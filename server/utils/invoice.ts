@@ -5,13 +5,13 @@
  *    絕不能讓 Notify 回非 200（藍新會重送 → 重複結算）或讓客戶看到錯誤。
  *    所有失敗都寫進 invoices 並在訂單上標 invoiceStatus,由人工/後續補開處理。
  *
- * 未設定 ezPay 金鑰 → 直接標 skipped（收款照常）。發票是獨立的商店帳號,見
- * server/utils/ezpay-invoice.ts 的說明。
+ * 未設定光貿金鑰 → 直接標 skipped（收款照常）。發票是獨立的商店帳號,見
+ * server/utils/guangmao-invoice.ts 的說明。
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
-import { isInvoiceConfigured, issueInvoice, type EzpayInvoiceKeys } from './ezpay-invoice'
+import { isInvoiceConfigured, issueInvoice, type GuangmaoInvoiceKeys } from './guangmao-invoice'
 import { splitTax } from '~~/shared/billing/tax'
 import { getBillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { resolveInvoiceProfile, type InvoiceProfile, type OrganizationDoc, type WorkspaceDoc } from '~~/shared/types/organization'
@@ -19,13 +19,12 @@ import type { InvoiceDoc } from '~~/shared/types/payment'
 
 export const INVOICES_COLLECTION = 'invoices'
 
-/** 由 runtimeConfig 取出 ezPay 金鑰（未設定則回 null → 不開發票）。 */
-export function invoiceKeysFromConfig(config: Record<string, unknown>): EzpayInvoiceKeys | null {
+/** 由 runtimeConfig 取出光貿金鑰（未設定則回 null → 不開發票）。 */
+export function invoiceKeysFromConfig(config: Record<string, unknown>): GuangmaoInvoiceKeys | null {
   const keys = {
-    merchantId: String(config.ezpayInvoiceMerchantId || '').trim(),
-    hashKey: String(config.ezpayInvoiceHashKey || '').trim(),
-    hashIV: String(config.ezpayInvoiceHashIV || '').trim(),
-    apiUrl: String(config.ezpayInvoiceApiUrl || '').trim(),
+    sellerUBN: String(config.guangmaoInvoiceSellerUBN || '').trim(),
+    appKey: String(config.guangmaoInvoiceAppKey || '').trim(),
+    apiUrl: String(config.guangmaoInvoiceApiUrl || '').trim(),
   }
   return isInvoiceConfigured(keys) ? keys : null
 }
@@ -43,7 +42,7 @@ export async function issueInvoiceForOrder(
     /** 含稅總額 = 實際請款金額 */
     totalAmt: number
   },
-  keys: EzpayInvoiceKeys | null,
+  keys: GuangmaoInvoiceKeys | null,
   db: Firestore = getDb(),
 ): Promise<void> {
   const orderRef = db.collection(PAYMENT_ORDERS_COLLECTION).doc(input.merchantOrderNo)
@@ -141,7 +140,7 @@ export async function issueInvoiceForOrder(
  * 開票也就沒有第二次機會了。
  */
 export async function reissueFailedInvoices(
-  keys: EzpayInvoiceKeys | null,
+  keys: GuangmaoInvoiceKeys | null,
   db: Firestore = getDb(),
   limit = 50,
 ): Promise<{ retried: number; issued: number }> {

@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireActiveOrgAdmin } from '~~/server/utils/workspace-auth'
-import { normalizeInvoiceProfile } from '~~/server/utils/ezpay-invoice'
+import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
 
 /**
  * POST /api/admin/org/:orgId/invoice-profile — 組織層級的發票資訊（**預設值**）。

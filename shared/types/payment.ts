@@ -83,13 +83,14 @@ export interface InvoiceDoc {
   amt: number
   taxAmt: number
   ok: boolean
-  /** ezPay 回傳狀態（SUCCESS 或錯誤代碼） */
+  /** 發票平台回傳狀態（光貿 code 字串，如 '0'=成功；或錯誤代碼） */
   status: string
   message?: string | null
   invoiceNumber?: string | null
+  /** ezPay 專屬交易序號（沿用舊資料用；光貿不產生此欄） */
   invoiceTransNo?: string | null
   randomNum?: string | null
-  /** ezPay CheckCode 驗證是否通過；false = 回應可疑，需人工確認 */
+  /** ezPay CheckCode 驗證是否通過（沿用舊資料用）；false = 回應可疑，需人工確認 */
   checkCodeValid?: boolean | null
   createdAt: Timestamp | FieldValue
 }

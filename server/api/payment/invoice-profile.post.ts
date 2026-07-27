@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { normalizeInvoiceProfile } from '~~/server/utils/ezpay-invoice'
+import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
 import { hasInvoiceProfile } from '~~/shared/types/organization'
 
 /**

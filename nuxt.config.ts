@@ -124,18 +124,16 @@ export default defineNuxtConfig({
     newebpayPeriodApiUrl: process.env.NEWEBPAY_PERIOD_API_URL ?? 'https://ccore.newebpay.com/MPG/period',
     newebpayPeriodAlterUrl: process.env.NEWEBPAY_PERIOD_ALTER_URL ?? 'https://ccore.newebpay.com/MPG/period/AlterStatus',
     /**
-     * ezPay 電子發票（**獨立的商店帳號**，與金流那組金鑰不同，需另外申請）。
-     * 未設定 → 收款照常，只是不開發票。
+     * 光貿(Amego)電子發票加值中心（**獨立於金流的商店帳號**，需另外向光貿申請）。
+     * 未設定 → 收款照常，只是不開發票(見 guangmao-invoice.ts 的 isInvoiceConfigured)。
      *
-     * ⚠️ apiUrl **刻意不給預設值**。若預設成測試站，正式環境只要忘了設這個環境變數，
-     *    就會把真實交易的發票開到測試平台——客戶會拿到一個不存在的發票號碼，
-     *    而且稅是真的沒報。四個值必須全設才會啟用開票（見 isInvoiceConfigured）。
-     *    測試 https://cinv.ezpay.com.tw／正式 https://inv.ezpay.com.tw
+     * ⚠️ apiUrl **刻意不給預設值**。若預設成正式站，沙盒測試就會把測試發票開到正式平台;
+     *    反之亦然。三個值必須全設才會啟用開票。
+     *    沙盒網址請向光貿索取;正式 https://invoice-api.amego.tw
      */
-    ezpayInvoiceMerchantId: process.env.EZPAY_INVOICE_MERCHANT_ID ?? '',
-    ezpayInvoiceHashKey: process.env.EZPAY_INVOICE_HASH_KEY ?? '',
-    ezpayInvoiceHashIV: process.env.EZPAY_INVOICE_HASH_IV ?? '',
-    ezpayInvoiceApiUrl: process.env.EZPAY_INVOICE_API_URL ?? '',
+    guangmaoInvoiceSellerUBN: process.env.GUANGMAO_INVOICE_SELLER_UBN ?? '',
+    guangmaoInvoiceAppKey: process.env.GUANGMAO_INVOICE_APP_KEY ?? '',
+    guangmaoInvoiceApiUrl: process.env.GUANGMAO_INVOICE_API_URL ?? '',
     /** 對外 HTTPS 原點（金流 Notify/Return 導回用）；與 clickTrackingBaseUrl 同源 */
     appBaseUrl: appPublicBaseUrl,
     /**
