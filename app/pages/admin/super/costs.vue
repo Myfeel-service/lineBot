@@ -185,42 +185,30 @@
             <div class="sa-cost-est">
               <div class="sa-cost-est__inputs">
                 <div class="sa-cost-est__row">
-                  <div class="sa-cost-est__rowhead">
-                    <div class="sa-cost-est__label">
-                      <span class="sa-cost-est__name">每月訊息則數</span>
-                      <span class="sa-cost-est__hint">客人來訊 + AI 回覆的總量 → 資料庫 + 主機 + 儲存</span>
-                    </div>
-                    <div class="sa-cost-est__rowcost">{{ ntTwd(costMsgTotal) }}</div>
+                  <div class="sa-cost-est__label">
+                    <span class="sa-cost-est__name">每月訊息則數</span>
+                    <span class="sa-cost-est__hint">客人來訊 ＋ AI 回覆的總量 → 資料庫 ＋ 主機 ＋ 儲存</span>
                   </div>
                   <el-slider v-model="msgsPerMonth" :max="500000" :step="1000" show-input />
                 </div>
                 <div class="sa-cost-est__row">
-                  <div class="sa-cost-est__rowhead">
-                    <div class="sa-cost-est__label">
-                      <span class="sa-cost-est__name">每月主動推播則數</span>
-                      <span class="sa-cost-est__hint">群發／排程訊息 → LINE 推播費（超過免費額度後每則約 NT${{ linePerPush }}）</span>
-                    </div>
-                    <div class="sa-cost-est__rowcost">{{ ntTwd(costLine) }}</div>
+                  <div class="sa-cost-est__label">
+                    <span class="sa-cost-est__name">每月主動推播則數</span>
+                    <span class="sa-cost-est__hint">群發／排程訊息 → LINE 推播費（超過免費額度後每則約 NT${{ linePerPush }}）</span>
                   </div>
                   <el-slider v-model="pushesPerMonth" :max="200000" :step="1000" show-input />
                 </div>
                 <div class="sa-cost-est__row">
-                  <div class="sa-cost-est__rowhead">
-                    <div class="sa-cost-est__label">
-                      <span class="sa-cost-est__name">每月營收（NT$）</span>
-                      <span class="sa-cost-est__hint">刷卡總額 → 金流手續費（約 {{ feeRate }}%）</span>
-                    </div>
-                    <div class="sa-cost-est__rowcost">{{ ntTwd(costFee) }}</div>
+                  <div class="sa-cost-est__label">
+                    <span class="sa-cost-est__name">每月營收（NT$）</span>
+                    <span class="sa-cost-est__hint">刷卡總額 → 金流手續費（約 {{ feeRate }}%）</span>
                   </div>
                   <el-slider v-model="monthlyRevenue" :max="500000" :step="1000" show-input />
                 </div>
                 <div class="sa-cost-est__row">
-                  <div class="sa-cost-est__rowhead">
-                    <div class="sa-cost-est__label">
-                      <span class="sa-cost-est__name">雲端固定月費</span>
-                      <span class="sa-cost-est__hint">主機基礎 + 排程 + 兩套系統（比較固定、與用量無關）</span>
-                    </div>
-                    <div class="sa-cost-est__rowcost">{{ ntTwd(cloudFixed) }}</div>
+                  <div class="sa-cost-est__label">
+                    <span class="sa-cost-est__name">雲端固定月費</span>
+                    <span class="sa-cost-est__hint">主機部署 ＋ 排程 ＋ 儲存基底（×2 系統，與訊息量無關）。小規模常在免費額度內 ≈ 0，看 AWS＋Firebase 帳單填</span>
                   </div>
                   <el-slider v-model="cloudFixed" :max="10000" :step="500" show-input />
                 </div>
@@ -234,16 +222,17 @@
                 </details>
               </div>
               <div class="sa-cost-est__out">
-                <div class="sa-cost-est__line">
-                  <span>外部估計小計</span><b>{{ ntTwd(extTotal) }}</b>
-                </div>
-                <div class="sa-cost-est__line">
-                  <span>本頁 AI 成本（實算）</span><b>{{ ntd(totals.totalCostUsd) }}</b>
-                </div>
+                <div class="sa-cost-est__outtitle">成本明細（每月估）</div>
+                <div class="sa-cost-est__line"><span>資料庫＋主機＋儲存</span><b>{{ ntTwd(costMsgTotal) }}</b></div>
+                <div class="sa-cost-est__line"><span>LINE 推播</span><b>{{ ntTwd(costLine) }}</b></div>
+                <div class="sa-cost-est__line"><span>金流手續費</span><b>{{ ntTwd(costFee) }}</b></div>
+                <div class="sa-cost-est__line"><span>雲端固定</span><b>{{ ntTwd(cloudFixed) }}</b></div>
+                <div class="sa-cost-est__line sa-cost-est__line--sub"><span>外部估計小計</span><b>{{ ntTwd(extTotal) }}</b></div>
+                <div class="sa-cost-est__line"><span>本頁 AI 成本（實算）</span><b>{{ ntd(totals.totalCostUsd) }}</b></div>
                 <div class="sa-cost-est__grand">
                   <span>概估每月總花費</span><b>{{ ntTwd(grandTotal) }}</b>
                 </div>
-                <p class="sa-cost-est__foot">外部為依「用量參數 × 公開單價」推估（資料庫+主機每則約 NT$0.0025、儲存按保留月數累積、LINE 每則與金流費率見上），非帳單金額；實際以各平台帳單與合約為準。</p>
+                <p class="sa-cost-est__foot">外部為依「用量參數 × 公開單價」推估（資料庫+主機每則約 NT$0.0025、儲存按保留月數累積、LINE 每則與金流費率見左），非帳單金額；實際以各平台帳單與合約為準。</p>
               </div>
             </div>
           </div>
