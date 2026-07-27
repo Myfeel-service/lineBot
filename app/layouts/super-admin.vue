@@ -37,6 +37,10 @@
           <el-icon class="nav-icon"><Wallet /></el-icon>
           <span>金流總覽</span>
         </NuxtLink>
+        <NuxtLink to="/admin/super/costs" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/costs') }">
+          <el-icon class="nav-icon"><Coin /></el-icon>
+          <span>AI 成本總覽</span>
+        </NuxtLink>
         <NuxtLink to="/admin/super/leads" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/leads') }">
           <el-icon class="nav-icon"><Message /></el-icon>
           <span>潛在客戶名單</span>
@@ -70,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { Avatar, ChatDotRound, Message, OfficeBuilding, Setting, SwitchButton, Wallet } from '@element-plus/icons-vue'
+import { Avatar, ChatDotRound, Coin, Message, OfficeBuilding, Setting, SwitchButton, Wallet } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const { user, logout } = useAuth()

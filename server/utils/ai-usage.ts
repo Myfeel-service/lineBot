@@ -88,6 +88,8 @@ export interface UsageDelta {
   testInputTokens?: number
   testOutputTokens?: number
   testEmbeddingTokens?: number
+  /** 後台測試觸發次數（與真客人 invocations 分開記）。 */
+  testInvocations?: number
   /**
    * 知識庫「建索引」的 embedding（reindex / bulk-create / 逐卡 index）——屬「建置成本」，
    * 跟客人查詢的 query embedding 分開記。不算進客人對話成本，但仍是工作區真實花費
@@ -131,6 +133,7 @@ export async function recordAiUsage(
   if (delta.testInputTokens) updates.testInputTokens = FieldValue.increment(delta.testInputTokens)
   if (delta.testOutputTokens) updates.testOutputTokens = FieldValue.increment(delta.testOutputTokens)
   if (delta.testEmbeddingTokens) updates.testEmbeddingTokens = FieldValue.increment(delta.testEmbeddingTokens)
+  if (delta.testInvocations) updates.testInvocations = FieldValue.increment(delta.testInvocations)
   if (delta.buildEmbeddingTokens) updates.buildEmbeddingTokens = FieldValue.increment(delta.buildEmbeddingTokens)
 
   try {

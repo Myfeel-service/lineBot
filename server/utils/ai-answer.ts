@@ -987,6 +987,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       if (delta.inputTokens) tokensOnly.testInputTokens = delta.inputTokens
       if (delta.outputTokens) tokensOnly.testOutputTokens = delta.outputTokens
       if (delta.embeddingTokens) tokensOnly.testEmbeddingTokens = delta.embeddingTokens
+      // 真客人的 invocations 訊號改導向 testInvocations：每次測試答題剛好計一次（各終點互斥、只 record 一次 invocations）。
+      if (delta.invocations) tokensOnly.testInvocations = delta.invocations
     }
     else {
       // followup：真客人點按鈕的重跑，是真實成本 → 記進真客人 token，只是不再計次數。

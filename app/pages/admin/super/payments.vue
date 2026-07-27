@@ -24,6 +24,11 @@
               <div class="sa-pay-stat__label">本月成交</div>
               <div class="sa-pay-stat__value">{{ summary.monthPaidCount }} 筆</div>
             </div>
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--alert': summary.monthFailedCount > 0 }">
+              <div class="sa-pay-stat__label">本月刷卡失敗</div>
+              <div class="sa-pay-stat__value">{{ summary.monthFailedCount }} 筆</div>
+              <div class="sa-pay-stat__hint">含同一筆重試</div>
+            </div>
             <div class="sa-pay-stat">
               <div class="sa-pay-stat__label">待付款</div>
               <div class="sa-pay-stat__value">{{ summary.pendingCount }} 筆</div>
@@ -90,11 +95,11 @@ interface PayOrder {
   createdAt: number | null
   paidAt: number | null
 }
-interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; pendingCount: number; count: number }
+interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; monthFailedCount: number; pendingCount: number; count: number }
 
 const loading = ref(false)
 const orders = ref<PayOrder[]>([])
-const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, pendingCount: 0, count: 0 })
+const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, monthFailedCount: 0, pendingCount: 0, count: 0 })
 
 async function load() {
   loading.value = true

@@ -46,15 +46,19 @@ export default defineEventHandler(async (event) => {
   const thisMonth = taipeiYyyyMm(new Date())
   let monthRevenue = 0
   let monthPaidCount = 0
+  let monthFailedCount = 0
   for (const o of orders) {
-    if (o.status !== 'paid') continue
     const when = o.paidAt ?? o.createdAt
-    if (when != null && taipeiYyyyMm(new Date(when)) === thisMonth) {
+    if (when == null || taipeiYyyyMm(new Date(when)) !== thisMonth) continue
+    if (o.status === 'paid') {
       monthRevenue += o.amount || 0
       monthPaidCount++
+    }
+    else if (o.status === 'failed') {
+      monthFailedCount++
     }
   }
   const pendingCount = orders.filter(o => o.status === 'pending').length
 
-  return { orders, summary: { thisMonth, monthRevenue, monthPaidCount, pendingCount, count: orders.length } }
+  return { orders, summary: { thisMonth, monthRevenue, monthPaidCount, monthFailedCount, pendingCount, count: orders.length } }
 })

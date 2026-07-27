@@ -259,11 +259,14 @@ export interface AiUsageDoc {
   /**
    * 測試對話（playground「重演」/ 內部測試）花掉的 token，**獨立記帳、不併入上方真客人 token**。
    * 用途：成本報表能把「真客人成本」與「測試成本」分開，每對話成本不被測試灌高。
-   * 測試不計 invocations/answered/handoffs（見 answerWithAi isTest），故這裡只有 token 分項。
+   * 測試不計真客人的 invocations/answered/handoffs（見 answerWithAi isTest）；
+   * 但另記 testInvocations，讓成本頁看得到「後台測試跑了幾次」。
    */
   testInputTokens?: number
   testOutputTokens?: number
   testEmbeddingTokens?: number
+  /** 後台測試（playground / 內部重演）觸發的次數；與真客人 invocations 分開記。 */
+  testInvocations?: number
   /** 知識庫建索引 embedding（reindex / bulk-create / 逐卡）；屬建置成本，與客人查詢 embedding 分開 */
   buildEmbeddingTokens?: number
   updatedAt: Timestamp | FieldValue
