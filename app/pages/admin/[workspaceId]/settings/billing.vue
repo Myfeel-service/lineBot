@@ -141,7 +141,7 @@
               <el-table-column label="方案" min-width="80">
                 <template #default="{ row }">{{ planName(row.planId) }}</template>
               </el-table-column>
-              <el-table-column label="金額" min-width="90" align="right">
+              <el-table-column label="金額(含稅)" min-width="90" align="right">
                 <template #default="{ row }">NT${{ row.amount.toLocaleString() }}</template>
               </el-table-column>
               <el-table-column label="付款方式" min-width="90">
@@ -153,10 +153,27 @@
                   <span v-if="row.status === 'failed' && row.failReason" class="billing-fail-reason">{{ failReasonText(row.failReason) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column v-if="invoiceEnabled" label="發票號碼" min-width="110">
+              <el-table-column v-if="invoiceEnabled" label="發票號碼" min-width="120">
                 <template #default="{ row }">
-                  <span v-if="row.invoiceNumber" class="billing-order-no">{{ row.invoiceNumber }}</span>
+                  <el-button
+                    v-if="row.invoiceNumber && row.invoiceStatus !== 'voided'"
+                    type="primary"
+                    link
+                    size="small"
+                    class="billing-invoice-view"
+                    @click="viewInvoice(row)"
+                  >
+                    <span class="billing-order-no">{{ row.invoiceNumber }}</span>
+                  </el-button>
+                  <el-tag v-else-if="row.invoiceStatus === 'voided'" type="info" size="small">已作廢</el-tag>
                   <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
+                  <el-tooltip
+                    v-else-if="row.invoiceStatus === 'skipped'"
+                    content="這筆未開立發票（金額為 0，或此帳號未啟用電子發票）"
+                    placement="top"
+                  >
+                    <span class="text-xs text-muted">未開立</span>
+                  </el-tooltip>
                   <span v-else class="text-xs text-muted">{{ invoiceStatusLabel(row.invoiceStatus) }}</span>
                 </template>
               </el-table-column>
@@ -229,6 +246,49 @@
             </template>
           </div>
         </div>
+
+        <!--
+          發票明細視窗:把已存但列表沒顯示的「隨機碼」攤出來——B2C 到財政部平台查詢／兌獎需要它。
+          光貲目前沒有「重寄 email／取得 PDF」的 API,所以這裡走客戶自助路徑(號碼＋隨機碼＋平台連結),
+          而不是接一支還沒對過文件的端點。
+        -->
+        <el-dialog v-model="invoiceViewOpen" title="電子發票明細" width="min(420px, 92vw)">
+          <div v-if="invoiceDetailLoading" class="billing-invoice-detail-loading">
+            <div class="spinner" />
+            <span class="text-sm text-muted">讀取發票明細…</span>
+          </div>
+          <div v-else-if="invoiceDetail" class="billing-invoice-detail">
+            <div class="bid-row">
+              <span class="bid-label">發票號碼</span>
+              <span class="billing-order-no bid-value">{{ invoiceDetail.invoiceNumber }}</span>
+            </div>
+            <div v-if="invoiceDetail.randomNum" class="bid-row">
+              <span class="bid-label">隨機碼</span>
+              <span class="bid-value">
+                <span class="billing-order-no">{{ invoiceDetail.randomNum }}</span>
+                <el-button link size="small" type="primary" @click="copyText(invoiceDetail.randomNum)">複製</el-button>
+              </span>
+            </div>
+            <div class="bid-row">
+              <span class="bid-label">開立時間</span>
+              <span class="bid-value">{{ fmtTime(invoiceDetail.issuedAt) }}</span>
+            </div>
+            <div class="bid-row">
+              <span class="bid-label">金額</span>
+              <span class="bid-value">
+                含稅 NT${{ invoiceDetail.totalAmt.toLocaleString() }}
+                <span class="text-xs text-muted">（銷售額 {{ invoiceDetail.amt.toLocaleString() }} ＋ 稅額 {{ invoiceDetail.taxAmt.toLocaleString() }}）</span>
+              </span>
+            </div>
+            <el-alert type="info" :closable="false">
+              <span class="text-xs">
+                個人發票可至
+                <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener" class="billing-invoice-link">財政部電子發票整合服務平台</a>
+                ,以發票號碼＋隨機碼查詢與兌獎;公司發票(有統編)已於開立時寄送至您設定的發票 Email。
+              </span>
+            </el-alert>
+          </div>
+        </el-dialog>
       </div>
     </template>
   </AdminSplitLayout>
@@ -237,6 +297,7 @@
 <script setup lang="ts">
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
+import { describeInvoiceProfile } from '~~/shared/types/organization'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
@@ -263,7 +324,7 @@ interface OrderRow {
   createdAt: number | null
   paidAt: number | null
   invoiceNumber?: string | null
-  invoiceStatus?: 'issued' | 'failed' | 'skipped' | null
+  invoiceStatus?: 'issued' | 'failed' | 'skipped' | 'voided' | null
 }
 const orders = ref<OrderRow[]>([])
 
@@ -345,17 +406,54 @@ const effectiveInvoice = ref<Record<string, string | null>>({})
 
 const workspaceName = computed(() => planView.value?.name ?? '')
 
-/** 一句話說清楚「現在會開出什麼樣的發票」——比列出五個欄位好懂。 */
-const effectiveInvoiceLabel = computed(() => {
-  const p = effectiveInvoice.value
-  if (p.buyerUBN) return `公司發票（統編 ${p.buyerUBN}・${p.buyerName || '未填抬頭'}）`
-  if (p.carrierNum) return `個人發票・存入手機條碼載具 ${p.carrierNum}`
-  if (p.loveCode) return `個人發票・捐贈（愛心碼 ${p.loveCode}）`
-  return '個人發票・紙本'
-})
+/** 一句話說清楚「現在會開出什麼樣的發票」——與發票表單預覽共用 describeInvoiceProfile（口徑一致）。 */
+const effectiveInvoiceLabel = computed(() => describeInvoiceProfile(effectiveInvoice.value))
 
-const INVOICE_STATUS_LABEL: Record<string, string> = { failed: '開立失敗', skipped: '未開立', issued: '—' }
+const INVOICE_STATUS_LABEL: Record<string, string> = { failed: '開立失敗', skipped: '未開立', voided: '已作廢', issued: '—' }
 function invoiceStatusLabel(s?: string | null) { return s ? (INVOICE_STATUS_LABEL[s] ?? '—') : '—' }
+
+// ── 檢視發票明細 ──────────────────────────────────────────────
+// 隨機碼有存但列表沒顯示,點開才向後端讀一次(不預載 50 筆的 join)。
+interface InvoiceDetail {
+  invoiceNumber: string
+  randomNum: string | null
+  totalAmt: number
+  amt: number
+  taxAmt: number
+  issuedAt: number | null
+}
+const invoiceViewOpen = ref(false)
+const invoiceDetailLoading = ref(false)
+const invoiceDetail = ref<InvoiceDetail | null>(null)
+
+async function viewInvoice(row: OrderRow) {
+  if (!row.invoiceNumber) return
+  invoiceViewOpen.value = true
+  invoiceDetailLoading.value = true
+  invoiceDetail.value = null
+  try {
+    invoiceDetail.value = await apiFetch<InvoiceDetail>(
+      `/api/payment/invoice-detail?order=${encodeURIComponent(row.merchantOrderNo)}`,
+    )
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '讀取發票明細失敗', 'error')
+    invoiceViewOpen.value = false
+  }
+  finally {
+    invoiceDetailLoading.value = false
+  }
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('已複製', 'success')
+  }
+  catch {
+    showToast('複製失敗,請手動選取', 'error')
+  }
+}
 
 /** 從「沿用組織」切到「專屬設定」：把組織的值當起點帶進表單，不要給他一張空的。 */
 function startOverride() {

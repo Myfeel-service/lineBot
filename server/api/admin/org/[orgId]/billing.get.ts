@@ -83,6 +83,7 @@ export default defineEventHandler(async (event) => {
         status: o.status,
         createdAt: toMs(o.createdAt),
         invoiceNumber: o.invoiceNumber ?? null,
+        invoiceStatus: o.invoiceStatus ?? null,
       }
     })
   }

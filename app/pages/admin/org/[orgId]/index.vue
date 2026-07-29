@@ -237,6 +237,16 @@
               </div>
             </div>
             <div class="card-section-stack">
+              <!-- 發票開立失敗要看得到（稅務問題）。組織管理者跨帳號看帳,更需要一眼發現哪筆漏開。 -->
+              <el-alert
+                v-if="invoiceEnabled && hasFailedInvoice"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="有發票開立失敗"
+              >
+                <span class="text-xs">有付款成功、但電子發票尚未開立成功的紀錄（見下方「發票號碼」欄）。系統會自動重試;若持續失敗,請聯繫我們協助處理。</span>
+              </el-alert>
               <!-- 讀不到就要說讀不到。渲染成一張「尚無付款紀錄」的空表，
                    等於告訴客戶他從來沒付過錢——那比誠實報錯糟糕得多。 -->
               <el-alert v-if="ordersError" type="warning" :closable="false" show-icon :title="ordersError" />
@@ -250,7 +260,7 @@
                 <el-table-column label="方案" min-width="70">
                   <template #default="{ row }">{{ planName(row.planId) }}</template>
                 </el-table-column>
-                <el-table-column label="金額" min-width="80" align="right">
+                <el-table-column label="金額(含稅)" min-width="80" align="right">
                   <template #default="{ row }">NT${{ row.amount.toLocaleString() }}</template>
                 </el-table-column>
                 <el-table-column label="狀態" min-width="70">
@@ -260,7 +270,9 @@
                 </el-table-column>
                 <el-table-column v-if="invoiceEnabled" label="發票號碼" min-width="100">
                   <template #default="{ row }">
-                    <span v-if="row.invoiceNumber" class="billing-order-no">{{ row.invoiceNumber }}</span>
+                    <span v-if="row.invoiceStatus === 'voided'" class="text-xs text-muted">已作廢</span>
+                    <span v-else-if="row.invoiceNumber" class="billing-order-no">{{ row.invoiceNumber }}</span>
+                    <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
                     <span v-else class="text-xs text-muted">—</span>
                   </template>
                 </el-table-column>
@@ -499,9 +511,12 @@ interface OrderRow {
   status: PaymentOrderStatus
   createdAt: number | null
   invoiceNumber: string | null
+  invoiceStatus: 'issued' | 'failed' | 'skipped' | 'voided' | null
 }
 const billingRows = ref<BillingRow[]>([])
 const orders = ref<OrderRow[]>([])
+/** 有付款成功、但發票開立失敗的紀錄 → 帳務區顯示警示（與帳單頁一致，稅務問題要看得到）。 */
+const hasFailedInvoice = computed(() => orders.value.some(o => o.status === 'paid' && o.invoiceStatus === 'failed'))
 const monthlyTotal = ref(0)
 /** 付款紀錄讀不到時的訊息。有值 → 顯示錯誤，**不要**渲染成一張「尚無付款紀錄」的空表。 */
 const ordersError = ref<string | null>(null)

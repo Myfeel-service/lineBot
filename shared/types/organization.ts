@@ -83,6 +83,21 @@ export interface InvoiceProfile {
   loveCode?: string | null
 }
 
+/**
+ * 一句話說清楚「這組設定會開出什麼樣的發票」——比列出五個欄位好懂。
+ * 供發票表單的即時預覽與帳單頁「沿用組織設定」摘要共用，兩邊口徑一致、不各寫一份慢慢飄。
+ */
+export function describeInvoiceProfile(p: InvoiceProfile | null | undefined): string {
+  const ubn = String(p?.buyerUBN ?? '').trim()
+  const name = String(p?.buyerName ?? '').trim()
+  const carrier = String(p?.carrierNum ?? '').trim()
+  const love = String(p?.loveCode ?? '').trim()
+  if (ubn) return `公司發票（統編 ${ubn}・${name || '未填抬頭'}）`
+  if (carrier) return `個人發票・存入手機條碼載具 ${carrier}`
+  if (love) return `個人發票・捐贈（愛心碼 ${love}）`
+  return '個人發票・紙本'
+}
+
 /** 發票資訊有沒有被填過（全空 = 沒填，該回退到組織的預設值）。 */
 export function hasInvoiceProfile(p: InvoiceProfile | null | undefined): boolean {
   if (!p) return false

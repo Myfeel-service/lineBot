@@ -67,7 +67,7 @@ export interface PaymentOrderDoc {
   notifyRaw?: Record<string, unknown> | null
   /** 電子發票開立結果（見 invoices collection；這裡只留摘要供帳單頁顯示） */
   invoiceNumber?: string | null
-  invoiceStatus?: 'issued' | 'failed' | 'skipped' | null
+  invoiceStatus?: 'issued' | 'failed' | 'skipped' | 'voided' | null
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -93,4 +93,31 @@ export interface InvoiceDoc {
   /** ezPay CheckCode 驗證是否通過（沿用舊資料用）；false = 回應可疑，需人工確認 */
   checkCodeValid?: boolean | null
   createdAt: Timestamp | FieldValue
+  /**
+   * 開立時實際送出的買方統編／抬頭（B2C 統編為 '0000000000'）。
+   * 開折讓時買方須與原發票一致，故留快照；此欄上線前開立的舊發票沒有，開折讓時擋下請人工處理。
+   */
+  buyerIdentifier?: string | null
+  buyerName?: string | null
+  /** 作廢：超管把這張已開立發票作廢後留下的稽核欄位（見 /api/admin/super/void-invoice） */
+  voided?: boolean
+  voidReason?: string | null
+  /** 光貿作廢回應的 code 字串（'0'=成功） */
+  voidStatus?: string | null
+  voidedAt?: Timestamp | FieldValue | null
+  /** 折讓：對這張發票開過的折讓證明單（可多筆，部分折讓累加；見 /api/admin/super/allowance） */
+  allowances?: InvoiceAllowanceRecord[]
+}
+
+/** 一筆折讓證明單的稽核紀錄（存在對應發票 doc 的 allowances 陣列裡）。 */
+export interface InvoiceAllowanceRecord {
+  /** 折讓證明單號（我方產生、≤16 碼、唯一）。 */
+  allowanceNumber: string
+  /** 折讓金額（含稅）。 */
+  amount: number
+  reason: string
+  /** 光貿回應 code 字串（'0'=成功）。 */
+  status: string
+  /** 開立當下的毫秒時間（陣列元素不能放 serverTimestamp，故存數值）。 */
+  createdAtMs: number
 }

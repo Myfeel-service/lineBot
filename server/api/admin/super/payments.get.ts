@@ -41,6 +41,8 @@ export default defineEventHandler(async (event) => {
     paymentType: o.paymentType ?? null,
     createdAt: toMs(o.createdAt),
     paidAt: toMs(o.paidAt),
+    invoiceNumber: o.invoiceNumber ?? null,
+    invoiceStatus: o.invoiceStatus ?? null,
   }))
 
   const thisMonth = taipeiYyyyMm(new Date())

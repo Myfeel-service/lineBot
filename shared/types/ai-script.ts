@@ -5,8 +5,8 @@ import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 //  Path: scripts/{scriptId}  （top-level + workspaceId 欄位）
 //
 //  腳本 = 多步驟客服情境。線性流程：trigger → collect → reply
-//  簡報 p23 提到的四種節點：觸發 / 收集 / API / 回覆
-//  Phase 3 不含 API 節點（屬 Phase 5 即時資料工具）
+//  簡報 p23 提到的四種步驟：觸發 / 收集 / API / 回覆
+//  Phase 3 不含 API 步驟（屬 Phase 5 即時資料工具）
 // ═══════════════════════════════════════════════════════════════════
 
 export type ScriptNodeType = 'trigger' | 'collect' | 'reply' | 'branch' | 'quickReply' | 'tag' | 'saveLead'
@@ -33,11 +33,11 @@ export interface ScriptTriggerNode {
   exampleEmbeddings?: Array<{ values: number[] }>
   /** 1–100，越大越優先；多腳本同時命中時取最高 */
   priority: number
-  /** 下一個節點 id；空字串視為直接結束 */
+  /** 下一個步驟 id；空字串視為直接結束 */
   next: string
 }
 
-/** collect 節點的答案格式：用來「抽取」命中片段並「驗證」格式，不符就重問 */
+/** collect 步驟的答案格式：用來「抽取」命中片段並「驗證」格式，不符就重問 */
 export type CollectFormat = 'any' | 'phone' | 'email' | 'number' | 'custom'
 
 export interface ScriptCollectNode {
@@ -77,7 +77,7 @@ export interface ScriptBranchCase {
   field: string
   /** equals / contains 用的比較值；exists 不需要 */
   value?: string
-  /** 條件成立要跳到的節點 id */
+  /** 條件成立要跳到的步驟 id */
   next: string
 }
 
@@ -86,14 +86,14 @@ export interface ScriptBranchNode {
   type: 'branch'
   /** 由上而下逐條判斷，第一條成立者勝出 */
   cases: ScriptBranchCase[]
-  /** 全部條件都不成立時的預設出口節點 id */
+  /** 全部條件都不成立時的預設出口步驟 id */
   defaultNext: string
 }
 
 export interface ScriptQuickReplyOption {
   /** 按鈕文字（≤20 字，LINE 規格）；也是客人點按後送出的文字、用來比對走哪條路 */
   label: string
-  /** 點這顆要跳到的節點 id */
+  /** 點這顆要跳到的步驟 id */
   next: string
 }
 
@@ -107,7 +107,7 @@ export interface ScriptQuickReplyNode {
   options: ScriptQuickReplyOption[]
 }
 
-/** ⑩ 貼標節點：流程走到這裡就替客人貼上指定標籤，然後往下 */
+/** ⑩ 貼標步驟：流程走到這裡就替客人貼上指定標籤，然後往下 */
 export interface ScriptTagNode {
   id: string
   type: 'tag'
@@ -124,7 +124,7 @@ export interface ScriptSaveLeadField {
   attrKey: string
 }
 
-/** ⑪ 寫名單節點：把收集到的欄位映射寫進使用者屬性（持久化、後台可見），然後往下 */
+/** ⑪ 寫名單步驟：把收集到的欄位映射寫進使用者屬性（持久化、後台可見），然後往下 */
 export interface ScriptSaveLeadNode {
   id: string
   type: 'saveLead'
@@ -145,7 +145,7 @@ export type ScriptNode =
 export interface ScriptStats {
   /** 啟動次數（命中觸發、進入腳本） */
   starts: number
-  /** 完成次數（流程跑到 reply 節點、正常收工） */
+  /** 完成次數（流程跑到 reply 步驟、正常收工） */
   completions: number
 }
 
@@ -156,7 +156,7 @@ export interface ScriptDoc {
   /** 多腳本同時命中時的優先序：由 trigger.priority 決定，這欄為快取方便 list 排序 */
   priority: number
   nodes: ScriptNode[]
-  /** 起始節點 id（必為 trigger 節點） */
+  /** 起始步驟 id（必為 trigger 步驟） */
   rootNodeId: string
   /** 成效統計（可能不存在＝尚未跑過） */
   stats?: ScriptStats
@@ -184,9 +184,9 @@ export interface ActiveScriptState {
 export const DEFAULT_SCRIPT_PRIORITY = 50
 export const DEFAULT_COLLECT_EXPIRE_MS = 10 * 60 * 1000 // 10 分鐘沒回就放棄
 export const MAX_SCRIPT_NODES = 20
-/** semantic 觸發每個節點最多幾句範例 */
+/** semantic 觸發每個步驟最多幾句範例 */
 export const MAX_TRIGGER_EXAMPLES = 10
-/** 快速回覆每個節點最多幾個選項（LINE Quick Reply 上限 13，這裡留保守值） */
+/** 快速回覆每個步驟最多幾個選項（LINE Quick Reply 上限 13，這裡留保守值） */
 export const MAX_QUICK_REPLY_OPTIONS = 10
 /**
  * semantic 觸發命中門檻（inbound 與範例的 cosine 相似度上限需 ≥ 此值）。
@@ -197,7 +197,7 @@ export const MAX_QUICK_REPLY_OPTIONS = 10
 export const DEFAULT_SEMANTIC_TRIGGER_THRESHOLD = 0.72
 
 /**
- * 節點所有「出口」節點 id（圖驗證 / 可達性用）。
+ * 步驟所有「出口」步驟 id（圖驗證 / 可達性用）。
  * reply 是終點無出口；branch 有 cases + defaultNext 多出口；trigger/collect 單一 next。
  * 空字串會被過濾掉（代表未接線，交給驗證另外報錯）。
  */
@@ -227,52 +227,52 @@ export function resolveBranchNext(node: ScriptBranchNode, collected: Record<stri
 
 export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootNodeId'>): string | null {
   if (!String(doc.name || '').trim()) return '請輸入腳本名稱'
-  if (!Array.isArray(doc.nodes) || doc.nodes.length === 0) return '請至少新增一個節點'
-  if (doc.nodes.length > MAX_SCRIPT_NODES) return `節點數超過上限 ${MAX_SCRIPT_NODES}`
+  if (!Array.isArray(doc.nodes) || doc.nodes.length === 0) return '請至少新增一個步驟'
+  if (doc.nodes.length > MAX_SCRIPT_NODES) return `步驟數超過上限 ${MAX_SCRIPT_NODES}`
 
   const ids = new Set<string>()
   for (const n of doc.nodes) {
-    if (!n.id) return '節點 id 不能為空'
-    if (ids.has(n.id)) return `節點 id 重複：${n.id}`
+    if (!n.id) return '步驟 id 不能為空'
+    if (ids.has(n.id)) return `步驟 id 重複：${n.id}`
     ids.add(n.id)
   }
 
-  if (!doc.rootNodeId || !ids.has(doc.rootNodeId)) return '請指定起始節點'
+  if (!doc.rootNodeId || !ids.has(doc.rootNodeId)) return '請指定起始步驟'
   const root = doc.nodes.find(n => n.id === doc.rootNodeId)
-  if (!root || root.type !== 'trigger') return '起始節點必須是「觸發」類型'
+  if (!root || root.type !== 'trigger') return '起始步驟必須是「觸發」類型'
 
-  // trigger 節點只能有一個（單一入口）
+  // trigger 步驟只能有一個（單一入口）
   const triggerCount = doc.nodes.filter(n => n.type === 'trigger').length
-  if (triggerCount !== 1) return '腳本必須有且僅有一個觸發節點'
+  if (triggerCount !== 1) return '腳本必須有且僅有一個觸發步驟'
 
-  // 至少要有一個回覆節點（且下方會驗它可達）
-  if (!doc.nodes.some(n => n.type === 'reply')) return '腳本至少要有一個回覆節點'
+  // 至少要有一個回覆步驟（且下方會驗它可達）
+  if (!doc.nodes.some(n => n.type === 'reply')) return '腳本至少要有一個回覆步驟'
 
-  // collected 只會由 collect 節點寫入；branch 條件與 saveLead 來源都讀 collected，
+  // collected 只會由 collect 步驟寫入；branch 條件與 saveLead 來源都讀 collected，
   // 故其欄位名必須對應某個 collect 的 fieldName，否則永遠是空值（typo / 順序錯）會靜默失效。
   const collectFieldNames = new Set(
     doc.nodes.filter(n => n.type === 'collect').map(n => (n as ScriptCollectNode).fieldName.trim()).filter(Boolean),
   )
 
-  // 所有出口必須指到存在的節點；非 reply 節點不能有空出口
+  // 所有出口必須指到存在的步驟；非 reply 步驟不能有空出口
   for (const n of doc.nodes) {
     if (n.type === 'reply') continue
     const outs = outgoingNodeIds(n)
     if (n.type === 'branch') {
-      if (!n.defaultNext || !ids.has(n.defaultNext)) return `分支節點請設定「其餘情況」的下一步`
+      if (!n.defaultNext || !ids.has(n.defaultNext)) return `分支步驟請設定「其餘情況」的下一步`
       for (const c of n.cases) {
         const field = c.field?.trim() ?? ''
         if (!field) return '分支條件請選擇要判斷的欄位'
-        if (!collectFieldNames.has(field)) return `分支條件的欄位「${field}」沒有對應的收集節點，請確認欄位名`
+        if (!collectFieldNames.has(field)) return `分支條件的欄位「${field}」沒有對應的收集步驟，請確認欄位名`
         if ((c.op === 'equals' || c.op === 'contains') && !String(c.value ?? '').trim()) {
           return '分支條件（等於／包含）請填寫比較值'
         }
-        if (!c.next || !ids.has(c.next)) return '分支條件請指定條件成立要跳到的節點'
+        if (!c.next || !ids.has(c.next)) return '分支條件請指定條件成立要跳到的步驟'
       }
     }
     else if (n.type === 'quickReply') {
-      if (!n.question?.trim()) return '快速回覆節點請填寫問句（會和按鈕一起送出）'
-      if (n.options.length === 0) return '快速回覆節點請至少新增一個選項'
+      if (!n.question?.trim()) return '快速回覆步驟請填寫問句（會和按鈕一起送出）'
+      if (n.options.length === 0) return '快速回覆步驟請至少新增一個選項'
       const seenLabels = new Set<string>()
       for (const o of n.options) {
         const label = o.label?.trim() ?? ''
@@ -280,31 +280,31 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
         // label 是「客人送出的文字」用來比對走哪條路；重複會讓後面那顆永遠選不到
         if (seenLabels.has(label)) return `快速回覆有重複的按鈕文字「${label}」，請改成不同名稱`
         seenLabels.add(label)
-        if (!o.next || !ids.has(o.next)) return `快速回覆選項「${label}」請指定要跳到的節點`
+        if (!o.next || !ids.has(o.next)) return `快速回覆選項「${label}」請指定要跳到的步驟`
       }
     }
     else if (n.type === 'tag') {
-      if (!n.addTagIds.length) return '貼標節點請至少選一個標籤'
-      if (!n.next || !ids.has(n.next)) return `節點「${nodeLabelOf(n)}」未指定下一步`
+      if (!n.addTagIds.length) return '貼標步驟請至少選一個標籤'
+      if (!n.next || !ids.has(n.next)) return `步驟「${nodeLabelOf(n)}」未指定下一步`
     }
     else if (n.type === 'saveLead') {
-      if (!n.fieldMap.length) return '寫名單節點請至少設定一個欄位對應'
+      if (!n.fieldMap.length) return '寫名單步驟請至少設定一個欄位對應'
       for (const m of n.fieldMap) {
         const from = m.fromField?.trim() ?? ''
         if (!from || !m.attrKey?.trim()) return '寫名單的欄位對應請填寫來源欄位與屬性名'
-        if (!collectFieldNames.has(from)) return `寫名單的來源欄位「${from}」沒有對應的收集節點，請確認欄位名`
+        if (!collectFieldNames.has(from)) return `寫名單的來源欄位「${from}」沒有對應的收集步驟，請確認欄位名`
       }
-      if (!n.next || !ids.has(n.next)) return `節點「${nodeLabelOf(n)}」未指定下一步`
+      if (!n.next || !ids.has(n.next)) return `步驟「${nodeLabelOf(n)}」未指定下一步`
     }
     else if (outs.length === 0 || outs.some(t => !ids.has(t))) {
-      return `節點「${nodeLabelOf(n)}」未指定下一步`
+      return `步驟「${nodeLabelOf(n)}」未指定下一步`
     }
   }
 
   // custom 格式的 collect 必須有正則，否則會變成「全部放行」的假驗證
   for (const n of doc.nodes) {
     if (n.type === 'collect' && n.format === 'custom' && !String(n.pattern || '').trim()) {
-      return `收集節點「${n.fieldName || ''}」選了自訂格式，請填寫正則表達式`
+      return `收集步驟「${n.fieldName || ''}」選了自訂格式，請填寫正則表達式`
     }
   }
 
@@ -316,10 +316,10 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
     }
   }
   else if (trigger.keywords.filter(k => k.trim()).length === 0) {
-    return '請為觸發節點設定至少一個關鍵字'
+    return '請為觸發步驟設定至少一個關鍵字'
   }
 
-  // 圖驗證：① 每個節點都從觸發可達（無孤兒）② 每個節點都能走到某個 reply（無死路 / 無法收尾的循環）
+  // 圖驗證：① 每個步驟都從觸發可達（無孤兒）② 每個步驟都能走到某個 reply（無死路 / 無法收尾的循環）
   const byId = new Map(doc.nodes.map(n => [n.id, n]))
   const reachableFromRoot = new Set<string>()
   const queue = [doc.rootNodeId]
@@ -331,10 +331,10 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
     if (node) for (const t of outgoingNodeIds(node)) if (ids.has(t)) queue.push(t)
   }
   for (const n of doc.nodes) {
-    if (!reachableFromRoot.has(n.id)) return `節點「${nodeLabelOf(n)}」接不到流程裡，請把它接上或刪除`
+    if (!reachableFromRoot.has(n.id)) return `步驟「${nodeLabelOf(n)}」接不到流程裡，請把它接上或刪除`
   }
 
-  // 反向可達：從所有 reply 往回 BFS，標出「能走到 reply」的節點
+  // 反向可達：從所有 reply 往回 BFS，標出「能走到 reply」的步驟
   const reverse = new Map<string, string[]>()
   for (const n of doc.nodes) {
     for (const t of outgoingNodeIds(n)) {
@@ -351,14 +351,14 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
     for (const p of reverse.get(id) ?? []) rq.push(p)
   }
   for (const n of doc.nodes) {
-    if (!canReachReply.has(n.id)) return `節點「${nodeLabelOf(n)}」沒有任何路徑通到回覆，流程會卡住`
+    if (!canReachReply.has(n.id)) return `步驟「${nodeLabelOf(n)}」沒有任何路徑通到回覆，流程會卡住`
   }
 
-  // ③ 由「只含非互動節點」的邊構成的循環會在 runtime 無限跳轉（branch/trigger/tag/saveLead 不等輸入，
-  //    分支條件又不變）。collect / quickReply 是「停等輸入」點，每輪會停下，故凡是邊的任一端是互動節點
+  // ③ 由「只含非互動步驟」的邊構成的循環會在 runtime 無限跳轉（branch/trigger/tag/saveLead 不等輸入，
+  //    分支條件又不變）。collect / quickReply 是「停等輸入」點，每輪會停下，故凡是邊的任一端是互動步驟
   //    就排除——只在「非互動 → 非互動」的子圖上找環。
-  //    注意：runtime 會從每個互動節點的 next「重新開走」，所以環可能藏在某個 collect 後面，
-  //    DFS 必須從每個非互動節點起跑（不能只從 root），否則藏在互動節點後的環會漏判。
+  //    注意：runtime 會從每個互動步驟的 next「重新開走」，所以環可能藏在某個 collect 後面，
+  //    DFS 必須從每個非互動步驟起跑（不能只從 root），否則藏在互動步驟後的環會漏判。
   const INTERACTIVE_TYPES = new Set<ScriptNodeType>(['collect', 'quickReply'])
   const isInteractive = (id: string): boolean => {
     const nd = byId.get(id)
@@ -382,7 +382,7 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
   for (const n of doc.nodes) {
     if (INTERACTIVE_TYPES.has(n.type) || color.get(n.id) !== undefined) continue
     if (dfsCycle(n.id)) {
-      return '流程有繞回自己的死循環（節點之間互指、中間卻沒有任何「收集／快速回覆」讓客人輸入），請調整'
+      return '流程有繞回自己的死循環（步驟之間互指、中間卻沒有任何「收集／快速回覆」讓客人輸入），請調整'
     }
   }
 
@@ -457,7 +457,7 @@ export interface CollectExtractResult {
 }
 
 /**
- * 依 collect 節點的 format 從使用者訊息抽取＋驗證。
+ * 依 collect 步驟的 format 從使用者訊息抽取＋驗證。
  * - 'any'：整句 trim 後原樣存（永遠 ok）。
  * - phone/email/number/custom：抽出第一個命中片段；抽不到 → ok=false（重問）。
  *   phone 會清掉抽出片段裡的 - 與空白，只留數字。

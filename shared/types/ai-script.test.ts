@@ -170,7 +170,7 @@ describe('action nodes (tag / saveLead)', () => {
       { id: 's1', type: 'saveLead', fieldMap: [{ fromField: 'oder_id', attrKey: '訂單編號' }], next: 'r1' },
       { id: 'r1', type: 'reply', text: 'ok', thenHandoff: false },
     ]
-    expect(validateScriptDoc({ ...base, nodes })).toMatch(/沒有對應的收集節點/)
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/沒有對應的收集步驟/)
   })
 })
 

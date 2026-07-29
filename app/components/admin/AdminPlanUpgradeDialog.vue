@@ -2,59 +2,69 @@
   <el-dialog
     :model-value="modelValue"
     title="選擇方案"
-    width="min(560px, 92vw)"
+    width="min(720px, 95vw)"
     @update:model-value="$emit('update:modelValue', $event)"
   >
-    <div class="plan-upgrade-list">
-      <div
-        v-for="p in plans"
-        :key="p.id"
-        class="plan-upgrade-row"
-        :class="{ 'is-current': p.id === currentPlanId }"
-      >
-        <div class="pu-info">
-          <div class="pu-name">
-            {{ p.name }}
-            <el-tag v-if="p.id === currentPlanId" size="small" type="success" effect="plain">目前方案</el-tag>
-          </div>
-          <div class="pu-specs">
-            {{ quotaLabel(p) }}<template v-if="perkLabel(p)"> · {{ perkLabel(p) }}</template>
-          </div>
-        </div>
-        <div class="pu-price">{{ priceLabel(p) }}</div>
-        <div class="pu-action">
-          <el-tooltip
-            v-if="canCheckout(p)"
-            :disabled="paymentEnabled"
-            content="線上付款尚未開通，請聯繫我們"
-            placement="top"
-          >
-            <!-- disabled 的按鈕不會觸發 tooltip，需外層 span 承接 hover -->
-            <span>
-              <el-button
-                :type="planAction(p) === '降級' ? 'info' : 'primary'"
-                :plain="planAction(p) === '降級'"
-                size="small"
-                :disabled="!paymentEnabled"
-                :loading="checkoutLoading === p.id"
-                @click="checkout(p)"
-              >
-                {{ planAction(p) }}
-              </el-button>
-            </span>
-          </el-tooltip>
-          <template v-else-if="p.custom">
-            <el-button v-if="contactHref" size="small" @click="contactUs">聯繫我們</el-button>
-            <span v-else class="text-xs text-muted">請洽窗口</span>
+    <!-- 方案比較表：方案為列、規格為欄，橫向對齊好比較「升級到底多拿到什麼」。
+         窄螢幕時整張表可左右捲動（see .plan-compare-scroll），不擠壓欄位。 -->
+    <div class="plan-compare-scroll">
+      <el-table :data="plans" size="small" class="plan-compare-table" :row-class-name="rowClass">
+        <el-table-column label="方案" min-width="104" fixed>
+          <template #default="{ row }">
+            <span class="pu-name">{{ row.name }}</span>
+            <el-tag v-if="row.id === currentPlanId" size="small" type="success" effect="plain">目前</el-tag>
           </template>
-          <!-- 免費層：不需結帳，但也不要留空白格（會像壞掉） -->
-          <span v-else class="text-xs text-muted">{{ p.id === currentPlanId ? '使用中' : '免費' }}</span>
-        </div>
-      </div>
+        </el-table-column>
+        <el-table-column label="每月則數" min-width="84">
+          <template #default="{ row }">{{ quotaLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="席次" min-width="58">
+          <template #default="{ row }">{{ row.seats == null ? '不限' : `${row.seats} 席` }}</template>
+        </el-table-column>
+        <el-table-column label="腳本" width="54" align="center">
+          <template #default="{ row }"><span :class="row.scripting ? 'pu-yes' : 'pu-no'">{{ row.scripting ? '✓' : '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="API" width="52" align="center">
+          <template #default="{ row }"><span :class="row.api ? 'pu-yes' : 'pu-no'">{{ row.api ? '✓' : '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="月費" min-width="92" align="right">
+          <template #default="{ row }">{{ priceLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="" min-width="88" align="right">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="canCheckout(row)"
+              :disabled="paymentEnabled"
+              content="線上付款尚未開通，請聯繫我們"
+              placement="top"
+            >
+              <!-- disabled 的按鈕不會觸發 tooltip，需外層 span 承接 hover -->
+              <span>
+                <el-button
+                  :type="planAction(row) === '降級' ? 'info' : 'primary'"
+                  :plain="planAction(row) === '降級'"
+                  size="small"
+                  :disabled="!paymentEnabled"
+                  :loading="checkoutLoading === row.id"
+                  @click="checkout(row)"
+                >
+                  {{ planAction(row) }}
+                </el-button>
+              </span>
+            </el-tooltip>
+            <template v-else-if="row.custom">
+              <el-button v-if="contactHref" size="small" @click="contactUs">聯繫我們</el-button>
+              <span v-else class="text-xs text-muted">請洽窗口</span>
+            </template>
+            <!-- 免費層：不需結帳，但也不要留空白格（會像壞掉） -->
+            <span v-else class="text-xs text-muted">{{ row.id === currentPlanId ? '使用中' : '免費' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
     <div class="plan-upgrade-foot">
       <span class="text-xs text-muted">
-        方案以「官方帳號」為單位各自計價，額度不跨帳號共用。付款由統一金流 PAYUNi 處理。
+        方案以「官方帳號」為單位各自計價，額度不跨帳號共用。所有價格均為含稅價。付款由統一金流 PAYUNi 處理。
         <template v-if="recurringEnabled">每月自動續扣，可隨時取消，取消後用到本期結束。</template>
       </span>
     </div>
@@ -70,6 +80,11 @@ defineEmits<{ 'update:modelValue': [boolean] }>()
 
 // 內部/測試方案不對客戶顯示（僅 super admin 指派）
 const plans = BILLING_PLAN_ORDER.map(id => BILLING_PLANS[id]).filter(p => !p.internal)
+
+/** 比較表裡把「目前方案」那一列淡淡標色，一眼看到自己在哪。 */
+function rowClass({ row }: { row: BillingPlan }) {
+  return row.id === props.currentPlanId ? 'plan-compare-row--current' : ''
+}
 
 /** 相對目前方案的動作：續訂 / 升級 / 降級——避免客戶把降級誤看成升級而誤扣款。 */
 function planAction(p: BillingPlan): '續訂' | '升級' | '降級' {
@@ -117,8 +132,8 @@ async function checkout(p: BillingPlan) {
   // 自動續訂是「授權往後每個月都扣」，這件事必須在按下去之前講清楚——事後才發現
   // 被持續扣款是最容易變成客訴與爭議款的。
   const terms = recurringEnabled
-    ? `將以 NT$${price}/月 ${action}「${p.name}」方案（${quota}），立即開通一個月，之後每月自動扣款。可隨時取消，取消後服務用到本期結束。`
-    : `將以 NT$${price} ${action}「${p.name}」方案（${quota}・單次付款、一個月）。`
+    ? `將以 NT$${price}/月（含稅）${action}「${p.name}」方案（${quota}），立即開通一個月，之後每月自動扣款。可隨時取消，取消後服務用到本期結束。`
+    : `將以 NT$${price}（含稅）${action}「${p.name}」方案（${quota}・單次付款、一個月）。`
   // 降級無比例折抵：立即生效、目前方案剩餘天數不折抵——按下去前必須講清楚,否則使用者會
   // 「付了錢還虧掉剩餘天數」而不自知。
   const downgradeWarn = action === '降級' ? '⚠️ 降級會立即生效，且目前方案剩餘天數不折抵。' : ''
@@ -169,12 +184,5 @@ function priceLabel(p: BillingPlan): string {
   if (p.priceMonthly == null) return '面談報價'
   if (p.priceMonthly === 0) return '免費'
   return `NT$${p.priceMonthly.toLocaleString()}/月`
-}
-function perkLabel(p: BillingPlan): string {
-  const parts: string[] = []
-  parts.push(p.seats == null ? '不限席次' : `${p.seats} 席`)
-  if (p.scripting) parts.push('腳本自動化')
-  if (p.api) parts.push('API')
-  return parts.join('・')
 }
 </script>

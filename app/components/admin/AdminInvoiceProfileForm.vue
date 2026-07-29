@@ -16,9 +16,11 @@
     </div>
 
     <div class="admin-field-group">
-      <AdminFieldLabel text="發票寄送 Email" tight />
+      <AdminFieldLabel :text="form.buyerUBN ? '發票寄送 Email（公司報帳必填）' : '發票寄送 Email'" tight />
       <el-input v-model="form.buyerEmail" placeholder="開立後寄送發票通知" />
       <p v-if="emailError" class="text-xs text-danger">{{ emailError }}</p>
+      <p v-else-if="emailRequiredError" class="text-xs text-danger">{{ emailRequiredError }}</p>
+      <p v-else-if="form.buyerUBN" class="text-xs text-muted">公司發票（三聯式）要拿去報帳，沒有 Email 就收不到那張可入帳的電子發票。</p>
     </div>
 
     <!-- 有統編 = B2B，載具／捐贈碼一律不適用（帶了 ezPay 也會退件）→ 直接不顯示，
@@ -36,10 +38,17 @@
         <p v-if="loveCodeError" class="text-xs text-danger">{{ loveCodeError }}</p>
       </div>
     </template>
+
+    <!-- 即時預覽:讓填的人一眼確認「這樣會開出什麼發票」，不必自己從五個欄位腦補。 -->
+    <p class="invoice-preview-line">
+      這樣設定會開出：<strong>{{ previewLabel }}</strong>
+    </p>
   </div>
 </template>
 
 <script setup lang="ts">
+import { describeInvoiceProfile } from '~~/shared/types/organization'
+
 /**
  * 發票開立資訊的表單。組織層（預設值）與官方帳號層（覆寫）共用同一份，
  * 免得兩邊的驗證規則與欄位互斥邏輯各寫一次、然後慢慢飄走。
@@ -66,6 +75,9 @@ const namePlaceholder = computed(() =>
   props.fallbackNameHint ? `留空則使用「${props.fallbackNameHint}」` : '留空則使用帳號名稱',
 )
 
+// 「這樣會開出什麼發票」的即時預覽，與帳單頁摘要共用同一支 describeInvoiceProfile（口徑一致）。
+const previewLabel = computed(() => describeInvoiceProfile(form.value))
+
 // 前端即時驗證：錯格式在填寫時就提示，而不是付款後被 ezPay 退件才知道
 const ubnError = computed(() => {
   const v = form.value.buyerUBN.trim()
@@ -74,6 +86,12 @@ const ubnError = computed(() => {
 const emailError = computed(() => {
   const v = form.value.buyerEmail.trim()
   return v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? 'Email 格式不正確' : ''
+})
+// 有統編 = B2B 三聯式，客戶要拿去報帳。光貿只在有帶 BuyerEmailAddress 時才寄發票，
+// 沒填 email 這張要入帳的發票就寄不出去 → 硬性要求，不讓它靜默漏掉。
+const emailRequiredError = computed(() => {
+  const ubn = form.value.buyerUBN.trim()
+  return /^\d{8}$/.test(ubn) && !form.value.buyerEmail.trim() ? '公司發票需填 Email，才能收到可報帳的電子發票' : ''
 })
 const carrierError = computed(() => {
   const v = form.value.carrierNum.trim()
@@ -88,7 +106,7 @@ const exclusiveError = computed(() =>
 )
 
 const isValid = computed(() =>
-  !ubnError.value && !emailError.value && !carrierError.value && !loveCodeError.value && !exclusiveError.value,
+  !ubnError.value && !emailError.value && !emailRequiredError.value && !carrierError.value && !loveCodeError.value && !exclusiveError.value,
 )
 watch(isValid, v => emit('update:valid', v), { immediate: true })
 </script>

@@ -36,6 +36,12 @@ export interface IssueInvoiceResult {
   invoiceTransNo?: string
   /** 回應驗簽是否通過;false = 回應可疑,仍記錄但標記。provider 不支援則留空。 */
   checkCodeValid?: boolean
+  /**
+   * 開立時**實際送出的**買方統編與抬頭(B2C 統編為 '0000000000')。存進 invoices doc,
+   * 供日後開折讓用——折讓的買方須與原發票一致,重算現行 profile 可能已飄移,故留快照。
+   */
+  buyerIdentifier?: string
+  buyerName?: string
 }
 
 // ── 格式驗證(財政部標準,存檔時就擋掉) ──────────────────────────────

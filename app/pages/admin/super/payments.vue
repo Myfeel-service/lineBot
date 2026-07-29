@@ -67,9 +67,69 @@
               <el-table-column label="訂單編號" min-width="160">
                 <template #default="{ row }"><span class="sa-pay-order-no">{{ row.merchantOrderNo }}</span></template>
               </el-table-column>
+              <el-table-column v-if="invoiceEnabled" label="發票" min-width="110">
+                <template #default="{ row }">
+                  <span v-if="row.invoiceStatus === 'voided'" class="text-xs text-muted">已作廢</span>
+                  <span v-else-if="row.invoiceNumber" class="sa-pay-order-no">{{ row.invoiceNumber }}</span>
+                  <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
+                  <span v-else class="text-xs text-muted">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="invoiceEnabled" label="操作" width="130">
+                <template #default="{ row }">
+                  <template v-if="row.invoiceStatus === 'issued' && row.invoiceNumber">
+                    <el-button
+                      size="small"
+                      type="danger"
+                      link
+                      :loading="acting === row.merchantOrderNo"
+                      @click="voidOrderInvoice(row)"
+                    >作廢</el-button>
+                    <el-button size="small" type="primary" link @click="openAllowance(row)">折讓</el-button>
+                  </template>
+                  <span v-else class="text-xs text-muted">—</span>
+                </template>
+              </el-table-column>
             </el-table>
           </div>
         </div>
+
+        <!--
+          折讓對話框:銷貨退回／部分退款用,對原發票開折讓證明單(原發票不作廢)。
+          金額預設全額、可改部分;買方以原發票快照為準(見 allowance.post.ts)。
+        -->
+        <el-dialog v-model="allowance.open" title="開立折讓" width="min(420px, 92vw)">
+          <div class="sa-allowance-form">
+            <p class="text-xs text-muted">
+              折讓用於銷貨退回／部分退款,會對原發票開折讓證明單(原發票不作廢)。逾作廢時效或已申報的退款走這裡。<br>
+              發票號碼 <span class="sa-pay-order-no">{{ allowance.invoiceNumber }}</span> · 原金額 NT${{ allowance.originalAmt.toLocaleString() }}
+            </p>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="折讓金額(含稅)" tight />
+              <el-input-number
+                v-model="allowance.amount"
+                :min="1"
+                :max="allowance.originalAmt"
+                :step="1"
+                step-strictly
+                controls-position="right"
+              />
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="折讓原因／品名" tight />
+              <el-input v-model="allowance.reason" placeholder="如:退款折讓、部分退費" maxlength="60" />
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="allowance.open = false">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="allowance.loading"
+              :disabled="!allowance.reason.trim() || !(allowance.amount >= 1)"
+              @click="submitAllowance"
+            >確認開立折讓</el-button>
+          </template>
+        </el-dialog>
       </div>
     </template>
   </AdminSplitLayout>
@@ -84,6 +144,9 @@ useHead({ title: '金流總覽 — 超級管理員' })
 const { apiFetch } = useSuperAdmin()
 const { showToast } = useAdminToast()
 
+const config = useRuntimeConfig()
+const invoiceEnabled = Boolean(config.public.invoiceEnabled)
+
 interface PayOrder {
   merchantOrderNo: string
   workspaceId: string
@@ -94,12 +157,93 @@ interface PayOrder {
   paymentType: string | null
   createdAt: number | null
   paidAt: number | null
+  invoiceNumber: string | null
+  invoiceStatus: 'issued' | 'failed' | 'skipped' | 'voided' | null
 }
 interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; monthFailedCount: number; pendingCount: number; count: number }
 
 const loading = ref(false)
 const orders = ref<PayOrder[]>([])
 const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, monthFailedCount: 0, pendingCount: 0, count: 0 })
+
+// ── 作廢發票 ──────────────────────────────────────────────
+// 作廢有時效（B2C 2 日 / B2B 7 日、當期未申報）,逾期只能改折讓——這裡先提示,實際時效由光貲端認定。
+const acting = ref('')
+async function voidOrderInvoice(row: PayOrder) {
+  let reason: string
+  try {
+    const r = await ElMessageBox.prompt(
+      `將作廢發票 ${row.invoiceNumber}（${row.workspaceName}）。\n⚠️ 作廢僅限開立後短期內（B2C 2 日／B2B 7 日、當期未申報）;逾期請改開折讓。若客戶還需要發票,作廢後要另行重開。`,
+      '作廢發票',
+      {
+        confirmButtonText: '確認作廢',
+        cancelButtonText: '取消',
+        inputPlaceholder: '作廢原因(必填,如:統編填錯、重複開立、已退款)',
+        inputValidator: (v: string) => (v && v.trim() ? true : '請填寫作廢原因'),
+        type: 'warning',
+      },
+    )
+    reason = String(r.value || '').trim()
+  }
+  catch { return } // 使用者取消
+  if (!reason) return
+
+  acting.value = row.merchantOrderNo
+  try {
+    await apiFetch('/api/admin/super/void-invoice', {
+      method: 'POST',
+      body: { merchantOrderNo: row.merchantOrderNo, reason },
+    })
+    showToast('發票已作廢', 'success')
+    await load()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '作廢失敗', 'error')
+  }
+  finally {
+    acting.value = ''
+  }
+}
+
+// ── 開折讓 ──────────────────────────────────────────────
+// 銷貨退回／部分退款用;金額預設全額、可改部分。買方以原發票快照為準(後端擋)。
+const allowance = reactive({
+  open: false,
+  merchantOrderNo: '',
+  invoiceNumber: '',
+  originalAmt: 0,
+  amount: 0,
+  reason: '',
+  loading: false,
+})
+function openAllowance(row: PayOrder) {
+  allowance.merchantOrderNo = row.merchantOrderNo
+  allowance.invoiceNumber = row.invoiceNumber || ''
+  allowance.originalAmt = row.amount
+  allowance.amount = row.amount
+  allowance.reason = ''
+  allowance.open = true
+}
+async function submitAllowance() {
+  const reason = allowance.reason.trim()
+  if (!reason || !(allowance.amount >= 1)) return
+  allowance.loading = true
+  try {
+    await apiFetch('/api/admin/super/allowance', {
+      method: 'POST',
+      body: { merchantOrderNo: allowance.merchantOrderNo, amount: allowance.amount, reason },
+    })
+    showToast('折讓已開立', 'success')
+    allowance.open = false
+    await load()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '折讓失敗', 'error')
+  }
+  finally {
+    allowance.loading = false
+  }
+}
 
 async function load() {
   loading.value = true

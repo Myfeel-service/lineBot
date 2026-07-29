@@ -11,7 +11,149 @@
 .scripts-section-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin: 4px 0 0;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* 即時流程檢查狀態列：設定當下就顯示「還差什麼 / 已 OK」 */
+.scripts-flow-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+
+  .el-icon {
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+
+  &.is-ok {
+    background: var(--el-color-success-light-9);
+    color: var(--el-color-success);
+  }
+  &.is-warn {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
+  }
+}
+
+/* 流程圖：即時把整條流程攤成縮排的節點列，分支往內縮一層 */
+.scripts-flow-map {
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.scripts-flow-map-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.scripts-flow-map-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.scripts-flow-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.scripts-flow-row {
+  display: flex;
+  align-items: center;
+  min-width: max-content;
+}
+
+/* 縮排層級用左側虛線導引，看得出「這條路屬於上面那個分支」 */
+.scripts-flow-row.is-indented {
+  border-inline-start: 1px dashed var(--el-border-color);
+  padding-inline-start: 10px;
+}
+
+.scripts-flow-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  white-space: nowrap;
+
+  .el-icon {
+    font-size: 13px;
+  }
+  b {
+    font-weight: 600;
+  }
+
+  /* 可點：跳到下面對應的步驟卡片 */
+  &.is-clickable {
+    cursor: pointer;
+    transition: filter 0.15s, box-shadow 0.15s;
+
+    &:hover {
+      filter: brightness(0.96);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 1px;
+    }
+  }
+}
+
+.scripts-flow-sub {
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+}
+
+.scripts-flow-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color);
+  border: 1px dashed var(--el-border-color);
+  border-radius: 100px;
+  padding: 1px 10px;
+}
+
+.scripts-flow-note {
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+/* 觸發測試框：用上緣虛線與「範例句」分開 */
+.scripts-trigger-test-group {
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--el-border-color);
+}
+
+.scripts-trigger-test {
+  font-size: 12px;
+  margin: 6px 0 0;
+
+  &.is-hit {
+    color: var(--el-color-success);
+  }
+  &.is-maybe {
+    color: var(--el-color-warning);
+  }
+  &.is-miss {
+    color: var(--el-text-color-secondary);
+  }
 }
 
 .scripts-node-list {
@@ -23,15 +165,34 @@
 .scripts-node-card {
   border: 1px solid var(--el-border-color);
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   background: var(--el-fill-color-light);
+  /* 卡內各欄位群組靠這裡的 gap 撐開間距（與 .card-section-stack 一致），
+     否則 field group 會直接相黏、看起來 padding 消失。 */
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+
+  /* 從流程圖點過來時短暫高亮，指出是哪一張卡 */
+  &.is-focused {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 2px var(--el-color-primary-light-7);
+  }
 }
 
 .scripts-node-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+}
+
+/* 每個步驟的「這步在做什麼」白話說明，緊貼標頭當副標 */
+.scripts-node-purpose {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+  margin: -0.35rem 0 0;
 }
 
 .scripts-node-badge {
@@ -83,13 +244,22 @@
 .scripts-next-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin: 10px 0 0;
-  padding-top: 8px;
+  margin: 0;
+  padding-top: 0.75rem;
   border-top: 1px dashed var(--el-border-color);
 
   strong {
     color: var(--el-text-color-primary);
     font-weight: 600;
+  }
+
+  /* 出口沒接好（存檔會被擋）→ 標紅指出要修的節點 */
+  &.is-unwired {
+    color: var(--el-color-danger);
+
+    strong {
+      color: var(--el-color-danger);
+    }
   }
 }
 
@@ -106,12 +276,185 @@
 .scripts-branch-value { flex: 1 1 110px; min-width: 90px; }
 .scripts-branch-next { flex: 1 1 150px; min-width: 120px; }
 
-/* 新增節點按鈕列：6 顆按鈕在窄面板自動換行，不再被裁切 */
-.scripts-add-actions {
+/* 加積木選單：分「常用/進階」，每顆卡片附一句說明，讓人一眼知道是做什麼的 */
+.scripts-add-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.scripts-add-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scripts-add-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--el-text-color-secondary);
+}
+
+.scripts-add-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.scripts-add-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 9px 11px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:hover {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  &-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    flex-shrink: 0;
+
+    .el-icon {
+      font-size: 14px;
+    }
+  }
+
+  &-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.35;
+
+    b {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--el-text-color-primary);
+    }
+    small {
+      font-size: 11.5px;
+      color: var(--el-text-color-secondary);
+    }
+  }
+}
+
+/* ── 試跑對話面板 ── */
+/* 標頭沿用共用的 .message-card-header（灰底＋左側色條＋下緣線），只多加可點收合 */
+.scripts-sim-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.scripts-sim-caret {
+  color: var(--el-text-color-secondary);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+
+  &.is-open {
+    transform: rotate(90deg);
+  }
+}
+
+.scripts-sim-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+
+.scripts-sim-empty {
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+  margin: 8px 0;
+}
+
+.scripts-sim-sys {
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  border-radius: 100px;
+  padding: 2px 10px;
+}
+
+.scripts-sim-line {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 82%;
+
+  &.is-bot {
+    align-self: flex-start;
+    align-items: flex-start;
+  }
+  &.is-me {
+    align-self: flex-end;
+    align-items: flex-end;
+  }
+}
+
+.scripts-sim-bubble {
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  .is-bot & {
+    background: var(--el-bg-color);
+    border: 1px solid var(--el-border-color);
+    border-bottom-left-radius: 4px;
+  }
+  .is-me & {
+    background: var(--el-color-primary);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+}
+
+.scripts-sim-qr {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+
+  button {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    border: 1px solid var(--el-color-primary-light-5);
+    border-radius: 100px;
+    padding: 4px 12px;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--el-color-primary-light-8);
+    }
+  }
+}
+
+.scripts-sim-input {
+  display: flex;
   gap: 8px;
-  margin-top: 12px;
 }
 
 /* 空狀態的範本選擇 */

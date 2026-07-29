@@ -93,6 +93,9 @@ export async function issueInvoiceForOrder(
       invoiceTransNo: result.invoiceTransNo ?? null,
       randomNum: result.randomNum ?? null,
       checkCodeValid: result.checkCodeValid ?? null,
+      // 買方快照：開折讓時買方須與原發票一致，重算現行 profile 可能已飄移，故存實際送出的值。
+      buyerIdentifier: result.buyerIdentifier ?? null,
+      buyerName: result.buyerName ?? null,
       createdAt: FieldValue.serverTimestamp(),
     }
     await invRef.set(doc)

@@ -13,56 +13,30 @@
   gap: 12px;
 }
 
-.plan-upgrade-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* 方案比較表：窄螢幕整張左右捲，欄位不被壓扁（方案名欄 fixed 釘住） */
+.plan-compare-scroll {
+  overflow-x: auto;
 }
 
-.plan-upgrade-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap; /* 窄螢幕時價格/按鈕可換行，不擠壓方案名 */
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-
-  &.is-current {
-    border-color: var(--color-line);
-    background: rgba(15, 123, 84, 0.06);
-  }
-
+.plan-compare-table {
   .pu-name {
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    margin-right: 6px;
   }
 
-  .pu-specs {
-    margin-top: 2px;
-    font-size: 12px;
-    color: #6b7280;
+  /* 有 / 無 某功能的視覺對比：有＝主色勾、無＝淡灰破折號 */
+  .pu-yes {
+    color: var(--color-primary, #0f7b54);
+    font-weight: 700;
   }
 
-  .pu-price {
-    font-weight: 600;
-    white-space: nowrap;
-    min-width: 84px; /* 固定寬右對齊 → 跨列價格一柱到底，好掃 */
-    text-align: right;
+  .pu-no {
+    color: #cbd5e1;
   }
 
-  .pu-info {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .pu-action {
-    flex: 0 0 auto;
-    min-width: 72px;
-    text-align: right;
+  /* 「目前方案」那一列淡淡標色（el-table 的列 class 套在 <tr>，需染 cell 背景） */
+  .plan-compare-row--current > td.el-table__cell {
+    background: rgba(15, 123, 84, 0.06);
   }
 }
 
@@ -147,6 +121,49 @@
 
   &:hover {
     text-decoration: underline;
+  }
+}
+
+/* 帳單頁：發票號碼做成可點的連結（點開看明細，含平常不顯示的隨機碼） */
+.billing-invoice-view {
+  padding: 0;
+  height: auto;
+  font-weight: 400;
+}
+
+/* 帳單頁：發票明細視窗（號碼／隨機碼／金額拆解 + 財政部平台查詢指引） */
+.billing-invoice-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.billing-invoice-detail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem 1rem;
+}
+
+.bid-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+
+  .bid-label {
+    flex: 0 0 64px;
+    font-size: 12px;
+    color: #6b7280;
+  }
+
+  .bid-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 }
 

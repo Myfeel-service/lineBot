@@ -81,6 +81,36 @@
     <!-- ── Editor Body ── -->
     <template #editor-body>
       <div class="ai-scripts-body admin-panel-stack">
+        <!-- 試跑：假裝自己是客人打字，即時模擬這條腳本（純預覽，無副作用） -->
+        <div class="message-card scripts-section-card scripts-sim-card">
+          <div class="message-card-header scripts-sim-head" role="button" tabindex="0" @click="showSim = !showSim" @keydown.enter="showSim = !showSim">
+            <div class="card-header-main">
+              <span class="section-title">試跑這條腳本</span>
+              <span class="text-xs text-muted">假裝客人打字，看機器人怎麼回（純預覽，不會真的發送）</span>
+            </div>
+            <el-icon class="scripts-sim-caret" :class="{ 'is-open': showSim }"><ArrowRight /></el-icon>
+          </div>
+          <div v-if="showSim" class="card-section-stack scripts-sim-panel">
+            <div class="scripts-sim-chat">
+              <p v-if="!simLog.length" class="scripts-sim-empty">輸入客人會打的第一句話開始（假設已經觸發這條腳本）</p>
+              <template v-for="(m, i) in simLog" :key="i">
+                <div v-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
+                <div v-else class="scripts-sim-line" :class="`is-${m.who}`">
+                  <div class="scripts-sim-bubble">{{ m.text || '（空白訊息）' }}</div>
+                  <div v-if="m.buttons?.length" class="scripts-sim-qr">
+                    <button v-for="(b, bi) in m.buttons" :key="bi" type="button" @click="simSend(b)">{{ b || '（空白按鈕）' }}</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="scripts-sim-input">
+              <el-input v-model="simInput" placeholder="輸入客人會打的話…" @keyup.enter="simSend()" />
+              <el-button type="primary" @click="simSend()">送出</el-button>
+              <el-button @click="simReset">重來</el-button>
+            </div>
+          </div>
+        </div>
+
         <!-- 啟用 + 優先度 -->
         <div class="message-card scripts-section-card">
           <div class="message-card-header">
@@ -111,13 +141,53 @@
         <div class="message-card scripts-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">流程節點</span>
+              <span class="section-title">流程步驟</span>
               <span class="text-xs text-muted">流程：觸發 → 收集（可多個）→ 回覆</span>
             </div>
           </div>
           <div class="card-section-stack">
+            <!-- 即時流程檢查：設定當下就顯示「還差什麼 / 已 OK」，沿用存檔時同一套驗證 -->
+            <div class="scripts-flow-status" :class="flowIssue ? 'is-warn' : 'is-ok'">
+              <el-icon v-if="flowIssue"><WarningFilled /></el-icon>
+              <el-icon v-else><CircleCheckFilled /></el-icon>
+              <span>{{ flowIssue ? `還差一步：${flowIssue}` : '流程完整，隨時可以儲存 ✓' }}</span>
+            </div>
+
+            <!-- 流程圖：即時把整條流程畫出來，分支往內縮一層、一眼看懂走向 -->
+            <div v-if="flowRows.length" class="scripts-flow-map">
+              <div class="scripts-flow-map-head">
+                <span class="scripts-flow-map-title">流程圖</span>
+                <span class="text-xs text-muted">即時預覽・點步驟可跳到下面編輯</span>
+              </div>
+              <div class="scripts-flow-rows">
+                <div
+                  v-for="row in flowRows"
+                  :key="row.key"
+                  class="scripts-flow-row"
+                  :class="[`scripts-flow-row--${row.kind}`, { 'is-indented': row.depth > 0 }]"
+                  :style="row.depth ? { marginInlineStart: `${row.depth * 22}px` } : undefined"
+                >
+                  <span
+                    v-if="row.kind === 'node'"
+                    class="scripts-flow-box is-clickable"
+                    :class="nodeBadgeClass(row.type ?? 'reply')"
+                    role="button"
+                    tabindex="0"
+                    @click="focusStep(row.id)"
+                    @keydown.enter="focusStep(row.id)"
+                  >
+                    <el-icon><component :is="nodeIcon(row.type ?? 'reply')" /></el-icon>
+                    <b>{{ row.title }}</b>
+                    <span v-if="row.sub" class="scripts-flow-sub">{{ row.sub }}</span>
+                  </span>
+                  <span v-else-if="row.kind === 'label'" class="scripts-flow-label">{{ row.title }}</span>
+                  <span v-else class="scripts-flow-note">{{ row.title }}</span>
+                </div>
+              </div>
+            </div>
+
             <div class="scripts-node-list">
-              <div v-for="node in form.nodes" :key="node.id" class="scripts-node-card">
+              <div v-for="node in form.nodes" :key="node.id" class="scripts-node-card" :class="{ 'is-focused': highlightStep === node.id }" :data-node-id="node.id">
                 <div class="scripts-node-header">
                   <span class="scripts-node-badge" :class="nodeBadgeClass(node.type)">
                     <el-icon><component :is="nodeIcon(node.type)" /></el-icon> {{ nodeTypeLabel(node.type) }}
@@ -134,6 +204,7 @@
                     移除
                   </el-button>
                 </div>
+                <p class="scripts-node-purpose">{{ nodePurpose(node.type) }}</p>
 
                 <!-- Trigger -->
                 <template v-if="node.type === 'trigger'">
@@ -173,6 +244,14 @@
                       不用列出所有講法——填 3～5 句不同說法即可，客人用相近意思的話也會觸發（最多 {{ MAX_TRIGGER_EXAMPLES }} 句）。
                     </p>
                   </template>
+
+                  <div class="admin-field-group scripts-trigger-test-group">
+                    <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條腳本）" tight />
+                    <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
+                    <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
+                      {{ triggerTestResult(node).state === 'hit' ? '✓ ' : triggerTestResult(node).state === 'maybe' ? '≈ ' : '✗ ' }}{{ triggerTestResult(node).text }}
+                    </p>
+                  </div>
                 </template>
 
                 <!-- Collect -->
@@ -184,6 +263,7 @@
                   <div class="admin-field-group">
                     <AdminFieldLabel text="欄位名稱（給答案取個代號，後面判斷、存名單、回覆帶入時都靠它）" tight />
                     <el-input v-model="node.fieldName" placeholder="例：order_id" />
+                    <p v-if="node.fieldName.trim()" class="scripts-section-hint">💡 之後在「回覆」步驟可以用 <b>{{ varLabel(node.fieldName) }}</b> 帶入客人的答案</p>
                   </div>
                   <div class="admin-field-group">
                     <AdminFieldLabel text="答案格式（系統會自動從客人訊息抓出答案；格式不對會再問一次）" tight />
@@ -253,16 +333,22 @@
                     </el-select>
                     <el-input v-if="c.op !== 'exists'" v-model="c.value" placeholder="比較值" class="scripts-branch-value" />
                     <span class="text-xs text-muted">→</span>
-                    <el-select :model-value="c.next" size="small" placeholder="前往…" class="scripts-branch-next" @change="c.next = $event">
+                    <el-select :model-value="c.next" size="small" placeholder="前往…" class="scripts-branch-next" @change="onTargetChange($event, c.next, (id) => c.next = id)">
                       <el-option v-for="o in targetOptions(node.id)" :key="o.value" :label="o.label" :value="o.value" />
+                      <el-option-group label="接下一步（會新增一個步驟）">
+                        <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                      </el-option-group>
                     </el-select>
                     <el-button size="small" type="danger" plain @click="removeBranchCase(node, ci)">✕</el-button>
                   </div>
                   <el-button size="small" plain @click="addBranchCase(node)">＋ 新增條件</el-button>
                   <div class="admin-field-group">
                     <AdminFieldLabel text="其餘情況（都不符合時）→ 前往" tight />
-                    <el-select :model-value="node.defaultNext" size="small" placeholder="前往…" @change="node.defaultNext = $event">
+                    <el-select :model-value="node.defaultNext" size="small" placeholder="前往…" @change="onTargetChange($event, node.defaultNext, (id) => node.defaultNext = id)">
                       <el-option v-for="o in targetOptions(node.id)" :key="o.value" :label="o.label" :value="o.value" />
+                      <el-option-group label="接下一步（會新增一個步驟）">
+                        <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                      </el-option-group>
                     </el-select>
                   </div>
                 </template>
@@ -278,8 +364,11 @@
                     <span class="text-xs text-muted">按鈕</span>
                     <el-input v-model="o.label" placeholder="按鈕文字（≤20 字）" class="scripts-branch-field" />
                     <span class="text-xs text-muted">→</span>
-                    <el-select :model-value="o.next" size="small" placeholder="前往…" class="scripts-branch-next" @change="o.next = $event">
+                    <el-select :model-value="o.next" size="small" placeholder="前往…" class="scripts-branch-next" @change="onTargetChange($event, o.next, (id) => o.next = id)">
                       <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
+                      <el-option-group label="接下一步（會新增一個步驟）">
+                        <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                      </el-option-group>
                     </el-select>
                     <el-button size="small" type="danger" plain @click="removeQuickReplyOption(node, oi)">✕</el-button>
                   </div>
@@ -321,23 +410,37 @@
                 </template>
 
                 <!-- 下一步摘要：把自動接線/結束這種看不見的去向講出來 -->
-                <p v-if="autoNextLabel(node)" class="scripts-next-hint">
+                <p v-if="autoNextLabel(node)" class="scripts-next-hint" :class="{ 'is-unwired': isNodeUnwired(node) }">
                   ↳ 下一步：<strong>{{ autoNextLabel(node) }}</strong>
                 </p>
               </div>
             </div>
 
-            <div class="scripts-add-actions">
-              <el-button size="small" plain @click="addNode('collect')">＋ 收集節點</el-button>
-              <el-button size="small" plain @click="addNode('quickReply')">＋ 快速回覆</el-button>
-              <el-button size="small" plain @click="addNode('branch')">＋ 分支節點</el-button>
-              <el-button size="small" plain @click="addNode('tag')">＋ 貼標節點</el-button>
-              <el-button size="small" plain @click="addNode('saveLead')">＋ 寫名單節點</el-button>
-              <el-button size="small" plain @click="addNode('reply')">＋ 回覆節點</el-button>
+            <div class="scripts-add-palette">
+              <div v-for="grp in nodePalette" :key="grp.group" class="scripts-add-group">
+                <span class="scripts-add-group-title">{{ grp.group }}</span>
+                <div class="scripts-add-cards">
+                  <button
+                    v-for="it in grp.items"
+                    :key="it.type"
+                    type="button"
+                    class="scripts-add-card"
+                    @click="addNode(it.type)"
+                  >
+                    <span class="scripts-add-card-icon" :class="nodeBadgeClass(it.type)">
+                      <el-icon><component :is="nodeIcon(it.type)" /></el-icon>
+                    </span>
+                    <span class="scripts-add-card-text">
+                      <b>＋ {{ it.name }}</b>
+                      <small>{{ it.desc }}</small>
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <p class="scripts-section-hint">
-              一般步驟會由上到下自動接下去；只有「分支」要自己用「前往…」下拉，指定每條路各接到哪一步。
+              一般步驟會由上到下自動接下去；只有「分支」和「快速回覆」要自己用「前往…」下拉，指定每條路各接到哪一步。
             </p>
           </div>
         </div>
@@ -348,7 +451,7 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { ChatDotRound, Collection, Delete, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share } from '@element-plus/icons-vue'
+import { ArrowRight, ChatDotRound, CircleCheckFilled, Collection, Delete, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { v4 as uuidv4 } from 'uuid'
 import type {
@@ -364,7 +467,7 @@ import type {
   ScriptTriggerNode,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, extractCollectValue, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -448,6 +551,14 @@ const statsText = computed(() => {
   return `啟動 ${starts} 次・完成 ${completions} 次（完成率 ${rate}%）`
 })
 
+/**
+ * 即時流程檢查：沿用「後端存檔時同一套」validateScriptDoc，設定當下就知道還差什麼、
+ * 不用按了儲存才被擋。名稱用佔位符帶入 → 這條專講「流程結構」問題，腳本名稱由標題欄位與送出時把關。
+ */
+const flowIssue = computed(() =>
+  validateScriptDoc({ name: form.value.name.trim() || '未命名腳本', nodes: form.value.nodes, rootNodeId: form.value.rootNodeId }),
+)
+
 // ── List helpers ───────────────────────────────────────────────────
 function triggerSummary(script: ScriptRow): string {
   const trig = script.nodes?.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
@@ -522,6 +633,253 @@ function autoNextLabel(node: ScriptNode): string | null {
   return null
 }
 
+/** 線性節點的出口是空的（存檔驗證會擋）→ 把該節點的「↳ 下一步」標紅，指出要修的地方 */
+function isNodeUnwired(node: ScriptNode): boolean {
+  return (node.type === 'trigger' || node.type === 'collect' || node.type === 'tag' || node.type === 'saveLead') && !node.next
+}
+
+// ── 流程圖（即時預覽）──────────────────────────────────────────────
+// 從觸發節點走訪整條流程，攤平成「縮排的流程列」：線性步驟同層往下，分支/快速回覆
+// 的每條路往內縮一層並標上條件。純唯讀，跟著下面卡片即時變動；用路徑 visited 斷循環。
+interface FlowRow { key: string; kind: 'node' | 'label' | 'note'; type?: ScriptNode['type']; title: string; sub?: string; depth: number; id?: string }
+
+function flowTruncate(s: string, n = 16): string {
+  const t = String(s || '').trim()
+  return t.length > n ? `${t.slice(0, n)}…` : t
+}
+function flowNodeTitle(node: ScriptNode): string {
+  if (node.type === 'collect') return `收集：${node.fieldName || '未命名'}`
+  return nodeTypeLabel(node.type)
+}
+function flowNodeSub(node: ScriptNode): string {
+  if (node.type === 'trigger') {
+    const list = ((node.matchMode ?? 'keyword') === 'semantic' ? (node.examples ?? []) : (node.keywords ?? [])).filter(Boolean)
+    return list.length ? `${list.slice(0, 3).join('、')}${list.length > 3 ? '…' : ''}` : '未設條件'
+  }
+  if (node.type === 'collect' || node.type === 'quickReply') return node.question ? `問「${flowTruncate(node.question)}」` : ''
+  if (node.type === 'reply') return node.thenHandoff ? '回覆後轉真人 → 結束' : '回覆 → 結束'
+  if (node.type === 'tag') return `${node.addTagIds.length} 個標籤`
+  if (node.type === 'saveLead') return `存 ${node.fieldMap.length} 個欄位`
+  return ''
+}
+function flowBranchLabel(c: ScriptBranchNode['cases'][number]): string {
+  const f = c.field || '欄位'
+  if (c.op === 'equals') return `若 ${f} =「${c.value || ''}」`
+  if (c.op === 'contains') return `若 ${f} 含「${c.value || ''}」`
+  return `若 ${f} 有填`
+}
+
+const flowRows = computed<FlowRow[]>(() => {
+  const nodes = form.value.nodes
+  const byId = new Map(nodes.map(n => [n.id, n]))
+  const rows: FlowRow[] = []
+  const rendered = new Set<string>()
+  const MAX = 60
+  let seq = 0
+
+  const pushNode = (node: ScriptNode, depth: number) => {
+    rendered.add(node.id)
+    rows.push({ key: `n${seq++}`, kind: 'node', type: node.type, title: flowNodeTitle(node), sub: flowNodeSub(node), depth, id: node.id })
+  }
+  const pushLabel = (title: string, depth: number) => rows.push({ key: `l${seq++}`, kind: 'label', title, depth })
+  const pushNote = (title: string, depth: number) => rows.push({ key: `x${seq++}`, kind: 'note', title, depth })
+
+  function walk(id: string, depth: number, path: Set<string>) {
+    if (rows.length >= MAX) return
+    if (!id) return pushNote('（尚未接下一步）', depth)
+    const node = byId.get(id)
+    if (!node) return pushNote('（接到不存在的步驟）', depth)
+    if (path.has(id)) return pushNote(`↩ 回到「${flowNodeTitle(node)}」`, depth)
+    const seen = new Set(path)
+    seen.add(id)
+
+    pushNode(node, depth)
+    if (node.type === 'branch') {
+      for (const c of node.cases) { pushLabel(flowBranchLabel(c), depth + 1); walk(c.next, depth + 1, seen) }
+      pushLabel('其餘情況', depth + 1)
+      walk(node.defaultNext, depth + 1, seen)
+    }
+    else if (node.type === 'quickReply') {
+      for (const o of node.options) { pushLabel(`按「${o.label || '未命名'}」`, depth + 1); walk(o.next, depth + 1, seen) }
+    }
+    else if (node.type !== 'reply') {
+      walk(node.next, depth, seen)
+    }
+  }
+
+  const root = nodes.find(n => n.id === form.value.rootNodeId)
+  if (root) walk(root.id, 0, new Set())
+  // 沒被走訪到的孤兒節點（觸發除外）：提醒還沒接進流程
+  for (const n of nodes) {
+    if (n.type !== 'trigger' && !rendered.has(n.id)) pushNote(`⚠「${flowNodeTitle(n)}」還沒接進流程`, 0)
+  }
+  return rows
+})
+
+// 點流程圖上的步驟 → 捲到下面對應的卡片並短暫高亮，讓「圖」和「編輯卡片」連成一個可導覽的流程
+const highlightStep = ref<string | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+function focusStep(id?: string) {
+  if (!id) return
+  highlightStep.value = id
+  // nextTick：剛新增的步驟卡片要等 DOM 更新後才捲得到
+  nextTick(() => {
+    document.querySelector(`[data-node-id="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => { highlightStep.value = null }, 1600)
+}
+
+// ── 「前往…」下拉裡直接「＋ 接下一步」：把「按鈕/分支可以接子流程」變成看得見的動作 ──
+const newStepOptions = [
+  { value: '__new:collect', label: '＋ 新增：收集（問一個問題）' },
+  { value: '__new:quickReply', label: '＋ 新增：快速回覆（給按鈕）' },
+  { value: '__new:branch', label: '＋ 新增：分支（依答案分流）' },
+  { value: '__new:tag', label: '＋ 新增：貼標' },
+  { value: '__new:saveLead', label: '＋ 新增：寫名單' },
+  { value: '__new:reply', label: '＋ 新增：回覆（結束）' },
+]
+
+function makeStep(type: 'collect' | 'quickReply' | 'branch' | 'tag' | 'saveLead' | 'reply', nextId: string): ScriptNode {
+  if (type === 'collect') return defaultCollectNode(nextId)
+  if (type === 'quickReply') return defaultQuickReplyNode(nextId)
+  if (type === 'branch') return defaultBranchNode(nextId)
+  if (type === 'tag') return defaultTagNode(nextId)
+  if (type === 'saveLead') return defaultSaveLeadNode(nextId)
+  return defaultReplyNode()
+}
+
+/**
+ * 「前往…」被改變時：
+ * - 選了一般步驟 → 直接把這條路指過去。
+ * - 選了「＋ 接下一步」→ 建一個新步驟「插進這條路」：新步驟的下一步自動接回原本的目標
+ *   （不會把原本接的東西弄丟），再把這條路指到新步驟，然後捲過去讓你填內容。
+ */
+function onTargetChange(value: string, currentTarget: string, setNext: (id: string) => void) {
+  if (typeof value === 'string' && value.startsWith('__new:')) {
+    const type = value.slice(6) as 'collect' | 'quickReply' | 'branch' | 'tag' | 'saveLead' | 'reply'
+    const node = makeStep(type, currentTarget)
+    form.value.nodes.push(node)
+    setNext(node.id)
+    focusStep(node.id)
+  }
+  else {
+    setNext(value)
+  }
+}
+
+// ── 加積木選單：分「常用 / 進階」＋一句說明，讓人一眼知道每種在做什麼 ──────
+const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quickReply' | 'reply' | 'branch' | 'tag' | 'saveLead'; name: string; desc: string }> }> = [
+  { group: '常用', items: [
+    { type: 'collect', name: '收集', desc: '問客人一個問題、記住答案' },
+    { type: 'quickReply', name: '快速回覆', desc: '給幾顆按鈕讓客人點選' },
+    { type: 'reply', name: '回覆', desc: '機器人回一句話，可結束或轉真人' },
+  ] },
+  { group: '進階', items: [
+    { type: 'branch', name: '分支', desc: '依前面的答案自動走不同路' },
+    { type: 'tag', name: '貼標', desc: '自動幫這位客人貼上標籤' },
+    { type: 'saveLead', name: '寫名單', desc: '把答案長期存進客人資料' },
+  ] },
+]
+
+// ── 試跑對話：在後台假裝自己是客人，用「目前編輯中」的腳本即時模擬 ──────────
+// 直接重用後端執行時同一套純函式（renderScriptTemplate / extractCollectValue /
+// resolveBranchNext），行為與真的跑腳本一致；純預覽，不寫任何資料、無副作用。
+interface SimMsg { who: 'bot' | 'me' | 'sys'; text: string; buttons?: string[] }
+const showSim = ref(false)
+const simLog = ref<SimMsg[]>([])
+const simInput = ref('')
+const simWaiting = ref<'collect' | 'quickReply' | null>(null)
+const simNodeId = ref<string | null>(null)
+const simCollected = ref<Record<string, string>>({})
+const simDone = ref(false)
+
+// 觸發測試框：打一句話，即時判斷會不會命中這條腳本
+const triggerTest = ref('')
+
+function simReset() {
+  simLog.value = []
+  simInput.value = ''
+  simWaiting.value = null
+  simNodeId.value = null
+  simCollected.value = {}
+  simDone.value = false
+  triggerTest.value = ''
+}
+function simPush(m: SimMsg) { simLog.value.push(m) }
+
+/** 從某節點往前推非互動步驟：遇到 collect/quickReply 停下等輸入、遇到 reply 結束 */
+function simRun(startId: string) {
+  let cursor = startId
+  for (let i = 0; i < 50; i++) {
+    if (!cursor) { simPush({ who: 'sys', text: '（這條路沒有接下一步，流程結束）' }); simDone.value = true; simWaiting.value = null; return }
+    const node = form.value.nodes.find(n => n.id === cursor)
+    if (!node) { simPush({ who: 'sys', text: '（接到不存在的步驟，流程結束）' }); simDone.value = true; simWaiting.value = null; return }
+    if (node.type === 'trigger') { cursor = node.next; continue }
+    if (node.type === 'branch') { cursor = resolveBranchNext(node, simCollected.value); continue }
+    if (node.type === 'tag') { simPush({ who: 'sys', text: `（貼標：${node.addTagIds.length} 個標籤）` }); cursor = node.next; continue }
+    if (node.type === 'saveLead') { simPush({ who: 'sys', text: '（寫名單：已把答案存進客人資料）' }); cursor = node.next; continue }
+    if (node.type === 'collect') {
+      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }) })
+      simNodeId.value = node.id; simWaiting.value = 'collect'; return
+    }
+    if (node.type === 'quickReply') {
+      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), buttons: node.options.map(o => o.label) })
+      simNodeId.value = node.id; simWaiting.value = 'quickReply'; return
+    }
+    if (node.type === 'reply') {
+      simPush({ who: 'bot', text: renderScriptTemplate(node.text, { collected: simCollected.value }) })
+      if (node.thenHandoff) simPush({ who: 'sys', text: '↳ 轉真人客服' })
+      simDone.value = true; simWaiting.value = null; return
+    }
+    return
+  }
+}
+
+/** 送出一句「客人的話」；第一句視為觸發訊息，之後照 collect / quickReply 推進 */
+function simSend(text?: string) {
+  const msg = String(text ?? simInput.value).trim()
+  if (!msg) return
+  simInput.value = ''
+  simPush({ who: 'me', text: msg })
+  if (simDone.value) { simPush({ who: 'sys', text: '（流程已結束，按「重來」再試一次）' }); return }
+
+  if (!simWaiting.value) {
+    const trig = form.value.nodes.find(n => n.type === 'trigger')
+    if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條腳本沒有觸發步驟）' }); return }
+    simRun(trig.next)
+    return
+  }
+  const node = form.value.nodes.find(n => n.id === simNodeId.value)
+  if (node?.type === 'collect') {
+    const res = extractCollectValue(node, msg)
+    if (!res.ok) { simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？' }); return }
+    simCollected.value[node.fieldName] = res.value
+    simRun(node.next)
+  }
+  else if (node?.type === 'quickReply') {
+    const opt = node.options.find(o => o.label.trim() === msg)
+    if (!opt) { simPush({ who: 'sys', text: '（請點下面的按鈕，或輸入按鈕上的文字）' }); return }
+    simRun(opt.next)
+  }
+  else { simPush({ who: 'sys', text: '（狀態異常，請按重來）' }) }
+}
+
+/**
+ * 觸發測試（大概版）：關鍵字用「即時子字串比對」（與後端 keyword 快速通道同邏輯，零成本）。
+ * 「看意思」模式的最終判斷是 AI 在真實對話時做的，這裡只能提示、無法百分百確定。
+ */
+function triggerTestResult(node: ScriptTriggerNode): { state: 'idle' | 'hit' | 'maybe' | 'miss'; text: string } {
+  const q = triggerTest.value.trim().toLowerCase()
+  if (!q) return { state: 'idle', text: '' }
+  const kws = (node.keywords ?? []).map(k => k.trim().toLowerCase()).filter(Boolean)
+  if (kws.some(k => q.includes(k))) return { state: 'hit', text: '會觸發（命中關鍵字）' }
+  if ((node.matchMode ?? 'keyword') === 'semantic') {
+    return { state: 'maybe', text: '沒中關鍵字。「看意思」模式實際由 AI 依範例句判斷，這裡無法百分百確定；範例句越貼近客人講法越準' }
+  }
+  return { state: 'miss', text: '不會觸發（沒命中任何關鍵字）' }
+}
+
 /** 目前腳本裡所有 collect 節點的欄位名（給分支/寫名單/變數插入下拉選，避免手打 typo） */
 const collectFieldOptions = computed(() =>
   form.value.nodes
@@ -532,6 +890,18 @@ const collectFieldOptions = computed(() =>
 function nodeHeaderHint(node: ScriptNode): string {
   if (node.type === 'collect') return node.fieldName ? `欄位「${node.fieldName}」` : '（未命名欄位）'
   if (node.type === 'reply') return node.thenHandoff ? '結束 → 轉真人' : '結束'
+  return ''
+}
+
+/** 每種步驟「在做什麼」的白話一句話，當步驟卡片副標，降低第一次使用的學習成本 */
+function nodePurpose(type: string): string {
+  if (type === 'trigger') return '決定客人說什麼，會啟動這條流程'
+  if (type === 'collect') return '問客人一個問題，把答案記起來（例：訂單編號）'
+  if (type === 'reply') return '機器人回一句話收尾，可選擇結束或轉真人'
+  if (type === 'branch') return '依前面收到的答案，自動走不同路（不花 AI）'
+  if (type === 'quickReply') return '給客人幾顆按鈕點選，依點哪顆走不同路'
+  if (type === 'tag') return '自動幫這位客人貼上標籤，然後往下'
+  if (type === 'saveLead') return '把收集到的答案，長期存進客人資料'
   return ''
 }
 /** 在回覆文字尾端插入一個欄位變數 */
@@ -589,6 +959,7 @@ function selectScript(script: ScriptRow, opts?: { skipDiscardConfirm?: boolean }
     nodes: deepCloneNodes(script.nodes),
   }
   markClean()
+  simReset()
 }
 
 function openCreate() {
@@ -597,6 +968,7 @@ function openCreate() {
   selectedId.value = null
   form.value = blankForm()
   markClean()
+  simReset()
 }
 
 /** 從範本一鍵建立：載入到編輯器（尚未存檔，使用者微調後按建立才寫入） */
@@ -612,6 +984,7 @@ function createFromTemplate(tpl: ScriptTemplate) {
     nodes: deepCloneNodes(tpl.nodes),
   }
   markClean()
+  simReset()
 }
 
 function cancelEdit() {

@@ -76,6 +76,32 @@ $admin-field-label-gap: 0.375rem;
   margin-bottom: 0;
 }
 
+/* 欄位標籤下的白話說明：小字、非粗體、比標籤更淡，換行不擠壓輸入框 */
+.admin-field-label__hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+/* 發票表單底部「這樣會開出什麼發票」即時預覽 */
+.invoice-preview-line {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: var(--fill-muted, #f5f6f8);
+  border-radius: 6px;
+
+  strong {
+    color: var(--text-primary, #111827);
+    font-weight: 600;
+  }
+}
+
 .admin-field-group {
   display: flex;
   flex-direction: column;

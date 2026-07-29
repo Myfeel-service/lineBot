@@ -4,7 +4,24 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")",
       "Bash(ngrok config *)",
       "Bash(nohup ngrok http 3001 --log=stdout)",
-      "WebFetch(domain:invoice.amego.tw)"
+      "WebFetch(domain:invoice.amego.tw)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot status --short)",
+      "WebFetch(domain:invoice-doc.amego.tw)",
+      "WebFetch(domain:docs.wpbrewer.com)",
+      "WebFetch(domain:shopstore.tw)",
+      "Bash(node amego-test.mjs)",
+      "Bash(node amego-verify.mjs)",
+      "Bash(node amego-full.mjs)",
+      "Bash(node amego-void-allow.mjs)",
+      "Bash(node amego-va2.mjs)",
+      "Bash(node amego-allow3.mjs)",
+      "WebFetch(domain:www.ezreceipt.cc)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:www.payuni.com.tw)",
+      "WebFetch(domain:docs.payuni.com.tw)",
+      "Bash(gh api *)",
+      "Bash(security find-generic-password *)",
+      "Bash(security delete-generic-password *)"
     ]
   }
 }

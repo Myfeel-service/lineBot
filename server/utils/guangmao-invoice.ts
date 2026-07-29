@@ -50,10 +50,7 @@ const ENDPOINT = {
 /** B2C 無統編時的買方統編填法(財政部標準:十個 0)。 */
 const B2C_BUYER_IDENTIFIER = '0000000000'
 
-/**
- * 手機條碼載具的載具類別碼(財政部標準)。
- * TODO(光貿文件): 確認光貿是否沿用財政部標準碼 3J0002;自然人憑證為 CQ0001。
- */
+/** 手機條碼載具的載具類別碼(財政部 F0401 標準,已對實;自然人憑證為 CQ0001)。 */
 const CARRIER_TYPE_MOBILE_BARCODE = '3J0002'
 
 /** md5(data + time + appKey),小寫 hex。 */
@@ -69,6 +66,18 @@ export function makeSign(dataStr: string, time: number | string, appKey: string)
  *
  * B2B(有統編)→ BuyerIdentifier 帶統編、PrintMark=Y(公司要報帳,不能只給載具)。
  * B2C → 載具 / 捐贈 / 紙本 三選一;都沒填就開紙本。
+ *
+ * 欄位名與型別已對過光貲官方 f0401 範例 + 財政部 MIG F0401 標準:
+ *   · **金額/稅率一律送字串**(光貲範例是 'SalesAmount'=>'160'、'TaxRate'=>'0.05')。
+ *   · TaxRate = '0.05'(小數,非 5)。
+ *   · 載具 CarrierType='3J0002'(手機條碼)、CarrierId1=顯碼/CarrierId2=隱碼(手機條碼兩者同值)。
+ *   · PrintMark 'Y'/'N'、NPOBAN(捐贈碼)、BuyerEmailAddress —— 皆為標準欄位名。
+ *   · 回應欄位 invoice_number / invoice_time / random_number(見 issueInvoice)—— 已沙盒實測確認。
+ *
+ * ⚠️ **金額模型 B2B / B2C 不同,已用光貲測試環境實測(否則 B2C 全部 3040174/3040177 開不出來)**:
+ *   · 品項 Amount **一律含稅**,加總 = TotalAmount(光貲檢核基準)。
+ *   · B2B(三聯式,有統編):SalesAmount=未稅、TaxAmount=稅額、相加=TotalAmount。
+ *   · B2C(二聯式,無統編):**SalesAmount=含稅(=TotalAmount)、TaxAmount=0**(稅內含,不另拆)。
  */
 export function buildIssueInvoiceData(input: IssueInvoiceInput): Record<string, unknown> {
   const { totalAmt, amt, taxAmt } = splitTax(input.totalAmt)
@@ -76,38 +85,38 @@ export function buildIssueInvoiceData(input: IssueInvoiceInput): Record<string, 
   const ubn = String(p.buyerUBN || '').trim()
   const isB2B = /^\d{8}$/.test(ubn)
 
-  // 單一品項:B2B 單價未稅、B2C 單價含稅(與財政部/加值中心的檢核一致)
-  // TODO(光貿文件): 對一下光貿 ProductItem 的 UnitPrice/Amount 是否也依 B2B/B2C 分未稅/含稅。
-  const unit = isB2B ? amt : totalAmt
+  // 表頭:三聯式拆未稅+稅額;二聯式送含稅、稅額 0(見上面實測結論)。
+  const salesAmount = isB2B ? amt : totalAmt
+  const taxAmount = isB2B ? taxAmt : 0
 
   const data: Record<string, unknown> = {
     OrderId: input.merchantOrderNo,
     BuyerIdentifier: isB2B ? ubn : B2C_BUYER_IDENTIFIER,
     BuyerName: String(p.buyerName || '').trim() || input.fallbackBuyerName,
     TaxType: '1', // 應稅
-    // TODO(光貿文件): 確認 TaxRate 要送小數(0.05)還是整數(5)。財政部 MIG F0401 用小數。
-    TaxRate: TAX_RATE_PERCENT / 100,
-    SalesAmount: amt,
-    FreeTaxSalesAmount: 0,
-    ZeroTaxSalesAmount: 0,
-    TaxAmount: taxAmt,
-    TotalAmount: totalAmt,
+    TaxRate: String(TAX_RATE_PERCENT / 100), // '0.05'(對過光貲範例)
+    SalesAmount: String(salesAmount),
+    FreeTaxSalesAmount: '0',
+    ZeroTaxSalesAmount: '0',
+    TaxAmount: String(taxAmount),
+    TotalAmount: String(totalAmt),
     ProductItem: [
       {
         Description: input.itemName,
-        Quantity: 1,
-        UnitPrice: unit,
-        Amount: unit,
+        Quantity: '1',
+        // 品項一律含稅、加總 = TotalAmount(B2B/B2C 皆同,已實測)
+        UnitPrice: String(totalAmt),
+        Amount: String(totalAmt),
         TaxType: '1',
       },
     ],
   }
 
   const email = String(p.buyerEmail || '').trim()
-  if (email) data.BuyerEmailAddress = email // TODO(光貿文件): 確認欄位名是否為 BuyerEmailAddress
+  if (email) data.BuyerEmailAddress = email
 
   if (isB2B) {
-    data.PrintMark = 'Y' // TODO(光貿文件): 確認「索取紙本」欄位名(PrintMark) 與值(Y/N)
+    data.PrintMark = 'Y' // 公司報帳一定要能列印
     return data
   }
 
@@ -115,10 +124,9 @@ export function buildIssueInvoiceData(input: IssueInvoiceInput): Record<string, 
   const carrier = String(p.carrierNum || '').trim().toUpperCase()
   const love = String(p.loveCode || '').trim()
   if (carrier) {
-    // TODO(光貿文件): 確認載具欄位名(CarrierType/CarrierId1/CarrierId2) 與手機條碼類別碼
-    data.CarrierType = CARRIER_TYPE_MOBILE_BARCODE
-    data.CarrierId1 = carrier
-    data.CarrierId2 = carrier
+    data.CarrierType = CARRIER_TYPE_MOBILE_BARCODE // '3J0002'
+    data.CarrierId1 = carrier // 顯碼
+    data.CarrierId2 = carrier // 隱碼(手機條碼兩者同值)
     data.PrintMark = 'N'
   }
   else if (love) {
@@ -139,14 +147,15 @@ interface AmegoCallResult {
 }
 
 /**
- * 送一包 data 到光貿某支端點。三支端點(f0401/f0501/g0401)外層與 sign 都一樣,
- * 只有路徑與 data 內容不同,所以共用這支。
+ * 送一包 data 到光貲某支端點。三支端點外層與 sign 都一樣,只有路徑與 data 內容不同。
  *
+ * ⚠️ **開立(f0401)的 data 是「單一物件」;作廢(f0501)/折讓(g0401)的 data 是「陣列」**
+ *    (光貲這兩支支援一次多張,單物件會被退 3050112/4040112)。由呼叫端決定傳物件或陣列。
  * ⚠️ sign 用的 dataStr 與送出的 data **必須是同一個字串**(見檔頭說明),否則回 code 16。
  */
 async function callAmego(
   endpoint: string,
-  data: Record<string, unknown>,
+  data: Record<string, unknown> | unknown[],
   keys: GuangmaoInvoiceKeys,
 ): Promise<AmegoCallResult> {
   const dataStr = JSON.stringify(data)
@@ -168,8 +177,15 @@ async function callAmego(
   if (!res.ok) {
     return { httpError: `HTTP_${res.status}`, code: Number.NaN, raw: {} }
   }
-  const raw = await res.json() as Record<string, unknown>
-  return { httpError: null, code: Number(raw?.code), raw }
+  // 光貲極少數情況(維護頁/被 WAF 擋)會回 200 但內容非 JSON → 不能讓它 throw,
+  // 否則未包 try/catch 的呼叫端(void/allowance)會炸;一律轉成結構化失敗由呼叫端記錄。
+  try {
+    const raw = await res.json() as Record<string, unknown>
+    return { httpError: null, code: Number(raw?.code), raw }
+  }
+  catch {
+    return { httpError: 'BAD_JSON', code: Number.NaN, raw: {} }
+  }
 }
 
 /**
@@ -180,7 +196,12 @@ export async function issueInvoice(
   input: IssueInvoiceInput,
   keys: GuangmaoInvoiceKeys,
 ): Promise<IssueInvoiceResult> {
-  const r = await callAmego(ENDPOINT.issue, buildIssueInvoiceData(input), keys)
+  // 先組出 data,好把「實際送出的」買方統編/抬頭回傳存檔（折讓要對得上原發票，見 IssueInvoiceResult）。
+  const data = buildIssueInvoiceData(input)
+  const buyerIdentifier = String(data.BuyerIdentifier ?? '')
+  const buyerName = String(data.BuyerName ?? '')
+
+  const r = await callAmego(ENDPOINT.issue, data, keys)
   if (r.httpError) return { ok: false, status: r.httpError, message: `光貿回應 ${r.httpError}` }
 
   // TODO(光貿文件): 確認回應欄位名。已知 code===0 成功、16 簽名錯、3040171 OrderId 重複。
@@ -196,6 +217,8 @@ export async function issueInvoice(
     invoiceNumber: raw.invoice_number != null ? String(raw.invoice_number) : undefined,
     randomNum: raw.random_number != null ? String(raw.random_number) : undefined,
     createTime: raw.invoice_time != null ? String(raw.invoice_time) : undefined,
+    buyerIdentifier,
+    buyerName,
   }
 }
 
@@ -217,12 +240,12 @@ export interface VoidInvoiceResult {
 }
 
 /**
- * 組作廢 data。TODO(光貿文件): 確認欄位名——MOF C0501 用 CancelInvoiceNumber/InvoiceDate/
- *   CancelReason;光貿 JSON 版可能簡化成 InvoiceNumber/InvoiceDate/CancelReason,待沙盒對實。
+ * 組作廢 data(單筆)。欄位已沙盒實測:作廢用 **CancelInvoiceNumber**(非 InvoiceNumber)、
+ * InvoiceDate 為 YYYYMMDD、CancelReason 必填。呼叫端會把它包成陣列送出(f0501 收陣列)。
  */
 export function buildVoidInvoiceData(input: VoidInvoiceInput): Record<string, unknown> {
   return {
-    InvoiceNumber: input.invoiceNumber,
+    CancelInvoiceNumber: input.invoiceNumber,
     InvoiceDate: input.invoiceDate,
     CancelReason: input.reason,
   }
@@ -233,8 +256,9 @@ export async function voidInvoice(
   input: VoidInvoiceInput,
   keys: GuangmaoInvoiceKeys,
 ): Promise<VoidInvoiceResult> {
-  const r = await callAmego(ENDPOINT.void, buildVoidInvoiceData(input), keys)
-  if (r.httpError) return { ok: false, status: r.httpError, message: `光貿回應 ${r.httpError}` }
+  // f0501 的 data 是陣列(支援多張),單筆也要包成 [ {…} ]
+  const r = await callAmego(ENDPOINT.void, [buildVoidInvoiceData(input)], keys)
+  if (r.httpError) return { ok: false, status: r.httpError, message: `光貲回應 ${r.httpError}` }
   const message = String((r.raw as { msg?: string })?.msg || '')
   return { ok: r.code === 0, status: String(r.raw?.code ?? 'UNKNOWN'), message }
 }
@@ -247,50 +271,67 @@ export async function voidInvoice(
 export interface AllowanceInput {
   /** 原發票號碼。 */
   invoiceNumber: string
+  /** 原發票開立日期 YYYYMMDD(折讓品項要逐項帶原發票日期)。 */
+  invoiceDate: string
   /** 折讓品項名稱。 */
   itemName: string
-  /** 折讓總額(含稅)。由此反推未稅/稅額,三者相加相等。 */
+  /** 折讓總額(含稅)。由此反推未稅/稅額。 */
   totalAmt: number
-  /** 折讓證明單號(不給則交由光貿配號)。TODO(光貿文件): 確認是否需自帶。 */
-  allowanceNumber?: string
-  /** 折讓日期。TODO(光貿文件): 確認格式與是否必填。 */
-  allowanceDate?: string
+  /** 折讓證明單號 —— **必填、≤16 字、需自帶且唯一**(光貲不代配號,實測 4040121)。 */
+  allowanceNumber: string
+  /** 折讓日期 YYYYMMDD。 */
+  allowanceDate: string
+  /**
+   * 買方抬頭 —— **必填、不可空**(實測 4040127),且**須與原發票的買方一致**。
+   * B2C 原發票用的是帳號名稱(見 issueInvoice 的 fallbackBuyerName),折讓要帶同一個。
+   */
+  buyerName: string
+  /** 原買方統編;**須與原發票一致**(實測 4040157),B2C 為 '0000000000'(預設)。 */
+  buyerIdentifier?: string
 }
 
 export interface AllowanceResult {
   ok: boolean
   status: string
   message: string
-  /** 折讓證明單號(成功才有)。 */
+  /** 折讓證明單號(= 我方送出的 allowanceNumber;光貲成功回應不另回號)。 */
   allowanceNumber?: string
 }
 
 /**
- * 組折讓 data。TODO(光貿文件): 欄位名待沙盒對實——MOF D0401 折讓含 AllowanceNumber/
- *   AllowanceDate/原發票號碼、ProductItem(每項要帶原發票號碼與日期)、TaxAmount/TotalAmount。
- *   下面是依標準組的骨架,拿到文件後校正欄位名與「品項是否需逐項對應原發票」。
+ * 組折讓 data(單筆)。已沙盒實測(g0401):
+ *   · **AllowanceType='2'**(賣方開立;1 買方開立自 114/1/1 起禁用,實測 4040145)。
+ *   · **AllowanceNumber 必填 ≤16 字**、**BuyerIdentifier 必填**(B2C='0000000000',實測 4040126)。
+ *   · 品項金額用**未稅 Amount + 另帶 Tax**、表頭 TotalAmount 含稅(這組實測 code 0)。
+ *   · 每項帶 OriginalInvoiceNumber/OriginalInvoiceDate/OriginalDescription。金額一律字串。
+ * 呼叫端會把它包成陣列送出(g0401 收陣列)。
  */
 export function buildAllowanceData(input: AllowanceInput): Record<string, unknown> {
   const { totalAmt, amt, taxAmt } = splitTax(input.totalAmt)
   const data: Record<string, unknown> = {
+    AllowanceType: '2', // 賣方開立
+    AllowanceNumber: input.allowanceNumber,
+    BuyerIdentifier: input.buyerIdentifier || '0000000000',
+    BuyerName: input.buyerName, // 不可空、須與原發票一致(實測 4040127/4040157)
     InvoiceNumber: input.invoiceNumber,
+    AllowanceDate: input.allowanceDate,
     TaxType: '1',
-    TaxAmount: taxAmt,
-    TotalAmount: totalAmt,
+    TaxAmount: String(taxAmt),
+    TotalAmount: String(totalAmt),
     ProductItem: [
       {
         Description: input.itemName,
-        Quantity: 1,
-        UnitPrice: amt, // 折讓品項一般以未稅計,TODO(光貿文件)確認
-        Amount: amt,
-        Tax: taxAmt,
+        Quantity: '1',
+        UnitPrice: String(amt), // 折讓品項以未稅計(實測折讓 Amount 用未稅)
+        Amount: String(amt),
+        Tax: String(taxAmt),
         TaxType: '1',
         OriginalInvoiceNumber: input.invoiceNumber,
+        OriginalInvoiceDate: input.invoiceDate,
+        OriginalDescription: input.itemName,
       },
     ],
   }
-  if (input.allowanceNumber) data.AllowanceNumber = input.allowanceNumber
-  if (input.allowanceDate) data.AllowanceDate = input.allowanceDate
   return data
 }
 
@@ -299,15 +340,15 @@ export async function issueAllowance(
   input: AllowanceInput,
   keys: GuangmaoInvoiceKeys,
 ): Promise<AllowanceResult> {
-  const r = await callAmego(ENDPOINT.allowance, buildAllowanceData(input), keys)
-  if (r.httpError) return { ok: false, status: r.httpError, message: `光貿回應 ${r.httpError}` }
-  const raw = r.raw as { msg?: string; allowance_number?: string }
-  const message = String(raw?.msg || '')
+  // g0401 的 data 是陣列(支援多張),單筆也要包成 [ {…} ]
+  const r = await callAmego(ENDPOINT.allowance, [buildAllowanceData(input)], keys)
+  if (r.httpError) return { ok: false, status: r.httpError, message: `光貲回應 ${r.httpError}` }
+  const message = String((r.raw as { msg?: string })?.msg || '')
   return {
     ok: r.code === 0,
     status: String(r.raw?.code ?? 'UNKNOWN'),
     message,
-    // TODO(光貿文件): 確認折讓單號回應欄位名(allowance_number 為推測)
-    allowanceNumber: raw?.allowance_number != null ? String(raw.allowance_number) : undefined,
+    // 成功時光貲不另回折讓單號,回傳我方送出的那組(即 input.allowanceNumber)
+    allowanceNumber: r.code === 0 ? input.allowanceNumber : undefined,
   }
 }
