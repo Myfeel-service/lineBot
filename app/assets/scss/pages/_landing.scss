@@ -250,7 +250,10 @@
   .lp-price__intro b { color: var(--ink); }
   .lp-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 42px; }
   /* 直接吃 shared/billing/plans.ts 的多方案：自動排版、緊湊卡片 */
-  .lp-plans--catalog { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; align-items: stretch; }
+  /* 方案目錄卡：目前對外 5 張（免費／輕量／入門／成長／企業，見 plans.ts 的 landingHidden）。
+     可用寬度 = 1160 − 48 padding = 1112px；min 196px 時 5×196 + 4×16 gap = 1044 ≤ 1112 → 剛好一列。
+     ⚠️ 若日後對外方案變成 6 張，這個 min 要一起調小，否則會變成 5＋1 的孤兒卡。 */
+  .lp-plans--catalog { grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 16px; align-items: stretch; }
   .lp-plans--catalog .lp-plan { padding: 26px 22px; }
   .lp-plans--catalog .lp-plan__price { font-size: 1.7rem; }
   .lp-plans--catalog .lp-plan__list { gap: 10px; padding-top: 16px; margin-bottom: 20px; }
@@ -265,7 +268,23 @@
   .lp-plan__list { list-style: none; margin: 0 0 26px; padding: 20px 0 0; border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 13px; flex: 1; }
   .lp-plan__list li { display: flex; gap: 11px; font-size: 0.96rem; }
   .lp-plan__list .tick { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--g-wash); color: var(--g-deep); display: grid; place-items: center; font-size: 0.75rem; font-weight: 800; }
-  .lp-price__fine { margin-top: 22px; font-size: 0.84rem; color: var(--ink-soft); }
+  /* 商品資訊（商品名稱／說明／售價／付款與發票／銷售者）：金流風控的核對清單。
+     標籤欄寬固定、值左緣對齊，讓人（與審核）能逐項掃過去。 */
+  .lp-product {
+    margin-top: 30px; background: var(--surf-2); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 26px 28px;
+  }
+  .lp-product__h { margin: 0 0 16px; font-size: 1rem; font-weight: 800; color: var(--ink); }
+  .lp-product__list { margin: 0; display: grid; gap: 12px; }
+  .lp-product__row { display: grid; grid-template-columns: 6em 1fr; gap: 16px; align-items: baseline; }
+  .lp-product__row dt { font-size: 0.86rem; color: var(--ink-soft); }
+  .lp-product__row dd { margin: 0; font-size: 0.9rem; color: var(--ink-2); line-height: 1.75; }
+  .lp-product__row dd b { color: var(--ink); font-weight: 700; }
+
+  .lp-price__fine { margin-top: 22px; font-size: 0.84rem; color: var(--ink-soft); line-height: 1.9; }
+  /* 內文中的政策連結（定價小字、FAQ 答案）：全站 reset 把 a 變成 color:inherit，
+     這裡要補回連結的樣子，不然政策條款看起來像純文字、沒人會點。 */
+  .lp-price__fine a, .lp-q .a a { color: var(--g-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
   /* ── FAQ ───────────────────────────────────────────────── */
   .lp-faq { margin-top: 60px; }
@@ -315,13 +334,33 @@
   .lp-form__ok h4 { margin: 0 0 8px; font-size: 1.3rem; font-weight: 800; }
   .lp-form__ok p { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
 
-  /* ── Footer ────────────────────────────────────────────── */
+  /* ── Footer（components/site/SiteFooter.vue，門面與法務頁共用）───────────
+   * 公司名稱／統一編號／客服電話／客服信箱／服務時間＋三份政策連結是信用卡收單的
+   * 必要揭露事項，版面以「標籤欄寬固定、值左緣對齊」為原則，四欄各自對齊到同一基線。
+   */
   .lp-foot { background: var(--surf-2); border-top: 1px solid var(--hair); }
-  .lp-foot__in { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 34px 0; flex-wrap: wrap; }
-  .lp-foot__brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; color: var(--ink); }
-  .lp-foot__links { display: flex; gap: 24px; flex-wrap: wrap; font-size: 0.9rem; }
-  .lp-foot__links a { color: var(--ink-soft); }
-  .lp-foot__links a:hover { color: var(--g-deep); }
+  .lp-foot__in {
+    display: grid; grid-template-columns: 1.5fr 1.1fr 0.8fr 0.9fr;
+    /* 左右一定要留 24px：padding 簡寫會把 .lp-wrap 的 `0 24px` 整條蓋掉，
+       寫 `52px 0` 的話手機上文字會直接貼齊螢幕邊緣。 */
+    gap: 40px; padding: 52px 24px 44px; align-items: start;
+  }
+  .lp-foot__brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.1rem; color: var(--ink); }
+  .lp-foot__tag { margin: 10px 0 18px; font-size: 0.9rem; color: var(--ink-soft); }
+  .lp-foot__h { margin: 0 0 14px; font-size: 0.9rem; font-weight: 800; color: var(--ink); letter-spacing: 0.01em; }
+  .lp-foot__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 0.875rem; }
+  .lp-foot__list li { display: grid; grid-template-columns: 4.8em 1fr; gap: 10px; align-items: baseline; color: var(--ink-2); }
+  .lp-foot__k { color: var(--ink-soft); }
+  .lp-foot__list a { color: var(--ink-2); }
+  .lp-foot__list a:hover { color: var(--g-deep); }
+  .lp-foot__list--nav li { display: block; }
+  .lp-foot__list--nav a { color: var(--ink-soft); }
+
+  .lp-foot__bar { border-top: 1px solid var(--hair); }
+  .lp-foot__bar-in {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    flex-wrap: wrap; padding: 18px 24px; font-size: 0.8rem; color: var(--ink-soft);
+  }
 
   /* ── Reveal（僅在 JS 掛上 .is-anim 後才隱藏，確保無 JS/SEO 可見）── */
   &.is-anim .lp-reveal { opacity: 0; transform: translateY(20px); }
@@ -345,6 +384,7 @@
     .lp-hero__visual { order: -1; }
     .lp-cards3, .lp-pillars, .lp-steps, .lp-plans, .lp-roadmap__grid, .lp-faq__grid, .lp-cta__grid, .lp-form__row, .lp-rr { grid-template-columns: 1fr; }
     .lp-step:not(:last-child)::after { display: none; }
+    .lp-foot__in { grid-template-columns: 1fr 1fr; gap: 32px; padding: 40px 24px 32px; }
   }
   @media (max-width: 720px) {
     .lp-nav__links { display: none; position: absolute; top: 68px; left: 0; right: 0; flex-direction: column; align-items: stretch; gap: 0; background: #fff; border-bottom: 1px solid var(--hair); padding: 8px 0; box-shadow: var(--sh-soft); }
@@ -364,6 +404,9 @@
     .lp-cmp__new { grid-column: 2; background: var(--g); }
     .lp-cmp__old, .lp-cmp__new { align-items: flex-start; font-size: 0.9rem; min-height: 0; padding: 14px 15px 16px; }
     .lp-cmp__x, .lp-cmp__v { margin-top: 1px; }
+
+    .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
+    .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

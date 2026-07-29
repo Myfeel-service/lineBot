@@ -7,6 +7,7 @@ import { createPendingOrder, findRecentPendingOrder, newMerchantOrderNo } from '
 import { getWorkspaceSubscription } from '~~/server/utils/billing'
 import { dayOfDate, taipeiDate } from '~~/shared/time'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
+import { POLICY_VERSION } from '~~/shared/legal'
 
 /**
  * POST /api/payment/create-subscription
@@ -33,6 +34,11 @@ export default defineEventHandler(async (event) => {
   const plan = getBillingPlan(planId)
   if (plan.custom || plan.priceMonthly == null || plan.priceMonthly <= 0) {
     throw createError({ statusCode: 400, statusMessage: '此方案不支援線上結帳,請聯繫業務' })
+  }
+  // 同 create-order：沒有付款前的同意紀錄就不建單（見 shared/legal.ts）。
+  // 自動續訂更需要這一筆——「授權往後每個月扣款」正是最容易變成爭議款的環節。
+  if (body?.termsAccepted !== true) {
+    throw createError({ statusCode: 400, statusMessage: '請先勾選同意服務條款與退費政策' })
   }
 
   const config = useRuntimeConfig(event)
@@ -84,7 +90,7 @@ export default defineEventHandler(async (event) => {
     await createPendingOrder(
       {
         merchantOrderNo, workspaceId, organizationId, planId, amount,
-        createdBy: uid, kind: 'period_first', anchorDay,
+        createdBy: uid, kind: 'period_first', anchorDay, termsVersion: POLICY_VERSION,
         // 開通成功後由 period-notify 拿去終止（現在不動）
         supersedesPeriodNo, supersedesPeriodOrderNo,
       },
@@ -99,8 +105,9 @@ export default defineEventHandler(async (event) => {
     Version: '1.5',
     LangType: 'zh-Tw',
     MerOrderNo: merchantOrderNo,
-    // ProdDesc 僅限中英數、空格、底線——不要放括號等符號，藍新會擋（PER10006）
-    ProdDesc: `${plan.name}方案 每月自動續訂`,
+    // ProdDesc 僅限中英數、空格、底線——不要放括號等符號，藍新會擋（PER10006）。
+    // 帶產品名讓客戶在付款頁／帳單上認得出這筆是什麼（見 nuxt.config 的 brandName）。
+    ProdDesc: `${String(config.public.brandName || '').trim()} ${plan.name}方案 每月自動續訂`.trim(),
     PeriodAmt: amount,
     PeriodType: 'M', // 每月
     PeriodPoint: String(existing?.anchorDay ?? anchorDay).padStart(2, '0'),

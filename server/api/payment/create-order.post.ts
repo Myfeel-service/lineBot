@@ -5,6 +5,7 @@ import type { BillingPlanId } from '~~/shared/billing/plans'
 import { PAYUNI_ENDPOINTS, buildUppForm, resolvePayuniEnv } from '~~/server/utils/payuni'
 import { createPendingOrder, findRecentPendingOrder, newMerchantOrderNo, supersedePendingOrders } from '~~/server/utils/payment'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
+import { POLICY_VERSION } from '~~/shared/legal'
 
 /**
  * POST /api/payment/create-order
@@ -26,8 +27,15 @@ export default defineEventHandler(async (event) => {
   if (plan.custom || plan.priceMonthly == null || plan.priceMonthly <= 0) {
     throw createError({ statusCode: 400, statusMessage: '此方案不支援線上結帳,請聯繫業務' })
   }
+  // 「不適用七日猶豫期」的法律前提是**付款前**取得同意（見 shared/legal.ts）——
+  // 前端沒帶同意就不建單、不導去金流,免得事後拿不出同意紀錄。
+  // 版本號由後端蓋成現行 POLICY_VERSION,不採信前端傳來的版本。
+  if (body?.termsAccepted !== true) {
+    throw createError({ statusCode: 400, statusMessage: '請先勾選同意服務條款與退費政策' })
+  }
 
   const config = useRuntimeConfig(event)
+  const brandName = String(config.public.brandName || '').trim()
   const merchantId = String(config.payuniMerchantId || '').trim()
   const base = String(config.appBaseUrl || '').trim().replace(/\/$/, '')
   if (!merchantId || !config.payuniHashKey || !config.payuniHashIV) {
@@ -49,7 +57,7 @@ export default defineEventHandler(async (event) => {
   const amount = existing?.amount ?? plan.priceMonthly
   const merchantOrderNo = existing?.merchantOrderNo ?? newMerchantOrderNo(new Date())
   if (!existing) {
-    await createPendingOrder({ merchantOrderNo, workspaceId, organizationId, planId, amount, createdBy: uid }, db)
+    await createPendingOrder({ merchantOrderNo, workspaceId, organizationId, planId, amount, createdBy: uid, termsVersion: POLICY_VERSION }, db)
   }
 
   const keys = { merKey: String(config.payuniHashKey), merIV: String(config.payuniHashIV) }
@@ -58,7 +66,9 @@ export default defineEventHandler(async (event) => {
     MerTradeNo: merchantOrderNo,
     TradeAmt: amount,
     Timestamp: Math.floor(Date.now() / 1000),
-    ProdDesc: `${plan.name}方案(1 個月)`,
+    // 商品描述要帶產品名:客戶在 PAYUNi 付款頁與信用卡帳單上看到的就是這一行,
+    // 風控也會拿它跟申報的商品名稱核對(見 nuxt.config 的 brandName)。
+    ProdDesc: `${brandName} ${plan.name}方案(1 個月)`.trim(),
     NotifyURL: `${base}/payuni/notify`,
     ReturnURL: `${base}/payuni/return?ws=${encodeURIComponent(workspaceId)}&no=${merchantOrderNo}`,
   }

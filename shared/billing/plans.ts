@@ -55,6 +55,14 @@ export interface BillingPlan {
   custom: boolean
   /** 僅供 super admin 直接指派（測試 / 內部帳號）；不對外顯示於方案頁 / 升級對話框、不可自助結帳。 */
   internal?: boolean
+  /**
+   * 不在「官網門面定價區」露出（後台升級對話框仍可見、仍可自助結帳）。
+   *
+   * ⚠️ 這不是產品決策而是金流合規:PAYUNi 特店申報的售價階段是 399 / 799 / 1499,
+   * 風控會拿官網顯示的價格與申報資料互相核對,門面多出一個未申報的價格會被退件。
+   * 若日後向 PAYUNi 補申報了更高階的售價,把這個旗標拿掉即可恢復露出。
+   */
+  landingHidden?: boolean
 }
 
 /** 統一超量加購單價（TWD/則）；付費非客製方案共用，改這裡即全站生效。 */
@@ -91,7 +99,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     id: 'lite',
     name: '輕量',
     answeredQuota: 700,
-    priceMonthly: 499,
+    priceMonthly: 399,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 2,
     knowledgeSources: 2,
@@ -119,7 +127,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     id: 'growth',
     name: '成長',
     answeredQuota: 3_500,
-    priceMonthly: 1_990,
+    priceMonthly: 1_499,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 5,
     knowledgeSources: 10,
@@ -142,6 +150,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     scripting: true,
     api: true,
     custom: false,
+    landingHidden: true, // 4,990 未向 PAYUNi 申報，先不在官網露出（見 landingHidden 說明）
   },
   enterprise: {
     id: 'enterprise',

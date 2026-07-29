@@ -21,7 +21,17 @@
       "WebFetch(domain:docs.payuni.com.tw)",
       "Bash(gh api *)",
       "Bash(security find-generic-password *)",
-      "Bash(security delete-generic-password *)"
+      "Bash(security delete-generic-password *)",
+      "Bash(grep -riLE \"\" /dev/null 2>/dev/null; grep -rilE \"隱私|privacy|退換|退款|refund|服務條款|terms\" /Users/kevin/Documents/Github/linebot/app/pages /Users/kevin/Documents/Github/linebot/app/components 2>/dev/null | head -20)",
+      "Read(//dev/**)",
+      "Read(//Applications/Google Chrome.app/Contents/MacOS/**)",
+      "Read(//Applications/**)",
+      "Bash(pkill -f \"Google Chrome.*headless\")",
+      "Bash(ls -la /Users/kevin/Documents/Github/linebot/*.png 2>/dev/null; mv /Users/kevin/Documents/Github/linebot/*.png /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/9c2f39ee-f356-42b7-8370-ed8225814d60/scratchpad/ 2>/dev/null; git status --short | grep -E \"\\\\.png\" || echo \"工作樹沒有 png 殘留\")",
+      "Bash(pkill -f \"nuxt dev\")"
+    ],
+    "additionalDirectories": [
+      "/Users/kevin/Documents/Github/linebot"
     ]
   }
 }

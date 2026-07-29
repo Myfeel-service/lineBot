@@ -60,6 +60,16 @@ export interface PaymentOrderDoc {
   periodEnd?: string | null
   /** 建單者 uid（稽核用） */
   createdBy?: string | null
+  /**
+   * 結帳前勾選同意條款的時間。
+   *
+   * 這是「本次交易不適用七日猶豫期」的舉證資料——法律前提是《通訊交易解除權合理例外
+   * 情事適用準則》第 2 條第 5 款的「經消費者**事先**同意始提供」（見 shared/legal.ts）。
+   * 沒有這個時間戳就等於沒有同意紀錄，發生爭議時排除猶豫期的主張站不住。
+   */
+  termsAcceptedAt?: Timestamp | FieldValue | null
+  /** 客戶當時同意的條款版本（POLICY_VERSION）；條款改版後才知道他同意的是哪一版。 */
+  termsVersion?: string | null
   createdAt: Timestamp | FieldValue
   paidAt?: Timestamp | FieldValue | null
   updatedAt: Timestamp | FieldValue

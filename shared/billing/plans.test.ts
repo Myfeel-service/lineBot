@@ -39,6 +39,17 @@ describe('BILLING_PLANS catalog', () => {
     }
   })
 
+  it('官網門面露出的付費價格 = 已向金流申報的售價階段', () => {
+    // PAYUNi 特店申報的售價階段是 399 / 799 / 1499。信用卡收單的風控會拿官網顯示的價格
+    // 與申報資料互相核對——門面多一個或少一個價格都可能被退件（見 plans.ts 的 landingHidden）。
+    // 改價或改 landingHidden 時，這個測試會先擋下來，提醒你同步更新送審資料。
+    const landingPaidPrices = BILLING_PLAN_ORDER
+      .map(id => BILLING_PLANS[id])
+      .filter(p => !p.internal && !p.landingHidden && p.priceMonthly != null && p.priceMonthly > 0)
+      .map(p => p.priceMonthly)
+    expect(landingPaidPrices).toEqual([399, 799, 1499])
+  })
+
   it('只有 enterprise 是客製方案', () => {
     for (const id of BILLING_PLAN_ORDER) {
       expect(BILLING_PLANS[id].custom).toBe(id === 'enterprise')

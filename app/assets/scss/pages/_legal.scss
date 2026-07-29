@@ -1,0 +1,84 @@
+/* ── 法務頁：服務條款 / 隱私權政策 / 退費與取消政策 ──────────────────
+ * 版面元件在 components/site/SiteLegalPage.vue；外層掛 .lp 以沿用門面的色票、
+ * nav 與 footer 樣式（見 pages/_landing.scss）。
+ *
+ * 排版原則：條文長、要能讀完——內文寬度收在 72ch，章節標題自動編號（一、二、三…），
+ * 頁首只留標題與「適用服務／營運主體／最後更新」三項事實，直接進條文。
+ */
+.lp-legal-page {
+  /* 條文欄寬：頁首與內文共用同一個值，兩者的文字左緣才會對齊到同一條線
+     （頁首若用門面的 1160px 寬，標題會比內文往左凸出將近 200px）。 */
+  --legal-col: calc(72ch + 48px);
+
+  /* ── 頁首 ─────────────────────────────────────────────── */
+  .lp-legal__hd { background: var(--g-wash-2); border-bottom: 1px solid var(--hair); padding: 44px 0 38px; }
+  .lp-legal__hd-in { max-width: var(--legal-col); }
+  .lp-legal__back { display: inline-block; margin-bottom: 18px; font-size: 0.9rem; font-weight: 600; color: var(--ink-soft); }
+  .lp-legal__back:hover { color: var(--g-deep); }
+  .lp-legal__hd h1 { margin: 0; font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; }
+  .lp-legal__meta {
+    display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 22px;
+    font-size: 0.85rem; color: var(--ink-soft);
+  }
+  .lp-legal__meta b { display: block; font-size: 0.78rem; font-weight: 700; color: var(--ink-soft); opacity: 0.8; margin-bottom: 2px; }
+  .lp-legal__meta span { color: var(--ink-2); }
+
+  /* ── 內文 ─────────────────────────────────────────────── */
+  .lp-legal { padding: 48px 24px 72px; max-width: var(--legal-col); counter-reset: sec; }
+  .lp-legal > section + section { margin-top: 38px; }
+  .lp-legal h2 {
+    counter-increment: sec; margin: 0 0 12px;
+    font-size: 1.18rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.4;
+  }
+  .lp-legal h2::before { content: counter(sec, cjk-ideographic) "、"; color: var(--g-deep); }
+  /* 聯絡窗口卡不進條號（它不是條文） */
+  .lp-legal__contact h2 { counter-increment: none; }
+  .lp-legal__contact h2::before { content: none; }
+  .lp-legal h3 { margin: 22px 0 8px; font-size: 1rem; font-weight: 700; color: var(--ink); }
+  .lp-legal p { margin: 0 0 12px; color: var(--ink-2); font-size: 0.95rem; }
+  .lp-legal ul, .lp-legal ol { margin: 0 0 12px; padding-left: 1.35em; color: var(--ink-2); font-size: 0.95rem; }
+  .lp-legal li { margin-bottom: 7px; }
+  .lp-legal li > b, .lp-legal p > b { color: var(--ink); font-weight: 700; }
+  .lp-legal a { color: var(--g-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+  .lp-legal > section > :last-child { margin-bottom: 0; }
+
+  /* 重點提示：法定權利的例外、扣款授權這類「必須被看到」的段落 */
+  .lp-legal__note {
+    background: var(--surf-2); border-left: 3px solid var(--g); border-radius: 0 12px 12px 0;
+    padding: 16px 18px; margin: 0 0 12px;
+  }
+  .lp-legal__note p:last-child { margin-bottom: 0; }
+
+  /* 表格（蒐集項目、保存期限）：窄螢幕可橫捲，不擠壓欄位 */
+  .lp-legal__table { overflow-x: auto; margin: 0 0 14px; }
+  .lp-legal__table table { width: 100%; min-width: 460px; border-collapse: collapse; font-size: 0.9rem; }
+  .lp-legal__table th, .lp-legal__table td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--hair); }
+  .lp-legal__table th { background: var(--surf-2); font-weight: 700; color: var(--ink); white-space: nowrap; }
+  .lp-legal__table td { color: var(--ink-2); }
+  /* 第一欄是類別名（帳號資料、對話與客人資料…）：不讓它在詞中間斷行，
+     否則「對話與客／人資料」這種斷法會比整張表其他內容更難掃。 */
+  .lp-legal__table td:first-child { white-space: nowrap; font-weight: 600; color: var(--ink); }
+
+  /* ── 聯絡窗口卡 ───────────────────────────────────────── */
+  .lp-legal__contact {
+    margin-top: 44px; background: var(--surf-2); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 24px 26px;
+  }
+  .lp-legal__contact h2 { font-size: 1.05rem; }
+  .lp-legal__contact-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 9px; font-size: 0.9rem; }
+  .lp-legal__contact-list li { display: grid; grid-template-columns: 5em 1fr; gap: 12px; align-items: baseline; margin: 0; }
+  .lp-legal__contact-list a { text-decoration: none; }
+
+  /* ── 其他條款 ─────────────────────────────────────────── */
+  .lp-legal__more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 30px; font-size: 0.9rem; }
+  .lp-legal__more-k { color: var(--ink-soft); }
+  .lp-legal__more a { color: var(--ink-2); font-weight: 600; }
+  .lp-legal__more a:hover { color: var(--g-deep); }
+
+  @media (max-width: 720px) {
+    .lp-legal { padding: 34px 24px 56px; }
+    .lp-legal__meta { gap: 12px 20px; }
+    .lp-legal__contact { padding: 20px; }
+    .lp-legal__contact-list li { grid-template-columns: 4.6em 1fr; gap: 10px; }
+  }
+}

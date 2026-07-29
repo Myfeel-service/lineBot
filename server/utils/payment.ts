@@ -131,6 +131,11 @@ export async function createPendingOrder(
     /** 換方案：這張新委託開通成功後要終止的舊委託（見 PaymentOrderDoc.supersedes*）。 */
     supersedesPeriodNo?: string | null
     supersedesPeriodOrderNo?: string | null
+    /**
+     * 客戶結帳前勾選同意的條款版本（POLICY_VERSION）。
+     * 由端點驗證前端確實帶了同意才傳進來；時間戳在這裡蓋（不信前端的時間）。
+     */
+    termsVersion?: string | null
   },
   db: Firestore = getDb(),
 ): Promise<void> {
@@ -152,6 +157,8 @@ export async function createPendingOrder(
     periodStart: null,
     periodEnd: null,
     createdBy: order.createdBy ?? null,
+    termsVersion: order.termsVersion ?? null,
+    termsAcceptedAt: order.termsVersion ? FieldValue.serverTimestamp() : null,
     createdAt: FieldValue.serverTimestamp(),
     paidAt: null,
     updatedAt: FieldValue.serverTimestamp(),

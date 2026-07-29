@@ -74,7 +74,9 @@ export async function issueInvoiceForOrder(
     const result = await issueInvoice({
       merchantOrderNo: input.merchantOrderNo,
       totalAmt: input.totalAmt,
-      itemName: `${plan.name}方案 訂閱服務`,
+      // 發票品名帶產品名(MiniMe 輕量方案 訂閱服務):客戶對帳看得懂,也與向金流申報的
+      // 商品名稱一致(見 nuxt.config 的 brandName)。未設定 env 時退回原本的方案名。
+      itemName: `${String(useRuntimeConfig().public?.brandName || '').trim()} ${plan.name}方案 訂閱服務`.trim(),
       profile,
       fallbackBuyerName: ws?.name || input.workspaceId,
     }, keys)

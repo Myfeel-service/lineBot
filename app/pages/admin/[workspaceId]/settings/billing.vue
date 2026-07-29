@@ -296,6 +296,7 @@
 
 <script setup lang="ts">
 import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import { describeInvoiceProfile } from '~~/shared/types/organization'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
@@ -566,12 +567,31 @@ const actingOrder = ref('')
 
 /** 待付款訂單「繼續付款」:重新建單（30 分內沿用同單號）→ 導回 PAYUNi 付款頁。 */
 async function resumePayment(row: OrderRow) {
+  // 這條路徑也可能建出**新**訂單（失敗單重新付款時舊單不會被沿用），所以同樣要在
+  // 付款前取得條款同意——句子與升級對話框的勾選框共用 CHECKOUT_CONSENT_TEXT，
+  // 兩條路徑客戶看到的同意內容一字不差（見 shared/legal.ts）。
+  const policyLinks = POLICY_LINKS.map(p => `<a href="${p.to}" target="_blank" rel="noopener">${p.label}</a>`).join('・')
+  try {
+    await ElMessageBox.confirm(
+      `<p>將以 NT$${row.amount.toLocaleString()}（含稅）完成「${planName(row.planId)}」方案的付款，接著前往統一金流 PAYUNi 的安全付款頁面。</p>`
+      + `<p>${CHECKOUT_CONSENT_TEXT}</p><p>${policyLinks}</p>`,
+      '確認付款',
+      {
+        dangerouslyUseHTMLString: true, // 只放我們自己的字串與政策連結，無使用者輸入
+        confirmButtonText: '同意條款並前往付款',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  }
+  catch { return } // 使用者取消
+
   actingOrder.value = row.merchantOrderNo
   const overlay = ElLoading.service({ lock: true, text: '正在前往 PAYUNi 安全付款頁面…' })
   try {
     const res = await apiFetch<{ action: string; fields: Record<string, string> }>('/api/payment/create-order', {
       method: 'POST',
-      body: { planId: row.planId, workspaceId: route.params.workspaceId },
+      body: { planId: row.planId, workspaceId: route.params.workspaceId, termsAccepted: true },
     })
     if (!res.action) throw new Error('金流尚未設定')
     submitToGateway(res.action, res.fields)

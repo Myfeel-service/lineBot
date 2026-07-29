@@ -34,8 +34,8 @@
           <template #default="{ row }">
             <el-tooltip
               v-if="canCheckout(row)"
-              :disabled="paymentEnabled"
-              content="線上付款尚未開通，請聯繫我們"
+              :disabled="paymentEnabled && agreed"
+              :content="paymentEnabled ? '請先勾選下方的條款同意' : '線上付款尚未開通，請聯繫我們'"
               placement="top"
             >
               <!-- disabled 的按鈕不會觸發 tooltip，需外層 span 承接 hover -->
@@ -44,7 +44,7 @@
                   :type="planAction(row) === '降級' ? 'info' : 'primary'"
                   :plain="planAction(row) === '降級'"
                   size="small"
-                  :disabled="!paymentEnabled"
+                  :disabled="!paymentEnabled || !agreed"
                   :loading="checkoutLoading === row.id"
                   @click="checkout(row)"
                 >
@@ -63,8 +63,16 @@
       </el-table>
     </div>
     <div class="plan-upgrade-foot">
+      <!-- 條款同意：勾了才能按付款。這不是裝飾——「不適用七日猶豫期」的法律前提就是
+           付款前取得同意（見 shared/legal.ts），同意紀錄會寫進訂單。
+           連結不放在 checkbox 的 label 裡（點連結會誤觸勾選），改列在下一行。 -->
+      <el-checkbox v-model="agreed" class="plan-upgrade-consent">{{ CHECKOUT_CONSENT_TEXT }}</el-checkbox>
+      <div class="plan-upgrade-policies">
+        <span class="text-xs text-muted">條款全文</span>
+        <a v-for="p in POLICY_LINKS" :key="p.to" :href="p.to" target="_blank" rel="noopener">{{ p.label }}</a>
+      </div>
       <span class="text-xs text-muted">
-        方案以「官方帳號」為單位各自計價，額度不跨帳號共用。所有價格均為含稅價。付款由統一金流 PAYUNi 處理。
+        方案以「官方帳號」為單位各自計價，額度不跨帳號共用。所有價格均為含稅價。付款由統一金流 PAYUNi 處理，付款後開立電子發票。
         <template v-if="recurringEnabled">每月自動續扣，可隨時取消，取消後用到本期結束。</template>
       </span>
     </div>
@@ -74,6 +82,7 @@
 <script setup lang="ts">
 import { ElLoading, ElMessageBox } from 'element-plus'
 import { BILLING_PLANS, BILLING_PLAN_ORDER, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 
 const props = defineProps<{ modelValue: boolean; currentPlanId?: string | null }>()
 defineEmits<{ 'update:modelValue': [boolean] }>()
@@ -119,10 +128,17 @@ function canCheckout(p: BillingPlan): boolean {
 
 const checkoutLoading = ref('')
 
+/**
+ * 是否已勾選同意條款。每次開啟對話框都重設為未勾選——同意要對應「這一次」的結帳，
+ * 上次開著沒付款的勾選不該延用。
+ */
+const agreed = ref(false)
+watch(() => props.modelValue, (open) => { if (open) agreed.value = false })
+
 interface CreateOrderResponse { action: string; method: string; fields: Record<string, string> }
 
 async function checkout(p: BillingPlan) {
-  if (!workspaceId.value || !paymentEnabled) return
+  if (!workspaceId.value || !paymentEnabled || !agreed.value) return
 
   // 結帳前先確認：講清楚要付多少、買哪個方案。避免一個誤點（尤其降級）就被直接
   // 帶去外部金流扣款。
@@ -161,7 +177,8 @@ async function checkout(p: BillingPlan) {
     const res = await $fetch<CreateOrderResponse>(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
-      body: { planId: p.id, workspaceId: workspaceId.value },
+      // termsAccepted：後端沒收到就不建單（同意紀錄會存進訂單，見 shared/legal.ts）
+      body: { planId: p.id, workspaceId: workspaceId.value, termsAccepted: true },
     })
     if (!res.action) throw new Error('金流尚未設定')
     submitToGateway(res.action, res.fields)

@@ -40,13 +40,47 @@
   }
 }
 
+/* 結帳前的條款同意 + 計價小字。
+   同意勾選是付款的前置條件（沒勾 → 付款鈕 disabled），所以給它一塊底色框起來，
+   不要讓它看起來像可略過的註腳。 */
 .plan-upgrade-foot {
   margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.plan-upgrade-consent {
+  /* 條款句子偏長，label 必須能換行（Element Plus 預設 nowrap 會被截掉） */
+  height: auto;
+  align-items: flex-start;
+
+  .el-checkbox__label {
+    white-space: normal;
+    line-height: 1.6;
+    font-size: 0.86rem;
+    color: var(--text-secondary);
+  }
+  .el-checkbox__input { margin-top: 2px; }
+}
+
+.plan-upgrade-policies {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  gap: 6px 14px;
+  padding-left: 26px; /* 對齊勾選框後的文字左緣 */
+
+  a {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--brand-green-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
 
 /* 帳單頁：金流導回後的結果提示（說明文字 + 輪詢狀態／重新整理鈕同一列） */

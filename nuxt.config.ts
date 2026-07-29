@@ -158,10 +158,35 @@ export default defineNuxtConfig({
       firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET ?? '',
       firebaseMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID ?? '',
       firebaseAppId: process.env.FIREBASE_APP_ID ?? '',
-      /** 升級／加購的聯繫方式（email 或 https 連結）；顯示於「升級方案」對話框。未設則顯示通用引導文字。 */
-      supportContact: process.env.PUBLIC_SUPPORT_CONTACT ?? '',
-      /** 門面／登入頁顯示的品牌名（多租戶：各 deployment 可用 PUBLIC_BRAND_NAME 覆寫）。預設沿用 landing 的 MYFEEL。 */
-      brandName: process.env.PUBLIC_BRAND_NAME ?? 'MYFEEL',
+      /** 升級／加購的聯繫方式（email 或 https 連結）；顯示於「升級方案」對話框。未設則退回客服信箱。 */
+      supportContact: process.env.PUBLIC_SUPPORT_CONTACT ?? process.env.PUBLIC_SUPPORT_EMAIL ?? 'service@myfeel-tw.com',
+      /**
+       * 對外品牌＝產品名（MiniMe）：門面商標、登入頁、付款頁商品描述、電子發票品名都用它。
+       *
+       * ⚠️ 品牌名 ≠ 公司名。營運主體是 legalCompanyName（麥菲爾股份有限公司）——
+       *    發票賣方、法務頁主體、風控核對的「公司名稱」是那一個，兩者不可互換。
+       * 多租戶：各 deployment 可用 PUBLIC_BRAND_NAME 覆寫。
+       */
+      brandName: process.env.PUBLIC_BRAND_NAME ?? 'MiniMe',
+      /**
+       * ── 營運主體與客服資訊（官網 footer／隱私權・服務條款・退費政策頁共用）─────────
+       *
+       * ⚠️ 這一組是**信用卡收單的合規要求**,不是純裝飾:金流（PAYUNi）風控審核會逐項核對
+       *    官網是否公開「公司名稱、統一編號、客服信箱、客服電話、隱私權政策、退換貨（退費）條款」,
+       *    缺一項就退件。改動前請先確認與送審資料一致。
+       *
+       * 預設值 = 本平台營運主體;多租戶部署可用 env 覆寫成自己的公司（同 brandName 的做法）。
+       */
+      legalCompanyName: process.env.PUBLIC_LEGAL_COMPANY_NAME ?? '麥菲爾股份有限公司',
+      legalTaxId: process.env.PUBLIC_LEGAL_TAX_ID ?? '83610942',
+      supportEmail: process.env.PUBLIC_SUPPORT_EMAIL ?? 'service@myfeel-tw.com',
+      supportPhone: process.env.PUBLIC_SUPPORT_PHONE ?? '+886-2-7702-1310',
+      supportHours: process.env.PUBLIC_SUPPORT_HOURS ?? '週一至週五 10:00–18:00',
+      /**
+       * 產品全名 = 向金流申報的「商品名稱」，必須逐字一致——風控會拿官網的商品資訊、
+       * 付款頁的商品描述、電子發票品名互相核對（見 legalCompanyName 註解）。
+       */
+      serviceFullName: process.env.PUBLIC_SERVICE_FULL_NAME ?? 'LINE MiniMe AI CRM 與客服系統',
       /**
        * 線上付款是否已開通（PAYUNi 統一金流 三把金鑰都設好才為 true）。
        * 只是布林值、不含任何金鑰內容；前端據此決定結帳鈕能不能按，

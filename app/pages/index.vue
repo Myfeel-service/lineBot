@@ -7,7 +7,8 @@
     <!-- ── Nav ─────────────────────────────────────────── -->
     <nav class="lp-nav">
       <div class="lp-wrap lp-nav__in">
-        <a class="lp-brand" href="#top"><span class="lp-brand__mark">M</span>MYFEEL</a>
+        <!-- 商標＝品牌／產品名（MiniMe），由 config 來；公司名（麥菲爾股份有限公司）在頁尾與法務頁揭露 -->
+        <a class="lp-brand" href="#top"><span class="lp-brand__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}</a>
         <div class="lp-nav__links">
           <a href="#value" @click="closeMenu">產品</a>
           <a href="#diff" @click="closeMenu">差異</a>
@@ -28,7 +29,8 @@
       <span class="lp-hero__blob lp-hero__blob--2" />
       <div class="lp-wrap lp-hero__grid">
         <div class="lp-hero__text">
-          <span class="lp-eyebrow">LINE AI 客服 · CRM · 再行銷</span>
+          <!-- 產品名放在第一眼看得到的位置：訪客要知道這個產品叫什麼，金流風控也要能對上申報的商品名 -->
+          <span class="lp-eyebrow">{{ brandName }}｜LINE AI 客服 · CRM · 再行銷</span>
           <h1>讓 AI 幫店主<br><span class="g">做生意</span></h1>
           <p class="lp-hero__sub">套用現成範本快速設定,15 分鐘接上你的 LINE 官方帳號——AI 依你的知識庫即時回客服、依腳本導購,幫你記住每一位客人。</p>
           <div class="lp-hero__actions">
@@ -163,8 +165,8 @@
       <div class="lp-wrap">
         <div class="lp-reveal">
           <span class="lp-eyebrow lp-eyebrow--plain">為什麼不是「又一套 LINE 工具」</span>
-          <h2 class="lp-h2">同樣要做的事,MYFEEL 幫你把「設定的工」也做掉</h2>
-          <p class="lp-lede">一般工具給你功能、叫你自己拉;MYFEEL 用範本 ＋ 知識庫,連設定都幫你省下。</p>
+          <h2 class="lp-h2">同樣要做的事,{{ brandName }} 幫你把「設定的工」也做掉</h2>
+          <p class="lp-lede">一般工具給你功能、叫你自己拉;{{ brandName }} 用範本 ＋ 知識庫,連設定都幫你省下。</p>
         </div>
 
         <div class="lp-cmp lp-reveal">
@@ -172,7 +174,7 @@
           <div class="lp-cmp__row lp-cmp__row--head">
             <div class="lp-cmp__dim">比較項目</div>
             <div class="lp-cmp__old">一般行銷工具</div>
-            <div class="lp-cmp__new"><span class="lp-cmp__mark">M</span>MYFEEL<span class="lp-cmp__tag">最省事</span></div>
+            <div class="lp-cmp__new"><span class="lp-cmp__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}<span class="lp-cmp__tag">最省事</span></div>
           </div>
           <div class="lp-cmp__row">
             <div class="lp-cmp__dim"><span class="lp-cmp__ic"><el-icon><Setting /></el-icon></span>開始設定</div>
@@ -225,7 +227,7 @@
             <div class="lp-assist">
               <div class="lp-assist__hd">
                 <span class="lp-assist__spark">✦</span>
-                <span><b>MYFEEL AI</b><small>給店主的經營建議</small></span>
+                <span><b>{{ brandName }} AI</b><small>給店主的經營建議</small></span>
               </div>
               <div class="lp-assist__body">
                 <div class="lp-assist__msg">有 <b>142 位老客</b>已經 60 天沒回購了,到了該再溝通的階段——要不要喚醒?</div>
@@ -278,7 +280,7 @@
         <div class="lp-reveal">
           <span class="lp-eyebrow">定價</span>
           <h2 class="lp-h2">軟體近免費,生意越好才付越多</h2>
-          <p class="lp-price__intro">每個帳號都有免費額度,之後按 AI 回覆的則數計價。<b>用量在後台看得清清楚楚,超量才以固定單價加購——花多少一目了然。</b></p>
+          <p class="lp-price__intro">每個帳號都有免費額度,之後按 AI 回覆的則數計價。<b>用量在後台看得清清楚楚,額度用完 AI 會先轉真人接手、不會自動扣款——要升級或加購由你決定。</b></p>
         </div>
 
         <div class="lp-plans lp-plans--catalog">
@@ -305,7 +307,39 @@
             >{{ p.cta }}</a>
           </div>
         </div>
-        <p class="lp-price__fine lp-reveal">＊價格為每月費用、已含稅;試銷期方案與額度可能調整,實際以後台顯示為準。</p>
+        <!-- 商品資訊：把「商品名稱／說明／售價／付款與發票」集中一處。
+             信用卡收單的風控就是找這四項,散在行銷文案裡他們找不到（也是被退件的常見原因）。 -->
+        <div class="lp-product lp-reveal">
+          <h3 class="lp-product__h">商品資訊</h3>
+          <dl class="lp-product__list">
+            <div class="lp-product__row">
+              <dt>商品名稱</dt>
+              <dd><b>{{ serviceFullName }}</b></dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>商品說明</dt>
+              <dd>讓 LINE 官方帳號的商家用戶透過本系統,導入自動化 AI 客服回覆,以及行銷與客戶關係管理(CRM)系統。以線上訂閱方式提供,無實體商品、不需運送。</dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>商品售價</dt>
+              <dd>月租 {{ paidPriceList }}(三階段,均為新臺幣含稅價,以「LINE 官方帳號」為單位計價);另有免費方案,企業需求為客製報價。</dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>付款與發票</dt>
+              <dd>信用卡付款,由<b>統一金流 PAYUNi</b> 處理;付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。</dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>銷售者</dt>
+              <dd>{{ companyName }}(統一編號 {{ taxId }})　客服電話 {{ phone }}　客服信箱 {{ email }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 付款方式、發票、含稅、計價單位都寫在上面的商品資訊卡了，這裡只補它沒講的 -->
+        <p class="lp-price__fine lp-reveal">
+          ＊不綁約、隨時可取消,取消後服務用到本期結束——詳見<NuxtLink to="/refund">退費與取消政策</NuxtLink>與<NuxtLink to="/terms">服務條款</NuxtLink>。
+          試銷期方案與額度可能調整,實際以後台顯示為準。
+        </p>
 
         <div id="faq" class="lp-faq lp-reveal">
           <h3 class="lp-faq__h">常見問題</h3>
@@ -321,13 +355,13 @@
               </details>
               <details class="lp-q">
                 <summary>按用量計價,會不會爆帳單?<span class="plus" v-html="plusIcon" /></summary>
-                <div class="a">每個帳號都有免費額度,之後按 AI 回覆則數計價。用量在後台看得到,超量才以固定單價加購,不會無預警扣款。</div>
+                <div class="a">不會。每個帳號都有免費額度,之後按 AI 回覆則數計價。用量在後台看得到,額度用完時 AI 會停止自動回覆並轉真人接手,<b>不會自動加收超量費用</b>——要加購額度或升級方案都由你決定。</div>
               </details>
             </div>
             <div>
               <details class="lp-q">
                 <summary>需要綁約嗎?<span class="plus" v-html="plusIcon" /></summary>
-                <div class="a">試銷期不綁約,隨時可停用。</div>
+                <div class="a">不用。隨時可取消,取消後服務用到本期結束、不會再扣款。取消方式與退費規則見<NuxtLink to="/refund">退費與取消政策</NuxtLink>。</div>
               </details>
               <details class="lp-q">
                 <summary>支援哪種 LINE 帳號?<span class="plus" v-html="plusIcon" /></summary>
@@ -411,19 +445,8 @@
       </div>
     </section>
 
-    <!-- ── Footer ──────────────────────────────────────── -->
-    <footer class="lp-foot">
-      <div class="lp-wrap lp-foot__in">
-        <span class="lp-foot__brand"><span class="lp-brand__mark">M</span>MYFEEL INC · 讓 AI 幫店主做生意</span>
-        <div class="lp-foot__links">
-          <a href="#value">產品</a>
-          <a href="#pricing">定價</a>
-          <a href="#faq">常見問題</a>
-          <a href="#demo">預約 Demo</a>
-          <NuxtLink to="/login">登入</NuxtLink>
-        </div>
-      </div>
-    </footer>
+    <!-- ── Footer（公司資訊／客服窗口／政策條款，與法務頁共用同一個元件）── -->
+    <SiteFooter />
   </div>
 </template>
 
@@ -434,11 +457,16 @@ import IconDoor from '~/components/icons/IconDoor.vue'
 
 definePageMeta({ layout: false })
 
+// 品牌／產品／公司／客服窗口統一由這裡來（與法務頁、頁尾同一份來源）。
+// ⚠️ brandName = 品牌／產品名（MiniMe）、companyName = 營運主體（麥菲爾股份有限公司），別混用。
+const { brandName, serviceFullName, companyName, taxId, phone, email } = useSiteIdentity()
+
 useSeoMeta({
-  title: 'MYFEEL — 讓 AI 幫店主做生意｜LINE AI 客服 × CRM × 再行銷',
+  // 這是產品的行銷頁,標題以產品名為主;公司名在頁尾與法務頁揭露。
+  title: `${brandName} — 讓 AI 幫店主做生意｜LINE AI 客服 × CRM × 再行銷`,
   description:
     '套用現成範本快速設定,15 分鐘接上 LINE 官方帳號,AI 依你的知識庫即時回客服、依腳本導購。專為人少事多的中小店家打造。',
-  ogTitle: 'MYFEEL — 讓 AI 幫店主做生意',
+  ogTitle: `${brandName} — 讓 AI 幫店主做生意`,
   ogDescription: '接走 8 成日常客服、分眾喚醒老客、把買過一次的人養成熟客。範本 ＋ 知識庫,快速讓 AI 上線接客。',
   ogType: 'website',
 })
@@ -474,11 +502,12 @@ function featureList(p: BillingPlan): string[] {
   return f
 }
 
-// 只顯示對外方案（排除 test/internal）；enterprise 走「預約 Demo」，其餘走「免費開始」。
+// 只顯示對外方案（排除 test/internal 與未向金流申報售價的 landingHidden）；
+// enterprise 走「預約 Demo」，其餘走「免費開始」。
 const publicPlans = computed(() =>
   BILLING_PLAN_ORDER
     .map(id => BILLING_PLANS[id])
-    .filter(p => !p.internal)
+    .filter(p => !p.internal && !p.landingHidden)
     .map(p => ({
       id: p.id,
       name: p.name,
@@ -488,6 +517,15 @@ const publicPlans = computed(() =>
       cta: p.custom ? '預約 Demo' : '免費開始',
       recommended: p.id === RECOMMENDED_PLAN,
     })),
+)
+
+// 售價字串由 plans.ts 展開（不寫死），改價時「商品資訊」區塊會跟著對；
+// 這一行必須等於向金流申報的售價階段，見 plans.ts 的 landingHidden。
+const paidPriceList = computed(() =>
+  publicPlans.value
+    .filter(p => p.price.unit) // 有「／月」單位 = 付費方案（免費與面談沒有）
+    .map(p => p.price.amount)
+    .join('／'),
 )
 
 // 使用者從哪張方案卡點進 #demo，一併記進名單（業務知道他對哪個方案有興趣）。
