@@ -60,7 +60,7 @@ const contactHref = contact
   ? (contact.startsWith('http') ? contact : `mailto:${contact}`)
   : ''
 // 品牌名走 runtimeConfig（多租戶可覆寫），不寫死租戶名
-const brandName = String(config.public.brandName ?? '').trim() || 'MYFEEL'
+const { brandName } = useSiteIdentity()
 const loading = ref(false)
 const errorMsg = ref('')
 

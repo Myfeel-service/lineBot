@@ -214,7 +214,7 @@ import { useAdminToast } from '~~/app/composables/useAdminToast'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 useHead({
-  title: '對話統計 — LINE Bot 管理系統',
+  title: useAdminTitle('對話統計'),
 })
 
 const { showToast } = useAdminToast()

@@ -224,7 +224,7 @@ import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 
 useHead({
-  title: '組織與 LINE — LINE Bot 管理系統',
+  title: useAdminTitle('組織與 LINE'),
 })
 
 type WorkspaceGet = {

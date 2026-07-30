@@ -4,8 +4,8 @@
         <div class="sidebar-logo">
           <span class="logo-icon"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
           <div>
-            <span class="logo-text">LINE Bot</span>
-            <span class="logo-sub">管理系統</span>
+            <span class="logo-text">{{ brandName }}</span>
+            <span class="logo-sub">管理後台</span>
           </div>
         </div>
 
@@ -119,6 +119,8 @@ import {
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
+// 側欄商標的品牌名走 config（原本寫死「LINE Bot」，那是舊稱不是產品名）
+const { brandName } = useSiteIdentity()
 const { user, logout } = useAuth()
 const { workspaceId, currentRole, currentWorkspaceName, canManageSettings, isViewer, workspaceList, loadWorkspaceList } = useWorkspace()
 const { checkIsSuperAdmin, isSuperAdmin } = useSuperAdmin()

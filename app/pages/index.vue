@@ -29,8 +29,8 @@
       <span class="lp-hero__blob lp-hero__blob--2" />
       <div class="lp-wrap lp-hero__grid">
         <div class="lp-hero__text">
-          <!-- 產品名放在第一眼看得到的位置：訪客要知道這個產品叫什麼，金流風控也要能對上申報的商品名 -->
-          <span class="lp-eyebrow">{{ brandName }}｜LINE AI 客服 · CRM · 再行銷</span>
+          <!-- 品牌名已在正上方的 nav 商標，這裡不再重複，只講產品定位 -->
+          <span class="lp-eyebrow">LINE AI 客服 · CRM · 再行銷</span>
           <h1>讓 AI 幫店主<br><span class="g">做生意</span></h1>
           <p class="lp-hero__sub">套用現成範本快速設定,15 分鐘接上你的 LINE 官方帳號——AI 依你的知識庫即時回客服、依腳本導購,幫你記住每一位客人。</p>
           <div class="lp-hero__actions">

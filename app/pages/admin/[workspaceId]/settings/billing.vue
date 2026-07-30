@@ -302,7 +302,7 @@ import { describeInvoiceProfile } from '~~/shared/types/organization'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
-useHead({ title: '訂閱與付款 — LINE Bot 管理系統' })
+useHead({ title: useAdminTitle('訂閱與付款') })
 
 const route = useRoute()
 const { apiFetch } = useWorkspace()

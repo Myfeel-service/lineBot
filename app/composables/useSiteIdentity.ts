@@ -28,3 +28,13 @@ export function useSiteIdentity() {
     hours: String(pub.supportHours ?? ''),
   }
 }
+
+/**
+ * 後台頁面的瀏覽器標題：「頁名 — 品牌 管理後台」。
+ *
+ * 收成一個函式而不是各頁自己寫死：原本 8 個頁面各寫「— LINE Bot 管理系統」，
+ * 品牌改名時全部漏改（LINE Bot 是舊稱，不是產品名）。後綴只在這裡定義一次。
+ */
+export function useAdminTitle(page: string): string {
+  return `${page} — ${useSiteIdentity().brandName} 管理後台`
+}

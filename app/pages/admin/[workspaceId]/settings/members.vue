@@ -90,7 +90,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
-useHead({ title: '成員管理 — LINE Bot 管理系統' })
+useHead({ title: useAdminTitle('成員管理') })
 
 const { showToast } = useAdminToast()
 const { workspaceId, apiFetch, canManageSettings } = useWorkspace()

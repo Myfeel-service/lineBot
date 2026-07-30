@@ -3,7 +3,7 @@
     <div class="ws-select-card">
       <div class="ws-select-logo">
         <span class="logo-icon"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
-        <h1>LINE Bot 管理系統</h1>
+        <h1>{{ brandName }} 管理後台</h1>
       </div>
       <p class="ws-select-sub">選擇要管理的官方帳號</p>
 
@@ -177,7 +177,7 @@ import { DEFAULT_LINE_WORKSPACE_ID } from '~~/shared/line-workspace'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
 
 definePageMeta({ middleware: 'auth', layout: false })
-useHead({ title: '選擇官方帳號 — LINE Bot 管理系統' })
+useHead({ title: useAdminTitle('選擇官方帳號') })
 
 const { logout } = useAuth()
 const { loadWorkspaceList, orgAdminOf } = useWorkspace()
@@ -198,7 +198,7 @@ const contactHref = contact
   ? (contact.startsWith('http') ? contact : `mailto:${contact}`)
   : ''
 // 品牌名走 runtimeConfig（多租戶可覆寫），不寫死租戶名
-const brandName = String(config.public.brandName ?? '').trim() || 'MYFEEL'
+const { brandName } = useSiteIdentity()
 
 // ── 「我想開始使用」→ 自助開通精靈 ───────────────────────────
 // 帶去 /admin/onboarding 讓他自己建立組織＋第一個帳號（免費方案），不再撞牆。

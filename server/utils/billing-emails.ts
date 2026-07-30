@@ -25,7 +25,7 @@ import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
 function brandName(): string {
   const c = useRuntimeConfig()
-  return String((c.public as Record<string, unknown>)?.brandName ?? '').trim() || 'MYFEEL'
+  return String((c.public as Record<string, unknown>)?.brandName ?? '').trim() || 'MiniMe'
 }
 
 function billingUrl(workspaceId: string): string {

@@ -384,7 +384,7 @@ import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
 definePageMeta({ middleware: 'auth', layout: false })
-useHead({ title: '組織管理 — LINE Bot 管理系統' })
+useHead({ title: useAdminTitle('組織管理') })
 
 const route = useRoute()
 const router = useRouter()

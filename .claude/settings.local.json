@@ -28,7 +28,8 @@
       "Read(//Applications/**)",
       "Bash(pkill -f \"Google Chrome.*headless\")",
       "Bash(ls -la /Users/kevin/Documents/Github/linebot/*.png 2>/dev/null; mv /Users/kevin/Documents/Github/linebot/*.png /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/9c2f39ee-f356-42b7-8370-ed8225814d60/scratchpad/ 2>/dev/null; git status --short | grep -E \"\\\\.png\" || echo \"工作樹沒有 png 殘留\")",
-      "Bash(pkill -f \"nuxt dev\")"
+      "Bash(pkill -f \"nuxt dev\")",
+      "Bash(cd /Users/kevin/Documents/Github/linebot *)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot"
