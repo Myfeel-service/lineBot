@@ -1,7 +1,7 @@
 # PAYUNi 每月自動扣款 — 設計文件
 
-> 狀態:**設計定稿,API 已對實,續扣路徑沙盒已驗,尚未動產品程式碼**(四項決策見 §9;CREDIT V1.3 欄位見 §2/§10)。2026-07-30。
-> 沙盒金鑰在 `.env`(S076820628);`/api/credit` 探針已通(見 §10)。**Phase 1 可直接開發**,不需等 PAYUNi;剩 UPP 首刷 token 旗標(§10a)。正式上線前才需申請+綁 IP(§10b)。
+> 狀態:**設計定稿,API 全對實(零技術未知),續扣路徑沙盒已驗,尚未動產品程式碼**(四項決策見 §9;欄位見 §2/§10)。2026-07-30。
+> 沙盒金鑰在 `.env`(S076820628);`/api/credit` 探針已通、UPP 首刷 token 參數(`UseTokenType`/`CreditToken`)已對實(見 §10)。**可從 Phase 1 一路開發到 Phase 5**,不需等 PAYUNi;正式上線前才需申請+綁 IP。
 > 目的:規劃「每月自動扣款(#3)」，並讓「降級期末生效(#2)」「退費折抵下一期(#1)」蓋在其上。
 > 對應決策:老闆 2026-07-29 拍板 #1 折抵不退現金、#2 降級期末生效、#3 要自動扣款。
 
@@ -44,7 +44,7 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 | `upp` | 整合支付頁(首刷、過 3D) | `/api/upp` |
 | `credit` | **信用卡幕後扣款**(用卡片資料或 Token 直接扣) | `/api/credit` |
 | `trade_bind_query` | 查詢已綁定的約定 Token | `/api/trade_bind_query` |
-| `trade_bind_cancel` | 取消約定 Token(帶 `UseTokenType=1` + `BindVal`) | `/api/trade_bind_cancel` |
+| `trade_bind_cancel` | 取消約定 Token(帶 `UseTokenType=1` + `CreditHash`) | `/api/trade_bind_cancel` |
 | `trade_close` | **請退款**(帶 `TradeNo` + `CloseType`) | `/api/trade_close` |
 | `trade_query` | 交易查詢(現有單次已在用) | `/api/trade/query` |
 
@@ -61,20 +61,20 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 ## 3. 目標架構:三條核心流程
 
 ### A. 首刷 — 建立約定 Token(客人按下訂閱)
-1. 客人在方案對話框按「開始訂閱」。
-2. 後端建 `paymentOrder`(kind=`period_first`)、走 `upp` 導客人去 PAYUNi 付款頁(**帶「建立約定/記憶卡號」旗標**，欄位待 §10 對實)。首刷會過 3D。
-3. PAYUNi 付款成功 → Notify(server→server)回來，內含**約定 Token(`BindVal`)** 與卡別末四碼(`Card4No`)。
-4. 我方 `fulfillPayuniTrade` 收單:開通本期訂閱、把 `BindVal`/末四碼存進 `subscription`、`autoRenew=true`、開發票。
+1. 客人在方案對話框按「開始訂閱」(已勾同意條款,存 `termsAcceptedAt/termsVersion`)。
+2. 後端建 `paymentOrder`(kind=`period_first`)、走 `/api/upp`(Version 2.0)導客人去 PAYUNi 付款頁,EncryptInfo 帶 `Credit=1 / UseTokenType=3 / CreditToken=<workspaceId> / CreditTokenType=2`(見 §10)。首刷會過 3D。
+3. PAYUNi 付款成功 → Notify(server→server)回來,內含 **`CreditHash`**(約定 Token)、`CreditLife`(有效期 MMYY)、`Card4No`(末四碼)。
+4. 我方 `fulfillPayuniTrade` 收單:開通本期訂閱、把 `CreditHash`/`CreditLife`/末四碼存進 `subscription`、`autoRenew=true`、開發票。
 
 > 重用:現有 PAYUNi 單次的 `buildUppForm` + `/payuni/notify` + `fulfillPayuniTrade` 幾乎照用，只多「請求 Token」與「存 Token」兩步。
 
 ### B. 每期續扣 — 我方主動幕後扣款(排程觸發)
 每期在錨定日,由排程觸發:
-1. `runPaymentReconcile` 找出「本期即將到期 / 已到期、`autoRenew=true`、`!cancelAtPeriodEnd`、有 `BindVal`」的訂閱。
+1. `runPaymentReconcile` 找出「本期即將到期 / 已到期、`autoRenew=true`、`!cancelAtPeriodEnd`、有 `CreditHash`」的訂閱。
 2. 決定**下期方案** = `pendingPlanId ?? planId`(降級在此生效，見 §4)。
 3. 決定**扣款金額** = `plan.priceMonthly − 折抵(min(creditBalance, price))`(折抵在此套用，見 §4)。
 4. 建 `paymentOrder`(kind=`period_recurring`)。
-5. 呼叫 `credit` 幕後扣款(`BindVal` + 金額)。**同步**拿到結果(不像藍新要等 webhook)。
+5. 呼叫 `credit` 幕後扣款(`CreditHash` + 金額)。**同步**拿到結果(不像藍新要等 webhook)。
 6. 成功:滾到下一期、套用 `pendingPlanId`、扣掉已用折抵、開發票、寄收據。
 7. 失敗:進 `past_due` 寬限期、隔日重試 N 次、寄提醒；寬限期滿仍失敗 → 降回免費層。
 
@@ -107,7 +107,7 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 ## 5. 資料模型改動
 
 `WorkspaceSubscription`(`shared/billing/plans.ts`)新增:
-- `payuniCardToken?: string`（= `BindVal`；有值 = 背後有生效中的約定，取代藍新的 `periodNo`/`periodOrderNo` 語意）
+- `payuniCardToken?: string`（= `CreditHash`；有值 = 背後有生效中的約定，取代藍新的 `periodNo`/`periodOrderNo` 語意）
 - `payuniCardLast4?: string`（卡別末四碼，UI 顯示「扣款卡 ****1234」用）
 - `pendingPlanId?: BillingPlanId | null`（#2:排程於期末生效的方案）
 - `creditBalance?: number`（#1:可折抵下期的餘額，含稅元）
@@ -129,7 +129,7 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 
 **要新增(PAYUNi 版)**:
 - `payuni.ts`:`buildCreditCharge`(幕後扣款 `credit`)、`buildBindCancel`(`trade_bind_cancel`)、`buildBindQuery`(選配)。
-- UPP 首刷帶「建立約定」旗標 + 從 Notify 取 `BindVal`/`Card4No`。
+- UPP 首刷帶「建立約定」旗標 + 從 Notify 取 `CreditHash`/`Card4No`。
 - `create-subscription.post.ts` / `cancel-subscription.post.ts`:**改接 PAYUNi**(現藍新版死碼可一併移除或封存)。
 - `runPaymentReconcile` 內新增 `chargeDueRecurring()`:找 due 訂閱 → `credit` 扣款 → 結算。
 - `recurringEnabled`:從寫死 `false` 改成「PAYUNi 金鑰齊 + 明確開關」計算。
@@ -155,8 +155,8 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 
 | Phase | 內容 | 產出 / 驗收 |
 |---|---|---|
-| **P1 對實** | 沙盒帳號跑通:UPP 建約定拿 `BindVal`、`credit` 用 Token 扣款、`trade_bind_cancel`。把 §10 的待確認欄位釘死。 | 一支沙盒實測腳本全綠 |
-| **P2 首刷+存 Token** | UPP 首刷帶建約定旗標、Notify 存 `BindVal`/末四碼、開通+開發票。前端訂閱按鈕改走 PAYUNi。 | 沙盒訂閱首期成功、Token 落庫 |
+| **P1 對實** | 沙盒帳號跑通:UPP 建約定拿 `CreditHash`、`credit` 用 Token 扣款、`trade_bind_cancel`。把 §10 的待確認欄位釘死。 | 一支沙盒實測腳本全綠 |
+| **P2 首刷+存 Token** | UPP 首刷帶建約定旗標、Notify 存 `CreditHash`/末四碼、開通+開發票。前端訂閱按鈕改走 PAYUNi。 | 沙盒訂閱首期成功、Token 落庫 |
 | **P3 每期續扣** | `chargeDueRecurring()` 進 reconcile、冪等、失敗重試、寬限期、續扣開發票+收據。 | 沙盒跨期自動扣款成功、失敗路徑正確 |
 | **P4 降級+折抵** | `pendingPlanId`(#2)、`creditBalance`(#1)注入續扣金額;超管開折抵 UI;降級改期末。 | 降級/折抵沙盒驗證 |
 | **P5 取消+換卡** | 取消(+`trade_bind_cancel`)、更新付款方式(重綁卡)、清藍新死碼。 | 全六路徑綠 → 開 `recurringEnabled` |
@@ -174,18 +174,25 @@ PAYUNi 的自動扣款**不是**「金流按月自動幫你扣、金額固定」
 
 ---
 
-## 10. API 欄位對實狀態(2026-07-29 官方文件已確認,原四項未知全解)
+## 10. API 欄位對實狀態(2026-07-30 官方文件已確認,零技術未知)
 
 1. ✅ 首刷建約定 = UPP 首次交易、持卡人同意約定 → 回傳 Token。
 2. ✅ Token 欄位名 = **`CreditHash`**(另有 `CreditLife` 有效期 MMYY、`Card4No` 末四碼)。
 3. ✅ 幕後扣款 = `POST /api/credit`(Version 1.3),帶 `CreditHash` + 自訂 `TradeAmt`;回應 `Status`/`TradeStatus`,含 UNKNOWN 非同步路徑(見 §2)。
 4. ✅ 加密沿用現有 `payuni.ts`(AES-GCM `EncryptInfo` / SHA256 `HashInfo`)。
 
-**沙盒已實測(2026-07-30)**:探針拿 .env 沙盒金鑰(MerID S076820628)打 `sandbox-api.payuni.com.tw/api/credit` + 假 `CreditHash` → 回 `Status: CREDIT02025 / Message: 約定信用卡不存在 / TradeStatus: 2`。代表**沙盒幕後扣款功能已開、簽章/加密位元組相容、IP 沒擋、V1.3 端點與請求/回應格式全對**——續扣路徑(§3B)等於已驗。**Phase 1 不需等 PAYUNi、可直接開發。**
+**沙盒續扣已實測(2026-07-30)**:探針拿 .env 沙盒金鑰(MerID S076820628)打 `sandbox-api.payuni.com.tw/api/credit` + 假 `CreditHash` → 回 `Status: CREDIT02025 / Message: 約定信用卡不存在 / TradeStatus: 2`。代表**沙盒幕後扣款功能已開、簽章/加密位元組相容、IP 沒擋、V1.3 端點與請求/回應格式全對**——續扣路徑(§3B)等於已驗。
 
-**剩兩個小項**:
-- (a) **UPP 首刷「請求建立 Token」要帶的參數**:流程圖確認首刷經 UPP 回傳 `CreditHash`,但觸發建立的 UPP 請求旗標還沒對到(需 UPP 請求參數頁或沙盒 browser 用測試卡跑一次首刷拿真 `CreditHash`)。拿到真 token 後,把它塞回上面那支探針就能驗證整筆續扣成功。
-- (b) **正式上線前**才需向 PAYUNi 申請「信用卡 Token / 幕後扣款」功能 + 綁定授權 IP(文件的「須申請審核」是**正式環境**要求;沙盒測試商店已開好)。**非開發阻礙,列入 go-live 檢查表。**
+**UPP 首刷建 token 參數已對實(2026-07-30 官方 UPP 文件)**:UPP 端點 `/api/upp`、**Version 固定 2.0**、Form Post。首刷要在 EncryptInfo 加:
+- `Credit=1`(啟用信用卡一次付清)
+- **`UseTokenType`**:`1`=約定(付款頁消費者可自行取消)、`2`=記憶卡號、**`3`=強制約定(消費者無法取消)**。→ 訂閱**建議 3**(確保一定拿到 token,否則客戶在 PAYUNi 頁取消約定=付了首月卻沒委託=訂閱靜默失敗;取消走我方「取消訂閱」UI)。
+- **`CreditToken`**=我方自訂參照字串(≤200、`[A-Za-z0-9@.#$%_-+]`),用 `workspaceId`。**用 UseTokenType 時此為必填。**
+- `CreditTokenType`=`2`(商店級 token;本專案每租戶單一特店);`CreditTokenExpired` 可省(預設跟卡到期日)。
+- 回應(UPP Version 2.0、`TradeStatus`=1 已付款)在信用卡區回 **`CreditHash`**(Token Hash,續扣用)+ **`CreditLife`**(MMYY)+ `Card4No`。
+
+**→ 首刷→續扣整條無技術未知,可從 Phase 1 一路做到 Phase 5。**
+
+**唯一剩「正式上線前」事項**(非開發阻礙):正式特店要向 PAYUNi 申請開通信用卡 Token/幕後扣款 + 綁授權 IP(沙盒測試商店已開好、已實測)。列 go-live 檢查表。
 
 ---
 
