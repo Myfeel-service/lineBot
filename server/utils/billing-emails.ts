@@ -10,6 +10,7 @@ import {
   renewalReminderEmail,
   quotaEmail,
 } from '~~/shared/billing/email-content'
+import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import { getBillingPlan, isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
 import { taipeiDate } from '~~/shared/time'
@@ -161,15 +162,21 @@ export async function sendDueBillingEmails(
       if (!sub.currentPeriodEnd) continue
       if (sub.renewalReminderSentFor === sub.currentPeriodEnd) continue // 這期已寄過
 
-      const plan = getBillingPlan(sub.planId)
-      if (plan.priceMonthly == null) continue
+      // 沒有約定卡 = 不會有任何排程來扣他 → 不能寄「我們即將向你收款」
+      // （period.ts 也已不再給這種帳號寬限期,它到期就直接降級）。
+      if (!sub.payuniCardToken) continue
+      // ⚠️ 金額**必須**用 resolveRecurringCharge:它才會套用「期末降級」與「折抵」。
+      //    自己拿 plan.priceMonthly 就會出現「信裡寫 799、帳單頁寫 399、實際扣 199」。
+      //    這是 shared/billing/recurring.ts 存在的唯一理由,不要繞過它。
+      const next = resolveRecurringCharge(sub)
+      if (next.price == null) continue
       const { email, workspaceName } = await resolveBillingRecipient(doc.id, db)
       if (email) {
         const content = renewalReminderEmail({
           brandName: brand,
           workspaceName,
-          planName: plan.name,
-          amount: plan.priceMonthly,
+          planName: getBillingPlan(next.planId).name,
+          amount: next.amount,
           chargeDate: addOneDay(sub.currentPeriodEnd),
           manageUrl: billingUrl(doc.id),
         })

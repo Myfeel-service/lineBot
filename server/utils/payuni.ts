@@ -28,6 +28,15 @@ export const PAYUNI_ENDPOINTS = {
   prod: 'https://api.payuni.com.tw/api/upp',
 } as const
 
+/**
+ * UPP 版本號。
+ * ⚠️ **建立信用卡約定要用 2.0**:官方 UPP 文件現行版本為 2.0,回應才會在信用卡區帶回
+ *    `CreditHash` / `CreditLife` / `Card4No`。單次付款沿用已對沙盒實測通過的 `1.0`
+ *    （不動它 = 不冒回歸風險）,等 2.0 也實測過再考慮統一。
+ */
+export const PAYUNI_UPP_VERSION = '1.0'
+export const PAYUNI_UPP_TOKEN_VERSION = '2.0'
+
 /** PAYUNi 交易查詢（trade/query）端點——主動對帳:漏接 Notify 時拿回真實付款狀態。 */
 export const PAYUNI_QUERY_ENDPOINTS = {
   test: 'https://sandbox-api.payuni.com.tw/api/trade/query',
@@ -38,6 +47,22 @@ export const PAYUNI_QUERY_ENDPOINTS = {
 export const PAYUNI_CREDIT_ENDPOINTS = {
   test: 'https://sandbox-api.payuni.com.tw/api/credit',
   prod: 'https://api.payuni.com.tw/api/credit',
+} as const
+
+/**
+ * 信用卡 Token 取消（約定／記憶卡號）端點。
+ * ⚠️ 路徑是「底線 + 斜線」(`credit_bind/cancel`),不是 `credit_bind_cancel`——
+ *    後者不存在,會回一個 HTML 前端頁。已對官方文件與沙盒實測雙重確認。
+ */
+export const PAYUNI_BIND_CANCEL_ENDPOINTS = {
+  test: 'https://sandbox-api.payuni.com.tw/api/credit_bind/cancel',
+  prod: 'https://api.payuni.com.tw/api/credit_bind/cancel',
+} as const
+
+/** 信用卡 Token 查詢（約定）端點。必填 `CreditToken` 或 `CreditHash` 擇一。 */
+export const PAYUNI_BIND_QUERY_ENDPOINTS = {
+  test: 'https://sandbox-api.payuni.com.tw/api/credit_bind/query',
+  prod: 'https://api.payuni.com.tw/api/credit_bind/query',
 } as const
 
 /**
@@ -62,7 +87,11 @@ export interface PayuniKeys {
   merIV: string
 }
 
-function assertKeys(keys: PayuniKeys): void {
+/**
+ * 驗證金鑰長度。對外開放是為了讓「批次扣款」這類流程能**先驗一次再進迴圈**——
+ * 否則設定錯誤會在每一筆扣款呼叫裡才 throw,被誤歸類成「結果未定」。
+ */
+export function assertPayuniKeys(keys: PayuniKeys): void {
   const keyLen = Buffer.byteLength(String(keys.merKey || ''))
   const ivLen = Buffer.byteLength(String(keys.merIV || ''))
   if (keyLen !== 32) throw new Error(`[payuni] Hash Key 長度須為 32 碼(實際 ${keyLen})`)
@@ -81,7 +110,7 @@ export function encodeEncryptInfo(params: Record<string, string | number>): stri
  * 完全複刻 PHP：bin2hex( base64(ciphertext) . ':::' . base64(tag) )。
  */
 export function encrypt(params: Record<string, string | number>, keys: PayuniKeys): string {
-  assertKeys(keys)
+  assertPayuniKeys(keys)
   const cipher = createCipheriv(ALGO, Buffer.from(keys.merKey), Buffer.from(keys.merIV))
   const ct = Buffer.concat([cipher.update(encodeEncryptInfo(params), 'utf8'), cipher.final()])
   const tag = cipher.getAuthTag()
@@ -94,7 +123,7 @@ export function encrypt(params: Record<string, string | number>, keys: PayuniKey
  * 呼叫端請包 try/catch 並於失敗時拒絕開通。
  */
 export function decrypt(encryptStr: string, keys: PayuniKeys): Record<string, string> {
-  assertKeys(keys)
+  assertPayuniKeys(keys)
   const combined = Buffer.from(String(encryptStr || '').trim(), 'hex').toString('utf8')
   const sep = combined.indexOf(':::')
   if (sep < 0) throw new Error('[payuni] EncryptInfo 格式錯誤(缺少 ::: 分隔)')
@@ -140,7 +169,7 @@ export interface PayuniUppForm {
 export function buildUppForm(
   encryptInfo: Record<string, string | number>,
   keys: PayuniKeys,
-  version = '1.0',
+  version: string = PAYUNI_UPP_VERSION,
 ): PayuniUppForm {
   const EncryptInfo = encrypt(encryptInfo, keys)
   return {
@@ -149,6 +178,68 @@ export function buildUppForm(
     EncryptInfo,
     HashInfo: makeHashInfo(EncryptInfo, keys),
   }
+}
+
+// ── UPP 首刷:建立信用卡約定（拿 CreditHash）──────────────────────────────────
+//
+// PAYUNi 的「自動扣款」= 首刷經 UPP 過一次 3D 驗證、持卡人同意約定 → 回傳一組信用卡 Token
+// (CreditHash),之後每期由**我方**拿它打 /api/credit 幕後扣款(見本檔末段)。
+// 單次付款不帶這組參數 → 行為完全不變。
+
+/** `CreditToken` 允許的字元(官方:≤200、[A-Za-z0-9@.#$%_\-+])。 */
+const CREDIT_TOKEN_REF_RE = /[^A-Za-z0-9@.#$%_\-+]/g
+
+/**
+ * 把我方的參照字串(workspaceId)清成 PAYUNi `CreditToken` 允許的形狀。
+ * ⚠️ 清完是空的就 **throw**,不可靜默改走「不建約定」——那會讓客戶付了首月、
+ *    以為自己訂閱了,實際上沒有任何委託(訂閱靜默失敗,最難查的那種)。
+ */
+export function sanitizeCreditTokenRef(raw: string): string {
+  const v = String(raw ?? '').replace(CREDIT_TOKEN_REF_RE, '').slice(0, 200)
+  if (!v) throw new Error('[payuni] CreditToken 參照字串清理後為空,無法建立信用卡約定')
+  return v
+}
+
+/**
+ * 首刷「建立約定」要疊進 UPP EncryptInfo 的欄位。
+ *
+ * - `Credit=1`：啟用信用卡一次付清。
+ * - `UseTokenType=3`：**強制約定**(消費者無法在 PAYUNi 付款頁自行取消約定)。刻意不用 `1`——
+ *   客戶若在金流頁把約定取消掉,我方會收到「付款成功」卻拿不到可續扣的 Token,變成
+ *   收了首月卻沒有委託。取消訂閱走我方後台的「取消訂閱」入口（可控、有稽核）。
+ * - `CreditToken`：我方自訂參照字串(用 workspaceId);用 UseTokenType 時為必填。
+ * - `CreditTokenType=2`：商店級 Token（本專案每租戶一組特店）。
+ *   `CreditTokenExpired` 省略 → 預設跟卡片到期日。
+ */
+export function buildTokenBindFields(reference: string): Record<string, string | number> {
+  return {
+    Credit: 1,
+    UseTokenType: 3,
+    CreditToken: sanitizeCreditTokenRef(reference),
+    CreditTokenType: 2,
+  }
+}
+
+/** 首刷成功後從交易結果取出的「約定卡」資訊（存進訂閱,供每期續扣）。 */
+export interface PayuniCardMandate {
+  /** 信用卡 Token(CreditHash)——續扣憑證,**不得外洩到前端**。 */
+  token: string
+  /** 末四碼(Card4No);UI 顯示用。 */
+  last4: string | null
+  /** 有效期(CreditLife,MMYY)。 */
+  expiry: string | null
+}
+
+/**
+ * 從 Notify／查單結果取出約定卡資訊；沒有 `CreditHash` 回 null（= 這筆沒建成約定）。
+ * 呼叫端必須把「沒拿到 Token」當成「沒有自動續訂」處理,不能假設有。
+ */
+export function parseCardMandate(result: PayuniTradeResult | null | undefined): PayuniCardMandate | null {
+  const token = String(result?.CreditHash ?? '').trim()
+  if (!token) return null
+  const last4 = String(result?.Card4No ?? '').trim()
+  const expiry = String(result?.CreditLife ?? '').trim()
+  return { token, last4: last4 || null, expiry: expiry || null }
 }
 
 /**
@@ -172,6 +263,15 @@ export interface PayuniTradeResult {
   Message?: string
   /** 授權時間 */
   PayTime?: string
+  /**
+   * 信用卡約定 Token（首刷帶 UseTokenType 建約定成功才有）——每期幕後續扣的憑證。
+   * 見 parseCardMandate / buildCreditCharge。
+   */
+  CreditHash?: string
+  /** 約定卡有效期（MMYY） */
+  CreditLife?: string
+  /** 卡號末四碼 */
+  Card4No?: string
   [k: string]: string | undefined
 }
 
@@ -324,6 +424,27 @@ export interface CreditChargeResult {
 }
 
 /**
+ * 這筆 `/api/credit` 的結果是否「**未定**」——既不能當成功、也**絕不能當失敗去重扣**。
+ *
+ * 四種都算未定,理由都一樣:**PAYUNi／銀行那邊可能已經授權成功了**,我方只是沒拿到答案。
+ *   · `UNKNOWN`      銀行 60 秒沒回,官方明說之後才有結果
+ *   · `TradeStatus=8` 待確認（官方文件 CREDIT 的狀態碼之一）
+ *   · `HTTP_5xx/4xx` 閘道逾時或錯誤,授權可能已在對方成立
+ *   · `BAD_JSON` / `FETCH_FAILED` 連回應都沒讀到
+ *
+ * ⚠️ 把這些當失敗的代價很具體:`settlePaidOrder` 會把訂單寫成 `failed`,而那是**終態**
+ *    （下一個分支就是「paid/failed 一律跳過」）→ 銀行事後核准也再也結算不了,
+ *    錢收了、期間沒開通、還寄了一封扣款失敗信給客戶。
+ */
+export function isCreditChargeIndeterminate(r: Pick<CreditChargeResult, 'outerStatus' | 'result'>): boolean {
+  const s = String(r.outerStatus || '').trim().toUpperCase()
+  if (s === 'UNKNOWN' || s === 'BAD_JSON' || s === 'FETCH_FAILED') return true
+  if (s.startsWith('HTTP_')) return true
+  if (String(r.result?.TradeStatus ?? '') === '8') return true
+  return false
+}
+
+/**
  * 對已約定的卡(CreditHash)發動一筆幕後扣款(server→server)。
  * ⚠️ UNKNOWN(銀行 60 秒未回)既非成功也非失敗——呼叫端應保留待確認、稍後用 trade/query 補查
  *    (見設計 §2/§7),不可直接當失敗重扣。
@@ -353,4 +474,124 @@ export async function chargeCreditToken(
     ? verifyAndDecryptPayuniNotify(String(outer.EncryptInfo), String(outer.HashInfo ?? ''), keys)
     : null
   return { ok: isPayuniPaid(outerStatus, result), outerStatus, result }
+}
+
+// ── 解除信用卡約定（credit_bind/cancel）──────────────────────────────────────
+//
+// 用途:客戶取消訂閱、或寬限期滿被降回免費層之後,把那張卡在 PAYUNi 的約定解掉,
+// 不留一個沒人會用的授權在金流端（對客戶也是好事:他的卡不再被我們綁著）。
+//
+// ⚠️ 這是**清潔工作,不是安全需求**。PAYUNi 是「我方主動發動扣款」的模型,
+//    `autoRenew=false` 之後沒有任何排程會扣他——不像藍新那種「不終止委託就會一直扣」。
+//    所以解約失敗只要留著 Token、下次對帳再試即可,不必當成錯誤中斷流程。
+//
+// 規格來源:官方文件「信用卡Token取消(約定/記憶卡號)(CREDIT)」Ver 1.0 + 沙盒探針雙重確認。
+
+/** Token 取消／查詢的版本號,官方固定 1.0（帶 1.3 會回 `API00003` 版本錯誤）。 */
+export const PAYUNI_BIND_VERSION = '1.0'
+
+/**
+ * 綁定類型（`UseTokenType`）。
+ * ⚠️ 與 UPP 建約定時的 `UseTokenType` **值域不同**:UPP 是 1=約定可取消／2=記憶卡號／3=強制約定,
+ *    這裡只有 1=綁定(約定)／2=記憶卡號（給 3 會回 `CANCEL02006 綁定類型，格式錯誤`）。
+ */
+export const BIND_TYPE_MANDATE = 1
+export const BIND_TYPE_REMEMBER_CARD = 2
+
+export interface BindCancelInput {
+  merchantId: string
+  /**
+   * 「綁定唯一值」——官方欄位名 `BindVal`。**要帶哪一個由 useTokenType 決定**:
+   *   · 約定(1)     → 帶 **`CreditHash`**
+   *   · 記憶卡號(2) → 帶 **`CreditToken`**
+   * 我方訂閱一律是約定,所以這裡放 `subscription.payuniCardToken`（= CreditHash）。
+   */
+  bindVal: string
+  /** 預設 1（約定）。 */
+  useTokenType?: typeof BIND_TYPE_MANDATE | typeof BIND_TYPE_REMEMBER_CARD
+  /**
+   * Token 紀錄類型:1=會員(預設)、2=商店。
+   * 我方首刷送的是 `CreditTokenType=2`（商店級,每租戶一組特店）→ 取消也要帶 2,才對得上。
+   */
+  creditTokenType?: 1 | 2
+  /** Unix 秒。由呼叫端提供以保持純函式可測。 */
+  timestamp: number
+}
+
+/** 解約的 EncryptInfo 欄位（純函式,好單元測試）。 */
+export function buildBindCancelFields(input: BindCancelInput): Record<string, string | number> {
+  return {
+    MerID: input.merchantId,
+    UseTokenType: input.useTokenType ?? BIND_TYPE_MANDATE,
+    BindVal: input.bindVal,
+    CreditTokenType: input.creditTokenType ?? 2,
+    Timestamp: input.timestamp,
+  }
+}
+
+/** 組 credit_bind/cancel 的外層 POST 欄位。 */
+export function buildBindCancel(input: BindCancelInput, keys: PayuniKeys): PayuniUppForm {
+  const EncryptInfo = encrypt(buildBindCancelFields(input), keys)
+  return {
+    MerID: input.merchantId,
+    Version: PAYUNI_BIND_VERSION,
+    EncryptInfo,
+    HashInfo: makeHashInfo(EncryptInfo, keys),
+  }
+}
+
+export interface BindCancelResult {
+  /** 兩層都成立（外層 Status=SUCCESS + 解密後 Status=SUCCESS）才算解約成功。 */
+  ok: boolean
+  /** 外層狀態碼（SUCCESS / CANCEL02005 未有綁定類型 / CANCEL02007 未有綁定唯一值 …）。 */
+  outerStatus: string
+  /** 解密後的訊息（成功為「取消成功」）。 */
+  message: string
+  /**
+   * PAYUNi 說「查無這筆約定」→ 對我方而言**與成功等價**（本來就沒有東西要解）,
+   * 呼叫端可以放心把 Token 清掉,不必無限重試。
+   * **只認實測確認的 `CANCEL03001`**（`取消失敗，查無符合約定資料`）——不做寬鬆的訊息比對,
+   * 因為「查無此特店」這類設定錯誤也含「查無」,誤判會讓呼叫端刪掉唯一能解約的憑證。
+   */
+  notFound: boolean
+}
+
+/**
+ * 解除一張卡在 PAYUNi 的約定。
+ * 失敗**不 throw**——這支永遠是在對帳／取消流程的尾巴被呼叫,不能因為清潔工作失敗而中斷主流程。
+ */
+export async function cancelCardBinding(
+  input: BindCancelInput,
+  keys: PayuniKeys,
+  env: unknown,
+): Promise<BindCancelResult> {
+  const url = PAYUNI_BIND_CANCEL_ENDPOINTS[resolvePayuniEnv(env)]
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'user-agent': 'payuni' },
+      body: new URLSearchParams({ ...buildBindCancel(input, keys) }).toString(),
+    })
+    if (!res.ok) return { ok: false, outerStatus: `HTTP_${res.status}`, message: '', notFound: false }
+    const outer = await res.json() as Record<string, unknown>
+    const outerStatus = String(outer.Status ?? '')
+    const inner = outer.EncryptInfo
+      ? verifyAndDecryptPayuniNotify(String(outer.EncryptInfo), String(outer.HashInfo ?? ''), keys)
+      : null
+    const message = String(inner?.Message ?? outer.Message ?? '')
+    const innerOk = String(inner?.Status ?? '').toUpperCase() === 'SUCCESS'
+    return {
+      ok: outerStatus.toUpperCase() === 'SUCCESS' && innerOk,
+      outerStatus,
+      message,
+      // ⚠️ 只認**實測確認**的 CANCEL03001（取消失敗，查無符合約定資料）。
+      // 刻意**不**用「訊息含『查無』就算」那種寬鬆比對:PAYUNi 還有「查無此特店」這類
+      // 設定錯誤也含「查無」,一旦誤判成 notFound,呼叫端就會把 Token 刪掉——而那是
+      // 唯一能解除該卡約定的憑證,約定卻還活著。寧可多重試幾次,不要毀掉憑證。
+      notFound: outerStatus.toUpperCase() === 'CANCEL03001',
+    }
+  }
+  catch (e) {
+    return { ok: false, outerStatus: 'FETCH_FAILED', message: (e as Error)?.message ?? '', notFound: false }
+  }
 }

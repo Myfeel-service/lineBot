@@ -23,6 +23,7 @@ import type { WorkspaceDoc } from '~~/shared/types/organization'
 import type { BillingPlan, BillingPlanId, WorkspaceSubscription } from '~~/shared/billing/plans'
 import { DEFAULT_BILLING_PLAN_ID, effectiveAnsweredQuota, getBillingPlan } from '~~/shared/billing/plans'
 import { newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
+import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import type { PlanView } from '~~/shared/billing/plan-state'
 import type { QuotaExceedStrategy } from '~~/shared/types/ai-knowledge'
 import { taipeiDate } from '~~/shared/time'
@@ -60,6 +61,7 @@ export function effectivePlanOf(sub: WorkspaceSubscription): { plan: BillingPlan
 export function buildPlanView(sub: WorkspaceSubscription | null): PlanView | null {
   if (!sub) return null
   const { plan, quota } = effectivePlanOf(sub)
+  const next = resolveRecurringCharge(sub)
   return {
     id: plan.id,
     name: plan.name,
@@ -70,8 +72,19 @@ export function buildPlanView(sub: WorkspaceSubscription | null): PlanView | nul
     status: sub.status,
     autoRenew: sub.autoRenew === true,
     cancelAtPeriodEnd: sub.cancelAtPeriodEnd === true,
-    // 只回布林值,委託單號不外洩到前端
-    hasMandate: Boolean(sub.periodNo && sub.periodOrderNo),
+    // 只回布林值,Token 不外洩到前端。
+    // 只看 PAYUNi 約定卡:藍新定期定額程式已移除,而它從未真正開通過（recurringEnabled 一律
+    // false + 金鑰未設）→ 沒有任何帳號真的有藍新委託。若真有 periodNo 的歷史資料，
+    // 這裡回 false 才對——取消入口已經沒有藍新那條路可走，顯示按鈕只會讓客戶按到報錯。
+    hasMandate: Boolean(sub.payuniCardToken),
+    cardLast4: sub.payuniCardLast4 ?? null,
+    // 只在寬限期（等扣款）時才有意義；續扣成功時 settlePaidOrder 已清掉這個欄位。
+    lastChargeError: sub.status === 'past_due' ? (sub.lastChargeError ?? null) : null,
+    // 下期方案／折抵／實扣金額：與續扣排程共用同一支純函式,畫面說扣多少就真的扣多少。
+    pendingPlanId: next.planId === sub.planId ? null : next.planId,
+    pendingPlanName: next.planId === sub.planId ? null : getBillingPlan(next.planId).name,
+    creditBalance: next.creditRemaining + next.creditUsed,
+    nextChargeAmount: next.price == null ? null : next.amount,
   }
 }
 

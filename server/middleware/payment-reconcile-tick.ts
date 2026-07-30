@@ -31,6 +31,8 @@ export default defineEventHandler((event) => {
   ticking = true
   lastTickAt = now
 
+  // ⚠️ 刻意**不帶 charge**:這裡是 fire-and-forget（下面沒有 await）,不能拿來刷卡。
+  //    續扣只走 /api/payment/reconcile（外部排程 + 會等它跑完）。這支只做對帳與清理。
   runBillingReconcile(config)
     .then((out) => {
       if (out.payuni?.recovered || out.downgraded || out.expiredOrders) {

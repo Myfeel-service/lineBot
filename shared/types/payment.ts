@@ -3,20 +3,23 @@ import type { BillingPlanId } from '../billing/plans'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Collection: paymentOrders
-//  Doc ID: merchantOrderNo（藍新 MerchantOrderNo，僅英數，<=30 碼）
+//  Doc ID: merchantOrderNo（金流的商店訂單編號，僅英數，長度上限見 INVOICE_ORDER_NO_MAX）
 //
 //  一筆付款訂單即一次「開通某方案一期」的請求。建單時寫入 pending，
 //  金額／方案以「建單當下後端寫入的值」為準（Notify 回傳只做比對，防竄改）。
-//  藍新 Notify（server→server）確認付款成功後由 webhook 改為 paid 並開通訂閱。
+//  金流 Notify（server→server）確認付款成功後由 webhook 改為 paid 並開通訂閱。
 // ═══════════════════════════════════════════════════════════════════
 
 export type PaymentOrderStatus = 'pending' | 'paid' | 'failed' | 'expired'
 
 /**
  * 這筆帳是怎麼來的：
- * - `one_time`         單次付款（MPG；藍新未開通定期定額時的退路）
- * - `period_first`     定期定額委託的首期（客戶按下訂閱那一刻）
- * - `period_recurring` 定期定額的第 2 期以後（藍新自動扣款後回拋，我方不主動建單）
+ * - `one_time`         單次付款（客戶自己回來刷一期；PAYUNi 自動扣款未開時的預設）
+ * - `period_first`     訂閱首期（客戶按下訂閱那一刻）。**PAYUNi：這個 kind 就是「要建立
+ *                      信用卡約定」的授權依據**——開通時只有這種單才會把回傳的 `CreditHash`
+ *                      存成約定卡（見 settlePaidOrder），避免單次付款被悄悄變成每月扣款。
+ * - `period_recurring` 第 2 期以後。**PAYUNi 與藍新語意相反**：藍新是金流自動扣完才回拋、
+ *                      我方不建單；PAYUNi 是**我方排程主動建單**再打 /api/credit 幕後扣款。
  */
 export type PaymentOrderKind = 'one_time' | 'period_first' | 'period_recurring'
 
@@ -30,26 +33,35 @@ export interface PaymentOrderDoc {
   status: PaymentOrderStatus
   kind?: PaymentOrderKind
   /**
-   * 建單時決定的錨定日（= 送給藍新的 PeriodPoint）。
-   * **開通時必須沿用這個值,不能重算**——跨午夜建單（23:59 建、00:00 開通）會讓藍新的
-   * 扣款日與我方的續期日差一天,之後每個月都會在寬限期的縫隙裡把付費客戶降級。
+   * 建單時決定的錨定日（每期在這一天續期／續扣）。
+   * **開通時必須沿用這個值,不能重算**——跨午夜建單（23:59 建、00:00 開通）會讓續扣日
+   * 與續期日差一天,之後每個月都會在寬限期的縫隙裡把付費客戶降級。
    */
   anchorDay?: number | null
-  /** 藍新定期定額委託單號（PeriodNo）；取消／暫停要拿它去打 AlterStatus */
+  /** @deprecated 藍新定期定額委託單號；程式已移除,欄位保留只為歷史文件相容。 */
   periodNo?: string | null
-  /**
-   * 換方案時「這張新委託要取代的**舊**委託」的單號。
-   *
-   * 舊委託不在建單當下終止——那會讓「放棄付款」的客戶白白丟掉他原本還在用的訂閱。
-   * 改成把舊委託單號記在這裡,等新委託**首期扣款成功**（settlePaidOrder 開通）之後,
-   * 才在 period-notify 裡終止舊委託。放棄付款 → 這張 pending 訂單被 reconcile 清成 expired、
-   * 舊訂閱原封不動。
-   */
+  /** @deprecated 藍新定期定額遺留（程式已於 2026-07-30 移除）；欄位保留只為歷史文件相容。 */
   supersedesPeriodNo?: string | null
+  /** @deprecated 同上，勿使用。 */
   supersedesPeriodOrderNo?: string | null
-  /** 這是委託的第幾期（定期定額續期帳才有） */
+  /** @deprecated 同上，勿使用。 */
   periodTimes?: number | null
-  /** 藍新交易序號（Notify 回傳） */
+  /**
+   * PAYUNi：這筆 `period_first` 有沒有真的建成信用卡約定（拿到 CreditHash）。
+   * false 而 status=paid → 收了首期的錢但**不會有下一期自動扣款**,要人工處理。
+   * Token 本身只存在訂閱上（敏感憑證不重複落在帳本）。
+   */
+  cardBound?: boolean | null
+  /** 約定卡末四碼（非憑證，稽核／客服對帳用）。 */
+  cardLast4?: string | null
+  /**
+   * 這筆用掉的折抵金額（`subscription.creditBalance`）。
+   * `amount` 已經是**扣掉折抵後的實收金額**——發票也開這個數字（見 recurring.ts 的稅務說明）。
+   * 結算成功時由 settlePaidOrder 依這個值把餘額扣掉,所以它必須存在訂單上（不能只存在記憶體裡,
+   * 否則重試／補查時會重複扣或漏扣餘額）。
+   */
+  creditApplied?: number | null
+  /** 金流端交易序號（Notify 回傳） */
   tradeNo?: string | null
   /** 付款方式（CREDIT / VACC / CVS…；Notify 回傳） */
   paymentType?: string | null

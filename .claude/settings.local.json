@@ -29,7 +29,20 @@
       "Bash(pkill -f \"Google Chrome.*headless\")",
       "Bash(ls -la /Users/kevin/Documents/Github/linebot/*.png 2>/dev/null; mv /Users/kevin/Documents/Github/linebot/*.png /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/9c2f39ee-f356-42b7-8370-ed8225814d60/scratchpad/ 2>/dev/null; git status --short | grep -E \"\\\\.png\" || echo \"工作樹沒有 png 殘留\")",
       "Bash(pkill -f \"nuxt dev\")",
-      "Bash(cd /Users/kevin/Documents/Github/linebot *)"
+      "Bash(cd /Users/kevin/Documents/Github/linebot *)",
+      "WebFetch(domain:support.1shop.tw)",
+      "Bash(node setup-test-ws.mjs)",
+      "Bash(pkill -f \"setup-test-ws\")",
+      "Bash(timeout 90 node setup-test-ws.mjs status)",
+      "Bash(ngrok http *)",
+      "Bash(PORT=3001 npm run dev)",
+      "Bash(pkill -f \"ngrok http\")",
+      "Bash(node setup-test-ws.mjs status)",
+      "Bash(node t2-open-paypage.mjs)",
+      "Bash(node t4-verify-ui.mjs)",
+      "Bash(node t3-pay.mjs 4147631000000002)",
+      "Bash(node t3-pay.mjs 4147631000000001)",
+      "Bash(node t7-recurring.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot"

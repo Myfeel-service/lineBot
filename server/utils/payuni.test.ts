@@ -1,8 +1,13 @@
 import { createHash } from 'crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  BIND_TYPE_MANDATE,
+  BIND_TYPE_REMEMBER_CARD,
+  buildBindCancel,
+  buildBindCancelFields,
   buildCreditCharge,
   buildCreditChargeFields,
+  buildTokenBindFields,
   buildTradeQuery,
   buildUppForm,
   decrypt,
@@ -12,9 +17,11 @@ import {
   isQueryTradePaid,
   isTradePaid,
   makeHashInfo,
+  parseCardMandate,
   parsePayuniQueryResult,
   payuniPaymentType,
   resolvePayuniEnv,
+  sanitizeCreditTokenRef,
   verifyAndDecryptPayuniNotify,
   verifyHashInfo,
 } from './payuni'
@@ -253,5 +260,95 @@ describe('payuniPaymentType', () => {
     expect(payuniPaymentType('9')).toBe('9')
     expect(payuniPaymentType('')).toBeNull()
     expect(payuniPaymentType(null)).toBeNull()
+  })
+})
+
+// ── 首刷建立信用卡約定（拿 CreditHash 供每期幕後續扣）────────────────────────
+
+describe('sanitizeCreditTokenRef（CreditToken 參照字串）', () => {
+  it('合法字元原樣保留', () => {
+    expect(sanitizeCreditTokenRef('MYFEEL')).toBe('MYFEEL')
+    expect(sanitizeCreditTokenRef('ws-01_a.b+c@d#e$f%g')).toBe('ws-01_a.b+c@d#e$f%g')
+  })
+  it('剃掉官方不允許的字元（斜線/空白/中文）,避免整筆被 PAYUNi 退', () => {
+    expect(sanitizeCreditTokenRef('ws/01 測試')).toBe('ws01')
+  })
+  it('超過 200 碼截斷', () => {
+    expect(sanitizeCreditTokenRef('a'.repeat(250))).toHaveLength(200)
+  })
+  it('清完為空 → throw（**不可**靜默改走不建約定：客戶會付了首月卻沒有委託）', () => {
+    expect(() => sanitizeCreditTokenRef('///')).toThrow()
+    expect(() => sanitizeCreditTokenRef('')).toThrow()
+  })
+})
+
+describe('buildTokenBindFields（UPP 首刷建約定參數）', () => {
+  const f = buildTokenBindFields('ws1')
+  it('UseTokenType=3 強制約定——不能用 1', () => {
+    // 1 = 消費者可在 PAYUNi 付款頁自行取消約定 → 我方會「收到付款成功卻拿不到可續扣的
+    // Token」,變成收了首月卻沒委託的靜默失敗。取消一律走我方後台入口（可控、有稽核）。
+    expect(f.UseTokenType).toBe(3)
+  })
+  it('Credit=1 / CreditTokenType=2（商店級）/ CreditToken 帶我方參照', () => {
+    expect(f).toEqual({ Credit: 1, UseTokenType: 3, CreditToken: 'ws1', CreditTokenType: 2 })
+  })
+  it('疊進 UPP EncryptInfo 後可完整往返（加解密不吃掉這些欄位）', () => {
+    const enc = encrypt({ MerID: 'MER1', MerTradeNo: 'NP1', TradeAmt: 399, ...f }, KEYS)
+    expect(decrypt(enc, KEYS)).toMatchObject({ UseTokenType: '3', CreditToken: 'ws1', CreditTokenType: '2', Credit: '1' })
+  })
+})
+
+describe('parseCardMandate（從回傳取出約定卡）', () => {
+  it('有 CreditHash → 取出 Token / 末四碼 / 有效期', () => {
+    expect(parseCardMandate({ CreditHash: 'HASH123', Card4No: '1234', CreditLife: '0929' }))
+      .toEqual({ token: 'HASH123', last4: '1234', expiry: '0929' })
+  })
+  it('只有 Token、沒末四碼/有效期 → 兩者為 null（不編造）', () => {
+    expect(parseCardMandate({ CreditHash: 'HASH123' })).toEqual({ token: 'HASH123', last4: null, expiry: null })
+  })
+  it('沒有 CreditHash / 空字串 / null → 一律 null（呼叫端須當「沒有自動續訂」處理）', () => {
+    expect(parseCardMandate({ TradeStatus: '1' })).toBeNull()
+    expect(parseCardMandate({ CreditHash: '  ' })).toBeNull()
+    expect(parseCardMandate(null)).toBeNull()
+    expect(parseCardMandate(undefined)).toBeNull()
+  })
+})
+
+// ── 解除信用卡約定（credit_bind/cancel）─────────────────────────────────────
+// 規格來源:官方文件「信用卡Token取消(約定/記憶卡號)(CREDIT)」Ver 1.0 + 沙盒探針。
+
+describe('buildBindCancelFields / buildBindCancel（解約）', () => {
+  const base = { merchantId: 'S076820628', bindVal: 'HASHTOKEN123', timestamp: 1700000000 }
+
+  it('欄位名是 **BindVal**（不是 CreditHash／CreditToken）', () => {
+    // 這一行是踩了 30+ 個猜測才問出來的:官方欄位名為 BindVal,
+    // 「要放 CreditHash 還是 CreditToken」由 UseTokenType 決定。
+    expect(buildBindCancelFields(base)).toEqual({
+      MerID: 'S076820628',
+      UseTokenType: 1, // 1 = 綁定（約定）
+      BindVal: 'HASHTOKEN123',
+      CreditTokenType: 2, // 2 = 商店級,與首刷送的一致
+      Timestamp: 1700000000,
+    })
+  })
+
+  it('預設是約定(1) + 商店級(2)——與我方首刷 UseTokenType=3/CreditTokenType=2 對得上', () => {
+    const f = buildBindCancelFields(base)
+    expect(f.UseTokenType).toBe(BIND_TYPE_MANDATE)
+    expect(f.CreditTokenType).toBe(2)
+  })
+
+  it('記憶卡號(2) 時呼叫端要改帶 CreditToken(語意由 useTokenType 標示)', () => {
+    const f = buildBindCancelFields({ ...base, bindVal: 'MYFEEL', useTokenType: BIND_TYPE_REMEMBER_CARD })
+    expect(f.UseTokenType).toBe(2)
+    expect(f.BindVal).toBe('MYFEEL')
+  })
+
+  it('外層四欄:Version 固定 1.0、簽章對得上、內層可解回帶 BindVal', () => {
+    const form = buildBindCancel(base, KEYS)
+    expect(form.MerID).toBe('S076820628')
+    expect(form.Version).toBe('1.0') // 帶 1.3 官方會回 API00003
+    expect(verifyHashInfo(form.EncryptInfo, form.HashInfo, KEYS)).toBe(true)
+    expect(decrypt(form.EncryptInfo, KEYS)).toMatchObject({ BindVal: 'HASHTOKEN123', UseTokenType: '1' })
   })
 })

@@ -211,4 +211,12 @@
   flex-wrap: wrap;
   padding-top: 4px;
   border-top: 1px solid #f0f2f5;
+
+  /* 用在警示框「內部」時（扣款失敗 → 換卡）：框內不需要再畫一條分隔線，
+     也不該撐開警示框的行距，否則兩層邊框看起來像壞掉。 */
+  &--tight {
+    padding-top: 6px;
+    border-top: 0;
+    justify-content: flex-start;
+  }
 }

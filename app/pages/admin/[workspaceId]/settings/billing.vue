@@ -78,7 +78,7 @@
 
             <!-- 續訂狀態：自動扣款這件事必須一眼看得到，而且**隨時退得掉**。
                  取消按鈕的顯示條件是 canCancel（= 還有生效中的委託），不是 autoRenew——
-                 扣款失敗或已被降級時，委託在藍新那邊還活著、還在刷卡，那正是最需要停掉它的時刻，
+                 扣款失敗或已被降級時，卡在金流那邊還綁著，那正是最需要停掉它的時刻，
                  絕不能讓警告訊息把取消入口蓋掉。 -->
             <el-alert
               v-if="planView.status === 'past_due'"
@@ -87,7 +87,18 @@
               show-icon
               title="這期的自動扣款尚未成功"
             >
-              <span class="text-xs">服務仍在正常運作。請確認信用卡是否過期或額度不足；幾天內仍未扣款成功，方案會降回免費層。</span>
+              <span class="text-xs">
+                <!-- 帶上金流回的真實原因（卡片過期／額度不足／被銀行拒絕）——
+                     只說「扣款未成功」等於叫客戶自己猜要修什麼。 -->
+                <template v-if="planView.lastChargeError">原因：{{ planView.lastChargeError }}。</template>
+                服務仍在正常運作，我們每天會再試一次。請確認信用卡是否過期或額度不足；幾天內仍未扣款成功，方案會降回免費層。
+              </span>
+              <!-- 卡不能用的當下就給出路。少了這顆按鈕，客戶只能等被降級再來找客服。 -->
+              <div v-if="canUpdateCard" class="billing-renew-row billing-renew-row--tight">
+                <el-button size="small" type="primary" :loading="updatingCard" @click="updatePaymentMethod">
+                  換一張卡付款
+                </el-button>
+              </div>
             </el-alert>
 
             <div v-if="planView.cancelAtPeriodEnd" class="billing-renew-row">
@@ -99,13 +110,45 @@
               <span class="text-xs text-muted">
                 <template v-if="planView.autoRenew">
                   每月自動續訂中 · 下次扣款 <strong>{{ nextChargeDate }}</strong>
+                  <!-- 金額要寫出來：折抵或期末降級都會讓下期金額與方案定價不同，
+                       客戶看到「下次扣款日」卻不知道扣多少，才是最容易變成客訴的地方。 -->
+                  <template v-if="planView.nextChargeAmount != null">
+                    · 金額 <strong>NT${{ planView.nextChargeAmount.toLocaleString() }}</strong>
+                  </template>
                 </template>
                 <template v-else>自動扣款委託仍在生效中，若不想再被扣款請取消。</template>
+                <!-- 末四碼：客戶要能認出「到底是哪張卡在被扣」，換卡／對帳都靠它。 -->
+                <template v-if="cardLabel"> · 扣款卡 {{ cardLabel }}</template>
               </span>
+              <!-- 換卡入口:卡過期／被銀行撤銷時客戶要能自己救,不然只能等降級再來客服。 -->
+              <el-button v-if="canUpdateCard" size="small" text :loading="updatingCard" @click="updatePaymentMethod">更新付款方式</el-button>
               <el-button size="small" text :loading="canceling" @click="cancelSubscription">取消訂閱</el-button>
             </div>
+
+            <!-- 已預約的期末降級：一定要能看到、也一定要能反悔。看不到的排程等於「莫名其妙
+                 某天方案就變小了」，那是最難處理的客服case。 -->
+            <div v-if="planView.pendingPlanName" class="billing-renew-row">
+              <span class="text-xs text-muted">
+                已預約 <strong>{{ nextChargeDate }}</strong> 起改為「<strong>{{ planView.pendingPlanName }}</strong>」方案，
+                目前方案用到 {{ planView.currentPeriodEnd }}。
+              </span>
+              <el-button size="small" text :loading="unscheduling" @click="cancelScheduledChange">取消預約</el-button>
+            </div>
+
+            <!-- 折抵餘額：客戶的錢，看不到會以為被吃掉了 -->
+            <div v-if="creditBalance > 0" class="billing-renew-row">
+              <span class="text-xs text-muted">
+                折抵餘額 <strong>NT${{ creditBalance.toLocaleString() }}</strong>——會自動折抵下期扣款，用完為止。
+              </span>
+            </div>
           </div>
-          <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="planView.id" />
+          <!-- has-mandate：有自動扣款委託時，降級改成「期末生效」（不吃掉已付的剩餘天數） -->
+          <AdminPlanUpgradeDialog
+            v-model="upgradeOpen"
+            :current-plan-id="planView.id"
+            :has-mandate="planView.hasMandate"
+            @changed="loadPlanSummary"
+          />
         </div>
         <div v-else-if="loading" class="message-card ar-section-card billing-plan-loading">
           <div class="spinner" />
@@ -353,7 +396,7 @@ const visibleOrders = computed(() => {
 const hiddenOrderCount = computed(() => orders.value.length - visibleOrders.value.length)
 
 // ── 自動續訂 ──────────────────────────────────────────────
-/** 下次扣款日 = 本期到期日的隔天（藍新在錨定日當天扣款）。 */
+/** 下次扣款日 = 本期到期日的隔天（我方排程在錨定日扣款）。 */
 const nextChargeDate = computed(() => {
   const end = planView.value?.currentPeriodEnd
   if (!end) return '—'
@@ -364,10 +407,35 @@ const nextChargeDate = computed(() => {
 })
 
 /**
- * 能不能取消 = 藍新那邊還有生效中的委託。**不是**看 autoRenew——
- * 扣款失敗被降回免費層時 autoRenew 已經是 false，但卡還在被扣，那時最需要這個按鈕。
+ * 能不能取消 = 金流那邊還有生效中的扣款委託。**不是**看 autoRenew——
+ * 扣款失敗被降回免費層時 autoRenew 已經是 false，但卡還綁著，那時最需要這個按鈕。
  */
 const canCancel = computed(() => planView.value?.hasMandate === true)
+
+/** 扣款卡標示（末四碼）；沒有末四碼就不顯示，不要湊出「•••• ????」這種假資訊。 */
+const cardLabel = computed(() => {
+  const last4 = String(planView.value?.cardLast4 || '').trim()
+  return last4 ? `•••• ${last4}` : ''
+})
+
+const creditBalance = computed(() => Number(planView.value?.creditBalance ?? 0))
+
+/** 取消已預約的期末降級（客戶反悔）→ 下期回到沿用現行方案。 */
+const unscheduling = ref(false)
+async function cancelScheduledChange() {
+  unscheduling.value = true
+  try {
+    await apiFetch('/api/payment/schedule-plan-change', { method: 'POST', body: { planId: null } })
+    showToast('已取消預約，下期沿用目前方案', 'success')
+    await loadPlanSummary()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || e?.message || '取消預約失敗', 'error')
+  }
+  finally {
+    unscheduling.value = false
+  }
+}
 
 const canceling = ref(false)
 async function cancelSubscription() {
@@ -600,6 +668,86 @@ async function resumePayment(row: OrderRow) {
   catch (e: any) {
     overlay.close()
     actingOrder.value = ''
+    showToast(e?.data?.statusMessage || e?.message || '建立訂單失敗', 'error')
+  }
+}
+
+/**
+ * 更新付款方式（換卡）——P5。
+ *
+ * PAYUNi 的約定 Token 綁在「一次真實的付款」上:要換卡就得再跑一次 UPP 首刷,由客戶在
+ * PAYUNi 付款頁輸入新卡並過 3D,回來的新 `CreditHash` 會覆蓋舊的。所以這件事**一定伴隨
+ * 一期的付款**,不是純粹換張卡而已——文案必須講清楚,否則客戶會覺得被莫名收費。
+ *
+ * 兩種情況的實際效果不同（都由後端 buildPaidSubscription 決定,這裡只是把它說白）：
+ *  · 扣款失敗中（past_due）→ 本期本來就還沒收到錢 → 這筆就是補繳,新一期從今天起算。
+ *  · 一切正常（active）  → 期間堆疊 → 等於「提前付下一期」,已付的剩餘天數不會消失。
+ *
+ * ⚠️ 若日後查到 PAYUNi 支援 0 元／1 元純綁卡,這裡就能改成不收錢的換卡
+ *    （目前官方文件沒查到,見 docs/PAYUNI-RECURRING-DESIGN.md §11）。
+ */
+/**
+ * 換卡實際會被收多少 = **現行方案的月費全額**。
+ *
+ * ⚠️ 刻意**不用** `planView.nextChargeAmount`——那是「下一期續扣」的金額(已扣折抵、已套用
+ *    期末降級)。換卡走的是 `create-order`,它一律收現行方案的 `priceMonthly`,折抵只在
+ *    續扣路徑套用。用 nextChargeAmount 去報價會出現「對話框說 499、實際刷 799」。
+ * 回 null = 這個方案不能線上結帳（免費／客製）→ 不顯示換卡入口。
+ */
+const cardChargeAmount = computed<number | null>(() => {
+  const plan = BILLING_PLANS[(planView.value?.id ?? '') as keyof typeof BILLING_PLANS]
+  const price = plan?.priceMonthly
+  if (plan?.custom || price == null || price <= 0) return null
+  return price
+})
+
+/**
+ * 能不能換卡。除了「有委託」還要求「現行方案真的能線上結帳」——
+ * 已被降回免費層但仍持有 Token 的帳號若露出這顆按鈕,按下去只會拿到
+ * 400「此方案不支援線上結帳」。
+ */
+const canUpdateCard = computed(() => canCancel.value && cardChargeAmount.value != null)
+
+const updatingCard = ref(false)
+async function updatePaymentMethod() {
+  const pv = planView.value
+  const charge = cardChargeAmount.value
+  if (!pv || charge == null) return
+  const isPastDue = pv.status === 'past_due'
+  const amount = charge.toLocaleString()
+  const policyLinks = POLICY_LINKS.map(p => `<a href="${p.to}" target="_blank" rel="noopener">${p.label}</a>`).join('・')
+  try {
+    await ElMessageBox.confirm(
+      `<p>換卡需要由你在 PAYUNi 付款頁完成一次實際付款（新卡才會被記錄下來），`
+      + `因此這次會以新卡收取 <b>NT$${amount}</b>（含稅）。</p>`
+      + (isPastDue
+        ? `<p>本期的自動扣款尚未成功，這筆就是補繳；付款完成後「${pv.name}」方案會從今天重新起算一整期。</p>`
+        : `<p>目前方案已付到 ${pv.currentPeriodEnd}，這筆等於<b>提前支付下一期</b>——已付的天數不會消失，新一期接在 ${pv.currentPeriodEnd} 之後。</p>`)
+      + `<p>之後每月自動扣款改用新卡。</p><p>${CHECKOUT_CONSENT_TEXT}</p><p>${policyLinks}</p>`,
+      '更新付款方式',
+      {
+        dangerouslyUseHTMLString: true, // 只放我們自己的字串與政策連結，無使用者輸入
+        confirmButtonText: '同意條款並前往換卡付款',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  }
+  catch { return }
+
+  updatingCard.value = true
+  const overlay = ElLoading.service({ lock: true, text: '正在前往 PAYUNi 安全付款頁面…' })
+  try {
+    const res = await apiFetch<{ action: string; fields: Record<string, string> }>('/api/payment/create-order', {
+      method: 'POST',
+      body: { planId: pv.id, workspaceId: route.params.workspaceId, termsAccepted: true },
+    })
+    if (!res.action) throw new Error('金流尚未設定')
+    submitToGateway(res.action, res.fields)
+  }
+  catch (e: any) {
+    overlay.close()
+    updatingCard.value = false
     showToast(e?.data?.statusMessage || e?.message || '建立訂單失敗', 'error')
   }
 }

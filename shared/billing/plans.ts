@@ -226,16 +226,29 @@ export interface WorkspaceSubscription {
    */
   anchorDay?: number
   /**
-   * 藍新定期定額的**委託單號**（PeriodNo）。有值 = 這個訂閱背後有一張自動扣款委託,
-   * 取消 / 暫停要拿它去打藍新的 AlterStatus。
+   * @deprecated 藍新定期定額的委託單號（PeriodNo）。**藍新定期定額程式已於 2026-07-30 移除**
+   * （它從未真正開通:`recurringEnabled` 一律 false + 金鑰未設 → 不存在真實委託）。
+   * 欄位保留只為讓萬一存在的歷史文件仍能通過型別檢查,**不要在新程式碼裡讀寫它**。
+   * 現行自動扣款看 {@link payuniCardToken}。
    */
   periodNo?: string
-  /**
-   * 建立這張委託的商店訂單編號（MerOrderNo）。藍新的 AlterStatus 要 MerOrderNo + PeriodNo
-   * **成對**才認,所以直接存在訂閱上——不然取消時得反查訂單（要多一組 composite index,
-   * 還多一條「查不到就取消不了」的失敗路徑,而那條路徑上客戶的卡還在被扣款）。
-   */
+  /** @deprecated 同 {@link periodNo}——藍新遺留,勿使用。 */
   periodOrderNo?: string
+  /**
+   * PAYUNi 信用卡**約定 Token**（`CreditHash`）——目前使用中的自動扣款模型。
+   *
+   * 有值 = 這張卡已同意約定,我方每期可拿它打 `/api/credit` 幕後扣款、**金額每期自訂**
+   * （折抵／降級只是這期少扣一點）。與藍新的 `periodNo` 語意不同:藍新是「金流按它自己的
+   * 排程扣固定金額」,PAYUNi 是「我方主動扣、金額我方決定」——失敗方向因此更安全
+   * （排程掛掉 = 這期沒扣到,不會變成「服務停了卡還在扣」）。
+   *
+   * ⚠️ 這是敏感憑證:**不得**外洩到前端（buildPlanView 只回布林 hasMandate 與末四碼）。
+   */
+  payuniCardToken?: string
+  /** 約定卡末四碼（`Card4No`）——UI 顯示「扣款卡 •••• 1234」用,非憑證。 */
+  payuniCardLast4?: string
+  /** 約定卡有效期（`CreditLife`,MMYY）。卡過期前可據此提醒客戶換卡。 */
+  payuniCardExpiry?: string
   /**
    * 是否自動續訂（背後有生效中的定期定額委託）。
    *
@@ -249,6 +262,38 @@ export interface WorkspaceSubscription {
    * 期末 roll 時直接降回免費層,不走寬限期。
    */
   cancelAtPeriodEnd?: boolean
+  /**
+   * 已排程於**期末生效**的方案變更（降級用；見 shared/billing/recurring.ts）。
+   *
+   * 降級不立即換方案——客戶已經付了這一期的錢,剩餘天數不該蒸發。按下降級只寫這個欄位,
+   * 期末續扣時才以它為準扣款並開通,然後清掉。null / 與 planId 相同 = 沒有排程變更。
+   *
+   * ⚠️ 只有「背後有自動續扣」的訂閱才有意義:單次付款沒有期末扣款那一刻,排了也不會生效。
+   */
+  pendingPlanId?: BillingPlanId | null
+  /**
+   * 可折抵下期扣款的餘額（含稅元,整數）。
+   *
+   * 用途:升級／異動的差額退費**改成折抵下期**而不退現金（老闆 2026-07-29 拍板）——
+   * 避開退款 API 與發票折讓,稅務上乾淨:折抵是「下期少收錢」,下期發票就開少收後的實收
+   * 金額,原發票完全不動。可累積、逐期折到用完。
+   */
+  creditBalance?: number
+  /**
+   * ── 每期自動續扣的狀態（PAYUNi Token 模型；由 chargeDueRecurring 維護）───────
+   *
+   * `lastChargeDate` 同時扮演兩個角色，都很關鍵：
+   *   ① **每日只重試一次**的節流（寬限期 3 天 → 最多 3~4 次，不會打爆客戶的卡）。
+   *   ② **併發搶鎖**：排程與 middleware tick 可能同時跑,claim 時在 transaction 內把它
+   *      寫成今天,另一路就會看到「今天已試過」而跳過 → 不會重複扣款。
+   */
+  lastChargeDate?: string | null
+  /** 本期已嘗試扣款次數（搭配 chargePeriodStart 判斷是否要歸零）。 */
+  chargeAttempts?: number
+  /** chargeAttempts 屬於哪一期（= 當時的 currentPeriodStart）；換期即歸零。 */
+  chargePeriodStart?: string | null
+  /** 最後一次扣款失敗的原因（PAYUNi Message）；成功續扣後清掉。給客戶與客服看。 */
+  lastChargeError?: string | null
   /** 例外額度：覆蓋方案預設則數（企業客製 / 業務談定的特例）。 */
   quotaOverride?: number | null
   /** 內部備註（開通原因、合約號等），不對客戶顯示。 */

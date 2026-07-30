@@ -123,8 +123,13 @@ export function rollSubscriptionToCurrentPeriod(
 
     if (!isSelfServePaidPlan(sub.planId)) continue // 免費 / 企業 / 內部：純續期
 
-    if (sub.autoRenew && !sub.cancelAtPeriodEnd) {
-      // 有自動續訂 → 先進寬限期,額度照給,等藍新的扣款通知把它改回 active
+    // 「有自動續訂」必須**真的有扣款憑證**才算。`autoRenew` 只是一個旗標,而 past_due
+    // 的語意是「等一筆即將發生的扣款」——沒有約定卡 Token 就**沒有任何排程會去扣他**,
+    // 讓他躺在寬限期只會:①白給 3 天 ②帳單頁顯示誤導的紅色「這期的自動扣款尚未成功」
+    // ③3 天後照樣降級。已經踩過:生產有一筆手動塞的測試訂閱 autoRenew=true 但沒有 Token。
+    // （同一個道理見 payment.ts:「沒拿到 Token 就不開 autoRenew」。）
+    if (sub.autoRenew && !sub.cancelAtPeriodEnd && sub.payuniCardToken) {
+      // 有生效中的約定卡 → 先進寬限期,額度照給,等續扣排程把它改回 active
       sub = { ...sub, status: 'past_due' }
     }
     else {
@@ -159,11 +164,11 @@ export function rollSubscriptionToCurrentPeriod(
  * 降回免費層。狀態設 active 而非 canceled——「沒續費」不是「解約」,
  * 而且 canceled 在額度解析裡本來就等同免費層,多一個狀態只是多一個要照顧的分支。
  *
- * ⚠️ **委託單號（periodNo / periodOrderNo）刻意保留。**
- *    降級只是「我方不再給付費方案」,藍新那張委託**仍然是活的、仍然會扣客戶的卡**。
- *    把單號刪掉 = 我方再也認不得那張委託 → 取消 API 找不到它 → 客戶變成
- *    「服務被降級、卡卻繼續被扣、而且誰都停不掉」。單號留著,取消入口才停得掉它,
- *    對帳排程也才有辦法主動去終止（見 payment.ts runPaymentReconcile）。
+ * ⚠️ **約定卡 Token（payuniCardToken）刻意保留。**
+ *    降級只是「我方不再給付費方案」,客戶那張卡在 PAYUNi 還是綁著的。Token 是我方唯一
+ *    能辨識並解除那張約定的憑證,刪掉就再也解不掉;而且客戶反悔要恢復訂閱也要用它。
+ *    留著**不會**自己扣款——`autoRenew=false` 之後沒有任何排程會扣他（PAYUNi 是我方主動
+ *    發動扣款,不是金流按自己的排程扣）。
  *
  * 特批額度（quotaOverride）則不該跟著留在免費層,清掉。
  */
@@ -180,19 +185,21 @@ function downgradeToFree(sub: WorkspaceSubscription): WorkspaceSubscription {
 }
 
 /**
- * 收到藍新「本期扣款成功」通知 → 把訂閱確認在當期、回到 active。
+ * 「本期扣款成功」→ 把訂閱確認在當期、回到 active。
  *
- * 通知會在錨定日當天進來,而那時 roll 可能已經把訂閱推進新一期並標成 past_due
- * （寬限期）。這裡先推進到當期拿到正確的本期起訖,再把方案與狀態蓋回去。
+ * 到期時 roll 已經把訂閱推進新一期並標成 past_due（寬限期）。這裡先推進到當期拿到正確的
+ * 本期起訖,再把方案與狀態蓋回去。**續扣一律走這支,不能走 buildPaidSubscription**——那支
+ * 會把已經滾進來的這一期再往後推一期,等於客戶一次扣款拿到兩個月。
  *
- * ⚠️ 方案**必須由呼叫端從訂單傳進來**,不能沿用 roll 之後的 sub.planId——通知若遲到
+ * ⚠️ 方案**必須由呼叫端從訂單傳進來**,不能沿用 roll 之後的 sub.planId——扣款若拖到
  *    超過寬限期,roll 早就把方案降成免費層了,直接沿用會變成「免費方案 active」,
  *    客戶付了錢卻只拿到 200 則。傳 planId 進來等於「錢收到了,把方案復原」。
+ *    也因此**期末降級**只要把訂單的 planId 換成 pendingPlanId 就自然生效。
  */
 export function confirmRenewal(
   input: WorkspaceSubscription,
   today: string,
-  paid: { planId: BillingPlanId; periodNo?: string | null; periodOrderNo?: string | null },
+  paid: { planId: BillingPlanId },
 ): WorkspaceSubscription {
   // 客戶已經按過取消 → 這筆多半是「終止委託」與藍新當期扣款的競態（錢已經扣了）。
   // 該給的一期照給,但**絕不能把 autoRenew 打開**——那等於系統自己把客戶的取消撤銷掉,
@@ -206,12 +213,6 @@ export function confirmRenewal(
     status: 'active',
     autoRenew: !wasCanceled,
     cancelAtPeriodEnd: wasCanceled,
-  }
-  // 委託單號要一起帶回：續期成功代表這張委託還活著,之後客戶要取消得靠它
-  // （AlterStatus 需要 MerOrderNo + PeriodNo 成對）。
-  if (!wasCanceled) {
-    if (paid.periodNo) next.periodNo = paid.periodNo
-    if (paid.periodOrderNo) next.periodOrderNo = paid.periodOrderNo
   }
   return next
 }

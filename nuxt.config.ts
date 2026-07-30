@@ -98,8 +98,9 @@ export default defineNuxtConfig({
     /** Google AI Studio API key（Gemini answer + embedding 共用）。申請：https://aistudio.google.com/apikey */
     geminiApiKey: process.env.GEMINI_API_KEY ?? '',
     /**
-     * 藍新金流 MPG 特店設定（每租戶各一組；private，勿放 public 以免金鑰外洩）。
-     * 測試特店 API 用 ccore.newebpay.com、正式用 core.newebpay.com。
+     * 藍新金流 MPG 特店設定（**舊金流,已改用 PAYUNi**；private，勿放 public 以免金鑰外洩）。
+     * 只留單次付款的 Notify/Return 以服務 2026-07 切換前的歷史訂單;定期定額程式已於
+     * 2026-07-30 全數移除（從未真正開通過）。新交易一律走 PAYUNi。
      */
     newebpayMerchantId: process.env.NEWEBPAY_MERCHANT_ID ?? '',
     newebpayHashKey: process.env.NEWEBPAY_HASH_KEY ?? '',
@@ -116,13 +117,14 @@ export default defineNuxtConfig({
     payuniHashIV: process.env.PAYUNI_HASH_IV ?? '',
     payuniEnv: process.env.PAYUNI_ENV ?? 'test',
     /**
-     * 信用卡定期定額（自動續訂）。與 MPG 共用同一組特店金鑰,只是換一支端點。
-     * ⚠️ 定期定額是**申請制**——要先在藍新特店後台啟用「定期定額支付工具」才會通;
-     *    未啟用時把 NEWEBPAY_PERIOD_ENABLED 留白,結帳會退回一次性付款,不會壞掉。
+     * 每月自動扣款（PAYUNi 信用卡約定 Token 幕後扣款）的灰度開關。
+     * true → 首刷走 UPP 建立約定拿 `CreditHash`，之後每期由我方排程打 /api/credit 幕後扣款。
+     *
+     * ⚠️ 正式特店要先向 PAYUNi 申請開通「信用卡 Token／幕後扣款」並綁定授權 IP,否則會被擋。
+     * ⚠️ 留白／false → **完全走現行單次付款,一行行為都不變**（首刷不帶建約定參數、
+     *    收單也不會存 Token）。設計見 docs/PAYUNI-RECURRING-DESIGN.md。
      */
-    newebpayPeriodEnabled: process.env.NEWEBPAY_PERIOD_ENABLED === 'true',
-    newebpayPeriodApiUrl: process.env.NEWEBPAY_PERIOD_API_URL ?? 'https://ccore.newebpay.com/MPG/period',
-    newebpayPeriodAlterUrl: process.env.NEWEBPAY_PERIOD_ALTER_URL ?? 'https://ccore.newebpay.com/MPG/period/AlterStatus',
+    payuniPeriodEnabled: process.env.PAYUNI_PERIOD_ENABLED === 'true',
     /**
      * 光貿(Amego)電子發票加值中心（**獨立於金流的商店帳號**，需另外向光貿申請）。
      * 未設定 → 收款照常，只是不開發票(見 guangmao-invoice.ts 的 isInvoiceConfigured)。
@@ -199,18 +201,24 @@ export default defineNuxtConfig({
         && process.env.PAYUNI_HASH_IV,
       ),
       /**
-       * 結帳是否走「自動續訂」（定期定額委託）而非一次性付款。
-       * ⚠️ 目前**一律 false**：已改用 PAYUNi 單次付款,PAYUNi 的定期定額（信用卡約定扣款）尚未實作。
-       *    留 false 確保前端**不會走到藍新那條殘留的 `create-subscription` 路徑**（那是藍新、金鑰也沒設,
-       *    一觸即壞）。等 PAYUNi 定期定額做好,再改成由 PAYUNI_PERIOD 之類旗標計算並接 PAYUNi 委託。
+       * 結帳是否走「每月自動扣款」而非單次付款（前端據此改結帳文案與同意內容）。
+       *
+       * 與 server 端的 `payuniPeriodEnabled` **同一個 env**（PAYUNI_PERIOD_ENABLED）——
+       * 必須同源:前端說「單次付款」而後端偷偷建了約定,是同意瑕疵,不只是文案不一致。
+       * 兩條路都走 `/api/payment/create-order`,差別只在 EncryptInfo 多帶建約定欄位。
+       * ⚠️ build 時計算：設好後要重新 build/部署才會生效（同 paymentEnabled）。
        */
-      recurringEnabled: false,
-      /** 電子發票是否已開通（前端據此顯示／隱藏「發票資訊」設定卡）。四個值缺一不可。 */
+      recurringEnabled: process.env.PAYUNI_PERIOD_ENABLED === 'true',
+      /**
+       * 電子發票是否已開通（前端據此顯示／隱藏「發票資訊」設定卡、發票號碼欄、作廢／折讓按鈕）。
+       * **必須與後端 isInvoiceConfigured 檢查的是同一組 env**（見 guangmao-invoice.ts）——
+       * 否則會出現「後端有開票、前端看不到發票」或反之的鬼打牆。三個值缺一不可。
+       * ⚠️ build 時計算：金鑰設好後要重新 build/部署才會變 true（同 paymentEnabled）。
+       */
       invoiceEnabled: Boolean(
-        process.env.EZPAY_INVOICE_MERCHANT_ID
-        && process.env.EZPAY_INVOICE_HASH_KEY
-        && process.env.EZPAY_INVOICE_HASH_IV
-        && process.env.EZPAY_INVOICE_API_URL,
+        process.env.GUANGMAO_INVOICE_SELLER_UBN
+        && process.env.GUANGMAO_INVOICE_APP_KEY
+        && process.env.GUANGMAO_INVOICE_API_URL,
       ),
       /**
        * 官方 FAQ 範本的 Google Sheet 母本網址（開「知道連結者可檢視」）。

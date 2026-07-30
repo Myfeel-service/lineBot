@@ -69,33 +69,17 @@ describe('buildPaidSubscription', () => {
   })
 })
 
-describe('buildPaidSubscription — 定期定額（自動扣款委託）', () => {
-  const existing = (over: Partial<WorkspaceSubscription> & Pick<WorkspaceSubscription, 'planId'>): WorkspaceSubscription => ({
-    status: 'active', currentPeriodStart: '2026-07-28', currentPeriodEnd: '2026-08-27', anchorDay: 28, ...over,
-  })
-
-  it('帶 periodNo → 開啟自動續訂並記下委託單號（到期改走寬限期而非直接降級）', () => {
-    const sub = buildPaidSubscription('starter', JUL28, null, { periodNo: 'P123', periodOrderNo: 'NP1', anchorDay: 28 })
-    expect(sub.autoRenew).toBe(true)
-    expect(sub.periodNo).toBe('P123')
-    expect(sub.periodOrderNo).toBe('NP1') // 取消時 AlterStatus 要 MerOrderNo + PeriodNo 成對
-  })
-
-  it('定期定額**不堆疊** —— 錨定日必須跟藍新的 PeriodPoint 同一天', () => {
-    // 若沿用舊訂閱的錨定日（堆疊），我方續期日就會跟藍新扣款日錯開，
-    // 每個月都會出現「我方到期進寬限期 → 藍新還沒到扣款日 → 寬限期滿 → 把有在付錢的客戶降級」。
-    const old = existing({ planId: 'lite', currentPeriodStart: '2026-07-05', currentPeriodEnd: '2026-08-04', anchorDay: 5 })
-    const sub = buildPaidSubscription('lite', JUL28, old, { periodNo: 'P123', periodOrderNo: 'NP1', anchorDay: 28 })
-    expect(sub.currentPeriodStart).toBe('2026-07-28') // 立刻生效，不接在 8/5
-    expect(sub.anchorDay).toBe(28) // ← 跟 PeriodPoint 一致
-  })
-
+describe('buildPaidSubscription — 錨定日', () => {
   it('錨定日沿用「建單時」存下的值，不在開通時重算（跨午夜會差一天）', () => {
-    // 23:59 建單（PeriodPoint=27）、00:00 開通：若在這裡用 now 重算就會拿到 28，
-    // 之後每個月藍新在 27 號扣款、我方在 28 號才續期 → 客戶每月被推進寬限期。
-    const sub = buildPaidSubscription('starter', JUL28, null, { periodNo: 'P123', anchorDay: 27 })
+    // 23:59 建單（錨定日 27）、00:00 開通：若在這裡用 now 重算就會拿到 28，
+    // 之後每個月續扣排程在 27 號扣、我方在 28 號才續期 → 客戶每月被推進寬限期。
+    const sub = buildPaidSubscription('starter', JUL28, null, {
+      anchorDay: 27,
+      payuniCard: { token: 'HASH1', last4: null, expiry: null },
+    })
     expect(sub.anchorDay).toBe(27)
     expect(sub.currentPeriodEnd).toBe('2026-08-26') // 下一次錨定日 8/27 的前一天
+    expect(sub.autoRenew).toBe(true)
   })
 })
 
@@ -211,40 +195,6 @@ describe('settlePaidOrder', () => {
     expect(db._store.get('workspaces/ws1')).toBeUndefined()
   })
 
-  it('換方案：開通成功 → 回報要終止的舊委託（period-notify 據此終止舊委託）', async () => {
-    const db = makeDb({
-      'paymentOrders/NP1': pendingOrder({
-        kind: 'period_first', supersedesPeriodNo: 'P_OLD', supersedesPeriodOrderNo: 'NP_OLD',
-      }),
-    }) as any
-    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 499, periodNo: 'P_NEW', now: JUL28 }, db)
-    expect(r.outcome).toBe('settled')
-    expect(r.supersedesPeriodNo).toBe('P_OLD')
-    expect(r.supersedesPeriodOrderNo).toBe('NP_OLD')
-  })
-
-  it('換方案 redelivery（已 paid）→ 仍回報舊委託，讓「開通成功但終止失敗」能在重送時補做', async () => {
-    const db = makeDb({
-      'paymentOrders/NP1': pendingOrder({
-        status: 'paid', kind: 'period_first', supersedesPeriodNo: 'P_OLD', supersedesPeriodOrderNo: 'NP_OLD',
-      }),
-    }) as any
-    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, periodNo: 'P_NEW', now: JUL28 }, db)
-    expect(r.outcome).toBe('already')
-    expect(r.supersedesPeriodNo).toBe('P_OLD') // ← 重送也要能終止舊委託
-  })
-
-  it('換方案 redelivery 但訂單是 failed → 不回報舊委託（失敗的訂單不該終止任何委託）', async () => {
-    const db = makeDb({
-      'paymentOrders/NP1': pendingOrder({
-        status: 'failed', kind: 'period_first', supersedesPeriodNo: 'P_OLD', supersedesPeriodOrderNo: 'NP_OLD',
-      }),
-    }) as any
-    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, periodNo: 'P_NEW', now: JUL28 }, db)
-    expect(r.outcome).toBe('already')
-    expect(r.supersedesPeriodNo).toBeUndefined()
-  })
-
   it('查無訂單 → unknown', async () => {
     const db = makeDb() as any
     expect((await settlePaidOrder({ merchantOrderNo: 'NOPE', paid: true, now: JUL28 }, db)).outcome).toBe('unknown')
@@ -259,3 +209,292 @@ describe('settlePaidOrder', () => {
   })
 })
 
+
+// ── PAYUNi 約定卡（Token 幕後續扣）────────────────────────────────────────────
+
+describe('buildPaidSubscription — PAYUNi 約定卡（Token 續扣）', () => {
+  const sub0 = (over: Partial<WorkspaceSubscription> & Pick<WorkspaceSubscription, 'planId'>): WorkspaceSubscription => ({
+    status: 'active', currentPeriodStart: '2026-07-28', currentPeriodEnd: '2026-08-27', anchorDay: 28, ...over,
+  })
+  const card = { token: 'HASH1', last4: '1234', expiry: '0929' }
+
+  it('帶約定卡 → 存 Token/末四碼/有效期,並開啟自動續訂', () => {
+    const sub = buildPaidSubscription('lite', JUL28, null, { payuniCard: card })
+    expect(sub.payuniCardToken).toBe('HASH1')
+    expect(sub.payuniCardLast4).toBe('1234')
+    expect(sub.payuniCardExpiry).toBe('0929')
+    expect(sub.autoRenew).toBe(true)
+    expect(sub.cancelAtPeriodEnd).toBe(false)
+  })
+
+  it('付款成功但沒建成約定 → **不**開自動續訂（否則會等一筆永不發生的續扣,把人卡到降級）', () => {
+    const sub = buildPaidSubscription('lite', JUL28, null, { payuniCard: null })
+    expect(sub.payuniCardToken).toBeUndefined()
+    expect(sub.autoRenew).not.toBe(true)
+  })
+
+  it('PAYUNi **可以堆疊**（與藍新相反）:提前改自動續訂不吃掉已付的剩餘天數', () => {
+    // 藍新不堆疊是因為金流端有自己固定的扣款日；PAYUNi 的扣款日由我方排程依
+    // currentPeriodEnd 決定,不會錯開 → 沿用舊錨定日、接在到期日隔天才是對客戶公平的做法。
+    const old = sub0({ planId: 'lite' })
+    const sub = buildPaidSubscription('lite', JUL28, old, { payuniCard: card, anchorDay: 28 })
+    expect(sub.currentPeriodStart).toBe('2026-08-28') // 接在 8/27 之後,不從今天重算
+    expect(sub.anchorDay).toBe(28)
+    expect(sub.payuniCardToken).toBe('HASH1')
+  })
+
+  it('這筆沒建新約定 → **沿用**既有 Token（弄丟就再也無法向 PAYUNi 解除約定）', () => {
+    const old = sub0({ planId: 'lite', payuniCardToken: 'OLD', payuniCardLast4: '9999', autoRenew: true })
+    const sub = buildPaidSubscription('lite', JUL28, old, {})
+    expect(sub.payuniCardToken).toBe('OLD')
+    expect(sub.payuniCardLast4).toBe('9999')
+    expect(sub.autoRenew).toBe(true)
+  })
+
+  it('已取消的人手動補刷一期 → 不會偷偷把自動續訂打開', () => {
+    const canceled = sub0({ planId: 'lite', payuniCardToken: 'OLD', autoRenew: false, cancelAtPeriodEnd: true })
+    const sub = buildPaidSubscription('lite', JUL28, canceled, {})
+    expect(sub.payuniCardToken).toBe('OLD') // Token 留著（解約還要用）
+    expect(sub.autoRenew).toBe(false)
+    expect(sub.cancelAtPeriodEnd).toBe(true)
+  })
+})
+
+describe('settlePaidOrder — 約定卡以「訂單 kind」為閘門', () => {
+  beforeEach(() => invalidateWorkspaceSubscriptionCache())
+  const card = { token: 'HASH1', last4: '1234', expiry: '0929' }
+
+  it('kind=period_first + 回傳 CreditHash → 存進訂閱,訂單記 cardBound/末四碼', async () => {
+    const db = makeDb({ 'paymentOrders/NP1': pendingOrder({ kind: 'period_first', anchorDay: 28 }) }) as any
+    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 499, payuniCard: card, now: JUL28 }, db)
+
+    expect(r.outcome).toBe('settled')
+    expect(r.cardBindFailed).toBe(false)
+    expect(db._store.get('workspaces/ws1').subscription).toMatchObject({
+      payuniCardToken: 'HASH1', payuniCardLast4: '1234', autoRenew: true,
+    })
+    const order = db._store.get('paymentOrders/NP1')
+    expect(order.cardBound).toBe(true)
+    expect(order.cardLast4).toBe('1234')
+  })
+
+  it('kind=one_time 卻回了 CreditHash → **不建立約定**（不能把單次付款變成每月扣款）', async () => {
+    const db = makeDb({ 'paymentOrders/NP1': pendingOrder({ kind: 'one_time' }) }) as any
+    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 499, payuniCard: card, now: JUL28 }, db)
+
+    expect(r.outcome).toBe('settled')
+    expect(r.cardBindFailed).toBe(false)
+    const ws = db._store.get('workspaces/ws1')
+    expect(ws.subscription.payuniCardToken).toBeUndefined()
+    expect(ws.subscription.autoRenew).not.toBe(true)
+    expect(db._store.get('paymentOrders/NP1').cardBound).toBe(false)
+  })
+
+  it('沒有 kind 的舊訂單（視為 one_time）同樣不建立約定', async () => {
+    const db = makeDb({ 'paymentOrders/NP1': pendingOrder() }) as any
+    await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 499, payuniCard: card, now: JUL28 }, db)
+    expect(db._store.get('workspaces/ws1').subscription.payuniCardToken).toBeUndefined()
+  })
+
+  it('kind=period_first 但沒拿到 Token → cardBindFailed（收了錢卻不會有下期扣款,要人看）', async () => {
+    const db = makeDb({ 'paymentOrders/NP1': pendingOrder({ kind: 'period_first' }) }) as any
+    const r = await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 499, payuniCard: null, now: JUL28 }, db)
+
+    expect(r.outcome).toBe('settled') // 錢收了、服務照開
+    expect(r.cardBindFailed).toBe(true)
+    expect(db._store.get('workspaces/ws1').subscription.autoRenew).not.toBe(true)
+  })
+})
+
+describe('settlePaidOrder — 續扣（period_recurring）確認當期,不是再開一期', () => {
+  beforeEach(() => invalidateWorkspaceSubscriptionCache())
+
+  /** 已被 roll 推進新一期、等扣款的自動續訂。 */
+  const pastDue = {
+    planId: 'lite', status: 'past_due', currentPeriodStart: '2026-08-28', currentPeriodEnd: '2026-09-27',
+    anchorDay: 28, autoRenew: true, payuniCardToken: 'HASH1', lastChargeError: '卡片授權失敗',
+  }
+  const AUG28 = new Date(Date.UTC(2026, 7, 28, 0, 30, 0))
+
+  it('續扣成功 → **同一期**轉 active（走 buildPaidSubscription 會變成客戶一次扣款拿兩個月）', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring', anchorDay: 28 }),
+      'workspaces/ws1': { subscription: pastDue },
+    }) as any
+    const r = await settlePaidOrder({ merchantOrderNo: 'R1', paid: true, amount: 499, now: AUG28 }, db)
+
+    expect(r.outcome).toBe('settled')
+    const sub = db._store.get('workspaces/ws1').subscription
+    expect(sub.status).toBe('active')
+    expect(sub.currentPeriodStart).toBe('2026-08-28') // ← 不是 2026-09-28
+    expect(sub.currentPeriodEnd).toBe('2026-09-27')
+    expect(sub.autoRenew).toBe(true)
+    expect(sub.payuniCardToken).toBe('HASH1') // 約定卡留著,下一期還要用
+    expect(sub.lastChargeError).toBeUndefined() // 上次的失敗原因已不成立,別留在畫面上
+    // 帳本記的本期起訖要與訂閱一致（發票/對帳看這個）
+    expect(db._store.get('paymentOrders/R1')).toMatchObject({ periodStart: '2026-08-28', periodEnd: '2026-09-27' })
+  })
+
+  it('續扣期間客戶已按取消 → 該給的一期照給,但不會把取消撤銷掉', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring' }),
+      'workspaces/ws1': { subscription: { ...pastDue, autoRenew: false, cancelAtPeriodEnd: true } },
+    }) as any
+    await settlePaidOrder({ merchantOrderNo: 'R1', paid: true, amount: 499, now: AUG28 }, db)
+
+    const sub = db._store.get('workspaces/ws1').subscription
+    expect(sub.status).toBe('active')
+    expect(sub.autoRenew).toBe(false)
+    expect(sub.cancelAtPeriodEnd).toBe(true)
+  })
+
+  it('續扣失敗 → 訂單標 failed 並留原因,訂閱不動（維持 past_due,降級交給 roll）', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring' }),
+      'workspaces/ws1': { subscription: pastDue },
+    }) as any
+    const r = await settlePaidOrder({ merchantOrderNo: 'R1', paid: false, failReason: '卡片授權失敗', now: AUG28 }, db)
+
+    expect(r.outcome).toBe('settled')
+    expect(db._store.get('paymentOrders/R1')).toMatchObject({ status: 'failed', failReason: '卡片授權失敗' })
+    expect(db._store.get('workspaces/ws1').subscription).toMatchObject({ status: 'past_due', planId: 'lite' })
+  })
+})
+
+describe('settlePaidOrder — 續扣落地降級與折抵（P4）', () => {
+  beforeEach(() => invalidateWorkspaceSubscriptionCache())
+  const AUG28 = new Date(Date.UTC(2026, 7, 28, 0, 30, 0))
+  const pastDue = (over: Record<string, unknown> = {}) => ({
+    planId: 'starter', status: 'past_due', currentPeriodStart: '2026-08-28', currentPeriodEnd: '2026-09-27',
+    anchorDay: 28, autoRenew: true, payuniCardToken: 'HASH1', ...over,
+  })
+
+  it('訂單方案 = 排程的新方案 → 開通新方案並清掉排程（否則下期會再降一次）', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring', planId: 'lite', amount: 399 }),
+      'workspaces/ws1': { subscription: pastDue({ pendingPlanId: 'lite' }) },
+    }) as any
+    await settlePaidOrder({ merchantOrderNo: 'R1', paid: true, amount: 399, now: AUG28 }, db)
+
+    const sub = db._store.get('workspaces/ws1').subscription
+    expect(sub.planId).toBe('lite')
+    expect(sub.status).toBe('active')
+    expect(sub.pendingPlanId).toBeUndefined()
+    expect(sub.currentPeriodStart).toBe('2026-08-28') // 仍是同一期
+  })
+
+  it('折抵：以**訂單上的 creditApplied** 扣餘額（重試/查單補查不會重複扣）', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring', planId: 'starter', amount: 699, creditApplied: 100 }),
+      'workspaces/ws1': { subscription: pastDue({ creditBalance: 300 }) },
+    }) as any
+    await settlePaidOrder({ merchantOrderNo: 'R1', paid: true, amount: 699, now: AUG28 }, db)
+
+    expect(db._store.get('workspaces/ws1').subscription.creditBalance).toBe(200)
+  })
+
+  it('折抵用完 → 欄位清掉,不留 0（避免畫面顯示「折抵餘額 NT$0」）', async () => {
+    const db = makeDb({
+      'paymentOrders/R1': pendingOrder({ merchantOrderNo: 'R1', kind: 'period_recurring', planId: 'starter', amount: 699, creditApplied: 100 }),
+      'workspaces/ws1': { subscription: pastDue({ creditBalance: 100 }) },
+    }) as any
+    await settlePaidOrder({ merchantOrderNo: 'R1', paid: true, amount: 699, now: AUG28 }, db)
+
+    expect(db._store.get('workspaces/ws1').subscription.creditBalance).toBeUndefined()
+  })
+
+  it('立即換方案（升級）→ 折抵餘額**必須跟著過來**,排程的期末降級則被這次購買取代', async () => {
+    const db = makeDb({
+      'paymentOrders/NP1': pendingOrder({ planId: 'growth', amount: 1499, kind: 'one_time' }),
+      'workspaces/ws1': { subscription: pastDue({ pendingPlanId: 'lite', creditBalance: 300 }) },
+    }) as any
+    await settlePaidOrder({ merchantOrderNo: 'NP1', paid: true, amount: 1499, now: AUG28 }, db)
+
+    const sub = db._store.get('workspaces/ws1').subscription
+    expect(sub.planId).toBe('growth')
+    // 折抵是客戶的錢:重建訂閱時漏帶就等於我們把欠他的折抵刪掉
+    expect(sub.creditBalance).toBe(300)
+    // pendingPlanId 刻意不帶:客戶剛主動換了方案,期末不該再把它降回舊的排程
+    expect(sub.pendingPlanId).toBeUndefined()
+  })
+})
+
+describe('buildPaidSubscription — past_due 不堆疊（換卡/補繳）', () => {
+  it('past_due（本期還沒收到錢）→ 從今天重新起算,不接在到期日之後', () => {
+    // 8/28 開始的一期沒扣到款 → roll 把它標 past_due。客戶 8/28 換卡補繳:
+    // 若堆疊,他會拿到 9/28~10/27 這段未來期間,而沒付款的本期照樣在寬限期滿被降級。
+    const pastDue: WorkspaceSubscription = {
+      planId: 'lite', status: 'past_due',
+      currentPeriodStart: '2026-08-28', currentPeriodEnd: '2026-09-27', anchorDay: 28,
+      autoRenew: true, payuniCardToken: 'OLD',
+    }
+    const sub = buildPaidSubscription('lite', new Date(Date.UTC(2026, 7, 28, 0, 30)), pastDue, {
+      payuniCard: { token: 'NEW', last4: '5678', expiry: '0930' },
+    })
+    expect(sub.currentPeriodStart).toBe('2026-08-28') // 今天,不是 9/28
+    expect(sub.currentPeriodEnd).toBe('2026-09-27')
+    expect(sub.status).toBe('active')
+    expect(sub.payuniCardToken).toBe('NEW') // 換卡:新 Token 覆蓋舊的
+    expect(sub.payuniCardLast4).toBe('5678')
+  })
+
+  it('active 且未到期 → 仍然堆疊（提前換卡/續費不白付）', () => {
+    const active: WorkspaceSubscription = {
+      planId: 'lite', status: 'active',
+      currentPeriodStart: '2026-08-28', currentPeriodEnd: '2026-09-27', anchorDay: 28,
+      autoRenew: true, payuniCardToken: 'OLD',
+    }
+    const sub = buildPaidSubscription('lite', new Date(Date.UTC(2026, 8, 1, 0, 30)), active, {
+      payuniCard: { token: 'NEW', last4: '5678', expiry: null },
+    })
+    expect(sub.currentPeriodStart).toBe('2026-09-28') // 接在 9/27 之後
+    expect(sub.payuniCardToken).toBe('NEW')
+  })
+})
+
+describe('settlePaidOrder — 換卡會回報被取代的舊 Token（否則舊約定永遠解不掉）', () => {
+  beforeEach(() => invalidateWorkspaceSubscriptionCache())
+  const AUG28 = new Date(Date.UTC(2026, 7, 28, 0, 30, 0))
+
+  it('新 Token 覆蓋舊 Token → 回報 replacedCardToken 給呼叫端去解約', async () => {
+    const db = makeDb({
+      'paymentOrders/NP9': pendingOrder({ merchantOrderNo: 'NP9', kind: 'period_first', planId: 'lite', amount: 399 }),
+      'workspaces/ws1': { subscription: {
+        planId: 'lite', status: 'active', currentPeriodStart: '2026-08-01', currentPeriodEnd: '2026-08-31',
+        anchorDay: 1, autoRenew: true, payuniCardToken: 'OLD_HASH', payuniCardLast4: '1111',
+      } },
+    }) as any
+    const r = await settlePaidOrder({
+      merchantOrderNo: 'NP9', paid: true, amount: 399,
+      payuniCard: { token: 'NEW_HASH', last4: '2222', expiry: '0930' }, now: AUG28,
+    }, db)
+
+    expect(r.replacedCardToken).toBe('OLD_HASH')
+    expect(db._store.get('workspaces/ws1').subscription.payuniCardToken).toBe('NEW_HASH')
+  })
+
+  it('Token 沒變（沿用同一組）→ 不回報,免得對還在用的約定發解約', async () => {
+    const db = makeDb({
+      'paymentOrders/NP9': pendingOrder({ merchantOrderNo: 'NP9', kind: 'period_first', planId: 'lite', amount: 399 }),
+      'workspaces/ws1': { subscription: {
+        planId: 'lite', status: 'active', currentPeriodStart: '2026-08-01', currentPeriodEnd: '2026-08-31',
+        anchorDay: 1, autoRenew: true, payuniCardToken: 'SAME_HASH',
+      } },
+    }) as any
+    const r = await settlePaidOrder({
+      merchantOrderNo: 'NP9', paid: true, amount: 399,
+      payuniCard: { token: 'SAME_HASH', last4: null, expiry: null }, now: AUG28,
+    }, db)
+
+    expect(r.replacedCardToken).toBeNull()
+  })
+
+  it('本來沒有 Token（第一次訂閱）→ 不回報', async () => {
+    const db = makeDb({ 'paymentOrders/NP9': pendingOrder({ merchantOrderNo: 'NP9', kind: 'period_first', planId: 'lite', amount: 399 }) }) as any
+    const r = await settlePaidOrder({
+      merchantOrderNo: 'NP9', paid: true, amount: 399,
+      payuniCard: { token: 'NEW_HASH', last4: null, expiry: null }, now: AUG28,
+    }, db)
+    expect(r.replacedCardToken).toBeNull()
+  })
+})

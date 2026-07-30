@@ -106,10 +106,10 @@ describe('rollSubscriptionToCurrentPeriod — 讀取時就地推算當期', () =
   })
 })
 
-// ── 自動續訂（定期定額）的寬限期 ──────────────────────────────────
+// ── 自動續訂的寬限期 ──────────────────────────────────────────────
 //
-// 藍新是在「錨定日當天」才扣款,通知可能晚幾小時。若一到期就降級,客戶每個月都會
-// 斷線一段時間——這組測試就是在釘死這件事不會發生。
+// 續扣是在「錨定日當天」由排程發動的,可能晚幾小時（甚至遇到 UNKNOWN 要等查單補查）。
+// 若一到期就降級,客戶每個月都會斷線一段時間——這組測試就是在釘死這件事不會發生。
 describe('rollSubscriptionToCurrentPeriod — 自動續訂的寬限期', () => {
   const autoRenewing = (over: Partial<WorkspaceSubscription> = {}): WorkspaceSubscription => ({
     planId: 'starter',
@@ -118,8 +118,8 @@ describe('rollSubscriptionToCurrentPeriod — 自動續訂的寬限期', () => {
     currentPeriodEnd: '2026-08-27',
     anchorDay: 28,
     autoRenew: true,
-    periodNo: 'P26072812345678',
-    periodOrderNo: 'NP260728120ABC',
+    // 寬限期的前提是「真的有一筆扣款會來」= 有生效中的約定卡
+    payuniCardToken: 'HASH1',
     ...over,
   })
 
@@ -145,13 +145,13 @@ describe('rollSubscriptionToCurrentPeriod — 自動續訂的寬限期', () => {
     expect(r.sub.autoRenew).toBe(false)
   })
 
-  it('降級**必須保留委託單號** —— 藍新那張委託還活著、還在扣客戶的卡', () => {
-    // 把單號刪掉 = 我方再也認不得那張委託 → 取消 API 找不到它 → 客戶落到
-    // 「服務被降級、錢繼續被扣、而且誰都停不掉」。這是最貴的一種 bug。
+  it('降級**必須保留約定卡 Token** —— 那張卡在 PAYUNi 還綁著', () => {
+    // Token 刪掉 = 我方再也認不得那張約定 → 解約 API 找不到它,客戶反悔想恢復訂閱也沒得用。
+    // （留著不會自己扣款:autoRenew 已成 false,沒有任何排程會扣他。）
     const r = rollSubscriptionToCurrentPeriod(autoRenewing(), '2026-09-01')
     expect(r.sub.planId).toBe('free')
-    expect(r.sub.periodNo).toBe('P26072812345678') // ← 留著，取消入口才停得掉它
-    expect(r.sub.periodOrderNo).toBe('NP260728120ABC')
+    expect(r.sub.payuniCardToken).toBe('HASH1') // ← 留著,解約與恢復訂閱都要用
+    expect(r.sub.autoRenew).toBe(false) // 但不會再有人扣他的卡
   })
 
   it('降級後不會卡在 past_due（免費層不在寬限期邏輯的管轄內，狀態會永遠清不掉）', () => {
@@ -192,11 +192,10 @@ describe('confirmRenewal — 收到扣款成功通知', () => {
   }
 
   it('寬限中收到通知 → 回到 active，本期不變', () => {
-    const s = confirmRenewal(pastDue, '2026-08-28', { planId: 'starter', periodNo: 'P123' })
+    const s = confirmRenewal(pastDue, '2026-08-28', { planId: 'starter' })
     expect(s.status).toBe('active')
     expect(s.planId).toBe('starter')
-    expect(s.currentPeriodStart).toBe('2026-08-28')
-    expect(s.periodNo).toBe('P123')
+    expect(s.currentPeriodStart).toBe('2026-08-28') // 同一期,不是再開一期
   })
 
   it('通知遲到、已被降成免費層 → 方案由訂單復原，客戶不會付了錢只拿到 200 則', () => {
@@ -209,14 +208,14 @@ describe('confirmRenewal — 收到扣款成功通知', () => {
       anchorDay: 28,
       autoRenew: false,
     }
-    const s = confirmRenewal(downgraded, '2026-09-02', { planId: 'starter', periodNo: 'P123' })
+    const s = confirmRenewal(downgraded, '2026-09-02', { planId: 'starter' })
     expect(s.planId).toBe('starter')
     expect(s.status).toBe('active')
     expect(s.autoRenew).toBe(true)
   })
 
   it('已按下取消 → 續期通知**不得**把 autoRenew 打開（系統不能自己撤銷客戶的取消）', () => {
-    // 情境：客戶 27 號取消、終止成功；藍新 28 號那筆扣款已經在路上（競態），通知進來了。
+    // 情境：客戶 27 號按下取消，28 號那筆續扣已經在路上（競態），錢扣到了。
     // 該給的一期照給，但絕不能復活訂閱——否則帳單頁會顯示一個永遠不會發生的「下次扣款日」，
     // 客戶的取消也從紀錄上消失了。
     const canceled: WorkspaceSubscription = {
@@ -228,10 +227,49 @@ describe('confirmRenewal — 收到扣款成功通知', () => {
       autoRenew: false,
       cancelAtPeriodEnd: true,
     }
-    const s = confirmRenewal(canceled, '2026-08-28', { planId: 'starter', periodNo: 'P123', periodOrderNo: 'NP1' })
+    const s = confirmRenewal(canceled, '2026-08-28', { planId: 'starter' })
     expect(s.planId).toBe('starter') // 錢收了，這一期照給
     expect(s.autoRenew).toBe(false) // ← 但取消依然有效
     expect(s.cancelAtPeriodEnd).toBe(true)
-    expect(s.periodNo).toBeUndefined() // 委託已終止，不要復活單號
+  })
+})
+
+// ── autoRenew 旗標為真但**沒有扣款憑證** ────────────────────────────────
+//
+// 生產真的有這種資料（手動塞的測試訂閱:autoRenew=true、periodNo 是假的、沒有約定卡）。
+// 這種帳號不會有任何排程去扣他,讓他躺在寬限期只是白給 3 天 + 在帳單頁顯示一個
+// 誤導的紅色「這期的自動扣款尚未成功」,3 天後照樣降級。
+describe('rollSubscriptionToCurrentPeriod — autoRenew 但沒有約定卡', () => {
+  const noMandate = (over: Partial<WorkspaceSubscription> = {}): WorkspaceSubscription => ({
+    planId: 'starter',
+    status: 'active',
+    currentPeriodStart: '2026-07-28',
+    currentPeriodEnd: '2026-08-27',
+    anchorDay: 28,
+    autoRenew: true,
+    ...over,
+  })
+
+  it('沒有 payuniCardToken → **不進寬限期**,直接降回免費層', () => {
+    const r = rollSubscriptionToCurrentPeriod(noMandate(), '2026-08-28')
+    expect(r.sub.status).toBe('active')
+    expect(r.sub.planId).toBe('free')
+    expect(r.downgraded).toBe(true)
+  })
+
+  it('殘留藍新 periodNo 也不算憑證（那套程式已移除,不會有人來扣款）', () => {
+    const r = rollSubscriptionToCurrentPeriod(
+      noMandate({ periodNo: 'SELFPTN0001', periodOrderNo: 'NPSELFPERIOD01' }),
+      '2026-08-28',
+    )
+    expect(r.sub.planId).toBe('free')
+    expect(r.downgraded).toBe(true)
+  })
+
+  it('有 payuniCardToken → 照原本邏輯進寬限期（對照組）', () => {
+    const r = rollSubscriptionToCurrentPeriod(noMandate({ payuniCardToken: 'HASH1' }), '2026-08-28')
+    expect(r.sub.status).toBe('past_due')
+    expect(r.sub.planId).toBe('starter')
+    expect(r.downgraded).toBe(false)
   })
 })

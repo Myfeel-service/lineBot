@@ -17,6 +17,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 
-  const result = await runBillingReconcile(config as unknown as Record<string, unknown>, new Date())
+  // charge: true —— **只有這條被 await 的路徑**才執行每期自動續扣（會真的刷卡）。
+  // middleware 的 tick 是 fire-and-forget,不給它刷卡（見 runBillingReconcile 的 opts 註解）。
+  const result = await runBillingReconcile(config as unknown as Record<string, unknown>, new Date(), { charge: true })
   return { ok: true, ...result }
 })

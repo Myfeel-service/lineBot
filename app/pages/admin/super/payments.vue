@@ -7,6 +7,7 @@
         caption="本租戶所有官方帳號的付款紀錄與本月營收。"
       />
       <div class="flex gap-2 admin-header-actions">
+        <el-button @click="openCredit">開折抵</el-button>
         <el-button :loading="loading" @click="load">重新整理</el-button>
       </div>
     </template>
@@ -130,6 +131,41 @@
             >確認開立折讓</el-button>
           </template>
         </el-dialog>
+
+        <!--
+          折抵對話框:給帳號一筆「可折抵下期扣款」的餘額。
+          與「折讓」不同——折讓是對已開發票做稅務沖銷(退錢);折抵是「下期少收錢」,
+          不動原發票、不退現金(老闆 2026-07-29 拍板)。升級差額、服務補償走這裡。
+        -->
+        <el-dialog v-model="credit.open" title="開折抵（折抵下期扣款）" width="min(440px, 92vw)">
+          <div class="sa-allowance-form">
+            <p class="text-xs text-muted">
+              折抵會在該帳號<strong>下一期自動扣款</strong>時直接少收，原發票完全不動、不需折讓（稅務乾淨）。<br>
+              可累積、逐期折到用完；若折抵 ≥ 月費，那期就完全不向信用卡請款、也不開發票。
+            </p>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="官方帳號 ID" tight />
+              <el-input v-model="credit.workspaceId" placeholder="workspace ID" />
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="折抵金額(含稅)" hint="可填負數以沖銷開錯的折抵；餘額不會低於 0" tight />
+              <el-input-number v-model="credit.amount" :step="1" step-strictly controls-position="right" />
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="原因" hint="會寫進 billingCredits 稽核紀錄" tight />
+              <el-input v-model="credit.reason" placeholder="如:升級差額折抵、服務中斷補償" maxlength="60" />
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="credit.open = false">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="credit.loading"
+              :disabled="!credit.workspaceId.trim() || !credit.reason.trim() || !credit.amount"
+              @click="submitCredit"
+            >確認開折抵</el-button>
+          </template>
+        </el-dialog>
       </div>
     </template>
   </AdminSplitLayout>
@@ -242,6 +278,36 @@ async function submitAllowance() {
   }
   finally {
     allowance.loading = false
+  }
+}
+
+// ── 開折抵（折抵下期扣款）──────────────────────────────────
+// 與折讓的分工:折讓=對已開發票做稅務沖銷(退錢);折抵=下期少收錢,不動原發票、不退現金。
+const credit = reactive({ open: false, loading: false, workspaceId: '', amount: 0, reason: '' })
+function openCredit() {
+  credit.workspaceId = ''
+  credit.amount = 0
+  credit.reason = ''
+  credit.open = true
+}
+async function submitCredit() {
+  const workspaceId = credit.workspaceId.trim()
+  const reason = credit.reason.trim()
+  if (!workspaceId || !reason || !credit.amount) return
+  credit.loading = true
+  try {
+    const r = await apiFetch<{ before: number; after: number }>('/api/admin/super/grant-credit', {
+      method: 'POST',
+      body: { workspaceId, amount: credit.amount, reason },
+    })
+    showToast(`折抵餘額 NT$${r.before.toLocaleString()} → NT$${r.after.toLocaleString()}`, 'success')
+    credit.open = false
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '開折抵失敗', 'error')
+  }
+  finally {
+    credit.loading = false
   }
 }
 

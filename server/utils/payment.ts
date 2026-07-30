@@ -1,5 +1,5 @@
 /**
- * 付款（藍新金流）server 側工具：訂單帳本存取、由「已付款方案」組出訂閱物件、
+ * 付款（PAYUNi 統一金流）server 側工具：訂單帳本存取、由「已付款方案」組出訂閱物件、
  * 每日續期對帳。
  *
  * 純函式（組訂閱、訂單編號）可單元測試;會碰 Firestore 的部分（建單、開通、對帳）
@@ -17,7 +17,7 @@ import { invalidateWorkspaceSubscriptionCache } from './billing'
 import { addDays, dayOfDate, taipeiDate } from '~~/shared/time'
 import { isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { anchorDayOf, confirmRenewal, newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
-import { terminatePeriodMandate, type PeriodMandateConfig } from './newebpay-period'
+import { cancelCardBinding, type PayuniCardMandate, type PayuniKeys } from './payuni'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 import type { PaymentOrderDoc, PaymentOrderKind, PaymentOrderStatus } from '~~/shared/types/payment'
 
@@ -37,37 +37,44 @@ const pad = (n: number, len = 2) => String(n).padStart(len, '0')
  * · **從免費升級 / 換方案** → 立刻生效：錨定日重設為付款日,本期從今天起算一整期。
  *   這正是修掉「7/28 付 799 卻只買到 3 天」的地方。
  *
- * ⚠️ 換方案時舊方案的**剩餘天數不折抵**（按比例補差額 proration 留到接定期定額時一起做）。
- *    目前結帳 UI 只做升級,升級的人拿到完整一期,不會吃虧;真要做降級前得先補上折抵。
+ * ⚠️ **立即換方案**時舊方案的剩餘天數不折抵（按比例補差額 proration 仍未做）。升級的人拿到
+ *    完整一期不吃虧;**降級已改走「期末生效」**（pendingPlanId,見 shared/billing/recurring.ts）,
+ *    所以現在不會有人因為降級而虧掉已付天數。
  */
 export function buildPaidSubscription(
   planId: BillingPlanId,
   now: Date,
   existingSub?: WorkspaceSubscription | null,
   opts?: {
-    /** 藍新定期定額委託單號；有值即代表這是自動續訂的訂閱。 */
-    periodNo?: string | null
-    /** 建立該委託的商店訂單編號（取消時 AlterStatus 要成對帶）。 */
-    periodOrderNo?: string | null
     /**
-     * 建單當下決定的錨定日（= 送給藍新的 PeriodPoint）。定期定額**必須**帶,
-     * 且必須是建單時存下來的那個值,不能在這裡用 now 重算——見 PaymentOrderDoc.anchorDay。
+     * 建單當下決定的錨定日。自動續訂**必須**帶,且必須是建單時存下來的那個值,
+     * 不能在這裡用 now 重算——見 PaymentOrderDoc.anchorDay。
      */
     anchorDay?: number | null
+    /**
+     * PAYUNi 首刷建立的信用卡約定（`CreditHash` + 末四碼 + 有效期）。
+     * 有值 → 開啟自動續訂,之後每期由**我方排程**拿 Token 幕後扣款。
+     */
+    payuniCard?: PayuniCardMandate | null
   },
 ): WorkspaceSubscription {
   const today = taipeiDate(now)
-  const isPeriod = Boolean(opts?.periodNo)
 
-  // 定期定額**不堆疊**：藍新那張委託的扣款日是 PeriodPoint（= 建單當天），我方的續期日
-  // 必須跟它同一天。若沿用舊訂閱的錨定日（堆疊），兩邊就會錯開，每個月都會出現
-  // 「我方到期進寬限期 → 藍新還沒到扣款日 → 寬限期滿 → 把有在付錢的客戶降級」。
-  // 換方案時舊委託已在 create-subscription 被終止，本來就該重新起算。
-  const stacking = !isPeriod
-    && existingSub != null
+  // 期間堆疊：同方案、還沒到期 → 新一期接在現有到期日之後,錨定日不變。
+  //
+  // ⚠️ PAYUNi 的 Token 模型**允許**堆疊（藍新定期定額不行,因為金流端有自己固定的扣款日
+  //    會與我方續期日錯開;那套程式已於 2026-07-30 移除）。PAYUNi 的扣款日由我方排程依
+  //    currentPeriodEnd 決定,所以客戶提前改成自動續訂,照樣把新一期接在到期日後面
+  //    ——不吃掉他已付的剩餘天數。
+  const stacking = existingSub != null
     && existingSub.planId === planId
     && isSelfServePaidPlan(planId)
     && existingSub.status !== 'canceled'
+    // past_due = 「已滾進新一期但**這一期還沒收到錢**」（等自動續扣／寬限期中）。
+    // 這時堆疊是錯的:它假設「你已經付到期末了」,於是把新買的一期接在到期日後面 →
+    // 客戶付了錢卻拿到一段未來的期間,而沒付款的本期照樣在寬限期到底後被降級。
+    // 沒付錢的那一期不該被當成資產,所以從今天重新起算一整期。
+    && existingSub.status !== 'past_due'
     && existingSub.currentPeriodEnd != null
     && existingSub.currentPeriodEnd >= today
 
@@ -81,12 +88,31 @@ export function buildPaidSubscription(
   if (existingSub?.planId === planId && existingSub.quotaOverride != null) {
     sub.quotaOverride = existingSub.quotaOverride
   }
-  // 定期定額：記下委託單號並開啟自動續訂（到期不會直接降級,改走寬限期等扣款通知）
-  if (opts?.periodNo) {
-    sub.periodNo = opts.periodNo
-    sub.autoRenew = true
-    sub.cancelAtPeriodEnd = false
-    if (opts.periodOrderNo) sub.periodOrderNo = opts.periodOrderNo
+  // 折抵餘額**一定要帶過來**。newSubscription 是全新物件,不帶就等於客戶付一次錢、
+  // 我們順手把欠他的折抵刪掉——那是拿走客戶的錢,不是「重新起算一期」的一部分。
+  // （對比 pendingPlanId：那是「期末要換成哪個方案」的指示,客戶現在主動換了方案就已經
+  //   取代掉那個指示,刻意**不**帶過來,否則會在期末把他剛買的方案又降回去。）
+  if (existingSub?.creditBalance != null && existingSub.creditBalance > 0) {
+    sub.creditBalance = existingSub.creditBalance
+  }
+  // PAYUNi：存下約定卡 Token,之後每期由我方排程幕後扣款。
+  // ⚠️ 只有拿到 Token 才開 autoRenew——「付款成功但沒建成約定」必須留在單次付款語意,
+  //    否則到期會等一筆永遠不會發生的續扣,把客戶卡在寬限期直到降級。
+  const card = opts?.payuniCard?.token
+    ? opts.payuniCard
+    // 這一筆沒有建新約定（例：已訂閱的人手動補刷一期）→ **沿用**原有的約定卡。
+    // 不能讓它掉：CreditHash 是我方唯一能對 PAYUNi 解除約定（credit_bind/cancel 的 BindVal）的憑證,
+    // 弄丟就變成「客戶那張卡在 PAYUNi 還綁著,我方卻再也取消不了」。
+    : (existingSub?.payuniCardToken
+        ? { token: existingSub.payuniCardToken, last4: existingSub.payuniCardLast4 ?? null, expiry: existingSub.payuniCardExpiry ?? null }
+        : null)
+  if (card) {
+    sub.payuniCardToken = card.token
+    if (card.last4) sub.payuniCardLast4 = card.last4
+    if (card.expiry) sub.payuniCardExpiry = card.expiry
+    // 新建的約定一律開自動續訂；沿用舊 Token 時尊重客戶原本的意願（他可能已按過取消）。
+    sub.autoRenew = opts?.payuniCard?.token ? true : existingSub?.autoRenew === true
+    sub.cancelAtPeriodEnd = opts?.payuniCard?.token ? false : existingSub?.cancelAtPeriodEnd === true
   }
   return sub
 }
@@ -99,11 +125,12 @@ function randomSuffix(): string {
 /**
  * 產生商店訂單編號：`NP` + UTC yyMMddHHmmss + 3 碼亂數 = **17 碼**。
  *
- * 長度是被**電子發票**綁死的,不是藍新：
- *   · 藍新 MerOrderNo 上限 30 碼（英數與底線）——很寬鬆。
- *   · 定期定額每期的 OrderNo = `本單號_期數`,最多再加 3 碼（`_99`）→ 20 碼。
- *   · ezPay 發票的 MerchantOrderNo 上限就是 **20 碼**。
- * 所以本單號一超過 17 碼,第 2 期之後的續期發票就會全部被 ezPay 退件。
+ * 17 碼這個長度來自 **ezPay 時期**的「自訂編號 ≤20 碼」限制（定期定額每期會加 `_期數` 後綴）。
+ *
+ * ✅ **已改用光貿（Amego）並實測過**（2026-07-30，公開測試帳號 12345678）：17／19／20／21／
+ *    24／30 碼的 OrderId **全部開立成功** → 光貿至少收到 30 碼，20 碼不是它的限制。
+ *    目前的瓶頸只剩 PAYUNi `MerTradeNo` 的 25 碼。17 碼予以保留（沒有理由改動已在跑的格式），
+ *    續扣單號另有自己的產生器（payuni-recurring.ts `recurringOrderNo`，19 碼）。
  */
 export function newMerchantOrderNo(now: Date, rand: string = randomSuffix()): string {
   const ts = `${String(now.getUTCFullYear()).slice(2)}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}`
@@ -111,7 +138,11 @@ export function newMerchantOrderNo(now: Date, rand: string = randomSuffix()): st
   return `NP${ts}${rand}`.slice(0, 17)
 }
 
-/** ezPay 發票的自訂編號上限（Varchar(20)）。 */
+/**
+ * 訂單編號的安全長度上限。
+ * 光貿實測至少吃 30 碼（見上方註解），所以現在真正的瓶頸是 **PAYUNi `MerTradeNo` ≤25 碼**。
+ * 保守取 20 當守門值：離兩邊上限都有餘裕，測試也用它把關。
+ */
 export const INVOICE_ORDER_NO_MAX = 20
 
 // ── Firestore 存取 ─────────────────────────────────────────────────
@@ -126,11 +157,10 @@ export async function createPendingOrder(
     amount: number
     createdBy?: string | null
     kind?: PaymentOrderKind
-    /** 定期定額：建單當下決定的錨定日（= PeriodPoint），開通時沿用不重算。 */
+    /** 自動續訂：建單當下決定的錨定日，開通時沿用不重算。 */
     anchorDay?: number | null
-    /** 換方案：這張新委託開通成功後要終止的舊委託（見 PaymentOrderDoc.supersedes*）。 */
-    supersedesPeriodNo?: string | null
-    supersedesPeriodOrderNo?: string | null
+    /** 續扣：這筆用掉的折抵金額（amount 已扣掉它）；結算成功時從訂閱餘額扣除。 */
+    creditApplied?: number | null
     /**
      * 客戶結帳前勾選同意的條款版本（POLICY_VERSION）。
      * 由端點驗證前端確實帶了同意才傳進來；時間戳在這裡蓋（不信前端的時間）。
@@ -148,9 +178,7 @@ export async function createPendingOrder(
     status: 'pending',
     kind: order.kind ?? 'one_time',
     anchorDay: order.anchorDay ?? null,
-    supersedesPeriodNo: order.supersedesPeriodNo ?? null,
-    supersedesPeriodOrderNo: order.supersedesPeriodOrderNo ?? null,
-    periodNo: null,
+    creditApplied: order.creditApplied ?? null,
     tradeNo: null,
     paymentType: null,
     failReason: null,
@@ -168,7 +196,7 @@ export async function createPendingOrder(
   await db.collection(PAYMENT_ORDERS_COLLECTION).doc(order.merchantOrderNo).create(doc)
 }
 
-/** 讀一筆訂單（定期定額續期時要用原始委託單找回 workspace 與方案）。 */
+/** 讀一筆訂單。 */
 export async function getOrder(
   merchantOrderNo: string,
   db: Firestore = getDb(),
@@ -183,6 +211,11 @@ export async function getOrder(
  * 與「換方案 A→B 留兩筆」（keepOrderNo 傳沿用的舊單號,沒有沿用就傳 null 全清）。
  * 誤殺客戶隨後才付款的舊單也沒關係:settlePaidOrder 對「expired + 已付款」仍會復活開通
  * （見該函式,收了錢就得給服務）。查詢沿用 (workspaceId, createdAt) 既有索引;失敗安全跳過。
+ *
+ * ⚠️ **`period_recurring` 一律不動**。那是續扣排程自己開的單,只有它知道有沒有拿到結果;
+ *    被這裡作廢掉的話,`getPendingOrders`（只選 pending）就再也查不到它 →
+ *    「PAYUNi 回 UNKNOWN、之後銀行核准了」那筆錢會收進來卻永遠開不通,而且沒有任何紀錄。
+ *    客戶在帳單頁按「升級／續訂／換卡」剛好撞上排程正在扣款,就會發生。
  */
 export async function supersedePendingOrders(
   workspaceId: string,
@@ -200,6 +233,7 @@ export async function supersedePendingOrders(
     for (const d of snap.docs) {
       const o = d.data() as PaymentOrderDoc
       if (o.status !== 'pending' || o.merchantOrderNo === keepOrderNo) continue
+      if (o.kind === 'period_recurring') continue // 排程擁有的單,不能被前台建單順手作廢（見上方註解）
       batch.update(d.ref, { status: 'expired' as PaymentOrderStatus, updatedAt: FieldValue.serverTimestamp() })
       n++
     }
@@ -252,6 +286,12 @@ export async function findRecentPendingOrder(
   planId: BillingPlanId,
   now: Date,
   db: Firestore = getDb(),
+  /**
+   * 只沿用**同 kind** 的舊單。單次付款與「建立信用卡約定」送給 PAYUNi 的參數不同,
+   * 而開通時是照訂單的 kind 決定要不要存 Token——沿用到 kind 不同的舊單,就會出現
+   * 「客戶以為訂閱了、實際只買了一期」。留 undefined = 不比對（維持舊行為）。
+   */
+  kind?: PaymentOrderKind,
 ): Promise<PaymentOrderDoc | null> {
   try {
     const snap = await db.collection(PAYMENT_ORDERS_COLLECTION)
@@ -263,6 +303,7 @@ export async function findRecentPendingOrder(
     for (const d of snap.docs) {
       const o = d.data() as PaymentOrderDoc
       if (o.status !== 'pending' || o.planId !== planId) continue
+      if (kind && (o.kind ?? 'one_time') !== kind) continue
       const ms = (o.createdAt as Timestamp)?.toMillis?.() ?? 0
       if (ms >= cutoff) return o
     }
@@ -284,11 +325,20 @@ export interface SettleOrderResult {
   /** 付款金額與建單金額不符（疑似竄改）；此時標記失敗、不開通 */
   amountMismatch?: boolean
   /**
-   * 換方案：本次開通的新委託所取代的**舊**委託單號。開通成功後由 period-notify 拿去
-   * 終止舊委託（此刻才終止，放棄付款的客戶舊訂閱才不會被白白殺掉）。
+   * 這次開通用新 Token 取代掉的**舊** Token（換卡／重新訂閱時才有）。
+   *
+   * 呼叫端必須拿它去 `credit_bind/cancel` 解約:舊 `CreditHash` 是唯一能解除那組約定的憑證,
+   * 被新 Token 覆蓋掉之後就再也解不了 → 客戶每換一次卡,就在他的卡上多留一組
+   * 永遠無法解除的約定。
    */
-  supersedesPeriodNo?: string | null
-  supersedesPeriodOrderNo?: string | null
+  replacedCardToken?: string | null
+  /**
+   * 這是一筆「要建立信用卡約定」的訂單（period_first）,錢收到了卻**沒拿到 Token**。
+   *
+   * 客戶付了首月、服務照開,但**不會有下一期自動扣款**——他會在期末默默掉回免費層。
+   * 呼叫端要大聲記錄（並在 P3 接通知）,這是需要人去看的狀況,不是可以吞掉的雜訊。
+   */
+  cardBindFailed?: boolean
 }
 
 /**
@@ -308,8 +358,14 @@ export async function settlePaidOrder(
     failReason?: string | null
     /** Notify 回傳的付款金額；與訂單金額不符則標記失敗、不開通（防竄改） */
     amount?: number
-    /** 定期定額委託單號（首期 Notify 回傳）；有值 → 訂閱開啟自動續訂 */
-    periodNo?: string | null
+    /**
+     * PAYUNi 首刷回傳的信用卡約定（`CreditHash` 等）。
+     *
+     * ⚠️ **只有 `kind === 'period_first'` 的訂單才會被採用**（在 transaction 內以訂單的 kind
+     *    為閘門）。理由：若 PAYUNi 在一筆單次付款也回了 CreditHash,照收就會把「只想買一期」
+     *    的客戶悄悄變成每月自動扣款——那是會上新聞的那種錯,寧可漏存也不能誤存。
+     */
+    payuniCard?: PayuniCardMandate | null
     now: Date
     notifyRaw?: Record<string, unknown> | null
   },
@@ -322,18 +378,10 @@ export async function settlePaidOrder(
     if (!snap.exists) return { outcome: 'unknown' }
     const order = snap.data() as PaymentOrderDoc
     // 冪等 / 終態保護：
-    // - paid  → 一律跳過（redelivery）。仍回報 supersedes（僅先前真的開通的 paid 單）,
-    //           讓「首次開通成功、終止舊委託卻失敗」能在重送時補做終止（終止冪等）。
+    // - paid  → 一律跳過（redelivery）。
     // - failed → 跳過（視為終態決標,不因後續回拋反覆改）。
     if (order.status === 'paid' || order.status === 'failed') {
-      return {
-        outcome: 'already',
-        workspaceId: order.workspaceId,
-        planId: order.planId,
-        ...(order.status === 'paid'
-          ? { supersedesPeriodNo: order.supersedesPeriodNo ?? null, supersedesPeriodOrderNo: order.supersedesPeriodOrderNo ?? null }
-          : {}),
-      }
+      return { outcome: 'already', workspaceId: order.workspaceId, planId: order.planId }
     }
     // 逾期單：**這次確認已付款才復活開通**——收了錢就得給服務（例:建單時自動作廢舊
     // 待付款後,客戶隔一會兒才在舊付款頁完成付款）。非付款成功的 expired 一律跳過。
@@ -368,19 +416,56 @@ export async function settlePaidOrder(
       return { outcome: 'settled', workspaceId: order.workspaceId, planId: order.planId, amountMismatch: true }
     }
 
-    const sub = buildPaidSubscription(order.planId, input.now, existingSub, {
-      periodNo: input.periodNo,
-      periodOrderNo: input.periodNo ? order.merchantOrderNo : null,
-      // 沿用建單時的錨定日（= 送給藍新的 PeriodPoint），不要在這裡重算
-      anchorDay: order.anchorDay,
-    })
+    // 建約定只認「當初就是為了建約定而開的單」（見 input.payuniCard 註解）。
+    const bindsCard = order.kind === 'period_first'
+    const payuniCard = bindsCard ? (input.payuniCard ?? null) : null
+    // ⚠️ 只對 `one_time` 警告。`period_recurring` 的 /api/credit 回應**本來就會**帶回
+    //    CreditHash（官方文件列為「續用」欄位）,每筆續扣都印一行會把日誌淹掉,
+    //    真正該警覺的情況（單次付款卻回來一組約定）就再也看不見了。
+    if (input.payuniCard?.token && !bindsCard && (order.kind ?? 'one_time') === 'one_time') {
+      console.warn('[payment] 單次付款訂單卻收到 CreditHash,不建立約定:', input.merchantOrderNo)
+    }
+
+    // 續扣（第 2 期以後）**不能**用 buildPaidSubscription。
+    // 到期時 roll 已經把訂閱推進新一期並標 past_due（額度照給、服務照跑）,此時要做的是
+    // 「把**已經滾進來的這一期**確認為已付款」= confirmRenewal。若走 buildPaidSubscription,
+    // 它會判定「同方案未到期 → 期間堆疊」把本期再往後推一期 → 客戶一次扣款拿到兩個月。
+    const today = taipeiDate(input.now)
+    let sub: WorkspaceSubscription
+    if (order.kind === 'period_recurring') {
+      const base = existingSub
+        ?? newSubscription(order.planId, today, { anchorDay: order.anchorDay ?? undefined })
+      // 方案由**訂單**決定（建單時已把 pendingPlanId 解析成 order.planId）→ 降級在此生效
+      sub = confirmRenewal(base, today, { planId: order.planId })
+      // 上一次失敗的原因已經不成立了,別留在畫面上（帳單頁會顯示它）
+      delete sub.lastChargeError
+      // 排程的方案變更已經生效 → 清掉,否則下一期會再套一次同一個變更
+      delete sub.pendingPlanId
+      // 折抵：扣掉這筆真的用掉的額度。以**訂單上的值**為準（不是重算）——重試／查單補救
+      // 走同一條路時才不會重複扣或漏扣餘額。
+      const used = Math.max(0, Math.floor(order.creditApplied ?? 0))
+      if (used > 0) {
+        const left = Math.max(0, Math.floor(existingSub?.creditBalance ?? 0) - used)
+        if (left > 0) sub.creditBalance = left
+        else delete sub.creditBalance
+      }
+    }
+    else {
+      sub = buildPaidSubscription(order.planId, input.now, existingSub, {
+        // 沿用建單時的錨定日，不要在這裡重算（跨午夜建單會差一天）
+        anchorDay: order.anchorDay,
+        payuniCard,
+      })
+    }
     tx.update(orderRef, {
       ...base,
       status: 'paid' as PaymentOrderStatus,
       paidAt: FieldValue.serverTimestamp(),
-      periodNo: input.periodNo ?? null,
       periodStart: sub.currentPeriodStart,
       periodEnd: sub.currentPeriodEnd,
+      // 稽核：這一筆有沒有真的建成約定（末四碼非憑證,Token 本身只存在訂閱上）
+      cardBound: Boolean(payuniCard?.token),
+      cardLast4: payuniCard?.last4 ?? null,
     })
     // 同一 transaction 內原子寫入訂閱 → 訂單 paid 與方案開通不會半套
     tx.update(wsRef, {
@@ -392,154 +477,17 @@ export async function settlePaidOrder(
       workspaceId: order.workspaceId,
       planId: order.planId,
       amount: order.amount,
-      // 換方案：新委託開通了 → 回報要終止的舊委託（同一張新委託時兩者不會相同）
-      supersedesPeriodNo: order.supersedesPeriodNo ?? null,
-      supersedesPeriodOrderNo: order.supersedesPeriodOrderNo ?? null,
+      // 收了訂閱首期的錢卻沒拿到 Token → 之後不會自動扣款,要人看（見欄位註解）
+      cardBindFailed: bindsCard && !sub.payuniCardToken,
+      // 換卡:舊 Token 被新的取代 → 回報給呼叫端去解約（見欄位註解）
+      replacedCardToken: existingSub?.payuniCardToken && sub.payuniCardToken !== existingSub.payuniCardToken
+        ? existingSub.payuniCardToken
+        : null,
     }
   })
 
   // 開通後清快取（transaction 外，確保已 commit）
   if (result.outcome === 'settled' && result.workspaceId) {
-    invalidateWorkspaceSubscriptionCache(result.workspaceId)
-  }
-  return result
-}
-
-// ── 定期定額：第 2 期以後的自動扣款 ────────────────────────────────
-
-export interface SettleRecurringResult {
-  outcome: 'renewed' | 'past_due' | 'already' | 'unknown'
-  workspaceId?: string
-  planId?: BillingPlanId
-  amount?: number
-  /** 本期的帳本單號（= 藍新的 OrderNo，`原單號_期數`）；開發票用 */
-  ledgerOrderNo?: string
-}
-
-/**
- * 結算定期定額的「每期授權」通知（NPA-N050）。
- *
- * 與首期不同：**我方沒有預先建單**——藍新自動扣款後才回拋。所以這裡是
- * 「拿原始委託單找回 workspace 與方案 → 補寫一筆本期帳 → 續期訂閱」。
- *
- * 冪等：本期帳的 doc id 用藍新的 `OrderNo`（`原單號_期數`，每期唯一），
- * 用 create() 搶寫;已存在即代表這期處理過 → 直接跳過（藍新會重送直到收 200）。
- *
- * 扣款失敗（Status ≠ SUCCESS）→ 訂閱維持 past_due,不動方案。寬限期用完後
- * rollSubscriptionToCurrentPeriod 會自然把它降回免費層（見 shared/billing/period.ts）。
- */
-export async function settleRecurringAuth(
-  input: {
-    /** 原始委託的商店訂單編號（MerchantOrderNo） */
-    merchantOrderNo: string
-    /** 本期單號（OrderNo = `原單號_期數`）；藍新未回傳時退回自行組出 */
-    ledgerOrderNo: string
-    paid: boolean
-    periodNo?: string | null
-    tradeNo?: string | null
-    amount?: number
-    periodTimes?: number | null
-    now: Date
-    notifyRaw?: Record<string, unknown> | null
-  },
-  db: Firestore = getDb(),
-): Promise<SettleRecurringResult> {
-  const today = taipeiDate(input.now)
-  const originRef = db.collection(PAYMENT_ORDERS_COLLECTION).doc(input.merchantOrderNo)
-  const ledgerRef = db.collection(PAYMENT_ORDERS_COLLECTION).doc(input.ledgerOrderNo)
-
-  // ⚠️ 帳本與訂閱**必須在同一個 transaction 裡**。
-  // 之前是先 create() 帳本、再 update() 訂閱：只要中間掛掉（Lambda 逾時、Firestore 抖動）,
-  // 藍新重送時就會撞到「帳本已存在 → 冪等跳過」,訂閱永遠續不了期——客戶錢扣了、方案卻在
-  // 寬限期滿之後被降級,而且連發票都不會開。冪等鍵一旦先落地，就再也沒有第二次機會了。
-  const result = await db.runTransaction<SettleRecurringResult>(async (tx) => {
-    const originSnap = await tx.get(originRef)
-    if (!originSnap.exists) return { outcome: 'unknown' }
-    const origin = originSnap.data() as PaymentOrderDoc
-
-    // 原始委託單已被判定失敗（金額不符 / 逾期清理）→ 這張委託本來就不該生效。
-    // 不能因為藍新照樣扣了款就把方案開起來,那等於「失敗的訂單被續期通知復活」。
-    if (origin.status === 'failed') {
-      console.error('[payment] 續期通知對應到一張已失敗的委託單,拒絕開通', input.merchantOrderNo)
-      return { outcome: 'unknown', workspaceId: origin.workspaceId, planId: origin.planId }
-    }
-
-    const ledgerSnap = await tx.get(ledgerRef)
-    if (ledgerSnap.exists) {
-      // 這一期處理過了（藍新重送）→ 冪等跳過
-      return { outcome: 'already', workspaceId: origin.workspaceId, planId: origin.planId }
-    }
-
-    const wsRef = db.collection('workspaces').doc(origin.workspaceId)
-    const wsSnap = await tx.get(wsRef)
-    const existing = wsSnap.exists ? (wsSnap.data() as WorkspaceDoc).subscription : undefined
-
-    const ledger: PaymentOrderDoc = {
-      merchantOrderNo: input.ledgerOrderNo,
-      workspaceId: origin.workspaceId,
-      organizationId: origin.organizationId ?? null,
-      planId: origin.planId,
-      amount: input.amount ?? origin.amount,
-      status: (input.paid ? 'paid' : 'failed') as PaymentOrderStatus,
-      kind: 'period_recurring' as PaymentOrderKind,
-      anchorDay: origin.anchorDay ?? null,
-      periodNo: input.periodNo ?? origin.periodNo ?? null,
-      periodTimes: input.periodTimes ?? null,
-      tradeNo: input.tradeNo ?? null,
-      paymentType: 'CREDIT',
-      periodStart: null,
-      periodEnd: null,
-      createdBy: null,
-      createdAt: FieldValue.serverTimestamp(),
-      paidAt: input.paid ? FieldValue.serverTimestamp() : null,
-      updatedAt: FieldValue.serverTimestamp(),
-      notifyRaw: input.notifyRaw ?? null,
-    }
-
-    if (!input.paid) {
-      tx.create(ledgerRef, ledger)
-      // 扣款失敗 → past_due（服務照跑,等寬限期與後續重試）。降級一律交給 roll 統一處理,
-      // 免得「失敗通知」與「寬限期推算」對降級時機各說各話。
-      // 只有還在付費方案上才標 past_due——已經被降回免費層的帳號再標 past_due 會卡死
-      // （免費層不在寬限期邏輯的管轄內，狀態永遠清不掉）。
-      if (existing && isSelfServePaidPlan(existing.planId)) {
-        tx.update(wsRef, {
-          subscription: { ...existing, status: 'past_due' },
-          updatedAt: FieldValue.serverTimestamp(),
-        })
-      }
-      return { outcome: 'past_due', workspaceId: origin.workspaceId, planId: origin.planId }
-    }
-
-    // 扣款成功 → 續期：推到當期、方案由「原始訂單」決定（見 confirmRenewal 的警告）
-    const base = existing ?? buildPaidSubscription(origin.planId, input.now, null, {
-      periodNo: input.periodNo,
-      periodOrderNo: origin.merchantOrderNo,
-      anchorDay: origin.anchorDay,
-    })
-    const renewed = confirmRenewal(base, today, {
-      planId: origin.planId,
-      periodNo: input.periodNo ?? origin.periodNo,
-      periodOrderNo: origin.merchantOrderNo,
-    })
-
-    tx.create(ledgerRef, {
-      ...ledger,
-      periodStart: renewed.currentPeriodStart,
-      periodEnd: renewed.currentPeriodEnd,
-    })
-    tx.update(wsRef, { subscription: renewed, updatedAt: FieldValue.serverTimestamp() })
-
-    return {
-      outcome: 'renewed',
-      workspaceId: origin.workspaceId,
-      planId: origin.planId,
-      amount: input.amount ?? origin.amount,
-      ledgerOrderNo: input.ledgerOrderNo,
-    }
-  })
-
-  if (result.workspaceId && (result.outcome === 'renewed' || result.outcome === 'past_due')) {
     invalidateWorkspaceSubscriptionCache(result.workspaceId)
   }
   return result
@@ -555,8 +503,18 @@ export async function settleRecurringAuth(
 const STALE_PENDING_MS = 3 * 60 * 60 * 1000
 
 /**
+ * 續扣單（`period_recurring`）的逾期門檻——**刻意比一般 pending 長得多**。
+ *
+ * 那是排程自己開的單,而 `/api/credit` 有「UNKNOWN 之後才有結果」的非同步路徑:
+ * 只要在 3 小時內被標成 expired,`getPendingOrders`（只選 pending）就再也查不到它,
+ * 銀行事後核准的那筆錢就會收進來卻永遠開不通。給 3 天讓 `trade/query` 有充分機會補查。
+ */
+const STALE_RECURRING_PENDING_MS = 3 * 24 * 60 * 60 * 1000
+
+/**
  * 每日對帳：① 過期的訂閱 → 滾到當期（免費層補回額度；付費方案沒續費則降回免費）
- *          ② 卡住的 pending 訂單 → expired（純清理,不影響訂閱）。
+ *          ② **past_due 的訂閱 → 寬限期滿的降級要落地**（見下方註解,少了這段會每天重扣）
+ *          ③ 卡住的 pending 訂單 → expired（純清理,不影響訂閱）。
  *
  * ⚠️ 這支排程是**把結果落地成資料**,不是正確性的前提。真正決定「現在是哪一期、
  *    額度該不該歸零」的是 `rollSubscriptionToCurrentPeriod`,它在每次讀訂閱時就地推算。
@@ -568,33 +526,50 @@ const STALE_PENDING_MS = 3 * 60 * 60 * 1000
 export async function runPaymentReconcile(
   now: Date = new Date(),
   db: Firestore = getDb(),
-  /** 降級時用來終止藍新委託；未提供則只寫資料庫（單元測試用）。 */
-  periodCfg?: PeriodMandateConfig | null,
-): Promise<{ renewed: number; downgraded: number; terminated: number; expiredOrders: number }> {
+  /**
+   * PAYUNi 特店設定;有給才會在降級時順手向 PAYUNi 解除卡片約定（清潔工作）。
+   * 不給 → 只寫資料庫、Token 留著（單元測試與金流未設定時走這條）。
+   */
+  payuni?: { merchantId: string; keys: PayuniKeys; env: unknown } | null,
+): Promise<{ renewed: number; downgraded: number; unbound: number; expiredOrders: number }> {
   const today = taipeiDate(now)
 
   let renewed = 0
   let downgraded = 0
-  let terminated = 0
-  const stale = await db.collection('workspaces').where('subscription.currentPeriodEnd', '<', today).get()
-  for (const doc of stale.docs) {
-    const sub = (doc.data() as WorkspaceDoc).subscription
-    if (!sub) continue
-    const rolled = rollSubscriptionToCurrentPeriod(sub, today)
-    if (!rolled.changed) continue
+  let unbound = 0
+  const seen = new Set<string>()
 
-    // 降級（沒續費 / 寬限期滿）→ 藍新那張委託還活著,還會扣客戶的卡。
-    // 我方都不給付費方案了,就必須主動把它停掉——否則客戶會「服務被降級、錢照扣」。
-    if (rolled.downgraded && rolled.sub.periodNo && rolled.sub.periodOrderNo && periodCfg) {
-      const t = await terminatePeriodMandate(rolled.sub.periodOrderNo, rolled.sub.periodNo, periodCfg)
-      if (t.ok) {
-        delete rolled.sub.periodNo
-        delete rolled.sub.periodOrderNo
-        terminated++
+  /** 把一個 workspace 的訂閱推進到當期並落地;有降級就順手解除卡片約定。 */
+  const rollAndPersist = async (doc: { id: string; ref: { update: (d: Record<string, unknown>) => Promise<unknown> }; data: () => unknown }) => {
+    if (seen.has(doc.id)) return
+    seen.add(doc.id)
+    const sub = (doc.data() as WorkspaceDoc).subscription
+    if (!sub) return
+    const rolled = rollSubscriptionToCurrentPeriod(sub, today)
+    if (!rolled.changed) return
+
+    // 降回免費層 → 順手解除那張卡在 PAYUNi 的約定,不留一個沒人會用的授權在金流端
+    // （對客戶也是好事:他的卡不再被我們綁著）。
+    //
+    // ⚠️ 這是**清潔工作,不是安全需求**——PAYUNi 是我方主動發動扣款,`autoRenew=false` 之後
+    //    沒有任何排程會扣他。所以解約失敗就**留著 Token、下次對帳再試**,絕不因此中斷對帳。
+    //    （對比藍新:不終止委託就會「服務被降級、錢照扣」,那才是必須成功的操作。）
+    // ⚠️ 只在「真的降級」時解。客戶按下取消（cancelAtPeriodEnd）時**不解**——他本期還能用,
+    //    而且可能反悔想恢復訂閱,那時還需要這組 Token。
+    if (rolled.downgraded && rolled.sub.payuniCardToken && payuni?.merchantId) {
+      const r = await cancelCardBinding({
+        merchantId: payuni.merchantId,
+        bindVal: rolled.sub.payuniCardToken,
+        timestamp: Math.floor(now.getTime() / 1000),
+      }, payuni.keys, payuni.env)
+      if (r.ok || r.notFound) {
+        delete rolled.sub.payuniCardToken
+        delete rolled.sub.payuniCardLast4
+        delete rolled.sub.payuniCardExpiry
+        unbound++
       }
       else {
-        // 停不掉 → 單號留著（下次對帳與客戶的取消按鈕都還能再試一次）
-        console.error('[payment] 降級時終止委託失敗,卡片可能仍在扣款', doc.id, t.code, t.message)
+        console.warn('[payment] 降級時解除卡片約定失敗,Token 留著下次再試', doc.id, r.outerStatus, r.message)
       }
     }
 
@@ -604,11 +579,26 @@ export async function runPaymentReconcile(
     if (rolled.downgraded) downgraded++
   }
 
+  // ① 已過期的訂閱（本期結束日在今天之前）
+  const stale = await db.collection('workspaces').where('subscription.currentPeriodEnd', '<', today).get()
+  for (const doc of stale.docs) await rollAndPersist(doc)
+
+  // ② past_due 的訂閱 —— **這一段不能省**。
+  //    past_due 代表「已經滾進新一期、但這一期還沒收到錢」,所以它的 currentPeriodEnd 是未來日期,
+  //    第 ① 段的查詢（currentPeriodEnd < today）**永遠選不到它**。少了這一段,「寬限期滿要降級」
+  //    就只會在每次讀訂閱時被就地算出來、從不寫回 Firestore → 資料永遠停在
+  //    past_due + autoRenew + Token → 續扣排程每天都選到它,同一張被拒的卡被無限重扣。
+  const pastDue = await db.collection('workspaces').where('subscription.status', '==', 'past_due').get()
+  for (const doc of pastDue.docs) await rollAndPersist(doc)
+
   let expiredOrders = 0
-  const staleCutoffMs = now.getTime() - STALE_PENDING_MS
   const pending = await db.collection(PAYMENT_ORDERS_COLLECTION).where('status', '==', 'pending').get()
   for (const doc of pending.docs) {
-    const createdAt = (doc.data() as PaymentOrderDoc).createdAt as Timestamp
+    const order = doc.data() as PaymentOrderDoc
+    // 續扣單給更長的 TTL（見 STALE_RECURRING_PENDING_MS）
+    const ttl = order.kind === 'period_recurring' ? STALE_RECURRING_PENDING_MS : STALE_PENDING_MS
+    const staleCutoffMs = now.getTime() - ttl
+    const createdAt = order.createdAt as Timestamp
     const ms = createdAt && typeof createdAt.toMillis === 'function' ? createdAt.toMillis() : 0
     if (ms && ms < staleCutoffMs) {
       await doc.ref.update({ status: 'expired' as PaymentOrderStatus, updatedAt: FieldValue.serverTimestamp() })
@@ -616,5 +606,5 @@ export async function runPaymentReconcile(
     }
   }
 
-  return { renewed, downgraded, terminated, expiredOrders }
+  return { renewed, downgraded, unbound, expiredOrders }
 }

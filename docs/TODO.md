@@ -1,6 +1,8 @@
 # 待辦清單（依優先順序）
 
-> 最後更新：2026-07-24（金流改用 PAYUNi 統一金流；Stage 1 沙盒付款頁實測通過）
+> 最後更新：2026-07-30（PAYUNi 自動扣款 P1~P5 程式完成；發票改光貿）
+> ⚠️ **「還缺什麼資料、去哪拿」一律看 [`docs/GOLIVE-BLOCKERS.md`](./GOLIVE-BLOCKERS.md)**，
+>    不要再靠對話裡的截圖口耳相傳。PAYUNi 自動扣款細節看 [`PAYUNI-RECURRING-DESIGN.md`](./PAYUNI-RECURRING-DESIGN.md)。
 > 排序原則：**先排「有前置時間、你不動它就一直卡著」的事**，再排「不做會扣錯錢」的，
 > 再排「服務已付費客戶」的，最後才是成長與商業完整性。
 
@@ -26,8 +28,15 @@
 1. [x] ✅ **Notify → 自動開通（模擬實測通過 2026-07-24）**：用真沙盒金鑰造合法 Notify 打本機（linebot dev 在 **:3001**，3000 被別的專案占）→ 訂單 paid、OA free→lite、冪等全對（寫進 linebot-e8dda 真 Firestore）。**真實刷卡的 Notify 尚未實收**（卡在測試卡；但格式與 handler 已用模擬證明）。
 2. [x] ✅ **`trade/query` 對真實 PAYUNi 沙盒驗證通過**：urlencoded 就通、HashInfo 驗簽過、可解密。**修掉 bug**：查單外層 Status 是 QUERY 碼非 SUCCESS → 新增 `isTradePaid`（reconcile 用它、且只在已付款才 settle，不會把等付款的 pending 誤標 failed）。⚠️ 尚未對「真的已付款」的單查過（確認 paid 分支欄位仍是 TradeStatus）。
 3. [x] ✅ **對帳會自動跑了（2026-07-24）**：抽 `runBillingReconcile` 共用；新增 `payment-reconcile-tick` middleware（正式環境有 API 流量時每 30 分順便跑，dev 不跑，全程冪等）→ 不靠外部排程也會對帳。外部 EventBridge/Cloud Scheduler 打 `/api/payment/reconcile`（帶 `X-Cron-Secret`）仍可接為更穩的主排程（選配）。
-4. [ ] **P1 自動續訂（定期定額）**：現在只有單次付款 → 一個月後降免費、要手動再刷。PAYUNi 信用卡約定扣款。留存/營收命脈。
-5. [ ] **P1 電子發票接哪家（決策）**：目前指向 ezPay（另一家、另申請）。PAYUNi 自帶電子發票 → 建議改用 PAYUNi（同一家、共用底座）。
+4. [~] **P1 自動續訂（每月自動扣款）**：改用 **PAYUNi 信用卡約定 Token 幕後扣款**（不是金流排程,
+       是我方每期主動扣、金額每期可自訂）。設計定稿見 `docs/PAYUNI-RECURRING-DESIGN.md`。
+       **P1（續扣建構器）+ P2（首刷建約定＋存 Token）程式已完成、灰度旗標 `PAYUNI_PERIOD_ENABLED` 預設關**;
+       ⬜ 沙盒實刷未驗、⬜ P3 每期續扣排程、⬜ P4 降級/折抵、⬜ P5 換卡＋清藍新死碼。
+       ⚠️ 正式上線前要向 PAYUNi 申請開通「信用卡 Token/幕後扣款」+ 綁授權 IP（有前置時間,建議先送）。
+5. [x] ✅ **電子發票已定案並接完：光貿（Amego）**（不是 ezPay、也不是 PAYUNi 自帶）。
+       開立/作廢/折讓三支都在（`guangmao-invoice.ts`）、公開測試帳號沙盒開立實測全綠、金額模型 B2B/B2C 分流已修。
+       ⬜ 剩:正式金鑰申請＋填入（`GUANGMAO_INVOICE_*`，**沒填 = 每筆訂單發票 skipped，等於零開票**）、
+       作廢/折讓沙盒實測、含稅口徑問會計。
 6. [~] **P1 付款失敗 UX / 收據信**：失敗原因顯示 + 一鍵重新付款 ✅（2026-07-24）；**收據/通知信（SES）已寫未開**（要 `EMAIL_FROM` + 驗證網域 + 出 sandbox）待做。
 7. [~] **P2 其餘**：✅ **super admin 金流總覽**（`/admin/super/payments`：本月營收/成交/待付款摘要 + 近 200 筆跨 OA 明細）、✅ **清藍新殘留續訂路徑**（`recurringEnabled` 一律 false，前端不再可能走到藍新 `create-subscription`）。⬜ 退款流程（PAYUNi `trade/close`，會動錢、建議連真實金流一起測）、期中升降級 proration（配自動續訂一起做）、含稅/未稅對齊（問會計）。
 
@@ -122,7 +131,17 @@
 
 系統裡**連一條寄信管道都沒有**。連成員邀請都只是個「隱形白名單」——被邀請的人不會收到任何通知。
 
-18. [ ] **建立寄信管道**（SES / SendGrid / Resend）— 下面每一項的前置
+18. [~] **建立寄信管道（AWS SES）— 程式已寫完,只缺「設定」**（2026-07-30 記錄）
+        付款收據、扣款失敗提醒、續扣前提醒、額度快用完 **四種信的程式都已完成**,
+        但三個環境變數沒設齊 → 寄信全部變成只寫 log,金流／排程完全不受影響。
+        **要做兩步(白話說明見 `docs/GOLIVE-BLOCKERS.md` C1/C2)**:
+        - [ ] **AWS Console → SES → 驗證寄件網域**（Create identity → Domain → `myfeel-tw.com`,
+              把 AWS 給的幾筆 CNAME 加進 DNS)
+        - [ ] **AWS Console → SES → 申請離開沙盒**（Request production access;新帳號只准寄給
+              自己驗證過的信箱,不申請就寄不到客戶)
+        - [ ] 填 Amplify 環境變數 `EMAIL_FROM`（例 `MiniMe <noreply@myfeel-tw.com>`,
+              **網域必須是上面驗證過的那個**）、`AWS_SES_REGION`（例 `ap-northeast-1`）。
+              憑證不用填,Amplify 執行角色自動帶。
 19. [ ] **成員邀請信**（現在完全沒有）
 20. [ ] 續訂前 7 天 / 1 天通知（Email + 後台橫幅）
 21. [ ] 扣款失敗通知（含「更新信用卡」的引導）
