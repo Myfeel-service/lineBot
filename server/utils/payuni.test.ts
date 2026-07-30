@@ -1,6 +1,8 @@
 import { createHash } from 'crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  buildCreditCharge,
+  buildCreditChargeFields,
   buildTradeQuery,
   buildUppForm,
   decrypt,
@@ -108,6 +110,40 @@ describe('buildUppForm', () => {
     expect(verifyHashInfo(form.EncryptInfo, form.HashInfo, KEYS)).toBe(true)
     // 內層可解回原參數
     expect(decrypt(form.EncryptInfo, KEYS)).toMatchObject({ MerID: 'ABC', TradeAmt: '499' })
+  })
+})
+
+describe('buildCreditCharge / buildCreditChargeFields(幕後 Token 續扣 /api/credit)', () => {
+  const base = {
+    merchantId: 'S076820628',
+    merchantOrderNo: 'NP260730001',
+    tradeAmt: 499,
+    creditHash: 'HASHTOKEN123',
+    prodDesc: 'MiniMe 輕量方案 訂閱服務',
+    timestamp: 1700000000,
+  }
+
+  it('EncryptInfo 欄位齊全、帶 CreditHash 與自訂 TradeAmt', () => {
+    expect(buildCreditChargeFields(base)).toEqual({
+      MerID: 'S076820628',
+      MerTradeNo: 'NP260730001',
+      TradeAmt: 499,
+      Timestamp: 1700000000,
+      ProdDesc: 'MiniMe 輕量方案 訂閱服務',
+      CreditHash: 'HASHTOKEN123',
+    })
+  })
+
+  it('TradeAmt 四捨五入為整數(折抵可能算出小數)', () => {
+    expect(buildCreditChargeFields({ ...base, tradeAmt: 498.6 }).TradeAmt).toBe(499)
+  })
+
+  it('外層四欄:Version 固定 1.3、簽章對得上、內層可解回帶 CreditHash', () => {
+    const form = buildCreditCharge(base, KEYS)
+    expect(form.MerID).toBe('S076820628')
+    expect(form.Version).toBe('1.3')
+    expect(verifyHashInfo(form.EncryptInfo, form.HashInfo, KEYS)).toBe(true)
+    expect(decrypt(form.EncryptInfo, KEYS)).toMatchObject({ CreditHash: 'HASHTOKEN123', TradeAmt: '499' })
   })
 })
 

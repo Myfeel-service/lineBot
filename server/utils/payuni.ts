@@ -34,6 +34,12 @@ export const PAYUNI_QUERY_ENDPOINTS = {
   prod: 'https://api.payuni.com.tw/api/trade/query',
 } as const
 
+/** PAYUNi 幕後 Token 扣款（credit）端點——每期定期扣款:用 CreditHash 直接對該卡授權。 */
+export const PAYUNI_CREDIT_ENDPOINTS = {
+  test: 'https://sandbox-api.payuni.com.tw/api/credit',
+  prod: 'https://api.payuni.com.tw/api/credit',
+} as const
+
 /**
  * 把 PAYUNI_ENV 正規化成 'test' | 'prod'。
  * ⚠️ **不要**用 `=== 'prod'` 硬比：`production`/`PROD`/前後空白 都該算正式,否則正式環境一個
@@ -259,4 +265,92 @@ export function verifyAndDecryptPayuniNotify(
   catch {
     return null
   }
+}
+
+// ── 幕後 Token 續扣（/api/credit;定期扣款用）─────────────────────────────────
+//
+// PAYUNi 定期扣款 = 首刷經 UPP 建立「信用卡約定」拿到 CreditHash(UPP 帶 UseTokenType/CreditToken),
+// 之後每期由「我方」拿 CreditHash 打此 API 幕後扣款,金額每期可自訂(折抵/降級即改 TradeAmt)。
+// 版本固定 1.3;回應與 Notify 同形({ MerID, Status, EncryptInfo, HashInfo }),兩層成功判定沿用 isPayuniPaid。
+// 見設計文件 docs/PAYUNI-RECURRING-DESIGN.md。
+
+/** 幕後 Token 扣款版本號,官方文件固定 1.3。 */
+export const PAYUNI_CREDIT_VERSION = '1.3'
+
+export interface CreditChargeInput {
+  merchantId: string
+  /** 商店訂單編號:≤25、[A-Za-z0-9_-]、10 分鐘內不可重複。 */
+  merchantOrderNo: string
+  /** 本期扣款金額(含稅整數)——每期可不同(折抵/降級即改此值)。 */
+  tradeAmt: number
+  /** 首刷建立約定時回傳的信用卡 Token(CreditHash)。 */
+  creditHash: string
+  /** 商品說明(≤550;帶產品名,對帳/發票一致)。 */
+  prodDesc: string
+  /** Unix 秒時間戳。由呼叫端提供以保持純函式可測。 */
+  timestamp: number
+}
+
+/** 續扣的 EncryptInfo 欄位(純函式,好單元測試;實際送出見 buildCreditCharge / chargeCreditToken)。 */
+export function buildCreditChargeFields(input: CreditChargeInput): Record<string, string | number> {
+  return {
+    MerID: input.merchantId,
+    MerTradeNo: input.merchantOrderNo,
+    TradeAmt: Math.round(input.tradeAmt),
+    Timestamp: input.timestamp,
+    ProdDesc: input.prodDesc,
+    CreditHash: input.creditHash,
+  }
+}
+
+/** 組 /api/credit 幕後扣款的外層 POST 欄位({ MerID, Version, EncryptInfo, HashInfo })。 */
+export function buildCreditCharge(input: CreditChargeInput, keys: PayuniKeys): PayuniUppForm {
+  const EncryptInfo = encrypt(buildCreditChargeFields(input), keys)
+  return {
+    MerID: input.merchantId,
+    Version: PAYUNI_CREDIT_VERSION,
+    EncryptInfo,
+    HashInfo: makeHashInfo(EncryptInfo, keys),
+  }
+}
+
+export interface CreditChargeResult {
+  /** 兩層都成立(外層 SUCCESS + 解密 TradeStatus==='1')才算扣款成功。 */
+  ok: boolean
+  /** 外層 Status(SUCCESS / UNKNOWN / 錯誤碼如 CREDIT02025…)。 */
+  outerStatus: string
+  /** 解密後交易明細(含 TradeStatus / Card4No / AuthCode / CreditHash…);驗簽失敗為 null。 */
+  result: PayuniTradeResult | null
+}
+
+/**
+ * 對已約定的卡(CreditHash)發動一筆幕後扣款(server→server)。
+ * ⚠️ UNKNOWN(銀行 60 秒未回)既非成功也非失敗——呼叫端應保留待確認、稍後用 trade/query 補查
+ *    (見設計 §2/§7),不可直接當失敗重扣。
+ */
+export async function chargeCreditToken(
+  input: CreditChargeInput,
+  keys: PayuniKeys,
+  env: unknown,
+): Promise<CreditChargeResult> {
+  const fields = buildCreditCharge(input, keys)
+  const url = PAYUNI_CREDIT_ENDPOINTS[resolvePayuniEnv(env)]
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'user-agent': 'payuni' },
+    body: new URLSearchParams({ ...fields }).toString(),
+  })
+  if (!res.ok) return { ok: false, outerStatus: `HTTP_${res.status}`, result: null }
+  let outer: Record<string, unknown>
+  try {
+    outer = await res.json() as Record<string, unknown>
+  }
+  catch {
+    return { ok: false, outerStatus: 'BAD_JSON', result: null }
+  }
+  const outerStatus = String(outer.Status ?? '')
+  const result = outer.EncryptInfo
+    ? verifyAndDecryptPayuniNotify(String(outer.EncryptInfo), String(outer.HashInfo ?? ''), keys)
+    : null
+  return { ok: isPayuniPaid(outerStatus, result), outerStatus, result }
 }
