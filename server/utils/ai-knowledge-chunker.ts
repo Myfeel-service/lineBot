@@ -595,3 +595,50 @@ export async function normalizeChunkWithLlm(input: {
 
   return { title, content, tags, questions, inputTokens, outputTokens }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Detect product name（匯入自動認產品名，P1-1）
+//  來源層 productName 是反問分組 / 防混答 / 指名作答的根基，過去全靠工程師手動
+//  改 Firestore（無主卡兩次釀成實測事故）。匯入預覽收尾時自動偵測、預填給使用者確認。
+// ═══════════════════════════════════════════════════════════════════
+
+const DETECT_PRODUCT_SYSTEM_INSTRUCTION = `你在幫商家整理客服知識庫。判斷這份文件是否「以單一產品為主」（產品說明書、單一商品頁等）。
+
+規則：
+1. 是單一產品 → 回該產品的完整正規名稱：品牌 + 產品名 +（有的話）型號 / 規格，例「GPLUS 智慧除濕機 12L」「SHARP iBarista 智慧咖啡機」。以文件自己的寫法為準，不要自行翻譯或改寫品牌名。
+2. 文件涵蓋多個產品（型錄、FAQ 彙整、公告）或是平台/公司頁（關於我們、隱私權、運送說明）→ productName 回空字串。
+3. 名稱長度 30 字以內；不要包含「說明書」「使用手冊」「操作指南」這類文件類型字眼。
+
+輸出格式（嚴格 JSON）：{ "productName": "string" }`
+
+export interface DetectProductNameResult {
+  productName: string
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
+ * 從「來源名稱（檔名 / 網址 / 標題）＋內文前段」偵測單一產品名。
+ * 多產品 / 平台頁回空字串。失敗 throw；caller 降級為「不預填」即可（不擋匯入）。
+ */
+export async function detectProductName(sampleText: string, sourceHint: string): Promise<DetectProductNameResult> {
+  const prompt = [
+    `[來源名稱] ${sourceHint || '（無）'}`,
+    '[內文開頭]',
+    String(sampleText ?? '').slice(0, 2000),
+  ].join('\n')
+
+  const { data, inputTokens, outputTokens } = await generateJson<{ productName?: unknown }>(prompt, {
+    systemInstruction: DETECT_PRODUCT_SYSTEM_INSTRUCTION,
+    temperature: 0.1,
+    maxOutputTokens: 256,
+    // 同 chunkSegment：關掉 thinking，避免吃掉配額把 JSON 截斷。
+    thinkingBudget: 0,
+  })
+
+  return {
+    productName: String(data?.productName ?? '').trim().slice(0, 60),
+    inputTokens,
+    outputTokens,
+  }
+}

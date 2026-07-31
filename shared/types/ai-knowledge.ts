@@ -106,6 +106,13 @@ export interface KnowledgeSourceDoc {
   gsheetAutoApply?: boolean
   /** 內容 hash，網址同步時用來判斷是否需要重新切卡 */
   contentHash: string
+  /**
+   * 變動偵測的「待確認新值」：抓到與 contentHash 不同的新 hash 時先存這裡，
+   * **下一輪仍是同一個新值才確認為真變動**——輪播 / 隨機推薦 / 計數器頁面每次抓都不同，
+   * 一次差異就通知會狼來了。內容跳回原值（假變動）或又變成別的值都會重置。
+   * 代價：真變動晚一個檢查週期才通知。
+   */
+  pendingHash?: string
   /** HTTP etag 與 lastModified（網址同步用） */
   etag: string
   lastModified: string
@@ -127,6 +134,13 @@ export interface KnowledgeSourceDoc {
    * re-sync 套用後會依當下的子卡片重新合成這張總覽卡。預設 false。
    */
   generateOverview?: boolean
+  /**
+   * 這個來源「所屬產品」的正規名稱（含品牌與型號）；空/未設 = 非單一產品來源（FAQ、公告等）。
+   * 卡片索引時自動繼承（runIndexOnChunk：embedding 前綴 + 卡片 productName 欄位），
+   * 是反問分組 / 防混答 / 指名作答的根基。匯入時 LLM 自動偵測預填、使用者可改；
+   * 之後在來源設定改動要**重建該來源索引**才生效（embedding 已含舊前綴）。
+   */
+  productName?: string
   lastFetchedAt: Timestamp | null
   /** 偵測到 URL 內容變了但還沒套用的時間；null = 沒過期 / 已套用 */
   outdatedAt: Timestamp | null
@@ -320,7 +334,7 @@ export interface AiConversationMeta {
   handoffSummary: string
   /** 最近一次反問澄清；非 null 時表示在等客人從 options 中選一個 */
   lastDisambiguation?: {
-    options: Array<{ chunkId: string; title: string }>
+    options: Array<{ chunkId: string; title: string; label?: string }>
     askedAt: Timestamp | FieldValue
   } | null
   /**
@@ -352,7 +366,9 @@ export interface DisambiguationPayload {
   clarification: string
   /**
    * 可選選項；每個 option 對應一張命中的知識卡。
-   * label = 按鈕顯示用短名稱（≤20 字，LLM 生成）；按鈕送出的 text 仍用完整 title（followup 比對用）。
+   * label = 按鈕顯示用短名稱（≤20 字，LLM 生成）。按鈕送出的 text 優先用短 label
+   * （客人氣泡才不會出現一整串卡片標題）；label 缺失或與其他選項撞名時退回完整 title，
+   * followup 比對兩者都認得（見 handler）。
    */
   options: Array<{ chunkId: string; title: string; label?: string }>
 }

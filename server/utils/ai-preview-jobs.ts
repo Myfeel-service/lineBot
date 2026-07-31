@@ -26,6 +26,7 @@ import {
 import { ocrPdfWithGemini, MAX_RAW_TEXT_LEN } from './ai-source-extractors'
 import { splitPdfPageRange } from './pdf-split'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
+import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import type { ChunkInput } from './ai-knowledge-chunks'
 
 export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
@@ -91,6 +92,8 @@ export interface WorkState {
   usage: { inputTokens: number; outputTokens: number }
   /** 匯入前健檢警告（表格來源：示範列沒換、重複問題、合併儲存格等）；提醒不擋匯入 */
   warnings: string[]
+  /** 自動偵測的產品名（finalize 時 LLM 判定；多產品 / 平台頁為空）。預填給使用者確認可改。 */
+  suggestedProductName?: string
 }
 
 /** Firestore job 文件（保持極小） */
@@ -132,6 +135,7 @@ export function makeWork(input: PreviewJobInput): WorkState {
     existingMatches: [],
     usage: { inputTokens: 0, outputTokens: 0 },
     warnings: [],
+    suggestedProductName: '',
   }
 }
 
@@ -359,6 +363,104 @@ export function workToPreviewResult(work: WorkState) {
     existingMatches: work.existingMatches,
     usage: work.usage,
     warnings: work.warnings ?? [], // 舊 job 的 work.json 沒這欄位，保底空陣列
+    suggestedProductName: work.suggestedProductName ?? '',
+  }
+}
+
+// ── 匯入品質守門（finalize 時跑；警示不擋匯入）───────────────────────
+
+/** 時效性內容字眼：命中的卡建議設「有效期限」，活動結束自動下架，不會過期照答 */
+const TIME_SENSITIVE_RE = /募資|集資|預購|倒數|折扣碼|優惠碼|限時|早鳥|檔期|回饋價/
+
+const normTitle = (s: string) => String(s || '').replace(/\s+/g, '').toLowerCase()
+
+/** 標題視為「幾乎相同」：正規化後相等，或互為包含（較短那個 ≥ 4 字）。與答題端 dedupe 同思路。 */
+function titlesNearIdentical(a: string, b: string): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  const shorter = a.length <= b.length ? a : b
+  const longer = a.length <= b.length ? b : a
+  return shorter.length >= 4 && longer.includes(shorter)
+}
+
+/**
+ * 切卡完成後的品質守門（P1-2 匯入防護），把警示 push 進 work.warnings：
+ * 1. 時效性內容（募資 / 折扣 / 檔期）→ 建議設有效期限。
+ * 2. 與現有知識卡標題重複 → 重複匯入提醒（GPLUS 兩本說明書各生一套同樣卡的教訓）。
+ * 3. 總覽卡涵蓋率對照產品索引 → 總覽卡宣稱與系統已知產品對不上（「主要產品為X」矛盾偵測）。
+ * 4. 多張卡的檔案沒認出產品名 → 說明書漏設產品名提醒（無主卡事故的源頭）。
+ * 全部 fail-open：查詢失敗只略過該項檢查，不擋匯入。
+ */
+export async function appendImportQualityWarnings(
+  db: Firestore,
+  workspaceId: string,
+  work: WorkState,
+): Promise<void> {
+  // 1. 時效性內容
+  const timeSensitiveCount = work.chunks.filter(c =>
+    TIME_SENSITIVE_RE.test(c.title) || TIME_SENSITIVE_RE.test(c.content)).length
+  if (timeSensitiveCount > 0) {
+    work.warnings.push(
+      `有 ${timeSensitiveCount} 張卡含有時效性內容（募資 / 折扣 / 檔期）——匯入後建議在卡片編輯視窗設定「有效期限」，活動結束會自動下架，不會過期還照答。`,
+    )
+  }
+
+  // 2. 與現有卡標題重複（跨來源）
+  try {
+    const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .select('title')
+      .limit(2000)
+      .get()
+    const existing = snap.docs.map(d => normTitle((d.data() as any)?.title)).filter(Boolean)
+    if (existing.length) {
+      const dupCount = work.chunks.filter((c) => {
+        const t = normTitle(c.title)
+        return existing.some(e => titlesNearIdentical(t, e))
+      }).length
+      if (dupCount >= 3) {
+        work.warnings.push(
+          `有 ${dupCount} 張卡與現有知識卡的標題相同或幾乎相同——可能是重複匯入（例：同產品兩份說明書）。重複卡會讓 AI 反問時出現兩個一樣的選項，建議先取消勾選重複的，或匯入後整理。`,
+        )
+      }
+    }
+  }
+  catch (e) {
+    console.warn('[preview-jobs] duplicate-title check failed（略過）:', e)
+  }
+
+  // 3. 總覽卡 vs 產品索引涵蓋率（只在要合成總覽卡時有意義）
+  try {
+    if (work.overviewCard) {
+      const names = await getWorkspaceProductNames(db, workspaceId)
+      if (names.length >= 3) {
+        const content = normTitle(work.overviewCard.content)
+        const covered = names.filter((n) => {
+          const nn = normTitle(n)
+          return nn.length >= 3 && content.includes(nn)
+        }).length
+        if (covered / names.length < 0.3) {
+          work.warnings.push(
+            `總覽卡只提到系統已知 ${names.length} 項產品中的 ${covered} 項——來源頁面可能沒抓到商品區塊（動態首頁常見）。總覽卡專門回答「你們有賣什麼」，內容錯會整店答錯，請務必確認或改用商品列表頁重新匯入。`,
+          )
+        }
+      }
+    }
+  }
+  catch (e) {
+    console.warn('[preview-jobs] overview-coverage check failed（略過）:', e)
+  }
+
+  // 4. 多張卡的檔案沒認出產品名（說明書漏設產品名 → 無主卡 → 反問怪按鈕 / 跨產品誤導）
+  if (
+    work.input.type === 'file'
+    && !work.input.generateOverview
+    && !work.suggestedProductName
+    && work.chunks.length >= 5
+  ) {
+    work.warnings.push(
+      '沒有辨識出這份文件屬於哪個產品——若它其實是單一產品的說明書，請在「所屬產品」欄填入產品名（含品牌與型號），否則客人指名問的時候可能拿別台產品的內容回答。',
+    )
   }
 }
 

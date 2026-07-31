@@ -6,6 +6,7 @@ import { invalidateCatalogSourceCache } from '~~/server/utils/ai-knowledge-sourc
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
+  addWorkspaceProductName,
   createKnowledgeChunk,
   normalizeChunkInput,
   validateChunkInput,
@@ -23,7 +24,7 @@ const MAX_BULK_CHUNKS = 150
 /**
  * POST /api/ai/knowledge/bulk-create
  * Body: {
- *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash? },
+ *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash?, productName? },
  *   chunks: [{ title, content, tags[] }]
  * }
  *
@@ -83,6 +84,10 @@ export default defineEventHandler(async (event) => {
     // 自動同步頻率（分鐘）：gsheet 每小時、url 每天、檔案不自動
     const refreshIntervalMinutes = sourceType === 'gsheet' ? 60 : sourceType === 'url' ? 1440 : 0
 
+    // 產品名（P1-1）：匯入預覽自動偵測、使用者確認後帶進來。先寫進 source doc 再建卡，
+    // 底下 createKnowledgeChunk → runIndexOnChunk 會即時繼承（embedding 前綴 + 卡片欄位）。
+    const productName = String(body?.source?.productName ?? '').trim().slice(0, 60)
+
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set({
       workspaceId,
       type: sourceType,
@@ -97,6 +102,7 @@ export default defineEventHandler(async (event) => {
       refreshIntervalMinutes,
       onChangeBehavior: 'notify',
       generateOverview: Boolean(overviewInput),
+      ...(productName ? { productName } : {}),
       ...gsheetFields,
       lastFetchedAt: now,
       outdatedAt: null,
@@ -107,6 +113,8 @@ export default defineEventHandler(async (event) => {
     })
     // 新型錄來源要讓答題端的 dedupeBySource 豁免立刻生效（不必等 60s 快取過期）
     if (overviewInput) invalidateCatalogSourceCache(workspaceId)
+    // 產品索引自動維護（只增不刪）；建卡前先併入，讓 pickCardProduct 這批就吃得到
+    if (productName) await addWorkspaceProductName(db, workspaceId, productName)
   }
 
   // ── 批次建立 chunks（含 embedding），用 concurrency 控速 ──────────

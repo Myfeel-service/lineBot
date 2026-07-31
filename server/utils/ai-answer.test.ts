@@ -11,6 +11,7 @@ import {
   isContextDependentFollowup,
   socialCannedReply,
   preferProductCards,
+  preferSpecCards,
   dedupeByTitleContainment,
   collapseSameProduct,
   productNamedInQuery,
@@ -95,6 +96,24 @@ describe('dedupeBySource', () => {
     ]
     // catalog 豁免 → a、b 都留；s2 非豁免 → 只留 c
     expect(dedupeBySource(input, new Set(['catalog'])).map(x => x.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('豁免卡片（一句多問錨點）保留，且不佔用該來源的名額', () => {
+    // 情境：價格卡（第一問）與保固卡（第二問錨點）同來源——沒有豁免時保固卡被刪 → 第二問漏答
+    const input = [
+      chunk({ id: 'price', sourceId: 's1', similarity: 0.9 }),
+      chunk({ id: 'other', sourceId: 's2', similarity: 0.8 }),
+      chunk({ id: 'warranty', sourceId: 's1', similarity: 0.7 }),
+    ]
+    expect(dedupeBySource(input, undefined, new Set(['warranty'])).map(c => c.id))
+      .toEqual(['price', 'other', 'warranty'])
+    // 錨點排在前面時，同來源分數最高的非錨點卡也照常保留
+    const input2 = [
+      chunk({ id: 'warranty', sourceId: 's1', similarity: 0.9 }),
+      chunk({ id: 'price', sourceId: 's1', similarity: 0.8 }),
+    ]
+    expect(dedupeBySource(input2, undefined, new Set(['warranty'])).map(c => c.id))
+      .toEqual(['warranty', 'price'])
   })
 })
 
@@ -357,6 +376,34 @@ describe('preferProductCards', () => {
   it('候選全是主題卡時順序不變', () => {
     const input = [c('1', '除濕機保固政策'), c('2', '台灣在地保固與安全認證')]
     expect(preferProductCards(input).map(x => x.id)).toEqual(['1', '2'])
+  })
+})
+
+describe('preferSpecCards', () => {
+  const c = (id: string, title: string, tags: string[] = []): SimilarChunk => chunk({ id, title, tags })
+  it('規格/特色卡排最前、售後卡排最後（7/31 稽核：比較題撈回保固/故障卡）', () => {
+    const input = [
+      c('warranty', 'GPLUS除濕機保固登錄方式'),
+      c('trouble', '電源無法開啟故障排除'),
+      c('spec', 'GPLUS除濕機12L產品規格'),
+      c('storage', '長期存放注意事項'),
+      c('feature', 'GPLUS除濕機特色介紹'),
+    ]
+    expect(preferSpecCards(input).map(x => x.id)).toEqual(['spec', 'feature', 'warranty', 'trouble', 'storage'])
+  })
+  it('同級內維持原相似度順序（穩定排序）', () => {
+    const input = [
+      c('a', 'W1 REGEN 除濕量與適用坪數'),
+      c('b', '威技除濕機水箱容量'),
+    ]
+    expect(preferSpecCards(input).map(x => x.id)).toEqual(['a', 'b'])
+  })
+  it('tags 也參與比對（標題沒寫規格但 tag 有）', () => {
+    const input = [
+      c('after', '購買後注意事項', ['保固']),
+      c('spec', 'GPLUS 12L 詳細資料', ['規格']),
+    ]
+    expect(preferSpecCards(input).map(x => x.id)).toEqual(['spec', 'after'])
   })
 })
 

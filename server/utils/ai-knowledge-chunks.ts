@@ -268,6 +268,27 @@ export async function getWorkspaceProductNames(db: Firestore, workspaceId: strin
   return names
 }
 
+/**
+ * 產品索引自動維護（只增不刪）：來源設定 / 匯入時填了 productName 就併進清單。
+ * 刻意不做刪除——清單裡有手動種入的別名（同產品多種叫法），無法從來源反推 provenance，
+ * 全量重建會把它們洗掉；多出來的舊名對 pickCardProduct 幾乎無害（只影響標題真的含它的卡）。
+ * 失敗不擋主流程（索引清單只是加分項）。
+ */
+export async function addWorkspaceProductName(db: Firestore, workspaceId: string, name: string): Promise<void> {
+  const clean = String(name || '').trim()
+  if (!clean) return
+  try {
+    await db.collection(PRODUCT_NAMES_COLLECTION).doc(workspaceId).set(
+      { names: FieldValue.arrayUnion(clean) },
+      { merge: true },
+    )
+    invalidateWorkspaceProductNames(workspaceId)
+  }
+  catch (e) {
+    console.warn('[ai-knowledge-chunks] addWorkspaceProductName failed:', e)
+  }
+}
+
 const normForProductMatch = (s: string) => String(s || '').toLowerCase().replace(/\s+/g, '')
 
 /** 卡標題若含清單裡的某產品名（正規化後子字串、取最長者）→ 用它；否則退回來源繼承的 fallback。 */

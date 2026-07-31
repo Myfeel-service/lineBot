@@ -260,6 +260,43 @@
           </div>
         </div>
 
+        <!-- 所屬產品（P1-1）：卡片索引時自動繼承來源產品名；改動後自動重建該來源索引。
+             gsheet 一列多產品不適用。 -->
+        <div v-if="selectedSource.type !== 'gsheet'" class="message-card src-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">所屬產品</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="src-section-hint">
+              這個來源的內容都在講<strong>同一個產品</strong>時才填（含品牌與型號）。卡片會自動標上產品名——客人指名問哪一台、或 AI 反問「您指的是哪一個」時，靠它才不會答錯台。FAQ、公告這類多產品內容請留空。
+            </p>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="產品名" tight />
+              <el-input
+                v-model="productNameForm"
+                :maxlength="60"
+                placeholder="例：GPLUS 智慧除濕機 12L（留空 = 非單一產品）"
+                class="control-full"
+                :disabled="!canEditSources"
+              />
+            </div>
+            <div v-if="canEditSources" class="src-settings-actions">
+              <el-button
+                type="primary"
+                size="small"
+                :loading="savingProductName"
+                :disabled="productNameForm.trim() === productNameBaseline"
+                @click="saveProductName"
+              >
+                儲存並重建索引
+              </el-button>
+              <span v-if="savingProductName" class="text-muted text-xs">正在重建這個來源的卡片索引，約需幾十秒⋯</span>
+            </div>
+          </div>
+        </div>
+
         <!-- 自動偵測設定（只給 URL） -->
         <div v-if="selectedSource.type === 'url'" class="message-card src-section-card" data-tour="kb-sync-settings">
           <div class="message-card-header">
@@ -680,6 +717,8 @@ interface SourceSummary {
   chunkCount: number
   refreshIntervalMinutes: number
   onChangeBehavior: 'notify' | 'log_only'
+  /** 所屬產品名；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
+  productName: string
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
@@ -1131,9 +1170,47 @@ async function loadSourceDetail(sourceId: string) {
       onChangeBehavior: res.source.onChangeBehavior,
     }
     settingsBaseline.value = { ...settingsForm.value }
+    productNameForm.value = res.source.productName
+    productNameBaseline.value = res.source.productName
   }
   catch (err: any) {
     showToast(err?.statusMessage || '載入細節失敗', 'error')
+  }
+}
+
+// ── 所屬產品（P1-1）─────────────────────────────────
+// 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這個來源的索引才生效。
+const productNameForm = ref('')
+const productNameBaseline = ref('')
+const savingProductName = ref(false)
+
+async function saveProductName() {
+  if (!selectedId.value) return
+  const next = productNameForm.value.trim()
+  savingProductName.value = true
+  try {
+    await apiFetch(`/api/ai/sources/${selectedId.value}`, {
+      method: 'PUT',
+      body: { productName: next },
+    })
+    const res = await apiFetch<{ indexed: number; failed: number }>(
+      `/api/ai/sources/${selectedId.value}/reindex`,
+      { method: 'POST' },
+    )
+    productNameBaseline.value = next
+    if (res.failed > 0) {
+      showToast(`已儲存；索引重建 ${res.indexed} 成功 / ${res.failed} 失敗，可再按一次重試`, 'error')
+    }
+    else {
+      showToast(`已儲存，並重建 ${res.indexed} 張卡的索引`, 'success')
+    }
+    await loadSourceDetail(selectedId.value)
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '儲存失敗', 'error')
+  }
+  finally {
+    savingProductName.value = false
   }
 }
 

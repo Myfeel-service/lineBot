@@ -93,7 +93,7 @@
                       :disabled="idx !== latestAiIdx || running"
                       @click="pickOption(opt.title)"
                     >
-                      {{ opt.title }}
+                      {{ opt.label || opt.title }}
                     </el-button>
                     <el-button
                       size="small"

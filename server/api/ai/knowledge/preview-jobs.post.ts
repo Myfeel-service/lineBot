@@ -218,5 +218,28 @@ function setChunkingFromExtracted(
   work.rawLength = extracted.rawLength
   work.truncated = extracted.rawLength > extracted.text.length
   work.meta = extracted.meta
+  work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text))
   primeChunking(work, extracted.text)
+}
+
+/**
+ * 擷取層品質守門（匯入防護）：內容太薄 / 疑似只抓到選單頁尾 → 預覽頁警示，不擋匯入。
+ * 7/31 總覽卡事故的根源就是動態首頁只抓到頁腳、切出 11 張平台雜卡而**無任何警示**。
+ */
+function extractionQualityWarnings(sourceType: string, text: string): string[] {
+  const warnings: string[] = []
+  const len = text.trim().length
+  if (len > 0 && len < 300) {
+    warnings.push(sourceType === 'url'
+      ? `這個網址只擷取到約 ${len} 字——很可能是動態網頁（內容由程式載入），伺服器抓不到主要內容。建議改用靜態的商品列表頁網址，或直接複製頁面文字用「貼上文字」匯入。`
+      : `只擷取到約 ${len} 字，內容可能不完整；請在下一步逐張確認卡片內容。`)
+  }
+  else if (sourceType === 'url') {
+    // 連結密度過高 = 內文多半是選單 / 頁尾（stripHtml 會把站內連結轉成「錨文字（網址）」）
+    const linkCount = (text.match(/https?:\/\//g) ?? []).length
+    if (linkCount >= 5 && len / linkCount < 80) {
+      warnings.push('擷取到的內容大多是連結（可能只抓到選單和頁尾、沒抓到主要內容）——若下一步的卡片沒有實質商品內容，請改用商品列表頁網址或直接貼文字。')
+    }
+  }
+  return warnings
 }

@@ -24,6 +24,7 @@ import { searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } f
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
+import { logHandoffEvent } from './ai-handoff-events'
 import { maybeWarnQuotaThreshold } from './ai-handoff-notify'
 import { getCurrentMonthTokens, getQuotaAnswered, recordAiUsage, type UsageDelta } from './ai-usage'
 import { resolveAnsweredQuota, resolveQuotaAction } from './billing'
@@ -563,13 +564,17 @@ export function truncateAtSentence(text: string, maxLen: number): string {
  * exemptSourceIds：「型錄/列表來源」(generateOverview) 的 sourceId —— 這類來源旗下是**不同產品**
  * 共用同一 sourceId，不能當「同主題」併掉（否則「有沒有除濕機」只剩 1 個產品、其餘被雜卡填位）。
  * 列在豁免集合的卡視為各自獨立、全部保留；近似重複仍由 dedupeNearIdentical 處理。
+ *
+ * exemptChunkIds：一句多問的「子問題錨點卡」——第二問的答案卡常與第一問的卡同來源
+ * （價格卡與保固卡都在同一產品頁），照同來源規則會被刪掉 → 第二問漏答。錨點卡一律保留，
+ * 且不佔用該來源的名額（同來源分數最高那張照常保留）。
  */
-export function dedupeBySource(chunks: SimilarChunk[], exemptSourceIds?: Set<string>): SimilarChunk[] {
+export function dedupeBySource(chunks: SimilarChunk[], exemptSourceIds?: Set<string>, exemptChunkIds?: Set<string>): SimilarChunk[] {
   const seen = new Set<string>()
   const out: SimilarChunk[] = []
   for (const c of chunks) {
     const key = c.sourceId
-    if (!key || exemptSourceIds?.has(key)) {
+    if (!key || exemptSourceIds?.has(key) || exemptChunkIds?.has(c.id)) {
       out.push(c)
       continue
     }
@@ -622,6 +627,26 @@ const SINGLE_ANSWER_TOPIC_RE = /統編|統一編號|發票|退稅|退還|貨物�
 export function preferProductCards(chunks: SimilarChunk[]): SimilarChunk[] {
   const isGeneric = (c: SimilarChunk) => GENERIC_TOPIC_RE.test(c.title)
   return [...chunks].sort((a, b) => Number(isGeneric(a)) - Number(isGeneric(b)))
+}
+
+/**
+ * 「規格/特色」vs「售後」卡片訊號（比較題用）。比較題每品項只取 2 張卡，
+ * 逐品項向量檢索（query 只有產品名）對「面向」沒有偏好，常把保固/故障排除/存放卡排前面
+ * —— 7/31 稽核比較題 4/4 全滅的直接原因（規格卡其實存在，只是沒被選進 context）。
+ */
+const SPEC_CARD_RE = /規格|尺寸|容量|功率|瓦數|耗電|電壓|坪數|除濕量|除溼量|水箱|分貝|噪音值|重量|材質|特色|功能|介紹|比較/
+const AFTERSALES_CARD_RE = /保固|故障|排除|維修|異常|燈號|清潔|保養|存放|收納|退貨|退款|註冊|登錄/
+
+/**
+ * 穩定排序（比較題取卡用）：規格/特色卡 → 其他 → 售後卡；同級內維持原相似度順序。
+ * 只重排、不改分數；title 與 tags 一起比對。
+ */
+export function preferSpecCards(chunks: SimilarChunk[]): SimilarChunk[] {
+  const rank = (c: SimilarChunk) => {
+    const hay = `${c.title} ${(c.tags ?? []).join(' ')}`
+    return SPEC_CARD_RE.test(hay) ? 0 : AFTERSALES_CARD_RE.test(hay) ? 2 : 1
+  }
+  return [...chunks].sort((a, b) => rank(a) - rank(b))
 }
 
 /**
@@ -1052,10 +1077,30 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     return recordAiUsage(workspaceId, tokensOnly, db)
   }
 
+  // 轉真人事件流（知識缺口報表的資料地基）：aiMeta 只存每客人最後一筆，報表需要逐事件記錄。
+  // fire-and-forget；測試呼叫不記。eventIntent / eventFollowupOf 在流程中途才有值，用可變外層變數
+  // 讓早期出口（敏感詞 / quota）也能安全呼叫。
+  let eventIntent: string | null = null
+  let eventFollowupOf: string | null = null
+  const logHandoff = (reason: HandoffReason, sources: SimilarChunk[] = []): void => {
+    if (input.isTest) return
+    logHandoffEvent(db, {
+      workspaceId,
+      query: text,
+      reason,
+      confidence: sources[0]?.similarity ?? 0,
+      intent: eventIntent,
+      followupOf: eventFollowupOf,
+      sources: sources.slice(0, 3).map(s => ({ chunkId: s.id, title: s.title, similarity: s.similarity })),
+      isFollowup: !!input.isFollowup,
+    })
+  }
+
   // ── 1. 敏感詞護欄 ──────────────────────────────────────
   const hit = detectSensitiveTopic(text, settings.sensitiveTopics)
   if (hit) {
     await record({ invocations: 1, handoffs: 1 })
+    logHandoff('sensitive_topic')
     return handoff('sensitive_topic')
   }
 
@@ -1109,6 +1154,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
 
     if (action === 'handoff') {
       await record({ invocations: 1, handoffs: 1 })
+      logHandoff('quota_exceeded')
       return handoff('quota_exceeded')
     }
     if (action === 'downgrade') {
@@ -1122,6 +1168,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 直接走 handoff('unresolved')；handler 端對此 reason 走轉真人二次確認（🙋按鈕）。
   if (!input.isFollowup && isUnresolvedFeedback(text, input.history)) {
     await record({ invocations: 1, handoffs: 1 })
+    logHandoff('unresolved')
     return handoff('unresolved')
   }
 
@@ -1143,27 +1190,32 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   catch (err) {
     console.error('[ai-answer] embedQuery failed:', err)
     await record({ invocations: 1, handoffs: 1 })
+    logHandoff('llm_error')
     return handoff('llm_error')
   }
   // precomputed 的 router token 已由 handler 記帳，這裡歸零避免重複計
   const routerIn = input.precomputedIntent ? 0 : (intentRes?.inputTokens ?? 0)
   const routerOut = input.precomputedIntent ? 0 : (intentRes?.outputTokens ?? 0)
+  eventIntent = intentRes?.intent ?? null
 
   // ── 3.5 意圖分流（router 失敗則用 regex/heuristic fallback）──
   // 語意敏感（關鍵字漏抓的換句話說）→ 轉真人。關鍵字硬擋已在步驟 1 做過，這裡是補抓。
   if (intentRes?.intent === 'sensitive') {
     await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    logHandoff('sensitive_topic')
     return handoff('sensitive_topic')
   }
   // 明確要求真人
   if (intentRes?.intent === 'find_human') {
     await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    logHandoff('user_request')
     return handoff('user_request')
   }
   // 業務洽詢（議價 / 團購 / 客製包裝）：需業務人員談，知識庫答不了。直接轉真人，
   // 不走 RAG / 反問（否則只會亂反問選產品，且選了也沒對應卡）。
   if (intentRes?.intent === 'commercial') {
     await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    logHandoff('commercial_inquiry')
     return handoff('commercial_inquiry')
   }
   // 社交（招呼 / 道謝 / 道別）→ 罐頭，不走 RAG
@@ -1198,6 +1250,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const followupOf = input.followupOf?.trim() && input.followupOf.trim() !== text
     ? input.followupOf.trim()
     : ''
+  eventFollowupOf = followupOf || null
   if (followupOf) {
     try {
       const composite = `${text} ${followupOf}`
@@ -1224,8 +1277,10 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       const perItem = await Promise.all(compareItems.map(async (item) => {
         const v = await embedQuery(item)
         embedTokenEstimate += estimateTokens(item)
-        const cs = await searchSimilarChunks(db, workspaceId, v, 3)
-        return cs.filter(c => c.similarity >= grounding).slice(0, 2)
+        // 多撈幾張再「規格/特色優先」重排：query 只有產品名、對面向沒偏好，
+        // top-3 常全是保固/故障卡 → 比較沒材料。重排後仍每品項只取 2 張控 context。
+        const cs = await searchSimilarChunks(db, workspaceId, v, 6)
+        return preferSpecCards(cs.filter(c => c.similarity >= grounding)).slice(0, 2)
       }))
       const groundedCount = perItem.filter(arr => arr.length > 0).length
       // 至少兩個品項都撈得到卡才有得比；不足就退回單句流程（多半仍會 handoff，但不亂湊）
@@ -1248,8 +1303,13 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 其中一件、另一件的卡撈不到 → 兩件一起被判 no_grounding。改成「每個子問題各自檢索」再併回主結果，
   // 讓兩邊的卡都在 context 裡，答題段的「能答的先答」才有材料。（compare/list 有自己的多品項處理，不進這裡）
   const subQuestions = (!isCompare && !isList) ? (intentRes?.subQuestions ?? []) : []
+  // 子問題「錨點卡」：各子問題檢索到的最佳卡（過 context 地板分）。後面的 top-k 裁切、
+  // 同來源去重都不得丟掉它——第二問的卡分數天然較低、又常與第一問的卡同來源，
+  // 一路被裁掉就是「一句兩問漏答第二問」的主因（7/31 稽核 P1-10）。
+  let subAnchors: SimilarChunk[] = []
   if (subQuestions.length >= 2) {
     try {
+      const floor = Math.max(0, getGroundingThreshold(settings) - 0.05)
       const seen = new Set(chunks.map(c => c.id))
       const merged = [...chunks]
       const perSub = await Promise.all(subQuestions.map(async (sub) => {
@@ -1258,8 +1318,16 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         return searchSimilarChunks(db, workspaceId, v, 3)
       }))
       for (const arr of perSub) for (const c of arr) if (!seen.has(c.id)) { seen.add(c.id); merged.push(c) }
+      // 每子問題的 top-1（過地板分才算「有答案卡」；沒過表示該子問題真的沒資料，交給 prompt 的
+      // 「答不到的部分補一句」規則，不硬塞低分卡）
+      subAnchors = perSub
+        .map(arr => arr.find(c => c.similarity >= floor))
+        .filter((c): c is SimilarChunk => !!c)
       merged.sort((a, b) => b.similarity - a.similarity)
       chunks = merged.slice(0, DEFAULT_TOP_K_CHUNKS + subQuestions.length) // 多留幾張讓各子問題的卡都進 context
+      const kept = new Set(chunks.map(c => c.id))
+      for (const a of subAnchors) if (!kept.has(a.id)) { chunks.push(a); kept.add(a.id) }
+      chunks.sort((a, b) => b.similarity - a.similarity)
       topSimilarity = chunks[0]?.similarity ?? 0
     }
     catch (err) {
@@ -1313,7 +1381,11 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         else chunks.push(hit)
       }
       chunks.sort((a, b) => b.similarity - a.similarity)
-      chunks = chunks.slice(0, DEFAULT_TOP_K_CHUNKS)
+      // 一句多問時保留加寬的寬度，且錨點卡被裁掉要補回（否則 tag 命中會把第二問的卡擠出去）
+      chunks = chunks.slice(0, DEFAULT_TOP_K_CHUNKS + subAnchors.length)
+      const keptIds = new Set(chunks.map(c => c.id))
+      for (const a of subAnchors) if (!keptIds.has(a.id)) { chunks.push(a); keptIds.add(a.id) }
+      chunks.sort((a, b) => b.similarity - a.similarity)
       topSimilarity = chunks[0]?.similarity ?? 0
     }
   }
@@ -1326,7 +1398,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 也應該主動反問澄清而不是默默 handoff。disambiguation 條件不過再走 grounding gate。
   // 型錄/列表來源豁免：其旗下是不同產品，不可當同主題併掉（否則產品列表反問只剩 1 個 + 雜卡）
   const catalogSourceIds = await getCatalogSourceIds(db, workspaceId)
-  const dedupedChunks = dedupeNearIdentical(dedupeBySource(chunks, catalogSourceIds))
+  const subAnchorIds = subAnchors.length ? new Set(subAnchors.map(a => a.id)) : undefined
+  const dedupedChunks = dedupeNearIdentical(dedupeBySource(chunks, catalogSourceIds, subAnchorIds))
   // P1-2 同產品收斂：把「同一台機器的不同面向卡」分到同一組，反問只在『真的不同產品』間發生。
   const groups = groupSameProduct(dedupedChunks)
   const productGroups = groups.map(g => g[0]!) // 每組代表卡（最高分）
@@ -1402,6 +1475,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         inputTokens: routerIn,
         outputTokens: routerOut,
       })
+      logHandoff('no_grounding', chunks)
       return handoff('no_grounding', chunks)
     }
   }
@@ -1447,6 +1521,10 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           `（補充：客服反問「您指的是哪一個？」後，客人選了「${text}」——請針對他選的這個主題，回答上面的**原始問題**；不要只複述選項卡片的內容。若卡片裡真的沒有原始問題的答案，hasInfo 設為 false。）`,
         ]
       : [text]),
+    // 一句多問：把子問題逐條點名。只靠下方通用規則時模型常只答第一問（7/31 稽核 P1-10）。
+    ...(subQuestions.length >= 2
+      ? [`（提醒：客人這句話一共問了 ${subQuestions.length} 件事——${subQuestions.map((s, i) => `${i + 1}. ${s}`).join('；')}。請依「一句多問」規則**逐一**回應，能答的都要答到，不要只答第一件。）`]
+      : []),
     '',
     `今天日期：${taiwanTodayLabel()}（台灣時間）。知識卡若提到活動、募資、優惠、預購或出貨的期間／截止日，請對照今天日期——**已過期的要明說「已於某日結束」**，不要當成現在進行式；不確定是否仍有效時，補一句「實際以官網最新公告為準」。`,
     '',
@@ -1560,6 +1638,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       inputTokens: routerIn,
       outputTokens: routerOut,
     })
+    logHandoff('llm_error', chunks)
     return handoff('llm_error', chunks)
   }
 
@@ -1633,12 +1712,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       inputTokens,
       outputTokens,
     })
+    const finalReason: HandoffReason = passesContent ? 'low_confidence' : 'no_grounding'
+    logHandoff(finalReason, chunks)
     return {
       decision: 'handoff',
       answer: '',
       confidence,
       sources: sourcesPayload,
-      handoffReason: passesContent ? 'low_confidence' : 'no_grounding',
+      handoffReason: finalReason,
       ...(input.debug ? { debugPrompt: userPrompt } : {}),
     }
   }

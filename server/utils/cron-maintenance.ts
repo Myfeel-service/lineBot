@@ -110,18 +110,33 @@ async function checkOneSource(
 
     // 比對 contentHash
     if (data.contentHash === newHash) {
-      // 沒變 → 只更新 lastFetchedAt
+      // 沒變 → 只更新 lastFetchedAt。先前若有「待確認新值」代表內容又跳回原樣
+      // （輪播/隨機區塊的假變動），一併清掉。
       await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
         lastFetchedAt: FieldValue.serverTimestamp(),
+        pendingHash: FieldValue.delete(),
         ...clearFailure,
       })
       return { sourceId, outcome: 'unchanged' }
     }
 
-    // 變了：記錄新 hash + 依設定決定行為
+    // 與上次不同：先不算真變——輪播 / 隨機推薦 / 計數器頁面每次抓 hash 都不同，一次差異就
+    // 通知會狼來了。新值先記 pendingHash，**下一輪仍是同一個新值才確認變動**；
+    // 又變成別的值則以最新值重新等待。代價：真變動晚一個檢查週期通知。
+    if (data.pendingHash !== newHash) {
+      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+        pendingHash: newHash,
+        lastFetchedAt: FieldValue.serverTimestamp(),
+        ...clearFailure,
+      })
+      return { sourceId, outcome: 'unchanged', message: 'pending-change（待下一輪確認）' }
+    }
+
+    // 變了（連兩輪抓到同一個新值）：記錄新 hash + 依設定決定行為
     const behavior = data.onChangeBehavior === 'log_only' ? 'log_only' : 'notify'
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
       contentHash: newHash,
+      pendingHash: FieldValue.delete(),
       lastFetchedAt: FieldValue.serverTimestamp(),
       ...clearFailure,
     })

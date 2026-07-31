@@ -5,7 +5,12 @@
  * chunk.sourceId 指回 source.id。手打單卡（type='manual'）也可有 source 把它們群組起來。
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { invalidateTagIndexCache, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import {
+  addWorkspaceProductName,
+  invalidateSourceProductCache,
+  invalidateTagIndexCache,
+  KNOWLEDGE_CHUNKS_COLLECTION,
+} from './ai-knowledge-chunks'
 import type {
   KnowledgeSourceDoc,
   KnowledgeSourceStatus,
@@ -68,6 +73,8 @@ export interface SourceSummary {
   chunkCount: number
   refreshIntervalMinutes: number
   onChangeBehavior: 'notify' | 'log_only'
+  /** 所屬產品的正規名稱；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
+  productName: string
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
@@ -94,6 +101,7 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     chunkCount: Number(raw.chunkCount ?? 0),
     refreshIntervalMinutes: Number(raw.refreshIntervalMinutes ?? 0),
     onChangeBehavior: raw.onChangeBehavior === 'log_only' ? 'log_only' : 'notify',
+    productName: String(raw.productName ?? '').trim(),
     lastFetchedAtMs: tsToMs(raw.lastFetchedAt),
     outdatedAtMs: tsToMs(raw.outdatedAt),
     updatedAtMs: tsToMs(raw.updatedAt),
@@ -212,6 +220,8 @@ export interface UpdateSourceSettingsInput {
   name?: string
   /** 移動到指定資料夾；null = 移出資料夾（未分類） */
   folderId?: string | null
+  /** 所屬產品名；'' = 清空（非單一產品來源）。改動後呼叫端要觸發該來源 reindex 才生效。 */
+  productName?: string
 }
 
 /**
@@ -241,8 +251,18 @@ export async function updateSourceSettings(
   if (input.folderId !== undefined) {
     update.folderId = input.folderId ? String(input.folderId) : null
   }
+  if (typeof input.productName === 'string') {
+    const clean = input.productName.trim().slice(0, 60)
+    update.productName = clean || FieldValue.delete()
+  }
 
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update(update)
+  if (typeof input.productName === 'string') {
+    // 索引流程 60s 快取要立刻失效，之後的 reindex 才吃得到新產品名；索引清單只增不刪
+    invalidateSourceProductCache(sourceId)
+    const clean = input.productName.trim().slice(0, 60)
+    if (clean) await addWorkspaceProductName(db, workspaceId, clean)
+  }
   const fresh = await getSource(db, sourceId, workspaceId)
   return fresh ? docToSourceSummary(fresh.id, fresh.data) : null
 }

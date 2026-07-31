@@ -4,9 +4,10 @@ import { updateSourceSettings } from '~~/server/utils/ai-knowledge-sources'
 
 /**
  * PUT /api/ai/sources/:sourceId
- * Body: { refreshIntervalMinutes?, onChangeBehavior?, name? }
+ * Body: { refreshIntervalMinutes?, onChangeBehavior?, name?, productName? }
  *
  * 只動使用者可配置欄位；hash / etag / lastFetchedAt 等系統欄位不在這支處理。
+ * productName 改動後前端要接著打 POST /api/ai/sources/:id/reindex 重建該來源索引才生效。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'sources.write')
@@ -19,6 +20,7 @@ export default defineEventHandler(async (event) => {
     onChangeBehavior: body?.onChangeBehavior,
     name: body?.name,
     folderId: body?.folderId === null ? null : (typeof body?.folderId === 'string' ? body.folderId : undefined),
+    productName: typeof body?.productName === 'string' ? body.productName : undefined,
   })
   if (!result) throw createError({ statusCode: 404, statusMessage: 'source not found' })
   return result

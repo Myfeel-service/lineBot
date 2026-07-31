@@ -2,8 +2,10 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
 import {
   advanceWork,
+  appendImportQualityWarnings,
   findExistingSources,
   JOB_LEASE_MS,
   KNOWLEDGE_PREVIEW_JOBS_COLLECTION,
@@ -75,6 +77,24 @@ export default defineEventHandler(async (event) => {
       work.existingMatches = (work.input.type === 'file' || work.input.type === 'url')
         ? await findExistingSources(workspaceId, work.sourceName, db)
         : []
+      // 自動認產品名（P1-1）：單一產品來源預填產品名給使用者確認。gsheet（多列多產品）不跑；
+      // 多產品 / 平台頁 LLM 會回空字串。失敗不擋匯入（只是不預填）。
+      if (!work.suggestedProductName && work.input.type !== 'gsheet' && work.chunks.length) {
+        try {
+          const sample = work.segments[0]
+            || work.chunks.slice(0, 5).map(c => `${c.title}\n${c.content}`).join('\n')
+          const det = await detectProductName(sample, work.sourceName)
+          work.suggestedProductName = det.productName
+          work.usage.inputTokens += det.inputTokens
+          work.usage.outputTokens += det.outputTokens
+        }
+        catch (e) {
+          console.warn('[preview-jobs] detectProductName failed（不預填，照常完成）:', e)
+        }
+      }
+      // 匯入品質守門（P1-2）：時效字眼 / 重複卡 / 總覽矛盾 / 說明書無產品名。
+      // 放在產品名偵測之後（第 4 項檢查要用偵測結果）；內部 fail-open 不擋匯入。
+      await appendImportQualityWarnings(db, workspaceId, work)
       work.phase = 'done'
       await saveWork(workspaceId, jobId, work)
       await ref.update({

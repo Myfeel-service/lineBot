@@ -2693,7 +2693,11 @@ async function tryAiFallback(params: {
   let followupOf: string | undefined
   if (lastDis?.options?.length) {
     const trimmed = textContent.trim()
-    const match = lastDis.options.find(o => o.title === trimmed)
+    // 按鈕送出的 text 已改用短 label（見下方 quick reply 組裝）；label 與 title 都認得，
+    // 部署前發出的舊反問（text=title）也仍能比對。
+    const match = trimmed
+      ? lastDis.options.find(o => o.title === trimmed || (o.label ?? '').trim() === trimmed)
+      : undefined
     if (match) {
       query = match.title
       isFollowup = true
@@ -2803,11 +2807,22 @@ async function tryAiFallback(params: {
       return
     }
 
-    // label 用 LLM 生成的短名稱（≤20 字硬限制是 LINE 規格）；送出的 text 用完整 title 供 followup 比對
-    const quickReplyItems: messagingApi.QuickReplyItem[] = dis.options.map(o => ({
-      type: 'action',
-      action: { type: 'message', label: (o.label || o.title).slice(0, 20), text: o.title },
-    }))
+    // label 用 LLM 生成的短名稱（≤20 字硬限制是 LINE 規格）。
+    // 送出的 text 也用短 label——客人點按鈕後氣泡顯示的就是這個 text，整串卡片標題機器味太重；
+    // label 缺失或與其他選項撞名（比對會歧義）時退回完整 title。followup 比對兩者都認得。
+    const labelCounts = new Map<string, number>()
+    for (const o of dis.options) {
+      const l = (o.label || '').trim()
+      if (l) labelCounts.set(l, (labelCounts.get(l) ?? 0) + 1)
+    }
+    const quickReplyItems: messagingApi.QuickReplyItem[] = dis.options.map((o) => {
+      const l = (o.label || '').trim()
+      const sendText = l && labelCounts.get(l) === 1 ? l : o.title
+      return {
+        type: 'action',
+        action: { type: 'message', label: (l || o.title).slice(0, 20), text: sendText },
+      }
+    })
     quickReplyItems.push({
       type: 'action',
       action: { type: 'message', label: '🙋 找真人', text: '找真人' },

@@ -36,7 +36,10 @@
 
         <el-tab-pane name="url">
           <template #label><span data-tour="kb-tab-url">網址</span></template>
-          <p class="kb-section-hint">系統會抓取網頁上的文字做成卡片。若那個網頁需要先登入、或要按按鈕才會顯示內容，可能抓不到，請改用上傳檔案。</p>
+          <p class="kb-section-hint">
+            系統會抓取網頁上的文字做成卡片。若那個網頁需要先登入、或要按按鈕才會顯示內容，可能抓不到，請改用上傳檔案。
+            <strong>提醒：很多商城「首頁」的商品區塊是動態載入的，抓下來會只剩選單和頁尾</strong>——請改貼商品「列表頁」或單一商品頁的網址。
+          </p>
           <el-input
             v-model="urlInput"
             placeholder="https://example.com/faq"
@@ -116,8 +119,8 @@
           這是商品 / 列表頁（額外產生一張「總覽卡」）
         </el-checkbox>
         <p class="kb-section-hint">
-          適用首頁、商品型錄這類「列出很多項目」的頁面。除了把每個項目切成卡片，再額外合成一張帶分類的總覽卡，
-          讓客人問「你們有賣什麼 / 有哪些產品」時能一次回答，不會被反問。
+          適用商品「列表頁」、型錄這類「列出很多項目」的頁面（<strong>不建議用首頁</strong>——商品區塊常是動態載入抓不到，總覽卡會做錯）。
+          除了把每個項目切成卡片，再額外合成一張帶分類的總覽卡，讓客人問「你們有賣什麼 / 有哪些產品」時能一次回答，不會被反問。
         </p>
       </div>
 
@@ -156,6 +159,21 @@
           class="kb-source-name-input"
         />
       </div>
+
+      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品來源（FAQ、公告等）。 -->
+      <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
+        <span class="kb-source-name-label">所屬產品</span>
+        <el-input
+          v-model="sourceMeta.productName"
+          :maxlength="60"
+          size="small"
+          placeholder="這份內容都在講同一個產品時才填（含品牌與型號）"
+          class="kb-source-name-input"
+        />
+      </div>
+      <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
+        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，卡片會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改。' : '內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
+      </p>
 
       <el-alert
         v-if="ocrUsed"
@@ -481,6 +499,8 @@ const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
   url: '',
+  /** 所屬產品名：AI 偵測預填、使用者可改；'' = 非單一產品來源 */
+  productName: '',
 })
 
 const canPreview = computed(() => {
@@ -515,6 +535,8 @@ interface PreviewResult {
   existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
   /** 表格來源的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
+  /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */
+  suggestedProductName?: string
 }
 
 type PollResponse =
@@ -626,6 +648,7 @@ async function runPreview() {
       type: mode.value,
       name: res.sourceName,
       url: res.sourceUrl,
+      productName: res.suggestedProductName ?? '',
     }
     step.value = 'preview'
   }
@@ -730,6 +753,7 @@ async function runImport() {
           type: sourceMeta.value.type,
           name: sourceMeta.value.name.trim() || '未命名來源',
           url: sourceMeta.value.url,
+          productName: sourceMeta.value.productName.trim(),
         },
         chunks: selected,
         overviewCard: overviewPayload,
@@ -773,7 +797,7 @@ function resetAll() {
   ocrUsed.value = false
   healthWarnings.value = []
   result.value = null
-  sourceMeta.value = { type: '', name: '', url: '' }
+  sourceMeta.value = { type: '', name: '', url: '', productName: '' }
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
 
