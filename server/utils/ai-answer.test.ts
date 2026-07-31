@@ -17,6 +17,7 @@ import {
   buildNamedGuessConfirm,
   cleanProductLabel,
   taiwanTodayLabel,
+  isUnresolvedFeedback,
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
@@ -545,5 +546,32 @@ describe('taiwanTodayLabel', () => {
   it('以台灣時區換日（UTC 晚上 10 點 = 台灣隔天早上 6 點）', () => {
     expect(taiwanTodayLabel(new Date('2026-07-31T22:00:00Z'))).toBe('2026年8月1日')
     expect(taiwanTodayLabel(new Date('2026-07-31T10:00:00Z'))).toBe('2026年7月31日')
+  })
+})
+
+describe('isUnresolvedFeedback', () => {
+  const history = [
+    { role: 'user' as const, text: '除濕機沒反應' },
+    { role: 'bot' as const, text: '請檢查插座並排空水箱試試看喔。' },
+  ]
+
+  it('bot 剛回答過 + 整句無效回報 → true', () => {
+    expect(isUnresolvedFeedback('還是一樣', history)).toBe(true)
+    expect(isUnresolvedFeedback('還是不行', history)).toBe(true)
+    expect(isUnresolvedFeedback('沒用', history)).toBe(true)
+    expect(isUnresolvedFeedback('試過了還是不行', history)).toBe(true)
+    expect(isUnresolvedFeedback('還是一樣!!', history)).toBe(true)
+  })
+
+  it('帶新問題的句子不誤中（非全等）', () => {
+    expect(isUnresolvedFeedback('價格還是一樣嗎', history)).toBe(false)
+    expect(isUnresolvedFeedback('還是一樣要收運費嗎', history)).toBe(false)
+    expect(isUnresolvedFeedback('換了插座還是一樣,水箱也排空了,還有什麼方法', history)).toBe(false)
+  })
+
+  it('上一句不是 bot 回覆 → false（冷啟動亂丟不觸發）', () => {
+    expect(isUnresolvedFeedback('還是一樣', [])).toBe(false)
+    expect(isUnresolvedFeedback('還是一樣', undefined)).toBe(false)
+    expect(isUnresolvedFeedback('還是一樣', [{ role: 'user', text: '哈囉' }])).toBe(false)
   })
 })

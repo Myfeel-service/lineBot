@@ -128,6 +128,25 @@ const FAREWELL_RE = /^(掰掰|拜拜|再見|bye+|byebye|seeyou)$/i
  */
 const FAKE_HANDOFF_RE = /轉接|轉真人|轉給(專員|真人|客服)|安排專(員|人)|請專人|找專人/
 
+/**
+ * 「照做了還是沒解決」的短句回報。整句（去標點）精確比對＋長度上限——
+ * 「價格還是一樣嗎」這種帶新問題的句子不會誤中（全等才算）。
+ */
+const UNRESOLVED_RE = /^(還是一樣|還是不行|還是不能用|還是沒用|還是沒反應|還是沒有反應|還是壞的|還是無法開機|還是打不開|還是失敗|依然一樣|一樣沒反應|沒有用|沒用|沒效|沒有效|無效|沒改善|沒有改善|試過了沒用|試過了還是不行|試過還是一樣|試了沒用|試了還是不行|不行耶|還是有問題|問題還是在)$/
+
+/**
+ * 客人是否在回報「上一輪的回答無效」。上一句必須是 bot 回覆（機器人才剛講完做法），
+ * 且這句是整句等於無效回報的短句。命中就別再重新檢索——多半又撈到同一張卡、
+ * 一字不差複讀（2026-07-31 實測鬼打牆），改走轉真人二次確認。
+ */
+export function isUnresolvedFeedback(text: string, history?: AiChatTurn[]): boolean {
+  const last = history?.length ? history[history.length - 1] : undefined
+  if (last?.role !== 'bot') return false
+  const t = String(text || '').trim().replace(/[!！。.~～、,，?？\s]/g, '')
+  if (!t || t.length > 14) return false
+  return UNRESOLVED_RE.test(t)
+}
+
 export const DEFAULT_GREETING_REPLY = '您好，請問有什麼可以為您服務的嗎？😊'
 export const DEFAULT_THANKS_REPLY = '不客氣！還有需要都可以再跟我說 😊'
 export const DEFAULT_FAREWELL_REPLY = '再見，有需要再來找我喔！😊'
@@ -1096,6 +1115,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       // 改用更便宜的 flash-lite，繼續答
       answerModel = 'gemini-2.5-flash-lite'
     }
+  }
+
+  // ── 2.5 「照做了還是沒解決」偵測 ──────────────────────────
+  // 客人對上一輪回答回報無效（還是一樣 / 沒用）。重新檢索多半又命中同一張卡 → 複讀鬼打牆。
+  // 直接走 handoff('unresolved')；handler 端對此 reason 走轉真人二次確認（🙋按鈕）。
+  if (!input.isFollowup && isUnresolvedFeedback(text, input.history)) {
+    await record({ invocations: 1, handoffs: 1 })
+    return handoff('unresolved')
   }
 
   // ── 3. 意圖路由 ∥ 向量檢索（並行，延遲幾乎不增加）──────────

@@ -291,6 +291,8 @@ export type HandoffReason =
   | 'user_request'
   /** 業務洽詢（議價殺價 / 團購批發 / 客製包裝禮盒等），需業務人員處理，知識庫答不了 */
   | 'commercial_inquiry'
+  /** 客人回報「照做了還是沒解決」（還是一樣 / 沒用）——再答只會複讀同一張卡，改走轉真人確認 */
+  | 'unresolved'
 
 export interface AiConversationMeta {
   /** 最近一次 AI 介入的決定 */
@@ -451,6 +453,7 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   manual: '人工指定',
   user_request: '客人要求真人',
   commercial_inquiry: '業務洽詢',
+  unresolved: '排除步驟沒解決',
 }
 
 export const KNOWLEDGE_CHUNK_STATUS_LABELS: Record<KnowledgeChunkStatus, string> = {

@@ -52,7 +52,8 @@
       "Bash(gcloud config *)",
       "Bash(gcloud scheduler *)",
       "Bash(gcloud logging *)",
-      "Bash(BATCH=V npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)"
+      "Bash(BATCH=V npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)",
+      "Bash(node --env-file=.env --experimental-strip-types -e ' *)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot"

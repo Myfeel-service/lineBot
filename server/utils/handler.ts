@@ -2305,7 +2305,8 @@ async function triggerHandoff(
 // AI 自己「推斷」答不了（信心不足 / 知識庫無依據）時，先問客人要不要轉真人並給按鈕，
 // 把 session 留在 bot；客人確認才真的轉接。降低誤判直接占用真人、也避免轉進「無人接」黑洞。
 // 敏感詞 / 額度用罄 / LLM 失敗 / 客人明講 不在此列（見呼叫端），維持直接轉接。
-const HANDOFF_CONFIRM_REASONS = new Set<HandoffReason>(['low_confidence', 'no_grounding'])
+// unresolved（客人回報「照做了沒解決」）也走確認——別直接占用真人，但要主動遞出轉接按鈕。
+const HANDOFF_CONFIRM_REASONS = new Set<HandoffReason>(['low_confidence', 'no_grounding', 'unresolved'])
 
 /** 二次確認 quick-reply 按鈕送回的文字 */
 const HANDOFF_CONFIRM_YES_TEXT = '轉接專員'
@@ -2335,6 +2336,8 @@ function isConfirmYesText(raw: string): boolean {
 const HANDOFF_CONFIRM_TTL_MS = 10 * 60 * 1000
 
 const HANDOFF_CONFIRM_PROMPT = '這個問題我不太確定該怎麼回答 😅 需要幫您轉接專員嗎？'
+/** unresolved 專用：客人才剛照做過步驟，說「不確定怎麼回答」會顯得沒在聽 */
+const HANDOFF_CONFIRM_PROMPT_UNRESOLVED = '看來這些方法沒有解決您的問題 😥 需要幫您轉接專員進一步協助嗎？'
 const HANDOFF_DECLINE_REPLY = '好的～您可以換個方式描述，或直接告訴我想了解什麼，我再幫您看看 😊'
 
 // ── 回答品質 proxy：「AI 答完不久客人又被轉真人」────────────────────
@@ -2849,7 +2852,7 @@ async function tryAiFallback(params: {
     ]
     const msg: messagingApi.TextMessage = {
       type: 'text',
-      text: HANDOFF_CONFIRM_PROMPT,
+      text: result.handoffReason === 'unresolved' ? HANDOFF_CONFIRM_PROMPT_UNRESOLVED : HANDOFF_CONFIRM_PROMPT,
       quickReply: { items: quickReplyItems },
     }
     await replyMessage(replyToken, [msg], workspaceId)
