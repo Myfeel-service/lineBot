@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import type { KpiResult } from '~~/shared/types/conversation-stats'
+import { isPreInboundFollowSession, type KpiResult } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
 export default defineEventHandler(async (event): Promise<KpiResult> => {
@@ -21,7 +21,8 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
   ref = ref.where('openedAt', '>=', startDate).where('openedAt', '<=', endDate)
 
   const snap = await ref.get()
-  const sessions = snap.docs.map(d => d.data())
+  // 活動/加好友出生、客人未開口的 session 不進統計(不算未首接也不算首接)
+  const sessions = snap.docs.map(d => d.data()).filter(s => !isPreInboundFollowSession(s))
 
   const total = sessions.length
   const botHandled = sessions.filter(s => s.initialHandler === 'bot').length

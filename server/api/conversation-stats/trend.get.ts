@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import type { TrendBucket, TrendGranularity } from '~~/shared/types/conversation-stats'
+import { isPreInboundFollowSession, type TrendBucket, type TrendGranularity } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
 function bucketKey(date: Date, granularity: TrendGranularity): string {
@@ -46,6 +46,8 @@ export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[
     const s = doc.data()
     const ts = s.openedAt?.toDate?.()
     if (!ts) continue
+    // 與 KPI 同口徑:活動/加好友出生、客人未開口的 session 不進統計
+    if (isPreInboundFollowSession(s)) continue
 
     const key = bucketKey(ts, granularity)
     if (!bucketMap.has(key)) {

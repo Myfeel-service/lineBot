@@ -20,6 +20,8 @@ interface SessionCacheEntry {
   status: ConversationStatus
   lastActivityAt: number  // JS ms timestamp
   cachedAt: number
+  /** 已收過客人來訊(follow/活動出生的 session 在此之前不進首接統計) */
+  hasInbound?: boolean
 }
 const SESSION_CACHE_TTL_MS = 30 * 1000
 const sessionByUser = new Map<string, SessionCacheEntry>()   // lineUserId → entry
@@ -120,6 +122,12 @@ async function closeOrphanedSessions(
 export async function ensureConversationSession(
   userId: string,
   workspaceId: string,
+  /**
+   * origin='follow':加好友/活動入口觸發(客人還沒開口)。這種 session 在收到第一句
+   * 客人訊息(hasInbound)前,不進首接統計——不算「未首接」(沒有東西被接),也不算首接。
+   * 不帶 opts = 客人來訊(訊息/postback),會把 hasInbound 補記為 true(冪等)。
+   */
+  opts: { origin?: 'follow' } = {},
 ): Promise<string> {
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
@@ -137,10 +145,13 @@ export async function ensureConversationSession(
     cached.status !== 'closed' &&
     now - cached.lastActivityAt < SESSION_24H_MS
   ) {
+    const bgUpdate: Record<string, unknown> = { lastActivityAt: FieldValue.serverTimestamp() }
+    // 客人來訊 → 補記 hasInbound(布林、重寫冪等;快取記住後同 instance 只寫一次)
+    if (!opts.origin && !cached.hasInbound) bgUpdate.hasInbound = true
     db.collection('conversationSessions').doc(cached.sessionId)
-      .update({ lastActivityAt: FieldValue.serverTimestamp() })
+      .update(bgUpdate)
       .catch(e => console.warn('[session] bg lastActivityAt update failed:', e))
-    sessionByUser.set(lineUserId, { ...cached, lastActivityAt: now, cachedAt: now })
+    sessionByUser.set(lineUserId, { ...cached, lastActivityAt: now, cachedAt: now, hasInbound: cached.hasInbound || !opts.origin })
     // Sync sessionStatusById so shouldSuppressInboundBotAutomationForSession gets a cache hit
     sessionStatusById.set(cached.sessionId, { status: cached.status, cachedAt: now })
     return cached.sessionId
@@ -171,7 +182,10 @@ export async function ensureConversationSession(
     if (existingData && existingData.status !== 'closed' && existingRef) {
       const lastActivity: number = existingData.lastActivityAt?.toMillis?.() ?? 0
       if (now - lastActivity < SESSION_24H_MS) {
-        tx.update(existingRef, { lastActivityAt: FieldValue.serverTimestamp() })
+        tx.update(existingRef, {
+          lastActivityAt: FieldValue.serverTimestamp(),
+          ...(!opts.origin && !existingData.hasInbound ? { hasInbound: true } : {}),
+        })
         resultStatus = existingData.status as ConversationStatus
         return convData!.currentSessionId as string
       }
@@ -198,6 +212,10 @@ export async function ensureConversationSession(
       hasHandoff: false,
       handoffRequestedAt: null,
       humanFirstRepliedAt: null,
+      // 出生方式:follow=加好友/活動入口(客人還沒開口);message=客人來訊。
+      // origin='follow' 且尚無 hasInbound 的 session 不進首接統計(見 isPreInboundFollowSession)
+      origin: opts.origin ?? 'message',
+      hasInbound: !opts.origin,
     })
     tx.set(convRef, {
       workspaceId,
@@ -215,6 +233,8 @@ export async function ensureConversationSession(
     status: resultStatus,
     lastActivityAt: now,
     cachedAt: now,
+    // 這次呼叫是客人來訊就一定有 inbound;follow 呼叫先設 false,下次來訊會補記
+    hasInbound: !opts.origin,
   })
   sessionStatusById.set(resultId, { status: resultStatus, cachedAt: now })
 

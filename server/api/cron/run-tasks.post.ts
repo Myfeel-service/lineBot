@@ -4,6 +4,7 @@ import {
   autoHandbackIdleSessions,
   remindOverdueHandoffs,
   cleanupExpiredWebhookEventLocks,
+  dailyBacklogDigest,
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
@@ -31,6 +32,7 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
+    { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
   ]
 

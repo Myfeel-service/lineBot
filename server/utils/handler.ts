@@ -336,7 +336,8 @@ export async function handleFollowEvent(
     console.log('[webhook] follow ensureUser:', userId)
     // Session creation and claim application are independent — run in parallel
     await Promise.all([
-      ensureConversationSession(userId, wid).catch(e =>
+      // origin='follow':加好友/活動入口出生的 session,客人開口前不進首接統計
+      ensureConversationSession(userId, wid, { origin: 'follow' }).catch(e =>
         console.error('[session] follow session error:', e),
       ),
       applyPendingClaims(userId, wid),
@@ -1748,9 +1749,17 @@ export async function handleMessageEvent(
       payload: event.message,
       lineEventTimestampMs,
     }, workspaceId).catch(e => console.error('[conv] save error:', e))
-    // Non-text: no bot reply; run in background
-    ensureConversationSession(userId, workspaceId).catch(e => console.error('[session] error:', e))
+    const sessionId = await ensureConversationSession(userId, workspaceId).catch((e) => {
+      console.error('[session] error:', e)
+      return null
+    })
     ensureUser(userId, undefined, workspaceId).catch(e => console.error('[ensureUser] Error:', e))
+    // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
+    // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
+    if (['image', 'video', 'audio', 'file'].includes(event.message.type) && event.replyToken) {
+      maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
+        .catch(e => console.error('[non-text-ack] error:', e))
+    }
   }
 }
 
@@ -2088,6 +2097,12 @@ async function handleIncomingText(
           if (actionMessages.length > 0) {
             await replyMessage(replyToken, actionMessages, wid)
             saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, wid).catch(e => console.error('[conv] save error:', e))
+            // 純文字/網址回覆也是機器人真實首接(與模組動作同等;先前漏記會被誤計成未首接)
+            if (sessionId) {
+              enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
+                console.error('[session] enterModule error:', e),
+              )
+            }
           }
         }
       }
@@ -2163,6 +2178,13 @@ async function runScriptStart(
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId)
   else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, result.quickReplies)
+  // 腳本問答=機器人真實首接(先前漏記會被誤計未首接)。await:確保先記 bot,
+  // 結尾轉真人時 live_agent 才能正確疊成「bot 首接+升級轉真人」而不是搶成 human 首接。
+  if (sessionId && result.replyText) {
+    await enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
+      console.error('[script] enterModule error:', e),
+    )
+  }
   if (result.finished && result.thenHandoff) {
     await triggerHandoff(userAttributes, lineUserId, workspaceId, sessionId, requestOrigin, channelSecret, /*alreadyReplied*/ true)
   }
@@ -2200,6 +2222,12 @@ async function runScriptAdvance(
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId)
   else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, result.quickReplies)
+  // 同 runScriptStart:腳本推進的回覆也記機器人首接(涵蓋「session 換新後才接續腳本」的情況)
+  if (sessionId && result.replyText) {
+    await enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
+      console.error('[script] enterModule error:', e),
+    )
+  }
   if (result.finished && result.thenHandoff) {
     await triggerHandoff(userAttributes, lineUserId, workspaceId, sessionId, requestOrigin, channelSecret, true)
   }
@@ -2327,6 +2355,49 @@ function wasRecentlyAnswered(meta: AiConversationMeta | undefined | null): boole
 const WAITING_ACK_THROTTLE_MS = 30 * 60 * 1000
 const WAITING_ACK_MAP_MAX_ENTRIES = 5000
 const waitingAckSentAt = new Map<string, number>()
+
+// ── 非文字訊息的禮貌回覆 ─────────────────────────────────────────────
+// 客人傳圖片/影片/語音/檔案時 AI 讀不懂內容,完全沉默像被已讀不回 → 回一句引導。
+// 條件:機器人服務中(真人接手時不插嘴)+ AI 全自動(draft/關閉的工作區不讓機器人開口)。
+const NON_TEXT_ACK_THROTTLE_MS = 10 * 60 * 1000
+const nonTextAckSentAt = new Map<string, number>()
+
+async function maybeAckNonTextMessage(
+  sessionId: string | null,
+  lineUserId: string,
+  replyToken: string,
+  workspaceId: string,
+): Promise<void> {
+  try {
+    // 等待真人/真人處理中 → 靜默(等待中的安撫由 waiting-ack 負責文字訊息即可)
+    if (await shouldSuppressInboundBotAutomationForSession(sessionId)) return
+    const settings = await getAiSettings(workspaceId).catch(() => null)
+    if (!settings?.enabled || settings.replyMode !== 'auto') return
+
+    const key = `${workspaceId}:${lineUserId}`
+    const now = Date.now()
+    if (now - (nonTextAckSentAt.get(key) ?? 0) < NON_TEXT_ACK_THROTTLE_MS) return
+    nonTextAckSentAt.set(key, now)
+    capMapSize(nonTextAckSentAt, WAITING_ACK_MAP_MAX_ENTRIES)
+
+    const msg: messagingApi.TextMessage = {
+      type: 'text',
+      text: '收到您傳的內容了！我目前只能閱讀文字，方便用文字描述您的問題嗎？需要專員協助也可以輸入「找真人」🙏',
+    }
+    try {
+      await replyMessage(replyToken, [msg], workspaceId)
+    }
+    catch (e) {
+      nonTextAckSentAt.delete(key)
+      throw e
+    }
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
+      .catch(e => console.error('[non-text-ack] save outgoing error:', e))
+  }
+  catch (e) {
+    console.error('[non-text-ack] failed:', e)
+  }
+}
 
 async function maybeSendWaitingAck(
   sessionId: string | null,
@@ -2611,15 +2682,19 @@ async function tryAiFallback(params: {
 
   const lastDis = prevAiMeta?.lastDisambiguation ?? null
 
-  // Followup：客人剛被反問過，這次訊息正好等於某個 option → 把該 option 當新 query 跑
+  // Followup：客人剛被反問過，這次訊息正好等於某個 option → 把該 option 當新 query 跑。
+  // 同時帶上反問前的原始問題（lastQuery）：只拿選項標題檢索會答非所問
+  // （問水箱多大 → 點選項 → 背操作面板），answerWithAi 會用「標題＋原始問題」合成檢索與作答。
   let query = textContent
   let isFollowup = false
+  let followupOf: string | undefined
   if (lastDis?.options?.length) {
     const trimmed = textContent.trim()
     const match = lastDis.options.find(o => o.title === trimmed)
     if (match) {
       query = match.title
       isFollowup = true
+      followupOf = prevAiMeta?.lastQuery?.trim() || undefined
     }
   }
 
@@ -2655,6 +2730,7 @@ async function tryAiFallback(params: {
       workspaceId,
       query,
       isFollowup,
+      followupOf,
       skipDisambiguation,
       history,
       // 意圖路由已分類過就重用（省一次 flash-lite）;routeMessage 失敗回 null 時仍由內部 classifyIntent 補
@@ -2742,6 +2818,12 @@ async function tryAiFallback(params: {
       await replyMessage(replyToken, [msg], workspaceId)
       saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+      // 反問澄清也是 AI 對客人的真實回應 → 記 AI 首接(草稿模式已在前面 return,不會到這)
+      if (sessionId) {
+        enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+          console.error('[ai-fallback] enterModule(ai) error:', e),
+        )
+      }
     }
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'disambiguate',
@@ -2773,6 +2855,12 @@ async function tryAiFallback(params: {
     await replyMessage(replyToken, [msg], workspaceId)
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
       .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+    // 「需要幫您轉接嗎?」也是 AI 對客人的真實回應 → 記 AI 首接(此分支已排除草稿模式)
+    if (sessionId) {
+      enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+        console.error('[ai-fallback] enterModule(ai) error:', e),
+      )
+    }
     // handoffs 已在 answerWithAi 記過；這裡只多送一則確認、不重複計。
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'handoff_confirm',

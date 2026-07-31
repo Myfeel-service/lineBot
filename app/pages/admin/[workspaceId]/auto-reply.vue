@@ -131,6 +131,15 @@
                   :label="option.label"
                 />
               </el-select>
+              <!-- anyText 陷阱警告:這種規則排在腳本與 AI 前面,會把它們全部無聲廢掉(正式站踩過的雷) -->
+              <el-alert
+                v-if="form.matchType === 'anyText'"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="這條規則啟用後,會攔截「所有」文字訊息"
+                description="自動回覆規則的順位在 AI 客服與腳本前面——這條開著,AI 和腳本會收不到任何訊息而完全失效,而且不會有任何錯誤提示。除非你是刻意要暫停 AI,否則建議改用「包含任一關鍵字」。"
+              />
             </div>
             <div v-if="form.matchType !== 'anyText'" class="admin-field-group">
               <AdminFieldLabel text="關鍵字內容" tight />

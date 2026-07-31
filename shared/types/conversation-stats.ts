@@ -17,6 +17,15 @@ export type ConversationEventType =
 
 export type TrendGranularity = 'day' | 'week' | 'month'
 
+/**
+ * 「加好友/活動入口」出生、客人還沒開口的 session → 不進首接統計。
+ * 沒有東西被「接」:算未首接會灌水(活動流量越大失真越大),算機器人首接又反向灌功;
+ * 客人真的傳第一句(hasInbound)後就正常計。舊資料沒有 origin 欄位 → 不受影響照舊計入。
+ */
+export function isPreInboundFollowSession(s: { origin?: unknown; hasInbound?: unknown } | undefined): boolean {
+  return s?.origin === 'follow' && s?.hasInbound !== true
+}
+
 export interface ConversationSessionDoc {
   workspaceId: string
   userId: string

@@ -7,6 +7,7 @@
  * 是各實例各通知一次，可接受——通知漏發比重複發更糟）。
  */
 import type { messagingApi } from '@line/bot-sdk'
+import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { pushMessage } from './line'
 import { getAiSettings } from './ai-settings'
 import { isServiceHoursDnd } from '~~/shared/time'
@@ -76,6 +77,43 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
     if (r.status === 'rejected') {
       // 最常見原因：該人員不是此官方帳號好友
       console.warn('[handoff-notify] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
+    }
+  })
+}
+
+// ── AI 額度 80% 預警 ────────────────────────────────────────────────
+// 額度用完的瞬間所有客人訊息會轉真人(懸崖式)——在 80% 先通知管理員,留反應時間。
+// 每個「額度期間」只警告一次(標記存 aiQuotaAlerts/{workspaceId},換期自動重新警戒);
+// 收件人沿用轉真人通知名單(名單沒設就發不出去——那本來就是最優先待辦)。
+export async function maybeWarnQuotaThreshold(params: {
+  workspaceId: string
+  /** 0~1 使用比例。呼叫端 <0.8 請勿呼叫,讓熱路徑零額外讀取 */
+  ratio: number
+  /** 期間識別鍵(則數額度=periodStart、token 上限=YYYY-MM);同鍵只警告一次 */
+  periodKey: string
+  /** 通知內容的用量描述(例「本期 AI 回覆則數 812/1000」) */
+  usageText: string
+  db: Firestore
+}): Promise<void> {
+  if (params.ratio < 0.8) return
+  const settings = await getAiSettings(params.workspaceId).catch(() => null)
+  const cfg = settings?.handoffNotify
+  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+
+  const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
+  const snap = await ref.get()
+  if ((snap.data() as { periodKey?: string } | undefined)?.periodKey === params.periodKey) return
+  // 先寫標記再推播:併發最壞重複推一次,可接受(同 handoff 通知取捨)
+  await ref.set({ periodKey: params.periodKey, ratioPct: Math.round(params.ratio * 100), warnedAt: FieldValue.serverTimestamp() })
+
+  const msg: messagingApi.TextMessage = {
+    type: 'text',
+    text: `⚠️ AI 用量預警\n${params.usageText}(約 ${Math.round(params.ratio * 100)}%)。\n額度用完後,客人訊息將全部轉真人或降級模型(依設定)。請留意用量或調整方案。`,
+  }
+  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)))
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.warn('[quota-warn] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
     }
   })
 }

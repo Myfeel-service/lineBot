@@ -72,6 +72,8 @@ export default defineEventHandler(async (event) => {
     isTest: true,
     skipDisambiguation: body?.skipDisambiguation === true,
     isFollowup: body?.isFollowup === true,
+    // 反問前的原始問題（前端模擬客人點按鈕時帶上，與正式 LINE handler 同行為）
+    followupOf: typeof body?.followupOf === 'string' ? body.followupOf.trim().slice(0, 200) : undefined,
     // 意圖路由已分類過就重用（與正式流程一致，省一次 flash-lite）；token 上面已記，內部會歸零
     precomputedIntent: route ?? undefined,
   })

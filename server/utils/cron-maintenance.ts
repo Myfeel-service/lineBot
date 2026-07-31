@@ -20,6 +20,8 @@ import { syncGoogleSheetSource } from './gsheet-sync'
 import { handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { pushMessage } from './line'
+import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
@@ -366,4 +368,75 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
     console.log('[webhook:cleanup-event-locks] deleted', deleted, 'expired locks')
   }
   return { deleted }
+}
+
+// ── 每日積壓/漏接摘要 ────────────────────────────────────────────────────
+// 「客人等到流失沒人知道」的解法:每天早上把「還在等真人的、卡在真人手上太久的」
+// 對話數量推播給轉真人通知名單。與 SLA 提醒同一套 status 單欄查詢(免複合索引)。
+// 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒積壓就不打擾。
+
+const DIGEST_HOUR_TAIPEI = 9 // 台北時間 9 點後的第一次排程觸發才發
+const HUMAN_STALE_HOURS = 12 // 真人處理中閒置超過此時數視為「卡住」
+
+export async function dailyBacklogDigest(db: Firestore) {
+  const taipeiNow = new Date(Date.now() + 8 * 3600_000)
+  if (taipeiNow.getUTCHours() < DIGEST_HOUR_TAIPEI) return { skipped: 'before-hour' }
+  const today = taipeiNow.toISOString().slice(0, 10)
+
+  const stateRef = db.collection('cronState').doc('backlog-digest')
+  const state = ((await stateRef.get()).data() ?? {}) as Record<string, string>
+
+  const [pendingSnap, humanSnap] = await Promise.all([
+    db.collection('conversationSessions').where('status', '==', 'pending_human').limit(SESSION_SCAN_LIMIT).get(),
+    db.collection('conversationSessions').where('status', '==', 'human_handling').limit(SESSION_SCAN_LIMIT).get(),
+  ])
+
+  interface Agg { pending: number; pendingOldestH: number; stale: number }
+  const byWs = new Map<string, Agg>()
+  const nowMs = Date.now()
+  const aggOf = (ws: string): Agg => {
+    const a = byWs.get(ws) ?? { pending: 0, pendingOldestH: 0, stale: 0 }
+    byWs.set(ws, a)
+    return a
+  }
+  for (const doc of pendingSnap.docs) {
+    const d = doc.data() as any
+    const ws = String(d?.workspaceId ?? '')
+    if (!ws) continue
+    const sinceMs = tsToMs(d.handoffRequestedAt) || tsToMs(d.lastActivityAt)
+    const a = aggOf(ws)
+    a.pending++
+    if (sinceMs) a.pendingOldestH = Math.max(a.pendingOldestH, (nowMs - sinceMs) / 3600_000)
+  }
+  for (const doc of humanSnap.docs) {
+    const d = doc.data() as any
+    const ws = String(d?.workspaceId ?? '')
+    if (!ws) continue
+    const lastMs = tsToMs(d.humanLastRepliedAt) || tsToMs(d.lastActivityAt)
+    if (lastMs && nowMs - lastMs >= HUMAN_STALE_HOURS * 3600_000) aggOf(ws).stale++
+  }
+
+  let notified = 0
+  const statePatch: Record<string, string> = {}
+  for (const [ws, agg] of byWs) {
+    if (state[ws] === today) continue // 今天發過
+    if (!agg.pending && !agg.stale) continue
+    const settings = await getAiSettings(ws, db)
+    const cfg = settings.handoffNotify
+    if (!cfg.enabled || !cfg.lineUserIds.length) continue
+
+    const lines = ['📋 客服積壓每日提醒']
+    if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
+    if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」`)
+    lines.push('請到後台「對話」頁查看。')
+    const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+    await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
+    statePatch[ws] = today
+    notified++
+  }
+  if (Object.keys(statePatch).length) await stateRef.set(statePatch, { merge: true })
+
+  const tally = { pendingScanned: pendingSnap.size, humanScanned: humanSnap.size, workspacesNotified: notified }
+  if (notified) console.log('[conversation:backlog-digest]', tally)
+  return tally
 }

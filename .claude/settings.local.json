@@ -42,7 +42,17 @@
       "Bash(node t4-verify-ui.mjs)",
       "Bash(node t3-pay.mjs 4147631000000002)",
       "Bash(node t3-pay.mjs 4147631000000001)",
-      "Bash(node t7-recurring.mjs)"
+      "Bash(node t7-recurring.mjs)",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "Bash(ln -sfn /Users/kevin/Documents/Github/linebot/node_modules /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/node_modules)",
+      "Bash(BATCH=A npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)",
+      "Bash(BATCH=B npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)",
+      "Bash(BATCH=C npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)",
+      "Bash(BATCH=FLOWS npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)",
+      "Bash(gcloud config *)",
+      "Bash(gcloud scheduler *)",
+      "Bash(gcloud logging *)",
+      "Bash(BATCH=V npx vitest run -c /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1126a1d3-355f-4703-af92-4c4afa16d262/scratchpad/live-vitest.config.ts)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot"

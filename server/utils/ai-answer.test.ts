@@ -16,6 +16,7 @@ import {
   productNamedInQuery,
   buildNamedGuessConfirm,
   cleanProductLabel,
+  taiwanTodayLabel,
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
@@ -537,5 +538,12 @@ describe('cleanProductLabel', () => {
       .toBe('粒粒安 飛利浦 無塗層 IH 智慧電子鍋')
     expect(cleanProductLabel('SHARP 頂級A咖｜iBarista 智慧咖啡機')).toBe('SHARP 頂級A咖 iBarista 智慧咖啡機')
     expect(cleanProductLabel('★MYFEEL全品項總覽')).toBe('MYFEEL全品項總覽')
+  })
+})
+
+describe('taiwanTodayLabel', () => {
+  it('以台灣時區換日（UTC 晚上 10 點 = 台灣隔天早上 6 點）', () => {
+    expect(taiwanTodayLabel(new Date('2026-07-31T22:00:00Z'))).toBe('2026年8月1日')
+    expect(taiwanTodayLabel(new Date('2026-07-31T10:00:00Z'))).toBe('2026年7月31日')
   })
 })

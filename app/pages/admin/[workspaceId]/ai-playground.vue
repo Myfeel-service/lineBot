@@ -331,7 +331,7 @@ function buildHistoryPayload(): Array<{ role: 'user' | 'bot'; text: string }> {
     .slice(-6)
 }
 
-async function send(text: string, opts: { skipDisambiguation?: boolean; isFollowup?: boolean } = {}) {
+async function send(text: string, opts: { skipDisambiguation?: boolean; isFollowup?: boolean; followupOf?: string } = {}) {
   const trimmed = text.trim()
   if (!trimmed) return
   // 帶入「本次提問之前」的對話脈絡，讓 playground 跟正式 LINE 一樣支援多輪追問
@@ -351,6 +351,7 @@ async function send(text: string, opts: { skipDisambiguation?: boolean; isFollow
         history: historyPayload,
         skipDisambiguation: opts.skipDisambiguation === true || autoSkipDisambiguation,
         isFollowup: opts.isFollowup === true,
+        followupOf: opts.followupOf,
       },
     })
     history.value.push({ role: 'ai', result: res, expanded: false })
@@ -401,8 +402,10 @@ async function tryExample(q: string) {
 }
 
 async function pickOption(title: string) {
-  // 模擬客人點按鈕：跟 LINE handler 一樣帶 skipDisambiguation + isFollowup
-  await send(title, { skipDisambiguation: true, isFollowup: true })
+  // 模擬客人點按鈕：跟 LINE handler 一樣帶 skipDisambiguation + isFollowup，
+  // 並帶上反問前的原始問題（最後一句 user 訊息），讓 AI 回答「選到的主題的原始問題」
+  const lastUser = [...history.value].reverse().find((t): t is UserTurn => t.role === 'user')
+  await send(title, { skipDisambiguation: true, isFollowup: true, followupOf: lastUser?.text })
 }
 
 async function retryLast() {
