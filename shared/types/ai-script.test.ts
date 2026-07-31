@@ -104,6 +104,13 @@ describe('extractCollectValue', () => {
     expect(extractCollectValue({ format: 'number' }, '數量大概 25 個')).toEqual({ ok: true, value: '25' })
   })
   it('custom: uses the pattern; falls back to any when pattern is invalid', () => {
+    expect(extractCollectValue({ format: 'alphanumeric' }, '我的編號是A123456喔')).toEqual({ ok: true, value: 'A123456' })
+    expect(extractCollectValue({ format: 'alphanumeric' }, '編號 12345')).toEqual({ ok: true, value: '12345' })
+    expect(extractCollectValue({ format: 'alphanumeric' }, '我不知道耶')).toEqual({ ok: false, value: '' })
+    expect(extractCollectValue({ format: 'alphanumericSymbol' }, '單號是 OD-2024/001 謝謝')).toEqual({ ok: true, value: 'OD-2024/001' })
+    expect(extractCollectValue({ format: 'alphanumericSymbol' }, '編號是A123。')).toEqual({ ok: true, value: 'A123' })
+    expect(extractCollectValue({ format: 'alphanumericSymbol' }, 'AB_12#3')).toEqual({ ok: true, value: 'AB_12#3' })
+    expect(extractCollectValue({ format: 'alphanumericSymbol' }, '沒有單號')).toEqual({ ok: false, value: '' })
     expect(extractCollectValue({ format: 'custom', pattern: '[A-Za-z]\\d{3,}' }, '我的編號是 A123 啦')).toEqual({ ok: true, value: 'A123' })
     expect(extractCollectValue({ format: 'custom', pattern: '[A-Za-z]\\d{3,}' }, '沒有編號')).toEqual({ ok: false, value: '' })
     // 壞掉的正則 → 不擋、原樣存

@@ -38,7 +38,7 @@ export interface ScriptTriggerNode {
 }
 
 /** collect 步驟的答案格式：用來「抽取」命中片段並「驗證」格式，不符就重問 */
-export type CollectFormat = 'any' | 'phone' | 'email' | 'number' | 'custom'
+export type CollectFormat = 'any' | 'phone' | 'email' | 'number' | 'alphanumeric' | 'alphanumericSymbol' | 'custom'
 
 export interface ScriptCollectNode {
   id: string
@@ -180,6 +180,18 @@ export interface ActiveScriptState {
 // ═══════════════════════════════════════════════════════════════════
 //  Defaults & validators
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 客人「明確要求真人」的說法(整句精確比對,trim 後)。
+ * AI 層攔截、腳本逃生門、試跑面板共用同一份——要加詞改這裡,全系統生效。
+ * 用精確比對(非子字串)避免誤傷:客人的答案(訂單編號、姓名…)不可能整句剛好等於這些詞。
+ */
+export const HUMAN_REQUEST_TEXTS = new Set(['找真人', '🙋 找真人', '轉真人', '真人客服'])
+
+/** 這句話是不是在喊找真人(腳本進行中優先於「當答案處理」) */
+export function isHumanRequestText(text: string): boolean {
+  return HUMAN_REQUEST_TEXTS.has(String(text || '').trim())
+}
 
 export const DEFAULT_SCRIPT_PRIORITY = 50
 export const DEFAULT_COLLECT_EXPIRE_MS = 10 * 60 * 1000 // 10 分鐘沒回就放棄
@@ -430,6 +442,12 @@ const COLLECT_FORMAT_PATTERNS: Record<Exclude<CollectFormat, 'any' | 'custom'>, 
   phone: /(?<!\d)0\d{1,3}[-\s]?\d{6,8}(?!\d)/,
   email: /[^\s@]+@[^\s@]+\.[^\s@]+/,
   number: /\d+/,
+  // 英文+數字：連續 ≥2 碼英數（訂單編號、序號、代碼）。「由英數組成」的字元集語意——
+  // 純英文或純數字也放行（客人的編號剛好沒字母不該被重問）。單一散字（句中的 a、1）抓不到。
+  alphanumeric: /[A-Za-z0-9]{2,}/,
+  // 英文+數字+符號：英數開頭結尾、中間可含 - _ / # .（例 OD-2024/001、AB_12#3）。
+  // 首尾限英數 → 句尾標點（「編號是A123。」）不會被誤收進值裡。
+  alphanumericSymbol: /[A-Za-z0-9][A-Za-z0-9#/._-]*[A-Za-z0-9]/,
 }
 
 /** 台灣電話清理後的合法碼數（市話 9 碼、手機 10 碼） */

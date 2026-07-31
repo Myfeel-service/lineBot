@@ -41,6 +41,25 @@
       <el-icon class="empty-icon"><Operation /></el-icon>
       <h3>選擇一條腳本開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
       <template v-if="canEditScripts">
+        <div class="scripts-ai-generate" data-tour="scr-ai-gen">
+          <span class="scripts-ai-generate-label">
+            <el-icon><MagicStick /></el-icon> 用一句話描述，AI 幫你搭草稿
+          </span>
+          <el-input
+            v-model="aiGenDesc"
+            type="textarea"
+            :rows="2"
+            maxlength="500"
+            placeholder="例：客人要退貨時，先問訂單編號和退貨原因，再請專員處理"
+            @keydown.enter.exact.prevent="generateFromAi"
+          />
+          <div class="scripts-ai-generate-actions">
+            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立腳本」才會存檔</span>
+            <el-button type="primary" :loading="aiGenerating" :disabled="!aiGenDesc.trim()" @click="generateFromAi">
+              {{ aiGenerating ? 'AI 生成中…' : 'AI 生成草稿' }}
+            </el-button>
+          </div>
+        </div>
         <p>從範本快速建立，或點「從空白開始」自己組</p>
         <div class="scripts-template-gallery" data-tour="scr-templates">
           <button
@@ -272,6 +291,8 @@
                       <el-option label="電話" value="phone" />
                       <el-option label="Email" value="email" />
                       <el-option label="純數字" value="number" />
+                      <el-option label="英文＋數字（例：A123456）" value="alphanumeric" />
+                      <el-option label="英文＋數字＋符號（例：OD-2024/001）" value="alphanumericSymbol" />
                       <el-option label="自訂（進階比對規則）" value="custom" />
                     </el-select>
                   </div>
@@ -451,7 +472,7 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { ArrowRight, ChatDotRound, CircleCheckFilled, Collection, Delete, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowRight, ChatDotRound, CircleCheckFilled, Collection, Delete, MagicStick, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { v4 as uuidv4 } from 'uuid'
 import type {
@@ -467,7 +488,7 @@ import type {
   ScriptTriggerNode,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, extractCollectValue, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, extractCollectValue, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -844,6 +865,14 @@ function simSend(text?: string) {
   simPush({ who: 'me', text: msg })
   if (simDone.value) { simPush({ who: 'sys', text: '（流程已結束，按「重來」再試一次）' }); return }
 
+  // 逃生門(與正式引擎同一份判斷詞):流程進行中喊「找真人」→ 放棄腳本、轉真人
+  if (simWaiting.value && isHumanRequestText(msg)) {
+    simPush({ who: 'sys', text: '↳ 逃生門：放棄流程，轉真人客服（會回覆客人並通知值班同仁）' })
+    simDone.value = true
+    simWaiting.value = null
+    return
+  }
+
   if (!simWaiting.value) {
     const trig = form.value.nodes.find(n => n.type === 'trigger')
     if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條腳本沒有觸發步驟）' }); return }
@@ -853,13 +882,23 @@ function simSend(text?: string) {
   const node = form.value.nodes.find(n => n.id === simNodeId.value)
   if (node?.type === 'collect') {
     const res = extractCollectValue(node, msg)
-    if (!res.ok) { simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？' }); return }
+    if (!res.ok) {
+      // 與引擎一致:答錯格式=挫折點,重問時亮「找真人」逃生按鈕
+      simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？', buttons: ['找真人'] })
+      return
+    }
     simCollected.value[node.fieldName] = res.value
     simRun(node.next)
   }
   else if (node?.type === 'quickReply') {
     const opt = node.options.find(o => o.label.trim() === msg)
-    if (!opt) { simPush({ who: 'sys', text: '（請點下面的按鈕，或輸入按鈕上的文字）' }); return }
+    if (!opt) {
+      // 與引擎一致:沒對到選項 → 重新出題,按鈕多一顆「找真人」(已有同義按鈕就不重複)
+      const labels = node.options.map(o => o.label)
+      if (!labels.some(l => isHumanRequestText(l.trim()))) labels.push('找真人')
+      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), buttons: labels })
+      return
+    }
     simRun(opt.next)
   }
   else { simPush({ who: 'sys', text: '（狀態異常，請按重來）' }) }
@@ -969,6 +1008,43 @@ function openCreate() {
   form.value = blankForm()
   markClean()
   simReset()
+}
+
+// ── AI 一句話生成草稿 ────────────────────────────────────────────────
+const aiGenDesc = ref('')
+const aiGenerating = ref(false)
+
+/** 呼叫生成端點,把草稿載入編輯器(與範本同一條路:未存檔,人審後按「建立」才寫入) */
+async function generateFromAi() {
+  const description = aiGenDesc.value.trim()
+  if (!description || aiGenerating.value) return
+  if (!confirmLeaveIfDirty()) return
+  aiGenerating.value = true
+  try {
+    const draft = await apiFetch<{ name: string; nodes: ScriptNode[]; rootNodeId: string }>(
+      '/api/ai/scripts/generate',
+      { method: 'POST', body: { description } },
+    )
+    isCreating.value = true
+    selectedId.value = null
+    form.value = {
+      name: draft.name,
+      enabled: true,
+      priority: DEFAULT_SCRIPT_PRIORITY,
+      rootNodeId: draft.rootNodeId,
+      nodes: deepCloneNodes(draft.nodes),
+    }
+    markClean()
+    simReset()
+    aiGenDesc.value = ''
+    showToast('草稿已生成——看看上面的流程圖、試跑一次,調整後按「建立腳本」', 'success')
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || err?.data?.statusMessage || err?.message || 'AI 生成失敗,換個說法再試一次', 'error')
+  }
+  finally {
+    aiGenerating.value = false
+  }
 }
 
 /** 從範本一鍵建立：載入到編輯器（尚未存檔，使用者微調後按建立才寫入） */

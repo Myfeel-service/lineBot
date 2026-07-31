@@ -168,3 +168,79 @@ describe('腳本引擎：過期狀態清除', () => {
     expect(activeScriptOf(store)).toBeUndefined()
   })
 })
+
+describe('腳本逃生門：進行中喊「找真人」永遠有人聽見', () => {
+  const s = script([
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['退貨'], examples: [], priority: 50, next: 'c' },
+    { id: 'c', type: 'collect', question: '請提供訂單編號', fieldName: 'order_id', expireMs: 600000, format: 'any', next: 'r' },
+    { id: 'r', type: 'reply', text: '已收到 {{order_id}}', thenHandoff: true },
+  ])
+
+  it('collect(不限格式)喊「找真人」→ 放棄流程，不會被存成答案', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+    await startScript(s, UID, {}, db)
+
+    const r = await advanceScript(activeScriptOf(store)!, '找真人', {}, UID, db)
+    expect(r.escapeToHuman).toBe(true)
+    expect(r.finished).toBe(true)
+    expect(r.replyText).toBe('') // 沒把「找真人」當答案跑到 reply
+    expect(activeScriptOf(store)).toBeFalsy() // activeScript 已清
+  })
+
+  it('「轉真人」也逃生；一般答案完全不受影響', async () => {
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', s)
+      await startScript(s, UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, '轉真人', {}, UID, db)
+      expect(r.escapeToHuman).toBe(true)
+    }
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', s)
+      await startScript(s, UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, 'A123456', {}, UID, db)
+      expect(r.escapeToHuman).toBeUndefined()
+      expect(r.replyText).toBe('已收到 A123456')
+      expect(r.thenHandoff).toBe(true)
+    }
+  })
+
+  it('collect 答錯格式重問時，亮「找真人」逃生按鈕', async () => {
+    const sPhone = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['預約'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '電話？', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'r' },
+      { id: 'r', type: 'reply', text: '收到', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', sPhone)
+    await startScript(sPhone, UID, {}, db)
+
+    const r = await advanceScript(activeScriptOf(store)!, '不知道耶', {}, UID, db)
+    expect(r.finished).toBe(false)
+    expect(r.quickReplies).toEqual(['找真人'])
+  })
+
+  it('quickReply 沒對到選項重問時，按鈕多一顆「找真人」；選項已有同義按鈕則不重複', async () => {
+    const mk = (labels: string[]) => script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['你好'], examples: [], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '需要什麼？', expireMs: 600000, options: labels.map(l => ({ label: l, next: 'r' })) },
+      { id: 'r', type: 'reply', text: '好的', thenHandoff: false },
+    ])
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', mk(['查訂單', '退貨']))
+      await startScript(mk(['查訂單', '退貨']), UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, '嗯？', {}, UID, db)
+      expect(r.quickReplies).toEqual(['查訂單', '退貨', '找真人'])
+    }
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', mk(['查訂單', '找真人']))
+      await startScript(mk(['查訂單', '找真人']), UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, '嗯？', {}, UID, db)
+      expect(r.quickReplies).toEqual(['查訂單', '找真人']) // 不重複加
+    }
+  })
+})

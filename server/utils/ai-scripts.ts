@@ -26,6 +26,7 @@ import type {
 import {
   DEFAULT_COLLECT_REASK,
   extractCollectValue,
+  isHumanRequestText,
   renderScriptTemplate,
   resolveBranchNext,
 } from '~~/shared/types/ai-script'
@@ -72,6 +73,11 @@ export interface ScriptStepResult {
   completed?: boolean
   /** quickReply 節點的按鈕文字；caller 用來組 LINE Quick Reply（label = 送出文字） */
   quickReplies?: string[]
+  /**
+   * 逃生門:客人在腳本進行中喊「找真人」→ 流程已放棄(activeScript 已清)。
+   * caller 應走標準轉真人流程(deliverHandoffReply),不要把 replyText 當一般回覆送。
+   */
+  escapeToHuman?: boolean
 }
 
 const EMPTY_RESULT: ScriptStepResult = { replyText: '', thenHandoff: false, finished: true }
@@ -275,6 +281,13 @@ export async function advanceScript(
   userDocId: string,
   db: Firestore = getDb(),
 ): Promise<ScriptStepResult> {
+  // 逃生門(最優先,先於「當答案處理」):腳本進行中喊「找真人」→ 放棄流程、交給 caller 走標準轉真人。
+  // 沒有這道門,求救會被 collect 存成欄位值(「已收到您的訂單 找真人」)或被格式驗證打回重問。
+  if (isHumanRequestText(userMessage)) {
+    await persistActiveScript(db, userDocId, null)
+    return { replyText: '', thenHandoff: false, finished: true, escapeToHuman: true }
+  }
+
   // 過期 → 直接清掉、丟回讓主流程走 rule / AI fallback
   if (state.expiresAt && state.expiresAt < Date.now()) {
     await persistActiveScript(db, userDocId, null)
@@ -310,16 +323,19 @@ export async function advanceScript(
     const normalized = String(userMessage || '').trim().toLowerCase()
     const picked = current.options.find(o => o.label.trim().toLowerCase() === normalized)
     if (!picked) {
-      // 沒對到任何選項 → 重新出題、停在同一節點（刷新逾時）
+      // 沒對到任何選項 → 重新出題、停在同一節點（刷新逾時）。
+      // 客人已經卡住一次,重問時補一顆「找真人」逃生按鈕(選項裡已有同義按鈕就不重複)。
       const reaskState: ActiveScriptState = {
         ...state,
         currentNodeId: current.id,
         expiresAt: Date.now() + (current.expireMs || 600_000),
       }
       await persistActiveScript(db, userDocId, reaskState)
+      const labels = current.options.map(o => o.label)
+      if (!labels.some(l => isHumanRequestText(l))) labels.push('找真人')
       return {
         replyText: renderScriptTemplate(current.question, { collected: state.collected, attributes }),
-        quickReplies: current.options.map(o => o.label),
+        quickReplies: labels,
         thenHandoff: false,
         finished: false,
       }
@@ -344,6 +360,8 @@ export async function advanceScript(
         collected: state.collected,
         attributes,
       }),
+      // 答錯格式=挫折點:重問時亮出逃生按鈕(點了送出「找真人」,由逃生門接住)
+      quickReplies: ['找真人'],
       thenHandoff: false,
       finished: false,
     }

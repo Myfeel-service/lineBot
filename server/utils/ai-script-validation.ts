@@ -23,7 +23,7 @@ import {
   type ScriptTriggerNode,
 } from '~~/shared/types/ai-script'
 
-const COLLECT_FORMATS: CollectFormat[] = ['any', 'phone', 'email', 'number', 'custom']
+const COLLECT_FORMATS: CollectFormat[] = ['any', 'phone', 'email', 'number', 'alphanumeric', 'alphanumericSymbol', 'custom']
 const BRANCH_OPS: BranchOp[] = ['exists', 'equals', 'contains']
 /** 單一分支節點最多幾條 case（避免前端塞爆） */
 const MAX_BRANCH_CASES = 10

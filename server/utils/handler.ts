@@ -43,7 +43,7 @@ import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
-import { matchesScriptKeywords, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
 import {
   lineUserFirestoreDocId,
@@ -2183,6 +2183,16 @@ async function runScriptAdvance(
 ): Promise<boolean> {
   const result = await advanceScript(active, textContent, userAttributes, fsUserDocId)
   invalidateUserDocCache(fsUserDocId)
+  if (result.escapeToHuman) {
+    // 逃生門:腳本進行中喊「找真人」→ 流程已放棄,走標準轉真人(回覆客人+通知值班+標記 session)
+    await deliverHandoffReply({
+      workspaceId, lineUserId, replyToken, userAttributes, channelSecret,
+      sessionId, requestOrigin,
+      customerMessage: textContent,
+      reason: 'user_request',
+    })
+    return true
+  }
   if (!result.replyText && result.finished) {
     // 過期或狀態壞掉 → 不算處理過，讓主流程往下走（rule / AI）
     return false
@@ -2261,8 +2271,7 @@ async function triggerHandoff(
     .catch(e => console.error('[script] enterModule(live_agent) error:', e))
 }
 
-/** 客人明確要求真人的句子（disambiguation quick reply 的「找真人」按鈕送出的文字） */
-const HUMAN_REQUEST_TEXTS = new Set(['找真人', '🙋 找真人', '轉真人', '真人客服'])
+// HUMAN_REQUEST_TEXTS 已移到 shared/types/ai-script.ts(AI 層攔截、腳本逃生門、試跑面板共用同一份)
 
 // ── 轉接前的二次確認（「需要幫您轉接專員嗎?」）──────────────────────
 // AI 自己「推斷」答不了（信心不足 / 知識庫無依據）時，先問客人要不要轉真人並給按鈕，
