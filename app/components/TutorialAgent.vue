@@ -24,13 +24,20 @@
         <header class="ta-panel__head">
           <div class="ta-panel__avatar"><el-icon><IconRobot /></el-icon></div>
           <div class="ta-panel__head-meta">
-            <div class="ta-panel__name">教學小幫手</div>
+            <div class="ta-panel__name">小幫手</div>
             <div class="ta-panel__status"><span class="ta-dot" />線上</div>
+          </div>
+          <div class="ta-tabs" role="tablist">
+            <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">設定進度</button>
+            <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問助理</button>
           </div>
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
         </header>
 
-        <div class="ta-panel__body">
+        <!-- 問助理:用講的查後台(唯讀) -->
+        <AdminAgentChat v-if="panelTab === 'chat'" class="ta-panel__chat" />
+
+        <div v-if="panelTab === 'setup'" class="ta-panel__body">
           <!-- 導覽結束後的回應（閉環） -->
           <div v-if="postTourNote" class="ta-note">{{ postTourNote }}</div>
 
@@ -152,7 +159,8 @@
           </template>
         </div>
 
-        <footer class="ta-panel__foot">我只看你帳號真實的設定狀態，不會給你假資訊。</footer>
+        <footer v-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的設定狀態，不會給你假資訊。</footer>
+        <footer v-else class="ta-panel__foot">回答都來自你帳號的真實資料;目前只能查詢,不能修改。</footer>
       </section>
     </Transition>
 
@@ -219,6 +227,9 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 const { user } = useAuth()
 const { workspaceId } = useWorkspace()
 const router = useRouter()
+
+/** 面板分頁:設定進度(原教學小幫手)/ 問助理(admin 查詢副駕 P1) */
+const panelTab = ref<'setup' | 'chat'>('setup')
 const {
   panelOpen,
   tourOpen,

@@ -1,0 +1,97 @@
+<template>
+  <div class="aa-chat">
+    <div ref="listEl" class="aa-chat__list">
+      <!-- 開場白 + 唯讀說明 -->
+      <div class="aa-msg aa-msg--ai">
+        <div class="aa-msg__bubble">想知道後台的什麼?我會查真實資料回答,不會亂編。<br><span class="aa-muted">(目前只能查詢,不能幫你修改設定)</span></div>
+      </div>
+
+      <template v-for="(m, i) in msgs" :key="i">
+        <div class="aa-msg" :class="m.who === 'me' ? 'aa-msg--me' : 'aa-msg--ai'">
+          <div class="aa-msg__bubble">{{ m.text }}</div>
+          <div v-if="m.tools?.length" class="aa-msg__tools">查了:{{ m.tools.map(toolLabel).join('、') }}</div>
+        </div>
+      </template>
+
+      <div v-if="loading" class="aa-msg aa-msg--ai">
+        <div class="aa-msg__bubble aa-muted">查詢中…</div>
+      </div>
+    </div>
+
+    <!-- 建議問題:還沒開始聊才顯示,一鍵就懂能問什麼 -->
+    <div v-if="!msgs.length && !loading" class="aa-chat__starters">
+      <button v-for="s in starters" :key="s" type="button" @click="send(s)">{{ s }}</button>
+    </div>
+
+    <div class="aa-chat__input">
+      <el-input
+        v-model="input"
+        placeholder="例:哪些腳本沒啟用?"
+        :disabled="loading"
+        @keyup.enter="send()"
+      />
+      <el-button type="primary" :loading="loading" :disabled="!input.trim() && !loading" @click="send()">送出</el-button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+/** Admin 查詢副駕(P1)的聊天面板:唯讀問答,掛在教學小幫手的「問助理」分頁。 */
+interface Msg { who: 'me' | 'ai'; text: string; tools?: string[] }
+
+const { apiFetch } = useWorkspace()
+
+const msgs = ref<Msg[]>([])
+const input = ref('')
+const loading = ref(false)
+const listEl = ref<HTMLElement | null>(null)
+
+const starters = [
+  '哪些腳本還沒啟用?',
+  '這個月 AI 用量如何?',
+  '知識庫有沒有匯入失敗?',
+  'AI 現在是什麼模式?',
+]
+
+const TOOL_LABELS: Record<string, string> = {
+  list_scripts: '腳本清單',
+  get_ai_settings: 'AI 設定',
+  get_ai_usage: 'AI 用量',
+  get_knowledge_status: '知識庫',
+  list_auto_reply_rules: '自動回覆規則',
+}
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name
+}
+
+function scrollToBottom() {
+  nextTick(() => { listEl.value?.scrollTo({ top: listEl.value.scrollHeight, behavior: 'smooth' }) })
+}
+
+async function send(preset?: string) {
+  const text = String(preset ?? input.value).trim()
+  if (!text || loading.value) return
+  input.value = ''
+  msgs.value.push({ who: 'me', text })
+  loading.value = true
+  scrollToBottom()
+  try {
+    // 帶最近 6 則當上下文,追問(「那上個月呢?」)才接得住
+    const history = msgs.value.slice(-7, -1).map(m => ({ role: m.who === 'me' ? 'user' : 'assistant', text: m.text }))
+    const res = await apiFetch<{ reply: string; toolCalls: string[] }>('/api/admin/agent/chat', {
+      method: 'POST',
+      body: { message: text, history },
+    })
+    msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls })
+  }
+  catch (err: any) {
+    msgs.value.push({ who: 'ai', text: err?.statusMessage || err?.data?.statusMessage || '查詢失敗了,稍後再試一次 🙏' })
+  }
+  finally {
+    loading.value = false
+    scrollToBottom()
+  }
+}
+</script>
+
+<!-- 樣式在 app/assets/scss/components/_tutorial-agent.scss(與教學小幫手同一份 partial) -->

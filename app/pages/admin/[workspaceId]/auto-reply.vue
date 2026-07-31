@@ -42,6 +42,26 @@
     <template #editor-empty>
       <el-icon class="empty-icon"><Lightning /></el-icon>
       <h3>選擇一條規則開始編輯</h3>
+      <!-- AI 一句話生成草稿(沿用腳本頁同一組樣式,跨頁一致) -->
+      <div v-if="canOperate" class="scripts-ai-generate" data-tour="ar-ai-gen">
+        <span class="scripts-ai-generate-label">
+          <el-icon><MagicStick /></el-icon> 用一句話描述，AI 幫你搭草稿
+        </span>
+        <el-input
+          v-model="aiGenDesc"
+          type="textarea"
+          :rows="2"
+          maxlength="500"
+          placeholder="例：客人問運費就回:全館滿千免運,未滿收80"
+          @keydown.enter.exact.prevent="generateFromAi"
+        />
+        <div class="scripts-ai-generate-actions">
+          <span class="text-xs text-muted">生成後會填進表單讓你檢查，按「建立規則」才會存檔</span>
+          <el-button type="primary" :loading="aiGenerating" :disabled="!aiGenDesc.trim()" @click="generateFromAi">
+            {{ aiGenerating ? 'AI 生成中…' : 'AI 生成草稿' }}
+          </el-button>
+        </div>
+      </div>
       <p>或點擊左側「新增」建立一條新的關鍵字觸發規則</p>
       <el-button v-if="canOperate" type="primary" @click="openCreate">新增規則</el-button>
     </template>
@@ -227,7 +247,7 @@
 
 
 <script setup lang="ts">
-import { Delete, Lightning, Plus } from '@element-plus/icons-vue'
+import { Delete, Lightning, MagicStick, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import {
   AUTO_REPLY_COOLDOWN_OPTIONS,
@@ -334,6 +354,38 @@ function openCreate() {
   selectedId.value = null
   form.value = defaultForm()
   markClean()
+}
+
+// ── AI 一句話生成草稿(填進表單讓人審,按「建立規則」才存) ─────────────
+const aiGenDesc = ref('')
+const aiGenerating = ref(false)
+
+async function generateFromAi() {
+  const description = aiGenDesc.value.trim()
+  if (!description || aiGenerating.value) return
+  if (!confirmLeaveIfDirty()) return
+  aiGenerating.value = true
+  try {
+    const draft = await apiFetch<any>('/api/auto-reply/generate', { method: 'POST', body: { description } })
+    isCreating.value = true
+    selectedId.value = null
+    form.value = {
+      ...defaultForm(),
+      name: draft.name,
+      keyword: draft.keyword,
+      matchType: draft.matchType,
+      action: normalizeAutoReplyAction(draft.action),
+    }
+    markClean()
+    aiGenDesc.value = ''
+    showToast('草稿已生成——檢查關鍵字和回覆文字，按「建立規則」存檔', 'success')
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || err?.data?.statusMessage || err?.message || 'AI 生成失敗，換個說法再試一次', 'error')
+  }
+  finally {
+    aiGenerating.value = false
+  }
 }
 
 function cancelEdit() {
