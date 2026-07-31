@@ -352,7 +352,7 @@
               <div
                 v-for="c in chunks"
                 :key="c.id"
-                class="src-chunk-row"
+                :class="['src-chunk-row', c.status === 'disabled' && 'src-chunk-row--off']"
               >
                 <div class="src-chunk-body">
                   <div class="src-chunk-main">
@@ -365,7 +365,9 @@
                     >內容過短</span>
                   </div>
                   <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
-                  <span class="src-chunk-meta">{{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }} · {{ relativeTime(c.updatedAtMs) }}</span>
+                  <span class="src-chunk-meta">
+                    {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
+                  </span>
                 </div>
                 <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
               </div>
@@ -550,6 +552,33 @@
           <el-button v-else size="small" plain @click="showChunkTagInput">＋</el-button>
         </div>
       </div>
+      <!-- 供 AI 使用開關 + 有效期限(已完成索引的卡才有;pending/failed 本來就不會被引用) -->
+      <template v-if="chunkEditMode === 'edit' && (chunkEditStatus === 'indexed' || chunkEditStatus === 'disabled')">
+        <div class="admin-field-group">
+          <AdminFieldLabel text="供 AI 使用" tight />
+          <div class="chunk-usage-row">
+            <el-switch v-model="chunkEnabled" />
+            <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這張卡回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
+          </div>
+        </div>
+        <div class="admin-field-group">
+          <AdminFieldLabel text="有效期限（選填）" tight />
+          <div class="chunk-usage-row">
+            <el-date-picker
+              v-model="chunkActiveUntil"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="永久有效"
+              clearable
+              style="width: 160px;"
+            />
+            <span class="text-xs text-muted">到期當天結束後自動停用——適合募資、折扣這類有檔期的內容</span>
+          </div>
+          <p v-if="chunkExpiredAtMs && !chunkEnabled" class="chunk-expired-note">
+            這張卡已於 {{ ymdLabel(chunkExpiredAtMs) }} 到期自動停用；打開開關或設定新期限即可重新上架。
+          </p>
+        </div>
+      </template>
     </div>
     <template #footer>
       <div class="chunk-footer">
@@ -665,6 +694,10 @@ interface ChunkRow {
   failureReason?: string
   manuallyEditedAtMs: number
   updatedAtMs: number
+  /** 有效期限（0 = 永久）；到期會被排程自動停用 */
+  activeUntilMs: number
+  /** 到期自動停用的時間（0 = 沒發生過） */
+  expiredAtMs: number
 }
 
 interface DiffEntry {
@@ -925,6 +958,17 @@ const chunkEditStatus = ref('')
 const chunkEditFailureReason = ref('')
 const chunkNormalizing = ref(false)
 const chunkReindexing = ref(false)
+// 供 AI 使用開關 + 有效期限(與內容分開存:走 /settings 端點,不動 embedding)
+const chunkEnabled = ref(true)
+const chunkActiveUntil = ref('') // 'YYYY-MM-DD';空字串 = 永久
+const chunkExpiredAtMs = ref(0)
+// 開窗時的原值,儲存時只送有變的部分
+let chunkSettingsOriginal = { enabled: true, activeUntil: '' }
+
+/** ms → 台灣時區 YYYY-MM-DD(sv locale 格式剛好是 ISO 日期) */
+function ymdLabel(ms: number): string {
+  return new Intl.DateTimeFormat('sv', { timeZone: 'Asia/Taipei' }).format(new Date(ms))
+}
 
 // ── Folder edit modal ───────────────────────────────
 const folderEditOpen = ref(false)
@@ -1401,6 +1445,10 @@ function openCreateManual() {
   chunkForm.value = { title: '', content: '', tags: [], questions: undefined }
   chunkEditStatus.value = ''
   chunkEditFailureReason.value = ''
+  chunkEnabled.value = true
+  chunkActiveUntil.value = ''
+  chunkExpiredAtMs.value = 0
+  chunkSettingsOriginal = { enabled: true, activeUntil: '' }
   chunkEditOpen.value = true
 }
 
@@ -1416,6 +1464,10 @@ function openEditChunk(chunk: ChunkRow) {
   }
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
+  chunkEnabled.value = chunk.status !== 'disabled'
+  chunkActiveUntil.value = chunk.activeUntilMs ? ymdLabel(chunk.activeUntilMs) : ''
+  chunkExpiredAtMs.value = chunk.expiredAtMs || 0
+  chunkSettingsOriginal = { enabled: chunkEnabled.value, activeUntil: chunkActiveUntil.value }
   chunkEditOpen.value = true
 }
 
@@ -1499,6 +1551,13 @@ async function saveChunk() {
         method: 'PUT',
         body,
       })
+      // 開關 / 有效期限有變才另打 settings(與內容編輯分開:不動 embedding)
+      const settingsBody: Record<string, unknown> = {}
+      if (chunkEnabled.value !== chunkSettingsOriginal.enabled) settingsBody.enabled = chunkEnabled.value
+      if (chunkActiveUntil.value !== chunkSettingsOriginal.activeUntil) settingsBody.activeUntil = chunkActiveUntil.value || null
+      if (Object.keys(settingsBody).length) {
+        await apiFetch(`/api/ai/knowledge/${chunkEditingId.value}/settings`, { method: 'POST', body: settingsBody })
+      }
       showToast('已儲存', 'success')
       chunkEditOpen.value = false
       if (selectedId.value) await loadSourceDetail(selectedId.value)
@@ -1579,10 +1638,10 @@ function statusLabel(s: string) {
   return s === 'ready' ? '可用' : s === 'fetching' ? '抓取中' : s === 'splitting' ? '切卡中' : '失敗'
 }
 function chunkStatusLabel(s: string) {
-  return s === 'indexed' ? '可用' : s === 'pending' ? '處理中' : '失敗'
+  return s === 'indexed' ? '可用' : s === 'pending' ? '處理中' : s === 'disabled' ? '已停用' : '失敗'
 }
 function chunkStatusBadge(s: string) {
-  return s === 'indexed' ? 'badge-green' : s === 'pending' ? 'badge-yellow' : 'badge-red'
+  return s === 'indexed' ? 'badge-green' : s === 'pending' ? 'badge-yellow' : s === 'disabled' ? 'badge-gray' : 'badge-red'
 }
 function statusChipText(src: SourceSummary) {
   if (src.outdatedAtMs > 0) return '有變動'

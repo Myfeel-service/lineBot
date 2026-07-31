@@ -9,7 +9,7 @@ export type EmbeddingVector = FirebaseFirestore.VectorValue
 //  一張知識卡：標題 + 內容 + 標籤 + 向量索引狀態
 // ═══════════════════════════════════════════════════════════════════
 
-export type KnowledgeChunkStatus = 'pending' | 'indexed' | 'failed'
+export type KnowledgeChunkStatus = 'pending' | 'indexed' | 'failed' | 'disabled'
 
 export interface KnowledgeChunkDoc {
   workspaceId: string
@@ -46,6 +46,13 @@ export interface KnowledgeChunkDoc {
   lastIndexedAt: Timestamp | null
   /** 使用者手動編輯後的時間戳；resync 時用來預設「保留人工版本」 */
   manuallyEditedAt: Timestamp | null
+  /**
+   * 有效期限（選填）：到期（含當日結束）後由排程自動改 status='disabled' 並搬到 expiredAt。
+   * 給行銷快訊類卡片（募資 / 折扣 / 出貨進度）用，避免過期內容繼續被 AI 引用。
+   */
+  activeUntil?: Timestamp | null
+  /** 到期自動停用的紀錄（原 activeUntil 值搬過來；手動重新啟用時清除） */
+  expiredAt?: Timestamp | null
   createdAt: Timestamp | FieldValue
   updatedAt: Timestamp | FieldValue
 }
@@ -460,6 +467,7 @@ export const KNOWLEDGE_CHUNK_STATUS_LABELS: Record<KnowledgeChunkStatus, string>
   pending: '處理中',
   indexed: '可用',
   failed: '失敗',
+  disabled: '已停用',
 }
 
 export const KNOWLEDGE_SOURCE_TYPE_LABELS: Record<KnowledgeSourceType, string> = {

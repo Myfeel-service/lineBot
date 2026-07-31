@@ -374,21 +374,29 @@ export async function searchSimilarChunks(
   } as any)
 
   const snap = await vectorQuery.get()
-  return snap.docs.map((doc) => {
-    const data = doc.data() as any
-    const distance = Number(data?._distance ?? 1)
-    const similarity = Math.max(0, 1 - distance)
-    return {
-      id: doc.id,
-      title: String(data?.title ?? ''),
-      content: String(data?.content ?? ''),
-      tags: Array.isArray(data?.tags) ? data.tags : [],
-      similarity,
-      sourceId: data?.sourceId ?? null,
-      isOverview: data?.isOverview === true,
-      productName: String(data?.productName ?? '').trim() || undefined,
-    }
-  })
+  // 有效期限保險：到期但排程還沒掃到的卡（最壞 10 分鐘空窗）當場排除，不進答題 context
+  const nowMs = Date.now()
+  return snap.docs
+    .filter((doc) => {
+      const until = (doc.data() as any)?.activeUntil
+      const untilMs = typeof until?.toMillis === 'function' ? until.toMillis() : 0
+      return !untilMs || untilMs > nowMs
+    })
+    .map((doc) => {
+      const data = doc.data() as any
+      const distance = Number(data?._distance ?? 1)
+      const similarity = Math.max(0, 1 - distance)
+      return {
+        id: doc.id,
+        title: String(data?.title ?? ''),
+        content: String(data?.content ?? ''),
+        tags: Array.isArray(data?.tags) ? data.tags : [],
+        similarity,
+        sourceId: data?.sourceId ?? null,
+        isOverview: data?.isOverview === true,
+        productName: String(data?.productName ?? '').trim() || undefined,
+      }
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════

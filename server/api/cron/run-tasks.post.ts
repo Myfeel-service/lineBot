@@ -5,6 +5,7 @@ import {
   remindOverdueHandoffs,
   cleanupExpiredWebhookEventLocks,
   dailyBacklogDigest,
+  expireKnowledgeCards,
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
@@ -30,6 +31,7 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:retry-stuck-chunks', run: () => retryStuckChunks(db) },
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
+    { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },

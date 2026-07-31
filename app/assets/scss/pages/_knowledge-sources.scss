@@ -93,6 +93,17 @@
 .src-chunk-meta { font-size: 12px; color: var(--el-text-color-secondary); }
 .src-chunk-loading { display: flex; justify-content: center; padding: 16px; }
 
+// 停用中的卡:整列壓淡,掃一眼就分得出「AI 用不到這張」
+.src-chunk-row--off .src-chunk-body { opacity: 0.55; }
+
+// 編輯視窗:供 AI 使用開關 / 有效期限
+.chunk-usage-row { display: flex; align-items: center; gap: 10px; }
+.chunk-expired-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+
 .diff-unchanged-note { display: flex; align-items: center; gap: 4px; margin: 0 0 8px; }
 
 .src-outdated-alert { margin-bottom: 12px; }

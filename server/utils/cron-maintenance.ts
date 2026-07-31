@@ -15,11 +15,12 @@ import {
   KNOWLEDGE_SOURCES_COLLECTION,
   markSourceOutdated,
 } from './ai-knowledge-sources'
+import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
-import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyKnowledgeSourceEvent } from './ai-handoff-notify'
 import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
@@ -51,6 +52,12 @@ interface SourceCheckResult {
   message?: string
 }
 
+/** 通知訊息用的來源顯示名稱 */
+function sourceTitleOf(data: KnowledgeSourceDoc): string {
+  const d = data as unknown as Record<string, unknown>
+  return String(d.title || d.name || d.url || '(未命名來源)').slice(0, 80)
+}
+
 async function checkOneSource(
   db: Firestore,
   sourceId: string,
@@ -63,6 +70,12 @@ async function checkOneSource(
       if (data.gsheetAutoApply === false) return { sourceId, outcome: 'unchanged' }
       const r = await syncGoogleSheetSource(db, data.workspaceId, sourceId, data)
       if (r.outcome === 'unchanged') return { sourceId, outcome: 'unchanged' }
+      // 自動套用後給一份摘要通知——自動化不等於無聲,管理員要知道知識庫剛剛變了什麼
+      notifyKnowledgeSourceEvent(data.workspaceId, [
+        '📗 Google 試算表知識已自動同步',
+        `來源：${sourceTitleOf(data)}`,
+        `新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted} 張知識卡。`,
+      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify gsheet failed:', e))
       return { sourceId, outcome: 'gsheet_synced', message: `+${r.added} ~${r.updated} -${r.deleted}` }
     }
 
@@ -128,6 +141,13 @@ async function checkOneSource(
 
     if (behavior === 'notify') {
       await markSourceOutdated(db, sourceId)
+      // 主動推播（不只後台標記——標記沒人天天看,變動掛一個月也沒人知道）。
+      // 頻率天然去重:contentHash 已更新,下次檢查 unchanged 就不會再進到這裡。
+      notifyKnowledgeSourceEvent(data.workspaceId, [
+        '📚 知識庫來源內容有變動',
+        `來源：${sourceTitleOf(data)}`,
+        '偵測到來源內容與上次不同。請至後台「AI 知識庫」檢視差異，決定是否更新知識卡。',
+      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify change failed:', e))
       return { sourceId, outcome: 'changed_notified' }
     }
     console.log(`[detect-source-updates] ${sourceId} (${data.url}) content changed; log_only mode, no notify`)
@@ -148,6 +168,16 @@ async function checkOneSource(
       lastCheckedAt: FieldValue.serverTimestamp(),
       ...(failCount >= 3 ? { status: 'failed' } : {}),
     }).catch(() => {})
+    // 只在「連續第 3 次失敗、剛跨過門檻標成 failed」時通知一次——之後每輪檢查仍會失敗,
+    // 但 failCount 已 >3 不再吵人(gsheet 403 壞半個月沒人知道的教訓;修好後 clearFailure 歸零)。
+    if (failCount === 3) {
+      notifyKnowledgeSourceEvent(data.workspaceId, [
+        '⚠️ 知識庫來源同步失敗',
+        `來源：${sourceTitleOf(data)}`,
+        `原因：${msg}`,
+        '在修復之前,這個來源的知識卡會停留在最後一次成功同步的內容。請至後台「AI 知識庫」檢查。',
+      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify failure failed:', e))
+    }
     return { sourceId, outcome: 'error', message: msg }
   }
 }
@@ -438,5 +468,59 @@ export async function dailyBacklogDigest(db: Firestore) {
 
   const tally = { pendingScanned: pendingSnap.size, humanScanned: humanSnap.size, workspacesNotified: notified }
   if (notified) console.log('[conversation:backlog-digest]', tally)
+  return tally
+}
+
+// ── 知識卡有效期限：到期自動停用 ─────────────────────────────────────
+// 行銷快訊類卡片（募資 / 折扣 / 出貨進度）設了 activeUntil，到期由這支改 status='disabled'
+// 並把期限搬到 expiredAt（否則到期卡每輪都被重撈）。答題端另有當場過濾兜底（searchSimilarChunks），
+// 這裡是正式下架 + 通知管理員。單一欄位 range 查詢走自動索引，跨全 workspace 一次掃。
+
+const EXPIRE_SCAN_LIMIT = 200
+
+export async function expireKnowledgeCards(db: Firestore) {
+  const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('activeUntil', '<=', Timestamp.now())
+    .limit(EXPIRE_SCAN_LIMIT)
+    .get()
+  if (snap.empty) return { expired: 0 }
+
+  const byWs = new Map<string, string[]>()
+  let expired = 0
+  for (const d of snap.docs) {
+    const c = d.data() as any
+    const status = String(c.status ?? 'pending')
+    // pending 先放著（幾秒後就會 indexed，下一輪再處理）；disabled/failed 只搬欄位去重，不通知
+    if (status === 'pending') continue
+    const patch: Record<string, unknown> = {
+      activeUntil: FieldValue.delete(),
+      expiredAt: c.activeUntil,
+      updatedAt: FieldValue.serverTimestamp(),
+    }
+    if (status === 'indexed') {
+      patch.status = 'disabled'
+      expired++
+      const ws = String(c.workspaceId ?? '')
+      if (ws) {
+        const list = byWs.get(ws) ?? []
+        list.push(String(c.title ?? '(未命名卡片)'))
+        byWs.set(ws, list)
+      }
+    }
+    await d.ref.update(patch).catch(e => console.warn(`[expire-knowledge-cards] ${d.id} update failed:`, e))
+  }
+
+  for (const [ws, titles] of byWs) {
+    const shown = titles.slice(0, 5).map(t => `・${t}`)
+    if (titles.length > 5) shown.push(`…等共 ${titles.length} 張`)
+    notifyKnowledgeSourceEvent(ws, [
+      '⏳ 知識卡已到期，AI 停止引用',
+      ...shown,
+      '要延長或重新啟用，請至後台「AI 知識庫」編輯該卡。',
+    ].join('\n')).catch(e => console.warn('[expire-knowledge-cards] notify failed:', e))
+  }
+
+  const tally = { expired, scanned: snap.size }
+  if (expired) console.log('[ai:expire-knowledge-cards]', tally)
   return tally
 }

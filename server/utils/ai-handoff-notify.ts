@@ -117,3 +117,23 @@ export async function maybeWarnQuotaThreshold(params: {
     }
   })
 }
+
+/**
+ * 知識庫來源事件通知（內容變動 / 同步失敗）：推播給 handoffNotify 的同一批收件人。
+ * 與 handoff 通知共用收件人與勿擾時段——維運通知不比轉真人急，勿擾時段一樣不吵人；
+ * 來源上的「已變動 / 失敗」標記不會消失，上班後看後台即可。
+ * 呼叫端自行控制頻率（變動靠 hash 更新天然去重；失敗只在「連續第 3 次」跨門檻時叫一次）。
+ */
+export async function notifyKnowledgeSourceEvent(workspaceId: string, text: string): Promise<void> {
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  if (isServiceHoursDnd(settings?.serviceHours)) return
+  const cfg = settings?.handoffNotify
+  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+  const msg: messagingApi.TextMessage = { type: 'text', text }
+  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], workspaceId)))
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.warn('[kb-source-notify] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+    }
+  })
+}

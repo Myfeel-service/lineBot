@@ -33,14 +33,15 @@ export default defineEventHandler(async (event) => {
   let q = db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .orderBy('__name__')
-    .select('title', 'content', 'questions')
+    .select('title', 'content', 'questions', 'status')
     .limit(BATCH_LIMIT)
   if (cursor) {
     q = q.startAfter(db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(cursor))
   }
   const snap = await q.get()
 
-  const docs = snap.docs.filter(d => String(d.data()?.content ?? '').trim())
+  // 停用的卡跳過:runIndexOnChunk 會把 status 設回 'indexed',全量重建不該偷偷重新啟用
+  const docs = snap.docs.filter(d => String(d.data()?.content ?? '').trim() && d.data()?.status !== 'disabled')
 
   type ResultRow = { id: string; status: string; failureReason?: string }
   const results: ResultRow[] = new Array(docs.length)
