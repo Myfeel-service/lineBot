@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import type { ConversationStatus, InitialHandler } from '~~/shared/types/conversation-stats'
+import { isPreInboundFollowSession, type ConversationStatus, type InitialHandler } from '~~/shared/types/conversation-stats'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
@@ -83,6 +83,9 @@ export default defineEventHandler(async (event) => {
     const filtered = safeSnap.docs
       .map(d => ({ id: d.id, data: d.data() as any }))
       .filter(({ data }) => {
+        // 「未首接」分頁(status='open')是待處理佇列:活動/加好友進來、客人未開口的
+        // session 不佔用佇列(客人開口後 hasInbound=true 自然回歸;「全部」分頁仍看得到)
+        if (status === 'open' && isPreInboundFollowSession(data)) return false
         if (initialHandler !== 'all' && data.initialHandler !== initialHandler) return false
         if (hasHandoff !== undefined && Boolean(data.hasHandoff) !== hasHandoff) return false
         const t = toMillis(data.lastActivityAt)
@@ -160,7 +163,29 @@ export default defineEventHandler(async (event) => {
     const snap = await ref.get()
     if (snap.empty) return { sessions: [], total, page, limit, hasMore: false }
 
-    const rawUserIds = snap.docs.map(d => String(d.data().userId || '')).filter(Boolean)
+    // 「未首接」分頁:剔除活動/加好友出生、客人未開口的 session(佇列語意,見 fallback 同註解)。
+    // 計數用等值查詢扣除(Firestore 等值可自動合併單欄索引);帶日期篩選時範圍+等值需複合索引,
+    // 扣不到就不扣——頁面數字寧可偏多,不冒缺索引直接炸頁的險。
+    let docs = snap.docs
+    let adjustedTotal = total
+    if (status === 'open') {
+      docs = docs.filter(d => !isPreInboundFollowSession(d.data() as any))
+      if (!startDate && !endDate) {
+        try {
+          const pre = await db.collection('conversationSessions')
+            .where('workspaceId', '==', workspaceId)
+            .where('status', '==', 'open')
+            .where('hasInbound', '==', false)
+            .count().get()
+          adjustedTotal = Math.max(0, total - pre.data().count)
+        }
+        catch (e: any) {
+          console.warn('[sessions.get] pre-inbound subtract failed:', String(e?.message).slice(0, 120))
+        }
+      }
+    }
+
+    const rawUserIds = docs.map(d => String(d.data().userId || '')).filter(Boolean)
     const fsUserIds = uniqueFirestoreUserIds(rawUserIds, workspaceId)
     const userMap: Record<string, Record<string, unknown> | undefined> = {}
     for (let i = 0; i < fsUserIds.length; i += CHUNK) {
@@ -169,10 +194,10 @@ export default defineEventHandler(async (event) => {
       uSnap.docs.forEach(d => { userMap[d.id] = d.data() })
     }
 
-    const sessions = snap.docs.map(d => mapSessionToRow(d.id, d.data(), userMap, workspaceId))
+    const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, workspaceId))
 
     const loaded = offset + sessions.length
-    return { sessions, total, page, limit, hasMore: loaded < total }
+    return { sessions, total: adjustedTotal, page, limit, hasMore: loaded < adjustedTotal }
   }
   catch (e: any) {
     const msg = String(e?.message || '')
