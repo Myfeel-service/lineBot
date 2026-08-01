@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
 
   const sources = srcSnap.docs.map((d) => {
     const s = d.data() as any
-    return { name: String(s?.name ?? ''), productName: String(s?.productName ?? '').trim() }
+    return { name: String(s?.name ?? ''), productName: String(s?.productName ?? '').trim(), type: String(s?.type ?? '') }
   })
   // 產品名池 = 產品索引清單 ∪ 各來源設定的產品名（來源可能設了索引還沒收錄的名字）
   const productNames = [...new Set([...indexNames, ...sources.map(s => s.productName).filter(Boolean)])]

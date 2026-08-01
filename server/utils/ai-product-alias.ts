@@ -60,6 +60,28 @@ export interface AliasCandidate {
 const VARIANT_WORDS = /(ultra|pro|plus|max|mini|lite|se|air|2nd|ii)\b/i
 
 /**
+ * 把檔名片段對齊到「已存在的產品名」。檔名常比卡片上存的名字多帶括號型號
+ * （「…高效抽取型除濕機 (WDH31B16E）」vs 卡片上的「…高效抽取型除濕機」）；
+ * 直接拿檔名片段當正式名，會多生一個沒有任何卡片在用的第三個名字——
+ * 對照表查不到卡片的舊寫法，分組照樣分成兩邊，使用者按了合併卻毫無效果。
+ * 找不到對應就原樣回傳。
+ */
+function snapToExistingName(part: string, existing: string[]): string {
+  const np = normalizeProductName(part)
+  if (!np) return part
+  let best = ''
+  for (const e of existing) {
+    const ne = normalizeProductName(e)
+    if (!ne || ne.length < 4) continue
+    // 互為包含即視為同一個名字的長短寫法，取既有清單裡的版本
+    if (np.includes(ne) || ne.includes(np)) {
+      if (ne.length > normalizeProductName(best).length) best = e
+    }
+  }
+  return best || part
+}
+
+/**
  * 偵測疑似別名。純函式（可測），只用手上已有的資料，不呼叫 LLM：
  *   訊號1 來源名稱本身用「｜」並列兩個叫法（使用者上傳的檔名就寫了，最可靠）
  *   訊號2 一個名稱包含另一個（簡稱／全稱；若多出來的部分含型號字眼則標記風險）
@@ -67,7 +89,7 @@ const VARIANT_WORDS = /(ultra|pro|plus|max|mini|lite|se|air|2nd|ii)\b/i
  * 只差標點/空白的寫法差異由 normalizeProductName 自動吸收，不列為候選（見下方註解）。
  */
 export function detectAliasCandidates(input: {
-  sources: Array<{ name?: string; productName?: string }>
+  sources: Array<{ name?: string; productName?: string; type?: string }>
   productNames: string[]
   aliasMap: ProductAliasMap
 }): AliasCandidate[] {
@@ -85,30 +107,38 @@ export function detectAliasCandidates(input: {
     if (dismissed.has(c.key) || alreadyLinked(c.a, c.b)) return
     if (!out.has(c.key)) out.set(c.key, c)
   }
+  const names = [...new Set(input.productNames.map(n => n.trim()).filter(Boolean))]
 
-  // ── 訊號 1：檔名/來源名以「｜」並列兩個叫法 ──
+  // ── 訊號 1：**檔案**來源的檔名以「｜」並列兩個叫法 ──
+  // 只吃 type='file'：網址來源的 name 是網頁標題，而商城標題慣用「｜」分隔品名與站名
+  // （「NWT 威技 16L 除濕機｜MiniMe 官方購物網」），一律當高信心別名會把站名併成產品，
+  // 汙染整個知識庫的產品歸屬。
   for (const s of input.sources) {
+    if (s.type && s.type !== 'file') continue
     const raw = String(s.name ?? '')
     const parts = raw
       .split(/[｜|]/)
       .map(p => p.replace(/[-–—]?\s*(使用)?說明書.*$/i, '').replace(/\.(pdf|pptx|xlsx?|docx?)$/i, '').trim())
       .filter(p => p.length >= 3)
     if (parts.length < 2) continue
-    const [a, b] = [parts[0]!, parts[1]!]
-    if (normalizeProductName(a) === normalizeProductName(b)) continue
+    // 對齊既有產品名：檔名片段常多帶括號型號（…除濕機 (WDH31B16E)），直接拿它當正式名會
+    // 生出「第三個名字」——卡片上存的仍是不含型號的舊寫法，對照表查不到、分組照樣分兩邊，
+    // 合併等於沒生效而且沒人看得出來。
+    const a0 = snapToExistingName(parts[0]!, names)
+    const b0 = snapToExistingName(parts[1]!, names)
+    if (normalizeProductName(a0) === normalizeProductName(b0)) continue
     add({
-      key: aliasPairKey(a, b),
+      key: aliasPairKey(a0, b0),
       // 較長的當正式名（資訊較完整）
-      a: a.length >= b.length ? a : b,
-      b: a.length >= b.length ? b : a,
+      a: a0.length >= b0.length ? a0 : b0,
+      b: a0.length >= b0.length ? b0 : a0,
       reason: `這兩個名字並列在同一份文件的名稱裡：「${raw.slice(0, 60)}」`,
       confidence: 'high',
       variantRisk: false,
     })
   }
 
-  // ── 訊號 2/3：名稱之間的字面關係 ──
-  const names = [...new Set(input.productNames.map(n => n.trim()).filter(Boolean))]
+  // ── 訊號 2：名稱之間的字面關係 ──
   for (let i = 0; i < names.length; i++) {
     for (let j = i + 1; j < names.length; j++) {
       const a = names[i]!
@@ -181,7 +211,19 @@ export async function getProductAliases(db: Firestore, workspaceId: string): Pro
 export function canonicalProductName(name: string | undefined | null, aliases: Record<string, string>): string {
   const raw = String(name ?? '').trim()
   if (!raw) return ''
-  return aliases[normalizeProductName(raw)] ?? raw
+  // 逐層解析:先把 A 併到 B、之後又把 B 併到 C 時,只查一層會讓 A 停在 B、
+  // 卡片又分成兩組(反問二選一重新出現)。設上限並記錄走過的節點防成環。
+  let cur = raw
+  const seen = new Set<string>()
+  for (let i = 0; i < 5; i++) {
+    const key = normalizeProductName(cur)
+    if (seen.has(key)) break
+    seen.add(key)
+    const next = aliases[key]
+    if (!next || normalizeProductName(next) === key) break
+    cur = next
+  }
+  return cur
 }
 
 // ── 寫入 ──────────────────────────────────────────────────────
@@ -196,12 +238,13 @@ export async function confirmAlias(
   const c = canonical.trim()
   const a = alias.trim()
   if (!c || !a || normalizeProductName(c) === normalizeProductName(a)) return
+  // 刻意**不**寫進 dismissedPairs:合併後 detectAliasCandidates 的 alreadyLinked 本來就會
+  // 濾掉這組;若又記進「不再詢問」,使用者按錯後即使「解除」也永遠找不回這組候選(單向門)。
   await db.collection(PRODUCT_NAMES_COLLECTION).doc(workspaceId).set(
     {
       names: FieldValue.arrayUnion(c),
       aliases: { [normalizeProductName(a)]: c },
       aliasLabels: { [normalizeProductName(a)]: a },
-      dismissedPairs: FieldValue.arrayUnion(aliasPairKey(c, a)),
     },
     { merge: true },
   )

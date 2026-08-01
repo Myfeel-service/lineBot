@@ -3,6 +3,8 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
+import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
+import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
 
 /** 掃描上限:健檢是彙總訊號,不是完整報表;超大知識庫掃前 N 張已足以暴露問題 */
 const CHUNK_SCAN_LIMIT = 1500
@@ -27,7 +29,7 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
   const db = getDb()
 
-  const [sourcesSnap, chunksSnap] = await Promise.all([
+  const [sourcesSnap, chunksSnap, indexNames, aliasMap] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .limit(300)
@@ -37,6 +39,8 @@ export default defineEventHandler(async (event) => {
       .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt')
       .limit(CHUNK_SCAN_LIMIT)
       .get(),
+    getWorkspaceProductNames(db, workspaceId),
+    getProductAliases(db, workspaceId),
   ])
 
   // reason 一併帶回:清單上直接看得到「為什麼失敗」(最常見是試算表沒分享給服務帳號),
@@ -94,5 +98,21 @@ export default defineEventHandler(async (event) => {
     expiredChunks: { count: expiredCount, items: expiredItems },
     /** 卡片掃描是否達到上限(超大知識庫時計數可能低估) */
     chunkScanTruncated: chunksSnap.size >= CHUNK_SCAN_LIMIT,
+    /**
+     * 待確認的產品別名組數。放在體檢裡回:這支本來就撈了全部來源,不必為了工具列一個
+     * 數字再打一支 API;更重要的是——不主動顯示的話,使用者永遠沒有理由去點那顆按鈕,
+     * 整個別名功能等於不存在。
+     */
+    aliasCandidateCount: detectAliasCandidates({
+      sources: sourcesSnap.docs.map((d) => {
+        const s = d.data() as any
+        return { name: String(s?.name ?? ''), productName: String(s?.productName ?? '').trim(), type: String(s?.type ?? '') }
+      }),
+      productNames: [...new Set([
+        ...indexNames,
+        ...sourcesSnap.docs.map(d => String((d.data() as any)?.productName ?? '').trim()).filter(Boolean),
+      ])],
+      aliasMap,
+    }).length,
   }
 })

@@ -1,7 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
-import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
 import { computeDiff, loadOldChunksForDiff } from '~~/server/utils/ai-knowledge-resync'
 import {
@@ -85,15 +84,17 @@ export default defineEventHandler(async (event) => {
           tags: c.tags ?? [],
           questions: c.questions ?? [],
         })))
-        // 縮水偵測(空內容當一等公民錯誤):比較基準是「這次從網頁抓到的字數」,
-        // **不能用重切後的卡片字數**——LLM 這輪寫得精簡一點就會誤報整頁抓不到。
-        // 再要求「真的有卡消失」才示警:沒有 removed 就沒有誤刪風險,不必嚇使用者。
+        // 縮水偵測(空內容當一等公民錯誤)。兩種都要抓,漏一種就會整源被刪:
+        //  · 抓到的網頁字數暴跌 → 頁面掛掉 / 改成動態載入
+        //  · 字數正常但**切出來的卡暴跌**(極端:LLM 回空陣列,不會 throw)→ 舊卡全被標成「移除」
+        // 字數用「實際抓到的網頁字數」而非重切後的卡片字數(LLM 這輪寫精簡就會誤報);
+        // 卡數則直接比張數。兩者都要求「真的有卡消失」才示警,沒有 removed 就沒有誤刪風險。
         const oldChars = oldChunks.reduce((s, c) => s + c.content.length, 0)
         const fetchedChars = work.resyncFetchedChars ?? 0
-        work.resyncShrink = oldChars > 0
-          && fetchedChars < oldChars * 0.5
-          && work.resyncDiff.summary.removed > 0
-          ? { oldChars, newChars: fetchedChars }
+        const charsCollapsed = oldChars > 0 && fetchedChars < oldChars * 0.5
+        const cardsCollapsed = oldChunks.length > 0 && work.chunks.length < oldChunks.length * 0.5
+        work.resyncShrink = (charsCollapsed || cardsCollapsed) && work.resyncDiff.summary.removed > 0
+          ? { oldChars, newChars: fetchedChars, oldCards: oldChunks.length, newCards: work.chunks.length }
           : null
       }
       else {
@@ -146,19 +147,29 @@ export default defineEventHandler(async (event) => {
       : undefined
 
     // 在時間預算內連續推進多步:一輪只推一段的話,長文件(100k 字 ≈ 13 段)要 13 次來回、
-    // 總時長 5 分鐘以上,比改寫前的並行切卡還慢。用 STEP_BUDGET_MS 卡住單次請求時間,
-    // 既不會撞閘道逾時,又能把來回次數壓下來。OCR 階段每批本來就久,只做一步。
-    const STEP_BUDGET_MS = 18_000
+    // 總時長 5 分鐘以上,比改寫前的並行切卡還慢。
+    //
+    // 兩個安全條件缺一不可:
+    //  (a) **每一步做完就存檔**——不存的話,請求若在後面的步驟撞閘道逾時,前面已完成(且已付錢)
+    //      的段全部白做,下一輪從頭再跑一次、再付一次錢。
+    //  (b) 續跑前用「上一步實際花的時間」預估下一步,估不完就收工回報進度。只看已用時間的話,
+    //      會在 17.9 秒時開啟一個 25 秒的步驟 → 43 秒 → 正是這套架構要避免的閘道逾時。
+    // 另外只有「進來時就是 chunk 階段」才續跑:OCR 最後一批會把 phase 翻成 chunk,
+    // 若順勢接下去做,一個請求會變成 OCR 批次 + 切卡批次,直接超過租約時間。
+    const STEP_BUDGET_MS = 22_000
     const startedAt = Date.now()
-    do {
+    const loopable = work.phase === 'chunk'
+    let lastStepMs = 0
+    for (;;) {
+      const stepStart = Date.now()
       await advanceWork(work, { getSourceBuffer })
+      lastStepMs = Date.now() - stepStart
       await flushJobUsage(workspaceId, work) // 每步結清:中途取消 / 逾時也不會漏記已花的 token
-    } while (
-      work.phase === 'chunk'
-      && Date.now() - startedAt < STEP_BUDGET_MS
-    )
+      await saveWork(workspaceId, jobId, work) // 見 (a):每步落地,逾時只損失最後一步
+      if (!loopable || work.phase !== 'chunk') break
+      if (Date.now() - startedAt + lastStepMs > STEP_BUDGET_MS) break // 見 (b)
+    }
 
-    await saveWork(workspaceId, jobId, work)
     await ref.update({
       phase: work.phase,
       progress: progressFor(work),

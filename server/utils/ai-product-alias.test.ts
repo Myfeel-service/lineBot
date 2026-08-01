@@ -39,6 +39,30 @@ describe('detectAliasCandidates', () => {
     expect(out[0]!.variantRisk).toBe(false)
   })
 
+  it('網址來源的標題不吃訊號1:商城標題慣用「｜」分隔品名與站名,誤判會把站名併成產品', () => {
+    const out = detectAliasCandidates({
+      sources: [{ type: 'url', name: 'NWT 威技 16L 除濕機｜MiniMe 官方購物網' }],
+      productNames: [],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(0)
+  })
+
+  it('訊號1 的正式名會對齊既有產品名(檔名多帶括號型號時不可生出第三個名字)', () => {
+    const out = detectAliasCandidates({
+      sources: [{
+        type: 'file',
+        name: '上好ㄟ抽取式除濕機｜NWT 威技 新一級能效 16L 高效抽取型除濕機 (WDH31B16E）-說明書.pdf',
+      }],
+      // 卡片上實際存的是不含型號的寫法
+      productNames: ['NWT 威技 新一級能效 16L 高效抽取型除濕機'],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(1)
+    // 若原樣採用檔名片段,合併後卡片的舊寫法查不到對照 → 分組照樣分兩邊,等於沒生效
+    expect(out[0]!.a).toBe('NWT 威技 新一級能效 16L 高效抽取型除濕機')
+  })
+
   it('只差標點/空白的寫法不列候選(答題端正規化後已自動視為同一台,不該浪費一次確認)', () => {
     const out = detectAliasCandidates({
       sources: [],
@@ -121,5 +145,22 @@ describe('canonicalProductName', () => {
     expect(canonicalProductName('BOYA mini2', aliases)).toBe('BOYA mini2')
     expect(canonicalProductName('', aliases)).toBe('')
     expect(canonicalProductName(undefined, aliases)).toBe('')
+  })
+
+  it('連鎖合併要一路解析到最終正式名(A→B、B→C 時 A 不能停在 B)', () => {
+    const chained = {
+      [normalizeProductName('上好ㄟ除濕機')]: '威技除濕機',
+      [normalizeProductName('威技除濕機')]: 'NWT 威技 新一級能效 16L 除濕機',
+    }
+    expect(canonicalProductName('上好ㄟ除濕機', chained)).toBe('NWT 威技 新一級能效 16L 除濕機')
+    expect(canonicalProductName('威技除濕機', chained)).toBe('NWT 威技 新一級能效 16L 除濕機')
+  })
+
+  it('對照成環時不會無限迴圈', () => {
+    const cyclic = {
+      [normalizeProductName('A 產品')]: 'B 產品',
+      [normalizeProductName('B 產品')]: 'A 產品',
+    }
+    expect(() => canonicalProductName('A 產品', cyclic)).not.toThrow()
   })
 })

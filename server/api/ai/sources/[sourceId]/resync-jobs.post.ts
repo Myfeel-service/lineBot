@@ -47,11 +47,9 @@ export default defineEventHandler(async (event) => {
 
   // 抽取(快且會失敗的部分):網址掛了在這裡當場報錯,使用者立刻看到
   // 「網址回應 404:請確認連結公開可訪問」這類可行動訊息。
-  // forceRefetch:手動按「重新同步」的語意就是「現在去看一次網頁」,不能讀舊暫存
-  // (排程剛寫過暫存時會短路成「全部未變」,看起來像功能壞掉)。
-  const extracted = await getResyncExtracted(db, sourceId, source.data.contentHash, source.data.url, {
-    forceRefetch: true,
-  })
+  // getResyncExtracted 一律當場重抓(不讀排程暫存)——手動按下這顆按鈕的語意就是
+  // 「現在去看一次網頁」;讀舊暫存會回報「全部未變」,看起來像功能壞掉。
+  const extracted = await getResyncExtracted(db, sourceId, source.data.contentHash, source.data.url)
   if (!extracted.text.trim()) {
     throw createError({ statusCode: 502, statusMessage: '抓到網頁但內容為空；請確認頁面是否改版或改用「貼上文字」重新匯入' })
   }

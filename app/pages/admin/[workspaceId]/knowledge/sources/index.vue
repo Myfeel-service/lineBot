@@ -1237,6 +1237,7 @@ interface HealthResponse {
   failedChunks: HealthChunkGroup
   expiredChunks: HealthChunkGroup
   chunkScanTruncated: boolean
+  aliasCandidateCount: number
 }
 const emptyHealth = (): HealthResponse => ({
   failedSources: [],
@@ -1246,6 +1247,7 @@ const emptyHealth = (): HealthResponse => ({
   failedChunks: { count: 0, items: [] },
   expiredChunks: { count: 0, items: [] },
   chunkScanTruncated: false,
+  aliasCandidateCount: 0,
 })
 const health = ref<HealthResponse>(emptyHealth())
 // 來源與卡片分開計:「1 個來源同步失敗」= 整批知識凍結,「1 張卡過短」= 小瑕疵,
@@ -1360,8 +1362,14 @@ const aliasLoading = ref(false)
 const aliasSaving = ref('')
 const aliasCandidates = ref<AliasCandidate[]>([])
 const aliasPairs = ref<AliasPair[]>([])
-/** 工具列的待確認數字；只在載入過之後才有值(不為了一個徽章在每次進頁面時多打一支 API) */
-const aliasCandidateCount = computed(() => aliasCandidates.value.length)
+/**
+ * 工具列徽章的數字。**來源是體檢端點**(進頁面就載入),不是這個視窗自己的清單——
+ * 只有開過視窗才有數字的話,使用者永遠沒有理由去點它,整個別名功能等於不存在。
+ * 開過視窗後改用視窗內的即時清單(按完確認數字要馬上少一)。
+ */
+const aliasDialogLoaded = ref(false)
+const aliasCandidateCount = computed(() =>
+  aliasDialogLoaded.value ? aliasCandidates.value.length : health.value.aliasCandidateCount)
 
 async function loadAliases() {
   aliasLoading.value = true
@@ -1371,6 +1379,7 @@ async function loadAliases() {
     )
     aliasCandidates.value = res.candidates ?? []
     aliasPairs.value = res.pairs ?? []
+    aliasDialogLoaded.value = true
   }
   catch (err: any) {
     showToast(err?.statusMessage || '讀取產品名稱失敗', 'error')
@@ -1396,6 +1405,7 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
     })
     showToast(action === 'confirm' ? `已合併，AI 之後會把它們當同一台` : '好的，不再詢問這一組', 'success')
     await loadAliases()
+    void loadHealth(true)
   }
   catch (err: any) {
     showToast(err?.statusMessage || '儲存失敗', 'error')

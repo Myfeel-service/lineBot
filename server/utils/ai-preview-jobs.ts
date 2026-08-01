@@ -14,6 +14,7 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { getDb, getStorage } from './firebase'
 import {
+  CHUNK_CONCURRENCY,
   chunkSegment,
   ENRICH_BATCH_SIZE,
   enrichCardBatch,
@@ -42,9 +43,11 @@ export const MIN_SEGMENT_SPLIT_LEN = 1500
 /**
  * 單輪同時切幾段。序列版在長文件上比「改成背景作業之前」還慢(每段一次來回),
  * 這裡讓一輪並行跑數段;單輪 wall clock ≈ 一次 LLM latency,仍遠低於閘道逾時。
- * 值沿用 chunker 對 Gemini RPM 的保守估計。
+ *
+ * **直接沿用 chunker 的 CHUNK_CONCURRENCY**:兩者管的是同一份 Gemini 速率預算,
+ * 分成兩個旋鈕的話,之後有人因為 429 調了其中一個、另一個還留在舊值。
  */
-export const CHUNK_PARALLEL = 4
+export { CHUNK_CONCURRENCY as CHUNK_PARALLEL } from './ai-knowledge-chunker'
 
 /** claim 一步的租約時間；poll 中途被閘道 504，過了這段時間下一輪可重接。 */
 export const JOB_LEASE_MS = 45_000
@@ -119,8 +122,8 @@ export interface WorkState {
   resyncContentHash?: string
   /** 這次「實際從網頁抓到」的字數(縮水判定要用它,不能用 LLM 重寫後的卡片字數) */
   resyncFetchedChars?: number
-  /** 內容縮水偵測:抓到的量 < 舊卡總字數一半且真有卡消失 → 疑似動態頁/抓取故障 */
-  resyncShrink?: { oldChars: number; newChars: number } | null
+  /** 內容縮水偵測:抓到的字數或切出的卡數暴跌、且真有卡消失 → 疑似動態頁/抓取故障 */
+  resyncShrink?: { oldChars: number; newChars: number; oldCards: number; newCards: number } | null
 }
 
 /** Firestore job 文件（保持極小） */
@@ -249,7 +252,7 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
   // 比改成背景作業之前的並行切卡還慢)。並行度沿用 chunker 的保守值,單輪 wall clock
   // ≈ 一次 LLM latency,仍遠低於閘道逾時。
   const batch: Array<{ index: number; text: string }> = []
-  for (let i = start; i < work.segments.length && batch.length < CHUNK_PARALLEL; i++) {
+  for (let i = start; i < work.segments.length && batch.length < CHUNK_CONCURRENCY; i++) {
     batch.push({ index: i, text: work.segments[i]! })
   }
 
@@ -260,6 +263,15 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
       : work.sourceName
     return chunkSegment(text, hint)
   }))
+
+  // 先把「所有已完成呼叫」的 token 記起來:Gemini 已經算錢了,不論這批結果後面會不會
+  // 因為撞卡片上限、或前面某段要對半切而被丟棄,用量報表都必須看得到。
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      work.usage.inputTokens += r.value.inputTokens
+      work.usage.outputTokens += r.value.outputTokens
+    }
+  }
 
   const seen = new Set(work.chunks.map(c => c.title.replace(/\s+/g, '')))
   let consumed = 0
@@ -276,23 +288,14 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
         if (parts.length >= 2) {
           // 先把這一段之前已成功的成果收下(cursor 前進 consumed),再把這段換成兩小段。
           // 這一段之後那些已跑完的結果只好丟掉重跑——截斷很罕見,不值得為它加狀態複雜度;
-          // 但它們的 token 已經花了,下面照實入帳。
+          // token 已在上面統一入帳,不會漏記。
           work.segments.splice(item.index, 1, ...parts)
-          for (let rest = b + 1; rest < results.length; rest++) {
-            const other = results[rest]!
-            if (other.status === 'fulfilled') {
-              work.usage.inputTokens += other.value.inputTokens
-              work.usage.outputTokens += other.value.outputTokens
-            }
-          }
           break
         }
       }
       throw r.reason
     }
 
-    work.usage.inputTokens += r.value.inputTokens
-    work.usage.outputTokens += r.value.outputTokens
     for (const c of r.value.chunks) {
       const key = c.title.replace(/\s+/g, '')
       if (seen.has(key)) continue
@@ -378,13 +381,21 @@ export async function flushJobUsage(workspaceId: string, work: WorkState): Promi
   const inputTokens = work.usage.inputTokens - flushed.inputTokens
   const outputTokens = work.usage.outputTokens - flushed.outputTokens
   if (inputTokens <= 0 && outputTokens <= 0) return
-  work.usageFlushed = { inputTokens: work.usage.inputTokens, outputTokens: work.usage.outputTokens }
-  await recordAiUsage(workspaceId, {
-    inputTokens,
-    outputTokens,
-    importInputTokens: inputTokens,
-    importOutputTokens: outputTokens,
-  }).catch(e => console.warn('[preview-jobs] flush usage failed:', e))
+  // 記帳成功才推進水位:先推進再寫入的話,這次寫入失敗(Firestore 短暫不可用)會讓這段用量
+  // 永遠沒人記——下一次 flush 只算它之後的差額,正是這個機制要防的「花了錢卻看不到」。
+  const snapshot = { inputTokens: work.usage.inputTokens, outputTokens: work.usage.outputTokens }
+  try {
+    await recordAiUsage(workspaceId, {
+      inputTokens,
+      outputTokens,
+      importInputTokens: inputTokens,
+      importOutputTokens: outputTokens,
+    })
+    work.usageFlushed = snapshot
+  }
+  catch (e) {
+    console.warn('[preview-jobs] flush usage failed（下一輪會連同這次的差額重試）:', e)
+  }
 }
 
 // ── 進度 / 結果對外形狀 ─────────────────────────────────────────────
@@ -447,7 +458,6 @@ export function workToPreviewResult(work: WorkState) {
             contentHash: work.resyncContentHash ?? '',
             diff: work.resyncDiff ?? null,
             shrink: work.resyncShrink ?? null,
-            warnings: work.warnings ?? [],
           },
         }
       : {}),

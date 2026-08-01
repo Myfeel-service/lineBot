@@ -200,40 +200,28 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
 }
 
 /**
- * 取 re-sync 要比對的「最新內容」:優先用變動偵測任務暫存的全文(hash 對得上才用),
- * 否則重抓並暫存。contentHash 一路帶到 apply 回寫——apply 寫回的 hash 必須對應
- * 「這份 diff 用的內容」,否則排程在 preview 與 apply 之間覆寫過 cache 時,
- * 新版變動會被永久吞掉(hash 對上了、內容卻是舊的)。
+ * 取「重新同步」要比對的最新內容：**一律當場重抓**，並把全文暫存回 cache。
+ *
+ * 為什麼不讀 cache：手動按下「重新同步」的語意就是「現在去看一次網頁」。排程偵測到變動時
+ * 會把當下全文寫進 cache，而套用過一次之後 source.contentHash 就等於 cache 的 hash——
+ * 若優先讀 cache，使用者改完網頁馬上按重新同步會拿到舊文字、畫面回報「全部未變」，
+ * 明明上面還寫著「已重新抓一次網頁」。用時間門檻擋也只是把問題縮小到幾分鐘內，
+ * 不如讓這顆按鈕的行為與它的名字一致。
+ *
+ * 代價：若網頁在「排程通知」與「使用者點進來」之間又變過一次，看到的是最新版而不是被通知的
+ * 那一版。這是可接受的——回寫的 contentHash 取自這次抓到的內容，兩者仍然一致，
+ * 而使用者要判斷的本來就是「網頁現在長怎樣」。
  */
-/** 快取多久之後視為過時(排程偵測寫入的暫存超過這個時間就重抓) */
-const CACHE_FRESH_MS = 10 * 60 * 1000
-
 export async function getResyncExtracted(
   db: Firestore,
   sourceId: string,
-  sourceContentHash: string,
+  _sourceContentHash: string,
   sourceUrl: string,
-  opts: { forceRefetch?: boolean } = {},
 ): Promise<{ text: string; rawLength: number; contentHash: string }> {
-  const cacheSnap = opts.forceRefetch
-    ? null
-    : await db.collection('knowledgeSources').doc(sourceId)
-        .collection('cache').doc('extracted')
-        .get()
-        .catch(() => null)
-  const cache = cacheSnap?.data() as { text?: string; hash?: string; rawLength?: number; fetchedAt?: any } | undefined
-  // 快取只在「還新鮮」時採用。沒有這道時間檢查的話:套用過一次之後 contentHash 就等於
-  // 快取 hash,使用者改完網頁馬上按「重新同步」會短路讀舊文字、回報「全部未變」,
-  // 看起來像功能壞掉(而且畫面上明明寫著「已重新抓一次網頁」)。
-  const fetchedMs = cache?.fetchedAt?.toMillis?.() ?? 0
-  const fresh = fetchedMs > 0 && (Date.now() - fetchedMs) < CACHE_FRESH_MS
-  if (cache?.text && cache.hash && cache.hash === sourceContentHash && fresh) {
-    return { text: cache.text, rawLength: Number(cache.rawLength ?? cache.text.length), contentHash: cache.hash }
-  }
   const extracted = await extractUrlText(sourceUrl)
   const { createHash } = await import('node:crypto')
   const contentHash = createHash('sha256').update(extracted.text).digest('hex')
-  // 重抓的版本也暫存,讓短時間內的第二次 preview 不必重抓
+  // 暫存這一版：resync-apply 之後的排程比對要有同一個基準
   await db.collection('knowledgeSources').doc(sourceId)
     .collection('cache').doc('extracted')
     .set({

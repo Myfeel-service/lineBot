@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { confirmAlias, dismissAliasPair, removeAlias } from '~~/server/utils/ai-product-alias'
+import { invalidateWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 
 /**
  * POST /api/ai/knowledge/product-aliases
@@ -27,6 +28,9 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 400, statusMessage: '需要 canonical 與 alias' })
     }
     await confirmAlias(db, workspaceId, canonical, alias)
+    // 正式名會 arrayUnion 進同一份文件的 names;那份清單另有 60 秒快取,
+    // 不一併失效的話,接下來一分鐘內建立的卡片認不到剛加進去的正式名。
+    invalidateWorkspaceProductNames(workspaceId)
     return { ok: true }
   }
 

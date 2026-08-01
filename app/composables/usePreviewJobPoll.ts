@@ -57,7 +57,8 @@ export function usePreviewJobPoll() {
       if (res.status === 'error') throw new Error(res.error || '處理失敗')
       progress.value = res.progress ?? null
     }
-    throw new Error('處理逾時')
+    // 錯誤訊息三要素:這裡只講「發生什麼 + 下一步」,呼叫端會補上「資料有沒有被動到」
+    throw new Error('處理時間超過上限,可以再試一次;內容很長的話建議改用「貼上文字」分批匯入')
   }
 
   return { progress, poll, cancel, reset }
