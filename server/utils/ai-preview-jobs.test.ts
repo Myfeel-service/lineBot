@@ -15,7 +15,7 @@ vi.mock('./ai-source-extractors', async (importActual) => {
   return { ...actual, ocrPdfWithGemini: vi.fn() }
 })
 
-import { advanceWork, makeWork, progressFor, workToPreviewResult } from './ai-preview-jobs'
+import { advanceWork, CHUNK_PARALLEL, makeWork, progressFor, workToPreviewResult } from './ai-preview-jobs'
 import { chunkSegment, ENRICH_BATCH_SIZE, enrichCardBatch, summarizeAsOverviewCard } from './ai-knowledge-chunker'
 import { ocrPdfWithGemini } from './ai-source-extractors'
 
@@ -34,7 +34,7 @@ beforeEach(() => {
 })
 
 describe('advanceWork — chunk 階段', () => {
-  it('逐段推進、累積 + 同 title 跨段去重，做完轉 finalize（無總覽卡）', async () => {
+  it('一輪並行切多段、累積 + 同 title 跨段去重，做完轉 finalize（無總覽卡）', async () => {
     mockChunk.mockImplementation(async (text: string) => ({
       chunks: [card(`T-${text}`), card('DUP')],
       inputTokens: 1,
@@ -45,16 +45,35 @@ describe('advanceWork — chunk 階段', () => {
     work.segments = ['seg1', 'seg2']
     work.phase = 'chunk'
 
-    await advanceWork(work)
-    expect(work.phase).toBe('chunk')
-    expect(work.segmentCursor).toBe(1)
-
+    // 段數 ≤ CHUNK_PARALLEL → 一輪跑完（序列版要兩輪；長文件的來回次數是體感延遲主因）
     await advanceWork(work)
     expect(work.phase).toBe('finalize')
     expect(work.segmentCursor).toBe(2)
+    // 結果仍照段序合併、跨段同名去重
     expect(work.chunks.map(c => c.title)).toEqual(['T-seg1', 'DUP', 'T-seg2'])
     expect(work.usage).toEqual({ inputTokens: 2, outputTokens: 4 })
     expect(mockChunk).toHaveBeenCalledTimes(2)
+  })
+
+  it('段數超過並行上限時分批推進（cursor 逐批前進，不會一次全吃）', async () => {
+    mockChunk.mockImplementation(async (text: string) => ({
+      chunks: [card(`T-${text}`)],
+      inputTokens: 1,
+      outputTokens: 1,
+    }))
+    const work = makeWork({ type: 'text', generateOverview: false })
+    work.sourceName = 'doc'
+    work.segments = Array.from({ length: CHUNK_PARALLEL + 2 }, (_, i) => `s${i}`)
+    work.phase = 'chunk'
+
+    await advanceWork(work)
+    expect(work.segmentCursor).toBe(CHUNK_PARALLEL)
+    expect(work.phase).toBe('chunk')
+
+    await advanceWork(work)
+    expect(work.segmentCursor).toBe(CHUNK_PARALLEL + 2)
+    expect(work.phase).toBe('finalize')
+    expect(work.chunks.length).toBe(CHUNK_PARALLEL + 2)
   })
 
   it('切卡撞輸出上限（截斷）→ 對半切原地換入、不進 cursor，下一輪用更小段重試', async () => {

@@ -13,6 +13,11 @@
         <el-tooltip v-if="canEditKb" content="手動新增一張問答卡" placement="bottom" :show-after="300">
           <el-button :icon="EditPen" size="small" plain @click="openCreateManual">手寫</el-button>
         </el-tooltip>
+        <el-tooltip v-if="canEditSources" content="整理同一台產品的不同叫法（例：上好ㄟ ＝ 威技）" placement="bottom" :show-after="300">
+          <el-button size="small" plain @click="openAliasDialog">
+            產品名稱<el-badge v-if="aliasCandidateCount" :value="aliasCandidateCount" class="src-alias-badge" />
+          </el-button>
+        </el-tooltip>
         <el-tooltip v-if="canReindexAll" content="讓 AI 重新學習全部卡片(系統升級檢索方式後使用)" placement="bottom" :show-after="300">
           <el-button :icon="Refresh" size="small" plain :loading="reindexingAll" @click="reindexAll">重新學習</el-button>
         </el-tooltip>
@@ -241,7 +246,10 @@
           :loading="resyncing"
           @click="startResync"
         >
-          重新同步
+          {{ resyncButtonLabel }}
+        </el-button>
+        <el-button v-if="resyncing" text @click="cancelResync">
+          取消
         </el-button>
         <el-button
           v-if="selectedSource?.type === 'gsheet'"
@@ -465,6 +473,51 @@
     </template>
   </AdminSplitLayout>
 
+  <!-- ── 產品名稱整理:同一台的不同叫法,系統列候選、由人確認 ── -->
+  <el-dialog
+    v-model="aliasOpen"
+    title="產品名稱整理"
+    width="min(680px, 94vw)"
+  >
+    <p class="text-muted text-sm src-health-list-hint">
+      同一台機器如果有兩種叫法（例：「上好ㄟ抽取式除濕機」和「NWT 威技 16L」），AI 會把它當成兩台，
+      反問時要客人二選一、回答出貨時間還會並列成兩台。在這裡確認之後，AI 就知道它們是同一台。
+      <strong>系統只負責找出可疑的組合，是不是同一台要由你判斷</strong>——同系列的不同型號（W1 REGEN 與 W1 REGEN ULTRA）看起來也很像，但不能合併。
+    </p>
+
+    <div v-if="aliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
+    <template v-else>
+      <p v-if="!aliasCandidates.length" class="text-muted text-sm">
+        目前沒有需要確認的組合。之後匯入新來源時若偵測到，這裡會再出現。
+      </p>
+      <div v-for="c in aliasCandidates" :key="c.key" class="src-alias-card">
+        <div class="src-alias-pair">
+          「{{ c.a }}」<span class="src-alias-eq">＝</span>「{{ c.b }}」？
+          <span v-if="c.confidence === 'high'" class="src-alias-tag is-high">證據明確</span>
+          <span v-else-if="c.variantRisk" class="src-alias-tag is-risk">可能是不同型號</span>
+        </div>
+        <p class="src-alias-reason">{{ c.reason }}</p>
+        <div class="src-alias-actions">
+          <el-button type="primary" size="small" :loading="aliasSaving === c.key" @click="decideAlias(c, 'confirm')">
+            是同一台，合併
+          </el-button>
+          <el-button size="small" :loading="aliasSaving === c.key" @click="decideAlias(c, 'dismiss')">
+            不是，兩台不同
+          </el-button>
+          <span class="text-muted text-xs">合併後會以「{{ c.a }}」為正式名稱</span>
+        </div>
+      </div>
+
+      <div v-if="aliasPairs.length" class="src-alias-confirmed">
+        <p class="section-title">已確認的對照（{{ aliasPairs.length }}）</p>
+        <div v-for="p in aliasPairs" :key="p.aliasKey" class="src-alias-row">
+          <span>「{{ p.alias }}」→ 「{{ p.canonical }}」</span>
+          <el-button text size="small" :loading="aliasSaving === p.aliasKey" @click="undoAlias(p)">解除</el-button>
+        </div>
+      </div>
+    </template>
+  </el-dialog>
+
   <!-- ── 健康檢查清單 Modal:點分類 → 列出問題項目,點項目直達來源/卡片 ── -->
   <el-dialog
     v-model="healthListOpen"
@@ -500,6 +553,39 @@
         已重新抓一次網頁、重新整理成一張張卡片，請逐張決定要換成新的、還是保留舊的。
         你手動改過的卡預設保留你的版本。
       </p>
+
+      <!-- 內容縮水警告(空內容當一等公民錯誤):抓到的量掉一半以上,「移除」多半是抓不到不是真下架 -->
+      <el-alert
+        v-if="diffData.shrink"
+        type="error"
+        show-icon
+        :closable="false"
+        class="diff-shrink-alert"
+      >
+        <template #title>
+          這次只抓到約 {{ diffData.shrink.newChars.toLocaleString() }} 字（上次約 {{ diffData.shrink.oldChars.toLocaleString() }} 字）
+        </template>
+        <div class="text-xs">
+          網頁可能改版成動態載入、或暫時故障——下方大量「移除」很可能是<strong>抓不到</strong>，不是內容真的下架。
+          <strong>建議先按取消、不要套用</strong>；若網頁確實改版了，請把內容複製下來改用「貼上文字」重新匯入。
+        </div>
+      </el-alert>
+
+      <!-- 擷取品質警示:與匯入流程共用同一套判斷,同一個網址在兩條路上要得到同樣的診斷 -->
+      <el-alert
+        v-if="diffData.warnings?.length"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="diff-shrink-alert"
+      >
+        <template #title>
+          這次抓到的內容有 {{ diffData.warnings.length }} 點要注意
+        </template>
+        <ul class="diff-warning-list">
+          <li v-for="(w, i) in diffData.warnings" :key="i">{{ w }}</li>
+        </ul>
+      </el-alert>
       <div class="diff-summary">
         <span class="diff-summary-chip diff-summary-chip--add">新增 {{ diffData.diff.summary.added }}</span>
         <span class="diff-summary-chip diff-summary-chip--mod">修改 {{ diffData.diff.summary.modified }}</span>
@@ -571,11 +657,16 @@
     </div>
 
     <template #footer>
+      <!-- 縮水時要求明確確認:此時所有「移除」已預設改為保留,使用者仍可逐張改成刪除,
+           但必須先勾這一項才放行,避免習慣性直接按主按鈕就清空整個來源 -->
+      <el-checkbox v-if="diffData?.shrink" v-model="shrinkAcknowledged" class="diff-shrink-ack">
+        我確認網頁真的改版了，仍要套用
+      </el-checkbox>
       <el-button @click="diffOpen = false">取消</el-button>
       <el-button
         type="primary"
         :loading="applying"
-        :disabled="!diffData?.diff.entries.length"
+        :disabled="!diffData?.diff.entries.length || (!!diffData?.shrink && !shrinkAcknowledged)"
         @click="applyDiff"
       >
         套用選取的變更
@@ -838,6 +929,10 @@ interface DiffData {
     entries: DiffEntry[]
     summary: { added: number; modified: number; removed: number; unchanged: number }
   }
+  /** 內容縮水偵測:重切後內容比舊卡總量掉一半以上且有卡消失 = 疑似動態頁/抓取故障,勸退套用 */
+  shrink?: { oldChars: number; newChars: number } | null
+  /** 擷取品質警示(太薄 / 只抓到選單頁尾),與匯入流程共用同一套判斷 */
+  warnings?: string[]
 }
 
 const { apiFetch, workspaceId, can } = useWorkspace()
@@ -1247,6 +1342,87 @@ async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }) {
   }
 }
 
+// ── 產品名稱整理(別名歸一)───────────────────────────
+// 同一台機器兩種叫法會被 AI 當成兩台(反問二選一、出貨時間並列)。系統偵測候選、由人確認——
+// 不自動合併:「W1 REGEN」與「W1 REGEN ULTRA」字面上也像別名,但那是兩台不同機器。
+interface AliasCandidate {
+  key: string
+  a: string
+  b: string
+  reason: string
+  confidence: 'high' | 'medium'
+  variantRisk: boolean
+}
+interface AliasPair { aliasKey: string; alias: string; canonical: string }
+
+const aliasOpen = ref(false)
+const aliasLoading = ref(false)
+const aliasSaving = ref('')
+const aliasCandidates = ref<AliasCandidate[]>([])
+const aliasPairs = ref<AliasPair[]>([])
+/** 工具列的待確認數字；只在載入過之後才有值(不為了一個徽章在每次進頁面時多打一支 API) */
+const aliasCandidateCount = computed(() => aliasCandidates.value.length)
+
+async function loadAliases() {
+  aliasLoading.value = true
+  try {
+    const res = await apiFetch<{ candidates: AliasCandidate[]; pairs: AliasPair[] }>(
+      '/api/ai/knowledge/product-aliases',
+    )
+    aliasCandidates.value = res.candidates ?? []
+    aliasPairs.value = res.pairs ?? []
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '讀取產品名稱失敗', 'error')
+  }
+  finally {
+    aliasLoading.value = false
+  }
+}
+
+async function openAliasDialog() {
+  aliasOpen.value = true
+  await loadAliases()
+}
+
+async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
+  aliasSaving.value = c.key
+  try {
+    await apiFetch('/api/ai/knowledge/product-aliases', {
+      method: 'POST',
+      body: action === 'confirm'
+        ? { action: 'confirm', canonical: c.a, alias: c.b }
+        : { action: 'dismiss', a: c.a, b: c.b },
+    })
+    showToast(action === 'confirm' ? `已合併，AI 之後會把它們當同一台` : '好的，不再詢問這一組', 'success')
+    await loadAliases()
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '儲存失敗', 'error')
+  }
+  finally {
+    aliasSaving.value = ''
+  }
+}
+
+async function undoAlias(p: AliasPair) {
+  aliasSaving.value = p.aliasKey
+  try {
+    await apiFetch('/api/ai/knowledge/product-aliases', {
+      method: 'POST',
+      body: { action: 'remove', alias: p.alias },
+    })
+    showToast('已解除', 'success')
+    await loadAliases()
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '解除失敗', 'error')
+  }
+  finally {
+    aliasSaving.value = ''
+  }
+}
+
 // ── 資料夾 CRUD ─────────────────────────────────────
 async function createFolderPrompt() {
   try {
@@ -1532,23 +1708,79 @@ async function deleteSource() {
   }
 }
 
+// ── 重新同步(背景作業版)────────────────────────────
+// 舊版一個請求做完「重抓+LLM 重切+比對」,大頁面 30 秒必撞閘道逾時,使用者只看到
+// 「取得差異失敗」。改走匯入同一套背景狀態機:建 job → 輪詢進度 → 永不逾時,可取消。
+const { progress: resyncProgress, poll: pollResyncJob, cancel: cancelResync, reset: resetResyncPoll } = usePreviewJobPoll()
+
+const resyncButtonLabel = computed(() => {
+  if (!resyncing.value) return '重新同步'
+  const p = resyncProgress.value
+  if (!p) return '重新抓取網頁⋯'
+  return p.total > 1 ? `${p.label} ${p.done}/${p.total}⋯` : `${p.label}⋯`
+})
+
+interface ResyncDoneResponse {
+  status: 'done'
+  sourceName: string
+  sourceUrl: string
+  rawLength: number
+  truncated: boolean
+  warnings?: string[]
+  resync?: {
+    sourceId: string
+    contentHash: string
+    diff: DiffData['diff'] | null
+    shrink: { oldChars: number; newChars: number } | null
+    warnings?: string[]
+  }
+}
+
+/** 縮水警示的二次確認(勾了才放行套用) */
+const shrinkAcknowledged = ref(false)
+
 async function startResync() {
   if (!selectedId.value) return
+  const sid = selectedId.value
   resyncing.value = true
+  resetResyncPoll()
   try {
-    const res = await apiFetch<DiffData>(`/api/ai/sources/${selectedId.value}/resync-preview`, {
+    const created = await apiFetch<{ jobId: string }>(`/api/ai/sources/${sid}/resync-jobs`, {
       method: 'POST',
       body: {},
     })
-    diffData.value = res
-    // 用後端 defaultAction 初始化使用者決定
+    const res = await pollResyncJob<ResyncDoneResponse>(created.jobId)
+    if (!res.resync?.diff) throw new Error('比對結果不完整,請再試一次')
+    const shrink = res.resync.shrink ?? null
+    diffData.value = {
+      sourceId: sid,
+      sourceName: res.sourceName,
+      sourceUrl: res.sourceUrl,
+      contentHash: res.resync.contentHash,
+      diff: res.resync.diff,
+      shrink,
+      warnings: res.resync.warnings ?? [],
+    }
+    // 用後端 defaultAction 初始化使用者決定。
+    // 內容縮水時「移除」多半是抓不到而不是真下架 → 一律預設保留,不能預設刪除
+    // (預設值就是絕大多數人會直接送出的值,警告文字擋不住習慣性按主按鈕)。
     const init: Record<string, string> = {}
-    for (const e of res.diff.entries) init[e.id] = e.defaultAction
+    for (const e of res.resync.diff.entries) {
+      init[e.id] = shrink && e.kind === 'removed' ? 'keep_old' : e.defaultAction
+    }
     decisions.value = init
+    shrinkAcknowledged.value = false
     diffOpen.value = true
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '取得差異失敗', 'error')
+    // 錯誤三要素:發生什麼 / 資料有沒有被動到 / 下一步。比對是唯讀的,可以誠實保證沒動到。
+    if (err?.message === PREVIEW_JOB_CANCELLED) {
+      showToast('已取消重新同步;你的知識卡沒有被改動', 'success')
+    }
+    else {
+      const reason = err?.data?.statusMessage || err?.statusMessage || err?.message || '重新整理沒有完成'
+      showToast(`${reason}。你的知識卡沒有被改動,可以再試一次;一直失敗的話,請把網頁內容複製下來用「貼上文字」重新匯入,或聯絡我們。`, 'error')
+    }
   }
   finally {
     resyncing.value = false
@@ -1580,11 +1812,29 @@ async function syncGsheetNow() {
 }
 
 async function applyDiff() {
-  if (!diffData.value || !selectedId.value) return
+  if (!diffData.value) return
+  // 一律套用回「算這份 diff 的那個來源」,不是「當下選中的來源」——重新同步改成背景作業後
+  // 可能跑好幾分鐘,期間使用者能點別的來源;用 selectedId 會把 A 的卡片建到 B 底下,
+  // 還會用 A 的網頁指紋覆蓋 B 的變動偵測基準。
+  const targetId = diffData.value.sourceId
+  if (!targetId) return
+  if (selectedId.value !== targetId) {
+    const targetName = diffData.value.sourceName || '原來源'
+    try {
+      await ElMessageBox.confirm(
+        `這份差異是「${targetName}」的比對結果,會套用回該來源(不是你目前選中的來源)。要繼續嗎?`,
+        '確認套用對象',
+        { confirmButtonText: '套用到原來源', cancelButtonText: '取消', type: 'warning' },
+      )
+    }
+    catch {
+      return
+    }
+  }
   applying.value = true
   try {
     const res = await apiFetch<{ added: number; updated: number; deleted: number; kept: number; errors: any[] }>(
-      `/api/ai/sources/${selectedId.value}/resync-apply`,
+      `/api/ai/sources/${targetId}/resync-apply`,
       {
         method: 'POST',
         body: {
@@ -1613,7 +1863,8 @@ async function applyDiff() {
     diffOpen.value = false
     diffData.value = null
     await loadSources(true)
-    if (selectedId.value) await loadSourceDetail(selectedId.value)
+    // 重載「被套用的那個來源」;使用者若已切到別的來源,那邊的畫面不受影響
+    if (selectedId.value === targetId) await loadSourceDetail(targetId)
   }
   catch (err: any) {
     showToast(err?.statusMessage || '套用失敗', 'error')

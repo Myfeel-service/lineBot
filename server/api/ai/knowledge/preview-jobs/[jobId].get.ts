@@ -3,10 +3,12 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
+import { computeDiff, loadOldChunksForDiff } from '~~/server/utils/ai-knowledge-resync'
 import {
   advanceWork,
   appendImportQualityWarnings,
   findExistingSources,
+  flushJobUsage,
   JOB_LEASE_MS,
   KNOWLEDGE_PREVIEW_JOBS_COLLECTION,
   loadSourceFile,
@@ -73,29 +75,55 @@ export default defineEventHandler(async (event) => {
     const work = await loadWork(workspaceId, jobId)
 
     if (work.phase === 'finalize') {
-      // 同名偵測只對 file / url（同舊 preview-chunks）
-      work.existingMatches = (work.input.type === 'file' || work.input.type === 'url')
-        ? await findExistingSources(workspaceId, work.sourceName, db)
-        : []
-      // 自動認產品名（P1-1）：單一產品來源預填產品名給使用者確認。gsheet（多列多產品）不跑；
-      // 多產品 / 平台頁 LLM 會回空字串。失敗不擋匯入（只是不預填）。
-      if (!work.suggestedProductName && work.input.type !== 'gsheet' && work.chunks.length) {
-        try {
-          const sample = work.segments[0]
-            || work.chunks.slice(0, 5).map(c => `${c.title}\n${c.content}`).join('\n')
-          const det = await detectProductName(sample, work.sourceName)
-          work.suggestedProductName = det.productName
-          work.usage.inputTokens += det.inputTokens
-          work.usage.outputTokens += det.outputTokens
-        }
-        catch (e) {
-          console.warn('[preview-jobs] detectProductName failed（不預填，照常完成）:', e)
-        }
+      if (work.input.resyncSourceId) {
+        // resync 工作:算新舊卡 diff + 內容縮水偵測。不跑「新來源」的三種檢查
+        // (同名偵測 / 認產品名 / 匯入守門——對既有來源的重切全是誤報)。
+        const oldChunks = await loadOldChunksForDiff(db, workspaceId, work.input.resyncSourceId)
+        work.resyncDiff = computeDiff(oldChunks, work.chunks.map(c => ({
+          title: c.title,
+          content: c.content,
+          tags: c.tags ?? [],
+          questions: c.questions ?? [],
+        })))
+        // 縮水偵測(空內容當一等公民錯誤):比較基準是「這次從網頁抓到的字數」,
+        // **不能用重切後的卡片字數**——LLM 這輪寫得精簡一點就會誤報整頁抓不到。
+        // 再要求「真的有卡消失」才示警:沒有 removed 就沒有誤刪風險,不必嚇使用者。
+        const oldChars = oldChunks.reduce((s, c) => s + c.content.length, 0)
+        const fetchedChars = work.resyncFetchedChars ?? 0
+        work.resyncShrink = oldChars > 0
+          && fetchedChars < oldChars * 0.5
+          && work.resyncDiff.summary.removed > 0
+          ? { oldChars, newChars: fetchedChars }
+          : null
       }
-      // 匯入品質守門（P1-2）：時效字眼 / 重複卡 / 總覽矛盾 / 說明書無產品名。
-      // 放在產品名偵測之後（第 4 項檢查要用偵測結果）；內部 fail-open 不擋匯入。
-      await appendImportQualityWarnings(db, workspaceId, work)
+      else {
+        // 同名偵測只對 file / url（同舊 preview-chunks）
+        work.existingMatches = (work.input.type === 'file' || work.input.type === 'url')
+          ? await findExistingSources(workspaceId, work.sourceName, db)
+          : []
+        // 自動認產品名（P1-1）：單一產品來源預填產品名給使用者確認。gsheet（多列多產品）不跑；
+        // 多產品 / 平台頁 LLM 會回空字串。失敗不擋匯入（只是不預填）。
+        if (!work.suggestedProductName && work.input.type !== 'gsheet' && work.chunks.length) {
+          try {
+            const sample = work.segments[0]
+              || work.chunks.slice(0, 5).map(c => `${c.title}\n${c.content}`).join('\n')
+            const det = await detectProductName(sample, work.sourceName)
+            work.suggestedProductName = det.productName
+            work.usage.inputTokens += det.inputTokens
+            work.usage.outputTokens += det.outputTokens
+          }
+          catch (e) {
+            console.warn('[preview-jobs] detectProductName failed（不預填，照常完成）:', e)
+          }
+        }
+        // 匯入品質守門（P1-2）：時效字眼 / 重複卡 / 總覽矛盾 / 說明書無產品名。
+        // 放在產品名偵測之後（第 4 項檢查要用偵測結果）；內部 fail-open 不擋匯入。
+        await appendImportQualityWarnings(db, workspaceId, work)
+      }
+
+      // ── 共用收尾(兩種工作只差上面那段;收尾邏輯只留一份免得日後只改到一邊)──
       work.phase = 'done'
+      await flushJobUsage(workspaceId, work) // 先結清未入帳 token,再標 done
       await saveWork(workspaceId, jobId, work)
       await ref.update({
         status: 'done',
@@ -104,16 +132,6 @@ export default defineEventHandler(async (event) => {
         leaseUntil: 0,
         updatedAt: FieldValue.serverTimestamp(),
       })
-      // 記帳放最後：doc 已標 done，即使這裡失敗也不會被重跑而重複計（寧可少記不要重複）
-      const { inputTokens, outputTokens } = work.usage
-      if (inputTokens || outputTokens) {
-        await recordAiUsage(workspaceId, {
-          inputTokens,
-          outputTokens,
-          importInputTokens: inputTokens,
-          importOutputTokens: outputTokens,
-        }).catch(() => {})
-      }
       return { status: 'done' as const, ...workToPreviewResult(work) }
     }
 
@@ -127,7 +145,19 @@ export default defineEventHandler(async (event) => {
         }
       : undefined
 
-    await advanceWork(work, { getSourceBuffer })
+    // 在時間預算內連續推進多步:一輪只推一段的話,長文件(100k 字 ≈ 13 段)要 13 次來回、
+    // 總時長 5 分鐘以上,比改寫前的並行切卡還慢。用 STEP_BUDGET_MS 卡住單次請求時間,
+    // 既不會撞閘道逾時,又能把來回次數壓下來。OCR 階段每批本來就久,只做一步。
+    const STEP_BUDGET_MS = 18_000
+    const startedAt = Date.now()
+    do {
+      await advanceWork(work, { getSourceBuffer })
+      await flushJobUsage(workspaceId, work) // 每步結清:中途取消 / 逾時也不會漏記已花的 token
+    } while (
+      work.phase === 'chunk'
+      && Date.now() - startedAt < STEP_BUDGET_MS
+    )
+
     await saveWork(workspaceId, jobId, work)
     await ref.update({
       phase: work.phase,

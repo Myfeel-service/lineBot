@@ -179,6 +179,30 @@
         </div>
       </el-alert>
 
+      <!-- 路徑分組導覽:一眼看懂網站組成,點分組縮小範圍(大站挑商品頁的主要動線) -->
+      <div v-if="siteGroups.length >= 2" class="kb-site-groups">
+        <button
+          type="button"
+          class="kb-site-group-chip"
+          :class="{ 'is-active': siteGroup === '' }"
+          :disabled="siteImporting"
+          @click="siteGroup = ''"
+        >
+          全部 {{ sitePages.length }} 頁
+        </button>
+        <button
+          v-for="[g, n] in siteGroups"
+          :key="g"
+          type="button"
+          class="kb-site-group-chip"
+          :class="{ 'is-active': siteGroup === g }"
+          :disabled="siteImporting"
+          @click="siteGroup = siteGroup === g ? '' : g"
+        >
+          {{ g }} {{ n }} 頁
+        </button>
+      </div>
+
       <div class="kb-site-toolbar">
         <el-checkbox
           :model-value="allSiteChecked"
@@ -186,7 +210,7 @@
           :disabled="siteImporting || !selectableSitePages.length"
           @change="toggleAllSite"
         >
-          全選
+          全選{{ siteGroup || siteFilter.trim() ? '（目前顯示的）' : '' }}
         </el-checkbox>
         <span class="text-muted text-xs">已勾選 {{ checkedSiteCount }} 頁</span>
         <span v-if="importedSiteCount" class="text-muted text-xs">
@@ -585,9 +609,8 @@ const overviewCard = ref<OverviewCard | null>(null)
 // ── Preview ───────────────────────────────────────────────
 const previewing = ref(false)
 // 非同步 job 的即時進度（切卡 3/5、辨識掃描檔 2/6…）；null = 尚無進度資訊
-const previewProgress = ref<{ done: number; total: number; label: string } | null>(null)
 const previewProgressText = computed(() => {
-  const p = previewProgress.value
+  const p = jobProgress.value
   if (!p) return 'Gemini 正在分析內容⋯'
   return p.total > 1 ? `${p.label} ${p.done}/${p.total}⋯` : `${p.label}⋯`
 })
@@ -623,6 +646,8 @@ interface SitePageRow {
   error: string
   /** 這個網址已經有對應的知識來源(再匯一次會產生重複) */
   imported: boolean
+  /** 路徑第一段(分組用);探索時算一次,避免每次篩選/勾選都重新解析上千個網址 */
+  group: string
 }
 const discovering = ref(false)
 const sitePages = ref<SitePageRow[]>([])
@@ -643,12 +668,35 @@ const siteHost = computed(() => {
   }
 })
 const siteFilter = ref('')
-/** 篩選只影響顯示,不影響勾選狀態(避免「篩掉的頁其實還勾著」造成誤匯) */
+/** 網址的第一段路徑當分組 key(例 /projects、/media);首頁歸「(首頁)」 */
+function pageGroupKey(url: string): string {
+  try {
+    const seg = new URL(url).pathname.split('/').filter(Boolean)[0] ?? ''
+    return seg ? `/${seg}` : '(首頁)'
+  }
+  catch {
+    return '(其他)'
+  }
+}
+
+/** 目前選中的分組;'' = 全部 */
+const siteGroup = ref('')
+/**
+ * 路徑分組導覽:大站(上千頁)的清單靠捲的找不到重點,先讓使用者看懂網站組成
+ * (「/media 1511 頁、/projects 225 頁」),點分組直接縮小範圍。只顯示 ≥2 頁的組。
+ */
+const siteGroups = computed(() => {
+  const m = new Map<string, number>()
+  for (const p of sitePages.value) m.set(p.group, (m.get(p.group) ?? 0) + 1)
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).filter(([, n]) => n >= 2).slice(0, 8)
+})
+
+/** 篩選(分組+關鍵字)只影響顯示,不會把已勾的頁取消勾選 */
 const visibleSitePages = computed(() => {
   const kw = siteFilter.value.trim().toLowerCase()
-  if (!kw) return sitePages.value
   return sitePages.value.filter(p =>
-    p.url.toLowerCase().includes(kw) || p.title.toLowerCase().includes(kw))
+    (!siteGroup.value || p.group === siteGroup.value)
+    && (!kw || p.url.toLowerCase().includes(kw) || p.title.toLowerCase().includes(kw)))
 })
 const checkedSiteCount = computed(() => sitePages.value.filter(p => p.checked).length)
 /** 批次結束後的結論(成功頁數/卡數/失敗/帶提醒) */
@@ -662,15 +710,38 @@ const siteSummary = computed(() => {
   }
 })
 const importedSiteCount = computed(() => sitePages.value.filter(p => p.imported).length)
-/** 可勾的頁:已匯入過與本輪已完成的都不算(全選也不會勾到它們) */
-const selectableSitePages = computed(() => sitePages.value.filter(p => !p.imported && p.status !== 'done'))
+/**
+ * 可勾的頁 = **目前顯示中**且未匯入過、本輪未完成的。全選作用在顯示中的頁——
+ * 「點 /projects 分組再全選」正是大站挑商品頁的主要動線;已勾但被篩掉的頁不會被取消。
+ */
+const selectableSitePages = computed(() => visibleSitePages.value.filter(p => !p.imported && p.status !== 'done'))
 const allSiteChecked = computed(() =>
   selectableSitePages.value.length > 0 && selectableSitePages.value.every(p => p.checked))
-const someSiteChecked = computed(() => checkedSiteCount.value > 0 && !allSiteChecked.value)
+// 半勾狀態要跟「全選」同範圍(目前顯示的頁)。用全域已勾數的話:在 A 分組勾了 5 頁再切到
+// B 分組,B 一頁都沒勾卻顯示半勾,點一下反而會把 B 的上千頁全勾起來。
+const someSiteChecked = computed(() =>
+  selectableSitePages.value.some(p => p.checked) && !allSiteChecked.value)
 
 function toggleAllSite(checked: boolean | string | number) {
   const on = checked === true
-  for (const p of selectableSitePages.value) p.checked = on
+  if (!on) {
+    for (const p of selectableSitePages.value) p.checked = false
+    return
+  }
+  // 勾到上限就停:分組動輒上千頁(/media 1511),讓他勾滿再用錯誤訊息擋下來,
+  // 使用者會卡在「1511 個勾勾要自己取消」的死路。先勾前 N 頁並說清楚。
+  const room = MAX_SITE_BATCH - sitePages.value.filter(p => p.checked).length
+  let added = 0
+  for (const p of selectableSitePages.value) {
+    if (p.checked) continue
+    if (added >= room) break
+    p.checked = true
+    added++
+  }
+  const remaining = selectableSitePages.value.filter(p => !p.checked).length
+  if (remaining > 0) {
+    showToast(`一次最多匯入 ${MAX_SITE_BATCH} 頁,已勾選 ${MAX_SITE_BATCH} 頁;剩下的 ${remaining} 頁可以等這批完成後再跑一次`, 'warning')
+  }
 }
 
 function pagePathLabel(url: string): string {
@@ -700,10 +771,13 @@ async function runDiscover() {
       warningTexts: [],
       error: '',
       imported: p.imported === true,
+      group: pageGroupKey(p.url),
     }))
     siteFrom.value = res.from
     siteTruncated.value = res.truncated
     siteFinished.value = false
+    siteGroup.value = ''
+    siteFilter.value = ''
     step.value = 'sitePages'
   }
   catch (err: any) {
@@ -754,7 +828,7 @@ async function runSiteImport() {
           method: 'POST',
           body: { type: 'url', url: page.url, generateOverview: false },
         })
-        const res = await pollPreviewJob(created.jobId)
+        const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
         if (!res.chunks.length) throw new Error('沒有切出卡片(頁面可能沒有實質內容)')
         const bulk = await apiFetch<{ indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
@@ -848,43 +922,12 @@ interface PreviewResult {
   suggestedProductName?: string
 }
 
-type PollResponse =
-  | ({ status: 'done' } & PreviewResult)
-  | { status: 'processing'; phase: string; progress: { done: number; total: number; label: string } }
-  | { status: 'error'; error: string }
-
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-/**
- * 輪詢預覽 job 直到 done / error。伺服器端每次輪詢推進一步(壓在閘道逾時內),
- * 所以這裡永遠拿短回應——閘道偶發 504/502/408 是「某一步剛好較久」,吞掉繼續輪詢
- * (伺服器端 lease 會由下一輪重接),不可一次抖動就整個失敗。上限 5 分鐘。
- */
-async function pollPreviewJob(jobId: string): Promise<PreviewResult> {
-  // 大型密文件最壞情況:OCR 逐批 + 逐段切卡跨多輪輪詢,每輪 ~20s,總量可到數分鐘。
-  // 上限放寬到 8 分鐘;伺服器端 job 存活 1 小時,真超時使用者可重新上傳。
-  const deadline = Date.now() + 8 * 60 * 1000
-  while (Date.now() < deadline) {
-    await sleep(1200)
-    let res: PollResponse
-    try {
-      res = await apiFetch<PollResponse>(`/api/ai/knowledge/preview-jobs/${encodeURIComponent(jobId)}`)
-    }
-    catch (e: any) {
-      const code = Number(e?.statusCode ?? e?.status ?? e?.response?.status ?? 0)
-      if (code === 504 || code === 502 || code === 408 || code === 0) continue
-      throw e
-    }
-    if (res.status === 'done') return res
-    if (res.status === 'error') throw new Error(res.error || '處理失敗')
-    previewProgress.value = res.progress
-  }
-  throw new Error('處理逾時，請稍後再試或改貼文字')
-}
+// 輪詢協定與「重新同步」共用同一支 composable(重試碼 / 逾時 / 取消只留一份實作)
+const { progress: jobProgress, poll: pollPreviewJob, reset: resetJobPoll } = usePreviewJobPoll()
 
 async function runPreview() {
   previewing.value = true
-  previewProgress.value = null
+  resetJobPoll()
   try {
     const body: Record<string, unknown> = { type: mode.value, generateOverview: generateOverview.value }
     if (mode.value === 'file') {
@@ -892,7 +935,7 @@ async function runPreview() {
       if (!file) return
       // 原檔直傳 Storage（signed PUT URL）：繞過 Lambda 6MB payload 上限、免 base64 33% 膨脹。
       // 檔案 bytes 不經過我們的 API/Lambda，只把 storagePath 送去建 job。
-      previewProgress.value = { done: 0, total: 1, label: '上傳檔案' }
+      jobProgress.value = { done: 0, total: 1, label: '上傳檔案' }
       const up = await apiFetch<{ storagePath: string; uploadUrl: string }>(
         '/api/ai/knowledge/upload-url',
         { method: 'POST', body: { fileName: file.name, contentType: file.type } },
@@ -903,7 +946,7 @@ async function runPreview() {
         body: file,
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
       })
-      previewProgress.value = null
+      resetJobPoll()
       body.fileName = file.name
       body.contentType = file.type
       body.storagePath = up.storagePath
@@ -926,7 +969,7 @@ async function runPreview() {
       '/api/ai/knowledge/preview-jobs',
       { method: 'POST', body },
     )
-    const res = await pollPreviewJob(created.jobId)
+    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
 
     if (!res.chunks.length) {
       showToast('AI 沒有切出任何有意義的卡片；請改貼文字或檢查來源內容', 'error')
@@ -966,7 +1009,7 @@ async function runPreview() {
   }
   finally {
     previewing.value = false
-    previewProgress.value = null
+    resetJobPoll()
   }
 }
 
@@ -1109,6 +1152,7 @@ function resetAll() {
   sourceMeta.value = { type: '', name: '', url: '', productName: '' }
   sitePages.value = []
   siteFilter.value = ''
+  siteGroup.value = ''
   siteTruncated.value = false
   siteImporting.value = false
   siteAborted.value = false

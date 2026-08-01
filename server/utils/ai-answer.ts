@@ -22,6 +22,7 @@
 import { pinyin } from 'pinyin-pro'
 import { searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
+import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
 import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
@@ -687,7 +688,7 @@ function brandTokens(title: string): Set<string> {
  * 邊角：共用上位品牌字（如多個 SHARP 產品都含 "sharp"）會被併成一群——此時退化為「直接答 top-1」，
  * 可接受（瀏覽型「SHARP 有什麼」走總覽卡，比較型走 compare 分支，都不經這裡）。
  */
-export function groupSameProduct(chunks: SimilarChunk[]): SimilarChunk[][] {
+export function groupSameProduct(chunks: SimilarChunk[], aliases?: Record<string, string>): SimilarChunk[][] {
   const groups: Array<{ members: SimilarChunk[]; tokens: Set<string>; sourceId: string | null; product: string | null }> = []
   for (const c of chunks) {
     const tokens = brandTokens(c.title)
@@ -695,7 +696,13 @@ export function groupSameProduct(chunks: SimilarChunk[]): SimilarChunk[][] {
     // productName（治本產物）是最可靠的同產品訊號：中文品名的屬性卡跨來源、標題無共用英數詞時
     // （「上好ㄟ除濕機產品介紹」vs「…產品說明」、奇美燈特色/維修卡），靠它才併得起來，
     // 否則會誤觸「同一台卻反問你要哪張卡」。空 productName 不參與比對（不會把沒設的誤併）。
-    const prod = (c.productName ?? '').trim().toLowerCase() || null
+    //
+    // 別名歸一：同一台機器的兩個叫法（上好ㄟ ↔ NWT 威技）字面完全不同，三種判定全不中，
+    // 會被當成兩台（反問要客人二選一、出貨時間並列成兩台的答案）。先換成正式名再比對。
+    // 正規化後比對:順手吸收「《筋牌特務》vs 筋牌特務」這種只差標點的寫法差異(不需人工確認)
+    const prod = aliases
+      ? (normalizeProductName(canonicalProductName(c.productName, aliases)) || null)
+      : (normalizeProductName(c.productName ?? '') || null)
     const g = groups.find(grp =>
       (!!grp.product && !!prod && grp.product === prod)
       || (!!grp.sourceId && !!sid && grp.sourceId === sid)
@@ -715,8 +722,8 @@ export function groupSameProduct(chunks: SimilarChunk[]): SimilarChunk[][] {
 }
 
 /** 同產品收斂成「一產品一代表卡」（每組最高分那張）。 */
-export function collapseSameProduct(chunks: SimilarChunk[]): SimilarChunk[] {
-  return groupSameProduct(chunks).map(g => g[0]!)
+export function collapseSameProduct(chunks: SimilarChunk[], aliases?: Record<string, string>): SimilarChunk[] {
+  return groupSameProduct(chunks, aliases).map(g => g[0]!)
 }
 
 const LATIN_RUN_RE = /[a-z0-9]{3,}/g
@@ -1401,7 +1408,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const subAnchorIds = subAnchors.length ? new Set(subAnchors.map(a => a.id)) : undefined
   const dedupedChunks = dedupeNearIdentical(dedupeBySource(chunks, catalogSourceIds, subAnchorIds))
   // P1-2 同產品收斂：把「同一台機器的不同面向卡」分到同一組，反問只在『真的不同產品』間發生。
-  const groups = groupSameProduct(dedupedChunks)
+  // 帶入已確認的別名對照（上好ㄟ ↔ NWT 威技），否則同一台的兩個叫法會被當成兩台。
+  const { aliases: productAliases } = await getProductAliases(db, workspaceId)
+  const groups = groupSameProduct(dedupedChunks, productAliases)
   const productGroups = groups.map(g => g[0]!) // 每組代表卡（最高分）
   // P1-3 指名豁免：客人這句已用英數品牌/型號詞點名單一產品（例「WDH-16EF 保固」）→ 不反問，直接作答。
   const namedProduct = productNamedInQuery(text, groups)
@@ -1489,7 +1498,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     .map((c, i) => {
       // 卡片標題常不帶產品名（維修卡只寫「保護代碼EH」）→ 補上所屬產品，
       // 讓 LLM 知道這張卡是哪個產品的，客人指名品牌時才敢作答（治本）。
-      const prod = !c.isOverview && c.productName ? `產品：${c.productName}｜` : ''
+      // 用正式名：同一台的兩個叫法若原樣帶進 context，LLM 會以為是兩台而並列作答。
+      const canonicalProd = canonicalProductName(c.productName, productAliases)
+      const prod = !c.isOverview && canonicalProd ? `產品：${canonicalProd}｜` : ''
       return `[卡 ${i + 1}｜${prod}${c.title}]\n${c.content.slice(0, CONTEXT_CARD_MAX_CHARS)}`
     })
     .join('\n\n')

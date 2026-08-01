@@ -27,7 +27,9 @@ import { ocrPdfWithGemini, MAX_RAW_TEXT_LEN } from './ai-source-extractors'
 import { splitPdfPageRange } from './pdf-split'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { recordAiUsage } from './ai-usage'
 import type { ChunkInput } from './ai-knowledge-chunks'
+import type { DiffResult } from './ai-knowledge-resync'
 
 export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
 
@@ -36,6 +38,13 @@ export const OCR_PAGE_BATCH = 5
 
 /** 切卡撞輸出上限時「對半再切」的下限；小於此就不再切（真的還失敗代表非截斷問題）。 */
 export const MIN_SEGMENT_SPLIT_LEN = 1500
+
+/**
+ * 單輪同時切幾段。序列版在長文件上比「改成背景作業之前」還慢(每段一次來回),
+ * 這裡讓一輪並行跑數段;單輪 wall clock ≈ 一次 LLM latency,仍遠低於閘道逾時。
+ * 值沿用 chunker 對 Gemini RPM 的保守估計。
+ */
+export const CHUNK_PARALLEL = 4
 
 /** claim 一步的租約時間；poll 中途被閘道 504，過了這段時間下一輪可重接。 */
 export const JOB_LEASE_MS = 45_000
@@ -55,6 +64,13 @@ export interface PreviewJobInput {
   text?: string
   name?: string
   generateOverview: boolean
+  /**
+   * 「重新同步」工作：對這個既有來源重切卡並在 finalize 算 diff（取代舊的同步式
+   * resync-preview——一個請求做完抽取＋LLM 切卡＋比對,大頁面必撞閘道逾時,
+   * 與當年 preview-chunks 504 同病）。有值時 finalize 跳過同名偵測 / 認產品名 /
+   * 匯入守門（那些是「新來源」的檢查,對既有來源的重切會全部誤報）。
+   */
+  resyncSourceId?: string
 }
 
 export interface ExistingMatch {
@@ -90,10 +106,21 @@ export interface WorkState {
   overviewCard: ChunkInput | null
   existingMatches: ExistingMatch[]
   usage: { inputTokens: number; outputTokens: number }
+  /** 已入帳的部分(累計值);usage 減掉它就是這次要記的差額。見 flushJobUsage */
+  usageFlushed?: { inputTokens: number; outputTokens: number }
   /** 匯入前健檢警告（表格來源：示範列沒換、重複問題、合併儲存格等）；提醒不擋匯入 */
   warnings: string[]
   /** 自動偵測的產品名（finalize 時 LLM 判定；多產品 / 平台頁為空）。預填給使用者確認可改。 */
   suggestedProductName?: string
+  // ── resync 工作專用(input.resyncSourceId 有值時)──
+  /** finalize 算出的新舊卡差異 */
+  resyncDiff?: DiffResult
+  /** 這份內容的指紋;apply 帶回寫,對應「這份 diff 用的內容」 */
+  resyncContentHash?: string
+  /** 這次「實際從網頁抓到」的字數(縮水判定要用它,不能用 LLM 重寫後的卡片字數) */
+  resyncFetchedChars?: number
+  /** 內容縮水偵測:抓到的量 < 舊卡總字數一半且真有卡消失 → 疑似動態頁/抓取故障 */
+  resyncShrink?: { oldChars: number; newChars: number } | null
 }
 
 /** Firestore job 文件（保持極小） */
@@ -212,46 +239,72 @@ async function advanceOcr(
 }
 
 async function advanceChunk(work: WorkState): Promise<WorkState> {
-  const i = work.segmentCursor
-  const seg = work.segments[i]
-  if (seg === undefined) {
+  const start = work.segmentCursor
+  if (work.segments[start] === undefined) {
     work.phase = 'finalize'
     return work
   }
-  const hint = work.segments.length > 1
-    ? `${work.sourceName}（第 ${i + 1}/${work.segments.length} 段）`.trim()
-    : work.sourceName
 
-  let res: Awaited<ReturnType<typeof chunkSegment>>
-  try {
-    res = await chunkSegment(seg, hint)
+  // 一輪同時切多段:序列版本在長文件上很痛(100k 字 ≈ 13 段 × 每段 15–25 秒 ≈ 5 分鐘,
+  // 比改成背景作業之前的並行切卡還慢)。並行度沿用 chunker 的保守值,單輪 wall clock
+  // ≈ 一次 LLM latency,仍遠低於閘道逾時。
+  const batch: Array<{ index: number; text: string }> = []
+  for (let i = start; i < work.segments.length && batch.length < CHUNK_PARALLEL; i++) {
+    batch.push({ index: i, text: work.segments[i]! })
   }
-  catch (err) {
-    // 內容太密、一段切出的卡撞 maxOutputTokens → 輸出 JSON 被截斷。把這段對半切、原地換入、
-    // **不進 cursor**，下一輪用更小的段重試（天然可續跑，一個 poll 仍只打一次 LLM）。
-    // 只對「截斷型」錯誤這樣做；其它錯誤（網路 502 等）照丟，避免無限切。
-    if (isChunkTruncationError(err) && seg.length > MIN_SEGMENT_SPLIT_LEN) {
-      const parts = splitSegmentInHalf(seg)
-      if (parts.length >= 2) {
-        work.segments.splice(i, 1, ...parts)
-        return work
-      }
-    }
-    throw err
-  }
-  work.usage.inputTokens += res.inputTokens
-  work.usage.outputTokens += res.outputTokens
+
+  const total = work.segments.length
+  const results = await Promise.allSettled(batch.map(({ index, text }) => {
+    const hint = total > 1
+      ? `${work.sourceName}（第 ${index + 1}/${total} 段）`.trim()
+      : work.sourceName
+    return chunkSegment(text, hint)
+  }))
 
   const seen = new Set(work.chunks.map(c => c.title.replace(/\s+/g, '')))
-  for (const c of res.chunks) {
-    const key = c.title.replace(/\s+/g, '')
-    if (seen.has(key)) continue
-    seen.add(key)
-    work.chunks.push(c)
+  let consumed = 0
+  for (let b = 0; b < batch.length; b++) {
+    const item = batch[b]!
+    const r = results[b]!
+
+    if (r.status === 'rejected') {
+      // 內容太密、一段切出的卡撞 maxOutputTokens → 輸出 JSON 被截斷。把這段對半切、原地換入、
+      // **cursor 停在這一段**,下一輪用更小的段重試(天然可續跑)。
+      // 只對「截斷型」錯誤這樣做;其它錯誤(網路 502 等)照丟,避免無限切。
+      if (isChunkTruncationError(r.reason) && item.text.length > MIN_SEGMENT_SPLIT_LEN) {
+        const parts = splitSegmentInHalf(item.text)
+        if (parts.length >= 2) {
+          // 先把這一段之前已成功的成果收下(cursor 前進 consumed),再把這段換成兩小段。
+          // 這一段之後那些已跑完的結果只好丟掉重跑——截斷很罕見,不值得為它加狀態複雜度;
+          // 但它們的 token 已經花了,下面照實入帳。
+          work.segments.splice(item.index, 1, ...parts)
+          for (let rest = b + 1; rest < results.length; rest++) {
+            const other = results[rest]!
+            if (other.status === 'fulfilled') {
+              work.usage.inputTokens += other.value.inputTokens
+              work.usage.outputTokens += other.value.outputTokens
+            }
+          }
+          break
+        }
+      }
+      throw r.reason
+    }
+
+    work.usage.inputTokens += r.value.inputTokens
+    work.usage.outputTokens += r.value.outputTokens
+    for (const c of r.value.chunks) {
+      const key = c.title.replace(/\s+/g, '')
+      if (seen.has(key)) continue
+      seen.add(key)
+      work.chunks.push(c)
+      if (work.chunks.length >= MAX_TOTAL_CHUNKS) break
+    }
+    consumed++
     if (work.chunks.length >= MAX_TOTAL_CHUNKS) break
   }
 
-  work.segmentCursor = i + 1
+  work.segmentCursor = start + consumed
   if (work.segmentCursor >= work.segments.length || work.chunks.length >= MAX_TOTAL_CHUNKS) {
     work.phase = (work.input.generateOverview && work.chunks.length >= 2) ? 'overview' : 'finalize'
   }
@@ -311,6 +364,29 @@ async function advanceOverview(work: WorkState): Promise<WorkState> {
   return work
 }
 
+/**
+ * 把「還沒入帳的 token」記進用量,並在 work 上標記已入帳到哪。
+ *
+ * 為什麼要增量結清:job 每推進一步就燒掉真實的 LLM 費用,但使用者可能中途按取消、
+ * 或前端輪詢逾時後再也沒人推進這個 job——若只在 finalize 記帳,那些 token 由 Gemini 收錢、
+ * 我們的用量報表卻完全看不到(取消鈕上線後這種情況會變常態)。
+ * 呼叫端在每次 advanceWork 之後、以及 finalize 收尾時呼叫;保存 work 前呼叫,
+ * 讓 usageFlushed 跟著一起存下去(重複呼叫是安全的,差額為 0 就不寫)。
+ */
+export async function flushJobUsage(workspaceId: string, work: WorkState): Promise<void> {
+  const flushed = work.usageFlushed ?? { inputTokens: 0, outputTokens: 0 }
+  const inputTokens = work.usage.inputTokens - flushed.inputTokens
+  const outputTokens = work.usage.outputTokens - flushed.outputTokens
+  if (inputTokens <= 0 && outputTokens <= 0) return
+  work.usageFlushed = { inputTokens: work.usage.inputTokens, outputTokens: work.usage.outputTokens }
+  await recordAiUsage(workspaceId, {
+    inputTokens,
+    outputTokens,
+    importInputTokens: inputTokens,
+    importOutputTokens: outputTokens,
+  }).catch(e => console.warn('[preview-jobs] flush usage failed:', e))
+}
+
 // ── 進度 / 結果對外形狀 ─────────────────────────────────────────────
 
 export function progressFor(work: WorkState): { done: number; total: number; label: string } {
@@ -328,7 +404,7 @@ export function progressFor(work: WorkState): { done: number; total: number; lab
     case 'overview':
       return { done: 0, total: 1, label: '產生總覽卡' }
     case 'finalize':
-      return { done: 1, total: 1, label: '整理中' }
+      return { done: 1, total: 1, label: work.input.resyncSourceId ? '比對新舊差異' : '整理中' }
     case 'done':
       return { done: 1, total: 1, label: '完成' }
     default:
@@ -364,6 +440,17 @@ export function workToPreviewResult(work: WorkState) {
     usage: work.usage,
     warnings: work.warnings ?? [], // 舊 job 的 work.json 沒這欄位，保底空陣列
     suggestedProductName: work.suggestedProductName ?? '',
+    ...(work.input.resyncSourceId
+      ? {
+          resync: {
+            sourceId: work.input.resyncSourceId,
+            contentHash: work.resyncContentHash ?? '',
+            diff: work.resyncDiff ?? null,
+            shrink: work.resyncShrink ?? null,
+            warnings: work.warnings ?? [],
+          },
+        }
+      : {}),
   }
 }
 

@@ -1,92 +1,16 @@
-import { FieldValue } from 'firebase-admin/firestore'
-import { getDb } from '~~/server/utils/firebase'
-import { requireCapability } from '~~/server/utils/workspace-auth'
-import { getSource } from '~~/server/utils/ai-knowledge-sources'
-import { extractUrlText } from '~~/server/utils/ai-source-extractors'
-import { chunkTextWithLlm } from '~~/server/utils/ai-knowledge-chunker'
-import { computeDiff, loadOldChunksForDiff } from '~~/server/utils/ai-knowledge-resync'
-import { recordAiUsage } from '~~/server/utils/ai-usage'
-
 /**
- * POST /api/ai/sources/:sourceId/resync-preview
+ * POST /api/ai/sources/:sourceId/resync-preview 【已停用】
  *
- * 重新抓 source 的最新內容、跑 LLM 切卡、跟既有 chunk 對比後回傳 diff。
- * **不寫入** Firestore；UI 顯示 diff modal → 使用者勾選 → 再呼叫 resync-apply 套用。
+ * 舊的同步式重新同步:一個請求裡做完「重抓網頁 + LLM 重切卡 + 比對」,大頁面必撞閘道
+ * 逾時(使用者只看到「取得差異失敗」)。已改由 POST /api/ai/sources/:id/resync-jobs
+ * 建背景工作、輪詢 GET /api/ai/knowledge/preview-jobs/:jobId 推進。
  *
- * 目前只支援 type='url'（檔案需要重新上傳當新 source；手打不需要 re-sync）。
+ * 這裡不直接刪檔而回 410:部署後仍開著舊分頁的使用者會打到這支,410 帶明確訊息
+ * 比 404 更好懂。也避免留著第二套 diff 實作要跟著維護(它沒有新的內容縮水防護)。
  */
-export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'sources.write')
-  const sourceId = String(getRouterParam(event, 'sourceId') ?? '').trim()
-  if (!sourceId) throw createError({ statusCode: 400, statusMessage: 'sourceId required' })
-
-  const db = getDb()
-  const source = await getSource(db, sourceId, workspaceId)
-  if (!source) throw createError({ statusCode: 404, statusMessage: 'source not found' })
-  if (source.data.type !== 'url' || !source.data.url) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: '目前只支援網址來源 (URL) 的 re-sync；檔案請重新匯入',
-    })
-  }
-
-  // ── 1. 取最新內容：優先用變動偵測任務暫存的全文（hash 對得上才用），否則重抓 ──
-  // contentHash 一律隨 diff 回傳給前端、由 resync-apply 帶回:apply 套用後回寫的 hash
-  // 必須對應「這份 diff 用的內容」——若 apply 自己去讀當下的 cache,排程任務在
-  // preview 與 apply 之間覆寫過 cache 時,新版變動會被永久吞掉(hash 對上了、內容卻是舊的)。
-  let extracted: { text: string; rawLength: number }
-  let contentHash: string
-  const cacheSnap = await db.collection('knowledgeSources').doc(sourceId)
-    .collection('cache').doc('extracted')
-    .get()
-    .catch(() => null)
-  const cache = cacheSnap?.data() as { text?: string; hash?: string; rawLength?: number } | undefined
-  if (cache?.text && cache.hash && cache.hash === source.data.contentHash) {
-    extracted = { text: cache.text, rawLength: Number(cache.rawLength ?? cache.text.length) }
-    contentHash = cache.hash
-  }
-  else {
-    extracted = await extractUrlText(source.data.url)
-    const { createHash } = await import('node:crypto')
-    contentHash = createHash('sha256').update(extracted.text).digest('hex')
-    // 重抓的版本也暫存,讓短時間內的第二次 preview 不必重抓
-    await db.collection('knowledgeSources').doc(sourceId)
-      .collection('cache').doc('extracted')
-      .set({
-        text: extracted.text,
-        hash: contentHash,
-        rawLength: extracted.rawLength,
-        fetchedAt: FieldValue.serverTimestamp(),
-      })
-      .catch(e => console.warn('[resync-preview] cache write failed:', e))
-  }
-  if (!extracted.text) {
-    throw createError({ statusCode: 502, statusMessage: '抓到網頁但內容為空' })
-  }
-
-  // ── 2. LLM 切卡 ────────────────────────────────────────
-  const { chunks: newChunks, inputTokens, outputTokens } = await chunkTextWithLlm(extracted.text, {
-    hint: source.data.name,
+export default defineEventHandler(() => {
+  throw createError({
+    statusCode: 410,
+    statusMessage: '重新同步已改版；請重新整理頁面後再試一次',
   })
-  await recordAiUsage(workspaceId, {
-    inputTokens,
-    outputTokens,
-    importInputTokens: inputTokens,
-    importOutputTokens: outputTokens,
-  }).catch(() => {})
-
-  // ── 3. 拉舊 chunks + 算 diff ──────────────────────────
-  const oldChunks = await loadOldChunksForDiff(db, workspaceId, sourceId)
-  const diff = computeDiff(oldChunks, newChunks)
-
-  return {
-    sourceId,
-    sourceName: source.data.name,
-    sourceUrl: source.data.url,
-    rawLength: extracted.rawLength,
-    truncated: extracted.rawLength > extracted.text.length,
-    // apply 時帶回:對應這份 diff 內容的指紋(見上方註解)
-    contentHash,
-    diff,
-  }
 })

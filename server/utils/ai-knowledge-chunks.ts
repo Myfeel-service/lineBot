@@ -10,6 +10,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { embedDocument, estimateTokens } from './gemini'
 import { recordAiUsage } from './ai-usage'
+import { canonicalProductName, getProductAliases } from './ai-product-alias'
 import type { KnowledgeChunkDoc, KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
 
 export const KNOWLEDGE_CHUNKS_COLLECTION = 'knowledgeChunks'
@@ -316,6 +317,12 @@ export async function runIndexOnChunk(
     const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null)
     const names = cd?.workspaceId ? await getWorkspaceProductNames(db, cd.workspaceId) : []
     productName = pickCardProduct(String(cd?.title ?? ''), names, sourceProduct)
+    // 別名歸一：同一台機器的不同叫法收斂成正式名，之後建立的卡片一律用同一個字串，
+    // 反問分組 / 防混答 / 指名作答才不會把同一台當成兩台。
+    if (productName && cd?.workspaceId) {
+      const { aliases } = await getProductAliases(db, cd.workspaceId)
+      productName = canonicalProductName(productName, aliases)
+    }
   }
   catch { /* 讀卡失敗就照原 embeddingText 走 */ }
   const finalText = productName ? `${productName}\n${embeddingText}` : embeddingText

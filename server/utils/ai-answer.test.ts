@@ -22,6 +22,7 @@ import {
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
+import { normalizeProductName } from './ai-product-alias'
 
 function chunk(partial: Partial<SimilarChunk> & { id: string }): SimilarChunk {
   return {
@@ -441,6 +442,28 @@ describe('collapseSameProduct', () => {
       c('n', 'NWT威技抽取式除濕機WDH31B16E', 0.73),
     ]
     expect(collapseSameProduct(input).map(x => x.id)).toEqual(['g', 'n'])
+  })
+
+  it('別名對照:同一台的兩個中文叫法(上好ㄟ ↔ NWT 威技)合併成一組', () => {
+    // 實測災情:兩個叫法字面完全不同、來源不同、標題無共用英數 → 被當成兩台,
+    // 反問要客人二選一、問出貨時間會並列成兩台的答案
+    const input = [
+      chunk({ id: 'x', title: '出貨進度', similarity: 0.8, sourceId: 's1', productName: '上好ㄟ抽取式除濕機' }),
+      chunk({ id: 'y', title: '出貨時間說明', similarity: 0.78, sourceId: 's2', productName: 'NWT 威技 新一級能效 16L 高效抽取型除濕機' }),
+    ]
+    // 沒有對照表時仍是兩台(維持既有行為,不亂併)
+    expect(collapseSameProduct(input).map(x => x.id)).toEqual(['x', 'y'])
+    // 有對照表 → 併成一台,代表卡取分數高者
+    const aliases = { [normalizeProductName('上好ㄟ抽取式除濕機')]: 'NWT 威技 新一級能效 16L 高效抽取型除濕機' }
+    expect(collapseSameProduct(input, aliases).map(x => x.id)).toEqual(['x'])
+  })
+
+  it('只差標點的產品名自動視為同一台(不必人工確認)', () => {
+    const input = [
+      chunk({ id: 'a', title: '特色', similarity: 0.8, sourceId: 's1', productName: 'MATELASER《筋牌特務》 W1 REGEN' }),
+      chunk({ id: 'b', title: '保固', similarity: 0.7, sourceId: 's2', productName: 'MATELASER 筋牌特務 W1 REGEN' }),
+    ]
+    expect(collapseSameProduct(input).map(x => x.id)).toEqual(['a'])
   })
 
   it('純中文品名無英數 → 退回 sourceId 判定（同 source 併、否則獨立）', () => {

@@ -108,6 +108,94 @@
   line-height: 1.6;
 }
 
+.diff-shrink-alert {
+  margin: 10px 0;
+}
+
+.diff-warning-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-shrink-ack {
+  margin-right: 12px;
+}
+
+/* ── 產品名稱整理(別名確認)────────────────────────── */
+.src-alias-badge {
+  margin-left: 6px;
+}
+
+.src-alias-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+}
+
+.src-alias-pair {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.src-alias-eq {
+  margin: 0 4px;
+  color: var(--el-text-color-secondary);
+}
+
+.src-alias-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+
+  &.is-high {
+    background: var(--el-color-success-light-9);
+    color: var(--el-color-success);
+  }
+
+  &.is-risk {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning-dark-2);
+  }
+}
+
+.src-alias-reason {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.src-alias-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.src-alias-confirmed {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.src-alias-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
 .src-health-list {
   display: flex;
   flex-direction: column;
