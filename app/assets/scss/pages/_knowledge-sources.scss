@@ -20,6 +20,147 @@
   line-height: 1.5;
 }
 
+/* ── 知識庫健康檢查列(P2-3):彙總 banner + 分類 chip + 清單 modal ── */
+/* 體檢列刻意「不」沿用 orphan banner 的黃色左條:兩者常同時出現,同款會被當成同一件事的兩段。
+   體檢是常駐體檢面板(中性底＋細框),orphan 是一次性的待整理提示(黃色警示)。 */
+.src-health-banner {
+  margin: 10px 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.src-health-msg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+}
+
+.src-health-icon {
+  flex: none;
+}
+
+.src-health-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.src-health-foot {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+}
+
+/* 三級語意:紅=壞掉要修、黃=待處理、灰=僅供參考(不催促) */
+.src-health-chip {
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
+  background: var(--el-bg-color);
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+  }
+
+  &.is-danger {
+    border-color: var(--el-color-danger-light-5);
+    color: var(--el-color-danger);
+
+    &:hover {
+      border-color: var(--el-color-danger);
+      color: var(--el-color-danger);
+    }
+  }
+
+  &.is-warning {
+    border-color: var(--el-color-warning-light-5);
+    color: var(--el-color-warning-dark-2);
+
+    &:hover {
+      border-color: var(--el-color-warning);
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  &.is-muted {
+    border-style: dashed;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.src-health-list-hint {
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
+
+.src-health-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 48vh;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+
+.src-health-list-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+
+  & + & {
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+
+  &:hover {
+    background: var(--el-fill-color-light);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+  }
+
+  /* 右側說明(失敗原因/所屬來源)吃剩餘空間並截斷,標題不會被長原因擠掉 */
+  > .text-muted {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.src-health-item-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 表頭 caption：類型（＋網址）一行，過長截斷 */
 .src-header-caption {
   overflow: hidden;

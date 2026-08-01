@@ -134,9 +134,108 @@
         >
           {{ previewing ? (mode === 'gsheet' ? '讀取中⋯' : 'AI 切卡中⋯') : (mode === 'gsheet' ? '讀取 Sheet' : '預覽切卡') }}
         </el-button>
+        <!-- 整站匯入（2.5）：探 sitemap / 同域連結 → 列頁面清單勾選，逐頁各自成來源 -->
+        <el-button
+          v-if="mode === 'url'"
+          :loading="discovering"
+          :disabled="!canPreview || previewing"
+          @click="runDiscover"
+        >
+          {{ discovering ? '尋找頁面中⋯' : '找出這個網站的其他頁面' }}
+        </el-button>
         <span v-if="previewing && mode !== 'gsheet'" class="text-muted text-xs">
           {{ previewProgressText }}
         </span>
+      </div>
+      <p v-if="mode === 'url' && !previewing" class="kb-section-hint kb-actions-hint">
+        「預覽切卡」只處理你貼的<strong>這一頁</strong>；整個網站要匯入很多頁時，用右邊那顆列出全站頁面再一次勾選。
+      </p>
+    </div>
+
+    <!-- ── Step 1.5:整站匯入 — 頁面清單勾選 ─────────────── -->
+    <div v-if="step === 'sitePages'">
+      <p class="kb-step-label">選擇要匯入的頁面</p>
+      <p class="kb-section-hint">
+        在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
+        （{{ siteFrom === 'sitemap' ? '來自網站自己提供的頁面清單（sitemap）' : '來自這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）。
+        勾選的每一頁會<strong>各自成為一個知識來源</strong>：AI 自動切卡、自動辨識產品名，完成後可到來源列表逐一檢查。
+      </p>
+
+      <!-- 整站完成後的結論列:全卡直入沒有逐頁預覽,結束一定要給「做了什麼、還要看什麼」 -->
+      <el-alert
+        v-if="siteFinished"
+        :type="siteSummary.failed || siteSummary.warned ? 'warning' : 'success'"
+        show-icon
+        :closable="false"
+        class="kb-site-summary"
+      >
+        <template #title>
+          已建立 {{ siteSummary.ok }} 個來源、共 {{ siteSummary.cards }} 張知識卡
+        </template>
+        <div class="text-xs">
+          <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
+          <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
+          <template v-if="!siteSummary.failed && !siteSummary.warned">這些卡片沒有經過逐張預覽，建議到知識庫抽幾張看看內容是否合用。</template>
+        </div>
+      </el-alert>
+
+      <div class="kb-site-toolbar">
+        <el-checkbox
+          :model-value="allSiteChecked"
+          :indeterminate="someSiteChecked"
+          :disabled="siteImporting || !selectableSitePages.length"
+          @change="toggleAllSite"
+        >
+          全選
+        </el-checkbox>
+        <span class="text-muted text-xs">已勾選 {{ checkedSiteCount }} 頁</span>
+        <span v-if="importedSiteCount" class="text-muted text-xs">
+          · {{ importedSiteCount }} 頁先前已匯入（不重複匯入，需更新請到來源頁「重新同步」）
+        </span>
+        <!-- 上百頁清單靠捲的找不到商品頁,給一個關鍵字篩選 -->
+        <el-input
+          v-model="siteFilter"
+          size="small"
+          clearable
+          placeholder="篩選網址或標題，例：product"
+          class="kb-site-filter"
+        />
+      </div>
+      <p v-if="siteFilter.trim()" class="kb-section-hint kb-site-filter-hint">
+        符合「{{ siteFilter.trim() }}」的有 {{ visibleSitePages.length }} 頁（勾選狀態不受篩選影響，清空篩選可看到全部）。
+      </p>
+      <div class="kb-site-list">
+        <div v-for="p in visibleSitePages" :key="p.url" class="kb-site-row">
+          <el-checkbox v-model="p.checked" :disabled="siteImporting || p.imported || p.status === 'done'" />
+          <div class="kb-site-page">
+            <div class="kb-site-title">{{ p.title || pagePathLabel(p.url) }}</div>
+            <div class="kb-site-url">{{ p.url }}</div>
+            <div v-if="p.status === 'failed'" class="kb-site-error">✕ {{ p.error }}</div>
+            <div v-if="p.warningTexts.length" class="kb-site-warnings">
+              <div v-for="(w, i) in p.warningTexts" :key="i">⚠︎ {{ w }}</div>
+            </div>
+          </div>
+          <span class="kb-site-status" :class="`is-${p.status}`" :title="p.status === 'failed' ? p.error : ''">
+            <template v-if="p.status === 'processing'">切卡中⋯</template>
+            <template v-else-if="p.status === 'done'">✓ {{ p.cards }} 張卡</template>
+            <template v-else-if="p.status === 'failed'">✕ 失敗</template>
+            <template v-else-if="p.imported">已匯入過</template>
+          </span>
+        </div>
+      </div>
+      <div class="kb-import-actions">
+        <el-button :disabled="siteImporting" @click="step = 'input'">上一步</el-button>
+        <el-button
+          type="primary"
+          :loading="siteImporting"
+          :disabled="!checkedSiteCount || siteImporting"
+          @click="runSiteImport"
+        >
+          {{ siteImporting ? `匯入中（${siteDoneCount}/${siteBatchTotal}）⋯` : `匯入勾選的 ${checkedSiteCount} 頁` }}
+        </el-button>
+        <el-button v-if="siteFinished && !siteImporting" type="primary" plain @click="close">
+          完成，去看知識庫
+        </el-button>
       </div>
     </div>
 
@@ -348,7 +447,7 @@
           :disabled="includedCount === 0"
           @click="runImport"
         >
-          {{ importing ? '匯入並索引中⋯' : `確認匯入 ${includedCount} 張` }}
+          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${includedCount} 張` }}
         </el-button>
       </div>
     </div>
@@ -362,7 +461,7 @@
           <strong>{{ result.total }}</strong>
         </div>
         <div class="kb-result-stat kb-result-stat--success">
-          <span class="kb-result-label">已索引</span>
+          <span class="kb-result-label">可用</span>
           <strong>{{ result.indexed }}</strong>
         </div>
         <div class="kb-result-stat" :class="result.failed ? 'kb-result-stat--danger' : ''">
@@ -372,7 +471,7 @@
       </div>
 
       <div v-if="result.failed > 0" class="kb-result-failed-list">
-        <p class="kb-section-hint">以下卡片建立但索引失敗，可在知識庫點開該卡按「重新索引」：</p>
+        <p class="kb-section-hint">以下卡片已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。可到知識庫點開該卡按「重新學習」重試：</p>
         <ul class="kb-failed-list">
           <li v-for="item in failedItems" :key="item.id">
             <strong>{{ item.title }}</strong>
@@ -390,6 +489,8 @@
 </template>
 
 <script setup lang="ts">
+import { ElMessageBox } from 'element-plus'
+
 const props = defineProps<{
   modelValue: boolean
   /**
@@ -409,7 +510,7 @@ const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
 
 type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
-type Step = 'input' | 'preview' | 'result'
+type Step = 'input' | 'sitePages' | 'preview' | 'result'
 
 const step = ref<Step>('input')
 const mode = ref<ImportMode>('file')
@@ -509,6 +610,214 @@ const canPreview = computed(() => {
   if (mode.value === 'gsheet') return /docs\.google\.com\/spreadsheets|^[a-zA-Z0-9-_]{20,}$/.test(gsheetInput.value.trim())
   return textInput.value.trim().length > 0
 })
+
+// ── 整站匯入(2.5):探頁面清單 → 勾選 → 逐頁走既有 preview-job + bulk-create ──
+interface SitePageRow {
+  url: string
+  title: string
+  checked: boolean
+  status: 'idle' | 'processing' | 'done' | 'failed'
+  cards: number
+  /** 這一頁的匯入守門提醒原文(整站匯入沒有逐頁預覽,至少要看得到提醒內容) */
+  warningTexts: string[]
+  error: string
+  /** 這個網址已經有對應的知識來源(再匯一次會產生重複) */
+  imported: boolean
+}
+const discovering = ref(false)
+const sitePages = ref<SitePageRow[]>([])
+const siteFrom = ref<'sitemap' | 'links'>('sitemap')
+const siteTruncated = ref(false)
+const siteImporting = ref(false)
+const siteAborted = ref(false) // 使用者中途關窗 → worker 收工
+const siteFinished = ref(false) // 至少跑完一輪批次匯入
+const siteBatchTotal = ref(0)
+const siteDoneCount = ref(0)
+
+const siteHost = computed(() => {
+  try {
+    return new URL(sitePages.value[0]?.url || urlInput.value.trim()).host
+  }
+  catch {
+    return ''
+  }
+})
+const siteFilter = ref('')
+/** 篩選只影響顯示,不影響勾選狀態(避免「篩掉的頁其實還勾著」造成誤匯) */
+const visibleSitePages = computed(() => {
+  const kw = siteFilter.value.trim().toLowerCase()
+  if (!kw) return sitePages.value
+  return sitePages.value.filter(p =>
+    p.url.toLowerCase().includes(kw) || p.title.toLowerCase().includes(kw))
+})
+const checkedSiteCount = computed(() => sitePages.value.filter(p => p.checked).length)
+/** 批次結束後的結論(成功頁數/卡數/失敗/帶提醒) */
+const siteSummary = computed(() => {
+  const done = sitePages.value.filter(p => p.status === 'done')
+  return {
+    ok: done.length,
+    cards: done.reduce((s, p) => s + p.cards, 0),
+    failed: sitePages.value.filter(p => p.status === 'failed').length,
+    warned: done.filter(p => p.warningTexts.length).length,
+  }
+})
+const importedSiteCount = computed(() => sitePages.value.filter(p => p.imported).length)
+/** 可勾的頁:已匯入過與本輪已完成的都不算(全選也不會勾到它們) */
+const selectableSitePages = computed(() => sitePages.value.filter(p => !p.imported && p.status !== 'done'))
+const allSiteChecked = computed(() =>
+  selectableSitePages.value.length > 0 && selectableSitePages.value.every(p => p.checked))
+const someSiteChecked = computed(() => checkedSiteCount.value > 0 && !allSiteChecked.value)
+
+function toggleAllSite(checked: boolean | string | number) {
+  const on = checked === true
+  for (const p of selectableSitePages.value) p.checked = on
+}
+
+function pagePathLabel(url: string): string {
+  try {
+    const u = new URL(url)
+    return decodeURIComponent(u.pathname === '/' ? u.host : u.pathname)
+  }
+  catch {
+    return url
+  }
+}
+
+async function runDiscover() {
+  discovering.value = true
+  try {
+    const res = await apiFetch<{ pages: Array<{ url: string; title: string; imported?: boolean }>; from: 'sitemap' | 'links'; truncated: boolean }>(
+      '/api/ai/knowledge/discover-pages',
+      { method: 'POST', body: { url: urlInput.value.trim() } },
+    )
+    // 預設不勾:整站可能上百頁,每頁都是一次 AI 切卡(時間+token);讓使用者自己挑
+    sitePages.value = res.pages.map(p => ({
+      url: p.url,
+      title: p.title,
+      checked: false,
+      status: 'idle',
+      cards: 0,
+      warningTexts: [],
+      error: '',
+      imported: p.imported === true,
+    }))
+    siteFrom.value = res.from
+    siteTruncated.value = res.truncated
+    siteFinished.value = false
+    step.value = 'sitePages'
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '探索失敗', 'error')
+  }
+  finally {
+    discovering.value = false
+  }
+}
+
+/** 一次批次最多頁數:每頁一次 LLM 切卡,再多就該分批跑(也避免瀏覽器分頁被綁住太久) */
+const MAX_SITE_BATCH = 50
+
+/** 批次匯入勾選頁:併發 2,每頁 = 建 preview-job → 輪詢 → bulk-create(全卡直入,不逐頁人工預覽)。 */
+async function runSiteImport() {
+  const targets = sitePages.value.filter(p => p.checked && p.status !== 'done')
+  if (!targets.length) return
+  if (targets.length > MAX_SITE_BATCH) {
+    return showToast(`一次最多匯入 ${MAX_SITE_BATCH} 頁,請先取消勾選一些(可分批進行)`, 'error')
+  }
+  // 每頁都要跑一次 AI 切卡並計入用量,量大時先講清楚再開始
+  if (targets.length >= 10) {
+    try {
+      await ElMessageBox.confirm(
+        `將匯入 ${targets.length} 頁,每頁都會由 AI 切卡並計入本月用量,過程約需 ${Math.ceil(targets.length * 0.5)}–${targets.length} 分鐘。期間請保持這個視窗開著。`,
+        '確認整站匯入',
+        { confirmButtonText: '開始匯入', cancelButtonText: '再想想', type: 'warning' },
+      )
+    }
+    catch {
+      return // 使用者取消
+    }
+  }
+  siteImporting.value = true
+  siteAborted.value = false
+  siteBatchTotal.value = targets.length
+  siteDoneCount.value = 0
+
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < targets.length) {
+      if (siteAborted.value) return // 使用者關窗 → 收工,不再開新頁
+      const page = targets[cursor++]!
+      page.status = 'processing'
+      page.error = ''
+      try {
+        const created = await apiFetch<{ jobId: string }>('/api/ai/knowledge/preview-jobs', {
+          method: 'POST',
+          body: { type: 'url', url: page.url, generateOverview: false },
+        })
+        const res = await pollPreviewJob(created.jobId)
+        if (!res.chunks.length) throw new Error('沒有切出卡片(頁面可能沒有實質內容)')
+        const bulk = await apiFetch<{ indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
+          method: 'POST',
+          body: {
+            source: {
+              type: 'url',
+              name: page.title || res.sourceName || page.url,
+              url: page.url,
+              productName: res.suggestedProductName ?? '',
+            },
+            chunks: res.chunks.map(c => ({
+              title: c.title,
+              content: c.content,
+              tags: c.tags ?? [],
+              questions: c.questions ?? [],
+            })),
+            overviewCard: null,
+          },
+        })
+        page.cards = bulk.indexed
+        page.warningTexts = res.warnings ?? []
+        page.status = 'done'
+        page.checked = false
+        page.imported = true
+      }
+      catch (err: any) {
+        page.status = 'failed'
+        page.error = String(err?.data?.statusMessage || err?.statusMessage || err?.message || '匯入失敗').slice(0, 80)
+      }
+      finally {
+        siteDoneCount.value++
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(2, targets.length) }, worker))
+
+  const ok = targets.filter(p => p.status === 'done')
+  const bad = targets.filter(p => p.status === 'failed')
+  // 讓關窗流程通知父層刷新來源列表(沿用既有 result 訊號)
+  if (ok.length) {
+    result.value = {
+      sourceId: null,
+      total: targets.length,
+      indexed: ok.reduce((s, p) => s + p.cards, 0),
+      failed: bad.length,
+      items: [],
+    }
+  }
+  siteFinished.value = true
+  siteImporting.value = false
+  // 中途關窗:視窗已不在,改用父層刷新讓已建立的來源立刻出現在列表(否則要手動重整才看得到)
+  if (siteAborted.value) {
+    if (ok.length) emit('imported', null)
+    resetAll()
+    return
+  }
+  showToast(
+    bad.length
+      ? `整站匯入完成:${ok.length} 頁成功、${bad.length} 頁失敗(清單有標原因)`
+      : `整站匯入完成:${ok.length} 頁、共 ${ok.reduce((s, p) => s + p.cards, 0)} 張卡`,
+    bad.length ? 'error' : 'success',
+  )
+}
 
 const includedCount = computed(() => chunks.value.filter(c => c.included).length)
 
@@ -798,6 +1107,14 @@ function resetAll() {
   healthWarnings.value = []
   result.value = null
   sourceMeta.value = { type: '', name: '', url: '', productName: '' }
+  sitePages.value = []
+  siteFilter.value = ''
+  siteTruncated.value = false
+  siteImporting.value = false
+  siteAborted.value = false
+  siteFinished.value = false
+  siteBatchTotal.value = 0
+  siteDoneCount.value = 0
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
 
@@ -810,6 +1127,13 @@ function close() {
  * 就通知父層刷新來源列表並重置狀態;中途關窗(還沒匯入)則保留輸入,下次打開接續。
  */
 function onDialogClose() {
+  // 整站批次還在跑時關窗(ESC / X):通知 worker 收工,收尾由 runSiteImport 負責
+  // (它會 emit imported 讓列表帶出已建立的來源,再 resetAll)——這裡不能先 reset,
+  // 否則正在跑的那幾頁寫完後會把狀態寫回已清空的 ref。
+  if (siteImporting.value) {
+    siteAborted.value = true
+    return
+  }
   if (result.value) {
     emit('imported', result.value.sourceId)
     resetAll()

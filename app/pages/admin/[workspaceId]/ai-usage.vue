@@ -245,7 +245,7 @@
               </div>
             </div>
             <p class="usage-hint">
-              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、切卡、建索引，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台測試</strong>＝你在 playground「重演」試打，不計入客人成本。
+              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、切卡、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台測試</strong>＝你在 playground「重演」試打，不計入客人成本。
             </p>
             <p class="usage-hint">
               金額依 Gemini 公開價估算（USD 約 ×32 換台幣）的<strong>偏高參考值</strong><template v-if="pricing">，每 100 萬用量：送入 ${{ pricing.inputPerM }} / 產生 ${{ pricing.outputPerM }} / 搜尋 ${{ pricing.embedPerM }} USD</template>。實際費用以 Google 帳單為準。

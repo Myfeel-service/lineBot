@@ -122,12 +122,20 @@ export interface KnowledgeSourceDoc {
   refreshIntervalMinutes: number
   /**
    * 偵測到內容變動時的行為：
-   *   - 'notify': 標 outdatedAt，等使用者進後台確認（**預設、推薦**）
-   *   - 'log_only': 只記錄到 log，不通知使用者
+   *   - 'notify': 通知使用者（**預設、推薦**）。實際處置再分兩級（見 urlAutoApply）：
+   *       小幅文字更新 → 自動套用＋摘要通知；結構性變動 → 標 outdatedAt 等人工確認。
+   *   - 'log_only': 只記錄到 log，不通知也不自動套用。
    *
-   * 不提供 'overwrite' 自動覆蓋選項 — 太危險（網站可能短暫掛 / 改版會切壞）。
+   * 不提供「無條件自動覆蓋」選項 — 太危險（網站可能短暫掛 / 改版會切壞）；
+   * 自動套用的門檻由 ai-knowledge-autoapply.classifyMinorChange 嚴格把關。
    */
   onChangeBehavior: 'notify' | 'log_only'
+  /**
+   * type === 'url' 專用：是否允許「小幅文字變動自動套用」（預設 true）。
+   * false = 這個來源的任何變動都要人工確認（比照 gsheetAutoApply 的商家自管語意），
+   * 但仍會收到變動通知——與 log_only（連通知都不要）不同。
+   */
+  urlAutoApply?: boolean
   /**
    * 列表頁（商品首頁、型錄頁）匯入時，除了切碎成個別卡片，再額外合成一張「總覽卡」
    * （isOverview=true 的 chunk），用來接「你們有賣什麼」這類列舉型問題。
@@ -397,6 +405,20 @@ export interface AiAnswerResult {
 // ═══════════════════════════════════════════════════════════════════
 
 export const EMBEDDING_DIMENSION = 768
+
+/**
+ * 「內容過短」判定門檻（去空白後的 content 字數）。卡片短到這種程度時檢索命中也答不出
+ * 東西，多半是切壞或抓壞的殘片。
+ *
+ * **前後端共用同一把尺**：來源頁的逐卡警示與知識庫體檢的計數若各用各的門檻，
+ * 會出現「體檢說有 5 張過短、點進去一張都沒標記」的自相矛盾。
+ */
+export const SHORT_CHUNK_CONTENT_CHARS = 30
+
+/** 去空白後的內容字數是否低於門檻（前後端共用，避免判定漂移） */
+export function isShortChunkContent(content: unknown): boolean {
+  return String(content ?? '').replace(/\s+/g, '').length < SHORT_CHUNK_CONTENT_CHARS
+}
 
 /** 信心門檻預設值（討論決議：保守起手 0.75，跑兩週後再降） */
 export const DEFAULT_CONFIDENCE_THRESHOLD = 0.75

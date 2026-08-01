@@ -13,8 +13,8 @@
         <el-tooltip v-if="canEditKb" content="手動新增一張問答卡" placement="bottom" :show-after="300">
           <el-button :icon="EditPen" size="small" plain @click="openCreateManual">手寫</el-button>
         </el-tooltip>
-        <el-tooltip v-if="canReindexAll" content="全部重新索引(系統升級檢索方式後使用)" placement="bottom" :show-after="300">
-          <el-button :icon="Refresh" size="small" plain :loading="reindexingAll" @click="reindexAll">重建索引</el-button>
+        <el-tooltip v-if="canReindexAll" content="讓 AI 重新學習全部卡片(系統升級檢索方式後使用)" placement="bottom" :show-after="300">
+          <el-button :icon="Refresh" size="small" plain :loading="reindexingAll" @click="reindexAll">重新學習</el-button>
         </el-tooltip>
       </div>
     </template>
@@ -39,6 +39,44 @@
         >
           一鍵整理
         </el-button>
+      </div>
+
+      <!-- 知識庫健康檢查列(P2-3):把稽核手動翻出來的問題變成常駐體檢,點分類直接列出來修 -->
+      <div v-if="healthIssueCount > 0 || healthExpiredCount > 0" class="src-health-banner">
+        <p class="src-health-msg">
+          <span class="src-health-icon">🩺</span>
+          <span>
+            知識庫體檢：<template v-if="healthSourceCount"><strong>{{ healthSourceCount }}</strong> 個來源要處理</template><template
+              v-if="healthSourceCount && healthChunkCount"
+            > · </template><template v-if="healthChunkCount"><strong>{{ healthChunkCount }}</strong> 張卡建議檢查</template><template
+              v-if="!healthIssueCount"
+            >目前沒有待處理項目</template>
+          </span>
+        </p>
+        <div class="src-health-chips">
+          <button v-if="health.failedSources.length" type="button" class="src-health-chip is-danger" @click="openHealthList('failedSources')">
+            {{ health.failedSources.length }} 個來源同步失敗
+          </button>
+          <button v-if="health.failedChunks.count" type="button" class="src-health-chip is-danger" @click="openHealthList('failedChunks')">
+            {{ health.failedChunks.count }} 張卡學習失敗
+          </button>
+          <button v-if="health.outdatedSources.length" type="button" class="src-health-chip is-warning" @click="openHealthList('outdatedSources')">
+            {{ health.outdatedSources.length }} 個來源偵測到變動
+          </button>
+          <button v-if="health.noProductSources.length" type="button" class="src-health-chip is-warning" @click="openHealthList('noProductSources')">
+            {{ health.noProductSources.length }} 份文件未設產品名
+          </button>
+          <button v-if="health.shortChunks.count" type="button" class="src-health-chip is-warning" @click="openHealthList('shortChunks')">
+            {{ health.shortChunks.count }} 張卡內容過短
+          </button>
+          <!-- 已過期停用＝功能正常運作的結果,不是待辦:灰階、排最後、不計入上方數字 -->
+          <button v-if="healthExpiredCount" type="button" class="src-health-chip is-muted" @click="openHealthList('expiredChunks')">
+            {{ healthExpiredCount }} 張卡已過期停用（僅供參考）
+          </button>
+        </div>
+        <p v-if="health.chunkScanTruncated" class="src-health-foot">
+          知識卡較多，體檢只掃描了其中一部分，實際張數可能更多。
+        </p>
       </div>
 
       <div v-if="loading && !sources.length" class="split-sidebar-loading">
@@ -290,9 +328,9 @@
                 :disabled="productNameForm.trim() === productNameBaseline"
                 @click="saveProductName"
               >
-                儲存並重建索引
+                儲存並重新學習
               </el-button>
-              <span v-if="savingProductName" class="text-muted text-xs">正在重建這個來源的卡片索引，約需幾十秒⋯</span>
+              <span v-if="savingProductName" class="text-muted text-xs">正在讓 AI 重新學習這個來源的卡片，約需幾十秒⋯</span>
             </div>
           </div>
         </div>
@@ -306,7 +344,9 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              排程會定期抓網頁內容、跟上次比對。<strong>偵測到變動不會自動覆蓋</strong>，會在這裡標一個提示等你進來看差異再決定。
+              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用並通知你</strong>（只更新原有卡片的內容）；
+              新增、刪除或大幅改版<strong>不會自動動</strong>，會在這裡標提示等你進來看差異再決定。
+              你手動編輯過的卡永遠不會被自動覆蓋。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測頻率" tight />
@@ -324,6 +364,16 @@
                 <el-radio value="notify">通知我（在來源頁掛 提示）</el-radio>
                 <el-radio value="log_only">只記錄不通知</el-radio>
               </el-radio-group>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="小幅文字變動" tight />
+              <el-radio-group v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
+                <el-radio :value="true">自動更新並通知我（建議）</el-radio>
+                <el-radio :value="false">一律等我確認</el-radio>
+              </el-radio-group>
+              <p class="src-section-hint">
+                只有「原有卡片的文字被改動」才算小幅變動；新增、刪除卡片或大幅改版一定會等你確認。
+              </p>
             </div>
             <div v-if="canEditSources" class="src-settings-actions">
               <el-button
@@ -414,6 +464,28 @@
       </div>
     </template>
   </AdminSplitLayout>
+
+  <!-- ── 健康檢查清單 Modal:點分類 → 列出問題項目,點項目直達來源/卡片 ── -->
+  <el-dialog
+    v-model="healthListOpen"
+    :title="healthListTitle"
+    width="min(560px, 92vw)"
+  >
+    <p class="text-muted text-sm src-health-list-hint">{{ healthListHint }}</p>
+    <div class="src-health-list">
+      <button
+        v-for="item in healthListItems"
+        :key="item.id"
+        type="button"
+        class="src-health-list-item"
+        @click="gotoHealthItem(item)"
+      >
+        <span class="src-health-item-title">{{ item.title }}</span>
+        <span v-if="item.meta" class="text-muted text-xs">{{ item.meta }}</span>
+      </button>
+    </div>
+    <p v-if="healthListTruncatedNote" class="text-muted text-xs">{{ healthListTruncatedNote }}</p>
+  </el-dialog>
 
   <!-- ── Diff Modal ──────────────────────────────────── -->
   <el-dialog
@@ -532,7 +604,7 @@
           :loading="chunkReindexing"
           @click="reindexChunkFromModal"
         >
-          重新索引
+          重新學習
         </el-button>
       </div>
       <div class="admin-field-group">
@@ -700,6 +772,7 @@
 <script setup lang="ts">
 import { Delete, EditPen, Folder, FolderAdd, FolderOpened, Lock, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -719,6 +792,8 @@ interface SourceSummary {
   onChangeBehavior: 'notify' | 'log_only'
   /** 所屬產品名；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
   productName: string
+  /** type='url'：小幅文字變動是否自動套用 */
+  urlAutoApply: boolean
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
@@ -949,8 +1024,9 @@ const detailLoading = ref(false)
 
 // ── 卡片品質「被動提示」:只標示、絕不自動攔截/刪除(判斷權在人) ──
 /** 標題＋內容去空白合計 <10 字:placeholder/測試列等級,embedding 是雜訊會污染檢索 */
-function isShortChunk(c: Pick<ChunkRow, 'title' | 'content'>): boolean {
-  return (c.title + c.content).replace(/\s+/g, '').length < 10
+/** 與知識庫體檢同一把尺（shared 常數）——兩邊門檻不同會出現「體檢說有、卡片卻沒標」 */
+function isShortChunk(c: Pick<ChunkRow, 'content'>): boolean {
+  return isShortChunkContent(c.content)
 }
 
 function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
@@ -958,11 +1034,17 @@ function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
   return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
 }
 
-const settingsForm = ref({ refreshIntervalMinutes: 0, onChangeBehavior: 'notify' as 'notify' | 'log_only' })
-const settingsBaseline = ref({ refreshIntervalMinutes: 0, onChangeBehavior: 'notify' as 'notify' | 'log_only' })
+const emptySettingsForm = () => ({
+  refreshIntervalMinutes: 0,
+  onChangeBehavior: 'notify' as 'notify' | 'log_only',
+  urlAutoApply: true,
+})
+const settingsForm = ref(emptySettingsForm())
+const settingsBaseline = ref(emptySettingsForm())
 const settingsDirty = computed(() =>
   settingsForm.value.refreshIntervalMinutes !== settingsBaseline.value.refreshIntervalMinutes
-  || settingsForm.value.onChangeBehavior !== settingsBaseline.value.onChangeBehavior,
+  || settingsForm.value.onChangeBehavior !== settingsBaseline.value.onChangeBehavior
+  || settingsForm.value.urlAutoApply !== settingsBaseline.value.urlAutoApply,
 )
 const savingSettings = ref(false)
 const deleting = ref(false)
@@ -1019,8 +1101,13 @@ const chunkTagInput = ref('')
 const chunkTagInputVisible = ref(false)
 const chunkTagInputEl = ref<{ focus: () => void } | null>(null)
 
-async function loadSources() {
+/**
+ * forceHealth:剛動過知識庫(匯入 / 刪來源 / 改卡 / 套用同步)時要跳過體檢節流,
+ * 否則店家照著體檢清單修完、回來數字卻不動(以為沒生效)。純瀏覽的重載用節流版即可。
+ */
+async function loadSources(forceHealth = false) {
   loading.value = true
+  void loadHealth(forceHealth) // 體檢與列表平行載入;失敗不擋頁面
   try {
     const [sourcesRes, foldersRes] = await Promise.all([
       apiFetch<{ items: SourceSummary[]; orphanCount?: number }>('/api/ai/sources/list'),
@@ -1041,6 +1128,122 @@ async function loadSources() {
   }
   finally {
     loading.value = false
+  }
+}
+
+// ── 知識庫健康檢查列(P2-3)───────────────────────────
+// 把 7/31 稽核靠工程師手動翻出來的問題(無主說明書/過短卡/同步失敗/過期停用)變成常駐體檢。
+interface HealthChunkGroup { count: number; items: Array<{ id: string; title: string; sourceId: string | null }> }
+interface HealthResponse {
+  failedSources: Array<{ id: string; name: string; reason?: string }>
+  outdatedSources: Array<{ id: string; name: string }>
+  noProductSources: Array<{ id: string; name: string; chunkCount: number }>
+  shortChunks: HealthChunkGroup
+  failedChunks: HealthChunkGroup
+  expiredChunks: HealthChunkGroup
+  chunkScanTruncated: boolean
+}
+const emptyHealth = (): HealthResponse => ({
+  failedSources: [],
+  outdatedSources: [],
+  noProductSources: [],
+  shortChunks: { count: 0, items: [] },
+  failedChunks: { count: 0, items: [] },
+  expiredChunks: { count: 0, items: [] },
+  chunkScanTruncated: false,
+})
+const health = ref<HealthResponse>(emptyHealth())
+// 來源與卡片分開計:「1 個來源同步失敗」= 整批知識凍結,「1 張卡過短」= 小瑕疵,
+// 加成同一個數字會把嚴重度抹平,店家看不出該先處理哪個。
+const healthSourceCount = computed(() =>
+  health.value.failedSources.length
+  + health.value.outdatedSources.length
+  + health.value.noProductSources.length)
+const healthChunkCount = computed(() =>
+  health.value.shortChunks.count + health.value.failedChunks.count)
+// 「已過期停用」是有效期限功能正確運作的結果,不是待辦——算進待處理會讓數字永遠清不完。
+// 另列一行「僅供參考」,店家想看時看得到、但不催他處理。
+const healthExpiredCount = computed(() => health.value.expiredChunks.count)
+const healthIssueCount = computed(() => healthSourceCount.value + healthChunkCount.value)
+
+/**
+ * 體檢節流:loadSources 有十幾個呼叫點(建資料夾、改名、刪來源、搬卡…),每次都掃
+ * 上千張卡的內容太貴,而體檢結果多半只在排程跑完或改過知識庫後才變。
+ * 60 秒內重複呼叫直接跳過;真的需要立即更新(匯入完成、刪來源)用 force。
+ */
+const HEALTH_TTL_MS = 60_000
+let healthFetchedAt = 0
+
+async function loadHealth(force = false) {
+  if (!force && healthFetchedAt && Date.now() - healthFetchedAt < HEALTH_TTL_MS) return
+  healthFetchedAt = Date.now()
+  try {
+    health.value = await apiFetch<HealthResponse>('/api/ai/knowledge/health')
+  }
+  catch {
+    /* 體檢失敗不擋頁面,banner 不顯示而已 */
+    healthFetchedAt = 0 // 失敗不佔用節流窗,下次進來可重試
+  }
+}
+
+type HealthCategory = 'failedSources' | 'outdatedSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks'
+const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
+  failedSources: { title: '來源同步失敗', hint: '這些來源自動同步一直失敗,知識卡停留在最後一次成功的內容。點進來源看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
+  outdatedSources: { title: '來源偵測到變動', hint: '網頁內容跟上次不一樣了。點進來源按「重新同步」看差異,決定要不要更新知識卡。' },
+  noProductSources: { title: '文件未設產品名', hint: '這些多卡的檔案來源沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進來源補上產品名。' },
+  failedChunks: { title: '卡片學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開卡片按「重新學習」可以重試。' },
+  shortChunks: { title: '卡片內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開卡片補內容或停用。' },
+  expiredChunks: { title: '卡片已過期停用', hint: '這些卡因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
+}
+const healthListOpen = ref(false)
+const healthListCategory = ref<HealthCategory>('failedSources')
+const healthListTitle = computed(() => HEALTH_META[healthListCategory.value].title)
+const healthListHint = computed(() => HEALTH_META[healthListCategory.value].hint)
+const healthListItems = computed<Array<{ id: string; title: string; meta: string; kind: 'source' | 'chunk' }>>(() => {
+  const cat = healthListCategory.value
+  const h = health.value
+  const sourceName = (id: string | null) => sources.value.find(s => s.id === id)?.name ?? ''
+  if (cat === 'failedSources') {
+    // 直接把失敗原因列出來(最常見是試算表沒分享給服務帳號),不必逐一點進來源才知道
+    return h.failedSources.map(s => ({ id: s.id, title: s.name, meta: s.reason ?? '', kind: 'source' as const }))
+  }
+  if (cat === 'outdatedSources') {
+    return h.outdatedSources.map(s => ({ id: s.id, title: s.name, meta: '', kind: 'source' as const }))
+  }
+  if (cat === 'noProductSources') {
+    return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 張卡`, kind: 'source' as const }))
+  }
+  return h[cat].items.map(c => ({ id: c.id, title: c.title, meta: sourceName(c.sourceId), kind: 'chunk' as const }))
+})
+const healthListTruncatedNote = computed(() => {
+  const cat = healthListCategory.value
+  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'noProductSources') return ''
+  const group = health.value[cat]
+  const notes: string[] = []
+  if (group.count > group.items.length) {
+    notes.push(`共 ${group.count} 張,先列前 ${group.items.length} 張;處理完重新整理會再列出其餘的。`)
+  }
+  // 掃描達上限時計數本身就是低估的,不講清楚店家會以為「清完就沒事了」
+  if (health.value.chunkScanTruncated) {
+    notes.push('知識卡數量較多,體檢只掃描了其中一部分,實際張數可能更多。')
+  }
+  return notes.join(' ')
+})
+
+function openHealthList(cat: HealthCategory) {
+  healthListCategory.value = cat
+  healthListOpen.value = true
+}
+
+async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }) {
+  healthListOpen.value = false
+  if (item.kind === 'source') {
+    const src = sources.value.find(s => s.id === item.id)
+    if (src) await selectSource(src)
+    else showToast('找不到這個來源(可能剛被刪除),請重新整理', 'error')
+  }
+  else {
+    await openChunkById(item.id)
   }
 }
 
@@ -1168,6 +1371,7 @@ async function loadSourceDetail(sourceId: string) {
     settingsForm.value = {
       refreshIntervalMinutes: res.source.refreshIntervalMinutes,
       onChangeBehavior: res.source.onChangeBehavior,
+      urlAutoApply: res.source.urlAutoApply !== false,
     }
     settingsBaseline.value = { ...settingsForm.value }
     productNameForm.value = res.source.productName
@@ -1199,12 +1403,13 @@ async function saveProductName() {
     )
     productNameBaseline.value = next
     if (res.failed > 0) {
-      showToast(`已儲存；索引重建 ${res.indexed} 成功 / ${res.failed} 失敗，可再按一次重試`, 'error')
+      showToast(`已儲存；${res.indexed} 張學習成功 / ${res.failed} 張失敗，可再按一次重試`, 'error')
     }
     else {
-      showToast(`已儲存，並重建 ${res.indexed} 張卡的索引`, 'success')
+      showToast(`已儲存，AI 已重新學會這個來源的 ${res.indexed} 張卡`, 'success')
     }
     await loadSourceDetail(selectedId.value)
+    void loadHealth(true) // 「未設產品名」的計數要立刻反映
   }
   catch (err: any) {
     showToast(err?.statusMessage || '儲存失敗', 'error')
@@ -1317,7 +1522,7 @@ async function deleteSource() {
     showToast(`已刪除「${src.name}」`, 'success')
     selectedId.value = null
     chunks.value = []
-    await loadSources()
+    await loadSources(true)
   }
   catch (err: any) {
     showToast(err?.statusMessage || '刪除失敗', 'error')
@@ -1407,7 +1612,7 @@ async function applyDiff() {
     }
     diffOpen.value = false
     diffData.value = null
-    await loadSources()
+    await loadSources(true)
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
@@ -1424,8 +1629,8 @@ const reindexingAll = ref(false)
 async function reindexAll() {
   try {
     await ElMessageBox.confirm(
-      '將這個工作區的所有知識卡重新建立索引(卡片內容不變)。通常只在系統升級檢索方式後需要;卡片多時要花幾分鐘,期間 AI 照常運作。',
-      '全部重新索引',
+      '讓 AI 把這個工作區的所有知識卡重新學習一次(卡片內容不會變)。通常只在系統升級後需要;卡片多時要花幾分鐘,期間 AI 照常運作。',
+      '全部重新學習',
       { confirmButtonText: '開始', cancelButtonText: '取消', type: 'warning' },
     )
   }
@@ -1445,11 +1650,11 @@ async function reindexAll() {
       failed += res.failed
       cursor = res.nextCursor
     } while (cursor)
-    showToast(`重新索引完成:${indexed} 張成功${failed ? `、${failed} 張失敗(可在卡片上個別重試)` : ''}`, failed ? 'warning' : 'success')
+    showToast(`重新學習完成:${indexed} 張成功${failed ? `、${failed} 張失敗(可在卡片上個別重試)` : ''}`, failed ? 'warning' : 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '重新索引失敗,請再試一次', 'error')
+    showToast(err?.statusMessage || '重新學習失敗,請再試一次', 'error')
   }
   finally {
     reindexingAll.value = false
@@ -1461,7 +1666,7 @@ const importOpen = ref(false)
 function goImport() { importOpen.value = true }
 
 async function onImported(sourceId: string | null) {
-  await loadSources()
+  await loadSources(true)
   if (sourceId) {
     const src = sources.value.find(s => s.id === sourceId)
     if (src) await selectSource(src)
@@ -1478,7 +1683,7 @@ async function migrateOrphans() {
     )
     const tail = res.capped ? '（達單次上限 200，剩下的請再點一次）' : ''
     showToast(`已整理 ${res.migrated} 張舊卡為手寫條目${tail}`, 'success')
-    await loadSources()
+    await loadSources(true)
   }
   catch (err: any) {
     showToast(err?.statusMessage || '整理失敗', 'error')
@@ -1585,7 +1790,7 @@ async function reindexChunkFromModal() {
   chunkReindexing.value = true
   try {
     await apiFetch(`/api/ai/knowledge/${chunkEditingId.value}/reindex`, { method: 'POST' })
-    showToast('已重新索引', 'success')
+    showToast('已重新學習', 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
     const updated = chunks.value.find(c => c.id === chunkEditingId.value)
     if (updated) {
@@ -1594,7 +1799,7 @@ async function reindexChunkFromModal() {
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '重新索引失敗', 'error')
+    showToast(err?.statusMessage || '重新學習失敗', 'error')
   }
   finally {
     chunkReindexing.value = false
@@ -1617,7 +1822,7 @@ async function saveChunk() {
       })
       showToast('已建立', 'success')
       chunkEditOpen.value = false
-      await loadSources()
+      await loadSources(true)
       if (res.sourceId) {
         selectedId.value = res.sourceId
         await loadSourceDetail(res.sourceId)
@@ -1638,7 +1843,7 @@ async function saveChunk() {
       showToast('已儲存', 'success')
       chunkEditOpen.value = false
       if (selectedId.value) await loadSourceDetail(selectedId.value)
-      await loadSources() // 因為 manual source 名稱可能跟著變
+      await loadSources(true) // 因為 manual source 名稱可能跟著變
     }
   }
   catch (err: any) {
@@ -1672,7 +1877,7 @@ async function deleteChunkFromModal() {
     showToast('已刪除', 'success')
     chunkEditOpen.value = false
     // 若這張是 manual single-card source 的唯一卡，後端會連 source 一起刪 → 重載 source list
-    await loadSources()
+    await loadSources(true)
     if (selectedId.value) {
       const stillExists = sources.value.find(s => s.id === selectedId.value)
       if (stillExists) await loadSourceDetail(selectedId.value)

@@ -75,6 +75,8 @@ export interface SourceSummary {
   onChangeBehavior: 'notify' | 'log_only'
   /** 所屬產品的正規名稱；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
   productName: string
+  /** type='url'：是否允許小幅文字變動自動套用（預設 true） */
+  urlAutoApply: boolean
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
@@ -102,6 +104,7 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     refreshIntervalMinutes: Number(raw.refreshIntervalMinutes ?? 0),
     onChangeBehavior: raw.onChangeBehavior === 'log_only' ? 'log_only' : 'notify',
     productName: String(raw.productName ?? '').trim(),
+    urlAutoApply: raw.urlAutoApply !== false,
     lastFetchedAtMs: tsToMs(raw.lastFetchedAt),
     outdatedAtMs: tsToMs(raw.outdatedAt),
     updatedAtMs: tsToMs(raw.updatedAt),
@@ -222,6 +225,8 @@ export interface UpdateSourceSettingsInput {
   folderId?: string | null
   /** 所屬產品名；'' = 清空（非單一產品來源）。改動後呼叫端要觸發該來源 reindex 才生效。 */
   productName?: string
+  /** type='url'：小幅變動是否自動套用 */
+  urlAutoApply?: boolean
 }
 
 /**
@@ -250,6 +255,9 @@ export async function updateSourceSettings(
   }
   if (input.folderId !== undefined) {
     update.folderId = input.folderId ? String(input.folderId) : null
+  }
+  if (typeof input.urlAutoApply === 'boolean') {
+    update.urlAutoApply = input.urlAutoApply
   }
   if (typeof input.productName === 'string') {
     const clean = input.productName.trim().slice(0, 60)

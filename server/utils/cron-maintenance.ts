@@ -16,6 +16,7 @@ import {
   markSourceOutdated,
 } from './ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
 import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { handBackSessionToBot } from './conversation-session'
@@ -48,8 +49,19 @@ async function sha256(input: string): Promise<string> {
 
 interface SourceCheckResult {
   sourceId: string
-  outcome: 'unchanged' | 'changed_notified' | 'changed_logged' | 'gsheet_synced' | 'error'
+  outcome: 'unchanged' | 'changed_notified' | 'changed_logged' | 'gsheet_synced' | 'auto_applied' | 'error'
   message?: string
+}
+
+/**
+ * 單輪排程最多對幾個來源嘗試「小改自動套用」:每次嘗試都要跑一次 LLM 重切卡(10–30s),
+ * 多個來源同輪變動時只試前 N 個,其餘照舊標記人工審——保住 10 分鐘輪的時間預算。
+ * (變動是 pendingHash 確認過的稀有事件,正常一輪 0–1 個。)
+ */
+const AUTO_APPLY_BUDGET_PER_RUN = 2
+
+interface DetectRunState {
+  autoApplyRemaining: number
 }
 
 /** 通知訊息用的來源顯示名稱 */
@@ -62,6 +74,7 @@ async function checkOneSource(
   db: Firestore,
   sourceId: string,
   data: KnowledgeSourceDoc,
+  run: DetectRunState = { autoApplyRemaining: 0 },
 ): Promise<SourceCheckResult> {
   try {
     // Google Sheet：自動同步（一列一卡，直接套用新增/更新/刪除，不走人工 resync）。
@@ -132,14 +145,8 @@ async function checkOneSource(
       return { sourceId, outcome: 'unchanged', message: 'pending-change（待下一輪確認）' }
     }
 
-    // 變了（連兩輪抓到同一個新值）：記錄新 hash + 依設定決定行為
+    // 變了（連兩輪抓到同一個新值）：依設定決定行為
     const behavior = data.onChangeBehavior === 'log_only' ? 'log_only' : 'notify'
-    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-      contentHash: newHash,
-      pendingHash: FieldValue.delete(),
-      lastFetchedAt: FieldValue.serverTimestamp(),
-      ...clearFailure,
-    })
 
     // 全文暫存到 subcollection：偵測時已抓過全文，丟掉的話使用者按「套用」還要重抓一次，
     // 而且「偵測時的版本」和「套用時的版本」可能不一致。放 subcollection 避免 source
@@ -154,7 +161,58 @@ async function checkOneSource(
       })
       .catch(e => console.warn(`[detect-source-updates] ${sourceId} cache write failed:`, e))
 
+    /**
+     * 提交「這次變動已處理完」。**一定要放在自動套用之後**：
+     * 這支跑在 /api/cron/run-tasks 的 Lambda 裡，自動套用要跑 LLM 重切卡＋逐卡 embedding，
+     * 是整條流程唯一可能撞閘道逾時的地方。若先寫 contentHash 再跑套用，逾時會讓
+     * 「卡片改到一半 + hash 已是新值」永久卡死（下輪比對 unchanged，沒人會再發現）。
+     * 保持舊 hash 的話，逾時只是下一輪重跑：已套用的卡在 diff 裡是 unchanged，天然冪等。
+     */
+    const commitChange = (extra: Record<string, unknown> = {}) =>
+      db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+        contentHash: newHash,
+        pendingHash: FieldValue.delete(),
+        lastFetchedAt: FieldValue.serverTimestamp(),
+        ...clearFailure,
+        ...extra,
+      })
+
     if (behavior === 'notify') {
+      // 小改自動套用(P2-7):標題精確配對的內容修改(不涉手編卡/無增刪/比例受限/長度未暴跌)
+      // 直接更新+摘要通知;結構變化照舊退人工審。每輪有嘗試限額(LLM 重切卡貴且慢)。
+      // 型錄來源與明確關閉自動更新的來源在這裡就排除,不佔限額也不花錢跑 LLM。
+      const autoEligible = !data.generateOverview && data.urlAutoApply !== false
+      if (autoEligible && run.autoApplyRemaining > 0) {
+        run.autoApplyRemaining--
+        const auto = await tryAutoApplyMinorChange(db, sourceId, data, extracted.text)
+        if (auto.noop) {
+          // 重切後其實沒有內容差異(排版級變動):不標記、不通知,但要記下新 hash
+          await commitChange()
+          return { sourceId, outcome: 'unchanged', message: 'content-equivalent' }
+        }
+        if (auto.applied) {
+          // 先前若有未處理的「偵測到變動」旗標,這次已把內容更新到最新 → 一併清掉,
+          // 否則來源會永遠掛著提示,店家點進去看到的卻是「全部未變」的空 diff。
+          await commitChange({ outdatedAt: null })
+          notifyKnowledgeSourceEvent(data.workspaceId, [
+            '📘 知識庫來源已自動更新',
+            `來源：${sourceTitleOf(data)}`,
+            `偵測到小幅文字變動,已自動更新 ${auto.updated} 張知識卡${auto.failed ? `(另有 ${auto.failed} 張索引失敗,排程會重試)` : ''}。`,
+            '新增、刪除或大幅改版仍會等你人工確認才套用。',
+          ].join('\n')).catch(e => console.warn('[detect-source-updates] notify auto-apply failed:', e))
+          return { sourceId, outcome: 'auto_applied', message: `~${auto.updated}` }
+        }
+        // 不符合自動條件 → 走人工審,通知帶上原因(店家知道為什麼要自己看)
+        await commitChange()
+        await markSourceOutdated(db, sourceId)
+        notifyKnowledgeSourceEvent(data.workspaceId, [
+          '📚 知識庫來源內容有變動',
+          `來源：${sourceTitleOf(data)}`,
+          `這次變動不適合自動更新(${auto.reason}),請至後台「AI 知識庫」檢視差異,決定是否更新知識卡。`,
+        ].join('\n')).catch(e => console.warn('[detect-source-updates] notify change failed:', e))
+        return { sourceId, outcome: 'changed_notified' }
+      }
+      await commitChange()
       await markSourceOutdated(db, sourceId)
       // 主動推播（不只後台標記——標記沒人天天看,變動掛一個月也沒人知道）。
       // 頻率天然去重:contentHash 已更新,下次檢查 unchanged 就不會再進到這裡。
@@ -165,6 +223,7 @@ async function checkOneSource(
       ].join('\n')).catch(e => console.warn('[detect-source-updates] notify change failed:', e))
       return { sourceId, outcome: 'changed_notified' }
     }
+    await commitChange()
     console.log(`[detect-source-updates] ${sourceId} (${data.url}) content changed; log_only mode, no notify`)
     return { sourceId, outcome: 'changed_logged' }
   }
@@ -229,14 +288,15 @@ export async function detectSourceUpdates(db: Firestore) {
 
   if (!dueDocs.length) return { scanned: 0 }
 
-  // 用 concurrency pool 跑 check
+  // 用 concurrency pool 跑 check;自動套用限額由整輪共用(見 AUTO_APPLY_BUDGET_PER_RUN)
+  const run: DetectRunState = { autoApplyRemaining: AUTO_APPLY_BUDGET_PER_RUN }
   const results: SourceCheckResult[] = []
   let cursor = 0
   async function worker() {
     while (cursor < dueDocs.length) {
       const i = cursor++
       const doc = dueDocs[i]!
-      const r = await checkOneSource(db, doc.id, doc.data)
+      const r = await checkOneSource(db, doc.id, doc.data, run)
       results.push(r)
     }
   }
@@ -250,9 +310,10 @@ export async function detectSourceUpdates(db: Firestore) {
     changedNotified: results.filter(r => r.outcome === 'changed_notified').length,
     changedLogged: results.filter(r => r.outcome === 'changed_logged').length,
     gsheetSynced: results.filter(r => r.outcome === 'gsheet_synced').length,
+    autoApplied: results.filter(r => r.outcome === 'auto_applied').length,
     errors: results.filter(r => r.outcome === 'error').length,
   }
-  if (tally.changedNotified || tally.gsheetSynced || tally.errors) {
+  if (tally.changedNotified || tally.gsheetSynced || tally.autoApplied || tally.errors) {
     console.log('[ai:detect-source-updates]', tally)
   }
   return tally

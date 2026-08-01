@@ -126,6 +126,115 @@
   margin-bottom: 12px;
 }
 
+/* ── 整站匯入:頁面清單勾選 ─────────────────────────── */
+.kb-site-summary {
+  margin-bottom: 12px;
+}
+
+.kb-site-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+/* 篩選框推到最右並吃剩餘寬度,與左側統計同一條基線 */
+.kb-site-filter {
+  margin-left: auto;
+  max-width: 240px;
+}
+
+.kb-site-filter-hint {
+  margin: 0 0 8px;
+}
+
+/* 兩顆動作按鈕的差異說明(這一頁 vs 整站) */
+.kb-actions-hint {
+  margin: 8px 0 0;
+}
+
+.kb-site-list {
+  max-height: 44vh;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+
+.kb-site-row {
+  display: flex;
+  align-items: flex-start; /* 有提醒/失敗原因時是多行,勾選框與狀態要對齊第一行 */
+  gap: 10px;
+  padding: 8px 12px;
+
+  & + & {
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+}
+
+.kb-site-page {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-site-title {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-site-url {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 提醒／失敗原因放在左側寬欄(不是窄狀態欄),長句才讀得完;
+   warning 純色在白底對比不足 → 用 dark-2 字色＋淡底色塊 */
+.kb-site-warnings {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--el-color-warning-light-9);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--el-color-warning-dark-2);
+  white-space: normal;
+}
+
+.kb-site-error {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--el-color-danger);
+  white-space: normal;
+}
+
+/* 固定寬度:各列的狀態文字才會左右對齊,長訊息也不會把中間內容擠掉 */
+.kb-site-status {
+  flex: none;
+  min-width: 72px;
+  text-align: right;
+  font-size: 12px;
+  white-space: nowrap;
+
+  &.is-processing {
+    color: var(--el-color-primary);
+  }
+
+  &.is-done {
+    color: var(--el-color-success);
+  }
+
+  &.is-failed {
+    color: var(--el-color-danger);
+  }
+}
+
 .kb-chunk-list {
   display: flex;
   flex-direction: column;

@@ -21,6 +21,7 @@ export default defineEventHandler(async (event) => {
     name: body?.name,
     folderId: body?.folderId === null ? null : (typeof body?.folderId === 'string' ? body.folderId : undefined),
     productName: typeof body?.productName === 'string' ? body.productName : undefined,
+    urlAutoApply: typeof body?.urlAutoApply === 'boolean' ? body.urlAutoApply : undefined,
   })
   if (!result) throw createError({ statusCode: 404, statusMessage: 'source not found' })
   return result
