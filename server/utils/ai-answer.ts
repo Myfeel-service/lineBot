@@ -20,7 +20,7 @@
  *   8. 否則 → answered，回傳 answer + sources
  */
 import { pinyin } from 'pinyin-pro'
-import { searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } from './ai-knowledge-chunks'
+import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
 import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
@@ -635,7 +635,12 @@ export function preferProductCards(chunks: SimilarChunk[]): SimilarChunk[] {
  * 逐品項向量檢索（query 只有產品名）對「面向」沒有偏好，常把保固/故障排除/存放卡排前面
  * —— 7/31 稽核比較題 4/4 全滅的直接原因（規格卡其實存在，只是沒被選進 context）。
  */
-const SPEC_CARD_RE = /規格|尺寸|容量|功率|瓦數|耗電|電壓|坪數|除濕量|除溼量|水箱|分貝|噪音值|重量|材質|特色|功能|介紹|比較/
+// 強訊號:客人比較時真正想看的「數字型規格」。分兩級是因為「功能」這種字太寬鬆——
+// 「按鍵鎖功能」會跟「產品規格」同級,而按鍵鎖分數剛好高一點就贏了,比較題就答成
+// 「兩台的按鍵鎖操作方式相同」(實測 R1)。
+const SPEC_CARD_RE = /規格|尺寸|容量|功率|瓦數|耗電|電壓|坪數|除濕量|除溼量|水箱容量|分貝|噪音值|重量|材質/
+/** 弱訊號:比沒有好,但排在數字規格之後 */
+const SPEC_WEAK_RE = /特色|介紹|概述|說明|功能/
 const AFTERSALES_CARD_RE = /保固|故障|排除|維修|異常|燈號|清潔|保養|存放|收納|退貨|退款|註冊|登錄/
 
 /**
@@ -645,7 +650,9 @@ const AFTERSALES_CARD_RE = /保固|故障|排除|維修|異常|燈號|清潔|保
 export function preferSpecCards(chunks: SimilarChunk[]): SimilarChunk[] {
   const rank = (c: SimilarChunk) => {
     const hay = `${c.title} ${(c.tags ?? []).join(' ')}`
-    return SPEC_CARD_RE.test(hay) ? 0 : AFTERSALES_CARD_RE.test(hay) ? 2 : 1
+    if (SPEC_CARD_RE.test(hay)) return 0
+    if (AFTERSALES_CARD_RE.test(hay)) return 3
+    return SPEC_WEAK_RE.test(hay) ? 1 : 2
   }
   return [...chunks].sort((a, b) => rank(a) - rank(b))
 }
@@ -669,6 +676,70 @@ export function dedupeByTitleContainment(chunks: SimilarChunk[]): SimilarChunk[]
     if (!dup) kept.push({ chunk: c, key })
   }
   return kept.map(k => k.chunk)
+}
+
+/** 把名稱切成比對用詞元（英數 run + 中文 run），小寫化 */
+function nameTokens(s: string): string[] {
+  const t = String(s || '').toLowerCase()
+  return [...(t.match(/[a-z0-9]+/g) ?? []), ...(t.match(CJK_RUN_RE) ?? [])]
+}
+
+/**
+ * 補齊比較品項。intent router 照客人的字面拆，客人省略的部分它也跟著省略：
+ *   「GPLUS 6L 跟 12L 差在哪」→ ["GPLUS 6L", "12L"]      ← 拿「12L」去檢索毫無鑑別力
+ *   「W1 REGEN 跟 ULTRA 差在哪」→ ["W1 REGEN", "W1 ULTRA"] ← 「W1 ULTRA」是不存在的品名
+ * 結果就是撈回一堆不相干的卡，比較題答非所問（實測 R1/R2/R3）。這裡補兩道：
+ *   1. 共同前綴回填：短品項缺了另一個品項的品牌詞就補上。
+ *   2. 對齊真實產品名：品項的詞元若是某個已知產品名的子集合，就換成那個完整名稱
+ *      （取「多餘詞最少」的那個＝最貼近的）。兩個品項會撞成同一個產品時整組放棄，
+ *      寧可維持原樣也不要把兩台變成一台。
+ * 純函式，方便測試。
+ */
+export function expandCompareItems(items: string[], productNames: string[] = []): string[] {
+  const cleaned = items.map(s => String(s || '').trim()).filter(Boolean)
+  if (cleaned.length < 2) return cleaned
+
+  // ── 1. 共同前綴回填 ──
+  // 只補「整個品項都是數字/尺寸」的那種（「12L」）。自己已經帶了品名詞的品項一律不動，
+  // 否則「威技 16L」會被硬加上 GPLUS 變成不存在的機器。
+  const words = (s: string) => s.split(/\s+/).filter(Boolean)
+  const isSizeOnly = (s: string) => {
+    const w = words(s)
+    return w.length > 0 && w.every(x => /\d/.test(x))
+  }
+  // 前綴取自「有品名詞的那個品項」的前導非數字字詞，用原字串保留大小寫
+  const donor = cleaned.find(s => !isSizeOnly(s)) ?? ''
+  const prefixWords: string[] = []
+  for (const w of words(donor)) {
+    if (/\d/.test(w)) break
+    prefixWords.push(w)
+  }
+  const prefix = prefixWords.join(' ')
+  const prefixed = cleaned.map(raw => (prefix && isSizeOnly(raw) ? `${prefix} ${raw}` : raw))
+
+  // ── 2. 對齊真實產品名 ──
+  if (!productNames.length) return prefixed
+  const snapped = prefixed.map((raw) => {
+    const toks = new Set(nameTokens(raw))
+    if (!toks.size) return raw
+    let best = ''
+    let bestExtra = Number.POSITIVE_INFINITY
+    for (const name of productNames) {
+      const nameToks = nameTokens(name)
+      if (!nameToks.length) continue
+      // 品項的每個詞都出現在產品名裡 → 這個產品名是它的完整版
+      if (![...toks].every(t => nameToks.includes(t))) continue
+      const extra = nameToks.length - toks.size
+      if (extra < bestExtra) {
+        bestExtra = extra
+        best = name
+      }
+    }
+    return best || raw
+  })
+  // 兩個品項對齊到同一個產品 → 這次對齊會把兩台合成一台，整組退回未對齊版本
+  const uniq = new Set(snapped.map(s => s.toLowerCase()))
+  return uniq.size === snapped.length ? snapped : prefixed
 }
 
 /** 取標題裡的「品牌/型號識別碼」：連續英數 run（≥3 碼）小寫化。 */
@@ -728,6 +799,26 @@ export function collapseSameProduct(chunks: SimilarChunk[], aliases?: Record<str
 
 const LATIN_RUN_RE = /[a-z0-9]{3,}/g
 const CJK_RUN_RE = /[一-鿿]{2,}/g
+
+/** 中文產品小名的最短長度（「小獴友」3 字）；再短就沒有鑑別力 */
+const CJK_NAME_MIN_LEN = 3
+
+/**
+ * 兩個字串的最長共同連續片段（長度 < minLen 時回空字串）。
+ * 用途：卡片標題的中文是整段連續字（「小獴友語音口音」），客人只打其中的產品小名
+ * （「小獴友」）時，單向的 includes 兩邊都對不上，要靠共同片段才抓得到。
+ */
+export function longestCommonRun(a: string, b: string, minLen: number): string {
+  const short = a.length <= b.length ? a : b
+  const long = a.length <= b.length ? b : a
+  for (let len = short.length; len >= minLen; len--) {
+    for (let i = 0; i + len <= short.length; i++) {
+      const candidate = short.slice(i, i + len)
+      if (long.includes(candidate)) return candidate
+    }
+  }
+  return ''
+}
 
 /** Levenshtein 編輯距離（短字串用，O(n·m)）。 */
 function editDistance(a: string, b: string): number {
@@ -831,10 +922,23 @@ export function productNamedInQuery(query: string, groups: SimilarChunk[][]): Na
   const uniqCjk = (idx: number, seg: string) => idents.every((o, j) => j === idx || !o.cjk.has(seg))
 
   // ── Tier A：精確指名 ──
+  // 中文比對要**雙向**：卡片標題的中文是「整段連續字」，產品小名常黏在更長的詞裡
+  //（「Poketomo 小獴友語音口音」是一個 run），只檢查「問句是否包含整段」的話，
+  // 客人打「小獴友」永遠對不上——實測就因此把新客第一問判成沒依據而轉真人。
+  // 改成找出兩邊的最長共同片段（≥3 字）並要求它只屬於這一組，鑑別力不變。
   const exact: number[] = []
   idents.forEach((id, idx) => {
     const latHit = [...id.lat].some(tok => qLatin.has(tok) && uniqLat(idx, tok))
-    const cjkHit = [...id.cjk].some(seg => uniqCjk(idx, seg) && rawQuery.includes(seg))
+    const cjkHit = [...id.cjk].some((seg) => {
+      if (uniqCjk(idx, seg) && rawQuery.includes(seg)) return true
+      const shared = longestCommonRun(rawQuery, seg, CJK_NAME_MIN_LEN)
+      if (!shared) return false
+      // 共同片段必須**完全獨占**：連它自己的任何 ≥3 字片段都不能出現在別組。
+      // 只check整段是否重複的話，「除濕機保固」會過關（別組只有「除濕機」沒有「保固」），
+      // 但那只是「品類詞＋屬性詞」的組合，不是指名某一台。
+      return idents.every((o, j) =>
+        j === idx || ![...o.cjk].some(other => longestCommonRun(other, shared, CJK_NAME_MIN_LEN)))
+    })
     if (latHit || cjkHit) exact.push(idx)
   })
   if (exact.length) return exact.length === 1 ? { card: groups[exact[0]!]![0]!, tier: 'exact' } : null
@@ -1243,7 +1347,11 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const isCompare = intentRes?.intent === 'compare'
   // 列舉意圖：「X 有哪些」——直接列出產品，不要反問（見生成段 isList 規則 + 跳過 disambiguation）。
   const isList = intentRes?.intent === 'list'
-  const compareItems = intentRes?.compareItems ?? []
+  // 補齊被客人省略的品牌詞、對齊到真實產品名（見 expandCompareItems）。
+  // 產品名清單有 60 秒快取，非比較題不必付這次讀取。
+  const compareItems = isCompare && (intentRes?.compareItems?.length ?? 0) >= 2
+    ? expandCompareItems(intentRes!.compareItems, await getWorkspaceProductNames(db, workspaceId))
+    : (intentRes?.compareItems ?? [])
 
   let embedTokenEstimate = estimateTokens(text)
 
@@ -1282,8 +1390,12 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     try {
       const grounding = getGroundingThreshold(settings)
       const perItem = await Promise.all(compareItems.map(async (item) => {
-        const v = await embedQuery(item)
-        embedTokenEstimate += estimateTokens(item)
+        // 檢索詞帶上比較語境:純用產品名去查,撈回的是「語意上最像這個產品名」的卡,
+        // 那可能是按鍵鎖、環保回收之類的任何一張(實測 R1 就答成「兩台按鍵鎖操作相同」)。
+        // 補上規格語境讓 embedding 偏向客人真正想比的數字卡。
+        const itemQuery = `${item} 規格 容量 尺寸 特色`
+        const v = await embedQuery(itemQuery)
+        embedTokenEstimate += estimateTokens(itemQuery)
         // 多撈幾張再「規格/特色優先」重排：query 只有產品名、對面向沒偏好，
         // top-3 常全是保固/故障卡 → 比較沒材料。重排後仍每品項只取 2 張控 context。
         const cs = await searchSimilarChunks(db, workspaceId, v, 6)
@@ -1316,7 +1428,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   let subAnchors: SimilarChunk[] = []
   if (subQuestions.length >= 2) {
     try {
-      const floor = Math.max(0, getGroundingThreshold(settings) - 0.05)
+      // 錨點門檻刻意比 context 地板更寬：子問題的句子短、embedding 訊號弱，分數天然偏低，
+      // 用同一把尺會讓「第二問其實有答案卡」的情況整張被丟掉（實測 R4 就是這樣只答第一問）。
+      const floor = Math.max(0, getGroundingThreshold(settings) - 0.15)
       const seen = new Set(chunks.map(c => c.id))
       const merged = [...chunks]
       const perSub = await Promise.all(subQuestions.map(async (sub) => {
@@ -1415,7 +1529,11 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // P1-3 指名豁免：客人這句已用英數品牌/型號詞點名單一產品（例「WDH-16EF 保固」）→ 不反問，直接作答。
   const namedProduct = productNamedInQuery(text, groups)
   // isList（列舉意圖「X 有哪些」）也跳過反問——直接列出，不要問「你要哪一個」。
-  if (!input.skipDisambiguation && !isCompare && !isList && !namedProduct && shouldDisambiguate(productGroups, settings)) {
+  // 一句多問也跳過反問：客人明明兩件事都問了，卻回他「你要問哪一個？」是反意圖的。
+  // （實測：「咖啡機怎麼清潔？零水鍋還買得到嗎？」被反問二選一——兩個不同產品的卡分數接近，
+  //   剛好落在反問區間。子問題已各自檢索過，直接照「一句多問」規則作答即可。）
+  const isMultiQuestion = subQuestions.length >= 2
+  if (!input.skipDisambiguation && !isCompare && !isList && !isMultiQuestion && !namedProduct && shouldDisambiguate(productGroups, settings)) {
     // 反問選項優先產品卡，把「說明/政策/出貨」等通用主題卡排後面（同產品已由 groupSameProduct 併掉）
     const candidates = preferProductCards(productGroups).slice(0, settings.disambiguation.maxOptions)
     const dis = await generateDisambiguation(candidates, text, settings)
@@ -1493,7 +1611,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // Context 瘦身：同來源去重、低於地板分（grounding 門檻 − 0.05）的卡不進 prompt、
   // 單卡內容截 CONTEXT_CARD_MAX_CHARS。top-1 已過 grounding 門檻，必在地板之上。
   const contextFloor = Math.max(0, getGroundingThreshold(settings) - 0.05)
-  const contextChunks = dedupedChunks.filter(c => c.similarity >= contextFloor)
+  // 子問題錨點卡一律進 context：它是那個子問題唯一的證據，被地板濾掉就等於那一問沒東西可答。
+  const contextChunks = dedupedChunks.filter(c => c.similarity >= contextFloor || subAnchorIds?.has(c.id))
   const contextBlock = contextChunks
     .map((c, i) => {
       // 卡片標題常不帶產品名（維修卡只寫「保護代碼EH」）→ 補上所屬產品，
@@ -1586,6 +1705,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       : []),
     // 價格 / 購買類問題的連結處理：優先用卡片內的連結，否則用 workspace 設定的官網網址當 fallback。
     '若客人是在問價格、購買、哪裡買、下單：',
+    // 實測災情：問「除濕機多少錢」→ 回「募資金額為新台幣 7,943,910 元」。那是整個專案的
+    // 集資總額，客人會誤以為是機器售價。這類數字一律不得用來回答價格。
+    '  - **募資金額 / 集資總額 / 達成率這類「專案成績」不是商品售價**：知識卡裡的「募資金額 7,943,910 元」是所有贊助者的總和，不是一台的價錢，客人看到會誤會。問價格時**一個字都不要提到這些數字**；沒有售價資料就只回「目前沒有標示售價」並附上官網連結。',
     '  - 知識卡內若有「連結：<網址>」，請把該連結附在回覆中，並說明最新價格 / 購買以該頁為準。',
     ...(settings.shopUrl
       ? [`  - 知識卡內若沒有連結，請回覆：最新價格與購買請見 ${settings.shopUrl}（此時 hasInfo 設為 true）。`]

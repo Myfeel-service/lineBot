@@ -19,6 +19,8 @@ import {
   cleanProductLabel,
   taiwanTodayLabel,
   isUnresolvedFeedback,
+  expandCompareItems,
+  longestCommonRun,
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
@@ -405,6 +407,49 @@ describe('preferSpecCards', () => {
       c('spec', 'GPLUS 12L 詳細資料', ['規格']),
     ]
     expect(preferSpecCards(input).map(x => x.id)).toEqual(['spec', 'after'])
+  })
+})
+
+describe('expandCompareItems', () => {
+  it('回填客人省略的品牌詞(「GPLUS 6L 跟 12L」→ 兩個都帶 GPLUS)', () => {
+    expect(expandCompareItems(['GPLUS 6L', '12L'])).toEqual(['GPLUS 6L', 'GPLUS 12L'])
+  })
+
+  it('已帶自己品牌詞的品項不被硬加另一個品牌', () => {
+    expect(expandCompareItems(['GPLUS 12L', '威技 16L']))
+      .toEqual(['GPLUS 12L', '威技 16L'])
+  })
+
+  it('對齊到真實產品名(router 拆出的「W1 ULTRA」其實不存在)', () => {
+    const names = ['MATELASER 筋牌特務 W1 REGEN', 'MATELASER 筋牌特務 W1 REGEN ULTRA']
+    expect(expandCompareItems(['W1 REGEN', 'W1 ULTRA'], names))
+      .toEqual(['MATELASER 筋牌特務 W1 REGEN', 'MATELASER 筋牌特務 W1 REGEN ULTRA'])
+  })
+
+  it('兩個品項會對齊到同一個產品時整組放棄(寧可不對齊,也不要把兩台併成一台)', () => {
+    const names = ['GPLUS 居不可濕 一級能效 6L/12L 除濕機']
+    // 6L 與 12L 都是這個名稱的子集合 → 對齊會讓兩台變同一台 → 退回前綴回填版本
+    expect(expandCompareItems(['GPLUS 6L', '12L'], names)).toEqual(['GPLUS 6L', 'GPLUS 12L'])
+  })
+
+  it('不足兩項時原樣回傳', () => {
+    expect(expandCompareItems(['GPLUS 6L'])).toEqual(['GPLUS 6L'])
+    expect(expandCompareItems([])).toEqual([])
+  })
+})
+
+describe('longestCommonRun', () => {
+  it('抓出黏在長詞裡的產品小名', () => {
+    // 卡片標題是一整段連續中文,客人只打小名 → 單向 includes 兩邊都不中
+    expect(longestCommonRun('小獴友是什麼?', '小獴友語音口音', 3)).toBe('小獴友')
+  })
+
+  it('短於門檻視為沒有共同片段', () => {
+    expect(longestCommonRun('保固', '保固登錄方式', 3)).toBe('')
+  })
+
+  it('完全無關回空字串', () => {
+    expect(longestCommonRun('咖啡機清潔', '除濕機水箱', 3)).toBe('')
   })
 })
 
