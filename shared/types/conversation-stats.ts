@@ -117,3 +117,9 @@ export const INITIAL_HANDLER_LABELS: Record<InitialHandler, string> = {
 }
 
 export const SESSION_24H_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 「真人處理中」但真人已閒置超過此時數 → 視為卡住（AI 被暫停、客人晾著）。
+ * cron 的每日積壓提醒與後台異常中心共用同一個門檻，兩邊講的數字才會一致。
+ */
+export const HUMAN_STALE_HOURS = 12

@@ -26,6 +26,7 @@ import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 function tsToMs(raw: unknown): number {
@@ -482,7 +483,6 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
 // 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒積壓就不打擾。
 
 const DIGEST_HOUR_TAIPEI = 9 // 台北時間 9 點後的第一次排程觸發才發
-const HUMAN_STALE_HOURS = 12 // 真人處理中閒置超過此時數視為「卡住」
 
 export async function dailyBacklogDigest(db: Firestore) {
   const taipeiNow = new Date(Date.now() + 8 * 3600_000)

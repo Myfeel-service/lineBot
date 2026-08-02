@@ -79,7 +79,17 @@
       "Bash(git -C /Users/kevin/Documents/Github/linebot push origin main)",
       "Bash(gh auth *)",
       "Bash(npx firebase-tools *)",
-      "Bash(gcloud auth *)"
+      "Bash(gcloud auth *)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/275f596a-0e94-479c-8de0-db80197df94e/scratchpad/audit-legacy-kb.ts\")",
+      "Bash(node \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/275f596a-0e94-479c-8de0-db80197df94e/scratchpad/probe-myfeel.mjs\")",
+      "Bash(node \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/275f596a-0e94-479c-8de0-db80197df94e/scratchpad/probe2.mjs\")",
+      "Bash(curl -sL -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/126.0 Safari/537.36\" \"https://help.tidio.com/hc/en-us/articles/14543666652316-Data-sources-Lyro-s-knowledge-base\" -o /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/275f596a-0e94-479c-8de0-db80197df94e/scratchpad/tidio_datasources.html)",
+      "WebFetch(domain:crescendolab.zendesk.com)",
+      "Bash(sed -n '/中文品類+屬性詞（除濕機保固）/,/^  }\\)/p' server/utils/ai-answer.test.ts)",
+      "Bash(sed -n '/擦邊球不因「品類+屬性」/,/^  }\\)/p' server/utils/ai-answer.test.ts)",
+      "Bash(sed -n '/export function cleanProductLabel/,/^}/p' server/utils/ai-answer.ts)",
+      "Bash(sed -n '/export function buildNamedGuessConfirm/,/^}/p' server/utils/ai-answer.ts)",
+      "Bash(pkill -f \"nuxt dev --port 3111\")"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot"

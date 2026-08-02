@@ -269,6 +269,14 @@
       "collectionGroup": "knowledgeSources",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "outdatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "knowledgeSources",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "refreshIntervalMinutes", "order": "ASCENDING" }
       ]

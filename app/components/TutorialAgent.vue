@@ -1,10 +1,22 @@
 <template>
   <!-- 常駐右下角的教學 agent。樣式見 assets/scss/components/_tutorial-agent.scss -->
   <div class="tutorial-agent">
-    <!-- 第一次來的引導小氣泡（一次性） -->
+    <!-- 異常小氣泡：壞掉的東西要主動講一次，不能只靠使用者注意到紅點 -->
     <Transition name="ta-pop">
       <button
-        v-if="showNudge && !panelOpen"
+        v-if="alertNudge && !panelOpen"
+        class="ta-nudge ta-nudge--alert"
+        @click="onAlertNudgeClick"
+      >
+        <span class="ta-nudge__text">{{ alertNudge }}</span>
+        <span class="ta-nudge__close" aria-label="知道了" @click.stop="alertNudge = ''"><el-icon><Close /></el-icon></span>
+      </button>
+    </Transition>
+
+    <!-- 第一次來的引導小氣泡（一次性）。有異常時讓位給上面那顆 -->
+    <Transition name="ta-pop">
+      <button
+        v-if="showNudge && !panelOpen && !alertNudge"
         class="ta-nudge"
         @click="onNudgeClick"
       >
@@ -28,7 +40,7 @@
             <div class="ta-panel__status"><span class="ta-dot" />線上</div>
           </div>
           <div class="ta-tabs" role="tablist">
-            <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">設定進度</button>
+            <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">目前狀況</button>
             <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問助理</button>
           </div>
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
@@ -49,6 +61,44 @@
               <p>{{ agentLine }}</p>
             </div>
           </div>
+
+          <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急 -->
+          <template v-if="alerts.length">
+            <div v-if="activeAlerts.length" class="ta-alerts">
+              <div class="ta-alerts__label">
+                <span>需要處理</span>
+                <span v-if="checkedAgo" class="ta-alerts__ago">{{ checkedAgo }}</span>
+              </div>
+              <button
+                v-for="a in activeAlerts"
+                :key="a.id"
+                class="ta-alert"
+                :class="`is-${a.severity}`"
+                @click="onFixAlert(a)"
+              >
+                <span class="ta-alert__icon"><el-icon><component :is="a.icon" /></el-icon></span>
+                <span class="ta-alert__main">
+                  <span class="ta-alert__title">
+                    {{ a.title }}
+                    <span v-if="a.count" class="ta-alert__count">{{ a.count }}</span>
+                  </span>
+                  <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
+                  <span class="ta-alert__impact">{{ a.impact }}</span>
+                  <span class="ta-alert__cta">{{ a.cta }} →</span>
+                </span>
+              </button>
+            </div>
+
+            <div v-else-if="alertsLoaded" class="ta-alerts-clear">
+              目前沒有發現異常{{ checkedAgo ? `（${checkedAgo}）` : '' }}。
+            </div>
+
+            <!-- 這次檢查不到的異常（現形，不要偷偷當成沒事） -->
+            <div v-if="unknownAlertItems.length" class="ta-unknown">
+              <span>這幾項我這次檢查不到：{{ unknownAlertItems.map(a => a.title).join('、') }}。</span>
+              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">重新檢查</button>
+            </div>
+          </template>
 
           <!-- 載入骨架 -->
           <div v-if="!loaded" class="ta-skeleton" aria-hidden="true">
@@ -76,8 +126,8 @@
                   必要設定 {{ requiredDone }}/{{ requiredTotal }}
                   <template v-if="allRequiredDone"> ・可以上線了</template>
                 </span>
-                <button class="ta-progress__refresh" :disabled="loading" @click="refresh">
-                  {{ loading ? '檢查中…' : '重新檢查' }}
+                <button class="ta-progress__refresh" :disabled="busy" @click="refreshAll(true)">
+                  {{ busy ? '檢查中…' : '重新檢查' }}
                 </button>
               </div>
               <div v-if="optionalTotal" class="ta-progress__optional">
@@ -125,7 +175,7 @@
             <!-- 這次查不到狀態的項目（現形，不偷偷扣分） -->
             <div v-if="unknownCaps.length" class="ta-unknown">
               <span>這幾項我這次查不到狀態：{{ unknownCaps.map(c => c.title).join('、') }}。</span>
-              <button class="ta-unknown__btn" :disabled="loading" @click="refresh">重新檢查</button>
+              <button class="ta-unknown__btn" :disabled="busy" @click="refreshAll(true)">重新檢查</button>
             </div>
             </template>
 
@@ -159,7 +209,7 @@
           </template>
         </div>
 
-        <footer v-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的設定狀態，不會給你假資訊。</footer>
+        <footer v-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的狀態，不會給你假資訊。</footer>
         <footer v-else class="ta-panel__foot">回答都來自你帳號的真實資料;目前只能查詢,不能修改。</footer>
       </section>
     </Transition>
@@ -172,12 +222,13 @@
       @click="onFabClick"
     >
       <span class="ta-fab__icon"><el-icon><component :is="panelOpen ? Close : IconRobot" /></el-icon></span>
-      <span v-if="!panelOpen && !allRequiredDone" class="ta-fab__pulse" aria-hidden="true" />
+      <span v-if="!panelOpen && (!allRequiredDone || criticalAlerts.length)" class="ta-fab__pulse" aria-hidden="true" />
+      <!-- 紅點只數「現在壞著」與「必要設定沒做」；建議處理的黃色項不進來，免得紅點長亮被無視 -->
       <span
-        v-if="!panelOpen && incompleteRequired.length"
+        v-if="!panelOpen && badgeCount"
         class="ta-fab__badge"
-        :aria-label="`還有 ${incompleteRequired.length} 項必要設定未完成`"
-      >{{ incompleteRequired.length }}</span>
+        :aria-label="badgeLabel"
+      >{{ badgeCount }}</span>
     </button>
 
     <!-- 導覽（Element Plus Tour）；用 zh-cn locale 讓按鈕是中文 -->
@@ -220,6 +271,7 @@
 
 <script setup lang="ts">
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
+import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 import { Close, View } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
@@ -261,7 +313,37 @@ const {
   loading,
   refresh,
 } = useSetupStatus()
+const {
+  alerts,
+  activeAlerts,
+  criticalAlerts,
+  unknownAlerts: unknownAlertItems,
+  loaded: alertsLoaded,
+  loading: alertsLoading,
+  checkedAgo,
+  refresh: refreshAlerts,
+  reset: resetAlerts,
+  POLL_INTERVAL_MS,
+} = useWorkspaceAlerts()
 const { setDemo, clearDemo } = useFlowDemo()
+
+/** 兩份體檢（設定就緒度 + 目前異常）一起重查；force 用在使用者手動按「重新檢查」 */
+function refreshAll(force = false) {
+  return Promise.all([refresh(), refreshAlerts({ force })])
+}
+
+const busy = computed(() => loading.value || alertsLoading.value)
+
+/** 紅點：現在壞著的 + 必要設定沒做的。兩者都是「不處理就有事」，合成一個數字才不會互相遮蔽 */
+const badgeCount = computed(() => criticalAlerts.value.length + incompleteRequired.value.length)
+const badgeLabel = computed(() => {
+  const parts: string[] = []
+  if (criticalAlerts.value.length)
+    parts.push(`${criticalAlerts.value.length} 個地方需要處理`)
+  if (incompleteRequired.value.length)
+    parts.push(`${incompleteRequired.value.length} 項必要設定未完成`)
+  return parts.join('、')
+})
 
 const userName = computed(() => {
   const dn = user.value?.displayName?.trim()
@@ -269,8 +351,14 @@ const userName = computed(() => {
   return ''
 })
 
-/** agent 開場白：完全依真實設定狀態講白話文 */
+/** agent 開場白：完全依真實狀態講白話文。順序＝先講壞了的，再講還沒做的 */
 const agentLine = computed(() => {
+  if (!loaded.value && !alertsLoaded.value)
+    return '我先幫你看一下目前的狀況…'
+  if (criticalAlerts.value.length)
+    return `先講重要的：有 ${criticalAlerts.value.length} 個地方現在不正常，客人會受影響。點下面就能去處理。`
+  if (activeAlerts.value.length)
+    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。`
   if (!loaded.value)
     return '我先幫你看一下目前的設定狀況…'
   // 沒有可動手的設定項（例如觀察者）：不談設定，直接導向教學
@@ -309,6 +397,15 @@ function onFix(cap: ResolvedCapability) {
     return
   closePanel()
   void router.push(cap.route(wid))
+}
+
+/** 點異常：直接去能修的那一頁（異常沒有導覽——導覽教的是怎麼設定，不是怎麼修壞掉的東西） */
+function onFixAlert(alert: ResolvedAlert) {
+  const wid = workspaceId.value
+  if (!wid)
+    return
+  closePanel()
+  void router.push(alert.route(wid))
 }
 
 /** 缺項巡覽：用 tour 逐一高亮側欄上「還沒做完」的入口，每步附「帶我做這項」 */
@@ -375,26 +472,80 @@ function onNudgeClick() {
   openPanel()
 }
 function onFabClick() {
-  if (!panelOpen.value)
+  if (!panelOpen.value) {
     dismissNudge()
+    alertNudge.value = ''
+  }
   togglePanel()
 }
 
+// ── 異常小氣泡 ──
+// 只在「壞著」的項目上主動彈一次：紅點很容易被當成裝飾，壞掉的東西值得講出來。
+// 用 sessionStorage 記已彈過，key 帶當下的異常組合——同一批異常這次登入不再吵，
+// 但**冒出新的異常**（組合變了）會再彈一次。
+const alertNudge = ref('')
+function alertNudgeKey(signature: string) {
+  return `ta-alert-nudge:${workspaceId.value || 'default'}:${signature}`
+}
+function onAlertNudgeClick() {
+  alertNudge.value = ''
+  panelTab.value = 'setup'
+  openPanel()
+}
+
+watch(criticalAlerts, (list) => {
+  if (!list.length || panelOpen.value)
+    return
+  const signature = list.map(a => a.id).sort().join(',')
+  try {
+    if (sessionStorage.getItem(alertNudgeKey(signature)))
+      return
+    sessionStorage.setItem(alertNudgeKey(signature), '1')
+  }
+  catch {}
+  alertNudge.value = list.length === 1
+    ? list[0]!.title
+    : `有 ${list.length} 個地方需要處理，客人會受影響`
+})
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
-  if (!loaded.value)
-    await refresh()
+  await refreshAll()
   // 只有「真的還有必要項沒做」且沒看過，才彈引導
   try {
     if (!localStorage.getItem(nudgeKey()) && incompleteRequired.value.length > 0)
       showNudge.value = true
   }
   catch {}
+  // 背景重查：使用者可能整天停在同一頁，不重查就等於沒有「主動告知」。
+  // 分頁在背景時跳過，不浪費查詢額度。
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible')
+      void refreshAlerts()
+  }, POLL_INTERVAL_MS)
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer)
+    clearInterval(pollTimer)
+  pollTimer = null
+})
+
+// 換工作區：先把上一個帳號的異常清掉再重查。把 A 家的「扣款失敗」留在 B 家畫面上，
+// 比暫時空白嚴重得多
+watch(workspaceId, (next, prev) => {
+  if (!next || next === prev)
+    return
+  alertNudge.value = ''
+  resetAlerts()
+  void refreshAll(true)
 })
 
 // 每次打開面板都重新體檢；關閉時清掉導覽回應
 watch(panelOpen, (open) => {
   if (open)
-    void refresh()
+    void refreshAll()
   else
     postTourNote.value = ''
 })
