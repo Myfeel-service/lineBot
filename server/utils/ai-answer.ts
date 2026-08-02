@@ -22,7 +22,8 @@
 import { pinyin } from 'pinyin-pro'
 import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
-import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
+import { contentSimilarity } from './ai-knowledge-resync'
+import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName } from './ai-product-alias'
 import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
@@ -792,6 +793,31 @@ export function groupSameProduct(chunks: SimilarChunk[], aliases?: Record<string
   return groups.map(g => g.members)
 }
 
+/**
+ * 反問候選去重:內容近似的卡只留分數最高那張。
+ *
+ * 實測災情:問「保固怎麼登錄」跳出「商品保固登錄方式 / 商品保固註冊流程 / 產品保固登錄與期限」
+ * 三個選項,客人根本分不出差別——它們是不同來源匯入的同義卡,標題不同所以既有的
+ * 「標題完全相同」去重抓不到,產品分組也併不起來(都沒有產品名、來源不同、無共用型號)。
+ * 這裡改比內容:同一件事講兩遍就不該同時出現在選項裡。
+ */
+export function dedupeSimilarCandidates(chunks: SimilarChunk[], threshold = 0.6): SimilarChunk[] {
+  const kept: SimilarChunk[] = []
+  for (const c of chunks) {
+    const dup = kept.some((k) => {
+      // 分屬不同產品的卡**永遠不合併**:實測「W1 REGEN 不在保固範圍」與
+      // 「W1 REGEN ULTRA 不在保固範圍」內容相似度 0.69,但那是兩台不同機器,
+      // 併掉會讓客人少一個選項、選到錯的那台。
+      const kp = (k.productName ?? '').trim()
+      const cp = (c.productName ?? '').trim()
+      if (kp && cp && kp !== cp) return false
+      return contentSimilarity(k.content, c.content) >= threshold
+    })
+    if (!dup) kept.push(c)
+  }
+  return kept
+}
+
 /** 同產品收斂成「一產品一代表卡」（每組最高分那張）。 */
 export function collapseSameProduct(chunks: SimilarChunk[], aliases?: Record<string, string>): SimilarChunk[] {
   return groupSameProduct(chunks, aliases).map(g => g[0]!)
@@ -973,12 +999,33 @@ export function cleanProductLabel(title: string): string {
     .trim()
 }
 
+/**
+ * 把按鈕文字壓在長度內,且**切在自然邊界**(空白 / 斜線 / 括號後)。
+ * 硬切的話會出現「【GPLUS 居不可濕】一級能效 6L/」這種斷在斜線上的殘句(實測 N21),
+ * 客人看到只會覺得系統壞了。找不到合理邊界才硬切。
+ */
+export function truncateLabel(text: string, max: number): string {
+  const s = String(text || '').trim()
+  if (s.length <= max) return s
+  const sliced = s.slice(0, max)
+  const boundary = Math.max(
+    sliced.lastIndexOf(' '),
+    sliced.lastIndexOf('】'),
+    sliced.lastIndexOf('）'),
+    sliced.lastIndexOf(')'),
+    sliced.lastIndexOf('、'),
+  )
+  // 邊界太靠前(等於幾乎沒東西)就寧可硬切
+  const cut = boundary >= Math.floor(max * 0.5) ? sliced.slice(0, boundary + 1) : sliced
+  return cut.replace(/[\s/｜|、,，.·-]+$/, '').trim() || sliced.trim()
+}
+
 export function buildNamedGuessConfirm(card: SimilarChunk): DisambiguationPayload {
   const clean = cleanProductLabel(card.title)
-  const short = (clean || card.title).slice(0, 30)
+  const short = truncateLabel(clean || card.title, 30)
   return {
     clarification: `您是想了解「${short}」嗎？可以點下方按鈕，或改由真人為您服務 😊`,
-    options: [{ chunkId: card.id, title: card.title, label: short.slice(0, 20) }],
+    options: [{ chunkId: card.id, title: card.title, label: truncateLabel(short, 20) }],
   }
 }
 
@@ -1535,9 +1582,23 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const isMultiQuestion = subQuestions.length >= 2
   if (!input.skipDisambiguation && !isCompare && !isList && !isMultiQuestion && !namedProduct && shouldDisambiguate(productGroups, settings)) {
     // 反問選項優先產品卡，把「說明/政策/出貨」等通用主題卡排後面（同產品已由 groupSameProduct 併掉）
-    const candidates = preferProductCards(productGroups).slice(0, settings.disambiguation.maxOptions)
+    const candidates = dedupeSimilarCandidates(preferProductCards(productGroups))
+      .slice(0, settings.disambiguation.maxOptions)
     const dis = await generateDisambiguation(candidates, text, settings)
     if (dis.payload) {
+      // 選項分屬不同產品時,標籤一律改成產品名。
+      // 實測「保固怎麼登錄」跳出「商品保固登錄方式 / 商品保固註冊流程 / 產品保固登錄與期限」——
+      // 這三張其實分屬 GPLUS 除濕機 / SHARP 咖啡機 / 威技除濕機,登錄方式真的不同(內容相似度只有
+      // 0.03~0.09),所以「反問」本身是對的,錯在標籤全是同義的流程名、客人分不出差別。
+      // 換成產品名,一眼就知道要點哪個。
+      const productOf = new Map(candidates.map(c => [c.id, canonicalProductName(c.productName, productAliases)]))
+      const distinctProducts = new Set([...productOf.values()].filter(Boolean))
+      if (distinctProducts.size >= 2 && [...productOf.values()].every(Boolean)) {
+        dis.payload.options = dis.payload.options.map((o) => {
+          const prod = productOf.get(o.chunkId)
+          return prod ? { ...o, label: truncateLabel(prod, 20) } : o
+        })
+      }
       await record({
         invocations: 1,
         disambiguations: 1,
@@ -1595,6 +1656,35 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       }
     }
     else {
+      // 「有賣 X 嗎」而知識庫沒有 X → 客人要的答案就是「沒有」,把他排進轉真人佇列
+      // 只是讓真人代打同一句話(實測:「你們有賣加濕器嗎」被轉真人)。
+      // 措辭刻意講「目前的商品資料裡沒有找到」而不是斷言「我們沒賣」——我們只能保證
+      // 自己的資料,而且附上實際有的品項與找真人的出口,客人自己就能判斷。
+      // 產品清單有同一台的多種寫法(「MATELASER 筋牌特務 W1 REGEN」「MATELASER《筋牌特務》 W1 REGEN」),
+      // 直接唸出來客人會以為有三台。用別名對照＋正規化收斂,取最完整的那個寫法。
+      const catalog = isList
+        ? dedupeProductNames(
+            (await getWorkspaceProductNames(db, workspaceId))
+              .map(n => canonicalProductName(n, productAliases)),
+          )
+        : []
+      if (catalog.length >= 3) {
+        await record({
+          invocations: 1,
+          answered: 1,
+          embeddingTokens: embedTokenEstimate,
+          inputTokens: routerIn,
+          outputTokens: routerOut,
+        })
+        return {
+          decision: 'answered',
+          answer: `目前的商品資料裡沒有找到您說的這個品項耶 🙏 我們現在有：${catalog.slice(0, 8).join('、')}。想找其他東西可以再告訴我，或跟我說「找真人」由專人為您確認。`,
+          confidence: topSimilarity,
+          sources: chunks.map(c => ({ chunkId: c.id, title: c.title, similarity: c.similarity })),
+          handoffReason: null,
+          ...(input.debug ? { debugPrompt: '(list-no-match canned reply)' } : {}),
+        }
+      }
       await record({
         invocations: 1,
         handoffs: 1,

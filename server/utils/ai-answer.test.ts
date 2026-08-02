@@ -21,6 +21,8 @@ import {
   isUnresolvedFeedback,
   expandCompareItems,
   longestCommonRun,
+  truncateLabel,
+  dedupeSimilarCandidates,
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
@@ -450,6 +452,58 @@ describe('longestCommonRun', () => {
 
   it('完全無關回空字串', () => {
     expect(longestCommonRun('咖啡機清潔', '除濕機水箱', 3)).toBe('')
+  })
+})
+
+describe('truncateLabel', () => {
+  it('切在自然邊界,不留斷在斜線上的殘句', () => {
+    // 實測 N21:硬切會變成「【GPLUS 居不可濕】一級能效 6L/」
+    expect(truncateLabel('【GPLUS 居不可濕】一級能效 6L/12L 除濕機', 20))
+      .toBe('【GPLUS 居不可濕】一級能效')
+  })
+
+  it('未超長時原樣回傳', () => {
+    expect(truncateLabel('威技除濕機', 20)).toBe('威技除濕機')
+  })
+
+  it('找不到合理邊界就硬切(不會回空字串)', () => {
+    const out = truncateLabel('一二三四五六七八九十一二三四五六七八九十', 10)
+    expect(out).toBe('一二三四五六七八九十')
+    expect(out.length).toBeLessThanOrEqual(10)
+  })
+})
+
+describe('dedupeSimilarCandidates', () => {
+  const c = (id: string, content: string, similarity: number): SimilarChunk =>
+    chunk({ id, title: id, content, similarity })
+
+  it('內容幾乎相同的同義卡只留分數最高那張(實測「擺放環境」兩張相似度 0.84)', () => {
+    const body = '除濕機請放在平坦穩固的地面,四周至少保留 30 公分的空間,避免緊靠牆面或家具影響進出風。'
+    const input = [
+      c('a', body, 0.78),
+      c('b', `${body}另外也請避免陽光直射。`, 0.77),
+      c('c', '七天鑑賞期內可申請退貨,商品需保持全新未使用。', 0.72),
+    ]
+    expect(dedupeSimilarCandidates(input).map(x => x.id)).toEqual(['a', 'c'])
+  })
+
+  it('分屬不同產品的卡永遠不合併,即使內容很像', () => {
+    // 實測「W1 REGEN 不在保固範圍」vs「W1 REGEN ULTRA 不在保固範圍」相似度 0.69,
+    // 但那是兩台不同機器,併掉客人就少一個選項、可能選到錯的那台
+    const body = '人為破壞、自行拆解、非正常使用造成的損壞不在保固範圍內。'
+    const input = [
+      chunk({ id: 'regen', title: 'x', content: body, similarity: 0.8, productName: 'W1 REGEN' }),
+      chunk({ id: 'ultra', title: 'y', content: `${body}詳情請見說明書。`, similarity: 0.78, productName: 'W1 REGEN ULTRA' }),
+    ]
+    expect(dedupeSimilarCandidates(input)).toHaveLength(2)
+  })
+
+  it('內容確實不同的卡全部保留', () => {
+    const input = [
+      c('a', '除濕機適用坪數為 8 到 12 坪。', 0.8),
+      c('b', '咖啡機水箱容量為 1.5 公升。', 0.75),
+    ]
+    expect(dedupeSimilarCandidates(input)).toHaveLength(2)
   })
 })
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   canonicalProductName,
+  dedupeProductNames,
   detectAliasCandidates,
   normalizeProductName,
   aliasPairKey,
@@ -162,5 +163,26 @@ describe('canonicalProductName', () => {
       [normalizeProductName('B 產品')]: 'A 產品',
     }
     expect(() => canonicalProductName('A 產品', cyclic)).not.toThrow()
+  })
+})
+
+describe('dedupeProductNames', () => {
+  it('收斂只差裝飾符號的寫法,保留沒有書名號的那個', () => {
+    expect(dedupeProductNames([
+      'MATELASER《筋牌特務》 W1 REGEN',
+      'MATELASER 筋牌特務 W1 REGEN',
+    ])).toEqual(['MATELASER 筋牌特務 W1 REGEN'])
+  })
+
+  it('不同型號不合併(REGEN 與 REGEN ULTRA 是兩台機器)', () => {
+    const out = dedupeProductNames([
+      'MATELASER 筋牌特務 W1 REGEN',
+      'MATELASER 筋牌特務 W1 REGEN ULTRA',
+    ])
+    expect(out).toHaveLength(2)
+  })
+
+  it('忽略空字串', () => {
+    expect(dedupeProductNames(['', '  ', 'BOYA mini2'])).toEqual(['BOYA mini2'])
   })
 })

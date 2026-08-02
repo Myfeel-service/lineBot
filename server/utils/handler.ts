@@ -37,7 +37,7 @@ import {
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
-import { answerWithAi, routeMessage, summarizeHandoffContext, type AiChatTurn, type RouteResult } from './ai-answer'
+import { answerWithAi, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
@@ -2820,7 +2820,8 @@ async function tryAiFallback(params: {
       const sendText = l && labelCounts.get(l) === 1 ? l : o.title
       return {
         type: 'action',
-        action: { type: 'message', label: (l || o.title).slice(0, 20), text: sendText },
+        // 20 字是 LINE 規格上限;切在自然邊界避免「…一級能效 6L/」這種殘句
+        action: { type: 'message', label: truncateLabel(l || o.title, 20), text: sendText },
       }
     })
     quickReplyItems.push({

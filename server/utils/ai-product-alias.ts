@@ -174,6 +174,35 @@ export function detectAliasCandidates(input: {
     || Number(x.variantRisk) - Number(y.variantRisk))
 }
 
+/** 裝飾符號數量：同一個名字的多種寫法中，優先選沒有《》【】括號的那個 */
+function decorationCount(s: string): number {
+  return (String(s).match(/[《》〈〉（）()【】\[\]「」『』]/g) ?? []).length
+}
+
+/**
+ * 收斂同一個產品的多種寫法（「MATELASER 筋牌特務 W1 REGEN」與「MATELASER《筋牌特務》 W1 REGEN」）。
+ * **只合併正規化後完全相等的**——「W1 REGEN」與「W1 REGEN ULTRA」是兩台不同機器，
+ * 用「互相包含」去合併會把它們併掉。同一組取裝飾符號最少、其次較長的寫法。
+ */
+export function dedupeProductNames(names: string[]): string[] {
+  const byKey = new Map<string, string>()
+  for (const raw of names) {
+    const n = String(raw ?? '').trim()
+    const key = normalizeProductName(n)
+    if (!n || !key) continue
+    const cur = byKey.get(key)
+    if (!cur) {
+      byKey.set(key, n)
+      continue
+    }
+    const better = decorationCount(n) !== decorationCount(cur)
+      ? decorationCount(n) < decorationCount(cur)
+      : n.length > cur.length
+    if (better) byKey.set(key, n)
+  }
+  return [...byKey.values()]
+}
+
 // ── 讀取 / 快取 ────────────────────────────────────────────────
 
 const ALIAS_TTL_MS = 60_000
