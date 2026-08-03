@@ -5,6 +5,7 @@ import {
 import { getDoc } from '~~/server/utils/firebase'
 import { WORKSPACE_FLOW_MODULE_TYPES, type ModuleType } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 
 const VALID_MODULE_TYPES: ModuleType[] = ['welcome', 'bot_flow', 'system_notice', 'live_agent']
 
@@ -54,6 +55,9 @@ export default defineEventHandler(async (event) => {
   }
 
   await updateDoc('flows', id, updates)
+
+  // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
+  invalidateBrokenModuleRefsCache(workspaceId)
 
   return { id, ...updates }
 })

@@ -255,12 +255,50 @@ export async function ensureConversationSession(
 }
 
 /**
+ * 記帳用的 session 取得：sessionId 為空時（建立會話那一步失敗了）再從 conversations 撈一次。
+ *
+ * 為什麼需要這層：webhook 各處都是 `ensureConversationSession(...).catch(() => null)`，
+ * 失敗回傳 null，後面每個記帳動作就被 `if (sessionId)` 一併跳過——但訊息已經送給客人了。
+ * 結果是「客人收到回覆、系統完全沒紀錄」。這裡多一次讀取把洞補起來，
+ * 只有在 sessionId 真的缺失時才會付這個成本。
+ */
+async function resolveSessionIdForAccounting(
+  sessionId: string | null | undefined,
+  userId: string,
+  workspaceId: string,
+): Promise<string | null> {
+  if (sessionId) return sessionId
+  try {
+    const db = getDb()
+    const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
+    const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
+    const convSnap = await db.collection('conversations').doc(convDocId).get()
+    const recovered = convSnap.data()?.currentSessionId as string | undefined
+    if (recovered) {
+      console.warn('[session] sessionId missing at accounting time, recovered from conversations:', recovered)
+      return recovered
+    }
+  }
+  catch (e) {
+    console.error('[session] sessionId recovery failed:', e)
+  }
+  return null
+}
+
+/**
  * Record that a module was entered in the current session.
  * Updates initial/current handler and status accordingly.
  * system_notice entries do NOT count toward initialHandler.
+ *
+ * 讀寫在同一個交易裡：先前是「先讀舊狀態、再寫新狀態」，同一秒兩則訊息會互相蓋掉
+ * （後寫的贏），可能少記一次首接或漏掉 hasHandoff。交易也讓 Firestore 自動重試競爭，
+ * 順帶降低「寫入失敗 → 靜默停在未首接」的機率。
+ *
+ * sessionId 允許為 null：缺失時自己補撈（見 resolveSessionIdForAccounting），
+ * 呼叫端不需要再用 `if (sessionId)` 把記帳整段跳過。
  */
 export async function enterModule(
-  sessionId: string,
+  sessionId: string | null | undefined,
   userId: string,
   moduleType: ModuleType,
   moduleId?: string,
@@ -268,11 +306,47 @@ export async function enterModule(
 ): Promise<void> {
   const wid = requireWorkspaceId(workspaceId, 'enterModule')
   const db = getDb()
-  const sessionRef = db.collection('conversationSessions').doc(sessionId)
-  const sessionSnap = await sessionRef.get()
-  if (!sessionSnap.exists) return
+  const sid = await resolveSessionIdForAccounting(sessionId, userId, wid)
+  if (!sid) {
+    console.error('[session] enterModule skipped, no session to record:', moduleType, moduleId ?? '')
+    return
+  }
+  const sessionRef = db.collection('conversationSessions').doc(sid)
 
-  const session = sessionSnap.data() as any
+  const outcome = await db.runTransaction(async (tx) => {
+    const sessionSnap = await tx.get(sessionRef)
+    if (!sessionSnap.exists) return null
+    const session = sessionSnap.data() as any
+    const updates = buildEnterModuleUpdates(session, moduleType)
+    tx.update(sessionRef, updates)
+    return {
+      status: updates.status as ConversationStatus | undefined,
+      isNewHandoff: Boolean(updates.hasHandoff),
+    }
+  })
+  if (!outcome) return
+
+  // Keep status cache in sync after module entry changes session status
+  if (outcome.status) {
+    _updateSessionStatusCache(sid, outcome.status)
+  }
+
+  if (moduleType === 'live_agent') {
+    const uid = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, wid), wid)
+    await db
+      .collection('users')
+      .doc(uid)
+      .update({ activeInput: FieldValue.delete() })
+      .catch((e) => console.warn('[session] clear activeInput on live_agent:', e))
+  }
+  await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'entered_module', { moduleType, moduleId })
+  if (outcome.isNewHandoff) {
+    await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'handoff_request')
+  }
+}
+
+/** enterModule 的狀態計算（純函式，方便在交易裡重跑：Firestore 競爭時會重試整個 callback） */
+function buildEnterModuleUpdates(session: any, moduleType: ModuleType): Record<string, any> {
   const updates: Record<string, any> = {
     currentModuleType: moduleType,
     lastActivityAt: FieldValue.serverTimestamp(),
@@ -304,57 +378,57 @@ export async function enterModule(
       updates.status = 'bot_handling'
     }
     // pending_human / human_handling are intentionally not overwritten here
+  } else if (moduleType === 'system_notice') {
+    // ⚠️ 這裡是「統計」與「佇列」分家的那一行。動它之前先讀
+    //    docs/CONVERSATION-STATS-DEFINITIONS.md（含改動前檢查清單）。
+    // 統計與佇列是兩件事，這裡是分界點：
+    //   initialHandler（統計「誰回答了客人」）→ 上面刻意不記，系統通知不是客服回覆
+    //   status（佇列「還需不需要人處理」）  → 必須移出 open，系統確實已經回應過客人
+    // 先前兩者綁在一起，導致「客人問了、機器人用系統通知回了」的會話永遠掛在未首接。
+    // currentHandler 也不動：沒有人「接手」，只是系統回了一則通知。
+    if (session.status === 'open') {
+      updates.status = 'bot_handling'
+    }
   }
 
   // Record handoff_request on first live_agent entry
-  const isNewHandoff = moduleType === 'live_agent' && !session.hasHandoff
-  if (isNewHandoff) {
+  if (moduleType === 'live_agent' && !session.hasHandoff) {
     updates.hasHandoff = true
     updates.handoffRequestedAt = FieldValue.serverTimestamp()
   }
 
-  await sessionRef.update(updates)
-
-  // Keep status cache in sync after module entry changes session status
-  if (updates.status) {
-    _updateSessionStatusCache(sessionId, updates.status as ConversationStatus)
-  }
-
-  if (moduleType === 'live_agent') {
-    const uid = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, wid), wid)
-    await db
-      .collection('users')
-      .doc(uid)
-      .update({ activeInput: FieldValue.delete() })
-      .catch((e) => console.warn('[session] clear activeInput on live_agent:', e))
-  }
-  await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'entered_module', { moduleType, moduleId })
-  if (isNewHandoff) {
-    await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'handoff_request')
-  }
+  return updates
 }
 
 /**
  * Record a human agent's first reply in a session (after handoff).
  * Idempotent: only fires once per session.
+ *
+ * 「只記一次」的判斷與寫入放在同一個交易裡：先前是分開的兩步，兩個客服同時回話
+ * 兩邊都會通過 humanFirstRepliedAt 的檢查，重複寫一筆 human_first_reply 事件。
  */
 export async function recordHumanFirstReply(sessionId: string, userId: string): Promise<void> {
   const db = getDb()
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
-  const sessionSnap = await sessionRef.get()
-  if (!sessionSnap.exists) return
 
-  const session = sessionSnap.data() as any
-  if (session.humanFirstRepliedAt) return
+  const recorded = await db.runTransaction(async (tx) => {
+    const sessionSnap = await tx.get(sessionRef)
+    if (!sessionSnap.exists) return false
+    const session = sessionSnap.data() as any
+    if (session.humanFirstRepliedAt) return false
 
-  await sessionRef.update({
-    humanFirstRepliedAt: FieldValue.serverTimestamp(),
-    humanLastRepliedAt: FieldValue.serverTimestamp(),
-    status: 'human_handling' as ConversationStatus,
-    currentHandler: 'human' as InitialHandler,
-    currentModuleType: 'live_agent' as ModuleType,
-    lastActivityAt: FieldValue.serverTimestamp(),
+    tx.update(sessionRef, {
+      humanFirstRepliedAt: FieldValue.serverTimestamp(),
+      humanLastRepliedAt: FieldValue.serverTimestamp(),
+      status: 'human_handling' as ConversationStatus,
+      currentHandler: 'human' as InitialHandler,
+      currentModuleType: 'live_agent' as ModuleType,
+      lastActivityAt: FieldValue.serverTimestamp(),
+    })
+    return true
   })
+  if (!recorded) return
+
   _updateSessionStatusCache(sessionId, 'human_handling')
   await recordConversationEvent(sessionId, userId, 'human_first_reply')
 }
@@ -458,58 +532,74 @@ export async function onHumanOutgoingMessage(userId: string, workspaceId: string
   if (!sessionId) return
 
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
-  const sessionSnap = await sessionRef.get()
-  const session = sessionSnap.data()
-  if (!session || session.status === 'closed') return
 
-  // 已正式轉真人（pending_human）等真人首次回覆 → 走既有流程（hasHandoff 已於進 live_agent 時設定）
-  if (session.status === 'pending_human' && !session.humanFirstRepliedAt) {
-    await recordHumanFirstReply(sessionId, userId)
-    return
-  }
+  // 「真人首接 vs 轉真人」的判斷與寫入放在同一個交易裡。先前是分開兩步，
+  // 兩位客服（或客服＋自動流程）同時動作時，兩邊都讀到同一份舊狀態，
+  // 可能把「轉真人」誤記成「真人首接」，或漏掉 hasHandoff。
+  const result = await db.runTransaction(async (tx) => {
+    const sessionSnap = await tx.get(sessionRef)
+    const session = sessionSnap.data()
+    if (!session || session.status === 'closed') return null
 
-  // 已在真人處理中 → 只更新「真人最後回覆時間」（auto-handback 用；與 lastActivityAt 分開，
-  // 因為 lastActivityAt 客人傳訊也會動）
-  if (session.status === 'human_handling') {
-    await sessionRef.update({
+    // 已正式轉真人（pending_human）等真人首次回覆 → 記首次回覆（hasHandoff 已於進 live_agent 時設定）
+    if (session.status === 'pending_human' && !session.humanFirstRepliedAt) {
+      tx.update(sessionRef, {
+        humanFirstRepliedAt: FieldValue.serverTimestamp(),
+        humanLastRepliedAt: FieldValue.serverTimestamp(),
+        status: 'human_handling' as ConversationStatus,
+        currentHandler: 'human' as InitialHandler,
+        currentModuleType: 'live_agent' as ModuleType,
+        lastActivityAt: FieldValue.serverTimestamp(),
+      })
+      return { isFirstHumanReply: true, newHandoff: false }
+    }
+
+    // 已在真人處理中 → 只更新「真人最後回覆時間」（auto-handback 用；與 lastActivityAt 分開，
+    // 因為 lastActivityAt 客人傳訊也會動）
+    if (session.status === 'human_handling') {
+      tx.update(sessionRef, {
+        lastActivityAt: FieldValue.serverTimestamp(),
+        humanLastRepliedAt: FieldValue.serverTimestamp(),
+      })
+      return { isFirstHumanReply: false, newHandoff: false }
+    }
+
+    // 其餘（open / bot_handling）＝ 真人「直接在收件匣接手」。
+    // 依「在他回覆之前有沒有人接過」補記，並把會話轉成真人處理中
+    //（副作用：會停止機器人／AI 對後續訊息自動回覆，避免與真人搶話；閒置後由 auto-handback 交還）：
+    //   - 之前沒人接（unhandled）→ 真人是第一個回覆的人 → 記「真人首接」
+    //   - 機器人／AI 已先接過      → 真人後來接手           → 記「轉真人」
+    const alreadyHandled
+      = session.initialHandler === 'bot' || session.initialHandler === 'ai' || session.initialHandler === 'human'
+    const updates: Record<string, any> = {
+      status: 'human_handling' as ConversationStatus,
+      currentHandler: 'human' as InitialHandler,
+      currentModuleType: 'live_agent' as ModuleType,
       lastActivityAt: FieldValue.serverTimestamp(),
       humanLastRepliedAt: FieldValue.serverTimestamp(),
-    })
-    return
-  }
+    }
+    const isFirstHumanReply = !session.humanFirstRepliedAt
+    if (isFirstHumanReply) updates.humanFirstRepliedAt = FieldValue.serverTimestamp()
 
-  // 其餘（open / bot_handling）＝ 真人「直接在收件匣接手」，先前完全沒被記帳。
-  // 依「在他回覆之前有沒有人接過」補記，並把會話轉成真人處理中
-  //（副作用：會停止機器人／AI 對後續訊息自動回覆，避免與真人搶話；閒置後由 auto-handback 交還）：
-  //   - 之前沒人接（unhandled）→ 真人是第一個回覆的人 → 記「真人首接」
-  //   - 機器人／AI 已先接過      → 真人後來接手           → 記「轉真人」
-  const alreadyHandled
-    = session.initialHandler === 'bot' || session.initialHandler === 'ai' || session.initialHandler === 'human'
-  const updates: Record<string, any> = {
-    status: 'human_handling' as ConversationStatus,
-    currentHandler: 'human' as InitialHandler,
-    currentModuleType: 'live_agent' as ModuleType,
-    lastActivityAt: FieldValue.serverTimestamp(),
-    humanLastRepliedAt: FieldValue.serverTimestamp(),
-  }
-  const isFirstHumanReply = !session.humanFirstRepliedAt
-  if (isFirstHumanReply) updates.humanFirstRepliedAt = FieldValue.serverTimestamp()
+    let newHandoff = false
+    if (!alreadyHandled) {
+      // 真人首接
+      updates.initialHandler = 'human' as InitialHandler
+      updates.initialModuleType = 'live_agent' as ModuleType
+    } else if (!session.hasHandoff) {
+      // 轉真人
+      updates.hasHandoff = true
+      updates.handoffRequestedAt = FieldValue.serverTimestamp()
+      newHandoff = true
+    }
 
-  let newHandoff = false
-  if (!alreadyHandled) {
-    // 真人首接
-    updates.initialHandler = 'human' as InitialHandler
-    updates.initialModuleType = 'live_agent' as ModuleType
-  } else if (!session.hasHandoff) {
-    // 轉真人
-    updates.hasHandoff = true
-    updates.handoffRequestedAt = FieldValue.serverTimestamp()
-    newHandoff = true
-  }
+    tx.update(sessionRef, updates)
+    return { isFirstHumanReply, newHandoff }
+  })
+  if (!result) return
 
-  await sessionRef.update(updates)
   _updateSessionStatusCache(sessionId, 'human_handling')
 
-  if (isFirstHumanReply) await recordConversationEvent(sessionId, userId, 'human_first_reply')
-  if (newHandoff) await recordConversationEvent(sessionId, userId, 'handoff_request')
+  if (result.isFirstHumanReply) await recordConversationEvent(sessionId, userId, 'human_first_reply')
+  if (result.newHandoff) await recordConversationEvent(sessionId, userId, 'handoff_request')
 }

@@ -33,6 +33,7 @@ import {
   ensureConversationSession,
   enterModule,
   getSessionStatusCached,
+  onHumanOutgoingMessage,
   shouldSuppressInboundBotAutomationForSession,
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
@@ -386,6 +387,28 @@ async function claimLeadClaimForApply(
  * follow 事件後，查詢此 userId 已綁定（claimed）但尚未套用的 leadClaim，
  * 依活動快照執行貼標，並選擇性推送機器人模組，最後標記 applied。
  */
+/**
+ * 活動／加好友推播送出後，把該工作區的會話移出「待處理」佇列。
+ *
+ * 記 system_notice 而不是 bot_flow 是刻意的（口徑見 docs/CONVERSATION-STATS-DEFINITIONS.md）：
+ * 這則推播是客人沒問就送的，不是回答，
+ * 記成機器人首接會讓活動流量灌水統計（活動辦越大灌越兇）。system_notice 只動 status、
+ * 不動 initialHandler——客服不會再看到一筆「其實已經推播過」的待處理，統計也保持誠實。
+ *
+ * 這裡自己取 session 是因為 claim 的工作區可能與 follow 事件的工作區不同（見 claimWorkspaceId），
+ * 不能沿用 handleFollowEvent 那一份。ensureConversationSession 是冪等的，常見情況會直接命中快取。
+ */
+async function markClaimPushHandled(userId: string, claimWorkspaceId: string): Promise<void> {
+  try {
+    const sessionId = await ensureConversationSession(userId, claimWorkspaceId, { origin: 'follow' })
+    if (!sessionId) return
+    await enterModule(sessionId, userId, 'system_notice', undefined, claimWorkspaceId)
+  }
+  catch (e) {
+    console.error('[follow] mark claim push handled failed:', e)
+  }
+}
+
 async function applyPendingClaims(
   userId: string,
   workspaceId: string,
@@ -498,6 +521,7 @@ async function applyPendingClaims(
             saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, claimWorkspaceId),
             dispatchPostReplyActions(userId, flow.messages, claimWorkspaceId),
           ])
+          await markClaimPushHandled(userId, claimWorkspaceId)
         }
       }
       catch (e) {
@@ -513,6 +537,7 @@ async function applyPendingClaims(
             pushMessage(userId, actionMessages, claimWorkspaceId),
             saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, claimWorkspaceId),
           ])
+          await markClaimPushHandled(userId, claimWorkspaceId)
         }
         catch (e) {
           console.error('[follow] pushMessage action failed:', e)
@@ -693,6 +718,11 @@ function buildAutoReplyActionMessages(
 
 /**
  * 管理後台「客服預存」：以 push 發送，邏輯對齊自動回覆命中後的模組／文字／網址處理。
+ *
+ * 送出後必須記 onHumanOutgoingMessage——這是真人客服的動作，與收件匣手打訊息
+ * （/api/conversations/[userId]/send）同一件事。先前漏記造成兩個問題：
+ *   1. 會話停在 open/unhandled，客服明明回過了卻一直掛在「未首接」佇列
+ *   2. 更嚴重：狀態沒轉 human_handling → 機器人／AI 不會閉嘴，會跟真人搶話回客人
  */
 export async function pushSupportPresetActionToUser(
   userIdOrDocId: string,
@@ -733,6 +763,7 @@ export async function pushSupportPresetActionToUser(
     await pushMessage(lineUserId, lineMessages, workspaceId)
     saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
     dispatchPostReplyActions(lineUserId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
+    onHumanOutgoingMessage(userIdOrDocId, workspaceId).catch(e => console.error('[supportPreset] onHumanOutgoing error:', e))
     return
   }
 
@@ -742,6 +773,7 @@ export async function pushSupportPresetActionToUser(
   }
   await pushMessage(lineUserId, actionMessages, workspaceId)
   await saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, workspaceId)
+  onHumanOutgoingMessage(userIdOrDocId, workspaceId).catch(e => console.error('[supportPreset] onHumanOutgoing error:', e))
 }
 
 function buildRichMessageSnapshot(item: any) {
@@ -1937,11 +1969,9 @@ async function handleIncomingText(
           await replyMessage(replyToken, lineMessages, wid)
           dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
           saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid).catch(e => console.error('[conv] save error:', e))
-          if (sessionId) {
-            enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
-              console.error('[session] enterModule error:', e),
-            )
-          }
+          enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+            console.error('[session] enterModule error:', e),
+          )
         } else {
           console.warn('[userInput] next flow has no renderable messages, skipping reply:', moduleId)
         }
@@ -2078,11 +2108,9 @@ async function handleIncomingText(
               await replyMessage(replyToken, lineMessages, wid)
               dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
               saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid).catch(e => console.error('[conv] save error:', e))
-              if (sessionId) {
-                enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
-                  console.error('[session] enterModule error:', e),
-                )
-              }
+              enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
+                console.error('[session] enterModule error:', e),
+              )
             }
           } else {
             console.warn(
@@ -2098,11 +2126,9 @@ async function handleIncomingText(
             await replyMessage(replyToken, actionMessages, wid)
             saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, wid).catch(e => console.error('[conv] save error:', e))
             // 純文字/網址回覆也是機器人真實首接(與模組動作同等;先前漏記會被誤計成未首接)
-            if (sessionId) {
-              enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
-                console.error('[session] enterModule error:', e),
-              )
-            }
+            enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
+              console.error('[session] enterModule error:', e),
+            )
           }
         }
       }
@@ -2396,6 +2422,12 @@ async function maybeAckNonTextMessage(
     }
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
       .catch(e => console.error('[non-text-ack] save outgoing error:', e))
+    // 客人傳了圖/影/音/檔（有需求）、機器人真的回了一句 → 記機器人首接。
+    // 記 bot_flow 不記 ai：這是寫死的引導語，不是 AI 作答，記 ai 會灌水 AI 答題數。
+    // 先前漏記會讓「傳圖後只收到引導語」的會話永遠掛在未首接。
+    enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
+      console.error('[non-text-ack] enterModule error:', e),
+    )
   }
   catch (e) {
     console.error('[non-text-ack] failed:', e)
@@ -2495,10 +2527,8 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  if (sessionId) {
-    enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
-      .catch(e => console.error('[ai-fallback] enterModule(live_agent) error:', e))
-  }
+  enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
+    .catch(e => console.error('[ai-fallback] enterModule(live_agent) error:', e))
 
   // 摘要在客人回覆送出後才 await（summarizeHandoffContext 不會 reject、最壞 4s 逾時回空字串）
   const resolvedSummary = params.summary instanceof Promise ? await params.summary : params.summary
@@ -2774,11 +2804,9 @@ async function tryAiFallback(params: {
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 登記「AI 首接」：AI 真的自動回覆了客人才算（草稿模式客人沒收到、不算首接）。
       // 非阻塞——與 bot_flow 自動回覆同慣例（先送客人回覆，統計背景補記）。
-      if (sessionId) {
-        enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
-          console.error('[ai-fallback] enterModule(ai) error:', e),
-        )
-      }
+      enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+        console.error('[ai-fallback] enterModule(ai) error:', e),
+      )
     }
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'answered',
@@ -2838,11 +2866,9 @@ async function tryAiFallback(params: {
       saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 反問澄清也是 AI 對客人的真實回應 → 記 AI 首接(草稿模式已在前面 return,不會到這)
-      if (sessionId) {
-        enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
-          console.error('[ai-fallback] enterModule(ai) error:', e),
-        )
-      }
+      enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+        console.error('[ai-fallback] enterModule(ai) error:', e),
+      )
     }
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'disambiguate',
@@ -2875,11 +2901,9 @@ async function tryAiFallback(params: {
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
       .catch(e => console.error('[ai-fallback] save outgoing error:', e))
     // 「需要幫您轉接嗎?」也是 AI 對客人的真實回應 → 記 AI 首接(此分支已排除草稿模式)
-    if (sessionId) {
-      enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
-        console.error('[ai-fallback] enterModule(ai) error:', e),
-      )
-    }
+    enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+      console.error('[ai-fallback] enterModule(ai) error:', e),
+    )
     // handoffs 已在 answerWithAi 記過；這裡只多送一則確認、不重複計。
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'handoff_confirm',
@@ -3049,6 +3073,13 @@ export async function handlePostbackEvent(
       addTagsToUser(lineUserFirestoreDocId(userId, workspaceId), switchTrigger.tagIds, 'system', `switchMenu:${switchTrigger.targetMenuId}`, workspaceId)
         .catch(e => console.error('[tagging] switch menu tagging failed:', e))
     }
+    // 切選單是「已完成的操作」，不是待回覆的提問：記 system_notice 把會話移出待處理佇列
+    // （只動 status、不動 initialHandler，統計上仍誠實記為沒人回答過）。
+    // 先前少了這一步，客人按一下選單就會在收件匣多出一筆其實不用處理的待辦。
+    // 放在原生切換的 return 之前，兩種切換路徑都要記。
+    enterModule(sessionId, userId, 'system_notice', undefined, workspaceId).catch(e =>
+      console.error('[switchMenu] enterModule error:', e),
+    )
     // 檢查是否為 LINE 原生瞬間切換（richmenuswitch）觸發的事件
     // @ts-ignore: LINE Node SDK's Event type might not perfectly reflect params yet
     const params = (event.postback as any).params
@@ -3111,11 +3142,9 @@ export async function handlePostbackEvent(
         await replyMessage(event.replyToken, lineMessages, workspaceId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
         saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
-        if (sessionId) {
-          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
-            console.error('[session] enterModule error:', e),
-          )
-        }
+        enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
+          console.error('[session] enterModule error:', e),
+        )
       }
     } else {
       console.warn('[webhook] triggerModule target not found or inactive:', moduleId)
@@ -3147,17 +3176,20 @@ export async function handlePostbackEvent(
         await replyMessage(event.replyToken, lineMessages, workspaceId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
         saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
-        if (sessionId) {
-          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
-            console.error('[session] enterModule (fallback) error:', e),
-          )
-        }
+        enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
+          console.error('[session] enterModule (fallback) error:', e),
+        )
       }
     } else {
       const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)
       if (actionMessages.length > 0) {
         await replyMessage(event.replyToken, actionMessages, workspaceId)
         saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
+        // 純文字/網址回覆也是機器人真實首接（與上面的模組分支同等；先前只有模組分支有記，
+        // 這條漏記會讓「按按鈕→收到一段文字」的會話誤掛在未首接）
+        enterModule(sessionId, userId, 'bot_flow', undefined, workspaceId).catch(e =>
+          console.error('[session] enterModule (fallback action) error:', e),
+        )
       }
     }
   }

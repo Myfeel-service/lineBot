@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import type { messagingApi } from '@line/bot-sdk'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
@@ -61,6 +62,9 @@ export default defineEventHandler(async (event) => {
     workspaceId,
     createdAt: FieldValue.serverTimestamp(),
   })
+
+  // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
+  invalidateBrokenModuleRefsCache(workspaceId)
 
   return doc
 })

@@ -10,7 +10,7 @@
  */
 
 import type { Component } from 'vue'
-import { Bell, ChatDotRound, CreditCard, MagicStick, Odometer, Reading, Refresh, Service, Tickets } from '@element-plus/icons-vue'
+import { Bell, ChatDotRound, CreditCard, MagicStick, Odometer, Pointer, Reading, Refresh, Service, Tickets } from '@element-plus/icons-vue'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 
 /**
@@ -117,6 +117,17 @@ const ALERTS: AlertDefinition[] = [
     cta: '去設定通知對象',
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
+  },
+  {
+    // 紅點：客人按下去真的什麼都收不到，屬於「正在影響客人」
+    id: 'brokenModuleButton',
+    icon: Pointer,
+    severity: 'critical',
+    title: '有按鈕按下去沒反應',
+    impact: '選單或圖卡上的按鈕指向已刪除／已停用的模組。客人按了收不到任何訊息，也不會看到錯誤提示。',
+    cta: '去檢查選單按鈕',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/richmenu`,
   },
   {
     id: 'humanBacklog',

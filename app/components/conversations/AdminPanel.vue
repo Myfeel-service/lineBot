@@ -877,7 +877,8 @@ interface MsgItem {
 
 interface SessionTimelineItem {
   id: string
-  type: 'event' | 'message'
+  /** broadcast = 群發標記，後端讀取時才拼進來（不是真的訊息文件），與 event 同樣渲染 */
+  type: 'event' | 'message' | 'broadcast'
   timestamp: any
   label?: string
   direction?: 'incoming' | 'outgoing'
@@ -885,6 +886,7 @@ interface SessionTimelineItem {
   text?: string
   messageType?: string
   payload?: unknown
+  broadcastId?: string
 }
 
 interface SessionPanelMeta {
@@ -1142,7 +1144,8 @@ const sessionToolbarMeta = computed<SessionPanelMeta | null>(() => {
 const chatRows = computed<ChatRow[]>(() => {
   if (selectedSessionId.value) {
     return sessionTimelineItems.value.map((item) => {
-      if (item.type === 'event') {
+      // broadcast 是後端讀取時才拼進來的群發標記（不是真的訊息文件），與事件同樣渲染成一行泡泡
+      if (item.type === 'event' || item.type === 'broadcast') {
         return {
           kind: 'event' as const,
           key: `e-${item.id}`,
@@ -1294,6 +1297,7 @@ async function loadList(reset = true) {
     listLoadingMore.value = false
   }
   await loadSessionCounts()
+  if (reset) void autoFillSidebarList()
 }
 
 async function loadMoreList() {
@@ -1307,6 +1311,24 @@ function onSidebarListScroll() {
   if (!el) return
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80)
     void loadMoreList()
+}
+
+/**
+ * 「還有下一頁、但目前筆數少到撐不出捲軸」＝ 捲動事件永遠不會觸發，清單卡死在幾筆。
+ * 補一輪自動續載，直到撐出捲軸或真的沒有下一頁為止（上限防呆，避免後端 hasMore 永遠為真時空轉）。
+ */
+const AUTO_FILL_MAX_PAGES = 5
+async function autoFillSidebarList() {
+  for (let i = 0; i < AUTO_FILL_MAX_PAGES; i++) {
+    await nextTick()
+    const el = sidebarListEl.value
+    if (!el || !listHasMore.value) return
+    if (el.scrollHeight > el.clientHeight + 40) return
+    const before = activeTab.value === 'all' ? conversations.value.length : sessions.value.length
+    await loadMoreList()
+    const after = activeTab.value === 'all' ? conversations.value.length : sessions.value.length
+    if (after <= before) return
+  }
 }
 
 async function refreshListQuiet() {

@@ -7,6 +7,7 @@ import {
 import { nextFlowSortOrder } from '~~/server/utils/flow-sort'
 import { WORKSPACE_FLOW_MODULE_TYPES, type ModuleType } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
@@ -35,6 +36,9 @@ export default defineEventHandler(async (event) => {
     sortOrder: nextFlowSortOrder(existingRegular),
     createdAt: FieldValue.serverTimestamp(),
   })
+
+  // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
+  invalidateBrokenModuleRefsCache(workspaceId)
 
   return doc
 })

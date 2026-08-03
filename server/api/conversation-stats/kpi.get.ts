@@ -25,6 +25,9 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
   const sessions = snap.docs.map(d => d.data()).filter(s => !isPreInboundFollowSession(s))
 
   const total = sessions.length
+  // ⚠️ 這裡的「未首接」是**統計**口徑（有沒有人回答過客人），與收件匣側欄的
+  //    「未首接」佇列（status==='open'，還需不需要人處理）**刻意不同**，
+  //    兩個數字不一樣不是 bug。改動前先讀 docs/CONVERSATION-STATS-DEFINITIONS.md。
   const botHandled = sessions.filter(s => s.initialHandler === 'bot').length
   const aiHandled = sessions.filter(s => s.initialHandler === 'ai').length
   const humanHandled = sessions.filter(s => s.initialHandler === 'human').length

@@ -1,7 +1,8 @@
 import { getDb } from '~~/server/utils/firebase'
-import { isPreInboundFollowSession, type ConversationStatus, type InitialHandler } from '~~/shared/types/conversation-stats'
+import type { ConversationStatus, InitialHandler } from '~~/shared/types/conversation-stats'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { countOpenQueueSessions, isOpenQueueSession, scanFilteredPage } from '~~/server/utils/conversation-queue'
 
 const PAGE_SIZE = 30
 const CHUNK = 30
@@ -67,6 +68,10 @@ export default defineEventHandler(async (event) => {
   const startMs = startDate ? startDate.getTime() : null
   const endMs = endDate ? endDate.getTime() : null
 
+  // 「未首接」分頁是待處理佇列:活動/加好友出生、客人未開口的 session 不佔佇列
+  // (客人開口後 hasInbound=true 自然回歸;「全部」分頁仍看得到)
+  const isOpenQueue = status === 'open'
+
   // Firestore composite indexes are painful during local dev and can break admin pages.
   // Strategy: try the "ideal" query first; if it fails with FAILED_PRECONDITION (missing index),
   // fall back to a safe query (status-only) and do the rest in memory.
@@ -83,9 +88,7 @@ export default defineEventHandler(async (event) => {
     const filtered = safeSnap.docs
       .map(d => ({ id: d.id, data: d.data() as any }))
       .filter(({ data }) => {
-        // 「未首接」分頁(status='open')是待處理佇列:活動/加好友進來、客人未開口的
-        // session 不佔用佇列(客人開口後 hasInbound=true 自然回歸;「全部」分頁仍看得到)
-        if (status === 'open' && isPreInboundFollowSession(data)) return false
+        if (isOpenQueue && !isOpenQueueSession(data)) return false
         if (initialHandler !== 'all' && data.initialHandler !== initialHandler) return false
         if (hasHandoff !== undefined && Boolean(data.hasHandoff) !== hasHandoff) return false
         const t = toMillis(data.lastActivityAt)
@@ -151,39 +154,39 @@ export default defineEventHandler(async (event) => {
 
     ref = ref.orderBy('lastActivityAt', 'desc')
 
-    const countSnap = await ref.count().get()
-    const total = countSnap.data().count
+    let docs: FirebaseFirestore.QueryDocumentSnapshot[]
+    let total: number
+    let hasMore: boolean
+    let truncated = false
 
-    if (offset > 0) {
-      // Use offset pagination for simplicity (Firestore supports up to 1000)
-      ref = ref.offset(offset)
+    if (isOpenQueue) {
+      // 過濾在分頁之前:每頁都是實打實的 limit 筆,總數才對得上列表
+      const scanned = await scanFilteredPage<FirebaseFirestore.QueryDocumentSnapshot>(
+        ref, isOpenQueueSession, offset, limit,
+      )
+      docs = scanned.docs
+      hasMore = scanned.hasMore
+      truncated = scanned.truncated
+      total = (startDate || endDate)
+        // 帶日期時算不出精確佇列數(範圍+等值需複合索引),用已載入筆數當下限,不假裝知道
+        ? offset + docs.length + (hasMore ? 1 : 0)
+        : await countOpenQueueSessions(db, workspaceId)
     }
-    ref = ref.limit(limit)
+    else {
+      const countSnap = await ref.count().get()
+      total = countSnap.data().count
 
-    const snap = await ref.get()
-    if (snap.empty) return { sessions: [], total, page, limit, hasMore: false }
-
-    // 「未首接」分頁:剔除活動/加好友出生、客人未開口的 session(佇列語意,見 fallback 同註解)。
-    // 計數用等值查詢扣除(Firestore 等值可自動合併單欄索引);帶日期篩選時範圍+等值需複合索引,
-    // 扣不到就不扣——頁面數字寧可偏多,不冒缺索引直接炸頁的險。
-    let docs = snap.docs
-    let adjustedTotal = total
-    if (status === 'open') {
-      docs = docs.filter(d => !isPreInboundFollowSession(d.data() as any))
-      if (!startDate && !endDate) {
-        try {
-          const pre = await db.collection('conversationSessions')
-            .where('workspaceId', '==', workspaceId)
-            .where('status', '==', 'open')
-            .where('hasInbound', '==', false)
-            .count().get()
-          adjustedTotal = Math.max(0, total - pre.data().count)
-        }
-        catch (e: any) {
-          console.warn('[sessions.get] pre-inbound subtract failed:', String(e?.message).slice(0, 120))
-        }
+      let pageRef = ref
+      if (offset > 0) {
+        // Use offset pagination for simplicity (Firestore supports up to 1000)
+        pageRef = pageRef.offset(offset)
       }
+      const snap = await pageRef.limit(limit).get()
+      docs = snap.docs
+      hasMore = offset + docs.length < total
     }
+
+    if (docs.length === 0) return { sessions: [], total, page, limit, hasMore: false, truncated }
 
     const rawUserIds = docs.map(d => String(d.data().userId || '')).filter(Boolean)
     const fsUserIds = uniqueFirestoreUserIds(rawUserIds, workspaceId)
@@ -196,8 +199,7 @@ export default defineEventHandler(async (event) => {
 
     const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, workspaceId))
 
-    const loaded = offset + sessions.length
-    return { sessions, total: adjustedTotal, page, limit, hasMore: loaded < adjustedTotal }
+    return { sessions, total, page, limit, hasMore, truncated }
   }
   catch (e: any) {
     const msg = String(e?.message || '')

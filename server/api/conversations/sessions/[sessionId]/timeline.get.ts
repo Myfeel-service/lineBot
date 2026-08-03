@@ -7,7 +7,10 @@ import {
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
-type TimelineItemType = 'message' | 'event'
+type TimelineItemType = 'message' | 'event' | 'broadcast'
+
+/** 一場會話最多顯示幾顆群發泡泡（時間軸不是推播報表，看到有發過就夠） */
+const BROADCAST_JOIN_LIMIT = 20
 
 interface TimelineItem {
   id: string
@@ -25,6 +28,52 @@ interface TimelineItem {
   moduleType?: ModuleType
   moduleId?: string
   label?: string
+  // broadcast fields（讀取時才拼進來，見 loadBroadcastItems）
+  broadcastId?: string
+}
+
+/**
+ * 群發推播：讀取時才拼進時間軸，**不逐筆寫入對話紀錄**。
+ *
+ * 為什麼不寫：一次三千人的群發就是三千筆重複內容，而且寫成 outgoing 訊息會把
+ * 三千個人的 lastMessageAt 同時推到現在——整個「全部」收件匣排序會被洗掉一次，
+ * 「已讀」推定也跟著失準。收件人名單本來就完整存在 broadcasts.audienceSnapshot
+ * .resolvedUserIds，直接反查即可，零額外寫入、內容只存一份。
+ *
+ * 缺索引或查詢失敗時回空陣列：群發泡泡不顯示，其餘時間軸照常，不讓整頁掛掉。
+ * 規模上限：收件人名單是單一文件內的陣列，Firestore 單文件 1MB，約兩萬多人會頂到
+ * （這個限制在寫入端本來就存在，不是這裡帶來的）。
+ */
+async function loadBroadcastItems(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+  userDocId: string,
+  openedAt: Date,
+  closedAt: Date | null,
+): Promise<TimelineItem[]> {
+  try {
+    let ref = db.collection('broadcasts')
+      .where('workspaceId', '==', workspaceId)
+      .where('audienceSnapshot.resolvedUserIds', 'array-contains', userDocId)
+      .where('completedAt', '>=', openedAt) as FirebaseFirestore.Query
+    if (closedAt) ref = ref.where('completedAt', '<=', closedAt)
+
+    const snap = await ref.limit(BROADCAST_JOIN_LIMIT).get()
+    return snap.docs
+      // 全員送失敗的推播沒人收到，不該出現在客人的時間軸
+      .filter(d => Number(d.data().sentCount ?? 0) > 0)
+      .map(d => ({
+        id: `bc-${d.id}`,
+        type: 'broadcast' as TimelineItemType,
+        timestamp: d.data().completedAt,
+        label: `已發送群發：${String(d.data().name || '未命名推播').slice(0, 40)}`,
+        broadcastId: d.id,
+      }))
+  }
+  catch (e: any) {
+    console.warn('[timeline] broadcast join skipped:', String(e?.message ?? e).slice(0, 200))
+    return []
+  }
 }
 
 function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType): string {
@@ -130,6 +179,15 @@ export default defineEventHandler(async (event) => {
       label: eventLabel(e.eventType, e.moduleType),
     })
   }
+
+  // 群發推播（讀取時才拼，零寫入）
+  items.push(...await loadBroadcastItems(
+    db,
+    workspaceId,
+    convDocId,
+    openedAt,
+    session.closedAt ? closedAt : null,
+  ))
 
   for (const d of messageDocs) {
     const m = d.data()

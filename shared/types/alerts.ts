@@ -31,6 +31,8 @@ export type WorkspaceAlertId =
   | 'handoffNotifyMissing'
   /** 客人在等真人、或對話卡在「真人處理中」太久 */
   | 'humanBacklog'
+  /** 選單／圖卡上有按鈕指向已刪除或已停用的模組，客人按了什麼都不會收到 */
+  | 'brokenModuleButton'
 
 /**
  * active = 現在有這個問題；clear = 檢查過沒問題；

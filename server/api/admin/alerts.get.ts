@@ -5,6 +5,7 @@ import { cleanReason, humanizeHours } from '~~/server/utils/alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getQuotaAnswered } from '~~/server/utils/ai-usage'
+import { findBrokenModuleRefs } from '~~/server/utils/broken-module-refs'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getDb } from '~~/server/utils/firebase'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
@@ -238,6 +239,20 @@ export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse
           const cfg = aiSettings.handoffNotify
           const off = !cfg?.enabled || !(cfg?.lineUserIds?.length)
           return off ? { active: true } : { active: false }
+        }),
+        probe('brokenModuleButton', async () => {
+          // 靜態檢查，不是統計「誰按到了」：在客人踩到之前就報。
+          // 結果有 5 分鐘快取，輪詢不會每次整批讀 flows + richmenus（見 broken-module-refs）
+          const broken = await findBrokenModuleRefs(db, wid)
+          if (!broken.length) return { active: false }
+          const first = broken[0]!
+          const where = first.sourceKind === 'richmenu' ? '選單' : '模組'
+          const why = first.reason === 'missing' ? '模組已被刪除' : '模組已停用'
+          return {
+            active: true,
+            count: broken.length,
+            detail: `${where}「${first.sourceLabel}」的按鈕指向的${why}`,
+          }
         }),
       ]
     : []
