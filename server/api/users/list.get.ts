@@ -1,13 +1,20 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 const CHUNK = 30
 const FETCH_BATCH = 120
 const MAX_SEARCH_SCAN = 5000
 
 type UserBase = {
+  /** Firestore doc id（{workspaceId}_{lineUserId}）——用於本系統的讀寫 */
   id: string
+  /**
+   * 純 LINE userId（Uxxx…）。呼叫 LINE API（推播、轉真人通知）只認這個，
+   * 直接把 id 丟給 LINE 會被判成無效 userId。
+   */
+  lineUserId: string
   displayName: string
   pictureUrl: string
   createdAt: unknown
@@ -149,6 +156,8 @@ async function fetchUserPage(opts: {
       if (d.data().isBlocked === true) continue
       const user: UserBase = {
         id: d.id,
+        lineUserId: String(d.data().lineUserId || '').trim()
+          || lineUserIdFromFirestoreDocId(d.id, workspaceId),
         displayName: d.data().displayName ?? d.id,
         pictureUrl: d.data().pictureUrl ?? '',
         createdAt: d.data().createdAt ?? null,
@@ -206,6 +215,8 @@ async function countMatchingUsers(opts: {
       if (d.data().isBlocked === true) continue
       const user: UserBase = {
         id: d.id,
+        lineUserId: String(d.data().lineUserId || '').trim()
+          || lineUserIdFromFirestoreDocId(d.id, workspaceId),
         displayName: d.data().displayName ?? d.id,
         pictureUrl: d.data().pictureUrl ?? '',
         createdAt: d.data().createdAt ?? null,

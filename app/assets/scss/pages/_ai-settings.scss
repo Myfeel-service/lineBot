@@ -180,10 +180,58 @@
   width: 140px;
 }
 
+.ai-notify-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-notify-option-avatar,
+.ai-notify-option-avatar-placeholder {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--el-fill-color-light);
+}
+
+.ai-notify-option-avatar {
+  object-fit: cover;
+}
+
+// 沒有頭像的成員要留同寬佔位，否則整列名字會比其他列往左跑 32px
+.ai-notify-option-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+// 名字優先吃寬度；userId 是輔助資訊，該讓它先被截斷
+.ai-notify-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ai-notify-option-id {
-  float: right;
-  margin-left: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 12px;
   font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+
+.ai-notify-empty {
+  margin: 0;
+  padding: 12px 20px;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--el-text-color-secondary);
 }
 

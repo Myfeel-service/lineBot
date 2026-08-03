@@ -206,14 +206,15 @@
                 filterable
                 remote
                 allow-create
-                default-first-option
+                :default-first-option="notifyQuery.length > 0"
                 :remote-method="searchNotifyUsers"
                 :loading="notifySearchLoading"
                 :multiple-limit="10"
                 :disabled="!form.handoffNotify.enabled"
-                placeholder="輸入暱稱搜尋會員…"
+                placeholder="點一下挑選,或輸入暱稱搜尋…"
                 class="control-full"
                 @change="syncNotifyDisplayNames"
+                @visible-change="onNotifyDropdownVisible"
               >
                 <el-option
                   v-for="opt in notifyUserOptions"
@@ -221,13 +222,31 @@
                   :value="opt.id"
                   :label="opt.name"
                 >
-                  <span>{{ opt.name }}</span>
-                  <span class="ai-notify-option-id">{{ opt.id }}</span>
+                  <span class="ai-notify-option">
+                    <img
+                      v-if="opt.picture"
+                      :src="opt.picture"
+                      class="ai-notify-option-avatar"
+                      alt=""
+                    >
+                    <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
+                    <span class="ai-notify-option-name">{{ opt.name }}</span>
+                    <span class="ai-notify-option-id">{{ opt.id }}</span>
+                  </span>
                 </el-option>
+                <template #empty>
+                  <p class="ai-notify-empty">
+                    {{ notifySearchLoading
+                      ? '搜尋中…'
+                      : notifyQuery
+                        ? '找不到這個暱稱的會員'
+                        : '還沒有人加這個官方帳號為好友,可直接貼上 U 開頭的 LINE userId' }}
+                  </p>
+                </template>
               </el-select>
               <p class="ai-section-hint">
-                輸入客服人員在 LINE 上的暱稱搜尋(對方需已加這個官方帳號好友並傳過訊息);
-                也可直接貼上 U 開頭的 LINE userId 後按 Enter。
+                點一下從會員清單挑選(預設列出最近加入的好友),或輸入暱稱搜尋
+                (對方需已加這個官方帳號好友並傳過訊息);也可直接貼上 U 開頭的 LINE userId 後按 Enter。
               </p>
             </div>
             <div class="admin-field-group">
@@ -563,7 +582,7 @@
 </template>
 
 <script setup lang="ts">
-import { CircleCheck, CircleCheckFilled, InfoFilled } from '@element-plus/icons-vue'
+import { CircleCheck, CircleCheckFilled, InfoFilled, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { buildDefaultAiSettings } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
@@ -777,38 +796,83 @@ async function loadStatus() {
   }
 }
 
-// ── 通知對象選人器:用會員暱稱搜尋,免去手抄 LINE userId ──
+// ── 通知對象選人器:下拉直接挑會員,也能用暱稱搜尋,免去手抄 LINE userId ──
+/** id 一律是純 LINE userId（Uxxx…）——存進設定後要直接餵給 LINE 推播，不能用 Firestore doc id */
+type NotifyUser = { id: string; displayName: string; pictureUrl: string }
+
 const notifySearchLoading = ref(false)
-const notifySearchResults = ref<Array<{ id: string; displayName: string }>>([])
-// userId → 暱稱(已儲存的 displayNames + 搜尋結果累積),讓已選 tag 顯示名字而不是 Uxxxx
+const notifySearchResults = ref<NotifyUser[]>([])
+/** 沒打字時的預設清單(最近加入的好友)——下拉一點開就有人可選,不必先猜暱稱 */
+const notifyDefaultUsers = ref<NotifyUser[]>([])
+const notifyDefaultLoaded = ref(false)
+const notifyQuery = ref('')
+// userId → 暱稱/頭像(已儲存的 displayNames + 搜尋結果累積),讓已選 tag 顯示名字而不是 Uxxxx
 const knownUserNames = ref<Record<string, string>>({})
+const knownUserPictures = ref<Record<string, string>>({})
 
 const notifyUserOptions = computed(() => {
   const map = new Map<string, string>()
   for (const uid of form.value.handoffNotify.lineUserIds) {
     map.set(uid, knownUserNames.value[uid] || uid)
   }
-  for (const u of notifySearchResults.value) {
+  for (const u of (notifyQuery.value ? notifySearchResults.value : notifyDefaultUsers.value)) {
     map.set(u.id, u.displayName || u.id)
   }
-  return [...map.entries()].map(([id, name]) => ({ id, name }))
+  return [...map.entries()].map(([id, name]) => ({
+    id,
+    name,
+    picture: knownUserPictures.value[id] || '',
+  }))
 })
+
+async function fetchNotifyUsers(search: string): Promise<NotifyUser[]> {
+  const qs = search ? `search=${encodeURIComponent(search)}&limit=20` : 'limit=20'
+  const res = await apiFetch<{ users: (NotifyUser & { lineUserId?: string })[] }>(`/api/users/list?${qs}`)
+  // 取 lineUserId 而非 doc id：doc id 是 {workspaceId}_{lineUserId}，餵給 LINE 會被判無效、通知靜默失敗
+  const users = res.users.map(u => ({
+    id: String(u.lineUserId || '').trim(),
+    displayName: u.displayName,
+    pictureUrl: u.pictureUrl ?? '',
+  })).filter(u => u.id)
+  for (const u of users) {
+    if (u.displayName) knownUserNames.value[u.id] = u.displayName
+    if (u.pictureUrl) knownUserPictures.value[u.id] = u.pictureUrl
+  }
+  return users
+}
+
+/** 下拉展開時抓一次預設清單;失敗就放掉旗標,下次展開再試,不影響打字搜尋 */
+async function ensureNotifyDefaultUsers() {
+  if (notifyDefaultLoaded.value) return
+  notifyDefaultLoaded.value = true
+  notifySearchLoading.value = true
+  try {
+    notifyDefaultUsers.value = await fetchNotifyUsers('')
+  }
+  catch {
+    notifyDefaultLoaded.value = false
+  }
+  finally {
+    notifySearchLoading.value = false
+  }
+}
+
+function onNotifyDropdownVisible(visible: boolean) {
+  if (visible) void ensureNotifyDefaultUsers()
+}
 
 async function searchNotifyUsers(query: string) {
   const q = query.trim()
+  notifyQuery.value = q
+  // 清空關鍵字時退回預設清單,而不是變成空白下拉
   if (!q) {
     notifySearchResults.value = []
+    await ensureNotifyDefaultUsers()
     return
   }
   notifySearchLoading.value = true
   try {
-    const res = await apiFetch<{ users: Array<{ id: string; displayName: string }> }>(
-      `/api/users/list?search=${encodeURIComponent(q)}&limit=20`,
-    )
-    notifySearchResults.value = res.users.map(u => ({ id: u.id, displayName: u.displayName }))
-    for (const u of res.users) {
-      if (u.displayName) knownUserNames.value[u.id] = u.displayName
-    }
+    notifySearchResults.value = await fetchNotifyUsers(q)
   }
   catch {
     notifySearchResults.value = []

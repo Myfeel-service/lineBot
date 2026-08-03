@@ -169,6 +169,11 @@ export interface BroadcastDoc {
    * false 時無法以 Insight 查開封數（可能曾 400 改為無彙總重試）。
    */
   lineInsightAggregationApplied?: boolean | null
+  /**
+   * 訊息已送出、但發送後的記帳（deliveries／最終統計）未寫完時的原因。
+   * status 仍照 LINE 實際送達結果寫；此欄位供報表提示紀錄可能不完整。
+   */
+  postSendError?: string | null
   scheduleAt: Timestamp | null
   startedAt: Timestamp | null
   completedAt: Timestamp | null
@@ -185,14 +190,21 @@ export interface BroadcastDoc {
 // ═══════════════════════════════════════════════════════════════════
 //  Sub-collection: broadcasts/{campaignId}/deliveries
 //  Doc ID: uuid
+//
+//  只記「沒收到的人」（deliveryStatus='failed'），成功者不逐筆記錄：
+//  受眾名單已存在 broadcasts.audienceSnapshot.resolvedUserIds，
+//  成功＝名單減掉這裡的失敗名單；且 LINE 的「成功」只代表它收下訊息，
+//  不代表客人看到（那是報表的開封數）。全員送達時本子集合不會有任何文件。
+//  2026-08 之前的推播仍留有 'sent' 文件，讀取端一律只查 'failed'。
 // ═══════════════════════════════════════════════════════════════════
 
 export type DeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped'
 
 export interface BroadcastDeliveryDoc {
   campaignId: string
-  /** Firestore users 集合的 doc ID（同 LINE userId） */
+  /** Firestore users 集合的 doc ID（{workspaceId}_{lineUserId}） */
   userId: string
+  /** 新寫入一律是 'failed'；其餘值只存在於舊資料 */
   deliveryStatus: DeliveryStatus
   failureReason: string | null
   /** 寫入時為 FieldValue（serverTimestamp），讀出為 Timestamp */

@@ -41,6 +41,8 @@ export async function executeBroadcastSend(
   totalCount: number
   sentCount: number
   failedCount: number
+  /** 訊息已送出、但發送後記帳未寫完時的說明（非發送失敗，呼叫端不該報「發送失敗」） */
+  postSendError: string | null
 }> {
   const source = options.source ?? 'manual'
   const runtimeConfig = useRuntimeConfig()
@@ -57,6 +59,30 @@ export async function executeBroadcastSend(
 
   // ── 解析受眾 ──────────────────────────────────────────────────────
   let resolvedUserIds: string[] = []
+
+  /**
+   * LINE 已回應後才會被填上：代表「訊息確實已經送出」。
+   * 之後任何一步（deliveries 記錄、最終統計）掛掉,都不可再把整筆標成 failed——
+   * 否則後台顯示「失敗／成功 0」,老闆會誤以為客人沒收到並重發。
+   */
+  type LineOutcome = {
+    successCount: number
+    failedCount: number
+    allFailed: boolean
+    aggregationUnit: string | null
+    aggregationApplied: boolean
+  }
+  let lineOutcome: LineOutcome | null = null
+
+  /** 發送結果的唯一寫法：三處寫入（checkpoint／最終／catch）都由此產生，避免欄位各寫一套而漂移 */
+  const statsPatchFor = (o: LineOutcome) => ({
+    status: o.allFailed ? 'failed' as const : 'completed' as const,
+    sentCount: o.successCount,
+    failedCount: o.failedCount,
+    completedAt: FieldValue.serverTimestamp(),
+    lineAggregationUnit: o.aggregationUnit,
+    lineInsightAggregationApplied: o.aggregationApplied,
+  })
 
   try {
     if (data.audienceSource.type === 'all') {
@@ -148,68 +174,118 @@ export async function executeBroadcastSend(
       console.warn('[broadcast/send] LINE 未套用 customAggregationUnits，開封數將無法從 LINE Insight 取得')
     }
 
-    // ── 寫入 deliveries 子集合 ────────────────────────────────────────
-    const BATCH_LIMIT = 400
-    let batch = db.batch()
-    let opsInBatch = 0
-
-    const flushBatch = async () => {
-      if (opsInBatch > 0) {
-        await batch.commit()
-        batch = db.batch()
-        opsInBatch = 0
-      }
-    }
-
-    const failedSet = new Set(failedIds)
-    const sentAt = FieldValue.serverTimestamp()
-
-    for (const r of recipients) {
-      const isFailed = failedSet.has(r.lineUserId)
-      const deliveryDoc: BroadcastDeliveryDoc = {
-        campaignId: id,
-        userId: r.docId,
-        deliveryStatus: isFailed ? 'failed' : 'sent',
-        failureReason: isFailed ? 'LINE multicast failed' : null,
-        sentAt: isFailed ? null : sentAt,
-        createdAt: sentAt,
-      }
-
-      const deliveryRef = db.collection('broadcasts').doc(id).collection('deliveries').doc(uuidv4())
-      batch.set(deliveryRef, deliveryDoc)
-      opsInBatch++
-
-      if (opsInBatch >= BATCH_LIMIT) await flushBatch()
-    }
-
-    await flushBatch()
-
-    // ── 更新 campaign 最終統計 ────────────────────────────────────────
-    const completedAt = FieldValue.serverTimestamp()
-    await ref.update({
-      status: failedIds.length === resolvedUserIds.length ? 'failed' : 'completed',
-      sentCount: successCount,
+    lineOutcome = {
+      successCount,
       failedCount: failedIds.length,
-      completedAt,
-      updatedAt: completedAt,
-      lineAggregationUnit: lineAggregationApplied ? lineUnit : null,
-      lineInsightAggregationApplied: lineAggregationApplied,
+      // 直接看有沒有人收到。failedIds 只會來自實際送出的 lineUserIds，
+      // 拿它比 resolvedUserIds（過濾無效收件人「之前」的人數）會讓「全退回」永遠判不成立
+      allFailed: successCount === 0,
+      aggregationUnit: lineAggregationApplied ? lineUnit : null,
+      aggregationApplied: lineAggregationApplied,
+    }
+
+    // ── 送出後立刻落地發送結果（checkpoint）──────────────────────────
+    // LINE 已回應，此刻起結果就是定局：狀態與人數一次寫死，
+    // 後面記帳（deliveries、postSendError）再怎麼掛，都不會讓報表歸零或卡在 processing
+    await ref.update({
+      ...statsPatchFor(lineOutcome),
+      updatedAt: FieldValue.serverTimestamp(),
+    }).catch((e) => {
+      console.error('[broadcast/send] 發送結果 checkpoint 寫入失敗（訊息已送出）:', e)
+    })
+
+    // ── 只記「沒收到的人」到 deliveries ───────────────────────────────
+    // 成功者不逐筆記錄：受眾名單已存在 audienceSnapshot，成功＝名單減掉失敗名單，
+    // 且 LINE 的「成功」只代表它收下訊息、不代表客人看到（那是報表的開封數）。
+    // 全員送達時這裡一筆都不寫，直接消掉了 3000＋人推播最容易逾時的一步。
+    let postSendError: string | null = null
+    const failedSet = new Set(failedIds)
+    const failedRecipients = recipients.filter(r => failedSet.has(r.lineUserId))
+
+    if (failedRecipients.length) {
+      try {
+        const BATCH_LIMIT = 400
+        let batch = db.batch()
+        let opsInBatch = 0
+
+        const flushBatch = async () => {
+          if (opsInBatch > 0) {
+            await batch.commit()
+            batch = db.batch()
+            opsInBatch = 0
+          }
+        }
+
+        const createdAt = FieldValue.serverTimestamp()
+
+        for (const r of failedRecipients) {
+          const deliveryDoc: BroadcastDeliveryDoc = {
+            campaignId: id,
+            userId: r.docId,
+            deliveryStatus: 'failed',
+            // LINE 是一批最多 500 人一起回覆結果，拿不到每個人各自的原因
+            failureReason: 'LINE multicast failed',
+            sentAt: null,
+            createdAt,
+          }
+
+          const deliveryRef = db.collection('broadcasts').doc(id).collection('deliveries').doc(uuidv4())
+          batch.set(deliveryRef, deliveryDoc)
+          opsInBatch++
+
+          if (opsInBatch >= BATCH_LIMIT) await flushBatch()
+        }
+
+        await flushBatch()
+      }
+      catch (e) {
+        postSendError = `沒收到的名單未寫完：${e instanceof Error ? e.message : String(e)}`
+        console.error('[broadcast/send] 失敗名單寫入失敗（訊息已送出，不影響推播結果）:', e)
+      }
+    }
+
+    // ── 補記 postSendError（checkpoint 若失敗，這裡順便再寫一次結果）──
+    await ref.update({
+      ...statsPatchFor(lineOutcome),
+      postSendError,
+      updatedAt: FieldValue.serverTimestamp(),
     })
 
     return {
       success: true,
       campaignId: id,
       totalCount: resolvedUserIds.length,
-      sentCount: successCount,
-      failedCount: failedIds.length,
+      sentCount: lineOutcome.successCount,
+      failedCount: lineOutcome.failedCount,
+      postSendError,
     }
   }
   catch (e) {
     const failedAt = FieldValue.serverTimestamp()
-    await ref.update({
-      status: 'failed',
-      updatedAt: failedAt,
-    }).catch(() => {})
+    const reason = e instanceof Error ? e.message : String(e)
+
+    // lineOutcome 有值＝LINE 已收下訊息，壞掉的只是後續記帳。
+    // 這種情形不可對外報「發送失敗」——否則老闆會以為客人沒收到而重發。
+    if (lineOutcome) {
+      const postSendError = `訊息已送出，但發送後的統計未寫完：${reason}`
+      console.error('[broadcast/send] 發送後記帳中斷（訊息已送出）:', e)
+      await ref.update({
+        ...statsPatchFor(lineOutcome),
+        postSendError,
+        updatedAt: failedAt,
+      }).catch(() => {})
+      return {
+        success: true,
+        campaignId: id,
+        totalCount: resolvedUserIds.length,
+        sentCount: lineOutcome.successCount,
+        failedCount: lineOutcome.failedCount,
+        postSendError,
+      }
+    }
+
+    // 還沒送出就失敗：確實是發送失敗
+    await ref.update({ status: 'failed', updatedAt: failedAt }).catch(() => {})
     throw e
   }
 }

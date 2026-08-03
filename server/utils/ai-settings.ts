@@ -55,6 +55,21 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 }
 
 /**
+ * 收斂成純 LINE userId。
+ * users 的 Firestore doc id 是 {workspaceId}_{lineUserId}，若整串被存進通知名單，
+ * pushMessage 會被 LINE 判成無效 userId 而靜默失敗——通知永遠不會到。
+ * 純 LINE userId 不含底線，因此可安全地取最後一段來自我修正。
+ */
+const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/i
+
+function normalizeLineUserId(value: unknown): string {
+  const s = String(value ?? '').trim()
+  if (!s.includes('_')) return s
+  const tail = s.slice(s.lastIndexOf('_') + 1)
+  return LINE_USER_ID_RE.test(tail) ? tail : s
+}
+
+/**
  * 取得工作區設定。若 doc 不存在則回傳預設值（不寫入）。
  */
 export async function getAiSettings(workspaceId: string, db: Firestore = getDb()): Promise<AiSettingsDoc> {
@@ -109,16 +124,23 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       onExceed: quotaStrategy,
     },
     handoffNotify: (() => {
-      const lineUserIds: string[] = Array.isArray(raw?.handoffNotify?.lineUserIds)
-        ? raw.handoffNotify.lineUserIds.map((v: unknown) => String(v).trim()).filter(Boolean).slice(0, 10)
+      // 保留原字串是為了 displayNames 還查得到（舊前端可能以 doc id 當 key）
+      const rawIds: string[] = Array.isArray(raw?.handoffNotify?.lineUserIds)
+        ? raw.handoffNotify.lineUserIds.map((v: unknown) => String(v ?? '').trim()).filter(Boolean).slice(0, 10)
         : []
+      const pairs = rawIds
+        .map(original => ({ original, id: normalizeLineUserId(original) }))
+        .filter(p => Boolean(p.id))
+      const lineUserIds = [...new Set(pairs.map(p => p.id))]
+
       // 顯示名稱快取只保留還在名單上的 user,避免 doc 越長越肥
       const displayNames: Record<string, string> = {}
       const rawNames = raw?.handoffNotify?.displayNames
       if (rawNames && typeof rawNames === 'object') {
-        for (const uid of lineUserIds) {
-          const name = String(rawNames[uid] ?? '').trim()
-          if (name) displayNames[uid] = name.slice(0, 100)
+        for (const { original, id } of pairs) {
+          if (displayNames[id]) continue
+          const name = String(rawNames[id] ?? rawNames[original] ?? '').trim()
+          if (name) displayNames[id] = name.slice(0, 100)
         }
       }
       return {

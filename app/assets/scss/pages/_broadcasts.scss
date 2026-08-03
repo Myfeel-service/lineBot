@@ -146,3 +146,56 @@
   line-height: 1.45;
   margin: 0;
 }
+
+.bc-failed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.bc-failed-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.375rem 0.625rem;
+
+  & + & {
+    border-top: 1px solid var(--border);
+  }
+}
+
+// 名字優先吃寬度，userId 是輔助資訊、該讓它先被截斷
+.bc-failed-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+
+.bc-failed-id {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+// 「訊息已送出、不用重發」是這面板上最該被看到的一句，不能用淺灰小字說
+.bc-postsend-note {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border-left: 3px solid var(--el-color-warning);
+  border-radius: 4px;
+  background: var(--el-color-warning-light-9);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}

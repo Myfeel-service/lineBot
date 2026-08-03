@@ -90,7 +90,14 @@
       "Bash(sed -n '/export function cleanProductLabel/,/^}/p' server/utils/ai-answer.ts)",
       "Bash(sed -n '/export function buildNamedGuessConfirm/,/^}/p' server/utils/ai-answer.ts)",
       "Bash(pkill -f \"nuxt dev --port 3111\")",
-      "Bash(cp \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/002ea911-803c-48a4-b670-bcff563c6899/scratchpad/repro.test.ts\" server/utils/zz-repro.test.ts && npx vitest run server/utils/zz-repro.test.ts 2>&1 | tail -40)"
+      "Bash(cp \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/002ea911-803c-48a4-b670-bcff563c6899/scratchpad/repro.test.ts\" server/utils/zz-repro.test.ts && npx vitest run server/utils/zz-repro.test.ts 2>&1 | tail -40)",
+      "Bash(node repair-broadcasts.mjs /Users/kevin/Documents/Github/linebot/.env_myfeel)",
+      "Bash(node inspect2.mjs)",
+      "Bash(node repair-broadcasts.mjs /Users/kevin/Documents/Github/linebot/.env_splash)",
+      "Bash(node inspect-broadcast.mjs)",
+      "Bash(node check-userids.mjs)",
+      "Bash(node count-deliveries.mjs)",
+      "Bash(node verify-failed-list.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

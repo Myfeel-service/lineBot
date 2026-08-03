@@ -214,6 +214,9 @@
             <el-button size="small" @click="loadReport">重新整理</el-button>
           </div>
           <div class="card-section-stack">
+            <p v-if="report.postSendError" class="bc-postsend-note">
+              訊息已經送出去了，不必重發。只是送出後在整理紀錄時中斷，「每個人收到沒有」的逐筆明細可能不完整；下面的發送總數、成功、失敗數字仍然是準的。
+            </p>
             <div class="bc-stats-row">
               <div class="bc-stat-box">
                 <div class="bc-stat-label">發送總數</div>
@@ -235,6 +238,18 @@
                 <div class="bc-stat-label">追蹤連結點擊</div>
                 <div class="bc-stat-value">{{ report.linkClickCount ?? report.clickCount }}</div>
               </div>
+            </div>
+            <div v-if="report.failedRecipients?.length" class="admin-field-group">
+              <AdminFieldLabel text="沒收到的人（多半是對方已封鎖官方帳號，可個別跟進）" tight />
+              <ul class="bc-failed-list">
+                <li v-for="u in report.failedRecipients" :key="u.lineUserId" class="bc-failed-item">
+                  <span class="bc-failed-name">{{ u.displayName }}</span>
+                  <span class="bc-failed-id">{{ u.lineUserId }}</span>
+                </li>
+              </ul>
+              <p v-if="report.failedRecipientsTruncated" class="bc-insight-warn text-muted">
+                共 {{ report.failedCount }} 位沒收到，這裡只列出前 {{ report.failedRecipients.length }} 位。
+              </p>
             </div>
             <div class="admin-field-stack">
               <div class="admin-field-group">
@@ -812,7 +827,13 @@ async function confirmSendNow() {
   sending.value = true
   try {
     const res = await apiFetch<any>(`/api/broadcast/${id}/send`, { method: 'POST' })
-    showToast(`發送完成 成功 ${res.sentCount} / 失敗 ${res.failedCount}`, 'success')
+    // postSendError＝訊息已送出、只是記錄沒整理完；不能報成發送失敗，否則會被重發一次
+    showToast(
+      res.postSendError
+        ? `已送出 成功 ${res.sentCount} / 失敗 ${res.failedCount}（發送後的紀錄未整理完，詳見成效報表）`
+        : `發送完成 成功 ${res.sentCount} / 失敗 ${res.failedCount}`,
+      res.postSendError ? 'warning' : 'success',
+    )
     closeValidateDialog()
     await loadData()
     selectedId.value = id

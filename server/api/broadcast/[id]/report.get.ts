@@ -1,7 +1,43 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { fetchBroadcastLineInsight } from '~~/server/utils/broadcast-line-insight'
+import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
+
+/** 「沒收到的人」最多列這麼多位，避免大量失敗時一次抓爆 */
+const FAILED_LIST_LIMIT = 100
+
+/**
+ * 取「沒收到的人」並補上暱稱，供後台直接跟進（多半是對方封鎖了官方帳號）。
+ * deliveries 只記失敗者；成功者不逐筆記錄（受眾名單本身已存在 audienceSnapshot）。
+ */
+async function fetchFailedRecipients(
+  db: FirebaseFirestore.Firestore,
+  campaignId: string,
+  workspaceId: string,
+): Promise<{ lineUserId: string; displayName: string }[]> {
+  const snap = await db.collection('broadcasts').doc(campaignId).collection('deliveries')
+    .where('deliveryStatus', '==', 'failed')
+    .limit(FAILED_LIST_LIMIT)
+    .get()
+
+  const docIds = [...new Set(
+    snap.docs.map(d => String(d.data().userId || '').trim()).filter(Boolean),
+  )]
+  if (!docIds.length) return []
+
+  const userSnaps = await db.getAll(...docIds.map(uid => db.collection('users').doc(uid)))
+
+  return docIds.map((docId, i) => {
+    const data = userSnaps[i]?.data()
+    const lineUserId = String(data?.lineUserId || '').trim()
+      || lineUserIdFromFirestoreDocId(docId, workspaceId)
+    return {
+      lineUserId,
+      displayName: String(data?.displayName || '').trim() || lineUserId,
+    }
+  })
+}
 
 function firestoreTimeToDate(v: unknown): Date | null {
   if (v == null) return null
@@ -57,6 +93,11 @@ export default defineEventHandler(async (event) => {
   const linkClickCount = clickSnap.size
   const linkCtr = data.sentCount > 0 ? linkClickCount / data.sentCount : 0
 
+  // 沒失敗就不必多跑一次查詢
+  const failedRecipients = data.failedCount > 0
+    ? await fetchFailedRecipients(db, id, workspaceId)
+    : []
+
   const startedAt = firestoreTimeToDate(data.startedAt as unknown)
   const completedAt = firestoreTimeToDate(data.completedAt as unknown)
 
@@ -102,6 +143,12 @@ export default defineEventHandler(async (event) => {
     /** LINE 官方統計之訊息內網址點擊人數（與 linkClickCount 分開） */
     lineUniqueClick: line.lineUniqueClick,
     lineInsightError: line.lineInsightError,
+    /** 訊息已送出但發送後記帳未寫完（沒收到的名單可能不全，成功／失敗數仍有效） */
+    postSendError: data.postSendError ?? null,
+    /** 沒收到的人（最多 FAILED_LIST_LIMIT 位），可直接跟進 */
+    failedRecipients,
+    /** 失敗人數超過列出上限時為 true，總數看 failedCount */
+    failedRecipientsTruncated: data.failedCount > failedRecipients.length,
     openRate: openRate != null ? Math.round(openRate * 10000) / 10000 : null,
     clicksByLinkKey,
     startedAt: data.startedAt,
