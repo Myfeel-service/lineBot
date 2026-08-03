@@ -9,6 +9,7 @@ import {
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
+import { scanKnowledgeGaps, weeklyKnowledgeGapDigest } from '~~/server/utils/ai-knowledge-suggest'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -32,6 +33,9 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
+    // 知識缺口掃描（每輪最多 2 個 workspace，內含 LLM）＋每週一的缺口週報
+    { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },
+    { name: 'ai:knowledge-gap-digest', run: () => weeklyKnowledgeGapDigest(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },

@@ -66,7 +66,11 @@ const ALERTS: AlertDefinition[] = [
     impact: '這些客人問了問題但 AI 當下答不出來，已轉給真人。若持續發生請先確認 AI 供應商狀態。',
     cta: '看是哪些對話',
     requires: 'operate',
-    route: wid => `/admin/${wid}/ai-usage`,
+    // 帶 ?reason= 讓監控頁自動套用「AI 服務暫時失敗」篩選並捲到案例清單
+    // （不帶的話落在頁頂、使用者得自己想起去下拉選原因）。
+    // 一併帶 includeResolved:這個警示是看「近 24 小時發生過幾次」、不看有沒有被標處理,
+    // 清單預設只顯示未處理 → 標過的那幾筆會讓人看到「N 次」卻是空清單。
+    route: wid => `/admin/${wid}/ai-usage?reason=llm_error&includeResolved=1`,
   },
   {
     id: 'knowledgeSyncFailed',
@@ -137,7 +141,8 @@ const ALERTS: AlertDefinition[] = [
     impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停。',
     cta: '去看對話',
     requires: 'operate',
-    route: wid => `/admin/${wid}/conversations`,
+    // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
+    route: wid => `/admin/${wid}/conversations?tab=pending_human`,
   },
   {
     id: 'knowledgeOutdated',

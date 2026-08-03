@@ -9,6 +9,14 @@
       ]
     },
     {
+      "collectionGroup": "aiFeedbackEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "autoReplies",
       "queryScope": "COLLECTION",
       "fields": [

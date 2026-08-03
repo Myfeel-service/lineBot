@@ -140,6 +140,7 @@
         :refresh-key="aiContextRefreshKey"
         :api-fetch="apiFetch"
         @apply-draft="applyAiDraft"
+        @add-knowledge="goAddKnowledge"
       />
       <div ref="messagesEl" class="conv-messages">
         <div v-if="msgLoading" class="split-sidebar-loading">
@@ -981,6 +982,14 @@ const { isSuperAdmin } = useSuperAdmin()
 function applyAiDraft(text: string) {
   inputText.value = String(text || '')
 }
+
+/** 開新分頁去補知識（帶客人原句預填），不離開現場對話——和 playground 同一做法 */
+function goAddKnowledge(query: string) {
+  const q = String(query || '').trim()
+  const suffix = q ? `?q=${encodeURIComponent(q)}` : ''
+  window.open(`/admin/${workspaceId.value}/knowledge/sources${suffix}`, '_blank')
+}
+
 const messagesEl = ref<HTMLElement | null>(null)
 const supportPresetsRaw = ref<any[]>([])
 const pendingSupportPresetId = ref('')
@@ -1395,6 +1404,24 @@ function getActionSummary(preset: any): string {
   if (action.type === 'module') return '觸發機器人模組'
   if (action.type === 'uri') return action.uri || '開啟網址'
   return action.text || '傳送文字'
+}
+
+/** 依 userId 選中對話；不在已載入的第一頁時，用列表搜尋端點撈那一筆（search 也比對 userId） */
+async function selectUserById(userId: string) {
+  let target = conversations.value.find(c => c.userId === userId) ?? null
+  if (!target) {
+    const res = await apiFetch<{ conversations: ConvItem[] }>('/api/conversations/list', {
+      params: { page: 1, limit: 1, search: userId },
+    }).catch(() => null)
+    target = res?.conversations?.[0] ?? null
+  }
+  if (target) {
+    await selectUser(target)
+    return
+  }
+  // 找不到就要說:靜默不動的話,從監控頁按「開對話」會像連結壞掉
+  // （對話很舊時會落在列表搜尋的掃描範圍之外）
+  showToast('找不到這位客人的對話，請用左側搜尋看看', 'warning')
 }
 
 async function selectUser(c: ConvItem) {
@@ -2330,7 +2357,12 @@ onMounted(() => {
   const qTab = String(route.query.tab || '')
   if (qTab && STATUS_TABS.some(t => t.value === qTab))
     activeTab.value = qTab as TabValue
-  loadList(true)
+  // 從監控頁「開對話」帶進來的客人（?userId=）：載入清單後直接選中，不讓人再找一次
+  const qUserId = String(route.query.userId || '')
+  void loadList(true).then(() => {
+    if (qUserId && activeTab.value === 'all')
+      void selectUserById(qUserId)
+  })
   loadSupportPresets()
   listPollTimer = setInterval(() => {
     if (!listLoading.value && !listLoadingMore.value)

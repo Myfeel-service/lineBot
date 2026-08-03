@@ -26,6 +26,39 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- 全庫搜尋:補卡前先確認「這題是不是已經有卡了」,不用一個來源一個來源翻 -->
+      <div class="src-search">
+        <el-input
+          v-model="searchKeyword"
+          size="small"
+          clearable
+          placeholder="搜尋知識卡（標題 / 內容 / 問法）"
+          :prefix-icon="Search"
+        />
+        <div v-if="searchLoading" class="src-search-loading">搜尋中…</div>
+        <div v-else-if="searchResults" class="src-search-results">
+          <div v-if="!searchResults.length" class="src-search-empty">
+            沒有符合的卡片——如果客人常問這題，可能就是該補的知識。
+          </div>
+          <button v-for="r in searchResults" :key="r.id" type="button" class="src-search-row" @click="openChunkById(r.id)">
+            <span class="src-search-row__title">
+              {{ r.title }}
+              <!-- 「找到卡」不等於「AI 用得到」:學習失敗/已停用的卡要標出來,
+                   否則會誤判「已經有這張卡了、不用補」 -->
+              <span v-if="r.status === 'failed'" class="badge badge-red">AI 沒學起來</span>
+              <span v-else-if="r.status === 'disabled'" class="badge badge-gray">已停用</span>
+              <span v-else-if="r.status === 'pending'" class="badge badge-yellow">處理中</span>
+            </span>
+            <span class="src-search-row__snippet">{{ r.snippet }}</span>
+          </button>
+          <p v-if="searchCountTruncated" class="src-search-foot">符合的卡片較多，只列出前 {{ searchResults.length }} 筆。</p>
+          <p v-if="searchTruncated" class="src-search-foot">卡片較多，只搜尋了前面一部分。</p>
+        </div>
+      </div>
+
+      <!-- 建議收件匣:AI 從「客人問了但答不出」的對話整理主題+擬好草稿,審一眼就能採用 -->
+      <KnowledgeSuggestions @accepted="loadSources(true)" />
+
       <!-- 偵測到 orphan chunks → 提示一鍵整理 -->
       <div v-if="orphanCount > 0" class="src-orphan-banner">
         <p class="src-orphan-msg">
@@ -735,6 +768,24 @@
           <span class="text-xs text-muted">自動整理成重點、清掉沒用的雜訊，讓 AI 更容易找到這條;整理後記得儲存</span>
         </div>
       </div>
+      <!-- 客人問法會一起進 embedding(拉高命中率)。一定要看得到、改得掉:
+           從「補知識」進來時這裡預填的是客人原話,可能夾著電話或姓名。 -->
+      <div v-if="chunkForm.questions !== undefined" class="admin-field-group">
+        <AdminFieldLabel text="客人可能怎麼問（會幫 AI 更容易找到這張卡）" tight />
+        <el-select
+          v-model="chunkForm.questions"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          :multiple-limit="3"
+          placeholder="輸入後按 Enter，最多 3 條"
+          style="width: 100%"
+        />
+        <p class="text-xs text-muted" style="margin: 4px 0 0;">
+          這幾句會跟著卡片一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
+        </p>
+      </div>
       <div class="admin-field-group">
         <AdminFieldLabel text="標籤（非必填，後台分類用）" tight />
         <div class="chunk-tag-row">
@@ -866,7 +917,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, EditPen, FirstAidKit, Folder, FolderAdd, FolderOpened, Lock, Refresh, Upload } from '@element-plus/icons-vue'
+import { Delete, EditPen, FirstAidKit, Folder, FolderAdd, FolderOpened, Lock, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
 
@@ -1173,6 +1224,61 @@ const chunkEditMode = ref<'create' | 'edit'>('create')
 const chunkEditingId = ref<string | null>(null) // edit 模式才有值
 // questions 是 AI 整理產生的常見問法,使用者不直接編;沒值就不送、後端保留既有
 const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions: undefined as string[] | undefined })
+
+// ── 全庫搜尋（標題 / 內容 / 問法） ─────────────────────
+interface SearchRow { id: string; sourceId: string | null; title: string; snippet: string; status: string }
+const searchKeyword = ref('')
+const searchResults = ref<SearchRow[] | null>(null)
+const searchTruncated = ref(false)
+const searchCountTruncated = ref(false)
+const searchLoading = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+let searchAbort: AbortController | null = null
+/**
+ * 每次搜尋在後端要掃 1500 張卡,所以 debounce 訂 500ms 並取消上一發:
+ * 300ms 的話打一句話會送出好幾發、每發都付一次全庫掃描的讀取費。
+ */
+watch(searchKeyword, (kw) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const q = kw.trim()
+  if (q.length < 2) {
+    // 單字元雜訊太多；清空輸入時同時收起結果面板
+    searchAbort?.abort()
+    searchAbort = null
+    searchResults.value = null
+    searchLoading.value = false
+    return
+  }
+  searchLoading.value = true
+  searchTimer = setTimeout(async () => {
+    searchAbort?.abort()
+    const ac = new AbortController()
+    searchAbort = ac
+    try {
+      const res = await apiFetch<{ items: SearchRow[]; truncated: boolean; countTruncated: boolean }>(
+        `/api/ai/knowledge/search?q=${encodeURIComponent(q)}`,
+        { signal: ac.signal },
+      )
+      // 輸入已經變了就丟棄過期結果
+      if (searchKeyword.value.trim() !== q) return
+      searchResults.value = res.items
+      searchTruncated.value = res.truncated
+      searchCountTruncated.value = res.countTruncated
+    }
+    catch {
+      if (ac.signal.aborted) return // 被新的一發取消,不要清掉畫面
+      searchResults.value = []
+      searchTruncated.value = false
+      searchCountTruncated.value = false
+    }
+    finally {
+      if (!ac.signal.aborted) searchLoading.value = false
+    }
+  }, 500)
+})
+
+/** 從監控頁 ?q= 進來補卡：建卡成功後把同問題的轉真人案例自動標已處理 */
+const pendingResolveQuery = ref('')
 const chunkSaving = ref(false)
 const chunkDeleting = ref(false)
 const chunkEditStatus = ref('')
@@ -1996,6 +2102,9 @@ async function commitName() {
 
 // ── 新增手寫卡片 ─────────────────────────────────────
 function openCreateManual() {
+  // 每次重開都要清掉「待銷案的問句」:從 ?q= 進來卻放棄、之後自己手寫另一張卡時,
+  // 殘留的舊問句會讓不相干的卡片把監控頁案例誤標成已處理
+  pendingResolveQuery.value = ''
   chunkEditMode.value = 'create'
   chunkEditingId.value = null
   chunkForm.value = { title: '', content: '', tags: [], questions: undefined }
@@ -2096,6 +2205,19 @@ async function saveChunk() {
       })
       showToast('已建立', 'success')
       chunkEditOpen.value = false
+      // 從監控頁 ?q= 進來的:建完卡自動把同問題的轉真人案例標已處理,不用回去逐筆按
+      if (pendingResolveQuery.value) {
+        const resolvedQ = pendingResolveQuery.value
+        pendingResolveQuery.value = ''
+        apiFetch<{ resolved: number }>('/api/ai/usage/handoffs/resolve-by-query', {
+          method: 'POST',
+          body: { query: resolvedQ },
+        })
+          .then((r) => {
+            if (r.resolved > 0) showToast(`已把監控頁 ${r.resolved} 筆同問題案例標為已處理`, 'success')
+          })
+          .catch(() => {}) // 銷案是順手的加值動作,失敗不影響建卡
+      }
       await loadSources(true)
       if (res.sourceId) {
         selectedId.value = res.sourceId
@@ -2241,6 +2363,9 @@ onMounted(async () => {
   if (q) {
     openCreateManual()
     chunkForm.value.title = q.slice(0, 100) // 對齊標題欄位 maxlength=100
+    // 客人的原話就是最好的「問法」:一併進 embedding,下次同樣問法直接命中
+    chunkForm.value.questions = [q.slice(0, 200)]
+    pendingResolveQuery.value = q
     clearQuery()
     return
   }

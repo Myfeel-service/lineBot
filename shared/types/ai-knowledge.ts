@@ -501,6 +501,82 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   unresolved: '排除步驟沒解決',
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  知識缺口建議（建議收件匣）
+//  從 aiHandoffEvents 事件流聚類「客人問了但 AI 答不出」的主題，LLM 先擬好
+//  知識卡草稿，店家在後台審核採用/忽略。一筆 = 一個主題（不是一筆事件）。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * accepting = 採用進行中的中間態（交易佔位）。建卡要好幾秒（含 embedding），
+ * 沒有這個中間態的話兩個分頁同時按「採用」會各建一張幾乎一樣的卡。
+ */
+export type KnowledgeSuggestionStatus = 'pending' | 'accepting' | 'accepted' | 'dismissed'
+
+/**
+ * 草稿裡「知識庫查不到、LLM 依規則留空」的佔位符。
+ * 前端顯示警示、後端擋下採用都用這一支——各寫一份正則的下場是:
+ * LLM 漏寫冒號時前端說草稿乾淨、後端 400 擋下,使用者看不到哪裡要補。
+ * 冒號刻意不強制(LLM 偶爾寫成「【請填寫金額】」)。
+ */
+export const KNOWLEDGE_DRAFT_BLANK_RE = /【請填寫[^】]*】/g
+
+export function countKnowledgeDraftBlanks(content: string): number {
+  return (String(content ?? '').match(KNOWLEDGE_DRAFT_BLANK_RE) ?? []).length
+}
+
+export interface KnowledgeSuggestionDraft {
+  title: string
+  content: string
+  tags: string[]
+  questions: string[]
+}
+
+/** collection: knowledgeSuggestions */
+export interface KnowledgeSuggestionDoc {
+  workspaceId: string
+  status: KnowledgeSuggestionStatus
+  /** 給列表看的主題名（LLM 命名，≤12 字） */
+  topic: string
+  /** 樣本問句（客人原話，最多 5 條，給人看） */
+  sampleQueries: string[]
+  /** 涵蓋的全部去重問句（最多 30 條）：採用後拿來把監控頁對應案例自動標已處理 */
+  queries: string[]
+  /** 30 天窗口內命中此主題的事件數 */
+  eventCount: number
+  /** 聚類中心向量：同主題下次掃描再出現時靠它比對，避免重複建議 */
+  centroid: number[]
+  /** LLM 擬好的草稿；草擬失敗為 null（主題照樣顯示，讓人手寫） */
+  draft: KnowledgeSuggestionDraft | null
+  /**
+   * 草稿內「【請填寫：…】」佔位符數量。>0 代表知識庫裡沒有這些事實、LLM 依規則
+   * 留空不編造，店家補完才能採用——這是內容品質防護，不是缺陷。
+   */
+  blanksCount: number
+  draftError?: string
+  /**
+   * eventCount 是取樣值（事件掃描或問句數撞到上限）。UI 要改講「至少 N 次」——
+   * 取樣數字印成實數會讓店家以為那就是全部。
+   */
+  sampled?: boolean
+  createdAt: unknown
+  updatedAt: unknown
+  /** 最近一筆命中事件的時間 */
+  lastSeenAt: unknown
+  /**
+   * 只有 accepted / dismissed 才會帶：處理完的建議 180 天後由 TTL 清掉。
+   * 不清的話這個 collection 只增不減，去重查詢的上限總會被撞到（撞到就會重複推薦已處理的主題）。
+   * pending 沒有這個欄位 → 不受 TTL 影響。
+   */
+  expireAt?: unknown
+  acceptedAt?: unknown
+  acceptedChunkId?: string
+  acceptedSourceId?: string
+  dismissedAt?: unknown
+  /** 忽略當下的事件數：同主題事件數翻倍才重新浮出，避免「狼來了」 */
+  seenCountAtDismiss?: number
+}
+
 export const KNOWLEDGE_CHUNK_STATUS_LABELS: Record<KnowledgeChunkStatus, string> = {
   pending: '處理中',
   indexed: '可用',

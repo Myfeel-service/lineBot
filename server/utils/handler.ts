@@ -1805,6 +1805,12 @@ export async function saveConversationMessage(
     payload?: unknown
     /** LINE webhook `event.timestamp`（毫秒），用於來訊時間與「對方曾互動」推定 */
     lineEventTimestampMs?: number
+    /**
+     * 這則 outgoing 是 AI 生成的（答題 / 反問澄清）。訊息流過去沒有任何 AI 標記，
+     * 「AI 當時到底回了什麼」「真人後來怎麼改口」都無法回溯——從現在開始標，
+     * 讓之後的答錯分析 / 從真人回覆學習有資料可用。
+     */
+    aiGenerated?: boolean
   },
   workspaceId?: string,
 ): Promise<void> {
@@ -1841,6 +1847,7 @@ export async function saveConversationMessage(
       text,
       timestamp: messageTimestamp,
       messageType: options?.messageType || 'text',
+      ...(options?.aiGenerated ? { aiGenerated: true } : {}),
       ...(payload !== undefined ? { payload } : {}),
     }),
     db.collection('conversations').doc(convDocId).set(convPatch, { merge: true }),
@@ -1851,6 +1858,7 @@ async function saveOutgoingConversationMessagesByWorkspace(
   userId: string,
   messages: messagingApi.Message[],
   workspaceId: string,
+  opts?: { aiGenerated?: boolean },
 ): Promise<void> {
   if (!Array.isArray(messages) || messages.length === 0) return
   await Promise.all(
@@ -1860,6 +1868,7 @@ async function saveOutgoingConversationMessagesByWorkspace(
       return saveConversationMessage(userId, 'outgoing', text, {
         messageType: String((msg as any)?.type || 'message'),
         payload: msg,
+        aiGenerated: opts?.aiGenerated === true,
       }, workspaceId)
     }),
   )
@@ -2801,7 +2810,7 @@ async function tryAiFallback(params: {
     if (replyToken && !draftMode) {
       const msg: messagingApi.TextMessage = { type: 'text', text: result.answer.slice(0, 5000) }
       await replyMessage(replyToken, [msg], workspaceId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { aiGenerated: true })
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 登記「AI 首接」：AI 真的自動回覆了客人才算（草稿模式客人沒收到、不算首接）。
       // 非阻塞——與 bot_flow 自動回覆同慣例（先送客人回覆，統計背景補記）。
@@ -2864,7 +2873,7 @@ async function tryAiFallback(params: {
     }
     if (replyToken) {
       await replyMessage(replyToken, [msg], workspaceId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { aiGenerated: true })
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 反問澄清也是 AI 對客人的真實回應 → 記 AI 首接(草稿模式已在前面 return,不會到這)
       enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>

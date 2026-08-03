@@ -162,7 +162,7 @@
                 <div v-else class="usage-empty">這個月 AI 還沒有處理任何訊息</div>
               </div>
 
-              <!-- 一般人只留「花多少」，用台幣白話；細節（品質指標/三桶）收進下方「進階」 -->
+              <!-- 主畫面留兩個數字：花多少、答得好不好。成本三桶細節收進下方「進階」 -->
               <div class="usage-substats">
                 <div class="usage-substat">
                   <span class="usage-substat__label">
@@ -175,6 +175,24 @@
                   <span class="usage-substat__sub">
                     跟客人對話的花費<template v-if="((summary?.buildCostUsd ?? 0) + (summary?.testCostUsd ?? 0)) > 0"> · 建置 / 測試另計，見進階</template>
                   </span>
+                </div>
+                <!-- 「答完客人又找真人」是目前唯一能回答「答得好不好」的數字，放主畫面，不收進進階。
+                     沒有任何 AI 答題時顯示「—」:0% 上綠色會把「沒資料」講成「滿分」。 -->
+                <div class="usage-substat">
+                  <span class="usage-substat__label">
+                    答完客人又找真人
+                    <el-tooltip placement="top" content="AI 回答完 30 分鐘內，客人仍要求轉真人——通常代表沒答對或沒答到重點。這是最接近「答得好不好」的指標。">
+                      <el-icon class="usage-substat__info"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                  </span>
+                  <template v-if="(summary?.answered ?? 0) > 0">
+                    <strong class="usage-substat__value" :class="metricTone('answeredThenHandoff', summary?.answeredThenHandoffRate)">{{ formatPercent(summary?.answeredThenHandoffRate) }}</strong>
+                    <span class="usage-substat__sub">{{ formatNumber(summary?.answeredThenHandoffs) }} 次 · 越低越好</span>
+                  </template>
+                  <template v-else>
+                    <strong class="usage-substat__value">—</strong>
+                    <span class="usage-substat__sub">這個月 AI 還沒有答過題</span>
+                  </template>
                 </div>
               </div>
             </template>
@@ -204,7 +222,7 @@
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">進階 / 技術細節</span>
-              <span class="text-xs text-muted">成本組成、AI 品質指標</span>
+              <span class="text-xs text-muted">成本組成（依用途拆三桶）</span>
             </div>
             <el-button text size="small" @click="advancedOpen = !advancedOpen">
               {{ advancedOpen ? '收合' : '展開' }}
@@ -212,13 +230,6 @@
             </el-button>
           </div>
           <div v-show="advancedOpen" class="card-section-stack">
-            <!-- AI 品質指標（從主畫面移下來，避免一般人被術語干擾） -->
-            <div class="usage-adv-quality">
-              <span class="usage-adv-quality__k">答後仍轉真人</span>
-              <strong class="usage-adv-quality__v" :class="metricTone('answeredThenHandoff', summary?.answeredThenHandoffRate)">{{ formatPercent(summary?.answeredThenHandoffRate) }}</strong>
-              <span class="usage-adv-quality__s">{{ formatNumber(summary?.answeredThenHandoffs) }} 次 · AI 答完客人還是要找人，越低越好</span>
-            </div>
-
             <!-- 成本依用途拆三桶（台幣）：客人對話才是上方花費；建置與測試各自獨立 -->
             <div class="usage-cost-split">
               <div class="usage-cost-row">
@@ -328,6 +339,7 @@ definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
 const { apiFetch, workspaceId } = useWorkspace()
 const router = useRouter()
+const route = useRoute()
 const { showToast } = useAdminToast()
 
 // 用量明細（Token）預設收合：一般人只看成本，需要技術數字才展開
@@ -599,6 +611,8 @@ function reasonBadgeClass(r: HandoffReason | null) {
   if (r === 'no_grounding') return 'badge badge-yellow'
   if (r === 'sensitive_topic') return 'badge badge-red'
   if (r === 'quota_exceeded') return 'badge badge-red'
+  // 系統故障要一眼和「客人要求真人」這類正常轉接分開,不能同為灰色
+  if (r === 'llm_error') return 'badge badge-red'
   return 'badge badge-gray'
 }
 
@@ -639,5 +653,21 @@ async function resolveHandoff(userId: string) {
   }
 }
 
-onMounted(() => loadAll())
+onMounted(() => {
+  // 異常中心「AI 服務近期失敗過」的深連結（?reason=llm_error&includeResolved=1）：
+  // 自動套用原因篩選並捲到案例清單，省掉「落在頁頂自己找下拉」那一段
+  const qReason = String(route.query.reason || '')
+  const applied = qReason && reasonOptions.some(o => o.value === qReason)
+  if (applied) {
+    reasonFilter.value = qReason as HandoffReason
+    // 警示看的是「發生過幾次」而非「還沒處理」→ 連結帶 includeResolved 才不會落在空清單
+    if (String(route.query.includeResolved || '') === '1') showResolved.value = true
+  }
+  // deep-link 是一次性指令:用完清掉網址,否則使用者把篩選改回「全部原因」後 F5 又被套回來
+  if (applied) router.replace({ query: {} }).catch(() => {})
+  void loadAll().then(() => {
+    if (applied)
+      void nextTick(() => scrollToHandoffs())
+  })
+})
 </script>

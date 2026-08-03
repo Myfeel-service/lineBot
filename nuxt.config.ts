@@ -25,7 +25,9 @@ export default defineNuxtConfig({
       // 每 15 分鐘清掉過期的知識庫預覽 job（Firestore 文件 + Storage temp）
       '*/15 * * * *': ['ai:cleanup-preview-jobs'],
       // 每 30 分鐘掃 URL 來源是否內容變動（每個 source 的實際偵測頻率由 refreshIntervalMinutes 決定）
-      '*/30 * * * *': ['ai:detect-source-updates'],
+      // + 知識缺口掃描。注意這裡只影響本機 dev；生產走 /api/cron/run-tasks，是 10 分鐘輪
+      // （Amplify 不打包 Nitro tasks）——調整節流要改 ai-knowledge-suggest.ts 裡的常數，不是這裡。
+      '*/30 * * * *': ['ai:detect-source-updates', 'ai:knowledge-gap-scan'],
       // 每 10 分鐘掃「真人處理中但閒置過久」的會話自動交還機器人（handbackIdleMinutes=0 不動作）
       // + 「轉真人超時無人回應」的 SLA 提醒（每場會話一次）
       '*/10 * * * *': ['conversation:auto-handback', 'conversation:handoff-sla'],

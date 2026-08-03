@@ -40,13 +40,24 @@
       <div v-if="ctx.suggestedReply" class="conv-ai-row conv-ai-row--block">
         <span class="conv-ai-row__label">AI 建議回覆</span>
         <div class="conv-ai-draft">{{ ctx.suggestedReply }}</div>
-        <el-button size="small" type="primary" plain @click="$emit('apply-draft', ctx.suggestedReply)">
+        <el-button size="small" type="primary" plain @click="applyDraft(ctx.suggestedReply)">
           填入回覆框
         </el-button>
       </div>
 
       <div v-if="!ctx.suggestedReply && !ctx.sources.length" class="conv-ai-empty">
-        知識庫沒有相關資訊。建議到知識庫補一張對應的卡，並把這位客人加入後續追蹤。
+        <span>知識庫沒有相關資訊，AI 這題答不出來。把答案補進知識庫，下次遇到就會回答了。</span>
+        <el-button size="small" type="primary" plain @click="$emit('add-knowledge', ctx.lastQuery)">
+          補知識
+        </el-button>
+      </div>
+
+      <!-- 「AI 自信地答錯」只有人看得出來:一鍵標記,訊號進知識缺口分析(帶當時命中的卡) -->
+      <div v-if="ctx.lastDecision === 'answered'" class="conv-ai-actions">
+        <el-button size="small" text type="danger" :disabled="wrongMarked" :loading="marking" @click="markWrong">
+          {{ wrongMarked ? '已標記答錯' : '這題 AI 答錯了' }}
+        </el-button>
+        <span class="conv-ai-actions__hint">標記後會列入知識庫「AI 建議補的知識」分析</span>
       </div>
     </div>
   </div>
@@ -55,6 +66,7 @@
 <script setup lang="ts">
 import { ChatDotRound, CircleCheck, Clock, QuestionFilled, User } from '@element-plus/icons-vue'
 import { HANDOFF_REASON_LABELS, type HandoffReason, type AiDecision } from '~~/shared/types/ai-knowledge'
+import { useAdminToast } from '~~/app/composables/useAdminToast'
 
 interface AiContextResponse {
   hasMeta: boolean
@@ -75,9 +87,12 @@ const props = defineProps<{
   apiFetch: <T = unknown>(url: string, opts?: Record<string, unknown>) => Promise<T>
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'apply-draft', text: string): void
+  (e: 'add-knowledge', query: string): void
 }>()
+
+const { showToast } = useAdminToast()
 
 const ctx = ref<AiContextResponse | null>(null)
 const expanded = ref(true)
@@ -120,6 +135,62 @@ const updatedAtLabel = computed(() => {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
   })
 })
+
+/**
+ * 回饋（答錯 / 採用草稿）針對的是「畫面上這一次 AI 互動」。
+ * 鍵一定要含 updatedAtMs：只用 userId 的話，同一位客人下次 AI 又答錯時，
+ * 按鈕會卡在「已標記答錯」而按不下去。
+ */
+const interactionKey = computed(() =>
+  props.userId && ctx.value?.updatedAtMs ? `${props.userId}:${ctx.value.updatedAtMs}` : '',
+)
+const markedWrongKey = ref('')
+const marking = ref(false)
+const wrongMarked = computed(() => !!interactionKey.value && markedWrongKey.value === interactionKey.value)
+
+/**
+ * 記錄一筆回饋事件。一定要帶 interactionAtMs：後端用它確認「你標的就是畫面上這一次」，
+ * 也用它當固定 doc id（重複點覆寫同一筆，不會把缺口統計灌大）。
+ */
+function logFeedback(type: 'wrong_answer' | 'draft_applied', userId: string, interactionAtMs: number): Promise<unknown> {
+  return props.apiFetch(`/api/conversations/${encodeURIComponent(userId)}/ai-feedback`, {
+    method: 'POST',
+    body: { type, interactionAtMs },
+  })
+}
+
+function applyDraft(text: string) {
+  emit('apply-draft', text)
+  // 採用率是草稿品質的長期指標；失敗不打擾客服現場
+  const userId = props.userId
+  const at = ctx.value?.updatedAtMs ?? 0
+  if (userId && at) logFeedback('draft_applied', userId, at).catch(() => {})
+}
+
+async function markWrong() {
+  const userId = props.userId
+  const at = ctx.value?.updatedAtMs ?? 0
+  // key 在送出前就固定住：await 之後才求值的話，這期間切到別的客人會把標記寫到那個人身上
+  const key = interactionKey.value
+  if (marking.value || wrongMarked.value || !userId || !at || !key) return
+  marking.value = true
+  try {
+    await logFeedback('wrong_answer', userId, at)
+    // 回來時已經切走就別動畫面（那筆標記本身有效，切回來會由 markedWrongKey 反映）
+    markedWrongKey.value = key
+    if (props.userId === userId) showToast('已記錄。這題會列入知識庫「AI 建議補的知識」分析', 'success')
+  }
+  catch (e: any) {
+    const conflict = e?.statusCode === 409 || e?.response?.status === 409
+    showToast(
+      conflict ? '這位客人已經有新的對話，請重新整理後再標記' : '記錄失敗，請再試一次',
+      'error',
+    )
+  }
+  finally {
+    marking.value = false
+  }
+}
 
 async function load() {
   ctx.value = null
@@ -245,7 +316,24 @@ watch(() => [props.userId, props.refreshKey], load, { immediate: true })
 }
 
 .conv-ai-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--el-text-color-secondary);
-  font-style: italic;
+
+  span {
+    flex: 1;
+  }
+}
+
+.conv-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  &__hint {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
 }
 </style>

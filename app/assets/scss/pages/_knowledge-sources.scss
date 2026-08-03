@@ -449,3 +449,153 @@
   width: 100%;
 }
 .chunk-footer-right { display: flex; gap: 8px; }
+
+/* ── 知識卡搜尋（補卡前先確認「這題是不是已經有卡」） ─────────────── */
+.src-search {
+  margin: 10px 12px 0;
+}
+.src-search-results {
+  margin-top: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.src-search-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: var(--el-fill-color-light); }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__snippet {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+.src-search-empty,
+.src-search-loading {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.src-search-foot {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+/* ── AI 建議補的知識（建議收件匣）：視覺對齊體檢 banner ─────────────── */
+.kb-suggest {
+  margin: 10px 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.kb-suggest-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+}
+.kb-suggest-icon { flex: none; }
+.kb-suggest-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+}
+.kb-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.kb-suggest-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+
+  &__main {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  &__topic {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__count {
+    flex: none;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
+  &__actions {
+    display: flex;
+    gap: 4px;
+  }
+}
+.kb-suggest-empty {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.kb-suggest-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+.kb-suggest-queries {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  font-size: 13px;
+
+  &__label {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  li { margin: 2px 0; }
+}
+.kb-suggest-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}

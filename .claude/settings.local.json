@@ -97,11 +97,19 @@
       "Bash(node inspect-broadcast.mjs)",
       "Bash(node check-userids.mjs)",
       "Bash(node count-deliveries.mjs)",
-      "Bash(node verify-failed-list.mjs)"
+      "Bash(node verify-failed-list.mjs)",
+      "Bash(sed -n 1,60p server/api/conversations/[userId]/send-preset.post.ts)",
+      "Bash(git mv *)",
+      "Bash(sed -n 645,665p app/pages/admin/[workspaceId]/richmenu.vue)",
+      "Bash(git ls-tree *)",
+      "Bash(set -o pipefail)",
+      "Bash(grep -rn \"workspaceId\" /Users/hi 2>/dev/null; grep -rn \"id.*match\\\\|/\\\\^\\\\[a-zA-Z0-9\\\\|slug\" /Users/kevin/Documents/Github/linebot/server/api/admin/super/workspaces/index.post.ts 2>/dev/null | head; ls /Users/kevin/Documents/Github/linebot/server/api/admin/super/workspaces/)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
-      "/Users/kevin/Documents/Github/linebot/server/utils"
+      "/Users/kevin/Documents/Github/linebot/server/utils",
+      "/Users/kevin/Documents/Github/linebot/server/api/conversations/[userId]",
+      "/Users/kevin/Documents/Github/linebot/app/pages/admin/[workspaceId]"
     ]
   }
 }
