@@ -34,6 +34,7 @@ import {
   enterModule,
   getSessionStatusCached,
   onHumanOutgoingMessage,
+  recordConversationEvent,
   shouldSuppressInboundBotAutomationForSession,
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
@@ -3148,6 +3149,10 @@ export async function handlePostbackEvent(
       }
     } else {
       console.warn('[webhook] triggerModule target not found or inactive:', moduleId)
+      // 空按鈕：客人按了、一則訊息都沒送出。postback 不會存成訊息，沒有這筆的話
+      // 客服只會看到一筆空的待處理，完全不知道發生什麼事（會話刻意留在待處理，
+      // 因為客人真的什麼都沒收到；根因另有「按鈕按下去沒反應」的紅點警報）
+      recordPostbackNoReply(sessionId, userId, moduleId)
     }
     return
   }
@@ -3192,6 +3197,32 @@ export async function handlePostbackEvent(
         )
       }
     }
+    return
   }
+
+  // 走到這裡＝客人按了按鈕、但沒有任何規則命中，一則訊息都沒送出。
+  // 被暫停自動回覆（真人處理中）不算異常，那是刻意讓真人接手，不留這筆。
+  if (!suppressBotAutomationPostback) {
+    recordPostbackNoReply(sessionId, userId)
+  }
+}
+
+/**
+ * 記一筆「客人點了按鈕但沒有回覆送出」到時間軸。
+ *
+ * 為什麼需要：postback 不會像文字訊息一樣存成一則 incoming（見 handleMessageEvent），
+ * 所以按鈕點擊在對話畫面上完全沒有痕跡。缺這筆時客服看到的是一筆空的待處理，
+ * 無從判斷客人想幹什麼——不可行動的東西留在工作佇列只會稀釋訊號。
+ *
+ * sessionId 缺失就不記：這筆是給人看的線索，掛不到任何會話上就沒有意義。
+ */
+function recordPostbackNoReply(
+  sessionId: string | null,
+  userId: string,
+  moduleId?: string,
+): void {
+  if (!sessionId) return
+  recordConversationEvent(sessionId, userId, 'postback_no_reply', moduleId ? { moduleId } : undefined)
+    .catch(e => console.error('[session] recordPostbackNoReply error:', e))
 }
 

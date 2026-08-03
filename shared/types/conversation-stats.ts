@@ -14,6 +14,12 @@ export type ConversationEventType =
   /** 真人把對話交還機器人（手動按鈕或閒置自動交還），bot/AI 恢復接手 */
   | 'returned_to_bot'
   | 'conversation_closed'
+  /**
+   * 客人按了按鈕、但系統一則訊息都沒回（按鈕指向的模組被刪／停用，或找不到對應回覆）。
+   * postback 本身不會存成訊息，沒有這筆的話對話畫面上完全看不出客人做過什麼——
+   * 客服只會看到一筆空的待處理。帶 moduleId 表示是「指向的內容已失效」。
+   */
+  | 'postback_no_reply'
 
 export type TrendGranularity = 'day' | 'week' | 'month'
 

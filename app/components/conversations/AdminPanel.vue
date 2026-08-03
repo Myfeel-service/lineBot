@@ -695,6 +695,7 @@ import {
   VIDEO_MAX_BYTES,
 } from '~~/shared/upload-rules'
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
+import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
 
 /** 與 `useWorkspace().apiFetch` 相同簽章，由路由頁注入（含 workspaceId）。 */
 const props = defineProps<{
@@ -824,7 +825,8 @@ function onVisibilityChange() {
 
 // ── Session tab types ─────────────────────────────────────────────
 
-type ConvSessionStatus = 'open' | 'bot_handling' | 'pending_human' | 'human_handling' | 'closed'
+// 沿用共用型別，不要在這裡再列一次（列兩份就會像先前的標籤那樣各自漂走）
+type ConvSessionStatus = ConversationStatus
 type TabValue = 'all' | ConvSessionStatus
 
 interface SessionItem {
@@ -842,18 +844,21 @@ const STATUS_TABS: { value: TabValue; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'pending_human', label: '待真人' },
   { value: 'human_handling', label: '真人處理' },
-  { value: 'open', label: '未首接' },
+  // 「待處理」＝還需不需要人處理（佇列語意）。不要改成「未首接」——那是統計看板
+  // 的指標名稱（有沒有人回答過），兩者是不同的一群對話，同名會被誤讀成同一個數字。
+  { value: 'open', label: '待處理' },
   { value: 'bot_handling', label: '機器人' },
   { value: 'closed', label: '結束' },
 ]
 
-const SESSION_STATUS_LABELS: Record<ConvSessionStatus, string> = {
-  open: '未首接',
-  bot_handling: '機器人處理中',
-  pending_human: '待真人',
-  human_handling: '真人處理中',
-  closed: '已結束',
-}
+/**
+ * 直接用共用定義，不要在這裡再抄一份。
+ *
+ * 先前這裡自己寫了一份、而且把 open 從「待處理」覆寫成「未首接」，結果同一個詞
+ * 在側欄（還需不需要人處理）和統計看板（有沒有人回答過）指兩件不同的事，
+ * 連新手教學講的都跟畫面不一致。詳見 docs/CONVERSATION-STATS-DEFINITIONS.md。
+ */
+const SESSION_STATUS_LABELS = STATUS_LABELS
 
 interface ConvItem {
   userId: string

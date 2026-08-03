@@ -76,12 +76,18 @@ async function loadBroadcastItems(
   }
 }
 
-function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType): string {
+function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, moduleId?: string): string {
   if (eventType === 'conversation_opened') return '新會話開始'
   if (eventType === 'conversation_closed') return '會話已結束'
   if (eventType === 'handoff_request') return '請求轉接真人'
   if (eventType === 'human_first_reply') return '真人客服首次回覆'
   if (eventType === 'returned_to_bot') return '已交還機器人'
+  if (eventType === 'postback_no_reply') {
+    // 有 moduleId = 按鈕指向的模組被刪／停用（可修）；沒有 = 找不到對應的回覆內容
+    return moduleId
+      ? '客人點了按鈕，但指向的內容已失效（沒有回覆送出）'
+      : '客人點了按鈕，但沒有對應的回覆內容（沒有回覆送出）'
+  }
   if (eventType === 'entered_module') {
     const label = moduleType ? MODULE_TYPE_LABELS[moduleType] : '模組'
     return `進入：${label}`
@@ -176,7 +182,7 @@ export default defineEventHandler(async (event) => {
       eventType: e.eventType,
       moduleType: e.moduleType,
       moduleId: e.moduleId,
-      label: eventLabel(e.eventType, e.moduleType),
+      label: eventLabel(e.eventType, e.moduleType, e.moduleId),
     })
   }
 

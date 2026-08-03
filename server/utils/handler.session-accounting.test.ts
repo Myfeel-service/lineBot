@@ -13,7 +13,8 @@ vi.mock('./line', () => ({
   pushMessage: vi.fn(),
   getUserProfile: vi.fn(async () => ({ displayName: '測試客人', pictureUrl: '' })),
   linkRichMenuIdToUser: vi.fn(),
-  showLoadingAnimation: vi.fn(),
+  // 必須回 Promise：呼叫端會直接 .catch()，回 undefined 會炸
+  showLoadingAnimation: vi.fn(async () => {}),
 }))
 vi.mock('./line-workspace-credentials', () => ({
   getLineWorkspaceCredentials: vi.fn(async () => ({ channelSecret: 'secret', channelAccessToken: 'token' })),
@@ -27,6 +28,7 @@ vi.mock('./conversation-session', () => ({
   enterModule: vi.fn(async () => {}),
   getSessionStatusCached: vi.fn(async () => 'open'),
   onHumanOutgoingMessage: vi.fn(async () => {}),
+  recordConversationEvent: vi.fn(async () => {}),
   shouldSuppressInboundBotAutomationForSession: vi.fn(async () => false),
 }))
 vi.mock('./ai-answer', () => ({
@@ -44,7 +46,7 @@ import { handleMessageEvent, handlePostbackEvent, pushSupportPresetActionToUser 
 import { getDb } from './firebase'
 import { pushMessage, replyMessage } from './line'
 import { getAiSettings } from './ai-settings'
-import { enterModule, onHumanOutgoingMessage } from './conversation-session'
+import { enterModule, onHumanOutgoingMessage, recordConversationEvent } from './conversation-session'
 
 const WS = 'ws1'
 const LINE_UID = 'U0000000000000000000000000000001'
@@ -175,6 +177,45 @@ describe('按按鈕命中舊關鍵字規則、回覆是純文字/網址 → 要�
 
     expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
     expect(vi.mocked(enterModule)).not.toHaveBeenCalled()
+  })
+
+  it('沒回覆時要留一筆時間軸線索,否則客服看到的是一筆空的待處理', async () => {
+    const { db } = makeDb({ autoReplies: [] })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(postbackEvent('nothing_matches_this2'), { workspaceId: 'ws-empty2' })
+
+    expect(vi.mocked(recordConversationEvent)).toHaveBeenCalledWith(
+      'sess-1', LINE_UID, 'postback_no_reply', undefined,
+    )
+  })
+
+  it('按鈕指向的模組已失效 → 線索要帶 moduleId(才能顯示「指向的內容已失效」)', async () => {
+    const { db } = makeDb({ autoReplies: [] })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    // triggerModule 指向不存在的模組：getFlowByModuleId 撈不到 → 一則訊息都沒送出
+    await handlePostbackEvent(postbackEvent('triggerModule=dead-module'), { workspaceId: 'ws-dead' })
+
+    expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
+    expect(vi.mocked(recordConversationEvent)).toHaveBeenCalledWith(
+      'sess-1', LINE_UID, 'postback_no_reply', { moduleId: 'dead-module' },
+    )
+  })
+
+  it('有回覆送出時不留這筆線索(不要洗版)', async () => {
+    const { db } = makeDb({
+      autoReplies: [{
+        id: 'r1', name: '有效按鈕', keyword: 'ok_button', matchType: 'exact', isActive: true,
+        action: { type: 'message', text: '這是回覆' },
+      }],
+    })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(postbackEvent('ok_button'), { workspaceId: 'ws-ok' })
+
+    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(recordConversationEvent)).not.toHaveBeenCalled()
   })
 })
 

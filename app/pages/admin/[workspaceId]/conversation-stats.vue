@@ -263,7 +263,10 @@ const firstContactSegs = computed(() => {
     { key: 'bot', label: '機器人', value: k.botHandled, escalated: k.botEscalated, cls: 'seg-bot', tab: 'bot_handling', help: '第一個回覆客人的是機器人罐頭回覆或流程。' },
     { key: 'ai', label: 'AI', value: k.aiHandled, escalated: k.aiEscalated, cls: 'seg-ai', tab: '', help: '第一個回覆客人的是 AI 客服（知識庫問答）。' },
     { key: 'human', label: '真人', value: k.humanHandled, escalated: 0, cls: 'seg-human', tab: 'human_handling', help: '第一個回覆客人的是真人客服（例如客人一進來就找真人，或真人直接接手還沒人回過的對話）。' },
-    { key: 'unhandled', label: '未首接', value: k.unhandled, escalated: 0, cls: 'seg-unhandled', tab: 'open', help: '整場對話從頭到尾沒有機器人、AI 或真人接手回覆（例如只收到系統通知，或加了好友卻沒互動）。' },
+    // tab 刻意留空（不可點）：收件匣的「待處理」問的是「還需不需要人處理」，
+    // 這裡的「未首接」問的是「有沒有人回答過」——兩邊是不同的一群對話，
+    // 接過去只會看到不一樣的數字。口徑見 docs/CONVERSATION-STATS-DEFINITIONS.md
+    { key: 'unhandled', label: '未首接', value: k.unhandled, escalated: 0, cls: 'seg-unhandled', tab: '', help: '整場對話從頭到尾沒有機器人、AI 或真人接手回覆（例如只收到系統通知，或加了好友卻沒互動）。這是回顧指標，跟收件匣的「待處理」不是同一群對話——那邊看的是現在還需要人處理的。' },
   ]
 })
 const visibleSegs = computed(() => firstContactSegs.value.filter(s => s.value > 0))

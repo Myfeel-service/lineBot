@@ -401,7 +401,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="conv-tabs"]',
         title: '用狀態分頁分流',
         description:
-          '這排分頁幫你分流：<strong>待處理</strong>是 AI 轉真人、等你接手的；接手後在<strong>處理中</strong>；談完按「結束會話」。要接手客人就先看「待處理」。',
+          '這排分頁幫你分流：<strong>待真人</strong>是 AI 轉過來、等你接手的，最優先看這個；接手後會移到<strong>真人處理</strong>，談完按「結束會話」。<strong>待處理</strong>是完全還沒有人回過的對話。',
         placement: 'right',
       },
     ],
