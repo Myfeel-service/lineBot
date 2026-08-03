@@ -84,6 +84,13 @@ const CAPABILITIES: SetupCapability[] = [
   },
 ]
 
+/**
+ * 兩次自動體檢之間的最短間隔。面板開開關關、換頁都會來要一次資料，
+ * 不節流就是一連串重複查詢；而「哪幾項還沒設定」不是秒級會變的東西。
+ * 使用者按「重新檢查」、或剛跑完導覽要確認有沒有生效時走 force，不受這個限制。
+ */
+const REFRESH_TTL_MS = 60_000
+
 export function useSetupStatus() {
   const { workspaceId, getBearer, canManageSettings, canOperate } = useWorkspace()
 
@@ -91,15 +98,18 @@ export function useSetupStatus() {
   const statusMap = useState<Record<string, SetupItemStatus>>('setup-status-map', () => ({}))
   const loaded = useState('setup-status-loaded', () => false)
   const loading = useState('setup-status-loading', () => false)
+  const checkedAt = useState('setup-status-checked-at', () => 0)
 
   let inflight: Promise<void> | null = null
 
-  async function refresh(): Promise<void> {
+  async function refresh(options: { force?: boolean } = {}): Promise<void> {
     const wid = workspaceId.value
     if (!wid)
       return
     if (inflight)
       return inflight
+    if (!options.force && checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS)
+      return
     loading.value = true
     inflight = (async () => {
       try {
@@ -112,6 +122,7 @@ export function useSetupStatus() {
         for (const item of data.items)
           next[item.id] = item.status
         statusMap.value = next
+        checkedAt.value = Date.now()
         loaded.value = true
       }
       catch {
@@ -123,6 +134,16 @@ export function useSetupStatus() {
       }
     })()
     return inflight
+  }
+
+  /**
+   * 清掉現有結果。換工作區時一定要呼叫：把 A 帳號「已完成」的進度條留在 B 帳號畫面上，
+   * 會讓人以為新帳號已經設定好了，比暫時沒有資料嚴重。
+   */
+  function reset() {
+    statusMap.value = {}
+    loaded.value = false
+    checkedAt.value = 0
   }
 
   const capabilities = computed<ResolvedCapability[]>(() =>
@@ -186,5 +207,6 @@ export function useSetupStatus() {
     loaded,
     loading,
     refresh,
+    reset,
   }
 }

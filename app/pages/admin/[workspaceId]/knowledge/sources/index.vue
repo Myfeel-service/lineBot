@@ -49,7 +49,7 @@
       <!-- 知識庫健康檢查列(P2-3):把稽核手動翻出來的問題變成常駐體檢,點分類直接列出來修 -->
       <div v-if="healthIssueCount > 0 || healthExpiredCount > 0" class="src-health-banner">
         <p class="src-health-msg">
-          <span class="src-health-icon">🩺</span>
+          <el-icon class="src-health-icon"><FirstAidKit /></el-icon>
           <span>
             知識庫體檢：<template v-if="healthSourceCount"><strong>{{ healthSourceCount }}</strong> 個來源要處理</template><template
               v-if="healthSourceCount && healthChunkCount"
@@ -109,8 +109,11 @@
             @dragstart.stop="onSourceDragStart(src.id, $event)"
             @dragend.stop="onSourceDragEnd"
           >⠿</span>
+          <!-- data-tour 標在每一列：教學要示範「卡片」「同步設定」時得先有選中的來源，
+               導覽會點到第一個符合的（＝清單第一列）-->
           <AdminSplitListItem
             class="flow-sidebar-row__item"
+            data-tour="kb-source-row"
             :title="src.name || '(未命名)'"
             :active="selectedId === src.id"
             time-in-title-row
@@ -184,6 +187,7 @@
               >⠿</span>
               <AdminSplitListItem
                 class="flow-sidebar-row__item"
+                data-tour="kb-source-row"
                 :title="src.name || '(未命名)'"
                 :active="selectedId === src.id"
                 time-in-title-row
@@ -493,8 +497,9 @@
       <div v-for="c in aliasCandidates" :key="c.key" class="src-alias-card">
         <div class="src-alias-pair">
           「{{ c.a }}」<span class="src-alias-eq">＝</span>「{{ c.b }}」？
-          <span v-if="c.confidence === 'high'" class="src-alias-tag is-high">證據明確</span>
-          <span v-else-if="c.variantRisk" class="src-alias-tag is-risk">可能是不同型號</span>
+          <!-- 型號風險優先於「證據明確」:兩者同時成立時只顯示綠標,等於在誘導使用者合併兩台不同機器 -->
+          <span v-if="c.variantRisk" class="src-alias-tag is-risk">可能是不同型號</span>
+          <span v-else-if="c.confidence === 'high'" class="src-alias-tag is-high">證據明確</span>
         </div>
         <p class="src-alias-reason">{{ c.reason }}</p>
         <div class="src-alias-actions">
@@ -861,7 +866,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, EditPen, Folder, FolderAdd, FolderOpened, Lock, Refresh, Upload } from '@element-plus/icons-vue'
+import { Delete, EditPen, FirstAidKit, Folder, FolderAdd, FolderOpened, Lock, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
 
@@ -1397,13 +1402,21 @@ async function openAliasDialog() {
 async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
   aliasSaving.value = c.key
   try {
-    await apiFetch('/api/ai/knowledge/product-aliases', {
+    const res = await apiFetch<{ changed?: boolean }>('/api/ai/knowledge/product-aliases', {
       method: 'POST',
       body: action === 'confirm'
         ? { action: 'confirm', canonical: c.a, alias: c.b }
         : { action: 'dismiss', a: c.a, b: c.b },
     })
-    showToast(action === 'confirm' ? `已合併，AI 之後會把它們當同一台` : '好的，不再詢問這一組', 'success')
+    showToast(
+      action !== 'confirm'
+        ? '好的，不再詢問這一組'
+        // 沒異動時要講清楚,否則清單少一列但沒發生任何事,看起來像剛才那次沒生效
+        : res?.changed === false
+          ? '這兩個名字本來就已經對應到同一台了'
+          : '已合併，AI 之後會把它們當同一台',
+      'success',
+    )
     await loadAliases()
     void loadHealth(true)
   }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   canonicalProductName,
+  confirmAlias,
   dedupeProductNames,
   detectAliasCandidates,
   normalizeProductName,
@@ -114,6 +115,55 @@ describe('detectAliasCandidates', () => {
     expect(out).toHaveLength(0)
   })
 
+  it('連鎖合併過的組合不再列出(A→B、B→C 時 A 與 C 早就是同一台)', () => {
+    // 實測災情:頂級A咖→iBarista、iBarista→SHARP iBarista 都併過了,
+    // 只查一層會判定「頂級A咖(→iBarista)」與「iBarista(→SHARP iBarista)」不同 → 候選重新冒出來,
+    // 使用者按合併寫入的內容與現況一模一樣 → 畫面沒變,看起來就是按了沒反應。
+    const map = emptyMap()
+    map.aliases[normalizeProductName('SHARP 頂級A咖')] = 'iBarista 智慧咖啡機'
+    map.aliases[normalizeProductName('iBarista 智慧咖啡機')] = 'SHARP iBarista 智慧咖啡機'
+    const out = detectAliasCandidates({
+      sources: [{ type: 'file', name: 'SHARP 頂級A咖｜iBarista 智慧咖啡機 HM-AD20VT使用說明書.pdf' }],
+      productNames: ['SHARP iBarista 智慧咖啡機', 'iBarista 智慧咖啡機', 'SHARP 頂級A咖'],
+      aliasMap: map,
+    })
+    expect(out).toHaveLength(0)
+  })
+
+  it('正式名顯示最終那一層(a 自己是別名時,卡片寫的正式名要等於實際會寫入的)', () => {
+    const map = emptyMap()
+    map.aliases[normalizeProductName('iBarista 智慧咖啡機')] = 'SHARP iBarista 智慧咖啡機'
+    const out = detectAliasCandidates({
+      sources: [{ type: 'file', name: 'SHARP 頂級A咖｜iBarista 智慧咖啡機使用說明書.pdf' }],
+      productNames: ['SHARP iBarista 智慧咖啡機', 'iBarista 智慧咖啡機', 'SHARP 頂級A咖'],
+      aliasMap: map,
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.a).toBe('SHARP iBarista 智慧咖啡機')
+    expect(out[0]!.b).toBe('SHARP 頂級A咖')
+  })
+
+  it('訊號1 差在型號字尾時照樣標風險(說明書常一次涵蓋基本款與 ULTRA)', () => {
+    const out = detectAliasCandidates({
+      sources: [{ type: 'file', name: 'MATELASER 筋牌特務 W1 REGEN｜MATELASER 筋牌特務 W1 REGEN ULTRA-說明書.pdf' }],
+      productNames: [],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.variantRisk).toBe(true)
+  })
+
+  it('訊號1 對齊既有產品名時不可對齊到不同型號', () => {
+    const out = detectAliasCandidates({
+      sources: [{ type: 'file', name: '筋牌特務按摩槍｜MATELASER 筋牌特務 W1 REGEN-說明書.pdf' }],
+      // 既有清單裡只有 ULTRA:基本款不該被「對齊」成 ULTRA
+      productNames: ['MATELASER 筋牌特務 W1 REGEN ULTRA'],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.a).toBe('MATELASER 筋牌特務 W1 REGEN')
+  })
+
   it('太短的共同片段不算(避免「燈」這種字誤配)', () => {
     const out = detectAliasCandidates({
       sources: [],
@@ -163,6 +213,64 @@ describe('canonicalProductName', () => {
       [normalizeProductName('B 產品')]: 'A 產品',
     }
     expect(() => canonicalProductName('A 產品', cyclic)).not.toThrow()
+  })
+})
+
+describe('confirmAlias', () => {
+  /** 只實作 confirmAlias 用到的 doc().get()/set(merge) —— aliases 是扁平物件，淺層合併即可 */
+  function fakeDb(initial: Record<string, any> = {}) {
+    const doc = { ...initial }
+    const writes: any[] = []
+    const db = {
+      collection: () => ({
+        doc: () => ({
+          get: async () => ({ data: () => doc }),
+          set: async (data: any) => {
+            writes.push(data)
+            doc.aliases = { ...(doc.aliases ?? {}), ...(data.aliases ?? {}) }
+            doc.aliasLabels = { ...(doc.aliasLabels ?? {}), ...(data.aliasLabels ?? {}) }
+          },
+        }),
+      }),
+    }
+    return { db: db as any, doc, writes }
+  }
+
+  it('把正式名解析到最終那一層,不留 A→B→C 的鏈', async () => {
+    const { db, doc } = fakeDb({
+      aliases: { [normalizeProductName('iBarista 智慧咖啡機')]: 'SHARP iBarista 智慧咖啡機' },
+    })
+    await confirmAlias(db, 'ws1', 'iBarista 智慧咖啡機', 'SHARP 頂級A咖')
+    // 指到 iBarista 就會讓「已確認的對照」出現同一個名字既在箭頭左邊又在右邊
+    expect(doc.aliases[normalizeProductName('SHARP 頂級A咖')]).toBe('SHARP iBarista 智慧咖啡機')
+  })
+
+  it('原本指向 alias 的別名要一起搬過來', async () => {
+    const { db, doc } = fakeDb({
+      aliases: { [normalizeProductName('SHARP 頂級A咖')]: 'iBarista 智慧咖啡機' },
+    })
+    await confirmAlias(db, 'ws2', 'SHARP iBarista 智慧咖啡機', 'iBarista 智慧咖啡機')
+    expect(doc.aliases[normalizeProductName('iBarista 智慧咖啡機')]).toBe('SHARP iBarista 智慧咖啡機')
+    expect(doc.aliases[normalizeProductName('SHARP 頂級A咖')]).toBe('SHARP iBarista 智慧咖啡機')
+  })
+
+  it('早就是同一台就不寫入,回 false 讓前端說得出「本來就已經合併」', async () => {
+    const { db, writes } = fakeDb({
+      aliases: {
+        [normalizeProductName('SHARP 頂級A咖')]: 'iBarista 智慧咖啡機',
+        [normalizeProductName('iBarista 智慧咖啡機')]: 'SHARP iBarista 智慧咖啡機',
+      },
+    })
+    expect(await confirmAlias(db, 'ws3', 'iBarista 智慧咖啡機', 'SHARP 頂級A咖')).toBe(false)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('反向合併不寫入(canonical 早就併進 alias,寫下去會成環)', async () => {
+    const { db, writes } = fakeDb({
+      aliases: { [normalizeProductName('SHARP 頂級A咖')]: 'iBarista 智慧咖啡機' },
+    })
+    expect(await confirmAlias(db, 'ws4', 'SHARP 頂級A咖', 'iBarista 智慧咖啡機')).toBe(false)
+    expect(writes).toHaveLength(0)
   })
 })
 

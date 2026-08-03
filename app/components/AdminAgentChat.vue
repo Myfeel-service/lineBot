@@ -39,9 +39,20 @@
 /** Admin 查詢副駕(P1)的聊天面板:唯讀問答,掛在教學小幫手的「問助理」分頁。 */
 interface Msg { who: 'me' | 'ai'; text: string; tools?: string[] }
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, workspaceId } = useWorkspace()
 
-const msgs = ref<Msg[]>([])
+// 對話存在全域:切去「目前狀況」看一眼、或關掉面板再打開,問到一半的內容都還在。
+// 但換工作區一定要清掉——B 家的畫面上留著 A 家的查詢結果會直接誤導人。
+const msgs = useState<Msg[]>('admin-agent-chat-msgs', () => [])
+const msgsWorkspace = useState('admin-agent-chat-workspace', () => '')
+watchEffect(() => {
+  const wid = workspaceId.value || ''
+  if (msgsWorkspace.value === wid)
+    return
+  msgs.value = []
+  msgsWorkspace.value = wid
+})
+
 const input = ref('')
 const loading = ref(false)
 const listEl = ref<HTMLElement | null>(null)
@@ -71,6 +82,10 @@ function scrollToBottom() {
 async function send(preset?: string) {
   const text = String(preset ?? input.value).trim()
   if (!text || loading.value) return
+  // 查詢期間可能被切到別的工作區。回來時對不上就整個丟掉——
+  // 把 A 家的查詢結果貼進 B 家的對話,是會讓人照著錯資料做決定的那種錯
+  const askedFor = workspaceId.value || ''
+  const stillHere = () => (workspaceId.value || '') === askedFor
   input.value = ''
   msgs.value.push({ who: 'me', text })
   loading.value = true
@@ -82,10 +97,12 @@ async function send(preset?: string) {
       method: 'POST',
       body: { message: text, history },
     })
-    msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls })
+    if (stillHere())
+      msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls })
   }
   catch (err: any) {
-    msgs.value.push({ who: 'ai', text: err?.statusMessage || err?.data?.statusMessage || '查詢失敗了,稍後再試一次 🙏' })
+    if (stillHere())
+      msgs.value.push({ who: 'ai', text: err?.statusMessage || err?.data?.statusMessage || '查詢失敗了,稍後再試一次 🙏' })
   }
   finally {
     loading.value = false

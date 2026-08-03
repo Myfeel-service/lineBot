@@ -179,7 +179,7 @@
         </div>
 
         <!-- ── 轉真人通知 ─────────────────────── -->
-        <div class="message-card ai-section-card">
+        <div class="message-card ai-section-card" data-tour="ais-handoff">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">轉真人通知</span>

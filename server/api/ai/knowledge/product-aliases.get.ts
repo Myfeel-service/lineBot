@@ -2,7 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
-import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
+import { canonicalProductName, detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
 
 /**
  * GET /api/ai/knowledge/product-aliases
@@ -28,11 +28,13 @@ export default defineEventHandler(async (event) => {
   const productNames = [...new Set([...indexNames, ...sources.map(s => s.productName).filter(Boolean)])]
 
   return {
-    // 已確認的對照,以「別名 → 正式名」呈現才看得懂是誰併到誰
+    // 已確認的對照,以「別名 → 正式名」呈現才看得懂是誰併到誰。
+    // 正式名要解析到最終那一層:舊資料可能留有 A→B、B→C 的鏈,照原樣列會出現
+    // 同一個名字既在箭頭左邊又在右邊(A→B 和 B→C 並排),看起來像沒合併成功。
     pairs: Object.entries(aliasMap.aliases).map(([aliasKey, canonical]) => ({
       aliasKey,
       alias: aliasMap.aliasLabels[aliasKey] || aliasKey,
-      canonical,
+      canonical: canonicalProductName(canonical, aliasMap.aliases),
     })),
     candidates: detectAliasCandidates({ sources, productNames, aliasMap }),
     productNames,

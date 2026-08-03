@@ -60,6 +60,17 @@ export interface AliasCandidate {
 const VARIANT_WORDS = /(ultra|pro|plus|max|mini|lite|se|air|2nd|ii)\b/i
 
 /**
+ * 兩個名字互為包含時，多出來的那段是不是型號變體（ULTRA / PRO …）。
+ * 是的話兩者很可能是不同機器：「W1 REGEN」與「W1 REGEN ULTRA」。
+ */
+function variantApart(na: string, nb: string): boolean {
+  const shorter = na.length <= nb.length ? na : nb
+  const longer = na.length <= nb.length ? nb : na
+  if (shorter === longer || !longer.includes(shorter)) return false
+  return VARIANT_WORDS.test(longer.replace(shorter, ''))
+}
+
+/**
  * 把檔名片段對齊到「已存在的產品名」。檔名常比卡片上存的名字多帶括號型號
  * （「…高效抽取型除濕機 (WDH31B16E）」vs 卡片上的「…高效抽取型除濕機」）；
  * 直接拿檔名片段當正式名，會多生一個沒有任何卡片在用的第三個名字——
@@ -73,8 +84,10 @@ function snapToExistingName(part: string, existing: string[]): string {
   for (const e of existing) {
     const ne = normalizeProductName(e)
     if (!ne || ne.length < 4) continue
-    // 互為包含即視為同一個名字的長短寫法，取既有清單裡的版本
-    if (np.includes(ne) || ne.includes(np)) {
+    // 互為包含即視為同一個名字的長短寫法，取既有清單裡的版本。
+    // 但差在型號變體時不可對齊：檔名寫「…W1 REGEN」卻對齊到既有的「…W1 REGEN ULTRA」，
+    // 會把基本款的文件掛到 ULTRA 名下，還讓候選看起來「證據明確」。
+    if ((np.includes(ne) || ne.includes(np)) && !variantApart(np, ne)) {
       if (ne.length > normalizeProductName(best).length) best = e
     }
   }
@@ -97,15 +110,17 @@ export function detectAliasCandidates(input: {
   const dismissed = new Set(dismissedPairs)
   const out = new Map<string, AliasCandidate>()
 
-  const resolved = (n: string) => aliases[normalizeProductName(n)]
-  const alreadyLinked = (a: string, b: string) => {
-    const ca = resolved(a) ?? a
-    const cb = resolved(b) ?? b
-    return normalizeProductName(ca) === normalizeProductName(cb)
-  }
+  // 一路解析到最終正式名,**不能只查一層**:A→B、B→C 這種連鎖下,只查一層會判定
+  // A(→B) 與 C 不同,於是把早就併好的組合又列成候選;使用者按「合併」寫入的內容
+  // 與現況一模一樣,畫面毫無變化,看起來就是「按了沒反應」。
+  const alreadyLinked = (a: string, b: string) =>
+    normalizeProductName(canonicalProductName(a, aliases))
+    === normalizeProductName(canonicalProductName(b, aliases))
   const add = (c: AliasCandidate) => {
     if (dismissed.has(c.key) || alreadyLinked(c.a, c.b)) return
-    if (!out.has(c.key)) out.set(c.key, c)
+    // 卡片上寫「合併後會以 a 為正式名」,但 a 自己可能已經是別名(a→C),實際寫進去的會是 C。
+    // 這裡先解析成最終正式名,使用者看到的才等於按下去的結果。
+    if (!out.has(c.key)) out.set(c.key, { ...c, a: canonicalProductName(c.a, aliases) })
   }
   const names = [...new Set(input.productNames.map(n => n.trim()).filter(Boolean))]
 
@@ -127,14 +142,19 @@ export function detectAliasCandidates(input: {
     const a0 = snapToExistingName(parts[0]!, names)
     const b0 = snapToExistingName(parts[1]!, names)
     if (normalizeProductName(a0) === normalizeProductName(b0)) continue
+    // 同一份檔名並列不代表就是同一台:說明書常一次涵蓋基本款與 ULTRA。
+    // 差在型號變體時要照樣標風險,否則只顯示「證據明確」會誘導使用者把兩台不同機器併掉。
+    const risk = variantApart(normalizeProductName(a0), normalizeProductName(b0))
     add({
       key: aliasPairKey(a0, b0),
       // 較長的當正式名（資訊較完整）
       a: a0.length >= b0.length ? a0 : b0,
       b: a0.length >= b0.length ? b0 : a0,
-      reason: `這兩個名字並列在同一份文件的名稱裡：「${raw.slice(0, 60)}」`,
+      reason: risk
+        ? `這兩個名字並列在同一份文件的名稱裡：「${raw.slice(0, 60)}」——但兩者只差型號字尾，**可能是同系列的不同款**，請確認`
+        : `這兩個名字並列在同一份文件的名稱裡：「${raw.slice(0, 60)}」`,
       confidence: 'high',
-      variantRisk: false,
+      variantRisk: risk,
     })
   }
 
@@ -213,9 +233,14 @@ export function invalidateProductAliases(workspaceId?: string) {
   else aliasCache.clear()
 }
 
-export async function getProductAliases(db: Firestore, workspaceId: string): Promise<ProductAliasMap> {
+export async function getProductAliases(
+  db: Firestore,
+  workspaceId: string,
+  /** 寫入前的讀取要繞過快取:拿到 60 秒前的舊對照表會算錯要一起搬的別名 */
+  opts?: { fresh?: boolean },
+): Promise<ProductAliasMap> {
   const cached = aliasCache.get(workspaceId)
-  if (cached && cached.expiresAt > Date.now()) return cached.value
+  if (!opts?.fresh && cached && cached.expiresAt > Date.now()) return cached.value
   let value: ProductAliasMap = { aliases: {}, aliasLabels: {}, dismissedPairs: [] }
   try {
     const snap = await db.collection(PRODUCT_NAMES_COLLECTION).doc(workspaceId).get()
@@ -257,27 +282,55 @@ export function canonicalProductName(name: string | undefined | null, aliases: R
 
 // ── 寫入 ──────────────────────────────────────────────────────
 
-/** 確認「這兩個是同一台」：把 alias 指向 canonical，並把 canonical 補進產品名清單 */
+/**
+ * 確認「這兩個是同一台」：把 alias 指向 canonical，並把 canonical 補進產品名清單。
+ *
+ * 對照表一律保持**扁平**（每個別名直接指向最終正式名，不留 A→B→C 的鏈）：
+ *   1. 傳進來的 canonical 若自己也是別名，改指它的最終正式名；
+ *   2. 原本指向 alias 的其他別名，一併改指新的正式名。
+ * 不扁平化的話「已確認的對照」會出現同一個名字既是別名又是正式名（看起來很怪），
+ * 而且鏈上的組合會被重複列成候選。
+ *
+ * 回傳 false 代表沒有東西可改（兩者早就是同一台）——呼叫端才有辦法告訴使用者，
+ * 而不是靜靜地寫入一模一樣的內容、畫面沒變讓人以為壞掉。
+ */
 export async function confirmAlias(
   db: Firestore,
   workspaceId: string,
   canonical: string,
   alias: string,
-): Promise<void> {
-  const c = canonical.trim()
+): Promise<boolean> {
   const a = alias.trim()
-  if (!c || !a || normalizeProductName(c) === normalizeProductName(a)) return
+  if (!canonical.trim() || !a) return false
+
+  const current = await getProductAliases(db, workspaceId, { fresh: true })
+  const aKey = normalizeProductName(a)
+  // 正式名解析到最終那一層(步驟 1)
+  const c = canonicalProductName(canonical, current.aliases)
+  const cKey = normalizeProductName(c)
+  // 自己併自己,或反過來 canonical 早就併進 alias 了(寫下去會成環)
+  if (!cKey || cKey === aKey) return false
+  // 已經指向同一個正式名 → 沒有東西要改
+  if (normalizeProductName(canonicalProductName(a, current.aliases)) === cKey) return false
+
+  // 原本指向 alias 的別名要一起搬過來(步驟 2)
+  const repointed: Record<string, string> = {}
+  for (const [k, v] of Object.entries(current.aliases)) {
+    if (k !== aKey && normalizeProductName(v) === aKey) repointed[k] = c
+  }
+
   // 刻意**不**寫進 dismissedPairs:合併後 detectAliasCandidates 的 alreadyLinked 本來就會
   // 濾掉這組;若又記進「不再詢問」,使用者按錯後即使「解除」也永遠找不回這組候選(單向門)。
   await db.collection(PRODUCT_NAMES_COLLECTION).doc(workspaceId).set(
     {
       names: FieldValue.arrayUnion(c),
-      aliases: { [normalizeProductName(a)]: c },
-      aliasLabels: { [normalizeProductName(a)]: a },
+      aliases: { ...repointed, [aKey]: c },
+      aliasLabels: { [aKey]: a },
     },
     { merge: true },
   )
   invalidateProductAliases(workspaceId)
+  return true
 }
 
 /** 「不是同一台」：記下來不再詢問 */

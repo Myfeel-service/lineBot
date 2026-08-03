@@ -2,27 +2,20 @@
   <!-- 常駐右下角的教學 agent。樣式見 assets/scss/components/_tutorial-agent.scss -->
   <div class="tutorial-agent">
     <!-- 異常小氣泡：壞掉的東西要主動講一次，不能只靠使用者注意到紅點 -->
+    <!-- 外層是 div、內層兩顆真按鈕：按鈕不能包按鈕，且「關掉」要能用鍵盤獨立操作 -->
     <Transition name="ta-pop">
-      <button
-        v-if="alertNudge && !panelOpen"
-        class="ta-nudge ta-nudge--alert"
-        @click="onAlertNudgeClick"
-      >
-        <span class="ta-nudge__text">{{ alertNudge }}</span>
-        <span class="ta-nudge__close" aria-label="知道了" @click.stop="alertNudge = ''"><el-icon><Close /></el-icon></span>
-      </button>
+      <div v-if="alertNudge && !panelOpen" class="ta-nudge ta-nudge--alert">
+        <button type="button" class="ta-nudge__text" @click="onAlertNudgeClick">{{ alertNudge }}</button>
+        <button type="button" class="ta-nudge__close" aria-label="知道了" @click="alertNudge = ''"><el-icon><Close /></el-icon></button>
+      </div>
     </Transition>
 
     <!-- 第一次來的引導小氣泡（一次性）。有異常時讓位給上面那顆 -->
     <Transition name="ta-pop">
-      <button
-        v-if="showNudge && !panelOpen && !alertNudge"
-        class="ta-nudge"
-        @click="onNudgeClick"
-      >
-        <span class="ta-nudge__text">第一次來？我帶你一步步把設定做完</span>
-        <span class="ta-nudge__close" aria-label="不用了" @click.stop="dismissNudge"><el-icon><Close /></el-icon></span>
-      </button>
+      <div v-if="showNudge && !panelOpen && !alertNudge" class="ta-nudge">
+        <button type="button" class="ta-nudge__text" @click="onNudgeClick">第一次來？我帶你一步步把設定做完</button>
+        <button type="button" class="ta-nudge__close" aria-label="不用了" @click="dismissNudge"><el-icon><Close /></el-icon></button>
+      </div>
     </Transition>
 
     <!-- 聊天面板 -->
@@ -46,10 +39,11 @@
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
         </header>
 
-        <!-- 問助理:用講的查後台(唯讀) -->
-        <AdminAgentChat v-if="panelTab === 'chat'" class="ta-panel__chat" />
+        <!-- 問助理:用講的查後台(唯讀)。用 v-show 不用 v-if——切去看「目前狀況」再切回來，
+             對話與捲動位置要還在，不然問到一半去對照狀態就等於重問一次 -->
+        <AdminAgentChat v-show="panelTab === 'chat'" class="ta-panel__chat" />
 
-        <div v-if="panelTab === 'setup'" class="ta-panel__body">
+        <div v-show="panelTab === 'setup'" class="ta-panel__body">
           <!-- 導覽結束後的回應（閉環） -->
           <div v-if="postTourNote" class="ta-note">{{ postTourNote }}</div>
 
@@ -167,9 +161,13 @@
               </button>
             </div>
 
-            <!-- 必要項都完成 -->
+            <!-- 必要項都完成：閉環到「上線前先試答」，不要停在恭喜就沒了 -->
             <div v-else class="ta-alldone">
-              必要設定都完成了，可以上線囉！需要的話我可以再帶你複習任何一段。
+              <p class="ta-alldone__msg">必要設定都完成了，可以上線囉！</p>
+              <p class="ta-alldone__hint">正式讓 AI 回客人之前，建議先自己試答幾題，確認答得穩。</p>
+              <button class="ta-alldone__cta" @click="startTopicById('ai-playground')">
+                去試答看看 →
+              </button>
             </div>
 
             <!-- 這次查不到狀態的項目（現形，不偷偷扣分） -->
@@ -200,7 +198,14 @@
                     @click="onPick(topic)"
                   >
                     <span class="ta-option__icon"><el-icon><component :is="topic.icon" /></el-icon></span>
-                    <span class="ta-option__label">{{ topic.label }}</span>
+                    <span class="ta-option__body">
+                      <span class="ta-option__label">
+                        {{ topic.label }}
+                        <!-- 步數自動算：功能旗標關掉某步時會跟著少，不會跟文案漂移 -->
+                        <span class="ta-option__steps">{{ stepCount(topic) }} 步</span>
+                      </span>
+                      <span class="ta-option__blurb">{{ topic.blurb }}</span>
+                    </span>
                     <span class="ta-option__arrow">→</span>
                   </button>
                 </div>
@@ -249,10 +254,19 @@
             :placement="step.placement"
           >
             <template #header>
-              <span class="ta-tour-title">{{ step.title }}</span>
+              <span class="ta-tour-head">
+                <!-- 步數由畫面標，內容不寫「第 N 步」——跳步、加步都不會對不上 -->
+                <span v-if="activeSteps.length > 1" class="ta-tour-count">{{ i + 1 }} / {{ activeSteps.length }}</span>
+                <span class="ta-tour-title">{{ step.title }}</span>
+              </span>
             </template>
             <!-- eslint-disable-next-line vue/no-v-html -->
             <div class="ta-tour-desc" v-html="step.description" />
+            <!-- 目標找不到時要講出來。預設會退成置中說明卡，不講的話使用者只會覺得
+                 「這步沒指到東西」而搞不清楚是壞了還是本來就沒有 -->
+            <p v-if="targetMissing && step.target" class="ta-tour-missing">
+              這一步要指的位置目前不在畫面上——通常是還沒選任何一筆資料，或這個功能沒開。上面的說明仍然適用。
+            </p>
             <el-button
               v-if="step.actionTopicId"
               type="primary"
@@ -289,6 +303,7 @@ const {
   groupedTopics,
   activeSteps,
   lastTopicId,
+  stepCount,
   openPanel,
   closePanel,
   togglePanel,
@@ -312,6 +327,7 @@ const {
   loaded,
   loading,
   refresh,
+  reset: resetSetupStatus,
 } = useSetupStatus()
 const {
   alerts,
@@ -327,9 +343,13 @@ const {
 } = useWorkspaceAlerts()
 const { setDemo, clearDemo } = useFlowDemo()
 
-/** 兩份體檢（設定就緒度 + 目前異常）一起重查；force 用在使用者手動按「重新檢查」 */
+/**
+ * 兩份體檢（設定就緒度 + 目前異常）一起重查。
+ * force 用在「使用者按重新檢查」與「剛跑完導覽要確認有沒有生效」——這兩種情境
+ * 一定要拿到當下的真實狀態，不能被節流擋掉回舊答案。
+ */
 function refreshAll(force = false) {
-  return Promise.all([refresh(), refreshAlerts({ force })])
+  return Promise.all([refresh({ force }), refreshAlerts({ force })])
 }
 
 const busy = computed(() => loading.value || alertsLoading.value)
@@ -370,14 +390,14 @@ const agentLine = computed(() => {
     return `有 ${unknownCaps.value.length} 項我這次查不到狀態，先點「重新檢查」確認一下。`
   if (incompleteAll.value.length)
     return `必要設定都完成了 可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
-  return '你的設定都完成了 之後有任何不熟的地方，隨時點我。'
+  return '你的設定都完成了。上線前建議先試答幾題確認 AI 答得穩，之後有任何不熟的地方隨時點我。'
 })
 
 function onPick(topic: Parameters<typeof startTopic>[0]) {
   void startTopic(topic)
 }
 
-// 複習教學分組的展開狀態；預設展開「開始設定」
+// 複習教學分組的展開狀態；預設展開「開始設定」與「AI 客服」
 const expandedGroups = ref<Set<string>>(new Set(['setup', 'ai']))
 function toggleGroup(id: string) {
   const next = new Set(expandedGroups.value)
@@ -435,7 +455,8 @@ async function onTourFinish() {
   const finishedId = lastTopicId.value
   clearDemo()
   endTour()
-  await refresh()
+  // 一定要 force：使用者剛才就在改設定，這裡拿到舊快取就會誤報「還沒生效」
+  await refresh({ force: true })
   const cap = finishedId ? capabilities.value.find(c => c.tourId === finishedId) : null
   if (cap) {
     postTourNote.value = cap.status === 'done'
@@ -452,7 +473,7 @@ async function onTourFinish() {
 function onTourClose() {
   clearDemo()
   endTour()
-  void refresh()
+  void refresh({ force: true })
 }
 
 // ── 第一次來的引導小氣泡（一次性，存 localStorage） ──
@@ -519,9 +540,9 @@ onMounted(async () => {
   }
   catch {}
   // 背景重查：使用者可能整天停在同一頁，不重查就等於沒有「主動告知」。
-  // 分頁在背景時跳過，不浪費查詢額度。
+  // 分頁在背景、或這個角色一項異常都看不到（例如觀察者）就跳過，不浪費查詢額度。
   pollTimer = setInterval(() => {
-    if (document.visibilityState === 'visible')
+    if (document.visibilityState === 'visible' && alerts.value.length)
       void refreshAlerts()
   }, POLL_INTERVAL_MS)
 })
@@ -532,13 +553,14 @@ onBeforeUnmount(() => {
   pollTimer = null
 })
 
-// 換工作區：先把上一個帳號的異常清掉再重查。把 A 家的「扣款失敗」留在 B 家畫面上，
-// 比暫時空白嚴重得多
+// 換工作區：先把上一個帳號的狀態清掉再重查。把 A 家的「扣款失敗」或「設定都完成了」
+// 留在 B 家畫面上，比暫時空白嚴重得多
 watch(workspaceId, (next, prev) => {
   if (!next || next === prev)
     return
   alertNudge.value = ''
   resetAlerts()
+  resetSetupStatus()
   void refreshAll(true)
 })
 
@@ -586,23 +608,13 @@ function scrollAndSettle(el: HTMLElement): Promise<void> {
   })
 }
 
-/** 輪詢等元素出現（最多 ~2s），給示範卡渲染的時間 */
-function waitForSelector(selector: string, timeout = 2000): Promise<HTMLElement | null> {
-  return new Promise((resolve) => {
-    const start = performance.now()
-    const tick = () => {
-      const el = document.querySelector<HTMLElement>(selector)
-      if (el) return resolve(el)
-      if (performance.now() - start > timeout) return resolve(null)
-      requestAnimationFrame(tick)
-    }
-    tick()
-  })
-}
+/** 這一步指定了 target 卻找不到元素。要顯示在卡片上，不能安靜退化成置中說明卡 */
+const targetMissing = ref(false)
 
 async function focusActiveStep() {
   if (!tourOpen.value) {
     liveTarget.value = null
+    targetMissing.value = false
     return
   }
   await nextTick()
@@ -628,7 +640,8 @@ async function focusActiveStep() {
   }
   const selector = step?.target
   // 空 target ＝ 置中說明卡（不高亮）；否則輪詢等元素出現（示範卡可能要時間渲染）
-  const el = selector ? await waitForSelector(selector) : null
+  const el = selector ? await waitForElement(selector, 2000) : null
+  targetMissing.value = Boolean(selector) && !el
   if (!el) {
     liveTarget.value = null
     return

@@ -27,11 +27,13 @@ export default defineEventHandler(async (event) => {
     if (!canonical || !alias) {
       throw createError({ statusCode: 400, statusMessage: '需要 canonical 與 alias' })
     }
-    await confirmAlias(db, workspaceId, canonical, alias)
+    const changed = await confirmAlias(db, workspaceId, canonical, alias)
     // 正式名會 arrayUnion 進同一份文件的 names;那份清單另有 60 秒快取,
     // 不一併失效的話,接下來一分鐘內建立的卡片認不到剛加進去的正式名。
-    invalidateWorkspaceProductNames(workspaceId)
-    return { ok: true }
+    if (changed) invalidateWorkspaceProductNames(workspaceId)
+    // changed=false:兩者早就指向同一個正式名。回 ok 但標記沒異動,
+    // 前端才能說「這組本來就已經合併了」,而不是畫面沒變讓人以為按鈕壞了。
+    return { ok: true, changed }
   }
 
   if (action === 'dismiss') {
