@@ -1380,13 +1380,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const social = intentRes ? socialReplyForIntent(intentRes.intent) : socialCannedReply(text)
   if (social) {
     await record({ invocations: 1, answered: 1, inputTokens: routerIn, outputTokens: routerOut })
-    return { decision: 'answered', answer: social, confidence: 1, sources: [], handoffReason: null }
+    // answerKind='social'：沒查知識庫。後台脈絡卡靠它避免把「謝謝」講成「知識庫沒有相關資訊」
+    return { decision: 'answered', answer: social, confidence: 1, sources: [], handoffReason: null, answerKind: 'social' }
   }
   // 明顯超出範圍（純閒聊 / 寫作代工 / 打探系統）→ 禮貌拒答收尾，**不轉真人**：
   // 這類訊息以前走 no_grounding 排進轉真人佇列，路人亂丟一句真人就得接一件（實測：天氣 / 寫詩 / prompt 注入全轉真人）。
   if (intentRes?.intent === 'offtopic') {
     await record({ invocations: 1, answered: 1, inputTokens: routerIn, outputTokens: routerOut })
-    return { decision: 'answered', answer: DEFAULT_OFFTOPIC_REPLY, confidence: 1, sources: [], handoffReason: null }
+    return { decision: 'answered', answer: DEFAULT_OFFTOPIC_REPLY, confidence: 1, sources: [], handoffReason: null, answerKind: 'offtopic' }
   }
 
   // 比較意圖：客人想比較多個產品。**不要反問叫他選一個**（那是反意圖、會鬼打牆），
@@ -1881,6 +1882,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       confidence: topSimilarity,
       sources: chunks.map(c => ({ chunkId: c.id, title: c.title, similarity: c.similarity })),
       handoffReason: null,
+      answerKind: 'offtopic',
       ...(input.debug ? { debugPrompt: userPrompt } : {}),
     }
   }

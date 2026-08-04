@@ -69,6 +69,35 @@ export const useWorkspace = () => {
     return task
   }
 
+  /**
+   * 給「路由守衛」用的載入：已經載過就不重打，而且**回報成功或失敗**。
+   *
+   * 守衛要用清單判斷「這個 workspace 你有沒有權限」，所以必須分得出
+   * 「查過了、真的沒有」與「根本沒查到（斷網／token 過期）」——
+   * 兩者混在一起的話，一次網路抖動就會把有權限的人踢出去。
+   */
+  async function ensureWorkspaceList(): Promise<{ loaded: boolean }> {
+    if (workspaceList.value.length > 0) return { loaded: true }
+    try {
+      await loadWorkspaceList()
+      return { loaded: true }
+    }
+    catch {
+      return { loaded: false }
+    }
+  }
+
+  /**
+   * 指定 workspace 的角色（不是「目前路由」的）。
+   *
+   * 路由守衛裡 `useRoute()` 拿到的是**還沒切過去的舊路由**，用 currentRole 判斷
+   * 會拿錯 workspace 的角色。守衛請一律用 `to.params.workspaceId` 呼叫這支。
+   */
+  function roleFor(wid: string | undefined | null): WorkspaceMemberRole | null {
+    if (!wid) return null
+    return workspaceList.value.find(w => w.workspaceId === wid)?.role ?? null
+  }
+
   // ── Role check helpers ─────────────────────────────────────────
   // canManageSettings：成員、LINE 憑證等 workspace 設定
   // canOperate：客服營運（對話、模組、推播等）— 不含觀察者
@@ -109,5 +138,7 @@ export const useWorkspace = () => {
     getBearer,
     apiFetch,
     loadWorkspaceList,
+    ensureWorkspaceList,
+    roleFor,
   }
 }

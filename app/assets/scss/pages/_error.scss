@@ -1,0 +1,117 @@
+/* ── 全站錯誤頁（app/error.vue；沒有 layout，類名皆掛在 .error-page 下）──── */
+.error-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+  padding: 1.5rem;
+}
+
+.error-page .error-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1rem;
+}
+
+.error-page .error-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.error-page .logo-circle {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, var(--brand-green), var(--brand-green-deep));
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+}
+
+.error-page .error-brand {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.error-page .error-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.6rem;
+}
+
+.error-page .error-icon--warn {
+  background: rgba(217, 119, 6, 0.12);
+  color: var(--color-warning);
+}
+
+.error-page .error-icon--error {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--color-error);
+}
+
+.error-page .error-icon--info {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-info);
+}
+
+.error-page .error-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.error-page .error-desc {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.error-page .error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.error-page .error-detail {
+  width: 100%;
+  margin-top: 0.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.error-page .error-detail summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.error-page .error-detail code {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+  line-height: 1.6;
+}

@@ -76,6 +76,56 @@ async function loadBroadcastItems(
   }
 }
 
+/**
+ * 訊息窗口往前多看的緩衝。
+ *
+ * 為什麼需要：客人訊息的時間戳是 **LINE 收到的時間**，而舊資料的 session.openedAt 是
+ * **我們處理到的時間**，後者一定晚幾百毫秒（網路 + 冷啟動）。用 `timestamp >= openedAt`
+ * 取窗口的話，「開啟這場會話的那句話」天生就會被切掉——客服點進任何一場新會話，
+ * 都看不到客人最初說了什麼。新資料已改用來訊時間當 openedAt（見 ensureConversationSession），
+ * 這個緩衝是給既有資料的（openedAt 已經寫死了，改不了）。
+ *
+ * 60 秒遠大於實際落差（毫秒級），又短到不會撈進不相關的東西；
+ * 而且下面還會用「上一場的結束時間」把窗口夾住，人工結束會話後客人馬上再傳訊也不會混場。
+ */
+const WINDOW_LOOKBACK_MS = 60_000
+
+/**
+ * 找出這位客人「上一場」會話的結束時間，當作本場窗口的硬下界。
+ *
+ * 只用 userId 等值查詢（不加 orderBy）→ 不需要複合索引；同一位客人的會話數量很少。
+ * 查不到／查詢失敗就回 0（等於不夾），寧可多看 60 秒也不要讓整條時間軸掛掉。
+ */
+async function previousSessionEndMs(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+  lineUserId: string,
+  sessionId: string,
+  openedMs: number,
+): Promise<number> {
+  try {
+    const snap = await db.collection('conversationSessions')
+      .where('userId', '==', lineUserId)
+      .where('workspaceId', '==', workspaceId)
+      .get()
+    let latest = 0
+    for (const d of snap.docs) {
+      if (d.id === sessionId) continue
+      const data = d.data()
+      const prevOpened = toMillis(data.openedAt)
+      if (!prevOpened || prevOpened >= openedMs) continue
+      // 上一場的邊界取「結束時間」，沒有結束時間（異常殘留）就用它的最後活動時間
+      const end = toMillis(data.closedAt) || toMillis(data.lastActivityAt)
+      if (end > latest && end <= openedMs) latest = end
+    }
+    return latest
+  }
+  catch (e: any) {
+    console.warn('[timeline] previous session lookup failed:', String(e?.message ?? e).slice(0, 160))
+    return 0
+  }
+}
+
 function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, moduleId?: string): string {
   if (eventType === 'conversation_opened') return '新會話開始'
   if (eventType === 'conversation_closed') return '會話已結束'
@@ -139,17 +189,24 @@ export default defineEventHandler(async (event) => {
   const openMs = toMillis(openedAt)
   const closeMs = session.closedAt ? toMillis(closedAt) : Number.POSITIVE_INFINITY
 
+  // 窗口起點：openedAt 往前 60 秒，但不得跨進上一場（見 WINDOW_LOOKBACK_MS）
+  const prevEndMs = openMs ? await previousSessionEndMs(db, workspaceId, lineUserId, sessionId, openMs) : 0
+  const windowStartMs = openMs
+    ? Math.max(openMs - WINDOW_LOOKBACK_MS, prevEndMs > 0 ? prevEndMs + 1 : 0)
+    : openMs
+  const windowStart = new Date(windowStartMs)
+
   const msgCol = db.collection('conversations').doc(convDocId).collection('messages')
 
   let messageDocs: FirebaseFirestore.QueryDocumentSnapshot[] = []
   try {
     let msgsRef = msgCol
-      .where('timestamp', '>=', openedAt)
+      .where('timestamp', '>=', windowStart)
       .orderBy('timestamp', 'asc') as FirebaseFirestore.Query
 
     if (session.closedAt) {
       msgsRef = msgCol
-        .where('timestamp', '>=', openedAt)
+        .where('timestamp', '>=', windowStart)
         .where('timestamp', '<=', closedAt)
         .orderBy('timestamp', 'asc')
     }
@@ -166,7 +223,7 @@ export default defineEventHandler(async (event) => {
     messageDocs = snap.docs
       .filter((d) => {
         const t = toMillis(d.data().timestamp)
-        return t >= openMs && t <= closeMs
+        return t >= windowStartMs && t <= closeMs
       })
       .reverse()
   }
@@ -186,12 +243,13 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  // 群發推播（讀取時才拼，零寫入）
+  // 群發推播（讀取時才拼，零寫入）。起點與訊息同一個窗口——不然「推播送出後客人才開口」
+  // 開的那場會話，會看到客人的話卻看不到他在回什麼
   items.push(...await loadBroadcastItems(
     db,
     workspaceId,
     convDocId,
-    openedAt,
+    windowStart,
     session.closedAt ? closedAt : null,
   ))
 

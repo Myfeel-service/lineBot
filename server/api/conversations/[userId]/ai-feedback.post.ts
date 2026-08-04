@@ -39,7 +39,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = getDb()
-  const snap = await db.collection('conversations').doc(lineUserFirestoreDocId(userId, workspaceId)).get()
+  // doc id 一律用正規化後的對話文件 id：取消標記（DELETE）與「是否已標記」（ai-context）
+  // 都要算出同一個 id，任何一邊用未正規化的原始參數就會對不上
+  const convDocId = lineUserFirestoreDocId(userId, workspaceId)
+  const snap = await db.collection('conversations').doc(convDocId).get()
   const data = snap.data() as { workspaceId?: string; aiMeta?: AiConversationMeta } | undefined
   if (!snap.exists || data?.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: '找不到此對話' })
@@ -60,7 +63,7 @@ export default defineEventHandler(async (event) => {
 
   await logAiFeedbackEvent(db, {
     workspaceId,
-    userId,
+    userId: convDocId,
     type,
     query: String(meta.lastQuery ?? ''),
     chunkIds: (meta.lastSourceChunkIds ?? []).map(String),

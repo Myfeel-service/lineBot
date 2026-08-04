@@ -6,6 +6,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { findBrokenModuleRefs } from '~~/server/utils/broken-module-refs'
+import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from '~~/server/utils/claim-push-health'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getDb } from '~~/server/utils/firebase'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
@@ -239,6 +240,17 @@ export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse
           const cfg = aiSettings.handoffNotify
           const off = !cfg?.enabled || !(cfg?.lineUserIds?.length)
           return off ? { active: true } : { active: false }
+        }),
+        probe('claimPushUnmarked', async () => {
+          // 一次點讀（cronState 內每工作區一筆）。蓋章成功會自己清掉，所以有值就代表最近真的壞過。
+          const st = await readClaimPushMarkFailure(db, wid)
+          if (!st) return { active: false }
+          if (Date.now() - st.failedAtMs > CLAIM_PUSH_MARK_ALERT_WINDOW_MS) return { active: false }
+          return {
+            active: true,
+            count: st.count,
+            detail: st.lastError ? `系統訊息：${cleanReason(st.lastError)}` : undefined,
+          }
         }),
         probe('brokenModuleButton', async () => {
           // 靜態檢查，不是統計「誰按到了」：在客人踩到之前就報。

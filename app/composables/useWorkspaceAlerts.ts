@@ -155,6 +155,17 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/knowledge/sources`,
   },
   {
+    id: 'claimPushUnmarked',
+    icon: Service,
+    severity: 'warning',
+    // 不用「蓋章 / system_notice」這種內部說法:客服看到的後果是「假的待處理」
+    title: '活動推播後有對話被誤標成待處理',
+    impact: '客人已經收到活動推播，但系統沒記下「已回應」，這些對話會出現在待處理清單上，其實不用處理。清單暫時會偏多，客人沒有受影響。',
+    cta: '去看待處理清單',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/conversations?tab=open`,
+  },
+  {
     id: 'invoiceFailed',
     icon: Tickets,
     severity: 'warning',

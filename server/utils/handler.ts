@@ -27,6 +27,7 @@ import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { archiveConversationMedia } from './conversation-media'
+import { clearClaimPushMarkFailure, recordClaimPushMarkFailure } from './claim-push-health'
 import { createImagemapImageToken } from './line-imagemap-image-token'
 import { createUriTagToken } from './line-action-tag-token'
 import { addTagsToUser } from './tagging'
@@ -338,13 +339,17 @@ export async function handleFollowEvent(
   try {
     await ensureUser(userId, preloadedProfile, wid)
     console.log('[webhook] follow ensureUser:', userId)
-    // Session creation and claim application are independent — run in parallel
+    // Session creation and claim application are independent — run in parallel。
+    // session 用 promise 傳下去（不先 await）：推播延遲不變，但推播後的「已回應」蓋章
+    // 就能用同一場 session，不必再開一次交易去問「是哪一場」。
+    // origin='follow':加好友/活動入口出生的 session,客人開口前不進首接統計
+    const sessionPromise = ensureConversationSession(userId, wid, { origin: 'follow' }).catch((e) => {
+      console.error('[session] follow session error:', e)
+      return null
+    })
     await Promise.all([
-      // origin='follow':加好友/活動入口出生的 session,客人開口前不進首接統計
-      ensureConversationSession(userId, wid, { origin: 'follow' }).catch(e =>
-        console.error('[session] follow session error:', e),
-      ),
-      applyPendingClaims(userId, wid),
+      sessionPromise,
+      applyPendingClaims(userId, wid, sessionPromise),
     ])
   }
   catch (e) {
@@ -398,23 +403,28 @@ async function claimLeadClaimForApply(
  * 記成機器人首接會讓活動流量灌水統計（活動辦越大灌越兇）。system_notice 只動 status、
  * 不動 initialHandler——客服不會再看到一筆「其實已經推播過」的待處理，統計也保持誠實。
  *
- * 這裡自己取 session 是因為 claim 的工作區可能與 follow 事件的工作區不同（見 claimWorkspaceId），
- * 不能沿用 handleFollowEvent 那一份。ensureConversationSession 是冪等的，常見情況會直接命中快取。
+ * ⚠️ 這一步曾經安靜壞掉（2026-08 抽查同活動 40 筆只有 11 筆蓋到章），所以現在：
+ *   1. 不再自己呼叫 ensureConversationSession。改用「已經建好的那一場」，缺失時由 enterModule
+ *      自己從 conversations.currentSessionId 補撈（一次點讀）。少一次交易、也不再依賴
+ *      in-memory 快取；而且推播本來就不該「創造」一場會話。
+ *   2. 失敗往外丟，由呼叫端記進健康狀態（異常提醒中心看得到），不再只印 log。
+ *
+ * knownSessionId 為 null 時代表「這張 claim 的工作區與 follow 事件的工作區不同」
+ * （見 claimWorkspaceId），不能沿用那一份 session，交給 enterModule 自己撈。
  */
-async function markClaimPushHandled(userId: string, claimWorkspaceId: string): Promise<void> {
-  try {
-    const sessionId = await ensureConversationSession(userId, claimWorkspaceId, { origin: 'follow' })
-    if (!sessionId) return
-    await enterModule(sessionId, userId, 'system_notice', undefined, claimWorkspaceId)
-  }
-  catch (e) {
-    console.error('[follow] mark claim push handled failed:', e)
-  }
+async function markClaimPushHandled(
+  userId: string,
+  claimWorkspaceId: string,
+  knownSessionId: string | null,
+): Promise<void> {
+  await enterModule(knownSessionId, userId, 'system_notice', undefined, claimWorkspaceId)
 }
 
 async function applyPendingClaims(
   userId: string,
   workspaceId: string,
+  /** handleFollowEvent 已在建立的那一場 session（同工作區時才可沿用，見 markClaimPushHandled） */
+  followSessionPromise?: Promise<string | null>,
 ): Promise<void> {
   const db = getDb()
   const now = new Date()
@@ -507,6 +517,61 @@ async function applyPendingClaims(
       console.log('[follow] tagging result:', taggingResult, 'claimId:', doc.id)
     }
 
+    /**
+     * 推播 + 存訊息 + 後續動作 + 「已回應」蓋章。
+     *
+     * ⚠️ 這裡刻意**不用一個 Promise.all 包起來**：先前四件事綁在一起，任何一件失敗
+     * （例如存訊息或 dispatchPostReplyActions 出錯）就會連帶跳過蓋章，
+     * 結果是「客人收到推播了、會話卻永遠掛在待處理」——實測抽 40 筆只有 11 筆蓋到章。
+     * 現在的規則：**推播成功就一定要蓋章**，其餘步驟各自失敗、互不牽連。
+     */
+    const pushAndMark = async (messages: messagingApi.Message[], label: string) => {
+      const sideEffects: Array<Promise<unknown>> = [
+        saveOutgoingConversationMessagesByWorkspace(userId, messages, claimWorkspaceId),
+      ]
+      if (action.type === 'module' && flow) {
+        sideEffects.push(dispatchPostReplyActions(userId, flow.messages, claimWorkspaceId))
+      }
+
+      let pushed = false
+      try {
+        // 推播與「存訊息／後續動作」並行（互不依賴），但成敗分開判斷
+        const [pushResult, ...sideResults] = await Promise.allSettled([
+          pushMessage(userId, messages, claimWorkspaceId),
+          ...sideEffects,
+        ])
+        pushed = pushResult!.status === 'fulfilled'
+        if (!pushed) console.error(`[follow] ${label} push failed:`, (pushResult as PromiseRejectedResult).reason)
+        // 副作用失敗不影響蓋章，但一定要留下記錄（客人收到了、後台卻沒有那則訊息）
+        for (const r of sideResults) {
+          if (r.status === 'rejected') console.error(`[follow] ${label} side effect failed:`, r.reason)
+        }
+      }
+      catch (e) {
+        // allSettled 不會 reject，走到這裡只可能是同步例外（例如訊息組裝有問題）
+        console.error(`[follow] ${label} failed before push:`, e)
+      }
+
+      // 推播沒成功就不蓋章：客人什麼都沒收到，這場確實還需要人看一眼
+      if (!pushed) return
+      try {
+        await markClaimPushHandled(
+          userId,
+          claimWorkspaceId,
+          claimWorkspaceId === workspaceId ? await (followSessionPromise ?? Promise.resolve(null)) : null,
+        )
+        // 清狀態失敗不算蓋章失敗（章已經蓋上了）→ 不要走進下面的 catch 誤報
+        await clearClaimPushMarkFailure(db, claimWorkspaceId)
+          .catch(e => console.warn('[follow] clear mark failure state failed:', e))
+      }
+      catch (e) {
+        // 蓋章失敗＝客服會看到假待辦。不再只印 log：寫進健康狀態，異常提醒中心看得到
+        console.error('[follow] mark claim push handled failed:', e)
+        await recordClaimPushMarkFailure(db, claimWorkspaceId, e)
+          .catch(err => console.error('[follow] record mark failure failed:', err))
+      }
+    }
+
     if (action.type === 'module' && flow) {
       try {
         const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
@@ -517,15 +582,7 @@ async function applyPendingClaims(
           userId,
           channelSecret,
         )
-        if (lineMessages.length > 0) {
-          // 並行：推播 + 儲存對話訊息 + dispatchPostReplyActions（三者互不依賴）
-          await Promise.all([
-            pushMessage(userId, lineMessages, claimWorkspaceId),
-            saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, claimWorkspaceId),
-            dispatchPostReplyActions(userId, flow.messages, claimWorkspaceId),
-          ])
-          await markClaimPushHandled(userId, claimWorkspaceId)
-        }
+        if (lineMessages.length > 0) await pushAndMark(lineMessages, 'pushMessage module')
       }
       catch (e) {
         console.error('[follow] pushMessage module failed:', e)
@@ -533,19 +590,7 @@ async function applyPendingClaims(
     }
     else if (action.type !== 'module') {
       const actionMessages = buildAutoReplyActionMessages(action, userAttributes)
-      if (actionMessages.length > 0) {
-        try {
-          // 並行：推播 + 儲存對話訊息
-          await Promise.all([
-            pushMessage(userId, actionMessages, claimWorkspaceId),
-            saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, claimWorkspaceId),
-          ])
-          await markClaimPushHandled(userId, claimWorkspaceId)
-        }
-        catch (e) {
-          console.error('[follow] pushMessage action failed:', e)
-        }
-      }
+      if (actionMessages.length > 0) await pushAndMark(actionMessages, 'pushMessage action')
     }
 
     // 標記已完成
@@ -1753,7 +1798,8 @@ export async function handleMessageEvent(
     // preloads are reads / idempotent so running them on a redelivery is harmless.
     // preloadedUser is passed to handleIncomingText so it skips the ensureUser call inside.
     const [sessionId, preloadedUser, , , isFirstDelivery] = await Promise.all([
-      ensureConversationSession(userId, workspaceId).catch((e) => {
+      // inboundAtMs：開新會話時用「客人這句話的時間」當開始時間，否則時間軸會切掉這第一句
+      ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
         console.error('[session] ensureConversationSession error:', e)
         return null
       }),
@@ -1802,7 +1848,7 @@ export async function handleMessageEvent(
       payload: event.message,
       lineEventTimestampMs,
     }, workspaceId).catch(e => console.error('[conv] save error:', e))
-    const sessionId = await ensureConversationSession(userId, workspaceId).catch((e) => {
+    const sessionId = await ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
       console.error('[session] error:', e)
       return null
     })
@@ -2860,6 +2906,7 @@ async function tryAiFallback(params: {
       lastConfidence: result.confidence,
       lastQuery: textContent,
       lastSourceChunkIds: result.sources.map(s => s.chunkId),
+      lastAnswerKind: result.answerKind ?? 'kb',
       suggestedReply: draftMode ? result.answer : '',
     })
     return
@@ -3015,6 +3062,8 @@ const AI_META_DEFAULTS: Omit<AiConversationMeta, 'updatedAt' | 'lastDecision'> =
   lastHandoffReason: null,
   lastQuery: '',
   lastSourceChunkIds: [],
+  // 預設 'kb'：沒特別標記就是走檢索生成（此時 sources 空才是真的沒依據）
+  lastAnswerKind: 'kb',
   intent: '',
   collectedFields: {},
   suggestedReply: '',
@@ -3052,6 +3101,24 @@ export async function handlePostbackEvent(
   // Parse synchronously upfront so we can preload the right async data in parallel
   const trigger = parseTriggerModuleData(data)
   const messageTrigger = parseTriggerMessageData(data)
+  const switchTrigger = parseSwitchMenuData(data)
+
+  /**
+   * 純切換圖文選單（不觸發模組、不送文字）＝ 客人在操作介面，不是在跟店家說話。
+   * 這種事件**完全不動會話**：不建立／不喚醒 session、不寫任何對話紀錄。
+   *
+   * 為什麼不能像以前那樣「建 session + 記一筆 system_notice 把它移出待處理」：
+   *   1. 客人只是點了一下選單，卻在對話紀錄上長出一行系統事件（客服看了也不知道要幹嘛）。
+   *   2. 上次互動隔超過 24 小時時，這一下點擊會關掉舊會話、開一場空的新會話，
+   *      整場只有「新會話開始」一行、狀態掛在待處理——客服完全看不出客人做了什麼。
+   *   3. 那個「移出待處理」的寫入還是 fire-and-forget，Lambda 回應後容器凍結就被砍掉，
+   *      等於兩頭落空：紀錄多了噪音、狀態又沒真的改到。
+   * 已讀推定用的 lastPeerActivityAt 照樣更新（客人確實在線上動作）。
+   *
+   * 三種 postback data 前綴（triggerModule= / triggerMessage= / switchMenu=）互斥，
+   * 所以「是切換選單」就等於「不是觸發模組、也不是送文字」。
+   */
+  const isPureMenuSwitch = Boolean(switchTrigger.targetMenuId)
 
   // Run all independent work in parallel upfront:
   // - credentials, session, user (always needed)
@@ -3071,10 +3138,12 @@ export async function handlePostbackEvent(
   // 貼標／回覆等副作用都在 claim 確認之後才會發生。
   const [{ channelSecret }, sessionId, preloadedUserData, { flow: preloadedFlow, hydrated: preloadedHydrated }, isFirstDelivery] = await Promise.all([
     getLineWorkspaceCredentials(workspaceId),
-    ensureConversationSession(userId, workspaceId).catch((e) => {
-      console.error('[session] postback session error:', e)
-      return null
-    }),
+    isPureMenuSwitch
+      ? Promise.resolve(null)
+      : ensureConversationSession(userId, workspaceId, { inboundAtMs: postbackTs }).catch((e) => {
+          console.error('[session] postback session error:', e)
+          return null
+        }),
     ensureUser(userId, undefined, workspaceId).catch(e => {
       console.error('[ensureUser] Error:', e)
       return null
@@ -3113,20 +3182,14 @@ export async function handlePostbackEvent(
     return
   }
 
-  // Handle Switch Menu command
-  const switchTrigger = parseSwitchMenuData(data)
+  // Handle Switch Menu command（switchTrigger 已在最上方解析，供 isPureMenuSwitch 判斷用）
   if (switchTrigger.targetMenuId) {
     if (switchTrigger.tagIds.length > 0) {
       addTagsToUser(lineUserFirestoreDocId(userId, workspaceId), switchTrigger.tagIds, 'system', `switchMenu:${switchTrigger.targetMenuId}`, workspaceId)
         .catch(e => console.error('[tagging] switch menu tagging failed:', e))
     }
-    // 切選單是「已完成的操作」，不是待回覆的提問：記 system_notice 把會話移出待處理佇列
-    // （只動 status、不動 initialHandler，統計上仍誠實記為沒人回答過）。
-    // 先前少了這一步，客人按一下選單就會在收件匣多出一筆其實不用處理的待辦。
-    // 放在原生切換的 return 之前，兩種切換路徑都要記。
-    enterModule(sessionId, userId, 'system_notice', undefined, workspaceId).catch(e =>
-      console.error('[switchMenu] enterModule error:', e),
-    )
+    // 切選單刻意不寫任何對話紀錄、也不動會話狀態（見上方 isPureMenuSwitch 的說明）：
+    // 客人在操作介面，不是在跟店家說話。
     // 檢查是否為 LINE 原生瞬間切換（richmenuswitch）觸發的事件
     // @ts-ignore: LINE Node SDK's Event type might not perfectly reflect params yet
     const params = (event.postback as any).params

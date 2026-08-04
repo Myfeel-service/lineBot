@@ -34,15 +34,44 @@ export interface AiFeedbackEventInput {
   interactionAtMs: number
 }
 
-/** 固定 doc id：type + 對話 + 那一次互動的時間戳。Firestore doc id 不可含 '/'。 */
-function feedbackDocId(evt: AiFeedbackEventInput): string {
+/**
+ * 固定 doc id：type + 對話 + 那一次互動的時間戳。Firestore doc id 不可含 '/'。
+ *
+ * 「可以算得出來」是刻意的：後台要能問「這一次互動標過答錯了嗎」與「把它取消掉」，
+ * 兩件事都只需要這個 id，不必另外查詢或再存一份狀態。
+ */
+export function aiFeedbackDocId(
+  evt: Pick<AiFeedbackEventInput, 'workspaceId' | 'userId' | 'type' | 'interactionAtMs'>,
+): string {
   const safeUser = evt.userId.replace(/[^\w-]/g, '_')
   return `${evt.type}_${evt.workspaceId}_${safeUser}_${evt.interactionAtMs}`
 }
 
+/**
+ * 取消一筆回饋（客服按錯「AI 答錯了」）。
+ *
+ * 直接刪掉那筆事件就夠：缺口聚類每輪都是重新掃事件流、沒有「已消費」標記
+ * （見 ai-knowledge-suggest.ts 的 scanKnowledgeGaps），所以刪掉之後下一輪就不再算它。
+ * 已經被聚成建議的那一條不會回頭撤掉——建議本來就要人審核，忽略即可。
+ *
+ * 回傳是否真的刪到（false = 本來就沒標記過，前端不必當成錯誤）。
+ */
+export async function deleteAiFeedbackEvent(
+  db: Firestore,
+  evt: Pick<AiFeedbackEventInput, 'workspaceId' | 'userId' | 'type' | 'interactionAtMs'>,
+): Promise<boolean> {
+  const ref = db.collection(AI_FEEDBACK_EVENTS_COLLECTION).doc(aiFeedbackDocId(evt))
+  const snap = await ref.get()
+  // 跨租戶保護：doc id 已含 workspaceId，但仍比對欄位，避免將來 id 規則變動時形成破口
+  if (!snap.exists) return false
+  if (snap.data()?.workspaceId !== evt.workspaceId) return false
+  await ref.delete()
+  return true
+}
+
 export async function logAiFeedbackEvent(db: Firestore, evt: AiFeedbackEventInput): Promise<void> {
   const now = Timestamp.now()
-  await db.collection(AI_FEEDBACK_EVENTS_COLLECTION).doc(feedbackDocId(evt)).set({
+  await db.collection(AI_FEEDBACK_EVENTS_COLLECTION).doc(aiFeedbackDocId(evt)).set({
     workspaceId: evt.workspaceId,
     userId: evt.userId,
     type: evt.type,

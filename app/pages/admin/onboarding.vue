@@ -82,6 +82,7 @@ useHead({ title: '建立官方帳號 — 開始使用' })
 
 const { showToast } = useAdminToast()
 const { $auth } = useNuxtApp()
+const { loadWorkspaceList } = useWorkspace()
 
 const step = ref<'form' | 'done'>('form')
 const workspaceName = ref('')
@@ -124,11 +125,20 @@ async function create() {
   }
 }
 
+/**
+ * 剛建好的帳號還不在前端的 workspace 清單裡，而 auth middleware 會用那份清單判斷
+ * 「這個帳號是不是你的」——不先重載就會被自己的守衛擋在門外、彈回帳號選擇頁。
+ */
+async function enterCreated(path: string) {
+  await loadWorkspaceList().catch(() => {})
+  await navigateTo(`/admin/${createdWorkspaceId.value}${path}`)
+}
+
 function goLine() {
-  navigateTo(`/admin/${createdWorkspaceId.value}/line-settings`)
+  return enterCreated('/line-settings')
 }
 
 function goWorkspace() {
-  navigateTo(`/admin/${createdWorkspaceId.value}/conversation-stats`)
+  return enterCreated('/conversation-stats')
 }
 </script>

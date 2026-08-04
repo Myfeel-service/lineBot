@@ -1,3 +1,5 @@
+import { hasMinRole } from '~~/shared/permissions'
+
 /**
  * AI 相關頁面的進入守門。
  *
@@ -13,9 +15,16 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const wid = to.params.workspaceId as string | undefined
   if (!wid) return
 
-  const { loadWorkspaceList, canManageSettings } = useWorkspace()
-  await loadWorkspaceList().catch(() => {})
-  if (!canManageSettings.value) {
+  // 角色一律用 `to` 的 workspaceId 去查：守衛裡的 useRoute() 拿到的還是**舊路由**，
+  // 用 currentRole 會查成上一頁那個 workspace 的角色（跨帳號跳頁時就會誤判）。
+  const { ensureWorkspaceList, roleFor } = useWorkspace()
+  const { loaded } = await ensureWorkspaceList()
+  if (!loaded) return
+
+  const role = roleFor(wid)
+  if (!role || !hasMinRole(role, 'admin')) {
+    // 不出聲地把人踢到別頁，他只會覺得「我明明點了 AI 設定，怎麼跑到對話去」。
+    useAdminToast().showToast('AI 客服相關頁面目前只開放給管理員', 'error')
     return navigateTo(`/admin/${wid}/conversations`, { replace: true })
   }
 })

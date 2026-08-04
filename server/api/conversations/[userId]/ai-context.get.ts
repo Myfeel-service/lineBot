@@ -1,8 +1,9 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
+import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import type { AiConversationMeta } from '~~/shared/types/ai-knowledge'
+import type { AiAnswerKind, AiConversationMeta } from '~~/shared/types/ai-knowledge'
 
 interface AiContextResponse {
   hasMeta: boolean
@@ -10,9 +11,17 @@ interface AiContextResponse {
   lastConfidence: number
   lastHandoffReason: AiConversationMeta['lastHandoffReason']
   lastQuery: string
+  /** 這一題是怎麼回的：招呼／越界／查知識庫。舊資料沒這欄位 → 'kb' */
+  lastAnswerKind: AiAnswerKind
   suggestedReply: string
   handoffSummary: string
   sources: Array<{ chunkId: string; title: string }>
+  /**
+   * 這一次互動是否已被標記「AI 答錯了」。
+   * 一定要由後端給：先前只存在前端記憶體，重新整理後看起來像沒標過（其實標了），
+   * 客服會重複按，也永遠看不出到底存進去了沒有。
+   */
+  wrongMarked: boolean
   updatedAtMs: number
 }
 
@@ -46,9 +55,11 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     lastConfidence: 0,
     lastHandoffReason: null,
     lastQuery: '',
+    lastAnswerKind: 'kb',
     suggestedReply: '',
     handoffSummary: '',
     sources: [],
+    wrongMarked: false,
     updatedAtMs: 0,
   }
   if (!snap.exists) return empty
@@ -61,18 +72,29 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
   if (!meta) return empty
 
   const ids: string[] = Array.isArray(meta.lastSourceChunkIds) ? meta.lastSourceChunkIds.slice(0, 5) : []
+  const updatedAtMs = tsToMs(meta.updatedAt)
+
   const titleByChunkId: Record<string, string> = {}
-  if (ids.length) {
-    const docs = await Promise.all(
-      ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)),
-    )
-    docs.forEach((d, i) => {
-      if (d?.exists) {
-        const cd = d.data() as { workspaceId?: string; title?: string }
-        if (cd?.workspaceId === workspaceId) titleByChunkId[ids[i]!] = String(cd.title ?? '')
-      }
-    })
-  }
+  const [, wrongMarked] = await Promise.all([
+    ids.length
+      ? Promise.all(ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)))
+        .then((docs) => {
+          docs.forEach((d, i) => {
+            if (!d?.exists) return
+            const cd = d.data() as { workspaceId?: string; title?: string }
+            if (cd?.workspaceId === workspaceId) titleByChunkId[ids[i]!] = String(cd.title ?? '')
+          })
+        })
+      : Promise.resolve(),
+    // 「這一次互動標過答錯了嗎」：doc id 算得出來，一次點讀即可（讀失敗當成沒標記，不讓整張卡掛掉）
+    updatedAtMs
+      ? db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
+        .doc(aiFeedbackDocId({ workspaceId, userId: convDocId, type: 'wrong_answer', interactionAtMs: updatedAtMs }))
+        .get()
+        .then(s => s.exists)
+        .catch(() => false)
+      : Promise.resolve(false),
+  ])
 
   return {
     hasMeta: true,
@@ -80,9 +102,11 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     lastConfidence: Number(meta.lastConfidence ?? 0),
     lastHandoffReason: meta.lastHandoffReason ?? null,
     lastQuery: String(meta.lastQuery ?? ''),
+    lastAnswerKind: meta.lastAnswerKind ?? 'kb',
     suggestedReply: String(meta.suggestedReply ?? ''),
     handoffSummary: String(meta.handoffSummary ?? ''),
     sources: ids.map(id => ({ chunkId: id, title: titleByChunkId[id] ?? '(卡片已刪除)' })),
-    updatedAtMs: tsToMs(meta.updatedAt),
+    wrongMarked,
+    updatedAtMs,
   }
 })

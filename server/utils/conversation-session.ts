@@ -1,4 +1,4 @@
-import { FieldValue } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './firebase'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
@@ -126,8 +126,13 @@ export async function ensureConversationSession(
    * origin='follow':加好友/活動入口觸發(客人還沒開口)。這種 session 在收到第一句
    * 客人訊息(hasInbound)前,不進首接統計——不算「未首接」(沒有東西被接),也不算首接。
    * 不帶 opts = 客人來訊(訊息/postback),會把 hasInbound 補記為 true(冪等)。
+   *
+   * inboundAtMs = 觸發這次的客人訊息時間(LINE webhook event.timestamp)。**開新會話時當作
+   * openedAt**。為什麼不能用伺服器時間:客人訊息存的是 LINE 的時間,一定比我們處理到的時間早
+   * 幾百毫秒(網路+冷啟動),而時間軸是用「openedAt 之後的訊息」取窗口——於是每一場新會話的
+   * 客人第一句都會被切掉,客服點進去看不到客人最初說了什麼。
    */
-  opts: { origin?: 'follow' } = {},
+  opts: { origin?: 'follow'; inboundAtMs?: number } = {},
 ): Promise<string> {
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
@@ -162,6 +167,19 @@ export async function ensureConversationSession(
   const newSessionId = uuidv4()
   const newSessionRef = db.collection('conversationSessions').doc(newSessionId)
 
+  /**
+   * 新會話的開始時間：用觸發它的那句客人訊息時間（見 opts.inboundAtMs）。
+   * 只接受「現在往前 5 分鐘內、且不在未來」的值——LINE redelivery 或髒 payload 帶進一個
+   * 幾小時前的時間戳，會讓這場會話的窗口往前吃到上一場的訊息。超出範圍就退回伺服器時間。
+   */
+  const inboundAtMs = Number(opts.inboundAtMs ?? 0)
+  const useInboundAt = Number.isFinite(inboundAtMs)
+    && inboundAtMs > now - 5 * 60_000
+    && inboundAtMs <= now
+  const openedAt = useInboundAt ? Timestamp.fromMillis(inboundAtMs) : FieldValue.serverTimestamp()
+  /** 舊會話（24h 到期）的結束時間：收在新會話開始的前一毫秒，讓兩場的窗口不重疊 */
+  const prevCloseAt = useInboundAt ? Timestamp.fromMillis(inboundAtMs - 1) : FieldValue.serverTimestamp()
+
   let createdNew = false
   let closedOldSessionId: string | null = null
   let resultStatus: ConversationStatus = 'open'
@@ -190,9 +208,12 @@ export async function ensureConversationSession(
         return convData!.currentSessionId as string
       }
       // 24h expired — close inline (event recorded outside the tx)
+      // closedAt 收在「開啟新會話那句話的前一毫秒」：兩場的邊界要對齊，
+      // 否則那句話會同時落在舊會話的窗口（<= closedAt）與新會話的窗口（>= openedAt）裡，
+      // 客服在兩個分頁都看到同一句話。
       tx.update(existingRef, {
         status: 'closed' as ConversationStatus,
-        closedAt: FieldValue.serverTimestamp(),
+        closedAt: prevCloseAt,
         lastActivityAt: FieldValue.serverTimestamp(),
       })
       closedOldSessionId = convData!.currentSessionId as string
@@ -201,7 +222,7 @@ export async function ensureConversationSession(
     tx.set(newSessionRef, {
       workspaceId,
       userId: lineUserId,
-      openedAt: FieldValue.serverTimestamp(),
+      openedAt,
       closedAt: null,
       lastActivityAt: FieldValue.serverTimestamp(),
       status: 'open' as ConversationStatus,

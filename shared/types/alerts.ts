@@ -33,6 +33,8 @@ export type WorkspaceAlertId =
   | 'humanBacklog'
   /** 選單／圖卡上有按鈕指向已刪除或已停用的模組，客人按了什麼都不會收到 */
   | 'brokenModuleButton'
+  /** 活動推播已送出，但「這場已回應」沒蓋上章 → 客服會看到一堆假的待處理 */
+  | 'claimPushUnmarked'
 
 /**
  * active = 現在有這個問題；clear = 檢查過沒問題；

@@ -21,14 +21,18 @@ import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } fr
 import { notifyKnowledgeSourceEvent } from './ai-handoff-notify'
 import { getAiSettings } from './ai-settings'
 import { isServiceHoursDnd } from '~~/shared/time'
-import { countKnowledgeDraftBlanks, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 
 export const KNOWLEDGE_SUGGESTIONS_COLLECTION = 'knowledgeSuggestions'
 /** 掃描狀態（cronState 慣例）：{ [workspaceId]: { lastScanAt?: ISO, requestedAt?: ISO } } */
 const SCAN_STATE_DOC = 'knowledge-gap-scan'
 
-/** 哪些 handoff 原因算「知識缺口」。llm_error 是故障、quota 是額度、sensitive/user_request/commercial 是政策與意圖，補卡都救不了。 */
-const GAP_REASONS = new Set(['no_grounding', 'low_confidence', 'unresolved'])
+/**
+ * 哪些 handoff 原因算「知識缺口」。llm_error 是故障、quota 是額度、
+ * sensitive/user_request/commercial 是政策與意圖，補卡都救不了。
+ * 定義搬到 shared（後台脈絡卡也要用同一份，否則兩邊會對同一場對話說不同的話）。
+ */
+const GAP_REASONS = KNOWLEDGE_GAP_HANDOFF_REASONS
 
 /** 事件窗口：與建議的「30 天內被問 N 次」口徑一致 */
 const EVENT_WINDOW_DAYS = 30

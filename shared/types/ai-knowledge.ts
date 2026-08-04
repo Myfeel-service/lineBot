@@ -332,6 +332,11 @@ export interface AiConversationMeta {
   lastQuery: string
   /** 命中知識卡 ID（依相似度由高到低） */
   lastSourceChunkIds: string[]
+  /**
+   * 最近一次是怎麼被回答的（見 {@link AiAnswerKind}）。舊資料沒有這個欄位 → 視為 'kb'。
+   * 後台脈絡卡靠它區分「查了沒東西」與「根本沒查」，不要用「信心 1.00 且沒命中卡」去猜。
+   */
+  lastAnswerKind?: AiAnswerKind
   /** AI 整理出的對話意圖（給真人客服參考） */
   intent: string
   /** 從對話中已收集到的欄位（key 由腳本定義） */
@@ -396,9 +401,26 @@ export interface AiAnswerResult {
   handoffReason: HandoffReason | null
   /** decision === 'disambiguate' 才有值 */
   disambiguation?: DisambiguationPayload
+  /** 這一題是怎麼被回答的（見 {@link AiAnswerKind}）；未標記時視為 'kb' */
+  answerKind?: AiAnswerKind
   /** 給 debug 用：實際送進 LLM 的 prompt */
   debugPrompt?: string
 }
+
+/**
+ * 「AI 是怎麼處理這一題的」——決定後台脈絡卡該說什麼話。
+ *
+ * 為什麼需要這個欄位：`sources` 空陣列有兩種完全不同的意思——
+ * 「查了知識庫但沒東西」（真的是知識缺口，該補卡）與「根本沒查知識庫」
+ * （招呼語／越界問題走罐頭回覆）。先前脈絡卡只看 sources 是否為空，
+ * 於是客人說「謝謝」也被講成「知識庫沒有相關資訊，AI 答不出來」，
+ * 還附一顆會把「謝謝」建成知識卡的按鈕。
+ *
+ *   social   ：招呼／道謝／道別 → 固定回覆，沒查知識庫
+ *   offtopic ：與本店無關的要求（天氣／寫詩／打探系統）→ 禮貌拒答，沒查知識庫
+ *   kb       ：走檢索生成（sources 為空才是真的沒依據）
+ */
+export type AiAnswerKind = 'social' | 'offtopic' | 'kb'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Constants
@@ -488,6 +510,53 @@ export const DEFAULT_SYSTEM_PROMPT = [
   '3. 不要編造資訊、不要承諾沒寫的事。',
   '4. 涉及退費、法律糾紛、醫療診斷等，務必交給專人，不要自己給建議。',
 ].join('\n')
+
+/**
+ * 屬於「知識缺口」的轉真人原因：AI 真的查了知識庫、但答不出來 → 補一張卡下次就會答。
+ *
+ * 其餘原因補知識沒有用，也不該對客服喊「知識庫沒有相關資訊」：
+ * 客人自己要求真人、敏感主題、業務洽詢（要人談）、用量已滿、AI 服務失敗、人工指定。
+ * 缺口聚類（scanKnowledgeGaps）與後台脈絡卡共用這一份，兩邊口徑才不會各走各的。
+ */
+export const KNOWLEDGE_GAP_HANDOFF_REASONS: ReadonlySet<string> = new Set<HandoffReason>([
+  'no_grounding',
+  'low_confidence',
+  'unresolved',
+])
+
+/** {@link isKnowledgeGapContext} 需要的最小資訊（對話頁脈絡卡的回應形狀） */
+export interface AiContextGapInput {
+  lastDecision: AiDecision | ''
+  lastHandoffReason: HandoffReason | null
+  /** 舊資料沒有這個欄位 → 視為 'kb' */
+  lastAnswerKind?: AiAnswerKind
+  /** 命中的知識卡數 */
+  sourceCount: number
+  /** 有沒有 AI 草稿（有草稿就不是「答不出來」） */
+  hasSuggestedReply: boolean
+}
+
+/**
+ * 這一次互動是不是**真的**「知識庫沒有相關資訊」？
+ *
+ * 為什麼要一個函式而不是在畫面上寫條件：先前脈絡卡只看「有沒有命中知識卡」，
+ * 於是客人說「謝謝」（走罐頭回覆、根本沒查知識庫）也被寫成「知識庫沒有相關資訊，
+ * AI 這題答不出來」，還附一顆會把「謝謝」建成知識卡的按鈕。
+ *
+ * 判斷規則：
+ *   - 有草稿 → 不是答不出來
+ *   - 沒查知識庫（social / offtopic）→ 不是知識缺口
+ *   - 轉真人 → 只有「查不到／信心不足／排除沒解決」才算（其餘補知識救不了）
+ *   - 其餘（走了檢索的答題／反問）→ 沒命中任何卡才算
+ */
+export function isKnowledgeGapContext(c: AiContextGapInput): boolean {
+  if (c.hasSuggestedReply) return false
+  if ((c.lastAnswerKind ?? 'kb') !== 'kb') return false
+  if (c.lastDecision === 'handoff' || c.lastDecision === 'handoff_confirm') {
+    return KNOWLEDGE_GAP_HANDOFF_REASONS.has(String(c.lastHandoffReason ?? ''))
+  }
+  return c.sourceCount === 0
+}
 
 export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   low_confidence: '信心不足',

@@ -35,6 +35,7 @@
     "@element-plus/nuxt": "^1.1.5",
     "@types/uuid": "^10.0.0",
     "element-plus": "^2.13.7",
+    "puppeteer": "^25.5.0",
     "sass": "^1.99.0",
     "vitest": "^4.1.5",
     "vue-tsc": "^3.3.4"

@@ -45,17 +45,27 @@
         </el-button>
       </div>
 
-      <div v-if="!ctx.suggestedReply && !ctx.sources.length" class="conv-ai-empty">
+      <!-- 「沒命中知識卡」有兩種意思,不能混為一談(見 knowledgeGap / noLookupText) -->
+      <div v-if="knowledgeGap" class="conv-ai-empty">
         <span>知識庫沒有相關資訊，AI 這題答不出來。把答案補進知識庫，下次遇到就會回答了。</span>
         <el-button size="small" type="primary" plain @click="$emit('add-knowledge', ctx.lastQuery)">
           補知識
         </el-button>
       </div>
 
-      <!-- 「AI 自信地答錯」只有人看得出來:一鍵標記,訊號進知識缺口分析(帶當時命中的卡) -->
-      <div v-if="ctx.lastDecision === 'answered'" class="conv-ai-actions">
-        <el-button size="small" text type="danger" :disabled="wrongMarked" :loading="marking" @click="markWrong">
-          {{ wrongMarked ? '已標記答錯' : '這題 AI 答錯了' }}
+      <div v-else-if="noLookupText" class="conv-ai-note">{{ noLookupText }}</div>
+
+      <!-- 「AI 自信地答錯」只有人看得出來:一鍵標記,訊號進知識缺口分析(帶當時命中的卡)。
+           招呼語／越界拒答不顯示:那些不是知識問題,標了只會把雜訊灌進缺口聚類。 -->
+      <div v-if="canMarkWrong" class="conv-ai-actions">
+        <el-button
+          size="small"
+          text
+          :type="wrongMarked ? 'info' : 'danger'"
+          :loading="marking"
+          @click="wrongMarked ? unmarkWrong() : markWrong()"
+        >
+          {{ wrongMarked ? '已標記答錯（點一下取消）' : '這題 AI 答錯了' }}
         </el-button>
         <span class="conv-ai-actions__hint">同類問題累積後，系統會在知識庫幫你擬一條</span>
       </div>
@@ -65,7 +75,13 @@
 
 <script setup lang="ts">
 import { ChatDotRound, CircleCheck, Clock, QuestionFilled, User } from '@element-plus/icons-vue'
-import { HANDOFF_REASON_LABELS, type HandoffReason, type AiDecision } from '~~/shared/types/ai-knowledge'
+import {
+  HANDOFF_REASON_LABELS,
+  isKnowledgeGapContext,
+  type AiAnswerKind,
+  type HandoffReason,
+  type AiDecision,
+} from '~~/shared/types/ai-knowledge'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 
 interface AiContextResponse {
@@ -74,9 +90,11 @@ interface AiContextResponse {
   lastConfidence: number
   lastHandoffReason: HandoffReason | null
   lastQuery: string
+  lastAnswerKind: AiAnswerKind
   suggestedReply: string
   handoffSummary: string
   sources: Array<{ chunkId: string; title: string }>
+  wrongMarked: boolean
   updatedAtMs: number
 }
 
@@ -120,6 +138,39 @@ const handoffLabel = computed(() => {
   return r ? HANDOFF_REASON_LABELS[r] ?? r : ''
 })
 
+/** 判斷規則放在 shared（有測試涵蓋），這裡只餵資料：畫面與缺口聚類要同一套口徑 */
+const knowledgeGap = computed(() => {
+  const c = ctx.value
+  if (!c?.hasMeta) return false
+  return isKnowledgeGapContext({
+    lastDecision: c.lastDecision,
+    lastHandoffReason: c.lastHandoffReason,
+    lastAnswerKind: c.lastAnswerKind,
+    sourceCount: c.sources.length,
+    hasSuggestedReply: Boolean(c.suggestedReply),
+  })
+})
+
+/** 沒查知識庫的情況，直接說清楚為什麼沒有「命中知識」可看 */
+const noLookupText = computed(() => {
+  const c = ctx.value
+  if (!c?.hasMeta || knowledgeGap.value || c.sources.length || c.suggestedReply) return ''
+  if (c.lastAnswerKind === 'social') return '這題是招呼語（打招呼／道謝／道別），AI 用固定回覆，沒有查知識庫。'
+  if (c.lastAnswerKind === 'offtopic') return '這題不在服務範圍（閒聊／代寫／打探系統），AI 已禮貌拒答，沒有查知識庫。'
+  if (c.lastDecision === 'handoff' || c.lastDecision === 'handoff_confirm') {
+    return `這題不是知識庫的問題（${handoffLabel.value || '已轉真人'}），補知識幫不上，請直接接手回覆。`
+  }
+  return ''
+})
+
+/**
+ * 「答錯」只對「AI 用知識庫回答」的題目有意義。
+ * 招呼語／越界拒答標了只會把雜訊灌進缺口聚類（≥4 字就會被當成一個主題）。
+ */
+const canMarkWrong = computed(() =>
+  ctx.value?.lastDecision === 'answered' && ctx.value.lastAnswerKind === 'kb',
+)
+
 const bannerClass = computed(() => {
   if (!ctx.value?.hasMeta) return ''
   if (ctx.value.lastDecision === 'handoff') return 'conv-ai-banner--handoff'
@@ -137,16 +188,16 @@ const updatedAtLabel = computed(() => {
 })
 
 /**
- * 回饋（答錯 / 採用草稿）針對的是「畫面上這一次 AI 互動」。
- * 鍵一定要含 updatedAtMs：只用 userId 的話，同一位客人下次 AI 又答錯時，
- * 按鈕會卡在「已標記答錯」而按不下去。
+ * 「這一次互動標過答錯了嗎」由後端給（ctx.wrongMarked），不是前端自己記。
+ * 先前只存在這個分頁的記憶體裡：重新整理後看起來像沒標過（其實標了），
+ * 客服會重複按，也永遠看不出到底存進去了沒有。
+ *
+ * 這裡只保留「剛剛按下去」的樂觀覆蓋值（等重新載入 ctx 期間讓按鈕立刻變樣），
+ * 每次 ctx 重新載入就清掉，回歸後端的事實。
  */
-const interactionKey = computed(() =>
-  props.userId && ctx.value?.updatedAtMs ? `${props.userId}:${ctx.value.updatedAtMs}` : '',
-)
-const markedWrongKey = ref('')
 const marking = ref(false)
-const wrongMarked = computed(() => !!interactionKey.value && markedWrongKey.value === interactionKey.value)
+const optimisticMarked = ref<boolean | null>(null)
+const wrongMarked = computed(() => optimisticMarked.value ?? ctx.value?.wrongMarked ?? false)
 
 /**
  * 記錄一筆回饋事件。一定要帶 interactionAtMs：後端用它確認「你標的就是畫面上這一次」，
@@ -157,6 +208,14 @@ function logFeedback(type: 'wrong_answer' | 'draft_applied', userId: string, int
     method: 'POST',
     body: { type, interactionAtMs },
   })
+}
+
+/** 取消回饋。doc id 由 (type, 對話, interactionAtMs) 算出來，所以刪除不需要另存任何狀態。 */
+function unlogFeedback(type: 'wrong_answer', userId: string, interactionAtMs: number): Promise<unknown> {
+  return props.apiFetch(
+    `/api/conversations/${encodeURIComponent(userId)}/ai-feedback?type=${type}&interactionAtMs=${interactionAtMs}`,
+    { method: 'DELETE' },
+  )
 }
 
 function applyDraft(text: string) {
@@ -170,16 +229,16 @@ function applyDraft(text: string) {
 async function markWrong() {
   const userId = props.userId
   const at = ctx.value?.updatedAtMs ?? 0
-  // key 在送出前就固定住：await 之後才求值的話，這期間切到別的客人會把標記寫到那個人身上
-  const key = interactionKey.value
-  if (marking.value || wrongMarked.value || !userId || !at || !key) return
+  if (marking.value || wrongMarked.value || !userId || !at) return
   marking.value = true
   try {
     await logFeedback('wrong_answer', userId, at)
-    // 回來時已經切走就別動畫面（那筆標記本身有效，切回來會由 markedWrongKey 反映）
-    markedWrongKey.value = key
-    // 不要講成「會變成建議」:同類問題累積到一定次數才會成為主題,單獨一筆不會馬上出現
-    if (props.userId === userId) showToast('已記錄。同類問題累積後會出現在知識庫的「AI 建議補的知識」', 'success')
+    // 回來時已經切到別的客人就別動畫面（那筆標記本身有效，切回來會由後端的 wrongMarked 反映）
+    if (props.userId === userId) {
+      optimisticMarked.value = true
+      // 不要講成「會變成建議」:同類問題累積到一定次數才會成為主題,單獨一筆不會馬上出現
+      showToast('已記錄。按錯了可以再點一下取消', 'success')
+    }
   }
   catch (e: any) {
     const conflict = e?.statusCode === 409 || e?.response?.status === 409
@@ -198,8 +257,35 @@ async function markWrong() {
   }
 }
 
+/**
+ * 取消「答錯」標記。刻意可以隨時取消（不設幾秒內撤回的窗口）：
+ * 客服常常是隔一天回頭看才發現標錯，短窗口等於沒有。
+ */
+async function unmarkWrong() {
+  const userId = props.userId
+  const at = ctx.value?.updatedAtMs ?? 0
+  if (marking.value || !wrongMarked.value || !userId || !at) return
+  marking.value = true
+  try {
+    await unlogFeedback('wrong_answer', userId, at)
+    if (props.userId === userId) {
+      optimisticMarked.value = false
+      // 講清楚「已經擬出來的建議不會自動收回」，否則客服會以為取消了就沒事
+      showToast('已取消標記。若同類問題已擬成建議，請到知識庫的建議收件匣按「忽略」', 'success')
+    }
+  }
+  catch {
+    showToast('取消失敗，請再試一次', 'error')
+  }
+  finally {
+    marking.value = false
+  }
+}
+
 async function load() {
   ctx.value = null
+  // 重新載入就回歸後端事實（含「這一次互動標過答錯了嗎」），不留上一次的樂觀值
+  optimisticMarked.value = null
   if (!props.userId) return
   try {
     ctx.value = await props.apiFetch<AiContextResponse>(
@@ -330,6 +416,12 @@ watch(() => [props.userId, props.refreshKey], load, { immediate: true })
   span {
     flex: 1;
   }
+}
+
+/* 「沒查知識庫」的說明:純資訊、沒有可按的動作,所以不做成 empty 那種帶按鈕的排版 */
+.conv-ai-note {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .conv-ai-actions {
