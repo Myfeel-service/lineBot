@@ -425,7 +425,7 @@
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測頻率" tight />
               <el-select v-model="settingsForm.refreshIntervalMinutes" class="control-full">
-                <el-option label="不偵測（手動 re-sync）" :value="0" />
+                <el-option label="不自動偵測（要更新時我自己按）" :value="0" />
                 <el-option label="每小時" :value="60" />
                 <el-option label="每天" :value="1440" />
                 <el-option label="每週" :value="10080" />
@@ -895,6 +895,40 @@
   <!-- ── 匯入彈窗 ───────────────────────────────────── -->
   <KnowledgeImportDialog v-model="importOpen" :existing-sources="sources" @imported="onImported" />
 
+  <!-- ── 補知識前的查重(P1-1):改既有的比新建一條重複的好 ──────── -->
+  <el-dialog
+    v-model="dupOpen"
+    title="這題可能已經有答案了"
+    width="min(560px, 92vw)"
+    :close-on-click-modal="false"
+  >
+    <p class="src-dup-query">客人問的是「{{ dupQuery }}」</p>
+    <p class="src-dup-hint">
+      知識庫裡已經有下面這些內容。<strong>改現有的那一條會比新增一條更好</strong>——
+      內容相近的兩條會讓 AI 分不出該用哪一條，反而更容易反問或答錯。
+    </p>
+    <div class="src-dup-list">
+      <button v-for="r in dupHits" :key="r.id" type="button" class="src-dup-row" @click="dupEdit(r)">
+        <span class="src-dup-row__title">
+          {{ r.title }}
+          <span v-if="r.status === 'failed'" class="badge badge-red">AI 沒學起來</span>
+          <span v-else-if="r.status === 'disabled'" class="badge badge-gray">已停用</span>
+        </span>
+        <span class="src-dup-row__snippet">{{ r.snippet }}</span>
+        <span class="src-dup-row__go">改這一條 →</span>
+      </button>
+    </div>
+    <template #footer>
+      <div class="src-dup-footer">
+        <span class="text-xs text-muted">都不是同一件事的話再新增</span>
+        <div>
+          <el-button @click="dupOpen = false">取消</el-button>
+          <el-button type="primary" plain @click="dupCreateAnyway">還是新增一條</el-button>
+        </div>
+      </div>
+    </template>
+  </el-dialog>
+
   <!-- ── Folder Edit Modal ──────────────────────────── -->
   <el-dialog
     v-model="folderEditOpen"
@@ -1031,6 +1065,22 @@ const canReindexAll = computed(() => can('knowledge.reindexAll'))
 const { showToast } = useAdminToast()
 
 const sources = ref<SourceSummary[]>([])
+
+/**
+ * AI 總開關與知識總條數（P1-4）：用來判斷「這一頁的內容目前有沒有在發揮作用」。
+ * null = 還沒讀到（讀失敗時不顯示提醒，寧可少講一句也不要誤報「AI 沒開」）。
+ */
+const aiEnabled = ref<boolean | null>(null)
+const totalChunkCount = computed(() => sources.value.reduce((sum, s) => sum + (s.chunkCount ?? 0), 0))
+async function loadAiEnabled() {
+  try {
+    const s = await apiFetch<{ enabled?: boolean }>('/api/ai/settings')
+    aiEnabled.value = s?.enabled === true
+  }
+  catch {
+    aiEnabled.value = null
+  }
+}
 const loading = ref(false)
 const selectedId = ref<string | null>(null)
 const selectedSource = computed(() => sources.value.find(s => s.id === selectedId.value) ?? null)
@@ -1310,6 +1360,55 @@ watch(searchKeyword, (kw) => {
 
 /** 從監控頁 ?q= 進來補卡：建卡成功後把同問題的轉真人案例自動標已處理 */
 const pendingResolveQuery = ref('')
+
+// ── 補知識前先查重複（P1-1） ──────────────────────────
+// 三個「補知識」入口原本都直接開空白視窗，同一題從不同入口進來就建出好幾條重複內容，
+// 而內容相近正是會引發反問與答錯的老問題（全庫搜尋 API 就在同一頁，只是沒被用）。
+const dupOpen = ref(false)
+const dupQuery = ref('')
+const dupHits = ref<SearchRow[]>([])
+const dupChecking = ref(false)
+
+/** 有現成的就先問要不要改那一條；沒有就直接開新增視窗（不多擋一步） */
+async function startAddKnowledge(q: string) {
+  dupQuery.value = q
+  dupChecking.value = true
+  try {
+    const res = await apiFetch<{ items: SearchRow[] }>(
+      `/api/ai/knowledge/search?q=${encodeURIComponent(q.slice(0, 60))}`,
+    )
+    // 只看前幾筆：這裡要回答的是「有沒有現成的」，不是給第二個搜尋結果頁
+    dupHits.value = (res.items ?? []).slice(0, 5)
+  }
+  catch {
+    dupHits.value = [] // 查不到就當沒有，不要卡住補知識這件事
+  }
+  finally {
+    dupChecking.value = false
+  }
+  if (dupHits.value.length) dupOpen.value = true
+  else openPrefilledCreate(q)
+}
+
+/** 客人原話預填成標題與問法（原話就是最好的問法，一併進 embedding） */
+function openPrefilledCreate(q: string) {
+  openCreateManual()
+  chunkForm.value.title = q.slice(0, 100) // 對齊標題欄位 maxlength=100
+  chunkForm.value.questions = [q.slice(0, 200)]
+  pendingResolveQuery.value = q
+}
+
+async function dupEdit(row: SearchRow) {
+  dupOpen.value = false
+  // 改既有那一條也算把這題處理掉了 → 沿用同一套自動銷案
+  pendingResolveQuery.value = dupQuery.value
+  await openChunkById(row.id)
+}
+
+function dupCreateAnyway() {
+  dupOpen.value = false
+  openPrefilledCreate(dupQuery.value)
+}
 const chunkSaving = ref(false)
 const chunkDeleting = ref(false)
 const chunkEditStatus = ref('')
@@ -1424,6 +1523,22 @@ interface TodoItem {
 const todoItems = computed<TodoItem[]>(() => {
   const items: TodoItem[] = []
   const h = health.value
+
+  /**
+   * AI 沒開 = 這一整頁的努力目前對客人零影響（P1-4）。
+   * 排第一個、紅色：知識庫建得再完整，總開關關著客人也感覺不到——
+   * 這是最容易「做完一整天卻沒有任何效果」的坑，而且畫面原本完全不提。
+   */
+  if (aiEnabled.value === false && totalChunkCount.value > 0) {
+    items.push({
+      id: 'aiOff',
+      tone: 'danger',
+      title: 'AI 客服還沒開啟',
+      why: `已經有 ${totalChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
+      cta: '去開啟',
+      action: () => navigateTo(`/admin/${workspaceId.value}/ai-settings`),
+    })
+  }
 
   if (h.failedSources.length) {
     items.push({
@@ -2576,6 +2691,7 @@ function relativeTime(ms: number) {
 
 onMounted(async () => {
   loadExpandedState()
+  void loadAiEnabled() // 不 await:只影響「要處理的事」多一列,不該卡住頁面載入
   const route = useRoute()
   const router = useRouter()
   // deep-link query 是一次性的指令:處理完就從網址清掉,否則 F5 會再彈一次視窗
@@ -2585,12 +2701,9 @@ onMounted(async () => {
   // 監控頁「補知識」帶 ?q=(客人沒被答到的問題):直接開新增手寫視窗、預填標題
   const q = String(route.query.q ?? '').trim()
   if (q) {
-    openCreateManual()
-    chunkForm.value.title = q.slice(0, 100) // 對齊標題欄位 maxlength=100
-    // 客人的原話就是最好的「問法」:一併進 embedding,下次同樣問法直接命中
-    chunkForm.value.questions = [q.slice(0, 200)]
-    pendingResolveQuery.value = q
     clearQuery()
+    // 先查有沒有現成的（避免同一題從三個入口進來各建一條）；沒有才直接開新增視窗
+    await startAddKnowledge(q)
     return
   }
 

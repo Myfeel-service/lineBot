@@ -257,7 +257,8 @@ async function accept() {
       showToast('知識已建立，但 AI 學習失敗——請到知識上按「重新學習」', 'error')
     }
     else if (res.verify?.decision === 'answered') {
-      showToast(`已學會！試答通過（信心 ${res.verify.confidence.toFixed(2)}）${resolvedNote}`, 'success')
+      // 不印相關度分數:對商家沒有意義,只會讓人以為那個數字要達到某個標準
+      showToast(`已學會！剛才用客人的問法試問過，AI 答得出來了${resolvedNote}`, 'success')
     }
     else {
       // 卡建好了但試答沒答出來＝還沒真的解決,用警示色(不是綠色成功)

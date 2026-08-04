@@ -189,51 +189,27 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresOperate: true,
     icon: Reading,
     label: '知識庫：建立與匯入',
-    blurb: '怎麼把知識餵給 AI，四種資料一次搞懂。',
+    blurb: '把資料交給 AI 整理，三步就好。',
     route: wid => `/admin/${wid}/knowledge/sources`,
     steps: [
       {
         target: '[data-tour="kb-import"]',
-        title: '從「匯入」開始',
+        title: '從「加入知識」開始',
         description:
-          '知識庫是由一份份「<strong>資料</strong>」組成的，AI 只會用這些資料裡的內容回答。點「<strong>匯入</strong>」開始——有 <strong>4 種餵料方式</strong>，我一個一個帶你看。',
+          '知識庫是由一份份「<strong>資料</strong>」組成的，AI 只會用這些資料裡的內容回答。點「<strong>加入知識</strong>」開始。',
         placement: 'bottom',
       },
       {
-        target: '[data-tour="kb-tab-file"]',
+        target: '[data-tour="kb-drop"]',
         clickBefore: '[data-tour="kb-import"]',
-        title: '方式 1：上傳檔案（PDF、Excel）',
+        title: '丟進來就好，不用先選種類',
         description:
-          '把現成的檔案丟進來（單檔 10MB 內）。<br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一條</strong>」——第一欄當知識標題、其餘欄位當內容。商品表、問答表最適合。<br><strong>PDF 或內容零散的檔案</strong>：由 AI 幫你分段（用拍的、掃的檔案會由 AI 認字，記得核對數字、價格）。<br>提醒：檔案<strong>上傳一次就固定</strong>，之後改了要重傳；想「改了自動更新」請用 Google Sheet。',
-        placement: 'bottom',
-      },
-      {
-        target: '[data-tour="kb-tab-url"]',
-        clickBefore: '[data-tour="kb-tab-url"]',
-        title: '方式 2：貼網址（可整站匯入）',
-        description:
-          '貼一個網頁網址，系統會抓網頁上的<strong>文字</strong>做成知識。想把<strong>整個網站</strong>一次餵進來？按「<strong>找出這個網站的其他頁面</strong>」，系統會列出全站頁面讓你勾選、一次匯入（每頁各自成為一份資料）。如果抓不到（例如那個網頁要先登入、或要按按鈕才會顯示內容），就改用上傳檔案。',
-        placement: 'bottom',
-      },
-      {
-        target: '[data-tour="kb-tab-gsheet"]',
-        clickBefore: '[data-tour="kb-tab-gsheet"]',
-        title: '方式 3：Google Sheet（會自動同步）',
-        description:
-          '最適合「常常在改」的資料（商品、價目表）。規則是<strong>一列一條</strong>：<strong>第一欄當知識標題</strong>，其餘欄位當內容。所以第一欄要放「看得懂的名字」（例：商品名），<strong>不要放編號</strong>。記得先把 Sheet <strong>分享給畫面上那個服務帳號</strong>，之後改內容會定期自動同步（你手動改過的內容不會被蓋掉）。',
-        placement: 'bottom',
-      },
-      {
-        target: '[data-tour="kb-tab-text"]',
-        clickBefore: '[data-tour="kb-tab-text"]',
-        title: '方式 4：貼整段文字',
-        description:
-          '手邊只有一段文字（FAQ、政策原文）就貼這裡，<strong>AI 幫你切成多條</strong>。最快、不用準備檔案。',
+          '把<strong>檔案拖進這個框</strong>（PDF、Excel，單檔 10MB 內），或直接<strong>貼上網址、Google 試算表連結、一大段文字</strong>——系統會自己認出你給的是什麼，然後告訴你<strong>「之後改了會不會自動更新」</strong>。那是唯一需要你知道的差別：<br>・<strong>Google 試算表</strong>＝你改，AI 定期自動跟著改（商品、價目表這種常改的最適合）<br>・<strong>網頁</strong>＝內容變了會通知你，由你決定要不要重新學<br>・<strong>檔案／貼上文字</strong>＝當下固定，之後要改就直接編輯知識<br>貼網址時，系統還會順便告訴你這個網站有幾頁，可以一次全部匯入。',
         placement: 'bottom',
       },
       {
         target: '[data-tour="kb-overview"]',
-        clickBefore: '[data-tour="kb-tab-file"]',
+        clickBefore: '[data-tour="kb-import"]',
         title: '列表頁記得勾「總表」',
         description:
           '如果這份是<strong>商品型錄 / 列表頁</strong>，勾這個會多做一張「總表」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google Sheet 免勾。）',

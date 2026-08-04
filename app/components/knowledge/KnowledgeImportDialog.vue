@@ -8,19 +8,38 @@
     @update:model-value="emit('update:modelValue', $event)"
     @close="onDialogClose"
   >
-    <!-- ── Step 1:選資料 ─────────────────────────── -->
+    <!-- ── Step 1:一個投放區,自動判別是什麼(P1-2) ─────────── -->
     <div v-if="step === 'input'">
-      <p class="kb-step-label">選擇資料 — 把 PDF、Excel、網址或一大段文字交給 AI 切成知識</p>
-      <el-tabs v-model="mode" class="kb-import-tabs">
-        <el-tab-pane name="file">
-          <template #label><span data-tour="kb-tab-file">檔案</span></template>
-          <p class="kb-section-hint">
-            支援 PDF、Excel（.xlsx / .xls），單檔上限 10MB。
-            <br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一條</strong>」——<strong>第一欄當知識標題</strong>（例：商品名稱），其餘欄位當內容；第一列請放欄位名稱（例：商品、價格、庫存）。最適合商品表、問答表。
-            <br><strong>PDF 或內容比較零散的檔案</strong>：改由 AI 自動判斷怎麼分段。掃描檔（用拍的、掃的）會由 AI 認字，請逐張核對數字、價格有沒有看錯。
-            <br>提醒：檔案是<strong>上傳一次就固定</strong>，之後改了要重新上傳；想要「改了會自動更新」請改用 Google Sheet。
-          </p>
-          <div class="kb-file-zone">
+      <p class="kb-step-label">把資料交給 AI 整理 — 檔案、網址、Google 試算表或一段文字都可以</p>
+
+      <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
+      <div
+        class="kb-drop"
+        :class="{ 'kb-drop--over': dragOver, 'kb-drop--filled': !!detected }"
+        data-tour="kb-drop"
+        @dragover.prevent="dragOver = true"
+        @dragleave.prevent="dragOver = false"
+        @drop.prevent="onDrop"
+      >
+        <template v-if="selectedFile">
+          <div class="kb-drop__file">
+            <span class="kb-drop__filename">{{ fileName }}</span>
+            <span class="text-xs text-muted">{{ fileSizeKb.toLocaleString('zh-TW') }} KB</span>
+            <el-button size="small" text @click="clearFile">換一個</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <el-input
+            v-model="pasteInput"
+            type="textarea"
+            :rows="4"
+            :maxlength="100000"
+            resize="none"
+            class="kb-drop__paste"
+            placeholder="貼上網址、Google 試算表連結，或直接貼一大段文字（FAQ、政策原文都可以）"
+          />
+          <div class="kb-drop__or">
+            <span>或</span>
             <input
               ref="fileInputEl"
               type="file"
@@ -28,91 +47,58 @@
               class="kb-file-input"
               @change="onFileChosen"
             >
-            <el-button type="primary" plain @click="fileInputEl?.click()">選擇檔案</el-button>
-            <span v-if="fileName" class="kb-file-name">{{ fileName }}（{{ fileSizeKb }} KB）</span>
-            <span v-else class="text-muted">尚未選擇檔案</span>
+            <el-button size="small" plain @click="fileInputEl?.click()">選擇檔案</el-button>
+            <span class="text-xs text-muted">PDF / Excel，也可以直接把檔案拖進這個框，單檔 10MB 內</span>
           </div>
-        </el-tab-pane>
+        </template>
+      </div>
 
-        <el-tab-pane name="url">
-          <template #label><span data-tour="kb-tab-url">網址</span></template>
-          <p class="kb-section-hint">
-            系統會抓取網頁上的文字做成知識。若那個網頁需要先登入、或要按按鈕才會顯示內容，可能抓不到，請改用上傳檔案。
-            <strong>提醒：很多商城「首頁」的商品區塊是動態載入的，抓下來會只剩選單和頁尾</strong>——請改貼商品「列表頁」或單一商品頁的網址。
-          </p>
-          <el-input
-            v-model="urlInput"
-            placeholder="https://example.com/faq"
-            clearable
-          />
-        </el-tab-pane>
+      <!-- 判別結果:先講「這是什麼」,再講唯一真正要知道的差異(會不會自動更新) -->
+      <div v-if="detected" class="kb-detected" :class="`kb-detected--${detected.syncTone}`">
+        <p class="kb-detected__head">
+          <span class="kb-detected__label">{{ detected.label }}</span>
+          <span class="kb-detected__sync">{{ detected.sync }}</span>
+        </p>
+        <p class="kb-detected__hint">{{ detected.hint }}</p>
 
-        <el-tab-pane name="gsheet">
-          <template #label><span data-tour="kb-tab-gsheet">Google Sheet</span></template>
-          <!-- 官方範本入口:兩欄(問題/答案)就好,其他問法由 AI 匯入時自動補 -->
-          <div class="kb-gsheet-template">
-            <div class="kb-gsheet-template-text">
-              <strong>第一次匯入?建議從官方 FAQ 範本開始:</strong>
-              <ol class="kb-gsheet-steps">
-                <li>{{ faqTemplateCopyUrl ? '點右側按鈕建立範本副本' : '下載範本檔,上傳到 Google 雲端硬碟並以「Google 試算表」開啟' }}</li>
-                <li>在「FAQ」分頁填「客人會問的問題」和「答案」(客人的其他問法之後由 AI 自動補)</li>
-                <li>把試算表「共用」給下方服務帳號(檢視權限即可)</li>
-                <li>回到這裡貼上試算表連結</li>
-              </ol>
-            </div>
-            <el-button
-              tag="a"
-              :href="faqTemplateCopyUrl || '/templates/faq-sheet-template.xlsx'"
-              target="_blank"
-              rel="noopener"
-              size="small"
-              type="primary"
-              plain
-            >
-              {{ faqTemplateCopyUrl ? '使用 FAQ 範本' : '下載 FAQ 範本' }}
-            </el-button>
-          </div>
-          <p class="kb-section-hint">
-            貼上 Google Sheet 連結，<strong>每一列自動變成一條知識</strong>：
-            <strong>第一欄當知識標題</strong>，其餘欄位當內容——
-            兩欄的表格就是「問題／答案」，多欄的表格會逐欄列成「<strong>欄名：內容</strong>」。第一列請放欄位名稱（例：商品、價格、庫存）。
-            之後你在 Sheet 改內容，機器人會<strong>定期自動更新</strong>（自動更新時靠第一欄的標題認出是同一列；你在後台手動改過的內容不會被蓋掉）。
-          </p>
-          <el-alert
-            v-if="serviceAccountEmail"
-            type="info"
-            :closable="false"
-            show-icon
-            class="kb-gsheet-share-hint"
-          >
-            <template #title>
-              請先把這份 Sheet「分享」給下列帳號（檢視權限即可），否則讀不到：
-            </template>
+        <!-- Google 試算表要先分享才讀得到:在偵測到的當下才講,不用先讀四段說明 -->
+        <div v-if="mode === 'gsheet' && serviceAccountEmail" class="kb-gsheet-share">
+          <span>還有一步:請把這份試算表「共用」給下面這個帳號(檢視權限就夠),否則系統讀不到。</span>
+          <div class="kb-gsheet-share__row">
             <code class="kb-gsheet-email">{{ serviceAccountEmail }}</code>
-            <el-button size="small" text type="primary" class="kb-gsheet-copy-btn" @click="copyServiceEmail">
-              複製
-            </el-button>
-          </el-alert>
-          <el-input
-            v-model="gsheetInput"
-            placeholder="https://docs.google.com/spreadsheets/d/.../edit"
-            clearable
-          />
-        </el-tab-pane>
+            <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+          </div>
+        </div>
 
-        <el-tab-pane name="text">
-          <template #label><span data-tour="kb-tab-text">貼上文字</span></template>
-          <p class="kb-section-hint">貼一大段文字（最多 100,000 字），由 AI 幫你切成多條。</p>
-          <el-input
-            v-model="textInput"
-            type="textarea"
-            :rows="10"
-            :maxlength="100000"
-            show-word-limit
-            placeholder="把你的客服 FAQ 或政策原文貼這裡..."
-          />
-        </el-tab-pane>
-      </el-tabs>
+        <!-- 整站匯入主動浮出(P1-3):不用自己想到有這功能 -->
+        <p v-if="mode === 'url' && sitePeeking" class="kb-site-peek kb-site-peek--loading">
+          正在看看這個網站還有哪些頁面⋯
+        </p>
+        <div v-else-if="mode === 'url' && sitePeekCount > 0" class="kb-site-peek">
+          <span>這個網站另外還有 <strong>{{ sitePeekCount }}</strong> 頁,要一起匯入嗎?</span>
+          <el-button size="small" type="primary" plain @click="step = 'sitePages'">
+            看清單挑選
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 第一次用的人給一條捷徑,不佔版面 -->
+      <p v-if="!detected" class="kb-first-time">
+        第一次匯入?
+        <el-button
+          tag="a"
+          :href="faqTemplateCopyUrl || '/templates/faq-sheet-template.xlsx'"
+          target="_blank"
+          rel="noopener"
+          size="small"
+          text
+          type="primary"
+        >
+          用官方 FAQ 範本開始
+        </el-button>
+        <span class="text-xs text-muted">兩欄(問題／答案)填完貼回來就好,其他問法 AI 會自動補</span>
+      </p>
+
 
       <div v-if="mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
         <el-checkbox v-model="generateOverview">
@@ -132,11 +118,11 @@
           :disabled="!canPreview"
           @click="runPreview"
         >
-          {{ previewing ? (mode === 'gsheet' ? '讀取中⋯' : 'AI 正在整理⋯') : (mode === 'gsheet' ? '讀取 Sheet' : '先看 AI 整理的結果') }}
+          {{ previewing ? 'AI 正在整理⋯' : '先看 AI 整理的結果' }}
         </el-button>
-        <!-- 整站匯入（2.5）：探 sitemap / 同域連結 → 列頁面清單勾選，逐頁各自成資料 -->
+        <!-- 整站匯入的備援入口:上方已自動報頁數時就不重複出現(探索失敗/還沒探完才需要) -->
         <el-button
-          v-if="mode === 'url'"
+          v-if="mode === 'url' && !sitePeekCount && !sitePeeking"
           :loading="discovering"
           :disabled="!canPreview || previewing"
           @click="runDiscover"
@@ -166,12 +152,8 @@
         style="margin-top: 12px"
         @close="previewError = ''"
       >
-        <div>可以再試一次；內容很長的話，建議改用「貼上文字」分批貼進來。</div>
+        <div>可以再試一次；內容很長的話，建議把文字分成幾段、分批貼進來。</div>
       </el-alert>
-
-      <p v-if="mode === 'url' && !previewing" class="kb-section-hint kb-actions-hint">
-        「先看 AI 整理的結果」只處理你貼的<strong>這一頁</strong>；整個網站要匯入很多頁時，用右邊那顆列出全站頁面再一次勾選。
-      </p>
     </div>
 
     <!-- ── Step 1.5:整站匯入 — 頁面清單勾選 ─────────────── -->
@@ -544,11 +526,39 @@
       </div>
 
       <div v-if="result.failed > 0" class="kb-result-failed-list">
-        <p class="kb-section-hint">以下知識已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。可到知識庫點開那一條按「重新學習」重試：</p>
+        <div class="kb-failed-head">
+          <p class="kb-section-hint">
+            以下知識已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。
+            大多是暫時性問題，<strong>就在這裡按重試即可</strong>。
+          </p>
+          <el-button
+            v-if="failedItems.some(i => plainFailure(i.failureReason).retryable)"
+            size="small"
+            type="primary"
+            plain
+            :loading="retryAllRunning"
+            @click="retryAllFailed"
+          >
+            全部重試
+          </el-button>
+        </div>
         <ul class="kb-failed-list">
-          <li v-for="item in failedItems" :key="item.id">
-            <strong>{{ item.title }}</strong>
-            <span class="text-muted text-xs">— {{ item.failureReason ?? '未知原因' }}</span>
+          <li v-for="item in failedItems" :key="item.id" class="kb-failed-row">
+            <div class="kb-failed-row__main">
+              <strong>{{ item.title }}</strong>
+              <span class="text-muted text-xs">{{ plainFailure(item.failureReason).text }}</span>
+            </div>
+            <el-button
+              v-if="plainFailure(item.failureReason).retryable"
+              size="small"
+              text
+              type="primary"
+              :loading="retryingIds.has(item.id)"
+              @click="retryOne(item)"
+            >
+              重試
+            </el-button>
+            <span v-else class="text-xs text-muted">要改內容才行</span>
           </li>
         </ul>
       </div>
@@ -563,6 +573,7 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
+import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
 
 const props = defineProps<{
   modelValue: boolean
@@ -586,7 +597,66 @@ type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
 type Step = 'input' | 'sitePages' | 'preview' | 'result'
 
 const step = ref<Step>('input')
-const mode = ref<ImportMode>('file')
+/**
+ * 第一步收成「一個投放區」（P1-2）。
+ *
+ * 原本是四個分頁（檔案／網址／Google Sheet／貼上文字），使用者一進來就得先做一個
+ * 「我該用哪個」的決定，而要判斷得切四次分頁讀四段小字；更糟的是**唯一真正重要的
+ * 判準——「之後改了會不會自動更新」——從來沒有並排出現過**。
+ * 現在：丟檔案或貼一段東西進來，由 pasteInput 自動判別是網址／試算表連結／純文字，
+ * 判別結果連同那一句關鍵差異一起講。mode 因此改成 computed（衍生，不再由人選）。
+ */
+const pasteInput = ref('')
+
+// 判別規則放 shared 並有測試涵蓋：判錯的後果不是顯示錯字，而是把一串試算表 ID
+// 當成知識內容匯進資料庫。mode 與 canPreview 共用同一份，不再各寫一次。
+const mode = computed<ImportMode>(() => detectImportKind(pasteInput.value, !!selectedFile.value))
+
+// 判別結果同步回原本三個欄位，下游（runPreview / runDiscover / bulk-create）完全不用改
+watch([pasteInput, mode], () => {
+  const v = pasteInput.value.trim()
+  urlInput.value = mode.value === 'url' ? v : ''
+  gsheetInput.value = mode.value === 'gsheet' ? v : ''
+  textInput.value = mode.value === 'text' ? pasteInput.value : ''
+})
+
+/** 偵測結果：名稱 + 那一句關鍵差異（會不會自動更新），沒東西時為 null */
+const detected = computed(() => {
+  if (selectedFile.value) {
+    const excel = /\.(xlsx|xls)$/i.test(fileName.value)
+    return {
+      label: excel ? 'Excel 表格' : '檔案',
+      sync: '上傳一次就固定。之後改了要重新上傳；想「改了自動更新」請改用 Google 試算表',
+      syncTone: 'static' as const,
+      hint: excel
+        ? '一列變成一條知識：第一欄當標題（例：商品名稱），其餘欄位當內容。第一列請放欄位名稱。'
+        : '由 AI 判斷怎麼分段。用拍的、掃的檔案會由 AI 認字，請核對數字與價格有沒有看錯。',
+    }
+  }
+  if (!pasteInput.value.trim()) return null
+  if (mode.value === 'gsheet') {
+    return {
+      label: 'Google 試算表',
+      sync: '你改試算表，AI 會定期自動跟著更新（你在後台手動改過的內容不會被蓋掉）',
+      syncTone: 'live' as const,
+      hint: '一列變成一條知識：第一欄當標題，其餘欄位當內容。第一欄請放看得懂的名字（例：商品名），不要放編號。',
+    }
+  }
+  if (mode.value === 'url') {
+    return {
+      label: '網頁',
+      sync: '抓取當下的內容。之後網頁改了，系統會通知你、由你決定要不要重新學',
+      syncTone: 'semi' as const,
+      hint: '只抓網頁上的文字。需要先登入、或要按按鈕才顯示內容的頁面可能抓不到；商城首頁的商品區塊常是動態載入，請改貼商品列表頁。',
+    }
+  }
+  return {
+    label: '一段文字',
+    sync: '貼進來就固定。之後要改就直接編輯知識內容',
+    syncTone: 'static' as const,
+    hint: `AI 會幫你切成多條（目前 ${pasteInput.value.trim().length.toLocaleString('zh-TW')} 字，上限 100,000 字）。`,
+  }
+})
 
 // ── File ──────────────────────────────────────────────────
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -597,19 +667,51 @@ const fileSizeKb = ref(0)
 const selectedFile = ref<File | null>(null)
 const fileContentType = ref('')
 
-function onFileChosen(e: Event) {
-  const target = e.target as HTMLInputElement
-  const file = target.files?.[0]
-  if (!file) return
+const ACCEPTED_EXT_RE = /\.(pdf|xlsx|xls)$/i
+
+/** 檔案共用入口:選檔與拖放都走這裡,上限與型別檢查只有一份 */
+function acceptFile(file: File | undefined | null): boolean {
+  if (!file) return false
+  if (!ACCEPTED_EXT_RE.test(file.name)) {
+    showToast('只支援 PDF 與 Excel（.xlsx / .xls）', 'error')
+    return false
+  }
   if (file.size > 10 * 1024 * 1024) {
     showToast('檔案超過 10MB 上限', 'error')
-    target.value = ''
-    return
+    return false
   }
   selectedFile.value = file
   fileName.value = file.name
   fileSizeKb.value = Math.round(file.size / 1024)
   fileContentType.value = file.type
+  pasteInput.value = '' // 檔案優先:避免同時有檔案又有貼上內容而判別不出來
+  return true
+}
+
+function onFileChosen(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (!acceptFile(target.files?.[0])) target.value = ''
+}
+
+const dragOver = ref(false)
+function onDrop(e: DragEvent) {
+  dragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) {
+    acceptFile(file)
+    return
+  }
+  // 拖的是一段文字/連結（從瀏覽器網址列或另一個頁面拖過來）也接受
+  const text = e.dataTransfer?.getData('text')?.trim()
+  if (text) pasteInput.value = text
+}
+
+function clearFile() {
+  selectedFile.value = null
+  fileName.value = ''
+  fileSizeKb.value = 0
+  fileContentType.value = ''
+  if (fileInputEl.value) fileInputEl.value.value = ''
 }
 
 // ── URL / text ────────────────────────────────────────────
@@ -660,7 +762,8 @@ const previewing = ref(false)
 // 非同步 job 的即時進度（整理 3/5、辨識掃描檔 2/6…）；null = 尚無進度資訊
 const previewProgressText = computed(() => {
   const p = jobProgress.value
-  if (!p) return 'Gemini 正在分析內容⋯'
+  // 供應商名稱對商家沒有意義（也不該讓它出現在 UI，換供應商時文案就過期了）
+  if (!p) return 'AI 正在讀你的資料⋯'
   return p.total > 1 ? `${p.label} ${p.done}/${p.total}⋯` : `${p.label}⋯`
 })
 const truncated = ref(false)
@@ -676,10 +779,11 @@ const sourceMeta = ref({
   productName: '',
 })
 
+// mode 已經是「判別結果」，這裡只需確認對應的輸入真的有值（規則共用 shared/knowledge-import-detect）
 const canPreview = computed(() => {
   if (mode.value === 'file') return Boolean(selectedFile.value)
-  if (mode.value === 'url') return /^https?:\/\//i.test(urlInput.value.trim())
-  if (mode.value === 'gsheet') return /docs\.google\.com\/spreadsheets|^[a-zA-Z0-9-_]{20,}$/.test(gsheetInput.value.trim())
+  if (mode.value === 'url') return HTTP_URL_PATTERN.test(urlInput.value.trim())
+  if (mode.value === 'gsheet') return GSHEET_PATTERN.test(gsheetInput.value.trim())
   return textInput.value.trim().length > 0
 })
 
@@ -803,30 +907,36 @@ function pagePathLabel(url: string): string {
   }
 }
 
+/** 抓同網域可匯入頁面清單並填進 sitePages。回傳頁數;不負責換頁。 */
+async function loadSitePages(url: string): Promise<number> {
+  const res = await apiFetch<{ pages: Array<{ url: string; title: string; imported?: boolean }>; from: 'sitemap' | 'links'; truncated: boolean }>(
+    '/api/ai/knowledge/discover-pages',
+    { method: 'POST', body: { url } },
+  )
+  // 預設不勾:整站可能上百頁,每頁都是一次 AI 整理(時間+token);讓使用者自己挑
+  sitePages.value = res.pages.map(p => ({
+    url: p.url,
+    title: p.title,
+    checked: false,
+    status: 'idle',
+    cards: 0,
+    warningTexts: [],
+    error: '',
+    imported: p.imported === true,
+    group: pageGroupKey(p.url),
+  }))
+  siteFrom.value = res.from
+  siteTruncated.value = res.truncated
+  siteFinished.value = false
+  siteGroup.value = ''
+  siteFilter.value = ''
+  return sitePages.value.length
+}
+
 async function runDiscover() {
   discovering.value = true
   try {
-    const res = await apiFetch<{ pages: Array<{ url: string; title: string; imported?: boolean }>; from: 'sitemap' | 'links'; truncated: boolean }>(
-      '/api/ai/knowledge/discover-pages',
-      { method: 'POST', body: { url: urlInput.value.trim() } },
-    )
-    // 預設不勾:整站可能上百頁,每頁都是一次 AI 整理(時間+token);讓使用者自己挑
-    sitePages.value = res.pages.map(p => ({
-      url: p.url,
-      title: p.title,
-      checked: false,
-      status: 'idle',
-      cards: 0,
-      warningTexts: [],
-      error: '',
-      imported: p.imported === true,
-      group: pageGroupKey(p.url),
-    }))
-    siteFrom.value = res.from
-    siteTruncated.value = res.truncated
-    siteFinished.value = false
-    siteGroup.value = ''
-    siteFilter.value = ''
+    await loadSitePages(urlInput.value.trim())
     step.value = 'sitePages'
   }
   catch (err: any) {
@@ -836,6 +946,50 @@ async function runDiscover() {
     discovering.value = false
   }
 }
+
+/**
+ * 貼上網址後自動探一次「這個網站還有幾頁」(P1-3)。
+ *
+ * 原本整站匯入藏成第二顆次要按鈕(標籤還是「找出這個網站的其他頁面」),
+ * 第一次用的人幾乎不會發現自己能一次匯入整站——那正是最花時間的手動替代方案。
+ * 現在改成主動報數字:「這個網站還有 128 頁,要一起匯入嗎?」
+ *
+ * 成本控制:只對合法 http(s) 網址、停止輸入 1 秒後才探、同一個網址只探一次、
+ * 失敗完全靜音(探不到就當沒這回事,原本的手動按鈕還在)。探到的清單直接留著,
+ * 按「一起匯入」不用再抓一次。
+ */
+const sitePeekCount = ref(0)
+const sitePeeking = ref(false)
+let peekedUrl = ''
+let peekTimer: ReturnType<typeof setTimeout> | null = null
+
+watch([mode, pasteInput], () => {
+  if (peekTimer) clearTimeout(peekTimer)
+  const url = pasteInput.value.trim()
+  if (mode.value !== 'url' || !HTTP_URL_PATTERN.test(url)) {
+    sitePeekCount.value = 0
+    return
+  }
+  if (url === peekedUrl) return // 已經探過這個網址
+  sitePeekCount.value = 0
+  peekTimer = setTimeout(async () => {
+    sitePeeking.value = true
+    try {
+      const n = await loadSitePages(url)
+      // 使用者可能在等待期間換了網址 → 過期結果丟掉
+      if (pasteInput.value.trim() !== url) return
+      peekedUrl = url
+      // 清單一定包含使用者貼的那一頁,「另外還有」要扣掉它才不會多報一頁
+      sitePeekCount.value = Math.max(0, n - 1)
+    }
+    catch {
+      peekedUrl = url // 探失敗就不再重試同一個網址,避免每次改字都打一次
+    }
+    finally {
+      sitePeeking.value = false
+    }
+  }, 1000)
+})
 
 /** 一次批次最多頁數:每頁一次 LLM 整理,再多就該分批跑(也避免瀏覽器分頁被綁住太久) */
 const MAX_SITE_BATCH = 50
@@ -1166,6 +1320,79 @@ const failedItems = computed(() =>
   (result.value?.items ?? []).filter(i => i.status === 'failed'),
 )
 
+// ── 失敗就地重試（P1-6） ──────────────────────────────────
+// 原本只寫「可到知識庫點開那一條按重新學習」：要記住 N 個標題、換頁、一條條點。
+// 失敗原因也直接吐後端原文（多半是英文），使用者無從判斷是暫時性還是內容有問題。
+
+/** 後端原文 → 白話一句＋能不能靠重試解決 */
+function plainFailure(reason?: string): { text: string; retryable: boolean } {
+  const r = String(reason ?? '').toLowerCase()
+  if (!r) return { text: '原因不明', retryable: true }
+  if (/timeout|timed out|etimedout|econnreset|socket/.test(r))
+    return { text: '連線逾時（暫時性問題）', retryable: true }
+  if (/429|rate limit|quota|resource.*exhausted/.test(r))
+    return { text: 'AI 服務忙碌中（暫時性問題）', retryable: true }
+  if (/5\d\d|internal|unavailable|bad gateway/.test(r))
+    return { text: 'AI 服務暫時故障（暫時性問題）', retryable: true }
+  if (/too long|exceed|payload|size/.test(r))
+    return { text: '這一條內容太長，AI 讀不下', retryable: false }
+  if (/empty|invalid|no content/.test(r))
+    return { text: '這一條內容有問題（可能是空的或只有符號）', retryable: false }
+  if (/api key|permission|denied|unauthorized|401|403/.test(r))
+    return { text: 'AI 服務金鑰或權限有問題，重試無效，請聯絡我們', retryable: false }
+  return { text: '學習失敗（暫時性問題居多）', retryable: true }
+}
+
+const retryingIds = ref<Set<string>>(new Set())
+const retryAllRunning = ref(false)
+
+async function retryOne(item: { id: string; status: string; failureReason?: string }): Promise<boolean> {
+  retryingIds.value = new Set([...retryingIds.value, item.id])
+  try {
+    await apiFetch(`/api/ai/knowledge/${item.id}/reindex`, { method: 'POST' })
+    // 就地改狀態：結果頁的統計與清單都跟著更新，不用重新匯入才看得到成果
+    const row = (result.value?.items ?? []).find(i => i.id === item.id)
+    if (row && result.value) {
+      row.status = 'indexed'
+      row.failureReason = undefined
+      result.value.indexed += 1
+      result.value.failed = Math.max(0, result.value.failed - 1)
+    }
+    return true
+  }
+  catch (err: any) {
+    const row = (result.value?.items ?? []).find(i => i.id === item.id)
+    if (row) row.failureReason = err?.data?.statusMessage || err?.statusMessage || row.failureReason
+    return false
+  }
+  finally {
+    const next = new Set(retryingIds.value)
+    next.delete(item.id)
+    retryingIds.value = next
+  }
+}
+
+async function retryAllFailed() {
+  // 只重試「可能靠重試解決」的：內容太長之類重試一百次也一樣，別讓人白等
+  const targets = failedItems.value.filter(i => plainFailure(i.failureReason).retryable)
+  if (!targets.length) return
+  retryAllRunning.value = true
+  try {
+    let ok = 0
+    for (const t of targets) {
+      // 逐條而非併發：失敗多半是 AI 服務忙碌，同時打更多只會一起失敗
+      if (await retryOne(t)) ok++
+    }
+    showToast(
+      ok === targets.length ? `${ok} 條都學會了` : `${ok} / ${targets.length} 條成功，其餘可稍後再試`,
+      ok === targets.length ? 'success' : 'error',
+    )
+  }
+  finally {
+    retryAllRunning.value = false
+  }
+}
+
 async function runImport() {
   const selected = chunks.value
     .filter(c => c.included && c.title.trim() && c.content.trim())
@@ -1216,7 +1443,7 @@ async function runImport() {
 
 function resetAll() {
   step.value = 'input'
-  mode.value = 'file'
+  pasteInput.value = '' // mode 由這個與 selectedFile 衍生，不再是可寫的狀態
   fileName.value = ''
   fileSizeKb.value = 0
   selectedFile.value = null

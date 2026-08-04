@@ -53,17 +53,6 @@
   font-size: 13px;
 }
 
-.kb-dedup-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-}
-
-.kb-import-tabs {
-  margin-top: -8px;
-}
-
 .kb-overview-toggle {
   margin-top: 16px;
   padding: 12px;
@@ -92,23 +81,8 @@
   color: var(--el-color-primary);
 }
 
-.kb-file-zone {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 6px;
-  background: var(--el-fill-color-light);
-}
-
 .kb-file-input {
   display: none;
-}
-
-.kb-file-name {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
 }
 
 .kb-import-actions {
@@ -186,11 +160,6 @@
 
 .kb-site-filter-hint {
   margin: 0 0 8px;
-}
-
-/* 兩顆動作按鈕的差異說明(這一頁 vs 整站) */
-.kb-actions-hint {
-  margin: 8px 0 0;
 }
 
 .kb-site-list {
@@ -331,35 +300,6 @@
   align-items: center;
 }
 
-.kb-gsheet-template {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
-  margin-bottom: 12px;
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-}
-
-.kb-gsheet-template-text {
-  font-size: 13px;
-  min-width: 0;
-}
-
-.kb-gsheet-steps {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.8;
-}
-
-.kb-gsheet-copy-btn {
-  margin-left: 8px;
-}
-
 .kb-health-warnings {
   margin-bottom: 12px;
 }
@@ -476,5 +416,159 @@
     font-size: 12px;
     line-height: 1.6;
     color: var(--el-text-color-secondary);
+  }
+}
+
+/* ── Step 1 單一投放區(P1-2):不用先決定「我該用哪一種」 ─────────── */
+.kb-drop {
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+  transition: border-color .15s, background .15s;
+
+  &--over {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+  &--filled {
+    border-style: solid;
+  }
+
+  &__paste :deep(.el-textarea__inner) {
+    background: var(--el-fill-blank);
+  }
+
+  &__or {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__file {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  &__filename {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* 判別結果:左色條標示「會不會自動更新」——這是四種方式唯一真正的差別 */
+.kb-detected {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+
+  &--live   { border-left-color: var(--brand-green, #05b24c); }
+  &--semi   { border-left-color: var(--el-color-warning); }
+  &--static { border-left-color: var(--el-color-info); }
+
+  &__head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+  }
+  &__label {
+    flex: none;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  &__sync {
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+  &__hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.kb-gsheet-share {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--el-border-color);
+  font-size: 12px;
+  color: var(--text-primary);
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+}
+
+/* 整站匯入主動浮出(P1-3) */
+.kb-site-peek {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--el-border-color);
+  font-size: 13px;
+
+  &--loading {
+    justify-content: flex-start;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.kb-first-time {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 匯入失敗就地重試(P1-6) */
+.kb-failed-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  .kb-section-hint { margin: 0; }
+}
+.kb-failed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+
+  &__main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+
+    strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 }
