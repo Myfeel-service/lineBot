@@ -519,15 +519,16 @@
                   <div class="src-chunk-main">
                     <span class="src-chunk-title">{{ c.title }}</span>
                     <span v-if="c.manuallyEditedAtMs > 0" class="src-chunk-lock" :title="`手動編輯過：${relativeTime(c.manuallyEditedAtMs)}`"><el-icon><Lock /></el-icon></span>
-                    <span
-                      v-if="isShortChunk(c)"
-                      class="src-chunk-warn"
-                      title="標題＋內容太短,AI 檢索時幾乎派不上用場,還可能干擾其他卡;建議補充內容或刪除"
-                    >內容過短</span>
+                    <span v-if="isShortChunk(c)" class="src-chunk-warn">內容過短</span>
                   </div>
                   <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
                   <span class="src-chunk-meta">
                     {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
+                  </span>
+                  <!-- 原本這句話只在滑鼠停留時出現:手機/平板完全看不到,而且沒說「多長才算夠」,
+                       補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。 -->
+                  <span v-if="isShortChunk(c)" class="src-chunk-warn-hint">
+                    目前 {{ shortChunkChars(c) }} 字（空白不算），補到 {{ SHORT_CHUNK_CONTENT_CHARS }} 字以上 AI 才找得到；用不到的話可以直接刪掉。
                   </span>
                 </div>
                 <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
@@ -982,7 +983,7 @@
 <script setup lang="ts">
 import { Delete, EditPen, FirstAidKit, Folder, FolderOpened, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
+import { isShortChunkContent, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1259,6 +1260,15 @@ const detailLoading = ref(false)
 /** 與知識庫體檢同一把尺（shared 常數）——兩邊門檻不同會出現「體檢說有、知識卻沒標」 */
 function isShortChunk(c: Pick<ChunkRow, 'content'>): boolean {
   return isShortChunkContent(c.content)
+}
+
+/**
+ * 判定用的字數（不算空白），與 isShortChunkContent 同一把尺。
+ * 上面 meta 行顯示的是含空白的原始長度，兩個數字會不一樣——所以提示裡要標明「空白不算」，
+ * 否則會出現「35 字」卻說「還差 5 字」這種自相矛盾。
+ */
+function shortChunkChars(c: Pick<ChunkRow, 'content'>): number {
+  return String(c.content ?? '').replace(/\s+/g, '').length
 }
 
 function chunkPreview(c: Pick<ChunkRow, 'content'>): string {

@@ -572,3 +572,9 @@
     }
   }
 }
+
+/* 標籤欄的補充說明:跟「客人問法」對比,要講清楚它不影響 AI */
+.kb-tags-note {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+}

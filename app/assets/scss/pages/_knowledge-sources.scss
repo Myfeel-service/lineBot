@@ -207,6 +207,15 @@
   border-radius: 4px;
   white-space: nowrap;
 }
+
+/* 過短的「怎麼辦」要看得見:原本只在 hover title,手機看不到、也沒說門檻是多少 */
+.src-chunk-warn-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--el-color-warning-dark-2);
+}
 .src-chunk-preview {
   margin: 2px 0;
   font-size: 12px;

@@ -468,7 +468,11 @@
                 ＋
               </el-button>
             </div>
+            <!-- 原本這一排標籤沒有欄位名稱,而隔壁「客人問法」有——使用者看到一排小方塊
+                 加一個「＋」不知道那是什麼,更可能誤以為它跟問法一樣會影響 AI 找不找得到。
+                 兩者用途完全不同,要講清楚。 -->
             <div class="kb-chunk-tags">
+              <span class="kb-questions-label">標籤<span class="kb-tags-note">（只是你自己分類用，不影響 AI 回答）</span></span>
               <el-tag
                 v-for="tag in chunk.tags"
                 :key="tag"
