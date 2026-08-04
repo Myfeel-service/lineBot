@@ -214,6 +214,7 @@
                 :preview-src-list="[getMessageImageUrl(msg)]"
                 :preview-teleported="true"
               />
+              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
             </template>
             <template v-else-if="getLineRichImageUrl(msg)">
               <el-image
@@ -226,15 +227,24 @@
               />
             </template>
             <template v-else-if="getMessageType(msg) === 'video'">
-              <div class="conv-video-frame">
+              <!-- 客人傳來的影片沒有預覽圖，只能直接放播放器；客服自己送的有預覽圖就先顯示 -->
+              <video
+                v-if="getVideoUrl(msg)"
+                class="conv-inline-video"
+                :src="getVideoUrl(msg)"
+                :poster="getVideoPreviewImageUrl(msg) || undefined"
+                controls
+                preload="metadata"
+              />
+              <div v-else-if="getVideoPreviewImageUrl(msg)" class="conv-video-frame">
                 <img
-                  v-if="getVideoPreviewImageUrl(msg)"
                   :src="getVideoPreviewImageUrl(msg)"
                   alt="video-preview"
                   class="conv-video-preview"
                 />
                 <div class="conv-video-play">▶</div>
               </div>
+              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
             </template>
             <template v-else-if="getMessageType(msg) === 'audio'">
               <a
@@ -246,10 +256,11 @@
               >
                 <span class="conv-attachment-card__icon">🎵</span>
                 <span class="conv-attachment-card__meta">
-                  <span class="conv-attachment-card__title">音訊檔</span>
-                  <span class="conv-attachment-card__desc">{{ getAudioDurationLabel(msg) }}</span>
+                  <span class="conv-attachment-card__title">語音訊息</span>
+                  <span class="conv-attachment-card__desc">{{ getAudioDurationLabel(msg) }}・點擊播放</span>
                 </span>
               </a>
+              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
             </template>
             <template v-else-if="getMessageType(msg) === 'file'">
               <a
@@ -265,6 +276,7 @@
                   <span class="conv-attachment-card__desc">點擊下載</span>
                 </span>
               </a>
+              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
             </template>
             <template v-else-if="isStructuredLineMessage(msg)">
               <div class="conv-line-template" :class="getStructuredTemplateClass(msg)">
@@ -1250,6 +1262,9 @@ watch(unreadConvCount, () => {
 watch(workspaceId, () => {
   hydrateConvLastRead()
   applyUnreadDocumentTitle()
+  // 換 workspace 就丟掉已簽好的媒體網址（換帳號後不該還留著上一家的檔案連結）
+  remoteMedia.value = {}
+  mediaQueue.length = 0
 })
 
 const sidebarItems = computed(() =>
@@ -2423,9 +2438,114 @@ function moveStructuredCarousel(msg: MsgItem, delta: number) {
   structuredCarouselPage.value[msg.id] = nextIndex
 }
 
+/**
+ * 客人傳來的圖／影／音／檔，LINE webhook 只給一個 messageId、沒有任何網址
+ * （payload 長這樣：{ type: 'image', id: '625…', contentProvider: { type: 'line' } }）。
+ * 原始檔得由後端向 LINE 拿、存進 Storage 後簽一組短效網址，前端才顯示得出來——
+ * 這裡就是「一則訊息 → 一組可顯示網址」的載入狀態，key 是訊息文件 id。
+ */
+type RemoteMediaState = 'loading' | 'ready' | 'expired' | 'not_ready' | 'too_large' | 'error'
+const remoteMedia = ref<Record<string, { state: RemoteMediaState; url?: string }>>({})
+
+const REMOTE_MEDIA_TYPES = ['image', 'video', 'audio', 'file']
+
+/** payload 內就有網址的情況：客服自己送出的圖／影／音，或 contentProvider 為外部來源 */
+function payloadMediaUrl(msg: MsgItem, prefer: 'preview' | 'original'): string {
+  const p = msg?.payload || {}
+  const provider = p?.contentProvider || {}
+  const candidates = prefer === 'preview'
+    ? [p.previewImageUrl, p.originalContentUrl, provider.previewImageUrl, provider.originalContentUrl]
+    : [p.originalContentUrl, provider.originalContentUrl]
+  for (const c of candidates) {
+    const url = String(c || '').trim()
+    if (url) return url
+  }
+  return ''
+}
+
+function needsRemoteMedia(msg: MsgItem): boolean {
+  if (!REMOTE_MEDIA_TYPES.includes(getMessageType(msg))) return false
+  if (payloadMediaUrl(msg, 'preview')) return false
+  return Boolean(String(msg?.payload?.id || '').trim())
+}
+
+/** 一次只補幾個：一則對話可能有十幾張圖，全部同時打會讓每個請求都變慢 */
+const MEDIA_CONCURRENCY = 4
+const mediaQueue: MsgItem[] = []
+let mediaInFlight = 0
+
+async function loadRemoteMedia(msg: MsgItem): Promise<void> {
+  const key = msg.id
+  const userId = selectedUser.value?.userId || selectedUserId.value
+  if (!userId) {
+    // 還不知道要問誰，把佔位清掉讓下次進畫面時能重試
+    delete remoteMedia.value[key]
+    return
+  }
+  try {
+    const res = await apiFetch<{ state: RemoteMediaState; url?: string }>(
+      `/api/conversations/${userId}/media/${key}`,
+    )
+    remoteMedia.value[key] = {
+      state: res?.url ? 'ready' : (res?.state || 'error'),
+      url: res?.url,
+    }
+  }
+  catch {
+    remoteMedia.value[key] = { state: 'error' }
+  }
+}
+
+function pumpMediaQueue(): void {
+  while (mediaInFlight < MEDIA_CONCURRENCY && mediaQueue.length) {
+    const next = mediaQueue.shift()!
+    mediaInFlight += 1
+    void loadRemoteMedia(next).finally(() => {
+      mediaInFlight -= 1
+      pumpMediaQueue()
+    })
+  }
+}
+
+function enqueueRemoteMedia(msg: MsgItem): void {
+  // loading / ready / 失敗都不重排：失敗多半是 LINE 已刪檔，重打只是浪費
+  if (remoteMedia.value[msg.id]) return
+  remoteMedia.value[msg.id] = { state: 'loading' }
+  mediaQueue.push(msg)
+  pumpMediaQueue()
+}
+
+// 訊息一進畫面就去補檔案網址（客服不該還要多按一下才看得到照片）。
+// 由新到舊排：聊天室是停在最下面的，先補看得到的那幾則。
+watch(chatRows, (rows) => {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]!
+    if (row.kind !== 'msg') continue
+    if (needsRemoteMedia(row.msg)) enqueueRemoteMedia(row.msg)
+  }
+}, { immediate: true })
+
+function remoteMediaUrl(msg: MsgItem): string {
+  return String(remoteMedia.value[msg.id]?.url || '').trim()
+}
+
+/** 沒有網址可顯示時，說清楚是哪一種「沒有」——空白泡泡會讓人以為後台壞了 */
+function mediaFallbackText(msg: MsgItem): string {
+  const type = getMessageType(msg)
+  const noun = type === 'video' ? '影片' : type === 'audio' ? '語音' : type === 'file' ? '檔案' : '圖片'
+  const state = remoteMedia.value[msg.id]?.state
+  if (state === 'loading') return `${noun}載入中…`
+  if (state === 'expired') return `這個${noun}已經無法取得（LINE 只保留客人傳來的檔案一小段時間）`
+  if (state === 'not_ready') return `${noun}還在 LINE 處理中，稍後重新整理再看`
+  if (state === 'too_large') return `${noun}太大，後台不預覽（請到 LINE 官方帳號 App 查看）`
+  if (state === 'error') return `${noun}載入失敗，重新整理再試一次`
+  // 沒有狀態＝這則訊息連檔案編號都沒留下（極少見），重試也不會有結果，別叫人白試
+  return `這則訊息沒有可以顯示的${noun}`
+}
+
 function getMessageImageUrl(msg: MsgItem): string {
   if (getMessageType(msg) !== 'image') return ''
-  return String(msg?.payload?.previewImageUrl || msg?.payload?.originalContentUrl || '').trim()
+  return payloadMediaUrl(msg, 'preview') || remoteMediaUrl(msg)
 }
 
 function getLineRichImageUrl(msg: MsgItem): string {
@@ -2474,7 +2594,12 @@ function getLineRichImageFrameStyle(msg: MsgItem): Record<string, string> {
 
 function getVideoPreviewImageUrl(msg: MsgItem): string {
   if (getMessageType(msg) !== 'video') return ''
-  return String(msg?.payload?.previewImageUrl || msg?.payload?.originalContentUrl || '').trim()
+  return String(msg?.payload?.previewImageUrl || '').trim()
+}
+
+function getVideoUrl(msg: MsgItem): string {
+  if (getMessageType(msg) !== 'video') return ''
+  return payloadMediaUrl(msg, 'original') || remoteMediaUrl(msg)
 }
 
 function getStickerImageUrl(msg: MsgItem): string {
@@ -2486,7 +2611,7 @@ function getStickerImageUrl(msg: MsgItem): string {
 
 function getAudioUrl(msg: MsgItem): string {
   if (getMessageType(msg) !== 'audio') return ''
-  return String(msg?.payload?.originalContentUrl || '').trim()
+  return payloadMediaUrl(msg, 'original') || remoteMediaUrl(msg)
 }
 
 function getAudioDurationLabel(msg: MsgItem): string {
@@ -2498,7 +2623,7 @@ function getAudioDurationLabel(msg: MsgItem): string {
 
 function getFileUrl(msg: MsgItem): string {
   if (getMessageType(msg) !== 'file') return ''
-  return String(msg?.payload?.originalContentUrl || '').trim()
+  return payloadMediaUrl(msg, 'original') || remoteMediaUrl(msg)
 }
 
 function getFileName(msg: MsgItem): string {

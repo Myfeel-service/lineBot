@@ -26,6 +26,7 @@ import {
 import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
+import { archiveConversationMedia } from './conversation-media'
 import { createImagemapImageToken } from './line-imagemap-image-token'
 import { createUriTagToken } from './line-action-tag-token'
 import { addTagsToUser } from './tagging'
@@ -1811,6 +1812,23 @@ export async function handleMessageEvent(
     if (['image', 'video', 'audio', 'file'].includes(event.message.type) && event.replyToken) {
       maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
         .catch(e => console.error('[non-text-ack] error:', e))
+    }
+
+    // 圖片：webhook 只給 messageId，原始檔要另外抓，而且 LINE 只暫存一段時間——
+    // 沒有在當下存檔，客服晚幾天才回頭看就永遠看不到那張圖了。所以收訊即存檔。
+    // 這裡刻意 await（Lambda 回應後容器就凍結，沒 await 的下載會被砍掉），但排在
+    // ack 之後，回覆已經先送出去了，不影響客人感受到的速度。
+    // 影片／語音／檔案體積大，改在後台真的要看時才抓（見 resolveConversationMediaUrl）。
+    if (event.message.type === 'image') {
+      const lineMessageId = String((event.message as { id?: string }).id || '')
+      const archived = await archiveConversationMedia({ workspaceId, lineMessageId, messageType: 'image' })
+        .catch((e) => {
+          console.error('[conv-media] archive error:', e)
+          return null
+        })
+      if (archived && !archived.ok) {
+        console.warn('[conv-media] image not archived:', lineMessageId, archived.state, archived.detail || '')
+      }
     }
   }
 }

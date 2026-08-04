@@ -833,6 +833,29 @@
     border-radius: 1.45rem;
   }
 
+  .conv-inline-video {
+    width: var(--line-image-message-width);
+    max-height: 640px;
+    border-radius: 1.25rem;
+    display: block;
+    background: #000;
+  }
+
+  // 圖／影／音／檔拿不到檔案時的說明卡。媒體泡泡本身是透明無邊框的（.conv-bubble.is-media），
+  // 所以這張卡要自己撐出可讀的外觀，否則會變成一段浮在空白處的灰字。
+  .conv-media-fallback {
+    width: min(330px, 72vw);
+    padding: 0.6rem 0.75rem;
+    box-sizing: border-box;
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    // 用卡片內文的字級而不是 meta 字級：這是要讀懂的說明，不是時間戳
+    font-size: var(--line-font-card-text);
+    line-height: 1.55;
+  }
+
   .conv-video-frame {
     width: min(540px, 78vw);
     max-width: 100%;

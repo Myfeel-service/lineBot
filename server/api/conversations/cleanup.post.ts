@@ -1,5 +1,11 @@
 import { Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
+import { deleteConversationMediaObjects, isMediaMessageType } from '~~/server/utils/conversation-media'
+
+function workspaceIdFromConversationDocId(convDocId: string): string {
+  const idx = String(convDocId || '').lastIndexOf('_')
+  return idx > 0 ? convDocId.slice(0, idx) : ''
+}
 
 function parsePositiveInt(value: unknown, fallback: number): number {
   const n = Number(value)
@@ -47,18 +53,36 @@ export default defineEventHandler(async (event) => {
       touchedConversations: 0,
       refreshedConversations: 0,
       deletedConversations: 0,
+      deletedMediaFiles: 0,
       hasMore: false,
     }
   }
 
   const touchedUserIds = new Set<string>()
+  // 客人傳來的圖／影／音／檔另外存在 Storage，訊息刪了存檔也要刪，否則空間只增不減
+  const mediaToDelete: Array<{ workspaceId: string; lineMessageId: string }> = []
   const batch = db.batch()
   for (const doc of oldMessagesSnap.docs) {
     batch.delete(doc.ref)
     const userId = doc.ref.parent.parent?.id
     if (userId) touchedUserIds.add(userId)
+    const data = doc.data()
+    const payload = (data.payload ?? {}) as Record<string, unknown>
+    const messageType = String(payload.type || data.messageType || '')
+    const lineMessageId = String(payload.id || '').trim()
+    // 訊息文件本身不存 workspaceId；對話文件 id 是 `{workspaceId}_{lineUserId}`，
+    // 而 LINE userId 不含底線，所以取最後一個底線之前就是 workspaceId
+    const workspaceId = workspaceIdFromConversationDocId(userId || '')
+    if (isMediaMessageType(messageType) && lineMessageId && workspaceId) {
+      mediaToDelete.push({ workspaceId, lineMessageId })
+    }
   }
   await batch.commit()
+  const deletedMediaFiles = await deleteConversationMediaObjects(mediaToDelete)
+    .catch((e) => {
+      console.warn('[cleanup] delete media objects failed:', e)
+      return 0
+    })
 
   let refreshedConversations = 0
   let deletedConversations = 0
@@ -98,6 +122,7 @@ export default defineEventHandler(async (event) => {
     touchedConversations: touchedUserIds.size,
     refreshedConversations,
     deletedConversations,
+    deletedMediaFiles,
     hasMore: oldMessagesSnap.size >= batchSize,
   }
 })

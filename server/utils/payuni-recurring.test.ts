@@ -8,12 +8,12 @@ vi.mock('./payuni', async (importOriginal) => {
   return { ...actual, chargeCreditToken: vi.fn() }
 })
 vi.mock('./payuni-fulfill', () => ({ fulfillPayuniTrade: vi.fn() }))
-vi.mock('./billing-emails', () => ({ sendChargeFailedNotification: vi.fn() }))
+vi.mock('./billing-emails', () => ({ sendChargeFailedNotification: vi.fn(), sendReceiptNotification: vi.fn() }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 
 import { chargeCreditToken } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
-import { sendChargeFailedNotification } from './billing-emails'
+import { sendChargeFailedNotification, sendReceiptNotification } from './billing-emails'
 import { chargeDueRecurring, isDueForRecurringCharge, recurringOrderNo } from './payuni-recurring'
 import { INVOICE_ORDER_NO_MAX } from './payment'
 import type { WorkspaceSubscription } from '~~/shared/billing/plans'
@@ -21,6 +21,7 @@ import type { WorkspaceSubscription } from '~~/shared/billing/plans'
 const mockCharge = vi.mocked(chargeCreditToken)
 const mockFulfill = vi.mocked(fulfillPayuniTrade)
 const mockFailMail = vi.mocked(sendChargeFailedNotification)
+const mockReceipt = vi.mocked(sendReceiptNotification)
 
 // 2026-08-28（UTC 00:30 = 台灣 08:30）：8/27 到期的訂閱昨天已被 roll 推進新一期
 const AUG28 = new Date(Date.UTC(2026, 7, 28, 0, 30, 0))
@@ -130,6 +131,7 @@ beforeEach(() => {
   mockCharge.mockReset()
   mockFulfill.mockReset()
   mockFailMail.mockReset()
+  mockReceipt.mockReset()
 })
 
 describe('recurringOrderNo（續扣單號 = 冪等鍵）', () => {
@@ -499,5 +501,30 @@ describe('chargeDueRecurring — 韌性', () => {
     expect(sub.lastChargeError).toBe('卡片授權失敗')
     expect(sub.autoRenew).toBe(false) // ← 客戶的取消沒有被還原
     expect(sub.cancelAtPeriodEnd).toBe(true)
+  })
+})
+
+describe('chargeDueRecurring — 折抵全額支付也要通知客戶', () => {
+  it('折抵蓋滿整期 → 仍寄收據（否則這期對客戶完全靜默,他會以為訂閱斷了）', async () => {
+    const db = makeDb({ 'workspaces/ws1': { subscription: dueSub({ creditBalance: 1000 }) } }) as any
+    const r = await chargeDueRecurring(CONFIG, AUG28, db)
+
+    expect(r.covered).toBe(1)
+    expect(mockCharge).not.toHaveBeenCalled()   // 沒有信用卡交易
+    expect(mockFulfill).not.toHaveBeenCalled()  // 不走開發票那條路
+    // 但客戶要收到通知——單號要對得上這期的帳
+    expect(mockReceipt).toHaveBeenCalledTimes(1)
+    expect(mockReceipt).toHaveBeenCalledWith(recurringOrderNo('ws1', '2026-08-28', TODAY))
+  })
+
+  it('部分折抵（有真的扣款）→ 收據由 fulfillPayuniTrade 那條路寄,不重複寄', async () => {
+    const db = makeDb({ 'workspaces/ws1': { subscription: dueSub({ creditBalance: 100 }) } }) as any
+    mockCharge.mockResolvedValue({ ok: true, outerStatus: 'SUCCESS', result: { TradeStatus: '1' } })
+    mockFulfill.mockResolvedValue({ merchantOrderNo: 'R', paid: true, outcome: 'settled' })
+
+    await chargeDueRecurring(CONFIG, AUG28, db)
+
+    expect(mockFulfill).toHaveBeenCalledTimes(1)
+    expect(mockReceipt).not.toHaveBeenCalled() // 這條路不自己寄,避免一期兩封
   })
 })

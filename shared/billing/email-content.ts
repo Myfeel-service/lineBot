@@ -55,38 +55,61 @@ export function receiptEmail(p: {
   brandName: string
   workspaceName: string
   planName: string
+  /** 實際向信用卡請款的金額（已扣折抵）。 */
   amount: number
   periodStart: string | null
   periodEnd: string | null
   invoiceNumber?: string | null
   recurring: boolean
+  /**
+   * 本期用掉的折抵金額。> 0 時收據會攤成「方案月費 − 折抵 = 實收」三行。
+   *
+   * ⚠️ 不攤開的話,客戶只會看到一個比方案定價少的數字而不知道為什麼——那是最典型的客服來電。
+   *    折抵剛好蓋滿整期時（amount = 0）更要講清楚:那期**完全沒有向信用卡請款**,
+   *    標題也不能寫「付款成功」（沒有付款這件事發生）。
+   */
+  creditApplied?: number
 }): EmailContent {
   const period = p.periodStart && p.periodEnd ? `${p.periodStart} ～ ${p.periodEnd}` : '—'
+  const credit = Math.max(0, Math.round(p.creditApplied ?? 0))
+  // 折抵全額吸收 → 這期沒有任何信用卡交易,措辭要跟著改
+  const fullyCovered = credit > 0 && p.amount <= 0
+
   const rows: Array<[string, string]> = [
     ['官方帳號', p.workspaceName],
     ['方案', p.planName],
-    ['金額（含稅）', money(p.amount)],
-    ['本期', period],
   ]
+  if (credit > 0) {
+    rows.push(['方案月費（含稅）', money(p.amount + credit)])
+    rows.push(['折抵', `− ${money(credit)}`])
+  }
+  rows.push([credit > 0 ? '本次實收（含稅）' : '金額（含稅）', money(p.amount)])
+  rows.push(['本期', period])
   if (p.invoiceNumber) rows.push(['電子發票號碼', p.invoiceNumber])
-  rows.push(['付款方式', p.recurring ? '信用卡自動續訂' : '單次付款'])
+  rows.push(['付款方式', fullyCovered ? '折抵餘額支付（未扣卡）' : (p.recurring ? '信用卡自動續訂' : '單次付款')])
 
-  const note = p.recurring
-    ? '已開啟自動續訂，下期將於本期結束後自動扣款；隨時可在後台「訂閱與付款」取消。'
-    : '感謝你的購買。'
+  const note = fullyCovered
+    ? '本期費用已由你的折抵餘額全額支付，這次沒有向信用卡請款。折抵用完後會恢復正常扣款。'
+    : (p.recurring
+        ? '已開啟自動續訂，下期將於本期結束後自動扣款；隨時可在後台「訂閱與付款」取消。'
+        : '感謝你的購買。')
 
-  const subject = `[${p.brandName}] 付款成功通知 — ${p.planName}方案`
-  const html = shell(p.brandName, '付款成功', paragraph(note) + table(rows))
+  const title = fullyCovered ? '本期已續訂' : '付款成功'
+  const subject = fullyCovered
+    ? `[${p.brandName}] 本期已續訂（由折抵支付）— ${p.planName}方案`
+    : `[${p.brandName}] 付款成功通知 — ${p.planName}方案`
+  const html = shell(p.brandName, title, paragraph(note) + table(rows))
   const text = [
-    '付款成功',
+    title,
     note,
     '',
     `官方帳號：${p.workspaceName}`,
     `方案：${p.planName}`,
-    `金額（含稅）：${money(p.amount)}`,
+    ...(credit > 0 ? [`方案月費（含稅）：${money(p.amount + credit)}`, `折抵：− ${money(credit)}`] : []),
+    `${credit > 0 ? '本次實收（含稅）' : '金額（含稅）'}：${money(p.amount)}`,
     `本期：${period}`,
     ...(p.invoiceNumber ? [`電子發票號碼：${p.invoiceNumber}`] : []),
-    `付款方式：${p.recurring ? '信用卡自動續訂' : '單次付款'}`,
+    `付款方式：${fullyCovered ? '折抵餘額支付（未扣卡）' : (p.recurring ? '信用卡自動續訂' : '單次付款')}`,
   ].join('\n')
   return { subject, html, text }
 }

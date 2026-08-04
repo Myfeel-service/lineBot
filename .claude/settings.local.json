@@ -111,13 +111,19 @@
       "Bash(unzip -q \"/Users/kevin/Downloads/07.PAYUNi_信用卡Token API申請書.xlsx\")",
       "Bash(git check-ignore *)",
       "WebFetch(domain:tw.linebiz.com)",
-      "Read(//Applications/LibreOffice.app/Contents/MacOS/**)"
+      "Read(//Applications/LibreOffice.app/Contents/MacOS/**)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/e7973517-e976-47d9-ac27-8af5718eba5a/scratchpad/probe-image-msgs.ts\")",
+      "Bash(cp \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/e7973517-e976-47d9-ac27-8af5718eba5a/scratchpad/probe-image-msgs.ts\" scripts/_probe-tmp.ts && node --env-file=.env_myfeel --experimental-strip-types scripts/_probe-tmp.ts 2>&1 | tail -45; rm -f scripts/_probe-tmp.ts)",
+      "Bash(xargs -r kill -9)",
+      "Bash(ps -eo pid,etime,time,command)",
+      "Bash(kill 73408)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
       "/Users/kevin/Documents/Github/linebot/server/utils",
       "/Users/kevin/Documents/Github/linebot/server/api/conversations/[userId]",
-      "/Users/kevin/Documents/Github/linebot/app/pages/admin/[workspaceId]"
+      "/Users/kevin/Documents/Github/linebot/app/pages/admin/[workspaceId]",
+      "/Users/kevin/Documents/Github/linebot/scripts"
     ]
   }
 }

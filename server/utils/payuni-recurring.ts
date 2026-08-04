@@ -41,7 +41,7 @@ import { getDb } from './firebase'
 import { createPendingOrder, settlePaidOrder, PAYMENT_ORDERS_COLLECTION } from './payment'
 import { assertPayuniKeys, chargeCreditToken, isCreditChargeIndeterminate, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
-import { sendChargeFailedNotification } from './billing-emails'
+import { sendChargeFailedNotification, sendReceiptNotification } from './billing-emails'
 import { GRACE_DAYS } from '~~/shared/billing/period'
 import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import { getBillingPlan, isSelfServePaidPlan, type WorkspaceSubscription } from '~~/shared/billing/plans'
@@ -307,6 +307,10 @@ export async function chargeDueRecurring(
           })
           summary.covered++
           console.log('[payuni:recurring] 本期由折抵全額支付,未向信用卡請款', doc.id, merchantOrderNo, charge.creditUsed)
+          // ⚠️ 這條路沒經過 fulfillPayuniTrade（收據信是在那支寄的）→ 要自己寄一封,
+          //    否則「這期沒扣款」對客戶完全靜默,他會以為訂閱斷了。
+          //    收據會顯示「折抵餘額支付（未扣卡）」,不會寫成「付款成功 NT$0」。
+          await sendReceiptNotification(merchantOrderNo)
         }
         else {
           summary.skipped++

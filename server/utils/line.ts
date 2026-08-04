@@ -123,6 +123,61 @@ export async function pushMessage(
   return client.pushMessage({ to: userId, messages })
 }
 
+export type LineMessageContentResult =
+  | { ok: true; buffer: Buffer; contentType: string }
+  /**
+   * expired：LINE 只暫存使用者傳來的檔案一段時間，過期就 404（拿不回來了）。
+   * not_ready：影片轉檔中（202），稍後可再試。
+   */
+  | { ok: false; reason: 'expired' | 'not_ready' | 'too_large' | 'error'; detail?: string }
+
+/**
+ * 下載使用者傳來的圖／影／音／檔原始內容（webhook payload 只給 messageId，沒有網址）。
+ * 邊收邊算大小、超過 maxBytes 立刻中止，避免一支大影片就把 Lambda 記憶體吃光。
+ */
+export async function fetchLineMessageContent(
+  messageId: string,
+  workspaceId: string,
+  options?: { maxBytes?: number },
+): Promise<LineMessageContentResult> {
+  const id = String(messageId || '').trim()
+  if (!id) return { ok: false, reason: 'error', detail: 'messageId is required' }
+  const maxBytes = Number(options?.maxBytes) > 0 ? Number(options!.maxBytes) : 30 * 1024 * 1024
+
+  try {
+    const { blob } = await getMessagingBundle(workspaceId)
+    const { httpResponse, body } = await blob.getMessageContentWithHttpInfo(id)
+    if (httpResponse.status === 202) return { ok: false, reason: 'not_ready' }
+    const contentType = String(httpResponse.headers.get('content-type') || '')
+      .split(';')[0]!
+      .trim() || 'application/octet-stream'
+
+    const chunks: Buffer[] = []
+    let total = 0
+    for await (const chunk of body as AsyncIterable<unknown>) {
+      const buf = Buffer.isBuffer(chunk)
+        ? chunk
+        : typeof chunk === 'string'
+          ? Buffer.from(chunk, 'utf8')
+          : Buffer.from(chunk as Uint8Array)
+      total += buf.length
+      if (total > maxBytes) {
+        body.destroy()
+        return { ok: false, reason: 'too_large' }
+      }
+      chunks.push(buf)
+    }
+    return { ok: true, buffer: Buffer.concat(chunks), contentType }
+  }
+  catch (err) {
+    if (err instanceof HTTPFetchError) {
+      if (err.status === 404 || err.status === 410) return { ok: false, reason: 'expired' }
+      return { ok: false, reason: 'error', detail: `${err.status} ${err.message}` }
+    }
+    return { ok: false, reason: 'error', detail: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 /** 建立圖文選單並回傳 richMenuId */
 export async function createRichMenu(richMenu: line.messagingApi.RichMenuRequest, workspaceId: string) {
   const { client } = await getMessagingBundle(workspaceId)

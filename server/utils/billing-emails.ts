@@ -80,6 +80,8 @@ export async function sendReceiptNotification(orderId: string, db: Firestore = g
       periodEnd: o.periodEnd ?? null,
       invoiceNumber: o.invoiceNumber ?? null,
       recurring: o.kind !== 'one_time',
+      // 有折抵時收據要攤成「方案月費 − 折抵 = 實收」,否則客戶看到比定價少的數字會來問
+      creditApplied: o.creditApplied ?? 0,
     })
     await sendEmail({ to: email, ...content })
   }
