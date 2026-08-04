@@ -26,7 +26,16 @@ export default defineEventHandler(async (event) => {
     wsRef.get(),
   ])
 
-  const members = memberSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Record<string, any>[]
+  // lineBindCode 是一次性密碼:誰拿到就能把自己綁成這位成員。列表允許 viewer 讀,
+  // 所以只回「有沒有待輸入的碼」,碼本身僅在產碼那一次回給 admin。
+  const members = memberSnap.docs.map((d) => {
+    const { lineBindCode, lineBindCodeExpiresAt, ...rest } = d.data() as Record<string, any>
+    return {
+      id: d.id,
+      ...rest,
+      hasPendingBindCode: Boolean(lineBindCode) && Number(lineBindCodeExpiresAt ?? 0) > Date.now(),
+    }
+  }) as Record<string, any>[]
 
   const pending = inviteSnap.docs.map(d => ({
     id: d.id,

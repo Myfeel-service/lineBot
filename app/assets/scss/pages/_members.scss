@@ -1,0 +1,91 @@
+// 成員管理：LINE 綁定相關
+
+.member-line-note {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.member-line-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+
+  .el-tag {
+    max-width: 130px;
+  }
+}
+
+.member-bind-target {
+  margin: 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.member-bind-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--el-text-color-regular);
+}
+
+.member-bind-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+
+  code {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--el-text-color-primary);
+    word-break: break-all;
+  }
+}
+
+.member-bind-expire {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+// 連結很長：字級調小、不加字距，才不會把複製鈕擠出卡片（碼本身仍維持大字好念）
+.member-bind-code--url code {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.member-bind-fallback {
+  border-top: none;
+
+  .el-collapse-item__header,
+  .el-collapse-item__wrap {
+    border-bottom: none;
+    background: transparent;
+  }
+
+  .el-collapse-item__header {
+    height: 32px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .el-collapse-item__content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 4px;
+  }
+}

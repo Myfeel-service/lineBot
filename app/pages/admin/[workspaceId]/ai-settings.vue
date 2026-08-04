@@ -216,24 +216,46 @@
                 @change="syncNotifyDisplayNames"
                 @visible-change="onNotifyDropdownVisible"
               >
-                <el-option
-                  v-for="opt in notifyUserOptions"
-                  :key="opt.id"
-                  :value="opt.id"
-                  :label="opt.name"
-                >
-                  <span class="ai-notify-option">
-                    <img
-                      v-if="opt.picture"
-                      :src="opt.picture"
-                      class="ai-notify-option-avatar"
-                      alt=""
-                    >
-                    <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
-                    <span class="ai-notify-option-name">{{ opt.name }}</span>
-                    <span class="ai-notify-option-id">{{ opt.id }}</span>
-                  </span>
-                </el-option>
+                <el-option-group v-if="notifyMemberOptions.length" label="後台成員(已綁定 LINE)">
+                  <el-option
+                    v-for="opt in notifyMemberOptions"
+                    :key="opt.id"
+                    :value="opt.id"
+                    :label="opt.name"
+                  >
+                    <span class="ai-notify-option">
+                      <img
+                        v-if="opt.picture"
+                        :src="opt.picture"
+                        class="ai-notify-option-avatar"
+                        alt=""
+                      >
+                      <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
+                      <span class="ai-notify-option-name">{{ opt.name }}</span>
+                      <span class="ai-notify-option-id">{{ opt.sub }}</span>
+                    </span>
+                  </el-option>
+                </el-option-group>
+                <el-option-group :label="notifyQuery ? '搜尋結果(LINE 會員)' : 'LINE 會員(最近加入的好友)'">
+                  <el-option
+                    v-for="opt in notifyGuestOptions"
+                    :key="opt.id"
+                    :value="opt.id"
+                    :label="opt.name"
+                  >
+                    <span class="ai-notify-option">
+                      <img
+                        v-if="opt.picture"
+                        :src="opt.picture"
+                        class="ai-notify-option-avatar"
+                        alt=""
+                      >
+                      <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
+                      <span class="ai-notify-option-name">{{ opt.name }}</span>
+                      <span class="ai-notify-option-id">{{ opt.id }}</span>
+                    </span>
+                  </el-option>
+                </el-option-group>
                 <template #empty>
                   <p class="ai-notify-empty">
                     {{ notifySearchLoading
@@ -245,8 +267,11 @@
                 </template>
               </el-select>
               <p class="ai-section-hint">
-                點一下從會員清單挑選(預設列出最近加入的好友),或輸入暱稱搜尋
-                (對方需已加這個官方帳號好友並傳過訊息);也可直接貼上 U 開頭的 LINE userId 後按 Enter。
+                找不到人?到
+                <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/members`">設定 → 成員管理</NuxtLink>
+                <template v-else>「設定 → 成員管理」</template>
+                幫該成員「綁定 LINE」,這裡就會出現在最上面那組,顯示的是他的 Email 而不是陌生暱稱。
+                也可以直接從下面的 LINE 會員清單挑,或貼上 U 開頭的 LINE userId 後按 Enter。
               </p>
             </div>
             <div class="admin-field-group">
@@ -590,7 +615,7 @@ import { taipeiYyyyMm } from '~~/shared/time'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
-const { apiFetch, workspaceId, can } = useWorkspace()
+const { apiFetch, workspaceId, can, canManageSettings } = useWorkspace()
 const canEditSettings = computed(() => can('ai.settings.write'))
 const { showToast } = useAdminToast()
 const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
@@ -810,12 +835,24 @@ const notifyQuery = ref('')
 const knownUserNames = ref<Record<string, string>>({})
 const knownUserPictures = ref<Record<string, string>>({})
 
-const notifyUserOptions = computed(() => {
+/** 已綁定 LINE 的後台成員——名單就是自己人,顯示 Email 比顯示 LINE 暱稱好認 */
+type NotifyMember = { id: string; name: string; sub: string; picture: string }
+const notifyMembers = ref<NotifyMember[]>([])
+const notifyMembersLoaded = ref(false)
+
+const notifyMemberOptions = computed(() => notifyMembers.value)
+
+/** 沒綁定的 LINE 會員(搜尋／最近好友)+ 已選但不在成員名單裡的舊項目。
+ *  成員已出現在上面那組,這裡要排除——同一個 value 出現兩次 el-select 會選錯 tag。 */
+const notifyGuestOptions = computed(() => {
+  const memberIds = new Set(notifyMembers.value.map(m => m.id))
   const map = new Map<string, string>()
   for (const uid of form.value.handoffNotify.lineUserIds) {
+    if (memberIds.has(uid)) continue
     map.set(uid, knownUserNames.value[uid] || uid)
   }
   for (const u of (notifyQuery.value ? notifySearchResults.value : notifyDefaultUsers.value)) {
+    if (memberIds.has(u.id)) continue
     map.set(u.id, u.displayName || u.id)
   }
   return [...map.entries()].map(([id, name]) => ({
@@ -824,6 +861,36 @@ const notifyUserOptions = computed(() => {
     picture: knownUserPictures.value[id] || '',
   }))
 })
+
+/** 載入已綁定 LINE 的成員。頁面載入就抓一次,讓已存的收件人直接顯示 Email 而不是 Uxxx */
+async function ensureNotifyMembers() {
+  if (notifyMembersLoaded.value) return
+  notifyMembersLoaded.value = true
+  try {
+    const rows = await apiFetch<any[]>(`/api/admin/workspaces/${workspaceId.value}/members`)
+    notifyMembers.value = rows
+      .filter(r => !r.pendingInvite && !r.readOnly && String(r.lineUserId || '').trim())
+      .map((r) => {
+        const id = String(r.lineUserId).trim()
+        const email = String(r.invitedEmail || r.uid || '').trim()
+        const lineName = String(r.lineDisplayName || '').trim()
+        return {
+          id,
+          name: email || lineName || id,
+          sub: lineName ? `LINE：${lineName}` : id,
+          picture: String(r.linePictureUrl || '').trim(),
+        }
+      })
+    // 讓已選的 tag 也顯示 Email(成員優先於 LINE 暱稱)
+    for (const m of notifyMembers.value) {
+      knownUserNames.value[m.id] = m.name
+      if (m.picture) knownUserPictures.value[m.id] = m.picture
+    }
+  }
+  catch {
+    notifyMembersLoaded.value = false
+  }
+}
 
 async function fetchNotifyUsers(search: string): Promise<NotifyUser[]> {
   const qs = search ? `search=${encodeURIComponent(search)}&limit=20` : 'limit=20'
@@ -858,7 +925,9 @@ async function ensureNotifyDefaultUsers() {
 }
 
 function onNotifyDropdownVisible(visible: boolean) {
-  if (visible) void ensureNotifyDefaultUsers()
+  if (!visible) return
+  void ensureNotifyMembers()
+  void ensureNotifyDefaultUsers()
 }
 
 async function searchNotifyUsers(query: string) {
@@ -980,5 +1049,7 @@ onMounted(() => {
   loadSettings()
   loadStatus()
   checkIsSuperAdmin().catch(() => {})
+  // 先抓成員綁定,已存的收件人才會直接顯示 Email,不用等使用者點開下拉
+  ensureNotifyMembers()
 })
 </script>

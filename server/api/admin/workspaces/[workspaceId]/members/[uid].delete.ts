@@ -1,4 +1,5 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { removeFromHandoffNotify } from '~~/server/utils/member-line-bind'
 
 /**
  * DELETE /api/admin/workspaces/:workspaceId/members/:uid
@@ -22,7 +23,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'Cannot remove owner. Transfer ownership first.' })
   }
 
+  const lineUserId = String(snap.data()?.lineUserId ?? '').trim()
+
   await db.collection('workspaceMembers').doc(memberDocId).delete()
+
+  // 人都移除了通知還一直推,名單上還會留一筆對不上任何成員的 Uxxx
+  if (lineUserId) await removeFromHandoffNotify(workspaceId, lineUserId)
 
   return { ok: true, removed: targetUid }
 })

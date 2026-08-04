@@ -162,6 +162,18 @@ export interface WorkspaceMemberDoc {
   invitedEmail: string | null
   joinedAt: Timestamp | FieldValue
   createdAt: Timestamp | FieldValue
+
+  // ── LINE 綁定（轉真人通知要推播給「人」，但後台帳號只有 email，兩者本來無橋）──
+  /** 綁定後的 LINE userId（U 開頭原始值，非 users 主鍵）；未綁定為 null */
+  lineUserId?: string | null
+  /** 綁定當下的 LINE 暱稱，列表顯示用 */
+  lineDisplayName?: string | null
+  linePictureUrl?: string | null
+  lineBoundAt?: Timestamp | FieldValue | null
+  /** 待輸入的一次性綁定碼（大寫）。成員傳到官方帳號後即清空 */
+  lineBindCode?: string | null
+  /** 綁定碼到期時間（epoch ms） */
+  lineBindCodeExpiresAt?: number | null
 }
 
 // ═══════════════════════════════════════════════════════════════════

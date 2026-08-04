@@ -43,6 +43,7 @@ import { answerWithAi, routeMessage, summarizeHandoffContext, truncateLabel, typ
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
@@ -1765,6 +1766,19 @@ export async function handleMessageEvent(
       payload: { type: 'text', text: textContent },
       lineEventTimestampMs,
     }, workspaceId).catch(e => console.error('[conv] save error:', e))
+
+    // 客服人員把後台產的綁定碼傳進來 → 記到該成員身上就結束,不進自動回覆／AI。
+    // 不像綁定碼時只花一次 regex,熱路徑零額外讀取。
+    const consumedBindCode = await tryConsumeMemberLineBindCode({
+      lineUserId: lineUserIdFromFirestoreDocId(userId, workspaceId),
+      text: textContent,
+      workspaceId,
+      replyToken: event.replyToken,
+    }).catch((e) => {
+      console.error('[member-bind] error:', e)
+      return false
+    })
+    if (consumedBindCode) return
 
     await handleIncomingText(userId, textContent, event.replyToken, options, preloadedUser, sessionId, workspaceId)
   } else {

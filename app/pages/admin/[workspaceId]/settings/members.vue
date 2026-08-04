@@ -20,6 +20,10 @@
             </div>
           </div>
           <div class="card-section-stack">
+            <p class="member-line-note">
+              「LINE 通知」綁定成員本人的 LINE 帳號後,
+              「AI 設定 → 轉真人通知」的名單就能直接勾選這位成員,不必到會員清單裡用暱稱找人。
+            </p>
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />
               <span>載入中…</span>
@@ -37,6 +41,27 @@
               <el-table-column label="角色" width="120">
                 <template #default="{ row }">
                   <el-tag :type="roleTagType(row.role)" :effect="roleTagEffect(row.role)" size="small">{{ roleLabel(row.role) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="LINE 通知" width="210">
+                <template #default="{ row }">
+                  <span v-if="row.readOnly || row.pendingInvite" class="text-xs text-muted">—</span>
+                  <div v-else-if="row.lineUserId" class="member-line-cell">
+                    <el-tag type="success" size="small" effect="light">
+                      {{ row.lineDisplayName || '已綁定' }}
+                    </el-tag>
+                    <el-button v-if="canManageSettings" size="small" link type="danger" @click="unbindLine(row)">
+                      解除
+                    </el-button>
+                  </div>
+                  <div v-else class="member-line-cell">
+                    <span class="text-xs text-muted">
+                      {{ row.hasPendingBindCode ? '等待對方傳送綁定碼' : '未綁定' }}
+                    </span>
+                    <el-button v-if="canManageSettings" size="small" link type="primary" @click="openBind(row)">
+                      {{ row.hasPendingBindCode ? '重新產生' : '綁定' }}
+                    </el-button>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column v-if="canManageSettings" label="操作" width="160" align="right">
@@ -85,6 +110,65 @@
       <el-button type="primary" :loading="inviting" @click="invite">邀請</el-button>
     </template>
   </el-dialog>
+
+  <!-- LINE 綁定 dialog -->
+  <el-dialog v-model="showBind" title="綁定 LINE" width="min(460px, 92vw)">
+    <div class="admin-panel-stack">
+      <p class="member-bind-target">
+        對象:<strong>{{ bindTargetLabel }}</strong>
+      </p>
+      <template v-if="bindUrl">
+        <ol class="member-bind-steps">
+          <li>請這位成員用<strong>他自己的 LINE</strong>加這個官方帳號為好友。</li>
+          <li>把下面這條連結傳給他(用什麼方式傳都行)。</li>
+          <li>他在手機上點開,訊息已經幫他打好了,<strong>按送出</strong>就完成。</li>
+        </ol>
+        <div class="member-bind-code member-bind-code--url">
+          <code>{{ bindUrl }}</code>
+          <el-button size="small" :type="bindCopied ? 'success' : 'primary'" plain @click="copyBindUrl">
+            {{ bindCopied ? '已複製' : '複製連結' }}
+          </el-button>
+        </div>
+        <p class="member-bind-expire">
+          綁定碼 10 分鐘內有效({{ bindExpireText }}前),過期可再產生一組。
+          他會收到「綁定成功」的回覆——收得到就代表確實已加好友,之後轉真人通知才推得出去。
+        </p>
+        <el-collapse class="member-bind-fallback">
+          <el-collapse-item title="連結點不開?改用手動輸入">
+            <p class="member-bind-expire">請他在跟官方帳號的聊天室裡,直接傳這行字:</p>
+            <div class="member-bind-code">
+              <code>{{ bindMessage }}</code>
+              <el-button size="small" plain @click="copyBindMessage">複製</el-button>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </template>
+
+      <template v-else>
+        <ol class="member-bind-steps">
+          <li>請這位成員用<strong>他自己的 LINE</strong>加這個官方帳號為好友。</li>
+          <li>請他把下面這行字傳給官方帳號:</li>
+        </ol>
+        <div class="member-bind-code">
+          <code>{{ bindMessage }}</code>
+          <el-button size="small" :type="bindCopied ? 'success' : 'primary'" plain @click="copyBindMessage">
+            {{ bindCopied ? '已複製' : '複製' }}
+          </el-button>
+        </div>
+        <ol class="member-bind-steps" start="3">
+          <li>他會收到「綁定成功」的回覆,這邊按「我完成了」重新整理即可。</li>
+        </ol>
+        <p class="member-bind-expire">
+          綁定碼 10 分鐘內有效({{ bindExpireText }}前),過期可再產生一組。
+          收得到回覆就代表他確實已加好友——之後轉真人通知才推得出去。
+        </p>
+      </template>
+    </div>
+    <template #footer>
+      <el-button @click="showBind = false">關閉</el-button>
+      <el-button type="primary" :loading="loading" @click="finishBind">我完成了</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -101,6 +185,14 @@ const showInvite = ref(false)
 const inviteEmail = ref('')
 const inviteRole = ref('agent')
 const inviting = ref(false)
+
+// ── LINE 綁定 ──
+const showBind = ref(false)
+const bindTargetLabel = ref('')
+const bindMessage = ref('')
+const bindUrl = ref('')
+const bindExpiresAt = ref(0)
+const bindCopied = ref(false)
 
 const ROLE_LABELS: Record<string, string> = {
   owner: '擁有者',
@@ -128,6 +220,75 @@ function openInvite() {
   inviteEmail.value = ''
   inviteRole.value = 'agent'
   showInvite.value = true
+}
+
+const bindExpireText = computed(() => {
+  if (!bindExpiresAt.value) return ''
+  return new Date(bindExpiresAt.value).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+})
+
+async function openBind(row: any) {
+  bindTargetLabel.value = row.invitedEmail || row.uid || '此成員'
+  bindCopied.value = false
+  try {
+    const res = await apiFetch<{ code: string; expiresAt: number; message: string; bindUrl: string }>(
+      `/api/admin/workspaces/${workspaceId.value}/members/${row.uid}/line-bind-code`,
+      { method: 'POST' },
+    )
+    bindMessage.value = res.message
+    bindUrl.value = res.bindUrl || ''
+    bindExpiresAt.value = res.expiresAt
+    showBind.value = true
+  } catch (e: any) {
+    showToast(e?.data?.statusMessage || '產生綁定碼失敗', 'error')
+  }
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    bindCopied.value = true
+    setTimeout(() => { bindCopied.value = false }, 2000)
+  }
+  catch {
+    showToast('複製失敗，請手動選取', 'error')
+  }
+}
+
+const copyBindUrl = () => copyToClipboard(bindUrl.value)
+const copyBindMessage = () => copyToClipboard(bindMessage.value)
+
+// 綁定是對方在 LINE 上完成的,後台收不到即時訊號 → 用「我完成了」重抓一次列表確認狀態
+async function finishBind() {
+  await load()
+  const bound = members.value.some(m => m.lineUserId && (m.invitedEmail || m.uid) === bindTargetLabel.value)
+  if (bound) {
+    showToast('已綁定', 'success')
+    showBind.value = false
+  }
+  else {
+    showToast('還沒收到綁定訊息,請確認對方已加好友並傳出那行字', 'warning')
+  }
+}
+
+async function unbindLine(row: any) {
+  try {
+    await ElMessageBox.confirm(
+      '解除後,這位成員會從「轉真人通知」名單中移除,不再收到通知。',
+      '解除 LINE 綁定',
+      { confirmButtonText: '解除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger', type: 'warning' },
+    )
+  }
+  catch { return }
+  try {
+    await apiFetch(`/api/admin/workspaces/${workspaceId.value}/members/${row.uid}/line-binding`, {
+      method: 'DELETE',
+    })
+    showToast('已解除綁定', 'success')
+    await load()
+  } catch (e: any) {
+    showToast(e?.data?.statusMessage || '解除失敗', 'error')
+  }
 }
 
 async function load() {
