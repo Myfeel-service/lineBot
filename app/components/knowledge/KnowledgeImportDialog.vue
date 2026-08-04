@@ -8,15 +8,15 @@
     @update:model-value="emit('update:modelValue', $event)"
     @close="onDialogClose"
   >
-    <!-- ── Step 1:選來源 ─────────────────────────── -->
+    <!-- ── Step 1:選資料 ─────────────────────────── -->
     <div v-if="step === 'input'">
-      <p class="kb-step-label">選擇來源 — 把 PDF、Excel、網址或一大段文字交給 AI 切成知識卡</p>
+      <p class="kb-step-label">選擇資料 — 把 PDF、Excel、網址或一大段文字交給 AI 切成知識</p>
       <el-tabs v-model="mode" class="kb-import-tabs">
         <el-tab-pane name="file">
           <template #label><span data-tour="kb-tab-file">檔案</span></template>
           <p class="kb-section-hint">
             支援 PDF、Excel（.xlsx / .xls），單檔上限 10MB。
-            <br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一張卡</strong>」——<strong>第一欄當卡片標題</strong>（例：商品名稱），其餘欄位當內容；第一列請放欄位名稱（例：商品、價格、庫存）。最適合商品表、問答表。
+            <br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一條</strong>」——<strong>第一欄當知識標題</strong>（例：商品名稱），其餘欄位當內容；第一列請放欄位名稱（例：商品、價格、庫存）。最適合商品表、問答表。
             <br><strong>PDF 或內容比較零散的檔案</strong>：改由 AI 自動判斷怎麼分段。掃描檔（用拍的、掃的）會由 AI 認字，請逐張核對數字、價格有沒有看錯。
             <br>提醒：檔案是<strong>上傳一次就固定</strong>，之後改了要重新上傳；想要「改了會自動更新」請改用 Google Sheet。
           </p>
@@ -37,7 +37,7 @@
         <el-tab-pane name="url">
           <template #label><span data-tour="kb-tab-url">網址</span></template>
           <p class="kb-section-hint">
-            系統會抓取網頁上的文字做成卡片。若那個網頁需要先登入、或要按按鈕才會顯示內容，可能抓不到，請改用上傳檔案。
+            系統會抓取網頁上的文字做成知識。若那個網頁需要先登入、或要按按鈕才會顯示內容，可能抓不到，請改用上傳檔案。
             <strong>提醒：很多商城「首頁」的商品區塊是動態載入的，抓下來會只剩選單和頁尾</strong>——請改貼商品「列表頁」或單一商品頁的網址。
           </p>
           <el-input
@@ -73,10 +73,10 @@
             </el-button>
           </div>
           <p class="kb-section-hint">
-            貼上 Google Sheet 連結，<strong>每一列自動變成一張知識卡</strong>：
-            <strong>第一欄當卡片標題</strong>，其餘欄位當內容——
+            貼上 Google Sheet 連結，<strong>每一列自動變成一條知識</strong>：
+            <strong>第一欄當知識標題</strong>，其餘欄位當內容——
             兩欄的表格就是「問題／答案」，多欄的表格會逐欄列成「<strong>欄名：內容</strong>」。第一列請放欄位名稱（例：商品、價格、庫存）。
-            之後你在 Sheet 改內容，機器人會<strong>定期自動更新</strong>（自動更新時靠第一欄的標題認出是同一列；你在後台手動改過的卡不會被蓋掉）。
+            之後你在 Sheet 改內容，機器人會<strong>定期自動更新</strong>（自動更新時靠第一欄的標題認出是同一列；你在後台手動改過的內容不會被蓋掉）。
           </p>
           <el-alert
             v-if="serviceAccountEmail"
@@ -102,7 +102,7 @@
 
         <el-tab-pane name="text">
           <template #label><span data-tour="kb-tab-text">貼上文字</span></template>
-          <p class="kb-section-hint">貼一大段文字（最多 100,000 字），由 AI 幫你切成多張卡。</p>
+          <p class="kb-section-hint">貼一大段文字（最多 100,000 字），由 AI 幫你切成多條。</p>
           <el-input
             v-model="textInput"
             type="textarea"
@@ -116,11 +116,11 @@
 
       <div v-if="mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
         <el-checkbox v-model="generateOverview">
-          這是商品 / 列表頁（額外產生一張「總覽卡」）
+          這是商品 / 列表頁（額外產生一張「總表」）
         </el-checkbox>
         <p class="kb-section-hint">
-          適用商品「列表頁」、型錄這類「列出很多項目」的頁面（<strong>不建議用首頁</strong>——商品區塊常是動態載入抓不到，總覽卡會做錯）。
-          除了把每個項目切成卡片，再額外合成一張帶分類的總覽卡，讓客人問「你們有賣什麼 / 有哪些產品」時能一次回答，不會被反問。
+          適用商品「列表頁」、型錄這類「列出很多項目」的頁面（<strong>不建議用首頁</strong>——商品區塊常是動態載入抓不到，總表會做錯）。
+          除了把每個項目切成知識，再額外合成一張帶分類的總表，讓客人問「你們有賣什麼 / 有哪些產品」時能一次回答，不會被反問。
         </p>
       </div>
 
@@ -132,9 +132,9 @@
           :disabled="!canPreview"
           @click="runPreview"
         >
-          {{ previewing ? (mode === 'gsheet' ? '讀取中⋯' : 'AI 切卡中⋯') : (mode === 'gsheet' ? '讀取 Sheet' : '預覽切卡') }}
+          {{ previewing ? (mode === 'gsheet' ? '讀取中⋯' : 'AI 正在整理⋯') : (mode === 'gsheet' ? '讀取 Sheet' : '先看 AI 整理的結果') }}
         </el-button>
-        <!-- 整站匯入（2.5）：探 sitemap / 同域連結 → 列頁面清單勾選，逐頁各自成來源 -->
+        <!-- 整站匯入（2.5）：探 sitemap / 同域連結 → 列頁面清單勾選，逐頁各自成資料 -->
         <el-button
           v-if="mode === 'url'"
           :loading="discovering"
@@ -143,12 +143,34 @@
         >
           {{ discovering ? '尋找頁面中⋯' : '找出這個網站的其他頁面' }}
         </el-button>
-        <span v-if="previewing && mode !== 'gsheet'" class="text-muted text-xs">
-          {{ previewProgressText }}
-        </span>
       </div>
+
+      <!-- 等待要有契約:長文件可能要好幾分鐘。原本只有一行灰字,沒有取消、
+           也沒說能不能關視窗——最容易讓人以為系統壞了的一段。 -->
+      <div v-if="previewing" class="kb-waiting">
+        <p class="kb-waiting__text">{{ previewProgressText }}</p>
+        <p class="kb-waiting__note">
+          內容長的話可能要幾分鐘。<strong>可以先關掉這個視窗去做別的事</strong>，回來再點一次「加入知識」就看得到結果。
+        </p>
+        <el-button size="small" text @click="cancelPreview">取消</el-button>
+      </div>
+
+      <!-- 逾時/失敗留在畫面上,不用 3.5 秒就消失的 toast:
+           等了好幾分鐘的人只要沒盯著螢幕,回來會看到一片乾淨畫面、完全不知道發生什麼事 -->
+      <el-alert
+        v-if="previewError && !previewing"
+        type="error"
+        show-icon
+        :closable="true"
+        :title="previewError"
+        style="margin-top: 12px"
+        @close="previewError = ''"
+      >
+        <div>可以再試一次；內容很長的話，建議改用「貼上文字」分批貼進來。</div>
+      </el-alert>
+
       <p v-if="mode === 'url' && !previewing" class="kb-section-hint kb-actions-hint">
-        「預覽切卡」只處理你貼的<strong>這一頁</strong>；整個網站要匯入很多頁時，用右邊那顆列出全站頁面再一次勾選。
+        「先看 AI 整理的結果」只處理你貼的<strong>這一頁</strong>；整個網站要匯入很多頁時，用右邊那顆列出全站頁面再一次勾選。
       </p>
     </div>
 
@@ -158,7 +180,7 @@
       <p class="kb-section-hint">
         在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
         （{{ siteFrom === 'sitemap' ? '來自網站自己提供的頁面清單（sitemap）' : '來自這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）。
-        勾選的每一頁會<strong>各自成為一個知識來源</strong>：AI 自動切卡、自動辨識產品名，完成後可到來源列表逐一檢查。
+        勾選的每一頁會<strong>各自成為一份資料</strong>：AI 自動整理、自動辨識產品名，完成後可到資料列表逐一檢查。
       </p>
 
       <!-- 整站完成後的結論列:全卡直入沒有逐頁預覽,結束一定要給「做了什麼、還要看什麼」 -->
@@ -170,12 +192,12 @@
         class="kb-site-summary"
       >
         <template #title>
-          已建立 {{ siteSummary.ok }} 個來源、共 {{ siteSummary.cards }} 張知識卡
+          已建立 {{ siteSummary.ok }} 份資料、共 {{ siteSummary.cards }} 條知識
         </template>
         <div class="text-xs">
           <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
           <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
-          <template v-if="!siteSummary.failed && !siteSummary.warned">這些卡片沒有經過逐張預覽，建議到知識庫抽幾張看看內容是否合用。</template>
+          <template v-if="!siteSummary.failed && !siteSummary.warned">這些知識沒有經過逐張預覽，建議到知識庫抽幾張看看內容是否合用。</template>
         </div>
       </el-alert>
 
@@ -214,7 +236,7 @@
         </el-checkbox>
         <span class="text-muted text-xs">已勾選 {{ checkedSiteCount }} 頁</span>
         <span v-if="importedSiteCount" class="text-muted text-xs">
-          · {{ importedSiteCount }} 頁先前已匯入（不重複匯入，需更新請到來源頁「重新同步」）
+          · {{ importedSiteCount }} 頁先前已匯入（不重複匯入，需更新請到資料頁「重新同步」）
         </span>
         <!-- 上百頁清單靠捲的找不到商品頁,給一個關鍵字篩選 -->
         <el-input
@@ -240,8 +262,8 @@
             </div>
           </div>
           <span class="kb-site-status" :class="`is-${p.status}`" :title="p.status === 'failed' ? p.error : ''">
-            <template v-if="p.status === 'processing'">切卡中⋯</template>
-            <template v-else-if="p.status === 'done'">✓ {{ p.cards }} 張卡</template>
+            <template v-if="p.status === 'processing'">整理中⋯</template>
+            <template v-else-if="p.status === 'done'">✓ {{ p.cards }} 條</template>
             <template v-else-if="p.status === 'failed'">✕ 失敗</template>
             <template v-else-if="p.imported">已匯入過</template>
           </span>
@@ -265,25 +287,25 @@
 
     <!-- ── Step 2:預覽 + 編輯 ─────────────────────────── -->
     <div v-if="step === 'preview'">
-      <p class="kb-step-label">預覽切卡結果</p>
+      <p class="kb-step-label">AI 整理的結果</p>
       <p class="kb-section-hint">
-        AI 偵測到 <strong>{{ chunks.length }}</strong> 張卡片。
+        AI 偵測到 <strong>{{ chunks.length }}</strong> 條知識。
         <span v-if="truncated" class="kb-warning"> 原文超過 10 萬字已截斷，可能漏掉後半部。</span>
         <span v-else>勾選要匯入的、可直接編輯內容；確認後一鍵建立。</span>
       </p>
 
       <div class="kb-source-name-row">
-        <span class="kb-source-name-label">來源名稱</span>
+        <span class="kb-source-name-label">資料名稱</span>
         <el-input
           v-model="sourceMeta.name"
           :maxlength="200"
           size="small"
-          placeholder="顯示在知識庫來源列表的名稱"
+          placeholder="顯示在知識庫資料列表的名稱"
           class="kb-source-name-input"
         />
       </div>
 
-      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品來源（FAQ、公告等）。 -->
+      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。 -->
       <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
         <span class="kb-source-name-label">所屬產品</span>
         <el-input
@@ -295,7 +317,7 @@
         />
       </div>
       <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
-        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，卡片會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改。' : '內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
+        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改。' : '內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
       </p>
 
       <el-alert
@@ -335,25 +357,25 @@
         class="kb-dedup-warning"
       >
         <template #title>
-          已存在 {{ dupMatches.length }} 個同名來源
+          已存在 {{ dupMatches.length }} 個同名資料
         </template>
         <div class="kb-dedup-body">
-          <p class="text-xs">繼續建立會在來源列表出現多筆同名項目，可能不是你想要的。在上方「來源名稱」改個名字，這個提醒就會消失。</p>
+          <p class="text-xs">繼續建立會在資料列表出現多筆同名項目，可能不是你想要的。在上方「資料名稱」改個名字，這個提醒就會消失。</p>
           <ul class="kb-dedup-list">
             <li v-for="m in dupMatches" :key="m.id">
-              「{{ m.name }}」（{{ m.chunkCount }} 張卡，{{ relativeTime(m.updatedAtMs) || '未更新' }}）
+              「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）
             </li>
           </ul>
         </div>
       </el-alert>
 
-      <!-- 總覽卡（列表頁專屬）：列在最上面、可編輯、可取消 -->
+      <!-- 總表（列表頁專屬）：列在最上面、可編輯、可取消 -->
       <div v-if="overviewCard" class="kb-overview-card">
         <div class="kb-chunk-checkbox">
           <el-checkbox v-model="overviewCard.included" />
         </div>
         <div class="kb-chunk-content">
-          <div class="kb-overview-badge">總覽卡（接「你們有賣什麼」這類問題）</div>
+          <div class="kb-overview-badge">總表（接「你們有賣什麼」這類問題）</div>
           <el-input v-model="overviewCard.title" placeholder="標題" size="small" class="kb-chunk-title" />
           <el-input
             v-model="overviewCard.content"
@@ -376,13 +398,39 @@
         </div>
       </div>
 
-      <div class="kb-bulk-actions">
+      <!-- 摘要 + 主動作先行:預設就是全選,所以「直接匯入」才是主路徑。
+           原本一律攤開 N 條、主按鈕在最底部,50 張要捲上萬像素才按得到,
+           結果沒人真的逐張審、只是捲——審核變成儀式。 -->
+      <div class="kb-preview-summary">
+        <p class="kb-preview-summary__head">
+          AI 整理出 <strong>{{ chunks.length }}</strong> 條問答<template v-if="includedCount !== chunks.length">，目前選了 {{ includedCount }} 條</template>
+        </p>
+        <p v-if="numericChunkCount" class="kb-preview-summary__warn">
+          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字，建議展開確認一下再匯入。
+        </p>
+        <div class="kb-preview-summary__actions">
+          <el-button
+            type="primary"
+            :loading="importing"
+            :disabled="includedCount === 0"
+            @click="runImport"
+          >
+            {{ importing ? '匯入並學習中⋯' : `直接匯入 ${includedCount} 條` }}
+          </el-button>
+          <el-button text @click="chunkListOpen = !chunkListOpen">
+            {{ chunkListOpen ? '收起逐條檢查' : '先逐條檢查' }}
+          </el-button>
+          <el-button text @click="step = 'input'">← 換一份重新整理</el-button>
+        </div>
+      </div>
+
+      <div v-show="chunkListOpen" class="kb-bulk-actions">
         <el-button size="small" plain @click="selectAll">全選</el-button>
         <el-button size="small" plain @click="selectNone">全不選</el-button>
         <span class="text-muted text-xs">已選 {{ includedCount }} / {{ chunks.length }}</span>
       </div>
 
-      <div class="kb-chunk-list">
+      <div v-show="chunkListOpen" class="kb-chunk-list">
         <div
           v-for="(chunk, idx) in chunks"
           :key="idx"
@@ -463,15 +511,16 @@
         </div>
       </div>
 
-      <div class="kb-import-actions">
-        <el-button @click="step = 'input'">← 重新切片</el-button>
+      <!-- 逐條檢查展開時,底部再放一次主動作(捲到最後不必再捲回去) -->
+      <div v-show="chunkListOpen" class="kb-import-actions">
+        <el-button @click="chunkListOpen = false">收起</el-button>
         <el-button
           type="primary"
           :loading="importing"
           :disabled="includedCount === 0"
           @click="runImport"
         >
-          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${includedCount} 張` }}
+          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${includedCount} 條` }}
         </el-button>
       </div>
     </div>
@@ -495,7 +544,7 @@
       </div>
 
       <div v-if="result.failed > 0" class="kb-result-failed-list">
-        <p class="kb-section-hint">以下卡片已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。可到知識庫點開該卡按「重新學習」重試：</p>
+        <p class="kb-section-hint">以下知識已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。可到知識庫點開那一條按「重新學習」重試：</p>
         <ul class="kb-failed-list">
           <li v-for="item in failedItems" :key="item.id">
             <strong>{{ item.title }}</strong>
@@ -518,14 +567,14 @@ import { ElMessageBox } from 'element-plus'
 const props = defineProps<{
   modelValue: boolean
   /**
-   * 父層的完整來源清單:同名警告要比對「全部」既有名稱——
-   * 只比對 preview 回傳的(原始名稱的)同名清單,會漏掉「改名撞進另一個既有來源」的情況。
+   * 父層的完整資料清單:同名警告要比對「全部」既有名稱——
+   * 只比對 preview 回傳的(原始名稱的)同名清單,會漏掉「改名撞進另一個既有資料」的情況。
    */
   existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  /** 有實際建立資料時觸發(全成功或部分成功),父層應刷新來源列表 */
+  /** 有實際建立資料時觸發(全成功或部分成功),父層應刷新資料列表 */
   'imported': [sourceId: string | null]
 }>()
 
@@ -601,14 +650,14 @@ onMounted(async () => {
   catch { /* 提示性質，讀不到就不顯示 */ }
 })
 
-// ── Overview（列表頁總覽卡）──────────────────────────────
+// ── Overview（列表頁總表）──────────────────────────────
 const generateOverview = ref(false)
 type OverviewCard = { included: boolean; title: string; content: string; tags: string[]; questions: string[] }
 const overviewCard = ref<OverviewCard | null>(null)
 
 // ── Preview ───────────────────────────────────────────────
 const previewing = ref(false)
-// 非同步 job 的即時進度（切卡 3/5、辨識掃描檔 2/6…）；null = 尚無進度資訊
+// 非同步 job 的即時進度（整理 3/5、辨識掃描檔 2/6…）；null = 尚無進度資訊
 const previewProgressText = computed(() => {
   const p = jobProgress.value
   if (!p) return 'Gemini 正在分析內容⋯'
@@ -616,14 +665,14 @@ const previewProgressText = computed(() => {
 })
 const truncated = ref(false)
 const ocrUsed = ref(false) // 掃描檔 PDF 由 AI 辨識文字 → 預覽時提醒逐張確認
-const healthWarnings = ref<string[]>([]) // 表格來源的匯入前健檢警告（提醒不擋匯入）
+const healthWarnings = ref<string[]>([]) // 表格資料的匯入前健檢警告（提醒不擋匯入）
 const chunks = ref<Array<{ included: boolean; title: string; content: string; tags: string[]; questions: string[] }>>([])
 const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>>([])
 const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
   url: '',
-  /** 所屬產品名：AI 偵測預填、使用者可改；'' = 非單一產品來源 */
+  /** 所屬產品名：AI 偵測預填、使用者可改；'' = 非單一產品資料 */
   productName: '',
 })
 
@@ -644,7 +693,7 @@ interface SitePageRow {
   /** 這一頁的匯入守門提醒原文(整站匯入沒有逐頁預覽,至少要看得到提醒內容) */
   warningTexts: string[]
   error: string
-  /** 這個網址已經有對應的知識來源(再匯一次會產生重複) */
+  /** 這個網址已經有對應的資料(再匯一次會產生重複) */
   imported: boolean
   /** 路徑第一段(分組用);探索時算一次,避免每次篩選/勾選都重新解析上千個網址 */
   group: string
@@ -761,7 +810,7 @@ async function runDiscover() {
       '/api/ai/knowledge/discover-pages',
       { method: 'POST', body: { url: urlInput.value.trim() } },
     )
-    // 預設不勾:整站可能上百頁,每頁都是一次 AI 切卡(時間+token);讓使用者自己挑
+    // 預設不勾:整站可能上百頁,每頁都是一次 AI 整理(時間+token);讓使用者自己挑
     sitePages.value = res.pages.map(p => ({
       url: p.url,
       title: p.title,
@@ -788,7 +837,7 @@ async function runDiscover() {
   }
 }
 
-/** 一次批次最多頁數:每頁一次 LLM 切卡,再多就該分批跑(也避免瀏覽器分頁被綁住太久) */
+/** 一次批次最多頁數:每頁一次 LLM 整理,再多就該分批跑(也避免瀏覽器分頁被綁住太久) */
 const MAX_SITE_BATCH = 50
 
 /** 批次匯入勾選頁:併發 2,每頁 = 建 preview-job → 輪詢 → bulk-create(全卡直入,不逐頁人工預覽)。 */
@@ -798,11 +847,11 @@ async function runSiteImport() {
   if (targets.length > MAX_SITE_BATCH) {
     return showToast(`一次最多匯入 ${MAX_SITE_BATCH} 頁,請先取消勾選一些(可分批進行)`, 'error')
   }
-  // 每頁都要跑一次 AI 切卡並計入用量,量大時先講清楚再開始
+  // 每頁都要跑一次 AI 整理並計入用量,量大時先講清楚再開始
   if (targets.length >= 10) {
     try {
       await ElMessageBox.confirm(
-        `將匯入 ${targets.length} 頁,每頁都會由 AI 切卡並計入本月用量,過程約需 ${Math.ceil(targets.length * 0.5)}–${targets.length} 分鐘。期間請保持這個視窗開著。`,
+        `將匯入 ${targets.length} 頁,每頁都會由 AI 整理並計入本月用量,過程約需 ${Math.ceil(targets.length * 0.5)}–${targets.length} 分鐘。期間請保持這個視窗開著。`,
         '確認整站匯入',
         { confirmButtonText: '開始匯入', cancelButtonText: '再想想', type: 'warning' },
       )
@@ -829,7 +878,7 @@ async function runSiteImport() {
           body: { type: 'url', url: page.url, generateOverview: false },
         })
         const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
-        if (!res.chunks.length) throw new Error('沒有切出卡片(頁面可能沒有實質內容)')
+        if (!res.chunks.length) throw new Error('沒有切出知識(頁面可能沒有實質內容)')
         const bulk = await apiFetch<{ indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
           body: {
@@ -867,7 +916,7 @@ async function runSiteImport() {
 
   const ok = targets.filter(p => p.status === 'done')
   const bad = targets.filter(p => p.status === 'failed')
-  // 讓關窗流程通知父層刷新來源列表(沿用既有 result 訊號)
+  // 讓關窗流程通知父層刷新資料列表(沿用既有 result 訊號)
   if (ok.length) {
     result.value = {
       sourceId: null,
@@ -879,7 +928,7 @@ async function runSiteImport() {
   }
   siteFinished.value = true
   siteImporting.value = false
-  // 中途關窗:視窗已不在,改用父層刷新讓已建立的來源立刻出現在列表(否則要手動重整才看得到)
+  // 中途關窗:視窗已不在,改用父層刷新讓已建立的資料立刻出現在列表(否則要手動重整才看得到)
   if (siteAborted.value) {
     if (ok.length) emit('imported', null)
     resetAll()
@@ -888,16 +937,30 @@ async function runSiteImport() {
   showToast(
     bad.length
       ? `整站匯入完成:${ok.length} 頁成功、${bad.length} 頁失敗(清單有標原因)`
-      : `整站匯入完成:${ok.length} 頁、共 ${ok.reduce((s, p) => s + p.cards, 0)} 張卡`,
+      : `整站匯入完成:${ok.length} 頁、共 ${ok.reduce((s, p) => s + p.cards, 0)} 條`,
     bad.length ? 'error' : 'success',
   )
 }
 
 const includedCount = computed(() => chunks.value.filter(c => c.included).length)
 
+/**
+ * 逐條檢查預設收起。整理結果預設全選,所以主路徑是「直接匯入」——
+ * 原本一律攤開所有知識、主按鈕壓在最底,幾十條就要捲上萬像素才按得到。
+ */
+const chunkListOpen = ref(false)
+
+/**
+ * 含金額/數字的條數。OCR 提醒說「請逐張確認數字、價格」卻沒標出是哪幾張,
+ * 那句話等於無法執行;這裡把該看的挑出來,讓「檢查」有對象。
+ */
+const numericChunkCount = computed(() =>
+  chunks.value.filter(c => c.included && /\d/.test(c.content)).length,
+)
+
 // 同名警告要「活的」:使用者在預覽步驟改名,警告即時跟著變。
-// 比對對象 = 父層完整來源清單 ∪ preview 回傳的同名清單(父層沒傳 prop 時的 fallback),
-// 否則改名撞進「另一個」既有來源不會有任何警告——正是這個警示要防的事。
+// 比對對象 = 父層完整資料清單 ∪ preview 回傳的同名清單(父層沒傳 prop 時的 fallback),
+// 否則改名撞進「另一個」既有資料不會有任何警告——正是這個警示要防的事。
 const dupMatches = computed(() => {
   const name = sourceMeta.value.name.trim()
   if (!name) return []
@@ -916,17 +979,24 @@ interface PreviewResult {
   truncated: boolean
   ocrUsed?: boolean
   existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
-  /** 表格來源的匯入前健檢警告（示範列沒換、重複問題等） */
+  /** 表格資料的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
   /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */
   suggestedProductName?: string
 }
 
 // 輪詢協定與「重新同步」共用同一支 composable(重試碼 / 逾時 / 取消只留一份實作)
-const { progress: jobProgress, poll: pollPreviewJob, reset: resetJobPoll } = usePreviewJobPoll()
+const { progress: jobProgress, poll: pollPreviewJob, reset: resetJobPoll, cancel: cancelJobPoll } = usePreviewJobPoll()
+
+/** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
+const previewError = ref('')
+/** 使用者主動取消：用來區分「取消」與「真的失敗」，取消不該顯示錯誤 */
+let previewCancelled = false
 
 async function runPreview() {
   previewing.value = true
+  previewError.value = ''
+  previewCancelled = false
   resetJobPoll()
   try {
     const body: Record<string, unknown> = { type: mode.value, generateOverview: generateOverview.value }
@@ -972,7 +1042,7 @@ async function runPreview() {
     const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
 
     if (!res.chunks.length) {
-      showToast('AI 沒有切出任何有意義的卡片；請改貼文字或檢查來源內容', 'error')
+      showToast('AI 沒有切出任何有意義的知識；請改貼文字或檢查資料內容', 'error')
       return
     }
 
@@ -1005,12 +1075,25 @@ async function runPreview() {
     step.value = 'preview'
   }
   catch (err: any) {
-    showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '切片失敗', 'error')
+    if (previewCancelled) return // 使用者自己按取消,不是錯誤
+    // 留在畫面上而不是 toast：等了幾分鐘的人常常沒盯著螢幕，3.5 秒的提示等於沒講
+    previewError.value = String(
+      err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
+    ).slice(0, 300)
   }
   finally {
     previewing.value = false
     resetJobPoll()
   }
+}
+
+/** 取消整理:輪詢停掉、畫面回到可操作狀態（composable 早就有 cancel，只是這個視窗沒接） */
+function cancelPreview() {
+  previewCancelled = true
+  cancelJobPoll()
+  previewing.value = false
+  resetJobPoll()
+  showToast('已取消', 'success')
 }
 
 // ── Tag editor (per chunk) ────────────────────────────────
@@ -1088,7 +1171,7 @@ async function runImport() {
     .filter(c => c.included && c.title.trim() && c.content.trim())
     .map(c => ({ title: c.title.trim(), content: c.content.trim(), tags: c.tags, questions: c.questions ?? [] }))
 
-  if (!selected.length) return showToast('請至少選擇一張卡', 'error')
+  if (!selected.length) return showToast('請至少選擇一條', 'error')
   if (selected.length > 150) return showToast('單次最多匯入 150 張，請先取消勾選一些', 'error')
 
   importing.value = true
@@ -1103,7 +1186,7 @@ async function runImport() {
       body: {
         source: {
           type: sourceMeta.value.type,
-          name: sourceMeta.value.name.trim() || '未命名來源',
+          name: sourceMeta.value.name.trim() || '未命名資料',
           url: sourceMeta.value.url,
           productName: sourceMeta.value.productName.trim(),
         },
@@ -1112,7 +1195,7 @@ async function runImport() {
       },
     })
     result.value = res
-    // 全部成功直接關窗(關窗 handler 會通知父層刷新並選中新來源);
+    // 全部成功直接關窗(關窗 handler 會通知父層刷新並選中新資料);
     // 有失敗才停在結果頁,讓使用者看到哪幾張失敗、原因是什麼
     if (res && res.failed === 0) {
       showToast(`成功匯入 ${res.indexed} 張`, 'success')
@@ -1168,11 +1251,11 @@ function close() {
 
 /**
  * 統一在「關窗」時結算:只要有實際建立過資料(result 存在,全成功或部分成功),
- * 就通知父層刷新來源列表並重置狀態;中途關窗(還沒匯入)則保留輸入,下次打開接續。
+ * 就通知父層刷新資料列表並重置狀態;中途關窗(還沒匯入)則保留輸入,下次打開接續。
  */
 function onDialogClose() {
   // 整站批次還在跑時關窗(ESC / X):通知 worker 收工,收尾由 runSiteImport 負責
-  // (它會 emit imported 讓列表帶出已建立的來源,再 resetAll)——這裡不能先 reset,
+  // (它會 emit imported 讓列表帶出已建立的資料,再 resetAll)——這裡不能先 reset,
   // 否則正在跑的那幾頁寫完後會把狀態寫回已清空的 ref。
   if (siteImporting.value) {
     siteAborted.value = true

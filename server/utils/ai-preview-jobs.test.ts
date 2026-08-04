@@ -248,7 +248,8 @@ describe('progressFor / workToPreviewResult', () => {
     work.phase = 'chunk'
     work.segments = ['a', 'b', 'c']
     work.segmentCursor = 1
-    expect(progressFor(work)).toEqual({ done: 1, total: 3, label: '切卡' })
+    // label 是給使用者看的進度字樣：原本叫「切卡」，全站統一改成白話的「整理」
+    expect(progressFor(work)).toEqual({ done: 1, total: 3, label: '整理' })
 
     work.phase = 'ocr'
     work.ocrPageCursor = 5

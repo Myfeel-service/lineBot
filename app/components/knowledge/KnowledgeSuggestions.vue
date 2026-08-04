@@ -39,7 +39,7 @@
     <!-- 審核草稿:可改可直接採用;含佔位符(知識庫查不到的事實)要先補完 -->
     <el-dialog
       v-model="reviewOpen"
-      title="審核知識卡草稿"
+      title="審核知識草稿"
       width="620px"
       :close-on-click-modal="false"
       append-to-body
@@ -73,7 +73,7 @@
 
         <el-form label-position="top">
           <el-form-item label="標題" required>
-            <el-input v-model="form.title" maxlength="100" show-word-limit placeholder="這張卡回答什麼，例：運費與到貨時間" />
+            <el-input v-model="form.title" maxlength="100" show-word-limit placeholder="這一條回答什麼，例：運費與到貨時間" />
           </el-form-item>
           <el-form-item label="內容" required>
             <el-input
@@ -85,7 +85,7 @@
               placeholder="用可以直接回覆客人的語氣寫"
             />
           </el-form-item>
-          <el-form-item label="客人可能怎麼問（會幫 AI 更容易找到這張卡）">
+          <el-form-item label="客人可能怎麼問（會幫 AI 更容易找到這一條）">
             <el-select
               v-model="form.questions"
               multiple
@@ -160,7 +160,7 @@ interface AcceptResponse {
 }
 
 const emit = defineEmits<{
-  /** 採用成功(知識庫多了一個 manual 來源),父頁面要重載來源列表 */
+  /** 採用成功(知識庫多了一個 manual 資料),父頁面要重載資料列表 */
   (e: 'accepted'): void
 }>()
 
@@ -215,7 +215,7 @@ async function load() {
     scanRequested.value = !!res.scan?.requested
   }
   catch {
-    // 建議是加值資訊,載入失敗不打擾來源頁主流程
+    // 建議是加值資訊,載入失敗不打擾資料頁主流程
     items.value = []
   }
   finally {
@@ -254,14 +254,14 @@ async function accept() {
     // 回饋要講清楚三件事:學會了沒、試答結果、順手銷了幾筆案例
     const resolvedNote = res.resolvedConversations > 0 ? `，並把 ${res.resolvedConversations} 筆監控頁案例標為已處理` : ''
     if (res.status !== 'indexed') {
-      showToast('卡片已建立，但 AI 學習失敗——請到卡片上按「重新學習」', 'error')
+      showToast('知識已建立，但 AI 學習失敗——請到知識上按「重新學習」', 'error')
     }
     else if (res.verify?.decision === 'answered') {
       showToast(`已學會！試答通過（信心 ${res.verify.confidence.toFixed(2)}）${resolvedNote}`, 'success')
     }
     else {
       // 卡建好了但試答沒答出來＝還沒真的解決,用警示色(不是綠色成功)
-      showToast(`卡片已建立${resolvedNote}，但試答仍答不出來，建議到「測試對話」確認`, 'warning')
+      showToast(`知識已建立${resolvedNote}，但試答仍答不出來，建議到「測試對話」確認`, 'warning')
     }
     emit('accepted')
   }

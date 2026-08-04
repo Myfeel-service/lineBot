@@ -298,6 +298,20 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     events: 0, uniqueQueries: 0, clusters: 0, created: 0, updated: 0, reopened: 0,
     draftsDeferred: 0, sampled: false,
   }
+  // 記帳放 finally：中途拋錯時 embedding / LLM 的錢已經花掉了，不記會讓成本報表低估、
+  // 也會讓 token 護欄失準（recordAiUsage 內部已吞錯，不會蓋掉原本的例外）
+  const usage: UsageDelta = {}
+  try {
+    return await runScan()
+  }
+  finally {
+    if (Object.keys(usage).length) await recordAiUsage(workspaceId, usage, db)
+    if (tally.draftsDeferred) {
+      console.log(`[kb-suggest] ${workspaceId}: ${tally.draftsDeferred} 個主題因時間預算未草擬，下一輪補`)
+    }
+  }
+
+  async function runScan(): Promise<GapScanTally> {
 
   // 1. 撈事件：handoff 事件流 + 客服「AI 答錯了」標記
   const [handoffSnap, feedbackSnap] = await Promise.all([
@@ -352,8 +366,7 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   tally.uniqueQueries = uniqueItems.length
   if (!uniqueItems.length) return tally
 
-  // 3. embed + 聚類
-  const usage: UsageDelta = {}
+  // 3. embed + 聚類（usage 由外層宣告，走 finally 記帳）
   let embedTokens = 0
   const embedded: Array<GapItem & { vector: number[] }> = []
   let cursor = 0
@@ -515,11 +528,8 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     await batch.commit()
   }
 
-  if (Object.keys(usage).length) await recordAiUsage(workspaceId, usage, db)
-  if (tally.draftsDeferred) {
-    console.log(`[kb-suggest] ${workspaceId}: ${tally.draftsDeferred} 個主題因時間預算未草擬，下一輪補`)
-  }
   return tally
+  }
 }
 
 // ── 掃描排程（cron 入口）與狀態 ────────────────────────────────────

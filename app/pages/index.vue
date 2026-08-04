@@ -492,7 +492,7 @@ function quotaText(p: BillingPlan): string {
 function featureList(p: BillingPlan): string[] {
   const f: string[] = []
   f.push(p.seats === null ? '團隊席次不限' : `團隊 ${p.seats} 席`)
-  f.push(p.knowledgeSources === null ? '知識庫來源不限' : `知識庫 ${p.knowledgeSources} 個來源`)
+  f.push(p.knowledgeSources === null ? '知識庫資料不限' : `知識庫 ${p.knowledgeSources} 份資料`)
   if (p.scripting) f.push('腳本自動化')
   if (p.broadcast === 'basic') f.push('基礎推播')
   else if (p.broadcast === 'advanced') f.push('進階分眾推播')

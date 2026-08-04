@@ -3,105 +3,9 @@
    注意：資料夾／側欄折疊類（.src-folder-*、.src-row--in-folder、.src-unfolder-zone、
    .folder-*）不在這裡——它們是 flow + sources 共用，定義在 _flow.scss（全域）。 */
 
-/* ─── Orphan migration banner ───────────────────── */
-.src-orphan-banner {
-  margin: 10px 12px;
-  padding: 10px 12px;
-  background: var(--el-color-warning-light-9);
-  border-left: 3px solid var(--el-color-warning);
-  border-radius: 4px;
-  font-size: 13px;
-}
-.src-orphan-msg { margin: 0 0 4px; }
-.src-orphan-hint {
-  margin: 0 0 8px;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.5;
-}
+/* ── 「要處理的事」：原本三個並排橫幅（orphan / 體檢 chip / AI 建議）的收斂點。
+   三種視覺語言並排會讓店家看不出該先做哪個，改成一份照嚴重度排序的清單。 */
 
-/* ── 知識庫健康檢查列(P2-3):彙總 banner + 分類 chip + 清單 modal ── */
-/* 體檢列刻意「不」沿用 orphan banner 的黃色左條:兩者常同時出現,同款會被當成同一件事的兩段。
-   體檢是常駐體檢面板(中性底＋細框),orphan 是一次性的待整理提示(黃色警示)。 */
-.src-health-banner {
-  margin: 10px 12px;
-  padding: 10px 12px;
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  font-size: 13px;
-}
-
-.src-health-msg {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0;
-}
-
-.src-health-icon {
-  flex: none;
-}
-
-.src-health-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.src-health-foot {
-  margin: 8px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-}
-
-/* 三級語意:紅=壞掉要修、黃=待處理、灰=僅供參考(不催促) */
-.src-health-chip {
-  border: 1px solid var(--el-border-color);
-  border-radius: 999px;
-  background: var(--el-bg-color);
-  padding: 2px 10px;
-  font-size: 12px;
-  color: var(--el-text-color-regular);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--el-color-primary);
-    color: var(--el-color-primary);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--el-color-primary);
-    outline-offset: 2px;
-  }
-
-  &.is-danger {
-    border-color: var(--el-color-danger-light-5);
-    color: var(--el-color-danger);
-
-    &:hover {
-      border-color: var(--el-color-danger);
-      color: var(--el-color-danger);
-    }
-  }
-
-  &.is-warning {
-    border-color: var(--el-color-warning-light-5);
-    color: var(--el-color-warning-dark-2);
-
-    &:hover {
-      border-color: var(--el-color-warning);
-      color: var(--el-color-warning-dark-2);
-    }
-  }
-
-  &.is-muted {
-    border-style: dashed;
-    color: var(--el-text-color-secondary);
-  }
-}
 
 .src-health-list-hint {
   margin: 0 0 10px;
@@ -278,14 +182,6 @@
   font-size: 11px;
   color: var(--el-text-color-secondary);
   margin-bottom: 2px;
-}
-.src-failure {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  background: var(--el-color-danger-light-9);
-  color: var(--el-color-danger);
-  border-radius: 4px;
-  font-size: 13px;
 }
 
 .src-settings-actions { margin-top: 8px; }
@@ -598,4 +494,152 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
+}
+
+/* ── 抓取失敗:就地修（結論先行 + 該做什麼 + 修的工具，最後才是系統原文） ── */
+.src-fix {
+  padding: 10px 12px;
+  border-left: 3px solid var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  &__title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-color-danger-dark-2);
+  }
+  &__what {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-primary);
+  }
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  &__input {
+    flex: 1;
+    min-width: 220px;
+  }
+  &__email {
+    flex: 1;
+    min-width: 220px;
+    padding: 4px 8px;
+    background: var(--el-fill-blank, #fff);
+    border: 1px solid var(--el-border-color);
+    border-radius: 4px;
+    font-size: 12px;
+    word-break: break-all;
+  }
+  &__raw {
+    margin: 0;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    word-break: break-all;
+  }
+}
+
+/* ── 「要處理的事」清單（取代 orphan banner + 體檢 chip 兩套視覺） ── */
+.src-todo {
+  margin: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  overflow: hidden;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 12px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover { background: var(--el-fill-color); }
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: -2px;
+    }
+  }
+  &__icon { flex: none; }
+  &__title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__toggle {
+    flex: none;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__body {
+    padding: 0 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* 每一項：結論 + 「不管它會怎樣」+ 一顆按鈕。左色條分兩級語意，不用彩色 chip */
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: var(--el-bg-color);
+    border-left: 3px solid var(--el-border-color);
+
+    &.is-danger { border-left-color: var(--el-color-danger); }
+    &.is-warning { border-left-color: var(--el-color-warning); }
+  }
+  &__item-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  &__item-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__item-why {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 「已過期自動停用」＝功能正常運作的結果，不是待辦：虛線、灰階、不催促 */
+  &__muted {
+    padding: 6px 10px;
+    border: 1px dashed var(--el-border-color);
+    border-radius: 4px;
+    background: transparent;
+    text-align: left;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    cursor: pointer;
+
+    &:hover { border-color: var(--el-color-primary); color: var(--el-color-primary); }
+    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+  }
+  &__foot {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+  }
 }

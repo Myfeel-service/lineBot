@@ -150,7 +150,7 @@
                       <span class="usage-leg__dot" />
                       <span class="usage-leg__k">
                         先問清楚
-                        <el-tooltip placement="top" content="AI 先問客人「你是要哪一個」再回答。偏高通常代表知識卡標題太相近。">
+                        <el-tooltip placement="top" content="AI 先問客人「你是要哪一個」再回答。偏高通常代表知識標題太相近。">
                           <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
                         </el-tooltip>
                       </span>
@@ -256,7 +256,7 @@
               </div>
             </div>
             <p class="usage-hint">
-              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、切卡、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台測試</strong>＝你在 playground「重演」試打，不計入客人成本。
+              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、整理、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台測試</strong>＝你在 playground「重演」試打，不計入客人成本。
             </p>
             <p class="usage-hint">
               金額依 Gemini 公開價估算（USD 約 ×32 換台幣）的<strong>偏高參考值</strong><template v-if="pricing">，每 100 萬用量：送入 ${{ pricing.inputPerM }} / 產生 ${{ pricing.outputPerM }} / 搜尋 ${{ pricing.embedPerM }} USD</template>。實際費用以 Google 帳單為準。
@@ -621,10 +621,12 @@ function goConversation(userId: string) {
   router.push(`/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(userId)}`)
 }
 function goAddKnowledge(query: string) {
-  // 帶客人原句過去:來源頁會自動開「新增手寫」視窗並預填標題,不用重打一遍
+  // 帶客人原句過去:來源頁會自動開「新增手寫」視窗並預填標題,不用重打一遍。
+  // 開新分頁(與測試對話、客服對話兩個入口一致):同頁跳轉會弄丟這份清單的篩選與捲動位置,
+  // 而且補完卡沒有任何回得來的路。
   const q = (query || '').trim()
   const suffix = q ? `?q=${encodeURIComponent(q)}` : ''
-  router.push(`/admin/${workspaceId.value}/knowledge/sources${suffix}`)
+  window.open(`/admin/${workspaceId.value}/knowledge/sources${suffix}`, '_blank')
 }
 function goPlayground(query: string) {
   router.push(`/admin/${workspaceId.value}/ai-playground?q=${encodeURIComponent(query)}`)

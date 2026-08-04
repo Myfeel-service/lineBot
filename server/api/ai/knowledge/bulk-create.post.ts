@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     : null
   if (overviewInput) {
     const err = validateChunkInput(overviewInput)
-    if (err) throw createError({ statusCode: 400, statusMessage: `總覽卡：${err}` })
+    if (err) throw createError({ statusCode: 400, statusMessage: `總表：${err}` })
   }
 
   const db = getDb()

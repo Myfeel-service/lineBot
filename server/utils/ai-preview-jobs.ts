@@ -1,13 +1,13 @@
 /**
  * 知識庫「上傳預覽」的非同步 job + 輪詢狀態機。
  *
- * 為什麼要這個：preview-chunks 是同步 API，一個請求裡把「抽文字 → LLM 切卡（+OCR
- * +總覽卡）」整包做完；長 PDF 會超過 Amplify/CloudFront 的閘道逾時（~30s）→ 504。
+ * 為什麼要這個：preview-chunks 是同步 API，一個請求裡把「抽文字 → LLM 整理（+OCR
+ * +總表）」整包做完；長 PDF 會超過 Amplify/CloudFront 的閘道逾時（~30s）→ 504。
  *
  * 設計（順這個 codebase 的既有紋理：每個請求壓在時限內、溢出排 Firestore）：
  * - 建 job 時把「快且會報錯」的抽取先做掉（讓壞檔/加密當場報錯），重活留給輪詢。
- * - 前端每 ~2s 輪詢一次，每次 advanceWork **只推進一個有界單位**（一批 OCR 頁 / 一段切卡 /
- *   一次總覽卡），每步都壓在逾時內 → 永不 504。
+ * - 前端每 ~2s 輪詢一次，每次 advanceWork **只推進一個有界單位**（一批 OCR 頁 / 一段整理 /
+ *   一次總表），每步都壓在逾時內 → 永不 504。
  * - 大文字放 Storage 的 work.json（無 1 MiB 限制）；Firestore job 文件只留狀態/進度/lease。
  * - lease + cursor 讓中途被閘道掐斷的一步能在 lease 過期後被下一輪重跑，不重跑已完成的步。
  */
@@ -37,7 +37,7 @@ export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
 /** 單批 OCR 的頁數：壓在閘道逾時內，同時控制 job 步數。5 頁 ≈ 15–25s。 */
 export const OCR_PAGE_BATCH = 5
 
-/** 切卡撞輸出上限時「對半再切」的下限；小於此就不再切（真的還失敗代表非截斷問題）。 */
+/** 整理撞輸出上限時「對半再切」的下限；小於此就不再切（真的還失敗代表非截斷問題）。 */
 export const MIN_SEGMENT_SPLIT_LEN = 1500
 
 /**
@@ -68,8 +68,8 @@ export interface PreviewJobInput {
   name?: string
   generateOverview: boolean
   /**
-   * 「重新同步」工作：對這個既有來源重切卡並在 finalize 算 diff（取代舊的同步式
-   * resync-preview——一個請求做完抽取＋LLM 切卡＋比對,大頁面必撞閘道逾時,
+   * 「重新同步」工作：對這個既有來源重整理並在 finalize 算 diff（取代舊的同步式
+   * resync-preview——一個請求做完抽取＋LLM 整理＋比對,大頁面必撞閘道逾時,
    * 與當年 preview-chunks 504 同病）。有值時 finalize 跳過同名偵測 / 認產品名 /
    * 匯入守門（那些是「新來源」的檢查,對既有來源的重切會全部誤報）。
    */
@@ -99,7 +99,7 @@ export interface WorkState {
   ocrPageTotal: number
   ocrPageCursor: number
   ocrText: string
-  // 切卡進度
+  // 整理進度
   segments: string[]
   segmentCursor: number
   // 補問法進度（gsheet / 乾淨 xlsx 的一列一卡：卡片沒有 questions，逐批補）
@@ -170,7 +170,7 @@ export function makeWork(input: PreviewJobInput): WorkState {
 }
 
 /**
- * 有了純文字（文字層 PDF / url / xlsx 散文 / text）後，準備切卡階段。
+ * 有了純文字（文字層 PDF / url / xlsx 散文 / text）後，準備整理階段。
  * text 已由抽取器截到 MAX_RAW_TEXT_LEN；空字串則直接 finalize（端點回「沒切出卡」）。
  */
 export function primeChunking(work: WorkState, text: string): void {
@@ -249,7 +249,7 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
   }
 
   // 一輪同時切多段:序列版本在長文件上很痛(100k 字 ≈ 13 段 × 每段 15–25 秒 ≈ 5 分鐘,
-  // 比改成背景作業之前的並行切卡還慢)。並行度沿用 chunker 的保守值,單輪 wall clock
+  // 比改成背景作業之前的並行整理還慢)。並行度沿用 chunker 的保守值,單輪 wall clock
   // ≈ 一次 LLM latency,仍遠低於閘道逾時。
   const batch: Array<{ index: number; text: string }> = []
   for (let i = start; i < work.segments.length && batch.length < CHUNK_CONCURRENCY; i++) {
@@ -342,7 +342,7 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
   work.enrichCursor = cursor + Math.max(1, batch.length) // 保底前進，避免卡死
 
   if (work.enrichCursor >= work.chunks.length) {
-    // xlsx（type=file）要總覽卡就接 overview；gsheet 維持不做總覽卡的舊行為
+    // xlsx（type=file）要總表就接 overview；gsheet 維持不做總表的舊行為
     work.phase = (work.input.generateOverview && work.input.type === 'file' && work.chunks.length >= 2)
       ? 'overview'
       : 'finalize'
@@ -351,7 +351,7 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
 }
 
 async function advanceOverview(work: WorkState): Promise<WorkState> {
-  // 總覽卡失敗不擋切卡結果（同 preview-chunks 的原行為）
+  // 總表失敗不擋整理結果（同 preview-chunks 的原行為）
   try {
     const ov = await summarizeAsOverviewCard(work.chunks, { hint: work.sourceName })
     if (ov) {
@@ -405,7 +405,7 @@ export function progressFor(work: WorkState): { done: number; total: number; lab
     case 'ocr':
       return { done: work.ocrPageCursor, total: Math.max(1, work.ocrPageTotal), label: '辨識掃描檔' }
     case 'chunk':
-      return { done: work.segmentCursor, total: Math.max(1, work.segments.length), label: '切卡' }
+      return { done: work.segmentCursor, total: Math.max(1, work.segments.length), label: '整理' }
     case 'enrich':
       return {
         done: Math.min(work.enrichCursor ?? 0, work.chunks.length),
@@ -413,7 +413,7 @@ export function progressFor(work: WorkState): { done: number; total: number; lab
         label: '補客人問法',
       }
     case 'overview':
-      return { done: 0, total: 1, label: '產生總覽卡' }
+      return { done: 0, total: 1, label: '產生總表' }
     case 'finalize':
       return { done: 1, total: 1, label: work.input.resyncSourceId ? '比對新舊差異' : '整理中' }
     case 'done':
@@ -481,10 +481,10 @@ function titlesNearIdentical(a: string, b: string): boolean {
 }
 
 /**
- * 切卡完成後的品質守門（P1-2 匯入防護），把警示 push 進 work.warnings：
+ * 整理完成後的品質守門（P1-2 匯入防護），把警示 push 進 work.warnings：
  * 1. 時效性內容（募資 / 折扣 / 檔期）→ 建議設有效期限。
  * 2. 與現有知識卡標題重複 → 重複匯入提醒（GPLUS 兩本說明書各生一套同樣卡的教訓）。
- * 3. 總覽卡涵蓋率對照產品索引 → 總覽卡宣稱與系統已知產品對不上（「主要產品為X」矛盾偵測）。
+ * 3. 總表涵蓋率對照產品索引 → 總表宣稱與系統已知產品對不上（「主要產品為X」矛盾偵測）。
  * 4. 多張卡的檔案沒認出產品名 → 說明書漏設產品名提醒（無主卡事故的源頭）。
  * 全部 fail-open：查詢失敗只略過該項檢查，不擋匯入。
  */
@@ -526,7 +526,7 @@ export async function appendImportQualityWarnings(
     console.warn('[preview-jobs] duplicate-title check failed（略過）:', e)
   }
 
-  // 3. 總覽卡 vs 產品索引涵蓋率（只在要合成總覽卡時有意義）
+  // 3. 總表 vs 產品索引涵蓋率（只在要合成總表時有意義）
   try {
     if (work.overviewCard) {
       const names = await getWorkspaceProductNames(db, workspaceId)
@@ -538,7 +538,7 @@ export async function appendImportQualityWarnings(
         }).length
         if (covered / names.length < 0.3) {
           work.warnings.push(
-            `總覽卡只提到系統已知 ${names.length} 項產品中的 ${covered} 項——來源頁面可能沒抓到商品區塊（動態首頁常見）。總覽卡專門回答「你們有賣什麼」，內容錯會整店答錯，請務必確認或改用商品列表頁重新匯入。`,
+            `總表只提到系統已知 ${names.length} 項產品中的 ${covered} 項——來源頁面可能沒抓到商品區塊（動態首頁常見）。總表專門回答「你們有賣什麼」，內容錯會整店答錯，請務必確認或改用商品列表頁重新匯入。`,
           )
         }
       }

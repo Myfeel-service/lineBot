@@ -135,7 +135,7 @@
     <!-- ── Editor Body ── -->
     <template #editor-body>
       <ConversationsAiContextBanner
-        v-if="isSuperAdmin"
+        v-if="canOperate"
         :user-id="selectedUserId"
         :refresh-key="aiContextRefreshKey"
         :api-fetch="apiFetch"
@@ -976,8 +976,16 @@ const activeTab = ref<TabValue>('all')
 const inputText = ref('')
 const searchText = ref('')
 const aiContextRefreshKey = ref(0)
-// AI 相關功能暫時只開放 super admin（isSuperAdmin 由 default layout 載入時填好）
-const { isSuperAdmin } = useSuperAdmin()
+/**
+ * AI 脈絡卡（含「補知識」與「這題 AI 答錯了」）開放到客服層級。
+ *
+ * 原本是 super admin only 的階段性開關，但那讓兩顆按鈕對客戶等於不存在——
+ * 尤其「答錯了」是唯一能讓人告訴系統「AI 這題答錯」的地方，沒有它就只收得到
+ * 「AI 自己說答不出來」那一半訊號。
+ * 用 canOperate（agent 以上，不含觀察者）對齊按鈕實際需要的權限：
+ * 補知識 = knowledge.write（agent）、答錯標記 = ai-feedback 端點（agent）。
+ */
+const { canOperate } = useWorkspace()
 
 function applyAiDraft(text: string) {
   inputText.value = String(text || '')
@@ -1204,6 +1212,7 @@ async function switchTab(tab: TabValue) {
 async function selectSession(s: SessionItem) {
   selectedSessionId.value = s.sessionId
   allTabActiveSession.value = null
+  aiContextSeenAtMs = 0
   selectedUserId.value = s.userId
   messages.value = []
   const convItem: ConvItem = {
@@ -1311,7 +1320,24 @@ async function loadList(reset = true) {
     listLoadingMore.value = false
   }
   await loadSessionCounts()
+  maybeRefreshAiContext()
   if (reset) void autoFillSidebarList()
+}
+
+/**
+ * 選中的客人有新訊息時，讓 AI 脈絡卡重抓一次。
+ * 沒有這個的話卡片只在「切換客人」時更新——客服看著舊那題,客人其實已經又問了一題,
+ * 對舊那題按「這題 AI 答錯了」就會被後端以 409 擋下(它比對的是最新那次互動)。
+ */
+let aiContextSeenAtMs = 0
+function maybeRefreshAiContext() {
+  const uid = selectedUserId.value
+  if (!uid) return
+  const row = conversations.value.find(c => c.userId === uid)
+  const ms = row ? messageTimestampToMs(row.lastMessageAt) : 0
+  if (!ms) return
+  if (aiContextSeenAtMs && ms > aiContextSeenAtMs) aiContextRefreshKey.value++
+  aiContextSeenAtMs = ms
 }
 
 async function loadMoreList() {
@@ -1429,6 +1455,8 @@ async function selectUser(c: ConvItem) {
   sessionTimelineItems.value = []
   sessionMeta.value = null
   allTabActiveSession.value = null
+  // 換人就重設基準時間，否則會拿上一位客人的時間戳去比、一進來就誤判成「有新訊息」
+  aiContextSeenAtMs = 0
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingSupportPresetId.value = ''

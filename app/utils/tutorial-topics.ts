@@ -98,7 +98,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="org-identity"]',
         title: '先確認身分',
         description:
-          '這張卡顯示你的<strong>組織名稱、官方帳號名稱</strong>，以及<strong>你的角色</strong>。只有「擁有者／管理員」能改這頁設定。',
+          '這一條顯示你的<strong>組織名稱、官方帳號名稱</strong>，以及<strong>你的角色</strong>。只有「擁有者／管理員」能改這頁設定。',
         placement: 'bottom',
       },
       {
@@ -189,14 +189,14 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresOperate: true,
     icon: Reading,
     label: '知識庫：建立與匯入',
-    blurb: '怎麼把知識餵給 AI，四種來源一次搞懂。',
+    blurb: '怎麼把知識餵給 AI，四種資料一次搞懂。',
     route: wid => `/admin/${wid}/knowledge/sources`,
     steps: [
       {
         target: '[data-tour="kb-import"]',
         title: '從「匯入」開始',
         description:
-          '知識庫是由一份份「<strong>來源</strong>」組成的，AI 只會用這些來源裡的內容回答。點「<strong>匯入</strong>」開始——有 <strong>4 種餵料方式</strong>，我一個一個帶你看。',
+          '知識庫是由一份份「<strong>資料</strong>」組成的，AI 只會用這些資料裡的內容回答。點「<strong>匯入</strong>」開始——有 <strong>4 種餵料方式</strong>，我一個一個帶你看。',
         placement: 'bottom',
       },
       {
@@ -204,7 +204,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-import"]',
         title: '方式 1：上傳檔案（PDF、Excel）',
         description:
-          '把現成的檔案丟進來（單檔 10MB 內）。<br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一張卡</strong>」——第一欄當卡片標題、其餘欄位當內容。商品表、問答表最適合。<br><strong>PDF 或內容零散的檔案</strong>：由 AI 幫你分段（用拍的、掃的檔案會由 AI 認字，記得核對數字、價格）。<br>提醒：檔案<strong>上傳一次就固定</strong>，之後改了要重傳；想「改了自動更新」請用 Google Sheet。',
+          '把現成的檔案丟進來（單檔 10MB 內）。<br><strong>Excel 表格</strong>：跟 Google Sheet 一樣「<strong>一列變成一條</strong>」——第一欄當知識標題、其餘欄位當內容。商品表、問答表最適合。<br><strong>PDF 或內容零散的檔案</strong>：由 AI 幫你分段（用拍的、掃的檔案會由 AI 認字，記得核對數字、價格）。<br>提醒：檔案<strong>上傳一次就固定</strong>，之後改了要重傳；想「改了自動更新」請用 Google Sheet。',
         placement: 'bottom',
       },
       {
@@ -212,7 +212,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-tab-url"]',
         title: '方式 2：貼網址（可整站匯入）',
         description:
-          '貼一個網頁網址，系統會抓網頁上的<strong>文字</strong>做成卡片。想把<strong>整個網站</strong>一次餵進來？按「<strong>找出這個網站的其他頁面</strong>」，系統會列出全站頁面讓你勾選、一次匯入（每頁各自成為一個來源）。如果抓不到（例如那個網頁要先登入、或要按按鈕才會顯示內容），就改用上傳檔案。',
+          '貼一個網頁網址，系統會抓網頁上的<strong>文字</strong>做成知識。想把<strong>整個網站</strong>一次餵進來？按「<strong>找出這個網站的其他頁面</strong>」，系統會列出全站頁面讓你勾選、一次匯入（每頁各自成為一份資料）。如果抓不到（例如那個網頁要先登入、或要按按鈕才會顯示內容），就改用上傳檔案。',
         placement: 'bottom',
       },
       {
@@ -220,7 +220,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-tab-gsheet"]',
         title: '方式 3：Google Sheet（會自動同步）',
         description:
-          '最適合「常常在改」的資料（商品、價目表）。規則是<strong>一列一張卡</strong>：<strong>第一欄當卡片標題</strong>，其餘欄位當內容。所以第一欄要放「看得懂的名字」（例：商品名），<strong>不要放編號</strong>。記得先把 Sheet <strong>分享給畫面上那個服務帳號</strong>，之後改內容會定期自動同步（你手動改過的卡不會被蓋掉）。',
+          '最適合「常常在改」的資料（商品、價目表）。規則是<strong>一列一條</strong>：<strong>第一欄當知識標題</strong>，其餘欄位當內容。所以第一欄要放「看得懂的名字」（例：商品名），<strong>不要放編號</strong>。記得先把 Sheet <strong>分享給畫面上那個服務帳號</strong>，之後改內容會定期自動同步（你手動改過的內容不會被蓋掉）。',
         placement: 'bottom',
       },
       {
@@ -228,22 +228,22 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-tab-text"]',
         title: '方式 4：貼整段文字',
         description:
-          '手邊只有一段文字（FAQ、政策原文）就貼這裡，<strong>AI 幫你切成多張卡</strong>。最快、不用準備檔案。',
+          '手邊只有一段文字（FAQ、政策原文）就貼這裡，<strong>AI 幫你切成多條</strong>。最快、不用準備檔案。',
         placement: 'bottom',
       },
       {
         target: '[data-tour="kb-overview"]',
         clickBefore: '[data-tour="kb-tab-file"]',
-        title: '列表頁記得勾「總覽卡」',
+        title: '列表頁記得勾「總表」',
         description:
-          '如果這份是<strong>商品型錄 / 列表頁</strong>，勾這個會多做一張「總覽卡」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google Sheet 免勾。）',
+          '如果這份是<strong>商品型錄 / 列表頁</strong>，勾這個會多做一張「總表」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google Sheet 免勾。）',
         placement: 'top',
       },
       {
         target: '[data-tour="kb-preview"]',
-        title: '預覽切卡再匯入',
+        title: '先看 AI 整理的結果再匯入',
         description:
-          '選好來源後按這裡，AI 會先<strong>切好卡片給你預覽</strong>。你可以逐張改標題／內容、取消不要的，確認沒問題再匯入——<strong>不會直接上線亂答</strong>。',
+          '選好資料後按這裡，AI 會先<strong>切好知識給你預覽</strong>。你可以逐張改標題／內容、取消不要的，確認沒問題再匯入——<strong>不會直接上線亂答</strong>。',
         placement: 'top',
       },
     ],
@@ -261,36 +261,36 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="kb-sources"]',
         title: '匯入的知識都在這裡管理',
         description:
-          '你匯入的每一份資料，都會變成一筆「<strong>來源</strong>」列在這份清單。<strong>點一份</strong>進去，右邊就能看它的內容、改東西、或設定更新。這一頁就是你日後照顧知識庫的地方。',
+          '你匯入的每一份資料，都會變成一筆「<strong>資料</strong>」列在這份清單。<strong>點一份</strong>進去，右邊就能看它的內容、改東西、或設定更新。這一頁就是你日後照顧知識庫的地方。',
         placement: 'right',
       },
       {
         target: '[data-tour="kb-folder-new"]',
-        title: '來源變多了，用資料夾分類',
+        title: '資料變多了，用資料夾分類',
         description:
-          '來源一多就會找不到。點上方<strong>新資料夾</strong>按鈕開資料夾（例如：商品、退換貨、活動），再把來源<strong>拖進去</strong>歸類。這只是後台整理方便你找，不影響 AI 回答。',
+          '資料一多就會找不到。點上方<strong>新資料夾</strong>按鈕開資料夾（例如：商品、退換貨、活動），再把資料<strong>拖進去</strong>歸類。這只是後台整理方便你找，不影響 AI 回答。',
         placement: 'bottom',
       },
       {
         target: '[data-tour="kb-chunks"]',
         clickBefore: '[data-tour="kb-source-row"]',
-        title: 'AI 把資料切成一張張「卡片」，你能微調',
+        title: 'AI 把資料切成一條條「知識」，你能微調',
         description:
-          '我幫你選了第一份來源。每份來源會被拆成一張張「<strong>卡片</strong>」，AI 就是一張卡一張卡地找答案。覺得哪張不對，按「<strong>編輯</strong>」改標題和內容，或用「<strong>AI 整理一下</strong>」讓它更好被找到。<strong>你親手改過的卡會被鎖定</strong>，日後自動更新時不會被蓋掉。每張卡還能設「<strong>供 AI 使用</strong>」開關和<strong>有效期限</strong>——檔期活動設好期限，到期會自動停用並通知你，AI 不會拿過期資訊回答。',
+          '我幫你選了第一份資料。每份資料會被拆成一條條「<strong>知識</strong>」，AI 就是一條一條地找答案。覺得哪一條不對，按「<strong>編輯</strong>」改標題和內容，或用「<strong>AI 整理一下</strong>」讓它更好被找到。<strong>你親手改過的內容會被鎖定</strong>，日後自動更新時不會被蓋掉。每條還能設「<strong>供 AI 使用</strong>」開關和<strong>有效期限</strong>——檔期活動設好期限，到期會自動停用並通知你，AI 不會拿過期資訊回答。',
         placement: 'left',
       },
       {
         target: '[data-tour="kb-sync-settings"]',
         title: '原始資料改了，知識會自動跟上',
         description:
-          '從<strong>網址</strong>或 <strong>Google Sheet</strong> 來的知識，系統會<strong>定期自動重讀</strong>（多久讀一次可以自己設）。網頁的<strong>小幅文字更新會自動套用並通知你</strong>；改動比較大時會先<strong>列出哪裡不一樣</strong>、讓你確認後再套用。Google Sheet 則一列一卡自動跟上。你親手改過的卡一律保留、<strong>不會被偷偷覆蓋</strong>。等不及排程時，隨時可在該來源右上按「<strong>重新同步</strong>」。<br>（這一區只有<strong>網址 / Google Sheet</strong> 來源才有；用檔案、手打文字建立的來源不會自動更新，改了要重新匯入。）',
+          '從<strong>網址</strong>或 <strong>Google Sheet</strong> 來的知識，系統會<strong>定期自動重讀</strong>（多久讀一次可以自己設）。網頁的<strong>小幅文字更新會自動套用並通知你</strong>；改動比較大時會先<strong>列出哪裡不一樣</strong>、讓你確認後再套用。Google Sheet 則一列一卡自動跟上。你親手改過的卡一律保留、<strong>不會被偷偷覆蓋</strong>。等不及排程時，隨時可在該資料右上按「<strong>重新同步</strong>」。<br>（這一區只有<strong>網址 / Google Sheet</strong> 資料才有；用檔案、手打文字建立的資料不會自動更新，改了要重新匯入。）',
         placement: 'left',
       },
       {
         target: '',
         title: '知識庫體檢會幫你盯',
         description:
-          '知識庫有狀況時，來源列表<strong>上方會出現「知識庫體檢」橫幅</strong>：同步失敗的來源、內容太短的卡、到期被自動停用的卡，都會列在那裡。<strong>點分類就直接列出要處理的那幾筆</strong>，照著修完就好——不用自己一張張翻。',
+          '知識庫有狀況時，資料列表<strong>上方會出現「知識庫體檢」橫幅</strong>：同步失敗的資料、內容太短的卡、到期被自動停用的卡，都會列在那裡。<strong>點分類就直接列出要處理的那幾筆</strong>，照著修完就好——不用自己一張張翻。',
       },
     ],
   },
@@ -467,7 +467,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresOperate: true,
     icon: ChatLineSquare,
     label: '基本訊息（文字/圖片/影片）',
-    blurb: '最常用的三種訊息，一顆一顆按給你看、卡片也開出來。',
+    blurb: '最常用的三種訊息，一顆一顆按給你看、知識也開出來。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -475,7 +475,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'text',
         title: '文字',
         description:
-          '點「<strong>＋ 文字</strong>」加一則純文字（可放表情符號、自動帶入客人暱稱，文字下還能加按鈕）。下方就是它的卡片。',
+          '點「<strong>＋ 文字</strong>」加一則純文字（可放表情符號、自動帶入客人暱稱，文字下還能加按鈕）。下方就是它的知識。',
         placement: 'bottom',
       },
       {
@@ -502,7 +502,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresOperate: true,
     icon: Postcard,
     label: '圖文訊息怎麼填',
-    blurb: '一張大圖切成多個可點區塊。打開一張卡帶你填。',
+    blurb: '一張大圖切成多個可點區塊。打開一條帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -537,7 +537,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresOperate: true,
     icon: Files,
     label: '輪播訊息怎麼填',
-    blurb: '多張卡片左右滑。打開一張帶你填。',
+    blurb: '多條知識左右滑。打開一張帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -553,23 +553,23 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'flexImageCarousel',
         title: '要不要放圖',
         description:
-          '輪播訊息是多張卡片可<strong>左右滑</strong>。先決定每張卡<strong>要不要放圖片</strong>（開了就能上傳圖、設比例）。',
+          '輪播訊息是多條知識可<strong>左右滑</strong>。先決定每條<strong>要不要放圖片</strong>（開了就能上傳圖、設比例）。',
         placement: 'top',
       },
       {
         target: '[data-tour="flex-col-title"]',
         demoType: 'flexImageCarousel',
-        title: '填卡片內容',
+        title: '填知識內容',
         description:
-          '每張卡填<strong>標題、內文</strong>；若有開圖還能上傳圖片、加最多 3 顆<strong>按鈕</strong>。',
+          '每條填<strong>標題、內文</strong>；若有開圖還能上傳圖片、加最多 3 顆<strong>按鈕</strong>。',
         placement: 'top',
       },
       {
         target: '[data-tour="flex-add-column"]',
         demoType: 'flexImageCarousel',
-        title: '多加幾張卡',
+        title: '多加幾條',
         description:
-          '按這顆「＋」就多一張卡，客人在聊天室能<strong>左右滑</strong>看更多。商品、方案並排介紹最好用。',
+          '按這顆「＋」就多一條，客人在聊天室能<strong>左右滑</strong>看更多。商品、方案並排介紹最好用。',
         placement: 'left',
       },
     ],

@@ -31,7 +31,7 @@
       </div>
 
       <div v-if="ctx.sources.length" class="conv-ai-row conv-ai-row--block">
-        <span class="conv-ai-row__label">命中知識卡（top {{ ctx.sources.length }}）</span>
+        <span class="conv-ai-row__label">命中知識（top {{ ctx.sources.length }}）</span>
         <ul class="conv-ai-source-list">
           <li v-for="src in ctx.sources" :key="src.chunkId">{{ src.title }}</li>
         </ul>
@@ -57,7 +57,7 @@
         <el-button size="small" text type="danger" :disabled="wrongMarked" :loading="marking" @click="markWrong">
           {{ wrongMarked ? '已標記答錯' : '這題 AI 答錯了' }}
         </el-button>
-        <span class="conv-ai-actions__hint">標記後會列入知識庫「AI 建議補的知識」分析</span>
+        <span class="conv-ai-actions__hint">同類問題累積後，系統會在知識庫幫你擬一條</span>
       </div>
     </div>
   </div>
@@ -178,14 +178,20 @@ async function markWrong() {
     await logFeedback('wrong_answer', userId, at)
     // 回來時已經切走就別動畫面（那筆標記本身有效，切回來會由 markedWrongKey 反映）
     markedWrongKey.value = key
-    if (props.userId === userId) showToast('已記錄。這題會列入知識庫「AI 建議補的知識」分析', 'success')
+    // 不要講成「會變成建議」:同類問題累積到一定次數才會成為主題,單獨一筆不會馬上出現
+    if (props.userId === userId) showToast('已記錄。同類問題累積後會出現在知識庫的「AI 建議補的知識」', 'success')
   }
   catch (e: any) {
     const conflict = e?.statusCode === 409 || e?.response?.status === 409
-    showToast(
-      conflict ? '這位客人已經有新的對話，請重新整理後再標記' : '記錄失敗，請再試一次',
-      'error',
-    )
+    if (conflict) {
+      // 畫面上的脈絡是舊的（客人在你看的時候又問了一題）。這裡要當場把畫面救回來——
+      // 只叫使用者「重新整理」但畫面上沒有任何刷新的地方，就是死路。
+      await load()
+      showToast('客人剛剛又問了新的問題，畫面已更新。請確認後再標記', 'warning')
+    }
+    else {
+      showToast('記錄失敗，請再試一次', 'error')
+    }
   }
   finally {
     marking.value = false

@@ -2,133 +2,127 @@
   <AdminSplitLayout :is-empty="!selectedSource">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="kb-sources">來源</span>
+      <span class="split-sidebar-title" data-tour="kb-sources">你的資料</span>
+      <!-- 工具列只留「加入知識」一顆主動作。原本 5 顆平鋪（含只有工程場景才按的「重新學習全部」）
+           讓第一屏就要做五選一;次要與維護動作收進「⋯」 -->
       <div class="flex gap-1">
-        <el-tooltip v-if="canEditFolders" content="新增資料夾" placement="bottom" :show-after="300">
-          <el-button :icon="FolderAdd" size="small" plain data-tour="kb-folder-new" @click="createFolderPrompt" />
+        <el-tooltip v-if="canEditKb" content="上傳檔案、貼網址或貼一段文字，AI 會自動整理" placement="bottom" :show-after="300">
+          <el-button :icon="Upload" size="small" type="primary" plain data-tour="kb-import" @click="goImport">加入知識</el-button>
         </el-tooltip>
-        <el-tooltip v-if="canEditKb" content="匯入檔案 / 網址 / 大段文字" placement="bottom" :show-after="300">
-          <el-button :icon="Upload" size="small" type="primary" plain data-tour="kb-import" @click="goImport">匯入</el-button>
-        </el-tooltip>
-        <el-tooltip v-if="canEditKb" content="手動新增一張問答卡" placement="bottom" :show-after="300">
-          <el-button :icon="EditPen" size="small" plain @click="openCreateManual">手寫</el-button>
-        </el-tooltip>
-        <el-tooltip v-if="canEditSources" content="整理同一台產品的不同叫法（例：上好ㄟ ＝ 威技）" placement="bottom" :show-after="300">
-          <el-button size="small" plain @click="openAliasDialog">
-            產品名稱<el-badge v-if="aliasCandidateCount" :value="aliasCandidateCount" class="src-alias-badge" />
-          </el-button>
-        </el-tooltip>
-        <el-tooltip v-if="canReindexAll" content="讓 AI 重新學習全部卡片(系統升級檢索方式後使用)" placement="bottom" :show-after="300">
-          <el-button :icon="Refresh" size="small" plain :loading="reindexingAll" @click="reindexAll">重新學習</el-button>
-        </el-tooltip>
+        <el-dropdown v-if="canEditKb || canEditSources || canEditFolders" trigger="click">
+          <el-button size="small" plain>⋯</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="canEditKb" @click="openCreateManual">
+                自己寫一條
+              </el-dropdown-item>
+              <el-dropdown-item v-if="canEditFolders" data-tour="kb-folder-new" @click="createFolderPrompt">
+                新增資料夾
+              </el-dropdown-item>
+              <el-dropdown-item v-if="canEditSources" divided @click="openAliasDialog">
+                同一產品的不同叫法{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
+              </el-dropdown-item>
+              <!-- 全庫重新學習是工程維護動作（升級檢索方式後才需要），不該長在主工具列 -->
+              <el-dropdown-item v-if="canReindexAll" :disabled="reindexingAll" @click="reindexAll">
+                {{ reindexingAll ? '重新學習中⋯' : '讓 AI 重新學習全部（維護用）' }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </template>
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
-      <!-- 全庫搜尋:補卡前先確認「這題是不是已經有卡了」,不用一個來源一個來源翻 -->
+      <!-- 全庫搜尋:補卡前先確認「這題是不是已經有卡了」,不用一份資料一份資料翻 -->
       <div class="src-search">
         <el-input
           v-model="searchKeyword"
           size="small"
           clearable
-          placeholder="搜尋知識卡（標題 / 內容 / 問法）"
+          placeholder="搜尋知識（標題 / 內容 / 問法）"
           :prefix-icon="Search"
         />
         <div v-if="searchLoading" class="src-search-loading">搜尋中…</div>
         <div v-else-if="searchResults" class="src-search-results">
           <div v-if="!searchResults.length" class="src-search-empty">
-            沒有符合的卡片——如果客人常問這題，可能就是該補的知識。
+            沒有符合的知識——如果客人常問這題，可能就是該補的知識。
           </div>
           <button v-for="r in searchResults" :key="r.id" type="button" class="src-search-row" @click="openChunkById(r.id)">
             <span class="src-search-row__title">
               {{ r.title }}
               <!-- 「找到卡」不等於「AI 用得到」:學習失敗/已停用的卡要標出來,
-                   否則會誤判「已經有這張卡了、不用補」 -->
+                   否則會誤判「已經有這一條了、不用補」 -->
               <span v-if="r.status === 'failed'" class="badge badge-red">AI 沒學起來</span>
               <span v-else-if="r.status === 'disabled'" class="badge badge-gray">已停用</span>
               <span v-else-if="r.status === 'pending'" class="badge badge-yellow">處理中</span>
             </span>
             <span class="src-search-row__snippet">{{ r.snippet }}</span>
           </button>
-          <p v-if="searchCountTruncated" class="src-search-foot">符合的卡片較多，只列出前 {{ searchResults.length }} 筆。</p>
-          <p v-if="searchTruncated" class="src-search-foot">卡片較多，只搜尋了前面一部分。</p>
+          <p v-if="searchCountTruncated" class="src-search-foot">符合的知識較多，只列出前 {{ searchResults.length }} 筆。</p>
+          <p v-if="searchTruncated" class="src-search-foot">知識較多，只搜尋了前面一部分。</p>
         </div>
       </div>
 
-      <!-- 建議收件匣:AI 從「客人問了但答不出」的對話整理主題+擬好草稿,審一眼就能採用 -->
-      <KnowledgeSuggestions @accepted="loadSources(true)" />
-
-      <!-- 偵測到 orphan chunks → 提示一鍵整理 -->
-      <div v-if="orphanCount > 0" class="src-orphan-banner">
-        <p class="src-orphan-msg">
-          偵測到 <strong>{{ orphanCount }}</strong> 張舊版未分組卡片
-        </p>
-        <p class="src-orphan-hint">
-          舊版手寫單張卡沒被「來源」管理，整理後每張會變成一筆手寫條目顯示在下方。
-        </p>
-        <el-button
-          v-if="canEditSources"
-          size="small"
-          type="primary"
-          plain
-          :loading="migrating"
-          @click="migrateOrphans"
-        >
-          一鍵整理
-        </el-button>
-      </div>
-
-      <!-- 知識庫健康檢查列(P2-3):把稽核手動翻出來的問題變成常駐體檢,點分類直接列出來修 -->
-      <div v-if="healthIssueCount > 0 || healthExpiredCount > 0" class="src-health-banner">
-        <p class="src-health-msg">
-          <el-icon class="src-health-icon"><FirstAidKit /></el-icon>
-          <span>
-            知識庫體檢：<template v-if="healthSourceCount"><strong>{{ healthSourceCount }}</strong> 個來源要處理</template><template
-              v-if="healthSourceCount && healthChunkCount"
-            > · </template><template v-if="healthChunkCount"><strong>{{ healthChunkCount }}</strong> 張卡建議檢查</template><template
-              v-if="!healthIssueCount"
-            >目前沒有待處理項目</template>
+      <!--
+        「要處理的事」單一收斂點。
+        原本這裡是三個各自為政的橫幅（AI 建議 / 舊版未分組知識 / 知識庫體檢六個 chip），
+        視覺語言各不相同、要捲過四層才看到自己的資料，而且使用者無從判斷哪個該先做。
+        現在合成一份清單、照「會不會影響客人」排序：壞掉的先、建議次之、僅供參考最後。
+        沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
+        AI 建議的草稿要看內容，仍留在下方獨立區塊，不在這裡重複列一次。
+      -->
+      <div v-if="todoItems.length || healthExpiredCount" class="src-todo">
+        <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
+          <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
+          <span class="src-todo__title">
+            <template v-if="todoItems.length">要處理的事（{{ todoItems.length }}）</template>
+            <template v-else>目前沒有要處理的事</template>
           </span>
-        </p>
-        <div class="src-health-chips">
-          <button v-if="health.failedSources.length" type="button" class="src-health-chip is-danger" @click="openHealthList('failedSources')">
-            {{ health.failedSources.length }} 個來源同步失敗
+          <span class="src-todo__toggle">{{ todoOpen ? '▴' : '▾' }}</span>
+        </button>
+
+        <div v-show="todoOpen" class="src-todo__body">
+          <div v-for="item in todoItems" :key="item.id" class="src-todo__item" :class="`is-${item.tone}`">
+            <div class="src-todo__item-main">
+              <span class="src-todo__item-title">{{ item.title }}</span>
+              <span class="src-todo__item-why">{{ item.why }}</span>
+            </div>
+            <el-button size="small" plain :loading="item.loading" @click="item.action()">
+              {{ item.cta }}
+            </el-button>
+          </div>
+
+          <!-- 已過期停用＝功能正常運作的結果，不是待辦：灰階、排最後、不算進上方數字 -->
+          <button
+            v-if="healthExpiredCount"
+            type="button"
+            class="src-todo__muted"
+            @click="openHealthList('expiredChunks')"
+          >
+            另有 {{ healthExpiredCount }} 張內容已過期自動停用（正常，不用處理）
           </button>
-          <button v-if="health.failedChunks.count" type="button" class="src-health-chip is-danger" @click="openHealthList('failedChunks')">
-            {{ health.failedChunks.count }} 張卡學習失敗
-          </button>
-          <button v-if="health.outdatedSources.length" type="button" class="src-health-chip is-warning" @click="openHealthList('outdatedSources')">
-            {{ health.outdatedSources.length }} 個來源偵測到變動
-          </button>
-          <button v-if="health.noProductSources.length" type="button" class="src-health-chip is-warning" @click="openHealthList('noProductSources')">
-            {{ health.noProductSources.length }} 份文件未設產品名
-          </button>
-          <button v-if="health.shortChunks.count" type="button" class="src-health-chip is-warning" @click="openHealthList('shortChunks')">
-            {{ health.shortChunks.count }} 張卡內容過短
-          </button>
-          <!-- 已過期停用＝功能正常運作的結果,不是待辦:灰階、排最後、不計入上方數字 -->
-          <button v-if="healthExpiredCount" type="button" class="src-health-chip is-muted" @click="openHealthList('expiredChunks')">
-            {{ healthExpiredCount }} 張卡已過期停用（僅供參考）
-          </button>
+          <p v-if="health.chunkScanTruncated" class="src-todo__foot">
+            內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
+          </p>
         </div>
-        <p v-if="health.chunkScanTruncated" class="src-health-foot">
-          知識卡較多，體檢只掃描了其中一部分，實際張數可能更多。
-        </p>
       </div>
+
+      <!-- 建議收件匣（草稿要看內容，維持獨立區塊；「有幾個建議」也會出現在上方待辦清單） -->
+      <KnowledgeSuggestions @accepted="loadSources(true)" />
 
       <div v-if="loading && !sources.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
       <div v-else-if="!sources.length && !orphanCount" class="split-sidebar-empty">
-        <span>沒有任何來源</span>
-        <p class="text-xs text-muted">每個來源代表一份知識（PDF / 網址 / 文字），AI 從這些來源裡找答案。</p>
+        <span>還沒有任何資料</span>
+        <p class="text-xs text-muted">放一份進來（檔案、網址、Google 試算表或一段文字），AI 就會從裡面找答案回覆客人。</p>
         <div v-if="canEditKb" class="flex gap-1" style="margin-top:8px;">
-          <el-button :icon="Upload" size="small" type="primary" plain @click="goImport">匯入</el-button>
+          <el-button :icon="Upload" size="small" type="primary" plain @click="goImport">加入知識</el-button>
         </div>
       </div>
       <div v-else class="split-list">
-        <!-- 未分類來源（直接平鋪在最上方，沒有 header） -->
+        <!-- 未分類資料（直接平鋪在最上方，沒有 header） -->
         <div
           v-for="src in uncategorizedSources"
           :key="src.id"
@@ -142,7 +136,7 @@
             @dragstart.stop="onSourceDragStart(src.id, $event)"
             @dragend.stop="onSourceDragEnd"
           >⠿</span>
-          <!-- data-tour 標在每一列：教學要示範「卡片」「同步設定」時得先有選中的來源，
+          <!-- data-tour 標在每一列：教學要示範「知識」「同步設定」時得先有選中的資料，
                導覽會點到第一個符合的（＝清單第一列）-->
           <AdminSplitListItem
             class="flow-sidebar-row__item"
@@ -159,7 +153,7 @@
           />
         </div>
 
-        <!-- 「移出資料夾」drop zone：只在拖曳「資料夾內」的卡片時才出現 -->
+        <!-- 「移出資料夾」drop zone：只在拖曳「資料夾內」的知識時才出現 -->
         <div
           v-if="isDraggingFromFolder"
           class="src-unfolder-zone"
@@ -244,31 +238,38 @@
     </template>
 
     <!-- ── Empty State ── -->
+    <!-- 未選取時是這一頁唯一能講「這頁是幹什麼的」的地方:知識庫原本是所有 AI 頁面中
+         唯一沒有頁面說明的一頁(打開就是一個內部名詞「資料」) -->
     <template #editor-empty>
       <el-icon class="empty-icon"><FolderOpened /></el-icon>
-      <h3>選擇一個來源開始管理</h3>
-      <p>{{ canEditKb ? '或匯入新的 PDF、網址、文字' : '（僅檢視）' }}</p>
+      <h3>這裡是 AI 回答客人的依據</h3>
+      <p>
+        你放進來的每一份資料（檔案、網址、Google 試算表、一段文字）都會由 AI 整理成一條條問答，
+        客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
+      </p>
+      <p class="text-xs text-muted">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
       <div v-if="canEditKb" class="flex gap-2" style="margin-top:8px;">
-        <el-button :icon="Upload" type="primary" @click="goImport">匯入</el-button>
+        <el-button :icon="Upload" type="primary" @click="goImport">加入第一份資料</el-button>
       </div>
+      <p v-if="!canEditKb" class="text-xs text-muted">（你的權限僅能檢視）</p>
     </template>
 
     <!-- ── Editor Header ── -->
     <template #editor-header>
       <div class="admin-flex-1">
-        <AdminFieldLabel text="來源名稱" tight />
+        <AdminFieldLabel text="資料名稱" tight />
         <div class="admin-title-row">
           <el-input
             v-if="canEditSources"
             v-model="nameDraft"
             size="large"
             class="admin-title-input"
-            placeholder="輸入來源名稱..."
+            placeholder="輸入資料名稱..."
             maxlength="200"
             @keydown.enter.prevent="commitName"
             @blur="commitName"
           />
-          <span v-else class="split-editor-title">{{ selectedSource?.name || '(未命名來源)' }}</span>
+          <span v-else class="split-editor-title">{{ selectedSource?.name || '(未命名資料)' }}</span>
         </div>
         <p class="text-sm text-muted admin-subtext src-header-caption">
           {{ typeEmoji(selectedSource?.type) }}<template v-if="selectedSource?.url"> · <a :href="selectedSource.url" target="_blank" rel="noopener">{{ selectedSource.url }}</a></template>
@@ -334,16 +335,44 @@
             <div class="src-info-grid">
               <div><span class="src-label">類型</span><strong>{{ typeLabel(selectedSource.type) }}</strong></div>
               <div><span class="src-label">狀態</span><strong>{{ statusLabel(selectedSource.status) }}</strong></div>
-              <div><span class="src-label">卡片數</span><strong>{{ selectedSource.chunkCount }}</strong></div>
+              <div><span class="src-label">條數</span><strong>{{ selectedSource.chunkCount }}</strong></div>
               <div><span class="src-label">最後同步</span><strong>{{ selectedSource.lastFetchedAtMs ? relativeTime(selectedSource.lastFetchedAtMs) : '尚未同步' }}</strong></div>
             </div>
-            <p v-if="selectedSource.failureReason" class="src-failure">
-              失敗原因：{{ selectedSource.failureReason }}
-            </p>
+            <!-- 失敗要能就地修:原本只印一行後端原文,商家看不懂也修不了
+                 (最常見的兩種原因,修的地方一個在 Google、一個是換網址) -->
+            <div v-if="selectedSource.failureReason" class="src-fix">
+              <p class="src-fix__title">⚠ 這份資料目前抓不到內容</p>
+              <p class="src-fix__what">{{ failureAdvice.what }}</p>
+
+              <!-- Google Sheet:最常見原因是沒分享給服務帳號 → email 直接放這裡可複製 -->
+              <div v-if="failureAdvice.kind === 'gsheet'" class="src-fix__row">
+                <code class="src-fix__email">{{ serviceAccountEmail || '讀取中⋯' }}</code>
+                <el-button size="small" plain :disabled="!serviceAccountEmail" @click="copyServiceAccount">
+                  複製帳號
+                </el-button>
+              </div>
+
+              <!-- 網址:原網頁被搬走時可以直接改網址,不用刪掉重新匯入(會失去手動改過的內容) -->
+              <div v-else-if="failureAdvice.kind === 'url' && canEditSources" class="src-fix__row">
+                <el-input v-model="urlForm" size="small" placeholder="https://…" class="src-fix__input" />
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="savingUrl"
+                  :disabled="!urlForm.trim() || urlForm.trim() === selectedSource.url"
+                  @click="saveSourceUrl"
+                >
+                  換成這個網址
+                </el-button>
+              </div>
+
+              <p class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
+            </div>
           </div>
         </div>
 
-        <!-- 所屬產品（P1-1）：卡片索引時自動繼承來源產品名；改動後自動重建該來源索引。
+        <!-- 所屬產品（P1-1）：知識索引時自動繼承資料產品名；改動後自動重建該資料索引。
              gsheet 一列多產品不適用。 -->
         <div v-if="selectedSource.type !== 'gsheet'" class="message-card src-section-card">
           <div class="message-card-header">
@@ -353,7 +382,7 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              這個來源的內容都在講<strong>同一個產品</strong>時才填（含品牌與型號）。卡片會自動標上產品名——客人指名問哪一台、或 AI 反問「您指的是哪一個」時，靠它才不會答錯台。FAQ、公告這類多產品內容請留空。
+              這份資料的內容都在講<strong>同一個產品</strong>時才填（含品牌與型號）。知識會自動標上產品名——客人指名問哪一台、或 AI 反問「您指的是哪一個」時，靠它才不會答錯台。FAQ、公告這類多產品內容請留空。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="產品名" tight />
@@ -375,7 +404,7 @@
               >
                 儲存並重新學習
               </el-button>
-              <span v-if="savingProductName" class="text-muted text-xs">正在讓 AI 重新學習這個來源的卡片，約需幾十秒⋯</span>
+              <span v-if="savingProductName" class="text-muted text-xs">正在讓 AI 重新學習這份資料的知識，約需幾十秒⋯</span>
             </div>
           </div>
         </div>
@@ -389,7 +418,7 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用並通知你</strong>（只更新原有卡片的內容）；
+              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用並通知你</strong>（只更新原有知識的內容）；
               新增、刪除或大幅改版<strong>不會自動動</strong>，會在這裡標提示等你進來看差異再決定。
               你手動編輯過的卡永遠不會被自動覆蓋。
             </p>
@@ -406,7 +435,7 @@
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測到變動時" tight />
               <el-radio-group v-model="settingsForm.onChangeBehavior">
-                <el-radio value="notify">通知我（在來源頁掛 提示）</el-radio>
+                <el-radio value="notify">通知我（在資料頁掛 提示）</el-radio>
                 <el-radio value="log_only">只記錄不通知</el-radio>
               </el-radio-group>
             </div>
@@ -417,7 +446,7 @@
                 <el-radio :value="false">一律等我確認</el-radio>
               </el-radio-group>
               <p class="src-section-hint">
-                只有「原有卡片的文字被改動」才算小幅變動；新增、刪除卡片或大幅改版一定會等你確認。
+                只有「原有知識的文字被改動」才算小幅變動；新增、刪除知識或大幅改版一定會等你確認。
               </p>
             </div>
             <div v-if="canEditSources" class="src-settings-actions">
@@ -474,12 +503,12 @@
         <div class="message-card src-section-card" data-tour="kb-chunks">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">卡片（{{ chunks.length }}）</span>
+              <span class="section-title">知識（{{ chunks.length }}）</span>
             </div>
           </div>
           <div class="card-section-stack">
             <div v-if="detailLoading" class="src-chunk-loading"><div class="spinner" /></div>
-            <p v-else-if="!chunks.length" class="text-muted">這個來源底下沒有卡片。</p>
+            <p v-else-if="!chunks.length" class="text-muted">這份資料底下沒有知識。</p>
             <div v-else class="src-chunk-list">
               <div
                 v-for="c in chunks"
@@ -525,7 +554,7 @@
     <div v-if="aliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
     <template v-else>
       <p v-if="!aliasCandidates.length" class="text-muted text-sm">
-        目前沒有需要確認的組合。之後匯入新來源時若偵測到，這裡會再出現。
+        目前沒有需要確認的組合。之後匯入新資料時若偵測到，這裡會再出現。
       </p>
       <div v-for="c in aliasCandidates" :key="c.key" class="src-alias-card">
         <div class="src-alias-pair">
@@ -556,7 +585,7 @@
     </template>
   </el-dialog>
 
-  <!-- ── 健康檢查清單 Modal:點分類 → 列出問題項目,點項目直達來源/卡片 ── -->
+  <!-- ── 健康檢查清單 Modal:點分類 → 列出問題項目,點項目直達資料/知識 ── -->
   <el-dialog
     v-model="healthListOpen"
     :title="healthListTitle"
@@ -588,8 +617,8 @@
   >
     <div v-if="diffData" class="diff-body">
       <p class="text-muted text-sm">
-        已重新抓一次網頁、重新整理成一張張卡片，請逐張決定要換成新的、還是保留舊的。
-        你手動改過的卡預設保留你的版本。
+        已重新抓一次網頁、重新整理成一條條知識，請逐張決定要換成新的、還是保留舊的。
+        你手動改過的內容預設保留你的版本。
       </p>
 
       <!-- 內容縮水警告(空內容當一等公民錯誤):抓到的量掉一半以上,「移除」多半是抓不到不是真下架 -->
@@ -696,7 +725,7 @@
 
     <template #footer>
       <!-- 縮水時要求明確確認:此時所有「移除」已預設改為保留,使用者仍可逐張改成刪除,
-           但必須先勾這一項才放行,避免習慣性直接按主按鈕就清空整個來源 -->
+           但必須先勾這一項才放行,避免習慣性直接按主按鈕就清空整份資料 -->
       <el-checkbox v-if="diffData?.shrink" v-model="shrinkAcknowledged" class="diff-shrink-ack">
         我確認網頁真的改版了，仍要套用
       </el-checkbox>
@@ -715,7 +744,7 @@
   <!-- ── Chunk Edit Modal ───────────────────────────── -->
   <el-dialog
     v-model="chunkEditOpen"
-    :title="chunkEditMode === 'create' ? '新增卡片(手寫一條知識)' : '編輯卡片'"
+    :title="chunkEditMode === 'create' ? '新增知識(手寫一條知識)' : '編輯知識'"
     width="min(700px, 92vw)"
     :close-on-click-modal="false"
     destroy-on-close
@@ -771,7 +800,7 @@
       <!-- 客人問法會一起進 embedding(拉高命中率)。一定要看得到、改得掉:
            從「補知識」進來時這裡預填的是客人原話,可能夾著電話或姓名。 -->
       <div v-if="chunkForm.questions !== undefined" class="admin-field-group">
-        <AdminFieldLabel text="客人可能怎麼問（會幫 AI 更容易找到這張卡）" tight />
+        <AdminFieldLabel text="客人可能怎麼問（會幫 AI 更容易找到這一條）" tight />
         <el-select
           v-model="chunkForm.questions"
           multiple
@@ -783,7 +812,7 @@
           style="width: 100%"
         />
         <p class="text-xs text-muted" style="margin: 4px 0 0;">
-          這幾句會跟著卡片一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
+          這幾句會跟著知識一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
         </p>
       </div>
       <div class="admin-field-group">
@@ -814,7 +843,7 @@
           <AdminFieldLabel text="供 AI 使用" tight />
           <div class="chunk-usage-row">
             <el-switch v-model="chunkEnabled" />
-            <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這張卡回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
+            <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這一條回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
           </div>
         </div>
         <div class="admin-field-group">
@@ -831,7 +860,7 @@
             <span class="text-xs text-muted">到期當天結束後自動停用——適合募資、折扣這類有檔期的內容</span>
           </div>
           <p v-if="chunkExpiredAtMs && !chunkEnabled" class="chunk-expired-note">
-            這張卡已於 {{ ymdLabel(chunkExpiredAtMs) }} 到期自動停用；打開開關或設定新期限即可重新上架。
+            這一條已於 {{ ymdLabel(chunkExpiredAtMs) }} 到期自動停用；打開開關或設定新期限即可重新上架。
           </p>
         </div>
       </template>
@@ -885,8 +914,8 @@
         />
       </div>
       <p v-if="folderEditTarget" class="folder-form-hint">
-        目前底下 {{ countByFolder[folderEditTarget.id] ?? 0 }} 筆來源。
-        若刪除，底下的來源會自動移到「未分類」，<strong>不會</strong>被刪掉。
+        目前底下 {{ countByFolder[folderEditTarget.id] ?? 0 }} 筆資料。
+        若刪除，底下的資料會自動移到「未分類」，<strong>不會</strong>被刪掉。
       </p>
     </div>
     <template #footer>
@@ -917,7 +946,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, EditPen, FirstAidKit, Folder, FolderAdd, FolderOpened, Lock, Refresh, Search, Upload } from '@element-plus/icons-vue'
+import { Delete, EditPen, FirstAidKit, Folder, FolderOpened, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
 
@@ -937,7 +966,7 @@ interface SourceSummary {
   chunkCount: number
   refreshIntervalMinutes: number
   onChangeBehavior: 'notify' | 'log_only'
-  /** 所屬產品名；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
+  /** 所屬產品名；'' = 非單一產品資料。改動後要重建該資料索引才生效。 */
   productName: string
   /** type='url'：小幅文字變動是否自動套用 */
   urlAutoApply: boolean
@@ -951,6 +980,8 @@ interface ChunkRow {
   title: string
   content: string
   tags: string[]
+  /** 客人問法（會一起進 embedding）；編輯時要看得到、改得掉 */
+  questions: string[]
   status: string
   failureReason?: string
   manuallyEditedAtMs: number
@@ -992,7 +1023,7 @@ interface DiffData {
 }
 
 const { apiFetch, workspaceId, can } = useWorkspace()
-// 內容維護一律 agent+；來源/資料夾/知識卡目前同層級，分開判斷以便日後政策若拆分只改一處
+// 內容維護一律 agent+；資料/資料夾/知識目前同層級，分開判斷以便日後政策若拆分只改一處
 const canEditKb = computed(() => can('knowledge.write'))
 const canEditSources = computed(() => can('sources.write'))
 const canEditFolders = computed(() => can('folders.write'))
@@ -1173,9 +1204,9 @@ async function onFolderDrop(folderId: string | null) {
 const chunks = ref<ChunkRow[]>([])
 const detailLoading = ref(false)
 
-// ── 卡片品質「被動提示」:只標示、絕不自動攔截/刪除(判斷權在人) ──
+// ── 知識品質「被動提示」:只標示、絕不自動攔截/刪除(判斷權在人) ──
 /** 標題＋內容去空白合計 <10 字:placeholder/測試列等級,embedding 是雜訊會污染檢索 */
-/** 與知識庫體檢同一把尺（shared 常數）——兩邊門檻不同會出現「體檢說有、卡片卻沒標」 */
+/** 與知識庫體檢同一把尺（shared 常數）——兩邊門檻不同會出現「體檢說有、知識卻沒標」 */
 function isShortChunk(c: Pick<ChunkRow, 'content'>): boolean {
   return isShortChunkContent(c.content)
 }
@@ -1207,7 +1238,7 @@ const diffOpen = ref(false)
 const diffData = ref<DiffData | null>(null)
 const decisions = ref<Record<string, string>>({})
 
-// diff modal:「未變」的卡不需要人做決定,預設收合成一行摘要——大來源改一小處時,
+// diff modal:「未變」的卡不需要人做決定,預設收合成一行摘要——大資料改一小處時,
 // 使用者才不用在幾十條未變裡找那一條有變的
 const showUnchangedDiff = ref(false)
 const visibleDiffEntries = computed(() => {
@@ -1235,7 +1266,7 @@ const searchLoading = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchAbort: AbortController | null = null
 /**
- * 每次搜尋在後端要掃 1500 張卡,所以 debounce 訂 500ms 並取消上一發:
+ * 每次搜尋在後端要掃 1500 條,所以 debounce 訂 500ms 並取消上一發:
  * 300ms 的話打一句話會送出好幾發、每發都付一次全庫掃描的讀取費。
  */
 watch(searchKeyword, (kw) => {
@@ -1308,7 +1339,7 @@ const chunkTagInputVisible = ref(false)
 const chunkTagInputEl = ref<{ focus: () => void } | null>(null)
 
 /**
- * forceHealth:剛動過知識庫(匯入 / 刪來源 / 改卡 / 套用同步)時要跳過體檢節流,
+ * forceHealth:剛動過知識庫(匯入 / 刪資料 / 改卡 / 套用同步)時要跳過體檢節流,
  * 否則店家照著體檢清單修完、回來數字卻不動(以為沒生效)。純瀏覽的重載用節流版即可。
  */
 async function loadSources(forceHealth = false) {
@@ -1330,7 +1361,7 @@ async function loadSources(forceHealth = false) {
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '載入來源失敗', 'error')
+    showToast(err?.statusMessage || '載入資料失敗', 'error')
   }
   finally {
     loading.value = false
@@ -1361,7 +1392,7 @@ const emptyHealth = (): HealthResponse => ({
   aliasCandidateCount: 0,
 })
 const health = ref<HealthResponse>(emptyHealth())
-// 來源與卡片分開計:「1 個來源同步失敗」= 整批知識凍結,「1 張卡過短」= 小瑕疵,
+// 資料與知識分開計:「1 份資料同步失敗」= 整批知識凍結,「1 條過短」= 小瑕疵,
 // 加成同一個數字會把嚴重度抹平,店家看不出該先處理哪個。
 const healthSourceCount = computed(() =>
   health.value.failedSources.length
@@ -1374,10 +1405,94 @@ const healthChunkCount = computed(() =>
 const healthExpiredCount = computed(() => health.value.expiredChunks.count)
 const healthIssueCount = computed(() => healthSourceCount.value + healthChunkCount.value)
 
+// ── 「要處理的事」單一清單 ────────────────────────────
+// 取代原本三個並排的橫幅。每一項照房規寫成:結論(標題) + 不管它會怎樣(why) + 一顆按鈕。
+// tone 只有兩級:danger = 現在就在影響客人的回答;warning = 建議處理。
+// 排序 = 影響客人的程度,不是資料類型——店家要的是「先做哪個」。
+const todoOpen = ref(true)
+
+interface TodoItem {
+  id: string
+  tone: 'danger' | 'warning'
+  title: string
+  why: string
+  cta: string
+  loading?: boolean
+  action: () => void
+}
+
+const todoItems = computed<TodoItem[]>(() => {
+  const items: TodoItem[] = []
+  const h = health.value
+
+  if (h.failedSources.length) {
+    items.push({
+      id: 'failedSources',
+      tone: 'danger',
+      title: `有 ${h.failedSources.length} 份資料抓不到內容`,
+      why: '這幾份的內容沒有更新進 AI，客人問到相關問題會拿到過時或空的答案。',
+      cta: '去修',
+      action: () => openHealthList('failedSources'),
+    })
+  }
+  if (h.failedChunks.count) {
+    items.push({
+      id: 'failedChunks',
+      tone: 'danger',
+      title: `有 ${h.failedChunks.count} 條內容 AI 沒學起來`,
+      why: '存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
+      cta: '去看',
+      action: () => openHealthList('failedChunks'),
+    })
+  }
+  if (h.outdatedSources.length) {
+    items.push({
+      id: 'outdatedSources',
+      tone: 'warning',
+      title: `有 ${h.outdatedSources.length} 份資料的原始內容改過了`,
+      why: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
+      cta: '去比對',
+      action: () => openHealthList('outdatedSources'),
+    })
+  }
+  if (h.noProductSources.length) {
+    items.push({
+      id: 'noProductSources',
+      tone: 'warning',
+      title: `有 ${h.noProductSources.length} 份文件沒說是哪個產品`,
+      why: '客人指名問某一台時，AI 可能拿別台產品的內容回答。',
+      cta: '去設定',
+      action: () => openHealthList('noProductSources'),
+    })
+  }
+  if (h.shortChunks.count) {
+    items.push({
+      id: 'shortChunks',
+      tone: 'warning',
+      title: `有 ${h.shortChunks.count} 條內容太短`,
+      why: '太短的內容 AI 找到了也答不出東西，還可能擋住其他有用的內容。',
+      cta: '去看',
+      action: () => openHealthList('shortChunks'),
+    })
+  }
+  if (orphanCount.value > 0) {
+    items.push({
+      id: 'orphan',
+      tone: 'warning',
+      title: `有 ${orphanCount.value} 條舊版內容還沒歸檔`,
+      why: '這些是舊版本留下的、沒有歸在任何一份資料底下。整理一下就會出現在下面的清單裡。',
+      cta: '一鍵整理',
+      loading: migrating.value,
+      action: () => { if (canEditSources.value) void migrateOrphans() },
+    })
+  }
+  return items
+})
+
 /**
- * 體檢節流:loadSources 有十幾個呼叫點(建資料夾、改名、刪來源、搬卡…),每次都掃
- * 上千張卡的內容太貴,而體檢結果多半只在排程跑完或改過知識庫後才變。
- * 60 秒內重複呼叫直接跳過;真的需要立即更新(匯入完成、刪來源)用 force。
+ * 體檢節流:loadSources 有十幾個呼叫點(建資料夾、改名、刪資料、搬卡…),每次都掃
+ * 上千條的內容太貴,而體檢結果多半只在排程跑完或改過知識庫後才變。
+ * 60 秒內重複呼叫直接跳過;真的需要立即更新(匯入完成、刪資料)用 force。
  */
 const HEALTH_TTL_MS = 60_000
 let healthFetchedAt = 0
@@ -1396,12 +1511,12 @@ async function loadHealth(force = false) {
 
 type HealthCategory = 'failedSources' | 'outdatedSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
-  failedSources: { title: '來源同步失敗', hint: '這些來源自動同步一直失敗,知識卡停留在最後一次成功的內容。點進來源看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
-  outdatedSources: { title: '來源偵測到變動', hint: '網頁內容跟上次不一樣了。點進來源按「重新同步」看差異,決定要不要更新知識卡。' },
-  noProductSources: { title: '文件未設產品名', hint: '這些多卡的檔案來源沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進來源補上產品名。' },
-  failedChunks: { title: '卡片學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開卡片按「重新學習」可以重試。' },
-  shortChunks: { title: '卡片內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開卡片補內容或停用。' },
-  expiredChunks: { title: '卡片已過期停用', hint: '這些卡因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
+  failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
+  outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
+  noProductSources: { title: '文件未設產品名', hint: '這些多卡的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
+  failedChunks: { title: '知識學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
+  shortChunks: { title: '知識內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
+  expiredChunks: { title: '知識已過期停用', hint: '這些卡因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
 }
 const healthListOpen = ref(false)
 const healthListCategory = ref<HealthCategory>('failedSources')
@@ -1412,14 +1527,14 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
   const h = health.value
   const sourceName = (id: string | null) => sources.value.find(s => s.id === id)?.name ?? ''
   if (cat === 'failedSources') {
-    // 直接把失敗原因列出來(最常見是試算表沒分享給服務帳號),不必逐一點進來源才知道
+    // 直接把失敗原因列出來(最常見是試算表沒分享給服務帳號),不必逐一點進資料才知道
     return h.failedSources.map(s => ({ id: s.id, title: s.name, meta: s.reason ?? '', kind: 'source' as const }))
   }
   if (cat === 'outdatedSources') {
     return h.outdatedSources.map(s => ({ id: s.id, title: s.name, meta: '', kind: 'source' as const }))
   }
   if (cat === 'noProductSources') {
-    return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 張卡`, kind: 'source' as const }))
+    return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 條`, kind: 'source' as const }))
   }
   return h[cat].items.map(c => ({ id: c.id, title: c.title, meta: sourceName(c.sourceId), kind: 'chunk' as const }))
 })
@@ -1433,7 +1548,7 @@ const healthListTruncatedNote = computed(() => {
   }
   // 掃描達上限時計數本身就是低估的,不講清楚店家會以為「清完就沒事了」
   if (health.value.chunkScanTruncated) {
-    notes.push('知識卡數量較多,體檢只掃描了其中一部分,實際張數可能更多。')
+    notes.push('知識數量較多,體檢只掃描了其中一部分,實際張數可能更多。')
   }
   return notes.join(' ')
 })
@@ -1448,7 +1563,7 @@ async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }) {
   if (item.kind === 'source') {
     const src = sources.value.find(s => s.id === item.id)
     if (src) await selectSource(src)
-    else showToast('找不到這個來源(可能剛被刪除),請重新整理', 'error')
+    else showToast('找不到這份資料(可能剛被刪除),請重新整理', 'error')
   }
   else {
     await openChunkById(item.id)
@@ -1474,7 +1589,7 @@ const aliasSaving = ref('')
 const aliasCandidates = ref<AliasCandidate[]>([])
 const aliasPairs = ref<AliasPair[]>([])
 /**
- * 工具列徽章的數字。**來源是體檢端點**(進頁面就載入),不是這個視窗自己的清單——
+ * 工具列徽章的數字。**資料是體檢端點**(進頁面就載入),不是這個視窗自己的清單——
  * 只有開過視窗才有數字的話,使用者永遠沒有理由去點它,整個別名功能等於不存在。
  * 開過視窗後改用視窗內的即時清單(按完確認數字要馬上少一)。
  */
@@ -1609,7 +1724,7 @@ async function deleteFolderFromModal() {
   const target = folderEditTarget.value
   const count = countByFolder.value[target.id] ?? 0
   const msg = count
-    ? `要刪除「${target.name}」這個資料夾嗎？\n底下的 ${count} 筆來源會自動移到「未分類」，不會被刪除。`
+    ? `要刪除「${target.name}」這個資料夾嗎？\n底下的 ${count} 筆資料會自動移到「未分類」，不會被刪除。`
     : `要刪除「${target.name}」這個空資料夾嗎？`
   try {
     await ElMessageBox.confirm(msg, '刪除資料夾', {
@@ -1628,7 +1743,7 @@ async function deleteFolderFromModal() {
     for (const s of sources.value) {
       if (s.folderId === target.id) s.folderId = null
     }
-    showToast(count ? `已刪除資料夾，${count} 筆來源已移至未分類` : '已刪除空資料夾', 'success')
+    showToast(count ? `已刪除資料夾，${count} 筆資料已移至未分類` : '已刪除空資料夾', 'success')
     folderEditOpen.value = false
   }
   catch (err: any) {
@@ -1641,15 +1756,15 @@ async function deleteFolderFromModal() {
 
 async function selectSource(src: SourceSummary) {
   selectedId.value = src.id
-  indexPollStartedAt = 0 // 換來源重新起算輪詢時限
-  // 先清空再載入:否則標頭已換、卡片列表還是上一個來源的(快速切換會張冠李戴)
+  indexPollStartedAt = 0 // 換資料重新起算輪詢時限
+  // 先清空再載入:否則標頭已換、知識列表還是上一份資料的(快速切換會張冠李戴)
   chunks.value = []
   detailLoading.value = true
   try {
     await loadSourceDetail(src.id)
   }
   finally {
-    // 只有「仍然選著這個來源」才收 spinner:A 的 finally 不該關掉 B 正在跑的 loading
+    // 只有「仍然選著這份資料」才收 spinner:A 的 finally 不該關掉 B 正在跑的 loading
     if (selectedId.value === src.id) detailLoading.value = false
   }
 }
@@ -1657,8 +1772,8 @@ async function selectSource(src: SourceSummary) {
 async function loadSourceDetail(sourceId: string) {
   try {
     const res = await apiFetch<{ source: SourceSummary; chunks: ChunkRow[] }>(`/api/ai/sources/${sourceId}`)
-    // 過期回應防護:等待期間使用者已切到別的來源 → 這份回應作廢。
-    // 沒有這行的話,慢的舊請求晚到會把 A 的卡片/同步設定蓋進 B 的畫面(張冠李戴),
+    // 過期回應防護:等待期間使用者已切到別的資料 → 這份回應作廢。
+    // 沒有這行的話,慢的舊請求晚到會把 A 的知識/同步設定蓋進 B 的畫面(張冠李戴),
     // 此時按「儲存設定」還會把 A 的同步間隔寫進 B。
     if (selectedId.value !== sourceId) return
     // 用最新的 source 覆寫 list 裡的同一筆，保證 detail 不過時
@@ -1681,6 +1796,9 @@ async function loadSourceDetail(sourceId: string) {
     settingsBaseline.value = { ...settingsForm.value }
     productNameForm.value = res.source.productName
     productNameBaseline.value = res.source.productName
+    urlForm.value = res.source.url ?? ''
+    // 抓取失敗的 Sheet:把要分享的帳號先撈好，商家一眼就看到要加誰（不必再去開匯入視窗找）
+    if (res.source.failureReason && res.source.type === 'gsheet') void loadServiceAccountEmail()
   }
   catch (err: any) {
     showToast(err?.statusMessage || '載入細節失敗', 'error')
@@ -1688,10 +1806,72 @@ async function loadSourceDetail(sourceId: string) {
 }
 
 // ── 所屬產品（P1-1）─────────────────────────────────
-// 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這個來源的索引才生效。
+// 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這份資料的索引才生效。
 const productNameForm = ref('')
 const productNameBaseline = ref('')
 const savingProductName = ref(false)
+
+// ── 抓取失敗:就地修 ──────────────────────────────────
+// 兩種最常見原因,修的地方各自不同(一個在 Google 那邊、一個是網址換了),
+// 所以要把「該做什麼」和「做的工具」放在失敗訊息旁邊,而不是只印後端原文。
+const failureAdvice = computed(() => {
+  const s = selectedSource.value
+  if (!s?.failureReason) return { kind: 'other' as const, what: '' }
+  if (s.type === 'gsheet') {
+    return {
+      kind: 'gsheet' as const,
+      what: '最常見的原因是這份 Google 試算表沒有分享給下面這個帳號。到試算表按「共用」，把這個帳號加為「檢視者」，再回來按上方「立即同步」。',
+    }
+  }
+  if (s.type === 'url') {
+    return {
+      kind: 'url' as const,
+      what: '原本的網頁可能被移走或改網址了。確認新網址後貼在下面換掉，換好會自動重新抓一次；網頁只是暫時掛掉的話，按上方「重新同步」再試即可。',
+    }
+  }
+  return {
+    kind: 'other' as const,
+    what: '檔案或文字資料不會自動更新。內容有問題請重新匯入一次這份資料。',
+  }
+})
+
+const serviceAccountEmail = ref('')
+async function loadServiceAccountEmail() {
+  if (serviceAccountEmail.value) return
+  const res = await apiFetch<{ serviceAccountEmail: string }>('/api/ai/knowledge/gsheet-account').catch(() => null)
+  serviceAccountEmail.value = res?.serviceAccountEmail ?? ''
+}
+async function copyServiceAccount() {
+  try {
+    await navigator.clipboard.writeText(serviceAccountEmail.value)
+    showToast('已複製帳號', 'success')
+  }
+  catch {
+    showToast('複製失敗，請手動選取', 'error')
+  }
+}
+
+const urlForm = ref('')
+const savingUrl = ref(false)
+async function saveSourceUrl() {
+  if (!selectedId.value) return
+  const next = urlForm.value.trim()
+  savingUrl.value = true
+  try {
+    await apiFetch(`/api/ai/sources/${selectedId.value}`, { method: 'PUT', body: { url: next } })
+    showToast('網址已更新，正在重新抓取⋯', 'success')
+    // 換網址等於換一份內容:直接走既有的「重新同步」流程讓使用者確認差異
+    await loadSources(true)
+    await loadSourceDetail(selectedId.value)
+    await startResync()
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || err?.statusMessage || '更新網址失敗', 'error')
+  }
+  finally {
+    savingUrl.value = false
+  }
+}
 
 async function saveProductName() {
   if (!selectedId.value) return
@@ -1711,7 +1891,7 @@ async function saveProductName() {
       showToast(`已儲存；${res.indexed} 張學習成功 / ${res.failed} 張失敗，可再按一次重試`, 'error')
     }
     else {
-      showToast(`已儲存，AI 已重新學會這個來源的 ${res.indexed} 張卡`, 'success')
+      showToast(`已儲存，AI 已重新學會這份資料的 ${res.indexed} 條`, 'success')
     }
     await loadSourceDetail(selectedId.value)
     void loadHealth(true) // 「未設產品名」的計數要立刻反映
@@ -1725,9 +1905,9 @@ async function saveProductName() {
 }
 
 // ── 索引狀態輪詢 ─────────────────────────────────────
-// 卡片存檔後是 pending（「處理中，約 5–30 秒」），但畫面不會自己更新——使用者要
+// 知識存檔後是 pending（「處理中，約 5–30 秒」），但畫面不會自己更新——使用者要
 // 手動點來點去才看得到變成「可用」，會以為壞掉。有 pending 卡就每 5 秒刷新一次
-// 選中的來源，全部完成即停；上限 2 分鐘（真卡住的交給排程重試 + 手動重新整理）。
+// 選中的資料，全部完成即停；上限 2 分鐘（真卡住的交給排程重試 + 手動重新整理）。
 const INDEX_POLL_INTERVAL_MS = 5000
 const INDEX_POLL_MAX_MS = 2 * 60 * 1000
 let indexPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -1785,12 +1965,12 @@ async function deleteSource() {
   if (!selectedSource.value) return
   const src = selectedSource.value
 
-  // 二次確認強度依風險分級:只有 1 張卡(多為手寫條目)用一般確認即可,
-  // 多張卡的來源才要求打「刪除」二字——避免對小物件過度確認、對大物件確認不足
+  // 二次確認強度依風險分級:只有 1 條(多為手寫條目)用一般確認即可,
+  // 多條的資料才要求打「刪除」二字——避免對小物件過度確認、對大物件確認不足
   try {
     if (src.chunkCount <= 1) {
       await ElMessageBox.confirm(
-        `要刪除「${src.name}」嗎?底下 ${src.chunkCount} 張卡片會一併刪除,無法復原。`,
+        `要刪除「${src.name}」嗎?底下 ${src.chunkCount} 條知識會一併刪除,無法復原。`,
         '刪除確認',
         {
           confirmButtonText: '刪除',
@@ -1802,7 +1982,7 @@ async function deleteSource() {
     }
     else {
       await ElMessageBox.prompt(
-        `要刪除「${src.name}」這個來源，會連同底下 ${src.chunkCount} 張卡片全部刪除，無法復原。\n\n請在下方輸入「刪除」確認：`,
+        `要刪除「${src.name}」這份資料，會連同底下 ${src.chunkCount} 條知識全部刪除，無法復原。\n\n請在下方輸入「刪除」確認：`,
         '刪除確認',
         {
           confirmButtonText: '永久刪除',
@@ -1904,11 +2084,11 @@ async function startResync() {
   catch (err: any) {
     // 錯誤三要素:發生什麼 / 資料有沒有被動到 / 下一步。比對是唯讀的,可以誠實保證沒動到。
     if (err?.message === PREVIEW_JOB_CANCELLED) {
-      showToast('已取消重新同步;你的知識卡沒有被改動', 'success')
+      showToast('已取消重新同步;你的知識沒有被改動', 'success')
     }
     else {
       const reason = err?.data?.statusMessage || err?.statusMessage || err?.message || '重新整理沒有完成'
-      showToast(`${reason}。你的知識卡沒有被改動,可以再試一次;一直失敗的話,請把網頁內容複製下來用「貼上文字」重新匯入,或聯絡我們。`, 'error')
+      showToast(`${reason}。你的知識沒有被改動,可以再試一次;一直失敗的話,請把網頁內容複製下來用「貼上文字」重新匯入,或聯絡我們。`, 'error')
     }
   }
   finally {
@@ -1925,6 +2105,9 @@ async function syncGsheetNow() {
       { method: 'POST', body: {} },
     )
     await loadSourceDetail(selectedId.value)
+    // 同步成功也可能剛清掉失敗標記 → 一定要 force 重跑體檢。
+    // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
+    await loadSources(true)
     if (res.outcome === 'unchanged') {
       showToast('已是最新，無變動', 'success')
     }
@@ -1942,18 +2125,18 @@ async function syncGsheetNow() {
 
 async function applyDiff() {
   if (!diffData.value) return
-  // 一律套用回「算這份 diff 的那個來源」,不是「當下選中的來源」——重新同步改成背景作業後
-  // 可能跑好幾分鐘,期間使用者能點別的來源;用 selectedId 會把 A 的卡片建到 B 底下,
+  // 一律套用回「算這份 diff 的那份資料」,不是「當下選中的資料」——重新同步改成背景作業後
+  // 可能跑好幾分鐘,期間使用者能點別的資料;用 selectedId 會把 A 的知識建到 B 底下,
   // 還會用 A 的網頁指紋覆蓋 B 的變動偵測基準。
   const targetId = diffData.value.sourceId
   if (!targetId) return
   if (selectedId.value !== targetId) {
-    const targetName = diffData.value.sourceName || '原來源'
+    const targetName = diffData.value.sourceName || '原資料'
     try {
       await ElMessageBox.confirm(
-        `這份差異是「${targetName}」的比對結果,會套用回該來源(不是你目前選中的來源)。要繼續嗎?`,
+        `這份差異是「${targetName}」的比對結果,會套用回該資料(不是你目前選中的資料)。要繼續嗎?`,
         '確認套用對象',
-        { confirmButtonText: '套用到原來源', cancelButtonText: '取消', type: 'warning' },
+        { confirmButtonText: '套用到原資料', cancelButtonText: '取消', type: 'warning' },
       )
     }
     catch {
@@ -1992,7 +2175,7 @@ async function applyDiff() {
     diffOpen.value = false
     diffData.value = null
     await loadSources(true)
-    // 重載「被套用的那個來源」;使用者若已切到別的來源,那邊的畫面不受影響
+    // 重載「被套用的那份資料」;使用者若已切到別的資料,那邊的畫面不受影響
     if (selectedId.value === targetId) await loadSourceDetail(targetId)
   }
   catch (err: any) {
@@ -2009,7 +2192,7 @@ const reindexingAll = ref(false)
 async function reindexAll() {
   try {
     await ElMessageBox.confirm(
-      '讓 AI 把這個工作區的所有知識卡重新學習一次(卡片內容不會變)。通常只在系統升級後需要;卡片多時要花幾分鐘,期間 AI 照常運作。',
+      '讓 AI 把這個工作區的所有知識重新學習一次(知識內容不會變)。通常只在系統升級後需要;知識多時要花幾分鐘,期間 AI 照常運作。',
       '全部重新學習',
       { confirmButtonText: '開始', cancelButtonText: '取消', type: 'warning' },
     )
@@ -2030,7 +2213,7 @@ async function reindexAll() {
       failed += res.failed
       cursor = res.nextCursor
     } while (cursor)
-    showToast(`重新學習完成:${indexed} 張成功${failed ? `、${failed} 張失敗(可在卡片上個別重試)` : ''}`, failed ? 'warning' : 'success')
+    showToast(`重新學習完成:${indexed} 張成功${failed ? `、${failed} 張失敗(可在知識上個別重試)` : ''}`, failed ? 'warning' : 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
@@ -2053,7 +2236,7 @@ async function onImported(sourceId: string | null) {
   }
 }
 
-// ── 一鍵整理舊版未分組卡片 ───────────────────────────
+// ── 一鍵整理舊版未分組知識 ───────────────────────────
 async function migrateOrphans() {
   migrating.value = true
   try {
@@ -2075,7 +2258,7 @@ async function migrateOrphans() {
 
 // ── 重新命名（用 ElMessageBox.prompt） ───────────────
 // 名稱直接在表頭 inline 編輯（跟其他編輯頁一致）：Enter 或失焦即存。
-// selectedSource 是唯讀 computed，故用 nameDraft 暫存，並隨選取的來源同步。
+// selectedSource 是唯讀 computed，故用 nameDraft 暫存，並隨選取的資料同步。
 const nameDraft = ref('')
 watch(() => selectedSource.value?.name, (n) => { nameDraft.value = n ?? '' }, { immediate: true })
 
@@ -2100,10 +2283,10 @@ async function commitName() {
   finally { savingName = false }
 }
 
-// ── 新增手寫卡片 ─────────────────────────────────────
+// ── 新增手寫知識 ─────────────────────────────────────
 function openCreateManual() {
-  // 每次重開都要清掉「待銷案的問句」:從 ?q= 進來卻放棄、之後自己手寫另一張卡時,
-  // 殘留的舊問句會讓不相干的卡片把監控頁案例誤標成已處理
+  // 每次重開都要清掉「待銷案的問句」:從 ?q= 進來卻放棄、之後自己手寫另一條時,
+  // 殘留的舊問句會讓不相干的知識把監控頁案例誤標成已處理
   pendingResolveQuery.value = ''
   chunkEditMode.value = 'create'
   chunkEditingId.value = null
@@ -2125,7 +2308,9 @@ function openEditChunk(chunk: ChunkRow) {
     title: chunk.title,
     content: chunk.content,
     tags: [...(chunk.tags ?? [])],
-    questions: undefined,
+    // 載入既有問法（以前傳 undefined＝欄位不顯示，結果從「補知識」存進去的客人原話
+    // 改不掉；那句話會一直被 AI 學著，可能還夾著電話姓名）
+    questions: [...(chunk.questions ?? [])],
   }
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
@@ -2189,6 +2374,39 @@ async function reindexChunkFromModal() {
   }
 }
 
+/**
+ * 存完知識就地試問一次,把「AI 現在答不答得出來」直接講給使用者聽。
+ *
+ * 為什麼要有:以前存好只知道「已建立」,要確認 AI 真的會用得換頁去「測試對話」重打一次;
+ * 而系統建議那條路(採用並學習)早就會自動試答並回報——同一件事不該兩種待遇。
+ * 用客人問法優先(那才是客人真的會打的句子),沒有就退回標題。
+ * 背景跑、不擋畫面;失敗完全靜默(這是加值資訊,不是必要步驟)。
+ */
+async function verifyChunkAnswerable(title: string, question?: string) {
+  const query = (question || title || '').trim()
+  if (!query) return
+  try {
+    const res = await apiFetch<{ timedOut: boolean; decision: string; confidence: number }>(
+      '/api/ai/knowledge/verify',
+      { method: 'POST', body: { query } },
+    )
+    if (res.timedOut) return
+    if (res.decision === 'answered') {
+      showToast(`AI 已經學會了——用「${query.slice(0, 14)}」試問，答得出來`, 'success')
+    }
+    else if (res.decision === 'disambiguate') {
+      showToast('已學會。這題和既有內容相近，AI 會先問客人是指哪一個再回答', 'success')
+    }
+    else {
+      // 卡存好了但試答仍答不出＝還沒真的解決,用警示色而不是綠色
+      showToast('知識已存好，但試問這題 AI 還是答不出來——建議把客人的問法補上，或到「測試對話」看細節', 'warning')
+    }
+  }
+  catch {
+    // 驗證失敗不影響存檔結果,不打擾
+  }
+}
+
 async function saveChunk() {
   const t = chunkForm.value.title.trim()
   const c = chunkForm.value.content.trim()
@@ -2196,15 +2414,20 @@ async function saveChunk() {
   chunkSaving.value = true
   try {
     const body: Record<string, unknown> = { title: t, content: c, tags: chunkForm.value.tags }
-    if (chunkForm.value.questions?.length) body.questions = chunkForm.value.questions
+    // 只要欄位有出現在畫面上就照送（含清成空陣列）——用 length 判斷的話，
+    // 使用者把夾了個資的問法全部刪掉會送不出去，等於刪不掉。
+    // undefined = 這次沒有這個欄位，後端保留既有值。
+    if (chunkForm.value.questions !== undefined) body.questions = chunkForm.value.questions
     if (chunkEditMode.value === 'create') {
-      // 建立新手寫卡片（後端會自動建一個 type='manual' 的 source 包它）
+      // 建立新手寫知識（後端會自動建一個 type='manual' 的 source 包它）
       const res = await apiFetch<{ id: string; sourceId: string }>('/api/ai/knowledge/create', {
         method: 'POST',
         body,
       })
       showToast('已建立', 'success')
       chunkEditOpen.value = false
+      // 就地驗證:不用再換頁去「測試對話」重打一次(與系統建議那條路的行為對齊)
+      void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
       // 從監控頁 ?q= 進來的:建完卡自動把同問題的轉真人案例標已處理,不用回去逐筆按
       if (pendingResolveQuery.value) {
         const resolvedQ = pendingResolveQuery.value
@@ -2238,6 +2461,7 @@ async function saveChunk() {
       }
       showToast('已儲存', 'success')
       chunkEditOpen.value = false
+      void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
       if (selectedId.value) await loadSourceDetail(selectedId.value)
       await loadSources(true) // 因為 manual source 名稱可能跟著變
     }
@@ -2255,8 +2479,8 @@ async function deleteChunkFromModal() {
   const title = chunkForm.value.title || '(未命名)'
   try {
     await ElMessageBox.confirm(
-      `要刪除「${title}」這張卡片嗎？無法復原。`,
-      '刪除卡片',
+      `要刪除「${title}」這一條片嗎？無法復原。`,
+      '刪除知識',
       {
         confirmButtonText: '刪除',
         cancelButtonText: '取消',
@@ -2313,7 +2537,7 @@ function typeLabel(t: string) {
   return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Google Sheet' : '手打'
 }
 function statusLabel(s: string) {
-  return s === 'ready' ? '可用' : s === 'fetching' ? '抓取中' : s === 'splitting' ? '切卡中' : '失敗'
+  return s === 'ready' ? '可用' : s === 'fetching' ? '抓取中' : s === 'splitting' ? '整理中' : '失敗'
 }
 function chunkStatusLabel(s: string) {
   return s === 'indexed' ? '可用' : s === 'pending' ? '處理中' : s === 'disabled' ? '已停用' : '失敗'
@@ -2334,7 +2558,7 @@ function statusChipTone(src: SourceSummary): 'success' | 'warning' | 'error' | '
 }
 function metaText(src: SourceSummary) {
   const parts: string[] = []
-  parts.push(`${src.chunkCount} 張卡`)
+  parts.push(`${src.chunkCount} 條`)
   if (src.lastFetchedAtMs) parts.push(`同步：${relativeTime(src.lastFetchedAtMs)}`)
   return parts.join(' · ')
 }
@@ -2370,7 +2594,7 @@ onMounted(async () => {
     return
   }
 
-  // 測試對話頁「編輯」帶 ?chunkId=:反查所屬來源,自動選取並開啟該卡的編輯視窗
+  // 測試對話頁「編輯」帶 ?chunkId=:反查所屬資料,自動選取並開啟該卡的編輯視窗
   const chunkId = String(route.query.chunkId ?? '').trim()
   if (chunkId) {
     await openChunkById(chunkId)
@@ -2378,7 +2602,7 @@ onMounted(async () => {
     return
   }
 
-  // 匯入完成帶 ?sourceId=:自動選中剛匯入的來源,讓使用者直接看到成果
+  // 匯入完成帶 ?sourceId=:自動選中剛匯入的資料,讓使用者直接看到成果
   const sourceId = String(route.query.sourceId ?? '').trim()
   if (sourceId) {
     const src = sources.value.find(s => s.id === sourceId)
@@ -2398,12 +2622,12 @@ async function openChunkById(chunkId: string) {
   try {
     const info = await apiFetch<{ id: string; sourceId: string | null }>(`/api/ai/knowledge/${chunkId}`)
     if (!info.sourceId) {
-      showToast('這張卡尚未歸入任何來源,請先用「一鍵整理」歸檔', 'error')
+      showToast('這一條尚未歸入任何資料,請先用「一鍵整理」歸檔', 'error')
       return
     }
     const src = sources.value.find(s => s.id === info.sourceId)
     if (!src) {
-      showToast('找不到這張卡所屬的來源(可能已被刪除)', 'error')
+      showToast('找不到這一條所屬的資料(可能已被刪除)', 'error')
       return
     }
     await selectSource(src)
@@ -2411,7 +2635,7 @@ async function openChunkById(chunkId: string) {
     if (chunk) openEditChunk(chunk)
   }
   catch {
-    showToast('找不到這張卡(可能已被刪除)', 'error')
+    showToast('找不到這一條(可能已被刪除)', 'error')
   }
 }
 </script>

@@ -203,7 +203,7 @@ export default defineEventHandler(async (event) => {
   }
   else if (type === 'text') {
     const text = String(body?.text ?? '').trim()
-    if (!text) throw createError({ statusCode: 400, statusMessage: '請輸入要切片的文字' })
+    if (!text) throw createError({ statusCode: 400, statusMessage: '請輸入要整理的文字' })
     if (text.length > MAX_RAW_TEXT_LEN) {
       throw createError({ statusCode: 400, statusMessage: `文字超過 ${MAX_RAW_TEXT_LEN} 字上限` })
     }

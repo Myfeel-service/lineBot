@@ -48,7 +48,7 @@
               <p class="ai-section-hint ai-checklist-title">上線前建議完成:</p>
               <div class="ai-check-item">
                 <span><el-icon :color="kbReady ? 'var(--brand-green-text)' : 'var(--text-muted)'"><component :is="kbReady ? CircleCheckFilled : CircleCheck" /></el-icon></span>
-                <span>知識庫有內容(目前 {{ cardCount ?? '—' }} 張卡)</span>
+                <span>知識庫有內容(目前 {{ cardCount ?? '—' }} 條)</span>
                 <NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="ai-status-link">去補知識 →</NuxtLink>
               </div>
               <div class="ai-check-item">
@@ -167,7 +167,7 @@
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              客人問價格 / 購買、但知識卡裡沒有對應連結時,AI 會用這個網址回覆「最新價格與購買請見…」。留空則不啟用。
+              客人問價格 / 購買、但知識裡沒有對應連結時,AI 會用這個網址回覆「最新價格與購買請見…」。留空則不啟用。
             </p>
             <el-input
               v-model="form.shopUrl"
@@ -402,7 +402,7 @@
                   :step="0.05"
                 />
                 <p class="ai-section-hint">
-                  AI 找到最接近的那張知識卡,必須夠相關(相關度 ≥ 此值)才准開口回答;不夠相關就轉真人,不硬掰。
+                  AI 找到最接近的那一條知識,必須夠相關(相關度 ≥ 此值)才准開口回答;不夠相關就轉真人,不硬掰。
                   預設 0.7;如果客人問題常常只差一點點(0.65–0.69)就被擋下來、老是轉真人,可以把它調低一些。
                 </p>
               </div>
@@ -418,7 +418,7 @@
             </div>
             <div class="card-section-stack">
               <p class="ai-section-hint">
-                當客人問題太籠統、知識庫剛好有好幾張卡都沾得上邊時,AI 會主動反問、給客人幾個按鈕點選,
+                當客人問題太籠統、知識庫剛好有好幾條都沾得上邊時,AI 會主動反問、給客人幾個按鈕點選,
                 而不是硬答或直接轉真人。什麼時候該反問,會依你選的「回答風格」自動設定,通常不用自己調。
               </p>
               <div class="admin-field-group">
@@ -438,7 +438,7 @@
                   :step="0.05"
                   :disabled="!form.disambiguation.enabled"
                 />
-                <p class="ai-section-hint">如果最相關的那張卡相關度太低(低於此值),代表知識庫其實沒有對應內容,就不反問、照一般規則處理。</p>
+                <p class="ai-section-hint">如果最相關的那一條相關度太低(低於此值),代表知識庫其實沒有對應內容,就不反問、照一般規則處理。</p>
               </div>
               <div class="admin-field-group">
                 <AdminFieldLabel :text="`反問上限(最相關卡 <):${form.disambiguation.top1Max.toFixed(2)}`" tight />
@@ -449,10 +449,10 @@
                   :step="0.05"
                   :disabled="!form.disambiguation.enabled"
                 />
-                <p class="ai-section-hint">如果最相關的那張卡相關度夠高(高於此值),代表答案很明確,就不反問、直接回答。</p>
+                <p class="ai-section-hint">如果最相關的那一條相關度夠高(高於此值),代表答案很明確,就不反問、直接回答。</p>
               </div>
               <div class="admin-field-group">
-                <AdminFieldLabel :text="`前兩張卡差距小於:${form.disambiguation.maxSpread.toFixed(2)}`" tight />
+                <AdminFieldLabel :text="`前兩條差距小於:${form.disambiguation.maxSpread.toFixed(2)}`" tight />
                 <el-slider
                   v-model="form.disambiguation.maxSpread"
                   :min="0"
@@ -460,7 +460,7 @@
                   :step="0.01"
                   :disabled="!form.disambiguation.enabled"
                 />
-                <p class="ai-section-hint">最相關的前兩張卡分數很接近(差距小於此值)時,才算「分不出客人要問哪張」而反問;數字調越大越容易反問。</p>
+                <p class="ai-section-hint">最相關的前兩條分數很接近(差距小於此值)時,才算「分不出客人要問哪一條」而反問;數字調越大越容易反問。</p>
               </div>
               <div class="admin-field-group">
                 <AdminFieldLabel text="最多選項數" tight />
@@ -560,7 +560,7 @@
                   <el-option label="Gemini 2.5 Flash Lite(更省)" value="gemini-2.5-flash-lite" />
                 </el-select>
                 <p class="ai-section-hint">
-                  Embedding 模型固定為 gemini-embedding-001(768 dim);切換會使所有知識卡索引失效,不開放調整。
+                  Embedding 模型固定為 gemini-embedding-001(768 dim);切換會使所有知識索引失效,不開放調整。
                 </p>
               </div>
               <div class="admin-field-group">

@@ -108,7 +108,7 @@
                   <span class="sa-cost-guide__when">你上傳或整理資料時才會用到</span>
                 </div>
                 <ul class="sa-cost-guide__list">
-                  <li><b>整理文件</b>：把 PDF／文件拆成一張張知識卡 <span class="sa-cost-guide__price">一份約 NT$2–5</span></li>
+                  <li><b>整理文件</b>：把 PDF／文件拆成一條條知識 <span class="sa-cost-guide__price">一份約 NT$2–5</span></li>
                   <li><b>掃描檔轉文字</b>：圖片型 PDF 先辨識成文字，最貴 <span class="sa-cost-guide__price">一份約 NT$5–10</span></li>
                 </ul>
                 <div class="sa-cost-guide__foot sa-cost-guide__foot--warn">⚠ 重傳同一份會重算重收，別重複上傳沒改的檔</div>

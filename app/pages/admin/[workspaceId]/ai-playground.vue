@@ -169,7 +169,7 @@
                     （{{ relevantThresholdLabel(turn.result) }} {{ pct(relevantThreshold(turn.result)) }}）
                   </span>
                   <span class="pg-meta text-muted">
-                    · 命中 {{ turn.result.sources.length }} 張卡
+                    · 命中 {{ turn.result.sources.length }} 條
                   </span>
                   <el-button
                     v-if="turn.result.sources.length || turn.result.debugPrompt"
@@ -431,7 +431,7 @@ function resetConversation() {
 }
 
 function goEditChunk(chunkId: string) {
-  // 帶 chunkId 過去；來源頁會反查所屬來源、自動選取並開啟該卡的編輯視窗。
+  // 帶 chunkId 過去；資料頁會反查所屬資料、自動選取並開啟該卡的編輯視窗。
   // 開新分頁：整頁跳轉會弄丟這裡的整段測試對話，修完卡回來就無法接著驗證。
   const href = router.resolve(`/admin/${workspaceId.value}/knowledge/sources?chunkId=${encodeURIComponent(chunkId)}`).href
   window.open(href, '_blank')
@@ -447,7 +447,7 @@ function queryForTurn(idx: number): string {
 }
 
 function goAddKnowledge(q: string) {
-  // 同監控頁「補知識」：來源頁自動開新增手寫視窗並預填。開新分頁保留測試對話。
+  // 同監控頁「補知識」：資料頁自動開新增手寫視窗並預填。開新分頁保留測試對話。
   const suffix = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''
   const href = router.resolve(`/admin/${workspaceId.value}/knowledge/sources${suffix}`).href
   window.open(href, '_blank')
