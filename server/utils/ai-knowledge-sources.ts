@@ -165,7 +165,7 @@ export async function listChunksBySource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-): Promise<Array<{ id: string; title: string; content: string; tags: string[]; status: string; failureReason?: string; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
+): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
@@ -177,6 +177,9 @@ export async function listChunksBySource(
       title: String(data?.title ?? ''),
       content: String(data?.content ?? ''),
       tags: Array.isArray(data?.tags) ? data.tags.map(String) : [],
+      // 問法會一起進 embedding，是檢索命中的關鍵。不回傳的話編輯畫面看不到也改不掉——
+      // 從「補知識」帶進來的客人原話（可能含電話姓名）就永遠留在那張卡上。
+      questions: Array.isArray(data?.questions) ? data.questions.map(String) : [],
       status: String(data?.status ?? 'pending'),
       ...(data?.failureReason ? { failureReason: String(data.failureReason) } : {}),
       isOverview: data?.isOverview === true,
@@ -227,6 +230,13 @@ export interface UpdateSourceSettingsInput {
   productName?: string
   /** type='url'：小幅變動是否自動套用 */
   urlAutoApply?: boolean
+  /**
+   * type='url' 專用：改網址（原網頁被搬走 / 換網域）。
+   * 沒有這個欄位的話，網頁一搬走這個來源就只能刪掉重新匯入——連帶失去手動編輯過的卡片。
+   * 改網址等於換了一份內容：contentHash / pendingHash / outdatedAt 一併重設，
+   * 否則會拿舊網址的指紋去比新網址，變動偵測永遠算錯。
+   */
+  url?: string
 }
 
 /**
@@ -262,6 +272,21 @@ export async function updateSourceSettings(
   if (typeof input.productName === 'string') {
     const clean = input.productName.trim().slice(0, 60)
     update.productName = clean || FieldValue.delete()
+  }
+  // 改網址：只有 url 型來源可改。換了網址就是換了一份內容 → 比對基準全部重設，
+  // 並清掉失敗標記（原網址 404 才要改網址，改完就不該還顯示失敗）。
+  if (typeof input.url === 'string' && input.url.trim() && source.data.type === 'url') {
+    const nextUrl = input.url.trim().slice(0, 2000)
+    if (!/^https?:\/\//i.test(nextUrl)) {
+      throw createError({ statusCode: 400, statusMessage: '網址要以 http:// 或 https:// 開頭' })
+    }
+    if (nextUrl !== source.data.url) {
+      update.url = nextUrl
+      update.contentHash = ''
+      update.pendingHash = FieldValue.delete()
+      update.outdatedAt = null
+      Object.assign(update, buildSourceClearFailure(source.data.status))
+    }
   }
 
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update(update)
@@ -300,4 +325,34 @@ export async function clearSourceOutdated(
     outdatedAt: null,
     updatedAt: FieldValue.serverTimestamp(),
   })
+}
+
+/**
+ * 抓取／同步成功後要清掉的失敗標記。
+ *
+ * 為什麼要有這支：知識庫體檢的「來源同步失敗」紅字看的是 `status:'failed'` 與
+ * `failureReason`。商家把 Google Sheet 分享權限修好、或網頁恢復了，**同步其實已經成功，
+ * 但只要沒清這兩個欄位，紅字就永遠在**——使用者做完所有正確動作也無法確認自己修好了，
+ * 只能反覆重做。所以每一條「成功」的路徑（排程檢查、手動立即同步、手動套用變更）
+ * 都要清一次，共用這一份定義。
+ *
+ * `FieldValue.delete()` 對不存在的欄位是 no-op，可以無條件呼叫。
+ */
+export function buildSourceClearFailure(currentStatus?: string) {
+  return {
+    failureReason: FieldValue.delete(),
+    checkFailCount: FieldValue.delete(),
+    ...(currentStatus === 'failed' ? { status: 'ready' as const } : {}),
+  }
+}
+
+/** 同上，直接寫進 Firestore；失敗只 log（清旗標不該讓主流程失敗） */
+export async function clearSourceFailure(
+  db: Firestore,
+  sourceId: string,
+  currentStatus?: string,
+): Promise<void> {
+  await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+    .update(buildSourceClearFailure(currentStatus))
+    .catch(e => console.warn(`[sources] ${sourceId} clearFailure failed:`, e))
 }

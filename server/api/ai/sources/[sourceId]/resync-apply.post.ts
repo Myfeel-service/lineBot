@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
+  buildSourceClearFailure,
   clearSourceOutdated,
   countSourceChunks,
   getSource,
@@ -241,6 +242,10 @@ export default defineEventHandler(async (event) => {
     lastFetchedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     ...(bodyHash ? { contentHash: bodyHash } : {}),
+    // 手動套用變更＝這個來源現在是好的，把失敗標記一起清掉。
+    // 不清的話只能等下一次排程成功檢查才會清，而設成「不偵測」的來源永遠不會被排程撈到
+    // → 體檢紅字永久卡著。
+    ...buildSourceClearFailure(source.data.status),
   })
   await clearSourceOutdated(db, sourceId)
 

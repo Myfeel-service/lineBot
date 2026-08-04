@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { getSource } from '~~/server/utils/ai-knowledge-sources'
+import { clearSourceFailure, getSource } from '~~/server/utils/ai-knowledge-sources'
 import { syncGoogleSheetSource } from '~~/server/utils/gsheet-sync'
 
 /**
@@ -22,5 +22,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const r = await syncGoogleSheetSource(db, workspaceId, sourceId, source.data)
+  // 手動同步成功也要清失敗標記——否則商家修好分享權限、按了「立即同步」成功了，
+  // 體檢的「來源同步失敗」還在，等於做對了卻看不到結果。
+  await clearSourceFailure(db, sourceId, source.data.status)
   return { sourceId, ...r }
 })

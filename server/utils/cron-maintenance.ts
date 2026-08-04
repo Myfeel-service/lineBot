@@ -13,6 +13,8 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import {
   KNOWLEDGE_SOURCES_COLLECTION,
+  buildSourceClearFailure,
+  clearSourceFailure,
   markSourceOutdated,
 } from './ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
@@ -83,6 +85,10 @@ async function checkOneSource(
     if (data.type === 'gsheet') {
       if (data.gsheetAutoApply === false) return { sourceId, outcome: 'unchanged' }
       const r = await syncGoogleSheetSource(db, data.workspaceId, sourceId, data)
+      // 同步成功就清掉失敗標記（連 unchanged 也要清）。少了這段，商家把 Sheet 分享權限
+      // 修好、同步其實已經成功，體檢仍永遠顯示「來源同步失敗」——做對了也看不到結果。
+      // 注意不能沿用下面 url 分支的 clearFailure：那個變數宣告在本分支的 return 之後。
+      await clearSourceFailure(db, sourceId, data.status)
       if (r.outcome === 'unchanged') return { sourceId, outcome: 'unchanged' }
       // 自動套用後給一份摘要通知——自動化不等於無聲,管理員要知道知識庫剛剛變了什麼
       notifyKnowledgeSourceEvent(data.workspaceId, [
@@ -100,15 +106,8 @@ async function checkOneSource(
     const extracted = await extractUrlText(data.url)
     const newHash = await sha256(extracted.text)
 
-    // 檢查成功：清掉先前的失敗標記。FieldValue.delete() 對不存在的欄位是 no-op,
-    // 不需要條件判斷(舊寫法 keys off 讀取時的快照,並發寫入的標記會漏清)。
-    // status 曾被本任務標成 'failed'(連續失敗 ≥3)的也要復原——否則來源永遠顯示
-    // 「失敗」且失敗原因已被清掉,使用者無從解釋、只能重新匯入。
-    const clearFailure = {
-      failureReason: FieldValue.delete(),
-      checkFailCount: FieldValue.delete(),
-      ...(data.status === 'failed' ? { status: 'ready' as const } : {}),
-    }
+    // 檢查成功：清掉先前的失敗標記（說明見 buildSourceClearFailure）
+    const clearFailure = buildSourceClearFailure(data.status)
 
     // 首次觀測（匯入時前端沒帶 hash → contentHash 為空）：只存 baseline,不標 outdated。
     // 內容並沒有「變」,只是還沒有比較基準;沒有這個分支的話,每個新 URL 來源
