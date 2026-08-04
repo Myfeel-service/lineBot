@@ -27,6 +27,15 @@
     <p v-else-if="!lastScanAtMs" class="kb-suggest-empty">
       還沒分析過。AI 開始服務客人後，系統會自動找出「客人問了但答不出來」的主題並擬好草稿。
     </p>
+    <!-- 「沒有建議」有兩種完全不同的意思，講錯就是騙人：
+         (a) 客人問的 AI 都答得出來
+         (b) 有人被問倒了，只是同一類還沒被問到兩次（門檻）——實測 8/04 就是這種：
+             12 位客人沒被答到，畫面卻說「都答得出來」。 -->
+    <p v-else-if="gapEvents > 0" class="kb-suggest-empty">
+      最近 30 天有 <strong>{{ gapEvents }}</strong> 個問題 AI 答不出來，但還沒有同一類問題被問到兩次以上——
+      系統要看到重複才會幫你擬草稿。只被問過一次的，可以在
+      <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">用量 / 監控</NuxtLink>的案例清單直接補。
+    </p>
     <p v-else class="kb-suggest-empty">目前沒有待處理的建議——最近客人問的，AI 都答得出來。</p>
 
     <p class="kb-suggest-foot">
@@ -164,7 +173,7 @@ const emit = defineEmits<{
   (e: 'accepted'): void
 }>()
 
-const { apiFetch, can } = useWorkspace()
+const { apiFetch, can, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
 
 const canEdit = computed(() => can('knowledge.write'))
@@ -172,6 +181,8 @@ const canEdit = computed(() => can('knowledge.write'))
 const loaded = ref(false)
 const items = ref<SuggestionRow[]>([])
 const lastScanAtMs = ref(0)
+/** 上次掃描窗口內「AI 答不出來」的事件數:用來分辨「沒缺口」與「有缺口但還沒重複」 */
+const gapEvents = ref(0)
 const scanRequested = ref(false)
 const refreshing = ref(false)
 const dismissingId = ref<string | null>(null)
@@ -207,11 +218,12 @@ async function load() {
   try {
     const res = await apiFetch<{
       items: SuggestionRow[]
-      scan: { lastScanAtMs: number; requested: boolean; lastError: string }
+      scan: { lastScanAtMs: number; requested: boolean; lastError: string; lastScanGapEvents: number }
     }>('/api/ai/knowledge/suggestions')
     items.value = res.items ?? []
     lastError.value = res.scan?.lastError ?? ''
     lastScanAtMs.value = res.scan?.lastScanAtMs ?? 0
+    gapEvents.value = res.scan?.lastScanGapEvents ?? 0
     scanRequested.value = !!res.scan?.requested
   }
   catch {

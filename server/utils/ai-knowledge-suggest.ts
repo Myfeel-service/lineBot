@@ -537,6 +537,14 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
 interface ScanStateEntry {
   lastScanAt?: string
   requestedAt?: string
+  /**
+   * 上次掃描時窗口內「AI 答不出來」的事件數。
+   *
+   * 為什麼要存:沒有建議有兩種完全不同的意思——(a) 客人問的 AI 都答得出來,
+   * (b) 有人被問倒了,只是同一類還沒被問到 2 次(門檻)。畫面原本一律說成 (a),
+   * 那在 (b) 的情況是假話——實測 8/04:12 位客人沒被答到,畫面卻說「都答得出來」。
+   */
+  lastScanGapEvents?: number
   /** 上次掃描失敗的時間（成功時清掉）：讓 UI 說得出「掃了但失敗」而不是假裝成功 */
   lastErrorAt?: string
   lastError?: string
@@ -551,6 +559,8 @@ export async function getGapScanState(db: Firestore, workspaceId: string): Promi
   lastScanAtMs: number
   requested: boolean
   lastError: string
+  /** 上次掃描窗口內「AI 答不出來」的事件數，讓空狀態說得出真話 */
+  lastScanGapEvents: number
 }> {
   const doc = await db.collection('cronState').doc(SCAN_STATE_DOC).get()
   const entry = ((doc.data() ?? {}) as Record<string, ScanStateEntry>)[workspaceId] ?? {}
@@ -562,6 +572,7 @@ export async function getGapScanState(db: Firestore, workspaceId: string): Promi
     requested: requestedMs > lastScanAtMs,
     // 只有「比上次成功掃描更新」的錯誤才算還沒解決
     lastError: errorAtMs > lastScanAtMs ? String(entry.lastError ?? '掃描失敗') : '',
+    lastScanGapEvents: Number(entry.lastScanGapEvents ?? 0),
   }
 }
 
@@ -657,10 +668,12 @@ export async function scanKnowledgeGaps(db: Firestore) {
       { merge: true },
     )
     try {
-      results[c.ws] = await scanWorkspaceKnowledgeGaps(db, c.ws)
+      const tally = await scanWorkspaceKnowledgeGaps(db, c.ws)
+      results[c.ws] = tally
       await stateRef.set({
         [c.ws]: {
           lastScanAt: new Date().toISOString(),
+          lastScanGapEvents: tally.events,
           leaseUntil: FieldValue.delete(),
           lastErrorAt: FieldValue.delete(),
           lastError: FieldValue.delete(),
