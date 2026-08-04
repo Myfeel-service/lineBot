@@ -110,7 +110,8 @@
       "Bash(mkdir -p form)",
       "Bash(unzip -q \"/Users/kevin/Downloads/07.PAYUNi_信用卡Token API申請書.xlsx\")",
       "Bash(git check-ignore *)",
-      "WebFetch(domain:tw.linebiz.com)"
+      "WebFetch(domain:tw.linebiz.com)",
+      "Read(//Applications/LibreOffice.app/Contents/MacOS/**)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

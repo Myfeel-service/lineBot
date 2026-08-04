@@ -110,17 +110,29 @@
           <span class="conv-session-toolbar__hint">{{ selectedSessionId ? '此場會話' : '進行中會話' }}</span>
           <el-tag size="small" type="info">{{ sessionToolbarMeta.statusLabel }}</el-tag>
           <el-button
-            v-if="sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling'"
+            v-if="canTakeOverSession"
+            size="small"
+            type="primary"
+            plain
+            :loading="takingOverSession"
+            title="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束"
+            @click="takeOverSelectedSession"
+          >
+            我接手（暫停自動回覆）
+          </el-button>
+          <el-button
+            v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
             size="small"
             type="primary"
             plain
             :loading="handingBackSession"
+            title="交還後，機器人與 AI 會恢復自動回覆這位客人"
             @click="handBackSelectedSession"
           >
             交還機器人
           </el-button>
           <el-button
-            v-if="sessionToolbarMeta.status !== 'closed'"
+            v-if="canOperate && sessionToolbarMeta.status !== 'closed'"
             size="small"
             plain
             :loading="closingSession"
@@ -485,47 +497,82 @@
             </div>
           </el-popover>
           <el-popover
-            v-if="selectedUserId && activeSupportPresets.length"
+            v-if="selectedUserId"
             trigger="click"
             placement="top-start"
             :width="340"
             popper-class="conv-picker-popover"
+            @show="onQuickReplyPickerShow"
           >
             <template #reference>
               <button
                 type="button"
                 class="conv-picker-trigger"
                 :disabled="sending || msgLoading"
-                title="客服預存"
+                title="客服預存 / 自動回覆"
               >
                 <span class="conv-picker-trigger__emoji">📦</span>
               </button>
             </template>
             <div class="conv-picker-panel">
-              <div class="conv-picker-title">客服預存</div>
+              <div class="conv-picker-title">挑一則送出</div>
+              <div class="conv-picker-tabs">
+                <button
+                  v-for="tab in quickReplyTabs"
+                  :key="tab.key"
+                  type="button"
+                  class="conv-picker-tab"
+                  :class="{ active: quickReplyTab === tab.key }"
+                  @click="setQuickReplyTab(tab.key)"
+                >
+                  <span>{{ tab.label }}</span>
+                </button>
+              </div>
+              <el-input
+                v-if="quickReplyNeedsSearch"
+                v-model="quickReplySearch"
+                placeholder="搜尋名稱…"
+                clearable
+                size="small"
+              />
               <div class="conv-picker-scrollbox">
-                <div class="conv-support-preset-list">
+                <div v-if="quickReplyLoading" class="conv-picker-empty">載入中…</div>
+                <div v-else-if="!quickReplyItems.length" class="conv-picker-empty">
+                  <template v-if="quickReplySearch.trim()">
+                    找不到符合「{{ quickReplySearch.trim() }}」的項目
+                  </template>
+                  <template v-else-if="quickReplyTab === 'preset'">
+                    還沒有啟用的客服預存。建立常用回覆後，就能在這裡一鍵送出。
+                    <a class="conv-picker-empty__link" @click="openQuickReplySource('preset')">去建立客服預存</a>
+                  </template>
+                  <template v-else>
+                    還沒有啟用的自動回覆規則。
+                    <a class="conv-picker-empty__link" @click="openQuickReplySource('rule')">去看自動回覆</a>
+                  </template>
+                </div>
+                <div v-else class="conv-support-preset-list">
                   <button
-                    v-for="preset in activeSupportPresets"
-                    :key="preset.id"
+                    v-for="item in quickReplyItems"
+                    :key="item.id"
                     type="button"
                     class="conv-support-preset-option"
-                    :class="{ active: pendingSupportPresetId === preset.id }"
+                    :class="{ active: pendingQuickReplyId === item.id }"
                     :disabled="isSupportPresetBusy"
-                    @click="pendingSupportPresetId = preset.id"
+                    @click="pendingQuickReplyId = item.id"
                   >
-                    <span class="conv-support-preset-option__name">{{ preset.name || '(未命名)' }}</span>
-                    <span class="conv-support-preset-option__meta">{{ getActionSummary(preset) }}</span>
+                    <span class="conv-support-preset-option__name">{{ item.name || '(未命名)' }}</span>
+                    <span class="conv-support-preset-option__meta">{{ item.meta }}</span>
                   </button>
                 </div>
               </div>
+              <p class="conv-picker-note">送出後這場會話轉為真人處理，機器人與 AI 不會再自動回覆，直到你按「交還機器人」。</p>
               <div class="conv-picker-footer">
                 <el-button
                   size="small"
                   type="primary"
                   :loading="sending"
-                  :disabled="!pendingSupportPresetId || isSupportPresetBusy"
-                  @click="sendSupportPreset"
+                  :disabled="!pendingQuickReplyId || isSupportPresetBusy"
+                  @click="sendQuickReply"
                 >
                   確認送出
                 </el-button>
@@ -533,7 +580,7 @@
             </div>
           </el-popover>
         </div>
-        <span class="text-muted conv-input-hint">點上面的按鈕，可以直接挑圖片、貼圖、表情或客服預存來傳</span>
+        <span class="text-muted conv-input-hint">點上面的按鈕，可以直接挑圖片、貼圖、表情，或挑一則客服預存／自動回覆送出</span>
       </div>
 
       <div class="conv-input-row">
@@ -907,6 +954,9 @@ type ChatRow = ChatRowEvent | ChatRowMsg
 
 type PickerKind = 'emoji' | 'sticker'
 type QuickSendType = 'image' | 'video' | 'audio'
+/** 「挑一則送出」的來源：客服預存 / 自動回覆規則 */
+type QuickReplySource = 'preset' | 'rule'
+type QuickReplyItem = { id: string; name: string; meta: string }
 
 type PickerCategory = {
   id: string
@@ -969,6 +1019,7 @@ const sessionStatusCounts = ref<Record<ConvSessionStatus, number>>({
 })
 const closingSession = ref(false)
 const handingBackSession = ref(false)
+const takingOverSession = ref(false)
 const selectedUserId = ref<string | null>(null)
 const selectedSessionId = ref<string | null>(null)
 const selectedUser = ref<ConvItem | null>(null)
@@ -1000,7 +1051,13 @@ function goAddKnowledge(query: string) {
 
 const messagesEl = ref<HTMLElement | null>(null)
 const supportPresetsRaw = ref<any[]>([])
-const pendingSupportPresetId = ref('')
+/** 自動回覆規則清單：規則可能很多，等 picker 第一次打開才載入 */
+const autoReplyRulesRaw = ref<any[]>([])
+const autoReplyRulesLoaded = ref(false)
+const autoReplyRulesLoading = ref(false)
+const quickReplyTab = ref<QuickReplySource>('preset')
+const quickReplySearch = ref('')
+const pendingQuickReplyId = ref('')
 const mediaDialogVisible = ref(false)
 const quickMediaUploading = ref(false)
 const quickSendType = ref<QuickSendType>('image')
@@ -1031,6 +1088,50 @@ const activeSupportPresets = computed(() =>
   supportPresetsRaw.value.filter((p: any) => p.isActive !== false),
 )
 const isSupportPresetBusy = computed(() => sending.value || msgLoading.value)
+
+/**
+ * 「挑一則送出」的兩個來源：客服預存（專門為客服建的）與自動回覆規則（借用那條規則的內容）。
+ * 兩者的 action 是同一個 shape，後端也走同一條發送路徑，所以放在同一顆按鈕的兩個分頁裡，
+ * 不再多一顆意義相近的按鈕。
+ */
+const quickReplyTabs: ReadonlyArray<{ key: QuickReplySource, label: string }> = [
+  { key: 'preset', label: '客服預存' },
+  { key: 'rule', label: '自動回覆' },
+]
+/** 超過這個數量才顯示搜尋框：只有 3 則時多一個輸入框是噪音 */
+const QUICK_REPLY_SEARCH_THRESHOLD = 8
+
+const activeAutoReplyRules = computed(() =>
+  autoReplyRulesRaw.value.filter((r: any) => r.isActive !== false),
+)
+const quickReplyLoading = computed(() =>
+  quickReplyTab.value === 'rule' && autoReplyRulesLoading.value,
+)
+const quickReplySourceItems = computed<QuickReplyItem[]>(() => {
+  if (quickReplyTab.value === 'rule') {
+    return activeAutoReplyRules.value.map((r: any) => ({
+      id: String(r.id),
+      name: String(r.name || ''),
+      // 關鍵字一起顯示：規則名稱常常很像，光看名字認不出是哪一條
+      meta: [r.keyword ? `關鍵字：${r.keyword}` : '', getActionSummary(r)].filter(Boolean).join('｜'),
+    }))
+  }
+  return activeSupportPresets.value.map((p: any) => ({
+    id: String(p.id),
+    name: String(p.name || ''),
+    meta: getActionSummary(p),
+  }))
+})
+const quickReplyNeedsSearch = computed(() =>
+  quickReplySourceItems.value.length > QUICK_REPLY_SEARCH_THRESHOLD,
+)
+const quickReplyItems = computed<QuickReplyItem[]>(() => {
+  const kw = quickReplySearch.value.trim().toLowerCase()
+  if (!kw) return quickReplySourceItems.value
+  return quickReplySourceItems.value.filter(
+    item => `${item.name} ${item.meta}`.toLowerCase().includes(kw),
+  )
+})
 const quickSendActions: Array<{ type: QuickSendType, label: string, icon: string }> = [
   { type: 'image', label: '圖片', icon: '🖼️' },
   { type: 'video', label: '影片', icon: '🎬' },
@@ -1161,6 +1262,16 @@ const sessionToolbarMeta = computed<SessionPanelMeta | null>(() => {
   if (activeTab.value === 'all' && allTabActiveSession.value)
     return allTabActiveSession.value
   return null
+})
+
+/**
+ * 「我接手」＝這場還是機器人／AI 在自動回覆（open / bot_handling）時才有意義。
+ * 已經是待真人 / 真人處理中的話，該顯示的是反向的「交還機器人」。
+ */
+const canTakeOverSession = computed(() => {
+  if (!canOperate.value) return false
+  const st = sessionToolbarMeta.value?.status
+  return st === 'open' || st === 'bot_handling'
 })
 
 const chatRows = computed<ChatRow[]>(() => {
@@ -1403,25 +1514,60 @@ async function loadSupportPresets() {
   supportPresetsRaw.value = await apiFetch<any[]>('/api/support-preset/list').catch(() => [])
 }
 
-async function sendSupportPreset() {
+/** 自動回覆規則可能上百條，不在進頁時載入；picker 打開才抓一次 */
+async function loadAutoReplyRules() {
+  if (autoReplyRulesLoaded.value || autoReplyRulesLoading.value) return
+  autoReplyRulesLoading.value = true
+  try {
+    autoReplyRulesRaw.value = await apiFetch<any[]>('/api/auto-reply/list').catch(() => [])
+    autoReplyRulesLoaded.value = true
+  }
+  finally {
+    autoReplyRulesLoading.value = false
+  }
+}
+
+function onQuickReplyPickerShow() {
+  if (quickReplyTab.value === 'rule') loadAutoReplyRules()
+}
+
+function setQuickReplyTab(tab: QuickReplySource) {
+  if (quickReplyTab.value === tab) return
+  quickReplyTab.value = tab
+  // 換分頁就清掉選取與搜尋：留著會變成「畫面上沒有選中的項目，送出鍵卻是亮的」
+  pendingQuickReplyId.value = ''
+  quickReplySearch.value = ''
+  if (tab === 'rule') loadAutoReplyRules()
+}
+
+function openQuickReplySource(tab: QuickReplySource) {
+  const page = tab === 'rule' ? 'auto-reply' : 'support-presets'
+  window.open(`/admin/${workspaceId.value}/${page}`, '_blank')
+}
+
+async function sendQuickReply() {
   if (!assertCanOperate()) return
-  const presetId = pendingSupportPresetId.value
-  if (!presetId || !selectedUserId.value || !selectedUser.value) return
+  const id = pendingQuickReplyId.value
+  if (!id || !selectedUserId.value || !selectedUser.value) return
+  const isRule = quickReplyTab.value === 'rule'
   sending.value = true
   try {
-    await apiFetch(`/api/conversations/${selectedUserId.value}/send-preset`, {
-      method: 'POST',
-      body: { presetId },
-    })
-    showToast('已送出客服預存', 'success')
+    await apiFetch(
+      `/api/conversations/${selectedUserId.value}/${isRule ? 'send-auto-reply' : 'send-preset'}`,
+      {
+        method: 'POST',
+        body: isRule ? { ruleId: id } : { presetId: id },
+      },
+    )
+    showToast(isRule ? '已送出自動回覆的內容' : '已送出客服預存', 'success')
     await reloadAfterOutgoing()
   }
   catch (e: any) {
-    showToast(e?.data?.statusMessage || '送出預存失敗', 'error')
+    showToast(e?.data?.statusMessage || (isRule ? '送出自動回覆失敗' : '送出預存失敗'), 'error')
   }
   finally {
     sending.value = false
-    pendingSupportPresetId.value = ''
+    pendingQuickReplyId.value = ''
   }
 }
 
@@ -1459,7 +1605,7 @@ async function selectUser(c: ConvItem) {
   aiContextSeenAtMs = 0
   selectedUserId.value = c.userId
   selectedUser.value = c
-  pendingSupportPresetId.value = ''
+  pendingQuickReplyId.value = ''
   messages.value = []
   msgLoading.value = true
   try {
@@ -1546,11 +1692,41 @@ async function reloadAfterOutgoing() {
   }
 }
 
+/**
+ * 客服主動接手：把這場轉真人處理，機器人／AI 停止自動回覆後續訊息。
+ * 先前只能「回一句話」才會讓機器人閉嘴——想先看資料再回覆的時候沒有辦法先卡住它。
+ */
+async function takeOverSelectedSession() {
+  const sid = selectedSessionId.value || allTabActiveSession.value?.sessionId
+  if (!sid || !canTakeOverSession.value) return
+  if (!assertCanOperate()) return
+  takingOverSession.value = true
+  try {
+    await apiFetch(`/api/conversations/sessions/${sid}/takeover`, {
+      method: 'POST',
+    })
+    showToast('已接手，機器人與 AI 不會再自動回覆這位客人（按「交還機器人」可恢復）', 'success')
+    if (selectedSessionId.value)
+      await reloadSessionTimeline()
+    else if (selectedUser.value)
+      await selectUser(selectedUser.value)
+    await refreshListQuiet()
+    await loadSessionCounts()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '接手失敗', 'error')
+  }
+  finally {
+    takingOverSession.value = false
+  }
+}
+
 async function handBackSelectedSession() {
   const sid = selectedSessionId.value || allTabActiveSession.value?.sessionId
   const st = sessionToolbarMeta.value?.status
   if (!sid || (st !== 'pending_human' && st !== 'human_handling'))
     return
+  if (!assertCanOperate()) return
   handingBackSession.value = true
   try {
     await apiFetch(`/api/conversations/sessions/${sid}/handback`, {
@@ -1562,6 +1738,8 @@ async function handBackSelectedSession() {
     else if (selectedUser.value)
       await selectUser(selectedUser.value)
     await refreshListQuiet()
+    // 狀態變了，側欄分頁的數字也要跟著動（先前漏了，交還後徽章會停在舊值）
+    await loadSessionCounts()
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '交還機器人失敗', 'error')

@@ -1184,6 +1184,32 @@
   color: var(--text-muted);
 }
 
+.conv-picker-empty {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 0.75rem 0.15rem;
+}
+
+.conv-picker-empty__link {
+  display: inline-block;
+  margin-top: 0.3rem;
+  color: var(--el-color-primary);
+  cursor: pointer;
+}
+
+.conv-picker-empty__link:hover {
+  text-decoration: underline;
+}
+
+/** 送出預存／自動回覆會讓這場轉真人處理——先講清楚，別讓客服事後才發現機器人不回話了 */
+.conv-picker-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .conv-picker-footer {
   display: flex;
   justify-content: flex-end;

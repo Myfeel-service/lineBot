@@ -138,6 +138,58 @@ describe('enterModule:統計(initialHandler)與佇列(status)是兩件事', () =
   })
 })
 
+/**
+ * 對話頁「我接手（暫停自動回覆）」走的就是 enterModule(live_agent)
+ * （server/api/conversations/sessions/[sessionId]/takeover.post.ts）。
+ * 這組測試盯的是「接手 ≠ 回覆過客人」：首接時間不能被按鈕點擊時間灌水。
+ */
+describe('enterModule(live_agent)：客服主動接手', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('機器人接過了才接手 → 記轉真人,不覆蓋機器人首接', async () => {
+    const { db, patches } = makeDb(openUnhandledSession({
+      status: 'bot_handling',
+      initialHandler: 'bot',
+      initialModuleType: 'bot_flow',
+    }))
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await enterModule(SESSION_ID, LINE_UID, 'live_agent', undefined, WS)
+
+    const patch = patches[0]!
+    expect(patch.status).toBe('pending_human')
+    expect(patch.currentHandler).toBe('human')
+    expect(patch.hasHandoff).toBe(true)
+    // 首接只有一次,已經是機器人首接就不能被接手動作改掉
+    expect(patch).not.toHaveProperty('initialHandler')
+  })
+
+  it('接手不等於回覆過客人 → 不寫 humanFirstRepliedAt(否則回應速度會被灌水)', async () => {
+    const { db, patches } = makeDb(openUnhandledSession({ status: 'bot_handling', initialHandler: 'ai' }))
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await enterModule(SESSION_ID, LINE_UID, 'live_agent', undefined, WS)
+
+    expect(patches[0]).not.toHaveProperty('humanFirstRepliedAt')
+    expect(patches[0]).not.toHaveProperty('humanLastRepliedAt')
+  })
+
+  it('已在真人處理中再接手 → 不把狀態退回待真人', async () => {
+    const { db, patches } = makeDb(openUnhandledSession({
+      status: 'human_handling',
+      initialHandler: 'human',
+      initialModuleType: 'live_agent',
+      hasHandoff: true,
+    }))
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await enterModule(SESSION_ID, LINE_UID, 'live_agent', undefined, WS)
+
+    expect(patches[0]).not.toHaveProperty('status')
+    expect(patches[0]).not.toHaveProperty('hasHandoff')
+  })
+})
+
 describe('enterModule:記帳不能因為拿不到 sessionId 就整段消失', () => {
   beforeEach(() => { vi.clearAllMocks() })
 

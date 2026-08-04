@@ -719,18 +719,23 @@ function buildAutoReplyActionMessages(
 }
 
 /**
- * 管理後台「客服預存」：以 push 發送，邏輯對齊自動回覆命中後的模組／文字／網址處理。
+ * 管理後台手動送出一則預存內容：以 push 發送，邏輯對齊自動回覆命中後的模組／文字／網址處理。
+ * 兩個來源共用（action 是同一個 shape）：
+ *   - 「客服預存」（/api/conversations/[userId]/send-preset）
+ *   - 對話頁手動挑一則「自動回覆」規則（/api/conversations/[userId]/send-auto-reply）
  *
  * 送出後必須記 onHumanOutgoingMessage——這是真人客服的動作，與收件匣手打訊息
  * （/api/conversations/[userId]/send）同一件事。先前漏記造成兩個問題：
  *   1. 會話停在 open/unhandled，客服明明回過了卻一直掛在「未首接」佇列
  *   2. 更嚴重：狀態沒轉 human_handling → 機器人／AI 不會閉嘴，會跟真人搶話回客人
+ *
+ * sourceRefId＝這則內容的來源文件 id（預存 id 或自動回覆規則 id），只用於標籤紀錄的來源欄位。
  */
 export async function pushSupportPresetActionToUser(
   userIdOrDocId: string,
   action: AutoReplyRuleShape['action'],
   tagging: AutoReplyRuleShape['tagging'],
-  presetId: string,
+  sourceRefId: string,
   requestOrigin: string,
   workspaceId: string,
 ): Promise<void> {
@@ -741,7 +746,7 @@ export async function pushSupportPresetActionToUser(
   const { channelSecret } = await getLineWorkspaceCredentials(workspaceId)
 
   if (tagging?.enabled && Array.isArray(tagging.addTagIds) && tagging.addTagIds.length > 0) {
-    addTagsToUser(fsUserDocId, tagging.addTagIds, 'manual', presetId, workspaceId).catch((e) => {
+    addTagsToUser(fsUserDocId, tagging.addTagIds, 'manual', sourceRefId, workspaceId).catch((e) => {
       console.error('[supportPreset] tagging failed:', e)
     })
   }
