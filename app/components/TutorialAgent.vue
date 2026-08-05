@@ -24,16 +24,19 @@
         v-if="panelOpen"
         class="ta-panel"
         role="dialog"
-        aria-label="教學助理"
+        aria-label="小幫手"
+        @keydown.esc="closePanel"
       >
         <header class="ta-panel__head">
           <div class="ta-panel__avatar"><el-icon><IconRobot /></el-icon></div>
           <div class="ta-panel__head-meta">
             <div class="ta-panel__name">小幫手</div>
-            <div class="ta-panel__status"><span class="ta-dot" />線上</div>
+            <!-- 資料新鮮度取代裝飾性的「線上」：使用者真正想知道的是「這是多新的資訊」 -->
+            <div class="ta-panel__status">{{ headerFreshness }}</div>
           </div>
           <div class="ta-tabs" role="tablist">
             <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">目前狀況</button>
+            <button type="button" role="tab" :aria-selected="panelTab === 'learn'" :class="{ 'is-active': panelTab === 'learn' }" @click="panelTab = 'learn'">教學</button>
             <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問助理</button>
           </div>
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
@@ -44,8 +47,17 @@
         <AdminAgentChat v-show="panelTab === 'chat'" class="ta-panel__chat" />
 
         <div v-show="panelTab === 'setup'" class="ta-panel__body">
+          <!-- 結論先行：先一句話講「有沒有事」，明細在下面（沿用 .ls-status 的視覺語言） -->
+          <div v-if="verdict" class="ta-verdict" :class="`is-${verdict.tone}`">
+            <el-icon class="ta-verdict__icon"><component :is="verdict.icon" /></el-icon>
+            <span>{{ verdict.text }}</span>
+          </div>
+
           <!-- 導覽結束後的回應（閉環） -->
           <div v-if="postTourNote" class="ta-note">{{ postTourNote }}</div>
+
+          <!-- 異常修復的回應（閉環）：上次點了「去修」，回來要講結果 -->
+          <div v-if="postFixNote" class="ta-note">{{ postFixNote }}</div>
 
           <!-- agent 訊息泡泡：依真實設定狀態講白話文 -->
           <div class="ta-msg">
@@ -56,35 +68,54 @@
             </div>
           </div>
 
-          <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急 -->
+          <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急。
+               紅橘語意差很多（客人正在受影響 vs 建議處理），分成兩組講，不共用一個標題 -->
           <template v-if="alerts.length">
-            <div v-if="activeAlerts.length" class="ta-alerts">
-              <div class="ta-alerts__label">
-                <span>需要處理</span>
-                <span v-if="checkedAgo" class="ta-alerts__ago">{{ checkedAgo }}</span>
-              </div>
-              <button
-                v-for="a in activeAlerts"
+            <!-- 首查就失敗：異常區不能靜默消失——「還沒檢查到」和「沒事」是兩回事 -->
+            <div v-if="!alertsLoaded && alertsFailed" class="ta-unknown ta-unknown--fail">
+              <span>我這次檢查不到異常狀態——這不代表沒有異常。</span>
+              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">重新檢查</button>
+            </div>
+
+            <div v-for="g in alertGroups" :key="g.key" class="ta-alerts">
+              <div class="ta-alerts__label" :class="`ta-alerts__label--${g.key}`">{{ g.label }}</div>
+              <!-- 卡片是 div 包兩顆真按鈕（主要動作／暫停提醒）：按鈕不能包按鈕 -->
+              <div
+                v-for="a in g.items"
                 :key="a.id"
                 class="ta-alert"
                 :class="`is-${a.severity}`"
-                @click="onFixAlert(a)"
               >
-                <span class="ta-alert__icon"><el-icon><component :is="a.icon" /></el-icon></span>
-                <span class="ta-alert__main">
-                  <span class="ta-alert__title">
-                    {{ a.title }}
-                    <span v-if="a.count" class="ta-alert__count">{{ a.count }}</span>
+                <button type="button" class="ta-alert__hit" @click="onFixAlert(a)">
+                  <span class="ta-alert__icon"><el-icon><component :is="a.icon" /></el-icon></span>
+                  <span class="ta-alert__main">
+                    <span class="ta-alert__title">
+                      {{ a.title }}
+                      <span v-if="a.count" class="ta-alert__count">{{ a.count }}</span>
+                    </span>
+                    <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
+                    <span class="ta-alert__impact">{{ a.impact }}</span>
+                    <span class="ta-alert__cta">{{ a.cta }} →</span>
                   </span>
-                  <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
-                  <span class="ta-alert__impact">{{ a.impact }}</span>
-                  <span class="ta-alert__cta">{{ a.cta }} →</span>
-                </span>
-              </button>
+                </button>
+                <!-- 只有 warning 給靜音：正在影響客人的事沒有「不想看」這個選項 -->
+                <button
+                  v-if="a.severity === 'warning'"
+                  type="button"
+                  class="ta-alert__snooze"
+                  @click="snoozeAlert(a.id)"
+                >暫停提醒 7 天</button>
+              </div>
             </div>
 
-            <div v-else-if="alertsLoaded" class="ta-alerts-clear">
-              目前沒有發現異常{{ checkedAgo ? `（${checkedAgo}）` : '' }}。
+            <div v-if="alertsLoaded && !activeAlerts.length" class="ta-alerts-clear">
+              目前沒有發現異常。
+            </div>
+
+            <!-- 有舊結果、但這次沒查成：講出來，別讓人以為看到的是最新結果 -->
+            <div v-if="alertsLoaded && alertsFailed" class="ta-unknown">
+              <span>剛才那次檢查失敗，上面是{{ checkedAgo || '稍早' }}的結果。</span>
+              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">再試一次</button>
             </div>
 
             <!-- 這次檢查不到的異常（現形，不要偷偷當成沒事） -->
@@ -92,7 +123,34 @@
               <span>這幾項我這次檢查不到：{{ unknownAlertItems.map(a => a.title).join('、') }}。</span>
               <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">重新檢查</button>
             </div>
+
+            <!-- 被靜音但還在發生的事也要現形：靜音是「先不吵我」，不是「當作沒事」 -->
+            <div v-if="snoozedAlerts.length" class="ta-unknown">
+              <span>已暫停提醒 {{ snoozedAlerts.length }} 項：{{ snoozedAlerts.map(a => a.title).join('、') }}。</span>
+              <button class="ta-unknown__btn" @click="unsnoozeAll">恢復提醒</button>
+            </div>
           </template>
+
+          <!-- 昨日摘要（日報）：打的是統計頁同一支查詢，兩邊數字永遠對得上 -->
+          <div v-if="briefVisible && briefY" class="ta-brief">
+            <div class="ta-brief__head">
+              <span>昨日摘要{{ briefDateLabel }}</span>
+              <button type="button" class="ta-brief__link" @click="goStats">看完整統計 →</button>
+            </div>
+            <p v-if="!briefY.total" class="ta-brief__empty">昨天沒有客人對話。</p>
+            <template v-else>
+              <div class="ta-brief__grid">
+                <div v-for="cell in briefCells" :key="cell.label" class="ta-brief__cell">
+                  <span class="ta-brief__num">{{ cell.value }}</span>
+                  <span class="ta-brief__label">{{ cell.label }}</span>
+                  <span class="ta-brief__delta">前天 {{ cell.prev }}</span>
+                </div>
+              </div>
+              <p v-if="briefY.unhandled" class="ta-brief__warn">
+                其中 {{ briefY.unhandled }} 場從頭到尾沒有人回，建議去看一下。
+              </p>
+            </template>
+          </div>
 
           <!-- 載入骨架 -->
           <div v-if="!loaded" class="ta-skeleton" aria-hidden="true">
@@ -176,45 +234,55 @@
               <button class="ta-unknown__btn" :disabled="busy" @click="refreshAll(true)">重新檢查</button>
             </div>
             </template>
-
-            <!-- 複習教學：依分類收合，避免清單過長 -->
-            <div v-if="groupedTopics.length" class="ta-review">
-              <div class="ta-review__label">想複習教學</div>
-              <div v-for="g in groupedTopics" :key="g.id" class="ta-review-group">
-                <button
-                  class="ta-review-group__head"
-                  :aria-expanded="expandedGroups.has(g.id)"
-                  @click="toggleGroup(g.id)"
-                >
-                  <span class="ta-review-group__title">{{ g.label }}</span>
-                  <span class="ta-review-group__count">{{ g.topics.length }}</span>
-                  <span class="ta-review-group__chev" :class="{ open: expandedGroups.has(g.id) }">▾</span>
-                </button>
-                <div v-if="expandedGroups.has(g.id)" class="ta-review-group__body">
-                  <button
-                    v-for="topic in g.topics"
-                    :key="topic.id"
-                    class="ta-option ta-option--sm"
-                    @click="onPick(topic)"
-                  >
-                    <span class="ta-option__icon"><el-icon><component :is="topic.icon" /></el-icon></span>
-                    <span class="ta-option__body">
-                      <span class="ta-option__label">
-                        {{ topic.label }}
-                        <!-- 步數自動算：功能旗標關掉某步時會跟著少，不會跟文案漂移 -->
-                        <span class="ta-option__steps">{{ stepCount(topic) }} 步</span>
-                      </span>
-                      <span class="ta-option__blurb">{{ topic.blurb }}</span>
-                    </span>
-                    <span class="ta-option__arrow">→</span>
-                  </button>
-                </div>
-              </div>
-            </div>
           </template>
         </div>
 
+        <!-- 教學：想學才來翻的參考庫（pull）。和「目前狀況」的異常/待辦（push）分開住，
+             不緊急的內容不佔狀況版面 -->
+        <div v-show="panelTab === 'learn'" class="ta-panel__body">
+          <div class="ta-msg">
+            <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
+            <div class="ta-msg__bubble">
+              <p>想學哪個功能？點一個主題，我直接在畫面上一步步帶你做。</p>
+            </div>
+          </div>
+          <div v-if="groupedTopics.length" class="ta-review">
+            <div v-for="g in groupedTopics" :key="g.id" class="ta-review-group">
+              <button
+                class="ta-review-group__head"
+                :aria-expanded="expandedGroups.has(g.id)"
+                @click="toggleGroup(g.id)"
+              >
+                <span class="ta-review-group__title">{{ g.label }}</span>
+                <span class="ta-review-group__count">{{ g.topics.length }}</span>
+                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has(g.id) }">▾</span>
+              </button>
+              <div v-if="expandedGroups.has(g.id)" class="ta-review-group__body">
+                <button
+                  v-for="topic in g.topics"
+                  :key="topic.id"
+                  class="ta-option ta-option--sm"
+                  @click="onPick(topic)"
+                >
+                  <span class="ta-option__icon"><el-icon><component :is="topic.icon" /></el-icon></span>
+                  <span class="ta-option__body">
+                    <span class="ta-option__label">
+                      {{ topic.label }}
+                      <!-- 步數自動算：功能旗標關掉某步時會跟著少，不會跟文案漂移 -->
+                      <span class="ta-option__steps">{{ stepCount(topic) }} 步</span>
+                    </span>
+                    <span class="ta-option__blurb">{{ topic.blurb }}</span>
+                  </span>
+                  <span class="ta-option__arrow">→</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="ta-options__empty">目前沒有可用的教學主題。</p>
+        </div>
+
         <footer v-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的狀態，不會給你假資訊。</footer>
+        <footer v-else-if="panelTab === 'learn'" class="ta-panel__foot">每個教學都會在實際畫面上一步步帶你操作。</footer>
         <footer v-else class="ta-panel__foot">回答都來自你帳號的真實資料;目前只能查詢,不能修改。</footer>
       </section>
     </Transition>
@@ -223,15 +291,18 @@
     <button
       class="ta-fab"
       :class="{ 'ta-fab--open': panelOpen }"
-      :aria-label="panelOpen ? '關閉教學助理' : '開啟教學助理'"
+      :aria-label="panelOpen ? '關閉小幫手' : '開啟小幫手'"
       @click="onFabClick"
     >
       <span class="ta-fab__icon"><el-icon><component :is="panelOpen ? Close : IconRobot" /></el-icon></span>
-      <span v-if="!panelOpen && (!allRequiredDone || criticalAlerts.length)" class="ta-fab__pulse" aria-hidden="true" />
-      <!-- 紅點只數「現在壞著」與「必要設定沒做」；建議處理的黃色項不進來，免得紅點長亮被無視 -->
+      <!-- 光暈等資料回來才閃：不然設定齊全的帳號每次載入都先閃一下（狼來了） -->
+      <span v-if="!panelOpen && (criticalAlerts.length || (loaded && !allRequiredDone))" class="ta-fab__pulse" aria-hidden="true" />
+      <!-- 數字＝「現在壞著」＋「必要設定沒做」；顏色分開講：紅只留給正在影響客人，
+           純設定缺項用中性色——守住「紅＝客人正在受影響」的語意。黃色警示項不進數字 -->
       <span
         v-if="!panelOpen && badgeCount"
         class="ta-fab__badge"
+        :class="{ 'ta-fab__badge--calm': !criticalAlerts.length }"
         :aria-label="badgeLabel"
       >{{ badgeCount }}</span>
     </button>
@@ -284,9 +355,10 @@
 </template>
 
 <script setup lang="ts">
+import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
-import { Close, View } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Close, InfoFilled, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 
@@ -294,8 +366,8 @@ const { user } = useAuth()
 const { workspaceId } = useWorkspace()
 const router = useRouter()
 
-/** 面板分頁:設定進度(原教學小幫手)/ 問助理(admin 查詢副駕 P1) */
-const panelTab = ref<'setup' | 'chat'>('setup')
+/** 面板分頁:目前狀況(異常+待辦+日報)/ 教學(主題庫)/ 問助理(admin 查詢副駕 P1) */
+const panelTab = ref<'setup' | 'learn' | 'chat'>('setup')
 const {
   panelOpen,
   tourOpen,
@@ -333,23 +405,30 @@ const {
   alerts,
   activeAlerts,
   criticalAlerts,
+  warningAlerts,
+  suggestionAlerts,
+  snoozedAlerts,
   unknownAlerts: unknownAlertItems,
   loaded: alertsLoaded,
   loading: alertsLoading,
+  lastRefreshFailed: alertsFailed,
   checkedAgo,
   refresh: refreshAlerts,
   reset: resetAlerts,
+  snoozeAlert,
+  unsnoozeAll,
   POLL_INTERVAL_MS,
 } = useWorkspaceAlerts()
+const { brief, refresh: refreshBrief, reset: resetBrief } = useDailyBrief()
 const { setDemo, clearDemo } = useFlowDemo()
 
 /**
- * 兩份體檢（設定就緒度 + 目前異常）一起重查。
+ * 三份資料（設定就緒度 + 目前異常 + 昨日摘要）一起重查。
  * force 用在「使用者按重新檢查」與「剛跑完導覽要確認有沒有生效」——這兩種情境
  * 一定要拿到當下的真實狀態，不能被節流擋掉回舊答案。
  */
 function refreshAll(force = false) {
-  return Promise.all([refresh({ force }), refreshAlerts({ force })])
+  return Promise.all([refresh({ force }), refreshAlerts({ force }), refreshBrief({ force })])
 }
 
 const busy = computed(() => loading.value || alertsLoading.value)
@@ -371,25 +450,109 @@ const userName = computed(() => {
   return ''
 })
 
-/** agent 開場白：完全依真實狀態講白話文。順序＝先講壞了的，再講還沒做的 */
+/** header 上的資料新鮮度：取代裝飾性的「線上」，回答「這是多新的資訊」 */
+const headerFreshness = computed(() => {
+  if (busy.value)
+    return '檢查中…'
+  return checkedAgo.value || '尚未檢查'
+})
+
+/** 昨日摘要（打統計頁同一支 KPI，口徑一致） */
+const briefY = computed(() => brief.value?.yesterday ?? null)
+/** 上線前（必要設定沒完成）不用日報打擾；一有過流量、或設定已完備就顯示——0 也是資訊 */
+const briefVisible = computed(() => {
+  const b = brief.value
+  if (!b)
+    return false
+  return b.yesterday.total > 0 || b.dayBefore.total > 0 || allRequiredDone.value
+})
+const briefDateLabel = computed(() => {
+  const d = brief.value?.date
+  if (!d)
+    return ''
+  const [, m, day] = d.split('-')
+  return `（${Number(m)}/${Number(day)}）`
+})
+const briefCells = computed(() => {
+  const b = brief.value
+  if (!b)
+    return []
+  return [
+    { label: '客人對話', value: b.yesterday.total, prev: b.dayBefore.total },
+    { label: 'AI／機器人先回', value: b.yesterday.autoFirst, prev: b.dayBefore.autoFirst },
+    { label: '轉真人', value: b.yesterday.handoffs, prev: b.dayBefore.handoffs },
+  ]
+})
+/** 開場白用的一句話日報 */
+const briefLine = computed(() => {
+  const b = brief.value
+  if (!b)
+    return ''
+  if (!b.yesterday.total)
+    return '昨天沒有客人對話。'
+  const parts = [`昨天有 ${b.yesterday.total} 場客人對話`, `AI／機器人先回了 ${b.yesterday.autoFirst} 場`]
+  if (b.yesterday.handoffs)
+    parts.push(`轉真人 ${b.yesterday.handoffs} 件`)
+  return `${parts.join('、')}。`
+})
+
+/**
+ * 結論先行的狀態列：紅（正在影響客人）→ 橘（建議處理）→ 藍（設定還沒完）→ 綠（一切正常）。
+ * 「查不到」不能歸進任何一級，單獨講。
+ */
+const verdict = computed<{ tone: string, icon: Component, text: string } | null>(() => {
+  if (criticalAlerts.value.length)
+    return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人` }
+  if (warningAlerts.value.length)
+    return { tone: 'warning', icon: WarningFilled, text: `${warningAlerts.value.length} 件事建議處理` }
+  if (!alertsLoaded.value)
+    return alertsFailed.value ? { tone: 'muted', icon: QuestionFilled, text: '目前檢查不到狀態' } : null
+  if (loaded.value && incompleteRequired.value.length)
+    return { tone: 'progress', icon: InfoFilled, text: `差 ${incompleteRequired.value.length} 項必要設定就能上線` }
+  return { tone: 'ok', icon: CircleCheckFilled, text: '一切正常' }
+})
+
+/** 異常分組呈現：紅（影響客人中）、橘（建議處理）、藍（可以更好——沒壞，是機會） */
+const alertGroups = computed(() => [
+  { key: 'critical', label: '現在影響客人', items: criticalAlerts.value },
+  { key: 'warning', label: '建議處理', items: warningAlerts.value },
+  { key: 'suggestion', label: '可以更好', items: suggestionAlerts.value },
+].filter(g => g.items.length))
+
+/** agent 開場白：完全依真實狀態講白話文。順序＝先講壞了的，再講還沒做的，最後才是日報 */
 const agentLine = computed(() => {
   if (!loaded.value && !alertsLoaded.value)
     return '我先幫你看一下目前的狀況…'
+  // 紅點同時數「壞著的」與「必要設定沒做」，開場白也要兩件都講，數字才對得上
+  const setupTail = incompleteRequired.value.length
+    ? `另外，必要設定還差 ${incompleteRequired.value.length} 項沒完成。`
+    : ''
   if (criticalAlerts.value.length)
-    return `先講重要的：有 ${criticalAlerts.value.length} 個地方現在不正常，客人會受影響。點下面就能去處理。`
+    return `先講重要的：有 ${criticalAlerts.value.length} 個地方現在不正常，客人會受影響。點下面就能去處理。${setupTail}`
   if (activeAlerts.value.length)
-    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。`
+    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。${setupTail}`
   if (!loaded.value)
     return '我先幫你看一下目前的設定狀況…'
-  // 沒有可動手的設定項（例如觀察者）：不談設定，直接導向教學
+  // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
   if (!hasItems.value)
-    return '嗨！想了解哪個功能，直接點下面的教學，我帶你看 '
+    return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
   if (incompleteRequired.value.length)
     return `我看過你的帳號了。最重要的還差 ${incompleteRequired.value.length} 項還沒做，我們一個一個來，點下面就能開始 `
-  if (!allRequiredDone.value)
-    return `有 ${unknownCaps.value.length} 項我這次查不到狀態，先點「重新檢查」確認一下。`
+  if (!allRequiredDone.value) {
+    const n = unknownCaps.value.filter(c => c.required).length
+    return `有 ${n} 項必要設定我這次查不到狀態，先點「重新檢查」確認一下。`
+  }
   if (incompleteAll.value.length)
     return `必要設定都完成了 可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
+  // 沒有壞的、沒有缺的：日報 + 機會（讓 AI 更聰明的建議）
+  const nSuggest = suggestionAlerts.value.reduce((s, a) => s + (a.count ?? 1), 0)
+  const suggestTail = nSuggest
+    ? `另外我整理了 ${nSuggest} 個能讓 AI 答得更好的建議，看看下面的「可以更好」。`
+    : ''
+  if (briefLine.value)
+    return `一切正常。${briefLine.value}${suggestTail}`
+  if (suggestTail)
+    return `一切正常。${suggestTail}`
   return '你的設定都完成了。上線前建議先試答幾題確認 AI 答得穩，之後有任何不熟的地方隨時點我。'
 })
 
@@ -419,13 +582,53 @@ function onFix(cap: ResolvedCapability) {
   void router.push(cap.route(wid))
 }
 
+/** 修復閉環：上次點「去修」的那件事，回來打開面板時要回報結果 */
+const lastFix = ref<{ id: string, title: string, at: number } | null>(null)
+const postFixNote = ref('')
+
 /** 點異常：直接去能修的那一頁（異常沒有導覽——導覽教的是怎麼設定，不是怎麼修壞掉的東西） */
 function onFixAlert(alert: ResolvedAlert) {
   const wid = workspaceId.value
   if (!wid)
     return
+  // 只追異常的修復結果；「可以更好」的建議在收件匣裡逐筆採用/忽略，沒有修好不修好
+  if (alert.severity !== 'suggestion')
+    lastFix.value = { id: alert.id, title: alert.title, at: Date.now() }
   closePanel()
   void router.push(alert.route(wid))
+}
+
+/**
+ * 打開面板時檢查上次去修的異常有沒有好（超過 30 分鐘就不追了——太久以前的事，
+ * 「修好了」的歸因已經不可信）。一定要 force：使用者剛改完設定，
+ * 拿 60 秒內的快取會誤報「還沒好」。
+ */
+async function verifyLastFix() {
+  const f = lastFix.value
+  if (!f || Date.now() - f.at > 30 * 60_000) {
+    lastFix.value = null
+    await refreshAll()
+    return
+  }
+  lastFix.value = null
+  await refreshAll(true)
+  const item = alerts.value.find(a => a.id === f.id)
+  if (!item)
+    return
+  if (item.state === 'clear')
+    postFixNote.value = `剛剛那件「${f.title}」看起來修好了 `
+  else if (item.state === 'active')
+    postFixNote.value = `「${f.title}」看起來還沒解決——有些修正要幾分鐘才生效，可以待會再按「重新檢查」。`
+  // unknown：查不到就不下結論
+}
+
+/** 昨日摘要的出口：想看趨勢與明細就去統計頁（同一份口徑的完整版） */
+function goStats() {
+  const wid = workspaceId.value
+  if (!wid)
+    return
+  closePanel()
+  void router.push(`/admin/${wid}/conversation-stats`)
 }
 
 /** 缺項巡覽：用 tour 逐一高亮側欄上「還沒做完」的入口，每步附「帶我做這項」 */
@@ -450,11 +653,12 @@ function onStepAction(topicId: string) {
 
 const postTourNote = ref('')
 
-/** 導覽「完成」：閉環——重抓狀態、依結果回應、重開面板 */
+/** 導覽「完成」：閉環——重抓狀態、依結果回應、重開面板（回應顯示在「目前狀況」） */
 async function onTourFinish() {
   const finishedId = lastTopicId.value
   clearDemo()
   endTour()
+  panelTab.value = 'setup'
   // 一定要 force：使用者剛才就在改設定，這裡拿到舊快取就會誤報「還沒生效」
   await refresh({ force: true })
   const cap = finishedId ? capabilities.value.find(c => c.tourId === finishedId) : null
@@ -561,15 +765,19 @@ watch(workspaceId, (next, prev) => {
   alertNudge.value = ''
   resetAlerts()
   resetSetupStatus()
+  resetBrief()
   void refreshAll(true)
 })
 
-// 每次打開面板都重新體檢；關閉時清掉導覽回應
+// 每次打開面板都重新體檢（有待驗證的修復就 force 並回報結果）；關閉時清掉一次性回應
 watch(panelOpen, (open) => {
-  if (open)
-    void refreshAll()
-  else
+  if (open) {
+    void verifyLastFix()
+  }
+  else {
     postTourNote.value = ''
+    postFixNote.value = ''
+  }
 })
 
 /**

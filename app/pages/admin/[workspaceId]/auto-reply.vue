@@ -206,7 +206,8 @@
                 module-title="機器人模組"
                 module-placeholder="請選擇要觸發的模組"
                 text-title="回覆文字"
-                text-placeholder="輸入要回覆給使用者的文字"
+                text-placeholder="輸入要回覆給使用者的文字（可換行分段）"
+                :text-multiline="true"
                 uri-title="網址"
                 uri-placeholder="https://..."
               />

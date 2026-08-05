@@ -27,6 +27,7 @@ import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { archiveConversationMedia } from './conversation-media'
+import { readInboundImage } from './media-describe'
 import { clearClaimPushMarkFailure, recordClaimPushMarkFailure } from './claim-push-health'
 import { createImagemapImageToken } from './line-imagemap-image-token'
 import { createUriTagToken } from './line-action-tag-token'
@@ -1858,29 +1859,46 @@ export async function handleMessageEvent(
     }
     const typeLabel = NON_TEXT_QUERY_LABELS[event.message.type]
       ?? (event.message.type === 'sticker' ? '[貼圖]' : `[${event.message.type}]`)
-    saveConversationMessage(userId, 'incoming', typeLabel, {
+    // 不 await：存訊息與下面的 ack／存檔沒有先後關係。但要留著 promise——
+    // 圖片的 AI 描述得補寫回這一則，需要它的 doc id。
+    const savedMessageId = saveConversationMessage(userId, 'incoming', typeLabel, {
       messageType: event.message.type,
       payload: event.message,
       lineEventTimestampMs,
-    }, workspaceId).catch(e => console.error('[conv] save error:', e))
+    }, workspaceId).catch((e) => {
+      console.error('[conv] save error:', e)
+      return ''
+    })
     const sessionId = await ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
       console.error('[session] error:', e)
       return null
     })
     ensureUser(userId, undefined, workspaceId).catch(e => console.error('[ensureUser] Error:', e))
+
+    // 看圖作答：開了這個開關，圖片就不再只是回一句「我看不懂」，而是讀圖 → 推出客人想問什麼
+    // → 走一般答題流程回覆。此時**引導語不能先發**：一則進來的訊息只有一個 replyToken，
+    // 被引導語用掉之後答案就只能改用推播（另外計費、且會變成兩則訊息）。
+    // 真人接手中（suppress）一律不啟動：機器人插話比不回更糟。
+    const imageAnswerOn = event.message.type === 'image'
+      && await getAiSettings(workspaceId).then(s => s?.enabled === true && s.imageAnswer?.enabled === true).catch(() => false)
+    const willAnswerImage = imageAnswerOn
+      && !(await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false))
+
     // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
     // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
-    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken) {
+    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken && !willAnswerImage) {
       maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
         .catch(e => console.error('[non-text-ack] error:', e))
     }
 
     // 圖片：webhook 只給 messageId，原始檔要另外抓，而且 LINE 只暫存一段時間——
     // 沒有在當下存檔，客服晚幾天才回頭看就永遠看不到那張圖了。所以收訊即存檔。
-    // 這裡刻意 await（Lambda 回應後容器就凍結，沒 await 的下載會被砍掉），但排在
-    // ack 之後，回覆已經先送出去了，不影響客人感受到的速度。
+    // 這裡刻意 await（Lambda 回應後容器就凍結，沒 await 的下載會被砍掉）。
     // 影片／語音／檔案體積大，改在後台真的要看時才抓（見 resolveConversationMediaUrl）。
     if (event.message.type === 'image') {
+      // 要作答就會沉默好幾秒（讀圖 + 查知識庫），先讓客人看到「輸入中…」才不像已讀不回
+      if (willAnswerImage) showLoadingAnimation(userId, workspaceId, 20).catch(() => {})
+
       const lineMessageId = String((event.message as { id?: string }).id || '')
       const archived = await archiveConversationMedia({ workspaceId, lineMessageId, messageType: 'image' })
         .catch((e) => {
@@ -1890,8 +1908,120 @@ export async function handleMessageEvent(
       if (archived && !archived.ok) {
         console.warn('[conv-media] image not archived:', lineMessageId, archived.state, archived.detail || '')
       }
+
+      // 存檔完就讓 AI 看一眼：描述一律寫給客服看；問句只有開了看圖作答才會有。
+      // 同樣 await：Lambda 回應後容器會凍結，沒 await 的後續工作會被砍掉。
+      let question = ''
+      if (archived?.ok) {
+        question = await describeAndAttachImage({
+          workspaceId,
+          userIdOrDocId: userId,
+          messageIdPromise: savedMessageId,
+          storagePath: archived.path,
+          contentType: archived.contentType,
+        }).catch((e) => {
+          console.error('[media-describe] attach error:', e)
+          return ''
+        })
+      }
+
+      if (willAnswerImage && event.replyToken) {
+        if (question) {
+          await answerImageQuestion({
+            workspaceId,
+            lineUserId: userId,
+            question,
+            replyToken: event.replyToken,
+            sessionId,
+            requestOrigin: options.requestOrigin || '',
+          })
+        }
+        else {
+          // 讀不出客人想問什麼（自拍、風景、模糊照，或讀圖整個失敗）→ 退回原本的引導語。
+          // replyToken 還沒被用掉,所以這裡仍發得出去——這正是前面不搶先發引導語的原因。
+          await maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
+            .catch(e => console.error('[non-text-ack] error:', e))
+        }
+      }
     }
   }
+}
+
+/**
+ * 把「客人傳的圖」翻譯出來的問句，丟進一般答題流程回覆客人。
+ *
+ * 刻意重用 tryAiFallback 而不是自己組一套：用量記帳、額度、敏感詞、信心門檻、
+ * 答不出來就轉真人、草稿模式不對客人說話——這些全都在那支裡面。自己寫一條平行路徑，
+ * 遲早會漏掉其中一項（例如圖片問答不算額度、或草稿模式偷偷回覆客人）。
+ */
+async function answerImageQuestion(params: {
+  workspaceId: string
+  lineUserId: string
+  question: string
+  replyToken: string
+  sessionId: string | null
+  requestOrigin: string
+}): Promise<void> {
+  const { workspaceId, lineUserId, question, replyToken, sessionId, requestOrigin } = params
+  try {
+    const [userData, { channelSecret }] = await Promise.all([
+      ensureUser(lineUserId, undefined, workspaceId).catch(() => null),
+      getLineWorkspaceCredentials(workspaceId),
+    ])
+    await tryAiFallback({
+      workspaceId,
+      lineUserId,
+      textContent: question,
+      replyToken,
+      userAttributes: buildAttributeContext(userData),
+      channelSecret,
+      sessionId,
+      requestOrigin,
+    })
+  }
+  catch (e) {
+    console.error('[image-answer] failed:', e)
+  }
+}
+
+/**
+ * 讓 AI 看一眼客人剛傳的圖，把那句描述寫回兩個地方：
+ *   1. 訊息本身（`mediaDescription`）→ 對話裡圖片下方的說明，客服掃一眼就知道是什麼
+ *   2. 對話文件（`lastNonTextInboundSummary`）→ 客人接著喊「找真人」時，
+ *      轉真人案例的原句就不只是「[圖片]」，而是「[圖片] 破掉的杯子」
+ *
+ * 回傳「客人可能想問的問句」給呼叫端拿去作答（沒開看圖作答時一律是空字串）。
+ *
+ * 描述失敗（Gemini 掛了 / 逾時 / AI 未啟用）一律安靜跳過：圖片本身已經存好也顯示得出來，
+ * 少一句說明不該讓客服看不到圖。
+ */
+async function describeAndAttachImage(params: {
+  workspaceId: string
+  userIdOrDocId: string
+  messageIdPromise: Promise<string>
+  storagePath: string
+  contentType: string
+}): Promise<string> {
+  const { workspaceId, userIdOrDocId, storagePath, contentType } = params
+  const { description, question } = await readInboundImage({ workspaceId, storagePath, contentType })
+  if (!description) return question
+
+  const db = getDb()
+  const lineUserId = lineUserIdFromFirestoreDocId(userIdOrDocId, workspaceId)
+  const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
+  // 這個 await 順序是必要的:存訊息時會把 lastNonTextInboundSummary 清空(防張冠李戴),
+  // 等它落地再寫描述,才不會被那個清空動作蓋掉。
+  const messageId = await params.messageIdPromise
+
+  await Promise.all([
+    messageId
+      ? db.collection('conversations').doc(convDocId).collection('messages').doc(messageId)
+          .set({ mediaDescription: description }, { merge: true })
+      : Promise.resolve(),
+    db.collection('conversations').doc(convDocId)
+      .set({ lastNonTextInboundSummary: description }, { merge: true }),
+  ])
+  return question
 }
 
 export async function saveConversationMessage(
@@ -1911,7 +2041,7 @@ export async function saveConversationMessage(
     aiGenerated?: boolean
   },
   workspaceId?: string,
-): Promise<void> {
+): Promise<string> {
   const wid = requireWorkspaceId(workspaceId, 'saveConversationMessage')
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userIdOrDocId, wid)
@@ -1944,6 +2074,9 @@ export async function saveConversationMessage(
     if (NON_TEXT_INBOUND_TYPES.has(String(options?.messageType || ''))) {
       convPatch.lastNonTextInboundAt = messageTimestamp
       convPatch.lastNonTextInboundType = options!.messageType
+      // 描述是收訊之後才補寫的（見 describeAndAttachImage）。這裡先清空，
+      // 否則這張圖描述失敗時會沿用上一張圖的說明，變成張冠李戴。
+      convPatch.lastNonTextInboundSummary = ''
     }
   }
 
@@ -1958,6 +2091,9 @@ export async function saveConversationMessage(
     }),
     db.collection('conversations').doc(convDocId).set(convPatch, { merge: true }),
   ])
+  // 回傳訊息 doc id：收訊後才生得出來的東西（例如圖片的 AI 描述）要補寫回這一則，
+  // 沒有 id 就只能反查，而 payload.id 沒有索引。呼叫端不需要時忽略即可。
+  return msgRef.id
 }
 
 async function saveOutgoingConversationMessagesByWorkspace(
@@ -2756,6 +2892,7 @@ async function tryAiFallback(params: {
       aiMeta?: AiConversationMeta
       lastNonTextInboundAt?: { toMillis?: () => number }
       lastNonTextInboundType?: string
+      lastNonTextInboundSummary?: string
     } | undefined
     const nonTextAtMs = convData?.lastNonTextInboundAt?.toMillis?.() ?? 0
     // 圖之後若客人已經改用文字問、AI 也答了(aiMeta 比圖新),那這句「找真人」是對那個
@@ -2768,8 +2905,13 @@ async function tryAiFallback(params: {
     const nonTextType = nonTextIsLatest ? String(convData?.lastNonTextInboundType || '') : ''
     const handoffReason: HandoffReason = nonTextType ? 'non_text_content' : 'user_request'
     // 監控頁列出的是「客人問了什麼」,存「找真人」三個字等於沒說；改存內容類型,
-    // 一眼看得出這是張圖(真正的內容在對話裡,列表的「開對話」點過去就看得到)
-    const handoffQuery = nonTextType ? (NON_TEXT_QUERY_LABELS[nonTextType] ?? `[${nonTextType}]`) : textContent
+    // 一眼看得出這是張圖。AI 有讀出圖片內容時再接上那句描述——
+    // 「[圖片] 破掉的馬克杯」對客服的價值遠高於「[圖片]」,不用點進去就知道要準備什麼。
+    const nonTextSummary = nonTextType ? String(convData?.lastNonTextInboundSummary || '').trim() : ''
+    const nonTextLabel = nonTextType ? (NON_TEXT_QUERY_LABELS[nonTextType] ?? `[${nonTextType}]`) : ''
+    const handoffQuery = nonTextType
+      ? (nonTextSummary ? `${nonTextLabel} ${nonTextSummary}` : nonTextLabel)
+      : textContent
 
     // 品質指標：剛被 AI 回答完就按「找真人」= 回答沒解決問題（fire-and-forget）。
     // 草稿模式不計——客人根本沒看到那次回答。

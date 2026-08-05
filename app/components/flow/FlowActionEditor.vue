@@ -68,7 +68,19 @@
       <div class="admin-field-group">
         <AdminFieldLabel :text="textTitle" tight />
         <div :class="['flow-input-inset-wrap', insetWrapClass, 'control-full']">
-          <el-input v-model="action.text" :placeholder="textPlaceholder" :size="fieldSize" />
+          <!--
+            textMultiline：這段文字是機器人「回」給客人的（預存／自動回覆／行銷活動）時要能換行——
+            段落、條列、留白都是回覆的一部分，擠成一行客人讀不下去。
+            按鈕動作那種「代客人送出的文字」維持單行：那是一句話，不是一段文案。
+          -->
+          <el-input
+            v-model="action.text"
+            :type="textMultiline ? 'textarea' : 'text'"
+            :autosize="textMultiline ? { minRows: 3, maxRows: 12 } : undefined"
+            :resize="textMultiline ? 'none' : undefined"
+            :placeholder="textPlaceholder"
+            :size="fieldSize"
+          />
           <FlowVariableInset
             v-if="showVariableInset"
             :size="insetButtonSize"
@@ -157,6 +169,8 @@ const props = withDefaults(defineProps<{
   labelShowWordLimit?: boolean
   textTitle?: string
   textPlaceholder?: string
+  /** 回覆文字用多行輸入（機器人回給客人的文案）；按鈕的「代發文字」維持單行 */
+  textMultiline?: boolean
   uriTitle?: string
   uriPlaceholder?: string
   moduleTitle?: string
@@ -182,6 +196,7 @@ const props = withDefaults(defineProps<{
   labelShowWordLimit: false,
   textTitle: '回覆文字',
   textPlaceholder: '回覆文字',
+  textMultiline: false,
   uriTitle: '網址',
   uriPlaceholder: 'https://...',
   moduleTitle: '機器人模組',

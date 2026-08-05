@@ -16,6 +16,10 @@ import { getAiSettings } from './ai-settings'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { ALERT_LABELS } from '~~/shared/types/alerts'
+import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
+import { SETUP_LABELS } from '~~/shared/types/setup'
+import type { SetupStatusResponse } from '~~/shared/types/setup'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
 export interface AdminAgentToolCall { tool: string; args: Record<string, unknown> }
@@ -30,10 +34,14 @@ export interface AdminAgentReply {
 const MAX_TOOL_STEPS = 4
 
 // ── 工具註冊表(全部唯讀) ─────────────────────────────────────────────
+interface ToolCtx {
+  /** 呼叫者的 Authorization header:轉發給自家 API 的工具用,權限由該 API 自行把關 */
+  authHeader?: string
+}
 interface ToolDef {
   /** 給模型看的一行說明(白話,含何時該用) */
   description: string
-  run: (db: Firestore, workspaceId: string, args: Record<string, unknown>) => Promise<unknown>
+  run: (db: Firestore, workspaceId: string, args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>
 }
 
 const TOOLS: Record<string, ToolDef> = {
@@ -130,6 +138,35 @@ const TOOLS: Record<string, ToolDef> = {
       })
     },
   },
+  get_current_alerts: {
+    description: '目前異常與建議總覽(和右下角小幫手同一份):現在影響客人的問題、建議處理的事、可以更好的建議。問「現在有什麼要處理 / 有沒有異常 / 系統正常嗎」時用。',
+    async run(_db, workspaceId, _args, ctx) {
+      // 轉發呼叫者的憑證打自家 API:與小幫手面板同一份資料、同一套權限過濾,
+      // 不在這裡另寫第二份查詢(兩份口徑遲早漂移)
+      const res = await $fetch<WorkspaceAlertsResponse>('/api/admin/alerts', {
+        query: { workspaceId },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      })
+      const STATE: Record<string, string> = { active: '有這個狀況', clear: '正常', unknown: '這次查不到(不代表沒問題)' }
+      return res.items.map(i => ({
+        item: ALERT_LABELS[i.id] ?? i.id,
+        state: STATE[i.state] ?? i.state,
+        count: i.count,
+        detail: i.detail,
+      }))
+    },
+  },
+  get_setup_status: {
+    description: '設定就緒度:接 LINE、開 AI、知識庫、腳本哪些做完哪些還沒。問「設定好了嗎 / 還差什麼才能上線」時用。',
+    async run(_db, workspaceId, _args, ctx) {
+      const res = await $fetch<SetupStatusResponse>('/api/admin/setup-status', {
+        query: { workspaceId },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      })
+      const STATUS: Record<string, string> = { done: '已完成', incomplete: '還沒做', unknown: '這次查不到' }
+      return res.items.map(i => ({ item: SETUP_LABELS[i.id] ?? i.id, status: STATUS[i.status] ?? i.status }))
+    },
+  },
 }
 
 const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號「後台查詢助理」。你只能查資料並回答,**沒有任何修改能力**;若使用者要求修改/刪除/開關任何東西,禮貌說明你目前只能查詢,請他到對應頁面操作。
@@ -154,8 +191,10 @@ export async function runAdminAgentChat(params: {
   workspaceId: string
   message: string
   history?: AdminAgentTurn[]
+  /** 呼叫者的 Authorization header,給需要打自家 API 的工具轉發用 */
+  authHeader?: string
 }): Promise<AdminAgentReply> {
-  const { db, workspaceId } = params
+  const { db, workspaceId, authHeader } = params
   const message = String(params.message || '').trim().slice(0, 1000)
   if (!message) throw createError({ statusCode: 400, statusMessage: '請輸入想查詢的問題' })
 
@@ -204,7 +243,7 @@ export async function runAdminAgentChat(params: {
     const args = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
     toolCalls.push({ tool: toolName, args })
     try {
-      const result = await tool.run(db, workspaceId, args)
+      const result = await tool.run(db, workspaceId, args, { authHeader })
       toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 4000)}`)
     }
     catch (e: any) {

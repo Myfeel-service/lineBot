@@ -154,7 +154,19 @@
         @apply-draft="applyAiDraft"
         @add-knowledge="goAddKnowledge"
       />
-      <div ref="messagesEl" class="conv-messages">
+      <!-- 圖片可以直接拖進對話區（貼上則綁在輸入框），不必繞 ＋ →「圖片」→ 選檔案 -->
+      <div
+        ref="messagesEl"
+        class="conv-messages"
+        :class="{ 'is-drop-target': canOperate && isDraggingImage }"
+        @dragenter.prevent="canOperate && onDragEnter($event)"
+        @dragover.prevent
+        @dragleave="onDragLeave"
+        @drop.prevent="canOperate && onDropFile($event)"
+      >
+        <div v-if="canOperate && isDraggingImage" class="conv-drop-hint">
+          放開就把圖片帶進來，送出前還可以先看一眼
+        </div>
         <div v-if="msgLoading" class="split-sidebar-loading">
           <div class="spinner" />
         </div>
@@ -215,6 +227,10 @@
                 :preview-teleported="true"
               />
               <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
+              <!-- AI 讀出來的圖片說明：明講是 AI 讀的，客服才知道這句話可能不準、要自己看圖確認 -->
+              <div v-if="msg.mediaDescription" class="conv-media-caption">
+                <span class="conv-media-caption__tag">AI 看到</span>{{ msg.mediaDescription }}
+              </div>
             </template>
             <template v-else-if="getLineRichImageUrl(msg)">
               <el-image
@@ -423,7 +439,22 @@
         </template>
       </div>
 
-      <div class="conv-input-tools">
+      <!--
+        客人封鎖後推播一定被 LINE 退件。不先講的話，客服會認真打完一長串才看到「發送失敗」，
+        而且不會知道是自己這邊沒問題——所以擋在回覆區上面，不是等送出才說。
+      -->
+      <div v-if="canOperate && selectedUser?.isBlocked" class="conv-blocked-notice">
+        <span class="conv-blocked-notice__icon" aria-hidden="true">🚫</span>
+        <span>這位客人已封鎖官方帳號，訊息送不出去。要聯絡他請改用其他管道。</span>
+      </div>
+
+      <!--
+        觀察者整條回覆區都不出現（和上面的 AI 脈絡卡同一個判斷）。
+        原本只靠 .conversations-page .el-button--primary 的唯讀 CSS 把「送出」藏掉，
+        但那只擋得住 primary 按鈕——picker 裡任何非 primary 的動作鈕都會漏出來，
+        點了才跳「觀察者無法執行此操作」。權限要在 markup 決定，不是靠按鈕顏色。
+      -->
+      <div v-if="canOperate" class="conv-input-tools">
         <div class="conv-picker-actions">
           <el-dropdown trigger="click" placement="top-start" @command="onQuickSendCommand">
             <button
@@ -452,10 +483,12 @@
           <el-popover
             v-for="picker in pickerModes"
             :key="picker.key"
+            v-model:visible="pickerVisible[picker.key]"
             trigger="click"
             placement="top-start"
             :width="340"
             popper-class="conv-picker-popover"
+            @hide="pendingSticker = null"
           >
             <template #reference>
               <button
@@ -492,7 +525,10 @@
                     :key="item.id"
                     type="button"
                     class="conv-picker-option"
-                    :class="`conv-picker-option--${picker.key}`"
+                    :class="[
+                      `conv-picker-option--${picker.key}`,
+                      { active: isPendingSticker(item) },
+                    ]"
                     :disabled="sending"
                     @click="onPickerItemSelect(picker.key, item)"
                   >
@@ -506,6 +542,26 @@
                   </button>
                 </div>
               </div>
+              <!--
+                貼圖改成先選再送。表情是插進輸入框（送出前隨時能刪），但貼圖點下去就直接
+                飛給客人、收不回來——同一顆按鈕裡兩種力道，得讓不可逆的那個多一步。
+              -->
+              <template v-if="picker.key === 'sticker'">
+                <p class="conv-picker-note">
+                  {{ pendingSticker ? '確認送出後客人馬上會收到，收不回來。' : '點一張貼圖選起來，再按送出。' }}
+                </p>
+                <div class="conv-picker-footer">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="sending"
+                    :disabled="!pendingSticker || sending"
+                    @click="sendPendingSticker"
+                  >
+                    送出貼圖
+                  </el-button>
+                </div>
+              </template>
             </div>
           </el-popover>
           <el-popover
@@ -605,7 +661,7 @@
         <span class="text-muted conv-input-hint">點上面的按鈕，可以挑圖片、貼圖、表情，或挑一則客服預存／自動回覆（文字可先填進回覆框改）</span>
       </div>
 
-      <div class="conv-input-row">
+      <div v-if="canOperate" class="conv-input-row">
         <el-input
           ref="inputRef"
           v-model="inputText"
@@ -615,6 +671,7 @@
           placeholder="輸入訊息（可含 emoji），Enter 送出、Shift + Enter 換行…"
           :disabled="sending"
           @keydown.enter="onInputEnter"
+          @paste="onInputPaste"
         />
         <el-button type="primary" :loading="sending" :disabled="!canSend" @click="send">
           送出
@@ -942,6 +999,8 @@ interface ConvItem {
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
   lastMessageAt: any
+  /** 客人已封鎖官方帳號：推播會被 LINE 退件，回覆區要先擋一句話 */
+  isBlocked?: boolean
 }
 
 interface MsgItem {
@@ -953,6 +1012,8 @@ interface MsgItem {
   timestamp: any
   /** 對方曾來訊／互動後推定已讀（見後端說明） */
   readByPeer?: boolean
+  /** 客人傳的圖，AI 讀出來的一句說明；AI 未啟用或讀不出來就沒有 */
+  mediaDescription?: string
 }
 
 interface SessionTimelineItem {
@@ -966,6 +1027,7 @@ interface SessionTimelineItem {
   text?: string
   messageType?: string
   payload?: unknown
+  mediaDescription?: string
   broadcastId?: string
 }
 
@@ -1073,7 +1135,62 @@ const aiContextRefreshKey = ref(0)
  */
 const { canOperate } = useWorkspace()
 
-const inputRef = ref<{ focus: () => void } | null>(null)
+const inputRef = ref<{ focus: () => void, textarea?: HTMLTextAreaElement } | null>(null)
+
+/**
+ * 每位客人各自的未送出草稿。
+ *
+ * 原本全站只有一個 inputText：幫 A 客人打到一半、切去看 B 客人一眼，那段字會跟著過去，
+ * 一按 Enter 就送給錯的人。切走時收進抽屜、切回來時放回去。
+ * 也寫進 localStorage：不小心關掉分頁或重新整理，打到一半的回覆不該就這樣不見。
+ */
+const drafts = new Map<string, string>()
+/** 每位客人的草稿上限（LINE 單則就 5000 字），以及總共記幾位客人 */
+const DRAFT_MAX_CHARS = 5000
+const DRAFT_MAX_USERS = 50
+
+const draftsStorageKey = computed(() => `conv-drafts:${workspaceId.value || 'unknown'}`)
+
+function loadPersistedDrafts() {
+  try {
+    const raw = localStorage.getItem(draftsStorageKey.value)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const [uid, text] of Object.entries(parsed ?? {})) {
+      if (typeof text === 'string' && text.trim()) drafts.set(uid, text.slice(0, DRAFT_MAX_CHARS))
+    }
+  }
+  catch {
+    // 存壞了就當作沒有草稿，不要因此擋住整個對話頁
+  }
+}
+
+function persistDrafts() {
+  try {
+    // 只留最近動到的幾位，免得 localStorage 無限長大
+    const entries = [...drafts.entries()].slice(-DRAFT_MAX_USERS)
+    if (!entries.length) localStorage.removeItem(draftsStorageKey.value)
+    else localStorage.setItem(draftsStorageKey.value, JSON.stringify(Object.fromEntries(entries)))
+  }
+  catch {
+    // 隱私模式／配額滿：草稿存不進去不影響這次回覆，靜靜略過
+  }
+}
+
+function stashDraft() {
+  const uid = selectedUserId.value
+  if (!uid) return
+  if (inputText.value.trim()) drafts.set(uid, inputText.value.slice(0, DRAFT_MAX_CHARS))
+  else drafts.delete(uid)
+  persistDrafts()
+}
+
+/** 邊打邊存（節流）：不等切走才存，重新整理也留得住 */
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null
+watch(inputText, () => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(stashDraft, 500)
+})
 
 /** 填進回覆框後把游標帶過去：客服下一步一定是改字，不該還要自己再點一次 */
 function focusInput() {
@@ -1281,6 +1398,11 @@ const stickerCategoryMap: Record<string, Array<{ packageId: string, stickerId: s
   ],
 }
 
+/** 選起來還沒送的貼圖；貼圖 picker 收起來時會清掉，不留幽靈選取 */
+const pendingSticker = ref<{ packageId: string, stickerId: string } | null>(null)
+/** 兩個 picker 各自的開合：送出貼圖後要自己把它關上 */
+const pickerVisible = reactive<Record<PickerKind, boolean>>({ emoji: false, sticker: false })
+
 const pickerModes: Array<{
   key: PickerKind
   title: string
@@ -1367,6 +1489,7 @@ const chatRows = computed<ChatRow[]>(() => {
         payload: item.payload as any,
         timestamp: item.timestamp,
         readByPeer: item.readByPeer,
+        mediaDescription: item.mediaDescription,
       }
       return { kind: 'msg' as const, key: item.id, msg }
     })
@@ -1713,6 +1836,11 @@ async function selectUserById(userId: string) {
 }
 
 async function selectUser(c: ConvItem) {
+  // 換人前先把打到一半的字收進這位客人的抽屜，再拿出下一位的
+  if (selectedUserId.value !== c.userId) {
+    stashDraft()
+    inputText.value = drafts.get(c.userId) ?? ''
+  }
   selectedSessionId.value = null
   sessionTimelineItems.value = []
   sessionMeta.value = null
@@ -1722,24 +1850,37 @@ async function selectUser(c: ConvItem) {
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingQuickReplyId.value = ''
-  messages.value = []
-  msgLoading.value = true
+  await loadMessages(c.userId)
+}
+
+/**
+ * 讀這位客人的訊息。
+ *
+ * quiet = 自己剛送出後的刷新：不清空、不轉圈。原本這條走 selectUser()，
+ * 每回一句就把整個對話清成一顆 spinner 再長回來——連回三句就閃三次。
+ */
+async function loadMessages(userId: string, options?: { quiet?: boolean }) {
+  const quiet = options?.quiet === true
+  if (!quiet) {
+    messages.value = []
+    msgLoading.value = true
+  }
   try {
     const res = await apiFetch<{
       messages: MsgItem[]
       activeSession: SessionPanelMeta | null
-    }>(`/api/conversations/${c.userId}/messages`)
+    }>(`/api/conversations/${userId}/messages`)
     messages.value = res.messages
     allTabActiveSession.value = res.activeSession ?? null
     await nextTick()
     scrollToBottom()
-    markConversationRead(c.userId)
+    markConversationRead(userId)
   }
   catch {
     showToast('載入訊息失敗', 'error')
   }
   finally {
-    msgLoading.value = false
+    if (!quiet) msgLoading.value = false
   }
 }
 
@@ -1759,19 +1900,22 @@ function onInputEnter(evt: Event | KeyboardEvent) {
 
 async function send() {
   if (!assertCanOperate()) return
-  if (!selectedUserId.value) return
+  const userId = selectedUserId.value
+  if (!userId) return
+  const text = inputText.value.trim()
+  if (!text) {
+    showToast('請輸入訊息', 'error')
+    return
+  }
   sending.value = true
   try {
-    const text = inputText.value.trim()
-    if (!text) {
-      showToast('請輸入訊息', 'error')
-      return
-    }
-    await apiFetch(`/api/conversations/${selectedUserId.value}/send`, {
+    await apiFetch(`/api/conversations/${userId}/send`, {
       method: 'POST',
       body: { type: 'text', text },
     })
     inputText.value = ''
+    drafts.delete(userId)
+    persistDrafts()
     await reloadAfterOutgoing()
   }
   catch (e: any) {
@@ -1779,14 +1923,18 @@ async function send() {
   }
   finally {
     sending.value = false
+    // 送出時輸入框被 disabled，焦點會掉到 body 且不會自己回來——
+    // 不還回去的話，客服每回一句都要用滑鼠再點一次輸入框才能繼續打。
+    nextTick(focusInput)
   }
 }
 
-async function reloadSessionTimeline() {
+async function reloadSessionTimeline(options?: { quiet?: boolean }) {
   const sid = selectedSessionId.value
   if (!sid)
     return
-  msgLoading.value = true
+  const quiet = options?.quiet === true
+  if (!quiet) msgLoading.value = true
   try {
     const res = await apiFetch<{
       sessionId: string
@@ -1807,17 +1955,18 @@ async function reloadSessionTimeline() {
     showToast('重新載入會話失敗', 'error')
   }
   finally {
-    msgLoading.value = false
+    if (!quiet) msgLoading.value = false
   }
 }
 
+/** 自己剛送出東西後的刷新：一律安靜（不清空、不轉圈），只有內容悄悄多一則 */
 async function reloadAfterOutgoing() {
   if (selectedSessionId.value) {
-    await reloadSessionTimeline()
+    await reloadSessionTimeline({ quiet: true })
     await refreshListQuiet()
   }
-  else if (selectedUser.value) {
-    await selectUser(selectedUser.value)
+  else if (selectedUserId.value) {
+    await loadMessages(selectedUserId.value, { quiet: true })
     await loadSessionCounts()
   }
 }
@@ -2005,7 +2154,11 @@ async function onQuickFileChange(kind: QuickPickKind, event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  await ingestQuickFile(kind, file)
+}
 
+/** 檢查 + 上傳 + 填進媒體表單。選檔、貼上、拖曳三條路都走這裡 */
+async function ingestQuickFile(kind: QuickPickKind, file: File) {
   const validation = validateFile(file, toUploadMediaKind(kind))
   if (!validation.ok) {
     showToast(validation.message, 'error')
@@ -2058,6 +2211,68 @@ function onQuickSendCommand(command: string | number | object) {
   quickSendType.value = type
   resetQuickMediaForm()
   mediaDialogVisible.value = true
+}
+
+/**
+ * 貼上（Cmd+V）或拖進來的圖片。
+ *
+ * 客服最常做的動作是截圖直接貼，原本一定要走 ＋ →「圖片」→ 對話框 → 選檔案。
+ * 這裡刻意不直接送出，而是開原本那個媒體對話框並把圖帶進去：
+ * 送圖給客人收不回來，貼錯一張的代價比多按一次「送出」高太多。
+ */
+async function acceptDroppedImage(file: File) {
+  if (!assertCanOperate()) return
+  if (!selectedUserId.value) {
+    showToast('請先選擇一位使用者', 'error')
+    return
+  }
+  quickSendType.value = 'image'
+  resetQuickMediaForm()
+  mediaDialogVisible.value = true
+  await ingestQuickFile('image', file)
+}
+
+function pickImageFile(source: DataTransfer | null | undefined): File | null {
+  const items = Array.from(source?.items ?? [])
+  for (const item of items) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue
+    const file = item.getAsFile()
+    if (file) return file
+  }
+  return null
+}
+
+/** 貼上圖片就接手；貼的是文字則什麼都不做，維持原本的貼上行為 */
+function onInputPaste(evt: Event) {
+  const file = pickImageFile((evt as ClipboardEvent).clipboardData)
+  if (!file) return
+  evt.preventDefault()
+  void acceptDroppedImage(file)
+}
+
+/** 拖曳計數器：dragleave 進到子元素也會觸發，用進出次數判斷才不會閃 */
+const dragDepth = ref(0)
+const isDraggingImage = computed(() => dragDepth.value > 0)
+
+function onDragEnter(evt: DragEvent) {
+  if (!Array.from(evt.dataTransfer?.types ?? []).includes('Files')) return
+  dragDepth.value++
+}
+
+function onDragLeave() {
+  if (dragDepth.value > 0) dragDepth.value--
+}
+
+function onDropFile(evt: DragEvent) {
+  dragDepth.value = 0
+  const file = pickImageFile(evt.dataTransfer)
+  if (!file) {
+    // 拖進來的不是圖片就要說一聲，不然會以為系統壞了
+    if (Array.from(evt.dataTransfer?.types ?? []).includes('Files'))
+      showToast('這裡只收圖片；影片、音訊、檔案請用左下角的 ＋', 'warning')
+    return
+  }
+  void acceptDroppedImage(file)
 }
 
 async function sendQuickMedia() {
@@ -2141,13 +2356,48 @@ function onPickerItemSelect(kind: PickerKind, item: PickerItem) {
     appendEmoji(item.emoji)
     return
   }
+  // 貼圖只是選起來；真的送出要再按一次（見 picker 底部的說明）
   if (kind === 'sticker' && item.kind === 'sticker') {
-    sendSticker(item.packageId, item.stickerId)
+    pendingSticker.value = { packageId: item.packageId, stickerId: item.stickerId }
   }
 }
 
+function isPendingSticker(item: PickerItem): boolean {
+  if (item.kind !== 'sticker') return false
+  const picked = pendingSticker.value
+  return !!picked && picked.packageId === item.packageId && picked.stickerId === item.stickerId
+}
+
+async function sendPendingSticker() {
+  const picked = pendingSticker.value
+  if (!picked) return
+  await sendSticker(picked.packageId, picked.stickerId)
+}
+
+/**
+ * 把字插在游標的位置，不是一律黏到最後面。
+ *
+ * 訊息可以換行之後這個差別很明顯：寫完三段想在第一段補個 emoji，原本會掉到第三段尾巴。
+ * 有選取範圍就取代掉它（和一般輸入框一樣的直覺）。
+ */
+function insertAtCursor(text: string) {
+  const el = inputRef.value?.textarea
+  if (!el) {
+    inputText.value += text
+    return
+  }
+  const start = el.selectionStart ?? inputText.value.length
+  const end = el.selectionEnd ?? start
+  inputText.value = inputText.value.slice(0, start) + text + inputText.value.slice(end)
+  const caret = start + text.length
+  nextTick(() => {
+    el.focus()
+    el.setSelectionRange(caret, caret)
+  })
+}
+
 function appendEmoji(emoji: string) {
-  inputText.value += emoji
+  insertAtCursor(emoji)
   recentEmojis.value = [
     emoji,
     ...recentEmojis.value.filter(item => item !== emoji),
@@ -2166,6 +2416,8 @@ async function sendSticker(packageId: string, sid: string) {
       method: 'POST',
       body: { type: 'sticker', packageId, stickerId: sid },
     })
+    // 送完就收起來（@hide 會順手清掉選取），別擋住剛送出去的那張
+    pickerVisible.sticker = false
     await reloadAfterOutgoing()
   }
   catch (e: any) {
@@ -2799,6 +3051,8 @@ onMounted(() => {
   if (typeof document !== 'undefined')
     savedDocumentTitle.value = document.title
   hydrateConvLastRead()
+  // 上次沒送出的草稿先撈回來，selectUser 選到那位客人時就會自己填回輸入框
+  loadPersistedDrafts()
   // 從統計頁下鑽帶進來的分頁（?tab=open/bot_handling/pending_human/closed…）
   const qTab = String(route.query.tab || '')
   if (qTab && STATUS_TABS.some(t => t.value === qTab))

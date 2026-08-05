@@ -167,6 +167,8 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
         cooldownMinutes: Math.round(clampNumber(raw?.disambiguation?.cooldownMinutes, 0, 1440, DEFAULT_DISAMBIGUATION_COOLDOWN_MINUTES)),
       }
     })(),
+    // 舊工作區沒有這個欄位 → 一律視為關閉（不能讓「升級後 AI 突然開始跟客人談照片」發生）
+    imageAnswer: { enabled: raw?.imageAnswer?.enabled === true },
     serviceHours: (() => {
       const sh = raw?.serviceHours
       // "HH:mm" 驗證：格式不合就退回預設,避免壞值讓 isServiceHoursDnd 判錯
@@ -202,6 +204,7 @@ export async function setAiSettings(
     // 深合併：partial 只帶部分子欄位（如 { enabled }）時，其餘門檻要保留工作區現值,
     // 否則 normalize 會把缺欄位重設回出廠預設（top1Min 0.65 事故的同型結構）
     disambiguation: { ...current.disambiguation, ...(partial.disambiguation ?? {}) },
+    imageAnswer: { ...current.imageAnswer, ...(partial.imageAnswer ?? {}) },
     serviceHours: { ...current.serviceHours, ...(partial.serviceHours ?? {}) },
   })
   await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).set({

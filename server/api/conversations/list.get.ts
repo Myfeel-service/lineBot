@@ -13,6 +13,8 @@ type ConvRow = {
   lastMessage: string
   lastDirection: string
   lastMessageAt: unknown
+  /** 客人已封鎖官方帳號（unfollow 時寫入）：推播會被 LINE 退件，客服要先知道 */
+  isBlocked: boolean
 }
 
 function matchesSearch(row: ConvRow, searchRaw: string): boolean {
@@ -47,6 +49,8 @@ async function enrichConversations(
       lastMessage: data.lastMessage ?? '',
       lastDirection: data.lastDirection ?? 'incoming',
       lastMessageAt: data.lastMessageAt ?? null,
+      // 這裡本來就撈了 user 文件，順手帶出來，不必為了這個旗標多打一次 Firestore
+      isBlocked: user.isBlocked === true,
     }
   })
 }

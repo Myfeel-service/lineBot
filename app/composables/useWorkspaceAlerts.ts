@@ -10,23 +10,24 @@
  */
 
 import type { Component } from 'vue'
-import { Bell, ChatDotRound, CreditCard, MagicStick, Odometer, Pointer, Reading, Refresh, Service, Tickets } from '@element-plus/icons-vue'
+import { Bell, ChatDotRound, CreditCard, MagicStick, Odometer, Opportunity, Pointer, Reading, Refresh, Service, Tickets } from '@element-plus/icons-vue'
+import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 
 /**
- * critical = 現在就在影響客人（客人問了得不到回答、系統停擺）。只有這一級會亮紅點。
- * warning  = 建議處理，但客人暫時不會有感。
+ * critical   = 現在就在影響客人（客人問了得不到回答、系統停擺）。只有這一級會亮紅點。
+ * warning    = 建議處理，但客人暫時不會有感。可以按「暫停提醒」靜音 7 天。
+ * suggestion = 沒有東西壞掉，是「可以更好」（例如建議收件匣有草稿）。不算異常、不進紅點、
+ *              不影響「目前沒有發現異常」的結論。
  *
  * 這條線要守住：什麼都算紅點，紅點就等於沒有——使用者會學會忽略它。
  */
-export type AlertSeverity = 'critical' | 'warning'
+export type AlertSeverity = 'critical' | 'warning' | 'suggestion'
 
 export interface AlertDefinition {
   id: WorkspaceAlertId
   icon: Component
   severity: AlertSeverity
-  /** 一句話、零術語：發生了什麼事 */
-  title: string
   /** 白話文：不管它會怎樣（講後果，不是講原理） */
   impact: string
   /** 按鈕上的動作字樣 */
@@ -38,6 +39,8 @@ export interface AlertDefinition {
 }
 
 export interface ResolvedAlert extends AlertDefinition {
+  /** 一句話、零術語標題。來自 shared 的 ALERT_LABELS——與問助理工具同一份，不會漂移 */
+  title: string
   state: WorkspaceAlertState
   count?: number
   detail?: string
@@ -52,7 +55,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'anyTextBlocking',
     icon: ChatDotRound,
     severity: 'critical',
-    title: 'AI 被自動回覆規則擋住了',
     impact: '有一條「輸入任何內容」的規則會先接走所有訊息，客人問什麼都只會拿到那句罐頭回覆，AI 等於沒開。',
     cta: '去看這條規則',
     requires: 'operate',
@@ -62,8 +64,7 @@ const ALERTS: AlertDefinition[] = [
     id: 'llmError',
     icon: MagicStick,
     severity: 'critical',
-    title: 'AI 服務近期失敗過',
-    impact: '這些客人問了問題但 AI 當下答不出來，已轉給真人。若持續發生請先確認 AI 供應商狀態。',
+    impact: '這些客人問了問題但 AI 當下答不出來，已轉給真人。這通常會自己恢復；若一整天都在發生，請聯絡我們處理。',
     cta: '看是哪些對話',
     requires: 'operate',
     // 帶 ?reason= 讓監控頁自動套用「AI 服務暫時失敗」篩選並捲到案例清單
@@ -73,11 +74,11 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/ai-usage?reason=llm_error&includeResolved=1`,
   },
   {
+    // 措辭與知識庫頁「要處理的事」同一句話（見 ALERT_LABELS）:
+    // 兩邊講的是同一件事,不該一邊「同步失敗」一邊「抓不到內容」
     id: 'knowledgeSyncFailed',
     icon: Reading,
     severity: 'critical',
-    // 措辭與知識庫頁「要處理的事」同一句話:兩邊講的是同一件事,不該一邊「同步失敗」一邊「抓不到內容」
-    title: '有資料抓不到內容',
     impact: '這些資料的內容沒有更新進 AI，客人問到相關問題會得到過時或空的答案。',
     cta: '去修這些資料',
     requires: 'operate',
@@ -89,7 +90,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'knowledgeIndexFailed',
     icon: Reading,
     severity: 'critical',
-    title: '有知識 AI 沒學起來',
     impact: '這些知識存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
     cta: '去看這些知識',
     requires: 'operate',
@@ -99,7 +99,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'quotaExceeded',
     icon: Odometer,
     severity: 'critical',
-    title: '本期回覆則數用完了',
     impact: 'AI 已經停止回覆，現在客人的訊息會直接轉給真人處理。',
     cta: '去升級方案',
     requires: 'settings',
@@ -109,8 +108,7 @@ const ALERTS: AlertDefinition[] = [
     id: 'paymentPastDue',
     icon: CreditCard,
     severity: 'critical',
-    title: '自動扣款沒有成功',
-    impact: '服務還在跑，但寬限期過了會被降回免費方案。請更新付款方式或改用手動付款。',
+    impact: '服務目前照常，但一直扣不到款會被降回免費方案、AI 停止回覆。請更新付款方式，或改用手動付款。',
     cta: '去處理付款',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
@@ -119,7 +117,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'handoffNotifyMissing',
     icon: Bell,
     severity: 'warning',
-    title: '沒有人會收到轉真人通知',
     impact: 'AI 答不出來時會轉給真人，但目前沒設定要通知誰——客人可能等很久都沒人接手。',
     cta: '去設定通知對象',
     requires: 'settings',
@@ -130,7 +127,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'brokenModuleButton',
     icon: Pointer,
     severity: 'critical',
-    title: '有按鈕按下去沒反應',
     impact: '選單或圖卡上的按鈕指向已刪除／已停用的模組。客人按了收不到任何訊息，也不會看到錯誤提示。',
     cta: '去檢查選單按鈕',
     requires: 'settings',
@@ -140,7 +136,6 @@ const ALERTS: AlertDefinition[] = [
     id: 'humanBacklog',
     icon: Service,
     severity: 'warning',
-    title: '有客人在等真人回覆',
     impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停。',
     cta: '去看對話',
     requires: 'operate',
@@ -151,18 +146,16 @@ const ALERTS: AlertDefinition[] = [
     id: 'knowledgeOutdated',
     icon: Refresh,
     severity: 'warning',
-    title: '有資料內容變了還沒重新學',
     impact: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
     cta: '去重新同步',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources`,
   },
   {
+    // 不用「蓋章 / system_notice」這種內部說法:客服看到的後果是「假的待處理」
     id: 'claimPushUnmarked',
     icon: Service,
     severity: 'warning',
-    // 不用「蓋章 / system_notice」這種內部說法:客服看到的後果是「假的待處理」
-    title: '活動推播後有對話被誤標成待處理',
     impact: '客人已經收到活動推播，但系統沒記下「已回應」，這些對話會出現在待處理清單上，其實不用處理。清單暫時會偏多，客人沒有受影響。',
     cta: '去看待處理清單',
     requires: 'operate',
@@ -172,11 +165,20 @@ const ALERTS: AlertDefinition[] = [
     id: 'invoiceFailed',
     icon: Tickets,
     severity: 'warning',
-    title: '有發票開立失敗',
     impact: '款項已收到，但發票沒開成功，通常是統編或載具格式有問題，需要補開。',
     cta: '去看付款紀錄',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+  },
+  {
+    // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
+    id: 'knowledgeSuggestions',
+    icon: Opportunity,
+    severity: 'suggestion',
+    impact: '這些是客人問過、但 AI 沒答好的主題。草稿我都擬好了，採用之後 AI 下次就答得出來。',
+    cta: '去看建議',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/knowledge/sources`,
   },
 ]
 
@@ -188,6 +190,8 @@ const REFRESH_TTL_MS = 60_000
  * 而這些異常都是「壞了幾小時也還是壞著」的狀態，不需要秒級新鮮度。
  */
 const POLL_INTERVAL_MS = 10 * 60_000
+/** warning 靜音時長：7 天後自動恢復提醒（若問題還在） */
+const SNOOZE_MS = 7 * 24 * 3600_000
 
 export function useWorkspaceAlerts() {
   const { workspaceId, getBearer, canManageSettings, canOperate } = useWorkspace()
@@ -197,6 +201,12 @@ export function useWorkspaceAlerts() {
   const loaded = useState('workspace-alerts-loaded', () => false)
   const loading = useState('workspace-alerts-loading', () => false)
   const checkedAt = useState<number>('workspace-alerts-checked-at', () => 0)
+  /**
+   * 上一次檢查是否失敗。要現形：查不到不等於沒異常——
+   * 首查就失敗時使用者得知道「還沒檢查到」，不能讓異常區靜默消失像沒事一樣；
+   * 已有舊結果時也要講「這次沒查成，看到的是稍早的結果」。
+   */
+  const lastRefreshFailed = useState('workspace-alerts-failed', () => false)
   /** 每次有人來要資料就記一次時間；「幾分鐘前檢查」靠它重算，不會停在「剛剛」不動 */
   const tick = useState<number>('workspace-alerts-tick', () => 0)
 
@@ -206,6 +216,7 @@ export function useWorkspaceAlerts() {
     const wid = workspaceId.value
     if (!wid)
       return
+    loadSnoozes(wid)
     tick.value = Date.now()
     if (inflight)
       return inflight
@@ -227,9 +238,11 @@ export function useWorkspaceAlerts() {
         alertMap.value = next
         checkedAt.value = data.checkedAt || Date.now()
         loaded.value = true
+        lastRefreshFailed.value = false
       }
       catch {
-        // 靜默失敗，保留前一次結果；查不到不等於沒異常，也不要清空既有警訊
+        // 保留前一次結果（查不到不等於沒異常，不清空既有警訊），但失敗要現形
+        lastRefreshFailed.value = true
       }
       finally {
         loading.value = false
@@ -247,21 +260,88 @@ export function useWorkspaceAlerts() {
     alertMap.value = {}
     loaded.value = false
     checkedAt.value = 0
+    lastRefreshFailed.value = false
+    snoozedMap.value = {} // 換工作區後由下一次 refresh 重新載入該工作區的靜音
   }
 
-  /** 只保留「這個帳號有權限去處理」的異常——沒權限的不顯示、也不算進紅點 */
+  // ── 靜音（只有 warning 可以）─────────────────────────────────
+  // 使用者對「知道了但暫時不處理」的 warning 沒有出口的話，清單會養成被整片忽略的習慣。
+  // critical 不給靜音：正在影響客人的事沒有「不想看」這個選項。
+  const snoozedMap = useState<Record<string, number>>('workspace-alerts-snoozed', () => ({}))
+
+  function snoozeStoreKey(wid: string) {
+    return `ta-alert-snooze:${wid}`
+  }
+  /** 從 localStorage 載入未過期的靜音（refresh 時呼叫，過期項順手清掉） */
+  function loadSnoozes(wid: string) {
+    if (!import.meta.client)
+      return
+    try {
+      const raw = JSON.parse(localStorage.getItem(snoozeStoreKey(wid)) ?? '{}') as Record<string, number>
+      const now = Date.now()
+      snoozedMap.value = Object.fromEntries(
+        Object.entries(raw).filter(([, until]) => typeof until === 'number' && until > now),
+      )
+    }
+    catch {
+      snoozedMap.value = {}
+    }
+  }
+  function persistSnoozes(wid: string) {
+    try {
+      localStorage.setItem(snoozeStoreKey(wid), JSON.stringify(snoozedMap.value))
+    }
+    catch {}
+  }
+  function snoozeAlert(id: WorkspaceAlertId) {
+    const wid = workspaceId.value
+    if (!wid)
+      return
+    if (ALERTS.find(a => a.id === id)?.severity !== 'warning')
+      return
+    snoozedMap.value = { ...snoozedMap.value, [id]: Date.now() + SNOOZE_MS }
+    persistSnoozes(wid)
+  }
+  function unsnoozeAll() {
+    const wid = workspaceId.value
+    if (!wid)
+      return
+    snoozedMap.value = {}
+    persistSnoozes(wid)
+  }
+  function isSnoozed(a: ResolvedAlert) {
+    return a.severity === 'warning' && (snoozedMap.value[a.id] ?? 0) > Date.now()
+  }
+
+  /** 只保留「這個帳號有權限去處理」的項目——沒權限的不顯示、也不算進紅點 */
   const visibleAlerts = computed<ResolvedAlert[]>(() =>
     ALERTS
       .filter(a => (a.requires === 'settings' ? canManageSettings.value : canOperate.value))
       .map((a) => {
         const item = alertMap.value[a.id]
-        return { ...a, state: item?.state ?? 'unknown', count: item?.count, detail: item?.detail }
+        // 標題來自 shared 的 ALERT_LABELS：面板與問助理工具講同一句話
+        return { ...a, title: ALERT_LABELS[a.id], state: item?.state ?? 'unknown', count: item?.count, detail: item?.detail }
       }),
   )
 
-  const activeAlerts = computed(() => visibleAlerts.value.filter(a => a.state === 'active'))
+  /**
+   * 進行中的「異常」：不含 suggestion（那是可以更好，不是壞掉）、不含被靜音的 warning。
+   * critical 一律排前（註冊表順序是維護順序，不是急迫順序）。
+   */
+  const activeAlerts = computed(() =>
+    [...visibleAlerts.value.filter(a => a.state === 'active' && a.severity !== 'suggestion' && !isSnoozed(a))]
+      .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'critical' ? -1 : 1)),
+  )
   const criticalAlerts = computed(() => activeAlerts.value.filter(a => a.severity === 'critical'))
   const warningAlerts = computed(() => activeAlerts.value.filter(a => a.severity === 'warning'))
+  /** 「可以更好」：建議類，另立一區呈現，不進異常結論 */
+  const suggestionAlerts = computed(() =>
+    visibleAlerts.value.filter(a => a.state === 'active' && a.severity === 'suggestion'),
+  )
+  /** 被靜音但其實還在發生的 warning：要現形（「已暫停提醒 N 項」），不能像沒事一樣 */
+  const snoozedAlerts = computed(() =>
+    visibleAlerts.value.filter(a => a.state === 'active' && isSnoozed(a)),
+  )
 
   /** 這次查不到狀態的項目（要現形，不能偷偷當成沒事） */
   const unknownAlerts = computed(() =>
@@ -285,13 +365,18 @@ export function useWorkspaceAlerts() {
     activeAlerts,
     criticalAlerts,
     warningAlerts,
+    suggestionAlerts,
+    snoozedAlerts,
     unknownAlerts,
     loaded,
     loading,
+    lastRefreshFailed,
     checkedAt,
     checkedAgo,
     refresh,
     reset,
+    snoozeAlert,
+    unsnoozeAll,
     POLL_INTERVAL_MS,
   }
 }

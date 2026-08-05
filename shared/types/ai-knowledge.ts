@@ -241,6 +241,18 @@ export interface AiSettingsDoc {
     cooldownMinutes: number
   }
   /**
+   * 看圖作答：客人傳照片時，AI 先讀圖推出「客人想問什麼」，再走一般答題流程回覆客人。
+   *
+   * **預設關閉，而且是刻意的**：客人傳的照片多半是瑕疵品、付款失敗畫面、訂單爭議，
+   * 本來就該真人處理；AI 認錯商品或誤讀金額還講得很篤定，比不回答更傷。
+   * 關閉時 AI 仍會讀圖寫一句描述給客服看（那條路徑不對客人說話，見 media-describe），
+   * 只是不會開口回覆——所以「先關著觀察描述準不準，再決定要不要開」是可行的漸進路徑。
+   */
+  imageAnswer: {
+    /** 總開關；關閉時客人收到的仍是「我只看得懂文字」引導語 */
+    enabled: boolean
+  }
+  /**
    * 服務時間 / 勿擾時段（台灣時區）。只影響「轉真人」：勿擾時段內轉真人時不通知客服、
    * 改回客人一則勿擾訊息（腳本 bot 與 AI 觸發的轉真人都吃）。enabled=false 時完全不影響行為。
    */
@@ -705,6 +717,9 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       maxSpread: DEFAULT_DISAMBIGUATION_MAX_SPREAD,
       maxOptions: DEFAULT_DISAMBIGUATION_MAX_OPTIONS,
       cooldownMinutes: DEFAULT_DISAMBIGUATION_COOLDOWN_MINUTES,
+    },
+    imageAnswer: {
+      enabled: false, // 預設關閉:這會讓 AI 對客人開口談照片內容,要老闆確認過描述品質才開
     },
     serviceHours: {
       enabled: false, // 預設關閉:不影響任何轉真人行為,要用才開

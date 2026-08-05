@@ -35,6 +35,29 @@ export type WorkspaceAlertId =
   | 'brokenModuleButton'
   /** 活動推播已送出，但「這場已回應」沒蓋上章 → 客服會看到一堆假的待處理 */
   | 'claimPushUnmarked'
+  /** 知識庫建議收件匣有待處理草稿（客人問過但 AI 答不好的主題）。不是異常，是「可以更好」 */
+  | 'knowledgeSuggestions'
+
+/**
+ * 各項的白話標題（單一事實來源）。
+ * 前端異常註冊表與後台查詢助理的 get_current_alerts 工具都從這裡拿，
+ * 兩邊各寫一份遲早漂移——小幫手面板和問助理講的必須是同一句話。
+ */
+export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
+  knowledgeSyncFailed: '有資料抓不到內容',
+  knowledgeIndexFailed: '有知識 AI 沒學起來',
+  knowledgeOutdated: '有資料內容變了還沒重新學',
+  anyTextBlocking: 'AI 被自動回覆規則擋住了',
+  llmError: 'AI 服務近 24 小時失敗過',
+  quotaExceeded: '本期回覆則數用完了',
+  paymentPastDue: '自動扣款沒有成功',
+  invoiceFailed: '有發票開立失敗',
+  handoffNotifyMissing: '沒有人會收到轉真人通知',
+  humanBacklog: '有客人在等真人回覆',
+  brokenModuleButton: '有按鈕按下去沒反應',
+  claimPushUnmarked: '活動推播後有對話被誤標成待處理',
+  knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
+}
 
 /**
  * active = 現在有這個問題；clear = 檢查過沒問題；

@@ -54,6 +54,8 @@ export default defineEventHandler(async (event) => {
       payload: data.payload ?? null,
       timestamp: data.timestamp ?? null,
       readByPeer,
+      /** 客人傳的圖，AI 讀出來的一句說明（沒讀到或 AI 未啟用就是空字串） */
+      mediaDescription: (data.mediaDescription as string | undefined) ?? '',
     }
   }).reverse()
 

@@ -19,7 +19,14 @@ export default defineEventHandler(async (event) => {
     : []
 
   const db = getDb()
-  const res = await runAdminAgentChat({ db, workspaceId, message: String(body?.message ?? ''), history })
+  const res = await runAdminAgentChat({
+    db,
+    workspaceId,
+    message: String(body?.message ?? ''),
+    history,
+    // 轉發呼叫者憑證:get_current_alerts / get_setup_status 打自家 API 時沿用同一套權限
+    authHeader: getHeader(event, 'authorization'),
+  })
 
   // 內部管理用量照記(與生成腳本同慣例)
   recordAiUsage(workspaceId, { inputTokens: res.inputTokens, outputTokens: res.outputTokens })

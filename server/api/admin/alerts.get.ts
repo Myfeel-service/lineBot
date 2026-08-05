@@ -4,6 +4,7 @@ import { getAiSettings } from '~~/server/utils/ai-settings'
 import { cleanReason, humanizeHours } from '~~/server/utils/alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from '~~/server/utils/ai-knowledge-suggest'
 import { getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { findBrokenModuleRefs } from '~~/server/utils/broken-module-refs'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from '~~/server/utils/claim-push-health'
@@ -174,12 +175,19 @@ export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse
             .orderBy('aiMeta.updatedAt', 'desc')
             .limit(LLM_ERROR_SCAN_LIMIT)
             .get()
-          const cutoff = Date.now() - LLM_ERROR_WINDOW_MS
-          const recent = snap.docs.filter((d) => {
-            const meta = (d.data() as { aiMeta?: { updatedAt?: unknown } }).aiMeta
-            return tsToMs(meta?.updatedAt) >= cutoff
-          })
-          return recent.length ? { active: true, count: recent.length } : { active: false }
+          const now = Date.now()
+          const cutoff = now - LLM_ERROR_WINDOW_MS
+          const recentMs = snap.docs
+            .map(d => tsToMs((d.data() as { aiMeta?: { updatedAt?: unknown } }).aiMeta?.updatedAt))
+            .filter(ms => ms >= cutoff)
+          if (!recentMs.length) return { active: false }
+          // 帶「最近一次是多久前」：正在壞和昨晚壞過一次，處理的急迫性完全不同
+          const newest = Math.max(...recentMs)
+          return {
+            active: true,
+            count: recentMs.length,
+            detail: `最近一次約 ${humanizeHours((now - newest) / 3600_000)}前`,
+          }
         }),
         probe('humanBacklog', async () => {
           const sessions = db.collection('conversationSessions').where('workspaceId', '==', wid)
@@ -251,6 +259,17 @@ export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse
             count: st.count,
             detail: st.lastError ? `系統訊息：${cleanReason(st.lastError)}` : undefined,
           }
+        }),
+        probe('knowledgeSuggestions', async () => {
+          // 不是異常，是「可以更好」：建議收件匣有幾筆待處理草稿。
+          // count() 聚合、兩個等值條件走自動索引，健康時成本趨近於零
+          const agg = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+            .where('workspaceId', '==', wid)
+            .where('status', '==', 'pending')
+            .count()
+            .get()
+          const n = agg.data().count
+          return n ? { active: true, count: n } : { active: false }
         }),
         probe('brokenModuleButton', async () => {
           // 靜態檢查，不是統計「誰按到了」：在客人踩到之前就報。

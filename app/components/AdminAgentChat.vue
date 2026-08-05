@@ -58,10 +58,10 @@ const loading = ref(false)
 const listEl = ref<HTMLElement | null>(null)
 
 const starters = [
-  '哪些腳本還沒啟用?',
+  '現在有什麼要處理的?',
   '這個月 AI 用量如何?',
+  '哪些腳本還沒啟用?',
   '知識庫有沒有匯入失敗?',
-  'AI 現在是什麼模式?',
 ]
 
 const TOOL_LABELS: Record<string, string> = {
@@ -70,6 +70,8 @@ const TOOL_LABELS: Record<string, string> = {
   get_ai_usage: 'AI 用量',
   get_knowledge_status: '知識庫',
   list_auto_reply_rules: '自動回覆規則',
+  get_current_alerts: '目前異常',
+  get_setup_status: '設定進度',
 }
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name

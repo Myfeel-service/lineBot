@@ -168,7 +168,10 @@
       "Bash(grep -n -A 30 \"310:\" /dev/null; sed -n '310,345p' /Users/kevin/Documents/Github/linebot/shared/types/ai-knowledge.ts; echo ---; grep -n -A 14 \"HANDOFF_REASON_LABELS\" /Users/kevin/Documents/Github/linebot/shared/types/ai-knowledge.ts | head -20)",
       "WebFetch(domain:ai.google.dev)",
       "Bash(sed -n '/type === .text./,/^  }/p' server/api/conversations/\\\\[userId\\\\]/send.post.ts | head -40; echo \"=== tail ===\"; tail -40 server/api/conversations/\\\\[userId\\\\]/send.post.ts)",
-      "Bash(node /Users/kevin/Documents/Github/linebot/__shot.mjs)"
+      "Bash(node /Users/kevin/Documents/Github/linebot/__shot.mjs)",
+      "Bash(node /Users/kevin/Documents/Github/linebot/__f.mjs)",
+      "Bash(git stash *)",
+      "Bash(perl -i -pe 's/\\\\bawait pushMessage\\\\\\(lineUserId,/await pushToCustomer\\(lineUserId,/ if $. >= 40' \"server/api/conversations/[userId]/send.post.ts\")"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

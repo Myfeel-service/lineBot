@@ -44,12 +44,17 @@ vi.mock('./ai-scripts', () => ({
 }))
 // 圖片存檔會打 LINE content API：測試只在意「起因有沒有被記住」，存檔本身另有測試
 vi.mock('./conversation-media', () => ({
-  archiveConversationMedia: vi.fn(async () => ({ ok: true })),
+  archiveConversationMedia: vi.fn(async () => ({
+    ok: true, path: 'conversation-media/ws-nontext/msg-img-1', contentType: 'image/jpeg', bytes: 1024,
+  })),
 }))
+// 讀圖是另一支的職責（media-describe.test.ts 有自己的測試），這裡只驗它的產物有沒有被用上
+vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', question: '' })) }))
 
 import { handleMessageEvent } from './handler'
 import { getDb } from './firebase'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { readInboundImage } from './media-describe'
 
 const WS = 'ws-nontext'
 const LINE_UID = 'U0000000000000000000000000000009'
@@ -62,6 +67,9 @@ const DOC_ID = `${WS}_${LINE_UID}`
  */
 function makeDb() {
   const conversations = new Map<string, Record<string, unknown>>()
+  // 訊息子集合：doc() 不帶 id = 新增（自動 id），帶 id = 補寫既有那一則（圖片描述走這條）
+  const messages = new Map<string, Record<string, unknown>>()
+  let autoId = 0
   const userDoc = {
     exists: true,
     data: () => ({ workspaceId: WS, lineUserId: LINE_UID, displayName: '測試客人', isBlocked: false }),
@@ -83,11 +91,21 @@ function makeDb() {
           }
         }),
         update: vi.fn(async () => {}),
-        collection: () => ({ doc: () => ({ set: vi.fn(async () => {}) }) }),
+        collection: () => ({
+          doc: (msgId?: string) => {
+            const key = msgId ?? `auto-${++autoId}`
+            return {
+              id: key,
+              set: vi.fn(async (data: any) => {
+                messages.set(key, { ...(messages.get(key) ?? {}), ...data })
+              }),
+            }
+          },
+        }),
       }),
     }),
   }
-  return { db, conversations }
+  return { db, conversations, messages }
 }
 
 function imageEvent(atMs: number): any {
@@ -166,6 +184,37 @@ describe('傳圖後找真人：轉真人原因要記得起因是圖片', () => {
 
     const conv = conversations.get(DOC_ID) as any
     expect(conv.aiMeta.lastHandoffReason).toBe('user_request')
+  })
+
+  it('AI 讀出圖片內容時，轉真人案例要寫「[圖片] 破掉的馬克杯」而不是光一個 [圖片]', async () => {
+    const { db, conversations, messages } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '' })
+
+    const now = Date.now()
+    await handleMessageEvent(imageEvent(now - 60_000), { workspaceId: WS })
+    await handleMessageEvent(textEvent('找真人', now), { workspaceId: WS })
+
+    const conv = conversations.get(DOC_ID) as any
+    expect(conv.aiMeta.lastQuery).toBe('[圖片] 破掉的白色馬克杯')
+    // 描述也要貼回那一則訊息，客服在對話裡才看得到圖片下方的說明
+    expect([...messages.values()].some(m => m.mediaDescription === '破掉的白色馬克杯')).toBe(true)
+  })
+
+  it('這張圖讀不出來時，不能沿用上一張圖的說明（張冠李戴比沒有說明更糟）', async () => {
+    const { db, conversations } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '' })
+    await handleMessageEvent(imageEvent(now - 120_000), { workspaceId: WS })
+    // 第二張圖：Gemini 逾時 → 描述空字串
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '', question: '' })
+    await handleMessageEvent(imageEvent(now - 60_000), { workspaceId: WS })
+    await handleMessageEvent(textEvent('找真人', now), { workspaceId: WS })
+
+    const conv = conversations.get(DOC_ID) as any
+    expect(conv.aiMeta.lastQuery).toBe('[圖片]')
   })
 
   it('傳圖後改用文字問、AI 已經答過 → 這句找真人是嫌回答不好，不該算在圖片頭上', async () => {

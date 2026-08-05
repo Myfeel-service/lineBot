@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { normalizeAutoReplyRule } from '~~/shared/auto-reply-rule'
 import { pushSupportPresetActionToUser } from '~~/server/utils/handler'
+import { describeLineSendFailure } from '~~/server/utils/line-send-error'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
 function resolveRequestOrigin(event: Parameters<typeof getHeader>[0]): string {
@@ -51,14 +52,22 @@ export default defineEventHandler(async (event) => {
   }
 
   const requestOrigin = resolveRequestOrigin(event)
-  await pushSupportPresetActionToUser(
-    userId,
-    rule.action,
-    rule.tagging,
-    ruleId,
-    requestOrigin,
-    workspaceId,
-  )
+  try {
+    await pushSupportPresetActionToUser(
+      userId,
+      rule.action,
+      rule.tagging,
+      ruleId,
+      requestOrigin,
+      workspaceId,
+    )
+  }
+  catch (e) {
+    // LINE 退件就講原因（封鎖／額度／太長）；其他錯（例如模組不存在）原封不動往上丟
+    const reason = describeLineSendFailure(e)
+    if (!reason) throw e
+    throw createError({ statusCode: 502, statusMessage: reason })
+  }
 
   return { ok: true }
 })

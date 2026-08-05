@@ -23,6 +23,8 @@ interface TimelineItem {
   text?: string
   messageType?: string
   payload?: unknown
+  /** 客人傳的圖，AI 讀出來的一句說明（與對話頁同一個欄位，兩邊顯示要一致） */
+  mediaDescription?: string
   // event fields
   eventType?: ConversationEventType
   moduleType?: ModuleType
@@ -267,6 +269,7 @@ export default defineEventHandler(async (event) => {
       text: m.text,
       messageType: m.messageType,
       payload: m.payload,
+      mediaDescription: m.mediaDescription ?? '',
     })
   }
 

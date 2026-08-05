@@ -290,6 +290,30 @@
           </div>
         </div>
 
+        <!-- ── 看圖作答 ─────────────── -->
+        <div class="message-card ai-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">客人傳照片時</span>
+              <span v-if="form.imageAnswer.enabled" class="badge badge-green">會自己回答</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="ai-section-hint">
+              關閉時,AI 仍會<strong>讀圖寫一句說明給客服看</strong>(在對話裡照片下方),但只回客人「我目前只能閱讀文字」。
+              開啟後,AI 會看圖推測客人想問什麼,再照一般問答流程回覆——答不出來一樣轉真人。
+            </p>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="讓 AI 看圖直接回答客人" tight />
+              <el-switch v-model="form.imageAnswer.enabled" active-text="開啟" inactive-text="關閉" />
+              <p class="ai-field-hint">
+                建議先關著用一陣子,到「對話」頁看 AI 寫的照片說明準不準,再決定要不要讓它開口。
+                客人傳的照片常是瑕疵品、付款失敗畫面、訂單爭議,這些本來就適合真人處理。
+              </p>
+            </div>
+          </div>
+        </div>
+
         <!-- ── 服務時間 / 勿擾時段 ─────────────── -->
         <div class="message-card ai-section-card">
           <div class="message-card-header">
@@ -634,6 +658,7 @@ interface FormShape {
   handoffNotify: AiSettingsDoc['handoffNotify']
   handbackIdleMinutes: number
   disambiguation: AiSettingsDoc['disambiguation']
+  imageAnswer: AiSettingsDoc['imageAnswer']
   serviceHours: AiSettingsDoc['serviceHours']
 }
 
@@ -654,6 +679,7 @@ function defaultForm(): FormShape {
     handoffNotify: { ...d.handoffNotify, lineUserIds: [...d.handoffNotify.lineUserIds], displayNames: { ...d.handoffNotify.displayNames } },
     handbackIdleMinutes: d.handbackIdleMinutes,
     disambiguation: { ...d.disambiguation },
+    imageAnswer: { ...d.imageAnswer },
     serviceHours: { ...d.serviceHours },
   }
 }
@@ -982,6 +1008,7 @@ function applySettings(data: AiSettingsDoc) {
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     disambiguation: { ...data.disambiguation },
+    imageAnswer: { ...data.imageAnswer },
     serviceHours: { ...data.serviceHours },
   }
   // 回填名稱快取,讓已選通知對象的 tag 顯示暱稱

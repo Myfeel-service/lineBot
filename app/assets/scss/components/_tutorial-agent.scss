@@ -61,7 +61,7 @@
 
 /* ── 聊天面板 ──────────────────────────────────────────────── */
 .ta-panel {
-  width: 340px;
+  width: 384px; /* 三分頁 + 異常/摘要收件匣後 340 太擠 */
   max-width: calc(100vw - 3rem);
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -103,19 +103,11 @@
   font-size: 0.95rem;
 }
 
+/* 資料新鮮度（「剛剛檢查過」…）：取代裝飾性的「線上」假狀態 */
 .ta-panel__status {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
   font-size: 0.75rem;
   opacity: 0.85;
-}
-
-.ta-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: #4ade80;
+  white-space: nowrap;
 }
 
 .ta-panel__close {
@@ -425,9 +417,54 @@
   &:hover { opacity: 1; }
 }
 
+/* ── 結論先行狀態列：一眼一句話「有沒有事」，視覺語言沿用 .ls-status ── */
+.ta-verdict {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-primary);
+
+  &.is-danger {
+    background: var(--el-color-danger-light-9);
+    border-left-color: var(--el-color-danger);
+    .ta-verdict__icon { color: var(--el-color-danger); }
+  }
+  &.is-warning {
+    background: var(--el-color-warning-light-9);
+    border-left-color: var(--el-color-warning);
+    .ta-verdict__icon { color: var(--el-color-warning); }
+  }
+  /* 「還沒設定完」不是異常，用品牌色講進度，不跟紅橘搶語意 */
+  &.is-progress {
+    background: var(--color-line-glow);
+    border-left-color: var(--color-line);
+    .ta-verdict__icon { color: var(--color-line); }
+  }
+  &.is-ok {
+    background: var(--el-color-success-light-9);
+    border-left-color: var(--el-color-success);
+    .ta-verdict__icon { color: var(--el-color-success); }
+  }
+  &.is-muted {
+    color: var(--text-secondary);
+    .ta-verdict__icon { color: var(--text-muted); }
+  }
+}
+
+.ta-verdict__icon {
+  font-size: 1.05rem;
+  flex-shrink: 0;
+}
+
 /* ── 目前異常（本來會動的東西壞了） ────────────────────────── */
 /* 與待辦（ta-todo）刻意長得不一樣：待辦是「還沒做」，異常是「壞了」。
-   左側色條分兩級——紅＝現在影響客人，橘＝建議處理。 */
+   紅橘分兩組各自有標題——紅＝現在影響客人，橘＝建議處理。 */
 .ta-alerts {
   display: flex;
   flex-direction: column;
@@ -436,30 +473,36 @@
 
 .ta-alerts__label {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.4rem;
   font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-secondary);
+
+  /* 組標題前的色點：跟卡片左側色條同一套語意 */
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+  &--critical::before { background: var(--color-error); }
+  &--warning::before { background: var(--color-warning); }
+  &--suggestion::before { background: var(--color-info); }
 }
 
-.ta-alerts__ago {
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
+/* 卡片是 div 包兩顆真按鈕（主要動作 ta-alert__hit ＋ 暫停提醒）：按鈕不能包按鈕 */
 .ta-alert {
   display: flex;
-  gap: 0.625rem;
+  flex-direction: column;
+  gap: 0.35rem;
   width: 100%;
   padding: 0.75rem 0.875rem;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: var(--radius-md);
-  cursor: pointer;
-  text-align: left;
   transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
 
   &:hover {
@@ -474,6 +517,40 @@
   &.is-warning {
     border-left-color: var(--color-warning);
     .ta-alert__icon { color: var(--color-warning); }
+  }
+  /* 可以更好＝機會不是故障：藍色，跟紅橘的「壞了」分開 */
+  &.is-suggestion {
+    border-left-color: var(--color-info);
+    .ta-alert__icon { color: var(--color-info); }
+  }
+}
+
+.ta-alert__hit {
+  display: flex;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* 暫停提醒（只出現在 warning 卡）：小、灰、靠右——是退路不是主要動作 */
+.ta-alert__snooze {
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
   }
 }
 
@@ -540,6 +617,99 @@
   border-radius: var(--radius-md);
   font-size: var(--fs-xs);
   color: var(--text-secondary);
+}
+
+/* 首查就失敗：比一般「查不到幾項」更重——整份異常狀態都是未知 */
+.ta-unknown--fail {
+  border-style: solid;
+  border-color: var(--color-warning);
+  color: var(--text-primary);
+}
+
+/* ── 昨日摘要（日報）：數字與統計頁同一支查詢 ──────────────── */
+.ta-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem 0.875rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ta-brief__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* 深入層的出口：摘要只給結論，趨勢與明細去統計頁看 */
+.ta-brief__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+  }
+}
+
+.ta-brief__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.ta-brief__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.ta-brief__num {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ta-brief__label {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.ta-brief__delta {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ta-brief__empty {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+/* 昨天有客人沒人回：這是摘要裡唯一需要行動的訊號，用警示色講 */
+.ta-brief__warn {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--color-warning);
+  font-weight: 600;
 }
 
 /* ── 待辦（沒做完的項目） ──────────────────────────────────── */
@@ -657,20 +827,11 @@
   padding: 0.25rem 0;
 }
 
-/* ── 複習教學區 ────────────────────────────────────────────── */
+/* ── 教學分頁的主題庫（原「複習教學」，已獨立成分頁，不再需要分隔線） ── */
 .ta-review {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  padding-top: 0.75rem;
-  border-top: 1px dashed var(--border);
-}
-
-.ta-review__label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
 }
 
 /* 分組收合 */
@@ -739,6 +900,11 @@
   line-height: 20px;
   text-align: center;
   box-shadow: 0 0 0 2px var(--bg-base);
+}
+
+/* 沒有正在影響客人的異常、只剩設定沒做完：中性色。紅只留給「客人正在受影響」 */
+.ta-fab__badge--calm {
+  background: var(--text-secondary);
 }
 
 .ta-panel__foot {

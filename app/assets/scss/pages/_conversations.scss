@@ -856,6 +856,31 @@
     line-height: 1.55;
   }
 
+  // 客人傳的圖，AI 讀出來的一句說明。寬度對齊圖片本身，讀起來才像是這張圖的說明文字；
+  // 刻意做得比圖片低調（次要色、小字）——它是輔助資訊，不該跟圖片本身搶注意力。
+  .conv-media-caption {
+    width: var(--line-image-message-width);
+    max-width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.35rem;
+    color: var(--text-secondary);
+    font-size: calc(var(--line-font-card-text) * 0.88);
+    line-height: 1.5;
+  }
+
+  // 「AI 看到」標籤：客服要一眼分得出這句話是機器寫的、不是客人打的字，
+  // 沒有這個前綴會讓人以為客人有附文字說明。
+  .conv-media-caption__tag {
+    display: inline-block;
+    margin-right: 0.35rem;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--line-font-meta);
+  }
+
   .conv-video-frame {
     width: min(540px, 78vw);
     max-width: 100%;
@@ -901,6 +926,48 @@
     height: 164px;
     display: block;
     background: transparent;
+  }
+
+  // 拖圖片進對話區：整區壓一層提示，不然放開之前看不出這裡收不收
+  .conv-messages.is-drop-target {
+    outline: 2px dashed var(--border-active);
+    outline-offset: -6px;
+    position: relative;
+  }
+
+  .conv-drop-hint {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    align-self: center;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-active);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    pointer-events: none;
+  }
+
+  // 客人已封鎖：壓在回覆區正上方，讓人在動手打字前就看到
+  .conv-blocked-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 1rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    flex-shrink: 0;
+  }
+
+  .conv-blocked-notice__icon {
+    font-size: 0.9rem;
+    line-height: 1;
+    flex-shrink: 0;
   }
 
   .conv-input-row {
@@ -1153,6 +1220,13 @@
   cursor: not-allowed;
 }
 
+/* 選起來還沒送的貼圖：要一眼看得出「按送出的是這張」 */
+.conv-picker-option.active {
+  background: var(--bg-hover);
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px var(--border-active) inset;
+}
+
 .conv-picker-option--emoji {
   height: 36px;
 }
@@ -1218,6 +1292,12 @@
 .conv-support-preset-option__meta {
   font-size: 0.72rem;
   color: var(--text-muted);
+  /* 預存文字可以是好幾段，這裡只是預覽：最多兩行，免得一則長文案就把清單撐掉 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .conv-picker-empty {

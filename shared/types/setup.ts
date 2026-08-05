@@ -12,6 +12,17 @@ export type SetupCapabilityId =
   | 'knowledgeReady' // 知識庫已有內容
   | 'scriptReady' // 已啟用至少一支客服腳本
 
+/**
+ * 各能力的白話標題（單一事實來源）：
+ * 前端能力註冊表與後台查詢助理的 get_setup_status 工具共用，兩邊講同一句話。
+ */
+export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
+  lineConnected: '接上 LINE 官方帳號',
+  aiEnabled: '開啟 AI 自動回覆',
+  knowledgeReady: '建立知識庫',
+  scriptReady: '啟用一支客服腳本',
+}
+
 /** done=已完成；incomplete=還沒做；unknown=這次查詢失敗，狀態未知（不要當成沒做） */
 export type SetupItemStatus = 'done' | 'incomplete' | 'unknown'
 
