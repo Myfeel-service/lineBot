@@ -280,6 +280,28 @@
 .diff-entry-kind { font-size: 12px; font-weight: 600; }
 .diff-entry-title { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .diff-entry-lock { font-size: 12px; color: var(--el-text-color-secondary); }
+// 「數字沒變 / 數字有變」:兩欄看起來很像的時候,先回答「這張到底影響不影響客人」
+.diff-entry-hint {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  // 數字真的變了 = 這張會改變客人拿到的答案,要看得出來
+  &--alert {
+    background: var(--el-color-danger-light-9);
+    color: var(--el-color-danger);
+    font-weight: 600;
+  }
+}
+
+// 標題被 AI 改掉:表頭只放一個標題,不列出來使用者看不見這種變動
+.diff-entry-titlechange {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+}
+.diff-title-old { text-decoration: line-through; }
+.diff-title-new { color: var(--el-color-success); }
 
 .diff-entry-cols {
   display: grid;

@@ -162,9 +162,10 @@
                 <div v-else class="usage-empty">這個月 AI 還沒有處理任何訊息</div>
               </div>
 
-              <!-- 主畫面留兩個數字：花多少、答得好不好。成本三桶細節收進下方「進階」 -->
+              <!-- 主畫面留給「答得好不好」。花費是平台的進貨成本（計費賣「則」），
+                   只有 super admin 看得到——租戶端通篇只講「則」，API 也不回成本欄位。 -->
               <div class="usage-substats">
-                <div class="usage-substat">
+                <div v-if="isSuperAdmin" class="usage-substat">
                   <span class="usage-substat__label">
                     這個月 AI 花費
                     <el-tooltip placement="top" content="只算跟客人對話的部分。整理知識庫、後台測試的花費另計，在下方「進階」。金額為依 Gemini 公開價估算的參考值，實際以 Google 帳單為準。">
@@ -173,7 +174,7 @@
                   </span>
                   <strong class="usage-substat__value">約 NT${{ formatNumber(twd(summary?.estimatedCostUsd)) }}</strong>
                   <span class="usage-substat__sub">
-                    跟客人對話的花費<template v-if="((summary?.buildCostUsd ?? 0) + (summary?.testCostUsd ?? 0)) > 0"> · 建置 / 測試另計，見進階</template>
+                    跟客人對話的花費<template v-if="((summary?.buildCostUsd ?? 0) + (summary?.testCostUsd ?? 0)) > 0"> · 建置 / 測試另計，見進階</template> · 僅系統管理員看得到
                   </span>
                 </div>
                 <!-- 「答完客人又找真人」是目前唯一能回答「答得好不好」的數字，放主畫面，不收進進階。
@@ -217,11 +218,12 @@
           </div>
         </div>
 
-        <!-- ── 進階 / 技術細節（預設收合：一般老闆不用看；要細節的人展開） ── -->
-        <div class="message-card usage-card">
+        <!-- ── 進階 / 技術細節（token / 成本組成 = 平台的進貨價 → 僅 super admin；預設收合） ── -->
+        <div v-if="isSuperAdmin" class="message-card usage-card">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">進階 / 技術細節</span>
+              <span class="badge badge-gray">僅系統管理員可見</span>
               <span class="text-xs text-muted">成本組成（依用途拆三桶）</span>
             </div>
             <el-button text size="small" @click="advancedOpen = !advancedOpen">
@@ -346,8 +348,10 @@ const { apiFetch, workspaceId } = useWorkspace()
 const router = useRouter()
 const route = useRoute()
 const { showToast } = useAdminToast()
+// 成本 / token 細目只給 super admin：金額是平台進貨價（計費賣「則」），租戶看得到就能反推毛利
+const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
 
-// 用量明細（Token）預設收合：一般人只看成本，需要技術數字才展開
+// 用量明細（Token）預設收合：需要技術數字才展開（整卡僅 super admin 可見）
 const advancedOpen = ref(false)
 
 interface Summary {
@@ -364,22 +368,23 @@ interface Summary {
   answeredThenHandoffRate: number
   disambiguations: number
   disambiguationRate: number
-  inputTokens: number
-  outputTokens: number
-  embeddingTokens: number
-  importInputTokens: number
-  importOutputTokens: number
-  /** 三桶用途拆分：客人對話（headline 成本就是這桶）/ 知識庫建置 / 後台測試 */
-  conversationTokens: number
-  buildTokens: number
-  buildCostUsd: number
-  testTokens: number
-  testCostUsd: number
   autoReplyRate: number
   handoffRate: number
-  estimatedCostUsd: number
-  perConversationUsd: number
-  pricing: { inputPerM: number; outputPerM: number; embedPerM: number }
+  /** ↓ token / 成本細目：僅 super admin 的回應才有這些欄位（租戶端 API 直接不回） */
+  inputTokens?: number
+  outputTokens?: number
+  embeddingTokens?: number
+  importInputTokens?: number
+  importOutputTokens?: number
+  /** 三桶用途拆分：客人對話（headline 成本就是這桶）/ 知識庫建置 / 後台測試 */
+  conversationTokens?: number
+  buildTokens?: number
+  buildCostUsd?: number
+  testTokens?: number
+  testCostUsd?: number
+  estimatedCostUsd?: number
+  perConversationUsd?: number
+  pricing?: { inputPerM: number; outputPerM: number; embedPerM: number }
   plan: {
     id: string
     name: string
@@ -663,6 +668,7 @@ async function resolveHandoff(userId: string) {
 }
 
 onMounted(() => {
+  void checkIsSuperAdmin().catch(() => {})
   // 異常中心「AI 服務近期失敗過」的深連結（?reason=llm_error&includeResolved=1）：
   // 自動套用原因篩選並捲到案例清單，省掉「落在頁頂自己找下拉」那一段
   const qReason = String(route.query.reason || '')

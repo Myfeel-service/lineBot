@@ -90,11 +90,11 @@
   }
   &.is-stuck .lp-nav { border-bottom-color: var(--hair); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03); }
   .lp-nav__in { display: flex; align-items: center; justify-content: space-between; height: 68px; }
-  .lp-brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; font-size: 1.2rem; letter-spacing: 0.01em; color: var(--ink); }
-  .lp-brand__mark {
-    width: 28px; height: 28px; border-radius: 9px; background: var(--g);
-    display: grid; place-items: center; color: #fff; font-size: 0.95rem; box-shadow: var(--sh-green);
-  }
+  /* 商標＝logotype 圖檔（圖標＋MiniMe 字樣），高度給 BrandLogo，寬度它自己算。
+     手機版（≤720px）換成 logomark：含字樣的 logotype 有 144px 寬，
+     加上「預約 Demo」按鈕會把漢堡選單鈕推出畫面（360px 寬時超出 7px）。 */
+  .lp-brand { display: inline-flex; align-items: center; --brand-logo-h: 27px; }
+  .lp-brand__mark { display: none; }
   .lp-nav__links { display: flex; align-items: center; gap: 30px; }
   .lp-nav__links a { font-size: 0.95rem; color: var(--ink-2); font-weight: 500; transition: color .15s ease; }
   .lp-nav__links a:hover { color: var(--g-deep); }
@@ -204,7 +204,7 @@
   .lp-cmp__row:last-child .lp-cmp__dim { border-bottom-left-radius: var(--r-card); }
   .lp-cmp__row--head .lp-cmp__dim, .lp-cmp__row--head .lp-cmp__old { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; color: var(--ink-soft); text-transform: uppercase; }
   .lp-cmp__row--head .lp-cmp__new { font-weight: 800; letter-spacing: 0.04em; }
-  .lp-cmp__mark { width: 28px; height: 28px; border-radius: 8px; background: #fff; display: grid; place-items: center; color: var(--g-deep); font-size: 0.88rem; font-weight: 800; flex: none; }
+  .lp-cmp__logo { --brand-logo-h: 23px; }
   .lp-cmp__tag { margin-left: auto; background: rgba(255, 255, 255, 0.22); color: #fff; font-size: 0.68rem; font-weight: 800; padding: 5px 12px; border-radius: var(--radius-pill); }
   .lp-cmp__x, .lp-cmp__v { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 0.68rem; font-weight: 800; }
   .lp-cmp__x { background: rgba(23, 25, 28, 0.06); color: var(--ink-soft); }
@@ -345,7 +345,7 @@
        寫 `52px 0` 的話手機上文字會直接貼齊螢幕邊緣。 */
     gap: 40px; padding: 52px 24px 44px; align-items: start;
   }
-  .lp-foot__brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.1rem; color: var(--ink); }
+  .lp-foot__brand { --brand-logo-h: 27px; }
   .lp-foot__tag { margin: 10px 0 18px; font-size: 0.9rem; color: var(--ink-soft); }
   .lp-foot__h { margin: 0 0 14px; font-size: 0.9rem; font-weight: 800; color: var(--ink); letter-spacing: 0.01em; }
   .lp-foot__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 0.875rem; }
@@ -392,6 +392,9 @@
     &.is-menu-open .lp-nav__links { display: flex; }
     .lp-nav__signin { display: none; }
     .lp-nav__burger { display: flex; }
+    /* 商標只留圖標，讓「預約 Demo」＋漢堡鈕在 320px 寬也放得下 */
+    .lp-brand__type { display: none; }
+    .lp-brand__mark { display: block; }
     &.is-menu-open .lp-nav__burger span { background: transparent; }
     &.is-menu-open .lp-nav__burger span::before { top: 0; transform: rotate(45deg); }
     &.is-menu-open .lp-nav__burger span::after { top: 0; transform: rotate(-45deg); }

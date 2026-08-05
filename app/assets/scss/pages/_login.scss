@@ -56,20 +56,10 @@
   margin-bottom: 0.5rem;
 }
 
-.login-page .logo-circle {
-  width: 64px;
-  height: 64px;
-  background: linear-gradient(135deg, var(--brand-green), var(--brand-green-deep));
-  border-radius: var(--radius-lg);
-  display: grid;
-  place-items: center;
-  font-size: 1.8rem;
-  box-shadow: var(--shadow-glow);
-}
-
-.login-page .login-logo h1 {
-  font-size: 1.4rem;
-  font-weight: 700;
+/* h1 只是為了保留頁面標題語意，實際看到的是 logotype 圖檔（alt＝品牌名） */
+.login-page .login-brand {
+  margin: 0;
+  --brand-logo-h: 40px;
 }
 
 .login-page .login-logo p {

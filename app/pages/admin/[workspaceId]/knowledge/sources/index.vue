@@ -310,7 +310,7 @@
           plain
           data-tour="kb-resync"
           :loading="resyncing"
-          @click="startResync"
+          @click="startResync()"
         >
           {{ resyncButtonLabel }}
         </el-button>
@@ -336,6 +336,26 @@
     <!-- ── Editor Body ── -->
     <template #editor-body>
       <div v-if="selectedSource" class="solo-editor-body admin-panel-stack">
+        <!-- 重新同步後確認「網頁沒變」:這是使用者按下按鈕後唯一的答覆,用面板不用 toast -->
+        <el-alert
+          v-if="resyncNoChange === selectedSource.id"
+          type="success"
+          show-icon
+          :closable="true"
+          class="src-outdated-alert"
+          @close="resyncNoChange = null"
+        >
+          <template #title>
+            網頁內容跟你上次整理的時候一模一樣
+          </template>
+          <div>
+            剛剛重新抓了一次這個網址，內容逐字比對完全相同，所以沒有需要你決定的事，知識卡也不用動。
+            <el-button text size="small" :loading="resyncing" @click="startResync(true)">
+              還是要讓 AI 重新整理一次
+            </el-button>
+          </div>
+        </el-alert>
+
         <!-- 偵測到變動的提示 -->
         <el-alert
           v-if="selectedSource.outdatedAtMs > 0"
@@ -682,12 +702,43 @@
           <li v-for="(w, i) in diffData.warnings" :key="i">{{ w }}</li>
         </ul>
       </el-alert>
+      <!-- 切法漂了:一張都沒對上卻大量增減,幾乎都是 AI 換了切法,不是網頁整頁重寫。
+           不講清楚的話,使用者會照著「移除 N」把好卡刪掉,或認定系統在亂報。 -->
+      <el-alert
+        v-if="diffLooksResplit"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="diff-shrink-alert"
+      >
+        <template #title>
+          這次的「新增 / 移除」多半不是網頁改了，而是 AI 換了一種分法
+        </template>
+        <div class="text-xs">
+          一張舊知識都沒有對上（未變 0），同時出現 {{ diffData.diff.summary.added }} 筆新增與
+          {{ diffData.diff.summary.removed }} 筆移除——網頁整頁重寫才會長這樣。
+          <strong>先比對內容再決定</strong>；看起來只是同一件事換句話說的話，直接按取消就好，
+          你現有的知識完全不會被動到。
+        </div>
+      </el-alert>
+
       <div class="diff-summary">
         <span class="diff-summary-chip diff-summary-chip--add">新增 {{ diffData.diff.summary.added }}</span>
         <span class="diff-summary-chip diff-summary-chip--mod">修改 {{ diffData.diff.summary.modified }}</span>
         <span class="diff-summary-chip diff-summary-chip--rem">移除 {{ diffData.diff.summary.removed }}</span>
         <span class="diff-summary-chip diff-summary-chip--same">未變 {{ diffData.diff.summary.unchanged }}</span>
       </div>
+
+      <!-- 把「該看哪幾張」講出來:修改裡只有數字變掉的那些會影響客人拿到的答案 -->
+      <p v-if="diffData.diff.summary.modified > 0" class="diff-unchanged-note text-muted text-xs">
+        <template v-if="diffNumbersChangedCount > 0">
+          「修改」裡有 <strong>{{ diffNumbersChangedCount }} 筆的數字變了</strong>(價格、天數、規格這類)，
+          下方標了「數字有變」的請優先看。
+        </template>
+        <template v-else>
+          「修改」的 {{ diffRewordOnlyCount }} 筆數字都沒有變(價格、天數、規格一樣)，只是換個說法。
+        </template>
+      </p>
 
       <p v-if="hiddenUnchangedCount > 0" class="diff-unchanged-note text-muted text-xs">
         {{ hiddenUnchangedCount }} 張未變的卡已收合(不需要做決定)
@@ -707,7 +758,20 @@
             <span class="diff-entry-kind">{{ kindLabel(entry.kind) }}</span>
             <span class="diff-entry-title">{{ entry.newChunk?.title || entry.oldChunk?.title }}</span>
             <span v-if="entry.oldChunk?.manuallyEdited" class="diff-entry-lock">手動編輯過</span>
+            <!-- 數字有沒有變 = 這張修改到底會不會改變客人拿到的答案 -->
+            <span v-if="entry.kind === 'modified' && entry.numbersChanged" class="diff-entry-hint diff-entry-hint--alert">
+              數字有變{{ formatNumberChanges(entry.numberChanges) }}
+            </span>
+            <span v-else-if="entry.kind === 'modified' && entry.numbersChanged === false" class="diff-entry-hint">
+              數字沒變
+            </span>
           </div>
+
+          <!-- 標題也變了:原本畫面只顯示一個標題,標題被 AI 改掉是看不見的 -->
+          <p v-if="entry.kind === 'modified' && entry.titleChanged" class="diff-entry-titlechange text-xs">
+            標題：<span class="diff-title-old">{{ entry.oldChunk?.title }}</span>
+            → <span class="diff-title-new">{{ entry.newChunk?.title }}</span>
+          </p>
 
           <!-- 內容對照 -->
           <div v-if="entry.kind === 'modified'" class="diff-entry-cols">
@@ -1073,6 +1137,12 @@ interface DiffEntry {
     manuallyEdited: boolean
   }
   newChunk?: { title: string; content: string; tags: string[] }
+  /** kind='modified'：內容裡的數字(價格/天數/規格)有沒有變。false = 只是換句話說 */
+  numbersChanged?: boolean
+  /** 變掉的數字,直接列給人看 */
+  numberChanges?: { removed: string[]; added: string[] }
+  /** kind='modified'：標題(忽略標點空白後)真的變了 */
+  titleChanged?: boolean
 }
 
 interface DiffData {
@@ -1342,6 +1412,47 @@ const visibleDiffEntries = computed(() => {
 const hiddenUnchangedCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'unchanged').length,
 )
+
+/**
+ * 「網頁跟上次整理時一模一樣」的結果（後端短路,沒有 diff 可看）。
+ * 用面板而不是 toast:這是使用者按下按鈕後唯一的答覆,3.5 秒消失的提示等於沒回答。
+ */
+const resyncNoChange = ref<string | null>(null)
+
+/**
+ * 「切法漂了」的提示條件:一張都沒對上(未變 0)卻同時大量新增+移除。
+ * 這種形狀幾乎都是 AI 這次換了一種切法,不是網頁真的整頁重寫——要講出來,
+ * 不然使用者會照著「移除 14」把好卡刪掉,或以為系統在亂報。
+ */
+const diffLooksResplit = computed(() => {
+  const s = diffData.value?.diff.summary
+  if (!s) return false
+  const oldCards = s.modified + s.removed + s.unchanged
+  return s.unchanged === 0 && oldCards >= 3 && s.added >= 3 && s.removed >= 3
+})
+
+/**
+ * 「修改」裡數字（價格 / 天數 / 規格）真的變掉的張數 —— 要優先看的就是這幾張。
+ * 反過來說：修改張數扣掉這個，就是純粹換句話說、客人拿到的事實沒變的那些。
+ */
+const diffNumbersChangedCount = computed(() =>
+  (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'modified' && e.numbersChanged).length,
+)
+const diffRewordOnlyCount = computed(() =>
+  (diffData.value?.diff.entries ?? [])
+    .filter(e => e.kind === 'modified' && e.numbersChanged === false).length,
+)
+
+/** 「數字有變」badge 後面接的內容:「(1000 → 1200)」;只有一邊有值就只顯示那一邊 */
+function formatNumberChanges(c?: { removed: string[]; added: string[] }): string {
+  if (!c) return ''
+  const from = c.removed.join('、')
+  const to = c.added.join('、')
+  if (from && to) return `（${from} → ${to}）`
+  if (to) return `（多了 ${to}）`
+  if (from) return `（少了 ${from}）`
+  return ''
+}
 
 // ── Chunk edit / create modal ───────────────────────
 const chunkEditOpen = ref(false)
@@ -2251,16 +2362,28 @@ interface ResyncDoneResponse {
 /** 縮水警示的二次確認(勾了才放行套用) */
 const shrinkAcknowledged = ref(false)
 
-async function startResync() {
+/**
+ * 重新同步。force=true 是「網頁其實沒變、但我還是要 AI 重新整理一次」的escape hatch
+ * （例如想換一種切法、或有卡片索引失敗想重來）。
+ */
+async function startResync(force = false) {
   if (!selectedId.value) return
   const sid = selectedId.value
   resyncing.value = true
+  resyncNoChange.value = null
   resetResyncPoll()
   try {
-    const created = await apiFetch<{ jobId: string }>(`/api/ai/sources/${sid}/resync-jobs`, {
+    const created = await apiFetch<{ jobId?: string; status?: string }>(`/api/ai/sources/${sid}/resync-jobs`, {
       method: 'POST',
-      body: {},
+      body: { force },
     })
+    // 網頁與「上次整理的那一版」逐字元相同 → 後端不會建 job,也沒有東西要決定。
+    // 誠實講「沒變」比丟一份假差異給人審好；真的想重整仍留一顆按鈕。
+    if (created.status === 'unchanged' || !created.jobId) {
+      resyncNoChange.value = sid
+      await loadSources(true) // 後端已把「有變動」標記清掉,列表與體檢要跟上
+      return
+    }
     const res = await pollResyncJob<ResyncDoneResponse>(created.jobId)
     if (!res.resync?.diff) throw new Error('比對結果不完整,請再試一次')
     const shrink = res.resync.shrink ?? null

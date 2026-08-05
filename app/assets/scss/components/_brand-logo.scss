@@ -1,0 +1,26 @@
+/* ── 品牌標誌（BrandLogo 元件）───────────────────────────────────
+   高度由使用它的版面用 --brand-logo-h 指定，寬度靠 aspect-ratio 自動算。
+   aspect-ratio 寫死原始 viewBox 比例，是為了讓瀏覽器在 SVG 還沒下載完就先
+   保留正確寬度——不然首屏 logo 一載完會把旁邊的導覽推一下（CLS）。 */
+.brand-logo {
+  display: block;
+  height: var(--brand-logo-h, 26px);
+  width: auto;
+  flex: none;
+}
+
+/* viewBox 795.29 × 148.92 */
+.brand-logo--type {
+  aspect-ratio: 795.29 / 148.92;
+}
+
+/* viewBox 249.91 × 148.92 */
+.brand-logo--mark {
+  aspect-ratio: 249.91 / 148.92;
+}
+
+/* 品牌綠／深色底：brightness(0) 先壓成黑、invert(1) 再翻成白，
+   兩色標誌（墨黑＋綠）會整個變成單色白，在綠底上才讀得到。 */
+.brand-logo--on-color {
+  filter: brightness(0) invert(1);
+}

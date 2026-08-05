@@ -96,6 +96,9 @@ export default defineEventHandler(async (event) => {
       folderId: typeof body?.source?.folderId === 'string' ? body.source.folderId : null,
       filePath: '', // Phase 1b 不存原檔；要存到 Storage 可以擴
       contentHash: String(body?.source?.contentHash ?? '').trim(),
+      // 這批卡就是從這一版內容切出來的 → 同時當成「重新同步」的比對基準。
+      // 沒有基準的來源（舊資料、貼上文字）第一次重新同步仍會照跑重切＋比對。
+      appliedContentHash: String(body?.source?.contentHash ?? '').trim(),
       etag: '',
       lastModified: '',
       refreshIntervalSec: 0,

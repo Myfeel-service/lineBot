@@ -31,6 +31,15 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* 品牌側欄（default layout）：logotype 圖檔本身就含「MiniMe」字樣，
+   所以不像超管／組織側欄那樣「圖示＋文字」左右排，改成 logo 在上、副標在下。 */
+.sidebar-logo--brand {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  --brand-logo-h: 25px;
+}
+
 .sidebar-logo span.logo-icon {
   width: 36px;
   height: 36px;

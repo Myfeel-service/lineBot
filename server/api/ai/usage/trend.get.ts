@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION } from '~~/server/utils/ai-usage'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
@@ -24,7 +24,7 @@ function lastNMonths(n: number): string[] {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'usage.read')
   const q = getQuery(event)
   const months = Math.min(12, Math.max(2, Number(q.months ?? 3)))
   const periods = lastNMonths(months)

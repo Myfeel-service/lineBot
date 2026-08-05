@@ -241,7 +241,10 @@ export default defineEventHandler(async (event) => {
     chunkCount: newChunkCount,
     lastFetchedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
-    ...(bodyHash ? { contentHash: bodyHash } : {}),
+    // appliedContentHash 與 contentHash 一起寫：這批卡就是從這一版內容切出來的。
+    // 下次按「重新同步」時拿它跟當場抓到的網頁比，一樣就直接回報「沒變」，
+    // 不必再花一輪 LLM 重切卡、也不會冒出兩批 LLM 產物之間的假差異。
+    ...(bodyHash ? { contentHash: bodyHash, appliedContentHash: bodyHash } : {}),
     // 手動套用變更＝這個來源現在是好的，把失敗標記一起清掉。
     // 不清的話只能等下一次排程成功檢查才會清，而設成「不偵測」的來源永遠不會被排程撈到
     // → 體檢紅字永久卡著。

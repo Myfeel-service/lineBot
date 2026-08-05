@@ -283,6 +283,8 @@ export async function updateSourceSettings(
     if (nextUrl !== source.data.url) {
       update.url = nextUrl
       update.contentHash = ''
+      // 卡片是從舊網址切出來的 → 基準也失效,不清會拿舊網址的指紋去判斷新網址「沒變」
+      update.appliedContentHash = ''
       update.pendingHash = FieldValue.delete()
       update.outdatedAt = null
       Object.assign(update, buildSourceClearFailure(source.data.status))

@@ -784,6 +784,8 @@ const sourceMeta = ref({
   url: '',
   /** 所屬產品名：AI 偵測預填、使用者可改；'' = 非單一產品資料 */
   productName: '',
+  /** 網址來源的內容指紋（存成 source.appliedContentHash＝重新同步的比對基準） */
+  contentHash: '',
 })
 
 // mode 已經是「判別結果」，這裡只需確認對應的輸入真的有值（規則共用 shared/knowledge-import-detect）
@@ -1048,6 +1050,7 @@ async function runSiteImport() {
               name: page.title || res.sourceName || page.url,
               url: page.url,
               productName: res.suggestedProductName ?? '',
+              contentHash: res.contentHash ?? '',
             },
             chunks: res.chunks.map(c => ({
               title: c.title,
@@ -1144,6 +1147,8 @@ interface PreviewResult {
   warnings?: string[]
   /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */
   suggestedProductName?: string
+  /** 網址來源這次抓到的內容指紋；原樣帶給 bulk-create 當「重新同步」的比對基準 */
+  contentHash?: string
 }
 
 // 輪詢協定與「重新同步」共用同一支 composable(重試碼 / 逾時 / 取消只留一份實作)
@@ -1232,6 +1237,7 @@ async function runPreview() {
       name: res.sourceName,
       url: res.sourceUrl,
       productName: res.suggestedProductName ?? '',
+      contentHash: res.contentHash ?? '',
     }
     step.value = 'preview'
   }
@@ -1423,6 +1429,7 @@ async function runImport() {
           name: sourceMeta.value.name.trim() || '未命名資料',
           url: sourceMeta.value.url,
           productName: sourceMeta.value.productName.trim(),
+          contentHash: sourceMeta.value.contentHash,
         },
         chunks: selected,
         overviewCard: overviewPayload,
@@ -1466,7 +1473,7 @@ function resetAll() {
   ocrUsed.value = false
   healthWarnings.value = []
   result.value = null
-  sourceMeta.value = { type: '', name: '', url: '', productName: '' }
+  sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
   sitePages.value = []
   siteFilter.value = ''
   siteGroup.value = ''

@@ -72,6 +72,13 @@ export default defineNuxtConfig({
   app: {
     head: {
       link: [
+        /* 瀏覽器圖示＝品牌 logomark（只有圖標的版本）。
+           三個都要留：SVG 給現役瀏覽器（不隨解析度模糊）、.ico 給舊版與 Windows 捷徑、
+           apple-touch-icon 給 iOS 主畫面（iOS 不吃 SVG，且會把透明底壓成黑色）。
+           兩個點陣檔由 `npm run build:icons` 從 logomark.svg 鋪白底轉出，換 logo 後要重跑。 */
+        { rel: 'icon', type: 'image/svg+xml', href: '/logomark.svg' },
+        { rel: 'icon', type: 'image/x-icon', sizes: '48x48', href: '/favicon.ico' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
         // 繁中主字型：Google Fonts 依 unicode-range 分片，只下載實際用到的字；native 字型為 fallback（display=swap 不擋首屏）

@@ -2,7 +2,11 @@
   <div class="lp lp-legal-page">
     <nav class="lp-nav">
       <div class="lp-wrap lp-nav__in">
-        <NuxtLink class="lp-brand" to="/"><span class="lp-brand__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}</NuxtLink>
+        <!-- 與門面導覽列同一套：≤720px 換成只有圖標的 logomark（見 _landing.scss 的 .lp-brand） -->
+        <NuxtLink class="lp-brand" to="/" :aria-label="brandName">
+          <BrandLogo class="lp-brand__type" alt="" />
+          <BrandLogo mark class="lp-brand__mark" alt="" />
+        </NuxtLink>
         <div class="lp-nav__right">
           <NuxtLink to="/login" class="lp-nav__signin">登入</NuxtLink>
           <a class="lp-btn lp-btn--primary" href="/#demo">預約 Demo</a>
@@ -62,6 +66,7 @@ const props = defineProps<{
   title: string
 }>()
 
+// brandName 只用在商標連結的 aria-label（看得到的字樣在 logotype 圖檔裡）
 const { brandName, serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours } = useSiteIdentity()
 
 /** 「對本政策有疑問」的自稱：把標題的「政策 / 條款」尾字拿來用，讀起來才順。 */

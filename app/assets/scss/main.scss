@@ -12,6 +12,7 @@
 @use "./layout/split-layout";
 
 /* ── Components ──────────────────────────────────────────────── */
+@use "./components/brand-logo";
 @use "./components/buttons";
 @use "./components/cards";
 @use "./components/tables";

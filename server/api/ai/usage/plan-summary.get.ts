@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 
@@ -13,7 +13,7 @@ import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing
  * 數字跟客人實際會被擋下來的那個點永遠一致（不會出現「顯示還有額度但已經被轉真人」）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'usage.read')
   const db = getDb()
 
   const sub = await getWorkspaceSubscription(workspaceId, db)

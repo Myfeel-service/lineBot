@@ -2,8 +2,8 @@
   <div class="error-page">
     <div class="error-card">
       <div class="error-logo">
-        <span class="logo-circle"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
-        <span class="error-brand">{{ brandName }} 管理後台</span>
+        <BrandLogo />
+        <span class="error-brand">管理後台</span>
       </div>
 
       <div class="error-icon" :class="`error-icon--${view.tone}`">
@@ -33,7 +33,7 @@
 
 <script setup lang="ts">
 import type { NuxtError } from '#app'
-import { ChatDotRound, Lock, QuestionFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Lock, QuestionFilled, WarningFilled } from '@element-plus/icons-vue'
 
 /**
  * 全站錯誤頁。

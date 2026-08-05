@@ -20,11 +20,18 @@
         <span class="conv-ai-row__value">{{ ctx.lastQuery }}</span>
       </div>
 
-      <div class="conv-ai-row">
-        <span class="conv-ai-row__label">把握度</span>
+      <!-- 罐頭回覆（招呼語／越界拒答）的信心是寫死的 1.00,印「很有把握」是在對一句
+           「不客氣」下能力判語 → 整列不顯示,底下 noLookupText 已把來由講清楚。 -->
+      <div v-if="showConfidence" class="conv-ai-row">
+        <span class="conv-ai-row__label">{{ isAnswered ? '把握度' : '知識命中分數' }}</span>
         <span class="conv-ai-row__value">
-          <strong>{{ confidenceLabel(ctx.lastConfidence) }}</strong>
-          <span class="conv-ai-confidence-raw">（{{ ctx.lastConfidence.toFixed(2) }}）</span>
+          <!-- 「有把握」是對『這則回答』的判語,只有真的回答了才成立。轉真人 / 反問時印它會與
+               結論打對台（實測:0.77「有把握」卻是把別台的折扣碼答錯後轉真人）→ 只給分數不下判語。 -->
+          <template v-if="isAnswered">
+            <strong>{{ confidenceLabel(ctx.lastConfidence) }}</strong>
+            <span class="conv-ai-confidence-raw">（{{ ctx.lastConfidence.toFixed(2) }}）</span>
+          </template>
+          <strong v-else>{{ ctx.lastConfidence.toFixed(2) }}</strong>
           <span v-if="ctx.lastHandoffReason" class="conv-ai-tag conv-ai-tag--warn">
             {{ handoffLabel }}
           </span>
@@ -136,9 +143,24 @@ function confidenceLabel(c: number): string {
   return '把握不高'
 }
 
+/** 只有「真的回了客人」才適用把握度判語（見 template 註解） */
+const isAnswered = computed(() => ctx.value?.lastDecision === 'answered')
+
+/** 罐頭回覆沒有「把握度」可談（信心固定 1.00，不是算出來的） */
+const isCanned = computed(() => {
+  const kind = ctx.value?.lastAnswerKind ?? 'kb'
+  return kind === 'social' || kind === 'offtopic'
+})
+const showConfidence = computed(() => !isCanned.value)
+
 const summaryText = computed(() => {
   if (!ctx.value?.hasMeta) return ''
-  if (ctx.value.lastDecision === 'answered') return `AI 已回答（${confidenceLabel(ctx.value.lastConfidence)}）`
+  if (ctx.value.lastDecision === 'answered') {
+    // 招呼語／越界拒答不報把握度（見 isCanned）：那句話是寫死的，不是 AI 判斷得多準
+    if (ctx.value.lastAnswerKind === 'social') return 'AI 已回覆招呼語（固定回覆，未查知識庫）'
+    if (ctx.value.lastAnswerKind === 'offtopic') return 'AI 已禮貌拒答（不在服務範圍）'
+    return `AI 已回答（${confidenceLabel(ctx.value.lastConfidence)}）`
+  }
   if (ctx.value.lastDecision === 'handoff') return `AI 轉真人 — ${handoffLabel.value}`
   if (ctx.value.lastDecision === 'handoff_confirm') return `AI 詢問是否轉接專員（${handoffLabel.value}），等客人確認`
   if (ctx.value.lastDecision === 'disambiguate') return `AI 反問澄清，等客人從選項挑一個`

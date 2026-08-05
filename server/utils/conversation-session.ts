@@ -13,17 +13,34 @@ import { SESSION_24H_MS } from '~~/shared/types/conversation-stats'
 // ── Session In-Memory Cache ───────────────────────────────────────
 // Avoids running a Firestore transaction on every single webhook event.
 // Common path: active session within 24h → return cached ID, update lastActivityAt in background.
-// TTL is intentionally short (10s) to limit stale-status window when admin changes session state.
+//
+// ⚠️ 「這場 session 是哪一個」與「這場現在誰在處理」是兩種鮮度需求，**必須分開計時**：
+//   · sessionId  客人一直講話就一直有效（24h 內同一場），續命沒問題 → cachedAt
+//   · status     隨時可能被**別的行程**改掉（客服按「我接手」、cron 自動交還、
+//                另一台 Lambda 處理到同一位客人的另一則訊息而轉了真人）→ statusCachedAt
+//
+// 先前兩者共用一個 cachedAt，而 fast path 每次來訊都把它refresh 成 now，於是
+// 「連續講話的客人」的舊狀態被無限續命：已經轉真人了，這台實例還以為機器人在處理，
+// AI 就繼續插話（也讓「我接手（暫停自動回覆）」按了不一定馬上生效）。
 
 interface SessionCacheEntry {
   sessionId: string
   status: ConversationStatus
   lastActivityAt: number  // JS ms timestamp
+  /** sessionId 這筆對應關係的快取時間（可隨活動續命） */
   cachedAt: number
+  /** status 這個值的取得時間（**不隨活動續命**，過期就回頭讀 Firestore） */
+  statusCachedAt: number
   /** 已收過客人來訊(follow/活動出生的 session 在此之前不進首接統計) */
   hasInbound?: boolean
 }
 const SESSION_CACHE_TTL_MS = 30 * 1000
+/**
+ * status 的鮮度上限。抑制自動回覆（轉真人後機器人閉嘴）看的就是它，賭錯的代價是
+ * 「AI 跟真人客服搶著回話」，所以刻意設得比 sessionId 短很多；代價是每則客人訊息
+ * 最多多一次 session doc 讀取（同一次 webhook 內的多個 caller 仍共用這份快取）。
+ */
+const SESSION_STATUS_TTL_MS = 5 * 1000
 const sessionByUser = new Map<string, SessionCacheEntry>()   // lineUserId → entry
 const sessionStatusById = new Map<string, { status: ConversationStatus; cachedAt: number }>() // sessionId → status
 
@@ -33,12 +50,17 @@ function requireWorkspaceId(workspaceId: string | undefined, context: string): s
   return wid
 }
 
+/**
+ * 本行程剛剛親手把狀態寫進 Firestore → 快取這份新值（status 鮮度也一併更新）。
+ * 注意這只救得了「自己這台」；別的行程改的狀態靠 SESSION_STATUS_TTL_MS 過期回讀。
+ */
 export function _updateSessionStatusCache(sessionId: string, status: ConversationStatus) {
-  sessionStatusById.set(sessionId, { status, cachedAt: Date.now() })
+  const now = Date.now()
+  sessionStatusById.set(sessionId, { status, cachedAt: now })
   // Also update per-user cache if it references this session
   for (const [uid, entry] of sessionByUser) {
     if (entry.sessionId === sessionId) {
-      sessionByUser.set(uid, { ...entry, status, cachedAt: Date.now() })
+      sessionByUser.set(uid, { ...entry, status, cachedAt: now, statusCachedAt: now })
       break
     }
   }
@@ -48,6 +70,31 @@ export function _invalidateUserSessionCache(lineUserId: string) {
   const entry = sessionByUser.get(lineUserId)
   if (entry) sessionStatusById.delete(entry.sessionId)
   sessionByUser.delete(lineUserId)
+}
+
+/**
+ * 從 Firestore 重讀一次 status 並同步兩份快取。回 null = doc 不存在或讀取失敗
+ * （呼叫端當「這份快取不可信」處理，不要拿舊值硬撐）。
+ */
+async function refreshSessionStatusFromDb(sessionId: string): Promise<ConversationStatus | null> {
+  try {
+    const snap = await getDb().collection('conversationSessions').doc(sessionId).get()
+    const status = snap.exists ? (snap.data()?.status as ConversationStatus | undefined) : undefined
+    if (!status) return null
+    const now = Date.now()
+    sessionStatusById.set(sessionId, { status, cachedAt: now })
+    for (const [uid, entry] of sessionByUser) {
+      if (entry.sessionId === sessionId) {
+        sessionByUser.set(uid, { ...entry, status, statusCachedAt: now })
+        break
+      }
+    }
+    return status
+  }
+  catch (e) {
+    console.warn('[session] status refresh failed:', sessionId, e)
+    return null
+  }
 }
 
 // ── Event Recording ───────────────────────────────────────────────
@@ -147,19 +194,39 @@ export async function ensureConversationSession(
   if (
     cached &&
     now - cached.cachedAt < SESSION_CACHE_TTL_MS &&
-    cached.status !== 'closed' &&
     now - cached.lastActivityAt < SESSION_24H_MS
   ) {
-    const bgUpdate: Record<string, unknown> = { lastActivityAt: FieldValue.serverTimestamp() }
-    // 客人來訊 → 補記 hasInbound(布林、重寫冪等;快取記住後同 instance 只寫一次)
-    if (!opts.origin && !cached.hasInbound) bgUpdate.hasInbound = true
-    db.collection('conversationSessions').doc(cached.sessionId)
-      .update(bgUpdate)
-      .catch(e => console.warn('[session] bg lastActivityAt update failed:', e))
-    sessionByUser.set(lineUserId, { ...cached, lastActivityAt: now, cachedAt: now, hasInbound: cached.hasInbound || !opts.origin })
-    // Sync sessionStatusById so shouldSuppressInboundBotAutomationForSession gets a cache hit
-    sessionStatusById.set(cached.sessionId, { status: cached.status, cachedAt: now })
-    return cached.sessionId
+    // status 過期就回頭讀一次（見 SESSION_STATUS_TTL_MS）：這場可能已經被客服接手、
+    // 被 cron 交還、或被按了「結束會話」——那些都發生在別的行程，本行程的快取不會知道。
+    let status: ConversationStatus | null = cached.status
+    let statusCachedAt = cached.statusCachedAt
+    if (now - statusCachedAt >= SESSION_STATUS_TTL_MS) {
+      // doc 讀不到（被刪 / 讀取失敗）→ status=null，不用快取，落到 slow path 重新對帳
+      status = await refreshSessionStatusFromDb(cached.sessionId)
+      statusCachedAt = Date.now()
+      if (!status) _invalidateUserSessionCache(lineUserId)
+    }
+    // 已結束的會話不能再收訊息（要開新的一場）→ 落到 slow path
+    if (status && status !== 'closed') {
+      const bgUpdate: Record<string, unknown> = { lastActivityAt: FieldValue.serverTimestamp() }
+      // 客人來訊 → 補記 hasInbound(布林、重寫冪等;快取記住後同 instance 只寫一次)
+      if (!opts.origin && !cached.hasInbound) bgUpdate.hasInbound = true
+      db.collection('conversationSessions').doc(cached.sessionId)
+        .update(bgUpdate)
+        .catch(e => console.warn('[session] bg lastActivityAt update failed:', e))
+      sessionByUser.set(lineUserId, {
+        ...cached,
+        status,
+        lastActivityAt: now,
+        cachedAt: now,
+        // 刻意沿用原本的鮮度（不是 now）：sessionId 可以續命，status 不行
+        statusCachedAt,
+        hasInbound: cached.hasInbound || !opts.origin,
+      })
+      // Sync sessionStatusById so shouldSuppressInboundBotAutomationForSession gets a cache hit
+      sessionStatusById.set(cached.sessionId, { status, cachedAt: statusCachedAt })
+      return cached.sessionId
+    }
   }
 
   // ── Slow path: Firestore transaction ─────────────────────────────
@@ -249,15 +316,18 @@ export async function ensureConversationSession(
   })
 
   // Populate both caches with the result of the transaction
+  // （status 來自剛才交易裡的讀取 → 這一刻是新鮮的，statusCachedAt 記 now）
+  const txAt = Date.now()
   sessionByUser.set(lineUserId, {
     sessionId: resultId,
     status: resultStatus,
     lastActivityAt: now,
     cachedAt: now,
+    statusCachedAt: txAt,
     // 這次呼叫是客人來訊就一定有 inbound;follow 呼叫先設 false,下次來訊會補記
     hasInbound: !opts.origin,
   })
-  sessionStatusById.set(resultId, { status: resultStatus, cachedAt: now })
+  sessionStatusById.set(resultId, { status: resultStatus, cachedAt: txAt })
 
   // Record events and clean up orphans outside the transaction (non-blocking for stats only).
   if (closedOldSessionId) {
@@ -522,27 +592,23 @@ export async function shouldSuppressInboundBotAutomationForSession(
 }
 
 /**
- * 取得 session status（走同一份 30 秒 cache）。
+ * 取得 session status（走 SESSION_STATUS_TTL_MS 這份短快取）。
  * 給「等待真人期間的輕量 ack」這類需要區分 pending_human / human_handling 的 caller 用。
+ *
+ * 過期就回讀 Firestore：這個值會被別的行程改（客服接手 / cron 交還 / 結束會話），
+ * 拿舊值的代價是機器人跟真人搶著回話，所以寧可多一次 doc read。
  */
 export async function getSessionStatusCached(
   sessionId: string | null | undefined,
 ): Promise<ConversationStatus | null> {
   if (!sessionId) return null
 
-  // Use cached status to avoid a redundant DB read (session was just read in ensureConversationSession)
-  const now = Date.now()
   const cached = sessionStatusById.get(sessionId)
-  if (cached && now - cached.cachedAt < SESSION_CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.cachedAt < SESSION_STATUS_TTL_MS) {
     return cached.status
   }
 
-  const db = getDb()
-  const snap = await db.collection('conversationSessions').doc(sessionId).get()
-  if (!snap.exists) return null
-  const status = snap.data()?.status as ConversationStatus | undefined
-  if (status) sessionStatusById.set(sessionId, { status, cachedAt: now })
-  return status ?? null
+  return refreshSessionStatusFromDb(sessionId)
 }
 
 export async function onHumanOutgoingMessage(userId: string, workspaceId: string): Promise<void> {

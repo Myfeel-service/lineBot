@@ -36,6 +36,13 @@
   }
 }
 
+/* 第一步的品牌落款＝logomark（只有圖標，字樣由下面的 h1 講）；
+   第二步的 .onb-logo--done 仍是綠圓打勾，那是「完成」狀態徽章、不是商標。 */
+.onb-mark {
+  --brand-logo-h: 34px;
+  margin-bottom: 0.25rem;
+}
+
 .onb-logo {
   width: 56px;
   height: 56px;

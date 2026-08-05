@@ -10,6 +10,7 @@
     "postinstall": "nuxt prepare",
     "test:unit": "vitest run",
     "typecheck": "nuxt typecheck",
+    "build:icons": "node scripts/build-brand-icons.mjs",
     "set-super-admin": "node --env-file=.env --experimental-strip-types scripts/set-super-admin.ts"
   },
   "dependencies": {

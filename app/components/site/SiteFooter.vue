@@ -2,7 +2,7 @@
   <footer class="lp-foot">
     <div class="lp-wrap lp-foot__in">
       <div class="lp-foot__col lp-foot__col--brand">
-        <span class="lp-foot__brand"><span class="lp-brand__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}</span>
+        <BrandLogo class="lp-foot__brand" />
         <p class="lp-foot__tag">讓 AI 幫店主做生意</p>
         <ul class="lp-foot__list">
           <li><span class="lp-foot__k">公司名稱</span><span>{{ companyName }}</span></li>
@@ -58,7 +58,8 @@
 //    發票賣方、法務頁主體、風控核對的「公司名稱」用的是後者。
 import { POLICY_LINKS } from '~~/shared/legal'
 
-const { brandName, serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours } = useSiteIdentity()
+// 品牌名不在這裡取用：商標由 <BrandLogo /> 出（logotype 已含 MiniMe 字樣）
+const { serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours } = useSiteIdentity()
 
 const year = new Date().getFullYear()
 </script>

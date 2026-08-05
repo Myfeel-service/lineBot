@@ -104,8 +104,21 @@ export interface KnowledgeSourceDoc {
    * false 時退回與 url 一樣的「標記 outdated 等人工確認」行為。
    */
   gsheetAutoApply?: boolean
-  /** 內容 hash，網址同步時用來判斷是否需要重新切卡 */
+  /** 內容 hash，網址同步時用來判斷是否需要重新切卡（＝「最後一次觀測到的網頁指紋」） */
   contentHash: string
+  /**
+   * 「目前這批知識卡對應到哪一版網頁內容」的指紋。只有走完人工審或自動套用的路徑會更新它：
+   * 匯入、resync-apply（含使用者一律選「保留舊版」——那也是**已經看過並決定**的版本）、
+   * 小改自動套用。排程只是偵測到變動時不會動它。
+   *
+   * 為什麼不能用 contentHash 代替：排程一偵測到變動就會把 contentHash 推到新值（再標 outdated
+   * 等人工確認），所以 contentHash 只代表「網頁現在長怎樣」，不代表「卡片是從什麼切出來的」。
+   * 少了這一欄，重新同步無法回答唯一重要的問題——「網頁跟我上次整理的時候比，到底有沒有變」
+   * ——只能每次都重跑一次 LLM 切卡再比對兩批 LLM 產物，於是網頁沒變也照樣冒出一堆假差異。
+   *
+   * 舊來源沒有這一欄（空字串）＝沒有基準，行為與過去相同（照跑重切＋比對）。
+   */
+  appliedContentHash?: string
   /**
    * 變動偵測的「待確認新值」：抓到與 contentHash 不同的新 hash 時先存這裡，
    * **下一輪仍是同一個新值才確認為真變動**——輪播 / 隨機推薦 / 計數器頁面每次抓都不同，
@@ -339,6 +352,19 @@ export type HandoffReason =
    * 不是客人主動想找真人。分開記，監控頁才看得出「一排找真人」裡有多少其實是傳圖。
    */
   | 'non_text_content'
+  /**
+   * 檢索撈回的卡全是「別的產品」——這場對話在談 A，卡片只有 B 的資料。
+   * 與 no_grounding 分開記：這不是「知識庫什麼都沒有」，而是「A 缺這個主題的卡」，
+   * 補知識的動作不同（要補 A 的卡，不是從零建）。
+   */
+  | 'product_mismatch'
+  /**
+   * 客人在問「他自己那一筆」的進度（這筆到哪了、為什麼還沒退款、單號 123 出貨了嗎）。
+   * 知識庫只有政策、沒有任何人的訂單資料 → 補卡永遠救不了，**不列入知識缺口**。
+   * 與 no_grounding 分開記的理由：這不是缺知識，是缺「查得到訂單的人」，
+   * 所以也不走「要不要幫您轉接」的二次確認，直接轉真人（少一次來回）。
+   */
+  | 'order_status'
 
 export interface AiConversationMeta {
   /** 最近一次 AI 介入的決定 */
@@ -540,6 +566,8 @@ export const KNOWLEDGE_GAP_HANDOFF_REASONS: ReadonlySet<string> = new Set<Handof
   'no_grounding',
   'low_confidence',
   'unresolved',
+  // 「在談 A、卡片只有 B」也是知識缺口（A 缺這個主題），補卡就能救
+  'product_mismatch',
 ])
 
 /** {@link isKnowledgeGapContext} 需要的最小資訊（對話頁脈絡卡的回應形狀） */
@@ -587,6 +615,8 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   commercial_inquiry: '業務洽詢',
   unresolved: '排除步驟沒解決',
   non_text_content: '傳了圖片/檔案',
+  product_mismatch: '這個產品沒有這題的資料',
+  order_status: '要查客人的訂單',
 }
 
 // ═══════════════════════════════════════════════════════════════════

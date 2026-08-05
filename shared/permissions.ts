@@ -31,7 +31,7 @@ export function hasMinRole(role: WorkspaceMemberRole, minRole: WorkspaceMemberRo
  */
 export const CAPABILITIES = {
   // ── 讀取（所有內部成員 viewer+）─────────────────────────────
-  'ai.read': 'viewer', // 知識庫/來源/資料夾列表、AI 設定讀取、用量監控
+  'ai.read': 'viewer', // 知識庫/來源/資料夾列表、AI 設定讀取（用量監控另見 usage.read）
   'members.read': 'viewer', // 成員列表
 
   // ── 內容維護（客服 agent+）──────────────────────────────────
@@ -43,6 +43,7 @@ export const CAPABILITIES = {
 
   // ── 設定類（管理員 admin+）──────────────────────────────────
   'ai.settings.write': 'admin', // AI 設定儲存
+  'usage.read': 'admin', // AI 用量監控頁（含方案額度等計費資訊，故非 viewer）
   'knowledge.reindexAll': 'admin', // 知識庫全量重建
   'members.manage': 'admin', // 成員 邀請/改角色/移除
   'line.manage': 'admin', // 組織與 LINE 憑證 讀取/儲存

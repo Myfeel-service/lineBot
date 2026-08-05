@@ -6,7 +6,13 @@ const SYSTEM_MODULE_DEFS = [
   { type: 'live_agent' as const, name: '真人客服' },
 ] as const
 
-function systemModuleId(workspaceId: string, type: 'welcome' | 'live_agent') {
+/**
+ * 系統模組的 flows doc id。**這是唯一的組法**——別在別處自己拼，也別拿
+ * SYSTEM_MODULE_IDS（'sys_live_agent'）當 doc id 去查：那是「模組種類代號」，
+ * 不是文件 id，查了永遠是 null（實測後果：店家在後台設的「真人客服」文案從來沒送出去過，
+ * 客人一律收到程式裡的預設句）。
+ */
+export function systemModuleId(workspaceId: string, type: 'welcome' | 'live_agent') {
   return `${workspaceId}_${type}`
 }
 

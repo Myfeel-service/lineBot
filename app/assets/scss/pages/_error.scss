@@ -28,16 +28,7 @@
   align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.5rem;
-}
-
-.error-page .logo-circle {
-  width: 32px;
-  height: 32px;
-  background: linear-gradient(135deg, var(--brand-green), var(--brand-green-deep));
-  border-radius: var(--radius-sm);
-  display: grid;
-  place-items: center;
-  font-size: 1rem;
+  --brand-logo-h: 22px;
 }
 
 .error-page .error-brand {

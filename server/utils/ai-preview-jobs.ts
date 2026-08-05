@@ -115,6 +115,12 @@ export interface WorkState {
   warnings: string[]
   /** 自動偵測的產品名（finalize 時 LLM 判定；多產品 / 平台頁為空）。預填給使用者確認可改。 */
   suggestedProductName?: string
+  /**
+   * 網址來源這次抓到的內容指紋。匯入時隨 source 一起存成 appliedContentHash
+   * （＝「這批卡是從這一版網頁切出來的」），之後按「重新同步」才有基準可以判斷
+   * 「網頁到底有沒有變」，不必每次都重跑 LLM 切卡去比兩批生成結果。
+   */
+  extractedHash?: string
   // ── resync 工作專用(input.resyncSourceId 有值時)──
   /** finalize 算出的新舊卡差異 */
   resyncDiff?: DiffResult
@@ -451,6 +457,8 @@ export function workToPreviewResult(work: WorkState) {
     usage: work.usage,
     warnings: work.warnings ?? [], // 舊 job 的 work.json 沒這欄位，保底空陣列
     suggestedProductName: work.suggestedProductName ?? '',
+    // 網址來源的內容指紋：匯入時原樣回傳給 bulk-create 當「重新同步」的比對基準
+    contentHash: work.extractedHash ?? '',
     ...(work.input.resyncSourceId
       ? {
           resync: {

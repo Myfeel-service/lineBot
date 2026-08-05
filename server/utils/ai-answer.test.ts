@@ -23,6 +23,8 @@ import {
   longestCommonRun,
   truncateLabel,
   dedupeSimilarCandidates,
+  looksLikeNoInfoAnswer,
+  activeProductsInContext,
 } from './ai-answer'
 import type { SimilarChunk } from './ai-knowledge-chunks'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
@@ -742,5 +744,78 @@ describe('isUnresolvedFeedback', () => {
     expect(isUnresolvedFeedback('還是一樣', [])).toBe(false)
     expect(isUnresolvedFeedback('還是一樣', undefined)).toBe(false)
     expect(isUnresolvedFeedback('還是一樣', [{ role: 'user', text: '哈囉' }])).toBe(false)
+  })
+})
+
+// 2026-08-05 實測災情：整場在談 MATELASER W1 REGEN 紅光儀，AI 連三則回「知識卡中沒有提到○○，
+// 不過…」並附上 SHARP 零水鍋的折扣碼，還全被記成 answered（扣則數 + KPI 說謊 + 不轉真人）。
+describe('looksLikeNoInfoAnswer', () => {
+  it('「知識卡中沒有提到 X，不過 Y」→ 視為答不出來', () => {
+    expect(looksLikeNoInfoAnswer('您好，知識卡中沒有提到關於試用期的資訊喔。若您是想了解保固相關問題，W1 REGEN 的保固期限是自購買日起 1 年。')).toBe(true)
+    expect(looksLikeNoInfoAnswer('您好，知識卡中沒有提到青少年網球選手的專屬優惠喔。目前只有透過 MYFEEL 平台購買可折 300 元。')).toBe(true)
+    expect(looksLikeNoInfoAnswer('知識庫裡查不到這個問題的答案。')).toBe(true)
+    expect(looksLikeNoInfoAnswer('目前的資料中沒有相關資訊喔。')).toBe(true)
+  })
+
+  it('卡片內容真的這樣寫的正當答案不誤殺', () => {
+    // 7/31 稽核特地救回的 case：卡裡就是叫客人洽原廠
+    expect(looksLikeNoInfoAnswer('說明書沒有提到這個錯誤代碼，建議您直接聯繫原廠客服 02-1234-5678 協助確認。')).toBe(false)
+    // 價格題的既定答法（prompt 明文要求這樣回）
+    expect(looksLikeNoInfoAnswer('目前沒有標示售價，最新價格與購買請見 https://example.com')).toBe(false)
+    expect(looksLikeNoInfoAnswer('W1 REGEN 的保固期限是自購買日起 1 年。')).toBe(false)
+    expect(looksLikeNoInfoAnswer('')).toBe(false)
+  })
+})
+
+describe('activeProductsInContext', () => {
+  const catalog = [
+    'MATELASER 筋牌特務 W1 REGEN 多波長紅光舒緩儀',
+    'MATELASER 筋牌特務 W1 REGEN ULTRA 多波長紅光舒緩儀',
+    'SHARP HEALSIO 自動調理零水鍋',
+    'GPLUS 除濕機',
+  ]
+
+  it('客人這句自己講了產品 → from=query', () => {
+    const r = activeProductsInContext('零水鍋多少錢', [], catalog)
+    expect(r?.from).toBe('query')
+    expect([...r!.products]).toEqual([normalizeProductName('SHARP HEALSIO 自動調理零水鍋')])
+  })
+
+  it('本次災情：產品脈絡由腳本回的商品連結建立，客人後續只問「怎麼購買最方便」', () => {
+    const history = [
+      { role: 'bot' as const, text: '林瓊惠您好，以下提供商品頁面連結供您參考：https://www.myfeel-tw.com/projects/W1REGEN' },
+      { role: 'user' as const, text: '好的' },
+      { role: 'bot' as const, text: '不客氣！還有需要都可以再跟我說 😊' },
+    ]
+    const r = activeProductsInContext('怎麼購買最方便？', history, catalog)
+    expect(r?.from).toBe('history')
+    // 連結裡的 W1REGEN 同時對上 W1 REGEN 與 ULTRA（同家族），兩台都算在脈絡內
+    expect(r!.products.size).toBe(2)
+    expect([...r!.products].every(p => p.includes('regen'))).toBe(true)
+  })
+
+  it('取「最近一則提到產品的訊息」，不把換過的產品一路聯集', () => {
+    const history = [
+      { role: 'user' as const, text: '請問 W1 REGEN 保固多久' },
+      { role: 'bot' as const, text: '自購買日起 1 年。' },
+      { role: 'user' as const, text: '那零水鍋呢' },
+      { role: 'bot' as const, text: 'SHARP HEALSIO 自動調理零水鍋的保固為 1 年。' },
+    ]
+    const r = activeProductsInContext('那運費要多少', history, catalog)
+    expect([...r!.products]).toEqual([normalizeProductName('SHARP HEALSIO 自動調理零水鍋')])
+  })
+
+  it('品類詞對到多台是正確的脈絡範圍（除濕機 ≠ 紅光儀）', () => {
+    const r = activeProductsInContext('除濕機要怎麼保養', [], catalog)
+    expect([...r!.products]).toEqual([normalizeProductName('GPLUS 除濕機')])
+  })
+
+  it('整場都沒提到任何產品 → null（不鎖，維持原行為）', () => {
+    const history = [
+      { role: 'user' as const, text: '你好' },
+      { role: 'bot' as const, text: '您好，請問有什麼可以為您服務的嗎？😊' },
+    ]
+    expect(activeProductsInContext('運費多少', history, catalog)).toBeNull()
+    expect(activeProductsInContext('運費多少', history, [])).toBeNull()
   })
 })

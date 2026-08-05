@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getAiSettings } from '~~/server/utils/ai-settings'
@@ -11,8 +11,11 @@ import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
  * 回傳指定月份的 AI 用量 KPI：
  *   - invocations / answered / handoffs
  *   - 自動回覆率 / handoff 率
- *   - input / output / embedding tokens
- *   - 估算成本（USD，依模型 list price 粗估）
+ *   - （僅 super admin）token 細目與估算成本
+ *
+ * 成本可見性收歸平台：計費賣「則數」，token 成本是平台的進貨價——租戶拿到
+ * NT$ 估算（或 token 數 × 公開牌價）就能反推毛利，故 cost/token 欄位一律只回
+ * 給 super admin，租戶端通篇只講「則」。
  */
 /**
  * Gemini 牌價（USD / 每百萬 token）。2026-07 查核之公開定價：
@@ -33,9 +36,26 @@ const PRICING = {
   embedPerM: GEMINI_EMBED_USD_PER_M,
 }
 
+/** super admin 專屬的 token / 成本細目（非 super admin 的回應中完全沒有這些 key） */
+const EMPTY_COST_DETAIL = {
+  inputTokens: 0,
+  outputTokens: 0,
+  embeddingTokens: 0,
+  importInputTokens: 0,
+  importOutputTokens: 0,
+  conversationTokens: 0,
+  buildTokens: 0,
+  buildCostUsd: 0,
+  testTokens: 0,
+  testCostUsd: 0,
+  estimatedCostUsd: 0,
+  perConversationUsd: 0,
+  pricing: PRICING,
+}
+
 export default defineEventHandler(async (event) => {
-  // 含計費方案 → 需 admin（與帳號設定/用量監控頁一致，非 viewer）。
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  // 含計費方案 → usage.read（admin；與用量監控頁門檻同一張表）。
+  const { workspaceId, isSuperAdmin } = await requireCapability(event, 'usage.read')
   const query = getQuery(event)
   const period = String(query.period ?? currentYyyyMm()).replace(/[^\d]/g, '').slice(0, 6) || currentYyyyMm()
 
@@ -58,36 +78,25 @@ export default defineEventHandler(async (event) => {
 
   const snap = await db.collection(AI_USAGE_COLLECTION).doc(`${workspaceId}_${period}`).get()
 
-  const empty = {
-    period,
-    plan,
-    aiEnabled,
-    replyMode,
-    quotaAnswered,
-    invocations: 0,
-    answered: 0,
-    handoffs: 0,
-    disambiguations: 0,
-    answeredThenHandoffs: 0,
-    answeredThenHandoffRate: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    embeddingTokens: 0,
-    importInputTokens: 0,
-    importOutputTokens: 0,
-    conversationTokens: 0,
-    buildTokens: 0,
-    buildCostUsd: 0,
-    testTokens: 0,
-    testCostUsd: 0,
-    autoReplyRate: 0,
-    handoffRate: 0,
-    disambiguationRate: 0,
-    estimatedCostUsd: 0,
-    perConversationUsd: 0,
-    pricing: PRICING,
+  if (!snap.exists) {
+    const empty = {
+      period,
+      plan,
+      aiEnabled,
+      replyMode,
+      quotaAnswered,
+      invocations: 0,
+      answered: 0,
+      handoffs: 0,
+      disambiguations: 0,
+      answeredThenHandoffs: 0,
+      answeredThenHandoffRate: 0,
+      autoReplyRate: 0,
+      handoffRate: 0,
+      disambiguationRate: 0,
+    }
+    return isSuperAdmin ? { ...empty, ...EMPTY_COST_DETAIL } : empty
   }
-  if (!snap.exists) return empty
 
   const data = snap.data() as Partial<AiUsageDoc>
   const invocations = Number(data.invocations ?? 0)
@@ -124,7 +133,7 @@ export default defineEventHandler(async (event) => {
   const buildCost = usd(importInputTokens, importOutputTokens, buildEmbeddingTokens) // 知識庫建置/整理
   const testCost = usd(testInputTokens, testOutputTokens, testEmbeddingTokens) // 後台測試
 
-  return {
+  const base = {
     period,
     plan,
     aiEnabled,
@@ -137,6 +146,14 @@ export default defineEventHandler(async (event) => {
     answeredThenHandoffs,
     // 品質 proxy：成功回答之中有多少比例在 30 分鐘內又被轉真人（越低越好）
     answeredThenHandoffRate: answered ? answeredThenHandoffs / answered : 0,
+    autoReplyRate: invocations ? answered / invocations : 0,
+    handoffRate: invocations ? handoffs / invocations : 0,
+    disambiguationRate: invocations ? disambiguations / invocations : 0,
+  }
+  if (!isSuperAdmin) return base
+
+  return {
+    ...base,
     inputTokens,
     outputTokens,
     embeddingTokens,
@@ -148,9 +165,6 @@ export default defineEventHandler(async (event) => {
     buildCostUsd: Number(buildCost.toFixed(4)),
     testTokens: testInputTokens + testOutputTokens + testEmbeddingTokens,
     testCostUsd: Number(testCost.toFixed(4)),
-    autoReplyRate: invocations ? answered / invocations : 0,
-    handoffRate: invocations ? handoffs / invocations : 0,
-    disambiguationRate: invocations ? disambiguations / invocations : 0,
     // estimatedCostUsd / perConversationUsd 只算「客人對話」——建置與測試不灌進來
     estimatedCostUsd: Number(cost.toFixed(4)),
     perConversationUsd: invocations ? Number((cost / invocations).toFixed(4)) : 0,

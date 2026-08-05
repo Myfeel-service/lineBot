@@ -56,6 +56,7 @@ import {
   lineUserIdFromFirestoreDocId,
 } from '~~/shared/line-workspace'
 import { capMapSize } from './bounded-cache'
+import { systemModuleId } from './workspace-system-modules'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -212,6 +213,8 @@ interface FlowDoc {
   isActive: boolean
   moduleType?: ModuleType
   isSystem?: boolean
+  /** 模組名稱（值班通知要寫「客人按了『真人客服』」，不然客服看不出他按了什麼） */
+  name?: string
 }
 
 interface UserDoc {
@@ -2224,6 +2227,14 @@ async function handleIncomingText(
           enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
             console.error('[session] enterModule error:', e),
           )
+          // 按到「真人客服」模組 → 真的轉真人（通知值班客服，見 notifyStaffForLiveAgentModule）
+          if (isLiveAgentModule(flow)) {
+            await notifyStaffForLiveAgentModule({
+              workspaceId: wid, lineUserId,
+              displayName: userAttributes.displayName || '',
+              customerMessage: textContent,
+            })
+          }
         } else {
           console.warn('[userInput] next flow has no renderable messages, skipping reply:', moduleId)
         }
@@ -2363,6 +2374,13 @@ async function handleIncomingText(
               enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
                 console.error('[session] enterModule error:', e),
               )
+              if (isLiveAgentModule(flow)) {
+                await notifyStaffForLiveAgentModule({
+                  workspaceId: wid, lineUserId,
+                  displayName: userAttributes.displayName || '',
+                  customerMessage: textContent,
+                })
+              }
             }
           } else {
             console.warn(
@@ -2584,7 +2602,7 @@ async function triggerHandoff(
 // 把 session 留在 bot；客人確認才真的轉接。降低誤判直接占用真人、也避免轉進「無人接」黑洞。
 // 敏感詞 / 額度用罄 / LLM 失敗 / 客人明講 不在此列（見呼叫端），維持直接轉接。
 // unresolved（客人回報「照做了沒解決」）也走確認——別直接占用真人，但要主動遞出轉接按鈕。
-const HANDOFF_CONFIRM_REASONS = new Set<HandoffReason>(['low_confidence', 'no_grounding', 'unresolved'])
+const HANDOFF_CONFIRM_REASONS = new Set<HandoffReason>(['low_confidence', 'no_grounding', 'unresolved', 'product_mismatch'])
 
 /** 二次確認 quick-reply 按鈕送回的文字 */
 const HANDOFF_CONFIRM_YES_TEXT = '轉接專員'
@@ -2636,6 +2654,49 @@ function wasRecentlyAnswered(meta: AiConversationMeta | undefined | null): boole
 const WAITING_ACK_THROTTLE_MS = 30 * 60 * 1000
 const WAITING_ACK_MAP_MAX_ENTRIES = 5000
 const waitingAckSentAt = new Map<string, number>()
+
+/**
+ * 「已為您安排專員」也算一次安撫語，要一起吃這個節流——否則客人在一分鐘內先收到
+ * 「已為您安排專員，將盡快回覆您」再收到「已收到您的訊息，專員會盡快回覆您」，
+ * 兩句話同一個意思、卻讓人以為前一次沒生效（實測就發生過，接著真人 2 小時後才回）。
+ */
+function markWaitingAckSent(workspaceId: string, lineUserId: string): void {
+  waitingAckSentAt.set(`${workspaceId}:${lineUserId}`, Date.now())
+  capMapSize(waitingAckSentAt, WAITING_ACK_MAP_MAX_ENTRIES)
+}
+
+/**
+ * 客人在機器人裡按到「真人客服」模組（moduleType='live_agent'）＝ 一次**真正的**轉真人。
+ *
+ * 訊息本身由模組自己的文案回覆（呼叫端已送出）、狀態由 enterModule('live_agent') 標記，
+ * 但先前這條路少了最重要的一步：**通知值班客服**。實測災情就是這樣——客人收到
+ * 「謝謝您！我們的客服人員會很快聯絡您」，而沒有任何客服知道有人在等，客人問到第三次
+ * 才因為 AI 的二次確認才真的排進佇列。
+ *
+ * 通知端自帶節流與 enabled 判斷，所以「按按鈕之後 AI 又轉一次」不會轟兩則。
+ */
+async function notifyStaffForLiveAgentModule(params: {
+  workspaceId: string
+  lineUserId: string
+  displayName: string
+  customerMessage: string
+}): Promise<void> {
+  // 「客服人員會很快聯絡您」本身就是安撫語 → 讓等待中的 ack 一起吃節流（同 deliverHandoffReply）
+  markWaitingAckSent(params.workspaceId, params.lineUserId)
+  await notifyHandoffToStaff({
+    workspaceId: params.workspaceId,
+    customerLineUserId: params.lineUserId,
+    customerName: params.displayName || params.lineUserId,
+    customerMessage: params.customerMessage,
+    reason: 'user_request',
+    summary: '',
+  }).catch(e => console.error('[live-agent-module] notifyHandoffToStaff error:', e))
+}
+
+/** 這個模組是不是「真人客服」系統模組（按到它就要真的轉真人＋通知客服） */
+function isLiveAgentModule(flow: { moduleType?: ModuleType | null } | null | undefined): boolean {
+  return (flow?.moduleType ?? 'bot_flow') === 'live_agent'
+}
 
 // ── 非文字訊息的禮貌回覆 ─────────────────────────────────────────────
 // 客人傳圖片/影片/語音/檔案時 AI 讀不懂內容,完全沉默像被已讀不回 → 回一句引導。
@@ -2733,7 +2794,7 @@ async function maybeSendWaitingAck(
 }
 
 /**
- * 把客人轉真人：回覆 sys_live_agent 流程訊息（或預設文字）、標記 session 進入
+ * 把客人轉真人：回覆本工作區「真人客服」系統模組的訊息（沒設就用預設文字）、標記 session 進入
  * live_agent、通知值班客服。AI handoff 與「找真人」攔截共用。
  */
 async function deliverHandoffReply(params: {
@@ -2747,6 +2808,12 @@ async function deliverHandoffReply(params: {
   /** 觸發 handoff 的客人訊息（給通知用） */
   customerMessage: string
   reason: HandoffReason | null
+  /**
+   * 轉接訊息**之前**要先送給客人的一句話（目前用於 order_status：AI 從知識庫查到的
+   * 一般規則，例「一般 3–5 個工作日出貨」）。先給期待值再說「幫您轉專員查這一筆」，
+   * 比只丟一句「幫您轉接」有用得多。空字串 = 不送。
+   */
+  prefixText?: string
   /**
    * AI 生成的對話摘要（best-effort，可為空）。可傳 Promise——客人回覆會先送出，
    * 摘要在送出後才 await，避免摘要的 LLM 延遲卡住客人的「已安排專員」回覆。
@@ -2765,7 +2832,11 @@ async function deliverHandoffReply(params: {
     handoffMessages = [{ type: 'text', text: settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY } as messagingApi.TextMessage]
   }
   else {
-    const liveAgentFlow = await getFlowByModuleId(SYSTEM_MODULE_IDS.live_agent).catch(() => null)
+    // ⚠️ 要用「本工作區的系統模組 doc id」查（見 systemModuleId）。
+    // 先前傳的是 SYSTEM_MODULE_IDS.live_agent（'sys_live_agent'）——那是模組種類代號、
+    // 不是文件 id，永遠查不到 → 店家在後台「真人客服」設的文案從來沒送出去過，
+    // 客人一律收到下面那句寫死的預設值。
+    const liveAgentFlow = await getFlowByModuleId(systemModuleId(workspaceId, 'live_agent')).catch(() => null)
     if (liveAgentFlow) {
       const hydrated = await hydrateRichMessageRefs(liveAgentFlow.messages as any[])
       handoffMessages = buildLineMessages(hydrated, userAttributes, requestOrigin, lineUserId, channelSecret)
@@ -2775,11 +2846,19 @@ async function deliverHandoffReply(params: {
     }
   }
 
+  // 規則先講、再講「幫您轉專員」。勿擾時段也照講（規則本身仍然有用，只是沒人接手）。
+  const prefixText = String(params.prefixText ?? '').trim()
+  if (prefixText) {
+    handoffMessages = [{ type: 'text', text: prefixText } as messagingApi.TextMessage, ...handoffMessages]
+  }
+
   if (replyToken) {
     // reply 失敗（token 過期 / LINE 5xx）不能讓整個轉接蒸發：客人這則沒收到「已安排專員」,
     // 但 session 標記與值班通知必須照常執行——否則客服不知道有人在等,而統計已計入 handoff。
     try {
       await replyMessage(replyToken, handoffMessages, workspaceId)
+      // 客人剛剛才被告知「已安排專員 / 目前非服務時間」→ 讓等待中的 ack 一起吃節流
+      markWaitingAckSent(workspaceId, lineUserId)
       saveOutgoingConversationMessagesByWorkspace(lineUserId, handoffMessages, workspaceId)
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
     }
@@ -2788,7 +2867,10 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
+  // 這裡刻意 await：狀態沒寫進去之前，同一批進來的下一則訊息會被判成「機器人還在處理」
+  // 而讓 AI 又開口（實測：客人同時打「轉接專員」＋「好」，第二句被當成招呼語回了
+  // 「請問有什麼可以為您服務的嗎？」）。客人的回覆上面已經送出，這段不影響回覆速度。
+  await enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
     .catch(e => console.error('[ai-fallback] enterModule(live_agent) error:', e))
 
   // 摘要在客人回覆送出後才 await（summarizeHandoffContext 不會 reject、最壞 4s 逾時回空字串）
@@ -3231,18 +3313,23 @@ async function tryAiFallback(params: {
       sessionId, requestOrigin,
       customerMessage: textContent,
       reason: result.handoffReason,
+      // order_status：AI 查到的一般規則先送給客人，再送轉接訊息（見 answerWithAi 的 orderStatusMode）
+      prefixText: result.handoffReason === 'order_status' ? result.answer : '',
       summary: summaryPromise,
     })
   }
 
-  // 答題用的 suggestedReply：handoff 時若 AI 也有生內容（low_confidence 但有 answer），帶給真人客服參考
+  // 答題用的 suggestedReply：handoff 時若 AI 也有生內容（low_confidence 但有 answer），帶給真人客服參考。
+  // order_status 例外——那段規則客人剛剛已經收到了（見 prefixText），再放進「AI 建議回覆」
+  // 只會讓客服按下「填入回覆框」把同一段話再貼一次。
+  const alreadySentToCustomer = result.handoffReason === 'order_status'
   await writeAiMeta(fsUserDocId, {
     lastDecision: 'handoff',
     lastConfidence: result.confidence,
     lastHandoffReason: result.handoffReason,
     lastQuery: textContent,
     lastSourceChunkIds: result.sources.map(s => s.chunkId),
-    suggestedReply: result.decision === 'handoff' && result.answer.trim() ? result.answer : '',
+    suggestedReply: !alreadySentToCustomer && result.decision === 'handoff' && result.answer.trim() ? result.answer : '',
     handoffSummary: await summaryPromise,
   })
 }
@@ -3446,6 +3533,13 @@ export async function handlePostbackEvent(
         enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
           console.error('[session] enterModule error:', e),
         )
+        if (isLiveAgentModule(flow)) {
+          await notifyStaffForLiveAgentModule({
+            workspaceId, lineUserId: userId,
+            displayName: userAttributes.displayName || '',
+            customerMessage: `（客人按了「${flow.name || '真人客服'}」）`,
+          })
+        }
       }
     } else {
       console.warn('[webhook] triggerModule target not found or inactive:', moduleId)
@@ -3484,6 +3578,13 @@ export async function handlePostbackEvent(
         enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
           console.error('[session] enterModule (fallback) error:', e),
         )
+        if (isLiveAgentModule(flow)) {
+          await notifyStaffForLiveAgentModule({
+            workspaceId, lineUserId: userId,
+            displayName: userAttributes.displayName || '',
+            customerMessage: `（客人按了「${flow.name || '真人客服'}」）`,
+          })
+        }
       }
     } else {
       const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)

@@ -25,6 +25,7 @@ describe('can — role × capability matrix', () => {
     'scripts.write': 'agent',
     'playground.use': 'agent',
     'ai.settings.write': 'admin',
+    'usage.read': 'admin',
     'knowledge.reindexAll': 'admin',
     'members.manage': 'admin',
     'line.manage': 'admin',

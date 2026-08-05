@@ -1,10 +1,9 @@
 <template>
   <div class="login-page">
     <div class="login-card">
-      <!-- Logo -->
+      <!-- Logo：品牌名在 logotype 圖裡，h1 留著才有頁面標題語意（alt 就是品牌名） -->
       <div class="login-logo">
-        <div class="logo-circle"><el-icon><ChatDotRound /></el-icon></div>
-        <h1>{{ brandName }}</h1>
+        <h1 class="login-brand"><BrandLogo /></h1>
         <p>管理後台 · 使用 Google 帳號登入</p>
       </div>
 
@@ -47,7 +46,6 @@
 </template>
 
 <script setup lang="ts">
-import { ChatDotRound } from '@element-plus/icons-vue'
 definePageMeta({ layout: false })
 
 const route = useRoute()
@@ -59,8 +57,6 @@ const contact = String(config.public.supportContact ?? '').trim()
 const contactHref = contact
   ? (contact.startsWith('http') ? contact : `mailto:${contact}`)
   : ''
-// 品牌名走 runtimeConfig（多租戶可覆寫），不寫死租戶名
-const { brandName } = useSiteIdentity()
 const loading = ref(false)
 const errorMsg = ref('')
 

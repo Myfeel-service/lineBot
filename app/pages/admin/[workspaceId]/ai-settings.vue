@@ -290,24 +290,31 @@
           </div>
         </div>
 
-        <!-- ── 看圖作答 ─────────────── -->
+        <!-- ── 客人傳的照片 ─────────────── -->
         <div class="message-card ai-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">客人傳照片時</span>
-              <span v-if="form.imageAnswer.enabled" class="badge badge-green">會自己回答</span>
+              <span class="section-title">客人傳的照片</span>
+              <span v-if="form.imageAnswer.enabled" class="badge badge-green">啟用中</span>
             </div>
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              關閉時,AI 仍會<strong>讀圖寫一句說明給客服看</strong>(在對話裡照片下方),但只回客人「我目前只能閱讀文字」。
-              開啟後,AI 會看圖推測客人想問什麼,再照一般問答流程回覆——答不出來一樣轉真人。
+              AI 一律會<strong>讀圖寫一句說明給客服看</strong>(顯示在「對話」頁的照片下方);
+              這顆開關只決定客人收到什麼——停用時回客人「我目前只能閱讀文字」,
+              啟用後 AI 會看圖推測客人想問什麼再回答,答不出來一樣轉真人。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="讓 AI 看圖直接回答客人" tight />
-              <el-switch v-model="form.imageAnswer.enabled" active-text="開啟" inactive-text="關閉" />
-              <p class="ai-field-hint">
-                建議先關著用一陣子,到「對話」頁看 AI 寫的照片說明準不準,再決定要不要讓它開口。
+              <el-switch
+                v-model="form.imageAnswer.enabled"
+                :disabled="!form.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <!-- 開啟後這段建議就沒意義了,留著只是雜訊(同「回答風格」的 v-if 慣例) -->
+              <p v-if="!form.imageAnswer.enabled" class="ai-section-hint">
+                建議先停用一陣子,到「對話」頁看 AI 寫的照片說明準不準,再決定要不要讓它開口。
                 客人傳的照片常是瑕疵品、付款失敗畫面、訂單爭議,這些本來就適合真人處理。
               </p>
             </div>
@@ -560,8 +567,10 @@
             </div>
           </div>
 
-          <!-- Quota:已開通方案的帳號用量以「則數」計(見「目前狀態」),token 上限不生效,整段隱藏 -->
-          <div v-if="!planView" class="message-card ai-section-card">
+          <!-- Quota:已開通方案的帳號用量以「則數」計(見「目前狀態」),token 上限不生效,整段隱藏。
+               另外只給改得動的人(admin)看:planView 來自 admin 端點,agent/viewer 拿 403 會誤判成
+               「無方案」而錯誤顯示這一區 -->
+          <div v-if="!planView && canEditSettings" class="message-card ai-section-card">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">用量上限</span>
@@ -839,7 +848,9 @@ async function loadStatus() {
     apiFetch<{ inputTokens: number; outputTokens: number; embeddingTokens: number }>(`/api/ai/usage/summary?period=${period}`),
     apiFetch<{ items: Array<{ chunkCount: number }> }>('/api/ai/sources/list'),
   ])
-  if (usage.status === 'fulfilled') {
+  // token 細目僅 super admin 的回應才有（成本可見性收歸平台）；欄位不在就維持 null，
+  // 不能用 ?? 0 硬算——那會把「看不到」顯示成「本月已用 0 tokens」。
+  if (usage.status === 'fulfilled' && typeof usage.value.inputTokens === 'number') {
     usageTokens.value = (usage.value.inputTokens ?? 0) + (usage.value.outputTokens ?? 0) + (usage.value.embeddingTokens ?? 0)
   }
   if (sources.status === 'fulfilled') {

@@ -7,8 +7,13 @@
     <!-- ── Nav ─────────────────────────────────────────── -->
     <nav class="lp-nav">
       <div class="lp-wrap lp-nav__in">
-        <!-- 商標＝品牌／產品名（MiniMe），由 config 來；公司名（麥菲爾股份有限公司）在頁尾與法務頁揭露 -->
-        <a class="lp-brand" href="#top"><span class="lp-brand__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}</a>
+        <!-- 商標＝品牌／產品名（MiniMe）；公司名（麥菲爾股份有限公司）在頁尾與法務頁揭露。
+             兩個圖檔都出、由 CSS 切換：手機導覽列擠不下含字樣的 logotype（會把選單鈕推出畫面），
+             ≤720px 改出 logomark。品牌名由 a 的 aria-label 提供，所以兩張圖都 alt=""。 -->
+        <a class="lp-brand" href="#top" :aria-label="brandName">
+          <BrandLogo class="lp-brand__type" alt="" />
+          <BrandLogo mark class="lp-brand__mark" alt="" />
+        </a>
         <div class="lp-nav__links">
           <a href="#value" @click="closeMenu">產品</a>
           <a href="#diff" @click="closeMenu">差異</a>
@@ -174,7 +179,8 @@
           <div class="lp-cmp__row lp-cmp__row--head">
             <div class="lp-cmp__dim">比較項目</div>
             <div class="lp-cmp__old">一般行銷工具</div>
-            <div class="lp-cmp__new"><span class="lp-cmp__mark">{{ brandName.charAt(0) }}</span>{{ brandName }}<span class="lp-cmp__tag">最省事</span></div>
+            <!-- 這格底色是品牌綠，logotype 要用 on-color 轉白才讀得到 -->
+            <div class="lp-cmp__new"><BrandLogo class="lp-cmp__logo" on-color /><span class="lp-cmp__tag">最省事</span></div>
           </div>
           <div class="lp-cmp__row">
             <div class="lp-cmp__dim"><span class="lp-cmp__ic"><el-icon><Setting /></el-icon></span>開始設定</div>

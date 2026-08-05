@@ -2,8 +2,8 @@
   <div class="ws-select-page">
     <div class="ws-select-card">
       <div class="ws-select-logo">
-        <span class="logo-icon"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
-        <h1>{{ brandName }} 管理後台</h1>
+        <!-- logotype 已含品牌名，h1 只補「管理後台」；讀出來仍是「MiniMe 管理後台」 -->
+        <h1><BrandLogo /><span>管理後台</span></h1>
       </div>
       <p class="ws-select-sub">選擇要管理的官方帳號</p>
 

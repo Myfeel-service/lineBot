@@ -195,7 +195,10 @@ export async function chunkSegment(text: string, hint: string | undefined): Prom
 
   const { data, inputTokens, outputTokens } = await generateJson<ChunkerJsonResponse>(prompt, {
     systemInstruction: SYSTEM_INSTRUCTION,
-    temperature: 0.2,
+    // temperature 0（不是 0.2）：切卡是抽取任務，不需要多樣性，而「同一份原文重切兩次要得到
+    // 同一批卡」是重新同步能不能被信任的前提。0.2 會讓每次重切換句話說、甚至換一種切法，
+    // diff 就會憑空冒出一堆「修改 / 移除 + 新增」——網頁根本沒改，使用者卻被要求逐張決定。
+    temperature: 0,
     // 內容密的手冊一段可切出很多卡；8192 太緊會讓輸出 JSON 截斷。給到 12288 有餘裕，
     // 但也不設更高——單次呼叫要在閘道逾時內回（見 SEGMENT_CHAR_LEN 註解）。撞到就靠對半再切。
     maxOutputTokens: 12288,

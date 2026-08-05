@@ -425,14 +425,30 @@
             </template>
             </div>
                   <div class="conv-bubble-meta">
-                    <span class="conv-bubble-time">{{ formatTime(msg.timestamp) }}</span>
-                    <span
-                      v-if="msg.direction === 'outgoing' && msg.readByPeer"
-                      class="conv-bubble-read"
-                      title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
-                    >已讀</span>
+                    <!-- 還在送 / 送失敗的本地泡泡：時間還不確定，先不要寫一個假的上去 -->
+                    <span v-if="msg.sendStatus === 'sending'" class="conv-bubble-sending">傳送中…</span>
+                    <span v-else-if="msg.sendStatus === 'failed'" class="conv-bubble-failed">傳送失敗</span>
+                    <template v-else>
+                      <span class="conv-bubble-time">{{ formatTime(msg.timestamp) }}</span>
+                      <span
+                        v-if="msg.direction === 'outgoing' && msg.readByPeer"
+                        class="conv-bubble-read"
+                        title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
+                      >已讀</span>
+                    </template>
                   </div>
                 </div>
+              </div>
+              <!--
+                失敗的原因和補救動作放在泡泡「下面」自己一行，不塞進旁邊那條 meta：
+                meta 只有泡泡剩下的寬度，一句「已封鎖」就被壓成三行讀不下去。
+              -->
+              <div v-if="msg.sendStatus === 'failed'" class="conv-send-failed-row">
+                <span class="conv-send-failed-row__reason">{{ msg.sendError }}</span>
+                <span class="conv-bubble-retry">
+                  <button type="button" @click="retryPendingOutgoing(String(msg.localId))">重試</button>
+                  <button type="button" @click="discardPendingOutgoing(String(msg.localId))">收回文字</button>
+                </span>
               </div>
             </template>
           </template>
@@ -1014,6 +1030,24 @@ interface MsgItem {
   readByPeer?: boolean
   /** 客人傳的圖，AI 讀出來的一句說明；AI 未啟用或讀不出來就沒有 */
   mediaDescription?: string
+  /**
+   * 只有「還在送 / 送失敗」的那則會有：這是還沒被伺服器確認的本地泡泡。
+   * 有值代表這則不是從後端讀回來的（見 pendingOutgoing）。
+   */
+  localId?: string
+  sendStatus?: 'sending' | 'failed'
+  sendError?: string
+}
+
+/** 樂觀上畫面的待送訊息：先出現在對話裡，POST 在背景跑 */
+interface PendingOutgoing {
+  localId: string
+  /** 綁在哪位客人身上——客服可能送完就切走，回來還要看得到 */
+  userId: string
+  text: string
+  at: number
+  status: 'sending' | 'failed'
+  error?: string
 }
 
 interface SessionTimelineItem {
@@ -1136,6 +1170,15 @@ const aiContextRefreshKey = ref(0)
 const { canOperate } = useWorkspace()
 
 const inputRef = ref<{ focus: () => void, textarea?: HTMLTextAreaElement } | null>(null)
+
+/**
+ * 樂觀送出：泡泡先上畫面、輸入框立刻清空並保持可打字，POST 在背景跑。
+ *
+ * 原本是等 POST 加整包訊息重新載完才解鎖輸入框——客服要盯著轉圈等好幾秒才能打下一句。
+ * 現在等待完全在背景，畫面上只有那顆泡泡旁邊的「傳送中…」。
+ */
+const pendingOutgoing = ref<PendingOutgoing[]>([])
+let pendingOutgoingSeq = 0
 
 /**
  * 每位客人各自的未送出草稿。
@@ -1469,7 +1512,36 @@ const canTakeOverSession = computed(() => {
   return st === 'open' || st === 'bot_handling'
 })
 
-const chatRows = computed<ChatRow[]>(() => {
+/**
+ * 目前這位客人還沒被伺服器確認的訊息，接在對話最後面。
+ *
+ * 和真的訊息共用同一套泡泡渲染（只是多一個 sendStatus），所以送出成功、
+ * 本地泡泡換成伺服器那則的時候看不出來有換過。
+ */
+const pendingRows = computed<ChatRowMsg[]>(() => {
+  const uid = selectedUserId.value
+  if (!uid) return []
+  return pendingOutgoing.value
+    .filter(p => p.userId === uid)
+    .map(p => ({
+      kind: 'msg' as const,
+      key: p.localId,
+      msg: {
+        id: p.localId,
+        localId: p.localId,
+        direction: 'outgoing' as const,
+        text: p.text,
+        messageType: 'text',
+        payload: null,
+        timestamp: p.at,
+        readByPeer: false,
+        sendStatus: p.status,
+        sendError: p.error,
+      },
+    }))
+})
+
+const serverChatRows = computed<ChatRow[]>(() => {
   if (selectedSessionId.value) {
     return sessionTimelineItems.value.map((item) => {
       // broadcast 是後端讀取時才拼進來的群發標記（不是真的訊息文件），與事件同樣渲染成一行泡泡
@@ -1496,6 +1568,8 @@ const chatRows = computed<ChatRow[]>(() => {
   }
   return messages.value.map(msg => ({ kind: 'msg' as const, key: msg.id, msg }))
 })
+
+const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
 
 function sessionChipTone(status: ConvSessionStatus): 'neutral' | 'warning' | 'success' | 'error' {
   if (status === 'pending_human') return 'warning'
@@ -1898,6 +1972,14 @@ function onInputEnter(evt: Event | KeyboardEvent) {
   send()
 }
 
+/**
+ * 送出文字：泡泡先上畫面，等待丟到背景。
+ *
+ * 刻意不設 sending（那會 disable 輸入框）：像 LINE 一樣，按下 Enter 的那一刻
+ * 訊息就出現在對話裡、輸入框清空，客服可以直接打下一句，不必等伺服器回來。
+ * 真的送不出去時那顆泡泡會變成「傳送失敗」，就地可以重試或刪掉——
+ * 比「彈個 toast、字已經不見了」誠實得多。
+ */
 async function send() {
   if (!assertCanOperate()) return
   const userId = selectedUserId.value
@@ -1907,26 +1989,64 @@ async function send() {
     showToast('請輸入訊息', 'error')
     return
   }
-  sending.value = true
+
+  const localId = `local-${++pendingOutgoingSeq}`
+  pendingOutgoing.value.push({ localId, userId, text, at: Date.now(), status: 'sending' })
+  inputText.value = ''
+  drafts.delete(userId)
+  persistDrafts()
+  await nextTick()
+  scrollToBottom()
+  focusInput()
+
+  void deliverPendingOutgoing(localId)
+}
+
+async function deliverPendingOutgoing(localId: string) {
+  const entry = pendingOutgoing.value.find(p => p.localId === localId)
+  if (!entry) return
+  entry.status = 'sending'
+  entry.error = undefined
   try {
-    await apiFetch(`/api/conversations/${userId}/send`, {
+    await apiFetch(`/api/conversations/${entry.userId}/send`, {
       method: 'POST',
-      body: { type: 'text', text },
+      body: { type: 'text', text: entry.text },
     })
-    inputText.value = ''
-    drafts.delete(userId)
-    persistDrafts()
-    await reloadAfterOutgoing()
+    // 背景對一次帳（狀態列的「真人處理中」、側欄最後一句、分頁數字都靠它）。
+    // 客服早就在打下一句了，這幾百毫秒看不見。
+    if (selectedUserId.value === entry.userId) await reloadAfterOutgoing()
+    else await refreshListQuiet()
+    // 伺服器那則已經在畫面上了，本地泡泡才能撤：反過來會閃一下空白
+    pendingOutgoing.value = pendingOutgoing.value.filter(p => p.localId !== localId)
   }
   catch (e: any) {
-    showToast(e?.data?.statusMessage || '發送失敗', 'error')
+    entry.status = 'failed'
+    entry.error = e?.data?.statusMessage || '發送失敗'
   }
-  finally {
-    sending.value = false
-    // 送出時輸入框被 disabled，焦點會掉到 body 且不會自己回來——
-    // 不還回去的話，客服每回一句都要用滑鼠再點一次輸入框才能繼續打。
-    nextTick(focusInput)
+}
+
+function retryPendingOutgoing(localId: string) {
+  if (!assertCanOperate()) return
+  void deliverPendingOutgoing(localId)
+}
+
+/** 放棄這則：文字先還回輸入框，才不會連改都沒機會就整段消失 */
+function discardPendingOutgoing(localId: string) {
+  const entry = pendingOutgoing.value.find(p => p.localId === localId)
+  pendingOutgoing.value = pendingOutgoing.value.filter(p => p.localId !== localId)
+  if (!entry) return
+  // 已經切到別位客人的話，寫回那位客人的草稿抽屜，別把 A 的話塞進 B 的輸入框
+  if (selectedUserId.value !== entry.userId) {
+    const kept = drafts.get(entry.userId)
+    drafts.set(entry.userId, kept?.trim() ? `${kept.replace(/\s+$/, '')}\n${entry.text}` : entry.text)
+    persistDrafts()
+    showToast('文字已收回那位客人的輸入框', 'success')
+    return
   }
+  inputText.value = inputText.value.trim()
+    ? `${inputText.value.replace(/\s+$/, '')}\n${entry.text}`
+    : entry.text
+  nextTick(focusInput)
 }
 
 async function reloadSessionTimeline(options?: { quiet?: boolean }) {

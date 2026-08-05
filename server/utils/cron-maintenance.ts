@@ -129,8 +129,33 @@ async function checkOneSource(
         lastFetchedAt: FieldValue.serverTimestamp(),
         pendingHash: FieldValue.delete(),
         ...clearFailure,
+        /**
+         * 舊來源沒有 appliedContentHash（這個欄位比它們晚出生）→ 在這裡順手補上。
+         * 只在這個分支補是刻意的：走到這裡代表「網頁與上次觀測相同、且沒有待處理的變動」，
+         * 那當下的內容就等於現有卡片對應的版本，這個推論是安全的。
+         * 有 outdatedAt（有變動還沒審）時不能補——那時 contentHash 早就跑在卡片前面，
+         * 補下去會把真的待審變動變成「沒變」而永遠消失。
+         */
+        ...(!data.appliedContentHash && !data.outdatedAt ? { appliedContentHash: newHash } : {}),
       })
       return { sourceId, outcome: 'unchanged' }
+    }
+
+    /**
+     * 與上次觀測不同,但**等於現有卡片對應的那一版**：網頁改過又改回來（或前一次的變動
+     * 已經被自動套用/人工審掉了）。這時沒有任何東西要店家決定 → 更新指紋、把「有變動」
+     * 提示清掉、不通知。少了這一段,店家會被通知去看一份「未變 0、全是假差異」的 diff。
+     */
+    const applied = String(data.appliedContentHash ?? '').trim()
+    if (applied && applied === newHash) {
+      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+        contentHash: newHash,
+        pendingHash: FieldValue.delete(),
+        outdatedAt: null,
+        lastFetchedAt: FieldValue.serverTimestamp(),
+        ...clearFailure,
+      })
+      return { sourceId, outcome: 'unchanged', message: 'back-to-applied-version' }
     }
 
     // 與上次不同：先不算真變——輪播 / 隨機推薦 / 計數器頁面每次抓 hash 都不同，一次差異就
@@ -186,14 +211,17 @@ async function checkOneSource(
         run.autoApplyRemaining--
         const auto = await tryAutoApplyMinorChange(db, sourceId, data, extracted.text)
         if (auto.noop) {
-          // 重切後其實沒有內容差異(排版級變動):不標記、不通知,但要記下新 hash
-          await commitChange()
+          // 重切後其實沒有內容差異(排版級變動):不標記、不通知,但要記下新 hash。
+          // appliedContentHash 也推到新值:現有卡片與這一版內容等價,已經沒有東西要決定,
+          // 少了這句,店家之後按「重新同步」還是會被要求審一份全是假差異的 diff。
+          await commitChange({ appliedContentHash: newHash })
           return { sourceId, outcome: 'unchanged', message: 'content-equivalent' }
         }
         if (auto.applied) {
           // 先前若有未處理的「偵測到變動」旗標,這次已把內容更新到最新 → 一併清掉,
           // 否則來源會永遠掛著提示,店家點進去看到的卻是「全部未變」的空 diff。
-          await commitChange({ outdatedAt: null })
+          // 卡片已更新到這一版 → appliedContentHash 同步推進(手動重新同步據此判斷「沒變」)。
+          await commitChange({ outdatedAt: null, appliedContentHash: newHash })
           notifyKnowledgeSourceEvent(data.workspaceId, [
             '📘 知識庫來源已自動更新',
             `來源：${sourceTitleOf(data)}`,

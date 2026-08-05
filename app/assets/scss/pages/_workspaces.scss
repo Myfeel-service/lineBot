@@ -24,25 +24,17 @@
 .ws-select-logo {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
 
-  /* 綠色圓角徽章底：圖示是白色，沒有底色就會在白卡上隱形（比照 login 的 .logo-circle） */
-  .logo-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-md);
-    background: linear-gradient(135deg, var(--brand-green), var(--brand-green-deep));
-    display: grid;
-    place-items: center;
-    font-size: 1.4rem;
-    flex-shrink: 0;
-  }
-
+  /* logotype 圖檔＋「管理後台」併成一個 h1：品牌名在圖裡（alt），文字只補後半段 */
   h1 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     font-size: 1.2rem;
     font-weight: 700;
     margin: 0;
     color: var(--text-primary);
+    --brand-logo-h: 30px;
   }
 }
 

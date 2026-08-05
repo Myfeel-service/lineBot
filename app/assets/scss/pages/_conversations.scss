@@ -347,6 +347,59 @@
     letter-spacing: 0.02em;
   }
 
+  // 樂觀送出：泡泡先上畫面，狀態寫在旁邊的 meta，不動泡泡本身的樣子
+  .conv-bubble-sending {
+    font-size: calc(var(--line-font-meta) * 0.92);
+    color: var(--text-muted);
+  }
+
+  .conv-bubble-failed {
+    font-size: calc(var(--line-font-meta) * 0.92);
+    font-weight: 600;
+    color: #b91c1c; // 與 .badge-red 同一個紅（尚無狀態色 token）
+  }
+
+  // 失敗原因＋補救動作：泡泡下面自己一行，靠右對齊（和外送泡泡同一邊）
+  .conv-send-failed-row {
+    align-self: flex-end;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    max-width: var(--chat-bubble-max);
+    margin-top: -0.3rem;
+    text-align: right;
+  }
+
+  .conv-send-failed-row__reason {
+    font-size: calc(var(--line-font-meta) * 0.92);
+    line-height: 1.45;
+    color: var(--text-secondary);
+    word-break: break-word;
+  }
+
+  .conv-bubble-retry {
+    display: inline-flex;
+    gap: 0.5rem;
+
+    button {
+      border: 0;
+      background: none;
+      padding: 0;
+      font-size: calc(var(--line-font-meta) * 0.92);
+      font-weight: 600;
+      color: var(--brand-green-text);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      opacity: 0.75;
+    }
+  }
+
   .conv-quick-reply-row {
     display: none;
   }

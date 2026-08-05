@@ -5,9 +5,12 @@
  * 設計重點：
  * - 不直接覆蓋，永遠出 diff 讓人類決定。
  * - 對「手動編輯過」的卡（manuallyEditedAt != null）預設 keep_old。
- * - 配對策略：第一輪 title 完全相等；配不上的再用內容 bigram 相似度做第二輪配對。
+ * - 配對策略：第一輪 title 相等（正規化後）；配不上的再用內容 bigram 相似度做第二輪配對。
  *   LLM 重切標題常會微調（「運費說明」→「運費與配送說明」），只靠 title 會把同一張卡
  *   誤報成「移除 + 新增」，使用者每次 re-sync 都要人工重配假差異。
+ * - **比對一律先正規化**（空白、全半形標點）：舊卡是上一次 LLM 的輸出、新卡是這一次的輸出，
+ *   逐字元比較會把「同一句話換個標點」報成「修改」，畫面上左右兩欄長得一樣卻要人做決定
+ *   ——使用者的結論會是「系統說有變更但其實沒有」，整個 diff 從此不被信任。
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { listChunksBySource } from './ai-knowledge-sources'
@@ -38,6 +41,22 @@ export interface DiffEntry {
     /** LLM 切卡生成的常見問法；apply 時隨新版一併寫入 */
     questions?: string[]
   }
+  /**
+   * kind=modified 才有：內容裡的數字（價格、天數、規格、日期）有沒有變。
+   * false ＝ 這張只是換句話說，客人拿到的事實沒變；true ＝ 要優先看的那幾張。
+   *
+   * 為什麼用數字而不是相似度：相似度只反映卡片長度。實測「50 到 99 度」改成
+   * 「50 到 95 度」的長卡相似度 0.95（真的改了規格），純粹換句話說的卡卻只有 0.63
+   * ——拿相似度標「幾乎相同」會剛好把該看的那張標成安全的。
+   *
+   * **只標示、不改預設動作**：數字沒變也可能少寫了一句（例如「重點」少一個欄位），
+   * 預設仍是用新版（網頁才是事實來源），不替使用者默默決定。
+   */
+  numbersChanged?: boolean
+  /** kind=modified 且數字有變：變掉的數字（各最多 6 個），前端直接列給人看 */
+  numberChanges?: { removed: string[]; added: string[] }
+  /** kind=modified 才有：標題（正規化後）是否真的變了 */
+  titleChanged?: boolean
 }
 
 export interface DiffSummary {
@@ -96,16 +115,102 @@ export function contentSimilarity(a: string, b: string): number {
   return jaccard(bigramSet(a), bigramSet(b))
 }
 
+/**
+ * 比對用正規化：把「同一份內容、只是排版或標點不同」的兩張卡視為相同。
+ *
+ * 為什麼需要：diff 兩邊都是 LLM 產物（舊卡＝上次切卡結果、新卡＝這次），
+ * 同一段原文重切兩次常只差全形冒號 / 「、」與「，」 / 「重點：」行的分隔空白。
+ * 逐字元比較會把這些報成「修改」，使用者看到左右兩欄一模一樣，等於系統在說謊。
+ *
+ * 只做**形變**統一（空白、全半形標點），不刪字也不刪數字：
+ * 「50 到 99 度」→「50 到 95 度」正規化後仍然不同，該報的修改照報。
+ */
+export function normalizeForCompare(s: string): string {
+  return String(s || '')
+    // 全形數字 → 半形（「１０００ 元」與「1000 元」是同一個價格，也讓數字比對抓得到）
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    // 全形標點 → 半形（同一句話兩次輸出可能用不同形）
+    .replace(/[：]/g, ':')
+    .replace(/[，、]/g, ',')
+    .replace(/[；]/g, ';')
+    .replace(/[（]/g, '(')
+    .replace(/[）]/g, ')')
+    .replace(/[｜]/g, '|')
+    .replace(/[～]/g, '~')
+    .replace(/[．。]/g, '.')
+    // 中文沒有詞距，LLM 兩次的空白位置常不同 → 全部去掉（與 bigramSet 同一套思路）
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
+/** 數字（含千分位、小數）：1,000 / 3.5 / 99 */
+const NUMBER_RE = /\d+(?:[.,]\d+)*/g
+
+/**
+ * 抓出內容裡的所有數字（多重集合，重複出現算多次）。
+ * 「這次的差異有沒有動到客人在意的事實」用數字判斷最穩：價格、天數、度數、規格、日期
+ * 都是數字，而純粹換句話說不會動到它們。
+ */
+export function extractNumbers(s: string): string[] {
+  // 先過 normalizeForCompare：全形數字/標點已轉半形、空白已去掉（「1 000」不會被拆成兩個）
+  return (normalizeForCompare(s).match(NUMBER_RE) ?? []).map(n => n.replace(/,/g, ''))
+}
+
+/** 多重集合差集：a 有而 b 沒有的（含重複次數） */
+function multisetDiff(a: string[], b: string[]): string[] {
+  const pool = [...b]
+  const out: string[] = []
+  for (const x of a) {
+    const i = pool.indexOf(x)
+    if (i >= 0) pool.splice(i, 1)
+    else out.push(x)
+  }
+  return out
+}
+
+/** 內容在「形變」層級上等價 */
+function contentEquivalent(a: string, b: string): boolean {
+  return normalizeForCompare(a) === normalizeForCompare(b)
+}
+
+/** 標籤集合等價（順序、形變都不算差異） */
+function tagsEquivalent(a: string[], b: string[]): boolean {
+  const key = (tags: string[]) =>
+    [...new Set(tags.map(normalizeForCompare).filter(Boolean))].sort().join('|')
+  return key(a) === key(b)
+}
+
 export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffResult {
-  const oldByTitle = new Map(oldChunks.map(c => [c.title, c]))
+  // 標題也用正規化後當索引：「特色：溫控」與「特色:溫控」是同一張卡，
+  // 用原字串當 key 會讓它掉進第二輪、甚至變成「移除 + 新增」。
+  const oldByTitle = new Map<string, OldChunk>()
+  for (const c of oldChunks) {
+    const key = normalizeForCompare(c.title)
+    if (!oldByTitle.has(key)) oldByTitle.set(key, c)
+  }
 
   const entries: DiffEntry[] = []
   const summary: DiffSummary = { added: 0, modified: 0, removed: 0, unchanged: 0 }
   const matchedOldIds = new Set<string>()
   const unmatchedNew: Array<{ n: NewChunk; idx: number }> = []
 
+  const pushUnchanged = (o: OldChunk, n: NewChunk) => {
+    entries.push({
+      id: `same:${o.id}`,
+      kind: 'unchanged',
+      defaultAction: 'keep_old',
+      oldChunk: { id: o.id, title: o.title, content: o.content, tags: o.tags, manuallyEdited: o.manuallyEditedAtMs > 0 },
+      newChunk: { title: n.title, content: n.content, tags: n.tags, questions: n.questions ?? [] },
+    })
+    summary.unchanged++
+  }
+
   const pushModified = (o: OldChunk, n: NewChunk) => {
     const manuallyEdited = o.manuallyEditedAtMs > 0
+    const oldNums = extractNumbers(o.content)
+    const newNums = extractNumbers(n.content)
+    const gone = multisetDiff(oldNums, newNums)
+    const came = multisetDiff(newNums, oldNums)
     entries.push({
       id: `mod:${o.id}`,
       kind: 'modified',
@@ -113,34 +218,37 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
       defaultAction: manuallyEdited ? 'keep_old' : 'use_new',
       oldChunk: { id: o.id, title: o.title, content: o.content, tags: o.tags, manuallyEdited },
       newChunk: { title: n.title, content: n.content, tags: n.tags, questions: n.questions ?? [] },
+      numbersChanged: gone.length > 0 || came.length > 0,
+      ...(gone.length || came.length
+        ? { numberChanges: { removed: gone.slice(0, 6), added: came.slice(0, 6) } }
+        : {}),
+      titleChanged: normalizeForCompare(o.title) !== normalizeForCompare(n.title),
     })
     summary.modified++
   }
 
-  // ── 第一輪：title 完全相等 ───────────────────────────────
+  /** 配上對之後的判定：形變等價 → unchanged，真有差 → modified */
+  const pushMatched = (o: OldChunk, n: NewChunk) => {
+    if (contentEquivalent(o.content, n.content)
+      && tagsEquivalent(o.tags, n.tags)
+      && normalizeForCompare(o.title) === normalizeForCompare(n.title)) {
+      pushUnchanged(o, n)
+    }
+    else {
+      pushModified(o, n)
+    }
+  }
+
+  // ── 第一輪：title 相等（正規化後）─────────────────────────
   for (let i = 0; i < newChunks.length; i++) {
     const n = newChunks[i]!
-    const o = oldByTitle.get(n.title)
+    const o = oldByTitle.get(normalizeForCompare(n.title))
     if (!o || matchedOldIds.has(o.id)) {
       unmatchedNew.push({ n, idx: i })
       continue
     }
     matchedOldIds.add(o.id)
-    const contentSame = o.content === n.content
-    const tagsSame = JSON.stringify([...o.tags].sort()) === JSON.stringify([...n.tags].sort())
-    if (contentSame && tagsSame) {
-      entries.push({
-        id: `same:${o.id}`,
-        kind: 'unchanged',
-        defaultAction: 'keep_old',
-        oldChunk: { id: o.id, title: o.title, content: o.content, tags: o.tags, manuallyEdited: o.manuallyEditedAtMs > 0 },
-        newChunk: { title: n.title, content: n.content, tags: n.tags, questions: n.questions ?? [] },
-      })
-      summary.unchanged++
-    }
-    else {
-      pushModified(o, n)
-    }
+    pushMatched(o, n)
   }
 
   // ── 第二輪：title 配不上的，用內容相似度配對（title 被 LLM 微調的情況）──
@@ -168,7 +276,9 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
     if (best && bestScore >= SECOND_PASS_MIN_SIMILARITY) {
       pairedNewIdx.add(best.idx)
       matchedOldIds.add(o.id)
-      pushModified(o, best.n)
+      // 走 pushMatched 而非直接 pushModified：內容一字不差、只有標題多了個全形空白的卡
+      // 在這裡也該是「未變」。原本無條件當 modified，等於每次重切都憑空生出待決定項。
+      pushMatched(o, best.n)
     }
   }
 

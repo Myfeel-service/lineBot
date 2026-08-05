@@ -139,6 +139,10 @@ export default defineEventHandler(async (event) => {
     work.sourceName = url
     work.sourceUrl = url
     work.sourceType = 'url'
+    // 指紋在這裡就算好隨結果回前端：匯入完存成 source.appliedContentHash，
+    // 之後「重新同步」才能直接回答「網頁跟你上次整理時比有沒有變」。
+    const { createHash } = await import('node:crypto')
+    work.extractedHash = createHash('sha256').update(extracted.text).digest('hex')
     setChunkingFromExtracted(work, extracted)
   }
   else if (type === 'text') {

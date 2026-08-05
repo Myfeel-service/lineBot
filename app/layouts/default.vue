@@ -1,12 +1,10 @@
 <template>
   <AdminShell>
     <template #sidebar>
-        <div class="sidebar-logo">
-          <span class="logo-icon"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
-          <div>
-            <span class="logo-text">{{ brandName }}</span>
-            <span class="logo-sub">管理後台</span>
-          </div>
+        <!-- --brand：logotype 自己就含品牌名，所以圖／字改成上下排（超管、組織側欄仍是圖示＋字，共用同一個 .sidebar-logo 底） -->
+        <div class="sidebar-logo sidebar-logo--brand">
+          <BrandLogo />
+          <span class="logo-sub">管理後台</span>
         </div>
 
         <!-- Workspace switcher -->
@@ -119,10 +117,8 @@ import {
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
-// 側欄商標的品牌名走 config（原本寫死「LINE Bot」，那是舊稱不是產品名）
-const { brandName } = useSiteIdentity()
 const { user, logout } = useAuth()
-const { workspaceId, currentRole, currentWorkspaceName, canManageSettings, isViewer, workspaceList, loadWorkspaceList } = useWorkspace()
+const { workspaceId, currentRole, currentWorkspaceName, canManageSettings, isViewer, can, workspaceList, loadWorkspaceList } = useWorkspace()
 const { checkIsSuperAdmin, isSuperAdmin } = useSuperAdmin()
 
 const canSwitchWorkspace = computed(() => workspaceList.value.length > 1)
@@ -165,18 +161,20 @@ const navItems = computed(() => {
   ]
 })
 
-// 開發期：整片 AI 暫時只給 admin+（與後端 ai-feature-gate 一致）。
-// 未來開放給 agent/viewer 時，改回依 can(...) 逐項判斷即可。
+// 依 capability 逐項顯示（單一事實來源 ~~/shared/permissions.ts，與 ai-feature
+// middleware、後端 requireCapability 同一張表）：知識庫/腳本/設定 viewer 可讀
+// （頁內寫入鈕另依 can() 隱藏）；測試對話會花 token → agent+；用量監控含計費 → admin。
 const aiNavItems = computed(() => {
   const wid = workspaceId.value
-  if (!wid || !canManageSettings.value) return []
-  return [
-    { to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
-    { to: `/admin/${wid}/ai-scripts`, icon: Operation, label: '客服腳本', tour: 'nav-ai-scripts' },
-    { to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
-    { to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: '用量監控' },
-    { to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },
+  if (!wid) return []
+  const items = [
+    { cap: 'ai.read' as const, to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
+    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-scripts`, icon: Operation, label: '客服腳本', tour: 'nav-ai-scripts' },
+    { cap: 'playground.use' as const, to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
+    { cap: 'usage.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: '用量監控' },
+    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },
   ]
+  return items.filter(item => can(item.cap)).map(({ cap: _cap, ...rest }) => rest)
 })
 </script>
 

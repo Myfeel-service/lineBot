@@ -4,7 +4,8 @@
       <!-- ── Step 1：命名並建立 ───────────────────────────── -->
       <template v-if="step === 'form'">
         <div class="onb-head">
-          <span class="onb-logo"><el-icon color="#fff"><ChatDotRound /></el-icon></span>
+          <!-- 標題已經寫了要做什麼，這裡只放圖標（logomark）當品牌落款 -->
+          <BrandLogo mark class="onb-mark" />
           <h1>建立你的官方帳號空間</h1>
           <p class="onb-sub">幫你的 LINE 官方帳號取個名字就能開始，預設是免費方案、不需綁卡。</p>
         </div>
@@ -74,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { ChatDotRound, Select } from '@element-plus/icons-vue'
+import { Select } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 
 definePageMeta({ middleware: 'auth', layout: false })
