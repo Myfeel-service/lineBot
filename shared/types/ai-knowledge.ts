@@ -322,6 +322,11 @@ export type HandoffReason =
   | 'commercial_inquiry'
   /** 客人回報「照做了還是沒解決」（還是一樣 / 沒用）——再答只會複讀同一張卡，改走轉真人確認 */
   | 'unresolved'
+  /**
+   * 傳了圖片／影片／語音／檔案後照引導語打「找真人」——起因是 AI 看不懂非文字內容，
+   * 不是客人主動想找真人。分開記，監控頁才看得出「一排找真人」裡有多少其實是傳圖。
+   */
+  | 'non_text_content'
 
 export interface AiConversationMeta {
   /** 最近一次 AI 介入的決定 */
@@ -515,7 +520,8 @@ export const DEFAULT_SYSTEM_PROMPT = [
  * 屬於「知識缺口」的轉真人原因：AI 真的查了知識庫、但答不出來 → 補一張卡下次就會答。
  *
  * 其餘原因補知識沒有用，也不該對客服喊「知識庫沒有相關資訊」：
- * 客人自己要求真人、敏感主題、業務洽詢（要人談）、用量已滿、AI 服務失敗、人工指定。
+ * 客人自己要求真人、敏感主題、業務洽詢（要人談）、用量已滿、AI 服務失敗、人工指定、
+ * 傳了圖片/檔案（AI 看不懂圖，補文字卡救不了）。
  * 缺口聚類（scanKnowledgeGaps）與後台脈絡卡共用這一份，兩邊口徑才不會各走各的。
  */
 export const KNOWLEDGE_GAP_HANDOFF_REASONS: ReadonlySet<string> = new Set<HandoffReason>([
@@ -568,6 +574,7 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   user_request: '客人要求真人',
   commercial_inquiry: '業務洽詢',
   unresolved: '排除步驟沒解決',
+  non_text_content: '傳了圖片/檔案',
 }
 
 // ═══════════════════════════════════════════════════════════════════

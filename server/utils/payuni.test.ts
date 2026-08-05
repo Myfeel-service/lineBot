@@ -24,6 +24,10 @@ import {
   sanitizeCreditTokenRef,
   verifyAndDecryptPayuniNotify,
   verifyHashInfo,
+  resolveBackendUrl,
+  PAYUNI_ENDPOINTS,
+  PAYUNI_CREDIT_ENDPOINTS,
+  PAYUNI_BIND_CANCEL_ENDPOINTS,
 } from './payuni'
 
 // 測試用假金鑰(長度須合規:Hash Key 32 碼、IV Key 16 碼)。非真實特店金鑰。
@@ -205,35 +209,42 @@ describe('isPayuniPaid(兩層成功判定)', () => {
   })
 })
 
-describe('parsePayuniQueryResult + isQueryTradePaid（真實查單格式:巢狀 Result[0]、已付款 TradeStatus=2）', () => {
-  // 取自對 PAYUNi 沙盒真實已付款單 NP260724073140RSJ 的 trade/query 回傳
+describe('parsePayuniQueryResult + isQueryTradePaid（真實查單格式:巢狀 Result[0]）', () => {
+  // 取自 2026-08-04 對 PAYUNi 沙盒「真的已付款」單 NP2608041503069QQ 的 trade/query 回傳
+  // （已付款 = TradeStatus '1',與 Notify 同語意;CloseStatus '2' = 請款成功）
   const paidQuery = {
     Status: 'SUCCESS', Message: '查詢成功',
-    'Result[0][MerTradeNo]': 'NP260724073140RSJ',
-    'Result[0][TradeNo]': '1784878344667576446',
-    'Result[0][TradeAmt]': '499',
-    'Result[0][TradeStatus]': '2',
+    'Result[0][MerTradeNo]': 'NP2608041503069QQ',
+    'Result[0][TradeNo]': '1785855858256599355',
+    'Result[0][TradeAmt]': '1499',
+    'Result[0][TradeStatus]': '1',
     'Result[0][PaymentType]': '1',
-    'Result[0][PaymentDay]': '2026-07-24 15:32:25',
+    'Result[0][PaymentDay]': '2026-08-04 23:04:18',
+    'Result[0][CloseStatus]': '2',
   }
-  it('攤平巢狀 Result[0][X] → 扁平欄位', () => {
+  it('把 Result[0][X] 攤平成扁平欄位', () => {
     expect(parsePayuniQueryResult(paidQuery)).toMatchObject({
-      MerTradeNo: 'NP260724073140RSJ', TradeNo: '1784878344667576446', TradeAmt: '499',
-      TradeStatus: '2', PaymentType: '1', PaymentDay: '2026-07-24 15:32:25',
+      MerTradeNo: 'NP2608041503069QQ', TradeNo: '1785855858256599355', TradeAmt: '1499',
+      TradeStatus: '1', PaymentType: '1', PaymentDay: '2026-08-04 23:04:18',
     })
   })
-  it('查單已付款 = TradeStatus 2 + 有 PaymentDay（可餵給 fulfillPayuniTrade 開通）', () => {
+  it('查單已付款 = TradeStatus 1（可餵給 fulfillPayuniTrade 開通）', () => {
     expect(isQueryTradePaid(parsePayuniQueryResult(paidQuery))).toBe(true)
+  })
+  it('**付款失敗(2)就算有 PaymentDay 也不是已付款** —— 舊版曾把這種單當已付款結算(回歸釘)', () => {
+    // 實測證據:失敗/取消的單「也有」PaymentDay(2026-08-04 沙盒 3D 取消單:TradeStatus 3 + PaymentDay 有值)
+    // → PaymentDay 不能當付款證據;TradeStatus 2 按官方文件是「付款失敗」。
+    expect(isQueryTradePaid({ TradeStatus: '2', PaymentDay: '2026-08-04 23:02:36' })).toBe(false)
+  })
+  it('取消(3)/未付款(9)/待確認(8)/逾期(4) 一律不是已付款', () => {
+    for (const st of ['3', '9', '8', '4', '0']) {
+      expect(isQueryTradePaid({ TradeStatus: st, PaymentDay: '2026-08-04 23:02:36' })).toBe(false)
+    }
   })
   it('查無訂單（沒有 Result[0]）→ 攤平成空、判為未付,不誤開通', () => {
     const notFound = { Status: 'QUERY03001', Message: '查無符合訂單資料', MerTradeNo: 'NP1' }
     expect(parsePayuniQueryResult(notFound)).toEqual({})
     expect(isQueryTradePaid(parsePayuniQueryResult(notFound))).toBe(false)
-  })
-  it('待付款 / 沒 PaymentDay → 未付,不會誤開通', () => {
-    expect(isQueryTradePaid({ TradeStatus: '1', PaymentDay: '' })).toBe(false)
-    expect(isQueryTradePaid({ TradeStatus: '2' })).toBe(false)
-    expect(isQueryTradePaid(parsePayuniQueryResult(null))).toBe(false)
   })
 })
 
@@ -350,5 +361,36 @@ describe('buildBindCancelFields / buildBindCancel（解約）', () => {
     expect(form.Version).toBe('1.0') // 帶 1.3 官方會回 API00003
     expect(verifyHashInfo(form.EncryptInfo, form.HashInfo, KEYS)).toBe(true)
     expect(decrypt(form.EncryptInfo, KEYS)).toMatchObject({ BindVal: 'HASHTOKEN123', UseTokenType: '1' })
+  })
+})
+
+describe('resolveBackendUrl（固定出口 IP 中繼站）', () => {
+  const CREDIT = PAYUNI_CREDIT_ENDPOINTS.prod
+  const CANCEL = PAYUNI_BIND_CANCEL_ENDPOINTS.prod
+
+  it('沒設中繼站 → 原樣直連 PAYUNi（現行行為必須一行不變）', () => {
+    for (const blank of [undefined, null, '', '   ']) {
+      expect(resolveBackendUrl(CREDIT, blank)).toBe(CREDIT)
+    }
+  })
+
+  it('設了中繼站 → 只換主機,**路徑原樣保留**（PAYUNi 靠路徑分辨是扣款還是解約）', () => {
+    expect(resolveBackendUrl(CREDIT, 'https://relay.example.com')).toBe('https://relay.example.com/api/credit')
+    expect(resolveBackendUrl(CANCEL, 'https://relay.example.com')).toBe('https://relay.example.com/api/credit_bind/cancel')
+  })
+
+  it('尾斜線與前後空白都要吃掉（不然會變 //api/credit 打到 404,整個自動扣款靜默失效）', () => {
+    expect(resolveBackendUrl(CREDIT, ' https://relay.example.com/ ')).toBe('https://relay.example.com/api/credit')
+  })
+
+  it('中繼站帶 port / 子路徑也不吃掉路徑（子路徑不支援 → 由設定文件約束只填原點）', () => {
+    expect(resolveBackendUrl(CREDIT, 'https://10.0.0.9:8443')).toBe('https://10.0.0.9:8443/api/credit')
+  })
+
+  it('**UPP 付款頁不受中繼站影響** —— 那是瀏覽器導轉,繞中繼站等於把客人的刷卡頁掛在小機器上', () => {
+    // 付款頁網址在 payment/create-order 直接取 PAYUNI_ENDPOINTS,不經過 resolveBackendUrl。
+    // 這個測試釘住「中繼站只服務幕後 API」這個邊界。
+    expect(PAYUNI_ENDPOINTS.prod).toContain('api.payuni.com.tw')
+    expect(resolveBackendUrl(PAYUNI_ENDPOINTS.prod, 'https://relay.example.com')).not.toBe(PAYUNI_ENDPOINTS.prod)
   })
 })

@@ -401,6 +401,13 @@
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
+/* 搜尋不到時附「補進知識庫」按鈕:column 容器要擋 stretch,按鈕別被撐滿版 */
+.src-search-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
 .src-search-foot {
   margin: 0;
   padding: 6px 10px;
@@ -465,11 +472,6 @@
     display: flex;
     gap: 4px;
   }
-}
-.kb-suggest-empty {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 .kb-suggest-foot {
   display: flex;
@@ -716,4 +718,90 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
+}
+
+/* ── 工作台:未選取資料時的右側大區 ─────────────────────────────
+   「要處理的事」與「AI 建議」原本擠在 240px 側欄,說明句句折行、資料清單被推到摺線下。
+   搬進右側大區後,側欄回歸「搜尋+資料清單」。 */
+.split-empty-state:has(.src-workbench) {
+  justify-content: flex-start;
+  align-items: stretch;
+  overflow-y: auto;
+  text-align: left;
+  padding: 24px 32px;
+}
+.src-workbench {
+  width: 100%;
+  max-width: 720px;
+  /* auto 四邊 = 垂直+水平置中(老闆 8/05 要求置中);內容比視窗高時 auto 會歸零、
+     由外層 overflow-y 接手捲動,不會像 justify-content:center 那樣裁掉頂部 */
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  /* 兩個區塊沿用側欄時代的樣式,只把側欄用的外距歸零(間距由工作台的 gap 統一管) */
+  .src-todo,
+  .kb-suggest { margin: 0; }
+
+  &__intro {
+    h3 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+      color: var(--text-primary);
+    }
+    p {
+      margin: 0 0 4px;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+  }
+  &__tip { font-size: 12px; }
+  &__cta { margin-top: 8px; }
+}
+
+/* 選著資料時工作台看不到:側欄頂端一行入口,點了回工作台 */
+.src-workbench-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 24px);
+  margin: 10px 12px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover { background: var(--el-fill-color); }
+
+  &__icon { flex: none; }
+  &__text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  &__arrow {
+    flex: none;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+/* 手寫視窗:標籤/有效期限收進「進階」摺疊(補一題知識只需要標題+內容+問法) */
+.chunk-advanced-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+
+  &:hover { color: var(--el-color-primary); }
 }

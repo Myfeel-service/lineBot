@@ -76,21 +76,24 @@ const ALERTS: AlertDefinition[] = [
     id: 'knowledgeSyncFailed',
     icon: Reading,
     severity: 'critical',
-    title: '有資料同步失敗',
+    // 措辭與知識庫頁「要處理的事」同一句話:兩邊講的是同一件事,不該一邊「同步失敗」一邊「抓不到內容」
+    title: '有資料抓不到內容',
     impact: '這些資料的內容沒有更新進 AI，客人問到相關問題會得到過時或空的答案。',
     cta: '去修這些資料',
     requires: 'operate',
-    route: wid => `/admin/${wid}/knowledge/sources`,
+    // ?health= 直接開對應的問題清單:使用者在這裡已經按過一次「去修」,
+    // 到頁面後不該再自己找一遍同一件事
+    route: wid => `/admin/${wid}/knowledge/sources?health=failedSources`,
   },
   {
     id: 'knowledgeIndexFailed',
     icon: Reading,
     severity: 'critical',
-    title: '有知識沒學起來',
+    title: '有知識 AI 沒學起來',
     impact: '這些知識存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
     cta: '去看這些知識',
     requires: 'operate',
-    route: wid => `/admin/${wid}/knowledge/sources`,
+    route: wid => `/admin/${wid}/knowledge/sources?health=failedChunks`,
   },
   {
     id: 'quotaExceeded',

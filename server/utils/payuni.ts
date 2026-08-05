@@ -66,6 +66,37 @@ export const PAYUNI_BIND_QUERY_ENDPOINTS = {
 } as const
 
 /**
+ * 把「幕後」API 的網址改指向我方的固定 IP 中繼站（`PAYUNI_RELAY_BASE`）。
+ *
+ * ── 為什麼需要這個 ────────────────────────────────────────────────────────
+ * PAYUNi 的幕後 API 會檢查來源 IP（後台「限定 API 之 IP 設定」,上限 10 組單一 IP,
+ * **不支援網段**）。我方跑在 AWS Amplify,對外 IP 來自共用池且會變動——2026-08-04
+ * 實測同一台機器一天內換了 4 個 IP,清單方式撐不住。業界（含 ShopStore 這類台灣開店平台,
+ * 其教學要商家填的 `35.221.226.156` 就是 GCP IP）的解法一致:**把幕後呼叫收斂到一個固定出口**。
+ *
+ * ── 為什麼只改網址、不用系統層 proxy ─────────────────────────────────────
+ * Node 的 `NODE_USE_ENV_PROXY` 是**全域**的,會把 Gemini／LINE／光貿發票的流量一起繞進
+ * 那台小機器 → 它就變成整個系統的單點故障。這裡只換「幕後那幾支」的網址,
+ * 其餘流量一行都不受影響;中繼站掛掉也只影響「本期自動扣款延到隔天」,客人照樣付得到錢
+ * （UPP 付款頁是瀏覽器導轉,永遠直連 PAYUNi,絕不經過中繼站)。
+ *
+ * ── 為什麼中繼站不需要被信任 ─────────────────────────────────────────────
+ * 請求在我方就已用特店金鑰加密（`EncryptInfo`）+ 簽章（`HashInfo`）,回應也要用同一組金鑰
+ * 驗簽才會被採信（見 `verifyAndDecryptPayuniNotify`）。所以一台被入侵的中繼站
+ * **無法偽造「扣款成功」**——它拿不到金鑰,簽不出通得過驗證的回應。
+ *
+ * 設定範例:`PAYUNI_RELAY_BASE=https://relay.example.com`（無尾斜線）
+ * 中繼站只要把 `/api/*` 原樣轉發到對應環境的 PAYUNi 主機即可（Caddy 一行 reverse_proxy）。
+ * ⚠️ 中繼站要與 `PAYUNI_ENV` 指向同一個環境（正式對正式、測試對測試）;
+ *    留白 = 直連 PAYUNi（現行行為,一行不變）。
+ */
+export function resolveBackendUrl(payuniUrl: string, relayBase: unknown): string {
+  const base = String(relayBase ?? '').trim().replace(/\/$/, '')
+  if (!base) return payuniUrl
+  return base + new URL(payuniUrl).pathname
+}
+
+/**
  * 把 PAYUNI_ENV 正規化成 'test' | 'prod'。
  * ⚠️ **不要**用 `=== 'prod'` 硬比：`production`/`PROD`/前後空白 都該算正式,否則正式環境一個
  *    小拼字就靜默把真客戶導到沙盒、刷不到錢。無法識別的值**保守用 test 並警告**（寧可測試站
@@ -323,12 +354,18 @@ export function parsePayuniQueryResult(decrypted: Record<string, string | undefi
 
 /**
  * **查單（trade/query）語意**下這筆是否已付款。
- * ⚠️ 查單的 `TradeStatus` 代碼**與 Notify 不同**——實測「已付款」在查單是 `'2'`（Notify 是 '1'）。
- *    另要求有 `PaymentDay`（實際付款時間）當第二道保險,避免誤判。此代碼以實測交易為準,
- *    上線前建議對 PAYUNi 官方文件再確認一次。
+ *
+ * 官方文件（交易查詢 Ver 2.0）:TradeStatus `0`=取號成功 `9`=未付款 **`1`=已付款**
+ * `2`=付款失敗 `3`=付款取消 `4`=交易逾期 `8`=訂單待確認 —— 與 Notify 同語意。
+ *
+ * ⚠️ **2026-08-04 修正過一個會「沒收到錢卻開通+開發票」的 bug**:本函式曾寫成
+ *    `TradeStatus==='2' && 有 PaymentDay` —— 來自 7/24 一筆被誤讀的交易。真沙盒實測:
+ *    已付款單回 `1`（CloseStatus=2 請款成功）,**失敗/取消的單也有 `PaymentDay`**（3D 取消
+ *    的單回 `3` 且 PaymentDay 有值）→ 舊判斷會把真正的「付款失敗(2)」當成已付款結算。
+ *    教訓:**單一樣本的實測不能推翻官方文件;兩者矛盾時要兩邊都再驗。**
  */
 export function isQueryTradePaid(result: PayuniTradeResult): boolean {
-  return String(result.TradeStatus ?? '') === '2' && !!String(result.PaymentDay ?? '').trim()
+  return String(result.TradeStatus ?? '') === '1'
 }
 
 /**
@@ -453,9 +490,11 @@ export async function chargeCreditToken(
   input: CreditChargeInput,
   keys: PayuniKeys,
   env: unknown,
+  /** 選填:固定 IP 中繼站基底網址（`PAYUNI_RELAY_BASE`）。留白 = 直連 PAYUNi。 */
+  relayBase?: unknown,
 ): Promise<CreditChargeResult> {
   const fields = buildCreditCharge(input, keys)
-  const url = PAYUNI_CREDIT_ENDPOINTS[resolvePayuniEnv(env)]
+  const url = resolveBackendUrl(PAYUNI_CREDIT_ENDPOINTS[resolvePayuniEnv(env)], relayBase)
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'user-agent': 'payuni' },
@@ -564,8 +603,10 @@ export async function cancelCardBinding(
   input: BindCancelInput,
   keys: PayuniKeys,
   env: unknown,
+  /** 選填:固定 IP 中繼站基底網址（`PAYUNI_RELAY_BASE`）。留白 = 直連 PAYUNi。 */
+  relayBase?: unknown,
 ): Promise<BindCancelResult> {
-  const url = PAYUNI_BIND_CANCEL_ENDPOINTS[resolvePayuniEnv(env)]
+  const url = resolveBackendUrl(PAYUNI_BIND_CANCEL_ENDPOINTS[resolvePayuniEnv(env)], relayBase)
   try {
     const res = await fetch(url, {
       method: 'POST',

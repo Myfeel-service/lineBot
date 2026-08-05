@@ -21,9 +21,10 @@
       </div>
 
       <div class="conv-ai-row">
-        <span class="conv-ai-row__label">信心</span>
+        <span class="conv-ai-row__label">把握度</span>
         <span class="conv-ai-row__value">
-          <strong>{{ ctx.lastConfidence.toFixed(2) }}</strong>
+          <strong>{{ confidenceLabel(ctx.lastConfidence) }}</strong>
+          <span class="conv-ai-confidence-raw">（{{ ctx.lastConfidence.toFixed(2) }}）</span>
           <span v-if="ctx.lastHandoffReason" class="conv-ai-tag conv-ai-tag--warn">
             {{ handoffLabel }}
           </span>
@@ -124,9 +125,20 @@ const decisionIcon = computed(() => {
   return Clock
 })
 
+/**
+ * 「信心 0.72」是內部分數,這張卡現在客服(agent)也看得到——
+ * 建議收件匣那邊刻意不印分數(對商家沒意義,只會讓人以為要達到某個標準),同一套產品不該兩種待遇。
+ * 白話等級為主,原始數字降為括號裡的小字(平台端排查用)。
+ */
+function confidenceLabel(c: number): string {
+  if (c >= 0.8) return '很有把握'
+  if (c >= 0.6) return '有把握'
+  return '把握不高'
+}
+
 const summaryText = computed(() => {
   if (!ctx.value?.hasMeta) return ''
-  if (ctx.value.lastDecision === 'answered') return `AI 已回答（信心 ${ctx.value.lastConfidence.toFixed(2)}）`
+  if (ctx.value.lastDecision === 'answered') return `AI 已回答（${confidenceLabel(ctx.value.lastConfidence)}）`
   if (ctx.value.lastDecision === 'handoff') return `AI 轉真人 — ${handoffLabel.value}`
   if (ctx.value.lastDecision === 'handoff_confirm') return `AI 詢問是否轉接專員（${handoffLabel.value}），等客人確認`
   if (ctx.value.lastDecision === 'disambiguate') return `AI 反問澄清，等客人從選項挑一個`
@@ -377,6 +389,12 @@ watch(() => [props.userId, props.refreshKey], load, { immediate: true })
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 原始信心分數:白話等級為主,分數留給平台端排查用 */
+.conv-ai-confidence-raw {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
 }
 
 .conv-ai-source-list {

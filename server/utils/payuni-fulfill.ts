@@ -88,7 +88,7 @@ export async function fulfillPayuniTrade(
         merchantId,
         bindVal: settled.replacedCardToken,
         timestamp: Math.floor(Date.now() / 1000),
-      }, keys, config.payuniEnv)
+      }, keys, config.payuniEnv, config.payuniRelayBase)
       if (r.ok || r.notFound) console.log('[payuni] 已解除被取代的舊卡約定', merchantOrderNo)
       else console.error('[payuni] 舊卡約定解除失敗,該組約定將無法再解除', merchantOrderNo, r.outerStatus, r.message)
     }

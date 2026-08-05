@@ -905,11 +905,24 @@
 
   .conv-input-row {
     display: flex;
+    // 輸入框會隨著換行長高，送出鍵要黏在底部；不然按鈕會被拉成一整條
+    align-items: flex-end;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-surface);
     flex-shrink: 0;
+  }
+
+  .conv-input-row .el-textarea {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .conv-input-row .el-textarea__inner {
+    // 22px 行高 + 上下 5px = 32px，一行時和「送出」鍵切齊；換行才往下長
+    line-height: 22px;
+    padding: 5px 11px;
   }
 
   .conv-input-tools {
@@ -1236,7 +1249,13 @@
 .conv-picker-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
   padding-top: 0.15rem;
+
+  /* 清掉 Element Plus 給相鄰 el-button 追加的 margin-left:12px，間距只由 gap 決定 */
+  .el-button + .el-button {
+    margin-left: 0;
+  }
 }
 
 .conv-quick-send-item {

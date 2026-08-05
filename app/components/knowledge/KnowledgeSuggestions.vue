@@ -3,13 +3,29 @@
   <!-- 只要載入完就顯示（不等第一次掃描）:整塊藏起來會連「重新掃描」按鈕都看不到,
        從未掃描過的工作區就沒有任何方法觸發第一次掃描。 -->
   <div v-if="loaded" class="kb-suggest">
+    <!-- 沒建議是最常見的狀態:結論直接寫進標題那一行,不佔五行解釋掃描機制。
+         「沒有建議」有兩種完全不同的意思,講錯就是騙人:
+         (a) 客人問的 AI 都答得出來
+         (b) 有人被問倒了,只是同一類還沒被問到兩次(門檻)——實測 8/04 就是這種:
+             12 位客人沒被答到,畫面卻說「都答得出來」。 -->
     <p class="kb-suggest-head">
       <el-icon class="kb-suggest-icon"><MagicStick /></el-icon>
       <span>
-        <strong>AI 建議補的知識</strong><template v-if="items.length">：{{ items.length }} 個主題待處理</template>
+        <strong>AI 建議補的知識</strong>
+        <template v-if="items.length">：{{ items.length }} 個主題待處理</template>
+        <template v-else-if="!lastScanAtMs">：還沒分析過</template>
+        <template v-else-if="gapEvents > 0">：有問題答不出來，還在等同類重複出現</template>
+        <template v-else>：目前沒有——最近客人問的，AI 都答得出來</template>
       </span>
     </p>
-    <p class="kb-suggest-hint">從「客人問過、但 AI 答不出來」的真實對話整理，草稿已擬好，審一眼就能用。</p>
+    <p v-if="items.length" class="kb-suggest-hint">從「客人問過、但 AI 答不出來」的真實對話整理，草稿已擬好，審一眼就能用。</p>
+    <p v-else-if="!lastScanAtMs" class="kb-suggest-hint">
+      AI 開始服務客人後，系統會自動找出「客人問了但答不出來」的主題並擬好草稿。
+    </p>
+    <p v-else-if="gapEvents > 0" class="kb-suggest-hint">
+      最近 30 天有 <strong>{{ gapEvents }}</strong> 個問題 AI 答不出來，同一類被問到兩次以上才會擬草稿；
+      只被問過一次的，可到 <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">用量 / 監控</NuxtLink> 的案例清單直接補。
+    </p>
 
     <div v-if="items.length" class="kb-suggest-list">
       <div v-for="s in items" :key="s.id" class="kb-suggest-item">
@@ -19,25 +35,11 @@
           <span class="kb-suggest-item__count">30 天內{{ s.sampled ? '至少' : '' }}被問 {{ s.eventCount }} 次</span>
         </div>
         <div v-if="canEdit" class="kb-suggest-item__actions">
-          <el-button size="small" type="primary" plain @click="openReview(s)">看草稿</el-button>
+          <el-button size="small" type="primary" plain @click="openReview(s)">審核草稿</el-button>
           <el-button size="small" text :loading="dismissingId === s.id" @click="dismiss(s)">忽略</el-button>
         </div>
       </div>
     </div>
-    <p v-else-if="!lastScanAtMs" class="kb-suggest-empty">
-      還沒分析過。AI 開始服務客人後，系統會自動找出「客人問了但答不出來」的主題並擬好草稿。
-    </p>
-    <!-- 「沒有建議」有兩種完全不同的意思，講錯就是騙人：
-         (a) 客人問的 AI 都答得出來
-         (b) 有人被問倒了，只是同一類還沒被問到兩次（門檻）——實測 8/04 就是這種：
-             12 位客人沒被答到，畫面卻說「都答得出來」。 -->
-    <p v-else-if="gapEvents > 0" class="kb-suggest-empty">
-      最近 30 天有 <strong>{{ gapEvents }}</strong> 個問題 AI 答不出來，但還沒有同一類問題被問到兩次以上——
-      系統要看到重複才會幫你擬草稿。只被問過一次的，可以在
-      <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">用量 / 監控</NuxtLink>的案例清單直接補。
-    </p>
-    <p v-else class="kb-suggest-empty">目前沒有待處理的建議——最近客人問的，AI 都答得出來。</p>
-
     <p class="kb-suggest-foot">
       <span>{{ scanLabel }}</span>
       <el-button v-if="canEdit && !scanRequested" size="small" text :loading="refreshing" @click="requestRefresh">
@@ -171,6 +173,8 @@ interface AcceptResponse {
 const emit = defineEmits<{
   /** 採用成功(知識庫多了一個 manual 資料),父頁面要重載資料列表 */
   (e: 'accepted'): void
+  /** 待處理建議數:父頁面側欄的「工作台入口」要顯示數字 */
+  (e: 'count', n: number): void
 }>()
 
 const { apiFetch, can, workspaceId } = useWorkspace()
@@ -195,6 +199,9 @@ const form = ref<{ title: string; content: string; tags: string[]; questions: st
 })
 
 const lastError = ref('')
+
+// 載入完成與採用/忽略後都會換新陣列 → 每次變動都把最新數字報給父頁面
+watch(items, v => emit('count', v.length))
 
 /**
  * 佔位符即時計數:使用者在彈窗補完空格,警示要跟著消失。

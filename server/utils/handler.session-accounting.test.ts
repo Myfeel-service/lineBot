@@ -9,7 +9,8 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 vi.mock('./line', () => ({
-  replyMessage: vi.fn(),
+  // 必須回 Promise：member-line-bind 會直接 .replyMessage(...).catch()
+  replyMessage: vi.fn(async () => {}),
   pushMessage: vi.fn(),
   getUserProfile: vi.fn(async () => ({ displayName: '測試客人', pictureUrl: '' })),
   linkRichMenuIdToUser: vi.fn(),
@@ -313,5 +314,42 @@ describe('客人傳圖/影/音/檔 → 回引導語就要記機器人首接', ()
     await new Promise(r => setTimeout(r, 10))
     expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
     expect(vi.mocked(enterModule)).not.toHaveBeenCalled()
+  })
+})
+
+describe('成員傳綁定碼 → 系統回覆完就要移出待處理', () => {
+  function textEvent(text: string): any {
+    return {
+      type: 'message',
+      timestamp: 1,
+      source: { type: 'user', userId: LINE_UID },
+      replyToken: 'reply-token',
+      message: { type: 'text', id: 'm1', text },
+    }
+  }
+
+  beforeEach(() => {
+    const { db } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+    // clearAllMocks 不會清掉前面 describe 設的 mockResolvedValue,明確歸零
+    vi.mocked(getAiSettings).mockResolvedValue(null as any)
+  })
+
+  it('綁定訊息被消化(含查無此碼)→ 記 system_notice,否則會話永遠掛在待處理', async () => {
+    await handleMessageEvent(textEvent('綁定 G9QCKC'), { workspaceId: WS })
+
+    // 系統已回覆綁定結果(這裡是查無此碼的 ❌),會話不該留在待處理佇列
+    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(enterModule)).toHaveBeenCalledWith(
+      'sess-1', LINE_UID, 'system_notice', undefined, WS,
+    )
+  })
+
+  it('一般文字不是綁定訊息 → 不蓋 system_notice 章', async () => {
+    await handleMessageEvent(textEvent('請問有貨嗎'), { workspaceId: WS })
+
+    expect(vi.mocked(enterModule)).not.toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), 'system_notice', expect.anything(), expect.anything(),
+    )
   })
 })

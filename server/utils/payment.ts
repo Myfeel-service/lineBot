@@ -530,7 +530,7 @@ export async function runPaymentReconcile(
    * PAYUNi 特店設定;有給才會在降級時順手向 PAYUNi 解除卡片約定（清潔工作）。
    * 不給 → 只寫資料庫、Token 留著（單元測試與金流未設定時走這條）。
    */
-  payuni?: { merchantId: string; keys: PayuniKeys; env: unknown } | null,
+  payuni?: { merchantId: string; keys: PayuniKeys; env: unknown; relayBase?: unknown } | null,
 ): Promise<{ renewed: number; downgraded: number; unbound: number; expiredOrders: number }> {
   const today = taipeiDate(now)
 
@@ -561,7 +561,7 @@ export async function runPaymentReconcile(
         merchantId: payuni.merchantId,
         bindVal: rolled.sub.payuniCardToken,
         timestamp: Math.floor(now.getTime() / 1000),
-      }, payuni.keys, payuni.env)
+      }, payuni.keys, payuni.env, payuni.relayBase)
       if (r.ok || r.notFound) {
         delete rolled.sub.payuniCardToken
         delete rolled.sub.payuniCardLast4

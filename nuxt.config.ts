@@ -128,6 +128,19 @@ export default defineNuxtConfig({
      */
     payuniPeriodEnabled: process.env.PAYUNI_PERIOD_ENABLED === 'true',
     /**
+     * 固定 IP 中繼站（只給「幕後」API 用:續扣 /api/credit、解約 /api/credit_bind/*）。
+     *
+     * PAYUNi 幕後 API 會檢查來源 IP（後台可填 10 組**單一** IP,不支援網段),而 Amplify
+     * 對外 IP 會變動（2026-08-04 實測一天換 4 個）→ 正式環境需把幕後呼叫收斂到一個固定出口。
+     * 設成中繼站基底網址（例 `https://relay.example.com`,無尾斜線),中繼站把 `/api/*`
+     * 原樣轉發到 PAYUNi 對應環境的主機即可。
+     *
+     * ⚠️ 客戶刷卡的 UPP 付款頁**永遠直連 PAYUNi**,不經過中繼站 → 中繼站掛掉只會讓
+     *    「本期自動扣款延到隔天」,不影響客人付款。
+     * ⚠️ 留白 = 直連 PAYUNi（現行行為）。詳見 payuni.ts 的 resolveBackendUrl。
+     */
+    payuniRelayBase: process.env.PAYUNI_RELAY_BASE ?? '',
+    /**
      * 光貿(Amego)電子發票加值中心（**獨立於金流的商店帳號**，需另外向光貿申請）。
      * 未設定 → 收款照常，只是不開發票(見 guangmao-invoice.ts 的 isInvoiceConfigured)。
      *

@@ -283,6 +283,16 @@ function buildAttributeContext(userData: UserDoc | null): Record<string, string>
   return context
 }
 
+/**
+ * 把 {{屬性}} 換成這位客人的實際值。
+ *
+ * 給「先填進回覆框、客服改完再送」這種要先看到成品的路徑用——代換必須和真的送出
+ * （buildAutoReplyActionMessages）是同一套，否則客服會把 {{displayName}} 原封不動送給客人。
+ */
+export function renderTextForUser(value: string, userData: Record<string, any> | null): string {
+  return renderWithAttributes(value, buildAttributeContext((userData ?? null) as UserDoc | null))
+}
+
 // ── Helpers ───────────────────────────────────────────────────────
 
 async function ensureUser(
@@ -1830,7 +1840,15 @@ export async function handleMessageEvent(
       console.error('[member-bind] error:', e)
       return false
     })
-    if (consumedBindCode) return
+    if (consumedBindCode) {
+      // 綁定訊息（成功或失敗）都已由系統回覆完畢，沒有客服要做的事——蓋 system_notice
+      // 把會話移出「待處理」。只動 status、不動 initialHandler，口徑同 markClaimPushHandled：
+      // 綁定的是自家成員不是客人提問，記成機器人首接會灌水統計。
+      await enterModule(sessionId, userId, 'system_notice', undefined, workspaceId).catch(e =>
+        console.error('[member-bind] enterModule error:', e),
+      )
+      return
+    }
 
     await handleIncomingText(userId, textContent, event.replyToken, options, preloadedUser, sessionId, workspaceId)
   } else {
@@ -1838,11 +1856,8 @@ export async function handleMessageEvent(
       console.log('[webhook] duplicate message event skipped')
       return
     }
-    const typeLabel = event.message.type === 'image' ? '[圖片]'
-      : event.message.type === 'video' ? '[影片]'
-      : event.message.type === 'audio' ? '[語音]'
-      : event.message.type === 'sticker' ? '[貼圖]'
-      : `[${event.message.type}]`
+    const typeLabel = NON_TEXT_QUERY_LABELS[event.message.type]
+      ?? (event.message.type === 'sticker' ? '[貼圖]' : `[${event.message.type}]`)
     saveConversationMessage(userId, 'incoming', typeLabel, {
       messageType: event.message.type,
       payload: event.message,
@@ -1855,7 +1870,7 @@ export async function handleMessageEvent(
     ensureUser(userId, undefined, workspaceId).catch(e => console.error('[ensureUser] Error:', e))
     // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
     // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
-    if (['image', 'video', 'audio', 'file'].includes(event.message.type) && event.replyToken) {
+    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken) {
       maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
         .catch(e => console.error('[non-text-ack] error:', e))
     }
@@ -1922,6 +1937,14 @@ export async function saveConversationMessage(
     convPatch.lastPeerActivityAt = useLineTs
       ? Timestamp.fromMillis(Number(options!.lineEventTimestampMs))
       : now
+    // 客人傳了 AI 看不懂的內容(圖/影/音/檔)就蓋一個時間戳。之後那句「找真人」才有辦法
+    // 回溯真正的起因——引導語叫客人打「找真人」,轉接當下若只看那三個字,監控頁會把
+    // 「傳圖被擋住」和「客人自己想找真人」記成同一種,兩者的處理方式完全不同。
+    // 蓋在這裡而不是引導語那邊:節流/真人接手時引導語不會發,但起因仍然是那張圖。
+    if (NON_TEXT_INBOUND_TYPES.has(String(options?.messageType || ''))) {
+      convPatch.lastNonTextInboundAt = messageTimestamp
+      convPatch.lastNonTextInboundType = options!.messageType
+    }
   }
 
   await Promise.all([
@@ -2484,6 +2507,15 @@ const waitingAckSentAt = new Map<string, number>()
 const NON_TEXT_ACK_THROTTLE_MS = 10 * 60 * 1000
 const nonTextAckSentAt = new Map<string, number>()
 
+// 會觸發引導語的非文字類型(貼圖刻意不在內:多半是裝飾/情緒,也不會被引導去找真人)
+const NON_TEXT_INBOUND_TYPES = new Set(['image', 'video', 'audio', 'file'])
+// 對話列表/監控頁的類型占位標籤(訊息本體沒有文字可顯示)
+const NON_TEXT_QUERY_LABELS: Record<string, string> = {
+  image: '[圖片]', video: '[影片]', audio: '[語音]', file: '[檔案]',
+}
+// 圖/影/音/檔進線後,多久內打「找真人」視為「因為傳了 AI 看不懂的內容而被引導語叫來」
+const NON_TEXT_HANDOFF_WINDOW_MS = 10 * 60 * 1000
+
 async function maybeAckNonTextMessage(
   sessionId: string | null,
   lineUserId: string,
@@ -2715,17 +2747,34 @@ async function tryAiFallback(params: {
     recordAiUsage(workspaceId, { invocations: 1, handoffs: 1 })
       .catch(e => console.error('[ai-fallback] recordAiUsage(user_request) error:', e))
 
+    // 這一句「找真人」是客人自己想找人,還是剛傳完圖被引導語叫來的?兩者的後續處理
+    // 完全不同(補知識 vs. 看那張圖),所以轉接前先讀對話文件回溯起因。
+    // 這裡改成 await:原本只有品質指標用得到、可以 fire-and-forget,現在 reason 要靠它決定。
+    // 只發生在「找真人」這條罕見路徑,後面本來就要打 LINE API,多這一次讀取不影響體感。
+    const convSnap = await getDb().collection('conversations').doc(fsUserDocId).get().catch(() => null)
+    const convData = convSnap?.data() as {
+      aiMeta?: AiConversationMeta
+      lastNonTextInboundAt?: { toMillis?: () => number }
+      lastNonTextInboundType?: string
+    } | undefined
+    const nonTextAtMs = convData?.lastNonTextInboundAt?.toMillis?.() ?? 0
+    // 圖之後若客人已經改用文字問、AI 也答了(aiMeta 比圖新),那這句「找真人」是對那個
+    // 回答不滿意,不是被圖卡住——這時標成傳圖會把人導向錯的處理方式(去看圖而不是補知識)。
+    // aiMeta 只有文字互動會動(引導語不是 AI、不寫 aiMeta),所以兩個時間戳比大小就夠。
+    const lastAiAtMs = (convData?.aiMeta?.updatedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
+    const nonTextIsLatest = nonTextAtMs > 0
+      && nonTextAtMs > lastAiAtMs
+      && (Date.now() - nonTextAtMs) <= NON_TEXT_HANDOFF_WINDOW_MS
+    const nonTextType = nonTextIsLatest ? String(convData?.lastNonTextInboundType || '') : ''
+    const handoffReason: HandoffReason = nonTextType ? 'non_text_content' : 'user_request'
+    // 監控頁列出的是「客人問了什麼」,存「找真人」三個字等於沒說；改存內容類型,
+    // 一眼看得出這是張圖(真正的內容在對話裡,列表的「開對話」點過去就看得到)
+    const handoffQuery = nonTextType ? (NON_TEXT_QUERY_LABELS[nonTextType] ?? `[${nonTextType}]`) : textContent
+
     // 品質指標：剛被 AI 回答完就按「找真人」= 回答沒解決問題（fire-and-forget）。
     // 草稿模式不計——客人根本沒看到那次回答。
-    if (!draftMode) {
-      getDb().collection('conversations').doc(fsUserDocId).get()
-        .then((snap) => {
-          const meta = (snap.data() as any)?.aiMeta as AiConversationMeta | undefined
-          if (wasRecentlyAnswered(meta)) {
-            return recordAiUsage(workspaceId, { answeredThenHandoffs: 1 })
-          }
-        })
-        .catch(() => {})
+    if (!draftMode && wasRecentlyAnswered(convData?.aiMeta)) {
+      recordAiUsage(workspaceId, { answeredThenHandoffs: 1 }).catch(() => {})
     }
 
     // 草稿模式維持「不對客人發話、不鎖 session」的契約，只通知值班客服
@@ -2734,22 +2783,22 @@ async function tryAiFallback(params: {
         workspaceId,
         customerLineUserId: lineUserId,
         customerName: userAttributes.displayName || lineUserId,
-        customerMessage: textContent,
-        reason: 'user_request',
+        customerMessage: handoffQuery,
+        reason: handoffReason,
       }).catch(e => console.error('[ai-fallback] notifyHandoffToStaff error:', e))
     }
     else {
       await deliverHandoffReply({
         workspaceId, lineUserId, replyToken, userAttributes, channelSecret,
         sessionId, requestOrigin,
-        customerMessage: textContent,
-        reason: 'user_request',
+        customerMessage: handoffQuery,
+        reason: handoffReason,
       })
     }
     await writeAiMeta(fsUserDocId, {
       lastDecision: 'handoff',
-      lastHandoffReason: 'user_request',
-      lastQuery: textContent,
+      lastHandoffReason: handoffReason,
+      lastQuery: handoffQuery,
     })
     return
   }

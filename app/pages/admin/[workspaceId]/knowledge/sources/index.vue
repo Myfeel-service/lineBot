@@ -13,18 +13,19 @@
           <el-button size="small" plain>⋯</el-button>
           <template #dropdown>
             <el-dropdown-menu>
+              <!-- 選單/按鈕用正式的功能動詞;白話留給說明文字(老闆 8/05:按鈕寫成口語句太過頭) -->
               <el-dropdown-item v-if="canEditKb" @click="openCreateManual">
-                自己寫一條
+                手動新增知識
               </el-dropdown-item>
               <el-dropdown-item v-if="canEditFolders" data-tour="kb-folder-new" @click="createFolderPrompt">
                 新增資料夾
               </el-dropdown-item>
               <el-dropdown-item v-if="canEditSources" divided @click="openAliasDialog">
-                同一產品的不同叫法{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
+                產品名稱整理{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
               </el-dropdown-item>
               <!-- 全庫重新學習是工程維護動作（升級檢索方式後才需要），不該長在主工具列 -->
               <el-dropdown-item v-if="canReindexAll" :disabled="reindexingAll" @click="reindexAll">
-                {{ reindexingAll ? '重新學習中⋯' : '讓 AI 重新學習全部（維護用）' }}
+                {{ reindexingAll ? '重新學習中⋯' : '重新學習全部知識（維護用）' }}
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -34,6 +35,19 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- 常駐提醒(老闆 8/05 要求):有事要處理時側欄一直顯示這一行,不只在選著資料時。
+           點了回工作台;兩邊都是空的才不顯示——沒事可提醒。 -->
+      <button
+        v-if="workbenchBadge"
+        type="button"
+        class="src-workbench-link"
+        @click="backToWorkbench"
+      >
+        <el-icon class="src-workbench-link__icon"><FirstAidKit /></el-icon>
+        <span class="src-workbench-link__text">{{ workbenchBadge }}</span>
+        <span class="src-workbench-link__arrow">→</span>
+      </button>
+
       <!-- 全庫搜尋:補卡前先確認「這題是不是已經有卡了」,不用一份資料一份資料翻 -->
       <div class="src-search">
         <el-input
@@ -45,8 +59,18 @@
         />
         <div v-if="searchLoading" class="src-search-loading">搜尋中…</div>
         <div v-else-if="searchResults" class="src-search-results">
+          <!-- 搜尋不到不能是死路:問題已經打好了、也確認過沒有重複,這是最乾淨的補知識時機 -->
           <div v-if="!searchResults.length" class="src-search-empty">
-            沒有符合的知識——如果客人常問這題，可能就是該補的知識。
+            <span>沒有符合的知識——如果客人常問這題，可能就是該補的知識。</span>
+            <el-button
+              v-if="canEditKb"
+              size="small"
+              type="primary"
+              plain
+              @click="openPrefilledCreate(searchKeyword.trim())"
+            >
+              補進知識庫
+            </el-button>
           </div>
           <button v-for="r in searchResults" :key="r.id" type="button" class="src-search-row" @click="openChunkById(r.id)">
             <span class="src-search-row__title">
@@ -63,53 +87,6 @@
           <p v-if="searchTruncated" class="src-search-foot">知識較多，只搜尋了前面一部分。</p>
         </div>
       </div>
-
-      <!--
-        「要處理的事」單一收斂點。
-        原本這裡是三個各自為政的橫幅（AI 建議 / 舊版未分組知識 / 知識庫體檢六個 chip），
-        視覺語言各不相同、要捲過四層才看到自己的資料，而且使用者無從判斷哪個該先做。
-        現在合成一份清單、照「會不會影響客人」排序：壞掉的先、建議次之、僅供參考最後。
-        沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
-        AI 建議的草稿要看內容，仍留在下方獨立區塊，不在這裡重複列一次。
-      -->
-      <div v-if="todoItems.length || healthExpiredCount" class="src-todo">
-        <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
-          <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
-          <span class="src-todo__title">
-            <template v-if="todoItems.length">要處理的事（{{ todoItems.length }}）</template>
-            <template v-else>目前沒有要處理的事</template>
-          </span>
-          <span class="src-todo__toggle">{{ todoOpen ? '▴' : '▾' }}</span>
-        </button>
-
-        <div v-show="todoOpen" class="src-todo__body">
-          <div v-for="item in todoItems" :key="item.id" class="src-todo__item" :class="`is-${item.tone}`">
-            <div class="src-todo__item-main">
-              <span class="src-todo__item-title">{{ item.title }}</span>
-              <span class="src-todo__item-why">{{ item.why }}</span>
-            </div>
-            <el-button size="small" plain :loading="item.loading" @click="item.action()">
-              {{ item.cta }}
-            </el-button>
-          </div>
-
-          <!-- 已過期停用＝功能正常運作的結果，不是待辦：灰階、排最後、不算進上方數字 -->
-          <button
-            v-if="healthExpiredCount"
-            type="button"
-            class="src-todo__muted"
-            @click="openHealthList('expiredChunks')"
-          >
-            另有 {{ healthExpiredCount }} 張內容已過期自動停用（正常，不用處理）
-          </button>
-          <p v-if="health.chunkScanTruncated" class="src-todo__foot">
-            內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
-          </p>
-        </div>
-      </div>
-
-      <!-- 建議收件匣（草稿要看內容，維持獨立區塊；「有幾個建議」也會出現在上方待辦清單） -->
-      <KnowledgeSuggestions @accepted="loadSources(true)" />
 
       <div v-if="loading && !sources.length" class="split-sidebar-loading">
         <div class="spinner" />
@@ -237,21 +214,72 @@
       </div>
     </template>
 
-    <!-- ── Empty State ── -->
-    <!-- 未選取時是這一頁唯一能講「這頁是幹什麼的」的地方:知識庫原本是所有 AI 頁面中
-         唯一沒有頁面說明的一頁(打開就是一個內部名詞「資料」) -->
+    <!-- ── 工作台(未選取資料時的右側大區) ── -->
+    <!-- 「要處理的事」與「AI 建議」原本擠在 240px 側欄裡,每句說明都折成兩三行、
+         資料清單被推到摺線以下;右邊這片大空間卻只放一段靜態說明。
+         現在側欄回歸「搜尋+資料清單」,工作的事(異常+建議)放進來這裡——照使用者要做的事長。 -->
     <template #editor-empty>
-      <el-icon class="empty-icon"><FolderOpened /></el-icon>
-      <h3>這裡是 AI 回答客人的依據</h3>
-      <p>
-        你放進來的每一份資料（檔案、網址、Google 試算表、一段文字）都會由 AI 整理成一條條問答，
-        客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
-      </p>
-      <p class="text-xs text-muted">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
-      <div v-if="canEditKb" class="flex gap-2" style="margin-top:8px;">
-        <el-button :icon="Upload" type="primary" @click="goImport">加入第一份資料</el-button>
+      <div class="src-workbench">
+        <div class="src-workbench__intro">
+          <h3>這裡是 AI 回答客人的依據</h3>
+          <p>
+            你放進來的每一份資料（檔案、網址、Google 試算表、一段文字）都會由 AI 整理成一條條問答，
+            客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
+          </p>
+          <p class="text-muted src-workbench__tip">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
+          <div v-if="canEditKb && !sources.length" class="src-workbench__cta">
+            <el-button :icon="Upload" type="primary" @click="goImport">加入第一份資料</el-button>
+          </div>
+          <p v-if="!canEditKb" class="text-muted src-workbench__tip">（你的權限僅能檢視）</p>
+        </div>
+
+        <!--
+          「要處理的事」單一收斂點。
+          原本是三個各自為政的橫幅（AI 建議 / 舊版未分組知識 / 知識庫體檢六個 chip），
+          視覺語言各不相同、使用者無從判斷哪個該先做。
+          合成一份清單、照「會不會影響客人」排序：壞掉的先、建議次之、僅供參考最後。
+          沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
+          AI 建議的草稿要看內容，留在下方獨立區塊，不在這裡重複列一次。
+        -->
+        <div v-if="todoItems.length || healthExpiredCount" class="src-todo">
+          <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
+            <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
+            <span class="src-todo__title">
+              <template v-if="todoItems.length">要處理的事（{{ todoItems.length }}）</template>
+              <template v-else>目前沒有要處理的事</template>
+            </span>
+            <span class="src-todo__toggle">{{ todoOpen ? '▴' : '▾' }}</span>
+          </button>
+
+          <div v-show="todoOpen" class="src-todo__body">
+            <div v-for="item in todoItems" :key="item.id" class="src-todo__item" :class="`is-${item.tone}`">
+              <div class="src-todo__item-main">
+                <span class="src-todo__item-title">{{ item.title }}</span>
+                <span class="src-todo__item-why">{{ item.why }}</span>
+              </div>
+              <el-button size="small" plain :loading="item.loading" @click="item.action()">
+                {{ item.cta }}
+              </el-button>
+            </div>
+
+            <!-- 已過期停用＝功能正常運作的結果，不是待辦：灰階、排最後、不算進上方數字 -->
+            <button
+              v-if="healthExpiredCount"
+              type="button"
+              class="src-todo__muted"
+              @click="openHealthList('expiredChunks')"
+            >
+              另有 {{ healthExpiredCount }} 張內容已過期自動停用（正常，不用處理）
+            </button>
+            <p v-if="health.chunkScanTruncated" class="src-todo__foot">
+              內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
+            </p>
+          </div>
+        </div>
+
+        <!-- 建議收件匣（草稿要看內容，維持獨立區塊）;count 讓側欄的工作台入口有數字可顯示 -->
+        <KnowledgeSuggestions @accepted="loadSources(true)" @count="suggestCount = $event" />
       </div>
-      <p v-if="!canEditKb" class="text-xs text-muted">（你的權限僅能檢視）</p>
     </template>
 
     <!-- ── Editor Header ── -->
@@ -816,38 +844,44 @@
           這幾句會跟著知識一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
         </p>
       </div>
-      <div class="admin-field-group">
-        <AdminFieldLabel text="標籤（非必填，後台分類用）" tight />
-        <div class="chunk-tag-row">
-          <el-tag
-            v-for="t in chunkForm.tags"
-            :key="t"
-            closable
-            class="chunk-tag"
-            @close="removeChunkTag(t)"
-          >{{ t }}</el-tag>
-          <el-input
-            v-if="chunkTagInputVisible"
-            ref="chunkTagInputEl"
-            v-model="chunkTagInput"
-            size="small"
-            style="width: 120px;"
-            @keydown.enter.prevent="commitChunkTag"
-            @blur="commitChunkTag"
-          />
-          <el-button v-else size="small" plain @click="showChunkTagInput">＋</el-button>
+      <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用) -->
+      <div v-if="chunkShowUsage" class="admin-field-group">
+        <AdminFieldLabel text="供 AI 使用" tight />
+        <div class="chunk-usage-row">
+          <el-switch v-model="chunkEnabled" />
+          <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這一條回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
         </div>
       </div>
-      <!-- 供 AI 使用開關 + 有效期限(已完成索引的卡才有;pending/failed 本來就不會被引用) -->
-      <template v-if="chunkEditMode === 'edit' && (chunkEditStatus === 'indexed' || chunkEditStatus === 'disabled')">
+
+      <!-- 標籤/有效期限用得少,收進進階:補一題知識只需要標題+內容+問法。
+           已有值(有標籤/設了期限/到期停用過)時預設展開——把生效中的設定藏起來會讓人找不到。 -->
+      <button type="button" class="chunk-advanced-toggle" @click="chunkAdvancedOpen = !chunkAdvancedOpen">
+        {{ chunkAdvancedOpen ? '▾' : '▸' }} 進階{{ chunkShowUsage ? '（標籤、有效期限）' : '（標籤）' }}
+      </button>
+      <template v-if="chunkAdvancedOpen">
         <div class="admin-field-group">
-          <AdminFieldLabel text="供 AI 使用" tight />
-          <div class="chunk-usage-row">
-            <el-switch v-model="chunkEnabled" />
-            <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這一條回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
+          <AdminFieldLabel text="標籤（非必填，後台分類用）" tight />
+          <div class="chunk-tag-row">
+            <el-tag
+              v-for="t in chunkForm.tags"
+              :key="t"
+              closable
+              class="chunk-tag"
+              @close="removeChunkTag(t)"
+            >{{ t }}</el-tag>
+            <el-input
+              v-if="chunkTagInputVisible"
+              ref="chunkTagInputEl"
+              v-model="chunkTagInput"
+              size="small"
+              style="width: 120px;"
+              @keydown.enter.prevent="commitChunkTag"
+              @blur="commitChunkTag"
+            />
+            <el-button v-else size="small" plain @click="showChunkTagInput">＋</el-button>
           </div>
         </div>
-        <div class="admin-field-group">
+        <div v-if="chunkShowUsage" class="admin-field-group">
           <AdminFieldLabel text="有效期限（選填）" tight />
           <div class="chunk-usage-row">
             <el-date-picker
@@ -981,7 +1015,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, EditPen, FirstAidKit, Folder, FolderOpened, Lock, Search, Upload } from '@element-plus/icons-vue'
+import { Delete, EditPen, FirstAidKit, Folder, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 
@@ -1429,6 +1463,11 @@ const chunkReindexing = ref(false)
 const chunkEnabled = ref(true)
 const chunkActiveUntil = ref('') // 'YYYY-MM-DD';空字串 = 永久
 const chunkExpiredAtMs = ref(0)
+/** 開關/期限只對已索引或已停用的卡有意義(pending/failed 本來就不會被引用) */
+const chunkShowUsage = computed(() =>
+  chunkEditMode.value === 'edit' && (chunkEditStatus.value === 'indexed' || chunkEditStatus.value === 'disabled'))
+/** 標籤/有效期限收進「進階」摺疊;開窗時依「有沒有值」決定預設開合 */
+const chunkAdvancedOpen = ref(false)
 // 開窗時的原值,儲存時只送有變的部分
 let chunkSettingsOriginal = { enabled: true, activeUntil: '' }
 
@@ -1530,6 +1569,18 @@ interface TodoItem {
   action: () => void
 }
 
+/**
+ * 只有一筆時直接跳到那筆資料/知識——最常見的情境(一份資料壞掉)原本也要
+ * 過一層清單彈窗,而彈窗的 hint 只是把待辦已講過的 why 再講一遍。多筆才開清單。
+ */
+function singleOrList(single: Array<{ id: string }>, kind: 'source' | 'chunk', cat: HealthCategory): () => void {
+  if (single.length === 1) {
+    const id = single[0]!.id
+    return () => { void gotoHealthItem({ id, kind }) }
+  }
+  return () => openHealthList(cat)
+}
+
 const todoItems = computed<TodoItem[]>(() => {
   const items: TodoItem[] = []
   const h = health.value
@@ -1545,7 +1596,7 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'danger',
       title: 'AI 客服還沒開啟',
       why: `已經有 ${totalChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
-      cta: '去開啟',
+      cta: '前往開啟',
       action: () => navigateTo(`/admin/${workspaceId.value}/ai-settings`),
     })
   }
@@ -1556,8 +1607,8 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'danger',
       title: `有 ${h.failedSources.length} 份資料抓不到內容`,
       why: '這幾份的內容沒有更新進 AI，客人問到相關問題會拿到過時或空的答案。',
-      cta: '去修',
-      action: () => openHealthList('failedSources'),
+      cta: '前往修復',
+      action: singleOrList(h.failedSources, 'source', 'failedSources'),
     })
   }
   if (h.failedChunks.count) {
@@ -1566,8 +1617,8 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'danger',
       title: `有 ${h.failedChunks.count} 條內容 AI 沒學起來`,
       why: '存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
-      cta: '去看',
-      action: () => openHealthList('failedChunks'),
+      cta: '查看',
+      action: singleOrList(h.failedChunks.count === 1 ? h.failedChunks.items : [], 'chunk', 'failedChunks'),
     })
   }
   if (h.outdatedSources.length) {
@@ -1576,8 +1627,8 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'warning',
       title: `有 ${h.outdatedSources.length} 份資料的原始內容改過了`,
       why: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
-      cta: '去比對',
-      action: () => openHealthList('outdatedSources'),
+      cta: '前往比對',
+      action: singleOrList(h.outdatedSources, 'source', 'outdatedSources'),
     })
   }
   if (h.noProductSources.length) {
@@ -1586,8 +1637,8 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'warning',
       title: `有 ${h.noProductSources.length} 份文件沒說是哪個產品`,
       why: '客人指名問某一台時，AI 可能拿別台產品的內容回答。',
-      cta: '去設定',
-      action: () => openHealthList('noProductSources'),
+      cta: '前往設定',
+      action: singleOrList(h.noProductSources, 'source', 'noProductSources'),
     })
   }
   if (h.shortChunks.count) {
@@ -1596,8 +1647,20 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'warning',
       title: `有 ${h.shortChunks.count} 條內容太短`,
       why: '太短的內容 AI 找到了也答不出東西，還可能擋住其他有用的內容。',
-      cta: '去看',
-      action: () => openHealthList('shortChunks'),
+      cta: '查看',
+      action: singleOrList(h.shortChunks.count === 1 ? h.shortChunks.items : [], 'chunk', 'shortChunks'),
+    })
+  }
+  // 別名候選原本只藏在「⋯」選單展開後的項目文字裡,⋯ 按鈕本身沒有徽章——
+  // 等於一個看不見的異常。它會讓 AI 把同一台機器當成兩台,該進待辦。
+  if (h.aliasCandidateCount > 0) {
+    items.push({
+      id: 'alias',
+      tone: 'warning',
+      title: `有 ${h.aliasCandidateCount} 組產品名稱可能是同一台`,
+      why: '同一台機器兩種叫法會被 AI 當成兩台——反問客人二選一、出貨時間並列成兩台。',
+      cta: '前往確認',
+      action: () => openAliasDialog(),
     })
   }
   if (orphanCount.value > 0) {
@@ -1613,6 +1676,21 @@ const todoItems = computed<TodoItem[]>(() => {
   }
   return items
 })
+
+// ── 工作台入口(選著資料時) ──────────────────────────
+// 工作台(要處理的事+AI建議)只在未選取資料時顯示;選著資料時側欄留一行入口。
+// suggestCount 由 KnowledgeSuggestions 元件回報——收件匣的資料只有它自己知道。
+const suggestCount = ref(0)
+const workbenchBadge = computed(() => {
+  const parts: string[] = []
+  if (todoItems.value.length) parts.push(`${todoItems.value.length} 件要處理`)
+  if (suggestCount.value) parts.push(`${suggestCount.value} 個 AI 建議`)
+  return parts.join('、')
+})
+function backToWorkbench() {
+  selectedId.value = null
+  chunks.value = []
+}
 
 /**
  * 體檢節流:loadSources 有十幾個呼叫點(建資料夾、改名、刪資料、搬卡…),每次都掃
@@ -2422,6 +2500,7 @@ function openCreateManual() {
   chunkActiveUntil.value = ''
   chunkExpiredAtMs.value = 0
   chunkSettingsOriginal = { enabled: true, activeUntil: '' }
+  chunkAdvancedOpen.value = false
   chunkEditOpen.value = true
 }
 
@@ -2443,6 +2522,8 @@ function openEditChunk(chunk: ChunkRow) {
   chunkActiveUntil.value = chunk.activeUntilMs ? ymdLabel(chunk.activeUntilMs) : ''
   chunkExpiredAtMs.value = chunk.expiredAtMs || 0
   chunkSettingsOriginal = { enabled: chunkEnabled.value, activeUntil: chunkActiveUntil.value }
+  // 有標籤/設過期限/到期停用過 → 進階預設展開,別把生效中的設定藏起來
+  chunkAdvancedOpen.value = chunkForm.value.tags.length > 0 || !!chunkActiveUntil.value || chunkExpiredAtMs.value > 0
   chunkEditOpen.value = true
 }
 
@@ -2731,6 +2812,16 @@ onMounted(async () => {
     const src = sources.value.find(s => s.id === sourceId)
     if (src) await selectSource(src)
     clearQuery()
+    return
+  }
+
+  // 右下角異常中心帶 ?health=分類:直接開對應的問題清單。
+  // 使用者在異常中心已經按過一次「去修」,到頁面後不該再自己找一遍同一件事。
+  const healthParam = String(route.query.health ?? '').trim()
+  if (healthParam && healthParam in HEALTH_META) {
+    clearQuery()
+    await loadHealth(true)
+    openHealthList(healthParam as HealthCategory)
     return
   }
 

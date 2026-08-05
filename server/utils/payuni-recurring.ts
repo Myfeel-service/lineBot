@@ -329,7 +329,7 @@ export async function chargeDueRecurring(
           creditHash: sub.payuniCardToken!,
           prodDesc: `${brandName} ${plan.name}方案 訂閱續扣`.trim(),
           timestamp: Math.floor(now.getTime() / 1000),
-        }, keys, config.payuniEnv)
+        }, keys, config.payuniEnv, config.payuniRelayBase)
       }
       catch (e) {
         // 網路層失敗：結果未知 → 與 UNKNOWN 同樣處理（留 pending,不標失敗、不重扣）

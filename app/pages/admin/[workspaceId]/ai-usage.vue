@@ -314,10 +314,15 @@
                 <div v-if="row.sources.length" class="usage-handoff-sources">
                   最相近卡：{{ row.sources.slice(0, 2).map(s => s.title).join('、') }}
                 </div>
+                <div v-if="row.handoffReason === 'non_text_content'" class="usage-handoff-sources">
+                  AI 目前看不懂圖片、影片這類內容，客人傳完後就要求真人。點「開對話」看客人傳了什麼。
+                </div>
                 <div class="usage-handoff-actions">
-                  <el-button :icon="ChatDotRound" size="small" plain @click="goConversation(row.userId)">開對話</el-button>
-                  <el-button :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
-                  <el-button v-if="advancedOpen" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
+                  <!-- 傳圖案例沒有「補知識」可按,主要動作換成開對話,不讓那一列全是次要按鈕 -->
+                  <el-button :icon="ChatDotRound" size="small" :type="row.handoffReason === 'non_text_content' ? 'primary' : undefined" plain @click="goConversation(row.userId)">開對話</el-button>
+                  <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路 -->
+                  <el-button v-if="row.handoffReason !== 'non_text_content'" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
+                  <el-button v-if="advancedOpen && row.handoffReason !== 'non_text_content'" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
                   <el-button v-if="!row.resolved" size="small" type="success" plain :loading="resolvingUserId === row.userId" @click="resolveHandoff(row.userId)">✓ 已處理</el-button>
                 </div>
               </div>
@@ -613,6 +618,8 @@ function reasonBadgeClass(r: HandoffReason | null) {
   if (r === 'quota_exceeded') return 'badge badge-red'
   // 系統故障要一眼和「客人要求真人」這類正常轉接分開,不能同為灰色
   if (r === 'llm_error') return 'badge badge-red'
+  // 傳圖:不是故障也不是客人主動要求,是 AI 讀不懂 → 給自己的顏色,才不會混進灰色那堆
+  if (r === 'non_text_content') return 'badge badge-blue'
   return 'badge badge-gray'
 }
 

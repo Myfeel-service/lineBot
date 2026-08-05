@@ -510,11 +510,13 @@
           </el-popover>
           <el-popover
             v-if="selectedUserId"
+            v-model:visible="quickReplyPickerVisible"
             trigger="click"
             placement="top-start"
             :width="340"
             popper-class="conv-picker-popover"
             @show="onQuickReplyPickerShow"
+            @hide="pendingQuickReplyId = ''"
           >
             <template #reference>
               <button
@@ -527,7 +529,7 @@
               </button>
             </template>
             <div class="conv-picker-panel">
-              <div class="conv-picker-title">挑一則送出</div>
+              <div class="conv-picker-title">挑一則回覆</div>
               <div class="conv-picker-tabs">
                 <button
                   v-for="tab in quickReplyTabs"
@@ -554,7 +556,7 @@
                     找不到符合「{{ quickReplySearch.trim() }}」的項目
                   </template>
                   <template v-else-if="quickReplyTab === 'preset'">
-                    還沒有啟用的客服預存。建立常用回覆後，就能在這裡一鍵送出。
+                    還沒有啟用的客服預存。建立常用回覆後，就能在這裡直接取用。
                     <a class="conv-picker-empty__link" @click="openQuickReplySource('preset')">去建立客服預存</a>
                   </template>
                   <template v-else>
@@ -569,7 +571,7 @@
                     type="button"
                     class="conv-support-preset-option"
                     :class="{ active: pendingQuickReplyId === item.id }"
-                    :disabled="isSupportPresetBusy"
+                    :disabled="isSupportPresetBusy || quickReplyFilling"
                     @click="pendingQuickReplyId = item.id"
                   >
                     <span class="conv-support-preset-option__name">{{ item.name || '(未命名)' }}</span>
@@ -577,30 +579,42 @@
                   </button>
                 </div>
               </div>
-              <p class="conv-picker-note">送出後這場會話轉為真人處理，機器人與 AI 不會再自動回覆，直到你按「交還機器人」。</p>
+              <p class="conv-picker-note">{{ quickReplyNote }}</p>
               <div class="conv-picker-footer">
                 <el-button
                   size="small"
-                  type="primary"
                   :loading="sending"
-                  :disabled="!pendingQuickReplyId || isSupportPresetBusy"
+                  :disabled="!pendingQuickReplyItem || isSupportPresetBusy || quickReplyFilling"
                   @click="sendQuickReply"
                 >
-                  確認送出
+                  直接送出
+                </el-button>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="quickReplyFilling"
+                  :disabled="!canFillQuickReply || isSupportPresetBusy"
+                  @click="fillQuickReply"
+                >
+                  填入回覆框
                 </el-button>
               </div>
             </div>
           </el-popover>
         </div>
-        <span class="text-muted conv-input-hint">點上面的按鈕，可以直接挑圖片、貼圖、表情，或挑一則客服預存／自動回覆送出</span>
+        <span class="text-muted conv-input-hint">點上面的按鈕，可以挑圖片、貼圖、表情，或挑一則客服預存／自動回覆（文字可先填進回覆框改）</span>
       </div>
 
       <div class="conv-input-row">
         <el-input
+          ref="inputRef"
           v-model="inputText"
-          placeholder="輸入訊息（可含 emoji），按 Enter 送出…"
+          type="textarea"
+          :autosize="{ minRows: 1, maxRows: 8 }"
+          resize="none"
+          placeholder="輸入訊息（可含 emoji），Enter 送出、Shift + Enter 換行…"
           :disabled="sending"
-          @keydown.enter.exact.prevent="send"
+          @keydown.enter="onInputEnter"
         />
         <el-button type="primary" :loading="sending" :disabled="!canSend" @click="send">
           送出
@@ -756,6 +770,7 @@ import {
 } from '~~/shared/upload-rules'
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
 import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
+import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 
 /** 與 `useWorkspace().apiFetch` 相同簽章，由路由頁注入（含 workspaceId）。 */
 const props = defineProps<{
@@ -968,7 +983,15 @@ type PickerKind = 'emoji' | 'sticker'
 type QuickSendType = 'image' | 'video' | 'audio'
 /** 「挑一則送出」的來源：客服預存 / 自動回覆規則 */
 type QuickReplySource = 'preset' | 'rule'
-type QuickReplyItem = { id: string; name: string; meta: string }
+type QuickReplyItem = {
+  id: string
+  name: string
+  meta: string
+  /** message = 有純文字可以填進回覆框改；module / uri 只能原封不動送出 */
+  actionType: AutoReplyActionType
+  /** 送出時會自動貼標籤——改走「填入回覆框」自己送就不會貼，要跟客服講清楚 */
+  taggingEnabled: boolean
+}
 
 type PickerCategory = {
   id: string
@@ -1050,8 +1073,16 @@ const aiContextRefreshKey = ref(0)
  */
 const { canOperate } = useWorkspace()
 
+const inputRef = ref<{ focus: () => void } | null>(null)
+
+/** 填進回覆框後把游標帶過去：客服下一步一定是改字，不該還要自己再點一次 */
+function focusInput() {
+  inputRef.value?.focus?.()
+}
+
 function applyAiDraft(text: string) {
   inputText.value = String(text || '')
+  nextTick(focusInput)
 }
 
 /** 開新分頁去補知識（帶客人原句預填），不離開現場對話——和 playground 同一做法 */
@@ -1070,6 +1101,9 @@ const autoReplyRulesLoading = ref(false)
 const quickReplyTab = ref<QuickReplySource>('preset')
 const quickReplySearch = ref('')
 const pendingQuickReplyId = ref('')
+/** 受控開合：填進回覆框後要自己把 popover 關掉，客服才看得到填進去的字 */
+const quickReplyPickerVisible = ref(false)
+const quickReplyFilling = ref(false)
 const mediaDialogVisible = ref(false)
 const quickMediaUploading = ref(false)
 const quickSendType = ref<QuickSendType>('image')
@@ -1126,12 +1160,16 @@ const quickReplySourceItems = computed<QuickReplyItem[]>(() => {
       name: String(r.name || ''),
       // 關鍵字一起顯示：規則名稱常常很像，光看名字認不出是哪一條
       meta: [r.keyword ? `關鍵字：${r.keyword}` : '', getActionSummary(r)].filter(Boolean).join('｜'),
+      actionType: getActionType(r),
+      taggingEnabled: r?.tagging?.enabled === true,
     }))
   }
   return activeSupportPresets.value.map((p: any) => ({
     id: String(p.id),
     name: String(p.name || ''),
     meta: getActionSummary(p),
+    actionType: getActionType(p),
+    taggingEnabled: p?.tagging?.enabled === true,
   }))
 })
 const quickReplyNeedsSearch = computed(() =>
@@ -1143,6 +1181,26 @@ const quickReplyItems = computed<QuickReplyItem[]>(() => {
   return quickReplySourceItems.value.filter(
     item => `${item.name} ${item.meta}`.toLowerCase().includes(kw),
   )
+})
+const pendingQuickReplyItem = computed<QuickReplyItem | null>(
+  () => quickReplyItems.value.find(item => item.id === pendingQuickReplyId.value) ?? null,
+)
+/** 只有純文字才填得進回覆框改；模組／網址卡沒有可編輯的文字 */
+const canFillQuickReply = computed(() => pendingQuickReplyItem.value?.actionType === 'message')
+/**
+ * 選到的這則要說什麼：不能改的要先講原因，會貼標籤的要講「自己送就不會貼」，
+ * 不然客服會以為兩顆按鈕只差在能不能改字。
+ */
+const quickReplyNote = computed(() => {
+  const item = pendingQuickReplyItem.value
+  const handoff = '送出後這場會話轉為真人處理，機器人與 AI 不會再自動回覆，直到你按「交還機器人」。'
+  if (!item) return handoff
+  const lines: string[] = []
+  if (item.actionType === 'module') lines.push('這則是觸發機器人模組，沒有可以改的文字，只能直接送出。')
+  else if (item.actionType === 'uri') lines.push('這則是網址按鈕卡，沒有可以改的文字，只能直接送出。')
+  if (item.taggingEnabled) lines.push('這則直接送出會自動貼標籤；填入回覆框自己送不會貼。')
+  lines.push(handoff)
+  return lines.join('')
 })
 const quickSendActions: Array<{ type: QuickSendType, label: string, icon: string }> = [
   { type: 'image', label: '圖片', icon: '🖼️' },
@@ -1575,6 +1633,8 @@ async function sendQuickReply() {
       },
     )
     showToast(isRule ? '已送出自動回覆的內容' : '已送出客服預存', 'success')
+    // 送完就收起來：這顆按鈕的事已經做完，留著擋住剛送出的訊息
+    quickReplyPickerVisible.value = false
     await reloadAfterOutgoing()
   }
   catch (e: any) {
@@ -1584,6 +1644,47 @@ async function sendQuickReply() {
     sending.value = false
     pendingQuickReplyId.value = ''
   }
+}
+
+/**
+ * 把預存／規則的文字填進回覆框，讓客服改完再自己送。
+ *
+ * 文字向後端要，不直接用清單裡那份：{{屬性}} 要換成這位客人的實際值，
+ * 代換規則得和真的送出同一套，否則客服會把 {{displayName}} 原封不動送出去。
+ */
+async function fillQuickReply() {
+  if (!assertCanOperate()) return
+  const item = pendingQuickReplyItem.value
+  if (!item || !selectedUserId.value) return
+  const isRule = quickReplyTab.value === 'rule'
+  quickReplyFilling.value = true
+  try {
+    const res = await apiFetch<{ text: string | null }>(
+      `/api/conversations/${selectedUserId.value}/quick-reply-text`,
+      { params: isRule ? { ruleId: item.id } : { presetId: item.id } },
+    )
+    const text = String(res?.text ?? '')
+    if (!text) {
+      showToast('這則沒有可以修改的文字，請用「直接送出」', 'warning')
+      return
+    }
+    inputText.value = text
+    quickReplyPickerVisible.value = false
+    pendingQuickReplyId.value = ''
+    await nextTick()
+    focusInput()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '載入內容失敗', 'error')
+  }
+  finally {
+    quickReplyFilling.value = false
+  }
+}
+
+function getActionType(preset: any): AutoReplyActionType {
+  const type = preset?.action?.type
+  return type === 'module' || type === 'uri' ? type : 'message'
 }
 
 function getActionSummary(preset: any): string {
@@ -1640,6 +1741,20 @@ async function selectUser(c: ConvItem) {
   finally {
     msgLoading.value = false
   }
+}
+
+/**
+ * Enter 送出、Shift + Enter 換行。
+ *
+ * isComposing 一定要擋：用注音／拼音打字時，按 Enter 是在選字，不是要送出——
+ * 沒擋的話會把還沒選完的半句送給客人。
+ */
+function onInputEnter(evt: Event | KeyboardEvent) {
+  const e = evt as KeyboardEvent
+  if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  send()
 }
 
 async function send() {

@@ -35,7 +35,7 @@ export async function runBillingReconcile(
   const merKey = String(config.payuniHashKey || '')
   const merIV = String(config.payuniHashIV || '')
   const payuniCfg = merchantId && merKey && merIV
-    ? { merchantId, keys: { merKey, merIV }, env: config.payuniEnv }
+    ? { merchantId, keys: { merKey, merIV }, env: config.payuniEnv, relayBase: config.payuniRelayBase }
     : null
   const result = await runPaymentReconcile(now, undefined, payuniCfg)
   const recurring = opts?.charge

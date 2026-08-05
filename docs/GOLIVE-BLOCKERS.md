@@ -203,19 +203,111 @@ QDM／1shop 這類平台商家則直接填平台提供的 IP。
 （查詢/解約）。客戶刷卡的 UPP 付款頁是瀏覽器導轉,不受 IP 限制;`trade/query` 目前從
 Amplify 打是通的,也沒被擋。所以要處理的只有 2~3 支呼叫。
 
-**業界怎麼解「serverless 打需要 IP 白名單的金流」**（2026-08-04 查證,這是常見到有整類 SaaS 在賣的問題）:
+**業界怎麼解「serverless 打需要 IP 白名單的金流」**（2026-08-04/05 查證,這是常見到有整類 SaaS 在賣的問題）:
 
 | 方案 | 做法 | 粗估成本（待核實） | 工 | 適用性 |
 |---|---|---|---|---|
-| **① 請金流放寬成網段** | 多數金流可談;先問 | 0 | 0 | **首選,等窗口回覆** |
-| **② 自架小出口代理**（次選） | Lightsail/EC2 最小機 + 固定 IP(Elastic IP),跑一個 HTTPS 轉發代理;程式設 `HTTPS_PROXY` 讓**只有續扣/解約那 2~3 支**走它 | 約 USD 3.5~6/月 | 半天 | ✅ 不需 VPC,Amplify 可用 |
-| ③ 靜態 IP 代理 SaaS | QuotaGuard / Fixie 這類「固定 IP 出口即服務」——業界對 Heroku/Vercel/Lambda 這類平台的標準解;設兩個環境變數即接上 | 約 USD 19/月起 | 1 小時 | ✅ 最省事但比自架貴;金流流量走第三方,資安要評估 |
-| ④ VPC + NAT Gateway | AWS 官方解 | USD 32/月起+流量 | 中 | ❌ **Amplify SSR 不支援 VPC,用不了** |
-| ⑤ fck-nat 便宜 NAT 機 | 社群省錢版 NAT | 約 USD 3/月 | 中 | ❌ 同樣要 VPC,用不了 |
+| ① 請金流放寬成網段 | ~~多數金流可談~~ | 0 | 0 | ❌ **已自我否決(2026-08-05):我方根本提不出可用的網段**,見下方 |
+| **② 自架小中繼站**（**主方案**,程式端已做好） | Lightsail/EC2 最小機 + 固定 IP(Elastic IP),跑一個 HTTPS 反向代理;設 `PAYUNI_RELAY_BASE` 讓**只有續扣/解約那 2~3 支**走它 | 約 USD 3.5~6/月 | 半天（機器）+ 0（程式已完成） | ✅ 不需 VPC,Amplify 可用 |
+| ③ 靜態 IP 代理 SaaS | QuotaGuard / Fixie 這類「固定 IP 出口即服務」 | 約 USD 19/月起 | 1 小時 | ✅ 最省事但比自架貴;金流流量走第三方,資安要評估 |
+| ④ **Cloudflare** | 見下方專節 | Enterprise 年約 | — | ❌ **這個規模用不到** |
+| ⑤ VPC + NAT Gateway | AWS 官方解 | USD 32/月起+流量 | 中 | ❌ **Amplify SSR 不支援 VPC,用不了** |
+| ⑥ fck-nat 便宜 NAT 機 | 社群省錢版 NAT | 約 USD 3/月 | 中 | ❌ 同樣要 VPC,用不了 |
 
-→ **結論:先問①;被拒就做②**（我方程式只要在 `chargeCreditToken`/`cancelCardBinding` 加一個
-可選的 proxy 環境變數,約 20 行,可以先寫好備著,切換只是設個 env）。
-③ 適合完全不想管機器的情況。**付款頁（UPP）與查單不受 IP 限制,所以出問題半徑很小。**
+#### ❌ 「問 PAYUNi 放寬成網段」已自我否決 —— 我方提不出網段（2026-08-05 查證）
+
+抓 AWS 官方位址清單 `https://ip-ranges.amazonaws.com/ip-ranges.json` 實際驗過:
+
+- 27 種服務標籤裡**沒有 `AMPLIFY`,連 `LAMBDA` 都沒有** → Amplify SSR 的出口 IP
+  是從**該區域整個 EC2 共用池**隨機拿的。
+- 池子規模:東京區 = **85 個 CIDR ≈ 430 萬個 IP**;美東 = 294 個 CIDR ≈ 2,100 萬個。
+- 池子**會長大**(AWS 為此提供 `AmazonIpSpaceChanged` 變更通知訂閱),且**全世界任何
+  AWS 客戶都共用** —— 攻擊者租一台同區 EC2 就在「我們的網段」裡。
+
+→ 就算 PAYUNi 願意收網段:塞不進 10 格上限、等於白名單失效、還會漂。
+  **死因在我方提不出可用的網段,與 PAYUNi 無關。** 所以不要在信裡問這題。
+  唯一能給出的「確定 IP」= 自架中繼站那台的靜態 IP,中繼站因此是主方案而非備案。
+
+#### ❌ Cloudflare 為什麼解不了這題（2026-08-05 查證）
+
+一句話:**Cloudflare 免費/付費方案只管「進來的流量」,不管「出去的 IP」;要固定出去的 IP 得買 Enterprise。**
+
+| 想用的 Cloudflare 功能 | 實際情況 |
+|---|---|
+| **Dedicated Egress IP**（正是我們要的「固定出口 IP」） | **只有 Enterprise 合約客戶能加購**,官方文件明寫 “available as an add-on for any Cloudflare Zero Trust **enterprise-contracted** customer”,要價年約等級 → 為了每月幾十筆扣款不合理 |
+| Cloudflare Tunnel（cloudflared） | **方向相反** —— 那是「把外面的請求安全帶進我方內網」,不是「讓我方的請求從固定 IP 出去」 |
+| Workers 當跳板 | Workers 的對外 IP 也是 Cloudflare 的**共用池**,同樣會變 → 換一個共用池而已,沒解決問題 |
+| Cloudflare 代管 DNS/CDN（我們已在用） | 只影響**別人打進來**的路徑,對我方主動打出去的 IP 完全沒有影響 |
+
+來源:[Dedicated egress IPs（Cloudflare One 文件）](https://developers.cloudflare.com/cloudflare-one/traffic-policies/egress-policies/dedicated-egress-ips/)、
+[Egress policies](https://developers.cloudflare.com/cloudflare-one/traffic-policies/egress-policies/)、
+[Cloudflare 部落格:Gateway dedicated egress policies](https://blog.cloudflare.com/gateway-dedicated-egress-policies/)
+
+→ 諷刺的是,**Cloudflare 賣的就是方案②那台機器的豪華版**。我們自己架一台 USD 3.5/月的
+   就得到同一件事(單一固定出口 IP),差別只在他們有全球備援與 SLA。
+
+#### ✅ 方案② 程式端已完成並實測（2026-08-05）
+
+環境變數 **`PAYUNI_RELAY_BASE`**:留白 = 直連 PAYUNi(**現行行為一行不變**);
+設了 = 幕後那幾支的網址換成中繼站,**路徑原樣保留**。
+`resolveBackendUrl()`（server/utils/payuni.ts）,4 個呼叫端都接好了。
+
+**實測**（真沙盒 `credit_bind/cancel`,同一個已簽章請求分別走兩條路）:
+
+```
+① 網址改寫  直連: https://sandbox-api.payuni.com.tw/api/credit_bind/cancel
+           經中繼: http://127.0.0.1:54585/api/credit_bind/cancel
+② [直連] {"ok":false,"notFound":true,"outerStatus":"CANCEL03001","message":"取消失敗，查無符合約定資料"}
+  [中繼] {"ok":false,"notFound":true,"outerStatus":"CANCEL03001","message":"取消失敗，查無符合約定資料"}
+  中繼站實際看到: {"method":"POST","path":"/api/credit_bind/cancel","ct":"application/x-www-form-urlencoded","bytes":444}
+```
+
+→ 兩條路徑**結果完全一致**、路徑保留、回覆通過我方金鑰驗簽。
+
+**⚠️ 刻意不用系統層 proxy(`HTTPS_PROXY` / `NODE_USE_ENV_PROXY`)** ——
+Node 22 確實支援 `NODE_USE_ENV_PROXY=1`(實測過),但它是**全域**的:會把 Gemini、LINE、
+光貿發票的流量一起繞進那台小機器 → 那台機器就變成**整個系統的單點故障**。
+換網址只影響幕後那幾支,其餘流量一行都不碰。也因此不必新增 `undici` 依賴。
+
+**中繼站掛掉的後果很小:** 客人刷卡的 UPP 付款頁永遠直連 PAYUNi;續扣是排程,
+今天沒扣到明天會再試(寬限期 3 天)。所以那台機器不需要高可用。
+
+**中繼站不需要被信任:** 請求在我方就已用特店金鑰 AES-GCM 加密 + SHA256 簽章,
+回覆也要用同一組金鑰驗簽才會被採信 → 一台被入侵的中繼站**簽不出「扣款成功」**。
+(它仍能看到加密後的封包、能擋掉請求 —— 所以照樣只開放必要的來源與路徑。)
+
+#### 中繼站怎麼架（半天,Caddy 版）
+
+1. **開機器 + 綁固定 IP**:AWS Lightsail 最小方案(USD 3.5/月) → Networking 頁按
+   **Attach static IP**(Lightsail 的靜態 IP 附掛在執行中的機器上不收費)。
+   同 AWS 帳號、同區域,帳單與權責都跟現有基礎設施在一起。
+2. **裝 Caddy**(自動申請並續期 Let's Encrypt 憑證,零手動)。`/etc/caddy/Caddyfile`:
+
+```caddyfile
+relay.yourdomain.com {
+    # 只開放 PAYUNi 幕後那幾支,其餘一律 404 —— 別讓它變成公開的開放代理
+    @payuni path /api/credit /api/credit_bind/*
+    handle @payuni {
+        reverse_proxy https://api.payuni.com.tw {
+            header_up Host api.payuni.com.tw   # TLS SNI 與 Host 都要對,否則上游拒絕
+        }
+    }
+    respond 404
+}
+```
+
+3. **DNS**:`relay.yourdomain.com` A 記錄指向那個靜態 IP。
+   ⚠️ 若用 Cloudflare 代管 DNS,這筆要設**灰雲(DNS only)** —— 開橘雲會讓連線先進
+   Cloudflare 再出來,出口 IP 就不是我們那台了,白名單白填。
+4. **PAYUNi 後台**:「限定 API 之 IP 設定」只填**那一個靜態 IP**(把現在為了測試塞的
+   浮動 IP 全部清掉)。
+5. **Amplify 環境變數**:`PAYUNI_RELAY_BASE=https://relay.yourdomain.com` → 重新部署。
+6. **驗收**:超管後台跑一次續扣排程,看 `charged` 有沒有進;或在機器上
+   `curl -s https://api.ipify.org` 確認它自己的出口 IP == 白名單那個。
+
+**測試環境不用架** —— 沙盒的 IP 白名單直接填當下的浮動 IP 就能測(已經這樣測完 A1~A21)。
+中繼站只為正式環境存在。若要在沙盒也走中繼,記得把 Caddyfile 的上游改成
+`https://sandbox-api.payuni.com.tw`(中繼站必須與 `PAYUNI_ENV` 同環境)。
 
 #### 申請書上的 IP 三格怎麼填
 
@@ -545,3 +637,96 @@ grep -rn "UPP02087" .            # 查錯誤碼
 grep -rln "CreditHash" .          # 查欄位出現在哪些 API
 grep -n "^| Version" "012_Ver 2.0.md"   # 查某支 API 的版本號
 ```
+
+---
+
+## 附四:給 PAYUNi 客服的詢問信（2026-08-05 修訂版,**可直接寄出**）
+
+**寄到**:`service@payuni.com.tw`（申請書頁面指定的送件/詢問信箱）
+**也可以**:把「短版」貼給窗口(王建民)先問一輪,他答不了再寄正式信。
+
+> **修訂記錄**:初版有問「IP 可否填網段」。後來抓 AWS 官方位址清單驗證後**整題拿掉**——
+> Amplify 的出口 IP 來自整個區域的 EC2 共用池(東京區 85 個 CIDR ≈ 430 萬 IP、會長大、
+> 全 AWS 客戶共用),我方根本提不出一個可用的網段,問了也沒用(見 A3)。
+> 中繼站因此从備案升級為**主方案**,而**問題 1(先送件、IP 後補)成為時程關鍵**。
+
+### 為什麼把三題綁成一封
+
+三題都是一來一往就能定案的封閉問題,且共同決定送件時程與日後開新租戶的流程成本。
+寫法上刻意先講我方已完成什麼、方案是什麼,再問問題——避免拿到樣板回覆。
+
+### 完整版（Email）
+
+> **主旨:幕後 Token 扣款申請書送件與綁定 IP 時程請教(會員編號 P2303845057)**
+>
+> PAYUNi 客服團隊您好:
+>
+> 我們是麥菲爾股份有限公司(統編 83610942),目前正在串接「信用卡幕後 Token 交易(CREDIT)」,
+> 用於訂閱制月租服務的每月自動扣款。
+>
+> **帳號資訊**
+> - 正式:會員編號 `P2303845057` / 商店代號 `NPPA836109423`
+> - 測試:會員編號 `P236588346` / 商店代號 `S076820628`
+>
+> **目前進度**:沙盒環境已完成 UPP 首刷建立約定(取得 `CreditHash`)、`/api/credit` 幕後扣款、
+> `/api/credit_bind/cancel` 解除約定的完整測試,回應均正常。
+> 幕後 API 的來源 IP,我方將以一台**固定 IP 的中繼主機**統一送出(主機建置中)。
+>
+> 有三個問題想請教:
+>
+> **問題 1|可否先送件審核,IP 之後再以「變更IP位置」補登?**
+>
+> 申請書上有「變更IP位置」的異動選項。我方固定 IP 主機尚在建置,想確認是否可以
+> **先送件讓審核流程開始,IP 待主機建置完成後再申請變更**?若可行,審核與建置就能並行,
+> 不會互相等待。
+>
+> **問題 2|同一個固定 IP 可否套用到會員底下所有商店?**
+>
+> 我方為 SaaS 平台,未來每一個客戶會各自擁有一個 PAYUNi 特店,但**全部幕後 API 呼叫
+> 都會從我方同一個固定 IP 送出**。想確認:
+> - 是否可用申請書的「全部商店統一設定」一次涵蓋?
+> - 未來新增商店時,是否每一間都需重新送一次紙本申請書,或有較簡便的流程?
+>
+> **問題 3|05 與 07 申請書的送件範圍與審核時間**
+>
+> - 正式商店(`NPPA836109423`)是否 05「幕後功能 API」與 07「信用卡 Token API」兩張都需要送?
+> - 測試環境我方已在後台「串接設定 › 限定 API 設定」啟用「信用卡 Token API」,目前可正常串接。
+>   此情況下測試環境是否仍需送件?
+> - 送件後一般審核作業時間約幾個工作日?
+>
+> 以上麻煩協助確認,謝謝。
+>
+> 麥菲爾股份有限公司
+> 江政諭
+> service@myfeel-tw.com
+
+### 短版（LINE 給窗口）
+
+> 建民您好,幕後 Token 扣款想再確認幾件事(正式 `NPPA836109423` / 測試 `S076820628`):
+>
+> 1. 幕後 API 的來源 IP 我們會用一台**固定 IP 的中繼主機**統一送出,主機還在建置 →
+>    可以**先送申請書讓審核跑,IP 之後用「變更IP位置」補**嗎?這樣審核跟建置可以並行。
+> 2. 我們是 SaaS,未來每個客戶各一個特店,但幕後呼叫都從我方同一個固定 IP 出去 →
+>    可以用「全部商店統一設定」一次涵蓋嗎?以後新增商店還要再送紙本嗎?
+> 3. 正式商店 05 和 07 **兩張都要送**嗎?測試環境我們已經在後台自己開了「信用卡Token API」
+>    也能串,這樣測試還需要送件嗎?審核大概幾個工作日?
+
+### ⚠️ 寄出前你可能想拿掉的一句
+
+問題 3 第二點主動說了「**測試環境我方已在後台自行啟用**」。
+
+- **留著的好處**:這是他們自己後台的開關,講清楚才問得到「那到底要不要送件」這個真正的答案;
+  對金流業者透明是對的。
+- **拿掉的理由**:理論上對方可能因此把沙盒的開關關掉、要我們補件才恢復。
+  (機率低 —— 那是後台給商店自助的功能。)
+
+→ 建議**留著**。但這是你的判斷,先講給你知道。
+
+### 這封信會決定什麼
+
+| 對方的回答 | 我方接下來 |
+|---|---|
+| **可以先送件、IP 後補** | 蓋章流程今天就開始跑,同時架中繼站 → 兩邊並行,省好幾天 |
+| **要 IP 才收件** | 先花半天把中繼站架好拿到 IP,再送件(A3 有完整 runbook,程式端已完成) |
+| **全部商店統一設定可行** | 每接一個新客戶不用再送紙本 → 這題影響的是**日後開通新租戶的流程成本**,不只上線 |
+| **測試也要補件** | 照送(表已填好在 ~/Desktop/PAYUNi申請書/);沙盒現在能測就繼續測 |

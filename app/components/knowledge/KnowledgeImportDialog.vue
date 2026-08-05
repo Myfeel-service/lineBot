@@ -616,14 +616,6 @@ const pasteInput = ref('')
 // 當成知識內容匯進資料庫。mode 與 canPreview 共用同一份，不再各寫一次。
 const mode = computed<ImportMode>(() => detectImportKind(pasteInput.value, !!selectedFile.value))
 
-// 判別結果同步回原本三個欄位，下游（runPreview / runDiscover / bulk-create）完全不用改
-watch([pasteInput, mode], () => {
-  const v = pasteInput.value.trim()
-  urlInput.value = mode.value === 'url' ? v : ''
-  gsheetInput.value = mode.value === 'gsheet' ? v : ''
-  textInput.value = mode.value === 'text' ? pasteInput.value : ''
-})
-
 /** 偵測結果：名稱 + 那一句關鍵差異（會不會自動更新），沒東西時為 null */
 const detected = computed(() => {
   if (selectedFile.value) {
@@ -670,6 +662,17 @@ const fileSizeKb = ref(0)
 // 否則 ~5MB 檔 base64 膨脹到 ~6.7MB 會超過 Lambda 6MB payload 上限 → 413）。
 const selectedFile = ref<File | null>(null)
 const fileContentType = ref('')
+
+// 判別結果同步回原本三個欄位，下游（runPreview / runDiscover / bulk-create）完全不用改。
+// ⚠️ 這個 watch 必須放在 selectedFile 宣告之後：watch 註冊當下就會讀一次 mode 當初始值，
+// 而 mode 的 getter 讀 selectedFile——放前面會 TDZ(「Cannot access before initialization」)，
+// 整個元件 setup 直接炸掉、知識庫頁面變全站錯誤頁。typecheck 抓不到這種執行時序問題。
+watch([pasteInput, mode], () => {
+  const v = pasteInput.value.trim()
+  urlInput.value = mode.value === 'url' ? v : ''
+  gsheetInput.value = mode.value === 'gsheet' ? v : ''
+  textInput.value = mode.value === 'text' ? pasteInput.value : ''
+})
 
 const ACCEPTED_EXT_RE = /\.(pdf|xlsx|xls)$/i
 
