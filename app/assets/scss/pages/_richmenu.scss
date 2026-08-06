@@ -56,11 +56,17 @@
   font-weight: 600;
 }
 
+/* 區塊設定：外殼＝message-card（卡頭＋內容），垂直節奏交給卡片自己的 padding，不要再疊 gap */
 .rm-area-editor {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-form-stack-gap);
+  gap: 0;
+}
+
+/* 卡頭右側的說明字：不跟標題擠、換行也不推開標題 */
+.rm-area-editor > .message-card-header > .text-muted {
+  flex-shrink: 1;
+  min-width: 0;
+  text-align: right;
 }
 
 /* 高度／捲動：layout/_split-layout.scss `.split-editor-body > .rm-editor-body` */
@@ -71,21 +77,84 @@
   gap: var(--space-form-stack-gap);
 }
 
+/*
+ * 選單設定卡：split 右側編輯區在寬螢幕會超過 1400px，單欄堆疊會把「Chat Bar 文字」
+ * 這種短欄位拉成滿版、視線左右跑，預覽也被推到很下面 → 分兩欄：
+ *   左＝要填的東西（固定 340px，欄位就是正常輸入框寬度）
+ *   右＝要看的東西（版型＋預覽，吃掉剩下的寬度）
+ * 卡片本身維持滿版，跟推播／自動回覆的區塊卡一致（見 _broadcasts.scss .bc-section-card）。
+ * 用 container query 而不是 media query：側欄寬度可拖曳，視窗寬 ≠ 編輯區寬。
+ */
 .rm-config-card {
   width: 100%;
   max-width: 100%;
+  container-type: inline-size;
 }
 
-.rm-config-card :deep(.card-section-stack) {
+/* 比 .card-section-stack（_flow.scss，載入順序在本檔之後）更高權重才壓得住 display:flex */
+.rm-config-card .rm-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem 1.25rem;
+}
+
+@container (max-width: 820px) {
+  .rm-config-card .rm-config-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rm-config-col {
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+/* 塌成單欄時（窄編輯區）短欄位不要又被拉成滿版；兩欄時軌道已是 340px，此上限不生效 */
+.rm-config-col--fields {
+  max-width: 420px;
+}
+
+/* 右欄標題（圖文樣式／區塊預覽）與左欄欄位標題對齊同一條線：
+   .admin-field-label 是 line-height 1.2，.admin-panel-title 沒設會吃 body 的 1.6 → 差 2~3px */
+.rm-config-col--visual .admin-panel-title {
+  line-height: 1.2;
+}
+
+/* 「區塊預覽」標題與畫布的間距，比照上方「圖文樣式」（.admin-layout-picker）＝同一節奏 */
+.rm-config-col--visual .admin-area-editor-flat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section-heading-gap);
+}
+
+/* 預覽不要無限放大到像另一個編輯器；拖區塊還是要夠大才好抓 */
+.rm-config-col--visual .canvas-wrap {
+  max-width: 860px;
+  margin-bottom: 0;
+}
+
+/* 還沒上傳圖時右欄不留空洞：放同尺寸的虛線佔位＋下一步說明 */
+.rm-preview-placeholder {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 132px;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .rm-layout-in-card {
   gap: 0.35rem;
-}
-
-.rm-layout-hint {
-  margin: 0;
 }
 
 .rm-section-card {

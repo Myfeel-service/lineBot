@@ -216,7 +216,20 @@
       "Bash(curl -sSI --max-time 10 https://lineminime.com/webhook)",
       "Bash(perl -0pi -e 's/const flagMap = await fetchConversationFlags\\\\\\(db, fsUserIds\\\\\\)/const convMap = await fetchConversationSideData\\(db, fsUserIds\\)/g; s/mapSessionToRow\\\\\\(id, s, userMap, flagMap, workspaceId\\\\\\)/mapSessionToRow\\(id, s, userMap, convMap, workspaceId\\)/g; s/mapSessionToRow\\\\\\(d\\\\.id, d\\\\.data\\\\\\(\\\\\\), userMap, flagMap, workspaceId\\\\\\)/mapSessionToRow\\(d.id, d.data\\(\\), userMap, convMap, workspaceId\\)/g' server/api/conversations/sessions.get.ts)",
       "Bash(perl -0pi -e 's/:meta-prefix=\"outgoingPrefix\\\\\\(/:meta-prefix=\"directionPrefix\\(/g; s/:meta-text-strong=\"\\(s|c\\)\\\\.lastDirection === .incoming. && !!\\\\1\\\\.lastMessage\"/:meta-strong=\"$1.lastDirection === '\"'\"'incoming'\"'\"' \\\\&\\\\& !!$1.lastMessage\"/g' app/components/conversations/AdminPanel.vue)",
-      "Bash(perl -0pi -e \"s/loadList\\\\\\(true\\\\\\)/loadList\\('reset'\\)/g; s/loadList\\\\\\(false\\\\\\)/loadList\\('more'\\)/g\" app/components/conversations/AdminPanel.vue)"
+      "Bash(perl -0pi -e \"s/loadList\\\\\\(true\\\\\\)/loadList\\('reset'\\)/g; s/loadList\\\\\\(false\\\\\\)/loadList\\('more'\\)/g\" app/components/conversations/AdminPanel.vue)",
+      "Bash(firebase projects:list)",
+      "Bash(node --env-file=.env_myfeel -e ' *)",
+      "Bash(npx --yes firebase-tools@latest --version)",
+      "Bash(perl -0pi -e \"s/queryFlaggedDocs\\\\\\(db, workspaceId,/queryFlaggedConversations\\(db, workspaceId,/g\" server/api/conversations/list.get.ts)",
+      "Bash(perl -0pi -e \"s/import \\\\{ getDb \\\\} from '~~\\\\/server\\\\/utils\\\\/firebase'/import { getDb } from '~~\\\\/server\\\\/utils\\\\/firebase'\\\\nimport { queryFlaggedConversations } from '~~\\\\/server\\\\/utils\\\\/conversation-queue'/\" server/api/conversations/list.get.ts)",
+      "Bash(cp /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/c2f55bbd-f81a-40e6-b25a-bc8b41787ade/scratchpad/inspect-autoreplies.ts /Users/kevin/Documents/Github/linebot/.tmp-inspect-autoreplies.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types /Users/kevin/Documents/Github/linebot/.tmp-inspect-autoreplies.ts)",
+      "Bash(perl -0pi -e 's/\\\\*\\\\*已做完（typecheck 0 \\\\/ 883 測試綠），未 commit、未部署。\\\\*\\\\*/**已 commit（9261f55，2026-08-06），未部署。** typecheck 0 \\\\/ 893 測試綠。/' project_conversation_list_unify.md)",
+      "Bash(perl -0pi -e 's/2026-08-06 已做未commit未部署;/2026-08-06 已commit 9261f55 未部署;/' MEMORY.md)",
+      "Bash(cp /tmp/rm-check.css .)",
+      "Bash(sed -i '' 's#href=\"/tmp/rm-check.css\"#href=\"rm-check.css\"#' rm-mock.html)",
+      "Bash(sed -i '' 's/class=\"rm-config-col\"/class=\"rm-config-col rm-config-col--fields\"/' rm-mock.html)",
+      "Bash(sed -e 's#</body>#<script>const r=e=>{const b=document.querySelector\\(e\\).getBoundingClientRect\\(\\);return e+\" top=\"+b.top.toFixed\\(1\\)+\" left=\"+b.left.toFixed\\(1\\)+\" w=\"+b.width.toFixed\\(1\\)+\" h=\"+b.height.toFixed\\(1\\)};const out=[\".rm-config-col--fields .admin-field-label\",\".rm-config-col--visual .admin-panel-title\",\".rm-config-col--fields\",\".rm-config-col--visual\",\".canvas-wrap\",\".rm-config-grid\"].map\\(r\\).join\\(\" | \"\\);document.title=out;const p=document.createElement\\(\"pre\"\\);p.id=\"M\";p.textContent=out;document.body.appendChild\\(p\\);</script></body>#' rm-mock.html)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

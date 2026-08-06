@@ -69,64 +69,106 @@
               <span class="section-title">選單設定</span>
             </div>
           </div>
-          <div class="card-section-stack">
-            <div class="admin-field-group" data-tour="rm-chatbar">
-              <AdminFieldLabel text="Chat Bar 文字" tight />
-              <el-input v-model="form.chatBarText" placeholder="選單" />
-            </div>
+          <div class="card-section-stack rm-config-grid">
+            <!-- 左欄：要填的東西（欄位不被寬螢幕拉成滿版） -->
+            <div class="rm-config-col rm-config-col--fields">
+              <div class="admin-field-group" data-tour="rm-chatbar">
+                <AdminFieldLabel text="Chat Bar 文字" tight />
+                <el-input v-model="form.chatBarText" placeholder="選單" />
+              </div>
 
-            <div class="admin-field-group">
-              <AdminFieldLabel text="啟用" tight />
-              <div class="admin-inline-control">
-                <el-switch v-model="form.selected" />
-                <span class="text-xs text-muted">{{ form.selected ? '啟用中' : '停用中' }}</span>
+              <div class="admin-field-group">
+                <AdminFieldLabel text="啟用" tight />
+                <div class="admin-inline-control">
+                  <el-switch v-model="form.selected" />
+                  <span class="text-xs text-muted">{{ form.selected ? '啟用中' : '停用中' }}</span>
+                </div>
+              </div>
+
+              <div class="admin-field-group" data-tour="rm-default">
+                <AdminFieldLabel text="設為預設選單" tight />
+                <div class="admin-inline-control">
+                  <el-switch v-model="form.setAsDefault" />
+                  <span class="text-xs text-muted">{{ form.setAsDefault ? '新加入好友預設顯示此選單' : '不設為預設選單' }}</span>
+                </div>
+              </div>
+
+              <div class="admin-field-group" data-tour="rm-image">
+                <AdminFieldLabel :text="`1. 上傳選單背景圖 (${isCreating ? '必要' : '選填，若不上傳則自動沿用舊圖'})`" tight />
+                <FlowUploadZone
+                  v-model="form.previewUrl"
+                  type="image"
+                  appearance="simple"
+                  upload-mode="local"
+                  hint="JPG / PNG · 最大 500KB（建議 2500x1686 或 2500x843）"
+                  @file-selected="onRichMenuImageSelected"
+                />
               </div>
             </div>
 
-            <div class="admin-field-group" data-tour="rm-default">
-              <AdminFieldLabel text="設為預設選單" tight />
-              <div class="admin-inline-control">
-                <el-switch v-model="form.setAsDefault" />
-                <span class="text-xs text-muted">{{ form.setAsDefault ? '新加入好友預設顯示此選單' : '不設為預設選單' }}</span>
+            <!-- 右欄：要看的東西（版型與預覽吃掉剩下的寬度） -->
+            <div class="rm-config-col rm-config-col--visual">
+              <div class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
+                <AdminLayoutPresetPicker
+                  flat
+                  title="圖文樣式"
+                  :layouts="richMenuLayoutPresets"
+                  :selected-id="form.layoutId"
+                  @select="onSelectRichMenuLayout"
+                />
               </div>
-            </div>
 
-            <div class="admin-field-group" data-tour="rm-image">
-              <AdminFieldLabel :text="`1. 上傳選單背景圖 (${isCreating ? '必要' : '選填，若不上傳則自動沿用舊圖'})`" tight />
-              <FlowUploadZone
-                v-model="form.previewUrl"
-                type="image"
-                appearance="simple"
-                upload-mode="local"
-                hint="JPG / PNG · 最大 500KB（建議 2500x1686 或 2500x843）"
-                @file-selected="onRichMenuImageSelected"
+              <AdminAreaEditorSection
+                v-if="form.previewUrl"
+                :areas="form.areas"
+                section-label="區塊預覽"
+                :flat="true"
+                :show-canvas="true"
+                :show-action-cards="false"
+                :show-header="true"
+                :show-add-button="false"
+                :allow-remove="false"
+                :show-bounds="false"
+                :min-bounds-size="0"
+                :base-width="Number(form.width) || 2500"
+                :base-height="Number(form.height) || 843"
+                :area-colors="areaColors"
+                :drag-area-index="dragState?.areaIndex ?? null"
+                :overlap-set="overlapSet"
+                :guide-lines="guideLines"
+                :canvas-style="richMenuCanvasStyle"
+                :canvas-image-url="form.previewUrl || undefined"
+                :set-canvas-ref="setRichMenuCanvasRef"
+                @start-drag="startDrag"
+                @start-resize="startResize"
+                @clamp="clampAreaByIndex"
               />
-            </div>
-
-            <div class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
-              <AdminLayoutPresetPicker
-                flat
-                title="圖文樣式"
-                :layouts="richMenuLayoutPresets"
-                :selected-id="form.layoutId"
-                @select="onSelectRichMenuLayout"
-              />
-              <p v-if="!form.previewUrl" class="text-xs text-muted rm-layout-hint">
-                可先選版型，實際區塊設定會在上傳背景圖後顯示。
+              <p v-else class="rm-preview-placeholder">
+                可先選版型。上傳背景圖後，這裡會顯示可拖曳的區塊預覽。
               </p>
             </div>
+          </div>
+        </div>
 
+        <!-- Areas Editor (only visible if image uploaded) -->
+        <div v-if="form.previewUrl" class="message-card rm-area-editor">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">2. 區塊設定</span>
+            </div>
+            <span class="text-xs text-muted">共 {{ form.areas.length }} 個區塊 · 設定點下去要做什麼</span>
+          </div>
+          <div class="card-section-stack">
             <AdminAreaEditorSection
-              v-if="form.previewUrl"
               :areas="form.areas"
-              section-label="區塊預覽"
+              section-label="區塊設定"
               :flat="true"
-              :show-canvas="true"
-              :show-action-cards="false"
+              :show-canvas="false"
+              :show-action-cards="true"
               :show-header="false"
-              :show-add-button="false"
-              :allow-remove="false"
-              :show-bounds="false"
+              :show-add-button="form.layoutId === 'custom'"
+              :allow-remove="form.layoutId === 'custom'"
+              :show-bounds="form.layoutId === 'custom'"
               :min-bounds-size="0"
               :base-width="Number(form.width) || 2500"
               :base-height="Number(form.height) || 843"
@@ -134,57 +176,29 @@
               :drag-area-index="dragState?.areaIndex ?? null"
               :overlap-set="overlapSet"
               :guide-lines="guideLines"
-              :canvas-style="richMenuCanvasStyle"
-              :canvas-image-url="form.previewUrl || undefined"
+              :canvas-style="{}"
               :set-canvas-ref="setRichMenuCanvasRef"
+              @add="addArea"
+              @remove="removeArea"
               @start-drag="startDrag"
               @start-resize="startResize"
               @clamp="clampAreaByIndex"
-            />
+            >
+              <template #action-fields="{ area }">
+                <AdminAreaActionEditor
+                  :model-value="area.action"
+                  :module-options="modules"
+                  :tag-options="allTags"
+                  :enable-tagging="true"
+                  :taggable-action-types="['module', 'message', 'switch']"
+                  :menu-options="menus"
+                  :allow-switch="true"
+                  :exclude-menu-id="selectedId"
+                  @update:model-value="(next) => { area.action = next }"
+                />
+              </template>
+            </AdminAreaEditorSection>
           </div>
-        </div>
-
-        <!-- Areas Editor (only visible if image uploaded) -->
-        <div v-if="form.previewUrl" class="rm-area-editor">
-          <AdminAreaEditorSection
-            :areas="form.areas"
-            section-label="2. 區塊設定"
-            :flat="true"
-            :show-canvas="false"
-            :show-action-cards="true"
-            :show-header="false"
-            :show-add-button="form.layoutId === 'custom'"
-            :allow-remove="form.layoutId === 'custom'"
-            :show-bounds="form.layoutId === 'custom'"
-            :min-bounds-size="0"
-            :base-width="Number(form.width) || 2500"
-            :base-height="Number(form.height) || 843"
-            :area-colors="areaColors"
-            :drag-area-index="dragState?.areaIndex ?? null"
-            :overlap-set="overlapSet"
-            :guide-lines="guideLines"
-              :canvas-style="{}"
-            :set-canvas-ref="setRichMenuCanvasRef"
-            @add="addArea"
-            @remove="removeArea"
-            @start-drag="startDrag"
-            @start-resize="startResize"
-            @clamp="clampAreaByIndex"
-          >
-            <template #action-fields="{ area }">
-              <AdminAreaActionEditor
-                :model-value="area.action"
-                :module-options="modules"
-                :tag-options="allTags"
-                :enable-tagging="true"
-                :taggable-action-types="['module', 'message', 'switch']"
-                :menu-options="menus"
-                :allow-switch="true"
-                :exclude-menu-id="selectedId"
-                @update:model-value="(next) => { area.action = next }"
-              />
-            </template>
-          </AdminAreaEditorSection>
         </div>
       </el-form>
     </template>
