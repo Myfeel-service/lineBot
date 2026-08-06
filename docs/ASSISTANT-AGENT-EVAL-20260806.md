@@ -70,7 +70,13 @@
 
 ### 方向 B:覆蓋率——「告知整個網站」的地基(中工,最重要)
 - **LINE webhook 常駐檢查**:目前只有按按鈕才驗。webhook 掛掉=整個機器人裝死,是所有異常裡最致命、卻唯一沒自動檢查的。建議進 probe(檢查 LINE 平台上 webhook URL 與啟用狀態,或看「最近 N 小時是否收過事件 vs 好友有互動」訊號)。
-  > ✅ 2026-08-06 已完成(未 commit):新異常 `lineWebhookBroken`(critical,admin 可見),probe 打 LINE GET webhook endpoint(不打 test API,留額度給設定頁手動驗證),抓四種壞法:沒設定/被停用/網址指向別的系統/權杖失效(401);外部查詢 5 分鐘快取;localhost 跳過網址比對(避免開發環境常亮紅燈);正規化比對函式與 line-webhook-verify 共用同一支。不需要新 Firestore 索引。
+  > ✅ 2026-08-06 已完成(未 commit):新異常 `lineWebhookBroken`(critical,admin 可見),probe 打 LINE GET webhook endpoint(不打 test API,留額度給設定頁手動驗證),抓四種壞法:沒設定/被停用/網址指向別的系統/權杖失效(401);外部查詢 5 分鐘快取;正規化比對函式與 line-webhook-verify 共用同一支。不需要新 Firestore 索引。
+  > ⚠️ 同日修一個實測誤報:第一版「網址比對」拿**使用者當下瀏覽的 origin** 當基準,本機開發/雙網域開 myfeel 後台就被誤判「指向別的系統」。修正=改比 `PUBLIC_BASE_URL`(runtime config appBaseUrl,對外正式網址的單一來源);沒設定或設成 localhost 就跳過比對(寧可漏抓不誤報);detail 直接寫出 LINE 後台填的網址。另補落地閉環:卡片 CTA 帶 `?verify=webhook`,進組織設定頁自動捲到「檢查連線」並實跑一次測試,不讓使用者在長頁面裡自己找要修什麼。
+  > 🔁 同日 code review 後補四修(未 commit,typecheck 0、876 測試綠):
+  > 1. **誤報只修了一半**:probe 換基準了,但它導去的組織設定頁還在拿 `window.location.origin` 當 `compareUrl`,雙網域下同一個誤報照長出來——而且 `webhookStatusBadge` 把「網址不一致」排在「測試成功」前面,會蓋掉「✓ 一切正常」,連「複製貼到 LINE」那格也會叫人把錯的網址貼去覆蓋。修法=`line-workspace` GET 回傳 `publicBaseUrl`(appBaseUrl,server-only 不進 public config),頁面的 webhook/LIFF 建議網址與 `compareUrl` 全部改吃它,後端沒設定才退回瀏覽網址。前後端從此同一把尺。
+  > 2. **CTA 在自己那頁按了沒反應**:handoff 只寫在 `onMounted`,但 Nuxt 預設 page key 不含 query;小幫手在組織設定頁本身也掛著,在該頁點卡片只有 query 變→元件不重掛→onMounted 不跑→不捲動也不測試。修法=改成 `watch(() => route.query.verify)`。
+  > 3. **`?verify=webhook` 沒清掉**:留在網址上=每次重整/上一頁回來都再真的請 LINE 送一則測試訊息(有次數上限,probe 刻意不打就是為了留額度)。修法=消費完 `router.replace` 拿掉參數(query-only 導航不會觸發 `onBeforeRouteLeave`,不會誤跳未儲存確認)。
+  > 4. **「剛剛去修的好了沒」永遠說還沒好**:`refreshAll(true)` 的 force 只跳過前端 60 秒節流,後端那層 5 分鐘外部查詢快取沒有 bypass;人剛在 LINE 後台改完回頭問,最多五分鐘一直被回「還沒解決」,而正式環境多台各存一份還會一次說好一次說壞。修法=force 一路傳到底(`/api/admin/alerts?force=1` → `collectWorkspaceAlerts({ skipCache })` → webhook probe 跳過讀快取、仍寫入)。只有換工作區、按「重新檢查」、以及 30 分鐘內有待驗證修復這三種情境會 force,平常開面板照樣吃快取。
 - **掛載死角**:小幫手只在 default layout;super-admin 與 `layout:false` 的組織頁沒有。至少 org 頁應該有(它是老闆自己會待的頁)。
   > ✅(改道)2026-08-06:org 頁不掛 FAB,改由**帳號卡原生呈現同一套訊號**(見下一項)——org 頁本來就有「帳號健康」區,把異常接進去比再開一個浮動面板更符合該頁的資訊架構。super-admin 是平台層,另議。
 - **剩餘 18 種異常逐步收編**:以「客人受影響」優先。加一項=後端 probe + 前端註冊表 + ALERT_LABELS 各一筆,邊際成本已經很低。

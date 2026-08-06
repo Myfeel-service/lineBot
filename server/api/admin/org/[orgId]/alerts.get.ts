@@ -24,7 +24,6 @@ export default defineEventHandler(async (event) => {
     .where('organizationId', '==', orgId)
     .select()
     .get()
-  const requestOrigin = getRequestURL(event, { xForwardedHost: true, xForwardedProto: true }).origin
 
   // 一個工作區一套 probe（~14 個查詢）。分批跑，避免大組織一口氣對
   // Firestore／LINE API 開出幾百個並發（健康工作區的單套成本趨近於零，分批只影響尾延遲）
@@ -33,7 +32,7 @@ export default defineEventHandler(async (event) => {
   for (let i = 0; i < wsSnap.docs.length; i += CHUNK) {
     workspaces.push(...await Promise.all(wsSnap.docs.slice(i, i + CHUNK).map(async doc => ({
       workspaceId: doc.id,
-      items: await collectWorkspaceAlerts(db, doc.id, { canSettings: true, canOperate: true, requestOrigin }),
+      items: await collectWorkspaceAlerts(db, doc.id, { canSettings: true, canOperate: true }),
     }))))
   }
 

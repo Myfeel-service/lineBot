@@ -59,7 +59,9 @@ const ALERTS: AlertDefinition[] = [
     impact: 'LINE 沒有把客人的訊息送進系統——機器人、AI、真人對話全都收不到，客人傳什麼都不會有回應。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
-    route: wid => `/admin/${wid}/settings/organization`,
+    // ?verify=webhook：進頁直接捲到「檢查連線」並實跑一次測試——
+    // 使用者在卡片上已經按過一次「去檢查」，到頁面不該再自己找一遍要修什麼
+    route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
   },
   {
     id: 'anyTextBlocking',
@@ -314,7 +316,10 @@ export function useWorkspaceAlerts() {
       try {
         const token = await getBearer()
         const data = await $fetch<WorkspaceAlertsResponse>('/api/admin/alerts', {
-          query: { workspaceId: wid },
+          // force 也要傳到後端：前端節流只是「不要重打」，後端還有一層外部查詢快取
+          // （LINE webhook 那顆存五分鐘）。使用者剛改完設定回來確認時，只擋前端沒用，
+          // 後端會回修好之前那份答案，變成一直說「還沒好」
+          query: { workspaceId: wid, ...(options.force ? { force: '1' } : {}) },
           headers: { Authorization: `Bearer ${token}` },
         })
         const next: Record<string, WorkspaceAlertItem> = {}

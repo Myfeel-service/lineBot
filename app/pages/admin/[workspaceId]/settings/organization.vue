@@ -229,6 +229,8 @@ useHead({
 
 type WorkspaceGet = {
   id: string
+  /** 這套系統對外的正式網址（PUBLIC_BASE_URL）；後端沒設定時為空字串 */
+  publicBaseUrl: string
   savedInFirestore: boolean
   name: string
   defaultLiffId: string
@@ -240,6 +242,8 @@ type WorkspaceGet = {
 }
 
 const { showToast } = useAdminToast()
+const route = useRoute()
+const router = useRouter()
 const {
   getBearer,
   workspaceId,
@@ -297,6 +301,7 @@ const clearing = ref(false)
 
 const meta = ref<WorkspaceGet>({
   id: 'default',
+  publicBaseUrl: '',
   savedInFirestore: false,
   name: '',
   defaultLiffId: '',
@@ -370,18 +375,20 @@ function onSecretBlur() {
     secretReveal.value = false
 }
 
-const suggestedWebhookUrl = ref('')
-const suggestedLiffEndpointUrl = ref('')
+/** 瀏覽器當下的網址；只在後端沒設定對外網址時（本機開發）當退路 */
+const browserOrigin = ref('')
 
-function refreshSuggestedWebhookUrl() {
-  if (typeof window === 'undefined') return
-  suggestedWebhookUrl.value = `${window.location.origin}/webhook`
-}
-
-function refreshSuggestedLiffEndpointUrl() {
-  if (typeof window === 'undefined') return
-  suggestedLiffEndpointUrl.value = `${window.location.origin}/liff/lead`
-}
+/**
+ * 要貼到 LINE 的網址、以及跟 LINE 上設定比對的基準，一律用「這套系統對外的正式網址」，
+ * **不是**使用者當下瀏覽的網址——同一套系統可能有自訂網域＋amplifyapp 兩個入口，
+ * 從其中一個進後台就會誤判「LINE 那邊填錯了」，也會叫使用者把錯的網址貼去 LINE
+ * 覆蓋掉本來正常的設定。後端 workspace-alerts 的 webhook 檢查用的是同一個基準。
+ */
+const publicBaseUrl = computed(() =>
+  (meta.value.publicBaseUrl || browserOrigin.value).replace(/\/$/, ''),
+)
+const suggestedWebhookUrl = computed(() => publicBaseUrl.value ? `${publicBaseUrl.value}/webhook` : '')
+const suggestedLiffEndpointUrl = computed(() => publicBaseUrl.value ? `${publicBaseUrl.value}/liff/lead` : '')
 
 async function copyLiffEndpointUrl() {
   if (!suggestedLiffEndpointUrl.value) return
@@ -452,7 +459,7 @@ const webhookStatusBadge = computed<{ text: string, tone: 'success' | 'warning' 
   if (r.lineActive === false)
     return { text: '⚠ Webhook 沒開', tone: 'warning', hint: 'LINE 後台的 Webhook 開關沒打開，這樣收不到訊息 —— 到 LINE Developers 把它打開。' }
   if (r.urlMatchesCompare === false)
-    return { text: '⚠ 網址不一致', tone: 'warning', hint: 'LINE 那邊填的網址，跟這頁的不一樣。確定 LINE 那邊填的沒錯就不用管；不確定就把這頁的「Webhook 網址」貼到 LINE 後台，或找工程師確認。' }
+    return { text: '⚠ 網址不一致', tone: 'warning', hint: 'LINE 那邊填的網址，跟這套系統對外的網址不一樣。把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉；不確定就找工程師確認。' }
   if (!r.testSkipped && r.test?.success)
     return { text: '✓ 一切正常', tone: 'success', hint: 'LINE 連得到你的系統，訊息收發沒問題。' }
   return { text: '✓ 看起來正常', tone: 'success', hint: '想再確認的話，按上方「測試連線」實跑一次。' }
@@ -633,14 +640,41 @@ async function clearWorkspace() {
   }
 }
 
+/**
+ * 從小幫手的異常卡片進來（?verify=webhook）：捲到「檢查連線」並實跑一次測試——
+ * 使用者已經在卡片上按過「去檢查」，到頁面不該再自己找一遍要看哪裡。
+ *
+ * 進來就先把參數清掉。留著的話每次重整、每次上一頁回來，都會再真的請 LINE 送一則
+ * 測試訊息，而那個次數是有上限的（後端的常駐檢查刻意只查設定不打測試，就是為了留額度）。
+ */
+async function consumeAlertHandoff() {
+  if (String(route.query.verify ?? '') !== 'webhook') return
+  const { verify: _drop, ...rest } = route.query
+  await router.replace({ query: rest })
+  await nextTick()
+  document.querySelector('[data-tour="org-verify"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // 實跑測試，結果面板會直接講「LINE 那邊填的網址」是什麼、差在哪
+  if (meta.value.channelAccessTokenConfigured)
+    await verifyWebhook(true).catch(() => {})
+}
+
+// 小幫手在本頁也掛著。在這頁點卡片時只有 query 變，Nuxt 不會重掛頁面元件、
+// onMounted 不會再跑——只靠 onMounted 讀參數的話，按了會完全沒反應
+watch(() => route.query.verify, (v) => {
+  if (v) void consumeAlertHandoff()
+})
+
 onMounted(async () => {
-  refreshSuggestedWebhookUrl()
-  refreshSuggestedLiffEndpointUrl()
+  browserOrigin.value = window.location.origin
   // workspaceList 由 layout (default.vue) 的 onMounted 負責載入；此頁只需載入 LINE 憑證 meta
   loadPlanSummary().catch(() => {})
   await load()
-  // 已設定憑證才靜默帶出 LINE 登記狀態（免費 GET、不佔測試次數、不跳 toast）
-  if (meta.value.channelAccessTokenConfigured)
+  if (String(route.query.verify ?? '') === 'webhook') {
+    void consumeAlertHandoff()
+  }
+  else if (meta.value.channelAccessTokenConfigured) {
+    // 平常進頁：靜默帶出 LINE 登記狀態（免費 GET、不佔測試次數、不跳 toast）
     verifyWebhook(false, { silent: true }).catch(() => {})
+  }
 })
 </script>

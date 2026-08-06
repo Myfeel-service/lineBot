@@ -18,10 +18,14 @@ export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 
   const canSettings = role === 'owner' || role === 'admin'
+  // ?force=1：使用者按「重新檢查」、或小幫手要確認「剛剛去修的好了沒」。
+  // 這種情境要連外部查詢的快取一起跳過——人剛在 LINE 後台改完設定回頭問，
+  // 給他五分鐘前那份答案等於騙他「還沒修好」。
+  const force = String(getQuery(event).force ?? '') === '1'
   const items = await collectWorkspaceAlerts(getDb(), wid, {
     canSettings,
     canOperate: canSettings || role === 'agent',
-    requestOrigin: getRequestURL(event, { xForwardedHost: true, xForwardedProto: true }).origin,
+    skipCache: force,
   })
 
   return { workspaceId: wid, items, checkedAt: Date.now() }

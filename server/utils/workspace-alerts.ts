@@ -103,8 +103,12 @@ export interface CollectAlertsOptions {
   canSettings: boolean
   /** 營運類訊號（agent 以上） */
   canOperate: boolean
-  /** 這個後台對外的 origin（比對 LINE webhook 網址用）；空字串＝跳過網址比對 */
-  requestOrigin: string
+  /**
+   * 略過外部查詢的快取（目前只有 LINE webhook 那顆有快取）。
+   * 使用者按「重新檢查」、或小幫手要確認「剛剛去修的好了沒」時要帶——
+   * 那些情境是人剛改完設定回頭問，拿五分鐘內的舊答案會一直誤報「還沒好」。
+   */
+  skipCache?: boolean
 }
 
 /** 收集單一工作區的所有異常訊號（依權限過濾）。單項失敗＝該項 unknown，不會 throw。 */
@@ -113,7 +117,7 @@ export async function collectWorkspaceAlerts(
   wid: string,
   opts: CollectAlertsOptions,
 ): Promise<WorkspaceAlertItem[]> {
-  const { canSettings, canOperate, requestOrigin } = opts
+  const { canSettings, canOperate, skipCache = false } = opts
 
   // AI 設定只讀一次，兩個 probe 共用。
   // 刻意不在這裡 await——一 await 就把後面所有查詢卡在它後面變成序列，
@@ -441,7 +445,9 @@ export async function collectWorkspaceAlerts(
           // 機器人的總開關：webhook 掛了＝所有訊息都進不來，其他異常都無從發生。
           // 只打 GET 查設定（便宜、無副作用）；LINE 的 test API 有每小時額度，
           // 留給設定頁的手動「驗證」按鈕。
-          const cached = webhookProbeCache.get(wid)
+          // skipCache＝使用者剛改完設定回頭確認：一定要真的再問一次 LINE，
+          // 否則五分鐘內都會拿到修好之前那份答案，一直說「還沒好」
+          const cached = skipCache ? null : webhookProbeCache.get(wid)
           if (cached && cached.expires > Date.now()) return cached.result
 
           const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
@@ -463,13 +469,17 @@ export async function collectWorkspaceAlerts(
             result = { active: true, detail: 'Webhook 在 LINE 後台被停用了' }
           }
           else {
-            // 指向別的系統也等於收不到。本機開發環境跳過比對——
-            // localhost 永遠對不上正式設定，常亮的紅燈只會教人忽略紅燈
-            const isLocal = !requestOrigin || /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(requestOrigin)
-            const mismatch = !isLocal
-              && normalizeWebhookCompareUrl(res.data.endpoint) !== normalizeWebhookCompareUrl(`${requestOrigin}/webhook`)
+            // 指向別的系統也等於收不到。比對基準＝PUBLIC_BASE_URL（對外正式網址），
+            // **不是**「使用者當下瀏覽的網址」——本機開發、或同一套系統有兩個網域
+            // （自訂網域＋amplifyapp）時，request origin 都會對不上，但 webhook 沒壞
+            // （第一版拿 request origin 比，在 myfeel 誤報過）。
+            // 沒設定對外網址、或設成本機網址就跳過比對：寧可漏抓「指向別系統」，不誤報。
+            const canonical = String(useRuntimeConfig().appBaseUrl || '').trim().replace(/\/$/, '')
+            const comparable = Boolean(canonical) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(canonical)
+            const mismatch = comparable
+              && normalizeWebhookCompareUrl(res.data.endpoint) !== normalizeWebhookCompareUrl(`${canonical}/webhook`)
             result = mismatch
-              ? { active: true, detail: 'LINE 後台填的 Webhook 網址不是這個系統' }
+              ? { active: true, detail: `LINE 後台填的是 ${res.data.endpoint}` }
               : { active: false }
           }
           webhookProbeCache.set(wid, { result, expires: Date.now() + WEBHOOK_PROBE_TTL_MS })
