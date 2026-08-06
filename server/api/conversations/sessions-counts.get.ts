@@ -36,5 +36,29 @@ export default defineEventHandler(async (event) => {
   // 口徑與 sessions.get.ts 的列表共用 conversation-queue,不再各算各的。
   counts.open = await countOpenQueueSessions(db, workspaceId)
 
-  return { counts, total }
+  return { counts, total, followUp: await countFollowUps(db, workspaceId) }
 })
+
+/**
+ * 客服右鍵標成「待跟進」的對話數（人工標記，不是上面那幾個會話狀態）。
+ * 刻意跟 counts.open（分頁「待處理」）分開:一個是人說要回頭跟,一個是系統說還沒人處理。
+ * 與側欄分頁的數字刻意分開回傳，不要加進 counts —— 那個 record 是會話狀態的口徑。
+ */
+async function countFollowUps(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+): Promise<number> {
+  try {
+    const snap = await db
+      .collection('conversations')
+      .where('workspaceId', '==', workspaceId)
+      .orderBy('followUpAt', 'desc')
+      .count()
+      .get()
+    return snap.data().count
+  }
+  catch {
+    // 缺複合索引時不要讓整排分頁數字消失：待跟進數就先當 0（畫面上等於不顯示數字）
+    return 0
+  }
+}

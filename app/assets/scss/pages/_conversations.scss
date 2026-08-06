@@ -55,10 +55,171 @@
     outline-offset: 1px;
   }
 
+  /**
+   * 搜尋框自己一列、篩選另一列。
+   *
+   * 曾經想省一列把兩個併排，但側欄只有 239px：篩選膠囊吃掉 127px，搜尋框只剩 81px，
+   * 連 placeholder「搜尋名稱…」都顯示不完，看起來像壞掉。省一列不值這個。
+   */
   .conv-search-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+  }
+
+  .conv-search-bar .el-input {
+    width: 100%;
+  }
+
+  /**
+   * 人工標記的篩選。刻意和上面那排狀態分頁長得不一樣（旗子 + 暖色），
+   * 因為它跟那排不是同一種東西：那排是系統判定的會話狀態，這個是人自己標的。
+   */
+  .conv-flag-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #fff;
+    height: 28px;
+    padding: 0 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  /**
+   * 旗子維持原色。曾經做成灰階當「未啟用」狀態，但縮到 0.7rem 的灰旗子看起來
+   * 像個分不出是什麼的深色三角形，反而讓這顆按鈕更難懂；
+   * 有顏色才一眼分得出它和上面那排（純文字的狀態分頁）不是同一種東西。
+   */
+  .conv-flag-filter__icon {
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  .conv-flag-filter:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+    color: var(--text-primary);
+  }
+
+  .conv-flag-filter.active {
+    background: rgba(230, 162, 60, 0.15);
+    border-color: rgba(230, 162, 60, 0.45);
+    color: #a35b00;
+  }
+
+  .conv-flag-filter:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+
+  /* 清單被上限截斷時的說明，不要讓人以為看到的就是全部 */
+  .conv-list-notice {
+    margin: 0 0.25rem 0.35rem;
+    padding: 0.4rem 0.55rem;
+    border-radius: var(--radius-sm, 6px);
+    background: rgba(230, 162, 60, 0.12);
+    color: #a35b00;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+
+  /* 空清單的補充說明（例如：待跟進是空的時候，講一下怎麼標） */
+  .conv-empty-hint {
+    display: block;
+    max-width: 15rem;
+    margin-top: 0.35rem;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  /* ── 列表列：滑過露出「⋯」 ───────────────────────────────────── */
+  .conv-list-row {
+    position: relative;
+  }
+
+  /**
+   * 釘選區與時間序的分界。
+   * 沒有這條線的話，「一則兩天前的訊息排在最上面」看起來像排序壞了。
+   */
+  .conv-list-row.is-pinned-edge::after {
+    content: '';
+    position: absolute;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: -0.15rem;
+    border-bottom: 1px dashed var(--border);
+    pointer-events: none;
+  }
+
+  /**
+   * 右鍵是隱藏功能，沒人會自己發現，所以滑過時在時間的位置換出「⋯」。
+   * 時間同時收起來（Gmail 就是這樣做）：不收的話按鈕只蓋掉時間的一半，
+   * 會看到「下午01」被切一半，像畫面壞了；而換位不換高度，列高也不會跳動。
+   */
+  .conv-list-row__more {
+    position: absolute;
+    /* 對齊列表項本身的內距（0.65rem / 0.75rem）：右緣與時間、摘要同一條隱形直線 */
+    top: 0.65rem;
+    right: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+
+  .conv-list-row:hover .conv-list-row__more,
+  .conv-list-row__more:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 讓位給 ⋯：只在滑過那一列，且只藏時間，名稱與摘要都留著 */
+  .conv-list-row:hover .split-list-item__time {
+    visibility: hidden;
+  }
+
+  .conv-list-row__more:hover {
+    background: var(--bg-surface, #fff);
+    color: var(--text-primary);
+    border-color: var(--border);
+  }
+
+  .conv-list-row__more:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+
+  /* 觸控裝置沒有 hover，永遠露出來（不然那顆按鈕等於不存在） */
+  @media (hover: none) {
+    .conv-list-row__more {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .conv-list-load-more {

@@ -198,7 +198,14 @@
       "Bash(node mobile-shot.mjs)",
       "Bash(pkill -f \"node .*nuxi\")",
       "Bash(/bin/sleep 2)",
-      "Bash(node --env-file=.env_myfeel --experimental-strip-types __probe-refs.ts)"
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types __probe-refs.ts)",
+      "Bash(ls node_modules | grep -iE '^\\(puppeteer|playwright\\)' ; ls node_modules/.bin | grep -iE 'puppeteer|playwright|chrome'; echo '---'; ls /Applications | grep -i chrome)",
+      "Bash(OUT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/e4ec53cf-e8b2-42f6-bb28-a438ed7ec75d/scratchpad node /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/e4ec53cf-e8b2-42f6-bb28-a438ed7ec75d/scratchpad/conv-flags-ui.mjs)",
+      "Bash(OUT_DIR=. node conv-flags-ui.mjs)",
+      "Bash(pkill -f 'nuxt dev')",
+      "Bash(pkill -f '.nuxt/dev')",
+      "Bash(npm run *)",
+      "Bash(OUT_DIR=. node conv-flags-empty.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

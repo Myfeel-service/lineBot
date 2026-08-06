@@ -4,6 +4,7 @@
     class="split-list-item"
     :class="{ active: props.active, 'has-leading-avatar': showLeadingBlock }"
     @click="emit('select')"
+    @contextmenu="onContextMenu"
   >
     <span
       v-if="showLeadingBlock"
@@ -25,6 +26,11 @@
     <div class="split-list-item__main">
       <template v-if="props.timeInTitleRow && !$slots.meta">
         <div class="split-list-item__title-row">
+          <span
+            v-if="trimmedTitleIcon"
+            class="split-list-item__title-icon"
+            aria-hidden="true"
+          >{{ trimmedTitleIcon }}</span>
           <div class="split-list-name">{{ props.title }}</div>
           <span
             v-if="trimmedChipText && props.titleRowChip"
@@ -36,7 +42,16 @@
             class="split-list-item__time"
           >{{ trimmedChipText }}</span>
         </div>
-        <div v-if="trimmedMetaText" class="split-list-meta split-list-meta--stacked">
+        <div
+          v-if="trimmedMetaText || trimmedMetaTag"
+          class="split-list-meta split-list-meta--stacked"
+          :class="{ 'has-inline-tag': trimmedMetaTag }"
+        >
+          <span
+            v-if="trimmedMetaTag"
+            class="split-list-chip split-list-chip--inline"
+            :class="`is-${props.metaTagTone}`"
+          >{{ trimmedMetaTag }}</span>
           <span
             class="split-list-meta-text"
             :class="{ truncate: props.metaTruncate }"
@@ -44,7 +59,13 @@
         </div>
       </template>
       <template v-else>
-        <div class="split-list-name">{{ props.title }}</div>
+        <div class="split-list-name">
+          <span
+            v-if="trimmedTitleIcon"
+            class="split-list-item__title-icon"
+            aria-hidden="true"
+          >{{ trimmedTitleIcon }}</span>{{ props.title }}
+        </div>
         <div v-if="$slots.meta || props.chipText || props.metaText" class="split-list-meta">
           <slot v-if="$slots.meta" name="meta" />
           <template v-else>
@@ -96,6 +117,16 @@ const props = withDefaults(defineProps<{
    * 對話列表請維持 false（右側為時間純文字）。
    */
   titleRowChip?: boolean
+  /** 名稱前的小圖示（emoji 即可），例如釘選的 📌 */
+  titleIcon?: string
+  /** 搭配 timeInTitleRow：摘要那一行最前面的小膠囊，例如「待處理」 */
+  metaTag?: string
+  metaTagTone?: 'success' | 'neutral' | 'warning' | 'error'
+  /**
+   * 允許右鍵開啟自訂選單：開啟時會擋掉瀏覽器原生選單並 emit contextmenu。
+   * 沒有要接選單就別開，不然使用者會失去原生右鍵卻換不到東西。
+   */
+  contextMenuEnabled?: boolean
 }>(), {
   active: false,
   chipText: '',
@@ -107,15 +138,28 @@ const props = withDefaults(defineProps<{
   showUnreadDot: false,
   timeInTitleRow: false,
   titleRowChip: false,
+  titleIcon: '',
+  metaTag: '',
+  metaTagTone: 'warning',
+  contextMenuEnabled: false,
 })
 
 const emit = defineEmits<{
   (e: 'select'): void
+  (e: 'contextmenu', event: MouseEvent): void
 }>()
 
 const trimmedAvatarUrl = computed(() => String(props.leadingAvatarUrl || '').trim())
 const trimmedChipText = computed(() => String(props.chipText || '').trim())
 const trimmedMetaText = computed(() => String(props.metaText || '').trim())
+const trimmedTitleIcon = computed(() => String(props.titleIcon || '').trim())
+const trimmedMetaTag = computed(() => String(props.metaTag || '').trim())
+
+function onContextMenu(event: MouseEvent) {
+  if (!props.contextMenuEnabled) return
+  event.preventDefault()
+  emit('contextmenu', event)
+}
 
 const showLeadingBlock = computed(() =>
   Boolean(trimmedAvatarUrl.value) || props.showLeadingAvatarFallback,

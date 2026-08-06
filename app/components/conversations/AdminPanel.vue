@@ -8,7 +8,7 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
-      <!-- Status Tabs -->
+      <!-- Status Tabs：這一排全部是「系統判定的會話狀態」，人工標記不放這裡（會被當成同一種東西） -->
       <div class="conv-status-tabs" data-tour="conv-tabs">
         <button
           v-for="tab in STATUS_TABS"
@@ -16,6 +16,7 @@
           type="button"
           class="conv-status-tab"
           :class="{ active: activeTab === tab.value }"
+          :title="tab.hint"
           @click="switchTab(tab.value)"
         >
           {{
@@ -29,12 +30,28 @@
       </div>
       <div class="conv-search-bar">
         <el-input v-model="searchText" placeholder="搜尋名稱…" clearable size="small" />
+        <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
+             和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
+        <button
+          v-if="activeTab === 'all'"
+          type="button"
+          class="conv-flag-filter"
+          :class="{ active: followUpFilterOn }"
+          :aria-pressed="followUpFilterOn"
+          title="待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）"
+          @click="toggleFollowUpFilter"
+        >
+          <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
+          只看待跟進{{ followUpCount > 0 ? `（${followUpCount}）` : '' }}
+        </button>
       </div>
       <div v-if="listLoading && !sidebarItems.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
       <div v-else-if="!sidebarItems.length" class="split-sidebar-empty">
-        <span>{{ searchText ? '無符合結果' : '尚無對話紀錄' }}</span>
+        <span>{{ sidebarEmpty.title }}</span>
+        <!-- 空清單不要變死路：這裡順便講怎麼標，這也是唯一會說明「待跟進怎麼來」的地方 -->
+        <span v-if="sidebarEmpty.hint" class="conv-empty-hint">{{ sidebarEmpty.hint }}</span>
       </div>
       <div
         v-else
@@ -42,40 +59,77 @@
         class="split-list"
         @scroll.passive="onSidebarListScroll"
       >
+        <div v-if="followUpListTruncated" class="conv-list-notice">
+          待跟進超過 {{ FOLLOW_UP_LIST_LIMIT }} 筆，這裡只顯示最新的 {{ FOLLOW_UP_LIST_LIMIT }} 筆
+        </div>
         <!-- Session-based view (status tabs) -->
         <template v-if="activeTab !== 'all'">
-          <AdminSplitListItem
+          <div
             v-for="s in sessionSidebarItems"
             :key="s.sessionId"
-            :title="s.displayName"
-            :leading-avatar-url="s.pictureUrl"
-            show-leading-avatar-fallback
-            time-in-title-row
-            :active="selectedSessionId === s.sessionId"
-            :meta-text="SESSION_STATUS_LABELS[s.status] || s.status"
-            :meta-truncate="true"
-            :chip-text="formatTime(s.lastActivityAt)"
-            :chip-tone="sessionChipTone(s.status)"
-            @select="selectSession(s)"
-          />
+            class="conv-list-row"
+          >
+            <AdminSplitListItem
+              :title="s.displayName"
+              :leading-avatar-url="s.pictureUrl"
+              show-leading-avatar-fallback
+              time-in-title-row
+              :active="selectedSessionId === s.sessionId"
+              :title-icon="s.pinned ? '📌' : ''"
+              :meta-tag="s.followUp ? '待跟進' : ''"
+              :meta-text="SESSION_STATUS_LABELS[s.status] || s.status"
+              :meta-truncate="true"
+              :chip-text="formatTime(s.lastActivityAt)"
+              :chip-tone="sessionChipTone(s.status)"
+              :context-menu-enabled="canOperate"
+              @select="selectSession(s)"
+              @contextmenu="openConvContextMenu($event, s)"
+            />
+            <button
+              v-if="canOperate"
+              type="button"
+              class="conv-list-row__more"
+              title="釘選 / 待跟進"
+              aria-label="更多動作"
+              @click.stop="openContextMenuFromButton($event, s)"
+            >⋯</button>
+          </div>
         </template>
         <!-- User-based view (all tab) -->
         <template v-else>
-          <AdminSplitListItem
-            v-for="c in convSidebarItems"
+          <div
+            v-for="(c, idx) in convSidebarItems"
             :key="c.userId"
-            :title="c.displayName"
-            :leading-avatar-url="c.pictureUrl"
-            show-leading-avatar-fallback
-            time-in-title-row
-            :show-unread-dot="isConvItemUnread(c)"
-            :active="selectedUserId === c.userId && !selectedSessionId"
-            :meta-text="(c.lastDirection === 'outgoing' ? '↑ ' : '') + c.lastMessage"
-            :meta-truncate="true"
-            :chip-text="formatTime(c.lastMessageAt)"
-            chip-tone="neutral"
-            @select="selectUser(c)"
-          />
+            class="conv-list-row"
+            :class="{ 'is-pinned-edge': idx === lastPinnedIndex }"
+          >
+            <AdminSplitListItem
+              :title="c.displayName"
+              :leading-avatar-url="c.pictureUrl"
+              show-leading-avatar-fallback
+              time-in-title-row
+              :show-unread-dot="isConvItemUnread(c)"
+              :active="selectedUserId === c.userId && !selectedSessionId"
+              :title-icon="c.pinned ? '📌' : ''"
+              :meta-tag="c.followUp ? '待跟進' : ''"
+              :meta-text="(c.lastDirection === 'outgoing' ? '↑ ' : '') + c.lastMessage"
+              :meta-truncate="true"
+              :chip-text="formatTime(c.lastMessageAt)"
+              chip-tone="neutral"
+              :context-menu-enabled="canOperate"
+              @select="selectUser(c)"
+              @contextmenu="openConvContextMenu($event, c)"
+            />
+            <!-- 右鍵是隱藏功能,沒人會自己發現:滑過就露出同一份選單的入口 -->
+            <button
+              v-if="canOperate"
+              type="button"
+              class="conv-list-row__more"
+              title="釘選 / 待跟進"
+              aria-label="更多動作"
+              @click.stop="openContextMenuFromButton($event, c)"
+            >⋯</button>
+          </div>
         </template>
         <div v-if="listLoadingMore" class="conv-list-load-more">
           <div class="spinner" />
@@ -828,6 +882,16 @@
     </template>
   </el-dialog>
 
+  <!-- 對話列表右鍵／⋯ 選單（釘選 / 待跟進）；觀察者不會開啟，保留瀏覽器原生選單 -->
+  <AdminContextMenu
+    v-model:visible="contextMenuVisible"
+    :x="contextMenuPos.x"
+    :y="contextMenuPos.y"
+    :title="contextMenuTarget?.displayName"
+    :items="contextMenuItems"
+    @select="onContextMenuSelect"
+  />
+
 </template>
 
 <script setup lang="ts">
@@ -843,7 +907,9 @@ import {
 } from '~~/shared/upload-rules'
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
 import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
+import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
+import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
 /** 與 `useWorkspace().apiFetch` 相同簽章，由路由頁注入（含 workspaceId）。 */
 const props = defineProps<{
@@ -986,17 +1052,25 @@ interface SessionItem {
   initialHandler: string
   hasHandoff: boolean
   lastActivityAt: any
+  /** 對話層級的人工標記（見 ConvItem），會話列表只顯示、不改變排序 */
+  pinned?: boolean
+  followUp?: boolean
 }
 
-const STATUS_TABS: { value: TabValue; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'pending_human', label: '待真人' },
-  { value: 'human_handling', label: '真人處理' },
+/**
+ * 這一排全部是**系統依對話狀況判定**的會話狀態，不是人標的。
+ * hint 會變成 title tooltip：兩個「待」開頭的分頁光看名字分不出差別，滑上去要講得出來。
+ */
+const STATUS_TABS: { value: TabValue; label: string; hint: string }[] = [
+  { value: 'all', label: '全部', hint: '所有對話，最新訊息排前面（釘選的會置頂）' },
+  { value: 'pending_human', label: '待真人', hint: '系統判定：客人要求真人，還沒有人接手' },
+  { value: 'human_handling', label: '真人處理', hint: '系統判定：已經有同事接手，機器人與 AI 暫停自動回覆' },
   // 「待處理」＝還需不需要人處理（佇列語意）。不要改成「未首接」——那是統計看板
   // 的指標名稱（有沒有人回答過），兩者是不同的一群對話，同名會被誤讀成同一個數字。
-  { value: 'open', label: '待處理' },
-  { value: 'bot_handling', label: '機器人' },
-  { value: 'closed', label: '結束' },
+  // 也不要和右鍵的人工標記混用同一個詞，那個叫「待跟進」（見 shared/conversation-flags.ts）。
+  { value: 'open', label: '待處理', hint: '系統判定：這場對話還沒有人處理過（不是你手動標的「待跟進」）' },
+  { value: 'bot_handling', label: '機器人', hint: '系統判定：目前由機器人／AI 自動回覆中' },
+  { value: 'closed', label: '結束', hint: '系統判定：已結束的會話' },
 ]
 
 /**
@@ -1017,6 +1091,12 @@ interface ConvItem {
   lastMessageAt: any
   /** 客人已封鎖官方帳號：推播會被 LINE 退件，回覆區要先擋一句話 */
   isBlocked?: boolean
+  /**
+   * 右鍵下的兩個人工標記（全 workspace 共用）。與會話狀態、統計完全無關——
+   * 為什麼是「待跟進」不是「待處理」見 ~~/shared/conversation-flags.ts。
+   */
+  pinned?: boolean
+  followUp?: boolean
 }
 
 interface MsgItem {
@@ -1157,6 +1237,14 @@ const selectedUser = ref<ConvItem | null>(null)
 const activeTab = ref<TabValue>('all')
 const inputText = ref('')
 const searchText = ref('')
+/** 「只看待跟進」：只在「全部」分頁有意義（其他分頁看的是會話狀態，不是人工標記） */
+const followUpFilterOn = ref(false)
+/** 待跟進數超過顯示上限時要在列表上明講，不要讓人以為看到的就是全部 */
+const followUpListTruncated = ref(false)
+const followUpCount = ref(0)
+const contextMenuVisible = ref(false)
+const contextMenuPos = ref({ x: 0, y: 0 })
+const contextMenuTarget = ref<ConvItem | SessionItem | null>(null)
 const aiContextRefreshKey = ref(0)
 /**
  * AI 脈絡卡（含「補知識」與「這題 AI 答錯了」）開放到客服層級。
@@ -1472,7 +1560,36 @@ const sessionSidebarItems = computed<SessionItem[]>(() => {
   return sessions.value.filter(s => s.displayName.toLowerCase().includes(kw))
 })
 
-const convSidebarItems = computed<ConvItem[]>(() => conversations.value)
+/**
+ * 釘選置頂。
+ *
+ * 後端第一頁已經排好，這裡再排一次是為了「按下右鍵到下次載入之間」畫面就先動——
+ * 不然按了釘選什麼都沒發生，會以為沒生效。filter 保序，所以兩邊順序一致。
+ */
+const convSidebarItems = computed<ConvItem[]>(() => {
+  const rows = conversations.value
+  if (!rows.some(c => c.pinned)) return rows
+  return [...rows.filter(c => c.pinned), ...rows.filter(c => !c.pinned)]
+})
+
+/** 釘選區的最後一筆：底下畫一條線，讀者才知道「時間序從這裡開始」 */
+const lastPinnedIndex = computed(() => {
+  const rows = convSidebarItems.value
+  let last = -1
+  for (let i = 0; i < rows.length; i++) if (rows[i]?.pinned) last = i
+  // 整份清單都是釘選時不用畫線（下面沒有東西了）
+  return last >= 0 && last < rows.length - 1 ? last : -1
+})
+
+const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
+  if (followUpFilterOn.value) {
+    return searchText.value
+      ? { title: '待跟進裡沒有符合的對話', hint: '' }
+      // 空清單不能只說「沒有」就結束：順便講怎麼標，不然這個篩選看起來像壞掉
+      : { title: '目前沒有待跟進的對話', hint: '在左側對話上按右鍵（或滑過按 ⋯）→「標記待跟進」，之後就能從這裡找回來' }
+  }
+  return { title: searchText.value ? '無符合結果' : '尚無對話紀錄', hint: '' }
+})
 
 const unreadConvCount = computed(() =>
   conversations.value.filter(c => isConvItemUnread(c)).length,
@@ -1578,8 +1695,94 @@ function sessionChipTone(status: ConvSessionStatus): 'neutral' | 'warning' | 'su
   return 'neutral'
 }
 
+// ── 右鍵／⋯：釘選、待跟進 ────────────────────────────────────────
+// 兩個都是「對話層級」的人工標記，所以會話列表按右鍵也是標到同一位客人身上。
+// 「待跟進」刻意不叫「待處理」——那個詞是上面分頁（系統判定）的，見 shared/conversation-flags.ts。
+
+const contextMenuItems = computed<AdminContextMenuItem[]>(() => {
+  const t = contextMenuTarget.value
+  if (!t) return []
+  return [
+    { key: 'pin', icon: '📌', label: t.pinned ? '取消釘選' : '釘選（排到最上面）' },
+    { key: 'followUp', icon: '🚩', label: t.followUp ? '取消待跟進' : '標記待跟進' },
+  ]
+})
+
+function openContextMenuAt(x: number, y: number, target: ConvItem | SessionItem) {
+  // 觀察者不開自訂選單（SplitListItem 也不會擋掉原生選單）：無權限一律隱藏，不給按了才說不行
+  if (!canOperate.value) return
+  contextMenuTarget.value = target
+  contextMenuPos.value = { x, y }
+  contextMenuVisible.value = true
+}
+
+function openConvContextMenu(ev: MouseEvent, target: ConvItem | SessionItem) {
+  openContextMenuAt(ev.clientX, ev.clientY, target)
+}
+
+/** 滑過列表列露出的「⋯」：從按鈕左下角展開，不要蓋住按鈕自己 */
+function openContextMenuFromButton(ev: MouseEvent, target: ConvItem | SessionItem) {
+  const rect = (ev.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  if (!rect) return openConvContextMenu(ev, target)
+  openContextMenuAt(rect.left, rect.bottom + 4, target)
+}
+
+/** 同一位客人可能同時出現在 conversations 與 sessions 兩份清單，兩邊都要跟著更新 */
+function applyLocalFlags(userId: string, flags: Partial<{ pinned: boolean, followUp: boolean }>) {
+  for (const row of conversations.value) {
+    if (row.userId === userId) Object.assign(row, flags)
+  }
+  for (const row of sessions.value) {
+    if (row.userId === userId) Object.assign(row, flags)
+  }
+  if (contextMenuTarget.value?.userId === userId) Object.assign(contextMenuTarget.value, flags)
+}
+
+async function onContextMenuSelect(key: string) {
+  const target = contextMenuTarget.value
+  if (!target || !assertCanOperate()) return
+
+  const isPin = key === 'pin'
+  const next = isPin ? !target.pinned : !target.followUp
+  const userId = target.userId
+
+  // 先上畫面再送出：釘選要重排、標記要冒出膠囊，等 200~500ms 才動會像沒按到。
+  // 失敗就整個轉回去（含數字），不要留下一個假的已標記狀態。
+  applyLocalFlags(userId, isPin ? { pinned: next } : { followUp: next })
+  if (!isPin) followUpCount.value = Math.max(0, followUpCount.value + (next ? 1 : -1))
+
+  try {
+    const res = await apiFetch<{ pinned: boolean, followUp: boolean }>(
+      `/api/conversations/${userId}/flags`,
+      { method: 'POST', body: isPin ? { pinned: next } : { followUp: next } },
+    )
+    // 以伺服器回的狀態為準（例如同事剛好也動過同一筆）
+    applyLocalFlags(userId, { pinned: res.pinned, followUp: res.followUp })
+    if (isPin) {
+      showToast(next ? '已釘選，排在列表最上面' : '已取消釘選', 'success')
+    }
+    else {
+      showToast(next ? '已標記待跟進' : '已取消待跟進', 'success')
+      // 正在「只看待跟進」時取消標記，那一筆要當場消失，不然畫面在說謊
+      if (!next && followUpFilterOn.value) await loadList(true)
+    }
+  }
+  catch (e: any) {
+    applyLocalFlags(userId, isPin ? { pinned: !next } : { followUp: !next })
+    if (!isPin) followUpCount.value = Math.max(0, followUpCount.value + (next ? -1 : 1))
+    showToast(e?.data?.statusMessage || '標記失敗，請稍後再試', 'error')
+  }
+}
+
+async function toggleFollowUpFilter() {
+  followUpFilterOn.value = !followUpFilterOn.value
+  await loadList(true)
+}
+
 async function switchTab(tab: TabValue) {
   activeTab.value = tab
+  // 「只看待跟進」是「全部」分頁專用的視角，切走就關掉，免得切回來還套著看不見的篩選
+  if (tab !== 'all') followUpFilterOn.value = false
   selectedSessionId.value = null
   allTabActiveSession.value = null
   sessionTimelineItems.value = []
@@ -1603,6 +1806,8 @@ async function selectSession(s: SessionItem) {
     lastMessage: SESSION_STATUS_LABELS[s.status] ?? '',
     lastDirection: 'incoming',
     lastMessageAt: s.lastActivityAt,
+    pinned: s.pinned === true,
+    followUp: s.followUp === true,
   }
   selectedUser.value = convItem
   sessionMeta.value = {
@@ -1661,16 +1866,20 @@ async function loadList(reset = true) {
         conversations: ConvItem[]
         total: number
         hasMore: boolean
+        truncated?: boolean
       }>('/api/conversations/list', {
         params: {
           page,
           limit: CONV_LIST_PAGE_SIZE,
           search: searchText.value.trim() || undefined,
+          flag: followUpFilterOn.value ? 'followup' : undefined,
         },
       })
       const chunk = res.conversations ?? []
       conversations.value = reset ? chunk : [...conversations.value, ...chunk]
       listHasMore.value = Boolean(res.hasMore)
+      followUpListTruncated.value = followUpFilterOn.value && res.truncated === true
+      // 待跟進總數不在這裡算：這裡的 total 會被顯示上限截掉，真正的數字由 loadSessionCounts() 帶回來
     }
     else {
       const res = await apiFetch<{
@@ -1768,12 +1977,13 @@ watch(searchText, () => {
 
 async function loadSessionCounts() {
   try {
-    const res = await apiFetch<{ counts: Record<ConvSessionStatus, number> }>(
+    const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number }>(
       '/api/conversations/sessions-counts',
     )
     for (const k of Object.keys(sessionStatusCounts.value) as ConvSessionStatus[]) {
       sessionStatusCounts.value[k] = Number(res.counts?.[k] ?? 0)
     }
+    followUpCount.value = Number(res.followUp ?? 0)
   }
   catch {
     // 分頁仍可用；數字維持上次成功值

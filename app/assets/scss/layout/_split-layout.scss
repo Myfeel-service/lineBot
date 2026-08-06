@@ -301,6 +301,36 @@ body.is-resizing-split {
   display: block;
 }
 
+/* 摘要那一行前面掛小膠囊時改成單行 flex，膠囊固定寬、摘要自己吃掉剩下的space */
+.split-list-meta.split-list-meta--stacked.has-inline-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.split-list-meta.split-list-meta--stacked.has-inline-tag .split-list-meta-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.split-list-chip.split-list-chip--inline {
+  flex-shrink: 0;
+}
+
+/* 名稱前的小圖示（例如釘選 📌）：跟著名稱那一行，不佔第二行 */
+.split-list-item__title-icon {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.split-list-name .split-list-item__title-icon {
+  margin-right: 0.25rem;
+}
+
 .split-list-chip {
   display: inline-flex;
   align-items: center;

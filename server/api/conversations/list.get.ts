@@ -1,6 +1,12 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import {
+  MAX_PINNED_CONVERSATIONS,
+  FOLLOW_UP_LIST_LIMIT,
+  readConversationFlags,
+  withPinnedFirst,
+} from '~~/shared/conversation-flags'
 
 const DISPLAY_FALLBACK = 'LINE 用戶'
 const FETCH_BATCH = 80
@@ -15,6 +21,10 @@ type ConvRow = {
   lastMessageAt: unknown
   /** 客人已封鎖官方帳號（unfollow 時寫入）：推播會被 LINE 退件，客服要先知道 */
   isBlocked: boolean
+  /** 人工標記：釘在列表最上面（全 workspace 共用） */
+  pinned: boolean
+  /** 人工標記：客服手動標「我要回頭跟這筆」，與會話狀態無關（見 shared/conversation-flags.ts） */
+  followUp: boolean
 }
 
 function matchesSearch(row: ConvRow, searchRaw: string): boolean {
@@ -42,6 +52,7 @@ async function enrichConversations(
   return docs.map((d) => {
     const data = d.data()
     const user = userMap[d.id] ?? {}
+    const flags = readConversationFlags(data)
     return {
       userId: d.id,
       displayName: String(user.displayName || '').trim() || DISPLAY_FALLBACK,
@@ -51,23 +62,75 @@ async function enrichConversations(
       lastMessageAt: data.lastMessageAt ?? null,
       // 這裡本來就撈了 user 文件，順手帶出來，不必為了這個旗標多打一次 Firestore
       isBlocked: user.isBlocked === true,
+      pinned: flags.pinned,
+      followUp: flags.followUp,
     }
   })
 }
 
 /**
+ * 依人工標記欄位排序取回（釘選 / 待跟進）。
+ *
+ * `orderBy(field)` 本身就會排除沒有這個欄位的文件，取消標記是 FieldValue.delete()，
+ * 所以這條查詢回來的就是「目前有標記的那些」。
+ * 缺複合索引時回 null（不是空陣列）：呼叫端才分得出「沒有人標記」和「查不到」。
+ */
+async function queryFlaggedDocs(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+  field: 'pinnedAt' | 'followUpAt',
+  max: number,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[] | null> {
+  try {
+    const snap = await db.collection('conversations')
+      .where('workspaceId', '==', workspaceId)
+      .orderBy(field, 'desc')
+      .limit(max)
+      .get()
+    return snap.docs
+  }
+  catch (e: any) {
+    console.warn(`[conversations/list] ${field} 查詢失敗（多半是缺複合索引）:`, String(e?.message || '').slice(0, 300))
+    return null
+  }
+}
+
+/**
  * GET /api/conversations/list
- * Query: page, limit, search
- * Response: { conversations, total, page, limit, hasMore }
+ * Query: page, limit, search, flag（flag=followup 只看待跟進）
+ * Response: { conversations, total, page, limit, hasMore, truncated }
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
 
   const query = getQuery(event)
   const searchRaw = String(query.search || '').trim().toLowerCase()
+  const flag = String(query.flag || '').trim()
   const { page, limit, offset } = parseAdminListPagination(query, { limit: 30 })
 
   const db = getDb()
+
+  // ── 只看待跟進 ────────────────────────────────────────────────────
+  // 標記量小（就是客服自己的待辦），一次撈完在記憶體排，不做分頁；
+  // 真的超過上限就把 truncated 帶回去讓畫面明講，不要默默只顯示一部分。
+  if (flag === 'followup') {
+    const docs = await queryFlaggedDocs(db, workspaceId, 'followUpAt', FOLLOW_UP_LIST_LIMIT + 1)
+    if (docs === null) {
+      throw createError({ statusCode: 503, statusMessage: '待跟進清單暫時查不到（資料庫索引建立中），請稍後再試' })
+    }
+    const truncated = docs.length > FOLLOW_UP_LIST_LIMIT
+    const rows = (await enrichConversations(db, docs.slice(0, FOLLOW_UP_LIST_LIMIT)))
+      .filter(row => matchesSearch(row, searchRaw))
+    return {
+      conversations: rows,
+      total: rows.length,
+      page: 1,
+      limit,
+      hasMore: false,
+      truncated,
+    }
+  }
+
   const baseRef = db.collection('conversations')
     .where('workspaceId', '==', workspaceId)
     .orderBy('lastMessageAt', 'desc')
@@ -76,14 +139,22 @@ export default defineEventHandler(async (event) => {
     const countSnap = await baseRef.count().get()
     const total = countSnap.data().count
 
+    // 釘選置頂（合併規則與去重原因見 withPinnedFirst）
+    const pinnedDocs = await queryFlaggedDocs(db, workspaceId, 'pinnedAt', MAX_PINNED_CONVERSATIONS)
+    const pinnedIds = new Set((pinnedDocs ?? []).map(d => d.id))
+    const pinnedRows = page === 1 && pinnedDocs?.length
+      ? await enrichConversations(db, pinnedDocs)
+      : []
+
     let ref = baseRef as FirebaseFirestore.Query
     if (offset > 0) ref = ref.offset(offset)
     const snap = await ref.limit(limit).get()
-    const conversations = await enrichConversations(db, snap.docs)
-    const loaded = offset + conversations.length
+    const rows = await enrichConversations(db, snap.docs)
+    // hasMore 要看「原始這一頁抓了幾筆」，不能用扣掉釘選後的筆數，否則會提早判定沒有下一頁
+    const loaded = offset + snap.docs.length
 
     return {
-      conversations,
+      conversations: withPinnedFirst(pinnedRows, rows, pinnedIds),
       total,
       page,
       limit,
@@ -91,6 +162,7 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  // 搜尋時不做釘選置頂：這時清單是「搜尋結果」，照相關的時間序給就好
   const matched: ConvRow[] = []
   let firestoreOffset = 0
   let scanned = 0

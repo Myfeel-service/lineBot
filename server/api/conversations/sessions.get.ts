@@ -3,6 +3,7 @@ import type { ConversationStatus, InitialHandler } from '~~/shared/types/convers
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { countOpenQueueSessions, isOpenQueueSession, scanFilteredPage } from '~~/server/utils/conversation-queue'
+import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
 
 const PAGE_SIZE = 30
 const CHUNK = 30
@@ -13,20 +14,44 @@ function uniqueFirestoreUserIds(rawIds: string[], workspaceId: string): string[]
   return [...new Set(rawIds.map(uid => lineUserFirestoreDocId(uid, workspaceId)))]
 }
 
+/**
+ * 這一頁會用到的對話人工標記（釘選 / 待跟進）。
+ *
+ * 標記存在 `conversations` 文件上、是「對話層級」的，會話列表也要顯示同一份，
+ * 不然同一位客人在「全部」有標記、切到「待真人」就不見了。
+ * conversations 與 users 共用同一組 doc id，所以直接沿用已算好的 fsUserIds。
+ */
+async function fetchConversationFlags(
+  db: FirebaseFirestore.Firestore,
+  fsUserIds: string[],
+): Promise<Record<string, ConversationManualFlags | undefined>> {
+  const flagMap: Record<string, ConversationManualFlags | undefined> = {}
+  for (let i = 0; i < fsUserIds.length; i += CHUNK) {
+    const chunk = fsUserIds.slice(i, i + CHUNK)
+    const cSnap = await db.collection('conversations').where('__name__', 'in', chunk).get()
+    cSnap.docs.forEach((d) => { flagMap[d.id] = readConversationFlags(d.data()) })
+  }
+  return flagMap
+}
+
 function mapSessionToRow(
   sessionDocId: string,
   s: Record<string, unknown>,
   userMap: Record<string, Record<string, unknown> | undefined>,
+  flagMap: Record<string, ConversationManualFlags | undefined>,
   workspaceId: string,
 ) {
   const fsUid = lineUserFirestoreDocId(String(s.userId || ''), workspaceId)
   const user = userMap[fsUid] ?? {}
   const displayName = String(user.displayName || '').trim() || DISPLAY_FALLBACK
+  const flags = flagMap[fsUid]
   return {
     sessionId: sessionDocId,
     userId: fsUid,
     displayName,
     pictureUrl: String(user.pictureUrl || '').trim(),
+    pinned: flags?.pinned === true,
+    followUp: flags?.followUp === true,
     status: s.status,
     initialHandler: s.initialHandler,
     currentHandler: s.currentHandler,
@@ -118,8 +143,9 @@ export default defineEventHandler(async (event) => {
       const uSnap = await db.collection('users').where('__name__', 'in', chunk).get()
       uSnap.docs.forEach(d => { userMap[d.id] = d.data() })
     }
+    const flagMap = await fetchConversationFlags(db, fsUserIds)
 
-    const sessions = sliced.map(({ id, data: s }) => mapSessionToRow(id, s, userMap, workspaceId))
+    const sessions = sliced.map(({ id, data: s }) => mapSessionToRow(id, s, userMap, flagMap, workspaceId))
 
     const loaded = offset + sessions.length
     return {
@@ -196,8 +222,9 @@ export default defineEventHandler(async (event) => {
       const uSnap = await db.collection('users').where('__name__', 'in', chunk).get()
       uSnap.docs.forEach(d => { userMap[d.id] = d.data() })
     }
+    const flagMap = await fetchConversationFlags(db, fsUserIds)
 
-    const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, workspaceId))
+    const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, flagMap, workspaceId))
 
     return { sessions, total, page, limit, hasMore, truncated }
   }
