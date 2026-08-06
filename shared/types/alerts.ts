@@ -11,8 +11,10 @@
  */
 
 export type WorkspaceAlertId =
-  /** LINE Webhook 壞了（沒設定／被停用／指向別的系統／權杖失效）——所有訊息都進不來 */
+  /** LINE Webhook 確定收不到（沒設定／被停用／權杖失效）——所有訊息都進不來 */
   | 'lineWebhookBroken'
+  /** LINE 填的 Webhook 和正式網址不一致：舊網址還指向這套系統時訊息照進，但舊網址一失效就無聲斷線 */
+  | 'lineWebhookUrlMismatch'
   /** 知識庫來源同步失敗（試算表沒分享、網頁被移走…） */
   | 'knowledgeSyncFailed'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
@@ -61,6 +63,7 @@ export type WorkspaceAlertId =
  */
 export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   lineWebhookBroken: '機器人收不到客人訊息',
+  lineWebhookUrlMismatch: 'LINE 填的收訊網址不是正式網址',
   knowledgeSyncFailed: '有資料抓不到內容',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',

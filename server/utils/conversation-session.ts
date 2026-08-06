@@ -120,8 +120,46 @@ export async function recordConversationEvent(
 // ── Session Lifecycle ─────────────────────────────────────────────
 
 /**
+ * 關閉一場會話時，把「這場的最後一則訊息」快照到 session 文件上。
+ *
+ * 為什麼要快照：對話列表五個分頁的第二行都是訊息摘要，但 `conversations` 上的
+ * `lastMessage` 是**對話層級**的最新一則。已結束的那場如果直接借用，就會被標上
+ * 後來新會話的訊息，點進去時間軸對不上——列表在說謊。
+ * 進行中的那場不需要快照（它就是 currentSessionId，兩者必定同一則）。
+ *
+ * ⚠️ 只在「對話的最後一則確實還屬於這場」時才蓋。24h 過期關閉是**新訊息觸發**的，
+ * 而非文字訊息那條路徑（handler.ts 的 else 分支）是先送存檔、後 await 開會話，
+ * 存檔有可能先落地——那時 conversations.lastMessage 已經是新那場的第一句了。
+ * 用「訊息時間不得晚於這場的最後活動時間」擋掉：正常情況兩者幾乎同時（給 60 秒容差），
+ * 搶跑的情況差距是 24 小時以上，分得很開。分不清就回空物件＝留白不猜。
+ */
+const CLOSE_SNAPSHOT_TOLERANCE_MS = 60_000
+
+export function sessionClosingPreview(
+  convData: Record<string, unknown> | undefined | null,
+  sessionLastActivityAt: unknown,
+): { lastMessage: string; lastDirection: 'incoming' | 'outgoing' } | Record<string, never> {
+  const text = String(convData?.lastMessage ?? '')
+  if (!text) return {}
+
+  const msgMs = (convData?.lastMessageAt as any)?.toMillis?.() ?? 0
+  const activityMs = (sessionLastActivityAt as any)?.toMillis?.() ?? 0
+  // 任一邊沒有時間戳就不猜（舊資料、或 serverTimestamp 還沒解析）
+  if (!msgMs || !activityMs) return {}
+  if (msgMs > activityMs + CLOSE_SNAPSHOT_TOLERANCE_MS) return {}
+
+  return {
+    lastMessage: text,
+    lastDirection: convData?.lastDirection === 'outgoing' ? 'outgoing' : 'incoming',
+  }
+}
+
+/**
  * Close any non-closed sessions for a user that are not the current active session.
  * Handles orphaned sessions left by race conditions.
+ *
+ * 刻意不蓋 lastMessage 快照：孤兒是競態留下來的殘骸，它「真正的最後一則」無從得知，
+ * 拿對話層級的最新一則去填就是亂猜。列表留白。
  */
 async function closeOrphanedSessions(
   lineUserId: string,
@@ -282,6 +320,8 @@ export async function ensureConversationSession(
         status: 'closed' as ConversationStatus,
         closedAt: prevCloseAt,
         lastActivityAt: FieldValue.serverTimestamp(),
+        // 這場的最後一則留一份給列表（convData 是這個 transaction 已經讀進來的，零額外讀取）
+        ...sessionClosingPreview(convData, existingData.lastActivityAt),
       })
       closedOldSessionId = convData!.currentSessionId as string
     }
@@ -566,14 +606,23 @@ export async function closeConversationSession(sessionId: string, userId: string
   const session = sessionSnap.data() as any
   if (session.status === 'closed') return
 
+  // 手動按「結束會話」：這場就是進行中那場，對話的最後一則必然屬於它。
+  // 不是的話（殘留的舊 session）就不蓋，留白不猜。
+  const convRef = db.collection('conversations').doc(convDocId)
+  const convData = (await convRef.get()).data()
+  const preview = convData?.currentSessionId === sessionId
+    ? sessionClosingPreview(convData, session.lastActivityAt)
+    : {}
+
   await sessionRef.update({
     status: 'closed' as ConversationStatus,
     closedAt: FieldValue.serverTimestamp(),
     lastActivityAt: FieldValue.serverTimestamp(),
+    ...preview,
   })
   _updateSessionStatusCache(sessionId, 'closed')
   _invalidateUserSessionCache(lineUserId)
-  await db.collection('conversations').doc(convDocId).set(
+  await convRef.set(
     { currentSessionId: null },
     { merge: true },
   )

@@ -3,7 +3,7 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 對話</span>
-      <el-button size="small" :loading="listLoading" @click="loadList(true)">重整</el-button>
+      <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
     </template>
 
     <!-- ── Sidebar List ── -->
@@ -65,22 +65,25 @@
         <!-- Session-based view (status tabs) -->
         <template v-if="activeTab !== 'all'">
           <div
-            v-for="s in sessionSidebarItems"
+            v-for="(s, idx) in sessionSidebarItems"
             :key="s.sessionId"
             class="conv-list-row"
+            :class="{ 'is-pinned-edge': idx === lastPinnedSessionIndex }"
           >
             <AdminSplitListItem
               :title="s.displayName"
               :leading-avatar-url="s.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
+              :show-unread-dot="isRowUnread(s.userId, s.lastActivityAt)"
               :active="selectedSessionId === s.sessionId"
               :title-icon="s.pinned ? '📌' : ''"
               :meta-tag="s.followUp ? '待跟進' : ''"
-              :meta-text="SESSION_STATUS_LABELS[s.status] || s.status"
+              :meta-prefix="directionPrefix(s)"
+              :meta-text="s.lastMessage || SESSION_NO_PREVIEW"
+              :meta-strong="s.lastDirection === 'incoming' && !!s.lastMessage"
               :meta-truncate="true"
               :chip-text="formatTime(s.lastActivityAt)"
-              :chip-tone="sessionChipTone(s.status)"
               :context-menu-enabled="canOperate"
               @select="selectSession(s)"
               @contextmenu="openConvContextMenu($event, s)"
@@ -108,11 +111,13 @@
               :leading-avatar-url="c.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isConvItemUnread(c)"
+              :show-unread-dot="isRowUnread(c.userId, c.lastMessageAt)"
               :active="selectedUserId === c.userId && !selectedSessionId"
               :title-icon="c.pinned ? '📌' : ''"
               :meta-tag="c.followUp ? '待跟進' : ''"
-              :meta-text="(c.lastDirection === 'outgoing' ? '↑ ' : '') + c.lastMessage"
+              :meta-prefix="directionPrefix(c)"
+              :meta-text="c.lastMessage"
+              :meta-strong="c.lastDirection === 'incoming' && !!c.lastMessage"
               :meta-truncate="true"
               :chip-text="formatTime(c.lastMessageAt)"
               chip-tone="neutral"
@@ -1018,19 +1023,38 @@ function messageTimestampToMs(ts: any): number {
   return 0
 }
 
-/** 最後一則訊息（含使用者進線、真人、機器人／系統回覆）晚於上次在後台開啟此對話即視為未讀 */
-function isConvItemUnread(c: ConvItem): boolean {
-  const lastMs = messageTimestampToMs(c.lastMessageAt)
+/**
+ * 列表摘要前面那句「這則是誰送的」。
+ *
+ * 兩邊都標，不是只標我們送的那一側：「我們」「客人」都是兩個字加全形冒號，寬度一樣，
+ * 所以摘要一律從同一條直線開始——掃一整排的時候方向自己對齊成一欄，不用逐列讀。
+ * 先前是 `↑` 箭頭，沒有人看得出那是什麼意思。
+ *
+ * 只講方向、不講是誰回的（真人／AI／機器人的區分在泡泡旁邊的標籤，見 shared/message-sender.ts）——
+ * 列表要回答的是「這位客人還在等我們嗎」，所以對外一律算「我們」。
+ */
+function directionPrefix(row: { lastMessage?: string, lastDirection?: string }): string {
+  if (!String(row.lastMessage || '').trim()) return ''
+  return row.lastDirection === 'outgoing' ? '我們：' : '客人：'
+}
+
+/**
+ * 最後一則訊息（含使用者進線、真人、機器人／系統回覆）晚於上次在後台開啟此對話即視為未讀。
+ * 兩種列都用這一支：「全部」給對話的 lastMessageAt、會話分頁給那場的 lastActivityAt，
+ * 已讀時間都記在同一位客人身上（見 convLastReadMs），所以切分頁紅點不會前後矛盾。
+ */
+function isRowUnread(userId: string, timestamp: unknown): boolean {
+  const lastMs = messageTimestampToMs(timestamp)
   if (lastMs <= 0)
     return false
-  const readMs = convLastReadMs.value[c.userId] ?? 0
+  const readMs = convLastReadMs.value[userId] ?? 0
   return lastMs > readMs
 }
 
 function applyUnreadDocumentTitle() {
   if (typeof document === 'undefined' || !savedDocumentTitle.value)
     return
-  const n = conversations.value.filter(c => isConvItemUnread(c)).length
+  const n = conversations.value.filter(c => isRowUnread(c.userId, c.lastMessageAt)).length
   const backgrounded = document.visibilityState === 'hidden' || !pageHasFocus.value
   if (n > 0 && backgrounded)
     document.title = `（${n}）${savedDocumentTitle.value}`
@@ -1067,10 +1091,20 @@ interface SessionItem {
   initialHandler: string
   hasHandoff: boolean
   lastActivityAt: any
-  /** 對話層級的人工標記（見 ConvItem），會話列表只顯示、不改變排序 */
+  /**
+   * 這場會話的最後一則訊息。進行中的場來自對話文件、已結束的場來自關閉當下的快照，
+   * 都在後端算好（見 sessions.get.ts 的 mapSessionToRow）。
+   * 空字串＝快照上線前就結束的舊會話，畫面顯示 SESSION_NO_PREVIEW，不猜內容。
+   */
+  lastMessage: string
+  lastDirection: 'incoming' | 'outgoing'
+  /** 對話層級的人工標記（見 ConvItem） */
   pinned?: boolean
   followUp?: boolean
 }
+
+/** 舊會話沒有訊息快照時的第二行。講清楚是「我們沒留」不是「客人沒講話」 */
+const SESSION_NO_PREVIEW = '（舊會話沒有訊息預覽）'
 
 /**
  * 這一排全部是**系統依對話狀況判定**的會話狀態，不是人標的。
@@ -1232,6 +1266,13 @@ const CONV_LIST_PAGE_SIZE = 30
 
 const listLoading = ref(false)
 const listLoadingMore = ref(false)
+/**
+ * 背景刷新進行中。刻意不是 ref：它不該影響任何畫面（那正是「不要整個重整」的重點），
+ * 只用來擋自己重入。做成 ref 遲早會有人拿去綁 spinner，就白改了。
+ */
+let listMerging = false
+/** 載入批次流水號，用來丟掉「回來時已經過期」的那一批結果（見 loadList） */
+let listLoadSeq = 0
 const listHasMore = ref(false)
 const listPage = ref(1)
 const sidebarListEl = ref<HTMLElement | null>(null)
@@ -1578,32 +1619,39 @@ const pickerModes: Array<{
   },
 ]
 
-const sessionSidebarItems = computed<SessionItem[]>(() => {
-  const kw = searchText.value.toLowerCase().trim()
-  if (!kw || activeTab.value === 'all') return sessions.value
-  return sessions.value.filter(s => s.displayName.toLowerCase().includes(kw))
-})
-
 /**
  * 釘選置頂。
  *
- * 後端第一頁已經排好，這裡再排一次是為了「按下右鍵到下次載入之間」畫面就先動——
+ * 「全部」分頁後端第一頁已經排好，這裡再排一次是為了「按下右鍵到下次載入之間」畫面就先動——
  * 不然按了釘選什麼都沒發生，會以為沒生效。filter 保序，所以兩邊順序一致。
+ * 會話分頁後端沒有排（釘選是對話層級、查詢是會話層級），全靠這裡排；
+ * 不排的話同一個 📌 在「全部」置頂、切過去卻沉在中間，看起來像壞掉。
  */
-const convSidebarItems = computed<ConvItem[]>(() => {
-  const rows = conversations.value
-  if (!rows.some(c => c.pinned)) return rows
-  return [...rows.filter(c => c.pinned), ...rows.filter(c => !c.pinned)]
+function pinnedFirst<T extends { pinned?: boolean }>(rows: T[]): T[] {
+  if (!rows.some(r => r.pinned)) return rows
+  return [...rows.filter(r => r.pinned), ...rows.filter(r => !r.pinned)]
+}
+
+const sessionSidebarItems = computed<SessionItem[]>(() => {
+  const kw = searchText.value.toLowerCase().trim()
+  const rows = !kw || activeTab.value === 'all'
+    ? sessions.value
+    : sessions.value.filter(s => s.displayName.toLowerCase().includes(kw))
+  return pinnedFirst(rows)
 })
 
+const convSidebarItems = computed<ConvItem[]>(() => pinnedFirst(conversations.value))
+
 /** 釘選區的最後一筆：底下畫一條線，讀者才知道「時間序從這裡開始」 */
-const lastPinnedIndex = computed(() => {
-  const rows = convSidebarItems.value
+function lastPinnedEdge(rows: { pinned?: boolean }[]): number {
   let last = -1
   for (let i = 0; i < rows.length; i++) if (rows[i]?.pinned) last = i
   // 整份清單都是釘選時不用畫線（下面沒有東西了）
   return last >= 0 && last < rows.length - 1 ? last : -1
-})
+}
+
+const lastPinnedIndex = computed(() => lastPinnedEdge(convSidebarItems.value))
+const lastPinnedSessionIndex = computed(() => lastPinnedEdge(sessionSidebarItems.value))
 
 const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
   if (followUpFilterOn.value) {
@@ -1616,7 +1664,7 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
 })
 
 const unreadConvCount = computed(() =>
-  conversations.value.filter(c => isConvItemUnread(c)).length,
+  conversations.value.filter(c => isRowUnread(c.userId, c.lastMessageAt)).length,
 )
 
 watch(unreadConvCount, () => {
@@ -1716,13 +1764,6 @@ const serverChatRows = computed<ChatRow[]>(() => {
 
 const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
 
-function sessionChipTone(status: ConvSessionStatus): 'neutral' | 'warning' | 'success' | 'error' {
-  if (status === 'pending_human') return 'warning'
-  if (status === 'human_handling') return 'success'
-  if (status === 'closed') return 'neutral'
-  return 'neutral'
-}
-
 // ── 右鍵／⋯：釘選、待跟進 ────────────────────────────────────────
 // 兩個都是「對話層級」的人工標記，所以會話列表按右鍵也是標到同一位客人身上。
 // 「待跟進」刻意不叫「待處理」——那個詞是上面分頁（系統判定）的，見 shared/conversation-flags.ts。
@@ -1792,7 +1833,7 @@ async function onContextMenuSelect(key: string) {
     else {
       showToast(next ? '已標記待跟進' : '已取消待跟進', 'success')
       // 正在「只看待跟進」時取消標記，那一筆要當場消失，不然畫面在說謊
-      if (!next && followUpFilterOn.value) await loadList(true)
+      if (!next && followUpFilterOn.value) await loadList('reset')
     }
   }
   catch (e: any) {
@@ -1804,7 +1845,7 @@ async function onContextMenuSelect(key: string) {
 
 async function toggleFollowUpFilter() {
   followUpFilterOn.value = !followUpFilterOn.value
-  await loadList(true)
+  await loadList('reset')
 }
 
 async function switchTab(tab: TabValue) {
@@ -1815,7 +1856,7 @@ async function switchTab(tab: TabValue) {
   allTabActiveSession.value = null
   sessionTimelineItems.value = []
   sessionMeta.value = null
-  await loadList(true)
+  await loadList('reset')
   if (tab === 'all' && selectedUserId.value && selectedUser.value) {
     await selectUser(selectedUser.value)
   }
@@ -1831,8 +1872,8 @@ async function selectSession(s: SessionItem) {
     userId: s.userId,
     displayName: s.displayName,
     pictureUrl: s.pictureUrl,
-    lastMessage: SESSION_STATUS_LABELS[s.status] ?? '',
-    lastDirection: 'incoming',
+    lastMessage: s.lastMessage,
+    lastDirection: s.lastDirection,
     lastMessageAt: s.lastActivityAt,
     pinned: s.pinned === true,
     followUp: s.followUp === true,
@@ -1872,8 +1913,19 @@ async function selectSession(s: SessionItem) {
 
 const canSend = computed(() => !!inputText.value.trim())
 
-async function loadList(reset = true) {
-  if (reset) {
+/**
+ * 載入清單的三種模式。
+ *
+ * · reset — 使用者主動換了脈絡（按重整、換分頁、搜尋、進頁）：清空重來，轉圈是誠實的
+ * · more  — 往下捲載下一頁：接在後面
+ * · merge — 背景刷新（每 30 秒輪詢、送出訊息後、標記後）：重抓第一頁併進現有清單，
+ *           不清空、不轉圈、不掉已載入的後續頁。整份換掉的話每 30 秒整排列都會重繪一次，
+ *           畫面閃、捲軸跳、hover 中的 ⋯ 消失。細節見 ~/utils/list-merge。
+ */
+type LoadListMode = 'reset' | 'more' | 'merge'
+
+async function loadList(mode: LoadListMode = 'reset') {
+  if (mode === 'reset') {
     if (listLoading.value) return
     listLoading.value = true
     listPage.value = 1
@@ -1881,12 +1933,31 @@ async function loadList(reset = true) {
     conversations.value = []
     sessions.value = []
   }
-  else {
+  else if (mode === 'more') {
     if (listLoadingMore.value || listLoading.value || !listHasMore.value) return
     listLoadingMore.value = true
   }
+  else {
+    // 背景刷新不搶正在進行的載入，也不重入自己
+    if (listLoading.value || listLoadingMore.value || listMerging) return
+    listMerging = true
+  }
 
-  const page = listPage.value
+  /**
+   * 這一批載入的流水號。
+   *
+   * 背景刷新不像 reset 有 listLoading 擋著，所以「輪詢送出去了 → 使用者按重整／換分頁 →
+   * 輪詢才回來」是真的會發生的順序。回來時號碼被追過就整批丟掉，不要把舊分頁的資料
+   * 併進新分頁的清單裡。
+   */
+  const seq = ++listLoadSeq
+
+  // 背景刷新永遠只重抓第一頁：那裡才有最新的變化，後面幾頁維持原樣
+  const page = mode === 'merge' ? 1 : listPage.value
+  // 併入前先記住捲動位置：新的列插在最上面會把內容往下推，不補回去就等於捲軸自己跳走
+  const listEl = mode === 'merge' ? sidebarListEl.value : null
+  const scrollTopBefore = listEl?.scrollTop ?? 0
+  const scrollHeightBefore = listEl?.scrollHeight ?? 0
 
   try {
     if (activeTab.value === 'all') {
@@ -1903,9 +1974,13 @@ async function loadList(reset = true) {
           flag: followUpFilterOn.value ? 'followup' : undefined,
         },
       })
+      if (seq !== listLoadSeq) return
       const chunk = res.conversations ?? []
-      conversations.value = reset ? chunk : [...conversations.value, ...chunk]
-      listHasMore.value = Boolean(res.hasMore)
+      conversations.value = mode === 'merge'
+        ? mergeIntoList(conversations.value, chunk, c => c.userId, res.hasMore)
+        : mode === 'reset' ? chunk : [...conversations.value, ...chunk]
+      // 背景刷新只看第一頁時後面幾頁還在清單裡，不能拿第一頁的 hasMore 覆蓋掉
+      if (mode !== 'merge' || !res.hasMore) listHasMore.value = Boolean(res.hasMore)
       followUpListTruncated.value = followUpFilterOn.value && res.truncated === true
       // 待跟進總數不在這裡算：這裡的 total 會被顯示上限截掉，真正的數字由 loadSessionCounts() 帶回來
     }
@@ -1921,25 +1996,42 @@ async function loadList(reset = true) {
           limit: CONV_LIST_PAGE_SIZE,
         },
       })
+      if (seq !== listLoadSeq) return
       const chunk = res.sessions ?? []
-      sessions.value = reset ? chunk : [...sessions.value, ...chunk]
-      listHasMore.value = Boolean(res.hasMore)
+      sessions.value = mode === 'merge'
+        ? mergeIntoList(sessions.value, chunk, s => s.sessionId, res.hasMore)
+        : mode === 'reset' ? chunk : [...sessions.value, ...chunk]
+      if (mode !== 'merge' || !res.hasMore) listHasMore.value = Boolean(res.hasMore)
+    }
+
+    if (listEl && scrollTopBefore > 0) {
+      await nextTick()
+      // 上面多出來的高度補回捲軸，客服正在看的那幾列就會停在原地
+      const delta = listEl.scrollHeight - scrollHeightBefore
+      if (delta) listEl.scrollTop = scrollTopBefore + delta
     }
   }
   catch {
-    if (reset) {
+    if (mode === 'reset') {
       conversations.value = []
       sessions.value = []
     }
-    showToast('載入對話列表失敗', 'error')
+    // 背景刷新失敗不吵：畫面上還是上一輪的資料，沒有壞掉的東西要通知
+    if (mode !== 'merge') showToast('載入對話列表失敗', 'error')
   }
   finally {
-    listLoading.value = false
-    listLoadingMore.value = false
+    // 只清自己那一批的旗標：被追過的話新那批還在跑，清掉會讓它的轉圈提早消失、
+    // 也會放行本來該被擋下的重入
+    if (seq === listLoadSeq) {
+      listLoading.value = false
+      listLoadingMore.value = false
+    }
+    listMerging = false
   }
+  if (seq !== listLoadSeq) return
   await loadSessionCounts()
   maybeRefreshAiContext()
-  if (reset) void autoFillSidebarList()
+  if (mode === 'reset') void autoFillSidebarList()
 }
 
 /**
@@ -1961,7 +2053,7 @@ function maybeRefreshAiContext() {
 async function loadMoreList() {
   if (!listHasMore.value || listLoading.value || listLoadingMore.value) return
   listPage.value += 1
-  await loadList(false)
+  await loadList('more')
 }
 
 function onSidebarListScroll() {
@@ -1989,18 +2081,20 @@ async function autoFillSidebarList() {
   }
 }
 
+/**
+ * 背景刷新（輪詢、送出訊息後、標記後）。
+ *
+ * 以前捲下去超過 80px 就整個放棄、只更新分頁數字——因為那時是整份重載，
+ * 一刷新捲軸就跳回頂端。現在改成併入 + 補回捲動位置，捲到哪裡都能安全刷新。
+ */
 async function refreshListQuiet() {
-  if (sidebarListEl.value && sidebarListEl.value.scrollTop > 80) {
-    await loadSessionCounts()
-    return
-  }
-  await loadList(true)
+  await loadList('merge')
 }
 
 let searchListTimer: ReturnType<typeof setTimeout> | null = null
 watch(searchText, () => {
   if (searchListTimer) clearTimeout(searchListTimer)
-  searchListTimer = setTimeout(() => void loadList(true), 300)
+  searchListTimer = setTimeout(() => void loadList('reset'), 300)
 })
 
 async function loadSessionCounts() {
@@ -2182,7 +2276,9 @@ async function loadMessages(userId: string, options?: { quiet?: boolean }) {
       messages: MsgItem[]
       activeSession: SessionPanelMeta | null
     }>(`/api/conversations/${userId}/messages`)
-    messages.value = res.messages
+    // 只換真的變了的那幾則：沒變的沿用原物件，Vue 就不會把整串泡泡重繪一遍
+    // （圖片泡泡重繪會閃、已簽好的媒體網址也會被重跑一輪）
+    messages.value = reuseUnchangedRows(messages.value, res.messages, m => m.id)
     allTabActiveSession.value = res.activeSession ?? null
     await nextTick()
     scrollToBottom()
@@ -3430,7 +3526,7 @@ onMounted(() => {
     activeTab.value = qTab as TabValue
   // 從監控頁「開對話」帶進來的客人（?userId=）：載入清單後直接選中，不讓人再找一次
   const qUserId = String(route.query.userId || '')
-  void loadList(true).then(() => {
+  void loadList('reset').then(() => {
     if (qUserId && activeTab.value === 'all')
       void selectUserById(qUserId)
   })

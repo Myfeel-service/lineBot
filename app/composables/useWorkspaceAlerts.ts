@@ -64,6 +64,17 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
   },
   {
+    // 與 lineWebhookBroken 刻意分開：網址不一致時訊息「可能」還進得來（舊網域仍指向
+    // 這套系統）——掛紅牌說「收不到」會狼來了（myfeel 實測：LINE 填舊網域、對話照進）。
+    id: 'lineWebhookUrlMismatch',
+    icon: Link,
+    severity: 'warning',
+    impact: 'LINE 後台填的收訊網址和這套系統的正式網址不同。訊息目前可能還進得來（舊網址還指向這裡），但哪天舊網址失效，所有訊息會無聲斷掉。建議把 LINE 後台換成正式網址。',
+    cta: '去檢查 LINE 連接',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+  },
+  {
     id: 'anyTextBlocking',
     icon: ChatDotRound,
     severity: 'critical',

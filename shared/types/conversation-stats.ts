@@ -50,6 +50,15 @@ export interface ConversationSessionDoc {
   humanLastRepliedAt?: FirebaseFirestore.Timestamp | null
   /** SLA 提醒已發送的時間（每場會話只提醒一次） */
   slaRemindedAt?: FirebaseFirestore.Timestamp | null
+  /**
+   * 這場會話結束當下的最後一則訊息，給列表第二行當摘要用（見 sessionClosingPreview）。
+   *
+   * 只在關閉時蓋一次快照——進行中的場不需要（直接讀 conversations 那份，必定是同一則）。
+   * 舊的已結束會話沒有這兩欄，列表就留白；刻意不回填，猜錯比空白更糟
+   * （同 resolveMessageSender 對舊訊息的處理）。
+   */
+  lastMessage?: string
+  lastDirection?: 'incoming' | 'outgoing'
 }
 
 export interface ConversationEventDoc {

@@ -74,7 +74,61 @@ const MAINTENANCE_STALE_MS = 60 * 60_000
  */
 const WEBHOOK_PROBE_TTL_MS = 5 * 60_000
 const WEBHOOK_PROBE_CACHE_MAX = 500
-const webhookProbeCache = new Map<string, { result: ProbeResult; expires: number }>()
+
+/**
+ * webhook 狀態分類。broken 與 mismatch **刻意分成兩顆警示**：
+ * 網址不一致時訊息「可能」還進得來（舊網域仍指向這套系統）——掛紅牌說「收不到訊息」
+ * 會狼來了（myfeel 實測：LINE 填舊網域、對話照常進來）。紅牌只留給確定收不到的三種。
+ */
+type WebhookCheck =
+  | { kind: 'unconfigured' } // 還沒接 LINE：是「設定沒做」（setup-status 的事），不是壞掉
+  | { kind: 'broken'; detail: string } // 確定收不到：沒設定網址／被停用／權杖失效
+  | { kind: 'mismatch'; endpoint: string } // 有設有開，但填的不是 PUBLIC_BASE_URL
+  | { kind: 'ok' }
+const webhookProbeCache = new Map<string, { result: WebhookCheck; expires: number }>()
+
+/**
+ * 問 LINE 目前的 webhook 設定並分類（5 分鐘快取；skipCache＝使用者剛改完設定回頭確認，
+ * 一定要真的再問一次，否則五分鐘內都拿到修好前的答案、一直說「還沒好」）。
+ * 只打 GET 查設定（便宜、無副作用）；LINE 的 test API 有每小時額度，留給設定頁的手動驗證。
+ * 網路抖動等非預期錯誤直接 throw → 兩顆 probe 都變 unknown，不下結論。
+ */
+async function checkLineWebhook(wid: string, skipCache: boolean): Promise<WebhookCheck> {
+  const cached = skipCache ? null : webhookProbeCache.get(wid)
+  if (cached && cached.expires > Date.now()) return cached.result
+
+  const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
+  const token = channelAccessToken.trim()
+  if (!token) return { kind: 'unconfigured' }
+
+  const res = await fetchLineWebhookEndpoint(token)
+  let result: WebhookCheck
+  if (!res.ok) {
+    if (res.status === 401)
+      result = { kind: 'broken', detail: 'LINE 存取權杖已失效，需要重新設定' }
+    else if (res.status === 404)
+      result = { kind: 'broken', detail: 'LINE 後台還沒設定 Webhook 網址' }
+    else
+      throw new Error(`LINE webhook 查詢失敗 HTTP ${res.status}`)
+  }
+  else if (!res.data.active) {
+    result = { kind: 'broken', detail: 'Webhook 在 LINE 後台被停用了' }
+  }
+  else {
+    // 比對基準＝PUBLIC_BASE_URL（對外正式網址），**不是**「使用者當下瀏覽的網址」——
+    // 本機開發、或同一套系統有兩個網域時，request origin 都會對不上，但 webhook 沒壞
+    // （第一版拿 request origin 比，在 myfeel 誤報過）。
+    // 沒設定對外網址、或設成本機網址就跳過比對：寧可漏抓，不誤報。
+    const canonical = String(useRuntimeConfig().appBaseUrl || '').trim().replace(/\/$/, '')
+    const comparable = Boolean(canonical) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(canonical)
+    const mismatch = comparable
+      && normalizeWebhookCompareUrl(res.data.endpoint) !== normalizeWebhookCompareUrl(`${canonical}/webhook`)
+    result = mismatch ? { kind: 'mismatch', endpoint: res.data.endpoint } : { kind: 'ok' }
+  }
+  webhookProbeCache.set(wid, { result, expires: Date.now() + WEBHOOK_PROBE_TTL_MS })
+  capMapSize(webhookProbeCache, WEBHOOK_PROBE_CACHE_MAX)
+  return result
+}
 
 type ProbeResult = { active: boolean; count?: number; detail?: string }
 
@@ -439,52 +493,21 @@ export async function collectWorkspaceAlerts(
     ? subPromise!.then(sub => (sub?.currentPeriodStart ? getQuotaAnswered(wid, sub.currentPeriodStart, db) : 0))
     : null
 
+  // webhook 只問 LINE 一次，「確定收不到」與「網址不一致」兩顆 probe 共用同一個答案
+  const webhookCheckPromise = canSettings ? checkLineWebhook(wid, skipCache) : null
+
   const billingProbes: Array<Promise<WorkspaceAlertItem>> = canSettings
     ? [
         probe('lineWebhookBroken', async () => {
-          // 機器人的總開關：webhook 掛了＝所有訊息都進不來，其他異常都無從發生。
-          // 只打 GET 查設定（便宜、無副作用）；LINE 的 test API 有每小時額度，
-          // 留給設定頁的手動「驗證」按鈕。
-          // skipCache＝使用者剛改完設定回頭確認：一定要真的再問一次 LINE，
-          // 否則五分鐘內都會拿到修好之前那份答案，一直說「還沒好」
-          const cached = skipCache ? null : webhookProbeCache.get(wid)
-          if (cached && cached.expires > Date.now()) return cached.result
-
-          const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
-          const token = channelAccessToken.trim()
-          // 還沒接 LINE 是「設定沒做」（setup-status 的事），不是「本來會動的東西壞了」
-          if (!token) return { active: false }
-
-          const res = await fetchLineWebhookEndpoint(token)
-          let result: ProbeResult
-          if (!res.ok) {
-            if (res.status === 401)
-              result = { active: true, detail: 'LINE 存取權杖已失效，需要重新設定' }
-            else if (res.status === 404)
-              result = { active: true, detail: 'LINE 後台還沒設定 Webhook 網址' }
-            else
-              throw new Error(`LINE webhook 查詢失敗 HTTP ${res.status}`) // 網路抖動等 → unknown，不下結論
-          }
-          else if (!res.data.active) {
-            result = { active: true, detail: 'Webhook 在 LINE 後台被停用了' }
-          }
-          else {
-            // 指向別的系統也等於收不到。比對基準＝PUBLIC_BASE_URL（對外正式網址），
-            // **不是**「使用者當下瀏覽的網址」——本機開發、或同一套系統有兩個網域
-            // （自訂網域＋amplifyapp）時，request origin 都會對不上，但 webhook 沒壞
-            // （第一版拿 request origin 比，在 myfeel 誤報過）。
-            // 沒設定對外網址、或設成本機網址就跳過比對：寧可漏抓「指向別系統」，不誤報。
-            const canonical = String(useRuntimeConfig().appBaseUrl || '').trim().replace(/\/$/, '')
-            const comparable = Boolean(canonical) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(canonical)
-            const mismatch = comparable
-              && normalizeWebhookCompareUrl(res.data.endpoint) !== normalizeWebhookCompareUrl(`${canonical}/webhook`)
-            result = mismatch
-              ? { active: true, detail: `LINE 後台填的是 ${res.data.endpoint}` }
-              : { active: false }
-          }
-          webhookProbeCache.set(wid, { result, expires: Date.now() + WEBHOOK_PROBE_TTL_MS })
-          capMapSize(webhookProbeCache, WEBHOOK_PROBE_CACHE_MAX)
-          return result
+          // 機器人的總開關：webhook 掛了＝所有訊息都進不來，其他異常都無從發生
+          const c = await webhookCheckPromise!
+          return c.kind === 'broken' ? { active: true, detail: c.detail } : { active: false }
+        }),
+        probe('lineWebhookUrlMismatch', async () => {
+          const c = await webhookCheckPromise!
+          return c.kind === 'mismatch'
+            ? { active: true, detail: `LINE 後台填的是 ${c.endpoint}` }
+            : { active: false }
         }),
         probe('quotaExceeded', async () => {
           const [sub, answered] = await Promise.all([subPromise!, answeredPromise!])

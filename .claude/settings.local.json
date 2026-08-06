@@ -207,7 +207,16 @@
       "Bash(npm run *)",
       "Bash(OUT_DIR=. node conv-flags-empty.mjs)",
       "Bash(cp /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/6ac3b1a7-7590-413d-8cde-a503de6b3981/scratchpad/list-flows.ts /Users/kevin/Documents/Github/linebot/scripts/tmp-list-flows.ts && node --env-file=.env_myfeel --experimental-strip-types scripts/tmp-list-flows.ts 2>&1 | head -60)",
-      "Bash(git -C /Users/kevin/Documents/Github/linebot diff --stat server/utils/broken-module-refs.ts)"
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff --stat server/utils/broken-module-refs.ts)",
+      "Bash(dig +short bot.myfeel-tw.com CNAME)",
+      "Bash(dig +short bot.myfeel-tw.com)",
+      "Bash(dig +short lineminime.com CNAME)",
+      "Bash(dig +short lineminime.com)",
+      "Bash(curl -sSI --max-time 10 https://bot.myfeel-tw.com/webhook)",
+      "Bash(curl -sSI --max-time 10 https://lineminime.com/webhook)",
+      "Bash(perl -0pi -e 's/const flagMap = await fetchConversationFlags\\\\\\(db, fsUserIds\\\\\\)/const convMap = await fetchConversationSideData\\(db, fsUserIds\\)/g; s/mapSessionToRow\\\\\\(id, s, userMap, flagMap, workspaceId\\\\\\)/mapSessionToRow\\(id, s, userMap, convMap, workspaceId\\)/g; s/mapSessionToRow\\\\\\(d\\\\.id, d\\\\.data\\\\\\(\\\\\\), userMap, flagMap, workspaceId\\\\\\)/mapSessionToRow\\(d.id, d.data\\(\\), userMap, convMap, workspaceId\\)/g' server/api/conversations/sessions.get.ts)",
+      "Bash(perl -0pi -e 's/:meta-prefix=\"outgoingPrefix\\\\\\(/:meta-prefix=\"directionPrefix\\(/g; s/:meta-text-strong=\"\\(s|c\\)\\\\.lastDirection === .incoming. && !!\\\\1\\\\.lastMessage\"/:meta-strong=\"$1.lastDirection === '\"'\"'incoming'\"'\"' \\\\&\\\\& !!$1.lastMessage\"/g' app/components/conversations/AdminPanel.vue)",
+      "Bash(perl -0pi -e \"s/loadList\\\\\\(true\\\\\\)/loadList\\('reset'\\)/g; s/loadList\\\\\\(false\\\\\\)/loadList\\('more'\\)/g\" app/components/conversations/AdminPanel.vue)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

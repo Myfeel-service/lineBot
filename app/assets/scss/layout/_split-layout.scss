@@ -301,19 +301,30 @@ body.is-resizing-split {
   display: block;
 }
 
-/* 摘要那一行前面掛小膠囊時改成單行 flex，膠囊固定寬、摘要自己吃掉剩下的space */
-.split-list-meta.split-list-meta--stacked.has-inline-tag {
+/* 摘要那一行前面掛了東西（膠囊或「客人：」這種前綴）就改成單行 flex，
+   前面固定寬、摘要自己吃掉剩下的 space */
+.split-list-meta.split-list-meta--stacked.has-inline-lead {
   display: flex;
   align-items: center;
   gap: 0.3rem;
 }
 
-.split-list-meta.split-list-meta--stacked.has-inline-tag .split-list-meta-text {
+.split-list-meta.split-list-meta--stacked.has-inline-lead .split-list-meta-text {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 前綴和摘要之間不要 gap：「客人：」的全形冒號自己就帶空白，
+   再多一段 gap 會斷成兩截，讀起來不像同一句話（膠囊那側的 gap 保留） */
+.split-list-meta .split-list-meta-prefix {
+  margin-right: -0.4rem;
+}
+
+.split-list-meta.split-list-meta--stacked.has-inline-lead .split-list-meta-prefix {
+  margin-right: -0.3rem;
 }
 
 .split-list-chip.split-list-chip--inline {
@@ -371,6 +382,27 @@ body.is-resizing-split {
   font-size: 0.72rem;
   color: var(--text-muted);
   line-height: 1.2;
+}
+
+/* 摘要前綴（對話列表：「我們：」「客人：」）。
+   兩邊都是兩個字加全形冒號、寬度一致，摘要才會從同一條直線開始。 */
+.split-list-meta-prefix {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+
+/* 這一列還等你處理（對話列表：客人講的最後一則）。
+   後台單色，用深淺分主次而不是顏色；前綴跟摘要一起加深，讀起來才是同一句。 */
+.split-list-meta.is-strong .split-list-meta-prefix,
+.split-list-meta.is-strong .split-list-meta-text {
+  color: var(--text-secondary);
+}
+
+.split-list-meta.is-strong .split-list-meta-text {
+  font-weight: 500;
 }
 
 .split-editor {

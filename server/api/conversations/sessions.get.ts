@@ -14,44 +14,76 @@ function uniqueFirestoreUserIds(rawIds: string[], workspaceId: string): string[]
   return [...new Set(rawIds.map(uid => lineUserFirestoreDocId(uid, workspaceId)))]
 }
 
+/** 一位客人的對話層級資料：人工標記 + 目前進行中的會話 + 最後一則訊息 */
+interface ConvSideData {
+  flags: ConversationManualFlags
+  currentSessionId: string
+  lastMessage: string
+  lastDirection: 'incoming' | 'outgoing'
+}
+
 /**
- * 這一頁會用到的對話人工標記（釘選 / 待跟進）。
+ * 這一頁會用到的對話層級資料。
  *
- * 標記存在 `conversations` 文件上、是「對話層級」的，會話列表也要顯示同一份，
+ * 標記（釘選 / 待跟進）存在 `conversations` 文件上，會話列表也要顯示同一份，
  * 不然同一位客人在「全部」有標記、切到「待真人」就不見了。
+ * 順手把最後一則訊息帶出來——列表五個分頁的第二行都要它，而這份文件本來就要讀。
  * conversations 與 users 共用同一組 doc id，所以直接沿用已算好的 fsUserIds。
  */
-async function fetchConversationFlags(
+async function fetchConversationSideData(
   db: FirebaseFirestore.Firestore,
   fsUserIds: string[],
-): Promise<Record<string, ConversationManualFlags | undefined>> {
-  const flagMap: Record<string, ConversationManualFlags | undefined> = {}
+): Promise<Record<string, ConvSideData | undefined>> {
+  const map: Record<string, ConvSideData | undefined> = {}
   for (let i = 0; i < fsUserIds.length; i += CHUNK) {
     const chunk = fsUserIds.slice(i, i + CHUNK)
     const cSnap = await db.collection('conversations').where('__name__', 'in', chunk).get()
-    cSnap.docs.forEach((d) => { flagMap[d.id] = readConversationFlags(d.data()) })
+    cSnap.docs.forEach((d) => {
+      const data = d.data()
+      map[d.id] = {
+        flags: readConversationFlags(data),
+        currentSessionId: String(data.currentSessionId ?? ''),
+        lastMessage: String(data.lastMessage ?? ''),
+        lastDirection: data.lastDirection === 'outgoing' ? 'outgoing' : 'incoming',
+      }
+    })
   }
-  return flagMap
+  return map
 }
 
 function mapSessionToRow(
   sessionDocId: string,
   s: Record<string, unknown>,
   userMap: Record<string, Record<string, unknown> | undefined>,
-  flagMap: Record<string, ConversationManualFlags | undefined>,
+  convMap: Record<string, ConvSideData | undefined>,
   workspaceId: string,
 ) {
   const fsUid = lineUserFirestoreDocId(String(s.userId || ''), workspaceId)
   const user = userMap[fsUid] ?? {}
   const displayName = String(user.displayName || '').trim() || DISPLAY_FALLBACK
-  const flags = flagMap[fsUid]
+  const conv = convMap[fsUid]
+  /**
+   * 這場會話的最後一則訊息。
+   *
+   * 進行中那場（= conversations.currentSessionId）直接讀對話層級那份：定義上就是同一則。
+   * 已結束的場讀自己身上的快照（關閉當下蓋的，見 sessionClosingPreview）——**不可以**
+   * 退回去用對話層級的，那會把後來新會話的訊息標到舊的這場上。
+   * 兩個都沒有（快照上線前就結束的舊會話）＝留白，不猜。
+   */
+  const isCurrent = Boolean(conv?.currentSessionId) && conv!.currentSessionId === sessionDocId
+  const lastMessage = isCurrent ? conv!.lastMessage : String(s.lastMessage ?? '')
+  const lastDirection = isCurrent
+    ? conv!.lastDirection
+    : (s.lastDirection === 'outgoing' ? 'outgoing' : 'incoming')
   return {
     sessionId: sessionDocId,
     userId: fsUid,
     displayName,
     pictureUrl: String(user.pictureUrl || '').trim(),
-    pinned: flags?.pinned === true,
-    followUp: flags?.followUp === true,
+    pinned: conv?.flags.pinned === true,
+    followUp: conv?.flags.followUp === true,
+    lastMessage,
+    lastDirection,
     status: s.status,
     initialHandler: s.initialHandler,
     currentHandler: s.currentHandler,
@@ -143,9 +175,9 @@ export default defineEventHandler(async (event) => {
       const uSnap = await db.collection('users').where('__name__', 'in', chunk).get()
       uSnap.docs.forEach(d => { userMap[d.id] = d.data() })
     }
-    const flagMap = await fetchConversationFlags(db, fsUserIds)
+    const convMap = await fetchConversationSideData(db, fsUserIds)
 
-    const sessions = sliced.map(({ id, data: s }) => mapSessionToRow(id, s, userMap, flagMap, workspaceId))
+    const sessions = sliced.map(({ id, data: s }) => mapSessionToRow(id, s, userMap, convMap, workspaceId))
 
     const loaded = offset + sessions.length
     return {
@@ -222,9 +254,9 @@ export default defineEventHandler(async (event) => {
       const uSnap = await db.collection('users').where('__name__', 'in', chunk).get()
       uSnap.docs.forEach(d => { userMap[d.id] = d.data() })
     }
-    const flagMap = await fetchConversationFlags(db, fsUserIds)
+    const convMap = await fetchConversationSideData(db, fsUserIds)
 
-    const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, flagMap, workspaceId))
+    const sessions = docs.map(d => mapSessionToRow(d.id, d.data(), userMap, convMap, workspaceId))
 
     return { sessions, total, page, limit, hasMore, truncated }
   }

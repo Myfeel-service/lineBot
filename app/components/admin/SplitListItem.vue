@@ -43,15 +43,19 @@
           >{{ trimmedChipText }}</span>
         </div>
         <div
-          v-if="trimmedMetaText || trimmedMetaTag"
+          v-if="trimmedMetaText || trimmedMetaTag || trimmedMetaPrefix"
           class="split-list-meta split-list-meta--stacked"
-          :class="{ 'has-inline-tag': trimmedMetaTag }"
+          :class="{ 'has-inline-lead': hasInlineLead, 'is-strong': props.metaStrong }"
         >
           <span
             v-if="trimmedMetaTag"
             class="split-list-chip split-list-chip--inline"
             :class="`is-${props.metaTagTone}`"
           >{{ trimmedMetaTag }}</span>
+          <span
+            v-if="trimmedMetaPrefix"
+            class="split-list-meta-prefix"
+          >{{ trimmedMetaPrefix }}</span>
           <span
             class="split-list-meta-text"
             :class="{ truncate: props.metaTruncate }"
@@ -66,7 +70,11 @@
             aria-hidden="true"
           >{{ trimmedTitleIcon }}</span>{{ props.title }}
         </div>
-        <div v-if="$slots.meta || props.chipText || props.metaText" class="split-list-meta">
+        <div
+          v-if="$slots.meta || props.chipText || props.metaText || trimmedMetaPrefix"
+          class="split-list-meta"
+          :class="{ 'is-strong': props.metaStrong }"
+        >
           <slot v-if="$slots.meta" name="meta" />
           <template v-else>
             <span
@@ -76,6 +84,10 @@
             >
               {{ props.chipText }}
             </span>
+            <span
+              v-if="trimmedMetaPrefix"
+              class="split-list-meta-prefix"
+            >{{ trimmedMetaPrefix }}</span>
             <span
               v-if="props.metaText"
               class="split-list-meta-text"
@@ -123,6 +135,16 @@ const props = withDefaults(defineProps<{
   metaTag?: string
   metaTagTone?: 'success' | 'neutral' | 'warning' | 'error'
   /**
+   * 摘要前面的短前綴（不是膠囊），例如對話列表的「我們：」「客人：」。
+   * 標示這段摘要是誰講的，膠囊留給標記，兩者可以同時出現。
+   */
+  metaPrefix?: string
+  /**
+   * 整行摘要（含前綴）用深字，預設淡字。給「這一列還等你處理」這種要被看見的內容用；
+   * 後台單色，靠深淺分主次，不用顏色。膠囊有自己的配色，不受影響。
+   */
+  metaStrong?: boolean
+  /**
    * 允許右鍵開啟自訂選單：開啟時會擋掉瀏覽器原生選單並 emit contextmenu。
    * 沒有要接選單就別開，不然使用者會失去原生右鍵卻換不到東西。
    */
@@ -141,6 +163,8 @@ const props = withDefaults(defineProps<{
   titleIcon: '',
   metaTag: '',
   metaTagTone: 'warning',
+  metaPrefix: '',
+  metaStrong: false,
   contextMenuEnabled: false,
 })
 
@@ -154,6 +178,10 @@ const trimmedChipText = computed(() => String(props.chipText || '').trim())
 const trimmedMetaText = computed(() => String(props.metaText || '').trim())
 const trimmedTitleIcon = computed(() => String(props.titleIcon || '').trim())
 const trimmedMetaTag = computed(() => String(props.metaTag || '').trim())
+const trimmedMetaPrefix = computed(() => String(props.metaPrefix || '').trim())
+
+/** 摘要前面掛了東西（膠囊或前綴）就要改走單行 flex，否則前綴會被擠到自己一行 */
+const hasInlineLead = computed(() => Boolean(trimmedMetaTag.value || trimmedMetaPrefix.value))
 
 function onContextMenu(event: MouseEvent) {
   if (!props.contextMenuEnabled) return
