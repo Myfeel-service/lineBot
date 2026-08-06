@@ -229,7 +229,19 @@
       "Bash(cp /tmp/rm-check.css .)",
       "Bash(sed -i '' 's#href=\"/tmp/rm-check.css\"#href=\"rm-check.css\"#' rm-mock.html)",
       "Bash(sed -i '' 's/class=\"rm-config-col\"/class=\"rm-config-col rm-config-col--fields\"/' rm-mock.html)",
-      "Bash(sed -e 's#</body>#<script>const r=e=>{const b=document.querySelector\\(e\\).getBoundingClientRect\\(\\);return e+\" top=\"+b.top.toFixed\\(1\\)+\" left=\"+b.left.toFixed\\(1\\)+\" w=\"+b.width.toFixed\\(1\\)+\" h=\"+b.height.toFixed\\(1\\)};const out=[\".rm-config-col--fields .admin-field-label\",\".rm-config-col--visual .admin-panel-title\",\".rm-config-col--fields\",\".rm-config-col--visual\",\".canvas-wrap\",\".rm-config-grid\"].map\\(r\\).join\\(\" | \"\\);document.title=out;const p=document.createElement\\(\"pre\"\\);p.id=\"M\";p.textContent=out;document.body.appendChild\\(p\\);</script></body>#' rm-mock.html)"
+      "Bash(sed -e 's#</body>#<script>const r=e=>{const b=document.querySelector\\(e\\).getBoundingClientRect\\(\\);return e+\" top=\"+b.top.toFixed\\(1\\)+\" left=\"+b.left.toFixed\\(1\\)+\" w=\"+b.width.toFixed\\(1\\)+\" h=\"+b.height.toFixed\\(1\\)};const out=[\".rm-config-col--fields .admin-field-label\",\".rm-config-col--visual .admin-panel-title\",\".rm-config-col--fields\",\".rm-config-col--visual\",\".canvas-wrap\",\".rm-config-grid\"].map\\(r\\).join\\(\" | \"\\);document.title=out;const p=document.createElement\\(\"pre\"\\);p.id=\"M\";p.textContent=out;document.body.appendChild\\(p\\);</script></body>#' rm-mock.html)",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-ip.ts\")",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-prod-order.ts\")",
+      "Bash(perl -i -pe 's/^\\(\\\\s*\\)await writeAiMeta\\\\\\(fsUserDocId, \\\\{$/$1await recordTurn\\({/ if $. >= 3180 && $. <= 3495; s/^\\(\\\\s*\\)await writeAiMeta\\\\\\(fsUserDocId, \\\\{ lastDecision: .skipped., lastQuery: textContent \\\\}\\\\\\)$/$1await recordTurn\\({ lastDecision: \\\\x27skipped\\\\x27, lastQuery: textContent }\\)/ if $. >= 3180 && $. <= 3495;' server/utils/handler.ts)",
+      "Bash(node --env-file=.env_main --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-ip.ts\")",
+      "Bash(sed -i '' 's/PAYUNI_UPP_ENDPOINTS/PAYUNI_ENDPOINTS/g' probe-upp-bind.ts)",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-upp-bind.ts\")",
+      "Bash(node --env-file=/Users/kevin/Documents/Github/linebot/.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-upp-bind.ts\")",
+      "Bash(ls /Applications | grep -i chrom; ls node_modules | grep -iE \"^\\(puppeteer|playwright\\)\" ; ls ~/.cache/puppeteer 2>/dev/null; which chromedriver 2>/dev/null; echo \"---\"; ls \"/Applications/Google Chrome.app/Contents/MacOS/\" 2>/dev/null)",
+      "Bash(ln -sfn /Users/kevin/Documents/Github/linebot/node_modules /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/node_modules)",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/first-charge.ts\")",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/first-charge-run.ts\")",
+      "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/chain-test.ts\")"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

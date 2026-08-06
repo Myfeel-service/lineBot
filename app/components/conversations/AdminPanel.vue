@@ -209,9 +209,11 @@
         v-if="canOperate"
         :user-id="selectedUserId"
         :refresh-key="aiContextRefreshKey"
+        :session-window="aiContextSessionWindow"
         :api-fetch="apiFetch"
         @apply-draft="applyAiDraft"
         @add-knowledge="goAddKnowledge"
+        @edit-chunk="goEditChunk"
       />
       <!-- 圖片可以直接拖進對話區（貼上則綁在輸入框），不必繞 ＋ →「圖片」→ 選檔案 -->
       <div
@@ -508,9 +510,38 @@
                         class="conv-bubble-read"
                         title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
                       >已讀</span>
+                      <!--
+                        這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：
+                        一場對話 AI 回好幾次，最上面那張永遠只講最新一次——客服想標的
+                        通常是更早那一則（發現答錯多半是客人抱怨之後）。
+                        沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
+                      -->
+                      <button
+                        v-if="canOperate && msg.aiTurnId"
+                        type="button"
+                        class="conv-bubble-why"
+                        :aria-expanded="openTurnKey === msg.aiTurnId"
+                        @click="toggleTurn(msg.aiTurnId)"
+                      >{{ openTurnKey === msg.aiTurnId ? '收起' : '為什麼這樣答' }}</button>
                     </template>
                   </div>
                 </div>
+              </div>
+
+              <!-- 展開的脈絡塞在泡泡「下面」自己一區：meta 那條只有泡泡剩下的寬度，塞不下 -->
+              <div v-if="msg.aiTurnId && openTurnKey === msg.aiTurnId" class="conv-turn-panel">
+                <div v-if="turnLoading" class="conv-turn-panel__loading"><div class="spinner" /></div>
+                <p v-else-if="turnError" class="conv-turn-panel__error">{{ turnError }}</p>
+                <ConversationsAiContextBody
+                  v-else-if="turnCtx"
+                  :ctx="turnCtx"
+                  :user-id="selectedUserId"
+                  :api-fetch="apiFetch"
+                  @apply-draft="applyAiDraft"
+                  @add-knowledge="goAddKnowledge"
+                  @edit-chunk="goEditChunk"
+                  @reload="loadTurn(msg.aiTurnId)"
+                />
               </div>
               <!--
                 失敗的原因和補救動作放在泡泡「下面」自己一行，不塞進旁邊那條 meta：
@@ -929,6 +960,7 @@ import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversa
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
+import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
 /** 與 `useWorkspace().apiFetch` 相同簽章，由路由頁注入（含 workspaceId）。 */
@@ -1167,6 +1199,11 @@ interface MsgItem {
   /** 標籤 tooltip 上補的一句：真人＝哪位同事，機器人＝哪個模組／規則 */
   senderName?: string
   /**
+   * 這則是哪一次 AI 回合送出的。有值才給「為什麼這樣答」——空＝這功能上線前的舊訊息，
+   * 刻意不用時間去猜是哪一回合（猜錯會讓客服對著錯的那一題按「答錯」）。
+   */
+  aiTurnId?: string
+  /**
    * 只有「還在送 / 送失敗」的那則會有：這是還沒被伺服器確認的本地泡泡。
    * 有值代表這則不是從後端讀回來的（見 pendingOutgoing）。
    */
@@ -1200,6 +1237,8 @@ interface SessionTimelineItem {
   mediaDescription?: string
   sender?: MessageSender | null
   senderName?: string
+  /** 這則是哪一次 AI 回合送出的（同 MsgItem.aiTurnId） */
+  aiTurnId?: string
   broadcastId?: string
 }
 
@@ -1207,6 +1246,33 @@ interface SessionPanelMeta {
   sessionId: string
   status: ConvSessionStatus
   statusLabel: string
+  /**
+   * 這場的時間範圍。AI 脈絡卡要靠它判斷「手上那張脈絡是不是這場的」——
+   * aiMeta 每位客人只有一張、每次互動覆寫，看舊會話時它講的是之後的事（見 aiContextSessionWindow）。
+   * 「全部」分頁的 allTabActiveSession 不經 timeline API，沒有這兩個值。
+   */
+  openedAtMs?: number
+  closedAtMs?: number
+}
+
+/** timeline API 的回應（selectSession 與 reloadSessionTimeline 共用，兩邊的解讀不能不一樣） */
+interface SessionTimelineResponse {
+  sessionId: string
+  status: ConvSessionStatus
+  statusLabel: string
+  openedAt?: any
+  closedAt?: any
+  items: SessionTimelineItem[]
+}
+
+function toSessionPanelMeta(res: SessionTimelineResponse): SessionPanelMeta {
+  return {
+    sessionId: res.sessionId,
+    status: res.status,
+    statusLabel: res.statusLabel,
+    openedAtMs: messageTimestampToMs(res.openedAt),
+    closedAtMs: messageTimestampToMs(res.closedAt),
+  }
 }
 
 type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any }
@@ -1404,6 +1470,88 @@ function goAddKnowledge(query: string) {
   const suffix = q ? `?q=${encodeURIComponent(q)}` : ''
   window.open(`/admin/${workspaceId.value}/knowledge/sources${suffix}`, '_blank')
 }
+
+/**
+ * 「去修這張卡」：AI 答錯時，要動的就是它照著答的那張知識卡。
+ * 知識庫頁已經吃 ?chunkId=（反查所屬資料、選中、直接開編輯視窗），這裡沿用同一個入口。
+ */
+function goEditChunk(chunkId: string) {
+  const id = String(chunkId || '').trim()
+  if (!id) return
+  window.open(`/admin/${workspaceId.value}/knowledge/sources?chunkId=${encodeURIComponent(id)}`, '_blank')
+}
+
+/**
+ * 泡泡旁「為什麼這樣答」展開的那一則。
+ *
+ * 一次只開一則（同時攤開三則脈絡，對話就讀不下去了）。內容等點下去才抓——
+ * 一串對話可能有十幾則 AI 回覆，預先全撈是十幾次讀取換一個多半沒人看的面板。
+ */
+const openTurnKey = ref('')
+const turnCtx = ref<AiContextPayload | null>(null)
+const turnLoading = ref(false)
+const turnError = ref('')
+
+function toggleTurn(turnId?: string) {
+  const id = String(turnId || '').trim()
+  if (!id) return
+  if (openTurnKey.value === id) {
+    openTurnKey.value = ''
+    turnCtx.value = null
+    return
+  }
+  openTurnKey.value = id
+  loadTurn(id)
+}
+
+async function loadTurn(turnId?: string) {
+  const id = String(turnId || '').trim()
+  const uid = selectedUserId.value
+  if (!id || !uid) return
+  turnLoading.value = true
+  turnError.value = ''
+  turnCtx.value = null
+  try {
+    const res = await apiFetch<AiContextPayload>(
+      `/api/conversations/${encodeURIComponent(uid)}/ai-turn/${encodeURIComponent(id)}`,
+    )
+    // 抓回來時使用者可能已經收起來或改開別則，別把畫面蓋掉
+    if (openTurnKey.value === id) turnCtx.value = res
+  }
+  catch {
+    if (openTurnKey.value === id) turnError.value = '讀不到這一次的判斷紀錄（可能已超過保留期限）'
+  }
+  finally {
+    turnLoading.value = false
+  }
+}
+
+// 換客人／換會話就收起來：面板講的是上一位客人的那一則
+watch([selectedUserId, selectedSessionId], () => {
+  openTurnKey.value = ''
+  turnCtx.value = null
+  turnError.value = ''
+})
+
+/**
+ * 看的是「某一場會話」時，把那場的時間範圍交給 AI 脈絡卡自行判斷要不要顯示。
+ *
+ * aiMeta 每位客人只留一張、每次 AI 互動整份覆寫，不分場次：點進三天前那場已結束的會話，
+ * 訊息換成那場的、脈絡卡卻還是今天最新那次，兩邊兜不起來；而且此時按「這題 AI 答錯了」
+ * 會成功記到今天那次頭上（時間戳與後端一致，後端樂觀鎖只擋「互動被更新」、擋不到「看錯場次」）。
+ *
+ * 起點比照 timeline 的訊息窗口往前 60 秒，否則觸發開場的那次 AI 互動會被誤判成別場的。
+ * 拿不到時間（舊資料）就回無限大窗口＝維持原本一律顯示的行為，不要因為缺欄位就把卡片藏光。
+ */
+const aiContextSessionWindow = computed<AiContextSessionWindow | null>(() => {
+  if (!selectedSessionId.value) return null
+  const m = sessionMeta.value
+  if (!m || m.sessionId !== selectedSessionId.value) return null
+  return {
+    startMs: m.openedAtMs ? m.openedAtMs - 60_000 : 0,
+    endMs: m.closedAtMs || Number.POSITIVE_INFINITY,
+  }
+})
 
 const messagesEl = ref<HTMLElement | null>(null)
 const supportPresetsRaw = ref<any[]>([])
@@ -1755,6 +1903,7 @@ const serverChatRows = computed<ChatRow[]>(() => {
         mediaDescription: item.mediaDescription,
         sender: item.sender ?? null,
         senderName: item.senderName,
+        aiTurnId: item.aiTurnId,
       }
       return { kind: 'msg' as const, key: item.id, msg }
     })
@@ -1886,17 +2035,10 @@ async function selectSession(s: SessionItem) {
   }
   msgLoading.value = true
   try {
-    const res = await apiFetch<{
-      sessionId: string
-      status: ConvSessionStatus
-      statusLabel: string
-      items: SessionTimelineItem[]
-    }>(`/api/conversations/sessions/${s.sessionId}/timeline`)
-    sessionMeta.value = {
-      sessionId: res.sessionId,
-      status: res.status,
-      statusLabel: res.statusLabel,
-    }
+    const res = await apiFetch<SessionTimelineResponse>(
+      `/api/conversations/sessions/${s.sessionId}/timeline`,
+    )
+    sessionMeta.value = toSessionPanelMeta(res)
     sessionTimelineItems.value = res.items ?? []
     await nextTick()
     scrollToBottom()
@@ -2390,17 +2532,10 @@ async function reloadSessionTimeline(options?: { quiet?: boolean }) {
   const quiet = options?.quiet === true
   if (!quiet) msgLoading.value = true
   try {
-    const res = await apiFetch<{
-      sessionId: string
-      status: ConvSessionStatus
-      statusLabel: string
-      items: SessionTimelineItem[]
-    }>(`/api/conversations/sessions/${sid}/timeline`)
-    sessionMeta.value = {
-      sessionId: res.sessionId,
-      status: res.status,
-      statusLabel: res.statusLabel,
-    }
+    const res = await apiFetch<SessionTimelineResponse>(
+      `/api/conversations/sessions/${sid}/timeline`,
+    )
+    sessionMeta.value = toSessionPanelMeta(res)
     sessionTimelineItems.value = res.items ?? []
     await nextTick()
     scrollToBottom()

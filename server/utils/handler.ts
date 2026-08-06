@@ -46,6 +46,7 @@ import { answerWithAi, routeMessage, summarizeHandoffContext, truncateLabel, typ
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
@@ -2064,6 +2065,12 @@ export async function saveConversationMessage(
     sender?: MessageSender
     /** 標籤 tooltip 上補的一句：真人＝哪位同事，機器人＝哪個模組。取不到就別填。 */
     senderName?: string
+    /**
+     * 這則是哪一次 AI 回合送出的（見 shared/types/ai-knowledge.ts 的 AiTurnDoc）。
+     * 有了它，泡泡旁的「為什麼這樣答」才能指向**那一次**的判斷，而不是這位客人最新那次——
+     * 後者正是「AI 答錯的那題永遠標不到」的來源。
+     */
+    aiTurnId?: string
   },
   workspaceId?: string,
 ): Promise<string> {
@@ -2117,6 +2124,7 @@ export async function saveConversationMessage(
       ...(direction === 'outgoing' && options?.senderName?.trim()
         ? { senderName: options.senderName.trim().slice(0, 80) }
         : {}),
+      ...(direction === 'outgoing' && options?.aiTurnId ? { aiTurnId: options.aiTurnId } : {}),
       ...(payload !== undefined ? { payload } : {}),
     }),
     db.collection('conversations').doc(convDocId).set(convPatch, { merge: true }),
@@ -2135,7 +2143,7 @@ async function saveOutgoingConversationMessagesByWorkspace(
   userId: string,
   messages: messagingApi.Message[],
   workspaceId: string,
-  opts: { sender: MessageSender; senderName?: string; aiGenerated?: boolean },
+  opts: { sender: MessageSender; senderName?: string; aiGenerated?: boolean; aiTurnId?: string },
 ): Promise<void> {
   if (!Array.isArray(messages) || messages.length === 0) return
   await Promise.all(
@@ -2148,6 +2156,7 @@ async function saveOutgoingConversationMessagesByWorkspace(
         aiGenerated: opts.aiGenerated === true,
         sender: opts.sender,
         senderName: opts.senderName,
+        aiTurnId: opts.aiTurnId,
       }, workspaceId)
     }),
   )
@@ -2254,23 +2263,30 @@ async function handleIncomingText(
           lineUserId,
           channelSecret,
         )
-        if (lineMessages.length > 0) {
-          await replyMessage(replyToken, lineMessages, wid)
+        // 按到「真人客服」模組 → 真的轉真人（勿擾時段會換掉文案，見 resolveLiveAgentModuleReply）
+        const liveAgent = await resolveLiveAgentModuleReply(wid, flow, lineMessages)
+        const outMessages = liveAgent?.messages ?? lineMessages
+        if (outMessages.length > 0) {
+          await replyMessage(replyToken, outMessages, wid)
+          // 「客服會很快聯絡您」本身就是安撫語 → 讓等待中的 ack 一起吃節流
+          if (liveAgent) markWaitingAckSent(wid, lineUserId)
           dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-          saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid, {
-            sender: 'bot',
-            senderName: String(flow.name || ''),
+          saveOutgoingConversationMessagesByWorkspace(lineUserId, outMessages, wid, {
+            sender: liveAgent?.sender ?? 'bot',
+            senderName: liveAgent?.senderName ?? String(flow.name || ''),
           }).catch(e => console.error('[conv] save error:', e))
-          enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
-            console.error('[session] enterModule error:', e),
-          )
-          // 按到「真人客服」模組 → 真的轉真人（通知值班客服，見 notifyStaffForLiveAgentModule）
-          if (isLiveAgentModule(flow)) {
-            await notifyStaffForLiveAgentModule({
-              workspaceId: wid, lineUserId,
+          if (liveAgent) {
+            await commitHandoff({
+              workspaceId: wid, lineUserId, sessionId, moduleId,
               displayName: userAttributes.displayName || '',
               customerMessage: textContent,
+              reason: 'user_request',
             })
+          }
+          else {
+            enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+              console.error('[session] enterModule error:', e),
+            )
           }
         } else {
           console.warn('[userInput] next flow has no renderable messages, skipping reply:', moduleId)
@@ -2347,8 +2363,6 @@ async function handleIncomingText(
         replyToken,
         wid,
         sessionId ?? null,
-        options.requestOrigin || '',
-        channelSecret,
         () => getConvoCtx().then(c => c.history),
       )
       if (scriptRes.handled) return
@@ -2404,22 +2418,28 @@ async function handleIncomingText(
               lineUserId,
               channelSecret,
             )
-            if (lineMessages.length > 0) {
-              await replyMessage(replyToken, lineMessages, wid)
+            const liveAgent = await resolveLiveAgentModuleReply(wid, flow, lineMessages)
+            const outMessages = liveAgent?.messages ?? lineMessages
+            if (outMessages.length > 0) {
+              await replyMessage(replyToken, outMessages, wid)
+              if (liveAgent) markWaitingAckSent(wid, lineUserId)
               dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-              saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid, {
-                sender: 'bot',
-                senderName: String(flow.name || ''),
+              saveOutgoingConversationMessagesByWorkspace(lineUserId, outMessages, wid, {
+                sender: liveAgent?.sender ?? 'bot',
+                senderName: liveAgent?.senderName ?? String(flow.name || ''),
               }).catch(e => console.error('[conv] save error:', e))
-              enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
-                console.error('[session] enterModule error:', e),
-              )
-              if (isLiveAgentModule(flow)) {
-                await notifyStaffForLiveAgentModule({
-                  workspaceId: wid, lineUserId,
+              if (liveAgent) {
+                await commitHandoff({
+                  workspaceId: wid, lineUserId, sessionId, moduleId: rule.action.moduleId,
                   displayName: userAttributes.displayName || '',
                   customerMessage: textContent,
+                  reason: 'user_request',
                 })
+              }
+              else {
+                enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
+                  console.error('[session] enterModule error:', e),
+                )
               }
             }
           } else {
@@ -2468,8 +2488,6 @@ async function runScriptStart(
   replyToken: string | undefined,
   workspaceId: string,
   sessionId: string | null,
-  requestOrigin: string,
-  channelSecret: string,
   /** 對話脈絡 lazy loader：只有走到意圖路由才會真的讀 Firestore（與 tryAiFallback 共用同一次讀取） */
   getHistory?: () => Promise<AiChatTurn[]>,
 ): Promise<{ handled: boolean; route: RouteResult | null }> {
@@ -2525,7 +2543,16 @@ async function runScriptStart(
     )
   }
   if (result.finished && result.thenHandoff) {
-    await triggerHandoff(userAttributes, lineUserId, workspaceId, sessionId, requestOrigin, channelSecret, /*alreadyReplied*/ true)
+    // 客人看到的那則已由腳本送出（勿擾時段送的是 dndReply），這裡只補狀態與通知。
+    // customerMessage 帶觸發腳本的那句話：先前傳空字串，客服收到的通知只有「腳本轉真人」
+    // 四個字，完全不知道客人在問什麼。
+    markWaitingAckSent(workspaceId, lineUserId)
+    await commitHandoff({
+      workspaceId, lineUserId, sessionId,
+      displayName: userAttributes.displayName || '',
+      customerMessage: textContent,
+      reason: null,
+    })
   }
   return { handled: true, route }
 }
@@ -2569,7 +2596,13 @@ async function runScriptAdvance(
     )
   }
   if (result.finished && result.thenHandoff) {
-    await triggerHandoff(userAttributes, lineUserId, workspaceId, sessionId, requestOrigin, channelSecret, true)
+    markWaitingAckSent(workspaceId, lineUserId)
+    await commitHandoff({
+      workspaceId, lineUserId, sessionId,
+      displayName: userAttributes.displayName || '',
+      customerMessage: textContent,
+      reason: null,
+    })
   }
   return true
 }
@@ -2583,9 +2616,7 @@ async function dndScriptHandoffReply(
   workspaceId: string,
 ): Promise<string | null> {
   if (!(result.finished && result.thenHandoff)) return null
-  const settings = await getAiSettings(workspaceId).catch(() => null)
-  if (!isServiceHoursDnd(settings?.serviceHours)) return null
-  return settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
+  return dndHandoffReplyText(workspaceId)
 }
 
 /**
@@ -2617,33 +2648,6 @@ async function sendScriptReply(
   await replyMessage(replyToken, [msg], workspaceId)
   saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { sender, senderName: scriptName })
     .catch(e => console.error('[script] save outgoing error:', e))
-}
-
-/**
- * 腳本 reply.thenHandoff=true：標記 session 進入 live_agent。
- * 訊息已經由腳本送出，這邊只負責 session state。
- */
-async function triggerHandoff(
-  userAttributes: Record<string, string>,
-  lineUserId: string,
-  workspaceId: string,
-  sessionId: string | null,
-  _requestOrigin: string,
-  _channelSecret: string,
-  _alreadyReplied: boolean,
-): Promise<void> {
-  // 通知值班客服（與 session 標記獨立，sessionId 缺失也照樣通知）
-  notifyHandoffToStaff({
-    workspaceId,
-    customerLineUserId: lineUserId,
-    customerName: userAttributes.displayName || lineUserId,
-    customerMessage: '',
-    reason: null,
-  }).catch(e => console.error('[script] notifyHandoffToStaff error:', e))
-
-  if (!sessionId) return
-  enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
-    .catch(e => console.error('[script] enterModule(live_agent) error:', e))
 }
 
 // HUMAN_REQUEST_TEXTS 已移到 shared/types/ai-script.ts(AI 層攔截、腳本逃生門、試跑面板共用同一份)
@@ -2716,37 +2720,112 @@ function markWaitingAckSent(workspaceId: string, lineUserId: string): void {
   capMapSize(waitingAckSentAt, WAITING_ACK_MAP_MAX_ENTRIES)
 }
 
+// ── 轉真人的兩個收斂點 ─────────────────────────────────────────────
+// 「把客人轉給真人」有六個入口（AI 護欄、二次確認、「找真人」攔截、腳本逃生門、
+// 腳本結尾 thenHandoff、按到「真人客服」模組），先前各自實作了一份，結果是同一件事
+// 三種行為：勿擾時段有的路徑會改口、有的照樣說「客服會很快聯絡您」；enterModule 有的
+// await、有的沒有（沒 await 的那些會被下一則訊息搶話）；通知內容有的是空的。
+//
+// 所以拆成兩個所有入口都必須走的收斂點：
+//   dndHandoffReplyText → 客人「看到什麼」（勿擾時段要取代掉哪一段話）
+//   commitHandoff       → 客人看不到的部分（標記 session、通知值班客服）
+// 差別只剩「誰負責把那則訊息送出去」，那本來就該由呼叫端決定。
+
 /**
- * 客人在機器人裡按到「真人客服」模組（moduleType='live_agent'）＝ 一次**真正的**轉真人。
+ * 勿擾時段時，客人不該收到「已為您安排專員」——承諾「馬上有人」卻整夜沒人接更糟。
+ * 回傳非 null＝這段話要**取代**原本要送出的轉真人訊息（不是追加：兩則並存會自相矛盾）。
  *
- * 訊息本身由模組自己的文案回覆（呼叫端已送出）、狀態由 enterModule('live_agent') 標記，
- * 但先前這條路少了最重要的一步：**通知值班客服**。實測災情就是這樣——客人收到
- * 「謝謝您！我們的客服人員會很快聯絡您」，而沒有任何客服知道有人在等，客人問到第三次
- * 才因為 AI 的二次確認才真的排進佇列。
+ * 客服端的靜音是另一件事，由 notifyHandoffToStaff 內部統一處理；這裡只管客人看到的那則。
+ */
+async function dndHandoffReplyText(workspaceId: string): Promise<string | null> {
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  if (!isServiceHoursDnd(settings?.serviceHours)) return null
+  return settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
+}
+
+/**
+ * 轉真人「客人看不到的那半」：標記 session 進 live_agent ＋ 通知值班客服。
+ * 所有入口在客人的訊息送出後都要呼叫這裡。
+ *
+ * 為什麼一定要 await enterModule：狀態沒寫進去之前，同一批進來的下一則訊息會被判成
+ * 「機器人還在處理」而讓 AI 又開口（實測：客人同時打「轉接專員」＋「好」，第二句被當成
+ * 招呼語回了「請問有什麼可以為您服務的嗎？」）。客人的回覆已經送出，這段不影響回覆速度。
  *
  * 通知端自帶節流與 enabled 判斷，所以「按按鈕之後 AI 又轉一次」不會轟兩則。
+ * sessionId 缺失也照樣通知——客服不知道有人在等，比統計少一筆嚴重得多。
  */
-async function notifyStaffForLiveAgentModule(params: {
+async function commitHandoff(params: {
   workspaceId: string
   lineUserId: string
+  sessionId: string | null | undefined
+  /** 觸發轉真人的模組 doc id（按到「真人客服」模組時帶真正的 id，其餘用系統模組代號） */
+  moduleId?: string
   displayName: string
+  /** 觸發 handoff 的客人訊息（給通知用，腳本流程可為空） */
   customerMessage: string
+  /** null = 非 AI 護欄觸發（腳本設定的轉真人） */
+  reason: HandoffReason | null
+  /**
+   * AI 生成的對話摘要（best-effort，可為空）。可傳 Promise——客人回覆已先送出，
+   * 摘要在這裡才 await，避免摘要的 LLM 延遲卡住客人的「已安排專員」回覆。
+   */
+  summary?: string | Promise<string>
 }): Promise<void> {
-  // 「客服人員會很快聯絡您」本身就是安撫語 → 讓等待中的 ack 一起吃節流（同 deliverHandoffReply）
-  markWaitingAckSent(params.workspaceId, params.lineUserId)
-  await notifyHandoffToStaff({
+  await enterModule(
+    params.sessionId ?? null,
+    params.lineUserId,
+    'live_agent',
+    params.moduleId ?? SYSTEM_MODULE_IDS.live_agent,
+    params.workspaceId,
+  ).catch(e => console.error('[handoff] enterModule(live_agent) error:', e))
+
+  const summary = params.summary instanceof Promise ? await params.summary : params.summary
+
+  notifyHandoffToStaff({
     workspaceId: params.workspaceId,
     customerLineUserId: params.lineUserId,
     customerName: params.displayName || params.lineUserId,
     customerMessage: params.customerMessage,
-    reason: 'user_request',
-    summary: '',
-  }).catch(e => console.error('[live-agent-module] notifyHandoffToStaff error:', e))
+    reason: params.reason,
+    summary,
+  }).catch(e => console.error('[handoff] notifyHandoffToStaff error:', e))
 }
 
 /** 這個模組是不是「真人客服」系統模組（按到它就要真的轉真人＋通知客服） */
 function isLiveAgentModule(flow: { moduleType?: ModuleType | null } | null | undefined): boolean {
   return (flow?.moduleType ?? 'bot_flow') === 'live_agent'
+}
+
+/** 按到「真人客服」模組時，客人實際會收到的訊息與「這則誰回的」標記 */
+interface LiveAgentModuleReply {
+  messages: messagingApi.Message[]
+  sender: MessageSender
+  senderName: string
+}
+
+/**
+ * 客人按到「真人客服」系統模組（圖文選單／快速回覆／關鍵字規則／postback 都會走到）。
+ * 回傳 null＝不是真人客服模組，呼叫端照原本的流程送模組訊息即可。
+ *
+ * 勿擾時段要把模組文案換成勿擾訊息：先前這條路沒做，客人半夜按圖文選單的「真人客服」
+ * 照樣收到「我們的客服人員會很快聯絡您」，然後整夜沒人——同一家店半夜兩種說法。
+ */
+async function resolveLiveAgentModuleReply(
+  workspaceId: string,
+  flow: { moduleType?: ModuleType | null; name?: unknown } | null | undefined,
+  lineMessages: messagingApi.Message[],
+): Promise<LiveAgentModuleReply | null> {
+  if (!isLiveAgentModule(flow)) return null
+  const dndText = await dndHandoffReplyText(workspaceId)
+  if (!dndText) {
+    return { messages: lineMessages, sender: 'bot', senderName: String(flow?.name || '') }
+  }
+  // sender 標 system 而非 bot：勿擾那句出自 AI 設定的服務時間，不是後台改得到的模組文案
+  return {
+    messages: [{ type: 'text', text: dndText } as messagingApi.TextMessage],
+    sender: 'system',
+    senderName: '勿擾時段回覆',
+  }
 }
 
 // ── 非文字訊息的禮貌回覆 ─────────────────────────────────────────────
@@ -2849,8 +2928,11 @@ async function maybeSendWaitingAck(
 }
 
 /**
- * 把客人轉真人：回覆本工作區「真人客服」系統模組的訊息（沒設就用預設文字）、標記 session 進入
- * live_agent、通知值班客服。AI handoff 與「找真人」攔截共用。
+ * 把客人轉真人，**並且由這裡送出客人看到的那則訊息**：回覆本工作區「真人客服」系統模組的
+ * 文案（沒設就用預設文字），再交給 commitHandoff 標記 session、通知值班客服。
+ *
+ * AI 護欄、二次確認、「找真人」攔截、腳本逃生門共用。腳本結尾與「按到真人客服模組」
+ * 的訊息由它們自己送（文案是店家設的），所以那兩條只呼叫 commitHandoff。
  */
 async function deliverHandoffReply(params: {
   workspaceId: string
@@ -2874,13 +2956,18 @@ async function deliverHandoffReply(params: {
    * 摘要在送出後才 await，避免摘要的 LLM 延遲卡住客人的「已安排專員」回覆。
    */
   summary?: string | Promise<string>
+  /**
+   * 是哪一次 AI 回合決定要轉的（見 AiTurnDoc）。轉接那句的文案雖然出自機器人模組，
+   * 但客服在對話上點「為什麼這樣答」想知道的正是「AI 為什麼決定轉人」——所以照樣蓋上去。
+   * 腳本逃生門／按到真人客服模組那幾條不是 AI 決定的，不會帶。
+   */
+  aiTurnId?: string
 }): Promise<void> {
   const { workspaceId, lineUserId, replyToken, userAttributes, channelSecret, sessionId, requestOrigin } = params
 
   // 勿擾時段:轉真人照常發生（session 仍進 live_agent、staff notify 由 notifyHandoffToStaff 端靜音），
   // 但客人收到的不是「已為您安排專員」而是勿擾訊息（避免承諾「馬上有人」卻整夜沒人）。
-  const settings = await getAiSettings(workspaceId).catch(() => null)
-  const dnd = isServiceHoursDnd(settings?.serviceHours)
+  const dndText = await dndHandoffReplyText(workspaceId)
 
   let handoffMessages: messagingApi.Message[] = []
   // 這幾則對話上要標成誰回的：勿擾那句出自 AI 設定（後台沒有模組可改）＝system，
@@ -2888,8 +2975,8 @@ async function deliverHandoffReply(params: {
   // 標 AI 只會讓人以為那句話是 AI 當場寫的、去 AI 設定裡翻半天。
   let handoffSender: MessageSender = 'bot'
   let handoffSenderName = '「真人客服」模組'
-  if (dnd) {
-    handoffMessages = [{ type: 'text', text: settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY } as messagingApi.TextMessage]
+  if (dndText) {
+    handoffMessages = [{ type: 'text', text: dndText } as messagingApi.TextMessage]
     handoffSender = 'system'
     handoffSenderName = '勿擾時段回覆'
   }
@@ -2928,11 +3015,13 @@ async function deliverHandoffReply(params: {
           ? saveOutgoingConversationMessagesByWorkspace(lineUserId, prefixMessages, workspaceId, {
               sender: 'ai',
               aiGenerated: true,
+              aiTurnId: params.aiTurnId,
             })
           : Promise.resolve(),
         saveOutgoingConversationMessagesByWorkspace(lineUserId, handoffMessages, workspaceId, {
           sender: handoffSender,
           senderName: handoffSenderName,
+          aiTurnId: params.aiTurnId,
         }),
       ]).catch(e => console.error('[ai-fallback] save outgoing error:', e))
     }
@@ -2941,24 +3030,15 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  // 這裡刻意 await：狀態沒寫進去之前，同一批進來的下一則訊息會被判成「機器人還在處理」
-  // 而讓 AI 又開口（實測：客人同時打「轉接專員」＋「好」，第二句被當成招呼語回了
-  // 「請問有什麼可以為您服務的嗎？」）。客人的回覆上面已經送出，這段不影響回覆速度。
-  await enterModule(sessionId, lineUserId, 'live_agent', SYSTEM_MODULE_IDS.live_agent, workspaceId)
-    .catch(e => console.error('[ai-fallback] enterModule(live_agent) error:', e))
-
-  // 摘要在客人回覆送出後才 await（summarizeHandoffContext 不會 reject、最壞 4s 逾時回空字串）
-  const resolvedSummary = params.summary instanceof Promise ? await params.summary : params.summary
-
-  // 通知值班客服（fire-and-forget，內含節流與 enabled 判斷）
-  notifyHandoffToStaff({
+  await commitHandoff({
     workspaceId,
-    customerLineUserId: lineUserId,
-    customerName: userAttributes.displayName || lineUserId,
+    lineUserId,
+    sessionId,
+    displayName: userAttributes.displayName || '',
     customerMessage: params.customerMessage,
     reason: params.reason,
-    summary: resolvedSummary,
-  }).catch(e => console.error('[ai-fallback] notifyHandoffToStaff error:', e))
+    summary: params.summary,
+  })
 }
 
 /** tryAiFallback / routeMessage 共用的對話脈絡（一次 Firestore 讀取供兩處使用） */
@@ -3027,6 +3107,19 @@ async function tryAiFallback(params: {
 
   const fsUserDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
 
+  /**
+   * 這一回合的識別，開頭就先拿（doc() 不打網路）。
+   *
+   * 一定要在送訊息之前拿到：訊息是先送出、aiMeta 後寫的（客人的回覆不能等 Firestore），
+   * 兩邊要對得起來就得共用同一個先產生好的 id。有了它，泡泡旁的「為什麼這樣答」才能
+   * 指向**那一次**的判斷——而不是這位客人最新那次（＝「答錯的那題永遠標不到」的來源）。
+   */
+  const turnId = newAiTurnId(getDb(), fsUserDocId)
+  /** 每個 AI 出口都用它收尾：寫狀態（aiMeta）順便留一份不會被覆寫的回合歷史 */
+  const recordTurn = (
+    meta: Partial<Omit<AiConversationMeta, 'updatedAt'>> & Pick<AiConversationMeta, 'lastDecision'>,
+  ) => writeAiMeta(fsUserDocId, meta, { turnId, workspaceId })
+
   // 草稿模式：AI 照常答題並寫進收件匣（suggestedReply），但不對客人發任何訊息。
   // 新導入工作區先觀察 AI 答題品質、再切全自動的漸進信任路徑。
   const draftMode = settings.replyMode === 'draft'
@@ -3091,9 +3184,10 @@ async function tryAiFallback(params: {
         sessionId, requestOrigin,
         customerMessage: handoffQuery,
         reason: handoffReason,
+        aiTurnId: turnId,
       })
     }
-    await writeAiMeta(fsUserDocId, {
+    await recordTurn({
       lastDecision: 'handoff',
       lastHandoffReason: handoffReason,
       lastQuery: handoffQuery,
@@ -3128,8 +3222,9 @@ async function tryAiFallback(params: {
         sessionId, requestOrigin,
         customerMessage: textContent,
         reason,
+        aiTurnId: turnId,
       })
-      await writeAiMeta(fsUserDocId, {
+      await recordTurn({
         lastDecision: 'handoff',
         lastConfidence: prevAiMeta.lastConfidence ?? 0,
         lastHandoffReason: reason,
@@ -3146,10 +3241,11 @@ async function tryAiFallback(params: {
         saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
           sender: 'ai',
           senderName: '客人回「我再問問」的固定回覆',
+          aiTurnId: turnId,
         }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
       }
       // 收掉 pending 狀態（'skipped' 不入轉真人案例列表、也不算 answeredThenHandoff）
-      await writeAiMeta(fsUserDocId, { lastDecision: 'skipped', lastQuery: textContent })
+      await recordTurn({ lastDecision: 'skipped', lastQuery: textContent })
       return
     }
     // 既非肯定也非否定 → 客人改問新問題，往下走正常 AI 流程
@@ -3193,7 +3289,7 @@ async function tryAiFallback(params: {
       customerMessage: textContent,
       reason: 'llm_error',
     }).catch(e => console.error('[ai-fallback] notifyHandoffToStaff error:', e))
-    await writeAiMeta(fsUserDocId, {
+    await recordTurn({
       lastDecision: 'handoff',
       lastHandoffReason: 'llm_error',
       lastQuery: textContent,
@@ -3242,15 +3338,18 @@ async function tryAiFallback(params: {
     if (replyToken && !draftMode) {
       const msg: messagingApi.TextMessage = { type: 'text', text: result.answer.slice(0, 5000) }
       await replyMessage(replyToken, [msg], workspaceId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { sender: 'ai', aiGenerated: true })
-        .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+        sender: 'ai',
+        aiGenerated: true,
+        aiTurnId: turnId,
+      }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 登記「AI 首接」：AI 真的自動回覆了客人才算（草稿模式客人沒收到、不算首接）。
       // 非阻塞——與 bot_flow 自動回覆同慣例（先送客人回覆，統計背景補記）。
       enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
         console.error('[ai-fallback] enterModule(ai) error:', e),
       )
     }
-    await writeAiMeta(fsUserDocId, {
+    await recordTurn({
       lastDecision: 'answered',
       lastConfidence: result.confidence,
       lastQuery: textContent,
@@ -3268,7 +3367,7 @@ async function tryAiFallback(params: {
     // 草稿模式：客人看不到選項按鈕，反問語句當建議回覆給客服參考即可；
     // 不寫 lastDisambiguation（沒有「等客人選」的狀態）。
     if (draftMode) {
-      await writeAiMeta(fsUserDocId, {
+      await recordTurn({
         lastDecision: 'disambiguate',
         lastConfidence: result.confidence,
         lastQuery: textContent,
@@ -3310,13 +3409,14 @@ async function tryAiFallback(params: {
         sender: 'ai',
         aiGenerated: true,
         senderName: 'AI 反問澄清',
+        aiTurnId: turnId,
       }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 反問澄清也是 AI 對客人的真實回應 → 記 AI 首接(草稿模式已在前面 return,不會到這)
       enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
         console.error('[ai-fallback] enterModule(ai) error:', e),
       )
     }
-    await writeAiMeta(fsUserDocId, {
+    await recordTurn({
       lastDecision: 'disambiguate',
       lastConfidence: result.confidence,
       lastQuery: textContent,
@@ -3347,13 +3447,14 @@ async function tryAiFallback(params: {
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
       sender: 'ai',
       senderName: 'AI 答不出來時的二次確認',
+      aiTurnId: turnId,
     }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
     // 「需要幫您轉接嗎?」也是 AI 對客人的真實回應 → 記 AI 首接(此分支已排除草稿模式)
     enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
       console.error('[ai-fallback] enterModule(ai) error:', e),
     )
     // handoffs 已在 answerWithAi 記過；這裡只多送一則確認、不重複計。
-    await writeAiMeta(fsUserDocId, {
+    await recordTurn({
       lastDecision: 'handoff_confirm',
       lastConfidence: result.confidence,
       lastHandoffReason: result.handoffReason,
@@ -3397,6 +3498,7 @@ async function tryAiFallback(params: {
       // order_status：AI 查到的一般規則先送給客人，再送轉接訊息（見 answerWithAi 的 orderStatusMode）
       prefixText: result.handoffReason === 'order_status' ? result.answer : '',
       summary: summaryPromise,
+      aiTurnId: turnId,
     })
   }
 
@@ -3404,7 +3506,7 @@ async function tryAiFallback(params: {
   // order_status 例外——那段規則客人剛剛已經收到了（見 prefixText），再放進「AI 建議回覆」
   // 只會讓客服按下「填入回覆框」把同一段話再貼一次。
   const alreadySentToCustomer = result.handoffReason === 'order_status'
-  await writeAiMeta(fsUserDocId, {
+  await recordTurn({
     lastDecision: 'handoff',
     lastConfidence: result.confidence,
     lastHandoffReason: result.handoffReason,
@@ -3430,18 +3532,40 @@ const AI_META_DEFAULTS: Omit<AiConversationMeta, 'updatedAt' | 'lastDecision'> =
   lastDisambiguation: null,
 }
 
+/**
+ * 寫入這位客人的 AI 狀態（aiMeta），並在有 `turn` 時把同一份判斷留一份不會被覆寫的歷史
+ * （`aiTurns/{turnId}`，見 shared 的 AiTurnDoc）。
+ *
+ * 兩份刻意從**同一個 merged 物件**產生：aiMeta 是「現在的狀態」（反問等待中、cooldown、
+ * 收件匣排序），turn 是「那一次的歷史」。用途不同但內容必須一致，分頭組裝遲早會漂掉。
+ */
 async function writeAiMeta(
   fsUserDocId: string,
   meta: Partial<Omit<AiConversationMeta, 'updatedAt'>> & Pick<AiConversationMeta, 'lastDecision'>,
+  turn?: { turnId: string; workspaceId: string },
 ): Promise<void> {
+  const merged = { ...AI_META_DEFAULTS, ...meta }
   try {
     await getDb().collection('conversations').doc(fsUserDocId).set({
-      aiMeta: { ...AI_META_DEFAULTS, ...meta, updatedAt: FieldValue.serverTimestamp() },
+      aiMeta: { ...merged, updatedAt: FieldValue.serverTimestamp() },
     }, { merge: true })
   }
   catch (e) {
     console.error('[ai-fallback] writeAiMeta failed:', e)
   }
+  if (!turn) return
+  // 回合歷史寫失敗只是少一張「為什麼這樣答」，不影響客人已經收到的回覆（writeAiTurn 自己吞例外）
+  await writeAiTurn(getDb(), fsUserDocId, turn.turnId, {
+    workspaceId: turn.workspaceId,
+    decision: merged.lastDecision,
+    confidence: merged.lastConfidence,
+    handoffReason: merged.lastHandoffReason,
+    query: merged.lastQuery,
+    sourceChunkIds: merged.lastSourceChunkIds,
+    answerKind: merged.lastAnswerKind ?? 'kb',
+    suggestedReply: merged.suggestedReply,
+    handoffSummary: merged.handoffSummary,
+  })
 }
 
 export async function handlePostbackEvent(
@@ -3608,21 +3732,27 @@ export async function handlePostbackEvent(
           userId,
           channelSecret,
         )
-        await replyMessage(event.replyToken, lineMessages, workspaceId)
+        const liveAgent = await resolveLiveAgentModuleReply(workspaceId, flow, lineMessages)
+        const outMessages = liveAgent?.messages ?? lineMessages
+        await replyMessage(event.replyToken, outMessages, workspaceId)
+        if (liveAgent) markWaitingAckSent(workspaceId, userId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId, {
-          sender: 'bot',
-          senderName: String(flow.name || ''),
+        saveOutgoingConversationMessagesByWorkspace(userId, outMessages, workspaceId, {
+          sender: liveAgent?.sender ?? 'bot',
+          senderName: liveAgent?.senderName ?? String(flow.name || ''),
         }).catch(e => console.error('[conv] save error:', e))
-        enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
-          console.error('[session] enterModule error:', e),
-        )
-        if (isLiveAgentModule(flow)) {
-          await notifyStaffForLiveAgentModule({
-            workspaceId, lineUserId: userId,
+        if (liveAgent) {
+          await commitHandoff({
+            workspaceId, lineUserId: userId, sessionId, moduleId,
             displayName: userAttributes.displayName || '',
             customerMessage: `（客人按了「${flow.name || '真人客服'}」）`,
+            reason: 'user_request',
           })
+        }
+        else {
+          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
+            console.error('[session] enterModule error:', e),
+          )
         }
       }
     } else {
@@ -3656,21 +3786,27 @@ export async function handlePostbackEvent(
           userId,
           channelSecret,
         )
-        await replyMessage(event.replyToken, lineMessages, workspaceId)
+        const liveAgent = await resolveLiveAgentModuleReply(workspaceId, flow, lineMessages)
+        const outMessages = liveAgent?.messages ?? lineMessages
+        await replyMessage(event.replyToken, outMessages, workspaceId)
+        if (liveAgent) markWaitingAckSent(workspaceId, userId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId, {
-          sender: 'bot',
-          senderName: String(flow.name || ''),
+        saveOutgoingConversationMessagesByWorkspace(userId, outMessages, workspaceId, {
+          sender: liveAgent?.sender ?? 'bot',
+          senderName: liveAgent?.senderName ?? String(flow.name || ''),
         }).catch(e => console.error('[conv] save error:', e))
-        enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
-          console.error('[session] enterModule (fallback) error:', e),
-        )
-        if (isLiveAgentModule(flow)) {
-          await notifyStaffForLiveAgentModule({
-            workspaceId, lineUserId: userId,
+        if (liveAgent) {
+          await commitHandoff({
+            workspaceId, lineUserId: userId, sessionId, moduleId: rule.action.moduleId,
             displayName: userAttributes.displayName || '',
             customerMessage: `（客人按了「${flow.name || '真人客服'}」）`,
+            reason: 'user_request',
           })
+        }
+        else {
+          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
+            console.error('[session] enterModule (fallback) error:', e),
+          )
         }
       }
     } else {

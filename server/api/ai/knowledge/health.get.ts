@@ -1,5 +1,11 @@
+import { Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import {
+  AI_FEEDBACK_EVENTS_COLLECTION,
+  aggregateWrongAnswerMarks,
+  isChunkUnfixedSinceMark,
+} from '~~/server/utils/ai-feedback-events'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
@@ -17,6 +23,17 @@ interface HealthItem {
   sourceId: string | null
 }
 
+/** 被標「答錯」的卡：多帶次數與最後標記時間，清單上要看得出嚴重程度 */
+interface WrongAnswerItem extends HealthItem {
+  markCount: number
+  lastMarkedAtMs: number
+}
+
+/** 「答錯」訊號的回看窗口：與建議收件匣的聚類窗口同一把尺（30 天） */
+const FEEDBACK_WINDOW_DAYS = 30
+/** 單輪最多撈幾筆回饋事件（同 kb-suggest，共用既有的 workspaceId+createdAt 索引） */
+const FEEDBACK_SCAN_LIMIT = 100
+
 /**
  * GET /api/ai/knowledge/health
  *
@@ -29,18 +46,34 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
   const db = getDb()
 
-  const [sourcesSnap, chunksSnap, indexNames, aliasMap] = await Promise.all([
+  const feedbackCutoff = Timestamp.fromMillis(Date.now() - FEEDBACK_WINDOW_DAYS * 86_400_000)
+
+  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .limit(300)
       .get(),
     db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
-      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt')
+      // updatedAt 是「標記之後有沒有人動過這張卡」的依據（見 wrongAnswerChunks）
+      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'updatedAt')
       .limit(CHUNK_SCAN_LIMIT)
       .get(),
     getWorkspaceProductNames(db, workspaceId),
     getProductAliases(db, workspaceId),
+    // 查詢形狀刻意與 kb-suggest 相同（type 在程式裡濾），共用既有的 workspaceId+createdAt 索引，不必再開新的。
+    // 缺索引時降級成「少一類體檢」而不是整頁掛掉，但一定要 log——靜默吞掉的話，
+    // 客服按的每個「AI 答錯了」都不會出現在工作台，而沒有人會知道。
+    db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('createdAt', '>=', feedbackCutoff)
+      .orderBy('createdAt', 'desc')
+      .limit(FEEDBACK_SCAN_LIMIT)
+      .get()
+      .catch((e) => {
+        console.warn('[kb-health] feedback query failed (缺 aiFeedbackEvents 複合索引?):', (e as Error)?.message)
+        return null
+      }),
   ])
 
   // reason 一併帶回:清單上直接看得到「為什麼失敗」(最常見是試算表沒分享給服務帳號),
@@ -59,18 +92,55 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  /**
+   * 客服標「AI 答錯了」的訊號，**按卡聚合**（不是按事件列）。
+   *
+   * 為什麼按卡：能動手修的單位是那張卡，而「同一張卡被標 3 次」比三筆各自的事件
+   * 強得多。聚類成建議要同主題累積、還要等排程（最長 7 天），這裡是不必等的那條路。
+   *
+   * 沒有 chunkIds 的事件（AI 沒引用到任何卡就答錯）不列：那是知識缺口、沒有卡可修，
+   * 已經由建議收件匣涵蓋，列在這裡只會給一條沒有動作可做的死路。
+   */
+  const markCountByChunk = aggregateWrongAnswerMarks(
+    (feedbackSnap?.docs ?? []).map((d) => {
+      const e = d.data() as { type?: string; chunkIds?: string[]; createdAt?: any }
+      return {
+        type: e.type,
+        chunkIds: e.chunkIds,
+        createdAtMs: typeof e.createdAt?.toMillis === 'function' ? e.createdAt.toMillis() : 0,
+      }
+    }),
+    feedbackCutoff.toMillis(),
+  )
+
   let shortCount = 0
   let failedCount = 0
   let expiredCount = 0
   const shortItems: HealthItem[] = []
   const failedItems: HealthItem[] = []
   const expiredItems: HealthItem[] = []
+  const wrongAnswerItems: WrongAnswerItem[] = []
   for (const d of chunksSnap.docs) {
     const c = d.data() as any
     const item: HealthItem = {
       id: d.id,
       title: String(c?.title ?? '(無標題)'),
       sourceId: c?.sourceId ?? null,
+    }
+
+    /**
+     * 被標過答錯、而且**標記之後沒有人動過**這張卡。
+     *
+     * 「有人改過就自動離開清單」是刻意的：不另外存一份「已處理」狀態，就不會有
+     * 「修好了但清單還掛著」的第二種真相。代價是改了卡卻沒真的改對時它會消失——
+     * 但那種情況客人會再問、客服會再標一次，訊號自己會回來。
+     */
+    const marked = markCountByChunk.get(d.id)
+    if (marked) {
+      const chunkUpdatedMs = typeof c?.updatedAt?.toMillis === 'function' ? c.updatedAt.toMillis() : 0
+      if (isChunkUnfixedSinceMark(chunkUpdatedMs, marked)) {
+        wrongAnswerItems.push({ ...item, markCount: marked.count, lastMarkedAtMs: marked.lastMarkedAtMs })
+      }
     }
     const status = String(c?.status ?? '')
     if (status === 'failed') {
@@ -96,6 +166,21 @@ export default defineEventHandler(async (event) => {
     shortChunks: { count: shortCount, items: shortItems },
     failedChunks: { count: failedCount, items: failedItems },
     expiredChunks: { count: expiredCount, items: expiredItems },
+    /**
+     * 客服標了「AI 答錯了」、而且那張卡至今沒被改過。次數多的排前面——
+     * 同一張卡被標好幾次，代表它正在持續答錯客人。
+     */
+    wrongAnswerChunks: {
+      count: wrongAnswerItems.length,
+      items: wrongAnswerItems
+        .sort((a, b) => b.markCount - a.markCount || b.lastMarkedAtMs - a.lastMarkedAtMs)
+        .slice(0, SAMPLE_LIMIT),
+      /**
+       * 回饋事件撈到上限了＝標記數是低估值。要講出來：不講的話畫面會讀成
+       * 「就這幾條」，而實際上可能還有更多被標記過的卡沒被算進來。
+       */
+      scanTruncated: (feedbackSnap?.size ?? 0) >= FEEDBACK_SCAN_LIMIT,
+    },
     /** 卡片掃描是否達到上限(超大知識庫時計數可能低估) */
     chunkScanTruncated: chunksSnap.size >= CHUNK_SCAN_LIMIT,
     /**

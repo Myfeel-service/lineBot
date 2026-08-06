@@ -3,27 +3,15 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import type { AiAnswerKind, AiConversationMeta } from '~~/shared/types/ai-knowledge'
+import type { AiConversationMeta, AiContextPayload } from '~~/shared/types/ai-knowledge'
 
-interface AiContextResponse {
-  hasMeta: boolean
-  lastDecision: AiConversationMeta['lastDecision'] | ''
-  lastConfidence: number
-  lastHandoffReason: AiConversationMeta['lastHandoffReason']
-  lastQuery: string
-  /** 這一題是怎麼回的：招呼／越界／查知識庫。舊資料沒這欄位 → 'kb' */
-  lastAnswerKind: AiAnswerKind
-  suggestedReply: string
-  handoffSummary: string
-  sources: Array<{ chunkId: string; title: string }>
-  /**
-   * 這一次互動是否已被標記「AI 答錯了」。
-   * 一定要由後端給：先前只存在前端記憶體，重新整理後看起來像沒標過（其實標了），
-   * 客服會重複按，也永遠看不出到底存進去了沒有。
-   */
-  wrongMarked: boolean
-  updatedAtMs: number
-}
+/**
+ * 回應形狀與 `ai-turn/:turnId` 共用（見 AiContextPayload）——後台是同一個脈絡元件在渲染。
+ *
+ * 這支給的是「這位客人**最近一次**」，turnId 一律空字串：aiMeta 沒有回合身分，
+ * 只能靠 updatedAtMs 指認是哪一次（也因此才需要 ai-feedback 的 409 樂觀鎖）。
+ */
+type AiContextResponse = AiContextPayload
 
 function tsToMs(raw: unknown): number {
   if (!raw) return 0
@@ -60,6 +48,7 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     handoffSummary: '',
     sources: [],
     wrongMarked: false,
+    turnId: '',
     updatedAtMs: 0,
   }
   if (!snap.exists) return empty
@@ -105,8 +94,14 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     lastAnswerKind: meta.lastAnswerKind ?? 'kb',
     suggestedReply: String(meta.suggestedReply ?? ''),
     handoffSummary: String(meta.handoffSummary ?? ''),
-    sources: ids.map(id => ({ chunkId: id, title: titleByChunkId[id] ?? '(卡片已刪除)' })),
+    sources: ids.map(id => ({
+      chunkId: id,
+      title: titleByChunkId[id] ?? '(卡片已刪除)',
+      exists: id in titleByChunkId,
+    })),
     wrongMarked,
+    // aiMeta 沒有回合身分：這支只能靠時間戳指認是哪一次（見 ai-feedback.post.ts 的舊路徑）
+    turnId: '',
     updatedAtMs,
   }
 })

@@ -1637,6 +1637,16 @@ interface HealthResponse {
   shortChunks: HealthChunkGroup
   failedChunks: HealthChunkGroup
   expiredChunks: HealthChunkGroup
+  /**
+   * 客服在對話頁按過「AI 答錯了」、而那張卡至今沒被改過。
+   * 按卡聚合（同一張被標多次只會是一列，markCount 是次數）。
+   */
+  wrongAnswerChunks: {
+    count: number
+    items: Array<{ id: string; title: string; sourceId: string | null; markCount: number; lastMarkedAtMs: number }>
+    /** 回饋事件撈到上限＝這裡的數字是低估值（要在清單上講明，不能讓人以為就這幾條） */
+    scanTruncated: boolean
+  }
   chunkScanTruncated: boolean
   aliasCandidateCount: number
 }
@@ -1647,6 +1657,7 @@ const emptyHealth = (): HealthResponse => ({
   shortChunks: { count: 0, items: [] },
   failedChunks: { count: 0, items: [] },
   expiredChunks: { count: 0, items: [] },
+  wrongAnswerChunks: { count: 0, items: [], scanTruncated: false },
   chunkScanTruncated: false,
   aliasCandidateCount: 0,
 })
@@ -1658,7 +1669,7 @@ const healthSourceCount = computed(() =>
   + health.value.outdatedSources.length
   + health.value.noProductSources.length)
 const healthChunkCount = computed(() =>
-  health.value.shortChunks.count + health.value.failedChunks.count)
+  health.value.shortChunks.count + health.value.failedChunks.count + health.value.wrongAnswerChunks.count)
 // 「已過期停用」是有效期限功能正確運作的結果,不是待辦——算進待處理會讓數字永遠清不完。
 // 另列一行「僅供參考」,店家想看時看得到、但不催他處理。
 const healthExpiredCount = computed(() => health.value.expiredChunks.count)
@@ -1730,6 +1741,30 @@ const todoItems = computed<TodoItem[]>(() => {
       why: '存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
       cta: '查看',
       action: singleOrList(h.failedChunks.count === 1 ? h.failedChunks.items : [], 'chunk', 'failedChunks'),
+    })
+  }
+  /**
+   * 客服在對話上按過「AI 答錯了」的卡。排在同事回報的訊號裡最前面（僅次於整批壞掉的資料）：
+   * 這是唯一「有人親眼看到 AI 答錯客人」的訊號，比任何自動偵測都確定。
+   *
+   * 不必等建議收件匣——那條路要同主題累積、還要等排程（最長 7 天）。這裡是不用等的那條。
+   */
+  if (h.wrongAnswerChunks.count) {
+    const first = h.wrongAnswerChunks.items[0]
+    const repeated = h.wrongAnswerChunks.items.filter(i => i.markCount > 1).length
+    items.push({
+      id: 'wrongAnswerChunks',
+      tone: 'danger',
+      title: h.wrongAnswerChunks.count === 1
+        ? `有 1 條內容被同事標記「AI 答錯了」`
+        : `有 ${h.wrongAnswerChunks.count} 條內容被同事標記「AI 答錯了」`,
+      why: repeated
+        ? `其中 ${repeated} 條被標記不只一次，代表它正在持續答錯客人。改好那幾條就會從這裡消失。`
+        : '同事在對話上看到 AI 用這些內容答錯了，而它們到現在都還沒被修改過。',
+      cta: '前往修正',
+      action: h.wrongAnswerChunks.count === 1 && first
+        ? () => { void gotoHealthItem({ id: first.id, kind: 'chunk' }) }
+        : () => openHealthList('wrongAnswerChunks'),
     })
   }
   if (h.outdatedSources.length) {
@@ -1823,7 +1858,7 @@ async function loadHealth(force = false) {
   }
 }
 
-type HealthCategory = 'failedSources' | 'outdatedSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks'
+type HealthCategory = 'failedSources' | 'outdatedSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
@@ -1831,6 +1866,7 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedChunks: { title: '知識學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
   shortChunks: { title: '知識內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
   expiredChunks: { title: '知識已過期停用', hint: '這些卡因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
+  wrongAnswerChunks: { title: '被標記「AI 答錯了」', hint: '同事在對話上看到 AI 用這幾條答錯客人。點開改掉內容就會從這裡消失——系統看的是「標記之後這條有沒有被改過」,不需要另外按已處理。次數是近 30 天內被標記的次數。' },
 }
 const healthListOpen = ref(false)
 const healthListCategory = ref<HealthCategory>('failedSources')
@@ -1850,6 +1886,16 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
   if (cat === 'noProductSources') {
     return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 條`, kind: 'source' as const }))
   }
+  if (cat === 'wrongAnswerChunks') {
+    // 次數是這一類唯一的排序依據,不放進 meta 等於把最重要的資訊藏起來
+    return h.wrongAnswerChunks.items.map(c => ({
+      id: c.id,
+      title: c.title,
+      meta: [c.markCount > 1 ? `被標記 ${c.markCount} 次` : '被標記 1 次', sourceName(c.sourceId)]
+        .filter(Boolean).join(' · '),
+      kind: 'chunk' as const,
+    }))
+  }
   return h[cat].items.map(c => ({ id: c.id, title: c.title, meta: sourceName(c.sourceId), kind: 'chunk' as const }))
 })
 const healthListTruncatedNote = computed(() => {
@@ -1863,6 +1909,9 @@ const healthListTruncatedNote = computed(() => {
   // 掃描達上限時計數本身就是低估的,不講清楚店家會以為「清完就沒事了」
   if (health.value.chunkScanTruncated) {
     notes.push('知識數量較多,體檢只掃描了其中一部分,實際張數可能更多。')
+  }
+  if (cat === 'wrongAnswerChunks' && health.value.wrongAnswerChunks.scanTruncated) {
+    notes.push('近期的標記筆數較多,只統計了最近的一批,實際被標記的內容可能更多。')
   }
   return notes.join(' ')
 })

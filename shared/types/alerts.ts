@@ -19,6 +19,11 @@ export type WorkspaceAlertId =
   | 'knowledgeSyncFailed'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
   | 'knowledgeIndexFailed'
+  /**
+   * 客服在對話上按過「AI 答錯了」、而那張知識卡到現在都還沒被改過。
+   * 這是唯一「有人親眼看到 AI 答錯客人」的訊號，比任何自動偵測都確定。
+   */
+  | 'knowledgeWrongAnswers'
   /** 來源內容變了但還沒重新學 */
   | 'knowledgeOutdated'
   /** 有「輸入任何內容」的自動回覆規則正在攔截全部訊息，AI 等於沒開 */
@@ -84,6 +89,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   broadcastOverdue: '有排程推播過時間還沒送',
   maintenanceStalled: '系統自動維護沒在跑',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
+  knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
 }
 
 /**

@@ -119,6 +119,17 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/knowledge/sources?health=failedChunks`,
   },
   {
+    // critical 不是「有人回報」而已：同事看到 AI 用這條答錯客人、而它還沒被改過，
+    // 代表它現在仍然在用同樣的內容回答下一位客人（紅＝正在影響客人）。
+    id: 'knowledgeWrongAnswers',
+    icon: Reading,
+    severity: 'critical',
+    impact: '同事在對話上看到 AI 用這些內容答錯客人，而它們到現在都還沒被修改過——同樣的問題會繼續答錯。',
+    cta: '去修這些知識',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/knowledge/sources?health=wrongAnswerChunks`,
+  },
+  {
     id: 'quotaExceeded',
     icon: Odometer,
     severity: 'critical',

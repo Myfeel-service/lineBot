@@ -50,6 +50,11 @@ import { getDb } from './firebase'
 import { replyMessage } from './line'
 import { getSessionStatusCached, shouldSuppressInboundBotAutomationForSession, enterModule } from './conversation-session'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { getAiSettings } from './ai-settings'
+import { loadActiveScripts, startScript } from './ai-scripts'
+
+/** 服務時間內、AI 全自動（clearAllMocks 不會還原 mockResolvedValue，逐個 describe 自己設回來） */
+const AI_SETTINGS_DEFAULT = { enabled: true, replyMode: 'auto', sensitiveTopics: [] }
 
 const WS = 'ws-ack'
 
@@ -227,6 +232,7 @@ describe('機器人裡按到「真人客服」模組＝真的轉真人', () => {
     vi.clearAllMocks()
     vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
     vi.mocked(getSessionStatusCached).mockResolvedValue('open' as any)
+    vi.mocked(getAiSettings).mockResolvedValue(AI_SETTINGS_DEFAULT as any)
   })
 
   it('按下去 → 送店家文案、標記轉真人、而且通知值班客服', async () => {
@@ -269,5 +275,75 @@ describe('機器人裡按到「真人客服」模組＝真的轉真人', () => {
 
     expect(sentTexts()).toContain('這是常見問題')
     expect(vi.mocked(notifyHandoffToStaff)).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 勿擾時段的口徑：AI 轉真人會改口說「目前非服務時間」，但按圖文選單這條先前沒做，
+   * 客人半夜按下去照樣收到「客服人員會很快聯絡您」然後整夜沒人——同一家店兩種說法。
+   * 兩條路現在共用 dndHandoffReplyText。
+   */
+  it('勿擾時段按下去 → 改送勿擾訊息，不再承諾「很快聯絡您」', async () => {
+    const uid = 'U0000000000000000000000000000107'
+    vi.mocked(getAiSettings).mockResolvedValue({
+      enabled: true, replyMode: 'auto', sensitiveTopics: [],
+      // start===end ＝ 沒有任何一分鐘落在服務時間內 → 整天勿擾，測試不受執行時間影響
+      serviceHours: { enabled: true, start: '09:00', end: '09:00', dndReply: '目前非服務時間，明天 9 點後回覆您' },
+    } as any)
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, {
+      workspaceId: WS4,
+      flows: {
+        [MODULE_ID]: {
+          workspaceId: WS4, name: '真人客服', moduleType: 'live_agent', isActive: true,
+          messages: [{ type: 'text', text: '謝謝您！我們的客服人員會很快聯絡您', buttons: [] }],
+        },
+      },
+    }) as any)
+
+    await handlePostbackEvent(postbackEvent(uid, MODULE_ID), { workspaceId: WS4 })
+
+    expect(sentTexts()).toContain('目前非服務時間，明天 9 點後回覆您')
+    expect(sentTexts()).not.toContain('謝謝您！我們的客服人員會很快聯絡您')
+    // 轉真人本身照常發生：客人仍要排進佇列，只是不承諾「馬上有人」
+    expect(vi.mocked(enterModule).mock.calls.some(c => c[2] === 'live_agent')).toBe(true)
+  })
+})
+
+/**
+ * 腳本結尾 thenHandoff=true 這條路先前傳的是空的 customerMessage，客服收到的通知只有
+ * 「🙋 真人客服請求／原因：腳本轉真人」——不知道客人問了什麼，等於還要自己去後台翻。
+ * 現在與其他入口一樣走 commitHandoff，帶上觸發腳本的那句話。
+ */
+describe('腳本結尾轉真人的通知要帶客人講了什麼', () => {
+  const WS5 = 'ws-script-handoff'
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
+    vi.mocked(getSessionStatusCached).mockResolvedValue('open' as any)
+    vi.mocked(getAiSettings).mockResolvedValue(AI_SETTINGS_DEFAULT as any)
+    vi.mocked(loadActiveScripts).mockResolvedValue([{
+      id: 'script-1', name: '退貨', enabled: true, rootNodeId: 'n1',
+      nodes: [{ id: 'n1', type: 'trigger', keywords: ['退貨'] }],
+    }] as any)
+    vi.mocked(startScript).mockResolvedValue({
+      replyText: '我幫您轉給專員處理退貨',
+      finished: true,
+      thenHandoff: true,
+      quickReplies: [],
+    } as any)
+  })
+
+  it('腳本跑完轉真人 → 通知帶原始訊息、session 標記 live_agent', async () => {
+    const uid = 'U0000000000000000000000000000108'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS5 }) as any)
+
+    await handleMessageEvent(textEvent(uid, '我要退貨', Date.now()), { workspaceId: WS5 })
+
+    // 先確定走的真的是腳本這條路（而不是掉到 AI fallback 也剛好通知了）
+    expect(sentTexts()).toContain('我幫您轉給專員處理退貨')
+    expect(vi.mocked(notifyHandoffToStaff)).toHaveBeenCalledWith(
+      expect.objectContaining({ customerLineUserId: uid, customerMessage: '我要退貨' }),
+    )
+    expect(vi.mocked(enterModule).mock.calls.some(c => c[2] === 'live_agent')).toBe(true)
   })
 })

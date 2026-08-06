@@ -1416,6 +1416,265 @@
     font-size: 0.72rem;
     color: var(--text-muted);
   }
+
+  // 泡泡旁的「為什麼這樣答」。做成細小的文字鈕(不是按鈕外框):它與時間、已讀同一條 meta,
+  // 給它按鈕重量會把每一則 AI 回覆都變成一個召喚注意力的東西。
+  .conv-bubble-why {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: var(--line-font-meta);
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--brand-green-text, var(--text-primary));
+    }
+  }
+
+  // 展開的那一則脈絡。縮排對齊泡泡、寬度上限比照訊息區,不要拉成整個面板寬
+  .conv-turn-panel {
+    margin: 0.15rem 0 0.5rem;
+    max-width: min(560px, 82%);
+
+    .conv-ai-banner-body {
+      border: 1px solid var(--el-border-color-lighter);
+      border-radius: 8px;
+      background: var(--el-fill-color-light);
+      border-top: 1px solid var(--el-border-color-lighter);
+    }
+  }
+
+  .conv-bubble-wrap.outgoing + .conv-turn-panel,
+  .conv-turn-panel {
+    margin-left: auto;
+  }
+
+  .conv-turn-panel__loading {
+    display: flex;
+    justify-content: center;
+    padding: 0.6rem;
+  }
+
+  .conv-turn-panel__error {
+    margin: 0;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    border: 1px dashed var(--el-border-color);
+    border-radius: 8px;
+  }
+
+  // ── AI 脈絡卡（components/conversations/AiContextBanner.vue）─────────────
+  // 原本寫在該元件的 <style scoped>,但整個對話頁的樣式都在這支 partial(AdminPanel.vue
+  // 一個 style 區塊都沒有),留一個特例只會讓人下次找不到要改哪裡。
+  .conv-ai-banner {
+    border-radius: 8px;
+    margin: 0 12px 12px;
+    border: 1px solid var(--el-border-color);
+    background: var(--el-fill-color-light);
+    font-size: 13px;
+
+    &--handoff {
+      border-color: var(--el-color-warning-light-5);
+      background: var(--el-color-warning-light-9);
+    }
+    &--answered {
+      border-color: var(--el-color-success-light-5);
+      background: var(--el-color-success-light-9);
+    }
+    &--disambiguate {
+      border-color: var(--el-color-info-light-5);
+      background: var(--el-color-info-light-9);
+    }
+    // 脈絡不屬於眼前這場會話:純說明、沒有任何可按的東西,所以不套決策色
+    &--stale {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 8px 12px;
+    }
+  }
+
+  .conv-ai-banner-stale-text {
+    flex: 1;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .conv-ai-banner-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .conv-ai-banner-badge {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .conv-ai-banner-summary {
+    flex: 1;
+    color: var(--el-text-color-regular);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conv-ai-banner-time,
+  .conv-ai-banner-toggle {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .conv-ai-banner-body {
+    padding: 8px 12px 12px;
+    border-top: 1px dashed var(--el-border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .conv-ai-row {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+
+    &--block {
+      flex-direction: column;
+    }
+  }
+
+  .conv-ai-row__label {
+    min-width: 90px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .conv-ai-row__value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* 原始信心分數:白話等級為主,分數留給平台端排查用 */
+  .conv-ai-confidence-raw {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .conv-ai-source-list {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    li {
+      margin: 2px 0;
+    }
+  }
+
+  // 卡名是連結不是純文字:AI 答錯時要動的就是這張卡,點名字就能打開來改
+  .conv-ai-source-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--el-color-primary);
+    text-align: left;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+
+    &:hover {
+      color: var(--el-color-primary-dark-2);
+    }
+  }
+
+  // 已刪除的卡:看得到當時引用了什麼,但沒有地方可去
+  .conv-ai-source-gone {
+    color: var(--el-text-color-secondary);
+  }
+
+  .conv-ai-draft {
+    padding: 8px 10px;
+    background: white;
+    border-radius: 4px;
+    border-left: 3px solid var(--el-color-primary);
+    white-space: pre-wrap;
+    margin-bottom: 6px;
+  }
+
+  .conv-ai-tag {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 10px;
+
+    &--warn {
+      background: var(--el-color-warning-light-7);
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  .conv-ai-empty {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--el-text-color-secondary);
+
+    span {
+      flex: 1;
+    }
+  }
+
+  /* 「沒查知識庫」的說明:純資訊、沒有可按的動作,所以不做成 empty 那種帶按鈕的排版 */
+  .conv-ai-note {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .conv-ai-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    &__hint {
+      font-size: 11px;
+      color: var(--el-text-color-secondary);
+    }
+  }
+
+  // 標記答錯之後的「接下來可以做什麼」。獨立成一塊(不是接在按鈕後面的一行小字):
+  // 這是按下去唯一看得到的回饋,擠成 11px 灰字等於沒講。
+  .conv-ai-followup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--el-fill-color-blank);
+    border: 1px solid var(--el-border-color-lighter);
+
+    &__line {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--el-text-color-regular);
+
+      &--muted {
+        color: var(--el-text-color-secondary);
+      }
+    }
+
+    &__cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+  }
 }
 
 .conv-picker-popover {

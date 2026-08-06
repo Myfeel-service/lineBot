@@ -60,6 +60,12 @@ export default defineEventHandler(async (event) => {
       /** 這則是誰回的：真人 / AI / 機器人 / 系統。null＝這功能上線前的舊訊息，前端不掛標籤 */
       sender: resolveMessageSender({ direction, sender: data.sender, aiGenerated: data.aiGenerated }),
       senderName: (data.senderName as string | undefined) ?? '',
+      /**
+       * 這則是哪一次 AI 回合送出的（見 AiTurnDoc）。有值才給「為什麼這樣答」的入口——
+       * 空字串＝這功能上線前的舊訊息，刻意不用時間去猜是哪一回合（猜錯會讓客服對著錯的
+       * 那一題按「答錯」，比沒有更糟；同 sender 標籤的「不猜」原則）。
+       */
+      aiTurnId: (data.aiTurnId as string | undefined) ?? '',
     }
   }).reverse()
 

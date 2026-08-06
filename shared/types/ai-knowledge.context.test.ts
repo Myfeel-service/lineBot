@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isKnowledgeGapContext, type AiContextGapInput } from './ai-knowledge'
+import {
+  isAiContextWithinSession,
+  isKnowledgeGapContext,
+  type AiContextGapInput,
+} from './ai-knowledge'
 
 function ctx(over: Partial<AiContextGapInput> = {}): AiContextGapInput {
   return {
@@ -66,5 +70,43 @@ describe('isKnowledgeGapContext', () => {
     expect(isKnowledgeGapContext(ctx({
       lastDecision: 'handoff_confirm', lastHandoffReason: 'no_grounding', sourceCount: 0,
     }))).toBe(true)
+  })
+})
+
+/**
+ * 脈絡卡講的是「這位客人最近一次」AI 互動，不是「這場會話」的。
+ * 判斷錯的代價不是少一張卡：客服會對著三天前那場，把「答錯」記到今天那次頭上。
+ */
+describe('isAiContextWithinSession', () => {
+  const SESSION = { startMs: 1_000, endMs: 2_000 }
+
+  it('看的是進行中的對話（沒有指定場次）→ 一律算數', () => {
+    expect(isAiContextWithinSession(999_999, null)).toBe(true)
+    expect(isAiContextWithinSession(999_999, undefined)).toBe(true)
+  })
+
+  it('互動落在這場的時間範圍內 → 算這場的', () => {
+    expect(isAiContextWithinSession(1_500, SESSION)).toBe(true)
+  })
+
+  it('邊界（開場、結束的那一刻）算在裡面', () => {
+    expect(isAiContextWithinSession(1_000, SESSION)).toBe(true)
+    expect(isAiContextWithinSession(2_000, SESSION)).toBe(true)
+  })
+
+  it('這場結束之後才發生的互動 → 不是這場的（原本會誤標的就是這一種）', () => {
+    expect(isAiContextWithinSession(2_001, SESSION)).toBe(false)
+  })
+
+  it('開場之前的互動（上一場留下來的）→ 不是這場的', () => {
+    expect(isAiContextWithinSession(999, SESSION)).toBe(false)
+  })
+
+  it('這場還沒結束（endMs=Infinity）→ 之後的互動都算這場的', () => {
+    expect(isAiContextWithinSession(9_999_999, { startMs: 1_000, endMs: Number.POSITIVE_INFINITY })).toBe(true)
+  })
+
+  it('沒有互動時間可比 → 不給操作（寧可少一張卡，也不要標到錯的場次）', () => {
+    expect(isAiContextWithinSession(0, SESSION)).toBe(false)
   })
 })

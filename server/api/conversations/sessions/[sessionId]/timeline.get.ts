@@ -29,6 +29,8 @@ interface TimelineItem {
   /** 這則是誰回的（與對話頁同一套判定，見 shared/message-sender.ts）；null＝舊訊息，不掛標籤 */
   sender?: MessageSender | null
   senderName?: string
+  /** 這則是哪一次 AI 回合送出的（見 AiTurnDoc）；空＝舊訊息，不給「為什麼這樣答」入口 */
+  aiTurnId?: string
   // event fields
   eventType?: ConversationEventType
   moduleType?: ModuleType
@@ -276,6 +278,7 @@ export default defineEventHandler(async (event) => {
       mediaDescription: m.mediaDescription ?? '',
       sender: resolveMessageSender({ direction, sender: m.sender, aiGenerated: m.aiGenerated }),
       senderName: m.senderName ?? '',
+      aiTurnId: m.aiTurnId ?? '',
     })
   }
 

@@ -28,3 +28,4 @@ logs
 # Explicit local variants (already covered by .env.*; keep for clarity)
 .env_myfeel
 .env_splash
+.env_main

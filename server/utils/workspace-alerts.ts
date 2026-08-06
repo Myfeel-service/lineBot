@@ -5,6 +5,7 @@ import { cleanReason, humanizeHours } from './alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
+import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark } from './ai-feedback-events'
 import { getQuotaAnswered } from './ai-usage'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
@@ -44,6 +45,11 @@ const SESSION_SCAN_LIMIT = 200
 /** 缺索引時的退路上限（見 knowledgeOutdated） */
 const FALLBACK_SCAN_LIMIT = 300
 const LLM_ERROR_SCAN_LIMIT = 50
+/** 「AI 答錯了」標記的回看窗口與掃描上限（與知識庫工作台同一把尺，見 health.get.ts） */
+const WRONG_ANSWER_WINDOW_DAYS = 30
+const WRONG_ANSWER_SCAN_LIMIT = 100
+/** 被標到的卡逐張點讀的上限（通常個位數；設上限避免異常資料把輪詢拖垮） */
+const WRONG_ANSWER_CHUNK_LOOKUP = 30
 /** llm_error 只看近 24 小時：Gemini 兩週前抖過一次不該一直掛紅燈 */
 const LLM_ERROR_WINDOW_MS = 24 * 3600_000
 /** 客人等真人超過此時數才算積壓（幾分鐘的等待是正常客服節奏，不是異常） */
@@ -239,6 +245,53 @@ export async function collectWorkspaceAlerts(
             .get()
           const n = agg.data().count
           return n ? { active: true, count: n } : { active: false }
+        }),
+        probe('knowledgeWrongAnswers', async () => {
+          /**
+           * 客服按過「AI 答錯了」、而那張卡至今沒被改過。
+           *
+           * 判定與知識庫工作台的 wrongAnswerChunks 同一套（標記時間 vs 卡片 updatedAt），
+           * 兩邊講的必須是同一件事——小幫手說沒事、工作台卻紅著，正是最傷信任的那種矛盾。
+           *
+           * 查詢形狀沿用既有的 workspaceId+createdAt 索引（type 在程式裡濾），不必開新索引。
+           */
+          const snap = await db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
+            .where('workspaceId', '==', wid)
+            .orderBy('createdAt', 'desc')
+            .limit(WRONG_ANSWER_SCAN_LIMIT)
+            .get()
+
+          const marksByChunk = aggregateWrongAnswerMarks(
+            snap.docs.map((d) => {
+              const e = d.data() as { type?: string; chunkIds?: string[]; createdAt?: unknown }
+              return { type: e.type, chunkIds: e.chunkIds, createdAtMs: tsToMs(e.createdAt) }
+            }),
+            Date.now() - WRONG_ANSWER_WINDOW_DAYS * 86_400_000,
+          )
+          if (!marksByChunk.size) return { active: false }
+
+          // 逐張點讀被標到的卡（通常只有個位數）比掃整個知識庫便宜得多
+          const ids = [...marksByChunk.keys()].slice(0, WRONG_ANSWER_CHUNK_LOOKUP)
+          const docs = await Promise.all(
+            ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)),
+          )
+          let unfixed = 0
+          let firstTitle = ''
+          docs.forEach((d, i) => {
+            if (!d?.exists) return // 卡被刪掉了＝沒有東西可修
+            const c = d.data() as { workspaceId?: string; title?: string; updatedAt?: unknown }
+            if (c?.workspaceId !== wid) return
+            const mark = marksByChunk.get(ids[i]!)
+            if (!mark || !isChunkUnfixedSinceMark(tsToMs(c.updatedAt), mark)) return
+            unfixed++
+            if (!firstTitle) firstTitle = String(c?.title ?? '')
+          })
+          if (!unfixed) return { active: false }
+          return {
+            active: true,
+            count: unfixed,
+            detail: firstTitle ? `例如「${firstTitle.slice(0, 30)}」` : '',
+          }
         }),
         probe('anyTextBlocking', async () => {
           // 設定與規則同時查（先查設定再決定要不要查規則會多一個來回；

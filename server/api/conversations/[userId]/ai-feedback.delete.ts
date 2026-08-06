@@ -6,28 +6,30 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 const VALID_TYPES = new Set<AiFeedbackType>(['wrong_answer', 'draft_applied'])
 
 /**
- * DELETE /api/conversations/:userId/ai-feedback?type=wrong_answer&interactionAtMs=...
+ * DELETE /api/conversations/:userId/ai-feedback?type=wrong_answer&turnId=...
+ *   （舊路徑：?interactionAtMs=... — 見下方相容說明）
  *
  * 取消一筆回饋（客服按錯「AI 答錯了」）。
  *
  * 為什麼需要：先前只有「記一筆」沒有「刪一筆」，不小心按到就救不回來，
  * 而那筆訊號會進知識缺口聚類（≥4 字就算），誤標會讓系統擬出一張沒意義的知識卡。
  *
- * 刻意**不做**樂觀鎖（POST 有）：要取消的就是客服畫面上那一次互動，
- * 即使客人期間又問了新問題，舊那筆也該可以撤回——這裡的 interactionAtMs 是「刪哪一筆」，
- * 不是「跟現況比對」。
+ * 刻意**不做**樂觀鎖（POST 有）：要取消的就是客服畫面上那一則回覆，
+ * 即使客人期間又問了新問題，舊那筆也該可以撤回——這裡的識別是「刪哪一筆」，不是「跟現況比對」。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
   const userId = String(getRouterParam(event, 'userId') ?? '').trim()
   const query = getQuery(event)
   const type = String(query.type ?? 'wrong_answer') as AiFeedbackType
+  const turnId = String(query.turnId ?? '').trim()
   const interactionAtMs = Number(query.interactionAtMs ?? 0)
 
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })
   if (!VALID_TYPES.has(type)) throw createError({ statusCode: 400, statusMessage: 'type 不合法' })
-  if (!Number.isFinite(interactionAtMs) || interactionAtMs <= 0) {
-    throw createError({ statusCode: 400, statusMessage: 'interactionAtMs required' })
+  // turnId（新）或 interactionAtMs（舊訊息沒有 turnId 時）二擇一
+  if (!turnId && (!Number.isFinite(interactionAtMs) || interactionAtMs <= 0)) {
+    throw createError({ statusCode: 400, statusMessage: 'turnId 或 interactionAtMs 必須擇一' })
   }
 
   const db = getDb()
@@ -43,6 +45,7 @@ export default defineEventHandler(async (event) => {
     workspaceId,
     userId: convDocId,
     type,
+    turnId: turnId || undefined,
     interactionAtMs,
   })
 

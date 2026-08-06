@@ -409,6 +409,41 @@ export interface AiConversationMeta {
   updatedAt: Timestamp | FieldValue
 }
 
+/**
+ * 一次 AI 回合的脈絡快照：`conversations/{doc}/aiTurns/{turnId}`。
+ *
+ * 為什麼要有這個：`aiMeta` 是「每位客人一張、每次 AI 互動整份覆寫」，一場對話 AI 回了五次
+ * 就只剩第五次——前四次的把握度、命中哪張卡、當時的決定**在資料層面已經不存在**。
+ * 造成的實際問題：客服發現 AI 答錯幾乎都在客人抱怨之後（此時已有新回合），那一題再也標不到；
+ * 標記過的也只在它還是「最新那次」時取消得掉。
+ *
+ * 所以每一次 AI 回合都留一份，並把 turnId 蓋在那次送出的訊息上（`MessageDoc.aiTurnId`），
+ * 泡泡旁的「為什麼這樣答」就能永遠指向**正確的那一次**。
+ *
+ * aiMeta 不會被取代：它仍是「這位客人現在的狀態」（反問等待中、cooldown、收件匣排序），
+ * 兩者用途不同——一個是狀態、一個是歷史。
+ */
+export interface AiTurnDoc {
+  workspaceId: string
+  /** 對話文件 id（= 訊息所屬的 conversations doc）；跨對話查詢用 */
+  userId: string
+  decision: AiDecision
+  confidence: number
+  handoffReason: HandoffReason | null
+  /** 觸發這一回合的客人原話 */
+  query: string
+  /** 命中知識卡 ID（依相似度由高到低） */
+  sourceChunkIds: string[]
+  answerKind: AiAnswerKind
+  /** 草稿模式或轉真人時給客服參考的回覆 */
+  suggestedReply: string
+  /** 轉真人時的對話摘要 */
+  handoffSummary: string
+  createdAt: Timestamp | FieldValue
+  /** 保留期同其他事件流（240 天）；TTL policy 兩專案各手動設一次 */
+  expireAt: Timestamp
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  AI auto-reply rule config (extension on AutoReplyDoc)
 //  當 autoReplyRule 的 type === 'ai' 時讀這份設定
@@ -614,6 +649,60 @@ export function isKnowledgeGapContext(c: AiContextGapInput): boolean {
     return KNOWLEDGE_GAP_HANDOFF_REASONS.has(String(c.lastHandoffReason ?? ''))
   }
   return c.sourceCount === 0
+}
+
+/**
+ * 後台脈絡卡的回應形狀。**兩支端點共用**：
+ *   - `ai-context`（這位客人最近一次，讀 aiMeta）
+ *   - `ai-turn/:turnId`（某一則 AI 回覆當時，讀 aiTurns）
+ *
+ * 共用是刻意的：畫面只有一個脈絡元件，兩邊回不同形狀就會養出兩套說法。
+ */
+export interface AiContextPayload {
+  hasMeta: boolean
+  lastDecision: AiDecision | ''
+  lastConfidence: number
+  lastHandoffReason: HandoffReason | null
+  lastQuery: string
+  lastAnswerKind: AiAnswerKind
+  suggestedReply: string
+  handoffSummary: string
+  /** exists=false＝卡已被刪：不給「去修這張卡」的連結（點下去只會說找不到） */
+  sources: Array<{ chunkId: string; title: string; exists: boolean }>
+  wrongMarked: boolean
+  /**
+   * 這一次 AI 回合的識別。有值＝脈絡來自 aiTurns，回饋直接綁這一回合（舊回合也標得到、取消得掉）；
+   * 空字串＝來自 aiMeta 的「最近一次」，只能用 updatedAtMs 指認（見 ai-feedback.post.ts 的樂觀鎖）。
+   */
+  turnId: string
+  /** aiMeta 的更新時間（毫秒）。turnId 有值時不使用。 */
+  updatedAtMs: number
+}
+
+/** {@link isAiContextWithinSession} 的會話時間範圍（endMs 可為 Infinity＝這場還沒結束） */
+export interface AiContextSessionWindow {
+  startMs: number
+  endMs: number
+}
+
+/**
+ * 手上這張脈絡（aiMeta）屬於眼前這場會話嗎？
+ *
+ * aiMeta 是「每位客人一張、每次 AI 互動整份覆寫」，不分場次。從側欄點進一場已結束的
+ * 舊會話時，訊息換成那場的、脈絡卡卻還是最新那次——兩邊兜不起來；更糟的是此時按
+ * 「這題 AI 答錯了」**會成功**記到最新那次頭上：時間戳與後端一致，後端的樂觀鎖只擋得住
+ * 「互動被更新了」，擋不到「客服看錯場次」。所以窗口對不上就不顯示、也不給操作。
+ *
+ * @param window null＝看的是進行中的對話而非特定場次 → 一律算數（維持原本行為）
+ */
+export function isAiContextWithinSession(
+  updatedAtMs: number,
+  window: AiContextSessionWindow | null | undefined,
+): boolean {
+  if (!window) return true
+  // 判不出時間就不給操作：寧可少一張卡，也不要讓人對著錯的場次按「答錯」
+  if (!(updatedAtMs > 0)) return false
+  return updatedAtMs >= window.startMs && updatedAtMs <= window.endMs
 }
 
 export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
