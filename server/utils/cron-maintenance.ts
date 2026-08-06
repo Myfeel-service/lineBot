@@ -18,16 +18,19 @@ import {
   markSourceOutdated,
 } from './ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
 import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
-import { notifyHandoffToStaff, notifyKnowledgeSourceEvent } from './ai-handoff-notify'
+import { notifyHandoffToStaff } from './ai-handoff-notify'
+import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { isServiceHoursDnd } from '~~/shared/time'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
@@ -90,12 +93,9 @@ async function checkOneSource(
       // 注意不能沿用下面 url 分支的 clearFailure：那個變數宣告在本分支的 return 之後。
       await clearSourceFailure(db, sourceId, data.status)
       if (r.outcome === 'unchanged') return { sourceId, outcome: 'unchanged' }
-      // 自動套用後給一份摘要通知——自動化不等於無聲,管理員要知道知識庫剛剛變了什麼
-      notifyKnowledgeSourceEvent(data.workspaceId, [
-        '📗 Google 試算表知識已自動同步',
-        `來源：${sourceTitleOf(data)}`,
-        `新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted} 張知識卡。`,
-      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify gsheet failed:', e))
+      // 同步成功不推播（2026-08-06 拍板:成功不需要行動,不值一則訊息錢）;
+      // 來源頁的最後同步時間/卡片數本來就看得到,這裡留 log 供追查。
+      console.log(`[detect-source-updates] gsheet ${sourceId} auto-synced: +${r.added} ~${r.updated} -${r.deleted}`)
       return { sourceId, outcome: 'gsheet_synced', message: `+${r.added} ~${r.updated} -${r.deleted}` }
     }
 
@@ -222,33 +222,22 @@ async function checkOneSource(
           // 否則來源會永遠掛著提示,店家點進去看到的卻是「全部未變」的空 diff。
           // 卡片已更新到這一版 → appliedContentHash 同步推進(手動重新同步據此判斷「沒變」)。
           await commitChange({ outdatedAt: null, appliedContentHash: newHash })
-          notifyKnowledgeSourceEvent(data.workspaceId, [
-            '📘 知識庫來源已自動更新',
-            `來源：${sourceTitleOf(data)}`,
-            `偵測到小幅文字變動,已自動更新 ${auto.updated} 張知識卡${auto.failed ? `(另有 ${auto.failed} 張索引失敗,排程會重試)` : ''}。`,
-            '新增、刪除或大幅改版仍會等你人工確認才套用。',
-          ].join('\n')).catch(e => console.warn('[detect-source-updates] notify auto-apply failed:', e))
+          // 自動更新成功不推播(2026-08-06 拍板:成功不需要行動);留 log 供追查
+          console.log(`[detect-source-updates] ${sourceId} auto-applied ~${auto.updated}${auto.failed ? ` (${auto.failed} failed)` : ''}`)
           return { sourceId, outcome: 'auto_applied', message: `~${auto.updated}` }
         }
-        // 不符合自動條件 → 走人工審,通知帶上原因(店家知道為什麼要自己看)
+        // 不符合自動條件 → 走人工審。不再即時推播:outdatedAt 標記由每日摘要
+        // (dailyOpsDigest)統一提醒,後台小幫手也有「內容變了還沒重新學」燈號。
         await commitChange()
         await markSourceOutdated(db, sourceId)
-        notifyKnowledgeSourceEvent(data.workspaceId, [
-          '📚 知識庫來源內容有變動',
-          `來源：${sourceTitleOf(data)}`,
-          `這次變動不適合自動更新(${auto.reason}),請至後台「AI 知識庫」檢視差異,決定是否更新知識卡。`,
-        ].join('\n')).catch(e => console.warn('[detect-source-updates] notify change failed:', e))
+        console.log(`[detect-source-updates] ${sourceId} changed, needs review (${auto.reason})`)
         return { sourceId, outcome: 'changed_notified' }
       }
       await commitChange()
       await markSourceOutdated(db, sourceId)
-      // 主動推播（不只後台標記——標記沒人天天看,變動掛一個月也沒人知道）。
-      // 頻率天然去重:contentHash 已更新,下次檢查 unchanged 就不會再進到這裡。
-      notifyKnowledgeSourceEvent(data.workspaceId, [
-        '📚 知識庫來源內容有變動',
-        `來源：${sourceTitleOf(data)}`,
-        '偵測到來源內容與上次不同。請至後台「AI 知識庫」檢視差異，決定是否更新知識卡。',
-      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify change failed:', e))
+      // 標記不會消失:每日摘要每天把「有變動待審」的來源數提醒一次,直到有人處理。
+      // (原本這裡即時推播;2026-08-06 拍板改併入摘要,一則錢講完全部)
+      console.log(`[detect-source-updates] ${sourceId} changed, needs review`)
       return { sourceId, outcome: 'changed_notified' }
     }
     await commitChange()
@@ -270,16 +259,8 @@ async function checkOneSource(
       lastCheckedAt: FieldValue.serverTimestamp(),
       ...(failCount >= 3 ? { status: 'failed' } : {}),
     }).catch(() => {})
-    // 只在「連續第 3 次失敗、剛跨過門檻標成 failed」時通知一次——之後每輪檢查仍會失敗,
-    // 但 failCount 已 >3 不再吵人(gsheet 403 壞半個月沒人知道的教訓;修好後 clearFailure 歸零)。
-    if (failCount === 3) {
-      notifyKnowledgeSourceEvent(data.workspaceId, [
-        '⚠️ 知識庫來源同步失敗',
-        `來源：${sourceTitleOf(data)}`,
-        `原因：${msg}`,
-        '在修復之前,這個來源的知識卡會停留在最後一次成功同步的內容。請至後台「AI 知識庫」檢查。',
-      ].join('\n')).catch(e => console.warn('[detect-source-updates] notify failure failed:', e))
-    }
+    // 不再即時推播(2026-08-06 拍板):status='failed' 由每日摘要每天提醒一次直到修復,
+    // 比「跨過第 3 次那一則」更不會漏(gsheet 403 壞半個月沒人知道的教訓——那則沒看到就沒了)。
     return { sourceId, outcome: 'error', message: msg }
   }
 }
@@ -448,20 +429,42 @@ export async function remindOverdueHandoffs(db: Firestore) {
         skipped++
         continue
       }
+      // 勿擾時段先不蓋章,等勿擾結束的下一輪再發(notifyHandoffToStaff 內部的勿擾
+      // 檢查會把推播吞掉,但這裡蓋了 slaRemindedAt 就永遠補不回來——在 missed_only
+      // 模式這是唯一的一則通知,吞掉等於整場轉真人無聲無息)。
+      if (isServiceHoursDnd(settings.serviceHours)) {
+        skipped++
+        continue
+      }
 
-      // 撈 displayName 讓提醒訊息可讀（一場會話只發一次，這個讀取量可接受）
-      const convSnap = await db.collection('conversations')
-        .doc(lineUserFirestoreDocId(lineUserId, workspaceId))
-        .get()
-        .catch(() => null)
-      const displayName = String(convSnap?.data()?.displayName ?? '') || lineUserId
+      // 撈暱稱讓提醒可讀（一場會話只發一次，這個讀取量可接受）。
+      // 暱稱存在 users 集合（ensureUser 寫入），conversations doc 從來沒有這個欄位——
+      // 之前讀錯集合,提醒永遠 fallback 成 33 碼原始 userId。
+      // 另外 profile 抓取失敗時 ensureUser 會把 userId 存進 displayName,一樣要擋:
+      // 原始 ID 在後台搜不到、也認不出是誰,不如老實說「未知暱稱」。
+      const docId = lineUserFirestoreDocId(lineUserId, workspaceId)
+      const [userSnap, convSnap] = await Promise.all([
+        db.collection('users').doc(docId).get().catch(() => null),
+        db.collection('conversations').doc(docId).get().catch(() => null),
+      ])
+      const rawName = String(userSnap?.data()?.displayName ?? '').trim()
+      const displayName = rawName && rawName !== lineUserId
+        ? rawName
+        : `未知暱稱（…${lineUserId.slice(-6)}）`
+
+      // missed_only 模式下這是唯一的一則通知:把轉真人當下存的摘要/客人訊息補回來。
+      // 只認這一場存的（at 不早於 handoffRequestedAt 太多），避免撈到上一場的舊內容。
+      const ctx = (convSnap?.data()?.handoffNotifyContext ?? null) as
+        { summary?: string; message?: string; reason?: string | null; at?: unknown } | null
+      const ctxFresh = Boolean(ctx && tsToMs(ctx.at) >= requestedMs - 10 * 60_000)
 
       await notifyHandoffToStaff({
         workspaceId,
         customerLineUserId: lineUserId,
         customerName: displayName,
-        customerMessage: '',
-        reason: null,
+        customerMessage: ctxFresh ? String(ctx?.message ?? '') : '',
+        reason: ctxFresh ? ((ctx?.reason ?? null) as HandoffReason | null) : null,
+        summary: ctxFresh ? String(ctx?.summary ?? '') : '',
         slaReminderMinutes: sla,
       })
       await doc.ref.update({ slaRemindedAt: FieldValue.serverTimestamp() })
@@ -504,64 +507,125 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
   return { deleted }
 }
 
-// ── 每日積壓/漏接摘要 ────────────────────────────────────────────────────
-// 「客人等到流失沒人知道」的解法:每天早上把「還在等真人的、卡在真人手上太久的」
-// 對話數量推播給轉真人通知名單。與 SLA 提醒同一套 status 單欄查詢(免複合索引)。
-// 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒積壓就不打擾。
+// ── 每日客服摘要 ─────────────────────────────────────────────────────────
+// 「知道就好」的事全部收進每天一則:客服積壓＋知識庫待辦(來源待審/同步失敗/到期卡/
+// 建議收件匣)。2026-08-06 拍板:原本各自即時推播的知識庫通知一律併進來,LINE 按則
+// 計費,一則錢講完全部;事件當下的標記(outdatedAt/status='failed'/expiredAt/pending)
+// 都留在資料上,摘要每天照著標記喊,直到有人處理——比「事件當下那一則」更不會漏。
+// 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒事就不發。
+// 發送時段由各 workspace 的 handoffNotify.digestHour 自選(台北時間整點)。
 
-const DIGEST_HOUR_TAIPEI = 9 // 台北時間 9 點後的第一次排程觸發才發
+const DIGEST_SCAN_LIMIT = 200
 
 export async function dailyBacklogDigest(db: Firestore) {
   const taipeiNow = new Date(Date.now() + 8 * 3600_000)
-  if (taipeiNow.getUTCHours() < DIGEST_HOUR_TAIPEI) return { skipped: 'before-hour' }
+  const taipeiHour = taipeiNow.getUTCHours()
   const today = taipeiNow.toISOString().slice(0, 10)
 
   const stateRef = db.collection('cronState').doc('backlog-digest')
   const state = ((await stateRef.get()).data() ?? {}) as Record<string, string>
 
-  const [pendingSnap, humanSnap] = await Promise.all([
+  // 發送時段是各 workspace 自選的,沒有全域「幾點前免查」的早退可用;
+  // 六個查詢都吃單欄自動索引、有 limit,平時多半是空結果,每 10 分鐘跑一次可接受。
+  const nowMs = Date.now()
+  const [pendingSnap, humanSnap, outdatedSnap, failedSnap, expiredSnap, suggestSnap] = await Promise.all([
     db.collection('conversationSessions').where('status', '==', 'pending_human').limit(SESSION_SCAN_LIMIT).get(),
     db.collection('conversationSessions').where('status', '==', 'human_handling').limit(SESSION_SCAN_LIMIT).get(),
+    db.collection(KNOWLEDGE_SOURCES_COLLECTION).where('outdatedAt', '>', Timestamp.fromMillis(0)).limit(DIGEST_SCAN_LIMIT).get(),
+    db.collection(KNOWLEDGE_SOURCES_COLLECTION).where('status', '==', 'failed').limit(DIGEST_SCAN_LIMIT).get(),
+    // 近 24 小時剛到期下架的卡;更早的到期卡當天已經講過,不重複喊
+    db.collection(KNOWLEDGE_CHUNKS_COLLECTION).where('expiredAt', '>', Timestamp.fromMillis(nowMs - 24 * 3600_000)).limit(DIGEST_SCAN_LIMIT).get(),
+    db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION).where('status', '==', 'pending').limit(DIGEST_SCAN_LIMIT).get(),
   ])
 
-  interface Agg { pending: number; pendingOldestH: number; stale: number }
+  interface Agg {
+    pending: number
+    pendingOldestH: number
+    stale: number
+    outdatedSources: number
+    failedSources: number
+    expiredCards: number
+    suggestions: number
+    topSuggestTopic: string
+    topSuggestCount: number
+  }
   const byWs = new Map<string, Agg>()
-  const nowMs = Date.now()
   const aggOf = (ws: string): Agg => {
-    const a = byWs.get(ws) ?? { pending: 0, pendingOldestH: 0, stale: 0 }
+    const a = byWs.get(ws) ?? {
+      pending: 0, pendingOldestH: 0, stale: 0,
+      outdatedSources: 0, failedSources: 0, expiredCards: 0,
+      suggestions: 0, topSuggestTopic: '', topSuggestCount: 0,
+    }
     byWs.set(ws, a)
     return a
   }
+  const wsOf = (doc: FirebaseFirestore.QueryDocumentSnapshot): string =>
+    String((doc.data() as any)?.workspaceId ?? '')
+
   for (const doc of pendingSnap.docs) {
-    const d = doc.data() as any
-    const ws = String(d?.workspaceId ?? '')
+    const ws = wsOf(doc)
     if (!ws) continue
+    const d = doc.data() as any
     const sinceMs = tsToMs(d.handoffRequestedAt) || tsToMs(d.lastActivityAt)
     const a = aggOf(ws)
     a.pending++
     if (sinceMs) a.pendingOldestH = Math.max(a.pendingOldestH, (nowMs - sinceMs) / 3600_000)
   }
   for (const doc of humanSnap.docs) {
-    const d = doc.data() as any
-    const ws = String(d?.workspaceId ?? '')
+    const ws = wsOf(doc)
     if (!ws) continue
+    const d = doc.data() as any
     const lastMs = tsToMs(d.humanLastRepliedAt) || tsToMs(d.lastActivityAt)
     if (lastMs && nowMs - lastMs >= HUMAN_STALE_HOURS * 3600_000) aggOf(ws).stale++
+  }
+  for (const doc of outdatedSnap.docs) {
+    const ws = wsOf(doc)
+    if (ws) aggOf(ws).outdatedSources++
+  }
+  for (const doc of failedSnap.docs) {
+    const ws = wsOf(doc)
+    if (ws) aggOf(ws).failedSources++
+  }
+  for (const doc of expiredSnap.docs) {
+    const ws = wsOf(doc)
+    // 只算「這次真的被下架」的卡:先前就 disabled/failed 的到期只是搬欄位去重
+    if (ws && String((doc.data() as any)?.status ?? '') === 'disabled') aggOf(ws).expiredCards++
+  }
+  for (const doc of suggestSnap.docs) {
+    const ws = wsOf(doc)
+    if (!ws) continue
+    const a = aggOf(ws)
+    a.suggestions++
+    const count = Number((doc.data() as any)?.eventCount ?? 0)
+    if (count > a.topSuggestCount) {
+      a.topSuggestCount = count
+      a.topSuggestTopic = String((doc.data() as any)?.topic ?? '').trim()
+    }
   }
 
   let notified = 0
   const statePatch: Record<string, string> = {}
   for (const [ws, agg] of byWs) {
     if (state[ws] === today) continue // 今天發過
-    if (!agg.pending && !agg.stale) continue
+    const hasConversation = agg.pending > 0 || agg.stale > 0
+    const hasKnowledge = agg.outdatedSources > 0 || agg.failedSources > 0 || agg.expiredCards > 0 || agg.suggestions > 0
+    if (!hasConversation && !hasKnowledge) continue
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
+    if (taipeiHour < cfg.digestHour) continue // 商家自選時段還沒到,下一輪再看
 
-    const lines = ['📋 客服積壓每日提醒']
+    const lines = ['📋 每日客服摘要']
     if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
     if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」`)
-    lines.push('請到後台「對話」頁查看。')
+    if (agg.outdatedSources) lines.push(`・${agg.outdatedSources} 個知識庫來源內容有變動,待你確認是否更新`)
+    if (agg.failedSources) lines.push(`・${agg.failedSources} 個知識庫來源同步失敗,修好前 AI 用的是舊內容`)
+    if (agg.expiredCards) lines.push(`・${agg.expiredCards} 張知識卡已到期下架,要延長請到知識庫編輯`)
+    if (agg.suggestions) {
+      lines.push(`・客人常問但 AI 答不好的主題 ${agg.suggestions} 個${agg.topSuggestTopic ? `(最常問:「${agg.topSuggestTopic}」)` : ''},草稿已擬好,審一眼按「採用」AI 就學會了`)
+    }
+    const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
+    lines.push(`請到後台${places}頁處理。`)
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
     await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
     statePatch[ws] = today
@@ -588,12 +652,11 @@ export async function expireKnowledgeCards(db: Firestore) {
     .get()
   if (snap.empty) return { expired: 0 }
 
-  const byWs = new Map<string, string[]>()
   let expired = 0
   for (const d of snap.docs) {
     const c = d.data() as any
     const status = String(c.status ?? 'pending')
-    // pending 先放著（幾秒後就會 indexed，下一輪再處理）；disabled/failed 只搬欄位去重，不通知
+    // pending 先放著（幾秒後就會 indexed，下一輪再處理）；disabled/failed 只搬欄位去重
     if (status === 'pending') continue
     const patch: Record<string, unknown> = {
       activeUntil: FieldValue.delete(),
@@ -603,25 +666,11 @@ export async function expireKnowledgeCards(db: Firestore) {
     if (status === 'indexed') {
       patch.status = 'disabled'
       expired++
-      const ws = String(c.workspaceId ?? '')
-      if (ws) {
-        const list = byWs.get(ws) ?? []
-        list.push(String(c.title ?? '(未命名卡片)'))
-        byWs.set(ws, list)
-      }
     }
     await d.ref.update(patch).catch(e => console.warn(`[expire-knowledge-cards] ${d.id} update failed:`, e))
   }
-
-  for (const [ws, titles] of byWs) {
-    const shown = titles.slice(0, 5).map(t => `・${t}`)
-    if (titles.length > 5) shown.push(`…等共 ${titles.length} 張`)
-    notifyKnowledgeSourceEvent(ws, [
-      '⏳ 知識卡已到期，AI 停止引用',
-      ...shown,
-      '要延長或重新啟用，請至後台「AI 知識庫」編輯該卡。',
-    ].join('\n')).catch(e => console.warn('[expire-knowledge-cards] notify failed:', e))
-  }
+  // 到期是預先知道的事,不即時推播(2026-08-06 拍板);expiredAt 標記由每日摘要
+  // 撈近 24 小時的下架卡統一提一句,細節到後台知識庫看。
 
   const tally = { expired, scanned: snap.size }
   if (expired) console.log('[ai:expire-knowledge-cards]', tally)

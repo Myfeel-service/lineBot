@@ -20,6 +20,7 @@ import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import { SETUP_LABELS } from '~~/shared/types/setup'
 import type { SetupStatusResponse } from '~~/shared/types/setup'
+import type { KpiResult } from '~~/shared/types/conversation-stats'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
 export interface AdminAgentToolCall { tool: string; args: Record<string, unknown> }
@@ -107,6 +108,31 @@ const TOOLS: Record<string, ToolDef> = {
         inputTokens: u.inputTokens ?? 0,
         outputTokens: u.outputTokens ?? 0,
         buildEmbeddingTokens: u.buildEmbeddingTokens ?? 0,
+      }
+    },
+  },
+  get_conversation_stats: {
+    description: '對話統計 KPI(與統計頁同一把尺):客人對話場數、AI/機器人/真人首接、整場沒人回、轉真人數。args 可帶 {"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},不帶=昨天。問「昨天/這週幾場對話、AI 先回幾場、幾場沒人理」時用。',
+    async run(_db, workspaceId, args, ctx) {
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+      // 預設=昨天(台灣時區;伺服器跑 UTC,直接 new Date() 在午夜前後會差一天)
+      const taiwanYesterday = new Date(Date.now() + 8 * 3600_000 - 86400_000).toISOString().slice(0, 10)
+      const startDate = DATE_RE.test(String(args?.startDate ?? '')) ? String(args.startDate) : taiwanYesterday
+      const endDate = DATE_RE.test(String(args?.endDate ?? '')) ? String(args.endDate) : startDate
+      // 轉發呼叫者憑證打統計頁同一支 KPI:同一套首接/轉真人口徑,
+      // 小幫手日報、統計頁、這裡三處講的數字永遠對得上(口徑漂移是這個後台最痛的坑)
+      const k = await $fetch<KpiResult>('/api/conversation-stats/kpi', {
+        query: { workspaceId, startDate, endDate },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      })
+      return {
+        range: `${startDate} ~ ${endDate}`,
+        total: k.total,
+        aiFirst: k.aiHandled,
+        botFirst: k.botHandled,
+        humanFirst: k.humanHandled,
+        unhandled: k.unhandled,
+        handoffs: k.handoffCount,
       }
     },
   },

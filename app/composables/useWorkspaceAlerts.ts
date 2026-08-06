@@ -10,7 +10,7 @@
  */
 
 import type { Component } from 'vue'
-import { Bell, ChatDotRound, CreditCard, MagicStick, Odometer, Opportunity, Pointer, Reading, Refresh, Service, Tickets } from '@element-plus/icons-vue'
+import { AlarmClock, Bell, ChatDotRound, CreditCard, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 
@@ -51,6 +51,16 @@ export interface ResolvedAlert extends AlertDefinition {
  * 文案一律白話、講後果，把使用者當第一次看到這個詞的人。
  */
 const ALERTS: AlertDefinition[] = [
+  {
+    // 所有異常裡最致命的：webhook 掛了＝訊息完全進不來，機器人等於死機
+    id: 'lineWebhookBroken',
+    icon: Link,
+    severity: 'critical',
+    impact: 'LINE 沒有把客人的訊息送進系統——機器人、AI、真人對話全都收不到，客人傳什麼都不會有回應。',
+    cta: '去檢查 LINE 連接',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization`,
+  },
   {
     id: 'anyTextBlocking',
     icon: ChatDotRound,
@@ -105,6 +115,16 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/billing`,
   },
   {
+    // 提前量：quotaExceeded 亮的時候 AI 已經停了。這顆在停之前就講
+    id: 'quotaRunningOut',
+    icon: Odometer,
+    severity: 'warning',
+    impact: '用完之後 AI 會停止回覆，客人的訊息只能等真人接手。趁還沒停先升級方案，就不會中斷。',
+    cta: '去看用量與方案',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/billing`,
+  },
+  {
     id: 'paymentPastDue',
     icon: CreditCard,
     severity: 'critical',
@@ -127,10 +147,20 @@ const ALERTS: AlertDefinition[] = [
     id: 'brokenModuleButton',
     icon: Pointer,
     severity: 'critical',
-    impact: '選單或圖卡上的按鈕指向已刪除／已停用的模組。客人按了收不到任何訊息，也不會看到錯誤提示。',
-    cta: '去檢查選單按鈕',
+    impact: '選單、圖卡、關鍵字回覆或活動指向已刪除／已停用的模組。客人觸發時收不到任何訊息，也不會看到錯誤提示。',
+    cta: '去檢查設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/richmenu`,
+  },
+  {
+    id: 'firstReplyBacklog',
+    icon: ChatDotRound,
+    severity: 'warning',
+    impact: '這些對話到現在還沒有任何人回覆過。AI 草稿模式下尤其要看：AI 只擬好草稿等人送出，沒人處理＝客人一直收不到回覆。',
+    cta: '去看未回覆的對話',
+    requires: 'operate',
+    // 與側欄「未首接」同一份佇列口徑，直接落在該分頁
+    route: wid => `/admin/${wid}/conversations?tab=open`,
   },
   {
     id: 'humanBacklog',
@@ -141,6 +171,16 @@ const ALERTS: AlertDefinition[] = [
     requires: 'operate',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
     route: wid => `/admin/${wid}/conversations?tab=pending_human`,
+  },
+  {
+    // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑
+    id: 'knowledgeIndexStuck',
+    icon: Reading,
+    severity: 'warning',
+    impact: '這些知識卡等了超過一小時還沒學完，AI 目前讀不到它們——客人問到相關問題會答不出來。若一直卡著，請聯絡我們。',
+    cta: '去看這些知識',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/knowledge/sources`,
   },
   {
     id: 'knowledgeOutdated',
@@ -162,6 +202,15 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/conversations?tab=open`,
   },
   {
+    id: 'renewalNotBound',
+    icon: CreditCard,
+    severity: 'warning',
+    impact: '這期的錢付成功了，但自動扣款的卡片沒有綁定成功——下期不會自動扣款，方案會被降回免費、AI 停止回覆。請重新設定付款方式，或聯絡我們處理。',
+    cta: '去處理付款方式',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/billing`,
+  },
+  {
     id: 'invoiceFailed',
     icon: Tickets,
     severity: 'warning',
@@ -169,6 +218,34 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看付款紀錄',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+  },
+  {
+    id: 'broadcastFailed',
+    icon: Promotion,
+    severity: 'warning',
+    impact: '這批推播發送失敗，名單上的客人沒有收到訊息。進去看失敗原因，處理後可以重新發送。',
+    cta: '去看推播',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/broadcasts`,
+  },
+  {
+    id: 'broadcastOverdue',
+    icon: AlarmClock,
+    severity: 'warning',
+    impact: '排定的發送時間已經過了，推播卻還沒送出去——排程可能卡住了。若一直沒動，請聯絡我們。',
+    cta: '去看排程',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/broadcasts`,
+  },
+  {
+    // 系統端問題：使用者修不了，但影響要現形（轉真人提醒、自動回收都靠它）
+    id: 'maintenanceStalled',
+    icon: Tools,
+    severity: 'warning',
+    impact: '背景的自動維護（轉真人提醒、逾時自動交回、資料更新偵測）已停擺超過一小時。這是系統端的問題，通常不用你操作；若持續一整天，請聯絡我們。',
+    cta: '去看連接狀態',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization`,
   },
   {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
@@ -181,6 +258,14 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/knowledge/sources`,
   },
 ]
+
+/**
+ * 各異常的嚴重度對照（單一事實來源＝上面的註冊表）。
+ * 組織頁彙總跨工作區訊號時用同一把尺，不另寫第二份分級。
+ */
+export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = Object.fromEntries(
+  ALERTS.map(a => [a.id, a.severity]),
+) as Record<WorkspaceAlertId, AlertSeverity>
 
 /** 兩次自動檢查之間的最短間隔：頁面切換不該每次都打一輪彙總查詢 */
 const REFRESH_TTL_MS = 60_000

@@ -230,8 +230,16 @@ export interface AiSettingsDoc {
     lineUserIds: string[]
     /** userId → 顯示名稱快取；僅供後台 UI 顯示用,推播本身只看 lineUserIds */
     displayNames?: Record<string, string>
+    /**
+     * 即時通知模式。always＝每場轉真人當下推播（預設）；missed_only＝當下不推，
+     * 超過 slaRemindMinutes 仍沒人接手才推一則（帶完整摘要）。後者給「客服本來就
+     * 整天盯後台」的商家省官方帳號訊息費——即時通知佔內部推播八成五的則數。
+     */
+    mode: 'always' | 'missed_only'
     /** SLA 提醒：轉真人後超過此分鐘數仍無人回應，再推播提醒一次（每場會話只提醒一次）。0 = 關閉 */
     slaRemindMinutes: number
+    /** 每日摘要（積壓＋知識庫待辦）發送時段：台北時間整點 0–23，當天過了這個小時的第一輪排程發送 */
+    digestHour: number
   }
   /**
    * 真人處理中、且真人最後回覆超過此分鐘數沒有後續回覆 → 自動把會話交還機器人。
@@ -519,7 +527,11 @@ export const DEFAULT_MONTHLY_TOKEN_CAP = 1_000_000
 export const DEFAULT_HANDBACK_IDLE_MINUTES = 0
 
 /** 轉真人後超時再提醒（分鐘）；0 = 關閉。單一事實來源：normalize / buildDefault / 前端表單都引用這裡 */
-export const DEFAULT_SLA_REMIND_MINUTES = 15
+// 2026-08-06 拍板從 15 放寬到 30：15 分鐘在人力吃緊時幾乎場場觸發,是內部推播成本第二大項
+export const DEFAULT_SLA_REMIND_MINUTES = 30
+
+/** 每日摘要發送時段預設（台北時間整點） */
+export const DEFAULT_DIGEST_HOUR = 9
 
 /** aiSettings 單例 doc ID */
 export const AI_SETTINGS_DOC_ID = 'default'
@@ -737,7 +749,9 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       enabled: false,
       lineUserIds: [],
       displayNames: {},
+      mode: 'always',
       slaRemindMinutes: DEFAULT_SLA_REMIND_MINUTES,
+      digestHour: DEFAULT_DIGEST_HOUR,
     },
     handbackIdleMinutes: DEFAULT_HANDBACK_IDLE_MINUTES,
     disambiguation: {

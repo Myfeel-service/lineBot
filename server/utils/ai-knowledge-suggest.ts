@@ -18,9 +18,6 @@ import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { embedQuery, generateJson, estimateTokens } from './gemini'
 import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
-import { notifyKnowledgeSourceEvent } from './ai-handoff-notify'
-import { getAiSettings } from './ai-settings'
-import { isServiceHoursDnd } from '~~/shared/time'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 
 export const KNOWLEDGE_SUGGESTIONS_COLLECTION = 'knowledgeSuggestions'
@@ -743,78 +740,6 @@ export async function resolveHandoffsByQueries(db: Firestore, workspaceId: strin
   return resolved
 }
 
-// ── 週報 digest ────────────────────────────────────────────────────
-
-const DIGEST_STATE_DOC = 'knowledge-gap-digest'
-const DIGEST_WEEKDAY_TAIPEI = 1 // 週一
-const DIGEST_HOUR_TAIPEI = 9
-
-/**
- * 每週一早上把「待處理的知識缺口建議」摘要推給轉真人通知名單。
- * 與 dailyBacklogDigest 同一套防重（cronState 記上次發送日）；沒有建議就不打擾。
- */
-/** 整體「這一天跑過了」的旗標：週一整天每 10 分鐘掃 300 筆是白付的 */
-const DIGEST_DONE_KEY = '__lastRunDate'
-const DIGEST_SCAN_LIMIT = 300
-
-export async function weeklyKnowledgeGapDigest(db: Firestore) {
-  const taipeiNow = new Date(Date.now() + 8 * 3600_000)
-  if (taipeiNow.getUTCDay() !== DIGEST_WEEKDAY_TAIPEI) return { skipped: 'not-monday' as const }
-  if (taipeiNow.getUTCHours() < DIGEST_HOUR_TAIPEI) return { skipped: 'before-hour' as const }
-  const today = taipeiNow.toISOString().slice(0, 10)
-
-  const stateRef = db.collection('cronState').doc(DIGEST_STATE_DOC)
-  const state = ((await stateRef.get()).data() ?? {}) as Record<string, string>
-  // 這一天已經跑完 → 1 讀早退。少了這道,週一 09:00 之後每 10 分鐘都會再掃一次 300 筆。
-  if (state[DIGEST_DONE_KEY] === today) return { skipped: 'already-ran-today' as const }
-
-  const snap = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
-    .where('status', '==', 'pending')
-    .limit(DIGEST_SCAN_LIMIT)
-    .get()
-  if (snap.size >= DIGEST_SCAN_LIMIT) {
-    // 撞上限＝某些 workspace 這週可能不會收到週報（跨租戶共用這個上限）
-    console.warn(`[kb-suggest] digest 撈到 ${snap.size} 筆待處理建議（上限），部分工作區本週可能漏發`)
-  }
-
-  const byWs = new Map<string, Array<{ topic: string; eventCount: number; sampled: boolean }>>()
-  for (const d of snap.docs) {
-    const s = d.data() as KnowledgeSuggestionDoc
-    const ws = String(s.workspaceId ?? '')
-    if (!ws) continue
-    const list = byWs.get(ws) ?? []
-    list.push({
-      topic: String(s.topic ?? '(未命名主題)'),
-      eventCount: Number(s.eventCount ?? 0),
-      sampled: s.sampled === true,
-    })
-    byWs.set(ws, list)
-  }
-
-  let notified = 0
-  const statePatch: Record<string, string> = { [DIGEST_DONE_KEY]: today }
-  for (const [ws, list] of byWs) {
-    if (state[ws] === today) continue // 今天發過（週一整天只發一次）
-    // 通知關掉 / 勿擾時段內就別蓋「今天發過」的章——蓋了之後這一週就永遠補不回來
-    // （dailyBacklogDigest 也是先檢查再蓋章）。
-    const settings = await getAiSettings(ws, db).catch(() => null)
-    const cfg = settings?.handoffNotify
-    if (!cfg?.enabled || !cfg.lineUserIds.length) continue
-    if (isServiceHoursDnd(settings?.serviceHours)) continue
-
-    const top = list.sort((a, b) => b.eventCount - a.eventCount).slice(0, 3)
-    const lines = [
-      '📚 AI 知識庫週報',
-      '最近客人問了、但 AI 答不出來的主題：',
-      ...top.map((t, i) => `${i + 1}. ${t.topic}（30 天內${t.sampled ? '至少' : ''} ${t.eventCount} 次）`),
-      ...(list.length > top.length ? [`…等共 ${list.length} 個主題`] : []),
-      '草稿已幫你擬好，到後台「知識庫」審一眼、按「採用」AI 就學會了。',
-    ]
-    await notifyKnowledgeSourceEvent(ws, lines.join('\n')).catch(e =>
-      console.warn('[kb-suggest] digest push failed:', (e as Error)?.message))
-    statePatch[ws] = today
-    notified++
-  }
-  await stateRef.set(statePatch, { merge: true })
-  return { workspacesNotified: notified, pendingSuggestions: snap.size }
-}
+// ── 週報 digest（已移除）──────────────────────────────────────────
+// 原本每週一推播「待處理知識缺口」;2026-08-06 拍板併入每日客服摘要
+// (cron-maintenance.ts dailyBacklogDigest 直接查 pending 建議),不再獨立佔一則訊息。

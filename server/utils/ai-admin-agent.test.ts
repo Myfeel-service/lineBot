@@ -90,6 +90,29 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     expect(generateJson.mock.calls[1]![0] as string).toContain('"answered":1')
   })
 
+  it('get_conversation_stats:預設查昨天(起訖同日)、轉發呼叫者 Authorization、結果進下一步 prompt', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      total: 5, aiHandled: 2, botHandled: 1, humanHandled: 1, unhandled: 1, handoffCount: 3,
+    })
+    ;(globalThis as any).$fetch = fetchMock
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_conversation_stats', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '昨天 5 場' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', message: '昨天幾場對話?', authHeader: 'Bearer t1' })
+    expect(res.reply).toBe('昨天 5 場')
+
+    const [url, opts] = fetchMock.mock.calls[0]! as [string, any]
+    expect(url).toBe('/api/conversation-stats/kpi')
+    expect(opts.query.workspaceId).toBe('w1')
+    // 沒帶日期=昨天:起訖同一天,格式正確(不驗確切日期,避免測試在午夜附近變成賭時區)
+    expect(opts.query.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(opts.query.endDate).toBe(opts.query.startDate)
+    // 權限口徑不另立:轉發呼叫者的憑證讓 KPI 端點自己把關
+    expect(opts.headers.authorization).toBe('Bearer t1')
+    // 數字要真的回饋給模型,答案才有依據
+    expect(generateJson.mock.calls[1]![0] as string).toContain('"total":5')
+  })
+
   it('模型輸出不合規(未知工具)→ 優雅收斂,不 throw', async () => {
     generateJson.mockResolvedValueOnce(step({ action: 'tool', tool: 'delete_everything', args: {} }))
     const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', message: '刪掉全部' })

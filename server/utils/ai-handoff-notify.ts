@@ -10,7 +10,9 @@ import type { messagingApi } from '@line/bot-sdk'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { pushMessage } from './line'
 import { getAiSettings } from './ai-settings'
+import { getDb } from './firebase'
 import { isServiceHoursDnd } from '~~/shared/time'
+import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { capMapSize } from './bounded-cache'
@@ -37,11 +39,29 @@ export interface HandoffNotifyParams {
 
 export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise<void> {
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
+  const cfg = settings?.handoffNotify
+  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+
+  // missed_only 模式：轉真人當下不推播,把通知內容存到 conversations doc;
+  // 超時仍沒人接手時 remindOverdueHandoffs 會撈回來,發成一則完整的請求通知。
+  // 存檔不算打擾,所以放在勿擾檢查之前——勿擾時段轉真人的內容也要留下來,
+  // 否則上班後發的那一則會缺摘要。
+  if (cfg.mode === 'missed_only' && !params.slaReminderMinutes) {
+    const docId = lineUserFirestoreDocId(params.customerLineUserId, params.workspaceId)
+    await getDb().collection('conversations').doc(docId).set({
+      handoffNotifyContext: {
+        summary: params.summary?.trim().slice(0, 300) ?? '',
+        message: params.customerMessage.trim().slice(0, 200),
+        reason: params.reason,
+        at: FieldValue.serverTimestamp(),
+      },
+    }, { merge: true }).catch(e => console.warn('[handoff-notify] context save failed:', e))
+    return
+  }
+
   // 勿擾時段內不推播（含腳本/AI 觸發與 SLA 再提醒）：轉真人照常發生,只是不吵客服;
   // 客服上班回來看「對話」佇列即可。這是所有 handoff 通知的單一收斂點。
   if (isServiceHoursDnd(settings?.serviceHours)) return
-  const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return
 
   const throttleKey = `${params.workspaceId}:${params.customerLineUserId}`
   const last = lastNotifiedAt.get(throttleKey) ?? 0
@@ -53,13 +73,25 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
   const reasonLabel = params.reason
     ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
     : '腳本轉真人'
+  const hasContext = Boolean(params.summary?.trim() || params.customerMessage.trim())
   const lines = params.slaReminderMinutes
-    ? [
-        '⏰ 提醒：真人客服請求尚未回應',
-        `客人：${params.customerName}`,
-        `已等待超過 ${params.slaReminderMinutes} 分鐘`,
-        '請至後台「對話」頁回覆。',
-      ]
+    // missed_only 的首次通知帶完整內容（摘要/訊息由 remindOverdueHandoffs 從存檔補回）;
+    // always 模式的再提醒維持短版——完整內容第一則已經發過了。
+    ? (hasContext
+        ? [
+            `🙋 真人客服請求（已等超過 ${params.slaReminderMinutes} 分鐘沒人接手）`,
+            `客人：${params.customerName}`,
+            ...(params.summary?.trim() ? [`📋 摘要：${params.summary.trim()}`] : []),
+            ...(params.customerMessage.trim() ? [`訊息：${params.customerMessage.trim().slice(0, 200)}`] : []),
+            `原因：${reasonLabel}`,
+            '請至後台「對話」頁回覆。',
+          ]
+        : [
+            '⏰ 提醒：真人客服請求尚未回應',
+            `客人：${params.customerName}`,
+            `已等待超過 ${params.slaReminderMinutes} 分鐘`,
+            '請至後台「對話」頁回覆。',
+          ])
     : [
         '🙋 真人客服請求',
         `客人：${params.customerName}`,
@@ -103,8 +135,9 @@ export async function maybeWarnQuotaThreshold(params: {
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
   if ((snap.data() as { periodKey?: string } | undefined)?.periodKey === params.periodKey) return
-  // 先寫標記再推播:併發最壞重複推一次,可接受(同 handoff 通知取捨)
-  await ref.set({ periodKey: params.periodKey, ratioPct: Math.round(params.ratio * 100), warnedAt: FieldValue.serverTimestamp() })
+  // 先寫標記再推播:併發最壞重複推一次,可接受(同 handoff 通知取捨)。
+  // merge:同一份 doc 還有 100% 用完的標記(exhaustedPeriodKey),不能整份蓋掉
+  await ref.set({ periodKey: params.periodKey, ratioPct: Math.round(params.ratio * 100), warnedAt: FieldValue.serverTimestamp() }, { merge: true })
 
   const msg: messagingApi.TextMessage = {
     type: 'text',
@@ -118,22 +151,40 @@ export async function maybeWarnQuotaThreshold(params: {
   })
 }
 
-/**
- * 知識庫來源事件通知（內容變動 / 同步失敗）：推播給 handoffNotify 的同一批收件人。
- * 與 handoff 通知共用收件人與勿擾時段——維運通知不比轉真人急，勿擾時段一樣不吵人；
- * 來源上的「已變動 / 失敗」標記不會消失，上班後看後台即可。
- * 呼叫端自行控制頻率（變動靠 hash 更新天然去重；失敗只在「連續第 3 次」跨門檻時叫一次）。
- */
-export async function notifyKnowledgeSourceEvent(workspaceId: string, text: string): Promise<void> {
-  const settings = await getAiSettings(workspaceId).catch(() => null)
-  if (isServiceHoursDnd(settings?.serviceHours)) return
+// ── AI 額度 100% 用完通知 ──────────────────────────────────────────
+// 80% 是預告,100% 是事故現場:AI 已停止回覆,客人訊息開始全轉真人(或降級模型)。
+// 這件事等不了「下次有人打開後台」——每期最多一則,是全系統資訊價值最高的一則錢。
+// 標記與 80% 預警共用 aiQuotaAlerts doc,各記各的鍵(兩者一期各發一次)。
+export async function maybeNotifyQuotaExhausted(params: {
+  workspaceId: string
+  /** 期間識別鍵,同 maybeWarnQuotaThreshold 的 periodKey 規則 */
+  periodKey: string
+  /** 通知內容的用量描述(例「本期 AI 回覆則數 1000/1000」) */
+  usageText: string
+  /** 超量後的實際行為(依 quota.onExceed 設定) */
+  action: 'handoff' | 'downgrade'
+  db: Firestore
+}): Promise<void> {
+  const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
   if (!cfg?.enabled || !cfg.lineUserIds.length) return
-  const msg: messagingApi.TextMessage = { type: 'text', text }
-  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], workspaceId)))
+
+  const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
+  const snap = await ref.get()
+  if ((snap.data() as { exhaustedPeriodKey?: string } | undefined)?.exhaustedPeriodKey === params.periodKey) return
+  await ref.set({ exhaustedPeriodKey: params.periodKey, exhaustedAt: FieldValue.serverTimestamp() }, { merge: true })
+
+  const consequence = params.action === 'handoff'
+    ? '從現在起,客人訊息會全部轉給真人客服,請盯緊後台「對話」頁。'
+    : '已自動改用較精簡的模型繼續回覆,品質可能略降。'
+  const msg: messagingApi.TextMessage = {
+    type: 'text',
+    text: `🚫 AI 額度已用完\n${params.usageText}。\n${consequence}\n要恢復請至後台調整方案,或等下期額度重置。`,
+  }
+  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)))
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn('[kb-source-notify] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+      console.warn('[quota-exhausted] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
     }
   })
 }

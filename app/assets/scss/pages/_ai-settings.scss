@@ -180,6 +180,11 @@
   width: 140px;
 }
 
+// 每日摘要發送時間:選項只有「HH:00」,不需要整行寬
+.ai-hour-select {
+  width: 120px;
+}
+
 .ai-notify-option {
   display: flex;
   align-items: center;

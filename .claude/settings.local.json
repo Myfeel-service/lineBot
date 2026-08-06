@@ -205,7 +205,9 @@
       "Bash(pkill -f 'nuxt dev')",
       "Bash(pkill -f '.nuxt/dev')",
       "Bash(npm run *)",
-      "Bash(OUT_DIR=. node conv-flags-empty.mjs)"
+      "Bash(OUT_DIR=. node conv-flags-empty.mjs)",
+      "Bash(cp /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/6ac3b1a7-7590-413d-8cde-a503de6b3981/scratchpad/list-flows.ts /Users/kevin/Documents/Github/linebot/scripts/tmp-list-flows.ts && node --env-file=.env_myfeel --experimental-strip-types scripts/tmp-list-flows.ts 2>&1 | head -60)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff --stat server/utils/broken-module-refs.ts)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

@@ -301,17 +301,8 @@
   }
 }
 
-/* ── 導覽結束回應 / 加分項 / 查不到 / 骨架 / 引導氣泡 ───────── */
-.ta-note {
-  padding: 0.625rem 0.75rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-active);
-  border-radius: var(--radius-md);
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  color: var(--text-primary);
-}
-
+/* ── 加分項 / 查不到 / 骨架 / 引導氣泡 ───────── */
+/* （導覽/修復的閉環回應已併進 agent 泡泡——一個 agent 一個聲音，.ta-note 隨之退役） */
 .ta-progress__optional {
   font-size: 0.6875rem;
   color: var(--text-muted);

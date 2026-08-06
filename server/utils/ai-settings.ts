@@ -17,6 +17,7 @@ import {
   DEFAULT_DISAMBIGUATION_MAX_SPREAD,
   DEFAULT_DISAMBIGUATION_TOP1_MAX,
   DEFAULT_DISAMBIGUATION_TOP1_MIN,
+  DEFAULT_DIGEST_HOUR,
   DEFAULT_DND_REPLY,
   DEFAULT_GROUNDING_SIMILARITY_THRESHOLD,
   DEFAULT_HANDBACK_IDLE_MINUTES,
@@ -143,11 +144,17 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
           if (name) displayNames[id] = name.slice(0, 100)
         }
       }
+      const mode = raw?.handoffNotify?.mode === 'missed_only' ? 'missed_only' as const : 'always' as const
+      let slaRemindMinutes = Math.round(clampNumber(raw?.handoffNotify?.slaRemindMinutes, 0, 1440, DEFAULT_SLA_REMIND_MINUTES))
+      // missed_only 模式下超時提醒是唯一的通知路徑,設 0 等於整個靜音——強制回預設值
+      if (mode === 'missed_only' && slaRemindMinutes === 0) slaRemindMinutes = DEFAULT_SLA_REMIND_MINUTES
       return {
         enabled: raw?.handoffNotify?.enabled === true,
         lineUserIds,
         displayNames,
-        slaRemindMinutes: Math.round(clampNumber(raw?.handoffNotify?.slaRemindMinutes, 0, 1440, DEFAULT_SLA_REMIND_MINUTES)),
+        mode,
+        slaRemindMinutes,
+        digestHour: Math.round(clampNumber(raw?.handoffNotify?.digestHour, 0, 23, DEFAULT_DIGEST_HOUR)),
       }
     })(),
     handbackIdleMinutes: Math.round(clampNumber(raw?.handbackIdleMinutes, 0, 1440, DEFAULT_HANDBACK_IDLE_MINUTES)),

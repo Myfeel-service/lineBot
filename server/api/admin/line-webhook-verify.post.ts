@@ -3,24 +3,9 @@ import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-cred
 import {
   type LineWebhookTestResult,
   fetchLineWebhookEndpoint,
+  normalizeWebhookCompareUrl,
   postLineWebhookTest,
 } from '~~/server/utils/line-webhook-remote'
-
-function normalizeWebhookCompareUrl(raw: string): string {
-  const s = raw.trim()
-  if (!s) return ''
-  try {
-    const u = new URL(s)
-    u.hash = ''
-    let path = u.pathname.replace(/\/+$/, '') || '/'
-    if (path !== '/' && path.endsWith('/')) path = path.slice(0, -1)
-    u.pathname = path
-    return u.href.replace(/\/$/, '')
-  }
-  catch {
-    return s.replace(/\/+$/, '')
-  }
-}
 
 export type LineWebhookVerifyResponse = {
   tokenOk: boolean

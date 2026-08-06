@@ -11,6 +11,8 @@
  */
 
 export type WorkspaceAlertId =
+  /** LINE Webhook 壞了（沒設定／被停用／指向別的系統／權杖失效）——所有訊息都進不來 */
+  | 'lineWebhookBroken'
   /** 知識庫來源同步失敗（試算表沒分享、網頁被移走…） */
   | 'knowledgeSyncFailed'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
@@ -23,6 +25,8 @@ export type WorkspaceAlertId =
   | 'llmError'
   /** 本期則數用完，AI 已停止回覆 */
   | 'quotaExceeded'
+  /** 本期則數快用完（達 80% 門檻、或照目前速度會在期末前用完）。AI 還在回，是提前量 */
+  | 'quotaRunningOut'
   /** 自動扣款失敗，寬限期中 */
   | 'paymentPastDue'
   /** 發票開立失敗 */
@@ -31,10 +35,22 @@ export type WorkspaceAlertId =
   | 'handoffNotifyMissing'
   /** 客人在等真人、或對話卡在「真人處理中」太久 */
   | 'humanBacklog'
+  /** 「未首接」佇列有對話等超過 1 小時完全沒人回（草稿模式沒人審＝客人一句回覆都沒有） */
+  | 'firstReplyBacklog'
+  /** 知識卡卡在 pending 超過 1 小時沒學完（重試放生或排程沒跑），AI 檢索不到 */
+  | 'knowledgeIndexStuck'
+  /** 首期付款成功但約定卡沒綁成：下期不會自動扣款，會靜默降級 */
+  | 'renewalNotBound'
   /** 選單／圖卡上有按鈕指向已刪除或已停用的模組，客人按了什麼都不會收到 */
   | 'brokenModuleButton'
   /** 活動推播已送出，但「這場已回應」沒蓋上章 → 客服會看到一堆假的待處理 */
   | 'claimPushUnmarked'
+  /** 有推播發送失敗（近 3 天內），名單上的客人沒收到 */
+  | 'broadcastFailed'
+  /** 排程推播過了排定時間還沒送（排程可能卡住） */
+  | 'broadcastOverdue'
+  /** 背景自動維護（轉真人提醒、過期回收、資料更新偵測）心跳停了 */
+  | 'maintenanceStalled'
   /** 知識庫建議收件匣有待處理草稿（客人問過但 AI 答不好的主題）。不是異常，是「可以更好」 */
   | 'knowledgeSuggestions'
 
@@ -44,18 +60,26 @@ export type WorkspaceAlertId =
  * 兩邊各寫一份遲早漂移——小幫手面板和問助理講的必須是同一句話。
  */
 export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
+  lineWebhookBroken: '機器人收不到客人訊息',
   knowledgeSyncFailed: '有資料抓不到內容',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',
   anyTextBlocking: 'AI 被自動回覆規則擋住了',
   llmError: 'AI 服務近 24 小時失敗過',
   quotaExceeded: '本期回覆則數用完了',
+  quotaRunningOut: '回覆則數快用完了',
   paymentPastDue: '自動扣款沒有成功',
   invoiceFailed: '有發票開立失敗',
   handoffNotifyMissing: '沒有人會收到轉真人通知',
   humanBacklog: '有客人在等真人回覆',
+  firstReplyBacklog: '有客人的訊息一直沒人回',
+  knowledgeIndexStuck: '有知識卡一直沒學完',
+  renewalNotBound: '付款成功但自動扣款沒綁好',
   brokenModuleButton: '有按鈕按下去沒反應',
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',
+  broadcastFailed: '有推播沒有送出去',
+  broadcastOverdue: '有排程推播過時間還沒送',
+  maintenanceStalled: '系統自動維護沒在跑',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
 }
 

@@ -157,11 +157,27 @@
                   <span class="org-card-quota-text">客製額度，無固定上限</span>
                 </div>
 
+                <!-- 一張卡一個結論（v-else-if 鏈，嚴重的先講）。異常旗標與右下角小幫手
+                     同一套訊號與嚴重度；tooltip 列出是哪幾件事，不用點進去才知道 -->
                 <div class="org-card-flags">
                   <span v-if="!r.lineConnected" class="org-flag org-flag--warn">尚未接上 LINE</span>
+                  <el-tooltip
+                    v-else-if="alertSummary(r.workspaceId)?.critical"
+                    :content="alertSummary(r.workspaceId)?.titles.join('、') ?? ''"
+                    placement="top"
+                  >
+                    <span class="org-flag org-flag--bad">{{ alertSummary(r.workspaceId)?.critical }} 件事正在影響客人</span>
+                  </el-tooltip>
                   <span v-else-if="state(r).state === 'over'" class="org-flag org-flag--bad">額度已用完，AI 停止回覆</span>
                   <span v-else-if="state(r).state === 'near'" class="org-flag org-flag--warn">額度即將用完</span>
                   <span v-else-if="r.plan?.status === 'past_due'" class="org-flag org-flag--warn">扣款未成功</span>
+                  <el-tooltip
+                    v-else-if="alertSummary(r.workspaceId)?.warning"
+                    :content="alertSummary(r.workspaceId)?.titles.join('、') ?? ''"
+                    placement="top"
+                  >
+                    <span class="org-flag org-flag--warn">{{ alertSummary(r.workspaceId)?.warning }} 件事建議處理</span>
+                  </el-tooltip>
                   <span v-else class="org-flag org-flag--ok">運作正常</span>
                 </div>
               </div>
@@ -380,6 +396,9 @@
 import { Avatar, ChatDotRound, CircleCheckFilled, DataBoard, OfficeBuilding, SwitchButton, UserFilled, Wallet, WarningFilled } from '@element-plus/icons-vue'
 import { derivePlanState, type PlanView } from '~~/shared/billing/plan-state'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
+import { ALERT_LABELS } from '~~/shared/types/alerts'
+import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
+import { ALERT_SEVERITY } from '~/composables/useWorkspaceAlerts'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
@@ -448,10 +467,49 @@ function state(r: OverviewRow) {
   return derivePlanState(r.plan, r.answered)
 }
 
-/** 需要處理 = 額度撞頂 / 快撞頂 / LINE 還沒接 / 扣款未成功。 */
+// ── 跨工作區異常彙總（與右下角小幫手同一套訊號、同一把嚴重度尺）──────
+// 帳號卡上既有的旗標已經在講額度與扣款，這幾個 id 不重複計，免得同一件事算兩次
+const FLAG_COVERED_ALERT_IDS = new Set<WorkspaceAlertId>(['quotaExceeded', 'quotaRunningOut', 'paymentPastDue'])
+const wsAlerts = ref<Record<string, WorkspaceAlertItem[]>>({})
+
+interface WsAlertSummary { critical: number; warning: number; titles: string[] }
+const alertSummaries = computed<Record<string, WsAlertSummary>>(() => {
+  const out: Record<string, WsAlertSummary> = {}
+  for (const [wid, items] of Object.entries(wsAlerts.value)) {
+    const sum: WsAlertSummary = { critical: 0, warning: 0, titles: [] }
+    for (const it of items) {
+      if (it.state !== 'active' || FLAG_COVERED_ALERT_IDS.has(it.id)) continue
+      const sev = ALERT_SEVERITY[it.id]
+      if (sev === 'critical') sum.critical++
+      else if (sev === 'warning') sum.warning++
+      else continue // suggestion 是「可以更好」，不是異常，組織彙總不計
+      sum.titles.push(ALERT_LABELS[it.id])
+    }
+    out[wid] = sum
+  }
+  return out
+})
+/** null = 這個工作區的訊號還沒回來（或讀取失敗）——不下結論，旗標只用 overview 既有資訊 */
+function alertSummary(wid: string): WsAlertSummary | null {
+  return alertSummaries.value[wid] ?? null
+}
+
+async function loadAlerts() {
+  try {
+    const res = await orgFetch<{ workspaces: Array<{ workspaceId: string; items: WorkspaceAlertItem[] }> }>('/alerts')
+    wsAlerts.value = Object.fromEntries(res.workspaces.map(w => [w.workspaceId, w.items]))
+  }
+  catch {
+    // 讀不到就維持「不下結論」：帳號卡只靠 overview 的旗標，不誤報也不假裝正常
+  }
+}
+
+/** 需要處理 = 額度撞頂 / 快撞頂 / LINE 還沒接 / 扣款未成功 / 異常中心有紅橘訊號。 */
 function isAlert(r: OverviewRow): boolean {
   if (!r.lineConnected) return true
   if (r.plan?.status === 'past_due') return true
+  const a = alertSummary(r.workspaceId)
+  if (a && (a.critical > 0 || a.warning > 0)) return true
   const s = state(r).state
   return s === 'over' || s === 'near'
 }
@@ -474,12 +532,14 @@ const paidCount = computed(() =>
 )
 const totalAnswered = computed(() => rows.value.reduce((sum, r) => sum + r.answered, 0))
 
-/** 嚴重度排序：AI 已經停止回覆 > 還沒接上線 > 快撞頂 > 正常。 */
+/** 嚴重度排序：正在影響客人（異常中心紅級）> AI 已停止回覆 > 還沒接上線 > 快撞頂/警示 > 正常。 */
 function severity(r: OverviewRow): number {
+  const a = alertSummary(r.workspaceId)
   const s = state(r).state
+  if (a?.critical) return 4
   if (s === 'over') return 3
   if (!r.lineConnected) return 2
-  if (s === 'near' || r.plan?.status === 'past_due') return 1
+  if (s === 'near' || r.plan?.status === 'past_due' || a?.warning) return 1
   return 0
 }
 const sortedRows = computed(() =>
@@ -704,6 +764,9 @@ async function reloadAll(isRefresh = false) {
   try {
     // 總覽是主資料（也負責驗權限）；其餘並行拉，任一失敗不影響其他分頁
     await loadOverview()
+    // 異常彙總最慢（逐工作區跑 probe、含外部 API），不擋整頁載入——
+    // 旗標晚點到會自動從「運作正常」升級成異常結論
+    void loadAlerts()
     await Promise.all([loadBilling(), loadMembers(), loadInvoiceProfile()])
   }
   catch (e: any) {

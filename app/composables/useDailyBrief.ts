@@ -25,6 +25,11 @@ export interface DailyBrief {
   date: string
   yesterday: DailyBriefDay
   dayBefore: DailyBriefDay
+  /**
+   * 前 7 天（昨天不算，往前推 7 天）的每日平均，給「昨天是不是特別多」當基準。
+   * 查不到＝null——趨勢就不下結論，日報本體照常。
+   */
+  baseline: { total: number; handoffs: number; unhandled: number } | null
 }
 
 /** 兩次抓取之間的最短間隔：昨天的數字不會變，開關面板不該重打 */
@@ -75,14 +80,31 @@ export function useDailyBrief() {
       return
 
     loading.value = true
+    // 趨勢基準窗：昨天往前推 7 天（-8 ～ -2）
+    const baseStart = new Date()
+    baseStart.setDate(baseStart.getDate() - 8)
+    const baseEnd = new Date()
+    baseEnd.setDate(baseEnd.getDate() - 2)
+
     inflight = (async () => {
       try {
         const dStr = fmtDate(dayBefore)
-        const [yk, dk] = await Promise.all([
+        const [yk, dk, base] = await Promise.all([
           apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: yStr, endDate: yStr } }),
           apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: dStr, endDate: dStr } }),
+          // 基準查失敗不拖垮日報本體：趨勢缺席比整份日報缺席無害
+          apiFetch<KpiResult>('/api/conversation-stats/kpi', {
+            params: { startDate: fmtDate(baseStart), endDate: fmtDate(baseEnd) },
+          }).catch(() => null),
         ])
-        brief.value = { date: yStr, yesterday: toDay(yk), dayBefore: toDay(dk) }
+        brief.value = {
+          date: yStr,
+          yesterday: toDay(yk),
+          dayBefore: toDay(dk),
+          baseline: base
+            ? { total: base.total / 7, handoffs: base.handoffCount / 7, unhandled: base.unhandled / 7 }
+            : null,
+        }
         checkedAt.value = Date.now()
         loaded.value = true
       }

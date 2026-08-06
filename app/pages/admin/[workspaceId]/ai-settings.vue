@@ -275,16 +275,55 @@
               </p>
             </div>
             <div class="admin-field-group">
-              <AdminFieldLabel text="超時再提醒(分鐘,0 = 關閉)" tight />
+              <AdminFieldLabel text="通知時機" tight />
+              <el-radio-group
+                v-model="form.handoffNotify.mode"
+                :disabled="!form.handoffNotify.enabled"
+              >
+                <el-radio value="always">每次轉真人都通知</el-radio>
+                <el-radio value="missed_only">只通知沒人接手的</el-radio>
+              </el-radio-group>
+              <p class="ai-section-hint">
+                {{ form.handoffNotify.mode === 'missed_only'
+                  ? '客人轉真人的當下不推播;超過下面設定的分鐘數仍沒人回覆,才發一則通知(內含客人問題摘要)。適合客服平常就開著後台「對話」頁的團隊,可大幅減少官方帳號的訊息用量。'
+                  : '客人轉真人的當下就推播提醒。每一則通知都會計入官方帳號的月訊息額度。' }}
+              </p>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel
+                :text="form.handoffNotify.mode === 'missed_only' ? '幾分鐘沒人接手才通知' : '超時再提醒(分鐘,0 = 關閉)'"
+                tight
+              />
               <el-input-number
                 v-model="form.handoffNotify.slaRemindMinutes"
-                :min="0"
+                :min="form.handoffNotify.mode === 'missed_only' ? 5 : 0"
                 :max="1440"
                 :step="5"
                 :disabled="!form.handoffNotify.enabled"
               />
               <p class="ai-section-hint">
-                轉真人後超過此時間仍無人回覆,再推播提醒一次(每場會話只提醒一次)。
+                {{ form.handoffNotify.mode === 'missed_only'
+                  ? '轉真人後等這麼久仍無人回覆,就發出唯一的一則通知(每場會話一次)。'
+                  : '轉真人後超過此時間仍無人回覆,再推播提醒一次(每場會話只提醒一次)。' }}
+              </p>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="每日摘要發送時間" tight />
+              <el-select
+                v-model="form.handoffNotify.digestHour"
+                :disabled="!form.handoffNotify.enabled"
+                class="ai-hour-select"
+              >
+                <el-option
+                  v-for="h in 24"
+                  :key="h - 1"
+                  :value="h - 1"
+                  :label="`${String(h - 1).padStart(2, '0')}:00`"
+                />
+              </el-select>
+              <p class="ai-section-hint">
+                每天過了這個時間,把「等待真人的客人、卡在真人處理中的對話、知識庫要處理的事」
+                整理成一則訊息推播給上面的通知對象;沒事就不發。
               </p>
             </div>
           </div>
@@ -642,7 +681,7 @@
 <script setup lang="ts">
 import { CircleCheck, CircleCheckFilled, InfoFilled, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { buildDefaultAiSettings } from '~~/shared/types/ai-knowledge'
+import { buildDefaultAiSettings, DEFAULT_SLA_REMIND_MINUTES, DEFAULT_DIGEST_HOUR } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { taipeiYyyyMm } from '~~/shared/time'
 
@@ -710,6 +749,14 @@ watch(() => form.value.disambiguation.top1Min, (v) => {
 })
 watch(() => form.value.disambiguation.top1Max, (v) => {
   if (v < form.value.disambiguation.top1Min) form.value.disambiguation.top1Min = v
+})
+
+// 「只通知沒人接手的」模式下,超時分鐘數是唯一的通知路徑,0(關閉)會變成完全靜音——
+// 切過去時把 0 拉回預設值,和後端 normalize 的守門一致,畫面顯示的就是會存進去的
+watch(() => form.value.handoffNotify.mode, (mode) => {
+  if (mode === 'missed_only' && form.value.handoffNotify.slaRemindMinutes < 5) {
+    form.value.handoffNotify.slaRemindMinutes = DEFAULT_SLA_REMIND_MINUTES
+  }
 })
 
 /**
@@ -1015,7 +1062,9 @@ function applySettings(data: AiSettingsDoc) {
       enabled: data.handoffNotify?.enabled === true,
       lineUserIds: [...(data.handoffNotify?.lineUserIds ?? [])],
       displayNames: { ...(data.handoffNotify?.displayNames ?? {}) },
-      slaRemindMinutes: Number(data.handoffNotify?.slaRemindMinutes ?? 15),
+      mode: data.handoffNotify?.mode === 'missed_only' ? 'missed_only' : 'always',
+      slaRemindMinutes: Number(data.handoffNotify?.slaRemindMinutes ?? DEFAULT_SLA_REMIND_MINUTES),
+      digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     disambiguation: { ...data.disambiguation },

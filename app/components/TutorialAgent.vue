@@ -53,17 +53,14 @@
             <span>{{ verdict.text }}</span>
           </div>
 
-          <!-- 導覽結束後的回應（閉環） -->
-          <div v-if="postTourNote" class="ta-note">{{ postTourNote }}</div>
-
-          <!-- 異常修復的回應（閉環）：上次點了「去修」，回來要講結果 -->
-          <div v-if="postFixNote" class="ta-note">{{ postFixNote }}</div>
-
-          <!-- agent 訊息泡泡：依真實設定狀態講白話文 -->
+          <!-- agent 訊息泡泡：依真實設定狀態講白話文。導覽完成／異常修復的閉環回應
+               也在這裡講——一個 agent 一個聲音，三個區塊各自代言只會像三個人在說話 -->
           <div class="ta-msg">
             <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
             <div class="ta-msg__bubble" aria-live="polite">
               <p>嗨{{ userName ? `，${userName}` : '' }}</p>
+              <p v-if="postTourNote">{{ postTourNote }}</p>
+              <p v-if="postFixNote">{{ postFixNote }}</p>
               <p>{{ agentLine }}</p>
             </div>
           </div>
@@ -71,12 +68,6 @@
           <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急。
                紅橘語意差很多（客人正在受影響 vs 建議處理），分成兩組講，不共用一個標題 -->
           <template v-if="alerts.length">
-            <!-- 首查就失敗：異常區不能靜默消失——「還沒檢查到」和「沒事」是兩回事 -->
-            <div v-if="!alertsLoaded && alertsFailed" class="ta-unknown ta-unknown--fail">
-              <span>我這次檢查不到異常狀態——這不代表沒有異常。</span>
-              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">重新檢查</button>
-            </div>
-
             <div v-for="g in alertGroups" :key="g.key" class="ta-alerts">
               <div class="ta-alerts__label" :class="`ta-alerts__label--${g.key}`">{{ g.label }}</div>
               <!-- 卡片是 div 包兩顆真按鈕（主要動作／暫停提醒）：按鈕不能包按鈕 -->
@@ -112,24 +103,20 @@
               目前沒有發現異常。
             </div>
 
-            <!-- 有舊結果、但這次沒查成：講出來，別讓人以為看到的是最新結果 -->
-            <div v-if="alertsLoaded && alertsFailed" class="ta-unknown">
-              <span>剛才那次檢查失敗，上面是{{ checkedAgo || '稍早' }}的結果。</span>
-              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">再試一次</button>
-            </div>
-
-            <!-- 這次檢查不到的異常（現形，不要偷偷當成沒事） -->
-            <div v-if="unknownAlertItems.length" class="ta-unknown">
-              <span>這幾項我這次檢查不到：{{ unknownAlertItems.map(a => a.title).join('、') }}。</span>
-              <button class="ta-unknown__btn" :disabled="alertsLoading" @click="refreshAll(true)">重新檢查</button>
-            </div>
-
             <!-- 被靜音但還在發生的事也要現形：靜音是「先不吵我」，不是「當作沒事」 -->
             <div v-if="snoozedAlerts.length" class="ta-unknown">
               <span>已暫停提醒 {{ snoozedAlerts.length }} 項：{{ snoozedAlerts.map(a => a.title).join('、') }}。</span>
               <button class="ta-unknown__btn" @click="unsnoozeAll">恢復提醒</button>
             </div>
           </template>
+
+          <!-- 檢查健康度：查詢失敗、查不到的項目（異常＋設定體檢）統一在這一條講、
+               共用一顆「重新檢查」。先前最多五條灰橫幅各配一顆按鈕，比異常本身還吵。
+               誠實原則不變：查不到＝不知道，不能靜默當成沒事 -->
+          <div v-if="checkGapLines.length" class="ta-unknown" :class="{ 'ta-unknown--fail': alertsFailed && !alertsLoaded }">
+            <span v-for="line in checkGapLines" :key="line">{{ line }}</span>
+            <button class="ta-unknown__btn" :disabled="busy" @click="refreshAll(true)">重新檢查</button>
+          </div>
 
           <!-- 昨日摘要（日報）：打的是統計頁同一支查詢，兩邊數字永遠對得上 -->
           <div v-if="briefVisible && briefY" class="ta-brief">
@@ -147,8 +134,9 @@
                 </div>
               </div>
               <p v-if="briefY.unhandled" class="ta-brief__warn">
-                其中 {{ briefY.unhandled }} 場從頭到尾沒有人回，建議去看一下。
+                其中 {{ briefY.unhandled }} 場從頭到尾沒有人回{{ unhandledSpike ? '，比平常多' : '' }}，建議去看一下。
               </p>
+              <p v-if="trendLine" class="ta-brief__warn">{{ trendLine }}</p>
             </template>
           </div>
 
@@ -228,11 +216,6 @@
               </button>
             </div>
 
-            <!-- 這次查不到狀態的項目（現形，不偷偷扣分） -->
-            <div v-if="unknownCaps.length" class="ta-unknown">
-              <span>這幾項我這次查不到狀態：{{ unknownCaps.map(c => c.title).join('、') }}。</span>
-              <button class="ta-unknown__btn" :disabled="busy" @click="refreshAll(true)">重新檢查</button>
-            </div>
             </template>
           </template>
         </div>
@@ -483,6 +466,31 @@ const briefCells = computed(() => {
     { label: '轉真人', value: b.yesterday.handoffs, prev: b.dayBefore.handoffs },
   ]
 })
+/**
+ * 趨勢異常：昨天比前 7 天平均多一截才講，平常不出聲。
+ * 門檻＝至少 3 件且達平均 2 倍——太敏感的趨勢提醒和狼來了是同一件事。
+ * 顯示在日報區塊（數字旁邊講數字的事），不進開場白——開場白的日報句已經唸過轉真人件數，
+ * 再唸一次會變成同一句話講兩遍。
+ */
+const trendLine = computed(() => {
+  const b = brief.value
+  if (!b?.baseline || !b.yesterday.total)
+    return ''
+  const h = b.yesterday.handoffs
+  if (h >= 3 && h >= b.baseline.handoffs * 2)
+    return `昨天轉真人 ${h} 件，平常一天約 ${formatAvg(b.baseline.handoffs)} 件——可能有哪類問題答不好，建議到統計頁看一下。`
+  return ''
+})
+/** 沒人回的場數是不是異常偏多（門檻同上）；只拿來在既有的警語裡補一句「比平常多」 */
+const unhandledSpike = computed(() => {
+  const b = brief.value
+  return Boolean(b?.baseline && b.yesterday.unhandled >= 3 && b.yesterday.unhandled >= b.baseline.unhandled * 2)
+})
+/** 平均數給人看：≥10 取整數，小的留一位小數（0.3 件/天四捨五入成 0 會變成在說謊） */
+function formatAvg(n: number): string {
+  return n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
+}
+
 /** 開場白用的一句話日報 */
 const briefLine = computed(() => {
   const b = brief.value
@@ -499,17 +507,42 @@ const briefLine = computed(() => {
 /**
  * 結論先行的狀態列：紅（正在影響客人）→ 橘（建議處理）→ 藍（設定還沒完）→ 綠（一切正常）。
  * 「查不到」不能歸進任何一級，單獨講。
+ * FAB 紅點數字＝critical＋必要設定缺項，所以有異常時頭條也要把缺項帶上——
+ * 按鈕寫 3、打開卻只講 1 件事，兩個最顯眼的數字就對不上了。
  */
 const verdict = computed<{ tone: string, icon: Component, text: string } | null>(() => {
+  const setupTail = loaded.value && incompleteRequired.value.length
+    ? `、另差 ${incompleteRequired.value.length} 項必要設定`
+    : ''
   if (criticalAlerts.value.length)
-    return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人` }
+    return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人${setupTail}` }
   if (warningAlerts.value.length)
-    return { tone: 'warning', icon: WarningFilled, text: `${warningAlerts.value.length} 件事建議處理` }
+    return { tone: 'warning', icon: WarningFilled, text: `${warningAlerts.value.length} 件事建議處理${setupTail}` }
   if (!alertsLoaded.value)
     return alertsFailed.value ? { tone: 'muted', icon: QuestionFilled, text: '目前檢查不到狀態' } : null
   if (loaded.value && incompleteRequired.value.length)
     return { tone: 'progress', icon: InfoFilled, text: `差 ${incompleteRequired.value.length} 項必要設定就能上線` }
   return { tone: 'ok', icon: CircleCheckFilled, text: '一切正常' }
+})
+
+/**
+ * 檢查健康度收斂：查詢失敗、查不到狀態的項目（異常＋設定體檢）合成一條、共用一顆
+ * 「重新檢查」。先前五種灰橫幅各配一顆按鈕、語氣格式各異，比異常本身還吵。
+ */
+const checkGapLines = computed(() => {
+  const lines: string[] = []
+  if (alertsFailed.value) {
+    lines.push(alertsLoaded.value
+      ? `剛才那次檢查失敗，上面是${checkedAgo.value || '稍早'}的結果。`
+      : '我這次檢查不到異常狀態——這不代表沒有異常。')
+  }
+  const unknownTitles = [
+    ...unknownAlertItems.value.map(a => a.title),
+    ...(loaded.value ? unknownCaps.value.map(c => c.title) : []),
+  ]
+  if (unknownTitles.length)
+    lines.push(`這幾項我這次查不到狀態：${unknownTitles.join('、')}。`)
+  return lines
 })
 
 /** 異常分組呈現：紅（影響客人中）、橘（建議處理）、藍（可以更好——沒壞，是機會） */
@@ -537,13 +570,13 @@ const agentLine = computed(() => {
   if (!hasItems.value)
     return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
   if (incompleteRequired.value.length)
-    return `我看過你的帳號了。最重要的還差 ${incompleteRequired.value.length} 項還沒做，我們一個一個來，點下面就能開始 `
+    return `我看過你的帳號了。最重要的還差 ${incompleteRequired.value.length} 項還沒做，我們一個一個來，點下面就能開始。`
   if (!allRequiredDone.value) {
     const n = unknownCaps.value.filter(c => c.required).length
     return `有 ${n} 項必要設定我這次查不到狀態，先點「重新檢查」確認一下。`
   }
   if (incompleteAll.value.length)
-    return `必要設定都完成了 可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
+    return `必要設定都完成了，可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
   // 沒有壞的、沒有缺的：日報 + 機會（讓 AI 更聰明的建議）
   const nSuggest = suggestionAlerts.value.reduce((s, a) => s + (a.count ?? 1), 0)
   const suggestTail = nSuggest
@@ -616,7 +649,7 @@ async function verifyLastFix() {
   if (!item)
     return
   if (item.state === 'clear')
-    postFixNote.value = `剛剛那件「${f.title}」看起來修好了 `
+    postFixNote.value = `剛剛那件「${f.title}」看起來修好了！`
   else if (item.state === 'active')
     postFixNote.value = `「${f.title}」看起來還沒解決——有些修正要幾分鐘才生效，可以待會再按「重新檢查」。`
   // unknown：查不到就不下結論
@@ -664,7 +697,7 @@ async function onTourFinish() {
   const cap = finishedId ? capabilities.value.find(c => c.tourId === finishedId) : null
   if (cap) {
     postTourNote.value = cap.status === 'done'
-      ? `「${cap.title}」完成了，太好了 `
+      ? `「${cap.title}」完成了，太好了！`
       : `看起來「${cap.title}」還沒生效——設定完記得按「儲存」喔。需要的話可以再走一次。`
   }
   else {

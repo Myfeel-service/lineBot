@@ -1,5 +1,22 @@
 const LINE_MESSAGING = 'https://api.line.me/v2'
 
+/** 比對 Webhook 網址用的正規化：去掉尾斜線與 hash，容忍設定頁貼上時的細微差異 */
+export function normalizeWebhookCompareUrl(raw: string): string {
+  const s = raw.trim()
+  if (!s) return ''
+  try {
+    const u = new URL(s)
+    u.hash = ''
+    let path = u.pathname.replace(/\/+$/, '') || '/'
+    if (path !== '/' && path.endsWith('/')) path = path.slice(0, -1)
+    u.pathname = path
+    return u.href.replace(/\/$/, '')
+  }
+  catch {
+    return s.replace(/\/+$/, '')
+  }
+}
+
 export type LineWebhookEndpointInfo = {
   endpoint: string
   active: boolean

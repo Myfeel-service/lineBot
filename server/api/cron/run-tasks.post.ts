@@ -9,7 +9,7 @@ import {
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
-import { scanKnowledgeGaps, weeklyKnowledgeGapDigest } from '~~/server/utils/ai-knowledge-suggest'
+import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -33,9 +33,9 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
-    // 知識缺口掃描（每輪最多 2 個 workspace，內含 LLM）＋每週一的缺口週報
+    // 知識缺口掃描（每輪最多 2 個 workspace，內含 LLM）。
+    // 缺口週報已併入 conversation:backlog-digest 的每日摘要（2026-08-06 拍板）
     { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },
-    { name: 'ai:knowledge-gap-digest', run: () => weeklyKnowledgeGapDigest(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
@@ -52,6 +52,13 @@ export default defineEventHandler(async (event) => {
 
   const failed = results.filter(r => !r.ok)
   if (failed.length) console.warn('[cron/run-tasks] failed:', failed)
+
+  // 心跳：讓異常提醒中心能發現「排程整批沒在跑」（Cloud Scheduler 停了、secret 換了、
+  // 端點壞了都會停止跳動）。寫失敗只記 log，不影響任務本身的回報。
+  await db.collection('cronState').doc('maintenance-heartbeat').set({
+    lastRunAt: Date.now(),
+    failedTasks: failed.map(f => f.task),
+  }, { merge: true }).catch(e => console.warn('[cron/run-tasks] heartbeat write failed:', e))
 
   return { ok: failed.length === 0, ms: Date.now() - startedAt, results }
 })

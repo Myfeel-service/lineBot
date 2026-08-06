@@ -66,12 +66,22 @@
 
 ### 方向 A:呈現層收斂(小工,先做)
 上面 P0 四項 + 文案毛病。**不新增任何狀態,只合併。**
+> ✅ 2026-08-06 已完成(未 commit):verdict 併講必要缺項、灰橫幅收斂成一條 checkGapLines、閉環回應併入 agent 泡泡(.ta-note 退役)、文案殘跡 4 處(比報告多抓到 1 處)。typecheck 0 錯、867 測試綠。
 
 ### 方向 B:覆蓋率——「告知整個網站」的地基(中工,最重要)
 - **LINE webhook 常駐檢查**:目前只有按按鈕才驗。webhook 掛掉=整個機器人裝死,是所有異常裡最致命、卻唯一沒自動檢查的。建議進 probe(檢查 LINE 平台上 webhook URL 與啟用狀態,或看「最近 N 小時是否收過事件 vs 好友有互動」訊號)。
+  > ✅ 2026-08-06 已完成(未 commit):新異常 `lineWebhookBroken`(critical,admin 可見),probe 打 LINE GET webhook endpoint(不打 test API,留額度給設定頁手動驗證),抓四種壞法:沒設定/被停用/網址指向別的系統/權杖失效(401);外部查詢 5 分鐘快取;localhost 跳過網址比對(避免開發環境常亮紅燈);正規化比對函式與 line-webhook-verify 共用同一支。不需要新 Firestore 索引。
 - **掛載死角**:小幫手只在 default layout;super-admin 與 `layout:false` 的組織頁沒有。至少 org 頁應該有(它是老闆自己會待的頁)。
+  > ✅(改道)2026-08-06:org 頁不掛 FAB,改由**帳號卡原生呈現同一套訊號**(見下一項)——org 頁本來就有「帳號健康」區,把異常接進去比再開一個浮動面板更符合該頁的資訊架構。super-admin 是平台層,另議。
 - **剩餘 18 種異常逐步收編**:以「客人受影響」優先。加一項=後端 probe + 前端註冊表 + ALERT_LABELS 各一筆,邊際成本已經很低。
+  > ✅(第一波 3 種)2026-08-06 已完成(未 commit):`broadcastFailed`(近 3 天發送失敗的推播;時間窗記憶體過濾,不開新索引)、`broadcastOverdue`(排定時間過 15 分鐘還沒送=排程卡住)、`maintenanceStalled`(背景維護心跳停超過 1 小時;心跳=run-tasks 每輪寫 cronState/maintenance-heartbeat,**這是新加的——之前排程整批死掉毫無痕跡**;文件不存在不誤報,本機開發不會亂叫)。三個都是 warning。maintenanceStalled 是系統側異常,呈現方式受拍板 #3 影響,先照 claimPushUnmarked 先例處理。
+  > ✅(第二波 3 種+1 擴充)2026-08-06 已完成(未 commit),依全站重新盤點(見第六節)挑「免新索引、免拍板」的做:
+  > - `firstReplyBacklog`(warning):「未首接」佇列有對話超過 1 小時完全沒人回。**堵住盤點發現的最大黑洞**——草稿模式下 AI 只擬稿不發話、session 不轉 pending_human,現有 14 種全抓不到「客人一句回覆都沒有」;口徑完全沿用側欄的 countOpenQueueSessions/isOpenQueueSession,不另立第二份。
+  > - `knowledgeIndexStuck`(warning):知識卡卡 pending 超過 1 小時(重試放生或排程沒跑),與 knowledgeIndexFailed 根因不同、AI 一樣讀不到。
+  > - `renewalNotBound`(warning):首期付款成功但約定卡沒綁成(status=paid+kind=period_first+cardBound=false,近 45 天)——下期會靜默降級;四等值免索引,cardBound 是新欄位、舊單不誤報。
+  > - `brokenModuleButton` 擴掃:原本只掃選單+圖卡,現在加掃**啟用中的關鍵字自動回覆規則與活動**(客人打關鍵字/掃活動碼指到已刪模組一樣收不到東西);快取測試同步更新。
 - **org 層跨工作區彙總**(Phase 2 原案):多工作區的老闆不該一家一家點進去看紅點。
+  > ✅ 2026-08-06 已完成(未 commit):probe 核心抽成 `server/utils/workspace-alerts.ts`(單工作區端點與 org 彙總同一份,口徑零第二份);新端點 `/api/admin/org/:orgId/alerts`(requireActiveOrgAdmin、每批 5 個工作區防並發爆量);org 總覽帳號卡旗標接上異常(critical=「N 件事正在影響客人」紅、warning=「N 件建議處理」橘,tooltip 列標題;嚴重度用前端註冊表 export 的 ALERT_SEVERITY 同一把尺);quotaExceeded/quotaRunningOut/paymentPastDue 排除計數(卡上既有旗標已講同一件事);「需要處理」統計與排序把異常算進去;彙總晚到不擋頁面載入。
 
 ### 方向 C:主動性——從「開後台才知道」到「提醒到人」(中工,質變點)
 - **c 層 LINE 推播**:critical 持續超過 X 分鐘(如 30 分)→ 推播給 handoffNotify 名單/owner。複用既有名單與文案(ALERT_LABELS),不發明新口徑。53 小時案例就是這一層要解的。
@@ -80,8 +90,11 @@
 
 ### 方向 D:建議力——從「壞了才講」到「看趨勢講話」(後續)
 - **額度預測**:quotaExceeded 是「已經停了」才亮;用 `derivePlanState` 同一把尺加「照這速度 N 天後用完」的 warning,把事故變成提前量。刻意不發明新口徑。
+  > ✅ 2026-08-06 已完成(未 commit):新異常 `quotaRunningOut`(warning,admin 可見)。觸發=達 80% 近上限門檻(derivePlanState 同一把尺)或速度外推會提前用完;防狼來了雙保險=開期未滿 3 天不外推、用量未達 40% 不外推;已超量時讓位給 quotaExceeded 不同時亮;detail 帶「已用 X/Y(Z%),約 N 天後用完,本期還有 M 天」。與 quotaExceeded 共用同一次訂閱+則數查詢,輪詢成本不變。
 - **趨勢異常**:轉真人率/unhandled 對比前 7 天突增時,在開場白講一句(資料就是日報那支 KPI,多查幾天即可)。
+  > ✅(微調)2026-08-06 已完成(未 commit):useDailyBrief 加前 7 天(-8~-2)基準(同一支 KPI 第三查,失敗不拖垮日報);門檻=至少 3 件且達平均 2 倍;轉真人突增=日報區塊獨立警語、沒人回突增=在既有警語補「比平常多」。**刻意不進開場白**——開場白的日報句已唸過轉真人件數,再唸一次是同一句話講兩遍;數字的事放數字旁邊講。
 - **問助理補洞**:chat 工具沒有 conversation-stats KPI(問「昨天幾場對話」答不出來,但面板明明顯示著);回答裡可帶「去修這個 →」的深連結,把查詢閉環到行動。
+  > ✅/⏸ 2026-08-06 部分完成(未 commit):新工具 `get_conversation_stats` 轉發呼叫者憑證打統計頁同一支 KPI(預設昨天、可帶起訖,口徑零第二份),附測試。**深連結未做**——AdminAgentChat 目前是純文字渲染,要先定訊息格式(文字+動作連結)再動渲染層,另列一工。
 
 ### 建議的順序
 A(半天級)→ B 的 webhook + 掛載死角(先堵最致命)→ C 推播(質變)→ B 其餘收編穿插 → D。
@@ -120,3 +133,30 @@ A(半天級)→ B 的 webhook + 掛載死角(先堵最致命)→ C 推播(質變
 - **S2 後台 agent 從「查」到「做」**:問助理接 tool-call(低風險動作先行:停用規則/重新同步來源/採用建議草稿,附確認步驟);權限沿用既有收斂(內容 agent/設定 admin)。腳本引擎的動作累積器已是現成底座。
 - **S3 衝突就地攔**:儲存 anyText 規則且 AI 開著時,當場講「這會擋住 AI」,不等右下角事後報警。
 - **S4 讓學習迴圈上線**(commit+部署建議收件匣):「用越久答越好」是 agent 產品的護城河,也是「AI 是核心」最有力的長期證據。
+
+---
+
+## 六、全站持續性異常盤點(2026-08-06 重建,取代口傳的「31 種」)
+
+程式碼全掃結果。**已收錄 21 種**(20 異常+1 建議,見 shared/types/alerts.ts 的 WorkspaceAlertId)。以下是**掃到但刻意還沒收**的,附原因——之後要收哪個,從這裡挑:
+
+### 有現成狀態可查、暫緩的
+| 候選 | 對客人影響 | 為什麼暫緩 |
+|---|---|---|
+| 知識卡到期被停用(status=disabled+expiredAt) | 有:該主題答不出來 | 要新複合索引(workspaceId+status+expiredAt),兩租戶部署;或掃全量 disabled 會混入手動停用的卡 |
+| 知識缺口掃描持續失敗(cronState/knowledge-gap-scan.lastError) | 間接:建議收件匣斷糧 | getGapScanState 現成、單筆點讀;系統側異常,等拍板 #3 的呈現方式 |
+| 轉真人案例沒人標「已處理」(aiMeta.handoffResolvedAt < updatedAt) | 間接:同樣的問題下個客人還是問不到 | 與 knowledgeSuggestions 高度重疊,兩顆會互相稀釋;先觀察收件匣的採用率 |
+| 來源抓取失敗 1~2 次(checkFailCount>0 未滿 3) | 間接:資料正在變舊 | 設計上滿 3 次才算失敗,提前報=狼來了;真要看可併進 knowledgeSyncFailed 的 detail |
+| 付款單卡 pending 超過 1 小時 | 無(商家:訂閱沒開通) | **刻意不收**:棄單是正常客人行為,誤報率太高 |
+| 推播卡在 processing(startedAt 很久+無 completedAt) | 有:名單沒收到 | claimBroadcastForSend 把 processing 當終態,卡住=永遠送不出;查得到但**修不了**(沒有重置入口),先做修復路徑再報 |
+| richmenu 快速切換別名在 LINE 側對不上 | 有(發生率低) | 無本地狀態,要逐筆打 LINE API;得比照 lineWebhookBroken 加 TTL 快取,優先度低 |
+
+### 沒有狀態可查、要先加寫入的(Phase 3 候選)
+| 候選 | 說明 |
+|---|---|
+| 客人照片存檔失敗 | archiveConversationMedia 失敗只 console.warn,不落任何狀態 |
+| **轉真人 LINE 通知推播失敗** | 只 console.warn。收件人封鎖官方帳號=通知永遠送不到,**比 handoffNotifyMissing 更陰險(設定看起來是好的)**;建議比照 claim-push-health 寫 cronState 一份文件 |
+| 推播送出後記帳沒寫完(postSendError) | 有欄位但語意特殊:訊息**已送出**只是失敗名單不完整,報成「發送失敗」會誘導老闆重發(程式碼註解明文警告);要收得另立文案 |
+
+### 確認過「不算持續性異常」的
+知識庫預覽 job 失敗(TTL 1 小時自動清)、postback_no_reply 事件(brokenModuleButton 靜態檢查已在客人踩到前就報)、users 好友同步截斷(只在同步回傳值裡)、tags/flow/ai-scripts 頁(無失敗狀態欄位)。

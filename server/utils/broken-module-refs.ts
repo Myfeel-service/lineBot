@@ -2,7 +2,8 @@ import { capMapSize } from './bounded-cache'
 import { TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
 
 /**
- * 「空按鈕」靜態檢查：找出圖文選單／圖卡上指向**已刪除或已停用**模組的按鈕。
+ * 「空按鈕」靜態檢查：找出圖文選單／圖卡／關鍵字自動回覆／活動上指向
+ * **已刪除或已停用**模組的按鈕或動作。
  *
  * 為什麼用靜態檢查而不是「記錄誰按到了」：
  *   - 事前發現，不用等客人踩到才知道（客人按了沒反應是不會回報的）
@@ -16,9 +17,9 @@ import { TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-
 export interface BrokenModuleRef {
   /** 被指向、但撈不到內容的模組 ID */
   moduleId: string
-  /** 引用它的地方（圖文選單名稱／模組名稱），給使用者直接找到要修哪裡 */
+  /** 引用它的地方（圖文選單／模組／規則／活動名稱），給使用者直接找到要修哪裡 */
   sourceLabel: string
-  sourceKind: 'richmenu' | 'flow'
+  sourceKind: 'richmenu' | 'flow' | 'autoReply' | 'campaign'
   /** missing = 模組被刪了；inactive = 模組還在但停用了 */
   reason: 'missing' | 'inactive'
 }
@@ -71,10 +72,13 @@ export async function findBrokenModuleRefs(
   if (cached && cached.expires > Date.now()) return cached.data
 
   // 一次把 flows 撈回來就同時拿到「誰引用了誰」和「被引用的還在不在／停用了沒」，
-  // 不需要為了查存在性再逐筆讀
-  const [flowsSnap, menusSnap] = await Promise.all([
+  // 不需要為了查存在性再逐筆讀。關鍵字規則與活動也會指向模組：
+  // 指到已刪模組時，客人打關鍵字／掃活動碼一樣什麼都收不到。
+  const [flowsSnap, menusSnap, rulesSnap, campaignsSnap] = await Promise.all([
     db.collection('flows').where('workspaceId', '==', workspaceId).get(),
     db.collection('richmenus').where('workspaceId', '==', workspaceId).get(),
+    db.collection('autoReplies').where('workspaceId', '==', workspaceId).get(),
+    db.collection('leadCampaigns').where('workspaceId', '==', workspaceId).get(),
   ])
 
   const flowById = new Map<string, { name: string; isActive: boolean }>()
@@ -119,6 +123,23 @@ export async function findBrokenModuleRefs(
       if (moduleId === d.id) continue
       check(moduleId, label, 'flow')
     }
+  }
+
+  // 關鍵字自動回覆：停用中的規則指向壞模組無害，只掃啟用的
+  // （isActive 未設視為啟用，與 normalizeAutoReplyRule 同一把尺）
+  for (const d of rulesSnap.docs) {
+    const data = d.data() as Record<string, unknown>
+    if (data.isActive === false) continue
+    const label = String(data.name ?? '(未命名規則)')
+    for (const moduleId of collectModuleRefs(data.action)) check(moduleId, label, 'autoReply')
+  }
+
+  // 活動（領取行銷模組）：moduleId 是頂層欄位，不用深掃
+  for (const d of campaignsSnap.docs) {
+    const data = d.data() as Record<string, unknown>
+    if (data.isActive === false) continue
+    const moduleId = typeof data.moduleId === 'string' ? data.moduleId.trim() : ''
+    if (moduleId) check(moduleId, String(data.name ?? '(未命名活動)'), 'campaign')
   }
 
   cache.set(workspaceId, { data: broken, expires: Date.now() + CACHE_TTL_MS })

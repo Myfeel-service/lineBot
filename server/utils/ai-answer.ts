@@ -27,7 +27,7 @@ import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeP
 import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
-import { maybeWarnQuotaThreshold } from './ai-handoff-notify'
+import { maybeWarnQuotaThreshold, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
 import { getCurrentMonthTokens, getQuotaAnswered, recordAiUsage, type UsageDelta } from './ai-usage'
 import { resolveAnsweredQuota, resolveQuotaAction } from './billing'
 import { getDb } from './firebase'
@@ -1408,21 +1408,24 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
 
     // 80% 額度預警(fire-and-forget,不增加答題延遲;<80% 連標記文件都不讀)。
     // 額度用完是懸崖(瞬間全轉真人)——先給管理員反應時間。
+    // 真的用完那一刻再推一則(每期一次):80% 是預告,100% 是事故現場,
+    // 沒有這一則的話 AI 停答只有「下次有人打開後台」才會被發現。
     if (usage) {
       const hasCountQuota = billing.quota != null && billing.quota > 0 && !!billing.periodStart
       const ratio = hasCountQuota
         ? usage.answered / billing.quota!
         : tokenCap > 0 ? usage.tokens / tokenCap : 0
-      if (ratio >= 0.8) {
-        void maybeWarnQuotaThreshold({
-          workspaceId,
-          ratio,
-          periodKey: hasCountQuota ? `p_${billing.periodStart}` : `t_${new Date().toISOString().slice(0, 7)}`,
-          usageText: hasCountQuota
-            ? `本期 AI 回覆則數 ${usage.answered}/${billing.quota}`
-            : `本月 AI token 用量 ${usage.tokens.toLocaleString()}/${tokenCap.toLocaleString()}`,
-          db,
-        }).catch(e => console.error('[quota-warn] failed:', e))
+      const periodKey = hasCountQuota ? `p_${billing.periodStart}` : `t_${new Date().toISOString().slice(0, 7)}`
+      const usageText = hasCountQuota
+        ? `本期 AI 回覆則數 ${usage.answered}/${billing.quota}`
+        : `本月 AI token 用量 ${usage.tokens.toLocaleString()}/${tokenCap.toLocaleString()}`
+      if (ratio >= 1 && (action === 'handoff' || action === 'downgrade')) {
+        void maybeNotifyQuotaExhausted({ workspaceId, periodKey, usageText, action, db })
+          .catch(e => console.error('[quota-exhausted] failed:', e))
+      }
+      else if (ratio >= 0.8) {
+        void maybeWarnQuotaThreshold({ workspaceId, ratio, periodKey, usageText, db })
+          .catch(e => console.error('[quota-warn] failed:', e))
       }
     }
 
