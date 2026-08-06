@@ -54,6 +54,55 @@
 **這同時證明中繼站方案必定可行**:PAYUNi 只認來源 IP,給它一個固定的就通。
 ③ 的查詢端點值得補一支正式函式(帳單頁可顯示卡片狀態)。
 
+#### ✅✅✅ 2026-08-07 **端到端實測完成(我方後台 + PAYUNi + 光貿 一條龍)**
+
+不是單元測試,是真的跑一次:臨時建租戶 → `/api/payment/create-order` → puppeteer 用測試卡真刷
+→ `/api/payment/reconcile` 補開通 → 開發票 → 把本期結束日改成昨天 → 再 reconcile → **真的續扣**。
+測完全部刪除(workspace/成員/訂單/發票/auth 使用者 + PAYUNi 解約),正式資料回到原本 5 個 workspace。
+
+| 環節 | 結果 |
+|---|---|
+| 建單 | ✅ `kind=period_first`、`anchorDay` 已鎖、`termsVersion`/`termsAcceptedAt` 有記 |
+| 真刷（測試卡 `4147631000000001`） | ✅ 導回我方 `ReturnURL` |
+| **漏接 Notify 的補救**（`trade/query`) | ✅ `recovered:1` → 訂單 paid、訂閱開通 |
+| 發票 | ✅ 首刷 399 → `ZA10031070`；799 → `ZA10031073` |
+| **期末 roll → past_due → 續扣** | ✅ `recurring: { due:1, charged:1 }`、訂單 `RDY…` `kind=period_recurring` paid 799 |
+| 續扣那期的發票 | ✅ `ZA10031074` |
+| 訂閱最終狀態 | ✅ `starter/active`、`autoRenew:true`、有卡片憑證、末四碼 `0001`、`lastChargeDate` |
+
+#### 🐛 **實測抓到一個會「客戶付了首期卻靜默降級」的真 bug（已修 + 有測試釘住）**
+
+**症狀**:第一輪 e2e 跑完,訂閱開通了、發票也開了,但 `payuniCardToken` 是空的、`autoRenew=false`
+→ 期末直接被降回免費層。dev log 有那行預埋的警告:`訂閱首期已付款但未取得約定 Token`。
+
+**根因**:首刷的 `CreditHash` **只出現在 UPP 的 Notify／Return 回傳裡一次**。
+Notify 沒送達時,補救路徑靠 `trade/query` 把訂單補成已付款,而**`trade/query` 的回傳結構裡
+根本沒有 `CreditHash`**(實測列出全部 20 個欄位:MerTradeNo/TradeNo/TradeAmt/TradeFee/
+TradeStatus/PaymentType/PaymentDay/CreateDay/Gateway/DataSource/Card6No/Card4No/CardExp/
+CardInst/AuthCode/AuthType/CardBank/CloseStatus/CloseAmt/RemainAmt)→ 憑證就此遺失。
+→ **「收了錢卻沒開通」有補救,「收了錢卻沒有續扣憑證」原本沒有。**
+
+**修法**:新增 `queryCardBinding()`(payuni.ts),在補開通時用**我方首刷送出的參照字串**
+(`CreditToken` = workspaceId)向 `credit_bind/query` 反查憑證,塞回 result 讓下游照原路吃
+(`server/utils/payuni-reconcile.ts`)。查不到也照樣開通(錢已收),只是照舊記 `cardBindFailed`。
+
+**⚠️ 反查的隱藏必填欄位(逐個變體實測出來的,官方文件沒寫)**:
+| 送出的欄位 | 回應 |
+|---|---|
+| `{ CreditToken }` | `QUERY03001 查無符合綁定資料` |
+| `{ CreditToken, CreditTokenType: 1 }`(會員級) | `QUERY03001` |
+| **`{ CreditToken, CreditTokenType: 2 }`(商店級 = 我方首刷用的)** | **SUCCESS**,回 `CreditHash` / `Card4No` / `CreditTokenExpired` / `CreditTokenStatus` |
+
+**修完重驗**:同一條路再跑 → `有卡片憑證: true`、`autoRenew: true`、期末續扣 `charged:1` ✅
+
+#### ⚠️ 另一個沉默的洞:**每月扣款原本沒有任何排程在打(已補)**
+
+`/api/payment/reconcile` 是唯一 `charge:true` 的路徑,而它**需要另外建一個 Cloud Scheduler 任務**;
+middleware 的 tick 刻意不刷卡(Lambda 會凍結容器)。**那個任務沒建 = 自動扣款完全不會發生,
+而且沒有任何錯誤**(客戶寬限 3 天後靜默降級)。
+→ 已把 `billing:reconcile-and-charge` 掛進**現有的** `/api/cron/run-tasks`(Cloud Scheduler 每 10 分鐘
+已在打),不必新建排程。安全性靠三層而非頻率:旗標未開回 0 / 每日 claim / 訂單號冪等鍵。
+
 **兩個實測學到的行為(程式相關)**:
 1. **同一張卡 + 同一個 `CreditToken` 參照 + 同一特店 → `CreditHash` 是同一組**(解約後再建約定,拿到的
    還是 `625566D4…`)。→ 換卡覆蓋舊 Token 的邏輯要注意「同卡重刷不會產生新 Token」;
@@ -453,6 +502,21 @@ relay.yourdomain.com {
 ---
 
 ## 🔴 B. 擋住「發票真的開出去」
+
+### B0. ✅ 光貿三件套已實測（2026-08-07,公開測試統編 12345678）
+
+| 動作 | 結果 |
+|---|---|
+| B2C 開立（399 含稅,無統編 → 買方統編填十個 0） | ✅ `ZA10031054` + 隨機碼 |
+| **作廢**（f0501) | ✅ 成功 ← **第一次驗證** |
+| B2B 開立（799 含稅,帶統編 83610942 + 抬頭) | ✅ `ZA10031055` |
+| **折讓 100 ×2 次**（g0401) | ✅ 兩次都成功,**可累加** ← **第一次驗證** |
+| 折讓超額（再折 700 > 剩餘) | ✅ 光貿自己擋:`4040173 此折讓單加上其他同發票折讓單的折讓金額已大於原發票的開立金額` |
+
+**⚠️ 踩到的時區陷阱(值得記,因為它只在半夜爆)**:折讓/作廢要帶「**原發票日期**」,
+第一次用 `toISOString()`(UTC)算 → 台灣時間 00:00–08:00 之間會算成前一天 →
+`4040151 原發票日期錯誤`。**正式程式用的是 `taipeiDate()`(void-invoice.post.ts:49 / allowance.post.ts:52),
+是對的** —— 這條記下來是為了防止日後有人「簡化」成 `toISOString()`。
 
 ### B1. 光貿正式金鑰
 

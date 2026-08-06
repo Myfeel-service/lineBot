@@ -10,6 +10,7 @@ import {
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
+import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -20,12 +21,18 @@ import { getDb } from '~~/server/utils/firebase'
  * 一律經此端點執行；每項工作內部都有「沒到期／沒東西就不動」的保護，
  * 高頻呼叫只是便宜的空查詢。
  *
- * 六項工作並行執行、單項失敗不影響其他項；回傳各項統計供 Cloud Scheduler
+ * 各項工作並行執行、單項失敗不影響其他項；回傳各項統計供 Cloud Scheduler
  * 執行紀錄檢視。排程推播（trigger-scheduled）有自己的每分鐘排程，不在此列。
+ *
+ * ⚠️ **`billing:reconcile-and-charge` 會真的刷客戶的卡**（見下方註解）。這裡是唯一被
+ *    `await` 且真的有排程在打的路徑——`/api/payment/reconcile` 雖然也做同一件事，但它
+ *    需要另外建一個 Cloud Scheduler 任務；只要那個任務沒建，每月自動扣款就**完全不會發生**
+ *    而且沒有任何錯誤（客戶寬限 3 天後靜默降級）。掛在這裡就不必依賴額外排程。
  */
 export default defineEventHandler(async (event) => {
   assertCronAuthorized(event)
 
+  const config = useRuntimeConfig(event)
   const db = getDb()
   const startedAt = Date.now()
   const tasks: Array<{ name: string; run: () => Promise<unknown> }> = [
@@ -40,6 +47,14 @@ export default defineEventHandler(async (event) => {
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
+    // 計費對帳 + **每期自動續扣**（會刷卡）。安全性靠三層,不靠呼叫頻率:
+    //   ① `PAYUNI_PERIOD_ENABLED !== true` 或金鑰未設 → chargeDueRecurring 直接回 0,零副作用
+    //   ② 每筆訂閱在 transaction 內 claim `lastChargeDate=今天` → 同一天最多扣一次
+    //   ③ 訂單號含期別與日期,重複建單會撞冪等鍵
+    // 所以 10 分鐘一次的呼叫在絕大多數時候只是一個 `status=='past_due'` 的空查詢。
+    // 用整支 runBillingReconcile（而非只呼叫 chargeDueRecurring）是因為順序有意義:
+    // 必須先 roll 把到期訂閱標成 past_due,續扣才挑得到人（見該檔註解）。
+    { name: 'billing:reconcile-and-charge', run: () => runBillingReconcile(config as unknown as Record<string, unknown>, new Date(), { charge: true }) },
   ]
 
   const settled = await Promise.allSettled(tasks.map(t => t.run()))

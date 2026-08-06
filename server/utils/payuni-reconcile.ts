@@ -12,7 +12,7 @@
  */
 import { getDb } from './firebase'
 import { getPendingOrders } from './payment'
-import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, resolvePayuniEnv, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
+import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -63,6 +63,31 @@ export async function reconcilePayuniPending(
       // **只在 PAYUNi 確認已付款時補開通**;未付／查無訂單 → 留著讓它照時間到期,
       // 絕不能把還在等付款的 pending 丟給 settle(paid=false) 誤標成 failed。
       if (!isQueryTradePaid(result)) return false
+
+      // ⚠️ **首刷的約定 Token 要在這裡補回來,否則客戶付了首期卻不會有下一期扣款。**
+      // `trade/query` 的回傳結構裡**沒有** CreditHash（2026-08-06 實測確認,欄位清單見
+      // payuni.ts 的 queryCardBinding 註解）→ 走這條補救路徑結算的 `period_first` 訂單,
+      // 會被 settlePaidOrder 判成 cardBindFailed:autoRenew 不開、期末寬限期滿靜默降級。
+      // 補法:拿我方首刷時送出的參照字串（CreditToken = workspaceId）向
+      // credit_bind/query 反查憑證,塞回 result 讓下游 parseCardMandate 照原路吃。
+      // 查不到也照樣結算（錢已經收了,開通不能等）——只是 cardBindFailed 會被記錄。
+      if (order.kind === 'period_first' && !result.CreditHash && order.workspaceId) {
+        const bind = await queryCardBinding({
+          merchantId,
+          creditToken: sanitizeCreditTokenRef(order.workspaceId),
+          timestamp: ts,
+        }, keys, config.payuniEnv, config.payuniRelayBase)
+        if (bind.mandate) {
+          result.CreditHash = bind.mandate.token
+          if (bind.mandate.last4) result.Card4No = bind.mandate.last4
+          if (bind.mandate.expiry) result.CreditLife = bind.mandate.expiry
+          console.log('[payuni:reconcile] 首刷約定已由 credit_bind/query 補回', order.merchantOrderNo)
+        }
+        else {
+          console.warn('[payuni:reconcile] 首刷訂單補開通但查不到約定憑證,自動續扣不會發生:', order.merchantOrderNo, bind.outerStatus)
+        }
+      }
+
       const r = await fulfillPayuniTrade(true, result, config)
       return r.outcome === 'settled'
     }

@@ -5,6 +5,7 @@ import {
   BIND_TYPE_REMEMBER_CARD,
   buildBindCancel,
   buildBindCancelFields,
+  buildBindQueryFields,
   buildCreditCharge,
   buildCreditChargeFields,
   buildTokenBindFields,
@@ -392,5 +393,33 @@ describe('resolveBackendUrl（固定出口 IP 中繼站）', () => {
     // 這個測試釘住「中繼站只服務幕後 API」這個邊界。
     expect(PAYUNI_ENDPOINTS.prod).toContain('api.payuni.com.tw')
     expect(resolveBackendUrl(PAYUNI_ENDPOINTS.prod, 'https://relay.example.com')).not.toBe(PAYUNI_ENDPOINTS.prod)
+  })
+})
+
+describe('buildBindQueryFields（查詢約定 / 補回漏接的首刷 Token）', () => {
+  const BASE = { merchantId: 'S076820628', timestamp: 1_786_000_000 }
+
+  it('**一定要帶 CreditTokenType,且預設 2（商店級）** —— 少了它 PAYUNi 回 QUERY03001 查無', () => {
+    // 2026-08-06 逐個變體實測:只帶 CreditToken → 查無;帶 CreditTokenType=1（會員級）→ 查無;
+    // 帶 2 才 SUCCESS。官方文件只寫「CreditToken 或 CreditHash 擇一必填」,沒提這件事。
+    const f = buildBindQueryFields({ ...BASE, creditToken: 'ws-1' })
+    expect(f.CreditTokenType).toBe(2)
+    expect(f.CreditToken).toBe('ws-1')
+  })
+
+  it('creditHash 與 creditToken 同時給 → 以 creditHash 為準（參照字串可能對到多張卡）', () => {
+    const f = buildBindQueryFields({ ...BASE, creditToken: 'ws-1', creditHash: 'HASH1' })
+    expect(f.CreditHash).toBe('HASH1')
+    expect(f.CreditToken).toBeUndefined()
+  })
+
+  it('會員級 Token 也支援（傳 1 就照傳,不要偷偷改成 2）', () => {
+    expect(buildBindQueryFields({ ...BASE, creditToken: 'ws-1', creditTokenType: 1 }).CreditTokenType).toBe(1)
+  })
+
+  it('MerID 與 Timestamp 必帶（PAYUNi 必填,漏了整支查詢失效）', () => {
+    const f = buildBindQueryFields({ ...BASE, creditHash: 'HASH1' })
+    expect(f.MerID).toBe('S076820628')
+    expect(f.Timestamp).toBe(1_786_000_000)
   })
 })

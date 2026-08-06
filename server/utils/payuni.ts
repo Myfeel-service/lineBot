@@ -636,3 +636,110 @@ export async function cancelCardBinding(
     return { ok: false, outerStatus: 'FETCH_FAILED', message: (e as Error)?.message ?? '', notFound: false }
   }
 }
+
+// ── 查詢信用卡約定（credit_bind/query）─────────────────────────────────────────
+//
+// 用途一（**真正的理由**）:**把漏接 Notify 的首刷約定救回來**。
+//   首刷的 `CreditHash` 只在 **UPP 的 Notify／Return 回傳裡**出現一次。若 Notify 沒送達,
+//   補救路徑 `reconcilePayuniPending` 是靠 `trade/query` 把訂單補成已付款——而
+//   **`trade/query` 的回傳結構裡沒有 `CreditHash`**（2026-08-06 實測,20 個欄位全列過:
+//   MerTradeNo/TradeNo/TradeAmt/TradeFee/TradeStatus/PaymentType/PaymentDay/CreateDay/
+//   Gateway/DataSource/Card6No/Card4No/CardExp/CardInst/AuthCode/AuthType/CardBank/
+//   CloseStatus/CloseAmt/RemainAmt）→ 客戶付了首期、卻沒有任何續扣憑證 → 期末靜默降級。
+//   這支就是那條救援路徑:拿我方自己送出的參照字串（`CreditToken` = workspaceId）反查憑證。
+// 用途二:帳單頁顯示「這張卡在 PAYUNi 還有效嗎」（CreditTokenStatus）。
+//
+// ⚠️ **`CreditTokenType` 必填且必須與建約定時一致（=2 商店級）**——2026-08-06 逐個變體實測:
+//      · `{ CreditToken }` 只帶 token            → `QUERY03001 查無符合綁定資料`
+//      · `{ CreditToken, CreditTokenType: 1 }`   → `QUERY03001`（會員級,不是我方用的那層）
+//      · `{ CreditToken, CreditTokenType: 2 }`   → **SUCCESS**,回 CreditHash / Card4No
+//    官方文件只寫「CreditToken 或 CreditHash 擇一必填」,沒提 type 也是必要條件 → 別照文件猜。
+
+export interface BindQueryInput {
+  merchantId: string
+  /** 我方參照字串（首刷時送的 `CreditToken`,本專案用 workspaceId）。與 creditHash 擇一。 */
+  creditToken?: string
+  /** 已知的約定 Token。與 creditToken 擇一。 */
+  creditHash?: string
+  /** Token 紀錄類型:1=會員、2=商店。**預設 2**（本專案每租戶一組特店,首刷送的就是 2）。 */
+  creditTokenType?: 1 | 2
+  /** Unix 秒。由呼叫端提供以保持純函式可測。 */
+  timestamp: number
+}
+
+/** credit_bind/query 的 EncryptInfo 欄位（純函式,好單元測試）。 */
+export function buildBindQueryFields(input: BindQueryInput): Record<string, string | number> {
+  const fields: Record<string, string | number> = {
+    MerID: input.merchantId,
+    CreditTokenType: input.creditTokenType ?? 2,
+    Timestamp: input.timestamp,
+  }
+  // 兩者擇一;同時給就以 creditHash 為準（比參照字串精確,參照字串可能對到多張卡）。
+  if (input.creditHash) fields.CreditHash = input.creditHash
+  else if (input.creditToken) fields.CreditToken = input.creditToken
+  return fields
+}
+
+export interface BindQueryResult {
+  ok: boolean
+  /** 外層狀態碼（SUCCESS / QUERY03001 查無符合綁定資料 / …）。 */
+  outerStatus: string
+  /** PAYUNi 說「查無這筆綁定」——與「查詢失敗」要分開:查無是確定沒有,不必重試。 */
+  notFound: boolean
+  /** 查到的約定卡（沒查到為 null）。欄位語意與首刷回傳的 PayuniCardMandate 一致。 */
+  mandate: { token: string; last4: string | null; expiry: string | null; status: string | null } | null
+}
+
+/**
+ * 查詢一組信用卡約定。失敗**不 throw**（與 cancelCardBinding 同原則:這支永遠在對帳／補救
+ * 流程裡被呼叫,不能因為查詢失敗而中斷主流程）。
+ */
+export async function queryCardBinding(
+  input: BindQueryInput,
+  keys: PayuniKeys,
+  env: unknown,
+  /** 選填:固定 IP 中繼站基底網址（`PAYUNI_RELAY_BASE`）。留白 = 直連 PAYUNi。 */
+  relayBase?: unknown,
+): Promise<BindQueryResult> {
+  const url = resolveBackendUrl(PAYUNI_BIND_QUERY_ENDPOINTS[resolvePayuniEnv(env)], relayBase)
+  const EncryptInfo = encrypt(buildBindQueryFields(input), keys)
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'user-agent': 'payuni' },
+      body: new URLSearchParams({
+        MerID: input.merchantId,
+        Version: PAYUNI_BIND_VERSION,
+        EncryptInfo,
+        HashInfo: makeHashInfo(EncryptInfo, keys),
+      }).toString(),
+    })
+    if (!res.ok) return { ok: false, outerStatus: `HTTP_${res.status}`, notFound: false, mandate: null }
+    const outer = await res.json() as Record<string, unknown>
+    const outerStatus = String(outer.Status ?? '')
+    const inner = outer.EncryptInfo
+      ? verifyAndDecryptPayuniNotify(String(outer.EncryptInfo), String(outer.HashInfo ?? ''), keys)
+      : null
+    // 查單類回傳是 PHP http_build_query 的巢狀 `Result[0][X]`（同 trade/query）。
+    const flat = parsePayuniQueryResult(inner as Record<string, string | undefined> | null)
+    const token = String(flat.CreditHash ?? '').trim()
+    return {
+      ok: outerStatus.toUpperCase() === 'SUCCESS' && Boolean(token),
+      outerStatus,
+      // ⚠️ 只認實測確認的 `QUERY03001`,不做「訊息含『查無』」的寬鬆比對（同 cancelCardBinding 的理由）。
+      notFound: outerStatus.toUpperCase() === 'QUERY03001',
+      mandate: token
+        ? {
+            token,
+            last4: flat.Card4No ? String(flat.Card4No) : null,
+            // 查詢回的是 `CreditTokenExpired`（MMYY）,語意同首刷回傳的 `CreditLife`。
+            expiry: flat.CreditTokenExpired ? String(flat.CreditTokenExpired) : null,
+            status: flat.CreditTokenStatus != null ? String(flat.CreditTokenStatus) : null,
+          }
+        : null,
+    }
+  }
+  catch (e) {
+    return { ok: false, outerStatus: 'FETCH_FAILED', notFound: false, mandate: null }
+  }
+}
