@@ -57,6 +57,7 @@ import {
 } from '~~/shared/line-workspace'
 import { capMapSize } from './bounded-cache'
 import { systemModuleId } from './workspace-system-modules'
+import type { MessageSender } from '~~/shared/message-sender'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -541,7 +542,10 @@ async function applyPendingClaims(
      */
     const pushAndMark = async (messages: messagingApi.Message[], label: string) => {
       const sideEffects: Array<Promise<unknown>> = [
-        saveOutgoingConversationMessagesByWorkspace(userId, messages, claimWorkspaceId),
+        saveOutgoingConversationMessagesByWorkspace(userId, messages, claimWorkspaceId, {
+          sender: 'bot',
+          senderName: action.type === 'module' && flow ? String(flow.name || '') : '',
+        }),
       ]
       if (action.type === 'module' && flow) {
         sideEffects.push(dispatchPostReplyActions(userId, flow.messages, claimWorkspaceId))
@@ -790,6 +794,9 @@ function buildAutoReplyActionMessages(
  *   2. 更嚴重：狀態沒轉 human_handling → 機器人／AI 不會閉嘴，會跟真人搶話回客人
  *
  * sourceRefId＝這則內容的來源文件 id（預存 id 或自動回覆規則 id），只用於標籤紀錄的來源欄位。
+ *
+ * 訊息一律標 sender='human'：借的是機器人模組／規則的內容，但按下送出的是真人客服，
+ * 對客服來說「這則誰回的」的答案就是那位同事（同 onHumanOutgoingMessage 的判斷）。
  */
 export async function pushSupportPresetActionToUser(
   userIdOrDocId: string,
@@ -798,6 +805,7 @@ export async function pushSupportPresetActionToUser(
   sourceRefId: string,
   requestOrigin: string,
   workspaceId: string,
+  operatorName?: string,
 ): Promise<void> {
   const lineUserId = lineUserIdFromFirestoreDocId(userIdOrDocId, workspaceId)
   const fsUserDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
@@ -828,7 +836,10 @@ export async function pushSupportPresetActionToUser(
       throw createError({ statusCode: 400, statusMessage: '此機器人模組沒有可發送的訊息' })
     }
     await pushMessage(lineUserId, lineMessages, workspaceId)
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, workspaceId, {
+      sender: 'human',
+      senderName: operatorName,
+    }).catch(e => console.error('[conv] save error:', e))
     dispatchPostReplyActions(lineUserId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
     onHumanOutgoingMessage(userIdOrDocId, workspaceId).catch(e => console.error('[supportPreset] onHumanOutgoing error:', e))
     return
@@ -839,7 +850,10 @@ export async function pushSupportPresetActionToUser(
     throw createError({ statusCode: 400, statusMessage: '無法送出此預存動作' })
   }
   await pushMessage(lineUserId, actionMessages, workspaceId)
-  await saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, workspaceId)
+  await saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, workspaceId, {
+    sender: 'human',
+    senderName: operatorName,
+  })
   onHumanOutgoingMessage(userIdOrDocId, workspaceId).catch(e => console.error('[supportPreset] onHumanOutgoing error:', e))
 }
 
@@ -2040,8 +2054,16 @@ export async function saveConversationMessage(
      * 這則 outgoing 是 AI 生成的（答題 / 反問澄清）。訊息流過去沒有任何 AI 標記，
      * 「AI 當時到底回了什麼」「真人後來怎麼改口」都無法回溯——從現在開始標，
      * 讓之後的答錯分析 / 從真人回覆學習有資料可用。
+     *
+     * 與 `sender` 是兩件事，別混：`aiGenerated` 問「內容是不是 AI 寫的」（學習迴圈要的），
+     * `sender` 問「這則是誰回的」（客服在對話上要看的）。轉真人那句「已為您安排專員」
+     * 是 AI 決定要轉的、文案卻來自機器人模組 → sender=bot、aiGenerated=false。
      */
     aiGenerated?: boolean
+    /** 這則是誰回的（只有 outgoing 有意義，見 shared/message-sender.ts） */
+    sender?: MessageSender
+    /** 標籤 tooltip 上補的一句：真人＝哪位同事，機器人＝哪個模組。取不到就別填。 */
+    senderName?: string
   },
   workspaceId?: string,
 ): Promise<string> {
@@ -2090,6 +2112,11 @@ export async function saveConversationMessage(
       timestamp: messageTimestamp,
       messageType: options?.messageType || 'text',
       ...(options?.aiGenerated ? { aiGenerated: true } : {}),
+      // sender 只標 outgoing：客人自己傳的不需要標，寫進去反而讓查詢多一種要排除的值
+      ...(direction === 'outgoing' && options?.sender ? { sender: options.sender } : {}),
+      ...(direction === 'outgoing' && options?.senderName?.trim()
+        ? { senderName: options.senderName.trim().slice(0, 80) }
+        : {}),
       ...(payload !== undefined ? { payload } : {}),
     }),
     db.collection('conversations').doc(convDocId).set(convPatch, { merge: true }),
@@ -2099,11 +2126,16 @@ export async function saveConversationMessage(
   return msgRef.id
 }
 
+/**
+ * `opts.sender` 刻意是**必填**：每一條「機器人對客人說話」的路徑都得講清楚自己是誰，
+ * 少一條就是對話上少一顆標籤，而少掉的那顆看起來跟舊訊息一樣（都是空白），沒人會發現。
+ * 新增回覆路徑時 TypeScript 會直接擋下來。
+ */
 async function saveOutgoingConversationMessagesByWorkspace(
   userId: string,
   messages: messagingApi.Message[],
   workspaceId: string,
-  opts?: { aiGenerated?: boolean },
+  opts: { sender: MessageSender; senderName?: string; aiGenerated?: boolean },
 ): Promise<void> {
   if (!Array.isArray(messages) || messages.length === 0) return
   await Promise.all(
@@ -2113,7 +2145,9 @@ async function saveOutgoingConversationMessagesByWorkspace(
       return saveConversationMessage(userId, 'outgoing', text, {
         messageType: String((msg as any)?.type || 'message'),
         payload: msg,
-        aiGenerated: opts?.aiGenerated === true,
+        aiGenerated: opts.aiGenerated === true,
+        sender: opts.sender,
+        senderName: opts.senderName,
       }, workspaceId)
     }),
   )
@@ -2223,7 +2257,10 @@ async function handleIncomingText(
         if (lineMessages.length > 0) {
           await replyMessage(replyToken, lineMessages, wid)
           dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-          saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid).catch(e => console.error('[conv] save error:', e))
+          saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid, {
+            sender: 'bot',
+            senderName: String(flow.name || ''),
+          }).catch(e => console.error('[conv] save error:', e))
           enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
             console.error('[session] enterModule error:', e),
           )
@@ -2370,7 +2407,10 @@ async function handleIncomingText(
             if (lineMessages.length > 0) {
               await replyMessage(replyToken, lineMessages, wid)
               dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-              saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid).catch(e => console.error('[conv] save error:', e))
+              saveOutgoingConversationMessagesByWorkspace(lineUserId, lineMessages, wid, {
+                sender: 'bot',
+                senderName: String(flow.name || ''),
+              }).catch(e => console.error('[conv] save error:', e))
               enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
                 console.error('[session] enterModule error:', e),
               )
@@ -2394,7 +2434,10 @@ async function handleIncomingText(
           const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)
           if (actionMessages.length > 0) {
             await replyMessage(replyToken, actionMessages, wid)
-            saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, wid).catch(e => console.error('[conv] save error:', e))
+            saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, wid, {
+              sender: 'bot',
+              senderName: String(rule.name || ''),
+            }).catch(e => console.error('[conv] save error:', e))
             // 純文字/網址回覆也是機器人真實首接(與模組動作同等;先前漏記會被誤計成未首接)
             enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
               console.error('[session] enterModule error:', e),
@@ -2472,8 +2515,8 @@ async function runScriptStart(
   const result = await startScript(matched, fsUserDocId, userAttributes)
   invalidateUserDocCache(fsUserDocId)
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
-  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId)
-  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, result.quickReplies)
+  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
+  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', String(matched.name || ''), result.quickReplies)
   // 腳本問答=機器人真實首接(先前漏記會被誤計未首接)。await:確保先記 bot,
   // 結尾轉真人時 live_agent 才能正確疊成「bot 首接+升級轉真人」而不是搶成 human 首接。
   if (sessionId && result.replyText) {
@@ -2516,8 +2559,9 @@ async function runScriptAdvance(
     return false
   }
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
-  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId)
-  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, result.quickReplies)
+  // 推進時手上只有 scriptId，拿不到腳本名字（advanceScript 沒回傳）→ senderName 留空
+  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
+  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', '', result.quickReplies)
   // 同 runScriptStart:腳本推進的回覆也記機器人首接(涵蓋「session 換新後才接續腳本」的情況)
   if (sessionId && result.replyText) {
     await enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
@@ -2544,11 +2588,18 @@ async function dndScriptHandoffReply(
   return settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
 }
 
+/**
+ * `sender` 由呼叫端決定：腳本本身的問答＝bot（後台改得到那條腳本），
+ * 勿擾時段換掉的那句＝system（那是 AI 設定裡的內建回覆，沒有腳本可改）。
+ * `scriptName` 取不到就留空——寧可 tooltip 少一行，也不要編一個假的腳本名出來。
+ */
 async function sendScriptReply(
   text: string,
   replyToken: string | undefined,
   lineUserId: string,
   workspaceId: string,
+  sender: MessageSender,
+  scriptName: string,
   quickReplies?: string[],
 ): Promise<void> {
   if (!text || !replyToken) return
@@ -2564,7 +2615,7 @@ async function sendScriptReply(
     }
   }
   await replyMessage(replyToken, [msg], workspaceId)
-  saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
+  saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { sender, senderName: scriptName })
     .catch(e => console.error('[script] save outgoing error:', e))
 }
 
@@ -2742,8 +2793,10 @@ async function maybeAckNonTextMessage(
       nonTextAckSentAt.delete(key)
       throw e
     }
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
-      .catch(e => console.error('[non-text-ack] save outgoing error:', e))
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+      sender: 'system',
+      senderName: '無法閱讀的內容自動回覆',
+    }).catch(e => console.error('[non-text-ack] save outgoing error:', e))
     // 客人傳了圖/影/音/檔（有需求）、機器人真的回了一句 → 記機器人首接。
     // 記 bot_flow 不記 ai：這是寫死的引導語，不是 AI 作答，記 ai 會灌水 AI 答題數。
     // 先前漏記會讓「傳圖後只收到引導語」的會話永遠掛在未首接。
@@ -2785,8 +2838,10 @@ async function maybeSendWaitingAck(
       waitingAckSentAt.delete(key)
       throw e
     }
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
-      .catch(e => console.error('[waiting-ack] save outgoing error:', e))
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+      sender: 'system',
+      senderName: '等待真人期間的自動回覆',
+    }).catch(e => console.error('[waiting-ack] save outgoing error:', e))
   }
   catch (e) {
     console.error('[waiting-ack] failed:', e)
@@ -2828,8 +2883,15 @@ async function deliverHandoffReply(params: {
   const dnd = isServiceHoursDnd(settings?.serviceHours)
 
   let handoffMessages: messagingApi.Message[] = []
+  // 這幾則對話上要標成誰回的：勿擾那句出自 AI 設定（後台沒有模組可改）＝system，
+  // 其餘出自「真人客服」系統模組＝bot。轉接的**決定**雖然常是 AI 下的，但客服要改的是文案，
+  // 標 AI 只會讓人以為那句話是 AI 當場寫的、去 AI 設定裡翻半天。
+  let handoffSender: MessageSender = 'bot'
+  let handoffSenderName = '「真人客服」模組'
   if (dnd) {
     handoffMessages = [{ type: 'text', text: settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY } as messagingApi.TextMessage]
+    handoffSender = 'system'
+    handoffSenderName = '勿擾時段回覆'
   }
   else {
     // ⚠️ 要用「本工作區的系統模組 doc id」查（見 systemModuleId）。
@@ -2848,19 +2910,31 @@ async function deliverHandoffReply(params: {
 
   // 規則先講、再講「幫您轉專員」。勿擾時段也照講（規則本身仍然有用，只是沒人接手）。
   const prefixText = String(params.prefixText ?? '').trim()
-  if (prefixText) {
-    handoffMessages = [{ type: 'text', text: prefixText } as messagingApi.TextMessage, ...handoffMessages]
-  }
+  const prefixMessages: messagingApi.Message[] = prefixText
+    ? [{ type: 'text', text: prefixText } as messagingApi.TextMessage]
+    : []
 
   if (replyToken) {
     // reply 失敗（token 過期 / LINE 5xx）不能讓整個轉接蒸發：客人這則沒收到「已安排專員」,
     // 但 session 標記與值班通知必須照常執行——否則客服不知道有人在等,而統計已計入 handoff。
     try {
-      await replyMessage(replyToken, handoffMessages, workspaceId)
+      await replyMessage(replyToken, [...prefixMessages, ...handoffMessages], workspaceId)
       // 客人剛剛才被告知「已安排專員 / 目前非服務時間」→ 讓等待中的 ack 一起吃節流
       markWaitingAckSent(workspaceId, lineUserId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, handoffMessages, workspaceId)
-        .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+      // 一次 reply、兩種來源：前綴那句是 AI 從知識庫查來的（AI 生成），
+      // 後面「已安排專員」是模組文案。存成同一個 sender 會讓客服對錯一半。
+      Promise.all([
+        prefixMessages.length
+          ? saveOutgoingConversationMessagesByWorkspace(lineUserId, prefixMessages, workspaceId, {
+              sender: 'ai',
+              aiGenerated: true,
+            })
+          : Promise.resolve(),
+        saveOutgoingConversationMessagesByWorkspace(lineUserId, handoffMessages, workspaceId, {
+          sender: handoffSender,
+          senderName: handoffSenderName,
+        }),
+      ]).catch(e => console.error('[ai-fallback] save outgoing error:', e))
     }
     catch (e) {
       console.error('[ai-fallback] handoff reply failed, continuing enterModule/notify:', e)
@@ -3069,8 +3143,10 @@ async function tryAiFallback(params: {
       if (replyToken) {
         const msg: messagingApi.TextMessage = { type: 'text', text: HANDOFF_DECLINE_REPLY }
         await replyMessage(replyToken, [msg], workspaceId)
-        saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
-          .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+        saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+          sender: 'ai',
+          senderName: '客人回「我再問問」的固定回覆',
+        }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
       }
       // 收掉 pending 狀態（'skipped' 不入轉真人案例列表、也不算 answeredThenHandoff）
       await writeAiMeta(fsUserDocId, { lastDecision: 'skipped', lastQuery: textContent })
@@ -3166,7 +3242,7 @@ async function tryAiFallback(params: {
     if (replyToken && !draftMode) {
       const msg: messagingApi.TextMessage = { type: 'text', text: result.answer.slice(0, 5000) }
       await replyMessage(replyToken, [msg], workspaceId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { aiGenerated: true })
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { sender: 'ai', aiGenerated: true })
         .catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 登記「AI 首接」：AI 真的自動回覆了客人才算（草稿模式客人沒收到、不算首接）。
       // 非阻塞——與 bot_flow 自動回覆同慣例（先送客人回覆，統計背景補記）。
@@ -3230,8 +3306,11 @@ async function tryAiFallback(params: {
     }
     if (replyToken) {
       await replyMessage(replyToken, [msg], workspaceId)
-      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { aiGenerated: true })
-        .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+        sender: 'ai',
+        aiGenerated: true,
+        senderName: 'AI 反問澄清',
+      }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
       // 反問澄清也是 AI 對客人的真實回應 → 記 AI 首接(草稿模式已在前面 return,不會到這)
       enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
         console.error('[ai-fallback] enterModule(ai) error:', e),
@@ -3265,8 +3344,10 @@ async function tryAiFallback(params: {
       quickReply: { items: quickReplyItems },
     }
     await replyMessage(replyToken, [msg], workspaceId)
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId)
-      .catch(e => console.error('[ai-fallback] save outgoing error:', e))
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+      sender: 'ai',
+      senderName: 'AI 答不出來時的二次確認',
+    }).catch(e => console.error('[ai-fallback] save outgoing error:', e))
     // 「需要幫您轉接嗎?」也是 AI 對客人的真實回應 → 記 AI 首接(此分支已排除草稿模式)
     enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
       console.error('[ai-fallback] enterModule(ai) error:', e),
@@ -3529,7 +3610,10 @@ export async function handlePostbackEvent(
         )
         await replyMessage(event.replyToken, lineMessages, workspaceId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
+        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId, {
+          sender: 'bot',
+          senderName: String(flow.name || ''),
+        }).catch(e => console.error('[conv] save error:', e))
         enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
           console.error('[session] enterModule error:', e),
         )
@@ -3574,7 +3658,10 @@ export async function handlePostbackEvent(
         )
         await replyMessage(event.replyToken, lineMessages, workspaceId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
+        saveOutgoingConversationMessagesByWorkspace(userId, lineMessages, workspaceId, {
+          sender: 'bot',
+          senderName: String(flow.name || ''),
+        }).catch(e => console.error('[conv] save error:', e))
         enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
           console.error('[session] enterModule (fallback) error:', e),
         )
@@ -3590,7 +3677,10 @@ export async function handlePostbackEvent(
       const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)
       if (actionMessages.length > 0) {
         await replyMessage(event.replyToken, actionMessages, workspaceId)
-        saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, workspaceId).catch(e => console.error('[conv] save error:', e))
+        saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, workspaceId, {
+          sender: 'bot',
+          senderName: String(rule.name || ''),
+        }).catch(e => console.error('[conv] save error:', e))
         // 純文字/網址回覆也是機器人真實首接（與上面的模組分支同等；先前只有模組分支有記，
         // 這條漏記會讓「按按鈕→收到一段文字」的會話誤掛在未首接）
         enterModule(sessionId, userId, 'bot_flow', undefined, workspaceId).catch(e =>

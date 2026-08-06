@@ -483,7 +483,21 @@
                     <span v-if="msg.sendStatus === 'sending'" class="conv-bubble-sending">傳送中…</span>
                     <span v-else-if="msg.sendStatus === 'failed'" class="conv-bubble-failed">傳送失敗</span>
                     <template v-else>
-                      <span class="conv-bubble-time">{{ formatTime(msg.timestamp) }}</span>
+                      <!--
+                        誰回的標籤與時間同一行：各佔一行的話 meta 會變成三層高，比旁邊
+                        一行字的泡泡還高。標籤放泡泡外面是刻意的——進泡泡裡會被誤讀成
+                        訊息內容（客人那邊看不到這顆標籤）。
+                        舊訊息沒有 sender 就整顆不出現，見 shared/message-sender.ts。
+                      -->
+                      <span class="conv-bubble-meta__line">
+                        <span
+                          v-if="msg.sender"
+                          class="conv-sender-tag"
+                          :class="{ 'conv-sender-tag--human': msg.sender === 'human' }"
+                          :title="senderTagTitle(msg)"
+                        >{{ MESSAGE_SENDER_LABELS[msg.sender] }}</span>
+                        <span class="conv-bubble-time">{{ formatTime(msg.timestamp) }}</span>
+                      </span>
                       <span
                         v-if="msg.direction === 'outgoing' && msg.readByPeer"
                         class="conv-bubble-read"
@@ -908,6 +922,7 @@ import {
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
 import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
+import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
@@ -1111,6 +1126,13 @@ interface MsgItem {
   /** 客人傳的圖，AI 讀出來的一句說明；AI 未啟用或讀不出來就沒有 */
   mediaDescription?: string
   /**
+   * 這則是誰回的（真人 / AI / 機器人 / 系統）。null 或沒有＝這功能上線前存的舊訊息，
+   * 泡泡上不掛標籤——猜一個來源比空白更糟（客服會拿假來源去追責任）。
+   */
+  sender?: MessageSender | null
+  /** 標籤 tooltip 上補的一句：真人＝哪位同事，機器人＝哪個模組／規則 */
+  senderName?: string
+  /**
    * 只有「還在送 / 送失敗」的那則會有：這是還沒被伺服器確認的本地泡泡。
    * 有值代表這則不是從後端讀回來的（見 pendingOutgoing）。
    */
@@ -1142,6 +1164,8 @@ interface SessionTimelineItem {
   messageType?: string
   payload?: unknown
   mediaDescription?: string
+  sender?: MessageSender | null
+  senderName?: string
   broadcastId?: string
 }
 
@@ -1652,6 +1676,8 @@ const pendingRows = computed<ChatRowMsg[]>(() => {
         payload: null,
         timestamp: p.at,
         readByPeer: false,
+        // 自己剛打的，當然是真人。先標好，等伺服器那則換上來時標籤才不會閃一下
+        sender: 'human' as const,
         sendStatus: p.status,
         sendError: p.error,
       },
@@ -1679,6 +1705,8 @@ const serverChatRows = computed<ChatRow[]>(() => {
         timestamp: item.timestamp,
         readByPeer: item.readByPeer,
         mediaDescription: item.mediaDescription,
+        sender: item.sender ?? null,
+        senderName: item.senderName,
       }
       return { kind: 'msg' as const, key: item.id, msg }
     })
@@ -2760,6 +2788,19 @@ async function sendSticker(packageId: string, sid: string) {
 
 function stickerPreviewUrl(stickerSid: string): string {
   return `https://stickershop.line-scdn.net/stickershop/v1/sticker/${stickerSid}/android/sticker.png`
+}
+
+/**
+ * 「真人／AI／機器人／系統」標籤的 tooltip。
+ *
+ * 標籤本身只有兩三個字，剩下的話留在 hover：這句是哪裡來的、要改文案的話去哪改，
+ * 還有真人是哪位同事／機器人是哪個模組。名字取不到就只出現說明那一行。
+ */
+function senderTagTitle(msg: MsgItem): string {
+  if (!msg.sender) return ''
+  const hint = MESSAGE_SENDER_HINTS[msg.sender]
+  const name = String(msg.senderName || '').trim()
+  return name ? `${hint}\n來源：${name}` : hint
 }
 
 function getMessageType(msg: MsgItem): string {

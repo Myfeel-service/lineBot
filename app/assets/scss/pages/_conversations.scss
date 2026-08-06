@@ -394,6 +394,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.32rem;
+    // 空間不夠時該退讓的是泡泡（讓文字多換一行），不是旁邊那欄時間／已讀。
+    // 沒有 min-width: 0，flex 子項不會縮到 min-content 以下，於是改去擠壓 meta。
+    min-width: 0;
   }
 
   .conv-bubble-wrap.incoming {
@@ -468,15 +471,28 @@
     color: #2d4f10;
   }
 
+  // 時間／已讀／誰回的那一小欄。
+  // ⚠️ flex: 0 0 auto + nowrap 是必要的，不是保險：這一欄可以被壓縮的話，長訊息把泡泡
+  // 撐到 max-width 之後就會把它擠成一個字寬，「已讀」被逐字斷成直排（已↵讀）。
+  // 要讓的是泡泡（下面的 min-width: 0），不是這一欄。
   .conv-bubble-meta {
     display: inline-flex;
+    flex: 0 0 auto;
     flex-direction: column;
     align-items: flex-end;
     gap: 0.24rem;
     font-size: var(--line-font-meta);
     color: var(--text-muted);
     line-height: 1.12;
-    min-width: 0;
+    white-space: nowrap;
+  }
+
+  // 「誰回的」標籤 + 時間同一行（各自一行會讓 meta 變三層高，比泡泡還高）
+  .conv-bubble-meta__line {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.26rem;
+    white-space: nowrap;
   }
 
   .conv-bubble-wrap.incoming .conv-bubble-meta {
@@ -489,9 +505,13 @@
     color: var(--text-muted);
   }
 
+  // 圖片／卡片訊息的 meta 是落在泡泡「下面」（wrap 轉成 column），不是旁邊。
+  // 這時要橫排：直排會在圖片下方拉出一條三層高的細長文字，看起來像排版壞掉。
   .conv-bubble-wrap.is-structured .conv-bubble-meta,
   .conv-bubble-wrap.is-media .conv-bubble-meta {
-    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
     padding-right: 0.18rem;
     box-sizing: border-box;
   }
@@ -506,6 +526,32 @@
     font-weight: 600;
     color: var(--text-secondary);
     letter-spacing: 0.02em;
+  }
+
+  // 「這則誰回的」標籤（真人／AI／機器人／系統）。
+  // 沿用 .conv-media-caption__tag 那顆的作法（單色、細框），不各給一個顏色：
+  // 四顆彩色標籤掛在每一則出站訊息上會比訊息本身還搶眼，後台一律單色。
+  .conv-sender-tag {
+    flex: 0 0 auto;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: calc(var(--line-font-meta) * 0.92);
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  // 「同事回過了嗎」是客服掃對話時最常問的一句 → 只有「真人」實心，
+  // 掃下來不用逐顆讀字也看得出哪幾則是人回的（仍然單色，只差深淺）。
+  .conv-sender-tag--human {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+    color: var(--text-secondary);
+    font-weight: 600;
   }
 
   // 樂觀送出：泡泡先上畫面，狀態寫在旁邊的 meta，不動泡泡本身的樣子
@@ -1032,13 +1078,39 @@
     font-weight: 400;
   }
 
+  // 圖片訊息的框不給固定寬度，只給上限。
+  //
+  // 先前是 width: 620px + object-fit: contain：橫圖剛好填滿沒事，**直圖（手機截圖、
+  // 直拍商品照）會被置中留白**——620px 的空框貼在該貼的那一側，但圖本身浮在框中央，
+  // 於是客人傳的截圖看起來飄在對話正中間，既不靠左也不靠右。
+  // 改成讓圖片自己撐出框：框永遠等於圖片，貼哪一邊由 .conv-bubble.is-media 決定。
   .conv-inline-image {
-    width: var(--line-image-message-width);
-    max-height: 640px;
+    max-width: var(--line-image-message-width);
     border-radius: 1.25rem;
     overflow: hidden;
-    display: block;
     background: transparent;
+  }
+
+  // 圖文訊息（imagemap / flex）的框靠 aspect-ratio + 固定寬度撐版型，
+  // 內層那張圖必須照舊填滿 100%，所以把上面的規則排除掉。
+  .conv-inline-image:not(.conv-inline-image--line-rich) .el-image__inner {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    // 直式長圖限高，避免一張截圖把整個對話推到看不見底
+    max-height: 640px;
+  }
+
+  // 圖片／影片這種透明泡泡：內容各自貼自己那一側，別被 align-items: stretch 拉成
+  // 跟最寬的兄弟元素（多半是 AI 說明那行字）一樣寬——那會把圖片又推回中間。
+  // 只動 is-media：卡片訊息（is-structured）本來就靠 .conv-line-template 的
+  // width: fit-content ＋ .conv-line-template-cards 的 justify-content 自己對齊，不要重複插手。
+  .conv-bubble.is-media {
+    align-items: flex-start;
+  }
+
+  .conv-bubble.outgoing.is-media {
+    align-items: flex-end;
   }
 
   .conv-inline-image--line-rich {
@@ -1073,8 +1145,14 @@
   // 客人傳的圖，AI 讀出來的一句說明。寬度對齊圖片本身，讀起來才像是這張圖的說明文字；
   // 刻意做得比圖片低調（次要色、小字）——它是輔助資訊，不該跟圖片本身搶注意力。
   .conv-media-caption {
-    width: var(--line-image-message-width);
-    max-width: 100%;
+    // width: 0 + min-width: 100% ＝「不參與決定泡泡多寬，但填滿泡泡」。
+    // 固定 620px 會反過來把圖片的框撐回 620px（同一個 flex 欄），直圖又被推回中間；
+    // 純 max-width 則讓長句子比一張直式截圖還寬，說明文字凸出圖片右邊。
+    // 這樣寫，泡泡寬度只由圖片決定，說明就正好裁齊圖片的兩邊。
+    // 下限 220px：窄圖（裁過的截圖）不該把說明壓成一行三個字的細長條。
+    // 這種情況說明會比圖片寬一點，但「讀得下去」優先於邊緣對齊。
+    width: 0;
+    min-width: max(100%, 220px);
     box-sizing: border-box;
     margin-top: 0.35rem;
     color: var(--text-secondary);

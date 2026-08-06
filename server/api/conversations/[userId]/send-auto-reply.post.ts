@@ -26,7 +26,9 @@ function resolveRequestOrigin(event: Parameters<typeof getHeader>[0]): string {
  * 動作／標籤的處理完全沿用客服預存那條路徑（兩者的 action 是同一個 shape）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  // 借的是模組／規則的內容，但按送出的是真人 → 對話上標「真人」並記下是哪位同事
+  const operatorName = String(token.name || token.email || '').trim()
 
   const userId = getRouterParam(event, 'userId')
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })
@@ -60,6 +62,7 @@ export default defineEventHandler(async (event) => {
       ruleId,
       requestOrigin,
       workspaceId,
+      operatorName,
     )
   }
   catch (e) {

@@ -3,6 +3,7 @@ import type { ConversationStatus } from '~~/shared/types/conversation-stats'
 import { STATUS_LABELS } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { resolveMessageSender } from '~~/shared/message-sender'
 
 function toMillis(raw: unknown): number {
   if (raw == null) return 0
@@ -56,6 +57,9 @@ export default defineEventHandler(async (event) => {
       readByPeer,
       /** 客人傳的圖，AI 讀出來的一句說明（沒讀到或 AI 未啟用就是空字串） */
       mediaDescription: (data.mediaDescription as string | undefined) ?? '',
+      /** 這則是誰回的：真人 / AI / 機器人 / 系統。null＝這功能上線前的舊訊息，前端不掛標籤 */
+      sender: resolveMessageSender({ direction, sender: data.sender, aiGenerated: data.aiGenerated }),
+      senderName: (data.senderName as string | undefined) ?? '',
     }
   }).reverse()
 

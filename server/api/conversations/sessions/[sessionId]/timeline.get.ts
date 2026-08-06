@@ -6,6 +6,7 @@ import {
 } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { resolveMessageSender, type MessageSender } from '~~/shared/message-sender'
 
 type TimelineItemType = 'message' | 'event' | 'broadcast'
 
@@ -25,6 +26,9 @@ interface TimelineItem {
   payload?: unknown
   /** 客人傳的圖，AI 讀出來的一句說明（與對話頁同一個欄位，兩邊顯示要一致） */
   mediaDescription?: string
+  /** 這則是誰回的（與對話頁同一套判定，見 shared/message-sender.ts）；null＝舊訊息，不掛標籤 */
+  sender?: MessageSender | null
+  senderName?: string
   // event fields
   eventType?: ConversationEventType
   moduleType?: ModuleType
@@ -270,6 +274,8 @@ export default defineEventHandler(async (event) => {
       messageType: m.messageType,
       payload: m.payload,
       mediaDescription: m.mediaDescription ?? '',
+      sender: resolveMessageSender({ direction, sender: m.sender, aiGenerated: m.aiGenerated }),
+      senderName: m.senderName ?? '',
     })
   }
 

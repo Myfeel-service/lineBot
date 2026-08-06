@@ -29,7 +29,11 @@ async function pushToCustomer(
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+
+  // 對話上「真人」標籤的 tooltip 要講出是哪位同事回的。收件匣是全團隊共用的，
+  // 只寫「真人」等於還要再問一次「誰回的？」。取不到名字就退到 email，都沒有就留空。
+  const operatorName = String(token.name || token.email || '').trim()
 
   const userId = getRouterParam(event, 'userId')
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })
@@ -58,6 +62,8 @@ export default defineEventHandler(async (event) => {
     await saveConversationMessage(userId, 'outgoing', '[貼圖]', {
       messageType: 'sticker',
       payload: message,
+      sender: 'human',
+      senderName: operatorName,
     }, workspaceId)
     onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
     return { ok: true }
@@ -74,6 +80,8 @@ export default defineEventHandler(async (event) => {
     await saveConversationMessage(userId, 'outgoing', '[圖片]', {
       messageType: 'image',
       payload: message,
+      sender: 'human',
+      senderName: operatorName,
     }, workspaceId)
     onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
     return { ok: true }
@@ -90,6 +98,8 @@ export default defineEventHandler(async (event) => {
     await saveConversationMessage(userId, 'outgoing', '[影片]', {
       messageType: 'video',
       payload: message,
+      sender: 'human',
+      senderName: operatorName,
     }, workspaceId)
     onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
     return { ok: true }
@@ -109,6 +119,8 @@ export default defineEventHandler(async (event) => {
     await saveConversationMessage(userId, 'outgoing', '[音訊]', {
       messageType: 'audio',
       payload: message,
+      sender: 'human',
+      senderName: operatorName,
     }, workspaceId)
     onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
     return { ok: true }
@@ -128,6 +140,8 @@ export default defineEventHandler(async (event) => {
     await saveConversationMessage(userId, 'outgoing', `[檔案] ${fileName}`, {
       messageType: 'file',
       payload: message,
+      sender: 'human',
+      senderName: operatorName,
     }, workspaceId)
     onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
     return { ok: true }
@@ -141,6 +155,8 @@ export default defineEventHandler(async (event) => {
   await saveConversationMessage(userId, 'outgoing', text, {
     messageType: 'text',
     payload: message,
+    sender: 'human',
+    senderName: operatorName,
   }, workspaceId)
   onHumanOutgoingMessage(userId, workspaceId).catch(e => console.error('[session] onHumanOutgoing error:', e))
 
