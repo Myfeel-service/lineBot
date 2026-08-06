@@ -13,6 +13,8 @@
   --line-card-radius: 1rem;
   --line-image-message-width: min(620px, 78vw);
   --line-rich-image-width: min(640px, 80vw);
+  /* 訊息流列間距。.conv-messages 與 .conv-day-group（日期分組）共用，避免分組後間距不一致 */
+  --conv-row-gap: 0.65rem;
 
   .conv-status-tabs {
     display: flex;
@@ -276,6 +278,12 @@
     overflow: hidden;
   }
 
+  // 「目前狀況」是 absolute 浮在對話上方,定位基準要落在這一層(而不是整頁)。
+  // 只在對話頁加,不動共用的 .split-editor-body——那支被很多頁面共用。
+  .split-editor-body {
+    position: relative;
+  }
+
   .conv-editor-header-block {
     display: flex;
     flex-direction: column;
@@ -295,6 +303,57 @@
   .conv-session-toolbar__hint {
     font-size: 0.72rem;
     color: var(--text-secondary);
+  }
+
+  /**
+   * 日期分段（仿 LINE）：一天一組，組頭是那天的日期膠囊。
+   *
+   * ⛔ 分組容器不可省。sticky 的推擠邊界是它的父層：一天一組，上一顆膠囊才會被
+   * 自己那組的底邊推出畫面、換成下一天那顆。全部攤平在同一層的話，先吸上去的
+   * 那顆永遠不會被推走，第二天的膠囊會直接疊在它上面（看起來就是壞的）。
+   *
+   * gap 與 .conv-messages 共用同一個變數：分組只是為了 sticky，不該改變泡泡間距。
+   * 另外，一欄可讀寬度的 .conv-messages > * 現在落在這一層（組），組內各列跟著縮，
+   * 效果一樣——而事件行也因此回到「置中小膠囊」，不會被拉成滿版。
+   */
+  .conv-day-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--conv-row-gap);
+  }
+
+  /**
+   * 日期膠囊本身。吸在自己那一組的頂端——長對話往上滑時還看得到現在讀的是哪一天。
+   * 刻意不用邊框／不加線：它是分段標記，不是內容，畫太重會跟事件行搶注意力。
+   */
+  .conv-day-divider {
+    position: sticky;
+    top: 0;
+    // 要蓋過泡泡裡的裝飾（輪播箭頭 z-index:3、整圖點擊提示 z-index:2）：
+    // 那些在 DOM 順序上排在後面，同層級就會壓在吸附中的膠囊上面。
+    z-index: 5;
+    // 整列滿版 + 內容置中（不是 align-self: center）：寬度那一關交給
+    // .conv-messages > * 管，這裡只負責把膠囊擺到中間。
+    display: flex;
+    justify-content: center;
+    // 比泡泡之間的 gap 再多一點空隙：分段要看得出來是「一天結束了」，而不是又一則訊息。
+    margin-block: 0.3rem;
+    // 吸附時會壓在泡泡上：讓點擊穿透過去，不要擋住下面那則訊息的操作。
+    pointer-events: none;
+  }
+
+  .conv-day-divider__label {
+    padding: 0.2rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--chat-day-chip-bg);
+    color: var(--chat-day-chip-text);
+    // 吸在頂端時會壓在中央的事件膠囊上（兩者都置中，一定會撞）。
+    // 一層淡陰影讓它讀起來是「浮在上面」，而不是和下面那顆黏成一顆壞掉的膠囊。
+    box-shadow: 0 1px 5px rgba(15, 23, 42, 0.22);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   .conv-timeline-event {
@@ -379,8 +438,18 @@
     padding: 1rem 1rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.65rem;
+    // 列與列的間距。日期分組（.conv-day-group）要用同一個值，
+    // 不然「同一天的兩則」和「跨組的兩則」間距會不一樣。
+    gap: var(--conv-row-gap);
     background: var(--chat-pane-bg); // 與 AI 試答頁共用（core/_variables.scss Chat 區）
+  }
+
+  /**
+   * 「目前狀況」是**浮在對話上方**的,所以訊息區要留出它的高度,
+   * 否則最舊的那幾則會被壓在底下。留的是一行狀態列的高度＋間距。
+   */
+  .conv-messages {
+    padding-top: 3.25rem;
   }
 
   .conv-bubble-row {
@@ -1244,10 +1313,12 @@
     position: relative;
   }
 
+  // 也吸在訊息區頂端，會跟日期膠囊（z-index:5）重疊：
+  // 拖曳只有那一瞬間、而且是正在動手的動作，所以疊在日期之上。
   .conv-drop-hint {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 6;
     align-self: center;
     padding: 0.45rem 0.9rem;
     border-radius: var(--radius-pill);
@@ -1473,7 +1544,7 @@
     width: 100%;
     max-width: min(560px, 82%);
 
-    .conv-ai-banner-body {
+    .conv-ai-context-body {
       border: 1px solid var(--el-border-color-lighter);
       border-radius: 8px;
       background: var(--el-fill-color-light);
@@ -1499,71 +1570,125 @@
   // ── AI 脈絡卡（components/conversations/AiContextBanner.vue）─────────────
   // 原本寫在該元件的 <style scoped>,但整個對話頁的樣式都在這支 partial(AdminPanel.vue
   // 一個 style 區塊都沒有),留一個特例只會讓人下次找不到要改哪裡。
-  .conv-ai-banner {
-    border-radius: 8px;
-    margin: 0 12px 12px;
-    border: 1px solid var(--el-border-color);
-    background: var(--el-fill-color-light);
-    font-size: 13px;
+  /**
+   * 「目前狀況」列。**是一條狀態列,不是一張卡**——絕大多數情況它只有一行字。
+   *
+   * 先前沿用舊脈絡卡的外框(可收合、多列、滿版),結果一兩行內容配一大片空白橫在
+   * 對話最上面,而版面最大的一塊還被「還沒整理過」這個空狀態佔走。
+   * 內容有多少就佔多少,不要先給一個殼再想辦法填。
+   */
+  /**
+   * 「目前狀況」列。**白底卡,不是灰帶**——訊息區底色本來就是灰(--chat-pane-bg),
+   * 先前用 --bg-hover 當底等於灰配灰,看起來像一條沒人要的分隔帶;
+   * 而 --bg-hover 在全站是「滑過」的顏色,拿來當常駐底色也會被讀成未啟用。
+   *
+   * 與底下的對話同一欄寬:不對齊的話它看起來像浮在別的地方的東西。
+   */
+  .conv-status {
+    // 浮在對話上方、不佔訊息流的位置:捲動時它留在原地,狀態隨時看得到。
+    // 訊息會從底下經過,所以底色必須是不透明的白。
+    position: absolute;
+    top: 0.6rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    z-index: 3;
+    padding: 0.5rem 0.6rem 0.5rem 0.75rem;
+    border-radius: var(--radius-md, 10px);
+    border: 1px solid var(--border);
+    background: var(--bg-surface, #fff);
+    box-shadow: var(--shadow-md);
+    font-size: 0.78rem;
+  }
 
-    &--handoff {
-      border-color: var(--el-color-warning-light-5);
-      background: var(--el-color-warning-light-9);
-    }
-    &--answered {
-      border-color: var(--el-color-success-light-5);
-      background: var(--el-color-success-light-9);
-    }
-    &--disambiguate {
-      border-color: var(--el-color-info-light-5);
-      background: var(--el-color-info-light-9);
-    }
-    // 脈絡不屬於眼前這場會話:純說明、沒有任何可按的東西,所以不套決策色
-    &--stale {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      padding: 8px 12px;
+  /**
+   * 狀態圓點。顏色本身就是狀態,比一顆看不懂的圖示直接:
+   * 琥珀＝有東西在等人（等客人回覆／已轉真人,可能要插手）、灰＝照常。
+   * 只分兩級——三種顏色會讓人以為顏色本身還有別的意義。
+   */
+  .conv-status__dot {
+    flex: 0 0 auto;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--text-muted);
+
+    .conv-status--waiting & {
+      background: #e6a23c;
     }
   }
 
-  // 摘要的按鈕列（整理 / 重新整理 + 上次整理時間）
-  .conv-ai-summary-actions {
+  /**
+   * 全部靠左擠在一起,**不要讓文字撐開剩餘寬度**。
+   * 先前狀態文字是 flex:1,把「整理這場對話」推到 1900px 外的右下角——
+   * 動作和它所屬的內容隔了整個螢幕寬,看起來像兩件不相干的事。
+   */
+  .conv-status__line {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 4px;
+    gap: 0.45rem;
+    min-width: 0;
   }
 
-  .conv-ai-banner-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .conv-ai-banner-badge {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .conv-ai-banner-summary {
-    flex: 1;
-    color: var(--el-text-color-regular);
+  // 狀態句是這一列的主角:給正常字級與深色,不要跟旁邊的時間一樣是灰小字
+  .conv-status__text {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .conv-ai-banner-time,
-  .conv-ai-banner-toggle {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
+  .conv-status__age {
+    flex: 0 0 auto;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
-  .conv-ai-banner-body {
+  // 分隔點由 CSS 產生:markup 裡塞一堆「·」的 span 會讓條件判斷變得難讀
+  .conv-status__line > .conv-status__age::before {
+    content: '·';
+    margin-right: 0.45rem;
+    color: var(--text-muted);
+  }
+
+  /**
+   * 動作靠右。欄寬收成 1100px 之後右對齊才成立——先前滿版時
+   * 它會被推到 1900px 外的角落,跟所屬的內容隔了整個螢幕。
+   */
+  .conv-status__actions {
+    flex: 1 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+
+  // 有摘要才出現。摘要是接手的人第一個要讀的東西,所以給正常字級、不是灰色小字
+  .conv-status__summary {
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed var(--border);
+  }
+
+  .conv-status__summary-text {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--text-primary);
+  }
+
+  .conv-status__summary-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.15rem;
+  }
+
+  .conv-ai-context-body {
     padding: 8px 12px 12px;
     border-top: 1px dashed var(--el-border-color);
     display: flex;

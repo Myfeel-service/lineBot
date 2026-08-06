@@ -235,339 +235,345 @@
         <div v-else-if="!chatRows.length" class="split-empty-state">
           <p>尚無對話內容</p>
         </div>
-        <template v-for="row in chatRows" :key="row.key">
-          <div
-            v-if="row.kind === 'event'"
-            class="conv-timeline-event"
-            :class="{ 'conv-timeline-event--action': row.variant === 'action' }"
-            :title="row.variant === 'action' ? '客人在 LINE 裡做的動作（按按鈕、加好友、活動登記），不是他傳的訊息' : undefined"
-          >
-            <span v-if="row.variant === 'action'" class="conv-timeline-event__icon" aria-hidden="true">👆</span>
-            <span v-else class="conv-timeline-event__dot" aria-hidden="true" />
-            <span class="conv-timeline-event__label">{{ row.label }}</span>
-            <span class="conv-timeline-event__time">{{ formatTime(row.timestamp) }}</span>
+        <!-- 一天一組（見 chatDayGroups）：日期膠囊吸在自己這一組的頂端，滑到下一天才換上新的那顆 -->
+        <div v-for="(group, groupIdx) in chatDayGroups" :key="group.key || `nd-${groupIdx}`" class="conv-day-group">
+          <div v-if="group.label" class="conv-day-divider">
+            <span class="conv-day-divider__label">{{ group.label }}</span>
           </div>
-          <template v-else>
-            <template v-for="msg in [row.msg]" :key="msg.id">
-              <div
-                class="conv-bubble-row"
-                :class="msg.direction"
-              >
+          <template v-for="row in group.rows" :key="row.key">
+            <div
+              v-if="row.kind === 'event'"
+              class="conv-timeline-event"
+              :class="{ 'conv-timeline-event--action': row.variant === 'action' }"
+              :title="row.variant === 'action' ? '客人在 LINE 裡做的動作（按按鈕、加好友、活動登記），不是他傳的訊息' : undefined"
+            >
+              <span v-if="row.variant === 'action'" class="conv-timeline-event__icon" aria-hidden="true">👆</span>
+              <span v-else class="conv-timeline-event__dot" aria-hidden="true" />
+              <span class="conv-timeline-event__label">{{ row.label }}</span>
+              <span class="conv-timeline-event__time">{{ formatClockTime(row.timestamp) }}</span>
+            </div>
+            <template v-else>
+              <template v-for="msg in [row.msg]" :key="msg.id">
                 <div
-                  class="conv-bubble-wrap"
-                  :class="[
-                    msg.direction,
-                    { 'is-structured': isStructuredLineMessage(msg), 'is-media': isMediaMessage(msg) },
-                  ]"
+                  class="conv-bubble-row"
+                  :class="msg.direction"
                 >
                   <div
-                    class="conv-bubble"
+                    class="conv-bubble-wrap"
                     :class="[
                       msg.direction,
                       { 'is-structured': isStructuredLineMessage(msg), 'is-media': isMediaMessage(msg) },
                     ]"
                   >
-                    <template v-if="getMessageType(msg) === 'text'">
-              <div v-if="isEmojiOnlyMessage(msg)" class="conv-emoji-message">
-                <img
-                  v-for="(emoji, idx) in splitEmojiUnits(getMessageDisplayText(msg))"
-                  :key="`${msg.id}-emoji-${idx}`"
-                  :src="getEmojiImageUrl(emoji)"
-                  :alt="emoji"
-                  class="conv-emoji-image"
-                />
-              </div>
-              <div v-else class="conv-bubble-text">
-                <div v-for="(line, lineIdx) in splitMessageLines(msg)" :key="`${msg.id}-line-${lineIdx}`">
-                  <template v-for="(seg, segIdx) in splitMessageLineSegments(line)" :key="`${msg.id}-seg-${lineIdx}-${segIdx}`">
-                    <span :class="{ 'conv-link-text': seg.isLink }">{{ seg.text }}</span>
-                  </template>
-                </div>
-              </div>
-            </template>
-            <template v-else-if="getMessageType(msg) === 'image'">
-              <el-image
-                v-if="getMessageImageUrl(msg)"
-                class="conv-inline-image"
-                :src="getMessageImageUrl(msg)"
-                fit="contain"
-                :preview-src-list="[getMessageImageUrl(msg)]"
-                :preview-teleported="true"
-              />
-              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
-              <!-- AI 讀出來的圖片說明：明講是 AI 讀的，客服才知道這句話可能不準、要自己看圖確認 -->
-              <div v-if="msg.mediaDescription" class="conv-media-caption">
-                <span class="conv-media-caption__tag">AI 看到</span>{{ msg.mediaDescription }}
-              </div>
-            </template>
-            <template v-else-if="getLineRichImageUrl(msg)">
-              <el-image
-                class="conv-inline-image conv-inline-image--line-rich"
-                :style="getLineRichImageFrameStyle(msg)"
-                :src="getLineRichImageUrl(msg)"
-                fit="contain"
-                :preview-src-list="[getLineRichImageUrl(msg)]"
-                :preview-teleported="true"
-              />
-            </template>
-            <template v-else-if="getMessageType(msg) === 'video'">
-              <!-- 客人傳來的影片沒有預覽圖，只能直接放播放器；客服自己送的有預覽圖就先顯示 -->
-              <video
-                v-if="getVideoUrl(msg)"
-                class="conv-inline-video"
-                :src="getVideoUrl(msg)"
-                :poster="getVideoPreviewImageUrl(msg) || undefined"
-                controls
-                preload="metadata"
-              />
-              <div v-else-if="getVideoPreviewImageUrl(msg)" class="conv-video-frame">
-                <img
-                  :src="getVideoPreviewImageUrl(msg)"
-                  alt="video-preview"
-                  class="conv-video-preview"
-                />
-                <div class="conv-video-play">▶</div>
-              </div>
-              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
-            </template>
-            <template v-else-if="getMessageType(msg) === 'audio'">
-              <a
-                v-if="getAudioUrl(msg)"
-                :href="getAudioUrl(msg)"
-                class="conv-attachment-card"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span class="conv-attachment-card__icon">🎵</span>
-                <span class="conv-attachment-card__meta">
-                  <span class="conv-attachment-card__title">語音訊息</span>
-                  <span class="conv-attachment-card__desc">{{ getAudioDurationLabel(msg) }}・點擊播放</span>
-                </span>
-              </a>
-              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
-            </template>
-            <template v-else-if="getMessageType(msg) === 'file'">
-              <a
-                v-if="getFileUrl(msg)"
-                :href="getFileUrl(msg)"
-                class="conv-attachment-card"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span class="conv-attachment-card__icon">📎</span>
-                <span class="conv-attachment-card__meta">
-                  <span class="conv-attachment-card__title">{{ getFileName(msg) }}</span>
-                  <span class="conv-attachment-card__desc">點擊下載</span>
-                </span>
-              </a>
-              <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
-            </template>
-            <template v-else-if="isStructuredLineMessage(msg)">
-              <div class="conv-line-template" :class="getStructuredTemplateClass(msg)">
-                <div
-                  v-if="shouldUseStructuredCarousel(msg)"
-                  class="conv-line-template-carousel"
-                >
-                  <button
-                    type="button"
-                    class="conv-line-template-carousel__arrow"
-                    :disabled="isStructuredCarouselAtStart(msg)"
-                    @click="moveStructuredCarousel(msg, -1)"
-                  >
-                    &lt;
-                  </button>
-                  <div class="conv-line-template-carousel__viewport">
                     <div
-                      class="conv-line-template-carousel__track"
-                      :style="{ transform: `translateX(calc(-1 * ${getStructuredCarouselIndex(msg)} * (50% + (var(--conv-carousel-gap) / 2))))` }"
+                      class="conv-bubble"
+                      :class="[
+                        msg.direction,
+                        { 'is-structured': isStructuredLineMessage(msg), 'is-media': isMediaMessage(msg) },
+                      ]"
                     >
+                      <template v-if="getMessageType(msg) === 'text'">
+                <div v-if="isEmojiOnlyMessage(msg)" class="conv-emoji-message">
+                  <img
+                    v-for="(emoji, idx) in splitEmojiUnits(getMessageDisplayText(msg))"
+                    :key="`${msg.id}-emoji-${idx}`"
+                    :src="getEmojiImageUrl(emoji)"
+                    :alt="emoji"
+                    class="conv-emoji-image"
+                  />
+                </div>
+                <div v-else class="conv-bubble-text">
+                  <div v-for="(line, lineIdx) in splitMessageLines(msg)" :key="`${msg.id}-line-${lineIdx}`">
+                    <template v-for="(seg, segIdx) in splitMessageLineSegments(line)" :key="`${msg.id}-seg-${lineIdx}-${segIdx}`">
+                      <span :class="{ 'conv-link-text': seg.isLink }">{{ seg.text }}</span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="getMessageType(msg) === 'image'">
+                <el-image
+                  v-if="getMessageImageUrl(msg)"
+                  class="conv-inline-image"
+                  :src="getMessageImageUrl(msg)"
+                  fit="contain"
+                  :preview-src-list="[getMessageImageUrl(msg)]"
+                  :preview-teleported="true"
+                />
+                <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
+                <!-- AI 讀出來的圖片說明：明講是 AI 讀的，客服才知道這句話可能不準、要自己看圖確認 -->
+                <div v-if="msg.mediaDescription" class="conv-media-caption">
+                  <span class="conv-media-caption__tag">AI 看到</span>{{ msg.mediaDescription }}
+                </div>
+              </template>
+              <template v-else-if="getLineRichImageUrl(msg)">
+                <el-image
+                  class="conv-inline-image conv-inline-image--line-rich"
+                  :style="getLineRichImageFrameStyle(msg)"
+                  :src="getLineRichImageUrl(msg)"
+                  fit="contain"
+                  :preview-src-list="[getLineRichImageUrl(msg)]"
+                  :preview-teleported="true"
+                />
+              </template>
+              <template v-else-if="getMessageType(msg) === 'video'">
+                <!-- 客人傳來的影片沒有預覽圖，只能直接放播放器；客服自己送的有預覽圖就先顯示 -->
+                <video
+                  v-if="getVideoUrl(msg)"
+                  class="conv-inline-video"
+                  :src="getVideoUrl(msg)"
+                  :poster="getVideoPreviewImageUrl(msg) || undefined"
+                  controls
+                  preload="metadata"
+                />
+                <div v-else-if="getVideoPreviewImageUrl(msg)" class="conv-video-frame">
+                  <img
+                    :src="getVideoPreviewImageUrl(msg)"
+                    alt="video-preview"
+                    class="conv-video-preview"
+                  />
+                  <div class="conv-video-play">▶</div>
+                </div>
+                <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
+              </template>
+              <template v-else-if="getMessageType(msg) === 'audio'">
+                <a
+                  v-if="getAudioUrl(msg)"
+                  :href="getAudioUrl(msg)"
+                  class="conv-attachment-card"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="conv-attachment-card__icon">🎵</span>
+                  <span class="conv-attachment-card__meta">
+                    <span class="conv-attachment-card__title">語音訊息</span>
+                    <span class="conv-attachment-card__desc">{{ getAudioDurationLabel(msg) }}・點擊播放</span>
+                  </span>
+                </a>
+                <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
+              </template>
+              <template v-else-if="getMessageType(msg) === 'file'">
+                <a
+                  v-if="getFileUrl(msg)"
+                  :href="getFileUrl(msg)"
+                  class="conv-attachment-card"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="conv-attachment-card__icon">📎</span>
+                  <span class="conv-attachment-card__meta">
+                    <span class="conv-attachment-card__title">{{ getFileName(msg) }}</span>
+                    <span class="conv-attachment-card__desc">點擊下載</span>
+                  </span>
+                </a>
+                <div v-else class="conv-media-fallback">{{ mediaFallbackText(msg) }}</div>
+              </template>
+              <template v-else-if="isStructuredLineMessage(msg)">
+                <div class="conv-line-template" :class="getStructuredTemplateClass(msg)">
+                  <div
+                    v-if="shouldUseStructuredCarousel(msg)"
+                    class="conv-line-template-carousel"
+                  >
+                    <button
+                      type="button"
+                      class="conv-line-template-carousel__arrow"
+                      :disabled="isStructuredCarouselAtStart(msg)"
+                      @click="moveStructuredCarousel(msg, -1)"
+                    >
+                      &lt;
+                    </button>
+                    <div class="conv-line-template-carousel__viewport">
                       <div
-                        v-for="(card, cardIdx) in getStructuredCards(msg)"
-                        :key="`${msg.id}-card-slide-${cardIdx}`"
-                        class="conv-line-template-carousel__item"
+                        class="conv-line-template-carousel__track"
+                        :style="{ transform: `translateX(calc(-1 * ${getStructuredCarouselIndex(msg)} * (50% + (var(--conv-carousel-gap) / 2))))` }"
                       >
                         <div
-                          class="conv-line-card"
-                          :class="getStructuredCardClass(msg, card)"
+                          v-for="(card, cardIdx) in getStructuredCards(msg)"
+                          :key="`${msg.id}-card-slide-${cardIdx}`"
+                          class="conv-line-template-carousel__item"
                         >
-                          <img
-                            v-if="card.imageUrl"
-                            :src="card.imageUrl"
-                            :alt="card.title || 'preview'"
-                            class="conv-line-card-image"
-                            :style="getCardImageStyle(msg, card)"
-                          />
                           <div
-                            v-if="shouldShowFlexImageHeroOverlay(msg, card) || (getStructuredVariant(msg) === 'image_carousel' && getCardOverlayLabel(card))"
-                            class="conv-line-card-image-overlay"
+                            class="conv-line-card"
+                            :class="getStructuredCardClass(msg, card)"
                           >
-                            {{ getCardOverlayLabel(card) }}
-                          </div>
-                          <div v-if="card.title" class="conv-line-card-title">{{ card.title }}</div>
-                          <div v-if="card.text" class="conv-line-card-text">{{ card.text }}</div>
-                          <div
-                            v-if="card.actions.length"
-                            class="conv-line-card-actions"
-                            :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
-                          >
-                            <button
-                              v-for="(act, actIdx) in card.actions"
-                              :key="`${msg.id}-act-${cardIdx}-${actIdx}`"
-                              type="button"
-                              class="conv-line-card-action"
+                            <img
+                              v-if="card.imageUrl"
+                              :src="card.imageUrl"
+                              :alt="card.title || 'preview'"
+                              class="conv-line-card-image"
+                              :style="getCardImageStyle(msg, card)"
+                            />
+                            <div
+                              v-if="shouldShowFlexImageHeroOverlay(msg, card) || (getStructuredVariant(msg) === 'image_carousel' && getCardOverlayLabel(card))"
+                              class="conv-line-card-image-overlay"
+                            >
+                              {{ getCardOverlayLabel(card) }}
+                            </div>
+                            <div v-if="card.title" class="conv-line-card-title">{{ card.title }}</div>
+                            <div v-if="card.text" class="conv-line-card-text">{{ card.text }}</div>
+                            <div
+                              v-if="card.actions.length"
+                              class="conv-line-card-actions"
                               :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
                             >
-                              {{ act }}
-                            </button>
+                              <button
+                                v-for="(act, actIdx) in card.actions"
+                                :key="`${msg.id}-act-${cardIdx}-${actIdx}`"
+                                type="button"
+                                class="conv-line-card-action"
+                                :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
+                              >
+                                {{ act }}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      class="conv-line-template-carousel__arrow"
+                      :disabled="isStructuredCarouselAtEnd(msg)"
+                      @click="moveStructuredCarousel(msg, 1)"
+                    >
+                      >
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    class="conv-line-template-carousel__arrow"
-                    :disabled="isStructuredCarouselAtEnd(msg)"
-                    @click="moveStructuredCarousel(msg, 1)"
-                  >
-                    >
-                  </button>
-                </div>
-                <div v-else class="conv-line-template-cards">
-                  <div
-                    v-for="(card, cardIdx) in getStructuredCards(msg)"
-                    :key="`${msg.id}-card-${cardIdx}`"
-                    class="conv-line-card"
-                    :class="getStructuredCardClass(msg, card)"
-                  >
-                    <img
-                      v-if="card.imageUrl"
-                      :src="card.imageUrl"
-                      :alt="card.title || 'preview'"
-                      class="conv-line-card-image"
-                      :style="getCardImageStyle(msg, card)"
-                    />
+                  <div v-else class="conv-line-template-cards">
                     <div
-                      v-if="shouldShowFlexImageHeroOverlay(msg, card) || (getStructuredVariant(msg) === 'image_carousel' && getCardOverlayLabel(card))"
-                      class="conv-line-card-image-overlay"
+                      v-for="(card, cardIdx) in getStructuredCards(msg)"
+                      :key="`${msg.id}-card-${cardIdx}`"
+                      class="conv-line-card"
+                      :class="getStructuredCardClass(msg, card)"
                     >
-                      {{ getCardOverlayLabel(card) }}
-                    </div>
-                    <div v-if="card.title" class="conv-line-card-title">{{ card.title }}</div>
-                    <div v-if="card.text" class="conv-line-card-text">{{ card.text }}</div>
-                    <div
-                      v-if="card.actions.length"
-                      class="conv-line-card-actions"
-                      :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
-                    >
-                      <button
-                        v-for="(act, actIdx) in card.actions"
-                        :key="`${msg.id}-act-${cardIdx}-${actIdx}`"
-                        type="button"
-                        class="conv-line-card-action"
+                      <img
+                        v-if="card.imageUrl"
+                        :src="card.imageUrl"
+                        :alt="card.title || 'preview'"
+                        class="conv-line-card-image"
+                        :style="getCardImageStyle(msg, card)"
+                      />
+                      <div
+                        v-if="shouldShowFlexImageHeroOverlay(msg, card) || (getStructuredVariant(msg) === 'image_carousel' && getCardOverlayLabel(card))"
+                        class="conv-line-card-image-overlay"
+                      >
+                        {{ getCardOverlayLabel(card) }}
+                      </div>
+                      <div v-if="card.title" class="conv-line-card-title">{{ card.title }}</div>
+                      <div v-if="card.text" class="conv-line-card-text">{{ card.text }}</div>
+                      <div
+                        v-if="card.actions.length"
+                        class="conv-line-card-actions"
                         :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
                       >
-                        {{ act }}
-                      </button>
+                        <button
+                          v-for="(act, actIdx) in card.actions"
+                          :key="`${msg.id}-act-${cardIdx}-${actIdx}`"
+                          type="button"
+                          class="conv-line-card-action"
+                          :class="{ 'is-line-action': shouldUseLineActionStyle(msg) }"
+                        >
+                          {{ act }}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </template>
-            <template v-else-if="getMessageType(msg) === 'sticker'">
-              <div class="conv-sticker-message">
-                <el-image
-                  v-if="getStickerImageUrl(msg)"
-                  class="conv-inline-sticker"
-                  :src="getStickerImageUrl(msg)"
-                  fit="contain"
-                  :preview-src-list="[getStickerImageUrl(msg)]"
-                  :preview-teleported="true"
-                />
-              </div>
-            </template>
-            <template v-else>
-              <el-tag size="small" type="info">{{ getMessageType(msg) }}</el-tag>
-              <span class="conv-bubble-text">{{ getMessageDisplayText(msg) }}</span>
-              <span v-if="getPayloadSummary(msg)" class="conv-bubble-text text-muted">{{ getPayloadSummary(msg) }}</span>
-            </template>
-            </div>
-                  <div class="conv-bubble-meta">
-                    <!-- 還在送 / 送失敗的本地泡泡：時間還不確定，先不要寫一個假的上去 -->
-                    <span v-if="msg.sendStatus === 'sending'" class="conv-bubble-sending">傳送中…</span>
-                    <span v-else-if="msg.sendStatus === 'failed'" class="conv-bubble-failed">傳送失敗</span>
-                    <template v-else>
-                      <!--
-                        誰回的標籤與時間同一行：各佔一行的話 meta 會變成三層高，比旁邊
-                        一行字的泡泡還高。標籤放泡泡外面是刻意的——進泡泡裡會被誤讀成
-                        訊息內容（客人那邊看不到這顆標籤）。
-                        舊訊息沒有 sender 就整顆不出現，見 shared/message-sender.ts。
-                      -->
-                      <span class="conv-bubble-meta__line">
-                        <span
-                          v-if="msg.sender"
-                          class="conv-sender-tag"
-                          :class="{ 'conv-sender-tag--human': msg.sender === 'human' }"
-                          :title="senderTagTitle(msg)"
-                        >{{ MESSAGE_SENDER_LABELS[msg.sender] }}</span>
-                        <span class="conv-bubble-time">{{ formatTime(msg.timestamp) }}</span>
-                      </span>
-                      <span
-                        v-if="msg.direction === 'outgoing' && msg.readByPeer"
-                        class="conv-bubble-read"
-                        title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
-                      >已讀</span>
-                    </template>
-                  </div>
-                </div>
-              </div>
-
-              <!--
-                這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：一場對話 AI 回好幾次，
-                最上面那張永遠只講最新一次——客服想標的通常是更早那一則（發現答錯多半是客人抱怨之後）。
-                沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
-
-                按鈕與展開的內容都放在泡泡「下面」自己一區，**不塞進旁邊那條 meta**：
-                meta 是貼在泡泡右側的窄欄、與泡泡共用寬度上限，多一列會把它撐成三層高
-                （比泡泡還高）、六個字也會把泡泡擠窄。同 conv-send-failed-row 的理由。
-              -->
-              <div v-if="canOperate && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
-                <button
-                  type="button"
-                  class="conv-bubble-why"
-                  :aria-expanded="openTurnKey === msg.aiTurnId"
-                  @click="toggleTurn(msg.aiTurnId)"
-                >{{ openTurnKey === msg.aiTurnId ? '收起' : '為什麼這樣答' }}</button>
-
-                <div v-if="openTurnKey === msg.aiTurnId" class="conv-turn-panel">
-                  <div v-if="turnLoading" class="conv-turn-panel__loading"><div class="spinner" /></div>
-                  <p v-else-if="turnError" class="conv-turn-panel__error">{{ turnError }}</p>
-                  <ConversationsAiContextBody
-                    v-else-if="turnCtx"
-                    :ctx="turnCtx"
-                    :user-id="selectedUserId"
-                    :api-fetch="apiFetch"
-                    @apply-draft="applyAiDraft"
-                    @add-knowledge="goAddKnowledge"
-                    @edit-chunk="goEditChunk"
-                    @reload="loadTurn(msg.aiTurnId)"
+              </template>
+              <template v-else-if="getMessageType(msg) === 'sticker'">
+                <div class="conv-sticker-message">
+                  <el-image
+                    v-if="getStickerImageUrl(msg)"
+                    class="conv-inline-sticker"
+                    :src="getStickerImageUrl(msg)"
+                    fit="contain"
+                    :preview-src-list="[getStickerImageUrl(msg)]"
+                    :preview-teleported="true"
                   />
                 </div>
+              </template>
+              <template v-else>
+                <el-tag size="small" type="info">{{ getMessageType(msg) }}</el-tag>
+                <span class="conv-bubble-text">{{ getMessageDisplayText(msg) }}</span>
+                <span v-if="getPayloadSummary(msg)" class="conv-bubble-text text-muted">{{ getPayloadSummary(msg) }}</span>
+              </template>
               </div>
-              <!--
-                失敗的原因和補救動作放在泡泡「下面」自己一行，不塞進旁邊那條 meta：
-                meta 只有泡泡剩下的寬度，一句「已封鎖」就被壓成三行讀不下去。
-              -->
-              <div v-if="msg.sendStatus === 'failed'" class="conv-send-failed-row">
-                <span class="conv-send-failed-row__reason">{{ msg.sendError }}</span>
-                <span class="conv-bubble-retry">
-                  <button type="button" @click="retryPendingOutgoing(String(msg.localId))">重試</button>
-                  <button type="button" @click="discardPendingOutgoing(String(msg.localId))">收回文字</button>
-                </span>
-              </div>
+                    <div class="conv-bubble-meta">
+                      <!-- 還在送 / 送失敗的本地泡泡：時間還不確定，先不要寫一個假的上去 -->
+                      <span v-if="msg.sendStatus === 'sending'" class="conv-bubble-sending">傳送中…</span>
+                      <span v-else-if="msg.sendStatus === 'failed'" class="conv-bubble-failed">傳送失敗</span>
+                      <template v-else>
+                        <!--
+                          誰回的標籤與時間同一行：各佔一行的話 meta 會變成三層高，比旁邊
+                          一行字的泡泡還高。標籤放泡泡外面是刻意的——進泡泡裡會被誤讀成
+                          訊息內容（客人那邊看不到這顆標籤）。
+                          舊訊息沒有 sender 就整顆不出現，見 shared/message-sender.ts。
+                        -->
+                        <span class="conv-bubble-meta__line">
+                          <span
+                            v-if="msg.sender"
+                            class="conv-sender-tag"
+                            :class="{ 'conv-sender-tag--human': msg.sender === 'human' }"
+                            :title="senderTagTitle(msg)"
+                          >{{ MESSAGE_SENDER_LABELS[msg.sender] }}</span>
+                          <span class="conv-bubble-time">{{ formatClockTime(msg.timestamp) }}</span>
+                        </span>
+                        <span
+                          v-if="msg.direction === 'outgoing' && msg.readByPeer"
+                          class="conv-bubble-read"
+                          title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
+                        >已讀</span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+
+                <!--
+                  這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：一場對話 AI 回好幾次，
+                  最上面那張永遠只講最新一次——客服想標的通常是更早那一則（發現答錯多半是客人抱怨之後）。
+                  沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
+
+                  按鈕與展開的內容都放在泡泡「下面」自己一區，**不塞進旁邊那條 meta**：
+                  meta 是貼在泡泡右側的窄欄、與泡泡共用寬度上限，多一列會把它撐成三層高
+                  （比泡泡還高）、六個字也會把泡泡擠窄。同 conv-send-failed-row 的理由。
+                -->
+                <div v-if="canOperate && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
+                  <button
+                    type="button"
+                    class="conv-bubble-why"
+                    :aria-expanded="openTurnKey === msg.aiTurnId"
+                    @click="toggleTurn(msg.aiTurnId)"
+                  >{{ openTurnKey === msg.aiTurnId ? '收起' : '為什麼這樣答' }}</button>
+
+                  <div v-if="openTurnKey === msg.aiTurnId" class="conv-turn-panel">
+                    <div v-if="turnLoading" class="conv-turn-panel__loading"><div class="spinner" /></div>
+                    <p v-else-if="turnError" class="conv-turn-panel__error">{{ turnError }}</p>
+                    <ConversationsAiContextBody
+                      v-else-if="turnCtx"
+                      :ctx="turnCtx"
+                      :user-id="selectedUserId"
+                      :api-fetch="apiFetch"
+                      @apply-draft="applyAiDraft"
+                      @add-knowledge="goAddKnowledge"
+                      @edit-chunk="goEditChunk"
+                      @reload="loadTurn(msg.aiTurnId)"
+                    />
+                  </div>
+                </div>
+                <!--
+                  失敗的原因和補救動作放在泡泡「下面」自己一行，不塞進旁邊那條 meta：
+                  meta 只有泡泡剩下的寬度，一句「已封鎖」就被壓成三行讀不下去。
+                -->
+                <div v-if="msg.sendStatus === 'failed'" class="conv-send-failed-row">
+                  <span class="conv-send-failed-row__reason">{{ msg.sendError }}</span>
+                  <span class="conv-bubble-retry">
+                    <button type="button" @click="retryPendingOutgoing(String(msg.localId))">重試</button>
+                    <button type="button" @click="discardPendingOutgoing(String(msg.localId))">收回文字</button>
+                  </span>
+                </div>
+              </template>
             </template>
           </template>
-        </template>
+        </div>
       </div>
 
       <!--
@@ -971,6 +977,7 @@ import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversa
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
+import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
@@ -1943,6 +1950,42 @@ const serverChatRows = computed<ChatRow[]>(() => {
 })
 
 const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
+
+/** 泡泡與事件行都吃這一支，好讓日期分組判斷「這一則是哪一天」 */
+function chatRowMs(row: ChatRow): number {
+  if (row.kind === 'msg') return messageTimestampToMs(row.msg.timestamp)
+  return messageTimestampToMs(row.timestamp)
+}
+
+/**
+ * 訊息流照 LINE 的做法用日期分段：一整條長對話滑下來，沒有分隔線就分不出
+ * 「這句是今天問的還是上個月問的」——泡泡旁只有時分（見 formatClockTime），
+ * 日期一律由分隔線負責，兩邊不重複講同一件事。文字規則見 shared/chat-day.ts。
+ *
+ * **為什麼是「分組」而不是在流裡插一列**：日期膠囊要吸在畫面頂端，滑到下一天時
+ * 才換成新的那顆。sticky 的推擠邊界是它的父層，所以一天一個 .conv-day-group
+ * 才會有「上一顆被自己那組的底邊推出去」的效果；全部攤平在同一層的話，
+ * 先吸上去的那顆永遠不會被推走，第二天的膠囊會直接疊在它上面。
+ *
+ * 拿不到時間的那幾則（timestamp 為空、或剛送出還沒回時間）跟著上一段走，
+ * 不自己開一段：免得中間憑空多一條「1970」或把同一天切成兩段。
+ */
+type ChatDayGroup = { key: string; label: string; rows: ChatRow[] }
+
+const chatDayGroups = computed<ChatDayGroup[]>(() => {
+  const groups: ChatDayGroup[] = []
+  for (const row of chatRows.value) {
+    const ms = chatRowMs(row)
+    const key = ms > 0 ? chatDayKey(ms) : ''
+    let group = groups[groups.length - 1]
+    if (!group || (key && key !== group.key)) {
+      group = { key, label: key ? formatChatDayLabel(ms) : '', rows: [] }
+      groups.push(group)
+    }
+    group.rows.push(row)
+  }
+  return groups
+})
 
 // ── 右鍵／⋯：釘選、待跟進 ────────────────────────────────────────
 // 兩個都是「對話層級」的人工標記，所以會話列表按右鍵也是標到同一位客人身上。
@@ -2945,6 +2988,19 @@ function formatTime(ts: any): string {
     return d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
   }
   return d.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
+}
+
+/**
+ * 訊息流裡的時間一律只給時分。
+ *
+ * 側欄的 formatTime 是「今天給時間、以前給日期」——那是列表要的（一眼看出多久沒回）。
+ * 但泡泡不能這樣：舊訊息只印「8/5」就等於把時間吃掉，客服看不出那天幾點回的。
+ * 日期交給上面的分隔線（見 chatDayGroups），這裡專心講幾點幾分。
+ */
+function formatClockTime(ts: any): string {
+  const ms = messageTimestampToMs(ts)
+  if (ms <= 0) return ''
+  return new Date(ms).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function getActiveCategory(kind: PickerKind): string {

@@ -1508,12 +1508,4 @@ function onDialogClose() {
   }
 }
 
-function relativeTime(ms: number): string {
-  if (!ms) return ''
-  const diff = Date.now() - ms
-  if (diff < 60_000) return '剛剛'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分鐘前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小時前`
-  return new Date(ms).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
-}
 </script>

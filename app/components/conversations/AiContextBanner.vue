@@ -4,57 +4,70 @@
     每一則 AI 回覆各自的判斷依據在泡泡旁邊的「為什麼這樣答」，那才是逐則的脈絡；
     把同一份東西在兩個地方各印一次，只會讓人問這兩個有什麼不一樣。
   -->
-  <div v-if="visible" class="conv-ai-banner" :class="bannerClass">
-    <div class="conv-ai-banner-header" @click="expanded = !expanded">
-      <span class="conv-ai-banner-badge"><el-icon v-if="decisionIcon"><component :is="decisionIcon" /></el-icon> 目前狀況</span>
-      <span class="conv-ai-banner-summary">{{ statusText }}</span>
-      <span class="conv-ai-banner-time">{{ updatedAtLabel }}</span>
-      <span class="conv-ai-banner-toggle">{{ expanded ? '▴' : '▾' }}</span>
-    </div>
+  <div v-if="visible" class="conv-status" :class="toneClass">
+    <!--
+      絕大多數情況這裡只有一行：狀態。所以它是一條狀態列，不是一張卡——
+      先前沿用舊卡片的外框（可收合、多列、滿版），結果一兩行內容配一大片空白橫在對話最上面，
+      而版面最大的一塊還被「還沒整理過」這個空狀態佔走。
+    -->
+    <!--
+      全部靠左擠在一起。先前狀態文字吃掉所有剩餘寬度，把「整理這場對話」推到
+      1900px 外的右下角——動作跟它所屬的內容離了整個螢幕寬，看起來像兩件不相干的事。
+    -->
+    <div class="conv-status__line">
+      <!-- 顏色本身就是狀態:有東西在等人＝琥珀,照常＝灰。比一顆看不懂的圖示直接 -->
+      <span class="conv-status__dot" aria-hidden="true" />
+      <span class="conv-status__text">{{ statusText }}</span>
 
-    <div v-if="expanded" class="conv-ai-banner-body">
-      <!--
-        摘要放最前面、不用再展一層：接手的人第一個要知道的就是「這場發生什麼事」，
-        而不是上一則的把握度。沒有摘要時給一顆按鈕，不要只留一片空白。
-      -->
-      <div class="conv-ai-row conv-ai-row--block">
-        <span class="conv-ai-row__label">這場對話發生什麼事</span>
-        <div v-if="summaryText" class="conv-ai-draft">{{ summaryText }}</div>
-        <p v-else class="conv-ai-note">
-          {{ isHistoricalSession
-            ? '這場結束時沒有留下摘要。'
-            : '還沒整理過。按「我接手」時會自動整理，也可以現在就整理一份。' }}
-        </p>
+      <!-- 相對時間而不是時刻：要判斷的是「這個狀態卡多久了、該不該插手」，不是幾點幾分 -->
+      <span v-if="statusAgeLabel" class="conv-status__age">{{ statusAgeLabel }}</span>
+
+      <div class="conv-status__actions">
         <!-- 已結束的會話不給整理：摘要是拿最近幾則生的，在舊會話上按只會得到在講別場的話 -->
-        <div v-if="!isHistoricalSession" class="conv-ai-summary-actions">
-          <el-button size="small" plain :loading="summarizing" @click="refreshSummary">
-            {{ summaryText ? '重新整理摘要' : '整理這場對話' }}
-          </el-button>
-          <span v-if="summaryAgeLabel" class="conv-ai-actions__hint">{{ summaryAgeLabel }}</span>
-        </div>
+        <el-button
+          v-if="!isHistoricalSession && !summaryText"
+          size="small"
+          plain
+          :loading="summarizing"
+          @click="refreshSummary"
+        >整理這場對話</el-button>
+
+        <!-- 草稿模式才有東西可展開（AI 沒發訊息＝對話上沒有泡泡可點，判斷依據只能在這裡看） -->
+        <el-button
+          v-if="ctx?.hasMeta && ctx.draftMode"
+          size="small"
+          text
+          :aria-expanded="expanded"
+          @click="expanded = !expanded"
+        >{{ expanded ? '收起草稿依據' : '看草稿依據' }}</el-button>
       </div>
-
-      <!--
-        草稿模式：AI 不對客人發訊息，所以對話上沒有 AI 泡泡、也就沒有「為什麼這樣答」可點。
-        這時這張卡是唯一看得到判斷依據的地方，完整脈絡必須留在上面。
-        非草稿模式就不重複顯示——那些都在泡泡旁邊。
-      -->
-      <ConversationsAiContextBody
-        v-if="ctx?.hasMeta && ctx.draftMode"
-        :ctx="ctx"
-        :user-id="userId"
-        :api-fetch="apiFetch"
-        @apply-draft="$emit('apply-draft', $event)"
-        @add-knowledge="$emit('add-knowledge', $event)"
-        @edit-chunk="$emit('edit-chunk', $event)"
-        @reload="load"
-      />
-
-      <!-- 非草稿模式只留一句指路：真正的逐則脈絡在泡泡旁邊 -->
-      <p v-else-if="ctx?.hasMeta" class="conv-ai-note">
-        想看某一則 AI 回覆是怎麼判斷的（把握度、參考了哪條知識、標記答錯），點那則泡泡下面的「為什麼這樣答」。
-      </p>
     </div>
+
+    <!-- 有摘要才佔版面。接手的人第一個要知道的就是這段，所以不藏在展開層裡 -->
+    <div v-if="summaryText" class="conv-status__summary">
+      <p class="conv-status__summary-text">{{ summaryText }}</p>
+      <div class="conv-status__summary-meta">
+        <span v-if="summaryAgeLabel" class="conv-status__age">{{ summaryAgeLabel }}</span>
+        <el-button
+          v-if="!isHistoricalSession"
+          size="small"
+          text
+          :loading="summarizing"
+          @click="refreshSummary"
+        >重新整理</el-button>
+      </div>
+    </div>
+
+    <ConversationsAiContextBody
+      v-if="expanded && ctx?.hasMeta && ctx.draftMode"
+      :ctx="ctx"
+      :user-id="userId"
+      :api-fetch="apiFetch"
+      @apply-draft="$emit('apply-draft', $event)"
+      @add-knowledge="$emit('add-knowledge', $event)"
+      @edit-chunk="$emit('edit-chunk', $event)"
+      @reload="load"
+    />
   </div>
 </template>
 
@@ -71,7 +84,6 @@
  *   2. 現在卡在哪（等客人選選項／等確認轉接／已轉真人）
  *   3. 草稿模式的完整脈絡（那時 AI 不發訊息，對話上根本沒有泡泡可點）
  */
-import { ChatDotRound, CircleCheck, Clock, QuestionFilled, User } from '@element-plus/icons-vue'
 import {
   HANDOFF_REASON_LABELS,
   isAiContextWithinSession,
@@ -101,7 +113,8 @@ defineEmits<{
 const { showToast } = useAdminToast()
 
 const ctx = ref<AiContextPayload | null>(null)
-const expanded = ref(true)
+/** 只有草稿模式那一塊需要展開；預設收著，不要一打開對話就攤一大片 */
+const expanded = ref(false)
 const summarizing = ref(false)
 
 /**
@@ -146,19 +159,8 @@ const visible = computed(() => Boolean(ctx.value) && (showStatus.value || Boolea
 const summaryAgeLabel = computed(() => {
   const ms = ctx.value?.takeoverSummaryAtMs ?? 0
   if (!ms || !ctx.value?.takeoverSummary) return ''
-  return `整理於 ${new Date(ms).toLocaleString('zh-TW', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  })}`
-})
-
-const decisionIcon = computed(() => {
-  if (!showStatus.value) return null
-  const d = ctx.value!.lastDecision
-  if (d === 'answered') return CircleCheck
-  if (d === 'handoff') return User
-  if (d === 'handoff_confirm') return ChatDotRound
-  if (d === 'disambiguate') return QuestionFilled
-  return Clock
+  const rel = relativeTime(ms)
+  return rel ? `整理於 ${rel}` : ''
 })
 
 const handoffLabel = computed(() => {
@@ -183,21 +185,25 @@ const statusText = computed(() => {
   return c.lastQuery || '—'
 })
 
-const bannerClass = computed(() => {
+/**
+ * 底色只分「要注意」與「照常」兩級。
+ * 三種顏色會讓人以為顏色本身有意義，但這條列真正要傳達的只有一件事：
+ * 現在是不是有東西在等人（等客人回覆／已轉真人＝可能要插手）。
+ */
+const toneClass = computed(() => {
   if (!showStatus.value) return ''
   const d = ctx.value!.lastDecision
-  if (d === 'handoff') return 'conv-ai-banner--handoff'
-  if (d === 'handoff_confirm' || d === 'disambiguate') return 'conv-ai-banner--disambiguate'
-  return 'conv-ai-banner--answered'
+  if (d === 'handoff' || d === 'handoff_confirm' || d === 'disambiguate') return 'conv-status--waiting'
+  return ''
 })
 
-const updatedAtLabel = computed(() => {
-  const ms = showStatus.value ? (ctx.value?.updatedAtMs ?? 0) : 0
-  if (!ms) return ''
-  return new Date(ms).toLocaleString('zh-TW', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
-})
+/**
+ * 這個狀態卡多久了。用相對時間而不是「8/6 下午11:41」：
+ * 要判斷的是「客人已經等 40 分鐘了、我該不該插手」，把時刻換算成多久是多一道手續。
+ */
+const statusAgeLabel = computed(() =>
+  showStatus.value ? relativeTime(ctx.value?.updatedAtMs ?? 0) : '',
+)
 
 /** 手動整理摘要。force：使用者明講要重新整理時才重生，否則沒有新訊息就沿用（省 LLM 費用） */
 async function refreshSummary() {

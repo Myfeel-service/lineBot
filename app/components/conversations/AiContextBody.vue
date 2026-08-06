@@ -1,5 +1,5 @@
 <template>
-  <div class="conv-ai-banner-body">
+  <div class="conv-ai-context-body">
     <div v-if="ctx.handoffSummary" class="conv-ai-row conv-ai-row--block">
       <span class="conv-ai-row__label">對話摘要</span>
       <div class="conv-ai-draft">{{ ctx.handoffSummary }}</div>

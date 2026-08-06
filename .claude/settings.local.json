@@ -258,7 +258,8 @@
       "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-recover-mandate.ts\" NP260806162626TS1 zz-e2e-033159064)",
       "Bash(node --env-file=/Users/kevin/Documents/Github/linebot/.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/probe-recover-mandate.ts\" NP260806162626TS1 zz-e2e-033159064)",
       "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/41c1c86c-aaad-4887-8763-087afc5aa6a2/scratchpad/e2e-round2.ts\")",
-      "Bash(node --env-file=/Users/kevin/Documents/Github/linebot/.env --experimental-strip-types e2e-cleanup.ts)"
+      "Bash(node --env-file=/Users/kevin/Documents/Github/linebot/.env --experimental-strip-types e2e-cleanup.ts)",
+      "Bash(npx sass *)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

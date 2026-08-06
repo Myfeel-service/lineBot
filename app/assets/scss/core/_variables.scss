@@ -30,6 +30,10 @@
   --chat-pane-bg: var(--bg-base);          /* 訊息區灰底 */
   --chat-bubble-max: min(84%, 680px);      /* 一般泡泡易讀上限 */
   --chat-bubble-max-wide: min(92%, 760px); /* 結構化/媒體訊息上限 */
+  /* 日期分隔線膠囊（仿 LINE）。不透明：半透明會透出底下的泡泡/文字，看起來像疊到一起。
+     用 text-secondary 這個既有灰（不新增顏色），白字對比 6.3:1 過 AA。 */
+  --chat-day-chip-bg: #4b5563;
+  --chat-day-chip-text: #ffffff;
 
   /* Text */
   --text-primary: #111827;

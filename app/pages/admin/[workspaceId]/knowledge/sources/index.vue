@@ -2943,15 +2943,6 @@ function metaText(src: SourceSummary) {
 function kindLabel(k: string) {
   return k === 'new' ? '新增' : k === 'modified' ? '修改' : k === 'removed' ? '移除' : '未變'
 }
-function relativeTime(ms: number) {
-  if (!ms) return ''
-  const diff = Date.now() - ms
-  if (diff < 60_000) return '剛剛'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分鐘前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小時前`
-  return new Date(ms).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
-}
-
 onMounted(async () => {
   loadExpandedState()
   void loadAiEnabled() // 不 await:只影響「要處理的事」多一列,不該卡住頁面載入
