@@ -37,7 +37,6 @@ import {
   enterModule,
   getSessionStatusCached,
   onHumanOutgoingMessage,
-  recordConversationEvent,
   shouldSuppressInboundBotAutomationForSession,
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
@@ -59,6 +58,12 @@ import {
 import { capMapSize } from './bounded-cache'
 import { systemModuleId } from './workspace-system-modules'
 import type { MessageSender } from '~~/shared/message-sender'
+import {
+  CUSTOMER_ACTION_MESSAGE_TYPE,
+  customerActionLabel,
+  isCustomerActionMessage,
+  type CustomerActionType,
+} from '~~/shared/customer-action'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -436,6 +441,23 @@ async function markClaimPushHandled(
   await enterModule(knownSessionId, userId, 'system_notice', undefined, claimWorkspaceId)
 }
 
+/** 活動名稱（給對話上那一行「客人從活動「X」登記」用）。取不到就回空字串，文案會退成不帶名稱的版本。 */
+async function resolveCampaignName(
+  db: FirebaseFirestore.Firestore,
+  campaignId: string,
+): Promise<string> {
+  const id = String(campaignId || '').trim()
+  if (!id) return ''
+  try {
+    const snap = await db.collection('leadCampaigns').doc(id).get()
+    return String(snap.data()?.name || '').trim()
+  }
+  catch (e) {
+    console.warn('[follow] resolve campaign name failed:', id, e)
+    return ''
+  }
+}
+
 async function applyPendingClaims(
   userId: string,
   workspaceId: string,
@@ -532,6 +554,21 @@ async function applyPendingClaims(
     if (taggingResult) {
       console.log('[follow] tagging result:', taggingResult, 'claimId:', doc.id)
     }
+
+    /**
+     * 客人做的事是「登記活動」，我們做的事才是那則歡迎推播。先前對話上只有後者，
+     * 客服／AI 都看不出客人是從哪個活動進來的（實測：客人登記「小耳記開賣通知」後問
+     * 「請問何時開賣」，對話上完全看不出他在問哪個產品）。
+     *
+     * 推播成功與否都記：客人確實登記了。活動名稱best-effort（多一次點讀，只發生在
+     * 每位客人的一次登記上，不在熱路徑）。
+     */
+    recordCustomerAction({
+      workspaceId: claimWorkspaceId,
+      userIdOrDocId: userId,
+      actionType: 'campaign_claim',
+      name: await resolveCampaignName(db, String(claim.campaignId || '')),
+    })
 
     /**
      * 推播 + 存訊息 + 後續動作 + 「已回應」蓋章。
@@ -2071,6 +2108,17 @@ export async function saveConversationMessage(
      * 後者正是「AI 答錯的那題永遠標不到」的來源。
      */
     aiTurnId?: string
+    /**
+     * 這一則是「客人動作紀錄」（見 shared/customer-action.ts），不是真的訊息：
+     * 只寫訊息子集合，**不動對話文件上的 lastMessage / lastMessageAt / lastPeerActivityAt**。
+     *
+     * 為什麼一定要分開：那三個欄位撐著列表第二行的摘要、未讀判定、以及 24 小時開新會話的
+     * 判斷。客人點一下按鈕就蓋掉「客人最後說了什麼」、把對話推成未讀、甚至關掉舊會話開一場
+     * 空的新會話——為了看見動作而弄壞這三件事，比看不見更糟。
+     * 對話文件仍寫一次 workspaceId / userId（merge）：客人加好友時對話文件可能還不存在，
+     * 少了它這一則會掛在一個不存在的父文件下面。
+     */
+    traceOnly?: boolean
   },
   workspaceId?: string,
 ): Promise<string> {
@@ -2088,14 +2136,17 @@ export async function saveConversationMessage(
   const msgRef = db.collection('conversations').doc(convDocId).collection('messages').doc()
   const payload = sanitizeForFirestore(options?.payload)
 
-  const convPatch: Record<string, unknown> = {
-    workspaceId: wid,
-    userId: lineUserId,
-    lastMessage: text,
-    lastDirection: direction,
-    lastMessageAt: now,
-  }
-  if (direction === 'incoming') {
+  const traceOnly = options?.traceOnly === true
+  const convPatch: Record<string, unknown> = traceOnly
+    ? { workspaceId: wid, userId: lineUserId }
+    : {
+        workspaceId: wid,
+        userId: lineUserId,
+        lastMessage: text,
+        lastDirection: direction,
+        lastMessageAt: now,
+      }
+  if (!traceOnly && direction === 'incoming') {
     convPatch.lastPeerActivityAt = useLineTs
       ? Timestamp.fromMillis(Number(options!.lineEventTimestampMs))
       : now
@@ -2160,6 +2211,46 @@ async function saveOutgoingConversationMessagesByWorkspace(
       }, workspaceId)
     }),
   )
+}
+
+/**
+ * 把「客人做了什麼」記成對話裡的一行（見 shared/customer-action.ts）。
+ *
+ * 一律 fire-and-forget、失敗只印 log：這是給人看的線索，不該擋住回覆客人。
+ * 時間戳優先用 LINE 事件時間（`lineEventTimestampMs`）——我們的回覆用 server 時間寫，
+ * 差幾百毫秒；用事件時間才會排在自己的回覆**前面**（客人先按、我們才回）。
+ */
+export function recordCustomerAction(params: {
+  workspaceId: string
+  /** lineUserId 或 conversations 文件 id 皆可 */
+  userIdOrDocId: string
+  actionType: CustomerActionType
+  /** 模組／規則／活動名稱，或按鈕送出的那段文字；取不到就留空（文案會退成不帶名稱的版本） */
+  name?: string | null
+  moduleId?: string
+  lineEventTimestampMs?: number
+}): void {
+  const text = customerActionLabel({
+    type: params.actionType,
+    name: params.name,
+    moduleId: params.moduleId,
+  })
+  saveConversationMessage(
+    params.userIdOrDocId,
+    'incoming',
+    text,
+    {
+      messageType: CUSTOMER_ACTION_MESSAGE_TYPE,
+      payload: {
+        actionType: params.actionType,
+        ...(params.name ? { name: String(params.name).slice(0, 300) } : {}),
+        ...(params.moduleId ? { moduleId: params.moduleId } : {}),
+      },
+      lineEventTimestampMs: params.lineEventTimestampMs,
+      traceOnly: true,
+    },
+    params.workspaceId,
+  ).catch(e => console.error('[customer-action] save error:', params.actionType, e))
 }
 
 /** 使用者 postback 等互動（無寫入一則 incoming 訊息時）仍更新對話上的「對方最後活動」時間，供推定已讀。 */
@@ -3059,7 +3150,10 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string): Pro
 
   // 組裝最近對話（最舊在前）；排除剛存進去的本次訊息，最多帶 6 則
   let history: AiChatTurn[] = (historySnap?.docs ?? [])
-    .map(d => d.data() as { direction?: string; text?: string })
+    .map(d => d.data() as { direction?: string; text?: string; messageType?: string })
+    // 客人動作紀錄（「客人點了…」）不是客人說的話：塞進 history 會被 LLM 當成客人的原句
+    // 引用、也會影響產品鎖的判斷（見 shared/customer-action.ts）
+    .filter(m => !isCustomerActionMessage(m.messageType))
     .reverse()
     .map(m => ({
       role: m.direction === 'incoming' ? 'user' as const : 'bot' as const,
@@ -3598,6 +3692,10 @@ export async function handlePostbackEvent(
    *      等於兩頭落空：紀錄多了噪音、狀態又沒真的改到。
    * 已讀推定用的 lastPeerActivityAt 照樣更新（客人確實在線上動作）。
    *
+   * 「客人動作紀錄」（見 shared/customer-action.ts）也刻意**不記純切換選單**：切分頁是每次
+   * 逛都會按好幾下的操作，記下來會在對話裡長出一串「客人切到選單 B」淹掉真正的對話。
+   * 有觸發模組／送出文字的那些按鈕才記——那些才是「客人想做什麼」。
+   *
    * 三種 postback data 前綴（triggerModule= / triggerMessage= / switchMenu=）互斥，
    * 所以「是切換選單」就等於「不是觸發模組、也不是送文字」。
    */
@@ -3653,6 +3751,16 @@ export async function handlePostbackEvent(
       addTagsToUser(lineUserFirestoreDocId(userId, workspaceId), messageTrigger.tagIds, 'system', 'postback:message', workspaceId)
         .catch(e => console.error('[tagging] message postback tagging failed:', e))
     }
+    // 「按鈕代客人送出一段文字」這條路徑不存 incoming 訊息（handleIncomingText 只負責回覆），
+    // 所以客服看到的是我們自己回了一段話、卻沒有任何客人的發話。記一行才看得出是按鈕來的
+    // ——而且要看得出是**按的**不是打的：同一句話按出來的和自己打出來的，處理方式不同。
+    recordCustomerAction({
+      workspaceId,
+      userIdOrDocId: userId,
+      actionType: 'button_message',
+      name: messageTrigger.text,
+      lineEventTimestampMs: postbackTs,
+    })
     await handleIncomingText(
       userId,
       messageTrigger.text,
@@ -3718,6 +3826,17 @@ export async function handlePostbackEvent(
     }
     const flow = preloadedFlow ?? await getFlowByModuleId(moduleId)
 
+    // 客人按了什麼：postback 不會存成訊息，這一行是對話上唯一的痕跡。
+    // 名稱用模組名（LINE 的 postback 事件不帶按鈕文字，我們拿得到的最接近的東西就是它）。
+    recordCustomerAction({
+      workspaceId,
+      userIdOrDocId: userId,
+      actionType: flow ? 'button_module' : 'button_dead',
+      name: flow ? String(flow.name || '') : '',
+      moduleId,
+      lineEventTimestampMs: postbackTs,
+    })
+
     if (flow) {
       if (event.replyToken) {
         const userAttributes = buildAttributeContext(preloadedUserData)
@@ -3756,16 +3875,24 @@ export async function handlePostbackEvent(
         }
       }
     } else {
+      // 空按鈕：客人按了、一則訊息都沒送出。上面那筆客人動作紀錄就是對話上唯一的痕跡
+      // （會話刻意留在待處理，因為客人真的什麼都沒收到；根因另有「按鈕按下去沒反應」的紅點警報）
       console.warn('[webhook] triggerModule target not found or inactive:', moduleId)
-      // 空按鈕：客人按了、一則訊息都沒送出。postback 不會存成訊息，沒有這筆的話
-      // 客服只會看到一筆空的待處理，完全不知道發生什麼事（會話刻意留在待處理，
-      // 因為客人真的什麼都沒收到；根因另有「按鈕按下去沒反應」的紅點警報）
-      recordPostbackNoReply(sessionId, userId, moduleId)
     }
     return
   }
 
   if (trigger.moduleId && suppressBotAutomationPostback) {
+    // 真人接手中：機器人刻意不回，但客人**確實按了**。這一行對接手的同事最有用
+    // （客人一邊等回覆一邊在點什麼），少了它就只是一段莫名的沉默。
+    recordCustomerAction({
+      workspaceId,
+      userIdOrDocId: userId,
+      actionType: 'button_module',
+      name: preloadedFlow ? String(preloadedFlow.name || '') : '',
+      moduleId: trigger.moduleId,
+      lineEventTimestampMs: postbackTs,
+    })
     return
   }
 
@@ -3773,6 +3900,15 @@ export async function handlePostbackEvent(
   const rule = !suppressBotAutomationPostback
     ? await matchAutoReplyRule(data, workspaceId, { allowAnyText: false })
     : null
+  if (!suppressBotAutomationPostback) {
+    recordCustomerAction({
+      workspaceId,
+      userIdOrDocId: userId,
+      actionType: rule ? 'button_module' : 'button_dead',
+      name: rule ? String(rule.name || '') : '',
+      lineEventTimestampMs: postbackTs,
+    })
+  }
   if (rule && event.replyToken) {
     const userAttributes = buildAttributeContext(preloadedUserData)
     if (rule.action.type === 'module') {
@@ -3827,29 +3963,12 @@ export async function handlePostbackEvent(
     return
   }
 
-  // 走到這裡＝客人按了按鈕、但沒有任何規則命中，一則訊息都沒送出。
-  // 被暫停自動回覆（真人處理中）不算異常，那是刻意讓真人接手，不留這筆。
-  if (!suppressBotAutomationPostback) {
-    recordPostbackNoReply(sessionId, userId)
-  }
-}
-
-/**
- * 記一筆「客人點了按鈕但沒有回覆送出」到時間軸。
- *
- * 為什麼需要：postback 不會像文字訊息一樣存成一則 incoming（見 handleMessageEvent），
- * 所以按鈕點擊在對話畫面上完全沒有痕跡。缺這筆時客服看到的是一筆空的待處理，
- * 無從判斷客人想幹什麼——不可行動的東西留在工作佇列只會稀釋訊號。
- *
- * sessionId 缺失就不記：這筆是給人看的線索，掛不到任何會話上就沒有意義。
- */
-function recordPostbackNoReply(
-  sessionId: string | null,
-  userId: string,
-  moduleId?: string,
-): void {
-  if (!sessionId) return
-  recordConversationEvent(sessionId, userId, 'postback_no_reply', moduleId ? { moduleId } : undefined)
-    .catch(e => console.error('[session] recordPostbackNoReply error:', e))
+  /**
+   * 走到這裡＝客人按了按鈕、但沒有任何規則命中，一則訊息都沒送出。
+   * 這一筆由上面的客人動作紀錄負責（不再另記 postback_no_reply 事件）：
+   * 兩者講的是同一件事，但動作紀錄在「對話」與「會話時間軸」兩邊都看得到，
+   * 事件只出現在會話時間軸——同時留著會讓時間軸上同一秒出現兩行幾乎一樣的字。
+   * 舊資料裡的 postback_no_reply 事件照舊顯示（見 timeline.get.ts 的 eventLabel）。
+   */
 }
 

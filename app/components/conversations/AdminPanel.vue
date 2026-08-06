@@ -207,6 +207,7 @@
     <template #editor-body>
       <ConversationsAiContextBanner
         v-if="canOperate"
+        ref="aiContextBanner"
         :user-id="selectedUserId"
         :refresh-key="aiContextRefreshKey"
         :session-window="aiContextSessionWindow"
@@ -235,8 +236,14 @@
           <p>尚無對話內容</p>
         </div>
         <template v-for="row in chatRows" :key="row.key">
-          <div v-if="row.kind === 'event'" class="conv-timeline-event">
-            <span class="conv-timeline-event__dot" aria-hidden="true" />
+          <div
+            v-if="row.kind === 'event'"
+            class="conv-timeline-event"
+            :class="{ 'conv-timeline-event--action': row.variant === 'action' }"
+            :title="row.variant === 'action' ? '客人在 LINE 裡做的動作（按按鈕、加好友、活動登記），不是他傳的訊息' : undefined"
+          >
+            <span v-if="row.variant === 'action'" class="conv-timeline-event__icon" aria-hidden="true">👆</span>
+            <span v-else class="conv-timeline-event__dot" aria-hidden="true" />
             <span class="conv-timeline-event__label">{{ row.label }}</span>
             <span class="conv-timeline-event__time">{{ formatTime(row.timestamp) }}</span>
           </div>
@@ -510,38 +517,42 @@
                         class="conv-bubble-read"
                         title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
                       >已讀</span>
-                      <!--
-                        這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：
-                        一場對話 AI 回好幾次，最上面那張永遠只講最新一次——客服想標的
-                        通常是更早那一則（發現答錯多半是客人抱怨之後）。
-                        沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
-                      -->
-                      <button
-                        v-if="canOperate && msg.aiTurnId"
-                        type="button"
-                        class="conv-bubble-why"
-                        :aria-expanded="openTurnKey === msg.aiTurnId"
-                        @click="toggleTurn(msg.aiTurnId)"
-                      >{{ openTurnKey === msg.aiTurnId ? '收起' : '為什麼這樣答' }}</button>
                     </template>
                   </div>
                 </div>
               </div>
 
-              <!-- 展開的脈絡塞在泡泡「下面」自己一區：meta 那條只有泡泡剩下的寬度，塞不下 -->
-              <div v-if="msg.aiTurnId && openTurnKey === msg.aiTurnId" class="conv-turn-panel">
-                <div v-if="turnLoading" class="conv-turn-panel__loading"><div class="spinner" /></div>
-                <p v-else-if="turnError" class="conv-turn-panel__error">{{ turnError }}</p>
-                <ConversationsAiContextBody
-                  v-else-if="turnCtx"
-                  :ctx="turnCtx"
-                  :user-id="selectedUserId"
-                  :api-fetch="apiFetch"
-                  @apply-draft="applyAiDraft"
-                  @add-knowledge="goAddKnowledge"
-                  @edit-chunk="goEditChunk"
-                  @reload="loadTurn(msg.aiTurnId)"
-                />
+              <!--
+                這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：一場對話 AI 回好幾次，
+                最上面那張永遠只講最新一次——客服想標的通常是更早那一則（發現答錯多半是客人抱怨之後）。
+                沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
+
+                按鈕與展開的內容都放在泡泡「下面」自己一區，**不塞進旁邊那條 meta**：
+                meta 是貼在泡泡右側的窄欄、與泡泡共用寬度上限，多一列會把它撐成三層高
+                （比泡泡還高）、六個字也會把泡泡擠窄。同 conv-send-failed-row 的理由。
+              -->
+              <div v-if="canOperate && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
+                <button
+                  type="button"
+                  class="conv-bubble-why"
+                  :aria-expanded="openTurnKey === msg.aiTurnId"
+                  @click="toggleTurn(msg.aiTurnId)"
+                >{{ openTurnKey === msg.aiTurnId ? '收起' : '為什麼這樣答' }}</button>
+
+                <div v-if="openTurnKey === msg.aiTurnId" class="conv-turn-panel">
+                  <div v-if="turnLoading" class="conv-turn-panel__loading"><div class="spinner" /></div>
+                  <p v-else-if="turnError" class="conv-turn-panel__error">{{ turnError }}</p>
+                  <ConversationsAiContextBody
+                    v-else-if="turnCtx"
+                    :ctx="turnCtx"
+                    :user-id="selectedUserId"
+                    :api-fetch="apiFetch"
+                    @apply-draft="applyAiDraft"
+                    @add-knowledge="goAddKnowledge"
+                    @edit-chunk="goEditChunk"
+                    @reload="loadTurn(msg.aiTurnId)"
+                  />
+                </div>
               </div>
               <!--
                 失敗的原因和補救動作放在泡泡「下面」自己一行，不塞進旁邊那條 meta：
@@ -959,6 +970,7 @@ import { lineAspectRatioToCss } from '~~/shared/media-preview'
 import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
+import { isCustomerActionMessage } from '~~/shared/customer-action'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
@@ -1275,7 +1287,13 @@ function toSessionPanelMeta(res: SessionTimelineResponse): SessionPanelMeta {
   }
 }
 
-type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any }
+/**
+ * 訊息流中央那一行灰字。兩種來源共用同一個樣子：
+ *   · 系統事件（新會話開始／已交還機器人／群發）
+ *   · 客人動作（客人點了什麼、從哪個活動登記）→ variant='action'，多一個手指圖示
+ * 刻意不做成泡泡：那不是誰「說」的話，做成泡泡會被讀成訊息內容。
+ */
+type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any; variant?: 'action' }
 type ChatRowMsg = { kind: 'msg'; key: string; msg: MsgItem }
 type ChatRow = ChatRowEvent | ChatRowMsg
 
@@ -1377,6 +1395,8 @@ const contextMenuVisible = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
 const contextMenuTarget = ref<ConvItem | SessionItem | null>(null)
 const aiContextRefreshKey = ref(0)
+/** 按「我接手」時要叫它整理這場對話的摘要（接手的人第一個想知道的就是這個） */
+const aiContextBanner = ref<{ refreshSummary: () => Promise<void> } | null>(null)
 /**
  * AI 脈絡卡（含「補知識」與「這題 AI 答錯了」）開放到客服層級。
  *
@@ -1880,6 +1900,17 @@ const pendingRows = computed<ChatRowMsg[]>(() => {
     }))
 })
 
+/**
+ * 客人動作紀錄（見 shared/customer-action.ts）存的是一則訊息，但**不能當泡泡畫**：
+ * 那不是客人說的話，是他按了什麼。轉成中央那一行灰字，對話頁與會話時間軸兩邊都吃這一條路。
+ */
+function chatRowForMessage(msg: MsgItem): ChatRow {
+  if (isCustomerActionMessage(msg.messageType)) {
+    return { kind: 'event', key: msg.id, label: msg.text, timestamp: msg.timestamp, variant: 'action' }
+  }
+  return { kind: 'msg', key: msg.id, msg }
+}
+
 const serverChatRows = computed<ChatRow[]>(() => {
   if (selectedSessionId.value) {
     return sessionTimelineItems.value.map((item) => {
@@ -1905,10 +1936,10 @@ const serverChatRows = computed<ChatRow[]>(() => {
         senderName: item.senderName,
         aiTurnId: item.aiTurnId,
       }
-      return { kind: 'msg' as const, key: item.id, msg }
+      return chatRowForMessage(msg)
     })
   }
-  return messages.value.map(msg => ({ kind: 'msg' as const, key: msg.id, msg }))
+  return messages.value.map(chatRowForMessage)
 })
 
 const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
@@ -2574,6 +2605,9 @@ async function takeOverSelectedSession() {
       method: 'POST',
     })
     showToast('已接手，機器人與 AI 不會再自動回覆這位客人（按「交還機器人」可恢復）', 'success')
+    // 接手的人最需要的就是「這場到現在發生什麼事」。刻意不 await：摘要要跑一次 LLM，
+    // 讓它擋住接手的畫面更新沒有道理——接手本身已經成立，摘要晚兩秒出現即可。
+    aiContextBanner.value?.refreshSummary()
     if (selectedSessionId.value)
       await reloadSessionTimeline()
     else if (selectedUser.value)

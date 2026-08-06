@@ -2,6 +2,8 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
+import { getAiSettings } from '~~/server/utils/ai-settings'
+import type { TakeoverSummaryDoc } from '~~/server/utils/conversation-summary'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { AiConversationMeta, AiContextPayload } from '~~/shared/types/ai-knowledge'
 
@@ -35,7 +37,13 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userIdRaw, workspaceId)
   const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
-  const snap = await db.collection('conversations').doc(convDocId).get()
+  // 草稿模式決定頂部卡片要不要保留完整脈絡（那時對話上沒有 AI 泡泡可點）。
+  // getAiSettings 有快取，這支又只在打開對話時呼叫，多這一次不影響體感。
+  const [snap, settings] = await Promise.all([
+    db.collection('conversations').doc(convDocId).get(),
+    getAiSettings(workspaceId).catch(() => null),
+  ])
+  const draftMode = settings?.replyMode === 'draft'
 
   const empty: AiContextResponse = {
     hasMeta: false,
@@ -46,6 +54,9 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     lastAnswerKind: 'kb',
     suggestedReply: '',
     handoffSummary: '',
+    takeoverSummary: '',
+    takeoverSummaryAtMs: 0,
+    draftMode,
     sources: [],
     wrongMarked: false,
     turnId: '',
@@ -53,12 +64,20 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
   }
   if (!snap.exists) return empty
 
-  const data = snap.data() as { workspaceId?: string; aiMeta?: AiConversationMeta }
+  const data = snap.data() as {
+    workspaceId?: string
+    aiMeta?: AiConversationMeta
+    takeoverSummary?: TakeoverSummaryDoc
+  }
   if (data.workspaceId !== workspaceId) {
     throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
   }
+  // 接手摘要與 aiMeta 無關：AI 從沒跑過的對話（純機器人／純真人）一樣要看得到摘要
+  const takeoverSummary = String(data.takeoverSummary?.text ?? '')
+  const takeoverSummaryAtMs = Number(data.takeoverSummary?.generatedAtMs ?? 0)
+
   const meta = data.aiMeta
-  if (!meta) return empty
+  if (!meta) return { ...empty, takeoverSummary, takeoverSummaryAtMs }
 
   const ids: string[] = Array.isArray(meta.lastSourceChunkIds) ? meta.lastSourceChunkIds.slice(0, 5) : []
   const updatedAtMs = tsToMs(meta.updatedAt)
@@ -94,6 +113,9 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     lastAnswerKind: meta.lastAnswerKind ?? 'kb',
     suggestedReply: String(meta.suggestedReply ?? ''),
     handoffSummary: String(meta.handoffSummary ?? ''),
+    takeoverSummary,
+    takeoverSummaryAtMs,
+    draftMode,
     sources: ids.map(id => ({
       chunkId: id,
       title: titleByChunkId[id] ?? '(卡片已刪除)',

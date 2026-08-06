@@ -141,7 +141,11 @@ function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, m
   if (eventType === 'human_first_reply') return '真人客服首次回覆'
   if (eventType === 'returned_to_bot') return '已交還機器人'
   if (eventType === 'postback_no_reply') {
-    // 有 moduleId = 按鈕指向的模組被刪／停用（可修）；沒有 = 找不到對應的回覆內容
+    /**
+     * 只會出現在舊資料上：現在「客人按了按鈕但沒回覆」改記成一筆客人動作紀錄
+     * （messageType='customer_action'，見 shared/customer-action.ts）——那個在對話頁也看得到。
+     * 文案刻意與那邊一致，同一件事在兩處不該有兩種說法。
+     */
     return moduleId
       ? '客人點了按鈕，但指向的內容已失效（沒有回覆送出）'
       : '客人點了按鈕，但沒有對應的回覆內容（沒有回覆送出）'

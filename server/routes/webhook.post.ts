@@ -1,6 +1,6 @@
 import { verifyLineWebhookSignature } from '../utils/line'
 import { listWorkspaceLineCredentials } from '../utils/line-workspace-credentials'
-import { handleMessageEvent, handlePostbackEvent, handleFollowEvent, handleUnfollowEvent } from '../utils/handler'
+import { handleMessageEvent, handlePostbackEvent, handleFollowEvent, handleUnfollowEvent, recordCustomerAction } from '../utils/handler'
 import { claimWebhookEvent } from '../utils/webhook-dedup'
 import type { webhook } from '@line/bot-sdk'
 
@@ -94,11 +94,36 @@ export default defineEventHandler(async (event) => {
       }
       else if (e.type === 'follow') {
         const userId = (e as webhook.FollowEvent).source?.userId
-        if (userId) await handleFollowEvent(userId, undefined, matchedWorkspaceId)
+        if (userId) {
+          /**
+           * 「客人加入好友」這一行記在這裡、不記在 handleFollowEvent 裡面：那支函式也會被
+           * /api/liff/apply 拿去套用**已經是好友**的人的活動登記，記在裡面會憑空多出一次加好友。
+           */
+          recordCustomerAction({
+            workspaceId: matchedWorkspaceId,
+            userIdOrDocId: userId,
+            actionType: 'follow',
+            lineEventTimestampMs: typeof (e as webhook.FollowEvent).timestamp === 'number'
+              ? (e as webhook.FollowEvent).timestamp
+              : undefined,
+          })
+          await handleFollowEvent(userId, undefined, matchedWorkspaceId)
+        }
       }
       else if (e.type === 'unfollow') {
         const userId = (e as webhook.UnfollowEvent).source?.userId
-        if (userId) await handleUnfollowEvent(userId, matchedWorkspaceId)
+        if (userId) {
+          // 封鎖之後推播一定被退件。對話上留一行，客服才知道「發不出去」不是自己這邊壞了
+          recordCustomerAction({
+            workspaceId: matchedWorkspaceId,
+            userIdOrDocId: userId,
+            actionType: 'unfollow',
+            lineEventTimestampMs: typeof (e as webhook.UnfollowEvent).timestamp === 'number'
+              ? (e as webhook.UnfollowEvent).timestamp
+              : undefined,
+          })
+          await handleUnfollowEvent(userId, matchedWorkspaceId)
+        }
       }
     }
     catch (err) {

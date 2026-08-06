@@ -180,18 +180,21 @@ describe('按按鈕命中舊關鍵字規則、回覆是純文字/網址 → 要�
     expect(vi.mocked(enterModule)).not.toHaveBeenCalled()
   })
 
-  it('沒回覆時要留一筆時間軸線索,否則客服看到的是一筆空的待處理', async () => {
+  /**
+   * 「按了按鈕卻沒有任何回覆」的線索改記成一筆客人動作紀錄（訊息子集合的
+   * messageType='customer_action'，見 shared/customer-action.ts）：那個在對話頁也看得到，
+   * 而 conversationEvents 只出現在會話時間軸。詳細的文案斷言在 handler.customer-action.test.ts。
+   */
+  it('沒回覆時不再另記 postback_no_reply 事件(改由客人動作紀錄承擔,免得同一秒兩行一樣的字)', async () => {
     const { db } = makeDb({ autoReplies: [] })
     vi.mocked(getDb).mockReturnValue(db as any)
 
     await handlePostbackEvent(postbackEvent('nothing_matches_this2'), { workspaceId: 'ws-empty2' })
 
-    expect(vi.mocked(recordConversationEvent)).toHaveBeenCalledWith(
-      'sess-1', LINE_UID, 'postback_no_reply', undefined,
-    )
+    expect(vi.mocked(recordConversationEvent)).not.toHaveBeenCalled()
   })
 
-  it('按鈕指向的模組已失效 → 線索要帶 moduleId(才能顯示「指向的內容已失效」)', async () => {
+  it('按鈕指向的模組已失效：同樣不記事件,且不該有任何回覆送出', async () => {
     const { db } = makeDb({ autoReplies: [] })
     vi.mocked(getDb).mockReturnValue(db as any)
 
@@ -199,23 +202,6 @@ describe('按按鈕命中舊關鍵字規則、回覆是純文字/網址 → 要�
     await handlePostbackEvent(postbackEvent('triggerModule=dead-module'), { workspaceId: 'ws-dead' })
 
     expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
-    expect(vi.mocked(recordConversationEvent)).toHaveBeenCalledWith(
-      'sess-1', LINE_UID, 'postback_no_reply', { moduleId: 'dead-module' },
-    )
-  })
-
-  it('有回覆送出時不留這筆線索(不要洗版)', async () => {
-    const { db } = makeDb({
-      autoReplies: [{
-        id: 'r1', name: '有效按鈕', keyword: 'ok_button', matchType: 'exact', isActive: true,
-        action: { type: 'message', text: '這是回覆' },
-      }],
-    })
-    vi.mocked(getDb).mockReturnValue(db as any)
-
-    await handlePostbackEvent(postbackEvent('ok_button'), { workspaceId: 'ws-ok' })
-
-    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(recordConversationEvent)).not.toHaveBeenCalled()
   })
 })

@@ -65,6 +65,11 @@ export default defineEventHandler(async (event): Promise<AiContextPayload> => {
     lastAnswerKind: turn.answerKind ?? 'kb',
     suggestedReply: String(turn.suggestedReply ?? ''),
     handoffSummary: String(turn.handoffSummary ?? ''),
+    // 接手摘要與草稿模式是「這位客人現在的狀態」，由頂部卡片負責；
+    // 這支講的是「那一則當時怎麼判斷的」，不重複回一份。
+    takeoverSummary: '',
+    takeoverSummaryAtMs: 0,
+    draftMode: false,
     sources: ids.map(id => ({
       chunkId: id,
       title: titleByChunkId[id] ?? '(卡片已刪除)',

@@ -667,6 +667,19 @@ export interface AiContextPayload {
   lastAnswerKind: AiAnswerKind
   suggestedReply: string
   handoffSummary: string
+  /**
+   * 客服按「我接手」時產生的對話摘要（見 conversation-summary.ts）。
+   * 與 handoffSummary 是兩件事：那個只有「AI 自己決定轉真人」時才有，
+   * 這個涵蓋客服主動接手——也就是最需要快速掌握前因後果的那個時刻。
+   */
+  takeoverSummary: string
+  takeoverSummaryAtMs: number
+  /**
+   * AI 是草稿模式嗎？草稿模式下 AI **不對客人發訊息**，所以對話上沒有 AI 泡泡，
+   * 也就沒有「為什麼這樣答」可以點——此時頂部卡片是唯一看得到判斷依據的地方，
+   * 要把完整脈絡留在上面（見 AiContextBanner）。
+   */
+  draftMode: boolean
   /** exists=false＝卡已被刪：不給「去修這張卡」的連結（點下去只會說找不到） */
   sources: Array<{ chunkId: string; title: string; exists: boolean }>
   wrongMarked: boolean

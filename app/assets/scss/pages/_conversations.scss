@@ -311,6 +311,23 @@
     color: var(--text-secondary);
   }
 
+  /**
+   * 客人的動作（按按鈕／加好友／活動登記）與系統事件同一個形狀、換一個色：
+   * 兩者都是「不是誰說的話」，但客服掃對話時要能一眼分出「客人做了什麼」
+   * 和「系統發生了什麼」。實線邊框＝跟客人有關，虛線＝系統。
+   */
+  .conv-timeline-event--action {
+    background: var(--bg-elevated);
+    border-style: solid;
+    border-color: var(--border-active);
+  }
+
+  .conv-timeline-event__icon {
+    font-size: 0.8rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
   .conv-timeline-event__dot {
     width: 6px;
     height: 6px;
@@ -1417,8 +1434,24 @@
     color: var(--text-muted);
   }
 
-  // 泡泡旁的「為什麼這樣答」。做成細小的文字鈕(不是按鈕外框):它與時間、已讀同一條 meta,
-  // 給它按鈕重量會把每一則 AI 回覆都變成一個召喚注意力的東西。
+  // 「為什麼這樣答」自己一區,放在泡泡下面(不在旁邊那條 meta 裡,見 AdminPanel 的註解)。
+  // 靠訊息那一側對齊:AI 的回覆是 outgoing,所以會靠右,跟泡泡對齊。
+  .conv-turn-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0.1rem 0 0.4rem;
+
+    &.outgoing {
+      align-items: flex-end;
+    }
+    &.incoming {
+      align-items: flex-start;
+    }
+  }
+
+  // 細小的文字鈕(不是按鈕外框):每一則 AI 回覆都會有一顆,
+  // 給它按鈕重量會讓整串對話變成一排召喚注意力的東西。
   .conv-bubble-why {
     padding: 0;
     border: 0;
@@ -1435,9 +1468,9 @@
     }
   }
 
-  // 展開的那一則脈絡。縮排對齊泡泡、寬度上限比照訊息區,不要拉成整個面板寬
+  // 展開的那一則脈絡。寬度上限比照訊息區,不要拉成整個面板寬
   .conv-turn-panel {
-    margin: 0.15rem 0 0.5rem;
+    width: 100%;
     max-width: min(560px, 82%);
 
     .conv-ai-banner-body {
@@ -1446,11 +1479,6 @@
       background: var(--el-fill-color-light);
       border-top: 1px solid var(--el-border-color-lighter);
     }
-  }
-
-  .conv-bubble-wrap.outgoing + .conv-turn-panel,
-  .conv-turn-panel {
-    margin-left: auto;
   }
 
   .conv-turn-panel__loading {
@@ -1499,11 +1527,12 @@
     }
   }
 
-  .conv-ai-banner-stale-text {
-    flex: 1;
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
-    line-height: 1.5;
+  // 摘要的按鈕列（整理 / 重新整理 + 上次整理時間）
+  .conv-ai-summary-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
   }
 
   .conv-ai-banner-header {
