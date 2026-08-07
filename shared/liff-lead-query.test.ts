@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseLeadClaimFromQuery, parsePublishedCtaUrl } from './liff-lead-query'
+import { buildLoginRedirectUri, parseLeadClaimFromQuery, parsePublishedCtaUrl, rewriteLiffRedirectUriToOrigin } from './liff-lead-query'
 
 describe('parseLeadClaimFromQuery', () => {
   it('reads claimToken and c from top-level query', () => {
@@ -105,5 +105,86 @@ describe('parsePublishedCtaUrl', () => {
       campaignCode: 'launch_q2',
       liffId: '2009-def',
     })
+  })
+})
+
+describe('rewriteLiffRedirectUriToOrigin', () => {
+  const origin = 'https://bot.myfeel-tw.com'
+
+  it('rewrites cross-origin liffRedirectUri to current origin, keeping path and query', () => {
+    const href = `${origin}/liff/lead?code=abc&state=xyz&liffClientId=2000009466&liffRedirectUri=${encodeURIComponent('https://lineminime.com/liff/lead?claimToken=tok-1&c=c_abc&liffId=2000009466-6XZKt7ZF')}`
+    const out = rewriteLiffRedirectUriToOrigin(href, origin)
+    expect(out).not.toBeNull()
+    const rewritten = new URL(out!).searchParams.get('liffRedirectUri')
+    expect(rewritten).toBe('https://bot.myfeel-tw.com/liff/lead?claimToken=tok-1&c=c_abc&liffId=2000009466-6XZKt7ZF')
+    // 其他 callback 參數不可動
+    const u = new URL(out!)
+    expect(u.searchParams.get('code')).toBe('abc')
+    expect(u.searchParams.get('state')).toBe('xyz')
+  })
+
+  it('returns null when liffRedirectUri already matches current origin', () => {
+    const href = `${origin}/liff/lead?code=abc&liffRedirectUri=${encodeURIComponent(`${origin}/liff/lead?claimToken=tok-1`)}`
+    expect(rewriteLiffRedirectUriToOrigin(href, origin)).toBeNull()
+  })
+
+  it('returns null when liffRedirectUri is absent', () => {
+    expect(rewriteLiffRedirectUriToOrigin(`${origin}/liff/lead?claimToken=tok-1`, origin)).toBeNull()
+  })
+
+  it('handles double-encoded liffRedirectUri', () => {
+    const doubleEncoded = encodeURIComponent(encodeURIComponent('https://lineminime.com/liff/lead?claimToken=tok-2&c=c_def'))
+    const href = `${origin}/liff/lead?code=abc&liffRedirectUri=${doubleEncoded}`
+    const out = rewriteLiffRedirectUriToOrigin(href, origin)
+    expect(out).not.toBeNull()
+    expect(new URL(out!).searchParams.get('liffRedirectUri'))
+      .toBe('https://bot.myfeel-tw.com/liff/lead?claimToken=tok-2&c=c_def')
+  })
+
+  it('supports legacy liff_redirect_uri key', () => {
+    const href = `${origin}/liff/lead?code=abc&liff_redirect_uri=${encodeURIComponent('https://lineminime.com/liff/lead?ct=tok-3')}`
+    const out = rewriteLiffRedirectUriToOrigin(href, origin)
+    expect(out).not.toBeNull()
+    expect(new URL(out!).searchParams.get('liff_redirect_uri'))
+      .toBe('https://bot.myfeel-tw.com/liff/lead?ct=tok-3')
+  })
+
+  it('returns null on malformed liffRedirectUri', () => {
+    const href = `${origin}/liff/lead?code=abc&liffRedirectUri=not-a-url`
+    expect(rewriteLiffRedirectUriToOrigin(href, origin)).toBeNull()
+  })
+})
+
+describe('buildLoginRedirectUri', () => {
+  const parsed = { ct: 'tok-1', campaignCode: 'c_abc', liffId: '2000009466-6XZKt7ZF' }
+
+  it('strips stale OAuth callback params and carries campaign params', () => {
+    const href = 'https://bot.myfeel-tw.com/liff/lead?code=used-once&state=xyz&liffClientId=2000009466&liffRedirectUri=' + encodeURIComponent('https://lineminime.com/liff/lead?claimToken=tok-1')
+    const out = new URL(buildLoginRedirectUri(href, parsed))
+    expect(out.searchParams.get('code')).toBeNull()
+    expect(out.searchParams.get('state')).toBeNull()
+    expect(out.searchParams.get('liffClientId')).toBeNull()
+    expect(out.searchParams.get('liffRedirectUri')).toBeNull()
+    expect(out.searchParams.get('claimToken')).toBe('tok-1')
+    expect(out.searchParams.get('c')).toBe('c_abc')
+    expect(out.searchParams.get('liffId')).toBe('2000009466-6XZKt7ZF')
+    expect(out.origin + out.pathname).toBe('https://bot.myfeel-tw.com/liff/lead')
+  })
+
+  it('keeps unrelated params like debug', () => {
+    const href = 'https://lineminime.com/liff/lead?claimToken=tok-1&debug=1'
+    const out = new URL(buildLoginRedirectUri(href, parsed))
+    expect(out.searchParams.get('debug')).toBe('1')
+    expect(out.searchParams.get('claimToken')).toBe('tok-1')
+  })
+
+  it('does not add params the caller has no value for', () => {
+    const href = 'https://lineminime.com/liff/lead?code=abc&state=xyz'
+    const out = new URL(buildLoginRedirectUri(href, { ct: '', campaignCode: '', liffId: '' }))
+    expect([...out.searchParams.keys()]).toEqual([])
+  })
+
+  it('returns href unchanged when it is not a valid URL', () => {
+    expect(buildLoginRedirectUri('not-a-url', parsed)).toBe('not-a-url')
   })
 })

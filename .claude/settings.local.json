@@ -305,7 +305,12 @@
       "Bash(python3 - /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse-conversations.ts)",
       "Bash(python3 - /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/diag2.ts)",
       "Bash(python3 - /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse-conversations.ts /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse2.ts)",
-      "Bash(python3 - /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse-conversations.ts /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse3.ts)"
+      "Bash(python3 - /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse-conversations.ts /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/0c80f997-0b26-4d3b-9195-b31be05bbc37/scratchpad/browse3.ts)",
+      "Bash(curl -sI -m 8 https://bot.myfeel-tw.com/liff/lead)",
+      "Bash(curl -sI -m 8 https://lineminime.com/liff/lead)",
+      "Bash(npx tsx -e ' *)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff --stat)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff -- app/pages/liff/lead.vue shared/liff-lead-query.ts shared/liff-lead-query.test.ts)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

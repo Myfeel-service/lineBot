@@ -119,6 +119,62 @@ export function parseLeadClaimFromQuery(
   return { ct, campaignCode, liffId }
 }
 
+/**
+ * LINE 登入 callback 的 `liffRedirectUri` 指向其他網域時（LIFF Endpoint URL 與活動連結
+ * 的網域不一致，例如換網域過渡期），把它改寫成目前網域、只保留 path/query/hash。
+ *
+ * 為什麼必須改寫：LIFF SDK 登入後把 access token 存在「目前網域」的 localStorage，
+ * 接著會跳轉到 `liffRedirectUri`。若那是別的網域，到了那邊 `liff.isLoggedIn()` 永遠是
+ * false，於是再次 `liff.login()` → 又被 LINE 導回 Endpoint 網域 → 再跳回去……
+ * 兩個網域之間無限循環，使用者只看到轉圈（2026-08-07 實測災情）。
+ *
+ * @returns 改寫後的完整網址；沒有 liffRedirectUri、已是同網域或解析失敗時回 null（不需改寫）。
+ */
+export function rewriteLiffRedirectUriToOrigin(href: string, origin: string): string | null {
+  try {
+    const url = new URL(href)
+    const key = url.searchParams.has('liffRedirectUri')
+      ? 'liffRedirectUri'
+      : url.searchParams.has('liff_redirect_uri') ? 'liff_redirect_uri' : ''
+    if (!key) return null
+    const target = new URL(normalizeMaybeEncodedUrl(url.searchParams.get(key) || ''))
+    const currentOrigin = new URL(origin).origin
+    if (target.origin === currentOrigin) return null
+    url.searchParams.set(key, new URL(target.pathname + target.search + target.hash, currentOrigin).toString())
+    return url.toString()
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * 組 `liff.login()` 的 redirectUri：拿掉上一輪 OAuth callback 的參數（code/state/
+ * liffClientId/liffRedirectUri），只帶活動參數回來。
+ *
+ * 為什麼必須清掉：code 用過即棄。跨網域登入失敗後重新 login 時若把整串 callback
+ * 網址當 redirectUri，登入完成會回到一個「還掛著舊 code/state」的網址，LIFF SDK
+ * 會把它誤判成另一次 callback 再處理一遍，於是又失敗又登入……參數像雪球越滾越長，
+ * 使用者只看到轉圈（2026-08-07 實測災情的放大器）。
+ */
+export function buildLoginRedirectUri(
+  href: string,
+  parsed: { ct: string; campaignCode: string; liffId: string },
+): string {
+  try {
+    const url = new URL(href)
+    for (const key of ['code', 'state', 'liffClientId', 'liffRedirectUri', 'liff_redirect_uri'])
+      url.searchParams.delete(key)
+    if (parsed.ct) url.searchParams.set('claimToken', parsed.ct)
+    if (parsed.campaignCode) url.searchParams.set('c', parsed.campaignCode)
+    if (parsed.liffId) url.searchParams.set('liffId', parsed.liffId)
+    return url.toString()
+  }
+  catch {
+    return href
+  }
+}
+
 /** 從後台儲存的活動進入網址（direct 或 liff.line.me）解析 claimToken 等參數。 */
 export function parsePublishedCtaUrl(ctaUrl: string): { ct: string; campaignCode: string; liffId: string } {
   try {

@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { $fetch } from 'ofetch'
-import { parseLeadClaimFromQuery } from '~~/shared/liff-lead-query'
+import { buildLoginRedirectUri, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
 
 definePageMeta({ layout: false, ssr: false })
 
@@ -265,7 +265,39 @@ async function tryOpenInLineAppBeforeInit(liffId: string) {
 }
 
 onMounted(async () => {
-  const ctx: Record<string, unknown> = { v: 7 }
+  const ctx: Record<string, unknown> = { v: 8 }
+
+  // ── 轉圈看門狗 ──────────────────────────────────────────────────────────
+  // liff.init() 在跨網域登入流程卡住時 promise 永遠不會 settle（2026-08-07 實測），
+  // 頁面會永遠轉圈。逾時就切到錯誤畫面，讓使用者能重試、能截 debug 資訊回報。
+  // 頁面轉背景（跳去 LINE App／等登入分頁）不算卡住，醒著才重新計時。
+  if (typeof window !== 'undefined') {
+    const LOADING_WATCHDOG_MS = 20 * 1000
+    const armWatchdog = () => window.setTimeout(() => {
+      if (phase.value !== 'loading') return
+      if (document.visibilityState === 'hidden') return
+      phase.value = 'error'
+      errorText.value = '載入逾時，請重新整理再試一次。'
+      debugInfo.value = buildDebugInfo({ reason: 'loading_watchdog', ...ctx })
+    }, LOADING_WATCHDOG_MS)
+    let watchdog = armWatchdog()
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || phase.value !== 'loading') return
+      window.clearTimeout(watchdog)
+      watchdog = armWatchdog()
+    })
+  }
+
+  // ── 最先處理：liffRedirectUri 指向別的網域時改寫成本網域 ────────────────
+  // LIFF Endpoint 網域與活動連結網域不一致時，登入 callback 會在兩個網域間
+  // 無限循環（詳見 rewriteLiffRedirectUriToOrigin）。必須趕在 liff.init() 讀網址前改好。
+  if (typeof window !== 'undefined') {
+    const pinned = rewriteLiffRedirectUriToOrigin(window.location.href, window.location.origin)
+    if (pinned) {
+      window.history.replaceState(window.history.state, '', pinned)
+      ctx.pinnedRedirectUri = true
+    }
+  }
 
   // ── 最先啟動：LIFF SDK 動態載入（與其他步驟並行執行）──────────────────
   // @line/liff 是最重的資源，越早開始載入越好。
@@ -386,7 +418,9 @@ onMounted(async () => {
   if (!liff.isLoggedIn()) {
     saveLeadParams(parsed)
     phase.value = 'need-login'
-    liff.login({ redirectUri: window.location.href })
+    // ⛔ 不可直接用 window.location.href：跨網域登入失敗後這裡會再走一次，
+    // 網址上還掛著用過即棄的 code/state，帶回去 SDK 會誤判成 callback 沒完沒了。
+    liff.login({ redirectUri: buildLoginRedirectUri(window.location.href, parsed) })
     return
   }
 
