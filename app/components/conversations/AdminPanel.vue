@@ -85,7 +85,7 @@
               :leading-avatar-url="s.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isRowUnread(s.userId, s.lastActivityAt, s.lastDirection)"
+              :show-unread-dot="isRowUnread(s.userId, s.lastActivityAt, s.lastDirection, s.status)"
               :active="selectedSessionId === s.sessionId"
               :title-icon="s.pinned ? '📌' : ''"
               :meta-tag="s.followUp ? '待跟進' : ''"
@@ -1245,13 +1245,22 @@ function directionPrefix(row: { lastMessage?: string, lastDirection?: string }):
  * 1. 最後一則是**客人**送的。我們自己回的、AI／機器人回的、系統蓋的通知一律不算——
  *    紅點是待辦不是動態；自己剛做完的事再紅一次，只會讓人學會忽略紅點。
  *    口徑跟 directionPrefix 同一條（非 outgoing 就當客人那側），兩邊不能各自漂走。
+ *    **例外是等真人的那場**：機器人那句「已為您安排專員」也是 outgoing，但它的意思正好是
+ *    「還沒有人處理」——把它當成處理過，客人就會安靜地躺在待真人分頁裡沒有任何標記。
  * 2. 那則的時間晚於基準：這位客人的已讀時間、或上次按「全部已讀」的時間，取大的那個。
  *
  * 兩種列都用這一支：「全部」給對話的 lastMessageAt、會話分頁給那場的 lastActivityAt，
  * 已讀時間都記在同一位客人身上（見 convLastReadMs），所以切分頁紅點不會前後矛盾。
+ * ⚠️「全部」那側的列沒有會話狀態（對話文件上沒有這個欄位），所以那裡的等真人對話仍然
+ *    不會亮紅點；要一併補上得先把狀態非正規化到 conversations 文件。
  */
-function isRowUnread(userId: string, timestamp: unknown, lastDirection?: string): boolean {
-  if (lastDirection === 'outgoing')
+function isRowUnread(
+  userId: string,
+  timestamp: unknown,
+  lastDirection?: string,
+  sessionStatus?: ConvSessionStatus,
+): boolean {
+  if (lastDirection === 'outgoing' && sessionStatus !== 'pending_human')
     return false
   const lastMs = messageTimestampToMs(timestamp)
   if (lastMs <= 0)
@@ -2022,7 +2031,7 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
 const unreadRowCount = computed(() =>
   activeTab.value === 'all'
     ? convSidebarItems.value.filter(c => isRowUnread(c.userId, c.lastMessageAt, c.lastDirection)).length
-    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, s.lastActivityAt, s.lastDirection)).length,
+    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, s.lastActivityAt, s.lastDirection, s.status)).length,
 )
 
 watch(unreadRowCount, () => {
@@ -2731,6 +2740,17 @@ function mergeTimeline(prev: TimelineItem[], incoming: TimelineItem[]): Timeline
  * quiet = 自己剛送出後的刷新：不清空、不轉圈，只把最新一段併進來。原本這條走整份重載，
  * 每回一句就把整個對話清成一顆 spinner 再長回來——連回三句就閃三次。
  */
+/**
+ * 這段回應還是不是「現在畫面上這一段」。
+ *
+ * 只比對客人不夠：同一位客人的兩場會話點得快一點，兩個請求會同時在路上，而已結束那場要多做
+ * 錨定查詢、通常比較慢。晚回來的那段若照樣蓋上去，時間軸、上下還有沒有的旗標、工具列狀態
+ * 就會是另一場的（左側還亮在你點的那場），看起來就是「點了 A 卻顯示 B」。
+ */
+function isStaleTimelineResponse(userId: string, sessionId: string): boolean {
+  return selectedUserId.value !== userId || (selectedSessionId.value || '') !== sessionId
+}
+
 async function loadTimeline(
   userId: string,
   options?: { sessionId?: string, quiet?: boolean, seenUpToMs?: number },
@@ -2748,8 +2768,8 @@ async function loadTimeline(
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
       params: { limit: TIMELINE_PAGE_SIZE, sessionId: sessionId || undefined },
     })
-    // 回來時人已經切走了就整段丟掉，不要把上一位客人的訊息貼到現在這位身上
-    if (selectedUserId.value !== userId) return
+    // 回來時人或會話已經切走了就整段丟掉，不要把上一個畫面的內容貼到現在這個上面
+    if (isStaleTimelineResponse(userId, sessionId)) return
     const incoming = res.items ?? []
     timelineItems.value = quiet ? mergeTimeline(timelineItems.value, incoming) : incoming
     /**
@@ -2793,6 +2813,7 @@ async function loadTimeline(
 async function loadOlderTimeline() {
   if (loadingOlder.value || msgLoading.value || !timelineHasOlder.value) return
   const userId = selectedUserId.value
+  const sessionId = selectedSessionId.value || ''
   const cursor = oldestMessageId()
   if (!userId || !cursor) return
   loadingOlder.value = true
@@ -2803,7 +2824,7 @@ async function loadOlderTimeline() {
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
       params: { limit: TIMELINE_PAGE_SIZE, beforeId: cursor },
     })
-    if (selectedUserId.value !== userId) return
+    if (isStaleTimelineResponse(userId, sessionId)) return
     const incoming = res.items ?? []
     timelineItems.value = mergeTimeline(timelineItems.value, incoming)
     timelineHasOlder.value = res.hasOlder === true && incoming.length > 0
@@ -2828,6 +2849,7 @@ async function loadOlderTimeline() {
 async function loadNewerTimeline() {
   if (loadingNewer.value || msgLoading.value || !timelineHasNewer.value) return
   const userId = selectedUserId.value
+  const sessionId = selectedSessionId.value || ''
   const cursor = newestMessageId()
   if (!userId || !cursor) return
   loadingNewer.value = true
@@ -2835,7 +2857,7 @@ async function loadNewerTimeline() {
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
       params: { limit: TIMELINE_PAGE_SIZE, afterId: cursor },
     })
-    if (selectedUserId.value !== userId) return
+    if (isStaleTimelineResponse(userId, sessionId)) return
     const incoming = res.items ?? []
     timelineItems.value = mergeTimeline(timelineItems.value, incoming)
     timelineHasNewer.value = res.hasNewer === true && incoming.length > 0
