@@ -299,6 +299,17 @@
     background: var(--bg-hover);
     border-color: var(--color-line);
   }
+
+  /* 開通引導入口：主要動作，比缺項巡覽醒目一階 */
+  &--onboard {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+
+    &:hover {
+      background: var(--el-color-primary-light-9);
+      border-color: var(--el-color-primary);
+    }
+  }
 }
 
 /* ── 加分項 / 查不到 / 骨架 / 引導氣泡 ───────── */
@@ -638,14 +649,15 @@
   color: var(--text-secondary);
 }
 
-/* 深入層的出口：摘要只給結論，趨勢與明細去統計頁看 */
+/* 深入層的出口：摘要只給結論，趨勢與明細去統計頁看。
+   刻意比卡頭標題輕一級——同樣粗細會變成兩個標題在搶第一眼 */
 .ta-brief__link {
   border: none;
   background: none;
   padding: 0;
   font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 500;
+  color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
 
@@ -655,17 +667,89 @@
   }
 }
 
-.ta-brief__grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
+/**
+ * 母數列：全卡唯一的大字。
+ * 刻意不做三等分格線——並排的等重數字在這個後台代表「互斥分項」（見統計頁與
+ * 用量頁的分段長條），但轉真人與「誰先回」是重疊的，排成三等分會被拿去相加。
+ */
+.ta-brief__total {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+
+  /* 前天推到右邊界（與卡頭的「看完整統計」同一條線）：
+     緊貼在「段對話」後面會被讀成同一句話 */
+  .ta-brief__delta {
+    margin-left: auto;
+  }
 }
 
-.ta-brief__cell {
+/* 問題一：互斥分項（加起來等於母數） */
+.ta-brief__split {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
+  gap: 0.25rem;
+}
+
+.ta-brief__q {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.ta-brief__parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.875rem;
+}
+
+.ta-brief__part {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  b {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  /* 「沒人回 0」是好消息，不該長得像警告；只有 >0 才上警示色 */
+  &.is-warn {
+    color: var(--color-warning);
+
+    b {
+      color: var(--color-warning);
+    }
+  }
+
+  /* 0 退到最淡：這一排唯一常態是 0 的就是「沒人回」，它不該天天跟 12 搶注意力 */
+  &.is-zero,
+  &.is-zero b {
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+}
+
+/* 問題二：母數的子集，用分隔線與上面那排斷開，避免被讀成第四個分項。
+   ⛔ 這裡曾加過比例長條（上排滿格＋下排 69%），老闆判定沒有變好：上排永遠填滿等於把
+   數字再畫一次，兩條灰軌道疊起來像進度條／載入骨架。三四個數字的卡不需要圖。 */
+.ta-brief__sub {
+  margin: 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+
+  b {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
 }
 
 .ta-brief__num {
@@ -694,6 +778,21 @@
   color: var(--text-secondary);
 }
 
+/* 新朋友：跟對話不同件事，自成一行放最上面；>0 才顯示所以不用做 0 的淡化 */
+.ta-brief__friends {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+
+  b {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+}
+
 /* 昨天有客人沒人回：這是摘要裡唯一需要行動的訊號，用警示色講 */
 .ta-brief__warn {
   margin: 0;
@@ -701,6 +800,37 @@
   line-height: 1.45;
   color: var(--color-warning);
   font-weight: 600;
+
+  /**
+   * 「等太久」但全部發生在下班時段：資訊留著，警示色收掉。
+   * 這種情況每天都會有（晚上進來的客人隔天早上才回），天天紅字＝狼來了。
+   * 同一張卡「沒人回 0 不上色」的道理：沒有人能行動的事就不該長得像警告。
+   */
+  &.is-mild {
+    color: var(--text-secondary);
+  }
+}
+
+/* 沒人回的點名：真按鈕（可鍵盤操作），長得像行內連結。
+   底線＝「點得下去」的訊號，顏色跟著警語走不另開新色 */
+.ta-brief__warnlink {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-right: 0.375rem;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &:last-of-type {
+    margin-right: 0;
+  }
 }
 
 /* ── 待辦（沒做完的項目） ──────────────────────────────────── */

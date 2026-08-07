@@ -47,11 +47,11 @@ export default defineEventHandler(async (event) => {
       name: w.name ?? doc.id,
       plan,
       answered,
-      // 與開通檢查清單同一個定義：Token / Secret / 預設 LIFF 三者都有才算接上
+      // 與開通檢查清單（setup-status 的 lineConnected）同一個定義：Token / Secret 都有才算接上。
+      // 預設 LIFF 已拆成獨立加分項（liffReady），不再擋「接上 LINE」。
       lineConnected: Boolean(
         String(w.channelAccessToken ?? '').trim()
-        && String(w.channelSecret ?? '').trim()
-        && String(w.defaultLiffId ?? '').trim(),
+        && String(w.channelSecret ?? '').trim(),
       ),
     }
   }))

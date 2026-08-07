@@ -31,16 +31,26 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
 
   const db = getDb()
 
-  const [lineConnected, aiEnabled, knowledgeReady, scriptReady] = await Promise.all([
-    // 已接 LINE：Token / Secret / 預設 LIFF 三者都有（與組織頁的儲存條件一致）
+  // lineConnected / liffReady 共用同一次文件讀取（兩個訊號、一次 read）
+  const workspaceSnap = db.collection('workspaces').doc(wid).get()
+
+  const [lineConnected, liffReady, aiEnabled, knowledgeReady, scriptReady, firstMessageReceived] = await Promise.all([
+    // 已接 LINE：Token / Secret 都有（與組織頁的儲存條件、org 總覽同一個定義）。
+    // 預設 LIFF 2026-08-07 拍板拆成獨立加分項 liffReady——多數新客戶第一天用不到，
+    // 缺它不該讓人永遠掛在「LINE 未接通」。
     resolve(async () => {
-      const snap = await db.collection('workspaces').doc(wid).get()
+      const snap = await workspaceSnap
       const w = snap.exists ? (snap.data() as Record<string, unknown>) : null
       return (
         !!String(w?.channelAccessToken ?? '').trim()
         && !!String(w?.channelSecret ?? '').trim()
-        && !!String(w?.defaultLiffId ?? '').trim()
       )
+    }),
+    // 已設定預設 LIFF（活動頁 / 綁定頁入口）
+    resolve(async () => {
+      const snap = await workspaceSnap
+      const w = snap.exists ? (snap.data() as Record<string, unknown>) : null
+      return !!String(w?.defaultLiffId ?? '').trim()
     }),
     // 已開 AI 自動回覆
     resolve(async () => {
@@ -61,13 +71,27 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
       const scripts = await loadActiveScripts(wid, db)
       return scripts.length > 0
     }),
+    // 曾收到客人訊息：lastPeerActivityAt 只在「客人真的傳了訊息」時寫入
+    // （加好友的 customer_action 是 traceOnly，不會蓋這個欄位——加了好友沒開口不算）。
+    // 單欄位 equality 查詢免索引；掃前 20 筆對話在記憶體判定即可：
+    // 有在營運的帳號前幾筆一定有人講過話，全新帳號本來就只有零星幾筆。
+    resolve(async () => {
+      const snap = await db
+        .collection('conversations')
+        .where('workspaceId', '==', wid)
+        .limit(20)
+        .get()
+      return snap.docs.some(d => d.data()?.lastPeerActivityAt != null)
+    }),
   ])
 
   const items: SetupStatusItem[] = [
     { id: 'lineConnected', status: lineConnected },
+    { id: 'liffReady', status: liffReady },
     { id: 'aiEnabled', status: aiEnabled },
     { id: 'knowledgeReady', status: knowledgeReady },
     { id: 'scriptReady', status: scriptReady },
+    { id: 'firstMessageReceived', status: firstMessageReceived },
   ]
 
   return { workspaceId: wid, items }

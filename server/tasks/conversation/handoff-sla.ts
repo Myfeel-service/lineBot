@@ -1,5 +1,6 @@
 import { remindOverdueHandoffs } from '~~/server/utils/cron-maintenance'
 import { getDb } from '~~/server/utils/firebase'
+import { localScheduledTasksEnabled, LOCAL_SCHEDULED_TASK_SKIPPED } from '~~/server/utils/local-scheduled-tasks'
 
 /**
  * Nitro scheduled task：handoff SLA 提醒。
@@ -12,6 +13,7 @@ export default defineTask({
     description: '轉真人超時未回應的會話，再提醒值班客服一次',
   },
   async run() {
+    if (!localScheduledTasksEnabled()) return { result: LOCAL_SCHEDULED_TASK_SKIPPED }
     return { result: await remindOverdueHandoffs(getDb()) }
   },
 })

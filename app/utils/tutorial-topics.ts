@@ -103,7 +103,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="org-liff"]',
-        title: '填預設 LIFF（必填）',
+        title: '填預設 LIFF（選填，活動頁用）',
         description:
           '先到 <strong>LINE Developers</strong> 建一個 LIFF App，把它的 LIFF ID 貼進來（例：2007123456-AbCdEfGh）。LIFF 的 Endpoint URL 要設成下方「活動 LIFF 頁」，<strong>不要</strong>填 Webhook 路徑。',
         placement: 'top',

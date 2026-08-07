@@ -29,6 +29,7 @@
 @use "./components/knowledge-import";
 @use "./components/plan-upgrade";
 @use "./components/tutorial-agent";
+@use "./components/agent-chat";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

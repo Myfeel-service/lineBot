@@ -74,7 +74,7 @@
           <div class="card-section-stack">
             <p class="ls-subgroup">LIFF（活動頁）</p>
             <div class="admin-field-group" data-tour="org-liff">
-              <AdminFieldLabel text="預設 LIFF（必填）" tight />
+              <AdminFieldLabel text="預設 LIFF（選填，活動頁用）" tight />
               <el-input
                 v-model="form.defaultLiffId"
                 placeholder="例：2007123456-AbCdEfGh"
@@ -553,10 +553,8 @@ async function save() {
   const tc = meta.value.channelAccessTokenConfigured
   const sc = meta.value.channelSecretConfigured
 
-  if (!defaultLiffId) {
-    showToast('請填寫預設 LIFF', 'error')
-    return
-  }
+  // 預設 LIFF 2026-08-07 拍板改為選填（加分項 liffReady）：沒填不擋存檔，
+  // 否則在開通引導跳過 LIFF 的人，回來改 Token 會被卡在這裡。
   if (!tc && !t) {
     showToast('請填寫 Channel Access Token', 'error')
     return

@@ -4,6 +4,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { countOpenQueueSessions, isOpenQueueSession, scanFilteredPage } from '~~/server/utils/conversation-queue'
 import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
+import { taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
 
 const PAGE_SIZE = 30
 const CHUNK = 30
@@ -119,9 +120,10 @@ export default defineEventHandler(async (event) => {
 
   const offset = (page - 1) * limit
 
-  const startDate = query.startDate ? new Date(String(query.startDate)) : null
-  const endDate = query.endDate ? new Date(String(query.endDate)) : null
-  if (endDate) endDate.setHours(23, 59, 59, 999)
+  // 日界線取台北時間，與統計端點同修（見 taipei-day.ts）——
+  // 否則統計頁點日期鑽進來，清單和 KPI 數的不是同一批對話
+  const startDate = taipeiDayStart(query.startDate)
+  const endDate = taipeiDayEnd(query.endDate)
   const startMs = startDate ? startDate.getTime() : null
   const endMs = endDate ? endDate.getTime() : null
 

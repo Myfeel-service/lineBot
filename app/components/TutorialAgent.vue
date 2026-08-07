@@ -124,17 +124,88 @@
               <span>昨日摘要{{ briefDateLabel }}</span>
               <button type="button" class="ta-brief__link" @click="goStats">看完整統計 →</button>
             </div>
+            <!-- 新朋友：跟對話是兩件事（加了好友沒開口不算對話），所以自成一行、不進下面的母數。
+                 沒有新朋友的日子不顯示 0——日報講發生了什麼，不逐條報「沒發生」 -->
+            <p v-if="briefY.newFriends > 0" class="ta-brief__friends">
+              新朋友 <b>+{{ briefY.newFriends }}</b> 位加了好友
+            </p>
             <p v-if="!briefY.total" class="ta-brief__empty">昨天沒有客人對話。</p>
             <template v-else>
-              <div class="ta-brief__grid">
-                <div v-for="cell in briefCells" :key="cell.label" class="ta-brief__cell">
-                  <span class="ta-brief__num">{{ cell.value }}</span>
-                  <span class="ta-brief__label">{{ cell.label }}</span>
-                  <span class="ta-brief__delta">前天 {{ cell.prev }}</span>
+              <!-- 母數：全卡唯一的大字，底下每個數字都是它的一部分（單位統一用統計頁的「場」） -->
+              <div class="ta-brief__total">
+                <span class="ta-brief__num">{{ briefY.total }}</span>
+                <span class="ta-brief__label">場對話</span>
+                <span class="ta-brief__delta">前天 {{ briefD?.total ?? 0 }}</span>
+              </div>
+
+              <!-- 問題一：互斥分項，加起來一定等於母數——讀的人不必自己減 -->
+              <div class="ta-brief__split">
+                <span class="ta-brief__q">第一句話是誰回的</span>
+                <div class="ta-brief__parts">
+                  <span
+                    v-for="p in briefParts"
+                    :key="p.key"
+                    class="ta-brief__part"
+                    :class="{ 'is-warn': p.warn, 'is-zero': !p.value }"
+                  >{{ p.label }} <b>{{ p.value }}</b></span>
                 </div>
               </div>
+
+              <!-- 問題二：子集，不是第四類。「這 N 場裡」這幾個字就是防止被拿去相加的關鍵。
+                   ⛔ 試過在這兩排各加一條比例長條（上排滿格、下排 69%），老闆判定沒有變好：
+                   上排永遠填滿等於把數字再畫一次，兩條灰軌道疊起來像進度條／載入骨架。
+                   這張卡只有三四個數字，不需要圖——別再加回來。 -->
+              <p class="ta-brief__sub">
+                這 {{ briefY.total }} 場裡，後來轉給真人的 <b>{{ briefY.handoffs }}</b> 場
+              </p>
+
+              <!-- 沒人回＝日報裡唯一要行動的事，所以直接點名、點名字開那場對話。
+                   刻意不連去「篩選過的收件匣」：統計的「沒人回」與收件匣的「待處理」是兩群對話
+                   （定義書明文），開單場對話就不會撞口徑。名單查不到時退回純文字提醒。 -->
               <p v-if="briefY.unhandled" class="ta-brief__warn">
-                其中 {{ briefY.unhandled }} 場從頭到尾沒有人回{{ unhandledSpike ? '，比平常多' : '' }}，建議去看一下。
+                <template v-if="briefY.unhandledSamples.length">
+                  {{ briefY.unhandled }} 場沒人回{{ unhandledSpike ? '（比平常多）' : '' }}：
+                  <button
+                    v-for="u in briefY.unhandledSamples"
+                    :key="u.userId"
+                    type="button"
+                    class="ta-brief__warnlink"
+                    @click="goConversation(u.userId)"
+                  >{{ u.displayName }}</button>
+                  <!-- 只點名 3 位，剩下的要有出口，否則「看到 8 場只能點 3 個」＝死路。
+                       goStats 會帶上這一天的日期，所以進去看到的就是同一批（見 goStats 註解） -->
+                  <button
+                    v-if="briefY.unhandled > briefY.unhandledSamples.length"
+                    type="button"
+                    class="ta-brief__warnlink"
+                    @click="goStats"
+                  >…等 {{ briefY.unhandled }} 位</button>
+                </template>
+                <template v-else>
+                  有客人一整天沒收到回覆{{ unhandledSpike ? '，比平常多' : '' }}，建議去看一下。
+                </template>
+              </p>
+
+              <!-- 等太久：轉真人後超過 SLA 才等到人（或到現在還沒等到）。門檻印實際設定值，
+                   不寫死 30——工作區改了 SLA 這裡要跟著講實話。同「沒人回」的點名模式。
+                   下班時段的等待分開講（拍板選項 c）：全部都是下班進來的就退成灰色，
+                   否則這行天天紅字＝狼來了。點名優先列服務時間內那幾場（後端已排序）。 -->
+              <p v-if="waitLine" class="ta-brief__warn" :class="{ 'is-mild': waitAllOffHours }">
+                {{ waitLine }}<template v-if="briefY.handoffWaitSamples.length">：
+                  <button
+                    v-for="u in briefY.handoffWaitSamples"
+                    :key="u.userId"
+                    type="button"
+                    class="ta-brief__warnlink"
+                    @click="goConversation(u.userId)"
+                  >{{ u.displayName }}</button>
+                  <button
+                    v-if="briefY.handoffWaitExceeded > briefY.handoffWaitSamples.length"
+                    type="button"
+                    class="ta-brief__warnlink"
+                    @click="goStats"
+                  >…等 {{ briefY.handoffWaitExceeded }} 位</button>
+                </template>
               </p>
               <p v-if="trendLine" class="ta-brief__warn">{{ trendLine }}</p>
             </template>
@@ -174,6 +245,17 @@
                 加分項 {{ optionalDone }}/{{ optionalTotal }}（做了 AI 更好用，不做也能上線）
               </div>
             </div>
+
+            <!-- 開通引導接手：必要項還沒完成時給聊天式精靈入口。
+                 同一份劇本、訊號驅動——做過的步驟會自動跳過，從真實缺口接著帶 -->
+            <button
+              v-if="incompleteRequired.length"
+              class="ta-gaptour ta-gaptour--onboard"
+              @click="goOnboardingChat"
+            >
+              <el-icon><ChatDotRound /></el-icon>
+              <span>用聊天引導完成開通 →</span>
+            </button>
 
             <!-- 缺項巡覽：次要連結，用 tour 帶你看一遍還沒做的 -->
             <button
@@ -341,7 +423,7 @@
 import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
-import { CircleCheckFilled, CircleCloseFilled, Close, InfoFilled, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, InfoFilled, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 
@@ -456,15 +538,26 @@ const briefDateLabel = computed(() => {
   const [, m, day] = d.split('-')
   return `（${Number(m)}/${Number(day)}）`
 })
-const briefCells = computed(() => {
-  const b = brief.value
-  if (!b)
+const briefD = computed(() => brief.value?.dayBefore ?? null)
+/**
+ * 「第一句話誰回的」的互斥分項：**只有加起來等於總場數的東西可以並排**。
+ * 這一排的全部價值就是「不用自己減」——所以舊資料湊不到總數時要補一格「其他」，
+ * 而不是讓它靜靜地對不起來（那就退回原本被誤讀的狀態了）。
+ */
+const briefParts = computed(() => {
+  const y = briefY.value
+  if (!y)
     return []
-  return [
-    { label: '客人對話', value: b.yesterday.total, prev: b.dayBefore.total },
-    { label: 'AI／機器人先回', value: b.yesterday.autoFirst, prev: b.dayBefore.autoFirst },
-    { label: '轉真人', value: b.yesterday.handoffs, prev: b.dayBefore.handoffs },
+  const parts = [
+    { key: 'auto', label: '機器人／AI', value: y.autoFirst, warn: false },
+    { key: 'human', label: '客服', value: y.humanFirst, warn: false },
+    // 0 的時候是好消息，不該長得像警告；>0 才轉警示色
+    { key: 'none', label: '沒人回', value: y.unhandled, warn: y.unhandled > 0 },
   ]
+  const rest = y.total - y.autoFirst - y.humanFirst - y.unhandled
+  if (rest > 0)
+    parts.push({ key: 'rest', label: '其他', value: rest, warn: false })
+  return parts
 })
 /**
  * 趨勢異常：昨天比前 7 天平均多一截才講，平常不出聲。
@@ -481,6 +574,27 @@ const trendLine = computed(() => {
     return `昨天轉真人 ${h} 件，平常一天約 ${formatAvg(b.baseline.handoffs)} 件——可能有哪類問題答不好，建議到統計頁看一下。`
   return ''
 })
+/**
+ * 「等太久」那一行的句子（拍板選項 c：下班時段分開講）。
+ * 組在 script 不塞樣板：三層條件寫成巢狀三元後沒人看得懂，改文案也不敢動。
+ * 全部都是下班進來的 → 講「都是」，不要出現「8 場…其中 8 場」這種廢話。
+ */
+const waitLine = computed(() => {
+  const y = briefY.value
+  if (!y?.handoffWaitExceeded)
+    return ''
+  const base = `${y.handoffWaitExceeded} 場客人等超過 ${y.handoffWaitSlaMinutes} 分鐘`
+  if (!y.handoffWaitOffHours)
+    return base
+  return y.handoffWaitOffHours >= y.handoffWaitExceeded
+    ? `${base}（都是下班時間進來的）`
+    : `${base}（其中 ${y.handoffWaitOffHours} 場是下班時間進來的）`
+})
+/** 全部都落在下班時段＝沒有一場是客服能檢討的 → 退成灰色，別天天紅字喊狼來了 */
+const waitAllOffHours = computed(() => {
+  const y = briefY.value
+  return Boolean(y?.handoffWaitExceeded && y.handoffWaitOffHours >= y.handoffWaitExceeded)
+})
 /** 沒人回的場數是不是異常偏多（門檻同上）；只拿來在既有的警語裡補一句「比平常多」 */
 const unhandledSpike = computed(() => {
   const b = brief.value
@@ -496,11 +610,17 @@ const briefLine = computed(() => {
   const b = brief.value
   if (!b)
     return ''
-  if (!b.yesterday.total)
-    return '昨天沒有客人對話。'
-  const parts = [`昨天有 ${b.yesterday.total} 場客人對話`, `AI／機器人先回了 ${b.yesterday.autoFirst} 場`]
+  if (!b.yesterday.total) {
+    return b.yesterday.newFriends > 0
+      ? `昨天沒有客人對話，但有 ${b.yesterday.newFriends} 位新朋友加了好友。`
+      : '昨天沒有客人對話。'
+  }
+  // 「其中」不可省：轉真人與 AI 先回是重疊的，並列講會被聽成兩類相加（同摘要卡的坑）
+  const parts = [`昨天有 ${b.yesterday.total} 場客人對話，其中 ${b.yesterday.autoFirst} 場是 AI／機器人先回`]
   if (b.yesterday.handoffs)
-    parts.push(`轉真人 ${b.yesterday.handoffs} 件`)
+    parts.push(`後來有 ${b.yesterday.handoffs} 場轉給真人`)
+  if (b.yesterday.newFriends > 0)
+    parts.push(`另外有 ${b.yesterday.newFriends} 位新朋友加了好友`)
   return `${parts.join('、')}。`
 })
 
@@ -655,13 +775,44 @@ async function verifyLastFix() {
   // unknown：查不到就不下結論
 }
 
-/** 昨日摘要的出口：想看趨勢與明細就去統計頁（同一份口徑的完整版） */
+/**
+ * 昨日摘要的出口：想看趨勢與明細就去統計頁（同一份口徑的完整版）。
+ *
+ * **一定要帶上摘要卡講的那一天**：統計頁預設是近 30 天，不帶日期就會出現
+ * 「卡上寫 16 場、點進去三百多場」——這張卡整輪都在修「數字對不上」，
+ * 出口自己再製造一次就白做了。
+ */
 function goStats() {
   const wid = workspaceId.value
   if (!wid)
     return
   closePanel()
-  void router.push(`/admin/${wid}/conversation-stats`)
+  const day = brief.value?.date
+  void router.push({
+    path: `/admin/${wid}/conversation-stats`,
+    query: day ? { startDate: day, endDate: day } : undefined,
+  })
+}
+
+/** 沒人回的點名出口：直接開那一位客人的對話（?userId= 深連結，收件匣 AdminPanel 會自動選中） */
+function goConversation(userId: string) {
+  const wid = workspaceId.value
+  if (!wid || !userId)
+    return
+  closePanel()
+  void router.push(`/admin/${wid}/conversations?userId=${encodeURIComponent(userId)}`)
+}
+
+/**
+ * 開通引導接手：把人帶去聊天式精靈（/admin/onboarding?workspaceId=）。
+ * 同一份劇本、訊號驅動——做過的步驟自動跳過，從第一個真實缺口接著帶。
+ */
+function goOnboardingChat() {
+  const wid = workspaceId.value
+  if (!wid)
+    return
+  closePanel()
+  void router.push(`/admin/onboarding?workspaceId=${wid}`)
 }
 
 /** 缺項巡覽：用 tour 逐一高亮側欄上「還沒做完」的入口，每步附「帶我做這項」 */

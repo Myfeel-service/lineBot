@@ -391,6 +391,42 @@ export async function autoHandbackIdleSessions(db: Firestore) {
 // ── 轉真人逾時 SLA 提醒 ────────────────────────────────────────────────────
 
 /**
+ * 原子認領一場會話的 SLA 提醒權：交易內確認還沒被提醒，同時把章蓋上。
+ *
+ * 為什麼一定要用交易：`slaRemindedAt` 的「先讀再寫」中間有空窗，只要有**兩個排程執行者**
+ * 同時跑這一輪，兩邊都會讀到「還沒提醒」→ 客服收到兩則一模一樣的提醒，而後蓋的章覆蓋
+ * 前一個，資料上只留一個章、完全看不出重複過。
+ * （2026-08-07 現場：本機 `nuxt dev` 的 Nitro scheduledTasks 用 .env 的正式憑證，
+ *  與 Amplify 上的 Cloud Scheduler 同時打同一份正式庫，13:40 與 14:30 兩則各重複一次。
+ *  Cloud Scheduler 逾時重試、Lambda 併發也是同一個坑，所以修在這裡而不是叫人關 dev。）
+ *
+ * humanFirstRepliedAt 在交易內再確認一次：這一輪跑到一半真人剛接手，就不該再催了。
+ */
+async function claimSlaReminder(
+  db: Firestore,
+  ref: FirebaseFirestore.DocumentReference,
+): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    const data = snap.data() as any
+    if (!snap.exists || data?.slaRemindedAt || data?.humanFirstRepliedAt) return false
+    tx.update(ref, { slaRemindedAt: FieldValue.serverTimestamp() })
+    return true
+  }).catch((err) => {
+    console.warn('[handoff-sla] claim failed:', ref.id, err)
+    return false
+  })
+}
+
+/** 推播沒送出去 → 把章拆掉，讓下一輪重試（否則這一場的提醒永遠補不回來） */
+async function releaseSlaReminders(refs: FirebaseFirestore.DocumentReference[]): Promise<void> {
+  await Promise.all(refs.map(ref =>
+    ref.update({ slaRemindedAt: FieldValue.delete() })
+      .catch(err => console.warn('[handoff-sla] release failed:', ref.id, err)),
+  ))
+}
+
+/**
  * pending_human 超過 aiSettings.handoffNotify.slaRemindMinutes 仍無人回應
  * → 再推播提醒值班客服一次。每場會話只提醒一次（session.slaRemindedAt 標記）。
  *
@@ -482,39 +518,52 @@ export async function remindOverdueHandoffs(db: Firestore) {
         }
       }))
 
+      // 先原子認領、認領成功才推播:另一個執行者搶到的場次會在這裡被過濾掉,
+      // 兩邊同時跑最壞的結果是「一邊發完整批、另一邊完全不發」,而不是各發一則。
+      // 認領（寫）排在推播（發訊息）之前是刻意的:失敗時可以拆章重試,反過來
+      // 「先發再蓋」則沒有任何辦法把已經送出去的訊息收回。
+      const claimed = (await Promise.all(
+        enriched.map(async e => (await claimSlaReminder(db, e.doc.ref)) ? e : null),
+      )).filter(Boolean) as typeof enriched
+      skipped += enriched.length - claimed.length
+      if (!claimed.length) continue
+
       // 1 位：維持完整格式（帶摘要與客人原話，客服看完就能接手）
       // ≥2 位：合併一則清單，每位一行「暱稱＋等了多久＋原因」
-      const single = enriched.length === 1 ? enriched[0]! : null
-      const sent = single
-        ? await notifyHandoffToStaff({
-            workspaceId,
-            customerLineUserId: single.lineUserId,
-            customerName: single.displayName,
-            customerMessage: single.message,
-            reason: single.reason,
-            summary: single.summary,
-            slaReminderMinutes: sla,
-          })
-        : await notifyOverdueHandoffBatch({
-            workspaceId,
-            slaReminderMinutes: sla,
-            items: enriched.map(e => ({
-              customerLineUserId: e.lineUserId,
-              customerName: e.displayName,
-              waitedMs: now - e.requestedMs,
-              reason: e.reason,
-            })),
-          })
-      // 沒送出去（被節流吞掉等）就別蓋章，留給下一輪重試
+      const single = claimed.length === 1 ? claimed[0]! : null
+      let sent = false
+      try {
+        sent = single
+          ? await notifyHandoffToStaff({
+              workspaceId,
+              customerLineUserId: single.lineUserId,
+              customerName: single.displayName,
+              customerMessage: single.message,
+              reason: single.reason,
+              summary: single.summary,
+              slaReminderMinutes: sla,
+            })
+          : await notifyOverdueHandoffBatch({
+              workspaceId,
+              slaReminderMinutes: sla,
+              items: claimed.map(e => ({
+                customerLineUserId: e.lineUserId,
+                customerName: e.displayName,
+                waitedMs: now - e.requestedMs,
+                reason: e.reason,
+              })),
+            })
+      }
+      catch (err) {
+        console.warn('[handoff-sla] notify threw:', workspaceId, err)
+      }
+      // 沒送出去（被節流吞掉、丟例外等）就把章拆掉，留給下一輪重試
       if (!sent) {
-        skipped += enriched.length
+        await releaseSlaReminders(claimed.map(e => e.doc.ref))
+        skipped += claimed.length
         continue
       }
-      await Promise.all(enriched.map(e =>
-        e.doc.ref.update({ slaRemindedAt: FieldValue.serverTimestamp() })
-          .catch(err => console.warn('[handoff-sla] stamp failed:', e.doc.id, err)),
-      ))
-      reminded += enriched.length
+      reminded += claimed.length
       messages++
     }
     catch (err) {
@@ -564,12 +613,53 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
 
 const DIGEST_SCAN_LIMIT = 200
 
+/**
+ * 原子認領「某 workspace 今天的摘要名額」：交易內確認今天還沒發，同時把日期記上。
+ *
+ * 與 claimSlaReminder 同一個理由，而且這裡的空窗更大——原本是「開頭讀一次整份 state、
+ * 整批跑完才在最後寫回」，中間夾著逐 workspace 的設定讀取與推播。只要有第二個執行者
+ * （Cloud Scheduler 逾時重試、Lambda 併發、本機 dev 的排程）就會發出兩份一樣的摘要。
+ *
+ * 每個 workspace 都認領同一份 doc 的不同欄位，會有交易競爭；租戶數是個位數、
+ * 一天各一次，Firestore 自動重試吃得下。
+ */
+async function claimDailyDigest(
+  db: Firestore,
+  stateRef: FirebaseFirestore.DocumentReference,
+  workspaceId: string,
+  today: string,
+): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(stateRef)
+    const data = (snap.data() ?? {}) as Record<string, string>
+    if (data[workspaceId] === today) return false
+    // 用 set+merge 而不是 update:doc 可能還不存在,而且 workspaceId 當欄位名時
+    // update 會把它當 field path 解析（這裡是 UUID 沒有點，但別留這種地雷）
+    tx.set(stateRef, { [workspaceId]: today }, { merge: true })
+    return true
+  }).catch((err) => {
+    console.warn('[backlog-digest] claim failed:', workspaceId, err)
+    return false
+  })
+}
+
+/** 摘要沒送出去 → 把今天的記錄拆掉，讓下一輪重試（否則今天就整天沒摘要了） */
+async function releaseDailyDigest(
+  stateRef: FirebaseFirestore.DocumentReference,
+  workspaceId: string,
+): Promise<void> {
+  await stateRef.set({ [workspaceId]: FieldValue.delete() }, { merge: true })
+    .catch(err => console.warn('[backlog-digest] release failed:', workspaceId, err))
+}
+
 export async function dailyBacklogDigest(db: Firestore) {
   const taipeiNow = new Date(Date.now() + 8 * 3600_000)
   const taipeiHour = taipeiNow.getUTCHours()
   const today = taipeiNow.toISOString().slice(0, 10)
 
   const stateRef = db.collection('cronState').doc('backlog-digest')
+  // 這一份只用來便宜地早退「今天已經發過」的 workspace（省掉設定讀取與聚合）；
+  // 真正防重複的判斷在 claimDailyDigest 的交易裡，不能靠這個快照。
   const state = ((await stateRef.get()).data() ?? {}) as Record<string, string>
 
   // 發送時段是各 workspace 自選的,沒有全域「幾點前免查」的早退可用;
@@ -651,9 +741,8 @@ export async function dailyBacklogDigest(db: Firestore) {
   }
 
   let notified = 0
-  const statePatch: Record<string, string> = {}
   for (const [ws, agg] of byWs) {
-    if (state[ws] === today) continue // 今天發過
+    if (state[ws] === today) continue // 今天發過（便宜早退；真正的判斷在 claimDailyDigest）
     const hasConversation = agg.pending > 0 || agg.stale > 0
     const hasKnowledge = agg.outdatedSources > 0 || agg.failedSources > 0 || agg.expiredCards > 0 || agg.suggestions > 0
     if (!hasConversation && !hasKnowledge) continue
@@ -661,6 +750,10 @@ export async function dailyBacklogDigest(db: Firestore) {
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
     if (taipeiHour < cfg.digestHour) continue // 商家自選時段還沒到,下一輪再看
+
+    // 認領排在所有「發不發」的判斷之後、推播之前:提早認領會讓「時段還沒到」也被
+    // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
+    if (!(await claimDailyDigest(db, stateRef, ws, today))) continue
 
     const lines = ['📋 每日客服摘要']
     if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
@@ -674,11 +767,24 @@ export async function dailyBacklogDigest(db: Firestore) {
     const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
     lines.push(`請到後台${places}頁處理。`)
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
-    await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
-    statePatch[ws] = today
+    try {
+      const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          // 最常見原因：該人員不是此官方帳號好友。名單全掛也不重試（設定問題，
+          // 重試只會每輪重打 LINE API），所以這裡只記 log、不拆章。
+          console.warn('[backlog-digest] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+        }
+      })
+    }
+    catch (err) {
+      // 真的丟例外（撈憑證失敗等）→ 拆章，下一輪重來
+      console.warn('[backlog-digest] push threw:', ws, err)
+      await releaseDailyDigest(stateRef, ws)
+      continue
+    }
     notified++
   }
-  if (Object.keys(statePatch).length) await stateRef.set(statePatch, { merge: true })
 
   const tally = { pendingScanned: pendingSnap.size, humanScanned: humanSnap.size, workspacesNotified: notified }
   if (notified) console.log('[conversation:backlog-digest]', tally)

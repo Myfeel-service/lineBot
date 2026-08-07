@@ -1,5 +1,6 @@
 import { detectSourceUpdates } from '~~/server/utils/cron-maintenance'
 import { getDb } from '~~/server/utils/firebase'
+import { localScheduledTasksEnabled, LOCAL_SCHEDULED_TASK_SKIPPED } from '~~/server/utils/local-scheduled-tasks'
 
 /**
  * Nitro scheduled task：對 type='url' 的 source 做變動偵測、gsheet 自動同步。
@@ -12,6 +13,7 @@ export default defineTask({
     description: '偵測 URL 來源內容變動，標記 outdated 等使用者確認',
   },
   async run() {
+    if (!localScheduledTasksEnabled()) return { result: LOCAL_SCHEDULED_TASK_SKIPPED }
     return { result: await detectSourceUpdates(getDb()) }
   },
 })

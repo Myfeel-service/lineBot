@@ -9,15 +9,39 @@
 
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 
+/**
+ * 一天的摘要。
+ *
+ * ⚠️ 這裡有**兩種不同的數字**，UI 不可以把它們並排：
+ * - `autoFirst` / `humanFirst` / `unhandled` 是「第一句話誰回的」的互斥分項，
+ *   三個加起來等於 `total`（initialHandler 只會是其中一種）。
+ * - `handoffs` 是「後來有沒有轉真人」，是 `total` 的**子集**，會與前面重疊
+ *   （機器人先回、後來轉真人的同一場會同時算進 autoFirst 和 handoffs）。
+ *
+ * 之前三格並排（總數／AI先回／轉真人）就是因為混用這兩種，讀的人會去相加、
+ * 對不起來，然後懷疑數字有 bug。加得起來的才能並排。
+ */
 export interface DailyBriefDay {
   /** 客人對話場數（已排除客人沒開口的場） */
   total: number
   /** AI／機器人先回的場數（aiHandled + botHandled） */
   autoFirst: number
-  /** 轉真人件數 */
+  /** 客服自己先回的場數（humanHandled） */
+  humanFirst: number
+  /** 轉真人件數；**與上面兩項重疊**，不是第三類 */
   handoffs: number
   /** 整天都沒有人回的場數 */
   unhandled: number
+  /** 第一次加好友的人數；-1＝查不到（老闆拍板 2026-08-07：只要人數，不帶「其中幾位開口」） */
+  newFriends: number
+  /** 沒人回的名單樣本（≤3，同一批 session 取樣）；點名字直接開那場對話 */
+  unhandledSamples: { userId: string; displayName: string }[]
+  /** 轉真人後等超過 SLA 的場數（門檻= handoffWaitSlaMinutes，沿用工作區 SLA 設定） */
+  handoffWaitExceeded: number
+  handoffWaitSlaMinutes: number
+  /** 其中「轉真人那一刻已經下班」的場數；服務時間沒啟用時恆 0 */
+  handoffWaitOffHours: number
+  handoffWaitSamples: { userId: string; displayName: string }[]
 }
 
 export interface DailyBrief {
@@ -46,8 +70,15 @@ function toDay(k: KpiResult): DailyBriefDay {
   return {
     total: k.total,
     autoFirst: k.aiHandled + k.botHandled,
+    humanFirst: k.humanHandled,
     handoffs: k.handoffCount,
     unhandled: k.unhandled,
+    newFriends: k.newFriends ?? -1,
+    unhandledSamples: k.unhandledSamples ?? [],
+    handoffWaitExceeded: k.handoffWaitExceeded ?? 0,
+    handoffWaitSlaMinutes: k.handoffWaitSlaMinutes ?? 30,
+    handoffWaitOffHours: k.handoffWaitOffHours ?? 0,
+    handoffWaitSamples: k.handoffWaitSamples ?? [],
   }
 }
 

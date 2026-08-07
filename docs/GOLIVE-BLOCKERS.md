@@ -415,6 +415,9 @@ Node 22 確實支援 `NODE_USE_ENV_PROXY=1`(實測過),但它是**全域**的:�
 
 #### 中繼站怎麼架（半天,Caddy 版）
 
+> 📘 **逐步操作教學(可直接照做,含驗收/回滾/常見錯誤)→ `docs/PAYUNI-RELAY-SETUP.md`。**
+> 下面是摘要,細節以那份為準。
+
 1. **開機器 + 綁固定 IP**:AWS Lightsail 最小方案(USD 3.5/月) → Networking 頁按
    **Attach static IP**(Lightsail 的靜態 IP 附掛在執行中的機器上不收費)。
    同 AWS 帳號、同區域,帳單與權責都跟現有基礎設施在一起。
@@ -434,8 +437,11 @@ relay.yourdomain.com {
 ```
 
 3. **DNS**:`relay.yourdomain.com` A 記錄指向那個靜態 IP。
-   ⚠️ 若用 Cloudflare 代管 DNS,這筆要設**灰雲(DNS only)** —— 開橘雲會讓連線先進
-   Cloudflare 再出來,出口 IP 就不是我們那台了,白名單白填。
+   建議 Cloudflare 設**灰雲(DNS only)**。
+   ⚠️ **更正(2026-08-07)**:本檔原本寫「開橘雲會讓出口 IP 不是我們那台,白名單白填」——**那是錯的**。
+   橘雲代理的是「**別人打進中繼站**」的方向;中繼站**打出去給 PAYUNi** 用的仍然是它自己的 IP,
+   白名單不會失效。建議灰雲的真正理由是:**扣款路徑上少一個依賴、少一個故障點**
+   (要用橘雲把機器藏起來也可以,只是憑證與逾時要自理)。
 4. **PAYUNi 後台**:「限定 API 之 IP 設定」只填**那一個靜態 IP**(把現在為了測試塞的
    浮動 IP 全部清掉)。
 5. **Amplify 環境變數**:`PAYUNI_RELAY_BASE=https://relay.yourdomain.com` → 重新部署。

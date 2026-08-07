@@ -18,6 +18,13 @@ export default defineNuxtConfig({
       tasks: true,
     },
     scheduledTasks: {
+      // ⚠️ 這些排程只在本機 `nuxt dev` 跑（Amplify 不打包 Nitro tasks），而 dev 讀的是 .env
+      //    ＝**正式** Firestore 與 LINE 憑證。開著 dev 就等於替正式環境多開一個排程執行者,
+      //    會真的動正式資料、真的發訊息,還會與 Cloud Scheduler 撞同一輪把同一件事做兩次
+      //    （2026-08-07 現場：客服的 SLA 逾時提醒每則收到兩份）。
+      //    因此每個 task 內部都有 localScheduledTasksEnabled() 閘門，預設不動作；
+      //    要在本機驗排程行為請設 LOCAL_SCHEDULED_TASKS=true（先確認 .env 指向測試租戶）。
+      //    見 server/utils/local-scheduled-tasks.ts。
       // 本機 dev 等環境；正式環境主要依 server/plugins/broadcast-scheduler.ts
       '* * * * *': ['broadcast:trigger-scheduled'],
       // 每 5 分鐘撿 failed / 卡住的知識卡重新索引

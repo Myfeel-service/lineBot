@@ -1,5 +1,6 @@
 import { cleanupExpiredWebhookEventLocks } from '~~/server/utils/cron-maintenance'
 import { getDb } from '~~/server/utils/firebase'
+import { localScheduledTasksEnabled, LOCAL_SCHEDULED_TASK_SKIPPED } from '~~/server/utils/local-scheduled-tasks'
 
 /**
  * Nitro scheduled task：刪除過期的 webhook 冪等鎖（expiresAt < now）。
@@ -12,6 +13,7 @@ export default defineTask({
     description: '清理過期的 webhook 事件冪等鎖',
   },
   async run() {
+    if (!localScheduledTasksEnabled()) return { result: LOCAL_SCHEDULED_TASK_SKIPPED }
     return { result: await cleanupExpiredWebhookEventLocks(getDb()) }
   },
 })

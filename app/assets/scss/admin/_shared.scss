@@ -26,6 +26,21 @@
   line-height: 1.45;
 }
 
+/**
+ * 副標／說明文字裡的行內連結（例：對話統計 ↔ 用量監控 互相導覽）。
+ * 用主色＋底線：說明文字本身是 muted 灰，連結不上色就看不出點得下去。
+ */
+.admin-inline-link {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
 .admin-header-actions {
   align-items: center;
 }

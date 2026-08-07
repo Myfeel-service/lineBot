@@ -1,0 +1,284 @@
+/* ── agent 結構化訊息渲染層（AgentMessageRenderer / AgentAskDock） ──
+   開通引導精靈與後台查詢助理共用；型別合約在 shared/types/agent-messages.ts */
+
+/* 訊息泡泡 */
+.agm-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+
+  &--agent { align-self: flex-start; align-items: flex-start; }
+  &--user { align-self: flex-end; align-items: flex-end; }
+
+  .agm-bubble {
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.7;
+    word-break: break-word;
+  }
+
+  &--agent .agm-bubble {
+    background: var(--el-fill-color-light);
+    border: 1px solid var(--el-border-color-lighter);
+    border-bottom-left-radius: 4px;
+  }
+
+  &--user .agm-bubble {
+    background: var(--el-color-primary);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+}
+
+/* 打字中指示（頁面在等 say() 的節奏時顯示） */
+.agm-typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 12px 14px;
+
+  i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--el-text-color-secondary);
+    opacity: 0.4;
+    animation: agm-blink 1.1s infinite;
+
+    &:nth-child(2) { animation-delay: 0.18s; }
+    &:nth-child(3) { animation-delay: 0.36s; }
+  }
+}
+
+@keyframes agm-blink {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agm-typing i { animation: none; }
+}
+
+/* 結構化卡片（agent 側） */
+.agm-card {
+  align-self: flex-start;
+  max-width: 88%;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+
+  &__label {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    margin-bottom: 4px;
+  }
+}
+
+.agm-help {
+  summary {
+    cursor: pointer;
+    color: var(--el-color-primary);
+    font-weight: 600;
+    user-select: none;
+  }
+
+  ol {
+    margin: 6px 0 2px;
+    padding-left: 20px;
+    color: var(--el-text-color-regular);
+    line-height: 1.9;
+  }
+
+  &__link {
+    display: inline-block;
+    margin-top: 4px;
+    color: var(--el-color-primary);
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+  }
+}
+
+.agm-link {
+  display: inline-block;
+  color: var(--el-color-primary);
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover { border-color: var(--el-color-primary); }
+}
+
+.agm-copy {
+  &__row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  &__value {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    background: var(--el-fill-color-light);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+}
+
+.agm-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  &--ok { color: var(--el-color-success); font-weight: 600; }
+  &--fail { color: var(--el-color-warning); }
+  /* 略過＝使用者的正當選擇，中性灰，不是警告 */
+  &--skipped { color: var(--el-text-color-secondary); }
+}
+
+.agm-highlight {
+  border-color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+
+  &__title {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 2px 0;
+  }
+
+  &__meta {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.agm-summary {
+  ul {
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+  }
+
+  li {
+    display: flex;
+    gap: 8px;
+    padding: 3px 0;
+
+    &.is-skipped { color: var(--el-text-color-secondary); }
+  }
+
+  &__mark {
+    flex: none;
+    font-weight: 700;
+    color: var(--el-color-success);
+
+    .is-skipped & { color: var(--el-color-warning); }
+  }
+}
+
+/* ── 輸入區（AgentAskDock） ── */
+.agd {
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 12px 16px;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  background: var(--el-bg-color);
+
+  /* 間距一律交給 gap；Element Plus 預設的相鄰按鈕 margin 會疊上去變成不均（8 vs 20px） */
+  .el-button + .el-button { margin-left: 0; }
+
+  &__hint {
+    margin: 0 auto;
+    color: var(--el-text-color-secondary);
+    font-size: 12.5px;
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  &__form {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    align-items: center;
+  }
+
+  &__input { flex: 1; min-width: 0; }
+
+  &__skip {
+    flex: none;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+
+    /* 直欄 stretch 會把 text 按鈕拉成滿版、看起來像多一列選項（房規常見坑） */
+    .agd__skip { align-self: center; }
+  }
+
+  &__person {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    background: var(--el-fill-color-light);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--el-color-primary);
+    }
+
+    &-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+
+      &--empty {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--el-fill-color);
+        color: var(--el-text-color-secondary);
+      }
+    }
+
+    &-main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    &-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--el-text-color-primary);
+    }
+
+    &-sub {
+      font-size: 11.5px;
+      color: var(--el-text-color-secondary);
+    }
+  }
+}

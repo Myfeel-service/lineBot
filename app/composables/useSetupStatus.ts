@@ -7,7 +7,7 @@
  */
 
 import type { Component } from 'vue'
-import { Link, MagicStick, Operation, Reading } from '@element-plus/icons-vue'
+import { Iphone, Link, MagicStick, Operation, Reading } from '@element-plus/icons-vue'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 
 export interface SetupCapability {
@@ -82,7 +82,24 @@ const CAPABILITIES: SetupCapability[] = [
     tourId: 'ai-scripts',
     navTarget: '[data-tour="nav-ai-scripts"]',
   },
+  {
+    // 2026-08-07 自 lineConnected 拆出：多數新客戶第一天用不到 LIFF，
+    // 缺它不該讓人永遠掛在「LINE 未接通」、也不該擋「可以上線」。
+    id: 'liffReady',
+    icon: Iphone,
+    title: '設定 LIFF（活動頁入口）',
+    why: '客人點開活動頁、會員綁定頁會用到。要辦活動前再補就行。',
+    required: false,
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization`,
+    tourId: 'organization',
+    navTarget: '[data-tour="nav-organization"]',
+  },
 ]
+
+// 注意：後端 setup-status 還會回 firstMessageReceived（收到第一則客人訊息），
+// 刻意不進這份註冊表——它沒有側欄入口可給缺項巡覽指、也不是一個「去設定」的頁面。
+// 開通引導精靈與後台查詢助理（SETUP_LABELS）直接使用該訊號。
 
 /**
  * 兩次自動體檢之間的最短間隔。面板開開關關、換頁都會來要一次資料，

@@ -1,11 +1,17 @@
 <template>
   <AdminSplitLayout solo>
     <template #editor-header>
+      <!-- 副標用問句講這一頁回答什麼（2026-08-07 拍板），並講明單位：
+           這頁數「則」、統計頁數「場」——兩頁數字對不上不是 bug，是單位不同 -->
       <AdminSoloPageHeading
         field-label="AI 客服"
         title="用量 / 監控"
-        caption="這個月的 AI 用量、自動回覆率、待補知識清單"
-      />
+        caption="AI 做了多少工、花了多少——這裡數的是「則」（AI 每回一次算一則）。"
+      >
+        <template #caption>
+          想看客人來了多少、誰接住的（數「場」）？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
+        </template>
+      </AdminSoloPageHeading>
       <div class="flex gap-2 admin-header-actions">
         <el-select v-model="period" size="small" data-tour="usg-period" style="width: 130px" @change="loadAll">
           <el-option
@@ -141,7 +147,14 @@
                       @keydown.enter="(summary?.handoffs ?? 0) > 0 && scrollToHandoffs()"
                     >
                       <span class="usage-leg__dot" />
-                      <span class="usage-leg__k">轉給真人</span>
+                      <span class="usage-leg__k">
+                        轉給真人
+                        <!-- 兩本帳的說明放在最容易被拿去對數字的位置：這裡數「次」（AI 每觸發一次轉接算一次）、
+                             對話統計頁數「場」（同一場轉幾次都算 1）——兩邊數字不同是刻意的，見定義書 -->
+                        <el-tooltip placement="top" content="這裡數「次」：AI 每觸發一次轉真人算一次。對話統計頁的「轉真人」數「場」（同一場轉幾次都算 1），所以兩頁數字不一樣是正常的。">
+                          <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
+                        </el-tooltip>
+                      </span>
                       <span class="usage-leg__v">{{ formatNumber(summary?.handoffs) }}</span>
                       <span class="usage-leg__pct">{{ formatPercent(summary?.handoffRate) }}</span>
                       <span v-if="(summary?.handoffs ?? 0) > 0" class="usage-leg__go">查看 ↓</span>

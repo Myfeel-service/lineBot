@@ -7,10 +7,12 @@
  */
 
 export type SetupCapabilityId =
-  | 'lineConnected' // 已接上 LINE 官方帳號（Token / Secret / 預設 LIFF 都有）
+  | 'lineConnected' // 已接上 LINE 官方帳號（Token / Secret 都有；LIFF 另拆 liffReady）
+  | 'liffReady' // 已設定預設 LIFF（活動頁 / 綁定頁入口）。2026-08-07 拍板自 lineConnected 拆出：多數新客戶第一天用不到，不該擋「可以上線」
   | 'aiEnabled' // 已開啟 AI 自動回覆
   | 'knowledgeReady' // 知識庫已有內容
   | 'scriptReady' // 已啟用至少一支客服腳本
+  | 'firstMessageReceived' // 曾收到任一則客人傳來的訊息（開通引導的「見證時刻」；只做訊號，不進健康卡註冊表——它沒有側欄入口可指）
 
 /**
  * 各能力的白話標題（單一事實來源）：
@@ -18,9 +20,11 @@ export type SetupCapabilityId =
  */
 export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
   lineConnected: '接上 LINE 官方帳號',
+  liffReady: '設定 LIFF（活動頁入口）',
   aiEnabled: '開啟 AI 自動回覆',
   knowledgeReady: '建立知識庫',
   scriptReady: '啟用一支客服腳本',
+  firstMessageReceived: '收到第一則客人訊息',
 }
 
 /** done=已完成；incomplete=還沒做；unknown=這次查詢失敗，狀態未知（不要當成沒做） */
