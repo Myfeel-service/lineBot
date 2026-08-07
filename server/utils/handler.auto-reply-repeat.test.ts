@@ -232,6 +232,48 @@ describe('自動回覆連續複讀防呆', () => {
     )
   })
 
+  /**
+   * 一場對話最長 24 小時，中間客人跟 AI 聊別的、真人回過話都不會動到 lastAutoReply。
+   * 沒有時效的話，早上問過「訂單」的客人下午再問一次就會被當成卡住 → 拿到「已為您安排專員」
+   * 而不是規則本來要給的答案，客服還被叫一次。
+   */
+  it('隔太久之後同一條規則再命中 → 照常回覆，不當成卡住的複讀', async () => {
+    const ws = nextWs()
+    const { db } = makeDb(ws, [orderRule(ws)])
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    await handleMessageEvent(textEvent('我的訂單出貨了嗎', now, 'tk-1'), { workspaceId: ws })
+
+    const realNow = Date.now
+    try {
+      Date.now = () => realNow() + 20 * 60 * 1000 // 超過 15 分鐘的複讀視窗
+      await handleMessageEvent(textEvent('想再問一下訂單進度', now + 20 * 60 * 1000, 'tk-2'), { workspaceId: ws })
+    }
+    finally {
+      Date.now = realNow
+    }
+
+    expect(sentTexts(1)).toContain('請提供您的訂單資訊')
+    expect(vi.mocked(notifyHandoffToStaff)).not.toHaveBeenCalled()
+  })
+
+  it('轉真人之後紀錄要清掉：否則這條規則在這一場永遠回不了話', async () => {
+    const ws = nextWs()
+    const { db } = makeDb(ws, [orderRule(ws)])
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    await handleMessageEvent(textEvent('我的訂單出貨了嗎', now, 'tk-1'), { workspaceId: ws })
+    // 第二則命中同一條 → 轉真人（複讀防呆），同時把紀錄清掉
+    await handleMessageEvent(textEvent('1. 訂單編號：M2026', now + 1000, 'tk-2'), { workspaceId: ws })
+    expect(sentTexts(1)).toContain('已為您安排專員')
+
+    // 真人處理完交還機器人後，同一條規則要能再回覆（清掉紀錄才不會又被判成複讀）
+    await handleMessageEvent(textEvent('請問訂單好了嗎', now + 2000, 'tk-3'), { workspaceId: ws })
+    expect(sentTexts(2)).toContain('請提供您的訂單資訊')
+  })
+
   it('中間換成別條規則 → 不算連續，兩條都照常回覆', async () => {
     const ws = nextWs()
     const other = {

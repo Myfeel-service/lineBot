@@ -23,11 +23,15 @@ export interface UserDoc {
   /** 模組 ID → 冷卻資訊（由啟用防重複的自動回覆寫入） */
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
   /**
-   * 上一則自動回覆是哪條規則、發生在哪一場對話。用來擋「同一條規則連著命中第二次」——
-   * 那代表客人照著罐頭回覆回了話卻又打中同一條，再送一次只會複讀（見 handleIncomingText）。
-   * 每次規則真的送出回覆時覆寫；不是冷卻，與 autoReplyCooldowns 各自獨立。
+   * 上一則自動回覆是哪條規則、發生在哪一場對話、什麼時候（epoch ms）。
+   * 用來擋「同一條規則連著命中第二次」——那代表客人照著罐頭回覆回了話卻又打中同一條，
+   * 再送一次只會複讀（見 handleIncomingText）。每次規則真的送出回覆時覆寫；
+   * 不是冷卻，與 autoReplyCooldowns 各自獨立。
+   *
+   * `at` 有時效（見 AUTO_REPLY_REPEAT_WINDOW_MS）：一場對話最長 24 小時，沒有時效的話
+   * 早上問過的客人下午再問就會被誤判成卡住而轉真人。舊資料沒有這個欄位＝視為過期。
    */
-  lastAutoReply?: { ruleId: string; sessionId: string }
+  lastAutoReply?: { ruleId: string; sessionId: string; at?: number }
   /**
    * 上一次「準備要送某條規則」的宣告：規則 ID、內容指紋、時間（epoch ms）。
    * 在冷卻交易裡寫入，用來擋 webhook 並行處理造成的「同一句話回兩次」——lastAutoReply 是

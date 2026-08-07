@@ -264,6 +264,32 @@ async function claimAutoReplyCooldown(
 }
 
 /**
+ * 「連著命中同一條規則」的有效期限。
+ *
+ * 為什麼要有期限：lastAutoReply 只記規則與場次，而一場對話最長 24 小時，中間客人跟 AI
+ * 聊別的、真人回過話都不會動到它。沒有期限的話，早上問過「訂單」的客人下午再問一次
+ * 就會被當成卡住的複讀 → 拿到「已為您安排專員」而不是規則本來要給的答案，客服還被叫一次。
+ *
+ * 真正要擋的是「客人照著罐頭回覆填回來、那句話又打中同一條」——那是幾十秒到幾分鐘內的事。
+ * 15 分鐘足以蓋住整個來回，又不會把「隔了一段時間的新問題」誤判成複讀。
+ */
+const AUTO_REPLY_REPEAT_WINDOW_MS = 15 * 60 * 1000
+
+/** 這次命中是不是「接著上一次同一條規則」（見 AUTO_REPLY_REPEAT_WINDOW_MS） */
+function isConsecutiveAutoReply(
+  last: UserDoc['lastAutoReply'] | null | undefined,
+  rule: AutoReplyRuleShape,
+  sessionId: string | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!rule.id || rule.matchType === 'anyText') return false
+  if (last?.ruleId !== rule.id || last?.sessionId !== (sessionId ?? '')) return false
+  // 舊資料沒有時間 → 當成過期。寧可讓規則正常回覆，也不要憑一個不知道多久以前的紀錄轉真人
+  const at = Number(last?.at ?? 0)
+  return at > 0 && now - at <= AUTO_REPLY_REPEAT_WINDOW_MS
+}
+
+/**
  * 記下「這位客人剛剛收到的是哪一條規則的回覆」，供下一則訊息判斷是不是連著命中同一條。
  * 客人的回覆早就送出去了，這裡才寫，不影響回覆速度；但一定要 await——下一則訊息
  * 可能只隔幾秒進來，寫沒落地就等於防呆沒生效。
@@ -274,7 +300,7 @@ async function recordAutoReplyFired(
   sessionId: string | null | undefined,
 ): Promise<void> {
   if (!ruleId) return
-  const lastAutoReply = { ruleId, sessionId: sessionId ?? '' }
+  const lastAutoReply = { ruleId, sessionId: sessionId ?? '', at: Date.now() }
   try {
     await getDb().collection('users').doc(fsUserDocId).set({ lastAutoReply }, { merge: true })
     const entry = userDocCache.get(fsUserDocId)
@@ -282,6 +308,27 @@ async function recordAutoReplyFired(
   }
   catch (e) {
     console.error('[autoReply] recordAutoReplyFired failed:', e)
+  }
+}
+
+/**
+ * 複讀防呆已經轉過真人了，就把紀錄清掉。
+ *
+ * 不清的話這條規則在這一場就等於**永久死亡**：真人處理完交還機器人之後，客人再問同一件事
+ * 仍然會命中「上一次就是這條」而再轉一次真人，規則的答案再也送不出去。
+ * 清掉之後最壞情況只是「同一場裡再被複讀防呆擋一次」，而那本來就是設計上要擋的。
+ */
+async function clearAutoReplyFired(fsUserDocId: string): Promise<void> {
+  try {
+    await getDb().collection('users').doc(fsUserDocId).set(
+      { lastAutoReply: FieldValue.delete() },
+      { merge: true },
+    )
+    const entry = userDocCache.get(fsUserDocId)
+    if (entry?.data) delete entry.data.lastAutoReply
+  }
+  catch (e) {
+    console.error('[autoReply] clearAutoReplyFired failed:', e)
   }
 }
 
@@ -316,8 +363,11 @@ interface UserDoc {
   attributes?: Record<string, string>
   autoReplyCooldowns?: Record<string, number>
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
-  /** 上一則自動回覆是哪條規則、哪一場對話（擋同一條規則連續複讀；見 recordAutoReplyFired） */
-  lastAutoReply?: { ruleId: string; sessionId: string }
+  /**
+   * 上一則自動回覆是哪條規則、哪一場對話、什麼時候（擋同一條規則連續複讀；
+   * 見 recordAutoReplyFired。`at` 是有效期限的依據，舊資料沒有這個欄位＝視為過期）
+   */
+  lastAutoReply?: { ruleId: string; sessionId: string; at?: number }
   /**
    * 上一次「準備要送這條規則」的宣告：規則、內容指紋、時間。
    * 在交易裡寫，用來擋並行處理造成的同一句話回兩次（見 claimAutoReplyCooldown）。
@@ -2556,8 +2606,8 @@ async function handleIncomingText(
     }
     if (rule) {
       /**
-       * 連續複讀防呆：上一則自動回覆就是這條規則、而且還在同一場對話 → 不再送一次同樣的話，
-       * 直接轉真人。
+       * 連續複讀防呆：上一則自動回覆就是這條規則、還在同一場對話、而且**就在剛剛**
+       * （見 AUTO_REPLY_REPEAT_WINDOW_MS）→ 不再送一次同樣的話，直接轉真人。
        *
        * 為什麼需要：規則的關鍵字會打到「客人照著罐頭回覆填回來的內容」。2026-08-07 正式站
        * 實例——「查詢訂單」規則關鍵字含「訂單」，客人回「1. 訂單編號：M…」再次命中，同一段
@@ -2567,13 +2617,7 @@ async function handleIncomingText(
        * anyText 規則排除在外：那種規則的本意就是「不管客人打什麼都回同一句」（多半用來
        * 暫停 AI），複讀是它的預期行為，不是卡住。
        */
-      const isRepeatOfLastRule = Boolean(
-        rule.id
-        && rule.matchType !== 'anyText'
-        && userState.lastAutoReply?.ruleId === rule.id
-        && userState.lastAutoReply?.sessionId === (sessionId ?? ''),
-      )
-      if (isRepeatOfLastRule) {
+      if (isConsecutiveAutoReply(userState.lastAutoReply, rule, sessionId)) {
         console.log('[autoReply] same rule matched twice in a row → handoff:', rule.id, rule.name)
         await deliverHandoffReply({
           workspaceId: wid,
@@ -2586,6 +2630,8 @@ async function handleIncomingText(
           customerMessage: textContent,
           reason: 'auto_reply_repeat',
         })
+        // 已經交給真人了，紀錄就地清掉：不清的話交還機器人之後這條規則在這一場永遠回不了話
+        await clearAutoReplyFired(fsUserDocId)
         return
       }
 
