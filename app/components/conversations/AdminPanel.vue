@@ -2849,9 +2849,19 @@ async function loadOlderTimeline() {
 async function loadNewerTimeline() {
   if (loadingNewer.value || msgLoading.value || !timelineHasNewer.value) return
   const userId = selectedUserId.value
+  if (!userId) return
   const sessionId = selectedSessionId.value || ''
   const cursor = newestMessageId()
-  if (!userId || !cursor) return
+  /**
+   * 這一段一則訊息都沒有（只有事件行）＝沒有可以接續的游標——那場的訊息被保留期清掉時
+   * 就會這樣。游標是訊息 id，接不下去。這時若直接 return，按鈕按下去毫無反應、也沒有
+   * 任何說明，看起來就是壞的；改成把人帶到最新一段並講清楚發生什麼事。
+   */
+  if (!cursor) {
+    showToast('這一段沒有可接續的訊息（可能已超過保留期限），已跳到最新', 'warning')
+    await leaveSessionSegment(userId)
+    return
+  }
   loadingNewer.value = true
   try {
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
