@@ -139,21 +139,51 @@ async function loadUserStateForIncomingText(fsUserDocId: string): Promise<{
 }
 
 /**
+ * 「同一句話被回兩次」的防護視窗。
+ *
+ * 為什麼上面那個連續複讀防呆擋不住：它讀的是訊息進來時就載好的 userState，而 webhook 的
+ * 事件是**並行**處理的（webhook.post.ts 用 Promise.all，同一批事件或兩個並行的 POST 都算）。
+ * 客人連點兩下送出兩則一樣的話時，兩邊都在 lastAutoReply 寫下去之前就把狀態讀走了 →
+ * 兩邊都認為「我不是複讀」→ 同一段罐頭回覆送兩次。
+ *
+ * 只需要蓋過「兩則訊息抵達的間隔」——交易會排隊，第二筆一定看得到第一筆寫下的宣告——
+ * 所以幾秒就夠。刻意**不**放大，也刻意只擋「同一條規則 + 一模一樣的內容」：
+ * 隔一下子才進來的下一個問題是真的問題，回覆它遠比省下一則重複訊息重要。
+ */
+const AUTO_REPLY_DUPLICATE_GUARD_MS = 8 * 1000
+
+/** 防連送用的內容指紋：同一句話（去頭尾空白、截短）才算重複，不同的問題不受影響。 */
+function autoReplyTextKey(text: string): string {
+  return String(text || '').trim().slice(0, 120)
+}
+
+/**
  * 原子性地確認冷卻狀態並寫入觸發時間。
  * 使用 Firestore Transaction，確保並行請求（同一使用者快速連傳）只有第一則真正觸發。
- * 回傳 true = 可以觸發；false = 已在冷卻中
+ * 回傳 true = 可以觸發；false = 已在冷卻中，或剛剛才用同一句話觸發過同一條規則。
+ *
+ * ⚠️ 沒開防重複觸發的規則**也要**走這段交易：那種規則的本意是「不要節流」，不是
+ *    「同一句話可以回兩次」。先前那些規則直接 return true、完全不進交易，於是並行
+ *    的兩則一樣的訊息都會送出同一段罐頭回覆——正是防呆想擋的情況。擋的條件刻意收得很窄
+ *    （同規則 + 同內容 + 幾秒內），不同的問題永遠不會被這段吃掉。
  */
 async function claimAutoReplyCooldown(
   fsUserDocId: string,
   rule: AutoReplyRuleShape,
+  /** 這次觸發的客人原文（見 autoReplyTextKey）。空字串＝沒有可比對的內容，不做防連送。 */
+  inboundText = '',
 ): Promise<boolean> {
-  if (!rule.cooldown?.enabled || !rule.id) return true
+  if (!rule.id) return true
+  const cooldownEnabled = rule.cooldown?.enabled === true
+  // anyText 規則的本意就是「不管客人打什麼都回同一句」，複讀是它的預期行為（同連續複讀防呆）
+  const textKey = rule.matchType === 'anyText' ? '' : autoReplyTextKey(inboundText)
 
   const db = getDb()
   const userRef = db.collection('users').doc(fsUserDocId)
   const ruleId = rule.id
-  const durationMs = Number(rule.cooldown.durationMs)
+  const durationMs = Number(rule.cooldown?.durationMs)
   const triggeredAt = Date.now()
+  const claim = { ruleId, textKey, at: triggeredAt }
   let shouldTrigger = false
 
   try {
@@ -164,49 +194,70 @@ async function claimAutoReplyCooldown(
         data?.autoReplyCooldowns as Record<string, unknown> | undefined,
       )
 
-      if (isAutoReplyRuleOnCooldown(rule, cooldowns, triggeredAt)) {
+      if (cooldownEnabled && isAutoReplyRuleOnCooldown(rule, cooldowns, triggeredAt)) {
+        shouldTrigger = false
+        return
+      }
+      // 同一條規則、一模一樣的內容、就在剛剛 → 是並行處理的同一句話，不要回第二次
+      const last = data?.lastAutoReplyClaim
+      if (
+        textKey
+        && last?.ruleId === ruleId
+        && last?.textKey === textKey
+        && Number(last?.at ?? 0) + AUTO_REPLY_DUPLICATE_GUARD_MS > triggeredAt
+      ) {
+        console.log('[autoReply] duplicate inbound within guard window → skip:', ruleId)
         shouldTrigger = false
         return
       }
 
       shouldTrigger = true
-      const updates: Record<string, unknown> = {
-        [`autoReplyCooldowns.${ruleId}`]: triggeredAt,
-      }
-      if (rule.action.type === 'module' && rule.action.moduleId) {
-        updates[`autoReplyModuleCooldowns.${rule.action.moduleId}`] = {
-          triggeredAt,
-          durationMs,
+      // 冷卻紀錄只有「有開冷卻」時才寫：沒開的規則寫了不會被讀，卻會在客戶之後把冷卻打開時
+      // 用一個舊時間白白擋掉一次觸發。防連送靠的是下面那筆宣告，與冷卻無關。
+      const updates: Record<string, unknown> = { lastAutoReplyClaim: claim }
+      if (cooldownEnabled) {
+        updates[`autoReplyCooldowns.${ruleId}`] = triggeredAt
+        if (rule.action.type === 'module' && rule.action.moduleId) {
+          updates[`autoReplyModuleCooldowns.${rule.action.moduleId}`] = {
+            triggeredAt,
+            durationMs,
+          }
         }
       }
 
       if (snap.exists) {
         tx.update(userRef, updates)
       } else {
-        const mergeData: Record<string, unknown> = {
-          autoReplyCooldowns: { [ruleId]: triggeredAt },
-        }
-        if (rule.action.type === 'module' && rule.action.moduleId) {
-          mergeData.autoReplyModuleCooldowns = {
-            [rule.action.moduleId]: { triggeredAt, durationMs },
+        const mergeData: Record<string, unknown> = { lastAutoReplyClaim: claim }
+        if (cooldownEnabled) {
+          mergeData.autoReplyCooldowns = { [ruleId]: triggeredAt }
+          if (rule.action.type === 'module' && rule.action.moduleId) {
+            mergeData.autoReplyModuleCooldowns = {
+              [rule.action.moduleId]: { triggeredAt, durationMs },
+            }
           }
         }
         tx.set(userRef, mergeData, { merge: true })
       }
     })
   } catch (e) {
-    // fail-closed：Firestore 故障時寧可這一輪不觸發，也不要讓冷卻全面失效造成大量重複觸發
-    console.error('[autoReply] cooldown transaction error (fail-closed):', e)
-    return false
+    // 有開冷卻 → fail-closed：寧可這一輪不觸發，也不要讓冷卻全面失效造成大量重複觸發。
+    // 沒開冷卻 → fail-open：這條路徑先前根本不進交易，Firestore 抖一下就讓客人問了沒有
+    // 回應，比偶爾多回一則重複訊息糟糕得多（這裡本來就只擋同一瞬間的同一句話）。
+    console.error(`[autoReply] cooldown transaction error (fail-${cooldownEnabled ? 'closed' : 'open'}):`, e)
+    return !cooldownEnabled
   }
 
   if (shouldTrigger) {
     const entry = userDocCache.get(fsUserDocId)
     if (entry?.data) {
-      entry.data.autoReplyCooldowns = {
-        ...(entry.data.autoReplyCooldowns ?? {}),
-        [ruleId]: triggeredAt,
+      if (cooldownEnabled) {
+        entry.data.autoReplyCooldowns = {
+          ...(entry.data.autoReplyCooldowns ?? {}),
+          [ruleId]: triggeredAt,
+        }
       }
+      entry.data.lastAutoReplyClaim = claim
     }
   }
   return shouldTrigger
@@ -267,6 +318,11 @@ interface UserDoc {
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
   /** 上一則自動回覆是哪條規則、哪一場對話（擋同一條規則連續複讀；見 recordAutoReplyFired） */
   lastAutoReply?: { ruleId: string; sessionId: string }
+  /**
+   * 上一次「準備要送這條規則」的宣告：規則、內容指紋、時間。
+   * 在交易裡寫，用來擋並行處理造成的同一句話回兩次（見 claimAutoReplyCooldown）。
+   */
+  lastAutoReplyClaim?: { ruleId: string; textKey: string; at: number }
 }
 
 function toConversationText(msg: messagingApi.Message): string {
@@ -2546,7 +2602,7 @@ async function handleIncomingText(
           : Promise.resolve({ flow: null, hydrated: [] })
 
       // 冷卻規則：原子性地確認並寫入冷卻；並行請求中只有第一則能取得鎖
-      const canTrigger = await claimAutoReplyCooldown(fsUserDocId, rule)
+      const canTrigger = await claimAutoReplyCooldown(fsUserDocId, rule, textContent)
       if (!canTrigger) return
 
       // 貼標（非阻塞，不影響回覆速度）

@@ -28,6 +28,12 @@ export interface UserDoc {
    * 每次規則真的送出回覆時覆寫；不是冷卻，與 autoReplyCooldowns 各自獨立。
    */
   lastAutoReply?: { ruleId: string; sessionId: string }
+  /**
+   * 上一次「準備要送某條規則」的宣告：規則 ID、內容指紋、時間（epoch ms）。
+   * 在冷卻交易裡寫入，用來擋 webhook 並行處理造成的「同一句話回兩次」——lastAutoReply 是
+   * 送出**之後**才寫的，並行的兩則訊息都會在它落地前讀完狀態（見 claimAutoReplyCooldown）。
+   */
+  lastAutoReplyClaim?: { ruleId: string; textKey: string; at: number }
   createdAt: Timestamp | FieldValue
 }
 

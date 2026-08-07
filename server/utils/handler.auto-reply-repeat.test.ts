@@ -108,6 +108,72 @@ function makeDb(ws: string, rules: Array<Record<string, unknown>>) {
   return { db, users, conversations }
 }
 
+/**
+ * 假 Firestore 的另一種樣子，專門驗「並行的兩則訊息」：
+ *   · 交易會**排隊執行且真的落地**（真實 Firestore 的保證）→ 第二筆看得到第一筆寫的冷卻時間
+ *   · 一般的 doc.set() 刻意**不**落地 → 模擬並行時「lastAutoReply 還沒寫下去，兩邊讀到的
+ *     都是舊狀態」，也就是連續複讀防呆看不到上一則的那個時間差
+ */
+function makeRaceDb(ws: string, rules: Array<Record<string, unknown>>) {
+  const users = new Map<string, Record<string, unknown>>()
+  const conversations = new Map<string, Record<string, unknown>>()
+  users.set(`${ws}_${LINE_UID}`, { workspaceId: ws, lineUserId: LINE_UID, displayName: '測試客人', isBlocked: false })
+  let autoId = 0
+  const storeOf = (col: string) => (col === 'users' ? users : col === 'conversations' ? conversations : null)
+
+  function applyUpdates(col: string, id: string, updates: Record<string, unknown>) {
+    const store = storeOf(col)
+    if (!store) return
+    const next = { ...(store.get(id) ?? {}) } as Record<string, any>
+    for (const [path, value] of Object.entries(updates)) {
+      const parts = path.split('.')
+      let node = next
+      for (const key of parts.slice(0, -1)) {
+        node[key] = { ...(node[key] ?? {}) }
+        node = node[key]
+      }
+      node[parts[parts.length - 1]!] = value
+    }
+    store.set(id, next)
+  }
+
+  const makeRef = (col: string, id: string) => ({
+    __col: col,
+    __id: id,
+    get: vi.fn(async () => (storeOf(col)?.has(id)
+      ? { exists: true, data: () => storeOf(col)!.get(id) }
+      : { exists: false, data: () => undefined })),
+    set: vi.fn(async () => {}),
+    update: vi.fn(async () => {}),
+    collection: () => ({
+      doc: (msgId?: string) => ({ id: msgId ?? `auto-${++autoId}`, set: vi.fn(async () => {}) }),
+      orderBy: () => ({ limit: () => ({ get: vi.fn(async () => ({ docs: [] })) }) }),
+    }),
+  })
+
+  let queue: Promise<unknown> = Promise.resolve()
+  const db = {
+    collection: (col: string) => ({
+      where: () => ({
+        get: vi.fn(async () => (col === 'autoReplies'
+          ? { empty: rules.length === 0, docs: rules.map(r => ({ id: String(r.id), data: () => r })) }
+          : { empty: true, docs: [] })),
+      }),
+      doc: (id?: string) => makeRef(col, String(id)),
+    }),
+    runTransaction: vi.fn((fn: any) => {
+      const run = queue.then(() => fn({
+        get: (ref: any) => ref.get(),
+        update: (ref: any, updates: Record<string, unknown>) => applyUpdates(ref.__col, ref.__id, updates),
+        set: (ref: any, data: Record<string, unknown>) => applyUpdates(ref.__col, ref.__id, data),
+      }))
+      queue = run.catch(() => {})
+      return run
+    }),
+  }
+  return { db }
+}
+
 function orderRule(ws: string) {
   return {
     id: 'rule-order',
@@ -186,6 +252,44 @@ describe('自動回覆連續複讀防呆', () => {
     expect(sentTexts(1)).toContain('營業時間是週一到週五')
     expect(sentTexts(2)).toContain('請提供您的訂單資訊')
     expect(vi.mocked(notifyHandoffToStaff)).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 連續複讀防呆讀的是「訊息進來時載好的使用者狀態」，而 webhook 的事件是並行處理的
+   * （webhook.post.ts 用 Promise.all）。客人連點兩下時，兩則都在 lastAutoReply 寫下去之前
+   * 就把狀態讀走了 → 兩則都認為自己不是複讀 → 同一段罐頭回覆送兩次，正是防呆要擋的事。
+   * 沒開「防重複觸發」的規則先前根本不進交易，這條路完全沒有保護。
+   */
+  it('客人連點兩下、兩則一樣的話並行進來 → 冷卻關閉的規則也只回一次', async () => {
+    const ws = nextWs()
+    const { db } = makeRaceDb(ws, [orderRule(ws)])
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    // 並行處理（webhook.post.ts 就是 Promise.all）→ 兩則都在 lastAutoReply 落地前讀完狀態
+    await Promise.all([
+      handleMessageEvent(textEvent('我的訂單出貨了嗎', now, 'tk-1'), { workspaceId: ws }),
+      handleMessageEvent(textEvent('我的訂單出貨了嗎', now, 'tk-2'), { workspaceId: ws }),
+    ])
+
+    expect(sentTexts(0)).toContain('請提供您的訂單資訊')
+    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
+    // 擋掉的那則是安靜跳過，不是轉真人：客人只是連點，對話沒有卡住
+    expect(vi.mocked(notifyHandoffToStaff)).not.toHaveBeenCalled()
+  })
+
+  it('並行的兩則是**不同**問題（只是都打中同一條規則）→ 兩則都要回，不能被防連送吃掉', async () => {
+    const ws = nextWs()
+    const { db } = makeRaceDb(ws, [orderRule(ws)])
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    await Promise.all([
+      handleMessageEvent(textEvent('我的訂單出貨了嗎', now, 'tk-1'), { workspaceId: ws }),
+      handleMessageEvent(textEvent('另外想問訂單可以改地址嗎', now, 'tk-2'), { workspaceId: ws }),
+    ])
+
+    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(2)
   })
 
   it('「輸入任何內容」規則不受影響：它的本意就是每一則都回同一句', async () => {
