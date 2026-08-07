@@ -273,7 +273,10 @@ async function loadBroadcastItems(
       .where('completedAt', '>=', new Date(Math.max(w.fromMs, 0))) as FirebaseFirestore.Query
     if (Number.isFinite(w.toMs)) ref = ref.where('completedAt', '<=', new Date(w.toMs))
 
-    const snap = await ref.limit(BROADCAST_JOIN_LIMIT).get()
+    // ⚠️ 一定要自己指定由新到舊：範圍條件下 Firestore 的隱含排序是「由舊到新」，
+    // 直接 limit(20) 會留下最舊的 20 筆、把客人剛收到的那幾封默默丟掉——而那正是
+    // 客服在看的東西。（既有索引是 completedAt ASC，方向全部反轉時可沿用同一份。）
+    const snap = await ref.orderBy('completedAt', 'desc').limit(BROADCAST_JOIN_LIMIT).get()
     return snap.docs
       // 全員送失敗的推播沒人收到，不該出現在客人的時間軸
       .filter(d => Number(d.data().sentCount ?? 0) > 0)

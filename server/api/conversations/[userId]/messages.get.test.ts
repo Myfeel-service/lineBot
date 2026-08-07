@@ -48,17 +48,24 @@ interface FakeEvent {
   ms: number
   eventType: string
 }
+interface FakeBroadcast {
+  id: string
+  ms: number
+  sentCount?: number
+}
 
 /** 只認測試會用到的那幾種查詢；沒對應到的直接回空，不要假裝支援 */
 function makeDb(data: {
   messages: FakeMessage[]
   sessions?: FakeSession[]
   events?: FakeEvent[]
+  broadcasts?: FakeBroadcast[]
   currentSessionId?: string
 }) {
   const messages = [...data.messages].sort((a, b) => a.ms - b.ms || a.id.localeCompare(b.id))
   const sessions = data.sessions ?? []
   const events = data.events ?? []
+  const broadcasts = data.broadcasts ?? []
 
   const msgDoc = (m: FakeMessage) => ({
     id: m.id,
@@ -125,9 +132,44 @@ function makeDb(data: {
 
   const emptyQuery: any = {
     where: () => emptyQuery,
+    orderBy: () => emptyQuery,
     limit: () => emptyQuery,
     get: async () => ({ docs: [], empty: true }),
   }
+
+  /**
+   * 群發查詢的假實作。刻意照 Firestore 的行為做：**先排序再截斷**——
+   * 這正是「沒寫 orderBy 就會留下最舊的那幾筆」的地方，假 db 不模擬這一段就測不出來。
+   */
+  type BcQuery = { filters: Array<{ op: string, ms: number }>, dir: 'asc' | 'desc', cap?: number }
+  const bcQuery = (q: BcQuery): any => ({
+    where: (field: string, op: string, value: unknown) =>
+      (field === 'completedAt'
+        ? bcQuery({ ...q, filters: [...q.filters, { op, ms: (value as Date).getTime() }] })
+        : bcQuery(q)),
+    orderBy: (_f: string, dir: 'asc' | 'desc' = 'asc') => bcQuery({ ...q, dir }),
+    limit: (n: number) => bcQuery({ ...q, cap: n }),
+    get: async () => {
+      let rows = broadcasts.filter(b => q.filters.every((f) => {
+        if (f.op === '>=') return b.ms >= f.ms
+        if (f.op === '<=') return b.ms <= f.ms
+        return true
+      }))
+      rows = [...rows].sort((a, b) => (q.dir === 'desc' ? b.ms - a.ms : a.ms - b.ms))
+      if (q.cap !== undefined) rows = rows.slice(0, q.cap)
+      return {
+        docs: rows.map(b => ({
+          id: b.id,
+          data: () => ({
+            completedAt: new Date(b.ms),
+            sentCount: b.sentCount ?? 1,
+            name: b.id,
+          }),
+        })),
+        empty: rows.length === 0,
+      }
+    },
+  })
 
   const sessionsQuery = (workspaceFiltered: boolean): any => ({
     where: (field: string, _op: string, _value: unknown) =>
@@ -180,7 +222,7 @@ function makeDb(data: {
           }),
         }
       }
-      // broadcasts：這支測試不測群發拼接，回空就好
+      if (col === 'broadcasts') return bcQuery({ filters: [], dir: 'asc' })
       return emptyQuery
     },
   }
@@ -309,5 +351,25 @@ describe('對話時間軸：分段讀', () => {
     const res = await call({ limit: 40 })
     expect(res.activeSession).toMatchObject({ sessionId: 's1', status: 'bot_handling' })
     expect(res.session).toBeNull()
+  })
+
+  /**
+   * 群發泡泡有上限（BROADCAST_JOIN_LIMIT＝20，時間軸不是推播報表）。上限本身沒問題，
+   * 問題是「留下哪 20 筆」：範圍條件下 Firestore 的隱含排序是由舊到新，沒有自己指定
+   * 由新到舊的話，客人剛收到、客服正在追的那幾封會被截掉，畫面上只剩幾個月前的舊推播。
+   */
+  it('群發超過上限時留下的是最新的那幾筆，不是最舊的', async () => {
+    const broadcasts = Array.from({ length: 25 }, (_, i) => ({
+      id: `bc${String(i + 1).padStart(2, '0')}`,
+      ms: T0 + i * HOUR,
+    }))
+    useDb({ messages: seriesOf(3, T0 + 30 * HOUR), broadcasts })
+
+    const res = await call({ limit: 40 })
+    const ids = res.items.filter(i => i.type === 'broadcast').map(i => i.id)
+
+    expect(ids).toHaveLength(20)
+    expect(ids).toContain('bc-bc25') // 最新的那封一定要在
+    expect(ids).not.toContain('bc-bc01') // 最舊的那幾封才是該被截掉的
   })
 })
