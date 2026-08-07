@@ -96,6 +96,11 @@ function normalizeNode(raw: any): ScriptNode | null {
       const reask = String(raw?.reaskText ?? '').trim().slice(0, 500)
       if (reask) node.reaskText = reask
     }
+    // 跳過出口：label 受 LINE Quick Reply 20 字上限；單邊留著讓 validateScriptDoc 報「未成對」而非靜默吞掉
+    const skipLabel = String(raw?.skipLabel ?? '').trim().slice(0, 20)
+    const skipNext = String(raw?.skipNext ?? '').trim()
+    if (skipLabel) node.skipLabel = skipLabel
+    if (skipNext) node.skipNext = skipNext
     return node
   }
 

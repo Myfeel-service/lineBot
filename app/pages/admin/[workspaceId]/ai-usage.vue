@@ -115,7 +115,9 @@
           <div class="card-section-stack">
             <div v-if="loading && !summary" class="usage-loading"><div class="spinner" /></div>
             <template v-else>
-              <!-- Hero：AI 介入 = 答完 + 轉真人 + 反問（乾淨拆解，一條分段長條看懂產出結構） -->
+              <!-- Hero：AI 出手 = 自己答完 + 轉給真人 + 先問清楚（乾淨拆解，一條分段長條看懂產出結構）。
+                   用詞照 2026-08-07 的名詞收斂表（docs/STATS-SIMPLIFICATION-20260807.md）：
+                   不再講「AI 介入／反問」——畫面早就是白話了，註解也別留舊詞免得被抄回去 -->
               <div class="usage-hero">
                 <div class="usage-hero__head">
                   <strong class="usage-hero__num">{{ formatNumber(summary?.invocations) }}</strong>
@@ -444,7 +446,7 @@ const reasonOptions = (Object.entries(HANDOFF_REASON_LABELS) as Array<[HandoffRe
 // 單價由 summary API 回傳（後端單一事實來源），還沒載到前先不顯示數字
 const pricing = computed(() => summary.value?.pricing ?? null)
 
-// AI 介入的三種結果佔比（分段長條寬度）。已驗證每次介入只記一種結果，
+// AI 出手的三種結果佔比（分段長條寬度）。已驗證每次出手只記一種結果，
 // 故 invocations = answered + handoffs + disambiguations 恆等，三段相加即 100%。
 const segPct = computed(() => {
   const total = summary.value?.invocations || 0
@@ -483,6 +485,9 @@ const trendHasData = computed(() => trend.value.some(p => p.invocations > 0))
 const trendOption = computed(() => {
   const t = trend.value
   return {
+    // ⚠️ 必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d）：
+    // 同一頁上下兩塊講同一件事，顏色一漂就變成「四種顏色三個意思」。
+    // ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
     color: ['#05b24c', '#5b7a9d'],
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人'] },
@@ -517,7 +522,9 @@ function makePeriodOptions() {
     const d = new Date(Date.UTC(tw.getUTCFullYear(), tw.getUTCMonth() - i, 1))
     const y = d.getUTCFullYear()
     const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-    opts.push({ value: `${y}${m}`, label: `${y}-${m}` })
+    // 最近兩期講白話（value 仍是 yyyyMM，只改顯示）：這一頁其他地方都白話，
+    // 只有這個選單露出 `2026-08` 原始格式。更早的月份照印年月才知道是哪一期。
+    opts.push({ value: `${y}${m}`, label: i === 0 ? '這個月' : i === 1 ? '上個月' : `${y}-${m}` })
   }
   return opts
 }

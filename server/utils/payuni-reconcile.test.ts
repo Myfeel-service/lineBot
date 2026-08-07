@@ -10,17 +10,18 @@ vi.mock('./payuni', async (importOriginal) => {
 })
 vi.mock('./payuni-fulfill', () => ({ fulfillPayuniTrade: vi.fn() }))
 vi.mock('./firebase', () => ({ getDb: vi.fn(() => ({})) }))
-vi.mock('./payment', () => ({ getPendingOrders: vi.fn() }))
+vi.mock('./payment', () => ({ getPendingOrders: vi.fn(), voidPendingOrder: vi.fn(async () => 'voided') }))
 
 import { queryCardBinding } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
-import { getPendingOrders } from './payment'
+import { getPendingOrders, voidPendingOrder } from './payment'
 import { reconcilePayuniPending } from './payuni-reconcile'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
 const mockBindQuery = vi.mocked(queryCardBinding)
 const mockFulfill = vi.mocked(fulfillPayuniTrade)
 const mockPending = vi.mocked(getPendingOrders)
+const mockVoid = vi.mocked(voidPendingOrder)
 
 const CONFIG = {
   payuniMerchantId: 'S076820628',
@@ -134,5 +135,41 @@ describe('reconcilePayuniPending — 首刷約定補回', () => {
     expect(r).toEqual({ checked: 1, recovered: 0 })
     expect(mockFulfill).not.toHaveBeenCalled()
     expect(mockBindQuery).not.toHaveBeenCalled()
+  })
+})
+
+describe('reconcilePayuniPending — PAYUNi 查無此單的續扣單要立刻作廢', () => {
+  // 為什麼重要:續扣單卡在 pending 會觸發 chargeDueRecurring 的「仍有未決續扣單就跳過」守衛,
+  // 而 pending TTL(3 天)== 寬限期(3 天) → 一次網路抖動就能讓付費客戶「從未被重試」就降級。
+  it('period_recurring + QUERY03001 + 已超過 10 分鐘 → 作廢,讓下一輪重試', async () => {
+    const old = { toMillis: () => Date.now() - 30 * 60 * 1000 }
+    mockPending.mockResolvedValue([order({ kind: 'period_recurring', createdAt: old as never })])
+    vi.stubGlobal('$fetch', vi.fn(async () => JSON.stringify({ Status: 'QUERY03001', MerID: 'S076820628' })))
+
+    const r = await reconcilePayuniPending(CONFIG, new Date())
+
+    expect(mockVoid).toHaveBeenCalledWith('NP2608060001', 'ws-1', expect.anything())
+    expect(mockFulfill).not.toHaveBeenCalled()
+    expect(r).toEqual({ checked: 1, recovered: 0 })
+  })
+
+  it('剛開的單(10 分鐘內)先不作廢 —— PAYUNi 可能只是還沒入庫,那時作廢會誤判', async () => {
+    const fresh = { toMillis: () => Date.now() - 60 * 1000 }
+    mockPending.mockResolvedValue([order({ kind: 'period_recurring', createdAt: fresh as never })])
+    vi.stubGlobal('$fetch', vi.fn(async () => JSON.stringify({ Status: 'QUERY03001' })))
+
+    await reconcilePayuniPending(CONFIG, new Date())
+
+    expect(mockVoid).not.toHaveBeenCalled()
+  })
+
+  it('首刷單(one_time / period_first)查無此單**不**作廢 —— 客人可能只是還沒付', async () => {
+    const old = { toMillis: () => Date.now() - 60 * 60 * 1000 }
+    mockPending.mockResolvedValue([order({ kind: 'period_first', createdAt: old as never })])
+    vi.stubGlobal('$fetch', vi.fn(async () => JSON.stringify({ Status: 'QUERY03001' })))
+
+    await reconcilePayuniPending(CONFIG, new Date())
+
+    expect(mockVoid).not.toHaveBeenCalled()
   })
 })

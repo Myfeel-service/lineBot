@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { SCRIPT_TEMPLATES } from './ai-script-templates'
 import {
+  collectSkipLabel,
   cosineSimilarity,
   extractCollectValue,
   matchesScriptKeywords,
@@ -178,6 +179,58 @@ describe('action nodes (tag / saveLead)', () => {
       { id: 'r1', type: 'reply', text: 'ok', thenHandoff: false },
     ]
     expect(validateScriptDoc({ ...base, nodes })).toMatch(/沒有對應的收集步驟/)
+  })
+})
+
+describe('collect 跳過出口（skipLabel / skipNext）', () => {
+  const base = { name: 's', rootNodeId: 't1' }
+  const trigger = (next: string): ScriptNode => ({ id: 't1', type: 'trigger', keywords: ['hi'], priority: 50, next })
+  const reply = (id: string): ScriptNode => ({ id, type: 'reply', text: 'ok', thenHandoff: false })
+  const collectWithSkip = (skip: { skipLabel?: string; skipNext?: string }): ScriptNode => ({
+    id: 'c1', type: 'collect', question: 'q', fieldName: 'order_id', expireMs: 60000, format: 'alphanumericSymbol', next: 'r1', ...skip,
+  })
+
+  it('outgoingNodeIds 把 skipNext 算進出口（可達性檢查看得到跳過路線）', () => {
+    expect(outgoingNodeIds(collectWithSkip({ skipLabel: '沒有', skipNext: 'r2' }))).toEqual(['r1', 'r2'])
+    expect(outgoingNodeIds(collectWithSkip({}))).toEqual(['r1'])
+  })
+
+  it('collectSkipLabel：skipLabel/skipNext 成對才算有設，單邊或空白視為沒設', () => {
+    expect(collectSkipLabel({ skipLabel: '我沒有訂單編號', skipNext: 'x' })).toBe('我沒有訂單編號')
+    expect(collectSkipLabel({ skipLabel: ' 我沒有訂單編號 ', skipNext: 'x' })).toBe('我沒有訂單編號')
+    expect(collectSkipLabel({ skipLabel: '我沒有訂單編號' })).toBe('')
+    expect(collectSkipLabel({ skipNext: 'x' })).toBe('')
+    expect(collectSkipLabel({ skipLabel: '  ', skipNext: 'x' })).toBe('')
+  })
+
+  it('接受成對且指向存在步驟的跳過出口（例：沒編號 → 改問 Email）', () => {
+    const nodes: ScriptNode[] = [
+      trigger('c1'),
+      collectWithSkip({ skipLabel: '我沒有訂單編號', skipNext: 'c2' }),
+      { id: 'c2', type: 'collect', question: 'email?', fieldName: 'email', expireMs: 60000, format: 'email', next: 'r1' },
+      reply('r1'),
+    ]
+    expect(validateScriptDoc({ ...base, nodes })).toBeNull()
+  })
+
+  it('有按鈕文字沒指定去向 → 擋（按了會是死路）', () => {
+    const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '我沒有訂單編號' }), reply('r1')]
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/還沒指定要跳到哪一步/)
+  })
+
+  it('有去向沒按鈕文字 → 擋（客人看不到入口）', () => {
+    const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipNext: 'r1' }), reply('r1')]
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/請填寫按鈕文字/)
+  })
+
+  it('skipNext 指到不存在的步驟 → 擋', () => {
+    const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '沒有', skipNext: 'ghost' }), reply('r1')]
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/不存在的步驟/)
+  })
+
+  it('skipLabel 撞「找真人」求助詞 → 擋（逃生門會先攔走，永遠到不了 skipNext）', () => {
+    const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '找真人', skipNext: 'r1' }), reply('r1')]
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/求助詞/)
   })
 })
 

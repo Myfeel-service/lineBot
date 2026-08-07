@@ -99,7 +99,9 @@
               </div>
             </div>
 
-            <div v-if="alertsLoaded && !activeAlerts.length" class="ta-alerts-clear">
+            <!-- 「沒有發現異常」只在必要設定完成後才講：還沒開通的帳號量不出營運異常，
+                 這句安心話會蓋過「還不能上線」的重點（2026-08-07 老闆回饋：新帳號看起來像沒事） -->
+            <div v-if="alertsLoaded && !activeAlerts.length && allRequiredDone" class="ta-alerts-clear">
               目前沒有發現異常。
             </div>
 
@@ -241,8 +243,9 @@
                   {{ busy ? '檢查中…' : '重新檢查' }}
                 </button>
               </div>
+              <!-- 定位說明在下面加分項區塊的標題講，這裡只報數，同一句話不講兩遍 -->
               <div v-if="optionalTotal" class="ta-progress__optional">
-                加分項 {{ optionalDone }}/{{ optionalTotal }}（做了 AI 更好用，不做也能上線）
+                加分項 {{ optionalDone }}/{{ optionalTotal }}
               </div>
             </div>
 
@@ -257,7 +260,44 @@
               <span>用聊天引導完成開通 →</span>
             </button>
 
-            <!-- 缺項巡覽：次要連結，用 tour 帶你看一遍還沒做的 -->
+            <!-- 開通步驟：必要項照依賴順序編號（先接 LINE 才輪得到 AI）。
+                 跟加分項拆成兩塊——同重量的卡混排讀不出「先做哪個」（2026-08-07） -->
+            <div v-if="incompleteRequired.length" class="ta-todos">
+              <div class="ta-todos__head ta-todos__head--required">先做這 {{ incompleteRequired.length }} 件，機器人才會動</div>
+              <button
+                v-for="(cap, i) in incompleteRequired"
+                :key="cap.id"
+                class="ta-todo ta-todo--required"
+                @click="onFix(cap)"
+              >
+                <span class="ta-todo__step">{{ i + 1 }}</span>
+                <span class="ta-todo__main">
+                  <span class="ta-todo__title">{{ cap.title }}</span>
+                  <span class="ta-todo__why">{{ cap.why }}</span>
+                  <span class="ta-todo__cta">{{ cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                </span>
+              </button>
+            </div>
+
+            <!-- 加分項：定位由分組標題講一次，卡上不再各掛「必要/加分」小標籤 -->
+            <div v-if="incompleteOptional.length" class="ta-todos">
+              <div class="ta-todos__head">加分項（做了 AI 更好用，不做也能上線）</div>
+              <button
+                v-for="cap in incompleteOptional"
+                :key="cap.id"
+                class="ta-todo"
+                @click="onFix(cap)"
+              >
+                <span class="ta-todo__icon"><el-icon><component :is="cap.icon" /></el-icon></span>
+                <span class="ta-todo__main">
+                  <span class="ta-todo__title">{{ cap.title }}</span>
+                  <span class="ta-todo__why">{{ cap.why }}</span>
+                  <span class="ta-todo__cta">{{ cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                </span>
+              </button>
+            </div>
+
+            <!-- 缺項巡覽：次要出口，擺清單後面——跟主 CTA 並排會互搶 -->
             <button
               v-if="incompleteAll.length"
               class="ta-gaptour"
@@ -267,30 +307,8 @@
               <span>帶我看一遍還沒做的</span>
             </button>
 
-            <!-- 待辦：還沒做完的項目（主要操作） -->
-            <div v-if="incompleteAll.length" class="ta-todos">
-              <button
-                v-for="cap in incompleteAll"
-                :key="cap.id"
-                class="ta-todo"
-                @click="onFix(cap)"
-              >
-                <span class="ta-todo__icon"><el-icon><component :is="cap.icon" /></el-icon></span>
-                <span class="ta-todo__main">
-                  <span class="ta-todo__title">
-                    {{ cap.title }}
-                    <span class="ta-todo__tag" :class="cap.required ? 'is-required' : 'is-optional'">
-                      {{ cap.required ? '必要' : '加分' }}
-                    </span>
-                  </span>
-                  <span class="ta-todo__why">{{ cap.why }}</span>
-                  <span class="ta-todo__cta">{{ cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
-                </span>
-              </button>
-            </div>
-
             <!-- 必要項都完成：閉環到「上線前先試答」，不要停在恭喜就沒了 -->
-            <div v-else class="ta-alldone">
+            <div v-if="!incompleteAll.length" class="ta-alldone">
               <p class="ta-alldone__msg">必要設定都完成了，可以上線囉！</p>
               <p class="ta-alldone__hint">正式讓 AI 回客人之前，建議先自己試答幾題，確認答得穩。</p>
               <button class="ta-alldone__cta" @click="startTopicById('ai-playground')">
@@ -362,12 +380,11 @@
       <span class="ta-fab__icon"><el-icon><component :is="panelOpen ? Close : IconRobot" /></el-icon></span>
       <!-- 光暈等資料回來才閃：不然設定齊全的帳號每次載入都先閃一下（狼來了） -->
       <span v-if="!panelOpen && (criticalAlerts.length || (loaded && !allRequiredDone))" class="ta-fab__pulse" aria-hidden="true" />
-      <!-- 數字＝「現在壞著」＋「必要設定沒做」；顏色分開講：紅只留給正在影響客人，
-           純設定缺項用中性色——守住「紅＝客人正在受影響」的語意。黃色警示項不進數字 -->
+      <!-- 數字＝「現在壞著」＋「必要設定沒做」，一律紅：還沒上線本身就是大問題
+           （2026-08-07 拍板，取代先前「純設定缺項用中性色」的分色）。黃色警示項不進數字 -->
       <span
         v-if="!panelOpen && badgeCount"
         class="ta-fab__badge"
-        :class="{ 'ta-fab__badge--calm': !criticalAlerts.length }"
         :aria-label="badgeLabel"
       >{{ badgeCount }}</span>
     </button>
@@ -423,7 +440,7 @@
 import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
-import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, InfoFilled, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 
@@ -625,23 +642,42 @@ const briefLine = computed(() => {
 })
 
 /**
- * 結論先行的狀態列：紅（正在影響客人）→ 橘（建議處理）→ 藍（設定還沒完）→ 綠（一切正常）。
+ * 「還不能上線」的後果句：依缺的是哪個根結講——LINE 沒接＝訊息完全進不來、
+ * 什麼都不會回；LINE 有接但 AI 沒開＝收得到但 AI 不會回。
+ * 一律講後果、不講進度（2026-08-07 老闆回饋：新帳號整片綠、看不出
+ * 「客人現在得不到任何回應」有多嚴重）。
+ */
+const notLiveConsequence = computed(() =>
+  capabilities.value.find(c => c.id === 'lineConnected')?.status === 'incomplete'
+    ? '客人傳訊息進來，不會有任何回應'
+    : '客人的訊息進得來，但 AI 不會回',
+)
+
+/** 加分項還沒做的：必要項在「開通步驟」區編號講，這一份只剩加分，兩塊分開呈現 */
+const incompleteOptional = computed(() => incompleteAll.value.filter(c => !c.required))
+
+/**
+ * 結論先行的狀態列：紅（正在影響客人）→ 紅（還不能上線）→ 橘（建議處理）→ 綠（一切正常）。
  * 「查不到」不能歸進任何一級，單獨講。
  * FAB 紅點數字＝critical＋必要設定缺項，所以有異常時頭條也要把缺項帶上——
  * 按鈕寫 3、打開卻只講 1 件事，兩個最顯眼的數字就對不上了。
+ * ⛔「差 N 項就能上線」的品牌綠進度講法被否決（好消息的長相）；先改橘、
+ * 2026-08-07 老闆再拍板升紅：還沒上線本身就是大問題，且要排在「建議處理」級之前，
+ * 不能被一顆橘色警告把頭條搶走。
  */
 const verdict = computed<{ tone: string, icon: Component, text: string } | null>(() => {
-  const setupTail = loaded.value && incompleteRequired.value.length
-    ? `、另差 ${incompleteRequired.value.length} 項必要設定`
-    : ''
-  if (criticalAlerts.value.length)
+  if (criticalAlerts.value.length) {
+    const setupTail = loaded.value && incompleteRequired.value.length
+      ? `、另差 ${incompleteRequired.value.length} 項必要設定`
+      : ''
     return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人${setupTail}` }
+  }
+  if (loaded.value && incompleteRequired.value.length)
+    return { tone: 'danger', icon: CircleCloseFilled, text: `還不能上線：${notLiveConsequence.value}（差 ${incompleteRequired.value.length} 項必要設定）` }
   if (warningAlerts.value.length)
-    return { tone: 'warning', icon: WarningFilled, text: `${warningAlerts.value.length} 件事建議處理${setupTail}` }
+    return { tone: 'warning', icon: WarningFilled, text: `${warningAlerts.value.length} 件事建議處理` }
   if (!alertsLoaded.value)
     return alertsFailed.value ? { tone: 'muted', icon: QuestionFilled, text: '目前檢查不到狀態' } : null
-  if (loaded.value && incompleteRequired.value.length)
-    return { tone: 'progress', icon: InfoFilled, text: `差 ${incompleteRequired.value.length} 項必要設定就能上線` }
   return { tone: 'ok', icon: CircleCheckFilled, text: '一切正常' }
 })
 
@@ -689,14 +725,20 @@ const agentLine = computed(() => {
   // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
   if (!hasItems.value)
     return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
+  // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況
   if (incompleteRequired.value.length)
-    return `我看過你的帳號了。最重要的還差 ${incompleteRequired.value.length} 項還沒做，我們一個一個來，點下面就能開始。`
+    return `我看過你的帳號了。現在${notLiveConsequence.value}——還差 ${incompleteRequired.value.length} 項必要設定才能上線。從第 1 步開始，我一步步帶你做。`
   if (!allRequiredDone.value) {
     const n = unknownCaps.value.filter(c => c.required).length
     return `有 ${n} 項必要設定我這次查不到狀態，先點「重新檢查」確認一下。`
   }
-  if (incompleteAll.value.length)
+  if (incompleteAll.value.length) {
+    // AI 開著 + 知識庫全空＝客人問什麼 AI 都答不出來，這不是普通的「想做再做」，
+    // 要點名講清楚後果（仍不擋「可以上線」——擋不擋是拍板過的加分項定位）
+    if (capabilities.value.find(c => c.id === 'knowledgeReady')?.status === 'incomplete')
+      return `必要設定都完成了。不過知識庫還是空的——客人問的問題 AI 幾乎都答不出來、只能轉給真人，建議先把知識庫建起來再上線。`
     return `必要設定都完成了，可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
+  }
   // 沒有壞的、沒有缺的：日報 + 機會（讓 AI 更聰明的建議）
   const nSuggest = suggestionAlerts.value.reduce((s, a) => s + (a.count ?? 1), 0)
   const suggestTail = nSuggest

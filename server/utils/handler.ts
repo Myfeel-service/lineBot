@@ -212,6 +212,28 @@ async function claimAutoReplyCooldown(
   return shouldTrigger
 }
 
+/**
+ * 記下「這位客人剛剛收到的是哪一條規則的回覆」，供下一則訊息判斷是不是連著命中同一條。
+ * 客人的回覆早就送出去了，這裡才寫，不影響回覆速度；但一定要 await——下一則訊息
+ * 可能只隔幾秒進來，寫沒落地就等於防呆沒生效。
+ */
+async function recordAutoReplyFired(
+  fsUserDocId: string,
+  ruleId: string,
+  sessionId: string | null | undefined,
+): Promise<void> {
+  if (!ruleId) return
+  const lastAutoReply = { ruleId, sessionId: sessionId ?? '' }
+  try {
+    await getDb().collection('users').doc(fsUserDocId).set({ lastAutoReply }, { merge: true })
+    const entry = userDocCache.get(fsUserDocId)
+    if (entry?.data) entry.data.lastAutoReply = lastAutoReply
+  }
+  catch (e) {
+    console.error('[autoReply] recordAutoReplyFired failed:', e)
+  }
+}
+
 // ── Type Definitions ──────────────────────────────────────────────
 
 interface FlowDoc {
@@ -243,6 +265,8 @@ interface UserDoc {
   attributes?: Record<string, string>
   autoReplyCooldowns?: Record<string, number>
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
+  /** 上一則自動回覆是哪條規則、哪一場對話（擋同一條規則連續複讀；見 recordAutoReplyFired） */
+  lastAutoReply?: { ruleId: string; sessionId: string }
 }
 
 function toConversationText(msg: messagingApi.Message): string {
@@ -2310,8 +2334,9 @@ async function handleIncomingText(
         ),
         activeInput: userData.activeInput ?? null,
         activeScript: userData.activeScript ?? null,
+        lastAutoReply: userData.lastAutoReply ?? null,
       }
-    : { ruleCooldowns: {}, moduleCooldowns: {}, activeInput: null, activeScript: null }
+    : { ruleCooldowns: {}, moduleCooldowns: {}, activeInput: null, activeScript: null, lastAutoReply: null }
 
   const activeInput = userState.activeInput
 
@@ -2474,6 +2499,40 @@ async function handleIncomingText(
       return
     }
     if (rule) {
+      /**
+       * 連續複讀防呆：上一則自動回覆就是這條規則、而且還在同一場對話 → 不再送一次同樣的話，
+       * 直接轉真人。
+       *
+       * 為什麼需要：規則的關鍵字會打到「客人照著罐頭回覆填回來的內容」。2026-08-07 正式站
+       * 實例——「查詢訂單」規則關鍵字含「訂單」，客人回「1. 訂單編號：M…」再次命中，同一段
+       * 「請提供您的訂單資訊」連送三次；而 message 型動作不會轉真人也不會通知任何人，
+       * 客人把單號姓名電話信箱全給了，客服端一則通知都沒有。
+       *
+       * anyText 規則排除在外：那種規則的本意就是「不管客人打什麼都回同一句」（多半用來
+       * 暫停 AI），複讀是它的預期行為，不是卡住。
+       */
+      const isRepeatOfLastRule = Boolean(
+        rule.id
+        && rule.matchType !== 'anyText'
+        && userState.lastAutoReply?.ruleId === rule.id
+        && userState.lastAutoReply?.sessionId === (sessionId ?? ''),
+      )
+      if (isRepeatOfLastRule) {
+        console.log('[autoReply] same rule matched twice in a row → handoff:', rule.id, rule.name)
+        await deliverHandoffReply({
+          workspaceId: wid,
+          lineUserId,
+          replyToken,
+          userAttributes,
+          channelSecret,
+          sessionId: sessionId ?? null,
+          requestOrigin: options.requestOrigin || '',
+          customerMessage: textContent,
+          reason: 'auto_reply_repeat',
+        })
+        return
+      }
+
       // 模組回覆所需的 flow＋圖文訊息預載與冷卻交易並行（純讀取，冷卻沒搶到也無副作用）。
       // 冷卻沒搶到會提早 return 而不 await 此 promise，故錯誤要在這裡收掉以免 unhandled rejection。
       const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> =
@@ -2532,6 +2591,7 @@ async function handleIncomingText(
                   console.error('[session] enterModule error:', e),
                 )
               }
+              await recordAutoReplyFired(fsUserDocId, rule.id ?? '', sessionId)
             }
           } else {
             console.warn(
@@ -2553,6 +2613,7 @@ async function handleIncomingText(
             enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
               console.error('[session] enterModule error:', e),
             )
+            await recordAutoReplyFired(fsUserDocId, rule.id ?? '', sessionId)
           }
         }
       }

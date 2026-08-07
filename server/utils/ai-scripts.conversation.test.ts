@@ -244,3 +244,85 @@ describe('腳本逃生門：進行中喊「找真人」永遠有人聽見', () =
     }
   })
 })
+
+describe('腳本引擎：collect 跳過出口（客人沒有這個資料也有路走）', () => {
+  const s = script([
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['查訂單'], examples: [], priority: 50, next: 'c_id' },
+    { id: 'c_id', type: 'collect', question: '請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', reaskText: '編號好像不太對，再試一次？', skipLabel: '我沒有訂單編號', skipNext: 'c_email', next: 'r_ok' },
+    { id: 'c_email', type: 'collect', question: '沒問題，請提供下單的 Email', fieldName: 'email', expireMs: 600000, format: 'email', next: 'r_email' },
+    { id: 'r_ok', type: 'reply', text: '已收到訂單 {{order_id}}', thenHandoff: true },
+    { id: 'r_email', type: 'reply', text: '已收到 {{email}}，將盡快為您查詢', thenHandoff: true },
+  ])
+
+  it('問編號時就亮跳過按鈕；點了 → 不存髒值、改問 Email、走完 Email 路線', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+
+    const r1 = await startScript(s, UID, {}, db)
+    expect(r1.replyText).toBe('請問您的訂單編號是？')
+    expect(r1.quickReplies).toEqual(['我沒有訂單編號'])
+
+    const r2 = await advanceScript(activeScriptOf(store)!, '我沒有訂單編號', {}, UID, db)
+    expect(r2.replyText).toBe('沒問題，請提供下單的 Email')
+    expect(activeScriptOf(store)?.currentNodeId).toBe('c_email')
+    expect(activeScriptOf(store)?.collected.order_id).toBeUndefined() // 跳過語沒被存成編號
+
+    const r3 = await advanceScript(activeScriptOf(store)!, '我的信箱 me@example.com', {}, UID, db)
+    expect(r3.replyText).toBe('已收到 me@example.com，將盡快為您查詢')
+    expect(r3.finished).toBe(true)
+    expect(r3.thenHandoff).toBe(true)
+  })
+
+  it('手打跳過語（前後空白）也認得', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+    await startScript(s, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '  我沒有訂單編號  ', {}, UID, db)
+    expect(activeScriptOf(store)?.currentNodeId).toBe('c_email')
+    expect(r.replyText).toBe('沒問題，請提供下單的 Email')
+  })
+
+  it('答錯格式重問 → 跳過按鈕和找真人一起亮；之後照常答編號仍走原路', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+    await startScript(s, UID, {}, db)
+
+    const r1 = await advanceScript(activeScriptOf(store)!, '呃我想想', {}, UID, db)
+    expect(r1.finished).toBe(false)
+    expect(r1.quickReplies).toEqual(['我沒有訂單編號', '找真人'])
+
+    const r2 = await advanceScript(activeScriptOf(store)!, '編號是 OD-2024/001', {}, UID, db)
+    expect(r2.replyText).toBe('已收到訂單 OD-2024/001')
+    expect(r2.finished).toBe(true)
+  })
+
+  it('format any + 跳過：跳過語先攔下來，不會被「照單全收」存成答案', async () => {
+    const sAny = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['查'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 600000, format: 'any', skipLabel: '沒有編號', skipNext: 'r_skip', next: 'r_ok' },
+      { id: 'r_ok', type: 'reply', text: '收到 {{order_id}}', thenHandoff: false },
+      { id: 'r_skip', type: 'reply', text: '好的，請專員協助您', thenHandoff: true },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', sAny)
+    await startScript(sAny, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '沒有編號', {}, UID, db)
+    expect(r.replyText).toBe('好的，請專員協助您')
+    expect(r.thenHandoff).toBe(true)
+  })
+
+  it('skipLabel 沒成對設 skipNext（壞資料防呆）→ 視為沒設跳過：問句不帶按鈕', async () => {
+    const sBroken = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['查'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', skipLabel: '沒有編號', next: 'r' },
+      { id: 'r', type: 'reply', text: '收到', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', sBroken)
+    const r1 = await startScript(sBroken, UID, {}, db)
+    expect(r1.quickReplies).toBeUndefined()
+    // 打跳過語不會跳（沒地方可跳），走一般格式驗證 → 重問只亮找真人
+    const r2 = await advanceScript(activeScriptOf(store)!, '沒有編號', {}, UID, db)
+    expect(r2.quickReplies).toEqual(['找真人'])
+  })
+})

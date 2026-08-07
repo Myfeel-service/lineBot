@@ -25,6 +25,7 @@ import type {
 } from '~~/shared/types/ai-script'
 import {
   DEFAULT_COLLECT_REASK,
+  collectSkipLabel,
   extractCollectValue,
   isHumanRequestText,
   renderScriptTemplate,
@@ -188,7 +189,9 @@ function runNonInteractiveSteps(
     }
 
     if (node.type === 'collect') {
-      // 問問題給使用者；停在這裡等下一則訊息
+      // 問問題給使用者；停在這裡等下一則訊息。
+      // 有設跳過出口（skipLabel+skipNext）→ 問句附一顆跳過按鈕，客人「沒有這個資料」也有路可走
+      const skipLabel = collectSkipLabel(node)
       return {
         nextState: { ...nextState!, currentNodeId: node.id, expiresAt: Date.now() + (node.expireMs || 600_000) },
         result: {
@@ -196,6 +199,7 @@ function runNonInteractiveSteps(
             collected: nextState!.collected,
             attributes,
           }),
+          ...(skipLabel ? { quickReplies: [skipLabel] } : {}),
           thenHandoff: false,
           finished: false,
         },
@@ -346,6 +350,13 @@ export async function advanceScript(
   // ── collect：格式抽取 + 驗證 ──
   const collectNode = current
 
+  // 跳過出口（先於格式驗證）:客人點了「我沒有這個資料」按鈕（或手打整句）→ 不收值、直接走 skipNext。
+  // 順序很重要:format 'any' 會照單全收,不先攔的話跳過語會被存成髒值
+  const skipLabel = collectSkipLabel(collectNode)
+  if (skipLabel && String(userMessage || '').trim().toLowerCase() === skipLabel.toLowerCase()) {
+    return advanceFrom(state.collected, collectNode.skipNext!)
+  }
+
   // 抽不到合格值 → 重問、停在同一節點（刷新逾時），不寫入髒值也不前進
   const extracted = extractCollectValue(collectNode, userMessage)
   if (!extracted.ok) {
@@ -360,8 +371,8 @@ export async function advanceScript(
         collected: state.collected,
         attributes,
       }),
-      // 答錯格式=挫折點:重問時亮出逃生按鈕(點了送出「找真人」,由逃生門接住)
-      quickReplies: ['找真人'],
+      // 答錯格式=挫折點:重問時亮出退路——跳過按鈕(有設的話)+找真人逃生鈕
+      quickReplies: [...(skipLabel ? [skipLabel] : []), '找真人'],
       thenHandoff: false,
       finished: false,
     }

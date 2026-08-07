@@ -304,6 +304,22 @@
                     <AdminFieldLabel text="格式不符時的重問話術（可留空用預設）" tight />
                     <el-input v-model="node.reaskText" placeholder="例：訂單編號好像怪怪的，可以再確認一次嗎？" />
                   </div>
+                  <div class="admin-field-group">
+                    <AdminFieldLabel text="客人答不出來時（選填）：多給一顆跳過按鈕，點了改走別條路" tight />
+                    <div class="scripts-branch-case">
+                      <span class="text-xs text-muted">按鈕</span>
+                      <el-input v-model="node.skipLabel" maxlength="20" placeholder="例：我沒有訂單編號" class="scripts-branch-field" />
+                      <span class="text-xs text-muted">→</span>
+                      <el-select :model-value="node.skipNext ?? ''" size="small" placeholder="前往…" class="scripts-branch-next" @change="onTargetChange($event, node.skipNext ?? '', (id) => node.skipNext = id)">
+                        <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
+                        <el-option-group label="接下一步（會新增一個步驟）">
+                          <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                        </el-option-group>
+                      </el-select>
+                      <el-button v-if="node.skipLabel || node.skipNext" size="small" type="danger" plain @click="clearCollectSkip(node)">✕</el-button>
+                    </div>
+                    <p class="scripts-section-hint">問這一題時會多這顆按鈕。例：問訂單編號附「我沒有訂單編號」，點了就跳去改問 Email。兩格都留空＝不提供跳過。</p>
+                  </div>
                 </template>
 
                 <!-- Reply -->
@@ -488,7 +504,7 @@ import type {
   ScriptTriggerNode,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, extractCollectValue, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, collectSkipLabel, extractCollectValue, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -646,7 +662,12 @@ function shortNodeName(id: string): string {
  */
 function autoNextLabel(node: ScriptNode): string | null {
   if (node.type === 'trigger' || node.type === 'collect' || node.type === 'tag' || node.type === 'saveLead') {
-    return node.next ? shortNodeName(node.next) : '（尚未接，存檔會擋）'
+    const main = node.next ? shortNodeName(node.next) : '（尚未接，存檔會擋）'
+    // 收集節點有跳過出口 → 把兩條去向都講出來
+    if (node.type === 'collect' && collectSkipLabel(node)) {
+      return `${main}；按「${collectSkipLabel(node)}」→ ${shortNodeName(node.skipNext!)}`
+    }
+    return main
   }
   if (node.type === 'reply') {
     return node.thenHandoff ? '流程結束，並轉真人客服' : '流程結束'
@@ -722,6 +743,13 @@ const flowRows = computed<FlowRow[]>(() => {
     }
     else if (node.type === 'quickReply') {
       for (const o of node.options) { pushLabel(`按「${o.label || '未命名'}」`, depth + 1); walk(o.next, depth + 1, seen) }
+    }
+    else if (node.type === 'collect' && collectSkipLabel(node)) {
+      // 有跳過出口的收集：像分支一樣畫兩條路，照常回答往下、按跳過鈕走另一條
+      pushLabel('照常回答', depth + 1)
+      walk(node.next, depth + 1, seen)
+      pushLabel(`按「${collectSkipLabel(node)}」`, depth + 1)
+      walk(node.skipNext!, depth + 1, seen)
     }
     else if (node.type !== 'reply') {
       walk(node.next, depth, seen)
@@ -841,7 +869,9 @@ function simRun(startId: string) {
     if (node.type === 'tag') { simPush({ who: 'sys', text: `（貼標：${node.addTagIds.length} 個標籤）` }); cursor = node.next; continue }
     if (node.type === 'saveLead') { simPush({ who: 'sys', text: '（寫名單：已把答案存進客人資料）' }); cursor = node.next; continue }
     if (node.type === 'collect') {
-      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }) })
+      // 與引擎一致:有跳過出口 → 問句附跳過按鈕
+      const skip = collectSkipLabel(node)
+      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), ...(skip ? { buttons: [skip] } : {}) })
       simNodeId.value = node.id; simWaiting.value = 'collect'; return
     }
     if (node.type === 'quickReply') {
@@ -881,10 +911,16 @@ function simSend(text?: string) {
   }
   const node = form.value.nodes.find(n => n.id === simNodeId.value)
   if (node?.type === 'collect') {
+    // 與引擎一致:先看是不是點了跳過按鈕(先於格式驗證,否則「不限格式」會把跳過語存成髒值)
+    const skip = collectSkipLabel(node)
+    if (skip && msg.toLowerCase() === skip.toLowerCase()) {
+      simRun(node.skipNext!)
+      return
+    }
     const res = extractCollectValue(node, msg)
     if (!res.ok) {
-      // 與引擎一致:答錯格式=挫折點,重問時亮「找真人」逃生按鈕
-      simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？', buttons: ['找真人'] })
+      // 與引擎一致:答錯格式=挫折點,重問時亮出退路——跳過按鈕(有設的話)+「找真人」逃生按鈕
+      simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？', buttons: [...(skip ? [skip] : []), '找真人'] })
       return
     }
     simCollected.value[node.fieldName] = res.value
@@ -976,6 +1012,12 @@ function setBranchOp(c: ScriptBranchNode['cases'][number], op: string | number |
   c.op = next
   // 切到 exists 不需要比較值，清掉殘留避免切回時冒出舊值
   if (next === 'exists') c.value = ''
+}
+
+/** 清掉收集節點的跳過出口（兩格一起清，避免留單邊被存檔驗證擋下） */
+function clearCollectSkip(node: ScriptCollectNode) {
+  node.skipLabel = ''
+  node.skipNext = ''
 }
 
 function addQuickReplyOption(node: ScriptQuickReplyNode) {
@@ -1162,9 +1204,10 @@ function removeNode(id: string) {
       ? removed.defaultNext
       : removed.type === 'quickReply' ? (removed.options[0]?.next ?? '') : ''
 
-  // 修補所有指向 removed.id 的出口（trigger/collect 的 next、branch defaultNext+cases、quickReply options）
+  // 修補所有指向 removed.id 的出口（trigger/collect 的 next+skipNext、branch defaultNext+cases、quickReply options）
   for (const n of nodes) {
     if ((n.type === 'trigger' || n.type === 'collect') && n.next === id) n.next = fallback
+    if (n.type === 'collect' && n.skipNext === id) n.skipNext = fallback
     if (n.type === 'branch') {
       if (n.defaultNext === id) n.defaultNext = fallback
       for (const c of n.cases) if (c.next === id) c.next = fallback

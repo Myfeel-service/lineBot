@@ -442,12 +442,8 @@
     border-left-color: var(--el-color-warning);
     .ta-verdict__icon { color: var(--el-color-warning); }
   }
-  /* 「還沒設定完」不是異常，用品牌色講進度，不跟紅橘搶語意 */
-  &.is-progress {
-    background: var(--color-line-glow);
-    border-left-color: var(--color-line);
-    .ta-verdict__icon { color: var(--color-line); }
-  }
+  /* 「還不能上線」直接用 is-danger：還沒上線本身就是大問題（2026-08-07 拍板）。
+     ⛔ 曾用品牌綠當「進度」講（is-progress）——新帳號打開整片綠像沒事。 */
   &.is-ok {
     background: var(--el-color-success-light-9);
     border-left-color: var(--el-color-success);
@@ -840,6 +836,26 @@
   gap: 0.5rem;
 }
 
+/* 待辦分組標題：跟異常組標題（.ta-alerts__label）同一套視覺——色點＋小字粗體。
+   必要＝橘點（要做的事）、加分＝中性點；紅點只留給「現在影響客人」那組 */
+.ta-todos__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-secondary);
+
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+  &--required::before { background: var(--color-warning); }
+}
+
 .ta-todo {
   display: flex;
   gap: 0.625rem;
@@ -866,6 +882,27 @@
   color: var(--color-line);
 }
 
+/* 必要步驟卡：橘左條＝「要做的事」。紅只留給頂上的結論（還不能上線）與異常卡，
+   面板內全紅的話紅就沒有意義了 */
+.ta-todo--required {
+  border-left-width: 3px;
+  border-left-color: var(--color-warning);
+}
+
+/* 步驟號碼：必要項有依賴順序（先接 LINE 才輪得到 AI 開關），數字比圖示講得清楚 */
+.ta-todo__step {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--color-warning);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
 .ta-todo__main {
   display: flex;
   flex-direction: column;
@@ -882,21 +919,8 @@
   color: var(--text-primary);
 }
 
-.ta-todo__tag {
-  font-size: 0.625rem;
-  font-weight: 600;
-  padding: 0.05rem 0.35rem;
-  border-radius: var(--radius-sm);
-
-  &.is-required {
-    background: var(--color-line);
-    color: #fff;
-  }
-  &.is-optional {
-    background: var(--bg-hover);
-    color: var(--text-secondary);
-  }
-}
+/* （「必要/加分」小標籤退役：分組標題講一次就夠。⛔別復活成品牌綠標籤——
+    綠底白字長得像「已完成」徽章，整張卡會被讀成沒事） */
 
 .ta-todo__why {
   font-size: 0.75rem;
@@ -1023,10 +1047,8 @@
   box-shadow: 0 0 0 2px var(--bg-base);
 }
 
-/* 沒有正在影響客人的異常、只剩設定沒做完：中性色。紅只留給「客人正在受影響」 */
-.ta-fab__badge--calm {
-  background: var(--text-secondary);
-}
+/* （--calm 退役：徽章一律紅。還沒上線本身就是大問題——2026-08-07 拍板；
+    ⛔灰、橘都試過，會被讀成「不急」） */
 
 .ta-panel__foot {
   padding: 0.625rem 1rem;

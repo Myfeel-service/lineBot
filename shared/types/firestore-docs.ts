@@ -22,6 +22,12 @@ export interface UserDoc {
   autoReplyCooldowns?: Record<string, number>
   /** 模組 ID → 冷卻資訊（由啟用防重複的自動回覆寫入） */
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
+  /**
+   * 上一則自動回覆是哪條規則、發生在哪一場對話。用來擋「同一條規則連著命中第二次」——
+   * 那代表客人照著罐頭回覆回了話卻又打中同一條，再送一次只會複讀（見 handleIncomingText）。
+   * 每次規則真的送出回覆時覆寫；不是冷卻，與 autoReplyCooldowns 各自獨立。
+   */
+  lastAutoReply?: { ruleId: string; sessionId: string }
   createdAt: Timestamp | FieldValue
 }
 

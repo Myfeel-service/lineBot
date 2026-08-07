@@ -55,6 +55,15 @@ export interface ScriptCollectNode {
   pattern?: string
   /** 驗證失敗時的重問話術；空字串時用預設重問語 */
   reaskText?: string
+  /**
+   * 跳過出口（選填、成對）：客人「沒有這個資料」的退路。
+   * 問問題與格式重問時都會多一顆 skipLabel 按鈕（LINE Quick Reply），
+   * 客人點了（或手打整句 label）就不收值、直接跳到 skipNext。
+   * 例：問訂單編號附「我沒有訂單編號」→ 跳去改問 Email。
+   */
+  skipLabel?: string
+  /** 跳過按鈕要跳到的步驟 id；與 skipLabel 成對出現 */
+  skipNext?: string
   next: string
 }
 
@@ -217,6 +226,7 @@ export function outgoingNodeIds(node: ScriptNode): string[] {
   if (node.type === 'reply') return []
   if (node.type === 'branch') return [...node.cases.map(c => c.next), node.defaultNext].filter(Boolean)
   if (node.type === 'quickReply') return node.options.map(o => o.next).filter(Boolean)
+  if (node.type === 'collect') return [node.next, node.skipNext ?? ''].filter(Boolean)
   return node.next ? [node.next] : []
 }
 
@@ -307,6 +317,17 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
         if (!collectFieldNames.has(from)) return `寫名單的來源欄位「${from}」沒有對應的收集步驟，請確認欄位名`
       }
       if (!n.next || !ids.has(n.next)) return `步驟「${nodeLabelOf(n)}」未指定下一步`
+    }
+    else if (n.type === 'collect') {
+      if (!n.next || !ids.has(n.next)) return `步驟「${nodeLabelOf(n)}」未指定下一步`
+      // 跳過出口：skipLabel / skipNext 必須成對且有效，否則按鈕會是死路
+      const skipLabel = String(n.skipLabel ?? '').trim()
+      const skipNext = String(n.skipNext ?? '').trim()
+      if (skipLabel && !skipNext) return `收集步驟「${n.fieldName || ''}」的跳過按鈕「${skipLabel}」還沒指定要跳到哪一步`
+      if (!skipLabel && skipNext) return `收集步驟「${n.fieldName || ''}」設定了跳過路線，請填寫按鈕文字（例：我沒有訂單編號）`
+      if (skipNext && !ids.has(skipNext)) return `收集步驟「${n.fieldName || ''}」的跳過按鈕接到不存在的步驟`
+      // 撞名保護:跳過按鈕若剛好是「找真人」這類求助詞,逃生門會先攔走、永遠到不了 skipNext
+      if (skipLabel && isHumanRequestText(skipLabel)) return `跳過按鈕文字「${skipLabel}」是轉真人的求助詞，客人點了會直接轉真人；請換個說法（例：我沒有訂單編號）`
     }
     else if (outs.length === 0 || outs.some(t => !ids.has(t))) {
       return `步驟「${nodeLabelOf(n)}」未指定下一步`
@@ -465,6 +486,15 @@ function compileCustomPattern(pattern: string | undefined): RegExp | null {
   catch {
     return null
   }
+}
+
+/**
+ * collect 節點的跳過按鈕文字；skipLabel/skipNext 必須成對才算有設（單邊視為沒設）。
+ * 引擎（ai-scripts.ts）與編輯器試跑共用，行為保持一致。
+ */
+export function collectSkipLabel(node: Pick<ScriptCollectNode, 'skipLabel' | 'skipNext'>): string {
+  const label = String(node.skipLabel ?? '').trim()
+  return label && String(node.skipNext ?? '').trim() ? label : ''
 }
 
 export interface CollectExtractResult {

@@ -38,8 +38,10 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     nodes: [
       // 不放「退款」：退款/退費屬敏感詞，讓它走 AI 敏感詞護欄直接轉真人，不被腳本攔截
       { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['退貨', '退換貨', '要退', '換貨'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_order' },
-      { id: 'c_order', type: 'collect', question: '好的，請提供您的訂單編號，我們為您處理 🙂', fieldName: 'order_id', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', next: 'r' },
+      // 跳過出口：客人手邊沒編號也有路走（不加的話 format any 會把「我沒有編號」整句存成編號）
+      { id: 'c_order', type: 'collect', question: '好的，請提供您的訂單編號，我們為您處理 🙂', fieldName: 'order_id', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', skipLabel: '我沒有訂單編號', skipNext: 'r_noid', next: 'r' },
       { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', thenHandoff: true },
+      { id: 'r_noid', type: 'reply', text: '沒問題，請直接留言告訴我們您購買的商品和大概的購買時間，將由專人為您查詢處理 🙇', thenHandoff: true },
     ],
   },
 

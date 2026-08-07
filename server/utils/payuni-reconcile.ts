@@ -11,7 +11,7 @@
  *    上線前請對測試特店跑一次確認回傳可解（純函式 buildTradeQuery/簽章已有單元測試）。
  */
 import { getDb } from './firebase'
-import { getPendingOrders } from './payment'
+import { getPendingOrders, voidPendingOrder } from './payment'
 import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
@@ -20,6 +20,12 @@ import type { PaymentOrderDoc } from '~~/shared/types/payment'
 const MAX_PENDING_PER_RUN = 200
 /** 同時併發幾筆查詢（別對閘道一次開太多連線） */
 const QUERY_CONCURRENCY = 5
+/**
+ * 續扣單被判定「PAYUNi 根本沒收到」之前，至少要放置這麼久。
+ * 純粹是給 PAYUNi 入庫的緩衝：剛送出的單若還沒進到查詢庫，會回查無 —— 那時作廢就錯了
+ * （PAYUNi 可能其實已授權）。10 分鐘遠大於任何正常的入庫延遲，也遠小於寬限期。
+ */
+const UNSENT_RECURRING_GRACE_MS = 10 * 60 * 1000
 
 export async function reconcilePayuniPending(
   config: Record<string, unknown>,
@@ -53,6 +59,29 @@ export async function reconcilePayuniPending(
       let resp: Record<string, string>
       try { resp = JSON.parse(raw) }
       catch { console.warn('[payuni:reconcile] 回應非 JSON,略過', order.merchantOrderNo); return false }
+
+      // ⚠️ **「PAYUNi 查無此單」對續扣單要立刻作廢,不能等 TTL**（2026-08-07 實測踩到）
+      //
+      // 續扣是**我方主動**打 `/api/credit`。若那個 HTTP 請求在網路層就失敗（實測遇到一次
+      // `fetch failed`),訂單會留在 pending;而 `chargeDueRecurring` 有「仍有未決的續扣單就
+      // 跳過本輪」的防重複扣款守衛 → **接下來每一輪都不會重試**。
+      // 續扣單的 pending TTL 是 3 天(STALE_RECURRING_PENDING_MS),而寬限期 GRACE_DAYS 也是 3 天
+      // → 一次網路抖動就足以讓付費客戶「從未被重試」就被降級。
+      //
+      // PAYUNi 對從沒收到過的單號回 `QUERY03001 查無符合訂單資料`（實測:網路失敗那張與亂編的
+      // 單號都是這個碼;真的成功過的單回 SUCCESS + 20 個欄位）→ **這代表那筆扣款根本沒送達**,
+      // 作廢它是安全的,下一輪就能正常重試。
+      // 只對 `period_recurring` 這樣做:首刷單(UPP)查無此單很正常——客人可能只是還沒付。
+      // 另外壓一個 10 分鐘的年齡下限,避免 PAYUNi 剛收單還沒入庫就被我方誤判。
+      const outerStatus = String(resp?.Status || '').trim().toUpperCase()
+      if (outerStatus === 'QUERY03001' && order.kind === 'period_recurring') {
+        const createdMs = (order.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
+        if (createdMs && now.getTime() - createdMs > UNSENT_RECURRING_GRACE_MS) {
+          const r = await voidPendingOrder(order.merchantOrderNo, order.workspaceId, getDb())
+          console.warn('[payuni:reconcile] PAYUNi 查無此續扣單(扣款未送達)→ 作廢以便下一輪重試', order.merchantOrderNo, r)
+        }
+        return false
+      }
 
       const enc = String(resp?.EncryptInfo || '')
       const hash = String(resp?.HashInfo || '')

@@ -373,6 +373,13 @@ export type HandoffReason =
    * 所以也不走「要不要幫您轉接」的二次確認，直接轉真人（少一次來回）。
    */
   | 'order_status'
+  /**
+   * 同一條自動回覆規則連著命中第二次——客人剛收到那段罐頭回覆、照著回了，關鍵字卻又打中同一條
+   * （2026-08-07 正式站災情：「查詢訂單」規則的關鍵字含「訂單」，客人填回來的
+   * 「1. 訂單編號：M…」再次命中 → 同一段話連送三次，而規則本身不會通知任何人）。
+   * 再送一次只會複讀，所以直接轉真人。不是知識缺口——補卡救不了設定問題。
+   */
+  | 'auto_reply_repeat'
 
 export interface AiConversationMeta {
   /** 最近一次 AI 介入的決定 */
@@ -731,6 +738,7 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   non_text_content: '傳了圖片/檔案',
   product_mismatch: '這個產品沒有這題的資料',
   order_status: '要查客人的訂單',
+  auto_reply_repeat: '自動回覆一直重複',
 }
 
 // ═══════════════════════════════════════════════════════════════════

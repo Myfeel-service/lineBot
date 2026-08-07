@@ -242,6 +242,41 @@
     min-width: 0;
   }
 
+  .conv-sidebar-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  /**
+   * 「全部已讀」刻意做得比「重整」輕：它是偶爾用一次的收拾動作，不是主要操作，
+   * 兩顆一樣重會讓人以為每次進來都該按一下。有紅點才出現（見 unreadRowCount）。
+   */
+  .conv-mark-all-read {
+    border: none;
+    background: none;
+    padding: 0 0.25rem;
+    height: 28px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    border-radius: var(--radius-sm, 6px);
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+
+  .conv-mark-all-read:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .conv-mark-all-read:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+
   /* 未讀僅保留頭像紅點：略大 + 呼吸光暈 */
   .split-list-item__avatar-wrap.is-unread::after {
     top: 0.08rem;
@@ -406,6 +441,44 @@
     margin-left: 0.15rem;
   }
 
+  /**
+   * 「上面還有更早的」／「這場之後還有」那一列。
+   *
+   * 刻意做得比事件膠囊更輕（沒有邊框、字更小）：它講的是**載入狀態**，不是對話內容，
+   * 畫得跟事件行一樣重的話，一條長對話滑上去會看到一堆長得像系統事件的東西。
+   */
+  .conv-timeline-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    align-self: center;
+    padding: 0.15rem 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .conv-timeline-more__btn {
+    padding: 0.2rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.6;
+    }
+  }
+
   .conv-user-info {
     display: flex;
     align-items: center;
@@ -450,6 +523,64 @@
    */
   .conv-messages {
     padding-top: 3.25rem;
+  }
+
+  /**
+   * 「回到最新」的錨點。它是訊息區的最後一個子元素，用 sticky 吸在捲動區底部——
+   * 往上翻多遠，按鈕都還在同一個位置（右下角，跟各家聊天室一樣）。
+   *
+   * height: 0 是刻意的：這顆是**浮在**最後一則訊息上的按鈕，不是訊息流裡的一列。
+   * 有高度的話，最後一則會被它往上頂，訊息區底部憑空多出一塊空白。
+   * 同理要用負的 margin-top 抵掉 flex gap，否則零高度的它照樣多吃一份列距。
+   */
+  .conv-jump-latest-anchor {
+    position: sticky;
+    bottom: 0;
+    align-self: flex-end;
+    height: 0;
+    margin-top: calc(var(--conv-row-gap) * -1);
+    z-index: 5;
+    // 零高度的容器本身不該吃掉點擊，只有裡面那顆按鈕收
+    pointer-events: none;
+  }
+
+  .conv-jump-latest {
+    // 從錨點那條零高度的線往上推一個身高，整顆才浮在最後一則訊息上面
+    transform: translateY(calc(-100% - 0.35rem));
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.8rem 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+
+    // 下面真的有沒看過的新訊息：換成品牌綠，跟單純「我捲上來了」分得開
+    &.has-new {
+      border-color: transparent;
+      background: var(--brand-green);
+      color: #fff;
+
+      &:hover {
+        background: var(--brand-green-press);
+      }
+    }
+  }
+
+  .conv-jump-latest__arrow {
+    font-size: 0.9rem;
+    line-height: 1;
   }
 
   .conv-bubble-row {
@@ -1503,6 +1634,51 @@
   .conv-attachment-card__desc {
     font-size: 0.72rem;
     color: var(--text-muted);
+  }
+
+  // 這則訊息附的快速回覆按鈕(AdminPanel 的 conv-quickreply-row)。客人在 LINE 看到的
+  // 是一排可點的膠囊;這裡只是「當時給過哪些選擇」的紀錄,顏色壓到次要、不可點,
+  // 免得跟對話裡真的能操作的東西(圖文卡按鈕、重試)長得一樣。
+  .conv-quickreply-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0.1rem 0 0.4rem;
+
+    &.outgoing {
+      justify-content: flex-end;
+    }
+    &.incoming {
+      justify-content: flex-start;
+    }
+  }
+
+  // 說明標籤沿用「AI 看到」那顆的做法(單色、細框):它要回答的是同一種問題——
+  // 「這排東西是哪來的?」少了它,第一次看的人會以為這排膠囊是給客服按的。
+  .conv-quickreply-row__tag {
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--line-font-meta);
+    white-space: nowrap;
+  }
+
+  .conv-quickreply-chip {
+    padding: 0.12rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-size: calc(var(--line-font-card-text) * 0.88);
+    line-height: 1.5;
+    // 單顆超長(整串型號名)就裁尾巴,別讓一顆按鈕佔掉兩行
+    max-width: min(320px, 100%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   // 「為什麼這樣答」自己一區,放在泡泡下面(不在旁邊那條 meta 裡,見 AdminPanel 的註解)。

@@ -3,7 +3,17 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 對話</span>
-      <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
+      <div class="conv-sidebar-actions">
+        <!-- 換電腦／清過快取／新同事第一次登入時整排全紅，沒這顆就只能一位一位點開才消得掉 -->
+        <button
+          v-if="unreadRowCount > 0"
+          type="button"
+          class="conv-mark-all-read"
+          title="把紅點一次清掉（只影響你這台電腦，不會動到同事看到的）"
+          @click="markAllConversationsRead"
+        >全部已讀（{{ unreadRowCount }}）</button>
+        <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
+      </div>
     </template>
 
     <!-- ── Sidebar List ── -->
@@ -75,7 +85,7 @@
               :leading-avatar-url="s.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isRowUnread(s.userId, s.lastActivityAt)"
+              :show-unread-dot="isRowUnread(s.userId, s.lastActivityAt, s.lastDirection)"
               :active="selectedSessionId === s.sessionId"
               :title-icon="s.pinned ? '📌' : ''"
               :meta-tag="s.followUp ? '待跟進' : ''"
@@ -111,7 +121,7 @@
               :leading-avatar-url="c.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isRowUnread(c.userId, c.lastMessageAt)"
+              :show-unread-dot="isRowUnread(c.userId, c.lastMessageAt, c.lastDirection)"
               :active="selectedUserId === c.userId && !selectedSessionId"
               :title-icon="c.pinned ? '📌' : ''"
               :meta-tag="c.followUp ? '待跟進' : ''"
@@ -221,6 +231,10 @@
         ref="messagesEl"
         class="conv-messages"
         :class="{ 'is-drop-target': canOperate && isDraggingImage }"
+        @scroll.passive="onMessagesScroll"
+        @load.capture="onMessagesContentGrew"
+        @error.capture="onMessagesContentGrew"
+        @loadedmetadata.capture="onMessagesContentGrew"
         @dragenter.prevent="canOperate && onDragEnter($event)"
         @dragover.prevent
         @dragleave="onDragLeave"
@@ -234,6 +248,17 @@
         </div>
         <div v-else-if="!chatRows.length" class="split-empty-state">
           <p>尚無對話內容</p>
+        </div>
+        <!--
+          往上滑到接近頂端就會自己把更早的一段讀進來（見 onMessagesScroll）。
+          這一列同時是「上面還有」的說明和手動的入口：只靠滑動的話，用鍵盤或
+          Home 鍵跳到頂的人不會知道還有東西可以讀。
+        -->
+        <div v-if="timelineHasOlder && !msgLoading" class="conv-timeline-more">
+          <span v-if="loadingOlder" class="conv-timeline-more__label">正在載入更早的訊息…</span>
+          <button v-else type="button" class="conv-timeline-more__btn" @click="loadOlderTimeline">
+            載入更早的訊息
+          </button>
         </div>
         <!-- 一天一組（見 chatDayGroups）：日期膠囊吸在自己這一組的頂端，滑到下一天才換上新的那顆 -->
         <div v-for="(group, groupIdx) in chatDayGroups" :key="group.key || `nd-${groupIdx}`" class="conv-day-group">
@@ -528,6 +553,26 @@
                 </div>
 
                 <!--
+                  這則訊息附的快速回覆按鈕。客人在 LINE 看到的是一排可點的膠囊，點了就送出
+                  對應文字——不畫出來的話，客人下一句「找真人」看起來像自己打的，客服根本
+                  不知道那是我們給的選項、也不知道當時還給過哪些選擇。
+                  只是紀錄，刻意做成不可點（span 不是 button）。
+                  跟「為什麼這樣答」同理由放泡泡下面自己一排，不塞旁邊那條 meta。
+                -->
+                <div v-if="getQuickReplyItems(msg).length" class="conv-quickreply-row" :class="msg.direction">
+                  <span
+                    class="conv-quickreply-row__tag"
+                    title="這則訊息在 LINE 裡附了這排按鈕，客人點一顆就會送出那段文字。這裡只是紀錄，按不了。"
+                  >客人看到的按鈕</span>
+                  <span
+                    v-for="(opt, optIdx) in getQuickReplyItems(msg)"
+                    :key="`${msg.id}-qr-${optIdx}`"
+                    class="conv-quickreply-chip"
+                    :title="opt.send && opt.send !== opt.label ? `點了會送出：${opt.send}` : undefined"
+                  >{{ opt.label }}</span>
+                </div>
+
+                <!--
                   這一則的「為什麼這樣答」。綁在泡泡上而不是只有最上面那張卡：一場對話 AI 回好幾次，
                   最上面那張永遠只講最新一次——客服想標的通常是更早那一則（發現答錯多半是客人抱怨之後）。
                   沒有 aiTurnId 的（這功能上線前的舊訊息）不出現，刻意不用時間去猜。
@@ -573,6 +618,43 @@
               </template>
             </template>
           </template>
+        </div>
+        <!--
+          看的是已結束的舊會話時，畫面停在那一場的尾巴——下面還有沒讀進來的訊息。
+          刻意不做成「滑到底自動讀」：那會和「黏在底部」打架，一路把整段歷史自動翻完。
+        -->
+        <div v-if="timelineHasNewer && !msgLoading" class="conv-timeline-more">
+          <span class="conv-timeline-more__label">這場之後還有訊息</span>
+          <button
+            type="button"
+            class="conv-timeline-more__btn"
+            :disabled="loadingNewer"
+            @click="loadNewerTimeline"
+          >
+            {{ loadingNewer ? '載入中…' : '載入後續訊息' }}
+          </button>
+        </div>
+        <!--
+          往上翻舊訊息時，這顆浮在對話右下角，一按就回到最新一則（下面還有沒載入的
+          就先把最新那一段讀回來，見 jumpToLatest）。
+          它是保險，不是主力：正常情況下開對話就已經停在最下面（見 scrollToBottom），
+          但圖片／圖文卡載得慢、或客服自己正在翻舊訊息時，總要有一條看得見的路回來。
+
+          它必須是訊息區的**最後一個子元素**：靠 sticky 吸在捲動區底部，才會剛好落在
+          「最後一則訊息與回覆區之間」。放到訊息區外面就只能對齊整個編輯區的底，
+          那是輸入框的位置，會蓋在打字區上。
+        -->
+        <div v-if="showJumpToLatest" class="conv-jump-latest-anchor">
+          <button
+            type="button"
+            class="conv-jump-latest"
+            :class="{ 'has-new': hasNewBelow }"
+            title="回到對話的最後一則訊息"
+            @click="jumpToLatest"
+          >
+            <span class="conv-jump-latest__arrow" aria-hidden="true">↓</span>
+            <span>{{ hasNewBelow ? '有新訊息' : '回到最新' }}</span>
+          </button>
         </div>
       </div>
 
@@ -993,8 +1075,20 @@ const { assertCanOperate } = useAdminOperateGuard()
 const route = useRoute()
 const workspaceId = computed(() => String(route.params.workspaceId || ''))
 
-/** 各使用者上次在後台「開啟對話」的時間（ms），存 localStorage，僅影響「全部」列表未讀提示 */
+/**
+ * 未讀紅點的兩個記號，都只存在這台電腦的 localStorage（每個 workspace 一份）：
+ *
+ * · convLastReadMs  — 每位客人「我看到哪個時間點為止」
+ * · readAllBeforeMs — 按過「全部已讀」的那一刻；比它舊的一律算看過，
+ *                     連還沒捲到、還沒載入的後面幾頁也一起蓋掉
+ *
+ * 兩者取大的那個當基準（見 isRowUnread）。已讀是每個人自己的，不跟同事共用——
+ * 同事看過不代表你看過。
+ */
 const convLastReadMs = ref<Record<string, number>>({})
+const readAllBeforeMs = ref(0)
+/** 已讀記錄的保留筆數上限：只留最近看過的這幾位，免得 localStorage 無限長大 */
+const CONV_READ_KEEP = 1000
 const pageHasFocus = ref(true)
 const savedDocumentTitle = ref('')
 let listPollTimer: ReturnType<typeof setInterval> | null = null
@@ -1004,12 +1098,18 @@ function convReadStorageKey(): string {
   return wid ? `admin-conv-lastRead:${wid}` : ''
 }
 
+function convReadAllStorageKey(): string {
+  const wid = workspaceId.value
+  return wid ? `admin-conv-readAll:${wid}` : ''
+}
+
 function hydrateConvLastRead() {
   if (typeof localStorage === 'undefined')
     return
   const key = convReadStorageKey()
   if (!key) {
     convLastReadMs.value = {}
+    readAllBeforeMs.value = 0
     return
   }
   try {
@@ -1019,6 +1119,8 @@ function hydrateConvLastRead() {
   catch {
     convLastReadMs.value = {}
   }
+  const allMs = Number(localStorage.getItem(convReadAllStorageKey()) || 0)
+  readAllBeforeMs.value = Number.isFinite(allMs) && allMs > 0 ? allMs : 0
 }
 
 function persistConvLastRead() {
@@ -1029,16 +1131,64 @@ function persistConvLastRead() {
     return
   try {
     localStorage.setItem(key, JSON.stringify(convLastReadMs.value))
+    localStorage.setItem(convReadAllStorageKey(), String(readAllBeforeMs.value))
   }
   catch {
     /* quota or private mode */
   }
 }
 
-function markConversationRead(userId: string) {
+/** 超過上限就丟掉最久沒看的那些（被丟掉的列往後捲到才會再亮一次，總比爆掉配額好） */
+function pruneConvLastRead(map: Record<string, number>): Record<string, number> {
+  const entries = Object.entries(map)
+  if (entries.length <= CONV_READ_KEEP)
+    return map
+  return Object.fromEntries(entries.sort((a, b) => b[1] - a[1]).slice(0, CONV_READ_KEEP))
+}
+
+/**
+ * 把這位客人標成「看到 seenUpToMs 為止」。
+ *
+ * 為什麼不是單純寫 Date.now()：列表上的時間戳來自 Firestore 伺服器（handler.ts 的
+ * lastMessageAt 用 serverTimestamp），Date.now() 來自客服自己那台電腦。電腦時間只要慢
+ * 個兩分鐘，寫進去的已讀時間就永遠早於訊息時間——那顆紅點按幾次都不會消。
+ * 所以一律取「本機現在」和「這次真的載到的最新一則」之中較大的那個，
+ * 順便把兩支時鐘的落差吃掉。
+ */
+function markConversationRead(userId: string, seenUpToMs = 0) {
   if (!userId)
     return
-  convLastReadMs.value = { ...convLastReadMs.value, [userId]: Date.now() }
+  const readMs = Math.max(Date.now(), seenUpToMs, convLastReadMs.value[userId] ?? 0)
+  convLastReadMs.value = pruneConvLastRead({ ...convLastReadMs.value, [userId]: readMs })
+  persistConvLastRead()
+}
+
+/** 一批時間戳裡最新的那個（ms）；用來把「這次畫面上真的看到的最新一則」交給 markConversationRead */
+function newestTimestampMs(list: unknown[]): number {
+  let max = 0
+  for (const ts of list) {
+    const ms = messageTimestampToMs(ts)
+    if (ms > max)
+      max = ms
+  }
+  return max
+}
+
+/**
+ * 「全部已讀」：一次把紅點清乾淨。
+ *
+ * 用一條時間線（readAllBeforeMs）而不是逐位客人蓋章，才蓋得到還沒載入的後面幾頁——
+ * 換一台電腦、清過快取、新同事第一次登入時，整排全紅只能一位一位點開才消得掉。
+ */
+function markAllConversationsRead() {
+  readAllBeforeMs.value = Math.max(
+    Date.now(),
+    readAllBeforeMs.value,
+    newestTimestampMs(conversations.value.map((c: ConvItem) => c.lastMessageAt)),
+    newestTimestampMs(sessions.value.map((s: SessionItem) => s.lastActivityAt)),
+  )
+  // 上面那條時間線已經蓋過所有既有記錄，逐位客人的章可以整份丟掉
+  convLastReadMs.value = {}
   persistConvLastRead()
 }
 
@@ -1090,22 +1240,30 @@ function directionPrefix(row: { lastMessage?: string, lastDirection?: string }):
 }
 
 /**
- * 最後一則訊息（含使用者進線、真人、機器人／系統回覆）晚於上次在後台開啟此對話即視為未讀。
+ * 紅點＝「這位客人在等我們，而且我還沒看過」。兩個條件都要成立：
+ *
+ * 1. 最後一則是**客人**送的。我們自己回的、AI／機器人回的、系統蓋的通知一律不算——
+ *    紅點是待辦不是動態；自己剛做完的事再紅一次，只會讓人學會忽略紅點。
+ *    口徑跟 directionPrefix 同一條（非 outgoing 就當客人那側），兩邊不能各自漂走。
+ * 2. 那則的時間晚於基準：這位客人的已讀時間、或上次按「全部已讀」的時間，取大的那個。
+ *
  * 兩種列都用這一支：「全部」給對話的 lastMessageAt、會話分頁給那場的 lastActivityAt，
  * 已讀時間都記在同一位客人身上（見 convLastReadMs），所以切分頁紅點不會前後矛盾。
  */
-function isRowUnread(userId: string, timestamp: unknown): boolean {
+function isRowUnread(userId: string, timestamp: unknown, lastDirection?: string): boolean {
+  if (lastDirection === 'outgoing')
+    return false
   const lastMs = messageTimestampToMs(timestamp)
   if (lastMs <= 0)
     return false
-  const readMs = convLastReadMs.value[userId] ?? 0
+  const readMs = Math.max(readAllBeforeMs.value, convLastReadMs.value[userId] ?? 0)
   return lastMs > readMs
 }
 
 function applyUnreadDocumentTitle() {
   if (typeof document === 'undefined' || !savedDocumentTitle.value)
     return
-  const n = conversations.value.filter(c => isRowUnread(c.userId, c.lastMessageAt)).length
+  const n = unreadRowCount.value
   const backgrounded = document.visibilityState === 'hidden' || !pageHasFocus.value
   if (n > 0 && backgrounded)
     document.title = `（${n}）${savedDocumentTitle.value}`
@@ -1242,12 +1400,16 @@ interface PendingOutgoing {
   error?: string
 }
 
-interface SessionTimelineItem {
+interface TimelineItem {
   id: string
   /** broadcast = 群發標記，後端讀取時才拼進來（不是真的訊息文件），與 event 同樣渲染 */
   type: 'event' | 'message' | 'broadcast'
   timestamp: any
   label?: string
+  /** 事件種類（見 ConversationEventType）；用來把重複的「進入：某模組」收掉 */
+  eventType?: string
+  /** entered_module 事件進的是哪一種模組 */
+  moduleType?: string
   direction?: 'incoming' | 'outgoing'
   readByPeer?: boolean
   text?: string
@@ -1268,30 +1430,23 @@ interface SessionPanelMeta {
   /**
    * 這場的時間範圍。AI 脈絡卡要靠它判斷「手上那張脈絡是不是這場的」——
    * aiMeta 每位客人只有一張、每次互動覆寫，看舊會話時它講的是之後的事（見 aiContextSessionWindow）。
-   * 「全部」分頁的 allTabActiveSession 不經 timeline API，沒有這兩個值。
+   * 結束時間為 0 ＝還在進行中。
    */
   openedAtMs?: number
   closedAtMs?: number
 }
 
-/** timeline API 的回應（selectSession 與 reloadSessionTimeline 共用，兩邊的解讀不能不一樣） */
-interface SessionTimelineResponse {
-  sessionId: string
-  status: ConvSessionStatus
-  statusLabel: string
-  openedAt?: any
-  closedAt?: any
-  items: SessionTimelineItem[]
-}
-
-function toSessionPanelMeta(res: SessionTimelineResponse): SessionPanelMeta {
-  return {
-    sessionId: res.sessionId,
-    status: res.status,
-    statusLabel: res.statusLabel,
-    openedAtMs: messageTimestampToMs(res.openedAt),
-    closedAtMs: messageTimestampToMs(res.closedAt),
-  }
+/** 對話時間軸 API 的一段回應（見 server/api/conversations/[userId]/messages.get.ts） */
+interface TimelineResponse {
+  items: TimelineItem[]
+  /** 上面還有更早的一段（往上滑就讀） */
+  hasOlder: boolean
+  /** 下面還有更晚的一段：點進已結束的舊會話時才會有，代表現在看的不是對話的最後 */
+  hasNewer: boolean
+  /** 這位客人目前進行中的那一場（可能是 null＝沒有進行中的會話） */
+  activeSession: SessionPanelMeta | null
+  /** 帶了 ?sessionId= 時，那一場的資料 */
+  session: SessionPanelMeta | null
 }
 
 /**
@@ -1371,9 +1526,20 @@ const msgLoading = ref(false)
 const sending = ref(false)
 const conversations = ref<ConvItem[]>([])
 const sessions = ref<SessionItem[]>([])
-const messages = ref<MsgItem[]>([])
-/** 依 session 的 timeline API（含事件列 + 該場訊息） */
-const sessionTimelineItems = ref<SessionTimelineItem[]>([])
+/**
+ * 目前這位客人的對話時間軸：訊息 + 系統事件 + 群發，已載入的那幾段。
+ *
+ * 五個分頁共用同一份（不再分「全部走 messages、會話分頁走 timeline」）——同一位客人
+ * 從哪個分頁點進去都是同一條完整對話，看到的東西不會不一樣。
+ */
+const timelineItems = ref<TimelineItem[]>([])
+/** 上面還有更早的訊息沒讀（往上滑會自己接著讀，見 loadOlderTimeline） */
+const timelineHasOlder = ref(false)
+/** 下面還有更晚的訊息沒讀：點進已結束的舊會話時才會有（見 loadNewerTimeline） */
+const timelineHasNewer = ref(false)
+const loadingOlder = ref(false)
+const loadingNewer = ref(false)
+/** 選中會話的資料（從會話分頁點進來的那一場） */
 const sessionMeta = ref<SessionPanelMeta | null>(null)
 /** 「全部」分頁：依 conversations.currentSessionId 取得的進行中會話（可手動結束） */
 const allTabActiveSession = ref<SessionPanelMeta | null>(null)
@@ -1581,6 +1747,14 @@ const aiContextSessionWindow = computed<AiContextSessionWindow | null>(() => {
 })
 
 const messagesEl = ref<HTMLElement | null>(null)
+/**
+ * 「黏在最下面」：開對話、送出、背景刷新後都停在最新一則。
+ * 使用者自己往上翻（離底超過 NEAR_BOTTOM_PX）就放掉，改用右下角那顆「回到最新」把人送回去——
+ * 正在讀舊訊息時被硬拉到底，比看不到最新一則更惹人厭。
+ */
+const stickToBottom = ref(true)
+const NEAR_BOTTOM_PX = 80
+let pinBottomTimer: ReturnType<typeof setInterval> | null = null
 const supportPresetsRaw = ref<any[]>([])
 /** 自動回覆規則清單：規則可能很多，等 picker 第一次打開才載入 */
 const autoReplyRulesRaw = ref<any[]>([])
@@ -1838,11 +2012,20 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
   return { title: searchText.value ? '無符合結果' : '尚無對話紀錄', hint: '' }
 })
 
-const unreadConvCount = computed(() =>
-  conversations.value.filter(c => isRowUnread(c.userId, c.lastMessageAt)).length,
+/**
+ * 目前這個分頁上還沒看的列數：分頁標題的「（3）」和「全部已讀」按鈕都用它。
+ *
+ * 一定要跟著分頁走：loadList 換到會話分頁時會把 conversations 清空，
+ * 先前只數 conversations，結果停在「待處理」時標題那個數字永遠是 0。
+ * 只數已載入的那幾頁——沒載到的列本來就還沒算進畫面上任何一個數字。
+ */
+const unreadRowCount = computed(() =>
+  activeTab.value === 'all'
+    ? convSidebarItems.value.filter(c => isRowUnread(c.userId, c.lastMessageAt, c.lastDirection)).length
+    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, s.lastActivityAt, s.lastDirection)).length,
 )
 
-watch(unreadConvCount, () => {
+watch(unreadRowCount, () => {
   applyUnreadDocumentTitle()
 })
 
@@ -1918,38 +2101,80 @@ function chatRowForMessage(msg: MsgItem): ChatRow {
   return { kind: 'msg', key: msg.id, msg }
 }
 
+/**
+ * 事件行裡「進入：某模組」只留**換手**的那幾筆。
+ *
+ * 每一句客人的話都會讓系統再進一次模組，所以整條對話攤開來看，「進入：機器人流程」
+ * 會出現在幾乎每一則回覆前面——實測 20 則訊息配 14 行事件，對話被切成一格一格，
+ * 而且那句話沒有新資訊：泡泡旁邊的標籤已經講了這則是機器人／AI／真人回的。
+ * 換手（機器人 → AI → 真人）才是客服要看的訊號，那一筆留著。
+ *
+ * 每一場會話重新算（見下面遇到 conversation_opened 時的重設）：一場的開頭講一次
+ * 「這場是誰接的」有意義，「同一場裡又進了同一個模組」沒有。
+ */
+function keepsModuleEvent(item: TimelineItem, lastModuleType: string): boolean {
+  if (item.eventType !== 'entered_module') return true
+  return String(item.moduleType || '') !== lastModuleType
+}
+
 const serverChatRows = computed<ChatRow[]>(() => {
-  if (selectedSessionId.value) {
-    return sessionTimelineItems.value.map((item) => {
-      // broadcast 是後端讀取時才拼進來的群發標記（不是真的訊息文件），與事件同樣渲染成一行泡泡
-      if (item.type === 'event' || item.type === 'broadcast') {
-        return {
-          kind: 'event' as const,
-          key: `e-${item.id}`,
-          label: item.label || '',
-          timestamp: item.timestamp,
-        }
-      }
-      const msg: MsgItem = {
-        id: item.id,
-        direction: item.direction === 'outgoing' ? 'outgoing' : 'incoming',
-        text: item.text ?? '',
-        messageType: String(item.messageType || 'text'),
-        payload: item.payload as any,
+  const rows: ChatRow[] = []
+  let lastModuleType = ''
+  for (const item of timelineItems.value) {
+    // broadcast 是後端讀取時才拼進來的群發標記（不是真的訊息文件），與事件同樣渲染成一行泡泡
+    if (item.type === 'event' || item.type === 'broadcast') {
+      if (!keepsModuleEvent(item, lastModuleType)) continue
+      if (item.eventType === 'conversation_opened') lastModuleType = ''
+      else if (item.eventType === 'entered_module') lastModuleType = String(item.moduleType || '')
+      rows.push({
+        kind: 'event' as const,
+        key: `e-${item.id}`,
+        label: item.label || '',
         timestamp: item.timestamp,
-        readByPeer: item.readByPeer,
-        mediaDescription: item.mediaDescription,
-        sender: item.sender ?? null,
-        senderName: item.senderName,
-        aiTurnId: item.aiTurnId,
-      }
-      return chatRowForMessage(msg)
-    })
+      })
+      continue
+    }
+    const msg: MsgItem = {
+      id: item.id,
+      direction: item.direction === 'outgoing' ? 'outgoing' : 'incoming',
+      text: item.text ?? '',
+      messageType: String(item.messageType || 'text'),
+      payload: item.payload as any,
+      timestamp: item.timestamp,
+      readByPeer: item.readByPeer,
+      mediaDescription: item.mediaDescription,
+      sender: item.sender ?? null,
+      senderName: item.senderName,
+      aiTurnId: item.aiTurnId,
+    }
+    rows.push(chatRowForMessage(msg))
   }
-  return messages.value.map(chatRowForMessage)
+  return rows
 })
 
 const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
+
+/**
+ * 「回到最新」只在真的看不到最新一則時出現：空對話、載入中、已經停在底部都不該冒出來。
+ * 例外是看舊會話（timelineHasNewer）：那時就算貼在載入內容的底部，看到的也不是最新一則。
+ */
+const showJumpToLatest = computed(() =>
+  (!stickToBottom.value || timelineHasNewer.value) && !msgLoading.value && chatRows.value.length > 0,
+)
+
+/**
+ * 往上翻的時候，背景刷新刻意不把畫面拉走（見 scrollToBottom 的 force）——
+ * 那就得由這顆按鈕負責講「下面有新的」，否則客服在翻舊訊息，客人的新訊息就悄悄地沒人看到。
+ */
+const chatNewestMs = computed(() => newestTimestampMs(
+  chatRows.value.map(r => (r.kind === 'event' ? r.timestamp : r.msg.timestamp)),
+))
+const seenNewestMs = ref(0)
+const hasNewBelow = computed(() => !stickToBottom.value && chatNewestMs.value > seenNewestMs.value)
+// 人停在底部＝最新那則就在眼前，基準線跟著往前推
+watch([stickToBottom, chatNewestMs], ([stuck, newest]) => {
+  if (stuck) seenNewestMs.value = newest
+}, { immediate: true })
 
 /** 泡泡與事件行都吃這一支，好讓日期分組判斷「這一則是哪一天」 */
 function chatRowMs(row: ChatRow): number {
@@ -2077,20 +2302,22 @@ async function switchTab(tab: TabValue) {
   if (tab !== 'all') followUpFilterOn.value = false
   selectedSessionId.value = null
   allTabActiveSession.value = null
-  sessionTimelineItems.value = []
   sessionMeta.value = null
   await loadList('reset')
+  // 切分頁不換人：同一位客人在「全部」和會話分頁看到的是同一條對話，
+  // 只是工具列從「進行中會話」換成「此場會話」（見 sessionToolbarMeta）
   if (tab === 'all' && selectedUserId.value && selectedUser.value) {
     await selectUser(selectedUser.value)
   }
 }
 
 async function selectSession(s: SessionItem) {
+  // 換會話＝重新黏回底部（同 selectUser）
+  stickToBottom.value = true
   selectedSessionId.value = s.sessionId
   allTabActiveSession.value = null
   aiContextSeenAtMs = 0
   selectedUserId.value = s.userId
-  messages.value = []
   const convItem: ConvItem = {
     userId: s.userId,
     displayName: s.displayName,
@@ -2102,29 +2329,13 @@ async function selectSession(s: SessionItem) {
     followUp: s.followUp === true,
   }
   selectedUser.value = convItem
+  // 先用列表那一列的狀態把工具列填好，時間軸讀回來再換成完整的（含起訊時間）
   sessionMeta.value = {
     sessionId: s.sessionId,
     status: s.status,
     statusLabel: SESSION_STATUS_LABELS[s.status] ?? String(s.status),
   }
-  msgLoading.value = true
-  try {
-    const res = await apiFetch<SessionTimelineResponse>(
-      `/api/conversations/sessions/${s.sessionId}/timeline`,
-    )
-    sessionMeta.value = toSessionPanelMeta(res)
-    sessionTimelineItems.value = res.items ?? []
-    await nextTick()
-    scrollToBottom()
-    markConversationRead(s.userId)
-  }
-  catch {
-    sessionTimelineItems.value = []
-    showToast('載入會話時間軸失敗', 'error')
-  }
-  finally {
-    msgLoading.value = false
-  }
+  await loadTimeline(s.userId, { sessionId: s.sessionId, seenUpToMs: messageTimestampToMs(s.lastActivityAt) })
 }
 
 const canSend = computed(() => !!inputText.value.trim())
@@ -2458,13 +2669,14 @@ async function selectUserById(userId: string) {
 }
 
 async function selectUser(c: ConvItem) {
+  // 換人＝重新黏回底部。不重設的話，上一位客人翻到一半的狀態會跟著帶進來
+  stickToBottom.value = true
   // 換人前先把打到一半的字收進這位客人的抽屜，再拿出下一位的
   if (selectedUserId.value !== c.userId) {
     stashDraft()
     inputText.value = drafts.get(c.userId) ?? ''
   }
   selectedSessionId.value = null
-  sessionTimelineItems.value = []
   sessionMeta.value = null
   allTabActiveSession.value = null
   // 換人就重設基準時間，否則會拿上一位客人的時間戳去比、一進來就誤判成「有新訊息」
@@ -2472,40 +2684,201 @@ async function selectUser(c: ConvItem) {
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingQuickReplyId.value = ''
-  await loadMessages(c.userId)
+  await loadTimeline(c.userId, { seenUpToMs: messageTimestampToMs(c.lastMessageAt) })
+}
+
+// ── 對話時間軸：一段一段讀 ──────────────────────────────────────────
+// 一次撈半年的對話沒有意義（開啟要等、九成九沒人看），所以只讀最新一段，
+// 往上滑到頂再接著讀更早的一段。五個分頁走同一條路，看到的是同一條完整對話。
+
+/** 一段幾則。與後端預設一致；改這裡就好，後端會照著吃 */
+const TIMELINE_PAGE_SIZE = 40
+/** 捲到離頂端這麼近就去讀更早的一段（留一點提前量，不要等真的貼到頂才動） */
+const LOAD_OLDER_EDGE_PX = 160
+
+/** 目前載入到的最舊／最新那一則**訊息**的 id：往上／往下讀的游標（事件與群發不是訊息文件，不能當游標） */
+function oldestMessageId(): string {
+  return timelineItems.value.find(i => i.type === 'message')?.id ?? ''
+}
+function newestMessageId(): string {
+  for (let i = timelineItems.value.length - 1; i >= 0; i--) {
+    const item = timelineItems.value[i]!
+    if (item.type === 'message') return item.id
+  }
+  return ''
 }
 
 /**
- * 讀這位客人的訊息。
+ * 把新讀到的一段併進已載入的內容。
  *
- * quiet = 自己剛送出後的刷新：不清空、不轉圈。原本這條走 selectUser()，
+ * 照 id 去重（不是照位置）：往下讀時「會話已結束」那一行會同時落在相鄰兩段的範圍裡
+ * （它在最後一則訊息之後、下一則訊息之前，見後端 TimeWindow），不去重就會出現兩次。
+ * 沒變的那幾則沿用原物件，Vue 才不會把整串泡泡重繪一遍——圖片泡泡重繪會閃，
+ * 已簽好的媒體網址也會被重跑一輪。
+ */
+function mergeTimeline(prev: TimelineItem[], incoming: TimelineItem[]): TimelineItem[] {
+  const incomingIds = new Set(incoming.map(i => i.id))
+  const merged = [...prev.filter(i => !incomingIds.has(i.id)), ...incoming]
+  merged.sort((a, b) => messageTimestampToMs(a.timestamp) - messageTimestampToMs(b.timestamp))
+  return reuseUnchangedRows(prev, merged, i => i.id)
+}
+
+/**
+ * 讀這位客人的對話（最新的一段）。
+ *
+ * sessionId = 從會話分頁點進來的那一場：已結束的場會從那場的尾巴開始讀，客服點三天前
+ * 那場就看到那場（後端負責錨定），下面沒讀的部分由 timelineHasNewer 告訴使用者。
+ * quiet = 自己剛送出後的刷新：不清空、不轉圈，只把最新一段併進來。原本這條走整份重載，
  * 每回一句就把整個對話清成一顆 spinner 再長回來——連回三句就閃三次。
  */
-async function loadMessages(userId: string, options?: { quiet?: boolean }) {
+async function loadTimeline(
+  userId: string,
+  options?: { sessionId?: string, quiet?: boolean, seenUpToMs?: number },
+) {
   const quiet = options?.quiet === true
+  const sessionId = options?.sessionId || ''
+  let loaded = false
   if (!quiet) {
-    messages.value = []
+    timelineItems.value = []
+    timelineHasOlder.value = false
+    timelineHasNewer.value = false
     msgLoading.value = true
   }
   try {
-    const res = await apiFetch<{
-      messages: MsgItem[]
-      activeSession: SessionPanelMeta | null
-    }>(`/api/conversations/${userId}/messages`)
-    // 只換真的變了的那幾則：沒變的沿用原物件，Vue 就不會把整串泡泡重繪一遍
-    // （圖片泡泡重繪會閃、已簽好的媒體網址也會被重跑一輪）
-    messages.value = reuseUnchangedRows(messages.value, res.messages, m => m.id)
-    allTabActiveSession.value = res.activeSession ?? null
+    const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
+      params: { limit: TIMELINE_PAGE_SIZE, sessionId: sessionId || undefined },
+    })
+    // 回來時人已經切走了就整段丟掉，不要把上一位客人的訊息貼到現在這位身上
+    if (selectedUserId.value !== userId) return
+    const incoming = res.items ?? []
+    timelineItems.value = quiet ? mergeTimeline(timelineItems.value, incoming) : incoming
+    /**
+     * 安靜刷新讀的是「最新一段」，但畫面上可能已經往上讀了好幾段。
+     * 這一段說「上面還有」時，那可能只是指我們手上已經載到的那些——所以只有在
+     * 已載入的內容沒有比這一段更舊的東西時，才照它的答案，否則維持原本的旗標。
+     */
+    const pageOldestMs = messageTimestampToMs(incoming.find(i => i.type === 'message')?.timestamp)
+    const keptOlder = quiet && pageOldestMs > 0 && timelineItems.value.some(
+      i => i.type === 'message' && messageTimestampToMs(i.timestamp) < pageOldestMs,
+    )
+    if (!keptOlder) timelineHasOlder.value = res.hasOlder === true
+    timelineHasNewer.value = res.hasNewer === true
+    allTabActiveSession.value = sessionId ? null : res.activeSession ?? null
+    if (sessionId && res.session) sessionMeta.value = res.session
     await nextTick()
-    scrollToBottom()
-    markConversationRead(userId)
+    // 安靜刷新（自己剛送完）不強拉：客服正在往上翻舊訊息時，畫面不該自己跳走
+    scrollToBottom({ force: !quiet })
+    markConversationRead(userId, Math.max(
+      newestTimestampMs(timelineItems.value.map(i => i.timestamp)),
+      options?.seenUpToMs ?? 0,
+    ))
+    loaded = true
   }
   catch {
-    showToast('載入訊息失敗', 'error')
+    showToast('載入對話失敗', 'error')
   }
   finally {
     if (!quiet) msgLoading.value = false
   }
+  // 續讀要等 msgLoading 放掉才動：loadOlderTimeline 看到還在載入中會直接回頭
+  if (loaded && !quiet) await autoFillTimeline()
+}
+
+/**
+ * 往上讀更早的一段（捲到接近頂端時自動觸發）。
+ *
+ * 讀完要把捲軸補回原位：內容接在**上面**，不補的話客服正在看的那幾則會被推到畫面外，
+ * 等於自己往下跳了一段。
+ */
+async function loadOlderTimeline() {
+  if (loadingOlder.value || msgLoading.value || !timelineHasOlder.value) return
+  const userId = selectedUserId.value
+  const cursor = oldestMessageId()
+  if (!userId || !cursor) return
+  loadingOlder.value = true
+  const el = messagesEl.value
+  const heightBefore = el?.scrollHeight ?? 0
+  const topBefore = el?.scrollTop ?? 0
+  try {
+    const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
+      params: { limit: TIMELINE_PAGE_SIZE, beforeId: cursor },
+    })
+    if (selectedUserId.value !== userId) return
+    const incoming = res.items ?? []
+    timelineItems.value = mergeTimeline(timelineItems.value, incoming)
+    timelineHasOlder.value = res.hasOlder === true && incoming.length > 0
+    if (el) {
+      await nextTick()
+      el.scrollTop = topBefore + (el.scrollHeight - heightBefore)
+    }
+  }
+  catch {
+    showToast('載入更早的訊息失敗', 'error')
+  }
+  finally {
+    loadingOlder.value = false
+  }
+}
+
+/**
+ * 往下讀更晚的一段。只有點進已結束的舊會話時才有意義（那時畫面停在那場的尾巴，
+ * 後面還有沒讀的內容），所以是使用者按了才讀，不做自動觸發——
+ * 自動的話「黏在底部」會一路把整段歷史翻完。
+ */
+async function loadNewerTimeline() {
+  if (loadingNewer.value || msgLoading.value || !timelineHasNewer.value) return
+  const userId = selectedUserId.value
+  const cursor = newestMessageId()
+  if (!userId || !cursor) return
+  loadingNewer.value = true
+  try {
+    const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
+      params: { limit: TIMELINE_PAGE_SIZE, afterId: cursor },
+    })
+    if (selectedUserId.value !== userId) return
+    const incoming = res.items ?? []
+    timelineItems.value = mergeTimeline(timelineItems.value, incoming)
+    timelineHasNewer.value = res.hasNewer === true && incoming.length > 0
+  }
+  catch {
+    showToast('載入後續訊息失敗', 'error')
+  }
+  finally {
+    loadingNewer.value = false
+  }
+}
+
+/**
+ * 「還有更早的、但目前內容少到撐不出捲軸」＝捲動事件永遠不會觸發，對話卡在幾則。
+ * 補一輪自動續讀，直到撐出捲軸或真的沒有更早的為止（同側欄的 autoFillSidebarList）。
+ */
+async function autoFillTimeline() {
+  for (let i = 0; i < AUTO_FILL_MAX_PAGES; i++) {
+    await nextTick()
+    const el = messagesEl.value
+    if (!el || !timelineHasOlder.value) return
+    if (el.scrollHeight > el.clientHeight + 40) return
+    const before = timelineItems.value.length
+    await loadOlderTimeline()
+    if (timelineItems.value.length <= before) return
+  }
+}
+
+/**
+ * 回到對話的最後一則。
+ *
+ * 下面還有沒讀的內容時（看舊會話），單純捲到底只會停在「已載入的最後一則」——
+ * 那不是最新的。這時要重新讀一次最新一段，畫面才真的回到現在。
+ */
+async function jumpToLatest() {
+  if (timelineHasNewer.value && selectedUserId.value) {
+    // 這一跳離開了那一場的範圍，工具列跟著回到「進行中會話」，不要繼續顯示舊那場的狀態
+    selectedSessionId.value = null
+    sessionMeta.value = null
+    await loadTimeline(selectedUserId.value)
+    return
+  }
+  scrollToBottom()
 }
 
 /**
@@ -2599,39 +2972,27 @@ function discardPendingOutgoing(localId: string) {
   nextTick(focusInput)
 }
 
-async function reloadSessionTimeline(options?: { quiet?: boolean }) {
-  const sid = selectedSessionId.value
-  if (!sid)
-    return
-  const quiet = options?.quiet === true
-  if (!quiet) msgLoading.value = true
-  try {
-    const res = await apiFetch<SessionTimelineResponse>(
-      `/api/conversations/sessions/${sid}/timeline`,
-    )
-    sessionMeta.value = toSessionPanelMeta(res)
-    sessionTimelineItems.value = res.items ?? []
-    await nextTick()
-    scrollToBottom()
-  }
-  catch {
-    showToast('重新載入會話失敗', 'error')
-  }
-  finally {
-    if (!quiet) msgLoading.value = false
-  }
+/**
+ * 重新讀最新一段（接手／交還／結案後）：狀態列與事件行都會變，但已讀到的舊訊息留著。
+ *
+ * 看的是歷史那一段（下面還有沒讀的）時不重讀：那一段的內容不會因為現在按了什麼而改變，
+ * 重讀只會把客服正在看的位置甩掉。
+ */
+async function reloadTimeline(options?: { quiet?: boolean }) {
+  const userId = selectedUserId.value
+  if (!userId || timelineHasNewer.value) return
+  await loadTimeline(userId, {
+    sessionId: selectedSessionId.value || undefined,
+    quiet: options?.quiet === true,
+  })
 }
 
 /** 自己剛送出東西後的刷新：一律安靜（不清空、不轉圈），只有內容悄悄多一則 */
 async function reloadAfterOutgoing() {
-  if (selectedSessionId.value) {
-    await reloadSessionTimeline({ quiet: true })
-    await refreshListQuiet()
-  }
-  else if (selectedUserId.value) {
-    await loadMessages(selectedUserId.value, { quiet: true })
-    await loadSessionCounts()
-  }
+  if (!selectedUserId.value) return
+  await reloadTimeline({ quiet: true })
+  if (selectedSessionId.value) await refreshListQuiet()
+  else await loadSessionCounts()
 }
 
 /**
@@ -2651,10 +3012,7 @@ async function takeOverSelectedSession() {
     // 接手的人最需要的就是「這場到現在發生什麼事」。刻意不 await：摘要要跑一次 LLM，
     // 讓它擋住接手的畫面更新沒有道理——接手本身已經成立，摘要晚兩秒出現即可。
     aiContextBanner.value?.refreshSummary()
-    if (selectedSessionId.value)
-      await reloadSessionTimeline()
-    else if (selectedUser.value)
-      await selectUser(selectedUser.value)
+    await reloadTimeline()
     await refreshListQuiet()
     await loadSessionCounts()
   }
@@ -2678,10 +3036,7 @@ async function handBackSelectedSession() {
       method: 'POST',
     })
     showToast('已交還機器人，AI / 自動回覆恢復接手', 'success')
-    if (selectedSessionId.value)
-      await reloadSessionTimeline()
-    else if (selectedUser.value)
-      await selectUser(selectedUser.value)
+    await reloadTimeline()
     await refreshListQuiet()
     // 狀態變了，側欄分頁的數字也要跟著動（先前漏了，交還後徽章會停在舊值）
     await loadSessionCounts()
@@ -2713,10 +3068,7 @@ async function closeSelectedSession() {
       method: 'POST',
     })
     showToast('已結束會話', 'success')
-    if (selectedSessionId.value)
-      await reloadSessionTimeline()
-    else if (selectedUser.value)
-      await selectUser(selectedUser.value)
+    await reloadTimeline()
     await refreshListQuiet()
   }
   catch (e: any) {
@@ -2973,10 +3325,71 @@ async function sendQuickMedia() {
   }
 }
 
-function scrollToBottom() {
-  if (messagesEl.value) {
-    messagesEl.value.scrollTop = messagesEl.value.scrollHeight
-  }
+/**
+ * 捲到最新一則。
+ *
+ * 為什麼不是一行 `scrollTop = scrollHeight` 就好：捲的那一刻，圖片／影片／圖文卡的高度**還是 0**
+ * （el-image 的 <img> 還沒載完、版面還沒撐開），捲到底其實是捲到「還沒長高的底」。
+ * 圖一載完，下面又多出好幾百 px，畫面就停在半路——最後一則整張圖的推播訊息看不到。
+ * 所以捲完要再守一小段時間：只要人還黏在底部、內容又長高了，就再貼回最下面。
+ * 超過這段時間才載完的（大圖、慢網路）由 onMessagesContentGrew 接手。
+ *
+ * force = 使用者主動換脈絡（開對話、送出訊息）：一定回到最新。
+ * force = false 的背景刷新只在人本來就停在底部時才捲，正在翻舊訊息不會被拉走。
+ */
+const PIN_BOTTOM_MS = 1500
+const PIN_BOTTOM_STEP_MS = 100
+
+function scrollToBottom(options?: { force?: boolean }) {
+  if (options?.force !== false) stickToBottom.value = true
+  if (!stickToBottom.value) return
+  if (pinBottomTimer) clearInterval(pinBottomTimer)
+  scrollToBottomNow()
+  const until = Date.now() + PIN_BOTTOM_MS
+  pinBottomTimer = setInterval(() => {
+    if (!stickToBottom.value || !messagesEl.value || Date.now() > until) {
+      stopPinBottom()
+      return
+    }
+    scrollToBottomNow()
+  }, PIN_BOTTOM_STEP_MS)
+}
+
+function scrollToBottomNow() {
+  const el = messagesEl.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+function stopPinBottom() {
+  if (pinBottomTimer) clearInterval(pinBottomTimer)
+  pinBottomTimer = null
+}
+
+/**
+ * 使用者往上翻就放掉「黏在底部」，右下角換成「回到最新」。
+ * 內容在下面長高不會觸發 scroll（scrollTop 沒變），所以這裡只會收到真的捲動。
+ *
+ * 快翻到頂就順手把更早的一段讀進來（見 loadOlderTimeline）——這就是「往上滑才載入」。
+ */
+function onMessagesScroll() {
+  const el = messagesEl.value
+  if (!el) return
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+  /**
+   * 停在「已載入的最後一則」不等於停在對話的最後一則：看已結束的舊會話時，下面還有
+   * 沒讀進來的訊息。這時不黏底——黏了的話圖片載完的重貼底會一路把整段歷史自動翻完，
+   * 而右下角那顆按鈕才是往下走的路（見 jumpToLatest）。
+   */
+  stickToBottom.value = atBottom && !timelineHasNewer.value
+  if (el.scrollTop <= LOAD_OLDER_EDGE_PX) void loadOlderTimeline()
+}
+
+/**
+ * 對話區裡任何一張圖／一支影片載完（load / error / loadedmetadata 都在捕獲階段收，
+ * 這些事件不會冒泡，只能用 capture 從外面攔）。載完＝版面剛長高，還黏在底部就再貼回去。
+ */
+function onMessagesContentGrew() {
+  if (stickToBottom.value) scrollToBottomNow()
 }
 
 function formatTime(ts: any): string {
@@ -3167,13 +3580,23 @@ function splitMessageLineSegments(line: string): MessageTextSegment[] {
   return segments.length ? segments : [{ text, isLink: false }]
 }
 
-function getQuickReplyItems(msg: MsgItem): string[] {
+/**
+ * 這則訊息在 LINE 裡附的快速回覆按鈕（AI 反問澄清的選項、腳本的選項、機器人流程都會帶）。
+ * label 是客人看到的字，send 是點下去實際送出的文字（postback 這類沒有送出文字，留空）。
+ * 不設數量上限：LINE 規格本身就只收 13 顆。
+ */
+function getQuickReplyItems(msg: MsgItem): Array<{ label: string, send: string }> {
   const items = msg?.payload?.quickReply?.items
   if (!Array.isArray(items)) return []
   return items
-    .map((item: any) => String(item?.action?.label || item?.action?.text || '').trim())
-    .filter(Boolean)
-    .slice(0, 8)
+    .map((item: any) => {
+      const action = item?.action ?? {}
+      return {
+        label: String(action.label || action.text || '').trim(),
+        send: String(action.text || action.displayText || '').trim(),
+      }
+    })
+    .filter(o => o.label)
 }
 
 function isStructuredLineMessage(msg: MsgItem): boolean {
@@ -3774,6 +4197,7 @@ onUnmounted(() => {
     clearInterval(listPollTimer)
     listPollTimer = null
   }
+  stopPinBottom()
   if (typeof window !== 'undefined') {
     window.removeEventListener('focus', onWindowFocus)
     window.removeEventListener('blur', onWindowBlur)

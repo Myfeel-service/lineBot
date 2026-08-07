@@ -63,8 +63,17 @@
   margin-top: auto;
 }
 
+/**
+ * 底部說明列。
+ *
+ * `min-height` 是關鍵：大數字靠 `margin-top:auto` 推到底，所以**四張卡的數字底邊
+ * 是否對齊，取決於這一列高度是否一致**。有一張卡的說明是條件顯示（新加好友在查不到
+ * 上期資料時整列空白），空列只有 padding 的高度 → 那張卡的數字會比隔壁低半行。
+ * 預留一行的高度，條件顯示的卡就不會破壞整排的底邊。
+ */
 .conv-stats-kpi-foot {
   padding-top: 0.25rem;
+  min-height: 1.3rem;
 }
 
 .conv-stats-kpi-card .stat-label {

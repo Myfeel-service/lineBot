@@ -88,24 +88,43 @@ function clearLeadParams() {
 }
 
 // ── localStorage: config cache (avoids API round-trip on repeat visits) ─
-const CFG_KEY = 'liff_config_cache'
+const CFG_KEY_PREFIX = 'liff_config_cache:'
 const CFG_TTL = 60 * 60 * 1000 // 1 hour
 
-function loadConfigCache(): { liffId: string; lineOaBasicId: string } | null {
-  if (typeof localStorage === 'undefined') return null
+/** LIFF ID 格式 `{loginChannelId}-{suffix}`；前半段可反查租戶，也是設定快取的鍵。 */
+function loginChannelIdFromLiffId(liffIdRaw: string): string {
+  const m = /^(\d+)-/.exec(String(liffIdRaw || '').trim())
+  return m?.[1] ?? ''
+}
+
+/**
+ * 設定快取一律按 Login channel 分開存。
+ * ⛔ 不可共用單一鍵：同一支瀏覽器可能先後開兩個不同租戶的活動，共用會把 A 租戶的
+ * liffId／OA basicId 餵給 B 租戶的客人。
+ */
+function loadConfigCache(channelId: string): { liffId: string; lineOaBasicId: string } | null {
+  if (typeof localStorage === 'undefined' || !channelId) return null
   try {
-    const raw = localStorage.getItem(CFG_KEY)
+    const key = CFG_KEY_PREFIX + channelId
+    const raw = localStorage.getItem(key)
     if (!raw) return null
     const d = JSON.parse(raw)
-    if (Date.now() - (d.cachedAt || 0) > CFG_TTL) { localStorage.removeItem(CFG_KEY); return null }
+    if (Date.now() - (d.cachedAt || 0) > CFG_TTL) { localStorage.removeItem(key); return null }
     return { liffId: String(d.liffId || ''), lineOaBasicId: String(d.lineOaBasicId || '') }
   } catch { return null }
 }
-function saveConfigCache(cfg: { liffId: string; lineOaBasicId: string }) {
-  if (typeof localStorage === 'undefined') return
-  // API 沒帶 workspaceId 時會回空值——寫入會蓋掉原本有效的快取，一律略過
+function saveConfigCache(channelId: string, cfg: { liffId: string; lineOaBasicId: string }) {
+  if (typeof localStorage === 'undefined' || !channelId) return
+  // API 認不出租戶時會回空值——寫入會蓋掉原本有效的快取，一律略過
   if (!cfg.liffId && !cfg.lineOaBasicId) return
-  try { localStorage.setItem(CFG_KEY, JSON.stringify({ ...cfg, cachedAt: Date.now() })) } catch {}
+  try { localStorage.setItem(CFG_KEY_PREFIX + channelId, JSON.stringify({ ...cfg, cachedAt: Date.now() })) } catch {}
+}
+
+/** 以 Login channel ID 反查這個租戶的 LIFF 設定（見 server/api/liff/config.get.ts）。 */
+function fetchLiffConfig(loginChannelId: string) {
+  return $fetch<{ liffId: string; lineOaBasicId: string }>('/api/liff/config', {
+    params: { liffClientId: loginChannelId },
+  })
 }
 
 function applyKnownOaBasicId(basicIdRaw: string) {
@@ -186,6 +205,16 @@ function parseLeadFromBrowserLocation() {
   return result
 }
 
+/** 讀 LINE 登入 callback 的參數（route.query 先，退回直接讀 location）。 */
+function readCallbackParam(key: string): string {
+  const fromRoute = (route.query as Record<string, unknown>)[key]
+  const v = Array.isArray(fromRoute) ? fromRoute[0] : fromRoute
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  if (typeof window === 'undefined') return ''
+  try { return String(new URL(window.location.href).searchParams.get(key) || '').trim() }
+  catch { return '' }
+}
+
 function buildDebugInfo(extra: Record<string, unknown>) {
   try {
     const routeQuery = route.query as Record<string, unknown>
@@ -236,7 +265,7 @@ async function tryOpenInLineAppBeforeInit(liffId: string) {
 }
 
 onMounted(async () => {
-  const ctx: Record<string, unknown> = { v: 6 }
+  const ctx: Record<string, unknown> = { v: 7 }
 
   // ── 最先啟動：LIFF SDK 動態載入（與其他步驟並行執行）──────────────────
   // @line/liff 是最重的資源，越早開始載入越好。
@@ -248,9 +277,12 @@ onMounted(async () => {
   ctx.step1Parsed = { ...parsed }
 
   // --- Step 1b: Restore params from localStorage after LINE OAuth redirect ---
-  const isOAuthCallback = !parsed.ct && !parsed.liffId
-    && typeof route.query.code === 'string'
-    && typeof route.query.liffClientId === 'string'
+  // callback 的固定參數要獨立判斷（不管 claimToken 有沒有從 liffRedirectUri 救回來），
+  // 因為下面的「跳去 LINE App」守門要靠它。liffClientId 同時是租戶線索。
+  const callbackLiffClientId = readCallbackParam('liffClientId')
+  const hasOAuthCallbackParams = Boolean(readCallbackParam('code') && callbackLiffClientId)
+  const isOAuthCallback = hasOAuthCallbackParams && !parsed.ct && !parsed.liffId
+  ctx.hasOAuthCallbackParams = hasOAuthCallbackParams
 
   if (parsed.ct || parsed.liffId) {
     saveLeadParams(parsed)
@@ -266,8 +298,13 @@ onMounted(async () => {
   // API fetch runs in parallel with liffImportPromise when liffId already known.
   let liffId = parsed.liffId
 
+  // 租戶線索：網址上的 liffId 前綴，或登入 callback 帶回來的 liffClientId。
+  // 兩個都沒有就無從得知是哪個租戶——此時不打 API（只會回空），也絕不猜。
+  const channelIdHint = loginChannelIdFromLiffId(liffId) || callbackLiffClientId
+  ctx.channelIdHint = channelIdHint
+
   // Try config cache first (instant, no network)
-  const cachedCfg = loadConfigCache()
+  const cachedCfg = loadConfigCache(channelIdHint)
   if (cachedCfg) {
     if (!liffId) liffId = cachedCfg.liffId
     if (cachedCfg.lineOaBasicId) applyKnownOaBasicId(cachedCfg.lineOaBasicId)
@@ -275,23 +312,28 @@ onMounted(async () => {
   }
 
   if (!liffId) {
-    // Must fetch API before proceeding — but liffImportPromise is already loading in parallel
-    try {
-      const cfg = await $fetch<{ liffId: string; lineOaBasicId: string }>('/api/liff/config')
-      liffId = cfg?.liffId || ''
-      if (cfg) saveConfigCache(cfg)
-      if (cfg?.lineOaBasicId) applyKnownOaBasicId(cfg.lineOaBasicId)
-      ctx.liffIdSource = 'api'
+    if (channelIdHint) {
+      // Must fetch API before proceeding — but liffImportPromise is already loading in parallel
+      try {
+        const cfg = await fetchLiffConfig(channelIdHint)
+        liffId = cfg?.liffId || ''
+        if (cfg) saveConfigCache(channelIdHint, cfg)
+        if (cfg?.lineOaBasicId) applyKnownOaBasicId(cfg.lineOaBasicId)
+        ctx.liffIdSource = 'api'
+      }
+      catch (e) {
+        ctx.liffIdSource = 'api_failed'
+        ctx.liffIdApiError = String(e)
+      }
     }
-    catch (e) {
-      ctx.liffIdSource = 'api_failed'
-      ctx.liffIdApiError = String(e)
+    else {
+      ctx.liffIdSource = 'no_tenant_hint'
     }
   }
-  else if (!cachedCfg || Date.now() - (loadConfigCache() as any)?.cachedAt > CFG_TTL / 2) {
+  else if (!cachedCfg && channelIdHint) {
     // Have liffId — refresh config cache in background without blocking
-    $fetch<{ liffId: string; lineOaBasicId: string }>('/api/liff/config').then((cfg) => {
-      if (cfg) saveConfigCache(cfg)
+    fetchLiffConfig(channelIdHint).then((cfg) => {
+      if (cfg) saveConfigCache(channelIdHint, cfg)
       if (cfg?.lineOaBasicId && !oaBasicId.value) applyKnownOaBasicId(cfg.lineOaBasicId)
     }).catch(() => {})
     ctx.liffIdSource = ctx.liffIdSource || 'url_or_params'
@@ -305,7 +347,13 @@ onMounted(async () => {
     return
   }
 
-  await tryOpenInLineAppBeforeInit(liffId)
+  // ⛔ 登入 callback 上不可跳去 LINE App：深連結會把網址上的 code 一起複製過去，
+  // 而那個 code 用過即棄；客人會在 App 裡拿著已消耗的 code 開 LIFF 而失敗，
+  // 同時持有這次登入的瀏覽器也回不去了。這裡直接讓 liff.init() 收掉 callback。
+  if (hasOAuthCallbackParams)
+    ctx.skippedLineAppDeepLink = true
+  else
+    await tryOpenInLineAppBeforeInit(liffId)
 
   // --- Step 3: Await LIFF SDK (已與 Step 2 並行載入) ---
   const liffMod = await liffImportPromise
