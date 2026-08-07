@@ -38,6 +38,8 @@ interface FakeMessage {
 interface FakeSession {
   id: string
   workspaceId?: string
+  /** 這場是誰的（預設就是這支測試的那位客人） */
+  userId?: string
   status?: string
   openedMs: number
   closedMs?: number
@@ -123,7 +125,7 @@ function makeDb(data: {
     id: s.id,
     data: () => ({
       workspaceId: s.workspaceId ?? WS,
-      userId: LINE_UID,
+      userId: s.userId ?? LINE_UID,
       status: s.status ?? (s.closedMs ? 'closed' : 'bot_handling'),
       openedAt: new Date(s.openedMs),
       closedAt: s.closedMs ? new Date(s.closedMs) : null,
@@ -171,11 +173,16 @@ function makeDb(data: {
     },
   })
 
-  const sessionsQuery = (workspaceFiltered: boolean): any => ({
-    where: (field: string, _op: string, _value: unknown) =>
-      sessionsQuery(workspaceFiltered || field === 'workspaceId'),
+  /** 會話查詢：where 會真的套用（userId 與 workspaceId 都認），否則測不出「別人的那場」 */
+  const sessionsQuery = (f: { ws?: boolean, userId?: string }): any => ({
+    where: (field: string, _op: string, value: unknown) => sessionsQuery({
+      ws: f.ws || field === 'workspaceId',
+      userId: field === 'userId' ? String(value) : f.userId,
+    }),
     get: async () => {
-      const rows = workspaceFiltered ? sessions.filter(s => (s.workspaceId ?? WS) === WS) : sessions
+      let rows = sessions
+      if (f.ws) rows = rows.filter(s => (s.workspaceId ?? WS) === WS)
+      if (f.userId) rows = rows.filter(s => (s.userId ?? LINE_UID) === f.userId)
       return { docs: rows.map(sessionSnap), empty: rows.length === 0 }
     },
   })
@@ -197,7 +204,7 @@ function makeDb(data: {
       }
       if (col === 'conversationSessions') {
         return {
-          ...sessionsQuery(false),
+          ...sessionsQuery({}),
           doc: (id: string) => ({
             get: async () => {
               const found = sessions.find(s => s.id === id)
@@ -351,6 +358,50 @@ describe('對話時間軸：分段讀', () => {
     const res = await call({ limit: 40 })
     expect(res.activeSession).toMatchObject({ sessionId: 's1', status: 'bot_handling' })
     expect(res.session).toBeNull()
+  })
+
+  /**
+   * 保留期清掉的只有訊息，會話與事件是永久留著的。老客人被清到只剩幾十則訊息時，
+   * 「已經讀到最早了就不設下界」會把他這輩子的每一筆事件都撈出來疊在那幾則訊息上面。
+   */
+  it('讀到最早一則時，事件只收這一則所屬那一場的，不會把整部歷史倒出來', async () => {
+    const recent = T0 + 300 * HOUR
+    useDb({
+      messages: seriesOf(3, recent), // 舊訊息已被保留期清掉 → hasOlder=false
+      sessions: [
+        { id: 'old', openedMs: T0, closedMs: T0 + HOUR, status: 'closed' },
+        { id: 'now', openedMs: recent - MINUTE },
+      ],
+      events: [
+        { id: 'e-old-open', sessionId: 'old', ms: T0, eventType: 'conversation_opened' },
+        { id: 'e-old-close', sessionId: 'old', ms: T0 + HOUR, eventType: 'conversation_closed' },
+        { id: 'e-now-open', sessionId: 'now', ms: recent - MINUTE, eventType: 'conversation_opened' },
+      ],
+    })
+
+    const res = await call({ limit: 40 })
+    const ids = res.items.map(i => i.id)
+
+    expect(res.hasOlder).toBe(false)
+    // 這一段那場的「新會話開始」要留著（它就落在第一則訊息之前，本來就是不設下界的理由）
+    expect(ids).toContain('e-now-open')
+    // 幾個月前那場的事件不該跟著出來
+    expect(ids).not.toContain('e-old-open')
+    expect(ids).not.toContain('e-old-close')
+  })
+
+  it('帶別人那場的 sessionId 進來：不當成錨點，也不會回別人那場的資料', async () => {
+    const otherUserSession = { id: 'foreign-user', userId: 'U0000000000000000000000000000002', openedMs: T0, closedMs: T0 + HOUR, status: 'closed' }
+    useDb({
+      messages: seriesOf(3, T0 + 10 * HOUR),
+      sessions: [{ id: 'mine', openedMs: T0 + 9 * HOUR }, otherUserSession],
+    })
+
+    const res = await call({ limit: 40, sessionId: 'foreign-user' })
+
+    // 別人那場不該出現在工具列，也不該把這位客人的時間軸錨定在那場的結束時間上
+    expect(res.session).toBeNull()
+    expect(messageIds(res)).toEqual(['m1', 'm2', 'm3'])
   })
 
   /**

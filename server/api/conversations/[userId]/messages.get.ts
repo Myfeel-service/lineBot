@@ -180,14 +180,24 @@ async function loadUserSessions(
   }
 }
 
-/** 單獨讀一場會話（驗過 workspace）；不存在或不是這個 workspace 的就回 null */
+/**
+ * 單獨讀一場會話（驗過 workspace **與客人**）；對不上就回 null。
+ *
+ * ⚠️ 一定要連 userId 一起驗：這支端點是 `/conversations/{那位客人}/messages`，而 sessionId
+ * 是從網址帶進來的。只驗 workspace 的話，帶另一位客人的 sessionId 進來會讓工具列顯示**別人
+ * 那場**的狀態與起訖時間，還會把這位客人的時間軸錨定在一個不相干的結束時間上（畫面通常
+ * 是空的）。這不是權限漏洞——呼叫端本來就看得到同 workspace 的每一段對話——但顯示的東西
+ * 是錯的，而且錯得不會有人發現。
+ */
 async function readSessionMeta(
   db: FirebaseFirestore.Firestore,
   workspaceId: string,
+  lineUserId: string,
   sessionId: string,
 ): Promise<SessionMeta | null> {
   const snap = await db.collection('conversationSessions').doc(sessionId).get()
-  if (!snap.exists || snap.data()?.workspaceId !== workspaceId) return null
+  if (!snap.exists) return null
+  if (snap.data()?.workspaceId !== workspaceId || snap.data()?.userId !== lineUserId) return null
   const data = snap.data()!
   const status = data.status as ConversationStatus
   return {
@@ -328,7 +338,7 @@ export default defineEventHandler(async (event) => {
   /** 從會話分頁點進來的那一場（撈不到就直接讀那份文件，順便驗 workspace） */
   let anchorSession: SessionMeta | null = anchorSessionId ? sessionById.get(anchorSessionId) ?? null : null
   if (anchorSessionId && !anchorSession) {
-    anchorSession = await readSessionMeta(db, workspaceId, anchorSessionId)
+    anchorSession = await readSessionMeta(db, workspaceId, lineUserId, anchorSessionId)
   }
 
   const currentSessionId = String(convData.currentSessionId ?? '')
@@ -336,7 +346,7 @@ export default defineEventHandler(async (event) => {
   // 會話清單那支查詢退場時（見 loadUserSessions）也要撐得住：工具列上的「結束會話」
   // 不該因為一條輔助查詢失敗就整組消失
   if (currentSessionId && !activeSession) {
-    activeSession = await readSessionMeta(db, workspaceId, currentSessionId)
+    activeSession = await readSessionMeta(db, workspaceId, lineUserId, currentSessionId)
   }
 
   /**
@@ -416,6 +426,31 @@ export default defineEventHandler(async (event) => {
     if (hasOlder && pageDocs.length) {
       w.fromMs = toMillis(pageDocs[0]!.data().timestamp)
       w.fromExclusive = false
+    }
+    else {
+      /**
+       * 已經讀到最早的一則了——但下界**不能**就這樣敞開到 epoch。
+       *
+       * 保留期清掉的只有訊息，會話與事件是永久留著的（見 cleanup.post.ts）。老客人被清到
+       * 只剩幾十則訊息時，敞開的下界會把他這輩子的每一筆事件全部撈出來（每 30 場一次
+       * `in` 查詢，讀取量跟著長），再整疊蓋在那幾則訊息上面——畫面上是一整片
+       * 「新會話開始／會話已結束」，真正的對話被推到看不見的地方。
+       *
+       * 取「這一則所屬那一場」的開始時間當下界：既留住「新會話開始」那一行（它正好落在
+       * 第一則訊息之前，也是當初不設下界的理由），又不會把更早的場次拖進來。
+       * 一則訊息都沒有時（例如剛加好友、或這一場的訊息已被清掉）就用點進來的那一場。
+       */
+      const oldestMs = pageDocs.length ? toMillis(pageDocs[0]!.data().timestamp) : 0
+      const owning = oldestMs > 0
+        ? sessions
+            .filter(s => s.openedAtMs > 0 && s.openedAtMs <= oldestMs)
+            .sort((a, b) => b.openedAtMs - a.openedAtMs)[0]
+        : anchorSession
+      // 對不到任何一場就維持原本的敞開（寧可多幾行，也不要把事件行整段弄不見）
+      if (owning?.openedAtMs) {
+        w.fromMs = owning.openedAtMs
+        w.fromExclusive = false
+      }
     }
   }
 
