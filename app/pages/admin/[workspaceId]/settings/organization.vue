@@ -439,6 +439,7 @@ type LiffEndpointCheckItem = {
   source: 'default' | 'campaign'
   status: 'ok' | 'mismatch' | 'broken' | 'unknown'
   endpoint: string | null
+  reason?: 'wrong_page' | 'unreachable' | 'deleted'
 }
 
 const liffChecks = ref<LiffEndpointCheckItem[]>([])
@@ -483,9 +484,11 @@ function liffCheckBadge(c: LiffEndpointCheckItem): { text: string, tone: 'succes
   if (c.status === 'mismatch')
     return { text: `⚠ ${who} 網址不一致`, tone: 'warning', hint: '登記的不是正式網址（多半是換過網域沒改到），客人登入活動頁會多繞、可能卡住。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
   if (c.status === 'broken') {
-    return c.endpoint
-      ? { text: `✕ ${who} 到不了活動頁`, tone: 'danger', hint: '登記的網址不是這套系統的活動頁——客人點活動連結會被帶去別的地方。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
-      : { text: `✕ ${who} 在 LINE 上找不到`, tone: 'danger', hint: '這個 LIFF 可能已被刪除、或 ID 貼錯了。確認上面欄位的 ID，或到 LINE Developers 重建一個。' }
+    if (c.reason === 'deleted' || !c.endpoint)
+      return { text: `✕ ${who} 在 LINE 上找不到`, tone: 'danger', hint: '這個 LIFF 可能已被刪除、或 ID 貼錯了。確認上面欄位的 ID，或到 LINE Developers 重建一個。' }
+    if (c.reason === 'unreachable')
+      return { text: `✕ ${who} 網址已連不上`, tone: 'danger', hint: '登記的網址已經連不上了（多半是舊網域停用了）——客人點活動連結會打不開。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
+    return { text: `✕ ${who} 到不了活動頁`, tone: 'danger', hint: '登記的網址不是這套系統的活動頁——客人點活動連結會被帶去別的地方。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
   }
   return { text: `？ ${who} 這次查不到`, tone: 'warning', hint: '暫時問不到 LINE，稍後按「重新檢查」。查不到不代表沒問題。' }
 }
@@ -496,6 +499,8 @@ type WebhookVerifyResult = {
   lineEndpoint: string | null
   lineActive: boolean | null
   urlMatchesCompare: boolean | null
+  /** 網址不一致時「LINE 填的那個網址」是否已連不上（null＝沒得比、沒戳） */
+  endpointUnreachable: boolean | null
   test: {
     success: boolean
     reason?: string
@@ -536,8 +541,11 @@ const webhookStatusBadge = computed<{ text: string, tone: 'success' | 'warning' 
   }
   if (r.lineActive === false)
     return { text: '⚠ Webhook 沒開', tone: 'warning', hint: 'LINE 後台的 Webhook 開關沒打開，這樣收不到訊息 —— 到 LINE Developers 把它打開。' }
+  // 「填錯但還能動」黃；「填錯而且那個網址已連不上」＝訊息確定送不進來，紅
+  if (r.urlMatchesCompare === false && r.endpointUnreachable)
+    return { text: '✕ LINE 填的網址已連不上', tone: 'danger', hint: 'LINE 現在把訊息送往一個已經連不上的網址（多半是舊網域停用了），客人傳什麼都收不到。把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉。' }
   if (r.urlMatchesCompare === false)
-    return { text: '⚠ 網址不一致', tone: 'warning', hint: 'LINE 那邊填的網址，跟這套系統對外的網址不一樣。把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉；不確定就找工程師確認。' }
+    return { text: '⚠ 網址不一致', tone: 'warning', hint: 'LINE 那邊填的網址，跟這套系統對外的網址不一樣。訊息目前還進得來，但那個網址哪天停用就會無聲斷線。把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉；不確定就找工程師確認。' }
   if (!r.testSkipped && r.test?.success)
     return { text: '✓ 一切正常', tone: 'success', hint: 'LINE 連得到你的系統，訊息收發沒問題。' }
   return { text: '✓ 看起來正常', tone: 'success', hint: '想再確認的話，按上方「測試連線」實跑一次。' }

@@ -6,6 +6,7 @@ import {
   normalizeWebhookCompareUrl,
   postLineWebhookTest,
 } from '~~/server/utils/line-webhook-remote'
+import { isUrlReachable } from '~~/server/utils/url-reachable'
 
 export type LineWebhookVerifyResponse = {
   tokenOk: boolean
@@ -16,6 +17,12 @@ export type LineWebhookVerifyResponse = {
   lineEndpoint: string | null
   lineActive: boolean | null
   urlMatchesCompare: boolean | null
+  /**
+   * 網址不一致時多戳一下「LINE 填的那個網址」還連不連得上：
+   * true＝已連不上（訊息確定送不進來，該當紅的講）；false＝還活著（黃就好）；
+   * null＝沒戳（網址一致或沒得比）。與小幫手 lineWebhookBroken 的升級邏輯同一把尺。
+   */
+  endpointUnreachable: boolean | null
   test: LineWebhookTestResult | null
   testSkipped: boolean
   testError?: string
@@ -58,6 +65,7 @@ export default defineEventHandler(async (event): Promise<LineWebhookVerifyRespon
       lineEndpoint: null,
       lineActive: null,
       urlMatchesCompare: null,
+      endpointUnreachable: null,
       test: null,
       testSkipped: true,
     }
@@ -66,6 +74,11 @@ export default defineEventHandler(async (event): Promise<LineWebhookVerifyRespon
   const { endpoint, active } = getRes.data
   const urlMatchesCompare = compareUrl
     ? normalizeWebhookCompareUrl(endpoint) === normalizeWebhookCompareUrl(compareUrl)
+    : null
+
+  // 只在「不一致」時才戳：一致＝就是這套系統自己，活著是不證自明的
+  const endpointUnreachable = urlMatchesCompare === false && endpoint
+    ? !(await isUrlReachable(endpoint))
     : null
 
   let test: LineWebhookTestResult | null = null
@@ -91,6 +104,7 @@ export default defineEventHandler(async (event): Promise<LineWebhookVerifyRespon
     lineEndpoint: endpoint,
     lineActive: active,
     urlMatchesCompare,
+    endpointUnreachable,
     test,
     testSkipped,
     testError,

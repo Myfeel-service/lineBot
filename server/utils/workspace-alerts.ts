@@ -15,6 +15,7 @@ import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { fetchLineWebhookEndpoint, normalizeWebhookCompareUrl } from './line-webhook-remote'
 import { collectLiffEndpointChecks } from './liff-endpoint-remote'
+import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
@@ -130,7 +131,15 @@ async function checkLineWebhook(wid: string, skipCache: boolean): Promise<Webhoo
     const comparable = Boolean(canonical) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(canonical)
     const mismatch = comparable
       && normalizeWebhookCompareUrl(res.data.endpoint) !== normalizeWebhookCompareUrl(`${canonical}/webhook`)
-    result = mismatch ? { kind: 'mismatch', endpoint: res.data.endpoint } : { kind: 'ok' }
+    // 「填錯但還能動」黃牌就好；「填錯而且那個網址已經連不上」＝訊息確定送不進來，
+    // 要升級成 broken——LINE 的查詢 API 對死掉的網域照樣回「有設定有開啟」，
+    // 舊網域一停掉沒有這一戳就會永遠停在黃牌（2026-08-07 換網域盤點時抓到的洞）。
+    if (mismatch && !(await isUrlReachable(res.data.endpoint))) {
+      result = { kind: 'broken', detail: `LINE 填的網址已連不上（${res.data.endpoint}），訊息送不進來` }
+    }
+    else {
+      result = mismatch ? { kind: 'mismatch', endpoint: res.data.endpoint } : { kind: 'ok' }
+    }
   }
   webhookProbeCache.set(wid, { result, expires: Date.now() + WEBHOOK_PROBE_TTL_MS })
   capMapSize(webhookProbeCache, WEBHOOK_PROBE_CACHE_MAX)
@@ -584,13 +593,12 @@ export async function collectWorkspaceAlerts(
             return { active: false }
           }
           const first = bad[0]!
-          return {
-            active: true,
-            count: bad.length,
-            detail: first.endpoint
-              ? `LIFF ${first.liffId} 在 LINE 登記的是 ${first.endpoint}`
-              : `LIFF ${first.liffId} 在 LINE 上已不存在`,
-          }
+          const detail = first.reason === 'deleted'
+            ? `LIFF ${first.liffId} 在 LINE 上已不存在`
+            : first.reason === 'unreachable'
+              ? `LIFF ${first.liffId} 登記的網址已連不上（${first.endpoint}）`
+              : `LIFF ${first.liffId} 在 LINE 登記的是 ${first.endpoint}`
+          return { active: true, count: bad.length, detail }
         }),
         probe('liffEndpointUrlMismatch', async () => {
           const checks = await liffChecksPromise!

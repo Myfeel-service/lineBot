@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
+import { isUrlReachable } from './url-reachable'
 
 /**
  * 問 LINE「這個 LIFF 登記的 Endpoint URL 是什麼」，並比對是不是這套系統的活動頁。
@@ -89,6 +90,8 @@ export interface LiffEndpointCheckItem {
   status: LiffEndpointStatus
   /** LINE 上登記的網址（查得到才有） */
   endpoint: string | null
+  /** broken 的細分（文案在前端對照）：wrong_page＝指到不相干的頁、unreachable＝登記的網址已連不上、deleted＝LIFF 不存在 */
+  reason?: 'wrong_page' | 'unreachable' | 'deleted'
 }
 
 /**
@@ -153,13 +156,15 @@ export async function collectLiffEndpointChecks(
       try {
         const lookup = await fetchLiffEndpointUrl(liffId, opts.skipCache === true)
         if (lookup.kind === 'not_found')
-          return { liffId, source, status: 'broken', endpoint: null }
-        return {
-          liffId,
-          source,
-          status: classifyLiffEndpoint(lookup.endpointUrl, opts.canonicalBase),
-          endpoint: lookup.endpointUrl,
-        }
+          return { liffId, source, status: 'broken', endpoint: null, reason: 'deleted' }
+        const status = classifyLiffEndpoint(lookup.endpointUrl, opts.canonicalBase)
+        if (status === 'broken')
+          return { liffId, source, status, endpoint: lookup.endpointUrl, reason: 'wrong_page' }
+        // 「填錯但還能動」與「填錯而且已經連不上」是兩種嚴重度：舊網域一停掉，
+        // 客人點活動連結就打不開了，要自動升級成 broken——不能等人記得回來看
+        if (status === 'mismatch' && !(await isUrlReachable(lookup.endpointUrl)))
+          return { liffId, source, status: 'broken', endpoint: lookup.endpointUrl, reason: 'unreachable' }
+        return { liffId, source, status, endpoint: lookup.endpointUrl }
       }
       catch (e) {
         console.warn(`[liff-endpoint] ${liffId} 檢查失敗:`, String((e as Error)?.message ?? e).slice(0, 160))
