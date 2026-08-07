@@ -1,0 +1,170 @@
+import type { Firestore } from 'firebase-admin/firestore'
+import { capMapSize } from './bounded-cache'
+import { getLineWorkspaceCredentials } from './line-workspace-credentials'
+
+/**
+ * 問 LINE「這個 LIFF 登記的 Endpoint URL 是什麼」，並比對是不是這套系統的活動頁。
+ *
+ * 為什麼要查：LINE 登入的 callback 永遠回到 LIFF 登記的 Endpoint URL，跟客人點的
+ * 連結網域無關。登記錯（換網域沒改到、指到第三方服務、LIFF 被刪）時活動連結會
+ * 把客人帶去錯的地方或卡在載入中，而後台完全看不出來（2026-08-07 實測災情）。
+ *
+ * 怎麼查：正規做法是 LIFF Server API（GET /liff/v1/apps），但那要 LINE **Login
+ * channel** 的 access token——我們只存 Messaging API 憑證，拿不到。退而求其次用
+ * 公開轉址頁：https://liff.line.me/{liffId} 的 HTML 裡寫著
+ * `const liffEndpointUrl = "…"`（2026-08 實測）。未文件化、LINE 改版就會失效，
+ * 所以解析不出來一律回 unknown（不下結論），絕不把「查不到」講成有事或沒事。
+ */
+
+const LIFF_PAGE_TIMEOUT_MS = 8000
+/** 結果快取：endpoint 不是秒級會變的設定，輪詢不該每次都打 LINE 的頁（同 webhook probe 的 5 分鐘） */
+const LIFF_PROBE_TTL_MS = 5 * 60_000
+const LIFF_PROBE_CACHE_MAX = 500
+
+/** 這套系統的活動頁路徑；/webhook 是老設定（GET 會 302 轉到活動頁，能用但該修正） */
+const LEAD_PATH = '/liff/lead'
+const LEGACY_LEAD_PATH = '/webhook'
+
+/** 每次檢查最多探幾個 LIFF（一個工作區通常就 1～2 個；上限擋異常資料把輪詢拖垮） */
+const LIFF_CHECK_MAX_IDS = 5
+const CAMPAIGN_LIFF_SCAN_LIMIT = 50
+
+export type LiffEndpointLookup =
+  | { kind: 'found'; endpointUrl: string }
+  | { kind: 'not_found' } // LIFF 不存在（已刪除或 ID 貼錯）
+
+const liffProbeCache = new Map<string, { result: LiffEndpointLookup; expires: number }>()
+
+/** 讀 liff.line.me 轉址頁取得登記的 Endpoint URL。解析不出來 throw（呼叫端降級 unknown）。 */
+export async function fetchLiffEndpointUrl(liffIdRaw: string, skipCache = false): Promise<LiffEndpointLookup> {
+  const liffId = liffIdRaw.trim()
+  const cached = skipCache ? null : liffProbeCache.get(liffId)
+  if (cached && cached.expires > Date.now()) return cached.result
+
+  const res = await fetch(`https://liff.line.me/${encodeURIComponent(liffId)}`, {
+    // 目前是 200＋HTML；若 LINE 哪天改回 3xx，Location 本身就是答案
+    redirect: 'manual',
+    signal: AbortSignal.timeout(LIFF_PAGE_TIMEOUT_MS),
+  })
+
+  let result: LiffEndpointLookup
+  if (res.status === 404) {
+    result = { kind: 'not_found' }
+  }
+  else if (res.status >= 300 && res.status < 400) {
+    const loc = String(res.headers.get('location') || '').trim()
+    if (!/^https?:\/\//.test(loc)) throw new Error(`liff.line.me 轉址沒帶 Location（HTTP ${res.status}）`)
+    result = { kind: 'found', endpointUrl: loc }
+  }
+  else if (res.ok) {
+    const html = await res.text()
+    const m = /const\s+liffEndpointUrl\s*=\s*"([^"]+)"/.exec(html)
+      ?? /<a\s+href="(https?:\/\/[^"]+)"/.exec(html)
+    if (!m?.[1]) throw new Error('liff.line.me 頁面裡找不到 endpoint（LINE 可能改版了）')
+    result = { kind: 'found', endpointUrl: m[1] }
+  }
+  else {
+    throw new Error(`liff.line.me 查詢失敗 HTTP ${res.status}`)
+  }
+
+  liffProbeCache.set(liffId, { result, expires: Date.now() + LIFF_PROBE_TTL_MS })
+  capMapSize(liffProbeCache, LIFF_PROBE_CACHE_MAX)
+  return result
+}
+
+export type LiffEndpointStatus =
+  /** 就是正式網址的活動頁 */
+  | 'ok'
+  /** 到得了活動頁，但網域不是正式網址、或還填著舊的 /webhook——登入流程會多繞，該修正 */
+  | 'mismatch'
+  /** 到不了活動頁：LIFF 不存在，或指向不相干的網站／頁面 */
+  | 'broken'
+  /** 這次查不到（網路失敗、LINE 改版）。不等於沒問題 */
+  | 'unknown'
+
+export interface LiffEndpointCheckItem {
+  liffId: string
+  /** default＝工作區預設 LIFF；campaign＝活動各自指定的 LIFF */
+  source: 'default' | 'campaign'
+  status: LiffEndpointStatus
+  /** LINE 上登記的網址（查得到才有） */
+  endpoint: string | null
+}
+
+/**
+ * 比對登記的網址與正式網址（PUBLIC_BASE_URL）。
+ * 沒有可信的比對基準（沒設定、或設成本機網址）時只驗「是不是活動頁路徑」，
+ * 不驗網域——寧可漏抓，不誤報（與 webhook mismatch 檢查同一條原則）。
+ */
+export function classifyLiffEndpoint(endpointUrl: string, canonicalBase: string): LiffEndpointStatus {
+  let target: URL
+  try {
+    target = new URL(endpointUrl)
+  }
+  catch {
+    return 'broken'
+  }
+  const path = target.pathname.replace(/\/+$/, '') || '/'
+  if (path !== LEAD_PATH && path !== LEGACY_LEAD_PATH) return 'broken'
+
+  const canonical = canonicalBase.trim().replace(/\/$/, '')
+  const comparable = Boolean(canonical) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(canonical)
+  if (comparable) {
+    try {
+      if (target.origin !== new URL(canonical).origin) return 'mismatch'
+    }
+    catch {
+      return 'ok'
+    }
+    if (path === LEGACY_LEAD_PATH) return 'mismatch'
+  }
+  return 'ok'
+}
+
+/**
+ * 收集一個工作區用到的所有 LIFF（預設＋活動指定）並逐一檢查登記狀態。
+ * 單一 LIFF 查失敗＝該項 unknown，不會整批丟錯——一個查不到不該遮住另一個查得到的災情。
+ */
+export async function collectLiffEndpointChecks(
+  db: Firestore,
+  wid: string,
+  opts: { canonicalBase: string; skipCache?: boolean },
+): Promise<LiffEndpointCheckItem[]> {
+  const { defaultLiffId } = await getLineWorkspaceCredentials(wid)
+
+  // 活動可各自指定 LIFF。不濾 isActive：欄位缺省視同啟用（等值查詢會漏掉缺欄位的舊資料），
+  // 而且停用活動的連結多半還在外面流通，登記錯一樣會有客人踩到。
+  const snap = await db.collection('leadCampaigns')
+    .where('workspaceId', '==', wid)
+    .select('liffId')
+    .limit(CAMPAIGN_LIFF_SCAN_LIMIT)
+    .get()
+
+  const targets = new Map<string, 'default' | 'campaign'>()
+  const def = String(defaultLiffId || '').trim()
+  if (def) targets.set(def, 'default')
+  for (const doc of snap.docs) {
+    const id = String((doc.data() as Record<string, unknown>).liffId || '').trim()
+    if (id && !targets.has(id)) targets.set(id, 'campaign')
+  }
+
+  return Promise.all([...targets.entries()].slice(0, LIFF_CHECK_MAX_IDS).map(
+    async ([liffId, source]): Promise<LiffEndpointCheckItem> => {
+      try {
+        const lookup = await fetchLiffEndpointUrl(liffId, opts.skipCache === true)
+        if (lookup.kind === 'not_found')
+          return { liffId, source, status: 'broken', endpoint: null }
+        return {
+          liffId,
+          source,
+          status: classifyLiffEndpoint(lookup.endpointUrl, opts.canonicalBase),
+          endpoint: lookup.endpointUrl,
+        }
+      }
+      catch (e) {
+        console.warn(`[liff-endpoint] ${liffId} 檢查失敗:`, String((e as Error)?.message ?? e).slice(0, 160))
+        return { liffId, source, status: 'unknown', endpoint: null }
+      }
+    },
+  ))
+}

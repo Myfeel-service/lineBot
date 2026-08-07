@@ -14,6 +14,7 @@ import { buildPlanView, getWorkspaceSubscription } from './billing'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { fetchLineWebhookEndpoint, normalizeWebhookCompareUrl } from './line-webhook-remote'
+import { collectLiffEndpointChecks } from './liff-endpoint-remote'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
@@ -549,6 +550,15 @@ export async function collectWorkspaceAlerts(
   // webhook 只問 LINE 一次，「確定收不到」與「網址不一致」兩顆 probe 共用同一個答案
   const webhookCheckPromise = canSettings ? checkLineWebhook(wid, skipCache) : null
 
+  // LIFF endpoint 也只探一次，「到不了活動頁」與「網址不一致」兩顆 probe 共用同一份結果
+  // （快取在 liff-endpoint-remote 內、按 liffId 分鍵——同一個 LIFF 被多個工作區用也只探一次）
+  const liffChecksPromise = canSettings
+    ? collectLiffEndpointChecks(db, wid, {
+        canonicalBase: String(useRuntimeConfig().appBaseUrl || ''),
+        skipCache,
+      })
+    : null
+
   const billingProbes: Array<Promise<WorkspaceAlertItem>> = canSettings
     ? [
         probe('lineWebhookBroken', async () => {
@@ -561,6 +571,40 @@ export async function collectWorkspaceAlerts(
           return c.kind === 'mismatch'
             ? { active: true, detail: `LINE 後台填的是 ${c.endpoint}` }
             : { active: false }
+        }),
+        probe('liffEndpointBroken', async () => {
+          // 客人點活動連結後根本到不了活動頁（登記指向別的網站、或 LIFF 已被刪）。
+          // 與 mismatch 刻意分兩顆：mismatch 只是多繞（舊網域還在線時能收尾），
+          // 這顆是確定迷路——同一套「紅牌只留給確定壞掉」的原則（見 webhook 那對）。
+          const checks = await liffChecksPromise!
+          const bad = checks.filter(c => c.status === 'broken')
+          if (!bad.length) {
+            // 有查不到的項目時不下「沒問題」的結論——unknown 要現形
+            if (checks.some(c => c.status === 'unknown')) throw new Error('有 LIFF 查不到登記狀態')
+            return { active: false }
+          }
+          const first = bad[0]!
+          return {
+            active: true,
+            count: bad.length,
+            detail: first.endpoint
+              ? `LIFF ${first.liffId} 在 LINE 登記的是 ${first.endpoint}`
+              : `LIFF ${first.liffId} 在 LINE 上已不存在`,
+          }
+        }),
+        probe('liffEndpointUrlMismatch', async () => {
+          const checks = await liffChecksPromise!
+          const bad = checks.filter(c => c.status === 'mismatch')
+          if (!bad.length) {
+            if (checks.some(c => c.status === 'unknown')) throw new Error('有 LIFF 查不到登記狀態')
+            return { active: false }
+          }
+          const first = bad[0]!
+          return {
+            active: true,
+            count: bad.length,
+            detail: `LIFF ${first.liffId} 在 LINE 登記的是 ${first.endpoint}`,
+          }
         }),
         probe('quotaExceeded', async () => {
           const [sub, answered] = await Promise.all([subPromise!, answeredPromise!])

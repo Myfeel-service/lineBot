@@ -91,6 +91,26 @@
                 <el-button @click="copyLiffEndpointUrl">複製</el-button>
               </div>
             </div>
+            <div v-if="liffChecks.length || checkingLiff" class="admin-field-group">
+              <AdminFieldLabel text="LINE 上的登記狀態" tight />
+              <div
+                v-for="c in liffChecks"
+                :key="c.liffId"
+                class="ls-status"
+                :class="`ls-status--${liffCheckBadge(c).tone}`"
+              >
+                <p class="ls-status-title">{{ liffCheckBadge(c).text }}</p>
+                <p class="ls-status-hint">{{ liffCheckBadge(c).hint }}</p>
+                <p v-if="c.endpoint" class="ls-status-detail">
+                  LINE 那邊填的網址：<span class="ls-status-url">{{ c.endpoint }}</span>
+                </p>
+              </div>
+              <div>
+                <el-button size="small" :loading="checkingLiff" @click="checkLiffEndpoints({ force: true })">
+                  重新檢查
+                </el-button>
+              </div>
+            </div>
             <p class="ls-subgroup">LINE 憑證</p>
             <p class="ar-section-hint">
               請到 LINE Developers → Messaging API 複製貼上。
@@ -412,6 +432,64 @@ async function copyWebhookUrl() {
   }
 }
 
+// ── LIFF 登記狀態（LINE 上的 Endpoint URL 是不是活動頁）──────────────────
+// 訊號口徑與小幫手的 liffEndpointBroken/liffEndpointUrlMismatch 同一份（同一個後端 probe）。
+type LiffEndpointCheckItem = {
+  liffId: string
+  source: 'default' | 'campaign'
+  status: 'ok' | 'mismatch' | 'broken' | 'unknown'
+  endpoint: string | null
+}
+
+const liffChecks = ref<LiffEndpointCheckItem[]>([])
+const checkingLiff = ref(false)
+
+/**
+ * silent=true：進頁被動帶出（免費 GET）。查失敗靜靜略過、不清空既有結果，別在載入時嚇人。
+ * force=true：使用者剛去 LINE 後台改完回頭確認——跳過後端 5 分鐘快取真的再查。
+ */
+async function checkLiffEndpoints(opts: { force?: boolean, silent?: boolean } = {}) {
+  if (!opts.silent) checkingLiff.value = true
+  try {
+    const token = await getBearer()
+    const data = await $fetch<{ expectedUrl: string, checks: LiffEndpointCheckItem[] }>(
+      '/api/admin/liff-endpoint-check',
+      {
+        query: { workspaceId: workspaceId.value, ...(opts.force ? { force: '1' } : {}) },
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    )
+    liffChecks.value = data.checks
+  }
+  catch (e: any) {
+    if (!opts.silent)
+      showToast(e?.data?.statusMessage || e?.message || '查詢 LIFF 登記狀態失敗', 'error')
+  }
+  finally {
+    if (!opts.silent) checkingLiff.value = false
+  }
+}
+
+const LIFF_SOURCE_LABEL: Record<LiffEndpointCheckItem['source'], string> = {
+  default: '預設',
+  campaign: '活動用',
+}
+
+// 一眼結論（與 webhook 徽章同一套呈現）：徽章下結論、hint 一句白話講怎麼辦
+function liffCheckBadge(c: LiffEndpointCheckItem): { text: string, tone: 'success' | 'warning' | 'danger', hint: string } {
+  const who = `LIFF ${c.liffId}（${LIFF_SOURCE_LABEL[c.source]}）`
+  if (c.status === 'ok')
+    return { text: `✓ ${who} 設定正確`, tone: 'success', hint: '客人點活動連結會正確開到活動頁。' }
+  if (c.status === 'mismatch')
+    return { text: `⚠ ${who} 網址不一致`, tone: 'warning', hint: '登記的不是正式網址（多半是換過網域沒改到），客人登入活動頁會多繞、可能卡住。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
+  if (c.status === 'broken') {
+    return c.endpoint
+      ? { text: `✕ ${who} 到不了活動頁`, tone: 'danger', hint: '登記的網址不是這套系統的活動頁——客人點活動連結會被帶去別的地方。把上面「活動 LIFF 頁」網址複製、到 LINE Developers 蓋掉這個 LIFF 的 Endpoint URL。' }
+      : { text: `✕ ${who} 在 LINE 上找不到`, tone: 'danger', hint: '這個 LIFF 可能已被刪除、或 ID 貼錯了。確認上面欄位的 ID，或到 LINE Developers 重建一個。' }
+  }
+  return { text: `？ ${who} 這次查不到`, tone: 'warning', hint: '暫時問不到 LINE，稍後按「重新檢查」。查不到不代表沒問題。' }
+}
+
 type WebhookVerifyResult = {
   getOk: boolean
   getMessage?: string
@@ -591,6 +669,8 @@ async function save() {
     await loadWorkspaceList().catch(() => {})
     await load()
     await verifyWebhook(false)
+    // 剛存的可能是新 LIFF ID：登記狀態跟著重新帶出（新 ID 不會命中舊快取）
+    checkLiffEndpoints({ silent: true }).catch(() => {})
     if (data.webhookVerification?.ok) {
       showToast(data.webhookVerification.message, 'success')
     }
@@ -646,10 +726,17 @@ async function clearWorkspace() {
  * 測試訊息，而那個次數是有上限的（後端的常駐檢查刻意只查設定不打測試，就是為了留額度）。
  */
 async function consumeAlertHandoff() {
-  if (String(route.query.verify ?? '') !== 'webhook') return
+  const target = String(route.query.verify ?? '')
+  if (target !== 'webhook' && target !== 'liff') return
   const { verify: _drop, ...rest } = route.query
   await router.replace({ query: rest })
   await nextTick()
+  if (target === 'liff') {
+    // LIFF 檢查是免費 GET 沒有次數上限，直接強制重查（使用者可能剛去 LINE 改完）
+    document.querySelector('[data-tour="org-liff"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    await checkLiffEndpoints({ force: true }).catch(() => {})
+    return
+  }
   document.querySelector('[data-tour="org-verify"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   // 實跑測試，結果面板會直接講「LINE 那邊填的網址」是什麼、差在哪
   if (meta.value.channelAccessTokenConfigured)
@@ -667,12 +754,20 @@ onMounted(async () => {
   // workspaceList 由 layout (default.vue) 的 onMounted 負責載入；此頁只需載入 LINE 憑證 meta
   loadPlanSummary().catch(() => {})
   await load()
-  if (String(route.query.verify ?? '') === 'webhook') {
+  const verifyTarget = String(route.query.verify ?? '')
+  if (verifyTarget === 'webhook' || verifyTarget === 'liff') {
     void consumeAlertHandoff()
+    // handoff 只處理點進來的那一項；另一塊的登記狀態照常靜默帶出
+    if (verifyTarget === 'liff' && meta.value.channelAccessTokenConfigured)
+      verifyWebhook(false, { silent: true }).catch(() => {})
+    else
+      checkLiffEndpoints({ silent: true }).catch(() => {})
   }
-  else if (meta.value.channelAccessTokenConfigured) {
-    // 平常進頁：靜默帶出 LINE 登記狀態（免費 GET、不佔測試次數、不跳 toast）
-    verifyWebhook(false, { silent: true }).catch(() => {})
+  else {
+    // 平常進頁：靜默帶出 LINE 登記狀態（webhook 與 LIFF 都是免費 GET、不佔測試次數、不跳 toast）
+    if (meta.value.channelAccessTokenConfigured)
+      verifyWebhook(false, { silent: true }).catch(() => {})
+    checkLiffEndpoints({ silent: true }).catch(() => {})
   }
 })
 </script>

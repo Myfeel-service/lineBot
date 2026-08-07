@@ -75,6 +75,27 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
   },
   {
+    // 與 webhook 那對同一套分級：到不了活動頁＝確定壞掉（紅）；下面那顆「網址不一致」
+    // 是還到得了但會多繞（黃）。訊號來源＝LINE 公開轉址頁上登記的 Endpoint URL。
+    id: 'liffEndpointBroken',
+    icon: Promotion,
+    severity: 'critical',
+    impact: '這個 LIFF 在 LINE 登記的開啟網址不是活動頁——客人點活動連結會被帶去別的網站或看到錯誤頁，貼標與綁定完全不會發生。到 LINE Developers 把該 LIFF 的 Endpoint URL 換成設定頁的「活動 LIFF 頁」網址。',
+    cta: '去檢查 LIFF 設定',
+    requires: 'settings',
+    // ?verify=liff：進頁直接捲到 LIFF 區塊並重新檢查一次（跳過快取）
+    route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+  },
+  {
+    id: 'liffEndpointUrlMismatch',
+    icon: Promotion,
+    severity: 'warning',
+    impact: 'LINE 登記的活動頁網址和這套系統的正式網址不同（多半是換過網域沒改到）。客人點活動連結登入時會在兩個網址之間繞，部分情況會卡在載入中。把 LINE Developers 那邊換成設定頁的「活動 LIFF 頁」網址。',
+    cta: '去檢查 LIFF 設定',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+  },
+  {
     id: 'anyTextBlocking',
     icon: ChatDotRound,
     severity: 'critical',

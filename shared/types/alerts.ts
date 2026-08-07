@@ -15,6 +15,10 @@ export type WorkspaceAlertId =
   | 'lineWebhookBroken'
   /** LINE 填的 Webhook 和正式網址不一致：舊網址還指向這套系統時訊息照進，但舊網址一失效就無聲斷線 */
   | 'lineWebhookUrlMismatch'
+  /** LIFF 在 LINE 登記的開啟網址到不了活動頁（指到別的網站、或 LIFF 已被刪除）——客人點活動連結會迷路 */
+  | 'liffEndpointBroken'
+  /** LIFF 登記的網址跟正式網址不一致（多半是換網域沒改到）：登入會在兩個網址間繞，部分情況卡在載入中 */
+  | 'liffEndpointUrlMismatch'
   /** 知識庫來源同步失敗（試算表沒分享、網頁被移走…） */
   | 'knowledgeSyncFailed'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
@@ -69,6 +73,8 @@ export type WorkspaceAlertId =
 export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   lineWebhookBroken: '機器人收不到客人訊息',
   lineWebhookUrlMismatch: 'LINE 填的收訊網址不是正式網址',
+  liffEndpointBroken: '活動連結會把客人帶去錯的地方',
+  liffEndpointUrlMismatch: 'LINE 填的活動頁網址不是正式網址',
   knowledgeSyncFailed: '有資料抓不到內容',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',
