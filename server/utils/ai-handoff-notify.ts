@@ -21,6 +21,18 @@ const NOTIFY_THROTTLE_MS = 10 * 60 * 1000
 const NOTIFY_MAP_MAX_ENTRIES = 5000
 const lastNotifiedAt = new Map<string, number>()
 
+/**
+ * 節流閘門：同一位客人 NOTIFY_THROTTLE_MS 內只通知一次。
+ * 回傳 true = 可以發（並已記下時間）；false = 太近了，這次別發。
+ */
+function markNotified(workspaceId: string, customerLineUserId: string, now: number): boolean {
+  const key = `${workspaceId}:${customerLineUserId}`
+  if (now - (lastNotifiedAt.get(key) ?? 0) < NOTIFY_THROTTLE_MS) return false
+  lastNotifiedAt.set(key, now)
+  capMapSize(lastNotifiedAt, NOTIFY_MAP_MAX_ENTRIES)
+  return true
+}
+
 export interface HandoffNotifyParams {
   workspaceId: string
   /** 客人的 LINE userId（節流 key 用） */
@@ -37,10 +49,15 @@ export interface HandoffNotifyParams {
   slaReminderMinutes?: number
 }
 
-export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise<void> {
+/**
+ * 回傳值 = 這次有沒有真的推播出去。呼叫端（SLA 逾時提醒）要據此決定要不要蓋
+ * slaRemindedAt——被勿擾/節流吞掉卻蓋了章，那一場的提醒就永遠補不回來。
+ * （missed_only 當下不推但已存檔，回 false 也是對的：真正的通知由超時那一則發。）
+ */
+export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise<boolean> {
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+  if (!cfg?.enabled || !cfg.lineUserIds.length) return false
 
   // missed_only 模式：轉真人當下不推播,把通知內容存到 conversations doc;
   // 超時仍沒人接手時 remindOverdueHandoffs 會撈回來,發成一則完整的請求通知。
@@ -56,19 +73,15 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
         at: FieldValue.serverTimestamp(),
       },
     }, { merge: true }).catch(e => console.warn('[handoff-notify] context save failed:', e))
-    return
+    return false
   }
 
   // 勿擾時段內不推播（含腳本/AI 觸發與 SLA 再提醒）：轉真人照常發生,只是不吵客服;
   // 客服上班回來看「對話」佇列即可。這是所有 handoff 通知的單一收斂點。
-  if (isServiceHoursDnd(settings?.serviceHours)) return
+  if (isServiceHoursDnd(settings?.serviceHours)) return false
 
-  const throttleKey = `${params.workspaceId}:${params.customerLineUserId}`
-  const last = lastNotifiedAt.get(throttleKey) ?? 0
   const now = Date.now()
-  if (now - last < NOTIFY_THROTTLE_MS) return
-  lastNotifiedAt.set(throttleKey, now)
-  capMapSize(lastNotifiedAt, NOTIFY_MAP_MAX_ENTRIES)
+  if (!markNotified(params.workspaceId, params.customerLineUserId, now)) return false
 
   const reasonLabel = params.reason
     ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
@@ -111,6 +124,97 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
       console.warn('[handoff-notify] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
     }
   })
+  // 名單上全部推播失敗（例如都不是好友）仍算「已發」：那是設定問題，
+  // 重試也只會一直失敗，蓋章讓它停在後台待辦裡比每輪重打 LINE API 好。
+  return true
+}
+
+// ── 逾時提醒合併成一則 ──────────────────────────────────────────────
+// 同一輪同一 workspace 有多位客人逾時未接手時,一場一則會連續轟炸客服——最痛的情境是
+// 勿擾時段刻意不蓋 slaRemindedAt(吞掉等於永遠補不回來),整晚累積的請求會在勿擾結束
+// 後的同一輪 cron 全部一起送出。改成:1 位維持完整格式(帶摘要與客人原話),
+// ≥2 位合併成一則清單,每位一行「暱稱＋等了多久＋原因」,省下 N-1 則訊息錢。
+
+/**
+ * 合併訊息最多列幾位客人,其餘只給筆數。
+ * LINE 單則文字上限 5000 字遠不是瓶頸,是「再長就沒人讀了」——沒列到名的那幾位
+ * 每日摘要仍會算進「等待真人」人數,後台「對話」頁也一直看得到。
+ */
+const OVERDUE_BATCH_LIST_MAX = 10
+
+export interface OverdueHandoffItem {
+  /** 客人的 LINE userId（節流 key 用） */
+  customerLineUserId: string
+  /** 客人顯示名稱；沒有就帶「未知暱稱（…尾六碼）」 */
+  customerName: string
+  /** 已等待毫秒（排序與文案用） */
+  waitedMs: number
+  /** null = 非 AI 護欄觸發（例如腳本設定轉真人），或存檔內容已過期 */
+  reason: HandoffReason | null
+}
+
+/** 「等了多久」的白話寫法：一小時內講分鐘，超過講小時（不寫「1.8 小時」這種要換算的數字） */
+function waitedText(waitedMs: number): string {
+  const minutes = Math.max(1, Math.round(waitedMs / 60_000))
+  if (minutes < 60) return `等 ${minutes} 分鐘`
+  return `等 ${Math.max(1, Math.round(minutes / 60))} 小時`
+}
+
+/**
+ * 多位客人逾時未接手 → 合併推播一則清單通知。
+ * enabled / 名單 / 勿擾三道檢查與 notifyHandoffToStaff 完全一致（同一個收斂點的規則），
+ * 回傳實際送出與否，呼叫端據此決定要不要蓋 slaRemindedAt。
+ *
+ * 刻意不做「逐位客人的節流檢查」（只在發完之後記時間）：這一則是整批共用的，
+ * 為了某一位在節流窗內就把他從名單刪掉，反而讓客服少看到一個在等的人——
+ * 合併訊息的內容與即時通知本來也不同（沒有摘要與客人原話），不算重複。
+ *
+ * 註：原因（reason）只在 missed_only 模式有值——always 模式不寫
+ * handoffNotifyContext，轉真人當下那一則已經把原因與客人原話講過了。
+ */
+export async function notifyOverdueHandoffBatch(params: {
+  workspaceId: string
+  /** 該 workspace 設定的 SLA 分鐘數（同一批共用同一個門檻） */
+  slaReminderMinutes: number
+  items: OverdueHandoffItem[]
+}): Promise<boolean> {
+  if (!params.items.length) return false
+
+  const settings = await getAiSettings(params.workspaceId).catch(() => null)
+  const cfg = settings?.handoffNotify
+  if (!cfg?.enabled || !cfg.lineUserIds.length) return false
+  if (isServiceHoursDnd(settings?.serviceHours)) return false
+
+  // 等最久的排前面：真的要先救的在第一行，被 LIST_MAX 砍掉的是最不急的那些
+  const sorted = [...params.items].sort((a, b) => b.waitedMs - a.waitedMs)
+  const listed = sorted.slice(0, OVERDUE_BATCH_LIST_MAX)
+  const rest = sorted.length - listed.length
+
+  const lines = [
+    `🙋 ${sorted.length} 位客人在等真人客服（都已超過 ${params.slaReminderMinutes} 分鐘沒人接手）`,
+    ...listed.map((item) => {
+      const reasonLabel = item.reason ? (HANDOFF_REASON_LABELS[item.reason] ?? item.reason) : ''
+      return `・${item.customerName} — ${waitedText(item.waitedMs)}${reasonLabel ? `・${reasonLabel}` : ''}`
+    }),
+    ...(rest > 0 ? [`・另有 ${rest} 位客人在等（完整名單請看後台）`] : []),
+    '請至後台「對話」頁回覆。',
+  ]
+  const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+
+  const results = await Promise.allSettled(
+    cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)),
+  )
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.warn('[handoff-notify] batch push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+    }
+  })
+
+  // 這一則已經替整批客人講過話了 → 全部記進節流 map（含沒列到名的），
+  // 否則接下來 10 分鐘內他們再觸發一次轉真人，又會各自補一則即時通知。
+  const now = Date.now()
+  for (const item of sorted) markNotified(params.workspaceId, item.customerLineUserId, now)
+  return true
 }
 
 // ── AI 額度 80% 預警 ────────────────────────────────────────────────

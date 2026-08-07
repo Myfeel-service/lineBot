@@ -31,7 +31,7 @@ const { getDb, convSet } = vi.hoisted(() => {
 })
 vi.mock('./firebase', () => ({ getDb }))
 
-import { notifyHandoffToStaff, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyOverdueHandoffBatch, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
 
 function settingsWith(mode: 'always' | 'missed_only') {
   return {
@@ -104,6 +104,92 @@ describe('notifyHandoffToStaff 模式分叉', () => {
     const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
     expect(text).toContain('⏰ 提醒：真人客服請求尚未回應')
     expect(text).toContain('已等待超過 30 分鐘')
+  })
+})
+
+describe('notifyOverdueHandoffBatch 逾時提醒合併', () => {
+  function item(id: string, name: string, waitedMs: number, reason: any = null) {
+    return { customerLineUserId: id, customerName: name, waitedMs, reason }
+  }
+
+  it('多位客人合併成一則:每位一行帶等待時間與原因,等最久的排最前面', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('missed_only'))
+    const sent = await notifyOverdueHandoffBatch({
+      workspaceId: 'WS',
+      slaReminderMinutes: 30,
+      items: [
+        item('U-b1', '小美', 45 * 60_000, 'low_confidence'),
+        item('U-b2', '王小明', 11 * 3600_000, 'user_request'),
+        item('U-b3', '未知暱稱（…a3f2b1）', 32 * 60_000),
+      ],
+    })
+    expect(sent).toBe(true)
+    // 3 位客人、2 個收件人 → 2 則（不是 6 則）
+    expect(pushMessage).toHaveBeenCalledTimes(2)
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('🙋 3 位客人在等真人客服（都已超過 30 分鐘沒人接手）')
+    // 等最久的王小明在第一行；小時／分鐘用白話寫
+    const lines = text.split('\n')
+    expect(lines[1]).toBe('・王小明 — 等 11 小時・客人要求真人')
+    expect(lines[2]).toBe('・小美 — 等 45 分鐘・信心不足')
+    // 沒有存檔原因的那位不留空的「・」尾巴
+    expect(lines[3]).toBe('・未知暱稱（…a3f2b1） — 等 32 分鐘')
+    expect(text).not.toContain('另有')
+  })
+
+  it('超過 10 位只列前 10 位,其餘給筆數', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('missed_only'))
+    const items = Array.from({ length: 13 }, (_, i) =>
+      item(`U-many-${i}`, `客人${i}`, (60 + i) * 60_000, 'user_request'))
+    await notifyOverdueHandoffBatch({ workspaceId: 'WS', slaReminderMinutes: 30, items })
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('🙋 13 位客人在等真人客服')
+    expect(text).toContain('・另有 3 位客人在等（完整名單請看後台）')
+    // 等最久的是 index 12
+    expect(text.split('\n')[1]).toContain('客人12')
+    expect(text).not.toContain('客人0 —')
+  })
+
+  it('勿擾時段內不推播,回 false 讓呼叫端別蓋 slaRemindedAt', async () => {
+    getAiSettings.mockResolvedValue({
+      handoffNotify: { enabled: true, lineUserIds: ['Sa'], mode: 'missed_only', slaRemindMinutes: 30, digestHour: 9 },
+      // start === end → 服務時段長度為 0 → 一天 24 小時都算勿擾（測試不能靠跑的當下幾點）
+      serviceHours: { enabled: true, start: '00:00', end: '00:00', weekendOff: false, dndReply: '' },
+    })
+    const sent = await notifyOverdueHandoffBatch({
+      workspaceId: 'WS', slaReminderMinutes: 30,
+      items: [item('U-dnd1', '甲', 60 * 60_000), item('U-dnd2', '乙', 70 * 60_000)],
+    })
+    expect(sent).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('通知關閉或名單為空時不發', async () => {
+    getAiSettings.mockResolvedValue({
+      handoffNotify: { enabled: true, lineUserIds: [], mode: 'always', slaRemindMinutes: 30, digestHour: 9 },
+      serviceHours: { enabled: false, start: '09:00', end: '18:00', weekendOff: true, dndReply: '' },
+    })
+    expect(await notifyOverdueHandoffBatch({
+      workspaceId: 'WS', slaReminderMinutes: 30,
+      items: [item('U-off1', '甲', 60 * 60_000), item('U-off2', '乙', 70 * 60_000)],
+    })).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('合併過的客人會記進節流:接下來的即時通知不重複吵', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    await notifyOverdueHandoffBatch({
+      workspaceId: 'WS', slaReminderMinutes: 30,
+      items: [item('U-thr1', '甲', 60 * 60_000), item('U-thr2', '乙', 70 * 60_000)],
+    })
+    expect(pushMessage).toHaveBeenCalledTimes(2)
+    pushMessage.mockClear()
+    const again = await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-thr1', customerName: '甲',
+      customerMessage: '還沒有人回我', reason: 'user_request',
+    })
+    expect(again).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
   })
 })
 

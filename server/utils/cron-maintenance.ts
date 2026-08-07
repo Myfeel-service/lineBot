@@ -24,7 +24,7 @@ import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
-import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyOverdueHandoffBatch } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
@@ -393,6 +393,10 @@ export async function autoHandbackIdleSessions(db: Firestore) {
 /**
  * pending_human 超過 aiSettings.handoffNotify.slaRemindMinutes 仍無人回應
  * → 再推播提醒值班客服一次。每場會話只提醒一次（session.slaRemindedAt 標記）。
+ *
+ * 同一輪同一 workspace 有多場逾時 → 合併成一則清單通知（見 notifyOverdueHandoffBatch）。
+ * 一場一則的舊行為在「勿擾結束後的第一輪」會把整晚累積的請求一次全轟出來，
+ * 所以這支必須先按 workspace 分組、再決定發幾則，不能逐場獨立處理。
  */
 export async function remindOverdueHandoffs(db: Firestore) {
   const snap = await db.collection('conversationSessions')
@@ -401,81 +405,124 @@ export async function remindOverdueHandoffs(db: Firestore) {
     .get()
 
   const now = Date.now()
-  let reminded = 0
+  let reminded = 0 // 被提醒到的「場數」
+  let messages = 0 // 真正送出的訊息則數（合併的效果看這個與 reminded 的差距）
   let skipped = 0
 
+  interface Candidate {
+    doc: FirebaseFirestore.QueryDocumentSnapshot
+    lineUserId: string
+    requestedMs: number
+  }
+  const byWs = new Map<string, Candidate[]>()
   for (const doc of snap.docs) {
     const data = doc.data() as any
     const workspaceId = String(data?.workspaceId ?? '')
     const lineUserId = String(data?.userId ?? '')
     if (!workspaceId || !lineUserId) continue
+    if (data.slaRemindedAt || data.humanFirstRepliedAt) {
+      skipped++
+      continue
+    }
+    const requestedMs = tsToMs(data.handoffRequestedAt)
+    if (!requestedMs) continue
+    const list = byWs.get(workspaceId) ?? []
+    list.push({ doc, lineUserId, requestedMs })
+    byWs.set(workspaceId, list)
+  }
 
+  for (const [workspaceId, candidates] of byWs) {
     try {
-      if (data.slaRemindedAt || data.humanFirstRepliedAt) {
-        skipped++
-        continue
-      }
-      const requestedMs = tsToMs(data.handoffRequestedAt)
-      if (!requestedMs) continue
-
-      // getAiSettings 有 60 秒 in-memory cache，同 workspace 多筆不重複讀
+      // getAiSettings 有 60 秒 in-memory cache；分組後每個 workspace 只讀一次
       const settings = await getAiSettings(workspaceId, db)
       const sla = settings.handoffNotify.slaRemindMinutes
       if (!settings.handoffNotify.enabled || !sla) {
-        skipped++
+        skipped += candidates.length
         continue
       }
-      if (now - requestedMs < sla * 60_000) {
-        skipped++
-        continue
-      }
-      // 勿擾時段先不蓋章,等勿擾結束的下一輪再發(notifyHandoffToStaff 內部的勿擾
-      // 檢查會把推播吞掉,但這裡蓋了 slaRemindedAt 就永遠補不回來——在 missed_only
-      // 模式這是唯一的一則通知,吞掉等於整場轉真人無聲無息)。
+      // 勿擾時段先不蓋章,等勿擾結束的下一輪再發(通知函式內部的勿擾檢查會把推播吞掉,
+      // 但這裡蓋了 slaRemindedAt 就永遠補不回來——在 missed_only 模式這是唯一的一則
+      // 通知,吞掉等於整場轉真人無聲無息)。
       if (isServiceHoursDnd(settings.serviceHours)) {
-        skipped++
+        skipped += candidates.length
         continue
       }
+
+      const overdue = candidates.filter(c => now - c.requestedMs >= sla * 60_000)
+      skipped += candidates.length - overdue.length
+      if (!overdue.length) continue
 
       // 撈暱稱讓提醒可讀（一場會話只發一次，這個讀取量可接受）。
       // 暱稱存在 users 集合（ensureUser 寫入），conversations doc 從來沒有這個欄位——
       // 之前讀錯集合,提醒永遠 fallback 成 33 碼原始 userId。
       // 另外 profile 抓取失敗時 ensureUser 會把 userId 存進 displayName,一樣要擋:
       // 原始 ID 在後台搜不到、也認不出是誰,不如老實說「未知暱稱」。
-      const docId = lineUserFirestoreDocId(lineUserId, workspaceId)
-      const [userSnap, convSnap] = await Promise.all([
-        db.collection('users').doc(docId).get().catch(() => null),
-        db.collection('conversations').doc(docId).get().catch(() => null),
-      ])
-      const rawName = String(userSnap?.data()?.displayName ?? '').trim()
-      const displayName = rawName && rawName !== lineUserId
-        ? rawName
-        : `未知暱稱（…${lineUserId.slice(-6)}）`
+      const enriched = await Promise.all(overdue.map(async (c) => {
+        const docId = lineUserFirestoreDocId(c.lineUserId, workspaceId)
+        const [userSnap, convSnap] = await Promise.all([
+          db.collection('users').doc(docId).get().catch(() => null),
+          db.collection('conversations').doc(docId).get().catch(() => null),
+        ])
+        const rawName = String(userSnap?.data()?.displayName ?? '').trim()
+        const displayName = rawName && rawName !== c.lineUserId
+          ? rawName
+          : `未知暱稱（…${c.lineUserId.slice(-6)}）`
 
-      // missed_only 模式下這是唯一的一則通知:把轉真人當下存的摘要/客人訊息補回來。
-      // 只認這一場存的（at 不早於 handoffRequestedAt 太多），避免撈到上一場的舊內容。
-      const ctx = (convSnap?.data()?.handoffNotifyContext ?? null) as
-        { summary?: string; message?: string; reason?: string | null; at?: unknown } | null
-      const ctxFresh = Boolean(ctx && tsToMs(ctx.at) >= requestedMs - 10 * 60_000)
+        // missed_only 模式下這是唯一的一則通知:把轉真人當下存的摘要/客人訊息補回來。
+        // 只認這一場存的（at 不早於 handoffRequestedAt 太多），避免撈到上一場的舊內容。
+        const ctx = (convSnap?.data()?.handoffNotifyContext ?? null) as
+          { summary?: string; message?: string; reason?: string | null; at?: unknown } | null
+        const ctxFresh = Boolean(ctx && tsToMs(ctx.at) >= c.requestedMs - 10 * 60_000)
+        return {
+          ...c,
+          displayName,
+          message: ctxFresh ? String(ctx?.message ?? '') : '',
+          summary: ctxFresh ? String(ctx?.summary ?? '') : '',
+          reason: ctxFresh ? ((ctx?.reason ?? null) as HandoffReason | null) : null,
+        }
+      }))
 
-      await notifyHandoffToStaff({
-        workspaceId,
-        customerLineUserId: lineUserId,
-        customerName: displayName,
-        customerMessage: ctxFresh ? String(ctx?.message ?? '') : '',
-        reason: ctxFresh ? ((ctx?.reason ?? null) as HandoffReason | null) : null,
-        summary: ctxFresh ? String(ctx?.summary ?? '') : '',
-        slaReminderMinutes: sla,
-      })
-      await doc.ref.update({ slaRemindedAt: FieldValue.serverTimestamp() })
-      reminded++
+      // 1 位：維持完整格式（帶摘要與客人原話，客服看完就能接手）
+      // ≥2 位：合併一則清單，每位一行「暱稱＋等了多久＋原因」
+      const single = enriched.length === 1 ? enriched[0]! : null
+      const sent = single
+        ? await notifyHandoffToStaff({
+            workspaceId,
+            customerLineUserId: single.lineUserId,
+            customerName: single.displayName,
+            customerMessage: single.message,
+            reason: single.reason,
+            summary: single.summary,
+            slaReminderMinutes: sla,
+          })
+        : await notifyOverdueHandoffBatch({
+            workspaceId,
+            slaReminderMinutes: sla,
+            items: enriched.map(e => ({
+              customerLineUserId: e.lineUserId,
+              customerName: e.displayName,
+              waitedMs: now - e.requestedMs,
+              reason: e.reason,
+            })),
+          })
+      // 沒送出去（被節流吞掉等）就別蓋章，留給下一輪重試
+      if (!sent) {
+        skipped += enriched.length
+        continue
+      }
+      await Promise.all(enriched.map(e =>
+        e.doc.ref.update({ slaRemindedAt: FieldValue.serverTimestamp() })
+          .catch(err => console.warn('[handoff-sla] stamp failed:', e.doc.id, err)),
+      ))
+      reminded += enriched.length
+      messages++
     }
     catch (err) {
-      console.warn('[handoff-sla] session check failed:', doc.id, err)
+      console.warn('[handoff-sla] workspace check failed:', workspaceId, err)
     }
   }
 
-  const tally = { scanned: snap.size, reminded, skipped }
+  const tally = { scanned: snap.size, reminded, messages, skipped }
   if (reminded) console.log('[conversation:handoff-sla]', tally)
   return tally
 }
