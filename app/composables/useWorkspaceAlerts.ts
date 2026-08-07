@@ -64,12 +64,13 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
   },
   {
-    // 與 lineWebhookBroken 刻意分開：網址不一致時訊息「可能」還進得來（舊網域仍指向
-    // 這套系統）——掛紅牌說「收不到」會狼來了（myfeel 實測：LINE 填舊網域、對話照進）。
+    // 2026-08-08 老闆拍板升紅：實務上「不一致」＝填著已排定停用的舊網址，是顆定時炸彈——
+    // 網址一停所有訊息無聲斷掉，等真的斷了才紅就是事後通知。與 lineWebhookBroken 仍分
+    // 兩張卡，因為講的話不同：這張是「快斷了、趁現在改」，那張是「已經斷了」。
     id: 'lineWebhookUrlMismatch',
     icon: Link,
-    severity: 'warning',
-    impact: 'LINE 後台填的收訊網址和這套系統的正式網址不同。訊息目前可能還進得來（舊網址還指向這裡），但哪天舊網址失效，所有訊息會無聲斷掉。建議把 LINE 後台換成正式網址。',
+    severity: 'critical',
+    impact: 'LINE 後台填的收訊網址不是這套系統的正式網址，多半是換網域前的舊網址。訊息目前可能還進得來，但那個網址一停用，所有客人訊息會無聲斷掉、不會有任何預警。趁還沒斷，把 LINE 後台換成正式網址。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
@@ -87,10 +88,12 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
   },
   {
+    // 同 lineWebhookUrlMismatch，2026-08-08 拍板升紅：填著的是遲早停用的舊網址，
+    // 而且現在就有感——客人登入活動頁會在兩個網址間繞，部分情況卡在載入中。
     id: 'liffEndpointUrlMismatch',
     icon: Promotion,
-    severity: 'warning',
-    impact: 'LINE 登記的活動頁網址和這套系統的正式網址不同（多半是換過網域沒改到）。客人點活動連結登入時會在兩個網址之間繞，部分情況會卡在載入中。把 LINE Developers 那邊換成設定頁的「活動 LIFF 頁」網址。',
+    severity: 'critical',
+    impact: 'LINE 登記的活動頁網址不是這套系統的正式網址，多半是換網域前的舊網址。客人點活動連結登入時會在兩個網址之間繞，部分情況會卡在載入中；那個舊網址一停用，活動連結會整個打不開。把 LINE Developers 那邊換成設定頁的「活動 LIFF 頁」網址。',
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,

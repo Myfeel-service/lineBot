@@ -84,9 +84,10 @@ const WEBHOOK_PROBE_TTL_MS = 5 * 60_000
 const WEBHOOK_PROBE_CACHE_MAX = 500
 
 /**
- * webhook 狀態分類。broken 與 mismatch **刻意分成兩顆警示**：
- * 網址不一致時訊息「可能」還進得來（舊網域仍指向這套系統）——掛紅牌說「收不到訊息」
- * 會狼來了（myfeel 實測：LINE 填舊網域、對話照常進來）。紅牌只留給確定收不到的三種。
+ * webhook 狀態分類。broken 與 mismatch **刻意分成兩顆警示**——不是嚴重度不同
+ * （2026-08-08 拍板後兩顆都紅：不一致＝填著排定停用的舊網址，等斷了才紅就晚了），
+ * 而是講的話不同：broken＝「已經收不到」，mismatch＝「還能動但快斷了、趁現在改」。
+ * 另外 mismatch＋填的網址已連不上會直接折進 broken（那就是真的收不到了）。
  */
 type WebhookCheck =
   | { kind: 'unconfigured' } // 還沒接 LINE：是「設定沒做」（setup-status 的事），不是壞掉

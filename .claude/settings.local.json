@@ -314,7 +314,11 @@
       "Bash(node --env-file=.env --experimental-strip-types \"/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/7c0e2f01-a518-41f5-943d-cabe2eb3fe2e/scratchpad/list-workspace-liff.ts\")",
       "Bash(node --env-file=.env --input-type=module -e ' *)",
       "Bash(node --env-file=.env --experimental-strip-types --input-type=module -e ' *)",
-      "Bash(node --experimental-strip-types --input-type=module -e ' *)"
+      "Bash(node --experimental-strip-types --input-type=module -e ' *)",
+      "Bash(cp /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1e07bcf9-21d4-4271-bd20-760f5f1ac008/scratchpad/dump-scripts.ts /Users/kevin/Documents/Github/linebot/.tmp-dump-scripts.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types /Users/kevin/Documents/Github/linebot/.tmp-dump-scripts.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-fix-order-script.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-scripts.ts)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
