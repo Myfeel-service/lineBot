@@ -11,8 +11,8 @@
  *    上線前請對測試特店跑一次確認回傳可解（純函式 buildTradeQuery/簽章已有單元測試）。
  */
 import { getDb } from './firebase'
-import { getPendingOrders, voidPendingOrder } from './payment'
-import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
+import { getPendingOrders, markRecurringNotFoundSeen, voidPendingOrder } from './payment'
+import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolveBackendUrl, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -26,6 +26,12 @@ const QUERY_CONCURRENCY = 5
  * （PAYUNi 可能其實已授權）。10 分鐘遠大於任何正常的入庫延遲，也遠小於寬限期。
  */
 const UNSENT_RECURRING_GRACE_MS = 10 * 60 * 1000
+/**
+ * 「查無此單」要相隔這麼久再看到第二次,才算數（見 markRecurringNotFoundSeen）。
+ * 排程是 10 分鐘一輪,所以實務上就是「下一輪仍然查無才作廢」;最快作廢時間
+ * ≈ 建單後 15 分鐘,離 pending TTL(3 天)與寬限期(3 天)都還很遠,不影響重試機會。
+ */
+const NOT_FOUND_CONFIRM_MS = 5 * 60 * 1000
 
 export async function reconcilePayuniPending(
   config: Record<string, unknown>,
@@ -34,7 +40,10 @@ export async function reconcilePayuniPending(
   const merchantId = String(config.payuniMerchantId || '').trim()
   const keys: PayuniKeys = { merKey: String(config.payuniHashKey || ''), merIV: String(config.payuniHashIV || '') }
   if (!merchantId || !keys.merKey || !keys.merIV) return { checked: 0, recovered: 0 } // 金流未設定 → 略過
-  const url = PAYUNI_QUERY_ENDPOINTS[resolvePayuniEnv(config.payuniEnv)]
+  // ⚠️ 查單一定要跟扣款走**同一個出口**（見 resolveBackendUrl）。設了中繼站時,扣款的實際
+  // 環境是「中繼站轉去哪」,而不是 PAYUNI_ENV;查單若直連 PAYUNi 就可能問到另一個環境,
+  // 於是每一筆真的授權成功的單都回「查無此單」→ 被下面那段作廢 → 下一輪重複扣款。
+  const url = resolveBackendUrl(PAYUNI_QUERY_ENDPOINTS[resolvePayuniEnv(config.payuniEnv)], config.payuniRelayBase)
   const ts = Math.floor(now.getTime() / 1000)
 
   const pending = await getPendingOrders(getDb(), MAX_PENDING_PER_RUN)
@@ -77,8 +86,17 @@ export async function reconcilePayuniPending(
       if (outerStatus === 'QUERY03001' && order.kind === 'period_recurring') {
         const createdMs = (order.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
         if (createdMs && now.getTime() - createdMs > UNSENT_RECURRING_GRACE_MS) {
-          const r = await voidPendingOrder(order.merchantOrderNo, order.workspaceId, getDb())
-          console.warn('[payuni:reconcile] PAYUNi 查無此續扣單(扣款未送達)→ 作廢以便下一輪重試', order.merchantOrderNo, r)
+          // 「查無」是**沒有簽章**的外層狀態碼(查無的回應本來就沒有 EncryptInfo 可驗),而作廢
+          // 不可逆 → 要求相隔數分鐘、跨兩輪對帳都查無才動手,避免查詢庫延遲或設定錯誤造成
+          // 「把已授權的那期作廢 → 下一輪重複扣款」。詳見 markRecurringNotFoundSeen。
+          const firstSeenMs = await markRecurringNotFoundSeen(order.merchantOrderNo, order.workspaceId, now, getDb())
+          if (firstSeenMs && now.getTime() - firstSeenMs >= NOT_FOUND_CONFIRM_MS) {
+            const r = await voidPendingOrder(order.merchantOrderNo, order.workspaceId, getDb())
+            console.warn('[payuni:reconcile] PAYUNi 連兩輪查無此續扣單(扣款未送達)→ 作廢以便下一輪重試', order.merchantOrderNo, r)
+          }
+          else {
+            console.warn('[payuni:reconcile] PAYUNi 查無此續扣單,先觀察下一輪再決定是否作廢', order.merchantOrderNo)
+          }
         }
         return false
       }

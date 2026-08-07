@@ -10,8 +10,8 @@
  * 整月的錢只買到幾天、額度還被同月份的免費用量吃掉。成本報表仍走日曆月
  * （aiUsage）,兩把尺刻意分開,見 shared/time.ts。
  */
-import { FieldValue } from 'firebase-admin/firestore'
-import type { Firestore, Timestamp } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp } from 'firebase-admin/firestore'
+import type { Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { invalidateWorkspaceSubscriptionCache } from './billing'
 import { addDays, dayOfDate, taipeiDate } from '~~/shared/time'
@@ -271,6 +271,45 @@ export async function voidPendingOrder(
     tx.update(ref, { status: 'expired' as PaymentOrderStatus, updatedAt: FieldValue.serverTimestamp() })
     return 'voided'
   })
+}
+
+/**
+ * 記下一次「PAYUNi 說查無此單」的觀測,回傳這筆單**第一次**被這樣觀測到的時間（毫秒;
+ * 不適用回 0）。只給 reconcilePayuniPending 的續扣單作廢判斷用。
+ *
+ * 為什麼要跨兩輪才算數:作廢是不可逆的,而「查無」這個結論完全建立在一個**沒有簽章**的
+ * 外層狀態碼上（查無的回應本來就沒有 EncryptInfo 可驗,同 queryCardBinding／cancelCardBinding）。
+ * 單一次觀測分不出「PAYUNi 根本沒收到」與「查詢庫還沒同步／我方查錯環境」——後者誤判時
+ * 被作廢的是**可能已經授權成功**的那一期,下一輪就會再刷一次客戶的卡（續扣單號帶當次
+ * 嘗試日期,PAYUNi 端不會擋）。要求相隔數分鐘的兩輪對帳都查無,代價只是晚幾分鐘重試。
+ *
+ * 觀測時間刻意不清除:pending 單最多活 3 天(STALE_RECURRING_PENDING_MS),在這段期間內
+ * 「曾經查無 + 現在又查無」已足以佐證,為了清乾淨而在每次查詢成功時多寫一次不划算。
+ */
+export async function markRecurringNotFoundSeen(
+  merchantOrderNo: string,
+  workspaceId: string,
+  now: Date,
+  db: Firestore = getDb(),
+): Promise<number> {
+  const ref = db.collection(PAYMENT_ORDERS_COLLECTION).doc(merchantOrderNo)
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists) return 0
+      const o = snap.data() as PaymentOrderDoc
+      // 不是這個 workspace 的、或已經不是 pending（剛被 Notify 開通了）→ 不必也不該再判斷
+      if (o.workspaceId !== workspaceId || o.status !== 'pending') return 0
+      const seen = (o.notFoundSeenAt as Timestamp | undefined)?.toMillis?.() ?? 0
+      if (seen > 0) return seen
+      tx.update(ref, { notFoundSeenAt: Timestamp.fromDate(now), updatedAt: FieldValue.serverTimestamp() })
+      return now.getTime()
+    })
+  }
+  catch (e) {
+    console.warn('[payment] markRecurringNotFoundSeen failed (skip):', e)
+    return 0
+  }
 }
 
 /** 建單去重視窗:同帳號同方案在此時間內的 pending 訂單會被沿用,避免連點重複扣款。 */

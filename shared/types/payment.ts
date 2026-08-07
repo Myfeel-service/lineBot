@@ -85,6 +85,12 @@ export interface PaymentOrderDoc {
   createdAt: Timestamp | FieldValue
   paidAt?: Timestamp | FieldValue | null
   updatedAt: Timestamp | FieldValue
+  /**
+   * 對帳時**第一次**觀測到「PAYUNi 查無此單」的時間（只用在 period_recurring）。
+   * 續扣單要相隔數分鐘、跨兩輪對帳都查無才作廢——理由見 payment.ts 的
+   * markRecurringNotFoundSeen（一次誤判等於把可能已授權的那期作廢,下輪重複扣款）。
+   */
+  notFoundSeenAt?: Timestamp | FieldValue | null
   /** Notify 解密後的重點欄位（對帳／稽核用） */
   notifyRaw?: Record<string, unknown> | null
   /** 電子發票開立結果（見 invoices collection；這裡只留摘要供帳單頁顯示） */
