@@ -2872,13 +2872,20 @@ async function autoFillTimeline() {
  */
 async function jumpToLatest() {
   if (timelineHasNewer.value && selectedUserId.value) {
-    // 這一跳離開了那一場的範圍，工具列跟著回到「進行中會話」，不要繼續顯示舊那場的狀態
-    selectedSessionId.value = null
-    sessionMeta.value = null
-    await loadTimeline(selectedUserId.value)
+    await leaveSessionSegment(selectedUserId.value)
     return
   }
   scrollToBottom()
+}
+
+/**
+ * 離開「某一場會話」的那一段，回到對話的最新一段。
+ * 這一跳離開了那一場的範圍，工具列跟著回到「進行中會話」，不要繼續顯示舊那場的狀態。
+ */
+async function leaveSessionSegment(userId: string) {
+  selectedSessionId.value = null
+  sessionMeta.value = null
+  await loadTimeline(userId)
 }
 
 /**
@@ -2987,9 +2994,23 @@ async function reloadTimeline(options?: { quiet?: boolean }) {
   })
 }
 
-/** 自己剛送出東西後的刷新：一律安靜（不清空、不轉圈），只有內容悄悄多一則 */
+/**
+ * 自己剛送出東西後的刷新：一律安靜（不清空、不轉圈），只有內容悄悄多一則。
+ *
+ * 例外是**看已結束的那一場**：那一段被後端錨定在該場的 closedAt（見 messages.get.ts 的
+ * anchorCloseMs），剛送出的這則時間在那之後，永遠不會出現在這一段裡——安靜刷新等於拿回
+ * 一段沒有它的內容，接著 deliverPendingOutgoing 撤掉本地泡泡，訊息就整個從畫面上消失
+ * （客服會當成沒送出去而重送，客人收到兩次）。所以送完就離開那一段回到最新。
+ */
 async function reloadAfterOutgoing() {
-  if (!selectedUserId.value) return
+  const userId = selectedUserId.value
+  if (!userId) return
+  if (selectedSessionId.value && Number(sessionMeta.value?.closedAtMs) > 0) {
+    await leaveSessionSegment(userId)
+    await refreshListQuiet()
+    await loadSessionCounts()
+    return
+  }
   await reloadTimeline({ quiet: true })
   if (selectedSessionId.value) await refreshListQuiet()
   else await loadSessionCounts()
