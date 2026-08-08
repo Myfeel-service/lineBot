@@ -10,7 +10,7 @@
  */
 
 import type { Component } from 'vue'
-import { AlarmClock, Bell, ChatDotRound, CreditCard, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
+import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 
@@ -199,6 +199,29 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/richmenu`,
+  },
+  {
+    // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。
+    // （2026-08-08 的真實災情：問訂單編號沒給「我沒有訂單編號」的退路，沒編號的客人出不去，
+    //   後台完全看不出來，只有自己去測才會發現。）
+    id: 'scriptDeadEnd',
+    icon: Guide,
+    severity: 'critical',
+    impact: '這條流程中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒有給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。到腳本編輯器幫那一題加一顆跳過按鈕。',
+    cta: '去修這條流程',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/ai-scripts`,
+  },
+  {
+    // 黃燈不是紅點：客人還是有 AI 或別的設定接住，壞的是「你設的流程沒生效」——
+    // 沒有人正在被卡住，但你以為在跑的東西其實一次都沒跑過。
+    id: 'scriptUnreachable',
+    icon: Guide,
+    severity: 'warning',
+    impact: '這條流程啟用著，但客人講什麼都輪不到它——觸發詞沒填，或是會先被自動回覆規則、敏感情境轉真人、另一條觸發詞更寬的流程接走。換一組更明確的觸發詞，或調整擋在前面的那個設定。',
+    cta: '去看這條流程',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/ai-scripts`,
   },
   {
     id: 'firstReplyBacklog',

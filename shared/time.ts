@@ -119,6 +119,19 @@ function hhmmToMinutes(s: string): number | null {
 }
 
 /**
+ * 今天（台灣時區）是不是「整天不上班」的日子＝開了服務時間又勾了週六日休息的週末。
+ *
+ * 和 `isServiceHoursDnd` 刻意分開:勿擾是「現在這個時間點不要吵」,休假日是「今天整天
+ * 沒人上班」。每日摘要這種**商家自選時段**的推播只能看後者——若拿整個勿擾去擋,
+ * 摘要時間設 20:00 而服務時間到 18:00 的商家會永遠收不到摘要。
+ */
+export function isServiceDayOff(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): boolean {
+  if (!cfg?.enabled || !cfg.weekendOff) return false
+  const dow = new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
+  return dow === 0 || dow === 6
+}
+
+/**
  * 現在（台灣時區）是否落在「勿擾時段」＝服務時間之外。
  * - enabled=false 一律回 false（完全不影響行為）。
  * - weekendOff 時,台灣時區的週六/週日整天視為勿擾。
@@ -127,9 +140,8 @@ function hhmmToMinutes(s: string): number | null {
  */
 export function isServiceHoursDnd(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): boolean {
   if (!cfg?.enabled) return false
+  if (isServiceDayOff(cfg, date)) return true
   const t = new Date(date.getTime() + TAIPEI_OFFSET_MS)
-  const dow = t.getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
-  if (cfg.weekendOff && (dow === 0 || dow === 6)) return true
   const start = hhmmToMinutes(cfg.start)
   const end = hhmmToMinutes(cfg.end)
   if (start === null || end === null) return false

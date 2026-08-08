@@ -14,7 +14,7 @@
  */
 import { generateJson } from './gemini'
 import { normalizeScriptInput } from './ai-script-validation'
-import { validateScriptDoc, type ScriptNode } from '~~/shared/types/ai-script'
+import { findStuckCollects, validateScriptDoc, type ScriptNode, type ScriptStuckCollect } from '~~/shared/types/ai-script'
 
 export interface ScriptDraft {
   name: string
@@ -49,7 +49,10 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 - 流程要收尾需要真人後續處理(退貨、客訴、報價…)→ 最後的 reply 設 "thenHandoff": true。
 - 收集到姓名/電話/email 這類要留存的資料 → 在 reply 前加 saveLead 存起來。
 - 電話用 format "phone"、email 用 "email";訂單編號/序號/貨運單號這類代碼用 "alphanumericSymbol"(英數開頭結尾,可含 - _ / # . 符號);其他一律 "any"。
-- 問「客人可能沒有的資料」(訂單編號、序號、發票號碼…)→ 給該 collect 加 skipLabel(例:我沒有訂單編號)+skipNext,讓答不出來的客人改走別條路(例:改問 email 或直接轉真人);姓名/電話這種人人答得出的不用加。
+- 問「客人可能根本沒有的資料」(訂單編號、序號、發票號碼、貨運單號…)→ **一定**要給該 collect 加 skipLabel(例:我沒有訂單編號)+skipNext,讓答不出來的客人改走別條路(例:改問 email、或直接轉真人);姓名/電話這種人人答得出的不用加。
+- ⛔ 絕不要把「如果沒有訂單編號…」這種備援問句做成**下一個**節點:collect 抽不到合格值就會一直重問、停在原地,客人根本走不到後面,那顆備援按鈕等於不存在。備援路徑只能掛在同一題的 skipNext 上。
+  錯:c1(問訂單編號,format alphanumericSymbol,next=q1) → q1(quickReply「如果沒有訂單編號,方便給 Email 嗎?」)
+  對:c1(問訂單編號,skipLabel「我沒有訂單編號」,skipNext=q1,next=s1) → 答得出來直接往下收尾;答不出來按鈕跳去 q1 問 Email
 - 線性優先,節點總數 ≤ 10;只有「客人需要做選擇」才用 quickReply。
 - 絕不使用 tag、branch 或任何未列出的節點型別。
 
@@ -68,9 +71,35 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown }
 
-/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿或驗證錯誤 */
+/** 確定性補救用的跳過按鈕文字（模型兩次都不加時才會用到,人審草稿時可自行改字） */
+const FALLBACK_SKIP_LABEL = '我沒有這項資料'
+
+/** 把「卡死步驟」寫成模型看得懂的修正指示 */
+function stuckFeedback(stuck: ScriptStuckCollect[]): string {
+  const lines = stuck.map(s => `- 節點 ${s.nodeId}(${s.fieldName}):「${s.question}」`).join('\n')
+  return `【上一次的輸出有「客人答不出來就卡死」的步驟】\n${lines}\n`
+    + '這幾題問的是客人手上可能根本沒有的代碼,格式又是嚴格格式,沒有跳過出口的話客人會被無限重問、'
+    + '永遠走不到後面的步驟。請幫這幾題補上 skipLabel + skipNext(指向備援路徑,例如改問 Email 或直接收尾轉真人)。'
+}
+
+/**
+ * 最後防線:模型兩次都不肯補跳過出口時,確定性補一顆「跳過這題往下走」的按鈕。
+ * 目標刻意就用該題原本的 next——猜不到更聰明的備援路徑,但至少客人不會被鎖死；
+ * 草稿本來就要人審，接哪裡由人改。
+ */
+function repairStuckCollects(draft: ScriptDraft, stuck: ScriptStuckCollect[]): ScriptDraft {
+  const ids = new Set(stuck.map(s => s.nodeId))
+  const nodes = draft.nodes.map((n) => {
+    if (n.type !== 'collect' || !ids.has(n.id) || !n.next) return n
+    return { ...n, skipLabel: FALLBACK_SKIP_LABEL, skipNext: n.next }
+  })
+  return { ...draft, nodes }
+}
+
+/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟清單)或驗證錯誤 */
 async function generateOnce(prompt: string): Promise<
-  { ok: true; draft: ScriptDraft } | { ok: false; error: string; inputTokens: number; outputTokens: number }
+  | { ok: true; draft: ScriptDraft; stuck: ScriptStuckCollect[]; inputTokens: number; outputTokens: number }
+  | { ok: false; error: string; inputTokens: number; outputTokens: number }
 > {
   const { data, inputTokens, outputTokens } = await generateJson<RawDraft>(prompt, {
     systemInstruction: SYSTEM_INSTRUCTION,
@@ -93,12 +122,17 @@ async function generateOnce(prompt: string): Promise<
   return {
     ok: true,
     draft: { name: input.name, nodes: input.nodes, rootNodeId: input.rootNodeId, inputTokens, outputTokens },
+    // 驗證過不代表流程走得通:代碼類問題沒有跳過出口 = 客人答不出來就卡死在那題
+    stuck: findStuckCollects(input.nodes),
+    inputTokens,
+    outputTokens,
   }
 }
 
 /**
- * 由自然語言描述生成腳本草稿。驗證沒過會把錯誤回饋給模型重生一次;
- * 兩次都失敗才丟 422(訊息為白話,可直接顯示給使用者)。
+ * 由自然語言描述生成腳本草稿。第一次有問題(驗證沒過、或有「答不出來就卡死」的步驟)
+ * 就把問題回饋給模型重生一次;第二次還是留著卡死步驟,由 repairStuckCollects 確定性補上跳過出口
+ * ——寧可補一顆通用按鈕給人改,也不要生一條客人走不出去的流程。兩次都連驗證都沒過才丟 422。
  */
 export async function generateScriptDraft(description: string): Promise<ScriptDraft> {
   const desc = String(description || '').trim().slice(0, MAX_GENERATE_DESCRIPTION_LEN)
@@ -107,17 +141,26 @@ export async function generateScriptDraft(description: string): Promise<ScriptDr
   }
 
   const first = await generateOnce(`【使用者描述】\n${desc}`)
-  if (first.ok) return first.draft
+  if (first.ok && !first.stuck.length) return first.draft
 
-  // 把驗證錯誤回饋給模型修正一次(常見是接線/欄位名筆誤,模型看得懂錯誤訊息)
-  const second = await generateOnce(
-    `【使用者描述】\n${desc}\n\n【上一次的輸出沒通過驗證,錯誤是】\n${first.error}\n請修正後重新輸出完整 JSON。`,
-  )
+  // 回饋給模型修正一次:驗證錯誤(接線/欄位名筆誤)或卡死步驟,模型都看得懂
+  const feedback = first.ok
+    ? stuckFeedback(first.stuck)
+    : `【上一次的輸出沒通過驗證,錯誤是】\n${first.error}\n`
+  const second = await generateOnce(`【使用者描述】\n${desc}\n\n${feedback}請修正後重新輸出完整 JSON。`)
+
+  // 兩次的 token 都要讓呼叫端記到帳
+  const totalIn = first.inputTokens + second.inputTokens
+  const totalOut = first.outputTokens + second.outputTokens
+
   if (second.ok) {
-    // 兩次的 token 都要讓呼叫端記到帳
-    second.draft.inputTokens += first.inputTokens
-    second.draft.outputTokens += first.outputTokens
-    return second.draft
+    const draft = second.stuck.length ? repairStuckCollects(second.draft, second.stuck) : second.draft
+    return { ...draft, inputTokens: totalIn, outputTokens: totalOut }
+  }
+  // 第二次連驗證都沒過,但第一次只是「有卡死步驟」→ 用第一次的草稿補跳過出口,好過整個失敗
+  if (first.ok) {
+    const draft = repairStuckCollects(first.draft, first.stuck)
+    return { ...draft, inputTokens: totalIn, outputTokens: totalOut }
   }
 
   throw createError({

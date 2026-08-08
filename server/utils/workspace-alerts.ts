@@ -8,6 +8,7 @@ import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark } from './ai-feedback-events'
 import { getQuotaAnswered } from './ai-usage'
 import { findBrokenModuleRefs } from './broken-module-refs'
+import { checkScriptHealth } from './script-health'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
 import { countOpenQueueSessions, isOpenQueueSession } from './conversation-queue'
 import { buildPlanView, getWorkspaceSubscription } from './billing'
@@ -525,6 +526,25 @@ export async function collectWorkspaceAlerts(
             .get()
           const n = agg.data().count
           return n ? { active: true, count: n } : { active: false }
+        }),
+        probe('scriptUnreachable', async () => {
+          const aiSettings = await aiSettingsPromise!
+          if (!aiSettings) throw new Error('ai settings unavailable')
+          const { unreachable } = await checkScriptHealth(db, wid, aiSettings.sensitiveTopics ?? [])
+          if (!unreachable.length) return { active: false }
+          return { active: true, count: unreachable.length, detail: unreachable[0]!.detail }
+        }),
+        probe('scriptDeadEnd', async () => {
+          const aiSettings = await aiSettingsPromise!
+          if (!aiSettings) throw new Error('ai settings unavailable')
+          const { deadEnds } = await checkScriptHealth(db, wid, aiSettings.sensitiveTopics ?? [])
+          if (!deadEnds.length) return { active: false }
+          const first = deadEnds[0]!
+          return {
+            active: true,
+            count: deadEnds.length,
+            detail: `「${first.scriptName}」問「${first.question.slice(0, 20)}」這一步，客人答不出來就出不去`,
+          }
         }),
         probe('brokenModuleButton', async () => {
           // 靜態檢查，不是統計「誰按到了」：在客人踩到之前就報。

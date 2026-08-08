@@ -201,8 +201,16 @@ sudo systemctl reload caddy
 ```
 
 > ⚠️ **上游網址要與環境一致**:上面寫的是**正式** `https://api.payuni.com.tw`。
-> 如果這台是要給**沙盒**用,必須改成 `https://sandbox-api.payuni.com.tw`,
-> 且要與 Amplify 的 `PAYUNI_ENV` 對得起來。**一台機器只服務一個環境,不要混。**
+> 沙盒要用的是 `https://sandbox-api.payuni.com.tw`,且要與 Amplify 的 `PAYUNI_ENV` 對得起來。
+>
+> **兩個環境可以共用同一台機器**(2026-08-08 確認線上就是這樣跑的):開兩個網域區塊,
+> 各自釘死自己的上游即可,例如 `<你的網域>` 走正式、`<你的網域>-test` 走沙盒。
+> 一台機器一個固定 IP,兩個環境的白名單填同一個 IP 就好,不必為了沙盒再開一台。
+> **不能混的是「同一個網域區塊裡的上游」**,不是機器——舊版本文寫成「一台機器只服務
+> 一個環境」是誤導。
+>
+> 兩段的 `@payuni path` 白名單要各改各的:`sed` 沒有加 `g`(或漏了其中一段)時,
+> 只會改到第一段,沙盒那邊就會靜靜地少一條路徑。
 
 ---
 
@@ -324,8 +332,7 @@ CREDIT03010 不提供此IP幕後交易，211.21.19.45, 54.249.132.4
 **為什麼危險**:正式環境那個位置會是 **Amplify 的動態 IP**。若 PAYUNi 的規則是「看到的每個 IP 都要在
 白名單內」,中繼站就永遠不會通 —— 而且錯誤訊息與「IP 沒填」長得幾乎一樣,極難看出根因。
 
-**修法**:在 `reverse_proxy` 區塊裡加三行 —— Step 7 的設定檔已含,
-但**如果你的機器是 2026-08-08 之前照舊版教學架的,很可能沒有這三行,要補**:
+**修法**:在 `reverse_proxy` 區塊裡加三行(Step 7 的設定檔已含):
 
 ```caddyfile
 header_up -X-Forwarded-For
@@ -334,6 +341,18 @@ header_up -X-Forwarded-Host
 ```
 
 順帶好處:不會把我方內部/雲端 IP 洩漏給金流。
+
+> ⚠️ **上面這個根因說法目前是「未證實」,別當定論**(2026-08-08 更正)。
+>
+> 實際去看線上那台機器,**兩個網域區塊都沒有這三行**,只有 `header_up Host` ——
+> 但 08-07 那筆真憑證續扣 NT$399 確實成功了(而且當時開發機 IP 已從白名單移除)。
+> 若 PAYUNi 真的把 `X-Forwarded-For` 裡的 IP 一起檢查,那筆就該被擋下來。
+>
+> 所以能確定的只有:**08-07 曾經看到一筆同時列出兩個 IP 的 `CREDIT03010`**;
+> 至於那到底是不是被擋的原因,現有證據下不了結論(當時可能同時改了白名單)。
+>
+> 這三行仍然**建議加**,但理由是「不要把我方 IP 洩漏給金流」這個實實在在的好處,
+> 不是「不加就不會通」。要加的話挑一個能馬上補測一筆真扣款的時間做,別在沒人看著時改。
 
 **💡 這裡有一個非常好用的驗證神器**:PAYUNi 的 `CREDIT03010` 訊息會**把它實際看到的所有來源 IP
 原樣回報**。所以要確認「PAYUNi 到底看到誰」,不必猜也不必看 log ——
@@ -349,11 +368,27 @@ header_up -X-Forwarded-Host
 | **真憑證經中繼站續扣 NT$399** | ✅ **`SUCCESS 授權成功`** |
 | 直連(開發機 IP,已從白名單移除) | ✅ 被擋 `CREDIT03010` —— 白名單真的在守門 |
 
-### ⚠️ 尚未套用到線上機器(2026-08-08)
+### ✅ 補上 `/api/trade/query` 並驗收(2026-08-08)
 
-`/api/trade/query` 是 2026-08-08 才加進本文設定檔的(實測線上那台對它回 `404`)。
-**線上機器還沒改**,要 SSH 進去把 `@payuni` 那行換成 Step 7 的版本再 `sudo systemctl reload caddy`。
-在補上之前,對帳查單會自動退回直連並在 log 留警告 —— 不會壞,但少了「與扣款同一個出口」這層保障。
+線上那台原本只放行 `/api/credit` 與 `/api/credit_bind/*`,對 `/api/trade/query` 回 `404`,
+所以對帳查單每次都退回直連。當天已在機器上補好(兩個網域區塊都改),驗收:
+
+| 探針 | 正式 | 沙盒 |
+|---|---|---|
+| `/api/trade/query`(新放行) | ✅ `200` | ✅ `200` |
+| `/api/upp`(白名單外) | ✅ `404` | ✅ `404` |
+
+改法(一行,重跑不會重複加,`$` 錨定 + `g` 讓兩個區塊都改到):
+
+```bash
+sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%F)
+sudo sed -i 's|@payuni path /api/credit /api/credit_bind/\*$|@payuni path /api/credit /api/credit_bind/* /api/trade/query|g' /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile   # 要看到 Valid configuration
+sudo systemctl reload caddy
+```
+
+> `reload` 時可能出現 `Warning: The unit file ... changed on disk`:與本次改動無關
+> (systemd 在說 caddy.service 定義檔某次被動過),設定照樣生效,`sudo systemctl daemon-reload` 可消。
 
 **最終狀態**:PAYUNi 白名單裡**只留中繼站那一個 IP**,所有浮動 IP 清空。
 開發機要測續扣時,把本機 `.env` 也設 `PAYUNI_RELAY_BASE=https://<沙盒中繼網域>` 即可。

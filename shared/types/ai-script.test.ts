@@ -4,6 +4,7 @@ import {
   collectSkipLabel,
   cosineSimilarity,
   extractCollectValue,
+  findStuckCollects,
   matchesScriptKeywords,
   matchesScriptTrigger,
   matchesSemanticTrigger,
@@ -231,6 +232,50 @@ describe('collect 跳過出口（skipLabel / skipNext）', () => {
   it('skipLabel 撞「找真人」求助詞 → 擋（逃生門會先攔走，永遠到不了 skipNext）', () => {
     const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '找真人', skipNext: 'r1' }), reply('r1')]
     expect(validateScriptDoc({ ...base, nodes })).toMatch(/求助詞/)
+  })
+})
+
+describe('findStuckCollects：答不出來就卡死的步驟', () => {
+  const collect = (over: Partial<ScriptNode> & { id: string }): ScriptNode => ({
+    type: 'collect', question: 'q', fieldName: 'f', expireMs: 60000, format: 'any', next: 'r1', ...over,
+  } as ScriptNode)
+
+  it('代碼類格式沒有跳過出口 → 抓出來', () => {
+    for (const format of ['alphanumericSymbol', 'alphanumeric', 'number', 'custom'] as const) {
+      const nodes = [collect({ id: 'c1', fieldName: 'order_id', format })]
+      expect(findStuckCollects(nodes).map(s => s.nodeId)).toEqual(['c1'])
+    }
+  })
+
+  it('有成對的跳過出口 → 不抓', () => {
+    const nodes = [collect({ id: 'c1', format: 'alphanumericSymbol', skipLabel: '我沒有訂單編號', skipNext: 'c2' })]
+    expect(findStuckCollects(nodes)).toEqual([])
+  })
+
+  it('單邊的跳過出口不算數（引擎不認，客人一樣卡死）', () => {
+    const nodes = [collect({ id: 'c1', format: 'alphanumericSymbol', skipLabel: '我沒有訂單編號' })]
+    expect(findStuckCollects(nodes).map(s => s.nodeId)).toEqual(['c1'])
+  })
+
+  it('姓名(any)/電話/Email 不抓——人人給得出,重問是在修錯字不是死路', () => {
+    const nodes = [
+      collect({ id: 'c1', fieldName: 'name', format: 'any' }),
+      collect({ id: 'c2', fieldName: 'phone', format: 'phone' }),
+      collect({ id: 'c3', fieldName: 'email', format: 'email' }),
+    ]
+    expect(findStuckCollects(nodes)).toEqual([])
+  })
+
+  it('線上實際踩到的形狀:備援問句擺在下一個節點 → 照樣算卡死（客人根本看不到那顆按鈕）', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['訂單'], priority: 50, next: 'c1' },
+      collect({ id: 'c1', fieldName: 'order_id', format: 'alphanumericSymbol', next: 'q1' }),
+      { id: 'q1', type: 'quickReply', question: '如果沒有訂單編號,方便給 Email 嗎?', expireMs: 60000, options: [{ label: '提供 Email', next: 'r1' }] },
+      { id: 'r1', type: 'reply', text: 'ok', thenHandoff: true },
+    ]
+    // 接線本身合法(驗證過得了),但流程實際走不通——所以這條檢查不能塞進 validateScriptDoc
+    expect(validateScriptDoc({ name: 's', rootNodeId: 't', nodes })).toBeNull()
+    expect(findStuckCollects(nodes).map(s => s.nodeId)).toEqual(['c1'])
   })
 })
 

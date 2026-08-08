@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, anchoredPeriod, dayOfDate, isServiceHoursDnd, nextAnchoredPeriod, normalizeAnchorDay, taipeiDate, taipeiYyyyMm } from './time'
+import { addDays, anchoredPeriod, dayOfDate, isServiceDayOff, isServiceHoursDnd, nextAnchoredPeriod, normalizeAnchorDay, taipeiDate, taipeiYyyyMm } from './time'
 
 describe('taipeiYyyyMm（成本報表的月結桶）', () => {
   it('月中:UTC 與台灣同月', () => {
@@ -133,5 +133,33 @@ describe('isServiceHoursDnd（服務時間 / 勿擾時段，台灣時區）', ()
   it('設定壞掉（時間格式非法）→ 回 false，寧可不擋', () => {
     const bad = { enabled: true, start: '25:99', end: '18:00', weekendOff: false }
     expect(isServiceHoursDnd(bad, new Date('2026-07-20T12:00:00Z'))).toBe(false)
+  })
+})
+
+describe('isServiceDayOff（整天休假，只看週末不看鐘點）', () => {
+  const svc = { enabled: true, start: '09:00', end: '18:00', weekendOff: true }
+
+  it('週六、週日整天都算休假（時段內外都一樣）', () => {
+    expect(isServiceDayOff(svc, new Date('2026-07-18T02:00:00Z'))).toBe(true) // 台灣週六 10:00
+    expect(isServiceDayOff(svc, new Date('2026-07-18T12:00:00Z'))).toBe(true) // 台灣週六 20:00
+    expect(isServiceDayOff(svc, new Date('2026-07-19T02:00:00Z'))).toBe(true) // 台灣週日 10:00
+  })
+
+  it('平日不算休假——包含服務時段之外的鐘點（這正是它和勿擾的差別）', () => {
+    expect(isServiceDayOff(svc, new Date('2026-07-20T02:00:00Z'))).toBe(false) // 台灣週一 10:00
+    expect(isServiceDayOff(svc, new Date('2026-07-20T12:00:00Z'))).toBe(false) // 台灣週一 20:00（勿擾但不是休假）
+    expect(isServiceHoursDnd(svc, new Date('2026-07-20T12:00:00Z'))).toBe(true)
+  })
+
+  it('週末照常服務 / 沒啟用服務時間 → 一律不算休假', () => {
+    expect(isServiceDayOff({ ...svc, weekendOff: false }, new Date('2026-07-18T02:00:00Z'))).toBe(false)
+    expect(isServiceDayOff({ ...svc, enabled: false }, new Date('2026-07-18T02:00:00Z'))).toBe(false)
+    expect(isServiceDayOff(null)).toBe(false)
+    expect(isServiceDayOff(undefined)).toBe(false)
+  })
+
+  it('台灣時區為準：UTC 週五晚上已是台灣週六', () => {
+    expect(isServiceDayOff(svc, new Date('2026-07-17T16:00:00Z'))).toBe(true) // 台灣週六 00:00
+    expect(isServiceDayOff(svc, new Date('2026-07-17T15:00:00Z'))).toBe(false) // 台灣週五 23:00
   })
 })

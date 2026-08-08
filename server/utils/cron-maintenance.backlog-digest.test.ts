@@ -235,3 +235,55 @@ describe('dailyBacklogDigest 一天一則', () => {
     expect(tally).toMatchObject({ workspacesNotified: 1 })
   })
 })
+
+/**
+ * 假日不吵人（2026-08-08 老闆回報「假日還是會收到每日推播」）。
+ *
+ * 摘要是照著資料上的標記每天重喊一次,所以休假日整天跳過不會漏掉任何一條——
+ * 上班日那則會把週末累積的全部講完。
+ */
+describe('dailyBacklogDigest 休假日', () => {
+  const SAT = Date.UTC(2026, 7, 8, 3, 0, 0) // 台北 2026-08-08(六) 11:00
+  /** 服務時間 09–18、週六日休息；digestHour 預設 10（台北 11 點時已到）。 */
+  const hours = (extra: Record<string, unknown> = {}, digestHour = 10) => ({
+    ...settings(digestHour),
+    serviceHours: { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: '', ...extra },
+  })
+
+  beforeEach(() => {
+    vi.setSystemTime(SAT)
+  })
+
+  it('服務時間有開 + 週六日休息 → 週六不發，也不吃掉當天名額', async () => {
+    getAiSettings.mockResolvedValue(hours({}))
+    const { db, state } = makeDb(['U1'])
+    const tally = await dailyBacklogDigest(db)
+
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(state[WS]).toBeUndefined()
+    expect(tally).toMatchObject({ workspacesNotified: 0 })
+  })
+
+  it('週末照常服務 → 週六照發（沒勾休息就不該幫商家決定）', async () => {
+    getAiSettings.mockResolvedValue(hours({ weekendOff: false }))
+    const { db } = makeDb(['U1'])
+
+    expect(await dailyBacklogDigest(db)).toMatchObject({ workspacesNotified: 1 })
+  })
+
+  it('沒啟用服務時間 → 週六照發（維持原行為）', async () => {
+    getAiSettings.mockResolvedValue(settings(10)) // serviceHours.enabled = false
+    const { db } = makeDb(['U1'])
+
+    expect(await dailyBacklogDigest(db)).toMatchObject({ workspacesNotified: 1 })
+  })
+
+  it('平日的摘要時段落在服務時間之外（09–18 上班、20:00 收摘要）→ 照發', async () => {
+    // 拿整個「勿擾時段」去擋的話這種商家會永遠收不到摘要，所以只擋休假日
+    vi.setSystemTime(Date.UTC(2026, 7, 10, 12, 0, 0)) // 台北 2026-08-10(一) 20:00
+    getAiSettings.mockResolvedValue(hours({}, 20))
+    const { db } = makeDb(['U1'])
+
+    expect(await dailyBacklogDigest(db)).toMatchObject({ workspacesNotified: 1 })
+  })
+})

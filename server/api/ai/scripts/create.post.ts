@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateScriptsCache, SCRIPTS_COLLECTION } from '~~/server/utils/ai-scripts'
+import { invalidateScriptHealthCache } from '~~/server/utils/script-health'
 import { normalizeScriptInput, stripTriggerEmbeddings, type ScriptInput } from '~~/server/utils/ai-script-validation'
 import { validateScriptDoc } from '~~/shared/types/ai-script'
 
@@ -26,6 +27,8 @@ export default defineEventHandler(async (event) => {
     updatedAt: now,
   })
   invalidateScriptsCache(workspaceId)
+  // 腳本改完,異常中心的「輪不到／走不完」要立刻反映,不要等 5 分鐘快取過期
+  invalidateScriptHealthCache(workspaceId)
   // stripTriggerEmbeddings：清掉舊資料可能殘留的 embedding，不回傳給前端
   return { id, ...input, nodes: stripTriggerEmbeddings(input.nodes) }
 })

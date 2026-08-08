@@ -326,7 +326,15 @@
       "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
       "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots2 node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
       "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots3 node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
-      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots-old node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)"
+      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots-old node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-probe-shadow.ts 212405d2-d782-443b-9670-adac3b3e1f99)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-probe-shadow.ts f2d418e2-9f5a-4123-86db-2d9d5bc6a779)",
+      "Bash(perl -0pi -e 's{import \\\\{ invalidateScriptsCache, SCRIPTS_COLLECTION \\\\} from '\\\\''~~/server/utils/ai-scripts'\\\\''}{import { invalidateScriptsCache, SCRIPTS_COLLECTION } from '\\\\''~~/server/utils/ai-scripts'\\\\''\\\\nimport { invalidateScriptHealthCache } from '\\\\''~~/server/utils/script-health'\\\\''}' '$f')",
+      "Bash(perl -0pi -e 's{  invalidateScriptsCache\\\\\\(workspaceId\\\\\\)}{  invalidateScriptsCache\\(workspaceId\\)\\\\n  // 腳本改完,異常中心的「輪不到／走不完」要立刻反映,不要等 5 分鐘快取過期\\\\n  invalidateScriptHealthCache\\(workspaceId\\)}' '$f')",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-check-health.ts 212405d2-d782-443b-9670-adac3b3e1f99 f2d418e2-9f5a-4123-86db-2d9d5bc6a779)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-live.ts 212405d2-d782-443b-9670-adac3b3e1f99 f2d418e2-9f5a-4123-86db-2d9d5bc6a779)",
+      "Bash(node --env-file=.env_splash --experimental-strip-types .tmp-dump-live.ts)",
+      "Bash(node --env-file=.env_splash --experimental-strip-types -e ' *)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

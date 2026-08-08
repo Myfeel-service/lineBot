@@ -30,7 +30,7 @@ import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
-import { isServiceHoursDnd } from '~~/shared/time'
+import { isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
@@ -609,7 +609,8 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
 // 計費,一則錢講完全部;事件當下的標記(outdatedAt/status='failed'/expiredAt/pending)
 // 都留在資料上,摘要每天照著標記喊,直到有人處理——比「事件當下那一則」更不會漏。
 // 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒事就不發。
-// 發送時段由各 workspace 的 handoffNotify.digestHour 自選(台北時間整點)。
+// 發送時段由各 workspace 的 handoffNotify.digestHour 自選(台北時間整點);
+// 休假日(服務時間有開 + 週六日休息)整天不發,週末累積的事上班日那則會一次講完。
 
 const DIGEST_SCAN_LIMIT = 200
 
@@ -749,6 +750,11 @@ export async function dailyBacklogDigest(db: Firestore) {
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
+    // 休假日整天不發（服務時間有開 + 勾了週六日休息）。摘要是照著資料上的標記每天重
+    // 喊一次,今天跳過不會漏掉任何一條——上班日那則照樣會把週末累積的全部講完。
+    // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
+    // 之外（例如 09:00–18:00 上班、20:00 收摘要）很合理,拿勿擾去擋會變成永遠不發。
+    if (isServiceDayOff(settings.serviceHours)) continue
     if (taipeiHour < cfg.digestHour) continue // 商家自選時段還沒到,下一輪再看
 
     // 認領排在所有「發不發」的判斷之後、推播之前:提早認領會讓「時段還沒到」也被

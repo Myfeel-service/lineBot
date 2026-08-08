@@ -324,6 +324,12 @@
               <p class="ai-section-hint">
                 每天過了這個時間,把「等待真人的客人、卡在真人處理中的對話、知識庫要處理的事」
                 整理成一則訊息推播給上面的通知對象;沒事就不發。
+                <template v-if="form.serviceHours.enabled && form.serviceHours.weekendOff">
+                  你設了週六日休息,<strong>假日整天不發</strong>,週末累積的事會併進上班日那一則。
+                </template>
+                <template v-else>
+                  假日也想安靜,請到下面「服務時間 / 勿擾時段」開啟並勾「週六日整天休息」。
+                </template>
               </p>
             </div>
           </div>
@@ -372,6 +378,9 @@
             <p class="ai-section-hint">
               設定服務時間後,非服務時間內不論腳本或 AI 要轉真人,都<strong>不推播通知客服</strong>(不半夜吵人),改回客人一則「勿擾訊息」。
               轉真人本身照常發生——客服上班回來在「對話」頁就能接手。時間以台灣時區為準。
+            </p>
+            <p class="ai-section-hint">
+              勾了「週六日整天休息」還會多一件事:<strong>假日不發每日摘要</strong>,那些事會併進上班日的那一則。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用服務時間 / 勿擾" tight />

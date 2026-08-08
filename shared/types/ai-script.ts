@@ -497,6 +497,39 @@ export function collectSkipLabel(node: Pick<ScriptCollectNode, 'skipLabel' | 'sk
   return label && String(node.skipNext ?? '').trim() ? label : ''
 }
 
+/**
+ * 「客人拿不出這筆資料就卡死」的格式：訂單編號、序號、發票號碼、單號這類**代碼**。
+ * 客人手上沒有就是沒有，再重問一百次也生不出來——這種題目一定要有跳過出口。
+ * phone/email 刻意不算：那是人人給得出的聯絡方式，重問是在修錯字，不是死路。
+ */
+const CODE_LIKE_FORMATS = new Set<CollectFormat>(['alphanumeric', 'alphanumericSymbol', 'number', 'custom'])
+
+export interface ScriptStuckCollect {
+  nodeId: string
+  fieldName: string
+  question: string
+}
+
+/**
+ * 找出「答不出來就出不去」的收集步驟：問代碼類資料、又沒有跳過出口（skipLabel+skipNext）。
+ * 引擎對這種節點的行為是「抽不到合格值 → 重問、停在原地」，所以沒有跳過出口 = 沒有編號的
+ * 客人永遠走不到後面任何一步（把「如果沒有編號…」的快速回覆擺在這題**後面**也救不了，
+ * 因為要先答得出編號才看得到那顆按鈕）。
+ *
+ * 這是**建議**不是硬性錯誤，所以刻意不放進 validateScriptDoc（會擋掉既有腳本存檔）；
+ * 由 AI 生成端當作重生條件、編輯器當作存檔前提醒。
+ */
+export function findStuckCollects(nodes: ScriptNode[]): ScriptStuckCollect[] {
+  const out: ScriptStuckCollect[] = []
+  for (const n of nodes) {
+    if (n.type !== 'collect') continue
+    if (!CODE_LIKE_FORMATS.has(n.format ?? 'any')) continue
+    if (collectSkipLabel(n)) continue
+    out.push({ nodeId: n.id, fieldName: n.fieldName || '', question: n.question || '' })
+  }
+  return out
+}
+
 export interface CollectExtractResult {
   /** 是否通過格式（'any' 一律通過） */
   ok: boolean

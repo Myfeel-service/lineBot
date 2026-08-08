@@ -64,6 +64,10 @@ export type WorkspaceAlertId =
   | 'maintenanceStalled'
   /** 知識庫建議收件匣有待處理草稿（客人問過但 AI 答不好的主題）。不是異常，是「可以更好」 */
   | 'knowledgeSuggestions'
+  /** 有啟用中的客服流程永遠輪不到（沒填觸發詞、或被規則／敏感情境／別條腳本先接走） */
+  | 'scriptUnreachable'
+  /** 有客服流程中間有「客人答不出來就卡死」的步驟，走進去出不來 */
+  | 'scriptDeadEnd'
 
 /**
  * 各項的白話標題（單一事實來源）。
@@ -96,6 +100,8 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   maintenanceStalled: '系統自動維護沒在跑',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
   knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
+  scriptUnreachable: '有客服流程永遠不會被啟動',
+  scriptDeadEnd: '有客服流程客人走不完',
 }
 
 /**
