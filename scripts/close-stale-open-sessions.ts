@@ -98,6 +98,8 @@ async function main() {
       batch.set(db.collection('conversationEvents').doc(), {
         sessionId: d.id,
         userId: String(d.data().userId ?? ''),
+        // 與 recordConversationEvent 同一組欄位：漏了 workspaceId 的事件之後無法直接查
+        workspaceId: String(d.data().workspaceId ?? ''),
         eventType: 'conversation_closed',
         timestamp: FieldValue.serverTimestamp(),
       })

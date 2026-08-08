@@ -99,11 +99,20 @@ async function refreshSessionStatusFromDb(sessionId: string): Promise<Conversati
 
 // ── Event Recording ───────────────────────────────────────────────
 
+/**
+ * 寫一筆會話事件。
+ *
+ * `workspaceId` 是後補的欄位（舊資料沒有）：沒有它，讀取端只能先查出這位客人的每一場
+ * 會話、再用 sessionId 分批 `in` 回來湊（見 messages.get.ts 的 loadEventItems）——因為
+ * 用 userId 直接查會跨 workspace（同一個 LINE Provider 下的兩個 OA，同一位客人的 userId
+ * 是同一組）。每個呼叫端本來就知道自己在哪個 workspace，寫下去以後新資料就能直接查，
+ * 舊資料仍走原本的 join（要整個換掉得先回填）。
+ */
 export async function recordConversationEvent(
   sessionId: string,
   userId: string,
   eventType: ConversationEventType,
-  extras?: { moduleType?: ModuleType; moduleId?: string },
+  extras?: { moduleType?: ModuleType; moduleId?: string; workspaceId?: string },
 ): Promise<void> {
   const db = getDb()
   const eventRef = db.collection('conversationEvents').doc()
@@ -111,6 +120,7 @@ export async function recordConversationEvent(
     sessionId,
     userId,
     eventType,
+    ...(extras?.workspaceId ? { workspaceId: extras.workspaceId } : {}),
     ...(extras?.moduleType ? { moduleType: extras.moduleType } : {}),
     ...(extras?.moduleId ? { moduleId: extras.moduleId } : {}),
     timestamp: FieldValue.serverTimestamp(),
@@ -188,7 +198,7 @@ async function closeOrphanedSessions(
 
   await Promise.all(
     orphans.map(doc =>
-      recordConversationEvent(doc.id, lineUserId, 'conversation_closed')
+      recordConversationEvent(doc.id, lineUserId, 'conversation_closed', { workspaceId })
         .catch(e => console.warn('[session] orphan close event failed:', doc.id, e)),
     ),
   )
@@ -371,13 +381,13 @@ export async function ensureConversationSession(
 
   // Record events and clean up orphans outside the transaction (non-blocking for stats only).
   if (closedOldSessionId) {
-    recordConversationEvent(closedOldSessionId, lineUserId, 'conversation_closed')
+    recordConversationEvent(closedOldSessionId, lineUserId, 'conversation_closed', { workspaceId })
       .catch(e => console.warn('[session] close event record failed:', e))
   }
   if (createdNew) {
     // Event recording and orphan cleanup are independent — run in parallel, non-blocking
     Promise.all([
-      recordConversationEvent(newSessionId, lineUserId, 'conversation_opened'),
+      recordConversationEvent(newSessionId, lineUserId, 'conversation_opened', { workspaceId }),
       closeOrphanedSessions(lineUserId, newSessionId, workspaceId),
     ]).catch(e => console.warn('[session] post-create cleanup failed:', e))
   }
@@ -470,9 +480,9 @@ export async function enterModule(
       .update({ activeInput: FieldValue.delete() })
       .catch((e) => console.warn('[session] clear activeInput on live_agent:', e))
   }
-  await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'entered_module', { moduleType, moduleId })
+  await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'entered_module', { moduleType, moduleId, workspaceId: wid })
   if (outcome.isNewHandoff) {
-    await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'handoff_request')
+    await recordConversationEvent(sid, lineUserIdFromFirestoreDocId(userId), 'handoff_request', { workspaceId: wid })
   }
 }
 
@@ -542,10 +552,13 @@ export async function recordHumanFirstReply(sessionId: string, userId: string): 
   const db = getDb()
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
 
+  // 事件要帶 workspaceId，而這支的參數沒有——從交易裡讀到的那份會話文件拿，不必多讀一次
+  let sessionWorkspaceId = ''
   const recorded = await db.runTransaction(async (tx) => {
     const sessionSnap = await tx.get(sessionRef)
     if (!sessionSnap.exists) return false
     const session = sessionSnap.data() as any
+    sessionWorkspaceId = String(session.workspaceId ?? '')
     if (session.humanFirstRepliedAt) return false
 
     tx.update(sessionRef, {
@@ -561,7 +574,7 @@ export async function recordHumanFirstReply(sessionId: string, userId: string): 
   if (!recorded) return
 
   _updateSessionStatusCache(sessionId, 'human_handling')
-  await recordConversationEvent(sessionId, userId, 'human_first_reply')
+  await recordConversationEvent(sessionId, userId, 'human_first_reply', { workspaceId: sessionWorkspaceId })
 }
 
 /**
@@ -588,7 +601,7 @@ export async function handBackSessionToBot(
     lastActivityAt: FieldValue.serverTimestamp(),
   })
   _updateSessionStatusCache(sessionId, 'bot_handling')
-  await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'returned_to_bot')
+  await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'returned_to_bot', { workspaceId: String(session.workspaceId ?? '') })
   return true
 }
 
@@ -626,7 +639,7 @@ export async function closeConversationSession(sessionId: string, userId: string
     { currentSessionId: null },
     { merge: true },
   )
-  await recordConversationEvent(sessionId, lineUserId, 'conversation_closed')
+  await recordConversationEvent(sessionId, lineUserId, 'conversation_closed', { workspaceId: String(session.workspaceId ?? '') })
 }
 
 /**
@@ -736,6 +749,6 @@ export async function onHumanOutgoingMessage(userId: string, workspaceId: string
 
   _updateSessionStatusCache(sessionId, 'human_handling')
 
-  if (result.isFirstHumanReply) await recordConversationEvent(sessionId, userId, 'human_first_reply')
-  if (result.newHandoff) await recordConversationEvent(sessionId, userId, 'handoff_request')
+  if (result.isFirstHumanReply) await recordConversationEvent(sessionId, userId, 'human_first_reply', { workspaceId })
+  if (result.newHandoff) await recordConversationEvent(sessionId, userId, 'handoff_request', { workspaceId })
 }
