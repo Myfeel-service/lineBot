@@ -66,6 +66,44 @@ export async function getLineWorkspaceCredentials(workspaceId: string): Promise<
 }
 
 /**
+ * 用 LIFF 的 Login channel id 反查租戶（`defaultLiffId` 的格式是 `{loginChannelId}-{suffix}`）。
+ *
+ * 為什麼不沿用 listWorkspaceLineCredentials：那支會把**整個 workspaces 集合**讀進記憶體
+ * （連 channel secret／access token 都一起），而呼叫它的 /api/liff/config 是**不需要登入**的
+ * 端點——任何人拿一組亂編的 liffClientId 反覆打，就能讓每個執行個體每分鐘重掃一次全表
+ * （查不到的回應刻意不設快取標頭）。這裡改成用前綴範圍查詢，最多讀 2 筆。
+ *
+ * 取 2 筆而不是 1 筆：兩個租戶共用同一個 Login channel 時要看得出「撞號了」，呼叫端才有
+ * 辦法維持「撞號就拒絕猜」（猜錯會把客人送去別的 Login channel 登入，貼標貼到不存在的人身上）。
+ * `-` 的下一個字元是 `.`，所以 [`{id}-`, `{id}.`) 正好是「以這個 channel id 為前綴」那一段，
+ * 不會把 `12345-xxx` 誤算成 `1234` 的。單欄位範圍查詢用的是自動索引，不必另外建。
+ */
+export async function findWorkspacesByLiffChannelId(
+  liffClientId: string,
+): Promise<Array<{ workspaceId: string; credentials: ResolvedLineCredentials }>> {
+  const id = String(liffClientId || '').trim()
+  if (!/^\d+$/.test(id)) return []
+
+  const snap = await getDb().collection('workspaces')
+    .where('defaultLiffId', '>=', `${id}-`)
+    .where('defaultLiffId', '<', `${id}.`)
+    .limit(2)
+    .get()
+
+  const now = Date.now()
+  return snap.docs.map((doc) => {
+    const d = doc.data() as LineWorkspaceDoc
+    const credentials: ResolvedLineCredentials = {
+      channelAccessToken: String(d?.channelAccessToken ?? '').trim(),
+      channelSecret: String(d?.channelSecret ?? '').trim(),
+      defaultLiffId: String(d?.defaultLiffId ?? '').trim(),
+    }
+    cacheByWorkspace.set(doc.id, { ...credentials, expiresAt: now + TTL_MS })
+    return { workspaceId: doc.id, credentials }
+  })
+}
+
+/**
  * 列出所有已設定 LINE 憑證的 workspace（供 webhook／token 驗證時比對）。
  */
 export async function listWorkspaceLineCredentials(): Promise<Array<{ workspaceId: string; credentials: ResolvedLineCredentials }>> {

@@ -1,4 +1,4 @@
-import { getLineWorkspaceCredentials, listWorkspaceLineCredentials } from '~~/server/utils/line-workspace-credentials'
+import { findWorkspacesByLiffChannelId, getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
 import { liffChannelIdFromLiffId } from '~~/server/utils/liff-token'
 
@@ -28,7 +28,9 @@ export default defineEventHandler(async (event) => {
     liffId = (await getLineWorkspaceCredentials(workspaceId)).defaultLiffId
   }
   else if (/^\d+$/.test(liffClientId)) {
-    const matches = (await listWorkspaceLineCredentials())
+    // 前綴範圍查詢最多讀 2 筆（見 findWorkspacesByLiffChannelId）；再用同一支解析函式復核，
+    // 免得「前綴相同但格式不是 {id}-{suffix}」的資料被當成命中
+    const matches = (await findWorkspacesByLiffChannelId(liffClientId))
       .filter(r => liffChannelIdFromLiffId(r.credentials.defaultLiffId) === liffClientId)
     const only = matches.length === 1 ? matches[0] : undefined
     if (only) {
