@@ -35,6 +35,42 @@ function searchParamsFromUrlOrQuery(raw: string): URLSearchParams | null {
 }
 
 /**
+ * LIFF ID 的格式是 `{loginChannelId}-{suffix}`，取出前半段的 Login channel ID。
+ *
+ * 放在 shared/ 而不是各自寫一份：這條規則同時是**前端的租戶設定快取鍵**與**後端反查租戶、
+ * 比對 token client_id** 的依據（server/utils/liff-token.ts 直接轉出這一支）。兩份各自演化的話，
+ * 前端會拿 A 租戶的鍵去存 B 租戶的 liffId——正是分租戶快取要防的那件事。
+ */
+export function liffChannelIdFromLiffId(liffId: string): string {
+  const m = /^(\d+)-/.exec(String(liffId || '').trim())
+  return m?.[1] ?? ''
+}
+
+/**
+ * 沿著巢狀的 `liff.state` 一路往下找，把還缺的參數補齊（最多 4 層，避免被構造成無窮迴圈）。
+ * `liff.state` 與 `liffRedirectUri` 兩條還原路徑都走這裡：兩邊要找的參數、別名與巢狀規則
+ * 完全一樣，分開寫的話新增一個別名（像這次的 claim_token／liff_id）就得記得改兩個地方。
+ */
+function fillFromNestedState(
+  startRaw: string,
+  acc: { ct: string; campaignCode: string; liffId: string },
+): void {
+  let cursor = startRaw
+  for (let i = 0; i < 4; i++) {
+    const sp = searchParamsFromUrlOrQuery(cursor)
+    if (!sp) break
+
+    if (!acc.ct) acc.ct = String(sp.get('claimToken') || sp.get('claim_token') || sp.get('ct') || '').trim()
+    if (!acc.campaignCode) acc.campaignCode = String(sp.get('c') || '').trim()
+    if (!acc.liffId) acc.liffId = String(sp.get('liffId') || sp.get('liff_id') || '').trim()
+
+    const nested = String(sp.get('liff.state') || sp.get('liff_state') || '').trim()
+    if (!nested) break
+    cursor = nested
+  }
+}
+
+/**
  * 活動 LIFF 進入頁：從網址取得 claimToken/ct（兌換 token）、c（活動代碼）與 liffId（初始化 LIFF SDK）。
  * LINE 可能把原始 query 放在 `liff.state`，登入 callback 則放在 `liffRedirectUri`。
  */
@@ -65,58 +101,20 @@ export function parseLeadClaimFromQuery(
     }
   }
 
+  const acc = { ct, campaignCode, liffId }
+
   const stateRaw = pick('liff.state') || pick('liff_state')
-  if (stateRaw) {
-    try {
-      let cursor = stateRaw
-      for (let i = 0; i < 4; i++) {
-        const decoded = decodeURIComponent(String(cursor || '').replace(/\+/g, '%20'))
-        let search = ''
-        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
-          search = new URL(decoded).search
-        }
-        else {
-          const qIndex = decoded.indexOf('?')
-          search = qIndex >= 0 ? decoded.slice(qIndex) : decoded
-        }
-        const normalized = search.startsWith('?') ? search.slice(1) : search
-        const sp = new URLSearchParams(normalized)
-
-        if (!ct) ct = String(sp.get('claimToken') || sp.get('claim_token') || sp.get('ct') || '').trim()
-        if (!campaignCode) campaignCode = String(sp.get('c') || '').trim()
-        if (!liffId) liffId = String(sp.get('liffId') || sp.get('liff_id') || '').trim()
-
-        const nested = String(sp.get('liff.state') || sp.get('liff_state') || '').trim()
-        if (!nested) break
-        cursor = nested
-      }
-    }
-    catch {
-      // ignore malformed state
-    }
-  }
+  if (stateRaw) fillFromNestedState(stateRaw, acc)
 
   // LINE 在外部瀏覽器完成登入後，callback 網址只剩 code/state/liffClientId，原本的
   // claimToken／liffId 會整批不見；LIFF 會另外附上 liffRedirectUri = 登入前的完整網址，
   // 是掉參數時最可靠的還原來源（比 localStorage 可靠：不受隱私模式、換瀏覽器、逾時影響）。
   const redirectUriRaw = pick('liffRedirectUri') || pick('liff_redirect_uri')
-  if (redirectUriRaw && (!ct || !campaignCode || !liffId)) {
-    let cursor = redirectUriRaw
-    for (let i = 0; i < 4; i++) {
-      const sp = searchParamsFromUrlOrQuery(cursor)
-      if (!sp) break
-
-      if (!ct) ct = String(sp.get('claimToken') || sp.get('claim_token') || sp.get('ct') || '').trim()
-      if (!campaignCode) campaignCode = String(sp.get('c') || '').trim()
-      if (!liffId) liffId = String(sp.get('liffId') || sp.get('liff_id') || '').trim()
-
-      const nested = String(sp.get('liff.state') || sp.get('liff_state') || '').trim()
-      if (!nested) break
-      cursor = nested
-    }
+  if (redirectUriRaw && (!acc.ct || !acc.campaignCode || !acc.liffId)) {
+    fillFromNestedState(redirectUriRaw, acc)
   }
 
-  return { ct, campaignCode, liffId }
+  return acc
 }
 
 /**

@@ -10,6 +10,8 @@
  * provider 底下替別人的 userId 取得有效 token，因此可阻斷冒用。
  */
 
+import { liffChannelIdFromLiffId } from '~~/shared/liff-lead-query'
+
 const LINE_API_BASE = 'https://api.line.me'
 
 export interface VerifiedLiffUser {
@@ -94,11 +96,9 @@ export async function verifyLiffAccessToken(accessToken: string): Promise<Verifi
 
 /**
  * LIFF ID 格式為 `{loginChannelId}-{suffix}`；取出 channel ID 供與 token 的 client_id 比對。
+ * 規則本身放在 shared/（前端也要用同一條當租戶快取鍵），這裡只轉出去給既有呼叫端用。
  */
-export function liffChannelIdFromLiffId(liffId: string): string {
-  const m = /^(\d+)-/.exec(String(liffId || '').trim())
-  return m?.[1] ?? ''
-}
+export { liffChannelIdFromLiffId }
 
 /**
  * 比對 token 的 client_id 與 workspace 設定的 LIFF channel。

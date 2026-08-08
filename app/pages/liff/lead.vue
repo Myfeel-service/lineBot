@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { $fetch } from 'ofetch'
-import { buildLoginRedirectUri, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
+import { buildLoginRedirectUri, liffChannelIdFromLiffId, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
 
 definePageMeta({ layout: false, ssr: false })
 
@@ -91,11 +91,12 @@ function clearLeadParams() {
 const CFG_KEY_PREFIX = 'liff_config_cache:'
 const CFG_TTL = 60 * 60 * 1000 // 1 hour
 
-/** LIFF ID 格式 `{loginChannelId}-{suffix}`；前半段可反查租戶，也是設定快取的鍵。 */
-function loginChannelIdFromLiffId(liffIdRaw: string): string {
-  const m = /^(\d+)-/.exec(String(liffIdRaw || '').trim())
-  return m?.[1] ?? ''
-}
+/**
+ * LIFF ID 格式 `{loginChannelId}-{suffix}`；前半段可反查租戶，也是設定快取的鍵。
+ * 用 shared/ 那一支（後端反查租戶、比對 token client_id 走的是同一條規則）——
+ * 兩邊各寫一份而其中一份改了的話，快取鍵與伺服器認定的租戶就會對不起來。
+ */
+const loginChannelIdFromLiffId = liffChannelIdFromLiffId
 
 /**
  * 設定快取一律按 Login channel 分開存。
@@ -205,14 +206,17 @@ function parseLeadFromBrowserLocation() {
   return result
 }
 
-/** 讀 LINE 登入 callback 的參數（route.query 先，退回直接讀 location）。 */
+/**
+ * 讀 LINE 登入 callback 的參數（code／liffClientId）。
+ *
+ * 只讀 route.query 就夠：callback 是一次全新的文件載入，route.query 就是從同一份
+ * location.search 解出來的，而且這一支只在 onMounted 最前面、任何 replaceState 之前被呼叫。
+ * （被包在 liff.state／hash 裡的參數不走這裡，那是 parseLeadFromBrowserLocation 的事。）
+ */
 function readCallbackParam(key: string): string {
   const fromRoute = (route.query as Record<string, unknown>)[key]
   const v = Array.isArray(fromRoute) ? fromRoute[0] : fromRoute
-  if (typeof v === 'string' && v.trim()) return v.trim()
-  if (typeof window === 'undefined') return ''
-  try { return String(new URL(window.location.href).searchParams.get(key) || '').trim() }
-  catch { return '' }
+  return typeof v === 'string' ? v.trim() : ''
 }
 
 function buildDebugInfo(extra: Record<string, unknown>) {
