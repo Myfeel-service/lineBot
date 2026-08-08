@@ -2,6 +2,7 @@ import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 import type { ModuleType } from './conversation-stats'
 import type { AutoReplyAction, AutoReplyCooldown, AutoReplyMatchType, AutoReplyTagging } from '../auto-reply-rule'
 import type { AiAutoReplyConfig, AiConversationMeta } from './ai-knowledge'
+import type { ActiveScriptState } from './ai-script'
 
 // AI 相關 doc 型別（KnowledgeChunkDoc / KnowledgeSourceDoc / AiSettingsDoc / AiUsageDoc）
 // 定義於 ./ai-knowledge.ts，由 Nuxt 自動匯入
@@ -12,12 +13,26 @@ import type { AiAutoReplyConfig, AiConversationMeta } from './ai-knowledge'
 // ═══════════════════════════════════════════════════════════════════
 
 export interface UserDoc {
-  workspaceId: string
+  /** 兩個都是後來才加的欄位，最早期的文件可能沒有 → 讀的時候不能假設一定在 */
+  workspaceId?: string
   /** LINE userId */
-  lineUserId: string
+  lineUserId?: string
   displayName: string
   pictureUrl: string
-  isBlocked: boolean
+  isBlocked?: boolean
+  blockedAt?: Timestamp | FieldValue | null
+  unblockedAt?: Timestamp | FieldValue | null
+  /** 正在等客人填的欄位（模組的「請輸入…」）；填完或逾時就清掉 */
+  activeInput?: {
+    moduleId: string
+    attribute?: string
+    tagIds?: string[]
+    expiresAt: number
+  } | null
+  /** 正在進行中的腳本狀態（見 shared/types/ai-script） */
+  activeScript?: ActiveScriptState | null
+  /** 客人身上的自訂屬性（貼標／模組收集到的欄位） */
+  attributes?: Record<string, string>
   /** 自動回覆規則 ID → 上次觸發時間（epoch ms） */
   autoReplyCooldowns?: Record<string, number>
   /** 模組 ID → 冷卻資訊（由啟用防重複的自動回覆寫入） */

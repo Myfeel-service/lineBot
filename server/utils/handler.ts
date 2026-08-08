@@ -50,6 +50,7 @@ import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
 import {
   lineUserFirestoreDocId,
@@ -344,35 +345,13 @@ interface FlowDoc {
   name?: string
 }
 
-interface UserDoc {
-  workspaceId?: string
-  lineUserId?: string
-  displayName: string
-  pictureUrl: string
+/**
+ * users 文件。欄位定義在 shared/types/firestore-docs.ts（同一份）——這裡先前另外抄了一份，
+ * 於是每加一個欄位就得記得改兩個地方，而共用的那份早就落後好幾個欄位了。
+ * 這邊只覆寫寫入端的差異：建立文件時 createdAt 送的是 serverTimestamp()。
+ */
+type UserDoc = Omit<SharedUserDoc, 'createdAt'> & {
   createdAt: FirebaseFirestore.FieldValue
-  isBlocked?: boolean
-  blockedAt?: FirebaseFirestore.FieldValue | null
-  unblockedAt?: FirebaseFirestore.FieldValue | null
-  activeInput?: {
-    moduleId: string
-    attribute?: string
-    tagIds?: string[]
-    expiresAt: number
-  } | null
-  activeScript?: ActiveScriptState | null
-  attributes?: Record<string, string>
-  autoReplyCooldowns?: Record<string, number>
-  autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
-  /**
-   * 上一則自動回覆是哪條規則、哪一場對話、什麼時候（擋同一條規則連續複讀；
-   * 見 recordAutoReplyFired。`at` 是有效期限的依據，舊資料沒有這個欄位＝視為過期）
-   */
-  lastAutoReply?: { ruleId: string; sessionId: string; at?: number }
-  /**
-   * 上一次「準備要送這條規則」的宣告：規則、內容指紋、時間。
-   * 在交易裡寫，用來擋並行處理造成的同一句話回兩次（見 claimAutoReplyCooldown）。
-   */
-  lastAutoReplyClaim?: { ruleId: string; textKey: string; at: number }
 }
 
 function toConversationText(msg: messagingApi.Message): string {
