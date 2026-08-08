@@ -12,7 +12,7 @@
  */
 import { getDb } from './firebase'
 import { getPendingOrders, markRecurringNotFoundSeen, voidPendingOrder } from './payment'
-import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolveBackendUrl, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
+import { PAYUNI_QUERY_ENDPOINTS, buildTradeQuery, isPayuniEnvExplicit, isQueryTradePaid, parsePayuniQueryResult, queryCardBinding, resolveBackendUrl, resolvePayuniEnv, sanitizeCreditTokenRef, verifyAndDecryptPayuniNotify, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -40,31 +40,54 @@ export async function reconcilePayuniPending(
   const merchantId = String(config.payuniMerchantId || '').trim()
   const keys: PayuniKeys = { merKey: String(config.payuniHashKey || ''), merIV: String(config.payuniHashIV || '') }
   if (!merchantId || !keys.merKey || !keys.merIV) return { checked: 0, recovered: 0 } // 金流未設定 → 略過
-  // ⚠️ 查單一定要跟扣款走**同一個出口**（見 resolveBackendUrl）。設了中繼站時,扣款的實際
-  // 環境是「中繼站轉去哪」,而不是 PAYUNI_ENV;查單若直連 PAYUNi 就可能問到另一個環境,
-  // 於是每一筆真的授權成功的單都回「查無此單」→ 被下面那段作廢 → 下一輪重複扣款。
-  const url = resolveBackendUrl(PAYUNI_QUERY_ENDPOINTS[resolvePayuniEnv(config.payuniEnv)], config.payuniRelayBase)
+  /**
+   * 查單優先跟扣款走**同一個出口**（見 resolveBackendUrl）：設了中繼站時，扣款的實際環境
+   * 是「中繼站轉去哪」而不是 PAYUNI_ENV，兩邊問不同環境的話，真的授權成功的單會回
+   * 「查無此單」→ 被下面那段作廢 → 下一輪重複扣款。
+   *
+   * 但中繼站不一定代理這條路徑（2026-08-08 實測：`/api/credit`、`/api/credit_bind/query`
+   * 有代理，`/api/trade/query` 回 404）。代理不到就退回直連，並留下警告——整支查單失效
+   * 的代價更大：漏接 Notify 的補開通會整個停擺，客人付了錢卻不會開通。
+   */
+  const directUrl = PAYUNI_QUERY_ENDPOINTS[resolvePayuniEnv(config.payuniEnv)]
+  let queryUrl = resolveBackendUrl(directUrl, config.payuniRelayBase)
   const ts = Math.floor(now.getTime() / 1000)
+
+  const postTradeQuery = async (orderNo: string): Promise<string> => {
+    const fields = buildTradeQuery(merchantId, orderNo, keys, ts)
+    // 明確用 text 讀回再自己 JSON.parse——不倚賴 PAYUNi 有沒有給 JSON content-type
+    // （否則 $fetch 會回字串、EncryptInfo 變 undefined,整個補救靜默失效）。
+    const send = (url: string) => $fetch<string>(url, {
+      method: 'POST',
+      body: new URLSearchParams({
+        MerID: fields.MerID,
+        Version: fields.Version,
+        EncryptInfo: fields.EncryptInfo,
+        HashInfo: fields.HashInfo,
+      }).toString(),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      responseType: 'text',
+    })
+    try {
+      return await send(queryUrl)
+    }
+    catch (e) {
+      if (queryUrl === directUrl) throw e
+      console.warn(
+        '[payuni:reconcile] 中繼站沒有代理 trade/query，這一輪改走直連（建議在中繼站補上這條路徑，'
+        + '讓查單與扣款走同一個出口）：', (e as Error)?.message,
+      )
+      queryUrl = directUrl
+      return await send(directUrl)
+    }
+  }
 
   const pending = await getPendingOrders(getDb(), MAX_PENDING_PER_RUN)
 
   /** 查一筆:已付款就補開通,回傳是否有真的補到。全程 try/catch,失敗回 false 不影響其他筆。 */
   const queryOne = async (order: PaymentOrderDoc): Promise<boolean> => {
     try {
-      const fields = buildTradeQuery(merchantId, order.merchantOrderNo, keys, ts)
-      // 明確用 text 讀回再自己 JSON.parse——不倚賴 PAYUNi 有沒有給 JSON content-type
-      // （否則 $fetch 會回字串、EncryptInfo 變 undefined,整個補救靜默失效）。
-      const raw = await $fetch<string>(url, {
-        method: 'POST',
-        body: new URLSearchParams({
-          MerID: fields.MerID,
-          Version: fields.Version,
-          EncryptInfo: fields.EncryptInfo,
-          HashInfo: fields.HashInfo,
-        }).toString(),
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        responseType: 'text',
-      })
+      const raw = await postTradeQuery(order.merchantOrderNo)
       let resp: Record<string, string>
       try { resp = JSON.parse(raw) }
       catch { console.warn('[payuni:reconcile] 回應非 JSON,略過', order.merchantOrderNo); return false }
@@ -85,6 +108,15 @@ export async function reconcilePayuniPending(
       const outerStatus = String(resp?.Status || '').trim().toUpperCase()
       if (outerStatus === 'QUERY03001' && order.kind === 'period_recurring') {
         const createdMs = (order.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
+        // PAYUNI_ENV 沒設定／打錯字時（resolvePayuniEnv 會保守退回 test）不准作廢：那時我們
+        // 問的環境可能根本不是扣款進去的那個，「查無此單」就不代表沒扣到（見 isPayuniEnvExplicit）
+        if (!isPayuniEnvExplicit(config.payuniEnv)) {
+          console.warn(
+            '[payuni:reconcile] PAYUNI_ENV 未明確設定，不敢依「查無此單」作廢續扣單（先設定 PAYUNI_ENV=test|prod）：',
+            order.merchantOrderNo,
+          )
+          return false
+        }
         if (createdMs && now.getTime() - createdMs > UNSENT_RECURRING_GRACE_MS) {
           // 「查無」是**沒有簽章**的外層狀態碼(查無的回應本來就沒有 EncryptInfo 可驗),而作廢
           // 不可逆 → 要求相隔數分鐘、跨兩輪對帳都查無才動手,避免查詢庫延遲或設定錯誤造成

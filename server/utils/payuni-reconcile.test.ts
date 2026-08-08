@@ -186,7 +186,7 @@ describe('reconcilePayuniPending — PAYUNi 查無此單的續扣單要作廢(�
     expect(mockVoid).not.toHaveBeenCalled()
   })
 
-  it('查單與扣款走同一個出口:設了中繼站,trade/query 也要走中繼站', async () => {
+  it('查單優先跟扣款走同一個出口:設了中繼站,trade/query 先走中繼站', async () => {
     // 為什麼:扣款(/api/credit)走中繼站時,那筆交易到底在正式還是沙盒,取決於**中繼站轉去哪**。
     // 查單若直連 PAYUNi、照 PAYUNI_ENV 選環境,就可能問到另一個環境 → 每筆真的授權成功的
     // 續扣單都回 QUERY03001 → 被判定「沒送達」作廢 → 下一輪重複扣客戶的卡。
@@ -197,6 +197,44 @@ describe('reconcilePayuniPending — PAYUNi 查無此單的續扣單要作廢(�
     await reconcilePayuniPending({ ...CONFIG, payuniRelayBase: 'https://relay.example.com' }, new Date())
 
     expect(fetchSpy).toHaveBeenCalledWith('https://relay.example.com/api/trade/query', expect.anything())
+  })
+
+  it('中繼站沒有代理 trade/query(實測會 404) → 退回直連，不能整支查單失效', async () => {
+    // 2026-08-08 實測:中繼站代理了 /api/credit 與 /api/credit_bind/query,但沒有 /api/trade/query。
+    // 若不退回直連,漏接 Notify 的補開通會整個停擺——客人付了錢卻不會開通,比查錯環境更糟。
+    mockPending.mockResolvedValue([order({ kind: 'period_first' })])
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes('relay.example.com')) throw new Error('404 Not Found')
+      return queryReply({})
+    })
+    vi.stubGlobal('$fetch', fetchSpy)
+    const payuni = await import('./payuni')
+    vi.spyOn(payuni, 'verifyAndDecryptPayuniNotify').mockReturnValue({
+      'Result[0][MerTradeNo]': 'NP2608060001',
+      'Result[0][TradeStatus]': '1',
+    } as never)
+    mockBindQuery.mockResolvedValue({ ok: false, outerStatus: 'QUERY03001', notFound: true, mandate: null })
+
+    const r = await reconcilePayuniPending({ ...CONFIG, payuniRelayBase: 'https://relay.example.com' }, new Date())
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://relay.example.com/api/trade/query', expect.anything())
+    expect(fetchSpy).toHaveBeenCalledWith('https://sandbox-api.payuni.com.tw/api/trade/query', expect.anything())
+    // 退回直連之後照樣補開通，不是靜靜失敗
+    expect(r.recovered).toBe(1)
+  })
+
+  it('PAYUNI_ENV 沒設定(會被保守退回 test) → 不敢依「查無此單」作廢', async () => {
+    // 這正是重複扣款的觸發條件:中繼站把扣款轉去正式，PAYUNI_ENV 留白讓查單問沙盒，
+    // 於是每筆真的扣成功的單都「查無」。這種設定下寧可讓 TTL 去處理，也不能作廢。
+    const now = new Date()
+    const old = { toMillis: () => now.getTime() - 30 * 60 * 1000 }
+    mockPending.mockResolvedValue([order({ kind: 'period_recurring', createdAt: old as never })])
+    mockNotFoundSeen.mockResolvedValue(now.getTime() - 20 * 60 * 1000)
+    vi.stubGlobal('$fetch', vi.fn(async () => JSON.stringify({ Status: 'QUERY03001' })))
+
+    await reconcilePayuniPending({ ...CONFIG, payuniEnv: '' }, now)
+
+    expect(mockVoid).not.toHaveBeenCalled()
   })
 
   it('沒設中繼站 → 照 PAYUNI_ENV 直連 PAYUNi(現行行為不變)', async () => {

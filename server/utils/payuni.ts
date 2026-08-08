@@ -102,6 +102,20 @@ export function resolveBackendUrl(payuniUrl: string, relayBase: unknown): string
  *    小拼字就靜默把真客戶導到沙盒、刷不到錢。無法識別的值**保守用 test 並警告**（寧可測試站
  *    也不要拿設定錯的環境去真的扣客戶錢）。
  */
+/**
+ * `PAYUNI_ENV` 是不是**明確設定**過的值（而不是留白／打錯字被保守退回 test）。
+ *
+ * 為什麼需要分辨：resolvePayuniEnv 把「沒設定」和「設成 test」都變成 test，兩者在多數情況
+ * 等價，但有一種情況差很多——設了中繼站時，扣款到底進哪個環境由**中繼站**決定，而查單是照
+ * PAYUNI_ENV 選端點。環境不一致時，已經授權成功的續扣單會被查成「查無此單」；
+ * 若還照這個結論把訂單作廢，下一輪就會對同一期再刷一次卡。
+ * 所以「會動到訂單狀態」的判斷要求 PAYUNI_ENV 是有人真的寫下來的值。
+ */
+export function isPayuniEnvExplicit(raw: unknown): boolean {
+  const v = String(raw ?? '').trim().toLowerCase()
+  return ['prod', 'production', 'live', 'core', 'test', 'sandbox', 'dev', 'staging'].includes(v)
+}
+
 export function resolvePayuniEnv(raw: unknown): 'test' | 'prod' {
   const v = String(raw ?? '').trim().toLowerCase()
   if (['prod', 'production', 'live', 'core'].includes(v)) return 'prod'
