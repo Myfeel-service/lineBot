@@ -3,7 +3,10 @@ import type { ConversationEventType, ConversationStatus, ModuleType } from '~~/s
 import { MODULE_TYPE_LABELS, STATUS_LABELS } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import { resolveMessageSender, type MessageSender } from '~~/shared/message-sender'
+import { resolveMessageSender } from '~~/shared/message-sender'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { customerActionLabel } from '~~/shared/customer-action'
+import type { TimelineItem, TimelineItemType, TimelineSessionMeta } from '~~/shared/types/conversation-timeline'
 
 /**
  * GET /api/conversations/:userId/messages
@@ -36,47 +39,8 @@ const MAX_PAGE_SIZE = 200
 /** 一段時間軸最多帶幾顆群發泡泡（時間軸不是推播報表，看到有發過就夠） */
 const BROADCAST_JOIN_LIMIT = 20
 
-type TimelineItemType = 'message' | 'event' | 'broadcast'
-
-interface TimelineItem {
-  id: string
-  type: TimelineItemType
-  timestamp: unknown
-  // ── 訊息 ──
-  direction?: 'incoming' | 'outgoing'
-  /** 出站訊息：對方在 lastPeerActivityAt 之前有互動／來訊時推定已讀（非 LINE 內建已讀） */
-  readByPeer?: boolean
-  text?: string
-  messageType?: string
-  payload?: unknown
-  /** 客人傳的圖，AI 讀出來的一句說明（沒讀到或 AI 未啟用就是空字串） */
-  mediaDescription?: string
-  /** 這則是誰回的：真人 / AI / 機器人 / 系統。null＝這功能上線前的舊訊息，前端不掛標籤 */
-  sender?: MessageSender | null
-  senderName?: string
-  /**
-   * 這則是哪一次 AI 回合送出的（見 AiTurnDoc）。有值才給「為什麼這樣答」的入口——
-   * 空字串＝這功能上線前的舊訊息，刻意不用時間去猜是哪一回合（猜錯會讓客服對著錯的
-   * 那一題按「答錯」，比沒有更糟；同 sender 標籤的「不猜」原則）。
-   */
-  aiTurnId?: string
-  // ── 事件 ──
-  eventType?: ConversationEventType
-  moduleType?: ModuleType
-  moduleId?: string
-  label?: string
-  // ── 群發（讀取時才拼進來，見 loadBroadcastItems）──
-  broadcastId?: string
-}
-
-/** 一場會話：給工具列、AI 脈絡卡窗口，也用來界定事件要撈哪幾場 */
-interface SessionMeta {
-  sessionId: string
-  status: ConversationStatus
-  statusLabel: string
-  openedAtMs: number
-  closedAtMs: number
-}
+/** 回應的形狀定義在 shared/types/conversation-timeline.ts（前後端同一份，見那邊的說明） */
+type SessionMeta = TimelineSessionMeta
 
 /**
  * 這一段時間軸的時間範圍。訊息由游標決定，事件與群發只能靠時間對進來，
@@ -92,17 +56,13 @@ interface TimeWindow {
   toExclusive: boolean
 }
 
+/**
+ * Firestore 時間欄位 → 毫秒（讀不出來就 0，代表「沒有時間」）。
+ * 轉換規則統一在 shared/firestore-date.ts：這個專案的時間欄位有 Timestamp、
+ * `{seconds}`、序列化後的 `{_seconds}`、ISO 字串好幾種樣子，各寫一份遲早會有一份漏掉。
+ */
 function toMillis(raw: unknown): number {
-  if (raw == null) return 0
-  if (typeof raw === 'object' && raw !== null && 'toMillis' in raw && typeof (raw as { toMillis: () => number }).toMillis === 'function') {
-    return (raw as { toMillis: () => number }).toMillis()
-  }
-  if (typeof raw === 'object' && raw !== null && 'toDate' in raw && typeof (raw as { toDate: () => Date }).toDate === 'function') {
-    return (raw as { toDate: () => Date }).toDate().getTime()
-  }
-  if (raw instanceof Date) return raw.getTime()
-  const t = new Date(String(raw)).getTime()
-  return Number.isFinite(t) ? t : 0
+  return parseFirestoreDate(raw)?.getTime() ?? 0
 }
 
 function inWindow(ms: number, w: TimeWindow): boolean {
@@ -122,17 +82,28 @@ function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, m
     /**
      * 只會出現在舊資料上：現在「客人按了按鈕但沒回覆」改記成一筆客人動作紀錄
      * （messageType='customer_action'，見 shared/customer-action.ts）——那個在對話流裡就看得到。
-     * 文案刻意與那邊一致，同一件事在兩處不該有兩種說法。
+     * 直接呼叫那邊的文案函式：同一件事在兩處不該有兩種說法，而「兩份字串靠人記得一起改」
+     * 遲早會漂走（漂走時也沒有任何測試或編譯器會出聲）。
      */
-    return moduleId
-      ? '客人點了按鈕，但指向的內容已失效（沒有回覆送出）'
-      : '客人點了按鈕，但沒有對應的回覆內容（沒有回覆送出）'
+    return customerActionLabel({ type: 'button_dead', moduleId })
   }
   if (eventType === 'entered_module') {
     const label = moduleType ? MODULE_TYPE_LABELS[moduleType] : '模組'
     return `進入：${label}`
   }
   return eventType
+}
+
+/** 會話文件 → 工具列要的那幾個欄位。清單與單筆兩條路都走這裡，欄位才不會各長各的 */
+function sessionMetaOf(sessionId: string, data: FirebaseFirestore.DocumentData): SessionMeta {
+  const status = data.status as ConversationStatus
+  return {
+    sessionId,
+    status,
+    statusLabel: STATUS_LABELS[status] ?? String(status),
+    openedAtMs: toMillis(data.openedAt),
+    closedAtMs: toMillis(data.closedAt),
+  }
 }
 
 /**
@@ -157,17 +128,7 @@ async function loadUserSessions(
   workspaceId: string,
   lineUserId: string,
 ): Promise<SessionMeta[]> {
-  const toMeta = (d: FirebaseFirestore.QueryDocumentSnapshot): SessionMeta => {
-    const data = d.data()
-    const status = data.status as ConversationStatus
-    return {
-      sessionId: d.id,
-      status,
-      statusLabel: STATUS_LABELS[status] ?? String(status),
-      openedAtMs: toMillis(data.openedAt),
-      closedAtMs: toMillis(data.closedAt),
-    }
-  }
+  const toMeta = (d: FirebaseFirestore.QueryDocumentSnapshot): SessionMeta => sessionMetaOf(d.id, d.data())
   try {
     const snap = await db.collection('conversationSessions')
       .where('userId', '==', lineUserId)
@@ -209,16 +170,9 @@ async function readSessionMeta(
 ): Promise<SessionMeta | null> {
   const snap = await db.collection('conversationSessions').doc(sessionId).get()
   if (!snap.exists) return null
-  if (snap.data()?.workspaceId !== workspaceId || snap.data()?.userId !== lineUserId) return null
   const data = snap.data()!
-  const status = data.status as ConversationStatus
-  return {
-    sessionId,
-    status,
-    statusLabel: STATUS_LABELS[status] ?? String(status),
-    openedAtMs: toMillis(data.openedAt),
-    closedAtMs: toMillis(data.closedAt),
-  }
+  if (data.workspaceId !== workspaceId || data.userId !== lineUserId) return null
+  return sessionMetaOf(sessionId, data)
 }
 
 /**
@@ -371,7 +325,7 @@ export default defineEventHandler(async (event) => {
    * 從那場的結束時間往回讀，畫面第一眼就是他點的那一場；還在進行中的那場結束時間就是現在，
    * 等於直接讀最新一段，不必特別處理。
    */
-  const anchorCloseMs = anchorSession && !beforeId && !afterId ? anchorSession.closedAtMs : 0
+  const anchorCloseMs = (anchorSession && !beforeId && !afterId ? anchorSession.closedAtMs : 0) ?? 0
 
   let pageDocs: FirebaseFirestore.QueryDocumentSnapshot[] = []
   let hasOlder = false
@@ -387,7 +341,7 @@ export default defineEventHandler(async (event) => {
     const cursor = await msgCol.doc(afterId).get()
     // 游標那則已被保留期清掉（見 cleanup.post.ts）＝就停在這裡，不要偷偷跳到別的地方
     if (!cursor.exists) {
-      return { items: [], hasOlder: false, hasNewer: false, limit, activeSession, session: anchorSession }
+      return { items: [], hasOlder: false, hasNewer: false, activeSession, session: anchorSession }
     }
     const docs = (await msgCol.orderBy('timestamp', 'asc').startAfter(cursor).limit(limit + 1).get()).docs
     hasNewer = docs.length > limit
@@ -404,7 +358,7 @@ export default defineEventHandler(async (event) => {
     if (beforeId) {
       const cursor = await msgCol.doc(beforeId).get()
       if (!cursor.exists) {
-        return { items: [], hasOlder: false, hasNewer: true, limit, activeSession, session: anchorSession }
+        return { items: [], hasOlder: false, hasNewer: true, activeSession, session: anchorSession }
       }
       ref = ref.startAfter(cursor)
       hasNewer = true
@@ -458,8 +412,8 @@ export default defineEventHandler(async (event) => {
       const oldestMs = pageDocs.length ? toMillis(pageDocs[0]!.data().timestamp) : 0
       const owning = oldestMs > 0
         ? sessions
-            .filter(s => s.openedAtMs > 0 && s.openedAtMs <= oldestMs)
-            .sort((a, b) => b.openedAtMs - a.openedAtMs)[0]
+            .filter(s => (s.openedAtMs ?? 0) > 0 && (s.openedAtMs ?? 0) <= oldestMs)
+            .sort((a, b) => (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0))[0]
         : anchorSession
       // 對不到任何一場就維持原本的敞開（寧可多幾行，也不要把事件行整段弄不見）
       if (owning?.openedAtMs) {
@@ -505,7 +459,6 @@ export default defineEventHandler(async (event) => {
     items,
     hasOlder,
     hasNewer,
-    limit,
     /** 對話目前進行中的那一場（「全部」分頁的工具列用） */
     activeSession,
     /** ?sessionId= 點進來的那一場（會話分頁工具列 + AI 脈絡卡的時間窗口） */

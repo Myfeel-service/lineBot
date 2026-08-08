@@ -1061,6 +1061,7 @@ import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from 
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
+import type { TimelineItem, TimelineResponse, TimelineSessionMeta } from '~~/shared/types/conversation-timeline'
 import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
@@ -1409,54 +1410,12 @@ interface PendingOutgoing {
   error?: string
 }
 
-interface TimelineItem {
-  id: string
-  /** broadcast = 群發標記，後端讀取時才拼進來（不是真的訊息文件），與 event 同樣渲染 */
-  type: 'event' | 'message' | 'broadcast'
-  timestamp: any
-  label?: string
-  /** 事件種類（見 ConversationEventType）；用來把重複的「進入：某模組」收掉 */
-  eventType?: string
-  /** entered_module 事件進的是哪一種模組 */
-  moduleType?: string
-  direction?: 'incoming' | 'outgoing'
-  readByPeer?: boolean
-  text?: string
-  messageType?: string
-  payload?: unknown
-  mediaDescription?: string
-  sender?: MessageSender | null
-  senderName?: string
-  /** 這則是哪一次 AI 回合送出的（同 MsgItem.aiTurnId） */
-  aiTurnId?: string
-  broadcastId?: string
-}
-
-interface SessionPanelMeta {
-  sessionId: string
-  status: ConvSessionStatus
-  statusLabel: string
-  /**
-   * 這場的時間範圍。AI 脈絡卡要靠它判斷「手上那張脈絡是不是這場的」——
-   * aiMeta 每位客人只有一張、每次互動覆寫，看舊會話時它講的是之後的事（見 aiContextSessionWindow）。
-   * 結束時間為 0 ＝還在進行中。
-   */
-  openedAtMs?: number
-  closedAtMs?: number
-}
-
-/** 對話時間軸 API 的一段回應（見 server/api/conversations/[userId]/messages.get.ts） */
-interface TimelineResponse {
-  items: TimelineItem[]
-  /** 上面還有更早的一段（往上滑就讀） */
-  hasOlder: boolean
-  /** 下面還有更晚的一段：點進已結束的舊會話時才會有，代表現在看的不是對話的最後 */
-  hasNewer: boolean
-  /** 這位客人目前進行中的那一場（可能是 null＝沒有進行中的會話） */
-  activeSession: SessionPanelMeta | null
-  /** 帶了 ?sessionId= 時，那一場的資料 */
-  session: SessionPanelMeta | null
-}
+/**
+ * 時間軸 API 的形狀（TimelineItem／TimelineResponse／會話 meta）定義在
+ * shared/types/conversation-timeline.ts，前後端**同一份**——先前兩邊各抄一份，欄位已經
+ * 漂走了（這邊少了 moduleId、把列舉放寬成 string），而兩份都編得過，沒有人會發現。
+ */
+type SessionPanelMeta = TimelineSessionMeta
 
 /**
  * 訊息流中央那一行灰字。兩種來源共用同一個樣子：
@@ -2805,80 +2764,66 @@ async function loadTimeline(
 }
 
 /**
- * 往上讀更早的一段（捲到接近頂端時自動觸發）。
+ * 接著讀上一段／下一段。
  *
- * 讀完要把捲軸補回原位：內容接在**上面**，不補的話客服正在看的那幾則會被推到畫面外，
- * 等於自己往下跳了一段。
+ * 兩個方向只差四件事：用哪一頭的游標、動哪一組旗標、失敗時說哪一句、以及要不要把捲軸
+ * 補回原位。其餘的守衛、合併、過期判斷完全一樣——拆成兩支的話，之後改其中一邊的規則
+ * （像過期回應要不要連會話一起比對）另一邊就會悄悄留在舊行為。
+ *
+ * · 往上（older）：捲到接近頂端時自動觸發。讀完要把捲軸補回原位，內容接在**上面**，
+ *   不補的話客服正在看的那幾則會被推到畫面外，等於自己往下跳了一段。
+ * · 往下（newer）：只有點進已結束的舊會話時才有意義，所以是使用者按了才讀、不自動觸發
+ *   （自動的話「黏在底部」會一路把整段歷史翻完）。
  */
-async function loadOlderTimeline() {
-  if (loadingOlder.value || msgLoading.value || !timelineHasOlder.value) return
+async function loadTimelinePage(direction: 'older' | 'newer') {
+  const older = direction === 'older'
+  const loading = older ? loadingOlder : loadingNewer
+  const hasMore = older ? timelineHasOlder : timelineHasNewer
+  if (loading.value || msgLoading.value || !hasMore.value) return
   const userId = selectedUserId.value
+  if (!userId) return
   const sessionId = selectedSessionId.value || ''
-  const cursor = oldestMessageId()
-  if (!userId || !cursor) return
-  loadingOlder.value = true
+  const cursor = older ? oldestMessageId() : newestMessageId()
+  /**
+   * 這一段一則訊息都沒有（只有事件行）＝沒有可以接續的游標——那場的訊息被保留期清掉時
+   * 就會這樣。游標是訊息 id，接不下去。往下讀是使用者按的，直接 return 會讓按鈕看起來
+   * 壞掉，所以帶他到最新一段並說明；往上讀是捲動自動觸發的，靜靜停住就好。
+   */
+  if (!cursor) {
+    if (!older) {
+      showToast('這一段沒有可接續的訊息（可能已超過保留期限），已跳到最新', 'warning')
+      await leaveSessionSegment(userId)
+    }
+    return
+  }
+
+  loading.value = true
   const el = messagesEl.value
   const heightBefore = el?.scrollHeight ?? 0
   const topBefore = el?.scrollTop ?? 0
   try {
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
-      params: { limit: TIMELINE_PAGE_SIZE, beforeId: cursor },
+      params: { limit: TIMELINE_PAGE_SIZE, ...(older ? { beforeId: cursor } : { afterId: cursor }) },
     })
     if (isStaleTimelineResponse(userId, sessionId)) return
     const incoming = res.items ?? []
     timelineItems.value = mergeTimeline(timelineItems.value, incoming)
-    timelineHasOlder.value = res.hasOlder === true && incoming.length > 0
-    if (el) {
+    hasMore.value = (older ? res.hasOlder : res.hasNewer) === true && incoming.length > 0
+    if (older && el) {
       await nextTick()
       el.scrollTop = topBefore + (el.scrollHeight - heightBefore)
     }
   }
   catch {
-    showToast('載入更早的訊息失敗', 'error')
+    showToast(older ? '載入更早的訊息失敗' : '載入後續訊息失敗', 'error')
   }
   finally {
-    loadingOlder.value = false
+    loading.value = false
   }
 }
 
-/**
- * 往下讀更晚的一段。只有點進已結束的舊會話時才有意義（那時畫面停在那場的尾巴，
- * 後面還有沒讀的內容），所以是使用者按了才讀，不做自動觸發——
- * 自動的話「黏在底部」會一路把整段歷史翻完。
- */
-async function loadNewerTimeline() {
-  if (loadingNewer.value || msgLoading.value || !timelineHasNewer.value) return
-  const userId = selectedUserId.value
-  if (!userId) return
-  const sessionId = selectedSessionId.value || ''
-  const cursor = newestMessageId()
-  /**
-   * 這一段一則訊息都沒有（只有事件行）＝沒有可以接續的游標——那場的訊息被保留期清掉時
-   * 就會這樣。游標是訊息 id，接不下去。這時若直接 return，按鈕按下去毫無反應、也沒有
-   * 任何說明，看起來就是壞的；改成把人帶到最新一段並講清楚發生什麼事。
-   */
-  if (!cursor) {
-    showToast('這一段沒有可接續的訊息（可能已超過保留期限），已跳到最新', 'warning')
-    await leaveSessionSegment(userId)
-    return
-  }
-  loadingNewer.value = true
-  try {
-    const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
-      params: { limit: TIMELINE_PAGE_SIZE, afterId: cursor },
-    })
-    if (isStaleTimelineResponse(userId, sessionId)) return
-    const incoming = res.items ?? []
-    timelineItems.value = mergeTimeline(timelineItems.value, incoming)
-    timelineHasNewer.value = res.hasNewer === true && incoming.length > 0
-  }
-  catch {
-    showToast('載入後續訊息失敗', 'error')
-  }
-  finally {
-    loadingNewer.value = false
-  }
-}
+function loadOlderTimeline() { return loadTimelinePage('older') }
+function loadNewerTimeline() { return loadTimelinePage('newer') }
 
 /**
  * 「還有更早的、但目前內容少到撐不出捲軸」＝捲動事件永遠不會觸發，對話卡在幾則。
