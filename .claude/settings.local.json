@@ -318,7 +318,15 @@
       "Bash(cp /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/1e07bcf9-21d4-4271-bd20-760f5f1ac008/scratchpad/dump-scripts.ts /Users/kevin/Documents/Github/linebot/.tmp-dump-scripts.ts)",
       "Bash(node --env-file=.env_myfeel --experimental-strip-types /Users/kevin/Documents/Github/linebot/.tmp-dump-scripts.ts)",
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-fix-order-script.ts)",
-      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-scripts.ts)"
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-scripts.ts)",
+      "Bash(npx --yes firebase-tools --version)",
+      "Bash(npx --yes firebase-tools login:list)",
+      "Bash(npx --yes firebase-tools firestore:indexes --project myfeel --account service@myfeel-tw.com)",
+      "Bash(npx --yes firebase-tools firestore:indexes --project splash --account splash.digilab@gmail.com)",
+      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
+      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots2 node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
+      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots3 node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)",
+      "Bash(SHOT_DIR=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/d956b7fe-fa3d-4407-b3cd-4a29c345f181/scratchpad/shots-old node --env-file=.env_splash scripts/.tmp-uiwalk.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

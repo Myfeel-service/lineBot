@@ -166,12 +166,18 @@ sudo nano /etc/caddy/Caddyfile
 relay.lineminime.com {
 	# 只放行 PAYUNi 幕後那幾支,其餘一律 404
 	# —— 別讓這台機器變成任何人都能借道的公開代理
-	@payuni path /api/credit /api/credit_bind/*
+	# trade/query(查單對帳)雖然不檢查 IP,仍要放行:它必須與扣款同一個出口、
+	# 打到同一個環境,否則會出現「扣款打正式、查單問沙盒 → 查無此單」的誤判
+	@payuni path /api/credit /api/credit_bind/* /api/trade/query
 
 	handle @payuni {
 		reverse_proxy https://api.payuni.com.tw {
 			# Host 與 TLS 名稱都要是 PAYUNi 的,否則上游會拒絕
 			header_up Host api.payuni.com.tw
+			# ⚠️ 這三行不能省 —— 原因見 §15.5,少了它整台機器等於白架
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Proto
+			header_up -X-Forwarded-Host
 		}
 	}
 
@@ -212,12 +218,16 @@ curl -s https://api.ipify.org; echo
 curl -s -o /dev/null -w "%{http_code}\n" https://relay.lineminime.com/api/credit -X POST -d 'x'
 #   → 期待 200(PAYUNi 會回一包錯誤 JSON,那就對了)
 
-# ③ 不該放行的路徑要被擋
+# ③ 查單也要通(漏了這條,對帳補開通會整支退回直連)
+curl -s -o /dev/null -w "%{http_code}\n" https://relay.lineminime.com/api/trade/query -X POST -d 'x'
+#   → 期待 200。若回 404,是 @payuni 那行少寫了 /api/trade/query
+
+# ④ 不該放行的路徑要被擋
 curl -s -o /dev/null -w "%{http_code}\n" https://relay.lineminime.com/api/upp -X POST -d 'x'
 #   → 期待 404
 ```
 
-**三個都符合才往下做。** ① 不相符表示靜態 IP 沒綁好;② 不是 200 多半是 DNS 或 80 埠沒開。
+**四個都符合才往下做。** ① 不相符表示靜態 IP 沒綁好;② 不是 200 多半是 DNS 或 80 埠沒開。
 
 ---
 
@@ -291,6 +301,7 @@ Amplify 主控台 → 你的 App → **Environment variables** → 新增:
 |---|---|---|
 | `curl` 憑證錯誤 / HTTPS 連不上 | DNS 沒生效,或 80 埠沒開 | 等 DNS、補防火牆規則,再 `sudo systemctl reload caddy` |
 | 打 `/api/credit` 回 404 | Caddyfile 路徑寫錯 | 檢查 `@payuni path` 那行 |
+| log 出現 `中繼站沒有代理 trade/query` | 機器是舊版設定,`@payuni` 那行沒有這條路徑 | 補上 `/api/trade/query` 後 `sudo systemctl reload caddy`。在補之前對帳會自動退回直連,功能不會壞,但出口 IP 與扣款不同 |
 | 回 `不提供此IP幕後交易` | 白名單沒填、或填錯 | 用錯誤訊息裡回報的 IP 去對 |
 | 回 `DEF01006 商店狀態不符合` | 不是中繼站的問題 | 特店還沒開通(見 GOLIVE-BLOCKERS A3) |
 | 扣款打到沙盒 | `PAYUNI_ENV` 與 Caddyfile 上游不一致 | 兩邊都要是同一個環境 |
@@ -313,7 +324,8 @@ CREDIT03010 不提供此IP幕後交易，211.21.19.45, 54.249.132.4
 **為什麼危險**:正式環境那個位置會是 **Amplify 的動態 IP**。若 PAYUNi 的規則是「看到的每個 IP 都要在
 白名單內」,中繼站就永遠不會通 —— 而且錯誤訊息與「IP 沒填」長得幾乎一樣,極難看出根因。
 
-**修法**:在兩個 `reverse_proxy` 區塊裡各加三行(Step 7 的設定檔已含):
+**修法**:在 `reverse_proxy` 區塊裡加三行 —— Step 7 的設定檔已含,
+但**如果你的機器是 2026-08-08 之前照舊版教學架的,很可能沒有這三行,要補**:
 
 ```caddyfile
 header_up -X-Forwarded-For
@@ -336,6 +348,12 @@ header_up -X-Forwarded-Host
 | `/api/credit`(白名單內) | ✅ 正常轉發到 PAYUNi |
 | **真憑證經中繼站續扣 NT$399** | ✅ **`SUCCESS 授權成功`** |
 | 直連(開發機 IP,已從白名單移除) | ✅ 被擋 `CREDIT03010` —— 白名單真的在守門 |
+
+### ⚠️ 尚未套用到線上機器(2026-08-08)
+
+`/api/trade/query` 是 2026-08-08 才加進本文設定檔的(實測線上那台對它回 `404`)。
+**線上機器還沒改**,要 SSH 進去把 `@payuni` 那行換成 Step 7 的版本再 `sudo systemctl reload caddy`。
+在補上之前,對帳查單會自動退回直連並在 log 留警告 —— 不會壞,但少了「與扣款同一個出口」這層保障。
 
 **最終狀態**:PAYUNi 白名單裡**只留中繼站那一個 IP**,所有浮動 IP 清空。
 開發機要測續扣時,把本機 `.env` 也設 `PAYUNI_RELAY_BASE=https://<沙盒中繼網域>` 即可。
@@ -362,7 +380,7 @@ IP 白名單本來是金鑰外洩後的第二道鎖,中繼站等於在那道鎖�
 
    ```caddyfile
    @payuni {
-   	path /api/credit /api/credit_bind/*
+   	path /api/credit /api/credit_bind/* /api/trade/query
    	header X-Relay-Token "換成一組長亂碼"
    }
    ```

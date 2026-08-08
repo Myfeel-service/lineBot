@@ -23,8 +23,11 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
   const endDate = taipeiDayEnd(query.endDate) ?? new Date()
   ref = ref.where('openedAt', '>=', startDate).where('openedAt', '<=', endDate)
 
-  // 新朋友（第一次加好友）：與對話數平行查。count() 只回數字不拉文件，
-  // 索引用現成的 users(workspaceId, createdAt)。查失敗回 -1（前端顯示「查不到」，不裝 0）。
+  // 新朋友（第一次加好友）：與對話數平行查。count() 只回數字不拉文件。
+  // ⚠️ 索引方向要 users(workspaceId ASC, createdAt **ASC**)：這支沒有 orderBy，範圍條件
+  //    隱含的排序是 ASC，原本檔案裡只有 createdAt DESC 的那個服務不了它——兩個租戶都
+  //    FAILED_PRECONDITION，這個數字從來沒真的查出來過（靜靜地一路回 -1）。
+  // 查失敗回 -1（前端顯示「查不到」，不裝 0）。
   const newFriendsPromise = db.collection('users')
     .where('workspaceId', '==', workspaceId)
     .where('createdAt', '>=', startDate)
