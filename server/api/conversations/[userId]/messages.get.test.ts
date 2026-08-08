@@ -173,16 +173,24 @@ function makeDb(data: {
     },
   })
 
-  /** 會話查詢：where 會真的套用（userId 與 workspaceId 都認），否則測不出「別人的那場」 */
-  const sessionsQuery = (f: { ws?: boolean, userId?: string }): any => ({
+  /**
+   * 會話查詢：where 會真的套用（userId 與 workspaceId 都認），否則測不出「別人的那場」；
+   * orderBy／limit 也照做，端點正常路徑就是「由新到舊取最近 N 場」。
+   */
+  const sessionsQuery = (f: { ws?: boolean, userId?: string, dir?: 'asc' | 'desc', cap?: number }): any => ({
     where: (field: string, _op: string, value: unknown) => sessionsQuery({
+      ...f,
       ws: f.ws || field === 'workspaceId',
       userId: field === 'userId' ? String(value) : f.userId,
     }),
+    orderBy: (_field: string, dir: 'asc' | 'desc' = 'asc') => sessionsQuery({ ...f, dir }),
+    limit: (n: number) => sessionsQuery({ ...f, cap: n }),
     get: async () => {
       let rows = sessions
       if (f.ws) rows = rows.filter(s => (s.workspaceId ?? WS) === WS)
       if (f.userId) rows = rows.filter(s => (s.userId ?? LINE_UID) === f.userId)
+      if (f.dir) rows = [...rows].sort((a, b) => (f.dir === 'desc' ? b.openedMs - a.openedMs : a.openedMs - b.openedMs))
+      if (f.cap !== undefined) rows = rows.slice(0, f.cap)
       return { docs: rows.map(sessionSnap), empty: rows.length === 0 }
     },
   })

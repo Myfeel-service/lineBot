@@ -136,12 +136,22 @@ function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, m
 }
 
 /**
- * 這位客人在這個 workspace 的所有會話。
+ * 這位客人在這個 workspace 的會話（由新到舊，最多 SESSION_SCAN_LIMIT 場）。
  *
- * 兩個等值條件（userId + workspaceId）不需要複合索引，但真的撞到索引錯誤時退回只查
- * userId、workspace 在記憶體裡濾——同一位客人的會話數量很少（一天最多一場）。
+ * 為什麼要有上限：這支查詢每次開對話、每次往上讀一段、每次送完訊息的安靜刷新都會重跑，
+ * 而會話文件是**永遠不會被清掉**的（保留期只清訊息，見 cleanup.post.ts）——聊了兩年的
+ * 客人等於每一次請求都把七百份會話文件重讀一遍。
+ *
+ * 為什麼 200 場夠：一天最多一場（見 conversation-session.ts 的 24 小時規則），而訊息只留
+ * CONVERSATION_RETENTION_DAYS（180 天），所以客服翻得到的最舊那一則訊息不會早於 180 天前，
+ * 需要對照的會話也就落在最近 180 場之內。留兩倍餘裕。
+ *
+ * 兩個等值條件加上排序需要複合索引（見 firestore.indexes.json）；索引還沒建好時會落到
+ * 下面的退路：只查 userId、workspace 在記憶體裡濾（無上限，但至少答案是對的）。
  * 整支失敗就回空陣列：事件行不顯示，訊息照常，不讓一條輔助查詢把整個對話頁弄掛。
  */
+const SESSION_SCAN_LIMIT = 200
+
 async function loadUserSessions(
   db: FirebaseFirestore.Firestore,
   workspaceId: string,
@@ -162,6 +172,8 @@ async function loadUserSessions(
     const snap = await db.collection('conversationSessions')
       .where('userId', '==', lineUserId)
       .where('workspaceId', '==', workspaceId)
+      .orderBy('openedAt', 'desc')
+      .limit(SESSION_SCAN_LIMIT)
       .get()
     return snap.docs.map(toMeta)
   }
@@ -324,7 +336,11 @@ export default defineEventHandler(async (event) => {
   const lineUserId = lineUserIdFromFirestoreDocId(routeUserId, workspaceId)
   const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
   const convRef = db.collection('conversations').doc(convDocId)
-  const convSnap = await convRef.get()
+  // 兩件事互不相干（一份對話文件、一批會話文件），沒有理由排隊等
+  const [convSnap, sessions] = await Promise.all([
+    convRef.get(),
+    loadUserSessions(db, workspaceId, lineUserId),
+  ])
   if (!convSnap.exists || convSnap.data()?.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: '找不到此對話' })
   }
@@ -332,7 +348,6 @@ export default defineEventHandler(async (event) => {
   const peerMs = toMillis(convData.lastPeerActivityAt)
   const msgCol = convRef.collection('messages')
 
-  const sessions = await loadUserSessions(db, workspaceId, lineUserId)
   const sessionById = new Map(sessions.map(s => [s.sessionId, s]))
 
   /** 從會話分頁點進來的那一場（撈不到就直接讀那份文件，順便驗 workspace） */
@@ -477,9 +492,12 @@ export default defineEventHandler(async (event) => {
   }
 
   // 空對話（一則訊息都沒有，例如剛加好友就被開場模組記了事件）也要看得到事件行，
-  // 所以事件不綁在訊息存在與否上
-  items.push(...await loadEventItems(db, sessions, w))
-  items.push(...await loadBroadcastItems(db, workspaceId, convDocId, w))
+  // 所以事件不綁在訊息存在與否上。兩批查的是不同集合、互不相干 → 一起發，不要一前一後。
+  const [eventItems, broadcastItems] = await Promise.all([
+    loadEventItems(db, sessions, w),
+    loadBroadcastItems(db, workspaceId, convDocId, w),
+  ])
+  items.push(...eventItems, ...broadcastItems)
 
   items.sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp))
 
