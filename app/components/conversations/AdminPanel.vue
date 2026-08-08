@@ -3634,22 +3634,41 @@ function splitMessageLineSegments(line: string): MessageTextSegment[] {
 }
 
 /**
+ * 每則訊息的快速回覆只解析一次。
+ *
+ * 樣板裡 v-if 與 v-for 各叫一次，而且每次重繪（送完訊息的安靜刷新、清單輪詢、載入旗標
+ * 翻動…）都會把整串重算一遍，等於每次重繪產生 2×N 份新陣列與新物件——正好把
+ * reuseUnchangedRows 為了不讓泡泡閃而做的「沒變就沿用原物件」抵銷掉。
+ *
+ * 用 WeakMap 掛在訊息物件上：訊息載進來之後 payload 不會再變，列被丟掉時快取自動回收，
+ * 不需要任何失效邏輯。
+ */
+const quickReplyItemsCache = new WeakMap<object, Array<{ label: string, send: string }>>()
+
+/**
  * 這則訊息在 LINE 裡附的快速回覆按鈕（AI 反問澄清的選項、腳本的選項、機器人流程都會帶）。
  * label 是客人看到的字，send 是點下去實際送出的文字（postback 這類沒有送出文字，留空）。
  * 不設數量上限：LINE 規格本身就只收 13 顆。
  */
 function getQuickReplyItems(msg: MsgItem): Array<{ label: string, send: string }> {
+  if (!msg || typeof msg !== 'object') return []
+  const cached = quickReplyItemsCache.get(msg)
+  if (cached) return cached
+
   const items = msg?.payload?.quickReply?.items
-  if (!Array.isArray(items)) return []
-  return items
-    .map((item: any) => {
-      const action = item?.action ?? {}
-      return {
-        label: String(action.label || action.text || '').trim(),
-        send: String(action.text || action.displayText || '').trim(),
-      }
-    })
-    .filter(o => o.label)
+  const parsed = Array.isArray(items)
+    ? items
+        .map((item: any) => {
+          const action = item?.action ?? {}
+          return {
+            label: String(action.label || action.text || '').trim(),
+            send: String(action.text || action.displayText || '').trim(),
+          }
+        })
+        .filter(o => o.label)
+    : []
+  quickReplyItemsCache.set(msg, parsed)
+  return parsed
 }
 
 function isStructuredLineMessage(msg: MsgItem): boolean {
