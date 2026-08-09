@@ -45,10 +45,10 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     ],
   },
 
-  // 3) 預約 / 報名：收姓名 + 電話(驗證) → 寫名單 → 完成
+  // 3) 預約 / 報名：收姓名 + 電話(驗證) → 存進客人資料 → 完成
   {
     key: 'booking',
-    label: '預約報名（含寫名單）',
+    label: '預約報名（含存客人資料）',
     description: '收集姓名與電話、存進客人資料，常用於預約/活動報名',
     rootNodeId: 't',
     nodes: [

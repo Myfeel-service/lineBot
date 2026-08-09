@@ -638,38 +638,6 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     ],
   },
   {
-    id: 'auto-reply',
-    category: 'growth',
-    requiresOperate: true,
-    icon: Lightning,
-    label: '設定自動回覆',
-    blurb: '關鍵字一命中就自動回。帶你建第一條。',
-    route: wid => `/admin/${wid}/auto-reply`,
-    steps: [
-      {
-        target: '[data-tour="ar-title"]',
-        title: '什麼是自動回覆',
-        description:
-          '自動回覆讓客人訊息<strong>一命中關鍵字</strong>就立刻自動回覆——適合常見問答、營業時間、地址這類固定回應。',
-        placement: 'right',
-      },
-      {
-        target: '[data-tour="ar-new"]',
-        title: '建第一條規則',
-        description:
-          '點「<strong>新增</strong>」：設好「關鍵字」和「要回什麼」，存檔後把狀態切成「<strong>啟用</strong>」就生效。',
-        placement: 'right',
-      },
-      {
-        target: '[data-tour="ar-ai-gen"]',
-        title: '懶得想？讓 AI 生成',
-        description:
-          '不想自己想關鍵字？在這裡<strong>用一句話描述</strong>（例：客人問運費就回全館滿千免運、未滿收 80），AI 會把<strong>關鍵字和回覆內容</strong>都擬好，進編輯器檢查後再儲存。',
-        placement: 'top',
-      },
-    ],
-  },
-  {
     id: 'richmenu',
     category: 'growth',
     requiresOperate: true,

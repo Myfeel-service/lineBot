@@ -40,7 +40,7 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 1. 觸發(起點,恰好一個):{ "id", "type": "trigger", "matchMode": "semantic", "keywords": ["核心詞×2~4"], "examples": ["客人會講的話×3~5句"], "priority": 50, "next": "下一個節點id" }
 2. 收集(問一題並記住答案):{ "id", "type": "collect", "question": "問句", "fieldName": "英文snake_case代號", "format": "any|phone|email|number|alphanumeric|alphanumericSymbol", "reaskText": "格式不符時的重問話術(format非any才給)", "skipLabel": "跳過按鈕文字≤20字(選填)", "skipNext": "按跳過要走的節點id(與skipLabel成對)", "next": "..." }
 3. 快速回覆(給按鈕讓客人選,每顆按鈕走不同路):{ "id", "type": "quickReply", "question": "問句", "options": [{ "label": "按鈕文字≤20字", "next": "..." }] }
-4. 寫名單(把收集到的答案長期存進客人資料):{ "id", "type": "saveLead", "fieldMap": [{ "fromField": "collect的fieldName", "attrKey": "中文屬性名" }], "next": "..." }
+4. 存進客人資料(把收集到的答案長期留存):{ "id", "type": "saveLead", "fieldMap": [{ "fromField": "collect的fieldName", "attrKey": "中文屬性名" }], "next": "..." }
 5. 回覆(終點,講完即結束):{ "id", "type": "reply", "text": "回覆文字", "thenHandoff": true|false }
 
 【硬規則】

@@ -80,7 +80,8 @@ const CAPABILITIES: SetupCapability[] = [
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-scripts`,
     tourId: 'ai-scripts',
-    navTarget: '[data-tour="nav-ai-scripts"]',
+    // 腳本已收進「自動回應」的第二個分頁，側欄不再有獨立的 nav-ai-scripts 可以指
+    navTarget: '[data-tour="nav-auto-response"]',
   },
   {
     // 2026-08-07 自 lineConnected 拆出：多數新客戶第一天用不到 LIFF，

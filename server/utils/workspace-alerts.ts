@@ -7,6 +7,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark } from './ai-feedback-events'
 import { getQuotaAnswered } from './ai-usage'
+import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { checkScriptHealth } from './script-health'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
@@ -306,26 +307,30 @@ export async function collectWorkspaceAlerts(
           }
         }),
         probe('anyTextBlocking', async () => {
-          // 設定與規則同時查（先查設定再決定要不要查規則會多一個來回；
-          // 這支規則查詢本來就只會回 0～1 筆）
+          // 「客人輸入任何內容」的觸發會接走所有訊息，AI 等於沒開。
+          // 舊的關鍵字規則刪掉後這個陷阱沒有消失——它搬到腳本的 keywordMatch 上了，所以這裡改掃腳本。
+          // 觸發設定藏在 nodes 陣列裡，Firestore 查不到，只能撈啟用中的腳本在記憶體裡濾（數量很小）。
           const [aiSettings, snap] = await Promise.all([
             aiSettingsPromise!,
-            db.collection('autoReplies')
+            db.collection(SCRIPTS_COLLECTION)
               .where('workspaceId', '==', wid)
-              .where('matchType', '==', 'anyText')
+              .where('enabled', '==', true)
               .limit(PROBLEM_SCAN_LIMIT)
               .get(),
           ])
           if (!aiSettings) throw new Error('ai settings unavailable')
-          // AI 沒開的時候，「輸入任何內容」規則是正常的兜底回覆，不是異常
+          // AI 沒開的時候，「攔截全部」是正常的兜底回覆，不是異常
           if (aiSettings.enabled !== true) return { active: false }
-          // isActive 未設視為啟用（與 normalizeAutoReplyRule 同一把尺）
-          const active = snap.docs
+          const hits = snap.docs
             .map(d => d.data() as Record<string, unknown>)
-            .filter(r => r?.isActive !== false)
-          if (!active.length) return { active: false }
-          const name = String(active[0]!.name ?? '(未命名規則)')
-          return { active: true, count: active.length, detail: `規則「${name}」` }
+            .filter((s) => {
+              const nodes = (Array.isArray(s.nodes) ? s.nodes : []) as Array<Record<string, unknown>>
+              const root = nodes.find(n => n?.id === s.rootNodeId)
+              return root?.type === 'trigger' && root?.keywordMatch === 'anyText'
+            })
+          if (!hits.length) return { active: false }
+          const name = String(hits[0]!.name ?? '(未命名設定)')
+          return { active: true, count: hits.length, detail: `設定「${name}」` }
         }),
         probe('llmError', async () => {
           // 走既有 composite index（workspaceId, aiMeta.lastHandoffReason, aiMeta.updatedAt DESC）
@@ -555,7 +560,7 @@ export async function collectWorkspaceAlerts(
           const KIND_LABEL: Record<string, string> = {
             richmenu: '選單',
             flow: '模組',
-            autoReply: '自動回覆規則',
+            script: '客服腳本',
             campaign: '活動',
           }
           const where = KIND_LABEL[first.sourceKind] ?? '模組'

@@ -154,13 +154,22 @@ const TOOLS: Record<string, ToolDef> = {
       }
     },
   },
-  list_auto_reply_rules: {
-    description: '列出自動回覆規則(關鍵字→固定回覆/模組):名稱、比對方式、啟用狀態。問「有哪些自動回覆規則 / 萬用規則開著嗎」時用。',
+  list_auto_responses: {
+    description: '列出自動回應設定(客人說什麼→系統怎麼回):名稱、觸發詞、比對方式、啟用狀態、幾個步驟。問「有哪些自動回應 / 有沒有攔截全部的設定 / 打某個關鍵字會回什麼」時用。',
     async run(db, workspaceId) {
-      const snap = await db.collection('autoReplies').where('workspaceId', '==', workspaceId).get()
+      const snap = await db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get()
       return snap.docs.map((d) => {
-        const r = d.data() as any
-        return { name: r.name, matchType: r.matchType, keyword: r.keyword ?? '', isActive: r.isActive === true, actionType: r.action?.type ?? '' }
+        const s = d.data() as any
+        const nodes = Array.isArray(s.nodes) ? s.nodes : []
+        const trigger = nodes.find((n: any) => n?.id === s.rootNodeId)
+        return {
+          name: s.name,
+          keywords: (trigger?.keywords ?? []).join('、'),
+          matchMode: trigger?.matchMode ?? 'keyword',
+          keywordMatch: trigger?.keywordMatch ?? 'any',
+          isActive: s.enabled === true,
+          stepCount: nodes.length,
+        }
       })
     },
   },

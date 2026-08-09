@@ -81,7 +81,7 @@
       </div>
     </template>
 
-    <!-- ── Editor Body（與 auto-reply 相同：可捲動 + padding + 區塊間距）── -->
+    <!-- ── Editor Body（與其他編輯頁相同：可捲動 + padding + 區塊間距）── -->
     <template #editor-body>
       <div class="ar-editor-body admin-panel-stack">
         <el-form label-position="top" class="admin-form-vertical bc-editor-form" @submit.prevent>

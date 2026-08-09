@@ -51,8 +51,8 @@ describe('collectModuleRefs(深掃任意結構找模組引用)', () => {
 })
 
 /** 假 Firestore：四個被掃的集合各回一批文件 */
-function makeDb(flows: any[], menus: any[], rules: any[] = [], campaigns: any[] = []) {
-  const byCol: Record<string, any[]> = { flows, richmenus: menus, autoReplies: rules, leadCampaigns: campaigns }
+function makeDb(flows: any[], menus: any[], scripts: any[] = [], campaigns: any[] = []) {
+  const byCol: Record<string, any[]> = { flows, richmenus: menus, scripts, leadCampaigns: campaigns }
   const toDocs = (arr: any[]) => arr.map(x => ({ id: x.id, data: () => x }))
   return {
     collection: (col: string) => ({
@@ -152,18 +152,23 @@ describe('findBrokenModuleRefs(空按鈕靜態檢查)', () => {
     expect(await findBrokenModuleRefs(db, WS)).toHaveLength(1)
   })
 
-  it('關鍵字規則指向壞模組也會查(停用中的規則不算)', async () => {
+  it('腳本的「機器人模組」步驟指向壞模組也會查(停用中的腳本不算)', async () => {
     const db = makeDb(
       [{ id: 'mod-a', name: '壞的', isActive: false }],
       [],
       [
-        { id: 'r1', name: '運費規則', isActive: true, action: { type: 'module', moduleId: 'mod-a' } },
-        { id: 'r2', name: '停用規則', isActive: false, action: { type: 'module', moduleId: 'mod-a' } },
+        { id: 's1', name: '查詢運費', enabled: true, nodes: [
+          { id: 't', type: 'trigger', keywords: ['運費'], next: 'm' },
+          { id: 'm', type: 'module', moduleId: 'mod-a' },
+        ] },
+        { id: 's2', name: '停用的腳本', enabled: false, nodes: [
+          { id: 'm', type: 'module', moduleId: 'mod-a' },
+        ] },
       ],
     )
     const broken = await findBrokenModuleRefs(db, WS)
     expect(broken).toEqual([{
-      moduleId: 'mod-a', sourceLabel: '運費規則', sourceKind: 'autoReply', reason: 'inactive',
+      moduleId: 'mod-a', sourceLabel: '查詢運費', sourceKind: 'script', reason: 'inactive',
     }])
   })
 
@@ -191,7 +196,7 @@ describe('findBrokenModuleRefs(空按鈕靜態檢查)', () => {
       }),
     } as any
 
-    // 一輪掃四個集合（flows / richmenus / autoReplies / leadCampaigns）
+    // 一輪掃四個集合（flows / richmenus / scripts / leadCampaigns）
     await findBrokenModuleRefs(db, WS)
     expect(getCalls).toBe(4)
     await findBrokenModuleRefs(db, WS)

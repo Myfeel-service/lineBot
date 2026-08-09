@@ -57,23 +57,23 @@ beforeEach(() => { vi.clearAllMocks() })
 
 /**
  * 假 Firestore：撐起 ensureUser（users）、saveConversationMessage（conversations/messages）、
- * loadActiveAutoReplyRules（autoReplies 的 where().get()）
+ * 腳本／設定等集合的 where().get()
  */
-function makeDb(opts: { autoReplies?: any[] } = {}) {
+function makeDb(opts: { scripts?: any[] } = {}) {
   const writes: { path: string; data: any }[] = []
   const userDoc = {
     exists: true,
     data: () => ({ workspaceId: WS, lineUserId: LINE_UID, displayName: '測試客人', isBlocked: false }),
   }
 
-  const ruleDocs = (opts.autoReplies ?? []).map((r, i) => ({ id: r.id ?? `rule-${i}`, data: () => r }))
+  const scriptDocs = (opts.scripts ?? []).map((r, i) => ({ id: r.id ?? `script-${i}`, data: () => r }))
 
   const db = {
     collection: (col: string) => ({
       where: () => ({
         get: vi.fn(async () => ({
-          empty: col !== 'autoReplies' || ruleDocs.length === 0,
-          docs: col === 'autoReplies' ? ruleDocs : [],
+          empty: col !== 'scripts' || scriptDocs.length === 0,
+          docs: col === 'scripts' ? scriptDocs : [],
         })),
       }),
       doc: (id?: string) => ({
@@ -133,76 +133,6 @@ describe('客服預存送出後要記「真人已接手」', () => {
 
     expect(vi.mocked(pushMessage)).not.toHaveBeenCalled()
     expect(vi.mocked(onHumanOutgoingMessage)).not.toHaveBeenCalled()
-  })
-})
-
-describe('按按鈕命中舊關鍵字規則、回覆是純文字/網址 → 要記機器人首接', () => {
-  function postbackEvent(data: string): any {
-    return {
-      type: 'postback',
-      timestamp: 1,
-      source: { type: 'user', userId: LINE_UID },
-      replyToken: 'reply-token',
-      postback: { data },
-    }
-  }
-
-  it('文字動作的規則：回覆後呼叫 enterModule(先前只有模組分支有記,這條漏掉)', async () => {
-    const { db } = makeDb({
-      autoReplies: [{
-        id: 'r1',
-        name: '舊按鈕',
-        keyword: 'legacy_button',
-        matchType: 'exact',
-        isActive: true,
-        action: { type: 'message', text: '這是純文字回覆' },
-      }],
-    })
-    vi.mocked(getDb).mockReturnValue(db as any)
-
-    await handlePostbackEvent(postbackEvent('legacy_button'), { workspaceId: WS })
-
-    expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(enterModule)).toHaveBeenCalledWith(
-      'sess-1', LINE_UID, 'bot_flow', undefined, WS,
-    )
-  })
-
-  it('沒有任何規則命中 → 沒回覆就不該記首接(維持真正的未首接)', async () => {
-    const { db } = makeDb({ autoReplies: [] })
-    vi.mocked(getDb).mockReturnValue(db as any)
-
-    // 換一個 workspaceId：loadActiveAutoReplyRules 有 per-workspace 快取，
-    // 沿用上一個 case 的 WS 會讀到上面那條規則
-    await handlePostbackEvent(postbackEvent('nothing_matches_this'), { workspaceId: 'ws-empty' })
-
-    expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
-    expect(vi.mocked(enterModule)).not.toHaveBeenCalled()
-  })
-
-  /**
-   * 「按了按鈕卻沒有任何回覆」的線索改記成一筆客人動作紀錄（訊息子集合的
-   * messageType='customer_action'，見 shared/customer-action.ts）：那個在對話頁也看得到，
-   * 而 conversationEvents 只出現在會話時間軸。詳細的文案斷言在 handler.customer-action.test.ts。
-   */
-  it('沒回覆時不再另記 postback_no_reply 事件(改由客人動作紀錄承擔,免得同一秒兩行一樣的字)', async () => {
-    const { db } = makeDb({ autoReplies: [] })
-    vi.mocked(getDb).mockReturnValue(db as any)
-
-    await handlePostbackEvent(postbackEvent('nothing_matches_this2'), { workspaceId: 'ws-empty2' })
-
-    expect(vi.mocked(recordConversationEvent)).not.toHaveBeenCalled()
-  })
-
-  it('按鈕指向的模組已失效：同樣不記事件,且不該有任何回覆送出', async () => {
-    const { db } = makeDb({ autoReplies: [] })
-    vi.mocked(getDb).mockReturnValue(db as any)
-
-    // triggerModule 指向不存在的模組：getFlowByModuleId 撈不到 → 一則訊息都沒送出
-    await handlePostbackEvent(postbackEvent('triggerModule=dead-module'), { workspaceId: 'ws-dead' })
-
-    expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
-    expect(vi.mocked(recordConversationEvent)).not.toHaveBeenCalled()
   })
 })
 

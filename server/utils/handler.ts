@@ -49,7 +49,7 @@ import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
-import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
 import {
@@ -74,7 +74,6 @@ interface CacheEntry<T> {
 }
 const flowDocCache = new Map<string, CacheEntry<FlowDoc | null>>()
 const richMessageCache = new Map<string, CacheEntry<any | null>>()
-const autoReplyRuleCache = new Map<string, CacheEntry<AutoReplyRuleShape[]>>()
 const userDocCache = new Map<string, CacheEntry<UserDoc | null>>()
 
 // Cache lifetime in milliseconds (increased to 60s for better hit rate)
@@ -114,7 +113,6 @@ function invalidateUserDocCache(docId: string) {
 }
 
 export function invalidateActiveAutoReplyRulesCache(workspaceId: string) {
-  autoReplyRuleCache.delete(`active:autoReplies:${workspaceId}`)
 }
 
 /** 一次讀取使用者文件，同時取出冷卻狀態與 activeInput，節省 Firestore round-trip */
@@ -153,115 +151,52 @@ async function loadUserStateForIncomingText(fsUserDocId: string): Promise<{
  */
 const AUTO_REPLY_DUPLICATE_GUARD_MS = 8 * 1000
 
-/** 防連送用的內容指紋：同一句話（去頭尾空白、截短）才算重複，不同的問題不受影響。 */
-function autoReplyTextKey(text: string): string {
-  return String(text || '').trim().slice(0, 120)
-}
+
 
 /**
- * 原子性地確認冷卻狀態並寫入觸發時間。
- * 使用 Firestore Transaction，確保並行請求（同一使用者快速連傳）只有第一則真正觸發。
- * 回傳 true = 可以觸發；false = 已在冷卻中，或剛剛才用同一句話觸發過同一條規則。
+ * 腳本冷卻：同一位客人在設定的時間內不會再被這條腳本接走一次（＝自動回覆的「防重複觸發」）。
  *
- * ⚠️ 沒開防重複觸發的規則**也要**走這段交易：那種規則的本意是「不要節流」，不是
- *    「同一句話可以回兩次」。先前那些規則直接 return true、完全不進交易，於是並行
- *    的兩則一樣的訊息都會送出同一段罐頭回覆——正是防呆想擋的情況。擋的條件刻意收得很窄
- *    （同規則 + 同內容 + 幾秒內），不同的問題永遠不會被這段吃掉。
+ * 與 claimAutoReplyCooldown 同一個用途但簡單得多：腳本有 activeScript 狀態，
+ * 進行中的流程本來就不會被重新啟動，所以不需要那一份「同一句話並行處理」的防連送，只做時間窗。
+ *
+ * 沒設冷卻一律放行且**不進交易**——這是每則訊息都會經過的熱路徑，能不打 Firestore 就不打。
+ * 有設而交易失敗採 fail-closed：寧可這一輪不啟動（客人會落到 AI，仍有人回他），
+ * 也不要讓冷卻整個失效變成重複觸發。
  */
-async function claimAutoReplyCooldown(
-  fsUserDocId: string,
-  rule: AutoReplyRuleShape,
-  /** 這次觸發的客人原文（見 autoReplyTextKey）。空字串＝沒有可比對的內容，不做防連送。 */
-  inboundText = '',
-): Promise<boolean> {
-  if (!rule.id) return true
-  const cooldownEnabled = rule.cooldown?.enabled === true
-  // anyText 規則的本意就是「不管客人打什麼都回同一句」，複讀是它的預期行為（同連續複讀防呆）
-  const textKey = rule.matchType === 'anyText' ? '' : autoReplyTextKey(inboundText)
+async function claimScriptCooldown(fsUserDocId: string, scriptId: string, cooldownMs: number): Promise<boolean> {
+  if (!scriptId || !(cooldownMs > 0)) return true
 
   const db = getDb()
   const userRef = db.collection('users').doc(fsUserDocId)
-  const ruleId = rule.id
-  const durationMs = Number(rule.cooldown?.durationMs)
-  const triggeredAt = Date.now()
-  const claim = { ruleId, textKey, at: triggeredAt }
-  let shouldTrigger = false
+  const now = Date.now()
+  let shouldStart = false
 
   try {
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(userRef)
-      const data = snap.data() as UserDoc | undefined
-      const cooldowns = normalizeAutoReplyCooldownsMap(
-        data?.autoReplyCooldowns as Record<string, unknown> | undefined,
-      )
-
-      if (cooldownEnabled && isAutoReplyRuleOnCooldown(rule, cooldowns, triggeredAt)) {
-        shouldTrigger = false
+      const map = (snap.data() as UserDoc | undefined)?.scriptCooldowns ?? {}
+      const last = Number(map?.[scriptId] ?? 0)
+      if (Number.isFinite(last) && last > 0 && last + cooldownMs > now) {
+        shouldStart = false
         return
       }
-      // 同一條規則、一模一樣的內容、就在剛剛 → 是並行處理的同一句話，不要回第二次
-      const last = data?.lastAutoReplyClaim
-      if (
-        textKey
-        && last?.ruleId === ruleId
-        && last?.textKey === textKey
-        && Number(last?.at ?? 0) + AUTO_REPLY_DUPLICATE_GUARD_MS > triggeredAt
-      ) {
-        console.log('[autoReply] duplicate inbound within guard window → skip:', ruleId)
-        shouldTrigger = false
-        return
-      }
-
-      shouldTrigger = true
-      // 冷卻紀錄只有「有開冷卻」時才寫：沒開的規則寫了不會被讀，卻會在客戶之後把冷卻打開時
-      // 用一個舊時間白白擋掉一次觸發。防連送靠的是下面那筆宣告，與冷卻無關。
-      const updates: Record<string, unknown> = { lastAutoReplyClaim: claim }
-      if (cooldownEnabled) {
-        updates[`autoReplyCooldowns.${ruleId}`] = triggeredAt
-        if (rule.action.type === 'module' && rule.action.moduleId) {
-          updates[`autoReplyModuleCooldowns.${rule.action.moduleId}`] = {
-            triggeredAt,
-            durationMs,
-          }
-        }
-      }
-
-      if (snap.exists) {
-        tx.update(userRef, updates)
-      } else {
-        const mergeData: Record<string, unknown> = { lastAutoReplyClaim: claim }
-        if (cooldownEnabled) {
-          mergeData.autoReplyCooldowns = { [ruleId]: triggeredAt }
-          if (rule.action.type === 'module' && rule.action.moduleId) {
-            mergeData.autoReplyModuleCooldowns = {
-              [rule.action.moduleId]: { triggeredAt, durationMs },
-            }
-          }
-        }
-        tx.set(userRef, mergeData, { merge: true })
-      }
+      shouldStart = true
+      if (snap.exists) tx.update(userRef, { [`scriptCooldowns.${scriptId}`]: now })
+      else tx.set(userRef, { scriptCooldowns: { [scriptId]: now } }, { merge: true })
     })
-  } catch (e) {
-    // 有開冷卻 → fail-closed：寧可這一輪不觸發，也不要讓冷卻全面失效造成大量重複觸發。
-    // 沒開冷卻 → fail-open：這條路徑先前根本不進交易，Firestore 抖一下就讓客人問了沒有
-    // 回應，比偶爾多回一則重複訊息糟糕得多（這裡本來就只擋同一瞬間的同一句話）。
-    console.error(`[autoReply] cooldown transaction error (fail-${cooldownEnabled ? 'closed' : 'open'}):`, e)
-    return !cooldownEnabled
+  }
+  catch (e) {
+    console.error('[script] cooldown transaction error (fail-closed):', e)
+    return false
   }
 
-  if (shouldTrigger) {
+  if (shouldStart) {
     const entry = userDocCache.get(fsUserDocId)
     if (entry?.data) {
-      if (cooldownEnabled) {
-        entry.data.autoReplyCooldowns = {
-          ...(entry.data.autoReplyCooldowns ?? {}),
-          [ruleId]: triggeredAt,
-        }
-      }
-      entry.data.lastAutoReplyClaim = claim
+      entry.data.scriptCooldowns = { ...(entry.data.scriptCooldowns ?? {}), [scriptId]: now }
     }
   }
-  return shouldTrigger
+  return shouldStart
 }
 
 /**
@@ -276,62 +211,8 @@ async function claimAutoReplyCooldown(
  */
 const AUTO_REPLY_REPEAT_WINDOW_MS = 15 * 60 * 1000
 
-/** 這次命中是不是「接著上一次同一條規則」（見 AUTO_REPLY_REPEAT_WINDOW_MS） */
-function isConsecutiveAutoReply(
-  last: UserDoc['lastAutoReply'] | null | undefined,
-  rule: AutoReplyRuleShape,
-  sessionId: string | null | undefined,
-  now = Date.now(),
-): boolean {
-  if (!rule.id || rule.matchType === 'anyText') return false
-  if (last?.ruleId !== rule.id || last?.sessionId !== (sessionId ?? '')) return false
-  // 舊資料沒有時間 → 當成過期。寧可讓規則正常回覆，也不要憑一個不知道多久以前的紀錄轉真人
-  const at = Number(last?.at ?? 0)
-  return at > 0 && now - at <= AUTO_REPLY_REPEAT_WINDOW_MS
-}
 
-/**
- * 記下「這位客人剛剛收到的是哪一條規則的回覆」，供下一則訊息判斷是不是連著命中同一條。
- * 客人的回覆早就送出去了，這裡才寫，不影響回覆速度；但一定要 await——下一則訊息
- * 可能只隔幾秒進來，寫沒落地就等於防呆沒生效。
- */
-async function recordAutoReplyFired(
-  fsUserDocId: string,
-  ruleId: string,
-  sessionId: string | null | undefined,
-): Promise<void> {
-  if (!ruleId) return
-  const lastAutoReply = { ruleId, sessionId: sessionId ?? '', at: Date.now() }
-  try {
-    await getDb().collection('users').doc(fsUserDocId).set({ lastAutoReply }, { merge: true })
-    const entry = userDocCache.get(fsUserDocId)
-    if (entry?.data) entry.data.lastAutoReply = lastAutoReply
-  }
-  catch (e) {
-    console.error('[autoReply] recordAutoReplyFired failed:', e)
-  }
-}
 
-/**
- * 複讀防呆已經轉過真人了，就把紀錄清掉。
- *
- * 不清的話這條規則在這一場就等於**永久死亡**：真人處理完交還機器人之後，客人再問同一件事
- * 仍然會命中「上一次就是這條」而再轉一次真人，規則的答案再也送不出去。
- * 清掉之後最壞情況只是「同一場裡再被複讀防呆擋一次」，而那本來就是設計上要擋的。
- */
-async function clearAutoReplyFired(fsUserDocId: string): Promise<void> {
-  try {
-    await getDb().collection('users').doc(fsUserDocId).set(
-      { lastAutoReply: FieldValue.delete() },
-      { merge: true },
-    )
-    const entry = userDocCache.get(fsUserDocId)
-    if (entry?.data) delete entry.data.lastAutoReply
-  }
-  catch (e) {
-    console.error('[autoReply] clearAutoReplyFired failed:', e)
-  }
-}
 
 // ── Type Definitions ──────────────────────────────────────────────
 
@@ -825,77 +706,30 @@ async function getFlowByModuleId(moduleId: string): Promise<FlowDoc | null> {
   return flow
 }
 
-async function loadActiveAutoReplyRules(workspaceId: string): Promise<AutoReplyRuleShape[]> {
-  const cacheKey = `active:autoReplies:${workspaceId}`
-  const cached = getCached(autoReplyRuleCache, cacheKey)
-  if (cached !== undefined) return cached
-
-  const db = getDb()
-  // Use equality-only filter (no orderBy) to avoid requiring a composite Firestore index.
-  // Sorting is done in-memory before normalization (createdAt is stripped by normalizeAutoReplyRule).
-  const snap = await db.collection('autoReplies')
-    .where('workspaceId', '==', workspaceId)
-    .get()
-
-  const rawDocs = snap.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .sort((a: any, b: any) => {
-      const aMs = a.createdAt?.toMillis?.() ?? a.createdAt ?? 0
-      const bMs = b.createdAt?.toMillis?.() ?? b.createdAt ?? 0
-      return bMs - aMs
-    })
-
-  const rules = rawDocs
-    .map((raw) => normalizeAutoReplyRule(raw))
-    .filter((rule) => rule.isActive)
-  setCache(autoReplyRuleCache, cacheKey, rules)
-  return rules
-}
 
 /**
- * 預熱單一 workspace 的機器人自動化快取（自動回覆規則、腳本、AI 設定、
- * 模組規則指到的 flow＋圖文訊息快照）。給 /api/warmup 的定時 ping 用：
+ * 預熱單一 workspace 的機器人自動化快取（腳本、AI 設定、
+ * 腳本的模組步驟指到的 flow＋圖文訊息快照）。給 /api/warmup 的定時 ping 用：
  * Lambda 執行個體與 in-memory 快取一起保溫，客人觸發模組時就走全快取路徑。
  */
 export async function warmWorkspaceAutomationCaches(workspaceId: string): Promise<void> {
-  const [rules] = await Promise.all([
-    loadActiveAutoReplyRules(workspaceId).catch(() => [] as AutoReplyRuleShape[]),
+  const [scripts] = await Promise.all([
     loadActiveScripts(workspaceId).catch(() => []),
     getAiSettings(workspaceId).catch(() => null),
     // 活動入口（/api/liff/claim・config）會查 OA basicId；一併保溫（快取 24h）
     resolveLineOaBasicId(workspaceId).catch(() => ''),
   ])
+  // 腳本的「機器人模組」步驟指到的 flow 一併保溫（規則已下架，改看腳本）
   const moduleIds = [...new Set(
-    rules
-      .filter(r => r.action.type === 'module' && r.action.moduleId)
-      .map(r => (r.action as { moduleId: string }).moduleId),
+    scripts.flatMap(s => (s.nodes ?? [])
+      .filter(n => n.type === 'module' && n.moduleId)
+      .map(n => (n as { moduleId: string }).moduleId)),
   )].slice(0, 30)
   await Promise.all(moduleIds.map(id =>
     getFlowByModuleId(id)
       .then(f => (f ? hydrateRichMessageRefs(f.messages as any[]) : null))
       .catch(() => null),
   ))
-}
-
-async function matchAutoReplyRule(
-  inputText: string,
-  workspaceId: string,
-  options: {
-    allowAnyText: boolean
-    ruleCooldowns?: Record<string, number>
-  } = { allowAnyText: true },
-): Promise<AutoReplyRuleShape | null> {
-  const rules = await loadActiveAutoReplyRules(workspaceId)
-  const excludeRuleIds = new Set<string>()
-  while (true) {
-    const rule = pickBestMatchingAutoReplyRule(rules, inputText, {
-      allowAnyText: options.allowAnyText,
-      excludeRuleIds,
-    })
-    if (!rule?.id) return rule
-    if (!isAutoReplyRuleOnCooldown(rule, options.ruleCooldowns)) return rule
-    excludeRuleIds.add(rule.id)
-  }
 }
 
 function buildAutoReplyActionMessages(
@@ -933,7 +767,6 @@ function buildAutoReplyActionMessages(
  * 管理後台手動送出一則預存內容：以 push 發送，邏輯對齊自動回覆命中後的模組／文字／網址處理。
  * 兩個來源共用（action 是同一個 shape）：
  *   - 「客服預存」（/api/conversations/[userId]/send-preset）
- *   - 對話頁手動挑一則「自動回覆」規則（/api/conversations/[userId]/send-auto-reply）
  *
  * 送出後必須記 onHumanOutgoingMessage——這是真人客服的動作，與收件匣手打訊息
  * （/api/conversations/[userId]/send）同一件事。先前漏記造成兩個問題：
@@ -1972,14 +1805,13 @@ export async function handleMessageEvent(
     // The claim (a Firestore write) is awaited before any side effect below; the
     // preloads are reads / idempotent so running them on a redelivery is harmless.
     // preloadedUser is passed to handleIncomingText so it skips the ensureUser call inside.
-    const [sessionId, preloadedUser, , , isFirstDelivery] = await Promise.all([
+    const [sessionId, preloadedUser, , isFirstDelivery] = await Promise.all([
       // inboundAtMs：開新會話時用「客人這句話的時間」當開始時間，否則時間軸會切掉這第一句
       ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
         console.error('[session] ensureConversationSession error:', e)
         return null
       }),
       ensureUser(userId, undefined, workspaceId).catch(() => null),
-      loadActiveAutoReplyRules(workspaceId).catch(() => []),  // warm cache; result discarded
       getAiSettings(workspaceId).catch(() => null),           // warm cache; result discarded
       dedupClaim,
     ])
@@ -2397,13 +2229,11 @@ async function handleIncomingText(
   const wid = requireWorkspaceId(workspaceId, 'handleIncomingText')
   const lineUserId = lineUserIdFromFirestoreDocId(userId, wid)
   const fsUserDocId = lineUserFirestoreDocId(lineUserId, wid)
-  // Run all independent fetches concurrently; loadActiveAutoReplyRules warms cache
-  // so the subsequent matchAutoReplyRule call is a near-instant cache hit
+  // Run all independent fetches concurrently
   const [userData, { channelSecret }, suppressBotAutomation] = await Promise.all([
     userDataOverride != null ? Promise.resolve(userDataOverride) : ensureUser(userId, undefined, wid),
     getLineWorkspaceCredentials(wid),
     sessionId ? shouldSuppressInboundBotAutomationForSession(sessionId) : Promise.resolve(false),
-    loadActiveAutoReplyRules(wid).catch(() => []),
   ])
   const userAttributes = buildAttributeContext(userData)
   let handledByInput = false
@@ -2453,7 +2283,7 @@ async function handleIncomingText(
     }
 
     if (flow) {
-      // Flow found: mark handled so auto-reply doesn't intercept the user's answer
+      // Flow found: mark handled so the script/AI layer doesn't intercept the user's answer
       handledByInput = true
       if (replyToken) {
         const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
@@ -2494,7 +2324,7 @@ async function handleIncomingText(
         }
       }
     } else {
-      // Flow not found: activeInput already deleted above, let auto-reply run normally
+      // Flow not found: activeInput already deleted above, let the normal flow run
       console.warn(
         '[userInput] activeInput flow missing/inactive:',
         moduleId,
@@ -2545,17 +2375,17 @@ async function handleIncomingText(
       // advanced=false → 腳本已過期 / 狀態壞掉、已清掉 activeScript；落回一般流程
     }
 
-    const rule = await matchAutoReplyRule(textContent, wid, {
-      allowAnyText: options.allowAnyText !== false,
-      ruleCooldowns: userState.ruleCooldowns,
-    })
-    if (!rule) {
+    // 規則已下架：訊息比對只剩「腳本 → AI」兩層。
+    // 舊的「自動回覆規則」曾經插在這兩者之間，而且永遠贏——腳本被規則無聲蓋掉、
+    // 客人問什麼都拿到罐頭回覆，都是那一層造成的（見 2026-08-07 複讀災情）。
+    // 現在順位是單一條：敏感情境 → 進行中的流程 → 啟動流程 → AI。
+    {
       // 對話脈絡 lazy 共用：意圖路由與 AI 答題吃同一次 Firestore 讀取;
       // 關鍵字就命中腳本（或沒有腳本）的訊息完全不會觸發載入
       let convoCtxPromise: Promise<AiConvoContext> | null = null
       const getConvoCtx = () => (convoCtxPromise ??= loadAiConvoContext(fsUserDocId, textContent))
 
-      // 1. 規則沒命中 → 嘗試啟動腳本（關鍵字快速通道 + 統一意圖路由）
+      // 1. 嘗試啟動腳本（關鍵字快速通道 + 統一意圖路由）
       const scriptRes = await runScriptStart(
         textContent,
         userAttributes,
@@ -2564,11 +2394,13 @@ async function handleIncomingText(
         replyToken,
         wid,
         sessionId ?? null,
+        options.requestOrigin || '',
+        channelSecret,
         () => getConvoCtx().then(c => c.history),
       )
       if (scriptRes.handled) return
 
-      // 2. 還是沒命中 → AI 保底（重用路由的意圖分類與已載入的對話脈絡）
+      // 2. 沒命中 → AI 保底（重用路由的意圖分類與已載入的對話脈絡）
       await tryAiFallback({
         workspaceId: wid,
         lineUserId,
@@ -2582,122 +2414,6 @@ async function handleIncomingText(
         getConvoCtx,
       })
       return
-    }
-    if (rule) {
-      /**
-       * 連續複讀防呆：上一則自動回覆就是這條規則、還在同一場對話、而且**就在剛剛**
-       * （見 AUTO_REPLY_REPEAT_WINDOW_MS）→ 不再送一次同樣的話，直接轉真人。
-       *
-       * 為什麼需要：規則的關鍵字會打到「客人照著罐頭回覆填回來的內容」。2026-08-07 正式站
-       * 實例——「查詢訂單」規則關鍵字含「訂單」，客人回「1. 訂單編號：M…」再次命中，同一段
-       * 「請提供您的訂單資訊」連送三次；而 message 型動作不會轉真人也不會通知任何人，
-       * 客人把單號姓名電話信箱全給了，客服端一則通知都沒有。
-       *
-       * anyText 規則排除在外：那種規則的本意就是「不管客人打什麼都回同一句」（多半用來
-       * 暫停 AI），複讀是它的預期行為，不是卡住。
-       */
-      if (isConsecutiveAutoReply(userState.lastAutoReply, rule, sessionId)) {
-        console.log('[autoReply] same rule matched twice in a row → handoff:', rule.id, rule.name)
-        await deliverHandoffReply({
-          workspaceId: wid,
-          lineUserId,
-          replyToken,
-          userAttributes,
-          channelSecret,
-          sessionId: sessionId ?? null,
-          requestOrigin: options.requestOrigin || '',
-          customerMessage: textContent,
-          reason: 'auto_reply_repeat',
-        })
-        // 已經交給真人了，紀錄就地清掉：不清的話交還機器人之後這條規則在這一場永遠回不了話
-        await clearAutoReplyFired(fsUserDocId)
-        return
-      }
-
-      // 模組回覆所需的 flow＋圖文訊息預載與冷卻交易並行（純讀取，冷卻沒搶到也無副作用）。
-      // 冷卻沒搶到會提早 return 而不 await 此 promise，故錯誤要在這裡收掉以免 unhandled rejection。
-      const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> =
-        rule.action.type === 'module' && rule.action.moduleId
-          ? getFlowByModuleId(rule.action.moduleId).then(async f =>
-              f ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) } : { flow: null, hydrated: [] })
-            .catch((e) => {
-              console.error('[autoReply] flow preload failed:', e)
-              return { flow: null, hydrated: [] }
-            })
-          : Promise.resolve({ flow: null, hydrated: [] })
-
-      // 冷卻規則：原子性地確認並寫入冷卻；並行請求中只有第一則能取得鎖
-      const canTrigger = await claimAutoReplyCooldown(fsUserDocId, rule, textContent)
-      if (!canTrigger) return
-
-      // 貼標（非阻塞，不影響回覆速度）
-      if (rule.tagging?.enabled && Array.isArray(rule.tagging?.addTagIds) && rule.tagging.addTagIds.length > 0) {
-        addTagsToUser(fsUserDocId, rule.tagging.addTagIds, 'rule', rule.id ?? null, wid)
-          .catch(e => console.error('[tagging] autoReply tagging failed:', e))
-      }
-
-      if (replyToken) {
-        if (rule.action.type === 'module') {
-          // 回覆組裝期間先顯示「輸入中…」，訊息送達時動畫自動消失（fire-and-forget）
-          showLoadingAnimation(lineUserId, wid, 10).catch(() => {})
-          const { flow, hydrated: hydratedMessages } = await flowHydrateTask
-          if (flow) {
-            const lineMessages = buildLineMessages(
-              hydratedMessages,
-              userAttributes,
-              options.requestOrigin || '',
-              lineUserId,
-              channelSecret,
-            )
-            const liveAgent = await resolveLiveAgentModuleReply(wid, flow, lineMessages)
-            const outMessages = liveAgent?.messages ?? lineMessages
-            if (outMessages.length > 0) {
-              await replyMessage(replyToken, outMessages, wid)
-              if (liveAgent) markWaitingAckSent(wid, lineUserId)
-              dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-              saveOutgoingConversationMessagesByWorkspace(lineUserId, outMessages, wid, {
-                sender: liveAgent?.sender ?? 'bot',
-                senderName: liveAgent?.senderName ?? String(flow.name || ''),
-              }).catch(e => console.error('[conv] save error:', e))
-              if (liveAgent) {
-                await commitHandoff({
-                  workspaceId: wid, lineUserId, sessionId, moduleId: rule.action.moduleId,
-                  displayName: userAttributes.displayName || '',
-                  customerMessage: textContent,
-                  reason: 'user_request',
-                })
-              }
-              else {
-                enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, wid).catch(e =>
-                  console.error('[session] enterModule error:', e),
-                )
-              }
-              await recordAutoReplyFired(fsUserDocId, rule.id ?? '', sessionId)
-            }
-          } else {
-            console.warn(
-              '[autoReply] matched rule module missing/inactive:',
-              rule.id ?? '(no-rule-id)',
-              rule.action.moduleId,
-            )
-          }
-        }
-        else {
-          const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)
-          if (actionMessages.length > 0) {
-            await replyMessage(replyToken, actionMessages, wid)
-            saveOutgoingConversationMessagesByWorkspace(lineUserId, actionMessages, wid, {
-              sender: 'bot',
-              senderName: String(rule.name || ''),
-            }).catch(e => console.error('[conv] save error:', e))
-            // 純文字/網址回覆也是機器人真實首接(與模組動作同等;先前漏記會被誤計成未首接)
-            enterModule(sessionId, lineUserId, 'bot_flow', undefined, wid).catch(e =>
-              console.error('[session] enterModule error:', e),
-            )
-            await recordAutoReplyFired(fsUserDocId, rule.id ?? '', sessionId)
-          }
-        }
-      }
     }
   }
 }
@@ -2721,6 +2437,8 @@ async function runScriptStart(
   replyToken: string | undefined,
   workspaceId: string,
   sessionId: string | null,
+  requestOrigin: string,
+  channelSecret: string,
   /** 對話脈絡 lazy loader：只有走到意圖路由才會真的讀 Firestore（與 tryAiFallback 共用同一次讀取） */
   getHistory?: () => Promise<AiChatTurn[]>,
 ): Promise<{ handled: boolean; route: RouteResult | null }> {
@@ -2731,11 +2449,9 @@ async function runScriptStart(
   // 1) 關鍵字快速通道：明確、零成本、確定性（不分模式；keywords 一律當明確觸發詞）
   let matched = scripts.find(s => matchesScriptKeywords(s, textContent)) ?? null
   let route: RouteResult | null = null
-
-  if (matched) {
-    // 腳本啟動要先寫入使用者狀態才回覆，期間先顯示「輸入中…」（fire-and-forget）
-    showLoadingAnimation(lineUserId, workspaceId, 10).catch(() => {})
-  }
+  // 關鍵字命中要不要顯示「輸入中…」，得等冷卻確認過再決定——
+  // 冷卻中卻先送了動畫，客人會看到機器人「正在打字」然後什麼都沒來。
+  const keywordHit = !!matched
 
   // 2) 沒命中 → 統一意圖路由（一次 LLM 呼叫，由 LLM 理解意圖+優先序決定走哪條腳本或交給 AI）。
   //    取代舊的「每條腳本各自比語意向量」：敏感情境(退款/法律…)不會被腳本攔截、相近意圖不會誤觸。
@@ -2763,14 +2479,38 @@ async function runScriptStart(
   }
   if (!matched) return { handled: false, route }
 
+  // 冷卻中＝當作沒命中，往下走（與自動回覆冷卻同語意：客人不會沒人理，只是改由 AI 接）
+  if (!(await claimScriptCooldown(fsUserDocId, matched.id, scriptCooldownMs(matched)))) {
+    console.log('[script] on cooldown → skip:', matched.id, matched.name)
+    return { handled: false, route }
+  }
+
+  // 腳本啟動要先寫入使用者狀態才回覆，期間先顯示「輸入中…」（fire-and-forget）
+  if (keywordHit) showLoadingAnimation(lineUserId, workspaceId, 10).catch(() => {})
+
   const result = await startScript(matched, fsUserDocId, userAttributes)
   invalidateUserDocCache(fsUserDocId)
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
-  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', String(matched.name || ''), result.quickReplies)
+  else if (result.moduleId && replyToken) {
+    await replyWithFlowModule({
+      moduleId: result.moduleId,
+      replyToken,
+      lineUserId,
+      workspaceId,
+      sessionId,
+      // 剛收到的答案疊在客人資料之上（同 renderScriptTemplate 的優先序），模組內容才帶得到 {{訂單編號}}
+      userAttributes: { ...userAttributes, ...(result.collected ?? {}) },
+      channelSecret,
+      requestOrigin,
+      customerMessage: textContent,
+      logContext: `script=${matched.id}`,
+    })
+  }
+  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', String(matched.name || ''), result.quickReplies, result.link)
   // 腳本問答=機器人真實首接(先前漏記會被誤計未首接)。await:確保先記 bot,
   // 結尾轉真人時 live_agent 才能正確疊成「bot 首接+升級轉真人」而不是搶成 human 首接。
-  if (sessionId && result.replyText) {
+  if (sessionId && hasScriptOutput(result)) {
     await enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
       console.error('[script] enterModule error:', e),
     )
@@ -2814,16 +2554,30 @@ async function runScriptAdvance(
     })
     return true
   }
-  if (!result.replyText && result.finished) {
+  if (!hasScriptOutput(result) && result.finished) {
     // 過期或狀態壞掉 → 不算處理過，讓主流程往下走（rule / AI）
     return false
   }
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   // 推進時手上只有 scriptId，拿不到腳本名字（advanceScript 沒回傳）→ senderName 留空
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
-  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', '', result.quickReplies)
+  else if (result.moduleId && replyToken) {
+    await replyWithFlowModule({
+      moduleId: result.moduleId,
+      replyToken,
+      lineUserId,
+      workspaceId,
+      sessionId,
+      userAttributes: { ...userAttributes, ...(result.collected ?? {}) },
+      channelSecret,
+      requestOrigin,
+      customerMessage: textContent,
+      logContext: `script=${active.scriptId}`,
+    })
+  }
+  else await sendScriptReply(result.replyText, replyToken, lineUserId, workspaceId, 'bot', '', result.quickReplies, result.link)
   // 同 runScriptStart:腳本推進的回覆也記機器人首接(涵蓋「session 換新後才接續腳本」的情況)
-  if (sessionId && result.replyText) {
+  if (sessionId && hasScriptOutput(result)) {
     await enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
       console.error('[script] enterModule error:', e),
     )
@@ -2857,6 +2611,91 @@ async function dndScriptHandoffReply(
  * 勿擾時段換掉的那句＝system（那是 AI 設定裡的內建回覆，沒有腳本可改）。
  * `scriptName` 取不到就留空——寧可 tooltip 少一行，也不要編一個假的腳本名出來。
  */
+/**
+ * 送出一個「機器人模組」的全部訊息，並把會話狀態接好。
+ * 自動回覆規則的模組動作與腳本的模組步驟共用這一支。
+ *
+ * ⛔ 千萬別各寫一份：中間那段「這個模組其實是真人客服模組」的判斷
+ * （resolveLiveAgentModuleReply → markWaitingAckSent → commitHandoff）一旦兩邊分岔，
+ * 就會出現「客人按了真人、系統卻沒真的轉真人」那種沒人看得出來的黑洞——這個專案踩過。
+ *
+ * 回傳 true＝真的送出訊息了（呼叫端據此決定要不要記自己的東西，例如自動回覆的觸發紀錄）。
+ */
+async function replyWithFlowModule(params: {
+  moduleId: string
+  /**
+   * 已在別處啟動的 flow 預載（自動回覆會和冷卻交易並行預載）。
+   * 傳的是 **Promise 不是結果**——先 await 再進來的話，下面那個「輸入中…」會晚到預載之後才送出。
+   */
+  preloaded?: Promise<{ flow: FlowDoc | null; hydrated: any[] }>
+  replyToken: string
+  lineUserId: string
+  workspaceId: string
+  sessionId: string | null
+  userAttributes: Record<string, string>
+  channelSecret: string
+  requestOrigin: string
+  customerMessage: string
+  /** 找不到模組時的 log 前綴，寫清楚是誰要送的 */
+  logContext: string
+}): Promise<boolean> {
+  const { moduleId, replyToken, lineUserId, workspaceId: wid, sessionId, userAttributes, channelSecret, logContext } = params
+
+  // 回覆組裝期間先顯示「輸入中…」，訊息送達時動畫自動消失（fire-and-forget）
+  showLoadingAnimation(lineUserId, wid, 10).catch(() => {})
+
+  const { flow, hydrated } = await (params.preloaded ?? getFlowByModuleId(moduleId)
+    .then(async f => (f ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) } : { flow: null, hydrated: [] as any[] }))
+    .catch((e) => {
+      console.error(`[module] ${logContext} flow load failed:`, e)
+      return { flow: null, hydrated: [] as any[] }
+    }))
+
+  if (!flow) {
+    console.warn(`[module] ${logContext} module missing/inactive:`, moduleId)
+    return false
+  }
+
+  const lineMessages = buildLineMessages(hydrated, userAttributes, params.requestOrigin, lineUserId, channelSecret)
+  const liveAgent = await resolveLiveAgentModuleReply(wid, flow, lineMessages)
+  const outMessages = liveAgent?.messages ?? lineMessages
+  if (outMessages.length === 0) return false
+
+  await replyMessage(replyToken, outMessages, wid)
+  if (liveAgent) markWaitingAckSent(wid, lineUserId)
+  dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
+  saveOutgoingConversationMessagesByWorkspace(lineUserId, outMessages, wid, {
+    sender: liveAgent?.sender ?? 'bot',
+    senderName: liveAgent?.senderName ?? String(flow.name || ''),
+  }).catch(e => console.error('[conv] save error:', e))
+
+  if (liveAgent) {
+    await commitHandoff({
+      workspaceId: wid, lineUserId, sessionId, moduleId,
+      displayName: userAttributes.displayName || '',
+      customerMessage: params.customerMessage,
+      reason: 'user_request',
+    })
+  }
+  else {
+    enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+      console.error('[session] enterModule error:', e),
+    )
+  }
+  return true
+}
+
+/**
+ * 這一步到底有沒有對客人說話。
+ * ⛔ 別再直接用 result.replyText 當這個判斷：reply 節點可以「只附一顆連結按鈕、沒有文字」
+ * （＝自動回覆的「開啟網址」動作那種形狀），module 步驟更是整則訊息都由模組出——
+ * 這兩種情況 replyText 都是空的，但客人確實收到了訊息。
+ * 用錯會有兩個後果：機器人首接沒被記到（會話掛在「未首接」），以及推進被誤判成「腳本壞掉」。
+ */
+function hasScriptOutput(result: { replyText: string; link?: { url: string }; moduleId?: string }): boolean {
+  return Boolean(result.replyText || result.link?.url || result.moduleId)
+}
+
 async function sendScriptReply(
   text: string,
   replyToken: string | undefined,
@@ -2865,21 +2704,44 @@ async function sendScriptReply(
   sender: MessageSender,
   scriptName: string,
   quickReplies?: string[],
+  link?: { url: string; label: string },
 ): Promise<void> {
-  if (!text || !replyToken) return
-  const msg: messagingApi.TextMessage = { type: 'text', text: text.slice(0, 5000) }
-  // quickReply 節點：把選項做成 LINE Quick Reply 按鈕（label = 送出文字，供 advanceScript 比對）
-  const labels = (quickReplies ?? []).map(l => String(l).trim()).filter(Boolean).slice(0, 13)
-  if (labels.length) {
-    msg.quickReply = {
-      items: labels.map(label => ({
-        type: 'action',
-        action: { type: 'message', label: label.slice(0, 20), text: label },
-      })),
+  // 只有連結沒有文字也要送得出去（＝自動回覆的「開啟網址」動作那種形狀）
+  if ((!text && !link?.url) || !replyToken) return
+  const messages: messagingApi.Message[] = []
+
+  if (text) {
+    const msg: messagingApi.TextMessage = { type: 'text', text: text.slice(0, 5000) }
+    // quickReply 節點：把選項做成 LINE Quick Reply 按鈕（label = 送出文字，供 advanceScript 比對）
+    const labels = (quickReplies ?? []).map(l => String(l).trim()).filter(Boolean).slice(0, 13)
+    if (labels.length) {
+      msg.quickReply = {
+        items: labels.map(label => ({
+          type: 'action',
+          action: { type: 'message', label: label.slice(0, 20), text: label },
+        })),
+      }
     }
+    messages.push(msg)
   }
-  await replyMessage(replyToken, [msg], workspaceId)
-  saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, { sender, senderName: scriptName })
+
+  // 連結按鈕獨立一則 buttons template：不塞進上面那則文字裡——buttons template 的 text
+  // 只有 160 字上限，回覆文字稍長就會被 LINE 整則退掉。
+  if (link?.url) {
+    messages.push({
+      type: 'template',
+      altText: link.label,
+      template: {
+        type: 'buttons',
+        text: '請點擊下方連結',
+        actions: [{ type: 'uri', label: link.label.slice(0, 20), uri: link.url }],
+      },
+    } as messagingApi.TemplateMessage)
+  }
+
+  if (!messages.length) return
+  await replyMessage(replyToken, messages, workspaceId)
+  saveOutgoingConversationMessagesByWorkspace(lineUserId, messages, workspaceId, { sender, senderName: scriptName })
     .catch(e => console.error('[script] save outgoing error:', e))
 }
 
@@ -3846,16 +3708,13 @@ export async function handlePostbackEvent(
   // Run all independent work in parallel upfront:
   // - credentials, session, user (always needed)
   // - module trigger: fetch flow then immediately chain hydrateRichMessageRefs
-  // - message trigger: warm the auto-reply rules cache
   const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> = trigger.moduleId
     ? getFlowByModuleId(trigger.moduleId).then(async (f) =>
         f
           ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) }
           : { flow: null, hydrated: [] },
       )
-    : messageTrigger.text
-      ? loadActiveAutoReplyRules(workspaceId).then(() => ({ flow: null, hydrated: [] }))
-      : Promise.resolve({ flow: null, hydrated: [] })
+    : Promise.resolve({ flow: null, hydrated: [] })
 
   // Dedup claim（Firestore 寫入）與預載並行；預載皆為讀取／冪等，redelivery 重跑無害。
   // 貼標／回覆等副作用都在 claim 確認之後才會發生。
@@ -4038,71 +3897,17 @@ export async function handlePostbackEvent(
     return
   }
 
-  // Fallback: Match legacy postback data to an auto-reply keyword (if any)
-  const rule = !suppressBotAutomationPostback
-    ? await matchAutoReplyRule(data, workspaceId, { allowAnyText: false })
-    : null
+  // 舊式 postback（data 是關鍵字字串）曾經回退去比對自動回覆規則。規則已下架，
+  // 這條路徑必然沒有結果——留著只是讓人以為還有一層保底。現在直接記成「按了沒反應的按鈕」，
+  // 讓異常中心看得到（那多半是圖文選單或舊模組指向已刪的東西）。
   if (!suppressBotAutomationPostback) {
     recordCustomerAction({
       workspaceId,
       userIdOrDocId: userId,
-      actionType: rule ? 'button_module' : 'button_dead',
-      name: rule ? String(rule.name || '') : '',
+      actionType: 'button_dead',
+      name: '',
       lineEventTimestampMs: postbackTs,
     })
-  }
-  if (rule && event.replyToken) {
-    const userAttributes = buildAttributeContext(preloadedUserData)
-    if (rule.action.type === 'module') {
-      const flow = await getFlowByModuleId(rule.action.moduleId)
-      if (flow) {
-        const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
-        const lineMessages = buildLineMessages(
-          hydratedMessages,
-          userAttributes,
-          options.requestOrigin || '',
-          userId,
-          channelSecret,
-        )
-        const liveAgent = await resolveLiveAgentModuleReply(workspaceId, flow, lineMessages)
-        const outMessages = liveAgent?.messages ?? lineMessages
-        await replyMessage(event.replyToken, outMessages, workspaceId)
-        if (liveAgent) markWaitingAckSent(workspaceId, userId)
-        dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
-        saveOutgoingConversationMessagesByWorkspace(userId, outMessages, workspaceId, {
-          sender: liveAgent?.sender ?? 'bot',
-          senderName: liveAgent?.senderName ?? String(flow.name || ''),
-        }).catch(e => console.error('[conv] save error:', e))
-        if (liveAgent) {
-          await commitHandoff({
-            workspaceId, lineUserId: userId, sessionId, moduleId: rule.action.moduleId,
-            displayName: userAttributes.displayName || '',
-            customerMessage: `（客人按了「${flow.name || '真人客服'}」）`,
-            reason: 'user_request',
-          })
-        }
-        else {
-          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', rule.action.moduleId, workspaceId).catch(e =>
-            console.error('[session] enterModule (fallback) error:', e),
-          )
-        }
-      }
-    } else {
-      const actionMessages = buildAutoReplyActionMessages(rule.action, userAttributes)
-      if (actionMessages.length > 0) {
-        await replyMessage(event.replyToken, actionMessages, workspaceId)
-        saveOutgoingConversationMessagesByWorkspace(userId, actionMessages, workspaceId, {
-          sender: 'bot',
-          senderName: String(rule.name || ''),
-        }).catch(e => console.error('[conv] save error:', e))
-        // 純文字/網址回覆也是機器人真實首接（與上面的模組分支同等；先前只有模組分支有記，
-        // 這條漏記會讓「按按鈕→收到一段文字」的會話誤掛在未首接）
-        enterModule(sessionId, userId, 'bot_flow', undefined, workspaceId).catch(e =>
-          console.error('[session] enterModule (fallback action) error:', e),
-        )
-      }
-    }
-    return
   }
 
   /**

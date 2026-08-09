@@ -1,4 +1,5 @@
 import { capMapSize } from './bounded-cache'
+import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
 
 /**
@@ -19,7 +20,7 @@ export interface BrokenModuleRef {
   moduleId: string
   /** 引用它的地方（圖文選單／模組／規則／活動名稱），給使用者直接找到要修哪裡 */
   sourceLabel: string
-  sourceKind: 'richmenu' | 'flow' | 'autoReply' | 'campaign'
+  sourceKind: 'richmenu' | 'flow' | 'script' | 'campaign'
   /** missing = 模組被刪了；inactive = 模組還在但停用了 */
   reason: 'missing' | 'inactive'
 }
@@ -72,12 +73,12 @@ export async function findBrokenModuleRefs(
   if (cached && cached.expires > Date.now()) return cached.data
 
   // 一次把 flows 撈回來就同時拿到「誰引用了誰」和「被引用的還在不在／停用了沒」，
-  // 不需要為了查存在性再逐筆讀。關鍵字規則與活動也會指向模組：
-  // 指到已刪模組時，客人打關鍵字／掃活動碼一樣什麼都收不到。
-  const [flowsSnap, menusSnap, rulesSnap, campaignsSnap] = await Promise.all([
+  // 不需要為了查存在性再逐筆讀。客服腳本與活動也會指向模組：
+  // 指到已刪模組時，客人打觸發詞／掃活動碼一樣什麼都收不到。
+  const [flowsSnap, menusSnap, scriptsSnap, campaignsSnap] = await Promise.all([
     db.collection('flows').where('workspaceId', '==', workspaceId).get(),
     db.collection('richmenus').where('workspaceId', '==', workspaceId).get(),
-    db.collection('autoReplies').where('workspaceId', '==', workspaceId).get(),
+    db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get(),
     db.collection('leadCampaigns').where('workspaceId', '==', workspaceId).get(),
   ])
 
@@ -125,13 +126,16 @@ export async function findBrokenModuleRefs(
     }
   }
 
-  // 關鍵字自動回覆：停用中的規則指向壞模組無害，只掃啟用的
-  // （isActive 未設視為啟用，與 normalizeAutoReplyRule 同一把尺）
-  for (const d of rulesSnap.docs) {
+  // 客服腳本的「機器人模組」步驟：停用中的腳本指向壞模組無害，只掃啟用的
+  for (const d of scriptsSnap.docs) {
     const data = d.data() as Record<string, unknown>
-    if (data.isActive === false) continue
-    const label = String(data.name ?? '(未命名規則)')
-    for (const moduleId of collectModuleRefs(data.action)) check(moduleId, label, 'autoReply')
+    if (data.enabled === false) continue
+    const label = String(data.name ?? '(未命名腳本)')
+    for (const node of (Array.isArray(data.nodes) ? data.nodes : []) as Array<Record<string, unknown>>) {
+      if (node?.type !== 'module') continue
+      const moduleId = typeof node.moduleId === 'string' ? node.moduleId.trim() : ''
+      if (moduleId) check(moduleId, label, 'script')
+    }
   }
 
   // 活動（領取行銷模組）：moduleId 是頂層欄位，不用深掃

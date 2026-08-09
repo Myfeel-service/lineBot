@@ -15,21 +15,27 @@
   margin: 0;
 }
 
-/* 即時流程檢查狀態列：設定當下就顯示「還差什麼 / 已 OK」 */
+/* 即時檢查狀態列：紅=擋存檔的接線錯、黃=不擋但客人會踩到、綠=三項都過 */
 .scripts-flow-status {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   padding: 8px 12px;
   border-radius: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 
   .el-icon {
     font-size: 15px;
     flex-shrink: 0;
+    /* 圖示對齊第一行文字的視覺中線（文字 13px × 1.5 行高） */
+    margin-top: 2px;
+  }
+
+  span {
+    flex: 1 1 auto;
   }
 
   &.is-ok {
@@ -40,6 +46,100 @@
     background: var(--el-color-warning-light-9);
     color: var(--el-color-warning);
   }
+  &.is-error {
+    background: var(--el-color-danger-light-9);
+    color: var(--el-color-danger);
+  }
+
+  /* 最後一條和下面的流程圖之間留正常間距 */
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* 「去看這一題」：直接跳到出問題的步驟卡片，不用自己找 */
+.scripts-flow-status-action {
+  flex: 0 0 auto;
+  height: auto;
+  padding: 0;
+  margin-top: 1px;
+}
+
+/* 成效：完成率是這頁最重要的數字，不該是標題旁的灰色小字 */
+.scripts-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border-inline-start: 3px solid var(--el-color-primary);
+  background: var(--el-fill-color-light);
+
+  &.is-warn {
+    border-inline-start-color: var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+  }
+}
+
+.scripts-stats-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.scripts-stats-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--el-text-color-primary);
+
+  .is-warn & {
+    color: var(--el-color-warning);
+  }
+}
+
+.scripts-stats-caption {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+
+.scripts-stats-detail {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+  margin: 0;
+}
+
+/* 進階設定（優先度）：預設收起，需要時才展開 */
+.scripts-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+/* 卡內的文字型展開/新增鈕（進階設定、加退路共用外觀底） */
+.scripts-inline-toggle {
+  font-size: 12.5px;
+  color: var(--el-color-primary);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* 健康狀態＋流程圖：跟著整頁一起捲。
+   ⛔ 這一區曾經做成吸頂＋自身限高可捲，結果整頁出現兩條捲軸（上面一塊自己捲、下面又捲一次），
+   滑鼠停在哪決定捲到什麼，很難用。一頁只留一條捲軸——要「編到第 5 步還看得到流程」，
+   靠的是流程圖上的步驟可以點過去，不是把它釘在畫面上。 */
+.scripts-overview {
+  display: flex;
+  flex-direction: column;
 }
 
 /* 流程圖：即時把整條流程攤成縮排的節點列，分支往內縮一層 */
@@ -48,7 +148,6 @@
   border-radius: 8px;
   background: var(--el-fill-color-blank);
   padding: 12px;
-  margin-bottom: 14px;
 }
 
 .scripts-flow-map-head {
@@ -113,6 +212,16 @@
       outline-offset: 1px;
     }
   }
+
+  /* 有問題的步驟：跟狀態列同一套訊號（黃），讓圖上就看得出要修哪一格 */
+  &.is-flagged {
+    box-shadow: inset 0 0 0 1.5px var(--el-color-warning);
+  }
+}
+
+.scripts-flow-flag {
+  color: var(--el-color-warning);
+  font-weight: 700;
 }
 
 .scripts-flow-sub {
@@ -185,6 +294,60 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 簡單模式（一步就結束）：卡片退成單純的分段，不用邊框把兩格裝成兩張「步驟卡」——
+   一問一答的設定看起來就該是一張表單，不是一條流程。 */
+.scripts-node-card.is-plain {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+
+  & + & {
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+}
+
+/* 「客人說什麼」「你回什麼」：要比欄位標題重，才讀得出是分節而不是又一個欄位 */
+.scripts-simple-heading {
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--el-text-color-primary);
+  padding-inline-start: 0.5rem;
+  border-inline-start: 3px solid var(--el-color-primary-light-5);
+}
+
+/* 「還要多做一步…」：簡單模式長成完整流程的唯一入口 */
+.scripts-grow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  align-self: flex-start;
+  margin-top: 12px;
+  padding: 9px 14px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  transition: border-color 0.15s, background 0.15s;
+
+  small {
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--el-text-color-secondary);
+  }
+
+  &:hover {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
 }
 
 /* 每個步驟的「這步在做什麼」白話說明，緊貼標頭當副標 */
@@ -263,18 +426,136 @@
   }
 }
 
-/* 條件 / 選項 / 欄位對應列：可伸縮、窄面板自適應（原本固定 px 會被切掉） */
+/* 退路 / 分路條件 / 快速回覆選項 / 欄位對應：四種列共用這個底。
+   用 grid 而不是 flex-wrap：欄寬固定才對得上下方欄位的右緣，換行時整組一起換，
+   不會出現「→」單獨掉一行變成一支沒有前後文的箭頭。
+   列內控制項一律 default 尺寸（32px）；混 size="small"（24px）會差 8px、同一列上下不齊。 */
 .scripts-branch-case {
-  display: flex;
+  display: grid;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 8px;
 }
-.scripts-branch-field { flex: 1 1 130px; min-width: 110px; }
-.scripts-branch-op { flex: 0 0 92px; }
-.scripts-branch-value { flex: 1 1 110px; min-width: 90px; }
-.scripts-branch-next { flex: 1 1 150px; min-width: 120px; }
+
+/* 退路 / 快速回覆選項：前綴 按鈕文字 → 前往 ✕ */
+.scripts-branch-case--route {
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 32px;
+}
+/* 依答案分路：如果 欄位 條件 比較值 → 前往 ✕
+   「有填寫」不需要比較值，但那一欄永遠留著（模板裡是空的 span）——欄數會變的話，
+   同一張卡裡混用幾種條件時，後面的「→」和「前往」就會在各列之間左右錯開。 */
+.scripts-branch-case--cond {
+  grid-template-columns: auto minmax(0, 1fr) 104px minmax(0, 1fr) auto minmax(0, 1fr) 32px;
+}
+/* 存進客人資料：收集欄位 欄位 存成 屬性名 ✕ */
+.scripts-branch-case--map {
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 32px;
+}
+
+/* grid 欄寬由 grid-template-columns 決定，控制項只要允許被壓縮 */
+.scripts-branch-field,
+.scripts-branch-op,
+.scripts-branch-value,
+.scripts-branch-next {
+  min-width: 0;
+}
+
+/* 比較值那一格是包住 el-input 的容器（「有填寫」時空著佔位），內層要撐滿 */
+.scripts-branch-value > .el-input {
+  width: 100%;
+}
+
+/* ✕ 永遠佔位：原本用 v-if 讓它有內容才出現，一開始打字整列寬度就縮一次 */
+.scripts-branch-remove {
+  width: 32px;
+  min-width: 32px;
+  padding-inline: 0;
+  justify-self: end;
+}
+
+/* 窄面板：整組一起換行——每個控制項各自成列、✕ 釘在右上，箭頭不會落單。
+   ⛔ 用 container query 不是 media query：會擠到的是**編輯區**的寬度（受側欄寬度、
+   使用者拖曳的分隔線影響），不是視窗寬度。用 @media 的話，1000px 視窗＋寬側欄
+   會讓編輯區只剩 560px 卻不換行，照樣擠成一團。 */
+.scripts-node-card {
+  container-type: inline-size;
+  container-name: scriptnode;
+}
+
+@container scriptnode (max-width: 620px) {
+  .scripts-branch-case--route,
+  .scripts-branch-case--cond,
+  .scripts-branch-case--map {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    row-gap: 6px;
+
+    > * {
+      grid-column: 1;
+    }
+    > .scripts-branch-remove {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    /* 由上往下排本身就講完了順序，這時候的「→」只是一個沒有前後文的孤字 */
+    > .scripts-branch-arrow {
+      display: none;
+    }
+    /* 「有填寫」不需要比較值：橫排時那一格要留著撐欄位對齊，直排時只會多一列空白 */
+    > .scripts-branch-value:empty {
+      display: none;
+    }
+  }
+}
+
+/* 沒設退路時只留這一顆：八成的收集步驟用不到，不該永遠佔一整塊 */
+.scripts-skip-add {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--el-color-primary);
+  background: none;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+
+  &:hover {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+
+  /* 問的是「客人可能根本沒有」的代碼又沒退路 → 帶語氣的建議，跟狀態列同一套訊號 */
+  &.is-suggested {
+    color: var(--el-color-warning);
+    border-style: solid;
+    border-color: var(--el-color-warning-light-5);
+    background: var(--el-color-warning-light-9);
+
+    b {
+      color: var(--el-color-primary);
+    }
+    &:hover {
+      border-color: var(--el-color-warning);
+      background: var(--el-color-warning-light-8);
+    }
+  }
+}
+
+/* 頁尾：講清楚「這件事該用自動回覆還是腳本」——兩個功能字面上分不出差別 */
+.scripts-sibling-note {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
 
 /* 加積木選單：分「常用/進階」，每顆卡片附一句說明，讓人一眼知道是做什麼的 */
 .scripts-add-palette {
@@ -368,12 +649,12 @@
   }
 }
 
+/* 試跑對話：跟著整頁捲，不自己開一個捲動區（同上，一頁只留一條捲軸）。
+   對話本來就是由上往下長，長了就把頁面撐高，不需要一個內嵌的小視窗。 */
 .scripts-sim-chat {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 320px;
-  overflow-y: auto;
   padding: 12px;
   border-radius: 8px;
   background: var(--el-fill-color-light);

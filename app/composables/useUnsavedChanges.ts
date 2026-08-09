@@ -27,6 +27,7 @@ export type UseUnsavedChangesOptions = {
 export function useUnsavedChanges(opts: UseUnsavedChangesOptions) {
   const message = opts.message ?? UNSAVED_CHANGES_CONFIRM_MESSAGE
   const baselineJson = ref('')
+  const forcedDirty = ref(false)
 
   function serializeCurrent(): string {
     try {
@@ -37,6 +38,7 @@ export function useUnsavedChanges(opts: UseUnsavedChangesOptions) {
   }
 
   const hasUnsavedChanges = computed(() => {
+    if (forcedDirty.value) return true
     const b = baselineJson.value
     if (b === '') return false
     return serializeCurrent() !== b
@@ -44,7 +46,17 @@ export function useUnsavedChanges(opts: UseUnsavedChangesOptions) {
 
   /** 將「目前畫面上的值」設為已對齊基準（載入項目、儲存成功後請呼叫） */
   function markClean() {
+    forcedDirty.value = false
     baselineJson.value = serializeCurrent()
+  }
+
+  /**
+   * 明確標記為「有未儲存內容」。
+   * 用於「畫面上已經是一份還沒存進資料庫的草稿」——從範本建立、AI 生成、複製一份。
+   * 這種狀態不能用 markClean()：那等於宣告草稿已經安全，切走時不會攔，整份就消失了。
+   */
+  function markDirty() {
+    forcedDirty.value = true
   }
 
   /** 若有未儲存變更則 `window.confirm`；回傳 `true` 表示可繼續離開／切換 */
@@ -73,6 +85,7 @@ export function useUnsavedChanges(opts: UseUnsavedChangesOptions) {
   return {
     hasUnsavedChanges,
     markClean,
+    markDirty,
     confirmLeaveIfDirty,
   }
 }

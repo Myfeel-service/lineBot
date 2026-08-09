@@ -334,7 +334,11 @@
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-check-health.ts 212405d2-d782-443b-9670-adac3b3e1f99 f2d418e2-9f5a-4123-86db-2d9d5bc6a779)",
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-live.ts 212405d2-d782-443b-9670-adac3b3e1f99 f2d418e2-9f5a-4123-86db-2d9d5bc6a779)",
       "Bash(node --env-file=.env_splash --experimental-strip-types .tmp-dump-live.ts)",
-      "Bash(node --env-file=.env_splash --experimental-strip-types -e ' *)"
+      "Bash(node --env-file=.env_splash --experimental-strip-types -e ' *)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-script-meta.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-fix-two-scripts.ts)",
+      "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-live.ts 212405d2-d782-443b-9670-adac3b3e1f99)",
+      "Bash(sed -i '' 's|<span class=\"text-xs text-muted\">→</span>|<span class=\"text-xs text-muted scripts-branch-arrow\">→</span>|g' app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue && grep -n \"scripts-branch-arrow\" app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

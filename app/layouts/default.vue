@@ -29,7 +29,8 @@
             :key="item.to"
             :to="item.to"
             class="nav-item"
-            :class="{ active: route.path === item.to }"
+            :data-tour="item.tour"
+            :class="{ active: route.path === item.to || (item.alsoActiveOn ?? []).includes(route.path) }"
           >
             <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
@@ -110,9 +111,10 @@
 </template>
 
 <script setup lang="ts">
+import type { Component } from 'vue'
 import {
   Box, ChatDotRound, Connection, CreditCard, DataLine, Grid, Lightning,
-  Monitor, OfficeBuilding, Operation, PriceTag, Promotion, Reading,
+  Monitor, OfficeBuilding, PriceTag, Promotion, Reading,
   Setting, SwitchButton, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'
 
@@ -144,7 +146,16 @@ const ROLE_LABELS: Record<string, string> = {
 }
 const currentRoleLabel = computed(() => currentRole.value ? (ROLE_LABELS[currentRole.value] ?? currentRole.value) : 'Admin')
 
-const navItems = computed(() => {
+interface NavItem {
+  to: string
+  icon: Component
+  label: string
+  tour?: string
+  /** 這一項底下還有別的路由（同一個入口的其他分頁）時，停在那些路徑也要亮起來 */
+  alsoActiveOn?: string[]
+}
+
+const navItems = computed<NavItem[]>(() => {
   const wid = workspaceId.value
   if (!wid) return []
   return [
@@ -152,12 +163,19 @@ const navItems = computed(() => {
     { to: `/admin/${wid}/conversations`, icon: ChatDotRound, label: '對話' },
     { to: `/admin/${wid}/flow`, icon: Connection, label: '機器人模組' },
     { to: `/admin/${wid}/richmenu`, icon: Grid, label: '圖文選單' },
-    { to: `/admin/${wid}/auto-reply`, icon: Lightning, label: '自動回覆' },
     { to: `/admin/${wid}/support-presets`, icon: Box, label: '客服預存' },
     { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
     { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
     { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },
     { to: `/admin/${wid}/users`, icon: User, label: '會員' },
+    // 「自動回應」＝客人講話、系統自動回。一句話回一件事與多步驟流程是同一種設定的不同深度
+    // （見腳本頁的簡單模式），所以只有一個入口。舊的「自動回覆規則」已於 2026-08-09 下架。
+    {
+      to: `/admin/${wid}/ai-scripts`,
+      icon: Lightning,
+      label: '自動回應',
+      tour: 'nav-auto-response',
+    },
   ]
 })
 
@@ -168,8 +186,9 @@ const aiNavItems = computed(() => {
   const wid = workspaceId.value
   if (!wid) return []
   const items = [
+    // ⛔ 客服腳本不在這裡：它就是上一組的「自動回應」。
+    // 這裡再放一個入口＝同一件事兩個進入點，會讓「該用哪一邊」的問題重新長回來。
     { cap: 'ai.read' as const, to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
-    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-scripts`, icon: Operation, label: '客服腳本', tour: 'nav-ai-scripts' },
     { cap: 'playground.use' as const, to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
     { cap: 'usage.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: '用量監控' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },

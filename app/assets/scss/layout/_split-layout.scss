@@ -512,7 +512,9 @@ body.is-resizing-split {
   flex-direction: column;
 }
 
-/* 表單堆疊：依內容撐高，由 .split-editor-body 捲動（自動回覆、推播、設定等） */
+/* 表單堆疊：依內容撐高，由 .split-editor-body 捲動（自動回覆、腳本、推播、設定等）。
+   整個編輯區只有這一層在捲——區塊自己再開一個捲動區的話，會變成兩條捲軸互搶滑鼠。 */
+.split-editor-body > .ai-scripts-body,
 .split-editor-body > .ar-editor-body,
 .split-editor-body > .ls-page-body,
 .split-editor-body > .rm-editor-body,

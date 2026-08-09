@@ -790,7 +790,6 @@
             placement="top-start"
             :width="340"
             popper-class="conv-picker-popover"
-            @show="onQuickReplyPickerShow"
             @hide="pendingQuickReplyId = ''"
           >
             <template #reference>
@@ -805,18 +804,6 @@
             </template>
             <div class="conv-picker-panel">
               <div class="conv-picker-title">挑一則回覆</div>
-              <div class="conv-picker-tabs">
-                <button
-                  v-for="tab in quickReplyTabs"
-                  :key="tab.key"
-                  type="button"
-                  class="conv-picker-tab"
-                  :class="{ active: quickReplyTab === tab.key }"
-                  @click="setQuickReplyTab(tab.key)"
-                >
-                  <span>{{ tab.label }}</span>
-                </button>
-              </div>
               <el-input
                 v-if="quickReplyNeedsSearch"
                 v-model="quickReplySearch"
@@ -830,13 +817,9 @@
                   <template v-if="quickReplySearch.trim()">
                     找不到符合「{{ quickReplySearch.trim() }}」的項目
                   </template>
-                  <template v-else-if="quickReplyTab === 'preset'">
-                    還沒有啟用的客服預存。建立常用回覆後，就能在這裡直接取用。
-                    <a class="conv-picker-empty__link" @click="openQuickReplySource('preset')">去建立客服預存</a>
-                  </template>
                   <template v-else>
-                    還沒有啟用的自動回覆規則。
-                    <a class="conv-picker-empty__link" @click="openQuickReplySource('rule')">去看自動回覆</a>
+                    還沒有啟用的客服預存。建立常用回覆後，就能在這裡直接取用。
+                    <a class="conv-picker-empty__link" @click="openQuickReplySource()">去建立客服預存</a>
                   </template>
                 </div>
                 <div v-else class="conv-support-preset-list">
@@ -1430,7 +1413,6 @@ type ChatRow = ChatRowEvent | ChatRowMsg
 type PickerKind = 'emoji' | 'sticker'
 type QuickSendType = 'image' | 'video' | 'audio'
 /** 「挑一則送出」的來源：客服預存 / 自動回覆規則 */
-type QuickReplySource = 'preset' | 'rule'
 type QuickReplyItem = {
   id: string
   name: string
@@ -1725,10 +1707,6 @@ const NEAR_BOTTOM_PX = 80
 let pinBottomTimer: ReturnType<typeof setInterval> | null = null
 const supportPresetsRaw = ref<any[]>([])
 /** 自動回覆規則清單：規則可能很多，等 picker 第一次打開才載入 */
-const autoReplyRulesRaw = ref<any[]>([])
-const autoReplyRulesLoaded = ref(false)
-const autoReplyRulesLoading = ref(false)
-const quickReplyTab = ref<QuickReplySource>('preset')
 const quickReplySearch = ref('')
 const pendingQuickReplyId = ref('')
 /** 受控開合：填進回覆框後要自己把 popover 關掉，客服才看得到填進去的字 */
@@ -1766,34 +1744,14 @@ const activeSupportPresets = computed(() =>
 const isSupportPresetBusy = computed(() => sending.value || msgLoading.value)
 
 /**
- * 「挑一則送出」的兩個來源：客服預存（專門為客服建的）與自動回覆規則（借用那條規則的內容）。
- * 兩者的 action 是同一個 shape，後端也走同一條發送路徑，所以放在同一顆按鈕的兩個分頁裡，
- * 不再多一顆意義相近的按鈕。
+ * 「挑一則送出」只有客服預存一個來源。
+ * 原本還能借用「自動回覆規則」的內容，那個功能已於 2026-08-09 下架。
  */
-const quickReplyTabs: ReadonlyArray<{ key: QuickReplySource, label: string }> = [
-  { key: 'preset', label: '客服預存' },
-  { key: 'rule', label: '自動回覆' },
-]
 /** 超過這個數量才顯示搜尋框：只有 3 則時多一個輸入框是噪音 */
 const QUICK_REPLY_SEARCH_THRESHOLD = 8
 
-const activeAutoReplyRules = computed(() =>
-  autoReplyRulesRaw.value.filter((r: any) => r.isActive !== false),
-)
-const quickReplyLoading = computed(() =>
-  quickReplyTab.value === 'rule' && autoReplyRulesLoading.value,
-)
+const quickReplyLoading = computed(() => false)
 const quickReplySourceItems = computed<QuickReplyItem[]>(() => {
-  if (quickReplyTab.value === 'rule') {
-    return activeAutoReplyRules.value.map((r: any) => ({
-      id: String(r.id),
-      name: String(r.name || ''),
-      // 關鍵字一起顯示：規則名稱常常很像，光看名字認不出是哪一條
-      meta: [r.keyword ? `關鍵字：${r.keyword}` : '', getActionSummary(r)].filter(Boolean).join('｜'),
-      actionType: getActionType(r),
-      taggingEnabled: r?.tagging?.enabled === true,
-    }))
-  }
   return activeSupportPresets.value.map((p: any) => ({
     id: String(p.id),
     name: String(p.name || ''),
@@ -2511,58 +2469,27 @@ async function loadSupportPresets() {
   supportPresetsRaw.value = await apiFetch<any[]>('/api/support-preset/list').catch(() => [])
 }
 
-/** 自動回覆規則可能上百條，不在進頁時載入；picker 打開才抓一次 */
-async function loadAutoReplyRules() {
-  if (autoReplyRulesLoaded.value || autoReplyRulesLoading.value) return
-  autoReplyRulesLoading.value = true
-  try {
-    autoReplyRulesRaw.value = await apiFetch<any[]>('/api/auto-reply/list').catch(() => [])
-    autoReplyRulesLoaded.value = true
-  }
-  finally {
-    autoReplyRulesLoading.value = false
-  }
-}
-
-function onQuickReplyPickerShow() {
-  if (quickReplyTab.value === 'rule') loadAutoReplyRules()
-}
-
-function setQuickReplyTab(tab: QuickReplySource) {
-  if (quickReplyTab.value === tab) return
-  quickReplyTab.value = tab
-  // 換分頁就清掉選取與搜尋：留著會變成「畫面上沒有選中的項目，送出鍵卻是亮的」
-  pendingQuickReplyId.value = ''
-  quickReplySearch.value = ''
-  if (tab === 'rule') loadAutoReplyRules()
-}
-
-function openQuickReplySource(tab: QuickReplySource) {
-  const page = tab === 'rule' ? 'auto-reply' : 'support-presets'
-  window.open(`/admin/${workspaceId.value}/${page}`, '_blank')
+function openQuickReplySource() {
+  window.open(`/admin/${workspaceId.value}/support-presets`, '_blank')
 }
 
 async function sendQuickReply() {
   if (!assertCanOperate()) return
   const id = pendingQuickReplyId.value
   if (!id || !selectedUserId.value || !selectedUser.value) return
-  const isRule = quickReplyTab.value === 'rule'
   sending.value = true
   try {
     await apiFetch(
-      `/api/conversations/${selectedUserId.value}/${isRule ? 'send-auto-reply' : 'send-preset'}`,
-      {
-        method: 'POST',
-        body: isRule ? { ruleId: id } : { presetId: id },
-      },
+      `/api/conversations/${selectedUserId.value}/send-preset`,
+      { method: 'POST', body: { presetId: id } },
     )
-    showToast(isRule ? '已送出自動回覆的內容' : '已送出客服預存', 'success')
+    showToast('已送出客服預存', 'success')
     // 送完就收起來：這顆按鈕的事已經做完，留著擋住剛送出的訊息
     quickReplyPickerVisible.value = false
     await reloadAfterOutgoing()
   }
   catch (e: any) {
-    showToast(e?.data?.statusMessage || (isRule ? '送出自動回覆失敗' : '送出預存失敗'), 'error')
+    showToast(e?.data?.statusMessage || '送出預存失敗', 'error')
   }
   finally {
     sending.value = false
@@ -2580,12 +2507,11 @@ async function fillQuickReply() {
   if (!assertCanOperate()) return
   const item = pendingQuickReplyItem.value
   if (!item || !selectedUserId.value) return
-  const isRule = quickReplyTab.value === 'rule'
   quickReplyFilling.value = true
   try {
     const res = await apiFetch<{ text: string | null }>(
       `/api/conversations/${selectedUserId.value}/quick-reply-text`,
-      { params: isRule ? { ruleId: item.id } : { presetId: item.id } },
+      { params: { presetId: item.id } },
     )
     const text = String(res?.text ?? '')
     if (!text) {

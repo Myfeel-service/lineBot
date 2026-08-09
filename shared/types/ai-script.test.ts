@@ -6,9 +6,9 @@ import {
   extractCollectValue,
   findStuckCollects,
   matchesScriptKeywords,
-  matchesScriptTrigger,
   matchesSemanticTrigger,
   outgoingNodeIds,
+  scriptCooldownMs,
   validateScriptDoc,
   type ScriptDoc,
   type ScriptNode,
@@ -40,29 +40,59 @@ describe('cosineSimilarity', () => {
   })
 })
 
-describe('matchesScriptTrigger (keyword)', () => {
-  it('matches substring case-insensitively', () => {
+describe('matchesScriptKeywords（腳本關鍵字比對的唯一入口）', () => {
+  it('子字串比對、不分大小寫', () => {
     const s = buildScript({ id: 't1', type: 'trigger', keywords: ['退貨'] })
-    expect(matchesScriptTrigger(s, '我想要退貨')).toBe(true)
-    expect(matchesScriptTrigger(s, '你好嗎')).toBe(false)
+    expect(matchesScriptKeywords(s, '我想要退貨')).toBe(true)
+    expect(matchesScriptKeywords(s, '你好嗎')).toBe(false)
   })
-  it('never matches when trigger is in semantic mode', () => {
-    const s = buildScript({ id: 't1', type: 'trigger', matchMode: 'semantic', keywords: ['退貨'], examples: ['退貨'] })
-    expect(matchesScriptTrigger(s, '我想要退貨')).toBe(false)
-  })
-  it('does not match a disabled script', () => {
-    const s = { ...buildScript({ id: 't1', type: 'trigger', keywords: ['退貨'] }), enabled: false }
-    expect(matchesScriptTrigger(s, '退貨')).toBe(false)
-  })
-})
 
-describe('matchesScriptKeywords (mode-agnostic fast-path)', () => {
-  it('matches keywords even in semantic mode (keywords = definite triggers)', () => {
+  it('停用的腳本一律不命中', () => {
+    const s = { ...buildScript({ id: 't1', type: 'trigger', keywords: ['退貨'] }), enabled: false }
+    expect(matchesScriptKeywords(s, '退貨')).toBe(false)
+  })
+
+  it('semantic 模式也吃 keywords（關鍵字＝確定性快速通道，不必每次都問 LLM）', () => {
     const s = buildScript({ id: 't1', type: 'trigger', matchMode: 'semantic', keywords: ['預約'], examples: ['想約個時間'] })
-    // matchesScriptTrigger 會因 semantic 模式回 false；matchesScriptKeywords 仍命中 keyword
-    expect(matchesScriptTrigger(s, '我要預約')).toBe(false)
     expect(matchesScriptKeywords(s, '我要預約')).toBe(true)
     expect(matchesScriptKeywords(s, '今天天氣好')).toBe(false)
+  })
+
+  // keywordMatch：與自動回覆規則的 matchType 對齊，兩種深度的設定要能互換
+  describe('keywordMatch', () => {
+    it('省略＝any（舊腳本行為不變）', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywords: ['退貨', '換貨'] })
+      expect(matchesScriptKeywords(s, '我要換貨')).toBe(true)
+    })
+
+    it('all：每個關鍵字都要出現', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywordMatch: 'all', keywords: ['訂單', '取消'] })
+      expect(matchesScriptKeywords(s, '我要取消訂單')).toBe(true)
+      expect(matchesScriptKeywords(s, '我要查訂單')).toBe(false)
+    })
+
+    it('exact：整句要一字不差', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywordMatch: 'exact', keywords: ['查訂單'] })
+      expect(matchesScriptKeywords(s, '查訂單')).toBe(true)
+      expect(matchesScriptKeywords(s, ' 查訂單 ')).toBe(true) // 前後空白會被 trim
+      expect(matchesScriptKeywords(s, '我要查訂單')).toBe(false)
+    })
+
+    it('anyText：有文字就命中，連關鍵字都不用填', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywordMatch: 'anyText', keywords: [] })
+      expect(matchesScriptKeywords(s, '隨便打什麼')).toBe(true)
+      expect(matchesScriptKeywords(s, '   ')).toBe(false) // 空白訊息不算
+    })
+
+    it('anyText 仍受停用擋住（別讓一條停用的設定攔截全站）', () => {
+      const s = { ...buildScript({ id: 't1', type: 'trigger', keywordMatch: 'anyText', keywords: [] }), enabled: false }
+      expect(matchesScriptKeywords(s, '哈囉')).toBe(false)
+    })
+
+    it('非 anyText 而關鍵字空白 → 不命中（不會變成攔截全部）', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywords: [] })
+      expect(matchesScriptKeywords(s, '哈囉')).toBe(false)
+    })
   })
 })
 
@@ -373,5 +403,60 @@ describe('validateScriptDoc：圖驗證（分支 / 快速回覆 / 循環）', ()
       { id: 'orphan', type: 'reply', text: '到不了', thenHandoff: false },
     ]
     expect(validateScriptDoc({ ...base, nodes })).toMatch(/接不到流程裡/)
+  })
+})
+
+describe('回覆的連結按鈕', () => {
+  function replyScript(reply: Record<string, unknown>) {
+    return {
+      name: 's',
+      rootNodeId: 't',
+      nodes: [
+        { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['嗨'], examples: [], priority: 50, next: 'r' },
+        { id: 'r', type: 'reply', text: '你好', thenHandoff: false, ...reply },
+      ] as ScriptNode[],
+    }
+  }
+
+  it('沒有 scheme 的網址擋在存檔（LINE 會整則退掉，客人收不到又看不出原因）', () => {
+    expect(validateScriptDoc(replyScript({ linkUrl: 'www.example.com' }))).toContain('https://')
+  })
+
+  it('https / tel / line 開頭放行', () => {
+    for (const url of ['https://a.com', 'http://a.com', 'tel:0912345678', 'line://ti/p/@x']) {
+      expect(validateScriptDoc(replyScript({ linkUrl: url }))).toBeNull()
+    }
+  })
+
+  it('開頭是變數的放行（真正的網址是執行時才組出來的）', () => {
+    expect(validateScriptDoc(replyScript({ linkUrl: '{{shopUrl}}/order' }))).toBeNull()
+  })
+
+  it('沒設連結不受影響', () => {
+    expect(validateScriptDoc(replyScript({}))).toBeNull()
+  })
+})
+
+describe('scriptCooldownMs', () => {
+  function withCooldown(cooldownMs?: unknown) {
+    return {
+      rootNodeId: 't',
+      nodes: [
+        { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['嗨'], examples: [], priority: 50, next: 'r', ...(cooldownMs === undefined ? {} : { cooldownMs }) },
+        { id: 'r', type: 'reply', text: 'ok', thenHandoff: false },
+      ] as ScriptNode[],
+    }
+  }
+
+  it('沒設＝0（不設限）', () => {
+    expect(scriptCooldownMs(withCooldown())).toBe(0)
+  })
+  it('有設就回那個毫秒數', () => {
+    expect(scriptCooldownMs(withCooldown(60_000))).toBe(60_000)
+  })
+  it('壞值一律當作沒設，不會變成永遠冷卻', () => {
+    expect(scriptCooldownMs(withCooldown(-1))).toBe(0)
+    expect(scriptCooldownMs(withCooldown('abc'))).toBe(0)
+    expect(scriptCooldownMs(withCooldown(Number.NaN))).toBe(0)
   })
 })

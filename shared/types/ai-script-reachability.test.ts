@@ -4,7 +4,11 @@
  * 異常中心報一次假的,使用者就會學會忽略它。
  */
 import { describe, it, expect } from 'vitest'
-import { findUnreachableScripts, type ScriptForReachability } from './ai-script-reachability'
+import {
+  findUnreachableScripts,
+  toReachabilityScripts,
+  type ScriptForReachability,
+} from './ai-script-reachability'
 import type { ScriptNode } from './ai-script'
 
 function script(over: Partial<ScriptForReachability> & { id: string; keywords?: string[]; examples?: string[] }): ScriptForReachability {
@@ -31,47 +35,7 @@ describe('findUnreachableScripts', () => {
     expect(findUnreachableScripts([script({ id: 's1', enabled: false, keywords: [] })])).toEqual([])
   })
 
-  describe('自動回覆規則擋在前面', () => {
-    it('containsAny 的 token 是觸發詞的子字串 → 每則都先被規則接走', () => {
-      const r = findUnreachableScripts(
-        [script({ id: 's1', keywords: ['退貨', '換貨'] })],
-        { rules: [{ name: '售後服務', matchType: 'containsAny', keyword: '退,換' }] },
-      )
-      expect(r[0]!.reason).toBe('autoReplyRule')
-      expect(r[0]!.detail).toContain('售後服務')
-    })
-
-    it('只蓋到部分觸發詞 → 不報（另一個詞還是進得來）', () => {
-      const r = findUnreachableScripts(
-        [script({ id: 's1', keywords: ['退貨', '換貨'] })],
-        { rules: [{ name: '退貨說明', matchType: 'containsAny', keyword: '退貨' }] },
-      )
-      expect(r).toEqual([])
-    })
-
-    it('exact 規則只搶走「整句就是那個詞」→ 詞不同就不算蓋台', () => {
-      const rules = [{ name: '用戶', matchType: 'exact' as const, keyword: '用戶' }]
-      expect(findUnreachableScripts([script({ id: 's1', keywords: ['退貨'] })], { rules })).toEqual([])
-      const same = findUnreachableScripts([script({ id: 's1', keywords: ['用戶'] })], { rules })
-      expect(same[0]!.reason).toBe('autoReplyRule')
-    })
-
-    it('containsAll 要觸發詞含全部 token 才算必定被搶', () => {
-      const rules = [{ name: '退貨查詢', matchType: 'containsAll' as const, keyword: '退貨,查詢' }]
-      expect(findUnreachableScripts([script({ id: 's1', keywords: ['退貨'] })], { rules })).toEqual([])
-      expect(findUnreachableScripts([script({ id: 's1', keywords: ['退貨查詢單'] })], { rules })[0]!.reason).toBe('autoReplyRule')
-    })
-
-    it('anyText 規則刻意不在這裡報（已有 anyTextBlocking 那一項）', () => {
-      const r = findUnreachableScripts(
-        [script({ id: 's1' })],
-        { rules: [{ name: '兜底', matchType: 'anyText', keyword: '' }] },
-      )
-      expect(r).toEqual([])
-    })
-  })
-
-  it('觸發詞都含敏感情境詞 → 安全層先攔走，腳本永遠不啟動', () => {
+it('觸發詞都含敏感情境詞 → 安全層先攔走，腳本永遠不啟動', () => {
     const r = findUnreachableScripts(
       [script({ id: 's1', name: '退款流程', keywords: ['我要申訴', '申訴流程'] })],
       { sensitiveTopics: ['申訴', '律師'] },
@@ -110,11 +74,11 @@ describe('findUnreachableScripts', () => {
     })
   })
 
-  it('同一條腳本只回第一個成立的原因，不會一次噴四張卡', () => {
-    const r = findUnreachableScripts(
-      [script({ id: 's1', keywords: ['申訴'] })],
-      { sensitiveTopics: ['申訴'], rules: [{ name: '兜底', matchType: 'containsAny', keyword: '申訴' }] },
-    )
+  it('同一條腳本只回第一個成立的原因，不會一次噴兩張卡', () => {
+    const broad = script({ id: 'broad', name: '申訴總表', keywords: ['申訴'] })
+    const narrow = script({ id: 's1', keywords: ['申訴流程'] })
+    const r = findUnreachableScripts([broad, narrow], { sensitiveTopics: ['申訴'] })
+      .filter(i => i.scriptId === 's1')
     expect(r).toHaveLength(1)
     expect(r[0]!.reason).toBe('sensitiveTopic')
   })
@@ -125,6 +89,27 @@ describe('findUnreachableScripts', () => {
       script({ id: 'b', name: '新增備註', keywords: ['新增備註', '備註', '要備註'] }),
       script({ id: 'c', name: '查詢訂單', keywords: ['訂單', '查詢', '進度'] }),
     ]
-    expect(findUnreachableScripts(live, { rules: [], sensitiveTopics: ['自殺', '提告', '律師'] })).toEqual([])
+    expect(findUnreachableScripts(live, { sensitiveTopics: ['自殺', '提告', '律師'] })).toEqual([])
+  })
+})
+
+/**
+ * 這兩支是異常中心、腳本編輯器、自動回覆編輯器**共用**的入口正規化。
+ * 三個地方各自手寫一遍的時候，總有一天會出現「這裡說會被蓋掉、那裡說不會」——
+ * 所以這裡鎖的是那把尺本身：什麼算「啟用中」。
+ */
+describe('toReachabilityScripts', () => {
+  it('只留啟用中的腳本（停用是刻意的，不算異常）', () => {
+    const rows = toReachabilityScripts([
+      { id: 'a', name: '啟用', enabled: true, rootNodeId: 't', nodes: [], priority: 50 },
+      { id: 'b', name: '停用', enabled: false, rootNodeId: 't', nodes: [], priority: 50 },
+      { id: 'c', name: '沒寫 enabled', rootNodeId: 't', nodes: [] },
+    ])
+    expect(rows.map(s => s.id)).toEqual(['a'])
+  })
+
+  it('缺 nodes/priority 不會炸，補成可分析的形狀', () => {
+    const [row] = toReachabilityScripts([{ id: 'a', enabled: true }])
+    expect(row).toEqual({ id: 'a', name: '', nodes: [], rootNodeId: '', enabled: true, priority: 0 })
   })
 })

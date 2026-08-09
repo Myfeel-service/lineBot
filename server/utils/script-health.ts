@@ -15,7 +15,6 @@ import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { findStuckCollects, type ScriptDoc } from '~~/shared/types/ai-script'
 import {
   findUnreachableScripts,
-  type AutoReplyRuleForReachability,
   type ScriptForReachability,
   type ScriptReachabilityIssue,
 } from '~~/shared/types/ai-script-reachability'
@@ -34,7 +33,7 @@ export interface ScriptHealth {
 
 /**
  * 同 broken-module-refs：這份結果只在有人編輯腳本／規則時才會變，
- * 但異常中心是被輪詢的端點——沒有快取的話每次輪詢都要整批讀 scripts + autoReplies。
+ * 但異常中心是被輪詢的端點——沒有快取的話每次輪詢都要整批讀 scripts。
  */
 const CACHE_TTL_MS = 5 * 60 * 1000
 const CACHE_MAX_ENTRIES = 50
@@ -52,17 +51,10 @@ export async function checkScriptHealth(
   const cached = cache.get(workspaceId)
   if (cached && cached.expires > Date.now()) return cached.data
 
-  const [scriptSnap, ruleSnap] = await Promise.all([
-    db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).where('enabled', '==', true).get(),
-    db.collection('autoReplies').where('workspaceId', '==', workspaceId).get(),
-  ])
+  const scriptSnap = await db.collection(SCRIPTS_COLLECTION)
+    .where('workspaceId', '==', workspaceId).where('enabled', '==', true).get()
 
   const scripts: ScriptForReachability[] = scriptSnap.docs.map(d => ({ id: d.id, ...(d.data() as ScriptDoc) }))
-  // isActive 未設視為啟用（與 normalizeAutoReplyRule／anyTextBlocking 同一把尺）
-  const rules: AutoReplyRuleForReachability[] = ruleSnap.docs
-    .map(d => d.data() as Record<string, unknown>)
-    .filter(r => r?.isActive !== false)
-    .map(r => ({ name: String(r.name ?? ''), matchType: r.matchType as AutoReplyRuleForReachability['matchType'], keyword: String(r.keyword ?? '') }))
 
   const deadEnds: ScriptDeadEnd[] = []
   for (const s of scripts) {
@@ -72,7 +64,7 @@ export async function checkScriptHealth(
   }
 
   const data: ScriptHealth = {
-    unreachable: findUnreachableScripts(scripts, { rules, sensitiveTopics }),
+    unreachable: findUnreachableScripts(scripts, { sensitiveTopics }),
     deadEnds,
   }
   cache.set(workspaceId, { data, expires: Date.now() + CACHE_TTL_MS })

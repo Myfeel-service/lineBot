@@ -69,7 +69,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_ai_settings: 'AI 設定',
   get_ai_usage: 'AI 用量',
   get_knowledge_status: '知識庫',
-  list_auto_reply_rules: '自動回覆規則',
+  list_auto_responses: '自動回應設定',
   get_current_alerts: '目前異常',
   get_setup_status: '設定進度',
 }

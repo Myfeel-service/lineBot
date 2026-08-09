@@ -35,6 +35,11 @@ export interface UserDoc {
   attributes?: Record<string, string>
   /** 自動回覆規則 ID → 上次觸發時間（epoch ms） */
   autoReplyCooldowns?: Record<string, number>
+  /**
+   * 腳本 ID → 上次啟動時間（epoch ms）。與 autoReplyCooldowns 同一個用途，
+   * 只是對象是腳本（見 claimScriptCooldown）。只有「有設冷卻」的腳本才會寫。
+   */
+  scriptCooldowns?: Record<string, number>
   /** 模組 ID → 冷卻資訊（由啟用防重複的自動回覆寫入） */
   autoReplyModuleCooldowns?: Record<string, { triggeredAt: number; durationMs: number }>
   /**

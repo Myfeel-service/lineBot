@@ -326,3 +326,94 @@ describe('腳本引擎：collect 跳過出口（客人沒有這個資料也有�
     expect(r2.quickReplies).toEqual(['找真人'])
   })
 })
+
+describe('腳本引擎：回覆附連結按鈕（＝自動回覆的「開啟網址」）', () => {
+  it('網址吃變數，把剛收到的訂單編號帶進查詢頁；沒填標題時用預設', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['查'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 600000, format: 'any', next: 'r' },
+      { id: 'r', type: 'reply', text: '幫您查到了', linkUrl: 'https://shop.example.com/o/{{order_id}}', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+
+    await startScript(s, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, 'A123', {}, UID, db)
+    expect(r.replyText).toBe('幫您查到了')
+    expect(r.link).toEqual({ url: 'https://shop.example.com/o/A123', label: '開啟網址' })
+  })
+
+  it('沒設連結就不帶 link 欄位（呼叫端據此決定要不要多送一則）', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['嗨'], examples: [], priority: 50, next: 'r' },
+      { id: 'r', type: 'reply', text: '你好', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+    const r = await startScript(s, UID, {}, db)
+    expect(r.link).toBeUndefined()
+  })
+
+  it('只有連結、沒有文字也送得出去（自動回覆「開啟網址」動作的形狀）', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['菜單'], examples: [], priority: 50, next: 'r' },
+      { id: 'r', type: 'reply', text: '', linkUrl: 'https://shop.example.com/menu', linkLabel: '看菜單', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+    const r = await startScript(s, UID, {}, db)
+    expect(r.replyText).toBe('')
+    expect(r.link).toEqual({ url: 'https://shop.example.com/menu', label: '看菜單' })
+  })
+})
+
+describe('腳本引擎：機器人模組步驟（＝自動回覆的「觸發機器人模組」）', () => {
+  it('走到 module 步驟 → 回傳 moduleId 並收工；訊息由 caller 送（要判斷真人客服模組）', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['選單'], examples: [], priority: 50, next: 'm' },
+      { id: 'm', type: 'module', moduleId: 'flow123' },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+
+    const r = await startScript(s, UID, {}, db)
+    expect(r.moduleId).toBe('flow123')
+    expect(r.replyText).toBe('')
+    expect(r.finished).toBe(true)
+    expect(r.completed).toBe(true)
+    // 終點步驟：activeScript 要清掉，不能把客人卡在流程裡
+    expect(activeScriptOf(store)).toBeUndefined()
+  })
+
+  it('收集完再送模組：模組前的貼標／寫屬性照常生效', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['報名'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '姓名？', fieldName: 'name', expireMs: 600000, format: 'any', next: 'save' },
+      { id: 'save', type: 'saveLead', fieldMap: [{ fromField: 'name', attrKey: '姓名' }], next: 'm' },
+      { id: 'm', type: 'module', moduleId: 'flow_welcome' },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+
+    await startScript(s, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '王小明', {}, UID, db)
+    expect(r.moduleId).toBe('flow_welcome')
+    expect(attrsOf(store)['姓名']).toBe('王小明')
+  })
+
+  it('把這一輪收集到的答案一起帶出去——不然模組內容裡的 {{變數}} 會原樣印給客人', async () => {
+    const s = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['查'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 600000, format: 'any', next: 'm' },
+      { id: 'm', type: 'module', moduleId: 'flow_order' },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', s)
+
+    await startScript(s, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, 'A123', {}, UID, db)
+    expect(r.moduleId).toBe('flow_order')
+    // 這一份是 caller 疊到客人資料上、拿去渲染模組訊息用的
+    expect(r.collected).toEqual({ order_id: 'A123' })
+  })
+})

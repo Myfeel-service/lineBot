@@ -6,7 +6,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/conversations/[userId]/quick-reply-text?presetId=xxx
- * GET /api/conversations/[userId]/quick-reply-text?ruleId=xxx
+ * GET /api/conversations/[userId]/quick-reply-text?presetId=xxx
  *
  * 「填入回覆框」用：拿這則客服預存／自動回覆的文字，讓客服改完再自己送出。
  * 只有 message 型別有可編輯的文字；module（觸發機器人模組）與 uri（按鈕卡）
@@ -20,8 +20,7 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const presetId = String(query?.presetId || '').trim()
-  const ruleId = String(query?.ruleId || '').trim()
-  if (!presetId && !ruleId) {
+  if (!presetId) {
     throw createError({ statusCode: 400, statusMessage: '請選擇要填入的項目' })
   }
 
@@ -31,17 +30,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: '找不到此使用者' })
   }
 
-  const collection = presetId ? 'supportPresets' : 'autoReplies'
-  const docId = presetId || ruleId
-  const snap = await db.collection(collection).doc(docId).get()
+  // 來源只剩客服預存（借用自動回覆規則內容的功能已於 2026-08-09 下架）
+  const snap = await db.collection('supportPresets').doc(presetId).get()
   if (!snap.exists || snap.data()?.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 404, statusMessage: presetId ? '找不到此預存' : '找不到此自動回覆規則' })
+    throw createError({ statusCode: 404, statusMessage: '找不到此預存' })
   }
 
-  const raw = { id: snap.id, ...snap.data() }
-  const action = presetId
-    ? normalizeSupportPreset(raw).action
-    : normalizeAutoReplyRule(raw).action
+  const action = normalizeSupportPreset({ id: snap.id, ...snap.data() }).action
 
   if (action.type !== 'message' || !action.text) {
     return { text: null as string | null }

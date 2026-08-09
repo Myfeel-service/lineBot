@@ -9,6 +9,7 @@ import {
   MAX_TRIGGER_EXAMPLES,
   type BranchOp,
   type CollectFormat,
+  type TriggerKeywordMatch,
   type ScriptBranchCase,
   type ScriptBranchNode,
   type ScriptCollectNode,
@@ -19,11 +20,15 @@ import {
   type ScriptReplyNode,
   type ScriptSaveLeadField,
   type ScriptSaveLeadNode,
+  type ScriptModuleNode,
   type ScriptTagNode,
   type ScriptTriggerNode,
 } from '~~/shared/types/ai-script'
+// 冷卻長度的白名單與自動回覆共用同一份——兩邊講的是同一件事，選項不該各有一套
+import { AUTO_REPLY_COOLDOWN_DURATIONS_MS } from '~~/shared/auto-reply-rule'
 
 const COLLECT_FORMATS: CollectFormat[] = ['any', 'phone', 'email', 'number', 'alphanumeric', 'alphanumericSymbol', 'custom']
+const TRIGGER_KEYWORD_MATCHES: TriggerKeywordMatch[] = ['any', 'all', 'exact', 'anyText']
 const BRANCH_OPS: BranchOp[] = ['exists', 'equals', 'contains']
 /** 單一分支節點最多幾條 case（避免前端塞爆） */
 const MAX_BRANCH_CASES = 10
@@ -64,11 +69,16 @@ function normalizeNode(raw: any): ScriptNode | null {
       id,
       type: 'trigger',
       matchMode,
+      keywordMatch: TRIGGER_KEYWORD_MATCHES.includes(raw?.keywordMatch) ? raw.keywordMatch : 'any',
       keywords: Array.isArray(raw?.keywords)
         ? raw.keywords.map((k: unknown) => String(k).trim()).filter(Boolean).slice(0, 20)
         : [],
       priority: clampInt(raw?.priority, 1, 100, DEFAULT_SCRIPT_PRIORITY),
       next: String(raw?.next ?? '').trim(),
+    }
+    // 冷卻：只收白名單裡的長度（與自動回覆同一組選項），其餘一律視為沒設
+    if (AUTO_REPLY_COOLDOWN_DURATIONS_MS.includes(Number(raw?.cooldownMs))) {
+      node.cooldownMs = Number(raw.cooldownMs)
     }
     // semantic 模式才收範例；exampleEmbeddings 一律由 server 算，絕不採信前端傳入
     if (matchMode === 'semantic') {
@@ -110,6 +120,21 @@ function normalizeNode(raw: any): ScriptNode | null {
       type: 'reply',
       text: String(raw?.text ?? '').trim().slice(0, 2000),
       thenHandoff: raw?.thenHandoff === true,
+    }
+    // 連結按鈕（選填）。網址留空＝沒有按鈕，連帶把標題也丟掉，不留半套資料
+    const linkUrl = String(raw?.linkUrl ?? '').trim().slice(0, 1000)
+    if (linkUrl) {
+      node.linkUrl = linkUrl
+      node.linkLabel = String(raw?.linkLabel ?? '').trim().slice(0, 20)
+    }
+    return node
+  }
+
+  if (type === 'module') {
+    const node: ScriptModuleNode = {
+      id,
+      type: 'module',
+      moduleId: String(raw?.moduleId ?? '').trim(),
     }
     return node
   }

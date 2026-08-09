@@ -2027,37 +2027,6 @@
   letter-spacing: 0.02em;
 }
 
-.conv-picker-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0 0.35rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.conv-picker-tab {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  height: 32px;
-  min-width: 32px;
-  padding: 0 0.55rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.conv-picker-tab:hover {
-  background: var(--bg-hover);
-}
-
-.conv-picker-tab.active {
-  border-color: var(--border-active);
-  background: var(--bg-hover);
-}
-
 .conv-picker-grid {
   display: grid;
   gap: 0.35rem;

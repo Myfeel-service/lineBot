@@ -102,10 +102,10 @@ const ALERTS: AlertDefinition[] = [
     id: 'anyTextBlocking',
     icon: ChatDotRound,
     severity: 'critical',
-    impact: '有一條「輸入任何內容」的規則會先接走所有訊息，客人問什麼都只會拿到那句罐頭回覆，AI 等於沒開。',
-    cta: '去看這條規則',
+    impact: '有一條設定的觸發是「客人輸入任何內容」，會先接走所有訊息，客人問什麼都只會拿到那一套回應，AI 等於沒開。',
+    cta: '去看這條設定',
     requires: 'operate',
-    route: wid => `/admin/${wid}/auto-reply`,
+    route: wid => `/admin/${wid}/ai-scripts`,
   },
   {
     id: 'llmError',

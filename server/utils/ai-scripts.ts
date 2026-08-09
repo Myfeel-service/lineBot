@@ -25,6 +25,7 @@ import type {
 } from '~~/shared/types/ai-script'
 import {
   DEFAULT_COLLECT_REASK,
+  DEFAULT_REPLY_LINK_LABEL,
   collectSkipLabel,
   extractCollectValue,
   isHumanRequestText,
@@ -74,6 +75,19 @@ export interface ScriptStepResult {
   completed?: boolean
   /** quickReply 節點的按鈕文字；caller 用來組 LINE Quick Reply（label = 送出文字） */
   quickReplies?: string[]
+  /** reply 節點附的連結按鈕（＝自動回覆的「開啟網址」）；caller 組成 buttons template 一起送 */
+  link?: { url: string; label: string }
+  /**
+   * module 節點：要送出的機器人模組 id。
+   * 訊息由 caller 送（要抓 flow、判斷真人客服模組、接會話狀態），引擎只負責走到這裡並收工。
+   */
+  moduleId?: string
+  /**
+   * module 節點：這一輪收集到的答案。
+   * ⛔ 模組訊息的變數是用「客人資料」渲染的，看不到腳本剛收到的答案——不把這份帶出去，
+   * 「收訂單編號 → 送模組」的模組內容就會把 {{order_id}} 原樣印給客人。
+   */
+  collected?: Record<string, string>
   /**
    * 逃生門:客人在腳本進行中喊「找真人」→ 流程已放棄(activeScript 已清)。
    * caller 應走標準轉真人流程(deliverHandoffReply),不要把 replyText 當一般回覆送。
@@ -225,7 +239,11 @@ function runNonInteractiveSteps(
     }
 
     if (node.type === 'reply') {
-      // 立刻回覆並結束流程
+      // 立刻回覆並結束流程。連結按鈕的網址也吃變數——才能把剛收到的訂單編號帶進查詢頁。
+      const linkUrl = renderScriptTemplate(String(node.linkUrl ?? '').trim(), {
+        collected: nextState!.collected,
+        attributes,
+      })
       return {
         nextState: null,
         result: {
@@ -233,10 +251,21 @@ function runNonInteractiveSteps(
             collected: nextState!.collected,
             attributes,
           }),
+          ...(linkUrl ? { link: { url: linkUrl, label: String(node.linkLabel ?? '').trim() || DEFAULT_REPLY_LINK_LABEL } } : {}),
           thenHandoff: node.thenHandoff,
           finished: true,
           completed: true,
         },
+        actions,
+      }
+    }
+
+    if (node.type === 'module') {
+      // 送出某個機器人模組的訊息並結束。引擎不組訊息——那需要抓 flow、判斷是不是真人客服模組、
+      // 接會話狀態，全部在 handler 的 replyWithFlowModule 裡（與自動回覆的模組動作共用同一支）。
+      return {
+        nextState: null,
+        result: { replyText: '', moduleId: node.moduleId, collected: { ...nextState!.collected }, thenHandoff: false, finished: true, completed: true },
         actions,
       }
     }

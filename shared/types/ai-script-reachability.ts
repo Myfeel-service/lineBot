@@ -1,37 +1,27 @@
 /**
  * 腳本「觸發得到嗎」的靜態分析。
  *
- * 為什麼需要這支:腳本在 webhook 編排裡排第三順位——
- *   安全層(敏感情境) → 進行中的腳本 → **自動回覆規則** → 啟動新腳本 → AI
+ * 為什麼需要這支:腳本在 webhook 編排裡排在安全層後面——
+ *   安全層(敏感情境) → 進行中的流程 → 啟動流程 → AI
  * 所以一條腳本可能設定完全正常、後台看起來好好的,實際上永遠輪不到:
- * 觸發詞被規則先接走、被敏感情境詞攔走、或被另一條關鍵字更寬的腳本蓋住。
+ * 觸發詞被敏感情境詞攔走,或被另一條關鍵字更寬的腳本蓋住。
  * 這種事客人不會回報(他們得到的是「別的回覆」不是「沒回覆」),只能靠靜態比對揪出來。
+ *
+ * 註:2026-08-09 起「自動回覆規則」已下架,原本的 autoReplyRule 原因隨之移除——
+ * 順位收成單一條之後,那種蓋台在結構上不可能再發生。
  *
  * 判定一律取「保守的強條件」——**每一個**觸發詞都被蓋掉才算,漏報好過誤報:
  * 異常中心報一次假的,使用者就會學會忽略它。
  *
- * anyText 規則刻意不在這裡處理:那是「所有腳本連同 AI 一起全滅」,
- * 已經有 anyTextBlocking 那一項在講,這裡再報一次只是同一件事講兩遍。
  */
-import type { AutoReplyMatchType } from '../auto-reply-rule'
-import { splitAutoReplyKeywords } from '../auto-reply-rule'
 import type { ScriptDoc } from './ai-script'
 
 /** 分析用的最小腳本形狀(id + 文件本體) */
 export type ScriptForReachability = Pick<ScriptDoc, 'name' | 'nodes' | 'rootNodeId' | 'enabled' | 'priority'> & { id: string }
 
-/** 分析用的最小規則形狀;只餵**啟用中**的規則進來 */
-export interface AutoReplyRuleForReachability {
-  name?: string
-  matchType: AutoReplyMatchType
-  keyword?: string
-}
-
 export type ScriptBlockReason =
   /** 關鍵字和語意範例都空白:確定性通道打不中,意圖路由也沒線索可判 */
   | 'noTrigger'
-  /** 每個觸發詞都會先被自動回覆規則接走 */
-  | 'autoReplyRule'
   /** 每個觸發詞都含敏感情境詞,安全層排在腳本之前,一律先轉真人 */
   | 'sensitiveTopic'
   /** 每個觸發詞都被另一條(優先度不低於它的)腳本的觸發詞包住 */
@@ -45,22 +35,25 @@ export interface ScriptReachabilityIssue {
   detail: string
 }
 
-function norm(s: unknown): string {
-  return String(s ?? '').trim().toLowerCase()
+/**
+ * 把原始文件（Firestore doc、list API 回來的列）收成分析用的形狀。
+ * 異常中心（server/utils/script-health.ts）與編輯器共用同一份，「enabled 未設視為啟用」只有一把尺。
+ */
+export function toReachabilityScripts(rows: Array<Record<string, unknown>>): ScriptForReachability[] {
+  return rows
+    .filter(s => s?.enabled)
+    .map(s => ({
+      id: String(s.id ?? ''),
+      name: String(s.name ?? ''),
+      nodes: (s.nodes ?? []) as ScriptForReachability['nodes'],
+      rootNodeId: String(s.rootNodeId ?? ''),
+      enabled: true,
+      priority: Number(s.priority ?? 0),
+    }))
 }
 
-/** 這條規則會不會「凡是含 keyword 的句子都先被它接走」 */
-function ruleSwallows(rule: AutoReplyRuleForReachability, scriptKeyword: string): boolean {
-  const kw = norm(rule.keyword)
-  if (!kw) return false
-  // exact:只有「整句就是這個詞」會被搶走,所以要完全相同才算
-  if (rule.matchType === 'exact') return kw === scriptKeyword
-  const tokens = splitAutoReplyKeywords(kw).map(norm).filter(Boolean)
-  if (!tokens.length) return false
-  // containsAll:句子要含全部 token 才命中 → 觸發詞本身要含全部 token 才必定被搶
-  if (rule.matchType === 'containsAll') return tokens.every(t => scriptKeyword.includes(t))
-  // containsAny:含任一 token 即命中 → 觸發詞含其中一個就必定被搶
-  return tokens.some(t => scriptKeyword.includes(t))
+function norm(s: unknown): string {
+  return String(s ?? '').trim().toLowerCase()
 }
 
 /** 取一條腳本的觸發節點（不是 trigger 或找不到就回 null） */
@@ -76,10 +69,9 @@ function triggerOf(script: ScriptForReachability) {
  */
 export function findUnreachableScripts(
   scripts: ScriptForReachability[],
-  ctx: { rules?: AutoReplyRuleForReachability[]; sensitiveTopics?: readonly string[] } = {},
+  ctx: { sensitiveTopics?: readonly string[] } = {},
 ): ScriptReachabilityIssue[] {
   const enabled = scripts.filter(s => s.enabled)
-  const rules = (ctx.rules ?? []).filter(r => r.matchType !== 'anyText')
   const topics = (ctx.sensitiveTopics ?? []).map(norm).filter(Boolean)
   const issues: ScriptReachabilityIssue[] = []
 
@@ -102,12 +94,6 @@ export function findUnreachableScripts(
     const topicHit = topics.find(t => keywords.every(k => k.includes(t)))
     if (topicHit) {
       push('sensitiveTopic', `「${name}」的觸發詞都含敏感情境詞「${topicHit}」，客人一提到就直接轉真人，不會走這條流程`)
-      continue
-    }
-
-    const rule = rules.find(r => keywords.every(k => ruleSwallows(r, k)))
-    if (rule) {
-      push('autoReplyRule', `「${name}」的觸發詞會先被自動回覆規則「${String(rule.name || '(未命名規則)')}」接走`)
       continue
     }
 
