@@ -1,5 +1,11 @@
 # 右下角小幫手 agent 體驗評估與優化方向(2026-08-06)
 
+> 🧊 **凍結文件（決策紀錄）。** 本檔記錄的是撰寫當下的判斷與進度，寫完不回頭改狀態。
+> 文中「當時未 commit／未部署」等字樣是**寫作當日的事實**，不是現在的狀態——這批程式後續都已進 `main`。
+> **現在的狀態一律看 [`docs/STATUS.md`](./STATUS.md)**（項目帶 `A-1`／`B-5` 編號）。
+> ——2026-08-10 補註（只加時間戳，未更動任何當時的結論）
+
+
 範圍:`TutorialAgent.vue` + `useWorkspaceAlerts` + `useSetupStatus` + `useDailyBrief` + `/api/admin/alerts` + 問助理(`ai-admin-agent.ts`)。
 起因:老闆問「狀態是否太多會誤導使用者」+ 期待 agent 成為「全站異常告知/提醒/建議」的單一入口。
 
@@ -66,14 +72,14 @@
 
 ### 方向 A:呈現層收斂(小工,先做)
 上面 P0 四項 + 文案毛病。**不新增任何狀態,只合併。**
-> ✅ 2026-08-06 已完成(未 commit):verdict 併講必要缺項、灰橫幅收斂成一條 checkGapLines、閉環回應併入 agent 泡泡(.ta-note 退役)、文案殘跡 4 處(比報告多抓到 1 處)。typecheck 0 錯、867 測試綠。
+> ✅ 2026-08-06 已完成(當時未 commit):verdict 併講必要缺項、灰橫幅收斂成一條 checkGapLines、閉環回應併入 agent 泡泡(.ta-note 退役)、文案殘跡 4 處(比報告多抓到 1 處)。typecheck 0 錯、867 測試綠。
 
 ### 方向 B:覆蓋率——「告知整個網站」的地基(中工,最重要)
 - **LINE webhook 常駐檢查**:目前只有按按鈕才驗。webhook 掛掉=整個機器人裝死,是所有異常裡最致命、卻唯一沒自動檢查的。建議進 probe(檢查 LINE 平台上 webhook URL 與啟用狀態,或看「最近 N 小時是否收過事件 vs 好友有互動」訊號)。
-  > ✅ 2026-08-06 已完成(未 commit):新異常 `lineWebhookBroken`(critical,admin 可見),probe 打 LINE GET webhook endpoint(不打 test API,留額度給設定頁手動驗證),抓四種壞法:沒設定/被停用/網址指向別的系統/權杖失效(401);外部查詢 5 分鐘快取;正規化比對函式與 line-webhook-verify 共用同一支。不需要新 Firestore 索引。
+  > ✅ 2026-08-06 已完成(當時未 commit):新異常 `lineWebhookBroken`(critical,admin 可見),probe 打 LINE GET webhook endpoint(不打 test API,留額度給設定頁手動驗證),抓四種壞法:沒設定/被停用/網址指向別的系統/權杖失效(401);外部查詢 5 分鐘快取;正規化比對函式與 line-webhook-verify 共用同一支。不需要新 Firestore 索引。
   > ⚠️ 同日修一個實測誤報:第一版「網址比對」拿**使用者當下瀏覽的 origin** 當基準,本機開發/雙網域開 myfeel 後台就被誤判「指向別的系統」。修正=改比 `PUBLIC_BASE_URL`(runtime config appBaseUrl,對外正式網址的單一來源);沒設定或設成 localhost 就跳過比對(寧可漏抓不誤報);detail 直接寫出 LINE 後台填的網址。另補落地閉環:卡片 CTA 帶 `?verify=webhook`,進組織設定頁自動捲到「檢查連線」並實跑一次測試,不讓使用者在長頁面裡自己找要修什麼。
   > ⚠️ 再修一輪(同日,myfeel 實測第二回):LINE 真的還填著舊網域 `bot.myfeel-tw.com/webhook`,但舊網域 DNS 仍指向同一套 app、訊息照常進來(昨日 25 場)——紅牌「機器人收不到客人訊息」與事實不符,會教人不信任紅牌。修正=**拆成兩顆**:`lineWebhookBroken`(critical)只留「確定收不到」三種(沒設定/停用/權杖失效);新 `lineWebhookUrlMismatch`(warning)講「網址不一致,目前可能還通,但舊網址一失效就無聲斷線」。一次 LINE 查詢兩顆共用。**myfeel 待辦:把 LINE Developers 的 Webhook URL 換成正式網址(lineminime.com/webhook),或確認 PUBLIC_BASE_URL 應該是哪個網域。**
-  > 🔁 同日 code review 後補四修(未 commit,typecheck 0、876 測試綠):
+  > 🔁 同日 code review 後補四修(當時未 commit,typecheck 0、876 測試綠):
   > 1. **誤報只修了一半**:probe 換基準了,但它導去的組織設定頁還在拿 `window.location.origin` 當 `compareUrl`,雙網域下同一個誤報照長出來——而且 `webhookStatusBadge` 把「網址不一致」排在「測試成功」前面,會蓋掉「✓ 一切正常」,連「複製貼到 LINE」那格也會叫人把錯的網址貼去覆蓋。修法=`line-workspace` GET 回傳 `publicBaseUrl`(appBaseUrl,server-only 不進 public config),頁面的 webhook/LIFF 建議網址與 `compareUrl` 全部改吃它,後端沒設定才退回瀏覽網址。前後端從此同一把尺。
   > 2. **CTA 在自己那頁按了沒反應**:handoff 只寫在 `onMounted`,但 Nuxt 預設 page key 不含 query;小幫手在組織設定頁本身也掛著,在該頁點卡片只有 query 變→元件不重掛→onMounted 不跑→不捲動也不測試。修法=改成 `watch(() => route.query.verify)`。
   > 3. **`?verify=webhook` 沒清掉**:留在網址上=每次重整/上一頁回來都再真的請 LINE 送一則測試訊息(有次數上限,probe 刻意不打就是為了留額度)。修法=消費完 `router.replace` 拿掉參數(query-only 導航不會觸發 `onBeforeRouteLeave`,不會誤跳未儲存確認)。
@@ -81,14 +87,14 @@
 - **掛載死角**:小幫手只在 default layout;super-admin 與 `layout:false` 的組織頁沒有。至少 org 頁應該有(它是老闆自己會待的頁)。
   > ✅(改道)2026-08-06:org 頁不掛 FAB,改由**帳號卡原生呈現同一套訊號**(見下一項)——org 頁本來就有「帳號健康」區,把異常接進去比再開一個浮動面板更符合該頁的資訊架構。super-admin 是平台層,另議。
 - **剩餘 18 種異常逐步收編**:以「客人受影響」優先。加一項=後端 probe + 前端註冊表 + ALERT_LABELS 各一筆,邊際成本已經很低。
-  > ✅(第一波 3 種)2026-08-06 已完成(未 commit):`broadcastFailed`(近 3 天發送失敗的推播;時間窗記憶體過濾,不開新索引)、`broadcastOverdue`(排定時間過 15 分鐘還沒送=排程卡住)、`maintenanceStalled`(背景維護心跳停超過 1 小時;心跳=run-tasks 每輪寫 cronState/maintenance-heartbeat,**這是新加的——之前排程整批死掉毫無痕跡**;文件不存在不誤報,本機開發不會亂叫)。三個都是 warning。maintenanceStalled 是系統側異常,呈現方式受拍板 #3 影響,先照 claimPushUnmarked 先例處理。
-  > ✅(第二波 3 種+1 擴充)2026-08-06 已完成(未 commit),依全站重新盤點(見第六節)挑「免新索引、免拍板」的做:
+  > ✅(第一波 3 種)2026-08-06 已完成(當時未 commit):`broadcastFailed`(近 3 天發送失敗的推播;時間窗記憶體過濾,不開新索引)、`broadcastOverdue`(排定時間過 15 分鐘還沒送=排程卡住)、`maintenanceStalled`(背景維護心跳停超過 1 小時;心跳=run-tasks 每輪寫 cronState/maintenance-heartbeat,**這是新加的——之前排程整批死掉毫無痕跡**;文件不存在不誤報,本機開發不會亂叫)。三個都是 warning。maintenanceStalled 是系統側異常,呈現方式受拍板 #3 影響,先照 claimPushUnmarked 先例處理。
+  > ✅(第二波 3 種+1 擴充)2026-08-06 已完成(當時未 commit),依全站重新盤點(見第六節)挑「免新索引、免拍板」的做:
   > - `firstReplyBacklog`(warning):「未首接」佇列有對話超過 1 小時完全沒人回。**堵住盤點發現的最大黑洞**——草稿模式下 AI 只擬稿不發話、session 不轉 pending_human,現有 14 種全抓不到「客人一句回覆都沒有」;口徑完全沿用側欄的 countOpenQueueSessions/isOpenQueueSession,不另立第二份。
   > - `knowledgeIndexStuck`(warning):知識卡卡 pending 超過 1 小時(重試放生或排程沒跑),與 knowledgeIndexFailed 根因不同、AI 一樣讀不到。
   > - `renewalNotBound`(warning):首期付款成功但約定卡沒綁成(status=paid+kind=period_first+cardBound=false,近 45 天)——下期會靜默降級;四等值免索引,cardBound 是新欄位、舊單不誤報。
   > - `brokenModuleButton` 擴掃:原本只掃選單+圖卡,現在加掃**啟用中的關鍵字自動回覆規則與活動**(客人打關鍵字/掃活動碼指到已刪模組一樣收不到東西);快取測試同步更新。
 - **org 層跨工作區彙總**(Phase 2 原案):多工作區的老闆不該一家一家點進去看紅點。
-  > ✅ 2026-08-06 已完成(未 commit):probe 核心抽成 `server/utils/workspace-alerts.ts`(單工作區端點與 org 彙總同一份,口徑零第二份);新端點 `/api/admin/org/:orgId/alerts`(requireActiveOrgAdmin、每批 5 個工作區防並發爆量);org 總覽帳號卡旗標接上異常(critical=「N 件事正在影響客人」紅、warning=「N 件建議處理」橘,tooltip 列標題;嚴重度用前端註冊表 export 的 ALERT_SEVERITY 同一把尺);quotaExceeded/quotaRunningOut/paymentPastDue 排除計數(卡上既有旗標已講同一件事);「需要處理」統計與排序把異常算進去;彙總晚到不擋頁面載入。
+  > ✅ 2026-08-06 已完成(當時未 commit):probe 核心抽成 `server/utils/workspace-alerts.ts`(單工作區端點與 org 彙總同一份,口徑零第二份);新端點 `/api/admin/org/:orgId/alerts`(requireActiveOrgAdmin、每批 5 個工作區防並發爆量);org 總覽帳號卡旗標接上異常(critical=「N 件事正在影響客人」紅、warning=「N 件建議處理」橘,tooltip 列標題;嚴重度用前端註冊表 export 的 ALERT_SEVERITY 同一把尺);quotaExceeded/quotaRunningOut/paymentPastDue 排除計數(卡上既有旗標已講同一件事);「需要處理」統計與排序把異常算進去;彙總晚到不擋頁面載入。
 
 ### 方向 C:主動性——從「開後台才知道」到「提醒到人」(中工,質變點)
 - **c 層 LINE 推播**:critical 持續超過 X 分鐘(如 30 分)→ 推播給 handoffNotify 名單/owner。複用既有名單與文案(ALERT_LABELS),不發明新口徑。53 小時案例就是這一層要解的。
@@ -97,11 +103,11 @@
 
 ### 方向 D:建議力——從「壞了才講」到「看趨勢講話」(後續)
 - **額度預測**:quotaExceeded 是「已經停了」才亮;用 `derivePlanState` 同一把尺加「照這速度 N 天後用完」的 warning,把事故變成提前量。刻意不發明新口徑。
-  > ✅ 2026-08-06 已完成(未 commit):新異常 `quotaRunningOut`(warning,admin 可見)。觸發=達 80% 近上限門檻(derivePlanState 同一把尺)或速度外推會提前用完;防狼來了雙保險=開期未滿 3 天不外推、用量未達 40% 不外推;已超量時讓位給 quotaExceeded 不同時亮;detail 帶「已用 X/Y(Z%),約 N 天後用完,本期還有 M 天」。與 quotaExceeded 共用同一次訂閱+則數查詢,輪詢成本不變。
+  > ✅ 2026-08-06 已完成(當時未 commit):新異常 `quotaRunningOut`(warning,admin 可見)。觸發=達 80% 近上限門檻(derivePlanState 同一把尺)或速度外推會提前用完;防狼來了雙保險=開期未滿 3 天不外推、用量未達 40% 不外推;已超量時讓位給 quotaExceeded 不同時亮;detail 帶「已用 X/Y(Z%),約 N 天後用完,本期還有 M 天」。與 quotaExceeded 共用同一次訂閱+則數查詢,輪詢成本不變。
 - **趨勢異常**:轉真人率/unhandled 對比前 7 天突增時,在開場白講一句(資料就是日報那支 KPI,多查幾天即可)。
-  > ✅(微調)2026-08-06 已完成(未 commit):useDailyBrief 加前 7 天(-8~-2)基準(同一支 KPI 第三查,失敗不拖垮日報);門檻=至少 3 件且達平均 2 倍;轉真人突增=日報區塊獨立警語、沒人回突增=在既有警語補「比平常多」。**刻意不進開場白**——開場白的日報句已唸過轉真人件數,再唸一次是同一句話講兩遍;數字的事放數字旁邊講。
+  > ✅(微調)2026-08-06 已完成(當時未 commit):useDailyBrief 加前 7 天(-8~-2)基準(同一支 KPI 第三查,失敗不拖垮日報);門檻=至少 3 件且達平均 2 倍;轉真人突增=日報區塊獨立警語、沒人回突增=在既有警語補「比平常多」。**刻意不進開場白**——開場白的日報句已唸過轉真人件數,再唸一次是同一句話講兩遍;數字的事放數字旁邊講。
 - **問助理補洞**:chat 工具沒有 conversation-stats KPI(問「昨天幾場對話」答不出來,但面板明明顯示著);回答裡可帶「去修這個 →」的深連結,把查詢閉環到行動。
-  > ✅/⏸ 2026-08-06 部分完成(未 commit):新工具 `get_conversation_stats` 轉發呼叫者憑證打統計頁同一支 KPI(預設昨天、可帶起訖,口徑零第二份),附測試。**深連結未做**——AdminAgentChat 目前是純文字渲染,要先定訊息格式(文字+動作連結)再動渲染層,另列一工。
+  > ✅/⏸ 2026-08-06 部分完成(當時未 commit):新工具 `get_conversation_stats` 轉發呼叫者憑證打統計頁同一支 KPI(預設昨天、可帶起訖,口徑零第二份),附測試。**深連結未做**——AdminAgentChat 目前是純文字渲染,要先定訊息格式(文字+動作連結)再動渲染層,另列一工。
 
 ### 建議的順序
 A(半天級)→ B 的 webhook + 掛載死角(先堵最致命)→ C 推播(質變)→ B 其餘收編穿插 → D。
