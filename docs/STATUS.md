@@ -27,80 +27,80 @@ _目前沒有未 commit 的工作。_
 
 ### A. 上線與部署
 
-| 項目 | 狀態 | 說明 |
-|---|---|---|
-| AWS Cost Explorer 成功路徑未實測 | `TODO` | 本機無憑證，接好但沒跑通。根帳號要先開「IAM 存取帳務資訊」否則必 AccessDenied。教學：`docs/AWS-COST-SETUP.md` |
-| 自動回應合一：部署前實機驗七件事 | `TODO` | 動了送訊息與 webhook 編排，不驗不能上 |
-| 異常中心索引部署兩租戶 | `TODO` | `knowledgeSources (workspaceId ASC, outdatedAt ASC)` 已寫進 `firestore.indexes.json` 未部署（沒部署會退回全掃描，不會壞）⛔deploy 別加 `--force` |
-| myfeel LINE Webhook URL 仍填舊網域 | `TODO` | LINE Developers 後台要換成正式網址 |
-| LIFF Endpoint URL 遷移 | `TODO` | ⛔順序：先改 LINE console endpoint → 部署 → 才跑 `resync --apply`；舊網域不可下架 |
-| 對話 180 天清理沒掛排程 | `DECIDE` | 兩租戶都沒掛，訊息無限累積（成本問題非資料遺失）。掛上就真刪且無 TTL 可挽回 → 等老闆決定 |
-| `aiTurns` TTL policy | `TODO` | 新子集合，要兩租戶各手動設一次 |
-| `aiHandoffEvents` TTL policy | `TODO` | 寫入已帶 `expireAt`（240 天）但 policy 沒設＝永遠不會自動清。補記「找真人」事件後量會再增加（八月多 12 筆） |
-| AWS 成本金鑰環境變數 | `TODO` | 走金鑰路線要在 Amplify 設 `AWS_COST_ACCESS_KEY_ID`／`AWS_COST_SECRET_ACCESS_KEY`。⛔**不可命名為 `AWS_ACCESS_KEY_ID`**：Lambda 保留變數，會被執行角色蓋掉且查不出原因 |
+| 編號 | 項目 | 狀態 | 說明 |
+|---|---|---|---|
+| `A-1` | AWS Cost Explorer 成功路徑未實測 | `TODO` | 本機無憑證，接好但沒跑通。根帳號要先開「IAM 存取帳務資訊」否則必 AccessDenied。教學：`docs/AWS-COST-SETUP.md` |
+| `A-2` | 自動回應合一：部署前實機驗七件事 | `TODO` | 動了送訊息與 webhook 編排，不驗不能上 |
+| `A-3` | 異常中心索引部署兩租戶 | `TODO` | `knowledgeSources (workspaceId ASC, outdatedAt ASC)` 已寫進 `firestore.indexes.json` 未部署（沒部署會退回全掃描，不會壞）⛔deploy 別加 `--force` |
+| `A-4` | myfeel LINE Webhook URL 仍填舊網域 | `TODO` | LINE Developers 後台要換成正式網址 |
+| `A-5` | LIFF Endpoint URL 遷移 | `TODO` | ⛔順序：先改 LINE console endpoint → 部署 → 才跑 `resync --apply`；舊網域不可下架 |
+| `A-6` | 對話 180 天清理沒掛排程 | `DECIDE` | 兩租戶都沒掛，訊息無限累積（成本問題非資料遺失）。掛上就真刪且無 TTL 可挽回 → 等老闆決定 |
+| `A-7` | `aiTurns` TTL policy | `TODO` | 新子集合，要兩租戶各手動設一次 |
+| `A-8` | `aiHandoffEvents` TTL policy | `TODO` | 寫入已帶 `expireAt`（240 天）但 policy 沒設＝永遠不會自動清。補記「找真人」事件後量會再增加（八月多 12 筆） |
+| `A-9` | AWS 成本金鑰環境變數 | `TODO` | 走金鑰路線要在 Amplify 設 `AWS_COST_ACCESS_KEY_ID`／`AWS_COST_SECRET_ACCESS_KEY`。⛔**不可命名為 `AWS_ACCESS_KEY_ID`**：Lambda 保留變數，會被執行角色蓋掉且查不出原因 |
 
 ### B. 金流與發票
 
-| 項目 | 狀態 | 說明 |
-|---|---|---|
-| ~~PAYUNi「07 信用卡 Token API」申請書~~ | `DONE` | **不用送件，2026-08-06 結案**。`UPP02087` 是 PAYUNi 後台「串接設定 › 限定 API 設定」的開關沒開，不是缺申請書；開關打開後沙盒建約定 `UseTokenType=3` 直接通。證據見 `docs/GOLIVE-BLOCKERS.md` A1 |
-| PAYUNi P3 每期續扣排程 | `DONE` | 程式 P1~P5 全完成，2026-08-07 端到端實測綠（續扣、折抵、降級、取消、解約、防重複扣款）。⛔續扣必用 `confirmRenewal`，否則一次扣款拿兩個月 |
-| PAYUNi P4 降級／折抵、P5 換卡＋清藍新死碼 | `DONE` | 同上一輪 e2e 驗過。設計見 `docs/PAYUNI-RECURRING-DESIGN.md` |
-| **PAYUNi 固定 IP 中繼站上正式** | `TODO` | **這才是自動扣款真正的硬阻塞**。`CREDIT03010 不提供此IP幕後交易` 已用真 Token 撞出來＝IP 白名單真的在擋，而 Amplify 出口 IP 每天換。test 中繼站 08-08 驗過（`/api/credit`、`credit_bind/query` 有代理），正式站要架＋設 `PAYUNI_RELAY_BASE`＋填進 PAYUNi 白名單。⛔中繼站要補代理 `/api/trade/query`，否則查單退回直連（`4a1167f`）。教學 `docs/PAYUNI-RELAY-SETUP.md` |
-| **PAYUNi 正式特店 `NPPA836109423` 審核中** | `BLOCKED` | 打正式 `/api/credit` 回 `DEF01006 商店狀態不符合`（正式金鑰已驗簽通過＝不是金鑰問題，也還沒走到 IP 那關）。**影響比自動扣款大：正式站連一筆單次付款都會被擋在這關** |
-| PAYUNi 灰度旗標 `PAYUNI_PERIOD_ENABLED` | `TODO` | 預設關。要等中繼站＋正式特店都就緒才開 |
-| 光貿發票正式金鑰 | `BLOCKED` | `GUANGMAO_INVOICE_*` 沒填 = 每筆訂單發票 skipped = 零開票 |
-| 光貿作廢／折讓沙盒實測 | `TODO` | 開立已全綠，這兩支還沒實測 |
-| 含稅／未稅口徑 | `BLOCKED` | 要問會計，稅務問題不是體驗問題 |
-| 升級按比例退費／折抵 | `DECIDE` | `payment.ts` 刻意註記的待辦。建議折抵不退現金，等拍板 |
-| 退款流程（`trade/close`） | `TODO` | 會動錢，建議連真實金流一起測 |
-| 收據／通知信（SES） | `TODO` | 已寫未開，要 `EMAIL_FROM` + 驗證網域 + 出 sandbox |
+| 編號 | 項目 | 狀態 | 說明 |
+|---|---|---|---|
+| `B-1` | ~~PAYUNi「07 信用卡 Token API」申請書~~ | `DONE` | **不用送件，2026-08-06 結案**。`UPP02087` 是 PAYUNi 後台「串接設定 › 限定 API 設定」的開關沒開，不是缺申請書；開關打開後沙盒建約定 `UseTokenType=3` 直接通。證據見 `docs/GOLIVE-BLOCKERS.md` A1 |
+| `B-2` | PAYUNi P3 每期續扣排程 | `DONE` | 程式 P1~P5 全完成，2026-08-07 端到端實測綠（續扣、折抵、降級、取消、解約、防重複扣款）。⛔續扣必用 `confirmRenewal`，否則一次扣款拿兩個月 |
+| `B-3` | PAYUNi P4 降級／折抵、P5 換卡＋清藍新死碼 | `DONE` | 同上一輪 e2e 驗過。設計見 `docs/PAYUNI-RECURRING-DESIGN.md` |
+| `B-4` | **PAYUNi 固定 IP 中繼站上正式** | `TODO` | **這才是自動扣款真正的硬阻塞**。`CREDIT03010 不提供此IP幕後交易` 已用真 Token 撞出來＝IP 白名單真的在擋，而 Amplify 出口 IP 每天換。test 中繼站 08-08 驗過（`/api/credit`、`credit_bind/query` 有代理），正式站要架＋設 `PAYUNI_RELAY_BASE`＋填進 PAYUNi 白名單。⛔中繼站要補代理 `/api/trade/query`，否則查單退回直連（`4a1167f`）。教學 `docs/PAYUNI-RELAY-SETUP.md` |
+| `B-5` | **PAYUNi 正式特店 `NPPA836109423` 審核中** | `BLOCKED` | 打正式 `/api/credit` 回 `DEF01006 商店狀態不符合`（正式金鑰已驗簽通過＝不是金鑰問題，也還沒走到 IP 那關）。**影響比自動扣款大：正式站連一筆單次付款都會被擋在這關** |
+| `B-6` | PAYUNi 灰度旗標 `PAYUNI_PERIOD_ENABLED` | `TODO` | 預設關。要等中繼站＋正式特店都就緒才開 |
+| `B-7` | 光貿發票正式金鑰 | `BLOCKED` | `GUANGMAO_INVOICE_*` 沒填 = 每筆訂單發票 skipped = 零開票 |
+| `B-8` | 光貿作廢／折讓沙盒實測 | `TODO` | 開立已全綠，這兩支還沒實測 |
+| `B-9` | 含稅／未稅口徑 | `BLOCKED` | 要問會計，稅務問題不是體驗問題 |
+| `B-10` | 升級按比例退費／折抵 | `DECIDE` | `payment.ts` 刻意註記的待辦。建議折抵不退現金，等拍板 |
+| `B-11` | 退款流程（`trade/close`） | `TODO` | 會動錢，建議連真實金流一起測 |
+| `B-12` | 收據／通知信（SES） | `TODO` | 已寫未開，要 `EMAIL_FROM` + 驗證網域 + 出 sandbox |
 
 ### C. AI 與腳本
 
-| 項目 | 狀態 | 說明 |
-|---|---|---|
-| 腳本 13 模塊 ③⑨ | `TODO` | A+B+C 階段其餘全完成 |
-| 「查詢訂單」改用腳本收四格再轉真人 | `TODO` | 老闆選了「先關規則，之後再做」 |
-| AI 正式上線前 6 步 | `TODO` | ①停 anyText 規則 ②設 handoffNotify 收件人+SLA ③設 serviceHours 勿擾 ④設 shopUrl ⑤replyMode 先 draft 跑 1-2 週 ⑥confidence 上線初期回 0.75 |
-| AI history 沒時間上限 | `TODO` | 會撈到 2.5 個月前舊訊息（已報未修） |
-| AI 表現頁「先問清楚」無下鑽 | `TODO` | 偏高警示行說「去把卡片標題改清楚」但沒有路能看到是哪幾張卡在打架；要嘛列出反問最多的主題，要嘛連去 playground 重演 |
-| AI 表現頁：補卡成效回饋 | `TODO` | 使用者在乎排行第 4 名的缺口——「上週補的 5 張卡，這週救回 12 題」。讓店家看得到補知識有用，才會一直餵。建議收件匣已有試答驗證的資料基礎可接 |
-| 超管成本頁：呼叫/答出比例異常警示 | `TODO` | 計費收在「答出」不收在呼叫（2026-08-10 拍板，完整決策與虧錢分析見 `docs/BILLING-UNIT-POLICY-20260810.md`），防極端「呼叫很多答出很少」的高成本帳號不靠改收費、靠內部警示（例：invocations/answered > 5 標黃）。資料現成（costs.get.ts 已回兩個數） |
-| 呼叫硬上限要不要做 | `DECIDE` | 額度只數「答出」→ 答不出來的呼叫**永遠燒不完額度**、成本理論上無上限（試算：月呼叫 2 萬次×答出率 5% ≈ NT$680 成本 > 輕量月費；免費層尤其）。選項＝月呼叫超過額度 N 倍（如 10×）自動轉真人。見 `docs/BILLING-UNIT-POLICY-20260810.md` §4 |
-| `resync-preview` 504 風險 | `TODO` | 同吃 `chunkTextWithLlm`，可套 job 機制 |
-| `upload.post.ts` 6MB 雷 | `TODO` | 同 Lambda payload 上限，未改直傳 signed URL |
-| 產品名注入：splash 租戶 | `TODO` | 若要做，需同樣種 productName + reindex |
-| 🔴 知識庫重傳同一份檔會重跑重收費 | `TODO` | 手動上傳**沒有內容去重**（`contentHash` 只有 url／Google Sheet 自動同步在用），重傳沒改過的大檔＝OCR＋切卡＋embedding 整套重跑重收，且不受則數／token 額度擋。最省力修法＝把現成的 contentHash 比對接到手動上傳，未變更就跳過 |
+| 編號 | 項目 | 狀態 | 說明 |
+|---|---|---|---|
+| `C-1` | 腳本 13 模塊 ③⑨ | `TODO` | A+B+C 階段其餘全完成 |
+| `C-2` | 「查詢訂單」改用腳本收四格再轉真人 | `TODO` | 老闆選了「先關規則，之後再做」 |
+| `C-3` | AI 正式上線前 6 步 | `TODO` | ①停 anyText 規則 ②設 handoffNotify 收件人+SLA ③設 serviceHours 勿擾 ④設 shopUrl ⑤replyMode 先 draft 跑 1-2 週 ⑥confidence 上線初期回 0.75 |
+| `C-4` | AI history 沒時間上限 | `TODO` | 會撈到 2.5 個月前舊訊息（已報未修） |
+| `C-5` | AI 表現頁「先問清楚」無下鑽 | `TODO` | 偏高警示行說「去把卡片標題改清楚」但沒有路能看到是哪幾張卡在打架；要嘛列出反問最多的主題，要嘛連去 playground 重演 |
+| `C-6` | AI 表現頁：補卡成效回饋 | `TODO` | 使用者在乎排行第 4 名的缺口——「上週補的 5 張卡，這週救回 12 題」。讓店家看得到補知識有用，才會一直餵。建議收件匣已有試答驗證的資料基礎可接 |
+| `C-7` | 超管成本頁：呼叫/答出比例異常警示 | `TODO` | 計費收在「答出」不收在呼叫（2026-08-10 拍板，完整決策與虧錢分析見 `docs/BILLING-UNIT-POLICY-20260810.md`），防極端「呼叫很多答出很少」的高成本帳號不靠改收費、靠內部警示（例：invocations/answered > 5 標黃）。資料現成（costs.get.ts 已回兩個數） |
+| `C-8` | 呼叫硬上限要不要做 | `DECIDE` | 額度只數「答出」→ 答不出來的呼叫**永遠燒不完額度**、成本理論上無上限（試算：月呼叫 2 萬次×答出率 5% ≈ NT$680 成本 > 輕量月費；免費層尤其）。選項＝月呼叫超過額度 N 倍（如 10×）自動轉真人。見 `docs/BILLING-UNIT-POLICY-20260810.md` §4 |
+| `C-9` | `resync-preview` 504 風險 | `TODO` | 同吃 `chunkTextWithLlm`，可套 job 機制 |
+| `C-10` | `upload.post.ts` 6MB 雷 | `TODO` | 同 Lambda payload 上限，未改直傳 signed URL |
+| `C-11` | 產品名注入：splash 租戶 | `TODO` | 若要做，需同樣種 productName + reindex |
+| `C-12` | 🔴 知識庫重傳同一份檔會重跑重收費 | `TODO` | 手動上傳**沒有內容去重**（`contentHash` 只有 url／Google Sheet 自動同步在用），重傳沒改過的大檔＝OCR＋切卡＋embedding 整套重跑重收，且不受則數／token 額度擋。最省力修法＝把現成的 contentHash 比對接到手動上傳，未變更就跳過 |
 
 ### D. 等老闆拍板
 
-| 項目 | 說明 |
-|---|---|
-| ~~草稿模式要不要扣則~~ | **2026-08-10 老闆拍板：收，結案**。草稿是送給客服的成品（收件匣建議回覆），價值有交付、只是對象是店家不是客人——計費行為不動，修的是頁面定義文字（「1 則＝AI 產出一則回答：自動發送或草稿擬稿」）。反問／playground 維持不收：收在價值不收在成本（整月全 AI 成本 NT$15 vs 方案月費，回收的是信任不是錢）。保險絲另列：呼叫/答出比例異常的內部警示 |
-| ~~「自己搞定」要不要含「問完答成功」~~ | **2026-08-10 被「場」制取代，結案**：主指標改成場級「全程搞定率」後，反問後答成的場自然算搞定（那場沒轉真人），題級低估問題不再影響畫面。`followupAnswered` 計數器保留照記，若日後要做題級診斷還用得到 |
-| 「系統」發送者標籤要不要留 | 老闆只講真人/AI/機器人三類，系統是我加的 |
-| 貼圖算不算「待處理」 | |
-| 昨日摘要「沒人回 N」可否點進名單、要不要補 SLA 那條 | |
+| 編號 | 項目 | 說明 |
+|---|---|---|
+| `D-1` | ~~草稿模式要不要扣則~~ | **2026-08-10 老闆拍板：收，結案**。草稿是送給客服的成品（收件匣建議回覆），價值有交付、只是對象是店家不是客人——計費行為不動，修的是頁面定義文字（「1 則＝AI 產出一則回答：自動發送或草稿擬稿」）。反問／playground 維持不收：收在價值不收在成本（整月全 AI 成本 NT$15 vs 方案月費，回收的是信任不是錢）。保險絲另列：呼叫/答出比例異常的內部警示 |
+| `D-2` | ~~「自己搞定」要不要含「問完答成功」~~ | **2026-08-10 被「場」制取代，結案**：主指標改成場級「全程搞定率」後，反問後答成的場自然算搞定（那場沒轉真人），題級低估問題不再影響畫面。`followupAnswered` 計數器保留照記，若日後要做題級診斷還用得到 |
+| `D-3` | 「系統」發送者標籤要不要留 | 老闆只講真人/AI/機器人三類，系統是我加的 |
+| `D-4` | 貼圖算不算「待處理」 | |
+| `D-5` | 昨日摘要「沒人回 N」可否點進名單、要不要補 SLA 那條 | |
 
 ### E. 技術債
 
-| 項目 | 說明 |
-|---|---|
-| ESLint 未導入 | 刻意延後（初次導入會產生大量風格 noise），typecheck 已進 CI |
-| 巨型檔案待拆 | `server/utils/handler.ts`(~2500 行)、`flow.vue`、`AdminPanel.vue` — 應獨立成無行為變更的重構 PR |
-| 重複實作收斂 | `tsToMs` 全 repo 9 份、worker-pool 3 份、`deliverOrDraft` 統一出口 |
+| 編號 | 項目 | 說明 |
+|---|---|---|
+| `E-1` | ESLint 未導入 | 刻意延後（初次導入會產生大量風格 noise），typecheck 已進 CI |
+| `E-2` | 巨型檔案待拆 | `server/utils/handler.ts`(**3940 行**，2026-08-10 實測；8/4 時 3256 行，兩週長 ~700 行)、`flow.vue`、`AdminPanel.vue` — 應獨立成無行為變更的重構 PR |
+| `E-3` | 重複實作收斂 | `tsToMs` 全 repo 9 份、worker-pool 3 份、`deliverOrDraft` 統一出口 |
 
 ### F. 已知限制（不打算修，但別忘了）
 
-| 項目 | 說明 |
-|---|---|
-| 改桶只影響未來資料 | 小幫手／生成腳本的 token 改記「後台自用」後，**八月以前的舊資料仍留在「回答客人」桶**，且月結桶是加總值、拆不出來，無法回填 → 跨月比較時九月起口徑會略有不同 |
-| 成本無法分攤到各官方帳號 | 資料庫（Google）與主機（AWS）都不依 workspace 分記用量，只有 AI 能逐帳號拆。頁面已寫明 |
-| 跨雲流量是唯一估算項 | 資料庫在 Google、主機在 AWS，每次讀取都是對外流量但**沒有任何用量指標可查**。用「讀取次數 × 每筆 1 KB × US$0.12/GiB」估，已對帳單校準（誤差 5% 內）。常數 `ASSUMED_BYTES_PER_READ`，調高＝更保守 |
-| 估算單價無條件進位 | 「一次抓 NT$0.04」是實測平均進位到分位。⚠️若哪天實測平均掉到 NT$0.005 以下，進位到分位會變成高估兩倍，那時要改進位到千分位 |
-| 金額一律只給 super admin | 五支會回金額的端點全部有守衛；`ai/usage/summary` 對非超管**連 key 都不回**。理由：計費賣「則數」，token 是平台進貨價，租戶拿到金額就能反推毛利 |
-| 金額只在「成本總覽」一頁 | 2026-08-10 拍板：用量監控頁不放任何金額與 token（那頁只講則數與品質）。API 仍回成本欄位給超管，因為 `ai-settings` 的 token 數還在用。⛔新增金額顯示前先想清楚要不要開第二個地方 |
+| 編號 | 項目 | 說明 |
+|---|---|---|
+| `F-1` | 改桶只影響未來資料 | 小幫手／生成腳本的 token 改記「後台自用」後，**八月以前的舊資料仍留在「回答客人」桶**，且月結桶是加總值、拆不出來，無法回填 → 跨月比較時九月起口徑會略有不同 |
+| `F-2` | 成本無法分攤到各官方帳號 | 資料庫（Google）與主機（AWS）都不依 workspace 分記用量，只有 AI 能逐帳號拆。頁面已寫明 |
+| `F-3` | 跨雲流量是唯一估算項 | 資料庫在 Google、主機在 AWS，每次讀取都是對外流量但**沒有任何用量指標可查**。用「讀取次數 × 每筆 1 KB × US$0.12/GiB」估，已對帳單校準（誤差 5% 內）。常數 `ASSUMED_BYTES_PER_READ`，調高＝更保守 |
+| `F-4` | 估算單價無條件進位 | 「一次抓 NT$0.04」是實測平均進位到分位。⚠️若哪天實測平均掉到 NT$0.005 以下，進位到分位會變成高估兩倍，那時要改進位到千分位 |
+| `F-5` | 金額一律只給 super admin | 五支會回金額的端點全部有守衛；`ai/usage/summary` 對非超管**連 key 都不回**。理由：計費賣「則數」，token 是平台進貨價，租戶拿到金額就能反推毛利 |
+| `F-6` | 金額只在「成本總覽」一頁 | 2026-08-10 拍板：用量監控頁不放任何金額與 token（那頁只講則數與品質）。API 仍回成本欄位給超管，因為 `ai-settings` 的 token 數還在用。⛔新增金額顯示前先想清楚要不要開第二個地方 |
 
 ---
 
@@ -152,7 +152,7 @@ _目前沒有未 commit 的工作。_
 | 2026-07-31 | 知識卡啟用開關＋有效期限、併發子保溫 | `a47d40d` `fc591f4` |
 | 2026-07-30 | PAYUNi 特店送件補件（品牌統一 MiniMe、改價）、幕後 Token 續扣 P1 | `c510965` `c5d61cf` |
 
-更早的完成項目請看 `git log`（366 個 commit）。
+更早的完成項目請看 `git log`（404 個 commit，2026-08-10 實測）。
 
 ---
 
@@ -163,3 +163,7 @@ _目前沒有未 commit 的工作。_
 3. **一句話寫清楚「為什麼」**，不要只寫做了什麼——三個月後只有 why 有用。
 4. 細節規格不要塞進這裡，放 `docs/` 專門文件，這份只放指標。
 5. 同步到 Notion 時，三個區塊各對一個 view；`狀態` 欄直接對 Notion 的 select 屬性。
+6. **編號是同步的對齊鍵**（`A-1`、`B-3`…＝區塊字母＋流水號）。Notion 開發表的「編號」欄存同一組值，同步時照編號比對，**不要靠語意猜**（兩邊命名刻意不同，例如 md 寫「PAYUNi P3 每期續扣排程」、Notion 寫「每期自動續扣排程」）。
+   - **編號一旦給就不重用**：項目做完搬去「完成」時，編號跟著走不要回收；新項目一律取該區塊的下一號。
+   - 完成區不編號——那是 append-only 的歷史，不需要對帳。
+7. 同步節奏一週一次。同步前先跑一次事實校對：`wc -l server/utils/handler.ts`、`git rev-list --count HEAD`，把會漂的數字更新掉再往 Notion 推。
