@@ -153,7 +153,7 @@
                       <span class="usage-leg__dot" />
                       <span class="usage-leg__k">
                         用到真人
-                        <el-tooltip placement="top" content="AI 先接住、但這場後來還是把客人交給了真人——含客人自己開口指名真人的。">
+                        <el-tooltip placement="top" content="AI 先接住、但這場後來還是把客人交給了真人——含客人自己開口指名真人的。想知道原因和能補救的，看下面的案例清單。">
                           <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
                         </el-tooltip>
                       </span>
@@ -169,11 +169,10 @@
                   另有 {{ formatNumber(heroOtherCount) }} 場不是 AI 接的（真人直接服務、選單流程、或還沒人回）——明細看<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">對話統計</NuxtLink>。
                 </div>
 
-                <!-- 交給真人的原因拆解：讓「用到真人」看得出該做什麼（哪些補知識有救）。
-                     原因記在「每一次轉接」上、上面的長條數「場」——單位不同就講明白，不裝一樣。 -->
-                <div v-if="handoffBreakdown" class="usage-note">
-                  AI 把客人交給真人共 {{ formatNumber(handoffBreakdown.total) }} 次（同一場可能轉好幾次）：答不出來 <b>{{ formatNumber(handoffBreakdown.gap) }}</b> 次（補知識就有救）<template v-if="handoffBreakdown.named">・客人指名要真人 {{ formatNumber(handoffBreakdown.named) }} 次</template><template v-if="handoffBreakdown.intended">・刻意設計要人接 {{ formatNumber(handoffBreakdown.intended) }} 次（查訂單、敏感話題這類）</template><template v-if="handoffBreakdown.image">・客人傳圖片/檔案 {{ formatNumber(handoffBreakdown.image) }} 次</template><template v-if="handoffBreakdown.unknown">・其餘 {{ formatNumber(handoffBreakdown.unknown) }} 次是較早的紀錄，沒留下原因</template>
-                </div>
+                <!-- ⛔ 原因拆解行（91 次：答不出來 62、指名 1…）已整行退場（2026-08-10 老闆「很混亂」拍板）：
+                     它數「事件次數」、hero 數「場」，且包含非 AI 首接的場——一行永遠對不回上面 43 場、
+                     也對不回 verdict 的待補件數，三組數字互相打架。「答不出來→補知識」的動作
+                     由 verdict＋案例清單（預設就停在「答不出來」組）全權承接，需要逐筆查帳的人清單裡都有。 -->
 
                 <!-- 「先問清楚」退出主畫面（2026-08-10 老闆拍板：使用者不在乎機制）——
                      只在偏高時現身一行，直接給診斷與動作，是訊號不是統計 -->
@@ -292,6 +291,64 @@
           </div>
         </div>
 
+        <!-- ── 方案用量／額度：跟錢有關，排在行動之後、回顧（趨勢）之前（2026-08-10 老闆拍板往上移）。
+             仍在 hero 與案例清單之後：先講價值與待辦；錢真正危急的時刻（快用完/用完）
+             由頁頂的紅黃警示搶第一眼，不靠這張卡的位置。 ── -->
+        <template v-if="planQuota">
+          <div class="message-card usage-card">
+            <div class="message-card-header">
+              <div class="card-header-main">
+                <!-- 無上限的方案沒有「額度」可言，標題跟著實況講 -->
+                <span class="section-title">{{ quotaLimit != null ? '方案額度' : '方案用量' }}</span>
+                <!-- 有上限：顯示額度的「本期」（續約日制）；無上限：跟著上方報表的月份走（見下） -->
+                <span class="text-xs text-muted">{{ planQuota.name }}<template v-if="quotaLimit != null"> · 本期 {{ quotaPeriodLabel }}</template></span>
+              </div>
+              <div class="plan-card-head-actions">
+                <span v-if="planQuota.currentPeriodEnd" class="text-xs text-muted">{{ planQuota.currentPeriodEnd }} 續期</span>
+                <!-- 無固定則數上限（客製/內部方案）打不到額度，升級對他沒意義 → 不顯示，避免噪音 -->
+                <el-button v-if="quotaLimit != null" size="small" @click="upgradeDialogOpen = true">升級方案</el-button>
+              </div>
+            </div>
+            <div class="card-section-stack">
+              <template v-if="quotaLimit != null">
+                <el-progress
+                  :percentage="quotaPercent"
+                  :color="quotaColor"
+                  :stroke-width="18"
+                  :text-inside="true"
+                  :format="() => `${quotaPercentRaw}%`"
+                />
+                <p class="usage-hint">
+                  本期已用 <strong>{{ formatNumber(quotaUsed) }}</strong> / {{ formatNumber(quotaLimit) }} 則
+                  <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
+                    <el-icon class="usage-info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                  <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
+                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
+                </p>
+                <!-- 雙時間軸提醒只有「有上限」需要：額度按續約日重置，跟上方報表的月份不是同一個區間。
+                     無上限的用量已改用同一個月份（下方分支），沒有第二條時間軸要解釋 -->
+                <p v-if="planQuota.currentPeriodStart" class="usage-hint usage-hint--muted">
+                  額度以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
+                </p>
+              </template>
+              <!-- 無上限也要給用量（2026-08-10 老闆拍板）：「無限」是計費條件，不是隱藏數字的理由。
+                   ⛔ 窗口改用「上方報表選的月份」（summary.answered）而不是訂閱期的 quotaAnswered——
+                   無限方案沒有額度要對，卻繼承續約日窗口只會多一條時間軸（老闆實測「94 則哪來的」）。
+                   給事實不給焦慮：沒有進度條、剩餘、升級鈕。 -->
+              <p v-else class="usage-hint">
+                {{ periodLabel }} AI 已回答 <strong>{{ formatNumber(summary?.answered) }}</strong> 則
+                <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
+                  <el-icon class="usage-info"><InfoFilled /></el-icon>
+                </el-tooltip>
+                ・此方案不限則數。
+              </p>
+            </div>
+          </div>
+
+          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" />
+        </template>
+
         <!-- ── 每月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
         <div class="message-card usage-card">
           <div class="message-card-header">
@@ -322,61 +379,6 @@
             </div>
           </div>
         </div>
-        <!-- 方案額度排最後：這是行政資訊，平常只是「確認一下還夠」。
-             一打開就先講用掉多少 = 先講錢再講價值；真的快用完時上面本來就有紅／黃警示。 -->
-        <template v-if="planQuota">
-          <div class="message-card usage-card">
-            <div class="message-card-header">
-              <div class="card-header-main">
-                <!-- 無上限的方案沒有「額度」可言，標題跟著實況講 -->
-                <span class="section-title">{{ quotaLimit != null ? '方案額度' : '方案用量' }}</span>
-                <span class="text-xs text-muted">{{ planQuota.name }} · 本期 {{ quotaPeriodLabel }}</span>
-              </div>
-              <div class="plan-card-head-actions">
-                <span v-if="planQuota.currentPeriodEnd" class="text-xs text-muted">{{ planQuota.currentPeriodEnd }} 續期</span>
-                <!-- 無固定則數上限（客製/內部方案）打不到額度，升級對他沒意義 → 不顯示，避免噪音 -->
-                <el-button v-if="quotaLimit != null" size="small" @click="upgradeDialogOpen = true">升級方案</el-button>
-              </div>
-            </div>
-            <div class="card-section-stack">
-              <template v-if="quotaLimit != null">
-                <el-progress
-                  :percentage="quotaPercent"
-                  :color="quotaColor"
-                  :stroke-width="18"
-                  :text-inside="true"
-                  :format="() => `${quotaPercentRaw}%`"
-                />
-                <p class="usage-hint">
-                  本期已用 <strong>{{ formatNumber(quotaUsed) }}</strong> / {{ formatNumber(quotaLimit) }} 則
-                  <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
-                    <el-icon class="usage-info"><InfoFilled /></el-icon>
-                  </el-tooltip>
-                  <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
-                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
-                </p>
-              </template>
-              <!-- 無上限也要給用量（2026-08-10 老闆拍板）：「無限」是計費條件，不是隱藏數字的理由——
-                   對客製戶這是「AI 做了多少工」的價值證據，也是日後續約談話的基礎。
-                   給事實不給焦慮：沒有進度條、剩餘、升級鈕（對無限方案都沒有意義）。 -->
-              <p v-else-if="planQuota.currentPeriodStart" class="usage-hint">
-                本期 AI 已回答 <strong>{{ formatNumber(quotaUsed) }}</strong> 則
-                <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
-                  <el-icon class="usage-info"><InfoFilled /></el-icon>
-                </el-tooltip>
-                ・此方案不限則數。
-              </p>
-              <!-- 沒有錨定週期的內部方案：後端沒算則數（回 0），印「已回答 0 則」是說謊 → 退回純文字 -->
-              <p v-else class="usage-hint">此方案不限則數。</p>
-              <!-- 雙時間軸提醒：按「續約日」算一期，和上方報表的月份不是同一個區間，避免日期兜不起來被誤會 -->
-              <p v-if="planQuota.currentPeriodStart" class="usage-hint usage-hint--muted">
-                本期以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
-              </p>
-            </div>
-          </div>
-
-          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" />
-        </template>
       </div>
     </template>
   </AdminSplitLayout>
@@ -539,31 +541,6 @@ const heroLoading = computed(() =>
 const heroError = computed(() => !summary.value || sessionsError.value)
 
 /**
- * 交給真人的原因拆解：讓「用到真人」看得出該做什麼（哪些補知識有救）。
- * 原因記在「每一次轉接」上（同一場可能轉好幾次），與 hero 的「場」不同單位——
- * 畫面上明講，不裝一樣。gap 用建議收件匣同一份白名單，兩處不會各判各的。
- * 事件比總數少的差額如實標「沒留下原因」——事件表 2026-08-10 前記不全、且有 240 天 TTL。
- */
-const handoffBreakdown = computed(() => {
-  const total = summary.value?.handoffs ?? 0
-  if (!total) return null
-  const counts = summary.value?.handoffReasonCounts ?? {}
-  let gap = 0
-  let named = 0
-  let image = 0
-  let intended = 0
-  for (const [reason, n] of Object.entries(counts)) {
-    if (reason === 'user_request') named += n
-    else if (reason === 'non_text_content') image += n
-    else if (KNOWLEDGE_GAP_HANDOFF_REASONS.has(reason)) gap += n
-    else intended += n
-  }
-  if (!gap && !named && !image && !intended) return null // 事件全缺（太舊）就不顯示，別出現「0 次有救」
-  const unknown = Math.max(0, total - gap - named - image - intended)
-  return { total, gap, named, image, intended, unknown }
-})
-
-/**
  * 「先問清楚」退出主畫面（2026-08-10 老闆拍板：使用者不在乎機制、只在乎要不要做事）。
  * 只在偏高（metricTone warn，>30%）時現身一行診斷＋動作——是訊號，不是統計。
  * 正常月份使用者完全不會看到這個詞。
@@ -678,15 +655,18 @@ const prevMonthRow = computed(() => {
 const rateDeltaPts = computed(() => {
   const prev = prevMonthRow.value
   const cur = heroMonth.value
-  if (!prev || !prev.ai || !cur?.ai) return null
+  // ⛔ 上月不足 5 場不比：跟 1 場比出來的「▼67 個百分點」是垃圾數字還掛警示色（實測畫面抓到）
+  if (!prev || prev.ai < 5 || !cur?.ai) return null
   return Math.round((heroRate.value - prev.solved / prev.ai) * 100)
 })
 
-/** 場數的變化只寫在副標、不上色：對話變多是生意變好還是負擔變重，看的人自己判斷 */
+/** 場數的變化只寫在副標、不上色：對話變多是生意變好還是負擔變重，看的人自己判斷。
+ *  上月基數太小（<5 場）只印事實「（上月僅 N 場）」——「較上月 ▲6300%」沒有資訊量只有嚇人 */
 const sessionsDeltaText = computed(() => {
   const prev = prevMonthRow.value?.ai ?? 0
   const cur = heroMonth.value?.ai ?? 0
   if (!prev) return ''
+  if (prev < 5) return `（上月僅 ${prev} 場）`
   const pct = Math.round(((cur - prev) / prev) * 100)
   if (pct === 0) return '（與上月持平）'
   return `（較上月 ${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%）`
