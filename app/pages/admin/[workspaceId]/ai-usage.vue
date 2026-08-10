@@ -1,15 +1,16 @@
 <template>
   <AdminSplitLayout solo>
     <template #editor-header>
-      <!-- 副標用問句講這一頁回答什麼（2026-08-07 拍板），並講明單位：
-           這頁數「則」、統計頁數「場」——兩頁數字對不上不是 bug，是單位不同 -->
+      <!-- 副標只回答「這頁是什麼」，換行後才接姊妹頁連結（原本兩個主題擠成一句沒斷點）。
+           ⛔ 別在這裡解釋「則」——原本寫「這裡數的是『則』（客人每來一則訊息算一則）」
+           是用「則」解釋「則」，等於沒解釋。單位差異留在數字旁的 tooltip 講。 -->
       <AdminSoloPageHeading
         field-label="AI 客服"
         title="AI 表現"
-        caption="你的 AI 做得好不好、還有什麼要補——這裡數的是「則」（客人每來一則訊息算一則）。"
+        caption="你的 AI 做得好不好、還有什麼要補。"
       >
         <template #caption>
-          想看客人來了多少、誰接住的（數「場」）？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
+          <br>想看客人來了多少、誰接住的？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
         </template>
       </AdminSoloPageHeading>
       <div class="flex gap-2 admin-header-actions">
@@ -37,14 +38,15 @@
           <el-button v-if="aiStatus.tone === 'off'" size="small" type="primary" @click="goSettings">去啟用</el-button>
         </div>
 
-        <!-- ── 方案額度（D1 進度條 / D2 超量提示） ── -->
+        <!-- 額度警示留在最上面：會直接讓 AI 停掉自動回覆，不能等人捲到頁尾才看到。
+             （額度本身那張卡放在頁尾，平常只是確認還夠不夠） -->
         <template v-if="planQuota">
           <el-alert
             v-if="isCurrentPeriod && quotaState === 'over'"
             type="error"
             :closable="false"
             show-icon
-            title="本月則數已用完"
+            title="本期則數已用完"
             style="margin-bottom: 16px"
           >
             <div class="quota-alert-body">
@@ -57,7 +59,7 @@
             type="warning"
             :closable="false"
             show-icon
-            title="本月則數即將用完"
+            title="本期則數即將用完"
             style="margin-bottom: 16px"
           >
             <div class="quota-alert-body">
@@ -65,53 +67,12 @@
               <el-button size="small" type="primary" @click="upgradeDialogOpen = true">升級方案</el-button>
             </div>
           </el-alert>
-
-          <div class="message-card usage-card">
-            <div class="message-card-header">
-              <div class="card-header-main">
-                <span class="section-title">方案額度</span>
-                <span class="text-xs text-muted">{{ planQuota.name }} · 本期 {{ quotaPeriodLabel }}</span>
-              </div>
-              <div class="plan-card-head-actions">
-                <span v-if="planQuota.currentPeriodEnd" class="text-xs text-muted">{{ planQuota.currentPeriodEnd }} 續期</span>
-                <!-- 無固定則數上限（客製/內部方案）打不到額度，升級對他沒意義 → 不顯示，避免噪音 -->
-                <el-button v-if="quotaLimit != null" size="small" @click="upgradeDialogOpen = true">升級方案</el-button>
-              </div>
-            </div>
-            <div class="card-section-stack">
-              <template v-if="quotaLimit != null">
-                <el-progress
-                  :percentage="quotaPercent"
-                  :color="quotaColor"
-                  :stroke-width="18"
-                  :text-inside="true"
-                  :format="() => `${quotaPercentRaw}%`"
-                />
-                <p class="usage-hint">
-                  本期已用 <strong>{{ formatNumber(quotaUsed) }}</strong> / {{ formatNumber(quotaLimit) }} 則
-                  <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
-                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
-                </p>
-              </template>
-              <p v-else class="usage-hint">此方案為客製額度，無固定則數上限。</p>
-              <!-- 雙時間軸提醒：額度按「續約日」算一期，和上方報表的月份不是同一個區間，避免日期兜不起來被誤會 -->
-              <p v-if="planQuota.currentPeriodStart" class="usage-hint usage-hint--muted">
-                額度以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
-              </p>
-            </div>
-          </div>
-
-          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" />
         </template>
 
-        <!-- ── KPI cards ─────────────────────── -->
+        <!-- ── AI 表現：這頁的主角 ─────────────────────── -->
+        <!-- 刻意沒有卡片標題：原本寫「核心指標」是內部術語，而且月份 hero 自己會講，
+             標題列等於把下面那句再說一次 -->
         <div class="message-card usage-card" data-tour="usg-kpi">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">核心指標</span>
-              <span class="text-xs text-muted">{{ periodLabel }}</span>
-            </div>
-          </div>
           <div class="card-section-stack">
             <div v-if="loading && !summary" class="usage-loading"><div class="spinner" /></div>
             <template v-else>
@@ -195,6 +156,18 @@
                     </div>
                   </div>
                 </template>
+              </div>
+
+              <!-- 結論先行：報表給數字，儀表板給判斷。上面一堆數字之後要有一句
+                   「這樣算好還是不好、接下來做什麼」，否則老闆得自己相加相除再猜。
+                   ⛔ 判語一律從後端真實數字推（沿用新手教學 agent 的原則），不讓 LLM 臆測。 -->
+              <div v-if="verdict" class="usage-verdict" :class="`usage-verdict--${verdict.tone}`">
+                <span class="usage-verdict__mark">{{ verdict.mark }}</span>
+                <div class="usage-verdict__body">
+                  <span class="usage-verdict__title">{{ verdict.title }}</span>
+                  <span class="usage-verdict__next">{{ verdict.next }}</span>
+                </div>
+                <el-button v-if="verdict.canAct" size="small" @click="scrollToHandoffs">去看看</el-button>
               </div>
 
               <!-- ⛔ 這頁不放任何金額與 token：計費賣「則數」，成本是平台的進貨價，
@@ -307,9 +280,52 @@
               <VChart class="usage-trend-chart" :option="trendOption" autoresize />
               <template #fallback><div class="usage-loading"><div class="spinner" /></div></template>
             </ClientOnly>
-            <div v-else class="usage-empty">還沒有足夠資料能看趨勢，AI 開始服務客人後這裡就會長出來。</div>
+            <div v-else class="usage-empty">
+              <template v-if="trendMonthsWithData === 1">目前只有一個月的資料，再過一個月就能看出是變好還是變差。</template>
+              <template v-else>還沒有足夠資料能看趨勢，AI 開始服務客人後這裡就會長出來。</template>
+            </div>
           </div>
         </div>
+        <!-- 方案額度排最後：這是行政資訊，平常只是「確認一下還夠」。
+             一打開就先講用掉多少 = 先講錢再講價值；真的快用完時上面本來就有紅／黃警示。 -->
+        <template v-if="planQuota">
+          <div class="message-card usage-card">
+            <div class="message-card-header">
+              <div class="card-header-main">
+                <span class="section-title">方案額度</span>
+                <span class="text-xs text-muted">{{ planQuota.name }} · 本期 {{ quotaPeriodLabel }}</span>
+              </div>
+              <div class="plan-card-head-actions">
+                <span v-if="planQuota.currentPeriodEnd" class="text-xs text-muted">{{ planQuota.currentPeriodEnd }} 續期</span>
+                <!-- 無固定則數上限（客製/內部方案）打不到額度，升級對他沒意義 → 不顯示，避免噪音 -->
+                <el-button v-if="quotaLimit != null" size="small" @click="upgradeDialogOpen = true">升級方案</el-button>
+              </div>
+            </div>
+            <div class="card-section-stack">
+              <template v-if="quotaLimit != null">
+                <el-progress
+                  :percentage="quotaPercent"
+                  :color="quotaColor"
+                  :stroke-width="18"
+                  :text-inside="true"
+                  :format="() => `${quotaPercentRaw}%`"
+                />
+                <p class="usage-hint">
+                  本期已用 <strong>{{ formatNumber(quotaUsed) }}</strong> / {{ formatNumber(quotaLimit) }} 則
+                  <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
+                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
+                </p>
+              </template>
+              <p v-else class="usage-hint">此方案為客製額度，無固定則數上限。</p>
+              <!-- 雙時間軸提醒：額度按「續約日」算一期，和上方報表的月份不是同一個區間，避免日期兜不起來被誤會 -->
+              <p v-if="planQuota.currentPeriodStart" class="usage-hint usage-hint--muted">
+                額度以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
+              </p>
+            </div>
+          </div>
+
+          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" />
+        </template>
       </div>
     </template>
   </AdminSplitLayout>
@@ -407,6 +423,35 @@ const segPct = computed(() => {
   }
 })
 
+/**
+ * 一句解讀：「現在算好還是不好、接下來做什麼」。
+ *
+ * 全部從真實數字推，沒有任何臆測：
+ *   - 好壞門檻沿用既有的 metricTone('autoReply')（≥50% 好、<20% 要留意），不另立一套標準
+ *   - 「該做什麼」指向下方待補清單，數量用實際載到的筆數，沒有就說沒有
+ * ⛔ 一則都沒有時不下判語——沒資料不是成績，硬給結論會變成瞎掰。
+ */
+const verdict = computed(() => {
+  const s = summary.value
+  if (!s || !s.invocations) return null
+  const rate = s.autoReplyRate
+  const pct = formatPercent(rate)
+  const pending = handoffs.value.filter(h => !h.resolved).length
+  const tone = metricTone('autoReply', rate).replace('is-', '') // good | warn | neutral
+
+  const title = tone === 'good'
+    ? `AI 幫你擋掉 ${pct} 的客人訊息，表現不錯`
+    : tone === 'warn'
+      ? `AI 只擋掉 ${pct} 的客人訊息，大部分還是要人接`
+      : `AI 幫你擋掉 ${pct} 的客人訊息，還有進步空間`
+
+  const next = pending > 0
+    ? `下面有 ${pending} 題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
+    : '目前沒有待補的知識，維持下去就好。'
+
+  return { tone, mark: tone === 'good' ? '✓' : tone === 'warn' ? '⚠' : '→', title, next, canAct: pending > 0 }
+})
+
 // 頂端狀態列：AI 有沒有在跑（老闆第一眼要知道的）。未啟用時特別點明「數字是歷史/測試」。
 const aiStatus = computed(() => {
   if (!summary.value) return null
@@ -463,8 +508,13 @@ const invocationsDeltaText = computed(() => {
   return `（較上月 ${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%）`
 })
 
-// 近 3 個月趨勢：有任何一個月有量才畫圖，否則顯示「資料不足」空狀態（剛上線/剛清空時）。
-const trendHasData = computed(() => trend.value.some(p => p.invocations > 0))
+/**
+ * ⛔ 至少要**兩個月**有量才畫趨勢圖。
+ * 只有一個月的話畫出來是孤零零一組柱子——那不是趨勢，只是把單月數字換個樣子再講一次，
+ * 反而讓人以為「看起來很少」。剛上線的第一個月就該老實說「還要再一個月」。
+ */
+const trendMonthsWithData = computed(() => trend.value.filter(p => p.invocations > 0).length)
+const trendHasData = computed(() => trendMonthsWithData.value >= 2)
 const trendOption = computed(() => {
   const t = trend.value
   return {

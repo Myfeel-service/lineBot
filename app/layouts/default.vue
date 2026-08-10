@@ -190,9 +190,12 @@ const aiNavItems = computed(() => {
   const items = [
     // ⛔ 客服腳本不在這裡：它就是上一組的「自動回應」。
     // 這裡再放一個入口＝同一件事兩個進入點，會讓「該用哪一邊」的問題重新長回來。
+    // 順序照**日常動線**排（看 → 補 → 驗 → 調），不是照第一次設定的動線：
+    // 設定只做一次，看表現天天做。表現頁說「這幾題答不出來」→ 去知識庫補 → 回測試對話驗。
+    // 新帳號落在空頁也不成問題——AI 未啟用時這頁的狀態列本身就是「去啟用」的入口。
+    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: 'AI 表現' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
     { cap: 'playground.use' as const, to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
-    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: 'AI 表現' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },
   ]
   return items.filter(item => can(item.cap)).map(({ cap: _cap, ...rest }) => rest)
