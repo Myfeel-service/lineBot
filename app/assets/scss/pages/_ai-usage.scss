@@ -237,64 +237,6 @@
 }
 
 
-/* 成本三桶：客人對話 / 知識庫建置 / 後台自用 —— 依用途拆分，數字靠右對齊成一欄 */
-.usage-cost-split {
-  display: flex;
-  flex-direction: column;
-}
-
-.usage-cost-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 0;
-  font-size: 13px;
-  border-bottom: 1px solid var(--el-fill-color-light);
-
-  &__dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 2px;
-    flex: none;
-
-    &--conv { background: var(--brand-green-deep); }
-    &--build { background: #8a6fb0; }
-    &--test { background: #b0783f; }
-  }
-  &__k {
-    font-weight: 600;
-    color: var(--text-primary);
-    min-width: 80px;
-  }
-  &__tok {
-    flex: 1;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    font-variant-numeric: tabular-nums;
-  }
-  &__cost {
-    font-weight: 700;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
-.usage-cost-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding-top: 10px;
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-
-  strong {
-    font-size: 15px;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
 .usage-hint {
   font-size: 11px;
   color: var(--el-text-color-secondary);

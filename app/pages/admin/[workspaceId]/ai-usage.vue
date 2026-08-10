@@ -177,22 +177,10 @@
                 <div v-else class="usage-empty">這個月 AI 還沒有處理任何訊息</div>
               </div>
 
-              <!-- 主畫面留給「答得好不好」。花費是平台的進貨成本（計費賣「則」），
-                   只有 super admin 看得到——租戶端通篇只講「則」，API 也不回成本欄位。 -->
+              <!-- ⛔ 這頁不放任何金額與 token：計費賣「則數」，成本是平台的進貨價，
+                   一律只在超管的「成本總覽」頁講（2026-08-10 拍板）。這裡通篇只講則數與品質。 -->
               <div class="usage-substats">
-                <div v-if="isSuperAdmin" class="usage-substat">
-                  <span class="usage-substat__label">
-                    這個月 AI 花費
-                    <el-tooltip placement="top" content="只算跟客人對話的部分。整理知識庫、後台自用的花費另計，在下方「進階」。金額為依 Gemini 公開價估算的參考值，實際以 Google 帳單為準。">
-                      <el-icon class="usage-substat__info"><InfoFilled /></el-icon>
-                    </el-tooltip>
-                  </span>
-                  <strong class="usage-substat__value">約 NT${{ formatNumber(twd(summary?.estimatedCostUsd)) }}</strong>
-                  <span class="usage-substat__sub">
-                    跟客人對話的花費<template v-if="((summary?.buildCostUsd ?? 0) + (summary?.testCostUsd ?? 0)) > 0"> · 建置 / 測試另計，見進階</template> · 僅系統管理員看得到
-                  </span>
-                </div>
-                <!-- 「答完客人又找真人」是目前唯一能回答「答得好不好」的數字，放主畫面，不收進進階。
+                <!-- 「答完客人又找真人」是目前唯一能回答「答得好不好」的數字。
                      沒有任何 AI 答題時顯示「—」:0% 上綠色會把「沒資料」講成「滿分」。 -->
                 <div class="usage-substat">
                   <span class="usage-substat__label">
@@ -234,53 +222,6 @@
         </div>
 
         <!-- ── 進階 / 技術細節（token / 成本組成 = 平台的進貨價 → 僅 super admin；預設收合） ── -->
-        <div v-if="isSuperAdmin" class="message-card usage-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">進階 / 技術細節</span>
-              <span class="badge badge-gray">僅系統管理員可見</span>
-              <span class="text-xs text-muted">成本組成（依用途拆三桶）</span>
-            </div>
-            <el-button text size="small" @click="advancedOpen = !advancedOpen">
-              {{ advancedOpen ? '收合' : '展開' }}
-              <el-icon class="el-icon--right"><component :is="advancedOpen ? ArrowUp : ArrowDown" /></el-icon>
-            </el-button>
-          </div>
-          <div v-show="advancedOpen" class="card-section-stack">
-            <!-- 成本依用途拆三桶（台幣）：客人對話才是上方花費；建置與測試各自獨立 -->
-            <div class="usage-cost-split">
-              <div class="usage-cost-row">
-                <span class="usage-cost-row__dot usage-cost-row__dot--conv" />
-                <span class="usage-cost-row__k">客人對話</span>
-                <span class="usage-cost-row__tok">{{ formatNumber(summary?.conversationTokens) }} tokens</span>
-                <strong class="usage-cost-row__cost">約 NT${{ formatNumber(twd(summary?.estimatedCostUsd)) }}</strong>
-              </div>
-              <div class="usage-cost-row">
-                <span class="usage-cost-row__dot usage-cost-row__dot--build" />
-                <span class="usage-cost-row__k">知識庫建置</span>
-                <span class="usage-cost-row__tok">{{ formatNumber(summary?.buildTokens) }} tokens</span>
-                <strong class="usage-cost-row__cost">約 NT${{ formatNumber(twd(summary?.buildCostUsd)) }}</strong>
-              </div>
-              <div class="usage-cost-row">
-                <span class="usage-cost-row__dot usage-cost-row__dot--test" />
-                <span class="usage-cost-row__k">後台自用</span>
-                <span class="usage-cost-row__tok">{{ formatNumber(summary?.testTokens) }} tokens</span>
-                <strong class="usage-cost-row__cost">約 NT${{ formatNumber(twd(summary?.testCostUsd)) }}</strong>
-              </div>
-              <div class="usage-cost-total">
-                <span>合計 · 工作區總花費</span>
-                <strong>約 NT${{ formatNumber(twd(totalCostUsd)) }}</strong>
-              </div>
-            </div>
-            <p class="usage-hint">
-              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、整理、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台自用</strong>＝你自己在後台操作 AI：試打、試答知識卡、問小幫手、一句話生成腳本，都不計入客人成本。
-            </p>
-            <p class="usage-hint">
-              金額依 Gemini 公開價估算（USD 約 ×32 換台幣）的<strong>偏高參考值</strong><template v-if="pricing">，每 100 萬用量：送入 ${{ pricing.inputPerM }} / 產生 ${{ pricing.outputPerM }} / 搜尋 ${{ pricing.embedPerM }} USD</template>。實際費用以 Google 帳單為準。
-            </p>
-          </div>
-        </div>
-
         <!-- ── 低信心 / 轉真人案例 ──────────────── -->
         <div ref="handoffCard" class="message-card usage-card" data-tour="usg-cases">
           <div class="message-card-header">
@@ -306,6 +247,9 @@
                 />
               </el-select>
               <el-checkbox v-model="showResolved" size="small" @change="loadHandoffs">顯示已處理</el-checkbox>
+              <!-- 這顆原本在「進階／技術細節」卡裡，那張卡（只放金額）已移除，
+                   但它還控制著下方的信心值與「重演」，所以搬來這裡。維持只有超管能開。 -->
+              <el-checkbox v-if="isSuperAdmin" v-model="advancedOpen" size="small">顯示技術細節</el-checkbox>
             </div>
             <div v-if="loadingHandoffs && !handoffs.length" class="usage-loading"><div class="spinner" /></div>
             <!-- 和解：此清單＝「目前還卡著、尚未處理」的對話（不分月份），與上方本月轉接次數不是同一份計數，
@@ -352,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, ChatDotRound, InfoFilled, Refresh, Upload } from '@element-plus/icons-vue'
+import { ChatDotRound, InfoFilled, Refresh, Upload } from '@element-plus/icons-vue'
 import { HANDOFF_REASON_LABELS, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { derivePlanState } from '~~/shared/billing/plan-state'
@@ -386,20 +330,8 @@ interface Summary {
   autoReplyRate: number
   handoffRate: number
   /** ↓ token / 成本細目：僅 super admin 的回應才有這些欄位（租戶端 API 直接不回） */
-  inputTokens?: number
-  outputTokens?: number
-  embeddingTokens?: number
-  importInputTokens?: number
-  importOutputTokens?: number
-  /** 三桶用途拆分：客人對話（headline 成本就是這桶）/ 知識庫建置 / 後台自用 */
-  conversationTokens?: number
-  buildTokens?: number
-  buildCostUsd?: number
-  testTokens?: number
-  testCostUsd?: number
-  estimatedCostUsd?: number
-  perConversationUsd?: number
-  pricing?: { inputPerM: number; outputPerM: number; embedPerM: number }
+  // ⛔ 這頁不再顯示任何金額與 token（一律只在超管「成本總覽」頁）。
+  // API 仍會回這些欄位給 super admin（ai-settings 的 token 數還在用），這裡刻意不宣告、不取用。
   plan: {
     id: string
     name: string
@@ -442,9 +374,6 @@ const showResolved = ref(false)
 const reasonOptions = (Object.entries(HANDOFF_REASON_LABELS) as Array<[HandoffReason, string]>)
   .filter(([value]) => value !== 'manual')
   .map(([value, label]) => ({ value, label }))
-
-// 單價由 summary API 回傳（後端單一事實來源），還沒載到前先不顯示數字
-const pricing = computed(() => summary.value?.pricing ?? null)
 
 // AI 出手的三種結果佔比（分段長條寬度）。已驗證每次出手只記一種結果，
 // 故 invocations = answered + handoffs + disambiguations 恆等，三段相加即 100%。
@@ -507,11 +436,6 @@ const trendOption = computed(() => {
 })
 
 // 三桶成本相加＝工作區總花費（客人對話 + 知識庫建置 + 後台自用）
-const totalCostUsd = computed(() => {
-  const s = summary.value
-  if (!s) return 0
-  return (s.estimatedCostUsd ?? 0) + (s.buildCostUsd ?? 0) + (s.testCostUsd ?? 0)
-})
 
 // ── Period selector（過去 3 個月） ─────────────────────────
 function makePeriodOptions() {
@@ -608,12 +532,6 @@ function formatNumber(n?: number | null) {
 function formatPercent(n?: number | null) {
   return `${Math.round((n ?? 0) * 100)}%`
 }
-// 成本用台幣白話呈現：USD × 匯率（粗估，實際以 Google 帳單為準，故四捨五入到整數即可）
-const USD_TO_TWD = 32
-function twd(usd?: number | null) {
-  return Math.round((usd ?? 0) * USD_TO_TWD)
-}
-
 /**
  * 依「數值門檻」決定數字顏色（rates 為 0~1）。
  * 正向指標（越高越好）好→綠；負向指標（越高越糟）過線才橘。
