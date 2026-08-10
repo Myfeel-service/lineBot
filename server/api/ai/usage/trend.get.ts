@@ -26,7 +26,8 @@ function lastNMonths(n: number): string[] {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'usage.read')
+  // 純表現資料、不含任何計費成分 → 跟 summary 一樣開到 ai.read（viewer 起）
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const q = getQuery(event)
   const months = Math.min(12, Math.max(2, Number(q.months ?? 3)))
   const periods = lastNMonths(months)

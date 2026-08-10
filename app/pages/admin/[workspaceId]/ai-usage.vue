@@ -5,8 +5,8 @@
            這頁數「則」、統計頁數「場」——兩頁數字對不上不是 bug，是單位不同 -->
       <AdminSoloPageHeading
         field-label="AI 客服"
-        title="用量 / 監控"
-        caption="AI 做了多少工、花了多少——這裡數的是「則」（AI 每回一次算一則）。"
+        title="AI 表現"
+        caption="你的 AI 做得好不好、還有什麼要補——這裡數的是「則」（客人每來一則訊息算一則）。"
       >
         <template #caption>
           想看客人來了多少、誰接住的（數「場」）？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
@@ -120,14 +120,29 @@
                    不再講「AI 介入／反問」——畫面早就是白話了，註解也別留舊詞免得被抄回去 -->
               <div class="usage-hero">
                 <div class="usage-hero__head">
-                  <strong class="usage-hero__num">{{ formatNumber(summary?.invocations) }}</strong>
-                  <span class="usage-hero__label">則 <b>客人訊息</b><br>{{ periodLabel }} AI 幫你處理的則數</span>
-                  <!-- 沒有基準的單一數字看不出多還少（「202 則」是好是壞？）。
-                       ⛔ 刻意用中性灰不上紅綠：訊息變多是生意變好還是負擔變重要看的人自己判斷，
-                       系統不該替他下價值判斷（成本頁那顆才需要紅綠，因為錢變多明確是壞事）。 -->
-                  <span v-if="invocationsDeltaPct !== null" class="usage-delta">
-                    較上月 {{ invocationsDeltaPct > 0 ? '▲' : (invocationsDeltaPct < 0 ? '▼' : '＝') }} {{ Math.abs(invocationsDeltaPct) }}%
-                  </span>
+                  <!-- Hero 主角＝自己搞定率，不是處理了幾則（2026-08-10 拍板）。
+                       這是 agent 產品真正在賣的東西：幫你擋掉多少，而不是用掉多少。
+                       則數退居副標——它是分母，不是成績。 -->
+                  <template v-if="(summary?.invocations ?? 0) > 0">
+                    <strong class="usage-hero__num" :class="metricTone('autoReply', summary?.autoReplyRate)">
+                      {{ formatPercent(summary?.autoReplyRate) }}
+                    </strong>
+                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} 共 {{ formatNumber(summary?.invocations) }} 則客人訊息{{ invocationsDeltaText }}</span>
+                    <!-- 比率的變化要用「百分點」不是「%」：68%→74% 是進步 6 個百分點，不是 6%。
+                         這顆可以上色——自己搞定率越高越好，方向明確（訊息量則不然，故只寫在副標不上色）。 -->
+                    <span
+                      v-if="autoReplyDeltaPts !== null"
+                      class="usage-delta"
+                      :class="autoReplyDeltaPts > 0 ? 'usage-delta--good' : (autoReplyDeltaPts < 0 ? 'usage-delta--warn' : '')"
+                    >
+                      較上月 {{ autoReplyDeltaPts > 0 ? '▲' : (autoReplyDeltaPts < 0 ? '▼' : '＝') }} {{ Math.abs(autoReplyDeltaPts) }} 個百分點
+                    </span>
+                  </template>
+                  <!-- 一則都沒有時不能顯示「0% 自己搞定」——那會把「沒資料」講成「一題都沒答對」 -->
+                  <template v-else>
+                    <strong class="usage-hero__num">—</strong>
+                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} 還沒有客人來問</span>
+                  </template>
                 </div>
                 <template v-if="(summary?.invocations ?? 0) > 0">
                   <div
@@ -180,7 +195,6 @@
                     </div>
                   </div>
                 </template>
-                <div v-else class="usage-empty">{{ periodLabel }} AI 還沒有處理任何訊息</div>
               </div>
 
               <!-- ⛔ 這頁不放任何金額與 token：計費賣「則數」，成本是平台的進貨價，
@@ -419,13 +433,34 @@ function scrollToHandoffs() {
  * 所選月份 vs 前一個月的訊息量變化。沿用趨勢那份資料（同一支 API、同一把台灣時區的尺），
  * 不另外再查一次。趨勢是「舊→新」排序，前一期即 index-1；選到最舊那個月沒得比 → null 不顯示。
  */
-const invocationsDeltaPct = computed(() => {
+/** 所選月份在趨勢陣列裡的前一期（趨勢是「舊→新」排序）；選到最舊那個月就沒得比 */
+const prevTrendPoint = computed(() => {
   const idx = trend.value.findIndex(p => p.period === period.value)
-  if (idx <= 0) return null
-  const prev = trend.value[idx - 1]?.invocations ?? 0
-  const cur = trend.value[idx]?.invocations ?? 0
-  if (!prev) return null
-  return Math.round(((cur - prev) / prev) * 100)
+  return idx > 0 ? (trend.value[idx - 1] ?? null) : null
+})
+
+/**
+ * 自己搞定率的變化，單位是**百分點**。
+ * ⛔ 別寫成百分比：68% → 74% 是「進步 6 個百分點」，不是「進步 6%」（那是 8.8%）。
+ * 比率的比率最容易被誤讀，寫錯就等於報錯成績。
+ */
+const autoReplyDeltaPts = computed(() => {
+  const prev = prevTrendPoint.value
+  if (!prev || !prev.invocations) return null
+  const cur = summary.value
+  if (!cur?.invocations) return null
+  const prevRate = prev.answered / prev.invocations
+  return Math.round((cur.autoReplyRate - prevRate) * 100)
+})
+
+/** 則數的變化只寫在副標、不上色：訊息變多是生意變好還是負擔變重，看的人自己判斷 */
+const invocationsDeltaText = computed(() => {
+  const prev = prevTrendPoint.value?.invocations ?? 0
+  const cur = summary.value?.invocations ?? 0
+  if (!prev) return ''
+  const pct = Math.round(((cur - prev) / prev) * 100)
+  if (pct === 0) return '（與上月持平）'
+  return `（較上月 ${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%）`
 })
 
 // 近 3 個月趨勢：有任何一個月有量才畫圖，否則顯示「資料不足」空狀態（剛上線/剛清空時）。

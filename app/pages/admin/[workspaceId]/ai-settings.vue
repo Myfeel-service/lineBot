@@ -36,7 +36,7 @@
               <span v-else-if="usageTokens !== null" class="ai-status-usage">
                 本月用量 {{ formatTokens(usageTokens) }}<template v-if="form.quota.monthlyTokenCap > 0"> / {{ formatTokens(form.quota.monthlyTokenCap) }}</template> tokens
               </span>
-              <NuxtLink :to="`/admin/${workspaceId}/ai-usage`" class="ai-status-link">用量監控 →</NuxtLink>
+              <NuxtLink :to="`/admin/${workspaceId}/ai-usage`" class="ai-status-link">AI 表現 →</NuxtLink>
             </div>
             <el-progress
               v-if="quotaPct !== null"

@@ -9,7 +9,7 @@
         caption="客人來了多少、誰接住的——這裡數的是「場」（一位客人 24 小時內的一段來回算一場）。"
       >
         <template #caption>
-          想看 AI 做了多少工、花多少錢（數「則」）？<NuxtLink :to="`/admin/${route.params.workspaceId}/ai-usage`" class="admin-inline-link">看用量 / 監控 →</NuxtLink>
+          想看 AI 自己搞定多少、還有什麼要補（數「則」）？<NuxtLink :to="`/admin/${route.params.workspaceId}/ai-usage`" class="admin-inline-link">看 AI 表現 →</NuxtLink>
         </template>
       </AdminSoloPageHeading>
       <div class="conv-stats-header-actions admin-header-actions" data-tour="cs-filter">

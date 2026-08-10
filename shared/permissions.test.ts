@@ -64,3 +64,28 @@ describe('can — role × capability matrix', () => {
     expect(can('viewer', 'playground.use')).toBe(false)
   })
 })
+
+/**
+ * 2026-08-10：AI 表現頁（原「用量監控」）從 usage.read 降到 ai.read。
+ * 理由是「最該先看的那頁權限最嚴」不合理——第一線客服要看得到自己照顧的 AI 做得好不好；
+ * 計費資訊（方案／額度／超量單價）改由 API 逐欄位擋，不再用頁面層級一刀切。
+ * 這組把那次決策釘住：能力表本身沒變，變的是「哪一頁要求哪個能力」，
+ * 所以這裡驗的是兩個能力的門檻仍然分開、沒有被合併回去。
+ */
+describe('AI 表現頁 vs 計費資訊的分界（2026-08-10）', () => {
+  it('頁面本體（ai.read）viewer 起看得到', () => {
+    expect(can('viewer', 'ai.read')).toBe(true)
+    expect(can('agent', 'ai.read')).toBe(true)
+  })
+
+  it('⛔ 同一頁裡的方案／額度（usage.read）仍然只給 admin+', () => {
+    expect(can('viewer', 'usage.read')).toBe(false)
+    expect(can('agent', 'usage.read')).toBe(false)
+    expect(can('admin', 'usage.read')).toBe(true)
+    expect(can('owner', 'usage.read')).toBe(true)
+  })
+
+  it('兩者門檻必須不同——合併回同一個門檻就等於這次改動被回退', () => {
+    expect(CAPABILITIES['ai.read']).not.toBe(CAPABILITIES['usage.read'])
+  })
+})

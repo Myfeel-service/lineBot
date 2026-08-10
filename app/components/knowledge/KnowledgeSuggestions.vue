@@ -24,7 +24,7 @@
     </p>
     <p v-else-if="gapEvents > 0" class="kb-suggest-hint">
       最近 30 天有 <strong>{{ gapEvents }}</strong> 個問題 AI 答不出來，同一類被問到兩次以上才會擬草稿；
-      只被問過一次的，可到 <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">用量 / 監控</NuxtLink> 的案例清單直接補。
+      只被問過一次的，可到 <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">AI 表現</NuxtLink> 的案例清單直接補。
     </p>
 
     <div v-if="items.length" class="kb-suggest-list">

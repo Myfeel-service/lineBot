@@ -180,8 +180,10 @@ const navItems = computed<NavItem[]>(() => {
 })
 
 // 依 capability 逐項顯示（單一事實來源 ~~/shared/permissions.ts，與 ai-feature
-// middleware、後端 requireCapability 同一張表）：知識庫/腳本/設定 viewer 可讀
-// （頁內寫入鈕另依 can() 隱藏）；測試對話會花 token → agent+；用量監控含計費 → admin。
+// middleware、後端 requireCapability 同一張表）：知識庫/設定/AI 表現 viewer 可讀
+// （頁內寫入鈕另依 can() 隱藏）；測試對話會花 token → agent+。
+// AI 表現頁 2026-08-10 從 usage.read 降到 ai.read：第一線客服要看得到自己照顧的 AI
+// 做得好不好，計費相關（方案額度）改由 API 逐欄位擋。
 const aiNavItems = computed(() => {
   const wid = workspaceId.value
   if (!wid) return []
@@ -190,7 +192,7 @@ const aiNavItems = computed(() => {
     // 這裡再放一個入口＝同一件事兩個進入點，會讓「該用哪一邊」的問題重新長回來。
     { cap: 'ai.read' as const, to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
     { cap: 'playground.use' as const, to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
-    { cap: 'usage.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: '用量監控' },
+    { cap: 'ai.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: 'AI 表現' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },
   ]
   return items.filter(item => can(item.cap)).map(({ cap: _cap, ...rest }) => rest)

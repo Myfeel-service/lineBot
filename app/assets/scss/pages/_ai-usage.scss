@@ -116,6 +116,10 @@
   color: var(--el-text-color-secondary);
   background: var(--el-fill-color, #f0f2f5);
   font-variant-numeric: tabular-nums;
+
+  /* 自己搞定率方向明確（越高越好）才上色；訊息量的增減不上色，只寫在副標 */
+  &--good { color: var(--brand-green-text, #067a35); background: rgba(5, 178, 76, 0.12); }
+  &--warn { color: #b45309; background: rgba(217, 119, 6, 0.12); }
 }
 
 .usage-hero__label {

@@ -3,6 +3,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getAiSettings } from '~~/server/utils/ai-settings'
+import { can } from '~~/shared/permissions'
 import { bucketAiCosts, GEMINI_PRICING } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
@@ -13,6 +14,12 @@ import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
  *   - invocations / answered / handoffs
  *   - 自動回覆率 / handoff 率
  *   - （僅 super admin）token 細目與估算成本
+ *   - （僅 usage.read／admin+）方案與額度
+ *
+ * 門檻是 `ai.read`（viewer 起）而不是 `usage.read`：這頁是「AI 表現」，第一線客服
+ * 也該看得到自己照顧的 AI 做得好不好。**計費相關的欄位改成逐欄位擋**——方案與額度
+ * 只回給 admin+，成本只回給 super admin。權限用頁面層級一刀切的話，會變成
+ * 「最該先看的那頁權限最嚴」。
  *
  * 成本可見性收歸平台：計費賣「則數」，token 成本是平台的進貨價——租戶拿到
  * NT$ 估算（或 token 數 × 公開牌價）就能反推毛利，故 cost/token 欄位一律只回
@@ -48,16 +55,18 @@ const EMPTY_COST_DETAIL = {
 }
 
 export default defineEventHandler(async (event) => {
-  // 含計費方案 → usage.read（admin；與用量監控頁門檻同一張表）。
-  const { workspaceId, isSuperAdmin } = await requireCapability(event, 'usage.read')
+  const { workspaceId, isSuperAdmin, role } = await requireCapability(event, 'ai.read')
+  // 方案／額度是計費資訊 → admin+ 才給（super admin 拿 role='owner'、組織管理員拿 'admin'，兩者都過）
+  const canSeeBilling = can(role, 'usage.read')
   const query = getQuery(event)
   const period = String(query.period ?? currentYyyyMm()).replace(/[^\d]/g, '').slice(0, 6) || currentYyyyMm()
 
   const db = getDb()
 
   // 目前方案（給前端顯示額度進度條 / 超量提示）。
-  const sub = await getWorkspaceSubscription(workspaceId, db)
-  const plan = buildPlanView(sub)
+  // 看不到計費的人連查都不用查（省一次 Firestore 讀）；plan 回 null，前端那張卡自然不長出來
+  const sub = canSeeBilling ? await getWorkspaceSubscription(workspaceId, db) : null
+  const plan = canSeeBilling ? buildPlanView(sub) : null
 
   // AI 是否已啟用（前端頂端狀態列用）：未啟用時 webhook 完全不跑 AI，畫面數字皆為歷史/測試。
   const settings = await getAiSettings(workspaceId, db)
@@ -66,7 +75,7 @@ export default defineEventHandler(async (event) => {
 
   // 額度進度條看的是「本期」（訂閱週期）用量,與攔截同一顆計數器——跟下面按月份查的
   // 報表 KPI（answered/tokens…）是兩把不同的尺,故不隨 ?period 切換。
-  const quotaAnswered = sub?.currentPeriodStart
+  const quotaAnswered = canSeeBilling && sub?.currentPeriodStart
     ? await getQuotaAnswered(workspaceId, sub.currentPeriodStart, db)
     : 0
 
