@@ -3,6 +3,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getAiSettings } from '~~/server/utils/ai-settings'
+import { bucketAiCosts, GEMINI_PRICING } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
 /**
@@ -26,15 +27,8 @@ import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
  * 一律以 flash 費率估 → **估算值偏保守（上限）**；實際費用以 Google 帳單為準。
  * 改價時只改這裡：pricing 會隨 API 回給前端顯示，前端不自帶一份。
  */
-const GEMINI_FLASH_INPUT_USD_PER_M = 0.30
-const GEMINI_FLASH_OUTPUT_USD_PER_M = 2.50
-const GEMINI_EMBED_USD_PER_M = 0.15
-
-const PRICING = {
-  inputPerM: GEMINI_FLASH_INPUT_USD_PER_M,
-  outputPerM: GEMINI_FLASH_OUTPUT_USD_PER_M,
-  embedPerM: GEMINI_EMBED_USD_PER_M,
-}
+// 單價與三桶算式共用 server/utils/ai-cost-buckets.ts（超管成本頁也用同一份，改價只改那裡）
+const PRICING = GEMINI_PRICING
 
 /** super admin 專屬的 token / 成本細目（非 super admin 的回應中完全沒有這些 key） */
 const EMPTY_COST_DETAIL = {
@@ -115,23 +109,15 @@ export default defineEventHandler(async (event) => {
   const testOutputTokens = Number(data.testOutputTokens ?? 0)
   const testEmbeddingTokens = Number(data.testEmbeddingTokens ?? 0)
 
-  const usd = (input: number, output: number, embed: number) =>
-    (input / 1_000_000) * GEMINI_FLASH_INPUT_USD_PER_M
-    + (output / 1_000_000) * GEMINI_FLASH_OUTPUT_USD_PER_M
-    + (embed / 1_000_000) * GEMINI_EMBED_USD_PER_M
+  // ── 依「用途」把成本拆三桶（客人對話才是 headline，其餘不灌進每對話成本）──
+  // 拆法與超管成本頁共用 bucketAiCosts，兩邊不會各改各的而對不起來。
+  const buckets = bucketAiCosts(data)
+  const conversationTokens = buckets.conversation.tokens
+  const buildTokens = buckets.build.tokens
 
-  // ── 依「用途」把成本拆三桶（見用量頁：客人對話才是 headline，其餘不灌進每對話成本）──
-  // 匯入 input/output 是 input/output 的子集（記帳時兩邊都寫），故對話量要把它減掉；
-  // 建索引 embedding 已改記 buildEmbeddingTokens，故 embeddingTokens 現在≈只剩客人查詢向量。
-  const convInputTokens = Math.max(0, inputTokens - importInputTokens)
-  const convOutputTokens = Math.max(0, outputTokens - importOutputTokens)
-  const convEmbeddingTokens = embeddingTokens
-  const conversationTokens = convInputTokens + convOutputTokens + convEmbeddingTokens
-  const buildTokens = importInputTokens + importOutputTokens + buildEmbeddingTokens
-
-  const cost = usd(convInputTokens, convOutputTokens, convEmbeddingTokens) // 客人對話 = headline
-  const buildCost = usd(importInputTokens, importOutputTokens, buildEmbeddingTokens) // 知識庫建置/整理
-  const testCost = usd(testInputTokens, testOutputTokens, testEmbeddingTokens) // 後台測試
+  const cost = buckets.conversation.costUsd // 客人對話 = headline
+  const buildCost = buckets.build.costUsd // 知識庫建置/整理
+  const testCost = buckets.test.costUsd // 後台自用（playground 試打 ＋ 小幫手）
 
   const base = {
     period,
@@ -159,11 +145,11 @@ export default defineEventHandler(async (event) => {
     embeddingTokens,
     importInputTokens,
     importOutputTokens,
-    // 三桶用途拆分：客人對話（headline）/ 知識庫建置 / 後台測試
+    // 三桶用途拆分：客人對話（headline）/ 知識庫建置 / 後台自用
     conversationTokens,
     buildTokens,
     buildCostUsd: Number(buildCost.toFixed(4)),
-    testTokens: testInputTokens + testOutputTokens + testEmbeddingTokens,
+    testTokens: buckets.test.tokens,
     testCostUsd: Number(testCost.toFixed(4)),
     // estimatedCostUsd / perConversationUsd 只算「客人對話」——建置與測試不灌進來
     estimatedCostUsd: Number(cost.toFixed(4)),

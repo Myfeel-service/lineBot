@@ -88,7 +88,7 @@ export interface UsageDelta {
   testInputTokens?: number
   testOutputTokens?: number
   testEmbeddingTokens?: number
-  /** 後台測試觸發次數（與真客人 invocations 分開記）。 */
+  /** 後台自用觸發次數：playground 試打 ＋ 後台小幫手對話（與真客人 invocations 分開記）。 */
   testInvocations?: number
   /**
    * 知識庫「建索引」的 embedding（reindex / bulk-create / 逐卡 index）——屬「建置成本」，

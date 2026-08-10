@@ -55,7 +55,7 @@
               <div class="sa-cost-legend">
                 <div class="sa-cost-legend__item">
                   <span class="sa-cost-dot sa-cost-dot--ai" />
-                  <span class="sa-cost-legend__name">AI（回答／整理知識／測試）</span>
+                  <span class="sa-cost-legend__name">AI（回答／整理知識／後台自用）</span>
                   <span class="sa-cost-legend__val">{{ ntTwdSoft(aiTotalTwd) }} ・ {{ grandPct(aiTotalTwd) }}%</span>
                 </div>
                 <div v-if="infra.status === 'ok'" class="sa-cost-legend__item">
@@ -96,7 +96,7 @@
           <div class="sa-cost-body">
             <div class="sa-cost-hero">
               <div class="sa-cost-hero__sub">
-                {{ activeCount }} 個帳號有花費 ・ 本月回答客人 {{ totals.answered.toLocaleString() }} 則 ・ 後台測試 {{ totals.testInvocations.toLocaleString() }} 次
+                {{ activeCount }} 個帳號有花費 ・ 客人這邊呼叫 AI {{ totals.invocations.toLocaleString() }} 次（答出 {{ totals.answered.toLocaleString() }} 則）・ 後台自用 {{ totals.testInvocations.toLocaleString() }} 次
               </div>
             </div>
 
@@ -120,12 +120,22 @@
                 </div>
                 <div class="sa-cost-legend__item">
                   <span class="sa-cost-dot sa-cost-dot--test" />
-                  <span class="sa-cost-legend__name">後台測試</span>
+                  <span class="sa-cost-legend__name">後台自用</span>
                   <span class="sa-cost-legend__val">{{ ntdSoft(totals.testCostUsd) }} ・ {{ pct(totals.testCostUsd) }}%</span>
                 </div>
               </div>
             </template>
             <div v-else class="sa-cost-empty">{{ emptyText }}</div>
+
+            <!-- 估算用的單一單價：客人與後台共用同一個數字，要算「多一倍訊息量要多少錢」就乘這個 -->
+            <div v-if="planningPerCallText" class="sa-cost-rate">
+              <span class="sa-cost-rate__label">估算抓這個數字</span>
+              <span class="sa-cost-rate__value">一次 {{ planningPerCallText }}</span>
+              <span class="sa-cost-rate__note">
+                客人每來一則訊息算一次（{{ totals.invocations.toLocaleString() }} 次）、後台自己操作也算一次（{{ totals.testInvocations.toLocaleString() }} 次）。
+                本月實測平均 {{ measuredPerCallText }}，<b>無條件進位</b>後給你估算用，只會高不會低。
+              </span>
+            </div>
           </div>
         </div>
 
@@ -139,43 +149,54 @@
           <div class="sa-cost-body">
             <p class="sa-cost-guide__intro">
               AI 是<b>按用量計費</b>的（單位叫 token，可想成「字數」）—— 客人問的字、AI 回的字都算錢。
-              下面是三種會花錢的情況，以及各自大概多少。
+              分成三桶的用意是看<b>哪一筆會隨客人變多而變多</b>：只有「回答客人」會，另外兩桶跟客人多寡無關。
             </p>
             <div class="sa-cost-guide">
               <div class="sa-cost-guide__col sa-cost-guide__col--conv">
                 <div class="sa-cost-guide__head">
                   <span class="sa-cost-dot sa-cost-dot--conv" /> 回答客人
-                  <span class="sa-cost-guide__when">客人每次來問就會用到</span>
+                  <span class="sa-cost-guide__when">客人越多越貴</span>
                 </div>
                 <ul class="sa-cost-guide__list">
-                  <li><b>看懂問題</b>：先判斷客人這句在問哪一類 <span class="sa-cost-guide__price">幾乎免費</span></li>
-                  <li><b>找答案</b>：從知識庫挑出最相關的幾則資料 <span class="sa-cost-guide__price">幾乎免費</span></li>
-                  <li><b>寫出回覆</b>：參考資料、產生答案（一則主要花這） <span class="sa-cost-guide__price">—</span></li>
+                  <li><b>看懂問題、找資料、寫出回覆</b>：一則客人訊息主要花在這 <span class="sa-cost-guide__price">最大宗</span></li>
+                  <li><b>答不出來的判斷</b>：決定要轉真人、還是反問客人一句 <span class="sa-cost-guide__price">一樣算一次</span></li>
+                  <li><b>判斷該不該走腳本</b>：這句要不要交給自動流程接手 <span class="sa-cost-guide__price">幾乎免費</span></li>
+                  <li><b>讀客人傳的照片</b>：看懂圖片內容才知道怎麼接 <span class="sa-cost-guide__price">併入同一則</span></li>
                 </ul>
-                <div class="sa-cost-guide__foot">合計一則約 <b>NT$0.11</b></div>
+                <!-- 與上方「估算抓這個數字」同一個來源，兩處不會各說各的 -->
+                <div class="sa-cost-guide__foot">
+                  <template v-if="planningPerCallText">客人來一則訊息抓 <b>{{ planningPerCallText }}</b></template>
+                  <template v-else>這個月還沒有客人來問，算不出平均</template>
+                </div>
               </div>
 
               <div class="sa-cost-guide__col sa-cost-guide__col--build">
                 <div class="sa-cost-guide__head">
                   <span class="sa-cost-dot sa-cost-dot--build" /> 整理知識庫
-                  <span class="sa-cost-guide__when">你上傳或整理資料時才會用到</span>
+                  <span class="sa-cost-guide__when">跟你上傳多少資料走，與客人多寡無關</span>
                 </div>
                 <ul class="sa-cost-guide__list">
                   <li><b>整理文件</b>：把 PDF／文件拆成一條條知識 <span class="sa-cost-guide__price">一份約 NT$2–5</span></li>
                   <li><b>掃描檔轉文字</b>：圖片型 PDF 先辨識成文字，最貴 <span class="sa-cost-guide__price">一份約 NT$5–10</span></li>
+                  <li><b>補「客人會怎麼問」</b>：幫知識卡補上常見問法，之後才搜得到 <span class="sa-cost-guide__price">很少</span></li>
+                  <li><b>每天掃知識缺口</b>：找出答不出來的問題、草擬補充建議 <span class="sa-cost-guide__price">很少</span></li>
                 </ul>
-                <div class="sa-cost-guide__foot sa-cost-guide__foot--warn">⚠ 重傳同一份會重算重收，別重複上傳沒改的檔</div>
+                <div class="sa-cost-guide__foot sa-cost-guide__foot--warn">⚠ 重傳沒改過的檔會重算重收</div>
               </div>
 
               <div class="sa-cost-guide__col sa-cost-guide__col--test">
                 <div class="sa-cost-guide__head">
-                  <span class="sa-cost-dot sa-cost-dot--test" /> 後台測試
-                  <span class="sa-cost-guide__when">你在後台試 AI 時才會用到</span>
+                  <span class="sa-cost-dot sa-cost-dot--test" /> 後台自用
+                  <span class="sa-cost-guide__when">跟你自己操作幾次走，與客人多寡無關</span>
                 </div>
                 <ul class="sa-cost-guide__list">
-                  <li><b>試玩／測試</b>：自己在後台測 AI 回答的效果 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>試打 AI</b>：在設定頁重演一句話，看它會怎麼答 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>知識庫試答</b>：存完卡片按試答，確認現在答得出來 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>採用建議後自動驗證</b>：系統用代表問句再試答一次 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>一句話生成腳本</b>：吐出一整份腳本，比一則回覆貴 <span class="sa-cost-guide__price">約 8～10 倍</span></li>
                 </ul>
-                <div class="sa-cost-guide__foot">花費跟真的回答一樣，但記在這桶、不算到客人頭上</div>
+                <div class="sa-cost-guide__foot">一次跟回答客人一樣價，不算到客人頭上</div>
               </div>
             </div>
           </div>
@@ -197,8 +218,17 @@
                   <el-tag v-if="!row.aiEnabled" size="small" type="info" class="sa-cost-off">AI 未啟用</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="本月回答" width="90" align="right">
-                <template #default="{ row }"><span class="text-xs text-muted">{{ row.answered.toLocaleString() }} 則</span></template>
+              <!-- 次數全部集中在這一欄，右邊四欄一律「單行金額」，欄與欄的高度才一致。
+                   ⛔ 主要數字必須是 invocations 不是 answered：右邊「回答客人」那筆錢買的是
+                   全部呼叫（答題＋轉真人判斷＋反問），拿 answered 當分母會算出高 2～3 倍的單價 -->
+              <el-table-column label="AI 呼叫" width="130" align="right">
+                <template #default="{ row }">
+                  <template v-if="row.invocations || row.testInvocations">
+                    <div class="text-xs">{{ row.invocations.toLocaleString() }} 次</div>
+                    <div class="text-xs text-muted">答出 {{ row.answered.toLocaleString() }} ・ 後台 {{ row.testInvocations.toLocaleString() }}</div>
+                  </template>
+                  <span v-else class="text-xs text-muted">—</span>
+                </template>
               </el-table-column>
               <el-table-column label="回答客人" width="105" align="right">
                 <template #header><span class="sa-cost-th"><span class="sa-cost-dot sa-cost-dot--conv" />回答客人</span></template>
@@ -208,12 +238,9 @@
                 <template #header><span class="sa-cost-th"><span class="sa-cost-dot sa-cost-dot--build" />整理知識庫</span></template>
                 <template #default="{ row }">{{ ntdSoft(row.buildCostUsd) }}</template>
               </el-table-column>
-              <el-table-column label="後台測試" width="115" align="right">
-                <template #header><span class="sa-cost-th"><span class="sa-cost-dot sa-cost-dot--test" />後台測試</span></template>
-                <template #default="{ row }">
-                  <div>{{ ntdSoft(row.testCostUsd) }}</div>
-                  <div v-if="row.testInvocations" class="text-xs text-muted">{{ row.testInvocations.toLocaleString() }} 次</div>
-                </template>
+              <el-table-column label="後台自用" width="105" align="right">
+                <template #header><span class="sa-cost-th"><span class="sa-cost-dot sa-cost-dot--test" />後台自用</span></template>
+                <template #default="{ row }">{{ ntdSoft(row.testCostUsd) }}</template>
               </el-table-column>
               <el-table-column label="合計" width="120" align="right">
                 <template #default="{ row }"><span class="sa-cost-total">{{ ntdSoft(row.totalCostUsd) }}</span></template>
@@ -640,6 +667,26 @@ const periodLabel = computed(() => {
   const p = period.value || ''
   return p.length === 6 ? `${p.slice(0, 4)} 年 ${p.slice(4, 6)} 月` : p
 })
+
+/**
+ * 估算用單價：**客人與後台合成同一個數字**，因為兩邊跑的是同一條答題流程、同一個費率，
+ * 實測差距只有幾個百分點（差在每題撈到多少參考資料），拆成兩個數字只會讓人以為有差別。
+ *
+ * 分母是「AI 被呼叫幾次」＝客人每來一則訊息算一次（不論最後是答出來、轉真人還是反問），
+ * 加上後台自己操作的次數。⛔ 別拿「答出幾則」當分母，那只佔全部呼叫的四成左右。
+ *
+ * 再**無條件進位到分位**當估算值：一來好乘，二來順便蓋掉「有些呼叫其實沒花到錢」
+ * （客人直接說找真人 → 直接轉接不呼叫 AI）造成的平均值稀釋，估出來只會偏高不會偏低。
+ */
+const allAiCalls = computed(() => totals.value.invocations + totals.value.testInvocations)
+const measuredPerCallTwd = computed(() => {
+  const calls = allAiCalls.value
+  if (!calls) return 0
+  return (totals.value.conversationCostUsd + totals.value.testCostUsd) * USD_TO_TWD / calls
+})
+const planningPerCallTwd = computed(() => Math.ceil(measuredPerCallTwd.value * 100) / 100)
+const planningPerCallText = computed(() => planningPerCallTwd.value > 0 ? `NT$${planningPerCallTwd.value.toFixed(2)}` : '')
+const measuredPerCallText = computed(() => measuredPerCallTwd.value > 0 ? `NT$${measuredPerCallTwd.value.toFixed(3)}` : '')
 
 // 以「四捨五入後的台幣」判定本月是否有實質花費（避免零頭造成有%沒金額）
 const hasSpend = computed(() => twd(totals.value.totalCostUsd) >= 1)

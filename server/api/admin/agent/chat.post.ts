@@ -28,9 +28,15 @@ export default defineEventHandler(async (event) => {
     authHeader: getHeader(event, 'authorization'),
   })
 
-  // 內部管理用量照記(與生成腳本同慣例)
-  recordAiUsage(workspaceId, { inputTokens: res.inputTokens, outputTokens: res.outputTokens })
-    .catch(e => console.error('[admin-agent] recordAiUsage error:', e))
+  // 內部管理用量照記,但要記進**後台自用**那桶(test*)而不是真客人那桶:
+  // 小幫手是我們自己在後台用的,把它算進「回答客人」會讓每則客人成本虛高,
+  // 拿那個數字去推單位經濟就會被誤導(2026-08-10 稽核發現)。
+  // 次數也一起記:成本進了哪一桶,對應的次數就要進同一桶,否則「每次多少錢」又會算錯。
+  recordAiUsage(workspaceId, {
+    testInputTokens: res.inputTokens,
+    testOutputTokens: res.outputTokens,
+    testInvocations: 1,
+  }).catch(e => console.error('[admin-agent] recordAiUsage error:', e))
 
   // 審計:誰、問了什麼、查了哪些工具、答了什麼(fire-and-forget,失敗不影響回答)
   db.collection('adminAgentLogs').add({

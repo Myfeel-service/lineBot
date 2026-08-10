@@ -170,7 +170,7 @@
 }
 
 /* ── AI 成本總覽 ─────────────────────────────────────── */
-// 三桶語意色：回答客人=沉穩藍(日常營運)、整理知識庫=琥珀(需留意)、後台測試=灰(內部)
+// 三桶語意色：回答客人=沉穩藍(日常營運)、整理知識庫=琥珀(需留意)、後台自用=灰(內部)
 $cost-conv: #2f7d9a;
 $cost-build: #c47f17;
 $cost-test: #8a939b;
@@ -271,6 +271,43 @@ $cost-test: #8a939b;
   font-weight: 700;
   color: var(--color-text-primary, #111827);
   font-variant-numeric: tabular-nums;
+}
+
+/* 估算用單價：整頁唯一一個「拿去乘」的數字，給它一條獨立的橫幅免得被當成又一個統計值 */
+.sa-cost-rate {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin-top: 1.1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-left: 3px solid $cost-conv;
+  border-radius: 8px;
+  background: var(--color-bg-subtle, #f9fafb);
+}
+
+.sa-cost-rate__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.sa-cost-rate__value {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text-primary, #111827);
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-cost-rate__note {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #9ca3af);
+
+  b { color: var(--color-text-secondary, #6b7280); }
 }
 
 .sa-cost-empty {
@@ -379,8 +416,9 @@ $cost-test: #8a939b;
 }
 
 .sa-cost-guide__foot {
-  margin-top: 0.85rem;
-  padding-top: 0.7rem;
+  // auto 把結論推到卡片底部：三欄條目數不同（3/4/5 條）時，三條分隔線才會對齊在同一水平
+  margin-top: auto;
+  padding-top: 0.85rem;
   border-top: 1px dashed var(--color-border, #e5e7eb);
   font-size: 0.78rem;
   color: var(--color-text-secondary, #6b7280);

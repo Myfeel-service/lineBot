@@ -350,7 +350,8 @@
       "Bash(aws --version)",
       "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check.mjs)",
       "Bash(node render2.mjs)",
-      "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check2.mjs)"
+      "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check2.mjs)",
+      "Bash(node render5.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

@@ -1,20 +1,9 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
+import { bucketAiCosts, GEMINI_PRICING, USD_TO_TWD } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
-// Gemini 牌價（USD / 每百萬 token），與 /api/ai/usage/summary、/api/admin/super/workspaces 同一份基準。
-// 用量 doc 未分模型，一律以較貴的 flash 費率估 → 估算值偏保守（上限）；實際以 Google 帳單為準。改價只改這裡。
-const IN_PER_M = 0.30
-const OUT_PER_M = 2.50
-const EMBED_PER_M = 0.15
-const USD_TO_TWD = 32
-
-const PRICING = { inputPerM: IN_PER_M, outputPerM: OUT_PER_M, embedPerM: EMBED_PER_M, usdToTwd: USD_TO_TWD }
-
-const usd = (input: number, output: number, embed: number) =>
-  (input / 1_000_000) * IN_PER_M
-  + (output / 1_000_000) * OUT_PER_M
-  + (embed / 1_000_000) * EMBED_PER_M
+const PRICING = { ...GEMINI_PRICING, usdToTwd: USD_TO_TWD }
 
 const round4 = (n: number) => Number(n.toFixed(4))
 
@@ -27,32 +16,22 @@ function prevYyyyMm(p: string): string {
   return `${py}${String(pm).padStart(2, '0')}`
 }
 
-/** 把一顆月結桶依「用途」拆三桶成本（口徑與 /api/ai/usage/summary 完全一致）。 */
+/** 三桶成本（口徑與 /api/ai/usage/summary 共用同一份 bucketAiCosts，不再各寫一次算式）。 */
 function bucketCosts(u: Partial<AiUsageDoc> | undefined) {
-  const inputTokens = Number(u?.inputTokens ?? 0)
-  const outputTokens = Number(u?.outputTokens ?? 0)
-  const embeddingTokens = Number(u?.embeddingTokens ?? 0)
-  const importInputTokens = Number(u?.importInputTokens ?? 0)
-  const importOutputTokens = Number(u?.importOutputTokens ?? 0)
-  const buildEmbeddingTokens = Number(u?.buildEmbeddingTokens ?? 0)
-  const testInputTokens = Number(u?.testInputTokens ?? 0)
-  const testOutputTokens = Number(u?.testOutputTokens ?? 0)
-  const testEmbeddingTokens = Number(u?.testEmbeddingTokens ?? 0)
-
-  // 客人對話要扣掉匯入（建置）分項，embedding 現只剩客人查詢向量。
-  const convIn = Math.max(0, inputTokens - importInputTokens)
-  const convOut = Math.max(0, outputTokens - importOutputTokens)
-  const conversation = usd(convIn, convOut, embeddingTokens)
-  const build = usd(importInputTokens, importOutputTokens, buildEmbeddingTokens)
-  const test = usd(testInputTokens, testOutputTokens, testEmbeddingTokens)
-  return { conversation, build, test, total: conversation + build + test }
+  const b = bucketAiCosts(u)
+  return {
+    conversation: b.conversation.costUsd,
+    build: b.build.costUsd,
+    test: b.test.costUsd,
+    total: b.totalCostUsd,
+  }
 }
 
 /**
  * GET /api/admin/super/costs?period=YYYYMM
  *
  * 全租戶 AI（Gemini）估算成本總覽（super admin 專用）。
- * 把每個 workspace 指定月份的成本拆三桶（客人對話 / 知識庫建置 / 後台測試）各自算出、加總，
+ * 把每個 workspace 指定月份的成本拆三桶（客人對話 / 知識庫建置 / 後台自用）各自算出、加總，
  * 附逐 workspace 明細（由高到低），並帶上一個月總成本供「vs 上月」比較。
  *
  * ⚠️ 只含 AI 估算成本；雲端主機、資料庫、LINE 推播、金流手續費不在此（見各平台帳單）。

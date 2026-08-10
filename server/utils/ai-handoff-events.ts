@@ -35,6 +35,17 @@ export interface HandoffEventInput {
 
 /** fire-and-forget：呼叫端不 await。 */
 export function logHandoffEvent(db: Firestore, evt: HandoffEventInput): void {
+  // 整段包 try/catch 才真的「絕不影響答題」：只 catch promise 的話，
+  // 同步就丟出來的錯（例如 db 還沒初始化）會直接打斷正在轉真人的那條主流程。
+  try {
+    logHandoffEventUnsafe(db, evt)
+  }
+  catch (e) {
+    console.error('[ai-handoff-events] log failed (sync):', e)
+  }
+}
+
+function logHandoffEventUnsafe(db: Firestore, evt: HandoffEventInput): void {
   const now = Timestamp.now()
   db.collection(HANDOFF_EVENTS_COLLECTION)
     .add({

@@ -183,7 +183,7 @@
                 <div v-if="isSuperAdmin" class="usage-substat">
                   <span class="usage-substat__label">
                     這個月 AI 花費
-                    <el-tooltip placement="top" content="只算跟客人對話的部分。整理知識庫、後台測試的花費另計，在下方「進階」。金額為依 Gemini 公開價估算的參考值，實際以 Google 帳單為準。">
+                    <el-tooltip placement="top" content="只算跟客人對話的部分。整理知識庫、後台自用的花費另計，在下方「進階」。金額為依 Gemini 公開價估算的參考值，實際以 Google 帳單為準。">
                       <el-icon class="usage-substat__info"><InfoFilled /></el-icon>
                     </el-tooltip>
                   </span>
@@ -263,7 +263,7 @@
               </div>
               <div class="usage-cost-row">
                 <span class="usage-cost-row__dot usage-cost-row__dot--test" />
-                <span class="usage-cost-row__k">後台測試</span>
+                <span class="usage-cost-row__k">後台自用</span>
                 <span class="usage-cost-row__tok">{{ formatNumber(summary?.testTokens) }} tokens</span>
                 <strong class="usage-cost-row__cost">約 NT${{ formatNumber(twd(summary?.testCostUsd)) }}</strong>
               </div>
@@ -273,7 +273,7 @@
               </div>
             </div>
             <p class="usage-hint">
-              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、整理、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台測試</strong>＝你在 playground「重演」試打，不計入客人成本。
+              成本依「用途」拆三塊：<strong>客人對話</strong>＝跟真客人來回問答（上方「這個月 AI 花費」就是這桶）；<strong>知識庫建置</strong>＝匯入、整理、讓 AI 學習這些內容，屬一次性 / 偶爾的花費，不是每次對話都有；<strong>後台自用</strong>＝你自己在後台操作 AI：試打、試答知識卡、問小幫手、一句話生成腳本，都不計入客人成本。
             </p>
             <p class="usage-hint">
               金額依 Gemini 公開價估算（USD 約 ×32 換台幣）的<strong>偏高參考值</strong><template v-if="pricing">，每 100 萬用量：送入 ${{ pricing.inputPerM }} / 產生 ${{ pricing.outputPerM }} / 搜尋 ${{ pricing.embedPerM }} USD</template>。實際費用以 Google 帳單為準。
@@ -391,7 +391,7 @@ interface Summary {
   embeddingTokens?: number
   importInputTokens?: number
   importOutputTokens?: number
-  /** 三桶用途拆分：客人對話（headline 成本就是這桶）/ 知識庫建置 / 後台測試 */
+  /** 三桶用途拆分：客人對話（headline 成本就是這桶）/ 知識庫建置 / 後台自用 */
   conversationTokens?: number
   buildTokens?: number
   buildCostUsd?: number
@@ -506,7 +506,7 @@ const trendOption = computed(() => {
   }
 })
 
-// 三桶成本相加＝工作區總花費（客人對話 + 知識庫建置 + 後台測試）
+// 三桶成本相加＝工作區總花費（客人對話 + 知識庫建置 + 後台自用）
 const totalCostUsd = computed(() => {
   const s = summary.value
   if (!s) return 0

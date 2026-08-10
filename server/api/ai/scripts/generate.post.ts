@@ -11,9 +11,15 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const draft = await generateScriptDraft(String(body?.description ?? ''))
 
-  // 生成屬內部管理操作,token 記到該 workspace 用量(與意圖路由同慣例:呼叫端記帳)
-  recordAiUsage(workspaceId, { inputTokens: draft.inputTokens, outputTokens: draft.outputTokens })
-    .catch(e => console.error('[scripts/generate] recordAiUsage error:', e))
+  // 生成屬內部管理操作 → 記進**後台自用**那桶(test*),不是真客人那桶。
+  // 一次生成會吐出一整份腳本,輸出 token 約是一則客人回覆的 8~10 倍,
+  // 記錯桶會讓「每則客人成本」明顯虛高(2026-08-10 稽核抓到,與後台小幫手同一個毛病)。
+  // 次數也一起記:成本進了哪一桶,對應的次數就要進同一桶,否則「每次多少錢」又會算錯。
+  recordAiUsage(workspaceId, {
+    testInputTokens: draft.inputTokens,
+    testOutputTokens: draft.outputTokens,
+    testInvocations: 1,
+  }).catch(e => console.error('[scripts/generate] recordAiUsage error:', e))
 
   return { name: draft.name, nodes: draft.nodes, rootNodeId: draft.rootNodeId }
 })

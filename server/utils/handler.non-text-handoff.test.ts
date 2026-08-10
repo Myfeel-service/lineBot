@@ -69,6 +69,8 @@ function makeDb() {
   const conversations = new Map<string, Record<string, unknown>>()
   // 訊息子集合：doc() 不帶 id = 新增（自動 id），帶 id = 補寫既有那一則（圖片描述走這條）
   const messages = new Map<string, Record<string, unknown>>()
+  // 轉真人事件流：計數與事件表必須同進同出，少寫這裡會讓原因分佈少一整類
+  const handoffEvents: Array<Record<string, unknown>> = []
   let autoId = 0
   const userDoc = {
     exists: true,
@@ -77,6 +79,10 @@ function makeDb() {
   const db = {
     collection: (col: string) => ({
       where: () => ({ get: vi.fn(async () => ({ empty: true, docs: [] })) }),
+      add: vi.fn(async (data: any) => {
+        if (col === 'aiHandoffEvents') handoffEvents.push(data)
+        return { id: `auto-${++autoId}` }
+      }),
       doc: (id?: string) => ({
         get: vi.fn(async () => {
           if (col === 'users') return userDoc
@@ -105,7 +111,7 @@ function makeDb() {
       }),
     }),
   }
-  return { db, conversations, messages }
+  return { db, conversations, messages, handoffEvents }
 }
 
 function imageEvent(atMs: number): any {
@@ -148,6 +154,31 @@ describe('傳圖後找真人：轉真人原因要記得起因是圖片', () => {
     expect(conv.aiMeta.lastDecision).toBe('handoff')
     expect(conv.aiMeta.lastHandoffReason).toBe('non_text_content')
     expect(conv.aiMeta.lastQuery).toBe('[圖片]')
+  })
+
+  it('轉真人事件流也要寫一筆：計數記了、事件沒記的話，原因分佈會少掉一整類', async () => {
+    const { db, handoffEvents } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    const now = Date.now()
+    await handleMessageEvent(imageEvent(now - 60_000), { workspaceId: WS })
+    await handleMessageEvent(textEvent('找真人', now), { workspaceId: WS })
+
+    expect(handoffEvents).toHaveLength(1)
+    expect(handoffEvents[0]).toMatchObject({ workspaceId: WS, reason: 'non_text_content', query: '[圖片]' })
+    // 這條路沒跑檢索：信心 0、沒有命中卡片，報表才不會以為「差一點就答出來」
+    expect(handoffEvents[0]!.confidence).toBe(0)
+    expect(handoffEvents[0]!.sources).toEqual([])
+  })
+
+  it('沒傳過圖直接喊「找真人」→ 事件記 user_request（這類目前完全沒進統計）', async () => {
+    const { db, handoffEvents } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handleMessageEvent(textEvent('找真人', Date.now()), { workspaceId: WS })
+
+    expect(handoffEvents).toHaveLength(1)
+    expect(handoffEvents[0]).toMatchObject({ reason: 'user_request', query: '找真人' })
   })
 
   it('值班客服的通知也要寫圖片，不是「找真人」三個字', async () => {

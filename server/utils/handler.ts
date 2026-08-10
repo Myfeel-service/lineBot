@@ -27,6 +27,7 @@ import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { archiveConversationMedia } from './conversation-media'
+import { logHandoffEvent } from './ai-handoff-events'
 import { readInboundImage } from './media-describe'
 import { clearClaimPushMarkFailure, recordClaimPushMarkFailure } from './claim-push-health'
 import { createImagemapImageToken } from './line-imagemap-image-token'
@@ -3259,6 +3260,22 @@ async function tryAiFallback(params: {
     const handoffQuery = nonTextType
       ? (nonTextSummary ? `${nonTextLabel} ${nonTextSummary}` : nonTextLabel)
       : textContent
+
+    // 事件流也要記：上面 recordAiUsage 已經把這次算進 handoffs 計數，這裡不記的話
+    // 「轉真人原因分佈」就會少掉這一類（2026-08-10 實測：計數 90、事件只有 78，差的 12 筆全是這條路）。
+    // 而且少掉的正是「客人根本不想跟機器人講話」這個最該被看見的訊號。
+    // 知識缺口報表只吃 no_grounding/low_confidence/unresolved/product_mismatch，
+    // 所以補記 user_request 不會污染那份建議清單。沒有檢索 → confidence 0、sources 空。
+    logHandoffEvent(getDb(), {
+      workspaceId,
+      query: handoffQuery,
+      reason: handoffReason,
+      confidence: 0,
+      intent: null,
+      followupOf: null,
+      sources: [],
+      isFollowup: false,
+    })
 
     // 品質指標：剛被 AI 回答完就按「找真人」= 回答沒解決問題（fire-and-forget）。
     // 草稿模式不計——客人根本沒看到那次回答。
