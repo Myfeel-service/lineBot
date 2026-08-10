@@ -64,6 +64,7 @@ _目前沒有未 commit 的工作。_
 | 「查詢訂單」改用腳本收四格再轉真人 | `TODO` | 老闆選了「先關規則，之後再做」 |
 | AI 正式上線前 6 步 | `TODO` | ①停 anyText 規則 ②設 handoffNotify 收件人+SLA ③設 serviceHours 勿擾 ④設 shopUrl ⑤replyMode 先 draft 跑 1-2 週 ⑥confidence 上線初期回 0.75 |
 | AI history 沒時間上限 | `TODO` | 會撈到 2.5 個月前舊訊息（已報未修） |
+| AI 表現頁「先問清楚」無下鑽 | `TODO` | tooltip 診斷「偏高＝知識卡標題太相近」但沒有路能看到是哪幾張卡在打架；要嘛列出反問最多的主題，要嘛連去 playground 重演 |
 | `resync-preview` 504 風險 | `TODO` | 同吃 `chunkTextWithLlm`，可套 job 機制 |
 | `upload.post.ts` 6MB 雷 | `TODO` | 同 Lambda payload 上限，未改直傳 signed URL |
 | 產品名注入：splash 租戶 | `TODO` | 若要做，需同樣種 productName + reindex |
@@ -104,6 +105,7 @@ _目前沒有未 commit 的工作。_
 
 | 日期 | 項目 | 代表 commit |
 |---|---|---|
+| 2026-08-10 | AI 表現頁 UIUX 評估後修 6 項：三個載入點失敗態＋重試（斷線不再顯示「沒客人來問／都處理完了」假綠燈）、verdict 待補數只認「答不出來」白名單且不隨篩選漂、案例篩選收成 hero 同語言分組（預設補得動的那組）、清單載入更多＋清空回填、「答完又找真人」>25% 進 verdict 但書、補往建議收件匣的橋。為什麼：儀表板給判斷，判語數字不對＝叫人白做工 | `3b82e68` |
 | 2026-08-10 | 趨勢圖加「自己搞定率」折線＋tooltip 結論先行（柱子看量、線看好壞；八月柱子變高但率其實從 43% 掉到 39%） | `b150bb2` |
 | 2026-08-10 | AI 表現：「轉給真人」圖例下補原因拆解行（答不出來 62 有救／刻意要人接 15／沒留原因 13；三數據修正全部完成） | `f025a03` |
 | 2026-08-10 | AI 表現：成績分母改「AI 出手過」（directHandoffs/followupAnswered 子計數器、反問成果可見、39%→42% 不再冤枉 AI） | `4fdb4bc` |
