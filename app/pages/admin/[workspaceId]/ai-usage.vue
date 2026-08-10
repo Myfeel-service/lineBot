@@ -84,11 +84,11 @@
                   <!-- Hero 主角＝自己搞定率，不是處理了幾則（2026-08-10 拍板）。
                        這是 agent 產品真正在賣的東西：幫你擋掉多少，而不是用掉多少。
                        則數退居副標——它是分母，不是成績。 -->
-                  <template v-if="(summary?.invocations ?? 0) > 0">
+                  <template v-if="(summary?.aiEngaged ?? 0) > 0">
                     <strong class="usage-hero__num" :class="metricTone('autoReply', summary?.autoReplyRate)">
                       {{ formatPercent(summary?.autoReplyRate) }}
                     </strong>
-                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} 共 {{ formatNumber(summary?.invocations) }} 則客人訊息{{ invocationsDeltaText }}</span>
+                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} AI 出手 {{ formatNumber(summary?.aiEngaged) }} 次{{ invocationsDeltaText }}</span>
                     <!-- 比率的變化要用「百分點」不是「%」：68%→74% 是進步 6 個百分點，不是 6%。
                          這顆可以上色——自己搞定率越高越好，方向明確（訊息量則不然，故只寫在副標不上色）。 -->
                     <span
@@ -99,17 +99,18 @@
                       較上月 {{ autoReplyDeltaPts > 0 ? '▲' : (autoReplyDeltaPts < 0 ? '▼' : '＝') }} {{ Math.abs(autoReplyDeltaPts) }} 個百分點
                     </span>
                   </template>
-                  <!-- 一則都沒有時不能顯示「0% 自己搞定」——那會把「沒資料」講成「一題都沒答對」 -->
+                  <!-- 一則都沒有時不能顯示「0% 自己搞定」——那會把「沒資料」講成「一題都沒答對」。
+                       「有客人但全是指名真人」也不能說成「還沒有客人來問」——那是另一回事。 -->
                   <template v-else>
                     <strong class="usage-hero__num">—</strong>
-                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} 還沒有客人來問</span>
+                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ (summary?.invocations ?? 0) > 0 ? `${periodLabel} 客人都直接找真人，AI 沒有出手` : `${periodLabel} 還沒有客人來問` }}</span>
                   </template>
                 </div>
-                <template v-if="(summary?.invocations ?? 0) > 0">
+                <template v-if="(summary?.aiEngaged ?? 0) > 0">
                   <div
                     class="usage-segbar"
                     role="img"
-                    :aria-label="`自己答完 ${summary?.answered}、轉給真人 ${summary?.handoffs}、先問清楚 ${summary?.disambiguations}`"
+                    :aria-label="`自己答完 ${summary?.answered}、轉給真人 ${aiHandoffCount}、先問清楚 ${summary?.disambiguations}`"
                   >
                     <span class="usage-seg usage-seg--answered" :style="{ width: `${segPct.answered}%` }" />
                     <span class="usage-seg usage-seg--handoff" :style="{ width: `${segPct.handoff}%` }" />
@@ -135,11 +136,11 @@
                         轉給真人
                         <!-- 兩本帳的說明放在最容易被拿去對數字的位置：這裡數「次」（AI 每觸發一次轉接算一次）、
                              對話統計頁數「場」（同一場轉幾次都算 1）——兩邊數字不同是刻意的，見定義書 -->
-                        <el-tooltip placement="top" content="這裡數「次」：AI 每觸發一次轉真人算一次。對話統計頁的「轉真人」數「場」（同一場轉幾次都算 1），所以兩頁數字不一樣是正常的。">
+                        <el-tooltip placement="top" content="AI 看過之後判斷該給真人接的次數。客人一開口就指名真人的不算在這（另列在下方）。這裡數「次」，對話統計頁數「場」（同一場轉幾次都算 1），兩頁數字不一樣是正常的。">
                           <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
                         </el-tooltip>
                       </span>
-                      <span class="usage-leg__v">{{ formatNumber(summary?.handoffs) }}</span>
+                      <span class="usage-leg__v">{{ formatNumber(aiHandoffCount) }}</span>
                       <span class="usage-leg__pct">{{ formatPercent(summary?.handoffRate) }}</span>
                       <span v-if="(summary?.handoffs ?? 0) > 0" class="usage-leg__go">查看 ↓</span>
                     </div>
@@ -147,12 +148,14 @@
                       <span class="usage-leg__dot" />
                       <span class="usage-leg__k">
                         先問清楚
-                        <el-tooltip placement="top" content="AI 先問客人「你是要哪一個」再回答。偏高通常代表知識標題太相近。">
+                        <el-tooltip placement="top" content="這是中間一步、不是結局：AI 先問「你是要哪一個」，客人選完 AI 才接著回答。偏高通常代表知識卡標題太相近。">
                           <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
                         </el-tooltip>
                       </span>
                       <span class="usage-leg__v">{{ formatNumber(summary?.disambiguations) }}</span>
                       <span class="usage-leg__pct">{{ formatPercent(summary?.disambiguationRate) }}</span>
+                      <!-- 反問的成果：followup 不記 answered，用子計數補能見度（8/10 起才有資料，0 就不顯示） -->
+                      <span v-if="(summary?.followupAnswered ?? 0) > 0" class="usage-leg__pct">問完答成功 {{ formatNumber(summary?.followupAnswered) }} 次</span>
                     </div>
                   </div>
                 </template>
@@ -359,6 +362,12 @@ interface Summary {
   invocations: number
   answered: number
   handoffs: number
+  /** invocations − directHandoffs（後端算好），成績的分母 */
+  aiEngaged: number
+  /** 客人一開口就指名真人、AI 沒出手（handoffs 的子集；2026-08-10 起才有資料） */
+  directHandoffs: number
+  /** 先問清楚之後成功答出的次數（2026-08-10 起才有資料） */
+  followupAnswered: number
   answeredThenHandoffs: number
   answeredThenHandoffRate: number
   disambiguations: number
@@ -395,6 +404,7 @@ interface TrendPoint {
   answered: number
   handoffs: number
   disambiguations: number
+  directHandoffs: number
 }
 
 const summary = ref<Summary | null>(null)
@@ -411,17 +421,22 @@ const reasonOptions = (Object.entries(HANDOFF_REASON_LABELS) as Array<[HandoffRe
   .filter(([value]) => value !== 'manual')
   .map(([value, label]) => ({ value, label }))
 
-// AI 出手的三種結果佔比（分段長條寬度）。已驗證每次出手只記一種結果，
-// 故 invocations = answered + handoffs + disambiguations 恆等，三段相加即 100%。
+// AI 出手的三種結果佔比（分段長條寬度）。分母是 aiEngaged（AI 真的出手過）——
+// 客人指名真人的 directHandoffs 分子分母一起扣，恆等式仍成立：
+// answered + (handoffs − direct) + disambiguations = aiEngaged，三段相加即 100%。
 const segPct = computed(() => {
-  const total = summary.value?.invocations || 0
+  const total = summary.value?.aiEngaged || 0
   if (!total) return { answered: 0, handoff: 0, clarify: 0 }
   return {
     answered: ((summary.value?.answered ?? 0) / total) * 100,
-    handoff: ((summary.value?.handoffs ?? 0) / total) * 100,
+    handoff: (aiHandoffCount.value / total) * 100,
     clarify: ((summary.value?.disambiguations ?? 0) / total) * 100,
   }
 })
+
+/** 「AI 判斷後轉真人」＝總轉真人扣掉客人指名的那些（圖例與長條都用這個數） */
+const aiHandoffCount = computed(() =>
+  Math.max(0, (summary.value?.handoffs ?? 0) - (summary.value?.directHandoffs ?? 0)))
 
 /**
  * 一句解讀：「現在算好還是不好、接下來做什麼」。
@@ -433,17 +448,18 @@ const segPct = computed(() => {
  */
 const verdict = computed(() => {
   const s = summary.value
-  if (!s || !s.invocations) return null
+  // 用 aiEngaged 當門檻：客人全是指名真人的月份 AI 沒出手，沒有成績可以下判語
+  if (!s || !s.aiEngaged) return null
   const rate = s.autoReplyRate
   const pct = formatPercent(rate)
   const pending = handoffs.value.filter(h => !h.resolved).length
   const tone = metricTone('autoReply', rate).replace('is-', '') // good | warn | neutral
 
   const title = tone === 'good'
-    ? `AI 幫你擋掉 ${pct} 的客人訊息，表現不錯`
+    ? `客人來問的，AI 自己搞定 ${pct}，表現不錯`
     : tone === 'warn'
-      ? `AI 只擋掉 ${pct} 的客人訊息，大部分還是要人接`
-      : `AI 幫你擋掉 ${pct} 的客人訊息，還有進步空間`
+      ? `客人來問的，AI 只搞定 ${pct}，大部分還是要人接`
+      : `客人來問的，AI 自己搞定 ${pct}，還有進步空間`
 
   const next = pending > 0
     ? `下面有 ${pending} 題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
@@ -491,17 +507,21 @@ const prevTrendPoint = computed(() => {
  */
 const autoReplyDeltaPts = computed(() => {
   const prev = prevTrendPoint.value
-  if (!prev || !prev.invocations) return null
+  if (!prev) return null
+  // 上月也用同一把「AI 出手過」的尺（舊月份 directHandoffs=0 → 自動等於舊算法）
+  const prevEngaged = prev.invocations - (prev.directHandoffs ?? 0)
+  if (!prevEngaged) return null
   const cur = summary.value
-  if (!cur?.invocations) return null
-  const prevRate = prev.answered / prev.invocations
+  if (!cur?.aiEngaged) return null
+  const prevRate = prev.answered / prevEngaged
   return Math.round((cur.autoReplyRate - prevRate) * 100)
 })
 
 /** 則數的變化只寫在副標、不上色：訊息變多是生意變好還是負擔變重，看的人自己判斷 */
 const invocationsDeltaText = computed(() => {
-  const prev = prevTrendPoint.value?.invocations ?? 0
-  const cur = summary.value?.invocations ?? 0
+  const p = prevTrendPoint.value
+  const prev = p ? p.invocations - (p.directHandoffs ?? 0) : 0
+  const cur = summary.value?.aiEngaged ?? 0
   if (!prev) return ''
   const pct = Math.round(((cur - prev) / prev) * 100)
   if (pct === 0) return '（與上月持平）'
@@ -534,7 +554,8 @@ const trendOption = computed(() => {
     },
     series: [
       { name: '自己答完', type: 'bar', barMaxWidth: 34, data: t.map(p => p.answered), label: { show: true, position: 'top', fontSize: 11 } },
-      { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: t.map(p => p.handoffs), label: { show: true, position: 'top', fontSize: 11 } },
+      // 扣掉客人指名真人的（AI 沒出手），跟單月的長條同一把尺；舊月份 directHandoffs=0 不變
+      { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: t.map(p => Math.max(0, p.handoffs - (p.directHandoffs ?? 0))), label: { show: true, position: 'top', fontSize: 11 } },
       // 三段要湊齊：少畫這段的話柱子加起來 ≠ hero 總數，看的人一定會拿去對帳
       { name: '先問清楚', type: 'bar', barMaxWidth: 34, data: t.map(p => p.disambiguations), label: { show: true, position: 'top', fontSize: 11 } },
     ],

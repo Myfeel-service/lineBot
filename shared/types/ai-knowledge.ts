@@ -324,6 +324,10 @@ export interface AiUsageDoc {
    * 測試不計真客人的 invocations/answered/handoffs（見 answerWithAi isTest）；
    * 但另記 testInvocations，讓成本頁看得到「後台測試跑了幾次」。
    */
+  /** handoffs 的子集：客人指名真人、AI 沒出手（見 ai-usage.ts UsageDelta 說明） */
+  directHandoffs?: number
+  /** 反問澄清後成功答出的次數（followup 不記 answered，用這顆補能見度） */
+  followupAnswered?: number
   testInputTokens?: number
   testOutputTokens?: number
   testEmbeddingTokens?: number

@@ -1341,6 +1341,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     }
     else {
       // followup：真客人點按鈕的重跑，是真實成本 → 記進真客人 token，只是不再計次數。
+      // 唯一例外：answered 訊號轉記 followupAnswered——反問後成功答出是「反問有效」的
+      // 直接證據，完全不記的話反問的成果全隱形（AI 表現頁「先問清楚」會看起來像死路）。
+      if (delta.answered) tokensOnly.followupAnswered = delta.answered
       if (delta.inputTokens) tokensOnly.inputTokens = delta.inputTokens
       if (delta.outputTokens) tokensOnly.outputTokens = delta.outputTokens
       if (delta.embeddingTokens) tokensOnly.embeddingTokens = delta.embeddingTokens

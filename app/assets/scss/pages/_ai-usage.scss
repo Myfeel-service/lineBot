@@ -149,6 +149,15 @@
   &--clarify  { background: #d99a2b; }
 }
 
+/* 客人指名真人：長條外的一行說明（不是 AI 的成績，刻意不給語意色、不進圖例） */
+.usage-direct {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+
+  b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+}
+
 .usage-legend {
   display: flex;
   flex-wrap: wrap;

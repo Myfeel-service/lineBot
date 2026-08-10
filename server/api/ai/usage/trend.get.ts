@@ -46,6 +46,8 @@ export default defineEventHandler(async (event) => {
       answered: Number(d?.answered ?? 0),
       handoffs: Number(d?.handoffs ?? 0),
       disambiguations: Number(d?.disambiguations ?? 0),
+      // 子集：客人指名真人、AI 沒出手（2026-08-10 起才有資料，舊月份 0）
+      directHandoffs: Number(d?.directHandoffs ?? 0),
     }
   })
 })

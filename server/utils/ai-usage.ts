@@ -82,6 +82,19 @@ export interface UsageDelta {
   /** AI answered 後 30 分鐘內客人又被轉真人 — 品質 proxy（回答沒解決問題） */
   answeredThenHandoffs?: number
   /**
+   * handoffs 的子集（比照 importInputTokens ⊆ inputTokens 的子集慣例）：
+   * 客人一開口就指名真人（「找真人」捷徑，含傳圖後被引導語叫來的）——**AI 根本沒出手**。
+   * 沒有這個分項的話，這種「客人偏好」會被算進 AI 的成績單，把自己搞定率往下拉
+   * （2026-08-10 實測：90 次轉真人有 13 次是這種）。恆等式不動：仍同時記 handoffs。
+   */
+  directHandoffs?: number
+  /**
+   * 「先問清楚」（反問澄清）之後客人點選、AI 成功答出來的次數。
+   * followup 路徑刻意不記 invocations/answered（避免灌水），代價是反問的成果全隱形——
+   * 這顆補回「反問到底有沒有用」的能見度。只從部署後起算。
+   */
+  followupAnswered?: number
+  /**
    * 測試對話（playground / 內部測試）的 token —— 獨立記帳，不併進上方真客人 token。
    * 讓成本報表能把真客人與測試分開；測試不計次數/率，故只有 token 分項。
    */
@@ -130,6 +143,8 @@ export async function recordAiUsage(
   if (delta.importInputTokens) updates.importInputTokens = FieldValue.increment(delta.importInputTokens)
   if (delta.importOutputTokens) updates.importOutputTokens = FieldValue.increment(delta.importOutputTokens)
   if (delta.answeredThenHandoffs) updates.answeredThenHandoffs = FieldValue.increment(delta.answeredThenHandoffs)
+  if (delta.directHandoffs) updates.directHandoffs = FieldValue.increment(delta.directHandoffs)
+  if (delta.followupAnswered) updates.followupAnswered = FieldValue.increment(delta.followupAnswered)
   if (delta.testInputTokens) updates.testInputTokens = FieldValue.increment(delta.testInputTokens)
   if (delta.testOutputTokens) updates.testOutputTokens = FieldValue.increment(delta.testOutputTokens)
   if (delta.testEmbeddingTokens) updates.testEmbeddingTokens = FieldValue.increment(delta.testEmbeddingTokens)

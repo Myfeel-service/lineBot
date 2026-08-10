@@ -181,6 +181,18 @@ describe('傳圖後找真人：轉真人原因要記得起因是圖片', () => {
     expect(handoffEvents[0]).toMatchObject({ reason: 'user_request', query: '找真人' })
   })
 
+  it('捷徑計數要帶 directHandoffs 子集：AI 沒出手，不能算進 AI 的成績單', async () => {
+    const { db } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+    const { recordAiUsage } = await import('./ai-usage')
+
+    await handleMessageEvent(textEvent('找真人', Date.now()), { workspaceId: WS })
+
+    // 恆等式不動（invocations/handoffs 照記），多的是子集標記——少了它，
+    // AI 表現頁會把「客人偏好」算成「AI 答不出來」，自己搞定率被冤枉拉低
+    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith(WS, { invocations: 1, handoffs: 1, directHandoffs: 1 })
+  })
+
   it('值班客服的通知也要寫圖片，不是「找真人」三個字', async () => {
     const { db } = makeDb()
     vi.mocked(getDb).mockReturnValue(db as any)

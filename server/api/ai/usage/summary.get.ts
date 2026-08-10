@@ -93,6 +93,9 @@ export default defineEventHandler(async (event) => {
       handoffs: 0,
       disambiguations: 0,
       answeredThenHandoffs: 0,
+      directHandoffs: 0,
+      followupAnswered: 0,
+      aiEngaged: 0,
       answeredThenHandoffRate: 0,
       autoReplyRate: 0,
       handoffRate: 0,
@@ -107,6 +110,12 @@ export default defineEventHandler(async (event) => {
   const handoffs = Number(data.handoffs ?? 0)
   const disambiguations = Number(data.disambiguations ?? 0)
   const answeredThenHandoffs = Number(data.answeredThenHandoffs ?? 0)
+  // 子計數（2026-08-10 起才有資料；舊月份為 0 → 下面的比率自然退回舊算法，數字不跳動）
+  const directHandoffs = Number(data.directHandoffs ?? 0)
+  const followupAnswered = Number(data.followupAnswered ?? 0)
+  // ⛔ 成績的分母是「AI 真的出手過」：客人一開口就指名真人的那些（directHandoffs）
+  // AI 連看都沒看，算進分母會把自己搞定率冤枉地拉低（實測 39% → 42% 的差距就是這個）。
+  const aiEngaged = Math.max(0, invocations - directHandoffs)
   const inputTokens = Number(data.inputTokens ?? 0)
   const outputTokens = Number(data.outputTokens ?? 0)
   const embeddingTokens = Number(data.embeddingTokens ?? 0)
@@ -139,11 +148,16 @@ export default defineEventHandler(async (event) => {
     handoffs,
     disambiguations,
     answeredThenHandoffs,
+    directHandoffs,
+    followupAnswered,
+    aiEngaged,
     // 品質 proxy：成功回答之中有多少比例在 30 分鐘內又被轉真人（越低越好）
     answeredThenHandoffRate: answered ? answeredThenHandoffs / answered : 0,
-    autoReplyRate: invocations ? answered / invocations : 0,
-    handoffRate: invocations ? handoffs / invocations : 0,
-    disambiguationRate: invocations ? disambiguations / invocations : 0,
+    // 三個比率的分母都是 aiEngaged（不是 invocations），轉真人的分子也扣掉 direct——
+    // 三段相加仍 = 100%（answered + (handoffs−direct) + disambiguations = aiEngaged）
+    autoReplyRate: aiEngaged ? answered / aiEngaged : 0,
+    handoffRate: aiEngaged ? Math.max(0, handoffs - directHandoffs) / aiEngaged : 0,
+    disambiguationRate: aiEngaged ? disambiguations / aiEngaged : 0,
   }
   if (!isSuperAdmin) return base
 

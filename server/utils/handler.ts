@@ -3227,8 +3227,10 @@ async function tryAiFallback(params: {
   // 沒有這個攔截的話，「找真人」會被拿去向量檢索、靠 no_grounding 繞路才轉真人，
   // 多花一次 embed，且若知識庫剛好有相關卡還可能被 AI 誤答。
   if (HUMAN_REQUEST_TEXTS.has(textContent.trim())) {
-    // 計入用量統計：列表（aiMeta handoff）與 KPI（handoffs 計數）必須一致
-    recordAiUsage(workspaceId, { invocations: 1, handoffs: 1 })
+    // 計入用量統計：列表（aiMeta handoff）與 KPI（handoffs 計數）必須一致。
+    // directHandoffs 子集標記「AI 沒出手」：這條路是客人指名真人、直接轉接，
+    // AI 表現頁靠它把這種客人偏好從 AI 的成績單裡扣掉（分子分母都扣，恆等式不動）。
+    recordAiUsage(workspaceId, { invocations: 1, handoffs: 1, directHandoffs: 1 })
       .catch(e => console.error('[ai-fallback] recordAiUsage(user_request) error:', e))
 
     // 這一句「找真人」是客人自己想找人,還是剛傳完圖被引導語叫來的?兩者的後續處理
