@@ -285,7 +285,7 @@
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">近 3 個月趨勢</span>
-              <span class="text-xs text-muted">自己答完 / 轉給真人 / 先問清楚</span>
+              <span class="text-xs text-muted">柱子看量、折線看自己搞定率（線往上＝變好）</span>
             </div>
           </div>
           <div class="card-section-stack">
@@ -571,29 +571,103 @@ const invocationsDeltaText = computed(() => {
  */
 const trendMonthsWithData = computed(() => trend.value.filter(p => p.invocations > 0).length)
 const trendHasData = computed(() => trendMonthsWithData.value >= 2)
+/**
+ * 每個月的「AI 出手過」次數與自己搞定率——與 hero 同一把尺（扣掉客人指名真人的）。
+ * 舊月份沒有 directHandoffs（0）→ 自然退回舊算法，歷史數字不會跳。
+ */
+const trendRows = computed(() => trend.value.map((p) => {
+  const direct = p.directHandoffs ?? 0
+  const engaged = Math.max(0, p.invocations - direct)
+  return {
+    ...p,
+    direct,
+    engaged,
+    aiHandoffs: Math.max(0, p.handoffs - direct),
+    // 沒出手的月份給 null 而不是 0：ECharts 會斷線，不會畫一條假的 0% 下去
+    ratePct: engaged > 0 ? Math.round((p.answered / engaged) * 100) : null,
+  }
+}))
+
 const trendOption = computed(() => {
-  const t = trend.value
+  const rows = trendRows.value
   return {
     // ⚠️ 必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d）：
     // 同一頁上下兩塊講同一件事，顏色一漂就變成「四種顏色三個意思」。
     // ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
-    color: ['#05b24c', '#5b7a9d', '#d99a2b'],
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人', '先問清楚'] },
-    grid: { left: 8, right: 12, top: 22, bottom: 34, containLabel: true },
-    xAxis: { type: 'category', data: t.map(p => p.label), axisTick: { alignWithLabel: true } },
-    yAxis: {
-      type: 'value',
-      minInterval: 1,
-      max: (v: { max: number }) => Math.max(1, Math.ceil((v.max || 1) * 1.15)),
-      splitLine: { lineStyle: { type: 'dashed' } },
+    color: ['#05b24c', '#5b7a9d', '#d99a2b', '#3f5a78'],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      /**
+       * ⛔ 第一行必須是結論（自己搞定率＋上月對比），三個原始數字擺後面。
+       * 這張圖存在的唯一理由是回答「有沒有變好」，而變好＝率上升，不是柱子變高：
+       * 客人變多時三根柱子會一起長，看起來很熱鬧但可能其實在退步。
+       * 只丟 80/90/33 就是要使用者自己心算 80÷203 再跟上月比——那正是要消滅的事。
+       */
+      formatter: (params: Array<{ dataIndex: number }>) => {
+        const i = params?.[0]?.dataIndex ?? 0
+        const r = rows[i]
+        if (!r) return ''
+        const prev = rows[i - 1]
+        const head = r.ratePct === null
+          ? `<div style="font-weight:700">${r.label}　AI 沒有出手</div>`
+          : `<div style="font-weight:700">${r.label}　自己搞定 ${r.ratePct}%`
+            + (prev?.ratePct != null ? `<span style="font-weight:400;opacity:.7">（上月 ${prev.ratePct}%）</span>` : '')
+            + '</div>'
+        const line = (c: string, k: string, v: number) =>
+          `<div style="display:flex;align-items:center;gap:6px;font-size:12px">`
+          + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c}"></span>`
+          + `<span style="flex:1">${k}</span><b>${v}</b></div>`
+        // 過渡期揭露：舊月份的 handoffs 混著「客人指名真人」，數不出來就講明白，
+        // 免得這張圖和 hero 底下的拆解行互相打架
+        const note = r.direct > 0
+          ? `<div style="font-size:11px;opacity:.7;margin-top:4px">含客人指名真人 ${r.direct} 次，已不計入成績</div>`
+          : (r.handoffs > 0 && r.aiHandoffs === r.handoffs && r.period < '202609'
+              ? '<div style="font-size:11px;opacity:.7;margin-top:4px">此月尚未區分「客人指名真人」，數字偏高</div>'
+              : '')
+        return head
+          + line('#05b24c', '自己答完', r.answered)
+          + line('#5b7a9d', '轉給真人', r.aiHandoffs)
+          + line('#d99a2b', '先問清楚', r.disambiguations)
+          + note
+      },
     },
+    legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人', '先問清楚', '自己搞定率'] },
+    grid: { left: 8, right: 12, top: 22, bottom: 34, containLabel: true },
+    xAxis: { type: 'category', data: rows.map(p => p.label), axisTick: { alignWithLabel: true } },
+    // 雙軸：左邊看量（柱），右邊看好壞（率）。量會隨客人數一起長，只看柱子看不出退步
+    yAxis: [
+      {
+        type: 'value',
+        minInterval: 1,
+        max: (v: { max: number }) => Math.max(1, Math.ceil((v.max || 1) * 1.15)),
+        splitLine: { lineStyle: { type: 'dashed' } },
+      },
+      {
+        type: 'value',
+        min: 0,
+        max: 100,
+        axisLabel: { formatter: '{value}%' },
+        splitLine: { show: false },
+      },
+    ],
     series: [
-      { name: '自己答完', type: 'bar', barMaxWidth: 34, data: t.map(p => p.answered), label: { show: true, position: 'top', fontSize: 11 } },
-      // 扣掉客人指名真人的（AI 沒出手），跟單月的長條同一把尺；舊月份 directHandoffs=0 不變
-      { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: t.map(p => Math.max(0, p.handoffs - (p.directHandoffs ?? 0))), label: { show: true, position: 'top', fontSize: 11 } },
+      { name: '自己答完', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.answered), label: { show: true, position: 'top', fontSize: 11 } },
+      { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.aiHandoffs), label: { show: true, position: 'top', fontSize: 11 } },
       // 三段要湊齊：少畫這段的話柱子加起來 ≠ hero 總數，看的人一定會拿去對帳
-      { name: '先問清楚', type: 'bar', barMaxWidth: 34, data: t.map(p => p.disambiguations), label: { show: true, position: 'top', fontSize: 11 } },
+      { name: '先問清楚', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.disambiguations), label: { show: true, position: 'top', fontSize: 11 } },
+      // 折線＝這張圖真正的主角：線往上就是變好，不必心算
+      {
+        name: '自己搞定率',
+        type: 'line',
+        yAxisIndex: 1,
+        data: rows.map(p => p.ratePct),
+        smooth: false,
+        symbolSize: 7,
+        lineStyle: { width: 2 },
+        label: { show: true, position: 'top', fontSize: 11, formatter: '{c}%' },
+        z: 3,
+      },
     ],
   }
 })
