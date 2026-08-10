@@ -221,11 +221,16 @@
               <!-- 次數全部集中在這一欄，右邊四欄一律「單行金額」，欄與欄的高度才一致。
                    ⛔ 主要數字必須是 invocations 不是 answered：右邊「回答客人」那筆錢買的是
                    全部呼叫（答題＋轉真人判斷＋反問），拿 answered 當分母會算出高 2～3 倍的單價 -->
-              <el-table-column label="AI 呼叫" width="130" align="right">
+              <el-table-column label="AI 呼叫" width="150" align="right">
                 <template #default="{ row }">
                   <template v-if="row.invocations || row.testInvocations">
                     <div class="text-xs">{{ row.invocations.toLocaleString() }} 次</div>
-                    <div class="text-xs text-muted">答出 {{ row.answered.toLocaleString() }} ・ 後台 {{ row.testInvocations.toLocaleString() }}</div>
+                    <!-- ⛔ 副行必須是主數字的「真拆解」：答出＋沒答出＝上面那個數。
+                         原本寫「答出 82・後台 125」——後台根本不在 207 裡，卻排得像拆解，
+                         而且實測資料剛好 82+125=207（沒答出=125、後台自用也=125，兩個 125
+                         是不同的東西）——老闆當場被騙到。後台自用另起一行、寫明「另計」。 -->
+                    <div v-if="row.invocations" class="text-xs text-muted">答出 {{ row.answered.toLocaleString() }}・沒答出 {{ Math.max(0, row.invocations - row.answered).toLocaleString() }}</div>
+                    <div v-if="row.testInvocations" class="text-xs text-muted">後台另計 {{ row.testInvocations.toLocaleString() }} 次</div>
                   </template>
                   <span v-else class="text-xs text-muted">—</span>
                 </template>

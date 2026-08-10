@@ -35,6 +35,18 @@
             <span class="usage-status__title">{{ aiStatus.title }}</span>
             <span class="usage-status__desc">{{ aiStatus.desc }}</span>
           </div>
+          <!-- 額度即時數（2026-08-10 老闆拍板 A 案）：跟錢有關的要第一眼看到——
+               放狀態列比整張卡搬上來更快，且不動「先講價值再講帳」的卡片順序。
+               只有「有上限」方案顯示（無限方案沒有「剩多少」可言）；點了捲到方案卡看細節。 -->
+          <button
+            v-if="quotaChip"
+            type="button"
+            class="usage-status__quota"
+            :class="`usage-status__quota--${quotaState}`"
+            @click="scrollToQuota"
+          >
+            {{ quotaChip }}
+          </button>
           <el-button v-if="aiStatus.tone === 'off'" size="small" type="primary" @click="goSettings">去啟用</el-button>
         </div>
 
@@ -295,7 +307,7 @@
              仍在 hero 與案例清單之後：先講價值與待辦；錢真正危急的時刻（快用完/用完）
              由頁頂的紅黃警示搶第一眼，不靠這張卡的位置。 ── -->
         <template v-if="planQuota">
-          <div class="message-card usage-card">
+          <div ref="quotaCard" class="message-card usage-card">
             <div class="message-card-header">
               <div class="card-header-main">
                 <!-- 無上限的方案沒有「額度」可言，標題跟著實況講 -->
@@ -857,7 +869,21 @@ const isCurrentPeriod = computed(() => period.value === periodOptions[0]!.value)
 // 額度按錨定日重置，跟日曆月不是同一把尺，拿報表數字當進度條會顯示錯的剩餘則數。
 const planQuota = computed(() => summary.value?.plan ?? null)
 /** 「則」是收錢的單位，定義要就地問得到——客人最有資格知道怎麼扣（與 recordQuotaAnswered 的實際行為一致） */
-const QUOTA_UNIT_TIP = '1 則＝AI 成功回答客人一個新問題。AI 反問的那句、反問後接著答的、轉真人的說明訊息，都不算則數。'
+const QUOTA_UNIT_TIP = '1 則＝AI 成功回答客人一個新問題。AI 反問的那句、反問後接著答的、轉真人的說明訊息，都不算則數。跟 LINE 官方帳號方案的「訊息則數」是兩回事，互不相干。'
+
+/**
+ * 狀態列右側的額度即時數（2026-08-10 老闆拍板 A 案）：「跟錢有關的要第一眼看到」。
+ * 只有「有上限」方案有東西可顯示；無限方案沒有「剩多少」的概念，不佔位。
+ * 顏色沿用 derivePlanState 的門檻（ok/near/over），與方案卡、頁頂警示同一套規則。
+ */
+const quotaChip = computed(() => {
+  if (!planQuota.value || quotaLimit.value == null) return ''
+  return `本期 ${formatNumber(quotaUsed.value)}／${formatNumber(quotaLimit.value)} 則`
+})
+const quotaCard = ref<HTMLElement | null>(null)
+function scrollToQuota() {
+  quotaCard.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 const upgradeDialogOpen = ref(false)
 const planState = computed(() => derivePlanState(planQuota.value, summary.value?.quotaAnswered ?? 0))
 // 額度週期的起訖（錨定日制，例如 07/28 ~ 08/27）；與下方報表的月份選擇無關。

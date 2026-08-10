@@ -83,6 +83,35 @@
 
     .usage-status__dot { background: var(--text-muted); }
   }
+
+  /* 額度即時數（有上限方案才有）：第一眼看到錢，點了捲到方案卡。
+     顏色跟 derivePlanState 同門檻——ok=中性、near=琥珀、over=紅 */
+  &__quota {
+    flex: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-surface, #fff);
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--el-text-color-secondary);
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover { background: var(--el-fill-color-light); }
+
+    &--near {
+      color: #b45309;
+      border-color: rgba(217, 154, 43, 0.5);
+      background: rgba(217, 154, 43, 0.08);
+    }
+    &--over {
+      color: #b91c1c;
+      border-color: rgba(185, 28, 28, 0.4);
+      background: rgba(185, 28, 28, 0.07);
+    }
+  }
 }
 
 .usage-loading {
