@@ -141,6 +141,13 @@
 
   b { color: var(--text-primary); font-weight: 600; }
 }
+/* 「自己搞定」旁的算式說明——這頁的主指標，定義要就地問得到 */
+.usage-hero__info {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: help;
+  vertical-align: middle;
+}
 
 /* 分段長條：顏色帶語意——答完＝綠（自助成功）、轉真人＝藍（正常交接、非壞事）、反問＝琥珀 */
 .usage-segbar {

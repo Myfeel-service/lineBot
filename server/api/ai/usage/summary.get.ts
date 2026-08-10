@@ -88,6 +88,10 @@ export default defineEventHandler(async (event) => {
    * 資料來源是事件表（月結桶只有總數）；月份界線與月結桶同一把台灣時區的尺。
    * ⛔ 只聚合成文字、不畫進分段長條：事件表有 240 天 TTL、且 2026-08-10 前的
    * 「找真人」捷徑沒記事件——子段會加不回總數，長條的「三段相加=100%」不能被它拖垮。
+   * ⛔ 必須跳過 isFollowup 事件：月結桶的 handoffs **不計** followup 重跑
+   *（ai-answer.ts 的 recordTokensOnly 只記 token），事件表卻照記每一筆。兩邊不對齊的話
+   * 分項會加超過總數，前端會冒出「轉給真人 30 次裡：答不出來 35 次」這種鬼話。
+   * 舊事件沒這個欄位 → 視為非 followup，與修正前行為一致。
    * 索引沿用 gap 掃描既有的 (workspaceId ASC, createdAt DESC)，免部署新索引。
    */
   async function countHandoffReasons(): Promise<Record<string, number>> {
@@ -102,12 +106,14 @@ export default defineEventHandler(async (event) => {
       // ⛔ 一定要 desc：現有索引是 (workspaceId ASC, createdAt DESC)；range 查詢
       // 不指定排序時 Firestore 預設 ASC，會要求一顆不存在的 ASC 索引（實測踩到）
       .orderBy('createdAt', 'desc')
-      .select('reason')
+      .select('reason', 'isFollowup')
       .limit(2000) // 保險絲：超過就讓「其餘 N 次」那行吸收，不炸讀取量
       .get()
     const counts: Record<string, number> = {}
     for (const d of ev.docs) {
-      const r = String((d.data() as { reason?: string }).reason ?? '')
+      const doc = d.data() as { reason?: string, isFollowup?: boolean }
+      if (doc.isFollowup === true) continue // 月結桶沒計這筆，分項也不能計
+      const r = String(doc.reason ?? '')
       if (r) counts[r] = (counts[r] ?? 0) + 1
     }
     return counts

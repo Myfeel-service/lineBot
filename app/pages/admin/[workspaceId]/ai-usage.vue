@@ -98,7 +98,21 @@
                     <strong class="usage-hero__num" :class="metricTone('autoReply', summary?.autoReplyRate)">
                       {{ formatPercent(summary?.autoReplyRate) }}
                     </strong>
-                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ periodLabel }} AI 出手 {{ formatNumber(summary?.aiEngaged) }} 次{{ invocationsDeltaText }}</span>
+                    <!-- 副標刻意把分子分母都念出來（「出手 203 次，其中 80 次自己答完」）：
+                         39% 打哪來變成讀得出來的事，不必去對照下面的長條或自己心算。
+                         老闆實際反映過「自己搞定怎麼算出來的還是有點難理解」——這行就是答案。 -->
+                    <span class="usage-hero__label">
+                      <b>自己搞定</b>
+                      <el-tooltip placement="top">
+                        <template #content>
+                          自己搞定 ＝ 自己答完 ÷ AI 出手總數（下面彩色長條的全長）。<br>
+                          「先問清楚」算在分母、不算在分子：那一次還沒有結局，要等客人選完才有答案。<br>
+                          客人一開口就指名真人的完全不算——那時 AI 根本沒出手，不該算它的成績。
+                        </template>
+                        <el-icon class="usage-hero__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                      <br>{{ periodLabel }} AI 出手 {{ formatNumber(summary?.aiEngaged) }} 次{{ invocationsDeltaText }}，其中 <b>{{ formatNumber(summary?.answered) }}</b> 次自己答完
+                    </span>
                     <!-- 比率的變化要用「百分點」不是「%」：68%→74% 是進步 6 個百分點，不是 6%。
                          這顆可以上色——自己搞定率越高越好，方向明確（訊息量則不然，故只寫在副標不上色）。 -->
                     <span
@@ -313,8 +327,10 @@
         <div class="message-card usage-card">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">近 3 個月趨勢</span>
-              <span class="text-xs text-muted">柱子看量、折線看自己搞定率（線往上＝變好）</span>
+              <span class="section-title">{{ trendTitle }}</span>
+              <!-- 副標直接寫算式：整根柱＝分母、綠段＝分子，折線就是綠段佔整根的比例。
+                   老闆反映「自己搞定怎麼算出來的還是有點難理解」——一句話講完，比 tooltip 可靠 -->
+              <span class="text-xs text-muted">一根柱子＝AI 出手總數，折線＝綠色「自己答完」佔整根的比例（線往上＝變好）</span>
             </div>
           </div>
           <div class="card-section-stack">
@@ -674,37 +690,53 @@ const invocationsDeltaText = computed(() => {
 const trendMonthsWithData = computed(() => trend.value.filter(p => p.invocations > 0).length)
 const trendHasData = computed(() => trendMonthsWithData.value >= 2)
 /**
+ * 標題跟著實際畫幾根柱子講。查的是近 3 個月，但開頭沒量的月份會被裁掉（見 trendRows），
+ * 寫死「近 3 個月」卻只有 2 根柱子＝畫面自己對不起來，這種數字不符老闆一眼就會抓。
+ */
+const trendTitle = computed(() =>
+  trendHasData.value ? `近 ${trendRows.value.length} 個月趨勢` : '每月趨勢')
+/**
  * 每個月的「AI 出手過」次數與自己搞定率——與 hero 同一把尺（扣掉客人指名真人的）。
  * 舊月份沒有 directHandoffs（0）→ 自然退回舊算法，歷史數字不會跳。
  */
-const trendRows = computed(() => trend.value.map((p) => {
-  const direct = p.directHandoffs ?? 0
-  const engaged = Math.max(0, p.invocations - direct)
-  return {
-    ...p,
-    direct,
-    engaged,
-    aiHandoffs: Math.max(0, p.handoffs - direct),
-    // 沒出手的月份給 null 而不是 0：ECharts 會斷線，不會畫一條假的 0% 下去
-    ratePct: engaged > 0 ? Math.round((p.answered / engaged) * 100) : null,
-  }
-}))
+const trendRows = computed(() => {
+  const all = trend.value.map((p) => {
+    const direct = p.directHandoffs ?? 0
+    const engaged = Math.max(0, p.invocations - direct)
+    return {
+      ...p,
+      direct,
+      engaged,
+      aiHandoffs: Math.max(0, p.handoffs - direct),
+      // 沒出手的月份給 null 而不是 0：ECharts 會斷線，不會畫一條假的 0% 下去
+      ratePct: engaged > 0 ? Math.round((p.answered / engaged) * 100) : null,
+    }
+  })
+  // 裁掉「AI 還沒開始服務」的開頭空月份：留著只是一整欄空白，把真實柱子擠到右邊。
+  // ⛔ 只裁開頭——中間的空月份要留，那代表 AI 中途停過（是資訊，不是雜訊）；
+  // 最後一個月是當月，永遠留（月初還沒量也要看得到自己在這條線上）。
+  const firstWithData = all.findIndex(p => p.invocations > 0)
+  return firstWithData > 0 ? all.slice(firstWithData) : all
+})
 
 const trendOption = computed(() => {
   const rows = trendRows.value
   return {
-    // ⚠️ 必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d）：
+    // ⚠️ 前三色必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d / #d99a2b）：
     // 同一頁上下兩塊講同一件事，顏色一漂就變成「四種顏色三個意思」。
+    // 第四色（折線）刻意是中性炭灰、不是藍：它是「綠段佔整根的比例」這個結論，
+    // 不是第四種資料。原本用 #3f5a78 與「轉給真人」的藍同族，會被讀成轉真人的附屬線。
     // ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
-    color: ['#05b24c', '#5b7a9d', '#d99a2b', '#3f5a78'],
+    color: ['#05b24c', '#5b7a9d', '#d99a2b', '#374151'],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       /**
-       * ⛔ 第一行必須是結論（自己搞定率＋上月對比），三個原始數字擺後面。
+       * ⛔ 第一行必須是結論（自己搞定率＋上月對比），原始數字擺後面。
        * 這張圖存在的唯一理由是回答「有沒有變好」，而變好＝率上升，不是柱子變高：
-       * 客人變多時三根柱子會一起長，看起來很熱鬧但可能其實在退步。
-       * 只丟 80/90/33 就是要使用者自己心算 80÷203 再跟上月比——那正是要消滅的事。
+       * 客人變多時整根柱子會長高，看起來很熱鬧但可能其實在退步。
+       * 順序刻意是「結論 → 分母（出手總數）→ 三段分子」：照著讀下來就是 80 ÷ 203 = 39%，
+       * 使用者不必自己心算，也看得懂那個百分比打哪來（老闆實際反映看不懂怎麼算的）。
        */
       formatter: (params: Array<{ dataIndex: number }>) => {
         const i = params?.[0]?.dataIndex ?? 0
@@ -716,6 +748,11 @@ const trendOption = computed(() => {
           : `<div style="font-weight:700">${r.label}　自己搞定 ${r.ratePct}%`
             + (prev?.ratePct != null ? `<span style="font-weight:400;opacity:.7">（上月 ${prev.ratePct}%）</span>` : '')
             + '</div>'
+        // 分母：整根柱子。標成「＝整根柱子」讓圖與數字對得起來
+        const total = r.engaged > 0
+          ? `<div style="font-size:12px;margin-top:3px;padding-bottom:3px;border-bottom:1px solid rgba(0,0,0,.08)">`
+            + `<span>AI 出手（整根柱子）</span>　<b>${r.engaged}</b> 次</div>`
+          : ''
         const line = (c: string, k: string, v: number) =>
           `<div style="display:flex;align-items:center;gap:6px;font-size:12px">`
           + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c}"></span>`
@@ -728,21 +765,41 @@ const trendOption = computed(() => {
               ? '<div style="font-size:11px;opacity:.7;margin-top:4px">此月尚未區分「客人指名真人」，數字偏高</div>'
               : '')
         return head
+          + total
           + line('#05b24c', '自己答完', r.answered)
           + line('#5b7a9d', '轉給真人', r.aiHandoffs)
           + line('#d99a2b', '先問清楚', r.disambiguations)
           + note
       },
     },
-    legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人', '先問清楚', '自己搞定率'] },
+    // 圖例圖示分家：三段是色塊（資料），折線用它自己的線圖示（結論）。
+    // ⛔ 別在 legend 層寫 icon:'roundRect'——那會把折線也畫成色塊，變成「四根柱子」
+    legend: {
+      bottom: 0,
+      itemWidth: 14,
+      itemHeight: 8,
+      data: [
+        { name: '自己答完', icon: 'roundRect' },
+        { name: '轉給真人', icon: 'roundRect' },
+        { name: '先問清楚', icon: 'roundRect' },
+        { name: '自己搞定率' },
+      ],
+    },
     grid: { left: 8, right: 12, top: 22, bottom: 34, containLabel: true },
     xAxis: { type: 'category', data: rows.map(p => p.label), axisTick: { alignWithLabel: true } },
-    // 雙軸：左邊看量（柱），右邊看好壞（率）。量會隨客人數一起長，只看柱子看不出退步
+    // 雙軸：左邊看量（整根柱＝AI 出手總數），右邊看好壞（率）。
+    // 量會隨客人數一起長，只看柱子看不出退步
     yAxis: [
       {
         type: 'value',
         minInterval: 1,
-        max: (v: { max: number }) => Math.max(1, Math.ceil((v.max || 1) * 1.15)),
+        // 留 15% headroom 給柱頂的總數標籤，再進位到「好看的刻度」——
+        // 直接用 203×1.15 會讓軸頂印出「234」這種沒人想讀的數字（實測過）
+        max: (v: { max: number }) => {
+          const m = Math.max(1, (v.max || 1) * 1.15)
+          const step = Math.pow(10, Math.floor(Math.log10(m))) / 2
+          return Math.ceil(m / step) * step
+        },
         splitLine: { lineStyle: { type: 'dashed' } },
       },
       {
@@ -753,11 +810,36 @@ const trendOption = computed(() => {
         splitLine: { show: false },
       },
     ],
+    /**
+     * 三段**堆疊**成一根＝AI 出手總數，與 hero 的分段長條同一個心智模型。
+     * ⛔ 別退回並排柱：並排看不到分母，「自己搞定 39%」就跟畫面上任何東西都對不起來
+     *（老闆實際反映「還是有點難理解」）。堆疊之後率＝綠段佔整根的比例，用眼睛就驗得出來。
+     * 每段的確切數字交給 tooltip：段內白字在綠/琥珀底上對比不足，柱頂並排小字則是
+     * 12 個浮動數字的視覺噪音（還會冒出 2026-06 那排「0 0 0」）。
+     */
     series: [
-      { name: '自己答完', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.answered), label: { show: true, position: 'top', fontSize: 11 } },
-      { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.aiHandoffs), label: { show: true, position: 'top', fontSize: 11 } },
-      // 三段要湊齊：少畫這段的話柱子加起來 ≠ hero 總數，看的人一定會拿去對帳
-      { name: '先問清楚', type: 'bar', barMaxWidth: 34, data: rows.map(p => p.disambiguations), label: { show: true, position: 'top', fontSize: 11 } },
+      { name: '自己答完', type: 'bar', stack: 'engaged', barMaxWidth: 44, data: rows.map(p => p.answered) },
+      { name: '轉給真人', type: 'bar', stack: 'engaged', barMaxWidth: 44, data: rows.map(p => p.aiHandoffs) },
+      // 三段要湊齊：少畫這段的話整根柱 ≠ hero 總數，看的人一定會拿去對帳。
+      // 標籤掛在堆疊最上面這段＝標在整根柱頂，印的是總數（engaged）不是自己的值；
+      // 沒出手的月份回空字串，免得 2026-06 在基線上印一個孤零零的 0
+      {
+        name: '先問清楚',
+        type: 'bar',
+        stack: 'engaged',
+        barMaxWidth: 44,
+        data: rows.map(p => p.disambiguations),
+        label: {
+          show: true,
+          position: 'top',
+          fontSize: 11,
+          fontWeight: 700,
+          formatter: (p: { dataIndex: number }) => {
+            const n = rows[p.dataIndex]?.engaged ?? 0
+            return n > 0 ? String(n) : ''
+          },
+        },
+      },
       // 折線＝這張圖真正的主角：線往上就是變好，不必心算
       {
         name: '自己搞定率',
@@ -767,7 +849,19 @@ const trendOption = computed(() => {
         smooth: false,
         symbolSize: 7,
         lineStyle: { width: 2 },
-        label: { show: true, position: 'top', fontSize: 11, formatter: '{c}%' },
+        // ⛔ 標籤一定要墊白底：改成堆疊柱之後整根變高，折線會穿過柱子，
+        // 40% 那個標籤剛好落在藍色段上（實測 headless 截圖抓到，深灰字疊藍底讀不清）
+        label: {
+          show: true,
+          position: 'top',
+          fontSize: 11,
+          fontWeight: 700,
+          color: '#374151',
+          backgroundColor: '#fff',
+          borderRadius: 3,
+          padding: [2, 4],
+          formatter: '{c}%',
+        },
         z: 3,
       },
     ],

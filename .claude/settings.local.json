@@ -357,7 +357,8 @@
       "Bash(claude --version)",
       "Bash(cp ~/.claude.json ~/.claude.json.bak-mcp)",
       "Bash(claude mcp *)",
-      "Bash(node reasons-live.mjs)"
+      "Bash(node reasons-live.mjs)",
+      "Bash(node render-trend.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
