@@ -19,9 +19,7 @@
 
 ## 🔵 進行中（DOING — 未 commit）
 
-| 項目 | 說明 | 檔案 | 更新日 |
-|---|---|---|---|
-| AI 記帳稽核修正（成本頁第二批） | 老闆問「79 則卻要 NT$7、測試 123 次只要 NT$4」→ 查出**記帳對、畫面用錯分母**（該用 invocations 不是 answered，差 2~3 倍）。連帶修三個真問題：①小幫手與②一句話生成腳本的 token 誤記進「回答客人」桶 ③「找真人」捷徑只加轉真人計數、沒寫事件表（八月計數 90 但事件 78）。三桶算式與單價本來兩支端點各寫一份 → 抽成單一來源 `ai-cost-buckets.ts` ＋ 7 項測試 | `server/utils/ai-cost-buckets.ts`(新)＋`.test.ts`(新)、`admin/super/costs.{vue,get.ts}`、`ai/usage/summary.get.ts`、`ai-usage.vue`、`agent/chat.post.ts`、`ai/scripts/generate.post.ts`、`handler.ts`＋`handler.non-text-handoff.test.ts`、`ai-handoff-events.ts`、`ai-usage.ts`、2 支 scss | 2026-08-10 |
+_目前沒有未 commit 的工作。_
 
 ---
 
@@ -103,6 +101,7 @@
 
 | 日期 | 項目 | 代表 commit |
 |---|---|---|
+| 2026-08-10 | AI 記帳稽核：修正成本頁用錯分母（該用 invocations 不是 answered）、小幫手與生成腳本兩處歸錯桶、「找真人」轉真人事件漏記；三桶算式抽成單一來源 `ai-cost-buckets.ts` ＋ 7 項測試 | `66a6af7` |
 | 2026-08-10 | 超管成本頁改版：拖拉估算器整組刪掉，改成 AI（實測）／資料庫（Firebase 實測用量）／主機（AWS 真實帳單）三筆；含 Cloud Monitoring 分桶時區 bug（`taipeiMidnightAfter`）與 AWS 設定教學 | `a936ca3` |
 | 2026-08-09 | 自動回應合一：自動回覆功能整組下架、腳本簡單模式、整頁捲軸收成一條 | `023b36d` |
 | 2026-08-09 | 腳本編輯器 UX 大改 1~10 項（含合併成兩分頁、健康狀態三重檢查） | `023b36d` |
