@@ -194,28 +194,11 @@
                 <el-button v-if="verdict.canAct" size="small" @click="scrollToHandoffs">去看看</el-button>
               </div>
 
-              <!-- ⛔ 這頁不放任何金額與 token：計費賣「則數」，成本是平台的進貨價，
-                   一律只在超管的「成本總覽」頁講（2026-08-10 拍板）。這裡通篇只講則數與品質。 -->
-              <div class="usage-substats">
-                <!-- 「答完客人又找真人」是目前唯一能回答「答得好不好」的數字。
-                     沒有任何 AI 答題時顯示「—」:0% 上綠色會把「沒資料」講成「滿分」。 -->
-                <div class="usage-substat">
-                  <span class="usage-substat__label">
-                    答完客人又找真人
-                    <el-tooltip placement="top" content="AI 回答完 30 分鐘內，客人仍要求轉真人——通常代表沒答對或沒答到重點。這是最接近「答得好不好」的指標。">
-                      <el-icon class="usage-substat__info"><InfoFilled /></el-icon>
-                    </el-tooltip>
-                  </span>
-                  <template v-if="(summary?.answered ?? 0) > 0">
-                    <strong class="usage-substat__value" :class="metricTone('answeredThenHandoff', summary?.answeredThenHandoffRate)">{{ formatPercent(summary?.answeredThenHandoffRate) }}</strong>
-                    <span class="usage-substat__sub">{{ formatNumber(summary?.answeredThenHandoffs) }} 次 · 越低越好</span>
-                  </template>
-                  <template v-else>
-                    <strong class="usage-substat__value">—</strong>
-                    <span class="usage-substat__sub">{{ periodLabel }} AI 還沒有回答過客人</span>
-                  </template>
-                </div>
-              </div>
+              <!-- ⛔ 這頁不放任何金額與 token（2026-08-10 拍板：成本一律只在超管「成本總覽」）。
+                   「答完客人又找真人」的常駐數字已拆（2026-08-10 老闆拍板）：場制 hero 已把
+                   「答了但客人不滿意」自然吸收進「用到真人」，它只剩診斷價值——比照「先問清楚」，
+                   偏高（>25%）時才在上面 verdict 以但書現身，正常月份誰都不會看到。
+                   拆掉它之後全頁只剩兩種單位：表現區講「場」、頁尾帳務卡講「則」。 -->
             </template>
           </div>
         </div>
@@ -366,6 +349,9 @@
                 />
                 <p class="usage-hint">
                   本期已用 <strong>{{ formatNumber(quotaUsed) }}</strong> / {{ formatNumber(quotaLimit) }} 則
+                  <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
+                    <el-icon class="usage-info"><InfoFilled /></el-icon>
+                  </el-tooltip>
                   <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
                   <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
                 </p>
@@ -374,7 +360,11 @@
                    對客製戶這是「AI 做了多少工」的價值證據，也是日後續約談話的基礎。
                    給事實不給焦慮：沒有進度條、剩餘、升級鈕（對無限方案都沒有意義）。 -->
               <p v-else-if="planQuota.currentPeriodStart" class="usage-hint">
-                本期 AI 已回答 <strong>{{ formatNumber(quotaUsed) }}</strong> 則・此方案不限則數。
+                本期 AI 已回答 <strong>{{ formatNumber(quotaUsed) }}</strong> 則
+                <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
+                  <el-icon class="usage-info"><InfoFilled /></el-icon>
+                </el-tooltip>
+                ・此方案不限則數。
               </p>
               <!-- 沒有錨定週期的內部方案：後端沒算則數（回 0），印「已回答 0 則」是說謊 → 退回純文字 -->
               <p v-else class="usage-hint">此方案不限則數。</p>
@@ -886,6 +876,8 @@ const isCurrentPeriod = computed(() => period.value === periodOptions[0]!.value)
 // 進度條吃 quotaAnswered（本期 = 訂閱週期）而不是 answered（所選月份的報表數字）——
 // 額度按錨定日重置，跟日曆月不是同一把尺，拿報表數字當進度條會顯示錯的剩餘則數。
 const planQuota = computed(() => summary.value?.plan ?? null)
+/** 「則」是收錢的單位，定義要就地問得到——客人最有資格知道怎麼扣（與 recordQuotaAnswered 的實際行為一致） */
+const QUOTA_UNIT_TIP = '1 則＝AI 成功回答客人一個新問題。AI 反問的那句、反問後接著答的、轉真人的說明訊息，都不算則數。'
 const upgradeDialogOpen = ref(false)
 const planState = computed(() => derivePlanState(planQuota.value, summary.value?.quotaAnswered ?? 0))
 // 額度週期的起訖（錨定日制，例如 07/28 ~ 08/27）；與下方報表的月份選擇無關。

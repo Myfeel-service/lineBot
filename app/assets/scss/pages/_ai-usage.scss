@@ -243,9 +243,6 @@
   }
 }
 
-/* ── 次要指標：品質 proxy + 成本；數字依門檻上色（見 metricTone） ── */
-/* ⛔ 別用 grid auto-fit：移除成本區塊後這裡只剩一格，auto-fit 會把單一子元素撐滿整行，
-   一個小數字上面壓一條全寬分隔線，看起來像沒做完。flex 讓它走自然寬，之後補回多格也能自動排 */
 /* 一句解讀：左色條＋結論＋一句「怎麼辦」（沿用房規的狀態 callout 寫法）。
    放在數字之後、明細之前——先看到判斷，再看細節 */
 .usage-verdict {
@@ -290,46 +287,12 @@
   }
 }
 
-.usage-substats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 32px;
-  margin-top: 4px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-.usage-substat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-
-  &__label {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-  &__info {
-    font-size: 13px;
-    color: var(--text-muted);
-    cursor: help;
-  }
-  &__value {
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 1.15;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-primary);
-
-    &.is-good { color: var(--brand-green-text); }
-    &.is-warn { color: #b45309; }
-    &.is-bad  { color: #b91c1c; }
-  }
-  &__sub {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-  }
+/* 泛用的 ⓘ 說明圖示（方案卡「則」的定義等）；hero 的沿用 .usage-hero__info */
+.usage-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: help;
+  vertical-align: middle;
 }
 
 
