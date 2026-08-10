@@ -345,7 +345,8 @@
           <div class="message-card usage-card">
             <div class="message-card-header">
               <div class="card-header-main">
-                <span class="section-title">方案額度</span>
+                <!-- 無上限的方案沒有「額度」可言，標題跟著實況講 -->
+                <span class="section-title">{{ quotaLimit != null ? '方案額度' : '方案用量' }}</span>
                 <span class="text-xs text-muted">{{ planQuota.name }} · 本期 {{ quotaPeriodLabel }}</span>
               </div>
               <div class="plan-card-head-actions">
@@ -369,10 +370,17 @@
                   <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
                 </p>
               </template>
-              <p v-else class="usage-hint">此方案為客製額度，無固定則數上限。</p>
-              <!-- 雙時間軸提醒：額度按「續約日」算一期，和上方報表的月份不是同一個區間，避免日期兜不起來被誤會 -->
+              <!-- 無上限也要給用量（2026-08-10 老闆拍板）：「無限」是計費條件，不是隱藏數字的理由——
+                   對客製戶這是「AI 做了多少工」的價值證據，也是日後續約談話的基礎。
+                   給事實不給焦慮：沒有進度條、剩餘、升級鈕（對無限方案都沒有意義）。 -->
+              <p v-else-if="planQuota.currentPeriodStart" class="usage-hint">
+                本期 AI 已回答 <strong>{{ formatNumber(quotaUsed) }}</strong> 則・此方案不限則數。
+              </p>
+              <!-- 沒有錨定週期的內部方案：後端沒算則數（回 0），印「已回答 0 則」是說謊 → 退回純文字 -->
+              <p v-else class="usage-hint">此方案不限則數。</p>
+              <!-- 雙時間軸提醒：按「續約日」算一期，和上方報表的月份不是同一個區間，避免日期兜不起來被誤會 -->
               <p v-if="planQuota.currentPeriodStart" class="usage-hint usage-hint--muted">
-                額度以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
+                本期以「續約日」為一期（{{ quotaPeriodLabel }}），和上方報表選的月份不是同一個區間。
               </p>
             </div>
           </div>
