@@ -159,6 +159,17 @@
                     </div>
                   </div>
                 </template>
+
+                <!-- 轉真人拆解：同一個數字拆成「有救的」跟「本來就設計要人接的」，才知道力氣花哪。
+                     放在 v-if 外面：就算整月都是客人指名（沒有長條），下面那行也要照講。 -->
+                <div v-if="handoffBreakdown" class="usage-note">
+                  轉給真人的 {{ formatNumber(handoffBreakdown.total) }} 次裡：答不出來 <b>{{ formatNumber(handoffBreakdown.gap) }}</b> 次（補知識就有救）<template v-if="handoffBreakdown.intended">・刻意設計要人接的 <b>{{ formatNumber(handoffBreakdown.intended) }}</b> 次（查訂單、敏感話題這類）</template><template v-if="handoffBreakdown.unknown">・其餘 {{ formatNumber(handoffBreakdown.unknown) }} 次是較早的紀錄，沒留下原因</template>
+                </div>
+
+                <!-- 客人指名真人：這是客人偏好，不是 AI 的成績（分子分母都不含），所以列在長條外面 -->
+                <div v-if="(summary?.directHandoffs ?? 0) > 0" class="usage-note">
+                  另有 <b>{{ formatNumber(summary?.directHandoffs) }}</b> 次客人一開口就指名真人、直接轉接——這是客人偏好，不算進上面的成績。
+                </div>
               </div>
 
               <!-- 結論先行：報表給數字，儀表板給判斷。上面一堆數字之後要有一句
