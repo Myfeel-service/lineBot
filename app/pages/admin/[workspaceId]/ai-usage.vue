@@ -14,7 +14,7 @@
         </template>
       </AdminSoloPageHeading>
       <div class="flex gap-2 admin-header-actions">
-        <el-select v-model="period" size="small" data-tour="usg-period" style="width: 130px" @change="loadAll">
+        <el-select v-model="period" size="small" data-tour="usg-period" class="usage-period-select" @change="loadAll">
           <el-option
             v-for="opt in periodOptions"
             :key="opt.value"
@@ -47,7 +47,7 @@
             :closable="false"
             show-icon
             title="本期則數已用完"
-            style="margin-bottom: 16px"
+            class="usage-quota-alert"
           >
             <div class="quota-alert-body">
               <span>AI 自動回覆已暫停、改由真人接手。升級方案或加購額度即可恢復自動回覆。</span>
@@ -60,7 +60,7 @@
             :closable="false"
             show-icon
             title="本期則數即將用完"
-            style="margin-bottom: 16px"
+            class="usage-quota-alert"
           >
             <div class="quota-alert-body">
               <span>已使用 {{ quotaPercentRaw }}%，用完後 AI 會暫停自動回覆並轉真人，建議提前升級方案。</span>
@@ -75,6 +75,16 @@
         <div class="message-card usage-card" data-tour="usg-kpi">
           <div class="card-section-stack">
             <div v-if="loading && !summary" class="usage-loading"><div class="spinner" /></div>
+            <!-- 載入失敗 ≠ 還沒有客人來問：summary 拿不到時如實說「不知道」。
+                 「查不到」跟「沒問題」必須是兩種畫面（08-09 假綠燈教訓，三個載入點都比照） -->
+            <div v-else-if="!summary" class="usage-empty usage-empty--error">
+              <span class="usage-empty__icon usage-empty__icon--error">!</span>
+              <div>
+                <div class="usage-empty__title">數據剛剛沒有載出來</div>
+                <div class="usage-empty__desc">不是沒有客人來問，是還不知道——通常重試一次就好。</div>
+              </div>
+              <el-button size="small" @click="loadAll">重試</el-button>
+            </div>
             <template v-else>
               <!-- Hero：AI 出手 = 自己答完 + 轉給真人 + 先問清楚（乾淨拆解，一條分段長條看懂產出結構）。
                    用詞照 2026-08-07 的名詞收斂表（docs/STATS-SIMPLIFICATION-20260807.md）：
@@ -155,7 +165,7 @@
                       <span class="usage-leg__v">{{ formatNumber(summary?.disambiguations) }}</span>
                       <span class="usage-leg__pct">{{ formatPercent(summary?.disambiguationRate) }}</span>
                       <!-- 反問的成果：followup 不記 answered，用子計數補能見度（8/10 起才有資料，0 就不顯示） -->
-                      <span v-if="(summary?.followupAnswered ?? 0) > 0" class="usage-leg__pct">問完答成功 {{ formatNumber(summary?.followupAnswered) }} 次</span>
+                      <span v-if="(summary?.followupAnswered ?? 0) > 0" class="usage-leg__pct usage-leg__followup">問完答成功 {{ formatNumber(summary?.followupAnswered) }} 次</span>
                     </div>
                   </div>
                 </template>
@@ -221,13 +231,13 @@
           </div>
           <div class="card-section-stack">
             <p class="usage-hint">
-              客人問了 AI 但答不出來的情況。點「補知識」直接到知識庫補一張對應卡。
+              AI 轉給真人的對話。預設只列「答不出來、補知識有救」的：點「補知識」直接到知識庫補一張對應卡；其他原因用下拉切換。
+              同一題被問很多次的，AI 會先在知識庫的「建議收件匣」擬好草稿，<NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="admin-inline-link">去那裡採用更快 →</NuxtLink>
             </p>
-            <!-- 篩選移到卡片內（不再擠在標題列），並補中文 placeholder（原本顯示英文「Select」） -->
+            <!-- 篩選移到卡片內（不再擠在標題列）。分組與 hero 拆解行同一套語言：
+                 上面學一次「答不出來／刻意設計要人接／客人指名」，這裡直接用，不再攤 12 個原始原因 -->
             <div class="usage-handoff-toolbar">
-              <el-select v-model="reasonFilter" size="small" placeholder="全部原因" style="width: 150px" @change="loadHandoffs">
-                <el-option label="全部原因" value="" />
-                <!-- 由共用標籤表導出:手打第二份會漂移(曾發生下拉與列表徽章同一原因兩種名字) -->
+              <el-select v-model="reasonFilter" size="small" placeholder="篩選原因" class="usage-reason-select" @change="onFilterChange">
                 <el-option
                   v-for="opt in reasonOptions"
                   :key="opt.value"
@@ -235,20 +245,32 @@
                   :value="opt.value"
                 />
               </el-select>
-              <el-checkbox v-model="showResolved" size="small" @change="loadHandoffs">顯示已處理</el-checkbox>
+              <el-checkbox v-model="showResolved" size="small" @change="onFilterChange">顯示已處理</el-checkbox>
               <!-- 這顆原本在「進階／技術細節」卡裡，那張卡（只放金額）已移除，
                    但它還控制著下方的信心值與「重演」，所以搬來這裡。維持只有超管能開。 -->
               <el-checkbox v-if="isSuperAdmin" v-model="advancedOpen" size="small">顯示技術細節</el-checkbox>
             </div>
             <div v-if="loadingHandoffs && !handoffs.length" class="usage-loading"><div class="spinner" /></div>
+            <div v-else-if="handoffsError" class="usage-empty usage-empty--error">
+              <span class="usage-empty__icon usage-empty__icon--error">!</span>
+              <div>
+                <div class="usage-empty__title">案例清單剛剛沒有載出來</div>
+                <div class="usage-empty__desc">不是都處理完了，是還不知道——通常重試一次就好。</div>
+              </div>
+              <el-button size="small" @click="() => loadHandoffs()">重試</el-button>
+            </div>
             <!-- 和解：此清單＝「目前還卡著、尚未處理」的對話（不分月份），與上方本月轉接次數不是同一份計數，
-                 避免「本月 141 次轉接」與「0 待處理」被誤讀成互相矛盾。空狀態要像「已清空」而非「沒資料」。 -->
-            <div v-else-if="!handoffs.length" class="usage-empty usage-empty--good">
+                 避免「本月 141 次轉接」與「0 待處理」被誤讀成互相矛盾。空狀態要像「已清空」而非「沒資料」。
+                 綠色「都清完了」只在預設的「答不出來」視角出現；其他篩選下空了就平實地說沒有。 -->
+            <div v-else-if="!handoffs.length && reasonFilter === GAP_FILTER && !showResolved" class="usage-empty usage-empty--good">
               <span class="usage-empty__icon">✓</span>
               <div>
                 <div class="usage-empty__title">沒有待補知識的轉真人對話了</div>
                 <div class="usage-empty__desc">這裡只列「目前還卡著、尚未處理」的對話，和上方本月轉接次數不是同一份計數。想回顧請勾「顯示已處理」。</div>
               </div>
+            </div>
+            <div v-else-if="!handoffs.length" class="usage-empty">
+              這個篩選下沒有案例。換個原因看看，或勾「顯示已處理」回顧處理過的。
             </div>
             <div v-else class="usage-handoff-list">
               <div v-for="row in handoffs" :key="`${row.userId}-${row.updatedAtMs}`" class="usage-handoff-row" :class="{ 'usage-handoff-row--resolved': row.resolved }">
@@ -273,9 +295,16 @@
                   <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路 -->
                   <el-button v-if="row.handoffReason !== 'non_text_content'" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
                   <el-button v-if="advancedOpen && row.handoffReason !== 'non_text_content'" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
-                  <el-button v-if="!row.resolved" size="small" type="success" plain :loading="resolvingUserId === row.userId" @click="resolveHandoff(row.userId)">✓ 已處理</el-button>
+                  <!-- 「已處理」只影響這份清單，不通知任何人——不講清楚的話沒人敢按 -->
+                  <el-tooltip v-if="!row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
+                    <el-button size="small" type="success" plain :loading="resolvingUserId === row.userId" @click="resolveHandoff(row.userId)">✓ 已處理</el-button>
+                  </el-tooltip>
                 </div>
               </div>
+            </div>
+            <!-- 清單固定一次 20 筆：不給出口的話，第 21 筆之後的案例等於不存在 -->
+            <div v-if="handoffs.length && handoffsHasMore" class="usage-more">
+              <el-button size="small" :loading="loadingMore" @click="loadHandoffs(true)">載入更多</el-button>
             </div>
           </div>
         </div>
@@ -290,6 +319,14 @@
           </div>
           <div class="card-section-stack">
             <div v-if="loadingTrend && !trend.length" class="usage-loading"><div class="spinner" /></div>
+            <div v-else-if="trendError" class="usage-empty usage-empty--error">
+              <span class="usage-empty__icon usage-empty__icon--error">!</span>
+              <div>
+                <div class="usage-empty__title">趨勢剛剛沒有載出來</div>
+                <div class="usage-empty__desc">不是沒有資料，是還不知道——通常重試一次就好。</div>
+              </div>
+              <el-button size="small" @click="loadTrend">重試</el-button>
+            </div>
             <ClientOnly v-else-if="trendHasData">
               <VChart class="usage-trend-chart" :option="trendOption" autoresize />
               <template #fallback><div class="usage-loading"><div class="spinner" /></div></template>
@@ -423,16 +460,45 @@ interface TrendPoint {
 const summary = ref<Summary | null>(null)
 const handoffs = ref<HandoffRow[]>([])
 const trend = ref<TrendPoint[]>([])
-const loading = ref(false)
-const loadingHandoffs = ref(false)
-const loadingTrend = ref(false)
-const reasonFilter = ref<'' | HandoffReason>('')
+// ⛔ 三個 loading 初始都是 true：初始 render 發生在 onMounted 之前，
+// 初始 false 會讓「還沒開始載」的那一幀直接掉進空狀態（畫面閃一下「還沒有客人來問」）
+const loading = ref(true)
+const loadingHandoffs = ref(true)
+const loadingTrend = ref(true)
+// 失敗三態：「查不到」和「沒問題」要分開（凡是查不到＝沒事的檢查都是假綠燈）
+const trendError = ref(false)
+const handoffsError = ref(false)
+// 案例清單的「還有更舊的」與載入更多游標（後端回 nextBefore，見 handoffs.get.ts）
+const handoffsHasMore = ref(false)
+const handoffsCursor = ref(0)
+const loadingMore = ref(false)
 const showResolved = ref(false)
 
-// 'manual' 是內部人工指定,不提供篩選(後端白名單同樣排除)
-const reasonOptions = (Object.entries(HANDOFF_REASON_LABELS) as Array<[HandoffReason, string]>)
-  .filter(([value]) => value !== 'manual')
-  .map(([value, label]) => ({ value, label }))
+/**
+ * 篩選分組與 hero 拆解行同一套語言（答不出來／刻意設計要人接／客人指名），
+ * 使用者在上面學一次分類、下面直接用；不再攤 12 個原始原因讓人自己歸類。
+ * 值＝逗號分隔的原因組（後端吃 in 查詢）；「答不出來」那組由共用白名單導出，
+ * 跟 hero 的「補知識就有救」永遠同一份，不會兩處各判各的。
+ */
+const GAP_FILTER = Array.from(KNOWLEDGE_GAP_HANDOFF_REASONS).join(',')
+const reasonGroupOptions = [
+  { label: '答不出來（可補知識）', value: GAP_FILTER },
+  { label: '刻意設計要人接', value: 'order_status,sensitive_topic,commercial_inquiry' },
+  { label: '客人指名真人', value: 'user_request' },
+  { label: '傳了圖片/檔案', value: 'non_text_content' },
+  { label: '系統狀況（AI 失敗、額度用完…）', value: 'llm_error,quota_exceeded,auto_reply_repeat' },
+  { label: '全部原因', value: '' },
+]
+// 預設停在「答不出來」：這張卡的存在理由是補知識，指名真人／查訂單那些沒有動作可做
+const reasonFilter = ref<string>(GAP_FILTER)
+/** 深連結帶進來的單一原因（如異常中心的 llm_error）——臨時加一個選項讓下拉顯示得出名字 */
+const extraReasonOption = ref<{ label: string; value: string } | null>(null)
+const reasonOptions = computed(() =>
+  extraReasonOption.value ? [...reasonGroupOptions, extraReasonOption.value] : reasonGroupOptions)
+
+function onFilterChange() {
+  void loadHandoffs()
+}
 
 // AI 出手的三種結果佔比（分段長條寬度）。分母是 aiEngaged（AI 真的出手過）——
 // 客人指名真人的 directHandoffs 分子分母一起扣，恆等式仍成立：
@@ -475,11 +541,30 @@ const handoffBreakdown = computed(() => {
 })
 
 /**
+ * verdict 的「待補知識」數，與篩選脫鉤的獨立底帳。
+ *
+ * ⛔ 不能直接數 handoffs 陣列：那份清單會跟著使用者的篩選漂
+ * （深連結切到 llm_error 時，verdict 會把 3 筆系統失敗講成「3 題答不出來」）。
+ * 只在載的是預設「答不出來」那組時更新；null＝還沒成功載過（載入中或失敗），
+ * 此時 verdict 不得宣稱「沒有待補」——那正是假綠燈。
+ */
+const pendingGap = ref<number | null>(null)
+const pendingGapHasMore = ref(false)
+function syncPendingGap() {
+  if (reasonFilter.value !== GAP_FILTER) return
+  pendingGap.value = handoffs.value.filter(r => !r.resolved).length
+  pendingGapHasMore.value = handoffsHasMore.value
+}
+
+/**
  * 一句解讀：「現在算好還是不好、接下來做什麼」。
  *
  * 全部從真實數字推，沒有任何臆測：
  *   - 好壞門檻沿用既有的 metricTone('autoReply')（≥50% 好、<20% 要留意），不另立一套標準
- *   - 「該做什麼」指向下方待補清單，數量用實際載到的筆數，沒有就說沒有
+ *   - 「該做什麼」只數「答不出來、補知識有救」的案例（pendingGap）——
+ *     客人指名、查訂單、傳圖這些補知識沒救，混進來會叫人白做工
+ *   - 「答完客人又找真人」偏高時要講：那代表「搞定」有一部分是假象，
+ *     不講的話 verdict 的 ✓ 會跟旁邊的橘色數字互相打架
  * ⛔ 一則都沒有時不下判語——沒資料不是成績，硬給結論會變成瞎掰。
  */
 const verdict = computed(() => {
@@ -488,7 +573,6 @@ const verdict = computed(() => {
   if (!s || !s.aiEngaged) return null
   const rate = s.autoReplyRate
   const pct = formatPercent(rate)
-  const pending = handoffs.value.filter(h => !h.resolved).length
   const tone = metricTone('autoReply', rate).replace('is-', '') // good | warn | neutral
 
   const title = tone === 'good'
@@ -497,11 +581,29 @@ const verdict = computed(() => {
       ? `客人來問的，AI 只搞定 ${pct}，大部分還是要人接`
       : `客人來問的，AI 自己搞定 ${pct}，還有進步空間`
 
-  const next = pending > 0
-    ? `下面有 ${pending} 題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
-    : '目前沒有待補的知識，維持下去就好。'
+  const pending = pendingGap.value
+  let next: string
+  let canAct = false
+  if (pending === null) {
+    // 底帳還沒建立（載入中／失敗／深連結載的是別組）：只指路，不下「沒有待補」的結論
+    next = handoffsError.value
+      ? '下方案例清單剛剛沒有載出來，重試後再看有什麼要補。'
+      : '到下方案例清單看看有沒有能補的知識。'
+    canAct = !handoffsError.value
+  }
+  else if (pending > 0) {
+    next = `下面有 ${pending}${pendingGapHasMore.value ? '+' : ''} 題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
+    canAct = true
+  }
+  else {
+    next = '目前沒有待補的知識，維持下去就好。'
+  }
 
-  return { tone, mark: tone === 'good' ? '✓' : tone === 'warn' ? '⚠' : '→', title, next, canAct: pending > 0 }
+  // 品質但書：回答完 30 分鐘內又被找真人的比例過線（>25%）就要講——「搞定」可能沒答到重點
+  if (s.answered > 0 && metricTone('answeredThenHandoff', s.answeredThenHandoffRate) === 'is-warn')
+    next += `另外有 ${formatPercent(s.answeredThenHandoffRate)} 的回答，客人看完仍要找真人，可能沒答到重點——建議開幾場對話抽查。`
+
+  return { tone, mark: tone === 'good' ? '✓' : tone === 'warn' ? '⚠' : '→', title, next, canAct }
 })
 
 // 頂端狀態列：AI 有沒有在跑（老闆第一眼要知道的）。未啟用時特別點明「數字是歷史/測試」。
@@ -714,31 +816,48 @@ const quotaState = computed(() => planState.value.state)
 const quotaColor = computed(() => planState.value.color)
 
 // ── Loaders ───────────────────────────────────────────────
+// ⛔ 失敗一律留下錯誤訊號給畫面顯示「載入失敗＋重試」，不准吞成空資料——
+// 這頁的空狀態全是正面文案（還沒有客人來問／都處理完了），吞掉錯誤等於把斷線講成好消息。
 async function loadSummary() {
   loading.value = true
   try {
     summary.value = await apiFetch<Summary>(`/api/ai/usage/summary?period=${period.value}`)
   }
   catch {
-    summary.value = null
+    summary.value = null // 模板以 !summary 判定失敗態（成功時 API 必回物件）
   }
   finally {
     loading.value = false
   }
 }
 
-async function loadHandoffs() {
-  loadingHandoffs.value = true
+async function loadHandoffs(append = false) {
+  if (append) loadingMore.value = true
+  else loadingHandoffs.value = true
   try {
     const params = new URLSearchParams({ limit: '20' })
     if (reasonFilter.value) params.set('reason', reasonFilter.value)
     if (showResolved.value) params.set('includeResolved', '1')
-    handoffs.value = await apiFetch<HandoffRow[]>(`/api/ai/usage/handoffs?${params.toString()}`)
+    if (append && handoffsCursor.value) params.set('before', String(handoffsCursor.value))
+    const res = await apiFetch<{ rows: HandoffRow[]; hasMore: boolean; nextBefore: number }>(`/api/ai/usage/handoffs?${params.toString()}`)
+    handoffs.value = append ? [...handoffs.value, ...res.rows] : res.rows
+    handoffsHasMore.value = res.hasMore
+    handoffsCursor.value = res.nextBefore || 0
+    handoffsError.value = false
+    syncPendingGap()
   }
   catch {
-    handoffs.value = []
+    if (append) {
+      // 載入更多失敗：清單還在，退回按鈕讓人再按就好，別把整卡換成錯誤態
+      showToast('載入更多失敗，請再試一次', 'error')
+    }
+    else {
+      handoffs.value = []
+      handoffsError.value = true
+    }
   }
   finally {
+    loadingMore.value = false
     loadingHandoffs.value = false
   }
 }
@@ -747,9 +866,11 @@ async function loadTrend() {
   loadingTrend.value = true
   try {
     trend.value = await apiFetch<TrendPoint[]>('/api/ai/usage/trend?months=3')
+    trendError.value = false
   }
   catch {
     trend.value = []
+    trendError.value = true
   }
   finally {
     loadingTrend.value = false
@@ -829,7 +950,10 @@ async function resolveHandoff(userId: string) {
     }
     else {
       handoffs.value = handoffs.value.filter(r => r.userId !== userId)
+      // 清到見底但更舊的還有 → 自動補一頁，別讓「都處理完了」的綠框說謊
+      if (!handoffs.value.length && handoffsHasMore.value) void loadHandoffs()
     }
+    syncPendingGap()
   }
   catch {
     // 保留在列表上讓使用者重試；沒有回饋會讓人以為按了沒反應而連點
@@ -843,11 +967,14 @@ async function resolveHandoff(userId: string) {
 onMounted(() => {
   void checkIsSuperAdmin().catch(() => {})
   // 異常中心「AI 服務近期失敗過」的深連結（?reason=llm_error&includeResolved=1）：
-  // 自動套用原因篩選並捲到案例清單，省掉「落在頁頂自己找下拉」那一段
+  // 自動套用原因篩選並捲到案例清單，省掉「落在頁頂自己找下拉」那一段。
+  // 下拉現在是分組選項，深連結的單一原因不在其中 → 動態補一個「只看：⋯」選項，
+  // 篩選語意照舊精準（只查那一個原因），下拉也顯示得出名字而不是原始代碼
   const qReason = String(route.query.reason || '')
-  const applied = qReason && reasonOptions.some(o => o.value === qReason)
+  const applied = !!qReason && qReason !== 'manual' && qReason in HANDOFF_REASON_LABELS
   if (applied) {
-    reasonFilter.value = qReason as HandoffReason
+    extraReasonOption.value = { label: `只看：${HANDOFF_REASON_LABELS[qReason as HandoffReason]}`, value: qReason }
+    reasonFilter.value = qReason
     // 警示看的是「發生過幾次」而非「還沒處理」→ 連結帶 includeResolved 才不會落在空清單
     if (String(route.query.includeResolved || '') === '1') showResolved.value = true
   }

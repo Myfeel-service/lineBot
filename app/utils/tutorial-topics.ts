@@ -339,7 +339,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="usg-kpi"]',
         title: '看 AI 幫你分擔多少',
         description:
-          '這排是重點：<strong>AI 介入次數、自動回覆率、轉真人率</strong>，還有「<strong>答後仍轉真人</strong>」（AI 答了客人還是要找真人，越低越好）和每對話成本——一眼看出 AI 顧得好不好。',
+          // 舊文案講「介入次數/自動回覆率/每對話成本」——名詞已改白話、成本已下架到超管，照舊講會找不到
+          '最大的數字是<strong>自己搞定率</strong>：客人來問的，AI 不用人幫忙就答完的比例。彩色長條把 AI 出手的結果拆成<strong>自己答完／轉給真人／先問清楚</strong>三段，下面那句灰框會直接告訴你現在算不算好、接下來做什麼。',
         placement: 'bottom',
       },
       {

@@ -25,16 +25,25 @@ function tsToMs(raw: unknown): number {
 }
 
 /**
- * GET /api/ai/usage/handoffs?limit=20&reason=low_confidence|no_grounding|any
+ * GET /api/ai/usage/handoffs?limit=20&reason=low_confidence,no_grounding&before=<ms>
  *
  * 列出最近被 AI 轉真人的對話（包含使用者原問與當時命中的卡）。
  * 監控頁的「補知識」入口；點進去可以看完整對話、或在知識庫補一張對應卡。
+ *
+ * - reason 接受逗號分隔多值：前端的篩選是「答不出來／刻意設計要人接」這類分組，
+ *   一組會一次帶好幾個原因（in 查詢與 == 用同一顆複合索引，免部署新索引）。
+ * - before（ms）是「載入更多」的游標；回應帶 hasMore 與 nextBefore，
+ *   清單見底時前端才有依據說「真的沒了」而不是「只載了 20 筆」。
  */
-export default defineEventHandler(async (event): Promise<HandoffRow[]> => {
+export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; hasMore: boolean; nextBefore: number }> => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
   const query = getQuery(event)
   const limit = Math.min(50, Math.max(1, Number(query.limit ?? 20)))
-  const reason = String(query.reason ?? '').trim()
+  // 白名單由共用標籤表導出(手抄第二份會漂移:新 reason 加了前端卻漏這裡,
+  // 篩選會靜默變成回全量);'manual' 是內部人工指定,不開放篩選。
+  const VALID_REASONS = new Set(Object.keys(HANDOFF_REASON_LABELS).filter(k => k !== 'manual'))
+  const reasons = String(query.reason ?? '').split(',').map(s => s.trim()).filter(r => VALID_REASONS.has(r))
+  const before = Number(query.before ?? 0)
 
   const includeResolved = String(query.includeResolved ?? '') === '1'
 
@@ -43,24 +52,24 @@ export default defineEventHandler(async (event): Promise<HandoffRow[]> => {
     .where('workspaceId', '==', workspaceId)
     .where('aiMeta.lastDecision', '==', 'handoff')
 
-  // 若指定特定 handoff 原因，改用 lastHandoffReason 查詢（對應 indexes.json 的 composite index）。
+  // 若指定 handoff 原因，改用 lastHandoffReason 查詢（對應 indexes.json 的 composite index）。
   // 注意:lastDecision 條件此時無法進查詢(會需要三欄複合索引),改在記憶體過濾——
   // 否則「還在等客人確認、實際沒轉接」的 handoff_confirm 會混進清單。
-  // 白名單由共用標籤表導出(手抄第二份會漂移:新 reason 加了前端卻漏這裡,
-  // 篩選會靜默變成回全量);'manual' 是內部人工指定,不開放篩選。
-  const VALID_REASONS = new Set(Object.keys(HANDOFF_REASON_LABELS).filter(k => k !== 'manual'))
-  const reasonFiltered = VALID_REASONS.has(reason)
+  const reasonFiltered = reasons.length > 0
   if (reasonFiltered) {
     q = db.collection('conversations')
       .where('workspaceId', '==', workspaceId)
-      .where('aiMeta.lastHandoffReason', '==', reason)
+      .where('aiMeta.lastHandoffReason', reasons.length === 1 ? '==' : 'in', reasons.length === 1 ? reasons[0] : reasons)
   }
+  // 載入更多：只回比游標更舊的。不等式落在 orderBy 同一欄，沿用既有索引
+  if (before > 0) q = q.where('aiMeta.updatedAt', '<', new Date(before))
 
   // resolved 與 lastDecision 過濾都在記憶體做,會吃掉查詢名額:只要任一種記憶體過濾
   // 會發生（未含已處理、或帶 reason 篩選）就多抓幾倍再 filter + slice,
-  // 避免「前 N 筆都被濾掉」讓頁面短少、更舊的真實案例被遮住
+  // 避免「前 N 筆都被濾掉」讓頁面短少、更舊的真實案例被遮住。
+  // 沒有記憶體過濾時多抓 1 筆當 hasMore 探針。
   const hasMemoryFilter = !includeResolved || reasonFiltered
-  const fetchLimit = hasMemoryFilter ? Math.min(100, limit * 3) : limit
+  const fetchLimit = hasMemoryFilter ? Math.min(100, limit * 3) : limit + 1
   const snap = await q.orderBy('aiMeta.updatedAt', 'desc').limit(fetchLimit).get()
 
   // Hydrate chunk titles（一次撈完，避免每列再打）
@@ -109,5 +118,18 @@ export default defineEventHandler(async (event): Promise<HandoffRow[]> => {
   })
 
   // 預設只回未處理的案例；includeResolved=1 連已處理的一起回
-  return (includeResolved ? rows : rows.filter(r => !r.resolved)).slice(0, limit)
+  const filtered = includeResolved ? rows : rows.filter(r => !r.resolved)
+  const sliced = filtered.slice(0, limit)
+
+  // 還有更舊的嗎：本頁被截掉的尾巴還有剩、或已抓滿抓取上限（外面大概率還有——
+  // 誤判成 true 的代價只是多按一次「載入更多」拿到空頁，比騙人「沒了」便宜）
+  const hasMore = filtered.length > limit || snap.size >= fetchLimit
+  // 下一頁游標：截掉尾巴時要接在「最後一筆回傳列」之後（否則被截掉的列會被跳過）；
+  // 沒截掉就接在「最後一筆掃過的 doc」之後（略過整段被記憶體過濾掉的，不重掃）
+  const lastDoc = snap.docs[snap.docs.length - 1]
+  const nextBefore = filtered.length > limit
+    ? (sliced[sliced.length - 1]?.updatedAtMs ?? 0)
+    : (lastDoc ? tsToMs((lastDoc.data() as { aiMeta?: AiConversationMeta }).aiMeta?.updatedAt) : 0)
+
+  return { rows: sliced, hasMore, nextBefore }
 })

@@ -17,6 +17,17 @@
   margin-bottom: 16px;
 }
 
+/* 額度警示與頁首控制項的尺寸（原本是 inline style，收進 partial） */
+.usage-quota-alert {
+  margin-bottom: 16px;
+}
+.usage-period-select {
+  width: 130px;
+}
+.usage-reason-select {
+  width: 180px;
+}
+
 /* 頂端 AI 狀態列：運作中=綠、草稿=琥珀、未啟用=灰。顏色帶語意，一眼判斷 AI 有沒有在跑 */
 .usage-status {
   display: flex;
@@ -202,6 +213,13 @@
   &--handoff  { .usage-leg__dot { background: #5b7a9d; } .usage-leg__v { color: #3f5a78; } }
   &--clarify  { .usage-leg__dot { background: #d99a2b; } .usage-leg__v { color: #b45309; } }
 
+  /* 「問完答成功 N 次」跟在百分比後面，補個間隔點才不會兩段灰字黏成一團 */
+  &__followup::before {
+    content: '·';
+    margin-right: 6px;
+    color: var(--text-muted);
+  }
+
   /* F7：可點下鑽（轉給真人 → 捲到清單）。有目標才變可點樣式 */
   &--link {
     cursor: pointer;
@@ -363,6 +381,35 @@
   margin-top: 2px;
 }
 
+/* 載入失敗：中性灰＋重試，跟綠色「都處理完了」長得完全不同——
+   「查不到」和「沒問題」必須是兩種畫面，否則斷線會被讀成好消息 */
+.usage-empty--error {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  text-align: left;
+  font-style: normal;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+
+  > .el-button {
+    flex: none;
+    margin-left: auto;
+  }
+}
+.usage-empty__icon--error {
+  background: var(--el-text-color-secondary);
+}
+
+/* 案例清單的「載入更多」：置中、跟列表拉開一點距離 */
+.usage-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
 /* 篩選列改放卡片內（不擠在標題）；與清單之間留一條分隔 */
 .usage-handoff-toolbar {
   display: flex;
@@ -417,5 +464,6 @@
 
 .usage-handoff-actions {
   display: flex;
+  flex-wrap: wrap; /* 窄視窗下四顆按鈕換行，不擠爆卡片 */
   gap: 6px;
 }
