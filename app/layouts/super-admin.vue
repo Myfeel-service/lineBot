@@ -39,7 +39,7 @@
         </NuxtLink>
         <NuxtLink to="/admin/super/costs" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/costs') }">
           <el-icon class="nav-icon"><Coin /></el-icon>
-          <span>AI 成本總覽</span>
+          <span>成本總覽</span>
         </NuxtLink>
         <NuxtLink to="/admin/super/leads" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/leads') }">
           <el-icon class="nav-icon"><Message /></el-icon>

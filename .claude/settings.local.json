@@ -338,7 +338,19 @@
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-script-meta.ts)",
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-fix-two-scripts.ts)",
       "Bash(node --env-file=.env_myfeel --experimental-strip-types .tmp-dump-live.ts 212405d2-d782-443b-9670-adac3b3e1f99)",
-      "Bash(sed -i '' 's|<span class=\"text-xs text-muted\">→</span>|<span class=\"text-xs text-muted scripts-branch-arrow\">→</span>|g' app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue && grep -n \"scripts-branch-arrow\" app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue)"
+      "Bash(sed -i '' 's|<span class=\"text-xs text-muted\">→</span>|<span class=\"text-xs text-muted scripts-branch-arrow\">→</span>|g' app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue && grep -n \"scripts-branch-arrow\" app/pages/admin/\\\\[workspaceId\\\\]/ai-scripts.vue)",
+      "Bash(gcloud projects *)",
+      "Bash(gcloud billing *)",
+      "Bash(node render.mjs)",
+      "Bash(node render.mjs full)",
+      "Bash(node render.mjs real)",
+      "Bash(node --experimental-strip-types /private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/a5a3e1b6-0087-467a-a0c9-740063723c58/scratchpad/live-check.ts)",
+      "Bash(node --experimental-strip-types live-check.ts)",
+      "Bash(node --experimental-strip-types live-check.ts /Users/kevin/Documents/Github/linebot/.env_myfeel 202607)",
+      "Bash(aws --version)",
+      "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check.mjs)",
+      "Bash(node render2.mjs)",
+      "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check2.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

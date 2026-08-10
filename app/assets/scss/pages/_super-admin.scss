@@ -397,132 +397,282 @@ $cost-test: #8a939b;
 
 .sa-cost-off { margin-left: 0.4rem; }
 
-/* 外部成本估算（拖拉 what-if） */
-.sa-cost-est {
+/* 卡片底部的口徑註記（換算依據、不含什麼） */
+.sa-cost-est__foot {
+  margin: 0.75rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #9ca3af);
+
+  b { color: var(--color-text-secondary, #6b7280); }
+}
+
+/* ── 資料庫（Firebase）實際花費 ───────────────────────── */
+// AI=沿用「回答客人」的藍（本頁最大宗）、資料庫=靛、主機=棕（三色相加＝總花費）
+$cost-ai: #2f7d9a;
+$cost-infra: #5b6ab0;
+$cost-host: #8a6f5a;
+
+.sa-cost-seg--ai { background: $cost-ai; }
+.sa-cost-seg--infra { background: $cost-infra; }
+.sa-cost-seg--host { background: $cost-host; }
+.sa-cost-dot--ai { background: $cost-ai; }
+.sa-cost-dot--infra { background: $cost-infra; }
+.sa-cost-dot--host { background: $cost-host; }
+
+/* 讀不到用量時的警示：務必看得出「不是沒花錢，是沒查到」 */
+.sa-infra-warn {
+  margin-top: 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.08);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: #92400e;
+
+  b { font-weight: 700; }
+}
+
+/* 各格相加＝資料庫總花費（auto-fit：格數變動也不會留孤兒） */
+.sa-infra-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 1.5rem;
-
-  @media (max-width: 820px) { grid-template-columns: 1fr; }
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.4rem;
 }
 
-.sa-cost-est__inputs {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+.sa-infra-cell {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--color-bg-subtle, #f9fafb);
+
+  /* 估算格：虛線框，一眼看出這格跟其他格的可信度不同 */
+  &--est {
+    border-style: dashed;
+    background: transparent;
+  }
 }
 
-.sa-cost-est__label {
+.sa-infra-est-tag {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #92400e;
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.sa-infra-cell__label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.sa-infra-cell__val {
+  margin-top: 0.15rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text-primary, #111827);
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-infra-cell__sub {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #9ca3af);
+}
+
+.sa-infra-chart-head {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 0.6rem;
 }
 
-.sa-cost-est__adv {
-  margin-top: 0.25rem;
-  border-top: 1px dashed var(--color-border, #e5e7eb);
-  padding-top: 0.85rem;
-
-  summary {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--color-text-secondary, #6b7280);
-    cursor: pointer;
-  }
-}
-
-.sa-cost-est__advgrid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.85rem 1.5rem;
-  margin-top: 0.85rem;
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary, #6b7280);
-  }
-}
-
-.sa-cost-est__name {
+.sa-infra-chart-title {
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary, #111827);
 }
 
-.sa-cost-est__hint {
+/* 圖例＋最高值：說明灰／靛各代表什麼，不用在圖上放會撞柱子的浮動標籤 */
+.sa-infra-chart-max {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   font-size: 0.72rem;
   color: var(--color-text-secondary, #9ca3af);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.sa-cost-est__out {
-  align-self: start;
-  padding: 1.15rem 1.25rem;
-  border-radius: 10px;
-  background: var(--accent-soft, #eef2ff);
-  border: 1px solid var(--color-border, #e5e7eb);
+.sa-infra-key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+  margin-left: 0.35rem;
+
+  &--free { background: #d5d9de; }
+  &--paid { background: $cost-infra; }
 }
 
-.sa-cost-est__outtitle {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--color-text-secondary, #9ca3af);
-  margin-bottom: 0.6rem;
-}
-
-.sa-cost-est__line {
+/* 每日讀取柱狀圖：灰＝免費額度內、靛＝要付錢的部分 */
+.sa-infra-chart__plot {
+  position: relative;
   display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 150px;
+  padding-top: 1.1rem; // 留給柱子上方的金額標籤
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.sa-infra-col {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.sa-infra-col__bar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #d5d9de; // 免費額度內的部分
+  overflow: hidden;
+}
+
+.sa-infra-col__paid {
+  width: 100%;
+  background: $cost-infra; // 超出免費額度＝真的要付錢
+}
+
+.sa-infra-col__tag {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 2px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: $cost-infra;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-infra-chart__axis {
+  display: flex;
+  gap: 3px;
+  margin-top: 0.3rem;
+}
+
+.sa-infra-chart__tick {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  font-size: 0.6rem;
+  color: var(--color-text-secondary, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 主機（AWS）：未接上時的開通步驟 */
+.sa-host-setup {
+  margin-top: 1rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--color-bg-subtle, #f9fafb);
+}
+
+.sa-host-setup__title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  margin-bottom: 0.5rem;
+}
+
+.sa-host-setup__steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.8rem;
+  line-height: 1.9;
+  color: var(--color-text-secondary, #6b7280);
+
+  b { color: var(--color-text-primary, #111827); }
+}
+
+.sa-host-setup__note {
+  margin: 0.7rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #9ca3af);
+}
+
+/* 主機各服務花費：長條長度＝相對最大項，數字靠右對齊 */
+.sa-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sa-host-row {
+  position: relative;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.3rem 0;
-  font-size: 0.85rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  overflow: hidden;
+}
+
+.sa-host-row__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(138, 111, 90, 0.16);
+  border-radius: 6px;
+}
+
+.sa-host-row__name {
+  position: relative;
+  color: var(--color-text-primary, #111827);
+}
+
+.sa-host-row__val {
+  position: relative;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sa-infra-top {
+  margin-top: 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  background: var(--color-bg-subtle, #f9fafb);
+  font-size: 0.8rem;
+  line-height: 1.7;
   color: var(--color-text-secondary, #6b7280);
 
   b {
     color: var(--color-text-primary, #111827);
     font-variant-numeric: tabular-nums;
   }
-}
-
-.sa-cost-est__line--sub {
-  margin-top: 0.35rem;
-  padding-top: 0.55rem;
-  border-top: 1px solid var(--color-border, #e5e7eb);
-  color: var(--color-text-primary, #111827);
-  font-weight: 700;
-}
-
-.sa-cost-est__grand {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-  margin-top: 0.5rem;
-  padding-top: 0.7rem;
-  border-top: 1px solid var(--color-border, #e5e7eb);
-
-  span {
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: var(--color-text-primary, #111827);
-  }
-
-  b {
-    font-size: 1.7rem;
-    font-weight: 800;
-    color: var(--color-text-primary, #111827);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
-.sa-cost-est__foot {
-  margin: 0.75rem 0 0;
-  font-size: 0.72rem;
-  line-height: 1.5;
-  color: var(--color-text-secondary, #9ca3af);
 }

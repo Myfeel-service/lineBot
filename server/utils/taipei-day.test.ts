@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from './taipei-day'
+import { taipeiDateKey, taipeiDayEnd, taipeiDayStart, taipeiMidnightAfter } from './taipei-day'
 
 /**
  * 這組測試守的是「昨日摘要 18 vs 16」那個坑：日期參數的日界線必須是台北時間，
@@ -24,6 +24,17 @@ describe('taipei-day', () => {
     const tpe0806_0300 = new Date('2026-08-05T19:00:00Z') // 台北 8/6 03:00
     expect(tpe0806_0300 >= taipeiDayStart('2026-08-06')!).toBe(true)
     expect(taipeiDateKey(tpe0806_0300)).toBe('2026-08-06')
+  })
+
+  it('taipeiMidnightAfter：推到下一個台北午夜(成本頁的每日分桶靠這個才切在日曆日上)', () => {
+    // 台北 8/10 00:18 → 下一個午夜是台北 8/11 00:00 = UTC 8/10 16:00
+    expect(taipeiMidnightAfter(new Date('2026-08-09T16:18:59Z')).toISOString()).toBe('2026-08-10T16:00:00.000Z')
+    // 台北 8/10 23:59:59.999 → 仍是台北 8/11 00:00
+    expect(taipeiMidnightAfter(new Date('2026-08-10T15:59:59.999Z')).toISOString()).toBe('2026-08-10T16:00:00.000Z')
+    // 剛好踩在台北午夜 → 取「下一個」(嚴格大於,不會回自己造成空區間)
+    const midnight = new Date('2026-08-09T16:00:00.000Z') // 台北 8/10 00:00
+    expect(taipeiMidnightAfter(midnight).toISOString()).toBe('2026-08-10T16:00:00.000Z')
+    expect(taipeiMidnightAfter(midnight).getTime()).toBeGreaterThan(midnight.getTime())
   })
 
   it('格式不對回 null(呼叫端 fallback 成預設區間,不會丟 Invalid Date 進 Firestore)', () => {

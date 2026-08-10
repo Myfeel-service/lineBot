@@ -41,3 +41,17 @@ export function shiftToTaipei(d: Date): Date {
 export function taipeiDateKey(d: Date): string {
   return shiftToTaipei(d).toISOString().slice(0, 10)
 }
+
+/**
+ * 下一個台北午夜（嚴格大於 d）。
+ *
+ * 用途：Cloud Monitoring 的分桶是**從查詢的結束時間往回切**的，不是從起點往後切。
+ * 結束時間若直接給「現在」，切出來的就會是「每天 00:18 分界」這種滾動 24 小時窗，
+ * 標成日曆日就整批偏移一天（2026-08-10 實測：尖峰從 8/4 被標到 8/5）。
+ * 把結束時間推到下一個台北午夜，每一桶才真的是一個台北日曆日。
+ */
+export function taipeiMidnightAfter(d: Date): Date {
+  const shifted = d.getTime() + TAIPEI_OFFSET_MS
+  const dayStart = Math.floor(shifted / 86_400_000) * 86_400_000
+  return new Date(dayStart + 86_400_000 - TAIPEI_OFFSET_MS)
+}
