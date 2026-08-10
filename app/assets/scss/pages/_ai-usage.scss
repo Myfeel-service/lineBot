@@ -149,7 +149,8 @@
   vertical-align: middle;
 }
 
-/* 分段長條：顏色帶語意——答完＝綠（自助成功）、轉真人＝藍（正常交接、非壞事）、反問＝琥珀 */
+/* 分段長條：顏色帶語意——全程搞定＝綠（自助成功）、用到真人＝藍（正常交接、非壞事）。
+   2026-08-10 改場制後只剩兩段；「先問清楚」退出主畫面（偏高才以 .usage-note--warn 現身） */
 .usage-segbar {
   display: flex;
   height: 26px;
@@ -164,16 +165,21 @@
 
   &--answered { background: var(--brand-green-deep); }
   &--handoff  { background: #5b7a9d; }
-  &--clarify  { background: #d99a2b; }
 }
 
-/* 長條外的補充說明行（轉真人原因拆解／客人指名真人）——刻意不給語意色、不進圖例 */
+/* 長條外的補充說明行（轉真人原因拆解／非 AI 接的場）——刻意不給語意色、不進圖例 */
 .usage-note {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
 
   b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+}
+/* 偏高才現身的診斷行（例：先問清楚過線）——琥珀語意，是訊號不是統計 */
+.usage-note--warn {
+  color: #b45309;
+
+  b { color: #b45309; }
 }
 
 .usage-legend {
@@ -218,14 +224,6 @@
 
   &--answered { .usage-leg__dot { background: var(--brand-green-deep); } .usage-leg__v { color: var(--brand-green-text); } }
   &--handoff  { .usage-leg__dot { background: #5b7a9d; } .usage-leg__v { color: #3f5a78; } }
-  &--clarify  { .usage-leg__dot { background: #d99a2b; } .usage-leg__v { color: #b45309; } }
-
-  /* 「問完答成功 N 次」跟在百分比後面，補個間隔點才不會兩段灰字黏成一團 */
-  &__followup::before {
-    content: '·';
-    margin-right: 6px;
-    color: var(--text-muted);
-  }
 
   /* F7：可點下鑽（轉給真人 → 捲到清單）。有目標才變可點樣式 */
   &--link {

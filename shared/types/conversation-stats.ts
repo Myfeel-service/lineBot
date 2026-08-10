@@ -135,6 +135,12 @@ export interface TrendBucket {
   handoff: number
   closed: number
   /**
+   * AI 首接、但之後仍轉真人的場數（= KPI 的 aiEscalated，按桶分）。
+   * AI 表現頁的「全程搞定率」分母用 ai、分子用 ai − aiEscalated——
+   * 與對話統計頁同一份分類邏輯，兩頁數字永遠對得起來。
+   */
+  aiEscalated: number
+  /**
    * 這一桶的新加好友數（users.createdAt，與對話數平行的另一條資料）。
    * 可選＝查好友失敗時**整批省略**而不是裝 0——圖上缺一條線比畫一條假的 0 線誠實。
    */

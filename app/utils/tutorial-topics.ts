@@ -339,8 +339,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="usg-kpi"]',
         title: '看 AI 幫你分擔多少',
         description:
-          // 舊文案講「介入次數/自動回覆率/每對話成本」——名詞已改白話、成本已下架到超管，照舊講會找不到
-          '最大的數字是<strong>自己搞定率</strong>：客人來問的，AI 不用人幫忙就答完的比例。彩色長條把 AI 出手的結果拆成<strong>自己答完／轉給真人／先問清楚</strong>三段，下面那句灰框會直接告訴你現在算不算好、接下來做什麼。',
+          // 2026-08-10 改場制：主指標是「場」不是「題」——導覽要跟畫面講同一種話
+          '最大的數字是<strong>全程搞定率</strong>：AI 接的對話裡，有幾成從頭到尾沒用到真人。彩色長條把 AI 接的場拆成<strong>全程搞定／用到真人</strong>兩段，下面那句灰框會直接告訴你現在算不算好、接下來做什麼。',
         placement: 'bottom',
       },
       {

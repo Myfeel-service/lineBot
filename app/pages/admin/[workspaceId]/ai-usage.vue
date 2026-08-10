@@ -70,129 +70,115 @@
         </template>
 
         <!-- ── AI 表現：這頁的主角 ─────────────────────── -->
-        <!-- 刻意沒有卡片標題：原本寫「核心指標」是內部術語，而且月份 hero 自己會講，
-             標題列等於把下面那句再說一次 -->
+        <!-- 2026-08-10 老闆拍板改「場」制：主指標＝AI 接的對話裡，幾場從頭到尾沒用到真人。
+             「場」是使用者本來就懂、在對話列表自己驗證得了的單位；「題」「出手」這些
+             工程單位一律不再出現在畫面上（口徑細節收 tooltip）。
+             資料源＝對話統計頁的 session 分類（同一支 trend API、同一份 aiEscalated 條件），
+             兩頁數字永遠對得起來，「次 vs 場」的和解條約也就不需要了。 -->
         <div class="message-card usage-card" data-tour="usg-kpi">
           <div class="card-section-stack">
-            <div v-if="loading && !summary" class="usage-loading"><div class="spinner" /></div>
-            <!-- 載入失敗 ≠ 還沒有客人來問：summary 拿不到時如實說「不知道」。
+            <div v-if="heroLoading" class="usage-loading"><div class="spinner" /></div>
+            <!-- 載入失敗 ≠ 還沒有客人來：拿不到資料時如實說「不知道」。
                  「查不到」跟「沒問題」必須是兩種畫面（08-09 假綠燈教訓，三個載入點都比照） -->
-            <div v-else-if="!summary" class="usage-empty usage-empty--error">
+            <div v-else-if="heroError" class="usage-empty usage-empty--error">
               <span class="usage-empty__icon usage-empty__icon--error">!</span>
               <div>
                 <div class="usage-empty__title">數據剛剛沒有載出來</div>
-                <div class="usage-empty__desc">不是沒有客人來問，是還不知道——通常重試一次就好。</div>
+                <div class="usage-empty__desc">不是沒有客人來，是還不知道——通常重試一次就好。</div>
               </div>
               <el-button size="small" @click="loadAll">重試</el-button>
             </div>
             <template v-else>
-              <!-- Hero：AI 出手 = 自己答完 + 轉給真人 + 先問清楚（乾淨拆解，一條分段長條看懂產出結構）。
-                   用詞照 2026-08-07 的名詞收斂表（docs/STATS-SIMPLIFICATION-20260807.md）：
-                   不再講「AI 介入／反問」——畫面早就是白話了，註解也別留舊詞免得被抄回去 -->
               <div class="usage-hero">
                 <div class="usage-hero__head">
-                  <!-- Hero 主角＝自己搞定率，不是處理了幾則（2026-08-10 拍板）。
-                       這是 agent 產品真正在賣的東西：幫你擋掉多少，而不是用掉多少。
-                       則數退居副標——它是分母，不是成績。 -->
-                  <template v-if="(summary?.aiEngaged ?? 0) > 0">
-                    <strong class="usage-hero__num" :class="metricTone('autoReply', summary?.autoReplyRate)">
-                      {{ formatPercent(summary?.autoReplyRate) }}
+                  <template v-if="(heroMonth?.ai ?? 0) > 0">
+                    <strong class="usage-hero__num" :class="metricTone('autoReply', heroRate)">
+                      {{ formatPercent(heroRate) }}
                     </strong>
-                    <!-- 副標刻意把分子分母都念出來（「出手 203 次，其中 80 次自己答完」）：
-                         39% 打哪來變成讀得出來的事，不必去對照下面的長條或自己心算。
-                         老闆實際反映過「自己搞定怎麼算出來的還是有點難理解」——這行就是答案。 -->
+                    <!-- 副標把分子分母都念出來（「接了 120 場，其中 70 場沒用到真人」）：
+                         比例打哪來是用讀的就懂的事，不必對照長條或自己心算 -->
                     <span class="usage-hero__label">
-                      <b>自己搞定</b>
+                      <b>全程搞定</b>
                       <el-tooltip placement="top">
                         <template #content>
-                          自己搞定 ＝ 自己答完 ÷ AI 出手總數（下面彩色長條的全長）。<br>
-                          「先問清楚」算在分母、不算在分子：那一次還沒有結局，要等客人選完才有答案。<br>
-                          客人一開口就指名真人的完全不算——那時 AI 根本沒出手，不該算它的成績。
+                          AI 第一個接住這場對話、而且到結束都沒有交給真人，就算「全程搞定」。<br>
+                          一場裡客人問了幾件事、AI 來回幾則訊息都不影響——只看最後有沒有用到你的人。<br>
+                          場的算法與「對話統計」頁同一份資料，兩頁對得起來。
                         </template>
                         <el-icon class="usage-hero__info"><InfoFilled /></el-icon>
                       </el-tooltip>
-                      <br>{{ periodLabel }} AI 出手 {{ formatNumber(summary?.aiEngaged) }} 次{{ invocationsDeltaText }}，其中 <b>{{ formatNumber(summary?.answered) }}</b> 次自己答完
+                      <br>{{ periodLabel }} AI 接了 {{ formatNumber(heroMonth?.ai) }} 場對話{{ sessionsDeltaText }}，其中 <b>{{ formatNumber(heroMonth?.solved) }}</b> 場從頭到尾沒用到真人
                     </span>
                     <!-- 比率的變化要用「百分點」不是「%」：68%→74% 是進步 6 個百分點，不是 6%。
-                         這顆可以上色——自己搞定率越高越好，方向明確（訊息量則不然，故只寫在副標不上色）。 -->
+                         這顆可以上色——搞定率越高越好，方向明確（場數多寡則不然，故只寫在副標不上色）。 -->
                     <span
-                      v-if="autoReplyDeltaPts !== null"
+                      v-if="rateDeltaPts !== null"
                       class="usage-delta"
-                      :class="autoReplyDeltaPts > 0 ? 'usage-delta--good' : (autoReplyDeltaPts < 0 ? 'usage-delta--warn' : '')"
+                      :class="rateDeltaPts > 0 ? 'usage-delta--good' : (rateDeltaPts < 0 ? 'usage-delta--warn' : '')"
                     >
-                      較上月 {{ autoReplyDeltaPts > 0 ? '▲' : (autoReplyDeltaPts < 0 ? '▼' : '＝') }} {{ Math.abs(autoReplyDeltaPts) }} 個百分點
+                      較上月 {{ rateDeltaPts > 0 ? '▲' : (rateDeltaPts < 0 ? '▼' : '＝') }} {{ Math.abs(rateDeltaPts) }} 個百分點
                     </span>
                   </template>
-                  <!-- 一則都沒有時不能顯示「0% 自己搞定」——那會把「沒資料」講成「一題都沒答對」。
-                       「有客人但全是指名真人」也不能說成「還沒有客人來問」——那是另一回事。 -->
+                  <!-- 一場都沒有時不能顯示「0% 全程搞定」——那會把「沒資料」講成「每場都失敗」。
+                       「有客人但 AI 都沒接到」也不能說成「還沒有客人來」——那是另一回事。 -->
                   <template v-else>
                     <strong class="usage-hero__num">—</strong>
-                    <span class="usage-hero__label"><b>自己搞定</b><br>{{ (summary?.invocations ?? 0) > 0 ? `${periodLabel} 客人都直接找真人，AI 沒有出手` : `${periodLabel} 還沒有客人來問` }}</span>
+                    <span class="usage-hero__label"><b>全程搞定</b><br>{{ (heroMonth?.total ?? 0) > 0 ? `${periodLabel} 客人來的 ${formatNumber(heroMonth?.total)} 場對話都由真人或選單流程服務，AI 沒有接到場` : `${periodLabel} 還沒有客人來過` }}</span>
                   </template>
                 </div>
-                <template v-if="(summary?.aiEngaged ?? 0) > 0">
+                <template v-if="(heroMonth?.ai ?? 0) > 0">
                   <div
                     class="usage-segbar"
                     role="img"
-                    :aria-label="`自己答完 ${summary?.answered}、轉給真人 ${aiHandoffCount}、先問清楚 ${summary?.disambiguations}`"
+                    :aria-label="`全程搞定 ${heroMonth?.solved} 場、用到真人 ${heroMonth?.escalated} 場`"
                   >
-                    <span class="usage-seg usage-seg--answered" :style="{ width: `${segPct.answered}%` }" />
-                    <span class="usage-seg usage-seg--handoff" :style="{ width: `${segPct.handoff}%` }" />
-                    <span class="usage-seg usage-seg--clarify" :style="{ width: `${segPct.clarify}%` }" />
+                    <span class="usage-seg usage-seg--answered" :style="{ width: `${segPct.solved}%` }" />
+                    <span class="usage-seg usage-seg--handoff" :style="{ width: `${segPct.escalated}%` }" />
                   </div>
                   <div class="usage-legend">
                     <div class="usage-leg usage-leg--answered">
                       <span class="usage-leg__dot" />
-                      <span class="usage-leg__k">自己答完</span>
-                      <span class="usage-leg__v">{{ formatNumber(summary?.answered) }}</span>
-                      <span class="usage-leg__pct">{{ formatPercent(summary?.autoReplyRate) }}</span>
+                      <span class="usage-leg__k">全程搞定</span>
+                      <span class="usage-leg__v">{{ formatNumber(heroMonth?.solved) }}</span>
+                      <span class="usage-leg__pct">{{ formatPercent(heroRate) }}</span>
                     </div>
                     <div
                       class="usage-leg usage-leg--handoff"
-                      :class="{ 'usage-leg--link': (summary?.handoffs ?? 0) > 0 }"
-                      :role="(summary?.handoffs ?? 0) > 0 ? 'button' : undefined"
-                      :tabindex="(summary?.handoffs ?? 0) > 0 ? 0 : undefined"
-                      @click="(summary?.handoffs ?? 0) > 0 && scrollToHandoffs()"
-                      @keydown.enter="(summary?.handoffs ?? 0) > 0 && scrollToHandoffs()"
+                      :class="{ 'usage-leg--link': (heroMonth?.escalated ?? 0) > 0 }"
+                      :role="(heroMonth?.escalated ?? 0) > 0 ? 'button' : undefined"
+                      :tabindex="(heroMonth?.escalated ?? 0) > 0 ? 0 : undefined"
+                      @click="(heroMonth?.escalated ?? 0) > 0 && scrollToHandoffs()"
+                      @keydown.enter="(heroMonth?.escalated ?? 0) > 0 && scrollToHandoffs()"
                     >
                       <span class="usage-leg__dot" />
                       <span class="usage-leg__k">
-                        轉給真人
-                        <!-- 兩本帳的說明放在最容易被拿去對數字的位置：這裡數「次」（AI 每觸發一次轉接算一次）、
-                             對話統計頁數「場」（同一場轉幾次都算 1）——兩邊數字不同是刻意的，見定義書 -->
-                        <el-tooltip placement="top" content="AI 看過之後判斷該給真人接的次數。客人一開口就指名真人的不算在這（另列在下方）。這裡數「次」，對話統計頁數「場」（同一場轉幾次都算 1），兩頁數字不一樣是正常的。">
+                        用到真人
+                        <el-tooltip placement="top" content="AI 先接住、但這場後來還是把客人交給了真人——含客人自己開口指名真人的。">
                           <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
                         </el-tooltip>
                       </span>
-                      <span class="usage-leg__v">{{ formatNumber(aiHandoffCount) }}</span>
-                      <span class="usage-leg__pct">{{ formatPercent(summary?.handoffRate) }}</span>
-                      <span v-if="(summary?.handoffs ?? 0) > 0" class="usage-leg__go">查看 ↓</span>
-                    </div>
-                    <div class="usage-leg usage-leg--clarify">
-                      <span class="usage-leg__dot" />
-                      <span class="usage-leg__k">
-                        先問清楚
-                        <el-tooltip placement="top" content="這是中間一步、不是結局：AI 先問「你是要哪一個」，客人選完 AI 才接著回答。偏高通常代表知識卡標題太相近。">
-                          <el-icon class="usage-leg__info"><InfoFilled /></el-icon>
-                        </el-tooltip>
-                      </span>
-                      <span class="usage-leg__v">{{ formatNumber(summary?.disambiguations) }}</span>
-                      <span class="usage-leg__pct">{{ formatPercent(summary?.disambiguationRate) }}</span>
-                      <!-- 反問的成果：followup 不記 answered，用子計數補能見度（8/10 起才有資料，0 就不顯示） -->
-                      <span v-if="(summary?.followupAnswered ?? 0) > 0" class="usage-leg__pct usage-leg__followup">問完答成功 {{ formatNumber(summary?.followupAnswered) }} 次</span>
+                      <span class="usage-leg__v">{{ formatNumber(heroMonth?.escalated) }}</span>
+                      <span class="usage-leg__pct">{{ heroMonth?.ai ? formatPercent(heroMonth.escalated / heroMonth.ai) : '' }}</span>
+                      <span v-if="(heroMonth?.escalated ?? 0) > 0" class="usage-leg__go">查看 ↓</span>
                     </div>
                   </div>
                 </template>
 
-                <!-- 轉真人拆解：同一個數字拆成「有救的」跟「本來就設計要人接的」，才知道力氣花哪。
-                     放在 v-if 外面：就算整月都是客人指名（沒有長條），下面那行也要照講。 -->
-                <div v-if="handoffBreakdown" class="usage-note">
-                  轉給真人的 {{ formatNumber(handoffBreakdown.total) }} 次裡：答不出來 <b>{{ formatNumber(handoffBreakdown.gap) }}</b> 次（補知識就有救）<template v-if="handoffBreakdown.intended">・刻意設計要人接的 <b>{{ formatNumber(handoffBreakdown.intended) }}</b> 次（查訂單、敏感話題這類）</template><template v-if="handoffBreakdown.unknown">・其餘 {{ formatNumber(handoffBreakdown.unknown) }} 次是較早的紀錄，沒留下原因</template>
+                <!-- 不是 AI 接的場：只補一句去處。明細（真人首接/沒人回/選單）是對話統計頁的事，這頁不重複 -->
+                <div v-if="heroOtherCount > 0" class="usage-note">
+                  另有 {{ formatNumber(heroOtherCount) }} 場不是 AI 接的（真人直接服務、選單流程、或還沒人回）——明細看<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">對話統計</NuxtLink>。
                 </div>
 
-                <!-- 客人指名真人：這是客人偏好，不是 AI 的成績（分子分母都不含），所以列在長條外面 -->
-                <div v-if="(summary?.directHandoffs ?? 0) > 0" class="usage-note">
-                  另有 <b>{{ formatNumber(summary?.directHandoffs) }}</b> 次客人一開口就指名真人、直接轉接——這是客人偏好，不算進上面的成績。
+                <!-- 交給真人的原因拆解：讓「用到真人」看得出該做什麼（哪些補知識有救）。
+                     原因記在「每一次轉接」上、上面的長條數「場」——單位不同就講明白，不裝一樣。 -->
+                <div v-if="handoffBreakdown" class="usage-note">
+                  AI 把客人交給真人共 {{ formatNumber(handoffBreakdown.total) }} 次（同一場可能轉好幾次）：答不出來 <b>{{ formatNumber(handoffBreakdown.gap) }}</b> 次（補知識就有救）<template v-if="handoffBreakdown.named">・客人指名要真人 {{ formatNumber(handoffBreakdown.named) }} 次</template><template v-if="handoffBreakdown.intended">・刻意設計要人接 {{ formatNumber(handoffBreakdown.intended) }} 次（查訂單、敏感話題這類）</template><template v-if="handoffBreakdown.image">・客人傳圖片/檔案 {{ formatNumber(handoffBreakdown.image) }} 次</template><template v-if="handoffBreakdown.unknown">・其餘 {{ formatNumber(handoffBreakdown.unknown) }} 次是較早的紀錄，沒留下原因</template>
+                </div>
+
+                <!-- 「先問清楚」退出主畫面（2026-08-10 老闆拍板：使用者不在乎機制）——
+                     只在偏高時現身一行，直接給診斷與動作，是訊號不是統計 -->
+                <div v-if="clarifyWarning" class="usage-note usage-note--warn">
+                  ⚠ {{ clarifyWarning }}
                 </div>
               </div>
 
@@ -226,7 +212,7 @@
                   </template>
                   <template v-else>
                     <strong class="usage-substat__value">—</strong>
-                    <span class="usage-substat__sub">{{ periodLabel }} AI 還沒有答過題</span>
+                    <span class="usage-substat__sub">{{ periodLabel }} AI 還沒有回答過客人</span>
                   </template>
                 </div>
               </div>
@@ -323,25 +309,25 @@
           </div>
         </div>
 
-        <!-- ── 近 3 個月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
+        <!-- ── 每月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
         <div class="message-card usage-card">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">{{ trendTitle }}</span>
               <!-- 副標直接寫算式：整根柱＝分母、綠段＝分子，折線就是綠段佔整根的比例。
-                   老闆反映「自己搞定怎麼算出來的還是有點難理解」——一句話講完，比 tooltip 可靠 -->
-              <span class="text-xs text-muted">一根柱子＝AI 出手總數，折線＝綠色「自己答完」佔整根的比例（線往上＝變好）</span>
+                   老闆反映「怎麼算出來的還是有點難理解」——一句話講完，比 tooltip 可靠 -->
+              <span class="text-xs text-muted">一根柱子＝AI 接的對話場數，折線＝全程沒用到真人的比例（線往上＝變好）</span>
             </div>
           </div>
           <div class="card-section-stack">
-            <div v-if="loadingTrend && !trend.length" class="usage-loading"><div class="spinner" /></div>
-            <div v-else-if="trendError" class="usage-empty usage-empty--error">
+            <div v-if="loadingSessions && !sessionBuckets.length" class="usage-loading"><div class="spinner" /></div>
+            <div v-else-if="sessionsError" class="usage-empty usage-empty--error">
               <span class="usage-empty__icon usage-empty__icon--error">!</span>
               <div>
                 <div class="usage-empty__title">趨勢剛剛沒有載出來</div>
                 <div class="usage-empty__desc">不是沒有資料，是還不知道——通常重試一次就好。</div>
               </div>
-              <el-button size="small" @click="loadTrend">重試</el-button>
+              <el-button size="small" @click="loadSessions">重試</el-button>
             </div>
             <ClientOnly v-else-if="trendHasData">
               <VChart class="usage-trend-chart" :option="trendOption" autoresize />
@@ -349,7 +335,7 @@
             </ClientOnly>
             <div v-else class="usage-empty">
               <template v-if="trendMonthsWithData === 1">目前只有一個月的資料，再過一個月就能看出是變好還是變差。</template>
-              <template v-else>還沒有足夠資料能看趨勢，AI 開始服務客人後這裡就會長出來。</template>
+              <template v-else>還沒有足夠資料能看趨勢，AI 開始接對話後這裡就會長出來。</template>
             </div>
           </div>
         </div>
@@ -401,6 +387,7 @@
 <script setup lang="ts">
 import { ChatDotRound, InfoFilled, Refresh, Upload } from '@element-plus/icons-vue'
 import { HANDOFF_REASON_LABELS, KNOWLEDGE_GAP_HANDOFF_REASONS, type HandoffReason } from '~~/shared/types/ai-knowledge'
+import type { TrendBucket } from '~~/shared/types/conversation-stats'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 
@@ -463,26 +450,17 @@ interface HandoffRow {
   updatedAtMs: number
 }
 
-interface TrendPoint {
-  period: string
-  label: string
-  invocations: number
-  answered: number
-  handoffs: number
-  disambiguations: number
-  directHandoffs: number
-}
-
 const summary = ref<Summary | null>(null)
 const handoffs = ref<HandoffRow[]>([])
-const trend = ref<TrendPoint[]>([])
+/** 場制資料源：對話統計的 session 月桶（hero 與趨勢圖共用同一份回應） */
+const sessionBuckets = ref<TrendBucket[]>([])
 // ⛔ 三個 loading 初始都是 true：初始 render 發生在 onMounted 之前，
-// 初始 false 會讓「還沒開始載」的那一幀直接掉進空狀態（畫面閃一下「還沒有客人來問」）
+// 初始 false 會讓「還沒開始載」的那一幀直接掉進空狀態（畫面閃一下「還沒有客人來」）
 const loading = ref(true)
 const loadingHandoffs = ref(true)
-const loadingTrend = ref(true)
+const loadingSessions = ref(true)
 // 失敗三態：「查不到」和「沒問題」要分開（凡是查不到＝沒事的檢查都是假綠燈）
-const trendError = ref(false)
+const sessionsError = ref(false)
 const handoffsError = ref(false)
 // 案例清單的「還有更舊的」與載入更多游標（後端回 nextBefore，見 handoffs.get.ts）
 const handoffsHasMore = ref(false)
@@ -516,44 +494,87 @@ function onFilterChange() {
   void loadHandoffs()
 }
 
-// AI 出手的三種結果佔比（分段長條寬度）。分母是 aiEngaged（AI 真的出手過）——
-// 客人指名真人的 directHandoffs 分子分母一起扣，恆等式仍成立：
-// answered + (handoffs − direct) + disambiguations = aiEngaged，三段相加即 100%。
-const segPct = computed(() => {
-  const total = summary.value?.aiEngaged || 0
-  if (!total) return { answered: 0, handoff: 0, clarify: 0 }
-  return {
-    answered: ((summary.value?.answered ?? 0) / total) * 100,
-    handoff: (aiHandoffCount.value / total) * 100,
-    clarify: ((summary.value?.disambiguations ?? 0) / total) * 100,
-  }
+/**
+ * 場制主資料（2026-08-10 老闆拍板）：hero 與趨勢都吃對話統計的 session 月桶。
+ * 一場＝對話列表看得到的一場會話；ai＝AI 首接的場、aiEscalated＝其中後來仍轉真人的場。
+ * 與對話統計頁同一支 API、同一份分類條件——兩頁數字天生一致，免換算免和解。
+ */
+const monthRowsAll = computed(() => {
+  const byKey = new Map(sessionBuckets.value.map(b => [b.date, b]))
+  // periodOptions 是新→舊，圖與「上月」比較都要舊→新
+  return [...periodOptions].reverse().map((o) => {
+    const key = `${o.value.slice(0, 4)}-${o.value.slice(4)}`
+    const b = byKey.get(key)
+    const ai = b?.ai ?? 0
+    const escalated = Math.min(ai, b?.aiEscalated ?? 0)
+    return {
+      period: o.value,
+      label: key,
+      total: b?.total ?? 0,
+      ai,
+      escalated,
+      solved: ai - escalated,
+      ratePct: ai > 0 ? Math.round(((ai - escalated) / ai) * 100) : null,
+    }
+  })
 })
-
-/** 「AI 判斷後轉真人」＝總轉真人扣掉客人指名的那些（圖例與長條都用這個數） */
-const aiHandoffCount = computed(() =>
-  Math.max(0, (summary.value?.handoffs ?? 0) - (summary.value?.directHandoffs ?? 0)))
+/** 所選月份的場數（月份選單一定在 monthRowsAll 裡，找不到＝資料還沒到 → 零狀態） */
+const heroMonth = computed(() => monthRowsAll.value.find(r => r.period === period.value) ?? null)
+const heroRate = computed(() => {
+  const m = heroMonth.value
+  return m && m.ai > 0 ? m.solved / m.ai : 0
+})
+/** 兩段長條寬度：全程搞定＋用到真人＝AI 接的場數，相加即 100% */
+const segPct = computed(() => {
+  const m = heroMonth.value
+  if (!m || !m.ai) return { solved: 0, escalated: 0 }
+  return { solved: (m.solved / m.ai) * 100, escalated: (m.escalated / m.ai) * 100 }
+})
+/** 不是 AI 接的場（真人首接／沒人回／純機器人流程）——補一句去處就好，明細歸對話統計頁 */
+const heroOtherCount = computed(() => {
+  const m = heroMonth.value
+  return m ? Math.max(0, m.total - m.ai) : 0
+})
+// hero 卡的載入／失敗閘門：summary（狀態列、拆解行）與 session 桶（主數字）任一沒到就不能開演
+const heroLoading = computed(() =>
+  (loading.value && !summary.value) || (loadingSessions.value && !sessionBuckets.value.length))
+const heroError = computed(() => !summary.value || sessionsError.value)
 
 /**
- * 轉真人原因拆解：讓「轉給真人 77 次」看得出該做什麼。
- * 分兩類就好——「補知識有救」（用 gap 建議同一份白名單，兩處不會各判各的）
- * vs「刻意設計要人接」（查訂單、敏感話題這類，補知識沒用）。
- * 客人指名真人的兩種原因不進這行（那些已在長條外單獨講）；
+ * 交給真人的原因拆解：讓「用到真人」看得出該做什麼（哪些補知識有救）。
+ * 原因記在「每一次轉接」上（同一場可能轉好幾次），與 hero 的「場」不同單位——
+ * 畫面上明講，不裝一樣。gap 用建議收件匣同一份白名單，兩處不會各判各的。
  * 事件比總數少的差額如實標「沒留下原因」——事件表 2026-08-10 前記不全、且有 240 天 TTL。
  */
 const handoffBreakdown = computed(() => {
-  const total = aiHandoffCount.value
+  const total = summary.value?.handoffs ?? 0
   if (!total) return null
   const counts = summary.value?.handoffReasonCounts ?? {}
   let gap = 0
+  let named = 0
+  let image = 0
   let intended = 0
   for (const [reason, n] of Object.entries(counts)) {
-    if (reason === 'user_request' || reason === 'non_text_content') continue
-    if (KNOWLEDGE_GAP_HANDOFF_REASONS.has(reason)) gap += n
+    if (reason === 'user_request') named += n
+    else if (reason === 'non_text_content') image += n
+    else if (KNOWLEDGE_GAP_HANDOFF_REASONS.has(reason)) gap += n
     else intended += n
   }
-  if (!gap && !intended) return null // 事件全缺（太舊）就不顯示，別出現「0 次有救」
-  const unknown = Math.max(0, total - gap - intended)
-  return { total, gap, intended, unknown }
+  if (!gap && !named && !image && !intended) return null // 事件全缺（太舊）就不顯示，別出現「0 次有救」
+  const unknown = Math.max(0, total - gap - named - image - intended)
+  return { total, gap, named, image, intended, unknown }
+})
+
+/**
+ * 「先問清楚」退出主畫面（2026-08-10 老闆拍板：使用者不在乎機制、只在乎要不要做事）。
+ * 只在偏高（metricTone warn，>30%）時現身一行診斷＋動作——是訊號，不是統計。
+ * 正常月份使用者完全不會看到這個詞。
+ */
+const clarifyWarning = computed(() => {
+  const s = summary.value
+  if (!s || !s.disambiguations) return null
+  if (metricTone('disambiguation', s.disambiguationRate) !== 'is-warn') return null
+  return `AI 這個月有 ${formatNumber(s.disambiguations)} 個問題得先反問客人才能回答（佔 ${formatPercent(s.disambiguationRate)}），偏高——通常是知識卡標題太相近，去把名字改清楚就會降。`
 })
 
 /**
@@ -584,18 +605,18 @@ function syncPendingGap() {
  * ⛔ 一則都沒有時不下判語——沒資料不是成績，硬給結論會變成瞎掰。
  */
 const verdict = computed(() => {
-  const s = summary.value
-  // 用 aiEngaged 當門檻：客人全是指名真人的月份 AI 沒出手，沒有成績可以下判語
-  if (!s || !s.aiEngaged) return null
-  const rate = s.autoReplyRate
+  const m = heroMonth.value
+  // 用「AI 接過場」當門檻：AI 一場都沒接的月份，沒有成績可以下判語
+  if (!m || !m.ai) return null
+  const rate = heroRate.value
   const pct = formatPercent(rate)
   const tone = metricTone('autoReply', rate).replace('is-', '') // good | warn | neutral
 
   const title = tone === 'good'
-    ? `客人來問的，AI 自己搞定 ${pct}，表現不錯`
+    ? `AI 接的對話，${pct} 從頭到尾不用真人，表現不錯`
     : tone === 'warn'
-      ? `客人來問的，AI 只搞定 ${pct}，大部分還是要人接`
-      : `客人來問的，AI 自己搞定 ${pct}，還有進步空間`
+      ? `AI 接的對話只有 ${pct} 能自己收尾，大部分還是要人接`
+      : `AI 接的對話 ${pct} 全程自己搞定，還有進步空間`
 
   const pending = pendingGap.value
   let next: string
@@ -608,7 +629,7 @@ const verdict = computed(() => {
     canAct = !handoffsError.value
   }
   else if (pending > 0) {
-    next = `下面有 ${pending}${pendingGapHasMore.value ? '+' : ''} 題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
+    next = `下面有 ${pending}${pendingGapHasMore.value ? '+' : ''} 個客人的問題答不出來還沒補知識，補完最有機會把這個數字拉上去。`
     canAct = true
   }
   else {
@@ -616,7 +637,8 @@ const verdict = computed(() => {
   }
 
   // 品質但書：回答完 30 分鐘內又被找真人的比例過線（>25%）就要講——「搞定」可能沒答到重點
-  if (s.answered > 0 && metricTone('answeredThenHandoff', s.answeredThenHandoffRate) === 'is-warn')
+  const s = summary.value
+  if (s && s.answered > 0 && metricTone('answeredThenHandoff', s.answeredThenHandoffRate) === 'is-warn')
     next += `另外有 ${formatPercent(s.answeredThenHandoffRate)} 的回答，客人看完仍要找真人，可能沒答到重點——建議開幾場對話抽查。`
 
   return { tone, mark: tone === 'good' ? '✓' : tone === 'warn' ? '⚠' : '→', title, next, canAct }
@@ -644,38 +666,28 @@ function scrollToHandoffs() {
   handoffCard.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-/**
- * 所選月份 vs 前一個月的訊息量變化。沿用趨勢那份資料（同一支 API、同一把台灣時區的尺），
- * 不另外再查一次。趨勢是「舊→新」排序，前一期即 index-1；選到最舊那個月沒得比 → null 不顯示。
- */
-/** 所選月份在趨勢陣列裡的前一期（趨勢是「舊→新」排序）；選到最舊那個月就沒得比 */
-const prevTrendPoint = computed(() => {
-  const idx = trend.value.findIndex(p => p.period === period.value)
-  return idx > 0 ? (trend.value[idx - 1] ?? null) : null
+/** 所選月份的前一個月（monthRowsAll 是舊→新）；選到最舊那個月就沒得比 */
+const prevMonthRow = computed(() => {
+  const idx = monthRowsAll.value.findIndex(r => r.period === period.value)
+  return idx > 0 ? (monthRowsAll.value[idx - 1] ?? null) : null
 })
 
 /**
- * 自己搞定率的變化，單位是**百分點**。
+ * 全程搞定率的變化，單位是**百分點**。
  * ⛔ 別寫成百分比：68% → 74% 是「進步 6 個百分點」，不是「進步 6%」（那是 8.8%）。
  * 比率的比率最容易被誤讀，寫錯就等於報錯成績。
  */
-const autoReplyDeltaPts = computed(() => {
-  const prev = prevTrendPoint.value
-  if (!prev) return null
-  // 上月也用同一把「AI 出手過」的尺（舊月份 directHandoffs=0 → 自動等於舊算法）
-  const prevEngaged = prev.invocations - (prev.directHandoffs ?? 0)
-  if (!prevEngaged) return null
-  const cur = summary.value
-  if (!cur?.aiEngaged) return null
-  const prevRate = prev.answered / prevEngaged
-  return Math.round((cur.autoReplyRate - prevRate) * 100)
+const rateDeltaPts = computed(() => {
+  const prev = prevMonthRow.value
+  const cur = heroMonth.value
+  if (!prev || !prev.ai || !cur?.ai) return null
+  return Math.round((heroRate.value - prev.solved / prev.ai) * 100)
 })
 
-/** 則數的變化只寫在副標、不上色：訊息變多是生意變好還是負擔變重，看的人自己判斷 */
-const invocationsDeltaText = computed(() => {
-  const p = prevTrendPoint.value
-  const prev = p ? p.invocations - (p.directHandoffs ?? 0) : 0
-  const cur = summary.value?.aiEngaged ?? 0
+/** 場數的變化只寫在副標、不上色：對話變多是生意變好還是負擔變重，看的人自己判斷 */
+const sessionsDeltaText = computed(() => {
+  const prev = prevMonthRow.value?.ai ?? 0
+  const cur = heroMonth.value?.ai ?? 0
   if (!prev) return ''
   const pct = Math.round(((cur - prev) / prev) * 100)
   if (pct === 0) return '（與上月持平）'
@@ -683,59 +695,46 @@ const invocationsDeltaText = computed(() => {
 })
 
 /**
- * ⛔ 至少要**兩個月**有量才畫趨勢圖。
- * 只有一個月的話畫出來是孤零零一組柱子——那不是趨勢，只是把單月數字換個樣子再講一次，
+ * ⛔ 至少要**兩個月**有場才畫趨勢圖。
+ * 只有一個月的話畫出來是孤零零一根柱子——那不是趨勢，只是把單月數字換個樣子再講一次，
  * 反而讓人以為「看起來很少」。剛上線的第一個月就該老實說「還要再一個月」。
  */
-const trendMonthsWithData = computed(() => trend.value.filter(p => p.invocations > 0).length)
+const trendMonthsWithData = computed(() => monthRowsAll.value.filter(r => r.ai > 0).length)
 const trendHasData = computed(() => trendMonthsWithData.value >= 2)
 /**
- * 標題跟著實際畫幾根柱子講。查的是近 3 個月，但開頭沒量的月份會被裁掉（見 trendRows），
+ * 標題跟著實際畫幾根柱子講。查的是近 3 個月，但開頭沒場的月份會被裁掉（見 trendRows），
  * 寫死「近 3 個月」卻只有 2 根柱子＝畫面自己對不起來，這種數字不符老闆一眼就會抓。
  */
 const trendTitle = computed(() =>
   trendHasData.value ? `近 ${trendRows.value.length} 個月趨勢` : '每月趨勢')
 /**
- * 每個月的「AI 出手過」次數與自己搞定率——與 hero 同一把尺（扣掉客人指名真人的）。
- * 舊月份沒有 directHandoffs（0）→ 自然退回舊算法，歷史數字不會跳。
+ * 趨勢列＝monthRowsAll（場制、與 hero 同一份）裁掉「AI 還沒開始接場」的開頭空月份：
+ * 留著只是一整欄空白，把真實柱子擠到右邊。
+ * ⛔ 只裁開頭——中間的空月份要留，那代表 AI 中途停過（是資訊，不是雜訊）；
+ * 最後一個月是當月，永遠留（月初還沒量也要看得到自己在這條線上）。
  */
 const trendRows = computed(() => {
-  const all = trend.value.map((p) => {
-    const direct = p.directHandoffs ?? 0
-    const engaged = Math.max(0, p.invocations - direct)
-    return {
-      ...p,
-      direct,
-      engaged,
-      aiHandoffs: Math.max(0, p.handoffs - direct),
-      // 沒出手的月份給 null 而不是 0：ECharts 會斷線，不會畫一條假的 0% 下去
-      ratePct: engaged > 0 ? Math.round((p.answered / engaged) * 100) : null,
-    }
-  })
-  // 裁掉「AI 還沒開始服務」的開頭空月份：留著只是一整欄空白，把真實柱子擠到右邊。
-  // ⛔ 只裁開頭——中間的空月份要留，那代表 AI 中途停過（是資訊，不是雜訊）；
-  // 最後一個月是當月，永遠留（月初還沒量也要看得到自己在這條線上）。
-  const firstWithData = all.findIndex(p => p.invocations > 0)
-  return firstWithData > 0 ? all.slice(firstWithData) : all
+  const all = monthRowsAll.value
+  const first = all.findIndex(r => r.ai > 0)
+  return first > 0 ? all.slice(first) : all
 })
 
 const trendOption = computed(() => {
   const rows = trendRows.value
   return {
-    // ⚠️ 前三色必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d / #d99a2b）：
-    // 同一頁上下兩塊講同一件事，顏色一漂就變成「四種顏色三個意思」。
-    // 第四色（折線）刻意是中性炭灰、不是藍：它是「綠段佔整根的比例」這個結論，
-    // 不是第四種資料。原本用 #3f5a78 與「轉給真人」的藍同族，會被讀成轉真人的附屬線。
-    // ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
-    color: ['#05b24c', '#5b7a9d', '#d99a2b', '#374151'],
+    // ⚠️ 前兩色必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d）：
+    // 同一頁上下兩塊講同一件事，顏色一漂就變成「三種顏色兩個意思」。
+    // 第三色（折線）刻意是中性炭灰、不是藍：它是「綠段佔整根的比例」這個結論，
+    // 不是第三種資料。ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
+    color: ['#05b24c', '#5b7a9d', '#374151'],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       /**
-       * ⛔ 第一行必須是結論（自己搞定率＋上月對比），原始數字擺後面。
+       * ⛔ 第一行必須是結論（全程搞定率＋上月對比），原始數字擺後面。
        * 這張圖存在的唯一理由是回答「有沒有變好」，而變好＝率上升，不是柱子變高：
        * 客人變多時整根柱子會長高，看起來很熱鬧但可能其實在退步。
-       * 順序刻意是「結論 → 分母（出手總數）→ 三段分子」：照著讀下來就是 80 ÷ 203 = 39%，
+       * 順序刻意是「結論 → 分母（整根柱子）→ 兩段分子」：照著讀下來就是 70 ÷ 120 = 58%，
        * 使用者不必自己心算，也看得懂那個百分比打哪來（老闆實際反映看不懂怎麼算的）。
        */
       formatter: (params: Array<{ dataIndex: number }>) => {
@@ -744,50 +743,40 @@ const trendOption = computed(() => {
         if (!r) return ''
         const prev = rows[i - 1]
         const head = r.ratePct === null
-          ? `<div style="font-weight:700">${r.label}　AI 沒有出手</div>`
-          : `<div style="font-weight:700">${r.label}　自己搞定 ${r.ratePct}%`
+          ? `<div style="font-weight:700">${r.label}　AI 沒有接到場</div>`
+          : `<div style="font-weight:700">${r.label}　全程搞定 ${r.ratePct}%`
             + (prev?.ratePct != null ? `<span style="font-weight:400;opacity:.7">（上月 ${prev.ratePct}%）</span>` : '')
             + '</div>'
         // 分母：整根柱子。標成「＝整根柱子」讓圖與數字對得起來
-        const total = r.engaged > 0
+        const total = r.ai > 0
           ? `<div style="font-size:12px;margin-top:3px;padding-bottom:3px;border-bottom:1px solid rgba(0,0,0,.08)">`
-            + `<span>AI 出手（整根柱子）</span>　<b>${r.engaged}</b> 次</div>`
+            + `<span>AI 接的對話（整根柱子）</span>　<b>${r.ai}</b> 場</div>`
           : ''
         const line = (c: string, k: string, v: number) =>
           `<div style="display:flex;align-items:center;gap:6px;font-size:12px">`
           + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c}"></span>`
           + `<span style="flex:1">${k}</span><b>${v}</b></div>`
-        // 過渡期揭露：舊月份的 handoffs 混著「客人指名真人」，數不出來就講明白，
-        // 免得這張圖和 hero 底下的拆解行互相打架
-        const note = r.direct > 0
-          ? `<div style="font-size:11px;opacity:.7;margin-top:4px">含客人指名真人 ${r.direct} 次，已不計入成績</div>`
-          : (r.handoffs > 0 && r.aiHandoffs === r.handoffs && r.period < '202609'
-              ? '<div style="font-size:11px;opacity:.7;margin-top:4px">此月尚未區分「客人指名真人」，數字偏高</div>'
-              : '')
         return head
           + total
-          + line('#05b24c', '自己答完', r.answered)
-          + line('#5b7a9d', '轉給真人', r.aiHandoffs)
-          + line('#d99a2b', '先問清楚', r.disambiguations)
-          + note
+          + line('#05b24c', '全程搞定', r.solved)
+          + line('#5b7a9d', '用到真人', r.escalated)
       },
     },
-    // 圖例圖示分家：三段是色塊（資料），折線用它自己的線圖示（結論）。
-    // ⛔ 別在 legend 層寫 icon:'roundRect'——那會把折線也畫成色塊，變成「四根柱子」
+    // 圖例圖示分家：兩段是色塊（資料），折線用它自己的線圖示（結論）。
+    // ⛔ 別在 legend 層寫 icon:'roundRect'——那會把折線也畫成色塊，變成「三根柱子」
     legend: {
       bottom: 0,
       itemWidth: 14,
       itemHeight: 8,
       data: [
-        { name: '自己答完', icon: 'roundRect' },
-        { name: '轉給真人', icon: 'roundRect' },
-        { name: '先問清楚', icon: 'roundRect' },
-        { name: '自己搞定率' },
+        { name: '全程搞定', icon: 'roundRect' },
+        { name: '用到真人', icon: 'roundRect' },
+        { name: '全程搞定率' },
       ],
     },
     grid: { left: 8, right: 12, top: 22, bottom: 34, containLabel: true },
     xAxis: { type: 'category', data: rows.map(p => p.label), axisTick: { alignWithLabel: true } },
-    // 雙軸：左邊看量（整根柱＝AI 出手總數），右邊看好壞（率）。
+    // 雙軸：左邊看量（整根柱＝AI 接的場數），右邊看好壞（率）。
     // 量會隨客人數一起長，只看柱子看不出退步
     yAxis: [
       {
@@ -811,46 +800,42 @@ const trendOption = computed(() => {
       },
     ],
     /**
-     * 三段**堆疊**成一根＝AI 出手總數，與 hero 的分段長條同一個心智模型。
-     * ⛔ 別退回並排柱：並排看不到分母，「自己搞定 39%」就跟畫面上任何東西都對不起來
+     * 兩段**堆疊**成一根＝AI 接的場數，與 hero 的分段長條同一個心智模型。
+     * ⛔ 別退回並排柱：並排看不到分母，「全程搞定 58%」就跟畫面上任何東西都對不起來
      *（老闆實際反映「還是有點難理解」）。堆疊之後率＝綠段佔整根的比例，用眼睛就驗得出來。
-     * 每段的確切數字交給 tooltip：段內白字在綠/琥珀底上對比不足，柱頂並排小字則是
-     * 12 個浮動數字的視覺噪音（還會冒出 2026-06 那排「0 0 0」）。
+     * 每段的確切數字交給 tooltip：段內白字在綠底上對比不足，柱頂並排小字是視覺噪音。
      */
     series: [
-      { name: '自己答完', type: 'bar', stack: 'engaged', barMaxWidth: 44, data: rows.map(p => p.answered) },
-      { name: '轉給真人', type: 'bar', stack: 'engaged', barMaxWidth: 44, data: rows.map(p => p.aiHandoffs) },
-      // 三段要湊齊：少畫這段的話整根柱 ≠ hero 總數，看的人一定會拿去對帳。
-      // 標籤掛在堆疊最上面這段＝標在整根柱頂，印的是總數（engaged）不是自己的值；
-      // 沒出手的月份回空字串，免得 2026-06 在基線上印一個孤零零的 0
+      { name: '全程搞定', type: 'bar', stack: 'sessions', barMaxWidth: 44, data: rows.map(p => p.solved) },
+      // 標籤掛在堆疊最上面這段＝標在整根柱頂，印的是總數（ai）不是自己的值；
+      // 沒接到場的月份回空字串，免得在基線上印一個孤零零的 0
       {
-        name: '先問清楚',
+        name: '用到真人',
         type: 'bar',
-        stack: 'engaged',
+        stack: 'sessions',
         barMaxWidth: 44,
-        data: rows.map(p => p.disambiguations),
+        data: rows.map(p => p.escalated),
         label: {
           show: true,
           position: 'top',
           fontSize: 11,
           fontWeight: 700,
           formatter: (p: { dataIndex: number }) => {
-            const n = rows[p.dataIndex]?.engaged ?? 0
+            const n = rows[p.dataIndex]?.ai ?? 0
             return n > 0 ? String(n) : ''
           },
         },
       },
       // 折線＝這張圖真正的主角：線往上就是變好，不必心算
       {
-        name: '自己搞定率',
+        name: '全程搞定率',
         type: 'line',
         yAxisIndex: 1,
         data: rows.map(p => p.ratePct),
         smooth: false,
         symbolSize: 7,
         lineStyle: { width: 2 },
-        // ⛔ 標籤一定要墊白底：改成堆疊柱之後整根變高，折線會穿過柱子，
-        // 40% 那個標籤剛好落在藍色段上（實測 headless 截圖抓到，深灰字疊藍底讀不清）
+        // ⛔ 標籤一定要墊白底：折線會穿過堆疊柱，標籤落在藍色段上會讀不清（實測截圖抓過）
         label: {
           show: true,
           position: 'top',
@@ -956,23 +941,33 @@ async function loadHandoffs(append = false) {
   }
 }
 
-async function loadTrend() {
-  loadingTrend.value = true
+/**
+ * 場制資料：對話統計的 session 月桶（granularity=month），一次拿近 3 個月。
+ * hero（所選月份）與趨勢圖共用同一份回應——兩塊永遠對得起來，也少打一支 API。
+ */
+async function loadSessions() {
+  loadingSessions.value = true
   try {
-    trend.value = await apiFetch<TrendPoint[]>('/api/ai/usage/trend?months=3')
-    trendError.value = false
+    // 起點＝3 個月前的 1 號、終點＝今天。台北日曆鍵（台灣固定 UTC+8），與後端 taipei-day 同一把尺
+    const tw = new Date(Date.now() + 8 * 60 * 60 * 1000)
+    const start = new Date(Date.UTC(tw.getUTCFullYear(), tw.getUTCMonth() - 2, 1))
+    const key = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+    const res = await apiFetch<{ buckets: TrendBucket[] }>(
+      `/api/conversation-stats/trend?granularity=month&startDate=${key(start)}&endDate=${key(tw)}`)
+    sessionBuckets.value = res.buckets
+    sessionsError.value = false
   }
   catch {
-    trend.value = []
-    trendError.value = true
+    sessionBuckets.value = []
+    sessionsError.value = true
   }
   finally {
-    loadingTrend.value = false
+    loadingSessions.value = false
   }
 }
 
 async function loadAll() {
-  await Promise.all([loadSummary(), loadHandoffs(), loadTrend()])
+  await Promise.all([loadSummary(), loadHandoffs(), loadSessions()])
 }
 
 // ── Format helpers ────────────────────────────────────────

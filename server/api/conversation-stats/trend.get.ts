@@ -57,7 +57,7 @@ export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[
   const [snap, friendDates] = await Promise.all([ref.get(), friendsPromise])
   const bucketMap = new Map<string, TrendBucket>()
   const emptyBucket = (key: string): TrendBucket => ({
-    date: key, total: 0, bot: 0, ai: 0, human: 0, unhandled: 0, handoff: 0, closed: 0,
+    date: key, total: 0, bot: 0, ai: 0, human: 0, unhandled: 0, handoff: 0, closed: 0, aiEscalated: 0,
     ...(friendDates ? { newFriends: 0 } : {}),
   })
 
@@ -80,6 +80,8 @@ export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[
     else bucket.unhandled++
     if (s.hasHandoff) bucket.handoff++
     if (s.status === 'closed') bucket.closed++
+    // AI 首接×轉真人交叉（與 kpi.get.ts 的 aiEscalated 同一條件）：AI 表現頁算「全程搞定率」用
+    if (s.initialHandler === 'ai' && s.hasHandoff === true) bucket.aiEscalated++
   }
 
   // 新朋友入桶：只有好友沒有對話的日子也要有桶（活動日常見：加了一堆好友、還沒人開口）
