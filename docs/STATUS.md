@@ -67,7 +67,6 @@ _目前沒有未 commit 的工作。_
 | `resync-preview` 504 風險 | `TODO` | 同吃 `chunkTextWithLlm`，可套 job 機制 |
 | `upload.post.ts` 6MB 雷 | `TODO` | 同 Lambda payload 上限，未改直傳 signed URL |
 | 產品名注入：splash 租戶 | `TODO` | 若要做，需同樣種 productName + reindex |
-| 用量監控頁 UIUX 修繕 6 項 | `TODO` | 評估見 `docs/AI-USAGE-UX-EVAL-20260810.md`。🔴 硬寫「這個月」但月份可選（選上個月會說謊）、🔴 Hero 沒有「較上月」基準、趨勢圖少「先問清楚」那段（兩根柱子加起來 ≠ Hero 總數）、移除成本後的過期註解與單格排版、待補知識清單上移 |
 | 🔴 知識庫重傳同一份檔會重跑重收費 | `TODO` | 手動上傳**沒有內容去重**（`contentHash` 只有 url／Google Sheet 自動同步在用），重傳沒改過的大檔＝OCR＋切卡＋embedding 整套重跑重收，且不受則數／token 額度擋。最省力修法＝把現成的 contentHash 比對接到手動上傳，未變更就跳過 |
 
 ### D. 等老闆拍板
@@ -107,6 +106,7 @@ _目前沒有未 commit 的工作。_
 
 | 日期 | 項目 | 代表 commit |
 |---|---|---|
+| 2026-08-10 | 用量監控頁 UIUX 修繕 6 項（硬寫「這個月」會說謊、hero 補「較上月」基準、趨勢補第三段、待補知識清單上移） | `5f49b24` |
 | 2026-08-10 | 用量監控頁移除所有金額與 token（權限本來就沒漏，是金額散在兩頁的問題）；成本一律只在超管「成本總覽」 | `4ae3a0c` |
 | 2026-08-10 | AI 記帳稽核：修正成本頁用錯分母（該用 invocations 不是 answered）、小幫手與生成腳本兩處歸錯桶、「找真人」轉真人事件漏記；三桶算式抽成單一來源 `ai-cost-buckets.ts` ＋ 7 項測試 | `66a6af7` |
 | 2026-08-10 | 超管成本頁改版：拖拉估算器整組刪掉，改成 AI（實測）／資料庫（Firebase 實測用量）／主機（AWS 真實帳單）三筆；含 Cloud Monitoring 分桶時區 bug（`taipeiMidnightAfter`）與 AWS 設定教學 | `a936ca3` |
