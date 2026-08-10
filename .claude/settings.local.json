@@ -356,7 +356,8 @@
       "Bash([ -f \"$CFG\" ])",
       "Bash(claude --version)",
       "Bash(cp ~/.claude.json ~/.claude.json.bak-mcp)",
-      "Bash(claude mcp *)"
+      "Bash(claude mcp *)",
+      "Bash(node reasons-live.mjs)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",

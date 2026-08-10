@@ -336,7 +336,7 @@
 
 <script setup lang="ts">
 import { ChatDotRound, InfoFilled, Refresh, Upload } from '@element-plus/icons-vue'
-import { HANDOFF_REASON_LABELS, type HandoffReason } from '~~/shared/types/ai-knowledge'
+import { HANDOFF_REASON_LABELS, KNOWLEDGE_GAP_HANDOFF_REASONS, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 
@@ -368,6 +368,8 @@ interface Summary {
   directHandoffs: number
   /** 先問清楚之後成功答出的次數（2026-08-10 起才有資料） */
   followupAnswered: number
+  /** 當月轉真人原因 → 次數（事件表聚合；查失敗為空物件） */
+  handoffReasonCounts: Record<string, number>
   answeredThenHandoffs: number
   answeredThenHandoffRate: number
   disambiguations: number
@@ -437,6 +439,29 @@ const segPct = computed(() => {
 /** 「AI 判斷後轉真人」＝總轉真人扣掉客人指名的那些（圖例與長條都用這個數） */
 const aiHandoffCount = computed(() =>
   Math.max(0, (summary.value?.handoffs ?? 0) - (summary.value?.directHandoffs ?? 0)))
+
+/**
+ * 轉真人原因拆解：讓「轉給真人 77 次」看得出該做什麼。
+ * 分兩類就好——「補知識有救」（用 gap 建議同一份白名單，兩處不會各判各的）
+ * vs「刻意設計要人接」（查訂單、敏感話題這類，補知識沒用）。
+ * 客人指名真人的兩種原因不進這行（那些已在長條外單獨講）；
+ * 事件比總數少的差額如實標「沒留下原因」——事件表 2026-08-10 前記不全、且有 240 天 TTL。
+ */
+const handoffBreakdown = computed(() => {
+  const total = aiHandoffCount.value
+  if (!total) return null
+  const counts = summary.value?.handoffReasonCounts ?? {}
+  let gap = 0
+  let intended = 0
+  for (const [reason, n] of Object.entries(counts)) {
+    if (reason === 'user_request' || reason === 'non_text_content') continue
+    if (KNOWLEDGE_GAP_HANDOFF_REASONS.has(reason)) gap += n
+    else intended += n
+  }
+  if (!gap && !intended) return null // 事件全缺（太舊）就不顯示，別出現「0 次有救」
+  const unknown = Math.max(0, total - gap - intended)
+  return { total, gap, intended, unknown }
+})
 
 /**
  * 一句解讀：「現在算好還是不好、接下來做什麼」。

@@ -4,6 +4,8 @@ import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered } from '~~/server/
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { can } from '~~/shared/permissions'
+import { HANDOFF_EVENTS_COLLECTION } from '~~/server/utils/ai-handoff-events'
+import { TAIPEI_OFFSET_MS } from '~~/server/utils/taipei-day'
 import { bucketAiCosts, GEMINI_PRICING } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
@@ -81,6 +83,36 @@ export default defineEventHandler(async (event) => {
 
   const snap = await db.collection(AI_USAGE_COLLECTION).doc(`${workspaceId}_${period}`).get()
 
+  /**
+   * 轉真人原因的按月聚合（給「轉給真人 N 次裡：答不出來 X、刻意要人接 Y」那行字）。
+   * 資料來源是事件表（月結桶只有總數）；月份界線與月結桶同一把台灣時區的尺。
+   * ⛔ 只聚合成文字、不畫進分段長條：事件表有 240 天 TTL、且 2026-08-10 前的
+   * 「找真人」捷徑沒記事件——子段會加不回總數，長條的「三段相加=100%」不能被它拖垮。
+   * 索引沿用 gap 掃描既有的 (workspaceId ASC, createdAt DESC)，免部署新索引。
+   */
+  async function countHandoffReasons(): Promise<Record<string, number>> {
+    const y = Number(period.slice(0, 4))
+    const m = Number(period.slice(4, 6))
+    const start = new Date(Date.UTC(y, m - 1, 1) - TAIPEI_OFFSET_MS)
+    const end = new Date(Date.UTC(y, m, 1) - TAIPEI_OFFSET_MS)
+    const ev = await db.collection(HANDOFF_EVENTS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('createdAt', '>=', start)
+      .where('createdAt', '<', end)
+      // ⛔ 一定要 desc：現有索引是 (workspaceId ASC, createdAt DESC)；range 查詢
+      // 不指定排序時 Firestore 預設 ASC，會要求一顆不存在的 ASC 索引（實測踩到）
+      .orderBy('createdAt', 'desc')
+      .select('reason')
+      .limit(2000) // 保險絲：超過就讓「其餘 N 次」那行吸收，不炸讀取量
+      .get()
+    const counts: Record<string, number> = {}
+    for (const d of ev.docs) {
+      const r = String((d.data() as { reason?: string }).reason ?? '')
+      if (r) counts[r] = (counts[r] ?? 0) + 1
+    }
+    return counts
+  }
+
   if (!snap.exists) {
     const empty = {
       period,
@@ -96,6 +128,7 @@ export default defineEventHandler(async (event) => {
       directHandoffs: 0,
       followupAnswered: 0,
       aiEngaged: 0,
+      handoffReasonCounts: {},
       answeredThenHandoffRate: 0,
       autoReplyRate: 0,
       handoffRate: 0,
@@ -151,6 +184,8 @@ export default defineEventHandler(async (event) => {
     directHandoffs,
     followupAnswered,
     aiEngaged,
+    // 有轉真人才查事件表（沒有就省一次查詢）；查失敗回空物件，那行字就不顯示，不擋整頁
+    handoffReasonCounts: handoffs > 0 ? await countHandoffReasons().catch(() => ({})) : {},
     // 品質 proxy：成功回答之中有多少比例在 30 分鐘內又被轉真人（越低越好）
     answeredThenHandoffRate: answered ? answeredThenHandoffs / answered : 0,
     // 三個比率的分母都是 aiEngaged（不是 invocations），轉真人的分子也扣掉 direct——
