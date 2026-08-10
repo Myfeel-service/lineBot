@@ -353,7 +353,10 @@
       "Bash(AWS_EC2_METADATA_DISABLED=true node aws-check2.mjs)",
       "Bash(node render5.mjs)",
       "mcp__claude_ai_Notion__notion-search",
-      "Bash([ -f \"$CFG\" ])"
+      "Bash([ -f \"$CFG\" ])",
+      "Bash(claude --version)",
+      "Bash(cp ~/.claude.json ~/.claude.json.bak-mcp)",
+      "Bash(claude mcp *)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
