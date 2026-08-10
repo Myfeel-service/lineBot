@@ -43,9 +43,12 @@ _目前沒有未 commit 的工作。_
 
 | 項目 | 狀態 | 說明 |
 |---|---|---|
-| PAYUNi「07 信用卡 Token API」申請書 | `BLOCKED` | 沙盒被 UPP02087 擋住（05 幕後授權已開）。核准後還要進後台啟用。Amplify 動態 IP vs 綁授權 IP 要問 |
-| PAYUNi P3 每期續扣排程 | `TODO` | ⛔續扣必用 `confirmRenewal`，否則一次扣款拿兩個月 |
-| PAYUNi P4 降級／折抵、P5 換卡＋清藍新死碼 | `TODO` | 設計見 `docs/PAYUNI-RECURRING-DESIGN.md` |
+| ~~PAYUNi「07 信用卡 Token API」申請書~~ | `DONE` | **不用送件，2026-08-06 結案**。`UPP02087` 是 PAYUNi 後台「串接設定 › 限定 API 設定」的開關沒開，不是缺申請書；開關打開後沙盒建約定 `UseTokenType=3` 直接通。證據見 `docs/GOLIVE-BLOCKERS.md` A1 |
+| PAYUNi P3 每期續扣排程 | `DONE` | 程式 P1~P5 全完成，2026-08-07 端到端實測綠（續扣、折抵、降級、取消、解約、防重複扣款）。⛔續扣必用 `confirmRenewal`，否則一次扣款拿兩個月 |
+| PAYUNi P4 降級／折抵、P5 換卡＋清藍新死碼 | `DONE` | 同上一輪 e2e 驗過。設計見 `docs/PAYUNI-RECURRING-DESIGN.md` |
+| **PAYUNi 固定 IP 中繼站上正式** | `TODO` | **這才是自動扣款真正的硬阻塞**。`CREDIT03010 不提供此IP幕後交易` 已用真 Token 撞出來＝IP 白名單真的在擋，而 Amplify 出口 IP 每天換。test 中繼站 08-08 驗過（`/api/credit`、`credit_bind/query` 有代理），正式站要架＋設 `PAYUNI_RELAY_BASE`＋填進 PAYUNi 白名單。⛔中繼站要補代理 `/api/trade/query`，否則查單退回直連（`4a1167f`）。教學 `docs/PAYUNI-RELAY-SETUP.md` |
+| **PAYUNi 正式特店 `NPPA836109423` 審核中** | `BLOCKED` | 打正式 `/api/credit` 回 `DEF01006 商店狀態不符合`（正式金鑰已驗簽通過＝不是金鑰問題，也還沒走到 IP 那關）。**影響比自動扣款大：正式站連一筆單次付款都會被擋在這關** |
+| PAYUNi 灰度旗標 `PAYUNI_PERIOD_ENABLED` | `TODO` | 預設關。要等中繼站＋正式特店都就緒才開 |
 | 光貿發票正式金鑰 | `BLOCKED` | `GUANGMAO_INVOICE_*` 沒填 = 每筆訂單發票 skipped = 零開票 |
 | 光貿作廢／折讓沙盒實測 | `TODO` | 開立已全綠，這兩支還沒實測 |
 | 含稅／未稅口徑 | `BLOCKED` | 要問會計，稅務問題不是體驗問題 |
@@ -116,6 +119,8 @@ _目前沒有未 commit 的工作。_
 | 2026-08-08 | 會話事件補 workspaceId ＋ 舊資料回填（兩專案已跑） | `7792461` `62c65bb` |
 | 2026-08-08 | LIFF 設定端點改前綴查詢、租戶判斷規則收斂 | `6dec35a` `35e4839` |
 | 2026-08-08 | 小幫手收編腳本異常兩項（scriptDeadEnd 紅／scriptUnreachable 黃） | `cb83e8f` |
+| 2026-08-07 | PAYUNi 自動扣款端到端實測（首刷→Notify→開通→發票→期末續扣→折抵→降級→取消解約），含兩個會動到錢的真 bug 修復 | `4c1e1cc` |
+| 2026-08-06 | PAYUNi `UPP02087` 結案：是後台「限定 API 設定」開關，**四份申請書都不用送**；沙盒首刷真刷拿到 `CreditHash`、續扣／查詢／解約全鏈路通 | `c5d61cf` |
 | 2026-08-07 | LIFF 換網域災情三件套 ＋ Endpoint 填錯系統內偵測 | `1cbe1b1` |
 | 2026-08-07 | 活動連結「無法完成綁定」修復 | `1cbe1b1` |
 | 2026-08-07 | 昨日摘要卡改版 ＋ 日期窗時區 bug（`taipei-day.ts`） | `9ee9544` |

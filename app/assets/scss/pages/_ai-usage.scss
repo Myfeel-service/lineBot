@@ -104,6 +104,20 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
+/* 較上月：刻意中性灰。訊息變多是生意變好還是負擔變重，由看的人判斷，系統不下價值判斷 */
+.usage-delta {
+  align-self: flex-end;
+  margin-bottom: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color, #f0f2f5);
+  font-variant-numeric: tabular-nums;
+}
+
 .usage-hero__label {
   font-size: 12px;
   line-height: 1.35;
@@ -194,10 +208,12 @@
 }
 
 /* ── 次要指標：品質 proxy + 成本；數字依門檻上色（見 metricTone） ── */
+/* ⛔ 別用 grid auto-fit：移除成本區塊後這裡只剩一格，auto-fit 會把單一子元素撐滿整行，
+   一個小數字上面壓一條全寬分隔線，看起來像沒做完。flex 讓它走自然寬，之後補回多格也能自動排 */
 .usage-substats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
   margin-top: 4px;
   padding-top: 16px;
   border-top: 1px solid var(--border);

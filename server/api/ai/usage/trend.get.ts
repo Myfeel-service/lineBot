@@ -7,7 +7,9 @@ import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
  * GET /api/ai/usage/trend?months=3
  *
  * 回傳最近 N 個月的 AI 用量趨勢（月對月），給用量頁畫長條圖：
- * 每月的 invocations / answered / handoffs。只看對話量，不含成本細節（那在 summary）。
+ * 每月的 invocations / answered / handoffs / disambiguations。只看對話量，不含成本細節（那在 summary）。
+ * ⛔ 三個結果分項要湊齊：用量頁的 hero 拆三段，趨勢圖少畫一段的話，
+ *    兩根柱子加起來會 ≠ hero 總數，看的人一定會拿去對帳。
  * 月結桶一月一份 doc，直接批次讀最近 N 顆即可，無需額外聚合。
  */
 function lastNMonths(n: number): string[] {
@@ -42,6 +44,7 @@ export default defineEventHandler(async (event) => {
       invocations: Number(d?.invocations ?? 0),
       answered: Number(d?.answered ?? 0),
       handoffs: Number(d?.handoffs ?? 0),
+      disambiguations: Number(d?.disambiguations ?? 0),
     }
   })
 })

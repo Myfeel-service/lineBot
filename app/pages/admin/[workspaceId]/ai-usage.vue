@@ -121,7 +121,13 @@
               <div class="usage-hero">
                 <div class="usage-hero__head">
                   <strong class="usage-hero__num">{{ formatNumber(summary?.invocations) }}</strong>
-                  <span class="usage-hero__label">則 <b>客人訊息</b><br>這個月 AI 幫你處理的則數</span>
+                  <span class="usage-hero__label">則 <b>客人訊息</b><br>{{ periodLabel }} AI 幫你處理的則數</span>
+                  <!-- 沒有基準的單一數字看不出多還少（「202 則」是好是壞？）。
+                       ⛔ 刻意用中性灰不上紅綠：訊息變多是生意變好還是負擔變重要看的人自己判斷，
+                       系統不該替他下價值判斷（成本頁那顆才需要紅綠，因為錢變多明確是壞事）。 -->
+                  <span v-if="invocationsDeltaPct !== null" class="usage-delta">
+                    較上月 {{ invocationsDeltaPct > 0 ? '▲' : (invocationsDeltaPct < 0 ? '▼' : '＝') }} {{ Math.abs(invocationsDeltaPct) }}%
+                  </span>
                 </div>
                 <template v-if="(summary?.invocations ?? 0) > 0">
                   <div
@@ -174,7 +180,7 @@
                     </div>
                   </div>
                 </template>
-                <div v-else class="usage-empty">這個月 AI 還沒有處理任何訊息</div>
+                <div v-else class="usage-empty">{{ periodLabel }} AI 還沒有處理任何訊息</div>
               </div>
 
               <!-- ⛔ 這頁不放任何金額與 token：計費賣「則數」，成本是平台的進貨價，
@@ -195,7 +201,7 @@
                   </template>
                   <template v-else>
                     <strong class="usage-substat__value">—</strong>
-                    <span class="usage-substat__sub">這個月 AI 還沒有答過題</span>
+                    <span class="usage-substat__sub">{{ periodLabel }} AI 還沒有答過題</span>
                   </template>
                 </div>
               </div>
@@ -203,26 +209,8 @@
           </div>
         </div>
 
-        <!-- ── 近 3 個月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
-        <div class="message-card usage-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">近 3 個月趨勢</span>
-              <span class="text-xs text-muted">自己答完 vs 轉給真人</span>
-            </div>
-          </div>
-          <div class="card-section-stack">
-            <div v-if="loadingTrend && !trend.length" class="usage-loading"><div class="spinner" /></div>
-            <ClientOnly v-else-if="trendHasData">
-              <VChart class="usage-trend-chart" :option="trendOption" autoresize />
-              <template #fallback><div class="usage-loading"><div class="spinner" /></div></template>
-            </ClientOnly>
-            <div v-else class="usage-empty">還沒有足夠資料能看趨勢，AI 開始服務客人後這裡就會長出來。</div>
-          </div>
-        </div>
-
-        <!-- ── 進階 / 技術細節（token / 成本組成 = 平台的進貨價 → 僅 super admin；預設收合） ── -->
-        <!-- ── 低信心 / 轉真人案例 ──────────────── -->
+        <!-- ── 待補知識的轉真人案例：這是這頁唯一「你現在可以動手」的區塊，
+             所以排在回顧性的趨勢圖前面（2026-08-10 UIUX 評估 G） ── -->
         <div ref="handoffCard" class="message-card usage-card" data-tour="usg-cases">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -290,6 +278,24 @@
             </div>
           </div>
         </div>
+
+        <!-- ── 近 3 個月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
+        <div class="message-card usage-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">近 3 個月趨勢</span>
+              <span class="text-xs text-muted">自己答完 / 轉給真人 / 先問清楚</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <div v-if="loadingTrend && !trend.length" class="usage-loading"><div class="spinner" /></div>
+            <ClientOnly v-else-if="trendHasData">
+              <VChart class="usage-trend-chart" :option="trendOption" autoresize />
+              <template #fallback><div class="usage-loading"><div class="spinner" /></div></template>
+            </ClientOnly>
+            <div v-else class="usage-empty">還沒有足夠資料能看趨勢，AI 開始服務客人後這裡就會長出來。</div>
+          </div>
+        </div>
       </div>
     </template>
   </AdminSplitLayout>
@@ -307,10 +313,10 @@ const { apiFetch, workspaceId } = useWorkspace()
 const router = useRouter()
 const route = useRoute()
 const { showToast } = useAdminToast()
-// 成本 / token 細目只給 super admin：金額是平台進貨價（計費賣「則」），租戶看得到就能反推毛利
+// 技術細節（信心值、重演按鈕）只給 super admin：一般使用者用不到也看不懂
 const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
 
-// 用量明細（Token）預設收合：需要技術數字才展開（整卡僅 super admin 可見）
+/** 轉真人案例的「顯示技術細節」開關（信心值＋重演按鈕）；預設關 */
 const advancedOpen = ref(false)
 
 interface Summary {
@@ -329,9 +335,8 @@ interface Summary {
   disambiguationRate: number
   autoReplyRate: number
   handoffRate: number
-  /** ↓ token / 成本細目：僅 super admin 的回應才有這些欄位（租戶端 API 直接不回） */
-  // ⛔ 這頁不再顯示任何金額與 token（一律只在超管「成本總覽」頁）。
-  // API 仍會回這些欄位給 super admin（ai-settings 的 token 數還在用），這裡刻意不宣告、不取用。
+  // ⛔ 這頁不放任何金額與 token（一律只在超管「成本總覽」頁）。
+  // API 仍會回成本欄位給 super admin（ai-settings 的 token 數還在用），這裡刻意不宣告、不取用。
   plan: {
     id: string
     name: string
@@ -359,6 +364,7 @@ interface TrendPoint {
   invocations: number
   answered: number
   handoffs: number
+  disambiguations: number
 }
 
 const summary = ref<Summary | null>(null)
@@ -409,6 +415,19 @@ function scrollToHandoffs() {
   handoffCard.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+/**
+ * 所選月份 vs 前一個月的訊息量變化。沿用趨勢那份資料（同一支 API、同一把台灣時區的尺），
+ * 不另外再查一次。趨勢是「舊→新」排序，前一期即 index-1；選到最舊那個月沒得比 → null 不顯示。
+ */
+const invocationsDeltaPct = computed(() => {
+  const idx = trend.value.findIndex(p => p.period === period.value)
+  if (idx <= 0) return null
+  const prev = trend.value[idx - 1]?.invocations ?? 0
+  const cur = trend.value[idx]?.invocations ?? 0
+  if (!prev) return null
+  return Math.round(((cur - prev) / prev) * 100)
+})
+
 // 近 3 個月趨勢：有任何一個月有量才畫圖，否則顯示「資料不足」空狀態（剛上線/剛清空時）。
 const trendHasData = computed(() => trend.value.some(p => p.invocations > 0))
 const trendOption = computed(() => {
@@ -417,9 +436,9 @@ const trendOption = computed(() => {
     // ⚠️ 必須與 hero 分段長條同色（_ai-usage.scss 的 --brand-green-deep / #5b7a9d）：
     // 同一頁上下兩塊講同一件事，顏色一漂就變成「四種顏色三個意思」。
     // ECharts 吃不了 CSS 變數，只能硬寫——改 token 時要記得回來改這裡。
-    color: ['#05b24c', '#5b7a9d'],
+    color: ['#05b24c', '#5b7a9d', '#d99a2b'],
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人'] },
+    legend: { bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, data: ['自己答完', '轉給真人', '先問清楚'] },
     grid: { left: 8, right: 12, top: 22, bottom: 34, containLabel: true },
     xAxis: { type: 'category', data: t.map(p => p.label), axisTick: { alignWithLabel: true } },
     yAxis: {
@@ -431,11 +450,11 @@ const trendOption = computed(() => {
     series: [
       { name: '自己答完', type: 'bar', barMaxWidth: 34, data: t.map(p => p.answered), label: { show: true, position: 'top', fontSize: 11 } },
       { name: '轉給真人', type: 'bar', barMaxWidth: 34, data: t.map(p => p.handoffs), label: { show: true, position: 'top', fontSize: 11 } },
+      // 三段要湊齊：少畫這段的話柱子加起來 ≠ hero 總數，看的人一定會拿去對帳
+      { name: '先問清楚', type: 'bar', barMaxWidth: 34, data: t.map(p => p.disambiguations), label: { show: true, position: 'top', fontSize: 11 } },
     ],
   }
 })
-
-// 三桶成本相加＝工作區總花費（客人對話 + 知識庫建置 + 後台自用）
 
 // ── Period selector（過去 3 個月） ─────────────────────────
 function makePeriodOptions() {
