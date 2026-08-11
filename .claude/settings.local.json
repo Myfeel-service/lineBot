@@ -358,7 +358,21 @@
       "Bash(cp ~/.claude.json ~/.claude.json.bak-mcp)",
       "Bash(claude mcp *)",
       "Bash(node reasons-live.mjs)",
-      "Bash(node render-trend.mjs)"
+      "Bash(node render-trend.mjs)",
+      "Bash(perl -0pi -e \"s/unreadAt: isCurrent \\\\? conv!\\\\.lastMessageAt \\\\?\\\\? null : null,/unreadAt: s.lastActivityAt ?? null,/\" server/api/conversations/sessions.get.ts)",
+      "Bash(sed -e \"s|Date.UTC\\(2026, 7, 9\\)|Date.UTC\\(2026, 7, 1\\)|\" -e 's|total < 20000|total < 50000|' reads-hourly.mjs)",
+      "Bash(node month-hourly.mjs)",
+      "Bash(node aug4.mjs)",
+      "Bash(node --env-file=.env_myfeel ./peek-tmp.mjs)",
+      "Bash(npx vite-node *)",
+      "Bash(SRC=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/4b75246f-1aa7-4b8c-8b84-b391a3521ec9/scratchpad/myfeel-extracted.txt npx vite-node -c vitest.config.ts ./verify-tmp.ts)",
+      "Bash(export SRC=/private/tmp/claude-501/-Users-kevin-Documents-Github-linebot/4b75246f-1aa7-4b8c-8b84-b391a3521ec9/scratchpad/myfeel-extracted.txt)",
+      "Bash(git apply *)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot log --since=2026-08-09 --until=2026-08-12 --oneline -- docs/)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot show --stat b09a2d4 274480f 1dc8bcb --oneline)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff docs/STATUS.md)",
+      "Bash(npx tsx *)",
+      "Bash(git -C /Users/kevin/Documents/Github/linebot diff .claude/settings.local.json)"
     ],
     "additionalDirectories": [
       "/Users/kevin/Documents/Github/linebot",
