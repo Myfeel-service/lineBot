@@ -5,6 +5,8 @@ import { fetchAwsCost, AwsCostUnavailableError } from '~~/server/utils/aws-cost'
  * GET /api/admin/super/host-costs?period=YYYYMM
  *
  * 主機（AWS）花費。與 AI／資料庫不同，這裡是 AWS 自己算好的**實際帳單金額**。
+ * `totalCost` 是**原價**（不含折抵金），`creditTotal`／`netTotal` 讓畫面能講清楚
+ * 「原價 − 折抵 ＝ 實付」——帳號還有折抵金時淨額是 0，只顯示淨額會被誤讀成沒花錢。
  *
  * 三態回報（`status`）：ok／unavailable，查不到一律帶原因、**不可回 0**
  * （沒接上 vs 這個月沒花錢，畫面上必須分得出來）。
@@ -60,6 +62,8 @@ export default defineEventHandler(async (event) => {
       isCurrentMonth,
       currency: res.currency,
       totalCost: res.totalCost,
+      creditTotal: res.creditTotal,
+      netTotal: res.netTotal,
       services: res.services,
       days: res.days,
     }

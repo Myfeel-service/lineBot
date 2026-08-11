@@ -1,4 +1,4 @@
-import { CostExplorerClient, GetCostAndUsageCommand } from '@aws-sdk/client-cost-explorer'
+import { CostExplorerClient, GetCostAndUsageCommand, type GetCostAndUsageCommandOutput } from '@aws-sdk/client-cost-explorer'
 
 /**
  * AWS 主機費用查詢（Cost Explorer）。
@@ -61,15 +61,28 @@ function describeError(e: any): string {
 export type AwsCostResult = {
   /** 帳單幣別，通常是 USD */
   currency: string
+  /** 原價：真實用量的成本，**不含**折抵金與退費 */
   totalCost: number
-  /** 各服務花費，由高到低 */
+  /** 折抵金＋退費合計（有折抵時是負數；0＝這個月沒有折抵） */
+  creditTotal: number
+  /** 實付＝原價＋折抵（AWS 真正收走的錢） */
+  netTotal: number
+  /** 各服務花費（原價），由高到低 */
   services: Array<{ name: string; cost: number }>
-  /** 每日花費（UTC 日） */
+  /** 每日花費（原價，UTC 日） */
   days: Array<{ day: string; cost: number }>
 }
 
 /**
- * 撈一段期間的 AWS 花費，依服務分組。
+ * 帳單裡不算「用量」的紀錄型別。折抵金（Credit）與退費（Refund）是負數沖銷項，
+ * 混進服務金額會把原價全部沖成 0——帳號還有折抵金時看起來就像「沒花錢」，
+ * 折抵一用完金額才突然冒出來。所以拆開：服務列表與 totalCost 一律是原價，
+ * 折抵另外加總成 creditTotal 讓畫面自己講。
+ */
+const ADJUSTMENT_RECORD_TYPES = new Set(['Credit', 'Refund'])
+
+/**
+ * 撈一段期間的 AWS 花費，依服務分組（原價），折抵金另計。
  * @param start `YYYY-MM-DD`（含）
  * @param end `YYYY-MM-DD`（不含）
  */
@@ -80,25 +93,39 @@ export async function fetchAwsCost(start: string, end: string): Promise<AwsCostR
       TimePeriod: { Start: start, End: end },
       Granularity: 'DAILY',
       Metrics: ['UnblendedCost'],
-      GroupBy: [{ Type: 'DIMENSION', Key: 'SERVICE' }],
+      // 第二個維度用來認出折抵／退費紀錄；同一次查詢就拿得到，不會多付 US$0.01
+      GroupBy: [
+        { Type: 'DIMENSION', Key: 'SERVICE' },
+        { Type: 'DIMENSION', Key: 'RECORD_TYPE' },
+      ],
     }))
   }
   catch (e) {
     throw new AwsCostUnavailableError(describeError(e))
   }
+  return parseCostResponse(res)
+}
 
+/** 把 Cost Explorer 的回應整理成畫面要的形狀（抽成純函式讓拆帳邏輯測得到） */
+export function parseCostResponse(res: GetCostAndUsageCommandOutput): AwsCostResult {
   const byService = new Map<string, number>()
   const days: Array<{ day: string; cost: number }> = []
   let currency = 'USD'
+  let creditTotal = 0
 
   for (const bucket of res.ResultsByTime ?? []) {
     let dayTotal = 0
     for (const g of bucket.Groups ?? []) {
       const name = g.Keys?.[0] ?? '其他'
+      const recordType = g.Keys?.[1] ?? ''
       const amount = Number(g.Metrics?.UnblendedCost?.Amount ?? 0)
       const unit = g.Metrics?.UnblendedCost?.Unit
       if (unit) currency = unit
       if (!Number.isFinite(amount)) continue
+      if (ADJUSTMENT_RECORD_TYPES.has(recordType)) {
+        creditTotal += amount
+        continue
+      }
       byService.set(name, (byService.get(name) ?? 0) + amount)
       dayTotal += amount
     }
@@ -112,5 +139,7 @@ export async function fetchAwsCost(start: string, end: string): Promise<AwsCostR
     .sort((a, b) => b.cost - a.cost)
 
   const totalCost = Number(services.reduce((a, s) => a + s.cost, 0).toFixed(6))
-  return { currency, totalCost, services, days }
+  creditTotal = Number(creditTotal.toFixed(6))
+  const netTotal = Number((totalCost + creditTotal).toFixed(6))
+  return { currency, totalCost, creditTotal, netTotal, services, days }
 }

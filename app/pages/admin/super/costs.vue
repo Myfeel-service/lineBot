@@ -371,7 +371,7 @@
             <div class="card-header-main">
               <span class="section-title">主機花費 {{ host.status === 'ok' ? ntTwdSoft(hostTotalTwd) : '' }}</span>
             </div>
-            <span v-if="host.status === 'ok'" class="text-xs text-muted">AWS 實際帳單 ・ {{ host.currency }}</span>
+            <span v-if="host.status === 'ok'" class="text-xs text-muted">AWS 實際帳單（原價，未扣折抵金）・ {{ host.currency }}</span>
           </div>
 
           <div v-if="hostLoading" class="sa-cost-body">
@@ -385,7 +385,7 @@
               <div class="sa-host-setup__title">要讓這裡顯示金額，需要在 AWS 做四件事</div>
               <ol class="sa-host-setup__steps">
                 <li>用<b>根帳號</b>到「帳戶」設定，把 <b>IAM 使用者存取帳務資訊</b> 打開（沒開的話後面權限給再多都會被擋）</li>
-                <li>到「帳單與成本管理」左側點 <b>Cost Explorer</b> 啟用（第一次啟用後<b>約 24 小時</b>才會有資料）</li>
+                <li>到「帳單與成本管理」左側點 <b>Cost Explorer</b>——第一次打開頁面就會自動啟用（啟用後<b>約 24 小時</b>才會有資料）</li>
                 <li>建立一個 IAM 使用者，只給 <b>ce:GetCostAndUsage</b> 這一個權限（唯讀，看不到也改不了任何資源），並建立存取金鑰</li>
                 <li>把金鑰設成環境變數 <b>AWS_COST_ACCESS_KEY_ID</b> 與 <b>AWS_COST_SECRET_ACCESS_KEY</b>，重新部署</li>
               </ol>
@@ -399,7 +399,13 @@
           <div v-else class="sa-cost-body">
             <p class="sa-cost-guide__intro">
               這是 <b>AWS 自己算好的帳單金額</b>（不是用單價推估的），依服務分項如下。
+              金額是<b>原價</b>——真實用量的成本，還沒扣掉 AWS 送的折抵金。
             </p>
+            <div v-if="hostCreditTwd > 0" class="sa-host-credit">
+              這個月實際付給 AWS 的是 <b>{{ ntTwd(hostNetTwd) }}</b>，因為折抵金吸收了大部分費用：
+              原價 {{ ntTwdSoft(hostTotalTwd) }} − 折抵 {{ ntTwd(hostCreditTwd) }} ＝ 實付 {{ ntTwd(hostNetTwd) }}。
+              折抵金用完之後，帳單就會回到原價。
+            </div>
             <div v-if="host.services.length" class="sa-host-list">
               <div v-for="s in host.services" :key="s.name" class="sa-host-row">
                 <span class="sa-host-row__bar" :style="{ width: hostPct(s.cost) + '%' }" />
@@ -409,8 +415,8 @@
             </div>
             <div v-else class="sa-cost-empty">這個月 AWS 沒有產生費用（都在免費額度內）</div>
             <p class="sa-cost-est__foot">
-              金額為 AWS Cost Explorer 的 UnblendedCost，分日以 <b>UTC</b> 計（與台北日差 8 小時，月總額不受影響）。
-              資料一天更新一次，本頁快取 6 小時。
+              金額為 AWS Cost Explorer 的 UnblendedCost（原價＝扣除折抵金 Credit 與退費 Refund 前），
+              分日以 <b>UTC</b> 計（與台北日差 8 小時，月總額不受影響）。資料一天更新一次，本頁快取 6 小時。
             </p>
           </div>
         </div>
@@ -516,7 +522,12 @@ interface Host {
   reason: string
   currency: string
   usdToTwd: number
+  /** 原價（不含折抵金） */
   totalCost: number
+  /** 折抵金＋退費（有折抵時為負數） */
+  creditTotal: number
+  /** 實付＝原價＋折抵 */
+  netTotal: number
   services: Array<{ name: string; cost: number }>
 }
 type HostResponse = Partial<Host> & { status: 'ok' | 'unavailable' }
@@ -565,7 +576,7 @@ const prevInfraCostUsd = ref<number | null>(null)
 
 const hostLoading = ref(true)
 const host = ref<Host>({
-  status: 'unavailable', reason: '', currency: 'USD', usdToTwd: USD_TO_TWD, totalCost: 0, services: [],
+  status: 'unavailable', reason: '', currency: 'USD', usdToTwd: USD_TO_TWD, totalCost: 0, creditTotal: 0, netTotal: 0, services: [],
 })
 /** 上月主機花費；null＝讀不到 */
 const prevHostCost = ref<number | null>(null)
@@ -575,6 +586,9 @@ const infraTotalTwd = computed(() => infra.value.status === 'ok' ? twd(infra.val
 // AWS 帳單幣別通常是 USD，但若帳號本身以台幣結算就直接用，不要再乘一次匯率
 const hostToTwd = (amount: number) => host.value.currency === 'USD' ? twd(amount) : Math.round(amount)
 const hostTotalTwd = computed(() => host.value.status === 'ok' ? hostToTwd(host.value.totalCost) : 0)
+// 折抵金以「正數」呈現（後端存的是負數沖銷項），實付另外算，畫面上三個數字要對得起來
+const hostCreditTwd = computed(() => host.value.status === 'ok' ? Math.abs(hostToTwd(host.value.creditTotal)) : 0)
+const hostNetTwd = computed(() => host.value.status === 'ok' ? hostToTwd(host.value.netTotal) : 0)
 const grandTotalTwd = computed(() => aiTotalTwd.value + infraTotalTwd.value + hostTotalTwd.value)
 
 function hostMoney(amount: number) {
@@ -786,6 +800,8 @@ function normalizeHost(res: HostResponse): Host {
     currency: res.currency || 'USD',
     usdToTwd: res.usdToTwd || USD_TO_TWD,
     totalCost: ok ? (res.totalCost ?? 0) : 0,
+    creditTotal: ok ? (res.creditTotal ?? 0) : 0,
+    netTotal: ok ? (res.netTotal ?? res.totalCost ?? 0) : 0,
     services: ok ? (res.services || []) : [],
   }
 }
