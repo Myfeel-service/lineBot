@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import {
   MAX_PINNED_CONVERSATIONS,
   FOLLOW_UP_LIST_LIMIT,
@@ -97,7 +98,8 @@ async function queryFlaggedDocs(
 
 /**
  * GET /api/conversations/list
- * Query: page, limit, search, flag（flag=followup 只看待跟進）
+ * Query: page, limit, search, flag（flag=followup 只看待跟進）,
+ *        userId（直達單筆，見下）, after（「載入更多」游標＝上一頁最後一筆 doc id）
  * Response: { conversations, total, page, limit, hasMore, truncated }
  */
 export default defineEventHandler(async (event) => {
@@ -107,8 +109,22 @@ export default defineEventHandler(async (event) => {
   const searchRaw = String(query.search || '').trim().toLowerCase()
   const flag = String(query.flag || '').trim()
   const { page, limit, offset } = parseAdminListPagination(query, { limit: 30 })
+  const afterId = String(query.after || '').trim()
 
   const db = getDb()
+
+  // ── 直達單筆（監控頁／小幫手「開對話」深連結） ──────────────────────
+  // 帶純 LINE userId 或完整 doc id 都收。以前這條路走「search=userId 的整段掃描」——
+  // 客人越舊掃越多（最舊要掃完 3,000 條對話＋3,000 份 user），其實照編號讀就是 1 次。
+  const directUserId = String(query.userId || '').trim()
+  if (directUserId) {
+    const docId = lineUserFirestoreDocId(directUserId, workspaceId)
+    const snap = await db.collection('conversations').doc(docId).get()
+    const empty = { conversations: [], total: 0, page: 1, limit, hasMore: false }
+    if (!snap.exists || snap.data()?.workspaceId !== workspaceId) return empty
+    const rows = await enrichConversations(db, [snap as FirebaseFirestore.QueryDocumentSnapshot])
+    return { conversations: rows, total: rows.length, page: 1, limit, hasMore: false }
+  }
 
   // ── 只看待跟進 ────────────────────────────────────────────────────
   // 標記量小（就是客服自己的待辦），一次撈完在記憶體排，不做分頁；
@@ -147,7 +163,16 @@ export default defineEventHandler(async (event) => {
       : []
 
     let ref = baseRef as FirebaseFirestore.Query
-    if (offset > 0) ref = ref.offset(offset)
+    if (afterId) {
+      // 「載入更多」的游標：offset 對跳過的每一筆都收讀取費（第 N 頁付 30×(N-1) 筆），
+      // 游標只多花 1 次讀取拿錨點文件
+      const cursorSnap = await db.collection('conversations').doc(afterId).get()
+      if (cursorSnap.exists && cursorSnap.data()?.workspaceId === workspaceId) ref = ref.startAfter(cursorSnap)
+      else if (offset > 0) ref = ref.offset(offset) // 游標失效退回 offset，寧可貴不要空頁
+    }
+    else if (offset > 0) {
+      ref = ref.offset(offset) // 相容沒帶游標的舊呼叫
+    }
     const snap = await ref.limit(limit).get()
     const rows = await enrichConversations(db, snap.docs)
     // hasMore 要看「原始這一頁抓了幾筆」，不能用扣掉釘選後的筆數，否則會提早判定沒有下一頁
@@ -164,15 +189,19 @@ export default defineEventHandler(async (event) => {
 
   // 搜尋時不做釘選置頂：這時清單是「搜尋結果」，照相關的時間序給就好
   const matched: ConvRow[] = []
-  let firestoreOffset = 0
   let scanned = 0
   let lastBatchFull = false
+  // 一批批往下掃用游標接，不用 offset——offset 對跳過的每一筆都收讀取費，
+  // 掃滿 3,000 筆的搜尋會被收 6.2 萬筆的錢（8/11 實測，單日 NT$49 的主因）
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null
 
   while (matched.length < offset + limit && scanned < MAX_SEARCH_SCAN) {
-    const snap = await baseRef.offset(firestoreOffset).limit(FETCH_BATCH).get()
+    let batchRef = baseRef as FirebaseFirestore.Query
+    if (cursor) batchRef = batchRef.startAfter(cursor)
+    const snap = await batchRef.limit(FETCH_BATCH).get()
     if (snap.empty) break
     scanned += snap.size
-    firestoreOffset += snap.size
+    cursor = snap.docs[snap.docs.length - 1]!
     lastBatchFull = snap.size >= FETCH_BATCH
 
     const rows = await enrichConversations(db, snap.docs)

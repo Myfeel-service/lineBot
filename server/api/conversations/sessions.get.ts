@@ -2,7 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import type { ConversationStatus, InitialHandler } from '~~/shared/types/conversation-stats'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { countOpenQueueSessions, isOpenQueueSession, scanFilteredPage } from '~~/server/utils/conversation-queue'
+import { isOpenQueueSession } from '~~/server/utils/conversation-queue'
 import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
 import { taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
 
@@ -21,6 +21,7 @@ interface ConvSideData {
   currentSessionId: string
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
+  lastMessageAt: unknown
 }
 
 /**
@@ -46,6 +47,7 @@ async function fetchConversationSideData(
         currentSessionId: String(data.currentSessionId ?? ''),
         lastMessage: String(data.lastMessage ?? ''),
         lastDirection: data.lastDirection === 'outgoing' ? 'outgoing' : 'incoming',
+        lastMessageAt: data.lastMessageAt ?? null,
       }
     })
   }
@@ -85,6 +87,23 @@ function mapSessionToRow(
     followUp: conv?.flags.followUp === true,
     lastMessage,
     lastDirection,
+    /**
+     * 未讀紅點專用的時間，**不可以**用 lastActivityAt。
+     *
+     * lastActivityAt 記的是「這場有沒有動靜」，客人按按鈕進模組、客服接手／交還／結案、
+     * 半夜 auto-handback 排程、24 小時過期自動關場……全都會把它往前推（見
+     * conversation-session.ts）。但紅點的另一半條件（lastDirection）問的是「最後一則
+     * **訊息**是誰送的」——那個只有真的有人講話才會變。兩個條件取自不同來源，就會出現
+     * 「客人是最後講話的人」永遠成立、時間卻一直跳 → 已經看完的列反覆變紅：
+     * 按完結案自己紅回來、客人按顆按鈕就紅但摘要沒變、排程跑完隔天一整排紅、
+     * 客人今天開口連他去年那些已結束的場也一起紅。
+     *
+     * 所以這裡跟上面兩個欄位拿同一份來源（進行中那場＝對話文件），三個同進同出，
+     * 紅點的判斷才對得上，也和「全部」分頁天生一致。
+     * 不是進行中的場一律 null＝不亮紅點：客人再開口會開新的一場，
+     * 已結束的場不可能還在等我們回。
+     */
+    unreadAt: isCurrent ? conv!.lastMessageAt ?? null : null,
     status: s.status,
     initialHandler: s.initialHandler,
     currentHandler: s.currentHandler,
@@ -119,6 +138,9 @@ export default defineEventHandler(async (event) => {
   const limit = Math.min(100, Math.max(1, Number(query.limit || PAGE_SIZE)))
 
   const offset = (page - 1) * limit
+  // 「載入更多」的游標＝上一頁最後一筆的 session doc id（無限捲動一定拿得到；
+  // 沒帶就退回 offset 分頁，見下）
+  const afterId = String(query.after || '').trim()
 
   // 日界線取台北時間，與統計端點同修（見 taipei-day.ts）——
   // 否則統計頁點日期鑽進來，清單和 KPI 數的不是同一批對話
@@ -199,6 +221,17 @@ export default defineEventHandler(async (event) => {
     if (status !== 'all') {
       ref = ref.where('status', '==', status as ConversationStatus)
     }
+    if (isOpenQueue) {
+      // 佇列口徑（open 扣掉「加好友出生、客人未開口」）直接下到查詢。
+      // 以前用 scanFilteredPage 在記憶體過濾——2026-08-11 實測 1,584 筆 open 全是
+      // 未開口的殭屍場，過濾率 0% ＝ 每次載入整批掃完（Firestore 照筆收讀取費），
+      // 停在分頁上每 30 秒輪詢再掃一遍，一小時 19 萬次讀取。
+      // 下推的前提是「所有 open session 都有 hasInbound 欄位」（等值查詢不匹配缺欄位
+      // 的文件）——兩租戶已實測缺欄位數為 0，且建場時一律寫入（conversation-session.ts）。
+      // 需要 (workspaceId, status, hasInbound, lastActivityAt DESC) 複合索引；
+      // 還沒部署時會 FAILED_PRECONDITION → 走下面的 runFallback（記憶體過濾，語意同一份）。
+      ref = ref.where('hasInbound', '==', true)
+    }
     if (initialHandler !== 'all') {
       ref = ref.where('initialHandler', '==', initialHandler as InitialHandler)
     }
@@ -214,37 +247,28 @@ export default defineEventHandler(async (event) => {
 
     ref = ref.orderBy('lastActivityAt', 'desc')
 
-    let docs: FirebaseFirestore.QueryDocumentSnapshot[]
-    let total: number
-    let hasMore: boolean
-    let truncated = false
+    const countSnap = await ref.count().get()
+    const total = countSnap.data().count
 
-    if (isOpenQueue) {
-      // 過濾在分頁之前:每頁都是實打實的 limit 筆,總數才對得上列表
-      const scanned = await scanFilteredPage<FirebaseFirestore.QueryDocumentSnapshot>(
-        ref, isOpenQueueSession, offset, limit,
-      )
-      docs = scanned.docs
-      hasMore = scanned.hasMore
-      truncated = scanned.truncated
-      total = (startDate || endDate)
-        // 帶日期時算不出精確佇列數(範圍+等值需複合索引),用已載入筆數當下限,不假裝知道
-        ? offset + docs.length + (hasMore ? 1 : 0)
-        : await countOpenQueueSessions(db, workspaceId)
-    }
-    else {
-      const countSnap = await ref.count().get()
-      total = countSnap.data().count
-
-      let pageRef = ref
-      if (offset > 0) {
-        // Use offset pagination for simplicity (Firestore supports up to 1000)
-        pageRef = pageRef.offset(offset)
+    let pageRef = ref
+    if (afterId) {
+      // 「載入更多」的游標：接在上一頁最後一筆之後。offset 會對**跳過的每一筆**收讀取費
+      // （第 N 頁付 30×(N-1) 筆跳過費，捲得越深越貴），游標只多花 1 次讀取拿錨點文件。
+      const cursorSnap = await db.collection('conversationSessions').doc(afterId).get()
+      if (cursorSnap.exists && cursorSnap.data()?.workspaceId === workspaceId) {
+        pageRef = pageRef.startAfter(cursorSnap)
       }
-      const snap = await pageRef.limit(limit).get()
-      docs = snap.docs
-      hasMore = offset + docs.length < total
+      else if (offset > 0) {
+        pageRef = pageRef.offset(offset) // 游標失效（該場被刪）退回 offset，寧可貴不要空頁
+      }
     }
+    else if (offset > 0) {
+      pageRef = pageRef.offset(offset) // 相容沒帶游標的舊呼叫
+    }
+    const snap = await pageRef.limit(limit).get()
+    const docs = snap.docs
+    const hasMore = offset + docs.length < total
+    const truncated = false
 
     if (docs.length === 0) return { sessions: [], total, page, limit, hasMore: false, truncated }
 

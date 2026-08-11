@@ -137,6 +137,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "hasInbound", "order": "ASCENDING" },
+        { "fieldPath": "lastActivityAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "conversationSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
         { "fieldPath": "initialHandler", "order": "ASCENDING" },
         { "fieldPath": "lastActivityAt", "order": "DESCENDING" }
       ]
