@@ -387,7 +387,7 @@
                 <li>用<b>根帳號</b>到「帳戶」設定，把 <b>IAM 使用者存取帳務資訊</b> 打開（沒開的話後面權限給再多都會被擋）</li>
                 <li>到「帳單與成本管理」左側點 <b>Cost Explorer</b>——第一次打開頁面就會自動啟用（啟用後<b>約 24 小時</b>才會有資料）</li>
                 <li>建立一個 IAM 使用者，只給 <b>ce:GetCostAndUsage</b> 這一個權限（唯讀，看不到也改不了任何資源），並建立存取金鑰</li>
-                <li>把金鑰設成環境變數 <b>AWS_COST_ACCESS_KEY_ID</b> 與 <b>AWS_COST_SECRET_ACCESS_KEY</b>，重新部署</li>
+                <li>把金鑰設成環境變數 <b>COST_EXPLORER_ACCESS_KEY_ID</b> 與 <b>COST_EXPLORER_SECRET_ACCESS_KEY</b>，重新部署（⛔不能取 AWS 開頭的名字，Amplify 會擋）</li>
               </ol>
               <p class="sa-host-setup__note">
                 完整逐步教學（含每一頁要點哪裡、權限 JSON、常見錯誤對照）放在 <b>docs/AWS-COST-SETUP.md</b>。

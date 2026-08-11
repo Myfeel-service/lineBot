@@ -181,10 +181,11 @@ export default defineNuxtConfig({
     emailReplyTo: process.env.EMAIL_REPLY_TO ?? '',
     awsSesRegion: process.env.AWS_SES_REGION ?? process.env.AWS_REGION ?? '',
     // 超管成本頁讀 AWS 帳單用（唯讀 ce:GetCostAndUsage）。
-    // ⛔ 不可命名為 AWS_ACCESS_KEY_ID／AWS_SECRET_ACCESS_KEY：那是 Lambda 保留變數，
-    //    在 Amplify 上設了會被執行角色蓋掉。留空則走預設憑證鏈。見 docs/AWS-COST-SETUP.md
-    awsCostAccessKeyId: process.env.AWS_COST_ACCESS_KEY_ID ?? '',
-    awsCostSecretAccessKey: process.env.AWS_COST_SECRET_ACCESS_KEY ?? '',
+    // ⛔ 環境變數不能用 AWS 開頭：Amplify 主控台整個擋掉 "AWS" 前綴（reserved prefix，
+    //    存檔直接報錯），Lambda 又會自動蓋掉 AWS_ACCESS_KEY_ID 那三個保留名。
+    //    所以取名 COST_EXPLORER_*。留空則走預設憑證鏈。見 docs/AWS-COST-SETUP.md
+    awsCostAccessKeyId: process.env.COST_EXPLORER_ACCESS_KEY_ID ?? '',
+    awsCostSecretAccessKey: process.env.COST_EXPLORER_SECRET_ACCESS_KEY ?? '',
 
     // Public (exposed to client)
     public: {

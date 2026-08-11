@@ -109,8 +109,8 @@
 
 | 變數名稱 | 值 |
 | --- | --- |
-| `AWS_COST_ACCESS_KEY_ID` | 步驟 3 的存取金鑰 ID |
-| `AWS_COST_SECRET_ACCESS_KEY` | 步驟 3 的私密存取金鑰 |
+| `COST_EXPLORER_ACCESS_KEY_ID` | 步驟 3 的存取金鑰 ID |
+| `COST_EXPLORER_SECRET_ACCESS_KEY` | 步驟 3 的私密存取金鑰 |
 
 3. 儲存 → **重新部署（Redeploy this version）**
 
@@ -119,17 +119,22 @@
 在 `.env` 加上同樣兩行即可：
 
 ```
-AWS_COST_ACCESS_KEY_ID=AKIA...
-AWS_COST_SECRET_ACCESS_KEY=...
+COST_EXPLORER_ACCESS_KEY_ID=AKIA...
+COST_EXPLORER_SECRET_ACCESS_KEY=...
 ```
 
-> ### ⛔ 為什麼不能叫 `AWS_ACCESS_KEY_ID`？
+> ### ⛔ 為什麼名字不能用 AWS 開頭？（2026-08-11 實測撞到）
 >
-> `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN` 是 **AWS Lambda 的保留環境變數**
-> （Amplify 的 SSR 就是跑在 Lambda 上）。這三個名字由執行環境自動填入執行角色的臨時憑證，
-> **你設了也會被蓋掉**，結果就是「明明設了金鑰卻還是說沒憑證」，而且完全查不出原因。
+> 兩層限制，缺一不可：
 >
-> 所以這裡刻意用 `AWS_COST_` 開頭的專屬名稱，程式會明確地把它們交給 Cost Explorer 用。
+> 1. **Amplify 主控台整個擋掉 "AWS" 前綴**：存檔直接跳紅字
+>    `Environment variables cannot start with the reserved prefix "AWS"`。
+>    第一版取名 `AWS_COST_*`，就是在這裡存不進去才改名的。
+> 2. `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN` 是 **Lambda 的保留變數**
+>    （Amplify 的 SSR 就是跑在 Lambda 上），由執行環境自動填入執行角色的臨時憑證，
+>    就算設得進去也會被蓋掉，變成「明明設了金鑰卻還是說沒憑證」而且查不出原因。
+>
+> 所以用 `COST_EXPLORER_` 開頭的專屬名稱，程式會明確地把它們交給 Cost Explorer 用。
 > 兩個都留空時，程式才退回去用預設憑證鏈（也就是路線 A 的做法）。
 
 ---
@@ -152,7 +157,7 @@ AWS_COST_SECRET_ACCESS_KEY=...
 
 | 畫面顯示 | 意思 | 怎麼修 |
 | --- | --- | --- |
-| 尚未設定 AWS 憑證（需要一組有 ce:GetCostAndUsage 權限的金鑰） | 程式完全找不到任何 AWS 憑證 | 走路線 B 的話，檢查步驟 4 的兩個變數名稱有沒有打錯、有沒有重新部署 |
+| 尚未設定 AWS 憑證（需要一組有 ce:GetCostAndUsage 權限的金鑰） | 程式完全找不到任何 AWS 憑證 | 走路線 B 的話，檢查步驟 4 的兩個變數名稱有沒有打錯（是 `COST_EXPLORER_*`，不是 AWS 開頭）、有沒有重新部署 |
 | AWS 憑證缺少 ce:GetCostAndUsage 權限 | 找到憑證了，但被 AWS 拒絕 | ①**先確認步驟 1 有做**（最常見）②檢查政策 JSON 有沒有貼對、有沒有真的掛到那個使用者／角色上 |
 | AWS 帳號尚未啟用 Cost Explorer（啟用後約 24 小時才有資料） | 步驟 2 沒做，或做了還在等 | 確認有按啟用，然後等滿 24 小時 |
 | 這個月份還沒開始 | 選到未來的月份 | 把月份選回本月或過去 |

@@ -9,13 +9,15 @@ import { CostExplorerClient, GetCostAndUsageCommand, type GetCostAndUsageCommand
  *   ① 帳號要先啟用 Cost Explorer，並允許 IAM 使用者讀取帳務資料
  *   ② 要有一組帶 `ce:GetCostAndUsage` 權限的憑證，兩條路擇一：
  *      - 幫 Amplify 的執行角色加上該權限 → 走 SDK 預設憑證鏈，什麼都不用設
- *      - 或開一個唯讀 IAM 使用者，把金鑰設成 `AWS_COST_ACCESS_KEY_ID` /
- *        `AWS_COST_SECRET_ACCESS_KEY`
+ *      - 或開一個唯讀 IAM 使用者，把金鑰設成 `COST_EXPLORER_ACCESS_KEY_ID` /
+ *        `COST_EXPLORER_SECRET_ACCESS_KEY`
  *   任何一項沒到位都會丟 AwsCostUnavailableError，呼叫端據此顯示「未接上」而不是 0。
  *
- * ⛔ **金鑰的環境變數名稱不能用 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`**：
- *    那是 Lambda（Amplify SSR 的執行環境）的保留變數，由執行角色自動填入、設了也會被蓋掉，
- *    所以這裡改用 `AWS_COST_*` 專屬名稱，明確傳給 client。沒設就退回預設憑證鏈。
+ * ⛔ **金鑰的環境變數名稱不能用 AWS 開頭**（2026-08-11 實測撞到）：
+ *    Amplify 主控台整個擋掉 "AWS" 前綴（reserved prefix，存檔直接報錯），
+ *    Lambda 又會自動蓋掉 `AWS_ACCESS_KEY_ID` 那三個保留名——第一版取名 `AWS_COST_*`
+ *    就是在 Amplify 存不進去才改的。所以用 `COST_EXPLORER_*`，明確傳給 client；
+ *    沒設就退回預設憑證鏈。
  *
  * ⚠️ 每次 GetCostAndUsage 要 US$0.01，所以呼叫端務必快取（帳單資料一天才更新一次，
  *    快取數小時完全夠用；不快取的話光是有人一直重整頁面就會慢慢累積費用）。
