@@ -164,6 +164,21 @@ describe('stripBoilerplate', () => {
     expect(stripBoilerplate(keep)).toBe(keep)
   })
 
+  /**
+   * 2026-08-11 拿正式站卡片實測抓到的誤刪：裸配「僅供參考」會吃掉真操作說明。
+   * 「僅供參考」必須綁圖像主詞（畫面／插圖／圖片…）才算免責句；把這條放寬回去就會再犯。
+   */
+  it('⛔「僅供參考」出現在操作說明裡要保留，綁圖像主詞才是免責', () => {
+    const keep = [
+      '加水時，請根據米的種類與品質調整水量，內鍋水位刻度僅供參考。',
+      '飯碗容量以 265ml 為參考值，容量僅供參考。',
+    ].join('\n')
+    expect(stripBoilerplate(keep)).toBe(keep)
+    // 圖像免責照樣剝掉
+    expect(stripBoilerplate('產品外觀請見官網，圖片僅供參考。')).toBe('')
+    expect(stripBoilerplate('本頁畫面僅供示意。')).toBe('')
+  })
+
   it('空輸入回空字串', () => {
     expect(stripBoilerplate('')).toBe('')
     expect(stripBoilerplate('   ')).toBe('')
