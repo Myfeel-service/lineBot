@@ -126,6 +126,30 @@ export interface KnowledgeSourceDoc {
    * 代價：真變動晚一個檢查週期才通知。
    */
   pendingHash?: string
+  /**
+   * 「把數字抹掉之後」的內容指紋（判斷規則見 `shared/knowledge-fingerprint.ts`）。
+   * 集資金額／支持人數／倒數天數這種每天都在動的數字不會反映在這道指紋上，
+   * 所以它變了＝**文字內容真的被改過**。舊來源沒有這一欄（''）＝沒有基準，
+   * 行為退回改版前的逐字比對。
+   */
+  textHash?: string
+  /** 上一輪抓到的逐字指紋（每輪都更新；`pendingHash` 是它在舊版的角色） */
+  observedHash?: string
+  /** 上一輪抓到的抹數字指紋 */
+  observedTextHash?: string
+  /**
+   * 已連續幾輪「文字一字未改、只有數字在動」。達到 `NUMERIC_DRIFT_LEARN_ROUNDS`
+   * 就認定這個網址的數字本來就會自己跑，之後純數字變動不再提醒（例：集資平台首頁）。
+   */
+  numericDriftRounds?: number
+  /** 已連續幾輪停在「等下一輪確認」 */
+  pendingRounds?: number
+  /**
+   * 連續多輪抓到的內容都不一樣、系統無從確認哪一版才算數的起始時間。
+   * 這種來源以前會無聲無息地永遠等下去、畫面卻顯示一切正常；有了它，資料頁才講得出
+   * 「自動偵測對這個網址無效，要更新請自己按重新同步」。恢復正常時寫回 null。
+   */
+  detectStalledAt?: unknown
   /** HTTP etag 與 lastModified（網址同步用） */
   etag: string
   lastModified: string

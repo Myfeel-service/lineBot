@@ -5,6 +5,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getResyncExtracted } from '~~/server/utils/ai-knowledge-resync'
 import { extractionQualityWarnings } from '~~/server/utils/ai-source-extractors'
+import { normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import {
   cleanupExpiredPreviewJobs,
   JOB_TTL_MS,
@@ -72,8 +73,13 @@ export default defineEventHandler(async (event) => {
    */
   const baseline = String(source.data.appliedContentHash ?? '').trim()
   if (!force && baseline && baseline === extracted.contentHash) {
+    // 兩道指紋要一起更新（排程用「抹掉數字後的指紋」分辨「網頁真的改了」與「計數器又跳了」）。
+    // 只更新其中一道會讓兩者對應到不同版本，下次數字一動就被誤判成文字改過。
+    const { createHash } = await import('node:crypto')
+    const textHash = createHash('sha256').update(normalizeVolatileNumbers(extracted.text)).digest('hex')
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
       contentHash: extracted.contentHash,
+      textHash,
       pendingHash: FieldValue.delete(),
       outdatedAt: null,
       lastFetchedAt: FieldValue.serverTimestamp(),

@@ -466,10 +466,34 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用並通知你</strong>（只更新原有知識的內容）；
+              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用</strong>（只更新原有知識的內容，不另外通知你，上面的「最後同步」時間會跟著更新）；
               新增、刪除或大幅改版<strong>不會自動動</strong>，會在這裡標提示等你進來看差異再決定。
               你手動編輯過的卡永遠不會被自動覆蓋。
             </p>
+
+            <!--
+              偵測狀況三態：正常不出聲，另外兩種一定要講出來。
+              以前這兩種情況畫面上什麼都不顯示,店家看到「最後同步 N 小時前」會以為系統在顧,
+              實際上官網改版了也不會有人知道——最糟的那種假綠燈。
+            -->
+            <div v-if="selectedSource.detectStalledAtMs > 0" class="src-detect-note src-detect-note--warn">
+              <p class="src-detect-note__title">⚠ 這個網址自動偵測幫不上忙</p>
+              <p>
+                每次抓到的內容都不一樣（常見於有隨機推薦、輪播區塊的首頁），系統分不出哪一次才算真的改版，
+                所以<strong>不會</strong>主動提醒你。要更新知識請按上方「重新同步」自己看差異，
+                或改用內容固定的頁面（單一商品頁、說明頁）當資料來源。
+              </p>
+              <p class="src-detect-note__meta">從 {{ relativeTime(selectedSource.detectStalledAtMs) }}開始</p>
+            </div>
+            <div v-else-if="selectedSource.numbersVolatile" class="src-detect-note">
+              <p class="src-detect-note__title">這個網址上的數字每次抓都在變</p>
+              <p>
+                像是集資金額、支持人數、倒數天數。系統已經學會忽略這些數字，
+                <strong>只在文字內容改變時才提醒你</strong>——所以單純改數字（例如只調價格）不會通知，
+                那種情況要自己按上方「重新同步」。
+              </p>
+            </div>
+
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測頻率" tight />
               <el-select v-model="settingsForm.refreshIntervalMinutes" class="control-full">
@@ -490,7 +514,7 @@
             <div class="admin-field-group">
               <AdminFieldLabel text="小幅文字變動" tight />
               <el-radio-group v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
-                <el-radio :value="true">自動更新並通知我（建議）</el-radio>
+                <el-radio :value="true">自動更新（建議）</el-radio>
                 <el-radio :value="false">一律等我確認</el-radio>
               </el-radio-group>
               <p class="src-section-hint">
@@ -1106,6 +1130,10 @@ interface SourceSummary {
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
+  /** type='url'：這個網址的數字每次抓都在變，系統已學會忽略，只在文字內容改變時提醒 */
+  numbersVolatile: boolean
+  /** type='url'：連續多輪抓到的內容都不同、自動偵測判斷不出來（0 = 正常） */
+  detectStalledAtMs: number
 }
 
 interface ChunkRow {
@@ -1633,6 +1661,8 @@ interface HealthChunkGroup { count: number; items: Array<{ id: string; title: st
 interface HealthResponse {
   failedSources: Array<{ id: string; name: string; reason?: string }>
   outdatedSources: Array<{ id: string; name: string }>
+  /** 每輪抓到的內容都不一樣＝變動偵測形同關閉（抓得到內容，所以不算同步失敗） */
+  stalledSources: Array<{ id: string; name: string }>
   noProductSources: Array<{ id: string; name: string; chunkCount: number }>
   shortChunks: HealthChunkGroup
   failedChunks: HealthChunkGroup
@@ -1653,6 +1683,7 @@ interface HealthResponse {
 const emptyHealth = (): HealthResponse => ({
   failedSources: [],
   outdatedSources: [],
+  stalledSources: [],
   noProductSources: [],
   shortChunks: { count: 0, items: [] },
   failedChunks: { count: 0, items: [] },
@@ -1667,6 +1698,7 @@ const health = ref<HealthResponse>(emptyHealth())
 const healthSourceCount = computed(() =>
   health.value.failedSources.length
   + health.value.outdatedSources.length
+  + health.value.stalledSources.length
   + health.value.noProductSources.length)
 const healthChunkCount = computed(() =>
   health.value.shortChunks.count + health.value.failedChunks.count + health.value.wrongAnswerChunks.count)
@@ -1777,6 +1809,20 @@ const todoItems = computed<TodoItem[]>(() => {
       action: singleOrList(h.outdatedSources, 'source', 'outdatedSources'),
     })
   }
+  /**
+   * 排在「內容改過了」後面：那個是已經知道要做什麼的事，這個是「系統其實沒在幫你看」——
+   * 不緊急但更容易被忽略，因為畫面上完全看不出異狀（最後同步時間照樣在更新）。
+   */
+  if (h.stalledSources.length) {
+    items.push({
+      id: 'stalledSources',
+      tone: 'warning',
+      title: `有 ${h.stalledSources.length} 份資料的自動偵測失效`,
+      why: '這幾個網址每次抓到的內容都不一樣，系統分不出哪次才算真的改版，所以官網改了也不會通知你。',
+      cta: '前往查看',
+      action: singleOrList(h.stalledSources, 'source', 'stalledSources'),
+    })
+  }
   if (h.noProductSources.length) {
     items.push({
       id: 'noProductSources',
@@ -1858,10 +1904,11 @@ async function loadHealth(force = false) {
   }
 }
 
-type HealthCategory = 'failedSources' | 'outdatedSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
+type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
+  stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「重新同步」,或改用內容固定的頁面當資料來源。' },
   noProductSources: { title: '文件未設產品名', hint: '這些多卡的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
   failedChunks: { title: '知識學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
   shortChunks: { title: '知識內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
@@ -1883,6 +1930,9 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
   if (cat === 'outdatedSources') {
     return h.outdatedSources.map(s => ({ id: s.id, title: s.name, meta: '', kind: 'source' as const }))
   }
+  if (cat === 'stalledSources') {
+    return h.stalledSources.map(s => ({ id: s.id, title: s.name, meta: '', kind: 'source' as const }))
+  }
   if (cat === 'noProductSources') {
     return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 條`, kind: 'source' as const }))
   }
@@ -1900,7 +1950,7 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
 })
 const healthListTruncatedNote = computed(() => {
   const cat = healthListCategory.value
-  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'noProductSources') return ''
+  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'stalledSources' || cat === 'noProductSources') return ''
   const group = health.value[cat]
   const notes: string[] = []
   if (group.count > group.items.length) {

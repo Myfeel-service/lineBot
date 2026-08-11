@@ -80,12 +80,19 @@ export default defineEventHandler(async (event) => {
   // 不必逐一點進來源才知道
   const failedSources: Array<{ id: string; name: string; reason: string }> = []
   const outdatedSources: Array<{ id: string; name: string }> = []
+  /**
+   * 自動偵測對這個網址無效（每輪抓到的內容都不一樣，系統確認不了哪一版才算數）。
+   * 一定要跟「同步失敗」分開列：這種來源抓得到內容、狀態也正常，只是**變動偵測形同關閉**——
+   * 店家以為系統在顧，其實官網改版了不會有人知道。
+   */
+  const stalledSources: Array<{ id: string; name: string }> = []
   const noProductSources: Array<{ id: string; name: string; chunkCount: number }> = []
   for (const d of sourcesSnap.docs) {
     const s = d.data() as any
     const name = String(s?.name ?? s?.url ?? '(未命名來源)')
     if (s?.status === 'failed') failedSources.push({ id: d.id, name, reason: String(s?.failureReason ?? '').slice(0, 120) })
     if (s?.outdatedAt) outdatedSources.push({ id: d.id, name })
+    if (s?.detectStalledAt) stalledSources.push({ id: d.id, name })
     // 「多卡的檔案來源沒設產品名」= 說明書無主卡事故的源頭;FAQ/公告類多為 gsheet/url,不誤傷
     if (s?.type === 'file' && !String(s?.productName ?? '').trim() && !s?.generateOverview && Number(s?.chunkCount ?? 0) >= 5) {
       noProductSources.push({ id: d.id, name, chunkCount: Number(s?.chunkCount ?? 0) })
@@ -162,6 +169,7 @@ export default defineEventHandler(async (event) => {
   return {
     failedSources,
     outdatedSources,
+    stalledSources,
     noProductSources,
     shortChunks: { count: shortCount, items: shortItems },
     failedChunks: { count: failedCount, items: failedItems },

@@ -31,6 +31,7 @@ import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
+import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
@@ -105,30 +106,79 @@ async function checkOneSource(
 
     const extracted = await extractUrlText(data.url)
     const newHash = await sha256(extracted.text)
+    // 第二道指紋：把數字抹掉之後再算。集資金額／支持人數／倒數天數這類「自己會跑的數字」
+    // 在這道指紋上完全不留痕跡，靠它才分得出「頁面真的改了」與「只是計數器又跳了」。
+    const newTextHash = await sha256(normalizeVolatileNumbers(extracted.text))
 
     // 檢查成功：清掉先前的失敗標記（說明見 buildSourceClearFailure）
     const clearFailure = buildSourceClearFailure(data.status)
+    const sourceRef = db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+
+    const decision = decideSourceChange(
+      {
+        contentHash: String(data.contentHash ?? ''),
+        textHash: String(data.textHash ?? ''),
+        appliedContentHash: String(data.appliedContentHash ?? '').trim(),
+        // 舊來源沒有 observedHash → 沿用語意相同的 pendingHash，行為與改版前一致
+        observedHash: String(data.observedHash ?? data.pendingHash ?? ''),
+        observedTextHash: String(data.observedTextHash ?? ''),
+        numericDriftRounds: Number(data.numericDriftRounds ?? 0),
+        pendingRounds: Number(data.pendingRounds ?? 0),
+      },
+      { hash: newHash, textHash: newTextHash },
+    )
+
+    // 每一輪都要記下「這次抓到什麼」：下一輪要靠它判斷這個網址的數字是不是本來就會自己跑。
+    const observed = {
+      observedHash: newHash,
+      observedTextHash: newTextHash,
+      lastFetchedAt: FieldValue.serverTimestamp(),
+    }
+
+    /**
+     * 判斷狀態要寫回文件，不能只有 log 知道。
+     * `detectStalledAt` = 連續好幾輪抓到的內容都不一樣、系統根本無從確認哪一版才算數
+     * ——這種來源以前會無聲無息地永遠停在「等下一輪」，畫面卻顯示一切正常。
+     * 時間戳只在第一次卡住時寫，之後保留原值（UI 要講「從什麼時候開始偵測不了」）。
+     */
+    const detectState = {
+      numericDriftRounds: decision.numericDriftRounds,
+      pendingRounds: decision.pendingRounds,
+      ...(decision.stalled
+        ? (data.detectStalledAt ? {} : { detectStalledAt: FieldValue.serverTimestamp() })
+        : { detectStalledAt: null }),
+    }
 
     // 首次觀測（匯入時前端沒帶 hash → contentHash 為空）：只存 baseline,不標 outdated。
     // 內容並沒有「變」,只是還沒有比較基準;沒有這個分支的話,每個新 URL 來源
     // 第一次排程必被誤報「偵測到變動」,狼來了幾次使用者就不理警示了。
-    if (!data.contentHash) {
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+    if (decision.kind === 'baseline') {
+      await sourceRef.update({
         contentHash: newHash,
-        lastFetchedAt: FieldValue.serverTimestamp(),
+        textHash: newTextHash,
+        ...observed,
+        ...detectState,
         ...clearFailure,
       })
       return { sourceId, outcome: 'unchanged' }
     }
 
-    // 比對 contentHash
-    if (data.contentHash === newHash) {
-      // 沒變 → 只更新 lastFetchedAt。先前若有「待確認新值」代表內容又跳回原樣
+    if (decision.kind === 'unchanged') {
+      // 逐字相同 → 只更新觀測值。先前若有「待確認新值」代表內容又跳回原樣
       // （輪播/隨機區塊的假變動），一併清掉。
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-        lastFetchedAt: FieldValue.serverTimestamp(),
+      await sourceRef.update({
         pendingHash: FieldValue.delete(),
+        ...observed,
+        ...detectState,
         ...clearFailure,
+        /**
+         * 抹數字指紋在這個分支**無條件重寫**（不是只補空值）：走到這裡代表剛抓到的內容
+         * 與現有版本逐字相同，所以這一份必定是正確的基準。
+         * 這也是唯一能自動修好它的地方——手動「重新同步」套用時只更新 contentHash
+         * （那條路上沒有原文可以算指紋），不在這裡重建的話，兩道指紋會對應到不同版本，
+         * 下一次數字一動就會被誤判成「文字改過了」而誤報一次變動。
+         */
+        textHash: newTextHash,
         /**
          * 舊來源沒有 appliedContentHash（這個欄位比它們晚出生）→ 在這裡順手補上。
          * 只在這個分支補是刻意的：走到這裡代表「網頁與上次觀測相同、且沒有待處理的變動」，
@@ -146,31 +196,64 @@ async function checkOneSource(
      * 已經被自動套用/人工審掉了）。這時沒有任何東西要店家決定 → 更新指紋、把「有變動」
      * 提示清掉、不通知。少了這一段,店家會被通知去看一份「未變 0、全是假差異」的 diff。
      */
-    const applied = String(data.appliedContentHash ?? '').trim()
-    if (applied && applied === newHash) {
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+    if (decision.kind === 'back-to-applied') {
+      await sourceRef.update({
         contentHash: newHash,
+        textHash: newTextHash,
         pendingHash: FieldValue.delete(),
         outdatedAt: null,
-        lastFetchedAt: FieldValue.serverTimestamp(),
+        ...observed,
+        ...detectState,
         ...clearFailure,
       })
       return { sourceId, outcome: 'unchanged', message: 'back-to-applied-version' }
     }
 
-    // 與上次不同：先不算真變——輪播 / 隨機推薦 / 計數器頁面每次抓 hash 都不同，一次差異就
-    // 通知會狼來了。新值先記 pendingHash，**下一輪仍是同一個新值才確認變動**；
-    // 又變成別的值則以最新值重新等待。代價：真變動晚一個檢查週期通知。
-    if (data.pendingHash !== newHash) {
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-        pendingHash: newHash,
-        lastFetchedAt: FieldValue.serverTimestamp(),
+    /**
+     * 這個網址的數字本來就會自己跑（連續幾輪都是「文字一字未改、只有數字在動」），
+     * 這一輪也只有數字在動 → 不是店家做的變動，不提醒。
+     * 指紋要跟上最新值，否則下一輪又會判成「跟上次不同」而原地打轉；
+     * 但 appliedContentHash **不能**推進——卡片裡的金額確實還是舊的，
+     * 手動按「重新同步」時該照實把差異列出來給人看。
+     */
+    if (decision.kind === 'numeric-drift') {
+      await sourceRef.update({
+        contentHash: newHash,
+        textHash: newTextHash,
+        pendingHash: FieldValue.delete(),
+        ...observed,
+        ...detectState,
         ...clearFailure,
       })
-      return { sourceId, outcome: 'unchanged', message: 'pending-change（待下一輪確認）' }
+      return { sourceId, outcome: 'unchanged', message: 'numeric-drift（這個網址的數字天天在動）' }
     }
 
-    // 變了（連兩輪抓到同一個新值）：依設定決定行為
+    // 與上次不同：先不算真變——輪播 / 隨機推薦 / 計數器頁面每次抓都不同，一次差異就
+    // 通知會狼來了。新值先記下來，**下一輪仍是同一份新內容才確認變動**；
+    // 又變成別的則以最新值重新等待。代價：真變動晚一個檢查週期通知。
+    if (decision.kind === 'pending') {
+      await sourceRef.update({
+        pendingHash: newHash,
+        ...observed,
+        ...detectState,
+        ...clearFailure,
+        /**
+         * 抹數字指紋的**一次性開機**：只在還沒有這一欄時寫（有了就不再動，那是確認過的基準）。
+         * 少了這句，早就卡在黑洞裡的來源永遠走不出來——它們正是因為每輪都不同才停在 pending，
+         * 而其他會寫指紋的分支它們一個都到不了，於是永遠退回舊的逐字比對、永遠卡著。
+         * 代價：以「現在這一版文字」當基準，卡住期間發生過的那次文字變動不會補報
+         *（那次本來就已經漏掉了），之後的變動照常偵測得到。
+         */
+        ...(data.textHash ? {} : { textHash: newTextHash }),
+      })
+      if (decision.stalled) {
+        // 卡住要出聲：這種來源以前會永遠停在這裡，而畫面上看起來一切正常
+        console.warn(`[detect-source-updates] ${sourceId} (${data.url}) 連續 ${decision.pendingRounds} 輪抓到的內容都不同，自動偵測失效`)
+      }
+      return { sourceId, outcome: 'unchanged', message: decision.stalled ? 'detect-stalled（每輪內容都不同）' : 'pending-change（待下一輪確認）' }
+    }
+
+    // 變了（連兩輪抓到同一份新內容）：依設定決定行為
     const behavior = data.onChangeBehavior === 'log_only' ? 'log_only' : 'notify'
 
     // 全文暫存到 subcollection：偵測時已抓過全文，丟掉的話使用者按「套用」還要重抓一次，
@@ -194,10 +277,12 @@ async function checkOneSource(
      * 保持舊 hash 的話，逾時只是下一輪重跑：已套用的卡在 diff 裡是 unchanged，天然冪等。
      */
     const commitChange = (extra: Record<string, unknown> = {}) =>
-      db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+      sourceRef.update({
         contentHash: newHash,
+        textHash: newTextHash,
         pendingHash: FieldValue.delete(),
-        lastFetchedAt: FieldValue.serverTimestamp(),
+        ...observed,
+        ...detectState,
         ...clearFailure,
         ...extra,
       })

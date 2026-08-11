@@ -16,6 +16,7 @@ import type {
   KnowledgeSourceStatus,
   KnowledgeSourceType,
 } from '~~/shared/types/ai-knowledge'
+import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
 
 export const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
 
@@ -80,6 +81,16 @@ export interface SourceSummary {
   lastFetchedAtMs: number
   outdatedAtMs: number
   updatedAtMs: number
+  /**
+   * type='url'：這個網址的數字（金額／人數／倒數之類）每次抓都在變，系統已學會忽略它們，
+   * 只在文字內容改變時才提醒。要在資料頁講出來——不講的話，店家會以為改價也會通知。
+   */
+  numbersVolatile: boolean
+  /**
+   * type='url'：連續多輪抓到的內容都不一樣，自動偵測判斷不出哪一版才算數（0 = 正常）。
+   * 這是第三種狀態，不能跟「一切正常」混為一談。
+   */
+  detectStalledAtMs: number
 }
 
 function tsToMs(raw: unknown): number {
@@ -108,6 +119,9 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     lastFetchedAtMs: tsToMs(raw.lastFetchedAt),
     outdatedAtMs: tsToMs(raw.outdatedAt),
     updatedAtMs: tsToMs(raw.updatedAt),
+    // 從輪數推導，不另存布林值：兩個地方各存一份遲早會對不起來
+    numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
+    detectStalledAtMs: tsToMs(raw.detectStalledAt),
   }
 }
 

@@ -579,6 +579,42 @@
   }
 }
 
+/* ── 自動偵測的第二、第三種狀態（正常不出聲，這兩種一定要講）── */
+.src-detect-note {
+  padding: 10px 12px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-primary);
+  }
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  &__meta {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 「偵測不了」＝店家以為系統在顧、其實沒有，比單純的資訊重一級 */
+  &--warn {
+    border-left-color: var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+
+    .src-detect-note__title {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+}
+
 /* ── 「要處理的事」清單（取代 orphan banner + 體檢 chip 兩套視覺） ── */
 .src-todo {
   margin: 10px 12px;
