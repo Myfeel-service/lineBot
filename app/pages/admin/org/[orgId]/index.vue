@@ -105,7 +105,9 @@
               </div>
               <div class="org-substat">
                 <span class="org-substat-num">{{ totalAnswered.toLocaleString() }}</span>
-                <el-tooltip content="各官方帳號當期計費週期內，AI 自動回覆訊息的則數加總（各帳號週期起算日可能不同）" placement="top">
+                <!-- ⛔ 定義用共用的 REPLY_UNIT_TIP，別自己造句：原本寫「AI 自動回覆訊息的則數」，
+                     漏掉草稿模式擬稿也扣（2026-08-10 拍板），跟計費行為對不上。 -->
+                <el-tooltip :content="`${REPLY_UNIT_TIP}（各帳號週期起算日可能不同，這裡是各自本期的加總）`" placement="top">
                   <span class="org-substat-label org-stat-label--hint">本期 AI 回覆則數</span>
                 </el-tooltip>
               </div>
@@ -395,6 +397,7 @@
 <script setup lang="ts">
 import { Avatar, ChatDotRound, CircleCheckFilled, DataBoard, OfficeBuilding, SwitchButton, UserFilled, Wallet, WarningFilled } from '@element-plus/icons-vue'
 import { derivePlanState, type PlanView } from '~~/shared/billing/plan-state'
+import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'

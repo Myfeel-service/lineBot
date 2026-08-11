@@ -253,14 +253,17 @@
               </div>
               <el-button size="small" @click="() => loadHandoffs()">重試</el-button>
             </div>
-            <!-- 和解：此清單＝「目前還卡著、尚未處理」的對話（不分月份），與上方本月轉接次數不是同一份計數，
-                 避免「本月 141 次轉接」與「0 待處理」被誤讀成互相矛盾。空狀態要像「已清空」而非「沒資料」。
+            <!-- 和解：此清單＝「目前還卡著、尚未處理」的對話（**不分月份**），與上方本月的場數統計
+                 不是同一份計數，避免「本月轉走很多」與「0 待處理」被誤讀成互相矛盾。
+                 ⛔ 別再寫「上方本月轉接次數」：那一行（原因拆解，數的是「次」）2026-08-10 已整行退場，
+                 上方現在只有「場」——指涉一個不存在的數字，比不解釋更糟。
+                 空狀態要像「已清空」而非「沒資料」。
                  綠色「都清完了」只在預設的「答不出來」視角出現；其他篩選下空了就平實地說沒有。 -->
             <div v-else-if="!handoffs.length && reasonFilter === GAP_FILTER && !showResolved" class="usage-empty usage-empty--good">
               <span class="usage-empty__icon">✓</span>
               <div>
                 <div class="usage-empty__title">沒有待補知識的轉真人對話了</div>
-                <div class="usage-empty__desc">這裡只列「目前還卡著、尚未處理」的對話，和上方本月轉接次數不是同一份計數。想回顧請勾「顯示已處理」。</div>
+                <div class="usage-empty__desc">這裡只列「目前還卡著、尚未處理」的對話，不分月份，和上方本月的場數統計不是同一份計數。想回顧請勾「顯示已處理」。</div>
               </div>
             </div>
             <div v-else-if="!handoffs.length" class="usage-empty">
@@ -407,6 +410,7 @@ import { HANDOFF_REASON_LABELS, KNOWLEDGE_GAP_HANDOFF_REASONS, type HandoffReaso
 import type { TrendBucket } from '~~/shared/types/conversation-stats'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { derivePlanState } from '~~/shared/billing/plan-state'
+import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -873,10 +877,9 @@ const isCurrentPeriod = computed(() => period.value === periodOptions[0]!.value)
 // 進度條吃 quotaAnswered（本期 = 訂閱週期）而不是 answered（所選月份的報表數字）——
 // 額度按錨定日重置，跟日曆月不是同一把尺，拿報表數字當進度條會顯示錯的剩餘則數。
 const planQuota = computed(() => summary.value?.plan ?? null)
-/** 「則」是收錢的單位，定義要就地問得到——客人最有資格知道怎麼扣。
- *  ⛔ 必須與 recordQuotaAnswered 的實際行為一致：草稿模式擬稿**也扣**（2026-08-10 老闆拍板：
- *  草稿是送給客服的成品、價值有交付）——原本寫「成功回答客人」跟收費行為矛盾，修的是這行字不是計費 */
-const QUOTA_UNIT_TIP = '1 則＝AI 產出一則回答：自動發送給客人，或草稿模式下擬好給客服參考。AI 反問的那句、反問後接著答的、轉真人的說明訊息，都不算則數。跟 LINE 官方帳號方案的「訊息則數」是兩回事，互不相干。'
+/** 「則」的定義搬到 shared/billing/usage-units.ts 當單一事實來源——
+ *  同一句話原本只有這一頁有，別頁講到則數時各自造句，才會出現「235 則」那種錯。 */
+const QUOTA_UNIT_TIP = REPLY_UNIT_TIP
 
 /**
  * 狀態列右側的額度即時數（2026-08-10 老闆拍板 A 案）：「跟錢有關的要第一眼看到」。

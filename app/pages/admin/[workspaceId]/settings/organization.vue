@@ -52,8 +52,14 @@
                 :text-inside="true"
                 :format="() => `${planState.percentRaw}%`"
               />
+              <!-- ⛔「本期」不是「本月」：usePlanSummary 讀的是額度攔截那顆計數器，
+                   按續約錨定日一期（見 shared/time.ts），跟日曆月不是同一把尺。
+                   寫成「本月」會讓人月初看到非零數字以為系統壞了。 -->
               <p class="text-xs text-muted">
-                本月已用 <strong>{{ planState.used.toLocaleString() }}</strong> / {{ planState.limit.toLocaleString() }} 則
+                本期已用 <strong>{{ planState.used.toLocaleString() }}</strong> / {{ planState.limit.toLocaleString() }} 則
+                <el-tooltip placement="top" :content="REPLY_UNIT_TIP">
+                  <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                </el-tooltip>
                 <template v-if="planState.remaining !== null">（剩 {{ planState.remaining.toLocaleString() }} 則）</template>
                 · <NuxtLink :to="usageLink" class="ar-link">查看用量</NuxtLink>
               </p>
@@ -239,7 +245,9 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 

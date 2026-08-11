@@ -47,14 +47,39 @@
                   <span v-else class="text-xs text-muted">未開通</span>
                 </template>
               </el-table-column>
-              <el-table-column label="本月用量" min-width="170">
+              <!-- ⛔ 主數字是 invocations，量詞必須是「次」不是「則」：2026-08-11 老闆對照
+                   成本總覽（「呼叫 AI 235 次（答出 95 則）」）發現這裡把同一個 235 寫成「則」——
+                   而且它就排在「計費方案」右邊，會被直接讀成計費則數（真值是 95，差 2.5 倍）。
+                   兩個數字都要在：管理視角問的是「有沒有在用（次）」與「收得到多少錢（則）」。
+                   ⚠️ 這裡的則數是**日曆月**桶，不是額度的錨定期——所以不並排額度上限，
+                   免得看起來像進度條卻跟攔截點對不上（額度看組織頁 / 帳號的方案卡）。 -->
+              <el-table-column label="本月 AI 用量" min-width="190">
+                <template #header>
+                  <span class="ws-sa-usage-th">
+                    本月 AI 用量
+                    <el-tooltip placement="top">
+                      <template #content>
+                        <div class="ws-sa-usage-tip">
+                          <p>{{ CALL_UNIT_TIP }}</p>
+                          <p>{{ REPLY_UNIT_TIP }}</p>
+                        </div>
+                      </template>
+                      <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                  </span>
+                </template>
                 <template #default="{ row }">
-                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
-                    <el-tag :type="row.usage?.aiEnabled ? 'success' : 'info'" size="small">
-                      {{ row.usage?.aiEnabled ? '啟用' : '未啟用' }}
-                    </el-tag>
-                    <span class="text-sm">{{ (row.usage?.invocations ?? 0).toLocaleString('zh-TW') }} 則</span>
-                    <span v-if="(row.usage?.conversationCostUsd ?? 0) > 0" class="text-xs text-muted">約 NT${{ Math.round((row.usage?.conversationCostUsd ?? 0) * 32).toLocaleString('zh-TW') }}</span>
+                  <div class="ws-sa-usage">
+                    <div class="ws-sa-usage__top">
+                      <el-tag :type="row.usage?.aiEnabled ? 'success' : 'info'" size="small">
+                        {{ row.usage?.aiEnabled ? '啟用' : '未啟用' }}
+                      </el-tag>
+                      <span class="text-sm">呼叫 {{ (row.usage?.invocations ?? 0).toLocaleString('zh-TW') }} 次</span>
+                    </div>
+                    <div v-if="(row.usage?.invocations ?? 0) > 0" class="text-xs text-muted">
+                      答出 {{ (row.usage?.answered ?? 0).toLocaleString('zh-TW') }} 則
+                      <template v-if="(row.usage?.conversationCostUsd ?? 0) > 0">・約 NT${{ Math.round((row.usage?.conversationCostUsd ?? 0) * 32).toLocaleString('zh-TW') }}</template>
+                    </div>
                   </div>
                 </template>
               </el-table-column>
@@ -175,8 +200,10 @@
 </template>
 
 <script setup lang="ts">
+import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS, BILLING_PLAN_ORDER } from '~~/shared/billing/plans'
 import type { BillingPlanId, SubscriptionStatus } from '~~/shared/billing/plans'
+import { CALL_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '官方帳號管理 — 超級管理員' })

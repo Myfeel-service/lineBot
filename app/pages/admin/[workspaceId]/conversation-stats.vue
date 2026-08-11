@@ -2,14 +2,16 @@
   <AdminSplitLayout solo :is-empty="false">
     <template #editor-header>
       <!-- 副標用問句講這一頁回答什麼（2026-08-07 拍板）；單位一律「場」，與昨日摘要卡一致。
-           姊妹頁做成連結：光講「另一頁數的是則」卻不給路，使用者只能自己回側欄找 -->
+           ⛔ 姊妹頁的連結別再標「（數「則」）」：2026-08-10 AI 表現頁主指標也改成「場」了，
+           兩頁現在同一把尺（那正是改場制的目的）。留著舊對照＝教一個已經不存在的差異。
+           兩頁的差別在**問題**不在單位，所以連結只講問題。 -->
       <AdminSoloPageHeading
         field-label="統計"
         title="客服對話統計"
         caption="客人來了多少、誰接住的——這裡數的是「場」（一位客人 24 小時內的一段來回算一場）。"
       >
         <template #caption>
-          想看 AI 自己搞定多少、還有什麼要補（數「則」）？<NuxtLink :to="`/admin/${route.params.workspaceId}/ai-usage`" class="admin-inline-link">看 AI 表現 →</NuxtLink>
+          想看 AI 自己搞定多少、還有什麼要補？<NuxtLink :to="`/admin/${route.params.workspaceId}/ai-usage`" class="admin-inline-link">看 AI 表現 →</NuxtLink>
         </template>
       </AdminSoloPageHeading>
       <div class="conv-stats-header-actions admin-header-actions" data-tour="cs-filter">

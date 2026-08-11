@@ -30,8 +30,13 @@
           <div class="card-section-stack">
             <div class="ai-status-row">
               <span :class="['badge', statusBadgeClass]">{{ statusLabel }}</span>
+              <!-- ⛔「本期」不是「本月」：planState 讀的是額度攔截那顆計數器,按續約錨定日一期。
+                   ⓘ 講清楚「則」是什麼——這一行是很多人第一次看到這個單位的地方。 -->
               <span v-if="planView" class="ai-status-usage">
-                本月已用 {{ planState.used.toLocaleString() }}<template v-if="planState.limit != null"> / {{ planState.limit.toLocaleString() }}</template> 則
+                本期已用 {{ planState.used.toLocaleString() }}<template v-if="planState.limit != null"> / {{ planState.limit.toLocaleString() }}</template> 則
+                <el-tooltip placement="top" :content="REPLY_UNIT_TIP">
+                  <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                </el-tooltip>
               </span>
               <span v-else-if="usageTokens !== null" class="ai-status-usage">
                 本月用量 {{ formatTokens(usageTokens) }}<template v-if="form.quota.monthlyTokenCap > 0"> / {{ formatTokens(form.quota.monthlyTokenCap) }}</template> tokens
@@ -693,6 +698,7 @@ import { ElMessageBox } from 'element-plus'
 import { buildDefaultAiSettings, DEFAULT_SLA_REMIND_MINUTES, DEFAULT_DIGEST_HOUR } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { taipeiYyyyMm } from '~~/shared/time'
+import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 

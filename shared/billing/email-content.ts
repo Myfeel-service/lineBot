@@ -172,27 +172,30 @@ export function quotaEmail(p: {
   kind: 'near' | 'over'
   manageUrl: string
 }): EmailContent {
+  // ⛔「本期」不是「本月」：呼叫端餵的 used 來自 getQuotaAnswered(currentPeriodStart)＝
+  //    訂閱錨定週期的計數器，跟日曆月不是同一把尺。原本標題寫「本月」、內文卻寫
+  //    「直到下一期額度重置」——同一封信自己打架，收信的是付錢的客戶。
   const usage = `${p.used.toLocaleString('en-US')} / ${p.quota.toLocaleString('en-US')} 則`
   if (p.kind === 'over') {
-    const subject = `[${p.brandName}] 本月 AI 回覆額度已用完`
+    const subject = `[${p.brandName}] 本期 AI 回覆額度已用完`
     const body
-      = paragraph(`「${p.workspaceName}」本月的 AI 回覆額度已用完（${usage}）。`)
+      = paragraph(`「${p.workspaceName}」本期的 AI 回覆額度已用完（${usage}）。`)
       + paragraph('AI 已暫停自動回覆，之後的訊息會轉由真人客服處理，直到下一期額度重置或你升級方案。')
       + button('升級方案', p.manageUrl)
     return {
       subject,
       html: shell(p.brandName, 'AI 回覆額度已用完', body),
-      text: ['AI 回覆額度已用完', `「${p.workspaceName}」本月的 AI 回覆額度已用完（${usage}）。`, 'AI 已暫停自動回覆，之後的訊息會轉由真人客服處理，直到下一期額度重置或你升級方案。', '', `升級方案：${p.manageUrl}`].join('\n'),
+      text: ['AI 回覆額度已用完', `「${p.workspaceName}」本期的 AI 回覆額度已用完（${usage}）。`, 'AI 已暫停自動回覆，之後的訊息會轉由真人客服處理，直到下一期額度重置或你升級方案。', '', `升級方案：${p.manageUrl}`].join('\n'),
     }
   }
-  const subject = `[${p.brandName}] 本月 AI 回覆額度即將用完`
+  const subject = `[${p.brandName}] 本期 AI 回覆額度即將用完`
   const body
-    = paragraph(`「${p.workspaceName}」本月的 AI 回覆額度即將用完（已用 ${usage}）。`)
+    = paragraph(`「${p.workspaceName}」本期的 AI 回覆額度即將用完（已用 ${usage}）。`)
     + paragraph('額度用完後 AI 會暫停自動回覆、改由真人處理。若預期用量會超過，建議提前升級方案。')
     + button('查看方案', p.manageUrl)
   return {
     subject,
     html: shell(p.brandName, 'AI 回覆額度即將用完', body),
-    text: ['AI 回覆額度即將用完', `「${p.workspaceName}」本月的 AI 回覆額度即將用完（已用 ${usage}）。`, '額度用完後 AI 會暫停自動回覆、改由真人處理。若預期用量會超過，建議提前升級方案。', '', `查看方案：${p.manageUrl}`].join('\n'),
+    text: ['AI 回覆額度即將用完', `「${p.workspaceName}」本期的 AI 回覆額度即將用完（已用 ${usage}）。`, '額度用完後 AI 會暫停自動回覆、改由真人處理。若預期用量會超過，建議提前升級方案。', '', `查看方案：${p.manageUrl}`].join('\n'),
   }
 }

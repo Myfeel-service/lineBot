@@ -95,6 +95,42 @@
   align-items: center;
 }
 
+/* 本月 AI 用量欄：主行「呼叫 N 次」、副行「答出 M 則・約 NT$X」。
+   兩個量詞是不同的東西（次＝AI 被叫起來、則＝真的答出來也就是收錢的單位），
+   所以分兩行、不並排——並排會被讀成同一個數字的兩種寫法。 */
+.ws-sa-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ws-sa-usage__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ws-sa-usage-th {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 兩段定義（次 / 則）各自成段，擠成一坨就沒人會讀 */
+.ws-sa-usage-tip {
+  max-width: 320px;
+  line-height: 1.6;
+
+  p {
+    margin: 0;
+
+    + p {
+      margin-top: 0.5rem;
+    }
+  }
+}
+
 /* workspace 未綁定組織：table 欄位提示 */
 .ws-sa-no-org-cell {
   font-size: 0.78rem;

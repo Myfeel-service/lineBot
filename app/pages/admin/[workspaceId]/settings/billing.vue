@@ -69,6 +69,10 @@
               />
               <p class="text-xs text-muted">
                 本期已用 <strong>{{ planState.used.toLocaleString() }}</strong> / {{ planState.limit.toLocaleString() }} 則
+                <!-- 帳單頁是最該問得到「則是什麼」的地方：這裡的數字直接決定要不要升級 -->
+                <el-tooltip placement="top" :content="REPLY_UNIT_TIP">
+                  <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                </el-tooltip>
                 <template v-if="planView.currentPeriodStart && planView.currentPeriodEnd">
                   · 本期 {{ planView.currentPeriodStart }} ~ {{ planView.currentPeriodEnd }}
                 </template>
@@ -338,7 +342,9 @@
 </template>
 
 <script setup lang="ts">
+import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import { describeInvoiceProfile } from '~~/shared/types/organization'

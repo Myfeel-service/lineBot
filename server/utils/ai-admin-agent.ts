@@ -92,7 +92,12 @@ const TOOLS: Record<string, ToolDef> = {
     },
   },
   get_ai_usage: {
-    description: 'AI 月用量:AI 呼叫次數、答題數、轉真人數、反問數、token 用量。args 可帶 {"month":"YYYY-MM"},不帶=本月。問「這個月 AI 回了幾則 / 用量 / 轉真人幾次」時用。',
+    // ⛔ 量詞要在 description 就綁死,否則小幫手會把 invocations 講成「則」——
+    //    畫面上「則」是收錢的單位(＝answered),兩者差 2～3 倍,講錯等於報錯帳。
+    description: 'AI 月用量。args 可帶 {"month":"YYYY-MM"},不帶=本月。問「這個月 AI 回了幾則 / 用量 / 轉真人幾次」時用。'
+      + '回傳欄位的量詞:invocations＝AI 被呼叫幾**次**(客人每來一則訊息算一次,含轉真人與反問);'
+      + 'answered＝AI 真的答出幾**則**(這才是計費與額度的單位);handoffs/disambiguations＝幾**次**。'
+      + '⛔ 講用量時 invocations 一律說「次」、answered 一律說「則」,不可互換。',
     async run(db, workspaceId, args) {
       const raw = String(args?.month ?? '').trim()
       const ym = /^\d{4}-\d{2}$/.test(raw) ? raw.replace('-', '') : new Date().toISOString().slice(0, 7).replace('-', '')

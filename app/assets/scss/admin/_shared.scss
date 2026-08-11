@@ -10,6 +10,18 @@
   --el-tag-text-color: var(--text-secondary);
 }
 
+/**
+ * 用量單位（「則」「次」）旁的 ⓘ。跨頁共用：方案卡、AI 設定狀態列、帳單頁、超管帳號列表
+ * 都要能就地問到「則到底是什麼」——定義文字本身在 shared/billing/usage-units.ts。
+ * 沿用 AI 表現頁 .usage-info 的視覺，只是升級成全後台共用。
+ */
+.admin-unit-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: help;
+  vertical-align: middle;
+}
+
 .admin-title-row {
   display: flex;
   align-items: center;
