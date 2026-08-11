@@ -1,4 +1,23 @@
-# UI/UX 審查待辦（依優先順序）
+# UI/UX 審查待辦（依優先順序）— 🗄️ 已封存，僅供追溯理由
+
+> # 🗄️ 本檔已封存（2026-08-12）——**不要在這裡新增或勾選項目**
+>
+> **還活著的項目已併入 [`docs/STATUS.md`](./STATUS.md) 並取得永久編號**（2026-08-12 老闆拍板全部記錄待辦）：
+>
+> | 本檔位置 | 現編號 |
+> |---|---|
+> | R4 全站沒有手機版（item 4） | `E-13` |
+> | 打磨批次：flow 存檔定位殘項(26)、輪播 380px(27)、richmenu 按兩次(28 殘項)、死碼清理殘項(34)、裝飾 emoji(35 殘項)、scoped 樣式(36)、統計卡三套(37)、flow 打磨(40)、匯入對話框(41)、landing select 預設值(10 殘項) | `E-14` |
+> | 手機導覽找不到「登入」（item 11） | `E-15` |
+>
+> **檔內沒勾但其實已解**（2026-08-12 逐條驗證）：
+> - item 6 假 Demo 表單：**7/20 自助導購那批已修**（真 POST `/api/leads`＋honeypot＋聯絡方式必填），本檔比修復早一天定稿所以沒記到。
+> - item 10 大半解（聯絡方式必填＋honeypot；殘「select 無空白預設」併入 `E-14`）。
+> - item 5 的 `.btn-danger`：文字已是 `var(--color-error)` 紅（R1 生效），「近黑字」已不成立。
+> - item 38 無障礙：三個子項全勾，父項忘了勾＝實質完成。
+>
+> ⚠️ 底下的勾選框一律不可信，狀態只看 `STATUS.md`。檔頭原寫「commit 到 billing-anchored-period」
+> ——那是 7 月的工作分支，早併回 `main`。**本檔保留的唯一價值是每一項的「為什麼、修法、殘留」說明。**
 
 > 建立：2026-07-16。審查範圍：全 30 頁（入口/登入/超管/LIFF、核心營運、AI 客服、Flow/圖文選單、設定/計費/組織）。
 > 進度：已完成 R1、R2、R3、R5、item 7、8、9、12、13、14、15、16、17、18、19、20、21、22、23、24、29、30、31、32、33、38、39、42，
@@ -48,7 +67,7 @@
    - 所有寫入鈕（新增/儲存/刪除/批次/同步/移標✕）加 `v-if="canOperate"`，對 viewer 直接隱藏（符合「無權限一律隱藏」）。
    `nuxt typecheck` 通過。
 
-4. [ ] **全站沒有手機版（R4）** — UX/UI
+4. [ ] **全站沒有手機版（R4）** — UX/UI　→ **STATUS `E-13`**
    `.layout-wrapper` 固定 flex + 240px 側欄 + `overflow:hidden`，**無漢堡、無抽屜**（grep 全站無 toggle/drawer/collapse）；
    41 個 SCSS 只有 10 個有 media query。兩大編輯器（flow/richmenu）拖曳只綁 `mousedown` + window `mousemove`
    （`useAreaEditor.ts:272`，無 pointer/touch），觸控裝置完全無法操作、且無「請用電腦」提示。
@@ -66,7 +85,7 @@
 
 ## 🔴 第 1 順位 — 立即修（名單流失／不可復原誤刪）
 
-6. [ ] **Landing 預約 Demo 表單是假的** — UX　`pages/index.vue:367`
+6. [x] **Landing 預約 Demo 表單是假的** — UX　`pages/index.vue:367`　（✅ 7/20 自助導購批次已修：真 POST `/api/leads`＋honeypot；2026-08-12 驗證）
    `@submit.prevent="submitted = true"` 只設本地變數、**沒有任何 API 送出**，卻立刻顯示
    「收到了！我們會在 1 個工作天內聯繫」。所有 hero/pricing/CTA 都導到這張表單
    → **每一筆潛在客戶都石沉大海，還被告知已收到。**
@@ -88,7 +107,7 @@
 ### index.vue（Landing）
 10. [ ] 表單 `novalidate` 且無驗證，姓名/聯絡方式可全空白送出仍成功；聯絡方式欄 `type="text"` 手機不跳對應鍵盤 — UX。
     附帶：`<select>` 產業別/需求無空白預設（初值「電商/客服回不完」），不動就送出會汙染名單資料。
-11. [ ] 手機導覽列「登入」`display:none`（_landing.scss:339）且不在漢堡選單內 → 手機上完全找不到登入 — UX。
+11. [ ] 手機導覽列「登入」`display:none`（_landing.scss:339）且不在漢堡選單內 → 手機上完全找不到登入 — UX。（2026-08-12 重驗仍在：漢堡選單有了但登入沒進選單）→ **STATUS `E-15`**
 12. [x] ✅ sticky nav 68px 遮住錨點標題 — UI　（2026-07-16 完成）：`.lp` 各錨點區加 `scroll-margin-top: 80px`。
 
 ### login.vue
