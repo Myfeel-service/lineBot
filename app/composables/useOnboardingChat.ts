@@ -46,6 +46,8 @@ interface FirstMessageRes {
 
 const SAY_DELAY_MS = 420
 const POLL_INTERVAL_MS = 4000
+/** 等第一則訊息多久沒動靜，就主動開口排障（別讓人乾瞪著轉圈） */
+const FIRST_MSG_HINT_MS = 45_000
 
 export function useOnboardingChat() {
   // 這個精靈自己管 workspaceId：建立流程一開始還沒有、續走模式來自 ?workspaceId=，
@@ -288,7 +290,7 @@ export function useOnboardingChat() {
   async function stepWelcomeFresh(): Promise<boolean> {
     progress.value = 0
     await say('嗨，我是小幫手 👋 接下來我用聊天的方式，帶你把客服機器人設定到可以上線，大約 10 分鐘。')
-    await say('一共四步，跟上面的進度條一格一格對得上：<b>建立帳號</b> → <b>接上 LINE</b> → <b>傳一句話測試</b> → <b>打開 AI</b>。隨時可以離開，下次回來我會從沒做完的地方接著帶。')
+    await say('一共四步，跟上面的進度條一格一格對得上：<b>建立帳號</b> → <b>接上 LINE</b> → <b>傳一句話測試</b> → <b>打開 AI</b>，做完就亮最後一格「完成」。隨時可以離開，下次回來我會從沒做完的地方接著帶。')
     const c = await askChoices([
       { label: '開始吧', value: 'go', primary: true },
       { label: '我想先自己逛逛', value: 'browse' },
@@ -349,10 +351,8 @@ export function useOnboardingChat() {
       progress.value = 1
     else if (setup.firstMessageReceived !== 'done')
       progress.value = 2
-    else if (!ai.enabled)
-      progress.value = 3
     else
-      progress.value = 3
+      progress.value = 3 // 開 AI 或只剩加分項都停在這格，「完成」由 stepDone 點亮
   }
 
   async function stepHasOA() {
@@ -362,7 +362,7 @@ export function useOnboardingChat() {
       { label: '還沒', value: 'no' },
     ])
     if (c === 'no') {
-      await say('先去 <b>LINE Official Account Manager</b> 免費申請一個，大約 5 分鐘，弄好回來按繼續。')
+      await say('先去 <b>LINE Official Account Manager</b> 免費申請一個，大約 5 分鐘。申請好之後，記得在官方帳號後台的「設定 → Messaging API」按<b>啟用</b>——沒啟用的話，等下要拿鑰匙的地方會找不到你的帳號。弄好回來按繼續。')
       card({ kind: 'link', label: '前往申請 LINE 官方帳號（台灣）', href: 'https://tw.linebiz.com/entry/' })
       await askChoices([{ label: '申請好了，繼續', value: 'ok', primary: true }])
     }
@@ -378,6 +378,7 @@ export function useOnboardingChat() {
       steps: [
         '打開 LINE Developers 並登入（下面有連結）',
         '選你的官方帳號 → Messaging API 分頁',
+        '（清單裡沒有你的帳號？先回官方帳號後台「設定 → Messaging API」按啟用，它才會出現）',
         '最下方 Channel access token 按「Issue」',
         '整串複製，回來貼上',
       ],
@@ -445,12 +446,15 @@ export function useOnboardingChat() {
       summary: '怎麼拿？',
       steps: [
         'LINE Developers → LIFF 分頁按「Add」',
-        'Endpoint 先填你的官網就行',
+        'Endpoint URL 貼下面那串專用網址（不是你的官網——填錯的話之後活動連結會打不開）',
         '建好後複製 LIFF ID（長得像 1234567890-Abcdefgh）',
       ],
       href: 'https://developers.line.biz/console/',
       hrefLabel: '打開 LINE Developers ↗',
     })
+    // 口徑必須跟 liff-endpoint-check 的 expectedUrl 一致（appBaseUrl + /liff/lead）——
+    // 教一套、健康檢查驗另一套的話，照著做的人剛開通完就會被亮紅
+    card({ kind: 'copy', label: 'LIFF 的 Endpoint URL（活動頁專用）', value: `${line.publicBaseUrl || window.location.origin}/liff/lead` })
     const v = await askInput({
       inputType: 'text',
       placeholder: '例：1234567890-Abcdefgh',
@@ -576,29 +580,90 @@ export function useOnboardingChat() {
       }
     }
 
+    // LINE 內建「自動回應訊息」預設開啟，會跟機器人搶話（客人每句話收到兩套回覆）。
+    // 這個開關 LINE 沒開 API、系統偵測不到，只能在這裡教。
+    await say('測試前還有一個小開關：LINE 官方帳號內建的「自動回應訊息」預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>（LINE 的罐頭訊息＋我們的回覆）。')
+    card({
+      kind: 'help',
+      summary: '怎麼關？',
+      steps: [
+        '打開 LINE 官方帳號後台（下面有連結）',
+        '設定 → 回應設定',
+        '把「自動回應訊息」關掉（回應方式選聊天機器人／Webhook 那組）',
+      ],
+      href: 'https://manager.line.biz/',
+      hrefLabel: '打開官方帳號後台 ↗',
+    })
+
     // ── 見證時刻：等第一則訊息 ──
     progress.value = 2
     await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
     const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
 
-    stopPolling = false
-    const polled = pollFirstMessage()
-    const asked = waitAsk({ kind: 'choices', options: [{ label: '先跳過測試', value: 'skip' }] })
+    let received: FirstMessageRes | null = null
+    let skipped = false
+    while (!received && !skipped) {
+      stopPolling = false
+      const polled = pollFirstMessage()
+      const asked = waitAsk({ kind: 'choices', options: [{ label: '先跳過測試', value: 'skip' }] })
 
-    const winner = await Promise.race([
-      polled.then(r => ({ kind: 'received' as const, r })),
-      asked.then(a => ({ kind: 'asked' as const, a })),
-    ])
+      const winner = await Promise.race([
+        polled.then(r => ({ kind: 'received' as const, r })),
+        asked.then(() => ({ kind: 'skipped' as const })),
+        // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口
+        sleep(FIRST_MSG_HINT_MS).then(() => ({ kind: 'stalled' as const })),
+      ])
 
-    if (disposed)
-      return
+      if (disposed)
+        return
 
-    if (winner.kind === 'received' && winner.r) {
-      settle({ type: 'cancelled' }) // 收掉「先跳過測試」按鈕
-      const at = winner.r.at ? new Date(winner.r.at) : null
+      if (winner.kind === 'received') {
+        stopPolling = true
+        if (winner.r) {
+          settle({ type: 'cancelled' }) // 收掉「先跳過測試」按鈕
+          received = winner.r
+        }
+        continue
+      }
+      if (winner.kind === 'skipped') {
+        // 使用者按了「先跳過測試」：echo 與收按鈕 onChoice 已經做掉了，這裡只收尾
+        stopPolling = true
+        skipped = true
+        continue
+      }
+      // stalled：先收掉輪詢與跳過按鈕，再主動排障
+      stopPolling = true
+      settle({ type: 'cancelled' })
+      await say('還沒等到訊息。最常見的原因有三個：① LINE Developers 那邊 Webhook URL 貼了但<b>忘了按存檔</b> ②「Use webhook」開關沒打開 ③手機加好友加到別的帳號。檢查一下，我也可以再幫你驗一次。')
+      const c = await askChoices([
+        { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
+        { label: '檢查好了，繼續等', value: 'wait' },
+        { label: '先跳過測試', value: 'skip' },
+      ])
+      if (c === 'skip') {
+        skipped = true
+        continue
+      }
+      if (c === 'verify') {
+        const vId = card({ kind: 'status', state: 'pending', text: '正在跟 LINE 確認 Webhook…' })
+        const v = await verifyWebhook(webhookUrl)
+        if (v?.ok) {
+          updateMsg(vId, { kind: 'status', state: 'ok', text: 'Webhook 沒問題，LINE 回應正常' })
+          await say('接線是通的——再用手機傳一句話試試，我繼續等。')
+        }
+        else {
+          updateMsg(vId, { kind: 'status', state: 'fail', text: v?.message || '檢查失敗' })
+          await say('看起來就是卡在這裡——照上面的訊息調整（最常見是沒按存檔、或 <b>Use webhook</b> 開關沒開），好了之後我這邊會自動收到。')
+        }
+      }
+      // 「繼續等」或驗完：回到迴圈重新掛上輪詢與跳過按鈕
+    }
+
+    if (received) {
+      const at = received.at ? new Date(received.at) : null
       const timeLabel = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : ''
-      const title = winner.r.messageType === 'text' && winner.r.text
-        ? `「${winner.r.text}」`
+      const title = received.messageType === 'text' && received.text
+        ? `「${received.text}」`
         : '（貼圖／圖片訊息）'
       updateMsg(waitId, {
         kind: 'highlight',
@@ -610,8 +675,6 @@ export function useOnboardingChat() {
       setup.firstMessageReceived = 'done'
     }
     else {
-      // 使用者按了「先跳過測試」：echo 與收按鈕 onChoice 已經做掉了，這裡只收尾
-      stopPolling = true
       updateMsg(waitId, { kind: 'status', state: 'skipped', text: '略過測試——之後隨時可以加好友傳一句話試試' })
       outcome.testSkipped = true
       markSkip('firstMsg')
@@ -648,7 +711,7 @@ export function useOnboardingChat() {
     const mode = c === 'auto' ? 'auto' : 'draft'
     const ok = await apiRetry(
       () => apiFetch('/api/ai/settings', { method: 'PUT', body: { enabled: true, replyMode: mode } }),
-      { failText: '開啟失敗' },
+      { failText: '開啟失敗', skipLabel: '先跳過' },
     )
     if (ok !== null) {
       ai.enabled = true
@@ -657,6 +720,9 @@ export function useOnboardingChat() {
       await say(mode === 'draft'
         ? '好選擇 👍 草稿模式開好了。AI 擬的回覆會出現在「對話」頁等你送出。'
         : '全自動開好了。之後想改，「AI 設定」裡隨時能切。')
+    }
+    else {
+      await say('先跳過。之後在「AI 設定」隨時可以打開。')
     }
   }
 
@@ -690,6 +756,10 @@ export function useOnboardingChat() {
   async function stepHandoff(ai: AiSnapshot) {
     if (ai.handoffReady || skips().handoff)
       return
+    // 草稿模式＋沒設通知＝AI 擬了稿沒有任何人知道要去送——兩個「跳過」疊起來才會踩到的洞，跳過時要講
+    const draftHint = ai.enabled && ai.replyMode === 'draft'
+      ? '另外你選了草稿模式——AI 擬好的回覆要有人按送出才會發給客人，記得每天開「對話」頁看一眼。'
+      : ''
     await say('當客人指名要找真人、或 AI 接不住的時候，要通知誰？從你官方帳號的好友裡選——收通知的人必須加了這個官方帳號好友，之後隨時能在「AI 設定」加更多人。')
 
     busy.value = true
@@ -713,7 +783,7 @@ export function useOnboardingChat() {
     }
 
     if (!options.length) {
-      await say('目前還抓不到好友清單（通常是還沒有人加這個官方帳號好友）。先跳過，之後在「AI 設定 → 轉真人通知」裡設定就行。')
+      await say(`目前還抓不到好友清單（通常是還沒有人加這個官方帳號好友）。先跳過，之後在「AI 設定 → 轉真人通知」裡設定就行。${draftHint}`)
       markSkip('handoff')
       return
     }
@@ -725,7 +795,7 @@ export function useOnboardingChat() {
     const picked = await askPicker(options, true)
     if (!picked) {
       markSkip('handoff')
-      await say('先跳過。提醒一下：通知沒設的話，客人要找真人時不會有人知道——之後記得在「AI 設定」補。')
+      await say(`先跳過。提醒一下：通知沒設的話，客人要找真人時不會有人知道——之後記得在「AI 設定」補。${draftHint}`)
       return
     }
     const ok = await apiRetry(
@@ -775,7 +845,7 @@ export function useOnboardingChat() {
       ])
       if (c === 'exit') {
         await say('好！進後台後，右下角的小幫手會隨時告訴你哪些項目還沒完成。')
-        await navigateTo(`/admin/${wid.value}/conversation-stats`)
+        await navigateTo(`/admin/${wid.value}/conversations`)
         return
       }
     }
@@ -812,13 +882,15 @@ export function useOnboardingChat() {
     })
     await say('設定完成 🎉 之後把常見問題匯入<b>知識庫</b>，AI 會答得更好。')
     await say('右下角的小幫手不會消失——哪裡沒做完、哪裡怪怪的，它都會主動說，點它也能隨時找我。')
+    // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
+    // 對話頁裡就有他剛傳的那句話，敘事接得上（2026-08-12 拍板 G-11）
     const c = await askChoices([
-      { label: '進入後台', value: 'workspace', primary: true },
+      { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : '進入後台', value: 'workspace', primary: true },
       { label: '帶我去匯入知識庫', value: 'knowledge' },
     ])
     await navigateTo(c === 'knowledge'
       ? `/admin/${wid.value}/knowledge/sources`
-      : `/admin/${wid.value}/conversation-stats`)
+      : `/admin/${wid.value}/conversations`)
   }
 
   // ── 入口 ────────────────────────────────────────────────────
