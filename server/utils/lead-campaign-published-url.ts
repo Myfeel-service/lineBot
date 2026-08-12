@@ -5,6 +5,7 @@ import type { LeadClaimDoc } from '~~/shared/types/lead-campaign'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { normalizeAutoReplyAction } from '~~/shared/auto-reply-rule'
 import { parsePublishedCtaUrl } from '~~/shared/liff-lead-query'
+import { leadEndpointUrl } from '~~/shared/liff-lead-path'
 
 type CampaignForEntryUrl = {
   workspaceId?: string
@@ -27,7 +28,7 @@ function buildPublishedCtaUrl(rawToken: string, campaignCode: string, liffId: st
   const config = useRuntimeConfig()
   const appBase = String(config.lineImagemapBaseUrl || '').replace(/\/$/, '')
   if (appBase) {
-    return `${appBase}/liff/lead?claimToken=${encodeURIComponent(rawToken)}&c=${encodeURIComponent(campaignCode)}&liffId=${encodeURIComponent(liffId)}`
+    return `${leadEndpointUrl(appBase)}?claimToken=${encodeURIComponent(rawToken)}&c=${encodeURIComponent(campaignCode)}&liffId=${encodeURIComponent(liffId)}`
   }
   const stateParams = `?claimToken=${encodeURIComponent(rawToken)}&c=${encodeURIComponent(campaignCode)}&liffId=${encodeURIComponent(liffId)}`
   return `https://liff.line.me/${liffId}?liff.state=${encodeURIComponent(stateParams)}`

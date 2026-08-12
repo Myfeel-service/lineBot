@@ -81,14 +81,14 @@ const {
 } = useOnboardingChat()
 
 // 「之後再說」：帳號一旦建好（或續走模式），直接進那個帳號的後台，不繞回帳號選擇頁。
-// 落「對話」頁不落統計頁——新帳號統計全 0，空的對話清單比空報表誠實（G-11 同一拍板）
+// 出口一律走 onboardingLandingPath（對話頁）——新帳號統計全 0，空的對話清單比空報表誠實（G-11 同一拍板）
 const exitTo = computed(() => {
   const target = continueWid.value || activeWorkspaceId.value
-  return target ? `/admin/${target}/conversations` : '/admin/workspaces'
+  return target ? onboardingLandingPath(target) : '/admin/workspaces'
 })
 
 function goWorkspace() {
-  return navigateTo(`/admin/${continueWid.value}/conversation-stats`)
+  return navigateTo(onboardingLandingPath(continueWid.value))
 }
 
 const listEl = ref<HTMLElement | null>(null)

@@ -2,6 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { collectLiffEndpointChecks } from '~~/server/utils/liff-endpoint-remote'
 import type { LiffEndpointCheckItem } from '~~/server/utils/liff-endpoint-remote'
+import { leadEndpointUrl } from '~~/shared/liff-lead-path'
 
 /**
  * GET /api/admin/liff-endpoint-check?workspaceId=...
@@ -34,7 +35,7 @@ export default defineEventHandler(async (event): Promise<{
 
   return {
     workspaceId: wid,
-    expectedUrl: canonicalBase ? `${canonicalBase}/liff/lead` : '',
+    expectedUrl: leadEndpointUrl(canonicalBase),
     checks,
   }
 })

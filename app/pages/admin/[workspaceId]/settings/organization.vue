@@ -248,6 +248,7 @@ import { ElMessageBox } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { leadEndpointUrl } from '~~/shared/liff-lead-path'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 
@@ -416,7 +417,7 @@ const publicBaseUrl = computed(() =>
   (meta.value.publicBaseUrl || browserOrigin.value).replace(/\/$/, ''),
 )
 const suggestedWebhookUrl = computed(() => publicBaseUrl.value ? `${publicBaseUrl.value}/webhook` : '')
-const suggestedLiffEndpointUrl = computed(() => publicBaseUrl.value ? `${publicBaseUrl.value}/liff/lead` : '')
+const suggestedLiffEndpointUrl = computed(() => leadEndpointUrl(publicBaseUrl.value))
 
 async function copyLiffEndpointUrl() {
   if (!suggestedLiffEndpointUrl.value) return

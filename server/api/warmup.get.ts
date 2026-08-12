@@ -2,6 +2,7 @@ import { listWorkspaceLineCredentials } from '~~/server/utils/line-workspace-cre
 import { warmWorkspaceAutomationCaches } from '~~/server/utils/handler'
 import { assertCronAuthorized } from '~~/server/utils/cron-auth'
 import { getDb } from '~~/server/utils/firebase'
+import { LEAD_PATH } from '~~/shared/liff-lead-path'
 
 /**
  * GET /api/warmup
@@ -29,7 +30,7 @@ import { getDb } from '~~/server/utils/firebase'
 const WARM_CHILDREN = 3
 
 /** 兩條頁面渲染路徑(SPA 殼/完整 SSR 是不同懶載入模組,各暖一次) */
-const WARM_PAGES = ['/liff/lead', '/'] as const
+const WARM_PAGES = [LEAD_PATH, '/'] as const
 
 async function warmPageRenderers(): Promise<Record<string, boolean>> {
   const results = await Promise.all(WARM_PAGES.map(path =>

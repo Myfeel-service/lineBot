@@ -1,4 +1,5 @@
 import type { Firestore } from 'firebase-admin/firestore'
+import { LEAD_PATH } from '~~/shared/liff-lead-path'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { isUrlReachable } from './url-reachable'
@@ -22,8 +23,8 @@ const LIFF_PAGE_TIMEOUT_MS = 8000
 const LIFF_PROBE_TTL_MS = 5 * 60_000
 const LIFF_PROBE_CACHE_MAX = 500
 
-/** 這套系統的活動頁路徑；/webhook 是老設定（GET 會 302 轉到活動頁，能用但該修正） */
-const LEAD_PATH = '/liff/lead'
+/** 這套系統的活動頁路徑（唯一來源在 shared/liff-lead-path，教的跟驗的必須同一串）；
+ * /webhook 是老設定（GET 會 302 轉到活動頁，能用但該修正） */
 const LEGACY_LEAD_PATH = '/webhook'
 
 /** 每次檢查最多探幾個 LIFF（一個工作區通常就 1～2 個；上限擋異常資料把輪詢拖垮） */
