@@ -4,6 +4,7 @@ import {
   collectSkipLabel,
   cosineSimilarity,
   extractCollectValue,
+  findPlaceholderTexts,
   findStuckCollects,
   matchesScriptKeywords,
   matchesSemanticTrigger,
@@ -306,6 +307,28 @@ describe('findStuckCollects：答不出來就卡死的步驟', () => {
     // 接線本身合法(驗證過得了),但流程實際走不通——所以這條檢查不能塞進 validateScriptDoc
     expect(validateScriptDoc({ name: 's', rootNodeId: 't', nodes })).toBeNull()
     expect(findStuckCollects(nodes).map(s => s.nodeId)).toEqual(['c1'])
+  })
+})
+
+describe('findPlaceholderTexts：AI 生成的【請填入：…】占位符', () => {
+  it('回覆/收集問句/快速回覆按鈕裡的占位符都抓得到，每步只報一次', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['營業'], priority: 50, next: 'r1' },
+      { id: 'r1', type: 'reply', text: '營業時間是【請填入：營業時間】，週末【請填入：週末有沒有開】', thenHandoff: false },
+      { id: 'c1', type: 'collect', question: '請問【請填入：要問什麼】？', fieldName: 'x', expireMs: 60000, format: 'any', next: 'r1' },
+      { id: 'q1', type: 'quickReply', question: '選一個', expireMs: 60000, options: [{ label: '【請填入：按鈕】', next: 'r1' }] },
+    ]
+    const hits = findPlaceholderTexts(nodes)
+    expect(hits.map(h => h.nodeId)).toEqual(['r1', 'c1', 'q1'])
+    // snippet 是命中的原文，警示文案直接引用
+    expect(hits[0]!.snippet).toBe('【請填入：營業時間】')
+  })
+
+  it('沒有占位符的正常文案 → 不誤報（含半形冒號版也認得）', () => {
+    const clean: ScriptNode[] = [{ id: 'r1', type: 'reply', text: '已收到您的訂單 {{order_id}}', thenHandoff: true }]
+    expect(findPlaceholderTexts(clean)).toEqual([])
+    const halfWidth: ScriptNode[] = [{ id: 'r1', type: 'reply', text: '價格是【請填入:方案價格】', thenHandoff: false }]
+    expect(findPlaceholderTexts(halfWidth).map(h => h.snippet)).toEqual(['【請填入:方案價格】'])
   })
 })
 

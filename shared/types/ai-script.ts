@@ -603,6 +603,37 @@ export function findStuckCollects(nodes: ScriptNode[]): ScriptStuckCollect[] {
   return out
 }
 
+/**
+ * AI 生成草稿的占位符格式：模型被要求「使用者沒提供的具體事實（營業時間、價格、網址…）
+ * 一律寫【請填入：…】，不可自行編造」。這裡是唯一一份 regex——生成 prompt、編輯器黃燈
+ * 都對這個格式，改格式要兩邊一起。
+ */
+export const SCRIPT_PLACEHOLDER_RE = /【請填入[^】]*】/
+
+export interface ScriptPlaceholderHit {
+  nodeId: string
+  /** 命中的那段占位符原文（例：【請填入：營業時間】），給警示文案直接引用 */
+  snippet: string
+}
+
+/**
+ * 找出文案裡還留著【請填入：…】占位符的步驟。
+ * 占位符是 AI 生成端「不編造事實」的產物——沒補完就存檔，客人會原封不動看到那串字。
+ * 與 findStuckCollects 同一定位：建議不是硬性錯誤，刻意不進 validateScriptDoc。
+ */
+export function findPlaceholderTexts(nodes: ScriptNode[]): ScriptPlaceholderHit[] {
+  const out: ScriptPlaceholderHit[] = []
+  for (const n of nodes) {
+    const texts: string[] = []
+    if (n.type === 'reply') texts.push(n.text)
+    if (n.type === 'collect') texts.push(n.question, n.reaskText ?? '', n.skipLabel ?? '')
+    if (n.type === 'quickReply') texts.push(n.question, ...n.options.map(o => o.label))
+    const hit = texts.map(t => String(t ?? '').match(SCRIPT_PLACEHOLDER_RE)?.[0]).find(Boolean)
+    if (hit) out.push({ nodeId: n.id, snippet: hit })
+  }
+  return out
+}
+
 export interface CollectExtractResult {
   /** 是否通過格式（'any' 一律通過） */
   ok: boolean

@@ -89,3 +89,52 @@ describe('generateScriptDraft：不讓「答不出來就卡死」的草稿出門
     await expect(generateScriptDraft('亂七八糟')).rejects.toMatchObject({ statusCode: 422 })
   })
 })
+
+describe('generateScriptDraft：拒答出口（描述不是流程/腳本做不到）', () => {
+  it('模型回 error → 422 帶模型講的原因,不再多花第二次 LLM', async () => {
+    generateJson.mockResolvedValueOnce(reply({ error: '腳本無法依時間自動判斷,請改用 AI 設定裡的勿擾時段' }))
+    await expect(generateScriptDraft('下班時間自動回覆')).rejects.toMatchObject({
+      statusCode: 422,
+      statusMessage: '腳本無法依時間自動判斷,請改用 AI 設定裡的勿擾時段',
+    })
+    expect(generateJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('第一次卡死、第二次才拒答 → 退回第一次的草稿補跳過出口(有堪用的就不空手而回)', async () => {
+    generateJson.mockResolvedValueOnce(reply(STUCK)).mockResolvedValueOnce(reply({ error: '做不到' }))
+    const draft = await generateScriptDraft('客人查訂單時先問訂單編號')
+    expect(collectNode(draft, 'c1').skipLabel).toBe('我沒有這項資料')
+  })
+
+  it('第一次驗證沒過、第二次拒答 → 422 帶拒答原因(比「沒生好」講得清楚)', async () => {
+    generateJson.mockResolvedValueOnce(reply({ name: '壞', rootNodeId: 'nope', nodes: [] })).mockResolvedValueOnce(reply({ error: '這不是客服流程' }))
+    await expect(generateScriptDraft('嗯')).rejects.toMatchObject({ statusCode: 422, statusMessage: '這不是客服流程' })
+  })
+})
+
+describe('generateScriptDraft：觸發關鍵字後檢(泛用詞/單字/敏感詞剔除)', () => {
+  function withKeywords(keywords: string[]) {
+    return { ...FIXED, nodes: FIXED.nodes.map(n => n.id === 't' ? { ...n, keywords } : n) }
+  }
+  function triggerOf(draft: { nodes: any[] }) {
+    return draft.nodes.find(n => n.type === 'trigger')
+  }
+
+  it('高頻通用詞與單一個字被剔除,具體詞保留(語意路由不靠 keywords,剔光也能觸發)', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['你好', '問題', '抽', '退貨', '訂單查詢'])))
+    const draft = await generateScriptDraft('客人查訂單')
+    expect(triggerOf(draft).keywords).toEqual(['退貨', '訂單查詢'])
+  })
+
+  it('含租戶敏感情境詞的關鍵字是死關鍵字(敏感層排在腳本前面)→ 剔除', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退款申請', '退錢'])))
+    const draft = await generateScriptDraft('客人要退款', { sensitiveTopics: ['退款', '申訴'] })
+    expect(triggerOf(draft).keywords).toEqual(['退錢'])
+  })
+
+  it('沒帶 sensitiveTopics → 只做泛用詞/單字剔除,不誤傷', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退貨'])))
+    const draft = await generateScriptDraft('客人要退貨')
+    expect(triggerOf(draft).keywords).toEqual(['退款', '退貨'])
+  })
+})

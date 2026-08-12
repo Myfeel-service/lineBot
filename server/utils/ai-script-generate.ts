@@ -43,8 +43,22 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 4. 存進客人資料(把收集到的答案長期留存):{ "id", "type": "saveLead", "fieldMap": [{ "fromField": "collect的fieldName", "attrKey": "中文屬性名" }], "next": "..." }
 5. 回覆(終點,講完即結束):{ "id", "type": "reply", "text": "回覆文字", "thenHandoff": true|false }
 
+【做不到的事,要說做不到】
+- 描述根本不是客服對話流程(閒聊、寫詩、與客服無關的指令),或流程的**核心**是腳本做不到的能力
+  (依時間/日期自動判斷、隨機抽獎、腳本自己去查外部系統的資料、修改訂單),不要硬生腳本,
+  改回:{ "error": "一句話說明為什麼做不到＋建議改用什麼" }
+- ⛔ error 裡的建議只能指向**系統真的有**的東西:圖文選單、加好友歡迎訊息、AI 設定裡的勿擾時段、
+  AI 知識庫(常見問答讓 AI 自己回答)、或「把需求改成先收資料再轉真人的流程」。不要編造功能名稱。
+  例:想做「客人打招呼就出選單」→ 建議用圖文選單或加好友歡迎訊息;非上班時間自動回覆 → 勿擾時段。
+- ⛔ 但「查詢類」需求(查訂單、查物流、查維修進度)是標準**可做**流程:先收資料、最後轉真人由專人查,
+  照常生成,不要回 error。
+- 描述裡附帶做不到的小動作(例:貼標籤)→ 略過那個動作、照常生成其餘流程,不要回 error。
+
 【硬規則】
 - rootNodeId 必須指向那個 trigger;至少要有一個 reply 收尾。
+- keywords 每個至少 2 個字,而且必須是**這個流程專屬**的具體詞。⛔ 絕不可用問候語或高頻通用詞
+  (你好、您好、在嗎、哈囉、請問、謝謝、客服、服務、問題、幫我…):關鍵字是「訊息包含就攔走」的
+  子字串比對,太泛的詞會把大量不相關的訊息全部攔進這條流程、蓋掉 AI 回答。
 - 每個非 reply 節點的 next(quickReply 是每顆按鈕的 next)必須指向存在的節點 id;id 用短代號(t, c1, q1, s1, r1…)。
 - 流程要收尾需要真人後續處理(退貨、客訴、報價…)→ 最後的 reply 設 "thenHandoff": true。
 - 收集到姓名/電話/email 這類要留存的資料 → 在 reply 前加 saveLead 存起來。
@@ -59,6 +73,9 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 【文案規則】
 - 全部繁體中文、口語、有禮貌,可少量 emoji;不要 markdown。
 - 回覆文字可用 {{fieldName}} 帶入收集到的答案(例:已收到您的訂單 {{order_id}})。
+- ⛔ 使用者描述裡**沒有提供**的具體事實——營業時間、價格、金額、網址、地址、電話、折扣碼——
+  絕不可自己編一個,一律寫成【請填入:那是什麼】占位符,讓使用者在編輯器補上真實資料。
+  例:「我們的營業時間是【請填入:營業時間】」。描述裡**有給**的數字(例:方案每月 499 元)照用。
 - name 取簡短好認的名字(例:退換貨查詢)。
 
 【範例一】
@@ -69,7 +86,41 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 輸入:活動報名:收姓名和電話,存進名單,最後跟客人說會再聯絡
 輸出:{"name":"活動報名","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":["報名","參加"],"examples":["我要報名","想參加活動","報名活動"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的~請問您的大名?","fieldName":"name","format":"any","next":"c2"},{"id":"c2","type":"collect","question":"請留下方便聯絡的電話 📞","fieldName":"phone","format":"phone","reaskText":"電話格式好像不太對,可以再確認一次嗎?","next":"s1"},{"id":"s1","type":"saveLead","fieldMap":[{"fromField":"name","attrKey":"姓名"},{"fromField":"phone","attrKey":"電話"}],"next":"r1"},{"id":"r1","type":"reply","text":"{{name}} 您好,已收到您的報名,我們會盡快與您聯繫 🙌","thenHandoff":false}]}`
 
-interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown }
+interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown; error?: unknown }
+
+/**
+ * 高頻通用詞黑名單:這些詞當觸發關鍵字,子字串比對會把大量不相關的訊息攔進腳本
+ * (「我的訂單有問題」中「問題」)。prompt 已教模型別用,這裡是確定性後檢的最後防線。
+ * 只管生成端:既有腳本可能刻意這樣設(例:範本的「人工客服」),編輯器不回頭報錯。
+ */
+const GENERIC_TRIGGER_KEYWORDS = new Set([
+  '你好', '您好', '哈囉', '在嗎', '請問', '謝謝', '感謝', '麻煩', '拜託',
+  '客服', '服務', '問題', '怎麼', '什麼', '多少', '幫我', '想問', '請教',
+  'hi', 'hello', 'ok', '好的', '是的',
+])
+
+/**
+ * 剔除會惹禍的觸發關鍵字,回傳剔掉了哪些(給 log 對帳):
+ * - 單一個字/黑名單詞 → 泛用劫持。
+ * - 含敏感情境詞(退款/申訴…)→ 敏感層排在腳本之前,含這個詞的訊息永遠到不了腳本=死關鍵字,
+ *   留著只會讓使用者以為設了有用。
+ * 拿掉關鍵字是安全的:生成一律 semantic 模式,語意路由吃範例句與腳本名,不靠 keywords 也觸發得了。
+ */
+function sanitizeTriggerKeywords(nodes: ScriptNode[], sensitiveTopics: readonly string[]): { nodes: ScriptNode[]; dropped: string[] } {
+  const topics = sensitiveTopics.map(t => String(t).trim().toLowerCase()).filter(Boolean)
+  const dropped: string[] = []
+  const out = nodes.map((n) => {
+    if (n.type !== 'trigger') return n
+    const kept = (n.keywords ?? []).filter((k) => {
+      const norm = k.trim().toLowerCase()
+      const bad = norm.length <= 1 || GENERIC_TRIGGER_KEYWORDS.has(norm) || topics.some(t => norm.includes(t))
+      if (bad) dropped.push(k)
+      return !bad
+    })
+    return kept.length === (n.keywords ?? []).length ? n : { ...n, keywords: kept }
+  })
+  return { nodes: out, dropped }
+}
 
 /** 確定性補救用的跳過按鈕文字（模型兩次都不加時才會用到,人審草稿時可自行改字） */
 const FALLBACK_SKIP_LABEL = '我沒有這項資料'
@@ -96,10 +147,10 @@ function repairStuckCollects(draft: ScriptDraft, stuck: ScriptStuckCollect[]): S
   return { ...draft, nodes }
 }
 
-/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟清單)或驗證錯誤 */
-async function generateOnce(prompt: string): Promise<
-  | { ok: true; draft: ScriptDraft; stuck: ScriptStuckCollect[]; inputTokens: number; outputTokens: number }
-  | { ok: false; error: string; inputTokens: number; outputTokens: number }
+/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟清單)、驗證錯誤、或模型拒答 */
+async function generateOnce(prompt: string, sensitiveTopics: readonly string[]): Promise<
+  | { ok: true; refused?: undefined; draft: ScriptDraft; stuck: ScriptStuckCollect[]; inputTokens: number; outputTokens: number }
+  | { ok: false; refused?: boolean; error: string; inputTokens: number; outputTokens: number }
 > {
   const { data, inputTokens, outputTokens } = await generateJson<RawDraft>(prompt, {
     systemInstruction: SYSTEM_INSTRUCTION,
@@ -109,6 +160,10 @@ async function generateOnce(prompt: string): Promise<
     thinkingBudget: 0,
   })
 
+  // 模型判定「不是流程/做不到」→ 帶原因拒答,不硬生。發生在驗證之前:error 回應沒有 nodes 可驗
+  const refusal = String(data?.error ?? '').trim()
+  if (refusal) return { ok: false, refused: true, error: refusal.slice(0, 200), inputTokens, outputTokens }
+
   // 與 create/put 端點同一套收斂(丟掉不明節點、夾範圍)+ 同一套驗證
   const input = normalizeScriptInput({
     name: data?.name,
@@ -116,38 +171,57 @@ async function generateOnce(prompt: string): Promise<
     nodes: data?.nodes,
     rootNodeId: data?.rootNodeId,
   })
-  const err = validateScriptDoc({ name: input.name || '未命名腳本', nodes: input.nodes, rootNodeId: input.rootNodeId })
+  // 觸發詞後檢在驗證之前:剔完若 keyword 模式沒詞了,要讓驗證抓到、回饋模型重生
+  const sanitized = sanitizeTriggerKeywords(input.nodes, sensitiveTopics)
+  if (sanitized.dropped.length) {
+    console.warn(`[scripts/generate] dropped trigger keywords: ${sanitized.dropped.join(', ')}`)
+  }
+  const err = validateScriptDoc({ name: input.name || '未命名腳本', nodes: sanitized.nodes, rootNodeId: input.rootNodeId })
   if (err) return { ok: false, error: err, inputTokens, outputTokens }
 
   return {
     ok: true,
-    draft: { name: input.name, nodes: input.nodes, rootNodeId: input.rootNodeId, inputTokens, outputTokens },
+    draft: { name: input.name, nodes: sanitized.nodes, rootNodeId: input.rootNodeId, inputTokens, outputTokens },
     // 驗證過不代表流程走得通:代碼類問題沒有跳過出口 = 客人答不出來就卡死在那題
-    stuck: findStuckCollects(input.nodes),
+    stuck: findStuckCollects(sanitized.nodes),
     inputTokens,
     outputTokens,
   }
+}
+
+export interface GenerateScriptDraftOptions {
+  /**
+   * 該租戶的敏感情境詞(退款/申訴…)。敏感層排在腳本之前,含這些詞的觸發關鍵字永遠輪不到,
+   * 生成時直接剔除。呼叫端(endpoint / agent)自己載設定傳進來——本函式維持不碰 Firestore。
+   */
+  sensitiveTopics?: readonly string[]
 }
 
 /**
  * 由自然語言描述生成腳本草稿。第一次有問題(驗證沒過、或有「答不出來就卡死」的步驟)
  * 就把問題回饋給模型重生一次;第二次還是留著卡死步驟,由 repairStuckCollects 確定性補上跳過出口
  * ——寧可補一顆通用按鈕給人改,也不要生一條客人走不出去的流程。兩次都連驗證都沒過才丟 422。
+ * 模型拒答(描述不是流程/要做腳本做不到的事)也丟 422,把它講的原因原樣給使用者——
+ * 重試沒有意義:同一句描述再問一次,得到的還是同一個「做不到」。
  */
-export async function generateScriptDraft(description: string): Promise<ScriptDraft> {
+export async function generateScriptDraft(description: string, options: GenerateScriptDraftOptions = {}): Promise<ScriptDraft> {
   const desc = String(description || '').trim().slice(0, MAX_GENERATE_DESCRIPTION_LEN)
   if (!desc) {
     throw createError({ statusCode: 400, statusMessage: '請先用一句話描述這個流程要做什麼' })
   }
+  const sensitiveTopics = options.sensitiveTopics ?? []
 
-  const first = await generateOnce(`【使用者描述】\n${desc}`)
+  const first = await generateOnce(`【使用者描述】\n${desc}`, sensitiveTopics)
   if (first.ok && !first.stuck.length) return first.draft
+  if (!first.ok && first.refused) {
+    throw createError({ statusCode: 422, statusMessage: first.error })
+  }
 
   // 回饋給模型修正一次:驗證錯誤(接線/欄位名筆誤)或卡死步驟,模型都看得懂
   const feedback = first.ok
     ? stuckFeedback(first.stuck)
     : `【上一次的輸出沒通過驗證,錯誤是】\n${first.error}\n`
-  const second = await generateOnce(`【使用者描述】\n${desc}\n\n${feedback}請修正後重新輸出完整 JSON。`)
+  const second = await generateOnce(`【使用者描述】\n${desc}\n\n${feedback}請修正後重新輸出完整 JSON。`, sensitiveTopics)
 
   // 兩次的 token 都要讓呼叫端記到帳
   const totalIn = first.inputTokens + second.inputTokens
@@ -157,10 +231,13 @@ export async function generateScriptDraft(description: string): Promise<ScriptDr
     const draft = second.stuck.length ? repairStuckCollects(second.draft, second.stuck) : second.draft
     return { ...draft, inputTokens: totalIn, outputTokens: totalOut }
   }
-  // 第二次連驗證都沒過,但第一次只是「有卡死步驟」→ 用第一次的草稿補跳過出口,好過整個失敗
+  // 第二次沒過(驗證失敗或這時才想拒答),但第一次只是「有卡死步驟」→ 用第一次的草稿補跳過出口,好過整個失敗
   if (first.ok) {
     const draft = repairStuckCollects(first.draft, first.stuck)
     return { ...draft, inputTokens: totalIn, outputTokens: totalOut }
+  }
+  if (second.refused) {
+    throw createError({ statusCode: 422, statusMessage: second.error })
   }
 
   throw createError({

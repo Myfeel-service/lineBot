@@ -668,7 +668,7 @@ import type {
   TriggerKeywordMatch,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, extractCollectValue, findStuckCollects, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptForReachability } from '~~/shared/types/ai-script-reachability'
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
@@ -918,6 +918,14 @@ const flowWarnings = computed<FlowWarning[]>(() => {
       key: `stuck:${s.nodeId}`,
       text: `客人答不出「${what}」就出不去——這種編號他手上可能根本沒有，會被一直重問。建議加一條退路。`,
       nodeId: s.nodeId,
+    })
+  }
+  // AI 生成草稿的「不編造事實」占位符：沒補完就存檔，客人會原封不動看到【請填入：…】
+  for (const hit of findPlaceholderTexts(form.value.nodes)) {
+    out.push({
+      key: `placeholder:${hit.nodeId}`,
+      text: `這一步的文案還留著「${hit.snippet}」——AI 不知道的資料不會亂編，請把真實內容填進去再存檔`,
+      nodeId: hit.nodeId,
     })
   }
   out.push(...duplicateFieldWarnings.value)

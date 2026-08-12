@@ -1,5 +1,6 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateScriptDraft } from '~~/server/utils/ai-script-generate'
+import { getAiSettings } from '~~/server/utils/ai-settings'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 
 /**
@@ -9,7 +10,12 @@ import { recordAiUsage } from '~~/server/utils/ai-usage'
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'scripts.write')
   const body = await readBody(event)
-  const draft = await generateScriptDraft(String(body?.description ?? ''))
+  // 敏感情境詞排在腳本之前攔截,生成端要拿它剔除「永遠輪不到」的觸發關鍵字。
+  // 讀不到設定就用空清單:生成照跑,只是少了這層剔除(編輯器的輪得到檢查還會再把關一次)
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  const draft = await generateScriptDraft(String(body?.description ?? ''), {
+    sensitiveTopics: settings?.sensitiveTopics ?? [],
+  })
 
   // 生成屬內部管理操作 → 記進**後台自用**那桶(test*),不是真客人那桶。
   // 一次生成會吐出一整份腳本,輸出 token 約是一則客人回覆的 8~10 倍,

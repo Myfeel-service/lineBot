@@ -24,7 +24,8 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     description: '客人說「找真人/轉接」就直接安排真人客服',
     rootNodeId: 't',
     nodes: [
-      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['找真人', '真人客服', '轉接', '客服人員', '專員'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'r' },
+      // 「人工客服」放這裡不放服務分流範本：打這四個字的人就是要真人，出選單是多一道關卡
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['找真人', '真人客服', '轉接', '客服人員', '專員', '人工客服'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'r' },
       { id: 'r', type: 'reply', text: '好的，馬上為您安排真人客服，請稍候 🙋', thenHandoff: true },
     ],
   },
@@ -36,8 +37,9 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     description: '客人要退貨 → 問訂單編號 → 收到後轉真人處理',
     rootNodeId: 't',
     nodes: [
-      // 不放「退款」：退款/退費屬敏感詞，讓它走 AI 敏感詞護欄直接轉真人，不被腳本攔截
-      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['退貨', '退換貨', '要退', '換貨'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_order' },
+      // 不放「退款」：退款/退費屬敏感詞，讓它走 AI 敏感詞護欄直接轉真人，不被腳本攔截。
+      // 不放「要退」：子字串比對下「我不要退了」也會命中，反悔的客人被拉進退貨流程
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['退貨', '退換貨', '換貨'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_order' },
       // 跳過出口：客人手邊沒編號也有路走（不加的話 format any 會把「我沒有編號」整句存成編號）
       { id: 'c_order', type: 'collect', question: '好的，請提供您的訂單編號，我們為您處理 🙂', fieldName: 'order_id', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', skipLabel: '我沒有訂單編號', skipNext: 'r_noid', next: 'r' },
       { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', thenHandoff: true },
@@ -69,19 +71,24 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     description: '客人想看服務選單時出三顆按鈕：出貨查詢 / 退換貨 / 找真人',
     rootNodeId: 't',
     nodes: [
-      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['客服選單', '服務選單', '人工客服'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'q' },
+      // 「人工客服」刻意不在這：那是明確要真人的詞，直接走「找真人快速通道」範本，別先出選單
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['客服選單', '服務選單', '選單'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'q' },
       {
         id: 'q',
         type: 'quickReply',
         question: '您好 👋 請問需要哪項服務？',
         expireMs: DEFAULT_COLLECT_EXPIRE_MS,
         options: [
-          { label: '出貨查詢', next: 'r_ship' },
+          { label: '出貨查詢', next: 'c_ship' },
           { label: '退換貨', next: 'r_return' },
           { label: '找真人', next: 'r_human' },
         ],
       },
-      { id: 'r_ship', type: 'reply', text: '您可在「我的訂單」查看物流狀態；若需協助，直接把訂單編號傳給我即可 🚚', thenHandoff: false },
+      // 出貨查詢＝收編號→轉真人。舊版叫客人「把訂單編號傳給我」卻沒人接（不轉真人、AI 也沒有
+      // 物流資料）＝把客人引進死巷；也不再寫死「我的訂單」頁面——不是每個店家都有那一頁
+      { id: 'c_ship', type: 'collect', question: '好的，請提供您的訂單編號，幫您查詢出貨狀態 🚚', fieldName: 'order_id', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', skipLabel: '我沒有訂單編號', skipNext: 'r_ship_noid', next: 'r_ship' },
+      { id: 'r_ship', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人為您查詢出貨進度，請稍候 🙇', thenHandoff: true },
+      { id: 'r_ship_noid', type: 'reply', text: '沒問題，請直接留言告訴我們您購買的商品和大概的購買時間，將由專人為您查詢 🙇', thenHandoff: true },
       { id: 'r_return', type: 'reply', text: '退換貨請提供您的訂單編號，將由專人為您協助 🙇', thenHandoff: true },
       { id: 'r_human', type: 'reply', text: '好的，馬上為您轉接真人客服，請稍候 🙋', thenHandoff: true },
     ],
