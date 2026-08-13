@@ -563,6 +563,31 @@ export function isShortChunkContent(content: unknown): boolean {
   return String(content ?? '').replace(/\s+/g, '').length < SHORT_CHUNK_CONTENT_CHARS
 }
 
+/**
+ * 「這份資料該設所屬產品卻沒設」的判定（前後端共用同一把尺）。
+ *
+ * 命中的典型情況＝一份說明書切成很多條卻沒說是哪一台：客人指名問的時候，
+ * 這些無主的知識可能被拿去回答**別台**的問題。
+ * 刻意只抓檔案類：FAQ／公告多半是網址或試算表，多產品是正常的，標出來只會變成雜訊；
+ * 型錄／列表（generateOverview）旗下本來就是很多不同產品，也不該問它「是哪一台」。
+ *
+ * 體檢清單與資料列表各寫一次判斷的話，會出現「列表標著未設產品、體檢卻不算它」
+ * 這種兩邊說法不一致的情形（本專案已經在「內容過短」上踩過同一種雷）。
+ */
+export const NO_PRODUCT_MIN_CHUNKS = 5
+
+export function needsProductName(src: {
+  type?: string
+  productName?: string
+  generateOverview?: boolean
+  chunkCount?: number
+}): boolean {
+  return src.type === 'file'
+    && !String(src.productName ?? '').trim()
+    && src.generateOverview !== true
+    && Number(src.chunkCount ?? 0) >= NO_PRODUCT_MIN_CHUNKS
+}
+
 /** 信心門檻預設值（討論決議：保守起手 0.75，跑兩週後再降） */
 export const DEFAULT_CONFIDENCE_THRESHOLD = 0.75
 

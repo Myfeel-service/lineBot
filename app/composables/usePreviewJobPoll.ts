@@ -17,6 +17,14 @@ export interface PreviewJobProgress {
 /** 使用者按取消時丟出的識別錯誤；呼叫端據此顯示「已取消」而不是失敗 */
 export const PREVIEW_JOB_CANCELLED = '__cancelled__'
 
+/**
+ * 等太久而放棄輪詢時，錯誤會帶這個代碼。
+ *
+ * 「等太久」跟「失敗」要分得出來：逾時的時候伺服器那份工作**還活著**（1 小時內都在），
+ * 呼叫端可以把續接記號留著、下次進來接著跑；真的失敗才該把記號丟掉。
+ */
+export const PREVIEW_JOB_DEADLINE = '__deadline__'
+
 export function usePreviewJobPoll() {
   const { apiFetch } = useWorkspace()
   const progress = ref<PreviewJobProgress | null>(null)
@@ -58,7 +66,10 @@ export function usePreviewJobPoll() {
       progress.value = res.progress ?? null
     }
     // 錯誤訊息三要素:這裡只講「發生什麼 + 下一步」,呼叫端會補上「資料有沒有被動到」
-    throw new Error('處理時間超過上限,可以再試一次;內容很長的話建議改用「貼上文字」分批匯入')
+    throw Object.assign(
+      new Error('處理時間超過上限,可以再試一次;內容很長的話建議改用「貼上文字」分批匯入'),
+      { code: PREVIEW_JOB_DEADLINE },
+    )
   }
 
   return { progress, poll, cancel, reset }

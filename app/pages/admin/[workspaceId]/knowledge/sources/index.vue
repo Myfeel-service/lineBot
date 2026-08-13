@@ -48,6 +48,28 @@
         <span class="src-workbench-link__arrow">→</span>
       </button>
 
+      <!--
+        還在整理／整理好了的匯入工作(視窗關著時才顯示)。
+        匯入的等待畫面告訴使用者「可以先關掉視窗去做別的事」,那就得有地方讓他知道
+        事情做完了沒有——否則他回來只會看到一片乾淨畫面,以為系統把他的東西弄丟了。
+      -->
+      <button
+        v-if="!importOpen && importJobState !== 'none'"
+        type="button"
+        class="src-workbench-link src-import-link"
+        :class="{ 'src-import-link--ready': importJobState === 'ready' }"
+        @click="importOpen = true"
+      >
+        <el-icon
+          class="src-workbench-link__icon"
+          :class="{ 'is-loading': importJobState === 'running' }"
+        ><Loading v-if="importJobState === 'running'" /><Check v-else /></el-icon>
+        <span class="src-workbench-link__text">
+          {{ importJobState === 'running' ? '一份資料整理中…' : '整理好了，看結果' }}
+        </span>
+        <span class="src-workbench-link__arrow">→</span>
+      </button>
+
       <!-- 全庫搜尋:補卡前先確認「這題是不是已經有卡了」,不用一份資料一份資料翻 -->
       <div class="src-search">
         <el-input
@@ -349,7 +371,7 @@
             網頁內容跟你上次整理的時候一模一樣
           </template>
           <div>
-            剛剛重新抓了一次這個網址，內容逐字比對完全相同，所以沒有需要你決定的事，知識卡也不用動。
+            剛剛重新抓了一次這個網址，內容逐字比對完全相同，所以沒有需要你決定的事，知識也不用動。
             <el-button text size="small" :loading="resyncing" @click="startResync(true)">
               還是要讓 AI 重新整理一次
             </el-button>
@@ -434,11 +456,9 @@
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="產品名" tight />
-              <el-input
+              <KnowledgeProductNameField
                 v-model="productNameForm"
-                :maxlength="60"
                 placeholder="例：GPLUS 智慧除濕機 12L（留空 = 非單一產品）"
-                class="control-full"
                 :disabled="!canEditSources"
               />
             </div>
@@ -468,7 +488,7 @@
             <p class="src-section-hint">
               排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用</strong>（只更新原有知識的內容，不另外通知你，上面的「最後同步」時間會跟著更新）；
               新增、刪除或大幅改版<strong>不會自動動</strong>，會在這裡標提示等你進來看差異再決定。
-              你手動編輯過的卡永遠不會被自動覆蓋。
+              你手動編輯過的內容永遠不會被自動覆蓋。
             </p>
 
             <!--
@@ -544,7 +564,7 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              排程會定期重讀這份 Sheet，<strong>一列一卡自動套用</strong>（新增/更新/刪除）。你在後台手動編輯過的卡會保留、不被覆蓋。
+              排程會定期重讀這份 Sheet，<strong>一列一條自動套用</strong>（新增/更新/刪除）。你在後台手動編輯過的內容會保留、不被覆蓋。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="同步頻率" tight />
@@ -581,31 +601,50 @@
           <div class="card-section-stack">
             <div v-if="detailLoading" class="src-chunk-loading"><div class="spinner" /></div>
             <p v-else-if="!chunks.length" class="text-muted">這份資料底下沒有知識。</p>
-            <div v-else class="src-chunk-list">
-              <div
-                v-for="c in chunks"
-                :key="c.id"
-                :class="['src-chunk-row', c.status === 'disabled' && 'src-chunk-row--off']"
-              >
-                <div class="src-chunk-body">
-                  <div class="src-chunk-main">
-                    <span class="src-chunk-title">{{ c.title }}</span>
-                    <span v-if="c.manuallyEditedAtMs > 0" class="src-chunk-lock" :title="`手動編輯過：${relativeTime(c.manuallyEditedAtMs)}`"><el-icon><Lock /></el-icon></span>
-                    <span v-if="isShortChunk(c)" class="src-chunk-warn">內容過短</span>
-                  </div>
-                  <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
-                  <span class="src-chunk-meta">
-                    {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
-                  </span>
-                  <!-- 原本這句話只在滑鼠停留時出現:手機/平板完全看不到,而且沒說「多長才算夠」,
-                       補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。 -->
-                  <span v-if="isShortChunk(c)" class="src-chunk-warn-hint">
-                    目前 {{ shortChunkChars(c) }} 字（空白不算），補到 {{ SHORT_CHUNK_CONTENT_CHARS }} 字以上 AI 才找得到；用不到的話可以直接刪掉。
-                  </span>
-                </div>
-                <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
+            <template v-else>
+              <!--
+                要修的那幾條在哪裡:一份資料切出上百條時,「哪幾條停用了 / 沒學成功 / 太短」
+                只能靠滑鼠滾——不然就得繞回工作台的體檢清單再點回這裡。
+                只在真的有東西可篩時才出現(全部正常就不該多一排按鈕)。
+              -->
+              <div v-if="chunkFilterTabs.length > 1" class="src-chunk-filters">
+                <button
+                  v-for="t in chunkFilterTabs"
+                  :key="t.key"
+                  type="button"
+                  class="src-chunk-filter"
+                  :class="{ 'is-active': chunkFilter === t.key }"
+                  @click="chunkFilter = t.key"
+                >
+                  {{ t.label }}（{{ t.count }}）
+                </button>
               </div>
-            </div>
+              <div class="src-chunk-list">
+                <div
+                  v-for="c in visibleChunks"
+                  :key="c.id"
+                  :class="['src-chunk-row', c.status === 'disabled' && 'src-chunk-row--off']"
+                >
+                  <div class="src-chunk-body">
+                    <div class="src-chunk-main">
+                      <span class="src-chunk-title">{{ c.title }}</span>
+                      <span v-if="c.manuallyEditedAtMs > 0" class="src-chunk-lock" :title="`手動編輯過：${relativeTime(c.manuallyEditedAtMs)}`"><el-icon><Lock /></el-icon></span>
+                      <span v-if="isShortChunk(c)" class="src-chunk-warn">內容過短</span>
+                    </div>
+                    <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
+                    <span class="src-chunk-meta">
+                      {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
+                    </span>
+                    <!-- 原本這句話只在滑鼠停留時出現:手機/平板完全看不到,而且沒說「多長才算夠」,
+                         補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。 -->
+                    <span v-if="isShortChunk(c)" class="src-chunk-warn-hint">
+                      目前 {{ shortChunkChars(c) }} 字（空白不算），補到 {{ SHORT_CHUNK_CONTENT_CHARS }} 字以上 AI 才找得到；用不到的話可以直接刪掉。
+                    </span>
+                  </div>
+                  <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -765,7 +804,7 @@
       </p>
 
       <p v-if="hiddenUnchangedCount > 0" class="diff-unchanged-note text-muted text-xs">
-        {{ hiddenUnchangedCount }} 張未變的卡已收合(不需要做決定)
+        {{ hiddenUnchangedCount }} 條未變的已收合(不需要做決定)
         <el-button text size="small" @click="showUnchangedDiff = !showUnchangedDiff">
           {{ showUnchangedDiff ? '收合' : '顯示' }}
         </el-button>
@@ -932,6 +971,17 @@
           這幾句會跟著知識一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
         </p>
       </div>
+      <!--
+        所屬產品:只有「新開一條」才問。手寫的知識原本完全沒有產品欄,
+        寫一條「濾網怎麼洗」進去,客人指名問**另一台**時這條照樣可能被拿去回答。
+        編輯既有的條目不在這裡問——它跟著所屬那份資料走,要改請到左邊那份資料的「所屬產品」,
+        兩邊都能改的話會出現「這條說 A、那份資料說 B」對不起來。
+      -->
+      <div v-if="chunkEditMode === 'create'" class="admin-field-group">
+        <AdminFieldLabel text="這條是在講哪個產品？（不是講單一產品就留空）" tight />
+        <KnowledgeProductNameField v-model="chunkProductName" />
+      </div>
+
       <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用) -->
       <div v-if="chunkShowUsage" class="admin-field-group">
         <AdminFieldLabel text="供 AI 使用" tight />
@@ -1016,7 +1066,12 @@
   </el-dialog>
 
   <!-- ── 匯入彈窗 ───────────────────────────────────── -->
-  <KnowledgeImportDialog v-model="importOpen" :existing-sources="sources" @imported="onImported" />
+  <KnowledgeImportDialog
+    v-model="importOpen"
+    :existing-sources="sources"
+    @imported="onImported"
+    @job-state="importJobState = $event"
+  />
 
   <!-- ── 補知識前的查重(P1-1):改既有的比新建一條重複的好 ──────── -->
   <el-dialog
@@ -1103,9 +1158,9 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, EditPen, FirstAidKit, Folder, Lock, Search, Upload } from '@element-plus/icons-vue'
+import { Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { isShortChunkContent, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
+import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1125,6 +1180,8 @@ interface SourceSummary {
   onChangeBehavior: 'notify' | 'log_only'
   /** 所屬產品名；'' = 非單一產品資料。改動後要重建該資料索引才生效。 */
   productName: string
+  /** 型錄／列表資料（旗下本來就有很多不同產品）→ 不該催它設「所屬產品」 */
+  generateOverview: boolean
   /** type='url'：小幅文字變動是否自動套用 */
   urlAutoApply: boolean
   lastFetchedAtMs: number
@@ -1403,6 +1460,49 @@ function shortChunkChars(c: Pick<ChunkRow, 'content'>): number {
   return String(c.content ?? '').replace(/\s+/g, '').length
 }
 
+/**
+ * 知識清單的狀態篩選。
+ *
+ * 一份說明書可以切出上百條,要找「哪幾條停用了 / 沒學成功 / 太短」原本只能滾——
+ * 或是繞回工作台的體檢清單再點回這一份資料。分類與體檢用同一組判斷,
+ * 兩邊看到的條數才會一樣。
+ */
+type ChunkFilterKey = 'all' | 'failed' | 'short' | 'disabled'
+const chunkFilter = ref<ChunkFilterKey>('all')
+
+function matchChunkFilter(c: ChunkRow, key: ChunkFilterKey): boolean {
+  if (key === 'failed') return c.status === 'failed'
+  if (key === 'disabled') return c.status === 'disabled'
+  // 過短只看還在用的:停用的卡不影響答題,列進來只會讓「要修的有幾條」看起來比實際多
+  if (key === 'short') return c.status !== 'disabled' && isShortChunk(c)
+  return true
+}
+
+/** 只列出真的有東西的分類——全部正常時整排按鈕不出現(沒有東西可篩就別佔版面) */
+const chunkFilterTabs = computed(() => {
+  const defs: Array<{ key: ChunkFilterKey, label: string }> = [
+    { key: 'all', label: '全部' },
+    { key: 'failed', label: 'AI 沒學起來' },
+    { key: 'short', label: '內容過短' },
+    { key: 'disabled', label: '已停用' },
+  ]
+  return defs
+    .map(d => ({ ...d, count: chunks.value.filter(c => matchChunkFilter(c, d.key)).length }))
+    .filter(d => d.key === 'all' || d.count > 0)
+})
+
+const visibleChunks = computed(() => chunks.value.filter(c => matchChunkFilter(c, chunkFilter.value)))
+
+/**
+ * 篩選中的那一類被清空時要自己退回「全部」。
+ * 例:只剩一條「內容過短」,補完字之後那個分類歸零 → 按鈕列不再顯示它,
+ * 但篩選還停在 short → 清單空白、也沒有任何按鈕可以點回去(看起來像知識全消失了)。
+ */
+watch([chunks, chunkFilter], () => {
+  if (chunkFilter.value === 'all') return
+  if (!chunks.value.some(c => matchChunkFilter(c, chunkFilter.value))) chunkFilter.value = 'all'
+})
+
 function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
   const firstLine = c.content.split('\n').map(s => s.trim()).find(Boolean) ?? ''
   return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
@@ -1488,6 +1588,8 @@ const chunkEditMode = ref<'create' | 'edit'>('create')
 const chunkEditingId = ref<string | null>(null) // edit 模式才有值
 // questions 是 AI 整理產生的常見問法,使用者不直接編;沒值就不送、後端保留既有
 const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions: undefined as string[] | undefined })
+/** 新開一條時的所屬產品(後端寫進自動建立的那份 manual 資料);編輯既有條目不用 */
+const chunkProductName = ref('')
 
 // ── 全庫搜尋（標題 / 內容 / 問法） ─────────────────────
 interface SearchRow { id: string; sourceId: string | null; title: string; snippet: string; status: string }
@@ -1909,10 +2011,10 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「重新同步」,或改用內容固定的頁面當資料來源。' },
-  noProductSources: { title: '文件未設產品名', hint: '這些多卡的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
-  failedChunks: { title: '知識學習失敗', hint: '這些卡 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
-  shortChunks: { title: '知識內容過短', hint: '內容太少的卡多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
-  expiredChunks: { title: '知識已過期停用', hint: '這些卡因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
+  noProductSources: { title: '文件未設產品名', hint: '這些內容較多的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
+  failedChunks: { title: '知識學習失敗', hint: '這幾條 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
+  shortChunks: { title: '知識內容過短', hint: '內容太少的多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
+  expiredChunks: { title: '知識已過期停用', hint: '這幾條因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
   wrongAnswerChunks: { title: '被標記「AI 答錯了」', hint: '同事在對話上看到 AI 用這幾條答錯客人。點開改掉內容就會從這裡消失——系統看的是「標記之後這條有沒有被改過」,不需要另外按已處理。次數是近 30 天內被標記的次數。' },
 }
 const healthListOpen = ref(false)
@@ -2172,6 +2274,9 @@ async function selectSource(src: SourceSummary) {
   indexPollStartedAt = 0 // 換資料重新起算輪詢時限
   // 先清空再載入:否則標頭已換、知識列表還是上一份資料的(快速切換會張冠李戴)
   chunks.value = []
+  // 篩選不跟著換資料的話:上一份選「AI 沒學起來」,換到一份全部正常的,
+  // 那個分類不存在 → 按鈕消失、清單空白,看起來像這份資料沒有知識
+  chunkFilter.value = 'all'
   detailLoading.value = true
   try {
     await loadSourceDetail(src.id)
@@ -2220,6 +2325,8 @@ async function loadSourceDetail(sourceId: string) {
 
 // ── 所屬產品（P1-1）─────────────────────────────────
 // 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這份資料的索引才生效。
+// 候選清單與匯入視窗共用同一份快取（存了新名字要讓兩邊都看得到）。
+const { addLocal: addProductNameLocal } = useProductNames()
 const productNameForm = ref('')
 const productNameBaseline = ref('')
 const savingProductName = ref(false)
@@ -2300,8 +2407,10 @@ async function saveProductName() {
       { method: 'POST' },
     )
     productNameBaseline.value = next
+    void addProductNameLocal(next) // 剛設的名字要立刻出現在下拉裡(下一份資料才選得到同一個)
+    await loadSources(true) // 側欄那列的產品名要跟著變
     if (res.failed > 0) {
-      showToast(`已儲存；${res.indexed} 張學習成功 / ${res.failed} 張失敗，可再按一次重試`, 'error')
+      showToast(`已儲存；${res.indexed} 條學習成功 / ${res.failed} 條失敗，可再按一次重試`, 'error')
     }
     else {
       showToast(`已儲存，AI 已重新學會這份資料的 ${res.indexed} 條`, 'success')
@@ -2638,7 +2747,7 @@ async function reindexAll() {
       failed += res.failed
       cursor = res.nextCursor
     } while (cursor)
-    showToast(`重新學習完成:${indexed} 張成功${failed ? `、${failed} 張失敗(可在知識上個別重試)` : ''}`, failed ? 'warning' : 'success')
+    showToast(`重新學習完成:${indexed} 條成功${failed ? `、${failed} 條失敗(可在知識上個別重試)` : ''}`, failed ? 'warning' : 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
@@ -2651,6 +2760,11 @@ async function reindexAll() {
 
 // ── 匯入彈窗(原獨立頁面已整併) ──────────────────────
 const importOpen = ref(false)
+/**
+ * 匯入視窗關著時,側欄要看得到「還在整理／整理好了」。
+ * 匯入的等待畫面請使用者去做別的事,這裡就是他回來時的入口。
+ */
+const importJobState = ref<'running' | 'ready' | 'none'>('none')
 function goImport() { importOpen.value = true }
 
 async function onImported(sourceId: string | null) {
@@ -2670,7 +2784,7 @@ async function migrateOrphans() {
       { method: 'POST', body: {} },
     )
     const tail = res.capped ? '（達單次上限 200，剩下的請再點一次）' : ''
-    showToast(`已整理 ${res.migrated} 張舊卡為手寫條目${tail}`, 'success')
+    showToast(`已整理 ${res.migrated} 條舊資料為手寫知識${tail}`, 'success')
     await loadSources(true)
   }
   catch (err: any) {
@@ -2716,6 +2830,8 @@ function openCreateManual() {
   chunkEditMode.value = 'create'
   chunkEditingId.value = null
   chunkForm.value = { title: '', content: '', tags: [], questions: undefined }
+  // 選著某份資料時新開一條,預設沿用那份資料的產品(多半就是在補同一台的東西)
+  chunkProductName.value = selectedSource.value?.productName ?? ''
   chunkEditStatus.value = ''
   chunkEditFailureReason.value = ''
   chunkEnabled.value = true
@@ -2847,11 +2963,14 @@ async function saveChunk() {
     // undefined = 這次沒有這個欄位，後端保留既有值。
     if (chunkForm.value.questions !== undefined) body.questions = chunkForm.value.questions
     if (chunkEditMode.value === 'create') {
-      // 建立新手寫知識（後端會自動建一個 type='manual' 的 source 包它）
+      // 建立新手寫知識（後端會自動建一個 type='manual' 的 source 包它，產品名寫在那份資料上）
+      const product = chunkProductName.value.trim()
+      body.productName = product
       const res = await apiFetch<{ id: string; sourceId: string }>('/api/ai/knowledge/create', {
         method: 'POST',
         body,
       })
+      if (product) void addProductNameLocal(product)
       showToast('已建立', 'success')
       chunkEditOpen.value = false
       // 就地驗證:不用再換頁去「測試對話」重打一次(與系統建議那條路的行為對齊)
@@ -2987,6 +3106,11 @@ function statusChipTone(src: SourceSummary): 'success' | 'warning' | 'error' | '
 function metaText(src: SourceSummary) {
   const parts: string[] = []
   parts.push(`${src.chunkCount} 條`)
+  // 產品名放在這裡才掃得出「哪幾份還沒設」——原本只有點進每一份資料才看得到,
+  // 補產品名等於要一份一份點開試。「該設卻沒設」的判定與體檢共用 needsProductName,
+  // 不然會出現「這裡標著未設、體檢卻不算它」兩邊說法不一致。
+  if (src.productName) parts.push(src.productName)
+  else if (needsProductName(src)) parts.push('未設產品')
   if (src.lastFetchedAtMs) parts.push(`同步：${relativeTime(src.lastFetchedAtMs)}`)
   return parts.join(' · ')
 }

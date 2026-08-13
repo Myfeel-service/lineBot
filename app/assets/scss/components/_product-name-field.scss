@@ -1,0 +1,25 @@
+/* ── 所屬產品欄位（ProductNameField.vue）────────────────────────
+   輸入框 + 現成產品名下拉。寬度吃滿容器（兩個呼叫點都在窄欄裡）。 */
+.product-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+
+  &__input {
+    width: 100%;
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+/* 產品名可能很長（含品牌與型號），下拉不截斷成一團看不懂的字 */
+.product-name-field__popper .el-autocomplete-suggestion__list li {
+  white-space: normal;
+  line-height: 1.5;
+}

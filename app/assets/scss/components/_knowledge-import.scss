@@ -65,6 +65,29 @@
   }
 }
 
+/* 整理完才問得出來的那一次「要不要做一張『我們有賣什麼』的清單」。
+   是建議不是警告 → 用主色淡底,不要用黃色(沒有東西壞掉) */
+.kb-overview-suggest {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 6px;
+  background: var(--el-color-primary-light-9);
+
+  &__text {
+    margin: 0 0 8px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
 .kb-overview-card {
   display: flex;
   gap: 12px;
@@ -98,11 +121,69 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* 篩選中的提示:沒有這一句,只顯示幾條會被當成「AI 只整理出這幾條」 */
+.kb-filter-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b45309;
 }
 
 /* ── 整站匯入:頁面清單勾選 ─────────────────────────── */
 .kb-site-summary {
   margin-bottom: 12px;
+}
+
+/* 整站匯入結束後:AI 幫這批標的產品名(不逐頁預覽,所以這是唯一一次看到它們的機會) */
+.kb-site-products {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+
+  &__head {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  &__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &__note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.kb-site-product {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 12px;
+  background: var(--el-bg-color);
+  font-size: 12px;
+
+  &__count { color: var(--el-text-color-secondary); }
+
+  /* 第一次出現的名字要看得出來——要多看一眼的就是這幾個 */
+  &__new {
+    padding: 0 5px;
+    border-radius: 8px;
+    background: var(--el-color-warning-light-8);
+    color: var(--el-color-warning);
+    font-weight: 600;
+  }
 }
 
 /* 路徑分組導覽 chips(大站組成一目了然;is-active = 目前篩選中的分組) */
@@ -382,6 +463,22 @@
     font-size: 12px;
     line-height: 1.6;
     color: #b45309;
+  }
+  /* 「只看這幾條」= 這句話本身就是按鈕(該檢查的內容算得出來,不該讓人自己在幾十條裡找) */
+  &__warn--action {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover .kb-preview-summary__warn-cta { text-decoration: underline; }
+  }
+  &__warn-cta {
+    font-weight: 600;
+    white-space: nowrap;
   }
   &__actions {
     display: flex;

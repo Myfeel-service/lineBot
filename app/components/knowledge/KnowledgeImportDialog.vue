@@ -100,13 +100,18 @@
       </p>
 
 
+      <!--
+        原本問的是「這是不是商品／列表頁」——那是我們的說法,使用者得先讀懂一段長說明
+        再自己判斷「我這頁算不算」。改成問他答得出來的事:這份東西裡有沒有很多樣商品。
+        判斷不了也沒關係:整理完看到條數多,預覽那一步會再主動問一次(見 suggestOverview)。
+      -->
       <div v-if="mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
         <el-checkbox v-model="generateOverview">
-          這是商品 / 列表頁（額外產生一張「總表」）
+          這份資料裡有<strong>很多樣商品</strong>嗎？
         </el-checkbox>
         <p class="kb-section-hint">
-          適用商品「列表頁」、型錄這類「列出很多項目」的頁面（<strong>不建議用首頁</strong>——商品區塊常是動態載入抓不到，總表會做錯）。
-          除了把每個項目切成知識，再額外合成一張帶分類的總表，讓客人問「你們有賣什麼 / 有哪些產品」時能一次回答，不會被反問。
+          勾起來的話，AI 會多做一張「我們有賣什麼」的清單——客人問「你們有賣哪些東西」時可以一次答完，不會被反問。
+          <strong>官網首頁不適合</strong>（商品區塊多半是滑動時才載入、抓不到，清單會做錯），請改貼商品列表頁。
         </p>
       </div>
 
@@ -135,8 +140,15 @@
            也沒說能不能關視窗——最容易讓人以為系統壞了的一段。 -->
       <div v-if="previewing" class="kb-waiting">
         <p class="kb-waiting__text">{{ previewProgressText }}</p>
+        <!--
+          這段話要跟實際行為對得上。以前寫「關掉視窗回來就看得到結果」,但工作編號只活在
+          記憶體裡:換頁或重整就撿不回來,伺服器那份還在也拿不到 → 只能重傳、重跑、重收費。
+          現在編號會落地(見 saveJobMarker),回到這一頁自動接續;但整理**只在有人看著時前進**,
+          所以只能承諾「接著跑、不會從頭來」,不能承諾「回來就好了」。
+        -->
         <p class="kb-waiting__note">
-          內容長的話可能要幾分鐘。<strong>可以先關掉這個視窗去做別的事</strong>，回來再點一次「加入知識」就看得到結果。
+          內容長的話可能要幾分鐘。<strong>可以先關掉這個視窗、甚至切去別的頁面做別的事</strong>——
+          回到知識庫這一頁會自動接著整理，<strong>不會從頭重來</strong>（離開的期間會暫停在原地）。
         </p>
         <el-button size="small" text @click="cancelPreview">取消</el-button>
       </div>
@@ -179,9 +191,35 @@
         <div class="text-xs">
           <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
           <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
-          <template v-if="!siteSummary.failed && !siteSummary.warned">這些知識沒有經過逐張預覽，建議到知識庫抽幾張看看內容是否合用。</template>
+          <template v-if="!siteSummary.failed && !siteSummary.warned">這些知識沒有經過逐條預覽，建議到知識庫抽幾條看看內容是否合用。</template>
         </div>
       </el-alert>
+
+      <!--
+        這批 AI 標了哪些產品名。整站匯入不逐頁預覽,產品名全由 AI 自己填了就進庫——
+        同一台在不同頁被標成兩種寫法,客人指名問時就會被反問「您指的是哪一台」,
+        而且要等到有人發現才修得掉。至少讓人在這裡看一眼、知道去哪改。
+      -->
+      <div v-if="siteFinished && siteProductNames.length" class="kb-site-products">
+        <p class="kb-site-products__head">
+          AI 幫這批標了 {{ siteProductNames.length }} 個產品名
+          <span class="text-xs text-muted">（標錯的話，到左邊那份資料的「所屬產品」改）</span>
+        </p>
+        <div class="kb-site-products__list">
+          <span v-for="p in siteProductNames" :key="p.name" class="kb-site-product">
+            {{ p.name }}
+            <span class="kb-site-product__count">{{ p.pages }} 頁</span>
+            <span v-if="p.isNew" class="kb-site-product__new">新</span>
+          </span>
+        </div>
+        <p v-if="siteProductNames.some(p => p.isNew)" class="kb-site-products__note">
+          標「新」的是這個帳號第一次出現的名字。<strong>如果其中有跟現有產品是同一台、只是寫法不同</strong>，
+          AI 會把它們當成兩台——請到「⋯ → 產品名稱整理」把它們併起來。
+        </p>
+        <p v-if="siteProductsUnnamed" class="kb-site-products__note">
+          另有 {{ siteProductsUnnamed }} 頁沒認出產品（多產品或非產品頁面就是正常的）。
+        </p>
+      </div>
 
       <!-- 路徑分組導覽:一眼看懂網站組成,點分組縮小範圍(大站挑商品頁的主要動線) -->
       <div v-if="siteGroups.length >= 2" class="kb-site-groups">
@@ -287,19 +325,20 @@
         />
       </div>
 
-      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。 -->
+      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。
+           欄位改成「可挑現成的」：手打是同一台被當成兩台的源頭（見 ProductNameField）。 -->
       <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
         <span class="kb-source-name-label">所屬產品</span>
-        <el-input
+        <KnowledgeProductNameField
           v-model="sourceMeta.productName"
-          :maxlength="60"
           size="small"
           placeholder="這份內容都在講同一個產品時才填（含品牌與型號）"
+          :show-hint="false"
           class="kb-source-name-input"
         />
       </div>
       <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
-        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改。' : '內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
+        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改——同一台請從下拉挑現成的名字，自己重打一次容易被當成兩台。' : '點一下可以挑已經在用的產品；內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
       </p>
 
       <el-alert
@@ -312,7 +351,7 @@
         <template #title>
           這份 PDF 是掃描檔，文字由 AI 辨識
         </template>
-        <div class="text-xs">辨識可能有錯漏（尤其數字、價格、電話），請逐張確認內容正確再匯入。</div>
+        <div class="text-xs">辨識可能有錯漏（尤其數字、價格、電話），請逐條確認內容正確再匯入。</div>
       </el-alert>
 
       <!-- 表格健檢:示範列沒換、重複問題、空答案、合併儲存格等;提醒不擋匯入 -->
@@ -387,14 +426,25 @@
         <p class="kb-preview-summary__head">
           AI 整理出 <strong>{{ chunks.length }}</strong> 條問答<template v-if="includedCount !== chunks.length">，目前選了 {{ includedCount }} 條</template>
         </p>
-        <p v-if="numericChunkCount" class="kb-preview-summary__warn">
-          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字，建議展開確認一下再匯入。
-        </p>
+        <!--
+          「建議展開確認」原本只是一句話:按下去攤開的是全部幾十條,要自己一條條找哪幾條有數字。
+          該看的就是這幾條——直接讓這句話帶你到它們面前。
+        -->
+        <button
+          v-if="numericChunkCount"
+          type="button"
+          class="kb-preview-summary__warn kb-preview-summary__warn--action"
+          @click="showNumericOnly"
+        >
+          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字（價格、期限最容易看錯）——
+          <span class="kb-preview-summary__warn-cta">只看這幾條 →</span>
+        </button>
         <div class="kb-preview-summary__actions">
+          <!-- 重做清單跑到一半時擋住匯入:按下去會把「即將被取代的那一份」寫進知識庫 -->
           <el-button
             type="primary"
             :loading="importing"
-            :disabled="includedCount === 0"
+            :disabled="includedCount === 0 || previewing"
             @click="runImport"
           >
             {{ importing ? '匯入並學習中⋯' : `直接匯入 ${includedCount} 條` }}
@@ -402,19 +452,59 @@
           <el-button text @click="chunkListOpen = !chunkListOpen">
             {{ chunkListOpen ? '收起逐條檢查' : '先逐條檢查' }}
           </el-button>
-          <el-button text @click="step = 'input'">← 換一份重新整理</el-button>
+          <el-button text @click="backToInput">← 換一份重新整理</el-button>
         </div>
       </div>
 
+      <!--
+        第一步那個勾選是在「還沒看到任何東西」時問的,答不出來很正常。
+        整理完條數這麼多,這裡才有依據主動問一次——而且要老實講這會再花一次 AI 用量。
+      -->
+      <div v-if="suggestOverview || redoingOverview" class="kb-overview-suggest">
+        <!-- 重做中:等待畫面在第一步,這裡看不到,所以進度要自己講(不然按下去像沒反應) -->
+        <template v-if="redoingOverview">
+          <p class="kb-overview-suggest__text">{{ previewProgressText }}</p>
+          <div class="kb-overview-suggest__actions">
+            <el-button size="small" text @click="cancelPreview">取消，保留原本的整理結果</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <p class="kb-overview-suggest__text">
+            這份整理出 <strong>{{ chunks.length }}</strong> 條，看起來列了很多樣商品。
+            要不要再做一張「我們有賣什麼」的清單？客人問「你們有賣哪些東西」時才能一次答完，不會被反問。
+          </p>
+          <div class="kb-overview-suggest__actions">
+            <el-button size="small" type="primary" plain @click="redoWithOverview">
+              重新整理並加上清單
+            </el-button>
+            <el-button size="small" text @click="overviewSuggestDismissed = true">不用，直接匯入</el-button>
+            <span class="text-xs text-muted">會請 AI 再讀一次這份資料（算一次用量），目前這些整理結果會重做。</span>
+          </div>
+        </template>
+      </div>
+
       <div v-show="chunkListOpen" class="kb-bulk-actions">
-        <el-button size="small" plain @click="selectAll">全選</el-button>
-        <el-button size="small" plain @click="selectNone">全不選</el-button>
+        <!-- 篩選中時按鈕只作用在看得到的那幾條,標籤要講明白(見 visibleForBulk) -->
+        <el-button size="small" plain @click="selectAll">
+          {{ previewFilter === 'numeric' ? '全選這幾條' : '全選' }}
+        </el-button>
+        <el-button size="small" plain @click="selectNone">
+          {{ previewFilter === 'numeric' ? '全不選這幾條' : '全不選' }}
+        </el-button>
         <span class="text-muted text-xs">已選 {{ includedCount }} / {{ chunks.length }}</span>
+        <!-- 篩選中一定要講清楚「現在沒看到全部」,否則會以為 AI 只整理出這幾條 -->
+        <template v-if="previewFilter === 'numeric'">
+          <span class="kb-filter-note">目前只顯示含金額或數字的 {{ numericVisibleCount }} 條</span>
+          <el-button size="small" text type="primary" @click="previewFilter = 'all'">看全部 {{ chunks.length }} 條</el-button>
+        </template>
       </div>
 
       <div v-show="chunkListOpen" class="kb-chunk-list">
+        <!-- 用 v-show 而不是先過濾陣列:標籤/問法的編輯狀態是綁 idx 的,
+             換成過濾後的索引會編到別條去 -->
         <div
           v-for="(chunk, idx) in chunks"
+          v-show="previewFilter === 'all' || hasNumber(chunk.content)"
           :key="idx"
           class="kb-chunk-row"
           :class="{ 'kb-chunk-row--excluded': !chunk.included }"
@@ -578,6 +668,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 
 const props = defineProps<{
   modelValue: boolean
@@ -591,11 +682,23 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   /** 有實際建立資料時觸發(全成功或部分成功),父層應刷新資料列表 */
   'imported': [sourceId: string | null]
+  /**
+   * 這份匯入工作現在的狀態,讓父層在視窗關著時也能顯示「還在整理／整理好了」。
+   * 沒有這個訊號的話,關掉視窗去做別的事的人回來只會看到一片乾淨畫面(見 resumeStoredJob 的說明)。
+   */
+  'job-state': [state: 'running' | 'ready' | 'none']
 }>()
 
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
+// 產品名候選(與「所屬產品」欄位共用同一份快取):整站匯入結束要分辨哪些名字是這批新增的
+const {
+  known: knownProductNamesPool,
+  ready: productNamesReady,
+  load: loadProductNames,
+  invalidate: invalidateProductNames,
+} = useProductNames()
 
 type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
 type Step = 'input' | 'sitePages' | 'preview' | 'result'
@@ -808,6 +911,8 @@ interface SitePageRow {
   error: string
   /** 這個網址已經有對應的資料(再匯一次會產生重複) */
   imported: boolean
+  /** AI 幫這一頁標的產品名(整站匯入不逐頁預覽,結束後要列出來讓人看過) */
+  productName: string
   /** 路徑第一段(分組用);探索時算一次,避免每次篩選/勾選都重新解析上千個網址 */
   group: string
 }
@@ -872,6 +977,39 @@ const siteSummary = computed(() => {
   }
 })
 const importedSiteCount = computed(() => sitePages.value.filter(p => p.imported).length)
+
+/**
+ * 這批 AI 各自標了哪些產品名。
+ *
+ * 整站匯入是一次幾十頁、**不經逐頁預覽直接建庫**——也就是變體產品名最大的入口:
+ * 同一台被 AI 在不同頁標成兩種寫法,之後客人指名問就會被反問「您指的是哪一台」。
+ * 單頁匯入的欄位改成可挑現成的擋不到這條路,所以結束後至少要把結果攤開來讓人看過。
+ * 「新」= 這次之前這個帳號沒有用過的名字(要多看一眼的就是這些)。
+ */
+const knownProductNames = ref<Set<string>>(new Set())
+/**
+ * 開始匯入前「現有產品清單」有沒有真的讀到。
+ * 讀不到卻照樣標「新」的話，畫面會把每一個產品都說成第一次出現、還請人去合併——
+ * 「查不到就等於沒有」是本專案踩過的假綠燈。
+ */
+const knownProductNamesReady = ref(false)
+const siteProductNames = computed(() => {
+  const m = new Map<string, number>()
+  for (const p of sitePages.value) {
+    if (p.status !== 'done' || !p.productName) continue
+    m.set(p.productName, (m.get(p.productName) ?? 0) + 1)
+  }
+  return [...m.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, pages]) => ({
+      name,
+      pages,
+      isNew: knownProductNamesReady.value && !knownProductNames.value.has(name),
+    }))
+})
+/** 有頁面成功、卻一個產品名都沒認出來時不顯示這一區(FAQ、公告類的網站本來就沒有) */
+const siteProductsUnnamed = computed(() =>
+  sitePages.value.filter(p => p.status === 'done' && !p.productName).length)
 /**
  * 可勾的頁 = **目前顯示中**且未匯入過、本輪未完成的。全選作用在顯示中的頁——
  * 「點 /projects 分組再全選」正是大站挑商品頁的主要動線;已勾但被篩掉的頁不會被取消。
@@ -932,6 +1070,7 @@ async function loadSitePages(url: string): Promise<number> {
     warningTexts: [],
     error: '',
     imported: p.imported === true,
+    productName: '',
     group: pageGroupKey(p.url),
   }))
   siteFrom.value = res.from
@@ -1027,6 +1166,24 @@ async function runSiteImport() {
   siteAborted.value = false
   siteBatchTotal.value = targets.length
   siteDoneCount.value = 0
+  // 取消旗標是整支輪詢共用的:上一次按過「取消整理」的話它還立著,
+  // 不先清掉,這批每一頁都會在第一次輪詢就被當成已取消而全部標失敗
+  resetJobPoll()
+
+  // 記下「這次之前已經有哪些產品名」,結束才分得出哪些是這批新冒出來的。
+  // ⚠️ 兩件事:
+  //  · 要在 siteImporting 立起來之後才 await——這中間關窗的話,收尾那條路(onDialogClose)
+  //    會以為沒有批次在跑而不做收拾,已經建好的資料就不會出現在列表上。
+  //  · 同一次開窗跑第二批時**不重抓**:重抓的話第一批剛加進去的名字會變成「本來就有」,
+  //    第二批的面板就不會標它們是新的——同一段說明在兩批之間自相矛盾。
+  if (!knownProductNamesReady.value) {
+    await loadProductNames()
+    // 用 known（含已經合併掉的舊叫法）而不是下拉那份收斂清單:
+    // 拿收斂清單比對的話,AI 標出一個「已經確認過是同一台」的舊叫法會被說成新的,
+    // 又叫使用者去合併一次他早就處理過的東西
+    knownProductNames.value = new Set(knownProductNamesPool.value)
+    knownProductNamesReady.value = productNamesReady.value
+  }
 
   let cursor = 0
   const worker = async () => {
@@ -1062,6 +1219,7 @@ async function runSiteImport() {
           },
         })
         page.cards = bulk.indexed
+        page.productName = res.suggestedProductName ?? ''
         page.warningTexts = res.warnings ?? []
         page.status = 'done'
         page.checked = false
@@ -1092,6 +1250,7 @@ async function runSiteImport() {
   }
   siteFinished.value = true
   siteImporting.value = false
+  invalidateProductNames() // 這批標的產品名已經進了後端清單,下次開欄位要挑得到
   // 中途關窗:視窗已不在,改用父層刷新讓已建立的資料立刻出現在列表(否則要手動重整才看得到)
   if (siteAborted.value) {
     if (ok.length) emit('imported', null)
@@ -1118,9 +1277,86 @@ const chunkListOpen = ref(false)
  * 含金額/數字的條數。OCR 提醒說「請逐張確認數字、價格」卻沒標出是哪幾張,
  * 那句話等於無法執行;這裡把該看的挑出來,讓「檢查」有對象。
  */
+function hasNumber(content: string) {
+  return /\d/.test(content)
+}
+/** 「其中 N 條含金額」講的是**這次會匯入的**——沒勾的不會進庫,不需要檢查 */
 const numericChunkCount = computed(() =>
-  chunks.value.filter(c => c.included && /\d/.test(c.content)).length,
+  chunks.value.filter(c => c.included && hasNumber(c.content)).length,
 )
+/**
+ * 篩選後畫面上實際看得到的條數。與上面那個數字刻意不同：
+ * 篩選是照「含不含數字」濾,沒勾的也留在畫面上(不然在這裡取消勾選,那一列會當場消失)。
+ * 兩個數字混用的話會出現「說 7 條卻列出 10 列」。
+ */
+const numericVisibleCount = computed(() => chunks.value.filter(c => hasNumber(c.content)).length)
+
+/**
+ * 逐條檢查時的顯示範圍。'numeric' = 只看含金額或數字的那幾條。
+ * 「建議展開確認數字」原本要人自己在幾十條裡找出哪幾條有數字——該看的既然算得出來,
+ * 就直接把人帶到它們面前(這與 OCR 提醒「請逐張確認數字、價格」是同一件事)。
+ */
+const previewFilter = ref<'all' | 'numeric'>('all')
+function showNumericOnly() {
+  previewFilter.value = 'numeric'
+  chunkListOpen.value = true
+}
+
+/**
+ * 「要不要順便做一張『我們有賣什麼』的清單」——整理完才問得出來的那一次。
+ *
+ * 第一步的勾選是在還沒看到任何內容時問的（「這份資料裡有很多樣商品嗎」），
+ * 第一次用的人根本答不出來，勾錯的代價是客人問「你們賣什麼」時 AI 只能反問。
+ * 條數多＝列了很多樣東西，這是我們手上唯一真的訊號，就在這時候問。
+ *
+ * 條件要嚴：接受重做等於再花一次 AI 用量，寧可少問也不要亂問。
+ * 只在「原本的輸入還在」時出現——接回上一份工作時輸入框是空的，重做會直接失敗。
+ */
+const OVERVIEW_SUGGEST_MIN_CHUNKS = 8
+const overviewSuggestDismissed = ref(false)
+const suggestOverview = computed(() =>
+  !overviewSuggestDismissed.value
+  && !overviewCard.value
+  && !generateOverview.value
+  && chunks.value.length >= OVERVIEW_SUGGEST_MIN_CHUNKS
+  && (sourceMeta.value.type === 'url' || sourceMeta.value.type === 'file')
+  && canPreview.value)
+
+/**
+ * 重做一次（這次加上清單）。
+ *
+ * ⚠️ 刻意**不切回第一步**：切回去的話，失敗時會停在空白的輸入畫面，
+ * 而剛才那份已經整理好、也已經計過用量的結果就再也回不去了——等於要人付第三次錢。
+ * 留在預覽頁重跑：成功才會被新結果取代，失敗的話原本那份還在，可以直接匯入。
+ */
+const redoingOverview = ref(false)
+/** applyPreviewResult 每跑一次就加一。用「有沒有換成新的一份」判斷成敗，比逐一列舉失敗原因可靠 */
+const previewRevision = ref(0)
+
+async function redoWithOverview() {
+  const before = previewRevision.value
+  redoingOverview.value = true
+  generateOverview.value = true
+  try {
+    await runPreview()
+  }
+  finally {
+    redoingOverview.value = false
+  }
+  // 沒有換成新的一份（取消／失敗／這次 AI 一條都沒切出來）→ 原本那份完好無缺，
+  // 把狀態退回去讓人可以直接匯入或再試一次。
+  // 用版本號而不是逐一判斷失敗原因：runPreview 的提早結束出口不只一個，
+  // 漏掉哪一個就會把失敗當成成功、還把「要不要做清單」的設定留在開啟狀態。
+  if (previewRevision.value === before) {
+    generateOverview.value = false
+    if (previewError.value) {
+      showToast(`${previewError.value}（原本整理好的內容還在，可以直接匯入）`, 'error')
+      previewError.value = ''
+    }
+    return
+  }
+  overviewSuggestDismissed.value = true // 問過了就不再問(即使這次 AI 沒做出清單)
+}
 
 // 同名警告要「活的」:使用者在預覽步驟改名,警告即時跟著變。
 // 比對對象 = 父層完整資料清單 ∪ preview 回傳的同名清單(父層沒傳 prop 時的 fallback),
@@ -1154,10 +1390,165 @@ interface PreviewResult {
 // 輪詢協定與「重新同步」共用同一支 composable(重試碼 / 逾時 / 取消只留一份實作)
 const { progress: jobProgress, poll: pollPreviewJob, reset: resetJobPoll, cancel: cancelJobPoll } = usePreviewJobPoll()
 
+/**
+ * 「先關掉視窗去做別的事」的續接記號。
+ *
+ * 等待畫面一直寫著「可以先關掉這個視窗、回來就看得到結果」,但 jobId 原本只活在記憶體裡:
+ * 同一頁關掉視窗再打開沒問題(元件沒被卸載),**一換頁或重整就整個消失**——而「去做別的事」
+ * 最自然的動作就是切去對話頁回客人。使用者回來看到一片乾淨畫面,只能重傳一次,
+ * 大檔的 OCR + 切卡 + embedding 整套重跑重收費(伺服器那份工作其實還活著,只是沒人來認領)。
+ *
+ * 所以把 jobId 落地。後端 job 存活 1 小時且完成後仍可重取結果(見 preview-jobs/[jobId].get.ts),
+ * 這裡留餘裕抓 55 分鐘;過期或撿不到就靜靜清掉,不打擾使用者。
+ *
+ * ⚠️ 伺服器端的工作**只有在有人輪詢時才會前進**(輪詢兼推進)。所以離開期間不會有進度,
+ * 回來才接著跑——文案要照這個事實寫,不能承諾「回來就好了」。
+ */
+const JOB_MARKER_TTL_MS = 55 * 60 * 1000
+interface JobMarker { jobId: string, startedAtMs: number, mode: ImportMode }
+
+function jobMarkerKey(): string {
+  return `kb-import-job:${workspaceId.value ?? ''}`
+}
+
+function saveJobMarker(jobId: string, m: ImportMode) {
+  try {
+    localStorage.setItem(jobMarkerKey(), JSON.stringify({ jobId, startedAtMs: Date.now(), mode: m } satisfies JobMarker))
+  }
+  catch { /* 無痕模式等寫不進去:接不回來而已,不影響這一輪匯入 */ }
+}
+
+function clearJobMarker() {
+  try {
+    localStorage.removeItem(jobMarkerKey())
+  }
+  catch { /* 同上 */ }
+}
+
+function readJobMarker(): JobMarker | null {
+  try {
+    const raw = localStorage.getItem(jobMarkerKey())
+    if (!raw) return null
+    const m = JSON.parse(raw) as JobMarker
+    if (!m?.jobId || typeof m.startedAtMs !== 'number') return null
+    if (Date.now() - m.startedAtMs > JOB_MARKER_TTL_MS) {
+      clearJobMarker()
+      return null
+    }
+    return m
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * 父層(資料頁)靠這個訊號在視窗關著時顯示「還在整理／整理好了」。
+ * 沒有它的話,關掉視窗的人得自己記得回來點「加入知識」才看得到——正是原本會被誤認為
+ * 「系統把我的東西弄丟了」的那一段。
+ */
+const jobState = computed<'running' | 'ready' | 'none'>(() => {
+  if (previewing.value) return 'running'
+  if (step.value === 'preview' && chunks.value.length > 0) return 'ready'
+  return 'none'
+})
+watch(jobState, v => emit('job-state', v), { immediate: true })
+
+/** 回到第一步(換一份重新整理)＝放棄目前這份工作,記號要跟著清掉 */
+function backToInput() {
+  clearJobMarker()
+  step.value = 'input'
+}
+
+/** 進頁面時撿回上一次沒看完的整理工作;撿不到就當沒這回事(不跳任何錯誤) */
+async function resumeStoredJob() {
+  const marker = readJobMarker()
+  if (!marker) return
+  previewing.value = true
+  previewError.value = ''
+  previewCancelled = false
+  resetJobPoll()
+  try {
+    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(marker.jobId)
+    // 這段可能跑好幾分鐘,期間使用者早就去做別的事了(挑整站頁面、跑批次匯入、開始另一份整理)。
+    // 這時把畫面切到預覽等於半路搶走他正在做的事——記號留著,下次進來再接。
+    if (siteImporting.value || step.value !== 'input') return
+    if (!res.chunks.length) {
+      clearJobMarker()
+      return
+    }
+    applyPreviewResult(res, marker.mode)
+    step.value = 'preview'
+  }
+  catch (err: any) {
+    if (previewCancelled) return // 使用者自己按了取消
+    // 等太久:伺服器那份工作還活著,記號留著下次進來再接。這次不出聲——
+    // 使用者只是打開了知識庫,沒有要求任何事,不該迎面丟一個錯誤給他
+    if (err?.code === PREVIEW_JOB_DEADLINE) return
+    const code = Number(err?.statusCode ?? err?.data?.statusCode ?? 0)
+    // 過期 / 被清掉 / 不是這個租戶的 → 記號沒用了,靜靜丟掉
+    if (code === 404 || code === 403) {
+      clearJobMarker()
+      return
+    }
+    // 其他錯誤留在畫面上:等了很久的人至少知道發生什麼事、可以再試一次
+    previewError.value = String(
+      err?.data?.statusMessage || err?.statusMessage || err?.message || '接續整理失敗',
+    ).slice(0, 300)
+    clearJobMarker()
+  }
+  finally {
+    previewing.value = false
+    resetJobPoll()
+  }
+}
+
+onMounted(() => { void resumeStoredJob() })
+
 /** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
 const previewError = ref('')
 /** 使用者主動取消：用來區分「取消」與「真的失敗」，取消不該顯示錯誤 */
 let previewCancelled = false
+
+/**
+ * 把整理結果攤進預覽畫面。第一次整理與「接回上次那份」共用同一份,
+ * 兩邊各寫一次的話,之後補欄位只改到一邊,接回來的那份就會少東西。
+ *
+ * srcMode 要另外傳:接回來的時候輸入框是空的,mode(由輸入內容衍生)已經不是當初那個,
+ * 拿它當來源類型會把網頁存成「一段文字」。
+ */
+function applyPreviewResult(res: PreviewResult, srcMode: ImportMode) {
+  previewRevision.value++ // 呼叫端據此判斷「這一輪真的換成新的一份了嗎」
+  previewFilter.value = 'all' // 新的一份從完整清單開始看
+  overviewSuggestDismissed.value = false
+  truncated.value = res.truncated
+  ocrUsed.value = res.ocrUsed === true
+  healthWarnings.value = res.warnings ?? []
+  chunks.value = res.chunks.map(c => ({
+    included: true,
+    title: c.title,
+    content: c.content,
+    tags: [...(c.tags ?? [])],
+    questions: [...(c.questions ?? [])],
+  }))
+  overviewCard.value = res.overviewCard
+    ? {
+        included: true,
+        title: res.overviewCard.title,
+        content: res.overviewCard.content,
+        tags: [...(res.overviewCard.tags ?? [])],
+        questions: [...(res.overviewCard.questions ?? [])],
+      }
+    : null
+  existingMatches.value = res.existingMatches ?? []
+  sourceMeta.value = {
+    type: srcMode,
+    name: res.sourceName,
+    url: res.sourceUrl,
+    productName: res.suggestedProductName ?? '',
+    contentHash: res.contentHash ?? '',
+  }
+}
 
 async function runPreview() {
   previewing.value = true
@@ -1182,6 +1573,9 @@ async function runPreview() {
         body: file,
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
       })
+      // 上傳可能跑好幾秒:期間按了取消就到此為止,不要再去建一份沒人要的整理工作。
+      // （下面的 reset 只是把「上傳檔案」的進度數字清掉，之後才進輪詢階段）
+      if (previewCancelled) return
       resetJobPoll()
       body.fileName = file.name
       body.contentType = file.type
@@ -1205,44 +1599,29 @@ async function runPreview() {
       '/api/ai/knowledge/preview-jobs',
       { method: 'POST', body },
     )
+    // 上傳大檔那段可能跑好幾秒,期間按了取消就別再往下建工作(否則會留下一份沒人要的記號)
+    if (previewCancelled) return
+    // 記號要在開始等之前就落地:最需要接回來的正是「等很久所以跑去做別的事」那一種
+    saveJobMarker(created.jobId, mode.value)
     const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
 
+    // 輪詢回來之後也要再確認一次:取消旗標是在 await 期間被設起來的
+    if (previewCancelled) return
+
     if (!res.chunks.length) {
+      clearJobMarker()
       showToast('AI 沒有切出任何有意義的知識；請改貼文字或檢查資料內容', 'error')
       return
     }
 
-    truncated.value = res.truncated
-    ocrUsed.value = res.ocrUsed === true
-    healthWarnings.value = res.warnings ?? []
-    chunks.value = res.chunks.map(c => ({
-      included: true,
-      title: c.title,
-      content: c.content,
-      tags: [...(c.tags ?? [])],
-      questions: [...(c.questions ?? [])],
-    }))
-    overviewCard.value = res.overviewCard
-      ? {
-          included: true,
-          title: res.overviewCard.title,
-          content: res.overviewCard.content,
-          tags: [...(res.overviewCard.tags ?? [])],
-          questions: [...(res.overviewCard.questions ?? [])],
-        }
-      : null
-    existingMatches.value = res.existingMatches ?? []
-    sourceMeta.value = {
-      type: mode.value,
-      name: res.sourceName,
-      url: res.sourceUrl,
-      productName: res.suggestedProductName ?? '',
-      contentHash: res.contentHash ?? '',
-    }
+    applyPreviewResult(res, mode.value)
     step.value = 'preview'
   }
   catch (err: any) {
-    if (previewCancelled) return // 使用者自己按取消,不是錯誤
+    if (previewCancelled) return // 使用者自己按取消,不是錯誤(記號已在 cancelPreview 清掉)
+    // 等太久 ≠ 失敗:逾時的時候伺服器那份工作還活著,記號留著讓人下次進來接著跑;
+    // 真的失敗(伺服器已標 error)才清掉——留著只會在下次進頁面時再報一次同一個錯。
+    if (err?.code !== PREVIEW_JOB_DEADLINE) clearJobMarker()
     // 留在畫面上而不是 toast：等了幾分鐘的人常常沒盯著螢幕，3.5 秒的提示等於沒講
     previewError.value = String(
       err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
@@ -1259,7 +1638,11 @@ function cancelPreview() {
   previewCancelled = true
   cancelJobPoll()
   previewing.value = false
-  resetJobPoll()
+  // ⚠️ 這裡**不可以**接著 resetJobPoll():reset 會把剛設好的取消旗標清成 false,
+  //    正在跑的輪詢就照樣跑到底、照樣把結果蓋上畫面——按了取消卻什麼也沒取消。
+  //    旗標留著,下一次 runPreview 開頭本來就會 reset。進度條只清畫面上的數字。
+  jobProgress.value = null
+  clearJobMarker() // 自己按取消 = 不要這份了,別在下次進頁面時又冒出來
   showToast('已取消', 'success')
 }
 
@@ -1312,11 +1695,18 @@ function commitQuestion(chunk: { questions: string[] }) {
 }
 
 // ── Bulk selection ────────────────────────────────────────
+// 只作用在**畫面上看得到的**那幾條:篩選「只看含數字的 8 條」時按全不選,
+// 卻把沒顯示的 52 條一起取消,是使用者完全預期不到的破壞。
+function visibleForBulk() {
+  return previewFilter.value === 'numeric'
+    ? chunks.value.filter(c => hasNumber(c.content))
+    : chunks.value
+}
 function selectAll() {
-  for (const c of chunks.value) c.included = true
+  for (const c of visibleForBulk()) c.included = true
 }
 function selectNone() {
-  for (const c of chunks.value) c.included = false
+  for (const c of visibleForBulk()) c.included = false
 }
 
 // ── Import ────────────────────────────────────────────────
@@ -1412,7 +1802,7 @@ async function runImport() {
     .map(c => ({ title: c.title.trim(), content: c.content.trim(), tags: c.tags, questions: c.questions ?? [] }))
 
   if (!selected.length) return showToast('請至少選擇一條', 'error')
-  if (selected.length > 150) return showToast('單次最多匯入 150 張，請先取消勾選一些', 'error')
+  if (selected.length > 150) return showToast('單次最多匯入 150 條，請先取消勾選一些', 'error')
 
   importing.value = true
   try {
@@ -1436,10 +1826,12 @@ async function runImport() {
       },
     })
     result.value = res
+    clearJobMarker() // 卡已經進庫了,這份整理工作到此為止
+    invalidateProductNames() // 這份資料的產品名已經進後端清單,下次填欄位要挑得到
     // 全部成功直接關窗(關窗 handler 會通知父層刷新並選中新資料);
     // 有失敗才停在結果頁,讓使用者看到哪幾張失敗、原因是什麼
     if (res && res.failed === 0) {
-      showToast(`成功匯入 ${res.indexed} 張`, 'success')
+      showToast(`成功匯入 ${res.indexed} 條`, 'success')
       close()
     }
     else if (res) {
@@ -1456,6 +1848,7 @@ async function runImport() {
 }
 
 function resetAll() {
+  clearJobMarker()
   step.value = 'input'
   pasteInput.value = '' // mode 由這個與 selectedFile 衍生，不再是可寫的狀態
   fileName.value = ''
@@ -1466,6 +1859,9 @@ function resetAll() {
   textInput.value = ''
   gsheetInput.value = ''
   chunks.value = []
+  chunkListOpen.value = false
+  previewFilter.value = 'all'
+  overviewSuggestDismissed.value = false
   overviewCard.value = null
   generateOverview.value = false
   existingMatches.value = []
@@ -1483,6 +1879,9 @@ function resetAll() {
   siteFinished.value = false
   siteBatchTotal.value = 0
   siteDoneCount.value = 0
+  // 下一次開窗要重新抓一次「原本有哪些產品名」當基準
+  knownProductNames.value = new Set()
+  knownProductNamesReady.value = false
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
 

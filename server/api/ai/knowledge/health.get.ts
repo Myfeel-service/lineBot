@@ -8,7 +8,7 @@ import {
 } from '~~/server/utils/ai-feedback-events'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
-import { isShortChunkContent } from '~~/shared/types/ai-knowledge'
+import { isShortChunkContent, needsProductName } from '~~/shared/types/ai-knowledge'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
 
@@ -93,8 +93,8 @@ export default defineEventHandler(async (event) => {
     if (s?.status === 'failed') failedSources.push({ id: d.id, name, reason: String(s?.failureReason ?? '').slice(0, 120) })
     if (s?.outdatedAt) outdatedSources.push({ id: d.id, name })
     if (s?.detectStalledAt) stalledSources.push({ id: d.id, name })
-    // 「多卡的檔案來源沒設產品名」= 說明書無主卡事故的源頭;FAQ/公告類多為 gsheet/url,不誤傷
-    if (s?.type === 'file' && !String(s?.productName ?? '').trim() && !s?.generateOverview && Number(s?.chunkCount ?? 0) >= 5) {
+    // 「多卡的檔案來源沒設產品名」= 說明書無主卡事故的源頭;判定與資料列表共用 needsProductName
+    if (needsProductName(s)) {
       noProductSources.push({ id: d.id, name, chunkCount: Number(s?.chunkCount ?? 0) })
     }
   }

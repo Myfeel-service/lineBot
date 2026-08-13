@@ -76,6 +76,12 @@ export interface SourceSummary {
   onChangeBehavior: 'notify' | 'log_only'
   /** 所屬產品的正規名稱；'' = 非單一產品來源。改動後要重建該來源索引才生效。 */
   productName: string
+  /**
+   * 型錄／列表來源（旗下本來就是很多不同產品）。
+   * 列表 UI 要靠它跟體檢用同一把尺判斷「這份該不該設產品名」——
+   * 少了它，畫面會把型錄標成「未設產品」，體檢卻不算它，兩邊說法不一致。
+   */
+  generateOverview: boolean
   /** type='url'：是否允許小幅文字變動自動套用（預設 true） */
   urlAutoApply: boolean
   lastFetchedAtMs: number
@@ -115,6 +121,7 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     refreshIntervalMinutes: Number(raw.refreshIntervalMinutes ?? 0),
     onChangeBehavior: raw.onChangeBehavior === 'log_only' ? 'log_only' : 'notify',
     productName: String(raw.productName ?? '').trim(),
+    generateOverview: raw.generateOverview === true,
     urlAutoApply: raw.urlAutoApply !== false,
     lastFetchedAtMs: tsToMs(raw.lastFetchedAt),
     outdatedAtMs: tsToMs(raw.outdatedAt),

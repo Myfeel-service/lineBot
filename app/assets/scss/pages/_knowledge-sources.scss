@@ -186,6 +186,32 @@
 
 .src-settings-actions { margin-top: 8px; }
 
+/* 知識清單的狀態篩選(要修的那幾條在哪裡);沿用整站匯入分組 chip 的外觀語言 */
+.src-chunk-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.src-chunk-filter {
+  padding: 3px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 12px;
+  background: var(--el-bg-color);
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+
+  &:hover { border-color: var(--el-color-primary-light-5); }
+
+  &.is-active {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+    font-weight: 600;
+  }
+}
+
 .src-chunk-list { display: flex; flex-direction: column; gap: 6px; }
 .src-chunk-row {
   display: flex;
@@ -848,6 +874,22 @@
   &__arrow {
     flex: none;
     color: var(--el-text-color-secondary);
+  }
+}
+
+/* 進行中／已完成的匯入工作(沿用上面那條的骨架,只換顏色語意)
+   整理中=中性、整理好了=綠色(有東西等你看),不用紅色:這不是壞掉 */
+.src-import-link {
+  border-color: var(--el-border-color);
+
+  .src-workbench-link__icon { color: var(--el-text-color-secondary); }
+
+  &--ready {
+    border-color: var(--el-color-success-light-5);
+    background: var(--el-color-success-light-9);
+
+    .src-workbench-link__icon { color: var(--el-color-success); }
+    &:hover { background: var(--el-color-success-light-8); }
   }
 }
 
