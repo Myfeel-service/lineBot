@@ -203,4 +203,23 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     for (const [name, t] of Object.entries(TOOLS))
       expect({ name, mutates: (t as any).mutates }).toEqual({ name, mutates: false })
   })
+
+  it('帶路(goto):白名單過濾＋去重＋最多 2 張,模型編的 id 一律丟棄', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'answer',
+      text: '去 AI 設定開通知',
+      goto: ['ai-settings', 'made-up-page', 'ai-settings', 'conversations', 'broadcasts'],
+    }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '通知怎麼設?' })
+    expect(res.messages).toEqual([
+      { kind: 'link', internal: true, label: '前往「AI 設定」', href: '/admin/w1/ai-settings' },
+      { kind: 'link', internal: true, label: '前往「對話」', href: '/admin/w1/conversations' },
+    ])
+  })
+
+  it('帶路(goto):沒帶或帶垃圾 → messages 空陣列,不 throw', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok', goto: 'not-an-array' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '嗨' })
+    expect(res.messages).toEqual([])
+  })
 })

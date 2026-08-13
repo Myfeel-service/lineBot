@@ -9,6 +9,14 @@
       <template v-for="(m, i) in msgs" :key="i">
         <div class="aa-msg" :class="m.who === 'me' ? 'aa-msg--me' : 'aa-msg--ai'">
           <div class="aa-msg__bubble">{{ m.text }}</div>
+          <!-- 回答附帶的帶路卡（站內連結，後端白名單生成）：與開通精靈共用同一個渲染層 -->
+          <div v-if="m.cards?.length" class="aa-msg__cards">
+            <AgentMessageRenderer
+              v-for="(c, j) in m.cards"
+              :key="`${i}-${j}`"
+              :entry="{ id: j, role: 'agent', msg: c }"
+            />
+          </div>
           <div v-if="m.tools?.length" class="aa-msg__tools">查了:{{ m.tools.map(toolLabel).join('、') }}</div>
         </div>
       </template>
@@ -38,8 +46,9 @@
 <script setup lang="ts">
 /** Admin 查詢副駕(P1)的聊天面板:唯讀問答,掛在教學小幫手的「問助理」分頁。 */
 import { ADMIN_AGENT_TOOL_LABELS } from '~~/shared/types/admin-agent'
+import type { AgentMsg } from '~~/shared/types/agent-messages'
 
-interface Msg { who: 'me' | 'ai'; text: string; tools?: string[] }
+interface Msg { who: 'me' | 'ai'; text: string; tools?: string[]; cards?: AgentMsg[] }
 
 const { apiFetch, workspaceId } = useWorkspace()
 
@@ -90,12 +99,12 @@ async function send(preset?: string) {
   try {
     // 帶最近 6 則當上下文,追問(「那上個月呢?」)才接得住
     const history = msgs.value.slice(-7, -1).map(m => ({ role: m.who === 'me' ? 'user' : 'assistant', text: m.text }))
-    const res = await apiFetch<{ reply: string; toolCalls: string[] }>('/api/admin/agent/chat', {
+    const res = await apiFetch<{ reply: string; toolCalls: string[]; messages?: AgentMsg[] }>('/api/admin/agent/chat', {
       method: 'POST',
       body: { message: text, history },
     })
     if (stillHere())
-      msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls })
+      msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls, cards: res.messages })
   }
   catch (err: any) {
     if (stillHere())

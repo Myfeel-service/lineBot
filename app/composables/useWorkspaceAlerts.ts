@@ -13,6 +13,7 @@ import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
+import type { AgentGuideId } from '~/utils/agent-guides'
 
 /**
  * critical   = 現在就在影響客人（客人問了得不到回答、系統停擺）。只有這一級會亮紅點。
@@ -36,6 +37,8 @@ export interface AlertDefinition {
   requires: 'settings' | 'operate'
   /** 去哪裡修 */
   route: (workspaceId: string) => string
+  /** 有掛的話，卡片多一顆「用聊天帶我修」——對應的引導劇本（C-31 Phase 1，utils/agent-guides） */
+  guideId?: AgentGuideId
 }
 
 export interface ResolvedAlert extends AlertDefinition {
@@ -86,6 +89,7 @@ const ALERTS: AlertDefinition[] = [
     requires: 'settings',
     // ?verify=liff：進頁直接捲到 LIFF 區塊並重新檢查一次（跳過快取）
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+    guideId: 'liff-endpoint',
   },
   {
     // 同 lineWebhookUrlMismatch，2026-08-08 拍板升紅：填著的是遲早停用的舊網址，
@@ -97,6 +101,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+    guideId: 'liff-endpoint',
   },
   {
     id: 'anyTextBlocking',
@@ -132,6 +137,7 @@ const ALERTS: AlertDefinition[] = [
     // ?health= 直接開對應的問題清單:使用者在這裡已經按過一次「去修」,
     // 到頁面後不該再自己找一遍同一件事
     route: wid => `/admin/${wid}/knowledge/sources?health=failedSources`,
+    guideId: 'knowledge-sync',
   },
   {
     id: 'knowledgeIndexFailed',
@@ -189,6 +195,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去設定通知對象',
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
+    guideId: 'handoff-notify',
   },
   {
     // 紅點：客人按下去真的什麼都收不到，屬於「正在影響客人」

@@ -16,8 +16,8 @@ export type AgentMsg =
   | { kind: 'text'; html: string }
   /** 「怎麼拿？」展開式小教學；href 給可直接點開的入口（別讓使用者自己打網址） */
   | { kind: 'help'; summary: string; steps: string[]; href?: string; hrefLabel?: string }
-  /** 外部連結卡（另開分頁） */
-  | { kind: 'link'; label: string; href: string }
+  /** 連結卡。internal＝站內頁（走 NuxtLink 同分頁導航）；否則視為外部連結另開分頁 */
+  | { kind: 'link'; label: string; href: string; internal?: boolean }
   /** 一鍵複製卡（例：Webhook 網址） */
   | { kind: 'copy'; label: string; value: string }
   /** 進行中/成功/失敗/略過 狀態卡。skipped 是使用者的正當選擇，語意中性——別用 fail 的警告色裝它 */

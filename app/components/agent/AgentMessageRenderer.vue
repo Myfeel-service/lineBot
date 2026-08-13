@@ -25,7 +25,14 @@
     >{{ entry.msg.hrefLabel || '打開連結 ↗' }}</a>
   </details>
 
-  <!-- 外部連結卡 -->
+  <!-- 站內連結卡：走 NuxtLink 同分頁導航（用 <a> 會整頁重載） -->
+  <NuxtLink
+    v-else-if="entry.msg.kind === 'link' && entry.msg.internal"
+    class="agm-card agm-link"
+    :to="entry.msg.href"
+  >{{ entry.msg.label }} →</NuxtLink>
+
+  <!-- 外部連結卡（另開分頁） -->
   <a
     v-else-if="entry.msg.kind === 'link'"
     class="agm-card agm-link"

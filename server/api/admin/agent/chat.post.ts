@@ -49,5 +49,6 @@ export default defineEventHandler(async (event) => {
     createdAt: FieldValue.serverTimestamp(),
   }).catch(e => console.error('[admin-agent] audit log error:', e))
 
-  return { reply: res.reply, toolCalls: res.toolCalls.map(t => t.tool) }
+  // messages＝結構化卡片（站內帶路連結，白名單生成）；前端用 AgentMessageRenderer 渲染
+  return { reply: res.reply, toolCalls: res.toolCalls.map(t => t.tool), messages: res.messages }
 })

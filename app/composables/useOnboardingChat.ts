@@ -9,17 +9,12 @@
  * - 每一步可跳過；跳過記 localStorage（純 UX 記憶，不當事實來源），加分項之後由健康卡盯。
  */
 
-import type {
-  AgentAsk,
-  AgentChatEntry,
-  AgentChoice,
-  AgentMsg,
-  AgentPickerOption,
-} from '~~/shared/types/agent-messages'
+import type { AgentChoice, AgentPickerOption } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { leadEndpointUrl } from '~~/shared/liff-lead-path'
+import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
 export const ONBOARDING_PROGRESS_LABELS = ['建立', '接 LINE', '測試', '開 AI', '完成'] as const
 
@@ -27,14 +22,6 @@ export const ONBOARDING_PROGRESS_LABELS = ['建立', '接 LINE', '測試', '開 
 export function onboardingLandingPath(workspaceId: string): string {
   return `/admin/${workspaceId}/conversations`
 }
-
-/** 使用者對輸入區的回應（內部用） */
-type AskResult =
-  | { type: 'choice', value: string }
-  | { type: 'text', value: string }
-  | { type: 'pick', option: AgentPickerOption }
-  | { type: 'skip' }
-  | { type: 'cancelled' }
 
 interface LineStatus {
   tokenConfigured: boolean
@@ -50,7 +37,6 @@ interface FirstMessageRes {
   at?: string
 }
 
-const SAY_DELAY_MS = 420
 const POLL_INTERVAL_MS = 4000
 /**
  * 等第一則訊息多久沒動靜，就主動開口排障（別讓人乾瞪著轉圈）。
@@ -79,167 +65,31 @@ export function useOnboardingChat() {
   const { apiFetch, getBearer } = useWorkspaceApiFetch(() => wid.value)
   const { loadWorkspaceList, workspaceList } = useWorkspace()
 
-  const entries = ref<AgentChatEntry[]>([])
-  const ask = ref<AgentAsk>({ kind: 'idle' })
-  const typing = ref(false)
-  const busy = ref(false)
+  // 原語（say/ask/apiRetry/輪詢/取消）全部來自共用 runner——「帶你修好」引導劇本
+  // 也吃同一顆引擎（C-31 Phase 1 抽出）。這裡只留開通情境專屬的東西：
+  // 步驟劇本、真實訊號 fetch、跳過記憶、進度條。
+  const runner = useAgentScriptRunner()
+  const { entries, ask, typing, busy } = runner
+  const {
+    say,
+    card,
+    updateMsg,
+    waitAsk,
+    settle,
+    askChoices,
+    askInput,
+    askPicker,
+    apiRetry,
+    pollUntil,
+    isDisposed,
+    runSteps,
+    runScript,
+    onChoice,
+    onSubmit,
+    onPick,
+    onSkip,
+  } = runner
   const progress = ref(0)
-
-  let nextId = 1
-  let resolveAsk: ((r: AskResult) => void) | null = null
-  let disposed = false
-  // 停輪詢用換代計數，不用共用布林：布林會被下一輪重設成 false，
-  // 讓還睡在 sleep 裡的舊輪詢器醒來復活，一場等待疊出好幾支（2026-08-12 修）
-  let pollGen = 0
-
-  // ── 基本動作 ────────────────────────────────────────────────
-
-  function sleep(ms: number): Promise<void> {
-    return new Promise(r => setTimeout(r, ms))
-  }
-
-  function push(role: 'agent' | 'user', msg: AgentMsg): number {
-    const id = nextId++
-    entries.value.push({ id, role, msg })
-    return id
-  }
-
-  function updateMsg(id: number, msg: AgentMsg) {
-    const e = entries.value.find(x => x.id === id)
-    if (e)
-      e.msg = msg
-  }
-
-  /** agent 說一句話（打字節奏 → 泡泡）。html 僅限劇本文案＋已跳脫的輸入 */
-  async function say(html: string) {
-    typing.value = true
-    await sleep(SAY_DELAY_MS)
-    typing.value = false
-    push('agent', { kind: 'text', html })
-    await sleep(120)
-  }
-
-  function card(msg: AgentMsg): number {
-    return push('agent', msg)
-  }
-
-  function sayUser(text: string) {
-    push('user', { kind: 'text', html: escapeHtml(text) })
-  }
-
-  function waitAsk(a: AgentAsk): Promise<AskResult> {
-    ask.value = a
-    return new Promise((r) => { resolveAsk = r })
-  }
-
-  function settle(r: AskResult) {
-    const res = resolveAsk
-    resolveAsk = null
-    ask.value = { kind: 'idle' }
-    res?.(r)
-  }
-
-  // 頁面事件 → 回填目前的提問
-  function onChoice(value: string) {
-    if (ask.value.kind !== 'choices')
-      return
-    const opt = ask.value.options.find(o => o.value === value)
-    // 對不上目前的選項（例如點到剛被換掉的舊按鈕）：整個當沒發生，
-    // 不能默默 settle——上一組選單的值被當成這一組的答案，就是「沒人按過卻跳過了」
-    if (!opt)
-      return
-    sayUser(opt.label)
-    settle({ type: 'choice', value })
-  }
-
-  function onSubmit(text: string) {
-    if (ask.value.kind !== 'input')
-      return
-    sayUser(ask.value.inputType === 'secret' ? '••••••••••（已輸入）' : text)
-    settle({ type: 'text', value: text })
-  }
-
-  function onPick(option: AgentPickerOption) {
-    if (ask.value.kind !== 'picker')
-      return
-    sayUser(option.label)
-    settle({ type: 'pick', option })
-  }
-
-  function onSkip() {
-    // 只有輸入格／選人格有跳過鈕；沒在問這兩種的時候，游離的 skip 事件
-    // 不能憑空冒出「先跳過」泡泡、更不能 settle 到別的提問上
-    if (ask.value.kind !== 'input' && ask.value.kind !== 'picker')
-      return
-    sayUser('先跳過')
-    settle({ type: 'skip' })
-  }
-
-  async function askChoices(options: AgentChoice[]): Promise<string> {
-    const r = await waitAsk({ kind: 'choices', options })
-    return r.type === 'choice' ? r.value : ''
-  }
-
-  /** 問一格輸入。回 null = 使用者跳過。validate 回錯誤文案時會重問。 */
-  async function askInput(opts: {
-    inputType: 'text' | 'secret' | 'url'
-    placeholder?: string
-    maxLength?: number
-    skippable?: boolean
-    validate?: (v: string) => string | null
-  }): Promise<string | null> {
-    while (true) {
-      const r = await waitAsk({
-        kind: 'input',
-        inputType: opts.inputType,
-        placeholder: opts.placeholder,
-        maxLength: opts.maxLength,
-        skippable: opts.skippable,
-      })
-      if (r.type === 'skip')
-        return null
-      if (r.type !== 'text')
-        continue
-      const err = opts.validate?.(r.value)
-      if (err) {
-        await say(err)
-        continue
-      }
-      return r.value
-    }
-  }
-
-  async function askPicker(options: AgentPickerOption[], skippable: boolean): Promise<AgentPickerOption | null> {
-    const r = await waitAsk({ kind: 'picker', options, skippable })
-    return r.type === 'pick' ? r.option : null
-  }
-
-  /**
-   * 包一個 API 呼叫：失敗時如實說明並讓使用者「再試一次」。
-   * skipLabel 有給才提供跳過出口（回 null）。
-   */
-  async function apiRetry<T>(fn: () => Promise<T>, opts: { failText: string, skipLabel?: string } = { failText: '出了點問題' }): Promise<T | null> {
-    while (true) {
-      busy.value = true
-      try {
-        return await fn()
-      }
-      catch (e: unknown) {
-        const detail = (e as { data?: { statusMessage?: string }, message?: string })?.data?.statusMessage
-          || (e as { message?: string })?.message || ''
-        await say(`${opts.failText}${detail ? `：${escapeHtml(detail)}` : '，請再試一次。'}`)
-        const options: AgentChoice[] = [{ label: '再試一次', value: 'retry', primary: true }]
-        if (opts.skipLabel)
-          options.push({ label: opts.skipLabel, value: 'skip' })
-        const c = await askChoices(options)
-        if (c === 'skip')
-          return null
-      }
-      finally {
-        busy.value = false
-      }
-    }
-  }
 
   // ── 跳過記憶（純 UX，不當事實來源） ─────────────────────────
 
@@ -696,8 +546,8 @@ export function useOnboardingChat() {
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
     // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
     // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
-    const gen = ++pollGen
-    const polled = pollFirstMessage(gen).then(r => ({ kind: 'received' as const, r }))
+    const poll = pollFirstMessage()
+    const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
 
     // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
     let hintTimer: ReturnType<typeof setTimeout> | undefined
@@ -719,20 +569,22 @@ export function useOnboardingChat() {
       // 使用者的回答另存一份：race 被計時器搶贏的那一刻人可能剛好按了按鈕，
       // 只看 race 結果會把人家剛說的話整個無視掉。
       // （讀取走 answer()：TS 的流程分析看不到 closure 裡的賦值，直接讀會被窄化成 null）
-      let answered: AskResult | null = null
+      let answered: AgentAskResult | null = null
       const answer = () => answered
       const asked = waitAsk({ kind: 'choices', options: askOptions })
-      void asked.then((r) => { answered = r })
+      // dispose 時 waitAsk 會 reject（取消例外）：這裡接住當成「answered」，
+      // 下一行的 isDisposed() 檢查會直接 break——別讓它變成 unhandled rejection
+      void asked.then((r) => { answered = r }).catch(() => {})
 
       const arms: Promise<{ kind: 'received', r: FirstMessageRes | null } | { kind: 'answered' } | { kind: 'stalled' }>[] = [
         polled,
-        asked.then(() => ({ kind: 'answered' as const })),
+        asked.then(() => ({ kind: 'answered' as const }), () => ({ kind: 'answered' as const })),
       ]
       if (hintPending)
         arms.push(stalledHint)
       const winner = await Promise.race(arms)
 
-      if (disposed)
+      if (isDisposed())
         break
 
       if (winner.kind === 'received') {
@@ -769,9 +621,9 @@ export function useOnboardingChat() {
       }
       // 其他（cancelled／不認得的值）：重掛按鈕繼續等
     }
-    pollGen++ // 舊輪詢器到此必停（跳過出口時它還睡在 sleep 裡，換代後醒來就會退出）
+    poll.stop() // 舊輪詢器到此必停（跳過出口時它還睡在 sleep 裡，換代後醒來就會退出）
     clearTimeout(hintTimer)
-    if (disposed)
+    if (isDisposed())
       return
 
     if (received) {
@@ -799,20 +651,12 @@ export function useOnboardingChat() {
     progress.value = 3
   }
 
-  async function pollFirstMessage(gen: number): Promise<FirstMessageRes | null> {
-    while (gen === pollGen && !disposed) {
-      // 頁面在背景時不打（照 TutorialAgent 的既有做法），回到前景下一輪就會查
-      if (document.visibilityState === 'visible') {
-        try {
-          const r = await apiFetch<FirstMessageRes>('/api/admin/onboarding/first-message')
-          if (r.received)
-            return r
-        }
-        catch { /* 單次失敗就等下一輪，不打斷等待 */ }
-      }
-      await sleep(POLL_INTERVAL_MS)
-    }
-    return null
+  /** 等第一則訊息：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退） */
+  function pollFirstMessage() {
+    return pollUntil<FirstMessageRes>(async () => {
+      const r = await apiFetch<FirstMessageRes>('/api/admin/onboarding/first-message')
+      return r.received ? r : null
+    }, POLL_INTERVAL_MS)
   }
 
   async function stepAiMode(ai: AiSnapshot) {
@@ -1016,71 +860,80 @@ export function useOnboardingChat() {
 
   // ── 入口 ────────────────────────────────────────────────────
 
+  interface MainFlowCtx {
+    line: LineStatus
+    setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
+    ai: AiSnapshot
+    preVerify?: boolean
+  }
+
+  /**
+   * 主線步驟順序的單一來源：新建與續走共用同一份（之前 start() 內重複兩份，
+   * 加一步要改兩個地方）。guard 不放在表上——每步開頭本來就用後端真實訊號
+   * 自我檢查、已完成就靜默跳過（resume 機制），這張表只管「順序」。
+   */
+  const MAIN_FLOW: AgentScriptStep<MainFlowCtx>[] = [
+    { id: 'token', run: c => stepToken(c.line) },
+    { id: 'secret', run: c => stepSecret(c.line) },
+    { id: 'webhook-first-message', run: c => stepWebhookAndFirstMsg(c.line, c.setup, { preVerify: c.preVerify }) },
+    { id: 'ai-mode', run: c => stepAiMode(c.ai) },
+    // LIFF 是加分題，排在魔法時刻之後——別讓選填項延後高潮
+    { id: 'liff', run: c => stepLiff(c.line) },
+    { id: 'shop-url', run: c => stepShopUrl(c.ai) },
+    { id: 'handoff', run: c => stepHandoff(c.ai) },
+    { id: 'done', run: () => stepDone() },
+  ]
+
   /**
    * 開跑。continueWorkspaceId 有給 = 續走模式（從健康卡「繼續完成開通」進來），
    * 逐步自我檢查、做過的靜默跳過；沒給 = 全新開通（建 org + workspace）。
+   * 整段包在 runScript 裡：離頁 dispose 後劇本鏈就地停下（G-14），取消靜默收掉。
    */
   async function start(continueWorkspaceId?: string) {
-    if (continueWorkspaceId) {
-      wid.value = continueWorkspaceId
-      busy.value = true
-      let line: LineStatus
-      let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
-      let ai: AiSnapshot
-      try {
-        ;[line, setup, ai] = await Promise.all([fetchLineStatus(), fetchSetup(), fetchAi()])
-      }
-      catch {
+    await runScript(async () => {
+      if (continueWorkspaceId) {
+        wid.value = continueWorkspaceId
+        busy.value = true
+        let line: LineStatus
+        let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
+        let ai: AiSnapshot
+        try {
+          ;[line, setup, ai] = await Promise.all([fetchLineStatus(), fetchSetup(), fetchAi()])
+        }
+        catch {
+          busy.value = false
+          await say('現在連不上伺服器，等一下再試一次。')
+          await askChoices([{ label: '重新載入', value: 'reload', primary: true }])
+          window.location.reload()
+          return
+        }
         busy.value = false
-        await say('現在連不上伺服器，等一下再試一次。')
-        await askChoices([{ label: '重新載入', value: 'reload', primary: true }])
-        window.location.reload()
+        await stepWelcomeBack(line, setup)
+        await runSteps(MAIN_FLOW, { line, setup, ai, preVerify: true })
         return
       }
-      busy.value = false
-      await stepWelcomeBack(line, setup)
-      await stepToken(line)
-      await stepSecret(line)
-      // LIFF 是加分題，排在魔法時刻之後——別讓選填項延後高潮
-      await stepWebhookAndFirstMsg(line, setup, { preVerify: true })
-      await stepAiMode(ai)
-      await stepLiff(line)
-      await stepShopUrl(ai)
-      await stepHandoff(ai)
-      await stepDone()
-      return
-    }
 
-    if (!(await stepWelcomeFresh()))
-      return
-    if (!(await stepCreate()))
-      return
-    await stepHasOA()
-    // 全新帳號：LINE 欄位一定是空的，不用先查
-    const line: LineStatus = { tokenConfigured: false, secretConfigured: false, liffConfigured: false, publicBaseUrl: '' }
-    // Webhook 網址需要 publicBaseUrl，補查一次（拿不到就用瀏覽器網址）
-    try {
-      const s = await fetchLineStatus()
-      line.publicBaseUrl = s.publicBaseUrl
-    }
-    catch { /* 用 window.location.origin 兜底 */ }
-    const setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
-    const ai: AiSnapshot = { enabled: false, replyMode: 'draft', shopUrl: '', handoffReady: false }
-    await stepToken(line)
-    await stepSecret(line)
-    // LIFF 是加分題，排在魔法時刻之後——別讓選填項延後高潮
-    await stepWebhookAndFirstMsg(line, setup)
-    await stepAiMode(ai)
-    await stepLiff(line)
-    await stepShopUrl(ai)
-    await stepHandoff(ai)
-    await stepDone()
+      if (!(await stepWelcomeFresh()))
+        return
+      if (!(await stepCreate()))
+        return
+      await stepHasOA()
+      // 全新帳號：LINE 欄位一定是空的，不用先查
+      const line: LineStatus = { tokenConfigured: false, secretConfigured: false, liffConfigured: false, publicBaseUrl: '' }
+      // Webhook 網址需要 publicBaseUrl，補查一次（拿不到就用瀏覽器網址）
+      try {
+        const s = await fetchLineStatus()
+        line.publicBaseUrl = s.publicBaseUrl
+      }
+      catch { /* 用 window.location.origin 兜底 */ }
+      const setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
+      const ai: AiSnapshot = { enabled: false, replyMode: 'draft', shopUrl: '', handoffReady: false }
+      await runSteps(MAIN_FLOW, { line, setup, ai })
+    })
   }
 
   function dispose() {
-    disposed = true
-    pollGen++ // 讓還睡在 sleep 裡的輪詢器下一次醒來就退出
-    resolveAsk = null
+    runner.dispose()
   }
 
   return {

@@ -537,6 +537,31 @@
 }
 
 /* 暫停提醒（只出現在 warning 卡）：小、灰、靠右——是退路不是主要動作 */
+// 「用聊天帶我修」：有引導劇本的異常卡入口（C-31 Phase 1）。
+// 跟靜音同一排視覺量級，但用主色講「這裡有路」——它是行動入口，不是降噪選項
+.ta-alert__guide {
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.6875rem;
+  color: var(--el-color-primary);
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// 問助理回覆附帶的帶路卡（AgentMessageRenderer 渲染的站內連結）
+.aa-msg__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  align-self: stretch;
+}
+
 .ta-alert__snooze {
   align-self: flex-end;
   padding: 0;

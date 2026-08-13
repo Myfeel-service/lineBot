@@ -23,13 +23,17 @@ import type { SetupStatusResponse } from '~~/shared/types/setup'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import type { AgentMsg } from '~~/shared/types/agent-messages'
 import { can, type Capability } from '~~/shared/permissions'
+import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
 export interface AdminAgentToolCall { tool: string; args: Record<string, unknown> }
 export interface AdminAgentReply {
   reply: string
   toolCalls: AdminAgentToolCall[]
+  /** 回答附帶的結構化卡片（目前只有站內帶路連結；C-31 Phase 1）——前端用 AgentMessageRenderer 渲染 */
+  messages: AgentMsg[]
   inputTokens: number
   outputTokens: number
 }
@@ -246,7 +250,11 @@ ${Object.entries(TOOLS).map(([name, t]) => `- ${name}: ${t.description}`).join('
 
 【每一步回傳 JSON,二選一】
 { "action": "tool", "tool": "工具名", "args": {} }
-{ "action": "answer", "text": "給使用者的回答" }
+{ "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"] }
+
+【帶路（goto,選填）】回答若建議使用者去後台某頁操作,附上 goto 幫他帶路(最多 2 個)。
+只准用下列 id,不在清單裡的一律不要寫——你沒有能力發明網址:
+${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——${d.hint}`).join('\n')}
 
 【規則】
 - 先查再答:回答裡的每個數字都必須來自【工具結果】,不知道就先查,絕不臆測或編造。
@@ -288,7 +296,7 @@ export async function runAdminAgentChat(params: {
       step === MAX_TOOL_STEPS ? '【注意】查詢次數已用完,請直接以現有工具結果回答("action":"answer")。' : '',
     ].filter(Boolean).join('\n\n')
 
-    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown }>(prompt, {
+    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; goto?: unknown }>(prompt, {
       systemInstruction: SYSTEM_INSTRUCTION,
       temperature: 0,
       maxOutputTokens: 1200,
@@ -300,7 +308,9 @@ export async function runAdminAgentChat(params: {
 
     if (data?.action === 'answer') {
       const text = String(data?.text ?? '').trim()
-      return { reply: text || '(助理沒有給出回答,請換個問法再試一次)', toolCalls, inputTokens, outputTokens }
+      // goto 走白名單解析:模型只挑 id,網址由 shared/agent-destinations 生——編不出來、最多挑錯頁
+      const messages = resolveAgentDestinations(data?.goto, workspaceId)
+      return { reply: text || '(助理沒有給出回答,請換個問法再試一次)', toolCalls, messages, inputTokens, outputTokens }
     }
 
     const toolName = String(data?.tool ?? '').trim()
@@ -309,7 +319,7 @@ export async function runAdminAgentChat(params: {
       : undefined
     if (data?.action !== 'tool' || !tool) {
       // 模型輸出不合規:當作答不出來,收斂結束(不重試燒 token)
-      return { reply: '這題我查不太到,換個問法試試?(例:「哪些腳本沒啟用」「這個月 AI 用量」)', toolCalls, inputTokens, outputTokens }
+      return { reply: '這題我查不太到,換個問法試試?(例:「哪些腳本沒啟用」「這個月 AI 用量」)', toolCalls, messages: [], inputTokens, outputTokens }
     }
     // 步數已用盡卻還想查 → 直接收斂,不執行第 N+1 次
     if (step === MAX_TOOL_STEPS) break
@@ -337,5 +347,5 @@ export async function runAdminAgentChat(params: {
     }
   }
 
-  return { reply: '這題查的步驟太多了,換個更具體的問法試試?', toolCalls, inputTokens, outputTokens }
+  return { reply: '這題查的步驟太多了,換個更具體的問法試試?', toolCalls, messages: [], inputTokens, outputTokens }
 }

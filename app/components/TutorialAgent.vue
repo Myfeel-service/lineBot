@@ -42,11 +42,22 @@
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
         </header>
 
+        <!-- 「帶你修好」引導劇本（C-31 Phase 1）：跑劇本時整個面板讓給它，按返回才回分頁。
+             關面板＝整段卸載（根是 v-if），runner 會 dispose、劇本就地停下 -->
+        <AgentGuidePanel
+          v-if="activeGuide"
+          :key="activeGuide"
+          :guide-id="activeGuide"
+          class="ta-panel__guide"
+          @close="activeGuide = null"
+          @done="refreshAll(true)"
+        />
+
         <!-- 問助理:用講的查後台(唯讀)。用 v-show 不用 v-if——切去看「目前狀況」再切回來，
              對話與捲動位置要還在，不然問到一半去對照狀態就等於重問一次 -->
-        <AdminAgentChat v-show="panelTab === 'chat'" class="ta-panel__chat" />
+        <AdminAgentChat v-show="!activeGuide && panelTab === 'chat'" class="ta-panel__chat" />
 
-        <div v-show="panelTab === 'setup'" class="ta-panel__body">
+        <div v-show="!activeGuide && panelTab === 'setup'" class="ta-panel__body">
           <!-- 結論先行：先一句話講「有沒有事」，明細在下面（沿用 .ls-status 的視覺語言） -->
           <div v-if="verdict" class="ta-verdict" :class="`is-${verdict.tone}`">
             <el-icon class="ta-verdict__icon"><component :is="verdict.icon" /></el-icon>
@@ -89,6 +100,13 @@
                     <span class="ta-alert__cta">{{ a.cta }} →</span>
                   </span>
                 </button>
+                <!-- 「用聊天帶我修」：有引導劇本的異常才有——把人留在面板裡一步步修＋當場驗證 -->
+                <button
+                  v-if="a.guideId"
+                  type="button"
+                  class="ta-alert__guide"
+                  @click="openGuide(a)"
+                >用聊天帶我修 →</button>
                 <!-- 只有 warning 給靜音：正在影響客人的事沒有「不想看」這個選項 -->
                 <button
                   v-if="a.severity === 'warning'"
@@ -322,7 +340,7 @@
 
         <!-- 教學：想學才來翻的參考庫（pull）。和「目前狀況」的異常/待辦（push）分開住，
              不緊急的內容不佔狀況版面 -->
-        <div v-show="panelTab === 'learn'" class="ta-panel__body">
+        <div v-show="!activeGuide && panelTab === 'learn'" class="ta-panel__body">
           <div class="ta-msg">
             <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
             <div class="ta-msg__bubble">
@@ -364,7 +382,8 @@
           <p v-else class="ta-options__empty">目前沒有可用的教學主題。</p>
         </div>
 
-        <footer v-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的狀態，不會給你假資訊。</footer>
+        <footer v-if="activeGuide" class="ta-panel__foot">跟著做就好——每一步完成，我都會真的檢查有沒有生效。</footer>
+        <footer v-else-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的狀態，不會給你假資訊。</footer>
         <footer v-else-if="panelTab === 'learn'" class="ta-panel__foot">每個教學都會在實際畫面上一步步帶你操作。</footer>
         <footer v-else class="ta-panel__foot">回答都來自你帳號的真實資料;目前只能查詢,不能修改。</footer>
       </section>
@@ -440,6 +459,7 @@
 import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
+import type { AgentGuideId } from '~/utils/agent-guides'
 import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
@@ -792,6 +812,23 @@ function onFixAlert(alert: ResolvedAlert) {
   closePanel()
   void router.push(alert.route(wid))
 }
+
+/**
+ * 「帶你修好」引導劇本（C-31 Phase 1）：跑在面板裡、一步步修＋當場驗證，
+ * 跟 onFixAlert 的差別是人不離開面板。劇本註冊在 utils/agent-guides，
+ * 哪些異常有劇本看註冊表的 guideId。
+ */
+const activeGuide = ref<AgentGuideId | null>(null)
+function openGuide(alert: ResolvedAlert) {
+  if (!alert.guideId)
+    return
+  activeGuide.value = alert.guideId
+}
+// 關面板順手收掉跑到一半的劇本：下次打開回到「目前狀況」，不殘留舊對話
+watch(panelOpen, (open) => {
+  if (!open)
+    activeGuide.value = null
+})
 
 /**
  * 打開面板時檢查上次去修的異常有沒有好（超過 30 分鐘就不追了——太久以前的事，
