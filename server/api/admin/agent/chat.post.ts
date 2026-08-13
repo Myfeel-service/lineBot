@@ -9,7 +9,7 @@ import { FieldValue } from 'firebase-admin/firestore'
  * 鐵律落點:workspaceId/權限來自 session、每次互動寫審計紀錄、token 記入用量。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, uid, role } = await requireWorkspaceAccess(event, 'viewer')
   const body = await readBody(event)
 
   const history: AdminAgentTurn[] = Array.isArray(body?.history)
@@ -22,6 +22,7 @@ export default defineEventHandler(async (event) => {
   const res = await runAdminAgentChat({
     db,
     workspaceId,
+    role, // 每個工具執行前比對自己的 requires 門檻(端點這道 viewer 只是最低消)
     message: String(body?.message ?? ''),
     history,
     // 轉發呼叫者憑證:get_current_alerts / get_setup_status 打自家 API 時沿用同一套權限

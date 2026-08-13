@@ -37,6 +37,8 @@
 
 <script setup lang="ts">
 /** Admin 查詢副駕(P1)的聊天面板:唯讀問答,掛在教學小幫手的「問助理」分頁。 */
+import { ADMIN_AGENT_TOOL_LABELS } from '~~/shared/types/admin-agent'
+
 interface Msg { who: 'me' | 'ai'; text: string; tools?: string[] }
 
 const { apiFetch, workspaceId } = useWorkspace()
@@ -64,17 +66,10 @@ const starters = [
   '知識庫有沒有匯入失敗?',
 ]
 
-const TOOL_LABELS: Record<string, string> = {
-  list_scripts: '腳本清單',
-  get_ai_settings: 'AI 設定',
-  get_ai_usage: 'AI 用量',
-  get_knowledge_status: '知識庫',
-  list_auto_responses: '自動回應設定',
-  get_current_alerts: '目前異常',
-  get_setup_status: '設定進度',
-}
+// 工具顯示名收 shared 單一來源:之前這裡手寫第二份,08-06 加 get_conversation_stats
+// 就漏了標籤(UI 直接秀英文工具名)——兩份表遲早漂移的實證
 function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name
+  return (ADMIN_AGENT_TOOL_LABELS as Record<string, string>)[name] ?? name
 }
 
 function scrollToBottom() {

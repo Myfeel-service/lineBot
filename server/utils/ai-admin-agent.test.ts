@@ -22,7 +22,10 @@ vi.mock('./gemini', () => ({ generateJson }))
 // Nitro 全域(測試環境沒有 Nuxt runtime)
 ;(globalThis as any).createError = (o: any) => Object.assign(new Error(o?.statusMessage || 'error'), o)
 
-import { runAdminAgentChat } from './ai-admin-agent'
+import { runAdminAgentChat, TOOLS } from './ai-admin-agent'
+
+/** 每個測試都用 viewer:現有 8 個工具的門檻最高就是 ai.read(=viewer),行為與改版前一致 */
+const asViewer = { role: 'viewer' as const }
 
 /** 最小假 Firestore:collection().where().get() + doc().get()(agent 工具只用這些讀法) */
 function makeDb(data: { scripts?: any[]; aiUsage?: Record<string, any> } = {}) {
@@ -61,7 +64,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'list_scripts', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: '「退換貨查詢」還沒啟用' }))
 
-    const res = await runAdminAgentChat({ db, workspaceId: 'w1', message: '哪些腳本沒啟用?' })
+    const res = await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '哪些腳本沒啟用?' })
     expect(res.reply).toBe('「退換貨查詢」還沒啟用')
     expect(res.toolCalls).toEqual([{ tool: 'list_scripts', args: {} }])
     expect(res.inputTokens).toBe(20)
@@ -78,7 +81,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_usage', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
-    await runAdminAgentChat({ db, workspaceId: 'w1', message: '這個月用量?' })
+    await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '這個月用量?' })
     const p = generateJson.mock.calls[1]![0] as string
     expect(p).toContain('"invocations":42')
 
@@ -86,7 +89,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_usage', args: { month: '2026-01' } }))
       .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
-    await runAdminAgentChat({ db, workspaceId: 'w1', message: '一月用量?' })
+    await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '一月用量?' })
     expect(generateJson.mock.calls[1]![0] as string).toContain('"answered":1')
   })
 
@@ -98,7 +101,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_conversation_stats', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: '昨天 5 場' }))
-    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', message: '昨天幾場對話?', authHeader: 'Bearer t1' })
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '昨天幾場對話?', authHeader: 'Bearer t1' })
     expect(res.reply).toBe('昨天 5 場')
 
     const [url, opts] = fetchMock.mock.calls[0]! as [string, any]
@@ -115,14 +118,14 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
 
   it('模型輸出不合規(未知工具)→ 優雅收斂,不 throw', async () => {
     generateJson.mockResolvedValueOnce(step({ action: 'tool', tool: 'delete_everything', args: {} }))
-    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', message: '刪掉全部' })
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '刪掉全部' })
     expect(res.reply).toContain('查不太到')
     expect(res.toolCalls).toEqual([])
   })
 
   it('步數用盡 → 收斂為引導回覆,最多執行 4 次工具', async () => {
     generateJson.mockResolvedValue(step({ action: 'tool', tool: 'list_scripts', args: {} }))
-    const res = await runAdminAgentChat({ db: makeDb({ scripts: [] }), workspaceId: 'w1', message: '一直查' })
+    const res = await runAdminAgentChat({ db: makeDb({ scripts: [] }), workspaceId: 'w1', ...asViewer, message: '一直查' })
     expect(res.toolCalls.length).toBe(4)
     expect(res.reply).toContain('換個更具體的問法')
   })
@@ -132,13 +135,72 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'list_scripts', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: '查詢出了點問題' }))
-    const res = await runAdminAgentChat({ db, workspaceId: 'w1', message: '腳本?' })
+    const res = await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '腳本?' })
     expect(res.reply).toBe('查詢出了點問題')
     expect(generateJson.mock.calls[1]![0] as string).toContain('查詢失敗')
   })
 
   it('空訊息 → 400', async () => {
-    await expect(runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', message: '  ' }))
+    await expect(runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '  ' }))
       .rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  // ── C-31 Phase 0:權限與寫入閘門 ──────────────────────────────
+  it('E-17:get_ai_usage 不回 token 細目(F-5:token 只給超管,聊天不能繞過)', async () => {
+    const ym = new Date().toISOString().slice(0, 7).replace('-', '')
+    const db = makeDb({ aiUsage: { [`w1_${ym}`]: { invocations: 42, answered: 30, inputTokens: 99999, outputTokens: 88888 } } })
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_usage', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '用量?' })
+    const p = generateJson.mock.calls[1]![0] as string
+    expect(p).toContain('"answered":30')
+    expect(p).not.toContain('inputTokens')
+    expect(p).not.toContain('99999')
+  })
+
+  it('權限閘門:requires 不足 → 工具不執行,模型收到如實訊息;權限夠 → 照常執行', async () => {
+    const run = vi.fn().mockResolvedValue({ ok: true })
+    ;(TOOLS as any).__test_admin_tool = { description: 'test', requires: 'ai.settings.write', mutates: false, run }
+    try {
+      generateJson
+        .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_admin_tool', args: {} }))
+        .mockResolvedValueOnce(step({ action: 'answer', text: '你的權限看不到' }))
+      const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'viewer', message: '查設定' })
+      expect(run).not.toHaveBeenCalled()
+      expect(res.toolCalls).toEqual([]) // 沒真的執行就不記 toolCalls
+      expect(generateJson.mock.calls[1]![0] as string).toContain('沒有權限')
+
+      generateJson.mockReset()
+      generateJson
+        .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_admin_tool', args: {} }))
+        .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', message: '查設定' })
+      expect(run).toHaveBeenCalledTimes(1)
+    }
+    finally {
+      delete (TOOLS as any).__test_admin_tool
+    }
+  })
+
+  it('寫入閘門:mutates=true 一律擋下,連 admin 也一樣(Phase 2 確認流上場前的鐵律)', async () => {
+    const run = vi.fn()
+    ;(TOOLS as any).__test_write_tool = { description: 'test', mutates: true, run }
+    try {
+      generateJson
+        .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_write_tool', args: {} }))
+        .mockResolvedValueOnce(step({ action: 'answer', text: '目前只能查詢' }))
+      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', message: '幫我改設定' })
+      expect(run).not.toHaveBeenCalled()
+      expect(generateJson.mock.calls[1]![0] as string).toContain('已擋下')
+    }
+    finally {
+      delete (TOOLS as any).__test_write_tool
+    }
+  })
+
+  it('註冊表不變量:P1 工具全部唯讀(mutates=false)', () => {
+    for (const [name, t] of Object.entries(TOOLS))
+      expect({ name, mutates: (t as any).mutates }).toEqual({ name, mutates: false })
   })
 })

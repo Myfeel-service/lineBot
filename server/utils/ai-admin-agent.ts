@@ -21,6 +21,9 @@ import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import { SETUP_LABELS } from '~~/shared/types/setup'
 import type { SetupStatusResponse } from '~~/shared/types/setup'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
+import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import { can, type Capability } from '~~/shared/permissions'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
 export interface AdminAgentToolCall { tool: string; args: Record<string, unknown> }
@@ -42,12 +45,28 @@ interface ToolCtx {
 interface ToolDef {
   /** 給模型看的一行說明(白話,含何時該用) */
   description: string
+  /**
+   * 執行門檻(shared/permissions 的 capability)。之前五個直讀 Firestore 的工具
+   * 「剛好」都是 viewer 級——是巧合不是機制;現在每個工具明講自己的門檻,
+   * 執行前用呼叫者的 role 比對(C-31 Phase 0)。
+   * 不填 = 轉發呼叫者憑證打自家 API 的工具,權限由目標端點自行把關(口徑零第二份)。
+   */
+  requires?: Capability
+  /**
+   * 是否為寫入型操作。Phase 0 全部 false;Phase 2 的代辦工具上場時,
+   * 確認流與稽核都吃這個欄位——在那之前 mutates=true 的工具一律被迴圈擋下(見下方閘門)。
+   */
+  mutates: boolean
   run: (db: Firestore, workspaceId: string, args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>
 }
 
-const TOOLS: Record<string, ToolDef> = {
+// key 綁 shared/types/admin-agent 的 AdminAgentToolId:加工具沒同步 UI 標籤=編譯失敗
+// (export 給測試驗閘門與不變量;Phase 2 的模組表也會從這裡長出來)
+export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
   list_scripts: {
     description: '列出所有客服腳本:名稱、啟用狀態、觸發方式與關鍵字、啟動/完成統計。問「有哪些腳本 / 哪些沒啟用 / 完成率」時用。',
+    requires: 'ai.read',
+    mutates: false,
     async run(db, workspaceId) {
       const snap = await db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get()
       return snap.docs.map((d) => {
@@ -67,6 +86,8 @@ const TOOLS: Record<string, ToolDef> = {
   },
   get_ai_settings: {
     description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、轉真人通知、勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒」時用。',
+    requires: 'ai.read',
+    mutates: false,
     async run(_db, workspaceId) {
       const s = await getAiSettings(workspaceId)
       return {
@@ -98,6 +119,8 @@ const TOOLS: Record<string, ToolDef> = {
       + '回傳欄位的量詞:invocations＝AI 被呼叫幾**次**(客人每來一則訊息算一次,含轉真人與反問);'
       + 'answered＝AI 真的答出幾**則**(這才是計費與額度的單位);handoffs/disambiguations＝幾**次**。'
       + '⛔ 講用量時 invocations 一律說「次」、answered 一律說「則」,不可互換。',
+    requires: 'ai.read',
+    mutates: false,
     async run(db, workspaceId, args) {
       const raw = String(args?.month ?? '').trim()
       const ym = /^\d{4}-\d{2}$/.test(raw) ? raw.replace('-', '') : new Date().toISOString().slice(0, 7).replace('-', '')
@@ -110,14 +133,15 @@ const TOOLS: Record<string, ToolDef> = {
         handoffs: u.handoffs ?? 0,
         disambiguations: u.disambiguations ?? 0,
         answeredThenHandoffs: u.answeredThenHandoffs ?? 0,
-        inputTokens: u.inputTokens ?? 0,
-        outputTokens: u.outputTokens ?? 0,
-        buildEmbeddingTokens: u.buildEmbeddingTokens ?? 0,
+        // ⛔ token 細目刻意不回(E-17):正規端點 ai/usage/summary 只給 super admin
+        //    (F-5 政策:token 是平台進貨價,租戶拿到就能反推毛利)。
+        //    之前這裡回給了 viewer,等於聊天問一句就繞過那道守衛。
       }
     },
   },
   get_conversation_stats: {
     description: '對話統計 KPI(與統計頁同一把尺):客人對話場數、AI/機器人/真人首接、整場沒人回、轉真人數。args 可帶 {"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},不帶=昨天。問「昨天/這週幾場對話、AI 先回幾場、幾場沒人理」時用。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由 KPI 端點自行把關
     async run(_db, workspaceId, args, ctx) {
       const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
       // 預設=昨天(台灣時區;伺服器跑 UTC,直接 new Date() 在午夜前後會差一天)
@@ -143,6 +167,8 @@ const TOOLS: Record<string, ToolDef> = {
   },
   get_knowledge_status: {
     description: '知識庫現況:來源數與各狀態(成功/失敗)、知識卡總數。問「知識庫有幾張卡 / 有沒有匯入失敗 / 來源狀態」時用。',
+    requires: 'ai.read',
+    mutates: false,
     async run(db, workspaceId) {
       const [sources, chunkCount] = await Promise.all([
         listSources(db, workspaceId, 200),
@@ -161,6 +187,8 @@ const TOOLS: Record<string, ToolDef> = {
   },
   list_auto_responses: {
     description: '列出自動回應設定(客人說什麼→系統怎麼回):名稱、觸發詞、比對方式、啟用狀態、幾個步驟。問「有哪些自動回應 / 有沒有攔截全部的設定 / 打某個關鍵字會回什麼」時用。',
+    requires: 'ai.read',
+    mutates: false,
     async run(db, workspaceId) {
       const snap = await db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get()
       return snap.docs.map((d) => {
@@ -180,6 +208,7 @@ const TOOLS: Record<string, ToolDef> = {
   },
   get_current_alerts: {
     description: '目前異常與建議總覽(和右下角小幫手同一份):現在影響客人的問題、建議處理的事、可以更好的建議。問「現在有什麼要處理 / 有沒有異常 / 系統正常嗎」時用。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由 alerts 端點自行把關(含 canOperate/canSettings 過濾)
     async run(_db, workspaceId, _args, ctx) {
       // 轉發呼叫者的憑證打自家 API:與小幫手面板同一份資料、同一套權限過濾,
       // 不在這裡另寫第二份查詢(兩份口徑遲早漂移)
@@ -198,6 +227,7 @@ const TOOLS: Record<string, ToolDef> = {
   },
   get_setup_status: {
     description: '設定就緒度:接 LINE、開 AI、知識庫、腳本哪些做完哪些還沒。問「設定好了嗎 / 還差什麼才能上線」時用。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由 setup-status 端點自行把關
     async run(_db, workspaceId, _args, ctx) {
       const res = await $fetch<SetupStatusResponse>('/api/admin/setup-status', {
         query: { workspaceId },
@@ -229,12 +259,14 @@ ${Object.entries(TOOLS).map(([name, t]) => `- ${name}: ${t.description}`).join('
 export async function runAdminAgentChat(params: {
   db: Firestore
   workspaceId: string
+  /** 呼叫者在這個工作區的角色:每個工具執行前用它比對 requires(C-31 Phase 0) */
+  role: WorkspaceMemberRole
   message: string
   history?: AdminAgentTurn[]
   /** 呼叫者的 Authorization header,給需要打自家 API 的工具轉發用 */
   authHeader?: string
 }): Promise<AdminAgentReply> {
-  const { db, workspaceId, authHeader } = params
+  const { db, workspaceId, role, authHeader } = params
   const message = String(params.message || '').trim().slice(0, 1000)
   if (!message) throw createError({ statusCode: 400, statusMessage: '請輸入想查詢的問題' })
 
@@ -272,13 +304,27 @@ export async function runAdminAgentChat(params: {
     }
 
     const toolName = String(data?.tool ?? '').trim()
-    const tool = TOOLS[toolName]
+    const tool = Object.prototype.hasOwnProperty.call(TOOLS, toolName)
+      ? TOOLS[toolName as AdminAgentToolId]
+      : undefined
     if (data?.action !== 'tool' || !tool) {
       // 模型輸出不合規:當作答不出來,收斂結束(不重試燒 token)
       return { reply: '這題我查不太到,換個問法試試?(例:「哪些腳本沒啟用」「這個月 AI 用量」)', toolCalls, inputTokens, outputTokens }
     }
     // 步數已用盡卻還想查 → 直接收斂,不執行第 N+1 次
     if (step === MAX_TOOL_STEPS) break
+
+    // 鐵律閘門(C-31 Phase 0):寫入型工具在確認流(Phase 2)上場前一律擋下——
+    // 就算未來有人手滑把 mutates:true 的工具掛進表,也走不到 run()。
+    if (tool.mutates) {
+      toolResults.push(`${toolName} → 已擋下:這是寫入型操作,小幫手目前只能查詢,請使用者到對應頁面操作。`)
+      continue
+    }
+    // 權限閘門:工具門檻用呼叫者的 role 比對,擋下後如實告訴模型(不要再試同一個工具)
+    if (tool.requires && !can(role, tool.requires)) {
+      toolResults.push(`${toolName} → 沒有權限:使用者目前的帳號角色看不到這項資料(同一個工具不用再試)。`)
+      continue
+    }
 
     const args = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
     toolCalls.push({ tool: toolName, args })
