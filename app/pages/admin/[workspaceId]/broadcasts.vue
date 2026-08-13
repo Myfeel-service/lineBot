@@ -56,8 +56,17 @@
         :is-creating="isCreating"
       />
       <div class="flex gap-1 admin-header-actions">
-        <!-- 已完成/取消 → 只看報表 -->
+        <!-- 已完成/取消 → 只看報表；失敗 → 多一個重發出口 -->
         <template v-if="isReadOnly">
+          <el-button
+            v-if="canOperate && selectedItem?.status === 'failed'"
+            type="warning"
+            plain
+            :loading="retrying"
+            @click="retryBroadcast"
+          >
+            重設為草稿再發一次
+          </el-button>
           <el-button @click="cancelEdit">關閉</el-button>
         </template>
         <!-- 可編輯 -->
@@ -85,6 +94,13 @@
     <template #editor-body>
       <div class="ar-editor-body admin-panel-stack">
         <el-form label-position="top" class="admin-form-vertical bc-editor-form" @submit.prevent>
+
+        <!-- ⓪  發送失敗原因（含看門狗收殮的卡死單「能否安全補發」判定） -->
+        <div v-if="selectedItem?.status === 'failed' && selectedDetail?.failureReason" class="message-card bc-section-card">
+          <div class="card-section-stack">
+            <p class="bc-failed-reason">{{ selectedDetail.failureReason }}</p>
+          </div>
+        </div>
 
         <!-- ①  受眾設定 -->
         <div class="message-card bc-section-card">
@@ -405,6 +421,7 @@ const {
 const saving = ref(false)
 const validating = ref(false)
 const sending = ref(false)
+const retrying = ref(false)
 const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 const validateDialogVisible = ref(false)
@@ -417,6 +434,8 @@ const pendingScheduleAtLocal = ref('')
 const pendingBroadcastId = ref<string | null>(null)
 const confirmDialogError = ref('')
 const report = ref<any>(null)
+/** 目前選取推播的完整文件（列表項沒有 failureReason 這類詳情欄位） */
+const selectedDetail = ref<any>(null)
 const { showToast } = useAdminToast()
 
 const defaultForm = () => ({
@@ -541,6 +560,7 @@ async function fetchBroadcastDetail(id: string): Promise<any | null> {
 async function loadFormFromId(id: string): Promise<boolean> {
   const full = await fetchBroadcastDetail(id)
   if (!full) return false
+  selectedDetail.value = full
   loadFormFromItem(full)
   markClean()
   return true
@@ -616,6 +636,7 @@ function openCreate() {
   isCreating.value = true
   selectedId.value = null
   report.value = null
+  selectedDetail.value = null
   form.value = defaultForm()
   markClean()
 }
@@ -644,6 +665,7 @@ async function cancelEdit() {
   else {
     isCreating.value = false
     selectedId.value = null
+    selectedDetail.value = null
     form.value = defaultForm()
     markClean()
   }
@@ -872,6 +894,40 @@ async function cancelBroadcast() {
   }
   catch {
     showToast('取消失敗', 'error')
+  }
+}
+
+/** 失敗的推播重設回草稿：本身不發任何訊息，重設後要再走一次「驗證並發送」 */
+async function retryBroadcast() {
+  if (!assertCanOperate()) return
+  if (!selectedId.value) return
+  try {
+    await ElMessageBox.confirm(
+      '會把這則推播重設回「草稿」：名稱、名單與訊息內容都保留，這一步不會發出任何訊息。重設後確認內容，再按「驗證並發送」才會真的送出。',
+      '重設為草稿再發一次',
+      {
+        confirmButtonText: '重設為草稿',
+        cancelButtonText: '返回',
+        type: 'warning',
+      },
+    )
+  }
+  catch { return }
+  retrying.value = true
+  try {
+    await apiFetch(`/api/broadcast/${selectedId.value}/retry`, { method: 'POST' })
+    showToast('已重設為草稿，確認內容後可再次發送', 'success')
+    report.value = null
+    await loadData()
+    if (selectedId.value && !(await loadFormFromId(selectedId.value))) {
+      showToast('已重設但載入內容失敗，請重新點選該推播', 'error')
+    }
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '重設失敗', 'error')
+  }
+  finally {
+    retrying.value = false
   }
 }
 

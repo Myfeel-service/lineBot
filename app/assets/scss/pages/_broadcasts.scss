@@ -188,6 +188,18 @@
   color: var(--text-secondary);
 }
 
+// 發送失敗原因（含看門狗收殮卡死單時寫的「能否安全補發」判定）——這句決定要不要重發，用錯色會害人重複轟炸
+.bc-failed-reason {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border-left: 3px solid var(--el-color-danger);
+  border-radius: 4px;
+  background: var(--el-color-danger-light-9);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 // 「訊息已送出、不用重發」是這面板上最該被看到的一句，不能用淺灰小字說
 .bc-postsend-note {
   margin: 0;

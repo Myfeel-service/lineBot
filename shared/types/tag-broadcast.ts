@@ -174,6 +174,12 @@ export interface BroadcastDoc {
    * status 仍照 LINE 實際送達結果寫；此欄位供報表提示紀錄可能不完整。
    */
   postSendError?: string | null
+  /**
+   * status='failed' 時給人看的失敗說明（含看門狗收殮卡死單時寫的「能否安全補發」判定）。
+   * ⛔跟 postSendError 是兩回事：postSendError＝「訊息其實送出去了，只是帳沒記完」，
+   * failureReason＝「這次發送真的失敗了」。
+   */
+  failureReason?: string | null
   scheduleAt: Timestamp | null
   startedAt: Timestamp | null
   completedAt: Timestamp | null
