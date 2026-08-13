@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="上傳 / 匯入"
+    title="加入知識"
     width="min(760px, 92vw)"
     :close-on-click-modal="false"
     class="kb-import-dialog"
@@ -96,22 +96,24 @@
         >
           用官方 FAQ 範本開始
         </el-button>
-        <span class="text-xs text-muted">兩欄(問題／答案)填完貼回來就好,其他問法 AI 會自動補</span>
+        <!-- 有母本連結=開 Google 試算表副本(填完貼連結回來);沒設定=下載 Excel 檔(要用「選擇檔案」傳回來)。
+             指示要照實際走的那條路講——寫死「貼回來」的話,下載 Excel 的人照字面做會卡住 -->
+        <span class="text-xs text-muted">兩欄(問題／答案)填完，{{ faqTemplateCopyUrl ? '把試算表連結貼回來' : '用「選擇檔案」把檔案傳回來' }}就好，其他問法 AI 會自動補</span>
       </p>
 
 
       <!--
-        原本問的是「這是不是商品／列表頁」——那是我們的說法,使用者得先讀懂一段長說明
-        再自己判斷「我這頁算不算」。改成問他答得出來的事:這份東西裡有沒有很多樣商品。
-        判斷不了也沒關係:整理完看到條數多,預覽那一步會再主動問一次(見 suggestOverview)。
+        等「偵測到內容」才出現:什麼都還沒貼就先問一個要讀四行字的問題,是空白狀態最重的負擔
+        (佔近半個視窗)。答不出來也沒關係:整理完看到條數多,預覽那一步會再主動問一次(見
+        suggestOverview)。標籤用敘述句不用問句——勾選框配問句,勾下去像在回答「有」,讀起來卡。
+        「官網首頁不適合」那句只跟貼網址有關,貼文字/傳檔的人看到只是干擾。
       -->
-      <div v-if="mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
+      <div v-if="detected && mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
         <el-checkbox v-model="generateOverview">
-          這份資料裡有<strong>很多樣商品</strong>嗎？
+          這是一份<strong>多樣商品</strong>的清單（AI 會多做一張「我們有賣什麼」的總表）
         </el-checkbox>
         <p class="kb-section-hint">
-          勾起來的話，AI 會多做一張「我們有賣什麼」的清單——客人問「你們有賣哪些東西」時可以一次答完，不會被反問。
-          <strong>官網首頁不適合</strong>（商品區塊多半是滑動時才載入、抓不到，清單會做錯），請改貼商品列表頁。
+          商品型錄、商品列表頁記得勾——客人問「你們有賣哪些東西」時可以一次答完，不會被反問。<template v-if="mode === 'url'"><strong>官網首頁不適合</strong>（商品區塊多半是滑動時才載入、抓不到，總表會做錯），請改貼商品列表頁。</template>
         </p>
       </div>
 
@@ -134,6 +136,9 @@
         >
           {{ discovering ? '尋找頁面中⋯' : '找出這個網站的其他頁面' }}
         </el-button>
+        <!-- 空白時按鈕是禁用的淺色,看起來像壞掉——講一句為什麼按不了。
+             按鈕本身不藏:導覽有一步指著它(data-tour="kb-preview") -->
+        <span v-if="!detected" class="text-xs text-muted">先貼上內容或選個檔案，這顆按鈕就會亮起來</span>
       </div>
 
       <!-- 等待要有契約:長文件可能要好幾分鐘。原本只有一行灰字,沒有取消、
@@ -308,10 +313,10 @@
     <!-- ── Step 2:預覽 + 編輯 ─────────────────────────── -->
     <div v-if="step === 'preview'">
       <p class="kb-step-label">AI 整理的結果</p>
-      <p class="kb-section-hint">
-        AI 偵測到 <strong>{{ chunks.length }}</strong> 條知識。
-        <span v-if="truncated" class="kb-warning"> 原文超過 10 萬字已截斷，可能漏掉後半部。</span>
-        <span v-else>勾選要匯入的、可直接編輯內容；確認後一鍵建立。</span>
+      <!-- 條數只在下面的摘要區講一次(原本這裡「N 條知識」、下面「N 條問答」同一個數字兩種單位);
+           也不能在這裡教人「勾選要匯入的」——清單預設收起,畫面上根本沒有勾選框。只留截斷警告。 -->
+      <p v-if="truncated" class="kb-section-hint">
+        <span class="kb-warning">原文超過 10 萬字已截斷，可能漏掉後半部。</span>
       </p>
 
       <div class="kb-source-name-row">
@@ -418,6 +423,12 @@
           </div>
         </div>
       </div>
+
+      <!-- 有勾「多樣商品」卻沒做出總表時要講一句:不講的話,勾了的人在這頁找不到總表,
+           只會以為勾了沒用、或系統壞了 -->
+      <p v-else-if="generateOverview" class="kb-section-hint">
+        有勾「多樣商品」，但 AI 沒能從這份內容做出「我們有賣什麼」的總表（看起來不是商品清單）；下面這些一般問答不受影響。
+      </p>
 
       <!-- 摘要 + 主動作先行:預設就是全選,所以「直接匯入」才是主路徑。
            原本一律攤開 N 條、主按鈕在最底部,50 張要捲上萬像素才按得到,

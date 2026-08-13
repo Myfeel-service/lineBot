@@ -208,11 +208,13 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom',
       },
       {
-        target: '[data-tour="kb-overview"]',
+        // 這個勾選框要「貼了內容」才會出現(空白狀態刻意不擺,見 KnowledgeImportDialog),
+        // 導覽開的是空視窗指不到它——改用置中說明卡講「等一下會看到什麼」
+        target: '',
         clickBefore: '[data-tour="kb-import"]',
-        title: '列表頁記得勾「總表」',
+        title: '商品型錄記得勾「總表」',
         description:
-          '如果這份是<strong>商品型錄 / 列表頁</strong>，勾這個會多做一張「總表」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google Sheet 免勾。）',
+          '貼上內容後，框下面會多一個「<strong>這是一份多樣商品的清單</strong>」的勾選框。商品型錄 / 列表頁記得勾——會多做一張「總表」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google 試算表免勾；忘了勾也沒關係，整理完條數多的話系統會再問你一次。）',
         placement: 'top',
       },
       {
