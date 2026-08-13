@@ -1,5 +1,6 @@
 import { Cron } from 'croner'
 import { runDueScheduledBroadcasts } from '../utils/run-due-scheduled-broadcasts'
+import { isLambdaRuntime } from '../utils/lambda-runtime'
 
 /**
  * 應用內建排程推播檢查（每分鐘）。
@@ -19,8 +20,7 @@ import { runDueScheduledBroadcasts } from '../utils/run-due-scheduled-broadcasts
 export default defineNitroPlugin(() => {
   if (import.meta.prerender) return
 
-  // Lambda runtime 一定會帶這兩個變數；偵測到就代表沒有長駐進程可以養計時器
-  if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT) {
+  if (isLambdaRuntime()) {
     console.log('[broadcast-scheduler] Lambda 環境，內建排程檢查停用（排程觸發走 Cloud Scheduler／列表頁輪詢）')
     return
   }

@@ -9,6 +9,7 @@ import { parseTriggerModuleData } from '~~/shared/action-schema'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
+import { BROADCAST_ALL_RECIPIENTS_FAILED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
 
 function extractTriggerModuleId(messages: any[]): string {
@@ -82,6 +83,9 @@ export async function executeBroadcastSend(
     completedAt: FieldValue.serverTimestamp(),
     lineAggregationUnit: o.aggregationUnit,
     lineInsightAggregationApplied: o.aggregationApplied,
+    // 每一條寫 failed 的路徑都要留下人看得懂的原因（小幫手警示已承諾「進去看失敗原因」）；
+    // 成功時明確清成 null，才不會留著上一輪嘗試的舊原因
+    failureReason: o.allFailed ? BROADCAST_ALL_RECIPIENTS_FAILED : null,
   })
 
   try {
@@ -162,7 +166,8 @@ export async function executeBroadcastSend(
       throw new Error('No valid LINE user IDs in audience')
     }
 
-    const lineUnit = broadcastAggregationUnit(id)
+    // 重發過的推播要換一個彙總單位，否則 LINE 會把上一次的開封／點擊算進這一次
+    const lineUnit = broadcastAggregationUnit(id, Number(data.retryCount ?? 0) + 1)
     const { successCount, failedIds, lineAggregationApplied } = await multicastMessage(
       lineUserIds,
       messagesForLine as any,
@@ -285,7 +290,11 @@ export async function executeBroadcastSend(
     }
 
     // 還沒送出就失敗：確實是發送失敗
-    await ref.update({ status: 'failed', updatedAt: failedAt }).catch(() => {})
+    await ref.update({
+      status: 'failed',
+      failureReason: humanizeBroadcastSendFailure(reason),
+      updatedAt: failedAt,
+    }).catch(() => {})
     throw e
   }
 }

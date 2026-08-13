@@ -96,9 +96,9 @@
         <el-form label-position="top" class="admin-form-vertical bc-editor-form" @submit.prevent>
 
         <!-- ⓪  發送失敗原因（含看門狗收殮的卡死單「能否安全補發」判定） -->
-        <div v-if="selectedItem?.status === 'failed' && selectedDetail?.failureReason" class="message-card bc-section-card">
+        <div v-if="failedReason" class="message-card bc-section-card">
           <div class="card-section-stack">
-            <p class="bc-failed-reason">{{ selectedDetail.failureReason }}</p>
+            <p class="bc-failed-reason">{{ failedReason }}</p>
           </div>
         </div>
 
@@ -434,8 +434,6 @@ const pendingScheduleAtLocal = ref('')
 const pendingBroadcastId = ref<string | null>(null)
 const confirmDialogError = ref('')
 const report = ref<any>(null)
-/** 目前選取推播的完整文件（列表項沒有 failureReason 這類詳情欄位） */
-const selectedDetail = ref<any>(null)
 const { showToast } = useAdminToast()
 
 const defaultForm = () => ({
@@ -471,6 +469,15 @@ const isReadOnly = computed(() => {
 
 const importUserIds = computed(() =>
   form.value.importText.split('\n').map((l) => l.trim()).filter(Boolean),
+)
+
+/**
+ * 失敗原因只認列表那份資料（列表 API 就有 failureReason，而且背景刷新會一直更新）。
+ * ⛔刻意不另外存一份詳情：詳情請求失敗時舊值會留著，變成 A 的「可以放心重發」
+ * 掛在 B 的標題下，而按鈕動到的是 B（2026-08-13 code review 抓到）。
+ */
+const failedReason = computed(() =>
+  selectedItem.value?.status === 'failed' ? String(selectedItem.value?.failureReason || '') : '',
 )
 
 const isScheduleSubmit = computed(() => form.value.scheduleMode === 'schedule')
@@ -560,7 +567,6 @@ async function fetchBroadcastDetail(id: string): Promise<any | null> {
 async function loadFormFromId(id: string): Promise<boolean> {
   const full = await fetchBroadcastDetail(id)
   if (!full) return false
-  selectedDetail.value = full
   loadFormFromItem(full)
   markClean()
   return true
@@ -636,7 +642,6 @@ function openCreate() {
   isCreating.value = true
   selectedId.value = null
   report.value = null
-  selectedDetail.value = null
   form.value = defaultForm()
   markClean()
 }
@@ -665,7 +670,6 @@ async function cancelEdit() {
   else {
     isCreating.value = false
     selectedId.value = null
-    selectedDetail.value = null
     form.value = defaultForm()
     markClean()
   }
@@ -923,30 +927,42 @@ async function retryBroadcast() {
       showToast('已重設但載入內容失敗，請重新點選該推播', 'error')
     }
   }
-  catch (e: any) {
-    showToast(e?.data?.statusMessage || '重設失敗', 'error')
+  catch (e: unknown) {
+    showToast(apiErrorMessage(e, '重設失敗'), 'error')
   }
   finally {
     retrying.value = false
   }
 }
 
-/** 列表有「已排程」時每分鐘觸發到期發送（後台登入即可，無需另設 Cron） */
+/** 列表有「已排程」或「發送中」時每分鐘打一次到期處理（後台登入即可，無需另設 Cron） */
 let duePollTimer: ReturnType<typeof setInterval> | null = null
 
-function hasScheduledBroadcasts() {
-  return broadcasts.value.some((b) => b.status === 'scheduled')
+/**
+ * 這支端點做兩件事：發到期的排程、收殮卡死在「發送中」的單。
+ * ⛔所以條件不能只看「已排程」：卡死的單狀態是 processing，只看 scheduled 的話，
+ * 手邊沒有其他排程時輪詢根本不會啟動，收殮就只能靠外部排程——而外部排程掛掉
+ * 正是推播卡住的原因之一，等於備援與主因同時失效（2026-08-13 code review 抓到）。
+ */
+function needsDuePolling() {
+  return broadcasts.value.some((b) => b.status === 'scheduled' || b.status === 'processing')
 }
 
 async function processDueScheduledBroadcasts() {
   if (!canOperate.value) return
-  if (!hasScheduledBroadcasts()) return
+  if (!needsDuePolling()) return
   try {
-    const res = await apiFetch<{ triggered: number; results: Array<{ id: string; success: boolean; error?: string }> }>(
+    const res = await apiFetch<{
+      triggered: number
+      reaped?: number
+      results: Array<{ id: string; success: boolean; error?: string }>
+    }>(
       '/api/broadcast/process-due',
       { method: 'POST' },
     )
-    if (res.triggered > 0) {
+    // reaped＝有卡死的單被標成失敗，畫面上那列還寫著「發送中」→ 一樣要重載，
+    // 否則使用者盯著的還是舊狀態，也看不到失敗原因與重發按鈕
+    if (res.triggered > 0 || (res.reaped ?? 0) > 0) {
       await loadData()
       if (selectedId.value) {
         const found = broadcasts.value.find((b) => b.id === selectedId.value)
@@ -955,6 +971,9 @@ async function processDueScheduledBroadcasts() {
       const failed = res.results.filter((r) => !r.success)
       if (failed.length) {
         showToast(`有 ${failed.length} 則排程發送失敗，請查看狀態`, 'error')
+      }
+      if ((res.reaped ?? 0) > 0) {
+        showToast(`有 ${res.reaped} 則推播卡住沒送出，已標記為失敗，點進去可看原因並重發`, 'error')
       }
     }
   }
@@ -968,7 +987,7 @@ function syncDuePollTimer() {
     clearInterval(duePollTimer)
     duePollTimer = null
   }
-  if (!hasScheduledBroadcasts()) return
+  if (!needsDuePolling()) return
   void processDueScheduledBroadcasts()
   duePollTimer = setInterval(() => {
     void processDueScheduledBroadcasts()

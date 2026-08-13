@@ -1,6 +1,8 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { executeBroadcastSend } from './broadcast-send'
 import { getDb } from './firebase'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED } from '~~/shared/broadcast-failure'
 
 export type DueScheduledBroadcastResult = {
   id: string
@@ -34,17 +36,23 @@ const STUCK_PROCESSING_MS = 10 * 60_000
  *
  * 能否安全補發的判定：checkpoint 設計是 LINE 一回應就立刻落地結果並蓋掉 processing，
  * 所以還停在 processing 的單，最遠只可能走到「LINE 已呼叫但 checkpoint 沒寫」那一小段。
- * 再看 updatedAt：認領交易把 updatedAt 寫成跟 startedAt 同一刻，之後的第一筆寫入（受眾快照）
- * 才會推進它——updatedAt 沒動過＝連受眾快照都沒寫＝一定還沒呼叫 LINE，重發安全；
- * updatedAt 動過＝死在快照之後，無法確認 LINE 收下了沒，重發可能重複，要人工確認。
+ * 再看 updatedAt：認領交易把 updatedAt 寫成跟 startedAt 同一個 serverTimestamp，
+ * 之後的第一筆寫入（受眾快照，就在呼叫 LINE 前一步）才會推進它——
+ *   updatedAt 仍等於 startedAt ＝ 連受眾快照都沒寫 ＝ 一定還沒呼叫 LINE，重發安全；
+ *   其他所有情形（動過、讀不出來、缺欄位、比 startedAt 早）都當「無法確認」。
+ * ⛔判不出來一律走保守側：說錯「沒人收到」會害人把整份名單重複轟炸一次
+ * （2026-08-13 code review 抓到第一版把讀不出來的時間當成 0，剛好落在危險的那一側）。
  */
 async function reapStuckProcessingBroadcasts(
   db: FirebaseFirestore.Firestore,
   workspaceId: string,
 ): Promise<number> {
-  // processing 正常同時最多一兩筆；等值查詢走自動索引，時間門檻在記憶體比（免新複合索引）
+  // processing 正常同時最多一兩筆；等值查詢走自動索引，時間門檻在記憶體比（免新複合索引）。
+  // 只取判斷用得到的欄位：整份文件含 audienceSnapshot.resolvedUserIds（可能上千個 ID）與
+  // messages 快照，而這裡一個都用不到——這支每分鐘跑一次，不能每次都把它們搬回來。
   const snap = await db.collection('broadcasts')
     .where('status', '==', 'processing')
+    .select('workspaceId', 'name', 'startedAt', 'updatedAt')
     .limit(20)
     .get()
   if (snap.empty) return 0
@@ -56,11 +64,21 @@ async function reapStuckProcessingBroadcasts(
     const data = doc.data()
     if (workspaceId && String(data.workspaceId || '') !== workspaceId) continue
 
-    const startedMs = (data.startedAt as Timestamp | undefined)?.toMillis?.() ?? 0
-    if (!startedMs || now - startedMs < STUCK_PROCESSING_MS) continue
+    const startedAt = parseFirestoreDate(data.startedAt)
+    const updatedAt = parseFirestoreDate(data.updatedAt)
+    // 停滯時鐘取「最後一次有寫入的時間」，不是單看 startedAt：受眾很大時光解析名單就要幾分鐘，
+    // 那筆快照寫入會把時鐘往前推，才不會把還在跑的發送誤判成卡死。
+    const lastProgressMs = Math.max(startedAt?.getTime() ?? 0, updatedAt?.getTime() ?? 0)
 
-    const updatedMs = (data.updatedAt as Timestamp | undefined)?.toMillis?.() ?? 0
-    const lineNotCalled = updatedMs <= startedMs
+    // 兩個時間都讀不出來：無從判斷跑多久了。這種文件不可能是剛認領的（認領交易一定寫兩個
+    // serverTimestamp），放著不管會永遠卡在 processing，還一直占用上面 limit(20) 的名額，
+    // 擋住真正該收殮的單 → 一律收殮，走保守文案。
+    const judgeable = lastProgressMs > 0
+    if (judgeable && now - lastProgressMs < STUCK_PROCESSING_MS) continue
+
+    const lineNotCalled = Boolean(
+      startedAt && updatedAt && updatedAt.getTime() === startedAt.getTime(),
+    )
 
     try {
       const didReap = await db.runTransaction(async (tx) => {
@@ -68,18 +86,17 @@ async function reapStuckProcessingBroadcasts(
         if (fresh.data()?.status !== 'processing') return false
         tx.update(doc.ref, {
           status: 'failed',
-          failureReason: lineNotCalled
-            ? '發送在開始後中斷，還沒送到 LINE 就停了——沒有任何人收到，可以放心重發。'
-            : '發送做到一半中斷，無法確認 LINE 是否已把訊息送出。重發前請先跟一兩位名單上的客人確認有沒有收到，避免重複發送。',
+          failureReason: lineNotCalled ? BROADCAST_STUCK_SAFE_TO_RESEND : BROADCAST_STUCK_UNVERIFIED,
           updatedAt: FieldValue.serverTimestamp(),
         })
         return true
       })
       if (!didReap) continue
       reaped++
+      const stuckFor = judgeable ? `${Math.round((now - lastProgressMs) / 60_000)} 分鐘` : '時間不明'
       console.warn(
         `[broadcast-scheduler] 收殮卡死推播 ${doc.id}「${String(data.name || '')}」`
-        + `（processing 已 ${Math.round((now - startedMs) / 60_000)} 分鐘，LINE 未呼叫=${lineNotCalled}）`,
+        + `（processing 已 ${stuckFor}，LINE 未呼叫=${lineNotCalled}）`,
       )
     }
     catch (e) {

@@ -177,9 +177,14 @@ export interface BroadcastDoc {
   /**
    * status='failed' 時給人看的失敗說明（含看門狗收殮卡死單時寫的「能否安全補發」判定）。
    * ⛔跟 postSendError 是兩回事：postSendError＝「訊息其實送出去了，只是帳沒記完」，
-   * failureReason＝「這次發送真的失敗了」。
+   * failureReason＝「這次發送真的失敗了」。措辭一律取 shared/broadcast-failure.ts。
    */
   failureReason?: string | null
+  /**
+   * 被「重設為草稿再發一次」重設過幾次（第一次發送時不存在／0）。
+   * 用途是給 LINE 的彙總單位加上第幾次，讓重發後的開封／點擊不會跟上一次疊在一起。
+   */
+  retryCount?: number
   scheduleAt: Timestamp | null
   startedAt: Timestamp | null
   completedAt: Timestamp | null

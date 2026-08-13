@@ -20,6 +20,8 @@ import { executeBroadcastSend } from './broadcast-send'
 import { getDb } from './firebase'
 import { multicastMessage } from './line'
 import { claimBroadcastForSend } from './broadcast-claim'
+import { BROADCAST_ALL_RECIPIENTS_FAILED } from '~~/shared/broadcast-failure'
+import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 
 const mockGetDb = vi.mocked(getDb)
 const mockMulticast = vi.mocked(multicastMessage)
@@ -180,6 +182,18 @@ describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () 
     expect(final.status).toBe('failed')
     expect(final.failedCount).toBe(2)
     expect(final.postSendError).toBeNull()
+    // 每一條寫 failed 的路徑都要留下人看得懂的原因（小幫手警示承諾了「進去看失敗原因」）
+    expect(final.failureReason).toBe(BROADCAST_ALL_RECIPIENTS_FAILED)
+  })
+
+  it('成功時把 failureReason 清成 null（不留上一輪嘗試的舊原因）', async () => {
+    claimReturns(['w1_U1'])
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    const { updates } = makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    expect(lastStatusPatch(updates)!.failureReason).toBeNull()
   })
 
   it('名單有無效收件人被濾掉、其餘全退回 → 仍要判成 failed（不可寫成已完成）', async () => {
@@ -210,6 +224,28 @@ describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () 
     const final = lastStatusPatch(updates)!
     expect(final.status).toBe('failed')
     expect(final).not.toHaveProperty('sentCount')
+    // 內部英文錯誤不可直接端到畫面上；要換成看得懂的一句，並講明沒有人收到
+    expect(final.failureReason).toContain('0 人')
+    expect(final.failureReason).not.toContain('Resolved audience is empty')
+  })
+
+  it('重發過的推播換一個 LINE 彙總單位（開封／點擊不可跟上一次疊在一起）', async () => {
+    claimReturns(['w1_U1'])
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      retryCount: 1,
+      messages: [{ type: 'text', text: 'hi' }],
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1'] },
+    } as any)
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    const unitUsed = mockMulticast.mock.calls[0]![3]!.customAggregationUnits![0]
+    expect(unitUsed).toBe(broadcastAggregationUnit('bc1', 2))
+    expect(unitUsed).not.toBe(broadcastAggregationUnit('bc1'))
   })
 
   it('LINE 未套用彙總單位時不寫 unit，報表才知道查不到開封數', async () => {
