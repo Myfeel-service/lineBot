@@ -255,7 +255,8 @@
           所以這裡預設顯示「沿用組織設定」的唯讀摘要，只有真的需要不同抬頭時才展開覆寫。
           直接給一張空表單，會讓人以為「沒填 = 不會開發票」而在每個 OA 各填一次。
         -->
-        <div v-if="invoiceEnabled" class="message-card ar-section-card">
+        <!-- id="invoice"：升級對話框的「先填發票資訊」用 #invoice 跳進來（見 scrollToInvoice） -->
+        <div v-if="invoiceEnabled" id="invoice" class="message-card ar-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">發票資訊</span>
@@ -811,8 +812,20 @@ async function reloadAll() {
   finally { loading.value = false }
 }
 
+/**
+ * 帶著 #invoice 進來（升級對話框的「先填發票資訊」）就捲到發票區。
+ * 發票卡在整頁最下面，不捲的話等於把人丟在頁面頂端自己找。
+ */
+function scrollToInvoice() {
+  if (route.hash !== '#invoice') return
+  nextTick(() => document.getElementById('invoice')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+watch(() => route.hash, scrollToInvoice)
+
 onMounted(async () => {
+  scrollToInvoice() // 發票卡的 v-if 只看靜態設定，不用等資料回來就能捲
   await reloadAll()
+  scrollToInvoice() // 資料回來後上方卡片會長高、位置跑掉，再對正一次
   pollReturnedOrder()
 })
 onUnmounted(stopPoll)

@@ -83,6 +83,29 @@
   }
 }
 
+/* 結帳前的發票提示：付款成功當下就照這行開票（零緩衝），所以要在付款前看得到。
+   字級同條款、發票別加粗——它是可行動的資訊，不是註腳。 */
+.plan-upgrade-invoice {
+  margin: 0;
+  padding-left: 26px; /* 對齊勾選框後的文字左緣（同 .plan-upgrade-policies） */
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  strong {
+    color: var(--text-primary);
+  }
+
+  a {
+    margin-left: 8px;
+    font-weight: 600;
+    color: var(--brand-green-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    white-space: nowrap;
+  }
+}
+
 /* 帳單頁：金流導回後的結果提示（說明文字 + 輪詢狀態／重新整理鈕同一列） */
 .billing-return-body {
   display: flex;

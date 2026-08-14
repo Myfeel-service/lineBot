@@ -73,6 +73,14 @@
         <span class="text-xs text-muted">條款全文</span>
         <a v-for="p in POLICY_LINKS" :key="p.to" :href="p.to" target="_blank" rel="noopener">{{ p.label }}</a>
       </div>
+      <!-- 發票提示：付款成功的那一秒就會照現行設定開票（零緩衝），所以「會開出什麼」
+           必須在付款前露出——沒設定過的公司客戶才不會拿到不能報帳的個人紙本發票，
+           事後只能作廢重開（跨月還得走折讓）。載入失敗整行不顯示：寧可少一行提示，
+           也不能猜一個錯的發票別給人看。 -->
+      <p v-if="invoiceLabel" class="plan-upgrade-invoice">
+        這次付款會開出：<strong>{{ invoiceLabel }}</strong>
+        <a href="#" @click.prevent="goInvoiceSettings">{{ invoiceCta }}</a>
+      </p>
       <span class="text-xs text-muted">
         方案以「官方帳號」為單位各自計價，額度不跨帳號共用。所有價格均為含稅價。付款由統一金流 PAYUNi 處理，付款後開立電子發票。
         <template v-if="recurringEnabled">每月自動續扣，可隨時取消，取消後用到本期結束。</template>
@@ -85,6 +93,7 @@
 import { ElLoading, ElMessageBox } from 'element-plus'
 import { BILLING_PLANS, BILLING_PLAN_ORDER, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
+import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
 
 const props = defineProps<{
   modelValue: boolean
@@ -116,7 +125,7 @@ function planAction(p: BillingPlan): '續訂' | '升級' | '降級' {
   return BILLING_PLAN_ORDER.indexOf(p.id) > cur ? '升級' : '降級'
 }
 
-const { getBearer, workspaceId } = useWorkspace()
+const { getBearer, workspaceId, apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
 
 const config = useRuntimeConfig()
@@ -147,11 +156,45 @@ function canCheckout(p: BillingPlan): boolean {
 const checkoutLoading = ref('')
 
 /**
+ * 目前生效的發票資訊（OA 覆寫 > 組織預設，與實際開票同一支 resolve）。
+ * null = 還沒載到或載入失敗 → 提示整行不顯示，不猜「個人紙本」誤導人。
+ */
+const effectiveInvoice = ref<InvoiceProfile | null>(null)
+const invoiceEnabled = Boolean(config.public.invoiceEnabled)
+const invoiceLabel = computed(() => effectiveInvoice.value ? describeInvoiceProfile(effectiveInvoice.value) : '')
+// 全空（會開預設的個人紙本）→ 用問句推一把；填過 → 只給「改」的入口
+const invoiceCta = computed(() =>
+  hasInvoiceProfile(effectiveInvoice.value) ? '改發票資訊' : '要開公司統編發票？先填發票資訊')
+
+async function loadInvoiceProfile() {
+  if (!invoiceEnabled) return
+  try {
+    const res = await apiFetch<{ effective: InvoiceProfile }>('/api/payment/invoice-profile')
+    effectiveInvoice.value = res.effective
+  }
+  catch {
+    effectiveInvoice.value = null
+  }
+}
+
+/** 關掉對話框、帶去帳單頁的發票區（billing.vue 看到 #invoice 會捲過去）。 */
+function goInvoiceSettings() {
+  emit('update:modelValue', false)
+  navigateTo(`/admin/${workspaceId.value}/settings/billing#invoice`)
+  // 本來就在帳單頁時路由不變、watcher 不會觸發 → 直接捲；跨頁時元素還不存在，交給目標頁處理
+  document.getElementById('invoice')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/**
  * 是否已勾選同意條款。每次開啟對話框都重設為未勾選——同意要對應「這一次」的結帳，
  * 上次開著沒付款的勾選不該延用。
  */
 const agreed = ref(false)
-watch(() => props.modelValue, (open) => { if (open) agreed.value = false })
+watch(() => props.modelValue, (open) => {
+  if (!open) return
+  agreed.value = false
+  loadInvoiceProfile() // 每次開啟都重抓：中途去改過發票資訊，回來要看到新的
+}, { immediate: true })
 
 interface CreateOrderResponse { action: string; method: string; fields: Record<string, string> }
 
