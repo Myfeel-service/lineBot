@@ -16,6 +16,38 @@
     line-height: 1.5;
     color: var(--el-text-color-secondary);
   }
+
+  /* 「跟現成名很像——是同一台嗎」的就地提問：琥珀底 callout，
+     要壓得過下方灰色 hint（這是要人回答的事，不是說明文字） */
+  &__ask {
+    padding: 8px 10px;
+    border: 1px solid var(--el-color-warning-light-5);
+    border-radius: 6px;
+    background: var(--el-color-warning-light-9);
+  }
+
+  &__ask-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+  }
+
+  &__ask-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* 「會新增一個產品」不是警告，是把系統要做的事講在前面 */
+  &__new {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+  }
 }
 
 /* 產品名可能很長（含品牌與型號），下拉不截斷成一團看不懂的字 */

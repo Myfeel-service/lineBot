@@ -15,6 +15,13 @@
  *   dismissedPairs: string[]            使用者按過「不是同一台」的組合，不再重複詢問
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { likelyTypoDistance, normalizeProductName } from '~~/shared/product-name-similarity'
+
+/**
+ * 正規化搬到 shared/product-name-similarity（「所屬產品」欄位打字當下的相似提示
+ * 要跟這裡的偵測用同一把尺），原匯出保留給既有呼叫端。
+ */
+export { normalizeProductName }
 
 /**
  * 與 ai-knowledge-chunks.PRODUCT_NAMES_COLLECTION 同一份文件（產品名清單與別名共存）。
@@ -22,14 +29,6 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
  * canonicalProductName，互相 import 會形成循環相依。
  */
 const PRODUCT_NAMES_COLLECTION = 'knowledgeProductIndex'
-
-/** 比對用正規化：去空白、去裝飾符號、小寫 */
-export function normalizeProductName(s: string): string {
-  return String(s || '')
-    .replace(/[《》〈〉（）()【】\[\]「」『』・·,，.。\-–—_/|｜]/g, '')
-    .replace(/\s+/g, '')
-    .toLowerCase()
-}
 
 /** 一組候選的穩定 key（與順序無關），用於「不再詢問」名單 */
 export function aliasPairKey(a: string, b: string): string {
@@ -184,6 +183,36 @@ export function detectAliasCandidates(input: {
           : `「${longName}」包含「${shortName}」，可能是同一台的全稱與簡稱`,
         confidence: 'medium',
         variantRisk,
+      })
+    }
+  }
+
+  // ── 訊號 3：字幾乎一樣（可能是打錯字）──
+  // 「GPLSU」vs「GPLUS」誰也不包含誰,訊號 2 抓不到;欄位端打字當下有同一把尺攔,
+  // 但整站匯入是 AI 自己標名字、不經欄位,漏網的要在這裡列出來。
+  // 數字不同的不列(12L vs 16L 多半是同系列不同型號);包含關係留給訊號 2(它會標型號風險)。
+  const usage = new Map<string, number>()
+  for (const s of input.sources) {
+    const p = normalizeProductName(String(s.productName ?? ''))
+    if (p) usage.set(p, (usage.get(p) ?? 0) + 1)
+  }
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const a = names[i]!
+      const b = names[j]!
+      const d = likelyTypoDistance(a, b)
+      if (d === null) continue
+      // 被較多資料使用的當正式名:打錯的那個通常只掛在一兩份資料上。同數取較長的。
+      const ua = usage.get(normalizeProductName(a)) ?? 0
+      const ub = usage.get(normalizeProductName(b)) ?? 0
+      const keepA = ua !== ub ? ua > ub : a.length >= b.length
+      add({
+        key: aliasPairKey(a, b),
+        a: keepA ? a : b,
+        b: keepA ? b : a,
+        reason: `這兩個名字只差 ${d} 個字——很可能其中一個是打錯字；如果真的是兩台不同機器，按「不是」就不再詢問`,
+        confidence: 'medium',
+        variantRisk: false,
       })
     }
   }

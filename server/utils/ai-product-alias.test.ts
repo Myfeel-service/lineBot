@@ -93,6 +93,45 @@ describe('detectAliasCandidates', () => {
     expect(risky[0]!.reason).toContain('不同型號')
   })
 
+  it('訊號3:字幾乎一樣(可能打錯字)→ 中信心;被較多資料使用的當正式名', () => {
+    const out = detectAliasCandidates({
+      // 正確寫法掛兩份資料、錯字只掛一份 → 正確寫法當正式名
+      sources: [
+        { productName: 'GPLUS 智慧除濕機 12L' },
+        { productName: 'GPLUS 智慧除濕機 12L' },
+        { productName: 'GPLSU 智慧除濕機 12L' },
+      ],
+      productNames: ['GPLUS 智慧除濕機 12L', 'GPLSU 智慧除濕機 12L'],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.confidence).toBe('medium')
+    expect(out[0]!.variantRisk).toBe(false)
+    expect(out[0]!.a).toBe('GPLUS 智慧除濕機 12L')
+    expect(out[0]!.b).toBe('GPLSU 智慧除濕機 12L')
+    expect(out[0]!.reason).toContain('打錯字')
+  })
+
+  it('訊號3:數字不同(12L vs 16L)不列——同系列不同型號,列出來會誘導誤併', () => {
+    const out = detectAliasCandidates({
+      sources: [],
+      productNames: ['GPLUS 智慧除濕機 12L', 'GPLUS 智慧除濕機 16L'],
+      aliasMap: emptyMap(),
+    })
+    expect(out).toHaveLength(0)
+  })
+
+  it('訊號3:已否決的錯字組合不再列出', () => {
+    const map = emptyMap()
+    map.dismissedPairs = [aliasPairKey('GPLUS 智慧除濕機 12L', 'GPLSU 智慧除濕機 12L')]
+    const out = detectAliasCandidates({
+      sources: [],
+      productNames: ['GPLUS 智慧除濕機 12L', 'GPLSU 智慧除濕機 12L'],
+      aliasMap: map,
+    })
+    expect(out).toHaveLength(0)
+  })
+
   it('已否決的組合不再列出', () => {
     const map = emptyMap()
     map.dismissedPairs = [aliasPairKey('SHARP iBarista 智慧咖啡機', 'iBarista 智慧咖啡機')]

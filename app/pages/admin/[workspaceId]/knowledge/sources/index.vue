@@ -687,6 +687,48 @@
         </div>
       </div>
 
+      <!-- 偵測靠「檔名並列／包含／幾乎同字」三種訊號,總有漏網的(完全不同的講法)——
+           給手動出口,不然只能繞路把掛錯名的資料逐份改名 -->
+      <div v-if="aliasProductNames.length >= 2" class="src-alias-manual">
+        <p class="section-title">自己挑兩個合併</p>
+        <p class="text-muted text-xs src-alias-manual__hint">
+          上面沒列出來、但你知道是同一台的（例如完全不同的講法），在這裡手動指定。
+        </p>
+        <div class="src-alias-manual__row">
+          <el-select
+            v-model="manualMerge"
+            filterable
+            clearable
+            size="small"
+            placeholder="要併走的名字（錯的／舊的）"
+            class="src-alias-manual__select"
+          >
+            <el-option v-for="n in manualMergeOptions" :key="n" :label="n" :value="n" />
+          </el-select>
+          <span class="src-alias-manual__arrow">併入</span>
+          <el-select
+            v-model="manualKeep"
+            filterable
+            clearable
+            size="small"
+            placeholder="要留下的名字（對的）"
+            class="src-alias-manual__select"
+          >
+            <el-option v-for="n in manualKeepOptions" :key="n" :label="n" :value="n" />
+          </el-select>
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :loading="manualSaving"
+            :disabled="!manualKeep || !manualMerge"
+            @click="manualMergeConfirm"
+          >
+            合併
+          </el-button>
+        </div>
+      </div>
+
       <div v-if="aliasPairs.length" class="src-alias-confirmed">
         <p class="section-title">已確認的對照（{{ aliasPairs.length }}）</p>
         <div v-for="p in aliasPairs" :key="p.aliasKey" class="src-alias-row">
@@ -2103,6 +2145,8 @@ const aliasLoading = ref(false)
 const aliasSaving = ref('')
 const aliasCandidates = ref<AliasCandidate[]>([])
 const aliasPairs = ref<AliasPair[]>([])
+/** 這個帳號目前所有產品名（手動合併的兩個下拉用） */
+const aliasProductNames = ref<string[]>([])
 /**
  * 工具列徽章的數字。**資料是體檢端點**(進頁面就載入),不是這個視窗自己的清單——
  * 只有開過視窗才有數字的話,使用者永遠沒有理由去點它,整個別名功能等於不存在。
@@ -2115,11 +2159,12 @@ const aliasCandidateCount = computed(() =>
 async function loadAliases() {
   aliasLoading.value = true
   try {
-    const res = await apiFetch<{ candidates: AliasCandidate[]; pairs: AliasPair[] }>(
+    const res = await apiFetch<{ candidates: AliasCandidate[]; pairs: AliasPair[]; productNames?: string[] }>(
       '/api/ai/knowledge/product-aliases',
     )
     aliasCandidates.value = res.candidates ?? []
     aliasPairs.value = res.pairs ?? []
+    aliasProductNames.value = (res.productNames ?? []).slice().sort((a: string, b: string) => a.localeCompare(b, 'zh-TW'))
     aliasDialogLoaded.value = true
   }
   catch (err: any) {
@@ -2153,6 +2198,8 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
           : '已合併，AI 之後會把它們當同一台',
       'success',
     )
+    // 併掉的名字要從「所屬產品」下拉消失(合併會動到收斂後的清單,60 秒快取等不得)
+    if (action === 'confirm') invalidateProductNamesCache()
     await loadAliases()
     void loadHealth(true)
   }
@@ -2164,6 +2211,54 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
   }
 }
 
+// ── 手動合併:偵測漏掉的(打錯字、完全不同的講法)給一個出口 ──
+// 沒有這個入口的話,漏網的組合只能繞路把掛錯名的資料逐份改名。
+const manualKeep = ref('')
+const manualMerge = ref('')
+const manualSaving = ref(false)
+// 兩個下拉互斥:同一個名字不能又留又併
+const manualKeepOptions = computed(() => aliasProductNames.value.filter(n => n !== manualMerge.value))
+const manualMergeOptions = computed(() => aliasProductNames.value.filter(n => n !== manualKeep.value))
+
+async function manualMergeConfirm() {
+  const keep = manualKeep.value
+  const merge = manualMerge.value
+  if (!keep || !merge || keep === merge) return
+  // 手動合併沒有系統證據背書,最常見的誤用是把同系列不同型號併掉——按下去前講清楚後果
+  try {
+    await ElMessageBox.confirm(
+      `合併後，AI 會把「${merge}」一律當成「${keep}」（可以在下面「解除」）。同系列的不同型號（例如 ULTRA 版、12L 與 16L）是兩台不同機器，不要合併。`,
+      '確認是同一台？',
+      { confirmButtonText: '是同一台，合併', cancelButtonText: '再想想', type: 'warning' },
+    )
+  }
+  catch {
+    return // 使用者取消
+  }
+  manualSaving.value = true
+  try {
+    const res = await apiFetch<{ changed?: boolean }>('/api/ai/knowledge/product-aliases', {
+      method: 'POST',
+      body: { action: 'confirm', canonical: keep, alias: merge },
+    })
+    showToast(
+      res?.changed === false ? '這兩個名字本來就已經對應到同一台了' : '已合併，AI 之後會把它們當同一台',
+      'success',
+    )
+    manualKeep.value = ''
+    manualMerge.value = ''
+    invalidateProductNamesCache()
+    await loadAliases()
+    void loadHealth(true)
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '儲存失敗', 'error')
+  }
+  finally {
+    manualSaving.value = false
+  }
+}
+
 async function undoAlias(p: AliasPair) {
   aliasSaving.value = p.aliasKey
   try {
@@ -2172,6 +2267,7 @@ async function undoAlias(p: AliasPair) {
       body: { action: 'remove', alias: p.alias },
     })
     showToast('已解除', 'success')
+    invalidateProductNamesCache() // 解除後那個名字要重新出現在「所屬產品」下拉
     await loadAliases()
   }
   catch (err: any) {
@@ -2326,7 +2422,7 @@ async function loadSourceDetail(sourceId: string) {
 // ── 所屬產品（P1-1）─────────────────────────────────
 // 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這份資料的索引才生效。
 // 候選清單與匯入視窗共用同一份快取（存了新名字要讓兩邊都看得到）。
-const { addLocal: addProductNameLocal } = useProductNames()
+const { addLocal: addProductNameLocal, invalidate: invalidateProductNamesCache } = useProductNames()
 const productNameForm = ref('')
 const productNameBaseline = ref('')
 const savingProductName = ref(false)
