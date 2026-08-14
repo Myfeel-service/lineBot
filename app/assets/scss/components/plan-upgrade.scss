@@ -222,6 +222,25 @@
     flex-wrap: wrap;
     gap: 6px;
   }
+
+  /* 折讓紀錄：一筆一行直排（同一行擠多筆會讀不出「每筆折了多少」） */
+  .bid-allowance-list {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .bid-allowance {
+    display: block;
+  }
+}
+
+/* 明細視窗底部的「下載證明聯 PDF」動作列（按鈕/連結 + 一句說明或錯誤原因） */
+.bid-file-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* 帳單頁：自動續訂狀態列（下次扣款日 + 取消訂閱）。

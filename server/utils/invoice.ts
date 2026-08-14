@@ -71,12 +71,14 @@ export async function issueInvoiceForOrder(
 
     const plan = getBillingPlan(input.planId)
 
+    // 發票品名帶產品名(MiniMe 輕量方案 訂閱服務):客戶對帳看得懂,也與向金流申報的
+    // 商品名稱一致(見 nuxt.config 的 brandName)。未設定 env 時退回原本的方案名。
+    const itemName = `${String(useRuntimeConfig().public?.brandName || '').trim()} ${plan.name}方案 訂閱服務`.trim()
+
     const result = await issueInvoice({
       merchantOrderNo: input.merchantOrderNo,
       totalAmt: input.totalAmt,
-      // 發票品名帶產品名(MiniMe 輕量方案 訂閱服務):客戶對帳看得懂,也與向金流申報的
-      // 商品名稱一致(見 nuxt.config 的 brandName)。未設定 env 時退回原本的方案名。
-      itemName: `${String(useRuntimeConfig().public?.brandName || '').trim()} ${plan.name}方案 訂閱服務`.trim(),
+      itemName,
       profile,
       fallbackBuyerName: ws?.name || input.workspaceId,
     }, keys)
@@ -98,6 +100,8 @@ export async function issueInvoiceForOrder(
       // 買方快照：開折讓時買方須與原發票一致，重算現行 profile 可能已飄移，故存實際送出的值。
       buyerIdentifier: result.buyerIdentifier ?? null,
       buyerName: result.buyerName ?? null,
+      // 品名快照：發票上的品名以開立當下為準，方案日後改名不能回頭改歷史發票的顯示
+      itemName,
       createdAt: FieldValue.serverTimestamp(),
     }
     await invRef.set(doc)

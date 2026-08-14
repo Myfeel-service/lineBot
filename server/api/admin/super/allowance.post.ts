@@ -2,6 +2,7 @@ import { FieldValue, type Timestamp } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { INVOICES_COLLECTION, invoiceKeysFromConfig } from '~~/server/utils/invoice'
+import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
 import { issueAllowance } from '~~/server/utils/guangmao-invoice'
 import { taipeiDate } from '~~/shared/time'
 import type { InvoiceDoc, InvoiceAllowanceRecord } from '~~/shared/types/payment'
@@ -74,6 +75,12 @@ export default defineEventHandler(async (event) => {
 
   const record: InvoiceAllowanceRecord = { allowanceNumber, amount, reason, status: result.status, createdAtMs: nowMs }
   await invRef.update({ allowances: FieldValue.arrayUnion(record) })
+
+  // 訂單摘要同步累計折讓額：帳單頁列表靠它標「已折讓」,不用逐筆 join invoices。
+  // 訂單缺失也不回頭讓已成功的折讓失敗（同 void-invoice 的處理）。
+  await db.collection(PAYMENT_ORDERS_COLLECTION).doc(merchantOrderNo)
+    .update({ invoiceAllowanceTotal: priorAllowed + amount, updatedAt: FieldValue.serverTimestamp() })
+    .catch(() => {})
 
   return { ok: true, allowanceNumber, remaining: remaining - amount }
 })

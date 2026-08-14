@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { describe, expect, it } from 'vitest'
-import { buildAllowanceData, buildIssueInvoiceData, buildVoidInvoiceData, isInvoiceConfigured, makeSign } from './guangmao-invoice'
+import { buildAllowanceData, buildInvoiceFileData, buildIssueInvoiceData, buildVoidInvoiceData, isInvoiceConfigured, makeSign } from './guangmao-invoice'
 
 const KEYS = {
   sellerUBN: '12345678',
@@ -122,5 +122,18 @@ describe('buildAllowanceData — 折讓(已實測)', () => {
     const d = buildAllowanceData({ ...allow, buyerIdentifier: '22099131', buyerName: '台積電' })
     expect(d.BuyerIdentifier).toBe('22099131')
     expect(d.BuyerName).toBe('台積電')
+  })
+})
+
+describe('buildInvoiceFileData — 證明聯 PDF(invoice_file)', () => {
+  it('固定用發票號碼查、版式預設 0(A4 整張,唯一 B2C 也適用的版式)、值皆字串', () => {
+    const d = buildInvoiceFileData({ invoiceNumber: 'AB12345678' })
+    expect(d.type).toBe('invoice')
+    expect(d.invoice_number).toBe('AB12345678')
+    expect(d.download_style).toBe('0')
+  })
+
+  it('可指定版式(1/2/3/5 限有統編的發票)', () => {
+    expect(buildInvoiceFileData({ invoiceNumber: 'AB12345678', downloadStyle: 3 }).download_style).toBe('3')
   })
 })

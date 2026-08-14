@@ -96,6 +96,11 @@ export interface PaymentOrderDoc {
   /** 電子發票開立結果（見 invoices collection；這裡只留摘要供帳單頁顯示） */
   invoiceNumber?: string | null
   invoiceStatus?: 'issued' | 'failed' | 'skipped' | 'voided' | null
+  /**
+   * 已開折讓的累計金額（含稅）。折讓明細在 invoices doc 的 allowances；
+   * 這裡只留總額,讓付款紀錄列表不用逐筆 join invoices 就能標「已折讓」。
+   */
+  invoiceAllowanceTotal?: number | null
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -127,6 +132,11 @@ export interface InvoiceDoc {
    */
   buyerIdentifier?: string | null
   buyerName?: string | null
+  /**
+   * 開立時送出的品名快照。發票上的品名以開立當下為準——方案日後改名不能回頭
+   * 改歷史發票的顯示；沒有此欄的舊發票由明細端點用方案名回推並標註。
+   */
+  itemName?: string | null
   /** 作廢：超管把這張已開立發票作廢後留下的稽核欄位（見 /api/admin/super/void-invoice） */
   voided?: boolean
   voidReason?: string | null

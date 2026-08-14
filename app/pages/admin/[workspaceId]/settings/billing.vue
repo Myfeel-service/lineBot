@@ -202,16 +202,21 @@
               </el-table-column>
               <el-table-column v-if="invoiceEnabled" label="發票號碼" min-width="120">
                 <template #default="{ row }">
-                  <el-button
-                    v-if="row.invoiceNumber && row.invoiceStatus !== 'voided'"
-                    type="primary"
-                    link
-                    size="small"
-                    class="billing-invoice-view"
-                    @click="viewInvoice(row)"
-                  >
-                    <span class="billing-order-no">{{ row.invoiceNumber }}</span>
-                  </el-button>
+                  <!-- 已作廢／已折讓的發票**照樣可以點開**——會計對帳最需要看的就是這兩種
+                       （作廢時間原因、折讓後實際金額都在明細裡），只掛標籤不給看等於逼人來問 -->
+                  <template v-if="row.invoiceNumber">
+                    <el-button
+                      type="primary"
+                      link
+                      size="small"
+                      class="billing-invoice-view"
+                      @click="viewInvoice(row)"
+                    >
+                      <span class="billing-order-no">{{ row.invoiceNumber }}</span>
+                    </el-button>
+                    <el-tag v-if="row.invoiceStatus === 'voided'" type="info" size="small">已作廢</el-tag>
+                    <el-tag v-else-if="row.invoiceAllowanceTotal" type="warning" size="small">已折讓</el-tag>
+                  </template>
                   <el-tag v-else-if="row.invoiceStatus === 'voided'" type="info" size="small">已作廢</el-tag>
                   <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
                   <el-tooltip
@@ -306,9 +311,39 @@
             <span class="text-sm text-muted">讀取發票明細…</span>
           </div>
           <div v-else-if="invoiceDetail" class="billing-invoice-detail">
+            <!-- 作廢的先講:下面的欄位只是歷史紀錄,別讓人抄了統編金額才發現這張無效 -->
+            <el-alert v-if="invoiceDetail.voided" type="warning" :closable="false">
+              <span class="text-xs">
+                這張發票已於 {{ fmtTime(invoiceDetail.voidedAt) }} 作廢{{ invoiceDetail.voidReason ? `（原因：${invoiceDetail.voidReason}）` : '' }},不可再用於報帳。
+              </span>
+            </el-alert>
             <div class="bid-row">
               <span class="bid-label">發票號碼</span>
               <span class="billing-order-no bid-value">{{ invoiceDetail.invoiceNumber }}</span>
+            </div>
+            <!-- 開給誰:用開立當下的快照。舊發票沒存快照 → buyerType 為 null,整段不顯示,不猜 -->
+            <div v-if="invoiceDetail.buyerType" class="bid-row">
+              <span class="bid-label">發票類型</span>
+              <span class="bid-value">{{ invoiceDetail.buyerType === 'b2b' ? '公司發票（三聯式）' : '個人發票（二聯式）' }}</span>
+            </div>
+            <div v-if="invoiceDetail.buyerUBN" class="bid-row">
+              <span class="bid-label">統一編號</span>
+              <span class="bid-value">
+                <span class="billing-order-no">{{ invoiceDetail.buyerUBN }}</span>
+                <el-button link size="small" type="primary" @click="copyText(invoiceDetail.buyerUBN)">複製</el-button>
+              </span>
+            </div>
+            <div v-if="invoiceDetail.buyerName" class="bid-row">
+              <span class="bid-label">{{ invoiceDetail.buyerType === 'b2b' ? '公司抬頭' : '買受人' }}</span>
+              <span class="bid-value">{{ invoiceDetail.buyerName }}</span>
+            </div>
+            <div v-if="invoiceDetail.itemName" class="bid-row">
+              <span class="bid-label">品名</span>
+              <span class="bid-value">
+                {{ invoiceDetail.itemName }}
+                <!-- 舊發票沒存品名快照,回推值在方案改名後就不是發票上的字,必須標註 -->
+                <span v-if="invoiceDetail.itemNameDerived" class="text-xs text-muted">（依現行方案名回推,以發票正本為準）</span>
+              </span>
             </div>
             <div v-if="invoiceDetail.randomNum" class="bid-row">
               <span class="bid-label">隨機碼</span>
@@ -328,13 +363,61 @@
                 <span class="text-xs text-muted">（銷售額 {{ invoiceDetail.amt.toLocaleString() }} ＋ 稅額 {{ invoiceDetail.taxAmt.toLocaleString() }}）</span>
               </span>
             </div>
-            <el-alert type="info" :closable="false">
+            <!-- 折讓過的發票金額已不是原額——不顯示的話會計對帳必定對不上 -->
+            <template v-if="invoiceDetail.allowanceTotal > 0">
+              <div class="bid-row">
+                <span class="bid-label">折讓紀錄</span>
+                <span class="bid-value bid-allowance-list">
+                  <span v-for="a in invoiceDetail.allowances" :key="a.allowanceNumber" class="bid-allowance">
+                    −NT${{ a.amount.toLocaleString() }}・{{ a.reason }}
+                    <span class="text-xs text-muted">（{{ a.createdAtMs ? fmtTime(a.createdAtMs) : '時間不詳' }}・單號 {{ a.allowanceNumber }}）</span>
+                  </span>
+                </span>
+              </div>
+              <div class="bid-row">
+                <span class="bid-label">折讓後金額</span>
+                <span class="bid-value">
+                  含稅 NT${{ invoiceDetail.netAmt.toLocaleString() }}
+                  <span class="text-xs text-muted">（原發票 NT${{ invoiceDetail.totalAmt.toLocaleString() }} − 已折讓 NT${{ invoiceDetail.allowanceTotal.toLocaleString() }}）</span>
+                </span>
+              </div>
+            </template>
+            <!-- 指引照發票類型講該講的;作廢的不給查詢/報帳指引（一張無效的發票沒有下一步） -->
+            <el-alert v-if="!invoiceDetail.voided" type="info" :closable="false">
               <span class="text-xs">
-                個人發票可至
-                <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener" class="billing-invoice-link">財政部電子發票整合服務平台</a>
-                ,以發票號碼＋隨機碼查詢與兌獎;公司發票(有統編)已於開立時寄送至您設定的發票 Email。
+                <template v-if="invoiceDetail.buyerType === 'b2b'">
+                  公司發票已於開立時寄送至您設定的發票 Email,可供報帳使用。
+                </template>
+                <template v-else-if="invoiceDetail.buyerType === 'b2c'">
+                  個人發票可至
+                  <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener" class="billing-invoice-link">財政部電子發票整合服務平台</a>
+                  ,以發票號碼＋隨機碼查詢與兌獎。
+                </template>
+                <template v-else>
+                  個人發票可至
+                  <a href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener" class="billing-invoice-link">財政部電子發票整合服務平台</a>
+                  ,以發票號碼＋隨機碼查詢與兌獎;公司發票(有統編)已於開立時寄送至您設定的發票 Email。
+                </template>
               </span>
             </el-alert>
+            <!-- 證明聯 PDF:光貲的連結只有 10 分鐘有效 → 每次點都即時取。
+                 取到後先嘗試自動開新分頁;被彈窗攔截擋下時,這裡的連結還在,自己點即可。
+                 作廢的發票不給下載(端點也擋)——無效發票的證明聯只會被誤用。 -->
+            <div v-if="!invoiceDetail.voided" class="bid-file-row">
+              <a
+                v-if="invoiceFileUrl"
+                :href="invoiceFileUrl"
+                target="_blank"
+                rel="noopener"
+                class="billing-invoice-link"
+              >開啟證明聯 PDF</a>
+              <el-button v-else size="small" :loading="invoiceFileLoading" @click="fetchInvoiceFile">
+                下載證明聯 PDF
+              </el-button>
+              <span v-if="invoiceFileUrl" class="text-xs text-muted">連結 10 分鐘內有效,逾時請重新點「檢視發票」</span>
+              <span v-else-if="!invoiceFileError" class="text-xs text-muted">報帳用;發票開立 180 天內可下載</span>
+              <span v-if="invoiceFileError" class="text-xs text-danger">{{ invoiceFileError }}</span>
+            </div>
           </div>
         </el-dialog>
       </div>
@@ -376,6 +459,8 @@ interface OrderRow {
   paidAt: number | null
   invoiceNumber?: string | null
   invoiceStatus?: 'issued' | 'failed' | 'skipped' | 'voided' | null
+  /** 已開折讓的累計金額；>0 時列表在號碼旁標「已折讓」（明細在點開的視窗裡） */
+  invoiceAllowanceTotal?: number | null
 }
 const orders = ref<OrderRow[]>([])
 
@@ -497,16 +582,35 @@ interface InvoiceDetail {
   amt: number
   taxAmt: number
   issuedAt: number | null
+  /** 開立當下的買方快照；null = 上線前的舊發票沒存,整段不顯示、不猜 */
+  buyerType: 'b2b' | 'b2c' | null
+  buyerUBN: string | null
+  buyerName: string | null
+  itemName: string | null
+  /** true = 品名是用現行方案名回推的（舊發票沒存快照）,顯示時要註明 */
+  itemNameDerived: boolean
+  voided: boolean
+  voidReason: string | null
+  voidedAt: number | null
+  allowances: { allowanceNumber: string; amount: number; reason: string; createdAtMs: number | null }[]
+  allowanceTotal: number
+  netAmt: number
 }
 const invoiceViewOpen = ref(false)
 const invoiceDetailLoading = ref(false)
 const invoiceDetail = ref<InvoiceDetail | null>(null)
+/** 正在檢視的訂單編號——「下載證明聯」要拿它去要 PDF 連結。 */
+const invoiceViewOrderNo = ref('')
 
 async function viewInvoice(row: OrderRow) {
   if (!row.invoiceNumber) return
   invoiceViewOpen.value = true
   invoiceDetailLoading.value = true
   invoiceDetail.value = null
+  invoiceViewOrderNo.value = row.merchantOrderNo
+  // 換一張發票就把上一張的 PDF 狀態清掉(連結 10 分鐘失效,留著只會開到過期頁)
+  invoiceFileUrl.value = ''
+  invoiceFileError.value = ''
   try {
     invoiceDetail.value = await apiFetch<InvoiceDetail>(
       `/api/payment/invoice-detail?order=${encodeURIComponent(row.merchantOrderNo)}`,
@@ -518,6 +622,32 @@ async function viewInvoice(row: OrderRow) {
   }
   finally {
     invoiceDetailLoading.value = false
+  }
+}
+
+// ── 下載證明聯 PDF ──
+// 光貿的 file_url 只有 10 分鐘有效 → 每次點都即時要,不存不快取。
+// 拿到後先嘗試直接開新分頁;被瀏覽器的彈窗攔截擋下時,畫面上已經有連結可以自己點。
+const invoiceFileUrl = ref('')
+const invoiceFileLoading = ref(false)
+const invoiceFileError = ref('')
+
+async function fetchInvoiceFile() {
+  invoiceFileLoading.value = true
+  invoiceFileError.value = ''
+  try {
+    const r = await apiFetch<{ fileUrl: string }>(
+      `/api/payment/invoice-file?order=${encodeURIComponent(invoiceViewOrderNo.value)}`,
+    )
+    invoiceFileUrl.value = r.fileUrl
+    window.open(r.fileUrl, '_blank', 'noopener')
+  }
+  catch (e: any) {
+    // 逾 180 天、存入載具的發票未中獎等,光貿的原因會在訊息裡——原樣顯示,使用者才知道為什麼
+    invoiceFileError.value = e?.data?.statusMessage || e?.data?.message || e?.message || '取得證明聯失敗'
+  }
+  finally {
+    invoiceFileLoading.value = false
   }
 }
 

@@ -14,8 +14,13 @@
  *    的欄位順序/空白只要有一點不同,光貿就會回 code 16(簽名驗證錯誤)。所以下面
  *    一律先 stringify 成 dataStr,再拿同一個 dataStr 去算 sign 與送出,不可各算一次。
  *
- * 規格來源:https://invoice.amego.tw/api_doc/example 與錯誤碼頁 info_detail?mid=71。
+ * 規格來源:官方 API 文件 https://invoice.amego.tw/api_doc/(JS 渲染單頁,curl 只會看到
+ * Loading;實際內容在 invoice-static.amego.tw/www/api_doc/assets/main.bundle.js)、
+ * 範例頁 /api_doc/example、錯誤碼頁 info_detail?mid=71、文件異動紀錄 info_detail?mid=76。
  * 標 `TODO(光貿文件)` 的是還沒從官方後台文件/沙盒實測確認的欄位,拿到測試帳號後補實。
+ *
+ * 光貿**沒有**「重寄發票通知 Email」的 API(2026-08-14 全文件查證):補發通知只存在
+ * 商家後台網頁的「補發發票開立通知」按鈕。要自動重寄只能自己寄(取 PDF 附檔,見 B-29)。
  */
 import { createHash } from 'crypto'
 import { splitTax, TAX_RATE_PERCENT } from '~~/shared/billing/tax'
@@ -45,6 +50,8 @@ const ENDPOINT = {
   void: '/json/f0501', // 作廢
   allowance: '/json/g0401', // 開立折讓
   voidAllowance: '/json/g0501', // 作廢折讓  TODO(光貿文件): 確認路徑(MOF D0501)
+  invoiceFile: '/json/invoice_file', // 發票證明聯 PDF(⚠️ 別跟 invoice_print 搞混,那支回熱感應機列印字串)
+  // 折讓證明單也有 PDF:/json/allowance_file(帶 allowance_number + download_style),要用時再接
 } as const
 
 /** B2C 無統編時的買方統編填法(財政部標準:十個 0)。 */
@@ -351,4 +358,51 @@ export async function issueAllowance(
     // 成功時光貲不另回折讓單號,回傳我方送出的那組(即 input.allowanceNumber)
     allowanceNumber: r.code === 0 ? input.allowanceNumber : undefined,
   }
+}
+
+// ── 發票證明聯 PDF(invoice_file) ─────────────────────────────────────
+//
+// 官方描述:「下載發票檔案(PDF格式)。載具發票中獎後才可下載,非載具發票可無限次下載。」
+// 限制:以發票日期起 **180 天內**(逾期回 code 51、查無回 71);⚠️ 回應的 file_url
+// **只有 10 分鐘有效**——不能存起來重用,一律按需取、當場給使用者開。
+
+export interface InvoiceFileInput {
+  /** 發票號碼(10 碼)。 */
+  invoiceNumber: string
+  /**
+   * 版式:0=A4 整張(預設;無統編只有這款,背面是兌獎聯需雙面列印)、
+   * 1=A4(地址+A5)、2=A4(A5x2)、3=A5、5=QRcode_A4(1/2/3/5 限有統編)。
+   */
+  downloadStyle?: number
+}
+
+export interface InvoiceFileResult {
+  ok: boolean
+  status: string
+  message: string
+  /** PDF 下載連結(10 分鐘有效)。 */
+  fileUrl?: string
+}
+
+/** 組 invoice_file 的 data。type 也可用 'order'+order_id 查,我們固定用發票號碼。 */
+export function buildInvoiceFileData(input: InvoiceFileInput): Record<string, unknown> {
+  return {
+    type: 'invoice',
+    invoice_number: input.invoiceNumber,
+    download_style: String(input.downloadStyle ?? 0),
+  }
+}
+
+/** 取一張發票的證明聯 PDF 下載連結。失敗回 ok:false(逾 180 天、載具未中獎都會走這)。 */
+export async function getInvoiceFileUrl(
+  input: InvoiceFileInput,
+  keys: GuangmaoInvoiceKeys,
+): Promise<InvoiceFileResult> {
+  const r = await callAmego(ENDPOINT.invoiceFile, buildInvoiceFileData(input), keys)
+  if (r.httpError) return { ok: false, status: r.httpError, message: `光貿回應 ${r.httpError}` }
+  const raw = r.raw as { msg?: string; data?: { file_url?: string } }
+  const message = String(raw?.msg || '')
+  const fileUrl = String(raw?.data?.file_url || '') || undefined
+  // code 0 但沒回連結也算失敗——回一個空連結給前端開等於開一個壞分頁
+  return { ok: r.code === 0 && Boolean(fileUrl), status: String(r.raw?.code ?? 'UNKNOWN'), message, fileUrl }
 }
