@@ -1209,14 +1209,20 @@ function newestTimestampMs(list: unknown[]): number {
  *
  * 同樣不碰 Date.now()（理由見 markConversationRead），而且不需要：兩份清單都是
  * 由新到舊排的（對話照 lastMessageAt、會話照 lastActivityAt），所以「已載入的最新那一筆」
- * 必然晚於還沒載入的每一筆。會話那邊刻意取 lastActivityAt 而不是紅點用的 unreadAt——
- * 排序欄位是它，只有它蓋得住後面幾頁；而它必然晚於同一列的 unreadAt，蓋過去是安全的。
+ * 必然晚於還沒載入的每一筆。會話那邊要取 lastActivityAt——排序欄位是它，只有它蓋得住
+ * 後面還沒載入的幾頁。
+ *
+ * ⛔ 但**不能只取它**。它和紅點用的 unreadAt 是兩份文件各自蓋的時間（會話文件那次還是
+ * 背景補寫的，見 conversation-session.ts 的 bgUpdate），誰先落地是隨機的——unreadAt 反而
+ * 比較晚的時候，按了「全部已讀」最上面那列還是紅的，再按一次也一樣（數字沒變），
+ * 只能點開那列才消。兩個都取最大的，那一列才蓋得住。
  */
 function markAllConversationsRead() {
   readAllBeforeMs.value = Math.max(
     readAllBeforeMs.value,
     newestTimestampMs(conversations.value.map((c: ConvItem) => c.lastMessageAt)),
     newestTimestampMs(sessions.value.map((s: SessionItem) => s.lastActivityAt)),
+    newestTimestampMs(sessions.value.map((s: SessionItem) => s.unreadAt)),
   )
   // 上面那條時間線已經蓋過所有既有記錄，逐位客人的章可以整份丟掉
   convLastReadMs.value = {}
@@ -2306,6 +2312,8 @@ async function selectSession(s: SessionItem) {
   selectedSessionId.value = s.sessionId
   allTabActiveSession.value = null
   aiContextSeenAtMs = 0
+  // 同 selectUser：這一場的最新一則等一下就讀進來了，記成「已經為它讀過」
+  openTimelineRowMs = messageTimestampToMs(s.unreadAt)
   selectedUserId.value = s.userId
   const convItem: ConvItem = {
     userId: s.userId,
@@ -2475,18 +2483,45 @@ async function loadList(mode: LoadListMode = 'reset') {
  * （不可以拿 chatRows，那裡面有還沒送出去的本機泡泡，時間是本機時鐘）。
  * 已結束的那一段 unreadAt 是 null → 讀不到時間 → 不重讀，正好也是我們要的：
  * 那一段被錨定在該場的結尾，新訊息本來就不屬於它（見 reloadAfterOutgoing 的說明）。
+ *
+ * ⛔ 光比「列上的時間有沒有比較新」不夠，還要記住上次為哪一則讀過（openTimelineRowMs）。
+ * 2026-08-14 以前存進資料庫的訊息，列上那個時間比訊息自己的時間晚幾百毫秒
+ * （見 handler.ts 的 lastMessageAt），這個比較會**永遠成立**——那些對話只要開著，
+ * 就每 30 秒重抓一整段時間軸，讀取費照筆算。記住之後：列上的時間有動才讀，
+ * 客人來一則就讀一次，沒動就不讀。
+ * 代價是這一次讀失敗就要等客人再開口（或客服自己點一下）才會再試，換掉的是「每 30 秒
+ * 重試到天荒地老」——失敗時那句錯誤提示也從每 30 秒一次變成只跳一次。
  */
+let openTimelineRowMs = 0
+
+/**
+ * 目前選中那一列上的「最後一則訊息時間」——**紅點就是拿這個值在比**
+ * （會話分頁看 unreadAt、「全部」看 lastMessageAt，見 isRowUnread）。
+ *
+ * 蓋已讀章一定要用它，不能只用時間軸上最新那一則的時間：同一則訊息在兩邊有兩個時間戳
+ * （見 handler.ts 的 lastMessageAt），2026-08-14 以前的資料上列這個比較晚，差幾百毫秒——
+ * 而紅點差 1 毫秒就算沒看過。用錯來源的話章永遠差最後一步，紅點怎麼等都不會消。
+ * ⛔ 蓋章的來源必須跟紅點比對的來源是同一個欄位，改任一邊都要一起改。
+ */
+function selectedRowUnreadMs(): number {
+  const uid = selectedUserId.value
+  if (!uid) return 0
+  const sid = selectedSessionId.value
+  return sid
+    ? messageTimestampToMs(sessions.value.find((s: SessionItem) => s.sessionId === sid)?.unreadAt)
+    : messageTimestampToMs(conversations.value.find((c: ConvItem) => c.userId === uid)?.lastMessageAt)
+}
+
 function maybeRefreshOpenTimeline() {
   const uid = selectedUserId.value
   if (!uid) return
   // 有東西正在讀就跳過，等下一輪：插隊進去只會跟它搶同一份 timelineItems
   if (msgLoading.value || loadingOlder.value || loadingNewer.value) return
-  const sid = selectedSessionId.value
-  const rowMs = sid
-    ? messageTimestampToMs(sessions.value.find((s: SessionItem) => s.sessionId === sid)?.unreadAt)
-    : messageTimestampToMs(conversations.value.find((c: ConvItem) => c.userId === uid)?.lastMessageAt)
+  const rowMs = selectedRowUnreadMs()
   if (rowMs <= 0) return
+  if (rowMs <= openTimelineRowMs) return
   if (rowMs <= newestTimestampMs(timelineItems.value.map((i: TimelineItem) => i.timestamp))) return
+  openTimelineRowMs = rowMs
   void reloadTimeline({ quiet: true })
 }
 
@@ -2682,6 +2717,9 @@ async function selectUser(c: ConvItem) {
   allTabActiveSession.value = null
   // 換人就重設基準時間，否則會拿上一位客人的時間戳去比、一進來就誤判成「有新訊息」
   aiContextSeenAtMs = 0
+  // 同理（見 maybeRefreshOpenTimeline）：這裡就把最新那一則讀進來了，記成「已經為它讀過」。
+  // 留著上一位的數字，換到比較安靜的客人時會把他之後的新訊息全判成舊的、不自己更新
+  openTimelineRowMs = messageTimestampToMs(c.lastMessageAt)
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingQuickReplyId.value = ''
@@ -2893,9 +2931,12 @@ async function jumpToLatest() {
  * 這一跳離開了那一場的範圍，工具列跟著回到「進行中會話」，不要繼續顯示舊那場的狀態。
  */
 async function leaveSessionSegment(userId: string) {
+  // 先問再清：清掉之後就找不到剛剛看的那一場，那一則的時間也就拿不到了。
+  // 跳回最新一段之後畫面上就是最後一則，這一跳要算「看過了」（見 reloadTimeline）
+  const seenUpToMs = selectedRowUnreadMs()
   selectedSessionId.value = null
   sessionMeta.value = null
-  await loadTimeline(userId)
+  await loadTimeline(userId, { seenUpToMs })
 }
 
 /**
@@ -2994,6 +3035,10 @@ function discardPendingOutgoing(localId: string) {
  *
  * 看的是歷史那一段（下面還有沒讀的）時不重讀：那一段的內容不會因為現在按了什麼而改變，
  * 重讀只會把客服正在看的位置甩掉。
+ *
+ * 已讀章一律蓋到「列上那一則」為止（selectedRowUnreadMs），不是只蓋到時間軸最新那一則——
+ * 走這支的每一條路（接手／交還／結案／自己回一句／開著的對話自己收新訊息）事後都該是
+ * 「看過了」。少了它，按完接手那顆紅點還亮著，要點去別人那再點回來才消得掉。
  */
 async function reloadTimeline(options?: { quiet?: boolean }) {
   const userId = selectedUserId.value
@@ -3001,6 +3046,7 @@ async function reloadTimeline(options?: { quiet?: boolean }) {
   await loadTimeline(userId, {
     sessionId: selectedSessionId.value || undefined,
     quiet: options?.quiet === true,
+    seenUpToMs: selectedRowUnreadMs(),
   })
 }
 

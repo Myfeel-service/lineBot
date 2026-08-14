@@ -2086,7 +2086,20 @@ export async function saveConversationMessage(
         userId: lineUserId,
         lastMessage: text,
         lastDirection: direction,
-        lastMessageAt: now,
+        /**
+         * 跟這一則訊息自己的時間**同一個值**，不可以另外蓋一次 serverTimestamp。
+         *
+         * 客人來訊時訊息存的是 LINE 的事件時間，比我們寫進資料庫的時間早幾百毫秒
+         * （網路＋冷啟動）。這裡若用 serverTimestamp，同一則訊息在兩個地方就有兩個時間，
+         * 而未讀紅點問的是「列上這一則有沒有晚於我看過的時間」——差 1 毫秒就算沒看過。
+         * 前端點開對話蓋的章來自時間軸（LINE 那個時間），永遠追不上列上這個（伺服器那個），
+         * 於是開著的對話紅點消不掉，「畫面是不是已經讀到最新」也永遠判定成否，
+         * 每 30 秒白重抓一整段時間軸。cleanup.post.ts 回填時本來就是拿訊息自己的時間，
+         * 這裡對齊它。
+         *
+         * 送出的訊息兩邊都是 serverTimestamp，行為不變。
+         */
+        lastMessageAt: messageTimestamp,
       }
   if (!traceOnly && direction === 'incoming') {
     convPatch.lastPeerActivityAt = useLineTs
