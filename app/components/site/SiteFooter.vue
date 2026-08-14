@@ -3,7 +3,7 @@
     <div class="lp-wrap lp-foot__in">
       <div class="lp-foot__col lp-foot__col--brand">
         <BrandLogo class="lp-foot__brand" />
-        <p class="lp-foot__tag">讓 AI 幫店主做生意</p>
+        <p class="lp-foot__tag">你的顧客，其實很值錢</p>
         <ul class="lp-foot__list">
           <li><span class="lp-foot__k">公司名稱</span><span>{{ companyName }}</span></li>
           <li><span class="lp-foot__k">統一編號</span><span>{{ taxId }}</span></li>
@@ -24,10 +24,13 @@
         <h2 class="lp-foot__h">產品</h2>
         <ul class="lp-foot__list lp-foot__list--nav">
           <!-- 用 /#anchor（不是 #anchor）：法務頁上也要能跳回首頁對應段落 -->
+          <!-- ⛔ 別加回 /#demo：首頁的預約 Demo 表單 2026-08-14 已整區移除，
+               想找人談的走左邊「客服聯絡」那欄的電話與信箱 -->
           <li><a href="/#value">產品介紹</a></li>
+          <li><a href="/#diff">功能比較</a></li>
           <li><a href="/#pricing">定價</a></li>
           <li><a href="/#faq">常見問題</a></li>
-          <li><a href="/#demo">預約 Demo</a></li>
+          <li><NuxtLink to="/login">免費註冊</NuxtLink></li>
           <li><NuxtLink to="/login">登入</NuxtLink></li>
         </ul>
       </div>

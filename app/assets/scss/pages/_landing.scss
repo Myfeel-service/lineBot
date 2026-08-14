@@ -1,10 +1,19 @@
 /* ── 對外 Landing Page（layout: false，類名皆掛在 .lp 下避免汙染全站樣式）──
- * 設計語言：以 LINE 官方帳號的對話為主軸，沿用 LINE 綠(#06C755)、大圓角、留白。
- * 互動（reveal / nav 陰影 / 手機選單 / 表單）在 pages/index.vue 的 <script setup>。
+ *
+ * 設計語言：白底 ＋ 品牌綠單一強調色、細線白卡、大留白。
+ * 每個區塊的節奏固定是「eyebrow 標籤 → .lp-h2 標題 → .lp-lede 說明 → 內容」，
+ * 結尾一條綠色 CTA 帶。⛔別再引進第二組主題色（深色段、鵝黃段那種）——
+ * 2026-08-14 試過一版對話式配色，與後台／法務頁調性不合已回退。
+ *
+ * ⚠️ `.lp` 這層外殼是**首頁與三個法務頁共用**的（見 components/site/SiteLegalPage.vue）：
+ *    .lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot 動到就會連坐那三頁。
+ *    只在首頁生效的東西掛在 `.lp-home` 底下。
+ *
+ * 互動（reveal / nav 陰影 / 手機選單 / 名單動畫 / 表單）在 pages/index.vue 的 <script setup>。
  */
 
-/* 錨點捲動時避開 68px sticky nav（item 12） */
-.lp #top, .lp #value, .lp #diff, .lp #pricing, .lp #faq, .lp #demo { scroll-margin-top: 80px; }
+/* 錨點捲動時避開 68px sticky nav */
+.lp #top, .lp #why, .lp #easy, .lp #value, .lp #diff, .lp #pricing, .lp #faq, .lp #signup { scroll-margin-top: 80px; }
 
 .lp {
   /* Palette — 沿用全站共用品牌綠 token（門面頁統一同一套來源）*/
@@ -23,6 +32,20 @@
   --surf-2: #f5f7f5;
   --hair: #ecefec;
 
+  /* 唯一的非綠色：琥珀。只給「久未互動／沒回覆」這種狀態訊號用，不當裝飾色。 */
+  --warn-ink: #b4762a;
+  --warn-wash: #fff1e4;
+
+  /* 面板左右內距：標頭、內容、名單列、名單頁尾全部吃這一個值。
+     ⛔別各寫各的——原本標頭 20px、內容 26px、名單列 20px，結果標頭文字比下面的
+     內容右移 12px、右緣差 6px，卡片看起來像沒對齊。 */
+  --panel-pad-x: 24px;
+
+  /* 區塊標題（eyebrow＋h2＋lede）與底下內容之間的固定節奏。
+     ⛔別各區各寫——原本 why/easy/value/diff 是 44、faq 36、signup 50，
+     而定價區的成本卡根本沒設，標題直接貼著表格。 */
+  --section-head-gap: 44px;
+
   --r-card: 20px;
   --r-xl: 30px;
   --sh-card: 0 2px 6px rgba(20, 24, 22, 0.04), 0 18px 44px rgba(20, 24, 22, 0.07);
@@ -40,6 +63,8 @@
   overflow-x: hidden;
 
   ::selection { background: var(--g-wash); }
+
+  .lp-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
   /* ── Utilities ─────────────────────────────────────────── */
   .lp-wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
@@ -61,6 +86,18 @@
   }
   .lp-lede { color: var(--ink-soft); font-size: clamp(1rem, 1.4vw, 1.14rem); margin: 16px 0 0; max-width: 46ch; }
 
+  /* 圖說：示意畫面必須標示，數字才不會被當成真實績效 */
+  .lp-figcap { margin: 14px 0 0; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.7; }
+  .lp-figcap--center { text-align: center; margin-top: 24px; }
+
+  /* 「即將推出」：功能還沒上線就一定要掛，不能當現有功能賣。
+     line-height 寫死：繼承的 1.7 會讓它比隔壁純文字的標頭高 0.5px，並排兩張卡就差 1px。 */
+  .lp-soon {
+    margin-left: auto; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.02em; line-height: 1.5;
+    color: var(--g-deep); background: var(--g-wash); border: 1px solid var(--g-line);
+    border-radius: var(--radius-pill); padding: 3px 11px;
+  }
+
   /* ── Buttons ───────────────────────────────────────────── */
   .lp-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -69,6 +106,7 @@
     border: 1.5px solid transparent; cursor: pointer; white-space: nowrap;
     transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
   }
+  .lp-btn--sm { font-size: 0.9rem; padding: 11px 20px; }
   .lp-btn--primary { background: var(--g); color: #fff; box-shadow: var(--sh-green); }
   .lp-btn--primary:hover { background: var(--g-deep); transform: translateY(-2px); }
   .lp-btn--primary:active { background: var(--g-press); transform: translateY(0); }
@@ -80,7 +118,7 @@
   .lp-btn:focus-visible { outline: 3px solid var(--g-deep); outline-offset: 3px; }
   a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px solid var(--g-deep); outline-offset: 2px; border-radius: 6px; }
 
-  /* ── Nav ───────────────────────────────────────────────── */
+  /* ── Nav（與法務頁 SiteLegalPage 共用，勿改結構）────────── */
   .lp-nav {
     position: sticky; top: 0; z-index: 60;
     background: rgba(255, 255, 255, 0.82);
@@ -92,7 +130,7 @@
   .lp-nav__in { display: flex; align-items: center; justify-content: space-between; height: 68px; }
   /* 商標＝logotype 圖檔（圖標＋MiniMe 字樣），高度給 BrandLogo，寬度它自己算。
      手機版（≤720px）換成 logomark：含字樣的 logotype 有 144px 寬，
-     加上「預約 Demo」按鈕會把漢堡選單鈕推出畫面（360px 寬時超出 7px）。 */
+     加上 CTA 按鈕會把漢堡選單鈕推出畫面（360px 寬時超出 7px）。 */
   .lp-brand { display: inline-flex; align-items: center; --brand-logo-h: 27px; }
   .lp-brand__mark { display: none; }
   .lp-nav__links { display: flex; align-items: center; gap: 30px; }
@@ -116,55 +154,72 @@
   .lp-hero__grid { position: relative; z-index: 1; display: grid; grid-template-columns: 1.05fr 0.95fr; gap: clamp(28px, 5vw, 64px); align-items: center; }
   .lp-hero h1 { font-size: clamp(2.5rem, 6.2vw, 4.3rem); font-weight: 800; letter-spacing: -0.035em; line-height: 1.1; margin: 22px 0 0; text-wrap: balance; }
   .lp-hero h1 .g { color: var(--g-deep); }
-  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1.05rem, 1.5vw, 1.24rem); line-height: 1.7; margin: 22px 0 0; max-width: 30ch; }
+  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1.05rem, 1.5vw, 1.24rem); line-height: 1.7; margin: 22px 0 0; max-width: 34ch; }
+  .lp-hero__sub b { color: var(--ink); font-weight: 700; }
   .lp-hero__actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+  .lp-hero__fine { margin: 20px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
+  /* nowrap：手機上「NT$399 起」會斷在空白處，把「起」孤零零丟到下一行 */
+  .lp-hero__fine b { color: var(--ink-2); font-weight: 700; white-space: nowrap; }
+  .lp-hero__visual { position: relative; z-index: 1; }
 
-  .lp-stats { display: flex; gap: 14px; margin-top: 40px; flex-wrap: wrap; }
-  .lp-stat { flex: 1; min-width: 130px; background: rgba(255, 255, 255, 0.7); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 16px 18px; }
-  .lp-stat b { display: block; font-size: 1.6rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
-  .lp-stat span { display: block; margin-top: 6px; font-size: 0.85rem; color: var(--ink-soft); }
-
-  /* ── LINE chat mock ────────────────────────────────────── */
-  .lp-phone { position: relative; z-index: 1; justify-self: center; width: 100%; max-width: 372px; padding-top: 42px; }
-  .lp-aitag {
-    position: absolute; z-index: 3; top: 0; left: 0;
-    display: inline-flex; align-items: center; gap: 7px;
-    background: #fff; border: 1px solid var(--g-line); color: var(--g-deep);
-    font-size: 0.76rem; font-weight: 800; padding: 7px 13px; border-radius: var(--radius-pill);
-    box-shadow: var(--sh-soft);
+  /* ── 通用面板（有標頭列的白卡）─────────────────────────── */
+  /* 卡片高度層級：靜置一律 --sh-soft、hover 才升到 --sh-card。
+     ⛔別讓靜置就用重陰影——這頁一次會並排到 8 張，整片會發灰。 */
+  .lp-panel {
+    background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card);
+    box-shadow: var(--sh-soft); overflow: hidden;
+    transition: transform .2s ease, box-shadow .2s ease;
   }
-  .lp-aitag i { width: 8px; height: 8px; border-radius: 50%; background: var(--g); box-shadow: 0 0 0 4px var(--g-wash); }
+  .lp-panel:hover { transform: translateY(-3px); box-shadow: var(--sh-card); }
+  /* min-height：標頭右邊放純文字或膠囊時高度會差幾 px，並排的兩張卡就會整條錯開 */
+  .lp-panel__hd {
+    display: flex; align-items: center; gap: 10px; min-height: 54px;
+    padding: 14px var(--panel-pad-x); border-bottom: 1px solid var(--hair); background: var(--surf-2);
+  }
+  .lp-panel__pip { width: 8px; height: 8px; border-radius: 50%; background: var(--g); flex: none; }
+  .lp-panel__pip--soon { background: var(--ink-soft); }
+  .lp-panel__title { font-size: 0.86rem; font-weight: 800; color: var(--ink); }
+  .lp-panel__meta { margin-left: auto; font-size: 0.76rem; color: var(--ink-soft); }
+  .lp-panel__bd { padding: 24px var(--panel-pad-x); }
+  .lp-panel__bd h3 { font-size: 1.12rem; font-weight: 800; margin: 18px 0 0; letter-spacing: -0.01em; }
+  .lp-panel__bd > p { font-size: 0.94rem; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.7; }
 
-  .lp-chat { background: #fff; border: 1px solid var(--hair); border-radius: 34px; overflow: hidden; box-shadow: var(--sh-card); }
-  .lp-chat__hd { display: flex; align-items: center; gap: 10px; padding: 16px 18px 14px; background: #fff; border-bottom: 1px solid var(--hair); }
-  .lp-chat__back { color: var(--ink-soft); font-size: 1.3rem; line-height: 1; }
-  .lp-chat__ava { width: 34px; height: 34px; border-radius: 12px; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 0.9rem; flex: none; }
-  .lp-chat__title { display: flex; flex-direction: column; line-height: 1.25; flex: 1; }
-  .lp-chat__title b { font-size: 0.98rem; }
-  .lp-chat__title small { font-size: 0.72rem; color: var(--ink-soft); }
-  .lp-chat__icons { color: var(--ink-soft); font-size: 1.05rem; letter-spacing: 4px; }
+  /* 面板裡的示意小圖（對話、清單、名片）共用的淺底容器 */
+  .lp-mock { background: var(--surf-2); border-radius: 14px; padding: 16px; }
 
-  .lp-chat__scroll { padding: 18px 16px 14px; background: #eef1ee; display: flex; flex-direction: column; gap: 12px; min-height: 320px; }
-  .lp-chat__day { align-self: center; background: rgba(0, 0, 0, 0.14); color: #fff; font-size: 0.72rem; padding: 3px 12px; border-radius: var(--radius-pill); }
+  /* ── Hero 好友名單 ─────────────────────────────────────── */
+  /* 底部漸隱：名單「還有很多」的感覺比列滿六個人更準確 */
+  .lp-friends__list {
+    max-height: 312px; overflow: hidden;
+    mask-image: linear-gradient(#000 80%, transparent 100%);
+    -webkit-mask-image: linear-gradient(#000 80%, transparent 100%);
+  }
+  .lp-fr { display: flex; align-items: center; gap: 12px; padding: 13px var(--panel-pad-x); border-bottom: 1px solid var(--hair); }
+  /* 頭像兩層背景：上層是 --photo（public/avatars/ 的照片），下層是人形剪影。
+     照片還沒放時上層 404、那一層不繪製，剪影就透出來——⛔不要改回 <img>：
+     alt="" 的破圖 Chrome 仍會畫一個破圖圖示疊在剪影上（實測過），而且 SSR 的 404
+     早於 Vue 掛載，@error 監聽器根本還沒接上。
+     ⚠️ 底色由 inline style 的 background-color 給，不可寫成 background 簡寫，會把兩層圖都洗掉。 */
+  .lp-fr__ava {
+    width: 36px; height: 36px; border-radius: 50%; flex: none; overflow: hidden;
+    background-image: var(--photo, none), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='rgba(255,255,255,0.92)'%3E%3Ccircle cx='18' cy='14.2' r='5.7'/%3E%3Cpath d='M6.4 32c0-5.8 5.2-9.4 11.6-9.4S29.6 26.2 29.6 32z'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat;
+    background-position: center, center;
+    background-size: cover, 100% 100%;
+  }
+  .lp-fr__txt { flex: 1; min-width: 0; }
+  .lp-fr__txt b { display: block; font-size: 0.9rem; font-weight: 600; }
+  .lp-fr__txt small { display: block; font-size: 0.8rem; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-fr__meta { text-align: right; flex: none; }
+  .lp-fr__ago { display: block; font-size: 0.74rem; color: var(--ink-soft); }
+  .lp-fr__tag { display: inline-block; margin-top: 4px; font-size: 0.66rem; font-weight: 800; border-radius: var(--radius-pill); padding: 3px 9px; }
+  .lp-fr__tag--cold { background: var(--surf-2); color: var(--ink-soft); }
+  .lp-fr__tag--miss { background: var(--warn-wash); color: var(--warn-ink); }
+  .lp-friends__foot { padding: 16px var(--panel-pad-x); background: var(--surf-2); border-top: 1px solid var(--hair); font-size: 0.88rem; color: var(--ink-2); }
+  .lp-friends__foot b { font-size: 1.1rem; font-weight: 800; color: var(--warn-ink); font-variant-numeric: tabular-nums; }
 
-  .lp-row { display: flex; align-items: flex-end; gap: 8px; max-width: 88%; }
-  .lp-row--in { align-self: flex-start; }
-  .lp-row--out { align-self: flex-end; flex-direction: row-reverse; }
-  .lp-row__ava { width: 30px; height: 30px; border-radius: 50%; background: #d7dcd7; display: grid; place-items: center; font-size: 0.95rem; flex: none; }
-  .lp-row__time { font-size: 0.66rem; color: #8b908a; margin-bottom: 2px; white-space: nowrap; }
-  .lp-row__meta { font-size: 0.64rem; color: #8b908a; margin-bottom: 2px; text-align: right; line-height: 1.3; white-space: nowrap; }
-  .lp-row__meta b { color: var(--g-deep); font-weight: 700; display: block; }
-
-  .lp-bubble { padding: 10px 14px; font-size: 0.92rem; line-height: 1.5; max-width: 100%; }
-  .lp-bubble--in { background: #fff; color: var(--ink); border-radius: 4px 18px 18px 18px; box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05); }
-  .lp-bubble--out { background: var(--g); color: #fff; border-radius: 18px 4px 18px 18px; font-weight: 500; }
-
-  .lp-chat__input { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #fff; border-top: 1px solid var(--hair); }
-  .lp-chat__input .ic { color: var(--ink-soft); font-size: 1.2rem; flex: none; }
-  .lp-chat__box { flex: 1; background: var(--surf-2); border-radius: var(--radius-pill); padding: 9px 15px; color: #a7aca6; font-size: 0.88rem; }
-
-  /* ── Pain ──────────────────────────────────────────────── */
-  .lp-cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
+  /* ── 卡在哪：三張痛點卡 ────────────────────────────────── */
+  .lp-cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: var(--section-head-gap); }
   .lp-pcard { background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 28px 26px; box-shadow: var(--sh-soft); transition: transform .2s ease, box-shadow .2s ease; }
   .lp-pcard:hover { transform: translateY(-4px); box-shadow: var(--sh-card); }
   .lp-pcard__ic { width: 52px; height: 52px; border-radius: 16px; background: var(--g-wash); display: grid; place-items: center; font-size: 1.5rem; color: var(--g-deep); }
@@ -174,35 +229,79 @@
   .lp-note b { color: var(--ink); }
   .lp-note .q { flex: none; font-size: 1.3rem; color: var(--g-deep); }
 
-  /* ── Value pillars ─────────────────────────────────────── */
-  .lp-pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 48px; }
-  .lp-pillar { position: relative; background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 30px 28px; box-shadow: var(--sh-soft); }
-  .lp-pillar--pro { border-color: var(--g-line); }
-  .lp-pillar__step { display: inline-flex; align-items: center; gap: 8px; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.04em; color: var(--g-deep); }
-  .lp-pillar__step i { width: 22px; height: 22px; border-radius: 50%; background: var(--g); color: #fff; display: grid; place-items: center; font-size: 0.74rem; font-variant-numeric: tabular-nums; }
-  .lp-pillar h3 { font-size: 1.32rem; font-weight: 800; margin: 14px 0 4px; letter-spacing: -0.01em; }
-  .lp-pillar__lede { color: var(--ink-soft); font-size: 0.94rem; margin: 0 0 20px; }
-  .lp-flist { list-style: none; margin: 0; padding: 20px 0 0; border-top: 1px dashed var(--hair); display: flex; flex-direction: column; gap: 15px; }
-  .lp-flist li { display: flex; gap: 12px; }
-  .lp-flist .ic { flex: none; width: 34px; height: 34px; border-radius: 11px; background: var(--g-wash); display: grid; place-items: center; font-size: 1.05rem; color: var(--g-deep); }
-  .lp-flist b { font-weight: 700; font-size: 0.96rem; }
-  .lp-flist small { display: block; color: var(--ink-soft); font-size: 0.86rem; margin-top: 2px; }
-  .lp-soon { font-size: 0.66rem; font-weight: 800; color: var(--g-deep); background: var(--g-wash); border: 1px solid var(--g-line); padding: 1px 8px; border-radius: var(--radius-pill); margin-left: 6px; vertical-align: middle; }
+  /* ── 怎麼變簡單：兩張並排面板 ──────────────────────────── */
+  /* 兩張卡的示意圖給同一個高度下限，否則兩張卡的標題會差幾十 px（並排時一眼看得出歪掉）。
+     ⚠️ 數字要 ≥ 兩邊自然高度的最大值（實測左邊三句對話 213.3px、右邊一張建議卡約 150px）。
+     設 212 時只有右邊被墊高、左邊照樣凸出 1.3px，兩個標題就差 1px——量過才算數。 */
+  .lp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: var(--section-head-gap); --demo-h: 216px; }
 
-  /* ── Diff / VS ─────────────────────────────────────────── */
-  /* 左＝樸素「舊做法」清單;右＝浮起、超出表格上下緣的 MYFEEL 勝方卡 */
-  .lp-cmp { position: relative; display: grid; grid-template-columns: 0.64fr 1fr 1.12fr; margin: 40px 0 24px; border: 1px solid var(--hair); border-radius: var(--r-card); background: #fff; }
+  .lp-setup { display: flex; flex-direction: column; gap: 9px; min-height: var(--demo-h, 186px); }
+  .lp-sd { max-width: 88%; font-size: 0.88rem; line-height: 1.65; padding: 10px 14px; border-radius: 15px; }
+  .lp-sd--ai { align-self: flex-start; background: var(--paper); border: 1px solid var(--hair); border-bottom-left-radius: 4px; }
+  .lp-sd--me { align-self: flex-end; background: var(--g); color: #fff; border-bottom-right-radius: 4px; font-weight: 500; }
+  .lp-sd .ok { color: var(--g-deep); font-weight: 800; }
+  .lp-sdbar { margin-top: auto; display: flex; align-items: center; gap: 10px; font-size: 0.76rem; font-weight: 800; color: var(--g-deep); }
+  .lp-sdbar i { flex: 1; height: 7px; border-radius: var(--radius-pill); background: #dfe6dd; overflow: hidden; position: relative; }
+  .lp-sdbar i::after { content: ''; position: absolute; inset: 0; background: var(--g); border-radius: var(--radius-pill); }
+
+  .lp-adv { display: flex; flex-direction: column; gap: 10px; min-height: var(--demo-h, 186px); }
+  .lp-adv__c { background: var(--paper); border: 1px solid var(--hair); border-radius: 12px; padding: 13px 15px; }
+  .lp-adv__c .t { display: block; font-size: 0.72rem; font-weight: 800; color: var(--g-deep); margin-bottom: 6px; }
+  .lp-adv__c .q { display: block; font-size: 0.85rem; line-height: 1.65; color: var(--ink-2); }
+  .lp-adv__c .q b { color: var(--ink); font-weight: 700; }
+  .lp-adv__btn { display: inline-block; margin-top: 10px; font-size: 0.75rem; font-weight: 800; color: var(--ink); background: var(--surf-2); border-radius: var(--radius-pill); padding: 6px 14px; }
+
+  /* ── 做什麼：三張功能面板 ──────────────────────────────── */
+  .lp-demos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: var(--section-head-gap); }
+  .lp-demo__k { width: 22px; height: 22px; border-radius: 50%; background: var(--g); color: #fff; display: grid; place-items: center; font-size: 0.74rem; font-weight: 800; flex: none; font-variant-numeric: tabular-nums; }
+  /* 三張的示意圖高度鎖住，標題才會落在同一條線上。
+     ⚠️ 數字要 ≥ 最高那張的自然高度（目前第 3 張「客戶貼標」223px），否則只有矮的被墊高、
+     高的照樣凸出來，三個標題就會差 45px。改內容後要回頭量。 */
+  .lp-stage { display: flex; flex-direction: column; gap: 8px; min-height: 228px; position: relative; }
+  .lp-qa { max-width: 90%; font-size: 0.82rem; padding: 9px 13px; border-radius: 14px; line-height: 1.6; }
+  .lp-qa--q { align-self: flex-start; background: var(--paper); border: 1px solid var(--hair); color: var(--ink); border-bottom-left-radius: 4px; }
+  .lp-qa--a { align-self: flex-start; background: var(--g); color: #fff; border-bottom-left-radius: 4px; font-weight: 500; }
+  .lp-stage__pill { margin-top: auto; align-self: flex-end; font-size: 0.72rem; font-weight: 800; color: var(--g-deep); background: var(--g-wash); border-radius: var(--radius-pill); padding: 5px 12px; }
+  .lp-stage__go { margin-top: auto; font-size: 0.76rem; font-weight: 800; color: var(--g-deep); }
+
+  .lp-seg, .lp-info {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: var(--paper); border: 1px solid var(--hair); border-radius: 8px;
+    padding: 8px 12px; font-size: 0.8rem;
+  }
+  .lp-seg span { color: var(--ink-2); }
+  .lp-seg b { font-weight: 800; color: var(--g-deep); font-variant-numeric: tabular-nums; }
+  .lp-info span { color: var(--ink-soft); }
+  .lp-info b { font-weight: 700; }
+  .lp-prof { display: flex; align-items: center; gap: 10px; padding-bottom: 4px; }
+  .lp-prof__a { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(140deg, var(--g), #37d97a); flex: none; }
+  .lp-prof b { display: block; font-size: 0.88rem; font-weight: 700; }
+  .lp-prof small { display: block; font-size: 0.74rem; color: var(--ink-soft); }
+
+  /* ── 比較表（為什麼不是「又一套 LINE 工具」）─────────────
+   * 左＝樸素的「舊做法」清單；右＝浮起、超出表格上下緣的勝方卡。
+   * ⚠️ `.lp-cmp__winner` 的寬度是照 grid 三欄比例硬算的（1.12 ÷ 2.76），改欄寬要一起改。
+   */
+  .lp-cmp { position: relative; display: grid; grid-template-columns: 0.64fr 1fr 1.12fr; margin: var(--section-head-gap) 0 0; border: 1px solid var(--hair); border-radius: var(--r-card); background: var(--paper); }
   .lp-cmp__row { display: contents; }
-  .lp-cmp__winner { position: absolute; z-index: 1; right: -1px; top: -20px; bottom: -20px; width: calc(1.12 / 2.76 * 100% + 2px); background: linear-gradient(158deg, #06c755 0%, #03a040 100%); border-radius: 24px; box-shadow: 0 30px 62px rgba(4, 150, 70, 0.36); pointer-events: none; }
+  .lp-cmp__winner {
+    position: absolute; z-index: 1; right: -1px; top: -20px; bottom: -20px;
+    width: calc(1.12 / 2.76 * 100% + 2px);
+    background: linear-gradient(158deg, #06c755 0%, #03a040 100%);
+    border-radius: 24px; box-shadow: 0 30px 62px rgba(4, 150, 70, 0.36); pointer-events: none;
+  }
   .lp-cmp__dim, .lp-cmp__old, .lp-cmp__new { display: flex; align-items: center; gap: 12px; padding: 19px 24px; font-size: 0.97rem; line-height: 1.4; min-height: 66px; }
   .lp-cmp__dim { grid-column: 1; font-weight: 700; color: var(--ink); background: var(--surf-2); font-size: 0.9rem; gap: 10px; padding-left: 20px; padding-right: 16px; }
-  .lp-cmp__old { grid-column: 2; color: var(--ink-soft); background: #fff; }
+  .lp-cmp__old { grid-column: 2; color: var(--ink-soft); background: var(--paper); }
   .lp-cmp__new { grid-column: 3; position: relative; z-index: 2; color: #fff; font-weight: 600; }
-  .lp-cmp__row:not(.lp-cmp__row--head) .lp-cmp__dim, .lp-cmp__row:not(.lp-cmp__row--head) .lp-cmp__old { border-top: 1px solid var(--line-soft); }
-  .lp-cmp__ic { flex: none; width: 26px; height: 26px; border-radius: 8px; background: #fff; border: 1px solid var(--hair); display: grid; place-items: center; font-size: 0.85rem; color: var(--g-deep); }
+  /* ⛔ 這條原本寫 var(--line-soft)，那個變數從來沒定義過 → 整條 border 宣告無效、
+     分隔線根本沒畫出來。用 --hair（真的存在的 token）。 */
+  .lp-cmp__row:not(.lp-cmp__row--head) .lp-cmp__dim,
+  .lp-cmp__row:not(.lp-cmp__row--head) .lp-cmp__old { border-top: 1px solid var(--hair); }
+  .lp-cmp__ic { flex: none; width: 26px; height: 26px; border-radius: 8px; background: var(--paper); border: 1px solid var(--hair); display: grid; place-items: center; font-size: 0.85rem; color: var(--g-deep); }
   .lp-cmp__row--head .lp-cmp__dim { border-top-left-radius: var(--r-card); }
   .lp-cmp__row:last-child .lp-cmp__dim { border-bottom-left-radius: var(--r-card); }
-  .lp-cmp__row--head .lp-cmp__dim, .lp-cmp__row--head .lp-cmp__old { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; color: var(--ink-soft); text-transform: uppercase; }
+  .lp-cmp__row--head .lp-cmp__dim, .lp-cmp__row--head .lp-cmp__old { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; color: var(--ink-soft); }
   .lp-cmp__row--head .lp-cmp__new { font-weight: 800; letter-spacing: 0.04em; }
   .lp-cmp__logo { --brand-logo-h: 23px; }
   .lp-cmp__tag { margin-left: auto; background: rgba(255, 255, 255, 0.22); color: #fff; font-size: 0.68rem; font-weight: 800; padding: 5px 12px; border-radius: var(--radius-pill); }
@@ -210,54 +309,50 @@
   .lp-cmp__x { background: rgba(23, 25, 28, 0.06); color: var(--ink-soft); }
   .lp-cmp__v { background: #fff; color: var(--g-deep); box-shadow: 0 3px 8px rgba(3, 120, 55, 0.3); }
 
-  /* ── Roadmap ───────────────────────────────────────────── */
-  .lp-roadmap { margin-top: 26px; border: 1px solid var(--g-line); border-radius: var(--r-xl); background: linear-gradient(180deg, var(--g-wash) 0%, transparent 55%); padding: clamp(26px, 4vw, 42px); }
-  .lp-roadmap__top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .lp-roadmap__badge { font-size: 0.74rem; font-weight: 800; letter-spacing: 0.04em; color: var(--g-deep); background: #fff; border: 1px solid var(--g-line); padding: 7px 14px; border-radius: var(--radius-pill); }
-  .lp-roadmap h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); font-weight: 800; letter-spacing: -0.01em; }
-  .lp-roadmap__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 28px; align-items: stretch; }
-  .lp-modes { display: flex; flex-direction: column; gap: 16px; }
-  .lp-mode { background: #fff; border: 1px solid var(--hair); border-radius: var(--r-card); padding: 22px 24px; box-shadow: var(--sh-soft); }
-  .lp-mode h4 { margin: 0 0 6px; font-size: 1.08rem; font-weight: 800; }
-  .lp-mode h4 span { color: var(--g-deep); }
-  .lp-mode p { margin: 0; color: var(--ink-soft); font-size: 0.93rem; }
-  .lp-roadmap__cta { margin-top: 22px; font-size: 0.96rem; color: var(--ink-2); }
-  .lp-roadmap__cta a { color: var(--g-deep); font-weight: 800; border-bottom: 2px solid var(--g-line); }
+  /* 直接放在 .lp-wrap 底下的面板（定價區那張成本卡）也要吃同一個節奏。
+     用 > 限定直接子層：.lp-two / .lp-demos 裡的面板由容器自己的 margin 管，別重複加。 */
+  .lp-section > .lp-wrap > .lp-panel { margin-top: var(--section-head-gap); }
 
-  /* assistant card (AI 建議店主) */
-  .lp-assist { background: #fff; border: 1px solid var(--hair); border-radius: 24px; overflow: hidden; box-shadow: var(--sh-card); display: flex; flex-direction: column; }
-  .lp-assist__hd { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--hair); }
-  .lp-assist__spark { width: 32px; height: 32px; border-radius: 10px; background: var(--g); color: #fff; display: grid; place-items: center; font-size: 1rem; }
-  .lp-assist__hd b { font-size: 0.98rem; }
-  .lp-assist__hd small { display: block; font-size: 0.74rem; color: var(--ink-soft); font-weight: 400; }
-  .lp-assist__body { padding: 24px 20px; display: flex; flex-direction: column; gap: 14px; flex: 1; justify-content: center; }
-  .lp-assist__msg { background: var(--surf-2); border-radius: 4px 16px 16px 16px; padding: 14px 16px; font-size: 0.95rem; color: var(--ink); }
-  .lp-assist__msg b { color: var(--g-deep); }
-  .lp-exec { align-self: flex-end; display: inline-flex; align-items: center; gap: 8px; background: var(--g); color: #fff; font-weight: 800; padding: 11px 22px; border-radius: var(--radius-pill); box-shadow: var(--sh-green); }
-  .lp-assist__done { align-self: flex-start; display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 0.86rem; }
-  .lp-assist__done .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g); }
+  /* ── 定價：先比「請人要多少錢」 ───────────────────────── */
+  .lp-sal { display: grid; grid-template-columns: 230px 1fr 160px; gap: 20px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--hair); }
+  .lp-sal:first-child { padding-top: 4px; }
+  .lp-sal:last-child { border-bottom: none; padding-bottom: 4px; }
+  .lp-sal__who { font-size: 1rem; font-weight: 800; }
+  .lp-sal__who small { display: block; font-size: 0.82rem; color: var(--ink-soft); font-weight: 400; margin-top: 3px; }
+  .lp-sal__bar { height: 16px; border-radius: var(--radius-pill); background: var(--surf-2); overflow: hidden; }
+  .lp-sal__bar i { display: block; height: 100%; width: var(--w); min-width: 8px; border-radius: var(--radius-pill); }
+  .lp-sal__bar i.is-hi { background: #d5ddd3; }
+  .lp-sal__bar i.is-lo { background: var(--g); }
+  .lp-sal__v { font-size: 1.3rem; font-weight: 800; text-align: right; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .lp-sal__v.is-hi { color: var(--ink-soft); }
+  .lp-sal__v.is-lo { color: var(--g-deep); }
 
-  /* ── Steps ─────────────────────────────────────────────── */
-  .lp-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 50px; }
-  .lp-step { position: relative; text-align: center; }
-  .lp-step__n { width: 52px; height: 52px; border-radius: 50%; background: var(--g); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; box-shadow: var(--sh-green); margin: 0 auto; position: relative; z-index: 1; }
-  .lp-step:not(:last-child)::after { content: ''; position: absolute; z-index: 0; top: 26px; left: 50%; right: calc(-50% - 24px); height: 2px; background: var(--g-line); }
-  .lp-step h3 { font-size: 1.12rem; font-weight: 800; margin: 20px 0 8px; }
-  .lp-step p { margin: 0; color: var(--ink-soft); font-size: 0.94rem; }
-
-  /* ── Pricing ───────────────────────────────────────────── */
-  .lp-price__intro { color: var(--ink-2); font-size: 1.04rem; max-width: 48ch; margin-top: 16px; }
+  /* ── Pricing（方案目錄 / 商品資訊 / FAQ）──────────────── */
+  /* 「方案」自成一個置中的群組：計費說明置中壓在兩張卡正上方，說明與卡片是同一個單位。
+     ⛔ 試過兩種都不行，別再改回去：
+        (1) 說明靠左、卡片置中 → 兩者對不齊，卡片像中間浮著一座孤島
+        (2) 說明擺左欄、卡片擺右欄並排 → 邊界是齊了，但左欄 78% 是空白（304/388px），更難看
+        只有兩張卡時，整組置中才是對的；群組本身窄於區塊其他元素是刻意的。 */
+  .lp-offer { margin-top: 52px; }
+  .lp-price__intro {
+    color: var(--ink-2); font-size: 1.04rem; line-height: 1.8;
+    max-width: 54ch; margin: 0 auto 30px; text-align: center;
+  }
   .lp-price__intro b { color: var(--ink); }
-  .lp-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 42px; }
-  /* 直接吃 shared/billing/plans.ts 的多方案：自動排版、緊湊卡片 */
-  /* 方案目錄卡：目前對外 5 張（免費／輕量／入門／成長／企業，見 plans.ts 的 landingHidden）。
-     可用寬度 = 1160 − 48 padding = 1112px；min 196px 時 5×196 + 4×16 gap = 1044 ≤ 1112 → 剛好一列。
-     ⚠️ 若日後對外方案變成 6 張，這個 min 要一起調小，否則會變成 5＋1 的孤兒卡。 */
-  .lp-plans--catalog { grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 16px; align-items: stretch; }
-  .lp-plans--catalog .lp-plan { padding: 26px 22px; }
-  .lp-plans--catalog .lp-plan__price { font-size: 1.7rem; }
-  .lp-plans--catalog .lp-plan__list { gap: 10px; padding-top: 16px; margin-bottom: 20px; }
-  .lp-plans--catalog .lp-plan__list li { font-size: 0.9rem; }
+  .lp-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  /* 試銷期只放 2 張（免費／399）。⛔別讓兩張卡拉滿 1112px——那樣每張 548px 寬、
+     裡面只有 4 行字，看起來像沒做完。給一個可讀上限再置中。 */
+  .lp-plans--featured { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; max-width: 720px; margin-inline: auto; }
+  .lp-plans--featured .lp-plan { padding: 30px 28px; }
+  .lp-plans--featured .lp-plan__price { font-size: 2rem; }
+  .lp-plans--featured .lp-plan__list { gap: 11px; padding-top: 18px; margin-bottom: 22px; }
+  .lp-plans--featured .lp-plan__list li { font-size: 0.92rem; }
+  /* 檯面下還有哪些方案：小字、置中，別搶走兩張卡的注意力 */
+  .lp-plans__more {
+    max-width: 720px; margin: 18px auto 0; text-align: center;
+    font-size: 0.88rem; color: var(--ink-soft); line-height: 1.8;
+  }
+  .lp-plans__more a { color: var(--g-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
   .lp-plan { position: relative; background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-xl); padding: 34px 32px; box-shadow: var(--sh-soft); display: flex; flex-direction: column; }
   .lp-plan--pro { border: 2px solid var(--g); box-shadow: var(--sh-card); }
   .lp-plan__ribbon { position: absolute; top: -13px; right: 28px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; background: var(--g); color: #fff; padding: 5px 14px; border-radius: var(--radius-pill); box-shadow: var(--sh-green); }
@@ -268,14 +363,23 @@
   .lp-plan__list { list-style: none; margin: 0 0 26px; padding: 20px 0 0; border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 13px; flex: 1; }
   .lp-plan__list li { display: flex; gap: 11px; font-size: 0.96rem; }
   .lp-plan__list .tick { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--g-wash); color: var(--g-deep); display: grid; place-items: center; font-size: 0.75rem; font-weight: 800; }
+  /* 沒有的項目：灰掉但仍佔一行——行數一致，兩張卡才不會一邊空一大塊 */
+  .lp-plan__list li.is-off { color: var(--ink-soft); }
+  .lp-plan__list li.is-off .tick { background: var(--surf-2); color: var(--ink-muted, #a7aca6); }
+
   /* 商品資訊（商品名稱／說明／售價／付款與發票／銷售者）：金流風控的核對清單。
      標籤欄寬固定、值左緣對齊，讓人（與審核）能逐項掃過去。 */
+  /* 商品資訊＝法遵揭露：風控要能一眼找到，但它不該比上面的方案卡還搶眼。
+     維持獨立灰底方便掃到，字級與行距往下收一級。 */
   .lp-product {
-    margin-top: 30px; background: var(--surf-2); border: 1px solid var(--hair);
-    border-radius: var(--r-card); padding: 26px 28px;
+    margin-top: 44px; background: var(--surf-2); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 24px 26px;
   }
-  .lp-product__h { margin: 0 0 16px; font-size: 1rem; font-weight: 800; color: var(--ink); }
-  .lp-product__list { margin: 0; display: grid; gap: 12px; }
+  .lp-product__h {
+    margin: 0 0 14px; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+  .lp-product__list { margin: 0; display: grid; gap: 10px; }
   .lp-product__row { display: grid; grid-template-columns: 6em 1fr; gap: 16px; align-items: baseline; }
   .lp-product__row dt { font-size: 0.86rem; color: var(--ink-soft); }
   .lp-product__row dd { margin: 0; font-size: 0.9rem; color: var(--ink-2); line-height: 1.75; }
@@ -286,9 +390,9 @@
      這裡要補回連結的樣子，不然政策條款看起來像純文字、沒人會點。 */
   .lp-price__fine a, .lp-q .a a { color: var(--g-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
-  /* ── FAQ ───────────────────────────────────────────────── */
-  .lp-faq { margin-top: 60px; }
-  .lp-faq__h { font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; }
+  /* ── FAQ（獨立區塊，不再掛在定價底下）────────────────────
+     背景維持白底：全頁只用細線分段，不要為了這一區多開一種底色。 */
+  .lp-faq { margin-top: var(--section-head-gap); }
   .lp-faq__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; }
   .lp-q { border-bottom: 1px solid var(--hair); }
   .lp-q summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 2px; font-weight: 700; font-size: 1rem; }
@@ -297,42 +401,35 @@
   .lp-q[open] .plus { transform: rotate(45deg); }
   .lp-q .a { padding: 0 2px 20px; color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
 
+  /* ── 註冊三步 ──────────────────────────────────────────── */
+  .lp-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: var(--section-head-gap); }
+  .lp-step { position: relative; text-align: center; }
+  .lp-step__n { width: 52px; height: 52px; border-radius: 50%; background: var(--g); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; box-shadow: var(--sh-green); margin: 0 auto; position: relative; z-index: 1; }
+  .lp-step:not(:last-child)::after { content: ''; position: absolute; z-index: 0; top: 26px; left: 50%; right: calc(-50% - 24px); height: 2px; background: var(--g-line); }
+  .lp-step h3 { font-size: 1.12rem; font-weight: 800; margin: 20px 0 8px; }
+  .lp-step p { margin: 0; color: var(--ink-soft); font-size: 0.94rem; }
+  .lp-signup__cta { margin-top: 44px; display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; }
+  .lp-signup__fine { font-size: 0.86rem; color: var(--ink-soft); }
+
   /* ── CTA band (green) ──────────────────────────────────── */
   .lp-cta { background: linear-gradient(135deg, #06c755 0%, #04a446 100%); color: #fff; position: relative; overflow: hidden; }
   .lp-cta__blob { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, 0.1); filter: blur(50px); }
   .lp-cta__blob--1 { width: 380px; height: 380px; top: -160px; right: -60px; }
   .lp-cta__blob--2 { width: 260px; height: 260px; bottom: -140px; left: 10%; }
-  .lp-cta__grid { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; gap: clamp(30px, 5vw, 64px); align-items: center; }
-  .lp-cta h2 { font-size: clamp(1.8rem, 3.6vw, 2.7rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.18; margin: 14px 0 0; text-wrap: balance; }
-  .lp-cta__eyebrow { display: inline-flex; background: rgba(255, 255, 255, 0.2); color: #fff; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.06em; padding: 6px 14px; border-radius: var(--radius-pill); }
-  .lp-cta__sub { color: rgba(255, 255, 255, 0.92); margin: 18px 0 0; max-width: 34ch; font-size: 1.05rem; }
-  .lp-rr { list-style: none; margin: 28px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .lp-rr li { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; font-weight: 500; }
-  .lp-rr .tick { width: 22px; height: 22px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); display: grid; place-items: center; font-size: 0.72rem; font-weight: 800; flex: none; }
-
-  /* form card */
-  .lp-form { background: #fff; border-radius: var(--r-xl); padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18); color: var(--ink); }
-  .lp-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .lp-field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
-  .lp-field label { font-size: 0.82rem; font-weight: 700; color: var(--ink-2); }
-  .lp-input {
-    font-family: inherit; font-size: 0.96rem; color: var(--ink); width: 100%;
-    background: var(--surf-2); border: 1.5px solid var(--hair); border-radius: 12px; padding: 13px 14px;
-    transition: border-color .15s ease, box-shadow .15s ease;
+  .lp-cta__in { position: relative; z-index: 1; text-align: center; }
+  .lp-cta h2 { font-size: clamp(1.9rem, 3.8vw, 2.9rem); font-weight: 800; letter-spacing: -0.025em; line-height: 1.22; margin: 0; text-wrap: balance; }
+  .lp-cta__sub { color: rgba(255, 255, 255, 0.92); margin: 18px auto 0; max-width: 40ch; font-size: 1.05rem; }
+  .lp-cta__actions { margin-top: 34px; display: flex; align-items: center; justify-content: center; gap: 22px; flex-wrap: wrap; }
+  .lp-cta__talk { color: #fff; font-weight: 600; font-size: 0.98rem; border-bottom: 2px solid rgba(255, 255, 255, 0.45); padding-bottom: 2px; }
+  .lp-cta__talk:hover { border-bottom-color: #fff; }
+  /* 四項保證：置中、不要撐滿整列，否則兩欄會離很遠像沒對齊 */
+  /* 置中單列而不是 2×2 格線：兩欄格線在 1160px 寬會把左右兩項推到很遠，看起來像沒對齊 */
+  .lp-rr {
+    list-style: none; padding: 0; margin: 40px 0 0;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 14px 30px;
   }
-  .lp-input::placeholder { color: #a7aca6; }
-  .lp-input:focus { outline: none; border-color: var(--g); box-shadow: 0 0 0 3px var(--g-wash); }
-  select.lp-input { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2371757b' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
-  .lp-form .lp-btn { margin-top: 6px; }
-  .lp-form .lp-btn[disabled] { opacity: 0.6; cursor: default; }
-  .lp-form__hint { text-align: center; margin-top: 14px; font-size: 0.8rem; color: var(--ink-soft); }
-  .lp-form__err { margin: 4px 0 0; font-size: 0.85rem; color: #d33; }
-  /* honeypot：把欄位藏起來（不用 display:none，部分機器人會略過 none 的欄位） */
-  .lp-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
-  .lp-form__ok { text-align: center; padding: 26px 8px; }
-  .lp-form__ok .big { width: 60px; height: 60px; border-radius: 50%; background: var(--g); color: #fff; display: grid; place-items: center; font-size: 1.7rem; font-weight: 800; margin: 0 auto 18px; box-shadow: var(--sh-green); }
-  .lp-form__ok h4 { margin: 0 0 8px; font-size: 1.3rem; font-weight: 800; }
-  .lp-form__ok p { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
+  .lp-rr li { display: flex; align-items: center; gap: 9px; font-size: 0.93rem; font-weight: 500; }
+  .lp-rr .tick { width: 22px; height: 22px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); display: grid; place-items: center; font-size: 0.72rem; font-weight: 800; flex: none; }
 
   /* ── Footer（components/site/SiteFooter.vue，門面與法務頁共用）───────────
    * 公司名稱／統一編號／客服電話／客服信箱／服務時間＋三份政策連結是信用卡收單的
@@ -362,27 +459,52 @@
     flex-wrap: wrap; padding: 18px 24px; font-size: 0.8rem; color: var(--ink-soft);
   }
 
-  /* ── Reveal（僅在 JS 掛上 .is-anim 後才隱藏，確保無 JS/SEO 可見）── */
+  /* ── 進場動畫 ──────────────────────────────────────────
+   * 一律「預設就是最終狀態」，只有 JS 掛上 .is-anim 之後才藏起來再演。
+   * 這樣沒有 JS、爬蟲、以及「減少動態效果」的使用者都直接看到完整內容。
+   */
   &.is-anim .lp-reveal { opacity: 0; transform: translateY(20px); }
   &.is-anim .lp-reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s ease; }
 
-  /* ── Hero chat 進場動畫 ─────────────────────────────────── */
-  .lp-chat__scroll .lp-row, .lp-chat__scroll .lp-chat__day { opacity: 0; animation: lpBubble .5s cubic-bezier(.2, .7, .3, 1) forwards; }
-  .lp-chat__scroll > :nth-child(1) { animation-delay: .2s; }
-  .lp-chat__scroll > :nth-child(2) { animation-delay: .5s; }
-  .lp-chat__scroll > :nth-child(3) { animation-delay: 1.1s; }
-  .lp-chat__scroll > :nth-child(4) { animation-delay: 1.7s; }
-  .lp-chat__scroll > :nth-child(5) { animation-delay: 2.2s; }
-  @keyframes lpBubble { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  /* Hero 名單逐列浮現 */
+  &.is-anim .lp-fr { opacity: 0; transform: translateY(6px); transition: opacity .45s ease, transform .45s ease; }
+  &.is-anim .lp-fr.is-show { opacity: 1; transform: none; }
 
-  .lp-float { animation: lpFloat 6s ease-in-out infinite; }
-  @keyframes lpFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+  /* 薪水長條：捲到才長出來 */
+  &.is-anim .lp-sal__bar i { width: 0; transition: width 1.2s cubic-bezier(.2, .7, .3, 1) .3s; }
+  &.is-anim .lp-reveal.in .lp-sal__bar i { width: var(--w); }
+
+  /* 設定／幕僚示意圖：等卡片捲進畫面才依序長出來（掛在 .in 上，不是 page load，
+     否則捲到時動畫早就播完了） */
+  &.is-anim {
+    .lp-d1, .lp-d2, .lp-d3, .lp-d4 { opacity: 0; transform: translateY(6px); }
+    .lp-reveal.in {
+      .lp-d1, .lp-d2, .lp-d3, .lp-d4 { animation: lpRise .5s ease forwards; }
+      .lp-d1 { animation-delay: .25s; }
+      .lp-d2 { animation-delay: .95s; }
+      .lp-d3 { animation-delay: 1.65s; }
+      .lp-d4 { animation-delay: 2.35s; }
+    }
+  }
+  @keyframes lpRise { to { opacity: 1; transform: none; } }
 
   /* ── Responsive ────────────────────────────────────────── */
+  /* 並排到 1100px 就收：方案卡那欄固定 700px，再窄下去左邊的計費說明只剩 228px，
+     一行擠不到十個字。收成上下之後兩欄都靠齊 wrap 的左右邊界，仍然不會有孤島。 */
+  @media (max-width: 1100px) {
+    .lp-offer { grid-template-columns: 1fr; gap: 28px; }
+  }
+  @media (max-width: 960px) {
+    .lp-two, .lp-demos, .lp-cards3 { grid-template-columns: 1fr 1fr; }
+  }
   @media (max-width: 900px) {
+    /* Hero 手機版文字在上：標題才是鉤子，名單卡是佐證 */
     .lp-hero__grid { grid-template-columns: 1fr; }
-    .lp-hero__visual { order: -1; }
-    .lp-cards3, .lp-pillars, .lp-steps, .lp-plans, .lp-roadmap__grid, .lp-faq__grid, .lp-cta__grid, .lp-form__row, .lp-rr { grid-template-columns: 1fr; }
+    .lp-hero__sub { max-width: none; }
+    .lp-hero__sub br { display: none; }
+    /* ⛔ .lp-plans 刻意不在這裡壓成 1fr：方案卡走 --catalog 的 auto-fit，
+       平板寬度本來就排得下 2～3 張，壓成單欄會變成 5 張超高的卡。 */
+    .lp-faq__grid, .lp-steps { grid-template-columns: 1fr; }
     .lp-step:not(:last-child)::after { display: none; }
     .lp-foot__in { grid-template-columns: 1fr 1fr; gap: 32px; padding: 40px 24px 32px; }
   }
@@ -392,14 +514,21 @@
     &.is-menu-open .lp-nav__links { display: flex; }
     .lp-nav__signin { display: none; }
     .lp-nav__burger { display: flex; }
-    /* 商標只留圖標，讓「預約 Demo」＋漢堡鈕在 320px 寬也放得下 */
+    /* 商標只留圖標，讓 CTA ＋漢堡鈕在 320px 寬也放得下 */
     .lp-brand__type { display: none; }
     .lp-brand__mark { display: block; }
     &.is-menu-open .lp-nav__burger span { background: transparent; }
     &.is-menu-open .lp-nav__burger span::before { top: 0; transform: rotate(45deg); }
     &.is-menu-open .lp-nav__burger span::after { top: 0; transform: rotate(-45deg); }
+    .lp-nav__right { gap: 10px; }
 
-    .lp-cmp { grid-template-columns: 1fr 1fr; margin: 24px 0; overflow: hidden; }
+    .lp-two, .lp-demos, .lp-cards3 { grid-template-columns: 1fr; }
+    .lp-plans--featured { grid-template-columns: 1fr; }
+
+    /* 比較表：三欄塞不進手機。改成「項目名獨佔一列，底下左舊右新兩欄對照」，
+       浮起的勝方卡在窄螢幕會蓋住內容，直接收掉、改用綠底標示右欄。 */
+    /* margin 沿用 --section-head-gap，別寫死：寫 24px 會讓這一區的標題比其他區更貼著內容 */
+    .lp-cmp { grid-template-columns: 1fr 1fr; margin: var(--section-head-gap) 0 0; overflow: hidden; }
     .lp-cmp__winner { display: none; }
     .lp-cmp__dim { grid-column: 1 / -1; min-height: 0; padding: 13px 16px 5px; font-size: 0.86rem; border-radius: 0; }
     .lp-cmp__row--head .lp-cmp__dim { display: none; }
@@ -407,15 +536,30 @@
     .lp-cmp__new { grid-column: 2; background: var(--g); }
     .lp-cmp__old, .lp-cmp__new { align-items: flex-start; font-size: 0.9rem; min-height: 0; padding: 14px 15px 16px; }
     .lp-cmp__x, .lp-cmp__v { margin-top: 1px; }
+    /* 「最省事」在 171px 寬的欄位裡放不下 logotype 旁邊，會被擠成直排三個字。
+       整片綠底本來就已經在標示哪邊是我們，這顆是裝飾，手機直接收掉。 */
+    .lp-cmp__tag { display: none; }
+
+    /* 三欄的成本列在窄螢幕會把數字擠到換行，改成上下堆疊 */
+    .lp-sal { grid-template-columns: 1fr; gap: 10px; padding: 18px 0; }
+    .lp-sal__v { text-align: left; }
+
+    /* 三欄的成本列在窄螢幕會把數字擠到換行，改成上下堆疊 */
+    .lp-sal { grid-template-columns: 1fr; gap: 10px; padding: 18px 0; }
+    .lp-sal__v { text-align: left; }
+
+    /* ⛔ 這裡曾經放「方案卡橫向捲動」：那是 5 張卡時代的解法（直排 2,052px＝2.4 個螢幕）。
+       檯面上收成 2 張之後，橫捲反而讓第二張被裁掉一半——直接直排即可，別再加回來。
+       單欄設定在 ≤900px 的區塊（grid-template-columns:1fr; max-width:420px）。 */
 
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .lp-chat__scroll .lp-row, .lp-chat__scroll .lp-chat__day { opacity: 1; animation: none; }
-    .lp-float { animation: none; }
-    &.is-anim .lp-reveal { opacity: 1; transform: none; }
+    &.is-anim .lp-reveal, &.is-anim .lp-fr { opacity: 1; transform: none; }
+    &.is-anim .lp-sal__bar i { width: var(--w); transition: none; }
+    &.is-anim .lp-d1, &.is-anim .lp-d2, &.is-anim .lp-d3, &.is-anim .lp-d4 { opacity: 1; transform: none; animation: none; }
     .lp-btn:hover, .lp-pcard:hover { transform: none; }
   }
 }

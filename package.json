@@ -11,6 +11,7 @@
     "test:unit": "vitest run",
     "typecheck": "nuxt typecheck",
     "build:icons": "node scripts/build-brand-icons.mjs",
+    "build:og": "node scripts/build-og-image.mjs",
     "set-super-admin": "node --env-file=.env --experimental-strip-types scripts/set-super-admin.ts"
   },
   "dependencies": {

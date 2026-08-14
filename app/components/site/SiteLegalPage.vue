@@ -9,7 +9,8 @@
         </NuxtLink>
         <div class="lp-nav__right">
           <NuxtLink to="/login" class="lp-nav__signin">登入</NuxtLink>
-          <a class="lp-btn lp-btn--primary" href="/#demo">預約 Demo</a>
+          <!-- 主要動線＝自助註冊（與首頁一致）；想先談的人走頁尾的客服電話／信箱 -->
+          <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login">免費註冊</NuxtLink>
         </div>
       </div>
     </nav>

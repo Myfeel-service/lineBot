@@ -97,8 +97,12 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; changed: [] }>()
 
-// 內部/測試方案不對客戶顯示（僅 super admin 指派）
-const plans = BILLING_PLAN_ORDER.map(id => BILLING_PLANS[id]).filter(p => !p.internal)
+// 內部/測試方案不對客戶顯示（僅 super admin 指派）。
+// ⚠️ 也要濾掉 landingHidden：那個旗標的意思是「這個售價**沒有向 PAYUNi 申報**」，
+//    而這張表不是型錄、是真的能按下去結帳的（見下面的 checkout），
+//    露出來等於讓客戶買得到一個未申報的價格。2026-08-14 補上——原本只濾 internal，
+//    專業版 4,990 一直從這裡漏出去。要恢復販售請先完成申報再拿掉 landingHidden。
+const plans = BILLING_PLAN_ORDER.map(id => BILLING_PLANS[id]).filter(p => !p.internal && !p.landingHidden)
 
 /** 比較表裡把「目前方案」那一列淡淡標色，一眼看到自己在哪。 */
 function rowClass({ row }: { row: BillingPlan }) {
