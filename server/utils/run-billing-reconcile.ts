@@ -6,12 +6,13 @@
  *            ② 再把「過期訂閱滾期/降級」「真的沒付且逾時的 pending 標逾期」落地
  *            ③ **每期自動續扣**（必須在 ② 之後——是 ② 的 roll 把到期的自動續訂標成
  *               past_due,續扣就是照這個狀態挑人;順序顛倒的話當天到期的人會晚一天才被扣）
- *            ④ 補開之前失敗的發票 ⑤ 續扣前提醒 + 額度通知（未設 SES 時內部略過,零成本）
+ *            ④ 補開之前失敗的發票＋撈回沒金鑰期間被跳過的發票（B-26,金鑰補上就自癒）
+ *            ⑤ 續扣前提醒 + 額度通知（未設 SES 時內部略過,零成本）
  */
 import { runPaymentReconcile } from './payment'
 import { reconcilePayuniPending } from './payuni-reconcile'
 import { chargeDueRecurring } from './payuni-recurring'
-import { invoiceKeysFromConfig, reissueFailedInvoices } from './invoice'
+import { invoiceKeysFromConfig, issueSkippedInvoices, reissueFailedInvoices } from './invoice'
 import { sendDueBillingEmails } from './billing-emails'
 
 export async function runBillingReconcile(
@@ -41,7 +42,9 @@ export async function runBillingReconcile(
   const recurring = opts?.charge
     ? await chargeDueRecurring(config, now)
     : null
-  const invoices = await reissueFailedInvoices(invoiceKeysFromConfig(config))
+  const invoiceKeys = invoiceKeysFromConfig(config)
+  const invoices = await reissueFailedInvoices(invoiceKeys)
+  const skippedInvoices = await issueSkippedInvoices(invoiceKeys)
   const emails = await sendDueBillingEmails(now)
-  return { ...result, payuni, recurring, invoices, emails }
+  return { ...result, payuni, recurring, invoices, skippedInvoices, emails }
 }

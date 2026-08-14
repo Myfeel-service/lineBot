@@ -15,7 +15,7 @@ import { isInvoiceConfigured, issueInvoice, type GuangmaoInvoiceKeys } from './g
 import { splitTax } from '~~/shared/billing/tax'
 import { getBillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { resolveInvoiceProfile, type InvoiceProfile, type OrganizationDoc, type WorkspaceDoc } from '~~/shared/types/organization'
-import type { InvoiceDoc } from '~~/shared/types/payment'
+import type { InvoiceDoc, PaymentOrderDoc } from '~~/shared/types/payment'
 
 export const INVOICES_COLLECTION = 'invoices'
 
@@ -175,4 +175,48 @@ export async function reissueFailedInvoices(
     if ((after.data() as InvoiceDoc)?.ok === true) issued++
   }
   return { retried: snap.size, issued }
+}
+
+/**
+ * 補開「當初沒設定金鑰而整張被跳過」的發票（B-26）。
+ *
+ * 沒金鑰時 issueInvoiceForOrder 只把訂單標 skipped、**不寫 invoices 文件**,
+ * 所以 reissueFailedInvoices（掃 invoices 裡 ok:false 的）永遠掃不到這批。
+ * 金鑰補上之後,這支從**訂單端**把「已付款卻整張沒開」的撈回來開——沒有它,
+ * 金鑰晚一步填的代價就是那批營收永久漏開發票(稅務問題),只能人工翻帳。
+ *
+ * 金額 0 的訂單（全額折抵那一期）本來就不開發票 → 維持 skipped 不動(見 B-21);
+ * 在記憶體過濾而非查詢條件,是避免 amount 範圍條件要再部署一組 composite index。
+ */
+export async function issueSkippedInvoices(
+  keys: GuangmaoInvoiceKeys | null,
+  db: Firestore = getDb(),
+  limit = 50,
+): Promise<{ retried: number; issued: number }> {
+  if (!keys) return { retried: 0, issued: 0 }
+
+  // 兩個等值條件用 Firestore 內建單欄位索引合併即可,不需新 composite index
+  const snap = await db.collection(PAYMENT_ORDERS_COLLECTION)
+    .where('invoiceStatus', '==', 'skipped')
+    .where('status', '==', 'paid')
+    .limit(limit)
+    .get()
+
+  let retried = 0
+  let issued = 0
+  for (const doc of snap.docs) {
+    const order = doc.data() as PaymentOrderDoc
+    if (!order.amount || order.amount <= 0) continue
+    retried++
+    // 開失敗會寫 invoices ok:false + 訂單標 failed → 之後由 reissueFailedInvoices 接手重試
+    await issueInvoiceForOrder({
+      merchantOrderNo: order.merchantOrderNo,
+      workspaceId: order.workspaceId,
+      planId: order.planId,
+      totalAmt: order.amount,
+    }, keys, db)
+    const after = await db.collection(INVOICES_COLLECTION).doc(order.merchantOrderNo).get()
+    if (after.exists && (after.data() as InvoiceDoc)?.ok === true) issued++
+  }
+  return { retried, issued }
 }
