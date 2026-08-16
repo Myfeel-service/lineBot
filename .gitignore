@@ -21,11 +21,9 @@ logs
 .fleet
 .idea
 
-# Local env files
+# Local env files —— 這些檔案裡有 Firebase 私鑰、金流金鑰、Gemini／光貿 App Key，
+# 一旦進版控就等於外洩。所以「點號」與「底線」兩種寫法都要擋，不要逐個檔名列。
 .env
 .env.*
+.env_*
 !.env.example
-# Explicit local variants (already covered by .env.*; keep for clarity)
-.env_myfeel
-.env_splash
-.env_main
