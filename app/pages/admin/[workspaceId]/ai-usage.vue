@@ -62,7 +62,9 @@
             class="usage-quota-alert"
           >
             <div class="quota-alert-body">
-              <span>AI 自動回覆已暫停、改由真人接手。升級方案或加購額度即可恢復自動回覆。</span>
+              <!-- ⛔ 別寫「加購額度即可恢復」：系統沒有加購入口，超量一律轉真人、不會自動收費。
+                   加購要與我們聯繫（terms「經你同意後才會開通與收費」），文案要跟條款同一口徑（B-41）。 -->
+              <span>AI 自動回覆已暫停、改由真人接手。升級方案即可恢復自動回覆；也可以與我們聯繫加購額度。</span>
               <el-button size="small" type="primary" @click="upgradeDialogOpen = true">升級方案</el-button>
             </div>
           </el-alert>
@@ -339,7 +341,7 @@
                     <el-icon class="usage-info"><InfoFilled /></el-icon>
                   </el-tooltip>
                   <template v-if="quotaRemaining !== null">（剩 {{ formatNumber(quotaRemaining) }} 則）</template>
-                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則</template>
+                  <template v-if="planQuota.overagePerReply">・超量加購 NT${{ planQuota.overagePerReply }}/則（與我們聯繫開通，不會自動加收）</template>
                 </p>
                 <!-- 雙時間軸提醒只有「有上限」需要：額度按續約日重置，跟上方報表的月份不是同一個區間。
                      無上限的用量已改用同一個月份（下方分支），沒有第二條時間軸要解釋 -->
