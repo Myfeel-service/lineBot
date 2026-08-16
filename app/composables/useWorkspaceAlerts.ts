@@ -291,8 +291,10 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'invoiceFailed',
     icon: Tickets,
-    severity: 'warning',
-    impact: '款項已收到，但發票沒開成功，通常是統編或載具格式有問題，需要補開。',
+    // 對客戶的口徑是「開立中」不是「失敗」（2026-08-16 拍板）：系統每日自動補開、客戶無事可做,
+    // 驚動他只會製造「系統壞了」的觀感。⛔真實狀態不動——超管金流總覽有紅色「發票未開成」計數。
+    severity: 'suggestion',
+    impact: '款項已收到，電子發票正由系統自動開立，完成後會顯示在付款紀錄並寄送通知。若需要我們處理（例如統編設定），會主動聯繫你。',
     cta: '去看付款紀錄',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,

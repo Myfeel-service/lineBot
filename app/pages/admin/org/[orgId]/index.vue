@@ -255,15 +255,16 @@
               </div>
             </div>
             <div class="card-section-stack">
-              <!-- 發票開立失敗要看得到（稅務問題）。組織管理者跨帳號看帳,更需要一眼發現哪筆漏開。 -->
+              <!-- 對客戶（組織管理員）的口徑是「開立中」不是「失敗」——系統每日自動補開,
+                   客戶無事可做;真實狀態（failed）不動,超管金流總覽照樣紅（2026-08-16 拍板） -->
               <el-alert
                 v-if="invoiceEnabled && hasFailedInvoice"
-                type="warning"
+                type="info"
                 :closable="false"
                 show-icon
-                title="有發票開立失敗"
+                title="電子發票開立中"
               >
-                <span class="text-xs">有付款成功、但電子發票尚未開立成功的紀錄（見下方「發票號碼」欄）。系統會自動重試;若持續失敗,請聯繫我們協助處理。</span>
+                <span class="text-xs">已付款訂單的電子發票由系統自動開立，完成後會在下方付款紀錄顯示號碼並寄送通知。若有設定上的問題（例如統編），我們會主動與你聯繫。</span>
               </el-alert>
               <!-- 讀不到就要說讀不到。渲染成一張「尚無付款紀錄」的空表，
                    等於告訴客戶他從來沒付過錢——那比誠實報錯糟糕得多。 -->
@@ -290,7 +291,13 @@
                   <template #default="{ row }">
                     <span v-if="row.invoiceStatus === 'voided'" class="text-xs text-muted">已作廢</span>
                     <span v-else-if="row.invoiceNumber" class="billing-order-no">{{ row.invoiceNumber }}</span>
-                    <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
+                    <el-tooltip
+                      v-else-if="row.invoiceStatus === 'failed'"
+                      content="發票由系統自動開立，完成後這裡會顯示號碼並寄送通知"
+                      placement="top"
+                    >
+                      <el-tag type="info" size="small">開立中</el-tag>
+                    </el-tooltip>
                     <span v-else class="text-xs text-muted">—</span>
                   </template>
                 </el-table-column>

@@ -34,6 +34,12 @@
               <div class="sa-pay-stat__label">待付款</div>
               <div class="sa-pay-stat__value">{{ summary.pendingCount }} 筆</div>
             </div>
+            <!-- 客戶端把發票 failed 顯示成「開立中」——真實狀態只剩這裡看得到,>0 必須紅 -->
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--alert': summary.invoiceFailedCount > 0 }">
+              <div class="sa-pay-stat__label">發票未開成</div>
+              <div class="sa-pay-stat__value">{{ summary.invoiceFailedCount }} 筆</div>
+              <div class="sa-pay-stat__hint">客戶端顯示「開立中」，每日自動補開</div>
+            </div>
           </div>
         </div>
 
@@ -353,11 +359,11 @@ interface PayOrder {
   invoiceAllowanceTotal: number | null
   manualRefundTotal: number | null
 }
-interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; monthFailedCount: number; pendingCount: number; count: number }
+interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; monthFailedCount: number; pendingCount: number; invoiceFailedCount: number; count: number }
 
 const loading = ref(false)
 const orders = ref<PayOrder[]>([])
-const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, monthFailedCount: 0, pendingCount: 0, count: 0 })
+const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, monthFailedCount: 0, pendingCount: 0, invoiceFailedCount: 0, count: 0 })
 
 // ── 作廢發票 ──────────────────────────────────────────────
 // 作廢有時效（B2C 2 日 / B2B 7 日、當期未申報）,逾期只能改折讓——這裡先提示,實際時效由光貲端認定。

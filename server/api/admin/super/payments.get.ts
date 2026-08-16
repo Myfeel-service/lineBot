@@ -65,5 +65,14 @@ export default defineEventHandler(async (event) => {
   }
   const pendingCount = orders.filter(o => o.status === 'pending').length
 
-  return { orders, summary: { thisMonth, monthRevenue, monthPaidCount, monthFailedCount, pendingCount, count: orders.length } }
+  // 發票未開成的真實數量:用 count() 掃**整個** collection,不受最近 200 筆限制——
+  // 客戶端把 failed 顯示成「開立中」(2026-08-16 拍板),所以超管這裡必須看得到真實狀態,
+  // 否則就變成雙面都綠的假綠燈,沒有人知道發票在積壓。
+  const failedAgg = await db.collection(PAYMENT_ORDERS_COLLECTION)
+    .where('invoiceStatus', '==', 'failed')
+    .count()
+    .get()
+  const invoiceFailedCount = failedAgg.data().count
+
+  return { orders, summary: { thisMonth, monthRevenue, monthPaidCount, monthFailedCount, pendingCount, invoiceFailedCount, count: orders.length } }
 })

@@ -87,7 +87,9 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   quotaExceeded: '本期回覆則數用完了',
   quotaRunningOut: '回覆則數快用完了',
   paymentPastDue: '自動扣款沒有成功',
-  invoiceFailed: '有發票開立失敗',
+  // 對客戶顯示「開立中」不是「失敗」（2026-08-16 拍板;系統每日自動補開、客戶無事可做）;
+  // 真實 failed 狀態超管在金流總覽看
+  invoiceFailed: '有發票還在開立中',
   handoffNotifyMissing: '沒有人會收到轉真人通知',
   humanBacklog: '有客人在等真人回覆',
   firstReplyBacklog: '有客人的訊息一直沒人回',

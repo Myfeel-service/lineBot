@@ -36,15 +36,18 @@
           發票開立失敗要看得到。開票在收款後於背景進行、失敗會自動重試（見 reissueFailedInvoices），
           但若持續失敗，這是稅務問題，管理者必須知道——不能只埋在付款紀錄表的一欄裡。
         -->
+        <!-- 對客戶的口徑是「開立中」不是「失敗」（2026-08-16 老闆拍板）：系統每日自動補開、
+             客戶不需要做任何事，「失敗」只會讓人以為系統壞了。⛔真實狀態（failed）照存不動，
+             超管金流總覽照樣顯示紅色「開立失敗」＋未開成計數——只軟化對外措辭，不軟化內部事實。 -->
         <el-alert
           v-if="invoiceEnabled && hasFailedInvoice"
-          type="warning"
+          type="info"
           show-icon
           :closable="false"
-          title="有發票開立失敗"
+          title="電子發票開立中"
         >
           <span class="text-xs">
-            有付款成功、但電子發票尚未開立成功的紀錄（見下方付款紀錄的「發票號碼」欄）。系統會自動重試；若持續失敗，請聯繫我們協助處理。
+            已付款訂單的電子發票由系統自動開立，完成後會在下方付款紀錄顯示號碼並寄送通知。若有設定上的問題（例如統編），我們會主動與你聯繫。
           </span>
         </el-alert>
 
@@ -218,7 +221,14 @@
                     <el-tag v-else-if="row.invoiceAllowanceTotal" type="warning" size="small">已折讓</el-tag>
                   </template>
                   <el-tag v-else-if="row.invoiceStatus === 'voided'" type="info" size="small">已作廢</el-tag>
-                  <el-tag v-else-if="row.invoiceStatus === 'failed'" type="danger" size="small">開立失敗</el-tag>
+                  <!-- 對客戶顯示「開立中」不是「失敗」——系統每日自動補開,客戶無事可做;真實狀態超管看 -->
+                  <el-tooltip
+                    v-else-if="row.invoiceStatus === 'failed'"
+                    content="發票由系統自動開立，完成後這裡會顯示號碼並寄送通知"
+                    placement="top"
+                  >
+                    <el-tag type="info" size="small">開立中</el-tag>
+                  </el-tooltip>
                   <el-tooltip
                     v-else-if="row.invoiceStatus === 'skipped'"
                     content="這筆未開立發票（金額為 0，或此帳號未啟用電子發票）"
