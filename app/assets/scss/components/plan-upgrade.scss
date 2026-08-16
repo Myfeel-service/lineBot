@@ -83,7 +83,7 @@
   }
 }
 
-/* 結帳前的發票提示：付款成功當下就照這行開票（零緩衝），所以要在付款前看得到。
+/* 結帳前的發票區：付款成功當下就照這裡開票（零緩衝），所以要在付款前看得到。
    字級同條款、發票別加粗——它是可行動的資訊，不是註腳。 */
 .plan-upgrade-invoice {
   margin: 0;
@@ -91,6 +91,10 @@
   font-size: 0.86rem;
   line-height: 1.6;
   color: var(--text-secondary);
+
+  p {
+    margin: 0;
+  }
 
   strong {
     color: var(--text-primary);
@@ -103,6 +107,37 @@
     text-decoration: underline;
     text-underline-offset: 2px;
     white-space: nowrap;
+  }
+}
+
+/* 沒填過發票資訊時的就地二選一（一般電商慣例）：「這次付款會開出：」＋兩顆 radio 同一行，
+   窄螢幕換行不擠壓；選公司統編才展開下面三格 */
+.plan-upgrade-invoice-kind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+
+  .el-radio {
+    margin-right: 0;
+    height: auto;
+  }
+
+  .el-radio__label {
+    font-size: 0.86rem;
+  }
+}
+
+/* 公司統編的三格（統編／抬頭／Email）：一欄直排、限寬——這是結帳的插曲，
+   不要長得像一整頁設定表單 */
+.plan-upgrade-invoice-fields {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  max-width: 400px;
+
+  p {
+    margin: 0;
   }
 }
 
