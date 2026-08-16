@@ -43,6 +43,9 @@ export default defineEventHandler(async (event) => {
     paidAt: toMs(o.paidAt),
     invoiceNumber: o.invoiceNumber ?? null,
     invoiceStatus: o.invoiceStatus ?? null,
+    // 列表直接標「已折讓／已退款」,不用逐筆 join invoices/billingRefunds
+    invoiceAllowanceTotal: o.invoiceAllowanceTotal ?? null,
+    manualRefundTotal: o.manualRefundTotal ?? null,
   }))
 
   const thisMonth = taipeiYyyyMm(new Date())

@@ -101,6 +101,13 @@ export interface PaymentOrderDoc {
    * 這裡只留總額,讓付款紀錄列表不用逐筆 join invoices 就能標「已折讓」。
    */
   invoiceAllowanceTotal?: number | null
+  /**
+   * 人工退款的累計金額（含稅）。**純紀錄,不動金流**——實際退款是人在 PAYUNi 商店
+   * 後台操作的,系統原本完全不留痕（發票作廢有紀錄、錢退了沒有,對帳會斷,2026-08-16
+   * 稽核 B-44③）。明細在 billingRefunds collection;之後若做 trade/close 自動退款,
+   * 也沿用同一組欄位落帳。
+   */
+  manualRefundTotal?: number | null
 }
 
 // ═══════════════════════════════════════════════════════════════════
