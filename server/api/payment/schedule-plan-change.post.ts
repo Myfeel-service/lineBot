@@ -2,7 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
-import { BILLING_PLAN_ORDER, getBillingPlan, isSelfServePaidPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { BILLING_PLAN_ORDER, getBillingPlan, isCheckoutablePlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { isDowngrade } from '~~/shared/billing/recurring'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 
@@ -45,7 +45,9 @@ export default defineEventHandler(async (event) => {
 
   let scheduled: BillingPlanId | null = null
   if (target !== null && target !== sub.planId) {
-    if (!isSelfServePaidPlan(target) && target !== 'free') {
+    // isCheckoutablePlan 而非 isSelfServePaidPlan:landingHidden(4,990)售價未向 PAYUNi
+    // 申報,預約成 pendingPlanId 會在期末用未申報價格續扣(B-39 同一道防線)。
+    if (!isCheckoutablePlan(target) && target !== 'free') {
       throw createError({ statusCode: 400, statusMessage: '此方案不支援自助變更,請聯繫業務' })
     }
     // 這支只做降級。升級要立即生效（客戶要的是現在就有額度）→ 走 create-order。

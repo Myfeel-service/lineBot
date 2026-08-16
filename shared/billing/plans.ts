@@ -337,6 +337,19 @@ export function isSelfServePaidPlan(id: BillingPlanId): boolean {
   return !!p && !p.internal && !p.custom && p.priceMonthly != null && p.priceMonthly > 0
 }
 
+/**
+ * 是否開放**線上結帳／排程改期**的方案 = isSelfServePaidPlan 再排除 `landingHidden`。
+ *
+ * ⚠️ 兩者不能混用：landingHidden（pro 4,990）是「售價未向 PAYUNi 申報,不可收費」,
+ * 但已在此方案上的訂閱到期仍要正常降級、續扣邏輯也照舊——所以到期／降級判斷用
+ * isSelfServePaidPlan,**收錢入口**（建單、預約期末變更）用這支。
+ * 2026-08-16 稽核（B-39）抓到 UI 有濾但 API 沒擋:繞過畫面直接打建單端點仍能刷 4,990。
+ */
+export function isCheckoutablePlan(id: BillingPlanId): boolean {
+  const p = BILLING_PLANS[id]
+  return isSelfServePaidPlan(id) && !p.landingHidden
+}
+
 // dev 自我檢查：BILLING_PLAN_ORDER 必須剛好涵蓋 BILLING_PLANS 的所有 key。
 if (import.meta.dev && BILLING_PLAN_ORDER.length !== Object.keys(BILLING_PLANS).length) {
   console.warn('[billing] BILLING_PLAN_ORDER 與 BILLING_PLANS 的方案數不一致，請同步更新。')

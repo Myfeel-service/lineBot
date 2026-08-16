@@ -7,6 +7,8 @@ import {
   OVERAGE_PER_REPLY_TWD,
   effectiveAnsweredQuota,
   getBillingPlan,
+  isCheckoutablePlan,
+  isSelfServePaidPlan,
 } from './plans'
 
 describe('BILLING_PLANS catalog', () => {
@@ -93,5 +95,27 @@ describe('effectiveAnsweredQuota', () => {
 
   it('企業無 override 時不設額度上限（null）', () => {
     expect(effectiveAnsweredQuota(BILLING_PLANS.enterprise)).toBeNull()
+  })
+})
+
+describe('isCheckoutablePlan（B-39：未申報售價不可收費）', () => {
+  it('landingHidden 的方案不可線上結帳，但仍是自助付費方案（到期照樣降級）', () => {
+    for (const id of BILLING_PLAN_ORDER) {
+      const p = BILLING_PLANS[id]
+      if (p.landingHidden) {
+        expect(isSelfServePaidPlan(id)).toBe(true)
+        expect(isCheckoutablePlan(id)).toBe(false)
+      }
+    }
+    // 目錄不變式：至少 pro 是這種情況（4,990 未向 PAYUNi 申報）
+    expect(isCheckoutablePlan('pro')).toBe(false)
+  })
+
+  it('一般付費方案照常可結帳；免費／客製／內部不可', () => {
+    expect(isCheckoutablePlan('lite')).toBe(true)
+    expect(isCheckoutablePlan('starter')).toBe(true)
+    expect(isCheckoutablePlan('growth')).toBe(true)
+    expect(isCheckoutablePlan('free')).toBe(false)
+    expect(isCheckoutablePlan('enterprise')).toBe(false)
   })
 })

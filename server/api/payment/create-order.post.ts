@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { BILLING_PLAN_ORDER, getBillingPlan } from '~~/shared/billing/plans'
+import { BILLING_PLAN_ORDER, getBillingPlan, isCheckoutablePlan } from '~~/shared/billing/plans'
 import { checkoutProductName } from '~~/shared/billing/product-name'
 import type { BillingPlanId } from '~~/shared/billing/plans'
 import { PAYUNI_ENDPOINTS, PAYUNI_UPP_TOKEN_VERSION, PAYUNI_UPP_VERSION, buildTokenBindFields, buildUppForm, resolvePayuniEnv } from '~~/server/utils/payuni'
@@ -28,6 +28,11 @@ export default defineEventHandler(async (event) => {
   const plan = getBillingPlan(planId)
   if (plan.custom || plan.priceMonthly == null || plan.priceMonthly <= 0) {
     throw createError({ statusCode: 400, statusMessage: '此方案不支援線上結帳,請聯繫業務' })
+  }
+  // landingHidden = 售價未向 PAYUNi 申報,不可收費(金流合規)。官網與升級對話框都濾掉了,
+  // 這裡是最後一道:繞過 UI 直接打 API 也不能用未申報的價格請款(B-39)。
+  if (!isCheckoutablePlan(planId)) {
+    throw createError({ statusCode: 400, statusMessage: '此方案未開放線上結帳,請聯繫業務' })
   }
   // 「不適用七日猶豫期」的法律前提是**付款前**取得同意（見 shared/legal.ts）——
   // 前端沒帶同意就不建單、不導去金流,免得事後拿不出同意紀錄。
@@ -98,6 +103,11 @@ export default defineEventHandler(async (event) => {
     }),
     NotifyURL: `${base}/payuni/notify`,
     ReturnURL: `${base}/payuni/return?ws=${encodeURIComponent(workspaceId)}&no=${merchantOrderNo}`,
+    // 「返回商店」按鈕(B-40):沒有它,客人在 PAYUNi 付款頁想放棄時沒有回站的路。
+    // 官方文件 UPP Ver2.0:付款頁/結果頁/取號頁都會顯示此按鈕。刻意不帶 no——
+    // 放棄的單還是 pending,帶了 no 會讓帳單頁顯示「付款處理中」的橫幅,反而誤導;
+    // 不帶就乾淨落在帳單頁,付款紀錄裡本來就有「繼續付款/取消訂單」可接手。
+    BackURL: `${base}/payuni/return?ws=${encodeURIComponent(workspaceId)}`,
   }
   const email = String(token.email || '').trim()
   if (email) encryptInfo.UsrMail = email
