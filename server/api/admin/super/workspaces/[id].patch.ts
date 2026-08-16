@@ -1,46 +1,8 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
-import { BILLING_PLAN_ORDER } from '~~/shared/billing/plans'
-import type { BillingPlanId, SubscriptionStatus, WorkspaceSubscription } from '~~/shared/billing/plans'
-import { newSubscription } from '~~/shared/billing/period'
-import { dayOfDate, normalizeAnchorDay, taipeiDate } from '~~/shared/time'
-
-const VALID_STATUS: SubscriptionStatus[] = ['active', 'trialing', 'past_due', 'canceled']
-
-/**
- * 驗證並正規化 super admin 傳入的訂閱；null = 刪除欄位。
- *
- * 週期用錨定日制：未帶起始日 → 今天;未帶到期日 → 由錨定日自動算出（起日 + 一期）。
- * 錨定日未指定則取起始日當天,之後每個月同一天續期。
- */
-function normalizeSubscription(raw: unknown): WorkspaceSubscription | FieldValue {
-  if (raw == null) return FieldValue.delete()
-  const r = raw as Record<string, unknown>
-  const planId = r.planId as BillingPlanId
-  if (!BILLING_PLAN_ORDER.includes(planId)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid planId' })
-  }
-  const status = (r.status ?? 'active') as SubscriptionStatus
-  if (!VALID_STATUS.includes(status)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid subscription status' })
-  }
-
-  const start = r.currentPeriodStart ? String(r.currentPeriodStart).slice(0, 10) : taipeiDate()
-  const anchorDay = r.anchorDay ? normalizeAnchorDay(Number(r.anchorDay)) : dayOfDate(start)
-
-  const sub = newSubscription(planId, start, { anchorDay, status })
-  // 明確指定到期日（合約特例）時尊重之；否則用錨定日自動算出的那一期
-  if (r.currentPeriodEnd) sub.currentPeriodEnd = String(r.currentPeriodEnd).slice(0, 10)
-
-  const override = Number(r.quotaOverride)
-  if (r.quotaOverride != null && r.quotaOverride !== '' && Number.isFinite(override) && override >= 0) {
-    sub.quotaOverride = Math.floor(override)
-  }
-  const note = String(r.note ?? '').trim()
-  if (note) sub.note = note
-  return sub
-}
+import type { WorkspaceSubscription } from '~~/shared/billing/plans'
+import { applySuperSubscriptionEdit, SubscriptionEditError } from '~~/shared/billing/subscription-edit'
 
 /**
  * PATCH /api/admin/super/workspaces/:id
@@ -49,6 +11,10 @@ function normalizeSubscription(raw: unknown): WorkspaceSubscription | FieldValue
  * subscription：{ planId, status?, currentPeriodStart?/End?, anchorDay?, quotaOverride?, note? }
  *   - null → 刪掉訂閱欄位。該帳號會被**當成免費層（200 則）並照常攔截**——
  *     沒有「未開通就不攔截」這種後門了（見 server/utils/billing.ts）。
+ *   - 非 null → **只覆寫表單欄位**，綁卡／折抵／續扣狀態原樣保留
+ *     （applySuperSubscriptionEdit；2026-08-16 稽核前是整包取代，超管改個備註
+ *     就會把客戶的 payuniCardToken／creditBalance 靜默清掉）。
+ *     因此寫入走 transaction：讀舊值→合併→寫回，避免與續扣排程互踩。
  *   - 寫入後清 billing 快取，則數額度攔截即時生效
  */
 export default defineEventHandler(async (event) => {
@@ -67,16 +33,26 @@ export default defineEventHandler(async (event) => {
   if ('organizationId' in body) {
     updates.organizationId = body.organizationId ?? null
   }
-  if ('subscription' in body) {
-    updates.subscription = normalizeSubscription(body.subscription)
-  }
 
   const db = getDb()
   const ref = db.collection('workspaces').doc(id)
-  const snap = await ref.get()
-  if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此官方帳號' })
-
-  await ref.update(updates)
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此官方帳號' })
+      if ('subscription' in body) {
+        updates.subscription = body.subscription == null
+          ? FieldValue.delete()
+          : applySuperSubscriptionEdit(snap.data()?.subscription as WorkspaceSubscription | undefined, body.subscription)
+      }
+      tx.update(ref, updates)
+    })
+  } catch (e) {
+    if (e instanceof SubscriptionEditError) {
+      throw createError({ statusCode: 400, statusMessage: e.message })
+    }
+    throw e
+  }
   // 訂閱可能變更 → 清 billing 快取，讓則數額度攔截立即生效
   invalidateWorkspaceSubscriptionCache(id)
 
