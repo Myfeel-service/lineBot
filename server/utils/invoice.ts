@@ -204,8 +204,15 @@ export async function reissueFailedInvoices(
     const inv = doc.data() as InvoiceDoc
     const orderSnap = await db.collection(PAYMENT_ORDERS_COLLECTION).doc(inv.merchantOrderNo).get()
     if (!orderSnap.exists) continue
-    const order = orderSnap.data() as { planId: BillingPlanId; status: string }
+    const order = orderSnap.data() as { planId: BillingPlanId; status: string; manualRefundTotal?: number | null }
     if (order.status !== 'paid') continue // 沒收到錢的不開發票
+    // 人工退款過的不自動補開:訂單 status 仍是 paid,但錢（或一部分）已經退了,
+    // 自動開全額發票＝幫退掉的錢開發票,開完又得作廢。這種單的稅務處理要人判斷
+    // （全退→不開;部分退→開淨額或開全額再折讓）,留給人工。log 留痕不靜默略過。
+    if ((order.manualRefundTotal ?? 0) > 0) {
+      console.log('[invoice] 補開略過（已有人工退款,留人工處理）:', inv.merchantOrderNo)
+      continue
+    }
 
     await issueInvoiceForOrder({
       merchantOrderNo: inv.merchantOrderNo,
@@ -250,6 +257,11 @@ export async function issueSkippedInvoices(
   for (const doc of snap.docs) {
     const order = doc.data() as PaymentOrderDoc
     if (!order.amount || order.amount <= 0) continue
+    // 同 reissueFailedInvoices:人工退款過的不自動補開,留人工判斷（見上方註解）
+    if ((order.manualRefundTotal ?? 0) > 0) {
+      console.log('[invoice] 補開略過（已有人工退款,留人工處理）:', order.merchantOrderNo)
+      continue
+    }
     retried++
     // 開失敗會寫 invoices ok:false + 訂單標 failed → 之後由 reissueFailedInvoices 接手重試
     await issueInvoiceForOrder({

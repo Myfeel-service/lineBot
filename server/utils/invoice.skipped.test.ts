@@ -94,4 +94,14 @@ describe('issueSkippedInvoices — 沒金鑰期間被跳過的發票,金鑰補�
     expect(r).toEqual({ retried: 0, issued: 0 })
     expect(mockIssue).not.toHaveBeenCalled()
   })
+
+  it('人工退款過的訂單不自動補開(自動開全額=幫退掉的錢開發票,留人工判斷)', async () => {
+    const { db } = fakeDb({
+      NP4: { ...paidOrder('NP4', 399), manualRefundTotal: 399 },
+      NP5: { ...paidOrder('NP5', 399), manualRefundTotal: 100 }, // 部分退款也留人工
+    })
+    const r = await issueSkippedInvoices(KEYS, db)
+    expect(r).toEqual({ retried: 0, issued: 0 })
+    expect(mockIssue).not.toHaveBeenCalled()
+  })
 })
