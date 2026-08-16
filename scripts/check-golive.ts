@@ -50,7 +50,14 @@ async function checkAmego() {
   const j = await res.json() as { code?: number, msg?: string }
 
   if (j.code === 14) {
-    return report(FAIL, `光貿發票（統編 ${ubn}）`, `被 IP 擋住 → 每一張發票都開不出來，而且收款照常成功、畫面不會報錯。\n   光貿原文：${j.msg}\n   解法：請光貿客服把「允許 IP」設成 0.0.0.0（不限制）——那格商家自己改不了`)
+    // 光貿的訊息會帶「它看到的來源 IP」——分兩種情況給不同解法，別叫人做錯的事：
+    //   · 已經走中繼站（訊息裡是中繼站的 IP）→ 只要請客服把這一個 IP 加進名單
+    //   · 還在直連（是主機當下隨機的 IP）→ 加了也沒用，那個號碼每天在換
+    const blockedIp = /(\d{1,3}(?:\.\d{1,3}){3})/.exec(String(j.msg ?? ''))?.[1] ?? ''
+    const viaRelay = Boolean(blockedIp) && apiUrl.includes(new URL(apiUrl).hostname) && !apiUrl.includes('amego')
+    return report(FAIL, `光貿發票（統編 ${ubn}）`, `被 IP 擋住 → 每一張發票都開不出來，而且收款照常成功、畫面不會報錯。\n   光貿原文：${j.msg}\n   解法：${viaRelay
+      ? `已經走中繼站（${new URL(apiUrl).hostname}），請光貿客服把 ${blockedIp} 加進「允許 IP」，原有名單不要動`
+      : '目前是直連，看到的 IP 每天都在換、加進名單沒有用。要嘛請客服把「允許 IP」設成 0.0.0.0（不限制），要嘛改走固定 IP 中繼站'}`)
   }
   if (j.code === 16) {
     return report(FAIL, `光貿發票（統編 ${ubn}）`, '簽章驗證失敗 → 統編與 App Key 配不起來，兩個值要同時換成同一組')
