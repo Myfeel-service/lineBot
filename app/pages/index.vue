@@ -490,7 +490,7 @@
 </template>
 
 <script setup lang="ts">
-import { BILLING_PLAN_ORDER, BILLING_PLANS, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { Aim, ChatDotRound, ChatLineRound, Coin, Connection, PriceTag, Setting, Timer } from '@element-plus/icons-vue'
 
 definePageMeta({ layout: false })
@@ -570,14 +570,16 @@ const publicPlans = computed(() =>
 )
 
 /**
- * 試銷期只主打這幾張方案卡（2026-08-14 老闆拍板：只 show 399）。
+ * 試銷期只主打免費＋399（2026-08-14 老闆拍板：只 show 399）。
+ *
+ * 清單本體在 shared/billing/plans.ts 的 `FEATURED_PLAN_IDS`——升級對話框也吃同一份，
+ * 別在頁面層級另開清單（2026-08-17 就是因為各維護各的，付款彈窗漏改被老闆抓到）。
  *
  * ⛔ 這是**行銷展示**的取捨，跟「有沒有向金流申報」是兩回事，所以不要改 plans.ts 的
  *    `landingHidden` 來達成——那個旗標的意思是「這個價格沒申報、不可以出現在官網」，
  *    借來當展示開關會讓下面商品資訊的售價列跟著少掉，變成「頁面宣稱的售價」與
  *    「向 PAYUNi 申報的售價」不一致。商品資訊一律列全部三階段。
  */
-const FEATURED_PLAN_IDS: BillingPlanId[] = ['free', 'lite']
 const featuredPlans = computed(() => {
   const picked = publicPlans.value.filter(p => FEATURED_PLAN_IDS.includes(p.id))
   // 只要檯面上有任何一個方案含推播，每張卡都列這一行（沒有的打叉），行數才會一致
@@ -585,13 +587,8 @@ const featuredPlans = computed(() => {
   return picked.map(p => ({ ...p, features: featureRows(p.plan, showBroadcast) }))
 })
 
-/** 沒放上檯面、但已申報的付費方案：卡片下方老實交代還有別的選擇，不要讓人以為只有一種價格 */
-const otherPaidPrices = computed(() =>
-  publicPlans.value
-    .filter(p => p.price.unit && !FEATURED_PLAN_IDS.includes(p.id))
-    .map(p => p.price.amount)
-    .join('／'),
-)
+// （2026-08-14 曾有「另有 NT$799／1,499」的老實交代行，D-14② 拍板整行移除；
+//   對應的 otherPaidPrices computed 已一併刪除，別再加回來。）
 
 /**
  * 商品資訊要揭露的售價。

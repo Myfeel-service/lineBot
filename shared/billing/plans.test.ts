@@ -4,6 +4,7 @@ import {
   BILLING_PLANS,
   BILLING_PLAN_ORDER,
   DEFAULT_BILLING_PLAN_ID,
+  FEATURED_PLAN_IDS,
   OVERAGE_PER_REPLY_TWD,
   effectiveAnsweredQuota,
   getBillingPlan,
@@ -50,6 +51,19 @@ describe('BILLING_PLANS catalog', () => {
       .filter(p => !p.internal && !p.landingHidden && p.priceMonthly != null && p.priceMonthly > 0)
       .map(p => p.priceMonthly)
     expect(landingPaidPrices).toEqual([399, 799, 1499])
+  })
+
+  it('檯面主打的方案必須是可對外露出的（不可 internal / landingHidden）', () => {
+    // FEATURED_PLAN_IDS 是行銷取捨（目前只 show 399），但露出底線是金流合規：
+    // 把 internal 或未申報（landingHidden）的方案加進主打清單，官網與升級對話框
+    // 會直接把它端給客戶。這裡擋住「只改清單沒想到合規」的手滑。
+    for (const id of FEATURED_PLAN_IDS) {
+      const p = BILLING_PLANS[id]
+      expect(p.internal ?? false).toBe(false)
+      expect(p.landingHidden ?? false).toBe(false)
+    }
+    // 主打清單至少要有一個可結帳的付費方案，否則升級對話框會變成「只有免費層」的死路
+    expect(FEATURED_PLAN_IDS.some(id => isCheckoutablePlan(id))).toBe(true)
   })
 
   it('只有 enterprise 是客製方案', () => {

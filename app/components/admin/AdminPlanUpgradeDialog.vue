@@ -91,7 +91,7 @@
 
 <script setup lang="ts">
 import { ElLoading, ElMessageBox } from 'element-plus'
-import { BILLING_PLANS, BILLING_PLAN_ORDER, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { BILLING_PLANS, BILLING_PLAN_ORDER, FEATURED_PLAN_IDS, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
@@ -107,12 +107,20 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; changed: [] }>()
 
-// 內部/測試方案不對客戶顯示（僅 super admin 指派）。
-// ⚠️ 也要濾掉 landingHidden：那個旗標的意思是「這個售價**沒有向 PAYUNi 申報**」，
-//    而這張表不是型錄、是真的能按下去結帳的（見下面的 checkout），
-//    露出來等於讓客戶買得到一個未申報的價格。2026-08-14 補上——原本只濾 internal，
-//    專業版 4,990 一直從這裡漏出去。要恢復販售請先完成申報再拿掉 landingHidden。
-const plans = BILLING_PLAN_ORDER.map(id => BILLING_PLANS[id]).filter(p => !p.internal && !p.landingHidden)
+// 這張表對客戶展示哪些方案，三層規則：
+// 1. internal（super admin 指派的內部/測試方案）不顯示。
+// 2. landingHidden（售價未向 PAYUNi 申報）不顯示——這張表不是型錄、是真的能按下去
+//    結帳的，露出等於讓客戶買到未申報的價格。2026-08-14 補上，原本專業版 4,990 從這裡漏出去。
+// 3. 剩下的只列「檯面上主打的」（FEATURED_PLAN_IDS，目前＝免費＋399）＋客戶**自己目前的**
+//    方案——正在用 799／1,499 的客戶仍要看得到自己在哪，才能續訂或期末降級。
+//    2026-08-17 補上：「只 show 399」（D-14）當時只改了官網，這張表照列全部申報價，
+//    被老闆抓到「付款頁面還是有各種金額」。企業「面談報價」列也跟著首頁拍板
+//    （D-13④ 企業卡不再露出）一併拿掉，想談客製走頁尾聯繫方式。
+const plans = computed(() =>
+  BILLING_PLAN_ORDER
+    .map(id => BILLING_PLANS[id])
+    .filter(p => !p.internal && !p.landingHidden)
+    .filter(p => FEATURED_PLAN_IDS.includes(p.id) || p.id === props.currentPlanId))
 
 /** 比較表裡把「目前方案」那一列淡淡標色，一眼看到自己在哪。 */
 function rowClass({ row }: { row: BillingPlan }) {

@@ -56,7 +56,8 @@ export interface BillingPlan {
   /** 僅供 super admin 直接指派（測試 / 內部帳號）；不對外顯示於方案頁 / 升級對話框、不可自助結帳。 */
   internal?: boolean
   /**
-   * 不在「官網門面定價區」露出（後台升級對話框仍可見、仍可自助結帳）。
+   * 售價未向 PAYUNi 申報：官網與後台升級對話框都不露出，也不可線上結帳
+   * （API 層擋在 isCheckoutablePlan，2026-08-16 B-39 補的——只濾 UI 會被直接打 API 繞過）。
    *
    * ⚠️ 這不是產品決策而是金流合規:PAYUNi 特店申報的售價階段是 399 / 799 / 1499,
    * 風控會拿官網顯示的價格與申報資料互相核對,門面多出一個未申報的價格會被退件。
@@ -73,6 +74,21 @@ export const OVERAGE_PER_REPLY_TWD = 0.8
  * 這份陣列與 BILLING_PLANS 的 key 必須一致（見檔尾的 dev 自我檢查）。
  */
 export const BILLING_PLAN_ORDER: BillingPlanId[] = ['free', 'lite', 'starter', 'growth', 'pro', 'enterprise', 'test', 'internal']
+
+/**
+ * 檯面上主打的方案（2026-08-14 老闆拍板「先隱藏就好，目前只 show 399」）。
+ * 官網定價區、商品資訊售價列、後台升級對話框的方案目錄**都吃這一份**。
+ *
+ * 為什麼放這裡：這份清單原本只寫在首頁頁面層級，升級對話框沒跟到——2026-08-17
+ * 老闆抓到付款彈窗仍列出 799／1,499。凡是「對客戶展示的方案目錄」一律引用這個常數，
+ * 不要再各頁自己維護一份。
+ *
+ * ⛔ 跟 `landingHidden` 是兩回事，不要互相借用：那個旗標＝「售價未申報，合規上不可
+ *    露出也不可收費」；這份清單＝「申報過、收得到，但行銷上現在不主打」。
+ *    starter(799)／growth(1,499) 不在清單上但仍可結帳（系統收得到、畫面不引導），
+ *    要真正停售得另開項目處理既有訂閱戶，見 STATUS `D-14` 的殘留說明。
+ */
+export const FEATURED_PLAN_IDS: BillingPlanId[] = ['free', 'lite']
 
 /** 未訂閱 / 找不到方案時的預設：每個帳號自動享有的免費額度。 */
 export const DEFAULT_BILLING_PLAN_ID: BillingPlanId = 'free'
