@@ -50,6 +50,7 @@ const ENDPOINT = {
   void: '/json/f0501', // 作廢
   allowance: '/json/g0401', // 開立折讓
   voidAllowance: '/json/g0501', // 作廢折讓  TODO(光貿文件): 確認路徑(MOF D0501)
+  barcode: '/json/barcode', // 手機條碼查詢(驗「這組條碼存不存在」,格式檢查驗不出來)
   invoiceFile: '/json/invoice_file', // 發票證明聯 PDF(⚠️ 別跟 invoice_print 搞混,那支回熱感應機列印字串)
   // 折讓證明單也有 PDF:/json/allowance_file(帶 allowance_number + download_style),要用時再接
 } as const
@@ -382,6 +383,45 @@ export interface InvoiceFileResult {
   message: string
   /** PDF 下載連結(10 分鐘有效)。 */
   fileUrl?: string
+}
+
+// ── 手機條碼查詢(barcode) ──────────────────────────────────────────────
+//
+// 為什麼需要:格式檢查驗不出「這組條碼到底存不存在」。2026-08-16 實測,帶一個格式
+// 完全合法但不存在的條碼去開立,光貿回 `3040132 載具號碼不存在`——**發票開不出來,
+// 而錢已經收了**,而且每日自動補開會拿同一組錯條碼一直重試,永遠不會成功。
+// 所以在「客戶存發票資訊」的當下就先問光貿一次,把錯的擋在前面。
+
+/** 手機條碼查詢結果。`exists: null` = 問不到（沒設金鑰／連不上／被 IP 擋），不是「不存在」。 */
+export interface BarcodeCheckResult {
+  /** true=存在、false=確定不存在、null=無法查證 */
+  exists: boolean | null
+  code: number
+  message: string
+}
+
+/**
+ * 問光貿「這組手機條碼存不存在」。
+ *
+ * ⚠️ **查不到不等於不存在**：連線失敗、金鑰未設、被 IP 擋都會回 `exists: null`，
+ *    呼叫端必須放行——否則光貿一出問題，客戶連發票資訊都存不了。
+ *    （這就是「查不到就等於沒問題」那個假綠燈的反面：不能把「不知道」當成「錯」，
+ *      也不能當成「對」，要留三態讓呼叫端自己決定。）
+ */
+export async function checkMobileBarcode(
+  barcode: string,
+  keys: GuangmaoInvoiceKeys,
+): Promise<BarcodeCheckResult> {
+  const r = await callAmego(ENDPOINT.barcode, { barCode: barcode }, keys)
+  if (r.httpError || Number.isNaN(r.code)) {
+    return { exists: null, code: Number.NaN, message: r.httpError ?? '光貿無回應' }
+  }
+  const message = String((r.raw as { msg?: string })?.msg || '')
+  // 9000113 = 手機條碼不存在、9000112 = 格式錯誤 → 兩者都是「這組不能用」
+  if (r.code === 0) return { exists: true, code: 0, message }
+  if (r.code === 9000112 || r.code === 9000113) return { exists: false, code: r.code, message }
+  // 其他代碼（IP 錯誤 14、簽章 16、平台維護 10…）＝我方問不到,不是客戶填錯
+  return { exists: null, code: r.code, message }
 }
 
 /** 組 invoice_file 的 data。type 也可用 'order'+order_id 查,我們固定用發票號碼。 */

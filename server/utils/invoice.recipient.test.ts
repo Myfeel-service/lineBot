@@ -75,6 +75,33 @@ describe('發票通知信的收件人（B-34）', () => {
     expect(mockIssue.mock.calls[0]![0].profile.buyerEmail).toBeFalsy()
   })
 
+  // B-31 第二道防線：存檔時漏過去的錯載具，開票時要自己救回來
+  it('載具無效（3040132）→ 自動拿掉載具改開紙本，不讓那筆訂單永遠沒有發票', async () => {
+    mockIssue
+      .mockResolvedValueOnce({ ok: false, status: '3040132', message: '載具號碼不存在' })
+      .mockResolvedValueOnce({ ok: true, status: '0', message: '', invoiceNumber: 'ZA10000003', randomNum: '0002' })
+
+    await issueInvoiceForOrder(
+      { merchantOrderNo: 'NP1', workspaceId: 'ws1', planId: 'lite', totalAmt: 399 },
+      KEYS,
+      fakeDb({ wsInvoiceProfile: { carrierNum: '/ABC1234' }, ownerEmail: 'owner@example.com' }),
+    )
+
+    expect(mockIssue).toHaveBeenCalledTimes(2)
+    expect(mockIssue.mock.calls[0]![0].profile.carrierNum).toBe('/ABC1234')
+    expect(mockIssue.mock.calls[1]![0].profile.carrierNum).toBeNull() // 第二次改開紙本
+  })
+
+  it('一般失敗（平台維護之類）不改開紙本——那種重試會好，不該把載具丟掉', async () => {
+    mockIssue.mockResolvedValueOnce({ ok: false, status: '10', message: '系統停機維護中' })
+    await issueInvoiceForOrder(
+      { merchantOrderNo: 'NP1', workspaceId: 'ws1', planId: 'lite', totalAmt: 399 },
+      KEYS,
+      fakeDb({ wsInvoiceProfile: { carrierNum: '/ABC1234' }, ownerEmail: 'owner@example.com' }),
+    )
+    expect(mockIssue).toHaveBeenCalledTimes(1)
+  })
+
   // 品名開出去就改不掉（光貿與財政部都不允許事後更正），格式要釘死
   it('發票品名＝申報商品名稱｜方案（1 個月），與付款頁主體逐字相同（B-33）', async () => {
     await issueInvoiceForOrder(

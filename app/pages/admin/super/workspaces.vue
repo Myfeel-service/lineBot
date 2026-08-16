@@ -153,10 +153,15 @@
 
       <div class="admin-field-group">
         <AdminFieldLabel text="方案" tight />
-        <el-select v-model="editForm.planId" placeholder="未開通（不攔截則數）" clearable style="width: 100%">
+        <el-select v-model="editForm.planId" placeholder="清空＝當成免費方案" clearable style="width: 100%">
           <el-option v-for="id in planOrder" :key="id" :label="planOptionLabel(id)" :value="id" />
         </el-select>
-        <p class="text-xs text-muted" style="margin-top: 4px">未開通的帳號不會被則數上限攔截（沿用內部 token 護欄）。</p>
+        <!-- ⚠️ 這行原本寫「未開通的帳號不會被則數上限攔截」，是錯的：清空只是刪掉訂閱欄位，
+             而 billing.ts 讀不到訂閱時會**當成免費方案**（raw ?? defaultFreeSubscription）。
+             照原本的說法去清空，等於把帳號默默鎖在 200 則，AI 答滿就全部轉真人。 -->
+        <p class="text-xs text-muted" style="margin-top: 4px">
+          清空＝刪掉訂閱資料，該帳號會<b>當成免費方案</b>（每期 {{ freeQuota }} 則）。真的要不限量請選內部方案。
+        </p>
       </div>
 
       <template v-if="editForm.planId">
@@ -201,7 +206,7 @@
 
 <script setup lang="ts">
 import { InfoFilled } from '@element-plus/icons-vue'
-import { BILLING_PLANS, BILLING_PLAN_ORDER } from '~~/shared/billing/plans'
+import { BILLING_PLANS, BILLING_PLAN_ORDER, DEFAULT_BILLING_PLAN_ID } from '~~/shared/billing/plans'
 import type { BillingPlanId, SubscriptionStatus } from '~~/shared/billing/plans'
 import { CALL_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
@@ -263,6 +268,8 @@ const statusOptions: { value: SubscriptionStatus; label: string }[] = [
 function planName(id: string): string {
   return BILLING_PLANS[id as BillingPlanId]?.name ?? id
 }
+/** 清空方案時實際會套到的額度——直接讀方案目錄，不手抄數字（改額度時這行會自己跟著變）。 */
+const freeQuota = computed(() => (BILLING_PLANS[DEFAULT_BILLING_PLAN_ID].answeredQuota ?? 0).toLocaleString())
 function planOptionLabel(id: BillingPlanId): string {
   const p = BILLING_PLANS[id]
   const quota = p.answeredQuota == null ? '客製' : `${p.answeredQuota.toLocaleString()} 則`

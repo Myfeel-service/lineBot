@@ -31,6 +31,18 @@ export function invoiceKeysFromConfig(config: Record<string, unknown>): Guangmao
 }
 
 /**
+ * 這次開票失敗，是不是「買方帶的載具／捐贈碼本身不能用」？
+ *
+ * 這類錯誤與網路故障、平台維護的差別是：**重試永遠不會好**（號碼本身就是錯的）。
+ * 實測到的是 `3040132 載具號碼不存在`；捐贈碼與其他載具類的代碼沒有逐一查證過，
+ * 所以再用訊息關鍵字兜底——寧可多退一張紙本，也不要讓那筆訂單永遠沒有發票。
+ */
+function isCarrierRejected(result: { status: string, message?: string }): boolean {
+  if (String(result.status) === '3040132') return true
+  return /載具|捐贈|愛心碼/.test(String(result.message ?? ''))
+}
+
+/**
  * 為一筆已付款的訂單開立電子發票（冪等：同一 merchantOrderNo 只開一次）。
  *
  * 任何例外都吞掉並記錄——呼叫端（Notify webhook）**不得**因為開票失敗而失敗。
@@ -89,13 +101,30 @@ export async function issueInvoiceForOrder(
       planName: plan.name,
     })
 
-    const result = await issueInvoice({
+    const issueInput = {
       merchantOrderNo: input.merchantOrderNo,
       totalAmt: input.totalAmt,
       itemName,
       profile,
       fallbackBuyerName: ws?.name || input.workspaceId,
-    }, keys)
+    }
+    let result = await issueInvoice(issueInput, keys)
+
+    // 載具／捐贈碼填了一個「格式對但不存在」的號碼 → 光貿退件（實測 3040132 載具號碼不存在）。
+    // 這種錯**重試一萬次也不會好**，而每日補開會拿同一組錯號碼一直重試 → 那張發票永遠開不
+    // 出來，但錢早就收了。所以退回紙本再開一次：發票開出來（稅務上正確），客戶頂多是
+    // 「這次沒存進載具」，可以自己改對再說。⛔不要靜默——原因會記進 invoices 供追查。
+    if (!result.ok && isCarrierRejected(result) && (profile.carrierNum || profile.loveCode)) {
+      const original = result
+      console.warn('[invoice] 載具/捐贈碼無效，改開紙本重試', input.merchantOrderNo, result.status, result.message)
+      result = await issueInvoice({
+        ...issueInput,
+        profile: { ...profile, carrierNum: null, loveCode: null },
+      }, keys)
+      if (result.ok) {
+        result.message = `原載具／捐贈碼無效（${original.status} ${original.message}），已改開紙本發票`
+      }
+    }
 
     const { totalAmt, amt, taxAmt } = splitTax(input.totalAmt)
     const doc: InvoiceDoc = {

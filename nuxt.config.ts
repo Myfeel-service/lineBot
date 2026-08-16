@@ -113,15 +113,14 @@ export default defineNuxtConfig({
     firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET ?? '',
     /** Google AI Studio API key（Gemini answer + embedding 共用）。申請：https://aistudio.google.com/apikey */
     geminiApiKey: process.env.GEMINI_API_KEY ?? '',
-    /**
-     * 藍新金流 MPG 特店設定（**舊金流,已改用 PAYUNi**；private，勿放 public 以免金鑰外洩）。
-     * 只留單次付款的 Notify/Return 以服務 2026-07 切換前的歷史訂單;定期定額程式已於
-     * 2026-07-30 全數移除（從未真正開通過）。新交易一律走 PAYUNi。
+    /*
+     * ⛔ 藍新金流（newebpay）已於 2026-08-16 整組移除（`B-23`），**不要加回來**。
+     *    移除前查過兩個專案的真實資料：沒有任何訂單或訂閱真的走過藍新
+     *    （唯一帶 periodNo 的那筆值與測試檔裡的字串一模一樣＝測試殘留，且無信用卡約定）。
+     *    留著的風險是 /newebpay/notify 這條路由本身——只要有人把金鑰填回環境變數，
+     *    它就重新變成一個可以開通訂閱的入口，而那條路徑沒有任何人在看。
+     *    `shared/types/payment.ts` 的 periodNo 等欄位刻意保留，只為讀得懂歷史資料。
      */
-    newebpayMerchantId: process.env.NEWEBPAY_MERCHANT_ID ?? '',
-    newebpayHashKey: process.env.NEWEBPAY_HASH_KEY ?? '',
-    newebpayHashIV: process.env.NEWEBPAY_HASH_IV ?? '',
-    newebpayApiUrl: process.env.NEWEBPAY_API_URL ?? 'https://ccore.newebpay.com/MPG/mpg_gateway',
     /**
      * PAYUNi 統一金流 整合式支付頁（UPP）特店設定（每租戶各一組；private，勿放 public）。
      * 加密與藍新不同（AES-256-GCM）。三把金鑰都設好 → paymentEnabled 才為 true。

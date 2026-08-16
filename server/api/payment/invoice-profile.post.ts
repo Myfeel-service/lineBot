@@ -2,6 +2,8 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
+import { invoiceKeysFromConfig } from '~~/server/utils/invoice'
+import { verifyCarrierNum } from '~~/server/utils/verify-carrier'
 import { hasInvoiceProfile } from '~~/shared/types/organization'
 
 /**
@@ -15,6 +17,14 @@ import { hasInvoiceProfile } from '~~/shared/types/organization'
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
   const profile = normalizeInvoiceProfile(await readBody(event))
+
+  // 手機條碼要跟光貿查證「存不存在」——格式檢查驗不出來，而存錯的代價是那筆訂單的
+  // 發票永遠開不出來（見 server/utils/verify-carrier.ts）。查不到一律放行，只擋確定錯的。
+  const verdict = await verifyCarrierNum(
+    profile.carrierNum,
+    invoiceKeysFromConfig(useRuntimeConfig(event) as unknown as Record<string, unknown>),
+  )
+  if (verdict.rejected) throw createError({ statusCode: 400, statusMessage: verdict.reason })
 
   await getDb().collection('workspaces').doc(workspaceId).update({
     // 全空 → 刪掉欄位而不是存一份空白 profile，否則 resolveInvoiceProfile 判斷不出

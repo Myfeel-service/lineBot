@@ -35,7 +35,7 @@ export default defineEventHandler((event) => {
 
   const config = useRuntimeConfig(event) as unknown as Record<string, unknown>
   // 沒設任何金流特店 → 沒有訂單要對帳,直接跳過（避免每半小時空掃 workspaces）
-  if (!config.payuniMerchantId && !config.newebpayMerchantId) return
+  if (!config.payuniMerchantId) return
 
   ticking = true
   lastTickAt = now

@@ -2,6 +2,8 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireActiveOrgAdmin } from '~~/server/utils/workspace-auth'
 import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
+import { invoiceKeysFromConfig } from '~~/server/utils/invoice'
+import { verifyCarrierNum } from '~~/server/utils/verify-carrier'
 
 /**
  * POST /api/admin/org/:orgId/invoice-profile — 組織層級的發票資訊（**預設值**）。
@@ -16,6 +18,14 @@ export default defineEventHandler(async (event) => {
 
   await requireActiveOrgAdmin(event, orgId)
   const profile = normalizeInvoiceProfile(await readBody(event))
+
+  // 與 OA 層那支同一道防線：手機條碼要跟光貿查證存不存在（存錯＝發票永遠開不出來）。
+  // 這裡是組織層預設值，一填影響底下所有 OA，更不能讓錯的號碼進來。
+  const verdict = await verifyCarrierNum(
+    profile.carrierNum,
+    invoiceKeysFromConfig(useRuntimeConfig(event) as unknown as Record<string, unknown>),
+  )
+  if (verdict.rejected) throw createError({ statusCode: 400, statusMessage: verdict.reason })
 
   const db = getDb()
   const ref = db.collection('organizations').doc(orgId)
