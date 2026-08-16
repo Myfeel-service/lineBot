@@ -69,6 +69,11 @@ export function receiptEmail(p: {
    *    標題也不能寫「付款成功」（沒有付款這件事發生）。
    */
   creditApplied?: number
+  /**
+   * 信用卡帳單上的請款名稱（本平台＝`myfeel`，與品牌名不同）。
+   * 留白則整列不出現——多租戶部署若未設定，寧可不講也不要講錯的名字。
+   */
+  statementName?: string
 }): EmailContent {
   const period = p.periodStart && p.periodEnd ? `${p.periodStart} ～ ${p.periodEnd}` : '—'
   const credit = Math.max(0, Math.round(p.creditApplied ?? 0))
@@ -87,6 +92,10 @@ export function receiptEmail(p: {
   rows.push(['本期', period])
   if (p.invoiceNumber) rows.push(['電子發票號碼', p.invoiceNumber])
   rows.push(['付款方式', fullyCovered ? '折抵餘額支付（未扣卡）' : (p.recurring ? '信用卡自動續訂' : '單次付款')])
+  // 帳單上的請款名稱與品牌不同。收據信是**離信用卡帳單最近的一份文件**——客戶月底對帳
+  // 翻信箱就找得到這一行，是防爭議款最有效的一環（理由見 shared/billing/statement.ts）。
+  // 折抵全額支付那期沒有向卡片請款，帳單不會出現任何一筆 → 講了只會造成混淆，故不放。
+  if (!fullyCovered && p.statementName) rows.push(['信用卡帳單顯示', p.statementName])
 
   const note = fullyCovered
     ? '本期費用已由你的折抵餘額全額支付，這次沒有向信用卡請款。折抵用完後會恢復正常扣款。'
@@ -110,6 +119,7 @@ export function receiptEmail(p: {
     `本期：${period}`,
     ...(p.invoiceNumber ? [`電子發票號碼：${p.invoiceNumber}`] : []),
     `付款方式：${fullyCovered ? '折抵餘額支付（未扣卡）' : (p.recurring ? '信用卡自動續訂' : '單次付款')}`,
+    ...(!fullyCovered && p.statementName ? [`信用卡帳單顯示：${p.statementName}`] : []),
   ].join('\n')
   return { subject, html, text }
 }

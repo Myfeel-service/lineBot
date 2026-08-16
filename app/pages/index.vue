@@ -361,7 +361,11 @@
             </div>
             <div class="lp-product__row">
               <dt>付款與發票</dt>
-              <dd>信用卡付款，由<b>統一金流 PAYUNi</b> 處理；付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。</dd>
+              <!-- 帳單請款名稱要在這裡露出：風控找的就是這張卡，客人事後對帳也翻得到
+                   （為什麼非講不可見 shared/billing/statement.ts）。 -->
+              <dd>
+                信用卡付款，由<b>統一金流 PAYUNi</b> 處理；付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。<template v-if="cardStatementName">信用卡帳單上會顯示「<b>{{ cardStatementName }}</b>」（{{ companyName }}）。</template>
+              </dd>
             </div>
             <div class="lp-product__row">
               <dt>銷售者</dt>
@@ -493,7 +497,7 @@ definePageMeta({ layout: false })
 
 // 品牌／產品／公司／客服窗口統一由這裡來（與法務頁、頁尾同一份來源）。
 // ⚠️ brandName = 品牌／產品名（MiniMe）、companyName = 營運主體（麥菲爾股份有限公司），別混用。
-const { brandName, serviceFullName, companyName, taxId, phone, email, emailHref } = useSiteIdentity()
+const { brandName, serviceFullName, companyName, taxId, phone, email, emailHref, cardStatementName } = useSiteIdentity()
 
 const plusIcon
   = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3v12M3 9h12"/></svg>'

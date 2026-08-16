@@ -87,6 +87,12 @@
         <li>申請退費的原因與（如為系統故障）發生時間</li>
       </ul>
       <p>我們會在收到申請後<b>3 個工作日內</b>回覆處理結果；需要進一步查證時，會先告知你預計所需時間。</p>
+      <!-- 這頁是「帳單上出現不認得的扣款」時第一個會被找到的地方——把請款名稱寫在這裡，
+           客人才不會直接打去銀行辦爭議（爭議款我方自負，見 shared/billing/statement.ts）。 -->
+      <p v-if="cardStatementName">
+        <b>在帳單上看到不認得的扣款？</b>本服務的信用卡請款於帳單上顯示為「<b>{{ cardStatementName }}</b>」（{{ companyName }}），
+        是 {{ brandName }} 的營運公司。若確認不是你本人訂閱的，請先與我們聯繫，我們會協助查明並處理。
+      </p>
     </section>
 
     <section>
@@ -112,7 +118,7 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 
-const { email, emailHref, phone, phoneHref, hours, serviceFullName, brandName } = useSiteIdentity()
+const { email, emailHref, phone, phoneHref, hours, serviceFullName, brandName, companyName, cardStatementName } = useSiteIdentity()
 
 useSeoMeta({
   title: `退費與取消政策 — ${brandName}`,

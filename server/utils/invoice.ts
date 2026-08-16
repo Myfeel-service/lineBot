@@ -14,6 +14,7 @@ import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { isInvoiceConfigured, issueInvoice, type GuangmaoInvoiceKeys } from './guangmao-invoice'
 import { splitTax } from '~~/shared/billing/tax'
 import { getBillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { invoiceProductName } from '~~/shared/billing/product-name'
 import { resolveInvoiceProfile, type InvoiceProfile, type OrganizationDoc, type WorkspaceDoc } from '~~/shared/types/organization'
 import type { InvoiceDoc, PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -69,11 +70,24 @@ export async function issueInvoiceForOrder(
     const orgProfile = orgSnap?.exists ? (orgSnap.data() as OrganizationDoc).invoiceProfile : null
     const profile: InvoiceProfile = resolveInvoiceProfile(orgProfile, ws?.invoiceProfile)
 
+    // 發票通知信是**光貿寄的**,而且只有帶了 BuyerEmailAddress 才會寄。
+    // 沒有這段退路的話:客戶沒填帳務信箱 → 發票照樣開出去、稅也報了,但他收不到通知、
+    // 也不知道去哪拿(B2C 開的是「要自己列印」那種,沒有連結就真的拿不到)。
+    // 收據信本來就有同一條退路(billing-emails.ts resolveBillingRecipient),兩邊要一致。
+    if (!profile.buyerEmail) {
+      const ownerEmail = String((orgSnap?.data() as OrganizationDoc | undefined)?.ownerEmail ?? '').trim()
+      if (ownerEmail) profile.buyerEmail = ownerEmail
+    }
+
     const plan = getBillingPlan(input.planId)
 
-    // 發票品名帶產品名(MiniMe 輕量方案 訂閱服務):客戶對帳看得懂,也與向金流申報的
-    // 商品名稱一致(見 nuxt.config 的 brandName)。未設定 env 時退回原本的方案名。
-    const itemName = `${String(useRuntimeConfig().public?.brandName || '').trim()} ${plan.name}方案 訂閱服務`.trim()
+    // 品名格式與付款頁共用同一支(主體逐字一致、括號各自補充),見 shared/billing/product-name.ts
+    const pub = useRuntimeConfig().public as Record<string, unknown>
+    const itemName = invoiceProductName({
+      serviceFullName: String(pub?.serviceFullName || ''),
+      brandName: String(pub?.brandName || ''),
+      planName: plan.name,
+    })
 
     const result = await issueInvoice({
       merchantOrderNo: input.merchantOrderNo,

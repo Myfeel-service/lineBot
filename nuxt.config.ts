@@ -215,6 +215,12 @@ export default defineNuxtConfig({
        * 預設值 = 本平台營運主體;多租戶部署可用 env 覆寫成自己的公司（同 brandName 的做法）。
        */
       legalCompanyName: process.env.PUBLIC_LEGAL_COMPANY_NAME ?? '麥菲爾股份有限公司',
+      /**
+       * 信用卡帳單上的請款名稱 —— **與品牌名不同，要逐字照收單登記填**。
+       * 本平台是小寫 `myfeel`（2026-08-16 實開 PAYUNi 正式付款頁確認）。
+       * 為什麼要公開揭露它：見 shared/billing/statement.ts 的檔頭（爭議款自負）。
+       */
+      cardStatementName: process.env.PUBLIC_CARD_STATEMENT_NAME ?? 'myfeel',
       legalTaxId: process.env.PUBLIC_LEGAL_TAX_ID ?? '83610942',
       supportEmail: process.env.PUBLIC_SUPPORT_EMAIL ?? 'service@myfeel-tw.com',
       supportPhone: process.env.PUBLIC_SUPPORT_PHONE ?? '+886-2-7702-1310',

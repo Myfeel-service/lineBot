@@ -20,6 +20,12 @@ export function useSiteIdentity() {
     serviceFullName: String(pub.serviceFullName ?? ''),
     companyName: String(pub.legalCompanyName ?? ''),
     taxId: String(pub.legalTaxId ?? ''),
+    /**
+     * 信用卡帳單上的請款名稱（本平台＝小寫 `myfeel`）。
+     * ⚠️ 它**不等於**品牌名，也不等於公司中文名——要逐字照收單登記，客人才對得起來。
+     * 為什麼每個對外頁都要露出：見 shared/billing/statement.ts（爭議款自負）。
+     */
+    cardStatementName: String(pub.cardStatementName ?? ''),
     email,
     emailHref: email ? `mailto:${email}` : '',
     phone,

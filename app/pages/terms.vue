@@ -63,6 +63,9 @@
       <h2>付款與電子發票</h2>
       <ul>
         <li>付款方式為信用卡，由<b>統一金流 PAYUNi（統一金流科技股份有限公司）</b>的付款頁面處理。我們不會取得、也不會儲存你的信用卡號。</li>
+        <!-- 帳單請款名稱與品牌不同：條款是客人事後查證的地方，這一條要查得到
+             （為什麼非講不可見 shared/billing/statement.ts）。 -->
+        <li v-if="cardStatementName"><b>信用卡帳單顯示名稱</b>：本服務的信用卡請款，於帳單上會顯示為「<b>{{ cardStatementName }}</b>」（{{ companyName }}），與品牌名稱 {{ brandName }} 為同一營運主體。</li>
         <li>付款成功後，我們會依《加值型及非加值型營業稅法》開立<b>電子發票</b>，並寄送至你在後台設定的帳務信箱。</li>
         <li>需要開立統一編號（公司戶）發票的，請於付款前在後台的發票資訊中填寫買方名稱與統一編號；發票一經開立，買方資訊的更正須依稅法規定辦理。</li>
         <li>如發生扣款失敗，我們會通知你並保留暫停服務的權利，直到費用結清。</li>
@@ -185,7 +188,7 @@ import { OVERAGE_PER_REPLY_TWD } from '~~/shared/billing/plans'
 
 definePageMeta({ layout: false })
 
-const { companyName, taxId, serviceFullName, brandName } = useSiteIdentity()
+const { companyName, taxId, serviceFullName, brandName, cardStatementName } = useSiteIdentity()
 
 useSeoMeta({
   title: `服務條款 — ${brandName}`,

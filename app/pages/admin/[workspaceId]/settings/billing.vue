@@ -430,6 +430,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
+import { cardStatementNotice } from '~~/shared/billing/statement'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import { describeInvoiceProfile } from '~~/shared/types/organization'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
@@ -444,6 +445,12 @@ const { plan: planView, state: planState, load: loadPlanSummary } = usePlanSumma
 
 const config = useRuntimeConfig()
 const invoiceEnabled = Boolean(config.public.invoiceEnabled)
+/** 帳單上的請款名稱揭露（與升級對話框同一句，見 shared/billing/statement.ts）。 */
+const statementNotice = computed(() => cardStatementNotice({
+  statementName: String(config.public.cardStatementName || ''),
+  legalCompanyName: String(config.public.legalCompanyName || ''),
+  brandName: String(config.public.brandName || ''),
+}))
 
 const upgradeOpen = ref(false)
 const loading = ref(false)
@@ -779,6 +786,9 @@ async function resumePayment(row: OrderRow) {
   try {
     await ElMessageBox.confirm(
       `<p>將以 NT$${row.amount.toLocaleString()}（含稅）完成「${planName(row.planId)}」方案的付款，接著前往統一金流 PAYUNi 的安全付款頁面。</p>`
+      // 帳單請款名稱與品牌不同，付款前一定要講（理由見 shared/billing/statement.ts）。
+      // 與升級對話框共用同一句，兩條結帳路徑客戶看到的一字不差。
+      + `<p>${statementNotice.value}</p>`
       + `<p>${CHECKOUT_CONSENT_TEXT}</p><p>${policyLinks}</p>`,
       '確認付款',
       {

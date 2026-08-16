@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { BILLING_PLAN_ORDER, getBillingPlan } from '~~/shared/billing/plans'
+import { checkoutProductName } from '~~/shared/billing/product-name'
 import type { BillingPlanId } from '~~/shared/billing/plans'
 import { PAYUNI_ENDPOINTS, PAYUNI_UPP_TOKEN_VERSION, PAYUNI_UPP_VERSION, buildTokenBindFields, buildUppForm, resolvePayuniEnv } from '~~/server/utils/payuni'
 import { createPendingOrder, findRecentPendingOrder, newMerchantOrderNo, supersedePendingOrders } from '~~/server/utils/payment'
@@ -86,11 +87,15 @@ export default defineEventHandler(async (event) => {
     MerTradeNo: merchantOrderNo,
     TradeAmt: amount,
     Timestamp: Math.floor(Date.now() / 1000),
-    // 商品描述要帶產品名:客戶在 PAYUNi 付款頁與信用卡帳單上看到的就是這一行,
-    // 風控也會拿它跟申報的商品名稱核對(見 nuxt.config 的 brandName)。
-    ProdDesc: bindCard
-      ? `${brandName} ${plan.name}方案 月訂閱(每月自動扣款)`.trim()
-      : `${brandName} ${plan.name}方案(1 個月)`.trim(),
+    // 商品描述:客戶在 PAYUNi 付款頁與信用卡帳單明細上看到的就是這一行,風控也會拿它跟
+    // 官網商品資訊、電子發票品名互相核對 → 格式收在 shared/billing/product-name.ts,
+    // 三處主體逐字一致(2026-08-16 之前三處各寫各的,見 STATUS `B-33`)。
+    ProdDesc: checkoutProductName({
+      serviceFullName: String(config.public.serviceFullName || ''),
+      brandName,
+      planName: plan.name,
+      recurring: bindCard,
+    }),
     NotifyURL: `${base}/payuni/notify`,
     ReturnURL: `${base}/payuni/return?ws=${encodeURIComponent(workspaceId)}&no=${merchantOrderNo}`,
   }

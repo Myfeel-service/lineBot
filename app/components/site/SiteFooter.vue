@@ -46,7 +46,11 @@
     <div class="lp-foot__bar">
       <div class="lp-wrap lp-foot__bar-in">
         <span>© {{ year }} {{ companyName }}　保留一切權利</span>
-        <span class="lp-foot__pay">信用卡付款由統一金流 PAYUNi 處理　·　依法開立電子發票</span>
+        <!-- 帳單請款名稱：客人一個月後看帳單只有這個名字，認不出來就會去銀行爭議
+             （幕後扣款的爭議款我方自負，見 shared/billing/statement.ts）。 -->
+        <span class="lp-foot__pay">
+          信用卡付款由統一金流 PAYUNi 處理<template v-if="cardStatementName">，帳單顯示「{{ cardStatementName }}」</template>　·　依法開立電子發票
+        </span>
       </div>
     </div>
   </footer>
@@ -62,7 +66,7 @@
 import { POLICY_LINKS } from '~~/shared/legal'
 
 // 品牌名不在這裡取用：商標由 <BrandLogo /> 出（logotype 已含 MiniMe 字樣）
-const { serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours } = useSiteIdentity()
+const { serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours, cardStatementName } = useSiteIdentity()
 
 const year = new Date().getFullYear()
 </script>

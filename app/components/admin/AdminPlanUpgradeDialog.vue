@@ -93,6 +93,7 @@
 import { ElLoading, ElMessageBox } from 'element-plus'
 import { BILLING_PLANS, BILLING_PLAN_ORDER, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
+import { cardStatementNotice } from '~~/shared/billing/statement'
 import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
 
 const props = defineProps<{
@@ -256,12 +257,32 @@ async function checkout(p: BillingPlan) {
   const terms = recurringEnabled
     ? `將以 NT$${price}/月（含稅）${action}「${p.name}」方案（${quota}），立即開通一個月，之後每月自動扣款。可隨時取消，取消後服務用到本期結束。`
     : `將以 NT$${price}（含稅）${action}「${p.name}」方案（${quota}・單次付款、一個月）。`
+  // 帳單上的請款名稱與品牌不同（myfeel ≠ MiniMe）——**按付款鍵前**是唯一一定會被看到的時機。
+  // 不講的話，客人一個月後在帳單看到陌生名字會當成盜刷去爭議，而幕後扣款的爭議款我方自負。
+  // 理由與單一事實來源見 shared/billing/statement.ts。
+  // 發票會開成什麼、寄到哪，在**按付款鍵之前**講一次。
+  // 刻意不做成「填完才能結帳」的必填表單：多數人只要個人發票，擋在這裡只會流失；
+  // 但也不能讓人事後才發現開錯抬頭——發票品名與買方一經開立就改不掉（要走作廢重開）。
+  // 載具那種不寄通知信（發票直接進載具），所以措辭跟著換，不要說「寄到」。
+  const inv = effectiveInvoice.value
+  const invoiceLine = invoiceEnabled && inv
+    ? (String(inv.carrierNum ?? '').trim()
+        ? `發票：${describeInvoiceProfile(inv)}（存入載具，不另寄通知信）`
+        : `發票：${describeInvoiceProfile(inv)}，通知寄到 ${String(inv.buyerEmail ?? '').trim() || '你的登入信箱'}`)
+    : ''
+  const statement = cardStatementNotice({
+    statementName: String(config.public.cardStatementName || ''),
+    legalCompanyName: String(config.public.legalCompanyName || ''),
+    brandName: String(config.public.brandName || ''),
+  })
   // 沒有委託的降級仍是「重新起算一期」：舊方案剩餘天數不折抵——按下去前必須講清楚,
   // 否則使用者會「付了錢還虧掉剩餘天數」而不自知。（有委託的降級走期末生效,不會有這問題。）
   const downgradeWarn = action === '降級' ? '⚠️ 降級會立即生效，且目前方案剩餘天數不折抵。' : ''
   try {
     await ElMessageBox.confirm(
-      `${downgradeWarn}${terms}接著前往統一金流 PAYUNi 的安全付款頁面完成付款。`,
+      `${downgradeWarn}${terms}接著前往統一金流 PAYUNi 的安全付款頁面完成付款。`
+      + (invoiceLine ? `\n\n${invoiceLine}` : '')
+      + `\n${statement}`,
       `確認${action}方案`,
       {
         confirmButtonText: recurringEnabled ? '前往付款並開始訂閱' : '前往付款',

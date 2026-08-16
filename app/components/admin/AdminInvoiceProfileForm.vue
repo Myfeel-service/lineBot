@@ -27,7 +27,9 @@
          而不是顯示了再擋，免得使用者填完才被告知不能用 -->
     <template v-if="!form.buyerUBN">
       <div class="admin-field-group">
-        <AdminFieldLabel text="手機條碼載具" hint="與捐贈碼只能擇一。都不填則開立紙本發票。" tight />
+        <!-- 「填了載具就收不到通知信」要講：發票會直接存進手機載具，光貿不再寄 Email。
+             不講的話客戶會以為發票沒開（MYFEEL 集資平台的說明也是這樣寫的）。 -->
+        <AdminFieldLabel text="手機條碼載具" hint="與捐贈碼只能擇一。都不填則開立紙本發票。填了載具，發票會直接存進手機載具，不會再寄發票通知信。" tight />
         <el-input v-model="form.carrierNum" placeholder="/ABC1234" maxlength="8" />
         <p v-if="carrierError" class="text-xs text-danger">{{ carrierError }}</p>
         <p v-else-if="exclusiveError" class="text-xs text-danger">{{ exclusiveError }}</p>

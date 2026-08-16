@@ -29,6 +29,15 @@ function brandName(): string {
   return String((c.public as Record<string, unknown>)?.brandName ?? '').trim() || 'MiniMe'
 }
 
+/**
+ * 信用卡帳單上的請款名稱（與品牌名不同，見 shared/billing/statement.ts）。
+ * 沒設就回空字串 → 收據信整列不出現，寧可不講也不要講錯的名字。
+ */
+function cardStatementName(): string {
+  const c = useRuntimeConfig()
+  return String((c.public as Record<string, unknown>)?.cardStatementName ?? '').trim()
+}
+
 function billingUrl(workspaceId: string): string {
   const c = useRuntimeConfig()
   const base = String(c.appBaseUrl ?? '').trim().replace(/\/$/, '')
@@ -82,6 +91,9 @@ export async function sendReceiptNotification(orderId: string, db: Firestore = g
       recurring: o.kind !== 'one_time',
       // 有折抵時收據要攤成「方案月費 − 折抵 = 實收」,否則客戶看到比定價少的數字會來問
       creditApplied: o.creditApplied ?? 0,
+      // 帳單上的請款名稱（myfeel ≠ MiniMe）：收據信是離帳單最近的一份文件，
+      // 客戶月底對帳翻信箱就對得起來 → 防爭議款（見 shared/billing/statement.ts）
+      statementName: cardStatementName(),
     })
     await sendEmail({ to: email, ...content })
   }

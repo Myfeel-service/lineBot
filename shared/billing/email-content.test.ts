@@ -43,6 +43,25 @@ describe('receiptEmail', () => {
     expect(receiptEmail(base).html).not.toContain('電子發票號碼')
   })
 
+  // 收據信是離信用卡帳單最近的一份文件：帳單上的請款名稱（myfeel）與品牌（MiniMe）不同，
+  // 客戶月底對帳靠這一行對得起來，不然就是打去銀行辦爭議（爭議款我方自負）。
+  it('有請款名稱時，收據信要寫出帳單會顯示什麼', () => {
+    const { html, text } = receiptEmail({ ...base, statementName: 'myfeel' })
+    expect(html).toContain('信用卡帳單顯示')
+    expect(html).toContain('myfeel')
+    expect(text).toContain('信用卡帳單顯示：myfeel')
+  })
+
+  it('沒設請款名稱就整列不出現（寧可不講，也不要講錯的名字）', () => {
+    expect(receiptEmail(base).html).not.toContain('信用卡帳單顯示')
+  })
+
+  // 折抵蓋滿整期＝那期完全沒有向卡片請款，帳單不會出現任何一筆 → 講了只會造成混淆
+  it('折抵全額支付那期不提帳單名稱', () => {
+    const { html } = receiptEmail({ ...base, amount: 0, creditApplied: 1990, statementName: 'myfeel' })
+    expect(html).not.toContain('信用卡帳單顯示')
+  })
+
   it('單次付款顯示為單次付款', () => {
     const { html } = receiptEmail({ ...base, recurring: false })
     expect(html).toContain('單次付款')
