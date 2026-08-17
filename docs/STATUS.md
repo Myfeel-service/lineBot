@@ -40,7 +40,7 @@
 | `A-8` | ~~`aiHandoffEvents` TTL policy~~ | `DONE` | **2026-08-12 查證結案：policy 早就設好了**。用 fields API 列兩租戶 TTL，`aiHandoffEvents.expireAt` 兩專案皆 `ACTIVE`——`AI-KB-TODO.md` 08-01 部署紀錄「TTL 兩專案已設」是對的，本表 08-10 寫「沒設」是誤記。docs 盤點抓到兩處說法相反才驗的 |
 | `A-9` | ~~AWS 成本金鑰環境變數~~ | `DONE` | **2026-08-11 已設好並部署生效，結案**。Amplify 上是 `COST_EXPLORER_ACCESS_KEY_ID`／`COST_EXPLORER_SECRET_ACCESS_KEY`（本機 `.env` 同名）。⛔**名字不能用 AWS 開頭**：Amplify 主控台整個擋 "AWS" 保留前綴（第一版 `AWS_COST_*` 存不進去才改名 `bb4f56e`），Lambda 又會蓋掉 `AWS_ACCESS_KEY_ID` 三個保留名 |
 | `A-11` | ~~`auditLogs` 索引部署~~（myfeel 已部署；splash 老闆指示先不管） | `DONE` | **2026-08-16 已部署 myfeel（linebot-e8dda）並驗證**：`auditLogs (workspaceId ASC, createdAt DESC)` 建立完成。⛔**沒有加 `--force`**——CLI 當場就警告「有 4 個 field override 不在索引檔裡，要刪請加 --force」，那 4 個正是 TTL 政策；部署後回查確認 5 個 field override 全部完好（aiFeedbackEvents／aiHandoffEvents／knowledgeSuggestions／webhookEventLocks 的 TTL 都還在）。**splash（linebot-b137e）老闆指示先不管**，日後要補：`npx firebase-tools deploy --only firestore:indexes --project splash --account splash.digilab@gmail.com`。順帶查證：`aiTurns` 的 TTL 確實仍未設定（見 `A-7`） |
-| `A-10` | ~~排程推播會隨機卡死在「發送中」~~ | `DEPLOY?` | **2026-08-13 修完（`ef6fcd2`＋複審即修 `4ec6bb2`），詳見完成區**。線上未驗：部署後要看①兩筆卡死單（AROMIC預熱／MATELSAER開賣）有沒有在 10 分鐘內被看門狗自動轉成「失敗」＋小幫手亮紅 ②失敗單詳情有失敗原因與「重設為草稿再發一次」按鈕（兩筆的原因句應該都是「還沒送到 LINE 就停了——沒有任何人收到，可以放心重發」，若出現「無法確認」那句就別直接重發，先抽問一兩位客人） |
+| `A-10` | ~~排程推播會隨機卡死在「發送中」~~ | `DEPLOY?` | **2026-08-13 修完（`ef6fcd2`＋複審即修 `4ec6bb2`），詳見完成區**。**2026-08-17 直查線上資料驗證①通過**：AROMIC預熱與MATELSAER開賣都已被看門狗轉成「失敗」，原因句正是安全的那句「還沒送到 LINE 就停了——沒有任何人收到，可以放心重發」＝補發安全（另有兩筆舊「推播刀盾」failed 無原因＝機制上線前的舊案，不理）。剩②畫面驗證：老闆處理 `D-12` 補發時順手看失敗單詳情有原因卡與「重設為草稿再發一次」按鈕即完整結案 |
 
 ### B. 金流與發票
 
@@ -138,7 +138,7 @@
 | 編號 | 項目 | 說明 |
 |---|---|---|
 | `E-1` | ESLint 未導入 | 刻意延後（初次導入會產生大量風格 noise），typecheck 已進 CI |
-| `E-2` | 巨型檔案待拆 | `server/utils/handler.ts`(**3940 行**，2026-08-10 實測；8/4 時 3256 行，兩週長 ~700 行)、`flow.vue`、`AdminPanel.vue` — 應獨立成無行為變更的重構 PR |
+| `E-2` | 巨型檔案待拆 | `server/utils/handler.ts`(**3953 行**，2026-08-17 實測；8/4 時 3256 行、8/10 時 3940 行——近一週只長 13 行，已止血但仍未拆)、`flow.vue`、`AdminPanel.vue` — 應獨立成無行為變更的重構 PR |
 | `E-3` | 重複實作收斂 | `tsToMs` 全 repo 9 份、worker-pool 3 份、`deliverOrDraft` 統一出口 |
 
 | `E-4` | README 仍是 Nuxt 預設樣板 | 新人接手沒有入口文件。`memory/project_script_13modules.md` 寫得很好，可當技術文件起點 |
@@ -281,7 +281,7 @@
 | 2026-07-31 | 知識卡啟用開關＋有效期限、併發子保溫 | `a47d40d` `fc591f4` |
 | 2026-07-30 | PAYUNi 特店送件補件（品牌統一 MiniMe、改價）、幕後 Token 續扣 P1 | `c510965` `c5d61cf` |
 
-更早的完成項目請看 `git log`（464 個 commit，2026-08-15 實測）。
+更早的完成項目請看 `git log`（487 個 commit，2026-08-17 實測）。
 
 ---
 
