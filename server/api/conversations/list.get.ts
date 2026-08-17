@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import {
   MAX_PINNED_CONVERSATIONS,
   FOLLOW_UP_LIST_LIMIT,
@@ -10,8 +10,11 @@ import {
 } from '~~/shared/conversation-flags'
 
 const DISPLAY_FALLBACK = 'LINE 用戶'
-const FETCH_BATCH = 80
-const MAX_SEARCH_SCAN = 3000
+/**
+ * 搜尋命中數上限。名字搜尋命中通常是個位數；會撞到這個數字的是「u」「a」這種
+ * 打中一堆 LINE userId 的單字母，那種結果本來就沒人要翻完，截斷後 truncated 帶回去明講。
+ */
+const MAX_SEARCH_MATCHES = 500
 
 type ConvRow = {
   userId: string
@@ -26,6 +29,12 @@ type ConvRow = {
   pinned: boolean
   /** 人工標記：客服手動標「我要回頭跟這筆」，與會話狀態無關（見 shared/conversation-flags.ts） */
   followUp: boolean
+}
+
+/** 搜尋結果在記憶體排序用：lastMessageAt 是 Firestore Timestamp，沒有的排最後 */
+function timestampMillis(v: unknown): number {
+  const ts = v as { toMillis?: () => number } | null
+  return typeof ts?.toMillis === 'function' ? ts.toMillis() : 0
 }
 
 function matchesSearch(row: ConvRow, searchRaw: string): boolean {
@@ -187,42 +196,60 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 搜尋時不做釘選置頂：這時清單是「搜尋結果」，照相關的時間序給就好
+  // ── 搜尋 ──────────────────────────────────────────────────────────
+  // 反過來掃 users：搜尋比的名字就存在 users 文件上。舊版掃 conversations 邊掃邊
+  // join users，名字命中少的搜尋每次都掃滿 3,000 筆＝約 130 趟循序往返（體感十幾秒）
+  // ＋近六千次計費讀取；掃 users 一趟查詢撈完全部名字，命中的才照編號去讀對話。
+  // 搜尋時不做釘選置頂：這時清單是「搜尋結果」，照時間序給就好。
+  const uSnap = await db.collection('users')
+    .where('workspaceId', '==', workspaceId)
+    .select('displayName', 'pictureUrl', 'isBlocked')
+    .get()
+
+  const matchedUsers = uSnap.docs.filter((d) => {
+    const name = String(d.data().displayName || '').trim().toLowerCase()
+    if (name.includes(searchRaw)) return true
+    // 只比 LINE userId 本體、不含 workspace 前綴：連前綴一起比的話，
+    // 搜到跟 workspaceId 撞字的字母會整批命中
+    return lineUserIdFromFirestoreDocId(d.id, workspaceId).toLowerCase().includes(searchRaw)
+  })
+
+  const truncated = matchedUsers.length > MAX_SEARCH_MATCHES
+  const capped = matchedUsers.slice(0, MAX_SEARCH_MATCHES)
+  const userDataById = new Map(capped.map(d => [d.id, d.data()] as const))
+
+  // 有 user 不一定有對話（加好友沒開口就沒有 conversations 文件），照編號讀、不存在的略過
+  const convSnaps = capped.length
+    ? await db.getAll(...capped.map(d => db.collection('conversations').doc(d.id)))
+    : []
+
   const matched: ConvRow[] = []
-  let scanned = 0
-  let lastBatchFull = false
-  // 一批批往下掃用游標接，不用 offset——offset 對跳過的每一筆都收讀取費，
-  // 掃滿 3,000 筆的搜尋會被收 6.2 萬筆的錢（8/11 實測，單日 NT$49 的主因）
-  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null
-
-  while (matched.length < offset + limit && scanned < MAX_SEARCH_SCAN) {
-    let batchRef = baseRef as FirebaseFirestore.Query
-    if (cursor) batchRef = batchRef.startAfter(cursor)
-    const snap = await batchRef.limit(FETCH_BATCH).get()
-    if (snap.empty) break
-    scanned += snap.size
-    cursor = snap.docs[snap.docs.length - 1]!
-    lastBatchFull = snap.size >= FETCH_BATCH
-
-    const rows = await enrichConversations(db, snap.docs)
-    for (const row of rows) {
-      if (!matchesSearch(row, searchRaw)) continue
-      matched.push(row)
-    }
-
-    if (snap.size < FETCH_BATCH) break
+  for (const snap of convSnaps) {
+    if (!snap.exists) continue
+    const data = snap.data()!
+    if (data.workspaceId !== workspaceId) continue
+    const user = userDataById.get(snap.id) ?? {}
+    const flags = readConversationFlags(data)
+    matched.push({
+      userId: snap.id,
+      displayName: String(user.displayName || '').trim() || DISPLAY_FALLBACK,
+      pictureUrl: String(user.pictureUrl || '').trim(),
+      lastMessage: data.lastMessage ?? '',
+      lastDirection: data.lastDirection ?? 'incoming',
+      lastMessageAt: data.lastMessageAt ?? null,
+      isBlocked: user.isBlocked === true,
+      pinned: flags.pinned,
+      followUp: flags.followUp,
+    })
   }
-
-  const conversations = matched.slice(offset, offset + limit)
-  const hitScanCap = scanned >= MAX_SEARCH_SCAN && lastBatchFull
-  const total = matched.length
-  const hasMore = matched.length > offset + limit || hitScanCap
+  matched.sort((a, b) => timestampMillis(b.lastMessageAt) - timestampMillis(a.lastMessageAt))
 
   return {
-    conversations,
-    total,
+    conversations: matched.slice(offset, offset + limit),
+    total: matched.length,
     page,
     limit,
-    hasMore,
+    hasMore: matched.length > offset + limit,
+    truncated,
   }
 })
