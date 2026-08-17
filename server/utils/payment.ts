@@ -14,7 +14,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import type { Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { invalidateWorkspaceSubscriptionCache } from './billing'
-import { addDays, dayOfDate, taipeiDate } from '~~/shared/time'
+import { addDays, dayOfDate, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
 import { isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { anchorDayOf, confirmRenewal, newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
 import { cancelCardBinding, type PayuniCardMandate, type PayuniKeys } from './payuni'
@@ -646,4 +646,70 @@ export async function runPaymentReconcile(
   }
 
   return { renewed, downgraded, unbound, expiredOrders }
+}
+
+/** 摘要算式的輸入：只需要金額與狀態，時間已轉成毫秒（見 admin/super/payments.get.ts）。 */
+export interface PaymentMonthRow {
+  status: string
+  amount: number
+  manualRefundTotal?: number | null
+  paidAt?: number | null
+  createdAt?: number | null
+}
+
+export interface PaymentMonthSummary {
+  /** 已請款 − 已退款，也就是真正留下來的錢。 */
+  monthRevenue: number
+  monthCharged: number
+  monthRefunded: number
+  monthPaidCount: number
+  monthRefundedCount: number
+  monthFailedCount: number
+}
+
+/**
+ * 金流總覽的「本月」摘要。抽成純函式是為了測得起來——這是會被拿去對帳的數字。
+ *
+ * **營收一律扣掉退款**。原本只看 status==='paid' 就整筆計入，同一頁的表格標著「已退款」、
+ * 上面的營收卻照算全額，一頁兩套算法（2026-08-17 老闆看板抓到：八月唯一一筆 399 已退款、
+ * 發票也作廢了，營收仍顯示 NT$399）。
+ *
+ * 只扣 manualRefundTotal（錢的那半邊帳），**刻意不扣 invoiceAllowanceTotal**——
+ * 折讓／作廢管的是稅務沖銷，同一筆退款兩邊通常都會留一筆，兩個都扣會重複扣兩次。
+ *
+ * 退款掛在「訂單成交的那個月」而不是「按下記退款的那個月」：退七月的單，七月營收跟著降，
+ * 不會在八月憑空冒出一筆負數。要的是「這個月賣出去、真正留下來多少」，不是現金流量表。
+ */
+export function summarizePaymentMonth(rows: PaymentMonthRow[], thisMonth: string): PaymentMonthSummary {
+  let monthCharged = 0
+  let monthRefunded = 0
+  let monthPaidCount = 0
+  let monthRefundedCount = 0
+  let monthFailedCount = 0
+
+  for (const o of rows) {
+    const when = o.paidAt ?? o.createdAt
+    if (when == null || taipeiYyyyMm(new Date(when)) !== thisMonth) continue
+    if (o.status === 'paid') {
+      const amount = o.amount || 0
+      // 上限鎖在原請款金額：record-refund 已擋超額，這裡再防一次，免得資料歪掉時營收變負數
+      const refunded = Math.min(Math.max(o.manualRefundTotal || 0, 0), amount)
+      monthCharged += amount
+      monthRefunded += refunded
+      monthPaidCount++
+      if (refunded > 0) monthRefundedCount++
+    }
+    else if (o.status === 'failed') {
+      monthFailedCount++
+    }
+  }
+
+  return {
+    monthRevenue: monthCharged - monthRefunded,
+    monthCharged,
+    monthRefunded,
+    monthPaidCount,
+    monthRefundedCount,
+    monthFailedCount,
+  }
 }

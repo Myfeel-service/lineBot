@@ -1,14 +1,14 @@
 import type { Timestamp } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
-import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
+import { PAYMENT_ORDERS_COLLECTION, summarizePaymentMonth } from '~~/server/utils/payment'
 import { taipeiYyyyMm } from '~~/shared/time'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 
 /**
  * GET /api/admin/super/payments — 本租戶所有官方帳號的付款總覽。僅 super admin。
- * 最近 200 筆訂單 + 本月營收摘要（台灣時區當月已付款）。
+ * 最近 200 筆訂單 + 本月營收摘要（台灣時區當月已付款,**扣掉已記的人工退款**）。
  * paymentOrders 是「租戶內」top-level collection → 跨租戶各自部署各看各的（與計費設計一致）。
  * 本月營收只從最近 200 筆估;單月成交量將破 200 時要改成用 where 查當月（現階段夠用）。
  */
@@ -48,21 +48,9 @@ export default defineEventHandler(async (event) => {
     manualRefundTotal: o.manualRefundTotal ?? null,
   }))
 
+  // 算式在 payment.ts（純函式、有測試）——這是拿去對帳的數字,不能只靠看畫面驗。
   const thisMonth = taipeiYyyyMm(new Date())
-  let monthRevenue = 0
-  let monthPaidCount = 0
-  let monthFailedCount = 0
-  for (const o of orders) {
-    const when = o.paidAt ?? o.createdAt
-    if (when == null || taipeiYyyyMm(new Date(when)) !== thisMonth) continue
-    if (o.status === 'paid') {
-      monthRevenue += o.amount || 0
-      monthPaidCount++
-    }
-    else if (o.status === 'failed') {
-      monthFailedCount++
-    }
-  }
+  const month = summarizePaymentMonth(orders, thisMonth)
   const pendingCount = orders.filter(o => o.status === 'pending').length
 
   // 發票未開成的真實數量:用 count() 掃**整個** collection,不受最近 200 筆限制——
@@ -74,5 +62,10 @@ export default defineEventHandler(async (event) => {
     .get()
   const invoiceFailedCount = failedAgg.data().count
 
-  return { orders, summary: { thisMonth, monthRevenue, monthPaidCount, monthFailedCount, pendingCount, invoiceFailedCount, count: orders.length } }
+  // month 已含 monthRevenue(淨額) 與 monthCharged / monthRefunded——
+  // 算式兩端要一起回,否則畫面上的 NT$0 看起來像壞掉,而不是「退光了」。
+  return {
+    orders,
+    summary: { thisMonth, ...month, pendingCount, invoiceFailedCount, count: orders.length },
+  }
 })

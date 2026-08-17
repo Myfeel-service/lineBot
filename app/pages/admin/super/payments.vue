@@ -17,13 +17,24 @@
         <!-- 摘要 -->
         <div class="message-card ar-section-card">
           <div class="sa-pay-summary">
+            <!--
+              營收是**扣掉退款後的實收**。有退款時一定要把算式攤開——光顯示 NT$0 看起來
+              像壞掉,寫成「已收 399 − 已退 399」才知道是退光了。用詞沿用成本總覽
+              「原價−折抵＝實付」的兩行式(B-44⑪),兩頁看起來是同一套東西。
+            -->
             <div class="sa-pay-stat">
               <div class="sa-pay-stat__label">本月營收（{{ summary.thisMonth || '—' }}）</div>
               <div class="sa-pay-stat__value">NT$ {{ summary.monthRevenue.toLocaleString() }}</div>
+              <div v-if="summary.monthRefunded > 0" class="sa-pay-stat__hint">
+                已收 NT${{ summary.monthCharged.toLocaleString() }} − 已退 NT${{ summary.monthRefunded.toLocaleString() }}
+              </div>
             </div>
             <div class="sa-pay-stat">
               <div class="sa-pay-stat__label">本月成交</div>
               <div class="sa-pay-stat__value">{{ summary.monthPaidCount }} 筆</div>
+              <div v-if="summary.monthRefundedCount > 0" class="sa-pay-stat__hint">
+                其中 {{ summary.monthRefundedCount }} 筆有退款
+              </div>
             </div>
             <div class="sa-pay-stat" :class="{ 'sa-pay-stat--alert': summary.monthFailedCount > 0 }">
               <div class="sa-pay-stat__label">本月刷卡失敗</div>
@@ -359,11 +370,23 @@ interface PayOrder {
   invoiceAllowanceTotal: number | null
   manualRefundTotal: number | null
 }
-interface Summary { thisMonth: string; monthRevenue: number; monthPaidCount: number; monthFailedCount: number; pendingCount: number; invoiceFailedCount: number; count: number }
+/** monthRevenue 是**扣掉退款的淨額**;monthCharged / monthRefunded 是攤給人看的算式兩端。 */
+interface Summary {
+  thisMonth: string
+  monthRevenue: number
+  monthCharged: number
+  monthRefunded: number
+  monthPaidCount: number
+  monthRefundedCount: number
+  monthFailedCount: number
+  pendingCount: number
+  invoiceFailedCount: number
+  count: number
+}
 
 const loading = ref(false)
 const orders = ref<PayOrder[]>([])
-const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthPaidCount: 0, monthFailedCount: 0, pendingCount: 0, invoiceFailedCount: 0, count: 0 })
+const summary = ref<Summary>({ thisMonth: '', monthRevenue: 0, monthCharged: 0, monthRefunded: 0, monthPaidCount: 0, monthRefundedCount: 0, monthFailedCount: 0, pendingCount: 0, invoiceFailedCount: 0, count: 0 })
 
 // ── 作廢發票 ──────────────────────────────────────────────
 // 作廢有時效（B2C 2 日 / B2B 7 日、當期未申報）,逾期只能改折讓——這裡先提示,實際時效由光貲端認定。
