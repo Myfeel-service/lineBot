@@ -1147,11 +1147,41 @@ async function save() {
   }
 }
 
+// ── 小幫手帶路:?focus=handoff ──────────────────────────────
+// 小幫手「設定轉真人通知」劇本要人來這頁用完整選人器時,連結卡會帶這個參數;
+// 進頁自動聚光「轉真人通知」那一卡＋儲存鈕,人不用在長頁面裡自己找位置。
+const route = useRoute()
+const router = useRouter()
+const { startAdHocTour } = useTutorial()
+
+function maybeStartFocusTour() {
+  if (route.query.focus !== 'handoff')
+    return
+  // 參數用完即丟:重新整理或存檔後不要再跑一次導覽
+  router.replace({ query: { ...route.query, focus: undefined } })
+  void startAdHocTour([
+    {
+      target: '[data-tour="ais-handoff"]',
+      title: '設定轉真人通知',
+      description:
+        '就是這一區。先把「<strong>啟用通知</strong>」打開，再到「<strong>通知對象</strong>」點一下挑選、或輸入暱稱搜尋。收通知的人必須已加你的官方帳號好友。',
+      placement: 'top',
+    },
+    {
+      target: '[data-tour="ais-save"]',
+      title: '儲存設定',
+      description: '選好人之後按這裡才會生效。存好之後，右下角小幫手的提醒會自己熄掉。',
+      placement: 'bottom-end',
+    },
+  ])
+}
+
 onMounted(() => {
   loadSettings()
   loadStatus()
   checkIsSuperAdmin().catch(() => {})
   // 先抓成員綁定,已存的收件人才會直接顯示 Email,不用等使用者點開下拉
   ensureNotifyMembers()
+  maybeStartFocusTour()
 })
 </script>

@@ -165,6 +165,8 @@ const liffEndpointGuide: AgentGuideDef = {
 }
 
 // ── 轉真人通知 ──────────────────────────────────────────────────
+// 連結卡的 ?focus=handoff：AI 設定頁看到它會自動聚光「轉真人通知」那一卡＋儲存鈕
+// （ai-settings.vue 進頁處理）。純連結會落在頁面頂端，人還得自己在長頁面裡找。
 
 const handoffNotifyGuide: AgentGuideDef = {
   id: 'handoff-notify',
@@ -199,7 +201,7 @@ const handoffNotifyGuide: AgentGuideDef = {
         if (!options.length) {
           c.state.exit = true
           await r.say('目前抓不到好友清單（通常是還沒有人加這個官方帳號好友）。先用手機加自己的官方帳號好友再回來設，或到「AI 設定」用完整的選人器。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings` })
+          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
           return
         }
         if (options.length >= 8)
@@ -209,7 +211,7 @@ const handoffNotifyGuide: AgentGuideDef = {
         if (!picked) {
           c.state.exit = true
           await r.say('先跳過。提醒一下：通知沒設的話，客人要找真人時不會有人知道。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings` })
+          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
           return
         }
         const ok = await r.apiRetry(
@@ -248,7 +250,7 @@ const handoffNotifyGuide: AgentGuideDef = {
           }
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '設定看起來還沒生效' })
           await r.say('剛存的設定讀回來還是空的——請到「AI 設定 → 轉真人通知」看一眼。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings` })
+          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
         }
         catch {
           r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒確認成功（不代表沒設好）' })
