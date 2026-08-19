@@ -119,7 +119,7 @@ const liffEndpointGuide: AgentGuideDef = {
               href: 'https://developers.line.biz/console/',
               hrefLabel: '打開 LINE Developers ↗',
             },
-            { text: '選你的官方帳號 → LIFF 分頁' },
+            { text: '選掛著「LINE Login」小字的那張卡（⚠️跟拿鑰匙相反——LIFF 住在 LINE Login 頻道下），切到 LIFF 分頁' },
             { text: '點進上面列出的那個 LIFF' },
             { text: 'Endpoint URL 換成剛剛那串，按 Update／存檔' },
           ],

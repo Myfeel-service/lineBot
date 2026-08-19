@@ -24,6 +24,7 @@
 | `line-console-webhook-url.png` | Messaging API 分頁的 Webhook settings | ①貼網址的欄位 ②Use webhook 開關 | `src-messaging-api.jpg` |
 | `oam-auto-reply.webp` | **循環動畫**：右上「設定」→ 側欄「回應設定」→ 選「手動聊天」（＝關掉內建自動回應的新版做法） | 三個停格 | `src-oam-response.jpg` |
 | `oam-enable-messaging-api.png` | 官方帳號後台 → 設定 → Messaging API 的啟用鈕 | 啟用按鈕 | **尚缺**——只用在「清單沒看到帳號」的岔路，補上即自動顯示 |
+| `line-console-liff-setup.webp` | **循環動畫**：LINE Login 那張卡 → LIFF 分頁 → Add → 貼 Endpoint URL | 待定 | **尚缺**——需 2 張截圖：LIFF 分頁清單、Add LIFF 表單（⚠️在 LINE Login 頻道下，跟拿鑰匙相反）；補上即自動顯示 |
 
 **全部由 `scripts/make-onboarding-shots.py` 產生**（需要 Python3＋Pillow）：裁切座標、紅框、
 編號徽章、動畫的停格與捲動節奏都寫在腳本裡。換圖流程＝重截 → 蓋掉來源檔 → 對新圖調座標 →
@@ -83,3 +84,4 @@ LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換�
 | 2026-08-19 ③ | 標註全套改聚光式；新增 channel-secret 循環動畫 | 粗紅框被嫌俗；緊裁列圖缺定位，教學圖改「從分頁帶到目標」的動畫 |
 | 2026-08-19 ④ | 標註拔掉框線只留聚光（壓暗 14→18%）；帳號清單改動畫版（教學用）；動畫開場加正常畫面幀；幾個框對正（「手動聊天」右側多一截最明顯）；秘鑰靜態列圖退場 | 老闆逐輪校 |
 | 2026-08-19 ⑤ | 關自動回應也改帶路動畫（右上設定→側欄回應設定→手動聊天，73KB），教學兩步併一步；靜態版退場 | 三個「找位置」環節全數動畫化 |
+| 2026-08-19 ⑥ | 欄位教學鈕擴到 LIFF（教我怎麼設，動畫待截圖）與內建自動回應（教我怎麼關，複用動畫）；設定頁補關自動回應提醒；LIFF 修復劇本明講「LINE Login 那張卡」 | D-17 盤點的兩個洞 |

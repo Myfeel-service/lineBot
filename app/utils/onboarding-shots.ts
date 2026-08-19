@@ -26,4 +26,6 @@ export const ONBOARDING_SHOTS = {
   webhookUrl: '/onboarding/line-console-webhook-url.png',
   /** 循環動畫：官方帳號後台——右上「設定」→ 側欄「回應設定」→ 選「手動聊天」 */
   oamAutoReplyAnim: '/onboarding/oam-auto-reply.webp',
+  /** 循環動畫：建活動頁 LIFF（LINE Login 那張卡 → LIFF 分頁 → Add → 貼 Endpoint）。⚠️截圖尚缺，補進 src 後產 */
+  liffSetupAnim: '/onboarding/line-console-liff-setup.webp',
 } as const

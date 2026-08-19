@@ -30,7 +30,7 @@ export interface FieldHelpDef {
   hrefLabel?: string
 }
 
-export type FieldHelpId = 'channelAccessToken' | 'channelSecret' | 'webhookUrl'
+export type FieldHelpId = 'channelAccessToken' | 'channelSecret' | 'webhookUrl' | 'liffSetup' | 'oamAutoReply'
 
 export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   channelAccessToken: {
@@ -59,5 +59,25 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     alt: 'Messaging API 分頁，標出 Webhook URL 欄位與 Use webhook 開關',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
+  },
+  liffSetup: {
+    button: '教我怎麼設',
+    title: '活動頁 LIFF 怎麼設？',
+    // ⚠️跟拿鑰匙相反：LIFF 住在「LINE Login」那張卡下面——拿鑰匙教學教人別點的那張，
+    // 這裡必須明講，否則兩份教學互打（2026-08-19 D-17 盤點抓到的雷）
+    html: '活動頁的 LIFF 建在「<b>LINE Login</b>」那張卡下面——⚠️<b>跟拿鑰匙相反</b>，這次別點 Messaging API。流程：到 LINE Developers 點 <b>LINE Login</b> 那張卡 → 切到 <b>LIFF</b> 分頁按「Add」→ <b>Endpoint URL</b> 貼下面「活動 LIFF 頁」的網址（按它旁邊的「複製」）→ 建好後把 <b>LIFF ID</b>（長得像 2007123456-AbCdEfGh）複製回來貼進這一格。',
+    image: ONBOARDING_SHOTS.liffSetupAnim,
+    alt: '循環動畫：LINE Login 頻道的 LIFF 分頁、Add LIFF、貼 Endpoint URL',
+    href: 'https://developers.line.biz/console/',
+    hrefLabel: '打開 LINE Developers',
+  },
+  oamAutoReply: {
+    button: '教我怎麼關',
+    title: '內建自動回應怎麼關？',
+    html: '到 <b>LINE 官方帳號後台</b>（綠色那個，跟拿鑰匙的後台不同）：照動畫點右上角「<b>設定</b>」→ 左邊選「<b>回應設定</b>」→「聊天的回應方式」選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
+    image: ONBOARDING_SHOTS.oamAutoReplyAnim,
+    alt: '循環動畫：右上設定、側欄回應設定、選手動聊天',
+    href: 'https://manager.line.biz/',
+    hrefLabel: '打開官方帳號後台',
   },
 }

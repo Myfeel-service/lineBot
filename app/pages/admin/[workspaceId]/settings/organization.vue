@@ -80,7 +80,10 @@
           <div class="card-section-stack">
             <p class="ls-subgroup">LIFF（活動頁）</p>
             <div class="admin-field-group" data-tour="org-liff">
-              <AdminFieldLabel text="預設 LIFF（選填，活動頁用）" tight />
+              <div class="afh-row">
+                <AdminFieldLabel text="預設 LIFF（選填，活動頁用）" tight />
+                <AdminFieldHelp id="liffSetup" />
+              </div>
               <el-input
                 v-model="form.defaultLiffId"
                 placeholder="例：2007123456-AbCdEfGh"
@@ -234,6 +237,15 @@
                   LINE 那邊填的網址：<span class="ls-status-url">{{ webhookVerifyResult.lineEndpoint }}</span>
                 </p>
               </div>
+            </div>
+
+            <p class="ls-subgroup">內建自動回應（記得關）</p>
+            <div class="admin-field-group">
+              <div class="afh-row">
+                <AdminFieldLabel text="LINE 內建的「自動回應訊息」要關掉" tight />
+                <AdminFieldHelp id="oamAutoReply" />
+              </div>
+              <p class="text-xs text-muted">沒關的話，客人每句話會收到兩套回覆（LINE 的罐頭訊息＋我們的回覆）。這個開關在 LINE 官方帳號後台，系統偵測不到，只能在這裡提醒。</p>
             </div>
 
             <template v-if="showClearStoredCredentials">
