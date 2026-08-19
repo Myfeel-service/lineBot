@@ -1210,6 +1210,53 @@
     </div>
   </el-dialog>
 
+  <!-- ── Duplicate Suggestions Modal（C-40(c)）────────── -->
+  <el-dialog
+    v-model="dupSuggestOpen"
+    title="疑似重複的知識"
+    width="min(680px, 92vw)"
+    :close-on-click-modal="false"
+  >
+    <p class="src-bin-hint">
+      系統用「內容相似度＋AI 判斷」找出可能重複的組合，並附上理由。
+      <strong>不會自動合併或刪除</strong>——確認後用「整理產品名稱」合併、或把多的那張刪掉（會進回收桶，可還原）。
+      不是重複的按「忽略」，之後不會再報這一組。
+    </p>
+    <p v-if="!health.duplicates.items.length" class="src-bin-empty">目前沒有疑似重複的項目。</p>
+    <div v-else class="src-bin-list">
+      <div v-for="s in health.duplicates.items" :key="s.key" class="src-bin-row">
+        <div class="src-bin-row__main">
+          <span class="src-bin-row__title">
+            {{ s.kind === 'product_split' ? '同一台商品、兩個名字？' : '兩張卡講同一件事？' }}
+          </span>
+          <span class="src-bin-row__meta">
+            A「{{ s.a.title }}」{{ s.a.productName ? `（${s.a.productName}）` : '' }}
+            ／ B「{{ s.b.title }}」{{ s.b.productName ? `（${s.b.productName}）` : '' }}
+          </span>
+          <span class="src-bin-row__snippet">{{ s.reason }}</span>
+        </div>
+        <div class="src-dupe-actions">
+          <el-button v-if="s.kind === 'product_split'" size="small" type="primary" plain @click="dupGoMerge">
+            去合併產品名
+          </el-button>
+          <template v-else>
+            <el-button size="small" plain @click="dupOpenCard(s.a.id)">看 A</el-button>
+            <el-button size="small" plain @click="dupOpenCard(s.b.id)">看 B</el-button>
+          </template>
+          <el-button size="small" text :loading="dupDismissing === s.key" @click="dupDismiss(s)">忽略</el-button>
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <div class="src-dup-footer">
+        <span class="text-xs text-muted">
+          {{ health.duplicates.scannedAtMs ? `上次掃描：${relativeTime(health.duplicates.scannedAtMs)}` : '尚未掃描' }}
+        </span>
+        <el-button size="small" plain :loading="dupRescanning" @click="dupRescan">重新掃描</el-button>
+      </div>
+    </template>
+  </el-dialog>
+
   <!-- ── Folder Edit Modal ──────────────────────────── -->
   <el-dialog
     v-model="folderEditOpen"
@@ -1780,6 +1827,54 @@ async function unlockChunk(c: { id: string; title: string }) {
   }
 }
 
+// ── Duplicate suggestions（疑似重複，C-40(c)）───────────
+const dupSuggestOpen = ref(false)
+const dupDismissing = ref('')
+const dupRescanning = ref(false)
+
+/** 產品名分裂 → 直接把人送進現成的「整理產品名稱」視窗（合錯可解除） */
+function dupGoMerge() {
+  dupSuggestOpen.value = false
+  openAliasDialog()
+}
+
+/** 重複卡 → 打開那張卡（看完自行決定刪哪張；刪了會進回收桶可還原） */
+function dupOpenCard(id: string) {
+  dupSuggestOpen.value = false
+  void gotoHealthItem({ id, kind: 'chunk' })
+}
+
+async function dupDismiss(s: DupSuggestionRow) {
+  dupDismissing.value = s.key
+  try {
+    await apiFetch('/api/ai/knowledge/dup-scan/dismiss', { method: 'POST', body: { key: s.key } })
+    health.value.duplicates.items = health.value.duplicates.items.filter(x => x.key !== s.key)
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '忽略失敗', 'error')
+  }
+  finally {
+    dupDismissing.value = ''
+  }
+}
+
+async function dupRescan() {
+  dupRescanning.value = true
+  try {
+    const r = await apiFetch<{ outcome: string; suggestions: number }>('/api/ai/knowledge/dup-scan', { method: 'POST', body: {} })
+    await loadHealth(true)
+    showToast(r.outcome === 'skipped_unchanged'
+      ? '知識沒有變動，維持上次的掃描結果'
+      : `掃描完成：${r.suggestions} 組疑似重複`, 'success')
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '掃描失敗', 'error')
+  }
+  finally {
+    dupRescanning.value = false
+  }
+}
+
 // ── Chunk edit / create modal ───────────────────────
 const chunkEditOpen = ref(false)
 const chunkEditMode = ref<'create' | 'edit'>('create')
@@ -1979,6 +2074,16 @@ interface HealthResponse {
   }
   chunkScanTruncated: boolean
   aliasCandidateCount: number
+  /** 疑似重複（C-40(c)）：排程「向量篩候選 → AI 判官」的建議；合併/刪除留人拍板 */
+  duplicates: { items: DupSuggestionRow[]; scannedAtMs: number }
+}
+interface DupSuggestionRow {
+  key: string
+  kind: 'product_split' | 'duplicate_cards'
+  a: { id: string; title: string; productName: string; sourceId: string | null }
+  b: { id: string; title: string; productName: string; sourceId: string | null }
+  similarity: number
+  reason: string
 }
 const emptyHealth = (): HealthResponse => ({
   failedSources: [],
@@ -1991,6 +2096,7 @@ const emptyHealth = (): HealthResponse => ({
   wrongAnswerChunks: { count: 0, items: [], scanTruncated: false },
   chunkScanTruncated: false,
   aliasCandidateCount: 0,
+  duplicates: { items: [], scannedAtMs: 0 },
 })
 const health = ref<HealthResponse>(emptyHealth())
 // 資料與知識分開計:「1 份資料同步失敗」= 整批知識凍結,「1 條過短」= 小瑕疵,
@@ -2110,6 +2216,21 @@ const todoItems = computed<TodoItem[]>(() => {
     })
   }
   /**
+   * 疑似重複（C-40(c)）：同一台商品的知識散在不同來源、或同一台被叫成兩個名字。
+   * 放著不管的下場已經發生過——同機不同名答矛盾、客人講到型號被判成「別台」轉真人。
+   * AI 只出建議（附理由），合併/刪除都由人按。
+   */
+  if (h.duplicates.items.length) {
+    items.push({
+      id: 'duplicates',
+      tone: 'warning',
+      title: `有 ${h.duplicates.items.length} 組知識疑似重複`,
+      why: '同一件事存了兩份（或同一台商品有兩個名字），AI 可能反問一樣的選項、甚至前後矛盾。',
+      cta: '查看',
+      action: () => { dupSuggestOpen.value = true },
+    })
+  }
+  /**
    * 排在「內容改過了」後面：那個是已經知道要做什麼的事，這個是「系統其實沒在幫你看」——
    * 不緊急但更容易被忽略，因為畫面上完全看不出異狀（最後同步時間照樣在更新）。
    */
@@ -2196,7 +2317,8 @@ async function loadHealth(force = false) {
   if (!force && healthFetchedAt && Date.now() - healthFetchedAt < HEALTH_TTL_MS) return
   healthFetchedAt = Date.now()
   try {
-    health.value = await apiFetch<HealthResponse>('/api/ai/knowledge/health')
+    // 併回預設值:後端還沒部署新欄位(duplicates)時,舊回應缺欄位不能讓畫面炸掉
+    health.value = { ...emptyHealth(), ...(await apiFetch<HealthResponse>('/api/ai/knowledge/health')) }
   }
   catch {
     /* 體檢失敗不擋頁面,banner 不顯示而已 */

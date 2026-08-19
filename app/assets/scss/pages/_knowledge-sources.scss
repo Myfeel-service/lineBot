@@ -1001,3 +1001,11 @@
     white-space: nowrap;
   }
 }
+
+/* 疑似重複建議列的動作鈕（沿用 src-bin-row 版面） */
+.src-dupe-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+}

@@ -10,6 +10,7 @@ import {
   purgeRecycledKnowledge,
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
+import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
@@ -47,6 +48,8 @@ export default defineEventHandler(async (event) => {
     // 知識缺口掃描（每輪最多 2 個 workspace，內含 LLM）。
     // 缺口週報已併入 conversation:backlog-digest 的每日摘要（2026-08-06 拍板）
     { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },
+    // 跨來源重複偵測（C-40(c)）:一輪一個 workspace,指紋沒變/24h 內掃過＝零 LLM 費
+    { name: 'ai:dup-scan', run: () => scanNextWorkspaceForDuplicates(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     // 真人接手中的會話不吃 24 小時自動結束，這是唯一會收殮它們的機制——停掉的話
     // 忘記按「結束會話」的對話會永遠掛著（那位客人也永遠收不到自動回覆）

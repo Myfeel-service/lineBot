@@ -1,0 +1,205 @@
+/**
+ * C-40(c) 跨來源重複偵測——三層漏斗。
+ * 釘住的行為：①向量候選門檻與上限 ②同來源同產品不報（切卡粒度不是重複）
+ * ③LLM 判官只有 same 才出建議（different/unsure 都不出＝寧可漏不可誤）
+ * ④指紋沒變整輪跳過＝零 LLM 費 ⑤忽略過的組合不再報。
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+;(globalThis as any).createError ??= (opts: { statusCode?: number; statusMessage?: string }) =>
+  Object.assign(new Error(opts?.statusMessage ?? 'error'), opts)
+
+vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => ({ __op: 'ts' }) },
+}))
+
+const { generateJson } = vi.hoisted(() => ({ generateJson: vi.fn() }))
+vi.mock('./gemini', () => ({
+  generateJson,
+  runWithLlmBudget: (_ws: string, fn: () => Promise<unknown>) => fn(),
+}))
+vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
+
+import {
+  cardSetFingerprint,
+  classifyPair,
+  cosineSim,
+  DUP_MAX_CANDIDATES,
+  dupPairKey,
+  runDuplicateScan,
+  topSimilarPairs,
+  type DupCardLite,
+} from './ai-duplicate-scan'
+
+const vec = (...v: number[]) => v
+const card = (id: string, over: Partial<DupCardLite> = {}): DupCardLite => ({
+  id,
+  title: `卡${id}`,
+  productName: '',
+  sourceId: `src-${id}`,
+  firstLine: '重點：測試',
+  embedding: vec(1, 0, 0),
+  ...over,
+})
+
+describe('cosineSim / topSimilarPairs', () => {
+  it('同向 = 1、正交 = 0；未單位化也算對', () => {
+    expect(cosineSim([2, 0], [5, 0])).toBeCloseTo(1)
+    expect(cosineSim([1, 0], [0, 3])).toBeCloseTo(0)
+  })
+  it('只收 ≥ 門檻的組合、分數高的優先、有上限', () => {
+    const cards = [
+      card('a', { embedding: vec(1, 0, 0) }),
+      card('b', { embedding: vec(0.99, 0.14, 0) }), // 與 a 約 0.99
+      card('c', { embedding: vec(0, 1, 0) }), // 與誰都不像
+    ]
+    const pairs = topSimilarPairs(cards, 0.9, DUP_MAX_CANDIDATES)
+    expect(pairs).toHaveLength(1)
+    expect(dupPairKey(pairs[0]!.a.id, pairs[0]!.b.id)).toBe('a~b')
+  })
+})
+
+describe('classifyPair', () => {
+  it('兩邊產品名都有且不同 → product_split（同一台兩個名字）', () => {
+    expect(classifyPair(
+      card('a', { productName: '上好ㄟ抽取式除濕機' }),
+      card('b', { productName: 'NWT 威技 除濕機' }),
+    )).toBe('product_split')
+  })
+  it('同產品（或有一邊沒掛）→ duplicate_cards；⛔同一來源內不報（切卡粒度不是重複）', () => {
+    expect(classifyPair(
+      card('a', { productName: 'GPLUS 除濕機' }),
+      card('b', { productName: 'GPLUS 除濕機' }),
+    )).toBe('duplicate_cards')
+    expect(classifyPair(
+      card('a', { sourceId: 'same', productName: 'GPLUS 除濕機' }),
+      card('b', { sourceId: 'same', productName: 'GPLUS 除濕機' }),
+    )).toBe(null)
+  })
+})
+
+describe('cardSetFingerprint', () => {
+  it('與順序無關；內容變了指紋就變', () => {
+    const a = [{ id: 'x', updatedAtMs: 1 }, { id: 'y', updatedAtMs: 2 }]
+    const b = [{ id: 'y', updatedAtMs: 2 }, { id: 'x', updatedAtMs: 1 }]
+    expect(cardSetFingerprint(a)).toBe(cardSetFingerprint(b))
+    expect(cardSetFingerprint([{ id: 'x', updatedAtMs: 9 }, { id: 'y', updatedAtMs: 2 }]))
+      .not.toBe(cardSetFingerprint(a))
+  })
+})
+
+// ── 完整掃描流程 ────────────────────────────────────────
+
+function makeScanDb(opts: {
+  prev?: Record<string, unknown> | null
+  chunks: Array<{ id: string; data: Record<string, unknown> }>
+}) {
+  const writes: Array<Record<string, unknown>> = []
+  const db: any = {
+    collection: (col: string) => ({
+      doc: () => ({
+        get: async () => ({ exists: opts.prev != null, data: () => opts.prev ?? undefined }),
+        set: async (payload: Record<string, unknown>) => { writes.push(payload) },
+      }),
+      where: () => ({
+        where: () => ({
+          select: () => ({
+            limit: () => ({
+              get: async () => ({
+                size: opts.chunks.length,
+                docs: opts.chunks.map(c => ({ id: c.id, data: () => c.data })),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }
+  return { db, writes }
+}
+
+const chunkDoc = (id: string, emb: number[], over: Record<string, unknown> = {}) => ({
+  id,
+  data: {
+    title: `卡${id}`,
+    productName: '',
+    sourceId: `src-${id}`,
+    content: '重點：內容',
+    embedding: emb,
+    updatedAt: { toMillis: () => 100 },
+    ...over,
+  },
+})
+
+beforeEach(() => generateJson.mockReset())
+
+describe('runDuplicateScan', () => {
+  it('判官回 same 才出建議；different/unsure 都不出（寧可漏不可誤）', async () => {
+    generateJson.mockResolvedValue({
+      data: {
+        results: [
+          { index: 0, verdict: 'same', reason: '同一台咖啡機，一張暱稱一張正式名' },
+          { index: 1, verdict: 'different', reason: '型號不同' },
+        ],
+      },
+      inputTokens: 10,
+      outputTokens: 5,
+    })
+    const { db, writes } = makeScanDb({
+      prev: null,
+      chunks: [
+        chunkDoc('a', [1, 0], { productName: '義比壓壓' }),
+        chunkDoc('b', [0.99, 0.14], { productName: 'Balzano 義式半自動' }),
+        chunkDoc('c', [0, 1], { productName: 'GPLUS 12L' }),
+        chunkDoc('d', [0.14, 0.99], { productName: 'GPLUS 16L' }),
+      ],
+    })
+    const r = await runDuplicateScan(db, 'ws1', { force: true })
+    expect(r.outcome).toBe('scanned')
+    expect(r.candidates).toBe(2)
+    expect(r.suggestions).toBe(1)
+    const saved = writes.at(-1) as any
+    expect(saved.suggestions).toHaveLength(1)
+    expect(saved.suggestions[0].kind).toBe('product_split')
+    expect(saved.suggestions[0].reason).toContain('咖啡機')
+  })
+
+  it('指紋沒變 → 整輪跳過、零 LLM 呼叫', async () => {
+    const chunks = [chunkDoc('a', [1, 0]), chunkDoc('b', [0.99, 0.14])]
+    const fp = cardSetFingerprint(chunks.map(c => ({ id: c.id, updatedAtMs: 100 })))
+    const { db } = makeScanDb({
+      prev: { fingerprint: fp, scannedAtMs: 1, suggestions: [{ key: 'a~b' }], ignoredKeys: [] },
+      chunks,
+    })
+    const r = await runDuplicateScan(db, 'ws1', { force: true })
+    expect(r.outcome).toBe('skipped_unchanged')
+    expect(generateJson).not.toHaveBeenCalled()
+  })
+
+  it('忽略過的組合不再送判官、也不再出建議', async () => {
+    const chunks = [chunkDoc('a', [1, 0]), chunkDoc('b', [0.99, 0.14])]
+    const { db } = makeScanDb({
+      prev: { fingerprint: 'old', scannedAtMs: 1, suggestions: [], ignoredKeys: ['a~b'] },
+      chunks,
+    })
+    const r = await runDuplicateScan(db, 'ws1', { force: true })
+    expect(r.outcome).toBe('scanned')
+    expect(r.candidates).toBe(0)
+    expect(generateJson).not.toHaveBeenCalled()
+  })
+
+  it('回收桶與總覽卡不參與；卡不足 2 張直接跳過', async () => {
+    const { db } = makeScanDb({
+      prev: null,
+      chunks: [
+        chunkDoc('a', [1, 0]),
+        chunkDoc('b', [0.99, 0.14], { deletedAt: { toMillis: () => 1 } }),
+        chunkDoc('c', [0.98, 0.2], { isOverview: true }),
+      ],
+    })
+    const r = await runDuplicateScan(db, 'ws1', { force: true })
+    expect(r.outcome).toBe('skipped_too_few')
+    expect(generateJson).not.toHaveBeenCalled()
+  })
+})

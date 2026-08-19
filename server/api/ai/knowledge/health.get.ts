@@ -8,6 +8,7 @@ import {
 } from '~~/server/utils/ai-feedback-events'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
+import { KNOWLEDGE_DUP_SCANS_COLLECTION } from '~~/server/utils/ai-duplicate-scan'
 import { isShortChunkContent, needsProductName } from '~~/shared/types/ai-knowledge'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
@@ -48,7 +49,7 @@ export default defineEventHandler(async (event) => {
 
   const feedbackCutoff = Timestamp.fromMillis(Date.now() - FEEDBACK_WINDOW_DAYS * 86_400_000)
 
-  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap] = await Promise.all([
+  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap, dupScanSnap] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .limit(300)
@@ -56,7 +57,8 @@ export default defineEventHandler(async (event) => {
     db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       // updatedAt 是「標記之後有沒有人動過這張卡」的依據（見 wrongAnswerChunks）
-      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'updatedAt')
+      // deletedAt：回收桶的卡要排除——⛔select 沒帶欄位的話讀出來恆 undefined，過濾等於沒過濾
+      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'updatedAt', 'deletedAt')
       .limit(CHUNK_SCAN_LIMIT)
       .get(),
     getWorkspaceProductNames(db, workspaceId),
@@ -74,6 +76,8 @@ export default defineEventHandler(async (event) => {
         console.warn('[kb-health] feedback query failed (缺 aiFeedbackEvents 複合索引?):', (e as Error)?.message)
         return null
       }),
+    // 疑似重複（C-40(c)）：讀排程掃好的結果（單筆文件），這裡零 LLM 費
+    db.collection(KNOWLEDGE_DUP_SCANS_COLLECTION).doc(workspaceId).get().catch(() => null),
   ])
 
   // reason 一併帶回:清單上直接看得到「為什麼失敗」(最常見是試算表沒分享給服務帳號),
@@ -208,5 +212,15 @@ export default defineEventHandler(async (event) => {
       ])],
       aliasMap,
     }).length,
+    /**
+     * 疑似重複（C-40(c)）：排程用「向量篩候選 → LLM 判官」掃出來的建議。
+     * 只出建議不自動動手——合併/刪除接現成的產品名合併與回收桶，人拍板。
+     */
+    duplicates: {
+      items: Array.isArray((dupScanSnap?.data() as any)?.suggestions)
+        ? (dupScanSnap!.data() as any).suggestions
+        : [],
+      scannedAtMs: Number((dupScanSnap?.data() as any)?.scannedAtMs ?? 0),
+    },
   }
 })

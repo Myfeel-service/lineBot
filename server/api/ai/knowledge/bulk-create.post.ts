@@ -74,10 +74,14 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
 
-  // ── 建 knowledgeSource（type=text 不建） ────────────────────────
+  // ── 建 knowledgeSource ────────────────────────
+  // text 也建（type='manual'，C-47）：原本 text 不建 source → sourceId 恆 null、
+  // 使用者確認過的「所屬產品」從未寫入任何地方（畫面有欄位、系統還花一次 LLM 預填＝白花），
+  // 整批卡變成 7/31 稽核反覆咬人的「無主卡」——客人指名問另一台時被拿去混答，
+  // 而且不屬於任何來源、無法整批管理。手寫單卡（create.post.ts）早就這樣做了，比照辦理。
   let sourceId: string | null = null
   const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
-  if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet') {
+  if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet' || sourceType === 'text') {
     sourceId = importId ? idFor('source') : uuidv4()
     const now = FieldValue.serverTimestamp()
     const sourceUrl = String(body?.source?.url ?? '').trim()
@@ -103,7 +107,8 @@ export default defineEventHandler(async (event) => {
 
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set({
       workspaceId,
-      type: sourceType,
+      // 貼上文字沒有可重抓的外部來源 → 歸 manual（與手寫單卡同類：不排同步、不偵測變動）
+      type: sourceType === 'text' ? 'manual' : sourceType,
       name: String(body?.source?.name ?? '').trim(),
       url: sourceUrl,
       folderId: typeof body?.source?.folderId === 'string' ? body.source.folderId : null,
