@@ -9,7 +9,7 @@
  * - 每一步可跳過；跳過記 localStorage（純 UX 記憶，不當事實來源），加分項之後由健康卡盯。
  */
 
-import type { AgentChoice, AgentPickerOption } from '~~/shared/types/agent-messages'
+import type { AgentChoice } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
@@ -18,7 +18,13 @@ import { type LineWebhookCause, diagnoseLineWebhook } from '~~/shared/line-webho
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
-export const ONBOARDING_PROGRESS_LABELS = ['建立', '接 LINE', '測試', '開 AI', '完成'] as const
+/**
+ * 進度條五格（2026-08-19 拍板重切）：舊版「接 LINE」一格塞四件事、佔整段八成時間，
+ * 使用者做了半天進度一格都沒動。拆成拿鑰匙／接線之後，最長的那段進度會前進三次。
+ * 「開 AI」同輪拍板整段移出開通引導（剛開通知識庫是空的，那時開 AI 客人問什麼都答不出來，
+ * 第一印象反而是「這 AI 很笨」）——AI 由右下角小幫手的開通清單接手盯，時機到了再開。
+ */
+export const ONBOARDING_PROGRESS_LABELS = ['建帳號', '拿鑰匙', '接線', '傳話測試', '完成'] as const
 
 /** 開通流程所有出口一律落「對話」頁：新帳號統計全 0，空的對話清單比空報表誠實（2026-08-12 拍板 G-11） */
 export function onboardingLandingPath(workspaceId: string): string {
@@ -80,7 +86,6 @@ export function useOnboardingChat() {
     settle,
     askChoices,
     askInput,
-    askPicker,
     apiRetry,
     pollUntil,
     isDisposed,
@@ -95,7 +100,7 @@ export function useOnboardingChat() {
 
   // ── 跳過記憶（純 UX，不當事實來源） ─────────────────────────
 
-  type SkipKey = 'liff' | 'shopUrl' | 'handoff' | 'firstMsg'
+  type SkipKey = 'firstMsg' // 舊的 liff/shopUrl/handoff 鍵已隨步驟移出（殘留的 localStorage 值無害）
 
   function skips(): Record<string, boolean> {
     try {
@@ -138,42 +143,15 @@ export function useOnboardingChat() {
     return map
   }
 
-  interface AiSnapshot {
-    enabled: boolean
-    replyMode: 'auto' | 'draft'
-    shopUrl: string
-    handoffReady: boolean
-  }
-
-  async function fetchAi(): Promise<AiSnapshot> {
-    const r = await apiFetch<{
-      enabled: boolean
-      replyMode: 'auto' | 'draft'
-      shopUrl?: string
-      handoffNotify: { enabled: boolean, lineUserIds: string[] }
-    }>('/api/ai/settings')
-    return {
-      enabled: r.enabled === true,
-      replyMode: r.replyMode === 'draft' ? 'draft' : 'auto',
-      shopUrl: String(r.shopUrl || '').trim(),
-      handoffReady: r.handoffNotify?.enabled === true && (r.handoffNotify?.lineUserIds?.length ?? 0) > 0,
-    }
-  }
-
   // ── 劇本 ────────────────────────────────────────────────────
 
   const freePlanName = BILLING_PLANS.free.name
   const freeQuota = BILLING_PLANS.free.answeredQuota
 
-  /** 這一輪跑完後給摘要用的紀錄 */
-  const outcome = {
-    aiModeLabel: '',
-  }
-
   async function stepWelcomeFresh(): Promise<boolean> {
     progress.value = 0
-    await say('嗨，我是小幫手 👋 接下來我用聊天的方式，帶你把客服機器人設定到可以上線，大約 10 分鐘。')
-    await say('一共四步，跟上面的進度條一格一格對得上：<b>建立帳號</b> → <b>接上 LINE</b> → <b>傳一句話測試</b> → <b>打開 AI</b>，做完就亮最後一格「完成」。隨時可以離開，下次回來我會從沒做完的地方接著帶。')
+    await say('嗨，我是小幫手 👋 接下來我用聊天的方式，帶你把客服機器人接上 LINE、收到第一句話，大約 8 分鐘。')
+    await say('一共四步，跟上面的進度條一格一格對得上：<b>建帳號</b> → <b>拿鑰匙</b> → <b>接線</b> → <b>傳一句話測試</b>，做完就亮最後一格「完成」。隨時可以離開，下次回來我會從沒做完的地方接著帶。')
     const c = await askChoices([
       { label: '開始吧', value: 'go', primary: true },
       { label: '我想先自己逛逛', value: 'browse' },
@@ -233,9 +211,9 @@ export function useOnboardingChat() {
     if (!line.tokenConfigured || !line.secretConfigured)
       progress.value = 1
     else if (setup.firstMessageReceived !== 'done')
-      progress.value = 2
+      progress.value = 2 // 鑰匙都在了 → 接線
     else
-      progress.value = 3 // 開 AI 或只剩加分項都停在這格，「完成」由 stepDone 點亮
+      progress.value = 3 // 都做完了停在傳話測試那格，「完成」由 stepDone 點亮
   }
 
   async function stepHasOA() {
@@ -360,53 +338,6 @@ export function useOnboardingChat() {
     })
     await askAndSaveSecret(line)
     await say('好了 ✓ 兩把鑰匙都到手，剩最後一步接線。')
-  }
-
-  /** 加分題（2026-08-07 拍板選填；刻意排在魔法時刻之後，不擋主線） */
-  async function stepLiff(line: LineStatus) {
-    if (line.liffConfigured || skips().liff)
-      return
-    await say('加分題：<b>LIFF ID</b>（選填）——之後要做活動頁、會員綁定頁才會用到。第一天用不到的話，先跳過完全沒問題。')
-    card({
-      kind: 'help',
-      summary: '怎麼拿？',
-      steps: [
-        { text: 'LINE Developers → LIFF 分頁按「Add」' },
-        { text: 'Endpoint URL 貼下面那串專用網址（不是你的官網——填錯的話之後活動連結會打不開）' },
-        { text: '建好後複製 LIFF ID（長得像 1234567890-Abcdefgh）' },
-      ],
-      href: 'https://developers.line.biz/console/',
-      hrefLabel: '打開 LINE Developers ↗',
-    })
-    // 口徑跟 liff-endpoint-check 的 expectedUrl 同一個來源（shared/liff-lead-path）——
-    // 教一套、健康檢查驗另一套的話，照著做的人剛開通完就會被亮紅
-    if (!line.publicBaseUrl) {
-      // 進場那次查詢失敗會被吞掉（catch 不設旗標照走）：教網址前補查一次。
-      // 直接兜瀏覽器網址的話，正式網址其實有設的人會被教一個幾分鐘後亮紅的網址
-      try {
-        line.publicBaseUrl = (await fetchLineStatus()).publicBaseUrl
-      }
-      catch { /* 真的拿不到才退回瀏覽器網址（跟設定頁同一套退路） */ }
-    }
-    card({ kind: 'copy', label: 'LIFF 的 Endpoint URL（活動頁專用）', value: leadEndpointUrl(line.publicBaseUrl || window.location.origin) })
-    const v = await askInput({
-      inputType: 'text',
-      placeholder: '例：1234567890-Abcdefgh',
-      skippable: true,
-    })
-    if (v == null) {
-      markSkip('liff')
-      await say('沒問題，先跳過。之後要辦活動時，右下角的小幫手會帶你補。')
-      return
-    }
-    const ok = await apiRetry(
-      () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { defaultLiffId: v } }),
-      { failText: '存檔失敗', skipLabel: '先跳過' },
-    )
-    if (ok === null)
-      markSkip('liff')
-    else
-      await say('存好了 ✓ 之後活動頁就能直接用。')
   }
 
   /**
@@ -644,6 +575,7 @@ export function useOnboardingChat() {
       catch { /* 真的拿不到才退回瀏覽器網址 */ }
     }
     const webhookUrl = `${line.publicBaseUrl || window.location.origin}/webhook`
+    progress.value = Math.max(progress.value, 2) // 鑰匙到手，進「接線」格
     let verified = false
 
     // 續走模式先靜默驗一次：之前就接好 Webhook 的人不用再被叫去貼一次網址
@@ -715,7 +647,7 @@ export function useOnboardingChat() {
     })
 
     // ── 見證時刻：等第一則訊息 ──
-    progress.value = 2
+    progress.value = 3
     await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
     const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
 
@@ -837,140 +769,16 @@ export function useOnboardingChat() {
     }, POLL_INTERVAL_MS)
   }
 
-  async function stepAiMode(ai: AiSnapshot) {
-    if (ai.enabled) {
-      outcome.aiModeLabel = ai.replyMode === 'draft' ? '草稿模式' : '全自動'
-      return
-    }
-    await say('最後把 AI 客服打開。建議先用<b>草稿模式</b>：AI 先擬好回覆、你看過再按送出，觀察幾天穩了再切全自動。')
-    const c = await askChoices([
-      { label: '先用草稿模式（建議）', value: 'draft', primary: true },
-      { label: '直接全自動', value: 'auto' },
-    ])
-    const mode = c === 'auto' ? 'auto' : 'draft'
-    const ok = await apiRetry(
-      () => apiFetch('/api/ai/settings', { method: 'PUT', body: { enabled: true, replyMode: mode } }),
-      { failText: '開啟失敗', skipLabel: '先跳過' },
-    )
-    if (ok !== null) {
-      ai.enabled = true
-      ai.replyMode = mode
-      outcome.aiModeLabel = mode === 'draft' ? '草稿模式' : '全自動'
-      await say(mode === 'draft'
-        ? '好選擇 👍 草稿模式開好了。AI 擬的回覆會出現在「對話」頁等你送出。'
-        : '全自動開好了。之後想改，「AI 設定」裡隨時能切。')
-    }
-    else {
-      await say('先跳過。之後在「AI 設定」隨時可以打開。')
-    }
-  }
-
-  async function stepShopUrl(ai: AiSnapshot) {
-    if (ai.shopUrl || skips().shopUrl)
-      return
-    // AI 沒開（上一步跳過）就別講得像已經在跑——話術照舊會讓人以為 AI 已經上工
-    await say(`${ai.enabled ? '' : '之後打開 AI 會用到：'}你的商店網址是？客人問「多少錢」的時候，AI 會即時去查商品和價格——這是客人最常問的問題，沒填會答不出來。`)
-    const v = await askInput({
-      inputType: 'url',
-      placeholder: 'https://…',
-      skippable: true,
-      validate: t => /^https?:\/\/\S+$/i.test(t) ? null : '網址要以 http:// 或 https:// 開頭，直接從瀏覽器網址列複製過來最保險。',
-    })
-    if (v == null) {
-      markSkip('shopUrl')
-      await say('先跳過。之後在「AI 設定」補上就行——沒填之前，價格類問題 AI 會答不出來喔。')
-      return
-    }
-    const ok = await apiRetry(
-      () => apiFetch('/api/ai/settings', { method: 'PUT', body: { shopUrl: v } }),
-      { failText: '存檔失敗', skipLabel: '先跳過' },
-    )
-    if (ok === null)
-      markSkip('shopUrl')
-    else {
-      ai.shopUrl = v
-      await say('存好了 ✓ 價格類問題交給 AI 沒問題了。')
-    }
-  }
-
-  async function stepHandoff(ai: AiSnapshot) {
-    if (ai.handoffReady || skips().handoff)
-      return
-    // 草稿模式＋沒設通知＝AI 擬了稿沒有任何人知道要去送——兩個「跳過」疊起來才會踩到的洞，跳過時要講
-    const draftHint = ai.enabled && ai.replyMode === 'draft'
-      ? '另外你選了草稿模式——AI 擬好的回覆要有人按送出才會發給客人，記得每天開「對話」頁看一眼。'
-      : ''
-    // 同上：AI 沒開的話這是「先設起來之後用」，不是已經在運作的功能
-    await say(`${ai.enabled ? '' : '先設一個之後會用到的：'}當客人指名要找真人、或 AI 接不住的時候，要通知誰？從你官方帳號的好友裡選——收通知的人必須加了這個官方帳號好友，之後隨時能在「AI 設定」加更多人。`)
-
-    busy.value = true
-    let options: AgentPickerOption[] = []
-    try {
-      const r = await apiFetch<{ users: { lineUserId?: string, displayName?: string, pictureUrl?: string }[] }>(
-        '/api/users/list?limit=20',
-      )
-      options = (r.users || [])
-        .map(u => ({
-          id: String(u.lineUserId || '').trim(),
-          label: String(u.displayName || '').trim() || '（未提供暱稱）',
-          pictureUrl: String(u.pictureUrl || '').trim() || undefined,
-        }))
-        .filter(o => o.id)
-        .slice(0, 8)
-    }
-    catch { /* 抓不到就走下面的空清單出口 */ }
-    finally {
-      busy.value = false
-    }
-
-    if (!options.length) {
-      await say(`目前還抓不到好友清單（通常是還沒有人加這個官方帳號好友）。先跳過，之後在「AI 設定 → 轉真人通知」裡設定就行。${draftHint}`)
-      markSkip('handoff')
-      return
-    }
-
-    // 清單可能被截斷（只列最近 8 位）：先講清楚找不到人時的出路，別讓人卡在這格
-    if (options.length >= 8)
-      await say('下面列的是最近的好友。要通知的人不在裡面的話，先按「先跳過」——進後台到「AI 設定 → 轉真人通知」有完整的搜尋選人。')
-
-    const picked = await askPicker(options, true)
-    if (!picked) {
-      markSkip('handoff')
-      await say(`先跳過。提醒一下：通知沒設的話，客人要找真人時不會有人知道——之後記得在「AI 設定」補。${draftHint}`)
-      return
-    }
-    const ok = await apiRetry(
-      () => apiFetch('/api/ai/settings', {
-        method: 'PUT',
-        body: {
-          handoffNotify: {
-            enabled: true,
-            lineUserIds: [picked.id],
-            displayNames: { [picked.id]: picked.label },
-          },
-        },
-      }),
-      { failText: '存檔失敗', skipLabel: '先跳過' },
-    )
-    if (ok === null)
-      markSkip('handoff')
-    else {
-      ai.handoffReady = true
-      await say('設好了 ✓ 之後有客人要找真人，這支 LINE 會跳通知。')
-    }
-  }
-
   async function stepDone() {
     progress.value = 4
     // 摘要不用劇本自己的記憶，重新跟後端要一次真實訊號——原則：agent 只轉述，不臆測。
     // 查不到就「不出成績單」：把剛做完的事顯示成沒做，比沒有摘要嚴重得多（查不到≠沒做）。
     let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
-    let ai: AiSnapshot | null = null
     while (true) {
       busy.value = true
       let checked = false
       try {
-        ;[setup, ai] = await Promise.all([fetchSetup(), fetchAi()])
+        setup = await fetchSetup()
         checked = true
       }
       catch { /* 走下面的誠實出口 */ }
@@ -1000,31 +808,12 @@ export function useOnboardingChat() {
           done: setup.firstMessageReceived === 'done',
           note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友傳一句話試試',
         },
-        {
-          label: `AI 自動回覆${ai?.enabled && outcome.aiModeLabel ? `（${outcome.aiModeLabel}）` : ''}`,
-          done: ai?.enabled === true,
-          // 唯一沒有 note 的未完成列會像「不明原因的失敗」——跳過的要跟其他列一樣講出路
-          note: ai?.enabled === true ? undefined : '尚未開啟，「AI 設定」裡隨時可開',
-        },
-        {
-          label: 'LIFF（活動頁入口）',
-          done: setup.liffReady === 'done',
-          note: setup.liffReady === 'done' ? undefined : '加分項，要辦活動再補',
-        },
-        {
-          label: '商店網址',
-          done: !!ai?.shopUrl,
-          note: ai?.shopUrl ? undefined : '已跳過，AI 設定裡可補',
-        },
-        {
-          label: '轉真人通知',
-          done: ai?.handoffReady === true,
-          note: ai?.handoffReady ? undefined : '已跳過，AI 設定裡可補',
-        },
       ],
     })
-    await say('設定完成 🎉 之後把常見問題匯入<b>知識庫</b>，AI 會答得更好。')
-    await say('右下角的小幫手不會消失——哪裡沒做完、哪裡怪怪的，它都會主動說，點它也能隨時找我。')
+    // 指路卡（2026-08-19 拍板）：AI 刻意不在開通引導裡開——剛開通知識庫是空的，
+    // 這時開 AI 客人問什麼都答不出來。順序講清楚：先餵料、再開 AI，開的事小幫手會盯
+    await say('接通完成 🎉 接下來建議照這個順序：先到<b>知識庫</b>把商品資料、常見問題匯進來，AI 有料可答之後，再到「AI 設定」把 AI 打開。')
+    await say('「AI 還沒開」這件事不用記——右下角的小幫手會一直盯著，哪裡沒做完、哪裡怪怪的，它都會主動說。')
     // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
     // 對話頁裡就有他剛傳的那句話，敘事接得上（2026-08-12 拍板 G-11，路徑見 onboardingLandingPath）
     const c = await askChoices([
@@ -1041,7 +830,6 @@ export function useOnboardingChat() {
   interface MainFlowCtx {
     line: LineStatus
     setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
-    ai: AiSnapshot
     preVerify?: boolean
   }
 
@@ -1050,15 +838,12 @@ export function useOnboardingChat() {
    * 加一步要改兩個地方）。guard 不放在表上——每步開頭本來就用後端真實訊號
    * 自我檢查、已完成就靜默跳過（resume 機制），這張表只管「順序」。
    */
+  // 2026-08-19 拍板：開 AI／LIFF／商店網址／轉真人通知整批移出開通引導——
+  // 剛開通知識庫是空的，那時開 AI 只會答不出來；這些全由右下角小幫手的開通清單接手盯
   const MAIN_FLOW: AgentScriptStep<MainFlowCtx>[] = [
     { id: 'token', run: c => stepToken(c.line) },
     { id: 'secret', run: c => stepSecret(c.line) },
     { id: 'webhook-first-message', run: c => stepWebhookAndFirstMsg(c.line, c.setup, { preVerify: c.preVerify }) },
-    { id: 'ai-mode', run: c => stepAiMode(c.ai) },
-    // LIFF 是加分題，排在魔法時刻之後——別讓選填項延後高潮
-    { id: 'liff', run: c => stepLiff(c.line) },
-    { id: 'shop-url', run: c => stepShopUrl(c.ai) },
-    { id: 'handoff', run: c => stepHandoff(c.ai) },
     { id: 'done', run: () => stepDone() },
   ]
 
@@ -1074,9 +859,8 @@ export function useOnboardingChat() {
         busy.value = true
         let line: LineStatus
         let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
-        let ai: AiSnapshot
         try {
-          ;[line, setup, ai] = await Promise.all([fetchLineStatus(), fetchSetup(), fetchAi()])
+          ;[line, setup] = await Promise.all([fetchLineStatus(), fetchSetup()])
         }
         catch {
           busy.value = false
@@ -1087,7 +871,7 @@ export function useOnboardingChat() {
         }
         busy.value = false
         await stepWelcomeBack(line, setup)
-        await runSteps(MAIN_FLOW, { line, setup, ai, preVerify: true })
+        await runSteps(MAIN_FLOW, { line, setup, preVerify: true })
         return
       }
 
@@ -1105,8 +889,7 @@ export function useOnboardingChat() {
       }
       catch { /* 用 window.location.origin 兜底 */ }
       const setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
-      const ai: AiSnapshot = { enabled: false, replyMode: 'draft', shopUrl: '', handoffReady: false }
-      await runSteps(MAIN_FLOW, { line, setup, ai })
+      await runSteps(MAIN_FLOW, { line, setup })
     })
   }
 
