@@ -18,8 +18,10 @@ export const ONBOARDING_SHOTS = {
   issueToken: '/onboarding/line-console-issue-token.png',
   /** 官方帳號後台：設定 → Messaging API 按啟用（清單裡找不到帳號時的岔路） */
   oamEnableMessagingApi: '/onboarding/oam-enable-messaging-api.png',
-  /** Basic settings 分頁：第二把鑰匙 Channel secret */
+  /** Basic settings 分頁：第二把鑰匙 Channel secret（靜態列圖，修復劇本的小面板用） */
   channelSecret: '/onboarding/line-console-channel-secret.png',
+  /** 循環動畫：切 Basic settings 分頁 → 捲下來 → 找到 Channel secret（教學用——緊裁列圖缺定位） */
+  channelSecretAnim: '/onboarding/line-console-channel-secret.webp',
   /** Messaging API 分頁：Webhook URL 欄位＋Update 鈕＋Use webhook 開關（一張圖三個框） */
   webhookUrl: '/onboarding/line-console-webhook-url.png',
   /** 官方帳號後台：回應設定 → 關掉內建自動回應 */

@@ -246,7 +246,7 @@ export function useOnboardingChat() {
    * 這裡不假裝驗證任何事，只是使用者自己控節奏的翻頁；每一步都留「直接貼上」的出口，
    * 會的人不用被牽著走完。
    */
-  async function walkNodes(nodes: WalkNode[], lastLabel: string, exitLabel: string) {
+  async function walkNodes(nodes: WalkNode[], exitLabel: string) {
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i]!
       const isLast = i === nodes.length - 1
@@ -258,14 +258,15 @@ export function useOnboardingChat() {
         card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
       if (n.image)
         card({ kind: 'image', src: n.image, alt: n.alt || '' })
+      // 最後一步不再多一顆確認鈕（2026-08-19 老闆實測嫌多）：內容亮完直接返回，
+      // 由呼叫端接手——貼鑰匙的直接亮輸入格、接線的直接回「幫我檢查」選單
+      if (isLast)
+        return
       while (true) {
-        const options: AgentChoice[] = [
-          { label: isLast ? lastLabel : '下一步', value: 'next', primary: true },
-        ]
+        const options: AgentChoice[] = [{ label: '下一步', value: 'next', primary: true }]
         if (n.detour)
           options.push({ label: n.detour.label, value: 'detour' })
-        if (!isLast)
-          options.push({ label: exitLabel, value: 'exit' })
+        options.push({ label: exitLabel, value: 'exit' })
         const c = await askChoices(options)
         if (c === 'detour' && n.detour) {
           await n.detour.run()
@@ -282,18 +283,21 @@ export function useOnboardingChat() {
     if (line.tokenConfigured)
       return
     await say('接下來要從 LINE 拿兩把鑰匙，都在 <b>LINE Developers</b> 後台。第一把：<b>Channel Access Token</b>——機器人要靠它替你傳訊息。')
-    // 迴圈而不是一次性選擇：選「直接貼上」的人反悔時，輸入格的後門會把他送回這裡重選
-    let taught = false
+    const how = await askChoices([
+      { label: '教我一步步拿', value: 'walk', primary: true },
+      { label: '我會拿，直接貼上', value: 'paste' },
+    ])
+    let taught = how === 'walk'
+    if (taught)
+      await walkTokenNodes()
+    // 教學走完（或選直接貼）就亮輸入格；輸入格的後門「我想看教學」按了直接切教學，
+    // 不再回選單繞一圈（2026-08-19 老闆實測：回選單要多按一次，泡泡疊一排很吵）
     while (!line.tokenConfigured) {
-      const how = await askChoices([
-        { label: taught ? '再看一次教學' : '教我一步步拿', value: 'walk', primary: !taught },
-        { label: '我會拿，直接貼上', value: 'paste', primary: taught },
-      ])
-      if (how === 'walk') {
+      const ok = await askAndSaveToken(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+      if (!ok && !line.tokenConfigured) {
         taught = true
         await walkTokenNodes()
       }
-      await askAndSaveToken(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
     }
   }
 
@@ -327,7 +331,7 @@ export function useOnboardingChat() {
           image: ONBOARDING_SHOTS.getTokenAnim,
           alt: '循環動畫：切到 Messaging API 分頁、捲到最下方、按 Issue 發鑰匙、按複製',
         },
-      ], '拿到了，來貼上', '我拿到了，直接貼上')
+      ], '我拿到了，直接貼上')
   }
 
   async function stepSecret(line: LineStatus) {
@@ -335,26 +339,47 @@ export function useOnboardingChat() {
       return
     await say('第二把：<b>Channel Secret</b>——用來確認訊息真的來自 LINE、不是別人假冒的。')
     let taught = false
-    while (!line.secretConfigured) {
+    // 選單只出現一次；「回上一步」是剛存完第一把就發現貼錯（例如回顯的帳號名不對）的回頭路——
+    // 過了這個窗口，接線檢查會用真訊號診斷出是哪把鑰匙錯、並給重貼入口
+    while (!line.secretConfigured && !taught) {
       const how = await askChoices([
-        { label: taught ? '再看一次教學' : '教我怎麼拿', value: 'walk', primary: !taught },
-        { label: '我會拿，直接貼上', value: 'paste', primary: taught },
+        { label: '教我怎麼拿', value: 'walk', primary: true },
+        { label: '我會拿，直接貼上', value: 'paste' },
+        { label: '回上一步：重貼第一把', value: 'redo-token' },
       ])
+      if (how === 'redo-token') {
+        await say('好，把新的 <b>Channel Access Token</b> 整串貼上來。')
+        if (await askAndSaveToken(line, { escapeLabel: '不換了，回來貼第二把' }))
+          await say('第一把換好了 ✓ 回到第二把。')
+        continue
+      }
       if (how === 'walk') {
         taught = true
-        await walkNodes([
-          {
-            html: '同一個後台，切到「<b>Basic settings</b>」分頁，找到 <b>Channel secret</b>，整串複製過來。',
-            href: 'https://developers.line.biz/console/',
-            hrefLabel: '打開 LINE Developers ↗',
-            image: ONBOARDING_SHOTS.channelSecret,
-            alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
-          },
-        ], '拿到了，來貼上', '')
+        await walkSecretNodes()
       }
-      await askAndSaveSecret(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+      break
+    }
+    while (!line.secretConfigured) {
+      const ok = await askAndSaveSecret(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+      if (!ok && !line.secretConfigured) {
+        taught = true
+        await walkSecretNodes()
+      }
     }
     await say('好了 ✓ 兩把鑰匙都到手，剩最後一步接線。')
+  }
+
+  /** 拿第二把鑰匙的教學：動畫從分頁帶到目標列——緊裁的列圖缺「從哪裡來」的定位 */
+  async function walkSecretNodes() {
+    await walkNodes([
+      {
+        html: '同一個後台，照下面的動畫做：切到「<b>Basic settings</b>」分頁 → 捲下來找到 <b>Channel secret</b> → 整串複製過來。',
+        href: 'https://developers.line.biz/console/',
+        hrefLabel: '打開 LINE Developers ↗',
+        image: ONBOARDING_SHOTS.channelSecretAnim,
+        alt: '循環動畫：切到 Basic settings 分頁、捲到 Channel secret 那一列',
+      },
+    ], '')
   }
 
   /**
@@ -638,19 +663,17 @@ export function useOnboardingChat() {
             image: ONBOARDING_SHOTS.webhookUrl,
             alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
           },
-          { html: '同一區把「<b>Use webhook</b>」開關打開（圖上的 ②）——只貼網址沒打開，訊息還是不會送過來。' },
-        ], '貼好了，幫我檢查', '我貼好了，直接檢查')
-        // 教學最後一顆按鈕就是「幫我檢查」：走完直接驗，不再多問一輪
+          { html: '同一區把「<b>Use webhook</b>」開關打開（圖上的 ②）——只貼網址沒打開，訊息還是不會送過來。做完回來按「貼好了，幫我檢查」。' },
+        ], '我貼好了，直接檢查')
+        // 教學走完不自動驗（人可能還在 LINE 那邊操作），回選單時「幫我檢查」已是主鈕
+        continue
       }
-      else if (c === 'skip') {
+      if (c === 'skip')
         break
-      }
-      if (c === 'walk' || c === 'check') {
-        const res = await verifyAndAdvise(webhookUrl, line)
-        if (res === 'ok') {
-          await say('接線完成！你的官方帳號已經連上系統了。')
-          verified = true
-        }
+      const res = await verifyAndAdvise(webhookUrl, line)
+      if (res === 'ok') {
+        await say('接線完成！你的官方帳號已經連上系統了。')
+        verified = true
       }
     }
 
@@ -676,7 +699,7 @@ export function useOnboardingChat() {
           image: ONBOARDING_SHOTS.oamAutoReply,
           alt: '官方帳號後台的回應設定頁，圈出「手動聊天」選項',
         },
-      ], '關好了，開始測試', '我會關，直接測試')
+      ], '我會關，直接測試')
     }
 
     // ── 見證時刻：等第一則訊息 ──

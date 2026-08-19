@@ -114,6 +114,38 @@ def main() -> None:
                    append_images=frames[1:], duration=[d for _, _, d in spec],
                    loop=0, quality=82, method=4)
 
+    # ── 循環動畫：切 Basic settings 分頁 → 捲下來 → 找到 Channel secret ──
+    # 為什麼是動畫不是那張列圖：緊裁的一列缺「從哪裡來」的定位，使用者對不出
+    # 這個欄位在頁面的什麼地方（2026-08-19 老闆實測回饋）；教學圖一律「從分頁帶到目標」
+    src2 = load('src-basic-settings.jpg')
+
+    def frame2(top: int, box=None) -> Image.Image:
+        im = src2.crop((x0, top, x1, top + vh))
+        if box:
+            dark = Image.eval(im, lambda v: int(v * 0.86))
+            mask = Image.new('L', im.size, 255)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, fill=0)
+            im = Image.composite(dark, im, mask)
+            ImageDraw.Draw(im).rounded_rectangle(
+                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, outline=RED, width=3)
+        return im.resize((target_w, int(vh * target_w / (x1 - x0))))
+
+    bs_tab = (295, 330, 420, 372)        # Basic settings 分頁
+    secret_row = (275, 1648, 800, 1712)  # Channel secret 那一列
+    spec2 = [
+        (90, bs_tab, 1600),   # 停：切到 Basic settings 分頁
+        (300, None, 130),     # 捲動帶過…
+        (620, None, 130),
+        (980, None, 130),
+        (1300, None, 300),
+        (1300, secret_row, 2200),  # 停：就是這一列，整串複製
+    ]
+    frames2 = [frame2(t, b) for t, b, _ in spec2]
+    frames2[0].save(OUT / 'line-console-channel-secret.webp', save_all=True,
+                    append_images=frames2[1:], duration=[d for _, _, d in spec2],
+                    loop=0, quality=82, method=4)
+
     for f in sorted(OUT.iterdir()):
         if f.suffix in ('.png', '.webp'):
             print(f'{f.name:44s} {f.stat().st_size // 1024:>4d} KB')
