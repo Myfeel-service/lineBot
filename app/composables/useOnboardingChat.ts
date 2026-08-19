@@ -517,6 +517,35 @@ export function useOnboardingChat() {
     }
   }
 
+  /**
+   * 「改前面的設定」：聊天中主動回頭重做（2026-08-20 拍板）。
+   * 不做精靈式的每步上一步——聊天不是表單，回上一步的實際需求是「重做某個動作」。
+   * 檢查失敗的自動診斷仍是主要回頭路；這裡接的是「不等檢查失敗、自己想改」的情境
+   * （例：頻道雙綁時錯的 Secret 也能通過檢查，人只能主動回頭換）。改完回原地繼續。
+   */
+  async function offerRedo(line: LineStatus) {
+    while (true) {
+      const c = await askChoices([
+        { label: '都不用，回來繼續', value: 'back', primary: true },
+        { label: '重貼第一把鑰匙', value: 'token' },
+        { label: '重貼第二把鑰匙', value: 'secret' },
+      ])
+      if (c === 'token') {
+        await say('好，把新的 <b>Channel Access Token</b> 整串貼上來。')
+        if (await askAndSaveToken(line, { escapeLabel: '不換了' }))
+          await say('第一把換好了 ✓ 還要改別的嗎？')
+        continue
+      }
+      if (c === 'secret') {
+        await say('好，把新的 <b>Channel Secret</b> 整串貼上來（Basic settings 分頁那把）。')
+        if (await askAndSaveSecret(line, { escapeLabel: '不換了' }))
+          await say('第二把換好了 ✓ 還要改別的嗎？')
+        continue
+      }
+      return
+    }
+  }
+
   /** Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一把鑰匙 */
   async function reenterToken(line: LineStatus) {
     await say('好，把新的 <b>Channel Access Token</b> 整串貼上來（LINE Developers → Messaging API 最下方按重發，可以拿一把新的）。')
@@ -658,7 +687,12 @@ export function useOnboardingChat() {
         { label: taught ? '再看一次教學' : '教我一步步貼', value: 'walk', primary: !taught },
         { label: '貼好了，幫我檢查', value: 'check', primary: taught },
         { label: '略過檢查，直接測試', value: 'skip' },
+        { label: '改前面的設定', value: 'redo' },
       ])
+      if (c === 'redo') {
+        await offerRedo(line)
+        continue
+      }
       if (c === 'walk') {
         taught = true
         await walkNodes([
@@ -732,6 +766,7 @@ export function useOnboardingChat() {
     const stallOptions: AgentChoice[] = [
       { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
       { label: '檢查好了，繼續等', value: 'wait' },
+      { label: '改前面的設定', value: 'redo' },
       { label: '先跳過測試', value: 'skip' },
     ]
     let askOptions = waitOptions
@@ -791,6 +826,12 @@ export function useOnboardingChat() {
       }
       if (val === 'wait') {
         askOptions = waitOptions
+        continue
+      }
+      if (val === 'redo') {
+        // 重貼期間輪詢照跑（訊息一進來下一輪 race 就接走），改完回排障選單
+        await offerRedo(line)
+        askOptions = stallOptions
         continue
       }
       // 其他（cancelled／不認得的值）：重掛按鈕繼續等
