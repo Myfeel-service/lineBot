@@ -22,7 +22,7 @@ import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
 import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
-import { handBackSessionToBot } from './conversation-session'
+import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
@@ -33,6 +33,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
+import type { ConversationStatus } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 function tsToMs(raw: unknown): number {
@@ -473,6 +474,68 @@ export async function autoHandbackIdleSessions(db: Firestore) {
   return tally
 }
 
+// ── 真人接手中的會話：閒置過久自動收尾 ─────────────────────────────────────
+
+/** 真人接手中的兩種狀態；兩支單欄等值查詢，免複合索引 */
+const HUMAN_OWNED_STATUSES: ConversationStatus[] = ['pending_human', 'human_handling']
+
+/**
+ * 真人接手中（待真人／真人處理中）的會話**不吃 24 小時自動結束**——客人隔天回一句
+ * 「好，那就這樣訂」要接在同一場，不能被判成新的一場讓 AI 搶答（見
+ * isHumanOwnedSessionStatus）。代價是這種場不會自己消失，這支就是唯一的收殮機制：
+ * 雙方都沒動靜超過 aiSettings.humanSessionMaxIdleHours 就自動結束。
+ *
+ * 為什麼非有不可：真人接手期間機器人是閉嘴的，客服忘了按「結束會話」等於這位客人從此
+ * 收不到任何自動回覆；而沒關的場會一直被背景查詢掃到（2026-08-11 讀取費暴衝有這一份）。
+ * 所以門檻可調但**不可關閉**（下界見 MIN_HUMAN_SESSION_MAX_IDLE_HOURS）。
+ *
+ * 判斷基準用 lastActivityAt（雙方任一有動靜就會被 bump），不是 humanLastRepliedAt——
+ * 客人還在講話的場不該被收掉，那是客服該去回的，靠 SLA 提醒與每日摘要催。
+ */
+export async function autoCloseIdleHumanSessions(db: Firestore) {
+  const now = Date.now()
+  let closed = 0
+  let skippedFresh = 0
+  let scanned = 0
+  let truncated = false
+
+  for (const status of HUMAN_OWNED_STATUSES) {
+    const snap = await db.collection('conversationSessions')
+      .where('status', '==', status)
+      .limit(SESSION_SCAN_LIMIT)
+      .get()
+    scanned += snap.size
+    // 掃到上限＝這一輪沒看完，剩下的下一輪再收。不出聲的話「掃過了」與「掃完了」看起來一樣
+    if (snap.size >= SESSION_SCAN_LIMIT) truncated = true
+
+    for (const doc of snap.docs) {
+      const data = doc.data() as any
+      const workspaceId = String(data?.workspaceId ?? '')
+      const userId = String(data?.userId ?? '')
+      if (!workspaceId || !userId) continue
+
+      try {
+        const settings = await getAiSettings(workspaceId, db)
+        const idleMs = now - (tsToMs(data.lastActivityAt) || tsToMs(data.openedAt))
+        if (idleMs < settings.humanSessionMaxIdleHours * 3600_000) {
+          skippedFresh++
+          continue
+        }
+        await closeConversationSession(doc.id, userId, { reason: 'idle_auto' })
+        closed++
+      }
+      catch (err) {
+        // 單筆失敗不影響整批（下一輪會再撿到它）
+        console.warn('[auto-close-idle] session close failed:', doc.id, err)
+      }
+    }
+  }
+
+  const tally = { scanned, closed, skippedFresh, truncated }
+  if (closed || truncated) console.log('[conversation:auto-close-idle]', tally)
+  return tally
+}
+
 // ── 轉真人逾時 SLA 提醒 ────────────────────────────────────────────────────
 
 /**
@@ -848,7 +911,7 @@ export async function dailyBacklogDigest(db: Firestore) {
 
     const lines = ['📋 每日客服摘要']
     if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
-    if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」`)
+    if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」(久到沒動靜的才會由系統自動收尾)`)
     if (agg.outdatedSources) lines.push(`・${agg.outdatedSources} 個知識庫來源內容有變動,待你確認是否更新`)
     if (agg.failedSources) lines.push(`・${agg.failedSources} 個知識庫來源同步失敗,修好前 AI 用的是舊內容`)
     if (agg.expiredCards) lines.push(`・${agg.expiredCards} 張知識卡已到期下架,要延長請到知識庫編輯`)

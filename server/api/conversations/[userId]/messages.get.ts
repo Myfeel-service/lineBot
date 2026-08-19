@@ -72,9 +72,18 @@ function inWindow(ms: number, w: TimeWindow): boolean {
   return true
 }
 
-function eventLabel(eventType: ConversationEventType, moduleType?: ModuleType, moduleId?: string): string {
+function eventLabel(
+  eventType: ConversationEventType,
+  moduleType?: ModuleType,
+  moduleId?: string,
+  reason?: string,
+): string {
   if (eventType === 'conversation_opened') return '新會話開始'
-  if (eventType === 'conversation_closed') return '會話已結束'
+  if (eventType === 'conversation_closed') {
+    // 系統看它太久沒動靜幫忙收的，要跟「客服自己按了結束」分開講——
+    // 否則客服看到「會話已結束」卻想不起來自己按過，只會以為系統在亂動
+    return reason === 'idle_auto' ? '太久沒有動靜，系統自動結束會話' : '會話已結束'
+  }
   if (eventType === 'handoff_request') return '請求轉接真人'
   if (eventType === 'human_first_reply') return '真人客服首次回覆'
   if (eventType === 'returned_to_bot') return '已交還機器人'
@@ -212,7 +221,7 @@ async function loadEventItems(
           eventType: e.eventType,
           moduleType: e.moduleType,
           moduleId: e.moduleId,
-          label: eventLabel(e.eventType, e.moduleType, e.moduleId),
+          label: eventLabel(e.eventType, e.moduleType, e.moduleId, e.reason),
         })
       }
     }

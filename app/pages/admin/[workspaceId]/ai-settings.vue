@@ -617,6 +617,21 @@
                   避免真人忘記收尾時客人後續訊息沒人理。也可在「對話」頁手動點「交還機器人」。
                 </p>
               </div>
+              <div class="admin-field-group">
+                <AdminFieldLabel text="真人接手中的對話最多留多久(小時)" tight />
+                <el-input-number
+                  v-model="form.humanSessionMaxIdleHours"
+                  :min="MIN_HUMAN_SESSION_MAX_IDLE_HOURS"
+                  :max="MAX_HUMAN_SESSION_MAX_IDLE_HOURS"
+                  :step="12"
+                />
+                <p class="ai-section-hint">
+                  真人接手後,這段對話不會因為「隔了一天」自動結束——客人隔天回一句「好,那就這樣訂」
+                  仍然接在同一段裡,不會被 AI 搶著回答。談完請按「結束會話」收尾。
+                  這裡設的是保底時限:雙方都沒有動靜超過這個時數,系統會幫忙結束(避免忘記按時,
+                  這位客人從此收不到任何自動回覆)。
+                </p>
+              </div>
             </div>
           </div>
 
@@ -695,7 +710,14 @@
 <script setup lang="ts">
 import { CircleCheck, CircleCheckFilled, InfoFilled, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { buildDefaultAiSettings, DEFAULT_SLA_REMIND_MINUTES, DEFAULT_DIGEST_HOUR } from '~~/shared/types/ai-knowledge'
+import {
+  buildDefaultAiSettings,
+  DEFAULT_SLA_REMIND_MINUTES,
+  DEFAULT_DIGEST_HOUR,
+  DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
+  MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
+  MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
+} from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { taipeiYyyyMm } from '~~/shared/time'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
@@ -720,6 +742,7 @@ interface FormShape {
   quota: { monthlyTokenCap: number; onExceed: AiSettingsDoc['quota']['onExceed'] }
   handoffNotify: AiSettingsDoc['handoffNotify']
   handbackIdleMinutes: number
+  humanSessionMaxIdleHours: number
   disambiguation: AiSettingsDoc['disambiguation']
   imageAnswer: AiSettingsDoc['imageAnswer']
   serviceHours: AiSettingsDoc['serviceHours']
@@ -741,6 +764,7 @@ function defaultForm(): FormShape {
     quota: { ...d.quota },
     handoffNotify: { ...d.handoffNotify, lineUserIds: [...d.handoffNotify.lineUserIds], displayNames: { ...d.handoffNotify.displayNames } },
     handbackIdleMinutes: d.handbackIdleMinutes,
+    humanSessionMaxIdleHours: d.humanSessionMaxIdleHours,
     disambiguation: { ...d.disambiguation },
     imageAnswer: { ...d.imageAnswer },
     serviceHours: { ...d.serviceHours },
@@ -1082,6 +1106,7 @@ function applySettings(data: AiSettingsDoc) {
       digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
+    humanSessionMaxIdleHours: Number(data.humanSessionMaxIdleHours ?? DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS),
     disambiguation: { ...data.disambiguation },
     imageAnswer: { ...data.imageAnswer },
     serviceHours: { ...data.serviceHours },

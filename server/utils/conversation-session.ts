@@ -1,14 +1,21 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './firebase'
-import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { getAiSettings } from './ai-settings'
+import {
+  DEFAULT_LINE_WORKSPACE_ID,
+  lineUserFirestoreDocId,
+  lineUserIdFromFirestoreDocId,
+} from '~~/shared/line-workspace'
 import type {
   ConversationEventType,
   ConversationStatus,
   InitialHandler,
   ModuleType,
+  SessionCloseReason,
 } from '~~/shared/types/conversation-stats'
-import { SESSION_24H_MS } from '~~/shared/types/conversation-stats'
+import { isHumanOwnedSessionStatus, SESSION_24H_MS } from '~~/shared/types/conversation-stats'
+import { DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS } from '~~/shared/types/ai-knowledge'
 
 // ── Session In-Memory Cache ───────────────────────────────────────
 // Avoids running a Firestore transaction on every single webhook event.
@@ -112,7 +119,13 @@ export async function recordConversationEvent(
   sessionId: string,
   userId: string,
   eventType: ConversationEventType,
-  extras?: { moduleType?: ModuleType; moduleId?: string; workspaceId?: string },
+  extras?: {
+    moduleType?: ModuleType
+    moduleId?: string
+    workspaceId?: string
+    /** conversation_closed 專用：系統自動收尾時帶，時間軸才講得出是誰收的 */
+    reason?: SessionCloseReason
+  },
 ): Promise<void> {
   const db = getDb()
   const eventRef = db.collection('conversationEvents').doc()
@@ -123,8 +136,20 @@ export async function recordConversationEvent(
     ...(extras?.workspaceId ? { workspaceId: extras.workspaceId } : {}),
     ...(extras?.moduleType ? { moduleType: extras.moduleType } : {}),
     ...(extras?.moduleId ? { moduleId: extras.moduleId } : {}),
+    ...(extras?.reason ? { reason: extras.reason } : {}),
     timestamp: FieldValue.serverTimestamp(),
   })
+}
+
+/**
+ * 真人接手中的會話「雙方都沒動靜」能撐多久（毫秒）。
+ *
+ * 下界鎖在 24 小時：工作區把時數設得比 24 小時短時，真人接手的場反而比機器人的場更早
+ * 換場——那正是這次要修掉的行為。設得短的意思是「請 cron 早點收尾」，不是「請提早換場」。
+ */
+export function humanSessionMaxIdleMs(hours: unknown): number {
+  const ms = Math.round(Number(hours) * 3600_000)
+  return Number.isFinite(ms) && ms > SESSION_24H_MS ? ms : SESSION_24H_MS
 }
 
 // ── Session Lifecycle ─────────────────────────────────────────────
@@ -238,6 +263,10 @@ export async function ensureConversationSession(
   // ── Fast path: active cached session ─────────────────────────────
   // For the common case (user messaging within 24h), skip the Firestore transaction entirely.
   // lastActivityAt is updated in the background so it doesn't block the reply.
+  //
+  // 這裡的 24 小時**不放寬**給真人接手中的場：那要多讀一次工作區設定，而這條路的存在意義
+  // 就是「什麼都不讀」。超過 24 小時就落到 slow path，由那邊決定續命或換場——
+  // 代價只是客人隔天回來的那一則多跑一次交易，之後又回到 fast path。
   const cached = sessionByUser.get(lineUserId)
   if (
     cached &&
@@ -314,7 +343,30 @@ export async function ensureConversationSession(
 
     if (existingData && existingData.status !== 'closed' && existingRef) {
       const lastActivity: number = existingData.lastActivityAt?.toMillis?.() ?? 0
-      if (now - lastActivity < SESSION_24H_MS) {
+      const idleMs = now - lastActivity
+
+      /**
+       * 真人接手中的場不吃 24 小時換場（見 isHumanOwnedSessionStatus），改吃工作區設定的
+       * 保底時限。設定只在「真的已經超過 24 小時、而且是真人接手中」時才去讀——那是客人隔了
+       * 一天以上才回來的少數情況，一般訊息完全不碰這條路。
+       *
+       * 這筆讀取刻意不進交易：它是設定值不是要保證一致性的狀態（getAiSettings 有 60 秒快取，
+       * 交易重試也不會真的重讀），拿進來只會讓交易的讀取集合白白變大。
+       */
+      let maxIdleMs = SESSION_24H_MS
+      if (idleMs >= SESSION_24H_MS && isHumanOwnedSessionStatus(existingData.status)) {
+        // 設定讀不到（Firestore 抖動、workspaceId 缺失）就退回預設值，**不是**退回 24 小時：
+        // 退回 24 小時等於這條規則失效，客人那句話又會被 AI 搶走——而那正是要修的事。
+        const hours = await getAiSettings(workspaceId, db)
+          .then(s => s.humanSessionMaxIdleHours)
+          .catch((e) => {
+            console.warn('[session] settings read failed, using default max idle:', e)
+            return DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS
+          })
+        maxIdleMs = humanSessionMaxIdleMs(hours)
+      }
+
+      if (idleMs < maxIdleMs) {
         tx.update(existingRef, {
           lastActivityAt: FieldValue.serverTimestamp(),
           ...(!opts.origin && !existingData.hasInbound ? { hasInbound: true } : {}),
@@ -322,7 +374,7 @@ export async function ensureConversationSession(
         resultStatus = existingData.status as ConversationStatus
         return convData!.currentSessionId as string
       }
-      // 24h expired — close inline (event recorded outside the tx)
+      // 沒動靜太久 — close inline (event recorded outside the tx)
       // closedAt 收在「開啟新會話那句話的前一毫秒」：兩場的邊界要對齊，
       // 否則那句話會同時落在舊會話的窗口（<= closedAt）與新會話的窗口（>= openedAt）裡，
       // 客服在兩個分頁都看到同一句話。
@@ -607,11 +659,17 @@ export async function handBackSessionToBot(
 
 /**
  * Close a conversation session. Idempotent.
+ *
+ * `opts.reason` 只有系統自動收尾時才帶（見 SessionCloseReason）：時間軸要分得出
+ * 「客服按了結束」與「系統看它太久沒動靜幫忙收的」，並在 session 上留可回查的標記
+ * （欄位沿用 scripts/close-stale-open-sessions.ts 那組，一次查詢就能撈出所有機器關掉的場）。
  */
-export async function closeConversationSession(sessionId: string, userId: string): Promise<void> {
+export async function closeConversationSession(
+  sessionId: string,
+  userId: string,
+  opts: { reason?: SessionCloseReason } = {},
+): Promise<void> {
   const db = getDb()
-  const lineUserId = lineUserIdFromFirestoreDocId(userId)
-  const convDocId = lineUserFirestoreDocId(lineUserId)
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
   const sessionSnap = await sessionRef.get()
   if (!sessionSnap.exists) return
@@ -619,27 +677,49 @@ export async function closeConversationSession(sessionId: string, userId: string
   const session = sessionSnap.data() as any
   if (session.status === 'closed') return
 
+  /**
+   * 主鍵要用**這場會話自己的** workspaceId 去組。先前一律用預設工作區，於是非預設工作區
+   * 按下「結束會話」時，`currentSessionId: null` 會寫進一份不存在的 `default_U…` 文件，
+   * 真正那份還指著這場已結束的會話（下次來訊靠 status==='closed' 才勉強自癒），
+   * 而列表要的最後一則訊息快照也永遠讀不到、留白。
+   */
+  const workspaceId = String(session.workspaceId ?? '') || DEFAULT_LINE_WORKSPACE_ID
+  const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
+  const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
+
   // 手動按「結束會話」：這場就是進行中那場，對話的最後一則必然屬於它。
   // 不是的話（殘留的舊 session）就不蓋，留白不猜。
   const convRef = db.collection('conversations').doc(convDocId)
   const convData = (await convRef.get()).data()
-  const preview = convData?.currentSessionId === sessionId
-    ? sessionClosingPreview(convData, session.lastActivityAt)
-    : {}
+  const isCurrent = convData?.currentSessionId === sessionId
+  const preview = isCurrent ? sessionClosingPreview(convData, session.lastActivityAt) : {}
 
   await sessionRef.update({
     status: 'closed' as ConversationStatus,
     closedAt: FieldValue.serverTimestamp(),
     lastActivityAt: FieldValue.serverTimestamp(),
     ...preview,
+    ...(opts.reason
+      ? { staleClosedAt: FieldValue.serverTimestamp(), staleClosedReason: opts.reason }
+      : {}),
   })
   _updateSessionStatusCache(sessionId, 'closed')
   _invalidateUserSessionCache(lineUserId)
-  await convRef.set(
-    { currentSessionId: null },
-    { merge: true },
-  )
-  await recordConversationEvent(sessionId, lineUserId, 'conversation_closed', { workspaceId: String(session.workspaceId ?? '') })
+  /**
+   * 只有在這場**確實是**對話目前指著的那一場時才清指標。無條件清會誤傷：關掉一場殘留的
+   * 舊 session（競態留下的孤兒，或排程收殮到的那種）時，會把對話指向進行中那場的指標
+   * 一起抹掉——下一則訊息就找不到現在這場，於是又開一場新的，客人講到一半的對話被切成兩段。
+   */
+  if (isCurrent) {
+    await convRef.set(
+      { currentSessionId: null },
+      { merge: true },
+    )
+  }
+  await recordConversationEvent(sessionId, lineUserId, 'conversation_closed', {
+    workspaceId: String(session.workspaceId ?? ''),
+    ...(opts.reason ? { reason: opts.reason } : {}),
+  })
 }
 
 /**

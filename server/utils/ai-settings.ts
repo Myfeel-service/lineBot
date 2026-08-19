@@ -21,6 +21,9 @@ import {
   DEFAULT_DND_REPLY,
   DEFAULT_GROUNDING_SIMILARITY_THRESHOLD,
   DEFAULT_HANDBACK_IDLE_MINUTES,
+  DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
+  MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
+  MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
   DEFAULT_MONTHLY_TOKEN_CAP,
   DEFAULT_REPLY_MAX_LEN,
   DEFAULT_SENSITIVE_TOPICS,
@@ -158,6 +161,13 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       }
     })(),
     handbackIdleMinutes: Math.round(clampNumber(raw?.handbackIdleMinutes, 0, 1440, DEFAULT_HANDBACK_IDLE_MINUTES)),
+    // 下界不是 0：這是真人接手會話**唯一**的自動收尾機制，允許關閉等於放回殭屍會話那個坑
+    humanSessionMaxIdleHours: Math.round(clampNumber(
+      raw?.humanSessionMaxIdleHours,
+      MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
+      MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
+      DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
+    )),
     disambiguation: (() => {
       let top1Min = clampNumber(raw?.disambiguation?.top1Min, 0, 1, DEFAULT_DISAMBIGUATION_TOP1_MIN)
       let top1Max = clampNumber(raw?.disambiguation?.top1Max, 0, 1, DEFAULT_DISAMBIGUATION_TOP1_MAX)

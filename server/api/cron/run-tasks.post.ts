@@ -2,6 +2,7 @@ import { assertCronAuthorized } from '~~/server/utils/cron-auth'
 import {
   detectSourceUpdates,
   autoHandbackIdleSessions,
+  autoCloseIdleHumanSessions,
   remindOverdueHandoffs,
   cleanupExpiredWebhookEventLocks,
   dailyBacklogDigest,
@@ -44,6 +45,9 @@ export default defineEventHandler(async (event) => {
     // 缺口週報已併入 conversation:backlog-digest 的每日摘要（2026-08-06 拍板）
     { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
+    // 真人接手中的會話不吃 24 小時自動結束，這是唯一會收殮它們的機制——停掉的話
+    // 忘記按「結束會話」的對話會永遠掛著（那位客人也永遠收不到自動回覆）
+    { name: 'conversation:auto-close-idle', run: () => autoCloseIdleHumanSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },

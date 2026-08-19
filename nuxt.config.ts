@@ -37,7 +37,8 @@ export default defineNuxtConfig({
       '*/30 * * * *': ['ai:detect-source-updates', 'ai:knowledge-gap-scan'],
       // 每 10 分鐘掃「真人處理中但閒置過久」的會話自動交還機器人（handbackIdleMinutes=0 不動作）
       // + 「轉真人超時無人回應」的 SLA 提醒（每場會話一次）
-      '*/10 * * * *': ['conversation:auto-handback', 'conversation:handoff-sla'],
+      // + 真人接手中但雙方都沒動靜太久的會話自動結束（那種場不吃 24 小時自動結束）
+      '*/10 * * * *': ['conversation:auto-handback', 'conversation:handoff-sla', 'conversation:auto-close-idle'],
       // 每小時清理過期的 webhook 冪等鎖（Firestore TTL 的程式內保底）
       '0 * * * *': ['webhook:cleanup-event-locks'],
     },

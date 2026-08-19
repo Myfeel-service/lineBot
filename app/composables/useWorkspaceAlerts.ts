@@ -244,7 +244,7 @@ const ALERTS: AlertDefinition[] = [
     id: 'humanBacklog',
     icon: Service,
     severity: 'warning',
-    impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停。',
+    impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停（久到沒動靜的才會由系統自動收尾）。',
     cta: '去看對話',
     requires: 'operate',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次

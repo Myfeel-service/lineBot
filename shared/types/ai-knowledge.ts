@@ -270,6 +270,11 @@ export interface AiSettingsDoc {
    * 0 = 關閉（只能手動按「交還機器人」或等 24h session 過期）。
    */
   handbackIdleMinutes: number
+  /**
+   * 真人接手中（待真人／真人處理中）的會話，雙方都沒動靜超過此時數 → 系統自動結束。
+   * 這種會話不吃 24 小時自動結束規則，這是唯一會自動收尾它的保底機制，故不接受 0。
+   */
+  humanSessionMaxIdleHours: number
   /** 反問澄清（disambiguation）— 答案擦邊且 top-K 分數接近時主動反問 */
   disambiguation: {
     /** 總開關；關掉就照舊走 answered / handoff */
@@ -621,6 +626,21 @@ export const DEFAULT_MONTHLY_TOKEN_CAP = 1_000_000
 /** 真人閒置自動交還機器人（分鐘）；0 = 關閉。保守預設關閉，由各工作區自行啟用 */
 export const DEFAULT_HANDBACK_IDLE_MINUTES = 0
 
+/**
+ * 真人接手中的會話，雙方都沒動靜超過此時數 → 系統自動收尾（結束會話）。
+ *
+ * 這是**保底**不是常規手段：真人接手中的場刻意不吃 24 小時自動結束（客人隔天回來要接在
+ * 同一場，見 isHumanOwnedSessionStatus），代價是它不會自己消失。客服一定會有忘記按
+ * 「結束會話」的時候，而真人接手期間機器人是閉嘴的——忘了按就等於這位客人從此收不到
+ * 任何自動回覆；沒關的場也會一直被背景查詢掃到（2026-08-11 讀取費暴衝有這一份）。
+ *
+ * 48 小時＝跨過一個週末以外的空檔還夠用，又不會讓忘記收尾的場拖過兩天。
+ * 刻意不提供 0（關閉）：關掉就是把上面那兩個坑放回來。
+ */
+export const DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS = 48
+export const MIN_HUMAN_SESSION_MAX_IDLE_HOURS = 6
+export const MAX_HUMAN_SESSION_MAX_IDLE_HOURS = 336
+
 /** 轉真人後超時再提醒（分鐘）；0 = 關閉。單一事實來源：normalize / buildDefault / 前端表單都引用這裡 */
 // 2026-08-06 拍板從 15 放寬到 30：15 分鐘在人力吃緊時幾乎場場觸發,是內部推播成本第二大項
 export const DEFAULT_SLA_REMIND_MINUTES = 30
@@ -917,6 +937,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       digestHour: DEFAULT_DIGEST_HOUR,
     },
     handbackIdleMinutes: DEFAULT_HANDBACK_IDLE_MINUTES,
+    humanSessionMaxIdleHours: DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
     disambiguation: {
       enabled: DEFAULT_DISAMBIGUATION_ENABLED,
       top1Min: DEFAULT_DISAMBIGUATION_TOP1_MIN,

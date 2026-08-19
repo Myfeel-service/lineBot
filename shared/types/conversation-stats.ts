@@ -181,6 +181,30 @@ export const INITIAL_HANDLER_LABELS: Record<InitialHandler, string> = {
 export const SESSION_24H_MS = 24 * 60 * 60 * 1000
 
 /**
+ * 「真人接手中」＝待真人或真人處理中。這兩種狀態**不吃 24 小時自動結束**。
+ *
+ * 為什麼要例外：24 小時規則是「客人隔了一天再開口就算新的一段對話」，對機器人／AI 是對的，
+ * 但真人談到一半的對話不是這樣——客服今天下午報完價，客人隔天下午回一句「好，那就這樣訂」，
+ * 24 小時規則會把它判成新的一場，於是**真人接手的狀態整個蒸發、AI 搶著回答那句話**，
+ * 客服看到的則是自己那場被標成「會話已結束」。這一段要接在同一場，收尾交給人按
+ * 「結束會話」或「交還機器人」。
+ *
+ * 代價是這種場不會自己消失，所以一定要有保底時限收殮（見 DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS）。
+ */
+export function isHumanOwnedSessionStatus(
+  status: unknown,
+): status is 'pending_human' | 'human_handling' {
+  return status === 'pending_human' || status === 'human_handling'
+}
+
+/**
+ * `conversation_closed` 事件的收尾原因。沒帶這個欄位＝人為按下「結束會話」或 24 小時到期，
+ * 時間軸照舊寫「會話已結束」；帶 `idle_auto` 的是保底時限強制收掉的，要分開講——
+ * 客服看到「會話已結束」卻想不起來自己按過，只會以為系統又在亂動。
+ */
+export type SessionCloseReason = 'idle_auto'
+
+/**
  * 「真人處理中」但真人已閒置超過此時數 → 視為卡住（AI 被暫停、客人晾著）。
  * cron 的每日積壓提醒與後台異常中心共用同一個門檻，兩邊講的數字才會一致。
  */
