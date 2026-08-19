@@ -36,6 +36,7 @@ export default defineEventHandler(async (event) => {
   const restored = resolveRestoredStatus(chunk.statusBeforeDelete, !!chunk.embedding)
   await ref.update({
     status: restored,
+    isDeleted: false, // 與 deletedAt 成對維護（查詢層過濾靠它，見 countSourceChunks）
     deletedAt: FieldValue.delete(),
     purgeAfter: FieldValue.delete(),
     statusBeforeDelete: FieldValue.delete(),
@@ -50,6 +51,7 @@ export default defineEventHandler(async (event) => {
     if (sourceSnap?.exists && (sourceSnap.data() as any)?.workspaceId === workspaceId) {
       if ((sourceSnap.data() as any)?.deletedAt != null) {
         await sourceRef.update({
+          isDeleted: false,
           deletedAt: FieldValue.delete(),
           purgeAfter: FieldValue.delete(),
           updatedAt: FieldValue.serverTimestamp(),

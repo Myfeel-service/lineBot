@@ -128,6 +128,7 @@ export default defineEventHandler(async (event) => {
       lastFetchedAt: now,
       outdatedAt: null,
       status: 'ready',
+      isDeleted: false, // listSources 查詢層過濾用
       chunkCount: inputs.length + (overviewInput ? 1 : 0),
       createdAt: now,
       updatedAt: now,

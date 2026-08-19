@@ -647,15 +647,23 @@ export async function saveWork(
   jobId: string,
   work: WorkState,
   expectedGeneration?: number,
-): Promise<number> {
+): Promise<number | undefined> {
   const file = getStorage().bucket().file(`${jobPrefix(workspaceId, jobId)}/work.json`)
+  /**
+   * ⛔`ifGenerationMatch: 0` 在 GCS 的語意是「這個物件必須**不存在**」——不是「不比對」。
+   * 2026-08-19 踩過：generation 讀不到時退回 0，work.json 明明存在 → 每次存檔必 412，
+   * 而 412 被呼叫端判成「別人接手了」→ 每輪推進一步、丟掉一步，錢照付、進度永遠不動。
+   * 讀不到就**不帶前置條件**（放棄這一步的鎖，回到「後寫的贏」）比帶一個語意相反的值安全。
+   */
   await file.save(JSON.stringify(work), {
     contentType: 'application/json',
-    ...(expectedGeneration !== undefined
+    ...(expectedGeneration !== undefined && expectedGeneration > 0
       ? { preconditionOpts: { ifGenerationMatch: expectedGeneration } }
       : {}),
   })
-  return Number(file.metadata?.generation ?? 0)
+  const gen = Number(file.metadata?.generation ?? 0)
+  // undefined＝這次拿不到版本號 → 下一步不要鎖（見上面的 0 語意陷阱）
+  return gen > 0 ? gen : undefined
 }
 
 export async function loadWork(workspaceId: string, jobId: string): Promise<WorkState> {
@@ -669,10 +677,12 @@ export async function loadWork(workspaceId: string, jobId: string): Promise<Work
 export async function loadWorkWithGeneration(
   workspaceId: string,
   jobId: string,
-): Promise<{ work: WorkState; generation: number }> {
+): Promise<{ work: WorkState; generation: number | undefined }> {
   const file = getStorage().bucket().file(`${jobPrefix(workspaceId, jobId)}/work.json`)
   const [meta] = await file.getMetadata()
-  const generation = Number(meta.generation ?? 0)
+  const gen = Number(meta.generation ?? 0)
+  // undefined＝拿不到版本號，這一輪不上鎖（0 是「必須不存在」，帶下去會永久 412）
+  const generation = gen > 0 ? gen : undefined
   const [buf] = await file.download(generation ? ({ generation } as never) : undefined)
   return { work: JSON.parse(buf.toString('utf8')) as WorkState, generation }
 }
@@ -719,7 +729,7 @@ export async function deleteJobStorage(workspaceId: string, jobId: string): Prom
 export async function cleanupExpiredPreviewJobs(
   db: Firestore = getDb(),
   limit = 200,
-): Promise<{ scanned: number; deleted: number; extended: number; failed: number; uploadsPurged: number }> {
+): Promise<{ scanned: number; deleted: number; extended: number; failed: number }> {
   const snap = await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION)
     .where('expiresAt', '<=', Timestamp.now())
     .limit(limit)
@@ -750,23 +760,37 @@ export async function cleanupExpiredPreviewJobs(
     }
   }))
 
-  // 順手清 preview-uploads/ 的孤兒上傳檔（C-49E）：使用者選了檔、上傳到一半按取消
-  // （最常見的操作）那顆檔永遠沒人刪——唯一的刪除點在 preview-jobs 端點被呼叫到時。
-  // 超過 24 小時的一律清（正常流程上傳後幾秒內就被消費掉）。失敗不擋主清理。
-  let uploadsPurged = 0
+  return { scanned: snap.size, deleted, extended, failed }
+}
+
+/**
+ * 清 preview-uploads/ 的孤兒上傳檔（C-49E）：使用者選了檔、上傳到一半按取消
+ * （最常見的操作）那顆檔永遠沒人刪——唯一的刪除點在 preview-jobs 端點被呼叫到時。
+ * 超過 24 小時的一律清（正常流程上傳後幾秒內就被消費掉）。
+ *
+ * ⛔**只給排程呼叫,不要塞進使用者請求**:列舉 + 逐檔刪除最壞是一次 list 加數百次
+ * 往返,掛在「建立匯入工作」那種本來就逼近閘道逾時的端點上會讓它直接超時。
+ * 每輪限量刪，剩下的下一輪繼續（10 分鐘一輪，追得上任何正常累積速度）。
+ */
+export async function cleanupOrphanUploads(
+  maxDeletes = 50,
+): Promise<{ scanned: number; purged: number }> {
+  let purged = 0
+  let scanned = 0
   try {
     const [files] = await getStorage().bucket().getFiles({ prefix: 'preview-uploads/', maxResults: 300 })
+    scanned = files.length
     const cutoff = Date.now() - 24 * 3600_000
     for (const f of files) {
+      if (purged >= maxDeletes) break
       const createdMs = Date.parse(String(f.metadata?.timeCreated ?? '')) || 0
       if (createdMs && createdMs < cutoff) {
-        await f.delete().then(() => { uploadsPurged++ }).catch(() => {})
+        await f.delete().then(() => { purged++ }).catch(() => {})
       }
     }
   }
   catch (e) {
-    console.warn('[cleanup-preview-jobs] preview-uploads sweep failed:', e)
+    console.warn('[cleanup-orphan-uploads] sweep failed:', e)
   }
-
-  return { scanned: snap.size, deleted, extended, failed, uploadsPurged }
+  return { scanned, purged }
 }

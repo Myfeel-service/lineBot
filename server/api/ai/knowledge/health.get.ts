@@ -131,8 +131,11 @@ export default defineEventHandler(async (event) => {
   const failedItems: HealthItem[] = []
   const expiredItems: HealthItem[] = []
   const wrongAnswerItems: WrongAnswerItem[] = []
+  // 疑似重複的「還活著嗎」名單（C-40(c) 鮮度）：用這批已載入的卡建，零額外讀取
+  const liveChunkIds = new Set<string>()
   for (const d of chunksSnap.docs) {
     const c = d.data() as any
+    if (c?.deletedAt == null && String(c?.status ?? '') === 'indexed') liveChunkIds.add(d.id)
     if (c?.deletedAt != null) continue // 回收桶的卡不進體檢（索引失敗/過短/到期都不再是它的事）
     const item: HealthItem = {
       id: d.id,
@@ -217,9 +220,16 @@ export default defineEventHandler(async (event) => {
      * 只出建議不自動動手——合併/刪除接現成的產品名合併與回收桶，人拍板。
      */
     duplicates: {
-      items: Array.isArray((dupScanSnap?.data() as any)?.suggestions)
+      /**
+       * 讀取時過濾「兩張卡都還在」（C-40(c) 鮮度）：使用者把 B 卡刪進回收桶之後，
+       * 這一組就該立刻從清單消失。不濾的話它會掛到下次掃描為止（排程最長 24 小時），
+       * 而「看 B」點過去是一張已刪除的卡——todo 紅點也一直亮著。
+       * liveChunkIds 來自上面已經載入的那批卡，不多讀任何一筆。
+       */
+      items: (Array.isArray((dupScanSnap?.data() as any)?.suggestions)
         ? (dupScanSnap!.data() as any).suggestions
-        : [],
+        : []
+      ).filter((s: any) => liveChunkIds.has(String(s?.a?.id)) && liveChunkIds.has(String(s?.b?.id))),
       scannedAtMs: Number((dupScanSnap?.data() as any)?.scannedAtMs ?? 0),
     },
   }

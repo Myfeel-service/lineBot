@@ -77,17 +77,28 @@ export function dupPairKey(idA: string, idB: string): string {
   return [idA, idB].sort().join('~')
 }
 
-/** 第 2 層：兩兩比對取 ≥ threshold 的前 cap 組（分數高的優先） */
+/**
+ * 第 2 層：兩兩比對取 ≥ threshold 的組，分數高的優先。
+ *
+ * ⛔`keep` 是「留下這組嗎」的過濾器，必須在**取前 cap 組之前**套用。
+ * 2026-08-19 踩過：先 slice(30) 再過濾同來源 → 同一份文件切出來的卡本來就是全庫最像的，
+ * 一個 94 條的型錄輕鬆生出 30 組以上同來源高相似對，過濾完剩 0 組 →
+ * LLM 判官從沒被呼叫、「上好ㄟ vs 威技」這種跨來源重複永遠掃不到（整個功能的目的落空）。
+ * 已忽略的組同理：每按一次忽略就永久吃掉一個名額。
+ */
 export function topSimilarPairs(
   cards: DupCardLite[],
   threshold = DUP_SIM_THRESHOLD,
   cap = DUP_MAX_CANDIDATES,
+  keep: (a: DupCardLite, b: DupCardLite) => boolean = () => true,
 ): Array<{ a: DupCardLite; b: DupCardLite; similarity: number }> {
   const pairs: Array<{ a: DupCardLite; b: DupCardLite; similarity: number }> = []
   for (let i = 0; i < cards.length; i++) {
     for (let j = i + 1; j < cards.length; j++) {
       const s = cosineSim(cards[i]!.embedding, cards[j]!.embedding)
-      if (s >= threshold) pairs.push({ a: cards[i]!, b: cards[j]!, similarity: s })
+      if (s < threshold) continue
+      if (!keep(cards[i]!, cards[j]!)) continue
+      pairs.push({ a: cards[i]!, b: cards[j]!, similarity: s })
     }
   }
   return pairs.sort((x, y) => y.similarity - x.similarity).slice(0, cap)
@@ -236,12 +247,13 @@ export async function runDuplicateScan(
 
   const ignored = new Set<string>(Array.isArray(prev?.ignoredKeys) ? prev.ignoredKeys.map(String) : [])
 
-  // 第 2 層：向量候選 → 分類 → 濾掉已忽略的
-  const rawPairs = topSimilarPairs(cards)
-  const candidates = rawPairs
-    .map(p => ({ ...p, kind: classifyPair(p.a, p.b) }))
-    .filter((p): p is typeof p & { kind: DupSuggestion['kind'] } => p.kind != null)
-    .filter(p => !ignored.has(dupPairKey(p.a.id, p.b.id)))
+  // 第 2 層：向量候選（同來源與已忽略的在取名額**之前**就排除，見 topSimilarPairs 註解）
+  const candidates = topSimilarPairs(
+    cards,
+    DUP_SIM_THRESHOLD,
+    DUP_MAX_CANDIDATES,
+    (a, b) => classifyPair(a, b) != null && !ignored.has(dupPairKey(a.id, b.id)),
+  ).map(p => ({ ...p, kind: classifyPair(p.a, p.b)! }))
 
   // 第 3 層：LLM 判官（只有候選 > 0 才花這一次呼叫）
   let suggestions: DupSuggestion[] = []
@@ -277,7 +289,9 @@ export async function runDuplicateScan(
     cardCount: cards.length,
     truncated: snap.size >= DUP_SCAN_CARD_LIMIT,
     suggestions,
-    ignoredKeys: [...ignored],
+    // ⛔**不要**寫回 ignoredKeys：這支從頭到尾只讀不改它，而判官那幾秒內使用者可能剛按了
+    // 「忽略」（dismiss 用 arrayUnion 寫入）——把掃描開始時的快照寫回去會把那次忽略吃掉，
+    // 該組下次又冒出來。少寫一個欄位就沒有這個競態。
   }, { merge: true })
 
   return { outcome: 'scanned', suggestions: suggestions.length, candidates: candidates.length }

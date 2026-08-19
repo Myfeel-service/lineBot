@@ -146,15 +146,39 @@ export async function listSources(
   workspaceId: string,
   limit = 100,
 ): Promise<SourceSummary[]> {
-  const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
-    .where('workspaceId', '==', workspaceId)
-    .orderBy('updatedAt', 'desc')
-    .limit(limit)
-    .get()
-  // 進回收桶的 manual 來源（單卡刪除連坐）不出現在來源列表；還原卡片時會一併還原
-  return snap.docs
-    .filter(d => (d.data() as any)?.deletedAt == null)
-    .map(d => docToSourceSummary(d.id, d.data() as any))
+  /**
+   * ⛔過濾要在查詢層做，不能「先 limit(100) 再用 JS 濾掉墓碑」（C-49E）：
+   * 軟刪除會把 updatedAt 推到最新，墓碑因此排在 `orderBy('updatedAt','desc')` 的最前面——
+   * 刪掉 40 張手寫卡就有 40 個墓碑佔滿視窗前段，濾完只剩 60 筆，真來源在畫面上消失 30 天。
+   * `isDeleted == false` 是等值條件，配 orderBy 走既有的自動索引合併。
+   * 舊資料沒有這個欄位 → 撈不到，所以多撈一輪「沒有這個欄位的舊 doc」補齊（一次性相容，
+   * 兩批合併後再排序取 limit）。
+   */
+  const [freshSnap, legacySnap] = await Promise.all([
+    db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('isDeleted', '==', false)
+      .orderBy('updatedAt', 'desc')
+      .limit(limit)
+      .get()
+      .catch(() => null),
+    db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .orderBy('updatedAt', 'desc')
+      .limit(limit)
+      .get(),
+  ])
+  const byId = new Map<string, any>()
+  for (const d of freshSnap?.docs ?? []) byId.set(d.id, d.data())
+  // 舊 doc（沒有 isDeleted 欄位）用 deletedAt 判：它們不可能是新軟刪除的（新路徑兩個都寫）
+  for (const d of legacySnap.docs) {
+    const data = d.data() as any
+    if (data?.isDeleted === undefined && data?.deletedAt == null) byId.set(d.id, data)
+  }
+  return [...byId.entries()]
+    .map(([id, data]) => docToSourceSummary(id, data))
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+    .slice(0, limit)
 }
 
 /**
@@ -180,15 +204,20 @@ export async function countSourceChunks(
   workspaceId: string,
   sourceId: string,
 ): Promise<number> {
-  // 不能用 count() 聚合：回收桶（軟刪除）的卡要排除，而「deletedAt 不存在」在
-  // Firestore 查詢層表達不了（== null 只配對「明確為 null」的欄位，舊卡沒這欄位會整批漏）。
-  // 改抓最小欄位在 JS 過濾；單一來源最多 150 張，讀取成本可接受。
-  const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+  // ⛔用 count() 聚合，不要抓文件回來數（C-49E）：`select()` **不會**降低 Firestore 的
+  // 讀取計費——投影只省頻寬，一筆文件仍計一次讀。150 張卡的來源每次呼叫就是 150 次讀，
+  // 而這支在單卡刪除/同步/還原/套用都會被呼叫（2026-08-11 讀取費暴衝就是這種形狀）。
+  // 靠 `isDeleted` 布林欄位讓查詢層就能過濾：軟刪除時寫 true，還原時寫 false，
+  // 建卡時預設 false——舊資料沒有這個欄位，所以用「!= true」語意的兩段查詢做相容：
+  // 先數全部，再扣掉明確標記為已刪除的（兩次都是聚合，各約 1 次讀）。
+  const base = db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
-    .select('deletedAt')
-    .get()
-  return snap.docs.filter(d => (d.data() as any)?.deletedAt == null).length
+  const [allAgg, deletedAgg] = await Promise.all([
+    base.count().get(),
+    base.where('isDeleted', '==', true).count().get(),
+  ])
+  return Math.max(0, allAgg.data().count - deletedAgg.data().count)
 }
 
 /**

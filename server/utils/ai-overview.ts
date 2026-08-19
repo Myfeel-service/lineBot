@@ -34,6 +34,11 @@ export async function regenerateOverviewCard(
 
   let existingOverview: { id: string; manuallyEdited: boolean; status: string } | null = null
   const childCards: Array<{ title: string; content: string; tags: string[] }> = []
+  /**
+   * 「暫時說不出話」的子卡（pending / failed）：不能拿來合成總覽（內容可能還沒索引好），
+   * 但**存在**這件事要記著——見下面的退休守門。
+   */
+  let transientChildren = 0
   for (const d of snap.docs) {
     const data = d.data() as any
     if (data?.deletedAt != null) continue // 回收桶不參與（也不把回收桶裡的舊總覽當現任）
@@ -45,8 +50,10 @@ export async function regenerateOverviewCard(
       }
       continue
     }
+    const st = String(data?.status ?? '')
+    if (st === 'pending' || st === 'failed') transientChildren++
     // 只餵「可用」子卡：停用/到期/索引失敗的卡不該出現在「你們有賣什麼」的答案裡
-    if (String(data?.status ?? '') !== 'indexed') continue
+    if (st !== 'indexed') continue
     childCards.push({
       title: String(data?.title ?? ''),
       content: String(data?.content ?? ''),
@@ -57,7 +64,15 @@ export async function regenerateOverviewCard(
   // 手動編輯過的總覽卡：尊重人工版本，不自動覆蓋
   if (existingOverview?.manuallyEdited) return
 
-  // 子卡不足：舊總覽收進回收桶（不能留著——型錄改版清空後它會繼續唸已下架品項）
+  /**
+   * ⛔子卡「暫時」不可用時什麼都不做（C-49C）：Gemini 一次故障就會讓整批子卡變 failed，
+   * 若照 childCards<2 判定就會把總覽卡收進回收桶——之後 retry 把子卡修好了，
+   * 但重生只在「同步有增刪改」時觸發，下一次同步是「沒變」→ 總覽永遠回不來。
+   * 有 pending/failed 子卡＝狀態未定，等它們塵埃落定的那一輪再處理。
+   */
+  if (transientChildren > 0 && childCards.length < 2) return
+
+  // 子卡真的沒了：舊總覽收進回收桶（不能留著——型錄改版清空後它會繼續唸已下架品項）
   if (childCards.length < 2) {
     if (existingOverview) {
       await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(existingOverview.id)

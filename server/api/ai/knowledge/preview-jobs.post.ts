@@ -57,8 +57,10 @@ export default defineEventHandler(async (event) => {
   }
 
   // 機會性清掃：Amplify 上 scheduledTasks 不會跑，改綁在匯入流量上順手清過期 job。
-  // 與底下的抽取重疊進行（最後才 await），幾乎不增加回應延遲；失敗不擋建立。
-  const sweep = cleanupExpiredPreviewJobs(getDb(), 20).catch(() => {})
+  // ⛔fire-and-forget、**不 await**：這支端點本來就逼近閘道逾時（抽取＋OCR 判定），
+  // 把清掃的 Storage 往返算進回應時間會讓「建立匯入工作」自己超時、連 jobId 都拿不到。
+  // 清不完下一輪（或排程的 ai:cleanup-*）會接手。
+  void cleanupExpiredPreviewJobs(getDb(), 20).catch(() => {})
 
   const jobId = uuidv4()
   const work = makeWork(input)
@@ -190,7 +192,6 @@ export default defineEventHandler(async (event) => {
   }
   await getDb().collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).set(jobDoc)
 
-  await sweep // 讓機會性清掃在回應前完成（已與抽取重疊，額外延遲極小）
   return { jobId, status: 'processing' as const, phase: work.phase }
 })
 
@@ -236,7 +237,7 @@ function cardToChunk(c: { title: string; content: string; tags: string[] }): Chu
 /** 有純文字的抽取結果 → 設定切卡階段。空文字直接報錯（即時回饋，不用等輪詢）。 */
 function setChunkingFromExtracted(
   work: WorkState,
-  extracted: { text: string; rawLength: number; meta: Record<string, string | number> },
+  extracted: { text: string; rawLength: number; meta: Record<string, string | number>; truncatedBySize?: boolean },
 ): void {
   if (!extracted.text.trim()) {
     throw createError({ statusCode: 400, statusMessage: '抽出純文字後為空；請確認檔案或連結內容' })
@@ -244,6 +245,6 @@ function setChunkingFromExtracted(
   work.rawLength = extracted.rawLength
   work.truncated = extracted.rawLength > extracted.text.length
   work.meta = extracted.meta
-  work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text))
+  work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text, extracted.truncatedBySize === true))
   primeChunking(work, extracted.text)
 }

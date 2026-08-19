@@ -203,3 +203,33 @@ describe('runDuplicateScan', () => {
     expect(generateJson).not.toHaveBeenCalled()
   })
 })
+
+describe('候選名額要先過濾再取（C-49 review #3）', () => {
+  it('同來源高相似對不該吃掉名額，跨來源的組要留得下來', () => {
+    // 20 組同來源、超像的卡（型錄切出來的形狀）＋ 1 組跨來源的真重複
+    const sameSrc: DupCardLite[] = Array.from({ length: 20 }, (_, i) =>
+      card(`s${i}`, { sourceId: 'catalog', embedding: vec(1, i * 0.0001) }))
+    const cross = [
+      card('x', { sourceId: 'srcA', productName: '上好ㄟ除濕機', embedding: vec(0.9, 0.436) }),
+      card('y', { sourceId: 'srcB', productName: 'NWT 威技除濕機', embedding: vec(0.9, 0.4359) }),
+    ]
+    const keep = (a: DupCardLite, b: DupCardLite) => classifyPair(a, b) != null
+    // cap 故意設小（3）：同來源那 20 組若先佔位，跨來源那組必被擠掉
+    const pairs = topSimilarPairs([...sameSrc, ...cross], 0.9, 3, keep)
+    expect(pairs.some(p => dupPairKey(p.a.id, p.b.id) === 'x~y')).toBe(true)
+    expect(pairs.every(p => classifyPair(p.a, p.b) != null)).toBe(true)
+  })
+})
+
+describe('掃描不覆寫 ignoredKeys（C-49 review #15）', () => {
+  it('寫回的內容不含 ignoredKeys —— 掃描期間按的「忽略」不會被吃掉', async () => {
+    generateJson.mockResolvedValue({ data: { results: [] }, inputTokens: 1, outputTokens: 1 })
+    const { db, writes } = makeScanDb({
+      prev: { fingerprint: 'old', scannedAtMs: 1, suggestions: [], ignoredKeys: ['a~b'] },
+      chunks: [chunkDoc('a', [1, 0]), chunkDoc('b', [0.99, 0.14]), chunkDoc('c', [0, 1])],
+    })
+    await runDuplicateScan(db, 'ws1', { force: true })
+    const saved = writes.at(-1) as any
+    expect('ignoredKeys' in saved).toBe(false)
+  })
+})

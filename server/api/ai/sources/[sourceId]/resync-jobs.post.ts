@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { buildSourceClearFailure, getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getResyncExtracted } from '~~/server/utils/ai-knowledge-resync'
 import { extractionQualityWarnings } from '~~/server/utils/ai-source-extractors'
 import { normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
@@ -48,8 +48,10 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  // 機會性清掃過期 job(Amplify 不跑 scheduledTasks,綁在功能流量上)
-  const sweep = cleanupExpiredPreviewJobs(db, 20).catch(() => {})
+  // 機會性清掃過期 job(Amplify 不跑 scheduledTasks,綁在功能流量上)。
+  // ⛔fire-and-forget、**不 await**:清掃裡有 Storage 列舉與逐檔刪除,await 在回應前
+  // 等於把它加進使用者的等待時間(這支已經很接近閘道逾時)。清不完下輪再清。
+  void cleanupExpiredPreviewJobs(db, 20).catch(() => {})
 
   // 抽取(快且會失敗的部分):網址掛了在這裡當場報錯,使用者立刻看到
   // 「網址回應 404:請確認連結公開可訪問」這類可行動訊息。
@@ -101,6 +103,12 @@ export default defineEventHandler(async (event) => {
       outdatedAt: null,
       lastFetchedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
+      // 抓成功＝這個來源現在是好的：把失敗標記清掉（C-48 的失敗落地必須有對應的復原路徑）。
+      // ⛔沒有這段的話：關掉自動偵測（refreshInterval=0）的來源永遠不被排程掃到，
+      // 商家把網址修好、按了重新同步也成功了，體檢仍永遠紅著「來源同步失敗」；
+      // 而且殘留的 checkFailCount 會餵給退避演算法，把健康來源推到 24 小時才檢查一次。
+      // （buildSourceClearFailure 本身就會 delete checkFailCount／failureReason，不必再寫一次）
+      ...buildSourceClearFailure(source.data.status),
     }).catch(e => console.warn('[resync] unchanged bookkeeping failed:', e))
     return {
       status: 'unchanged' as const,
@@ -109,6 +117,11 @@ export default defineEventHandler(async (event) => {
       fetchedChars: extracted.text.trim().length,
     }
   }
+
+  // 抓取成功（有內容、要進重切）→ 同樣清掉失敗標記與退避計數，理由同上
+  await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+    ...buildSourceClearFailure(source.data.status),
+  }).catch(() => {})
 
   const jobId = uuidv4()
   const work = makeWork({
@@ -126,7 +139,7 @@ export default defineEventHandler(async (event) => {
   work.resyncContentHash = extracted.contentHash
   work.resyncFetchedChars = extracted.text.trim().length
   // 與匯入同一套擷取守門:同個網址在兩條路上要得到同樣的診斷
-  work.warnings.push(...extractionQualityWarnings('url', extracted.text))
+  work.warnings.push(...extractionQualityWarnings('url', extracted.text, (extracted as any).truncatedBySize === true))
   primeChunking(work, extracted.text)
 
   await saveWork(workspaceId, jobId, work)
@@ -147,6 +160,5 @@ export default defineEventHandler(async (event) => {
   }
   await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).set(jobDoc)
 
-  await sweep
   return { jobId, status: 'processing' as const, phase: work.phase }
 })

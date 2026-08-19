@@ -35,17 +35,24 @@ export default defineEventHandler(async (event) => {
   // 固定在本 workspace 的 preview-uploads/ 底下；preview-jobs 下載時會用這個前綴做隔離檢查。
   const storagePath = `preview-uploads/${workspaceId}/${uploadId}.${safeExt}`
 
-  // 不把 Content-Type 納入簽章 → 前端 PUT 的 header 不必逐字對齊，少一種 403 SignatureDoesNotMatch。
-  // 下載端只認 bytes，檔案型別由 preview-jobs 收到的 fileName/contentType 另行判定。
-  // ⛔大小上限納入簽章（C-49A）：不設的話拿到網址就能 PUT 2GB——GCS 照收（付儲存費），
-  // 之後 preview-jobs 把整包下載進 Lambda 直接 OOM，而且炸掉後那顆檔案永遠留在 bucket。
+  /**
+   * ⛔簽章裡**不要**放任何 extensionHeaders（含 x-goog-content-length-range）。
+   * 2026-08-19 踩過：為了擋超大上傳把 content-length-range 加進 extensionHeaders，
+   * 但 signer 會把每個 extensionHeader 併入 X-Goog-SignedHeaders 與 canonical request，
+   * 而瀏覽器 PUT 只送 Content-Type → 簽章對不上 → **所有檔案上傳一律 403**。
+   * 要靠它擋大小的話，前端每次 PUT 都得逐字送同一個 header，多一種必炸的耦合。
+   *
+   * 大小防線改放伺服器端兩道（都在我們自己手上，不依賴 client 行為）：
+   *   ① preview-jobs 下載前先 file.getMetadata() 檢查 size，超過就刪檔並回 400（不進記憶體）
+   *   ② cleanupExpiredPreviewJobs 每輪清 preview-uploads/ 超過 24h 的孤兒檔
+   * 代價：超大檔會先落地 GCS 幾秒到幾小時的儲存費——比「上傳整個壞掉」便宜太多。
+   */
   const [uploadUrl] = await getStorage().bucket()
     .file(storagePath)
     .getSignedUrl({
       version: 'v4',
       action: 'write',
       expires: Date.now() + 10 * 60 * 1000, // 10 分鐘內要 PUT 完
-      extensionHeaders: { 'x-goog-content-length-range': '0,10485760' }, // 10MB，與 preview-jobs 檢查一致
     })
 
   return { uploadId, storagePath, uploadUrl }

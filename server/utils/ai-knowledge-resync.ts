@@ -410,7 +410,7 @@ export async function getResyncExtracted(
   sourceId: string,
   _sourceContentHash: string,
   sourceUrl: string,
-): Promise<{ text: string; rawLength: number; contentHash: string }> {
+): Promise<{ text: string; rawLength: number; contentHash: string; truncatedBySize: boolean }> {
   const extracted = await extractUrlText(sourceUrl)
   const { createHash } = await import('node:crypto')
   const contentHash = createHash('sha256').update(extracted.text).digest('hex')
@@ -424,7 +424,7 @@ export async function getResyncExtracted(
       fetchedAt: FieldValue.serverTimestamp(),
     })
     .catch(e => console.warn('[resync] cache write failed:', e))
-  return { text: extracted.text, rawLength: extracted.rawLength, contentHash }
+  return { text: extracted.text, rawLength: extracted.rawLength, contentHash, truncatedBySize: extracted.truncatedBySize === true }
 }
 
 /** 把 Firestore 拉出來的 raw chunks 轉成 diff 函式吃的格式 */

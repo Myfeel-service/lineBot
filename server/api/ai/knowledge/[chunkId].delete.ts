@@ -50,6 +50,7 @@ export default defineEventHandler(async (event) => {
         // 會讓其他卡變成指向回收桶來源的隱形卡（列表看不到、卻還在被檢索）。
         if (sourceData.type === 'manual' && remaining === 0) {
           await sourceRef.update({
+            isDeleted: true, // listSources 靠這個欄位在查詢層排除墓碑（見該函式註解）
             deletedAt: FieldValue.serverTimestamp(),
             purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
             updatedAt: FieldValue.serverTimestamp(),

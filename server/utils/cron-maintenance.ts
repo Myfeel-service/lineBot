@@ -98,6 +98,10 @@ async function checkOneSource(
       if (r.outcome === 'blocked_mass_deletion') {
         await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
           failureReason: `表格一次少了 ${r.pendingDeletes ?? 0} 列（現有 ${r.kept} 張卡）。為避免誤刪，自動同步已暫停套用；請到知識庫來源頁確認後手動同步。`,
+          // ⛔一定要一起寫 status:'failed'：體檢的「資料同步失敗」與小幫手 knowledgeSyncFailed
+          // 都只看 status，只寫 failureReason 的話畫面全綠——正好違背這道守門的目的
+          //（讓店家看得到「自動同步暫停了，有 N 張卡等你確認」）。
+          status: 'failed',
           outdatedAt: FieldValue.serverTimestamp(),
           lastFetchedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -402,23 +406,18 @@ export async function detectSourceUpdates(db: Firestore) {
   }
   const snap = await q.get()
   const windowFull = snap.size >= SOURCE_SCAN_LIMIT * 5
-  if (windowFull) {
-    const last = snap.docs.at(-1)!
-    await cursorRef.set({
-      lastInterval: Number((last.data() as any).refreshIntervalMinutes ?? 0),
-      lastId: last.id,
-    }).catch(() => {})
-    // 撞上限不能靜默：這代表來源數已超過單輪視窗，靠輪轉分批照顧
-    console.log(`[detect-source-updates] 候選窗滿（${snap.size}），游標輪轉續掃`)
-  }
-  else {
-    await cursorRef.set({ lastInterval: null, lastId: '' }).catch(() => {})
-  }
 
   const now = Date.now()
   const dueDocs: Array<{ id: string; data: KnowledgeSourceDoc }> = []
+  /**
+   * 游標要停在「這一輪真的看過的最後一筆」，不是「抓回來的最後一筆」。
+   * ⛔踩過：抓 250 筆但只處理 50 筆就 break，游標卻推到第 250 筆——中間 200 個來源
+   * 這輪沒看、游標又已經越過它們，要等繞完一整圈才有機會。那正是本來要修的飢餓，換個形狀。
+   */
+  let lastSeen: { interval: number; id: string } | null = null
   for (const d of snap.docs) {
     const data = d.data() as KnowledgeSourceDoc
+    lastSeen = { interval: Number((data as any).refreshIntervalMinutes ?? 0), id: d.id }
     if (data.type !== 'url' && data.type !== 'gsheet') continue
     // 關掉自動同步的表＝商家自管：checkOneSource 只會直接 return，
     // 不排除的話它們永遠「到期」、每輪白佔 SCAN_LIMIT 名額（早退不戳時間戳）。
@@ -431,6 +430,15 @@ export async function detectSourceUpdates(db: Firestore) {
     if (lastMs && (now - lastMs) < sourceDueIntervalMs(intervalMs, Number(data.checkFailCount ?? 0))) continue
     dueDocs.push({ id: d.id, data })
     if (dueDocs.length >= SOURCE_SCAN_LIMIT) break
+  }
+
+  // 游標落在「這輪看過的最後一筆」；沒撞到視窗上限＝已經看到底，歸零下輪從頭
+  if (windowFull && lastSeen) {
+    await cursorRef.set({ lastInterval: lastSeen.interval, lastId: lastSeen.id }).catch(() => {})
+    console.log(`[detect-source-updates] 候選窗滿（${snap.size}），游標停在已檢視的最後一筆、下輪續掃`)
+  }
+  else {
+    await cursorRef.set({ lastInterval: null, lastId: '' }).catch(() => {})
   }
 
   if (!dueDocs.length) return { scanned: 0 }

@@ -81,7 +81,8 @@ export default defineEventHandler(async (event) => {
     // 放棄這一步的結果。沒有鎖的年代：兩個執行體交錯寫回會讓進度游標倒退、
     // 已付費切好的段消失重跑、token 重複入帳。
     const { work, generation } = await loadWorkWithGeneration(workspaceId, jobId)
-    let workGen = generation
+    // undefined＝這輪拿不到版本號、不上鎖（⛔不可退回 0：那是「必須不存在」，會永久 412）
+    let workGen: number | undefined = generation
 
     if (work.phase === 'finalize') {
       if (work.input.resyncSourceId) {

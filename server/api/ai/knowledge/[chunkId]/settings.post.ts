@@ -98,8 +98,15 @@ export default defineEventHandler(async (event) => {
   if (activeUntilTs !== undefined) {
     update.activeUntil = activeUntilTs === null ? FieldValue.delete() : activeUntilTs
     if (activeUntilTs && activeUntilTs.toMillis() > Date.now()) {
-      // 日期改到未來：若這張是「到期自動停用」的卡 → 視為重新上架
+      // 日期改到未來：若這張是「到期自動停用」的卡 → 視為重新上架。
+      // ⛔沒有向量的卡不能標 indexed（與上面「啟用」那條同一道守門）：
+      // 到期排程現在對 failed 卡也寫 disabled，所以「內容改過→重算失敗→到期下架」的卡
+      // 會落在這條路上；標 indexed 的話畫面顯示可用、檢索卻永遠撈不到（findNearest 需要向量），
+      // 而 retry 只撈 pending/failed → 沒有任何機制救得回來的殭屍卡。
       if (status === 'disabled' && chunk.expiredAt && body?.enabled !== false) {
+        if (!chunk.embedding) {
+          throw createError({ statusCode: 400, statusMessage: '這張卡沒有索引資料，請先用「重新索引」建好再延長期限' })
+        }
         update.status = 'indexed' satisfies KnowledgeChunkStatus
         update.expiredAt = FieldValue.delete()
       }

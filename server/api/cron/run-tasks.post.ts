@@ -11,7 +11,7 @@ import {
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
-import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
+import { cleanupExpiredPreviewJobs, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { getDb } from '~~/server/utils/firebase'
@@ -41,6 +41,8 @@ export default defineEventHandler(async (event) => {
   const tasks: Array<{ name: string; run: () => Promise<unknown> }> = [
     { name: 'ai:retry-stuck-chunks', run: () => retryStuckChunks(db) },
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
+    // 取消上傳留下的孤兒檔（只在排程清，不塞進使用者請求路徑——列舉+逐檔刪會拖垮匯入端點）
+    { name: 'ai:cleanup-orphan-uploads', run: () => cleanupOrphanUploads() },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
     // 回收桶到期清運：軟刪除的知識卡（含連坐的 manual 來源）過了 30 天保留期真刪

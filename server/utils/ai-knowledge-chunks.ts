@@ -35,6 +35,9 @@ export const RECYCLE_RETENTION_DAYS = 30
 export function buildChunkSoftDeletePatch(existingStatus?: unknown): Record<string, unknown> {
   return {
     status: 'disabled' satisfies KnowledgeChunkStatus,
+    // 查詢層過濾用的布林（C-49E）：`deletedAt 不存在` 在 Firestore 表達不了，
+    // 而用 count() 聚合算張數必須在查詢層就排除墓碑，否則只能整批讀回來數（150 倍讀取費）。
+    isDeleted: true,
     ...(existingStatus ? { statusBeforeDelete: String(existingStatus) } : {}),
     deletedAt: FieldValue.serverTimestamp(),
     purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
@@ -157,6 +160,7 @@ export async function createKnowledgeChunk(
     embedding: null,
     tokens: estimateTokens(params.content),
     status: 'pending',
+    isDeleted: false, // 見 buildChunkSoftDeletePatch：查詢層要靠這個欄位排除回收桶
     sourceId: params.sourceId ?? null,
     lastIndexedAt: null,
     manuallyEditedAt: null,
@@ -400,12 +404,21 @@ export async function runIndexOnChunk(
     }
   }
   catch { /* 產品名解析失敗就照原 embeddingText 走 */ }
-  // embedding 模型輸入約 2048 token（≈ 中文 1300–2000 字），超長只會被上游截掉或報錯。
-  // 這裡自己截（C-49D）：取前段（產品名+標題+問法都在前面，檢索訊號最重的部分保得住），
-  // 長卡的後半對向量的貢獻本來就進不去，明著截比交給 API 碰運氣穩。
-  const EMBED_INPUT_CHAR_LIMIT = 1800
+  /**
+   * embedding 模型輸入上限約 2048 token，超長會被上游截掉或報錯。這裡自己截（C-49D），
+   * 但**用估算 token 而不是固定字數**：這是多租戶 SaaS，固定 1800 字對中文剛好、
+   * 對英文租戶卻只有約 450 token——等於把模型 3/4 的容量丟掉，同一張卡在改版前後
+   * 建出的向量涵蓋範圍還不一樣（排序不一致）。estimateTokens 是既有的同一把尺。
+   * 截在前段是刻意的：產品名、標題、客人問法都在最前面，檢索訊號最重的部分保得住。
+   */
+  const EMBED_TOKEN_LIMIT = 1900 // 留一點餘裕給模型端的計法差異
   const rawText = productName ? `${productName}\n${embeddingText}` : embeddingText
-  const finalText = rawText.length > EMBED_INPUT_CHAR_LIMIT ? rawText.slice(0, EMBED_INPUT_CHAR_LIMIT) : rawText
+  let finalText = rawText
+  if (estimateTokens(rawText) > EMBED_TOKEN_LIMIT) {
+    // 依估算比例回推字數，再收斂一次（估算是線性的，一次就夠；保底再砍 5%）
+    const ratio = EMBED_TOKEN_LIMIT / estimateTokens(rawText)
+    finalText = rawText.slice(0, Math.max(200, Math.floor(rawText.length * ratio * 0.95)))
+  }
   const embeddingTokens = estimateTokens(finalText)
   try {
     const values = await embedDocument(finalText)

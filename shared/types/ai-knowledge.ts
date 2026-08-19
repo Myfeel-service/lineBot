@@ -12,6 +12,12 @@ export type EmbeddingVector = FirebaseFirestore.VectorValue
 export type KnowledgeChunkStatus = 'pending' | 'indexed' | 'failed' | 'disabled'
 
 export interface KnowledgeChunkDoc {
+  /**
+   * 在回收桶裡（軟刪除）。與 deletedAt 成對維護——deletedAt 給人看時間、
+   * 這個布林給**查詢層**過濾：Firestore 表達不了「欄位不存在」，
+   * 沒有它就只能整批讀回來在 JS 濾（150 倍讀取費，見 countSourceChunks）。
+   */
+  isDeleted?: boolean
   workspaceId: string
   title: string
   content: string
