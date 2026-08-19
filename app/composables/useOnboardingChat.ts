@@ -662,16 +662,16 @@ export function useOnboardingChat() {
         taught = true
         await walkNodes([
           {
-            html: '先按上面那張卡的「複製」拿到網址，然後打開 LINE Developers → 你的官方帳號 → <b>Messaging API</b> 分頁。',
+            html: '先按上面那張卡的「複製」拿到網址，然後打開 LINE Developers。',
             href: 'https://developers.line.biz/console/',
             hrefLabel: '打開 LINE Developers ↗',
           },
           {
-            html: '<b>Webhook URL</b> 欄位貼上剛剛複製的網址，按「<b>Update</b>」存檔（圖上的 ①）。',
-            image: ONBOARDING_SHOTS.webhookUrl,
-            alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
+            // 選對卡的前導放進動畫裡——同名雙卡是最大雷點，教學開頭就要處理
+            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → <b>Webhook URL</b> 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。做完回來按「貼好了，幫我檢查」。',
+            image: ONBOARDING_SHOTS.webhookAnim,
+            alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
           },
-          { html: '同一區把「<b>Use webhook</b>」開關打開（圖上的 ②）——只貼網址沒打開，訊息還是不會送過來。做完回來按「貼好了，幫我檢查」。' },
         ], '我貼好了，直接檢查')
         // 教學走完不自動驗（人可能還在 LINE 那邊操作），回選單時「幫我檢查」已是主鈕
         continue

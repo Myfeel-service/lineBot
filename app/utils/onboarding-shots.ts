@@ -22,8 +22,10 @@ export const ONBOARDING_SHOTS = {
   oamEnableMessagingApi: '/onboarding/oam-enable-messaging-api.png',
   /** 循環動畫：切 Basic settings 分頁 → 捲下來 → 找到 Channel secret（緊裁列圖缺定位已退場） */
   channelSecretAnim: '/onboarding/line-console-channel-secret.webp',
-  /** Messaging API 分頁：Webhook URL 欄位＋Update 鈕＋Use webhook 開關（一張圖三個框） */
+  /** Messaging API 分頁：Webhook URL 欄位＋Use webhook 開關（靜態①②，修復劇本用） */
   webhookUrl: '/onboarding/line-console-webhook-url.png',
+  /** 循環動畫：貼 Webhook 網址全程——選對卡（同名雙卡）→ 切分頁 → 貼網址按 Update → 開 Use webhook */
+  webhookAnim: '/onboarding/line-console-webhook.webp',
   /** 循環動畫：官方帳號後台——右上「設定」→ 側欄「回應設定」→ 選「手動聊天」 */
   oamAutoReplyAnim: '/onboarding/oam-auto-reply.webp',
   /** 循環動畫：建活動頁 LIFF（LINE Login 那張卡 → LIFF 分頁 → Add → 貼 Endpoint）。⚠️截圖尚缺，補進 src 後產 */

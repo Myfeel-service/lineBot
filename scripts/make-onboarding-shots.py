@@ -183,6 +183,50 @@ def main() -> None:
                     append_images=frames4[1:], duration=[d for _, _, d in spec4],
                     loop=0, quality=82, method=4)
 
+    # ── 通用視窗幀（後面的動畫都用這支，別再各寫一份 frameN） ──
+    def vframe(src_im: Image.Image, top: int, box=None, x0: int = 240, x1: int = 1330) -> Image.Image:
+        im = src_im.crop((x0, top, x1, top + vh))
+        if box:
+            dark = Image.eval(im, lambda v: int(v * 0.82))
+            mask = Image.new('L', im.size, 255)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, fill=0)
+            im = Image.composite(dark, im, mask)
+        return im.resize((target_w, int(vh * target_w / (x1 - x0))))
+
+    # ── 循環動畫：貼 Webhook 網址（含「選對卡」前導——同名雙卡是最大雷點，教學開頭就要處理） ──
+    # 跨三頁的真實路徑：帳號清單選 Messaging API 卡 → 落在 Basic settings → 切 Messaging API 分頁
+    # → 捲到 Webhook settings → 貼網址按 Update → 開 Use webhook
+    lst = load('src-channel-list.jpg')
+    bs = load('src-basic-settings.jpg')
+    spec5 = [
+        (lst, 84, None, 900),                        # 開場：帳號清單正常畫面
+        (lst, 84, (556, 595, 714, 640), 1800),       # 停：點掛「Messaging API」小字的那張卡
+        (bs, 90, (435, 330, 560, 372), 1800),        # 停：進來後切「Messaging API」分頁
+        (src, 90, None, 250),                        # 落在 Messaging API 分頁，捲動帶過…
+        (src, 520, None, 130),
+        (src, 950, None, 300),
+        (src, 950, (425, 1000, 710, 1090), 1900),    # 停：Webhook URL 貼上按 Update
+        (src, 950, (434, 1117, 511, 1174), 1900),    # 停：打開 Use webhook
+    ]
+    frames5 = [vframe(im, t, b) for im, t, b, _ in spec5]
+    frames5[0].save(OUT / 'line-console-webhook.webp', save_all=True,
+                    append_images=frames5[1:], duration=[d for *_, d in spec5],
+                    loop=0, quality=82, method=4)
+
+    # ── 循環動畫：建活動頁 LIFF（前半段——後半的 Add 表單等截圖補齊再加幀） ──
+    # ⚠️LIFF 住在「LINE Login」那張卡下面——跟拿鑰匙相反，動畫開頭就要把卡選對
+    login_page = load('src-line-login-channel-DO-NOT-USE.jpg')  # 這張的正途：教 LIFF 在哪
+    spec6 = [
+        (lst, 84, None, 900),                        # 開場：帳號清單正常畫面
+        (lst, 84, (812, 598, 922, 636), 2000),       # 停：這次點掛「LINE Login」小字的那張卡
+        (login_page, 90, (538, 330, 588, 372), 2600),  # 停：切「LIFF」分頁（Add 表單幀待截圖）
+    ]
+    frames6 = [vframe(im, t, b) for im, t, b, _ in spec6]
+    frames6[0].save(OUT / 'line-console-liff-setup.webp', save_all=True,
+                    append_images=frames6[1:], duration=[d for *_, d in spec6],
+                    loop=0, quality=82, method=4)
+
     for f in sorted(OUT.iterdir()):
         if f.suffix in ('.png', '.webp'):
             print(f'{f.name:44s} {f.stat().st_size // 1024:>4d} KB')
