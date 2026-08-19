@@ -6,7 +6,7 @@
  * - 每一步「完成了沒」由後端真實訊號判定（setup-status / line-workspace / ai settings），
  *   劇本只轉述；續走（resume）= 逐步自我檢查「已完成就靜默跳過」，不存「進行到第幾步」。
  * - 憑證只在這裡收、走既有 PUT 端點（admin 權限），不落 log、不進 LLM。
- * - 每一步可跳過；跳過記 localStorage（純 UX 記憶，不當事實來源），加分項之後由健康卡盯。
+ * - 每一步可跳過，但只作用當下這一輪（⛔跳過記憶已拆：它跟「沒做完每次都拉回」互相打架）。
  */
 
 import type { AgentChoice } from '~~/shared/types/agent-messages'
@@ -99,34 +99,9 @@ export function useOnboardingChat() {
   } = runner
   const progress = ref(0)
 
-  // ── 跳過記憶（純 UX，不當事實來源） ─────────────────────────
-
-  type SkipKey = 'firstMsg' // 舊的 liff/shopUrl/handoff 鍵已隨步驟移出（殘留的 localStorage 值無害）
-
-  function skips(): Record<string, boolean> {
-    try {
-      return JSON.parse(localStorage.getItem(`onb-skips:${wid.value}`) || '{}')
-    }
-    catch {
-      return {}
-    }
-  }
-
-  function clearSkip(key: SkipKey) {
-    try {
-      const next = skips()
-      delete next[key]
-      localStorage.setItem(`onb-skips:${wid.value}`, JSON.stringify(next))
-    }
-    catch { /* 同 markSkip：寫不進去就算了 */ }
-  }
-
-  function markSkip(key: SkipKey) {
-    try {
-      localStorage.setItem(`onb-skips:${wid.value}`, JSON.stringify({ ...skips(), [key]: true }))
-    }
-    catch { /* 無痕模式等寫不進去就算了，只影響下次會再問一次 */ }
-  }
+  // 「跳過記憶」已整組拆除（2026-08-20）：它跟「開通沒做完每次進後台都拉回」的拍板
+  // 直接打架——系統一邊說你有事沒做完把人拉進來，一邊又用舊記憶把人快轉到完成頁。
+  // 現在跳過只作用當下這一輪；回來就停在沒做完的那一步，照樣可以再跳過。
 
   // ── 真實訊號 ────────────────────────────────────────────────
 
@@ -653,7 +628,6 @@ export function useOnboardingChat() {
     }
     else {
       updateMsg(waitId, { kind: 'status', state: 'skipped', text: '略過測試——之後隨時可以加好友傳一句話試試' })
-      markSkip('firstMsg')
     }
     progress.value = 3
   }
@@ -788,13 +762,6 @@ export function useOnboardingChat() {
       progress.value = Math.max(progress.value, 3)
       return
     }
-    // 上次明確按過「先跳過測試」的人回來，不重坐一次教學＋等待——
-    // 跟 liff/shopUrl/handoff 同一套跳過記憶；之後由健康卡盯（那邊才是事實來源）
-    if (skips().firstMsg) {
-      progress.value = Math.max(progress.value, 3)
-      return
-    }
-
     // ── 接線：Webhook ──
     // 進場那次 publicBaseUrl 查詢失敗會被吞掉：教網址前補查一次，
     // 直接兜瀏覽器網址會教錯（正式網址有設的人幾分鐘後就被健康檢查亮紅）
@@ -809,11 +776,13 @@ export function useOnboardingChat() {
     let verified = false
 
     // 續走模式先靜默驗一次：之前就接好 Webhook 的人不用再被叫去貼一次網址
+    let resumedConnected = false
     if (opts.preVerify && line.tokenConfigured && line.secretConfigured) {
       const v = await verifyWebhook(webhookUrl)
       if (v?.cause === 'ok') {
         await say('Webhook 之前就接好了 ✓ 直接來測試。')
         verified = true
+        resumedConnected = true
       }
     }
 
@@ -863,6 +832,17 @@ export function useOnboardingChat() {
 
     // LINE 內建「自動回應訊息」預設開啟，會跟機器人搶話（客人每句話收到兩套回覆）。
     // 這個開關 LINE 沒開 API、系統偵測不到，只能在這裡教。
+    // 續走且接線本來就通的人不重坐這課（第一次走過時教過了；設定頁也有「教我怎麼關」）——
+    // 回來的人要直接落在沒做完的傳話測試（2026-08-20 老闆抓到：不能每次回來都重演一遍）
+    if (!resumedConnected) {
+      await teachAutoReplyOff()
+    }
+
+    await stepFirstMessageWait(line, setup, webhookUrl)
+  }
+
+  /** 教關掉 LINE 內建自動回應（開通接線後的必修課；抽出來是為了續走時可跳過） */
+  async function teachAutoReplyOff() {
     await say('測試前還有一個小開關：LINE 官方帳號內建的「自動回應訊息」預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>（LINE 的罐頭訊息＋我們的回覆）。')
     const howOff = await askChoices([
       { label: '教我一步步關', value: 'walk', primary: true },
@@ -884,8 +864,6 @@ export function useOnboardingChat() {
         },
       ], '我會關，直接測試')
     }
-
-    await stepFirstMessageWait(line, setup, webhookUrl)
   }
 
   /** 等第一則訊息：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退） */
@@ -959,7 +937,6 @@ export function useOnboardingChat() {
         continue
       }
       if (c === 'test') {
-        clearSkip('firstMsg') // 反悔跳過：旗標不清的話，重入的等待段會被 guard 直接放行
         const webhookUrl = `${line.publicBaseUrl || window.location.origin}/webhook`
         await stepFirstMessageWait(line, setup, webhookUrl)
         // 收到（或再次跳過）後回成績單重新整理：遞迴重跑 stepDone 會重抓真實訊號
