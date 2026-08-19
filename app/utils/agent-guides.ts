@@ -417,14 +417,16 @@ async function adviseTokenReissue(c: AgentGuideCtx) {
     steps: [
       { text: '打開 LINE Developers 並登入（下面有連結）' },
       {
-        text: '選你的官方帳號 → Messaging API 分頁',
+        // 同名卡片可能有兩張（Messaging API／LINE Login），認小字不認名稱——
+        // 點錯那張拿到的是另一把不能用的鑰匙
+        text: '選掛著「Messaging API」小字的那張卡（同名可能有兩張，認小字不認名稱）',
         image: ONBOARDING_SHOTS.consoleChannel,
-        alt: 'LINE Developers 首頁，圈出官方帳號在清單裡的位置',
+        alt: '帳號清單頁，圈出卡片下方的 Messaging API 小字',
       },
       {
-        text: '捲到最下方，Channel access token 按「Reissue」（沒發過就按 Issue）',
+        text: '切到 Messaging API 分頁，捲到最下方，Channel access token 按「Reissue」（沒發過就按 Issue）',
         image: ONBOARDING_SHOTS.issueToken,
-        alt: 'Messaging API 分頁最下方，圈出發行 Channel access token 的按鈕',
+        alt: 'Messaging API 分頁最下方，圈出重發 Channel access token 的按鈕',
       },
       { text: '整串複製' },
     ],

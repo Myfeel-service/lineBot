@@ -1,39 +1,56 @@
 # 開通引導的示意圖
 
-小幫手的「怎麼拿？／怎麼貼？／怎麼關？」卡片會在每一小步旁邊配一張畫面照片。
-圖檔放這個資料夾，**檔名要跟下表一模一樣**（路徑在 `app/utils/onboarding-shots.ts`）。
+小幫手的「怎麼拿？／怎麼貼？／怎麼關？」卡片會在每一小步旁邊配一張畫面截圖。
+**卡片吃的是下表的 PNG**（路徑單一來源在 `app/utils/onboarding-shots.ts`）。
 
-> **圖還沒放進來也不會壞**：卡片會先在背景載一次，載不到就只顯示文字。
-> 補圖不用改程式——檔案丟進來、重新部署就出現。
+⚠️ **這個資料夾會對外公開**（`public/` 底下的東西任何人都能用網址開啟，也會跟著部署）。
+只放卡片真的會用到的圖；**未裁切的原始截圖放 `docs/onboarding-shots-src/`**（不對外、不部署），
+重裁重框時從那裡出發，不用重拍。
 
-## 拍攝規格
+> **圖不在也不會壞**：卡片會先在背景載一次，載不到就只顯示文字。
+> 補圖／換圖丟進來重新部署即可，**不用改程式**。
 
-- **格式** PNG，寬度 **1000–1400px**（卡片顯示約 190px 高，點了會放大看原圖）。
-- **標註** 用紅色框線圈出「這一步要按的那一個東西」，一張圖**只圈一個重點**（第 5 張例外，見下表）。
-  不要加箭頭以外的說明文字——文字由卡片負責，圖上寫字之後改文案會對不起來。
-- **打碼** 帳號名稱、Channel ID、任何看得出是誰的字樣都要遮掉。⛔ 憑證本身（Token／Secret）
-  絕對不能入鏡，就算打碼也不要——寧可截在欄位還沒展開的狀態。
-- **語言** 用**繁體中文介面**截（LINE 後台可切語言）。使用者看到的是中文介面，圖是英文的話反而更難對照。
-- **裁切** 只留必要範圍：看得出「這是哪一頁」＋要按的那個東西，不要整個瀏覽器視窗。
+## 正式圖（卡片實際顯示的）
 
-## 要拍的六張
+來源檔都在 `docs/onboarding-shots-src/`（下表只寫檔名）。
 
-| 檔名 | 在哪裡拍 | 圈什麼 | 用在哪 |
+| 檔名 | 內容 | 紅框圈什麼 | 來源檔 |
 |---|---|---|---|
-| `line-console-channel.png` | LINE Developers 首頁（登入後的清單） | 官方帳號在清單裡的位置 | 拿第一把鑰匙的第 2 步；修復劇本重發鑰匙 |
-| `line-console-issue-token.png` | LINE Developers → Messaging API 分頁，捲到最底 | Channel access token 的 **Issue／Reissue** 按鈕 | 拿第一把鑰匙的第 3 步；修復劇本重發鑰匙 |
-| `oam-enable-messaging-api.png` | **官方帳號後台**（manager.line.biz）→ 設定 → Messaging API | 「啟用」按鈕 | 「清單裡沒看到你的帳號？」的岔路（預設收合） |
-| `line-console-channel-secret.png` | LINE Developers → Basic settings 分頁 | Channel secret 欄位（**值要遮掉**） | 拿第二把鑰匙；重貼第二把鑰匙 |
-| `line-console-webhook-url.png` | LINE Developers → Messaging API 分頁上半部 | **這張圈三個**：Webhook URL 欄位、Update 按鈕、Use webhook 開關 | 接線那步；webhook 修復劇本（沒填網址／開關沒開／網址不對，三種都用這張） |
-| `oam-auto-reply.png` | **官方帳號後台** → 設定 → 回應設定 | 「自動回應訊息」的開關 | 關掉 LINE 內建罐頭回覆那步 |
+| `line-business-id-login.png` | LINE Business ID 登入頁 | 綠色「LINE帳號」按鈕 | `src-login.jpg` |
+| `line-console-channel.png` | LINE Developers 帳號清單 | 卡片下方的「Messaging API」**小字**（⛔同名可能兩張卡，認小字不認名稱） | `src-channel-list.jpg` |
+| `line-console-issue-token.png` | Messaging API 分頁最底 | Channel access token 的 Issue／Reissue 鈕 | `src-messaging-api.jpg` |
+| `line-console-channel-secret.png` | Messaging API 頻道的 Basic settings | Channel secret 那一列 | `src-basic-settings.jpg` |
+| `line-console-webhook-url.png` | Messaging API 分頁的 Webhook settings | ①貼網址的欄位 ②Use webhook 開關 | `src-messaging-api.jpg` |
+| `oam-auto-reply.png` | 官方帳號後台 → 設定 → 回應設定 | 「手動聊天」選項（＝關掉內建自動回應的新版做法） | `src-oam-response.jpg` |
+| `oam-enable-messaging-api.png` | 官方帳號後台 → 設定 → Messaging API 的啟用鈕 | 啟用按鈕 | **尚缺**——只用在「清單沒看到帳號」的岔路，補上即自動顯示 |
 
-⚠️ 第 3 張與第 6 張在**另一個後台**（綠色的官方帳號後台），跟前面幾張不是同一個網站——
-這正是最多人迷路的地方，圖裡要留得出「這是另一個後台」的辨識度（例如左側選單一起入鏡）。
+裁切、紅框、編號徽章的產線腳本在 session scratchpad 的 `make-shots.py`（一次性工具，
+座標寫在腳本裡）；要重做時用任何工具照上表重產同名 PNG 即可。
+
+## 來源檔備註（`docs/onboarding-shots-src/`）
+
+- `src-line-login-channel-DO-NOT-USE.jpg`＝**LINE Login 頻道**的 Basic settings。
+  ⛔**別拿它教第二把鑰匙**——那頁的 Channel secret 是另一把（LINE Login 用的），跟收訊息
+  的不是同一把，教了就是把人送進「Secret 貼錯→訊息全被丟掉」的災難。檔名直接標了 DO NOT
+  USE，留著只當「長這樣的頁面不要用」的對照。
+- `src-provider-settings.jpg`＝Provider 設定頁，目前沒有任何步驟用到。
+
+## 拍攝／處理規格（換圖時照做）
+
+- **語言**：LINE Developers 後台**只有英文**（沒有中文介面），照英文截——使用者看到的
+  就是英文；官方帳號後台（manager.line.biz）是中文，照中文截。
+- **打碼**（下面三樣一定要遮，已建立先例）：右上角**個人大頭照**、**個人名字**、
+  官方帳號後台頂列的**加好友 ID（@xxxx）**。帳號名稱用測試帳號（Myfeel Test）可留。
+- ⛔ **憑證絕對不能入鏡**：Token／Channel secret／Channel ID／QR code 的值，截圖前先清空
+  或蓋住——這個資料夾是對外公開網址，圖推上線就收不回來。
+- **標註**：紅框（#E0313A、4px、圓角）一張圖圈一個重點（webhook 那張例外，①②編號對齊
+  卡片步驟）。不要在圖上寫字——文字由卡片負責，寫在圖上之後改文案會對不起來。
+- **裁切**：只裁「目標＋認得出位置的周邊」，整頁縮圖進卡片會變螞蟻字。寬度 1000–1400px。
 
 ## 更新紀錄
 
 LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換圖時在這裡補一行：
 
-| 日期 | 換了哪幾張 | 誰拍的 | 備註 |
-|---|---|---|---|
-| （待補） | 首批六張 | | 尚未拍攝——目前卡片只顯示文字 |
+| 日期 | 換了哪幾張 | 備註 |
+|---|---|---|
+| 2026-08-19 | 首批六張（老闆截圖、Claude 裁切標註） | 岔路那張（oam-enable-messaging-api）尚缺。⚠️這批圖同時抓到教學文案過期：回應設定新版介面沒有「聊天機器人」選項，正確操作是回應方式選「手動聊天」，劇本文案已同步改 |

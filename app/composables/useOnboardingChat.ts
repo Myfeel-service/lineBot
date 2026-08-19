@@ -259,11 +259,17 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '怎麼拿？',
       steps: [
-        { text: '打開 LINE Developers 並登入（下面有連結）' },
         {
-          text: '選你的官方帳號 → Messaging API 分頁',
+          text: '打開 LINE Developers 並登入（下面有連結），登入方式選「LINE帳號」',
+          image: ONBOARDING_SHOTS.consoleLogin,
+          alt: 'LINE Business ID 登入頁，圈出綠色的 LINE帳號 按鈕',
+        },
+        {
+          // 真實畫面查證過的陷阱：同一個帳號會有兩張同名卡（Messaging API／LINE Login），
+          // 靠名字選五五開會選錯——選錯的下場是拿到另一把不能用的鑰匙
+          text: '選你的官方帳號——同名卡片可能有兩張，點下面掛著「Messaging API」小字的那張',
           image: ONBOARDING_SHOTS.consoleChannel,
-          alt: 'LINE Developers 首頁，圈出官方帳號在清單裡的位置',
+          alt: '帳號清單頁，圈出卡片下方的 Messaging API 小字',
           // 「帳號沒出現在清單」只有一部分人會遇到，但遇到的人不知道要跑去另一個後台。
           // 收合起來：沒遇到的人不用讀，遇到的人點開就有另一個後台的畫面
           aside: {
@@ -273,8 +279,9 @@ export function useOnboardingChat() {
             alt: '官方帳號後台的設定頁，圈出 Messaging API 的啟用按鈕',
           },
         },
+        { text: '進去後，上排切到「Messaging API」分頁，捲到最下方' },
         {
-          text: '捲到最下方，Channel access token 按「Issue」',
+          text: 'Channel access token 按「Issue」發一把',
           image: ONBOARDING_SHOTS.issueToken,
           alt: 'Messaging API 分頁最下方，圈出發行 Channel access token 的按鈕',
         },
@@ -643,11 +650,13 @@ export function useOnboardingChat() {
       summary: '怎麼關？',
       steps: [
         { text: '打開 LINE 官方帳號後台（下面有連結；這是另一個後台，跟剛剛那個不一樣）' },
-        { text: '左邊選「設定」→「回應設定」' },
+        { text: '點右上角「設定」，左邊選單選「回應設定」' },
         {
-          text: '把「自動回應訊息」關掉（回應方式選聊天機器人／Webhook 那組）',
+          // 2026-08-19 對實際畫面校正過：新版介面沒有「聊天機器人」那組選項了，
+          // 正確操作是回應方式選「手動聊天」——照舊講法找「聊天機器人」的人會找不到
+          text: '「聊天的回應方式」裡，回應方式選「手動聊天」——不要選「手動聊天＋自動回應訊息」',
           image: ONBOARDING_SHOTS.oamAutoReply,
-          alt: '官方帳號後台的回應設定頁，圈出自動回應訊息的開關',
+          alt: '官方帳號後台的回應設定頁，圈出「手動聊天」選項',
         },
       ],
       href: 'https://manager.line.biz/',
