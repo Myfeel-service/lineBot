@@ -333,17 +333,7 @@ export function useOnboardingChat() {
         { label: '回上一步：重貼第一把', value: 'redo-token' },
       ])
       if (how === 'redo-token') {
-        // 回頭換第一把也要有教學可看（2026-08-19 老闆回饋）——貼錯的人多半正是不熟流程的人
-        const r = await askChoices([
-          { label: '直接貼新的第一把', value: 'paste', primary: true },
-          { label: '重看第一把的教學', value: 'walk' },
-          { label: '不換了，回第二把', value: 'back' },
-        ])
-        if (r === 'back')
-          continue
-        if (r === 'walk')
-          await walkTokenNodes()
-        if (await askAndSaveToken(line, { escapeLabel: '不換了，回來貼第二把' }))
+        if (await redoKeyFlow(line, 'token', '不換了，回來貼第二把'))
           await say('第一把換好了 ✓ 回到第二把。')
         continue
       }
@@ -633,6 +623,36 @@ export function useOnboardingChat() {
   }
 
   /**
+   * 重貼某把鑰匙的統一入口（2026-08-20 拍板：回頭重做也要有教學，忘記怎麼拿的人
+   * 正是最需要教的人；所有重貼入口一律同這套規則，跟主流程一致）：
+   * 先問「教我一步步拿／直接貼新的／不換了」，輸入格的後門直達教學。
+   * 回傳有沒有真的換（診斷路徑要靠它決定要不要說「再檢查一次」）。
+   */
+  async function redoKeyFlow(line: LineStatus, kind: 'token' | 'secret', cancelLabel = '不換了'): Promise<boolean> {
+    const isToken = kind === 'token'
+    const how = await askChoices([
+      { label: '教我一步步拿', value: 'walk', primary: true },
+      { label: '我會拿，直接貼新的', value: 'paste' },
+      { label: cancelLabel, value: 'cancel' },
+    ])
+    if (how === 'cancel')
+      return false
+    let taught = how === 'walk'
+    if (taught)
+      await (isToken ? walkTokenNodes() : walkSecretNodes())
+    while (true) {
+      const escapeLabel = taught ? '再看一次教學' : '等等，我想看教學'
+      const ok = isToken
+        ? await askAndSaveToken(line, { escapeLabel })
+        : await askAndSaveSecret(line, { escapeLabel })
+      if (ok)
+        return true
+      taught = true
+      await (isToken ? walkTokenNodes() : walkSecretNodes())
+    }
+  }
+
+  /**
    * 「改前面的設定」：聊天中主動回頭重做（2026-08-20 拍板）。
    * 不做精靈式的每步上一步——聊天不是表單，回上一步的實際需求是「重做某個動作」。
    * 檢查失敗的自動診斷仍是主要回頭路；這裡接的是「不等檢查失敗、自己想改」的情境
@@ -645,16 +665,8 @@ export function useOnboardingChat() {
         { label: '重貼第一把鑰匙', value: 'token' },
         { label: '重貼第二把鑰匙', value: 'secret' },
       ])
-      if (c === 'token') {
-        await say('好，把新的 <b>Channel Access Token</b> 整串貼上來。')
-        if (await askAndSaveToken(line, { escapeLabel: '不換了' }))
-          await say('第一把換好了 ✓ 還要改別的嗎？')
-        continue
-      }
-      if (c === 'secret') {
-        await say('好，把新的 <b>Channel Secret</b> 整串貼上來（Basic settings 分頁那把）。')
-        if (await askAndSaveSecret(line, { escapeLabel: '不換了' }))
-          await say('第二把換好了 ✓ 還要改別的嗎？')
+      if (c === 'token' || c === 'secret') {
+        await redoKeyFlow(line, c)
         continue
       }
       return
@@ -663,8 +675,7 @@ export function useOnboardingChat() {
 
   /** Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一把鑰匙 */
   async function reenterToken(line: LineStatus) {
-    await say('好，把新的 <b>Channel Access Token</b> 整串貼上來（LINE Developers → Messaging API 最下方按重發，可以拿一把新的）。')
-    if (await askAndSaveToken(line, { escapeLabel: '先不換了' }))
+    if (await redoKeyFlow(line, 'token', '先不換了'))
       await say('再檢查一次看看。')
     else
       await say('好，先不換。想換的時候再按一次檢查就行。')
@@ -675,21 +686,7 @@ export function useOnboardingChat() {
    * 這條路以前不存在——同一個 401 被當成 Token 的問題，人被指去重貼一把根本沒壞的鑰匙。
    */
   async function reenterSecret(line: LineStatus) {
-    await say('好，回 LINE Developers 的 <b>Basic settings</b> 分頁，把 <b>Channel secret</b> 整串重新複製一次貼上來。')
-    card({
-      kind: 'help',
-      summary: '在哪裡？',
-      steps: [
-        {
-          text: '照動畫做：切到 Basic settings 分頁，捲下來找到 Channel secret，整串複製過來',
-          image: ONBOARDING_SHOTS.channelSecretAnim,
-          alt: '循環動畫：切到 Basic settings 分頁、捲到 Channel secret 那一列',
-        },
-      ],
-      href: 'https://developers.line.biz/console/',
-      hrefLabel: '打開 LINE Developers ↗',
-    })
-    if (await askAndSaveSecret(line, { escapeLabel: '先不換了' }))
+    if (await redoKeyFlow(line, 'secret', '先不換了'))
       await say('換好了 ✓ 再檢查一次看看。')
     else
       await say('好，先不換。想換的時候再按一次檢查就行。')
