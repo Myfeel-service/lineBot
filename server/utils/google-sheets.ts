@@ -231,6 +231,13 @@ async function selectSheetsToRead(
   if (gid != null) {
     const hit = sheets.find(s => String(s.properties?.sheetId) === gid)
     if (hit) return [toSheetTarget(hit)]
+    // ⛔指定的分頁不見了（被刪除重建 gid 就會變）→ 直接失敗，不退回名稱猜測。
+    // 退回猜測的下場：改讀到「使用說明」頁 → 說明文字變知識卡、原 FAQ 卡整批被判
+    // 「表上已不存在」刪光——靜默讀錯頁比讀不到危險得多。
+    throw createError({
+      statusCode: 422,
+      statusMessage: '原本指定的分頁已不存在（分頁被刪除重建時，連結裡的 gid 會變）。請確認試算表分頁，重新貼一次正確的分頁連結。',
+    })
   }
   const pick = new Set(selectDataSheetNames(sheets.map(s => s.properties?.title ?? '')))
   const selected = sheets.filter(s => pick.has(s.properties?.title ?? ''))

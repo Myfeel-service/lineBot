@@ -179,3 +179,70 @@ export async function getCurrentMonthTokens(
   return Number(data?.inputTokens ?? 0) + Number(data?.outputTokens ?? 0)
     + Number(data?.embeddingTokens ?? 0) + Number(data?.buildEmbeddingTokens ?? 0)
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  維運（匯入/切卡/OCR/自動套用/embedding）的月度花費上限——C-45 額度收口
+//
+//  背景：全系統原本唯一的額度閘門在「回答客人」路徑上；匯入 30 份掃描 PDF、
+//  整站 50 頁、常變網頁開自動套用……全部不受任何限制，額度燈一路綠。
+//  這裡給維運桶一個「防失控」的硬上限：不是計費（計費照舊賣則數），
+//  是煞車——正常使用碰不到，失控（迴圈重試、惡意灌檔）才會撞上。
+//
+//  執行點收口在 gemini.ts 單一出口（runWithLlmBudget 圈起來的呼叫都會查），
+//  未來新功能只要在最外層圈一次，就自動被守住——「忘了加檢查」從此絕種。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 預設維運月上限（import LLM + 建索引 embedding 合計 token）。
+ * 量級：正常一份 100k 字文件整套切卡+embedding ≈ 20 萬 token；20M ≈ 100 份/月，
+ * 一般商家碰不到、失控迴圈會撞上。要調整就改這裡（或日後開 per-workspace 欄位）。
+ */
+export const DEFAULT_MAINTENANCE_TOKEN_CAP = 20_000_000
+
+/** 快取 60 秒：批次 embedding 每卡查一次額度會把讀取費燒在守門上，得不償失 */
+const maintBudgetCache = new Map<string, { expiresAt: number; used: number }>()
+
+/** 測試用：清掉快取 */
+export function invalidateMaintenanceBudgetCache(workspaceId?: string) {
+  if (workspaceId) maintBudgetCache.delete(workspaceId)
+  else maintBudgetCache.clear()
+}
+
+/** 本月維運桶已用量（import in/out + 建索引 embedding） */
+export async function getMaintenanceBudgetStatus(
+  workspaceId: string,
+  db: Firestore = getDb(),
+): Promise<{ used: number; cap: number; blocked: boolean }> {
+  const cached = maintBudgetCache.get(workspaceId)
+  let used: number
+  if (cached && cached.expiresAt > Date.now()) {
+    used = cached.used
+  }
+  else {
+    const yyyyMm = currentYyyyMm()
+    const snap = await db.collection(AI_USAGE_COLLECTION).doc(usageDocId(workspaceId, yyyyMm)).get()
+    const data = (snap.exists ? snap.data() : {}) as Partial<AiUsageDoc>
+    used = Number(data?.importInputTokens ?? 0)
+      + Number(data?.importOutputTokens ?? 0)
+      + Number(data?.buildEmbeddingTokens ?? 0)
+    maintBudgetCache.set(workspaceId, { expiresAt: Date.now() + 60_000, used })
+  }
+  const cap = DEFAULT_MAINTENANCE_TOKEN_CAP
+  return { used, cap, blocked: used >= cap }
+}
+
+/**
+ * 超過維運上限就丟 429（給入口端點與 gemini 出口共用）。
+ * 訊息寫給店家看：發生什麼、影響什麼、什麼時候恢復。
+ */
+export async function assertMaintenanceBudget(
+  workspaceId: string,
+  db: Firestore = getDb(),
+): Promise<void> {
+  const s = await getMaintenanceBudgetStatus(workspaceId, db)
+  if (!s.blocked) return
+  throw createError({
+    statusCode: 429,
+    statusMessage: `本月 AI 整理用量已達安全上限（${(s.used / 1_000_000).toFixed(1)}M/${(s.cap / 1_000_000).toFixed(0)}M token）。匯入與自動同步暫停，下月自動恢復；若是正常使用需求請聯繫我們調整上限。`,
+  })
+}

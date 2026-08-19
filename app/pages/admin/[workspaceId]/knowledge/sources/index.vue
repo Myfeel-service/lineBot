@@ -23,6 +23,9 @@
               <el-dropdown-item v-if="canEditSources" divided @click="openAliasDialog">
                 產品名稱整理{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
               </el-dropdown-item>
+              <el-dropdown-item v-if="canEditKb" @click="openRecycleBin">
+                回收桶
+              </el-dropdown-item>
               <!-- 全庫重新學習是工程維護動作（升級檢索方式後才需要），不該長在主工具列 -->
               <el-dropdown-item v-if="canReindexAll" :disabled="reindexingAll" @click="reindexAll">
                 {{ reindexingAll ? '重新學習中⋯' : '重新學習全部知識（維護用）' }}
@@ -394,6 +397,24 @@
           </div>
         </el-alert>
 
+        <!-- gsheet 手編鎖分歧（C-44）:改了表格卻永遠不生效的唯一原因,必須常駐講出來,
+             不能只有卡片上一顆沒解釋的小鎖 icon -->
+        <el-alert
+          v-if="selectedSource.type === 'gsheet' && selectedSource.manualKeptCount > 0"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="src-outdated-alert"
+        >
+          <template #title>
+            有 {{ selectedSource.manualKeptCount }} 張卡不會跟著表格更新
+          </template>
+          <div>
+            這幾張卡在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
+            想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。
+          </div>
+        </el-alert>
+
         <!-- 基本資訊 -->
         <div class="message-card src-section-card">
           <div class="message-card-header">
@@ -628,7 +649,13 @@
                   <div class="src-chunk-body">
                     <div class="src-chunk-main">
                       <span class="src-chunk-title">{{ c.title }}</span>
-                      <span v-if="c.manuallyEditedAtMs > 0" class="src-chunk-lock" :title="`手動編輯過：${relativeTime(c.manuallyEditedAtMs)}`"><el-icon><Lock /></el-icon></span>
+                      <button
+                        v-if="c.manuallyEditedAtMs > 0"
+                        type="button"
+                        class="src-chunk-lock"
+                        :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。點一下可解除。`"
+                        @click.stop="unlockChunk(c)"
+                      ><el-icon><Lock /></el-icon></button>
                       <span v-if="isShortChunk(c)" class="src-chunk-warn">內容過短</span>
                     </div>
                     <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
@@ -1149,6 +1176,40 @@
     </template>
   </el-dialog>
 
+  <!-- ── Recycle Bin Modal ──────────────────────────── -->
+  <el-dialog
+    v-model="recycleOpen"
+    title="回收桶"
+    width="min(640px, 92vw)"
+    :close-on-click-modal="false"
+  >
+    <p class="src-bin-hint">
+      刪除的知識會先放在這裡 30 天，期間可以還原；到期後才會真正清除。
+      還原後會回到刪除前的狀態（原本停用的還原後仍是停用）。
+    </p>
+    <p v-if="recycleLoading" class="src-bin-empty">載入中⋯</p>
+    <p v-else-if="recycleLoadFailed" class="src-bin-empty">
+      回收桶讀取失敗，請重新開啟一次。
+    </p>
+    <p v-else-if="!recycleRows.length" class="src-bin-empty">回收桶是空的。</p>
+    <div v-else class="src-bin-list">
+      <div v-for="r in recycleRows" :key="r.id" class="src-bin-row">
+        <div class="src-bin-row__main">
+          <span class="src-bin-row__title">{{ r.title }}</span>
+          <span class="src-bin-row__meta">
+            {{ r.sourceName ? `${r.sourceName}｜` : '' }}{{ formatRecycleTime(r.deletedAtMs) }}刪除
+            <template v-if="r.purgeAfterMs">・{{ recycleDaysLeft(r.purgeAfterMs) }} 天後清除</template>
+          </span>
+          <span class="src-bin-row__snippet">{{ r.snippet }}</span>
+        </div>
+        <el-button size="small" plain :loading="restoringId === r.id" @click="restoreChunk(r)">
+          還原
+        </el-button>
+      </div>
+      <p v-if="recycleTruncated" class="src-bin-empty">只顯示最近 100 筆。</p>
+    </div>
+  </el-dialog>
+
   <!-- ── Folder Edit Modal ──────────────────────────── -->
   <el-dialog
     v-model="folderEditOpen"
@@ -1233,6 +1294,8 @@ interface SourceSummary {
   numbersVolatile: boolean
   /** type='url'：連續多輪抓到的內容都不同、自動偵測判斷不出來（0 = 正常） */
   detectStalledAtMs: number
+  /** type='gsheet'：手動編輯鎖住、與表格內容分歧的張數（>0 要常駐提示） */
+  manualKeptCount: number
 }
 
 interface ChunkRow {
@@ -1278,6 +1341,12 @@ interface DiffData {
   sourceUrl: string
   /** preview 當時內容的指紋;apply 時帶回,讓後端回寫「對應這份 diff」的 hash */
   contentHash?: string
+  /**
+   * 這份 diff 的套用冪等鍵（C-43）:150 張卡的套用會超過閘道 30 秒,後端做完了
+   * 前端卻收到逾時;再按一次時帶同一個 applyId,新增的卡用決定性 id 覆寫同一批,
+   * 不會多出一整批重複卡。同一份 diff 存活期間永遠用同一個值。
+   */
+  applyId: string
   diff: {
     entries: DiffEntry[]
     summary: { added: number; modified: number; removed: number; unchanged: number }
@@ -1622,6 +1691,93 @@ function formatNumberChanges(c?: { removed: string[]; added: string[] }): string
   if (to) return `（多了 ${to}）`
   if (from) return `（少了 ${from}）`
   return ''
+}
+
+// ── Recycle bin（回收桶）─────────────────────────────
+// 刪除一律先軟刪除（後端 C-42），這裡是唯一的還原入口。三態（載入中/失敗/就緒）
+// 分開呈現——「讀取失敗」與「回收桶是空的」是兩回事，混在一起就是假綠燈。
+interface RecycleRow {
+  id: string
+  title: string
+  snippet: string
+  sourceId: string | null
+  sourceName: string | null
+  deletedAtMs: number
+  purgeAfterMs: number
+}
+const recycleOpen = ref(false)
+const recycleLoading = ref(false)
+const recycleLoadFailed = ref(false)
+const recycleRows = ref<RecycleRow[]>([])
+const recycleTruncated = ref(false)
+const restoringId = ref('')
+
+async function openRecycleBin() {
+  recycleOpen.value = true
+  recycleLoading.value = true
+  recycleLoadFailed.value = false
+  try {
+    const res = await apiFetch<{ items: RecycleRow[]; truncated: boolean }>('/api/ai/knowledge/recycle-bin')
+    recycleRows.value = res.items
+    recycleTruncated.value = res.truncated
+  }
+  catch {
+    recycleLoadFailed.value = true
+  }
+  finally {
+    recycleLoading.value = false
+  }
+}
+
+function formatRecycleTime(ms: number): string {
+  return ms ? relativeTime(ms) : ''
+}
+
+function recycleDaysLeft(ms: number): number {
+  return Math.max(0, Math.ceil((ms - Date.now()) / 86_400_000))
+}
+
+async function restoreChunk(r: RecycleRow) {
+  restoringId.value = r.id
+  try {
+    await apiFetch(`/api/ai/knowledge/${r.id}/restore`, { method: 'POST' })
+    recycleRows.value = recycleRows.value.filter(x => x.id !== r.id)
+    showToast(`已還原「${r.title}」`, 'success')
+    // 還原會動到來源的卡數/列表（連坐的 manual 來源也會回來）→ 重載
+    await loadSources(true)
+    if (r.sourceId && selectedId.value === r.sourceId) await loadSourceDetail(r.sourceId)
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '還原失敗', 'error')
+  }
+  finally {
+    restoringId.value = ''
+  }
+}
+
+/**
+ * 解除手動編輯鎖（C-44）：鎖住的卡同步時保留人工版本——這是「改了表格/網頁卻永遠
+ * 不生效」唯一的原因。解鎖後下一輪同步會用來源版本覆蓋，先講清楚再做。
+ */
+async function unlockChunk(c: { id: string; title: string }) {
+  try {
+    await ElMessageBox.confirm(
+      `「${c.title}」目前以後台手動編輯的版本為準。解除鎖定後，下一次同步會改用表格／網頁的版本覆蓋這張卡。`,
+      '解除手動編輯鎖定',
+      { confirmButtonText: '解除鎖定', cancelButtonText: '維持人工版本', type: 'warning' },
+    )
+  }
+  catch {
+    return
+  }
+  try {
+    await apiFetch(`/api/ai/knowledge/${c.id}/settings`, { method: 'POST', body: { clearManualLock: true } })
+    showToast('已解除鎖定；下一次同步會改用來源版本', 'success')
+    if (selectedId.value) await loadSourceDetail(selectedId.value)
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || '解除失敗', 'error')
+  }
 }
 
 // ── Chunk edit / create modal ───────────────────────
@@ -2696,6 +2852,7 @@ async function startResync(force = false) {
       sourceName: res.sourceName,
       sourceUrl: res.sourceUrl,
       contentHash: res.resync.contentHash,
+      applyId: crypto.randomUUID(),
       diff: res.resync.diff,
       shrink,
       warnings: res.resync.warnings ?? [],
@@ -2726,20 +2883,53 @@ async function startResync(force = false) {
   }
 }
 
+interface GsheetSyncRes {
+  outcome: 'unchanged' | 'synced' | 'blocked_mass_deletion'
+  added: number
+  updated: number
+  deleted: number
+  kept: number
+  pendingDeletes?: number
+  manualKept?: number
+}
+
 async function syncGsheetNow() {
   if (!selectedId.value) return
   gsheetSyncing.value = true
   try {
-    const res = await apiFetch<{ outcome: 'unchanged' | 'synced'; added: number; updated: number; deleted: number; kept: number }>(
+    let res = await apiFetch<GsheetSyncRes>(
       `/api/ai/sources/${selectedId.value}/gsheet-sync`,
       { method: 'POST', body: {} },
     )
+    // 大量刪除被後端擋下（什麼都還沒動）：把數字攤給使用者確認，同意才帶旗標放行。
+    // 誤刪整批列 / 分頁讀取異常時，這一步就是最後一道門。
+    if (res.outcome === 'blocked_mass_deletion') {
+      try {
+        await ElMessageBox.confirm(
+          `表格比上次同步少了 ${res.pendingDeletes ?? 0} 列，對應的知識卡會被移到回收桶（30 天內可還原）。\n\n如果不是你刪的，請先到試算表確認分頁與內容是否正常，不要繼續。`,
+          '一次要刪很多卡，先確認一下',
+          { confirmButtonText: '我確認要刪', cancelButtonText: '先不要', type: 'warning' },
+        )
+      }
+      catch {
+        showToast('已取消；這次同步沒有做任何變更', 'success')
+        return
+      }
+      res = await apiFetch<GsheetSyncRes>(
+        `/api/ai/sources/${selectedId.value}/gsheet-sync`,
+        { method: 'POST', body: { allowMassDeletion: true } },
+      )
+    }
     await loadSourceDetail(selectedId.value)
     // 同步成功也可能剛清掉失敗標記 → 一定要 force 重跑體檢。
     // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
     await loadSources(true)
     if (res.outcome === 'unchanged') {
       showToast('已是最新，無變動', 'success')
+    }
+    else if (res.manualKept) {
+      // 被手動編輯鎖住的分歧要講出來——不講的話，商家改了表格卻永遠不生效、也不知道為什麼
+      showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；另有 ${res.manualKept} 張手動編輯過的卡未跟表格更新（點卡片上的鎖頭可解除）`, 'warning')
     }
     else {
       showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`, 'success')
@@ -2773,9 +2963,29 @@ async function applyDiff() {
       return
     }
   }
+  // C-44:「保留了與網頁不同的內容」要先講清楚——這些差異這次會被捨棄套用,
+  // 但之後重新同步仍會再列出(後端因此不推進「已同步到哪一版」的指紋)。
+  const divergentKeeps = diffData.value.diff.entries.filter((e) => {
+    const a = decisions.value[e.id]
+    return (e.kind === 'modified' && (a === 'keep_old' || a === 'skip'))
+      || (e.kind === 'removed' && a === 'keep_old')
+      || (e.kind === 'new' && a === 'skip')
+  }).length
+  if (divergentKeeps > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `你保留了 ${divergentKeeps} 項與網頁不同的內容（卡片會維持舊版）。網頁的新內容這次不會套用；之後按重新同步時，這些差異仍會再列出來。`,
+        '有保留與網頁不同的內容',
+        { confirmButtonText: '照我的選擇套用', cancelButtonText: '回去再看看', type: 'warning' },
+      )
+    }
+    catch {
+      return
+    }
+  }
   applying.value = true
   try {
-    const res = await apiFetch<{ added: number; updated: number; deleted: number; kept: number; errors: any[] }>(
+    const res = await apiFetch<{ added: number; updated: number; deleted: number; kept: number; errors: any[]; divergentKeeps?: number; fingerprintAdvanced?: boolean }>(
       `/api/ai/sources/${targetId}/resync-apply`,
       {
         method: 'POST',
@@ -2783,6 +2993,7 @@ async function applyDiff() {
           entries: diffData.value.diff.entries,
           decisions: decisions.value,
           contentHash: diffData.value.contentHash ?? '',
+          applyId: diffData.value.applyId,
         },
       },
     )
@@ -2794,14 +3005,14 @@ async function applyDiff() {
       }
       const names = res.errors.slice(0, 3).map((er: any) => `「${titleOf(String(er.entryId))}」`).join('、')
       showToast(
-        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 張失敗:${names}${res.errors.length > 3 ? ' 等' : ''},請對這幾張重新同步或手動編輯`,
+        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 張失敗:${names}${res.errors.length > 3 ? ' 等' : ''}。可以直接再按一次「套用」重試,不會重複建卡`,
         'warning',
       )
       console.warn('[resync-apply] errors:', res.errors)
+      // 部分失敗:diff 留在畫面上讓人直接重按(同一個 applyId,冪等)
+      return
     }
-    else {
-      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')
-    }
+    showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')
     diffOpen.value = false
     diffData.value = null
     await loadSources(true)
@@ -2809,7 +3020,9 @@ async function applyDiff() {
     if (selectedId.value === targetId) await loadSourceDetail(targetId)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '套用失敗', 'error')
+    // 逾時/斷線:後端很可能已經做完(或做到一半)。diff 與 applyId 都還在,
+    // 直接再按一次是安全的(新增用決定性 id 覆寫,不會重複建卡)。
+    showToast(`${err?.statusMessage || '套用失敗'}；可以直接再按一次「套用」，不會重複建卡`, 'error')
   }
   finally {
     applying.value = false

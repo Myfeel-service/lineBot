@@ -20,6 +20,7 @@ import {
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
+import { runWithLlmBudget } from './gemini'
 import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
@@ -89,7 +90,20 @@ async function checkOneSource(
     // autoApply === false 的來源視為「商家自管」，這支不動它。
     if (data.type === 'gsheet') {
       if (data.gsheetAutoApply === false) return { sourceId, outcome: 'unchanged' }
-      const r = await syncGoogleSheetSource(db, data.workspaceId, sourceId, data)
+      // 額度境域（C-45）：補問法 LLM 超額時整段丟 429，走下面 catch 記失敗，不再燒錢
+      const r = await runWithLlmBudget(data.workspaceId, () => syncGoogleSheetSource(db, data.workspaceId, sourceId, data))
+      // ⛔大量刪除被擋下：不能走「成功」路徑清失敗標記——要讓店家看得到。
+      // 寫 failureReason + outdatedAt（體檢紅字 + 有變動提示），等人工到來源頁按
+      // 「立即同步」確認放行；同時戳 lastFetchedAt 讓排程下一輪不再空轉重讀同一張表。
+      if (r.outcome === 'blocked_mass_deletion') {
+        await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+          failureReason: `表格一次少了 ${r.pendingDeletes ?? 0} 列（現有 ${r.kept} 張卡）。為避免誤刪，自動同步已暫停套用；請到知識庫來源頁確認後手動同步。`,
+          outdatedAt: FieldValue.serverTimestamp(),
+          lastFetchedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }).catch(e => console.warn(`[detect-source-updates] ${sourceId} mark blocked failed:`, e))
+        return { sourceId, outcome: 'changed_logged', message: `gsheet 大量刪除已擋下（${r.pendingDeletes} 列）` }
+      }
       // 同步成功就清掉失敗標記（連 unchanged 也要清）。少了這段，商家把 Sheet 分享權限
       // 修好、同步其實已經成功，體檢仍永遠顯示「來源同步失敗」——做對了也看不到結果。
       // 注意不能沿用下面 url 分支的 clearFailure：那個變數宣告在本分支的 return 之後。
@@ -295,7 +309,8 @@ async function checkOneSource(
       const autoEligible = !data.generateOverview && data.urlAutoApply !== false
       if (autoEligible && run.autoApplyRemaining > 0) {
         run.autoApplyRemaining--
-        const auto = await tryAutoApplyMinorChange(db, sourceId, data, extracted.text)
+        // 額度境域（C-45）：自動套用要先花一次完整重切卡的錢，超額 workspace 直接跳過
+        const auto = await runWithLlmBudget(data.workspaceId, () => tryAutoApplyMinorChange(db, sourceId, data, extracted.text))
         if (auto.noop) {
           // 重切後其實沒有內容差異(排版級變動):不標記、不通知,但要記下新 hash。
           // appliedContentHash 也推到新值:現有卡片與這一版內容等價,已經沒有東西要決定,
@@ -963,14 +978,17 @@ export async function expireKnowledgeCards(db: Firestore) {
   for (const d of snap.docs) {
     const c = d.data() as any
     const status = String(c.status ?? 'pending')
-    // pending 先放著（幾秒後就會 indexed，下一輪再處理）；disabled/failed 只搬欄位去重
+    // pending 先放著（幾秒後就會 indexed，下一輪再處理）；disabled 只搬欄位去重
     if (status === 'pending') continue
     const patch: Record<string, unknown> = {
       activeUntil: FieldValue.delete(),
       expiredAt: c.activeUntil,
       updatedAt: FieldValue.serverTimestamp(),
     }
-    if (status === 'indexed') {
+    // failed 也要一併 disabled：到期當天剛好 embedding 失敗的卡，若只搬欄位不改狀態，
+    // 十分鐘後 retry 排程把它重試成功就寫回 indexed——而 activeUntil 已被搬走，
+    // 這裡不會再撈到它第二次 → 過期卡永久復活。disabled 讓它離開 retry 佇列（查詢只撈 pending/failed）。
+    if (status === 'indexed' || status === 'failed') {
       patch.status = 'disabled'
       expired++
     }
@@ -981,5 +999,40 @@ export async function expireKnowledgeCards(db: Firestore) {
 
   const tally = { expired, scanned: snap.size }
   if (expired) console.log('[ai:expire-knowledge-cards]', tally)
+  return tally
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  回收桶到期清運
+//  軟刪除（單卡刪除 / resync delete_old / gsheet 同步刪列）只標 deletedAt + purgeAfter，
+//  這支把過了保留期（RECYCLE_RETENTION_DAYS）的卡與連坐的 manual 來源真刪。
+//  單一欄位 range 查詢走自動索引。
+// ═══════════════════════════════════════════════════════════════════
+
+const PURGE_SCAN_LIMIT = 200
+
+export async function purgeRecycledKnowledge(db: Firestore) {
+  const now = Timestamp.now()
+  let purged = 0
+  let failed = 0
+  for (const col of [KNOWLEDGE_CHUNKS_COLLECTION, KNOWLEDGE_SOURCES_COLLECTION]) {
+    const snap = await db.collection(col)
+      .where('purgeAfter', '<=', now)
+      .limit(PURGE_SCAN_LIMIT)
+      .get()
+    for (const d of snap.docs) {
+      // 逐筆刪並照實計數——「deleted 恆等於 scanned」的假回報是健檢明列的反模式
+      try {
+        await d.ref.delete()
+        purged++
+      }
+      catch (e) {
+        failed++
+        console.warn(`[ai:purge-recycled] ${col}/${d.id} delete failed:`, e)
+      }
+    }
+  }
+  const tally = { purged, failed }
+  if (purged || failed) console.log('[ai:purge-recycled]', tally)
   return tally
 }

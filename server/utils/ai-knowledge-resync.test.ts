@@ -139,3 +139,85 @@ describe('computeDiff 第二輪配對', () => {
     expect(added.defaultAction).toBe('add_new')
   })
 })
+
+// ═══════════════════════════════════════════════════════════════════
+//  C-40 穩定鍵配對（第 0 輪：卡片內容裡的「連結：」網址）
+//  病灶：募資首頁品項換檔期改名（「義比壓壓 義式自動…」→「義式半自動…」），
+//  標題對不上、內容差異又過不了 0.6 → 判成「新增＋移除」→ 縮水保護把移除預設
+//  改保留 → 同一台商品兩張卡越滾越多。連結是比標題穩得多的身分。
+// ═══════════════════════════════════════════════════════════════════
+
+describe('extractCardLink', () => {
+  it('抽出唯一的連結行並正規化（去 query/hash、去尾斜線、host 小寫）', async () => {
+    const { extractCardLink } = await import('./ai-knowledge-resync')
+    expect(extractCardLink('重點：X\n\n說明文字。\n連結：https://WWW.Myfeel-tw.com/projects/BZ-CCM806/?utm=x#top'))
+      .toBe('www.myfeel-tw.com/projects/BZ-CCM806')
+  })
+  it('沒有連結行、或不只一條 → null（多連結的卡身分不明，不能拿來配對）', async () => {
+    const { extractCardLink } = await import('./ai-knowledge-resync')
+    expect(extractCardLink('沒有連結的內容')).toBe(null)
+    expect(extractCardLink('連結：https://a.com/x\n連結：https://a.com/y')).toBe(null)
+    expect(extractCardLink('連結：不是網址')).toBe(null)
+  })
+})
+
+describe('computeDiff 第 0 輪：連結穩定鍵', () => {
+  it('品項改名＋文案重寫但連結相同 → 判「修改」，不是「新增＋移除」（C-40 的病）', () => {
+    const olds = [oldChunk('c1',
+      'Balzano 義比壓壓 義式自動雙膠囊3合1咖啡機',
+      '重點：品牌：Balzano 百佳諾｜暱稱：義比壓壓\n\n這台咖啡機支援咖啡粉與兩種膠囊，早鳥價三千九，加贈奶泡器與濾杯組合，總集資已突破三百萬。\n連結：https://www.myfeel-tw.com/projects/BZ-CCM806',
+    )]
+    const news = [newChunk(
+      'Balzano 義式半自動雙膠囊3合1咖啡機',
+      '重點：品牌：Balzano\n\n義式半自動咖啡機，一台搞定咖啡粉與大小膠囊。\n連結：https://www.myfeel-tw.com/projects/BZ-CCM806',
+    )]
+    // 前提確認：標題不同、內容相似度過不了第二輪門檻——沒有第 0 輪就會變 add+remove
+    expect(contentSimilarity(olds[0]!.content, news[0]!.content)).toBeLessThan(0.6)
+    const r = computeDiff(olds, news)
+    expect(r.summary).toEqual({ added: 0, modified: 1, removed: 0, unchanged: 0 })
+  })
+
+  it('同一產品頁多張卡共用連結 → 連結不唯一不配對，照走標題輪（不亂點鴛鴦）', () => {
+    const link = '\n連結：https://www.myfeel-tw.com/projects/HD5225'
+    const olds = [
+      oldChunk('c1', '保固說明', `保固兩年。${link}`),
+      oldChunk('c2', '運費說明', `滿千免運。${link}`),
+    ]
+    const news = [
+      newChunk('保固說明', `保固兩年。${link}`),
+      newChunk('運費說明', `滿千免運。${link}`),
+    ]
+    const r = computeDiff(olds, news)
+    // 標題輪照樣全配上：兩張都未變
+    expect(r.summary).toEqual({ added: 0, modified: 0, removed: 0, unchanged: 2 })
+  })
+})
+
+describe('countDivergentKeeps（C-44：保留了與網頁不同的內容才算）', () => {
+  it('modified 保留/略過、removed 保留、new 略過 → 算；unchanged 保留、正常套用 → 不算', async () => {
+    const { countDivergentKeeps } = await import('./ai-knowledge-resync')
+    const entries = [
+      { id: 'mod:1', kind: 'modified' as const },
+      { id: 'same:2', kind: 'unchanged' as const },
+      { id: 'rem:3', kind: 'removed' as const },
+      { id: 'new:4', kind: 'new' as const },
+      { id: 'mod:5', kind: 'modified' as const },
+    ]
+    expect(countDivergentKeeps(entries, {
+      'mod:1': 'keep_old', // 算
+      'same:2': 'keep_old', // 不算（本來就一樣）
+      'rem:3': 'keep_old', // 算
+      'new:4': 'skip', // 算
+      'mod:5': 'use_new', // 不算（照網頁套了）
+    })).toBe(3)
+    expect(countDivergentKeeps(entries, {
+      'mod:1': 'use_new',
+      'same:2': 'keep_old',
+      'rem:3': 'delete_old',
+      'new:4': 'add_new',
+      'mod:5': 'use_new',
+    })).toBe(0)
+    // 沒帶決定 → 套用端視同保留 → 照算
+    expect(countDivergentKeeps([{ id: 'mod:9', kind: 'modified' as const }], {})).toBe(1)
+  })
+})

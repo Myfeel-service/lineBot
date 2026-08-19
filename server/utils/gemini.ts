@@ -4,9 +4,37 @@
  * 走 REST 不走 SDK：避免多一個 npm 依賴、也避免 SDK 跨 Node 版本相容性問題。
  * Key 由 nuxt.config.ts runtimeConfig.geminiApiKey 注入。
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { EMBEDDING_DIMENSION } from '~~/shared/types/ai-knowledge'
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
+
+// ═══════════════════════════════════════════════════════════════════
+//  維運額度收口（C-45）
+//  所有 LLM / embedding 呼叫都走這個檔案——額度守門收在這個出口，
+//  未來任何新功能只要外層用 runWithLlmBudget 圈起來就自動被守住，
+//  不必每個入口各自記得加檢查（「忘了加」正是健檢抓到的病）。
+//
+//  用 AsyncLocalStorage 傳 workspace 境域而非改每個函式簽名：
+//  切卡/補問法/OCR 這些工具函式不用知道額度的存在。
+//  沒被圈住的呼叫（回答客人路徑有自己的則數額度）不查、行為不變。
+// ═══════════════════════════════════════════════════════════════════
+
+const llmBudgetALS = new AsyncLocalStorage<{ workspaceId: string }>()
+
+/** 把一段維運工作圈進某 workspace 的額度境域：內部所有 gemini 呼叫都會先過額度檢查 */
+export function runWithLlmBudget<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+  if (!workspaceId) return fn()
+  return llmBudgetALS.run({ workspaceId }, fn)
+}
+
+/** 出口守門：境域內才查；超額丟 429（lazy import 避免模組相依環） */
+async function assertLlmBudget(): Promise<void> {
+  const ctx = llmBudgetALS.getStore()
+  if (!ctx) return
+  const { assertMaintenanceBudget } = await import('./ai-usage')
+  await assertMaintenanceBudget(ctx.workspaceId)
+}
 
 /**
  * 過載 / 暫時性錯誤：自動重試。
@@ -104,6 +132,7 @@ function backoffDelay(attempt: number): number {
  * 模型 gemini-embedding-001，outputDimensionality=768（與 Firestore 向量索引相容）。
  */
 export async function embedDocument(text: string): Promise<number[]> {
+  await assertLlmBudget()
   return embed(text, 'RETRIEVAL_DOCUMENT')
 }
 
@@ -228,6 +257,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
  * 給掃描檔 OCR 這類多模態輸入用;fallback 行為與 generateText 一致。
  */
 export async function generateParts(parts: GeminiPart[], opts: GenerateOptions = {}): Promise<GenerateResult> {
+  await assertLlmBudget()
   const primary = opts.model ?? 'gemini-2.5-flash'
   try {
     return await doGenerate(parts, opts, primary)

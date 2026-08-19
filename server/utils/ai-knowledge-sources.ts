@@ -97,6 +97,11 @@ export interface SourceSummary {
    * 這是第三種狀態，不能跟「一切正常」混為一談。
    */
   detectStalledAtMs: number
+  /**
+   * type='gsheet'：上次同步時「因手動編輯被鎖住、與表格內容分歧」的張數（C-44）。
+   * >0 代表商家改了表格但那幾張卡不會跟——要在來源頁常駐講出來，不能只有小鎖 icon。
+   */
+  manualKeptCount: number
 }
 
 function tsToMs(raw: unknown): number {
@@ -129,6 +134,7 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     // 從輪數推導，不另存布林值：兩個地方各存一份遲早會對不起來
     numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
     detectStalledAtMs: tsToMs(raw.detectStalledAt),
+    manualKeptCount: Number((raw as Record<string, unknown>).manualKeptCount ?? 0),
   }
 }
 
@@ -145,7 +151,10 @@ export async function listSources(
     .orderBy('updatedAt', 'desc')
     .limit(limit)
     .get()
-  return snap.docs.map(d => docToSourceSummary(d.id, d.data() as any))
+  // 進回收桶的 manual 來源（單卡刪除連坐）不出現在來源列表；還原卡片時會一併還原
+  return snap.docs
+    .filter(d => (d.data() as any)?.deletedAt == null)
+    .map(d => docToSourceSummary(d.id, d.data() as any))
 }
 
 /**
@@ -171,12 +180,15 @@ export async function countSourceChunks(
   workspaceId: string,
   sourceId: string,
 ): Promise<number> {
+  // 不能用 count() 聚合：回收桶（軟刪除）的卡要排除，而「deletedAt 不存在」在
+  // Firestore 查詢層表達不了（== null 只配對「明確為 null」的欄位，舊卡沒這欄位會整批漏）。
+  // 改抓最小欄位在 JS 過濾；單一來源最多 150 張，讀取成本可接受。
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
-    .count()
+    .select('deletedAt')
     .get()
-  return snap.data().count
+  return snap.docs.filter(d => (d.data() as any)?.deletedAt == null).length
 }
 
 /**
@@ -191,7 +203,9 @@ export async function listChunksBySource(
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
     .get()
-  return snap.docs.map((d) => {
+  // 回收桶的卡不出現在來源明細，也不參與 resync diff / gsheet 同步比對：
+  // 被比對到的話，重新加回同標題列會「更新」到墓碑卡（內容復活但狀態隱藏）而不是建新卡。
+  return snap.docs.filter(d => (d.data() as any)?.deletedAt == null).map((d) => {
     const data = d.data() as any
     return {
       id: d.id,

@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
+import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { computeDiff, loadOldChunksForDiff } from '~~/server/utils/ai-knowledge-resync'
 import {
   advanceWork,
@@ -12,11 +13,15 @@ import {
   KNOWLEDGE_PREVIEW_JOBS_COLLECTION,
   loadSourceFile,
   loadWork,
+  loadWorkWithGeneration,
   progressFor,
   saveWork,
   workToPreviewResult,
   type PreviewJobDoc,
 } from '~~/server/utils/ai-preview-jobs'
+
+/** 暫時性錯誤（Gemini 過載/網路）連續失敗幾次才把 job 打成終局 error */
+const TRANSIENT_ERROR_LIMIT = 5
 
 /**
  * GET /api/ai/knowledge/preview-jobs/[jobId]  （workspaceId 由 query 帶入）
@@ -48,6 +53,7 @@ export default defineEventHandler(async (event) => {
 
     if (job.status === 'done') return { kind: 'done' }
     if (job.status === 'error') return { kind: 'error', error: job.error || '處理失敗' }
+    if (job.status === 'cancelled') return { kind: 'error', error: '這個匯入工作已取消' }
 
     const now = Date.now()
     if (job.leaseUntil && job.leaseUntil > now) {
@@ -71,7 +77,11 @@ export default defineEventHandler(async (event) => {
 
   // ── claimed：做「一步」 ────────────────────────────────────────────
   try {
-    const work = await loadWork(workspaceId, jobId)
+    // 版本鎖（C-46）：釘住載入時的 generation，存檔時不符＝別的執行體已接手，
+    // 放棄這一步的結果。沒有鎖的年代：兩個執行體交錯寫回會讓進度游標倒退、
+    // 已付費切好的段消失重跑、token 重複入帳。
+    const { work, generation } = await loadWorkWithGeneration(workspaceId, jobId)
+    let workGen = generation
 
     if (work.phase === 'finalize') {
       if (work.input.resyncSourceId) {
@@ -125,12 +135,13 @@ export default defineEventHandler(async (event) => {
       // ── 共用收尾(兩種工作只差上面那段;收尾邏輯只留一份免得日後只改到一邊)──
       work.phase = 'done'
       await flushJobUsage(workspaceId, work) // 先結清未入帳 token,再標 done
-      await saveWork(workspaceId, jobId, work)
+      await saveWork(workspaceId, jobId, work, workGen)
       await ref.update({
         status: 'done',
         phase: 'done',
         progress: progressFor(work),
         leaseUntil: 0,
+        transientErrors: 0,
         updatedAt: FieldValue.serverTimestamp(),
       })
       return { status: 'done' as const, ...workToPreviewResult(work) }
@@ -162,24 +173,59 @@ export default defineEventHandler(async (event) => {
     let lastStepMs = 0
     for (;;) {
       const stepStart = Date.now()
-      await advanceWork(work, { getSourceBuffer })
+      // 額度境域（C-45）:這一步裡的 OCR / 切卡 / 補問法 LLM 呼叫都會先過維運額度檢查
+      await runWithLlmBudget(workspaceId, () => advanceWork(work, { getSourceBuffer }))
       lastStepMs = Date.now() - stepStart
       await flushJobUsage(workspaceId, work) // 每步結清:中途取消 / 逾時也不會漏記已花的 token
-      await saveWork(workspaceId, jobId, work) // 見 (a):每步落地,逾時只損失最後一步
+      workGen = await saveWork(workspaceId, jobId, work, workGen) // 見 (a):每步落地＋版本鎖,逾時只損失最後一步
       if (!loopable || work.phase !== 'chunk') break
       if (Date.now() - startedAt + lastStepMs > STEP_BUDGET_MS) break // 見 (b)
+      // 續租（C-46）:連續推進多步會超過單一租約;不續租的話 90 秒一到就被下一次
+      // 輪詢搶走並發重跑——正是「同批 OCR 重收費」的根源
+      await ref.update({ leaseUntil: Date.now() + JOB_LEASE_MS })
     }
 
     await ref.update({
       phase: work.phase,
       progress: progressFor(work),
       leaseUntil: 0,
+      transientErrors: 0, // 成功推進一步＝暫時性錯誤計數歸零
       updatedAt: FieldValue.serverTimestamp(),
     })
     return { status: 'processing' as const, phase: work.phase, progress: progressFor(work) }
   }
   catch (err: any) {
+    const statusCode = Number(err?.statusCode ?? err?.code ?? 0)
     const message = String(err?.statusMessage || err?.message || '處理失敗')
+
+    // 版本鎖衝突（412）：別的執行體已接手這個 job,這一步的結果放棄即可——不是錯誤。
+    if (statusCode === 412) {
+      const snap = await ref.get().catch(() => null)
+      const jd = snap?.data() as PreviewJobDoc | undefined
+      return { status: 'processing' as const, phase: jd?.phase ?? 'chunk', progress: jd?.progress ?? { done: 0, total: 1, label: '處理中' } }
+    }
+
+    /**
+     * 錯誤分類（C-46）：Gemini 過載/網路抖動（callGemini 一律包成 502；503/504 同類）
+     * 是暫時性的——原本一次 429/502 就把 job 打成**終局** error,前面十段已付的錢全作廢、
+     * 只能整份重傳。改成:清租約讓下一次輪詢重接,連續 5 次才放棄。
+     * 額度 429（C-45）不在此列＝直接終局,訊息本身就是使用者要的答案（等下月或聯繫調整）。
+     */
+    const transient = statusCode === 502 || statusCode === 503 || statusCode === 504
+    if (transient) {
+      const snap = await ref.get().catch(() => null)
+      const jd = snap?.data() as (PreviewJobDoc & { transientErrors?: number }) | undefined
+      const attempts = Number(jd?.transientErrors ?? 0) + 1
+      if (attempts < TRANSIENT_ERROR_LIMIT) {
+        await ref.update({
+          transientErrors: attempts,
+          leaseUntil: 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        }).catch(() => {})
+        return { status: 'processing' as const, phase: jd?.phase ?? 'chunk', progress: jd?.progress ?? { done: 0, total: 1, label: '處理中（剛剛有一步沒成功，重試中）' } }
+      }
+    }
+
     await ref.update({
       status: 'error',
       error: message,

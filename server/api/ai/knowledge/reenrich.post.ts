@@ -1,5 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
+import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { reenrichWorkspaceChunks } from '~~/server/utils/ai-reenrich'
 
 /**
@@ -17,6 +18,7 @@ import { reenrichWorkspaceChunks } from '~~/server/utils/ai-reenrich'
 export default defineEventHandler(async (event) => {
   // 全工作區的知識維運操作，沿用與 reindex-all 相同的權限
   const { workspaceId } = await requireCapability(event, 'knowledge.reindexAll')
+  await assertMaintenanceBudget(workspaceId) // C-45：補問法整庫掃描是純維運花費，超額不開跑
   const body = await readBody(event).catch(() => ({}))
   const cursor = String(body?.cursor ?? '').trim()
   return reenrichWorkspaceChunks(getDb(), workspaceId, cursor)

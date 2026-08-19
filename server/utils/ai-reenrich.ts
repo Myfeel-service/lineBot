@@ -33,7 +33,7 @@ export async function reenrichWorkspaceChunks(
   let q = db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .orderBy('__name__')
-    .select('title', 'content', 'tags', 'questions', 'isOverview', 'manuallyEditedAt')
+    .select('title', 'content', 'tags', 'questions', 'isOverview', 'manuallyEditedAt', 'status')
     .limit(REENRICH_SCAN_LIMIT)
   if (cursor) {
     q = q.startAfter(db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(cursor))
@@ -41,7 +41,9 @@ export async function reenrichWorkspaceChunks(
   const snap = await q.get()
 
   const targets = snap.docs
-    .filter(d => needsQuestionEnrichment(d.data()))
+    // 停用（含到期下架）的卡跳過：runIndexOnChunk 的守門已保證它們不會被復活，
+    // 這裡再省下對隱藏卡白花的 LLM 補問法＋embedding 重算（等真的重新啟用再補不遲）。
+    .filter(d => d.data()?.status !== 'disabled' && needsQuestionEnrichment(d.data()))
     .map((d) => {
       const data = d.data()
       return {

@@ -85,6 +85,29 @@ export interface DiffResult {
   summary: DiffSummary
 }
 
+/**
+ * 這次套用有幾個「保留了與網頁不同的內容」的決定（C-44 的關鍵量）：
+ * - modified 選保留/略過 → 卡片停在舊版、網頁是新版
+ * - removed 選保留 → 網頁已沒有這段、卡片還在
+ * - new 選略過 → 網頁有這段、卡片沒有
+ * 沒帶決定的項套用端視同保留，所以這裡也照算。unchanged 保留不算（兩邊本來就一樣）。
+ * 只要這個數 > 0，套用後就**不能**把 appliedContentHash 推到新版——推了等於宣告
+ * 「卡片已同步到這一版網頁」，下次重新同步會回「已是最新」，這次被保留的差異從此蒸發。
+ */
+export function countDivergentKeeps(
+  entries: Array<Pick<DiffEntry, 'id' | 'kind'>>,
+  decisions: Record<string, string>,
+): number {
+  let n = 0
+  for (const e of entries) {
+    const a = decisions[e.id]
+    if (e.kind === 'modified' && (a === 'keep_old' || a === 'skip' || a === undefined)) n++
+    else if (e.kind === 'removed' && (a === 'keep_old' || a === undefined)) n++
+    else if (e.kind === 'new' && (a === 'skip' || a === undefined)) n++
+  }
+  return n
+}
+
 /** 第二輪配對的內容相似度門檻 */
 export const SECOND_PASS_MIN_SIMILARITY = 0.6
 
@@ -180,6 +203,45 @@ function tagsEquivalent(a: string[], b: string[]): boolean {
   return key(a) === key(b)
 }
 
+/**
+ * 從卡片內容抽出「連結：<網址>」的網址（切卡規則 12 產生的行）。
+ * 正規化：去 query/hash、去尾斜線、host 小寫——同一個募資頁不同輪抓到的連結字串才對得起來。
+ * 內容裡不只一條連結行（或沒有）回 null。
+ */
+export function extractCardLink(content: string): string | null {
+  const links = String(content || '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.startsWith('連結：'))
+    .map(l => l.slice('連結：'.length).trim())
+    .filter(Boolean)
+  if (links.length !== 1) return null
+  try {
+    const u = new URL(links[0]!)
+    const path = u.pathname.replace(/\/+$/, '')
+    return `${u.host.toLowerCase()}${path}`
+  }
+  catch {
+    return null
+  }
+}
+
+/** 集合內「只出現一次」的連結才可靠：同一產品頁切出的多張卡會共用同一條連結，不能拿來配對 */
+function uniqueLinkMap<T>(items: T[], linkOf: (t: T) => string | null): Map<string, T> {
+  const count = new Map<string, number>()
+  const first = new Map<string, T>()
+  for (const it of items) {
+    const link = linkOf(it)
+    if (!link) continue
+    count.set(link, (count.get(link) ?? 0) + 1)
+    if (!first.has(link)) first.set(link, it)
+  }
+  for (const [link, n] of count) {
+    if (n > 1) first.delete(link)
+  }
+  return first
+}
+
 export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffResult {
   // 標題也用正規化後當索引：「特色：溫控」與「特色:溫控」是同一張卡，
   // 用原字串當 key 會讓它掉進第二輪、甚至變成「移除 + 新增」。
@@ -193,6 +255,7 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
   const summary: DiffSummary = { added: 0, modified: 0, removed: 0, unchanged: 0 }
   const matchedOldIds = new Set<string>()
   const unmatchedNew: Array<{ n: NewChunk; idx: number }> = []
+
 
   const pushUnchanged = (o: OldChunk, n: NewChunk) => {
     entries.push({
@@ -239,8 +302,28 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
     }
   }
 
+  // ── 第 0 輪：穩定鍵配對——卡片內容裡的「連結：」網址 ─────────────
+  // 列表頁（募資首頁）一個品項一條專案連結，是比標題穩得多的身分：
+  // 品項改名（「義比壓壓」⇄「義式半自動」）、文案重寫都不影響連結。
+  // 沒有這一輪，改名的品項會被判成「新增＋移除」→ 配上縮水保護的「移除預設保留」
+  // → 同一台商品兩張卡越滾越多（C-40 的病）。
+  // 只用「新舊兩邊都唯一」的連結：同一產品頁切出的多張卡共用連結，配了會亂點鴛鴦。
+  const linkPairedNewIdx = new Set<number>()
+  {
+    const oldByLink = uniqueLinkMap(oldChunks, c => extractCardLink(c.content))
+    const newByLink = uniqueLinkMap(newChunks.map((n, idx) => ({ n, idx })), x => extractCardLink(x.n.content))
+    for (const [link, o] of oldByLink) {
+      const cand = newByLink.get(link)
+      if (!cand || matchedOldIds.has(o.id)) continue
+      matchedOldIds.add(o.id)
+      linkPairedNewIdx.add(cand.idx)
+      pushMatched(o, cand.n)
+    }
+  }
+
   // ── 第一輪：title 相等（正規化後）─────────────────────────
   for (let i = 0; i < newChunks.length; i++) {
+    if (linkPairedNewIdx.has(i)) continue // 第 0 輪已用連結配走
     const n = newChunks[i]!
     const o = oldByTitle.get(normalizeForCompare(n.title))
     if (!o || matchedOldIds.has(o.id)) {

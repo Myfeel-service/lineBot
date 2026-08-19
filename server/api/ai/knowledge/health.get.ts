@@ -129,6 +129,7 @@ export default defineEventHandler(async (event) => {
   const wrongAnswerItems: WrongAnswerItem[] = []
   for (const d of chunksSnap.docs) {
     const c = d.data() as any
+    if (c?.deletedAt != null) continue // 回收桶的卡不進體檢（索引失敗/過短/到期都不再是它的事）
     const item: HealthItem = {
       id: d.id,
       title: String(c?.title ?? '(無標題)'),

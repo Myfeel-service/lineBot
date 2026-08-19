@@ -7,13 +7,59 @@
  * - 同步寫入時間預期 ~300-500ms（Gemini embed ~200ms + Firestore 2 次寫入）
  * - 排程任務會掃 pending 太久或 failed 的卡重新嘗試
  */
-import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { embedDocument, estimateTokens } from './gemini'
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
+import { embedDocument, estimateTokens, runWithLlmBudget } from './gemini'
 import { recordAiUsage } from './ai-usage'
 import { canonicalProductName, getProductAliases } from './ai-product-alias'
 import type { KnowledgeChunkDoc, KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
 
 export const KNOWLEDGE_CHUNKS_COLLECTION = 'knowledgeChunks'
+
+// ═══════════════════════════════════════════════════════════════════
+//  回收桶（軟刪除）
+//  所有「刪知識卡」的路徑（單卡刪除 / 重新同步的 delete_old / gsheet 同步刪列）
+//  一律先進回收桶：status 改 disabled（沿用既有狀態機 → 檢索 / tag 索引 / retry /
+//  reindex 的排除全部自動生效）＋ deletedAt / purgeAfter，30 天後排程才真刪。
+//  為什麼：健檢抓到五種「資料無聲消失」情境（gsheet 誤刪列 / 分頁讀空 / gid 掉頁 /
+//  resync 誤選刪除 / 併發互踩），逐路補防呆是打地鼠——軟刪除把整類後果降級成可還原。
+//  ⛔整個來源的「刪除資料」維持真刪（有打字二次確認的強防呆，且還原語意複雜）。
+// ═══════════════════════════════════════════════════════════════════
+
+/** 回收桶保留天數；到期由排程 purgeRecycledKnowledge 真刪 */
+export const RECYCLE_RETENTION_DAYS = 30
+
+/**
+ * 軟刪除的欄位 patch（呼叫端自行 ref.update / batch.update）。
+ * existingStatus 給還原用：還原時回到刪除前的狀態（手動停用的卡還原後仍是停用）。
+ */
+export function buildChunkSoftDeletePatch(existingStatus?: unknown): Record<string, unknown> {
+  return {
+    status: 'disabled' satisfies KnowledgeChunkStatus,
+    ...(existingStatus ? { statusBeforeDelete: String(existingStatus) } : {}),
+    deletedAt: FieldValue.serverTimestamp(),
+    purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
+    updatedAt: FieldValue.serverTimestamp(),
+  }
+}
+
+/**
+ * 還原時該回到什麼狀態（純函式好測）：
+ * - 刪除前是 indexed 但向量已被清掉（刪除後內容曾被動過的邊角）→ pending 讓 retry 重建
+ * - 其餘回刪除前的狀態；沒記到刪除前狀態的舊資料 → 有向量當 indexed、沒向量當 pending
+ * disabled 刻意原樣保留：刪除前就被店家關掉的卡，還原不等於重新上架。
+ */
+export function resolveRestoredStatus(statusBeforeDelete: unknown, hasEmbedding: boolean): KnowledgeChunkStatus {
+  const prev = String(statusBeforeDelete ?? '')
+  if (prev === 'disabled' || prev === 'failed') return prev
+  if (prev === 'indexed') return hasEmbedding ? 'indexed' : 'pending'
+  if (prev === 'pending') return 'pending'
+  return hasEmbedding ? 'indexed' : 'pending'
+}
+
+/** 這張卡是否在回收桶（軟刪除狀態）。讀取端排除、寫入端擋操作都用這一把尺。 */
+export function isChunkRecycled(data: any): boolean {
+  return data?.deletedAt != null
+}
 
 /** pending 卡超過此時間就算「卡住」，會被排程任務撿回來重試 */
 export const PENDING_STUCK_MS = 5 * 60 * 1000
@@ -186,12 +232,16 @@ export async function updateKnowledgeChunk(
     return { status: (existing.status as KnowledgeChunkStatus) ?? 'pending' }
   }
 
-  // 內容（或 questions）變動：先標 pending、清掉舊向量，再跑 embed
+  // 內容（或 questions）變動：先標 pending、清掉舊向量，再跑 embed。
+  // ⛔停用卡例外：status 保持 'disabled' 不落 pending——「停用」是店家的意圖、
+  // 內容更新不是重新啟用。這裡若寫 pending，下游 runIndexOnChunk 讀到的就不是
+  // disabled，守門（停用卡不復活）會失效；被 retry 排程撿走也會直接復活。
+  const wasDisabled = existing.status === 'disabled'
   await ref.update({
     ...baseUpdate,
     embedding: null,
     tokens: estimateTokens(params.content),
-    status: 'pending',
+    status: wasDisabled ? 'disabled' : 'pending',
     lastIndexedAt: null,
     failureReason: FieldValue.delete(),
   })
@@ -310,21 +360,37 @@ export async function runIndexOnChunk(
   workspaceId?: string,
 ): Promise<{ id: string; status: KnowledgeChunkStatus; failureReason?: string; embeddingTokens: number }> {
   const ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId)
+  // 讀一次現況：守門（停用卡不復活）與產品名解析共用這次讀取。
+  // 讀失敗時 cd=null → 不守門照原文走（跟舊行為一致；讀都讀不到，embed 多半也會失敗）。
+  let cd: any = null
+  try {
+    cd = (await ref.get()).data()
+  }
+  catch { /* 讀卡失敗就照原 embeddingText 走 */ }
+  /**
+   * ⛔守門：停用（disabled）是店家的意圖，重算索引不代表重新啟用。
+   * 沒有這條的話，補問法 / gsheet 同步 / 單卡重建索引 / 編輯存檔四條路都會把
+   * 停用（含到期下架）的卡無聲寫回 indexed——過期募資價、下架折扣碼直接復活對客人講話，
+   * 而 activeUntil 已被到期排程搬走，沒有任何機制會再下架它第二次。
+   * 重新啟用只有一條路：settings.post.ts 的「供 AI 使用」開關（不經過這裡）。
+   */
+  const wasDisabled = cd?.status === 'disabled'
   // 解析並前置產品名：卡標題自己有品名 → 逐卡認領（優先）；否則退回來源層 productName。沒有就維持原樣。
   let productName = ''
   try {
-    const cd = (await ref.get()).data() as any
-    const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null)
-    const names = cd?.workspaceId ? await getWorkspaceProductNames(db, cd.workspaceId) : []
-    productName = pickCardProduct(String(cd?.title ?? ''), names, sourceProduct)
-    // 別名歸一：同一台機器的不同叫法收斂成正式名，之後建立的卡片一律用同一個字串，
-    // 反問分組 / 防混答 / 指名作答才不會把同一台當成兩台。
-    if (productName && cd?.workspaceId) {
-      const { aliases } = await getProductAliases(db, cd.workspaceId)
-      productName = canonicalProductName(productName, aliases)
+    if (cd) {
+      const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null)
+      const names = cd?.workspaceId ? await getWorkspaceProductNames(db, cd.workspaceId) : []
+      productName = pickCardProduct(String(cd?.title ?? ''), names, sourceProduct)
+      // 別名歸一：同一台機器的不同叫法收斂成正式名，之後建立的卡片一律用同一個字串，
+      // 反問分組 / 防混答 / 指名作答才不會把同一台當成兩台。
+      if (productName && cd?.workspaceId) {
+        const { aliases } = await getProductAliases(db, cd.workspaceId)
+        productName = canonicalProductName(productName, aliases)
+      }
     }
   }
-  catch { /* 讀卡失敗就照原 embeddingText 走 */ }
+  catch { /* 產品名解析失敗就照原 embeddingText 走 */ }
   const finalText = productName ? `${productName}\n${embeddingText}` : embeddingText
   const embeddingTokens = estimateTokens(finalText)
   try {
@@ -332,7 +398,8 @@ export async function runIndexOnChunk(
     await ref.update({
       embedding: FieldValue.vector(values),
       productName: productName || FieldValue.delete(),
-      status: 'indexed' satisfies KnowledgeChunkStatus,
+      // 停用卡：向量照樣更新（重新啟用時免重算、不會拿到舊向量），但狀態維持 disabled
+      status: (wasDisabled ? 'disabled' : 'indexed') satisfies KnowledgeChunkStatus,
       lastIndexedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       failureReason: FieldValue.delete(),
@@ -343,17 +410,22 @@ export async function runIndexOnChunk(
       // 建索引 embedding 屬「建置成本」，記到 buildEmbeddingTokens（不進客人對話成本）
       void recordAiUsage(workspaceId, { buildEmbeddingTokens: embeddingTokens }, db)
     }
-    return { id: chunkId, status: 'indexed', embeddingTokens }
+    return { id: chunkId, status: wasDisabled ? 'disabled' : 'indexed', embeddingTokens }
   }
   catch (err: any) {
     const reason = String(err?.statusMessage || err?.message || 'embed failed').slice(0, 300)
+    // 429＝維運額度守門擋下（gemini.ts 出口；Gemini 自己的 429 會被包成 502），不是這張卡的錯：
+    // 不耗 retryCount，下月額度恢復後自動重試得回來；耗掉的話 5 輪後永久 failed、額度回來也不自癒。
+    const isBudgetBlock = Number(err?.statusCode) === 429
     await ref.update({
-      status: 'failed' satisfies KnowledgeChunkStatus,
+      // 停用卡 embed 失敗也不落 failed：落了就會進 retry 佇列，重試成功又寫回 indexed＝復活。
+      // 向量可能因此過舊/為空——安全網在 settings.post.ts：啟用時 embedding 為空會擋下並指去「重新索引」。
+      status: (wasDisabled ? 'disabled' : 'failed') satisfies KnowledgeChunkStatus,
       failureReason: reason,
-      retryCount: FieldValue.increment(1),
+      ...(wasDisabled || isBudgetBlock ? {} : { retryCount: FieldValue.increment(1) }),
       updatedAt: FieldValue.serverTimestamp(),
     }).catch(() => {})
-    return { id: chunkId, status: 'failed', failureReason: reason, embeddingTokens: 0 }
+    return { id: chunkId, status: wasDisabled ? 'disabled' : 'failed', failureReason: reason, embeddingTokens: 0 }
   }
 }
 
@@ -374,6 +446,17 @@ export interface SimilarChunk {
   isOverview: boolean
   /** 所屬產品的正規名稱（來源層設定、索引時寫入）；答題 context 用來標明卡片是哪個產品的 */
   productName?: string
+}
+
+/**
+ * 有效期限保險（兩條檢索路共用同一把尺）：到期但排程還沒掃到的卡（最壞 10 分鐘空窗）
+ * 當場排除，不進答題 context。向量路與品號 tag 路都要套——tag 命中給 0.95 高信心、
+ * 會直接過 grounding/confidence 兩道門，漏了這裡等於過期卡從側門高信心進場。
+ */
+export function chunkStillActive(data: any, nowMs: number): boolean {
+  const until = data?.activeUntil
+  const untilMs = typeof until?.toMillis === 'function' ? until.toMillis() : 0
+  return !untilMs || untilMs > nowMs
 }
 
 /**
@@ -405,11 +488,7 @@ export async function searchSimilarChunks(
   // 有效期限保險：到期但排程還沒掃到的卡（最壞 10 分鐘空窗）當場排除，不進答題 context
   const nowMs = Date.now()
   return snap.docs
-    .filter((doc) => {
-      const until = (doc.data() as any)?.activeUntil
-      const untilMs = typeof until?.toMillis === 'function' ? until.toMillis() : 0
-      return !untilMs || untilMs > nowMs
-    })
+    .filter(doc => chunkStillActive(doc.data(), nowMs))
     .map((doc) => {
       const data = doc.data() as any
       const distance = Number(data?._distance ?? 1)
@@ -504,8 +583,9 @@ export async function searchChunksByIdentifierTag(
 
   const refs = matchedIds.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id))
   const snaps = await db.getAll(...refs)
+  const nowMs = Date.now()
   return snaps
-    .filter(s => s.exists && s.data()?.status === 'indexed')
+    .filter(s => s.exists && s.data()?.status === 'indexed' && chunkStillActive(s.data(), nowMs))
     .map((s) => {
       const data = s.data() as any
       return {
@@ -571,18 +651,28 @@ export async function retryStuckChunks(
 
     const content = String(data?.content ?? '')
     if (!content) {
+      // 空內容推不動：當場標 failed＋滿額 retryCount 讓它離開佇列。原本只 failed++ 不動文件，
+      // updatedAt 永遠不變 → 這張卡每輪都排在「最舊」最前面，把別租戶真正卡住的卡
+      // 擠出 limit 名額（隊頭阻塞），每天還白數 144 次。
+      await doc.ref.update({
+        status: 'failed' satisfies KnowledgeChunkStatus,
+        failureReason: '內容為空，無法建立索引',
+        retryCount: MAX_AUTO_RETRIES,
+        updatedAt: FieldValue.serverTimestamp(),
+      }).catch(() => {})
       failed++
       continue
     }
-    // 不帶 workspaceId:批次迴圈每卡一寫會打爆單一月用量文件,改累計、迴圈後每 workspace 一寫
-    const result = await runIndexOnChunk(db, doc.id, buildEmbeddingText(
+    const ws = typeof data?.workspaceId === 'string' ? data.workspaceId : ''
+    // 不帶 workspaceId:批次迴圈每卡一寫會打爆單一月用量文件,改累計、迴圈後每 workspace 一寫。
+    // 額度境域（C-45）另外圈:超額的 workspace 這輪跳過（429 不耗 retryCount，下月自動恢復）
+    const result = await runWithLlmBudget(ws, () => runIndexOnChunk(db, doc.id, buildEmbeddingText(
       String(data?.title ?? ''),
       content,
       Array.isArray(data?.questions) ? data.questions.map(String) : [],
-    ))
+    )))
     if (result.status === 'indexed') {
       indexed++
-      const ws = typeof data?.workspaceId === 'string' ? data.workspaceId : ''
       if (ws) tokensByWorkspace.set(ws, (tokensByWorkspace.get(ws) ?? 0) + result.embeddingTokens)
     }
     else {

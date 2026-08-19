@@ -24,8 +24,11 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event).catch(() => ({}))
   const hasEnabled = typeof body?.enabled === 'boolean'
   const hasActiveUntil = 'activeUntil' in (body ?? {})
-  if (!hasEnabled && !hasActiveUntil) {
-    throw createError({ statusCode: 400, statusMessage: '至少要帶 enabled 或 activeUntil' })
+  // 解除手動編輯鎖（C-44）：鎖住的卡不吃表格/網頁更新，是「表格改了永遠不生效」
+  // 唯一的來源；這裡給一條明確的解鎖路（解鎖後下一輪同步就會覆蓋回來源版本）。
+  const hasClearLock = body?.clearManualLock === true
+  if (!hasEnabled && !hasActiveUntil && !hasClearLock) {
+    throw createError({ statusCode: 400, statusMessage: '至少要帶 enabled、activeUntil 或 clearManualLock' })
   }
 
   // 解析有效期限：當日結束（台灣時間）才到期，符合「設 8/15 = 8/15 整天都有效」的直覺
@@ -54,6 +57,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
   }
 
+  // 回收桶的卡不接受開關/期限操作：它的 status 是 disabled 沒錯，但那是「已刪除」不是「停用」。
+  // 不擋的話，API 直接 enable 會讓一張已刪除的卡復活上線，30 天後又被 purge 排程真刪掉。
+  if (chunk.deletedAt != null) {
+    throw createError({ statusCode: 400, statusMessage: '這張卡在回收桶裡，請先還原再操作' })
+  }
+
   const status = String(chunk.status ?? 'pending') as KnowledgeChunkStatus
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() }
 
@@ -80,6 +89,10 @@ export default defineEventHandler(async (event) => {
         update.activeUntil = FieldValue.delete()
       }
     }
+  }
+
+  if (hasClearLock) {
+    update.manuallyEditedAt = null
   }
 
   if (activeUntilTs !== undefined) {

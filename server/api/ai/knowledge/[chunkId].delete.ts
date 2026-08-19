@@ -1,14 +1,22 @@
-import { FieldValue } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { invalidateTagIndexCache, KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
-import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import {
+  buildChunkSoftDeletePatch,
+  invalidateTagIndexCache,
+  KNOWLEDGE_CHUNKS_COLLECTION,
+  RECYCLE_RETENTION_DAYS,
+} from '~~/server/utils/ai-knowledge-chunks'
+import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 
 /**
  * DELETE /api/ai/knowledge/:chunkId
  *
- * 若這張卡屬於 type='manual' 的 source（一個 source = 一張卡），刪卡的同時把 source 也刪掉
- * （避免來源列表留下「0 張卡」的孤兒）；若是 file/url 的 source，只更新 chunkCount。
+ * 刪除＝進回收桶（軟刪除，30 天內可還原；到期由排程真刪）。
+ * 若這張卡屬於 type='manual' 的 source（一個 source = 一張卡），source 跟著一起進回收桶
+ * （不能真刪：還原時卡片的 sourceId 會指向不存在的來源）；file/url 的 source 只重算 chunkCount
+ * （用實數重算，不用 increment——單卡刪除與 resync/gsheet 的重算並存時 increment 會漂，
+ * 刪除確認框顯示的「底下 N 條」就會說謊）。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
@@ -20,27 +28,33 @@ export default defineEventHandler(async (event) => {
   const snap = await ref.get()
   if (!snap.exists) return { ok: true }
 
-  const existing = snap.data() as { workspaceId?: string; sourceId?: string | null }
+  const existing = snap.data() as { workspaceId?: string; sourceId?: string | null; status?: string; deletedAt?: unknown }
   if (existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
   }
+  if (existing.deletedAt != null) return { ok: true } // 已在回收桶，冪等
 
-  await ref.delete()
+  await ref.update(buildChunkSoftDeletePatch(existing.status))
   invalidateTagIndexCache(workspaceId)
 
-  // 同步維護 source 的 chunkCount / 若是 manual 單張就一併刪掉 source
+  // 同步維護 source：manual 單張 → source 一起進回收桶；其他 → 重算 chunkCount
   if (existing.sourceId) {
     const sourceRef = db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(existing.sourceId)
     const sourceSnap = await sourceRef.get().catch(() => null)
     if (sourceSnap?.exists) {
-      const sourceData = sourceSnap.data() as { type?: string; workspaceId?: string; chunkCount?: number }
+      const sourceData = sourceSnap.data() as { type?: string; workspaceId?: string }
       if (sourceData.workspaceId === workspaceId) {
         if (sourceData.type === 'manual') {
-          await sourceRef.delete().catch(() => {})
+          await sourceRef.update({
+            deletedAt: FieldValue.serverTimestamp(),
+            purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
+            updatedAt: FieldValue.serverTimestamp(),
+          }).catch(() => {})
         }
         else {
+          const chunkCount = await countSourceChunks(db, workspaceId, existing.sourceId)
           await sourceRef.update({
-            chunkCount: FieldValue.increment(-1),
+            chunkCount,
             updatedAt: FieldValue.serverTimestamp(),
           }).catch(() => {})
         }

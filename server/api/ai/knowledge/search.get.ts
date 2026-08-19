@@ -30,13 +30,14 @@ export default defineEventHandler(async (event) => {
   const db = getDb()
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
-    .select('title', 'content', 'questions', 'sourceId', 'status')
+    .select('title', 'content', 'questions', 'sourceId', 'status', 'deletedAt')
     .limit(SCAN_LIMIT)
     .get()
 
   const scored: Array<KnowledgeSearchRow & { score: number }> = []
   for (const d of snap.docs) {
-    const c = d.data() as { title?: string; content?: string; questions?: string[]; sourceId?: string | null; status?: string }
+    const c = d.data() as { title?: string; content?: string; questions?: string[]; sourceId?: string | null; status?: string; deletedAt?: unknown }
+    if (c.deletedAt != null) continue // 回收桶的卡不進搜尋結果
     const title = String(c.title ?? '')
     const content = String(c.content ?? '')
     const questions = (c.questions ?? []).map(String)

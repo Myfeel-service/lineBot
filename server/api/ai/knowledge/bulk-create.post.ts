@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateCatalogSourceCache } from '~~/server/utils/ai-knowledge-sources'
-import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
   addWorkspaceProductName,
@@ -33,7 +34,19 @@ const MAX_BULK_CHUNKS = 150
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  // 維運額度前置檢查（C-45）：讓使用者在開始前就看到「額度不足」，而不是建到一半死
+  await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)
+
+  /**
+   * importId（C-46 冪等鍵，前端帶預覽 jobId）：150 張卡 × embedding 會超過閘道 30 秒——
+   * Lambda 其實建完了，前端卻收到逾時、使用者再按一次。有 importId 時 source 與每張卡
+   * 的 id 都決定性導出：重按覆寫同一批 doc，不會留下「說有 150 條實際 30 條」的殭屍來源
+   * ＋第二批重複卡＋二次 embedding 費。
+   */
+  const importId = String(body?.importId ?? '').trim().slice(0, 64)
+  const idFor = (suffix: string) =>
+    createHash('sha256').update(`bulk:${workspaceId}:${importId}:${suffix}`).digest('hex').slice(0, 32)
 
   const rawChunks = Array.isArray(body?.chunks) ? body.chunks : []
   if (!rawChunks.length) {
@@ -65,7 +78,7 @@ export default defineEventHandler(async (event) => {
   let sourceId: string | null = null
   const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
   if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet') {
-    sourceId = uuidv4()
+    sourceId = importId ? idFor('source') : uuidv4()
     const now = FieldValue.serverTimestamp()
     const sourceUrl = String(body?.source?.url ?? '').trim()
 
@@ -132,7 +145,7 @@ export default defineEventHandler(async (event) => {
     while (cursor < inputs.length) {
       const idx = cursor++
       const input = inputs[idx]!
-      const chunkId = uuidv4()
+      const chunkId = importId ? idFor(`chunk:${idx}`) : uuidv4()
       const r = await createKnowledgeChunk(db, {
         workspaceId,
         chunkId,
@@ -150,7 +163,7 @@ export default defineEventHandler(async (event) => {
   if (overviewInput) {
     const r = await createKnowledgeChunk(db, {
       workspaceId,
-      chunkId: uuidv4(),
+      chunkId: importId ? idFor('overview') : uuidv4(),
       ...overviewInput,
       sourceId,
       skipUsageRecording: true,
@@ -162,6 +175,16 @@ export default defineEventHandler(async (event) => {
   // 整批一次記帳
   if (totalEmbeddingTokens > 0) {
     await recordAiUsage(workspaceId, { buildEmbeddingTokens: totalEmbeddingTokens })
+  }
+
+  // chunkCount 回寫實數（建 source 時寫的是「預計」數）：中途死掉重跑後這裡會補正，
+  // 不再留下「說有 150 條、實際 30 條」的殭屍來源
+  if (sourceId) {
+    const { countSourceChunks } = await import('~~/server/utils/ai-knowledge-sources')
+    const actual = await countSourceChunks(db, workspaceId, sourceId)
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+      .update({ chunkCount: actual, updatedAt: FieldValue.serverTimestamp() })
+      .catch(() => {})
   }
 
   const indexed = results.filter(r => r.status === 'indexed').length

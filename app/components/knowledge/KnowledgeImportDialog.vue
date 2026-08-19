@@ -880,6 +880,12 @@ const overviewCard = ref<OverviewCard | null>(null)
 
 // ── Preview ───────────────────────────────────────────────
 const previewing = ref(false)
+/**
+ * 最近一次預覽工作的 jobId（C-46）：兩個用途——
+ * ① 取消時打 DELETE 讓伺服器真的停下（否則 job 佔著 Storage、再 poll 還會花錢推進）
+ * ② 當 bulk-create 的冪等鍵：逾時後重按「匯入」覆寫同一批卡，不生殭屍來源與重複卡
+ */
+const lastPreviewJobId = ref('')
 // 非同步 job 的即時進度（整理 3/5、辨識掃描檔 2/6…）；null = 尚無進度資訊
 const previewProgressText = computed(() => {
   const p = jobProgress.value
@@ -1220,6 +1226,8 @@ async function runSiteImport() {
               productName: res.suggestedProductName ?? '',
               contentHash: res.contentHash ?? '',
             },
+            // 冪等鍵（C-46）:單頁逾時重試不會生第二個來源
+            importId: created.jobId,
             chunks: res.chunks.map(c => ({
               title: c.title,
               content: c.content,
@@ -1480,6 +1488,7 @@ async function resumeStoredJob() {
   previewCancelled = false
   resetJobPoll()
   try {
+    lastPreviewJobId.value = marker.jobId
     const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(marker.jobId)
     // 這段可能跑好幾分鐘,期間使用者早就去做別的事了(挑整站頁面、跑批次匯入、開始另一份整理)。
     // 這時把畫面切到預覽等於半路搶走他正在做的事——記號留著,下次進來再接。
@@ -1612,6 +1621,7 @@ async function runPreview() {
     )
     // 上傳大檔那段可能跑好幾秒,期間按了取消就別再往下建工作(否則會留下一份沒人要的記號)
     if (previewCancelled) return
+    lastPreviewJobId.value = created.jobId // 取消端點與 bulk-create 冪等鍵（C-46）都要用
     // 記號要在開始等之前就落地:最需要接回來的正是「等很久所以跑去做別的事」那一種
     saveJobMarker(created.jobId, mode.value)
     const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
@@ -1654,6 +1664,12 @@ function cancelPreview() {
   //    旗標留著,下一次 runPreview 開頭本來就會 reset。進度條只清畫面上的數字。
   jobProgress.value = null
   clearJobMarker() // 自己按取消 = 不要這份了,別在下次進頁面時又冒出來
+  // 通知伺服器（C-46）:原本取消只是前端不再輪詢,job 停在 processing 佔著 Storage 一小時,
+  // 再 poll 一下還會繼續花錢推進。fire-and-forget,失敗也不擋畫面(排程清理是保底)。
+  if (lastPreviewJobId.value) {
+    apiFetch(`/api/ai/knowledge/preview-jobs/${lastPreviewJobId.value}`, { method: 'DELETE' }).catch(() => {})
+    lastPreviewJobId.value = ''
+  }
   showToast('已取消', 'success')
 }
 
@@ -1834,6 +1850,8 @@ async function runImport() {
         },
         chunks: selected,
         overviewCard: overviewPayload,
+        // 冪等鍵（C-46）:逾時後重按「匯入」會覆寫同一批卡,不會多出殭屍來源＋重複卡
+        importId: lastPreviewJobId.value || undefined,
       },
     })
     result.value = res

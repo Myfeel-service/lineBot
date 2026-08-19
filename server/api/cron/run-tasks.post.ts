@@ -7,6 +7,7 @@ import {
   cleanupExpiredWebhookEventLocks,
   dailyBacklogDigest,
   expireKnowledgeCards,
+  purgeRecycledKnowledge,
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { cleanupExpiredPreviewJobs } from '~~/server/utils/ai-preview-jobs'
@@ -41,6 +42,8 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
+    // 回收桶到期清運：軟刪除的知識卡（含連坐的 manual 來源）過了 30 天保留期真刪
+    { name: 'ai:purge-recycled-knowledge', run: () => purgeRecycledKnowledge(db) },
     // 知識缺口掃描（每輪最多 2 個 workspace，內含 LLM）。
     // 缺口週報已併入 conversation:backlog-digest 的每日摘要（2026-08-06 拍板）
     { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },

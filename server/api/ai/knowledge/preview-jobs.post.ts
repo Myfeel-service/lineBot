@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb, getStorage } from '~~/server/utils/firebase'
 import {
   extractionQualityWarnings,
@@ -38,6 +39,8 @@ import type { ChunkInput } from '~~/server/utils/ai-knowledge-chunks'
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  // 維運額度前置檢查（C-45）：超額就別建工作，讓人第一時間看到原因
+  await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)
   const type = String(body?.type ?? '').trim()
   const wantOverview = body?.generateOverview === true

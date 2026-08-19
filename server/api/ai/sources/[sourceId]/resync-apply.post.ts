@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
@@ -10,6 +11,7 @@ import {
   KNOWLEDGE_SOURCES_COLLECTION,
 } from '~~/server/utils/ai-knowledge-sources'
 import {
+  buildChunkSoftDeletePatch,
   createKnowledgeChunk,
   KNOWLEDGE_CHUNKS_COLLECTION,
   normalizeChunkInput,
@@ -17,8 +19,8 @@ import {
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { summarizeAsOverviewCard } from '~~/server/utils/ai-knowledge-chunker'
-import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { loadOldChunksForDiff, type DiffAction, type DiffEntry } from '~~/server/utils/ai-knowledge-resync'
+import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { countDivergentKeeps, loadOldChunksForDiff, type DiffAction, type DiffEntry } from '~~/server/utils/ai-knowledge-resync'
 
 /**
  * 套用 diff 後，依「當下這個 source 旗下的子卡片」重新合成總覽卡（isOverview）。
@@ -106,6 +108,8 @@ async function regenerateOverviewCard(
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'sources.write')
+  // 維運額度前置檢查（C-45）：套用會跑 embedding＋總覽 LLM
+  await assertMaintenanceBudget(workspaceId)
   const sourceId = String(getRouterParam(event, 'sourceId') ?? '').trim()
   if (!sourceId) throw createError({ statusCode: 400, statusMessage: 'sourceId required' })
 
@@ -115,6 +119,14 @@ export default defineEventHandler(async (event) => {
   if (!entries.length || !decisions) {
     throw createError({ statusCode: 400, statusMessage: '請提供 entries 與 decisions' })
   }
+  /**
+   * applyId（C-43 冪等鍵）：150 張卡的套用會超過閘道 30 秒——Lambda 其實做完了，
+   * 前端卻收到逾時、使用者再按一次。有 applyId 時 add_new 的 chunkId 用它決定性導出，
+   * 重按同一次套用會覆寫同一批 doc 而不是用新 uuid 再生一批重複卡。
+   */
+  const applyId = String(body?.applyId ?? '').trim().slice(0, 64)
+  const deterministicChunkId = (entryId: string) =>
+    createHash('sha256').update(`resync:${sourceId}:${applyId}:${entryId}`).digest('hex').slice(0, 32)
 
   const db = getDb()
   const source = await getSource(db, sourceId, workspaceId)
@@ -175,7 +187,8 @@ export default defineEventHandler(async (event) => {
         }
         await createKnowledgeChunk(db, {
           workspaceId,
-          chunkId: uuidv4(),
+          // 有 applyId 就用決定性 id（重按覆寫同一張，不重複建卡）；舊 client 沒帶則照舊隨機
+          chunkId: applyId ? deterministicChunkId(entry.id) : uuidv4(),
           title: input.title,
           content: input.content,
           tags: input.tags,
@@ -211,7 +224,9 @@ export default defineEventHandler(async (event) => {
         continue
       }
       if (action === 'delete_old' && entry.oldChunk) {
-        await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(entry.oldChunk.id).delete()
+        // 進回收桶（軟刪除）而非真刪：診斷 diff 誤選「刪除」、或縮水誤判時還有 30 天可還原
+        await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(entry.oldChunk.id)
+          .update(buildChunkSoftDeletePatch())
         deleted++
         continue
       }
@@ -236,6 +251,16 @@ export default defineEventHandler(async (event) => {
   // 那會把新版指紋配上舊版內容,新變動從此不再被偵測。沒帶就不動 contentHash
   //（最壞只是下次排程再報一次變動,方向安全）。
   const bodyHash = String(body?.contentHash ?? '').trim()
+  /**
+   * ⛔指紋只有在「卡片真的同步到這一版網頁」時才能推進（C-44）：
+   * - 有任何「保留了與網頁不同的內容」的決定（手編卡預設保留就是最常見的一種）→ 不推進。
+   *   推進等於宣告已同步，下次重新同步直接回「已是最新」、排程也不再提醒——
+   *   卡片寫 100、網頁寫 120，這個差異從此蒸發，只剩一顆不顯眼的「強制重切」能救。
+   * - 有逐卡失敗（errors）→ 不推進、也不清「有變動」旗標：部分失敗不能記成完整成功。
+   * 不推進的代價只是下次重新同步要再跑一輪比對——方向安全。
+   */
+  const divergentKeeps = countDivergentKeeps(entries, decisions)
+  const fingerprintSafe = errors.length === 0 && divergentKeeps === 0
   const newChunkCount = await countSourceChunks(db, workspaceId, sourceId)
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
     chunkCount: newChunkCount,
@@ -247,13 +272,18 @@ export default defineEventHandler(async (event) => {
     // textHash（抹掉數字後的指紋）跟著作廢：這條路上沒有原文可以重算，留著舊值會讓
     // 兩道指紋對應到不同版本，排程下次數字一動就誤判成「文字改過了」而誤報變動。
     // 清成空值＝沒有基準，排程會退回逐字比對，並在下一個「內容沒變」的檢查輪重建它。
-    ...(bodyHash ? { contentHash: bodyHash, appliedContentHash: bodyHash, textHash: '' } : {}),
+    ...(bodyHash && fingerprintSafe ? { contentHash: bodyHash, appliedContentHash: bodyHash, textHash: '' } : {}),
     // 手動套用變更＝這個來源現在是好的，把失敗標記一起清掉。
     // 不清的話只能等下一次排程成功檢查才會清，而設成「不偵測」的來源永遠不會被排程撈到
-    // → 體檢紅字永久卡著。
-    ...buildSourceClearFailure(source.data.status),
+    // → 體檢紅字永久卡著。逐卡有失敗時不清（還不算「好」）。
+    ...(errors.length === 0 ? buildSourceClearFailure(source.data.status) : {}),
   })
-  await clearSourceOutdated(db, sourceId)
+  // 「有變動」旗標：全部套完（含保留決定）就清——使用者剛剛親手看過這份 diff；
+  // 若卡片仍與網頁不同，排程下一輪確認到變動會再標回來，不會永久消失。
+  // 逐卡有失敗時不清：這次套用沒完成，提示留著。
+  if (errors.length === 0) {
+    await clearSourceOutdated(db, sourceId)
+  }
 
   return {
     sourceId,
@@ -263,5 +293,7 @@ export default defineEventHandler(async (event) => {
     kept,
     errors,
     chunkCount: newChunkCount,
+    divergentKeeps,
+    fingerprintAdvanced: !!bodyHash && fingerprintSafe,
   }
 })

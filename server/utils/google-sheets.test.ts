@@ -310,3 +310,34 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
       .rejects.toMatchObject({ statusCode: 422 })
   })
 })
+
+describe('selectSheetsToRead gid 守門（經 readGoogleSheetAsCards）', () => {
+  const makeApi = (sheets: Array<{ sheetId: number; title: string }>, values: string[][] = []): SheetsApiFn =>
+    (async (path: string) => {
+      if (path.includes('fields=')) {
+        return { sheets: sheets.map(s => ({ properties: s })) } as never
+      }
+      return { values } as never
+    }) as SheetsApiFn
+
+  it('gid 對得上 → 只讀那頁（原行為）', async () => {
+    const api = makeApi(
+      [{ sheetId: 123, title: 'FAQ' }],
+      [['問題', '答案'], ['運費', '滿千免運']],
+    )
+    const r = await readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api)
+    expect(r.cards.length).toBe(1)
+  })
+
+  it('gid 對不上（分頁被刪除重建）→ 直接 422，不退回名稱猜測讀到別頁', async () => {
+    // 沒守門的話會掉進名稱規則、把「使用說明」頁讀成知識 → 原 FAQ 卡整批被判「已不存在」刪光。
+    // 退路頁給真實資料列：守門若被拿掉，這裡會「成功」讀出卡而不是丟錯——
+    // 斷言必須綁「分頁已不存在」訊息，不能只看 422（空表守門也回 422，會假陽性）。
+    const api = makeApi(
+      [{ sheetId: 456, title: '使用說明' }],
+      [['問題', '答案'], ['這是說明頁的列', '會被誤讀成知識卡']],
+    )
+    await expect(readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api))
+      .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('分頁已不存在') })
+  })
+})

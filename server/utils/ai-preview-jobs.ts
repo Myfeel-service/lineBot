@@ -50,12 +50,17 @@ export const MIN_SEGMENT_SPLIT_LEN = 1500
 export { CHUNK_CONCURRENCY as CHUNK_PARALLEL } from './ai-knowledge-chunker'
 
 /** claim 一步的租約時間；poll 中途被閘道 504，過了這段時間下一輪可重接。 */
-export const JOB_LEASE_MS = 45_000
+/**
+ * 單步租約。90 秒 > 單步最壞值（一批 OCR 正常 15–25s，Gemini 尖峰 50–60s）——
+ * 原本 45 秒短於最壞單步：租約到期被下一次輪詢（1.2s 間隔）搶走，同一批 OCR
+ * 重跑重收費；配合每步續租（[jobId].get 的迴圈）與 work.json 版本鎖雙保險。
+ */
+export const JOB_LEASE_MS = 90_000
 
 /** job 存活時間；超過由 cleanup task 連同 Storage temp 一起刪。 */
 export const JOB_TTL_MS = 60 * 60 * 1000
 
-export type PreviewJobStatus = 'processing' | 'done' | 'error'
+export type PreviewJobStatus = 'processing' | 'done' | 'error' | 'cancelled'
 export type PreviewJobPhase = 'ocr' | 'chunk' | 'enrich' | 'overview' | 'finalize' | 'done'
 
 /** 建 job 時鎖定的來源輸入（抽取用的原始參數） */
@@ -614,10 +619,26 @@ function jobPrefix(workspaceId: string, jobId: string): string {
   return `preview-jobs/${workspaceId}/${jobId}`
 }
 
-export async function saveWork(workspaceId: string, jobId: string, work: WorkState): Promise<void> {
-  await getStorage().bucket()
-    .file(`${jobPrefix(workspaceId, jobId)}/work.json`)
-    .save(JSON.stringify(work), { contentType: 'application/json' })
+/**
+ * 存進度。expectedGeneration 有帶＝樂觀鎖（C-46）：work.json 的 GCS generation
+ * 與載入時不同（別的執行體已寫過）→ 412，呼叫端放棄這一步的結果。
+ * 沒有鎖的年代：兩個執行體交錯寫回會讓 segmentCursor 倒退、已付費切好的段
+ * 整批消失重跑、token 重複入帳。回傳這次寫入後的 generation 供下一步續用。
+ */
+export async function saveWork(
+  workspaceId: string,
+  jobId: string,
+  work: WorkState,
+  expectedGeneration?: number,
+): Promise<number> {
+  const file = getStorage().bucket().file(`${jobPrefix(workspaceId, jobId)}/work.json`)
+  await file.save(JSON.stringify(work), {
+    contentType: 'application/json',
+    ...(expectedGeneration !== undefined
+      ? { preconditionOpts: { ifGenerationMatch: expectedGeneration } }
+      : {}),
+  })
+  return Number(file.metadata?.generation ?? 0)
 }
 
 export async function loadWork(workspaceId: string, jobId: string): Promise<WorkState> {
@@ -625,6 +646,18 @@ export async function loadWork(workspaceId: string, jobId: string): Promise<Work
     .file(`${jobPrefix(workspaceId, jobId)}/work.json`)
     .download()
   return JSON.parse(buf.toString('utf8')) as WorkState
+}
+
+/** 載入進度＋generation（配 saveWork 的樂觀鎖用；讀取釘在同一個 generation 上避免讀寫間被換掉） */
+export async function loadWorkWithGeneration(
+  workspaceId: string,
+  jobId: string,
+): Promise<{ work: WorkState; generation: number }> {
+  const file = getStorage().bucket().file(`${jobPrefix(workspaceId, jobId)}/work.json`)
+  const [meta] = await file.getMetadata()
+  const generation = Number(meta.generation ?? 0)
+  const [buf] = await file.download(generation ? ({ generation } as never) : undefined)
+  return { work: JSON.parse(buf.toString('utf8')) as WorkState, generation }
 }
 
 /** 上傳原始 PDF（掃描檔 OCR 用）。回傳存於 prefix 下的檔名，寫進 job.sourceFile。 */
@@ -653,7 +686,7 @@ export async function loadSourceFile(workspaceId: string, jobId: string, name: s
 export async function deleteJobStorage(workspaceId: string, jobId: string): Promise<void> {
   await getStorage().bucket()
     .deleteFiles({ prefix: `${jobPrefix(workspaceId, jobId)}/` })
-    .catch(() => {})
+    .catch((e) => { console.warn(`[preview-jobs] storage cleanup failed (${jobId}):`, e) })
 }
 
 /**
@@ -669,15 +702,35 @@ export async function deleteJobStorage(workspaceId: string, jobId: string): Prom
 export async function cleanupExpiredPreviewJobs(
   db: Firestore = getDb(),
   limit = 200,
-): Promise<{ scanned: number; deleted: number }> {
+): Promise<{ scanned: number; deleted: number; extended: number; failed: number }> {
   const snap = await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION)
     .where('expiresAt', '<=', Timestamp.now())
     .limit(limit)
     .get()
+  let deleted = 0
+  let extended = 0
+  let failed = 0
   await Promise.all(snap.docs.map(async (doc) => {
-    const data = doc.data() as PreviewJobDoc
-    await deleteJobStorage(data.workspaceId, doc.id)
-    await doc.ref.delete().catch(() => {})
+    const data = doc.data() as PreviewJobDoc & { updatedAt?: { toMillis?: () => number } }
+    // 還在動的 job 不刪、改續命（C-46）：使用者中途去開會/筆電休眠，回來要能接續，
+    // 已付的 OCR 錢不作廢。「還在動」= 30 分鐘內有寫入過（每一步都會戳 updatedAt）。
+    const updatedMs = typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : 0
+    if (data.status === 'processing' && updatedMs > Date.now() - 30 * 60_000) {
+      await doc.ref.update({ expiresAt: Timestamp.fromMillis(Date.now() + JOB_TTL_MS) })
+        .then(() => { extended++ })
+        .catch(() => { failed++ })
+      return
+    }
+    // 照實計數——「deleted 恆等於 scanned」的假回報是健檢明列的反模式
+    try {
+      await deleteJobStorage(data.workspaceId, doc.id)
+      await doc.ref.delete()
+      deleted++
+    }
+    catch (e) {
+      failed++
+      console.warn(`[cleanup-preview-jobs] ${doc.id} delete failed:`, e)
+    }
   }))
-  return { scanned: snap.size, deleted: snap.size }
+  return { scanned: snap.size, deleted, extended, failed }
 }
