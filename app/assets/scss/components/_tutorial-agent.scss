@@ -420,10 +420,12 @@
 }
 
 /* ── 結論先行狀態列：一眼一句話「有沒有事」，視覺語言沿用 .ls-status ── */
-/* 開通英雄卡：面板裡唯一的主色滿版卡——開通沒完成是新帳號最大的事（2026-08-20 拍板），
-   顯眼度刻意壓過所有異常卡與待辦卡。做完（onboardingIncomplete=false）整卡消失 */
+/* 開通英雄卡：面板裡唯一的滿版色卡——開通沒完成是新帳號最大的事（2026-08-20 拍板），
+   顯眼度刻意壓過所有異常卡與待辦卡。做完（onboardingIncomplete=false）整卡消失。
+   ⛔用 danger 紅不用品牌綠：綠在這套設計是「好消息」的長相（08-10 拍板連「差 N 項就能上線」
+   的綠色進度講法都被否決過），最緊急的事要長得像急件——還沒上線＝紅級（08-07 拍板） */
 .ta-hero {
-  background: var(--el-color-primary);
+  background: var(--el-color-danger);
   border-radius: 12px;
   padding: 14px 16px;
   color: #fff;
@@ -494,12 +496,12 @@
     border: 0;
     border-radius: 999px;
     background: #fff;
-    color: var(--el-color-primary);
+    color: var(--el-color-danger);
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
 
-    &:hover { background: var(--el-color-primary-light-9); }
+    &:hover { background: var(--el-color-danger-light-9); }
   }
 }
 
