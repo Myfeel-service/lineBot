@@ -100,6 +100,7 @@ def main() -> None:
     copy = (1120, 1984, 1176, 2032)     # 複製圖示
 
     spec = [
+        (90, None, 900),      # 開場：先看正常畫面（跟使用者瀏覽器裡一樣），再聚焦
         (90, tab, 1600),      # 停：切到 Messaging API 分頁
         (280, None, 130),     # 捲動帶過…
         (560, None, 130),
@@ -134,6 +135,7 @@ def main() -> None:
     bs_tab = (295, 330, 420, 372)        # Basic settings 分頁
     secret_row = (275, 1648, 800, 1712)  # Channel secret 那一列
     spec2 = [
+        (90, None, 900),      # 開場：先看正常畫面，再聚焦
         (90, bs_tab, 1600),   # 停：切到 Basic settings 分頁
         (300, None, 130),     # 捲動帶過…
         (620, None, 130),

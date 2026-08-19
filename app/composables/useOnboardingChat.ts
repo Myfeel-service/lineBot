@@ -348,7 +348,16 @@ export function useOnboardingChat() {
         { label: '回上一步：重貼第一把', value: 'redo-token' },
       ])
       if (how === 'redo-token') {
-        await say('好，把新的 <b>Channel Access Token</b> 整串貼上來。')
+        // 回頭換第一把也要有教學可看（2026-08-19 老闆回饋）——貼錯的人多半正是不熟流程的人
+        const r = await askChoices([
+          { label: '直接貼新的第一把', value: 'paste', primary: true },
+          { label: '重看第一把的教學', value: 'walk' },
+          { label: '不換了，回第二把', value: 'back' },
+        ])
+        if (r === 'back')
+          continue
+        if (r === 'walk')
+          await walkTokenNodes()
         if (await askAndSaveToken(line, { escapeLabel: '不換了，回來貼第二把' }))
           await say('第一把換好了 ✓ 回到第二把。')
         continue
