@@ -200,6 +200,19 @@ export function useSetupStatus() {
     requiredCaps.value.filter(c => c.status === 'incomplete'),
   )
 
+  /**
+   * 開通對話還有沒有事可做——聊天引導按鈕與「進後台自動彈開通」的依據。
+   * 範圍刻意只含開通對話真的會處理的兩件事：接上 LINE、收到第一則訊息。
+   * ⛔別把 aiEnabled 算進來：開 AI 已移出開通（2026-08-19），算進來的話做完開通
+   * 按鈕永遠不消失、人還會一直被拉回一個「已經沒事可做」的對話。
+   * unknown 不算未完成（查不到 ≠ 沒做），沒管理權限的人（開通要 admin）一律 false。
+   */
+  const onboardingIncomplete = computed(() =>
+    canManageSettings.value
+    && loaded.value
+    && (statusMap.value.lineConnected === 'incomplete' || statusMap.value.firstMessageReceived === 'incomplete'),
+  )
+
   /** 沒做完的項目（必要在前、進階在後，沿用註冊表順序） */
   const incompleteAll = computed(() =>
     visibleCapabilities.value.filter(c => c.status === 'incomplete'),
@@ -214,6 +227,7 @@ export function useSetupStatus() {
     capabilities,
     hasItems,
     incompleteRequired,
+    onboardingIncomplete,
     incompleteAll,
     unknownCaps,
     requiredTotal,

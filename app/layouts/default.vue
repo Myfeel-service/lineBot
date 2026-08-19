@@ -133,10 +133,32 @@ const workspaceSwitchLabel = computed(() =>
 
 onMounted(async () => {
   await checkIsSuperAdmin().catch(() => {})
-  if (!user.value || workspaceList.value.length > 0)
-    return
-  await loadWorkspaceList().catch(() => {})
+  if (user.value && workspaceList.value.length === 0)
+    await loadWorkspaceList().catch(() => {})
+  void maybePopOnboarding()
 })
+
+// ── 開通沒做完就每次進後台都拉回開通對話（2026-08-19 拍板） ────
+// 「每次進入」＝每次整頁載入（重新整理、新分頁、隔天回來都會再跳）；
+// 同一次載入內只跳一次——按「之後再說」出來落在對話頁，不能又被抓回去無限循環。
+// 判定吃 useSetupStatus.onboardingIncomplete（接 LINE＋第一則訊息，admin 才會 true），
+// 做完就永遠安靜。⛔用 useState 不用 sessionStorage：F5 重整要重新提醒。
+const setup = useSetupStatus()
+const onboardingPopped = useState<Record<string, boolean>>('onb-auto-popped', () => ({}))
+
+async function maybePopOnboarding() {
+  const wid = workspaceId.value
+  if (!wid || onboardingPopped.value[wid])
+    return
+  await setup.refresh().catch(() => {})
+  if (!setup.onboardingIncomplete.value)
+    return
+  onboardingPopped.value = { ...onboardingPopped.value, [wid]: true }
+  await navigateTo(`/admin/onboarding?workspaceId=${wid}`)
+}
+
+// 同一次載入內切換到另一個沒做完的帳號，也要各提醒一次（各帳號各自記）
+watch(workspaceId, () => { void maybePopOnboarding() })
 
 const ROLE_LABELS: Record<string, string> = {
   owner: '擁有者',

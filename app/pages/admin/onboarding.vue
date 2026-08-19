@@ -92,6 +92,16 @@ function goWorkspace() {
   return navigateTo(onboardingLandingPath(continueWid.value))
 }
 
+// 人已經在開通頁＝這一輪載入不需要再被「自動拉回開通」提醒。
+// 不記的話：按「之後再說」出去 → 版型掛載 → 又被抓回來，要按兩次才逃得掉。
+const onboardingPopped = useState<Record<string, boolean>>('onb-auto-popped', () => ({}))
+watch([() => continueWid.value, activeWorkspaceId], ([cw, aw]) => {
+  for (const w of [cw, aw]) {
+    if (w && !onboardingPopped.value[w])
+      onboardingPopped.value = { ...onboardingPopped.value, [w]: true }
+  }
+}, { immediate: true })
+
 const listEl = ref<HTMLElement | null>(null)
 watch([() => entries.value.length, typing, ask], () => {
   nextTick(() => listEl.value?.scrollTo({ top: listEl.value.scrollHeight }))

@@ -267,10 +267,11 @@
               </div>
             </div>
 
-            <!-- 開通引導接手：必要項還沒完成時給聊天式精靈入口。
-                 同一份劇本、訊號驅動——做過的步驟會自動跳過，從真實缺口接著帶 -->
+            <!-- 開通引導接手：開通範圍（接 LINE＋第一則訊息）沒完成才給入口——
+                 ⛔別改回 incompleteRequired：那含 aiEnabled，開 AI 已移出開通，
+                 用它判定的話做完開通這顆按鈕永遠不消失（2026-08-19） -->
             <button
-              v-if="incompleteRequired.length"
+              v-if="onboardingIncomplete"
               class="ta-gaptour ta-gaptour--onboard"
               @click="goOnboardingChat"
             >
@@ -491,6 +492,7 @@ const {
   hasItems,
   incompleteAll,
   incompleteRequired,
+  onboardingIncomplete,
   unknownCaps,
   requiredTotal,
   requiredDone,
