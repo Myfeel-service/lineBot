@@ -420,6 +420,69 @@
 }
 
 /* ── 結論先行狀態列：一眼一句話「有沒有事」，視覺語言沿用 .ls-status ── */
+/* 開通英雄卡：面板裡唯一的主色滿版卡——開通沒完成是新帳號最大的事（2026-08-20 拍板），
+   顯眼度刻意壓過所有異常卡與待辦卡。做完（onboardingIncomplete=false）整卡消失 */
+.ta-hero {
+  background: var(--el-color-primary);
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: #fff;
+
+  &__title {
+    font-size: 14.5px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  &__steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  &__step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0.95;
+
+    &.is-done { opacity: 0.7; text-decoration: line-through; }
+  }
+
+  &__mark {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 22%);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  &__cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: #fff;
+    color: var(--el-color-primary);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+
+    &:hover { background: var(--el-color-primary-light-9); }
+  }
+}
+
 .ta-verdict {
   display: flex;
   align-items: center;

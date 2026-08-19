@@ -64,6 +64,23 @@
             <span>{{ verdict.text }}</span>
           </div>
 
+          <!-- 開通英雄卡（2026-08-20 拍板）：開通沒完成＝新帳號最大的問題，
+               放結論正下方、全面板最顯眼的設計——列出還缺哪幾步＋一顆大 CTA。
+               有它的時候，下面的待辦清單不再重複列「接上 LINE」（英雄卡代言） -->
+          <div v-if="onboardingIncomplete" class="ta-hero">
+            <div class="ta-hero__title">開通還沒完成——機器人還不能上線</div>
+            <div class="ta-hero__steps">
+              <div v-for="st in onboardingSteps" :key="st.id" class="ta-hero__step" :class="{ 'is-done': st.done }">
+                <span class="ta-hero__mark">{{ st.done ? '✓' : '○' }}</span>
+                <span>{{ st.label }}</span>
+              </div>
+            </div>
+            <button type="button" class="ta-hero__cta" @click="goOnboardingChat">
+              <el-icon><ChatDotRound /></el-icon>
+              <span>用聊天引導完成開通 →</span>
+            </button>
+          </div>
+
           <!-- agent 訊息泡泡：依真實設定狀態講白話文。導覽完成／異常修復的閉環回應
                也在這裡講——一個 agent 一個聲音，三個區塊各自代言只會像三個人在說話 -->
           <div class="ta-msg">
@@ -267,24 +284,12 @@
               </div>
             </div>
 
-            <!-- 開通引導接手：開通範圍（接 LINE＋第一則訊息）沒完成才給入口——
-                 ⛔別改回 incompleteRequired：那含 aiEnabled，開 AI 已移出開通，
-                 用它判定的話做完開通這顆按鈕永遠不消失（2026-08-19） -->
-            <button
-              v-if="onboardingIncomplete"
-              class="ta-gaptour ta-gaptour--onboard"
-              @click="goOnboardingChat"
-            >
-              <el-icon><ChatDotRound /></el-icon>
-              <span>用聊天引導完成開通 →</span>
-            </button>
-
             <!-- 開通步驟：必要項照依賴順序編號（先接 LINE 才輪得到 AI）。
                  跟加分項拆成兩塊——同重量的卡混排讀不出「先做哪個」（2026-08-07） -->
-            <div v-if="incompleteRequired.length" class="ta-todos">
-              <div class="ta-todos__head ta-todos__head--required">先做這 {{ incompleteRequired.length }} 件，機器人才會動</div>
+            <div v-if="todosForList.length" class="ta-todos">
+              <div class="ta-todos__head ta-todos__head--required">先做這 {{ todosForList.length }} 件，機器人才會動</div>
               <button
-                v-for="(cap, i) in incompleteRequired"
+                v-for="(cap, i) in todosForList"
                 :key="cap.id"
                 class="ta-todo ta-todo--required"
                 @click="onFix(cap)"
@@ -493,6 +498,7 @@ const {
   incompleteAll,
   incompleteRequired,
   onboardingIncomplete,
+  onboardingSteps,
   unknownCaps,
   requiredTotal,
   requiredDone,
@@ -538,6 +544,13 @@ function refreshAll(force = false) {
 const busy = computed(() => loading.value || alertsLoading.value)
 
 /** 紅點：現在壞著的 + 必要設定沒做的。兩者都是「不處理就有事」，合成一個數字才不會互相遮蔽 */
+/** 英雄卡在場時「接上 LINE」由它代言，必要待辦不再重複列同一件事 */
+const todosForList = computed(() =>
+  onboardingIncomplete.value
+    ? incompleteRequired.value.filter(c => c.id !== 'lineConnected')
+    : incompleteRequired.value,
+)
+
 const badgeCount = computed(() => criticalAlerts.value.length + incompleteRequired.value.length)
 const badgeLabel = computed(() => {
   const parts: string[] = []

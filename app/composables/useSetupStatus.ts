@@ -213,6 +213,12 @@ export function useSetupStatus() {
     && (statusMap.value.lineConnected === 'incomplete' || statusMap.value.firstMessageReceived === 'incomplete'),
   )
 
+  /** 開通範圍的兩個里程碑（小幫手英雄卡列「還缺哪幾步」用；跟 onboardingIncomplete 同一把尺） */
+  const onboardingSteps = computed(() => ([
+    { id: 'lineConnected', label: '接上 LINE 官方帳號', done: statusMap.value.lineConnected === 'done' },
+    { id: 'firstMessageReceived', label: '收到第一則訊息（傳話測試）', done: statusMap.value.firstMessageReceived === 'done' },
+  ]))
+
   /** 沒做完的項目（必要在前、進階在後，沿用註冊表順序） */
   const incompleteAll = computed(() =>
     visibleCapabilities.value.filter(c => c.status === 'incomplete'),
@@ -228,6 +234,7 @@ export function useSetupStatus() {
     hasItems,
     incompleteRequired,
     onboardingIncomplete,
+    onboardingSteps,
     incompleteAll,
     unknownCaps,
     requiredTotal,
