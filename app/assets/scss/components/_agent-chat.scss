@@ -97,16 +97,35 @@
     margin-top: 6px;
   }
 
-  /* 示意圖：縮圖收在卡片裡（點了走 el-image 的放大檢視，不要一進場就佔滿對話） */
+  /* 示意圖：整張顯示、點了走 el-image 的放大檢視。
+     ⛔ 不要在這裡設 max-height：el-image 自帶 overflow:hidden，高度上限會變成
+     「裁掉下半張」而不是「縮小」——2026-08-19 就這樣把標註紅框整個切掉過。
+     要控制高度請去把來源圖裁得更扁，不要在 CSS 砍。 */
   &__shot {
     display: block;
     margin: 6px 0 2px;
     width: 100%;
-    max-height: 190px;
+    height: auto;
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     background: var(--el-fill-color-lighter);
     cursor: zoom-in;
+
+    .el-image__inner {
+      height: auto;
+    }
+  }
+
+  /* 每一步自己的入口連結：放在那一步底下，不要只在卡片最下面擺一顆
+     （「下面有連結」等於要人自己往下找，第一步就該點得到） */
+  &__step-link {
+    display: inline-block;
+    margin: 4px 0 2px;
+    color: var(--el-color-primary);
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
   }
 
   /* 岔路（例：清單裡沒看到你的帳號？）——語氣退一階，不要跟主步驟搶 */
@@ -135,6 +154,23 @@
     text-decoration: none;
 
     &:hover { text-decoration: underline; }
+  }
+}
+
+/* 單張示意圖卡（節點式教學一步一張圖；也吃循環動畫 webp）。
+   同 __shot 的鐵律：⛔別設 max-height——el-image 的 overflow:hidden 會「裁掉」不是「縮小」 */
+.agm-shot {
+  align-self: flex-start;
+  display: block;
+  width: 88%;
+  height: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-fill-color-lighter);
+  cursor: zoom-in;
+
+  .el-image__inner {
+    height: auto;
   }
 }
 

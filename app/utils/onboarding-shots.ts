@@ -10,10 +10,10 @@
  * 「這批圖什麼時候拍的、LINE 後台改版了沒」記在 README。
  */
 export const ONBOARDING_SHOTS = {
-  /** LINE Business ID 登入頁：選「LINE帳號」那顆綠色按鈕 */
-  consoleLogin: '/onboarding/line-business-id-login.png',
   /** LINE Developers 帳號清單：認卡片下方「Messaging API」小字（同名可能有兩張卡） */
   consoleChannel: '/onboarding/line-console-channel.png',
+  /** 循環動畫：切到 Messaging API 分頁 → 捲到最底 → 按 Issue 發鑰匙 → 按複製 */
+  getTokenAnim: '/onboarding/line-console-get-token.webp',
   /** Messaging API 分頁最下方：發第一把鑰匙（Issue / Reissue） */
   issueToken: '/onboarding/line-console-issue-token.png',
   /** 官方帳號後台：設定 → Messaging API 按啟用（清單裡找不到帳號時的岔路） */

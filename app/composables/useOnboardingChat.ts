@@ -251,45 +251,91 @@ export function useOnboardingChat() {
     }
   }
 
+  /** 節點式教學的一步：一句話＋（選配）連結／示意圖／岔路 */
+  interface WalkNode {
+    html: string
+    href?: string
+    hrefLabel?: string
+    image?: string
+    alt?: string
+    /** 岔路按鈕：走完岔路回到同一步（例：清單裡沒看到帳號） */
+    detour?: { label: string, run: () => Promise<void> }
+  }
+
+  /**
+   * 節點式教學（2026-08-19 老闆拍板）：一次只亮一步、按「下一步」前進，
+   * 一步一張大圖不用為卡片長度縮圖。⛔跟先前否決的「問好了嗎」不同——
+   * 這裡不假裝驗證任何事，只是使用者自己控節奏的翻頁；每一步都留「直接貼上」的出口，
+   * 會的人不用被牽著走完。
+   */
+  async function walkNodes(nodes: WalkNode[], lastLabel: string, exitLabel: string) {
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i]!
+      const isLast = i === nodes.length - 1
+      await say(`<b>${i + 1}/${nodes.length}</b>｜${n.html}`)
+      if (n.href)
+        card({ kind: 'link', label: n.hrefLabel || '打開連結', href: n.href })
+      if (n.image)
+        card({ kind: 'image', src: n.image, alt: n.alt || '' })
+      while (true) {
+        const options: AgentChoice[] = [
+          { label: isLast ? lastLabel : '下一步', value: 'next', primary: true },
+        ]
+        if (n.detour)
+          options.push({ label: n.detour.label, value: 'detour' })
+        if (!isLast)
+          options.push({ label: exitLabel, value: 'exit' })
+        const c = await askChoices(options)
+        if (c === 'detour' && n.detour) {
+          await n.detour.run()
+          continue // 岔路走完回到同一步，繼續問「下一步」
+        }
+        if (c === 'exit')
+          return
+        break
+      }
+    }
+  }
+
   async function stepToken(line: LineStatus) {
     if (line.tokenConfigured)
       return
     await say('接下來要從 LINE 拿兩把鑰匙，都在 <b>LINE Developers</b> 後台。第一把：<b>Channel Access Token</b>——機器人要靠它替你傳訊息。')
-    card({
-      kind: 'help',
-      summary: '怎麼拿？',
-      steps: [
+    const how = await askChoices([
+      { label: '教我一步步拿', value: 'walk', primary: true },
+      { label: '我會拿，直接貼上', value: 'paste' },
+    ])
+    if (how === 'walk') {
+      await walkNodes([
         {
-          text: '打開 LINE Developers 並登入（下面有連結），登入方式選「LINE帳號」',
-          image: ONBOARDING_SHOTS.consoleLogin,
-          alt: 'LINE Business ID 登入頁，圈出綠色的 LINE帳號 按鈕',
+          // 登入方式刻意不指定：不是每個人都用 LINE 帳號（也可能用電子郵件的商用帳號）
+          html: '打開 LINE Developers 並登入——用你平常的方式登入就可以（第一次通常選「LINE帳號」）。',
+          href: 'https://developers.line.biz/console/',
+          hrefLabel: '打開 LINE Developers ↗',
         },
         {
           // 真實畫面查證過的陷阱：同一個帳號會有兩張同名卡（Messaging API／LINE Login），
           // 靠名字選五五開會選錯——選錯的下場是拿到另一把不能用的鑰匙
-          text: '選你的官方帳號——同名卡片可能有兩張，點下面掛著「Messaging API」小字的那張',
+          html: '選你的官方帳號。<b>同名卡片可能有兩張</b>——認卡片下面掛著「Messaging API」小字的那張，點進去。',
           image: ONBOARDING_SHOTS.consoleChannel,
           alt: '帳號清單頁，圈出卡片下方的 Messaging API 小字',
-          // 「帳號沒出現在清單」只有一部分人會遇到，但遇到的人不知道要跑去另一個後台。
-          // 收合起來：沒遇到的人不用讀，遇到的人點開就有另一個後台的畫面
-          aside: {
-            summary: '清單裡沒看到你的帳號？',
-            text: '那是還沒啟用的關係。回官方帳號後台的「設定 → Messaging API」按啟用，它才會出現在這個清單裡。',
-            image: ONBOARDING_SHOTS.oamEnableMessagingApi,
-            alt: '官方帳號後台的設定頁，圈出 Messaging API 的啟用按鈕',
+          detour: {
+            label: '清單裡沒看到我的帳號？',
+            run: async () => {
+              await say('那是還沒啟用的關係。到官方帳號後台的「設定 → Messaging API」按<b>啟用</b>，它才會出現在剛剛的清單裡。弄好回來按「下一步」繼續。')
+              card({ kind: 'link', label: '打開官方帳號後台 ↗', href: 'https://manager.line.biz/' })
+              card({ kind: 'image', src: ONBOARDING_SHOTS.oamEnableMessagingApi, alt: '官方帳號後台的設定頁，圈出 Messaging API 的啟用按鈕' })
+            },
           },
         },
-        { text: '進去後，上排切到「Messaging API」分頁，捲到最下方' },
         {
-          text: 'Channel access token 按「Issue」發一把',
-          image: ONBOARDING_SHOTS.issueToken,
-          alt: 'Messaging API 分頁最下方，圈出發行 Channel access token 的按鈕',
+          // 老闆拍板：切分頁→捲到底→發鑰匙→複製是一氣呵成的動作，合成一節點配循環動畫
+          html: '照下面的動畫做：切到「<b>Messaging API</b>」分頁 → 捲到最下面 → Channel access token 按「<b>Issue</b>」發一把 → 按<b>複製</b>圖示整串複製。',
+          image: ONBOARDING_SHOTS.getTokenAnim,
+          alt: '循環動畫：切到 Messaging API 分頁、捲到最下方、按 Issue 發鑰匙、按複製',
         },
-        { text: '整串複製，回來貼上' },
-      ],
-      href: 'https://developers.line.biz/console/',
-      hrefLabel: '打開 LINE Developers ↗',
-    })
+      ], '拿到了，來貼上', '我拿到了，直接貼上')
+    }
     await askAndSaveToken(line)
   }
 
@@ -615,7 +661,11 @@ export function useOnboardingChat() {
         kind: 'help',
         summary: '怎麼貼？',
         steps: [
-          { text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁（下面有連結）' },
+          {
+            text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁',
+            href: 'https://developers.line.biz/console/',
+            hrefLabel: '打開 LINE Developers ↗',
+          },
           {
             text: 'Webhook URL 欄位貼上剛剛複製的網址，按「Update」存檔',
             image: ONBOARDING_SHOTS.webhookUrl,
@@ -623,8 +673,6 @@ export function useOnboardingChat() {
           },
           { text: '同一區把「Use webhook」開關打開——只貼網址沒打開，訊息還是不會送過來' },
         ],
-        href: 'https://developers.line.biz/console/',
-        hrefLabel: '打開 LINE Developers ↗',
       })
     }
 
@@ -649,7 +697,11 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '怎麼關？',
       steps: [
-        { text: '打開 LINE 官方帳號後台（下面有連結；這是另一個後台，跟剛剛那個不一樣）' },
+        {
+          text: '打開 LINE 官方帳號後台——這是另一個後台，跟剛剛那個不一樣',
+          href: 'https://manager.line.biz/',
+          hrefLabel: '打開官方帳號後台 ↗',
+        },
         { text: '點右上角「設定」，左邊選單選「回應設定」' },
         {
           // 2026-08-19 對實際畫面校正過：新版介面沒有「聊天機器人」那組選項了，
@@ -659,8 +711,6 @@ export function useOnboardingChat() {
           alt: '官方帳號後台的回應設定頁，圈出「手動聊天」選項',
         },
       ],
-      href: 'https://manager.line.biz/',
-      hrefLabel: '打開官方帳號後台 ↗',
     })
 
     // ── 見證時刻：等第一則訊息 ──

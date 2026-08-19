@@ -16,16 +16,21 @@
 
 | 檔名 | 內容 | 紅框圈什麼 | 來源檔 |
 |---|---|---|---|
-| `line-business-id-login.png` | LINE Business ID 登入頁 | 綠色「LINE帳號」按鈕 | `src-login.jpg` |
 | `line-console-channel.png` | LINE Developers 帳號清單 | 卡片下方的「Messaging API」**小字**（⛔同名可能兩張卡，認小字不認名稱） | `src-channel-list.jpg` |
+| `line-console-get-token.webp` | **循環動畫**：切 Messaging API 分頁 → 捲到底 → 按 Issue → 按複製 | 三個停格各圈一處（分頁／Issue 鈕／複製圖示） | `src-messaging-api.jpg` |
 | `line-console-issue-token.png` | Messaging API 分頁最底 | Channel access token 的 Issue／Reissue 鈕 | `src-messaging-api.jpg` |
 | `line-console-channel-secret.png` | Messaging API 頻道的 Basic settings | Channel secret 那一列 | `src-basic-settings.jpg` |
 | `line-console-webhook-url.png` | Messaging API 分頁的 Webhook settings | ①貼網址的欄位 ②Use webhook 開關 | `src-messaging-api.jpg` |
 | `oam-auto-reply.png` | 官方帳號後台 → 設定 → 回應設定 | 「手動聊天」選項（＝關掉內建自動回應的新版做法） | `src-oam-response.jpg` |
 | `oam-enable-messaging-api.png` | 官方帳號後台 → 設定 → Messaging API 的啟用鈕 | 啟用按鈕 | **尚缺**——只用在「清單沒看到帳號」的岔路，補上即自動顯示 |
 
-裁切、紅框、編號徽章的產線腳本在 session scratchpad 的 `make-shots.py`（一次性工具，
-座標寫在腳本裡）；要重做時用任何工具照上表重產同名 PNG 即可。
+**全部由 `scripts/make-onboarding-shots.py` 產生**（需要 Python3＋Pillow）：裁切座標、紅框、
+編號徽章、動畫的停格與捲動節奏都寫在腳本裡。換圖流程＝重截 → 蓋掉來源檔 → 對新圖調座標 →
+重跑腳本。⛔動畫是「整頁截圖裁不同捲動位置」拼出來的，不是錄影——換截圖重跑即可重製，
+別改成錄螢幕（錄的沒人會重錄，過期了只能整段作廢）。
+
+（`src-login.jpg` 登入頁：2026-08-19 拍板不配圖——登入頁人人認得，而且圈哪顆按鈕都會誤導
+用其他方式登入的人；文案改講「用你平常的方式登入」。來源檔留著。）
 
 ## 來源檔備註（`docs/onboarding-shots-src/`）
 
@@ -54,3 +59,4 @@ LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換�
 | 日期 | 換了哪幾張 | 備註 |
 |---|---|---|
 | 2026-08-19 | 首批六張（老闆截圖、Claude 裁切標註） | 岔路那張（oam-enable-messaging-api）尚缺。⚠️這批圖同時抓到教學文案過期：回應設定新版介面沒有「聊天機器人」選項，正確操作是回應方式選「手動聊天」，劇本文案已同步改 |
+| 2026-08-19 ② | 拿鑰匙段改節點式教學：登入圖移除、新增 get-token 循環動畫；產線收進 `scripts/make-onboarding-shots.py` | 老闆拍板：一次一步＋「下一步」翻頁；切分頁→捲底→Issue→複製合成一支動畫（63KB） |

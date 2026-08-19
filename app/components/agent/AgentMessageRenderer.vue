@@ -17,6 +17,14 @@
     <ol>
       <li v-for="(s, i) in entry.msg.steps" :key="i" class="agm-help__step">
         <span>{{ s.text }}</span>
+        <!-- 這一步自己的入口：例如「打開 LINE Developers」就在第一步直接點得到 -->
+        <a
+          v-if="s.href"
+          class="agm-help__step-link"
+          :href="s.href"
+          target="_blank"
+          rel="noopener"
+        >{{ s.hrefLabel || '打開連結 ↗' }}</a>
         <!-- 圖檔還沒放進 public/onboarding/ 時 shotReady 永遠是 false:只少一張圖,不破版 -->
         <el-image
           v-if="s.image && shotReady(s.image)"
@@ -50,6 +58,17 @@
       rel="noopener"
     >{{ entry.msg.hrefLabel || '打開連結 ↗' }}</a>
   </details>
+
+  <!-- 單張示意圖卡（節點式教學）：載不到檔整張不畫，不留空殼 -->
+  <el-image
+    v-else-if="entry.msg.kind === 'image' && shotReady(entry.msg.src)"
+    class="agm-shot"
+    :src="entry.msg.src"
+    :alt="entry.msg.alt"
+    fit="contain"
+    :preview-src-list="[entry.msg.src]"
+    :preview-teleported="true"
+  />
 
   <!-- 站內連結卡：走 NuxtLink 同分頁導航（用 <a> 會整頁重載） -->
   <NuxtLink
@@ -149,6 +168,10 @@ const shotReady = (src: string) => readyShots.value.includes(src)
 
 onMounted(() => {
   const msg = props.entry.msg
+  if (msg.kind === 'image') {
+    probeShot(msg.src)
+    return
+  }
   if (msg.kind !== 'help')
     return
   for (const s of msg.steps) {

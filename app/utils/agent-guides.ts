@@ -114,13 +114,15 @@ const liffEndpointGuide: AgentGuideDef = {
           kind: 'help',
           summary: '怎麼改？',
           steps: [
-            { text: '打開 LINE Developers 並登入（下面有連結）' },
+            {
+              text: '打開 LINE Developers 並登入',
+              href: 'https://developers.line.biz/console/',
+              hrefLabel: '打開 LINE Developers ↗',
+            },
             { text: '選你的官方帳號 → LIFF 分頁' },
             { text: '點進上面列出的那個 LIFF' },
             { text: 'Endpoint URL 換成剛剛那串，按 Update／存檔' },
           ],
-          href: 'https://developers.line.biz/console/',
-          hrefLabel: '打開 LINE Developers ↗',
         })
       },
     },
@@ -415,7 +417,11 @@ async function adviseTokenReissue(c: AgentGuideCtx) {
     kind: 'help',
     summary: '怎麼重發？',
     steps: [
-      { text: '打開 LINE Developers 並登入（下面有連結）' },
+      {
+        text: '打開 LINE Developers 並登入',
+        href: 'https://developers.line.biz/console/',
+        hrefLabel: '打開 LINE Developers ↗',
+      },
       {
         // 同名卡片可能有兩張（Messaging API／LINE Login），認小字不認名稱——
         // 點錯那張拿到的是另一把不能用的鑰匙
@@ -499,7 +505,11 @@ const lineWebhookGuide: AgentGuideDef = {
               kind: 'help',
               summary: '怎麼貼？',
               steps: [
-                { text: '打開 LINE Developers 並登入（下面有連結）' },
+                {
+                  text: '打開 LINE Developers 並登入',
+                  href: 'https://developers.line.biz/console/',
+                  hrefLabel: '打開 LINE Developers ↗',
+                },
                 { text: '選你的官方帳號 → Messaging API 分頁' },
                 {
                   text: 'Webhook URL 欄位貼上上面那串，按「Update」存檔',

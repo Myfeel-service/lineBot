@@ -28,6 +28,13 @@ export interface AgentHelpStep {
   /** 圖片替代文字（讀螢幕軟體會唸）。有圖就要寫，別讓它只唸出檔名 */
   alt?: string
   /**
+   * 這一步自己的入口連結（另開分頁）。
+   * 「打開某某後台」這種步驟一律用它——把連結擺在卡片最下面、步驟裡寫「下面有連結」，
+   * 等於要人自己往下找一次，第一步就該直接點得到。
+   */
+  href?: string
+  hrefLabel?: string
+  /**
    * 岔路：預設收合的補充。用在「只有一部分人會遇到」的情況
    * （例：清單裡找不到自己的帳號），塞進主步驟會害所有人多讀一段不相干的字。
    * 岔路常常要跑去另一個後台，所以它自己也可以配一張圖。
@@ -42,6 +49,11 @@ export type AgentMsg =
   | { kind: 'help'; summary: string; steps: AgentHelpStep[]; href?: string; hrefLabel?: string }
   /** 連結卡。internal＝站內頁（走 NuxtLink 同分頁導航）；否則視為外部連結另開分頁 */
   | { kind: 'link'; label: string; href: string; internal?: boolean }
+  /**
+   * 單張示意圖卡（節點式教學「一步一張圖」用；也吃循環動畫 webp）。
+   * 檔案載不到就整張不顯示——不破圖，所以劇本可以先接圖、截圖之後補檔。
+   */
+  | { kind: 'image'; src: string; alt: string }
   /** 一鍵複製卡（例：Webhook 網址） */
   | { kind: 'copy'; label: string; value: string }
   /** 進行中/成功/失敗/略過 狀態卡。skipped 是使用者的正當選擇，語意中性——別用 fail 的警告色裝它 */
