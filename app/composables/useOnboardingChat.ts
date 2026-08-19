@@ -112,6 +112,15 @@ export function useOnboardingChat() {
     }
   }
 
+  function clearSkip(key: SkipKey) {
+    try {
+      const next = skips()
+      delete next[key]
+      localStorage.setItem(`onb-skips:${wid.value}`, JSON.stringify(next))
+    }
+    catch { /* 同 markSkip：寫不進去就算了 */ }
+  }
+
   function markSkip(key: SkipKey) {
     try {
       localStorage.setItem(`onb-skips:${wid.value}`, JSON.stringify({ ...skips(), [key]: true }))
@@ -517,6 +526,138 @@ export function useOnboardingChat() {
     }
   }
 
+
+  /**
+   * 見證時刻：等第一則訊息（含 90 秒排障、驗 webhook、改前面的設定）。
+   * 抽成獨立段落是為了可重入——結尾成績單的「回去做傳話測試」要能直接跳回這裡
+   *（2026-08-20 老闆抓到：最需要上一步的正是結尾那頁，之前只有中途選單能回頭）。
+   */
+  async function stepFirstMessageWait(
+    line: LineStatus,
+    setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>,
+    webhookUrl: string,
+  ) {
+    progress.value = 3
+    await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
+    const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
+
+    // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
+    // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
+    // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
+    const poll = pollFirstMessage()
+    const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
+
+    // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
+    let hintTimer: ReturnType<typeof setTimeout> | undefined
+    const stalledHint = new Promise<{ kind: 'stalled' }>((r) => {
+      hintTimer = setTimeout(() => r({ kind: 'stalled' }), FIRST_MSG_HINT_MS)
+    })
+    let hintPending = true
+
+    const waitOptions: AgentChoice[] = [{ label: '先跳過測試', value: 'skip' }]
+    const stallOptions: AgentChoice[] = [
+      { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
+      { label: '檢查好了，繼續等', value: 'wait' },
+      { label: '改前面的設定', value: 'redo' },
+      { label: '先跳過測試', value: 'skip' },
+    ]
+    let askOptions = waitOptions
+
+    let received: FirstMessageRes | null = null
+    while (true) {
+      // 使用者的回答另存一份：race 被計時器搶贏的那一刻人可能剛好按了按鈕，
+      // 只看 race 結果會把人家剛說的話整個無視掉。
+      // （讀取走 answer()：TS 的流程分析看不到 closure 裡的賦值，直接讀會被窄化成 null）
+      let answered: AgentAskResult | null = null
+      const answer = () => answered
+      const asked = waitAsk({ kind: 'choices', options: askOptions })
+      // dispose 時 waitAsk 會 reject（取消例外）：這裡接住當成「answered」，
+      // 下一行的 isDisposed() 檢查會直接 break——別讓它變成 unhandled rejection
+      void asked.then((r) => { answered = r }).catch(() => {})
+
+      const arms: Promise<{ kind: 'received', r: FirstMessageRes | null } | { kind: 'answered' } | { kind: 'stalled' }>[] = [
+        polled,
+        asked.then(() => ({ kind: 'answered' as const }), () => ({ kind: 'answered' as const })),
+      ]
+      if (hintPending)
+        arms.push(stalledHint)
+      const winner = await Promise.race(arms)
+
+      if (isDisposed())
+        break
+
+      if (winner.kind === 'received') {
+        settle({ type: 'cancelled' }) // 收掉待答按鈕
+        received = winner.r
+        break
+      }
+
+      if (winner.kind === 'stalled') {
+        hintPending = false
+        if (!answer()) {
+          settle({ type: 'cancelled' })
+          // ④ 是真實災情：第二把鑰匙貼錯時，訊息其實有送到、被我們自己丟掉，
+          //    人在這裡乾等而三個原因沒有一個是他的病因。現在「幫我再驗一次」查得出來了
+          await say('還沒等到訊息。最常見的原因有四個：① LINE Developers 那邊 Webhook URL 貼了但<b>還沒按存檔</b> ②「Use webhook」開關沒打開 ③手機加好友加到別的帳號 ④第二把鑰匙（Channel Secret）貼錯，訊息會被我們當成假冒的丟掉。按下面「幫我再驗一次」，這四種我都會幫你看——這段時間我也還在聽，訊息一進來就會告訴你。')
+          askOptions = stallOptions
+          continue
+        }
+        // 撞上使用者同一刻的點擊：往下照使用者的選擇處理
+      }
+
+      const a = answer()
+      const val = a?.type === 'choice' ? a.value : ''
+      if (val === 'skip')
+        break
+      if (val === 'verify') {
+        const res = await verifyAndAdvise(webhookUrl, line)
+        if (res === 'ok')
+          await say('接線是通的——再用手機傳一句話試試，我繼續等。')
+        askOptions = stallOptions
+        continue
+      }
+      if (val === 'wait') {
+        askOptions = waitOptions
+        continue
+      }
+      if (val === 'redo') {
+        // 重貼期間輪詢照跑（訊息一進來下一輪 race 就接走），改完回排障選單
+        await offerRedo(line)
+        askOptions = stallOptions
+        continue
+      }
+      // 其他（cancelled／不認得的值）：重掛按鈕繼續等
+    }
+    poll.stop() // 舊輪詢器到此必停（跳過出口時它還睡在 sleep 裡，換代後醒來就會退出）
+    clearTimeout(hintTimer)
+    if (isDisposed())
+      return
+
+    if (received) {
+      const at = received.at ? new Date(received.at) : null
+      const timeLabel = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : ''
+      const typeLabel = FIRST_MSG_TYPE_LABELS[received.messageType || '']
+      // 三分法：有原文引原文；認得的非文字型別講型別；其他（客人只點了選單、
+      // 原文被最近 10 則洗掉…）只說「收到」——這張卡是開通的情感高點，寧可講少，不能講錯
+      const title = received.messageType === 'text' && received.text
+        ? `「${received.text}」`
+        : typeLabel ? `（${typeLabel}訊息）` : '（收到你的訊息）'
+      updateMsg(waitId, {
+        kind: 'highlight',
+        label: '收到第一則訊息',
+        title,
+        meta: timeLabel ? `${timeLabel} · 來自你的 LINE` : '來自你的 LINE',
+      })
+      await say('收到了！你的機器人正式活起來了 🎉 之後客人傳的每一句話，都會出現在後台的「對話」頁。')
+      setup.firstMessageReceived = 'done'
+    }
+    else {
+      updateMsg(waitId, { kind: 'status', state: 'skipped', text: '略過測試——之後隨時可以加好友傳一句話試試' })
+      markSkip('firstMsg')
+    }
+    progress.value = 3
+  }
+
   /**
    * 「改前面的設定」：聊天中主動回頭重做（2026-08-20 拍板）。
    * 不做精靈式的每步上一步——聊天不是表單，回上一步的實際需求是「重做某個動作」。
@@ -744,126 +885,7 @@ export function useOnboardingChat() {
       ], '我會關，直接測試')
     }
 
-    // ── 見證時刻：等第一則訊息 ──
-    progress.value = 3
-    await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
-    const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
-
-    // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
-    // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
-    // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
-    const poll = pollFirstMessage()
-    const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
-
-    // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
-    let hintTimer: ReturnType<typeof setTimeout> | undefined
-    const stalledHint = new Promise<{ kind: 'stalled' }>((r) => {
-      hintTimer = setTimeout(() => r({ kind: 'stalled' }), FIRST_MSG_HINT_MS)
-    })
-    let hintPending = true
-
-    const waitOptions: AgentChoice[] = [{ label: '先跳過測試', value: 'skip' }]
-    const stallOptions: AgentChoice[] = [
-      { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
-      { label: '檢查好了，繼續等', value: 'wait' },
-      { label: '改前面的設定', value: 'redo' },
-      { label: '先跳過測試', value: 'skip' },
-    ]
-    let askOptions = waitOptions
-
-    let received: FirstMessageRes | null = null
-    while (true) {
-      // 使用者的回答另存一份：race 被計時器搶贏的那一刻人可能剛好按了按鈕，
-      // 只看 race 結果會把人家剛說的話整個無視掉。
-      // （讀取走 answer()：TS 的流程分析看不到 closure 裡的賦值，直接讀會被窄化成 null）
-      let answered: AgentAskResult | null = null
-      const answer = () => answered
-      const asked = waitAsk({ kind: 'choices', options: askOptions })
-      // dispose 時 waitAsk 會 reject（取消例外）：這裡接住當成「answered」，
-      // 下一行的 isDisposed() 檢查會直接 break——別讓它變成 unhandled rejection
-      void asked.then((r) => { answered = r }).catch(() => {})
-
-      const arms: Promise<{ kind: 'received', r: FirstMessageRes | null } | { kind: 'answered' } | { kind: 'stalled' }>[] = [
-        polled,
-        asked.then(() => ({ kind: 'answered' as const }), () => ({ kind: 'answered' as const })),
-      ]
-      if (hintPending)
-        arms.push(stalledHint)
-      const winner = await Promise.race(arms)
-
-      if (isDisposed())
-        break
-
-      if (winner.kind === 'received') {
-        settle({ type: 'cancelled' }) // 收掉待答按鈕
-        received = winner.r
-        break
-      }
-
-      if (winner.kind === 'stalled') {
-        hintPending = false
-        if (!answer()) {
-          settle({ type: 'cancelled' })
-          // ④ 是真實災情：第二把鑰匙貼錯時，訊息其實有送到、被我們自己丟掉，
-          //    人在這裡乾等而三個原因沒有一個是他的病因。現在「幫我再驗一次」查得出來了
-          await say('還沒等到訊息。最常見的原因有四個：① LINE Developers 那邊 Webhook URL 貼了但<b>還沒按存檔</b> ②「Use webhook」開關沒打開 ③手機加好友加到別的帳號 ④第二把鑰匙（Channel Secret）貼錯，訊息會被我們當成假冒的丟掉。按下面「幫我再驗一次」，這四種我都會幫你看——這段時間我也還在聽，訊息一進來就會告訴你。')
-          askOptions = stallOptions
-          continue
-        }
-        // 撞上使用者同一刻的點擊：往下照使用者的選擇處理
-      }
-
-      const a = answer()
-      const val = a?.type === 'choice' ? a.value : ''
-      if (val === 'skip')
-        break
-      if (val === 'verify') {
-        const res = await verifyAndAdvise(webhookUrl, line)
-        if (res === 'ok')
-          await say('接線是通的——再用手機傳一句話試試，我繼續等。')
-        askOptions = stallOptions
-        continue
-      }
-      if (val === 'wait') {
-        askOptions = waitOptions
-        continue
-      }
-      if (val === 'redo') {
-        // 重貼期間輪詢照跑（訊息一進來下一輪 race 就接走），改完回排障選單
-        await offerRedo(line)
-        askOptions = stallOptions
-        continue
-      }
-      // 其他（cancelled／不認得的值）：重掛按鈕繼續等
-    }
-    poll.stop() // 舊輪詢器到此必停（跳過出口時它還睡在 sleep 裡，換代後醒來就會退出）
-    clearTimeout(hintTimer)
-    if (isDisposed())
-      return
-
-    if (received) {
-      const at = received.at ? new Date(received.at) : null
-      const timeLabel = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : ''
-      const typeLabel = FIRST_MSG_TYPE_LABELS[received.messageType || '']
-      // 三分法：有原文引原文；認得的非文字型別講型別；其他（客人只點了選單、
-      // 原文被最近 10 則洗掉…）只說「收到」——這張卡是開通的情感高點，寧可講少，不能講錯
-      const title = received.messageType === 'text' && received.text
-        ? `「${received.text}」`
-        : typeLabel ? `（${typeLabel}訊息）` : '（收到你的訊息）'
-      updateMsg(waitId, {
-        kind: 'highlight',
-        label: '收到第一則訊息',
-        title,
-        meta: timeLabel ? `${timeLabel} · 來自你的 LINE` : '來自你的 LINE',
-      })
-      await say('收到了！你的機器人正式活起來了 🎉 之後客人傳的每一句話，都會出現在後台的「對話」頁。')
-      setup.firstMessageReceived = 'done'
-    }
-    else {
-      updateMsg(waitId, { kind: 'status', state: 'skipped', text: '略過測試——之後隨時可以加好友傳一句話試試' })
-      markSkip('firstMsg')
-    }
-    progress.value = 3
+    await stepFirstMessageWait(line, setup, webhookUrl)
   }
 
   /** 等第一則訊息：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退） */
@@ -874,7 +896,7 @@ export function useOnboardingChat() {
     }, POLL_INTERVAL_MS)
   }
 
-  async function stepDone() {
+  async function stepDone(line: LineStatus) {
     progress.value = 4
     // 摘要不用劇本自己的記憶，重新跟後端要一次真實訊號——原則：agent 只轉述，不臆測。
     // 查不到就「不出成績單」：把剛做完的事顯示成沒做，比沒有摘要嚴重得多（查不到≠沒做）。
@@ -918,17 +940,40 @@ export function useOnboardingChat() {
     // 結尾刻意一個字都不提知識庫／AI（2026-08-19 拍板二修：AI 的事完全不進開通，
     // 連結尾指路也不要）——接下來要做什麼，由右下角小幫手的清單接手盯
     await say('接通完成 🎉 接下來交給右下角的<b>小幫手</b>——下一步要做什麼、哪裡怪怪的，它都會主動說，點它隨時找得到我。')
-    // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
-    // 對話頁裡就有他剛傳的那句話，敘事接得上（2026-08-12 拍板 G-11，路徑見 onboardingLandingPath）
-    const c = await askChoices([
-      { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : `開始設定 ${brandName}`, value: 'workspace', primary: true },
-      // 設錯了不能卡死（2026-08-19 老闆抓到）：給回頭修的路——設定頁進場會實跑一次連線檢查，
-      // 各欄位旁還有「教我怎麼拿」求救鈕
-      { label: '好像有設定錯？幫我檢查', value: 'check' },
-    ])
-    await navigateTo(c === 'check'
-      ? `/admin/${wid.value}/settings/organization?verify=webhook`
-      : onboardingLandingPath(wid.value))
+    // 這頁也要有上一步（2026-08-20 老闆抓到：成績單擺著「已跳過」卻只有離開鈕＝卡死）：
+    // 跳過的測試可以當場回去做、鑰匙可以當場重貼，改完成績單會重新整理
+    while (true) {
+      const options: AgentChoice[] = [
+        { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : `開始設定 ${brandName}`, value: 'workspace', primary: true },
+      ]
+      if (setup.firstMessageReceived !== 'done')
+        options.push({ label: '回去做傳話測試', value: 'test' })
+      options.push(
+        { label: '改前面的設定', value: 'redo' },
+        // 設定頁進場會實跑一次連線檢查，各欄位旁還有「教我怎麼拿」求救鈕
+        { label: '好像有設定錯？幫我檢查', value: 'check' },
+      )
+      const c = await askChoices(options)
+      if (c === 'redo') {
+        await offerRedo(line)
+        continue
+      }
+      if (c === 'test') {
+        clearSkip('firstMsg') // 反悔跳過：旗標不清的話，重入的等待段會被 guard 直接放行
+        const webhookUrl = `${line.publicBaseUrl || window.location.origin}/webhook`
+        await stepFirstMessageWait(line, setup, webhookUrl)
+        // 收到（或再次跳過）後回成績單重新整理：遞迴重跑 stepDone 會重抓真實訊號
+        return stepDone(line)
+      }
+      if (c === 'check') {
+        await navigateTo(`/admin/${wid.value}/settings/organization?verify=webhook`)
+        return
+      }
+      // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
+      // 對話頁裡就有他剛傳的那句話，敘事接得上（2026-08-12 拍板 G-11）
+      await navigateTo(onboardingLandingPath(wid.value))
+      return
+    }
   }
 
   // ── 入口 ────────────────────────────────────────────────────
@@ -950,7 +995,7 @@ export function useOnboardingChat() {
     { id: 'token', run: c => stepToken(c.line) },
     { id: 'secret', run: c => stepSecret(c.line) },
     { id: 'webhook-first-message', run: c => stepWebhookAndFirstMsg(c.line, c.setup, { preVerify: c.preVerify }) },
-    { id: 'done', run: () => stepDone() },
+    { id: 'done', run: c => stepDone(c.line) },
   ]
 
   /**
