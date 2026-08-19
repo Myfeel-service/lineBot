@@ -162,7 +162,8 @@
 
 .onbc-shell {
   width: 100%;
-  max-width: 560px;
+  /* 2026-08-19 老闆實測：560px 讓教學截圖被壓得太小，桌機放寬到 720 */
+  max-width: 720px;
   height: min(760px, calc(100vh - 3rem));
   background: var(--bg-surface);
   border-radius: var(--radius-xl);
@@ -256,7 +257,16 @@
 
 .onbc-chat {
   flex: 1;
+  /* ⛔ 必須有 min-height: 0：flex 子元素預設不肯縮小於內容高，這格會被內容撐高、
+     再被外殼的 overflow: hidden 剪掉——結果就是「對話不能捲、尾端被切」
+     （2026-08-19 老闆實測抓到；教學圖加進來之前內容都很短，所以一直沒發作） */
+  min-height: 0;
   overflow-y: auto;
+
+  /* ⛔ 訊息一律不參與壓縮：這格自己是固定高度的 flex 直欄，子元素預設 flex-shrink:1，
+     內容一超高就會被「擠進去」——文字泡泡有最小內容高壓不動，圖片沒有、會被壓扁成一條線
+     （同一天抓到的第二個症狀「圖片被壓縮」就是它）。要捲動，不要壓縮 */
+  > * { flex: none; }
   padding: 16px;
   display: flex;
   flex-direction: column;

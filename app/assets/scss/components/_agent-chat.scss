@@ -157,12 +157,26 @@
   }
 }
 
+/* 選項鈕：長在對話流的最新訊息下面（LINE 快速按鈕位置，2026-08-19 老闆拍板）。
+   靠右＝使用者這一側；點了會變成右側的使用者泡泡，按鈕列即消失 */
+.agm-choices {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 2px 0;
+
+  /* element-plus 的相鄰按鈕左邊距會跟 flex gap 疊加，收掉 */
+  .el-button + .el-button { margin-left: 0; }
+}
+
 /* 單張示意圖卡（節點式教學一步一張圖；也吃循環動畫 webp）。
    同 __shot 的鐵律：⛔別設 max-height——el-image 的 overflow:hidden 會「裁掉」不是「縮小」 */
 .agm-shot {
   align-self: flex-start;
   display: block;
-  width: 88%;
+  width: 100%;
   height: auto;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 12px;
@@ -399,5 +413,8 @@
   padding: 1rem;
   display: flex;
   flex-direction: column;
+
+  /* 同 .onbc-chat：訊息不參與壓縮（圖片會被壓扁），超高就捲動 */
+  > * { flex: none; }
   gap: 0.5rem;
 }

@@ -9,8 +9,10 @@
       <div v-if="typing" class="agm-msg agm-msg--agent">
         <div class="agm-bubble agm-typing"><i /><i /><i /></div>
       </div>
+      <!-- 選項鈕跟著對話長在最新訊息下面（與開通引導頁同一套，2026-08-19 拍板） -->
+      <AgentChoiceChips :ask="ask" :busy="busy" @choice="onChoice" />
     </div>
-    <AgentAskDock :ask="ask" :busy="busy" @choice="onChoice" @submit="onSubmit" @pick="onPick" @skip="onSkip" />
+    <AgentAskDock :ask="ask" :busy="busy" @submit="onSubmit" @pick="onPick" @skip="onSkip" />
   </div>
 </template>
 

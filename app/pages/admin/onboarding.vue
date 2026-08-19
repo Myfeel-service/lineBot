@@ -38,12 +38,13 @@
         <div v-if="typing" class="agm-msg agm-msg--agent">
           <div class="agm-bubble agm-typing"><i /><i /><i /></div>
         </div>
+        <!-- 選項鈕跟著對話長在最新訊息下面（LINE 快速按鈕位置）；輸入格才留在底部 dock -->
+        <AgentChoiceChips :ask="ask" :busy="busy" @choice="onChoice" />
       </div>
 
       <AgentAskDock
         :ask="ask"
         :busy="busy"
-        @choice="onChoice"
         @submit="onSubmit"
         @pick="onPick"
         @skip="onSkip"

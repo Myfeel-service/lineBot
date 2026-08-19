@@ -1,22 +1,9 @@
 <template>
-  <div class="agd">
-    <!-- 沒輪到使用者：顯示提示（或留白） -->
-    <p v-if="ask.kind === 'idle'" class="agd__hint">{{ ask.hint || '' }}</p>
-
-    <!-- 按鈕選項 -->
-    <div v-else-if="ask.kind === 'choices'" class="agd__chips">
-      <el-button
-        v-for="opt in ask.options"
-        :key="opt.value"
-        :type="opt.primary ? 'primary' : 'default'"
-        round
-        :disabled="busy"
-        @click="$emit('choice', opt.value)"
-      >{{ opt.label }}</el-button>
-    </div>
-
+  <!-- 只在真的要打字／選人時現身。選項鈕不歸這裡——它們長在對話流裡
+       （AgentChoiceChips，跟著最新訊息），這裡再畫一份就會出現兩排一樣的按鈕 -->
+  <div v-if="ask.kind === 'input' || ask.kind === 'picker'" class="agd">
     <!-- 文字 / 密鑰輸入 -->
-    <form v-else-if="ask.kind === 'input'" class="agd__form" @submit.prevent="submit">
+    <form v-if="ask.kind === 'input'" class="agd__form" @submit.prevent="submit">
       <el-input
         ref="inputEl"
         v-model="text"
