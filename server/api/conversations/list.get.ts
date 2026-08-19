@@ -23,6 +23,11 @@ type ConvRow = {
   lastMessage: string
   lastDirection: string
   lastMessageAt: unknown
+  /**
+   * 客人最後一則訊息的時間＝未讀紅點比的那個值（見 shared/conversation-unread.ts）。
+   * null＝客人沒開過口，或這是 2026-08-19 之前的舊對話（前端有退路）。
+   */
+  customerLastAt: unknown
   /** 客人已封鎖官方帳號（unfollow 時寫入）：推播會被 LINE 退件，客服要先知道 */
   isBlocked: boolean
   /** 人工標記：釘在列表最上面（全 workspace 共用） */
@@ -70,6 +75,7 @@ async function enrichConversations(
       lastMessage: data.lastMessage ?? '',
       lastDirection: data.lastDirection ?? 'incoming',
       lastMessageAt: data.lastMessageAt ?? null,
+      customerLastAt: data.lastInboundMessageAt ?? null,
       // 這裡本來就撈了 user 文件，順手帶出來，不必為了這個旗標多打一次 Firestore
       isBlocked: user.isBlocked === true,
       pinned: flags.pinned,
@@ -237,6 +243,7 @@ export default defineEventHandler(async (event) => {
       lastMessage: data.lastMessage ?? '',
       lastDirection: data.lastDirection ?? 'incoming',
       lastMessageAt: data.lastMessageAt ?? null,
+      customerLastAt: data.lastInboundMessageAt ?? null,
       isBlocked: user.isBlocked === true,
       pinned: flags.pinned,
       followUp: flags.followUp,

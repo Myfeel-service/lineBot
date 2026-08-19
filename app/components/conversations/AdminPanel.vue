@@ -9,7 +9,7 @@
           v-if="unreadRowCount > 0"
           type="button"
           class="conv-mark-all-read"
-          title="把紅點一次清掉（只影響你這台電腦，不會動到同事看到的）"
+          title="把這份清單上看得到的紅點一次清掉（只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響）"
           @click="markAllConversationsRead"
         >全部已讀（{{ unreadRowCount }}）</button>
         <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
@@ -72,6 +72,11 @@
         <div v-if="followUpListTruncated" class="conv-list-notice">
           待跟進超過 {{ FOLLOW_UP_LIST_LIMIT }} 筆，這裡只顯示最新的 {{ FOLLOW_UP_LIST_LIMIT }} 筆
         </div>
+        <!-- 搜尋中的清單不會自己更新（見 listAutoRefreshPaused）：不講的話，
+             客服會以為「都沒有新訊息」，其實是畫面停在搜尋當下那一刻 -->
+        <div v-if="listAutoRefreshPaused" class="conv-list-notice">
+          搜尋結果不會自動更新，新訊息與紅點請清空搜尋或按「重整」
+        </div>
         <!-- Session-based view (status tabs) -->
         <template v-if="activeTab !== 'all'">
           <div
@@ -85,7 +90,7 @@
               :leading-avatar-url="s.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isRowUnread(s.userId, s.unreadAt, s.lastDirection, s.status)"
+              :show-unread-dot="isRowUnread(s.userId, sessionRowCustomerMs(s))"
               :active="selectedSessionId === s.sessionId"
               :title-icon="s.pinned ? '📌' : ''"
               :meta-tag="s.followUp ? '待跟進' : ''"
@@ -121,7 +126,7 @@
               :leading-avatar-url="c.pictureUrl"
               show-leading-avatar-fallback
               time-in-title-row
-              :show-unread-dot="isRowUnread(c.userId, c.lastMessageAt, c.lastDirection)"
+              :show-unread-dot="isRowUnread(c.userId, convRowCustomerMs(c))"
               :active="selectedUserId === c.userId && !selectedSessionId"
               :title-icon="c.pinned ? '📌' : ''"
               :meta-tag="c.followUp ? '待跟進' : ''"
@@ -1040,6 +1045,7 @@ import {
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
 import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
+import { customerLastMessageMs, isConversationUnread } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
@@ -1063,8 +1069,9 @@ const workspaceId = computed(() => String(route.params.workspaceId || ''))
  * 未讀紅點的兩個記號，都只存在這台電腦的 localStorage（每個 workspace 一份）：
  *
  * · convLastReadMs  — 每位客人「我看到哪個時間點為止」
- * · readAllBeforeMs — 按過「全部已讀」的那一刻；比它舊的一律算看過，
- *                     連還沒捲到、還沒載入的後面幾頁也一起蓋掉
+ * · readAllBeforeMs — 舊版「全部已讀」留下的那條全域時間線，比它舊的一律算看過。
+ *                    **只讀不再寫**：2026-08-19 改成逐位客人蓋章（見 markAllConversationsRead）。
+ *                    留著是為了升級當下不要把使用者早就清掉的紅點整批倒回來。
  *
  * 兩者取大的那個當基準（見 isRowUnread）。已讀是每個人自己的，不跟同事共用——
  * 同事看過不代表你看過。
@@ -1087,6 +1094,42 @@ function convReadAllStorageKey(): string {
   return wid ? `admin-conv-readAll:${wid}` : ''
 }
 
+function readStoredConvLastRead(): Record<string, number> {
+  if (typeof localStorage === 'undefined')
+    return {}
+  const key = convReadStorageKey()
+  if (!key)
+    return {}
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) as Record<string, number> : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  }
+  catch {
+    return {}
+  }
+}
+
+/**
+ * 兩份已讀記錄合成一份，每位客人各取比較晚的那個。
+ *
+ * 已讀只會往前走（看過的不會變成沒看過），所以「取大的」永遠是安全的合併方式。
+ * 這是同一台電腦開兩個後台分頁時唯一不會互相蓋掉的做法——先前兩邊各自把記憶體裡的
+ * 整包寫回去、後寫的贏，於是 A 分頁清掉的紅點會被 B 分頁倒回來（反過來也一樣），
+ * 使用者看到的就是紅點忽有忽無。
+ */
+function mergeConvLastRead(
+  a: Record<string, number>,
+  b: Record<string, number>,
+): Record<string, number> {
+  const merged: Record<string, number> = { ...a }
+  for (const [userId, ms] of Object.entries(b)) {
+    const n = Number(ms)
+    if (Number.isFinite(n) && n > (merged[userId] ?? 0)) merged[userId] = n
+  }
+  return merged
+}
+
 function hydrateConvLastRead() {
   if (typeof localStorage === 'undefined')
     return
@@ -1096,30 +1139,41 @@ function hydrateConvLastRead() {
     readAllBeforeMs.value = 0
     return
   }
-  try {
-    const raw = localStorage.getItem(key)
-    convLastReadMs.value = raw ? JSON.parse(raw) as Record<string, number> : {}
-  }
-  catch {
-    convLastReadMs.value = {}
-  }
+  convLastReadMs.value = readStoredConvLastRead()
   const allMs = Number(localStorage.getItem(convReadAllStorageKey()) || 0)
   readAllBeforeMs.value = Number.isFinite(allMs) && allMs > 0 ? allMs : 0
 }
 
+/**
+ * 寫回 localStorage 前先把硬碟上那份併進來（見 mergeConvLastRead）：
+ * 另一個分頁在我們載入之後蓋的章不能被沖掉。
+ */
 function persistConvLastRead() {
   if (typeof localStorage === 'undefined')
     return
   const key = convReadStorageKey()
   if (!key)
     return
+  const merged = pruneConvLastRead(mergeConvLastRead(readStoredConvLastRead(), convLastReadMs.value))
+  convLastReadMs.value = merged
   try {
-    localStorage.setItem(key, JSON.stringify(convLastReadMs.value))
-    localStorage.setItem(convReadAllStorageKey(), String(readAllBeforeMs.value))
+    localStorage.setItem(key, JSON.stringify(merged))
   }
   catch {
     /* quota or private mode */
   }
+}
+
+/**
+ * 另一個分頁蓋了已讀 → 這個分頁的紅點也要跟著消。
+ * localStorage 的 storage 事件只在**其他**分頁寫入時觸發，所以不會跟自己打架。
+ */
+function onConvReadStorage(e: StorageEvent) {
+  const key = convReadStorageKey()
+  if (!key || (e.key && e.key !== key))
+    return
+  convLastReadMs.value = mergeConvLastRead(convLastReadMs.value, readStoredConvLastRead())
+  applyUnreadDocumentTitle()
 }
 
 /** 超過上限就丟掉最久沒看的那些（被丟掉的列往後捲到才會再亮一次，總比爆掉配額好） */
@@ -1162,7 +1216,11 @@ function markConversationRead(userId: string, seenUpToMs = 0) {
  * 那顆標題數字整個失去意義（它只在背景時才顯示，見 applyUnreadDocumentTitle）。
  * 所以背景時只記著「欠這位客人一個章」，回到前景那一刻才真的蓋下去。
  */
-let pendingReadStamp: { userId: string, seenUpToMs: number } | null = null
+/**
+ * 一位客人一筆，不是只留最後一位——**先前只存一筆**，切走前連看兩位客人的話，
+ * 前一位的章會被後一位覆蓋掉，他的紅點就消不掉了。
+ */
+const pendingReadStamps = new Map<string, number>()
 
 function pageIsVisible(): boolean {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden')
@@ -1177,17 +1235,15 @@ function stampConversationRead(userId: string, seenUpToMs: number) {
     markConversationRead(userId, seenUpToMs)
     return
   }
-  pendingReadStamp = pendingReadStamp && pendingReadStamp.userId === userId
-    ? { userId, seenUpToMs: Math.max(pendingReadStamp.seenUpToMs, seenUpToMs) }
-    : { userId, seenUpToMs }
+  pendingReadStamps.set(userId, Math.max(pendingReadStamps.get(userId) ?? 0, seenUpToMs))
 }
 
 function flushPendingReadStamp() {
-  if (!pendingReadStamp || !pageIsVisible())
+  if (!pendingReadStamps.size || !pageIsVisible())
     return
-  const { userId, seenUpToMs } = pendingReadStamp
-  pendingReadStamp = null
-  markConversationRead(userId, seenUpToMs)
+  const pending = [...pendingReadStamps.entries()]
+  pendingReadStamps.clear()
+  for (const [userId, seenUpToMs] of pending) markConversationRead(userId, seenUpToMs)
 }
 
 /** 一批時間戳裡最新的那個（ms）；用來把「這次畫面上真的看到的最新一則」交給 markConversationRead */
@@ -1202,30 +1258,29 @@ function newestTimestampMs(list: unknown[]): number {
 }
 
 /**
- * 「全部已讀」：一次把紅點清乾淨。
+ * 「全部已讀」：把**目前清單上看得到的**紅點一次清掉，逐位客人各蓋一個章。
  *
- * 用一條時間線（readAllBeforeMs）而不是逐位客人蓋章，才蓋得到還沒載入的後面幾頁——
- * 換一台電腦、清過快取、新同事第一次登入時，整排全紅只能一位一位點開才消得掉。
+ * 2026-08-19 從「一條全域時間線」改成這樣。原本那條線取的是已載入列裡最新的動靜時間
+ * （lastActivityAt——結案、接手、半夜排程都會把它往前推），比它舊的一律算看過。
+ * 問題是它跨分頁生效又永遠不會降：在「待真人」按下寫著「全部已讀（2）」的按鈕，
+ * 會把「全部」分頁裡所有比那個時間早、你從沒點開過的客人一起變成已讀，而且救不回來——
+ * 按鈕上的數字講的是這個分頁的 2 列，實際清掉的是整個 workspace，兩者對不起來。
  *
- * 同樣不碰 Date.now()（理由見 markConversationRead），而且不需要：兩份清單都是
- * 由新到舊排的（對話照 lastMessageAt、會話照 lastActivityAt），所以「已載入的最新那一筆」
- * 必然晚於還沒載入的每一筆。會話那邊要取 lastActivityAt——排序欄位是它，只有它蓋得住
- * 後面還沒載入的幾頁。
+ * 逐列蓋章的代價是蓋不到還沒載入的後面幾頁（換電腦、清過快取時整排全紅的情境）：
+ * 往下捲載進來之後再按一次就好，而且**這次按下去清掉的東西，畫面上都看得見**。
  *
- * ⛔ 但**不能只取它**。它和紅點用的 unreadAt 是兩份文件各自蓋的時間（會話文件那次還是
- * 背景補寫的，見 conversation-session.ts 的 bgUpdate），誰先落地是隨機的——unreadAt 反而
- * 比較晚的時候，按了「全部已讀」最上面那列還是紅的，再按一次也一樣（數字沒變），
- * 只能點開那列才消。兩個都取最大的，那一列才蓋得住。
+ * 一樣不碰 Date.now()（理由見 markConversationRead），蓋的是每一列上「客人最後開口」
+ * 那個時間戳，與紅點比對的欄位同一族。
  */
 function markAllConversationsRead() {
-  readAllBeforeMs.value = Math.max(
-    readAllBeforeMs.value,
-    newestTimestampMs(conversations.value.map((c: ConvItem) => c.lastMessageAt)),
-    newestTimestampMs(sessions.value.map((s: SessionItem) => s.lastActivityAt)),
-    newestTimestampMs(sessions.value.map((s: SessionItem) => s.unreadAt)),
-  )
-  // 上面那條時間線已經蓋過所有既有記錄，逐位客人的章可以整份丟掉
-  convLastReadMs.value = {}
+  const next = { ...convLastReadMs.value }
+  const stamp = (userId: string, ms: number) => {
+    if (!userId || ms <= 0) return
+    next[userId] = Math.max(next[userId] ?? 0, ms)
+  }
+  for (const c of conversations.value as ConvItem[]) stamp(c.userId, convRowCustomerMs(c))
+  for (const s of sessions.value as SessionItem[]) stamp(s.userId, sessionRowCustomerMs(s))
+  convLastReadMs.value = pruneConvLastRead(next)
   persistConvLastRead()
 }
 
@@ -1277,37 +1332,44 @@ function directionPrefix(row: { lastMessage?: string, lastDirection?: string }):
 }
 
 /**
- * 紅點＝「這位客人在等我們，而且我還沒看過」。兩個條件都要成立：
+ * 這一列「客人最後開口」是什麼時候（epoch ms）——紅點比的就是這個值，
+ * 蓋已讀章的也是這個值。規則與舊資料退路寫在 shared/conversation-unread.ts。
  *
- * 1. 最後一則是**客人**送的。我們自己回的、AI／機器人回的、系統蓋的通知一律不算——
- *    紅點是待辦不是動態；自己剛做完的事再紅一次，只會讓人學會忽略紅點。
- *    口徑跟 directionPrefix 同一條（非 outgoing 就當客人那側），兩邊不能各自漂走。
- *    **例外是等真人的那場**：機器人那句「已為您安排專員」也是 outgoing，但它的意思正好是
- *    「還沒有人處理」——把它當成處理過，客人就會安靜地躺在待真人分頁裡沒有任何標記。
- * 2. 那則的時間晚於基準：這位客人的已讀時間、或上次按「全部已讀」的時間，取大的那個。
- *
- * 兩種列都用這一支，而且**兩邊餵進來的時間必須跟方向同源**：「全部」給對話的 lastMessageAt、
- * 會話分頁給後端算好的 unreadAt（也是對話的 lastMessageAt，已結束的場為 null）。
- * ⛔ 會話分頁一度餵 lastActivityAt，那是「這場有沒有動靜」——接手／交還／結案／客人按鈕／
- *    半夜排程都會把它往前推，但方向那半永遠停在「客人」，於是看完的列一直紅回來
- *    （細節見 sessions.get.ts 的 mapSessionToRow）。改欄位前先想清楚這件事。
- * 已讀時間都記在同一位客人身上（見 convLastReadMs），所以切分頁紅點不會前後矛盾。
- * ⚠️「全部」那側的列沒有會話狀態（對話文件上沒有這個欄位），所以那裡的等真人對話仍然
- *    不會亮紅點；要一併補上得先把狀態非正規化到 conversations 文件。
+ * 兩種列各有自己的欄位名，但意思完全一樣，所以拆成兩支小的、不要在呼叫端東拼西湊：
+ * 會話列的最後一則叫 unreadAt（已結束的場為 null），對話列的叫 lastMessageAt。
  */
-function isRowUnread(
-  userId: string,
-  timestamp: unknown,
-  lastDirection?: string,
-  sessionStatus?: ConvSessionStatus,
-): boolean {
-  if (lastDirection === 'outgoing' && sessionStatus !== 'pending_human')
-    return false
-  const lastMs = messageTimestampToMs(timestamp)
-  if (lastMs <= 0)
-    return false
+function convRowCustomerMs(c: ConvItem): number {
+  return customerLastMessageMs({
+    customerLastMs: messageTimestampToMs(c.customerLastAt),
+    lastMessageMs: messageTimestampToMs(c.lastMessageAt),
+    lastDirection: c.lastDirection,
+  })
+}
+
+function sessionRowCustomerMs(s: SessionItem): number {
+  return customerLastMessageMs({
+    customerLastMs: messageTimestampToMs(s.customerLastAt),
+    lastMessageMs: messageTimestampToMs(s.unreadAt),
+    lastDirection: s.lastDirection,
+  })
+}
+
+/**
+ * 紅點＝「客人講過話，而且還沒有人真的看過這段對話」。
+ *
+ * 2026-08-19 老闆拍板換掉舊口徑（「最後一則是客人送的」＝把紅點當待辦、AI 回完就不算）。
+ * 為什麼換、以及舊資料怎麼退路，全寫在 shared/conversation-unread.ts，那裡是唯一一份規則。
+ *
+ * 這一支只負責把「我看到哪為止」湊上去：這位客人的已讀時間，和舊版「全部已讀」留下的
+ * 那條全域時間線，取大的那個。已讀時間都記在同一位客人身上（見 convLastReadMs），
+ * 所以同一位客人在五個分頁看到的紅點一致。
+ *
+ * ⛔ 這裡比的欄位改動時，蓋已讀章的來源（selectedRowCustomerLastMs、loadTimeline）
+ *    必須一起改成同一族時間戳，否則章永遠差一步、紅點怎麼等都不會消。
+ */
+function isRowUnread(userId: string, customerLastMs: number): boolean {
   const readMs = Math.max(readAllBeforeMs.value, convLastReadMs.value[userId] ?? 0)
-  return lastMs > readMs
+  return isConversationUnread({ customerLastMs, lastMessageMs: 0 }, readMs)
 }
 
 function applyUnreadDocumentTitle() {
@@ -1335,8 +1397,9 @@ function onWindowBlur() {
 function onVisibilityChange() {
   flushPendingReadStamp()
   applyUnreadDocumentTitle()
-  // 背景時輪詢是停的（見 listPollTimer），回前景補刷一次把漏掉的變化拉回來
-  if (typeof document !== 'undefined' && !document.hidden
+  // 背景時輪詢是停的（見 listPollTimer），回前景補刷一次把漏掉的變化拉回來。
+  // 搜尋中一樣不重抓（口徑同輪詢，否則每次切回分頁就重掃一次全 workspace 的對話）
+  if (typeof document !== 'undefined' && !document.hidden && !listAutoRefreshPaused.value
     && !listLoading.value && !listLoadingMore.value)
     void refreshListQuiet()
 }
@@ -1358,10 +1421,14 @@ interface SessionItem {
   /** 這場最後一次有動靜的時間（含接手／交還／結案／排程等非訊息動作）＝列上那顆時間膠囊 */
   lastActivityAt: any
   /**
-   * 未讀紅點專用的時間＝這場最後一則**訊息**的時間；已結束的場為 null（＝不亮）。
+   * 這場最後一則**訊息**的時間（不分方向）；已結束的場為 null。
+   * 用途有兩個：舊資料的紅點退路（見 shared/conversation-unread.ts），以及判斷
+   * 開著的對話要不要重讀（見 maybeRefreshOpenTimeline）。
    * 為什麼不能拿 lastActivityAt 兼用，見 sessions.get.ts 的 mapSessionToRow。
    */
   unreadAt: any
+  /** 客人最後一則訊息的時間＝紅點比的那個值；已結束的場為 null（＝不亮） */
+  customerLastAt: any
   /**
    * 這場會話的最後一則訊息。進行中的場來自對話文件、已結束的場來自關閉當下的快照，
    * 都在後端算好（見 sessions.get.ts 的 mapSessionToRow）。
@@ -1409,6 +1476,8 @@ interface ConvItem {
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
   lastMessageAt: any
+  /** 客人最後一則訊息的時間＝紅點比的那個值（見 shared/conversation-unread.ts） */
+  customerLastAt?: any
   /** 客人已封鎖官方帳號：推播會被 LINE 退件，回覆區要先擋一句話 */
   isBlocked?: boolean
   /**
@@ -1997,6 +2066,13 @@ function lastPinnedEdge(rows: { pinned?: boolean }[]): number {
 const lastPinnedIndex = computed(() => lastPinnedEdge(convSidebarItems.value))
 const lastPinnedSessionIndex = computed(() => lastPinnedEdge(sessionSidebarItems.value))
 
+/**
+ * 搜尋中的清單是一份快照，不跟著每 30 秒的輪詢更新（重送搜尋等於重掃一次全 workspace
+ * 的對話，2026-08-11 讀取費暴衝那筆帳）。停就停，但要**講出來**——清單上會出現一行說明，
+ * 否則客服搜完名字沒清掉字，看到的就是一個從此不再有新訊息、紅點也不會亮的畫面。
+ */
+const listAutoRefreshPaused = computed(() => activeTab.value === 'all' && !!searchText.value.trim())
+
 const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
   if (followUpFilterOn.value) {
     return searchText.value
@@ -2016,8 +2092,8 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
  */
 const unreadRowCount = computed(() =>
   activeTab.value === 'all'
-    ? convSidebarItems.value.filter(c => isRowUnread(c.userId, c.lastMessageAt, c.lastDirection)).length
-    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, s.unreadAt, s.lastDirection, s.status)).length,
+    ? convSidebarItems.value.filter(c => isRowUnread(c.userId, convRowCustomerMs(c))).length
+    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, sessionRowCustomerMs(s))).length,
 )
 
 watch(unreadRowCount, () => {
@@ -2324,6 +2400,8 @@ async function selectSession(s: SessionItem) {
     // 這一份要跟 lastMessage 同一則（切到「全部」分頁時會拿去當已讀基準），
     // 所以是 unreadAt 不是 lastActivityAt；已結束的場沒有就留 null，不拿動靜時間充數
     lastMessageAt: s.unreadAt ?? null,
+    // 紅點與已讀章比的是這個（見 isRowUnread），切到「全部」分頁時要接得上
+    customerLastAt: s.customerLastAt ?? null,
     pinned: s.pinned === true,
     followUp: s.followUp === true,
   }
@@ -2334,7 +2412,7 @@ async function selectSession(s: SessionItem) {
     status: s.status,
     statusLabel: SESSION_STATUS_LABELS[s.status] ?? String(s.status),
   }
-  await loadTimeline(s.userId, { sessionId: s.sessionId, seenUpToMs: messageTimestampToMs(s.unreadAt) })
+  await loadTimeline(s.userId, { sessionId: s.sessionId, seenUpToMs: sessionRowCustomerMs(s) })
 }
 
 const canSend = computed(() => !!inputText.value.trim())
@@ -2495,15 +2573,13 @@ async function loadList(mode: LoadListMode = 'reset') {
 let openTimelineRowMs = 0
 
 /**
- * 目前選中那一列上的「最後一則訊息時間」——**紅點就是拿這個值在比**
- * （會話分頁看 unreadAt、「全部」看 lastMessageAt，見 isRowUnread）。
+ * 目前選中那一列上的「最後一則訊息時間」（不分方向）。
  *
- * 蓋已讀章一定要用它，不能只用時間軸上最新那一則的時間：同一則訊息在兩邊有兩個時間戳
- * （見 handler.ts 的 lastMessageAt），2026-08-14 以前的資料上列這個比較晚，差幾百毫秒——
- * 而紅點差 1 毫秒就算沒看過。用錯來源的話章永遠差最後一步，紅點怎麼等都不會消。
- * ⛔ 蓋章的來源必須跟紅點比對的來源是同一個欄位，改任一邊都要一起改。
+ * 只給 maybeRefreshOpenTimeline 判斷「這一列有沒有多出東西、要不要重讀」用——
+ * 開著的對話 AI 回了一句也算多出東西，所以這裡**不能**換成客人那側的時間，
+ * 否則畫面不會自己長出 AI 那句。蓋已讀章請用下面那支。
  */
-function selectedRowUnreadMs(): number {
+function selectedRowLastMessageMs(): number {
   const uid = selectedUserId.value
   if (!uid) return 0
   const sid = selectedSessionId.value
@@ -2512,12 +2588,32 @@ function selectedRowUnreadMs(): number {
     : messageTimestampToMs(conversations.value.find((c: ConvItem) => c.userId === uid)?.lastMessageAt)
 }
 
+/**
+ * 目前選中那一列上的「客人最後一則」——**紅點就是拿這個值在比**（見 isRowUnread）。
+ *
+ * 蓋已讀章一定要用它，不能用時間軸上最新那一則的時間：同一則訊息在兩邊有兩個時間戳
+ * （見 handler.ts 的 lastMessageAt），2026-08-14 以前的資料上列這個比較晚，差幾百毫秒——
+ * 而紅點差 1 毫秒就算沒看過。用錯來源的話章永遠差最後一步，紅點怎麼等都不會消。
+ * ⛔ 蓋章的來源必須跟紅點比對的來源是同一個欄位，改任一邊都要一起改。
+ */
+function selectedRowCustomerLastMs(): number {
+  const uid = selectedUserId.value
+  if (!uid) return 0
+  const sid = selectedSessionId.value
+  if (sid) {
+    const s = sessions.value.find((row: SessionItem) => row.sessionId === sid)
+    return s ? sessionRowCustomerMs(s) : 0
+  }
+  const c = conversations.value.find((row: ConvItem) => row.userId === uid)
+  return c ? convRowCustomerMs(c) : 0
+}
+
 function maybeRefreshOpenTimeline() {
   const uid = selectedUserId.value
   if (!uid) return
   // 有東西正在讀就跳過，等下一輪：插隊進去只會跟它搶同一份 timelineItems
   if (msgLoading.value || loadingOlder.value || loadingNewer.value) return
-  const rowMs = selectedRowUnreadMs()
+  const rowMs = selectedRowLastMessageMs()
   if (rowMs <= 0) return
   if (rowMs <= openTimelineRowMs) return
   if (rowMs <= newestTimestampMs(timelineItems.value.map((i: TimelineItem) => i.timestamp))) return
@@ -2723,7 +2819,8 @@ async function selectUser(c: ConvItem) {
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingQuickReplyId.value = ''
-  await loadTimeline(c.userId, { seenUpToMs: messageTimestampToMs(c.lastMessageAt) })
+  // 已讀章只蓋到「客人最後開口」為止（見 loadTimeline 裡的說明）
+  await loadTimeline(c.userId, { seenUpToMs: convRowCustomerMs(c) })
 }
 
 // ── 對話時間軸：一段一段讀 ──────────────────────────────────────────
@@ -2818,8 +2915,18 @@ async function loadTimeline(
     await nextTick()
     // 安靜刷新（自己剛送完）不強拉：客服正在往上翻舊訊息時，畫面不該自己跳走
     scrollToBottom({ force: !quiet })
+    /**
+     * 已讀章只吃**客人那側的訊息時間**，跟紅點比的欄位同一族（見 isRowUnread）。
+     *
+     * ⛔ 不可以退回「時間軸上最新那一則」：那會把我們自己回的、AI 回的、系統事件的
+     * 伺服器時間也蓋進去，而客人來訊蓋的是 LINE 事件時間。兩族混用的話，webhook 遲送
+     * 或客人跟我們幾乎同時發話時，新進來那則的時間會早於已讀基準 → 那一列摘要換了、
+     * 前綴是「客人：」，就是永遠不會亮紅點。
+     */
     stampConversationRead(userId, Math.max(
-      newestTimestampMs(timelineItems.value.map(i => i.timestamp)),
+      newestTimestampMs(timelineItems.value
+        .filter((i: TimelineItem) => i.type === 'message' && i.direction === 'incoming')
+        .map((i: TimelineItem) => i.timestamp)),
       options?.seenUpToMs ?? 0,
     ))
     loaded = true
@@ -2933,7 +3040,7 @@ async function jumpToLatest() {
 async function leaveSessionSegment(userId: string) {
   // 先問再清：清掉之後就找不到剛剛看的那一場，那一則的時間也就拿不到了。
   // 跳回最新一段之後畫面上就是最後一則，這一跳要算「看過了」（見 reloadTimeline）
-  const seenUpToMs = selectedRowUnreadMs()
+  const seenUpToMs = selectedRowCustomerLastMs()
   selectedSessionId.value = null
   sessionMeta.value = null
   await loadTimeline(userId, { seenUpToMs })
@@ -3036,7 +3143,7 @@ function discardPendingOutgoing(localId: string) {
  * 看的是歷史那一段（下面還有沒讀的）時不重讀：那一段的內容不會因為現在按了什麼而改變，
  * 重讀只會把客服正在看的位置甩掉。
  *
- * 已讀章一律蓋到「列上那一則」為止（selectedRowUnreadMs），不是只蓋到時間軸最新那一則——
+ * 已讀章一律蓋到「列上客人最後那一則」為止（selectedRowCustomerLastMs），不是時間軸最新那一則——
  * 走這支的每一條路（接手／交還／結案／自己回一句／開著的對話自己收新訊息）事後都該是
  * 「看過了」。少了它，按完接手那顆紅點還亮著，要點去別人那再點回來才消得掉。
  */
@@ -3046,7 +3153,7 @@ async function reloadTimeline(options?: { quiet?: boolean }) {
   await loadTimeline(userId, {
     sessionId: selectedSessionId.value || undefined,
     quiet: options?.quiet === true,
-    seenUpToMs: selectedRowUnreadMs(),
+    seenUpToMs: selectedRowCustomerLastMs(),
   })
 }
 
@@ -4279,15 +4386,21 @@ onMounted(() => {
     // 分頁在背景（切走／視窗最小化）不刷新——回前景時 onVisibilityChange 會補刷一次。
     // 沒有這條的話，掛在背景的分頁每 30 秒照打後端（2026-08-11 資料庫讀取暴衝的幫兇）
     if (typeof document !== 'undefined' && document.hidden) return
-    // 搜尋字留在框裡時暫停輪詢：背景刷新會把搜尋字一起重送，等於每 30 秒重掃一次
-    // 全 workspace 的對話（搜不到的字一次要掃 3,000 筆）。搜尋結果是快照，本來就不需要即時
-    if (activeTab.value === 'all' && searchText.value.trim()) return
+    // 搜尋字留在框裡時不重抓清單：背景刷新會把搜尋字一起重送，等於每 30 秒重掃一次
+    // 全 workspace 的對話。但**分頁上的數字照更新**（那支只讀計數、很便宜），
+    // 而且清單上會明講「搜尋結果不會自己更新」——先前是整支輪詢直接 return，
+    // 客服搜完名字沒清掉字（很常見）就再也收不到新訊息與紅點，畫面上一點徵兆都沒有。
+    if (listAutoRefreshPaused.value) {
+      void loadSessionCounts()
+      return
+    }
     if (!listLoading.value && !listLoadingMore.value)
       void refreshListQuiet()
   }, 30_000)
   if (typeof window !== 'undefined') {
     window.addEventListener('focus', onWindowFocus)
     window.addEventListener('blur', onWindowBlur)
+    window.addEventListener('storage', onConvReadStorage)
   }
   if (typeof document !== 'undefined')
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -4304,6 +4417,8 @@ onUnmounted(() => {
     window.removeEventListener('focus', onWindowFocus)
     window.removeEventListener('blur', onWindowBlur)
   }
+  if (typeof window !== 'undefined')
+    window.removeEventListener('storage', onConvReadStorage)
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', onVisibilityChange)
     if (savedDocumentTitle.value)

@@ -143,9 +143,16 @@ export default defineEventHandler(async (event) => {
 
   for (const convId of touchedConversationIds) {
     const conversationRef = db.collection('conversations').doc(convId)
+    /**
+     * 多撈幾則是為了在同一批裡找出「客人最後一則」——那是未讀紅點比的值
+     * （見 shared/conversation-unread.ts）。留在對話文件上的時間如果指向一則
+     * 已經被這支清掉的訊息，那顆紅點就會亮著、但點進去看不到對應的內容。
+     * 不另外下 `where('direction','==','incoming')` 是因為那要在子集合上多建一個複合索引，
+     * 這裡撈 20 則就夠涵蓋絕大多數情況（真的整段都是我方訊息就當客人沒開過口，清成 null）。
+     */
     const latestSnap = await conversationRef.collection('messages')
       .orderBy('timestamp', 'desc')
-      .limit(1)
+      .limit(20)
       .get()
 
     if (latestSnap.empty) {
@@ -155,11 +162,13 @@ export default defineEventHandler(async (event) => {
     }
 
     const latest = latestSnap.docs[0]?.data() ?? {}
+    const latestInbound = latestSnap.docs.find(d => d.data()?.direction === 'incoming')?.data()
     await conversationRef.set(
       {
         lastMessage: latest.text ?? '',
         lastDirection: latest.direction ?? 'incoming',
         lastMessageAt: latest.timestamp ?? null,
+        lastInboundMessageAt: latestInbound?.timestamp ?? null,
       },
       { merge: true },
     )

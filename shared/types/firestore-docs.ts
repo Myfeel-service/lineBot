@@ -72,6 +72,11 @@ export interface ConversationDoc {
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
   lastMessageAt: Timestamp | null
+  /**
+   * 客人最後一則**訊息**的時間＝未讀紅點比的那個值（見 shared/conversation-unread.ts）。
+   * 2026-08-19 起才寫，之前的對話沒有這欄（前端有舊資料退路，刻意不回填）。
+   */
+  lastInboundMessageAt?: Timestamp | null
   /** 最近一次 AI 互動的脈絡快取；給「待真人」收件匣顯示用 */
   aiMeta?: AiConversationMeta
 }

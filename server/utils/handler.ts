@@ -2102,6 +2102,16 @@ export async function saveConversationMessage(
         lastMessageAt: messageTimestamp,
       }
   if (!traceOnly && direction === 'incoming') {
+    /**
+     * 客人最後一則**訊息**的時間＝未讀紅點比的那個值（見 shared/conversation-unread.ts）。
+     *
+     * 跟這一則訊息自己的時間同一個值，理由同上面的 lastMessageAt：紅點差 1 毫秒就算沒看過。
+     * ⛔ 不可以拿隔壁的 lastPeerActivityAt 兼用——那個是「客人有沒有在動」，客人按按鈕、
+     * 切選單分頁都會把它往前推（見 bumpConversationPeerActivity），拿來當紅點的話
+     * 客人滑一下選單整排就紅了。也不可以拿 lastMessageAt 兼用——那是「最後一則」，
+     * AI 一回就變成我們這側，正是舊口徑會漏掉客人的原因。
+     */
+    convPatch.lastInboundMessageAt = messageTimestamp
     convPatch.lastPeerActivityAt = useLineTs
       ? Timestamp.fromMillis(Number(options!.lineEventTimestampMs))
       : now

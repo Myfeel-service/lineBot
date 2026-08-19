@@ -22,6 +22,8 @@ interface ConvSideData {
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
   lastMessageAt: unknown
+  /** 客人最後一則訊息的時間＝紅點比的那個值（見 shared/conversation-unread.ts） */
+  lastInboundMessageAt: unknown
 }
 
 /**
@@ -48,6 +50,7 @@ async function fetchConversationSideData(
         lastMessage: String(data.lastMessage ?? ''),
         lastDirection: data.lastDirection === 'outgoing' ? 'outgoing' : 'incoming',
         lastMessageAt: data.lastMessageAt ?? null,
+        lastInboundMessageAt: data.lastInboundMessageAt ?? null,
       }
     })
   }
@@ -104,6 +107,13 @@ function mapSessionToRow(
      * 已結束的場不可能還在等我們回。
      */
     unreadAt: isCurrent ? conv!.lastMessageAt ?? null : null,
+    /**
+     * 客人最後一則訊息的時間＝紅點真正比的那個值（見 shared/conversation-unread.ts）。
+     * 與上面 unreadAt 同一份來源、同一個「只給進行中那場」的規則——已結束的場不可能還在
+     * 等我們回，客人再開口會開新的一場。上面那個留著當舊資料的退路（2026-08-19 以前的
+     * 對話沒有這欄），兩個都給，前端自己挑。
+     */
+    customerLastAt: isCurrent ? conv!.lastInboundMessageAt ?? null : null,
     status: s.status,
     initialHandler: s.initialHandler,
     currentHandler: s.currentHandler,

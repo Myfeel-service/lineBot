@@ -152,3 +152,50 @@ describe('對話文件的 lastMessageAt 要跟訊息自己的時間同一個值'
     expect(convWrite(writes).lastPeerActivityAt).toMatchObject({ __ms: LINE_EVENT_MS })
   })
 })
+
+/**
+ * 2026-08-19 換了紅點口徑：不再問「最後一則是不是客人送的」，改問「客人最後一則是什麼時候、
+ * 有沒有人看過」（見 shared/conversation-unread.ts）。紅點比的值改成這個新欄位，
+ * 所以它也要跟訊息自己的時間同一個值——理由同 lastMessageAt，差 1 毫秒就算沒看過。
+ */
+describe('客人最後一則的時間（紅點比的那個值）', () => {
+  it('客人來訊：跟訊息自己的時間同一個值，不另外蓋伺服器時間', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'incoming', '請問有貨嗎', {
+      messageType: 'text',
+      lineEventTimestampMs: LINE_EVENT_MS,
+    }, WS)
+
+    expect(convWrite(writes).lastInboundMessageAt).toMatchObject({ __ms: LINE_EVENT_MS })
+    expect(convWrite(writes).lastInboundMessageAt.toMillis())
+      .toBe(messageWrite(writes).timestamp.toMillis())
+  })
+
+  it('我們送出的訊息不可以動到它——動了就等於「AI 一回，客人那句就算看過了」', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'outgoing', '有的唷', { messageType: 'text' }, WS)
+
+    expect(convWrite(writes)).not.toHaveProperty('lastInboundMessageAt')
+  })
+
+  /**
+   * 客人按按鈕／切選單是「客人動作紀錄」（traceOnly），刻意不動對話文件上的這幾個欄位——
+   * 動了的話客人滑一下圖文選單，整排列就紅起來（見 shared/customer-action.ts）。
+   */
+  it('客人動作紀錄（按按鈕）不算開口，不動這個欄位', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'incoming', '客人按了「查詢訂單」', {
+      messageType: 'customer_action',
+      lineEventTimestampMs: LINE_EVENT_MS,
+      traceOnly: true,
+    }, WS)
+
+    expect(convWrite(writes)).not.toHaveProperty('lastInboundMessageAt')
+  })
+})
