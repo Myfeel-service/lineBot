@@ -206,7 +206,8 @@ def main() -> None:
         (src, 90, None, 250),                        # 落在 Messaging API 分頁，捲動帶過…
         (src, 520, None, 130),
         (src, 950, None, 300),
-        (src, 950, (425, 1000, 710, 1090), 1900),    # 停：Webhook URL 貼上按 Update
+        (src, 950, (512, 1042, 594, 1086), 1600),    # 停：先按「Edit」打開輸入格（第一次的人沒這步會卡住）
+        (src, 950, (425, 1000, 710, 1090), 1900),    # 停：貼上網址按 Update
         (src, 950, (434, 1117, 511, 1174), 1900),    # 停：打開 Use webhook
     ]
     frames5 = [vframe(im, t, b) for im, t, b, _ in spec5]

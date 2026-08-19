@@ -512,7 +512,7 @@ const lineWebhookGuide: AgentGuideDef = {
                 },
                 { text: '選你的官方帳號 → Messaging API 分頁' },
                 {
-                  text: 'Webhook URL 欄位貼上上面那串，按「Update」存檔',
+                  text: 'Webhook URL 按「Edit」打開輸入格，貼上上面那串，按「Update」存檔',
                   image: ONBOARDING_SHOTS.webhookUrl,
                   alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
                 },
@@ -553,7 +553,7 @@ const lineWebhookGuide: AgentGuideDef = {
               steps: [
                 { text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁' },
                 {
-                  text: 'Webhook URL 整串蓋掉，換成上面那串（不要留舊的），按「Update」存檔',
+                  text: 'Webhook URL 按「Edit」，整串蓋掉換成上面那串（不要留舊的），按「Update」存檔',
                   image: ONBOARDING_SHOTS.webhookUrl,
                   alt: 'Messaging API 分頁，圈出 Webhook URL 欄位與 Update 按鈕',
                 },

@@ -54,7 +54,7 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   webhookUrl: {
     button: '教我怎麼用',
     title: 'Webhook 網址要貼去哪？',
-    html: '這一格<b>不用填</b>——按旁邊的「複製」拿到網址，照動畫貼到 LINE：選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張）→ 切到 <b>Messaging API</b> 分頁 → <b>Webhook URL</b> 貼上按「Update」存檔 → 打開「<b>Use webhook</b>」開關。',
+    html: '這一格<b>不用填</b>——按旁邊的「複製」拿到網址，照動畫貼到 LINE：選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張）→ 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。',
     image: ONBOARDING_SHOTS.webhookAnim,
     alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
     href: 'https://developers.line.biz/console/',

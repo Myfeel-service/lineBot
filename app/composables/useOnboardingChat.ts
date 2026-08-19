@@ -668,7 +668,7 @@ export function useOnboardingChat() {
           },
           {
             // 選對卡的前導放進動畫裡——同名雙卡是最大雷點，教學開頭就要處理
-            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → <b>Webhook URL</b> 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。做完回來按「貼好了，幫我檢查」。',
+            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。做完回來按「貼好了，幫我檢查」。',
             image: ONBOARDING_SHOTS.webhookAnim,
             alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
           },
