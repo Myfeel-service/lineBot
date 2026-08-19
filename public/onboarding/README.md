@@ -22,7 +22,7 @@
 | `line-console-issue-token.png` | Messaging API 分頁最底 | Channel access token 的 Issue／Reissue 鈕 | `src-messaging-api.jpg` |
 | `line-console-channel-secret.webp` | **循環動畫**：切 Basic settings 分頁 → 捲下來 → Channel secret 那一列 | 兩個停格（分頁／目標列） | `src-basic-settings.jpg` |
 | `line-console-webhook-url.png` | Messaging API 分頁的 Webhook settings | ①貼網址的欄位 ②Use webhook 開關 | `src-messaging-api.jpg` |
-| `oam-auto-reply.png` | 官方帳號後台 → 設定 → 回應設定 | 「手動聊天」選項（＝關掉內建自動回應的新版做法） | `src-oam-response.jpg` |
+| `oam-auto-reply.webp` | **循環動畫**：右上「設定」→ 側欄「回應設定」→ 選「手動聊天」（＝關掉內建自動回應的新版做法） | 三個停格 | `src-oam-response.jpg` |
 | `oam-enable-messaging-api.png` | 官方帳號後台 → 設定 → Messaging API 的啟用鈕 | 啟用按鈕 | **尚缺**——只用在「清單沒看到帳號」的岔路，補上即自動顯示 |
 
 **全部由 `scripts/make-onboarding-shots.py` 產生**（需要 Python3＋Pillow）：裁切座標、紅框、
@@ -64,3 +64,4 @@ LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換�
 | 2026-08-19 ② | 拿鑰匙段改節點式教學：登入圖移除、新增 get-token 循環動畫；產線收進 `scripts/make-onboarding-shots.py` | 老闆拍板：一次一步＋「下一步」翻頁；切分頁→捲底→Issue→複製合成一支動畫（63KB） |
 | 2026-08-19 ③ | 標註全套改聚光式；新增 channel-secret 循環動畫 | 粗紅框被嫌俗；緊裁列圖缺定位，教學圖改「從分頁帶到目標」的動畫 |
 | 2026-08-19 ④ | 標註拔掉框線只留聚光（壓暗 14→18%）；帳號清單改動畫版（教學用）；動畫開場加正常畫面幀；幾個框對正（「手動聊天」右側多一截最明顯）；秘鑰靜態列圖退場 | 老闆逐輪校 |
+| 2026-08-19 ⑤ | 關自動回應也改帶路動畫（右上設定→側欄回應設定→手動聊天，73KB），教學兩步併一步；靜態版退場 | 三個「找位置」環節全數動畫化 |

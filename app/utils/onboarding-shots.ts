@@ -24,6 +24,6 @@ export const ONBOARDING_SHOTS = {
   channelSecretAnim: '/onboarding/line-console-channel-secret.webp',
   /** Messaging API 分頁：Webhook URL 欄位＋Update 鈕＋Use webhook 開關（一張圖三個框） */
   webhookUrl: '/onboarding/line-console-webhook-url.png',
-  /** 官方帳號後台：回應設定 → 關掉內建自動回應 */
-  oamAutoReply: '/onboarding/oam-auto-reply.png',
+  /** 循環動畫：官方帳號後台——右上「設定」→ 側欄「回應設定」→ 選「手動聊天」 */
+  oamAutoReplyAnim: '/onboarding/oam-auto-reply.webp',
 } as const

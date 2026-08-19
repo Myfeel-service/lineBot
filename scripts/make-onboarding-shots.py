@@ -68,10 +68,6 @@ def main() -> None:
              boxes=[(425, 1000, 710, 1090), (434, 1117, 511, 1174)],
              badges=[(745, 1043, 1), (545, 1144, 2)]).save(OUT / 'line-console-webhook-url.png')
 
-    # 關自動回應：回應設定頁，圈「手動聊天」（新版介面沒有「聊天機器人」那組選項了）
-    annotate(load('src-oam-response.jpg'), (250, 545, 1330, 950),
-             boxes=[(546, 750, 652, 792)]).save(OUT / 'oam-auto-reply.png')
-
     # ── 循環動畫：切分頁 → 捲到底 → 按 Issue → 按複製 ──────────
     src = load('src-messaging-api.jpg')
     x0, x1, vh, target_w = 240, 1330, 620, 880
@@ -155,6 +151,37 @@ def main() -> None:
     frames3 = [frame3(), frame3(label)]
     frames3[0].save(OUT / 'line-console-channel.webp', save_all=True,
                     append_images=frames3[1:], duration=[1100, 2400], loop=0, quality=82, method=4)
+
+    # ── 循環動畫：關內建自動回應——右上「設定」→ 側欄「回應設定」→ 選「手動聊天」 ──
+    # 這支含側欄（x 從 0 起）：側欄本身就是導航故事的一部分
+    src4 = load('src-oam-response.jpg')
+
+    def frame4(top: int, box=None) -> Image.Image:
+        im = src4.crop((0, top, 1352, top + vh))
+        if box:
+            dark = Image.eval(im, lambda v: int(v * 0.82))
+            mask = Image.new('L', im.size, 255)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (box[0], box[1] - top, box[2], box[3] - top), radius=10, fill=0)
+            im = Image.composite(dark, im, mask)
+        return im.resize((target_w, int(vh * target_w / 1352)))
+
+    oam_settings = (1264, 53, 1344, 94)   # 右上「設定」
+    oam_response = (44, 213, 190, 247)    # 側欄「回應設定」
+    oam_manual = (546, 750, 652, 792)     # 「手動聊天」選項
+    spec4 = [
+        (0, None, 900),            # 開場：正常畫面
+        (0, oam_settings, 1500),   # 停：右上「設定」
+        (0, oam_response, 1500),   # 停：側欄「回應設定」
+        (200, None, 130),          # 捲動帶過…
+        (420, None, 130),
+        (610, None, 300),
+        (610, oam_manual, 2400),   # 停：選「手動聊天」
+    ]
+    frames4 = [frame4(t, b) for t, b, _ in spec4]
+    frames4[0].save(OUT / 'oam-auto-reply.webp', save_all=True,
+                    append_images=frames4[1:], duration=[d for _, _, d in spec4],
+                    loop=0, quality=82, method=4)
 
     for f in sorted(OUT.iterdir()):
         if f.suffix in ('.png', '.webp'):
