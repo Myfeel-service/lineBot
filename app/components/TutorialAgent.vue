@@ -69,8 +69,8 @@
                有它的時候，下面的待辦清單不再重複列「接上 LINE」（英雄卡代言） -->
           <div v-if="onboardingIncomplete" class="ta-hero">
             <div class="ta-hero__head">
-              <!-- 標題向前看（結論紅條已講「還沒完成」，這裡不再複述同一句） -->
-              <div class="ta-hero__title">完成這幾步，機器人就上線</div>
+              <!-- 結論紅條開通期讓位（統一成一塊），後果句由標題扛 -->
+              <div class="ta-hero__title">開通還沒完成——機器人還不能上線</div>
               <button type="button" class="ta-hero__refresh" :disabled="busy" @click="refreshAll(true)">
                 {{ busy ? '檢查中…' : '重新檢查' }}
               </button>
@@ -712,10 +712,10 @@ const verdict = computed<{ tone: string, icon: Component, text: string } | null>
       : ''
     return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人${setupTail}` }
   }
-  // 開通未完成＝頭號問題只有一個：verdict、英雄卡、泡泡同一軸線（2026-08-20 拍板 D-20——
-  // 之前 verdict 講「差 1 項（AI）」、英雄卡講「開通沒完成」，同畫面兩個頭號問題）
+  // 開通未完成＝英雄卡整塊代言，結論列不另出一條（2026-08-20 拍板：兩塊統一成一塊）。
+  // ⛔要 return null 擋在這裡，不能讓它往下掉到「一切正常」——還沒開通不是正常
   if (loaded.value && onboardingIncomplete.value)
-    return { tone: 'danger', icon: CircleCloseFilled, text: '開通還沒完成——機器人還不能上線' }
+    return null
   if (loaded.value && incompleteRequired.value.length)
     return { tone: 'danger', icon: CircleCloseFilled, text: `還不能上線：${notLiveConsequence.value}（差 ${incompleteRequired.value.length} 項必要設定）` }
   if (warningAlerts.value.length)
