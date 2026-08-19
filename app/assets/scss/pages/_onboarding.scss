@@ -162,9 +162,11 @@
 
 .onbc-shell {
   width: 100%;
-  /* 2026-08-19 老闆實測：560px 讓教學截圖被壓得太小，桌機放寬到 720 */
+  /* 2026-08-19 老闆實測：560px 讓教學截圖被壓得太小，桌機放寬到 720；
+     高度同輪加高 760→920——教學步驟「文字＋圖＋按鈕」一組要能整組入鏡，
+     760 的年代對話裡還沒有圖。小螢幕由 100vh-3rem 那邊接手，行動版斷點不受影響 */
   max-width: 720px;
-  height: min(760px, calc(100vh - 3rem));
+  height: min(920px, calc(100vh - 3rem));
   background: var(--bg-surface);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
