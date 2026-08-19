@@ -67,6 +67,14 @@ export default defineEventHandler(async (event) => {
     { name: 'billing:reconcile-and-charge', run: () => runBillingReconcile(config as unknown as Record<string, unknown>, new Date(), { charge: true }) },
   ]
 
+  // 心跳先寫（C-48）：原本寫在所有 await 之後——任何一項任務拖到撞閘道逾時，
+  // 心跳就沒寫到 → 小幫手誤報「背景維護停擺」，而任務其實每輪都跑了大半。
+  // 心跳的語意是「排程有進來」（Cloud Scheduler 停了/secret 換了才該紅），不是「全部成功」；
+  // 成功與否由下面的 failedTasks 補記。
+  await db.collection('cronState').doc('maintenance-heartbeat').set({
+    lastRunAt: Date.now(),
+  }, { merge: true }).catch(e => console.warn('[cron/run-tasks] heartbeat write failed:', e))
+
   const settled = await Promise.allSettled(tasks.map(t => t.run()))
   const results = tasks.map((t, i) => {
     const s = settled[i]!
@@ -78,10 +86,8 @@ export default defineEventHandler(async (event) => {
   const failed = results.filter(r => !r.ok)
   if (failed.length) console.warn('[cron/run-tasks] failed:', failed)
 
-  // 心跳：讓異常提醒中心能發現「排程整批沒在跑」（Cloud Scheduler 停了、secret 換了、
-  // 端點壞了都會停止跳動）。寫失敗只記 log，不影響任務本身的回報。
   await db.collection('cronState').doc('maintenance-heartbeat').set({
-    lastRunAt: Date.now(),
+    lastCompletedAt: Date.now(),
     failedTasks: failed.map(f => f.task),
   }, { merge: true }).catch(e => console.warn('[cron/run-tasks] heartbeat write failed:', e))
 

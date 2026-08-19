@@ -98,6 +98,11 @@ export function validateChunkInput(input: ChunkInput): string | null {
   if (!input.title) return '請輸入標題'
   if (!input.content) return '請輸入內容'
   if (input.content.length > 5000) return '內容過長（上限 5000 字）'
+  // 上限補齊（C-49E）：title 與 tags 都會進 embedding / tag 索引，原本無上限——
+  // client 直送 bulk-create 可以用 200 個 tag 撐爆 tag 索引、無限長 title 吃掉整段向量
+  if (input.title.length > 200) return '標題過長（上限 200 字）'
+  if (input.tags.length > 10) return '標籤太多（上限 10 個）'
+  if (input.tags.some(t => t.length > 50)) return '單一標籤過長（上限 50 字）'
   return null
 }
 
@@ -201,9 +206,13 @@ export async function updateKnowledgeChunk(
   const existingQuestions: string[] = Array.isArray(existing.questions) ? existing.questions.map(String) : []
   const questions = params.questions ?? existingQuestions
   // questions 也在 embedding 文字裡：有提供且與既有不同，就算 content 沒變也要重新索引，
-  // 否則 doc 上的 questions 與向量會永久分歧
+  // 否則 doc 上的 questions 與向量會永久分歧。
+  // ⛔比對要吃「集合」不吃「逐字順序」（C-49D）：resync 對「未變」卡回填問法時，
+  // LLM 這輪只是換個順序或多個空白，逐字比較會讓 100 張未變卡整批白重算 embedding
+  // （付錢＋每張各一段索引空窗）。同一批問法換順序對檢索沒有實質差異。
+  const qKey = (qs: string[]) => JSON.stringify([...qs.map(q => q.trim()).filter(Boolean)].sort())
   const questionsChanged = params.questions !== undefined
-    && JSON.stringify(params.questions) !== JSON.stringify(existingQuestions)
+    && qKey(params.questions) !== qKey(existingQuestions)
   const needsReindex = params.contentChanged || questionsChanged
 
   const baseUpdate: Record<string, unknown> = {
@@ -391,7 +400,12 @@ export async function runIndexOnChunk(
     }
   }
   catch { /* 產品名解析失敗就照原 embeddingText 走 */ }
-  const finalText = productName ? `${productName}\n${embeddingText}` : embeddingText
+  // embedding 模型輸入約 2048 token（≈ 中文 1300–2000 字），超長只會被上游截掉或報錯。
+  // 這裡自己截（C-49D）：取前段（產品名+標題+問法都在前面，檢索訊號最重的部分保得住），
+  // 長卡的後半對向量的貢獻本來就進不去，明著截比交給 API 碰運氣穩。
+  const EMBED_INPUT_CHAR_LIMIT = 1800
+  const rawText = productName ? `${productName}\n${embeddingText}` : embeddingText
+  const finalText = rawText.length > EMBED_INPUT_CHAR_LIMIT ? rawText.slice(0, EMBED_INPUT_CHAR_LIMIT) : rawText
   const embeddingTokens = estimateTokens(finalText)
   try {
     const values = await embedDocument(finalText)

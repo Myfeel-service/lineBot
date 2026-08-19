@@ -11,6 +11,7 @@
  *   所以超過 SEGMENT_CHAR_LEN 就切段、逐段呼叫再合併
  */
 import { generateJson } from './gemini'
+import { normalizeForCompare } from './ai-knowledge-resync'
 import type { ChunkInput } from './ai-knowledge-chunks'
 
 export const MAX_CHUNKS_PER_DOC = 50
@@ -276,7 +277,8 @@ export async function chunkTextWithLlm(rawText: string, opts?: { hint?: string }
     inputTokens += res.inputTokens
     outputTokens += res.outputTokens
     for (const c of res.chunks) {
-      const key = c.title.replace(/\s+/g, '')
+      // 同 resync 的比對尺（normalizeForCompare）:只去空白吃不到全半形/大小寫變體 → 影子卡
+      const key = normalizeForCompare(c.title)
       if (seenTitles.has(key)) continue
       seenTitles.add(key)
       merged.push(c)

@@ -37,6 +37,7 @@ vi.mock('./ai-knowledge-chunker', () => ({
   })),
 }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./ai-overview', () => ({ regenerateOverviewCard: vi.fn(async () => {}) }))
 
 const { listChunksBySource } = vi.hoisted(() => ({ listChunksBySource: vi.fn() }))
 vi.mock('./ai-knowledge-sources', () => ({

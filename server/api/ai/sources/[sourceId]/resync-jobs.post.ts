@@ -55,7 +55,24 @@ export default defineEventHandler(async (event) => {
   // 「網址回應 404:請確認連結公開可訪問」這類可行動訊息。
   // getResyncExtracted 一律當場重抓(不讀排程暫存)——手動按下這顆按鈕的語意就是
   // 「現在去看一次網頁」;讀舊暫存會回報「全部未變」,看起來像功能壞掉。
-  const extracted = await getResyncExtracted(db, sourceId, source.data.contentHash, source.data.url)
+  // ⛔失敗也要落地(C-48):關掉自動偵測(refreshInterval=0)的來源永遠不被排程掃到,
+  // 手動失敗只丟 toast 的話,連按五次 404 列表照樣綠色「正常」——這裡比照排程路徑
+  // 寫 checkFailCount/failureReason,連續 3 次標 failed,體檢與每日摘要才看得到。
+  let extracted: Awaited<ReturnType<typeof getResyncExtracted>>
+  try {
+    extracted = await getResyncExtracted(db, sourceId, source.data.contentHash, source.data.url)
+  }
+  catch (err: any) {
+    const msg = String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200)
+    const failCount = Number((source.data as any).checkFailCount ?? 0) + 1
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+      failureReason: `重新同步失敗：${msg}`,
+      checkFailCount: failCount,
+      lastCheckedAt: FieldValue.serverTimestamp(),
+      ...(failCount >= 3 ? { status: 'failed' } : {}),
+    }).catch(() => {})
+    throw err
+  }
   if (!extracted.text.trim()) {
     throw createError({ statusCode: 502, statusMessage: '抓到網頁但內容為空；請確認頁面是否改版或改用「貼上文字」重新匯入' })
   }

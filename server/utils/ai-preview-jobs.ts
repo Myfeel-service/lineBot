@@ -30,7 +30,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
 import type { ChunkInput } from './ai-knowledge-chunks'
-import type { DiffResult } from './ai-knowledge-resync'
+import { normalizeForCompare, type DiffResult } from './ai-knowledge-resync'
 
 export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
 
@@ -109,6 +109,8 @@ export interface WorkState {
   segmentCursor: number
   // 補問法進度（gsheet / 乾淨 xlsx 的一列一卡：卡片沒有 questions，逐批補）
   enrichCursor: number
+  /** 補問法失敗的批數（C-49B）：>0 收尾時要警告——「不擋匯入」不等於「不告訴使用者」 */
+  enrichFailedBatches?: number
   // 累積產出
   chunks: ChunkInput[]
   overviewCard: ChunkInput | null
@@ -284,7 +286,9 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
     }
   }
 
-  const seen = new Set(work.chunks.map(c => c.title.replace(/\s+/g, '')))
+  // 去重的尺與 resync 同一把（normalizeForCompare）：只去空白吃不到「iPhone 保固」vs「IPHONE保固」
+  // 這種全半形/大小寫變體——入庫成兩張後，之後每次同步都被誤報 removed（影子卡）
+  const seen = new Set(work.chunks.map(c => normalizeForCompare(c.title)))
   let consumed = 0
   for (let b = 0; b < batch.length; b++) {
     const item = batch[b]!
@@ -308,7 +312,7 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
     }
 
     for (const c of r.value.chunks) {
-      const key = c.title.replace(/\s+/g, '')
+      const key = normalizeForCompare(c.title)
       if (seen.has(key)) continue
       seen.add(key)
       work.chunks.push(c)
@@ -320,6 +324,13 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
 
   work.segmentCursor = start + consumed
   if (work.segmentCursor >= work.segments.length || work.chunks.length >= MAX_TOTAL_CHUNKS) {
+    // 撞卡數上限要說（C-49B）：10 萬字型錄切到一半就滿 150 張，後面的段整批不處理。
+    // 不講的話預覽顯示 150 條、零警告——使用者以為整份都進去了，後半段商品客人一問就答不出來。
+    // （gsheet 路徑本來就有「超過 150 列」提示，LLM 路徑漏了這句。）
+    if (work.chunks.length >= MAX_TOTAL_CHUNKS && work.segmentCursor < work.segments.length) {
+      const skipped = work.segments.length - work.segmentCursor
+      work.warnings.push(`內容太多：整理到 ${MAX_TOTAL_CHUNKS} 條上限就停了，後面約 ${skipped} 段（占全文約 ${Math.round(skipped / work.segments.length * 100)}%）沒有處理。建議把文件拆成兩份分批匯入。`)
+    }
     work.phase = (work.input.generateOverview && work.chunks.length >= 2) ? 'overview' : 'finalize'
   }
   return work
@@ -348,9 +359,15 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
     }
     catch (e) {
       console.warn('[preview-jobs] enrich batch failed（該批不補問法，照常繼續）:', e)
+      // 「不擋」不等於「不說」（C-49B）：全滅時 150 張卡都沒問法、檢索明顯變弱，
+      // 而畫面一路綠——記一筆失敗批數，收尾時警告一次。
+      work.enrichFailedBatches = (work.enrichFailedBatches ?? 0) + 1
     }
   }
   work.enrichCursor = cursor + Math.max(1, batch.length) // 保底前進，避免卡死
+  if (work.enrichCursor >= work.chunks.length && (work.enrichFailedBatches ?? 0) > 0) {
+    work.warnings.push(`有 ${work.enrichFailedBatches} 批卡片沒補到「客人問法」（AI 服務暫時不穩），這些卡照常匯入但檢索效果較弱；稍後可在知識庫按「補問法」重跑。`)
+  }
 
   if (work.enrichCursor >= work.chunks.length) {
     // xlsx（type=file）要總表就接 overview；gsheet 維持不做總表的舊行為
@@ -702,7 +719,7 @@ export async function deleteJobStorage(workspaceId: string, jobId: string): Prom
 export async function cleanupExpiredPreviewJobs(
   db: Firestore = getDb(),
   limit = 200,
-): Promise<{ scanned: number; deleted: number; extended: number; failed: number }> {
+): Promise<{ scanned: number; deleted: number; extended: number; failed: number; uploadsPurged: number }> {
   const snap = await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION)
     .where('expiresAt', '<=', Timestamp.now())
     .limit(limit)
@@ -732,5 +749,24 @@ export async function cleanupExpiredPreviewJobs(
       console.warn(`[cleanup-preview-jobs] ${doc.id} delete failed:`, e)
     }
   }))
-  return { scanned: snap.size, deleted, extended, failed }
+
+  // 順手清 preview-uploads/ 的孤兒上傳檔（C-49E）：使用者選了檔、上傳到一半按取消
+  // （最常見的操作）那顆檔永遠沒人刪——唯一的刪除點在 preview-jobs 端點被呼叫到時。
+  // 超過 24 小時的一律清（正常流程上傳後幾秒內就被消費掉）。失敗不擋主清理。
+  let uploadsPurged = 0
+  try {
+    const [files] = await getStorage().bucket().getFiles({ prefix: 'preview-uploads/', maxResults: 300 })
+    const cutoff = Date.now() - 24 * 3600_000
+    for (const f of files) {
+      const createdMs = Date.parse(String(f.metadata?.timeCreated ?? '')) || 0
+      if (createdMs && createdMs < cutoff) {
+        await f.delete().then(() => { uploadsPurged++ }).catch(() => {})
+      }
+    }
+  }
+  catch (e) {
+    console.warn('[cleanup-preview-jobs] preview-uploads sweep failed:', e)
+  }
+
+  return { scanned: snap.size, deleted, extended, failed, uploadsPurged }
 }

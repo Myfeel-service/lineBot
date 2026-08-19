@@ -12,6 +12,7 @@
  * 這正是整站匯入能繞開動態首頁問題的原因。通用實作,不綁任何站台。
  */
 import { resolveInternalUrl } from './ai-source-extractors'
+import { fetchPublicText } from './safe-fetch'
 
 export interface DiscoveredPage {
   url: string
@@ -36,13 +37,14 @@ const BINARY_EXT_RE = /\.(?:jpe?g|png|gif|webp|svg|ico|css|js|json|xml|pdf|zip|m
 
 async function fetchPage(url: string): Promise<{ text: string; finalUrl: string } | null> {
   try {
-    const res = await fetch(url, {
+    // safe-fetch（C-49A）：整站探索是「把一個站的連結圖攤開」的功能，
+    // 不擋私有網段的話正好變成內網掃描器；大小上限防超大回應打爆記憶體。
+    const res = await fetchPublicText(url, {
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: { 'User-Agent': 'LineBotKnowledgeFetcher/1.0' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     if (!res.ok) return null
-    return { text: await res.text(), finalUrl: res.url || url }
+    return { text: res.text, finalUrl: res.finalUrl }
   }
   catch {
     return null

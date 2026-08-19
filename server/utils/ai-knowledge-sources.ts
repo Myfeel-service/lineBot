@@ -243,12 +243,19 @@ export async function deleteSourceWithChunks(
     .where('sourceId', '==', sourceId)
     .get()
 
-  const batch = db.batch()
-  for (const doc of chunksSnap.docs) batch.delete(doc.ref)
+  // 分批刪（C-49E）：單一 batch 上限 500 writes——卡片 >498 張時整批 commit 失敗，
+  // 來源永遠刪不掉（不是部分刪，是全不刪）。400 一批保留餘裕。
+  const refs = chunksSnap.docs.map(d => d.ref)
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = db.batch()
+    for (const ref of refs.slice(i, i + 400)) batch.delete(ref)
+    await batch.commit()
+  }
+  const tail = db.batch()
   // 變動偵測的全文暫存（subcollection）也一併清掉，避免孤兒 doc
-  batch.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
-  batch.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
-  await batch.commit()
+  tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
+  tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
+  await tail.commit()
   invalidateTagIndexCache(workspaceId)
   invalidateCatalogSourceCache(workspaceId)
 

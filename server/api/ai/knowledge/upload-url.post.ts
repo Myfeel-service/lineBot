@@ -37,12 +37,15 @@ export default defineEventHandler(async (event) => {
 
   // 不把 Content-Type 納入簽章 → 前端 PUT 的 header 不必逐字對齊，少一種 403 SignatureDoesNotMatch。
   // 下載端只認 bytes，檔案型別由 preview-jobs 收到的 fileName/contentType 另行判定。
+  // ⛔大小上限納入簽章（C-49A）：不設的話拿到網址就能 PUT 2GB——GCS 照收（付儲存費），
+  // 之後 preview-jobs 把整包下載進 Lambda 直接 OOM，而且炸掉後那顆檔案永遠留在 bucket。
   const [uploadUrl] = await getStorage().bucket()
     .file(storagePath)
     .getSignedUrl({
       version: 'v4',
       action: 'write',
       expires: Date.now() + 10 * 60 * 1000, // 10 分鐘內要 PUT 完
+      extensionHeaders: { 'x-goog-content-length-range': '0,10485760' }, // 10MB，與 preview-jobs 檢查一致
     })
 
   return { uploadId, storagePath, uploadUrl }

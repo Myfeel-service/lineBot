@@ -367,31 +367,68 @@ async function checkOneSource(
 }
 
 /**
+ * 失敗退避（C-48，純函式好測）：連續失敗的來源檢查間隔升冪（interval × 2^n，封頂 24h）。
+ * 沒有退避的話：分享權限被收回的試算表每小時被打一次 API 打到永遠，
+ * 還穩穩佔住每輪掃描名額，把健康的來源擠出去。
+ */
+export function sourceDueIntervalMs(intervalMs: number, checkFailCount: number): number {
+  const n = Math.min(Math.max(0, Math.floor(checkFailCount)), 5)
+  return Math.min(intervalMs * 2 ** n, 24 * 60 * 60_000)
+}
+
+/** 單輪處理的時間預算：超過就把剩下的留給下一輪（沒處理的來源 lastFetchedAt 沒動，下輪照樣 due）。
+ *  一輪拖太久會撞閘道逾時 → Cloud Scheduler 記失敗重試 → 半輪工作重複執行。 */
+const DETECT_TIME_BUDGET_MS = 60_000
+
+/**
  * 對 type='url' 的 source 做變動偵測、type='gsheet' 做自動同步。
  * 每張 source 的實際頻率由自身 refreshIntervalMinutes 決定（含失敗退避），
  * 呼叫端頻率高於來源頻率時只是空查詢。
  */
 export async function detectSourceUpdates(db: Firestore) {
   // 撈候選來源：refreshIntervalMinutes > 0（url 偵測 + gsheet 自動同步共用此排程）。
-  // 只用單一不等式查詢（免複合索引），type 在 JS 端篩。
-  // 進一步用 lastFetchedAt 過濾「到時間了」會比較準，但 Firestore 不易做時間區間查詢，
-  // 一律撈出來後用 JS 過濾 — 工作區 source 通常不會多到爆。
-  const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+  // 不等式查詢隱含按 refreshIntervalMinutes 升冪 → 沒有游標的話**每輪永遠拿同一批前 N 筆**：
+  // 任一租戶接個幾百張表（60 分）就把所有網址來源（1440 分）永久擠出視窗、零指標（C-48）。
+  // 游標輪轉：記住上一輪掃到哪，下一輪接著掃；掃到底歸零重來。__name__ 是免費的第二排序鍵。
+  const cursorRef = db.collection('cronState').doc('detect-sources-cursor')
+  const cursorData = (await cursorRef.get()).data() as { lastInterval?: number; lastId?: string } | undefined
+  let q = db.collection(KNOWLEDGE_SOURCES_COLLECTION)
     .where('refreshIntervalMinutes', '>', 0)
-    .limit(SOURCE_SCAN_LIMIT * 5) // 撈寬一點，過濾後再砍到 SCAN_LIMIT
-    .get()
+    .orderBy('refreshIntervalMinutes')
+    .orderBy('__name__')
+    .limit(SOURCE_SCAN_LIMIT * 5)
+  if (cursorData?.lastInterval != null && cursorData?.lastId) {
+    q = q.startAfter(cursorData.lastInterval, cursorData.lastId)
+  }
+  const snap = await q.get()
+  const windowFull = snap.size >= SOURCE_SCAN_LIMIT * 5
+  if (windowFull) {
+    const last = snap.docs.at(-1)!
+    await cursorRef.set({
+      lastInterval: Number((last.data() as any).refreshIntervalMinutes ?? 0),
+      lastId: last.id,
+    }).catch(() => {})
+    // 撞上限不能靜默：這代表來源數已超過單輪視窗，靠輪轉分批照顧
+    console.log(`[detect-source-updates] 候選窗滿（${snap.size}），游標輪轉續掃`)
+  }
+  else {
+    await cursorRef.set({ lastInterval: null, lastId: '' }).catch(() => {})
+  }
 
   const now = Date.now()
   const dueDocs: Array<{ id: string; data: KnowledgeSourceDoc }> = []
   for (const d of snap.docs) {
     const data = d.data() as KnowledgeSourceDoc
     if (data.type !== 'url' && data.type !== 'gsheet') continue
+    // 關掉自動同步的表＝商家自管：checkOneSource 只會直接 return，
+    // 不排除的話它們永遠「到期」、每輪白佔 SCAN_LIMIT 名額（早退不戳時間戳）。
+    if (data.type === 'gsheet' && data.gsheetAutoApply === false) continue
     // 退避：失敗的檢查不更新 lastFetchedAt，若只看它會每次排程都重打掛掉的網站。
-    // 以「最後一次嘗試」（成功或失敗）起算間隔。
+    // 以「最後一次嘗試」（成功或失敗）起算間隔；連續失敗的來源間隔升冪（見 sourceDueIntervalMs）。
     const lastMs = Math.max(tsToMs(data.lastFetchedAt), tsToMs(data.lastCheckedAt))
     const intervalMs = Number(data.refreshIntervalMinutes || 0) * 60_000
     if (!intervalMs) continue
-    if (lastMs && (now - lastMs) < intervalMs) continue
+    if (lastMs && (now - lastMs) < sourceDueIntervalMs(intervalMs, Number(data.checkFailCount ?? 0))) continue
     dueDocs.push({ id: d.id, data })
     if (dueDocs.length >= SOURCE_SCAN_LIMIT) break
   }
@@ -399,11 +436,13 @@ export async function detectSourceUpdates(db: Firestore) {
   if (!dueDocs.length) return { scanned: 0 }
 
   // 用 concurrency pool 跑 check;自動套用限額由整輪共用(見 AUTO_APPLY_BUDGET_PER_RUN)
+  // 時間預算:到點就收工,剩下的來源下一輪照樣 due(不處理≠丟掉)
   const run: DetectRunState = { autoApplyRemaining: AUTO_APPLY_BUDGET_PER_RUN }
+  const deadline = Date.now() + DETECT_TIME_BUDGET_MS
   const results: SourceCheckResult[] = []
   let cursor = 0
   async function worker() {
-    while (cursor < dueDocs.length) {
+    while (cursor < dueDocs.length && Date.now() < deadline) {
       const i = cursor++
       const doc = dueDocs[i]!
       const r = await checkOneSource(db, doc.id, doc.data, run)
@@ -413,6 +452,9 @@ export async function detectSourceUpdates(db: Firestore) {
   await Promise.all(
     Array.from({ length: Math.min(SOURCE_FETCH_CONCURRENCY, dueDocs.length) }, worker),
   )
+  if (results.length < dueDocs.length) {
+    console.warn(`[detect-source-updates] 時間預算用完，本輪處理 ${results.length}/${dueDocs.length}，其餘下輪續掃`)
+  }
 
   const tally = {
     scanned: results.length,
@@ -824,11 +866,19 @@ export async function dailyBacklogDigest(db: Firestore) {
   const stateRef = db.collection('cronState').doc('backlog-digest')
   // 這一份只用來便宜地早退「今天已經發過」的 workspace（省掉設定讀取與聚合）；
   // 真正防重複的判斷在 claimDailyDigest 的交易裡，不能靠這個快照。
-  const state = ((await stateRef.get()).data() ?? {}) as Record<string, string>
+  const state = ((await stateRef.get()).data() ?? {}) as Record<string, string | number>
 
-  // 發送時段是各 workspace 自選的,沒有全域「幾點前免查」的早退可用;
-  // 六個查詢都吃單欄自動索引、有 limit,平時多半是空結果,每 10 分鐘跑一次可接受。
+  // 掃描節流（C-49D）：發送時段各 workspace 自選、沒有全域「幾點前免查」的早退，
+  // 但也不必每 10 分鐘就跑滿 6 個查詢——一天 144 輪裡 143 輪的結果注定被丟掉，
+  // 最壞 17 萬次白讀（8/11 讀取費暴衝就是這種「掃全部再跳過」的形狀）。
+  // 改成半小時掃一輪：摘要的語意是「當天的 digestHour 那個小時內送到」，±30 分鐘無感。
   const nowMs = Date.now()
+  const lastScanMs = Number(state.__lastScanMs ?? 0)
+  if (nowMs - lastScanMs < 30 * 60_000) {
+    return { outcome: 'throttled' as const, sent: 0 }
+  }
+  await stateRef.set({ __lastScanMs: nowMs }, { merge: true }).catch(() => {})
+
   const [pendingSnap, humanSnap, outdatedSnap, failedSnap, expiredSnap, suggestSnap] = await Promise.all([
     db.collection('conversationSessions').where('status', '==', 'pending_human').limit(SESSION_SCAN_LIMIT).get(),
     db.collection('conversationSessions').where('status', '==', 'human_handling').limit(SESSION_SCAN_LIMIT).get(),

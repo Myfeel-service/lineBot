@@ -21,6 +21,8 @@ export type WorkspaceAlertId =
   | 'liffEndpointUrlMismatch'
   /** 知識庫來源同步失敗（試算表沒分享、網頁被移走…） */
   | 'knowledgeSyncFailed'
+  /** 網址來源每輪抓到的內容都不同＝變動偵測形同關閉（輪播/隨機區塊首頁必落入；官網改版不會通知） */
+  | 'knowledgeDetectStalled'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
   | 'knowledgeIndexFailed'
   /**
@@ -80,6 +82,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   liffEndpointBroken: '活動連結會把客人帶去錯的地方',
   liffEndpointUrlMismatch: 'LINE 填的活動頁網址不是正式網址',
   knowledgeSyncFailed: '有資料抓不到內容',
+  knowledgeDetectStalled: '有網址的自動偵測失效',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',
   anyTextBlocking: 'AI 被自動回覆規則擋住了',

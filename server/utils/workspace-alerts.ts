@@ -249,6 +249,18 @@ export async function collectWorkspaceAlerts(
             return n ? { active: true, count: n } : { active: false }
           }
         }),
+        probe('knowledgeDetectStalled', async () => {
+          // 每輪抓到的內容都不同＝變動偵測形同關閉（MYFEEL 首頁型的輪播頁必落入）。
+          // 原本只有點進知識庫來源頁才看得到——官網改版半年也不會有人知道（C-48）。
+          // 免新索引：來源數量級小（health 同樣全掃 300），select 單欄位全掃即可。
+          const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+            .where('workspaceId', '==', wid)
+            .select('detectStalledAt')
+            .limit(FALLBACK_SCAN_LIMIT)
+            .get()
+          const n = snap.docs.filter(d => (d.data() as Record<string, unknown>).detectStalledAt).length
+          return n ? { active: true, count: n } : { active: false }
+        }),
         probe('knowledgeIndexFailed', async () => {
           // count() 聚合查詢：兩個等值條件走自動索引合併，不必讀 doc
           const agg = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)

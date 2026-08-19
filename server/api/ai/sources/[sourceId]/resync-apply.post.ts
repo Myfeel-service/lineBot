@@ -18,79 +18,9 @@ import {
   updateKnowledgeChunk,
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
-import { summarizeAsOverviewCard } from '~~/server/utils/ai-knowledge-chunker'
-import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
+import { regenerateOverviewCard } from '~~/server/utils/ai-overview'
 import { countDivergentKeeps, loadOldChunksForDiff, type DiffAction, type DiffEntry } from '~~/server/utils/ai-knowledge-resync'
-
-/**
- * 套用 diff 後，依「當下這個 source 旗下的子卡片」重新合成總覽卡（isOverview）。
- * 機器合成、預設覆蓋；但若使用者手動編輯過總覽卡（manuallyEditedAt）則保留不動。
- * 失敗只記 warning，不擋 re-sync 主流程。
- */
-async function regenerateOverviewCard(
-  db: ReturnType<typeof getDb>,
-  workspaceId: string,
-  sourceId: string,
-): Promise<void> {
-  const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
-    .where('workspaceId', '==', workspaceId)
-    .where('sourceId', '==', sourceId)
-    .get()
-
-  let existingOverview: { id: string; manuallyEdited: boolean } | null = null
-  const childCards: Array<{ title: string; content: string; tags: string[] }> = []
-  for (const d of snap.docs) {
-    const data = d.data() as any
-    if (data?.isOverview === true) {
-      existingOverview = { id: d.id, manuallyEdited: data?.manuallyEditedAt != null }
-      continue
-    }
-    childCards.push({
-      title: String(data?.title ?? ''),
-      content: String(data?.content ?? ''),
-      tags: Array.isArray(data?.tags) ? data.tags.map(String) : [],
-    })
-  }
-
-  // 手動編輯過的總覽卡：尊重人工版本，不自動覆蓋
-  if (existingOverview?.manuallyEdited) return
-
-  const ov = await summarizeAsOverviewCard(
-    childCards.map(c => ({ ...c, sourceId: null })),
-  )
-  if (!ov) return // 子卡不足 2 張等情況，保留現狀
-
-  await recordAiUsage(workspaceId, {
-    inputTokens: ov.inputTokens,
-    outputTokens: ov.outputTokens,
-    importInputTokens: ov.inputTokens,
-    importOutputTokens: ov.outputTokens,
-  }).catch(() => {})
-
-  if (existingOverview) {
-    await updateKnowledgeChunk(db, {
-      chunkId: existingOverview.id,
-      title: ov.card.title,
-      content: ov.card.content,
-      tags: ov.card.tags,
-      questions: ov.card.questions ?? [],
-      contentChanged: true,
-      manualEdit: false,
-    })
-  }
-  else {
-    await createKnowledgeChunk(db, {
-      workspaceId,
-      chunkId: uuidv4(),
-      title: ov.card.title,
-      content: ov.card.content,
-      tags: ov.card.tags,
-      questions: ov.card.questions ?? [],
-      isOverview: true,
-      sourceId,
-    })
-  }
-}
 
 /**
  * POST /api/ai/sources/:sourceId/resync-apply
@@ -240,8 +170,9 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 列表頁來源：依套用後的子卡片重新合成總覽卡（覆蓋舊的；手動編輯過則保留）
-  if (source.data.generateOverview) {
+  // 列表頁來源：依套用後的子卡片重新合成總覽卡（覆蓋舊的；手動編輯過則保留）。
+  // 只在真的動過卡時重生（C-49D）：全選保留＝什麼都沒改，也重生等於白付一次總覽 LLM＋embedding
+  if (source.data.generateOverview && (added || updated || deleted)) {
     await regenerateOverviewCard(db, workspaceId, sourceId)
       .catch(e => console.warn('[resync-apply] overview regen failed:', e))
   }

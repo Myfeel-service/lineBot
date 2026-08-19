@@ -14,6 +14,7 @@ import {
   MAX_RAW_TEXT_LEN,
 } from '~~/server/utils/ai-source-extractors'
 import { parseGoogleSheetUrl, readGoogleSheetAsCards, sheetHealthWarnings } from '~~/server/utils/google-sheets'
+import { getPdfPageCount } from '~~/server/utils/pdf-split'
 import {
   cleanupExpiredPreviewJobs,
   JOB_TTL_MS,
@@ -99,7 +100,17 @@ export default defineEventHandler(async (event) => {
       const extracted = await extractPdfText(buffer)
       if (isProbablyScannedPdf(extracted, buffer.length)) {
         // 掃描檔：沒有文字層 → 走 OCR 切頁批處理（逐輪推進）。原檔存 Storage 供各批切頁。
-        const pages = Number(extracted.meta.pages ?? 0)
+        // 頁數讀不到要有第二意見（C-49B）：unpdf 對非標準 PDF 常回不出 totalPages，
+        // 原本直接當 1 頁 → 40 頁說明書只辨識第一頁、顯示「整理好了，2 條」——
+        // 使用者以為內容就這麼少，後面 39 頁的保固規格全沒進知識庫。
+        let pages = Number(extracted.meta.pages ?? 0)
+        if (pages <= 0) {
+          pages = await getPdfPageCount(buffer).catch(() => 0)
+        }
+        if (pages <= 0) {
+          // 兩邊都讀不到＝檔案結構特殊，猜 1 頁是靜默丟內容——老實報錯讓人換路
+          throw createError({ statusCode: 422, statusMessage: '無法判讀這份 PDF 的頁數（檔案格式特殊），AI 辨識無法保證完整；請改貼文字或換一份檔案' })
+        }
         if (pages > MAX_OCR_PAGES) {
           throw createError({
             statusCode: 400,
@@ -107,8 +118,8 @@ export default defineEventHandler(async (event) => {
           })
         }
         sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'pdf', contentType || 'application/pdf')
-        work.meta = { ...extracted.meta }
-        work.ocrPageTotal = pages > 0 ? pages : 1
+        work.meta = { ...extracted.meta, pages }
+        work.ocrPageTotal = pages
         work.ocrPageCursor = 0
         work.phase = 'ocr'
       }
@@ -201,6 +212,13 @@ async function readUploadedFileBuffer(
     const file = getStorage().bucket().file(storagePath)
     const [exists] = await file.exists()
     if (!exists) throw createError({ statusCode: 400, statusMessage: '找不到已上傳的檔案，請重新上傳' })
+    // 先看 metadata 再下載（C-49A）：簽名網址已有大小上限，這裡是第二道——
+    // 超大檔要在「下載進記憶體之前」擋下，OOM 炸掉的話連刪檔的機會都沒有
+    const [meta] = await file.getMetadata()
+    if (Number(meta.size ?? 0) > 10 * 1024 * 1024) {
+      await file.delete().catch(() => {})
+      throw createError({ statusCode: 400, statusMessage: '檔案超過 10MB 上限' })
+    }
     const [buf] = await file.download()
     await file.delete().catch(() => {}) // 讀完即刪；失敗不擋建立
     return buf

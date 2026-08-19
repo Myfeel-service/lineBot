@@ -118,3 +118,14 @@ describe('purgeRecycledKnowledge（回收桶到期清運）', () => {
     expect(deleted).toEqual(['knowledgeChunks/a', 'knowledgeSources/s1'])
   })
 })
+
+describe('sourceDueIntervalMs（失敗退避）', () => {
+  it('無失敗照原間隔;連續失敗指數升冪、封頂 24 小時', async () => {
+    const { sourceDueIntervalMs } = await import('./cron-maintenance')
+    const H = 3600_000
+    expect(sourceDueIntervalMs(H, 0)).toBe(H)
+    expect(sourceDueIntervalMs(H, 1)).toBe(2 * H)
+    expect(sourceDueIntervalMs(H, 3)).toBe(8 * H)
+    expect(sourceDueIntervalMs(H, 99)).toBe(24 * H) // 封頂:壞來源一天還是會試一次,修好能自己回來
+  })
+})

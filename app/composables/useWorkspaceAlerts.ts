@@ -142,6 +142,17 @@ const ALERTS: AlertDefinition[] = [
     guideId: 'knowledge-sync',
   },
   {
+    // 措辭與知識庫頁體檢同一件事（stalledSources）:輪播/隨機區塊的首頁每輪抓到的內容都不同,
+    // 系統分不出哪一版算數 → 官網真的改版也不會通知——畫面上還一切正常,最容易被忽略
+    id: 'knowledgeDetectStalled',
+    icon: Reading,
+    severity: 'warning',
+    impact: '這些網址每次抓到的內容都不一樣，系統已無法替你盯改版——官網改了也不會提醒。建議改用內容固定的頁面當資料來源。',
+    cta: '去看這些網址',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/knowledge/sources?health=stalledSources`,
+  },
+  {
     id: 'knowledgeIndexFailed',
     icon: Reading,
     severity: 'critical',
