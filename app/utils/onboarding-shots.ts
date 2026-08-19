@@ -10,17 +10,17 @@
  * 「這批圖什麼時候拍的、LINE 後台改版了沒」記在 README。
  */
 export const ONBOARDING_SHOTS = {
-  /** LINE Developers 帳號清單：認卡片下方「Messaging API」小字（同名可能有兩張卡） */
+  /** LINE Developers 帳號清單（靜態，修復劇本用）：認卡片下方「Messaging API」小字 */
   consoleChannel: '/onboarding/line-console-channel.png',
+  /** 循環動畫：帳號清單整頁（含麵包屑定位）→ 聚焦「Messaging API」小字（教學用） */
+  consoleChannelAnim: '/onboarding/line-console-channel.webp',
   /** 循環動畫：切到 Messaging API 分頁 → 捲到最底 → 按 Issue 發鑰匙 → 按複製 */
   getTokenAnim: '/onboarding/line-console-get-token.webp',
   /** Messaging API 分頁最下方：發第一把鑰匙（Issue / Reissue） */
   issueToken: '/onboarding/line-console-issue-token.png',
   /** 官方帳號後台：設定 → Messaging API 按啟用（清單裡找不到帳號時的岔路） */
   oamEnableMessagingApi: '/onboarding/oam-enable-messaging-api.png',
-  /** Basic settings 分頁：第二把鑰匙 Channel secret（靜態列圖，修復劇本的小面板用） */
-  channelSecret: '/onboarding/line-console-channel-secret.png',
-  /** 循環動畫：切 Basic settings 分頁 → 捲下來 → 找到 Channel secret（教學用——緊裁列圖缺定位） */
+  /** 循環動畫：切 Basic settings 分頁 → 捲下來 → 找到 Channel secret（緊裁列圖缺定位已退場） */
   channelSecretAnim: '/onboarding/line-console-channel-secret.webp',
   /** Messaging API 分頁：Webhook URL 欄位＋Update 鈕＋Use webhook 開關（一張圖三個框） */
   webhookUrl: '/onboarding/line-console-webhook-url.png',

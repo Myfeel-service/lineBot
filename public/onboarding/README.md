@@ -16,10 +16,10 @@
 
 | 檔名 | 內容 | 紅框圈什麼 | 來源檔 |
 |---|---|---|---|
-| `line-console-channel.png` | LINE Developers 帳號清單 | 卡片下方的「Messaging API」**小字**（⛔同名可能兩張卡，認小字不認名稱） | `src-channel-list.jpg` |
+| `line-console-channel.png` | LINE Developers 帳號清單（靜態，修復劇本用） | 卡片下方的「Messaging API」**小字**（⛔同名可能兩張卡，認小字不認名稱） | `src-channel-list.jpg` |
+| `line-console-channel.webp` | **循環動畫**：帳號清單整頁（含麵包屑定位）→ 聚焦「Messaging API」小字 | 一個停格 | `src-channel-list.jpg` |
 | `line-console-get-token.webp` | **循環動畫**：切 Messaging API 分頁 → 捲到底 → 按 Issue → 按複製 | 三個停格各圈一處（分頁／Issue 鈕／複製圖示） | `src-messaging-api.jpg` |
 | `line-console-issue-token.png` | Messaging API 分頁最底 | Channel access token 的 Issue／Reissue 鈕 | `src-messaging-api.jpg` |
-| `line-console-channel-secret.png` | Messaging API 頻道的 Basic settings | Channel secret 那一列（修復劇本的小面板用） | `src-basic-settings.jpg` |
 | `line-console-channel-secret.webp` | **循環動畫**：切 Basic settings 分頁 → 捲下來 → Channel secret 那一列 | 兩個停格（分頁／目標列） | `src-basic-settings.jpg` |
 | `line-console-webhook-url.png` | Messaging API 分頁的 Webhook settings | ①貼網址的欄位 ②Use webhook 開關 | `src-messaging-api.jpg` |
 | `oam-auto-reply.png` | 官方帳號後台 → 設定 → 回應設定 | 「手動聊天」選項（＝關掉內建自動回應的新版做法） | `src-oam-response.jpg` |
@@ -49,7 +49,7 @@
   官方帳號後台頂列的**加好友 ID（@xxxx）**。帳號名稱用測試帳號（Myfeel Test）可留。
 - ⛔ **憑證絕對不能入鏡**：Token／Channel secret／Channel ID／QR code 的值，截圖前先清空
   或蓋住——這個資料夾是對外公開網址，圖推上線就收不回來。
-- **標註＝聚光式**（2026-08-19 拍板）：目標維持原亮度、周圍壓暗 14%、細線框（#E0313A、2px、圓角）——⛔別畫回粗紅框，被嫌過俗。一張圖圈一個重點（webhook 那張例外，①②編號對齊
+- **標註＝純聚光**（2026-08-19 拍板二修）：目標維持原亮度、周圍壓暗 18%、**不畫框線**（有色塊聚焦就不需要線；更早的粗紅框被嫌俗、細框也拔掉了）。一張圖圈一個重點（webhook 那張例外，①②編號對齊
   卡片步驟）。不要在圖上寫字——文字由卡片負責，寫在圖上之後改文案會對不起來。
 - **裁切**：只裁「目標＋認得出位置的周邊」，整頁縮圖進卡片會變螞蟻字。寬度 1000–1400px。
 - **教學圖優先用「從分頁帶到目標」的動畫**（2026-08-19 拍板）：緊裁的一列靜態圖缺「從哪裡來」的定位，使用者對不出這個欄位在頁面的什麼地方；靜態緊裁圖只用在修復劇本這種「已經知道位置、回去再看一眼」的場景。
@@ -63,3 +63,4 @@ LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換�
 | 2026-08-19 | 首批六張（老闆截圖、Claude 裁切標註） | 岔路那張（oam-enable-messaging-api）尚缺。⚠️這批圖同時抓到教學文案過期：回應設定新版介面沒有「聊天機器人」選項，正確操作是回應方式選「手動聊天」，劇本文案已同步改 |
 | 2026-08-19 ② | 拿鑰匙段改節點式教學：登入圖移除、新增 get-token 循環動畫；產線收進 `scripts/make-onboarding-shots.py` | 老闆拍板：一次一步＋「下一步」翻頁；切分頁→捲底→Issue→複製合成一支動畫（63KB） |
 | 2026-08-19 ③ | 標註全套改聚光式；新增 channel-secret 循環動畫 | 粗紅框被嫌俗；緊裁列圖缺定位，教學圖改「從分頁帶到目標」的動畫 |
+| 2026-08-19 ④ | 標註拔掉框線只留聚光（壓暗 14→18%）；帳號清單改動畫版（教學用）；動畫開場加正常畫面幀；幾個框對正（「手動聊天」右側多一截最明顯）；秘鑰靜態列圖退場 | 老闆逐輪校 |

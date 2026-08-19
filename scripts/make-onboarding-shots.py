@@ -35,8 +35,8 @@ def annotate(im: Image.Image, crop, boxes=(), badges=()) -> Image.Image:
     ox, oy = crop[0], crop[1]
 
     if boxes:
-        # 周圍壓暗 14%，目標區域（圓角矩形）維持原樣
-        dark = Image.eval(im, lambda v: int(v * 0.86))
+        # 周圍壓暗 18%，目標區域（圓角矩形）維持原亮——⛔不畫框線（有色塊就夠了，拍板）
+        dark = Image.eval(im, lambda v: int(v * 0.82))
         mask = Image.new('L', im.size, 255)
         md = ImageDraw.Draw(mask)
         for (x1, y1, x2, y2) in boxes:
@@ -44,8 +44,6 @@ def annotate(im: Image.Image, crop, boxes=(), badges=()) -> Image.Image:
         im = Image.composite(dark, im, mask)
 
     d = ImageDraw.Draw(im)
-    for (x1, y1, x2, y2) in boxes:
-        d.rounded_rectangle((x1 - ox, y1 - oy, x2 - ox, y2 - oy), radius=10, outline=RED, width=2)
     for (x, y, n) in badges:
         r = 13
         d.ellipse((x - ox - r, y - oy - r, x - ox + r, y - oy + r), fill=RED)
@@ -57,26 +55,22 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
     # ── 靜態圖 ──────────────────────────────────────────────────
-    # 帳號清單：只留三張卡那排，圈中間卡的「Messaging API」小字（同名雙卡認小字不認名稱）
+    # 帳號清單（修復劇本用；教學用下面的動畫版）：圈中間卡的「Messaging API」小字
     annotate(load('src-channel-list.jpg'), (270, 380, 1070, 700),
-             boxes=[(560, 598, 725, 636)]).save(OUT / 'line-console-channel.png')
+             boxes=[(556, 595, 714, 640)]).save(OUT / 'line-console-channel.png')
 
     # 發鑰匙：Messaging API 分頁最底的 Issue／Reissue 鈕
     annotate(load('src-messaging-api.jpg'), (240, 1868, 1330, 2065),
              boxes=[(1222, 1972, 1310, 2024)]).save(OUT / 'line-console-issue-token.png')
 
-    # 第二把鑰匙：Basic settings 的 Channel secret 那一列
-    annotate(load('src-basic-settings.jpg'), (240, 1555, 1330, 1800),
-             boxes=[(275, 1648, 800, 1712)]).save(OUT / 'line-console-channel-secret.png')
-
     # Webhook：①貼網址的欄位 ②Use webhook 開關（編號對齊卡片步驟）
     annotate(load('src-messaging-api.jpg'), (240, 950, 1330, 1205),
-             boxes=[(425, 1000, 710, 1090), (432, 1120, 510, 1168)],
+             boxes=[(425, 1000, 710, 1090), (434, 1117, 511, 1174)],
              badges=[(745, 1043, 1), (545, 1144, 2)]).save(OUT / 'line-console-webhook-url.png')
 
     # 關自動回應：回應設定頁，圈「手動聊天」（新版介面沒有「聊天機器人」那組選項了）
     annotate(load('src-oam-response.jpg'), (250, 545, 1330, 950),
-             boxes=[(542, 748, 756, 795)]).save(OUT / 'oam-auto-reply.png')
+             boxes=[(546, 750, 652, 792)]).save(OUT / 'oam-auto-reply.png')
 
     # ── 循環動畫：切分頁 → 捲到底 → 按 Issue → 按複製 ──────────
     src = load('src-messaging-api.jpg')
@@ -86,13 +80,11 @@ def main() -> None:
         im = src.crop((x0, top, x1, top + vh))
         if box:
             # 與靜態圖同一套聚光式標註（縮圖後線寬會除以 ~1.24，這裡畫粗一點）
-            dark = Image.eval(im, lambda v: int(v * 0.86))
+            dark = Image.eval(im, lambda v: int(v * 0.82))
             mask = Image.new('L', im.size, 255)
             ImageDraw.Draw(mask).rounded_rectangle(
                 (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, fill=0)
             im = Image.composite(dark, im, mask)
-            ImageDraw.Draw(im).rounded_rectangle(
-                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, outline=RED, width=3)
         return im.resize((target_w, int(vh * target_w / (x1 - x0))))
 
     tab = (432, 332, 558, 378)          # Messaging API 分頁
@@ -123,17 +115,15 @@ def main() -> None:
     def frame2(top: int, box=None) -> Image.Image:
         im = src2.crop((x0, top, x1, top + vh))
         if box:
-            dark = Image.eval(im, lambda v: int(v * 0.86))
+            dark = Image.eval(im, lambda v: int(v * 0.82))
             mask = Image.new('L', im.size, 255)
             ImageDraw.Draw(mask).rounded_rectangle(
                 (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, fill=0)
             im = Image.composite(dark, im, mask)
-            ImageDraw.Draw(im).rounded_rectangle(
-                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, outline=RED, width=3)
         return im.resize((target_w, int(vh * target_w / (x1 - x0))))
 
     bs_tab = (295, 330, 420, 372)        # Basic settings 分頁
-    secret_row = (275, 1648, 800, 1712)  # Channel secret 那一列
+    secret_row = (270, 1651, 800, 1715)  # Channel secret 那一列
     spec2 = [
         (90, None, 900),      # 開場：先看正常畫面，再聚焦
         (90, bs_tab, 1600),   # 停：切到 Basic settings 分頁
@@ -147,6 +137,24 @@ def main() -> None:
     frames2[0].save(OUT / 'line-console-channel-secret.webp', save_all=True,
                     append_images=frames2[1:], duration=[d for _, _, d in spec2],
                     loop=0, quality=82, method=4)
+
+    # ── 循環動畫：帳號清單——先看整頁（含麵包屑，知道自己在哪）再聚焦小字 ──
+    src3 = load('src-channel-list.jpg')
+
+    def frame3(box=None) -> Image.Image:
+        im = src3.crop((240, 84, 1330, 704))
+        if box:
+            dark = Image.eval(im, lambda v: int(v * 0.82))
+            mask = Image.new('L', im.size, 255)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (box[0] - 240, box[1] - 84, box[2] - 240, box[3] - 84), radius=10, fill=0)
+            im = Image.composite(dark, im, mask)
+        return im.resize((target_w, int(im.height * target_w / im.width)))
+
+    label = (556, 595, 714, 640)  # 中間卡的「Messaging API」小字
+    frames3 = [frame3(), frame3(label)]
+    frames3[0].save(OUT / 'line-console-channel.webp', save_all=True,
+                    append_images=frames3[1:], duration=[1100, 2400], loop=0, quality=82, method=4)
 
     for f in sorted(OUT.iterdir()):
         if f.suffix in ('.png', '.webp'):

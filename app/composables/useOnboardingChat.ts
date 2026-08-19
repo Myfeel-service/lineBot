@@ -314,8 +314,8 @@ export function useOnboardingChat() {
           // 真實畫面查證過的陷阱：同一個帳號會有兩張同名卡（Messaging API／LINE Login），
           // 靠名字選五五開會選錯——選錯的下場是拿到另一把不能用的鑰匙
           html: '選你的官方帳號。<b>同名卡片可能有兩張</b>——認卡片下面掛著「Messaging API」小字的那張，點進去。',
-          image: ONBOARDING_SHOTS.consoleChannel,
-          alt: '帳號清單頁，圈出卡片下方的 Messaging API 小字',
+          image: ONBOARDING_SHOTS.consoleChannelAnim,
+          alt: '循環動畫：帳號清單頁，聚焦卡片下方的 Messaging API 小字',
           detour: {
             label: '清單裡沒看到我的帳號？',
             run: async () => {
@@ -535,11 +535,10 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '在哪裡？',
       steps: [
-        { text: '同一個後台，切到 Basic settings 分頁' },
         {
-          text: '找到 Channel secret，整串複製過來',
-          image: ONBOARDING_SHOTS.channelSecret,
-          alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
+          text: '照動畫做：切到 Basic settings 分頁，捲下來找到 Channel secret，整串複製過來',
+          image: ONBOARDING_SHOTS.channelSecretAnim,
+          alt: '循環動畫：切到 Basic settings 分頁、捲到 Channel secret 那一列',
         },
       ],
       href: 'https://developers.line.biz/console/',
