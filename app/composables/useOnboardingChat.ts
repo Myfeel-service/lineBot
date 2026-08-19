@@ -76,6 +76,7 @@ export function useOnboardingChat() {
   // 原語（say/ask/apiRetry/輪詢/取消）全部來自共用 runner——「帶你修好」引導劇本
   // 也吃同一顆引擎（C-31 Phase 1 抽出）。這裡只留開通情境專屬的東西：
   // 步驟劇本、真實訊號 fetch、跳過記憶、進度條。
+  const { brandName } = useSiteIdentity()
   const runner = useAgentScriptRunner()
   const { entries, ask, typing, busy } = runner
   const {
@@ -873,18 +874,19 @@ export function useOnboardingChat() {
         },
       ],
     })
-    // 指路卡（2026-08-19 拍板）：AI 刻意不在開通引導裡開——剛開通知識庫是空的，
-    // 這時開 AI 客人問什麼都答不出來。順序講清楚：先餵料、再開 AI，開的事小幫手會盯
-    await say('接通完成 🎉 接下來建議照這個順序：先到<b>知識庫</b>把商品資料、常見問題匯進來，AI 有料可答之後，再到「AI 設定」把 AI 打開。')
-    await say('「AI 還沒開」這件事不用記——右下角的小幫手會一直盯著，哪裡沒做完、哪裡怪怪的，它都會主動說。')
+    // 結尾刻意一個字都不提知識庫／AI（2026-08-19 拍板二修：AI 的事完全不進開通，
+    // 連結尾指路也不要）——接下來要做什麼，由右下角小幫手的清單接手盯
+    await say('接通完成 🎉 接下來交給右下角的<b>小幫手</b>——下一步要做什麼、哪裡怪怪的，它都會主動說，點它隨時找得到我。')
     // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
     // 對話頁裡就有他剛傳的那句話，敘事接得上（2026-08-12 拍板 G-11，路徑見 onboardingLandingPath）
     const c = await askChoices([
-      { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : '進入後台', value: 'workspace', primary: true },
-      { label: '帶我去匯入知識庫', value: 'knowledge' },
+      { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : `開始設定 ${brandName}`, value: 'workspace', primary: true },
+      // 設錯了不能卡死（2026-08-19 老闆抓到）：給回頭修的路——設定頁進場會實跑一次連線檢查，
+      // 各欄位旁還有「教我怎麼拿」求救鈕
+      { label: '好像有設定錯？幫我檢查', value: 'check' },
     ])
-    await navigateTo(c === 'knowledge'
-      ? `/admin/${wid.value}/knowledge/sources`
+    await navigateTo(c === 'check'
+      ? `/admin/${wid.value}/settings/organization?verify=webhook`
       : onboardingLandingPath(wid.value))
   }
 
