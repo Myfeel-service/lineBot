@@ -10,11 +10,37 @@
     <div class="agm-bubble" v-html="entry.msg.html" />
   </div>
 
-  <!-- 「怎麼拿?」展開教學 -->
-  <details v-else-if="entry.msg.kind === 'help'" class="agm-card agm-help">
+  <!-- 圖解步驟卡:一步一格,有圖就配圖(點圖放大)。預設展開——這是要照著做的東西,
+       藏在一次點擊後面等於沒有 -->
+  <details v-else-if="entry.msg.kind === 'help'" class="agm-card agm-help" open>
     <summary>{{ entry.msg.summary }}</summary>
     <ol>
-      <li v-for="(s, i) in entry.msg.steps" :key="i">{{ s }}</li>
+      <li v-for="(s, i) in entry.msg.steps" :key="i" class="agm-help__step">
+        <span>{{ s.text }}</span>
+        <!-- 圖檔還沒放進 public/onboarding/ 時 shotReady 永遠是 false:只少一張圖,不破版 -->
+        <el-image
+          v-if="s.image && shotReady(s.image)"
+          class="agm-help__shot"
+          :src="s.image"
+          :alt="s.alt || s.text"
+          fit="contain"
+          :preview-src-list="[s.image]"
+          :preview-teleported="true"
+        />
+        <details v-if="s.aside" class="agm-help__aside">
+          <summary>{{ s.aside.summary }}</summary>
+          <p>{{ s.aside.text }}</p>
+          <el-image
+            v-if="s.aside.image && shotReady(s.aside.image)"
+            class="agm-help__shot"
+            :src="s.aside.image"
+            :alt="s.aside.alt || s.aside.text"
+            fit="contain"
+            :preview-src-list="[s.aside.image]"
+            :preview-teleported="true"
+          />
+        </details>
+      </li>
     </ol>
     <a
       v-if="entry.msg.href"
@@ -92,9 +118,46 @@
 import { CircleCheckFilled, Loading, Remove, WarningFilled } from '@element-plus/icons-vue'
 import type { AgentChatEntry } from '~~/shared/types/agent-messages'
 
-defineProps<{ entry: AgentChatEntry }>()
+const props = defineProps<{ entry: AgentChatEntry }>()
 
 const copied = ref(false)
+
+// ── 示意圖：載得起來才畫 ──────────────────────────────────────
+// 劇本會先把圖接上、截圖之後才補進 public/onboarding/。這段期間直接畫 <img> 會是一排破圖，
+// 所以先在背景載一次，成功才顯示。結果記在 module 層：同一張圖在整個 session 只探一次
+// （一段對話裡同一張圖可能出現在好幾張卡）。
+const shotProbe = new Map<string, boolean>()
+const readyShots = ref<string[]>([])
+
+function probeShot(src: string) {
+  const cached = shotProbe.get(src)
+  if (cached != null) {
+    if (cached)
+      readyShots.value.push(src)
+    return
+  }
+  const img = new Image()
+  img.onload = () => {
+    shotProbe.set(src, true)
+    readyShots.value.push(src)
+  }
+  img.onerror = () => shotProbe.set(src, false)
+  img.src = src
+}
+
+const shotReady = (src: string) => readyShots.value.includes(src)
+
+onMounted(() => {
+  const msg = props.entry.msg
+  if (msg.kind !== 'help')
+    return
+  for (const s of msg.steps) {
+    if (s.image)
+      probeShot(s.image)
+    if (s.aside?.image)
+      probeShot(s.aside.image)
+  }
+})
 
 async function copy(value: string) {
   try {

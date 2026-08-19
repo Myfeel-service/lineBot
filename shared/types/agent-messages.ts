@@ -11,11 +11,35 @@
  *    任何使用者輸入要先經過 escapeHtml 再插進去。
  */
 
+/**
+ * 圖解步驟卡的一小步。
+ *
+ * 一步只講一件事——「打開後台」跟「找到某個分頁」是兩步，不要併成一句。
+ * 使用者是照著這行字在別人的網站上找東西，句子越長越難對照。
+ */
+export interface AgentHelpStep {
+  /** 這一步要做什麼（白話、一件事） */
+  text: string
+  /**
+   * 示意圖路徑（`public/` 底下，統一取自 app/utils/onboarding-shots）。
+   * 圖檔還沒放進去時整塊自動不顯示、文字照常——所以可以先接圖再補檔。
+   */
+  image?: string
+  /** 圖片替代文字（讀螢幕軟體會唸）。有圖就要寫，別讓它只唸出檔名 */
+  alt?: string
+  /**
+   * 岔路：預設收合的補充。用在「只有一部分人會遇到」的情況
+   * （例：清單裡找不到自己的帳號），塞進主步驟會害所有人多讀一段不相干的字。
+   * 岔路常常要跑去另一個後台，所以它自己也可以配一張圖。
+   */
+  aside?: { summary: string; text: string; image?: string; alt?: string }
+}
+
 export type AgentMsg =
   /** 一般泡泡。html 僅限劇本文案 + 已跳脫的使用者輸入 */
   | { kind: 'text'; html: string }
-  /** 「怎麼拿？」展開式小教學；href 給可直接點開的入口（別讓使用者自己打網址） */
-  | { kind: 'help'; summary: string; steps: string[]; href?: string; hrefLabel?: string }
+  /** 圖解步驟卡（「怎麼拿？」）：一步一格、可配示意圖；href 給可直接點開的入口（別讓使用者自己打網址） */
+  | { kind: 'help'; summary: string; steps: AgentHelpStep[]; href?: string; hrefLabel?: string }
   /** 連結卡。internal＝站內頁（走 NuxtLink 同分頁導航）；否則視為外部連結另開分頁 */
   | { kind: 'link'; label: string; href: string; internal?: boolean }
   /** 一鍵複製卡（例：Webhook 網址） */

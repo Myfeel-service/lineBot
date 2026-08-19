@@ -14,6 +14,8 @@ import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { leadEndpointUrl } from '~~/shared/liff-lead-path'
+import { type LineWebhookCause, diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
+import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
 export const ONBOARDING_PROGRESS_LABELS = ['建立', '接 LINE', '測試', '開 AI', '完成'] as const
@@ -257,33 +259,31 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '怎麼拿？',
       steps: [
-        '打開 LINE Developers 並登入（下面有連結）',
-        '選你的官方帳號 → Messaging API 分頁',
-        '（清單裡沒有你的帳號？先回官方帳號後台「設定 → Messaging API」按啟用，它才會出現）',
-        '最下方 Channel access token 按「Issue」',
-        '整串複製，回來貼上',
+        { text: '打開 LINE Developers 並登入（下面有連結）' },
+        {
+          text: '選你的官方帳號 → Messaging API 分頁',
+          image: ONBOARDING_SHOTS.consoleChannel,
+          alt: 'LINE Developers 首頁，圈出官方帳號在清單裡的位置',
+          // 「帳號沒出現在清單」只有一部分人會遇到，但遇到的人不知道要跑去另一個後台。
+          // 收合起來：沒遇到的人不用讀，遇到的人點開就有另一個後台的畫面
+          aside: {
+            summary: '清單裡沒看到你的帳號？',
+            text: '那是還沒啟用的關係。回官方帳號後台的「設定 → Messaging API」按啟用，它才會出現在這個清單裡。',
+            image: ONBOARDING_SHOTS.oamEnableMessagingApi,
+            alt: '官方帳號後台的設定頁，圈出 Messaging API 的啟用按鈕',
+          },
+        },
+        {
+          text: '捲到最下方，Channel access token 按「Issue」',
+          image: ONBOARDING_SHOTS.issueToken,
+          alt: 'Messaging API 分頁最下方，圈出發行 Channel access token 的按鈕',
+        },
+        { text: '整串複製，回來貼上' },
       ],
       href: 'https://developers.line.biz/console/',
       hrefLabel: '打開 LINE Developers ↗',
     })
-    while (true) {
-      const v = await askInput({
-        inputType: 'secret',
-        placeholder: '貼上 Channel Access Token',
-        validate: t => t.length < 20 ? '這串看起來太短了，Channel Access Token 是很長的一串，請整串複製過來。' : null,
-      })
-      if (v == null)
-        continue
-      const ok = await apiRetry(
-        () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { channelAccessToken: v } }),
-        { failText: '存檔失敗' },
-      )
-      if (ok !== null) {
-        line.tokenConfigured = true
-        await say('收到 ✓ 已經幫你存好。')
-        return
-      }
-    }
+    await askAndSaveToken(line)
   }
 
   async function stepSecret(line: LineStatus) {
@@ -293,28 +293,19 @@ export function useOnboardingChat() {
     card({
       kind: 'help',
       summary: '怎麼拿？',
-      steps: ['同一個後台 → Basic settings 分頁', '找到 Channel secret，複製過來'],
+      steps: [
+        { text: '同一個後台，切到 Basic settings 分頁' },
+        {
+          text: '找到 Channel secret，整串複製過來',
+          image: ONBOARDING_SHOTS.channelSecret,
+          alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
+        },
+      ],
       href: 'https://developers.line.biz/console/',
       hrefLabel: '打開 LINE Developers ↗',
     })
-    while (true) {
-      const v = await askInput({
-        inputType: 'secret',
-        placeholder: '貼上 Channel Secret',
-        validate: t => t.length < 10 ? '這串看起來太短了，請到 Basic settings 分頁整串複製 Channel secret。' : null,
-      })
-      if (v == null)
-        continue
-      const ok = await apiRetry(
-        () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { channelSecret: v } }),
-        { failText: '存檔失敗' },
-      )
-      if (ok !== null) {
-        line.secretConfigured = true
-        await say('好了 ✓ 兩把鑰匙都到手，剩最後一步接線。')
-        return
-      }
-    }
+    await askAndSaveSecret(line)
+    await say('好了 ✓ 兩把鑰匙都到手，剩最後一步接線。')
   }
 
   /** 加分題（2026-08-07 拍板選填；刻意排在魔法時刻之後，不擋主線） */
@@ -326,9 +317,9 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '怎麼拿？',
       steps: [
-        'LINE Developers → LIFF 分頁按「Add」',
-        'Endpoint URL 貼下面那串專用網址（不是你的官網——填錯的話之後活動連結會打不開）',
-        '建好後複製 LIFF ID（長得像 1234567890-Abcdefgh）',
+        { text: 'LINE Developers → LIFF 分頁按「Add」' },
+        { text: 'Endpoint URL 貼下面那串專用網址（不是你的官網——填錯的話之後活動連結會打不開）' },
+        { text: '建好後複製 LIFF ID（長得像 1234567890-Abcdefgh）' },
       ],
       href: 'https://developers.line.biz/console/',
       hrefLabel: '打開 LINE Developers ↗',
@@ -369,35 +360,36 @@ export function useOnboardingChat() {
    * 走唯讀的 line-webhook-verify，不走 PUT line-workspace：那支每按一次都會寫一次 workspace doc
    * ＋清掉「全租戶」的憑證快取——卡住的人連按幾次驗證，會害所有租戶的 webhook 熱路徑重讀整批資料。
    */
-  async function verifyWebhook(webhookUrl: string): Promise<{ ok: boolean, message: string } | null> {
+  async function verifyWebhook(webhookUrl: string): Promise<{ cause: LineWebhookCause, message: string } | null> {
     busy.value = true
     try {
       const r = await apiFetch<{
         getOk: boolean
+        getStatus?: number
         getMessage?: string
+        lineActive: boolean | null
         urlMatchesCompare: boolean | null
+        endpointUnreachable: boolean | null
         test: { success: boolean, reason?: string, statusCode?: number | null } | null
+        testSkipped: boolean
         testError?: string
       }>('/api/admin/line-webhook-verify', {
         method: 'POST',
         body: { compareUrl: webhookUrl },
       })
-      if (!r.getOk)
-        return { ok: false, message: r.getMessage || '查詢 Webhook 失敗' }
-      if (r.urlMatchesCompare === false)
-        return { ok: false, message: 'LINE 後台 Webhook URL 與系統網址不一致' }
-      if (r.testError)
-        return { ok: false, message: r.testError }
-      if (r.test && !r.test.success)
-        return { ok: false, message: `Webhook 測試未通過（${r.test.reason || 'UNKNOWN'}${r.test.statusCode != null ? ` / HTTP ${r.test.statusCode}` : ''}）` }
-      return { ok: true, message: 'Webhook 驗證通過' }
+      // 病因判讀走 shared/line-webhook-diagnosis（設定頁徽章吃同一份）——
+      // 這裡曾經自己用 /HTTP 401/ 比對訊息字串，把「LINE 不認得我們的 Token」和
+      // 「我們把 LINE 的測試訊息擋掉（Channel Secret 對不上）」判成同一種病，
+      // 結果是叫人去重貼一把根本沒壞的鑰匙，重貼完再驗還是同一句話
+      const v = diagnoseLineWebhook(r)
+      return { cause: v.cause, message: v.badge }
     }
     catch (e: unknown) {
       // 唯一能下定論的失敗：後端明說缺 Channel Access Token（400）。
       // 其他（網路斷、500、token 過期）一律回 null＝查不到，不能拿來當診斷
       const msg = String((e as { data?: { statusMessage?: string } })?.data?.statusMessage || '')
       if (msg.includes('Channel Access Token'))
-        return { ok: false, message: msg }
+        return { cause: 'token', message: msg }
       return null
     }
     finally {
@@ -405,27 +397,113 @@ export function useOnboardingChat() {
     }
   }
 
-  /** Webhook 檢查一直過不了、而且錯誤長得像憑證問題時的出口：讓人當場重貼 Token */
-  async function reenterToken(line: LineStatus) {
-    await say('好，把新的 <b>Channel Access Token</b> 整串貼上來（LINE Developers → Messaging API 最下方可以重發一組）。')
+  /**
+   * 問 LINE：這把 Channel Access Token 是真的嗎、是誰的？（免費，不佔 webhook 測試次數）
+   * 問不到回 null——不能因為我們自己連不出去，就說人家的鑰匙是壞的。
+   */
+  async function checkToken(token: string): Promise<{ valid: boolean | null, displayName?: string } | null> {
+    busy.value = true
+    try {
+      return await apiFetch<{ valid: boolean | null, displayName?: string }>('/api/admin/line-token-check', {
+        method: 'POST',
+        body: { channelAccessToken: token },
+      })
+    }
+    catch {
+      return null
+    }
+    finally {
+      busy.value = false
+    }
+  }
+
+  /**
+   * 收第一把鑰匙：貼上 → **先問 LINE 這把是真的嗎** → 才存檔。
+   *
+   * 原本只擋「字串太短」，所以貼到別家帳號的鑰匙、或已經在 LINE 後台被重發作廢的舊鑰匙，
+   * 都會被回「收到 ✓ 已經幫你存好」，一路到兩步之後的接線檢查才爆——那時人早就不會
+   * 聯想到是鑰匙的問題。驗過的還會回顯帳號名，「貼成另一個官方帳號」也當場看得出來。
+   */
+  async function askAndSaveToken(line: LineStatus) {
     while (true) {
       const v = await askInput({
         inputType: 'secret',
         placeholder: '貼上 Channel Access Token',
-        validate: t => t.length < 20 ? '這串看起來太短了，請整串複製過來。' : null,
+        validate: t => t.length < 20 ? '這串看起來太短了，Channel Access Token 是很長的一串，請整串複製過來。' : null,
       })
       if (v == null)
         continue
+      const check = await checkToken(v)
+      if (check?.valid === false) {
+        await say('這把鑰匙 LINE 不認得 ⛔ 常見兩種原因：①複製時漏頭漏尾（要<b>整串</b>）②在 LINE 後台按過重發，舊的那把當場失效。回 Messaging API 分頁重新複製一次，再貼上來。')
+        continue
+      }
       const ok = await apiRetry(
         () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { channelAccessToken: v } }),
         { failText: '存檔失敗' },
       )
+      if (ok === null)
+        continue
+      line.tokenConfigured = true
+      // 問不到（check 是 null，或 valid 是 null）就只說存好了——不假裝驗過
+      if (check?.valid === true && check.displayName)
+        await say(`收到 ✓ 這把鑰匙是「<b>${escapeHtml(check.displayName)}</b>」的，已經幫你存好。`)
+      else
+        await say('收到 ✓ 已經幫你存好。')
+      return
+    }
+  }
+
+  /** 收第二把鑰匙。⚠️這把沒辦法單獨驗真假（LINE 沒有這種 API），只能靠接線測試才驗得出來 */
+  async function askAndSaveSecret(line: LineStatus) {
+    while (true) {
+      const v = await askInput({
+        inputType: 'secret',
+        placeholder: '貼上 Channel Secret',
+        validate: t => t.length < 10 ? '這串看起來太短了，請到 Basic settings 分頁整串複製 Channel secret。' : null,
+      })
+      if (v == null)
+        continue
+      const ok = await apiRetry(
+        () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { channelSecret: v } }),
+        { failText: '存檔失敗' },
+      )
       if (ok !== null) {
-        line.tokenConfigured = true
-        await say('換好了 ✓ 再檢查一次看看。')
+        line.secretConfigured = true
         return
       }
     }
+  }
+
+  /** Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一把鑰匙 */
+  async function reenterToken(line: LineStatus) {
+    await say('好，把新的 <b>Channel Access Token</b> 整串貼上來（LINE Developers → Messaging API 最下方按重發，可以拿一把新的）。')
+    await askAndSaveToken(line)
+    await say('再檢查一次看看。')
+  }
+
+  /**
+   * 判定是「我們自己把 LINE 的測試訊息擋掉」時的出口：重貼第二把鑰匙。
+   * 這條路以前不存在——同一個 401 被當成 Token 的問題，人被指去重貼一把根本沒壞的鑰匙。
+   */
+  async function reenterSecret(line: LineStatus) {
+    await say('好，回 LINE Developers 的 <b>Basic settings</b> 分頁，把 <b>Channel secret</b> 整串重新複製一次貼上來。')
+    card({
+      kind: 'help',
+      summary: '在哪裡？',
+      steps: [
+        { text: '同一個後台，切到 Basic settings 分頁' },
+        {
+          text: '找到 Channel secret，整串複製過來',
+          image: ONBOARDING_SHOTS.channelSecret,
+          alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
+        },
+      ],
+      href: 'https://developers.line.biz/console/',
+      hrefLabel: '打開 LINE Developers ↗',
+    })
+    await askAndSaveSecret(line)
+    await say('換好了 ✓ 再檢查一次看看。')
   }
 
   /**
@@ -436,32 +514,52 @@ export function useOnboardingChat() {
   async function verifyAndAdvise(webhookUrl: string, line: LineStatus): Promise<'ok' | 'fail' | 'unknown'> {
     const cardId = card({ kind: 'status', state: 'pending', text: '正在跟 LINE 確認 Webhook…' })
     const v = await verifyWebhook(webhookUrl)
-    if (v?.ok) {
+    if (v?.cause === 'ok') {
       updateMsg(cardId, { kind: 'status', state: 'ok', text: 'Webhook 已接通，LINE 回應正常' })
       return 'ok'
     }
-    if (v == null) {
-      // 自己的 API 掛了不能對 Webhook 下結論——查不到≠沒接好，別把非答案講成確診
+    if (v == null || v.cause === 'unknown') {
+      // 問不到就不能對 Webhook 下結論——查不到≠沒接好，別把非答案講成確診
       updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒檢查成功（不代表 Webhook 有問題）' })
-      await say('剛剛連我們自己的伺服器沒成功，這<b>不代表</b> Webhook 有問題——等一下再驗一次就好。')
+      await say('剛剛沒問到結果，這<b>不代表</b> Webhook 有問題——等一下再驗一次就好。')
       return 'unknown'
     }
     updateMsg(cardId, { kind: 'status', state: 'fail', text: v.message || '檢查失敗' })
-    // 依真實錯誤分流建議——別叫使用者去查一個不是病因的地方
-    if (/HTTP 401|查詢 Webhook 失敗|Channel Access Token/.test(v.message)) {
-      await say('這種錯誤通常是 <b>Channel Access Token 貼錯</b>——LINE 不認得我們帶的鑰匙。要重貼一次嗎？')
-      const r = await askChoices([
-        { label: '重貼 Token', value: 'retoken', primary: true },
-        { label: '我再檢查看看', value: 'later' },
-      ])
-      if (r === 'retoken')
-        await reenterToken(line)
-    }
-    else if (/不一致/.test(v.message)) {
-      await say('LINE 後台填的網址跟上面那串不一樣——再複製一次、<b>整串</b>貼上並存檔，好了再驗一次。')
-    }
-    else {
-      await say(`照上面的訊息調整一下（${WEBHOOK_COMMON_CAUSES}），好了再驗一次。`)
+    // 依真實病因分流——別叫使用者去改一個沒壞的東西。
+    // 兩種 401 一定要分開講：LINE 不認得我們的鑰匙（第一把）vs 我們把 LINE 擋掉（第二把）
+    switch (v.cause) {
+      case 'token': {
+        await say('LINE <b>不認得我們手上的鑰匙</b>——就是第一把（Channel Access Token），多半是在 LINE 後台被重新發過一次，舊的當場失效。要重貼一把新的嗎？')
+        const r = await askChoices([
+          { label: '重貼第一把鑰匙', value: 'retoken', primary: true },
+          { label: '我再檢查看看', value: 'later' },
+        ])
+        if (r === 'retoken')
+          await reenterToken(line)
+        break
+      }
+      case 'signature': {
+        await say('好消息是 LINE <b>有把訊息送過來</b>，但被我們自己擋掉了：第二把鑰匙（<b>Channel Secret</b>）跟 LINE 後台不是同一組，訊息會被當成假冒的丟掉。要重貼一次嗎？')
+        const r = await askChoices([
+          { label: '重貼第二把鑰匙', value: 'resecret', primary: true },
+          { label: '我再檢查看看', value: 'later' },
+        ])
+        if (r === 'resecret')
+          await reenterSecret(line)
+        break
+      }
+      case 'nourl':
+        await say('LINE 後台<b>還沒收到這串網址</b>——通常是貼了但沒按 Update 存檔。再貼一次、存檔，好了再驗一次。')
+        break
+      case 'inactive':
+        await say('網址有了，剩「<b>Use webhook</b>」開關沒打開——就在網址欄位下面。開了再驗一次。')
+        break
+      case 'mismatch':
+      case 'mismatchDead':
+        await say('LINE 後台填的網址跟上面那串不一樣——再複製一次、<b>整串</b>蓋掉貼上並存檔，好了再驗一次。')
+        break
+      default:
+        await say(`照上面的訊息調整一下（${WEBHOOK_COMMON_CAUSES}），好了再驗一次。`)
     }
     return 'fail'
   }
@@ -497,16 +595,30 @@ export function useOnboardingChat() {
     // 續走模式先靜默驗一次：之前就接好 Webhook 的人不用再被叫去貼一次網址
     if (opts.preVerify && line.tokenConfigured && line.secretConfigured) {
       const v = await verifyWebhook(webhookUrl)
-      if (v?.ok) {
+      if (v?.cause === 'ok') {
         await say('Webhook 之前就接好了 ✓ 直接來測試。')
         verified = true
       }
     }
 
     if (!verified) {
-      await say('最後一步接線：把下面這串網址，貼到 LINE Developers → Messaging API 的 <b>Webhook URL</b> 欄位，存檔後打開 <b>Use webhook</b> 開關。')
+      await say('最後一步接線：把下面這串網址交給 LINE，客人的訊息才知道要送到哪裡。')
       card({ kind: 'copy', label: '你的 Webhook 網址', value: webhookUrl })
-      card({ kind: 'link', label: '打開 LINE Developers（Messaging API 分頁）', href: 'https://developers.line.biz/console/' })
+      card({
+        kind: 'help',
+        summary: '怎麼貼？',
+        steps: [
+          { text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁（下面有連結）' },
+          {
+            text: 'Webhook URL 欄位貼上剛剛複製的網址，按「Update」存檔',
+            image: ONBOARDING_SHOTS.webhookUrl,
+            alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
+          },
+          { text: '同一區把「Use webhook」開關打開——只貼網址沒打開，訊息還是不會送過來' },
+        ],
+        href: 'https://developers.line.biz/console/',
+        hrefLabel: '打開 LINE Developers ↗',
+      })
     }
 
     while (!verified) {
@@ -530,9 +642,13 @@ export function useOnboardingChat() {
       kind: 'help',
       summary: '怎麼關？',
       steps: [
-        '打開 LINE 官方帳號後台（下面有連結）',
-        '設定 → 回應設定',
-        '把「自動回應訊息」關掉（回應方式選聊天機器人／Webhook 那組）',
+        { text: '打開 LINE 官方帳號後台（下面有連結；這是另一個後台，跟剛剛那個不一樣）' },
+        { text: '左邊選「設定」→「回應設定」' },
+        {
+          text: '把「自動回應訊息」關掉（回應方式選聊天機器人／Webhook 那組）',
+          image: ONBOARDING_SHOTS.oamAutoReply,
+          alt: '官方帳號後台的回應設定頁，圈出自動回應訊息的開關',
+        },
       ],
       href: 'https://manager.line.biz/',
       hrefLabel: '打開官方帳號後台 ↗',
@@ -597,7 +713,9 @@ export function useOnboardingChat() {
         hintPending = false
         if (!answer()) {
           settle({ type: 'cancelled' })
-          await say('還沒等到訊息。最常見的原因有三個：① LINE Developers 那邊 Webhook URL 貼了但<b>還沒按存檔</b> ②「Use webhook」開關沒打開 ③手機加好友加到別的帳號。我可以再幫你驗一次——這段時間我也還在聽，訊息一進來就會告訴你。')
+          // ④ 是真實災情：第二把鑰匙貼錯時，訊息其實有送到、被我們自己丟掉，
+          //    人在這裡乾等而三個原因沒有一個是他的病因。現在「幫我再驗一次」查得出來了
+          await say('還沒等到訊息。最常見的原因有四個：① LINE Developers 那邊 Webhook URL 貼了但<b>還沒按存檔</b> ②「Use webhook」開關沒打開 ③手機加好友加到別的帳號 ④第二把鑰匙（Channel Secret）貼錯，訊息會被我們當成假冒的丟掉。按下面「幫我再驗一次」，這四種我都會幫你看——這段時間我也還在聽，訊息一進來就會告訴你。')
           askOptions = stallOptions
           continue
         }

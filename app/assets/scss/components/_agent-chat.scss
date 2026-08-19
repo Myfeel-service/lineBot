@@ -92,6 +92,41 @@
     line-height: 1.9;
   }
 
+  /* 有圖的步驟要能一眼分辨「這張圖是第幾步的」：行距放寬、步與步之間拉開 */
+  &__step + &__step {
+    margin-top: 6px;
+  }
+
+  /* 示意圖：縮圖收在卡片裡（點了走 el-image 的放大檢視，不要一進場就佔滿對話） */
+  &__shot {
+    display: block;
+    margin: 6px 0 2px;
+    width: 100%;
+    max-height: 190px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    cursor: zoom-in;
+  }
+
+  /* 岔路（例：清單裡沒看到你的帳號？）——語氣退一階，不要跟主步驟搶 */
+  &__aside {
+    margin: 4px 0 2px;
+    font-size: 12px;
+
+    summary {
+      color: var(--el-text-color-secondary);
+      font-weight: 500;
+    }
+
+    p {
+      margin: 4px 0 0;
+      padding-left: 2px;
+      color: var(--el-text-color-secondary);
+      line-height: 1.7;
+    }
+  }
+
   &__link {
     display: inline-block;
     margin-top: 4px;

@@ -65,6 +65,7 @@ const ALERTS: AlertDefinition[] = [
     // ?verify=webhook：進頁直接捲到「檢查連線」並實跑一次測試——
     // 使用者在卡片上已經按過一次「去檢查」，到頁面不該再自己找一遍要修什麼
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+    guideId: 'line-webhook',
   },
   {
     // 2026-08-08 老闆拍板升紅：實務上「不一致」＝填著已排定停用的舊網址，是顆定時炸彈——
@@ -77,6 +78,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+    guideId: 'line-webhook',
   },
   {
     // 與 webhook 那對同一套分級：到不了活動頁＝確定壞掉（紅）；下面那顆「網址不一致」

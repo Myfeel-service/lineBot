@@ -249,6 +249,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { leadEndpointUrl } from '~~/shared/liff-lead-path'
+import { diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 
@@ -504,6 +505,8 @@ function liffCheckBadge(c: LiffEndpointCheckItem): { text: string, tone: 'succes
 
 type WebhookVerifyResult = {
   getOk: boolean
+  /** 問不到時 LINE 回的 HTTP 狀態：401＝不認得 Token、404＝還沒填網址（判讀靠它分辨） */
+  getStatus?: number
   getMessage?: string
   lineEndpoint: string | null
   lineActive: boolean | null
@@ -532,33 +535,14 @@ type SaveWorkspaceResponse = {
 const webhookVerifyResult = ref<WebhookVerifyResult | null>(null)
 const verifyingWebhook = ref(false)
 
-// 一眼結論：徽章下結論、hint 用一句白話說「怎麼辦」。嚴重度優先序＝測試失敗 > 沒開/不一致 > 正常。
+// 一眼結論：徽章下結論、hint 用一句白話說「怎麼辦」。
+// 判讀本身在 shared/line-webhook-diagnosis（小幫手對話吃同一份）——同一個檢查結果
+// 曾經在這裡與對話裡各判一次，401 的兩種病因被判成不同答案，這裡只負責顯示。
 const webhookStatusBadge = computed<{ text: string, tone: 'success' | 'warning' | 'danger', hint: string } | null>(() => {
   const r = webhookVerifyResult.value
   if (!r) return null
-  if (!r.getOk)
-    return { text: '✕ 問不到狀態', tone: 'danger', hint: r.getMessage || '目前問不到 LINE，稍後再試，或確認 Token 是否正確。' }
-  if (!r.testSkipped && (r.testError || (r.test && !r.test.success))) {
-    const is401 = r.test?.statusCode === 401
-    return {
-      text: '✕ 測試沒過',
-      tone: 'danger',
-      hint: is401
-        ? 'LINE 連到你的系統了，但被擋下來 —— 多半是這頁的 Channel Secret 跟 LINE 後台不是同一組，重貼一次再存。'
-        : 'LINE 連你的系統時失敗了。確認網址對外連得到、開頭是 https。',
-    }
-  }
-  if (r.lineActive === false)
-    return { text: '⚠ Webhook 沒開', tone: 'warning', hint: 'LINE 後台的 Webhook 開關沒打開，這樣收不到訊息 —— 到 LINE Developers 把它打開。' }
-  // 網址不一致一律紅（2026-08-08 拍板：填著的多半是排定停用的舊網址，等斷了才紅就晚了）；
-  // 「已連不上」與「還能動」分開講，後果不同
-  if (r.urlMatchesCompare === false && r.endpointUnreachable)
-    return { text: '✕ LINE 填的網址已連不上', tone: 'danger', hint: 'LINE 現在把訊息送往一個已經連不上的網址（多半是舊網域停用了），客人傳什麼都收不到。把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉。' }
-  if (r.urlMatchesCompare === false)
-    return { text: '✕ 網址不一致（填的是舊網址）', tone: 'danger', hint: 'LINE 那邊填的不是這套系統的正式網址。訊息目前還進得來，但那個網址一停用就會無聲斷線。趁還沒斷，把上面那格「Webhook 網址」複製、貼到 LINE 後台覆蓋掉。' }
-  if (!r.testSkipped && r.test?.success)
-    return { text: '✓ 一切正常', tone: 'success', hint: 'LINE 連得到你的系統，訊息收發沒問題。' }
-  return { text: '✓ 看起來正常', tone: 'success', hint: '想再確認的話，按上方「測試連線」實跑一次。' }
+  const v = diagnoseLineWebhook(r)
+  return { text: v.badge, tone: v.tone, hint: v.hint }
 })
 
 /**
@@ -767,6 +751,56 @@ watch(() => route.query.verify, (v) => {
   if (v) void consumeAlertHandoff()
 })
 
+// ── 小幫手帶路：?focus=webhook / ?focus=token ──────────────────
+// 「修好 LINE 收訊」劇本（agent-guides 的 line-webhook）的連結卡會帶這個參數；
+// 進頁用聚光燈指出要按哪裡，人不用在長頁面裡自己找位置。與 ?verify= 的分工：
+// verify＝替人跑一次檢查（會真的請 LINE 發測試訊息），focus＝只指位置、動手的是人。
+const { startAdHocTour } = useTutorial()
+
+function maybeStartFocusTour() {
+  const target = String(route.query.focus ?? '')
+  if (target !== 'webhook' && target !== 'token')
+    return
+  // 參數用完即丟：重新整理或存檔後不要再跑一次導覽
+  void router.replace({ query: { ...route.query, focus: undefined } })
+  if (target === 'token') {
+    void startAdHocTour([
+      {
+        target: '[data-tour="org-token"]',
+        title: '貼上新的 Channel Access Token',
+        description: '把剛在 <strong>LINE Developers → Messaging API</strong> 重發（Reissue）的 Token <strong>整串</strong>貼進這一格。',
+        placement: 'top',
+      },
+      {
+        target: '[data-tour="org-save"]',
+        title: '按儲存才會生效',
+        description: '存檔時系統會順手驗一次 Webhook。修好之後，右下角小幫手的紅點會自己熄掉。',
+        placement: 'bottom-end',
+      },
+    ])
+    return
+  }
+  void startAdHocTour([
+    {
+      target: '[data-tour="org-webhook"]',
+      title: '複製你的 Webhook 網址',
+      description: '按「<strong>複製</strong>」拿到網址，貼到 <strong>LINE Developers → Messaging API → Webhook URL</strong>，存檔後打開「Use webhook」開關。',
+      placement: 'top',
+    },
+    {
+      target: '[data-tour="org-verify"]',
+      title: '回來按「測試連線」',
+      description: 'LINE 那邊弄好後按這顆，LINE 會真的送一則測試訊息，確認訊息進得來。<strong>次數有限，別連續猛按</strong>。',
+      placement: 'top',
+    },
+  ])
+}
+
+// 同上：劇本的連結卡若在本頁按下，只有 query 變，得用 watch 接
+watch(() => route.query.focus, (v) => {
+  if (v) maybeStartFocusTour()
+})
+
 onMounted(async () => {
   browserOrigin.value = window.location.origin
   // workspaceList 由 layout (default.vue) 的 onMounted 負責載入；此頁只需載入 LINE 憑證 meta
@@ -787,5 +821,7 @@ onMounted(async () => {
       verifyWebhook(false, { silent: true }).catch(() => {})
     checkLiffEndpoints({ silent: true }).catch(() => {})
   }
+  // 放在 load() 之後：聚光燈的目標元素要等頁面資料就緒才在畫面上
+  maybeStartFocusTour()
 })
 </script>

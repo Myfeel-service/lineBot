@@ -11,9 +11,10 @@
  */
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
+import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentScriptRunner, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
-export type AgentGuideId = 'liff-endpoint' | 'handoff-notify' | 'knowledge-sync'
+export type AgentGuideId = 'liff-endpoint' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook'
 
 export interface AgentGuideCtx {
   r: AgentScriptRunner
@@ -113,10 +114,10 @@ const liffEndpointGuide: AgentGuideDef = {
           kind: 'help',
           summary: '怎麼改？',
           steps: [
-            '打開 LINE Developers 並登入（下面有連結）',
-            '選你的官方帳號 → LIFF 分頁',
-            '點進上面列出的那個 LIFF',
-            'Endpoint URL 換成剛剛那串，按 Update／存檔',
+            { text: '打開 LINE Developers 並登入（下面有連結）' },
+            { text: '選你的官方帳號 → LIFF 分頁' },
+            { text: '點進上面列出的那個 LIFF' },
+            { text: 'Endpoint URL 換成剛剛那串，按 Update／存檔' },
           ],
           href: 'https://developers.line.biz/console/',
           hrefLabel: '打開 LINE Developers ↗',
@@ -335,10 +336,292 @@ const knowledgeSyncGuide: AgentGuideDef = {
   ],
 }
 
+// ── LINE 收訊（Webhook） ────────────────────────────────────────
+// 兩顆紅燈共用：lineWebhookBroken（已斷）與 lineWebhookUrlMismatch（快斷）。
+// 驗證一律 runTest:false——查設定是免費 GET；「請 LINE 真的發一則測試訊息」有次數上限，
+// 那顆留在設定頁的「測試連線」。劇本的連結卡帶 ?focus=webhook／?focus=token，
+// 設定頁看到會用聚光燈（ad-hoc tour）指出要按哪裡（organization.vue 進頁處理）。
+
+/** line-webhook-verify 端點回應的子集（劇本只看這幾格，完整定義在 server 端點檔） */
+interface WebhookVerifyRes {
+  getOk: boolean
+  getStatus?: number
+  lineEndpoint: string | null
+  lineActive: boolean | null
+  urlMatchesCompare: boolean | null
+  endpointUnreachable: boolean | null
+}
+
+export type LineWebhookProblem =
+  | { kind: 'token' } // LINE 不認得 Channel Access Token（401，多半是被重發過）
+  | { kind: 'nourl' } // LINE 後台還沒填 Webhook URL（404）
+  | { kind: 'inactive' } // 網址有填但 Use webhook 開關沒開
+  | { kind: 'mismatch', endpoint: string, unreachable: boolean } // 填的不是正式網址
+  | { kind: 'unknown' } // 查不到：不下結論（誠實三態）
+  | { kind: 'ok' }
+
+/** 分診順序照後端 workspace-alerts 同一把尺：token → 沒網址 → 開關 → 網址不一致 */
+export function classifyLineWebhook(res: WebhookVerifyRes): LineWebhookProblem {
+  if (!res.getOk) {
+    if (res.getStatus === 401)
+      return { kind: 'token' }
+    if (res.getStatus === 404)
+      return { kind: 'nourl' }
+    return { kind: 'unknown' }
+  }
+  if (res.lineActive === false)
+    return { kind: 'inactive' }
+  if (res.urlMatchesCompare === false)
+    return { kind: 'mismatch', endpoint: String(res.lineEndpoint || ''), unreachable: res.endpointUnreachable === true }
+  return { kind: 'ok' }
+}
+
+const LINE_CONSOLE_LINK = {
+  href: 'https://developers.line.biz/console/',
+  hrefLabel: '打開 LINE Developers ↗',
+} as const
+
+/** 設定頁連結卡：?focus= 讓設定頁進頁用聚光燈指位（webhook＝複製網址＋測試連線；token＝貼 Token＋儲存） */
+function orgFocusCard(c: AgentGuideCtx, focus: 'webhook' | 'token', label: string) {
+  c.r.card({ kind: 'link', internal: true, label, href: `/admin/${c.workspaceId}/settings/organization?focus=${focus}` })
+}
+
+/**
+ * 查一次 Webhook 設定（不發測試訊息）。'no-token'＝系統這邊連 Token 都沒存，
+ * 再重試也不會好，要走「先把 Token 存回來」的出口而不是 retry 迴圈。
+ */
+async function fetchWebhookVerify(c: AgentGuideCtx, compareUrl: string): Promise<WebhookVerifyRes | 'no-token' | null> {
+  return c.r.apiRetry(async () => {
+    try {
+      return await c.apiFetch<WebhookVerifyRes>('/api/admin/line-webhook-verify', {
+        method: 'POST',
+        body: { compareUrl, runTest: false },
+      })
+    }
+    catch (e: unknown) {
+      const err = e as { statusCode?: number, status?: number, data?: { statusCode?: number } }
+      if ((err?.statusCode ?? err?.status ?? err?.data?.statusCode) === 400)
+        return 'no-token' as const
+      throw e
+    }
+  }, { failText: '查詢 Webhook 狀態失敗', skipLabel: '先不修' })
+}
+
+/** Token 失效的修法（診斷與驗證迴圈都可能走到）：教重發＋聚光燈連結卡，走完即收工 */
+async function adviseTokenReissue(c: AgentGuideCtx) {
+  const { r } = c
+  await r.say('修法分兩步：先去 LINE 重發一把新鑰匙，再回系統貼上。')
+  r.card({
+    kind: 'help',
+    summary: '怎麼重發？',
+    steps: [
+      { text: '打開 LINE Developers 並登入（下面有連結）' },
+      {
+        text: '選你的官方帳號 → Messaging API 分頁',
+        image: ONBOARDING_SHOTS.consoleChannel,
+        alt: 'LINE Developers 首頁，圈出官方帳號在清單裡的位置',
+      },
+      {
+        text: '捲到最下方，Channel access token 按「Reissue」（沒發過就按 Issue）',
+        image: ONBOARDING_SHOTS.issueToken,
+        alt: 'Messaging API 分頁最下方，圈出發行 Channel access token 的按鈕',
+      },
+      { text: '整串複製' },
+    ],
+    ...LINE_CONSOLE_LINK,
+  })
+  await r.say('複製好之後，點下面這張卡到設定頁——我會用聚光燈指給你看要貼哪一格、按哪顆儲存。存檔後右下角的紅點修好就自己熄掉。')
+  orgFocusCard(c, 'token', '去設定頁貼新 Token（我會指位置）')
+  c.state.exit = true
+}
+
+const lineWebhookGuide: AgentGuideDef = {
+  id: 'line-webhook',
+  title: '修好 LINE 收訊（Webhook）',
+  alertIds: ['lineWebhookBroken', 'lineWebhookUrlMismatch'],
+  steps: [
+    {
+      id: 'diagnose',
+      async run(c) {
+        const { r } = c
+        await r.say('這顆紅燈關係到<b>客人的訊息進不進得來系統</b>。我先跟 LINE 實際查一次設定，看是哪裡出了問題。')
+
+        // 正確答案（正式 webhook 網址）先查 publicBaseUrl，拿不到才退回瀏覽器網址——
+        // 與開通精靈同一套：直接兜瀏覽器網址，在正式網址有設的環境會教錯
+        let base = ''
+        try {
+          const ws = await c.apiFetch<{ publicBaseUrl?: string }>('/api/admin/line-workspace')
+          base = String(ws?.publicBaseUrl || '').trim()
+        }
+        catch { /* 拿不到走瀏覽器網址保底 */ }
+        const webhookUrl = `${base || (typeof window === 'undefined' ? '' : window.location.origin)}/webhook`
+        c.state.webhookUrl = webhookUrl
+
+        const res = await fetchWebhookVerify(c, webhookUrl)
+        if (!res) {
+          c.state.exit = true
+          await r.say('好，先不修。右下角的紅點會一直盯著這件事，想修的時候再點「用聊天帶我修」。')
+          return
+        }
+        if (res === 'no-token') {
+          c.state.exit = true
+          await r.say('系統這邊<b>還沒存 LINE 的鑰匙</b>（Channel Access Token），要先把它存回來才談得到收訊息。點下面這張卡，我會在設定頁指給你看要貼哪裡。')
+          orgFocusCard(c, 'token', '去設定頁存 Token（我會指位置）')
+          return
+        }
+
+        const p = classifyLineWebhook(res)
+        switch (p.kind) {
+          case 'ok': {
+            c.state.exit = true
+            r.card({ kind: 'status', state: 'ok', text: '剛查了一次，LINE 的 Webhook 設定正常' })
+            await r.say('看起來已經修好了（或剛剛自己恢復）✓ 想再保險一點，到設定頁按「<b>測試連線</b>」請 LINE 真的發一則測試訊息——點下面這張卡，我會指給你看在哪。')
+            orgFocusCard(c, 'webhook', '到設定頁測試連線（我會指位置）')
+            return
+          }
+          case 'unknown': {
+            c.state.exit = true
+            r.card({ kind: 'status', state: 'skipped', text: '這次查不到 LINE 那邊的狀態（不代表壞掉）' })
+            await r.say('跟 LINE 查詢沒成功——<b>查不到不代表有問題</b>，等幾分鐘再打開我檢查一次。')
+            return
+          }
+          case 'token': {
+            await r.say('查到了：LINE <b>不認得我們手上的鑰匙</b>（Channel Access Token 失效，多半是被重發過）。這段時間訊息進不來，機器人也發不出去。')
+            await adviseTokenReissue(c)
+            return
+          }
+          case 'nourl': {
+            await r.say('查到了：LINE 後台<b>還沒填收訊網址（Webhook URL）</b>——客人傳的訊息，LINE 不知道要送去哪，全部進不來。照下面的步驟接上。')
+            r.card({ kind: 'copy', label: '你的 Webhook 網址', value: webhookUrl })
+            r.card({
+              kind: 'help',
+              summary: '怎麼貼？',
+              steps: [
+                { text: '打開 LINE Developers 並登入（下面有連結）' },
+                { text: '選你的官方帳號 → Messaging API 分頁' },
+                {
+                  text: 'Webhook URL 欄位貼上上面那串，按「Update」存檔',
+                  image: ONBOARDING_SHOTS.webhookUrl,
+                  alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
+                },
+                { text: '同一區把「Use webhook」開關打開' },
+              ],
+              ...LINE_CONSOLE_LINK,
+            })
+            return
+          }
+          case 'inactive': {
+            await r.say('查到了：網址有填，但「<b>Use webhook</b>」開關沒打開——等於門牌掛了、門沒開，訊息還是進不來。')
+            r.card({
+              kind: 'help',
+              summary: '怎麼開？',
+              steps: [
+                { text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁' },
+                {
+                  text: 'Webhook URL 欄位下方找到「Use webhook」，打開它',
+                  image: ONBOARDING_SHOTS.webhookUrl,
+                  alt: 'Messaging API 分頁，圈出 Use webhook 開關的位置',
+                },
+              ],
+              ...LINE_CONSOLE_LINK,
+            })
+            return
+          }
+          case 'mismatch': {
+            await r.say(
+              `查到了：LINE 後台填的收訊網址是<br><b>${escapeHtml(p.endpoint || '（空白）')}</b><br>`
+              + (p.unreachable
+                ? '而且那個網址<b>已經連不上</b>——訊息現在就進不來。把它換成下面這串正式網址。'
+                : '不是這套系統的正式網址。訊息目前可能還進得來，但那個網址一停用就會<b>無聲斷掉</b>——趁還沒斷，換成下面這串。'),
+            )
+            r.card({ kind: 'copy', label: '正確的 Webhook 網址', value: webhookUrl })
+            r.card({
+              kind: 'help',
+              summary: '怎麼換？',
+              steps: [
+                { text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁' },
+                {
+                  text: 'Webhook URL 整串蓋掉，換成上面那串（不要留舊的），按「Update」存檔',
+                  image: ONBOARDING_SHOTS.webhookUrl,
+                  alt: 'Messaging API 分頁，圈出 Webhook URL 欄位與 Update 按鈕',
+                },
+              ],
+              ...LINE_CONSOLE_LINK,
+            })
+          }
+        }
+      },
+    },
+    {
+      id: 'verify-loop',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        const webhookUrl = String(c.state.webhookUrl || '')
+        while (true) {
+          const choice = await r.askChoices([
+            { label: '改好了，幫我檢查', value: 'check', primary: true },
+            { label: '先跳過', value: 'skip' },
+          ])
+          if (choice !== 'check') {
+            await r.say('好。右下角的紅點會一直盯著這件事，修好它就自己熄掉。想在畫面上被指一次位置，點下面這張卡。')
+            orgFocusCard(c, 'webhook', '到設定頁看 Webhook 位置（我會指給你）')
+            return
+          }
+          const cardId = r.card({ kind: 'status', state: 'pending', text: '正在跟 LINE 確認 Webhook 設定…' })
+          const res = await fetchWebhookVerify(c, webhookUrl)
+          if (!res) {
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒檢查成功（不代表沒修好）' })
+            return
+          }
+          if (res === 'no-token') {
+            r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '系統這邊的 Token 不見了' })
+            await r.say('設定頁存的 Channel Access Token 被清掉了——要先把 Token 存回來。點下面這張卡，我會指給你看貼哪裡。')
+            orgFocusCard(c, 'token', '去設定頁存 Token（我會指位置）')
+            return
+          }
+          const p = classifyLineWebhook(res)
+          if (p.kind === 'ok') {
+            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: 'Webhook 已接通，設定都對了' })
+            await r.say('修好了 🎉 LINE 之後會把客人的訊息送進系統。想再保險一點，到設定頁按「<b>測試連線</b>」請 LINE 真的發一則測試訊息（有次數限制，別連續猛按）。')
+            orgFocusCard(c, 'webhook', '到設定頁測試連線（我會指位置）')
+            return
+          }
+          if (p.kind === 'unknown') {
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次查不到（不代表沒修好）' })
+            await r.say('跟 LINE 查詢沒成功——<b>查不到不代表沒修好</b>，等幾分鐘再按一次檢查。')
+            continue
+          }
+          if (p.kind === 'token') {
+            r.updateMsg(cardId, { kind: 'status', state: 'fail', text: 'LINE 不認得目前的 Token' })
+            await r.say('這次查出來是 <b>Token 失效</b>（可能剛剛在 LINE 那邊被重發過）。')
+            await adviseTokenReissue(c)
+            return
+          }
+          if (p.kind === 'nourl') {
+            r.updateMsg(cardId, { kind: 'status', state: 'fail', text: 'LINE 後台還是沒有 Webhook 網址' })
+            await r.say('最常見是貼了但<b>沒按 Update／存檔</b>。再貼一次、存檔，好了再按檢查。')
+            continue
+          }
+          if (p.kind === 'inactive') {
+            r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '「Use webhook」開關還沒打開' })
+            await r.say('網址有了，剩下把開關打開——就在 Webhook URL 欄位下面。開了再按檢查。')
+            continue
+          }
+          // mismatch
+          r.updateMsg(cardId, { kind: 'status', state: 'fail', text: 'LINE 填的還是別的網址' })
+          await r.say(`現在填的是 <b>${escapeHtml(p.endpoint || '（空白）')}</b>。再複製一次、<b>整串蓋掉</b>貼上並按 Update／存檔，好了再按檢查。`)
+        }
+      },
+    },
+  ],
+}
+
 // ── 註冊表 ──────────────────────────────────────────────────────
 
 export const AGENT_GUIDES: Record<AgentGuideId, AgentGuideDef> = {
   'liff-endpoint': liffEndpointGuide,
   'handoff-notify': handoffNotifyGuide,
   'knowledge-sync': knowledgeSyncGuide,
+  'line-webhook': lineWebhookGuide,
 }
