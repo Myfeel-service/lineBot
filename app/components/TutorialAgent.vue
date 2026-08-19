@@ -68,7 +68,13 @@
                放結論正下方、全面板最顯眼的設計——列出還缺哪幾步＋一顆大 CTA。
                有它的時候，下面的待辦清單不再重複列「接上 LINE」（英雄卡代言） -->
           <div v-if="onboardingIncomplete" class="ta-hero">
-            <div class="ta-hero__title">開通還沒完成——機器人還不能上線</div>
+            <div class="ta-hero__head">
+              <!-- 標題向前看（結論紅條已講「還沒完成」，這裡不再複述同一句） -->
+              <div class="ta-hero__title">完成這幾步，機器人就上線</div>
+              <button type="button" class="ta-hero__refresh" :disabled="busy" @click="refreshAll(true)">
+                {{ busy ? '檢查中…' : '重新檢查' }}
+              </button>
+            </div>
             <div class="ta-hero__steps">
               <div v-for="st in onboardingSteps" :key="st.id" class="ta-hero__step" :class="{ 'is-done': st.done }">
                 <span class="ta-hero__mark">{{ st.done ? '✓' : '○' }}</span>
@@ -86,7 +92,8 @@
           <div class="ta-msg">
             <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
             <div class="ta-msg__bubble" aria-live="polite">
-              <p>嗨{{ userName ? `，${userName}` : '' }}</p>
+              <!-- 不帶名字：displayName 常是組織名（例：Myfeel），拿來當人名打招呼很怪（D-20 ⑤） -->
+              <p>嗨 👋</p>
               <p v-if="postTourNote">{{ postTourNote }}</p>
               <p v-if="postFixNote">{{ postFixNote }}</p>
               <p>{{ agentLine }}</p>
@@ -259,7 +266,9 @@
             <!-- 設定體檢：只在這個帳號「有權限做設定」時才顯示（觀察者不會被沒法做的待辦打擾） -->
             <template v-if="hasItems">
             <!-- 完成度：主進度只看必要項 -->
-            <div class="ta-progress">
+            <!-- 開通期不顯示：英雄卡＋待辦已把狀態講完，第三份記帳只會吵（D-20 ④）；
+                 「重新檢查」開通期搬到英雄卡上 -->
+            <div v-if="!onboardingIncomplete" class="ta-progress">
               <div
                 class="ta-progress__bar"
                 role="progressbar"
@@ -561,12 +570,6 @@ const badgeLabel = computed(() => {
   return parts.join('、')
 })
 
-const userName = computed(() => {
-  const dn = user.value?.displayName?.trim()
-  if (dn) return dn.split(' ')[0]
-  return ''
-})
-
 /** header 上的資料新鮮度：取代裝飾性的「線上」，回答「這是多新的資訊」 */
 const headerFreshness = computed(() => {
   if (busy.value)
@@ -685,7 +688,9 @@ const briefLine = computed(() => {
 const notLiveConsequence = computed(() =>
   capabilities.value.find(c => c.id === 'lineConnected')?.status === 'incomplete'
     ? '客人傳訊息進來，不會有任何回應'
-    : '客人的訊息進得來，但 AI 不會回',
+    // ⛔別寫「訊息進得來」：lineConnected 只驗憑證有存，沒驗真的連通（D-15(b)）——
+    // Secret 貼錯的帳號一則都收不到，宣稱進得來就是說謊
+    : 'AI 還沒開，客人的問題沒有人回',
 )
 
 /** 加分項還沒做的：必要項在「開通步驟」區編號講，這一份只剩加分，兩塊分開呈現 */
@@ -707,6 +712,10 @@ const verdict = computed<{ tone: string, icon: Component, text: string } | null>
       : ''
     return { tone: 'danger', icon: CircleCloseFilled, text: `${criticalAlerts.value.length} 件事正在影響客人${setupTail}` }
   }
+  // 開通未完成＝頭號問題只有一個：verdict、英雄卡、泡泡同一軸線（2026-08-20 拍板 D-20——
+  // 之前 verdict 講「差 1 項（AI）」、英雄卡講「開通沒完成」，同畫面兩個頭號問題）
+  if (loaded.value && onboardingIncomplete.value)
+    return { tone: 'danger', icon: CircleCloseFilled, text: '開通還沒完成——機器人還不能上線' }
   if (loaded.value && incompleteRequired.value.length)
     return { tone: 'danger', icon: CircleCloseFilled, text: `還不能上線：${notLiveConsequence.value}（差 ${incompleteRequired.value.length} 項必要設定）` }
   if (warningAlerts.value.length)
@@ -760,6 +769,11 @@ const agentLine = computed(() => {
   // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
   if (!hasItems.value)
     return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
+  // 開通期泡泡只講「下一步」：結論已經由上面的紅條講過，再複述一次＝兩個聲音講同一件事
+  if (onboardingIncomplete.value) {
+    const next = onboardingSteps.value.find(st => !st.done)
+    return `下一步：${next?.label || '完成開通'}。按上面綠色卡片，我用聊天帶你做完。`
+  }
   // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況
   if (incompleteRequired.value.length)
     return `我看過你的帳號了。現在${notLiveConsequence.value}——還差 ${incompleteRequired.value.length} 項必要設定才能上線。從第 1 步開始，我一步步帶你做。`

@@ -428,10 +428,30 @@
   padding: 14px 16px;
   color: #fff;
 
+  &__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
   &__title {
     font-size: 14.5px;
     font-weight: 700;
-    margin-bottom: 8px;
+  }
+
+  &__refresh {
+    flex: none;
+    border: 0;
+    background: none;
+    color: rgb(255 255 255 / 85%);
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+
+    &:disabled { opacity: 0.6; cursor: default; }
   }
 
   &__steps {
