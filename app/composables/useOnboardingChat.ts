@@ -273,8 +273,9 @@ export function useOnboardingChat() {
       const n = nodes[i]!
       const isLast = i === nodes.length - 1
       await say(`<b>${i + 1}/${nodes.length}</b>｜${n.html}`)
+      // 連結卡模板會自己補「 ↗」，字樣裡不能再帶（會變雙箭頭）
       if (n.href)
-        card({ kind: 'link', label: n.hrefLabel || '打開連結', href: n.href })
+        card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
       if (n.image)
         card({ kind: 'image', src: n.image, alt: n.alt || '' })
       while (true) {
@@ -323,7 +324,7 @@ export function useOnboardingChat() {
             label: '清單裡沒看到我的帳號？',
             run: async () => {
               await say('那是還沒啟用的關係。到官方帳號後台的「設定 → Messaging API」按<b>啟用</b>，它才會出現在剛剛的清單裡。弄好回來按「下一步」繼續。')
-              card({ kind: 'link', label: '打開官方帳號後台 ↗', href: 'https://manager.line.biz/' })
+              card({ kind: 'link', label: '打開官方帳號後台', href: 'https://manager.line.biz/' })
               card({ kind: 'image', src: ONBOARDING_SHOTS.oamEnableMessagingApi, alt: '官方帳號後台的設定頁，圈出 Messaging API 的啟用按鈕' })
             },
           },
