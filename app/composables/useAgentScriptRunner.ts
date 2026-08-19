@@ -167,7 +167,8 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     // 只有輸入格／選人格有跳過鈕；游離的 skip 事件不能憑空冒出「先跳過」泡泡
     if (ask.value.kind !== 'input' && ask.value.kind !== 'picker')
       return
-    sayUser('先跳過')
+    // 泡泡跟按鈕字樣一致：輸入格可以自訂跳過鈕字樣（例：等等，我想看教學）
+    sayUser((ask.value.kind === 'input' && ask.value.skipLabel) || '先跳過')
     settle({ type: 'skip' })
   }
 
@@ -182,6 +183,7 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     placeholder?: string
     maxLength?: number
     skippable?: boolean
+    skipLabel?: string
     validate?: (v: string) => string | null
   }): Promise<string | null> {
     while (true) {
@@ -191,6 +193,7 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
         placeholder: o.placeholder,
         maxLength: o.maxLength,
         skippable: o.skippable,
+        skipLabel: o.skipLabel,
       })
       if (r.type === 'skip')
         return null

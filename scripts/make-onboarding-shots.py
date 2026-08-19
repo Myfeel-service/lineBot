@@ -26,16 +26,30 @@ def load(name: str) -> Image.Image:
 
 
 def annotate(im: Image.Image, crop, boxes=(), badges=()) -> Image.Image:
-    """裁切＋紅框＋編號徽章。box/badge 座標都用「原圖」座標，這裡自動換算。"""
+    """裁切＋聚光標註。box/badge 座標都用「原圖」座標，這裡自動換算。
+
+    聚光式（2026-08-19 改版）：目標保持原亮度、周圍輕微壓暗，框用細線——
+    粗紅框被嫌「很俗」，壓暗周圍比加粗框更能把視線帶到目標，也不蓋到畫面內容。
+    """
     im = im.crop(crop)
-    d = ImageDraw.Draw(im)
     ox, oy = crop[0], crop[1]
+
+    if boxes:
+        # 周圍壓暗 14%，目標區域（圓角矩形）維持原樣
+        dark = Image.eval(im, lambda v: int(v * 0.86))
+        mask = Image.new('L', im.size, 255)
+        md = ImageDraw.Draw(mask)
+        for (x1, y1, x2, y2) in boxes:
+            md.rounded_rectangle((x1 - ox, y1 - oy, x2 - ox, y2 - oy), radius=10, fill=0)
+        im = Image.composite(dark, im, mask)
+
+    d = ImageDraw.Draw(im)
     for (x1, y1, x2, y2) in boxes:
-        d.rounded_rectangle((x1 - ox, y1 - oy, x2 - ox, y2 - oy), radius=8, outline=RED, width=4)
+        d.rounded_rectangle((x1 - ox, y1 - oy, x2 - ox, y2 - oy), radius=10, outline=RED, width=2)
     for (x, y, n) in badges:
-        r = 15
+        r = 13
         d.ellipse((x - ox - r, y - oy - r, x - ox + r, y - oy + r), fill=RED)
-        d.text((x - ox, y - oy), str(n), fill=(255, 255, 255), anchor='mm', font_size=20)
+        d.text((x - ox, y - oy), str(n), fill=(255, 255, 255), anchor='mm', font_size=17)
     return im
 
 
@@ -71,9 +85,14 @@ def main() -> None:
     def frame(top: int, box=None) -> Image.Image:
         im = src.crop((x0, top, x1, top + vh))
         if box:
-            d = ImageDraw.Draw(im)
-            d.rounded_rectangle((box[0] - x0, box[1] - top, box[2] - x0, box[3] - top),
-                                radius=8, outline=RED, width=5)
+            # 與靜態圖同一套聚光式標註（縮圖後線寬會除以 ~1.24，這裡畫粗一點）
+            dark = Image.eval(im, lambda v: int(v * 0.86))
+            mask = Image.new('L', im.size, 255)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, fill=0)
+            im = Image.composite(dark, im, mask)
+            ImageDraw.Draw(im).rounded_rectangle(
+                (box[0] - x0, box[1] - top, box[2] - x0, box[3] - top), radius=10, outline=RED, width=3)
         return im.resize((target_w, int(vh * target_w / (x1 - x0))))
 
     tab = (432, 332, 558, 378)          # Messaging API 分頁

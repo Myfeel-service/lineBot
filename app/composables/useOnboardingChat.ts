@@ -250,7 +250,9 @@ export function useOnboardingChat() {
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i]!
       const isLast = i === nodes.length - 1
-      await say(`<b>${i + 1}/${nodes.length}</b>｜${n.html}`)
+      // 單節點不標步數（「1/1」很傻）；多節點用小徽章標，別用粗體＋直線硬拼
+      const stepno = nodes.length > 1 ? `<span class="agm-stepno">${i + 1} / ${nodes.length}</span>` : ''
+      await say(`${stepno}${n.html}`)
       // 連結卡模板會自己補「 ↗」，字樣裡不能再帶（會變雙箭頭）
       if (n.href)
         card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
@@ -280,12 +282,24 @@ export function useOnboardingChat() {
     if (line.tokenConfigured)
       return
     await say('接下來要從 LINE 拿兩把鑰匙，都在 <b>LINE Developers</b> 後台。第一把：<b>Channel Access Token</b>——機器人要靠它替你傳訊息。')
-    const how = await askChoices([
-      { label: '教我一步步拿', value: 'walk', primary: true },
-      { label: '我會拿，直接貼上', value: 'paste' },
-    ])
-    if (how === 'walk') {
-      await walkNodes([
+    // 迴圈而不是一次性選擇：選「直接貼上」的人反悔時，輸入格的後門會把他送回這裡重選
+    let taught = false
+    while (!line.tokenConfigured) {
+      const how = await askChoices([
+        { label: taught ? '再看一次教學' : '教我一步步拿', value: 'walk', primary: !taught },
+        { label: '我會拿，直接貼上', value: 'paste', primary: taught },
+      ])
+      if (how === 'walk') {
+        taught = true
+        await walkTokenNodes()
+      }
+      await askAndSaveToken(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+    }
+  }
+
+  /** 拿第一把鑰匙的節點式教學（stepToken 可能重複進出，抽出來） */
+  async function walkTokenNodes() {
+    await walkNodes([
         {
           // 登入方式刻意不指定：不是每個人都用 LINE 帳號（也可能用電子郵件的商用帳號）
           html: '打開 LINE Developers 並登入——用你平常的方式登入就可以（第一次通常選「LINE帳號」）。',
@@ -314,29 +328,32 @@ export function useOnboardingChat() {
           alt: '循環動畫：切到 Messaging API 分頁、捲到最下方、按 Issue 發鑰匙、按複製',
         },
       ], '拿到了，來貼上', '我拿到了，直接貼上')
-    }
-    await askAndSaveToken(line)
   }
 
   async function stepSecret(line: LineStatus) {
     if (line.secretConfigured)
       return
     await say('第二把：<b>Channel Secret</b>——用來確認訊息真的來自 LINE、不是別人假冒的。')
-    card({
-      kind: 'help',
-      summary: '怎麼拿？',
-      steps: [
-        { text: '同一個後台，切到 Basic settings 分頁' },
-        {
-          text: '找到 Channel secret，整串複製過來',
-          image: ONBOARDING_SHOTS.channelSecret,
-          alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
-        },
-      ],
-      href: 'https://developers.line.biz/console/',
-      hrefLabel: '打開 LINE Developers ↗',
-    })
-    await askAndSaveSecret(line)
+    let taught = false
+    while (!line.secretConfigured) {
+      const how = await askChoices([
+        { label: taught ? '再看一次教學' : '教我怎麼拿', value: 'walk', primary: !taught },
+        { label: '我會拿，直接貼上', value: 'paste', primary: taught },
+      ])
+      if (how === 'walk') {
+        taught = true
+        await walkNodes([
+          {
+            html: '同一個後台，切到「<b>Basic settings</b>」分頁，找到 <b>Channel secret</b>，整串複製過來。',
+            href: 'https://developers.line.biz/console/',
+            hrefLabel: '打開 LINE Developers ↗',
+            image: ONBOARDING_SHOTS.channelSecret,
+            alt: 'Basic settings 分頁，圈出 Channel secret 欄位',
+          },
+        ], '拿到了，來貼上', '')
+      }
+      await askAndSaveSecret(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+    }
     await say('好了 ✓ 兩把鑰匙都到手，剩最後一步接線。')
   }
 
@@ -409,15 +426,18 @@ export function useOnboardingChat() {
    * 都會被回「收到 ✓ 已經幫你存好」，一路到兩步之後的接線檢查才爆——那時人早就不會
    * 聯想到是鑰匙的問題。驗過的還會回顯帳號名，「貼成另一個官方帳號」也當場看得出來。
    */
-  async function askAndSaveToken(line: LineStatus) {
+  async function askAndSaveToken(line: LineStatus, opts: { escapeLabel?: string } = {}): Promise<boolean> {
     while (true) {
       const v = await askInput({
         inputType: 'secret',
         placeholder: '貼上 Channel Access Token',
+        // 後門：一開始選「直接貼上」的人，對話裡沒有教學也叫不出來——輸入格不能是死路
+        skippable: !!opts.escapeLabel,
+        skipLabel: opts.escapeLabel,
         validate: t => t.length < 20 ? '這串看起來太短了，Channel Access Token 是很長的一串，請整串複製過來。' : null,
       })
       if (v == null)
-        continue
+        return false
       const check = await checkToken(v)
       if (check?.valid === false) {
         await say('這把鑰匙 LINE 不認得 ⛔ 常見兩種原因：①複製時漏頭漏尾（要<b>整串</b>）②在 LINE 後台按過重發，舊的那把當場失效。回 Messaging API 分頁重新複製一次，再貼上來。')
@@ -435,27 +455,29 @@ export function useOnboardingChat() {
         await say(`收到 ✓ 這把鑰匙是「<b>${escapeHtml(check.displayName)}</b>」的，已經幫你存好。`)
       else
         await say('收到 ✓ 已經幫你存好。')
-      return
+      return true
     }
   }
 
   /** 收第二把鑰匙。⚠️這把沒辦法單獨驗真假（LINE 沒有這種 API），只能靠接線測試才驗得出來 */
-  async function askAndSaveSecret(line: LineStatus) {
+  async function askAndSaveSecret(line: LineStatus, opts: { escapeLabel?: string } = {}): Promise<boolean> {
     while (true) {
       const v = await askInput({
         inputType: 'secret',
         placeholder: '貼上 Channel Secret',
+        skippable: !!opts.escapeLabel,
+        skipLabel: opts.escapeLabel,
         validate: t => t.length < 10 ? '這串看起來太短了，請到 Basic settings 分頁整串複製 Channel secret。' : null,
       })
       if (v == null)
-        continue
+        return false
       const ok = await apiRetry(
         () => apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { channelSecret: v } }),
         { failText: '存檔失敗' },
       )
       if (ok !== null) {
         line.secretConfigured = true
-        return
+        return true
       }
     }
   }
@@ -463,8 +485,10 @@ export function useOnboardingChat() {
   /** Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一把鑰匙 */
   async function reenterToken(line: LineStatus) {
     await say('好，把新的 <b>Channel Access Token</b> 整串貼上來（LINE Developers → Messaging API 最下方按重發，可以拿一把新的）。')
-    await askAndSaveToken(line)
-    await say('再檢查一次看看。')
+    if (await askAndSaveToken(line, { escapeLabel: '先不換了' }))
+      await say('再檢查一次看看。')
+    else
+      await say('好，先不換。想換的時候再按一次檢查就行。')
   }
 
   /**
@@ -487,8 +511,10 @@ export function useOnboardingChat() {
       href: 'https://developers.line.biz/console/',
       hrefLabel: '打開 LINE Developers ↗',
     })
-    await askAndSaveSecret(line)
-    await say('換好了 ✓ 再檢查一次看看。')
+    if (await askAndSaveSecret(line, { escapeLabel: '先不換了' }))
+      await say('換好了 ✓ 再檢查一次看看。')
+    else
+      await say('好，先不換。想換的時候再按一次檢查就行。')
   }
 
   /**
@@ -590,61 +616,68 @@ export function useOnboardingChat() {
     if (!verified) {
       await say('最後一步接線：把下面這串網址交給 LINE，客人的訊息才知道要送到哪裡。')
       card({ kind: 'copy', label: '你的 Webhook 網址', value: webhookUrl })
-      card({
-        kind: 'help',
-        summary: '怎麼貼？',
-        steps: [
+    }
+
+    let taught = false
+    while (!verified) {
+      const c = await askChoices([
+        { label: taught ? '再看一次教學' : '教我一步步貼', value: 'walk', primary: !taught },
+        { label: '貼好了，幫我檢查', value: 'check', primary: taught },
+        { label: '略過檢查，直接測試', value: 'skip' },
+      ])
+      if (c === 'walk') {
+        taught = true
+        await walkNodes([
           {
-            text: '打開 LINE Developers → 你的官方帳號 → Messaging API 分頁',
+            html: '先按上面那張卡的「複製」拿到網址，然後打開 LINE Developers → 你的官方帳號 → <b>Messaging API</b> 分頁。',
             href: 'https://developers.line.biz/console/',
             hrefLabel: '打開 LINE Developers ↗',
           },
           {
-            text: 'Webhook URL 欄位貼上剛剛複製的網址，按「Update」存檔',
+            html: '<b>Webhook URL</b> 欄位貼上剛剛複製的網址，按「<b>Update</b>」存檔（圖上的 ①）。',
             image: ONBOARDING_SHOTS.webhookUrl,
             alt: 'Messaging API 分頁，圈出 Webhook URL 欄位、Update 按鈕與 Use webhook 開關',
           },
-          { text: '同一區把「Use webhook」開關打開——只貼網址沒打開，訊息還是不會送過來' },
-        ],
-      })
-    }
-
-    while (!verified) {
-      const c = await askChoices([
-        { label: '貼好了，幫我檢查', value: 'check', primary: true },
-        { label: '略過檢查，直接測試', value: 'skip' },
-      ])
-      if (c === 'skip')
+          { html: '同一區把「<b>Use webhook</b>」開關打開（圖上的 ②）——只貼網址沒打開，訊息還是不會送過來。' },
+        ], '貼好了，幫我檢查', '我貼好了，直接檢查')
+        // 教學最後一顆按鈕就是「幫我檢查」：走完直接驗，不再多問一輪
+      }
+      else if (c === 'skip') {
         break
-      const res = await verifyAndAdvise(webhookUrl, line)
-      if (res === 'ok') {
-        await say('接線完成！你的官方帳號已經連上系統了。')
-        verified = true
+      }
+      if (c === 'walk' || c === 'check') {
+        const res = await verifyAndAdvise(webhookUrl, line)
+        if (res === 'ok') {
+          await say('接線完成！你的官方帳號已經連上系統了。')
+          verified = true
+        }
       }
     }
 
     // LINE 內建「自動回應訊息」預設開啟，會跟機器人搶話（客人每句話收到兩套回覆）。
     // 這個開關 LINE 沒開 API、系統偵測不到，只能在這裡教。
     await say('測試前還有一個小開關：LINE 官方帳號內建的「自動回應訊息」預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>（LINE 的罐頭訊息＋我們的回覆）。')
-    card({
-      kind: 'help',
-      summary: '怎麼關？',
-      steps: [
+    const howOff = await askChoices([
+      { label: '教我一步步關', value: 'walk', primary: true },
+      { label: '我會關，直接測試', value: 'skip' },
+    ])
+    if (howOff === 'walk') {
+      await walkNodes([
         {
-          text: '打開 LINE 官方帳號後台——這是另一個後台，跟剛剛那個不一樣',
+          html: '打開 <b>LINE 官方帳號後台</b>——注意，這是<b>另一個後台</b>，跟剛剛拿鑰匙那個不一樣。',
           href: 'https://manager.line.biz/',
           hrefLabel: '打開官方帳號後台 ↗',
         },
-        { text: '點右上角「設定」，左邊選單選「回應設定」' },
+        { html: '點右上角「<b>設定</b>」，左邊選單選「<b>回應設定</b>」。' },
         {
           // 2026-08-19 對實際畫面校正過：新版介面沒有「聊天機器人」那組選項了，
           // 正確操作是回應方式選「手動聊天」——照舊講法找「聊天機器人」的人會找不到
-          text: '「聊天的回應方式」裡，回應方式選「手動聊天」——不要選「手動聊天＋自動回應訊息」',
+          html: '「聊天的回應方式」裡，回應方式選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
           image: ONBOARDING_SHOTS.oamAutoReply,
           alt: '官方帳號後台的回應設定頁，圈出「手動聊天」選項',
         },
-      ],
-    })
+      ], '關好了，開始測試', '我會關，直接測試')
+    }
 
     // ── 見證時刻：等第一則訊息 ──
     progress.value = 3

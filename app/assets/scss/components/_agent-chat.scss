@@ -157,6 +157,20 @@
   }
 }
 
+/* 節點式教學的步數徽章（泡泡文案裡的 <span class="agm-stepno">1 / 3</span>） */
+.agm-stepno {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
 /* 選項鈕：長在對話流的最新訊息下面（LINE 快速按鈕位置，2026-08-19 老闆拍板）。
    靠右＝使用者這一側；點了會變成右側的使用者泡泡，按鈕列即消失 */
 .agm-choices {

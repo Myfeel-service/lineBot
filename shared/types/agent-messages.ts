@@ -93,8 +93,14 @@ export type AgentAsk =
     inputType: 'text' | 'secret' | 'url'
     placeholder?: string
     maxLength?: number
-    /** 顯示「先跳過」 */
+    /** 顯示跳過鈕 */
     skippable?: boolean
+    /**
+     * 跳過鈕的字樣（預設「先跳過"）。輸入格是死路的時候用它開後門——
+     * 例：貼鑰匙的輸入格給「等等，我想看教學」，否則一開始選了「直接貼上」的人
+     * 對話裡沒有教學、也沒有任何按鈕能叫出來（2026-08-19 老闆實測抓到的死路）。
+     */
+    skipLabel?: string
   }
   /** 引導式選人（例：轉真人通知對象，2026-08-07 拍板用選的、不自動綁） */
   | { kind: 'picker'; options: AgentPickerOption[]; skippable?: boolean }

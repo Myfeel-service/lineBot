@@ -16,7 +16,7 @@
         @keyup.enter="submit"
       />
       <el-button v-if="ask.skippable" text class="agd__skip" :disabled="busy" @click="$emit('skip')">
-        先跳過
+        {{ ask.skipLabel || '先跳過' }}
       </el-button>
       <el-button type="primary" round :disabled="busy || !text.trim()" @click="submit">送出</el-button>
     </form>
