@@ -1,0 +1,61 @@
+/* 欄位教學（AdminFieldHelp）：欄位旁求救鈕＋就地彈窗。
+   分工規則見 app/utils/field-help.ts 檔頭。 */
+
+/* 標籤列：左標籤、右求救鈕（space-between 讓按鈕落在欄位右緣，跟輸入框對齊） */
+.afh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  /* 標籤自己的下邊距交給 row 統一管，兩個都留會墊高 */
+  .admin-field-label { margin-bottom: 0; }
+}
+
+.afh-btn {
+  padding: 0 2px;
+  height: auto;
+  font-size: 12.5px;
+
+  &__icon { margin-right: 3px; }
+}
+
+.afh-dialog {
+  /* width 由 prop 給 720px；小螢幕退讓 */
+  max-width: 94vw;
+
+  &__text {
+    margin: 0 0 12px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--el-text-color-regular);
+  }
+
+  /* 同 .agm-shot 的鐵律：⛔別設 max-height——el-image 的 overflow:hidden 會「裁掉」不是「縮小」 */
+  &__shot {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    cursor: zoom-in;
+
+    .el-image__inner { height: auto; }
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  &__link {
+    color: var(--el-color-primary);
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+  }
+}

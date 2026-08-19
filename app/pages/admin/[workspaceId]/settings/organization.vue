@@ -122,7 +122,10 @@
               請到 LINE Developers → Messaging API 複製貼上。
             </p>
             <div class="admin-field-group" data-tour="org-token">
-              <AdminFieldLabel text="Channel Access Token（必填）" tight />
+              <div class="afh-row">
+                <AdminFieldLabel text="Channel Access Token（必填）" tight />
+                <AdminFieldHelp id="channelAccessToken" />
+              </div>
               <div
                 v-if="showMaskedAccessToken"
                 class="ls-cred-mask"
@@ -148,7 +151,10 @@
               />
             </div>
             <div class="admin-field-group" data-tour="org-secret">
-              <AdminFieldLabel text="Channel Secret（必填）" tight />
+              <div class="afh-row">
+                <AdminFieldLabel text="Channel Secret（必填）" tight />
+                <AdminFieldHelp id="channelSecret" />
+              </div>
               <div
                 v-if="showMaskedSecret"
                 class="ls-cred-mask"
@@ -190,7 +196,10 @@
               → Messaging API 的 Webhook URL（要 https、外面連得到）。測試失敗多半是 Channel Secret 兩邊沒填成同一組。
             </p>
             <div class="admin-field-group" data-tour="org-webhook">
-              <AdminFieldLabel text="Webhook 網址（複製貼到 LINE）" tight />
+              <div class="afh-row">
+                <AdminFieldLabel text="Webhook 網址（複製貼到 LINE）" tight />
+                <AdminFieldHelp id="webhookUrl" />
+              </div>
               <div v-if="suggestedWebhookUrl" class="cmp-url-row">
                 <el-input :model-value="suggestedWebhookUrl" readonly />
                 <el-button @click="copyWebhookUrl">複製</el-button>
