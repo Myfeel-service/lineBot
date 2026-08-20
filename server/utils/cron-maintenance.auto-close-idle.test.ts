@@ -1,10 +1,13 @@
 /**
  * 真人接手中的會話「閒置過久自動收尾」。
  *
- * 這支是那種會話**唯一**的收殮機制：它們刻意不吃 24 小時自動結束（客人隔天回來要接在
- * 同一場），所以沒有這一輪掃描的話，客服忘記按「結束會話」的對話會永遠掛著——
- * 真人接手期間機器人是閉嘴的，那位客人從此收不到任何自動回覆，而沒關的場還會一直被
- * 背景查詢掃到（2026-08-11 讀取費暴衝有這一份）。
+ * 那種會話刻意不吃 24 小時自動結束（客人隔天回來要接在同一場），所以這支是唯一會替它們
+ * 收殮的東西——沒關的場會一直留在「真人處理中」分頁、也一直被背景查詢掃到
+ * （2026-08-11 讀取費暴衝有這一份）。
+ *
+ * 2026-08-21 拍板改成**開關、預設關**（`humanSessionMaxIdleHours=0`）：真人接手的對話
+ * 等真人自己按「結束會話」／「交還機器人」才結束。⛔ 0 必須當「關閉」處理，不能只靠
+ * 「閒置 ≥ 0 小時」的比較——那會變成每一場都收，正好是關閉的反面。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -107,6 +110,17 @@ describe('真人接手中的會話：閒置過久自動收尾', () => {
       { id: 's1', status: 'human_handling', idleHours: 50, userId: 'U123' },
     ]))
     expect(closeConversationSession).toHaveBeenCalledWith('s1', 'U123', { reason: 'idle_auto' })
+  })
+
+  it('設 0（預設關閉）＝一場都不收，等真人自己按結束', async () => {
+    getAiSettings.mockResolvedValue({ humanSessionMaxIdleHours: 0 })
+    const tally = await autoCloseIdleHumanSessions(makeDb([
+      { id: 'idle-30d', status: 'human_handling', idleHours: 30 * 24 },
+      { id: 'idle-50h', status: 'pending_human', idleHours: 50 },
+    ]))
+
+    expect(tally).toMatchObject({ scanned: 2, closed: 0, skippedDisabled: 2 })
+    expect(closeConversationSession).not.toHaveBeenCalled()
   })
 
   it('門檻照各工作區設定走（設 72 小時 → 閒置 50 小時不收）', async () => {

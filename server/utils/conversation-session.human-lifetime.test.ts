@@ -5,9 +5,13 @@
  * 24 小時規則把它判成新的一場，真人接手的狀態整個蒸發，AI 搶著回答那句話，
  * 而客服看到自己那場被標成「會話已結束」。
  *
- * 這組測試守住：真人接手中（待真人／真人處理中）續命到保底時限，其餘狀態照舊 24 小時；
- * 保底時限到了就一定要換場（沒有這條，忘記按「結束會話」的對話會永遠掛著，
- * 那位客人也永遠收不到自動回覆）。
+ * 這組測試守住：真人接手中（待真人／真人處理中）續命到保底時限，其餘狀態照舊 24 小時。
+ *
+ * 2026-08-21 拍板把「太久沒動靜自動結束」改成開關且**預設關**（`humanSessionMaxIdleHours=0`）：
+ * 關著就永不換場——真人接手的對話只有真人自己按「結束會話」／「交還機器人」才結束。
+ * 這樣做的前提是 `H-13`：AI 要不要閉嘴看的是對話上的 `lastHumanActionAt` 記號，
+ * 不再靠這場會話有沒有開著，所以不自動結束**不會**再造成「那位客人從此收不到自動回覆」。
+ * 開了開關（>0）就照設定的時數收，且下界仍鎖 24 小時（不然真人的場比機器人更早換場）。
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -122,7 +126,16 @@ describe('真人接手中的會話：客人隔天回來要接在同一場', () =
     expect(await inboundAfterIdle('bot_handling', 30)).toBe('new-session-id')
   })
 
-  it('真人接手中但超過保底時限（50 > 48 小時）：還是要換場，不能無限期掛著', async () => {
+  it('自動結束關著（預設）：閒置 50 小時也不換場，等真人自己按結束', async () => {
+    expect(await inboundAfterIdle('human_handling', 50)).toBe(SESSION_ID)
+  })
+
+  it('自動結束關著：連閒置一個月都還接在同一場', async () => {
+    expect(await inboundAfterIdle('human_handling', 30 * 24)).toBe(SESSION_ID)
+  })
+
+  it('開了自動結束（48 小時）且超過：換場，不能無限期掛著', async () => {
+    getAiSettings.mockResolvedValue({ humanSessionMaxIdleHours: 48 })
     expect(await inboundAfterIdle('human_handling', 50)).toBe('new-session-id')
   })
 
@@ -139,7 +152,17 @@ describe('真人接手中的會話：客人隔天回來要接在同一場', () =
   it('保底時限設得比 24 小時短也不會讓真人接手比機器人更早換場', () => {
     expect(humanSessionMaxIdleMs(6)).toBe(SESSION_24H_MS)
     expect(humanSessionMaxIdleMs(48)).toBe(48 * HOUR)
-    // 髒值（舊 doc 缺欄位）退回 24 小時，不是 NaN 造成「永遠不換場」
-    expect(humanSessionMaxIdleMs(undefined)).toBe(SESSION_24H_MS)
+  })
+
+  /**
+   * 0 ＝ 開關關閉（預設）→ 永不換場。⛔ 不可以讓 0 掉進「下界 24 小時」那條路：
+   * 那會讓「關掉自動結束」變成「24 小時就換場」，跟畫面上寫的完全相反。
+   * 髒值（設定讀取失敗、舊 doc 缺欄位）也走這條：寧可讓那場掛著，也不要在真人還沒放手時
+   * 把客人交回 AI。
+   */
+  it('0 或髒值＝關閉自動結束，永不換場', () => {
+    expect(humanSessionMaxIdleMs(0)).toBe(Number.POSITIVE_INFINITY)
+    expect(humanSessionMaxIdleMs(undefined)).toBe(Number.POSITIVE_INFINITY)
+    expect(humanSessionMaxIdleMs(-5)).toBe(Number.POSITIVE_INFINITY)
   })
 })

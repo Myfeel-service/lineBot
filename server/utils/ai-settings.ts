@@ -164,13 +164,21 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       }
     })(),
     handbackIdleMinutes: Math.round(clampNumber(raw?.handbackIdleMinutes, 0, 1440, DEFAULT_HANDBACK_IDLE_MINUTES)),
-    // 下界不是 0：這是真人接手會話**唯一**的自動收尾機制，允許關閉等於放回殭屍會話那個坑
-    humanSessionMaxIdleHours: Math.round(clampNumber(
-      raw?.humanSessionMaxIdleHours,
-      MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
-      MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
-      DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
-    )),
+    /**
+     * 0 ＝ 關閉（預設，見 DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS）：真人接手的對話只有真人
+     * 自己按「結束會話」／「交還機器人」才結束。開啟時才吃 6～336 小時的範圍——
+     * ⛔ 不可以把 0 一起丟進 clampNumber，那會被夾成 6 小時＝「關閉」反而變成最積極的收尾。
+     */
+    humanSessionMaxIdleHours: (() => {
+      const raw0 = Number(raw?.humanSessionMaxIdleHours)
+      if (raw0 === 0) return 0
+      return Math.round(clampNumber(
+        raw?.humanSessionMaxIdleHours,
+        MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
+        MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
+        DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
+      ))
+    })(),
     disambiguation: (() => {
       let top1Min = clampNumber(raw?.disambiguation?.top1Min, 0, 1, DEFAULT_DISAMBIGUATION_TOP1_MIN)
       let top1Max = clampNumber(raw?.disambiguation?.top1Max, 0, 1, DEFAULT_DISAMBIGUATION_TOP1_MAX)

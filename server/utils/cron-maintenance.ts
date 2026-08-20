@@ -567,6 +567,7 @@ export async function autoCloseIdleHumanSessions(db: Firestore) {
   const now = Date.now()
   let closed = 0
   let skippedFresh = 0
+  let skippedDisabled = 0
   let scanned = 0
   let truncated = false
 
@@ -587,6 +588,16 @@ export async function autoCloseIdleHumanSessions(db: Firestore) {
 
       try {
         const settings = await getAiSettings(workspaceId, db)
+        /**
+         * 0 ＝ 這個工作區把「自動結束」關掉了（預設，2026-08-21 拍板）：真人接手的對話
+         * 只有真人自己按「結束會話」／「交還機器人」才結束，這支不代勞。
+         * ⛔ 不可以只靠下面的 `idleMs <` 比較——0 小時代表「零容忍」，每一場都會被收掉，
+         * 正好是關閉的反面。
+         */
+        if (!settings.humanSessionMaxIdleHours) {
+          skippedDisabled++
+          continue
+        }
         const idleMs = now - (tsToMs(data.lastActivityAt) || tsToMs(data.openedAt))
         if (idleMs < settings.humanSessionMaxIdleHours * 3600_000) {
           skippedFresh++
@@ -602,7 +613,7 @@ export async function autoCloseIdleHumanSessions(db: Firestore) {
     }
   }
 
-  const tally = { scanned, closed, skippedFresh, truncated }
+  const tally = { scanned, closed, skippedFresh, skippedDisabled, truncated }
   if (closed || truncated) console.log('[conversation:auto-close-idle]', tally)
   return tally
 }

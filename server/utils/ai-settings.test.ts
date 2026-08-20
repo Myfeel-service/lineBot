@@ -44,3 +44,36 @@ describe('normalizeAiSettings — 轉真人通知名單收斂成純 LINE userId'
     expect(withNotify(many).lineUserIds).toHaveLength(10)
   })
 })
+
+/**
+ * 「太久沒動靜自動結束對話」是**同一個數字欄位**的開關＋時數：0 ＝ 關閉（預設）、
+ * >0 ＝ 幾小時後收。2026-08-21 拍板預設關（真人沒切就不要轉，等真人按下結束才結束）。
+ */
+describe('normalizeAiSettings — 自動結束對話（0 = 關閉）', () => {
+  const hours = (raw?: unknown) =>
+    normalizeAiSettings(raw === undefined ? {} : { humanSessionMaxIdleHours: raw })
+      .humanSessionMaxIdleHours
+
+  it('沒設定過的工作區＝關閉（預設不自動結束）', () => {
+    expect(hours()).toBe(0)
+  })
+
+  /**
+   * ⛔ 這條是最容易寫錯的地方：把 0 丟進「夾在 6~336」的收斂裡會變成 6 小時——
+   * 「關閉」反而成了最積極的收尾，而且畫面上開關看起來是關的。
+   */
+  it('0 要原封不動留著，不可以被夾成下界 6 小時', () => {
+    expect(hours(0)).toBe(0)
+  })
+
+  it('開啟時吃 6~336 小時的範圍（設 3 → 6、設 999 → 336）', () => {
+    expect(hours(48)).toBe(48)
+    expect(hours(3)).toBe(6)
+    expect(hours(999)).toBe(336)
+  })
+
+  it('髒值（字串／null）當沒設定＝關閉', () => {
+    expect(hours('abc')).toBe(0)
+    expect(hours(null)).toBe(0)
+  })
+})

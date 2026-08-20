@@ -148,8 +148,16 @@ export async function recordConversationEvent(
  * 換場——那正是這次要修掉的行為。設得短的意思是「請 cron 早點收尾」，不是「請提早換場」。
  */
 export function humanSessionMaxIdleMs(hours: unknown): number {
-  const ms = Math.round(Number(hours) * 3600_000)
-  return Number.isFinite(ms) && ms > SESSION_24H_MS ? ms : SESSION_24H_MS
+  const n = Number(hours)
+  /**
+   * 0 ＝「自動結束」關閉（預設，2026-08-21 拍板）→ 永不換場：真人接手的對話只有真人自己
+   * 按「結束會話」／「交還機器人」才結束，時間到就換場等於系統代他放手。
+   * 讀不出數字（設定讀取失敗、舊髒資料）也走這條：寧可讓那場繼續掛著，也不要在真人還沒
+   * 放手時把客人交回 AI——那是這條規則存在的全部理由。
+   */
+  if (!Number.isFinite(n) || n <= 0) return Number.POSITIVE_INFINITY
+  const ms = Math.round(n * 3600_000)
+  return ms > SESSION_24H_MS ? ms : SESSION_24H_MS
 }
 
 /**

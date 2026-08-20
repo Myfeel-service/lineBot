@@ -634,7 +634,21 @@
                 </p>
               </div>
               <div class="admin-field-group">
-                <AdminFieldLabel text="真人接手中的對話最多留多久(小時)" tight />
+                <AdminFieldLabel text="太久沒動靜時自動結束對話" tight />
+                <el-switch
+                  v-model="autoCloseIdleOn"
+                  active-text="啟用"
+                  inactive-text="停用"
+                />
+                <p class="ai-section-hint">
+                  真人接手後,這段對話<strong>只有真人按「結束會話」或「交還機器人」才會結束</strong>——
+                  客人隔幾天回一句「好,那就這樣訂」仍然接在真人手上,不會被 AI 搶著回答。
+                  這顆開關預設停用;啟用的話,雙方都沒有動靜超過下面設的時數,系統會幫忙把那一段收起來
+                  (客人不會因此被交回 AI,下次來訊仍然是真人的)。
+                </p>
+              </div>
+              <div v-if="autoCloseIdleOn" class="admin-field-group">
+                <AdminFieldLabel text="多久沒動靜就自動結束(小時)" tight />
                 <el-input-number
                   v-model="form.humanSessionMaxIdleHours"
                   :min="MIN_HUMAN_SESSION_MAX_IDLE_HOURS"
@@ -642,10 +656,8 @@
                   :step="12"
                 />
                 <p class="ai-section-hint">
-                  真人接手後,這段對話不會因為「隔了一天」自動結束——客人隔天回一句「好,那就這樣訂」
-                  仍然接在同一段裡,不會被 AI 搶著回答。談完請按「結束會話」收尾。
-                  這裡設的是保底時限:雙方都沒有動靜超過這個時數,系統會幫忙結束(避免忘記按時,
-                  這位客人從此收不到任何自動回覆)。
+                  時間從「雙方最後一次有動靜」起算。收起來的那一段時間軸會寫「太久沒有動靜,
+                  系統自動結束會話」,跟真人自己按的分開講。
                 </p>
               </div>
             </div>
@@ -731,6 +743,7 @@ import {
   DEFAULT_SLA_REMIND_MINUTES,
   DEFAULT_DIGEST_HOUR,
   DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
+  SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
@@ -931,6 +944,19 @@ const quotaPct = computed(() => {
   const cap = form.value.quota.monthlyTokenCap
   if (usageTokens.value === null || cap <= 0) return null
   return Math.min(100, Math.round((usageTokens.value / cap) * 100))
+})
+
+/**
+ * 「太久沒動靜自動結束對話」開關。後端只認一個數字（0 ＝ 關閉、>0 ＝ 幾小時後收），
+ * 開關與時數是同一個欄位的兩種樣子——⛔ 刻意不多存一個 boolean：兩份狀態遲早會不一致
+ * （開關說開、時數是 0 就變成無聲的關閉，而畫面上看起來是開的）。
+ * 打開時填建議值 48 小時，關掉時寫 0。
+ */
+const autoCloseIdleOn = computed({
+  get: () => form.value.humanSessionMaxIdleHours > 0,
+  set: (on: boolean) => {
+    form.value.humanSessionMaxIdleHours = on ? SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS : 0
+  },
 })
 
 const kbReady = computed(() => (cardCount.value ?? 0) > 0)

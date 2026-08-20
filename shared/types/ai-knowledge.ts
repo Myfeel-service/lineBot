@@ -286,7 +286,8 @@ export interface AiSettingsDoc {
   handbackIdleMinutes: number
   /**
    * 真人接手中（待真人／真人處理中）的會話，雙方都沒動靜超過此時數 → 系統自動結束。
-   * 這種會話不吃 24 小時自動結束規則，這是唯一會自動收尾它的保底機制，故不接受 0。
+   * **0 = 關閉（預設）**：只有真人按「結束會話」／「交還機器人」才會結束，系統不代勞。
+   * 開啟時下界 6 小時（見 MIN_HUMAN_SESSION_MAX_IDLE_HOURS）。
    */
   humanSessionMaxIdleHours: number
   /** 反問澄清（disambiguation）— 答案擦邊且 top-K 分數接近時主動反問 */
@@ -648,10 +649,18 @@ export const DEFAULT_HANDBACK_IDLE_MINUTES = 0
  * 「結束會話」的時候，而真人接手期間機器人是閉嘴的——忘了按就等於這位客人從此收不到
  * 任何自動回覆；沒關的場也會一直被背景查詢掃到（2026-08-11 讀取費暴衝有這一份）。
  *
- * 48 小時＝跨過一個週末以外的空檔還夠用，又不會讓忘記收尾的場拖過兩天。
- * 刻意不提供 0（關閉）：關掉就是把上面那兩個坑放回來。
+ * **2026-08-21 老闆拍板改成開關、預設關（`0`）**：「真人沒有切就不要轉，等真人按下結束
+ * 才結束。」上面那兩個坑的第一個已經不存在——`H-13` 之後「AI 要不要閉嘴」看的是對話上的
+ * `lastHumanActionAt` 記號，不再靠這場會話有沒有開著，所以自動結束與否不影響客人收不收得到
+ * 自動回覆。剩下的代價只有「沒收尾的場會一直留在『真人處理中』分頁、越積越多」。
+ *
+ * 開啟時的建議值仍是 48 小時（跨過一個週末以外的空檔還夠用），見
+ * SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS——那是「打開開關時填進去的預設值」，
+ * 不是「沒設定時的預設行為」，兩者刻意分開，否則舊工作區會被當成有開。
  */
-export const DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS = 48
+export const DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS = 0
+/** 打開「自動結束」開關時填入的時數（前端用；後端只認 0＝關、>0＝開） */
+export const SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS = 48
 export const MIN_HUMAN_SESSION_MAX_IDLE_HOURS = 6
 export const MAX_HUMAN_SESSION_MAX_IDLE_HOURS = 336
 
