@@ -152,6 +152,71 @@ export function humanSessionMaxIdleMs(hours: unknown): number {
   return Number.isFinite(ms) && ms > SESSION_24H_MS ? ms : SESSION_24H_MS
 }
 
+/**
+ * 這位客人現在是真人的嗎？（＝新開的這場要不要一開始就算真人在處理）
+ *
+ * 為什麼需要這個判斷：「現在誰在處理這位客人」以前只存在**進行中的那一場會話**上，
+ * 會話一結束就整個歸零。但真人常常在沒有進行中會話時講話——客服回完順手按「結束會話」、
+ * 或上一場早就到期被收掉、或主動發訊問候客人——那則訊息掛不到任何一場；客人一回話就開
+ * 新的一場，而新的一場是從「沒人接手」起算，於是 AI 把真人的話接走：
+ *   · 2026-08-17 14:52 真人回出貨進度 → 14:53 客服按結束 → 12 秒後客人追問「你們不是在
+ *     台灣嗎？」→ AI 亂答委製進口商資訊
+ *   · 2026-08-20 17:40 真人主動問「補寄商品收到了嗎」→ 24 分鐘後客人回「有收到」→ AI 接手
+ *     連回三則
+ * 正式資料近 7 天 593 場新會話中有 35 場（約 6%）是這樣開始的（STATUS `H-13`）。
+ *
+ * ⛔ **刻意不看時間**。老闆 2026-08-20 拍板：「真人沒有切就不要轉，等真人按下結束才結束。」
+ * 所以這裡只問「真人有沒有放手」，不問「隔了多久」——放手只有兩種方式，都是真人自己按的：
+ *   · 「結束會話」（closeConversationSession，客服手動那次）
+ *   · 「交還機器人」（handBackSessionToBot）
+ * 先前寫過一版 48 小時窗口（沿用 humanSessionMaxIdleHours），拍板後移除：時間到就自動把
+ * 客人交回 AI，正是這條規則要防的事。
+ *
+ * 回傳真人那次動作的時間（寫進新會話的 humanLastRepliedAt，工作區若開了「閒置自動交還」
+ * 才有基準）；不是真人的就回 null。
+ */
+function resolveHumanOwnership(
+  convData: FirebaseFirestore.DocumentData | undefined,
+): Timestamp | null {
+  const raw = convData?.lastHumanActionAt
+  // 只認得出時間的值（舊資料沒這欄、髒值都當「不是真人的」，不猜）
+  return typeof raw?.toMillis === 'function' ? (raw as Timestamp) : null
+}
+
+/**
+ * 真人放手了（按「結束會話」或「交還機器人」）→ 清掉「這位客人是真人的」那個記號，
+ * AI／自動回覆從下一則訊息開始恢復接手。
+ *
+ * ⚠️ 系統自動收尾（排程把太久沒動靜的場關掉）**不可以**呼叫這支：那不是真人按的，
+ * 清掉就等於「時間到自動把客人交回 AI」，正是拍板要防的事。
+ */
+async function releaseHumanOwnership(convDocId: string): Promise<void> {
+  await getDb()
+    .collection('conversations')
+    .doc(convDocId)
+    .set({ lastHumanActionAt: FieldValue.delete() }, { merge: true })
+    .catch(e => console.warn('[session] release human ownership failed:', convDocId, e))
+}
+
+/**
+ * 真人對這位客人動作了（送出訊息、或按「我接手」）→ 蓋上「這位客人是真人的」記號。
+ *
+ * 送出訊息那條路不走這裡（saveConversationMessage 寫對話文件時順手蓋，零額外寫入）；
+ * 這支給「按了按鈕但還沒說話」用——客服按「我接手」就是宣告所有權，不該等他打字。
+ */
+export async function markHumanOwnership(userId: string, workspaceId: string): Promise<void> {
+  const wid = requireWorkspaceId(workspaceId, 'markHumanOwnership')
+  const lineUserId = lineUserIdFromFirestoreDocId(userId, wid)
+  await getDb()
+    .collection('conversations')
+    .doc(lineUserFirestoreDocId(lineUserId, wid))
+    .set({
+      workspaceId: wid,
+      userId: lineUserId,
+      lastHumanActionAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+}
+
 // ── Session Lifecycle ─────────────────────────────────────────────
 
 /**
@@ -327,8 +392,17 @@ export async function ensureConversationSession(
   let createdNew = false
   let closedOldSessionId: string | null = null
   let resultStatus: ConversationStatus = 'open'
+  /** 這場是「延續真人對話」開的（要在交易外補一筆時間軸事件） */
+  let humanLeadRecorded = false
 
   const resultId = await db.runTransaction(async (tx) => {
+    // Firestore 競爭時會重跑整個 callback：上一輪留下的旗標一律歸零，
+    // 否則被重試掉的那一輪會在交易外多記一筆事件（實際沒發生的事）
+    createdNew = false
+    closedOldSessionId = null
+    resultStatus = 'open'
+    humanLeadRecorded = false
+
     const convSnap = await tx.get(convRef)
     const convData = convSnap.data()
 
@@ -388,25 +462,52 @@ export async function ensureConversationSession(
       closedOldSessionId = convData!.currentSessionId as string
     }
 
+    /**
+     * 這位客人已經是真人的（真人還沒按結束／交還）→ 這場一開始就算真人在處理
+     * （見 resolveHumanOwnership）。只在「客人來訊開的場」判：origin='follow'
+     * （加好友／活動入口）那種客人還沒開口，沒有任何一句話需要被搶，
+     * 硬標成真人只會擋掉迎賓流程。
+     */
+    const humanLeadAt = opts.origin ? null : resolveHumanOwnership(convData)
+    /**
+     * 一個值兩個用途（寫進文件、寫進快取），**刻意只算一次**：分頭寫的話，
+     * 文件說「真人處理中」而本行程的快取還說「沒人接手」，客人那一則照樣被 AI 接走
+     * ——而且看文件完全看不出哪裡不對。
+     */
+    const newStatus: ConversationStatus = humanLeadAt ? 'human_handling' : 'open'
+
     tx.set(newSessionRef, {
       workspaceId,
       userId: lineUserId,
       openedAt,
       closedAt: null,
       lastActivityAt: FieldValue.serverTimestamp(),
-      status: 'open' as ConversationStatus,
+      /**
+       * 延續真人時只動「誰在處理」這一族欄位（status / currentHandler / currentModuleType），
+       * ⛔ 統計那一族（initialHandler / initialModuleType / hasHandoff / humanFirstRepliedAt）
+       * 一律留白：真人在**這一場**還沒回過話，先記成「真人首接」會讓「沒人回的對話」憑空消失
+       * 一批——客人回一句「好，謝謝」而沒人理，帳面上會變成有人接了。
+       * 真的回了那一刻由 onHumanOutgoingMessage 補記（它會認出這種還沒有首接紀錄的場）。
+       */
+      status: newStatus,
       initialHandler: 'unhandled' as InitialHandler,
-      currentHandler: 'unhandled' as InitialHandler,
+      currentHandler: (humanLeadAt ? 'human' : 'unhandled') as InitialHandler,
       initialModuleType: null,
-      currentModuleType: null,
+      currentModuleType: humanLeadAt ? ('live_agent' as ModuleType) : null,
       hasHandoff: false,
       handoffRequestedAt: null,
       humanFirstRepliedAt: null,
+      // 自動交還機器人（handbackIdleMinutes）要有基準才收得掉這種場：沒有這一筆，
+      // 它會 `continue` 跳過，開了自動交還的工作區反而永遠交不回來。
+      ...(humanLeadAt ? { humanLastRepliedAt: humanLeadAt } : {}),
       // 出生方式:follow=加好友/活動入口(客人還沒開口);message=客人來訊。
       // origin='follow' 且尚無 hasInbound 的 session 不進首接統計(見 isPreInboundFollowSession)
       origin: opts.origin ?? 'message',
       hasInbound: !opts.origin,
     })
+    // 快取要跟文件同一個值（否則這一則訊息自己還是會被 AI 接走），事件在交易外補記
+    resultStatus = newStatus
+    humanLeadRecorded = humanLeadAt != null
     tx.set(convRef, {
       workspaceId,
       userId: lineUserId,
@@ -440,6 +541,10 @@ export async function ensureConversationSession(
     // Event recording and orphan cleanup are independent — run in parallel, non-blocking
     Promise.all([
       recordConversationEvent(newSessionId, lineUserId, 'conversation_opened', { workspaceId }),
+      // 時間軸要講出「為什麼這場一開始就是真人的」，否則客服只會看到 AI 忽然不回話了
+      ...(humanLeadRecorded
+        ? [recordConversationEvent(newSessionId, lineUserId, 'human_lead_continued', { workspaceId })]
+        : []),
       closeOrphanedSessions(lineUserId, newSessionId, workspaceId),
     ]).catch(e => console.warn('[session] post-create cleanup failed:', e))
   }
@@ -652,6 +757,15 @@ export async function handBackSessionToBot(
     currentModuleType: 'bot_flow' as ModuleType,
     lastActivityAt: FieldValue.serverTimestamp(),
   })
+  /**
+   * 「交還機器人」＝真人明確放手，所以連「這位客人是真人的」記號一起清掉。
+   * 不清的話這場雖然回到機器人，客人**下一場**又會被判成真人的（記號還在），
+   * 客服會覺得那顆按鈕只生效一次。
+   */
+  const wid = String(session.workspaceId ?? '') || DEFAULT_LINE_WORKSPACE_ID
+  await releaseHumanOwnership(
+    lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, wid), wid),
+  )
   _updateSessionStatusCache(sessionId, 'bot_handling')
   await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'returned_to_bot', { workspaceId: String(session.workspaceId ?? '') })
   return true
@@ -710,9 +824,20 @@ export async function closeConversationSession(
    * 舊 session（競態留下的孤兒，或排程收殮到的那種）時，會把對話指向進行中那場的指標
    * 一起抹掉——下一則訊息就找不到現在這場，於是又開一場新的，客人講到一半的對話被切成兩段。
    */
-  if (isCurrent) {
+  /**
+   * 真人按下「結束會話」＝他放手了 → 連「這位客人是真人的」記號一起清掉，
+   * 客人下次來訊由 AI／自動回覆正常接手。這就是老闆拍板的那條線：**要結束，
+   * 得有人按**（見 resolveHumanOwnership）。
+   * ⛔ `opts.reason` 有值＝系統排程幫忙收的，**不可以**清：那會變成「時間到就自動把
+   * 客人交回 AI」，正是這次要修掉的行為。
+   */
+  const releaseHuman = !opts.reason
+  if (isCurrent || releaseHuman) {
     await convRef.set(
-      { currentSessionId: null },
+      {
+        ...(isCurrent ? { currentSessionId: null } : {}),
+        ...(releaseHuman ? { lastHumanActionAt: FieldValue.delete() } : {}),
+      },
       { merge: true },
     )
   }
@@ -770,8 +895,14 @@ export async function onHumanOutgoingMessage(userId: string, workspaceId: string
     const session = sessionSnap.data()
     if (!session || session.status === 'closed') return null
 
-    // 已正式轉真人（pending_human）等真人首次回覆 → 記首次回覆（hasHandoff 已於進 live_agent 時設定）
-    if (session.status === 'pending_human' && !session.humanFirstRepliedAt) {
+    /**
+     * 真人那側、但這場還沒有人真的回過話 → 這一則就是這場的真人首次回覆。
+     *
+     * 兩種來源：①正式轉真人（pending_human）等真人回覆，hasHandoff 已於進 live_agent 時設定
+     * ②「延續真人對話」開場的（human_handling，見 ensureConversationSession 的 humanLeadAt）——
+     * 那種場刻意沒有預先蓋首接欄位，所以這裡要補記，否則客服明明回了，統計仍算這場沒人回。
+     */
+    if (isHumanOwnedSessionStatus(session.status) && !session.humanFirstRepliedAt) {
       tx.update(sessionRef, {
         humanFirstRepliedAt: FieldValue.serverTimestamp(),
         humanLastRepliedAt: FieldValue.serverTimestamp(),
@@ -779,6 +910,14 @@ export async function onHumanOutgoingMessage(userId: string, workspaceId: string
         currentHandler: 'human' as InitialHandler,
         currentModuleType: 'live_agent' as ModuleType,
         lastActivityAt: FieldValue.serverTimestamp(),
+        // 轉真人來的場首接欄位已由 enterModule(live_agent) 記過，不重蓋；
+        // 延續真人開場的場沒人記過 → 真人是這場第一個回覆的人（不是「轉真人」，本來就是他的）
+        ...(session.initialModuleType
+          ? {}
+          : {
+              initialHandler: 'human' as InitialHandler,
+              initialModuleType: 'live_agent' as ModuleType,
+            }),
       })
       return { isFirstHumanReply: true, newHandoff: false }
     }

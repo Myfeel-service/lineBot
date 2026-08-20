@@ -13,6 +13,12 @@ export type ConversationEventType =
   | 'human_first_reply'
   /** 真人把對話交還機器人（手動按鈕或閒置自動交還），bot/AI 恢復接手 */
   | 'returned_to_bot'
+  /**
+   * 這場一開始就是真人的：上一場已經結束（或客服主動發訊時根本沒有進行中的會話），
+   * 但真人在時限內才剛跟這位客人講過話 → 客人回的第一句留給真人，AI／自動回覆不接手。
+   * 沒有這一筆的話，客服只會看到「AI 忽然不回話了」而找不到原因。
+   */
+  | 'human_lead_continued'
   | 'conversation_closed'
   /**
    * 客人按了按鈕、但系統一則訊息都沒回（按鈕指向的模組被刪／停用，或找不到對應回覆）。

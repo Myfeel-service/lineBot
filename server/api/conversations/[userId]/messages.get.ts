@@ -87,6 +87,8 @@ function eventLabel(
   if (eventType === 'handoff_request') return '請求轉接真人'
   if (eventType === 'human_first_reply') return '真人客服首次回覆'
   if (eventType === 'returned_to_bot') return '已交還機器人'
+  // 講「為什麼」而不只是「發生了什麼」：客服看到的是 AI 忽然不回話，要看得出是誰決定的
+  if (eventType === 'human_lead_continued') return '延續真人對話，AI 不自動回覆'
   if (eventType === 'postback_no_reply') {
     /**
      * 只會出現在舊資料上：現在「客人按了按鈕但沒回覆」改記成一筆客人動作紀錄

@@ -2101,6 +2101,21 @@ export async function saveConversationMessage(
          */
         lastMessageAt: messageTimestamp,
       }
+  /**
+   * 真人客服講話了 → 蓋上「這位客人是真人的」記號（蓋在對話上，不是會話上）。
+   *
+   * 這是「客人回的下一句要不要留給真人」唯一的依據（見 conversation-session.ts 的
+   * resolveHumanOwnership），清掉的時機只有真人按「結束會話」／「交還機器人」。
+   * ⛔ 一定要蓋在**對話**文件上：真人常常在沒有進行中會話時講話（回完按了「結束會話」、
+   * 或上一場早就到期被收掉），那時根本沒有一場可以蓋。
+   * 蓋在這裡＝零額外寫入（convPatch 本來就要寫一次）。
+   *
+   * 只認 sender='human'（收件匣手打、客服預存），機器人／AI／系統／推播都不算——
+   * 推播若也算，發完一輪等於全體客人接下來的問題都不讓 AI 回。
+   */
+  if (!traceOnly && direction === 'outgoing' && options?.sender === 'human') {
+    convPatch.lastHumanActionAt = messageTimestamp
+  }
   if (!traceOnly && direction === 'incoming') {
     /**
      * 客人最後一則**訊息**的時間＝未讀紅點比的那個值（見 shared/conversation-unread.ts）。

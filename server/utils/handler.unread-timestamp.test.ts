@@ -199,3 +199,62 @@ describe('客人最後一則的時間（紅點比的那個值）', () => {
     expect(convWrite(writes)).not.toHaveProperty('lastInboundMessageAt')
   })
 })
+
+/**
+ * 2026-08-20 新增：「這位客人是真人的」記號記在**對話**上（不是會話上）。
+ * 客人回的下一句要不要留給真人，看的就是這個值（見 conversation-session.ts 的
+ * resolveHumanOwnership）——真人常常在沒有進行中會話時講話，那時沒有一場可以蓋。
+ * 記號沒有時限，只有真人按「結束會話」／「交還機器人」才清掉。
+ */
+describe('「這位客人是真人的」記號（客人回話要不要留給真人的依據）', () => {
+  it('客服手打／客服預存送出 → 記下來，且與訊息自己的時間同一個值', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'outgoing', '廠商說明天會補寄', {
+      messageType: 'text',
+      sender: 'human',
+      senderName: '小敏',
+    }, WS)
+
+    expect(convWrite(writes).lastHumanActionAt).toBe('__ts__')
+    expect(convWrite(writes).lastHumanActionAt).toBe(messageWrite(writes).timestamp)
+  })
+
+  it('AI 回的不算（否則 AI 自己講一句就能把後面的對話全部從自己手上收走）', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'outgoing', '您好，請問需要什麼協助？', {
+      messageType: 'text',
+      sender: 'ai',
+      aiGenerated: true,
+    }, WS)
+
+    expect(convWrite(writes)).not.toHaveProperty('lastHumanActionAt')
+  })
+
+  it('機器人模組／系統通知也不算', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'outgoing', '已收到您的資訊', {
+      messageType: 'text',
+      sender: 'bot',
+    }, WS)
+
+    expect(convWrite(writes)).not.toHaveProperty('lastHumanActionAt')
+  })
+
+  it('客人來訊不會動到它', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await saveConversationMessage(DOC_ID, 'incoming', '好唷', {
+      messageType: 'text',
+      lineEventTimestampMs: LINE_EVENT_MS,
+    }, WS)
+
+    expect(convWrite(writes)).not.toHaveProperty('lastHumanActionAt')
+  })
+})
