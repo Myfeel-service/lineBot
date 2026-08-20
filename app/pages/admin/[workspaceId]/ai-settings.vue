@@ -337,6 +337,22 @@
                 </template>
               </p>
             </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="順便提醒節慶行銷" tight />
+              <el-switch
+                v-model="form.handoffNotify.festivalTips"
+                :disabled="!form.handoffNotify.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <p class="ai-section-hint">
+                台灣節日的<strong>前 7 天、前 3 天、前一天</strong>,在上面那則摘要裡多加一段節日提醒與行銷建議
+                (例如「再過 7 天就是中秋節,禮盒與送禮的需求會明顯升溫」)。三次講的事不一樣:
+                七天前提醒備素材、三天前提醒去排推播、前一天是最後確認清單。
+                <strong>當天沒有其他待辦也會照發</strong>這一段,否則提醒就沒意義了。
+                收錄約 20 個真的會影響買氣的節日(中秋、春節、母親節、雙 11…),同一天最多講一個。
+              </p>
+            </div>
           </div>
         </div>
 
@@ -1104,6 +1120,8 @@ function applySettings(data: AiSettingsDoc) {
       mode: data.handoffNotify?.mode === 'missed_only' ? 'missed_only' : 'always',
       slaRemindMinutes: Number(data.handoffNotify?.slaRemindMinutes ?? DEFAULT_SLA_REMIND_MINUTES),
       digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
+      // 舊工作區沒有這個欄位＝預設開（與後端 normalize 同一個口徑，別在這裡寫成 === true）
+      festivalTips: data.handoffNotify?.festivalTips !== false,
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     humanSessionMaxIdleHours: Number(data.humanSessionMaxIdleHours ?? DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS),

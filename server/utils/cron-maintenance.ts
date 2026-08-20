@@ -31,7 +31,13 @@ import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
-import { isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
+import { daysBetween, isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
+import {
+  TAIWAN_FESTIVALS,
+  festivalReminderText,
+  hasFestivalInWindow,
+  pickFestivalReminder,
+} from '~~/shared/taiwan-festivals'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
@@ -866,6 +872,44 @@ async function releaseDailyDigest(
     .catch(err => console.warn('[backlog-digest] release failed:', workspaceId, err))
 }
 
+// ── 節慶行銷提醒 ─────────────────────────────────────────────────────────
+// 節日前 7／3／1 天，在每日摘要那則訊息裡多加一段（不另發一則，LINE 按則計費）。
+// 節日表與「今天該講哪一個」的判定都在 shared/taiwan-festivals.ts。
+//
+// 這裡只負責記帳：哪個 workspace 對哪個節日講到第幾個里程碑了。
+// 形狀 `{ [workspaceId]: { [festivalId]: 已送出的最小里程碑 } }`。
+// 一天一則的防重複沿用 claimDailyDigest，所以這份不需要交易——節慶提醒是搭在那則
+// 已認領成功的訊息上，走到這裡就代表今天這個 workspace 只會有一則。
+
+/** workspaces 全掃上限（節慶提醒才需要「連沒積壓的帳號也要發」，見呼叫處） */
+const DIGEST_WORKSPACE_SCAN_CAP = 2000
+
+type FestivalSentState = Record<string, Record<string, number>>
+
+/**
+ * 記下「這個節日講到第幾個里程碑」，順手清掉已經過完的節日。
+ *
+ * 不清的話這份 doc 會逐年變肥（每個 workspace 每年二十幾筆），而且過期的 key 會讓
+ * 日後改節日表時難以看出哪些還有效。表上已被刪掉的 id 也一併清掉。
+ */
+async function recordFestivalReminder(
+  stateRef: FirebaseFirestore.DocumentReference,
+  workspaceId: string,
+  current: Record<string, number>,
+  festivalId: string,
+  milestone: number,
+  today: string,
+): Promise<void> {
+  const patch: Record<string, unknown> = { [festivalId]: milestone }
+  for (const id of Object.keys(current)) {
+    if (id === festivalId) continue
+    const f = TAIWAN_FESTIVALS.find(x => x.id === id)
+    if (!f || daysBetween(today, f.date) < 0) patch[id] = FieldValue.delete()
+  }
+  await stateRef.set({ [workspaceId]: patch }, { merge: true })
+    .catch(err => console.warn('[festival-digest] record failed:', workspaceId, err))
+}
+
 export async function dailyBacklogDigest(db: Firestore) {
   const taipeiNow = new Date(Date.now() + 8 * 3600_000)
   const taipeiHour = taipeiNow.getUTCHours()
@@ -908,13 +952,14 @@ export async function dailyBacklogDigest(db: Firestore) {
     topSuggestTopic: string
     topSuggestCount: number
   }
+  const emptyAgg = (): Agg => ({
+    pending: 0, pendingOldestH: 0, stale: 0,
+    outdatedSources: 0, failedSources: 0, expiredCards: 0,
+    suggestions: 0, topSuggestTopic: '', topSuggestCount: 0,
+  })
   const byWs = new Map<string, Agg>()
   const aggOf = (ws: string): Agg => {
-    const a = byWs.get(ws) ?? {
-      pending: 0, pendingOldestH: 0, stale: 0,
-      outdatedSources: 0, failedSources: 0, expiredCards: 0,
-      suggestions: 0, topSuggestTopic: '', topSuggestCount: 0,
-    }
+    const a = byWs.get(ws) ?? emptyAgg()
     byWs.set(ws, a)
     return a
   }
@@ -962,15 +1007,41 @@ export async function dailyBacklogDigest(db: Firestore) {
     }
   }
 
+  // ── 節慶提醒的前置準備 ────────────────────────────────────────────
+  // 只有「真的有節日進入 7 天內」才做這兩件事，一年裡大多數日子完全跳過：
+  //   ① 讀提醒進度（1 次讀取）
+  //   ② 全掃 workspaces —— 節慶提醒跟積壓不同,**沒有積壓的帳號也該收到**,
+  //      而 byWs 是從積壓資料聚合出來的,沒積壓的帳號根本不在裡面。
+  // 這個閘門是刻意的：2026-08-11 讀取費暴衝的形狀就是「掃全部再跳過」。
+  const festivalWindowOpen = hasFestivalInWindow(today)
+  const festivalStateRef = db.collection('cronState').doc('festival-digest')
+  let festivalState: FestivalSentState = {}
+  const targetWorkspaces = new Set(byWs.keys())
+  if (festivalWindowOpen) {
+    festivalState = ((await festivalStateRef.get()).data() ?? {}) as FestivalSentState
+    const wsSnap = await db.collection('workspaces').limit(DIGEST_WORKSPACE_SCAN_CAP).get()
+    if (wsSnap.size >= DIGEST_WORKSPACE_SCAN_CAP) {
+      console.warn('[festival-digest] workspace 數達掃描上限，部分帳號今天收不到節慶提醒', DIGEST_WORKSPACE_SCAN_CAP)
+    }
+    for (const doc of wsSnap.docs) targetWorkspaces.add(doc.id)
+  }
+
   let notified = 0
-  for (const [ws, agg] of byWs) {
+  let festivalsSent = 0
+  for (const ws of targetWorkspaces) {
+    const agg = byWs.get(ws) ?? emptyAgg()
     if (state[ws] === today) continue // 今天發過（便宜早退；真正的判斷在 claimDailyDigest）
     const hasConversation = agg.pending > 0 || agg.stale > 0
     const hasKnowledge = agg.outdatedSources > 0 || agg.failedSources > 0 || agg.expiredCards > 0 || agg.suggestions > 0
-    if (!hasConversation && !hasKnowledge) continue
+    // 節慶判定排在讀設定**之前**：只有節慶可講、而它今天早就講過的帳號,連設定都不用讀
+    const reminder = festivalWindowOpen ? pickFestivalReminder(today, festivalState[ws] ?? {}) : null
+    if (!hasConversation && !hasKnowledge && !reminder) continue
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
+    const festival = cfg.festivalTips ? reminder : null
+    // 商家把節慶提醒關掉、當天又沒有別的事 → 整則不發（不要為了節慶硬發空摘要）
+    if (!hasConversation && !hasKnowledge && !festival) continue
     // 休假日整天不發（服務時間有開 + 勾了週六日休息）。摘要是照著資料上的標記每天重
     // 喊一次,今天跳過不會漏掉任何一條——上班日那則照樣會把週末累積的全部講完。
     // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
@@ -982,17 +1053,26 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
     if (!(await claimDailyDigest(db, stateRef, ws, today))) continue
 
-    const lines = ['📋 每日客服摘要']
-    if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
-    if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」(久到沒動靜的才會由系統自動收尾)`)
-    if (agg.outdatedSources) lines.push(`・${agg.outdatedSources} 個知識庫來源內容有變動,待你確認是否更新`)
-    if (agg.failedSources) lines.push(`・${agg.failedSources} 個知識庫來源同步失敗,修好前 AI 用的是舊內容`)
-    if (agg.expiredCards) lines.push(`・${agg.expiredCards} 張知識卡已到期下架,要延長請到知識庫編輯`)
-    if (agg.suggestions) {
-      lines.push(`・客人常問但 AI 答不好的主題 ${agg.suggestions} 個${agg.topSuggestTopic ? `(最常問:「${agg.topSuggestTopic}」)` : ''},草稿已擬好,審一眼按「採用」AI 就學會了`)
+    // 當天只有節慶可講時換一個標題：掛在「每日客服摘要」底下會讓商家以為有客服待辦
+    const lines: string[] = []
+    if (hasConversation || hasKnowledge) {
+      lines.push('📋 每日客服摘要')
+      if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
+      if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」(久到沒動靜的才會由系統自動收尾)`)
+      if (agg.outdatedSources) lines.push(`・${agg.outdatedSources} 個知識庫來源內容有變動,待你確認是否更新`)
+      if (agg.failedSources) lines.push(`・${agg.failedSources} 個知識庫來源同步失敗,修好前 AI 用的是舊內容`)
+      if (agg.expiredCards) lines.push(`・${agg.expiredCards} 張知識卡已到期下架,要延長請到知識庫編輯`)
+      if (agg.suggestions) {
+        lines.push(`・客人常問但 AI 答不好的主題 ${agg.suggestions} 個${agg.topSuggestTopic ? `(最常問:「${agg.topSuggestTopic}」)` : ''},草稿已擬好,審一眼按「採用」AI 就學會了`)
+      }
+      const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
+      lines.push(`請到後台${places}頁處理。`)
+      // 空行隔開：節慶提醒跟上面的待辦是兩件事，黏在一起會被當成第 N 條待辦
+      if (festival) lines.push('', `🎉 ${festivalReminderText(festival)}`)
     }
-    const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
-    lines.push(`請到後台${places}頁處理。`)
+    else if (festival) {
+      lines.push('🎉 節慶行銷提醒', festivalReminderText(festival))
+    }
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
     try {
       const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
@@ -1010,10 +1090,23 @@ export async function dailyBacklogDigest(db: Firestore) {
       await releaseDailyDigest(stateRef, ws)
       continue
     }
+    // 只有真的送出去才記里程碑：上面拆章重來時,這個節日還要能再講一次
+    if (festival) {
+      await recordFestivalReminder(
+        festivalStateRef, ws, festivalState[ws] ?? {},
+        festival.festival.id, festival.milestone, today,
+      )
+      festivalsSent++
+    }
     notified++
   }
 
-  const tally = { pendingScanned: pendingSnap.size, humanScanned: humanSnap.size, workspacesNotified: notified }
+  const tally = {
+    pendingScanned: pendingSnap.size,
+    humanScanned: humanSnap.size,
+    workspacesNotified: notified,
+    festivalReminders: festivalsSent,
+  }
   if (notified) console.log('[conversation:backlog-digest]', tally)
   return tally
 }

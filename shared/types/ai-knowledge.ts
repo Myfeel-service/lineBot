@@ -270,6 +270,14 @@ export interface AiSettingsDoc {
     slaRemindMinutes: number
     /** 每日摘要（積壓＋知識庫待辦）發送時段：台北時間整點 0–23，當天過了這個小時的第一輪排程發送 */
     digestHour: number
+    /**
+     * 節慶行銷提醒：台灣節日前 7／3／1 天，在每日摘要那則訊息裡多加一段節日提醒與
+     * 行銷建議（`shared/taiwan-festivals.ts`）。**預設開**——這是有用的東西，且只會
+     * 發給本來就開了通知的帳號，嫌吵再關。
+     *
+     * 開著時「當天沒有其他待辦」也會照發（只有節慶那段），否則提醒常常無聲消失。
+     */
+    festivalTips: boolean
   }
   /**
    * 真人處理中、且真人最後回覆超過此分鐘數沒有後續回覆 → 自動把會話交還機器人。
@@ -941,6 +949,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       mode: 'always',
       slaRemindMinutes: DEFAULT_SLA_REMIND_MINUTES,
       digestHour: DEFAULT_DIGEST_HOUR,
+      festivalTips: true,
     },
     handbackIdleMinutes: DEFAULT_HANDBACK_IDLE_MINUTES,
     humanSessionMaxIdleHours: DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,

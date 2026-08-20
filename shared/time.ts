@@ -45,6 +45,18 @@ export function addDays(date: string, n: number): string {
   return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`
 }
 
+/**
+ * 兩個日期字串相差幾天（`to - from`，`to` 比較晚就是正數）。
+ *
+ * 刻意用 `Date.UTC` 而不是把字串當本地時間 parse：後者在 UTC+8 以外的執行環境
+ * （CI、開發機）會因為 parse 出來的時間點落在前一天而整批偏移一天。
+ */
+export function daysBetween(from: string, to: string): number {
+  const [fy, fm, fd] = from.split('-').map(Number) as [number, number, number]
+  const [ty, tm, td] = to.split('-').map(Number) as [number, number, number]
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000)
+}
+
 /** 錨定日合法化：夾到 1–31。 */
 export function normalizeAnchorDay(day: number | null | undefined): number {
   const n = Math.floor(Number(day) || 1)
