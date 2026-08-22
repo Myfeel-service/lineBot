@@ -15,7 +15,18 @@
             <el-tag v-if="row.id === currentPlanId" size="small" type="success" effect="plain">目前</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="每月則數" min-width="84">
+        <!-- 2026-08-22 老闆拍板（`D-9`）：方案表維持講「每月」，只在這一欄補一顆定義。
+             為什麼不全面改成「每期」：付費方案就是月繳、一期恰好一個月，「每月」沒有騙人，
+             而「每期」是我們的內部詞——客人比價時會先卡一下「一期是多久」，賣點多一道翻譯就弱一分。
+             會混淆的只有一種人：已經是客戶、又剛好在錨定日附近看用量頁（那邊寫「本期」），
+             他需要的是一句解釋，不是把整張表的字都換掉。所以定義就掛在兩個詞碰頭的這裡。 -->
+        <el-table-column min-width="84">
+          <template #header>
+            每月則數
+            <el-tooltip placement="top" :content="QUOTA_PERIOD_HINT">
+              <span class="pu-hint" role="img" aria-label="每月則數怎麼算">ⓘ</span>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">{{ quotaLabel(row) }}</template>
         </el-table-column>
         <el-table-column label="席次" min-width="58">
@@ -119,6 +130,17 @@ import { BILLING_PLANS, BILLING_PLAN_ORDER, FEATURED_PLAN_IDS, type BillingPlan,
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
+
+/**
+ * 「每月則數」欄位旁那顆 ⓘ 的說明（`D-9`，2026-08-22 拍板）。
+ *
+ * 後台的用量數字一律講「本期」（錨定日起算），這張表講「每月」——兩邊都對，但同一個
+ * 流程裡先看到「本期 300/1,000 則」再按「升級方案」看到「每月 1,000 則」，會讓人以為
+ * 是兩種東西。這句話就是把它們接起來，放在兩個詞唯一碰頭的地方。
+ */
+const QUOTA_PERIOD_HINT
+  = '一期就是一個月，從你開通的那一天起算（例如 3 月 15 日開通，每期就是 15 號到下個月 14 號）。'
+  + '後台用量頁寫的「本期」指的就是這一個月，用完會在下一期的同一天重新計算。'
 
 const props = defineProps<{
   modelValue: boolean

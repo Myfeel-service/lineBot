@@ -24,6 +24,15 @@
     margin-right: 6px;
   }
 
+  /* 「每月則數」旁的定義 ⓘ（D-9）：它是註解不是動作，所以刻意做得比欄位標題淡、
+     不搶眼；游標變成問號提示它有話要說。⛔別給它主色——那會看起來像可以按的功能。 */
+  .pu-hint {
+    margin-left: 2px;
+    color: var(--text-secondary, #64748b);
+    cursor: help;
+    font-weight: 400;
+  }
+
   /* 有 / 無 某功能的視覺對比：有＝主色勾、無＝淡灰破折號 */
   .pu-yes {
     color: var(--color-primary, #0f7b54);
