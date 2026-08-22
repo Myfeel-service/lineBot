@@ -1,0 +1,56 @@
+#!/bin/sh
+# 收工提醒：commit 有實質改動但沒動到 docs/STATUS.md 時，在 commit 訊息裡加一行提醒。
+# 只提醒、不阻擋（擋了只會被 --no-verify 繞過）。
+# 安裝：npm run setup:hooks（或手動 cp scripts/git-hooks/prepare-commit-msg .git/hooks/ && chmod +x）
+# 來源受版控：scripts/git-hooks/prepare-commit-msg（.git/hooks 不進版控，改這份要重跑安裝）
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+
+# merge / squash / 已帶訊息的 commit -m 之外的來源不打擾
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+STAGED=$(git diff --cached --name-only)
+
+# 沒有 staged 檔（例如 --allow-empty）不提醒
+[ -z "$STAGED" ] && exit 0
+
+# 這次已經動了 STATUS.md → 沒事
+echo "$STAGED" | grep -q "^docs/STATUS.md$" && exit 0
+
+# 只動了「不需要記狀態」的檔案 → 不提醒。
+# 白名單：docs、markdown、設定、鎖檔、hook 自己。
+NEEDS_STATUS=0
+for f in $STAGED; do
+  case "$f" in
+    docs/*|*.md|.claude/*|.gitignore|.env.example|package-lock.json|scripts/git-hooks/*) ;;
+    *) NEEDS_STATUS=1 ;;
+  esac
+done
+[ "$NEEDS_STATUS" -eq 0 ] && exit 0
+
+# 有實質程式改動但 STATUS.md 沒動 → 兩路提醒：
+# ① stderr：用 -m 直接 commit 時（人與 Claude Code 的常態）終端機看得到
+printf '\n⚠️  這次 commit 動了程式但沒動 docs/STATUS.md\n' >&2
+printf '   收工規則（CLAUDE.md）：新開工→進行中；commit 完→搬到完成補 hash；發現新事→待辦。\n' >&2
+printf '   真的不需要記狀態就忽略這行；需要的話 commit 完馬上補一個 STATUS 的 commit。\n\n' >&2
+
+# ② 訊息檔註解：**只在走編輯器時**加。
+# ⛔ 用 `git commit -m` 時不能加：那條路的預設 cleanup 模式是 whitespace，不會剝掉 `#` 開頭
+#    的行——實測整段提醒會變成 commit 的標題（2026-08-17 在沙盒 repo 重現）。
+#    走編輯器（COMMIT_SOURCE 空值／template）才是 default cleanup，註解才真的不會進 log。
+case "$COMMIT_SOURCE" in
+  message|commit) exit 0 ;;
+esac
+
+{
+  echo "# ⚠️ 這次 commit 動了程式但沒動 docs/STATUS.md——收工規則（CLAUDE.md）："
+  echo "#    新開工 → 進行中；commit 完 → 搬到完成補 hash；發現新事 → 待辦。"
+  echo "#    如果這次改動真的不需要記狀態，留著這則訊息直接 commit 即可（此提醒不會進 log）。"
+  echo "#"
+  cat "$COMMIT_MSG_FILE"
+} > "$COMMIT_MSG_FILE.tmp" && mv "$COMMIT_MSG_FILE.tmp" "$COMMIT_MSG_FILE"
+
+exit 0
