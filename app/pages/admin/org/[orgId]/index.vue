@@ -408,7 +408,7 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
-import { ALERT_SEVERITY } from '~/composables/useWorkspaceAlerts'
+import { ALERT_SEVERITY } from '~~/shared/types/alerts'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 

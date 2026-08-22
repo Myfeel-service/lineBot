@@ -697,6 +697,21 @@
   text-align: center;
 }
 
+/* 系統側異常的小標（D-8③）：這件事使用者動不了手。
+   ⛔ 刻意用中性灰、不用警告色——它標的是「誰動手」，不是「有多嚴重」；
+   染色會變成第二套嚴重度，跟卡片本身的紅／橘打架。 */
+.ta-alert__sys {
+  flex-shrink: 0;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 16px;
+}
+
 /* 具體是哪一筆／為什麼失敗——只講「有 2 個失敗」等於叫使用者自己去猜 */
 .ta-alert__detail {
   font-size: var(--fs-xs);

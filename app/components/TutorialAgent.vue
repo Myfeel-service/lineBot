@@ -118,6 +118,10 @@
                     <span class="ta-alert__title">
                       {{ a.title }}
                       <span v-if="a.count" class="ta-alert__count">{{ a.count }}</span>
+                      <!-- 系統側（D-8③）：使用者去點什麼都不會讓它好。仍然照嚴重度顯示
+                           （llmError 就是客人問了得不到回答），但要當場說清楚不用他動手，
+                           否則他會反覆點進去找不到能做的事，最後學會忽略整個面板。 -->
+                      <span v-if="a.owner === 'system'" class="ta-alert__sys">不用你操作</span>
                     </span>
                     <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
                     <span class="ta-alert__impact">{{ a.impact }}</span>
@@ -144,7 +148,7 @@
             <!-- 「沒有發現異常」只在必要設定完成後才講：還沒開通的帳號量不出營運異常，
                  這句安心話會蓋過「還不能上線」的重點（2026-08-07 老闆回饋：新帳號看起來像沒事） -->
             <div v-if="alertsLoaded && !activeAlerts.length && allRequiredDone" class="ta-alerts-clear">
-              目前沒有發現異常。
+              目前沒有發現異常{{ alertsCheckedCount ? `——這次檢查了 ${alertsCheckedCount} 項` : '' }}。
             </div>
 
             <!-- 被靜音但還在發生的事也要現形：靜音是「先不吵我」，不是「當作沒事」 -->
@@ -528,6 +532,7 @@ const {
   suggestionAlerts,
   snoozedAlerts,
   unknownAlerts: unknownAlertItems,
+  checkedCount: alertsCheckedCount,
   loaded: alertsLoaded,
   loading: alertsLoading,
   lastRefreshFailed: alertsFailed,
@@ -688,8 +693,10 @@ const briefLine = computed(() => {
 const notLiveConsequence = computed(() =>
   capabilities.value.find(c => c.id === 'lineConnected')?.status === 'incomplete'
     ? '客人傳訊息進來，不會有任何回應'
-    // ⛔別寫「訊息進得來」：lineConnected 只驗憑證有存，沒驗真的連通（D-15(b)）——
-    // Secret 貼錯的帳號一則都收不到，宣稱進得來就是說謊
+    // ⛔仍然別寫「訊息進得來」：2026-08-21 起 lineConnected 已經會真的去問 LINE
+    // （網址有設、開關有開才算完成，見 D-15(b)），但那驗的是**送得出來**——
+    // 第二把鑰匙（Channel Secret）貼錯的話，LINE 送過來會被我方簽章擋掉，
+    // 這裡照樣看不出來。宣稱「進得來」的唯一鐵證是真的收過一則（firstMessageReceived）。
     : 'AI 還沒開，客人的問題沒有人回',
 )
 

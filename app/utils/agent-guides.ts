@@ -14,7 +14,7 @@ import type { WorkspaceAlertId } from '~~/shared/types/alerts'
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentScriptRunner, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
-export type AgentGuideId = 'liff-endpoint' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook'
+export type AgentGuideId = 'liff-endpoint' | 'liff-setup' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook'
 
 export interface AgentGuideCtx {
   r: AgentScriptRunner
@@ -161,6 +161,149 @@ const liffEndpointGuide: AgentGuideDef = {
           }
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: `還有 ${bad.length} 個沒過` })
           await r.say(`還沒過的：<br>${bad.map(liffProblemLine).join('<br>')}<br>最常見是<b>改完沒按存檔</b>、或改到別的 LIFF。再看一眼，好了再按檢查。`)
+        }
+      },
+    },
+  ],
+}
+
+// ── 還沒有活動頁（LIFF）──────────────────────────────────────────
+// 與上面那條的分工：liff-endpoint 修「已經有 LIFF 但登記錯了」，
+// 這條處理「根本還沒有 LIFF、活動連結點下去什麼都沒有」（D-19，2026-08-21 拍板）。
+
+/** LIFF ID 長得像 2007123456-AbCdEfGh：純數字的 channel id ＋ 連字號 ＋ 一串英數 */
+const LIFF_ID_RE = /^\d{8,}-[A-Za-z0-9]+$/
+
+const liffSetupGuide: AgentGuideDef = {
+  id: 'liff-setup',
+  title: '設定活動頁（LIFF）',
+  alertIds: ['liffMissing'],
+  steps: [
+    {
+      id: 'explain-and-copy',
+      async run(c) {
+        const { r } = c
+        await r.say('你有活動在跑，但還沒設定<b>活動頁</b>——客人在外面點活動連結會打不開，貼標和綁定都不會發生。設定一次就好，之後所有活動共用。大約三分鐘。')
+
+        // 正確答案一律取後端口徑（publicBaseUrl），⛔別拿瀏覽器網址兜：
+        // 正式網址有設的環境會教錯，那正是 2026-08-07 換網域災情的形狀
+        let expectedUrl = ''
+        const res = await r.apiRetry(
+          () => c.apiFetch<LiffCheckRes>('/api/admin/liff-endpoint-check', { query: { force: 1 } }),
+          { failText: '查詢活動頁網址失敗', skipLabel: '先不設' },
+        )
+        if (res) expectedUrl = String(res.expectedUrl || '').trim()
+        if (!expectedUrl) {
+          c.state.exit = true
+          await r.say('系統這邊還沒設定正式網址，我給不出要填的活動頁網址。請到設定頁處理（那邊有完整的說明與檢查）。')
+          r.card({ kind: 'link', internal: true, label: '前往「組織與 LINE 設定」', href: `/admin/${c.workspaceId}/settings/organization?focus=liff` })
+          return
+        }
+        c.state.expectedUrl = expectedUrl
+
+        await r.say('第一步：到 LINE 建一個活動頁，網址填下面這串。')
+        r.card({ kind: 'copy', label: '活動頁網址（貼到 LINE 的 Endpoint URL）', value: expectedUrl })
+        r.card({
+          kind: 'help',
+          summary: '怎麼建？',
+          steps: [
+            {
+              text: '打開 LINE Developers 並登入',
+              href: 'https://developers.line.biz/console/',
+              hrefLabel: '打開 LINE Developers ↗',
+            },
+            {
+              // ⚠️ 與「拿鑰匙」教學相反：那邊教人認 Messaging API、別點 LINE Login，
+              // 這邊要點的正是 LINE Login。不明講的話兩份教學會互打
+              // （2026-08-19 D-17 盤點抓到的雷）
+              text: '選掛著「LINE Login」小字的那張卡 ——⚠️跟拿鑰匙那次相反，這次別點 Messaging API',
+              image: ONBOARDING_SHOTS.liffSetupAnim,
+              alt: '循環動畫：LINE Login 頻道的 LIFF 分頁、Add LIFF、貼 Endpoint URL',
+            },
+            { text: '切到「LIFF」分頁，按「Add」新增一個' },
+            { text: 'Endpoint URL 貼上剛剛複製的那串網址；Size 選 Full；其餘照預設' },
+            { text: '建好後，把清單上那串「LIFF ID」複製起來（長得像 2007123456-AbCdEfGh）' },
+          ],
+        })
+      },
+    },
+    {
+      id: 'save-and-verify',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        while (true) {
+          const liffId = await r.askInput({
+            inputType: 'text',
+            placeholder: '例：2007123456-AbCdEfGh',
+            maxLength: 60,
+            skippable: true,
+            skipLabel: '先跳過',
+            validate: v => (LIFF_ID_RE.test(v.trim())
+              ? null
+              : '這串看起來不像 LIFF ID。它長得像 <b>2007123456-AbCdEfGh</b>（數字、連字號、一串英數），在 LIFF 分頁的清單上。'),
+          })
+          if (!liffId) {
+            await r.say('好，先跳過。這顆紅點會一直在——它代表現在有客人點連結會打不開。想設定的時候再點「用聊天帶我修」，或直接到設定頁。')
+            r.card({ kind: 'link', internal: true, label: '前往「組織與 LINE 設定」', href: `/admin/${c.workspaceId}/settings/organization?focus=liff` })
+            return
+          }
+
+          const cardId = r.card({ kind: 'status', state: 'pending', text: '正在存起來…' })
+          const saved = await r.apiRetry(
+            () => c.apiFetch('/api/admin/line-workspace', {
+              method: 'PUT',
+              body: { defaultLiffId: liffId.trim() },
+            }),
+            { failText: '存檔失敗', skipLabel: '先跳過' },
+          )
+          if (!saved) {
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒存成功' })
+            return
+          }
+          r.updateMsg(cardId, { kind: 'status', state: 'ok', text: '已存起來' })
+
+          // ⛔ 存起來不等於會動：LIFF ID 打錯、或 LINE 那邊的 Endpoint URL 填成別的網址，
+          // 客人照樣打不開。一定要真的回頭問 LINE 一次才敢說修好了。
+          // 內層迴圈＝「去 LINE 改網址 → 回來再驗一次」，不必重問已經存好的 ID。
+          while (true) {
+            const checkId = r.card({ kind: 'status', state: 'pending', text: '正在跟 LINE 確認這個活動頁通不通…' })
+            const check = await r.apiRetry(
+              () => c.apiFetch<LiffCheckRes>('/api/admin/liff-endpoint-check', { query: { force: 1 } }),
+              { failText: '查詢失敗', skipLabel: '先跳過' },
+            )
+            if (!check) {
+              r.updateMsg(checkId, { kind: 'status', state: 'skipped', text: '這次查不到（不代表沒設好）' })
+              await r.say('已經存起來了，只是這次問不到 LINE。<b>查不到不代表有問題</b>，過幾分鐘打開我再檢查一次。')
+              return
+            }
+            const mine = check.checks.find(x => x.liffId === liffId.trim())
+            if (!mine || mine.status === 'unknown') {
+              r.updateMsg(checkId, { kind: 'status', state: 'skipped', text: '這次查不到這個活動頁的狀態' })
+              await r.say('已經存起來了。這次沒問到 LINE 那邊的登記狀態——過幾分鐘再檢查一次就好。')
+              return
+            }
+            if (mine.status === 'ok') {
+              r.updateMsg(checkId, { kind: 'status', state: 'ok', text: '活動頁設定完成，連結打得開了' })
+              await r.say('設好了 🎉 客人現在點活動連結會直接進到活動頁，貼標與綁定也會正常運作。')
+              return
+            }
+            // broken / mismatch：ID 存對了，但那個 LIFF 在 LINE 登記的網址不是活動頁
+            r.updateMsg(checkId, { kind: 'status', state: 'fail', text: 'LIFF 存好了，但 LINE 那邊填的網址不對' })
+            await r.say(
+              `這個 LIFF 在 LINE 登記的網址是 <b>${escapeHtml(mine.endpoint || '（空白）')}</b>，`
+              + '不是活動頁。回到那個 LIFF 把 <b>Endpoint URL</b> 整串蓋掉成下面這串再存檔。',
+            )
+            r.card({ kind: 'copy', label: '活動頁網址', value: String(c.state.expectedUrl ?? '') })
+            const again = await r.askChoices([
+              { label: '改好了，再檢查一次', value: 'again', primary: true },
+              { label: '先跳過', value: 'skip' },
+            ])
+            if (again !== 'again') {
+              await r.say('好。右下角的紅點會一直盯著這件事，修好就自己熄掉。')
+              return
+            }
+          }
         }
       },
     },
@@ -633,6 +776,7 @@ const lineWebhookGuide: AgentGuideDef = {
 
 export const AGENT_GUIDES: Record<AgentGuideId, AgentGuideDef> = {
   'liff-endpoint': liffEndpointGuide,
+  'liff-setup': liffSetupGuide,
   'handoff-notify': handoffNotifyGuide,
   'knowledge-sync': knowledgeSyncGuide,
   'line-webhook': lineWebhookGuide,

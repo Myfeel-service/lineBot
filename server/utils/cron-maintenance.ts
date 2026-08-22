@@ -38,6 +38,9 @@ import {
   hasFestivalInWindow,
   pickFestivalReminder,
 } from '~~/shared/taiwan-festivals'
+import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
+import { collectWorkspaceAlerts } from './workspace-alerts'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
@@ -1196,5 +1199,133 @@ export async function purgeRecycledKnowledge(db: Firestore) {
   }
   const tally = { purged, failed }
   if (purged || failed) console.log('[ai:purge-recycled]', tally)
+  return tally
+}
+
+// ── 嚴重異常主動推到 LINE（D-8②）────────────────────────────────────────
+// 小幫手面板只有「人打開後台」才看得到。壞得最嚴重的那幾種（機器人收不到訊息、
+// AI 停止回覆、活動連結打不開）通常沒人在看的時候發生，等商家想到要開後台，
+// 客人已經被晾了幾小時。這支把**紅色那一級**主動送到值班人員的 LINE。
+//
+// ⛔ 只推 critical。warning／suggestion 推了就是狼來了，久了連真的紅燈都會被忽略。
+// ⛔ 名單沿用「轉真人通知」那一份（handoffNotify.lineUserIds），不另設第二份——
+//    第二份名單＝第二個要維護的東西、第二個會忘記填的欄位，而收通知的本來就是同一批人。
+
+/** 一件事最多多久提醒一次：同一個紅燈天天講一次（會煩但不至於淹沒），不是每輪都講 */
+const CRITICAL_PUSH_REPEAT_MS = 24 * 3600_000
+/** 每個 workspace 多久檢查一次：這輪要跑整套異常彙總，不必每 10 分鐘跑一遍 */
+const CRITICAL_PUSH_CHECK_INTERVAL_MS = 60 * 60_000
+/** 只在這個時段推（台北時間）。半夜把人吵醒他也修不了，隔天早上照樣會講 */
+const CRITICAL_PUSH_HOUR_FROM = 9
+const CRITICAL_PUSH_HOUR_TO = 21
+/** 一則訊息最多列幾條，其餘用「還有 N 件」帶過（LINE 訊息太長會被截斷） */
+const CRITICAL_PUSH_MAX_LINES = 5
+/** workspaces 全掃上限（同節慶提醒：這件事跟有沒有積壓無關，得從帳號出發） */
+const CRITICAL_PUSH_WORKSPACE_CAP = 2000
+
+type CriticalPushState = Record<string, { checkedAt?: number, sent?: Record<string, number> }>
+
+/** 一行：標題（幾個）＋補充；系統側的當場說明不用他動手 */
+function criticalAlertLine(item: WorkspaceAlertItem): string {
+  const label = ALERT_LABELS[item.id] ?? item.id
+  const detail = item.detail ? `（${item.detail}）` : ''
+  const sys = SYSTEM_OWNED_ALERTS.has(item.id) ? '（系統這邊的狀況，不用你操作）' : ''
+  return `・${label}${detail}${sys}`
+}
+
+export async function pushCriticalAlerts(db: Firestore) {
+  const now = Date.now()
+  const taipeiHour = new Date(now + 8 * 3600_000).getUTCHours()
+  // 時段外整支早退：一個查詢都不做（一天有一半的時間落在這裡）
+  if (taipeiHour < CRITICAL_PUSH_HOUR_FROM || taipeiHour >= CRITICAL_PUSH_HOUR_TO)
+    return { skipped: 'off-hours' as const }
+
+  const stateRef = db.collection('cronState').doc('critical-alert-push')
+  const state = ((await stateRef.get()).data() ?? {}) as CriticalPushState
+
+  const wsSnap = await db.collection('workspaces').select().limit(CRITICAL_PUSH_WORKSPACE_CAP).get()
+  let checked = 0
+  let notified = 0
+
+  for (const doc of wsSnap.docs) {
+    const wid = doc.id
+    const prev = state[wid] ?? {}
+    // 節流擋在最前面：擋不住的話每 10 分鐘就要跑一整套異常彙總 ×每個帳號
+    if (prev.checkedAt && now - prev.checkedAt < CRITICAL_PUSH_CHECK_INTERVAL_MS) continue
+
+    const settings = await getAiSettings(wid, db)
+    const cfg = settings.handoffNotify
+    // 沒開通知、沒有人收、或商家把這顆關掉 → 不查也不推（省掉整套彙總查詢）
+    if (!cfg.enabled || !cfg.lineUserIds.length || !cfg.criticalAlertPush) continue
+
+    let items: WorkspaceAlertItem[]
+    try {
+      // 排程沒有「使用者」，兩種權限都給：這是在看整個帳號的狀態，不是某個人看得到什麼
+      items = await collectWorkspaceAlerts(db, wid, { canSettings: true, canOperate: true })
+    }
+    catch (err) {
+      console.warn('[critical-alert-push] collect failed:', wid, err)
+      continue
+    }
+    checked++
+    await stateRef.set({ [wid]: { checkedAt: now } }, { merge: true })
+      .catch(err => console.warn('[critical-alert-push] checkedAt write failed:', wid, err))
+
+    // ⚠️ 只認 active。unknown（這次查不到）刻意不推——「查不到」不是「壞掉」，
+    // 拿它推播就是把我方的查詢失敗當成商家的災情，一次誤報就會讓人關掉這個功能。
+    const criticals = items.filter(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'critical')
+    const sent = prev.sent ?? {}
+    const fresh = criticals.filter(i => now - (sent[i.id] ?? 0) >= CRITICAL_PUSH_REPEAT_MS)
+    if (!fresh.length) {
+      // 已經全部講過（還在冷卻）→ 只把已修好的從紀錄裡拿掉，讓它再壞時能立刻再講
+      const stillBroken = new Set(criticals.map(i => i.id))
+      const stale = Object.keys(sent).filter(id => !stillBroken.has(id as typeof criticals[number]['id']))
+      if (stale.length) {
+        const patch: Record<string, unknown> = {}
+        for (const id of stale) patch[id] = FieldValue.delete()
+        await stateRef.set({ [wid]: { sent: patch } }, { merge: true })
+          .catch(err => console.warn('[critical-alert-push] prune failed:', wid, err))
+      }
+      continue
+    }
+
+    const shown = fresh.slice(0, CRITICAL_PUSH_MAX_LINES)
+    const lines = [
+      fresh.length === 1 ? '🔴 有 1 件事正在影響客人' : `🔴 有 ${fresh.length} 件事正在影響客人`,
+      ...shown.map(criticalAlertLine),
+    ]
+    if (fresh.length > shown.length) lines.push(`・還有 ${fresh.length - shown.length} 件，請到後台看`)
+    lines.push('請開後台，右下角的小幫手會告訴你每一件要怎麼處理。')
+
+    const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+    let anyDelivered = false
+    try {
+      const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], wid)))
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') anyDelivered = true
+        else console.warn('[critical-alert-push] push failed for', cfg.lineUserIds[i], (r.reason as Error)?.message ?? r.reason)
+      })
+    }
+    catch (err) {
+      console.warn('[critical-alert-push] push threw:', wid, err)
+    }
+    // ⛔ 一則都沒送成功就不要記「已通知」：記了的話這件事要 24 小時後才會再試，
+    //    而商家從頭到尾沒收到任何東西
+    if (!anyDelivered) continue
+
+    const patch: Record<string, unknown> = {}
+    for (const i of fresh) patch[i.id] = now
+    // 順手把已經修好的從紀錄裡拿掉（同上：再壞時要能立刻再講）
+    const stillBroken = new Set(criticals.map(i => i.id))
+    for (const id of Object.keys(sent)) {
+      if (!stillBroken.has(id as typeof criticals[number]['id'])) patch[id] = FieldValue.delete()
+    }
+    await stateRef.set({ [wid]: { sent: patch } }, { merge: true })
+      .catch(err => console.warn('[critical-alert-push] record failed:', wid, err))
+    notified++
+  }
+
+  const tally = { workspacesChecked: checked, workspacesNotified: notified }
+  if (notified) console.log('[alerts:critical-push]', tally)
   return tally
 }

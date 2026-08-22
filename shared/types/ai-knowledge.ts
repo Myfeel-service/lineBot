@@ -278,6 +278,17 @@ export interface AiSettingsDoc {
      * 開著時「當天沒有其他待辦」也會照發（只有節慶那段），否則提醒常常無聲消失。
      */
     festivalTips: boolean
+    /**
+     * 嚴重異常主動推到 LINE（`D-8`②，2026-08-21 老闆拍板做）。
+     *
+     * 只推「現在正在影響客人」那一級（機器人收不到訊息、AI 停止回覆、活動連結打不開…），
+     * 一件事最多一天講一次、多件事併成一則。**預設開**——這一級的定義就是客人此刻
+     * 拿不到服務，等商家自己想到要開後台看才發現，往往已經過了幾小時。
+     *
+     * ⛔ 不要把 warning／suggestion 也推進來：那兩級是「建議處理」與「可以更好」，
+     *    推到 LINE 就是狼來了，久了連真的紅燈也會被忽略。
+     */
+    criticalAlertPush: boolean
   }
   /**
    * 真人處理中、且真人最後回覆超過此分鐘數沒有後續回覆 → 自動把會話交還機器人。
@@ -959,6 +970,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       slaRemindMinutes: DEFAULT_SLA_REMIND_MINUTES,
       digestHour: DEFAULT_DIGEST_HOUR,
       festivalTips: true,
+      criticalAlertPush: true,
     },
     handbackIdleMinutes: DEFAULT_HANDBACK_IDLE_MINUTES,
     humanSessionMaxIdleHours: DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,

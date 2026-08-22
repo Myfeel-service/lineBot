@@ -15,6 +15,16 @@ export type WorkspaceAlertId =
   | 'lineWebhookBroken'
   /** LINE 填的 Webhook 和正式網址不一致：舊網址還指向這套系統時訊息照進，但舊網址一失效就無聲斷線 */
   | 'lineWebhookUrlMismatch'
+  /**
+   * 同一個 LINE 官方帳號同時被兩個工作區接著：客人的訊息只會進到簽章先對上的那一邊，
+   * 另一邊一則都收不到，而且兩邊的檢查看起來都是綠的（2026-08-19 實測挖到）。
+   */
+  | 'lineChannelConflict'
+  /**
+   * 有活動在跑，但活動自己沒指定 LIFF、工作區也沒有預設 LIFF＝活動連結在外面點下去打不開。
+   * 條件式：沒開活動的帳號不需要 LIFF，不會亮這顆。
+   */
+  | 'liffMissing'
   /** LIFF 在 LINE 登記的開啟網址到不了活動頁（指到別的網站、或 LIFF 已被刪除）——客人點活動連結會迷路 */
   | 'liffEndpointBroken'
   /** LIFF 登記的網址跟正式網址不一致（多半是換網域沒改到）：登入會在兩個網址間繞，部分情況卡在載入中 */
@@ -79,6 +89,8 @@ export type WorkspaceAlertId =
 export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   lineWebhookBroken: '機器人收不到客人訊息',
   lineWebhookUrlMismatch: 'LINE 填的收訊網址不是正式網址',
+  lineChannelConflict: '這個 LINE 帳號同時接在兩個地方',
+  liffMissing: '活動連結點下去會打不開',
   liffEndpointBroken: '活動連結會把客人帶去錯的地方',
   liffEndpointUrlMismatch: 'LINE 填的活動頁網址不是正式網址',
   knowledgeSyncFailed: '有資料抓不到內容',
@@ -108,6 +120,76 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   scriptUnreachable: '有客服流程永遠不會被啟動',
   scriptDeadEnd: '有客服流程客人走不完',
 }
+
+/**
+ * critical   = 現在就在影響客人（客人問了得不到回答、系統停擺）。只有這一級會亮紅點，
+ *              也只有這一級會主動推到 LINE。
+ * warning    = 建議處理，但客人暫時不會有感。可以在面板上按「暫停提醒」靜音 7 天。
+ * suggestion = 沒有東西壞掉，是「可以更好」（例如建議收件匣有草稿）。不算異常、不進紅點。
+ *
+ * 這條線要守住：什麼都算紅點，紅點就等於沒有——使用者會學會忽略它。
+ */
+export type AlertSeverity = 'critical' | 'warning' | 'suggestion'
+
+/**
+ * 各異常的嚴重度（**單一事實來源**）。
+ *
+ * 2026-08-21 從前端註冊表搬到 shared：分級原本只有畫面知道，但排程要決定
+ * 「哪些該主動推到商家的 LINE」也得用同一把尺（`D-8`②）。前後端各留一份分級，
+ * 遲早會出現「畫面是紅的、推播不推」這種對不起來的狀況。
+ * 文案（ALERT_LABELS）早就是這樣共用的，分級跟著同一個做法。
+ */
+export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
+  lineWebhookBroken: 'critical',
+  lineWebhookUrlMismatch: 'critical',
+  lineChannelConflict: 'critical',
+  liffMissing: 'critical',
+  liffEndpointBroken: 'critical',
+  liffEndpointUrlMismatch: 'critical',
+  anyTextBlocking: 'critical',
+  llmError: 'critical',
+  knowledgeSyncFailed: 'critical',
+  knowledgeDetectStalled: 'warning',
+  knowledgeIndexFailed: 'critical',
+  knowledgeWrongAnswers: 'critical',
+  quotaExceeded: 'critical',
+  quotaRunningOut: 'warning',
+  paymentPastDue: 'critical',
+  handoffNotifyMissing: 'warning',
+  brokenModuleButton: 'critical',
+  scriptDeadEnd: 'critical',
+  scriptUnreachable: 'warning',
+  firstReplyBacklog: 'warning',
+  humanBacklog: 'warning',
+  knowledgeIndexStuck: 'warning',
+  knowledgeOutdated: 'warning',
+  claimPushUnmarked: 'warning',
+  renewalNotBound: 'warning',
+  invoiceFailed: 'suggestion',
+  broadcastFailed: 'warning',
+  broadcastOverdue: 'warning',
+  maintenanceStalled: 'warning',
+  knowledgeSuggestions: 'suggestion',
+}
+
+/**
+ * 「這是系統這邊的狀況，使用者動不了手」（2026-08-21 老闆拍板做，原 `D-8`③）。
+ *
+ * 外部服務暫時掛掉、背景排程沒跑、我方蓋章漏掉——使用者去點任何按鈕都不會讓它好。
+ * 這些項目仍然照嚴重度顯示（llmError 就是客人問了得不到回答），但畫面與推播都要
+ * 明講「不用你操作」，否則使用者會反覆點進去找不到能做的事，最後學會忽略整個面板。
+ *
+ * ⛔ 不要因為「使用者不用動手」就把它降級或藏起來：嚴重度看的是客人受多少影響，
+ *    與誰動手無關。
+ */
+export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<WorkspaceAlertId>([
+  'llmError',
+  'claimPushUnmarked',
+  'maintenanceStalled',
+  'broadcastOverdue',
+  'knowledgeIndexStuck',
+  'invoiceFailed',
+])
 
 /**
  * active = 現在有這個問題；clear = 檢查過沒問題；

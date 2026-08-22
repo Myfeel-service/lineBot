@@ -174,3 +174,35 @@ export async function collectLiffEndpointChecks(
     },
   ))
 }
+
+/**
+ * 「有活動，但沒有任何 LIFF 可以用」——活動連結在外面點下去會打不開（`D-19`）。
+ *
+ * 這是條件式的：沒開活動的帳號完全不需要 LIFF（2026-08-07 拍板把 LIFF 從必要項拆成
+ * 加分項，就是因為多數新客戶第一天用不到）。只有「已經有活動在跑、活動自己沒指定 LIFF、
+ * 工作區也沒有預設 LIFF」這個組合，才是客人真的會踩到的災情。
+ *
+ * ⚠️ 與 collectLiffEndpointChecks 同一條原則：**不濾 isActive**。欄位缺省的舊資料會被
+ * 等值查詢漏掉，而且停用活動的連結多半還在外面流通，一樣有客人會點。
+ * ⚠️ 這裡只回「有沒有、幾個」，不回活動名稱——這是彙總訊號不是報表。
+ */
+export async function countCampaignsWithoutUsableLiff(
+  db: Firestore,
+  wid: string,
+): Promise<{ campaignsWithoutLiff: number, hasDefaultLiff: boolean }> {
+  const { defaultLiffId } = await getLineWorkspaceCredentials(wid)
+  const hasDefaultLiff = Boolean(String(defaultLiffId || '').trim())
+  // 有預設 LIFF 就一定有得用（活動沒填會自動 fallback），連查都不用查
+  if (hasDefaultLiff) return { campaignsWithoutLiff: 0, hasDefaultLiff: true }
+
+  const snap = await db.collection('leadCampaigns')
+    .where('workspaceId', '==', wid)
+    .select('liffId')
+    .limit(CAMPAIGN_LIFF_SCAN_LIMIT)
+    .get()
+
+  const campaignsWithoutLiff = snap.docs
+    .filter(doc => !String((doc.data() as Record<string, unknown>).liffId || '').trim())
+    .length
+  return { campaignsWithoutLiff, hasDefaultLiff: false }
+}

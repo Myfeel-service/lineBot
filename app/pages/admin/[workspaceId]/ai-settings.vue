@@ -353,6 +353,22 @@
                 收錄約 20 個真的會影響買氣的節日(中秋、春節、母親節、雙 11…),同一天最多講一個。
               </p>
             </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="出大事時馬上通知" tight />
+              <el-switch
+                v-model="form.handoffNotify.criticalAlertPush"
+                :disabled="!form.handoffNotify.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <p class="ai-section-hint">
+                <strong>正在影響客人</strong>的狀況(機器人收不到客人訊息、回覆則數用完 AI 停止回覆、
+                活動連結打不開…)不等每日摘要,當天就推一則給上面的通知對象。
+                同一件事<strong>一天最多講一次</strong>,多件事併成一則;
+                只在<strong>早上 9 點到晚上 9 點</strong>之間發(半夜叫醒你也修不了,隔天早上照樣會講)。
+                「建議處理」那一級不會用這個管道,免得真的出事時你已經不看了。
+              </p>
+            </div>
           </div>
         </div>
 
@@ -1148,6 +1164,7 @@ function applySettings(data: AiSettingsDoc) {
       digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
       // 舊工作區沒有這個欄位＝預設開（與後端 normalize 同一個口徑，別在這裡寫成 === true）
       festivalTips: data.handoffNotify?.festivalTips !== false,
+      criticalAlertPush: data.handoffNotify?.criticalAlertPush !== false,
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     humanSessionMaxIdleHours: Number(data.humanSessionMaxIdleHours ?? DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS),

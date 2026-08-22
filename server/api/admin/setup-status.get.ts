@@ -4,6 +4,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { checkLineWebhook } from '~~/server/utils/workspace-alerts'
 
 /**
  * GET /api/admin/setup-status?workspaceId=...
@@ -35,16 +36,31 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
   const workspaceSnap = db.collection('workspaces').doc(wid).get()
 
   const [lineConnected, liffReady, aiEnabled, knowledgeReady, scriptReady, firstMessageReceived] = await Promise.all([
-    // 已接 LINE：Token / Secret 都有（與組織頁的儲存條件、org 總覽同一個定義）。
+    // 已接 LINE。
+    //
+    // ── 2026-08-21 老闆拍板改口徑（`D-15`(b)）───────────────────────────────
+    // 舊定義是「Token / Secret 兩個欄位都有值」，於是**憑證貼了但 LINE 後台根本沒設
+    // 收訊網址**的帳號會被判成已完成：開通引導的入口就此消失，小幫手還會照著這個訊號
+    // 說「客人的訊息進得來」——講的是一件沒人驗過的事。
+    // 新定義＝真的去問 LINE：網址有設、開關有開，才算接上。
+    //
+    // ⚠️ 「網址不一致」仍算完成：那代表 LINE 填的是別的網址（多半是舊網域），訊息
+    //    目前照樣進得來，只是遲早會斷——那是另一顆紅色警示（lineWebhookUrlMismatch）
+    //    在講的事，不該讓這個帳號回到「還沒接上 LINE」的狀態。
+    // ⚠️ 問不到 LINE（我方連不出去、LINE 忙）→ 丟錯讓它變 unknown，畫面誠實說
+    //    「這次查不到」。⛔ 不可以退回舊的「有欄位就算接上」——那正是要修掉的謊。
+    // 成本：checkLineWebhook 與右下角小幫手共用同一份 5 分鐘快取，不會多打 LINE。
     // 預設 LIFF 2026-08-07 拍板拆成獨立加分項 liffReady——多數新客戶第一天用不到，
     // 缺它不該讓人永遠掛在「LINE 未接通」。
     resolve(async () => {
       const snap = await workspaceSnap
       const w = snap.exists ? (snap.data() as Record<string, unknown>) : null
-      return (
-        !!String(w?.channelAccessToken ?? '').trim()
+      const hasCredentials = !!String(w?.channelAccessToken ?? '').trim()
         && !!String(w?.channelSecret ?? '').trim()
-      )
+      // 憑證都還沒貼＝這一步就是還沒做，不必去問 LINE
+      if (!hasCredentials) return false
+      const check = await checkLineWebhook(wid, false)
+      return check.kind === 'ok' || check.kind === 'mismatch'
     }),
     // 已設定預設 LIFF（活動頁 / 綁定頁入口）
     resolve(async () => {

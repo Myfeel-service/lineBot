@@ -6,6 +6,7 @@ import {
   remindOverdueHandoffs,
   cleanupExpiredWebhookEventLocks,
   dailyBacklogDigest,
+  pushCriticalAlerts,
   expireKnowledgeCards,
   purgeRecycledKnowledge,
 } from '~~/server/utils/cron-maintenance'
@@ -58,6 +59,10 @@ export default defineEventHandler(async (event) => {
     { name: 'conversation:auto-close-idle', run: () => autoCloseIdleHumanSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
+    // 紅色異常主動推到值班人員的 LINE（D-8②）。掛在這支既有排程上＝不用再去
+    // Cloud Scheduler 建第三個任務（兩個租戶各一次的手動工）；內部有節流：
+    // 台北時間 09–21 點外整支早退，每個帳號一小時才真的查一次。
+    { name: 'alerts:critical-push', run: () => pushCriticalAlerts(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
     // 計費對帳 + **每期自動續扣**（會刷卡）。安全性靠三層,不靠呼叫頻率:
     //   ① `PAYUNI_PERIOD_ENABLED !== true` 或金鑰未設 → chargeDueRecurring 直接回 0,零副作用

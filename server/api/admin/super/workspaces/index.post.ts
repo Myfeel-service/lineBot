@@ -4,6 +4,11 @@ import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
 import { addSystemModulesToBatch } from '~~/server/utils/workspace-system-modules'
 import { defaultFreeSubscription } from '~~/server/utils/billing'
+import {
+  LINE_BOT_USER_ID_FIELD,
+  channelConflictMessage,
+  checkChannelBindingConflict,
+} from '~~/server/utils/line-channel-binding'
 
 /**
  * POST /api/admin/super/workspaces
@@ -40,7 +45,20 @@ export default defineEventHandler(async (event) => {
     subscription: defaultFreeSubscription(),
     updatedAt: FieldValue.serverTimestamp(),
   }
-  if (channelAccessToken) wsData.channelAccessToken = channelAccessToken
+  if (channelAccessToken) {
+    // 與設定頁同一道把關：一個 LINE 官方帳號只能接在一個工作區。超管建帳號時貼到
+    // 別人已經在用的憑證，後果一樣是「客人訊息整批進到另一邊、兩邊都看不出來」。
+    const { identity, conflicts } = await checkChannelBindingConflict(db, workspaceId, String(channelAccessToken))
+    if (conflicts.length) {
+      throw createError({
+        statusCode: 409,
+        statusMessage: channelConflictMessage(conflicts),
+        data: { reason: 'lineChannelAlreadyBound', conflicts },
+      })
+    }
+    wsData.channelAccessToken = channelAccessToken
+    if (identity.kind === 'ok') wsData[LINE_BOT_USER_ID_FIELD] = identity.botUserId
+  }
   if (channelSecret) wsData.channelSecret = channelSecret
   if (defaultLiffId) wsData.defaultLiffId = defaultLiffId
 

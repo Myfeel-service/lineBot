@@ -11,24 +11,18 @@
 
 import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
-import { ALERT_LABELS } from '~~/shared/types/alerts'
-import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
+import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
-/**
- * critical   = 現在就在影響客人（客人問了得不到回答、系統停擺）。只有這一級會亮紅點。
- * warning    = 建議處理，但客人暫時不會有感。可以按「暫停提醒」靜音 7 天。
- * suggestion = 沒有東西壞掉，是「可以更好」（例如建議收件匣有草稿）。不算異常、不進紅點、
- *              不影響「目前沒有發現異常」的結論。
- *
- * 這條線要守住：什麼都算紅點，紅點就等於沒有——使用者會學會忽略它。
- */
-export type AlertSeverity = 'critical' | 'warning' | 'suggestion'
+// 嚴重度（ALERT_SEVERITY）與「這是系統這邊的狀況」（SYSTEM_OWNED_ALERTS）都定義在
+// shared/types/alerts.ts——排程要決定哪些異常該主動推到商家的 LINE，用的必須是跟畫面
+// 同一把尺。要用的地方直接從 shared 拿，⛔別在這裡再轉出去一份（會變成兩個 auto-import
+// 同名來源，Nuxt 會挑一個、另一個靜靜被忽略）。
 
 export interface AlertDefinition {
   id: WorkspaceAlertId
   icon: Component
-  severity: AlertSeverity
   /** 白話文：不管它會怎樣（講後果，不是講原理） */
   impact: string
   /** 按鈕上的動作字樣 */
@@ -44,6 +38,10 @@ export interface AlertDefinition {
 export interface ResolvedAlert extends AlertDefinition {
   /** 一句話、零術語標題。來自 shared 的 ALERT_LABELS——與問助理工具同一份，不會漂移 */
   title: string
+  /** 來自 shared 的 ALERT_SEVERITY（見檔頭）：畫面與推播用同一把尺 */
+  severity: AlertSeverity
+  /** 'system'＝系統這邊的狀況，使用者動不了手（來自 shared 的 SYSTEM_OWNED_ALERTS） */
+  owner?: 'system'
   state: WorkspaceAlertState
   count?: number
   detail?: string
@@ -58,7 +56,6 @@ const ALERTS: AlertDefinition[] = [
     // 所有異常裡最致命的：webhook 掛了＝訊息完全進不來，機器人等於死機
     id: 'lineWebhookBroken',
     icon: Link,
-    severity: 'critical',
     impact: 'LINE 沒有把客人的訊息送進系統——機器人、AI、真人對話全都收不到，客人傳什麼都不會有回應。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
@@ -73,7 +70,6 @@ const ALERTS: AlertDefinition[] = [
     // 兩張卡，因為講的話不同：這張是「快斷了、趁現在改」，那張是「已經斷了」。
     id: 'lineWebhookUrlMismatch',
     icon: Link,
-    severity: 'critical',
     impact: 'LINE 後台填的收訊網址不是這套系統的正式網址，多半是換網域前的舊網址。訊息目前可能還進得來，但那個網址一停用，所有客人訊息會無聲斷掉、不會有任何預警。趁還沒斷，把 LINE 後台換成正式網址。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
@@ -81,11 +77,33 @@ const ALERTS: AlertDefinition[] = [
     guideId: 'line-webhook',
   },
   {
+    // 紅：這是「看起來全綠、其實一則都收不到」的那種壞法，比明著壞掉更難自己發現。
+    // 2026-08-19 老闆實測「亂打 Secret 卻綠燈」挖出來的——當時是同一個頻道被兩個
+    // 工作區綁著，正確的鑰匙在另一邊，訊息整批被接走。
+    id: 'lineChannelConflict',
+    icon: Link,
+    impact: '同一個 LINE 官方帳號同時接在兩個地方。客人傳的訊息只會進到其中一邊，另一邊一則都收不到——而且兩邊的檢查看起來都正常，不會有任何錯誤訊息。請決定這個官方帳號要留在哪一邊，另一邊把 LINE 連接清掉。',
+    cta: '去檢查 LINE 連接',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+  },
+  {
+    // 紅（2026-08-21 老闆拍板做）：這是「客人已經在外面點連結、點下去什麼都沒有」，
+    // 照 08-08 分級＝正在影響客人。⚠️條件式——沒開活動的帳號後端根本不會回這一項，
+    // 所以它不會變成所有新帳號都掛著的紅點（LIFF 本身仍是加分項）。
+    id: 'liffMissing',
+    icon: Promotion,
+    impact: '你有活動在跑，但還沒設定活動頁（LIFF）——客人在外面點活動連結會打不開，貼標與綁定都不會發生。設定只要一次，之後所有活動共用。',
+    cta: '去設定活動頁',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization?focus=liff`,
+    guideId: 'liff-setup',
+  },
+  {
     // 與 webhook 那對同一套分級：到不了活動頁＝確定壞掉（紅）；下面那顆「網址不一致」
     // 是還到得了但會多繞（黃）。訊號來源＝LINE 公開轉址頁上登記的 Endpoint URL。
     id: 'liffEndpointBroken',
     icon: Promotion,
-    severity: 'critical',
     impact: '這個 LIFF 在 LINE 登記的開啟網址不是活動頁——客人點活動連結會被帶去別的網站或看到錯誤頁，貼標與綁定完全不會發生。到 LINE Developers 把該 LIFF 的 Endpoint URL 換成設定頁的「活動 LIFF 頁」網址。',
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
@@ -98,7 +116,6 @@ const ALERTS: AlertDefinition[] = [
     // 而且現在就有感——客人登入活動頁會在兩個網址間繞，部分情況卡在載入中。
     id: 'liffEndpointUrlMismatch',
     icon: Promotion,
-    severity: 'critical',
     impact: 'LINE 登記的活動頁網址不是這套系統的正式網址，多半是換網域前的舊網址。客人點活動連結登入時會在兩個網址之間繞，部分情況會卡在載入中；那個舊網址一停用，活動連結會整個打不開。把 LINE Developers 那邊換成設定頁的「活動 LIFF 頁」網址。',
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
@@ -108,7 +125,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'anyTextBlocking',
     icon: ChatDotRound,
-    severity: 'critical',
     impact: '有一條設定的觸發是「客人輸入任何內容」，會先接走所有訊息，客人問什麼都只會拿到那一套回應，AI 等於沒開。',
     cta: '去看這條設定',
     requires: 'operate',
@@ -117,7 +133,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'llmError',
     icon: MagicStick,
-    severity: 'critical',
     impact: '這些客人問了問題但 AI 當下答不出來，已轉給真人。這通常會自己恢復；若一整天都在發生，請聯絡我們處理。',
     cta: '看是哪些對話',
     requires: 'operate',
@@ -132,7 +147,6 @@ const ALERTS: AlertDefinition[] = [
     // 兩邊講的是同一件事,不該一邊「同步失敗」一邊「抓不到內容」
     id: 'knowledgeSyncFailed',
     icon: Reading,
-    severity: 'critical',
     impact: '這些資料的內容沒有更新進 AI，客人問到相關問題會得到過時或空的答案。',
     cta: '去修這些資料',
     requires: 'operate',
@@ -146,7 +160,6 @@ const ALERTS: AlertDefinition[] = [
     // 系統分不出哪一版算數 → 官網真的改版也不會通知——畫面上還一切正常,最容易被忽略
     id: 'knowledgeDetectStalled',
     icon: Reading,
-    severity: 'warning',
     impact: '這些網址每次抓到的內容都不一樣，系統已無法替你盯改版——官網改了也不會提醒。建議改用內容固定的頁面當資料來源。',
     cta: '去看這些網址',
     requires: 'operate',
@@ -155,7 +168,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'knowledgeIndexFailed',
     icon: Reading,
-    severity: 'critical',
     impact: '這些知識存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
     cta: '去看這些知識',
     requires: 'operate',
@@ -166,7 +178,6 @@ const ALERTS: AlertDefinition[] = [
     // 代表它現在仍然在用同樣的內容回答下一位客人（紅＝正在影響客人）。
     id: 'knowledgeWrongAnswers',
     icon: Reading,
-    severity: 'critical',
     impact: '同事在對話上看到 AI 用這些內容答錯客人，而它們到現在都還沒被修改過——同樣的問題會繼續答錯。',
     cta: '去修這些知識',
     requires: 'operate',
@@ -175,7 +186,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'quotaExceeded',
     icon: Odometer,
-    severity: 'critical',
     impact: 'AI 已經停止回覆，現在客人的訊息會直接轉給真人處理。',
     cta: '去升級方案',
     requires: 'settings',
@@ -185,7 +195,6 @@ const ALERTS: AlertDefinition[] = [
     // 提前量：quotaExceeded 亮的時候 AI 已經停了。這顆在停之前就講
     id: 'quotaRunningOut',
     icon: Odometer,
-    severity: 'warning',
     impact: '用完之後 AI 會停止回覆，客人的訊息只能等真人接手。趁還沒停先升級方案，就不會中斷。',
     cta: '去看用量與方案',
     requires: 'settings',
@@ -194,7 +203,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'paymentPastDue',
     icon: CreditCard,
-    severity: 'critical',
     impact: '服務目前照常，但一直扣不到款會被降回免費方案、AI 停止回覆。請更新付款方式，或改用手動付款。',
     cta: '去處理付款',
     requires: 'settings',
@@ -203,7 +211,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'handoffNotifyMissing',
     icon: Bell,
-    severity: 'warning',
     impact: 'AI 答不出來時會轉給真人，但目前沒設定要通知誰——客人可能等很久都沒人接手。',
     cta: '去設定通知對象',
     requires: 'settings',
@@ -214,7 +221,6 @@ const ALERTS: AlertDefinition[] = [
     // 紅點：客人按下去真的什麼都收不到，屬於「正在影響客人」
     id: 'brokenModuleButton',
     icon: Pointer,
-    severity: 'critical',
     impact: '選單、圖卡、關鍵字回覆或活動指向已刪除／已停用的模組。客人觸發時收不到任何訊息，也不會看到錯誤提示。',
     cta: '去檢查設定',
     requires: 'settings',
@@ -226,7 +232,6 @@ const ALERTS: AlertDefinition[] = [
     //   後台完全看不出來，只有自己去測才會發現。）
     id: 'scriptDeadEnd',
     icon: Guide,
-    severity: 'critical',
     impact: '這條流程中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒有給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。到腳本編輯器幫那一題加一顆跳過按鈕。',
     cta: '去修這條流程',
     requires: 'operate',
@@ -237,7 +242,6 @@ const ALERTS: AlertDefinition[] = [
     // 沒有人正在被卡住，但你以為在跑的東西其實一次都沒跑過。
     id: 'scriptUnreachable',
     icon: Guide,
-    severity: 'warning',
     impact: '這條流程啟用著，但客人講什麼都輪不到它——觸發詞沒填，或是會先被自動回覆規則、敏感情境轉真人、另一條觸發詞更寬的流程接走。換一組更明確的觸發詞，或調整擋在前面的那個設定。',
     cta: '去看這條流程',
     requires: 'operate',
@@ -246,7 +250,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'firstReplyBacklog',
     icon: ChatDotRound,
-    severity: 'warning',
     impact: '這些對話到現在還沒有任何人回覆過。AI 草稿模式下尤其要看：AI 只擬好草稿等人送出，沒人處理＝客人一直收不到回覆。',
     cta: '去看未回覆的對話',
     requires: 'operate',
@@ -256,7 +259,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'humanBacklog',
     icon: Service,
-    severity: 'warning',
     impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停（久到沒動靜的才會由系統自動收尾）。',
     cta: '去看對話',
     requires: 'operate',
@@ -267,7 +269,6 @@ const ALERTS: AlertDefinition[] = [
     // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑
     id: 'knowledgeIndexStuck',
     icon: Reading,
-    severity: 'warning',
     impact: '這些知識卡等了超過一小時還沒學完，AI 目前讀不到它們——客人問到相關問題會答不出來。若一直卡著，請聯絡我們。',
     cta: '去看這些知識',
     requires: 'operate',
@@ -276,7 +277,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'knowledgeOutdated',
     icon: Refresh,
-    severity: 'warning',
     impact: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
     cta: '去重新同步',
     requires: 'operate',
@@ -286,7 +286,6 @@ const ALERTS: AlertDefinition[] = [
     // 不用「蓋章 / system_notice」這種內部說法:客服看到的後果是「假的待處理」
     id: 'claimPushUnmarked',
     icon: Service,
-    severity: 'warning',
     impact: '客人已經收到活動推播，但系統沒記下「已回應」，這些對話會出現在待處理清單上，其實不用處理。清單暫時會偏多，客人沒有受影響。',
     cta: '去看待處理清單',
     requires: 'operate',
@@ -295,7 +294,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'renewalNotBound',
     icon: CreditCard,
-    severity: 'warning',
     impact: '這期的錢付成功了，但自動扣款的卡片沒有綁定成功——下期不會自動扣款，方案會被降回免費、AI 停止回覆。請重新設定付款方式，或聯絡我們處理。',
     cta: '去處理付款方式',
     requires: 'settings',
@@ -306,7 +304,6 @@ const ALERTS: AlertDefinition[] = [
     icon: Tickets,
     // 對客戶的口徑是「開立中」不是「失敗」（2026-08-16 拍板）：系統每日自動補開、客戶無事可做,
     // 驚動他只會製造「系統壞了」的觀感。⛔真實狀態不動——超管金流總覽有紅色「發票未開成」計數。
-    severity: 'suggestion',
     impact: '款項已收到，電子發票正由系統自動開立，完成後會顯示在付款紀錄並寄送通知。若需要我們處理（例如統編設定），會主動聯繫你。',
     cta: '去看付款紀錄',
     requires: 'settings',
@@ -315,7 +312,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'broadcastFailed',
     icon: Promotion,
-    severity: 'warning',
     impact: '這批推播發送失敗，名單上的客人沒有收到訊息。進去看失敗原因，處理後可以重新發送。',
     cta: '去看推播',
     requires: 'operate',
@@ -324,7 +320,6 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'broadcastOverdue',
     icon: AlarmClock,
-    severity: 'warning',
     impact: '排定的發送時間已經過了，推播卻還沒送出去——排程可能卡住了。若一直沒動，請聯絡我們。',
     cta: '去看排程',
     requires: 'operate',
@@ -334,17 +329,16 @@ const ALERTS: AlertDefinition[] = [
     // 系統端問題：使用者修不了，但影響要現形（轉真人提醒、自動回收都靠它）
     id: 'maintenanceStalled',
     icon: Tools,
-    severity: 'warning',
     impact: '背景的自動維護（轉真人提醒、逾時自動交回、資料更新偵測）已停擺超過一小時。這是系統端的問題，通常不用你操作；若持續一整天，請聯絡我們。',
     cta: '去看連接狀態',
     requires: 'settings',
+
     route: wid => `/admin/${wid}/settings/organization`,
   },
   {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
     id: 'knowledgeSuggestions',
     icon: Opportunity,
-    severity: 'suggestion',
     impact: '這些是客人問過、但 AI 沒答好的主題。草稿我都擬好了，採用之後 AI 下次就答得出來。',
     cta: '去看建議',
     requires: 'operate',
@@ -352,13 +346,6 @@ const ALERTS: AlertDefinition[] = [
   },
 ]
 
-/**
- * 各異常的嚴重度對照（單一事實來源＝上面的註冊表）。
- * 組織頁彙總跨工作區訊號時用同一把尺，不另寫第二份分級。
- */
-export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = Object.fromEntries(
-  ALERTS.map(a => [a.id, a.severity]),
-) as Record<WorkspaceAlertId, AlertSeverity>
 
 /** 兩次自動檢查之間的最短間隔：頁面切換不該每次都打一輪彙總查詢 */
 const REFRESH_TTL_MS = 60_000
@@ -478,7 +465,7 @@ export function useWorkspaceAlerts() {
     const wid = workspaceId.value
     if (!wid)
       return
-    if (ALERTS.find(a => a.id === id)?.severity !== 'warning')
+    if (ALERT_SEVERITY[id] !== 'warning')
       return
     snoozedMap.value = { ...snoozedMap.value, [id]: Date.now() + SNOOZE_MS }
     persistSnoozes(wid)
@@ -501,7 +488,15 @@ export function useWorkspaceAlerts() {
       .map((a) => {
         const item = alertMap.value[a.id]
         // 標題來自 shared 的 ALERT_LABELS：面板與問助理工具講同一句話
-        return { ...a, title: ALERT_LABELS[a.id], state: item?.state ?? 'unknown', count: item?.count, detail: item?.detail }
+        return {
+          ...a,
+          title: ALERT_LABELS[a.id],
+          severity: ALERT_SEVERITY[a.id],
+          owner: SYSTEM_OWNED_ALERTS.has(a.id) ? 'system' as const : undefined,
+          state: item?.state ?? 'unknown',
+          count: item?.count,
+          detail: item?.detail,
+        }
       }),
   )
 
@@ -529,6 +524,20 @@ export function useWorkspaceAlerts() {
     loaded.value ? visibleAlerts.value.filter(a => a.state === 'unknown') : [],
   )
 
+  /**
+   * 這一輪真的問出答案的項數（2026-08-21 老闆拍板做，原 `D-8`①）。
+   *
+   * 用途：「目前沒有發現異常」後面要講「這次檢查了 N 項」。沒有這個數字的話，
+   * 那句話跟「我根本沒檢查」在畫面上長得一模一樣——使用者無從分辨系統是真的看過，
+   * 還是在對他敷衍。
+   *
+   * ⛔ 只數 active／clear，**不含 unknown**：查不到的那幾項另外列（checkGapLines），
+   *    算進來就變成「檢查了 12 項」其實只查到 9 項——那正是這個數字要防的事。
+   */
+  const checkedCount = computed(() =>
+    loaded.value ? visibleAlerts.value.filter(a => a.state !== 'unknown').length : 0,
+  )
+
   /** 「上次檢查」的白話說法，給面板顯示資料有多新 */
   const checkedAgo = computed(() => {
     if (!checkedAt.value)
@@ -549,6 +558,7 @@ export function useWorkspaceAlerts() {
     suggestionAlerts,
     snoozedAlerts,
     unknownAlerts,
+    checkedCount,
     loaded,
     loading,
     lastRefreshFailed,

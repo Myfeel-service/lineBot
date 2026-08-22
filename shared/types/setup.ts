@@ -7,7 +7,10 @@
  */
 
 export type SetupCapabilityId =
-  | 'lineConnected' // 已接上 LINE 官方帳號（Token / Secret 都有；LIFF 另拆 liffReady）
+  // 已接上 LINE 官方帳號。2026-08-21 拍板（`D-15`(b)）改口徑：不再是「憑證欄位有值」，
+  // 而是真的問過 LINE——網址有設、開關有開才算。憑證貼了但 LINE 後台沒設收訊網址的帳號，
+  // 以前會被判成完成、引導入口就此消失。（LIFF 另拆 liffReady）
+  | 'lineConnected'
   | 'liffReady' // 已設定預設 LIFF（活動頁 / 綁定頁入口）。2026-08-07 拍板自 lineConnected 拆出：多數新客戶第一天用不到，不該擋「可以上線」
   | 'aiEnabled' // 已開啟 AI 自動回覆
   | 'knowledgeReady' // 知識庫已有內容

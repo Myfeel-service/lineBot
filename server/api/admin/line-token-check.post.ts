@@ -1,5 +1,7 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { fetchLineBotInfo } from '~~/server/utils/line-webhook-remote'
+import { getDb } from '~~/server/utils/firebase'
+import { channelConflictMessage, findOtherWorkspacesOnChannel } from '~~/server/utils/line-channel-binding'
 
 export type LineTokenCheckResponse = {
   /** true＝LINE 認得這把鑰匙；false＝明確不認得；null＝這次問不到（查不到 ≠ 有問題） */
@@ -7,6 +9,11 @@ export type LineTokenCheckResponse = {
   /** valid 時回官方帳號名稱，讓使用者自己確認「是不是我要接的那個帳號」 */
   displayName?: string
   basicId?: string
+  /**
+   * 這個官方帳號已經被別的工作區接走了——存下去會擋（見 line-workspace/index.put.ts）。
+   * 這裡先講，是為了讓人在「還沒按存檔」的時候就知道，而不是按了才被退回。
+   */
+  alreadyBound?: { message: string, workspaceNames: string[] }
 }
 
 /**
@@ -19,7 +26,7 @@ export type LineTokenCheckResponse = {
  * ⚠️ token 只用來打 LINE，不寫 log、不回傳（回傳的只有帳號名稱）。
  */
 export default defineEventHandler(async (event): Promise<LineTokenCheckResponse> => {
-  await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
 
   const body = await readBody(event).catch(() => ({})) as Record<string, unknown>
   const token = String(body?.channelAccessToken ?? '').trim()
@@ -35,8 +42,20 @@ export default defineEventHandler(async (event): Promise<LineTokenCheckResponse>
     return { valid: null }
   }
 
-  if (res.ok)
-    return { valid: true, displayName: res.data.displayName, basicId: res.data.basicId }
+  if (res.ok) {
+    // 鑰匙是真的，再看一眼這個官方帳號是不是已經接在別的地方（查不到就不講，
+    // 別把我方查詢失敗說成「被別人綁走」）
+    let alreadyBound: LineTokenCheckResponse['alreadyBound']
+    try {
+      const conflicts = await findOtherWorkspacesOnChannel(getDb(), res.data.userId, String(workspaceId || ''))
+      if (conflicts.length) {
+        alreadyBound = { message: channelConflictMessage(conflicts), workspaceNames: conflicts.map(c => c.name) }
+      }
+    }
+    catch { /* 比對失敗就不講這件事，鑰匙本身的結論不受影響 */ }
+
+    return { valid: true, displayName: res.data.displayName, basicId: res.data.basicId, alreadyBound }
+  }
 
   // LINE 明確拒絕這把鑰匙才下定論；其餘（429 太頻繁、5xx LINE 自己出事）一律「這次問不到」
   if (res.status === 401 || res.status === 403)

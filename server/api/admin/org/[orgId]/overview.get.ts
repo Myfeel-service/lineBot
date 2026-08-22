@@ -47,7 +47,10 @@ export default defineEventHandler(async (event) => {
       name: w.name ?? doc.id,
       plan,
       answered,
-      // 與開通檢查清單（setup-status 的 lineConnected）同一個定義：Token / Secret 都有才算接上。
+      // ⚠️ 這裡刻意只看「憑證有沒有貼」，與開通檢查清單（setup-status 的 lineConnected，
+      // 2026-08-21 起會真的去問 LINE）**不同口徑**：這是跨帳號的總覽列表，一頁要判 N 個
+      // 帳號，逐一打 LINE 會讓整頁等在外部查詢上。這一欄只是列表上的粗略提示
+      // （「尚未接上 LINE」），真正的判定進到那個帳號裡看。
       // 預設 LIFF 已拆成獨立加分項（liffReady），不再擋「接上 LINE」。
       lineConnected: Boolean(
         String(w.channelAccessToken ?? '').trim()

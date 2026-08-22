@@ -8,6 +8,11 @@ import {
   fetchLineWebhookEndpoint,
   postLineWebhookTest,
 } from '~~/server/utils/line-webhook-remote'
+import {
+  channelConflictMessage,
+  checkChannelBindingConflict,
+  rememberChannelBinding,
+} from '~~/server/utils/line-channel-binding'
 
 type PutBody = {
   name?: string
@@ -83,9 +88,32 @@ export default defineEventHandler(async (event) => {
     updates.defaultLiffId = v ? v : FieldValue.delete()
   }
 
+  /** 這次存進去的頻道身分（存檔成功後記在文件上，之後比對免再打 LINE） */
+  let boundBotUserId = ''
+
   if (Object.prototype.hasOwnProperty.call(body, 'channelAccessToken')) {
     const v = String(body.channelAccessToken ?? '').trim()
+
+    // 存檔前先擋「這個官方帳號已經被別的工作區接走了」（2026-08-19 老闆實測挖出、
+    // 08-21 拍板「要擋」）。同一個頻道被兩邊綁著時，客人訊息會整批進到簽章先對上的
+    // 那一邊，這邊一則都收不到，而且所有檢查都會是綠的——事後幾乎查不出來，
+    // 所以只能在寫進去的當下攔。
+    // ⛔ 問不到頻道身分時放行：我方連不出去不該變成客戶不能上線。
+    if (v) {
+      const { identity, conflicts } = await checkChannelBindingConflict(db, wid, v)
+      if (conflicts.length) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: channelConflictMessage(conflicts),
+          data: { reason: 'lineChannelAlreadyBound', conflicts },
+        })
+      }
+      if (identity.kind === 'ok') boundBotUserId = identity.botUserId
+    }
+
     updates.channelAccessToken = v ? v : FieldValue.delete()
+    // 憑證被清掉時頻道身分要跟著清，否則會留著一個對不到憑證的舊身分去擋別人
+    if (!v) updates.lineBotUserId = FieldValue.delete()
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'channelSecret')) {
@@ -95,6 +123,7 @@ export default defineEventHandler(async (event) => {
 
   await ref.set(updates, { merge: true })
   invalidateLineWorkspaceCredentialsCache()
+  if (boundBotUserId) await rememberChannelBinding(db, wid, boundBotUserId)
 
   let webhookVerification: WebhookVerificationResult | undefined
 

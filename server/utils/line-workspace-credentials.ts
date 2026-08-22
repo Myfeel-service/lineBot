@@ -6,6 +6,12 @@ export type ResolvedLineCredentials = {
   channelSecret: string
   /** 活動 CTA 等可選用 */
   defaultLiffId: string
+  /**
+   * 這個工作區綁的是哪個 LINE 官方帳號（LINE 側的 bot userId）。
+   * 存憑證時順手記下來的快取值，只用來回答「有沒有別的工作區綁著同一個帳號」——
+   * 有它就不必為了比對再去打一次 LINE。舊資料可能沒有，空字串代表還沒問過。
+   */
+  lineBotUserId: string
 }
 
 const TTL_MS = 60 * 1000
@@ -37,6 +43,7 @@ export async function getLineWorkspaceCredentials(workspaceId: string): Promise<
       channelAccessToken: cached.channelAccessToken,
       channelSecret: cached.channelSecret,
       defaultLiffId: cached.defaultLiffId,
+      lineBotUserId: cached.lineBotUserId,
     }
   }
 
@@ -49,6 +56,7 @@ export async function getLineWorkspaceCredentials(workspaceId: string): Promise<
       fromRequested.channelAccessToken = String(d?.channelAccessToken ?? '').trim()
       fromRequested.channelSecret = String(d?.channelSecret ?? '').trim()
       fromRequested.defaultLiffId = String(d?.defaultLiffId ?? '').trim()
+      fromRequested.lineBotUserId = String(d?.lineBotUserId ?? '').trim()
     }
 
   }
@@ -60,6 +68,7 @@ export async function getLineWorkspaceCredentials(workspaceId: string): Promise<
     channelAccessToken: fromRequested.channelAccessToken || '',
     channelSecret: fromRequested.channelSecret || '',
     defaultLiffId: fromRequested.defaultLiffId || '',
+    lineBotUserId: fromRequested.lineBotUserId || '',
   }
   cacheByWorkspace.set(cacheKey, { ...resolved, expiresAt: now + TTL_MS })
   return resolved
@@ -97,6 +106,7 @@ export async function findWorkspacesByLiffChannelId(
       channelAccessToken: String(d?.channelAccessToken ?? '').trim(),
       channelSecret: String(d?.channelSecret ?? '').trim(),
       defaultLiffId: String(d?.defaultLiffId ?? '').trim(),
+      lineBotUserId: String(d?.lineBotUserId ?? '').trim(),
     }
     cacheByWorkspace.set(doc.id, { ...credentials, expiresAt: now + TTL_MS })
     return { workspaceId: doc.id, credentials }
@@ -122,7 +132,10 @@ export async function listWorkspaceLineCredentials(): Promise<Array<{ workspaceI
       channelAccessToken: String(d?.channelAccessToken ?? '').trim(),
       channelSecret: String(d?.channelSecret ?? '').trim(),
       defaultLiffId: String(d?.defaultLiffId ?? '').trim(),
+      lineBotUserId: String(d?.lineBotUserId ?? '').trim(),
     }
+    // ⛔ 判空只看真正的憑證三欄：lineBotUserId 只是比對用的快取值，
+    //    有它但沒憑證的文件對 webhook 驗證沒有用，不該被算成「有設定」
     if (!credentials.channelAccessToken && !credentials.channelSecret && !credentials.defaultLiffId) continue
     rows.push({ workspaceId: doc.id, credentials })
     cacheByWorkspace.set(doc.id, { ...credentials, expiresAt: now + TTL_MS })

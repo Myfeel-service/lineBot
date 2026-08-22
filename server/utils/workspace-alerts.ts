@@ -15,8 +15,9 @@ import { countOpenQueueSessions, isOpenQueueSession } from './conversation-queue
 import { buildPlanView, getWorkspaceSubscription } from './billing'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
+import { findOtherWorkspacesOnChannel, getOrLearnChannelBotUserId } from './line-channel-binding'
 import { fetchLineWebhookEndpoint, normalizeWebhookCompareUrl } from './line-webhook-remote'
-import { collectLiffEndpointChecks } from './liff-endpoint-remote'
+import { collectLiffEndpointChecks, countCampaignsWithoutUsableLiff } from './liff-endpoint-remote'
 import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState } from '~~/shared/billing/plan-state'
@@ -104,7 +105,7 @@ const webhookProbeCache = new Map<string, { result: WebhookCheck; expires: numbe
  * 只打 GET 查設定（便宜、無副作用）；LINE 的 test API 有每小時額度，留給設定頁的手動驗證。
  * 網路抖動等非預期錯誤直接 throw → 兩顆 probe 都變 unknown，不下結論。
  */
-async function checkLineWebhook(wid: string, skipCache: boolean): Promise<WebhookCheck> {
+export async function checkLineWebhook(wid: string, skipCache: boolean): Promise<WebhookCheck> {
   const cached = skipCache ? null : webhookProbeCache.get(wid)
   if (cached && cached.expires > Date.now()) return cached.result
 
@@ -618,6 +619,37 @@ export async function collectWorkspaceAlerts(
           return c.kind === 'mismatch'
             ? { active: true, detail: `LINE 後台填的是 ${c.endpoint}` }
             : { active: false }
+        }),
+        probe('lineChannelConflict', async () => {
+          // 同一個官方帳號被兩個工作區接著：訊息只會進到 webhook 簽章先對上的那一邊。
+          // 存憑證時已經會擋（line-channel-binding），這顆是給**擋之前就已經雙綁**的
+          // 舊資料用的——那種狀態自己完全看不出來，只能由系統指出來。
+          const creds = await getLineWorkspaceCredentials(wid)
+          if (!creds.channelAccessToken.trim()) return { active: false } // 還沒接 LINE：那是設定沒做，不是壞掉
+          const botUserId = await getOrLearnChannelBotUserId(db, wid, creds)
+          // 問不到身分就不下結論（丟錯＝unknown，誠實顯示「這次查不到」）
+          if (!botUserId) throw new Error('查不到這個工作區綁的是哪個 LINE 官方帳號')
+          const conflicts = await findOtherWorkspacesOnChannel(db, botUserId, wid)
+          if (!conflicts.length) return { active: false }
+          return {
+            active: true,
+            count: conflicts.length,
+            detail: `同一個官方帳號也接在「${conflicts.map(c => c.name).join('」、「')}」`,
+          }
+        }),
+        probe('liffMissing', async () => {
+          // 條件式（`D-19`）：只有「已經有活動在跑、卻沒有任何 LIFF 可用」才算災情。
+          // 沒開活動的帳號完全不需要 LIFF，這顆不會亮——這正是 2026-08-07 把 LIFF
+          // 從必要項拆成加分項的理由，別讓它變回一個所有人都掛著的紅點。
+          const { campaignsWithoutLiff } = await countCampaignsWithoutUsableLiff(db, wid)
+          if (!campaignsWithoutLiff) return { active: false }
+          return {
+            active: true,
+            count: campaignsWithoutLiff,
+            detail: campaignsWithoutLiff === 1
+              ? '有 1 個活動沒有可用的活動頁'
+              : `有 ${campaignsWithoutLiff} 個活動沒有可用的活動頁`,
+          }
         }),
         probe('liffEndpointBroken', async () => {
           // 客人點活動連結後根本到不了活動頁（登記指向別的網站、或 LIFF 已被刪）。

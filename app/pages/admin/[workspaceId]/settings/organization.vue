@@ -780,10 +780,29 @@ const { startAdHocTour } = useTutorial()
 
 function maybeStartFocusTour() {
   const target = String(route.query.focus ?? '')
-  if (target !== 'webhook' && target !== 'token')
+  if (target !== 'webhook' && target !== 'token' && target !== 'liff')
     return
   // 參數用完即丟：重新整理或存檔後不要再跑一次導覽
   void router.replace({ query: { ...route.query, focus: undefined } })
+  if (target === 'liff') {
+    // 「活動連結點下去會打不開」那顆紅點（liffMissing）點過來的：LIFF 這一格
+    // 在頁面中段，不指位置的話人得自己在一長串憑證欄位裡找
+    void startAdHocTour([
+      {
+        target: '[data-tour="org-liff"]',
+        title: '貼上活動頁的 LIFF ID',
+        description: '在 <strong>LINE Developers → LINE Login</strong> 那張卡（⚠️不是 Messaging API）建一個 LIFF，Endpoint URL 填下面「活動 LIFF 頁」的網址，再把 <strong>LIFF ID</strong> 貼進這一格。旁邊有「教我怎麼設」。',
+        placement: 'top',
+      },
+      {
+        target: '[data-tour="org-save"]',
+        title: '按儲存才會生效',
+        description: '存好之後，右下角小幫手那顆「活動連結點下去會打不開」的紅點會自己熄掉。',
+        placement: 'bottom-end',
+      },
+    ])
+    return
+  }
   if (target === 'token') {
     void startAdHocTour([
       {
