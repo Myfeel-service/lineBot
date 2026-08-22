@@ -10,6 +10,7 @@ import {
   matchesSemanticTrigger,
   outgoingNodeIds,
   scriptCooldownMs,
+  scriptTriggerEvent,
   validateScriptDoc,
   type ScriptDoc,
   type ScriptNode,
@@ -481,5 +482,29 @@ describe('scriptCooldownMs', () => {
     expect(scriptCooldownMs(withCooldown(-1))).toBe(0)
     expect(scriptCooldownMs(withCooldown('abc'))).toBe(0)
     expect(scriptCooldownMs(withCooldown(Number.NaN))).toBe(0)
+  })
+})
+
+describe('加好友觸發（triggerEvent=follow）', () => {
+  it('scriptTriggerEvent：有標 follow 回 follow，沒標（舊腳本）一律回 message', () => {
+    expect(scriptTriggerEvent(buildScript({ id: 't1', type: 'trigger', triggerEvent: 'follow' }))).toBe('follow')
+    expect(scriptTriggerEvent(buildScript({ id: 't1', type: 'trigger', keywords: ['退貨'] }))).toBe('message')
+  })
+
+  it('validateScriptDoc：follow 腳本不需要關鍵字或範例（事件本身就是條件）', () => {
+    const s = buildScript({ id: 't1', type: 'trigger', triggerEvent: 'follow' })
+    expect(validateScriptDoc({ name: '歡迎', nodes: s.nodes, rootNodeId: s.rootNodeId })).toBeNull()
+  })
+
+  it('validateScriptDoc：訊息型腳本沒關鍵字照樣擋（follow 的豁免不能外溢）', () => {
+    const s = buildScript({ id: 't1', type: 'trigger', keywords: [] })
+    expect(validateScriptDoc({ name: 'x', nodes: s.nodes, rootNodeId: s.rootNodeId })).toContain('關鍵字')
+  })
+
+  it('matchesScriptKeywords：follow 腳本任何文字都不命中——連殘留 anyText/關鍵字也一樣', () => {
+    // 舊資料可能殘留 keywordMatch='anyText'：少了守衛它會攔截所有訊息（AI 全滅）
+    const s = buildScript({ id: 't1', type: 'trigger', triggerEvent: 'follow', keywordMatch: 'anyText', keywords: ['退貨'] })
+    expect(matchesScriptKeywords(s, '退貨')).toBe(false)
+    expect(matchesScriptKeywords(s, '隨便打一句')).toBe(false)
   })
 })

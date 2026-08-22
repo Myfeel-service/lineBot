@@ -31,6 +31,7 @@ import {
   isHumanRequestText,
   renderScriptTemplate,
   resolveBranchNext,
+  scriptTriggerEvent,
 } from '~~/shared/types/ai-script'
 import { addTagsToUser } from './tagging'
 
@@ -60,6 +61,32 @@ export async function loadActiveScripts(workspaceId: string, db: Firestore = get
   }))
   cache.set(workspaceId, { data: rows, expires: Date.now() + CACHE_TTL_MS })
   return rows
+}
+
+/**
+ * 找出這個工作區「另一條」啟用中的加好友腳本（存檔防呆用）。
+ *
+ * 一個工作區只能有一條啟用中的 follow 腳本：訊息型腳本靠關鍵字分流，兩條並存各接各的；
+ * follow 事件沒有內容可分流，兩條並存＝客人一加好友就被兩條腳本各接一次。
+ * ⛔ 刻意直接查 Firestore、不走 loadActiveScripts 的 60 秒快取——防呆吃到過期快取
+ * 等於沒防（存了 A 再存 B，快取還沒看到 A）。這查詢只在「存檔且是 follow 腳本」時才跑，
+ * 不在熱路徑上。等值查詢走自動索引，免新索引。
+ */
+export async function findEnabledFollowScriptConflict(
+  workspaceId: string,
+  excludeScriptId?: string,
+  db: Firestore = getDb(),
+): Promise<{ id: string; name: string } | null> {
+  const snap = await db.collection(SCRIPTS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('enabled', '==', true)
+    .get()
+  for (const d of snap.docs) {
+    if (d.id === excludeScriptId) continue
+    const s = d.data() as ScriptDoc
+    if (scriptTriggerEvent(s) === 'follow') return { id: d.id, name: String(s.name || '(未命名腳本)') }
+  }
+  return null
 }
 
 // ── Active script lifecycle ──────────────────────────────────────────────

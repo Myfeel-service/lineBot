@@ -64,6 +64,25 @@ function normalizeNode(raw: any): ScriptNode | null {
   if (!id || !type) return null
 
   if (type === 'trigger') {
+    // 加好友觸發（事件型）：不吃任何文字比對條件。編輯器切換模式時可能殘留關鍵字／範例，
+    // 這裡一律清空——健康檢查會拿別條腳本的 keywords 去算「誰蓋住誰」，殘留值會污染那把尺。
+    if (raw?.triggerEvent === 'follow') {
+      const node: ScriptTriggerNode = {
+        id,
+        type: 'trigger',
+        triggerEvent: 'follow',
+        matchMode: 'keyword',
+        keywordMatch: 'any',
+        keywords: [],
+        priority: clampInt(raw?.priority, 1, 100, DEFAULT_SCRIPT_PRIORITY),
+        next: String(raw?.next ?? '').trim(),
+      }
+      // 冷卻對 follow 也有意義：封鎖又解除封鎖會再收到一次 follow 事件
+      if (AUTO_REPLY_COOLDOWN_DURATIONS_MS.includes(Number(raw?.cooldownMs))) {
+        node.cooldownMs = Number(raw.cooldownMs)
+      }
+      return node
+    }
     const matchMode = raw?.matchMode === 'semantic' ? 'semantic' : 'keyword'
     const node: ScriptTriggerNode = {
       id,

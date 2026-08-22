@@ -2,7 +2,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { answerWithAi, routeMessage, type AiChatTurn, type RouteResult } from '~~/server/utils/ai-answer'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
-import { matchesScriptKeywords, type ScriptDoc, type ScriptTriggerNode } from '~~/shared/types/ai-script'
+import { matchesScriptKeywords, scriptTriggerEvent, type ScriptDoc, type ScriptTriggerNode } from '~~/shared/types/ai-script'
 
 /**
  * POST /api/ai/playground
@@ -34,7 +34,9 @@ export default defineEventHandler(async (event) => {
 
   // ── 先模擬腳本觸發（與正式 LINE 同一套：關鍵字快速通道 → 統一意圖路由）──
   // 只判「會不會觸發」，不真的啟動 / 持久化 activeScript。
-  const scripts = await loadActiveScripts(workspaceId).catch(() => [])
+  // 加好友觸發的腳本與正式流程同樣排除：playground 打的是「客人的一句話」，不是 follow 事件。
+  const scripts = (await loadActiveScripts(workspaceId).catch(() => []))
+    .filter(s => scriptTriggerEvent(s) === 'message')
   let triggered: (ScriptDoc & { id: string }) | null = scripts.find(s => matchesScriptKeywords(s, query)) ?? null
   let route: RouteResult | null = null
   if (!triggered && scripts.length) {

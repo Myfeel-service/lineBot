@@ -107,7 +107,12 @@ export default defineEventHandler(async (event) => {
               ? (e as webhook.FollowEvent).timestamp
               : undefined,
           })
-          await handleFollowEvent(userId, undefined, matchedWorkspaceId)
+          // replyToken 只有這裡帶：加好友歡迎腳本要用它回覆（免推播額度）；
+          // /api/liff/apply 那條補套用路徑刻意不帶（那不是加好友的瞬間）
+          await handleFollowEvent(userId, undefined, matchedWorkspaceId, {
+            replyToken: (e as webhook.FollowEvent).replyToken,
+            requestOrigin,
+          })
         }
       }
       else if (e.type === 'unfollow') {

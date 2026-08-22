@@ -31,6 +31,14 @@ export const SCRIPT_NODE_TYPE_LABELS: Record<ScriptNodeType, string> = {
 export type TriggerMatchMode = 'keyword' | 'semantic'
 
 /**
+ * 觸發來源：message（預設）＝客人打字；follow＝客人加好友那一刻（事件型，完全不比對文字）。
+ * follow 腳本由 webhook 的 follow 事件啟動（handler.runFollowWelcomeScript），
+ * 永遠不參與訊息比對與意圖路由——matchesScriptKeywords 對它一律回 false。
+ * 省略時視為 'message'（向後相容既有腳本）。
+ */
+export type ScriptTriggerEvent = 'message' | 'follow'
+
+/**
  * 關鍵字要怎麼比對。與自動回覆規則的 matchType 同一組語意——
  * 兩邊要能互換（一句話的設定和多步驟流程是同一種東西的不同深度），比對能力就不能只有一邊有。
  * 省略時視為 'any'，等同舊行為（任一關鍵字是子字串即命中）。
@@ -40,6 +48,8 @@ export type TriggerKeywordMatch = 'any' | 'all' | 'exact' | 'anyText'
 export interface ScriptTriggerNode {
   id: string
   type: 'trigger'
+  /** 觸發來源；省略時視為 'message'（向後相容舊腳本）。'follow' 時 keywords／examples 無意義且會被存檔清空 */
+  triggerEvent?: ScriptTriggerEvent
   /** keyword 模式：任一關鍵字命中就觸發 */
   keywords: string[]
   /** 比對方式；省略時視為 'keyword'（向後相容舊腳本） */
@@ -115,6 +125,16 @@ export interface ScriptReplyNode {
 
 /** 連結按鈕沒填文字時的預設（與自動回覆的「開啟網址」一致） */
 export const DEFAULT_REPLY_LINK_LABEL = '開啟網址'
+
+/**
+ * 取這條腳本的觸發來源。判定與比對散在四處（訊息比對、意圖路由、follow 事件、健康檢查、
+ * 存檔防呆、編輯器），全部吃這一把尺——各自讀 root.triggerEvent 的話，漏掉預設值處理
+ * 就會把舊腳本（沒有這個欄位）誤判成 follow。
+ */
+export function scriptTriggerEvent(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId'>): ScriptTriggerEvent {
+  const root = script.nodes?.find(n => n.id === script.rootNodeId)
+  return root?.type === 'trigger' && root.triggerEvent === 'follow' ? 'follow' : 'message'
+}
 
 /** 取這條腳本的冷卻毫秒數（沒設／不合法＝0，代表不設限） */
 export function scriptCooldownMs(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId'>): number {
@@ -416,9 +436,13 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
     }
   }
 
-  // trigger 的觸發條件：依模式檢查（keyword 要關鍵字、semantic 要範例句）
+  // trigger 的觸發條件：依模式檢查（keyword 要關鍵字、semantic 要範例句）。
+  // 加好友觸發是事件型：「加好友」這件事本身就是條件，不需要（也不能）填關鍵字或範例。
   const trigger = root as ScriptTriggerNode
-  if ((trigger.matchMode ?? 'keyword') === 'semantic') {
+  if ((trigger.triggerEvent ?? 'message') === 'follow') {
+    // 事件型觸發沒有文字條件可驗
+  }
+  else if ((trigger.matchMode ?? 'keyword') === 'semantic') {
     if ((trigger.examples ?? []).filter(e => e.trim()).length === 0) {
       return '語意觸發請至少填一句意圖範例'
     }
@@ -688,6 +712,10 @@ export function matchesScriptKeywords(script: Pick<ScriptDoc, 'nodes' | 'rootNod
   if (!text) return false
   const root = script.nodes.find(n => n.id === script.rootNodeId)
   if (!root || root.type !== 'trigger') return false
+
+  // 加好友觸發的腳本只由 follow 事件啟動，任何文字都不命中。
+  // ⛔ 這行不能省：舊資料若殘留 keywordMatch='anyText'，少了這道守衛它會攔截所有訊息。
+  if (root.triggerEvent === 'follow') return false
 
   // anyText：有文字就命中，不看關鍵字（和自動回覆的同名選項一樣，會蓋掉 AI，編輯器要跳警告）
   const mode = root.keywordMatch ?? 'any'

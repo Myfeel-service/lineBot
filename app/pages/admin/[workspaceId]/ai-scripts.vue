@@ -225,7 +225,7 @@
           <div class="card-section-stack">
             <div class="scripts-node-list">
               <div v-for="node in form.nodes" :key="node.id" class="scripts-node-card" :class="{ 'is-focused': highlightStep === node.id, 'is-plain': isSimpleMode }" :data-node-id="node.id">
-                <div v-if="isSimpleMode" class="scripts-simple-heading">{{ simpleSectionTitle(node.type) }}</div>
+                <div v-if="isSimpleMode" class="scripts-simple-heading">{{ simpleSectionTitle(node) }}</div>
                 <div v-else class="scripts-node-header">
                   <span class="scripts-node-badge" :class="nodeBadgeClass(node.type)">
                     <el-icon><component :is="nodeIcon(node.type)" /></el-icon> {{ nodeTypeLabel(node.type) }}
@@ -249,16 +249,31 @@
                   <div class="admin-field-group">
                     <AdminFieldLabel text="觸發方式" tight />
                     <el-radio-group
-                      :model-value="node.matchMode ?? 'keyword'"
+                      :model-value="triggerUiMode(node)"
                       size="small"
                       @change="setTriggerMode(node, $event)"
                     >
                       <el-radio-button value="keyword">關鍵字</el-radio-button>
                       <el-radio-button value="semantic">看意思</el-radio-button>
+                      <el-radio-button value="follow">客人加好友時</el-radio-button>
                     </el-radio-group>
                   </div>
 
-                  <template v-if="(node.matchMode ?? 'keyword') === 'keyword'">
+                  <template v-if="triggerUiMode(node) === 'follow'">
+                    <p class="scripts-section-hint">
+                      客人把這個官方帳號加為好友（含封鎖後再解除）的那一刻就會走這條流程，不用打任何字。一個帳號只能有一條這種腳本。
+                    </p>
+                    <!-- 與 LINE 內建歡迎訊息打對台：兩邊都開＝客人一加好友連收兩份 -->
+                    <el-alert
+                      type="info"
+                      :closable="false"
+                      show-icon
+                      title="LINE 內建的「加入好友的歡迎訊息」記得關掉"
+                      description="LINE 官方帳號後台（LINE Official Account Manager）本身也有一則內建的歡迎訊息，兩邊都開的話，客人一加好友會連收兩份。請到那個後台把「加入好友的歡迎訊息」關閉，只留這一條。"
+                    />
+                  </template>
+
+                  <template v-else-if="triggerUiMode(node) === 'keyword'">
                     <div class="admin-field-group">
                       <AdminFieldLabel text="怎麼比對" tight />
                       <el-select :model-value="node.keywordMatch ?? 'any'" class="control-full" @change="node.keywordMatch = $event">
@@ -312,13 +327,17 @@
                       <span />
                       <el-button type="danger" plain class="scripts-branch-remove" title="取消防重複觸發" @click="clearCooldown(node)">✕</el-button>
                     </div>
-                    <p class="scripts-section-hint">同一位客人在這段時間內又打中觸發詞，也不會再走一次這條流程（會改由 AI 回答）。</p>
+                    <p class="scripts-section-hint">
+                      {{ triggerUiMode(node) === 'follow'
+                        ? '同一位客人在這段時間內封鎖又解除、再次加好友，也不會再收到一次這條流程。'
+                        : '同一位客人在這段時間內又打中觸發詞，也不會再走一次這條流程（會改由 AI 回答）。' }}
+                    </p>
                   </div>
                   <button v-else type="button" class="scripts-skip-add" @click="enableCooldown(node)">
                     ＋ 設定防重複觸發（同一位客人隔多久才能再走一次）
                   </button>
 
-                  <div class="admin-field-group scripts-trigger-test-group">
+                  <div v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group">
                     <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條腳本）" tight />
                     <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
                     <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
@@ -623,7 +642,9 @@
           </div>
           <div v-if="showSim" class="card-section-stack scripts-sim-panel">
             <div class="scripts-sim-chat">
-              <p v-if="!simLog.length" class="scripts-sim-empty">輸入客人會打的第一句話開始（假設已經觸發這條腳本）</p>
+              <p v-if="!simLog.length" class="scripts-sim-empty">
+                {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條腳本）' }}
+              </p>
               <template v-for="(m, i) in simLog" :key="i">
                 <div v-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
                 <div v-else class="scripts-sim-line" :class="`is-${m.who}`">
@@ -635,8 +656,12 @@
               </template>
             </div>
             <div class="scripts-sim-input">
-              <el-input v-model="simInput" placeholder="輸入客人會打的話…" @keyup.enter="simSend()" />
-              <el-button type="primary" @click="simSend()">送出</el-button>
+              <!-- 加好友腳本沒有「第一句話」——第一步由加好友事件觸發，之後才輪到打字 -->
+              <el-button v-if="editingFollowScript && !simLog.length" type="primary" @click="simFollowStart">模擬客人加好友</el-button>
+              <template v-else>
+                <el-input v-model="simInput" placeholder="輸入客人會打的話…" @keyup.enter="simSend()" />
+                <el-button type="primary" @click="simSend()">送出</el-button>
+              </template>
               <el-button @click="simReset">重來</el-button>
             </div>
           </div>
@@ -668,7 +693,7 @@ import type {
   TriggerKeywordMatch,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, renderScriptTemplate, resolveBranchNext, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, renderScriptTemplate, resolveBranchNext, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptForReachability } from '~~/shared/types/ai-script-reachability'
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
@@ -781,8 +806,9 @@ const isSimpleMode = computed(() => {
 const showPalette = ref(false)
 
 /** 簡單模式的區塊標題：用「這一格在問什麼」講，不用步驟類型的名字 */
-function simpleSectionTitle(type: string): string {
-  return type === 'trigger' ? '客人說什麼' : '你回什麼'
+function simpleSectionTitle(node: ScriptNode): string {
+  if (node.type !== 'trigger') return '你回什麼'
+  return node.triggerEvent === 'follow' ? '客人加好友時' : '客人說什麼'
 }
 
 /** 關鍵字比對方式；文案與自動回覆的「比對方式」對齊，兩邊講的是同一件事 */
@@ -929,6 +955,17 @@ const flowWarnings = computed<FlowWarning[]>(() => {
     })
   }
   out.push(...duplicateFieldWarnings.value)
+  // 一個帳號只能有一條啟用中的「加好友時」腳本（後端存檔也會擋；這裡先講，別等按存檔才知道）
+  if (editingFollowScript.value && form.value.enabled) {
+    const draftId = selectedId.value
+    const rival = scripts.value.find(s => s.id !== draftId && s.enabled && scriptTriggerEvent(s) === 'follow')
+    if (rival) {
+      out.push({
+        key: 'follow:dup',
+        text: `「${rival.name || '(未命名腳本)'}」也是在客人加好友時啟動、而且開著——兩條都開的話客人會連收兩份，存檔會被擋下來。請先停用那一條，或直接改那一條`,
+      })
+    }
+  }
   for (const issue of reachabilityIssues.value) {
     // 被「另一條腳本」蓋住時，講「自動回覆排在前面」會把人指去翻錯的地方
     const why = issue.reason === 'otherScript' ? '' : '（安全層排在腳本前面）'
@@ -958,6 +995,7 @@ const allClearText = computed(() => {
 function triggerSummary(script: ScriptRow): string {
   const trig = script.nodes?.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
   if (!trig) return '無觸發條件'
+  if (trig.triggerEvent === 'follow') return '客人加好友時'
   if ((trig.matchMode ?? 'keyword') === 'semantic') {
     const ex = (trig.examples ?? []).filter(Boolean)
     if (!ex.length) return '無範例'
@@ -1053,6 +1091,7 @@ function flowNodeTitle(node: ScriptNode): string {
 }
 function flowNodeSub(node: ScriptNode): string {
   if (node.type === 'trigger') {
+    if (node.triggerEvent === 'follow') return '客人加好友時'
     const list = ((node.matchMode ?? 'keyword') === 'semantic' ? (node.examples ?? []) : (node.keywords ?? [])).filter(Boolean)
     return list.length ? `${list.slice(0, 3).join('、')}${list.length > 3 ? '…' : ''}` : '未設條件'
   }
@@ -1273,6 +1312,24 @@ function simRun(startId: string) {
     }
     return
   }
+}
+
+/** 編輯中的這條是不是「加好友時」腳本（試跑起點與重複警告共用） */
+const editingFollowScript = computed(() => {
+  const trig = form.value.nodes.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
+  return trig?.triggerEvent === 'follow'
+})
+
+/** 加好友腳本的試跑起點：沒有「第一句話」，用一顆按鈕模擬 follow 事件 */
+function simFollowStart() {
+  if (simLog.value.length) return
+  simPush({ who: 'sys', text: '（客人把你的官方帳號加為好友）' })
+  const trig = form.value.nodes.find(n => n.type === 'trigger')
+  if (!trig || trig.type !== 'trigger') {
+    simPush({ who: 'sys', text: '（這條腳本沒有觸發步驟）' })
+    return
+  }
+  simRun(trig.next)
 }
 
 /** 送出一句「客人的話」；第一句視為觸發訊息，之後照 collect / quickReply 推進 */
@@ -1694,7 +1751,22 @@ function updateKeywords(node: ScriptTriggerNode, value: string) {
     .slice(0, 20)
 }
 
+/**
+ * 觸發方式在畫面上是三選一（關鍵字／看意思／客人加好友時），但資料上是兩個欄位
+ * （triggerEvent 事件型 vs matchMode 文字比對）——這裡是唯一一處換算，模板都吃這支。
+ */
+function triggerUiMode(node: ScriptTriggerNode): 'keyword' | 'semantic' | 'follow' {
+  if (node.triggerEvent === 'follow') return 'follow'
+  return (node.matchMode ?? 'keyword') === 'semantic' ? 'semantic' : 'keyword'
+}
+
 function setTriggerMode(node: ScriptTriggerNode, mode: string | number | boolean | undefined) {
+  if (mode === 'follow') {
+    node.triggerEvent = 'follow'
+    return
+  }
+  // 切回文字比對：關鍵字／範例還留在欄位上，切回來就看得到（存檔時 follow 腳本才會被清空）
+  delete node.triggerEvent
   const m: TriggerMatchMode = mode === 'semantic' ? 'semantic' : 'keyword'
   node.matchMode = m
   if (m === 'semantic' && !node.examples) node.examples = []

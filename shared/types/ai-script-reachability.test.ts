@@ -113,3 +113,22 @@ describe('toReachabilityScripts', () => {
     expect(row).toEqual({ id: 'a', name: '', nodes: [], rootNodeId: '', enabled: true, priority: 0 })
   })
 })
+
+describe('加好友觸發（triggerEvent=follow）不進可達性分析', () => {
+  function followScript(id: string): ScriptForReachability {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', triggerEvent: 'follow', matchMode: 'keyword', keywords: [], examples: [], priority: 50, next: 'r' },
+      { id: 'r', type: 'reply', text: '歡迎', thenHandoff: false },
+    ]
+    return { id, name: '加好友歡迎', enabled: true, priority: 50, rootNodeId: 't', nodes }
+  }
+
+  it('沒有觸發詞是它的天性，不報「沒東西能啟動它」（follow 事件直達）', () => {
+    expect(findUnreachableScripts([followScript('s1')])).toEqual([])
+  })
+
+  it('和其他腳本並存也互不影響（它沒有關鍵字可以蓋住誰）', () => {
+    const other = script({ id: 's2', keywords: ['退貨'] })
+    expect(findUnreachableScripts([followScript('s1'), other])).toEqual([])
+  })
+})

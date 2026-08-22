@@ -77,6 +77,9 @@ export function findUnreachableScripts(
 
   for (const script of enabled) {
     const trigger = triggerOf(script)
+    // 加好友觸發是事件型：follow 事件直達、不經文字比對，敏感層與別條腳本都蓋不住它，
+    // 也天生沒有觸發詞——跳過整組檢查，否則會對每條 follow 腳本誤報「沒有觸發詞」。
+    if (trigger?.triggerEvent === 'follow') continue
     const keywords = (trigger?.keywords ?? []).map(norm).filter(Boolean)
     const examples = (trigger?.examples ?? []).map(e => String(e).trim()).filter(Boolean)
     const name = String(script.name || '(未命名腳本)')

@@ -50,7 +50,7 @@ import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
-import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
 import {
@@ -346,10 +346,16 @@ export async function handleFollowEvent(
   userId: string,
   preloadedProfile?: { displayName: string; pictureUrl: string } | null,
   workspaceId?: string,
+  /**
+   * 只有真的 follow webhook 才帶（webhook.post.ts）。/api/liff/apply 的補套用不帶——
+   * 那是「已經是好友的人登記活動」，不是加好友的瞬間，跑歡迎腳本會變成每登記一次活動
+   * 就被歡迎一次。有 replyToken 才會考慮啟動加好友歡迎腳本（C-56）。
+   */
+  opts?: { replyToken?: string; requestOrigin?: string },
 ): Promise<void> {
   const wid = requireWorkspaceId(workspaceId, 'handleFollowEvent')
   try {
-    await ensureUser(userId, preloadedProfile, wid)
+    const userData = await ensureUser(userId, preloadedProfile, wid)
     console.log('[webhook] follow ensureUser:', userId)
     // Session creation and claim application are independent — run in parallel。
     // session 用 promise 傳下去（不先 await）：推播延遲不變，但推播後的「已回應」蓋章
@@ -359,13 +365,104 @@ export async function handleFollowEvent(
       console.error('[session] follow session error:', e)
       return null
     })
-    await Promise.all([
+    const [sessionId, claimOutcome] = await Promise.all([
       sessionPromise,
       applyPendingClaims(userId, wid, sessionPromise),
     ])
+    // 加好友歡迎腳本：活動 claim 已在這個工作區推播過就讓位——客人是從活動連結進來的，
+    // 活動那則歡迎比通用歡迎更對題，兩則都送等於加好友第一秒就被連轟兩串訊息。
+    if (opts?.replyToken && !claimOutcome.pushed) {
+      await runFollowWelcomeScript({
+        lineUserId: userId,
+        workspaceId: wid,
+        sessionId,
+        replyToken: opts.replyToken,
+        requestOrigin: opts.requestOrigin ?? '',
+        userData,
+      })
+    }
   }
   catch (e) {
     console.error('[webhook] handleFollowEvent error:', e)
+  }
+}
+
+/**
+ * 加好友那一刻的歡迎腳本（C-56）。
+ *
+ * 為什麼走腳本而不是另做一種「歡迎訊息」設定：腳本引擎已經能回覆、收資料、貼標、
+ * 送模組、轉真人——歡迎流程要的能力它全有，缺的只是「加好友」這種事件型觸發。
+ * 訊息用 follow 事件自帶的 replyToken 回（免推播額度）；claim 推播那條路刻意不共用，
+ * 因為那邊是 push（沒有 replyToken 可用）。
+ *
+ * 統計口徑與活動推播同一把尺（見 markClaimPushHandled）：這是客人沒問就送的訊息，
+ * 蓋 system_notice、不記 bot 首接——歡迎訊息發得越勤，首接統計不能跟著灌水。
+ * 客人真的回話之後，接續的問答由 runScriptAdvance 記 bot_flow（那時他開口了，算數）。
+ */
+async function runFollowWelcomeScript(params: {
+  lineUserId: string
+  workspaceId: string
+  sessionId: string | null
+  replyToken: string
+  requestOrigin: string
+  userData: UserDoc | null
+}): Promise<void> {
+  const { lineUserId, workspaceId: wid, sessionId, replyToken } = params
+  const scripts = await loadActiveScripts(wid).catch(() => [])
+  const matched = scripts.find(s => scriptTriggerEvent(s) === 'follow') ?? null
+  if (!matched) return
+
+  const fsUserDocId = lineUserFirestoreDocId(lineUserId, wid)
+  // 防重複觸發沿用同一顆冷卻：封鎖再解除封鎖會再收到一次 follow 事件，設了冷卻就不再吵一次
+  if (!(await claimScriptCooldown(fsUserDocId, matched.id, scriptCooldownMs(matched)))) {
+    console.log('[script] follow script on cooldown → skip:', matched.id, matched.name)
+    return
+  }
+
+  const userAttributes = buildAttributeContext(params.userData)
+  const result = await startScript(matched, fsUserDocId, userAttributes)
+  invalidateUserDocCache(fsUserDocId)
+
+  const dndReply = await dndScriptHandoffReply(result, wid)
+  if (dndReply) {
+    await sendScriptReply(dndReply, replyToken, lineUserId, wid, 'system', '')
+  }
+  else if (result.moduleId) {
+    const { channelSecret } = await getLineWorkspaceCredentials(wid)
+    // enterAs：模組訊息在這裡是「客人沒問就送的」，蓋 system_notice 不記 bot 首接（口徑見上）
+    await replyWithFlowModule({
+      moduleId: result.moduleId,
+      replyToken,
+      lineUserId,
+      workspaceId: wid,
+      sessionId,
+      userAttributes: { ...userAttributes, ...(result.collected ?? {}) },
+      channelSecret,
+      requestOrigin: params.requestOrigin,
+      customerMessage: '',
+      logContext: `follow-script=${matched.id}`,
+      enterAs: 'system_notice',
+    })
+    // replyWithFlowModule 自己蓋章（enterAs）；模組被刪＝什麼都沒送，也就什麼都不蓋
+  }
+  else {
+    await sendScriptReply(result.replyText, replyToken, lineUserId, wid, 'bot', String(matched.name || ''), result.quickReplies, result.link)
+    if (hasScriptOutput(result)) {
+      await enterModule(sessionId, lineUserId, 'system_notice', undefined, wid).catch(e =>
+        console.error('[script] follow enterModule error:', e),
+      )
+    }
+  }
+
+  if (result.finished && result.thenHandoff) {
+    markWaitingAckSent(wid, lineUserId)
+    await commitHandoff({
+      workspaceId: wid, lineUserId, sessionId,
+      displayName: userAttributes.displayName || '',
+      // 客人一句話都還沒說——這是「加好友當下就轉真人」的設定，通知裡沒有客人的問題可帶
+      customerMessage: '',
+      reason: null,
+    })
   }
 }
 
@@ -454,17 +551,24 @@ async function applyPendingClaims(
   workspaceId: string,
   /** handleFollowEvent 已在建立的那一場 session（同工作區時才可沿用，見 markClaimPushHandled） */
   followSessionPromise?: Promise<string | null>,
-): Promise<void> {
+): Promise<{
+  /**
+   * 有沒有任何 claim 在「這次 follow 的工作區」推播成功——加好友歡迎腳本據此讓位。
+   * 只算推播成功的：claim 只貼標沒推播（或推播失敗）時，客人什麼都沒收到，歡迎腳本照跑。
+   */
+  pushed: boolean
+}> {
   const db = getDb()
   const now = new Date()
   const campaignWorkspaceCache = new Map<string, string>()
+  let pushedInFollowWorkspace = false
 
   const snap = await db.collection('leadClaims')
     .where('lineUserId', '==', userId)
     .where('status', '==', 'claimed')
     .get()
 
-  if (snap.empty) return
+  if (snap.empty) return { pushed: false }
 
   for (const doc of snap.docs) {
     const claim = doc.data()
@@ -601,6 +705,7 @@ async function applyPendingClaims(
 
       // 推播沒成功就不蓋章：客人什麼都沒收到，這場確實還需要人看一眼
       if (!pushed) return
+      if (claimWorkspaceId === workspaceId) pushedInFollowWorkspace = true
       try {
         await markClaimPushHandled(
           userId,
@@ -647,6 +752,7 @@ async function applyPendingClaims(
     })
     console.log('[follow] claim applied:', doc.id)
   }
+  return { pushed: pushedInFollowWorkspace }
 }
 
 export async function handleUnfollowEvent(
@@ -2481,7 +2587,11 @@ async function runScriptStart(
   /** 對話脈絡 lazy loader：只有走到意圖路由才會真的讀 Firestore（與 tryAiFallback 共用同一次讀取） */
   getHistory?: () => Promise<AiChatTurn[]>,
 ): Promise<{ handled: boolean; route: RouteResult | null }> {
-  const scripts = await loadActiveScripts(workspaceId).catch(() => [])
+  // 加好友觸發的腳本不參與文字比對，也不能進意圖路由的候選名單——
+  // matchesScriptKeywords 對它一律 false，但路由是把「腳本名稱＋提示」丟給 LLM 選，
+  // 不先濾掉的話 LLM 看到「歡迎新朋友」這種名字照樣會選它。
+  const scripts = (await loadActiveScripts(workspaceId).catch(() => []))
+    .filter(s => scriptTriggerEvent(s) === 'message')
   if (!scripts.length) return { handled: false, route: null }
   // 註：敏感情境已在編排最上層（呼叫此函式之前）攔截，這裡不需再檢查。
 
@@ -2677,6 +2787,12 @@ async function replyWithFlowModule(params: {
   customerMessage: string
   /** 找不到模組時的 log 前綴，寫清楚是誰要送的 */
   logContext: string
+  /**
+   * 會話要記成哪種進入（預設 flow.moduleType ?? 'bot_flow'）。
+   * 加好友歡迎腳本傳 'system_notice'：那是客人沒問就送的訊息，不可記 bot 首接
+   * （與活動推播的 markClaimPushHandled 同一個口徑）。真人客服模組不受此參數影響。
+   */
+  enterAs?: ModuleType
 }): Promise<boolean> {
   const { moduleId, replyToken, lineUserId, workspaceId: wid, sessionId, userAttributes, channelSecret, logContext } = params
 
@@ -2717,7 +2833,7 @@ async function replyWithFlowModule(params: {
     })
   }
   else {
-    enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+    enterModule(sessionId, lineUserId, params.enterAs ?? flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
       console.error('[session] enterModule error:', e),
     )
   }

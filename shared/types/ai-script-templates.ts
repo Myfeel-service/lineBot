@@ -17,6 +17,20 @@ export interface ScriptTemplate {
 }
 
 export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
+  // 0) 加好友歡迎：事件型觸發（triggerEvent='follow'），客人加好友那一刻送出。
+  //    文案刻意通用、不編造任何店家事實（無店名/折扣/營業時間——那些是使用者自己要改的）；
+  //    「找真人」是真實功能（HUMAN_REQUEST_TEXTS），可以放心教客人打。
+  {
+    key: 'follow-welcome',
+    label: '加好友歡迎訊息',
+    description: '客人一加好友就先打招呼，講清楚這裡能問什麼',
+    rootNodeId: 't',
+    nodes: [
+      { id: 't', type: 'trigger', triggerEvent: 'follow', matchMode: 'keyword', keywords: [], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'r' },
+      { id: 'r', type: 'reply', text: '謝謝您加入好友 🎉 商品、運費、訂單的問題，直接在這裡打字問我就可以；想找真人服務的話，隨時輸入「找真人」。', thenHandoff: false },
+    ],
+  },
+
   // 1) 最簡單：找真人快速通道
   {
     key: 'to-human',
