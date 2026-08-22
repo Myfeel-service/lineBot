@@ -32,10 +32,11 @@ function matchesSearch(user: UserBase, searchRaw: string): boolean {
  * 取得會員列表，含每位用戶的標籤資訊
  *
  * Query:
- *   tagIds   - 以逗號分隔的 tagId，只回傳擁有其中任一標籤的用戶
- *   search   - 顯示名稱或 userId 關鍵字（不分大小寫）
- *   page     - 頁碼（預設 1）
- *   limit    - 每頁筆數（預設 50，上限 100）
+ *   tagIds    - 以逗號分隔的 tagId，只回傳擁有其中任一標籤的用戶
+ *   search    - 顯示名稱或 userId 關鍵字（不分大小寫）
+ *   suggested - '1' 時只回傳「有待處理 AI 標籤建議」的用戶（收件匣入口，G-20③）
+ *   page      - 頁碼（預設 1）
+ *   limit     - 每頁筆數（預設 50，上限 100）
  *
  * Response: { users, total, page, limit }
  */
@@ -59,6 +60,19 @@ export default defineEventHandler(async (event) => {
         .get()
       filterUserIds = new Set(snap.docs.map((d) => d.data().userId as string))
     }
+  }
+
+  // 「只看有 AI 建議的」：hasPending 是寫入端維護的等值查詢欄位（Firestore 查不了「陣列非空」）。
+  // 與標籤篩選同時開時取交集（兩個條件都要成立）
+  if (String(query.suggested || '') === '1') {
+    const snap = await db.collection('userTagSuggestions')
+      .where('workspaceId', '==', workspaceId)
+      .where('hasPending', '==', true)
+      .get()
+    const suggestedIds = new Set(snap.docs.map(d => d.id))
+    filterUserIds = filterUserIds
+      ? new Set([...filterUserIds].filter(id => suggestedIds.has(id)))
+      : suggestedIds
   }
 
   const users = await fetchUserPage({
@@ -108,11 +122,20 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  // 收件匣入口（G-20③）：這一頁的用戶各自有沒有待處理的 AI 建議。
+  // 主鍵直讀批次（getAll），一頁一批、零掃描
+  const suggestFlags = new Map<string, boolean>()
+  const sugSnaps = await db.getAll(...userIds.map(id => db.collection('userTagSuggestions').doc(id)))
+  for (const s of sugSnaps) {
+    if (s.exists && s.data()?.hasPending === true) suggestFlags.set(s.id, true)
+  }
+
   const enriched = users.map((user) => {
     const tagIds = userTagMap[user.id] ?? []
     return {
       ...user,
       tagIds,
+      hasTagSuggestions: suggestFlags.get(user.id) === true,
       tags: tagIds.map((tid) => tagMap[tid]).filter(Boolean).map((t) => ({
         id: t.id,
         code: t.code,

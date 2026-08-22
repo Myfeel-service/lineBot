@@ -144,7 +144,32 @@
   gap: 0.75rem;
 }
 
+/* ── 收件匣入口（G-20③）：列表上的「AI 建議」琥珀章＋篩選欄位 ── */
+
+.user-suggest-chip {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning-dark-2, #b45309);
+  border: 1px solid var(--el-color-warning-light-5);
+}
+
+.users-toolbar__field--suggest {
+  flex-shrink: 0;
+}
+
 /* ── 客人單頁抽屜（G-6）───────────────────────────────── */
+
+.user-detail__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+}
 
 .user-identity--clickable {
   cursor: pointer;
@@ -236,12 +261,19 @@
 }
 
 .user-detail__last-message {
-  /* 最後一句話當摘要看就好，長文截尾——整段對話請去對話頁看 */
+  /* 最後一句話當摘要看就好，長文截尾——整段對話按下面的「看完整對話」 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
   min-width: 0;
+}
+
+.user-detail__meta-actions {
+  display: flex;
+  justify-content: flex-end;
+  /* text button 自帶 padding，往上收一點免得跟上一列隔太開 */
+  margin: -0.25rem -0.5rem -0.25rem 0;
 }
 
 .user-detail__section {

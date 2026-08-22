@@ -268,6 +268,7 @@ async function suggestForSession(
     workspaceId,
     userId: convDocId,
     pending: [...pending, ...newPending],
+    hasPending: true, // pending 的鏡像（列表等值查詢用）——這裡剛加了東西，必為 true
     dismissedTagIds: [...dismissed],
     updatedAt: FieldValue.serverTimestamp(),
     ...(sugSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),

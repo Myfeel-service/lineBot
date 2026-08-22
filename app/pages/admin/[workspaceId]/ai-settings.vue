@@ -409,6 +409,8 @@
             <div class="card-header-main">
               <span class="section-title">顧客標籤</span>
               <span v-if="form.autoTagSuggest.enabled" class="badge badge-green">AI 建議啟用中</span>
+              <!-- 沒互動標籤預設開＝正常狀態不用講；被關掉才值得在標題列看得到（G-20⑥） -->
+              <span v-if="!form.inactiveTag.enabled" class="badge badge-gray">沒互動標籤已停用</span>
             </div>
           </div>
           <div class="card-section-stack">
@@ -425,8 +427,8 @@
               <p class="ai-section-hint">
                 超過天數沒來訊就自動貼上（標籤叫「{{ form.inactiveTag.days }} 天沒互動」），
                 客人一回來就自動摘掉——發「好久不見」推播時選這個標籤就是名單。
-                ⚠️ 判斷用的「最後來訊時間」是 2026-08-19 起才有的欄位，更早之前就沉默的老客
-                第一批抓不到，會隨時間自然補齊。
+                ⚠️ 系統從 2026-08-19 才開始記「客人最後一次來訊」的時間，在那之前就沒再來訊的
+                老客第一批抓不到，會隨時間自然補齊。
               </p>
               <div v-if="form.inactiveTag.enabled" class="admin-field-group">
                 <AdminFieldLabel text="幾天沒來訊算「沒互動」" tight />

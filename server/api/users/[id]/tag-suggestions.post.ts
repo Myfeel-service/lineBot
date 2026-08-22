@@ -52,8 +52,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const dismissedTagIds = Array.isArray(sugDoc.dismissedTagIds) ? sugDoc.dismissedTagIds : []
+  const remaining = pending.filter(p => !target.includes(p.tagId))
   await sugRef.set({
-    pending: pending.filter(p => !target.includes(p.tagId)),
+    pending: remaining,
+    hasPending: remaining.length > 0, // pending 的鏡像（列表等值查詢用）
     dismissedTagIds: action === 'dismiss'
       ? [...new Set([...dismissedTagIds, ...target])]
       : dismissedTagIds,

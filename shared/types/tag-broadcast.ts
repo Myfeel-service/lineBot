@@ -90,6 +90,11 @@ export interface UserTagSuggestionDoc {
   /** users 主鍵：`${workspaceId}_${lineUserId}` */
   userId: string
   pending: UserTagSuggestionPending[]
+  /**
+   * `pending.length > 0` 的鏡像欄位，**兩個寫入點（掃描器／採用忽略端點）都要維護**。
+   * 為什麼要多存一份：列表「只看有 AI 建議的」要用等值查詢撈——Firestore 查不了「陣列非空」。
+   */
+  hasPending: boolean
   /** 忽略過的標籤——永久不再建議（採用過的不在此列：已貼上，由 userTags 天然擋掉） */
   dismissedTagIds: string[]
   createdAt: Timestamp | FieldValue

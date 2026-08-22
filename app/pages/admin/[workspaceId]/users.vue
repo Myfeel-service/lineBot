@@ -55,6 +55,10 @@
                   </el-option>
                 </el-select>
               </div>
+              <div class="users-toolbar__field users-toolbar__field--suggest">
+                <AdminFieldLabel text="AI 建議" tight />
+                <el-checkbox v-model="filterSuggested">只看有 AI 建議的</el-checkbox>
+              </div>
               <span class="tags-count text-muted">共 {{ total.toLocaleString('zh-TW') }} 位</span>
             </div>
             <p class="users-sync-hint text-muted">
@@ -106,6 +110,9 @@
                         />
                         <span v-else class="user-avatar-placeholder"><el-icon><User /></el-icon></span>
                         <span class="user-name">{{ user.displayName || user.id }}</span>
+                        <!-- 收件匣入口（G-20③）：有 AI 建議的客人要在列表上看得到，
+                             不能靠「碰巧點開」才發現 -->
+                        <span v-if="user.hasTagSuggestions" class="user-suggest-chip">AI 建議</span>
                       </div>
                     </td>
                     <td class="td-time">{{ formatZhDateOnly(user.createdAt) }}</td>
@@ -242,6 +249,8 @@
     class="user-detail-drawer"
   >
     <div v-if="detailUser" class="user-detail">
+      <!-- 眉標：第一次用的人要知道這個面板叫什麼（G-20④） -->
+      <span class="user-detail__eyebrow">客人檔案</span>
       <div class="user-detail__head">
         <img v-if="detailUser.pictureUrl" :src="detailUser.pictureUrl" class="user-detail__avatar" :alt="detailUser.displayName" />
         <span v-else class="user-detail__avatar user-detail__avatar--empty"><el-icon><User /></el-icon></span>
@@ -259,7 +268,11 @@
         <div class="user-detail__meta">
           <div class="user-detail__meta-item">
             <span class="user-detail__meta-label">最後來訊</span>
-            <b>{{ detail.conversation?.lastInboundMessageAtMs ? relativeTime(detail.conversation.lastInboundMessageAtMs) : '—' }}</b>
+            <!-- ⛔「—」對舊客會說謊（G-20①）：時間是 8/19 才開始記的，有對話但沒這筆時間
+                 ＝更早之前的老客，不是「從沒講過話」——要講清楚，不留一條會被誤讀的橫線 -->
+            <b v-if="detail.conversation?.lastInboundMessageAtMs">{{ relativeTime(detail.conversation.lastInboundMessageAtMs) }}</b>
+            <span v-else-if="detail.conversation" class="text-muted">更早之前（系統 2026-08-19 才開始記這個時間）</span>
+            <b v-else>—</b>
           </div>
           <div class="user-detail__meta-item">
             <span class="user-detail__meta-label">最後訊息</span>
@@ -269,6 +282,10 @@
               </template>
               <template v-else>—</template>
             </b>
+          </div>
+          <!-- 通往完整對話的真連結（G-20⑦）：對話頁的 ?userId= 深連結是現成的（監控頁同款） -->
+          <div v-if="detail.conversation" class="user-detail__meta-actions">
+            <el-button size="small" text type="primary" @click="goConversation">看完整對話 →</el-button>
           </div>
         </div>
 
@@ -315,7 +332,9 @@
               </tr>
             </tbody>
           </table>
-          <span v-else class="text-muted text-sm">還沒有——腳本的「收集」步驟問到的答案會存在這裡。</span>
+          <!-- ⚠️ 寫入這裡的是「存進客人資料」步驟（saveLead），不是「收集」——收集只是問，
+               有沒有存下來看腳本有沒有接那一步。文案要照編輯器的步驟名講（G-20②） -->
+          <span v-else class="text-muted text-sm">還沒有——腳本走到「存進客人資料」步驟時，存下來的欄位會出現在這裡。</span>
         </section>
       </template>
     </div>
@@ -345,6 +364,7 @@ const loading = computed(() => usersLoading.value || tagsLoading.value)
 
 const searchText = ref('')
 const filterTagIds = ref<string[]>([])
+const filterSuggested = ref(false)
 const selectedIds = ref<string[]>([])
 const { showToast } = useAdminToast()
 
@@ -423,6 +443,12 @@ async function loadUserDetail(id: string) {
   }
 }
 
+/** 通往完整對話：對話頁的 ?userId= 深連結是現成的（監控頁「開對話」同一條路） */
+function goConversation() {
+  if (!detailUser.value) return
+  navigateTo(`/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(detailUser.value.id)}`)
+}
+
 /** 採用＝真的貼上（來源記 AI、可撤）；忽略＝這個標籤對這位客人永遠不再建議 */
 async function actOnSuggestion(tagId: string, action: 'apply' | 'dismiss') {
   if (!assertCanOperate()) return
@@ -450,6 +476,7 @@ function userListQuery(targetPage = page.value) {
     limit: pageSize.value,
     tagIds: filterTagIds.value.length ? filterTagIds.value : undefined,
     search: searchText.value,
+    suggested: filterSuggested.value ? 1 : undefined,
   }
 }
 
@@ -470,6 +497,10 @@ watch(filterTagIds, () => {
   selectedIds.value = []
   void reloadUsers(true)
 }, { deep: true })
+watch(filterSuggested, () => {
+  selectedIds.value = []
+  void reloadUsers(true)
+})
 watch(searchText, () => {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
