@@ -49,10 +49,20 @@
 
 ### 第 3 步：給主機寄信的權限
 
-程式**刻意不用金鑰**寄信（走執行角色，比 COST_EXPLORER 那組金鑰更省事），所以要讓 Amplify 的執行角色有 SES 權限：
+程式**刻意不用金鑰**寄信（走執行角色，比 COST_EXPLORER 那組金鑰更省事），所以要讓 Amplify 的執行角色有 SES 權限。
 
-1. AWS 主控台 → IAM → 「角色」→ 找 Amplify 這個 App 的 **SSR 運算角色**（名稱通常含 `amplify` 與 App 名，看「上次活動」最近的那個）。
-2. 「新增許可」→「建立內嵌政策」→ JSON 貼：
+⚠️ **2026-08-17 實況更正**：Amplify 的 SSR 主機**預設沒有掛任何角色**——IAM 角色清單裡只會看到三個 AWS 系統自動建的服務角色（ResourceExplorer／Support／TrustedAdvisor），找不到 amplify 開頭的是正常的。所以要**先建、再掛、再加權限**：
+
+1. **讓 Amplify 建角色**：Amplify 主控台 → 該 App → 左側「應用程式設定」→「**IAM 角色**」→ 找「**運算角色**（Compute role）」區塊（⚠️ 不是「服務角色」，那是給建置部署用的）→ 按編輯，選「**建立並使用新的服務角色**」讓 Amplify 自動建（信任關係它會自己設對）。
+   - 若這頁只能挑現有角色、沒有自動建立選項：回 IAM →「建立角色」→ 信任實體選「自訂信任政策」貼：
+     ```json
+     {
+       "Version": "2012-10-17",
+       "Statement": [{ "Effect": "Allow", "Principal": { "Service": "amplify.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+     }
+     ```
+     權限先不加直接下一步，名稱取 `amplify-ssr-email-role`，建好回 Amplify 的運算角色選它。
+2. **加寄信權限**：IAM → 「角色」→ 點開剛建的那個角色 → 「新增許可」→「建立內嵌政策」→ 切 JSON 貼：
    ```json
    {
      "Version": "2012-10-17",
@@ -60,8 +70,9 @@
    }
    ```
 3. 命名如 `send-transactional-email`，儲存。
+4. 角色是部署時掛上去的——**接下來第 4 步設完環境變數重新部署那一次，會一併生效**，不用多部署一輪。
 
-（若之後 log 出現 `AccessDenied`，就是這步沒做到或掛錯角色。）
+（若之後 log 出現 `AccessDenied`，就是這步沒做到、掛錯角色，或掛完沒重新部署。）
 
 ### 第 4 步：設環境變數＋重新部署（B-12）
 
