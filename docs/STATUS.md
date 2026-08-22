@@ -19,7 +19,7 @@
 
 ## 🔵 進行中（DOING — 未 commit）
 
-> 🔑 **2026-08-22 起推送不再卡 403**：Amplify 部署跟的是 `myfeel` remote（`Myfeel-service/lineBot`）——驗證方式＝`origin`（splashdigilab）落後 73 個 commit 時，新導購頁（只在 myfeel 上）已出現在 lineminime.com 首頁。本機 git 憑證就是 Myfeel-service，**`git push myfeel main` 可以直接推、推完 Amplify 自動部署**；`origin` 那份已過期，僅供對照。
+> 🔑 **2026-08-22 起推送不再卡 403**：Amplify 部署跟的是 `myfeel` remote（`Myfeel-service/lineBot`）——驗證方式＝`origin`（splashdigilab）落後 73 個 commit 時，新導購頁（只在 myfeel 上）已出現在 lineminime.com 首頁。本機 git 憑證就是 Myfeel-service，**`git push myfeel main` 可以直接推、推完 Amplify 自動部署**；`origin` 那份已過期——**2026-08-22 老闆拍板「目前都先不要管 splash」＝不用再推它、也不用再對照**。
 
 | 編號 | 項目 | 狀態 | 說明 |
 |---|---|---|---|
@@ -40,7 +40,7 @@
 | `A-4` | myfeel LINE Webhook URL 仍填舊網域 | `TODO` | LINE Developers 後台要換成正式網址 |
 | `A-5` | LIFF Endpoint URL 遷移 | `TODO` | ⛔順序：先改 LINE console endpoint → 部署 → 才跑 `resync --apply`；舊網域不可下架 |
 | `A-6` | 對話 180 天清理：**只清免費帳號** | `TODO` | **2026-08-16 老闆拍板：免費帳號的對話 180 天要清理**（付費帳號不在這次範圍）。⚠️ 不是「掛上排程」就好——現行 `CONVERSATION_RETENTION_DAYS` 是**全站一個值、不分方案**，直接掛上去會把付費客戶的對話一起刪掉，而且刪了沒有 TTL 可挽回。**程式已改完（`c1b2b9d`）**：`/api/conversations/cleanup` 改成先算出生效方案是免費層的工作區，再從那些工作區往下找舊訊息。⛔**沒有寫成「掃全部再跳過付費的」**——那樣付費客戶的舊訊息每天都會被撈出來再跳過，查詢照樣計費、過濾率隨資料變老趨近於零，就是 08-11 讀取費暴衝那次的記憶體過濾分頁。另加 `?dryRun=1` 只回報會刪幾筆。**驗證（正式資料、唯讀）**：dry-run 實跑 `freePlanWorkspaces=0`／`wouldDelete=0`＝現在掛上去不會刪到任何東西；documentId 範圍查詢逐帳號對帳 4486 筆對話全數相符（⛔上界要用 ``，兩邊界同值會查出零筆而且看起來像「沒有舊訊息」）。⚠️**沒有單元測試**（假 Firestore 要涵蓋子集合與範圍查詢，成本高於收益），改以真實資料 dry-run 驗證，日後動它請照樣先 dry-run。**2026-08-22 第三次空跑（正式資料、唯讀，直呼端點本人）：`freePlanWorkspaces=3`／`wouldDelete=0`**——⚠️免費層帳號數從 0 變 3（測試組織清除後解約回免費層，`effectivePlanOf` 把 canceled 視為免費層是既有語意），但整個資料庫**沒有任何一筆對話的最後訊息早於 180 天**（另用 count 查詢對帳：5,014 筆對話，超過 180 天的 0 筆），所以現在掛上去仍然一筆都不會刪。**剩下：掛 Cloud Scheduler 每天一次**（部署後再掛，先用 dryRun=1 確認一次）。**2026-08-17 又空跑一次（正式資料、唯讀）：`freePlanWorkspaces=0`／`wouldDelete=0`，與 08-16 同**＝今天掛上去也不會刪到任何東西。⛔ 空跑要直呼端點本人（stub 掉 `useRuntimeConfig`／`getHeader`／`getQuery` 用 vite-node 跑），不要另外抄一份查詢邏輯來驗——抄的那份跟真的不會是同一個口徑。⚠️另發現 **119 筆對話掛在 `workspaceId=default` 底下但 `workspaces` 沒有這份文件**（多租戶化前的遺留）＝不屬於任何帳號，永遠不會被清到，要不要處理另議 |
-| `A-7` | `aiTurns` TTL policy | `TODO` | 新子集合，要兩租戶各手動設一次。**08-12 用 fields API 驗過確實還沒設**（兩租戶現有 TTL 只有 aiFeedbackEvents／aiHandoffEvents／knowledgeSuggestions／webhookEventLocks 四個）。**2026-08-22 再驗一次（fields API 列兩租戶）：仍是那四個、`aiTurns` 兩邊都沒有。** 2026-08-17 也是同樣結果——這格只能在 console 手動設，程式端驗得到「有沒有設」但設不了 |
+| `A-7` | `aiTurns` TTL policy | `TODO` | 新子集合，**只設 myfeel（linebot-e8dda）即可——2026-08-22 老闆拍板 splash 目前都先不管**（原寫兩租戶各設一次）。**08-12 用 fields API 驗過確實還沒設**（兩租戶現有 TTL 只有 aiFeedbackEvents／aiHandoffEvents／knowledgeSuggestions／webhookEventLocks 四個）。**2026-08-22 再驗一次（fields API 列兩租戶）：仍是那四個、`aiTurns` 兩邊都沒有。** 2026-08-17 也是同樣結果——這格只能在 console 手動設，程式端驗得到「有沒有設」但設不了 |
 | `A-8` | ~~`aiHandoffEvents` TTL policy~~ | `DONE` | **2026-08-12 查證結案：policy 早就設好了**。用 fields API 列兩租戶 TTL，`aiHandoffEvents.expireAt` 兩專案皆 `ACTIVE`——`AI-KB-TODO.md` 08-01 部署紀錄「TTL 兩專案已設」是對的，本表 08-10 寫「沒設」是誤記。docs 盤點抓到兩處說法相反才驗的 |
 | `A-9` | ~~AWS 成本金鑰環境變數~~ | `DONE` | **2026-08-11 已設好並部署生效，結案**。Amplify 上是 `COST_EXPLORER_ACCESS_KEY_ID`／`COST_EXPLORER_SECRET_ACCESS_KEY`（本機 `.env` 同名）。⛔**名字不能用 AWS 開頭**：Amplify 主控台整個擋 "AWS" 保留前綴（第一版 `AWS_COST_*` 存不進去才改名 `bb4f56e`），Lambda 又會蓋掉 `AWS_ACCESS_KEY_ID` 三個保留名 |
 | `A-11` | ~~`auditLogs` 索引部署~~（myfeel 已部署；splash 老闆指示先不管） | `DONE` | **2026-08-16 已部署 myfeel（linebot-e8dda）並驗證**：`auditLogs (workspaceId ASC, createdAt DESC)` 建立完成。⛔**沒有加 `--force`**——CLI 當場就警告「有 4 個 field override 不在索引檔裡，要刪請加 --force」，那 4 個正是 TTL 政策；部署後回查確認 5 個 field override 全部完好（aiFeedbackEvents／aiHandoffEvents／knowledgeSuggestions／webhookEventLocks 的 TTL 都還在）。**splash（linebot-b137e）老闆指示先不管**，日後要補：`npx firebase-tools deploy --only firestore:indexes --project splash --account splash.digilab@gmail.com`。順帶查證：`aiTurns` 的 TTL 確實仍未設定（見 `A-7`） |
@@ -100,7 +100,7 @@
 | `C-8` | 呼叫硬上限要不要做 | `DECIDE` | 額度只數「答出」→ 答不出來的呼叫**永遠燒不完額度**、成本理論上無上限（試算：月呼叫 2 萬次×答出率 5% ≈ NT$680 成本 > 輕量月費；免費層尤其）。選項＝月呼叫超過額度 N 倍（如 10×）自動轉真人。見 `docs/BILLING-UNIT-POLICY-20260810.md` §4 |
 | `C-9` | `resync-preview` 504 風險 | `TODO` | 同吃 `chunkTextWithLlm`，可套 job 機制 |
 | `C-10` | `upload.post.ts` 6MB 雷 | `TODO` | 同 Lambda payload 上限，未改直傳 signed URL |
-| `C-11` | 產品名注入：splash 租戶 | `TODO` | 若要做，需同樣種 productName + reindex |
+| `C-11` | 產品名注入：splash 租戶 | `TODO` | **2026-08-22 老闆拍板「目前都先不要管 splash」＝本條擱置**，恢復管 splash 時再議。原內容：若要做，需同樣種 productName + reindex |
 | `C-12` | 🔴 知識庫重傳同一份檔會重跑重收費 | `TODO` | 手動上傳**沒有內容去重**（`contentHash` 只有 url／Google Sheet 自動同步在用），重傳沒改過的大檔＝OCR＋切卡＋embedding 整套重跑重收，且不受則數／token 額度擋。最省力修法＝把現成的 contentHash 比對接到手動上傳，未變更就跳過 |
 
 | `C-13` | 語意自動貼標（沒有關鍵字也能判客訴） | `TODO` | 現在只能靠關鍵字，客人沒講到那幾個詞就抓不到，**真正在生氣的客訴往往漏接**。差異化賣點 |

@@ -64,3 +64,4 @@
 - 詳細規格放 `docs/` 專門文件，`STATUS.md` 只放指標與一句話說明。
 - 樣式寫在 `app/assets/scss/` partials + `main.scss @use`，不要寫在 `.vue` 的 `<style>`。
 - 多租戶：Firestore 結構變更（索引／TTL）通常要對**兩個**專案各跑一次，見 `docs/` 與記憶 `reference_firestore_index_deploy`。
+  **（2026-08-22 老闆拍板：splash 目前都先不管——索引／TTL 先只跑 myfeel＝`linebot-e8dda`；恢復雙租戶時把這句刪掉。）**
