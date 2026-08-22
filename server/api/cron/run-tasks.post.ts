@@ -15,6 +15,8 @@ import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-sca
 import { cleanupExpiredPreviewJobs, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
+import { scanInactiveTag } from '~~/server/utils/inactive-tag'
+import { scanTagSuggestions } from '~~/server/utils/ai-tag-suggest'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -53,6 +55,12 @@ export default defineEventHandler(async (event) => {
     { name: 'ai:knowledge-gap-scan', run: () => scanKnowledgeGaps(db) },
     // 跨來源重複偵測（C-40(c)）:一輪一個 workspace,指紋沒變/24h 內掃過＝零 LLM 費
     { name: 'ai:dup-scan', run: () => scanNextWorkspaceForDuplicates(db) },
+    // 「N 天沒互動」自動標籤（CRM 分眾）：每工作區每天只真跑一次（內有 lastRunDay 閘），
+    // 其餘輪次都是一次 cronState 空讀。窗口掃描＋修復輪掃都有上限，見 inactive-tag.ts
+    { name: 'crm:inactive-tag', run: () => scanInactiveTag(db) },
+    // AI 讀對話貼標建議（D-24 建議式）：只掃 autoTagSuggest 開著的工作區、
+    // 游標只往前走、每輪每工作區上限 8 場、每場最多一次 LLM，見 ai-tag-suggest.ts
+    { name: 'crm:tag-suggest', run: () => scanTagSuggestions(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     // 真人接手中的會話不吃 24 小時自動結束，這是唯一會收殮它們的機制——停掉的話
     // 忘記按「結束會話」的對話會永遠掛著（那位客人也永遠收不到自動回覆）

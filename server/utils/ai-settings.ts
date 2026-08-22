@@ -29,6 +29,9 @@ import {
   DEFAULT_SENSITIVE_TOPICS,
   DEFAULT_SLA_REMIND_MINUTES,
   DEFAULT_SYSTEM_PROMPT,
+  DEFAULT_INACTIVE_TAG_DAYS,
+  MIN_INACTIVE_TAG_DAYS,
+  MAX_INACTIVE_TAG_DAYS,
 } from '~~/shared/types/ai-knowledge'
 import type {
   AiSettingsDoc,
@@ -213,6 +216,14 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
         dndReply: reply,
       }
     })(),
+    // 舊工作區沒有這個欄位 → 視為開啟（同 festivalTips 的口徑：它不對客人說話，
+    // 只是後台自動貼一個分眾標籤，漏掉才是損失；判斷欄位 08-19 起才有＝天生漸進）
+    inactiveTag: {
+      enabled: raw?.inactiveTag?.enabled !== false,
+      days: Math.round(clampNumber(raw?.inactiveTag?.days, MIN_INACTIVE_TAG_DAYS, MAX_INACTIVE_TAG_DAYS, DEFAULT_INACTIVE_TAG_DAYS)),
+    },
+    // 舊工作區沒有這個欄位 → 一律視為關閉（每場對話一次 LLM 費用，同 imageAnswer 口徑）
+    autoTagSuggest: { enabled: raw?.autoTagSuggest?.enabled === true },
     updatedAt: raw?.updatedAt ?? FieldValue.serverTimestamp(),
   }
 }
@@ -236,6 +247,8 @@ export async function setAiSettings(
     disambiguation: { ...current.disambiguation, ...(partial.disambiguation ?? {}) },
     imageAnswer: { ...current.imageAnswer, ...(partial.imageAnswer ?? {}) },
     serviceHours: { ...current.serviceHours, ...(partial.serviceHours ?? {}) },
+    inactiveTag: { ...current.inactiveTag, ...(partial.inactiveTag ?? {}) },
+    autoTagSuggest: { ...current.autoTagSuggest, ...(partial.autoTagSuggest ?? {}) },
   })
   await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).set({
     ...merged,

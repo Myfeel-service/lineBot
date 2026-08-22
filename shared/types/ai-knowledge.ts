@@ -343,6 +343,29 @@ export interface AiSettingsDoc {
     /** 勿擾時段回覆客人的訊息 */
     dndReply: string
   }
+  /**
+   * 「N 天沒互動」自動標籤（CRM 分眾）：每天把「超過 N 天沒來訊」的客人貼上系統標籤，
+   * 客人一回來就自動摘掉。標籤本身在 tags 集合（code=sys_inactive，見 inactive-tag.ts），
+   * 推播分眾照常選這個標籤就好——分眾維度只有標籤一種，所以什麼都做成標籤（CRM-EVAL-20260822）。
+   *
+   * **預設開啟**：它不對客人說話、只在後台貼標，而且判斷基準 lastInboundMessageAt 是
+   * 2026-08-19 才開始記的——天數門檻走完之前一筆都不會貼，天生就是漸進上線。
+   */
+  inactiveTag: {
+    enabled: boolean
+    /** 幾天沒來訊算「沒互動」（下限 7：太短會把週末沒講話的客人都標成沉睡） */
+    days: number
+  }
+  /**
+   * AI 讀對話自動貼標（建議式，D-24）：對話結束後 AI 從**現有標籤清單**挑 0～3 個建議，
+   * 進收件匣等人採用——第一版刻意不直接貼（貼錯的下游是推錯人），跑順再談全自動。
+   *
+   * **預設關閉**：每場對話一次 LLM 呼叫是真金白銀，也要老闆先看過建議品質再開
+   * （同 imageAnswer 的漸進路徑）。
+   */
+  autoTagSuggest: {
+    enabled: boolean
+  }
   updatedAt: Timestamp | FieldValue
 }
 
@@ -682,6 +705,11 @@ export const DEFAULT_SLA_REMIND_MINUTES = 30
 /** 每日摘要發送時段預設（台北時間整點） */
 export const DEFAULT_DIGEST_HOUR = 9
 
+/** 「N 天沒互動」自動標籤的天數。單一事實來源：normalize / buildDefault / 前端表單都引用這裡 */
+export const DEFAULT_INACTIVE_TAG_DAYS = 60
+export const MIN_INACTIVE_TAG_DAYS = 7
+export const MAX_INACTIVE_TAG_DAYS = 365
+
 /** aiSettings 單例 doc ID */
 export const AI_SETTINGS_DOC_ID = 'default'
 
@@ -991,6 +1019,13 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       end: '18:00',
       weekendOff: true,
       dndReply: DEFAULT_DND_REPLY,
+    },
+    inactiveTag: {
+      enabled: true, // 預設開啟:不對客人說話、判斷欄位 08-19 起才有＝天生漸進,見介面註解
+      days: DEFAULT_INACTIVE_TAG_DAYS,
+    },
+    autoTagSuggest: {
+      enabled: false, // 預設關閉:每場對話一次 LLM 費用,老闆看過建議品質才開(同 imageAnswer)
     },
   }
 }

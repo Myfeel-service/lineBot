@@ -143,3 +143,193 @@
   flex-wrap: wrap;
   gap: 0.75rem;
 }
+
+/* ── 客人單頁抽屜（G-6）───────────────────────────────── */
+
+.user-identity--clickable {
+  cursor: pointer;
+  border-radius: 8px;
+
+  &:hover .user-name {
+    color: var(--el-color-primary);
+    text-decoration: underline;
+  }
+}
+
+.user-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.user-detail__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-detail__avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+
+  &--empty {
+    background: var(--bg-elevated);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+  }
+}
+
+.user-detail__title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.user-detail__name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+
+.user-detail__blocked {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+
+.user-detail__sub {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.user-detail__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+
+.user-detail__meta-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.user-detail__meta-label {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.user-detail__last-message {
+  /* 最後一句話當摘要看就好，長文截尾——整段對話請去對話頁看 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.user-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.user-detail__section-actions {
+  margin-top: 0.25rem;
+}
+
+.user-detail__tag-source {
+  margin-left: 0.3rem;
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+/* AI 建議區：跟一般標籤區分開（琥珀淡底＝「待你決定」，同 alerts 的 warning 語彙） */
+.user-detail__section--suggest {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 10px;
+  background: var(--el-color-warning-light-9);
+}
+
+.user-detail__suggest-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.user-detail__suggest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.user-detail__suggest-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.user-detail__suggest-reason {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-detail__suggest-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.user-detail__attrs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+  }
+
+  th {
+    color: var(--text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+    width: 34%;
+  }
+
+  td {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+
+  tr:last-child th,
+  tr:last-child td {
+    border-bottom: none;
+  }
+}

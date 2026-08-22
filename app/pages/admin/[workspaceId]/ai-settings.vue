@@ -403,6 +403,57 @@
           </div>
         </div>
 
+        <!-- ── 顧客標籤（CRM 分眾，CRM-EVAL-20260822 P1）─────────────── -->
+        <div class="message-card ai-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">顧客標籤</span>
+              <span v-if="form.autoTagSuggest.enabled" class="badge badge-green">AI 建議啟用中</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="ai-section-hint">
+              標籤是發推播挑名單的依據。這裡的兩個功能都只在後台動標籤,<strong>不會對客人說任何話</strong>。
+            </p>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="太久沒來訊的客人，自動貼「沒互動」標籤" tight />
+              <el-switch
+                v-model="form.inactiveTag.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <p class="ai-section-hint">
+                超過天數沒來訊就自動貼上（標籤叫「{{ form.inactiveTag.days }} 天沒互動」），
+                客人一回來就自動摘掉——發「好久不見」推播時選這個標籤就是名單。
+                ⚠️ 判斷用的「最後來訊時間」是 2026-08-19 起才有的欄位，更早之前就沉默的老客
+                第一批抓不到，會隨時間自然補齊。
+              </p>
+              <div v-if="form.inactiveTag.enabled" class="admin-field-group">
+                <AdminFieldLabel text="幾天沒來訊算「沒互動」" tight />
+                <el-input-number
+                  v-model="form.inactiveTag.days"
+                  :min="MIN_INACTIVE_TAG_DAYS"
+                  :max="MAX_INACTIVE_TAG_DAYS"
+                  :step="1"
+                />
+              </div>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="AI 讀對話，建議這位客人該貼什麼標籤" tight />
+              <el-switch
+                v-model="form.autoTagSuggest.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <p class="ai-section-hint">
+                對話結束後 AI 從<strong>你現有的標籤</strong>裡挑建議（例如客人問過禮盒 → 建議「送禮客群」），
+                放進「好友與標籤」頁點開客人時的「AI 建議」區——<strong>你按「採用」才會真的貼上</strong>，
+                AI 不會自己動手。開啟後每場對話會多一次小額 AI 費用。
+              </p>
+            </div>
+          </div>
+        </div>
+
         <!-- ── 服務時間 / 勿擾時段 ─────────────── -->
         <div class="message-card ai-section-card">
           <div class="message-card-header">
@@ -762,6 +813,8 @@ import {
   SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
+  MIN_INACTIVE_TAG_DAYS,
+  MAX_INACTIVE_TAG_DAYS,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { taipeiYyyyMm } from '~~/shared/time'
@@ -791,6 +844,8 @@ interface FormShape {
   disambiguation: AiSettingsDoc['disambiguation']
   imageAnswer: AiSettingsDoc['imageAnswer']
   serviceHours: AiSettingsDoc['serviceHours']
+  inactiveTag: AiSettingsDoc['inactiveTag']
+  autoTagSuggest: AiSettingsDoc['autoTagSuggest']
 }
 
 /** 表單預設值直接取自後端同一份 buildDefaultAiSettings，避免兩份預設漂移（top1Min 0.65 事故的根因） */
@@ -813,6 +868,8 @@ function defaultForm(): FormShape {
     disambiguation: { ...d.disambiguation },
     imageAnswer: { ...d.imageAnswer },
     serviceHours: { ...d.serviceHours },
+    inactiveTag: { ...d.inactiveTag },
+    autoTagSuggest: { ...d.autoTagSuggest },
   }
 }
 
@@ -1171,6 +1228,9 @@ function applySettings(data: AiSettingsDoc) {
     disambiguation: { ...data.disambiguation },
     imageAnswer: { ...data.imageAnswer },
     serviceHours: { ...data.serviceHours },
+    // 舊工作區沒有這兩個欄位時退回預設（normalize 也會補，這裡是載入時的同一個口徑）
+    inactiveTag: { ...(data.inactiveTag ?? buildDefaultAiSettings().inactiveTag) },
+    autoTagSuggest: { ...(data.autoTagSuggest ?? buildDefaultAiSettings().autoTagSuggest) },
   }
   // 回填名稱快取,讓已選通知對象的 tag 顯示暱稱
   for (const [uid, name] of Object.entries(data.handoffNotify?.displayNames ?? {})) {

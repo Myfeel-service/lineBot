@@ -2,6 +2,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './firebase'
 import { getAiSettings } from './ai-settings'
+import { clearInactiveTagOnReturn } from './inactive-tag'
 import {
   DEFAULT_LINE_WORKSPACE_ID,
   lineUserFirestoreDocId,
@@ -402,6 +403,12 @@ export async function ensureConversationSession(
   let resultStatus: ConversationStatus = 'open'
   /** 這場是「延續真人對話」開的（要在交易外補一筆時間軸事件） */
   let humanLeadRecorded = false
+  /**
+   * 交易裡讀到的「客人上一次來訊」時間（舊值）——給交易後的「沒互動」摘標判斷用
+   * （見 inactive-tag.ts）。文字訊息路徑存訊息在會話交易**之後**，所以這裡拿到的
+   * 一定是更新前的值；拿它判斷「這位是不是沉睡了 N 天才回來」零額外讀取。
+   */
+  let prevInboundMsForReturnCheck = 0
 
   const resultId = await db.runTransaction(async (tx) => {
     // Firestore 競爭時會重跑整個 callback：上一輪留下的旗標一律歸零，
@@ -410,9 +417,11 @@ export async function ensureConversationSession(
     closedOldSessionId = null
     resultStatus = 'open'
     humanLeadRecorded = false
+    prevInboundMsForReturnCheck = 0
 
     const convSnap = await tx.get(convRef)
     const convData = convSnap.data()
+    prevInboundMsForReturnCheck = (convData?.lastInboundMessageAt as Timestamp | undefined)?.toMillis?.() ?? 0
 
     // Read existing session inside the transaction (prevents concurrent creates).
     let existingRef: FirebaseFirestore.DocumentReference | null = null
@@ -555,6 +564,16 @@ export async function ensureConversationSession(
         : []),
       closeOrphanedSessions(lineUserId, newSessionId, workspaceId),
     ]).catch(e => console.warn('[session] post-create cleanup failed:', e))
+  }
+
+  /**
+   * 沉睡客回來了 → 摘掉「N 天沒互動」標籤（CRM 分眾，見 inactive-tag.ts）。
+   * 放在慢路徑的交易之後：回來的客人必走慢路徑（快取早就沒了），而沒超過門檻的
+   * 常態訊息在函式第一個 if 就返回＝零額外讀取。⛔ Lambda 上不可 fire-and-forget，
+   * 所以 await；函式內部自己吞錯，不會拖垮收訊。
+   */
+  if (!opts.origin && prevInboundMsForReturnCheck) {
+    await clearInactiveTagOnReturn(db, workspaceId, convDocId, prevInboundMsForReturnCheck, now)
   }
 
   return resultId

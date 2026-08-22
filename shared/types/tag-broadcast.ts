@@ -41,9 +41,11 @@ export interface TagDoc {
  * manual  – 後台手動操作
  * import  – CSV 匯入
  * rule    – 自動化規則觸發（Phase 3）
- * system  – 系統事件觸發，例如加入好友、完成購買
+ * system  – 系統事件觸發，例如加入好友、完成購買、「N 天沒互動」（inactive-tag.ts）
+ * ai      – AI 讀對話建議、**人按了採用**才貼上（D-24 建議式；ai-tag-suggest.ts）。
+ *           出錯要追得回來：來源標 ai 的都能在客人單頁一眼看出、且 tagLogs 有紀錄
  */
-export type UserTagSourceType = 'manual' | 'import' | 'rule' | 'system'
+export type UserTagSourceType = 'manual' | 'import' | 'rule' | 'system' | 'ai'
 
 export interface UserTagDoc {
   workspaceId: string
@@ -64,6 +66,35 @@ export interface UserTagDoc {
 // ═══════════════════════════════════════════════════════════════════
 
 export type TagOpAction = 'add' | 'remove'
+
+// ═══════════════════════════════════════════════════════════════════
+//  Collection: userTagSuggestions
+//  Doc ID: `${workspaceId}_${lineUserId}`（與 users / conversations 同一把 key，一人一份）
+//
+//  AI 讀對話貼標的收件匣（D-24 建議式）：AI 只把建議寫進 pending，人按「採用」
+//  才真的寫 userTags（sourceType='ai'）。忽略的 tagId 永久記在 dismissedTagIds——
+//  ⛔ 判過的不再重生（同 AI 學習迴圈的鐵律），否則同一個建議每場對話都回來一次。
+// ═══════════════════════════════════════════════════════════════════
+
+export interface UserTagSuggestionPending {
+  tagId: string
+  /** AI 的一句話依據（給店家看的，30 字內） */
+  reason: string
+  /** 產生這條建議的那場會話 */
+  sessionId: string
+  suggestedAtMs: number
+}
+
+export interface UserTagSuggestionDoc {
+  workspaceId: string
+  /** users 主鍵：`${workspaceId}_${lineUserId}` */
+  userId: string
+  pending: UserTagSuggestionPending[]
+  /** 忽略過的標籤——永久不再建議（採用過的不在此列：已貼上，由 userTags 天然擋掉） */
+  dismissedTagIds: string[]
+  createdAt: Timestamp | FieldValue
+  updatedAt: Timestamp | FieldValue
+}
 
 export interface TagLogDoc {
   workspaceId: string

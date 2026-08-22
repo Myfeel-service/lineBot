@@ -77,3 +77,59 @@ export async function addTagsToUser(
 
   return { added, skipped }
 }
+
+/**
+ * 冪等摘標：對單一使用者批次移除標籤（與 addTagsToUser 成對）。
+ * - 本來就沒有的 userTag doc 自動略過。
+ * - 同樣寫 tagLogs（action: 'remove'）供稽核——系統自動摘的標要查得到是誰摘的。
+ */
+export async function removeTagsFromUser(
+  /** Firestore users 主鍵：`${workspaceId}_${lineUserId}` */
+  userFirestoreDocId: string,
+  tagIds: string[],
+  sourceType: UserTagSourceType,
+  sourceRefId: string | null,
+  workspaceId: string,
+): Promise<{ removed: string[]; skipped: string[] }> {
+  if (!userFirestoreDocId || !tagIds.length) return { removed: [], skipped: [] }
+
+  const db = getDb()
+  const now = FieldValue.serverTimestamp()
+  const removed: string[] = []
+  const skipped: string[] = []
+  const batch = db.batch()
+
+  const entries = await Promise.all(
+    tagIds.map(async (tagId) => {
+      const ref = db.collection('userTags').doc(`${userFirestoreDocId}_${tagId}`)
+      const snap = await ref.get()
+      return { tagId, ref, exists: snap.exists }
+    }),
+  )
+
+  for (const { tagId, ref, exists } of entries) {
+    if (!exists) {
+      skipped.push(tagId)
+      continue
+    }
+    batch.delete(ref)
+    const logDoc: TagLogDoc = {
+      workspaceId,
+      action: 'remove',
+      userId: userFirestoreDocId,
+      tagId,
+      sourceType,
+      sourceRefId,
+      operatorId: null,
+      createdAt: now,
+    }
+    batch.set(db.collection('tagLogs').doc(uuidv4()), logDoc)
+    removed.push(tagId)
+  }
+
+  if (removed.length > 0) {
+    await batch.commit()
+  }
+
+  return { removed, skipped }
+}
