@@ -279,13 +279,17 @@
               <span class="lp-panel__title">顧客貼標</span>
             </div>
             <div class="lp-panel__bd">
+              <!-- ⛔ 這三行只能列系統真的會記的欄位（標籤／聊過的內容／腳本收到的答案／最後來訊）。
+                   2026-08-23 拍板把「買過 禮盒 ×2」「客單價 NT$1,280」換掉：購買紀錄與金額
+                   系統沒有任何來源（見 STATUS C-58／C-60），寫在卡上是沒掛徽章的不實宣稱，
+                   而且底下圖說的免責也沒涵蓋到它。接了購買資料之後才可以把「買過／客單價」加回來。 -->
               <div class="lp-mock lp-stage">
                 <div class="lp-prof"><span class="lp-prof__a" /><span><b>陳小姐</b><small>LINE 好友</small></span></div>
-                <div class="lp-info"><span>買過</span><b>禮盒 ×2</b></div>
-                <div class="lp-info"><span>客單價</span><b>NT$1,280</b></div>
                 <div class="lp-info"><span>標籤</span><b>送禮客群</b></div>
+                <div class="lp-info"><span>問過</span><b>{{ proposal?.name ?? '節慶' }}禮盒有沒有貨</b></div>
+                <div class="lp-info"><span>最後來訊</span><b>3 天前</b></div>
               </div>
-              <h3>誰是誰、買過什麼，自動記住</h3>
+              <h3>誰是誰、聊過什麼，自動記住</h3>
               <p>客服與行銷資料打通，同一位客人前後文都在，不再靠印象認人。</p>
             </div>
           </div>
@@ -616,7 +620,10 @@
               </details>
               <details class="lp-q">
                 <summary>我的客戶資料安全嗎？<span class="plus" v-html="plusIcon" /></summary>
-                <div class="a">資料存在你自己的工作區，你擁有、可管理與刪除，我們不會另作他用。</div>
+                <!-- ⛔ 別把「可自行刪除」加回來：後台沒有刪除客人／對話的入口。這句要跟隱私權頁
+                     （2026-08-21 已改成寄信處理）講一樣的話——做出自助刪除（STATUS H-15c）之前，
+                     任何一處寫「隨時可刪」都是對消費者的不實承諾。 -->
+                <div class="a">資料存在你自己的工作區，我們不會另作他用。需要刪除特定客人或整批資料時，寄信到 <a :href="emailHref">{{ email }}</a>，我們會在確認你的身分後 30 日內處理。</div>
               </details>
               <details class="lp-q">
                 <summary>按用量計價，會不會爆帳單？<span class="plus" v-html="plusIcon" /></summary>
