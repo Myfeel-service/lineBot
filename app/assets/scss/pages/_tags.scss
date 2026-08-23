@@ -221,41 +221,63 @@
   line-height: 1.6;
 }
 
-/* ── AI 判斷三段選擇（D-27①）：帶說明的選項卡 ──────────── */
+/* ── AI 判斷三段選擇（D-27①）＋範本清單（D-27③）─────────────
+   ⛔ 一律用 el-radio / el-checkbox，不要手刻原生 input：
+      base/_reset.scss 有 `input, textarea, select { width: 100% }`，原生 radio 會被拉成
+      滿版把整列吃光，旁邊文字被壓成 0 寬變直排（2026-08-24 實際破版，headless 量到
+      radio 寬 456px、文字寬 0px）。EP 的真 input 是隱藏的 .el-radio__original，不吃那條。
+   ⚠️ EP 預設是「單行、nowrap、固定 32px 高、右側 margin 32px」的並排樣式，
+      要當多行卡片用就得逐項覆寫：高度改 auto、white-space 改 normal、清掉 margin。 */
+
+%tags-choice-card {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  white-space: normal;
+  transition: border-color 0.15s, background 0.15s;
+
+  /* ⛔ 這是全域 partial，**不能用 `:deep()`**（那是 SFC scoped 樣式的語法，
+     寫在這裡會原樣輸出、選不到任何東西）——直接寫後代選擇器。 */
+
+  /* 圓鈕／方框跟第一行文字對齊（EP 預設垂直居中，多行卡片會飄到中間） */
+  .el-radio__input,
+  .el-checkbox__input {
+    margin-top: 0.2rem;
+  }
+
+  /* label 區塊化才排得下標題＋說明兩行 */
+  .el-radio__label,
+  .el-checkbox__label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding-left: 0.55rem;
+    line-height: 1.55;
+    white-space: normal;
+    word-break: break-word;
+  }
+}
 
 .tags-ai-options {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+  width: 100%;
 }
 
 .tags-ai-option {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  border: 1px solid var(--border-color);
-  border-radius: 9px;
-  padding: 0.55rem 0.75rem;
-  cursor: pointer;
-  transition: border-color 0.15s;
+  @extend %tags-choice-card;
 
-  &.is-active {
+  /* EP 會在選中的 root 上自己加 .is-checked，不必另外綁 class */
+  &.is-checked {
     border-color: var(--el-color-primary);
     background: var(--el-color-primary-light-9);
   }
-}
-
-.tags-ai-option__radio {
-  margin-top: 0.28rem;
-  flex-shrink: 0;
-  accent-color: var(--el-color-primary);
-}
-
-.tags-ai-option__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
 }
 
 .tags-ai-option__title {
@@ -267,7 +289,6 @@
 .tags-ai-option__desc {
   font-size: 0.76rem;
   color: var(--text-secondary);
-  line-height: 1.55;
 }
 
 /* 判斷條件欄：左邊一條淡色引導線＝「這欄屬於上面選的那個模式」 */
@@ -277,47 +298,29 @@
   border-left: 2px solid var(--el-color-primary-light-7);
 }
 
-/* ── 範本清單（D-27③）─────────────────────────────── */
-
 .tags-template-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  width: 100%;
   max-height: min(52vh, 460px);
   overflow-y: auto;
 }
 
 .tags-template-item {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  border: 1px solid var(--border-color);
-  border-radius: 9px;
-  padding: 0.6rem 0.75rem;
-  cursor: pointer;
+  @extend %tags-choice-card;
 
   &.is-checked {
     border-color: var(--el-color-primary);
     background: var(--el-color-primary-light-9);
   }
 
-  &.is-exists {
-    opacity: 0.55;
-    cursor: default;
+  /* 已建立過的範本要淡化＝一眼看出「這顆不用再建」（EP 自己也會在 root 加 is-disabled） */
+  &.is-exists,
+  &.is-disabled {
+    opacity: 0.6;
+    background: var(--bg-elevated);
   }
-}
-
-.tags-template-item__check {
-  margin-top: 0.3rem;
-  flex-shrink: 0;
-  accent-color: var(--el-color-primary);
-}
-
-.tags-template-item__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
 }
 
 .tags-template-item__name {
@@ -326,12 +329,12 @@
   gap: 0.4rem;
   font-weight: 600;
   font-size: 0.875rem;
+  color: var(--text-primary);
 }
 
 .tags-template-item__criteria {
   font-size: 0.78rem;
   color: var(--text-primary);
-  line-height: 1.55;
 }
 
 .tags-template-item__usage {

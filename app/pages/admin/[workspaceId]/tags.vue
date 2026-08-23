@@ -212,26 +212,21 @@
              預設 off＝問卷/客服/活動這類事件紀錄標籤完全不被 AI 碰。 -->
         <div class="admin-field-group">
           <AdminFieldLabel text="要不要讓 AI 判斷這顆標籤？" tight />
-          <div class="tags-ai-options">
-            <label
+          <!-- ⛔ 用 el-radio-group 不要手刻 <input type="radio">：base/_reset.scss 有
+               `input, textarea, select { width: 100% }`，原生 radio 會被拉成滿版把整列吃光，
+               旁邊的文字被壓成 0 寬變直排（2026-08-24 實際破版過）。Element Plus 的真 input
+               是隱藏的 .el-radio__original，不吃那條規則。 -->
+          <el-radio-group v-model="form.aiMode" class="tags-ai-options">
+            <el-radio
               v-for="opt in AI_MODE_OPTIONS"
               :key="opt.value"
+              :value="opt.value"
               class="tags-ai-option"
-              :class="{ 'is-active': form.aiMode === opt.value }"
             >
-              <input
-                v-model="form.aiMode"
-                type="radio"
-                name="tag-ai-mode"
-                :value="opt.value"
-                class="tags-ai-option__radio"
-              />
-              <span class="tags-ai-option__body">
-                <span class="tags-ai-option__title">{{ opt.title }}</span>
-                <span class="tags-ai-option__desc">{{ opt.desc }}</span>
-              </span>
-            </label>
-          </div>
+              <span class="tags-ai-option__title">{{ opt.title }}</span>
+              <span class="tags-ai-option__desc">{{ opt.desc }}</span>
+            </el-radio>
+          </el-radio-group>
         </div>
 
         <!-- 判斷條件只在需要時出現（漸進揭露）：off 的 19 顆標籤不用面對用不到的欄位。
@@ -273,31 +268,25 @@
       這些都是「對話裡看得出來」的意圖標籤——判斷條件已經寫好，建立後可到標籤上逐字修改。
       建立時一律是「<strong>AI 先建議</strong>」，你按採用才貼；覺得準了再把該顆改成「直接貼」。
     </p>
-    <div class="tags-template-list">
-      <label
+    <!-- 同三段選擇：原生 checkbox 也會被 reset 的 `input { width: 100% }` 拉滿版，一律走 el-checkbox -->
+    <el-checkbox-group v-model="selectedTemplateCodes" class="tags-template-list">
+      <el-checkbox
         v-for="t in TAG_TEMPLATES"
         :key="t.code"
+        :value="t.code"
+        :disabled="existingCodes.has(t.code)"
         class="tags-template-item"
-        :class="{ 'is-exists': existingCodes.has(t.code), 'is-checked': selectedTemplateCodes.includes(t.code) }"
+        :class="{ 'is-exists': existingCodes.has(t.code) }"
       >
-        <input
-          v-model="selectedTemplateCodes"
-          type="checkbox"
-          :value="t.code"
-          :disabled="existingCodes.has(t.code)"
-          class="tags-template-item__check"
-        />
-        <span class="tags-template-item__body">
-          <span class="tags-template-item__name">
-            <span class="tag-color-dot" :style="{ '--dot-bg': t.color }" />
-            {{ t.name }}
-            <span v-if="existingCodes.has(t.code)" class="badge badge-gray">已建立</span>
-          </span>
-          <span class="tags-template-item__criteria">條件：{{ t.criteria }}</span>
-          <span class="tags-template-item__usage">{{ t.usage }}</span>
+        <span class="tags-template-item__name">
+          <span class="tag-color-dot" :style="{ '--dot-bg': t.color }" />
+          {{ t.name }}
+          <span v-if="existingCodes.has(t.code)" class="badge badge-gray">已建立</span>
         </span>
-      </label>
-    </div>
+        <span class="tags-template-item__criteria">條件：{{ t.criteria }}</span>
+        <span class="tags-template-item__usage">{{ t.usage }}</span>
+      </el-checkbox>
+    </el-checkbox-group>
     <template #footer>
       <el-button @click="templateDialogVisible = false">關閉</el-button>
       <el-button
