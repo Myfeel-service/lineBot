@@ -212,3 +212,11 @@
 .tags-option-row__label {
   margin-left: 0;
 }
+
+/* 說明欄底下的用途提示：這一欄同時是「AI 的判斷條件」，不講清楚沒人知道寫的字有作用
+   （2026-08-24 老闆直接問「這邊的說明就是會讓 AI 判斷嗎」＝文案沒講到位） */
+.tags-desc-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}

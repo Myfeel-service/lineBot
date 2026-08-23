@@ -145,4 +145,15 @@ describe('buildSuggestPrompt', () => {
     const p = buildSuggestPrompt(catalog, transcript)
     expect(p).not.toContain('id: t2｜名稱: VIP｜說明:')
   })
+
+  /**
+   * 說明欄就是「AI 的判斷條件」（標籤編輯器 maxlength=200）。
+   * 先前 prompt 只截前 80 字＝使用者認真寫的條件被默默丟掉一半、畫面一個字都沒講。
+   * ⛔ 動標籤編輯器的 maxlength 時，這條會失敗提醒你兩邊要一起改。
+   */
+  it('說明滿 200 字要整段進 prompt，不准靜默截斷（對齊輸入框上限）', () => {
+    const desc = '條'.repeat(200)
+    const p = buildSuggestPrompt([{ id: 't1', name: '在看除濕機', description: desc }], transcript)
+    expect(p).toContain(desc)
+  })
 })

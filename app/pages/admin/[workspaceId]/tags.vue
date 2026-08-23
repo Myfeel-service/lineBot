@@ -176,15 +176,27 @@
           </div>
         </div>
 
+        <!-- ⛔ 這一欄**不只是內部備註**：開了「AI 讀對話建議標籤」之後，AI 判斷時看到的就是
+             「名稱＋這一欄」（見 server/utils/ai-tag-suggest.ts 的 buildSuggestPrompt）。
+             原本標題寫「備註說明」、提示寫「供內部參考」是加 AI 之前的文案，會讓人不知道
+             這裡寫的字有真實作用（2026-08-24 老闆直接問「這邊的說明就是會讓 AI 判斷嗎」）。
+             ⛔ 改字數上限時要連 ai-tag-suggest 的 DESCRIPTION_IN_PROMPT_MAX 一起改，
+             否則會變成「讓人打 200 字、AI 只讀前 80 字」的靜默截斷。 -->
         <div class="admin-field-group">
-          <AdminFieldLabel text="備註說明（選填）" tight />
+          <AdminFieldLabel text="說明（選填，也是 AI 判斷這顆標籤的條件）" tight />
           <el-input
             v-model="form.description"
             type="textarea"
-            :rows="2"
-            placeholder="供內部參考的補充說明"
+            :rows="3"
+            placeholder="例：客人詢問、比較除濕機，或提到家裡潮濕、衣服晾不乾想找解法。只問舊機維修的不算。"
             maxlength="200"
+            show-word-limit
           />
+          <p class="tags-desc-hint text-muted">
+            這段話有兩個用途：給團隊看，以及<strong>當 AI 的判斷條件</strong>——開了「AI 讀對話，建議該貼什麼標籤」
+            （在「AI 設定 → 顧客標籤」）之後，AI 會拿整段對話對照這裡寫的條件。
+            寫法：<strong>客人說了什麼算</strong>、順便寫<strong>什麼不算</strong>，越像人話越準。
+          </p>
         </div>
       </div>
     </el-form>

@@ -38,6 +38,14 @@ const MAX_SUGGESTIONS_PER_SESSION = 3
 const MAX_PENDING_PER_USER = 5
 /** prompt 裡最多放幾個候選標籤（標籤上百的工作區截斷，控 token） */
 const MAX_TAGS_IN_PROMPT = 60
+/**
+ * 每顆標籤的說明放進 prompt 的字數上限。
+ *
+ * ⛔ **必須等於標籤編輯器 `description` 的 maxlength**（app/pages/admin/[workspaceId]/tags.vue）：
+ * 先前這裡是 80、輸入框卻讓人打 200 → 認真寫的判斷條件被默默丟掉一半，而畫面一個字都沒講。
+ * 那一欄現在的定位就是「AI 的判斷條件」，讓人打得下的就要全部讀進來，不留隱藏規則。
+ */
+const DESCRIPTION_IN_PROMPT_MAX = 200
 
 export const AI_TAG_SUGGEST_SOURCE_REF = 'ai-tag-suggest'
 
@@ -75,7 +83,7 @@ export interface TranscriptTurn {
 
 export function buildSuggestPrompt(catalog: TagCatalogItem[], transcript: TranscriptTurn[]): string {
   const tagLines = catalog
-    .map(t => `- id: ${t.id}｜名稱: ${t.name}${t.description ? `｜說明: ${t.description.slice(0, 80)}` : ''}`)
+    .map(t => `- id: ${t.id}｜名稱: ${t.name}${t.description ? `｜說明: ${t.description.slice(0, DESCRIPTION_IN_PROMPT_MAX)}` : ''}`)
     .join('\n')
   const convoLines = transcript
     .map(t => `${t.role === 'customer' ? '客' : '店'}: ${t.text}`)
