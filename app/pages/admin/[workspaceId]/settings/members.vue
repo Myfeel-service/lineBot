@@ -22,7 +22,7 @@
           <div class="card-section-stack">
             <p class="member-line-note">
               「LINE 通知」綁定成員本人的 LINE 帳號後,
-              「AI 設定 → 轉真人通知」的名單就能直接勾選這位成員,不必到會員清單裡用暱稱找人。
+              「AI 設定 → 轉真人通知」的名單就能直接勾選這位成員,不必到好友清單裡用暱稱找人。
             </p>
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />

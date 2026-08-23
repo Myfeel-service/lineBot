@@ -1,7 +1,10 @@
 /** 後台標籤／好友／推播共用的選項與色票（單一來源，避免各頁複製） */
 
 export const TAG_CATEGORY_OPTIONS = [
-  { value: 'member_status', label: '會員狀態' },
+  // ⛔ 顯示文字 2026-08-23 由「會員狀態」改「好友狀態」（「會員」全面退場，見 STATUS G-23）。
+  // **`value` 刻意不動**：它是既有標籤存在資料庫裡的分類值，改了等於要遷移全部既有標籤，
+  // 而使用者只看得到 label。日後若真要改 value，記得連 tags 集合一起搬。
+  { value: 'member_status', label: '好友狀態' },
   { value: 'interest', label: '興趣偏好' },
   { value: 'behavior', label: '消費行為' },
   { value: 'activity', label: '活動參與' },

@@ -8,7 +8,7 @@ import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 export type TagStatus = 'active' | 'inactive'
 
 /**
- * member_status  – 例如 vip、new_friend、blocked_risk
+ * member_status  – 「好友狀態」（後台顯示名，見 shared/tag-admin.ts）：例如 vip、new_friend、blocked_risk
  * interest       – 例如 interest_food、interest_travel
  * behavior       – 例如 buyer、cart_abandon、clicked_promo
  * activity       – 例如 event_2025q2、campaign_mothersday

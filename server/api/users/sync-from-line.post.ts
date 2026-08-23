@@ -149,7 +149,7 @@ export default defineEventHandler(async (event) => {
     if (msg.includes('Access to this API is not available for your account')) {
       throw createError({
         statusCode: 403,
-        statusMessage: '此 LINE 官方帳號目前不支援好友清單 API（followers/ids），只能透過 Webhook 事件逐步累積會員。',
+        statusMessage: '此 LINE 官方帳號目前不支援好友清單 API（followers/ids），只能透過 Webhook 事件逐步累積好友。',
       })
     }
     throw createError({
