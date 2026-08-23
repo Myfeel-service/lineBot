@@ -2,6 +2,7 @@ import type { SetupItemStatus, SetupStatusItem, SetupStatusResponse } from '~~/s
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
+import { hasReceivedPeerMessage } from '~~/server/utils/conversation-peer-activity'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { checkLineWebhook } from '~~/server/utils/workspace-alerts'
@@ -89,16 +90,8 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
     }),
     // 曾收到客人訊息：lastPeerActivityAt 只在「客人真的傳了訊息」時寫入
     // （加好友的 customer_action 是 traceOnly，不會蓋這個欄位——加了好友沒開口不算）。
-    // 單欄位 equality 查詢免索引；掃前 20 筆對話在記憶體判定即可：
-    // 有在營運的帳號前幾筆一定有人講過話，全新帳號本來就只有零星幾筆。
-    resolve(async () => {
-      const snap = await db
-        .collection('conversations')
-        .where('workspaceId', '==', wid)
-        .limit(20)
-        .get()
-      return snap.docs.some(d => d.data()?.lastPeerActivityAt != null)
-    }),
+    // 口徑與開通引導的見證時刻共用 findLatestPeerActiveConversation，別在這裡各寫一份。
+    resolve(() => hasReceivedPeerMessage(db, wid)),
   ])
 
   const items: SetupStatusItem[] = [

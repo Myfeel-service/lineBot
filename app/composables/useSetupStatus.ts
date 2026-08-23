@@ -115,22 +115,48 @@ export function useSetupStatus() {
   const { workspaceId, getBearer, canManageSettings, canOperate } = useWorkspace()
 
   // 全域共享，FAB 與面板共用同一份狀態
-  const statusMap = useState<Record<string, SetupItemStatus>>('setup-status-map', () => ({}))
-  const loaded = useState('setup-status-loaded', () => false)
+  const rawStatusMap = useState<Record<string, SetupItemStatus>>('setup-status-map', () => ({}))
+  const rawLoaded = useState('setup-status-loaded', () => false)
   const loading = useState('setup-status-loading', () => false)
   const checkedAt = useState('setup-status-checked-at', () => 0)
+  /**
+   * 這份結果是「哪個官方帳號」的。
+   *
+   * ⛔ 沒有這一欄就出過事（2026-08-23）：狀態是全域共享的一份，換帳號時沒人記得它是誰的，
+   * 60 秒內再問還會被當成新鮮的直接回覆——於是從一個全新帳號（沒收過訊息）點進 MYFEEL，
+   * default.vue 拿著上一家的「開通沒做完」把人整頁拉去開通引導，引導自己重查一次卻顯示
+   * 兩項都完成、直接跳「接通完成」。判斷與資料一律先對得上帳號，對不上就當作沒有資料。
+   */
+  const checkedFor = useState('setup-status-checked-for', () => '')
 
   let inflight: Promise<void> | null = null
+  let inflightFor = ''
+  let inflightTicket = 0
+
+  /** 手上這份是不是「現在這個帳號」的 */
+  const cacheMatchesWorkspace = computed(() =>
+    !!workspaceId.value && checkedFor.value === workspaceId.value,
+  )
+
+  /** 對外一律走這兩個：對不上帳號就是空的／沒載入過，不會把別家的答案端出來 */
+  const statusMap = computed<Record<string, SetupItemStatus>>(() =>
+    cacheMatchesWorkspace.value ? rawStatusMap.value : {},
+  )
+  const loaded = computed(() => cacheMatchesWorkspace.value && rawLoaded.value)
 
   async function refresh(options: { force?: boolean } = {}): Promise<void> {
     const wid = workspaceId.value
     if (!wid)
       return
-    if (inflight)
+    // 只有「同一個帳號」的查詢能共用飛行中的那一支
+    if (inflight && inflightFor === wid)
       return inflight
-    if (!options.force && checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS)
+    // 快取只對得上自己那個帳號；換了帳號一律重查，不吃 TTL
+    if (!options.force && checkedFor.value === wid && checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS)
       return
     loading.value = true
+    inflightFor = wid
+    const ticket = ++inflightTicket
     inflight = (async () => {
       try {
         const token = await getBearer()
@@ -141,29 +167,35 @@ export function useSetupStatus() {
         const next: Record<string, SetupItemStatus> = {}
         for (const item of data.items)
           next[item.id] = item.status
-        statusMap.value = next
+        rawStatusMap.value = next
+        checkedFor.value = wid
         checkedAt.value = Date.now()
-        loaded.value = true
+        rawLoaded.value = true
       }
       catch {
         // 靜默失敗，保留前一次結果；不要把查不到誤報成沒做
       }
       finally {
-        loading.value = false
-        inflight = null
+        // 只有「最後發出的那一支」有資格收尾——中途換帳號時舊的那支落地不能把新的清掉
+        if (inflightTicket === ticket) {
+          loading.value = false
+          inflight = null
+          inflightFor = ''
+        }
       }
     })()
     return inflight
   }
 
   /**
-   * 清掉現有結果。換工作區時一定要呼叫：把 A 帳號「已完成」的進度條留在 B 帳號畫面上，
-   * 會讓人以為新帳號已經設定好了，比暫時沒有資料嚴重。
+   * 清掉現有結果。換工作區時會呼叫；不過就算沒人叫，checkedFor 也會擋住跨帳號誤用——
+   * 把 A 帳號「已完成」的進度條留在 B 帳號畫面上，比暫時沒有資料嚴重。
    */
   function reset() {
-    statusMap.value = {}
-    loaded.value = false
+    rawStatusMap.value = {}
+    rawLoaded.value = false
     checkedAt.value = 0
+    checkedFor.value = ''
   }
 
   const capabilities = computed<ResolvedCapability[]>(() =>

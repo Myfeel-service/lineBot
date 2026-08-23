@@ -30,7 +30,10 @@ function stubDb(workspace: Record<string, unknown> | null) {
   vi.mocked(getDb).mockReturnValue({
     collection: () => ({
       doc: () => ({ get: async () => ({ exists: !!workspace, data: () => workspace }) }),
-      where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }),
+      where: () => ({
+        limit: () => ({ get: async () => ({ empty: true, docs: [] }) }),
+        orderBy: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }),
+      }),
     }),
   } as never)
 }

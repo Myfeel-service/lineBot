@@ -1,3 +1,4 @@
+import { findLatestPeerActiveConversation } from '~~/server/utils/conversation-peer-activity'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
@@ -32,26 +33,11 @@ export default defineEventHandler(async (event): Promise<FirstMessageResponse> =
 
   const db = getDb()
 
-  // 單欄位 equality 查詢免索引；在記憶體挑「最近有客人說話」的那場對話
-  const convSnap = await db
-    .collection('conversations')
-    .where('workspaceId', '==', wid)
-    .limit(20)
-    .get()
-
-  let latestDocId: string | null = null
-  let latestMs = 0
-  for (const doc of convSnap.docs) {
-    const at = doc.data()?.lastPeerActivityAt
-    const ms = typeof at?.toMillis === 'function' ? at.toMillis() : 0
-    if (ms > latestMs) {
-      latestMs = ms
-      latestDocId = doc.id
-    }
-  }
-
-  if (!latestDocId)
+  // 「最近有客人說話」的那場對話——與 setup-status 的 firstMessageReceived 共用同一支
+  const latest = await findLatestPeerActiveConversation(db, wid)
+  if (!latest)
     return { received: false }
+  const latestDocId = latest.id
 
   // 取該場對話最近幾則，找最新的一則「客人傳來的訊息」。
   // 只用 orderBy timestamp（子集合單欄位索引自動有）——加 direction 過濾會要複合索引，
