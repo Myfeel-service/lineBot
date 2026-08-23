@@ -279,6 +279,13 @@ export interface AiSettingsDoc {
      */
     festivalTips: boolean
     /**
+     * 每週一在同一則摘要裡附「本週顧客觀察」（D-25 第二階，洞察週報）：
+     * 這週被貼最多的標籤、待處理的 AI 標籤建議數、上月有來訊這月安靜的客人數。
+     * 走每日摘要同一條 LINE 管道不另發一則；只講有資料的觀察，全部為零就整段不出現。
+     * **預設開**（同 festivalTips 口徑：不對客人說話，漏掉才是損失）。
+     */
+    weeklyInsights: boolean
+    /**
      * 嚴重異常主動推到 LINE（`D-8`②，2026-08-21 老闆拍板做）。
      *
      * 只推「現在正在影響客人」那一級（機器人收不到訊息、AI 停止回覆、活動連結打不開…），
@@ -1007,6 +1014,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       slaRemindMinutes: DEFAULT_SLA_REMIND_MINUTES,
       digestHour: DEFAULT_DIGEST_HOUR,
       festivalTips: true,
+      weeklyInsights: true,
       criticalAlertPush: true,
     },
     handbackIdleMinutes: DEFAULT_HANDBACK_IDLE_MINUTES,

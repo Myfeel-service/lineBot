@@ -25,6 +25,7 @@ import { extractUrlText } from './ai-source-extractors'
 import { syncGoogleSheetSource } from './gsheet-sync'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
+import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushMessage } from './line'
@@ -1028,14 +1029,19 @@ export async function dailyBacklogDigest(db: Firestore) {
   //      而 byWs 是從積壓資料聚合出來的,沒積壓的帳號根本不在裡面。
   // 這個閘門是刻意的：2026-08-11 讀取費暴衝的形狀就是「掃全部再跳過」。
   const festivalWindowOpen = hasFestivalInWindow(today)
+  /** 週一＝摘要尾巴附「本週顧客觀察」（D-25 洞察週報；同節慶的掛法：搭同一則，不另發） */
+  const weeklyWindowOpen = isTaipeiMonday(today)
   const festivalStateRef = db.collection('cronState').doc('festival-digest')
   let festivalState: FestivalSentState = {}
   const targetWorkspaces = new Set(byWs.keys())
   if (festivalWindowOpen) {
     festivalState = ((await festivalStateRef.get()).data() ?? {}) as FestivalSentState
+  }
+  if (festivalWindowOpen || weeklyWindowOpen) {
+    // 節慶與週報都跟積壓無關——**沒有積壓的帳號也該收到**，而 byWs 只有積壓帳號
     const wsSnap = await db.collection('workspaces').limit(DIGEST_WORKSPACE_SCAN_CAP).get()
     if (wsSnap.size >= DIGEST_WORKSPACE_SCAN_CAP) {
-      console.warn('[festival-digest] workspace 數達掃描上限，部分帳號今天收不到節慶提醒', DIGEST_WORKSPACE_SCAN_CAP)
+      console.warn('[digest] workspace 數達掃描上限，部分帳號今天收不到節慶/週報段落', DIGEST_WORKSPACE_SCAN_CAP)
     }
     for (const doc of wsSnap.docs) targetWorkspaces.add(doc.id)
   }
@@ -1049,7 +1055,8 @@ export async function dailyBacklogDigest(db: Firestore) {
     const hasKnowledge = agg.outdatedSources > 0 || agg.failedSources > 0 || agg.expiredCards > 0 || agg.suggestions > 0
     // 節慶判定排在讀設定**之前**：只有節慶可講、而它今天早就講過的帳號,連設定都不用讀
     const reminder = festivalWindowOpen ? pickFestivalReminder(today, festivalState[ws] ?? {}) : null
-    if (!hasConversation && !hasKnowledge && !reminder) continue
+    // 週一先別在這裡早退：週報有沒有東西要等設定與時段閘門過了才查（見下方 insights）
+    if (!hasConversation && !hasKnowledge && !reminder && !weeklyWindowOpen) continue
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
@@ -1062,6 +1069,18 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 之外（例如 09:00–18:00 上班、20:00 收摘要）很合理,拿勿擾去擋會變成永遠不發。
     if (isServiceDayOff(settings.serviceHours)) continue
     if (taipeiHour < cfg.digestHour) continue // 商家自選時段還沒到,下一輪再看
+
+    // 週報查詢排在所有便宜閘門之後：只有真的走到「要發」的帳號、而且是週一才花這幾個查詢。
+    // 但要排在認領**之前**——週一「只有週報可講」的帳號得先知道有沒有東西，
+    // 先認領再發現是空的會把今天記成發過，當天真正的摘要就再也出不去了。
+    // 週報壞了只記 log，不准拖垮摘要本體。
+    const insights = weeklyWindowOpen && cfg.weeklyInsights !== false
+      ? await buildWeeklyInsights(db, ws, nowMs).catch((e) => {
+          console.warn('[weekly-insights] build failed:', ws, e)
+          return null
+        })
+      : null
+    if (!hasConversation && !hasKnowledge && !festival && !insights) continue
 
     // 認領排在所有「發不發」的判斷之後、推播之前:提早認領會讓「時段還沒到」也被
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
@@ -1087,6 +1106,8 @@ export async function dailyBacklogDigest(db: Firestore) {
     else if (festival) {
       lines.push('🎉 節慶行銷提醒', festivalReminderText(festival))
     }
+    // 週報段落固定收尾（第一行自帶標題）；前面有別的段落就用空行隔開
+    if (insights) lines.push(...(lines.length ? [''] : []), ...insights)
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
     try {
       const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))

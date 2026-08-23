@@ -350,6 +350,21 @@
                 (例如「再過 7 天就是中秋節,禮盒與送禮的需求會明顯升溫」)。三次講的事不一樣:
                 七天前提醒備素材、三天前提醒去排推播、前一天是最後確認清單。
                 <strong>當天沒有其他待辦也會照發</strong>這一段,否則提醒就沒意義了。
+              </p>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="每週一附「本週顧客觀察」" tight />
+              <el-switch
+                v-model="form.handoffNotify.weeklyInsights"
+                :disabled="!form.handoffNotify.enabled"
+                active-text="啟用"
+                inactive-text="停用"
+              />
+              <p class="ai-section-hint">
+                每週一在同一則摘要裡多一段：這週被貼最多的標籤、還沒看的 AI 標籤建議、
+                上個月有來訊但最近兩週安靜下來的客人數——都是看完就有下一步的觀察
+                (例如選著標籤發推播)。<strong>只講有資料的</strong>,這週沒東西就整段不出現,
+                不會硬湊一段空話。
                 收錄約 20 個真的會影響買氣的節日(中秋、春節、母親節、雙 11…),同一天最多講一個。
               </p>
             </div>
@@ -1224,6 +1239,7 @@ function applySettings(data: AiSettingsDoc) {
       digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
       // 舊工作區沒有這個欄位＝預設開（與後端 normalize 同一個口徑，別在這裡寫成 === true）
       festivalTips: data.handoffNotify?.festivalTips !== false,
+      weeklyInsights: data.handoffNotify?.weeklyInsights !== false,
       criticalAlertPush: data.handoffNotify?.criticalAlertPush !== false,
     },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),

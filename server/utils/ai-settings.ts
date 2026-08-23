@@ -164,6 +164,8 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
         // 舊工作區沒有這個欄位 → 視為開啟（與 imageAnswer 相反：那是「AI 會不會跟客人
         // 說話」的行為改變所以預設關，這裡只是多一段給店家自己看的提醒，漏掉才是損失）
         festivalTips: raw?.handoffNotify?.festivalTips !== false,
+        // 同 festivalTips 口徑：週一的「本週顧客觀察」段落，舊工作區視為開
+        weeklyInsights: raw?.handoffNotify?.weeklyInsights !== false,
         // 同 festivalTips：沒存過這個欄位的舊工作區一律視為「開」，前後端同口徑
         criticalAlertPush: raw?.handoffNotify?.criticalAlertPush !== false,
       }
