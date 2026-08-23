@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { TagLogDoc } from '~~/shared/types/tag-broadcast'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { recordManualRemovalAsDismissed } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 const FIRESTORE_BATCH_LIMIT = 400
@@ -91,6 +92,13 @@ export default defineEventHandler(async (event) => {
   }
 
   await flushBatch()
+
+  // 同單筆移除：手動拆掉＝否決票，AI 有在判的標籤記進「永不再提」（防 auto 拉鋸戰）
+  if (removed > 0) {
+    const fsUserDocIds = userIds.map(uid =>
+      lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(uid, workspaceId), workspaceId))
+    await recordManualRemovalAsDismissed(db, workspaceId, fsUserDocIds, tagIds)
+  }
 
   return { total: userIds.length * tagIds.length, removed, notFound }
 })

@@ -11,12 +11,19 @@ function filterTags(
   opts: {
     statusFilter?: string
     categoryFilter?: string
+    aiModeFilter?: string
     searchRaw?: string
   },
 ): TagRow[] {
   let result = tags
   if (opts.statusFilter) result = result.filter((t) => t.status === opts.statusFilter)
   if (opts.categoryFilter) result = result.filter((t) => t.category === opts.categoryFilter)
+  // 'off' 要把「沒有這個欄位」的舊標籤也算進去（缺欄＝off 是全系統口徑）
+  if (opts.aiModeFilter) {
+    result = opts.aiModeFilter === 'off'
+      ? result.filter((t) => !t.aiMode || t.aiMode === 'off')
+      : result.filter((t) => t.aiMode === opts.aiModeFilter)
+  }
   if (opts.searchRaw) {
     result = result.filter(
       (t) =>
@@ -44,6 +51,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const statusFilter = query.status as string | undefined
   const categoryFilter = query.category as string | undefined
+  const aiModeFilter = query.aiMode as string | undefined
   const searchRaw = String(query.search || '').trim().toLowerCase()
   const includeMemberCount = query.includeMemberCount === '1' || query.includeMemberCount === 'true'
   const { page, limit, offset, paginate } = parseAdminListPagination(query)
@@ -52,7 +60,7 @@ export default defineEventHandler(async (event) => {
     ref.where('workspaceId', '==', workspaceId).orderBy('createdAt', 'desc'),
   )
 
-  const filtered = filterTags(tags, { statusFilter, categoryFilter, searchRaw })
+  const filtered = filterTags(tags, { statusFilter, categoryFilter, aiModeFilter, searchRaw })
 
   const attachMemberCounts = async (rows: TagRow[]) => {
     if (!includeMemberCount || !rows.length) return rows

@@ -16,7 +16,7 @@ vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn() }))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 
-import { filterSuggestible, buildSuggestPrompt, prunePendingForAppliedTags } from './ai-tag-suggest'
+import { filterSuggestible, buildSuggestPrompt, prunePendingForAppliedTags, recordManualRemovalAsDismissed } from './ai-tag-suggest'
 
 const WS = 'ws1'
 
@@ -123,8 +123,8 @@ describe('filterSuggestible：模型不生 ID 的最後防線', () => {
 
 describe('buildSuggestPrompt', () => {
   const catalog = [
-    { id: 't1', name: '送禮客群', description: '會買禮盒送人的客人' },
-    { id: 't2', name: 'VIP', description: '' },
+    { id: 't1', name: '送禮客群', criteria: '客人提到要送人、找禮物', mode: 'suggest' as const },
+    { id: 't2', name: 'VIP', criteria: '', mode: 'auto' as const },
   ]
   const transcript = [
     { role: 'customer' as const, text: '請問禮盒可以代寄嗎' },
@@ -133,7 +133,7 @@ describe('buildSuggestPrompt', () => {
 
   it('候選標籤帶 id 與名稱；客/店逐字稿標開（店家的話不能當依據，prompt 有講）', () => {
     const p = buildSuggestPrompt(catalog, transcript)
-    expect(p).toContain('id: t1｜名稱: 送禮客群')
+    expect(p).toContain('id: t1｜名稱: 送禮客群｜判斷條件: 客人提到要送人、找禮物')
     expect(p).toContain('id: t2｜名稱: VIP')
     expect(p).toContain('客: 請問禮盒可以代寄嗎')
     expect(p).toContain('店: 可以的，結帳時填收件人就好')
@@ -141,19 +141,96 @@ describe('buildSuggestPrompt', () => {
     expect(p).toContain('只能從清單中選')
   })
 
-  it('沒有說明的標籤不會多出空的「說明:」段', () => {
+  it('沒填條件的標籤不會多出空的「判斷條件:」段', () => {
     const p = buildSuggestPrompt(catalog, transcript)
-    expect(p).not.toContain('id: t2｜名稱: VIP｜說明:')
+    expect(p).not.toContain('id: t2｜名稱: VIP｜判斷條件:')
   })
 
   /**
-   * 說明欄就是「AI 的判斷條件」（標籤編輯器 maxlength=200）。
+   * 判斷條件欄的 maxlength=200（標籤編輯器）。
    * 先前 prompt 只截前 80 字＝使用者認真寫的條件被默默丟掉一半、畫面一個字都沒講。
    * ⛔ 動標籤編輯器的 maxlength 時，這條會失敗提醒你兩邊要一起改。
    */
-  it('說明滿 200 字要整段進 prompt，不准靜默截斷（對齊輸入框上限）', () => {
-    const desc = '條'.repeat(200)
-    const p = buildSuggestPrompt([{ id: 't1', name: '在看除濕機', description: desc }], transcript)
-    expect(p).toContain(desc)
+  it('條件滿 200 字要整段進 prompt，不准靜默截斷（對齊輸入框上限）', () => {
+    const crit = '條'.repeat(200)
+    const p = buildSuggestPrompt([{ id: 't1', name: '在看除濕機', criteria: crit, mode: 'suggest' }], transcript)
+    expect(p).toContain(crit)
+  })
+})
+
+describe('recordManualRemovalAsDismissed：手動拆標＝否決票（防 auto 拉鋸戰）', () => {
+  /** tags getAll ＋ userTagSuggestions doc get/set 的迷你假 db */
+  function fakeDb(opts: {
+    tags: Record<string, Record<string, unknown> | null>
+    suggestions: Record<string, Record<string, unknown> | null>
+  }) {
+    const writes: Array<{ id: string; data: any }> = []
+    const db: any = {
+      collection: (name: string) => ({
+        doc: (id: string) => ({
+          __col: name,
+          __id: id,
+          get: async () => ({
+            id,
+            exists: opts.suggestions[id] != null,
+            data: () => opts.suggestions[id],
+          }),
+          set: async (data: any) => { writes.push({ id, data }) },
+        }),
+      }),
+      getAll: async (...refs: Array<{ __id: string }>) =>
+        refs.map(r => ({ id: r.__id, exists: opts.tags[r.__id] != null, data: () => opts.tags[r.__id] })),
+    }
+    return { db, writes }
+  }
+
+  it('拆掉 AI 在判的標籤 → 記進 dismissedTagIds，pending 裡同顆建議一併清掉', async () => {
+    const { db, writes } = fakeDb({
+      tags: { t1: { workspaceId: 'ws1', aiMode: 'auto' } },
+      suggestions: { u1: { workspaceId: 'ws1', pending: [{ tagId: 't1' }, { tagId: 't2' }], dismissedTagIds: [], hasPending: true } },
+    })
+    await recordManualRemovalAsDismissed(db, 'ws1', ['u1'], ['t1'])
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.data.dismissedTagIds).toContain('t1')
+    expect(writes[0]!.data.pending).toEqual([{ tagId: 't2' }])
+    expect(writes[0]!.data.hasPending).toBe(true)
+  })
+
+  it('拆掉 off 標籤（問卷/客服這類）→ 完全不寫（別為日常移標多建文件）', async () => {
+    const { db, writes } = fakeDb({
+      tags: { t1: { workspaceId: 'ws1' } }, // 沒有 aiMode ＝ off
+      suggestions: {},
+    })
+    await recordManualRemovalAsDismissed(db, 'ws1', ['u1'], ['t1'])
+    expect(writes).toHaveLength(0)
+  })
+
+  it('客人還沒有建議文件 → 建一份只帶否決票的（auto 不記住就會貼回來）', async () => {
+    const { db, writes } = fakeDb({
+      tags: { t1: { workspaceId: 'ws1', aiMode: 'suggest' } },
+      suggestions: { u1: null },
+    })
+    await recordManualRemovalAsDismissed(db, 'ws1', ['u1'], ['t1'])
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.data.dismissedTagIds).toEqual(['t1'])
+    expect(writes[0]!.data.hasPending).toBe(false)
+  })
+
+  it('⛔ 別的租戶的標籤／建議文件一律不動', async () => {
+    const { db, writes } = fakeDb({
+      tags: { t1: { workspaceId: 'other', aiMode: 'auto' } },
+      suggestions: { u1: { workspaceId: 'ws1', pending: [], dismissedTagIds: [], hasPending: false } },
+    })
+    await recordManualRemovalAsDismissed(db, 'ws1', ['u1'], ['t1'])
+    expect(writes).toHaveLength(0)
+  })
+
+  it('已經在否決名單裡 → 不重複寫', async () => {
+    const { db, writes } = fakeDb({
+      tags: { t1: { workspaceId: 'ws1', aiMode: 'auto' } },
+      suggestions: { u1: { workspaceId: 'ws1', pending: [], dismissedTagIds: ['t1'], hasPending: false } },
+    })
+    await recordManualRemovalAsDismissed(db, 'ws1', ['u1'], ['t1'])
+    expect(writes).toHaveLength(0)
   })
 })

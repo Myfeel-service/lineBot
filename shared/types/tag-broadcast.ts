@@ -16,6 +16,19 @@ export type TagStatus = 'active' | 'inactive'
  */
 export type TagCategory = 'member_status' | 'interest' | 'behavior' | 'activity' | 'custom'
 
+/**
+ * 這顆標籤要不要讓 AI 判斷（D-27，2026-08-24 老闆拍板）：
+ * off     – AI 完全不碰（**預設**：問卷／客服／活動這類事件紀錄標籤，AI 從對話判斷不出來）
+ * suggest – AI 判斷後進收件匣，人按「採用」才貼
+ * auto    – AI 判斷到直接貼（來源記 ai、可撤、週報看得到）
+ *
+ * ⛔ 為什麼是一個三段選擇不是兩個開關：兩個開關有四種組合，其中「不讓 AI 判卻要自動貼」
+ * 沒有意義；三段＝信任程度由低到高一次講完。
+ * ⛔ 舊標籤沒有這個欄位＝off：掃描器用 `where('aiMode','in',['suggest','auto'])` 挑候選，
+ * 缺欄位天然不命中——上線當天既有標籤行為零改變。
+ */
+export type TagAiMode = 'off' | 'suggest' | 'auto'
+
 export interface TagDoc {
   workspaceId: string
   /** 同一 workspace 內唯一；英文小寫加底線，程式內部使用。例如 interest_food */
@@ -25,7 +38,16 @@ export interface TagDoc {
   category: TagCategory
   /** hex 色碼，用於後台顯示標籤色塊 */
   color: string
+  /** 給團隊看的內部說明。⛔ AI **不讀這欄**（判斷條件在 aiCriteria）——2026-08-24 起分兩欄 */
   description: string
+  /** 見 TagAiMode；舊文件沒有此欄＝off */
+  aiMode?: TagAiMode
+  /**
+   * AI 的判斷條件（aiMode 為 suggest/auto 時才有意義）。寫法＝「客人說了什麼算＋什麼不算」。
+   * 與 description 分開的理由：既有標籤的說明是寫給人看的（檔期備註之類），
+   * 拿去當 AI 條件會讓它亂猜。編輯器在切到 suggest/auto 時會把 description **預填**進來讓人改。
+   */
+  aiCriteria?: string
   status: TagStatus
   createdBy: string
   createdAt: Timestamp | FieldValue

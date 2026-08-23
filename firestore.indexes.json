@@ -1134,6 +1134,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "workspaceId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "aiMode",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

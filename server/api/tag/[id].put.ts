@@ -45,6 +45,13 @@ export default defineEventHandler(async (event) => {
   for (const key of allowed) {
     if (body[key] !== undefined) updates[key] = body[key]
   }
+  // AI 判斷三段（D-27）：白名單驗證，壞值一律回 off；條件文字對齊編輯器上限 200 字
+  if (body.aiMode !== undefined) {
+    updates.aiMode = body.aiMode === 'suggest' || body.aiMode === 'auto' ? body.aiMode : 'off'
+  }
+  if (body.aiCriteria !== undefined) {
+    updates.aiCriteria = String(body.aiCriteria ?? '').trim().slice(0, 200)
+  }
 
   await ref.update(updates)
   return { id, ...snap.data(), ...updates }

@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import type { TagDoc, TagCategory, TagStatus } from '~~/shared/types/tag-broadcast'
+import type { TagDoc, TagCategory, TagStatus, TagAiMode } from '~~/shared/types/tag-broadcast'
 
 const VALID_CATEGORIES: TagCategory[] = ['member_status', 'interest', 'behavior', 'activity', 'custom']
 
@@ -26,6 +26,9 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const { code, name, category, color = '#6B7280', description = '', status: statusInput } = body
   const status: TagStatus = statusInput === 'inactive' ? 'inactive' : 'active'
+  // AI 判斷三段（D-27）：白名單外一律當 off——舊前端沒帶這欄也是 off，行為零改變
+  const aiMode: TagAiMode = body.aiMode === 'suggest' || body.aiMode === 'auto' ? body.aiMode : 'off'
+  const aiCriteria = String(body.aiCriteria ?? '').trim().slice(0, 200)
 
   if (!code || !name || !category) {
     throw createError({ statusCode: 400, statusMessage: 'code, name, category are required' })
@@ -61,6 +64,8 @@ export default defineEventHandler(async (event) => {
     category,
     color,
     description,
+    aiMode,
+    aiCriteria,
     status,
     createdBy: uid,
     createdAt: now,

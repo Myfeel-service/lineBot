@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { TagLogDoc } from '~~/shared/types/tag-broadcast'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { recordManualRemovalAsDismissed } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
@@ -54,5 +55,10 @@ export default defineEventHandler(async (event) => {
   batch.set(db.collection('tagLogs').doc(uuidv4()), logDoc)
 
   await batch.commit()
+
+  // 手動拆掉的標籤＝否決票：AI 有在判的標籤記進「永不再提」，否則 auto 模式會貼回來
+  // 變成人跟排程的拉鋸戰（見 recordManualRemovalAsDismissed）
+  await recordManualRemovalAsDismissed(db, workspaceId, [fsUserDocId], [tagId])
+
   return { success: true, userId: fsUserDocId, tagId }
 })

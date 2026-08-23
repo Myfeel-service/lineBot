@@ -220,3 +220,121 @@
   font-size: 0.78rem;
   line-height: 1.6;
 }
+
+/* ── AI 判斷三段選擇（D-27①）：帶說明的選項卡 ──────────── */
+
+.tags-ai-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tags-ai-option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s;
+
+  &.is-active {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+}
+
+.tags-ai-option__radio {
+  margin-top: 0.28rem;
+  flex-shrink: 0;
+  accent-color: var(--el-color-primary);
+}
+
+.tags-ai-option__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.tags-ai-option__title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.tags-ai-option__desc {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* 判斷條件欄：左邊一條淡色引導線＝「這欄屬於上面選的那個模式」 */
+.tags-criteria-group {
+  margin-left: 0.4rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--el-color-primary-light-7);
+}
+
+/* ── 範本清單（D-27③）─────────────────────────────── */
+
+.tags-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+}
+
+.tags-template-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+
+  &.is-checked {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+
+  &.is-exists {
+    opacity: 0.55;
+    cursor: default;
+  }
+}
+
+.tags-template-item__check {
+  margin-top: 0.3rem;
+  flex-shrink: 0;
+  accent-color: var(--el-color-primary);
+}
+
+.tags-template-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.tags-template-item__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.tags-template-item__criteria {
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+.tags-template-item__usage {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}

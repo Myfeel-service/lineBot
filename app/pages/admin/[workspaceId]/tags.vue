@@ -7,6 +7,8 @@
         caption="建立與管理好友標籤，用於分眾推播"
       />
       <div class="flex gap-1 admin-header-actions">
+        <!-- 範本＝AI 判斷型標籤的起手式：名稱、判斷條件都寫好，一鍵建立改幾個字就能用（D-27③） -->
+        <el-button v-if="canOperate" size="small" data-tour="tag-templates" @click="openTemplates">從範本建立</el-button>
         <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="tag-new" @click="openCreate">新增</el-button>
       </div>
     </template>
@@ -43,6 +45,14 @@
                   <el-option label="停用" value="inactive" />
                 </el-select>
               </div>
+              <div class="tags-toolbar__field tags-toolbar__field--status">
+                <AdminFieldLabel text="AI 判斷" tight />
+                <el-select v-model="filterAiMode" placeholder="全部" clearable>
+                  <el-option label="不用（我自己貼）" value="off" />
+                  <el-option label="AI 先建議" value="suggest" />
+                  <el-option label="AI 直接貼" value="auto" />
+                </el-select>
+              </div>
               <span class="tags-count text-muted">共 {{ total.toLocaleString('zh-TW') }} 筆</span>
             </div>
 
@@ -60,6 +70,7 @@
                     <th class="tags-table__th--swatch" />
                     <th>名稱</th>
                     <th>Code</th>
+                    <th>AI 判斷</th>
                     <th>分類</th>
                     <th>狀態</th>
                     <th class="tags-table__th--count">好友數</th>
@@ -80,6 +91,13 @@
                     </td>
                     <td class="td-name">{{ tag.name }}</td>
                     <td class="td-code">{{ tag.code }}</td>
+                    <!-- 一眼看出「這顆是誰在貼」：AI 有在動的才上色，off 給低調的「—」
+                         （21 顆裡多數是 off，整欄都掛灰章只是噪音） -->
+                    <td>
+                      <span v-if="tag.aiMode === 'auto'" class="badge badge-green">AI 直接貼</span>
+                      <span v-else-if="tag.aiMode === 'suggest'" class="badge badge-orange">AI 先建議</span>
+                      <span v-else class="text-muted">—</span>
+                    </td>
                     <td>
                       <span class="badge badge-gray">{{ tagCategoryLabel(tag.category) }}</span>
                     </td>
@@ -176,16 +194,54 @@
           </div>
         </div>
 
-        <!-- ⛔ 這一欄**不只是內部備註**：開了「AI 讀對話建議標籤」之後，AI 判斷時看到的就是
-             「名稱＋這一欄」（見 server/utils/ai-tag-suggest.ts 的 buildSuggestPrompt）。
-             原本標題寫「備註說明」、提示寫「供內部參考」是加 AI 之前的文案，會讓人不知道
-             這裡寫的字有真實作用（2026-08-24 老闆直接問「這邊的說明就是會讓 AI 判斷嗎」）。
-             ⛔ 改字數上限時要連 ai-tag-suggest 的 DESCRIPTION_IN_PROMPT_MAX 一起改，
-             否則會變成「讓人打 200 字、AI 只讀前 80 字」的靜默截斷。 -->
+        <!-- 說明與 AI 判斷條件是**兩欄**（D-27②）：既有標籤的說明是寫給人看的（檔期備註
+             之類），拿去當 AI 條件會讓它亂猜。AI 只讀 aiCriteria，description 回歸內部備註。 -->
         <div class="admin-field-group">
-          <AdminFieldLabel text="說明（選填，也是 AI 判斷這顆標籤的條件）" tight />
+          <AdminFieldLabel text="說明（給團隊看，選填）" tight />
           <el-input
             v-model="form.description"
+            type="textarea"
+            :rows="2"
+            placeholder="這顆標籤是做什麼的、誰負責、檔期備註——寫給人看的話"
+            maxlength="200"
+          />
+        </div>
+
+        <!-- 三段選擇（D-27①）：一個控制講完「讓不讓 AI 判＋判了怎麼處理」。
+             ⛔ 不做成兩個開關——四種組合有一種（不讓判卻自動貼）沒有意義。
+             預設 off＝問卷/客服/活動這類事件紀錄標籤完全不被 AI 碰。 -->
+        <div class="admin-field-group">
+          <AdminFieldLabel text="要不要讓 AI 判斷這顆標籤？" tight />
+          <div class="tags-ai-options">
+            <label
+              v-for="opt in AI_MODE_OPTIONS"
+              :key="opt.value"
+              class="tags-ai-option"
+              :class="{ 'is-active': form.aiMode === opt.value }"
+            >
+              <input
+                v-model="form.aiMode"
+                type="radio"
+                name="tag-ai-mode"
+                :value="opt.value"
+                class="tags-ai-option__radio"
+              />
+              <span class="tags-ai-option__body">
+                <span class="tags-ai-option__title">{{ opt.title }}</span>
+                <span class="tags-ai-option__desc">{{ opt.desc }}</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 判斷條件只在需要時出現（漸進揭露）：off 的 19 顆標籤不用面對用不到的欄位。
+             切到 suggest/auto 時把 description 預填進來讓人改（不是靜默沿用，見 watch）。
+             ⛔ maxlength 200 = ai-tag-suggest 的 CRITERIA_IN_PROMPT_MAX，動一邊要動另一邊
+             （有測試釘住「滿 200 字要整段進 prompt」）。 -->
+        <div v-if="form.aiMode !== 'off'" class="admin-field-group tags-criteria-group">
+          <AdminFieldLabel text="AI 判斷條件（只有這欄 AI 會看）" tight />
+          <el-input
+            v-model="form.aiCriteria"
             type="textarea"
             :rows="3"
             placeholder="例：客人詢問、比較除濕機，或提到家裡潮濕、衣服晾不乾想找解法。只問舊機維修的不算。"
@@ -193,9 +249,9 @@
             show-word-limit
           />
           <p class="tags-desc-hint text-muted">
-            這段話有兩個用途：給團隊看，以及<strong>當 AI 的判斷條件</strong>——開了「AI 讀對話，建議該貼什麼標籤」
-            （在「AI 設定 → 顧客標籤」）之後，AI 會拿整段對話對照這裡寫的條件。
-            寫法：<strong>客人說了什麼算</strong>、順便寫<strong>什麼不算</strong>，越像人話越準。
+            AI 會拿整段對話對照這裡寫的條件，<strong>只看客人說的話</strong>（客服自己提到不算）。
+            寫法：<strong>什麼算</strong>、順便寫<strong>什麼不算</strong>，越像人話越準。
+            要生效記得到「AI 設定 → 顧客標籤」開啟 AI 讀對話的總開關。
           </p>
         </div>
       </div>
@@ -209,12 +265,68 @@
     </template>
   </el-dialog>
 
+  <!-- ── 範本（D-27③）：AI 判斷型標籤的起手式 ──────────────
+       難的不是點「新增」，是想不到該建哪些、條件怎麼寫。範本全部寫好，
+       勾選建立後改幾個字就能用；建立時一律「AI 先建議」，跑準了再自行升級直接貼。 -->
+  <el-dialog v-model="templateDialogVisible" title="從範本建立 AI 判斷型標籤" width="min(560px, 94vw)">
+    <p class="tags-desc-hint text-muted" style="margin-top: 0">
+      這些都是「對話裡看得出來」的意圖標籤——判斷條件已經寫好，建立後可到標籤上逐字修改。
+      建立時一律是「<strong>AI 先建議</strong>」，你按採用才貼；覺得準了再把該顆改成「直接貼」。
+    </p>
+    <div class="tags-template-list">
+      <label
+        v-for="t in TAG_TEMPLATES"
+        :key="t.code"
+        class="tags-template-item"
+        :class="{ 'is-exists': existingCodes.has(t.code), 'is-checked': selectedTemplateCodes.includes(t.code) }"
+      >
+        <input
+          v-model="selectedTemplateCodes"
+          type="checkbox"
+          :value="t.code"
+          :disabled="existingCodes.has(t.code)"
+          class="tags-template-item__check"
+        />
+        <span class="tags-template-item__body">
+          <span class="tags-template-item__name">
+            <span class="tag-color-dot" :style="{ '--dot-bg': t.color }" />
+            {{ t.name }}
+            <span v-if="existingCodes.has(t.code)" class="badge badge-gray">已建立</span>
+          </span>
+          <span class="tags-template-item__criteria">條件：{{ t.criteria }}</span>
+          <span class="tags-template-item__usage">{{ t.usage }}</span>
+        </span>
+      </label>
+    </div>
+    <template #footer>
+      <el-button @click="templateDialogVisible = false">關閉</el-button>
+      <el-button
+        v-if="canOperate"
+        type="primary"
+        :loading="creatingTemplates"
+        :disabled="!selectedTemplateCodes.length"
+        @click="createFromTemplates"
+      >
+        建立所選（{{ selectedTemplateCodes.length }}）
+      </el-button>
+    </template>
+  </el-dialog>
+
 </template>
 
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
+import { TAG_TEMPLATES } from '~~/shared/tag-templates'
+import type { TagAiMode } from '~~/shared/types/tag-broadcast'
+
+/** 三段選擇的文案（D-27①）：信任程度由低到高，一次講完「讓不讓判＋判了怎麼處理」 */
+const AI_MODE_OPTIONS: Array<{ value: TagAiMode; title: string; desc: string }> = [
+  { value: 'off', title: '不用，我自己貼（預設）', desc: 'AI 完全不會碰這顆。問卷、客服、活動這類由系統或人貼的標籤選這個。' },
+  { value: 'suggest', title: 'AI 判斷後先建議，我按了才貼', desc: '出現在「好友」頁那位客人的 AI 建議區，你按採用才生效。新標籤建議從這段開始。' },
+  { value: 'auto', title: 'AI 判斷到就直接貼上', desc: '不用你按。會記「AI 貼的」、隨時可拿掉；手動拿掉過的客人 AI 不會再貼。' },
+]
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -229,6 +341,7 @@ const isEditing = ref(false)
 const searchText = ref('')
 const filterCategory = ref('')
 const filterStatus = ref('')
+const filterAiMode = ref('')
 
 const defaultForm = () => ({
   id: '',
@@ -237,9 +350,78 @@ const defaultForm = () => ({
   category: 'custom' as const,
   color: '#6B7280',
   description: '',
+  aiMode: 'off' as TagAiMode,
+  aiCriteria: '',
   status: 'active' as 'active' | 'inactive',
 })
 const form = ref(defaultForm())
+
+/**
+ * 切到「讓 AI 判」而條件還是空的 → 把說明**預填**進去當底稿讓人改。
+ * ⛔ 是預填不是靜默沿用：欄位裡看得到、能整段改掉——「AI 偷偷拿說明當條件」正是
+ * 這次要拆掉的行為（G-24 的教訓）。
+ */
+watch(() => form.value.aiMode, (mode, prev) => {
+  if (prev === 'off' && mode !== 'off' && !form.value.aiCriteria.trim() && form.value.description.trim()) {
+    form.value.aiCriteria = form.value.description.trim()
+  }
+})
+
+// ── 範本（D-27③）──────────────────────────────────────
+const templateDialogVisible = ref(false)
+const selectedTemplateCodes = ref<string[]>([])
+const creatingTemplates = ref(false)
+/** 已存在的 code（含分頁外的：範本 code 撞號時後端也會 409 擋，這裡是第一道顯示） */
+const existingCodes = computed(() => new Set(tags.value.map((t: any) => String(t.code ?? ''))))
+
+function openTemplates() {
+  selectedTemplateCodes.value = []
+  templateDialogVisible.value = true
+}
+
+async function createFromTemplates() {
+  if (!assertCanOperate()) return
+  if (!selectedTemplateCodes.value.length) return
+  creatingTemplates.value = true
+  let created = 0
+  let skipped = 0
+  try {
+    // 逐顆建（一次最多 8 顆）：單顆撞號（409）算跳過不算失敗，其餘照建
+    for (const code of selectedTemplateCodes.value) {
+      const t = TAG_TEMPLATES.find(x => x.code === code)
+      if (!t) continue
+      try {
+        await apiFetch('/api/tag/create', {
+          method: 'POST',
+          body: {
+            code: t.code,
+            name: t.name,
+            category: t.category,
+            color: t.color,
+            description: t.usage,
+            aiMode: 'suggest', // 範本一律先建議（人工把關），跑準了再自行升級 auto
+            aiCriteria: t.criteria,
+            status: 'active',
+          },
+        })
+        created++
+      }
+      catch (e: any) {
+        if (e?.status === 409 || e?.statusCode === 409) skipped++
+        else throw e
+      }
+    }
+    showToast(skipped ? `建立 ${created} 顆（${skipped} 顆已存在，略過）` : `建立 ${created} 顆標籤`, 'success')
+    templateDialogVisible.value = false
+    await refreshTags()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '建立失敗', 'error')
+  }
+  finally {
+    creatingTemplates.value = false
+  }
+}
 
 function formatMemberCount(count: number | undefined) {
   return (count ?? 0).toLocaleString('zh-TW')
@@ -252,6 +434,7 @@ function tagListQuery(targetPage = page.value) {
     includeMemberCount: true,
     status: filterStatus.value || undefined,
     category: filterCategory.value || undefined,
+    aiMode: filterAiMode.value || undefined,
     search: searchText.value,
   }
 }
@@ -271,7 +454,7 @@ async function onPageChange(nextPage: number) {
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
-watch([filterStatus, filterCategory], () => {
+watch([filterStatus, filterCategory, filterAiMode], () => {
   void reloadTags(true)
 })
 watch(searchText, () => {
@@ -294,6 +477,9 @@ function openEdit(tag: any) {
     category: (tag.category ?? 'custom') as any,
     color: tag.color ?? '#6B7280',
     description: tag.description ?? '',
+    // 舊標籤沒有這兩欄＝off（跟後端與掃描器同一個口徑）
+    aiMode: (tag.aiMode === 'suggest' || tag.aiMode === 'auto' ? tag.aiMode : 'off') as TagAiMode,
+    aiCriteria: tag.aiCriteria ?? '',
     status: tag.status === 'inactive' ? 'inactive' : 'active',
   }
   dialogVisible.value = true
@@ -321,6 +507,8 @@ async function submitForm() {
           category: form.value.category,
           color: form.value.color,
           description: form.value.description.trim(),
+          aiMode: form.value.aiMode,
+          aiCriteria: form.value.aiCriteria.trim(),
           status: form.value.status,
         },
       })
@@ -335,6 +523,8 @@ async function submitForm() {
           category: form.value.category,
           color: form.value.color,
           description: form.value.description.trim(),
+          aiMode: form.value.aiMode,
+          aiCriteria: form.value.aiCriteria.trim(),
           status: form.value.status,
         },
       })

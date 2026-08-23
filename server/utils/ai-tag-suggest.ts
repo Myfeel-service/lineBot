@@ -22,6 +22,7 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
+import { addTagsToUser } from './tagging'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -39,20 +40,23 @@ const MAX_PENDING_PER_USER = 5
 /** prompt 裡最多放幾個候選標籤（標籤上百的工作區截斷，控 token） */
 const MAX_TAGS_IN_PROMPT = 60
 /**
- * 每顆標籤的說明放進 prompt 的字數上限。
+ * 每顆標籤的判斷條件放進 prompt 的字數上限。
  *
- * ⛔ **必須等於標籤編輯器 `description` 的 maxlength**（app/pages/admin/[workspaceId]/tags.vue）：
- * 先前這裡是 80、輸入框卻讓人打 200 → 認真寫的判斷條件被默默丟掉一半，而畫面一個字都沒講。
- * 那一欄現在的定位就是「AI 的判斷條件」，讓人打得下的就要全部讀進來，不留隱藏規則。
+ * ⛔ **必須等於標籤編輯器 `aiCriteria` 的 maxlength**（app/pages/admin/[workspaceId]/tags.vue）：
+ * 先前是 80、輸入框卻讓人打 200 → 認真寫的判斷條件被默默丟掉一半，而畫面一個字都沒講。
+ * 讓人打得下的就要全部讀進來，不留隱藏規則。
  */
-const DESCRIPTION_IN_PROMPT_MAX = 200
+const CRITERIA_IN_PROMPT_MAX = 200
 
 export const AI_TAG_SUGGEST_SOURCE_REF = 'ai-tag-suggest'
 
 export interface TagCatalogItem {
   id: string
   name: string
-  description: string
+  /** AI 的判斷條件（TagDoc.aiCriteria）。⛔ 不是 description——那欄是給團隊看的，AI 不讀 */
+  criteria: string
+  /** suggest＝進收件匣等人採用；auto＝判到直接貼（TagDoc.aiMode，off 的根本不會進 catalog） */
+  mode: 'suggest' | 'auto'
 }
 
 /**
@@ -83,7 +87,7 @@ export interface TranscriptTurn {
 
 export function buildSuggestPrompt(catalog: TagCatalogItem[], transcript: TranscriptTurn[]): string {
   const tagLines = catalog
-    .map(t => `- id: ${t.id}｜名稱: ${t.name}${t.description ? `｜說明: ${t.description.slice(0, DESCRIPTION_IN_PROMPT_MAX)}` : ''}`)
+    .map(t => `- id: ${t.id}｜名稱: ${t.name}${t.criteria ? `｜判斷條件: ${t.criteria.slice(0, CRITERIA_IN_PROMPT_MAX)}` : ''}`)
     .join('\n')
   const convoLines = transcript
     .map(t => `${t.role === 'customer' ? '客' : '店'}: ${t.text}`)
@@ -118,8 +122,9 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
   workspaces: number
   sessions: number
   suggested: number
+  autoApplied: number
 }> {
-  const stats = { workspaces: 0, sessions: 0, suggested: 0 }
+  const stats = { workspaces: 0, sessions: 0, suggested: 0, autoApplied: 0 }
   const wsSnap = await db.collection('workspaces').select().get()
 
   for (const wsDoc of wsSnap.docs) {
@@ -148,18 +153,26 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
         .get()
       if (sessSnap.empty) continue
 
-      // 標籤目錄：active 的、排除系統維護的「沒互動」標（AI 不該建議它，它有自己的排程）
+      /**
+       * 標籤目錄＝**老闆指定要讓 AI 判的那幾顆**（aiMode ∈ suggest/auto），不再是全部標籤。
+       *
+       * ⛔ D-27 的核心修正：先前拿「所有 active 標籤」當候選，但實務上多數標籤是事件紀錄
+       * （問卷-XX、客服-產品型號、活動-XX），AI 從對話裡根本判斷不出「有沒有填過問卷」，
+       * 硬猜就是雜訊。缺 aiMode 欄位的舊標籤天然不命中 in 查詢＝預設 off，行為零改變。
+       * 候選變少同時讓判斷更穩、prompt 更便宜。
+       */
       const tagSnap = await db.collection('tags')
         .where('workspaceId', '==', workspaceId)
-        .where('status', '==', 'active')
+        .where('aiMode', 'in', ['suggest', 'auto'])
         .get()
       const catalog: TagCatalogItem[] = tagSnap.docs
-        .filter(d => d.data()?.code !== INACTIVE_TAG_CODE)
+        .filter(d => d.data()?.status === 'active' && d.data()?.code !== INACTIVE_TAG_CODE)
         .slice(0, MAX_TAGS_IN_PROMPT)
         .map(d => ({
           id: d.id,
           name: String(d.data()?.name ?? ''),
-          description: String(d.data()?.description ?? ''),
+          criteria: String(d.data()?.aiCriteria ?? ''),
+          mode: d.data()?.aiMode === 'auto' ? 'auto' as const : 'suggest' as const,
         }))
         .filter(t => t.name)
 
@@ -175,7 +188,8 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
         try {
           const processed = await suggestForSession(db, workspaceId, String(sess.userId ?? ''), sessDoc.id, catalog, usage)
           stats.sessions += 1
-          stats.suggested += processed
+          stats.suggested += processed.suggested
+          stats.autoApplied += processed.autoApplied
         }
         catch (e) {
           console.warn('[tag-suggest] session failed:', sessDoc.id, e)
@@ -240,7 +254,65 @@ export async function prunePendingForAppliedTags(
   return pruned
 }
 
-/** 單場處理：組逐字稿 → 算候選 → LLM → 白名單過濾 → 寫收件匣。回傳寫進幾條建議 */
+/**
+ * 手動移除標籤＝「這位客人不要這顆」，記進 dismissedTagIds 讓 AI 永不再提。
+ *
+ * ⛔ 沒有這條會出現拉鋸戰：auto 標籤被 AI 貼上 → 客服判斷不對手動拆掉 → 下一場對話
+ * AI 又貼回來 → 客服再拆……人永遠贏不了排程。手動移除就是人給的否決票，要記住。
+ * （想恢復＝手動貼回去；貼回去之後它已在身上，AI 本來就不會再動它。）
+ *
+ * 只記「AI 有在判的標籤」（aiMode ∈ suggest/auto）：拆問卷、客服這類 off 標籤
+ * 不需要建否決紀錄，別為每次日常移標多寫一份文件。
+ * 失敗只記 log——否決票寫不進去不該讓移除本身失敗。
+ */
+export async function recordManualRemovalAsDismissed(
+  db: Firestore,
+  workspaceId: string,
+  userDocIds: string[],
+  tagIds: string[],
+): Promise<void> {
+  if (!userDocIds.length || !tagIds.length) return
+  try {
+    // 只留 AI 有在判的標籤
+    const tagSnaps = await db.getAll(...[...new Set(tagIds)].map(id => db.collection('tags').doc(id)))
+    const aiTagIds = tagSnaps
+      .filter(s => s.exists && s.data()?.workspaceId === workspaceId)
+      .filter(s => s.data()?.aiMode === 'suggest' || s.data()?.aiMode === 'auto')
+      .map(s => s.id)
+    if (!aiTagIds.length) return
+
+    for (const userDocId of userDocIds) {
+      const ref = db.collection('userTagSuggestions').doc(userDocId)
+      const snap = await ref.get()
+      const doc = (snap.data() ?? null) as UserTagSuggestionDoc | null
+      if (doc && doc.workspaceId !== workspaceId) continue
+      const dismissed = new Set(Array.isArray(doc?.dismissedTagIds) ? doc!.dismissedTagIds : [])
+      const before = dismissed.size
+      aiTagIds.forEach(id => dismissed.add(id))
+      // pending 裡若正好掛著同一顆建議，一併清掉（人都拆了，建議再掛著只是雜訊）
+      const pending = Array.isArray(doc?.pending) ? doc!.pending : []
+      const remaining = pending.filter(p => !dismissed.has(p.tagId))
+      if (dismissed.size === before && remaining.length === pending.length) continue
+      await ref.set({
+        workspaceId,
+        userId: userDocId,
+        pending: remaining,
+        hasPending: remaining.length > 0,
+        dismissedTagIds: [...dismissed],
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+      }, { merge: true })
+    }
+  }
+  catch (e) {
+    console.warn('[tag-suggest] record manual removal failed:', e)
+  }
+}
+
+/**
+ * 單場處理：組逐字稿 → 算候選 → LLM → 白名單過濾 → 依標籤的三段設定分流
+ * （suggest → 收件匣等人採用；auto → 直接貼，來源記 ai）。
+ */
 async function suggestForSession(
   db: Firestore,
   workspaceId: string,
@@ -248,16 +320,17 @@ async function suggestForSession(
   sessionId: string,
   catalog: TagCatalogItem[],
   usage: UsageDelta,
-): Promise<number> {
-  if (!lineUserId) return 0
+): Promise<{ suggested: number; autoApplied: number }> {
+  const none = { suggested: 0, autoApplied: 0 }
+  if (!lineUserId) return none
   const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
 
-  // 收件匣現況：滿了就不看這場（等人清）；忽略過的永不再建議
+  // 收件匣現況與「永不再提」名單（忽略過＋手動移除過的都在 dismissedTagIds）
   const sugRef = db.collection('userTagSuggestions').doc(convDocId)
   const sugSnap = await sugRef.get()
   const sugDoc = (sugSnap.data() ?? null) as UserTagSuggestionDoc | null
   const pending = Array.isArray(sugDoc?.pending) ? sugDoc!.pending : []
-  if (pending.length >= MAX_PENDING_PER_USER) return 0
+  const inboxFull = pending.length >= MAX_PENDING_PER_USER
   const dismissed = new Set(Array.isArray(sugDoc?.dismissedTagIds) ? sugDoc!.dismissedTagIds : [])
   const pendingIds = new Set(pending.map(p => p.tagId))
 
@@ -265,8 +338,12 @@ async function suggestForSession(
   const taggedSnap = await db.collection('userTags').where('userId', '==', convDocId).get()
   const tagged = new Set(taggedSnap.docs.map(d => String(d.data()?.tagId ?? '')))
 
-  const candidates = catalog.filter(t => !tagged.has(t.id) && !dismissed.has(t.id) && !pendingIds.has(t.id))
-  if (!candidates.length) return 0
+  const candidates = catalog.filter(t =>
+    !tagged.has(t.id) && !dismissed.has(t.id) && !pendingIds.has(t.id)
+    // ⛔ 收件匣滿了只擋「建議型」候選（沒位置放了）；auto 型不進收件匣，不受它牽制——
+    //    否則「建議堆著沒人清」會連帶讓全自動標籤也停擺
+    && !(inboxFull && t.mode === 'suggest'))
+  if (!candidates.length) return none
 
   // 逐字稿：客人的動作紀錄（「客人點了…」）不是客人說的話，不進逐字稿
   const msgSnap = await db.collection('conversations').doc(convDocId)
@@ -284,7 +361,7 @@ async function suggestForSession(
     .filter(t => t.text)
 
   // 客人至少要講過兩句話才值得花一次 LLM（貼圖問候、單句「謝謝」這種場跳過）
-  if (transcript.filter(t => t.role === 'customer').length < 2) return 0
+  if (transcript.filter(t => t.role === 'customer').length < 2) return none
 
   const prompt = buildSuggestPrompt(candidates, transcript)
   const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
@@ -304,27 +381,41 @@ async function suggestForSession(
   const rawTags = Array.isArray(data?.tags) ? data.tags : []
   const reasonById = new Map(rawTags.map(t => [String(t?.id ?? '').trim(), String(t?.reason ?? '').trim().slice(0, 60)]))
   const accepted = filterSuggestible(rawTags.map(t => String(t?.id ?? '')), new Set(candidates.map(c => c.id)))
-  // 收件匣剩餘容量也要守住（上面只擋「已滿」，這裡擋「加了會爆」）
-  const room = MAX_PENDING_PER_USER - pending.length
-  const toAdd = accepted.slice(0, room)
-  if (!toAdd.length) return 0
+  if (!accepted.length) return none
 
-  const newPending: UserTagSuggestionPending[] = toAdd.map(tagId => ({
-    tagId,
-    reason: reasonById.get(tagId) ?? '',
-    sessionId,
-    suggestedAtMs: Date.now(),
-  }))
+  // ── 依標籤的三段設定分流（D-27）────────────────────────
+  const modeById = new Map(candidates.map(c => [c.id, c.mode]))
+  const autoIds = accepted.filter(id => modeById.get(id) === 'auto')
+  const suggestIds = accepted.filter(id => modeById.get(id) !== 'auto')
 
-  const docPatch: Partial<UserTagSuggestionDoc> = {
-    workspaceId,
-    userId: convDocId,
-    pending: [...pending, ...newPending],
-    hasPending: true, // pending 的鏡像（列表等值查詢用）——這裡剛加了東西，必為 true
-    dismissedTagIds: [...dismissed],
-    updatedAt: FieldValue.serverTimestamp(),
-    ...(sugSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+  // auto：直接貼。sourceType='ai' ＝客人單頁看得出是 AI 貼的、tagLogs 有紀錄、隨時可撤；
+  // 週報「這週被貼最多」也吃 tagLogs，貼歪了每週一看得到
+  let autoApplied = 0
+  if (autoIds.length) {
+    const { added } = await addTagsToUser(convDocId, autoIds, 'ai', 'ai-tag-suggest:auto', workspaceId)
+    autoApplied = added.length
   }
-  await sugRef.set(docPatch, { merge: true })
-  return newPending.length
+
+  // suggest：進收件匣（容量再守一次：上面只擋「已滿」，這裡擋「加了會爆」）
+  const room = MAX_PENDING_PER_USER - pending.length
+  const toAdd = suggestIds.slice(0, Math.max(0, room))
+  if (toAdd.length) {
+    const newPending: UserTagSuggestionPending[] = toAdd.map(tagId => ({
+      tagId,
+      reason: reasonById.get(tagId) ?? '',
+      sessionId,
+      suggestedAtMs: Date.now(),
+    }))
+    const docPatch: Partial<UserTagSuggestionDoc> = {
+      workspaceId,
+      userId: convDocId,
+      pending: [...pending, ...newPending],
+      hasPending: true, // pending 的鏡像（列表等值查詢用）——這裡剛加了東西，必為 true
+      dismissedTagIds: [...dismissed],
+      updatedAt: FieldValue.serverTimestamp(),
+      ...(sugSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+    }
+    await sugRef.set(docPatch, { merge: true })
+  }
+  return { suggested: toAdd.length, autoApplied }
 }
