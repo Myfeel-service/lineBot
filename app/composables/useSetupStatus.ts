@@ -89,7 +89,9 @@ const CAPABILITIES: SetupCapability[] = [
     id: 'liffReady',
     icon: Iphone,
     title: '設定 LIFF（活動頁入口）',
-    why: '客人點開活動頁、會員綁定頁會用到。要辦活動前再補就行。',
+    // ⛔ 原本寫「活動頁、會員綁定頁」——**沒有「會員綁定頁」這個東西**（app/pages/liff 底下
+    // 只有 lead.vue 活動頁，綁定就發生在那一頁上）。2026-08-23 改名掃描時抓到並改掉。
+    why: '客人點開活動頁（登記活動、綁定資料）會用到。要辦活動前再補就行。',
     required: false,
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization`,

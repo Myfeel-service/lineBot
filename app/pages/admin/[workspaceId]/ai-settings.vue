@@ -241,7 +241,7 @@
                     </span>
                   </el-option>
                 </el-option-group>
-                <el-option-group :label="notifyQuery ? '搜尋結果(LINE 會員)' : 'LINE 會員(最近加入的好友)'">
+                <el-option-group :label="notifyQuery ? '搜尋結果(LINE 好友)' : 'LINE 好友(最近加入的)'">
                   <el-option
                     v-for="opt in notifyGuestOptions"
                     :key="opt.id"
@@ -266,7 +266,7 @@
                     {{ notifySearchLoading
                       ? '搜尋中…'
                       : notifyQuery
-                        ? '找不到這個暱稱的會員'
+                        ? '找不到這個暱稱的好友'
                         : '還沒有人加這個官方帳號為好友,可直接貼上 U 開頭的 LINE userId' }}
                   </p>
                 </template>
@@ -276,7 +276,7 @@
                 <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/members`">設定 → 成員管理</NuxtLink>
                 <template v-else>「設定 → 成員管理」</template>
                 幫該成員「綁定 LINE」,這裡就會出現在最上面那組,顯示的是他的 Email 而不是陌生暱稱。
-                也可以直接從下面的 LINE 會員清單挑,或貼上 U 開頭的 LINE userId 後按 Enter。
+                也可以直接從下面的 LINE 好友清單挑,或貼上 U 開頭的 LINE userId 後按 Enter。
               </p>
             </div>
             <div class="admin-field-group">
@@ -1077,7 +1077,7 @@ async function loadStatus() {
   }
 }
 
-// ── 通知對象選人器:下拉直接挑會員,也能用暱稱搜尋,免去手抄 LINE userId ──
+// ── 通知對象選人器:下拉直接挑好友,也能用暱稱搜尋,免去手抄 LINE userId ──
 /** id 一律是純 LINE userId（Uxxx…）——存進設定後要直接餵給 LINE 推播，不能用 Firestore doc id */
 type NotifyUser = { id: string; displayName: string; pictureUrl: string }
 
@@ -1098,7 +1098,7 @@ const notifyMembersLoaded = ref(false)
 
 const notifyMemberOptions = computed(() => notifyMembers.value)
 
-/** 沒綁定的 LINE 會員(搜尋／最近好友)+ 已選但不在成員名單裡的舊項目。
+/** 沒綁定的 LINE 好友(搜尋／最近好友)+ 已選但不在成員名單裡的舊項目。
  *  成員已出現在上面那組,這裡要排除——同一個 value 出現兩次 el-select 會選錯 tag。 */
 const notifyGuestOptions = computed(() => {
   const memberIds = new Set(notifyMembers.value.map(m => m.id))

@@ -4,7 +4,7 @@
       <AdminSoloPageHeading
         field-label="標籤管理"
         title="標籤列表"
-        caption="建立與管理會員標籤，用於分眾推播"
+        caption="建立與管理好友標籤，用於分眾推播"
       />
       <div class="flex gap-1 admin-header-actions">
         <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="tag-new" @click="openCreate">新增</el-button>
@@ -62,7 +62,7 @@
                     <th>Code</th>
                     <th>分類</th>
                     <th>狀態</th>
-                    <th class="tags-table__th--count">會員數</th>
+                    <th class="tags-table__th--count">好友數</th>
                     <th>建立時間</th>
                   </tr>
                 </thead>

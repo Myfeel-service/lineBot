@@ -1,5 +1,5 @@
 /**
- * 後台共用：載入會員列表（/api/users/list，伺服器分頁）
+ * 後台共用：載入好友列表（/api/users/list，伺服器分頁）
  */
 export const ADMIN_USER_PAGE_SIZE = 50
 

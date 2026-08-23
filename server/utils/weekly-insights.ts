@@ -79,17 +79,17 @@ export interface WeeklyInsightInput {
 export function formatWeeklyInsightLines(input: WeeklyInsightInput): string[] | null {
   const lines: string[] = []
 
-  // ⛔ 指路一律用**側欄的名字**（「會員」「AI 設定」）——人是拿著訊息對照側欄找的，
+  // ⛔ 指路一律用**側欄的名字**（「好友」「AI 設定」）——人是拿著訊息對照側欄找的，
   //    寫「好友頁」這種頁面別名會找不到（G-22③：同一頁曾有三個名字）
   if (input.topTags.length) {
     const parts = input.topTags.map(t => `「${t.name}」+${t.count} 位`).join('、')
-    lines.push(`・這週被貼最多的標籤：${parts}——後台「會員」頁可依標籤篩出名單`)
+    lines.push(`・這週被貼最多的標籤：${parts}——後台「好友」頁可依標籤篩出名單`)
   }
   if (input.inactiveAdds.count > 0) {
     lines.push(`・${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
   }
   if (input.pendingSuggestUsers > 0) {
-    lines.push(`・${input.pendingSuggestUsers} 位客人的 AI 標籤建議還沒看——後台「會員」頁勾「只看有 AI 建議的」`)
+    lines.push(`・${input.pendingSuggestUsers} 位客人的 AI 標籤建議還沒看——後台「好友」頁勾「只看有 AI 建議的」`)
   }
   if (input.quietDown > 0) {
     // 文案跟資料窗口一字不差（14~28 天前，不是日曆上個月）＋這一行也要有下一步（G-22②④）

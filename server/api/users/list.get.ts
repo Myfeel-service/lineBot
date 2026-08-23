@@ -47,7 +47,7 @@ function matchesSearch(user: UserBase, searchRaw: string): boolean {
 
 /**
  * GET /api/users/list
- * 取得會員列表，含每位用戶的標籤資訊
+ * 取得好友列表，含每位用戶的標籤資訊
  *
  * Query:
  *   tagIds    - 以逗號分隔的 tagId，只回傳擁有其中任一標籤的用戶

@@ -79,10 +79,11 @@ describe('formatWeeklyInsightLines', () => {
     })!
     expect(lines[0]).toBe('📈 本週顧客觀察（8/17–8/24）')
     expect(lines[1]).toContain('「送禮客群」+12 位、「VIP」+3 位')
-    // ⛔ 指路要用**側欄的名字**「會員」——「好友頁」是不存在的別名（G-22③，同頁曾有三個名字）
-    expect(lines[1]).toContain('「會員」頁')
-    expect(lines[1]).not.toContain('好友頁')
-    expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('「會員」頁')
+    // ⛔ 指路要用**側欄的名字**「好友」——側欄叫什麼訊息就寫什麼（G-22③／2026-08-23 統一改名）
+    expect(lines[1]).toContain('「好友」頁')
+    // 「會員」已於 2026-08-23 全面退場（側欄／頁題／訊息一律「好友」）——別讓它從指路文案復活
+    expect(lines.join('\n')).not.toContain('會員')
+    expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('「好友」頁')
     expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('5 位')
     // 文案要跟資料窗口（14~28 天前）一字不差，不寫「上個月」；而且要有下一步（G-22②④）
     const quiet = lines.find(l => l.includes('兩週沒再出現'))!

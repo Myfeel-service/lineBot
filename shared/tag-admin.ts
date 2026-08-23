@@ -1,4 +1,4 @@
-/** 後台標籤／會員／推播共用的選項與色票（單一來源，避免各頁複製） */
+/** 後台標籤／好友／推播共用的選項與色票（單一來源，避免各頁複製） */
 
 export const TAG_CATEGORY_OPTIONS = [
   { value: 'member_status', label: '會員狀態' },

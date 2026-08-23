@@ -189,7 +189,9 @@ const navItems = computed<NavItem[]>(() => {
     { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
     { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
     { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },
-    { to: `/admin/${wid}/users`, icon: User, label: '會員' },
+    // ⛔ 叫「好友」不叫「會員」（2026-08-23 拍板）：LINE 後台自己就這樣叫，而「會員」
+    // 會讓店家以為有註冊／等級。**側欄名＝指路用的名字**，週報等訊息都照它寫。
+    { to: `/admin/${wid}/users`, icon: User, label: '好友' },
     // 「自動回應」＝客人講話、系統自動回。一句話回一件事與多步驟流程是同一種設定的不同深度
     // （見腳本頁的簡單模式），所以只有一個入口。舊的「自動回覆規則」已於 2026-08-09 下架。
     {

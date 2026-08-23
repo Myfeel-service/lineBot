@@ -729,7 +729,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     category: 'growth',
     requiresOperate: true,
     icon: PriceTag,
-    label: '建立會員標籤',
+    label: '建立好友標籤',
     blurb: '標籤把好友分群，之後推播、活動都能鎖定分眾。帶你建第一個。',
     route: wid => `/admin/${wid}/tags`,
     steps: [
@@ -759,7 +759,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="tag-name"]',
         title: '顯示名稱、分類與顏色',
         description:
-          '這裡填<strong>給人看的名字</strong>（例：VIP 會員），再選分類、挑個顏色方便一眼認出。都填好按「<strong>建立標籤</strong>」就完成',
+          '這裡填<strong>給人看的名字</strong>（例：VIP），再選分類、挑個顏色方便一眼認出。都填好按「<strong>建立標籤</strong>」就完成',
         placement: 'bottom',
       },
     ],
@@ -808,7 +808,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     category: 'growth',
     requiresOperate: true,
     icon: User,
-    label: '管理會員與貼標',
+    label: '管理好友與貼標',
     blurb: '看好友名單、依標籤篩選、批次貼標。',
     route: wid => `/admin/${wid}/users`,
     steps: [
@@ -830,7 +830,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="usr-list"]',
         title: '查看與批次貼標',
         description:
-          '<strong>點一位會員</strong>看他的資料與標籤；<strong>勾選多位</strong>後，上方會出現「<strong>批次加標／移標</strong>」，一次幫一群人貼上或拿掉標籤，整理名單很快。',
+          '<strong>點一位好友</strong>看他的資料與標籤；<strong>勾選多位</strong>後，上方會出現「<strong>批次加標／移標</strong>」，一次幫一群人貼上或拿掉標籤，整理名單很快。',
         placement: 'top',
       },
     ],

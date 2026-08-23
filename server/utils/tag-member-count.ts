@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 
 const CHUNK = 30
 
-/** 僅統計指定 tagId 的會員數（避免掃描整個 userTags） */
+/** 僅統計指定 tagId 的好友數（避免掃描整個 userTags） */
 export async function memberCountsForTagIds(
   db: Firestore,
   workspaceId: string,

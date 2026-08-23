@@ -50,7 +50,7 @@
 const { canOperate } = useWorkspace()
 
 const props = defineProps({
-  /** 隱藏左側欄，右側編輯區全寬（標籤／會員等列表頁與 split-editor 視覺一致） */
+  /** 隱藏左側欄，右側編輯區全寬（標籤／好友等列表頁與 split-editor 視覺一致） */
   solo: {
     type: Boolean,
     default: false,

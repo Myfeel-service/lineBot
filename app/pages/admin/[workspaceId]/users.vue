@@ -1,10 +1,15 @@
 <template>
   <AdminSplitLayout solo :is-empty="false">
     <template #editor-header>
+      <!-- ⛔ 這頁的人一律叫「好友」不叫「會員」（2026-08-23 老闆拍板）：LINE 官方帳號後台
+           自己就叫好友、我們抓的是 followers API，而「會員」會讓店家以為有註冊／等級這種
+           不存在的功能。側欄、大標、說明、週報指路全部同一個字，人才找得到這頁。
+           ⚠️「客人」是另一回事，刻意不統一：好友＝加過官方帳號的所有人（含從沒講話的），
+           客人＝對話裡正在講話的那位；對話頁講「客人」是對的。 -->
       <AdminSoloPageHeading
-        field-label="會員"
-        title="好友與標籤"
-        caption="管理 LINE 好友，查看與操作會員標籤"
+        field-label="好友"
+        title="好友"
+        caption="查看好友、貼標籤、看 AI 建議"
       />
       <div class="flex gap-1 admin-header-actions">
         <el-button v-if="canOperate" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">
@@ -74,7 +79,7 @@
                  條件命中的人剛好在後面就會查不到——要講出來並給下一步 -->
             <div v-else-if="!users.length" class="tags-empty">
               <span v-if="truncated">好友太多，只查了前 5,000 位就停下來——用上面的搜尋或標籤縮小範圍再看一次。</span>
-              <span v-else>{{ total ? '無符合條件的會員' : '尚無好友資料' }}</span>
+              <span v-else>{{ total ? '無符合條件的好友' : '尚無好友資料' }}</span>
             </div>
             <div v-else class="table-wrap">
               <table class="users-table">
@@ -88,7 +93,7 @@
                         @change="toggleSelectAll"
                       />
                     </th>
-                    <th>會員</th>
+                    <th>好友</th>
                     <th>加入時間</th>
                     <th class="users-table__th--actions">標籤操作</th>
                   </tr>
@@ -169,7 +174,7 @@
         </el-select>
       </div>
       <div class="admin-alert admin-alert--warn">
-        <span>此操作將影響 <strong>{{ selectedIds.length }}</strong> 位會員</span>
+        <span>此操作將影響 <strong>{{ selectedIds.length }}</strong> 位好友</span>
       </div>
     </div>
     <template #footer>
@@ -507,7 +512,7 @@ function userListQuery(targetPage = page.value) {
 async function reloadUsers(resetPage = false): Promise<boolean> {
   const targetPage = resetPage ? 1 : page.value
   const ok = await loadUsers(userListQuery(targetPage))
-  if (!ok) showToast('載入會員失敗', 'error')
+  if (!ok) showToast('載入好友失敗', 'error')
   return ok
 }
 
@@ -640,7 +645,7 @@ function openBatchTag(mode: 'add' | 'remove') {
 async function submitBatch() {
   if (!assertCanOperate()) return
   if (!selectedIds.value.length) {
-    showToast('請先勾選至少一位會員', 'error')
+    showToast('請先勾選至少一位好友', 'error')
     return
   }
   if (!batchTagIds.value.length) {
