@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { UserTagDoc, TagLogDoc } from '~~/shared/types/tag-broadcast'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { prunePendingForAppliedTags } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
@@ -86,5 +87,12 @@ export default defineEventHandler(async (event) => {
   }
 
   await batch.commit()
+
+  // 這些標籤如果正躺在 AI 建議收件匣裡，就地剪掉——不然列表那顆「AI 建議」章
+  // 會為一個已經做完的決定一直亮著（見 prunePendingForAppliedTags）
+  if (added.length) {
+    await prunePendingForAppliedTags(db, workspaceId, [fsUserDocId], added)
+  }
+
   return { userId: fsUserDocId, added, skipped }
 })

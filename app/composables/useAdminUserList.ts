@@ -6,14 +6,49 @@ export const ADMIN_USER_PAGE_SIZE = 50
 export type AdminUserListQuery = {
   tagIds?: string[]
   search?: string
+  /** 只看「有待處理 AI 標籤建議」的客人（收件匣入口） */
+  suggested?: boolean
   page?: number
   limit?: number
+}
+
+/**
+ * 組查詢字串。**抽成純函式是為了測得到**——`suggested` 這條就是因為
+ * 「畫面傳了、composable 沒往下帶」而整個篩選是死的（2026-08-23 code review 抓到），
+ * 而型別檢查抓不到（呼叫端不是字面物件，不吃 excess property check）。
+ *
+ * ⛔ 新增條件時**同時**改這裡與 `userListRequestKey`，兩支都有測試釘著。
+ */
+export function buildUserListParams(query?: AdminUserListQuery, defaultLimit = ADMIN_USER_PAGE_SIZE): URLSearchParams {
+  const params = new URLSearchParams()
+  if (query?.tagIds?.length) params.set('tagIds', query.tagIds.join(','))
+  if (query?.search?.trim()) params.set('search', query.search.trim())
+  if (query?.suggested) params.set('suggested', '1')
+  params.set('page', String(query?.page ?? 1))
+  params.set('limit', String(query?.limit ?? defaultLimit))
+  return params
+}
+
+/**
+ * 飛行中請求的去重鑰匙。每個會影響結果的條件都要在裡面：
+ * 漏一個 → 「同頁同搜尋字、只切那個條件」時會命中同一支請求，畫面停在舊結果。
+ */
+export function userListRequestKey(query?: AdminUserListQuery, defaultLimit = ADMIN_USER_PAGE_SIZE): string {
+  return JSON.stringify({
+    tagIds: query?.tagIds ?? [],
+    search: query?.search ?? '',
+    suggested: query?.suggested ?? false,
+    page: query?.page ?? 1,
+    limit: query?.limit ?? defaultLimit,
+  })
 }
 
 export function useAdminUserList() {
   const users = ref<any[]>([])
   const loading = ref(false)
   const total = ref(0)
+  /** true＝後端掃描撞到上限，清單與總數可能不完整（要讓畫面講出來，別把「掃不完」顯示成「沒有」） */
+  const truncated = ref(false)
   const page = ref(1)
   const pageSize = ref(ADMIN_USER_PAGE_SIZE)
   const { apiFetch } = useWorkspace()
@@ -21,32 +56,25 @@ export function useAdminUserList() {
   let inFlight: { key: string; promise: Promise<boolean> } | null = null
 
   async function loadUsers(query?: AdminUserListQuery): Promise<boolean> {
-    const key = JSON.stringify({
-      tagIds: query?.tagIds ?? [],
-      search: query?.search ?? '',
-      page: query?.page ?? 1,
-      limit: query?.limit ?? ADMIN_USER_PAGE_SIZE,
-    })
+    const key = userListRequestKey(query)
     if (inFlight && inFlight.key === key) return inFlight.promise
 
     const task = (async () => {
       loading.value = true
       try {
-        const search = new URLSearchParams()
-        if (query?.tagIds?.length) search.set('tagIds', query.tagIds.join(','))
-        if (query?.search?.trim()) search.set('search', query.search.trim())
-        search.set('page', String(query?.page ?? 1))
-        search.set('limit', String(query?.limit ?? pageSize.value))
+        const search = buildUserListParams(query, pageSize.value)
 
         const res = await apiFetch<{
           users: any[]
           total: number
           page: number
           limit: number
+          truncated?: boolean
         }>(`/api/users/list?${search.toString()}`)
 
         users.value = res.users ?? []
         total.value = res.total ?? 0
+        truncated.value = res.truncated === true
         page.value = res.page ?? query?.page ?? 1
         pageSize.value = res.limit ?? query?.limit ?? ADMIN_USER_PAGE_SIZE
         return true
@@ -54,6 +82,7 @@ export function useAdminUserList() {
       catch {
         users.value = []
         total.value = 0
+        truncated.value = false
         return false
       }
       finally {
@@ -65,5 +94,5 @@ export function useAdminUserList() {
     return task
   }
 
-  return { users, loading, total, page, pageSize, loadUsers }
+  return { users, loading, total, page, pageSize, truncated, loadUsers }
 }

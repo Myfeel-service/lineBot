@@ -16,7 +16,86 @@ vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn() }))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 
-import { filterSuggestible, buildSuggestPrompt } from './ai-tag-suggest'
+import { filterSuggestible, buildSuggestPrompt, prunePendingForAppliedTags } from './ai-tag-suggest'
+
+const WS = 'ws1'
+
+/**
+ * userTagSuggestions 的迷你假 db：getAll 回指定文件，set 記錄寫入。
+ * 每份文件帶自己的 ref.set，模擬 snap.ref.set 的用法。
+ */
+function fakeSuggestDb(docs: Record<string, Record<string, unknown> | null>) {
+  const writes: Array<{ id: string; data: any }> = []
+  const makeSnap = (id: string) => {
+    const data = docs[id]
+    return {
+      id,
+      exists: data != null,
+      data: () => data,
+      ref: { set: async (d: any) => { writes.push({ id, data: d }) } },
+    }
+  }
+  const db: any = {
+    collection: () => ({ doc: (id: string) => ({ __id: id }) }),
+    getAll: async (...refs: Array<{ __id: string }>) => refs.map(r => makeSnap(r.__id)),
+  }
+  return { db, writes }
+}
+
+describe('prunePendingForAppliedTags：標籤貼上了就把建議剪掉', () => {
+  it('剪掉命中的那筆，pending 還有剩 → hasPending 維持 true', async () => {
+    const { db, writes } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't1' }, { tagId: 't2' }], hasPending: true },
+    })
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(1)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.data.pending).toEqual([{ tagId: 't2' }])
+    expect(writes[0]!.data.hasPending).toBe(true)
+  })
+
+  it('剪光了 → hasPending 必須翻成 false（不然列表那顆章永遠亮著）', async () => {
+    const { db, writes } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't1' }], hasPending: true },
+    })
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(1)
+    expect(writes[0]!.data.pending).toEqual([])
+    expect(writes[0]!.data.hasPending).toBe(false)
+  })
+
+  it('沒有命中 → 完全不寫（每次貼標都白寫一筆是不行的）', async () => {
+    const { db, writes } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't9' }], hasPending: true },
+    })
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('沒有建議文件的客人 → 略過，不建檔', async () => {
+    const { db, writes } = fakeSuggestDb({ u1: null })
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('⛔ 別的租戶的文件一律不動（主鍵撞號也不能跨租戶寫）', async () => {
+    const { db, writes } = fakeSuggestDb({
+      u1: { workspaceId: 'other-ws', pending: [{ tagId: 't1' }], hasPending: true },
+    })
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('空輸入不打 db；批次多人各自處理', async () => {
+    const { db, writes } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't1' }], hasPending: true },
+      u2: { workspaceId: WS, pending: [{ tagId: 't1' }, { tagId: 't3' }], hasPending: true },
+    })
+    expect(await prunePendingForAppliedTags(db, WS, [], ['t1'])).toBe(0)
+    expect(await prunePendingForAppliedTags(db, WS, ['u1'], [])).toBe(0)
+    expect(writes).toHaveLength(0)
+    expect(await prunePendingForAppliedTags(db, WS, ['u1', 'u2'], ['t1'])).toBe(2)
+    expect(writes.map(w => w.data.hasPending)).toEqual([false, true])
+  })
+})
 
 describe('filterSuggestible：模型不生 ID 的最後防線', () => {
   const candidates = new Set(['t1', 't2', 't3'])

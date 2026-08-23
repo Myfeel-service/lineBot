@@ -91,10 +91,14 @@ export interface UserTagSuggestionDoc {
   userId: string
   pending: UserTagSuggestionPending[]
   /**
-   * `pending.length > 0` 的鏡像欄位，**兩個寫入點（掃描器／採用忽略端點）都要維護**。
+   * `pending.length > 0` 的鏡像欄位，**每一個會動到 pending 的寫入點都要維護**
+   * （掃描器、採用／忽略、手動貼標時的剪枝）。
    * 為什麼要多存一份：列表「只看有 AI 建議的」要用等值查詢撈——Firestore 查不了「陣列非空」。
+   *
+   * ⚠️ 標成選填是誠實不是偷懶：欄位是 2026-08-23 才加的，更早寫進去的建議文件沒有它
+   * （功能預設關，實務上幾乎不存在，但型別不該聲稱一定有）。讀的時候一律 `=== true`。
    */
-  hasPending: boolean
+  hasPending?: boolean
   /** 忽略過的標籤——永久不再建議（採用過的不在此列：已貼上，由 userTags 天然擋掉） */
   dismissedTagIds: string[]
   createdAt: Timestamp | FieldValue

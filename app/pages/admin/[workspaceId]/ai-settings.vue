@@ -427,8 +427,8 @@
               <p class="ai-section-hint">
                 超過天數沒來訊就自動貼上（標籤叫「{{ form.inactiveTag.days }} 天沒互動」），
                 客人一回來就自動摘掉——發「好久不見」推播時選這個標籤就是名單。
-                ⚠️ 系統從 2026-08-19 才開始記「客人最後一次來訊」的時間，在那之前就沒再來訊的
-                老客第一批抓不到，會隨時間自然補齊。
+                ⚠️ 系統從 {{ INBOUND_TIME_TRACKING_SINCE }} 才開始記「客人最後一次來訊」的時間，
+                在那之前就沒再來訊的老客第一批抓不到，會隨時間自然補齊。
               </p>
               <div v-if="form.inactiveTag.enabled" class="admin-field-group">
                 <AdminFieldLabel text="幾天沒來訊算「沒互動」" tight />
@@ -817,6 +817,7 @@ import {
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_INACTIVE_TAG_DAYS,
   MAX_INACTIVE_TAG_DAYS,
+  INBOUND_TIME_TRACKING_SINCE,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { taipeiYyyyMm } from '~~/shared/time'

@@ -146,16 +146,9 @@
 
 /* ── 收件匣入口（G-20③）：列表上的「AI 建議」琥珀章＋篩選欄位 ── */
 
-.user-suggest-chip {
+/* 幾何與顏色都吃共用 .badge.badge-orange；這裡只補列內排版不該被壓縮 */
+.user-suggest-badge {
   flex-shrink: 0;
-  font-size: 0.7rem;
-  font-weight: 600;
-  line-height: 1;
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  background: var(--el-color-warning-light-9);
-  color: var(--el-color-warning-dark-2, #b45309);
-  border: 1px solid var(--el-color-warning-light-5);
 }
 
 .users-toolbar__field--suggest {
@@ -167,8 +160,10 @@
 .user-detail__eyebrow {
   font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  /* ⛔ 不加 letter-spacing：那是拉丁字母 small-caps 的手法，兩個中文字只會看起來鬆掉 */
   color: var(--text-secondary);
+  /* 眉標是「底下那塊」的標籤，要貼著它——不然吃到抽屜的 1.25rem 欄距會變成孤立的一行 */
+  margin-bottom: -1rem;
 }
 
 .user-identity--clickable {
@@ -258,6 +253,13 @@
 .user-detail__meta-label {
   color: var(--text-secondary);
   flex-shrink: 0;
+}
+
+/* 「更早之前…」「還沒傳過訊息」這類說明句：仍是這一列的值（所以是 <b>），
+   但語意上不是一個時間點，用一般字重與次要色，別讓它看起來像個數據 */
+.user-detail__meta-soft {
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .user-detail__last-message {

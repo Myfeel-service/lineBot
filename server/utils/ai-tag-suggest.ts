@@ -188,6 +188,50 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
   return stats
 }
 
+/**
+ * 標籤已經貼上了（不管是誰貼的）→ 把對應的建議從收件匣剪掉。
+ *
+ * 為什麼一定要有：客服看到建議「VIP」，但他習慣走「管理標籤」自己加——建議會永遠留在
+ * 收件匣裡，列表上那顆「AI 建議」琥珀章就變成永不消失的假警報，久了沒人理它。
+ * 呼叫點＝所有手動貼標的入口（單人／批次）；採用／忽略那支自己會處理。
+ *
+ * ⛔ 只在「這些客人真的有待處理建議」時才寫（先讀後寫），否則每次貼標都白寫一筆。
+ */
+export async function prunePendingForAppliedTags(
+  db: Firestore,
+  workspaceId: string,
+  userDocIds: string[],
+  tagIds: string[],
+): Promise<number> {
+  if (!userDocIds.length || !tagIds.length) return 0
+  let pruned = 0
+  try {
+    for (let i = 0; i < userDocIds.length; i += 300) {
+      const refs = userDocIds.slice(i, i + 300).map(id => db.collection('userTagSuggestions').doc(id))
+      const snaps = await db.getAll(...refs)
+      for (const snap of snaps) {
+        if (!snap.exists) continue
+        const doc = snap.data() as UserTagSuggestionDoc
+        if (doc.workspaceId !== workspaceId) continue
+        const pending = Array.isArray(doc.pending) ? doc.pending : []
+        const remaining = pending.filter(p => !tagIds.includes(p.tagId))
+        if (remaining.length === pending.length) continue
+        await snap.ref.set({
+          pending: remaining,
+          hasPending: remaining.length > 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+        pruned += pending.length - remaining.length
+      }
+    }
+  }
+  catch (e) {
+    // 剪枝失敗不該讓貼標本身失敗（標籤已經貼上了才走到這）
+    console.warn('[tag-suggest] prune failed:', e)
+  }
+  return pruned
+}
+
 /** 單場處理：組逐字稿 → 算候選 → LLM → 白名單過濾 → 寫收件匣。回傳寫進幾條建議 */
 async function suggestForSession(
   db: Firestore,

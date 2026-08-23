@@ -1088,6 +1088,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "userTagSuggestions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "workspaceId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasPending",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

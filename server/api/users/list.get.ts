@@ -6,6 +6,24 @@ import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 const CHUNK = 30
 const FETCH_BATCH = 120
 const MAX_SEARCH_SCAN = 5000
+/**
+ * 已知 id 集合小於這個數就走「主鍵直讀」快路徑（getAll）而不是掃 users。
+ *
+ * ⛔ 為什麼一定要有這條：`filterUserIds` 已經是精確的 id 集合，卻丟給 `offset()` 分頁掃描＝
+ * 為了 3 筆結果掃 5,000 筆、而 offset 跳過的每一筆都計費（2026-08-11 讀取費暴衝的同款）。
+ * 直讀還順便讓 `total` 精確、不受 MAX_SEARCH_SCAN 截斷。
+ */
+const FAST_PATH_MAX_IDS = 500
+/** getAll 一次的批量 */
+const GETALL_CHUNK = 300
+
+function tsToMs(raw: unknown): number {
+  const v = raw as { toMillis?: () => number; seconds?: number; _seconds?: number } | null | undefined
+  if (!v) return 0
+  if (typeof v.toMillis === 'function') return v.toMillis()
+  const sec = v.seconds ?? v._seconds
+  return typeof sec === 'number' ? sec * 1000 : 0
+}
 
 type UserBase = {
   /** Firestore doc id（{workspaceId}_{lineUserId}）——用於本系統的讀寫 */
@@ -64,7 +82,8 @@ export default defineEventHandler(async (event) => {
 
   // 「只看有 AI 建議的」：hasPending 是寫入端維護的等值查詢欄位（Firestore 查不了「陣列非空」）。
   // 與標籤篩選同時開時取交集（兩個條件都要成立）
-  if (String(query.suggested || '') === '1') {
+  const onlySuggested = String(query.suggested || '') === '1'
+  if (onlySuggested) {
     const snap = await db.collection('userTagSuggestions')
       .where('workspaceId', '==', workspaceId)
       .where('hasPending', '==', true)
@@ -75,23 +94,29 @@ export default defineEventHandler(async (event) => {
       : suggestedIds
   }
 
-  const users = await fetchUserPage({
-    db,
-    workspaceId,
-    offset,
-    limit,
-    filterUserIds,
-    searchRaw,
-  })
+  let users: UserBase[]
+  let total: number
+  /** true＝掃描撞到上限，結果與總數都可能不完整（別讓畫面把「掃不完」講成「沒有」） */
+  let truncated = false
 
-  const total = await countMatchingUsers({
-    db,
-    workspaceId,
-    filterUserIds,
-    searchRaw,
-  })
+  const fastPathIds = filterUserIds && filterUserIds.size <= FAST_PATH_MAX_IDS
+    ? [...filterUserIds]
+    : null
 
-  if (!users.length) return { users: [], total, page, limit }
+  if (fastPathIds) {
+    // id 已知 → 主鍵直讀，總數精確、不掃 users、不用 offset
+    const matched = await fetchUsersByIds({ db, workspaceId, ids: fastPathIds, searchRaw })
+    total = matched.length
+    users = matched.slice(offset, offset + limit)
+  }
+  else {
+    users = await fetchUserPage({ db, workspaceId, offset, limit, filterUserIds, searchRaw })
+    const counted = await countMatchingUsers({ db, workspaceId, filterUserIds, searchRaw })
+    total = counted.count
+    truncated = counted.truncated
+  }
+
+  if (!users.length) return { users: [], total, page, limit, truncated }
 
   const userIds = users.map((u) => u.id)
   const allUserTags: Array<{ userId: string; tagId: string }> = []
@@ -122,12 +147,32 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 收件匣入口（G-20③）：這一頁的用戶各自有沒有待處理的 AI 建議。
-  // 主鍵直讀批次（getAll），一頁一批、零掃描
-  const suggestFlags = new Map<string, boolean>()
-  const sugSnaps = await db.getAll(...userIds.map(id => db.collection('userTagSuggestions').doc(id)))
-  for (const s of sugSnaps) {
-    if (s.exists && s.data()?.hasPending === true) suggestFlags.set(s.id, true)
+  /**
+   * 收件匣入口（G-20③）：這一頁的客人各自有沒有待處理的 AI 建議。
+   *
+   * ⛔ 先用 `count()` 探一次再決定要不要逐筆讀：`autoTagSuggest` **預設關**，沒開過的工作區
+   * 這個集合是空的，逐筆 getAll 等於每次翻頁都白付 50~100 次讀取（而且是在一個跟 AI 建議
+   * 無關的頁面上）。count 聚合不論命中幾筆都只算 1 次讀取，先問「這個工作區到底有沒有」最便宜。
+   * `suggested=1` 時整頁必然都是 true（篩選本身就是這個條件），連 count 都不用問。
+   */
+  const suggestedIds = new Set<string>()
+  if (onlySuggested) {
+    userIds.forEach(id => suggestedIds.add(id))
+  }
+  else {
+    const anyPending = await db.collection('userTagSuggestions')
+      .where('workspaceId', '==', workspaceId)
+      .where('hasPending', '==', true)
+      .count()
+      .get()
+      .then(s => s.data().count > 0)
+      .catch(() => false) // 探測失敗只是少一顆提示章，不該讓整個列表壞掉
+    if (anyPending) {
+      const sugSnaps = await db.getAll(...userIds.map(id => db.collection('userTagSuggestions').doc(id)))
+      for (const s of sugSnaps) {
+        if (s.exists && s.data()?.hasPending === true) suggestedIds.add(s.id)
+      }
+    }
   }
 
   const enriched = users.map((user) => {
@@ -135,7 +180,7 @@ export default defineEventHandler(async (event) => {
     return {
       ...user,
       tagIds,
-      hasTagSuggestions: suggestFlags.get(user.id) === true,
+      hasTagSuggestions: suggestedIds.has(user.id),
       tags: tagIds.map((tid) => tagMap[tid]).filter(Boolean).map((t) => ({
         id: t.id,
         code: t.code,
@@ -146,8 +191,48 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  return { users: enriched, total, page, limit }
+  return { users: enriched, total, page, limit, truncated }
 })
+
+/**
+ * 主鍵直讀一批客人（快路徑）：id 已知時不該去掃 users。
+ * 排序與掃描路徑一致（加入時間新→舊），這樣切換條件時清單順序不會忽然變一種邏輯。
+ */
+async function fetchUsersByIds(opts: {
+  db: FirebaseFirestore.Firestore
+  workspaceId: string
+  ids: string[]
+  searchRaw: string
+}): Promise<UserBase[]> {
+  const { db, workspaceId, ids, searchRaw } = opts
+  const out: UserBase[] = []
+
+  for (let i = 0; i < ids.length; i += GETALL_CHUNK) {
+    const refs = ids.slice(i, i + GETALL_CHUNK).map(id => db.collection('users').doc(id))
+    if (!refs.length) continue
+    const snaps = await db.getAll(...refs)
+    for (const d of snaps) {
+      if (!d.exists) continue
+      const data = d.data()!
+      // 主鍵本身含租戶前綴，這裡再驗一次是保險（最早期的 doc 可能沒有這個欄位，缺欄不擋）
+      if (data.workspaceId && data.workspaceId !== workspaceId) continue
+      if (data.isBlocked === true) continue
+      const user: UserBase = {
+        id: d.id,
+        lineUserId: String(data.lineUserId || '').trim() || lineUserIdFromFirestoreDocId(d.id, workspaceId),
+        displayName: data.displayName ?? d.id,
+        pictureUrl: data.pictureUrl ?? '',
+        createdAt: data.createdAt ?? null,
+        isBlocked: false,
+      }
+      if (!matchesSearch(user, searchRaw)) continue
+      out.push(user)
+    }
+  }
+
+  out.sort((a, b) => tsToMs(b.createdAt) - tsToMs(a.createdAt))
+  return out
+}
 
 async function fetchUserPage(opts: {
   db: FirebaseFirestore.Firestore
@@ -202,12 +287,16 @@ async function fetchUserPage(opts: {
   return collected
 }
 
+/**
+ * 掃描路徑的總數。回 `truncated` 是刻意的——撞到 MAX_SEARCH_SCAN 時「0 筆」的意思是
+ * 「掃不完、沒找到」而不是「真的沒有」，畫面要有辦法分辨（同 conversations/list 的做法）。
+ */
 async function countMatchingUsers(opts: {
   db: FirebaseFirestore.Firestore
   workspaceId: string
   filterUserIds: Set<string> | null
   searchRaw: string
-}): Promise<number> {
+}): Promise<{ count: number; truncated: boolean }> {
   const { db, workspaceId, filterUserIds, searchRaw } = opts
 
   if (!searchRaw && !filterUserIds) {
@@ -215,7 +304,7 @@ async function countMatchingUsers(opts: {
       .where('workspaceId', '==', workspaceId)
       .count()
       .get()
-    return snap.data().count
+    return { count: snap.data().count, truncated: false }
   }
 
   let count = 0
@@ -253,5 +342,5 @@ async function countMatchingUsers(opts: {
     if (snap.size < FETCH_BATCH) break
   }
 
-  return count
+  return { count, truncated: scanned >= MAX_SEARCH_SCAN }
 }

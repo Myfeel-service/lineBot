@@ -53,7 +53,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const suggestions = suggestSnap.exists ? suggestSnap.data() : null
-  const pending = Array.isArray(suggestions?.pending) ? suggestions!.pending : []
+  const taggedIds = new Set(tagSnap.docs.map(d => String(d.data()?.tagId ?? '')))
+  // 已經貼上的標籤不再顯示成「待你決定」（剪枝在貼標端做，這裡是顯示層的保險：
+  // 涵蓋舊資料與同時有人在別的分頁貼標的情況）——手上已有 userTags，零額外讀取
+  const pending = (Array.isArray(suggestions?.pending) ? suggestions!.pending : [])
+    .filter((p: any) => !taggedIds.has(String(p?.tagId ?? '')))
 
   return {
     id: fsUserDocId,

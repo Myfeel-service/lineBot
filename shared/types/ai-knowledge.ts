@@ -705,6 +705,15 @@ export const DEFAULT_SLA_REMIND_MINUTES = 30
 /** 每日摘要發送時段預設（台北時間整點） */
 export const DEFAULT_DIGEST_HOUR = 9
 
+/**
+ * 系統從哪一天開始記「客人最後一次來訊」（`conversations.lastInboundMessageAt`）。
+ *
+ * 這是**部署事實**不是設定：在這天之前就沒再來訊的客人查不到那個時間，所以
+ * ①「N 天沒互動」標籤的第一批會晚一點才出現 ②客人檔案的「最後來訊」要據此換句話說。
+ * ⛔ 單一事實來源——這個日期出現在客人檔案與 AI 設定頁兩處文案，別各寫一份字串。
+ */
+export const INBOUND_TIME_TRACKING_SINCE = '2026-08-19'
+
 /** 「N 天沒互動」自動標籤的天數。單一事實來源：normalize / buildDefault / 前端表單都引用這裡 */
 export const DEFAULT_INACTIVE_TAG_DAYS = 60
 export const MIN_INACTIVE_TAG_DAYS = 7

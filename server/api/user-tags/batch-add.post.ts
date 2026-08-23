@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { UserTagDoc, TagLogDoc } from '~~/shared/types/tag-broadcast'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { prunePendingForAppliedTags } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 const FIRESTORE_BATCH_LIMIT = 400
@@ -101,6 +102,14 @@ export default defineEventHandler(async (event) => {
   }
 
   await flushBatch()
+
+  // 同 users/[id]/tags.post：貼上去的標籤要從 AI 建議收件匣剪掉，
+  // 否則列表那顆「AI 建議」章會為已經做完的決定一直亮著
+  if (added > 0) {
+    const fsUserDocIds = userIds.map(uid =>
+      lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(uid, workspaceId), workspaceId))
+    await prunePendingForAppliedTags(db, workspaceId, fsUserDocIds, tagIds)
+  }
 
   return { total: userIds.length * tagIds.length, added, skipped }
 })

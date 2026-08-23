@@ -70,8 +70,11 @@
               <div class="spinner" />
               <span>載入中…</span>
             </div>
+            <!-- ⛔「掃不完」不可以顯示成「沒有」：好友很多時後端只掃前 5,000 位，
+                 條件命中的人剛好在後面就會查不到——要講出來並給下一步 -->
             <div v-else-if="!users.length" class="tags-empty">
-              <span>{{ total ? '無符合條件的會員' : '尚無好友資料' }}</span>
+              <span v-if="truncated">好友太多，只查了前 5,000 位就停下來——用上面的搜尋或標籤縮小範圍再看一次。</span>
+              <span v-else>{{ total ? '無符合條件的會員' : '尚無好友資料' }}</span>
             </div>
             <div v-else class="table-wrap">
               <table class="users-table">
@@ -111,8 +114,9 @@
                         <span v-else class="user-avatar-placeholder"><el-icon><User /></el-icon></span>
                         <span class="user-name">{{ user.displayName || user.id }}</span>
                         <!-- 收件匣入口（G-20③）：有 AI 建議的客人要在列表上看得到，
-                             不能靠「碰巧點開」才發現 -->
-                        <span v-if="user.hasTagSuggestions" class="user-suggest-chip">AI 建議</span>
+                             不能靠「碰巧點開」才發現。用共用的 .badge badge-orange，
+                             ⛔別自刻琥珀膠囊（同色不同尺寸＝跨頁 drift，換色時也會漏改） -->
+                        <span v-if="user.hasTagSuggestions" class="badge badge-orange user-suggest-badge">AI 建議</span>
                       </div>
                     </td>
                     <td class="td-time">{{ formatZhDateOnly(user.createdAt) }}</td>
@@ -268,11 +272,13 @@
         <div class="user-detail__meta">
           <div class="user-detail__meta-item">
             <span class="user-detail__meta-label">最後來訊</span>
-            <!-- ⛔「—」對舊客會說謊（G-20①）：時間是 8/19 才開始記的，有對話但沒這筆時間
-                 ＝更早之前的老客，不是「從沒講過話」——要講清楚，不留一條會被誤讀的橫線 -->
-            <b v-if="detail.conversation?.lastInboundMessageAtMs">{{ relativeTime(detail.conversation.lastInboundMessageAtMs) }}</b>
-            <span v-else-if="detail.conversation" class="text-muted">更早之前（系統 2026-08-19 才開始記這個時間）</span>
-            <b v-else>—</b>
+            <!-- ⛔ 三種「沒有時間」要分開講（G-20①的修正版）：
+                 ①舊客（對話本身早於系統開始記的日期）→ 講「更早之前」
+                 ②只按過按鈕、從沒打字的客人（對話比那天還新）→ 講「還沒傳過訊息」
+                    ——lastInboundMessageAt 只在客人真的傳訊息時寫（按鈕算 traceOnly 不寫），
+                    這種人講「更早之前」是說謊，他的紀錄根本比那天還晚
+                 ③連對話都沒有 → 「—」 -->
+            <b :class="{ 'user-detail__meta-soft': lastInbound.soft }">{{ lastInbound.text }}</b>
           </div>
           <div class="user-detail__meta-item">
             <span class="user-detail__meta-label">最後訊息</span>
@@ -345,6 +351,7 @@
 <script setup lang="ts">
 import { User } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
+import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -357,6 +364,7 @@ const {
   total,
   page,
   pageSize,
+  truncated,
   loadUsers,
 } = useAdminUserList()
 const { tags: allTags, loading: tagsLoading, loadTags: loadTagOptions } = useAdminTagList()
@@ -423,6 +431,22 @@ const detailTags = computed(() =>
 
 const detailAttributes = computed(() => Object.entries(detail.value?.attributes ?? {}))
 
+/**
+ * 「最後來訊」要顯示什麼。系統從 `INBOUND_TIME_TRACKING_SINCE` 才開始記這個時間，
+ * 所以「查不到」有兩種完全不同的意思，不能用同一句話帶過（見模板註解）。
+ */
+const lastInbound = computed<{ text: string; soft: boolean }>(() => {
+  const conv = detail.value?.conversation
+  if (!conv) return { text: '—', soft: true }
+  if (conv.lastInboundMessageAtMs) return { text: relativeTime(conv.lastInboundMessageAtMs), soft: false }
+  const cutoffMs = Date.parse(`${INBOUND_TIME_TRACKING_SINCE}T00:00:00+08:00`)
+  // 對話的動靜早於那天 → 是真的「更早之前」；比那天新 → 這位從來沒打字過
+  if (conv.lastMessageAtMs && conv.lastMessageAtMs < cutoffMs) {
+    return { text: `更早之前（系統 ${INBOUND_TIME_TRACKING_SINCE} 才開始記這個時間）`, soft: true }
+  }
+  return { text: '還沒傳過訊息（只按過按鈕或加了好友）', soft: true }
+})
+
 async function openUserDetail(user: any) {
   detailUser.value = user
   detail.value = null
@@ -476,7 +500,7 @@ function userListQuery(targetPage = page.value) {
     limit: pageSize.value,
     tagIds: filterTagIds.value.length ? filterTagIds.value : undefined,
     search: searchText.value,
-    suggested: filterSuggested.value ? 1 : undefined,
+    suggested: filterSuggested.value,
   }
 }
 
