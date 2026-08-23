@@ -31,6 +31,19 @@ export function isTaipeiMonday(taipeiDateStr: string): boolean {
   return new Date(`${taipeiDateStr}T00:00:00Z`).getUTCDay() === 1
 }
 
+/**
+ * 統計窗口＝**台北日曆週**（上週一 00:00 ～ 本週一 00:00），不是「發送當下往回 7×24 小時」。
+ *
+ * 為什麼（G-22①）：滾動窗口的數字跟發送時刻綁在一起——同一週不同時間重算會漂、
+ * 跟後台對帳對不起來，而且標題「8/17–8/24」橫跨八個日曆日看起來就錯。
+ * 日曆週＝可重現、可解釋，標題顯示「8/17–8/23」（週一到週日）。
+ */
+export function weeklyWindow(taipeiToday: string): { startMs: number; endMs: number; rangeText: string } {
+  const endMs = Date.parse(`${taipeiToday}T00:00:00+08:00`) // 本週一台北 00:00（不含）
+  const startMs = endMs - WEEK_MS
+  return { startMs, endMs, rangeText: `${taipeiMd(startMs)}–${taipeiMd(endMs - DAY_MS)}` }
+}
+
 /** 純聚合（可測）：一週的貼標紀錄 → 各標籤次數，多到少排序、同數量照首次出現順序 */
 export function aggregateTagAdds(tagIds: string[]): Array<{ tagId: string; count: number }> {
   const counts = new Map<string, number>()
@@ -66,18 +79,21 @@ export interface WeeklyInsightInput {
 export function formatWeeklyInsightLines(input: WeeklyInsightInput): string[] | null {
   const lines: string[] = []
 
+  // ⛔ 指路一律用**側欄的名字**（「會員」「AI 設定」）——人是拿著訊息對照側欄找的，
+  //    寫「好友頁」這種頁面別名會找不到（G-22③：同一頁曾有三個名字）
   if (input.topTags.length) {
     const parts = input.topTags.map(t => `「${t.name}」+${t.count} 位`).join('、')
-    lines.push(`・這週被貼最多的標籤：${parts}——好友頁可依標籤篩出名單`)
+    lines.push(`・這週被貼最多的標籤：${parts}——後台「會員」頁可依標籤篩出名單`)
   }
   if (input.inactiveAdds.count > 0) {
     lines.push(`・${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
   }
   if (input.pendingSuggestUsers > 0) {
-    lines.push(`・${input.pendingSuggestUsers} 位客人的 AI 標籤建議還沒看——好友頁勾「只看有 AI 建議的」`)
+    lines.push(`・${input.pendingSuggestUsers} 位客人的 AI 標籤建議還沒看——後台「會員」頁勾「只看有 AI 建議的」`)
   }
   if (input.quietDown > 0) {
-    lines.push(`・上個月有來訊、最近兩週安靜下來的客人：${input.quietDown} 位`)
+    // 文案跟資料窗口一字不差（14~28 天前，不是日曆上個月）＋這一行也要有下一步（G-22②④）
+    lines.push(`・最近一個月內有來訊、但兩週沒再出現的客人：${input.quietDown} 位——想提早喚醒，到「AI 設定」把「沒互動」天數調低，就能用標籤把他們撈出來發推播`)
   }
 
   if (!lines.length) return null
@@ -93,33 +109,38 @@ function taipeiMd(ms: number): string {
 /**
  * 查資料＋組段落。回 null＝這週沒有值得講的（或查詢失敗——由呼叫端 catch，
  * 週報壞了不准拖垮每日摘要本體）。
+ *
+ * @param taipeiToday 台北日期字串（發送日＝週一）；窗口錨定在它的 00:00，同一週怎麼重算都一樣
  */
 export async function buildWeeklyInsights(
   db: Firestore,
   workspaceId: string,
-  nowMs: number,
+  taipeiToday: string,
 ): Promise<string[] | null> {
+  const { startMs, endMs, rangeText } = weeklyWindow(taipeiToday)
   const [logSnap, pendingSuggestUsers, quietDown] = await Promise.all([
     db.collection('tagLogs')
       .where('workspaceId', '==', workspaceId)
       .where('action', '==', 'add')
-      .where('createdAt', '>=', Timestamp.fromMillis(nowMs - WEEK_MS))
+      .where('createdAt', '>=', Timestamp.fromMillis(startMs))
+      .where('createdAt', '<', Timestamp.fromMillis(endMs))
       .limit(TAG_LOG_SCAN_LIMIT)
       .select('tagId')
       .get(),
-    // 兩個 count 聚合：不論命中幾筆都只計 1 次讀取
+    // count 聚合：不論命中幾筆都只計 1 次讀取。
+    // 「還沒看的建議」是**現在的狀態**不是週統計，刻意不套窗口——套了反而說謊
     db.collection('userTagSuggestions')
       .where('workspaceId', '==', workspaceId)
       .where('hasPending', '==', true)
       .count().get().then(s => s.data().count)
       .catch(() => 0),
-    // 「上月有講話、這月沉默」的可計算版本：最後來訊落在 [28 天前, 14 天前) 的對話數。
-    // lastInboundMessageAt 是 08-19 起才有的欄位 → 這個窗口要到 9 月初才開始有值，
-    // 在那之前自然為 0＝這一條整週不出現（誠實的漸進，同沒互動標籤）
+    // 「最近一個月內有來訊、但兩週沒再出現」：最後來訊落在 [週界-28天, 週界-14天) 的對話數。
+    // 錨定週界＝同一週重算數字不漂。lastInboundMessageAt 是 08-19 起才有的欄位 →
+    // 這個窗口要到 9 月初才開始有值，在那之前自然為 0＝這一條整週不出現（誠實的漸進）
     db.collection('conversations')
       .where('workspaceId', '==', workspaceId)
-      .where('lastInboundMessageAt', '>=', Timestamp.fromMillis(nowMs - 28 * DAY_MS))
-      .where('lastInboundMessageAt', '<', Timestamp.fromMillis(nowMs - 14 * DAY_MS))
+      .where('lastInboundMessageAt', '>=', Timestamp.fromMillis(endMs - 28 * DAY_MS))
+      .where('lastInboundMessageAt', '<', Timestamp.fromMillis(endMs - 14 * DAY_MS))
       .count().get().then(s => s.data().count)
       .catch(() => 0),
   ])
@@ -151,7 +172,7 @@ export async function buildWeeklyInsights(
   }
 
   return formatWeeklyInsightLines({
-    rangeText: `${taipeiMd(nowMs - WEEK_MS)}–${taipeiMd(nowMs)}`,
+    rangeText,
     topTags,
     inactiveAdds,
     pendingSuggestUsers,

@@ -1075,7 +1075,7 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 先認領再發現是空的會把今天記成發過，當天真正的摘要就再也出不去了。
     // 週報壞了只記 log，不准拖垮摘要本體。
     const insights = weeklyWindowOpen && cfg.weeklyInsights !== false
-      ? await buildWeeklyInsights(db, ws, nowMs).catch((e) => {
+      ? await buildWeeklyInsights(db, ws, today).catch((e) => {
           console.warn('[weekly-insights] build failed:', ws, e)
           return null
         })

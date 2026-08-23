@@ -14,13 +14,30 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 
-import { isTaipeiMonday, aggregateTagAdds, formatWeeklyInsightLines } from './weekly-insights'
+import { isTaipeiMonday, aggregateTagAdds, formatWeeklyInsightLines, weeklyWindow } from './weekly-insights'
 
 describe('isTaipeiMonday', () => {
   it('2026-08-24 是週一 → true；前後兩天 false', () => {
     expect(isTaipeiMonday('2026-08-24')).toBe(true)
     expect(isTaipeiMonday('2026-08-23')).toBe(false) // 週日
     expect(isTaipeiMonday('2026-08-25')).toBe(false) // 週二
+  })
+})
+
+describe('weeklyWindow：台北日曆週，不是發送時刻往回 7×24h（G-22①）', () => {
+  it('週一 8/24 發 → 窗口＝8/17 00:00～8/24 00:00（台北），標題 8/17–8/23', () => {
+    const w = weeklyWindow('2026-08-24')
+    expect(w.endMs).toBe(Date.parse('2026-08-24T00:00:00+08:00'))
+    expect(w.startMs).toBe(Date.parse('2026-08-17T00:00:00+08:00'))
+    expect(w.rangeText).toBe('8/17–8/23') // 週一到週日七個日曆日，不是橫跨八天的 8/17–8/24
+  })
+
+  it('同一週不論幾點重算，窗口一個毫秒都不動（可重現、可對帳）', () => {
+    expect(weeklyWindow('2026-08-24')).toEqual(weeklyWindow('2026-08-24'))
+  })
+
+  it('跨月的週：9/7 發 → 標題 8/31–9/6', () => {
+    expect(weeklyWindow('2026-09-07').rangeText).toBe('8/31–9/6')
   })
 })
 
@@ -62,9 +79,16 @@ describe('formatWeeklyInsightLines', () => {
     })!
     expect(lines[0]).toBe('📈 本週顧客觀察（8/17–8/24）')
     expect(lines[1]).toContain('「送禮客群」+12 位、「VIP」+3 位')
-    expect(lines[1]).toContain('好友頁') // 每條觀察都要有「去哪看」
+    // ⛔ 指路要用**側欄的名字**「會員」——「好友頁」是不存在的別名（G-22③，同頁曾有三個名字）
+    expect(lines[1]).toContain('「會員」頁')
+    expect(lines[1]).not.toContain('好友頁')
+    expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('「會員」頁')
     expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('5 位')
-    expect(lines.find(l => l.includes('安靜下來'))).toContain('23 位')
+    // 文案要跟資料窗口（14~28 天前）一字不差，不寫「上個月」；而且要有下一步（G-22②④）
+    const quiet = lines.find(l => l.includes('兩週沒再出現'))!
+    expect(quiet).toContain('23 位')
+    expect(quiet).toContain('AI 設定') // 這一行不准是唯一沒有下一步的
+    expect(quiet).not.toContain('上個月')
   })
 
   it('「沒互動」單獨一行講、帶喚醒的下一步（不混進被貼最多排行）', () => {
