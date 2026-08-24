@@ -513,6 +513,13 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /**
+     * ⛔ 一定要 relative：AI 狀態列（.conv-status）是 `position: absolute; left/right: .75rem`，
+     * 它原本的定位基準是 `.split-editor-body`（整個編輯區）。加了右側客人卡之後，
+     * 它會**橫跨到面板上方並蓋住面板標題**（2026-08-24 老闆截圖抓到）。
+     * 把定位基準收回對話欄，狀態列才會待在它該待的地方。
+     */
+    position: relative;
   }
 
   /* 包一層之後，原本靠 `.split-editor-body > .conv-messages` 拿到的高度要重新給 */
