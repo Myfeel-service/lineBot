@@ -222,35 +222,40 @@
 }
 
 /* ── AI 判斷三段選擇（D-27①）＋範本清單（D-27③）─────────────
-   ⛔ 一律用 el-radio / el-checkbox，不要手刻原生 input：
-      base/_reset.scss 有 `input, textarea, select { width: 100% }`，原生 radio 會被拉成
-      滿版把整列吃光，旁邊文字被壓成 0 寬變直排（2026-08-24 實際破版，headless 量到
-      radio 寬 456px、文字寬 0px）。EP 的真 input 是隱藏的 .el-radio__original，不吃那條。
-   ⚠️ EP 預設是「單行、nowrap、固定 32px 高、右側 margin 32px」的並排樣式，
-      要當多行卡片用就得逐項覆寫：高度改 auto、white-space 改 normal、清掉 margin。 */
+   Element Plus 的 radio/checkbox 預設是「並排、單行」的樣子，要當多行卡片用必須覆寫。
 
-%tags-choice-card {
+   ⛔⛔ **選擇器一定要比 EP 更具體**（所以全部巢狀在容器 class 底下）：
+   EP 的 `.el-radio{height:32px;white-space:nowrap}` 與我的 `.tags-ai-option` 同樣是
+   單一 class（權重 0,1,0），誰後載入誰贏——真實 app 裡 EP 的 CSS 在後面，於是卡片高度
+   被鎖回 32px、內容溢出，標題直接疊到下一個選項上（2026-08-24 破版第二次）。
+   巢狀後變成 `.tags-ai-options .tags-ai-option`（0,2,0）穩定壓過 EP，與載入順序無關。
+
+   ⛔ 這是全域 partial，**不能用 `:deep()`**（SFC scoped 專用語法，寫在這裡會原樣輸出、
+      選不到東西）——直接寫後代選擇器。
+   ⚠️ 驗證方式：把 ep.css 放在 main.css **後面**（最壞順序）渲染，量盒模型確認高度不是 32px。 */
+
+@mixin tags-choice-card {
   display: flex;
   align-items: flex-start;
   width: 100%;
-  height: auto;
-  margin: 0;
+  height: auto; /* ⛔ EP 鎖 32px */
+  margin: 0; /* ⛔ EP 給 margin-right 30px/8px（並排用） */
   padding: 0.55rem 0.75rem;
   border: 1px solid var(--border-color);
   border-radius: 9px;
-  white-space: normal;
+  white-space: normal; /* ⛔ EP 是 nowrap */
+  line-height: 1.55; /* el-checkbox-group 把 line-height 歸零，要自己補回來 */
+  font-size: 0.875rem; /* 同上：checkbox-group 的 font-size:0 會傳下來 */
   transition: border-color 0.15s, background 0.15s;
 
-  /* ⛔ 這是全域 partial，**不能用 `:deep()`**（那是 SFC scoped 樣式的語法，
-     寫在這裡會原樣輸出、選不到任何東西）——直接寫後代選擇器。 */
-
-  /* 圓鈕／方框跟第一行文字對齊（EP 預設垂直居中，多行卡片會飄到中間） */
+  /* 圓鈕／方框對齊第一行文字（EP 預設垂直居中，多行卡片會飄到中間） */
   .el-radio__input,
   .el-checkbox__input {
     margin-top: 0.2rem;
+    white-space: normal;
   }
 
-  /* label 區塊化才排得下標題＋說明兩行 */
+  /* label 要區塊化才排得下「標題＋說明」兩行 */
   .el-radio__label,
   .el-checkbox__label {
     display: flex;
@@ -268,27 +273,27 @@
   flex-direction: column;
   gap: 0.45rem;
   width: 100%;
-}
 
-.tags-ai-option {
-  @extend %tags-choice-card;
+  .tags-ai-option {
+    @include tags-choice-card;
 
-  /* EP 會在選中的 root 上自己加 .is-checked，不必另外綁 class */
-  &.is-checked {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary-light-9);
+    /* 選中態吃 EP 自己加在 root 上的 .is-checked，不自綁 class */
+    &.is-checked {
+      border-color: var(--el-color-primary);
+      background: var(--el-color-primary-light-9);
+    }
+
+    .tags-ai-option__title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--text-primary);
+    }
+
+    .tags-ai-option__desc {
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+    }
   }
-}
-
-.tags-ai-option__title {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--text-primary);
-}
-
-.tags-ai-option__desc {
-  font-size: 0.76rem;
-  color: var(--text-secondary);
 }
 
 /* 判斷條件欄：左邊一條淡色引導線＝「這欄屬於上面選的那個模式」 */
@@ -305,39 +310,39 @@
   width: 100%;
   max-height: min(52vh, 460px);
   overflow-y: auto;
-}
 
-.tags-template-item {
-  @extend %tags-choice-card;
+  .tags-template-item {
+    @include tags-choice-card;
 
-  &.is-checked {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary-light-9);
+    &.is-checked {
+      border-color: var(--el-color-primary);
+      background: var(--el-color-primary-light-9);
+    }
+
+    /* 已建立過的範本淡化＝一眼看出「不用再建」（EP 也會在 root 加 is-disabled） */
+    &.is-exists,
+    &.is-disabled {
+      opacity: 0.6;
+      background: var(--bg-elevated);
+    }
+
+    .tags-template-item__name {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: var(--text-primary);
+    }
+
+    .tags-template-item__criteria {
+      font-size: 0.78rem;
+      color: var(--text-primary);
+    }
+
+    .tags-template-item__usage {
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+    }
   }
-
-  /* 已建立過的範本要淡化＝一眼看出「這顆不用再建」（EP 自己也會在 root 加 is-disabled） */
-  &.is-exists,
-  &.is-disabled {
-    opacity: 0.6;
-    background: var(--bg-elevated);
-  }
-}
-
-.tags-template-item__name {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-weight: 600;
-  font-size: 0.875rem;
-  color: var(--text-primary);
-}
-
-.tags-template-item__criteria {
-  font-size: 0.78rem;
-  color: var(--text-primary);
-}
-
-.tags-template-item__usage {
-  font-size: 0.74rem;
-  color: var(--text-secondary);
 }

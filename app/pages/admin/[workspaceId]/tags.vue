@@ -132,7 +132,7 @@
   <el-dialog
     v-model="dialogVisible"
     :title="isEditing ? '編輯標籤' : '新增標籤'"
-    width="min(480px, 92vw)"
+    width="min(600px, 94vw)"
     class="tags-dialog"
     :close-on-click-modal="false"
   >
@@ -263,7 +263,7 @@
   <!-- ── 範本（D-27③）：AI 判斷型標籤的起手式 ──────────────
        難的不是點「新增」，是想不到該建哪些、條件怎麼寫。範本全部寫好，
        勾選建立後改幾個字就能用；建立時一律「AI 先建議」，跑準了再自行升級直接貼。 -->
-  <el-dialog v-model="templateDialogVisible" title="從範本建立 AI 判斷型標籤" width="min(560px, 94vw)">
+  <el-dialog v-model="templateDialogVisible" title="從範本建立 AI 判斷型標籤" width="min(680px, 94vw)">
     <p class="tags-desc-hint text-muted" style="margin-top: 0">
       這些都是「對話裡看得出來」的意圖標籤——判斷條件已經寫好，建立後可到標籤上逐字修改。
       建立時一律是「<strong>AI 先建議</strong>」，你按採用才貼；覺得準了再把該顆改成「直接貼」。
