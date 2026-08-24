@@ -106,7 +106,19 @@
                         {{ tag.status === 'active' ? '啟用' : '停用' }}
                       </span>
                     </td>
-                    <td class="td-count">{{ formatMemberCount(tag.memberCount) }}</td>
+                    <!-- 大數字要能點進明細：帶著標籤跳好友頁（?tagIds=）就是那份名單。
+                         ⛔ 要 stop 掉冒泡——整列的 click 是開編輯對話框，不擋的話會同時觸發。
+                         0 位時不給連結（點進去只會看到空清單，是死路不是捷徑）。 -->
+                    <td class="td-count">
+                      <button
+                        v-if="(tag.memberCount ?? 0) > 0"
+                        type="button"
+                        class="tags-count-link"
+                        :title="`看這 ${formatMemberCount(tag.memberCount)} 位好友`"
+                        @click.stop="goTaggedFriends(tag.id)"
+                      >{{ formatMemberCount(tag.memberCount) }}</button>
+                      <span v-else>{{ formatMemberCount(tag.memberCount) }}</span>
+                    </td>
                     <td class="td-time">{{ formatZhDateOnly(tag.createdAt) }}</td>
                   </tr>
                 </tbody>
@@ -414,6 +426,11 @@ async function createFromTemplates() {
 
 function formatMemberCount(count: number | undefined) {
   return (count ?? 0).toLocaleString('zh-TW')
+}
+
+/** 點「好友數」→ 好友頁並自動套上這顆標籤的篩選（那頁 onMounted 會讀 ?tagIds=） */
+function goTaggedFriends(tagId: string) {
+  navigateTo(`/admin/${workspaceId.value}/users?tagIds=${encodeURIComponent(tagId)}`)
 }
 
 function tagListQuery(targetPage = page.value) {

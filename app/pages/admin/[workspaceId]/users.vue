@@ -361,6 +361,7 @@ import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { workspaceId, apiFetch } = useWorkspace()
+const route = useRoute()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 const {
@@ -727,5 +728,14 @@ async function removeUserTag(userId: string, tagId: string) {
   }
 }
 
-onMounted(loadData)
+/**
+ * 從標籤管理頁點「好友數」帶進來的標籤（`?tagIds=a,b`）：載入前先套上篩選，
+ * 這樣點進來直接就是那份名單，不用自己再選一次。
+ * ⛔ 要在 loadData 之前設好——否則會先撈一次全部好友再重撈一次（白付一輪讀取）。
+ */
+onMounted(() => {
+  const q = String(route.query.tagIds ?? '').trim()
+  if (q) filterTagIds.value = q.split(',').map(s => s.trim()).filter(Boolean)
+  void loadData()
+})
 </script>

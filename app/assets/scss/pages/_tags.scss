@@ -93,6 +93,23 @@
   color: var(--text-secondary);
 }
 
+/* 好友數＝可點的明細入口（帶標籤跳好友頁）。外觀維持數字的樣子，
+   只在 hover 時才明顯是連結——整列本身也可點（開編輯），別讓兩個可點目標打架 */
+.tags-count-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-color-primary);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .td-name {
   font-weight: 600;
   color: var(--text-primary);
