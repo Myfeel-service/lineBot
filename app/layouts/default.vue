@@ -182,7 +182,11 @@ const navItems = computed<NavItem[]>(() => {
   if (!wid) return []
   return [
     { to: `/admin/${wid}/conversation-stats`, icon: DataLine, label: '對話統計' },
-    { to: `/admin/${wid}/conversations`, icon: ChatDotRound, label: '對話' },
+    // 「客服對話」＝讓它跟「好友」的分工自我解釋（G-26③）：這頁是收件匣（有人在等回話），
+    // 「好友」那頁是名單（要找出一群人）。老闆問「兩者要不要併」，答案是不併但要講清楚各自幹什麼。
+    // ⛔ 只加限定詞給這一項，**不動「好友」**：08-23 拍板這群人一律叫「好友」（LINE 後台的用詞），
+    //    改成「客戶名單」會又生出第三個名字，等於重演「同一頁三個名稱」那個坑。
+    { to: `/admin/${wid}/conversations`, icon: ChatDotRound, label: '客服對話' },
     { to: `/admin/${wid}/flow`, icon: Connection, label: '機器人模組' },
     { to: `/admin/${wid}/richmenu`, icon: Grid, label: '圖文選單' },
     { to: `/admin/${wid}/support-presets`, icon: Box, label: '客服預存' },

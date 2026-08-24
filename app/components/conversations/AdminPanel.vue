@@ -180,6 +180,15 @@
             <div class="split-editor-title">{{ selectedUser?.displayName }}</div>
           </div>
         </div>
+        <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義） -->
+        <el-button
+          v-if="selectedUserId && !customerPanelOpen"
+          size="small"
+          text
+          type="primary"
+          class="conv-customer-reopen"
+          @click="customerPanelOpen = true"
+        >客人檔案 →</el-button>
         <div v-if="sessionToolbarMeta" class="conv-session-toolbar">
           <span class="conv-session-toolbar__hint">{{ selectedSessionId ? '此場會話' : '進行中會話' }}</span>
           <el-tag size="small" type="info">{{ sessionToolbarMeta.statusLabel }}</el-tag>
@@ -220,6 +229,12 @@
 
     <!-- ── Editor Body ── -->
     <template #editor-body>
+      <!-- ══ G-26：對話區 ＋ 右側客人卡 ══════════════════════════
+           版面照 LINE 官方帳號後台：左清單／中對話／右客人資訊。
+           ⛔ 只加外層容器、**內容不重新縮排**——那會產生 600 行的假 diff，
+              把真正的改動埋掉（縮排對 CSS 沒有影響）。 -->
+      <div class="conv-body-split">
+      <div class="conv-body-main">
       <ConversationsAiContextBanner
         v-if="canOperate"
         ref="aiContextBanner"
@@ -883,6 +898,27 @@
         <el-button type="primary" :loading="sending" :disabled="!canSend" @click="send">
           送出
         </el-button>
+      </div>
+      </div>
+
+      <!-- 右側客人卡：**與好友頁同一個元件**（改一次兩邊都變）。
+           ⛔ 按需載入——它自己在 userId 變動時撈一次，**沒有掛進 30 秒清單輪詢**
+              （那是 2026-08-11 讀取費暴衝的形狀）。 -->
+      <aside v-if="selectedUserId && customerPanelOpen" class="conv-customer">
+        <div class="conv-customer__hd">
+          <span class="conv-customer__title">客人檔案</span>
+          <button type="button" class="conv-customer__collapse" title="收起客人檔案" @click="customerPanelOpen = false">✕</button>
+        </div>
+        <div class="conv-customer__body">
+          <AdminCustomerCard
+            :user-id="selectedUserId"
+            :api-fetch="apiFetch"
+            :can-operate="canOperate"
+            :fallback-name="selectedUser?.displayName"
+            :fallback-picture="selectedUser?.pictureUrl"
+          />
+        </div>
+      </aside>
       </div>
     </template>
   </AdminSplitLayout>
@@ -1644,6 +1680,12 @@ const takingOverSession = ref(false)
 const selectedUserId = ref<string | null>(null)
 const selectedSessionId = ref<string | null>(null)
 const selectedUser = ref<ConvItem | null>(null)
+/**
+ * 右側客人檔案面板開著沒（G-26）。用 useState 讓它跨頁記住——客服會依自己的螢幕寬度
+ * 決定要不要開，每次進頁面都重新彈出來很煩。預設開：接手前先知道對方是誰，
+ * 正是這個面板存在的理由（老闆 08-24 拍板照 LINE 的版面做）。
+ */
+const customerPanelOpen = useState('conv-customer-panel-open', () => true)
 const activeTab = ref<TabValue>('all')
 const inputText = ref('')
 const searchText = ref('')

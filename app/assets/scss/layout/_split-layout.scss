@@ -541,6 +541,16 @@ body.is-resizing-split {
   overflow: hidden;
 }
 
+/* ⚠️ G-26 之後對話區被包進 .conv-body-split（左對話＋右客人卡），
+   所以「填滿高度」要給那一層；.conv-messages 的 flex 由 _conversations.scss 內層再給。
+   ⛔ 這是**直接子層**選擇器——當初包容器時就是踩到它才讓訊息區塌掉一次。 */
+.split-editor-body > .conv-body-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
 .split-editor-body > .conv-messages {
   flex: 1;
   min-height: 0;

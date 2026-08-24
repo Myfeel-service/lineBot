@@ -260,94 +260,18 @@
     <div v-if="detailUser" class="user-detail">
       <!-- 眉標：第一次用的人要知道這個面板叫什麼（G-20④） -->
       <span class="user-detail__eyebrow">客人檔案</span>
-      <div class="user-detail__head">
-        <img v-if="detailUser.pictureUrl" :src="detailUser.pictureUrl" class="user-detail__avatar" :alt="detailUser.displayName" />
-        <span v-else class="user-detail__avatar user-detail__avatar--empty"><el-icon><User /></el-icon></span>
-        <div class="user-detail__title">
-          <span class="user-detail__name">{{ detailUser.displayName || detailUser.id }}</span>
-          <span v-if="detail?.isBlocked" class="user-detail__blocked">已封鎖／退追蹤</span>
-          <span class="user-detail__sub">加入於 {{ formatZhDateOnly(detailUser.createdAt) }}</span>
-        </div>
-      </div>
-
-      <div v-if="detailLoading" class="tags-loading"><div class="spinner" /><span>載入中…</span></div>
-
-      <template v-else-if="detail">
-        <!-- 最後互動 -->
-        <div class="user-detail__meta">
-          <div class="user-detail__meta-item">
-            <span class="user-detail__meta-label">最後來訊</span>
-            <!-- ⛔ 三種「沒有時間」要分開講（G-20①的修正版）：
-                 ①舊客（對話本身早於系統開始記的日期）→ 講「更早之前」
-                 ②只按過按鈕、從沒打字的客人（對話比那天還新）→ 講「還沒傳過訊息」
-                    ——lastInboundMessageAt 只在客人真的傳訊息時寫（按鈕算 traceOnly 不寫），
-                    這種人講「更早之前」是說謊，他的紀錄根本比那天還晚
-                 ③連對話都沒有 → 「—」 -->
-            <b :class="{ 'user-detail__meta-soft': lastInbound.soft }">{{ lastInbound.text }}</b>
-          </div>
-          <div class="user-detail__meta-item">
-            <span class="user-detail__meta-label">最後訊息</span>
-            <b class="user-detail__last-message">
-              <template v-if="detail.conversation?.lastMessage">
-                {{ detail.conversation.lastDirection === 'incoming' ? '客人：' : '我們：' }}{{ detail.conversation.lastMessage }}
-              </template>
-              <template v-else>—</template>
-            </b>
-          </div>
-          <!-- 通往完整對話的真連結（G-20⑦）：對話頁的 ?userId= 深連結是現成的（監控頁同款） -->
-          <div v-if="detail.conversation" class="user-detail__meta-actions">
-            <el-button size="small" text type="primary" @click="goConversation">看完整對話 →</el-button>
-          </div>
-        </div>
-
-        <!-- AI 建議標籤（D-24 收件匣）：有建議才出現，採用才真的貼 -->
-        <section v-if="detail.tagSuggestions?.pending.length" class="user-detail__section user-detail__section--suggest">
-          <AdminFieldLabel text="AI 建議的標籤" tight />
-          <p class="user-detail__suggest-hint">AI 從對話內容判斷的，你按「採用」才會真的貼上。</p>
-          <div v-for="s in detail.tagSuggestions.pending" :key="s.tagId" class="user-detail__suggest-row">
-            <div class="user-detail__suggest-main">
-              <AdminTagTintChip :color="tagById(s.tagId)?.color ?? '#8a95a1'">
-                {{ tagById(s.tagId)?.name ?? '（已刪除的標籤）' }}
-              </AdminTagTintChip>
-              <span v-if="s.reason" class="user-detail__suggest-reason">{{ s.reason }}</span>
-            </div>
-            <div v-if="canOperate" class="user-detail__suggest-actions">
-              <el-button size="small" type="primary" :loading="suggestActing === s.tagId" @click="actOnSuggestion(s.tagId, 'apply')">採用</el-button>
-              <el-button size="small" :loading="suggestActing === s.tagId" @click="actOnSuggestion(s.tagId, 'dismiss')">忽略</el-button>
-            </div>
-          </div>
-        </section>
-
-        <!-- 標籤 -->
-        <section class="user-detail__section">
-          <AdminFieldLabel text="標籤" tight />
-          <div v-if="detailTags.length" class="user-tags-row">
-            <AdminTagTintChip v-for="t in detailTags" :key="t.tagId" :color="t.color">
-              {{ t.name }}<small class="user-detail__tag-source">{{ t.sourceLabel }}</small>
-            </AdminTagTintChip>
-          </div>
-          <span v-else class="text-muted text-sm">尚無標籤</span>
-          <div class="user-detail__section-actions">
-            <el-button size="small" @click="openUserTagDialog(detailUser)">管理標籤</el-button>
-          </div>
-        </section>
-
-        <!-- 腳本收集到的資料（G-6 的根：進得去、看不到 → 現在看得到） -->
-        <section class="user-detail__section">
-          <AdminFieldLabel text="收集到的資料" tight />
-          <table v-if="detailAttributes.length" class="user-detail__attrs">
-            <tbody>
-              <tr v-for="[k, v] in detailAttributes" :key="k">
-                <th>{{ k }}</th>
-                <td>{{ v }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <!-- ⚠️ 寫入這裡的是「存進客人資料」步驟（saveLead），不是「收集」——收集只是問，
-               有沒有存下來看腳本有沒有接那一步。文案要照編輯器的步驟名講（G-20②） -->
-          <span v-else class="text-muted text-sm">還沒有——腳本走到「存進客人資料」步驟時，存下來的欄位會出現在這裡。</span>
-        </section>
-      </template>
+      <!-- ⛔ 卡片內容是**共用元件**（G-26）：客服對話頁右側用的是同一份，
+           改一次兩邊都變。別在這裡另刻一份客人資訊。 -->
+      <AdminCustomerCard
+        :user-id="detailUser.id"
+        :api-fetch="apiFetch"
+        :can-operate="canOperate"
+        :fallback-name="detailUser.displayName"
+        :fallback-picture="detailUser.pictureUrl"
+        show-conversation-link
+        @changed="refreshUsersOnly"
+        @open-conversation="goConversation"
+      />
     </div>
   </el-drawer>
 
@@ -356,7 +280,6 @@
 <script setup lang="ts">
 import { User } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
-import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -394,83 +317,16 @@ const userTagSaving = ref(false)
 const syncingLine = ref(false)
 const syncProgress = ref('')
 
-// ── 客人單頁（G-6）────────────────────────────────────────
-type UserDetail = {
-  id: string
-  isBlocked: boolean
-  attributes: Record<string, string>
-  tags: Array<{ tagId: string; sourceType: string; createdAtMs: number }>
-  conversation: { lastMessage: string; lastDirection: 'incoming' | 'outgoing' | null; lastMessageAtMs: number; lastInboundMessageAtMs: number } | null
-  tagSuggestions: { pending: Array<{ tagId: string; reason: string; suggestedAtMs: number }> } | null
-}
-
+// ── 客人單頁（G-6／G-26）──────────────────────────────────
+// 卡片內容與所有讀寫都在共用元件 AdminCustomerCard 裡（客服對話頁用同一份）。
+// 這裡只留「開哪一位」的狀態。
 const detailVisible = ref(false)
-const detailLoading = ref(false)
-/** 列表那一列（先拿名字頭像即時開抽屜，詳情再補） */
+/** 列表那一列：先把名字頭像交給卡片當 fallback，詳情由卡片自己撈 */
 const detailUser = ref<any>(null)
-const detail = ref<UserDetail | null>(null)
-/** 正在採用／忽略中的建議 tagId（按鈕 loading 用） */
-const suggestActing = ref<string | null>(null)
 
-/** 標籤來源的白話標示：AI 貼的要看得出是 AI 貼的，出錯才追得回來 */
-const TAG_SOURCE_LABELS: Record<string, string> = {
-  manual: '手動',
-  import: '匯入',
-  rule: '規則',
-  system: '系統',
-  ai: 'AI',
-}
-
-function tagById(tagId: string) {
-  return allTags.value.find(t => t.id === tagId) ?? null
-}
-
-const detailTags = computed(() =>
-  (detail.value?.tags ?? []).map(t => ({
-    ...t,
-    name: tagById(t.tagId)?.name ?? '（已刪除的標籤）',
-    color: tagById(t.tagId)?.color ?? '#8a95a1',
-    // 「手動」是預設不標，其他來源才標——列表一排全是「手動」只是噪音
-    sourceLabel: t.sourceType !== 'manual' ? (TAG_SOURCE_LABELS[t.sourceType] ?? t.sourceType) : '',
-  })),
-)
-
-const detailAttributes = computed(() => Object.entries(detail.value?.attributes ?? {}))
-
-/**
- * 「最後來訊」要顯示什麼。系統從 `INBOUND_TIME_TRACKING_SINCE` 才開始記這個時間，
- * 所以「查不到」有兩種完全不同的意思，不能用同一句話帶過（見模板註解）。
- */
-const lastInbound = computed<{ text: string; soft: boolean }>(() => {
-  const conv = detail.value?.conversation
-  if (!conv) return { text: '—', soft: true }
-  if (conv.lastInboundMessageAtMs) return { text: relativeTime(conv.lastInboundMessageAtMs), soft: false }
-  const cutoffMs = Date.parse(`${INBOUND_TIME_TRACKING_SINCE}T00:00:00+08:00`)
-  // 對話的動靜早於那天 → 是真的「更早之前」；比那天新 → 這位從來沒打字過
-  if (conv.lastMessageAtMs && conv.lastMessageAtMs < cutoffMs) {
-    return { text: `更早之前（系統 ${INBOUND_TIME_TRACKING_SINCE} 才開始記這個時間）`, soft: true }
-  }
-  return { text: '還沒傳過訊息（只按過按鈕或加了好友）', soft: true }
-})
-
-async function openUserDetail(user: any) {
+function openUserDetail(user: any) {
   detailUser.value = user
-  detail.value = null
   detailVisible.value = true
-  await loadUserDetail(user.id)
-}
-
-async function loadUserDetail(id: string) {
-  detailLoading.value = true
-  try {
-    detail.value = await apiFetch<UserDetail>(`/api/users/${id}/detail`)
-  }
-  catch {
-    showToast('載入客人資料失敗', 'error')
-  }
-  finally {
-    detailLoading.value = false
-  }
 }
 
 /** 通往完整對話：對話頁的 ?userId= 深連結是現成的（監控頁「開對話」同一條路） */
@@ -479,26 +335,6 @@ function goConversation() {
   navigateTo(`/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(detailUser.value.id)}`)
 }
 
-/** 採用＝真的貼上（來源記 AI、可撤）；忽略＝這個標籤對這位客人永遠不再建議 */
-async function actOnSuggestion(tagId: string, action: 'apply' | 'dismiss') {
-  if (!assertCanOperate()) return
-  if (!detailUser.value) return
-  suggestActing.value = tagId
-  try {
-    await apiFetch(`/api/users/${detailUser.value.id}/tag-suggestions`, {
-      method: 'POST',
-      body: { action, tagIds: [tagId] },
-    })
-    showToast(action === 'apply' ? '已採用，標籤貼上了' : '已忽略，不會再建議這個標籤', 'success')
-    await Promise.all([loadUserDetail(detailUser.value.id), refreshUsersOnly()])
-  }
-  catch (e: any) {
-    showToast(e?.data?.statusMessage || '操作失敗', 'error')
-  }
-  finally {
-    suggestActing.value = null
-  }
-}
 
 function userListQuery(targetPage = page.value) {
   return {
@@ -702,8 +538,7 @@ async function addUserTags() {
     await refreshUsersOnly()
     const updated = users.value.find((u) => u.id === dialogUser.value!.id)
     if (updated) dialogUser.value = JSON.parse(JSON.stringify(updated))
-    // 抽屜開著同一位 → 詳情跟著更新，不然抽屜上的標籤是舊的
-    if (detailVisible.value && detailUser.value?.id === updated?.id) void loadUserDetail(updated.id)
+
   }
   catch {
     showToast('加標失敗', 'error')
@@ -721,7 +556,7 @@ async function removeUserTag(userId: string, tagId: string) {
     await refreshUsersOnly()
     const updated = users.value.find((u) => u.id === userId)
     if (updated) dialogUser.value = JSON.parse(JSON.stringify(updated))
-    if (detailVisible.value && detailUser.value?.id === userId) void loadUserDetail(userId)
+
   }
   catch {
     showToast('移除失敗', 'error')

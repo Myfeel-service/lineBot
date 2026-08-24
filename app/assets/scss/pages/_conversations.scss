@@ -505,6 +505,81 @@
     flex-shrink: 0;
   }
 
+  /* ── G-26：對話主區 ＋ 右側客人卡（版面照 LINE 官方帳號後台）── */
+  .conv-body-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 包一層之後，原本靠 `.split-editor-body > .conv-messages` 拿到的高度要重新給 */
+  .conv-body-main > .conv-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .conv-customer {
+    /* 寬度取 LINE 的比例（約 18% of 1920）；窄螢幕整個藏起來，別把對話區壓成一條 */
+    flex: 0 0 320px;
+    /* ⛔ 一定要 min-width: 0：預設 min-width:auto 會讓面板被內容的最小寬度撐開——
+       卡片裡「最後訊息」那行是 nowrap 截尾，min-content 等於整句話的長度，
+       實測面板從 320 被撐到 413px（headless 量到才發現）。 */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-left: 1px solid var(--border-color);
+    background: var(--bg-base);
+
+    @container (max-width: 900px) {
+      display: none;
+    }
+  }
+
+  .conv-customer__hd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+
+  .conv-customer__title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+  }
+
+  .conv-customer__collapse {
+    background: none;
+    border: none;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--text-muted);
+    cursor: pointer;
+
+    &:hover { color: var(--text-primary); }
+  }
+
+  .conv-customer__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.9rem 0.85rem 1.5rem;
+  }
+
+  .conv-customer-reopen {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
   .conv-messages {
     flex: 1;
     overflow-y: auto;

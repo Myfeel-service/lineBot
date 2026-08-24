@@ -1,0 +1,264 @@
+/* ══════════════════════════════════════════════════════════════
+   客人檔案卡（G-26）——好友頁抽屜與客服對話頁右側面板共用同一份。
+
+   版面參考 LINE 官方帳號後台的右側面板：頭像＋名字 → 標籤（可就地新增）
+   → 其他資訊；區塊之間用細線分隔、每塊一個小標題、空狀態用淡底說明框。
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   ══════════════════════════════════════════════════════════════ */
+
+.cust-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+/* ── 頭部 ── */
+.cust-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding-bottom: 0.9rem;
+}
+
+.cust-card__avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+
+  &--empty {
+    background: var(--bg-elevated);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+  }
+}
+
+.cust-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.cust-card__name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.cust-card__blocked {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+
+.cust-card__sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ── 區塊：細線分隔（照 LINE 的分段感）── */
+.cust-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--border-color);
+
+  /* AI 建議是「待你決定」，用琥珀淡底跟其他區塊分開（同專案 warning 語彙） */
+  &--suggest {
+    background: var(--el-color-warning-light-9);
+    border-radius: 9px;
+    border-top: none;
+    padding: 0.75rem 0.85rem;
+    margin: 0.6rem 0;
+  }
+}
+
+.cust-card__section-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cust-card__section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* 「＋ 新增標籤」：LINE 把它放在標籤區右上、用主色文字鈕，貼標是這張卡最常做的事 */
+.cust-card__add {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover,
+  &:focus-visible { text-decoration: underline; }
+}
+
+.cust-card__add-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cust-card__add-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.cust-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.cust-card__tag-src {
+  margin-left: 0.25rem;
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.cust-card__empty,
+.cust-card__note {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.cust-card__hint {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* ── AI 建議列 ── */
+.cust-card__suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.4rem;
+}
+
+.cust-card__suggest-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cust-card__suggest-why {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.cust-card__suggest-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* ── 鍵值列（唯讀資料用對齊格線，不用表單樣式）── */
+.cust-card__kv {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+
+.cust-card__k {
+  color: var(--text-secondary);
+  flex: 0 0 4.5em;
+}
+
+.cust-card__v {
+  min-width: 0;
+  color: var(--text-primary);
+
+  /* 說明句（「更早之前…」「還沒傳過訊息」）不是一個時間點，用一般字重與次要色 */
+  &--soft {
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+
+  /* 最後一句話當摘要看就好，長文截尾——整段對話按下面的連結 */
+  &--clip {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+}
+
+.cust-card__section-actions {
+  margin: -0.15rem -0.5rem 0 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── 腳本收集到的資料 ── */
+.cust-card__attrs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+  }
+
+  th {
+    color: var(--text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+    width: 38%;
+  }
+
+  td {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+
+  tr:last-child th,
+  tr:last-child td { border-bottom: none; }
+}
+
+.cust-card__loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.2rem 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.cust-card__error {
+  padding: 0.9rem 0;
+  font-size: 0.8rem;
+  color: var(--el-color-danger);
+}
