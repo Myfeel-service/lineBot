@@ -8,6 +8,7 @@ import {
   readConversationFlags,
   withPinnedFirst,
 } from '~~/shared/conversation-flags'
+import { readConversationAssignee, type ConversationAssignee } from '~~/shared/conversation-assignee'
 
 const DISPLAY_FALLBACK = 'LINE 用戶'
 /**
@@ -34,6 +35,8 @@ type ConvRow = {
   pinned: boolean
   /** 人工標記：客服手動標「我要回頭跟這筆」，與會話狀態無關（見 shared/conversation-flags.ts） */
   followUp: boolean
+  /** 負責人員：哪一位同事在跟這條線（見 shared/conversation-assignee.ts）；沒人負責時 uid 為空字串 */
+  assignee: ConversationAssignee
 }
 
 /** 搜尋結果在記憶體排序用：lastMessageAt 是 Firestore Timestamp，沒有的排最後 */
@@ -80,6 +83,7 @@ async function enrichConversations(
       isBlocked: user.isBlocked === true,
       pinned: flags.pinned,
       followUp: flags.followUp,
+      assignee: readConversationAssignee(data),
     }
   })
 }
@@ -247,6 +251,7 @@ export default defineEventHandler(async (event) => {
       isBlocked: user.isBlocked === true,
       pinned: flags.pinned,
       followUp: flags.followUp,
+      assignee: readConversationAssignee(data),
     })
   }
   matched.sort((a, b) => timestampMillis(b.lastMessageAt) - timestampMillis(a.lastMessageAt))

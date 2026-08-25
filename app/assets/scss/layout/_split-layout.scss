@@ -258,6 +258,30 @@ body.is-resizing-split {
   margin-bottom: 0;
 }
 
+/**
+ * 標題列右側的一字圓章：對話列表拿來標「誰在跟這條線」（G-27 功能缺口②）。
+ *
+ * 為什麼是一個字的圓章而不是名字：側欄只有 239px，放全名等於把客人的名字吃掉一半。
+ * LINE／Intercom 的收件匣也都是用小頭像放在同一個位置。
+ * ⛔ flex-shrink: 0 ——被壓扁的圓會變成橢圓，比不畫還糟。
+ */
+.split-list-item__owner {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
+}
+
 .split-list-item__time {
   flex-shrink: 0;
   max-width: 42%;

@@ -90,6 +90,44 @@
         </div>
       </section>
 
+      <!-- ── 備註（客服交接用；客人看不到）────────────────── -->
+      <section class="cust-card__section">
+        <div class="cust-card__section-hd">
+          <span class="cust-card__section-title">備註</span>
+          <button
+            v-if="canOperate && !editingNote"
+            type="button"
+            class="cust-card__add"
+            @click="startEditNote"
+          >{{ note.text ? '編輯' : '＋ 寫備註' }}</button>
+        </div>
+        <!-- 這句一定要在：客服不敢寫的第一個理由就是「這會不會被客人看到」 -->
+        <p class="cust-card__hint">寫給同事看的，客人看不到。</p>
+
+        <template v-if="editingNote">
+          <el-input
+            ref="noteInput"
+            v-model="noteDraft"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 10 }"
+            :maxlength="CUSTOMER_NOTE_MAX_CHARS"
+            show-word-limit
+            resize="none"
+            placeholder="例：這位客人堅持要原廠保固，已回報廠商，等回覆"
+          />
+          <div class="cust-card__note-actions">
+            <el-button size="small" :disabled="savingNote" @click="cancelEditNote">取消</el-button>
+            <el-button size="small" type="primary" :loading="savingNote" @click="saveNote">儲存</el-button>
+          </div>
+        </template>
+        <template v-else-if="note.text">
+          <p class="cust-card__note-text">{{ note.text }}</p>
+          <!-- 交接看的是「誰在什麼時候留的」：沒有這行，三天前的狀況會被當成現在的狀況 -->
+          <span v-if="noteByline" class="cust-card__note-by">{{ noteByline }}</span>
+        </template>
+        <span v-else class="cust-card__empty">還沒有備註</span>
+      </section>
+
       <!-- ── 最後互動 ─────────────────────────────────── -->
       <section class="cust-card__section">
         <span class="cust-card__section-title">最後互動</span>
@@ -114,7 +152,19 @@
 
       <!-- ── 腳本收集到的資料 ──────────────────────────── -->
       <section class="cust-card__section">
-        <span class="cust-card__section-title">收集到的資料</span>
+        <div class="cust-card__section-hd">
+          <span class="cust-card__section-title">收集到的資料</span>
+          <!-- ⚠️ 寫入這裡的是腳本「存進客人資料」步驟（saveLead），不是「收集」——
+               收集只是問，有沒有存下來看腳本有沒有接那一步。文案照編輯器的步驟名講。
+               G-27⑥：這段解釋原本是常駐兩行的空狀態，但「多數客人沒填過表單」才是常態——
+               常態不該佔兩行，收進問號裡，滑上去才講。 -->
+          <span
+            v-if="!attributeRows.length"
+            class="cust-card__why"
+            title="腳本走到「存進客人資料」步驟時，存下來的欄位會出現在這裡。多數客人沒走過收資料的腳本，所以這裡通常是空的。"
+            aria-label="這裡為什麼是空的"
+          >?</span>
+        </div>
         <table v-if="attributeRows.length" class="cust-card__attrs">
           <tbody>
             <tr v-for="[k, v] in attributeRows" :key="k">
@@ -123,11 +173,7 @@
             </tr>
           </tbody>
         </table>
-        <!-- ⚠️ 寫入這裡的是腳本「存進客人資料」步驟（saveLead），不是「收集」——
-             收集只是問，有沒有存下來看腳本有沒有接那一步。文案照編輯器的步驟名講。 -->
-        <p v-else class="cust-card__note">
-          還沒有——腳本走到「存進客人資料」步驟時，存下來的欄位會出現在這裡。
-        </p>
+        <span v-else class="cust-card__empty">還沒有收集到資料</span>
       </section>
     </template>
   </div>
@@ -136,6 +182,7 @@
 <script setup lang="ts">
 import { User } from '@element-plus/icons-vue'
 import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
+import { CUSTOMER_NOTE_MAX_CHARS, type CustomerNote } from '~~/shared/customer-note'
 
 interface CustomerDetail {
   id: string
@@ -152,6 +199,7 @@ interface CustomerDetail {
     lastInboundMessageAtMs: number
   } | null
   tagSuggestions: { pending: Array<{ tagId: string; reason: string; suggestedAtMs: number }> } | null
+  note: CustomerNote
 }
 
 const props = defineProps<{
@@ -184,10 +232,12 @@ const acting = ref<string | null>(null)
 
 const displayName = computed(() => detail.value?.displayName || props.fallbackName || '')
 const pictureUrl = computed(() => detail.value?.pictureUrl || props.fallbackPicture || '')
-const joinedText = computed(() => {
-  const ms = detail.value?.createdAtMs
-  return ms ? new Date(ms).toLocaleDateString('zh-TW') : ''
-})
+/**
+ * ⛔ 和「最後來訊」走同一支 calendarDate（G-27⑥）。
+ * 原本這裡是 toLocaleDateString() 的完整年月日、那邊是 relativeTime 的月日，
+ * 同一張卡兩種日期寫法。
+ */
+const joinedText = computed(() => calendarDate(detail.value?.createdAtMs ?? 0))
 
 /** 標籤來源白話標示：AI 貼的要看得出是 AI 貼的，出錯才追得回來。手動＝預設不標（整排「手動」是噪音） */
 const TAG_SOURCE_LABELS: Record<string, string> = {
@@ -215,6 +265,55 @@ const addableTags = computed(() => {
 
 const pendingSuggestions = computed(() => detail.value?.tagSuggestions?.pending ?? [])
 const attributeRows = computed(() => Object.entries(detail.value?.attributes ?? {}))
+
+/* ── 備註（G-27 功能缺口①）────────────────────────────────── */
+const editingNote = ref(false)
+const savingNote = ref(false)
+const noteDraft = ref('')
+const noteInput = ref<{ focus: () => void } | null>(null)
+
+const EMPTY_NOTE: CustomerNote = { text: '', updatedByName: '', updatedAtMs: 0 }
+const note = computed<CustomerNote>(() => detail.value?.note ?? EMPTY_NOTE)
+
+/** 「誰在什麼時候留的」。缺哪一半就只講有的那半，不要生出「（ 於 ）」這種空殼 */
+const noteByline = computed(() => {
+  const who = note.value.updatedByName
+  const when = note.value.updatedAtMs ? relativeTime(note.value.updatedAtMs) : ''
+  if (who && when) return `${who} · ${when}`
+  return who || when
+})
+
+function startEditNote() {
+  noteDraft.value = note.value.text
+  editingNote.value = true
+  void nextTick(() => noteInput.value?.focus())
+}
+
+function cancelEditNote() {
+  editingNote.value = false
+  noteDraft.value = ''
+}
+
+async function saveNote() {
+  savingNote.value = true
+  try {
+    const saved = await props.apiFetch<CustomerNote>(`/api/users/${props.userId}/note`, {
+      method: 'POST',
+      body: { text: noteDraft.value },
+    })
+    // 就地更新，不整份重載：重載會把展開中的標籤選單、捲動位置一起打掉
+    if (detail.value) detail.value.note = saved
+    editingNote.value = false
+    showToast(saved.text ? '備註已儲存' : '備註已清空', 'success')
+    emit('changed')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '備註儲存失敗', 'error')
+  }
+  finally {
+    savingNote.value = false
+  }
+}
 
 /**
  * 「最後來訊」要顯示什麼。系統從 INBOUND_TIME_TRACKING_SINCE 才開始記，
@@ -302,6 +401,9 @@ async function actOnSuggestion(tagId: string, action: 'apply' | 'dismiss') {
 // 換人就重載；標籤目錄只載一次（chip 的名字與顏色靠它）
 watch(() => props.userId, (id) => {
   adding.value = false
+  // ⛔ 換人一定要收掉編輯中的備註：不收的話上一位客人打到一半的字會留在框裡，
+  //    下一位客人按儲存就把它寫到**別人**身上（同一個元件實例、只換 userId）
+  cancelEditNote()
   if (id) void load()
 }, { immediate: true })
 

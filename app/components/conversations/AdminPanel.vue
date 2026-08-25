@@ -2,7 +2,8 @@
   <AdminSplitLayout class="conversations-page" :is-empty="!selectedUserId">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 對話</span>
+      <!-- 側欄選單昨天改叫「客服對話」了，這裡跟著改：同一個東西同一個名字（G-27⑤） -->
+      <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 客服對話</span>
       <div class="conv-sidebar-actions">
         <!-- 換電腦／清過快取／新同事第一次登入時整排全紅，沒這顆就只能一位一位點開才消得掉 -->
         <button
@@ -11,32 +12,53 @@
           class="conv-mark-all-read"
           title="把這份清單上看得到的紅點一次清掉（只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響）"
           @click="markAllConversationsRead"
-        >全部已讀（{{ unreadRowCount }}）</button>
+        >標記全部已讀（{{ unreadRowCount }}）</button>
         <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
       </div>
     </template>
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
-      <!-- Status Tabs：這一排全部是「系統判定的會話狀態」，人工標記不放這裡（會被當成同一種東西） -->
+      <!-- Status Tabs：這一排全部是「系統判定的會話狀態」，人工標記不放這裡（會被當成同一種東西）。
+           G-27③：只留「要人動手」的三個在檯面上，其餘收進右邊的下拉（原本六個擠三排吃掉約 100px，
+           而且最大的數字「機器人」正好是最不需要人看的一群）。 -->
       <div class="conv-status-tabs" data-tour="conv-tabs">
         <button
-          v-for="tab in STATUS_TABS"
+          v-for="tab in PRIMARY_STATUS_TABS"
           :key="tab.value"
           type="button"
           class="conv-status-tab"
           :class="{ active: activeTab === tab.value }"
           :title="tab.hint"
           @click="switchTab(tab.value)"
+        >{{ statusTabText(tab) }}</button>
+        <el-dropdown
+          trigger="click"
+          placement="bottom-end"
+          class="conv-status-more"
+          @command="switchTab"
         >
-          {{
-            tab.value === 'all'
-              ? tab.label
-              : tab.value === 'closed'
-                ? tab.label
-                : `${tab.label}（${sessionStatusCounts[tab.value]}）`
-          }}
-        </button>
+          <button
+            type="button"
+            class="conv-status-tab conv-status-tab--more"
+            :class="{ active: secondaryTabActive }"
+            title="全部、機器人自動回覆中、已結束——這三個是翻閱用的，不是待辦"
+          >{{ secondaryTabLabel }} ▾</button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="tab in SECONDARY_STATUS_TABS"
+                :key="tab.value"
+                :command="tab.value"
+                :title="tab.hint"
+              >
+                <span class="conv-status-more-item" :class="{ active: activeTab === tab.value }">
+                  {{ statusTabText(tab) }}
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
       <div class="conv-search-bar">
         <el-input v-model="searchText" placeholder="搜尋名稱…" clearable size="small" />
@@ -77,6 +99,25 @@
         <div v-if="listAutoRefreshPaused" class="conv-list-notice">
           搜尋結果不會自動更新，新訊息與紅點請清空搜尋或按「重整」
         </div>
+        <!--
+          G-27③：釘選區的標題。
+          釘選一律置頂，釘到 12 筆時第一screen 就整片都是 📌，中間沒有任何字說明
+          「這一段是釘選」——讀起來就變成「每列都有圖釘」。標一下、並且可以收起來，
+          收起來才拿得回照時間排序的收件匣。
+        -->
+        <button
+          v-if="pinnedRowCount > 0"
+          type="button"
+          class="conv-list-group"
+          :aria-expanded="pinnedGroupOpen"
+          :title="pinnedGroupOpen
+            ? '收起釘選區，只看照時間排序的對話'
+            : '展開釘選區（釘選的對話一律排在最上面）'"
+          @click="pinnedGroupOpen = !pinnedGroupOpen"
+        >
+          <span class="conv-list-group__caret" aria-hidden="true">{{ pinnedGroupOpen ? '▾' : '▸' }}</span>
+          <span>📌 釘選中（{{ pinnedRowCount }}）</span>
+        </button>
         <!-- Session-based view (status tabs) -->
         <template v-if="activeTab !== 'all'">
           <div
@@ -93,6 +134,8 @@
               :show-unread-dot="isRowUnread(s.userId, sessionRowCustomerMs(s))"
               :active="selectedSessionId === s.sessionId"
               :title-icon="s.pinned ? '📌' : ''"
+              :owner-initial="assigneeInitial(s.assignee?.name ?? '')"
+              :owner-title="s.assignee?.name ? `負責人員：${s.assignee.name}` : ''"
               :meta-tag="s.followUp ? '待跟進' : ''"
               :meta-prefix="directionPrefix(s)"
               :meta-text="s.lastMessage || SESSION_NO_PREVIEW"
@@ -129,6 +172,8 @@
               :show-unread-dot="isRowUnread(c.userId, convRowCustomerMs(c))"
               :active="selectedUserId === c.userId && !selectedSessionId"
               :title-icon="c.pinned ? '📌' : ''"
+              :owner-initial="assigneeInitial(c.assignee?.name ?? '')"
+              :owner-title="c.assignee?.name ? `負責人員：${c.assignee.name}` : ''"
               :meta-tag="c.followUp ? '待跟進' : ''"
               :meta-prefix="directionPrefix(c)"
               :meta-text="c.lastMessage"
@@ -189,6 +234,61 @@
           class="conv-customer-reopen"
           @click="customerPanelOpen = true"
         >客人檔案 →</el-button>
+        <!--
+          G-27⑥ 色階：狀態用標籤、動作用同一款次要按鈕，
+          **只有「當下最該做的那一件」給主色**——也就是客人在等人接手時的「我接手」。
+          ⛔「交還機器人」不可以是綠的：這個專案裡綠＝好／完成，但它是一個動作不是好消息
+          （原本三個控制項三種視覺重量，眼睛不知道該先看哪個）。
+        -->
+        <!--
+          負責人員（G-27 功能缺口②）：接手前先看得到「是誰在跟」，才不會兩個人同時回。
+          放頂部而不是右側客人卡：撞車是**回訊息之前**要擋的，視線不會先繞到右邊那張卡。
+          ⛔ 沒有選中客人時不出現（沒有對話可以指派）。
+        -->
+        <el-dropdown
+          v-if="selectedUserId && canOperate"
+          trigger="click"
+          placement="bottom-start"
+          class="conv-assignee"
+          :disabled="assigneeSaving"
+          @command="setAssignee"
+          @visible-change="onAssigneeMenuToggle"
+        >
+          <button
+            type="button"
+            class="conv-assignee__btn"
+            :class="{ 'is-set': !!currentAssignee.uid }"
+            :title="currentAssignee.uid
+              ? `負責人員：${currentAssignee.name}（點一下可換人或取消）`
+              : '指定一位同事負責這條線，其他人就看得出來已經有人在跟'"
+          >{{ currentAssignee.uid ? `👤 ${currentAssignee.name}` : '👤 指派負責人' }}</button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="assigneeLoading" disabled>載入同事名單…</el-dropdown-item>
+              <!-- ⛔ 查不到不可以靜靜顯示空選單（08-09「查不到≠沒問題」三態） -->
+              <el-dropdown-item v-else-if="assigneeLoadFailed" disabled>
+                同事名單載入失敗，請重新整理
+              </el-dropdown-item>
+              <el-dropdown-item v-else-if="!assignableMembers.length" disabled>
+                這個官方帳號只有你一位客服
+              </el-dropdown-item>
+              <template v-else>
+                <el-dropdown-item
+                  v-for="m in assignableMembers"
+                  :key="m.uid"
+                  :command="m.uid"
+                >
+                  <span :class="{ 'conv-assignee__current': m.uid === currentAssignee.uid }">
+                    {{ m.name }}
+                  </span>
+                </el-dropdown-item>
+                <el-dropdown-item v-if="currentAssignee.uid" command="" divided>
+                  取消指派
+                </el-dropdown-item>
+              </template>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <div v-if="sessionToolbarMeta" class="conv-session-toolbar">
           <span class="conv-session-toolbar__hint">{{ selectedSessionId ? '此場會話' : '進行中會話' }}</span>
           <el-tag size="small" type="info">{{ sessionToolbarMeta.statusLabel }}</el-tag>
@@ -206,7 +306,6 @@
           <el-button
             v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
             size="small"
-            type="primary"
             plain
             :loading="handingBackSession"
             title="交還後，機器人與 AI 會恢復自動回覆這位客人"
@@ -235,6 +334,29 @@
               把真正的改動埋掉（縮排對 CSS 沒有影響）。 -->
       <div class="conv-body-split">
       <div class="conv-body-main">
+      <!--
+        G-27①：收起來的軌跡換成這一行。
+        五個灰膠囊擠在訊息中間 → 一行「這場：新會話 → AI 客服 → 真人（12:03 接手）」，
+        開關就放在同一行的右邊（要看細節的人在這裡找得到，不必猜它被藏到哪去了）。
+      -->
+      <div
+        v-if="selectedUserId && (sessionFlowSummary || hiddenEventCount > 0 || showAllEvents)"
+        class="conv-flow-summary"
+      >
+        <span v-if="sessionFlowSummary" class="conv-flow-summary__path">
+          這場：{{ sessionFlowSummary }}
+        </span>
+        <span v-else class="conv-flow-summary__path text-muted">這段還沒有系統紀錄</span>
+        <button
+          v-if="hiddenEventCount > 0 || showAllEvents"
+          type="button"
+          class="conv-flow-summary__toggle"
+          :title="showAllEvents
+            ? '收起純軌跡（新會話開始、進入某模組、真人首次回覆），只留下解釋換手的那幾筆'
+            : '把新會話開始、進入某模組這類系統內部軌跡也顯示在對話裡'"
+          @click="showAllEvents = !showAllEvents"
+        >{{ showAllEvents ? '收起系統紀錄' : `顯示系統紀錄（${hiddenEventCount}）` }}</button>
+      </div>
       <ConversationsAiContextBanner
         v-if="canOperate"
         ref="aiContextBanner"
@@ -700,7 +822,7 @@
               type="button"
               class="conv-picker-trigger"
               :disabled="sending || msgLoading || !selectedUserId"
-              title="傳送媒體"
+              title="傳圖片、影片或檔案給客人"
             >
               <span class="conv-picker-trigger__plus">＋</span>
             </button>
@@ -734,7 +856,7 @@
                 type="button"
                 class="conv-picker-trigger"
                 :disabled="sending"
-                :title="picker.title"
+                :title="picker.hint"
               >
                 <img
                   :src="picker.triggerIcon"
@@ -817,7 +939,7 @@
                 type="button"
                 class="conv-picker-trigger"
                 :disabled="sending || msgLoading"
-                title="客服預存 / 自動回覆"
+                title="挑一則客服預存回覆：可直接送出，也可先填進回覆框改過再送"
               >
                 <span class="conv-picker-trigger__emoji">📦</span>
               </button>
@@ -880,7 +1002,9 @@
             </div>
           </el-popover>
         </div>
-        <span class="text-muted conv-input-hint">點上面的按鈕，可以挑圖片、貼圖、表情，或挑一則客服預存／自動回覆（文字可先填進回覆框改）</span>
+        <!-- ⛔ 這裡原本有一整句「點上面的按鈕，可以挑圖片、貼圖…」的說明：第一天有用，
+             第一百天還在，佔一整行而且每次視線往下都要越過它（G-27②）。
+             說明改掛在四顆圖示各自的 title 上（滑上去才講）。 -->
       </div>
 
       <div v-if="canOperate" class="conv-input-row">
@@ -1079,8 +1203,14 @@ import {
   VIDEO_MAX_BYTES,
 } from '~~/shared/upload-rules'
 import { lineAspectRatioToCss } from '~~/shared/media-preview'
-import { STATUS_LABELS, type ConversationStatus } from '~~/shared/types/conversation-stats'
+import {
+  MODULE_TYPE_LABELS,
+  STATUS_LABELS,
+  type ConversationStatus,
+  type ModuleType,
+} from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
+import { assigneeInitial, NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
 import { customerLastMessageMs, isConversationUnread } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
@@ -1475,6 +1605,8 @@ interface SessionItem {
   /** 對話層級的人工標記（見 ConvItem） */
   pinned?: boolean
   followUp?: boolean
+  /** 負責人員也是對話層級的（見 ConvItem） */
+  assignee?: ConversationAssignee
 }
 
 /** 舊會話沒有訊息快照時的第二行。講清楚是「我們沒留」不是「客人沒講話」 */
@@ -1495,6 +1627,25 @@ const STATUS_TABS: { value: TabValue; label: string; hint: string }[] = [
   { value: 'bot_handling', label: '機器人', hint: '系統判定：目前由機器人／AI 自動回覆中' },
   { value: 'closed', label: '結束', hint: '系統判定：已結束的會話' },
 ]
+
+/**
+ * 六個分頁擠成三排（G-27③）：吃掉清單上方約 100px，而且六個平權——
+ * 其中「機器人 2324」這個最大的數字，正好是**最不需要人看**的一群（AI 自己處理完的），
+ * 視覺上卻最搶眼。
+ *
+ * 收法＝一排只放「要人動手」的三個，其餘（全部／機器人／結束）收進右邊一個下拉。
+ * ⛔ 不是刪掉，是換位置：三個都還在下拉裡，而且哪一個在用就顯示哪一個。
+ * ⛔ 順序照「急迫度」排，不照原本的宣告順序。
+ */
+const PRIMARY_TAB_VALUES: TabValue[] = ['pending_human', 'human_handling', 'open']
+
+/** 一排顯示的那三個（照急迫度排，不照宣告順序） */
+const PRIMARY_STATUS_TABS = PRIMARY_TAB_VALUES
+  .map(v => STATUS_TABS.find(t => t.value === v))
+  .filter((t): t is (typeof STATUS_TABS)[number] => !!t)
+
+/** 收進下拉的其餘三個（全部／機器人／結束） */
+const SECONDARY_STATUS_TABS = STATUS_TABS.filter(t => !PRIMARY_TAB_VALUES.includes(t.value))
 
 /**
  * 直接用共用定義，不要在這裡再抄一份。
@@ -1522,6 +1673,8 @@ interface ConvItem {
    */
   pinned?: boolean
   followUp?: boolean
+  /** 負責人員：哪一位同事在跟這條線（G-27 功能缺口②）。uid 空字串＝還沒有人負責 */
+  assignee?: ConversationAssignee
 }
 
 interface MsgItem {
@@ -1580,7 +1733,11 @@ type SessionPanelMeta = TimelineSessionMeta
  *   · 客人動作（客人點了什麼、從哪個活動登記）→ variant='action'，多一個手指圖示
  * 刻意不做成泡泡：那不是誰「說」的話，做成泡泡會被讀成訊息內容。
  */
-type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any; variant?: 'action' }
+type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any; variant?: 'action'
+  /** 原始事件型別：用來分「換手／客人動作」與「純軌跡」，⛔別用 label 字串猜（文案改了就失效） */
+  eventType?: string
+  /** entered_module 專用：摘要列要講「進了哪一種模組」，label 已經被包成「進入：X」不好拆 */
+  moduleType?: string }
 type ChatRowMsg = { kind: 'msg'; key: string; msg: MsgItem }
 type ChatRow = ChatRowEvent | ChatRowMsg
 
@@ -1687,6 +1844,25 @@ const selectedUser = ref<ConvItem | null>(null)
  */
 const customerPanelOpen = useState('conv-customer-panel-open', () => true)
 const activeTab = ref<TabValue>('all')
+
+/** 現在選的是不是收在下拉裡那三個（是的話下拉那顆要亮起來，並顯示它的名字） */
+const secondaryTabActive = computed(() => !PRIMARY_TAB_VALUES.includes(activeTab.value))
+
+const secondaryTabLabel = computed(() =>
+  secondaryTabActive.value
+    ? (STATUS_TABS.find(t => t.value === activeTab.value)?.label ?? '其他')
+    : '其他',
+)
+
+/**
+ * 分頁上的數字。
+ * ⛔「全部」與「結束」刻意不給數字：那兩個是翻閱用的，給了數字會被讀成待辦數。
+ */
+function statusTabText(tab: { value: TabValue; label: string }): string {
+  if (tab.value === 'all' || tab.value === 'closed') return tab.label
+  return `${tab.label}（${sessionStatusCounts.value[tab.value as ConvSessionStatus]}）`
+}
+
 const inputText = ref('')
 const searchText = ref('')
 /** 「只看待跟進」：只在「全部」分頁有意義（其他分頁看的是會話狀態，不是人工標記） */
@@ -2057,18 +2233,26 @@ const pickerVisible = reactive<Record<PickerKind, boolean>>({ emoji: false, stic
 const pickerModes: Array<{
   key: PickerKind
   title: string
+  /**
+   * 滑上去才說的那句（G-27②）。輸入框上方原本有一整行說明把四顆按鈕一次講完，
+   * 第一天有用、第一百天還在佔位；拆成每顆自己的 tooltip，講的是「按了會怎樣」
+   * 而不只是重複按鈕的名字。
+   */
+  hint: string
   triggerIcon: string
   categories: PickerCategory[]
 }> = [
   {
     key: 'emoji',
     title: 'Emoji',
+    hint: '插入 Emoji（會填進回覆框，送出前還能改）',
     triggerIcon: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f600.png',
     categories: emojiCategories,
   },
   {
     key: 'sticker',
     title: 'LINE 貼圖',
+    hint: '傳 LINE 貼圖（先選一張，再按送出）',
     triggerIcon: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9e9.png',
     categories: stickerCategories,
   },
@@ -2087,15 +2271,45 @@ function pinnedFirst<T extends { pinned?: boolean }>(rows: T[]): T[] {
   return [...rows.filter(r => r.pinned), ...rows.filter(r => !r.pinned)]
 }
 
+/**
+ * 釘選區要不要展開（G-27③）。
+ *
+ * 2026-08-24 老闆回報「每一列都有圖釘」。查了正式資料**不是 bug**：MYFEEL 真的有
+ * 12 筆被釘（08-17～08-24 陸續釘的），而釘選一律置頂 → 第一screen 12 列剛好全是釘選，
+ * 中間沒有任何標題說「這一段是釘選」，讀起來就變成「每列都有圖釘＝圖釘沒有意義」。
+ *
+ * 所以修法不是動渲染條件，是**把那一段標示成一個區塊**，並且可以收起來——
+ * 收起來之後才拿得回照時間排序的收件匣。
+ */
+const pinnedGroupOpen = useState('conv-pinned-group-open', () => true)
+
+/** 收起釘選區時要真的從清單裡拿掉（只影響顯示，不動任何資料） */
+function applyPinnedGroup<T extends { pinned?: boolean }>(rows: T[]): T[] {
+  const sorted = pinnedFirst(rows)
+  return pinnedGroupOpen.value ? sorted : sorted.filter(r => !r.pinned)
+}
+
 const sessionSidebarItems = computed<SessionItem[]>(() => {
   const kw = searchText.value.toLowerCase().trim()
   const rows = !kw || activeTab.value === 'all'
     ? sessions.value
     : sessions.value.filter(s => s.displayName.toLowerCase().includes(kw))
-  return pinnedFirst(rows)
+  return applyPinnedGroup(rows)
 })
 
-const convSidebarItems = computed<ConvItem[]>(() => pinnedFirst(conversations.value))
+const convSidebarItems = computed<ConvItem[]>(() => applyPinnedGroup(conversations.value))
+
+/**
+ * 這個分頁上有幾筆被釘選（給區塊標題用）。
+ * ⛔ 要數收起來之前的原始清單，不能數 sidebarItems——收起來之後那份是 0，
+ *    標題就會變成「釘選中（0）」而且再也點不開。
+ */
+const pinnedRowCount = computed(() => {
+  const rows: { pinned?: boolean }[] = activeTab.value === 'all'
+    ? conversations.value
+    : sessions.value
+  return rows.filter(r => r.pinned).length
+})
 
 /** 釘選區的最後一筆：底下畫一條線，讀者才知道「時間序從這裡開始」 */
 function lastPinnedEdge(rows: { pinned?: boolean }[]): number {
@@ -2230,6 +2444,29 @@ function keepsModuleEvent(item: TimelineItem, lastModuleType: string): boolean {
   return String(item.moduleType || '') !== lastModuleType
 }
 
+/**
+ * 哪些系統事件「一定要看得到」（G-27①）。
+ *
+ * 老闆回報版面亂，逐區一看：一場對話畫面上 5 個系統膠囊、真訊息只有 3 則——
+ * 軌跡資料和對話內容平起平坐擺在動線正中間，把訊息切碎。
+ * 收法＝**只留下「解釋了為什麼換手」的事件**，純軌跡（新會話開始、進入某模組、
+ * 真人首次回覆——那個泡泡旁邊本來就有「真人」標籤）預設收起來。
+ *
+ * ⛔ 用 eventType 分類，不要比對 label 字串：文案改一次分類就靜默失效。
+ * ⛔ 客人動作（variant='action'：按按鈕、加好友、活動登記）**永遠不收**——
+ *    那是客人真的做了什麼，不是系統的內部軌跡。
+ */
+const ALWAYS_SHOWN_EVENT_TYPES = new Set([
+  'handoff_request',       // 為什麼轉真人
+  'returned_to_bot',       // 為什麼 AI 又開始回話
+  'human_lead_continued',  // 為什麼這場一開始就是真人（否則看起來像 AI 壞了）
+  'conversation_closed',   // 這場結束了
+  'postback_no_reply',     // 客人按了按鈕卻沒人回＝故障訊號
+])
+
+/** 展開全部系統事件（預設收起）。跨對話記住：客服的閱讀習慣不會因為換一個人就改變 */
+const showAllEvents = useState('conv-show-all-events', () => false)
+
 const serverChatRows = computed<ChatRow[]>(() => {
   const rows: ChatRow[] = []
   let lastModuleType = ''
@@ -2244,6 +2481,8 @@ const serverChatRows = computed<ChatRow[]>(() => {
         key: `e-${item.id}`,
         label: item.label || '',
         timestamp: item.timestamp,
+        eventType: item.eventType ? String(item.eventType) : undefined,
+        moduleType: item.moduleType ? String(item.moduleType) : undefined,
       })
       continue
     }
@@ -2265,7 +2504,68 @@ const serverChatRows = computed<ChatRow[]>(() => {
   return rows
 })
 
-const chatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
+const allChatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
+
+/** 收起來的純軌跡事件有幾筆（給開關顯示數字用；0 就不必出現那顆開關） */
+const hiddenEventCount = computed(() =>
+  allChatRows.value.filter(r =>
+    r.kind === 'event' && r.variant !== 'action'
+    && !(r.eventType && ALWAYS_SHOWN_EVENT_TYPES.has(r.eventType))).length,
+)
+
+/**
+ * 畫面上真的要畫的列。系統事件預設只留「解釋為什麼換手」那幾類（見 ALWAYS_SHOWN_EVENT_TYPES），
+ * 其餘用開關展開——⛔ 只影響顯示，不動任何資料與統計。
+ */
+const chatRows = computed<ChatRow[]>(() => {
+  if (showAllEvents.value) return allChatRows.value
+  return allChatRows.value.filter(r =>
+    r.kind !== 'event'
+    || r.variant === 'action'
+    || (r.eventType ? ALWAYS_SHOWN_EVENT_TYPES.has(r.eventType) : true), // 舊資料沒帶型別 → 保守顯示
+  )
+})
+
+/**
+ * 收起來的那幾筆軌跡，濃縮成頂部一行：「這場：新會話 → AI 客服 → 真人（12:03 接手）」。
+ *
+ * 為什麼要有這一行：把五個膠囊直接藏掉會少掉「這場是怎麼走到現在的」——
+ * 那是客服接手前唯一想知道的事。收起來但不丟掉，換成一行讀得完的。
+ *
+ * ⛔ 只讀**已經載入的這一段**時間軸（往上分段讀還沒讀到的不算），
+ *    所以往上翻越多這行會越長，這是誠實的：它描述的是「你看得到的這段」。
+ */
+const SESSION_FLOW_STAGE_LABELS: Record<string, string> = {
+  conversation_opened: '新會話',
+  handoff_request: '轉真人',
+  returned_to_bot: '交還機器人',
+  human_lead_continued: '真人續接',
+  conversation_closed: '結束',
+}
+
+const sessionFlowSummary = computed<string>(() => {
+  const stages: string[] = []
+  for (const row of allChatRows.value) {
+    if (row.kind !== 'event' || row.variant === 'action') continue
+    const type = row.eventType
+    if (!type) continue
+    let stage = ''
+    if (type === 'entered_module') {
+      stage = MODULE_TYPE_LABELS[row.moduleType as ModuleType] ?? '模組'
+    }
+    else if (type === 'human_first_reply') {
+      // 接手時間是這行最有價值的一格：客服想知道的是「什麼時候有人接的」
+      const at = formatTime(row.timestamp)
+      stage = at ? `真人（${at} 接手）` : '真人'
+    }
+    else {
+      stage = SESSION_FLOW_STAGE_LABELS[type] ?? ''
+    }
+    // 連續重複的階段收成一格（同一場反覆進出同一個模組不必列兩次）
+    if (stage && stages[stages.length - 1] !== stage) stages.push(stage)
+  }
+  return stages.join(' → ')
+})
 
 /**
  * 「回到最新」只在真的看不到最新一則時出現：空對話、載入中、已經停在底部都不該冒出來。
@@ -2358,6 +2658,87 @@ function openContextMenuFromButton(ev: MouseEvent, target: ConvItem | SessionIte
 }
 
 /** 同一位客人可能同時出現在 conversations 與 sessions 兩份清單，兩邊都要跟著更新 */
+/* ── 負責人員（G-27 功能缺口②）─────────────────────────────── */
+
+interface AssignableMember { uid: string, name: string, email: string, role: string }
+
+const assignableMembers = ref<AssignableMember[]>([])
+const assigneeLoading = ref(false)
+/** ⛔ 三態：載入失敗要講出來，不可以顯示成一個空的同事名單（08-09 假綠燈教訓） */
+const assigneeLoadFailed = ref(false)
+const assigneeLoaded = ref(false)
+const assigneeSaving = ref(false)
+
+const currentAssignee = computed<ConversationAssignee>(
+  () => selectedUser.value?.assignee ?? NO_ASSIGNEE,
+)
+
+/** 名單只在第一次打開選單時才抓：多數時候客服不會動它，不必每開一個對話就多打一支 API */
+async function onAssigneeMenuToggle(open: boolean) {
+  if (!open || assigneeLoaded.value || assigneeLoading.value) return
+  assigneeLoading.value = true
+  assigneeLoadFailed.value = false
+  try {
+    const res = await apiFetch<{ members: AssignableMember[] }>('/api/conversations/assignees')
+    assignableMembers.value = res.members ?? []
+    assigneeLoaded.value = true
+  }
+  catch {
+    assigneeLoadFailed.value = true
+  }
+  finally {
+    assigneeLoading.value = false
+  }
+}
+
+/**
+ * 從剛重抓回來的清單，把負責人員補回頂部那顆按鈕。
+ *
+ * 為什麼需要：按「我接手」時後端會自動把負責人指給按的人（takeover.post.ts），
+ * 但 `selectedUser` 是選取當下複製出來的一份，清單重抓不會動到它——
+ * 不補的話接手完頂部還寫著「指派負責人」，看起來像自動指派沒生效。
+ */
+function syncSelectedAssigneeFromList() {
+  const userId = selectedUserId.value
+  if (!userId || !selectedUser.value) return
+  const row: { assignee?: ConversationAssignee } | undefined
+    = conversations.value.find((c: ConvItem) => c.userId === userId)
+      ?? sessions.value.find((s: SessionItem) => s.userId === userId)
+  if (row?.assignee) selectedUser.value.assignee = row.assignee
+}
+
+/** 把負責人員同步到畫面上所有看得到這位客人的地方（清單兩份＋頂部） */
+function applyLocalAssignee(userId: string, assignee: ConversationAssignee) {
+  for (const row of conversations.value) if (row.userId === userId) row.assignee = assignee
+  for (const row of sessions.value) if (row.userId === userId) row.assignee = assignee
+  if (selectedUser.value?.userId === userId) selectedUser.value.assignee = assignee
+}
+
+async function setAssignee(uid: string) {
+  const userId = selectedUserId.value
+  if (!userId || !assertCanOperate()) return
+  if (uid === currentAssignee.value.uid) return
+
+  const previous = currentAssignee.value
+  assigneeSaving.value = true
+  try {
+    const saved = await apiFetch<ConversationAssignee>(
+      `/api/conversations/${encodeURIComponent(userId)}/assignee`,
+      { method: 'POST', body: { uid } },
+    )
+    applyLocalAssignee(userId, saved)
+    showToast(saved.uid ? `已指派給 ${saved.name}` : '已取消指派', 'success')
+  }
+  catch (e: any) {
+    // ⛔ 失敗要轉回去：留著假的指派比沒有指派更糟（同事會以為有人在跟）
+    applyLocalAssignee(userId, previous)
+    showToast(e?.data?.statusMessage || '指派失敗', 'error')
+  }
+  finally {
+    assigneeSaving.value = false
+  }
+}
+
 function applyLocalFlags(userId: string, flags: Partial<{ pinned: boolean, followUp: boolean }>) {
   for (const row of conversations.value) {
     if (row.userId === userId) Object.assign(row, flags)
@@ -2446,6 +2827,8 @@ async function selectSession(s: SessionItem) {
     customerLastAt: s.customerLastAt ?? null,
     pinned: s.pinned === true,
     followUp: s.followUp === true,
+    // 負責人員是對話層級的，切到會話分頁要接得上（否則頂部那顆會顯示「指派負責人」）
+    assignee: s.assignee ?? NO_ASSIGNEE,
   }
   selectedUser.value = convItem
   // 先用列表那一列的狀態把工具列填好，時間軸讀回來再換成完整的（含起訊時間）
@@ -3240,6 +3623,8 @@ async function takeOverSelectedSession() {
     aiContextBanner.value?.refreshSummary()
     await reloadTimeline()
     await refreshListQuiet()
+    // 後端接手時會自動把負責人指給按的人；清單重抓後把它補到頂部那顆按鈕上
+    syncSelectedAssigneeFromList()
     await loadSessionCounts()
   }
   catch (e: any) {

@@ -32,6 +32,13 @@
             aria-hidden="true"
           >{{ trimmedTitleIcon }}</span>
           <div class="split-list-name">{{ props.title }}</div>
+          <!-- 一顆字的小圓章（例：對話列表的負責人員）。放時間左邊、名字右邊：
+               名字被截短一點沒關係，「這條線已經有人在跟」要一眼看得到。 -->
+          <span
+            v-if="trimmedOwnerInitial"
+            class="split-list-item__owner"
+            :title="props.ownerTitle || props.ownerInitial"
+          >{{ trimmedOwnerInitial }}</span>
           <span
             v-if="trimmedChipText && props.titleRowChip"
             class="split-list-chip split-list-chip--in-title-row"
@@ -131,6 +138,14 @@ const props = withDefaults(defineProps<{
   titleRowChip?: boolean
   /** 名稱前的小圖示（emoji 即可），例如釘選的 📌 */
   titleIcon?: string
+  /**
+   * 搭配 timeInTitleRow：標題右側的一字圓章，例如對話列表的「負責人員」。
+   * 只給**一個字**（呼叫端自己取，見 shared/conversation-assignee.ts 的 assigneeInitial）——
+   * 這裡是 239px 寬的側欄，放全名會把客人的名字擠掉。
+   */
+  ownerInitial?: string
+  /** 圓章的 tooltip：滑上去要看得到全名，否則一個字猜不出是誰 */
+  ownerTitle?: string
   /** 搭配 timeInTitleRow：摘要那一行最前面的小膠囊，例如「待處理」 */
   metaTag?: string
   metaTagTone?: 'success' | 'neutral' | 'warning' | 'error'
@@ -161,6 +176,8 @@ const props = withDefaults(defineProps<{
   timeInTitleRow: false,
   titleRowChip: false,
   titleIcon: '',
+  ownerInitial: '',
+  ownerTitle: '',
   metaTag: '',
   metaTagTone: 'warning',
   metaPrefix: '',
@@ -177,6 +194,7 @@ const trimmedAvatarUrl = computed(() => String(props.leadingAvatarUrl || '').tri
 const trimmedChipText = computed(() => String(props.chipText || '').trim())
 const trimmedMetaText = computed(() => String(props.metaText || '').trim())
 const trimmedTitleIcon = computed(() => String(props.titleIcon || '').trim())
+const trimmedOwnerInitial = computed(() => String(props.ownerInitial || '').trim().slice(0, 1))
 const trimmedMetaTag = computed(() => String(props.metaTag || '').trim())
 const trimmedMetaPrefix = computed(() => String(props.metaPrefix || '').trim())
 

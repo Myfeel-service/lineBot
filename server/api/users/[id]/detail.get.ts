@@ -67,6 +67,15 @@ export default defineEventHandler(async (event) => {
     isBlocked: user!.isBlocked === true,
     createdAtMs: tsToMs(user!.createdAt),
     attributes,
+    /**
+     * 客服交接用的備註（G-27 功能缺口①）。與 user 文件同一份，零額外讀取。
+     * ⛔ 只給後台：這支端點要 viewer 以上，而備註不會出現在任何送給客人的路徑。
+     */
+    note: {
+      text: String(user!.note ?? ''),
+      updatedByName: String(user!.noteUpdatedByName ?? ''),
+      updatedAtMs: tsToMs(user!.noteUpdatedAt),
+    },
     tags: tagSnap.docs.map((d) => {
       const t = d.data()
       return {

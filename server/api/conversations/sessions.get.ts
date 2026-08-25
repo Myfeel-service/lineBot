@@ -4,6 +4,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { isOpenQueueSession } from '~~/server/utils/conversation-queue'
 import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
+import { NO_ASSIGNEE, readConversationAssignee, type ConversationAssignee } from '~~/shared/conversation-assignee'
 import { taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
 
 const PAGE_SIZE = 30
@@ -18,6 +19,8 @@ function uniqueFirestoreUserIds(rawIds: string[], workspaceId: string): string[]
 /** 一位客人的對話層級資料：人工標記 + 目前進行中的會話 + 最後一則訊息 */
 interface ConvSideData {
   flags: ConversationManualFlags
+  /** 負責人員也是對話層級的：同一位客人在哪個分頁看都要是同一個人（見 shared/conversation-assignee.ts） */
+  assignee: ConversationAssignee
   currentSessionId: string
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
@@ -46,6 +49,7 @@ async function fetchConversationSideData(
       const data = d.data()
       map[d.id] = {
         flags: readConversationFlags(data),
+        assignee: readConversationAssignee(data),
         currentSessionId: String(data.currentSessionId ?? ''),
         lastMessage: String(data.lastMessage ?? ''),
         lastDirection: data.lastDirection === 'outgoing' ? 'outgoing' : 'incoming',
@@ -88,6 +92,7 @@ function mapSessionToRow(
     pictureUrl: String(user.pictureUrl || '').trim(),
     pinned: conv?.flags.pinned === true,
     followUp: conv?.flags.followUp === true,
+    assignee: conv?.assignee ?? NO_ASSIGNEE,
     lastMessage,
     lastDirection,
     /**

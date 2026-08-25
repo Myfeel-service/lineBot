@@ -17,7 +17,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * （onHumanOutgoingMessage）才記，否則「多久回應客人」會被按鈕點擊時間灌水。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid, token } = await requireWorkspaceAccess(event, 'agent')
 
   const sessionId = getRouterParam(event, 'sessionId')
   if (!sessionId) throw createError({ statusCode: 400, statusMessage: 'sessionId required' })
@@ -48,6 +48,32 @@ export default defineEventHandler(async (event) => {
    * 全部蓋記號會讓「客人打過一次找真人」的帳號從此永遠收不到自動回覆。
    */
   await markHumanOwnership(session.userId as string, workspaceId)
+
+  /**
+   * 按「我接手」的人就是負責人員（G-27 功能缺口②）。
+   *
+   * 自動指派是這個功能會不會被用起來的關鍵：多一步手動指派，忙起來就沒人做，
+   * 清單上永遠是空的，等於白做。「我接手」本來就是在宣告「這個我來」。
+   *
+   * ⛔ 已經有人負責就**不覆蓋**：接手鈕在 pending_human 以外的狀態也點得到
+   *    （例如同事 A 已在跟、B 手滑點了），靜靜把負責人換成 B 比沒有負責人更糟。
+   * ⛔ 指派失敗不能讓接手失敗：接手（機器人閉嘴）是主要目的，
+   *    負責人員只是分工標記，吞掉錯誤並留 log。
+   */
+  try {
+    const convRef = db.collection('conversations').doc(session.userId as string)
+    const conv = await convRef.get()
+    if (conv.exists && !String(conv.data()?.assigneeUid ?? '').trim()) {
+      await convRef.update({
+        assigneeUid: uid,
+        assigneeName: String(token.name || token.email || '').trim() || uid,
+        assignedAt: new Date(),
+      })
+    }
+  }
+  catch (e: unknown) {
+    console.warn('[takeover] 自動指派負責人員失敗（接手本身已完成）:', String((e as Error)?.message ?? e).slice(0, 200))
+  }
 
   return { ok: true }
 })

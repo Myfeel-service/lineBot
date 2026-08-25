@@ -97,6 +97,27 @@
   color: var(--text-secondary);
 }
 
+/**
+ * 區塊標題旁的問號（G-27⑥）。
+ * 常態性的空狀態不該用兩行解釋自己——解釋收進這裡，滑上去才講。
+ * 用 title 屬性（原生 tooltip）：這一句是補充說明，不值得為它多掛一個元件。
+ */
+.cust-card__why {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
 /* 「＋ 新增標籤」：LINE 把它放在標籤區右上、用主色文字鈕，貼標是這張卡最常做的事 */
 .cust-card__add {
   background: none;
@@ -137,8 +158,9 @@
   font-size: 0.85em;
 }
 
-.cust-card__empty,
-.cust-card__note {
+/* `.cust-card__note` 已隨 G-27⑥ 的空狀態瘦身移除（唯一使用處改用 __empty），
+   反向 grep 過整個 app/ 沒有其他 .vue 借用，才刪的 */
+.cust-card__empty {
   font-size: 0.76rem;
   color: var(--text-muted);
   margin: 0;
@@ -150,6 +172,35 @@
   font-size: 0.74rem;
   color: var(--text-secondary);
   line-height: 1.55;
+}
+
+/* ── 備註（G-27 功能缺口①：客服交接用，客人看不到）── */
+
+/**
+ * 備註內容。
+ * ⛔ 一定要 pre-wrap：客服會用換行條列「已回報廠商／等回覆／預計三天」，
+ *    預設的 normal 會把它壓成一整段，寫的人下次就不寫了。
+ * ⛔ 也要 overflow-wrap: anywhere：貼進來的訂單號／網址是一長串沒有空白的字元，
+ *    不斷行的話會把 320px 的面板整個撐開（G-26 那次被撐到 413px 的同款）。
+ */
+.cust-card__note-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cust-card__note-by {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.cust-card__note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
 }
 
 /* ── AI 建議列 ── */
