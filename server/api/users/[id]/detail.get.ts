@@ -1,6 +1,8 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { readConversationAssignee } from '~~/shared/conversation-assignee'
+import { readConversationFlags } from '~~/shared/conversation-flags'
 
 /**
  * GET /api/users/:id/detail — 客人單頁（G-6）
@@ -29,11 +31,25 @@ export default defineEventHandler(async (event) => {
   const fsUserDocId = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userIdParam, workspaceId), workspaceId)
 
   const db = getDb()
-  const [userSnap, tagSnap, convSnap, suggestSnap] = await Promise.all([
+  const lineUserId = lineUserIdFromFirestoreDocId(fsUserDocId, workspaceId)
+  const [userSnap, tagSnap, convSnap, suggestSnap, sessionCount] = await Promise.all([
     db.collection('users').doc(fsUserDocId).get(),
     db.collection('userTags').where('userId', '==', fsUserDocId).get(),
     db.collection('conversations').doc(fsUserDocId).get(),
     db.collection('userTagSuggestions').doc(fsUserDocId).get(),
+    /**
+     * 來過幾次（D-29③）：第一次來的新客與來過 14 次的常客，接手時的語氣完全不同。
+     * ⛔ 用 count() 聚合不是撈回來數——不論幾場都只算 1 次讀取（08-11 讀取費鐵律）。
+     * ⛔ `conversationSessions.userId` 存的是**純 LINE userId**（不是 users 主鍵），
+     *    帶錯的話每個人都會顯示 0 次。既有索引 (userId, workspaceId) 直接吃得下。
+     */
+    db.collection('conversationSessions')
+      .where('userId', '==', lineUserId)
+      .where('workspaceId', '==', workspaceId)
+      .count().get()
+      .then(s => s.data().count)
+      // 查不到就回 null＝畫面不顯示這一列，⛔ 不要回 0（那是「來過 0 次」的謊話）
+      .catch((e) => { console.warn('[user detail] session count failed:', e); return null }),
   ])
 
   // 主鍵是拿授權過的 workspaceId 組出來的，跨租戶讀不到別人的文件；
@@ -61,7 +77,15 @@ export default defineEventHandler(async (event) => {
 
   return {
     id: fsUserDocId,
-    lineUserId: lineUserIdFromFirestoreDocId(fsUserDocId, workspaceId),
+    lineUserId,
+    /** 來過幾次（null＝查不到，畫面就不顯示這列——不要拿 0 充數） */
+    sessionCount,
+    /**
+     * 誰在跟這條線、有沒有被標「待跟進」（D-29①②）。
+     * 兩者都存在 conversations 文件上，這支端點本來就撈了那份，零額外讀取。
+     */
+    assignee: readConversationAssignee(conv ?? undefined),
+    flags: readConversationFlags(conv ?? undefined),
     displayName: String(user!.displayName ?? ''),
     pictureUrl: String(user!.pictureUrl ?? ''),
     isBlocked: user!.isBlocked === true,

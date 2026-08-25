@@ -16,9 +16,24 @@
       <img v-if="pictureUrl" :src="pictureUrl" class="cust-card__avatar" :alt="displayName" />
       <span v-else class="cust-card__avatar cust-card__avatar--empty"><el-icon><User /></el-icon></span>
       <div class="cust-card__title">
-        <span class="cust-card__name">{{ displayName || userId }}</span>
+        <div class="cust-card__name-row">
+          <span class="cust-card__name">{{ displayName || userId }}</span>
+          <!-- 客服右鍵標的「待跟進」在清單上看得到、點進客人卻看不到 → 交接的人不知道
+               前一手把這位列為待跟進（D-29②）。有標才出現。 -->
+          <span v-if="detail?.flags?.followUp" class="cust-card__flag">🚩 待跟進</span>
+        </div>
         <span v-if="detail?.isBlocked" class="cust-card__blocked">已封鎖／退追蹤</span>
-        <span v-if="joinedText" class="cust-card__sub">加入於 {{ joinedText }}</span>
+        <div class="cust-card__subrow">
+          <span v-if="joinedText" class="cust-card__sub">加入於 {{ joinedText }}</span>
+          <!-- 查訂單、對帳、回報問題常要這串 ID，現在得去資料庫撈（D-29④） -->
+          <button
+            v-if="detail?.lineUserId"
+            type="button"
+            class="cust-card__copy"
+            :title="`複製這位客人的 LINE ID：${detail.lineUserId}`"
+            @click="copyLineId"
+          >{{ copiedId ? '已複製' : '複製 ID' }}</button>
+        </div>
       </div>
     </div>
 
@@ -90,6 +105,46 @@
         </div>
       </section>
 
+      <!-- ── 負責人員（D-29①）──────────────────────────────
+           ⛔ 對話頁不顯示（`showAssignee=false`）：那一頁頂部已經有同一顆控制項，
+              同一個畫面兩個入口改同一份資料＝遲早有人只改到一邊。
+              好友頁抽屜沒有那顆，這裡是它唯一的家。 -->
+      <section v-if="showAssignee" class="cust-card__section">
+        <div class="cust-card__section-hd">
+          <span class="cust-card__section-title">負責人員</span>
+          <button
+            v-if="canOperate && !assigneeEditing"
+            type="button"
+            class="cust-card__add"
+            @click="startEditAssignee"
+          >{{ assignee.uid ? '換人' : '＋ 指派' }}</button>
+        </div>
+        <template v-if="assigneeEditing">
+          <el-select
+            v-model="assigneePick"
+            filterable
+            clearable
+            placeholder="選一位同事（清空＝取消指派）"
+            size="small"
+            class="cust-card__add-select"
+            :loading="assigneeLoading"
+            @change="applyAssignee"
+          >
+            <el-option v-for="m in assignableMembers" :key="m.uid" :label="m.name" :value="m.uid" />
+          </el-select>
+          <!-- ⛔ 三態：查不到同事名單要講出來，不可以顯示成一個空的下拉（08-09 假綠燈） -->
+          <span v-if="assigneeLoadFailed" class="cust-card__empty">同事名單載入失敗，請重新整理。</span>
+          <div class="cust-card__note-actions">
+            <el-button size="small" @click="assigneeEditing = false">取消</el-button>
+          </div>
+        </template>
+        <template v-else-if="assignee.uid">
+          <p class="cust-card__owner">{{ assignee.name }}</p>
+          <span v-if="assignee.assignedAtMs" class="cust-card__note-by">{{ relativeTime(assignee.assignedAtMs) }}指派</span>
+        </template>
+        <span v-else class="cust-card__empty">還沒有人負責</span>
+      </section>
+
       <!-- ── 備註（客服交接用；客人看不到）────────────────── -->
       <section class="cust-card__section">
         <div class="cust-card__section-hd">
@@ -128,9 +183,19 @@
         <span v-else class="cust-card__empty">還沒有備註</span>
       </section>
 
-      <!-- ── 最後互動 ─────────────────────────────────── -->
-      <section class="cust-card__section">
+      <!-- ── 最後互動 ───────────────────────────────────
+           ⛔ 對話頁不顯示（`showLastActivity=false`，老闆 08-25 指出）：
+              左邊就是完整對話，「最後訊息」在那裡看得一清二楚，再列一次是重複。
+              但好友頁抽屜旁邊沒有對話，這區是判斷「這位還熱著嗎」唯一的線索——
+              所以是**同一張卡在兩個家各顯示適合的欄位**，不是刪功能。 -->
+      <section v-if="showLastActivity" class="cust-card__section">
         <span class="cust-card__section-title">最後互動</span>
+        <!-- 新客與來過十幾次的常客，接手時的語氣完全不同（D-29③）。
+             null＝查不到就整列不出現，⛔ 不要顯示「0 次」那種謊話 -->
+        <div v-if="detail.sessionCount !== null" class="cust-card__kv">
+          <span class="cust-card__k">來過</span>
+          <b class="cust-card__v">{{ detail.sessionCount }} 次對話</b>
+        </div>
         <div class="cust-card__kv">
           <span class="cust-card__k">最後來訊</span>
           <!-- ⛔ 三種「沒有時間」要分開講：舊客／從沒打字過／連對話都沒有（見 lastInbound） -->
@@ -183,9 +248,12 @@
 import { User } from '@element-plus/icons-vue'
 import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
 import { CUSTOMER_NOTE_MAX_CHARS, type CustomerNote } from '~~/shared/customer-note'
+import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
 
 interface CustomerDetail {
   id: string
+  /** 純 LINE userId（不含租戶前綴）——查訂單／對帳要複製的就是這串 */
+  lineUserId: string
   displayName: string
   pictureUrl: string
   isBlocked: boolean
@@ -200,19 +268,39 @@ interface CustomerDetail {
   } | null
   tagSuggestions: { pending: Array<{ tagId: string; reason: string; suggestedAtMs: number }> } | null
   note: CustomerNote
+  /** 來過幾次；null＝查不到（畫面不顯示那一列，不拿 0 充數） */
+  sessionCount: number | null
+  assignee: ConversationAssignee
+  flags: { pinned: boolean; followUp: boolean }
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** users 主鍵（`${workspaceId}_${lineUserId}`）；換人時自動重載 */
   userId: string
   apiFetch: <T>(url: string, opts?: any) => Promise<T>
   canOperate?: boolean
   /** 好友頁要顯示「看完整對話 →」；對話頁本身不需要（人已經在那裡了） */
   showConversationLink?: boolean
+  /**
+   * 「最後互動」要不要顯示（D-29②）。
+   * 好友頁＝要（旁邊沒有對話，它是唯一線索）；對話頁＝不要（左邊就是完整對話，重複）。
+   */
+  showLastActivity?: boolean
+  /**
+   * 「負責人員」要不要顯示（D-29①）。
+   * 好友頁＝要（那頁沒有別的地方看得到誰在跟）；對話頁＝不要（頂部已經有同一顆控制項，
+   * 同畫面兩個入口改同一份資料遲早只改到一邊）。
+   */
+  showAssignee?: boolean
   /** 列表已知的名字／頭像：先畫出來再補詳情，避免面板一開是空的 */
   fallbackName?: string
   fallbackPicture?: string
-}>()
+}>(), {
+  // 這兩個**預設要顯示**：好友頁（另一個宿主）什麼都不用傳就拿到完整的卡，
+  // 只有對話頁需要明確關掉。⛔ 預設 false 的話新宿主會默默少東西。
+  showLastActivity: true,
+  showAssignee: true,
+})
 
 const emit = defineEmits<{
   /** 貼標／移標／採用建議之後：宿主可以重新載入自己的清單 */
@@ -265,6 +353,76 @@ const addableTags = computed(() => {
 
 const pendingSuggestions = computed(() => detail.value?.tagSuggestions?.pending ?? [])
 const attributeRows = computed(() => Object.entries(detail.value?.attributes ?? {}))
+
+/* ── 負責人員（D-29①）──────────────────────────────────────
+   ⛔ 端點與資料形狀跟對話頁頂部那顆共用（`/api/conversations/assignees`＋
+   `/api/conversations/:userId/assignee`），不要在這裡自己寫一套判斷。 */
+interface AssignableMember { uid: string, name: string }
+
+const assigneeEditing = ref(false)
+const assigneeLoading = ref(false)
+/** ⛔ 三態：查不到同事名單要講出來，不可以顯示成一個空下拉（08-09「查不到≠沒問題」） */
+const assigneeLoadFailed = ref(false)
+const assigneeLoaded = ref(false)
+const assignableMembers = ref<AssignableMember[]>([])
+const assigneePick = ref('')
+
+const assignee = computed<ConversationAssignee>(() => detail.value?.assignee ?? NO_ASSIGNEE)
+
+async function startEditAssignee() {
+  assigneePick.value = assignee.value.uid
+  assigneeEditing.value = true
+  if (assigneeLoaded.value || assigneeLoading.value) return
+  assigneeLoading.value = true
+  assigneeLoadFailed.value = false
+  try {
+    const res = await props.apiFetch<{ members: AssignableMember[] }>('/api/conversations/assignees')
+    assignableMembers.value = res.members ?? []
+    assigneeLoaded.value = true
+  }
+  catch {
+    assigneeLoadFailed.value = true
+  }
+  finally {
+    assigneeLoading.value = false
+  }
+}
+
+/** 清空（uid 空字串）＝取消指派，與對話頁頂部那顆的語意一致 */
+async function applyAssignee(uid: string | null) {
+  const next = String(uid ?? '')
+  try {
+    const saved = await props.apiFetch<ConversationAssignee>(
+      `/api/conversations/${props.userId}/assignee`,
+      { method: 'POST', body: { uid: next } },
+    )
+    if (detail.value) detail.value.assignee = saved
+    assigneeEditing.value = false
+    showToast(saved.uid ? `已指派給 ${saved.name}` : '已取消指派', 'success')
+    emit('changed')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '指派失敗', 'error')
+  }
+}
+
+/* ── 複製 LINE ID（D-29④）───────────────────────────────── */
+const copiedId = ref(false)
+
+async function copyLineId() {
+  const id = detail.value?.lineUserId
+  if (!id) return
+  try {
+    await navigator.clipboard.writeText(id)
+    copiedId.value = true
+    // ⛔ 用「已複製」取代 toast：這是一個小到不值得打斷視線的動作
+    setTimeout(() => { copiedId.value = false }, 1500)
+  }
+  catch {
+    // 剪貼簿被瀏覽器擋掉（非 https／權限）→ 講出來，不要按了完全沒反應
+    showToast('瀏覽器擋住了複製，請手動選取', 'error')
+  }
+}
 
 /* ── 備註（G-27 功能缺口①）────────────────────────────────── */
 const editingNote = ref(false)
@@ -404,6 +562,7 @@ watch(() => props.userId, (id) => {
   // ⛔ 換人一定要收掉編輯中的備註：不收的話上一位客人打到一半的字會留在框裡，
   //    下一位客人按儲存就把它寫到**別人**身上（同一個元件實例、只換 userId）
   cancelEditNote()
+  assigneeEditing.value = false
   if (id) void load()
 }, { immediate: true })
 

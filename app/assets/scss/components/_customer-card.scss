@@ -313,3 +313,59 @@
   font-size: 0.8rem;
   color: var(--el-color-danger);
 }
+
+/* ── 名字列：待跟進章與複製 ID（D-29②④）────────────────── */
+.cust-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* 客服自己標的旗標，不是系統狀態 → 用琥珀不用紅（紅留給「正在影響客人」） */
+.cust-card__flag {
+  flex-shrink: 0;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--el-color-warning-light-9);
+  color: #a35b00;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.cust-card__subrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* 次要動作：做得比「加入於」還輕，滑過才變深——它不該跟名字搶注意力 */
+.cust-card__copy {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover { color: var(--el-color-primary); }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+}
+
+/* 負責人員的名字：這一格是「誰在跟」的答案，給正常字重不要當附註 */
+.cust-card__owner {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}

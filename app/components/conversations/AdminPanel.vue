@@ -1040,6 +1040,8 @@
             :can-operate="canOperate"
             :fallback-name="selectedUser?.displayName"
             :fallback-picture="selectedUser?.pictureUrl"
+            :show-last-activity="false"
+            :show-assignee="false"
           />
         </div>
       </aside>

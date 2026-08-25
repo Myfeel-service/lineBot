@@ -645,7 +645,13 @@
     flex-direction: column;
     min-height: 0;
     border-left: 1px solid var(--border-color);
-    background: var(--bg-base);
+    /**
+     * ⛔ 白底不是灰底（老闆 08-25 指出）。原本是 `--bg-base`，而**訊息區也是同一塊灰**
+     * （`--chat-pane-bg` 就是 `--bg-base`）→ 右半邊整片糊在一起，看不出「對話」與「檔案」
+     * 是兩個東西。另外兩個對照：LINE 官方後台這塊是白；同一張卡在好友頁抽屜裡也是白，
+     * 不改的話同一張卡兩個入口兩種底色。
+     */
+    background: var(--bg-surface);
 
     @container (max-width: 900px) {
       display: none;
