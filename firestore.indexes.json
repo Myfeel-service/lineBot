@@ -267,6 +267,24 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "lastActivityAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "conversationSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "workspaceId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "hasInbound",
           "order": "ASCENDING"
         },
