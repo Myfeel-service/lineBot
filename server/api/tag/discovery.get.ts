@@ -31,6 +31,7 @@ export default defineEventHandler(async (event) => {
       usage: p.usage,
       reason: p.reason,
       userCount: Array.isArray(p.userDocIds) ? p.userDocIds.length : 0,
+      sampleNames: Array.isArray(p.sampleNames) ? p.sampleNames : [],
       proposedAtMs: p.proposedAtMs,
     })),
     lastScanMs: Number(doc?.lastScanMs ?? 0),

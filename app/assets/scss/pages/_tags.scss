@@ -374,6 +374,11 @@
   min-width: 0;
 }
 
+/**
+ * ⛔ 不要再給 `& + & { margin-top }`：外層 `.card-section-stack` 已經是
+ * `flex-direction:column; gap:.65rem`，再疊 margin 會讓「列與列」變 1.15rem、
+ * 而「說明與第一列」還是 .65rem ——同一張卡兩種間距，正是老闆一眼會抓的那種不齊。
+ */
 .tags-discovery-row {
   display: flex;
   align-items: flex-start;
@@ -383,10 +388,29 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-base);
+}
 
-  & + & {
-    margin-top: 0.5rem;
-  }
+/* 總開關關著卻有舊建議：結論先行的警告條（借 ls-status 的語彙：左色條＋淡底） */
+.tags-discovery-warn {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--el-color-warning);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--el-color-warning-light-9);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+/**
+ * 沒有建議時的那一行。刻意**不做成卡片**：它只是「功能還活著」的生命跡象，
+ * 做成卡片就變成一個永遠佔著版面、卻什麼都沒說的空盒子。
+ */
+.tags-discovery-idle {
+  margin: 0;
+  padding: 0 0.15rem;
+  font-size: 0.76rem;
+  line-height: 1.6;
 }
 
 .tags-discovery-row__main {
@@ -407,10 +431,22 @@
   color: var(--text-primary);
 }
 
-/* 「N 位客人聊過」是這條建議的證據強度，給次要色但不縮小——它是判斷要不要按的依據 */
+/* 「N 位客人聊過，包括…」是這條建議的證據強度，不縮小——它是判斷要不要按的依據 */
 .tags-discovery-row__count {
+  margin: 0.25rem 0 0;
   font-size: 0.78rem;
+  line-height: 1.55;
   color: var(--text-secondary);
+
+  strong {
+    color: var(--text-primary);
+  }
+}
+
+/* 提議時間：這條放多久了。最輕的一格，不跟名字搶 */
+.tags-discovery-row__when {
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .tags-discovery-row__reason {

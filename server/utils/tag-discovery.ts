@@ -42,6 +42,8 @@ const MESSAGES_PER_SESSION = 20
 const DIGEST_LINE_MAX = 160
 /** 併發讀訊息的批量（240 場串行要一分多鐘，Lambda 裡等不起） */
 const TRANSCRIPT_CONCURRENCY = 8
+/** 每條建議存幾位客人的名字當證據（畫面上顯示「包括 A、B 等 N 位」） */
+const SAMPLE_NAMES_PER_PROPOSAL = 3
 
 /** 一場對話的摘要：這位客人（在這場）說了什麼 */
 interface SessionDigest {
@@ -222,10 +224,31 @@ async function scanOneWorkspace(
     maxProposals: Math.min(MAX_PROPOSALS_PER_SCAN, Math.max(0, room)),
   })
 
-  const proposals: TagDiscoveryProposal[] = cleaned.map(p => ({
+  // 每條建議抓前 3 位客人的名字當證據（掃描時抓一次，見 shared 的欄位註解）
+  const sampleNamesByProposal = await Promise.all(
+    cleaned.map(p => fetchSampleNames(db, p.userDocIds.slice(0, SAMPLE_NAMES_PER_PROPOSAL))),
+  )
+
+  const proposals: TagDiscoveryProposal[] = cleaned.map((p, i) => ({
     ...p,
+    sampleNames: sampleNamesByProposal[i] ?? [],
     id: randomUUID(), // ⛔ id 是伺服器產的，模型只產內容
     proposedAtMs: Date.now(),
   }))
   return { proposed: proposals.length, proposals }
+}
+
+/** 名字查不到就跳過那一位（⛔ 不要用 userId 充數——畫面上出現一串亂碼比不顯示更糟） */
+async function fetchSampleNames(db: Firestore, userDocIds: string[]): Promise<string[]> {
+  if (!userDocIds.length) return []
+  try {
+    const snaps = await db.getAll(...userDocIds.map(id => db.collection('users').doc(id)))
+    return snaps
+      .map(s => String(s.data()?.displayName ?? '').trim())
+      .filter(Boolean)
+  }
+  catch (e) {
+    console.warn('[tag-discovery] sample names failed:', e)
+    return []
+  }
 }

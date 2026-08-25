@@ -58,6 +58,15 @@ export interface TagDiscoveryProposal {
   reason: string
   /** 聊過這個主題的客人（users 主鍵）。採用時直接幫這批人貼上 */
   userDocIds: string[]
+  /**
+   * 前幾位客人的名字（掃描當下的快照，最多 3 個）。
+   *
+   * 為什麼要存不要現查：「23 位客人聊過」是這條建議唯一的證據強度，但按下去之前
+   * 看不到是**誰**就沒有信任可言；而標籤還不存在、沒有名單頁可以連過去（好友頁是
+   * 靠 ?tagIds= 篩的）。存快照＝一週一次幾筆讀取，現查＝每次開標籤頁都多打好幾次。
+   * 代價是客人改名後這裡還是舊名字——可接受（它只是「大概是這些人」的提示）。
+   */
+  sampleNames: string[]
   proposedAtMs: number
 }
 
@@ -132,11 +141,11 @@ export interface SanitizeContext {
 export function sanitizeDiscoveryProposals(
   raw: RawDiscoveryTopic[],
   ctx: SanitizeContext,
-): Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs'>> {
+): Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs' | 'sampleNames'>> {
   const max = ctx.maxProposals ?? MAX_PROPOSALS_PER_SCAN
   const minUsers = ctx.minDistinctUsers ?? MIN_DISTINCT_USERS
   const taken = new Set(ctx.takenNames.map(normalizeTagName).filter(Boolean))
-  const out: Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs'>> = []
+  const out: Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs' | 'sampleNames'>> = []
 
   for (const topic of Array.isArray(raw) ? raw : []) {
     if (out.length >= max) break

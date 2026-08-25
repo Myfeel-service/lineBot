@@ -27,19 +27,34 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ai-section-hint">
+            <!-- ⛔ 總開關關著卻有舊建議：按「建立」會生出一顆永遠不會自己運作的標籤，
+                 要先把這件事講出來，不能讓人按完才發現沒動靜 -->
+            <p v-if="!discoveryEnabled" class="tags-discovery-warn">
+              ⚠️ 「AI 讀對話」目前是關的，這些是先前留下的建議。現在建立的標籤不會自動判斷，
+              要到「AI 設定 → 顧客標籤」打開總開關才會開始運作。
+            </p>
+            <p class="tags-desc-hint text-muted">
               從最近兩週的對話歸納出來的主題。按「建立」才會真的新增標籤，
-              並幫聊過的那批客人貼上（記為 AI 貼的，隨時可拿掉）；按「不要」之後不會再建議同一個主題。
+              並幫聊過的那批客人貼上（記為 AI 貼的，隨時可拿掉）；按「忽略」之後不會再建議同一個主題。
             </p>
             <div v-for="p in discoveryPending" :key="p.id" class="tags-discovery-row">
               <div class="tags-discovery-row__main">
                 <div class="tags-discovery-row__title">
                   <span class="tags-discovery-row__name">{{ p.name }}</span>
                   <span class="badge badge-gray">{{ tagCategoryLabel(p.category) }}</span>
-                  <span class="tags-discovery-row__count">{{ p.userCount }} 位客人聊過</span>
+                  <!-- 這條建議是什麼時候提的：放著三週沒動的建議，「最近兩週」那句就不成立了 -->
+                  <span v-if="p.proposedAtMs" class="tags-discovery-row__when">
+                    {{ relativeTime(p.proposedAtMs) }}提議
+                  </span>
                 </div>
+                <!-- 「N 位客人聊過」是這條建議唯一的證據強度 → 附上前幾位的名字。
+                     標籤還不存在，沒有名單頁可以連過去（好友頁靠 ?tagIds= 篩） -->
+                <p class="tags-discovery-row__count">
+                  <strong>{{ p.userCount }} 位客人</strong>聊過<template v-if="p.sampleNames?.length">，包括 {{ p.sampleNames.join('、') }}{{ p.userCount > p.sampleNames.length ? ' 等' : '' }}</template>
+                </p>
                 <p v-if="p.reason" class="tags-discovery-row__reason">{{ p.reason }}</p>
-                <p class="tags-discovery-row__criteria">AI 判斷條件：{{ p.criteria }}</p>
+                <!-- 條件會被裁成兩行，但它正是要按下去的依據 → 滑上去看得到全文 -->
+                <p class="tags-discovery-row__criteria" :title="p.criteria">AI 判斷條件：{{ p.criteria }}</p>
               </div>
               <div v-if="canOperate" class="tags-discovery-row__actions">
                 <el-button
@@ -48,16 +63,33 @@
                   :loading="discoveryActing === p.id"
                   :disabled="!!discoveryActing && discoveryActing !== p.id"
                   @click="actOnDiscovery(p, 'adopt')"
-                >建立並標記 {{ p.userCount }} 位</el-button>
+                >建立並幫 {{ p.userCount }} 位貼上</el-button>
                 <el-button
                   size="small"
                   :disabled="!!discoveryActing"
                   @click="actOnDiscovery(p, 'dismiss')"
-                >不要</el-button>
+                >忽略</el-button>
               </div>
             </div>
           </div>
         </div>
+
+        <!--
+          ⛔ 沒有建議時也要有生命跡象（08-25 教訓：`C-68` 那個排程壞了兩天沒人看得出來，
+          因為畫面上「沒東西」跟「壞掉」長得一模一樣）。做成一行小字不是卡片——不佔版面。
+        -->
+        <p v-else-if="discoveryLoaded" class="tags-discovery-idle text-muted">
+          <template v-if="!discoveryEnabled">
+            AI 每週會從對話裡找「還沒有標籤」的新主題——目前「AI 讀對話」是關的，
+            到「AI 設定 → 顧客標籤」打開才會開始找。
+          </template>
+          <template v-else-if="discoveryLastScanMs">
+            AI 每週會從對話裡找「還沒有標籤」的新主題。上次掃描：{{ relativeTime(discoveryLastScanMs) }}，這次沒有發現足夠明確的新主題。
+          </template>
+          <template v-else>
+            AI 每週會從對話裡找「還沒有標籤」的新主題，第一次掃描還沒跑（排程每 10 分鐘檢查一次）。
+          </template>
+        </p>
 
         <div class="message-card tags-page-card">
           <div class="message-card-header">
@@ -477,18 +509,30 @@ interface DiscoveryRow {
   usage: string
   reason: string
   userCount: number
+  sampleNames: string[]
   proposedAtMs: number
 }
 
 const discoveryPending = ref<DiscoveryRow[]>([])
 /** 目前正在處理的提案 id（同一時間只准按一條，防連點與互相蓋寫） */
 const discoveryActing = ref('')
+/** 「AI 讀對話」總開關：關著的話卡片要先講清楚建了也不會自己運作 */
+const discoveryEnabled = ref(false)
+const discoveryLastScanMs = ref(0)
+/**
+ * 查過了沒。⛔ 三態：沒有這個旗標的話，「還沒查完」和「查完沒建議」在畫面上
+ * 長得一樣，那行說明會在載入中就先閃一下（也就是 08-09 拍板的「查不到≠沒問題」）。
+ */
+const discoveryLoaded = ref(false)
 
-/** 載入失敗保持空陣列＝卡片不出現。這張卡是錦上添花，不值得為它擋整頁 */
+/** 載入失敗保持空陣列且不標 loaded＝那行說明不出現。這張卡是錦上添花，不值得為它擋整頁 */
 async function loadDiscovery() {
   try {
-    const res = await apiFetch<{ pending: DiscoveryRow[] }>('/api/tag/discovery')
+    const res = await apiFetch<{ pending: DiscoveryRow[]; enabled: boolean; lastScanMs: number }>('/api/tag/discovery')
     discoveryPending.value = res.pending ?? []
+    discoveryEnabled.value = res.enabled === true
+    discoveryLastScanMs.value = Number(res.lastScanMs ?? 0)
+    discoveryLoaded.value = true
   }
   catch {
     discoveryPending.value = []
