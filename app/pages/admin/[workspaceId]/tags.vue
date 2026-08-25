@@ -44,7 +44,7 @@
                   <span class="badge badge-gray">{{ tagCategoryLabel(p.category) }}</span>
                   <!-- 這條建議是什麼時候提的：放著三週沒動的建議，「最近兩週」那句就不成立了 -->
                   <span v-if="p.proposedAtMs" class="tags-discovery-row__when">
-                    {{ relativeTime(p.proposedAtMs) }}提議
+                    {{ elapsedSince(p.proposedAtMs) }}提議
                   </span>
                 </div>
                 <!-- 「N 位客人聊過」是這條建議唯一的證據強度 → 附上前幾位的名字。
@@ -75,21 +75,16 @@
         </div>
 
         <!--
-          ⛔ 沒有建議時也要有生命跡象（08-25 教訓：`C-68` 那個排程壞了兩天沒人看得出來，
+          ⛔ 沒有建議時也要有生命跡象（08-25：`C-68` 那個排程壞了兩天沒人看得出來，
           因為畫面上「沒東西」跟「壞掉」長得一模一樣）。做成一行小字不是卡片——不佔版面。
+          文案由 discoveryState() 這支純函式決定（可測），⛔ 不要在模板裡拼條件：
+          第一版就是在這裡拼 v-if，結果「每輪都炸」被印成「第一次掃描還沒跑」。
         -->
-        <p v-else-if="discoveryLoaded" class="tags-discovery-idle text-muted">
-          <template v-if="!discoveryEnabled">
-            AI 每週會從對話裡找「還沒有標籤」的新主題——目前「AI 讀對話」是關的，
-            到「AI 設定 → 顧客標籤」打開才會開始找。
-          </template>
-          <template v-else-if="discoveryLastScanMs">
-            AI 每週會從對話裡找「還沒有標籤」的新主題。上次掃描：{{ relativeTime(discoveryLastScanMs) }}，這次沒有發現足夠明確的新主題。
-          </template>
-          <template v-else>
-            AI 每週會從對話裡找「還沒有標籤」的新主題，第一次掃描還沒跑（排程每 10 分鐘檢查一次）。
-          </template>
-        </p>
+        <p
+          v-else-if="discoveryLoaded"
+          class="tags-discovery-idle"
+          :class="`is-${discoveryIdle.tone}`"
+        >{{ discoveryIdle.text }}</p>
 
         <div class="message-card tags-page-card">
           <div class="message-card-header">
@@ -396,6 +391,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
+import { discoveryState } from '~~/shared/tag-discovery'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
 /** 三段選擇的文案（D-27①）：信任程度由低到高，一次講完「讓不讓判＋判了怎麼處理」 */
@@ -519,23 +515,48 @@ const discoveryActing = ref('')
 /** 「AI 讀對話」總開關：關著的話卡片要先講清楚建了也不會自己運作 */
 const discoveryEnabled = ref(false)
 const discoveryLastScanMs = ref(0)
+/** 掃描器連續失敗中（後端用掃描器自己記的失敗判定，不是拿游標猜） */
+const discoveryStalled = ref(false)
+/** 這次進頁面之後有沒有自己處理掉建議——⛔ 沒有這個的話，按掉最後一條之後畫面會
+ *  說「這次掃描沒有發現主題」，但它明明有發現，是你剛處理完（等於系統在說謊） */
+const discoveryHandledThisVisit = ref(false)
 /**
  * 查過了沒。⛔ 三態：沒有這個旗標的話，「還沒查完」和「查完沒建議」在畫面上
  * 長得一樣，那行說明會在載入中就先閃一下（也就是 08-09 拍板的「查不到≠沒問題」）。
  */
 const discoveryLoaded = ref(false)
 
-/** 載入失敗保持空陣列且不標 loaded＝那行說明不出現。這張卡是錦上添花，不值得為它擋整頁 */
+/** 那行小字的內容：全部交給純函式決定（可測），模板只負責印 */
+const discoveryIdle = computed(() => discoveryState({
+  enabled: discoveryEnabled.value,
+  lastScanMs: discoveryLastScanMs.value,
+  stalled: discoveryStalled.value,
+  handledThisVisit: discoveryHandledThisVisit.value,
+}))
+
+/**
+ * 載入失敗＝把 loaded 收回 false，那行說明就不出現。
+ * ⛔ 只清空清單是不夠的：現在雖然只在 onMounted 呼叫一次、失敗剛好不會出事，
+ *    但只要有人加一個「採用後重新載入」或輪詢，失敗的那次就會變成
+ *    「上次掃描：X，這次沒有發現新主題」——網路錯誤被講成掃描結果（08-09 三態鐵律）。
+ */
 async function loadDiscovery() {
   try {
-    const res = await apiFetch<{ pending: DiscoveryRow[]; enabled: boolean; lastScanMs: number }>('/api/tag/discovery')
+    const res = await apiFetch<{
+      pending: DiscoveryRow[]
+      enabled: boolean
+      lastScanMs: number
+      stalled: boolean
+    }>('/api/tag/discovery')
     discoveryPending.value = res.pending ?? []
     discoveryEnabled.value = res.enabled === true
     discoveryLastScanMs.value = Number(res.lastScanMs ?? 0)
+    discoveryStalled.value = res.stalled === true
     discoveryLoaded.value = true
   }
   catch {
     discoveryPending.value = []
+    discoveryLoaded.value = false
   }
 }
 
@@ -552,9 +573,10 @@ async function actOnDiscovery(p: DiscoveryRow, action: 'adopt' | 'dismiss') {
       await refreshTags() // 新標籤要馬上出現在下面的表格裡
     }
     else {
-      showToast('已否決，之後不會再建議這個主題', 'success')
+      showToast('已忽略，之後不會再建議這個主題', 'success')
     }
     discoveryPending.value = discoveryPending.value.filter((row: DiscoveryRow) => row.id !== p.id)
+    discoveryHandledThisVisit.value = true
   }
   catch (e: any) {
     // 404＝同事剛處理掉了：把這條從畫面拿掉並講原因，不是報錯了事

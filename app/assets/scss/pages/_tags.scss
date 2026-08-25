@@ -375,6 +375,17 @@
 }
 
 /**
+ * ⛔ 這條是必要的：`.tags-desc-hint` 自己帶 `margin: .4rem 0 0`（它在表單欄位下面
+ * 需要那個間距），但這張卡的 `.card-section-stack` 是 flex column + gap——
+ * **flex 的 margin 不會和 gap 合併，是相加**。不取消的話「警告條→說明」會變成
+ * 10.4+6.4=16.8px，而「說明→第一列」「列→列」是 10.4px：同一張卡兩種間距，
+ * 正是這輪要修掉的那個缺陷（第一次修只拿掉 row 的 margin，換個 class 又長回來）。
+ */
+.tags-discovery-card .tags-desc-hint {
+  margin-top: 0;
+}
+
+/**
  * ⛔ 不要再給 `& + & { margin-top }`：外層 `.card-section-stack` 已經是
  * `flex-direction:column; gap:.65rem`，再疊 margin 會讓「列與列」變 1.15rem、
  * 而「說明與第一列」還是 .65rem ——同一張卡兩種間距，正是老闆一眼會抓的那種不齊。
@@ -408,9 +419,16 @@
  */
 .tags-discovery-idle {
   margin: 0;
-  padding: 0 0.15rem;
+  /* ⛔ 對齊卡片外緣（0），不要給 0.15rem 這種「跟誰都不對齊」的縮排：
+     它是卡片的兄弟，2.4px 的偏移會在左緣切出一條看得見的鋸齒 */
+  padding: 0;
   font-size: 0.76rem;
   line-height: 1.6;
+  color: var(--text-muted);
+
+  /* 壞掉／太久沒跑不是中性資訊，用色階講出嚴重度（配色語意同全站） */
+  &.is-warning { color: #a35b00; }
+  &.is-danger { color: var(--el-color-danger); }
 }
 
 .tags-discovery-row__main {

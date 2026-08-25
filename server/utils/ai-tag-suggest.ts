@@ -26,6 +26,8 @@ import { addTagsToUser } from './tagging'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
+import { recordScannerFailure } from './scanner-health'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import type { UserTagSuggestionDoc, UserTagSuggestionPending } from '~~/shared/types/tag-broadcast'
 
@@ -135,7 +137,15 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
       stats.workspaces += 1
 
       const stateRef = db.collection('cronState').doc(`tag-suggest-${workspaceId}`)
-      const state = (await stateRef.get()).data() as { cursorMs?: number } | undefined
+      const stateSnap = await stateRef.get()
+      const state = stateSnap.data() as { cursorMs?: number } | undefined
+      /**
+       * `C-68` 的治本：這支迴圈的 catch 會把錯誤吞掉（單一工作區壞掉不該拖垮其他人），
+       * 但吞掉之後畫面上什麼都不會說——缺索引害它每輪都炸、兩天沒人發現。
+       * 現在失敗會記在自己的狀態文件上，異常提醒中心讀得到（見 shared/scanner-health.ts）。
+       * ⛔ 不可以改用「游標有沒有前進」判斷：追上進度後本來就不會寫入。
+       */
+      const health = readScannerHealth(stateSnap.data() as Record<string, unknown> | undefined)
 
       // 開關剛打開：游標定在「現在」，之後結束的對話才進建議。不追歷史（見檔頭）。
       if (!state?.cursorMs) {
@@ -201,9 +211,14 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
       if (usage.inputTokens || usage.outputTokens) {
         await recordAiUsage(workspaceId, usage, db).catch(e => console.warn('[tag-suggest] usage record failed:', e))
       }
+
+      // 這一輪走完了＝健康；先前有記錄在案的失敗才需要寫（清掉）
+      const healed = nextScannerHealth(health, { ok: true })
+      if (healed) await stateRef.set({ health: healed }, { merge: true })
     }
     catch (e) {
       console.warn('[tag-suggest] workspace failed:', workspaceId, e)
+      await recordScannerFailure(db.collection('cronState').doc(`tag-suggest-${workspaceId}`), e)
     }
   }
 

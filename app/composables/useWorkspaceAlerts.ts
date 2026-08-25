@@ -336,6 +336,18 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/settings/organization`,
   },
   {
+    /**
+     * 系統端問題（C-68 的治本）：AI 讀對話的背景掃描一直失敗。
+     * 之前這種死法完全沒有現形機制——開關開著、畫面什麼都不說，兩天後才被發現。
+     */
+    id: 'scannerStalled',
+    icon: Tools,
+    impact: 'AI 讀對話的背景掃描（貼標建議、發現新標籤）連續失敗中，所以不會有新的標籤建議出現。這是系統端的問題，不用你操作，請聯絡我們處理。',
+    cta: '去看標籤',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/tags`,
+  },
+  {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
     id: 'knowledgeSuggestions',
     icon: Opportunity,

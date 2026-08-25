@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  discoveryState,
   MAX_PROPOSALS_PER_SCAN,
+  pickSampleNames,
   normalizeTagName,
   sanitizeDiscoveryProposals,
   sanitizeTagCode,
@@ -111,5 +113,72 @@ describe('標籤 code 清洗', () => {
     expect(sanitizeTagCode('中文code')).toBe('')
     expect(sanitizeTagCode('9starts_with_digit')).toBe('')
     expect(sanitizeTagCode('')).toBe('')
+  })
+})
+
+describe('證據名字：挑得出「真的有名字」的那幾位', () => {
+  it('空字串跳過往後找——LINE 用戶沒設暱稱是常態，不補位的話證據會整段消失', () => {
+    expect(pickSampleNames(['', '', '', '王小明', 'Amy', '陳大文'], 3)).toEqual(['王小明', 'Amy', '陳大文'])
+  })
+
+  it('undefined／全空白／重複名字都跳過', () => {
+    expect(pickSampleNames([undefined, '  ', '王小明', '王小明', 'Amy'], 3)).toEqual(['王小明', 'Amy'])
+  })
+
+  it('全部都沒名字 → 回空陣列（呼叫端就不顯示「包括…」那段）', () => {
+    expect(pickSampleNames(['', '   ', undefined], 3)).toEqual([])
+  })
+
+  it('吃 max 上限', () => {
+    expect(pickSampleNames(['a', 'b', 'c', 'd'], 2)).toEqual(['a', 'b'])
+  })
+})
+
+describe('標籤頁那行小字：狀態怎麼判（C-68 的沉默死亡不可以再演一次）', () => {
+  const NOW = Date.parse('2026-08-25T12:00:00+08:00')
+  const base = { enabled: true, lastScanMs: NOW - 86_400_000, stalled: false, handledThisVisit: false, now: NOW }
+
+  it('總開關關著 → 講怎麼開，不講掃描結果', () => {
+    const s = discoveryState({ ...base, enabled: false })
+    expect(s.tone).toBe('idle')
+    expect(s.text).toContain('AI 設定')
+  })
+
+  /** 這條是整輪 review 最重要的一項：掃描每輪都炸時 lastScanMs 永遠是 0 */
+  it('⛔ 掃描連續失敗且從沒成功過 → 必須講「一直失敗」，不可以講「第一次掃描還沒跑」', () => {
+    const s = discoveryState({ ...base, stalled: true, lastScanMs: 0 })
+    expect(s.tone).toBe('danger')
+    expect(s.text).toContain('一直失敗')
+    expect(s.text).not.toContain('還沒跑')
+  })
+
+  it('成功過但之後一直失敗 → 一樣講失敗，不講「沒發現新主題」', () => {
+    const s = discoveryState({ ...base, stalled: true })
+    expect(s.tone).toBe('danger')
+    expect(s.text).not.toContain('沒有發現')
+  })
+
+  it('從沒掃過（而且沒在失敗）→ 講「第一次還沒跑」', () => {
+    const s = discoveryState({ ...base, lastScanMs: 0 })
+    expect(s.tone).toBe('idle')
+    expect(s.text).toContain('第一次掃描還沒跑')
+  })
+
+  it('⛔ 上次成功掃描太久以前 → 要警告，不可以照樣講「這次沒發現主題」', () => {
+    const s = discoveryState({ ...base, lastScanMs: NOW - 20 * 86_400_000 })
+    expect(s.tone).toBe('warning')
+    expect(s.text).toContain('超過兩週')
+  })
+
+  it('⛔ 使用者剛把建議處理完 → 不可以說「掃描沒有發現主題」（它有發現，是人處理掉的）', () => {
+    const s = discoveryState({ ...base, handledThisVisit: true })
+    expect(s.text).toContain('都處理完了')
+    expect(s.text).not.toContain('沒有發現')
+  })
+
+  it('一切正常、這次真的沒東西 → 才講「沒有發現足夠明確的新主題」', () => {
+    const s = discoveryState(base)
+    expect(s.tone).toBe('idle')
+    expect(s.text).toContain('沒有發現足夠明確的新主題')
   })
 })

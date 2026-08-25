@@ -74,6 +74,12 @@ export type WorkspaceAlertId =
   | 'broadcastOverdue'
   /** 背景自動維護（轉真人提醒、過期回收、資料更新偵測）心跳停了 */
   | 'maintenanceStalled'
+  /**
+   * AI 讀對話的背景掃描（貼標建議／發現新標籤）連續失敗中。
+   * ⛔ 判定看的是**掃描器自己記下的失敗**，不是「游標有沒有前進」——
+   *    追上進度後本來就不會寫入，拿游標當訊號會整天誤報（見 shared/scanner-health.ts）。
+   */
+  | 'scannerStalled'
   /** 知識庫建議收件匣有待處理草稿（客人問過但 AI 答不好的主題）。不是異常，是「可以更好」 */
   | 'knowledgeSuggestions'
   /** 有啟用中的客服流程永遠輪不到（沒填觸發詞、或被規則／敏感情境／別條腳本先接走） */
@@ -115,6 +121,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   broadcastFailed: '有推播沒有送出去',
   broadcastOverdue: '有排程推播過時間還沒送',
   maintenanceStalled: '系統自動維護沒在跑',
+  scannerStalled: 'AI 讀對話的背景掃描一直失敗',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
   knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
   scriptUnreachable: '有客服流程永遠不會被啟動',
@@ -169,6 +176,7 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   broadcastFailed: 'warning',
   broadcastOverdue: 'warning',
   maintenanceStalled: 'warning',
+  scannerStalled: 'warning',
   knowledgeSuggestions: 'suggestion',
 }
 
@@ -186,6 +194,7 @@ export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<Worksp
   'llmError',
   'claimPushUnmarked',
   'maintenanceStalled',
+  'scannerStalled',
   'broadcastOverdue',
   'knowledgeIndexStuck',
   'invoiceFailed',

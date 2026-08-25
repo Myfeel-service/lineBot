@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calendarDate, relativeTime } from './relative-time'
+import { calendarDate, elapsedSince, relativeTime } from './relative-time'
 
 /**
  * G-27⑥：客人卡上「加入於 2026/8/23」與「最後來訊 8/23」兩種寫法，改走同一支。
@@ -40,5 +40,36 @@ describe('relativeTime 超過一天的那一段要跟 calendarDate 同一個寫�
 
   it('一天內還是講「幾小時前」，沒有被改掉', () => {
     expect(relativeTime(Date.now() - 3 * 3_600_000)).toBe('3 小時前')
+  })
+})
+
+/**
+ * G-27 code review 抓到：AI 標籤建議約每週產生一次，所以打開頁面時它幾乎永遠超過
+ * 24 小時 → relativeTime 會印「8/4」，本來想講的「放三週沒人動」變成要讀者自己算。
+ */
+describe('陳放時間：要回答「擱著多久了」不是「哪一天的事」', () => {
+  const NOW = Date.parse('2026-08-25T12:00:00+08:00')
+  const days = (n: number) => NOW - n * 86_400_000
+
+  it('⛔ 超過一天要講「N 天前」，不可以掉回日期（那正是 relativeTime 做的事）', () => {
+    expect(elapsedSince(days(3), NOW)).toBe('3 天前')
+    expect(elapsedSince(days(3), NOW)).not.toBe(calendarDate(days(3), NOW))
+  })
+
+  it('一天內沿用時分的講法', () => {
+    expect(elapsedSince(NOW - 30_000, NOW)).toBe('剛剛')
+    expect(elapsedSince(NOW - 5 * 60_000, NOW)).toBe('5 分鐘前')
+    expect(elapsedSince(NOW - 5 * 3_600_000, NOW)).toBe('5 小時前')
+  })
+
+  it('兩週以上改用週、兩個月以上改用月（不要出現「87 天前」這種要自己換算的數字）', () => {
+    expect(elapsedSince(days(13), NOW)).toBe('13 天前')
+    expect(elapsedSince(days(21), NOW)).toBe('3 週前')
+    expect(elapsedSince(days(90), NOW)).toBe('3 個月前')
+  })
+
+  it('沒有時間回空字串；未來時間當「剛剛」（時鐘偏移不要印出負數）', () => {
+    expect(elapsedSince(0, NOW)).toBe('')
+    expect(elapsedSince(NOW + 60_000, NOW)).toBe('剛剛')
   })
 })

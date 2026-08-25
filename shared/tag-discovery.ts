@@ -103,6 +103,86 @@ export function normalizeTagName(raw: string): string {
     .replace(/[。，、．,.!?！？「」『』()（）:：;；-]/g, '')
 }
 
+/**
+ * 從候選名字裡挑前 N 個「真的有名字」的。
+ *
+ * ⛔ 不能只取前 3 位就算了：LINE 用戶沒設暱稱是常態（`displayName` 存空字串），
+ * 前三位剛好都空白的話整條建議會退回「23 位客人聊過」——這條建議唯一的證據就這樣消失，
+ * 而且畫面上跟「這功能沒做」長得一模一樣。呼叫端要多抓幾位進來讓這裡挑。
+ */
+export function pickSampleNames(names: Array<string | null | undefined>, max = 3): string[] {
+  const out: string[] = []
+  for (const raw of names) {
+    const name = String(raw ?? '').trim()
+    if (!name || out.includes(name)) continue
+    out.push(name)
+    if (out.length >= max) break
+  }
+  return out
+}
+
+/**
+ * 「AI 發現新標籤」現在到底是什麼狀態（純函式，可測）——標籤頁那行小字的內容來源。
+ *
+ * ⛔ **這支存在的理由**：先前那行是把 `lastScanMs` 原樣印出來，結果它偵測不到
+ * 它自己註解裡點名的那種壞法——掃描每輪都炸掉時 `lastScanMs` 永遠是 0，畫面會印
+ * 「第一次掃描還沒跑」，讀起來像「再等一下」，正是 `C-68` 的沉默死亡再演一次。
+ * 所以這裡吃三個輸入：開關、上次成功掃描、掃描器有沒有在連續失敗。
+ */
+export type DiscoveryStateTone = 'idle' | 'warning' | 'danger'
+
+export interface DiscoveryStateInput {
+  enabled: boolean
+  lastScanMs: number
+  /** 掃描器連續失敗中（由 shared/scanner-health.ts 判定） */
+  stalled: boolean
+  /** 這次進頁面之後，使用者自己處理掉了建議（採用或忽略） */
+  handledThisVisit: boolean
+  now?: number
+}
+
+/** 超過幾倍間隔沒成功掃描就算「太久沒動」（掃描約每 6.5 天一次，兩倍＝約兩週） */
+export const DISCOVERY_STALE_FACTOR = 2
+
+export function discoveryState(input: DiscoveryStateInput): { tone: DiscoveryStateTone; text: string } {
+  const now = input.now ?? Date.now()
+
+  if (!input.enabled) {
+    return {
+      tone: 'idle',
+      text: 'AI 每週會從對話裡找「還沒有標籤」的新主題——目前「AI 讀對話」是關的，到「AI 設定 → 顧客標籤」打開才會開始找。',
+    }
+  }
+
+  // ⛔ 壞掉最優先：壞掉時 lastScanMs 可能是 0（從沒成功過）也可能很舊，
+  //    兩種都不能顯示成「還沒跑」或「沒發現主題」那種無害的話
+  if (input.stalled) {
+    return {
+      tone: 'danger',
+      text: 'AI 找新標籤的背景掃描一直失敗，已經有一段時間沒有真的跑過了。這是系統這邊的狀況，不用你操作——請聯絡我們處理。',
+    }
+  }
+
+  if (!input.lastScanMs) {
+    return { tone: 'idle', text: 'AI 每週會從對話裡找「還沒有標籤」的新主題，第一次掃描還沒跑（排程每 10 分鐘檢查一次）。' }
+  }
+
+  // 成功過、但久到不合理（例如排程整個停了，連失敗都沒記到）
+  if (now - input.lastScanMs > DISCOVERY_INTERVAL_MS * DISCOVERY_STALE_FACTOR) {
+    return {
+      tone: 'warning',
+      text: '距離上次成功掃描已經超過兩週，比預期的一週一次久很多。背景排程可能沒在跑——這是系統這邊的狀況，不用你操作。',
+    }
+  }
+
+  // ⛔ 剛被使用者清空的清單，不可以講成「掃描沒發現主題」——它有發現，是你剛處理完
+  if (input.handledThisVisit) {
+    return { tone: 'idle', text: '這批建議都處理完了。AI 每週會再從新的對話裡找新主題。' }
+  }
+
+  return { tone: 'idle', text: 'AI 每週會從對話裡找「還沒有標籤」的新主題。這次掃描沒有發現足夠明確的新主題。' }
+}
+
 /** 標籤 code 的清洗：合法就原樣、不合法回空字串（呼叫端自己給退路，這裡不編數字） */
 export function sanitizeTagCode(raw: string): string {
   const code = String(raw ?? '').trim().toLowerCase()

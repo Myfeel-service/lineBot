@@ -18,6 +18,9 @@ import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
+import { recordScannerFailure } from './scanner-health'
+import { fetchUserDisplayNames } from './user-display-names'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import {
   DISCOVERY_INTERVAL_MS,
@@ -25,6 +28,7 @@ import {
   MAX_PENDING_DISCOVERIES,
   MAX_PROPOSALS_PER_SCAN,
   MIN_DISTINCT_USERS,
+  pickSampleNames,
   sanitizeDiscoveryProposals,
   type RawDiscoveryTopic,
   type TagDiscoveryDoc,
@@ -44,6 +48,8 @@ const DIGEST_LINE_MAX = 160
 const TRANSCRIPT_CONCURRENCY = 8
 /** 每條建議存幾位客人的名字當證據（畫面上顯示「包括 A、B 等 N 位」） */
 const SAMPLE_NAMES_PER_PROPOSAL = 3
+/** 為了湊滿上面那 3 個，要撈幾位候選進來挑（沒設暱稱的 LINE 用戶很常見） */
+const SAMPLE_NAME_CANDIDATES = 8
 
 /** 一場對話的摘要：這位客人（在這場）說了什麼 */
 interface SessionDigest {
@@ -114,17 +120,27 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
       stats.scanned += 1
       stats.proposed += result.proposed
 
+      // 這一輪真的跑完了＝健康；先前有記錄在案的失敗才需要寫（清掉）
+      const healed = nextScannerHealth(readScannerHealth(doc as unknown as Record<string, unknown>), { ok: true })
+
       await docRef.set({
         workspaceId,
         pending: [...pending, ...result.proposals],
         dismissedNames,
         lastScanMs: Date.now(),
+        ...(healed ? { health: healed } : {}),
         updatedAt: FieldValue.serverTimestamp(),
         ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
       }, { merge: true })
     }
     catch (e) {
+      /**
+       * ⛔ `C-68` 的教訓：這裡吞掉錯誤是對的（一個工作區壞掉不該拖垮其他人），
+       * 但**吞掉之後要留下痕跡**——否則掃描每輪都炸、`lastScanMs` 永遠是 0，
+       * 標籤頁那行小字會印「第一次掃描還沒跑」，讀起來像「再等一下」。
+       */
       console.warn('[tag-discovery] workspace failed:', workspaceId, e)
+      await recordScannerFailure(db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId), e)
     }
   }
 
@@ -224,31 +240,28 @@ async function scanOneWorkspace(
     maxProposals: Math.min(MAX_PROPOSALS_PER_SCAN, Math.max(0, room)),
   })
 
-  // 每條建議抓前 3 位客人的名字當證據（掃描時抓一次，見 shared 的欄位註解）
-  const sampleNamesByProposal = await Promise.all(
-    cleaned.map(p => fetchSampleNames(db, p.userDocIds.slice(0, SAMPLE_NAMES_PER_PROPOSAL))),
-  )
+  /**
+   * 每條建議抓幾位客人的名字當證據（掃描時抓一次，見 shared 的欄位註解）。
+   *
+   * ⛔ 抓 `SAMPLE_NAME_CANDIDATES` 位而不是剛好 3 位：LINE 用戶沒設暱稱是常態
+   * （`displayName` 存空字串），前三位剛好都空白的話整條建議會退回「23 位客人聊過」，
+   * 證據就這樣默默消失。多抓幾位讓 pickSampleNames 挑得出有名字的。
+   * ⛔ 全部提案**合併成一次 getAll**：一條一次是好幾趟來回，而同一位客人出現在
+   * 兩條建議裡還會被讀兩次。
+   */
+  const candidateIds = [...new Set(
+    cleaned.flatMap(p => p.userDocIds.slice(0, SAMPLE_NAME_CANDIDATES)),
+  )]
+  const nameById = await fetchUserDisplayNames(db, candidateIds)
 
-  const proposals: TagDiscoveryProposal[] = cleaned.map((p, i) => ({
+  const proposals: TagDiscoveryProposal[] = cleaned.map(p => ({
     ...p,
-    sampleNames: sampleNamesByProposal[i] ?? [],
+    sampleNames: pickSampleNames(
+      p.userDocIds.slice(0, SAMPLE_NAME_CANDIDATES).map(id => nameById[id]),
+      SAMPLE_NAMES_PER_PROPOSAL,
+    ),
     id: randomUUID(), // ⛔ id 是伺服器產的，模型只產內容
     proposedAtMs: Date.now(),
   }))
   return { proposed: proposals.length, proposals }
-}
-
-/** 名字查不到就跳過那一位（⛔ 不要用 userId 充數——畫面上出現一串亂碼比不顯示更糟） */
-async function fetchSampleNames(db: Firestore, userDocIds: string[]): Promise<string[]> {
-  if (!userDocIds.length) return []
-  try {
-    const snaps = await db.getAll(...userDocIds.map(id => db.collection('users').doc(id)))
-    return snaps
-      .map(s => String(s.data()?.displayName ?? '').trim())
-      .filter(Boolean)
-  }
-  catch (e) {
-    console.warn('[tag-discovery] sample names failed:', e)
-    return []
-  }
 }

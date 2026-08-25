@@ -3,6 +3,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import type { TagDiscoveryDoc } from '~~/shared/tag-discovery'
+import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 
 /**
  * GET /api/tag/discovery — 「AI 發現的新標籤」收件匣（標籤頁頂部那張卡）
@@ -23,6 +24,11 @@ export default defineEventHandler(async (event) => {
 
   return {
     enabled: settings.autoTagSuggest?.enabled === true,
+    /**
+     * 掃描器是不是連續失敗中。⛔ 一定要回這個：畫面只拿 `lastScanMs` 的話，
+     * 「每輪都炸」看起來會跟「還沒跑第一次」一模一樣（`C-68` 的沉默死亡）。
+     */
+    stalled: isScannerStalled(readScannerHealth(snap.data() as Record<string, unknown> | undefined)),
     pending: (Array.isArray(doc?.pending) ? doc!.pending : []).map(p => ({
       id: p.id,
       name: p.name,

@@ -10,6 +10,8 @@ import { getQuotaAnswered } from './ai-usage'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { checkScriptHealth } from './script-health'
+import { TAG_DISCOVERY_COLLECTION } from './tag-discovery'
+import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
 import { countOpenQueueSessions, isOpenQueueSession } from './conversation-queue'
 import { buildPlanView, getWorkspaceSubscription } from './billing'
@@ -743,6 +745,38 @@ export async function collectWorkspaceAlerts(
           return {
             active: true,
             detail: `上次執行約 ${humanizeHours(ageMs / 3600_000)}前`,
+          }
+        }),
+        probe('scannerStalled', async () => {
+          /**
+           * `C-68` 的治本（08-25）：AI 貼標掃描器因為缺一個索引每輪都炸，錯誤被 catch
+           * 吞掉 → 開關開著、畫面什麼都不說，兩天後才有人問「怎麼都沒建議」。
+           *
+           * ⛔ **不可以用「游標有沒有前進」判斷**：掃描器追上進度後本來就不寫入
+           *    （沒有新對話要處理），拿游標當訊號會天天誤報。唯一可靠的是掃描器
+           *    自己記下的連續失敗（見 shared/scanner-health.ts）。
+           *
+           * 只在「AI 讀對話」開著時才查——關著的話這兩支根本不會跑，
+           * 報「掃描失敗」只會讓人去找一個不存在的問題。
+           */
+          const settings = await getAiSettings(wid, db)
+          if (settings.autoTagSuggest?.enabled !== true) return { active: false }
+
+          const [suggestSnap, discoverySnap] = await Promise.all([
+            db.collection('cronState').doc(`tag-suggest-${wid}`).get(),
+            db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get(),
+          ])
+          const broken = ([
+            ['貼標建議', suggestSnap],
+            ['發現新標籤', discoverySnap],
+          ] as const).filter(([, snap]) =>
+            isScannerStalled(readScannerHealth(snap.data() as Record<string, unknown> | undefined)))
+
+          if (!broken.length) return { active: false }
+          return {
+            active: true,
+            count: broken.length,
+            detail: `${broken.map(([name]) => name).join('、')}的背景掃描連續失敗中`,
           }
         }),
         probe('paymentPastDue', async () => {
