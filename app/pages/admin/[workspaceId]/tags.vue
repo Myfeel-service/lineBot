@@ -15,6 +15,50 @@
 
     <template #editor-body>
       <div class="solo-editor-body admin-panel-stack">
+        <!-- ══ AI 發現的新標籤（老闆 08-25 拍板）═══════════════════
+             掃描器每週讀一次最近的對話，找「很多客人在聊、但還沒有標籤」的主題。
+             按「建立」才會真的新增（同時幫聊過的那批客人貼上）；按「不要」永不再提。
+             沒有建議時整張卡不出現——不佔版面。 -->
+        <div v-if="discoveryPending.length" class="message-card tags-discovery-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">AI 發現的新標籤</span>
+              <span class="badge badge-orange">{{ discoveryPending.length }} 個建議</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="ai-section-hint">
+              從最近兩週的對話歸納出來的主題。按「建立」才會真的新增標籤，
+              並幫聊過的那批客人貼上（記為 AI 貼的，隨時可拿掉）；按「不要」之後不會再建議同一個主題。
+            </p>
+            <div v-for="p in discoveryPending" :key="p.id" class="tags-discovery-row">
+              <div class="tags-discovery-row__main">
+                <div class="tags-discovery-row__title">
+                  <span class="tags-discovery-row__name">{{ p.name }}</span>
+                  <span class="badge badge-gray">{{ tagCategoryLabel(p.category) }}</span>
+                  <span class="tags-discovery-row__count">{{ p.userCount }} 位客人聊過</span>
+                </div>
+                <p v-if="p.reason" class="tags-discovery-row__reason">{{ p.reason }}</p>
+                <p class="tags-discovery-row__criteria">AI 判斷條件：{{ p.criteria }}</p>
+              </div>
+              <div v-if="canOperate" class="tags-discovery-row__actions">
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="discoveryActing === p.id"
+                  :disabled="!!discoveryActing && discoveryActing !== p.id"
+                  @click="actOnDiscovery(p, 'adopt')"
+                >建立並標記 {{ p.userCount }} 位</el-button>
+                <el-button
+                  size="small"
+                  :disabled="!!discoveryActing"
+                  @click="actOnDiscovery(p, 'dismiss')"
+                >不要</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="message-card tags-page-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -424,6 +468,65 @@ async function createFromTemplates() {
   }
 }
 
+// ── AI 發現的新標籤（08-25）──────────────────────────────
+interface DiscoveryRow {
+  id: string
+  name: string
+  category: string
+  criteria: string
+  usage: string
+  reason: string
+  userCount: number
+  proposedAtMs: number
+}
+
+const discoveryPending = ref<DiscoveryRow[]>([])
+/** 目前正在處理的提案 id（同一時間只准按一條，防連點與互相蓋寫） */
+const discoveryActing = ref('')
+
+/** 載入失敗保持空陣列＝卡片不出現。這張卡是錦上添花，不值得為它擋整頁 */
+async function loadDiscovery() {
+  try {
+    const res = await apiFetch<{ pending: DiscoveryRow[] }>('/api/tag/discovery')
+    discoveryPending.value = res.pending ?? []
+  }
+  catch {
+    discoveryPending.value = []
+  }
+}
+
+async function actOnDiscovery(p: DiscoveryRow, action: 'adopt' | 'dismiss') {
+  if (!assertCanOperate()) return
+  discoveryActing.value = p.id
+  try {
+    const res = await apiFetch<{ created?: { name: string }; tagged?: number; dismissed?: boolean }>(
+      '/api/tag/discovery',
+      { method: 'POST', body: { action, proposalId: p.id } },
+    )
+    if (action === 'adopt') {
+      showToast(`已建立「${res.created?.name ?? p.name}」並幫 ${res.tagged ?? 0} 位客人貼上（AI 先建議模式）`, 'success')
+      await refreshTags() // 新標籤要馬上出現在下面的表格裡
+    }
+    else {
+      showToast('已否決，之後不會再建議這個主題', 'success')
+    }
+    discoveryPending.value = discoveryPending.value.filter((row: DiscoveryRow) => row.id !== p.id)
+  }
+  catch (e: any) {
+    // 404＝同事剛處理掉了：把這條從畫面拿掉並講原因，不是報錯了事
+    if (e?.status === 404 || e?.statusCode === 404) {
+      discoveryPending.value = discoveryPending.value.filter((row: DiscoveryRow) => row.id !== p.id)
+      showToast('這條建議剛被同事處理過了', 'warning')
+    }
+    else {
+      showToast(e?.data?.statusMessage || '操作失敗', 'error')
+    }
+  }
+  finally {
+    discoveryActing.value = ''
+  }
+}
+
 function formatMemberCount(count: number | undefined) {
   return (count ?? 0).toLocaleString('zh-TW')
 }
@@ -547,5 +650,8 @@ async function submitForm() {
   }
 }
 
-onMounted(() => reloadTags(true))
+onMounted(() => {
+  void reloadTags(true)
+  void loadDiscovery()
+})
 </script>

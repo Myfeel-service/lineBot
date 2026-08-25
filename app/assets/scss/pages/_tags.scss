@@ -363,3 +363,77 @@
     }
   }
 }
+
+/* ── AI 發現的新標籤（08-25）：標籤頁頂部的建議卡 ─────────────────
+   一列一個提案。做得比表格輕：它是等你決定的建議，不是已存在的資料。
+   ⛔ 不能套 .tags-page-card：那個為了讓表格撐滿有 flex:1，建議卡會被拉高吃掉表格。 */
+.tags-discovery-card.message-card {
+  width: 100%;
+  max-width: 100%;
+  flex: none;
+  min-width: 0;
+}
+
+.tags-discovery-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-base);
+
+  & + & {
+    margin-top: 0.5rem;
+  }
+}
+
+.tags-discovery-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tags-discovery-row__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tags-discovery-row__name {
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+
+/* 「N 位客人聊過」是這條建議的證據強度，給次要色但不縮小——它是判斷要不要按的依據 */
+.tags-discovery-row__count {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.tags-discovery-row__reason {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.tags-discovery-row__criteria {
+  margin: 0.15rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  /* 條件可長到 200 字：兩行截斷，完整內容建立後到編輯器看（這裡是決策清單不是編輯器） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tags-discovery-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}
