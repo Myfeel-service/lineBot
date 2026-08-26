@@ -116,7 +116,15 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
       // 間隔未到、而且沒有人按「立即掃描」→ 走人（每輪只花上面那 1 次讀取）
       if (!rescanPending && Date.now() - lastScanMs < DISCOVERY_INTERVAL_MS) continue
       // 收件匣滿了就不掃：提了也放不進去，白燒一次 LLM。老闆清掉之後下一輪自然會掃
-      if (pending.length >= MAX_PENDING_DISCOVERIES) continue
+      if (pending.length >= MAX_PENDING_DISCOVERIES) {
+        // ⛔ 但手動要求要消掉：不清的話畫面會**永遠**顯示「已排進佇列，約 10 分鐘內會掃」
+        //   （discoveryTiming 判的就是 rescanRequestedMs > lastScanMs），而它其實永遠不會跑。
+        if (rescanPending) {
+          await docRef.set({ rescanRequestedMs: FieldValue.delete() }, { merge: true })
+            .catch(e => console.warn('[tag-discovery] clear rescan marker failed:', workspaceId, e))
+        }
+        continue
+      }
 
       const result = await scanOneWorkspace(db, workspaceId, pending, dismissedNames)
       stats.scanned += 1
@@ -145,6 +153,21 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
        */
       console.warn('[tag-discovery] workspace failed:', workspaceId, e)
       await recordScannerFailure(db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId), e)
+      /**
+       * 🔴 **手動要求一定要在這裡消掉，否則是無限重跑。**
+       *
+       * 失敗時 `lastScanMs` 與 `rescanRequestedMs` 兩個都沒寫 → 下一輪（10 分鐘後）
+       * `rescanPending` 仍然成立，於是**跳過 6.5 天閘門把整包掃描再跑一次**：
+       * 撈整批會話 ＋ 打一次 LLM，每 10 分鐘一次、永遠不會停。
+       * 這個 repo 有讀取費暴衝的前科（見記憶 `project_firestore_read_cost_20260811`），
+       * 而 `C-78` 已經證實這條路真的會 throw（generateJson 遇到 MAX_TOKENS 截斷就丟）。
+       *
+       * 清掉＝「試過了、失敗了」：失敗本身由 recordScannerFailure 留痕，
+       * 標籤頁那條細條會轉成紅色的「一直失敗」，比假裝還在排隊誠實。
+       */
+      await db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId)
+        .set({ rescanRequestedMs: FieldValue.delete() }, { merge: true })
+        .catch(err => console.warn('[tag-discovery] clear rescan marker failed:', workspaceId, err))
     }
   }
 

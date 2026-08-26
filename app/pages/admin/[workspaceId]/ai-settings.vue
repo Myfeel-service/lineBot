@@ -547,9 +547,12 @@
                 placeholder="您好,目前非客服服務時間,我們會在服務時間盡快回覆您 🙏"
               />
               <!-- 客人看到的字會多一行,這裡不講清楚的話店家會以為系統擅自改了他的文案。
-                   時間由上面的欄位帶,店家改營業時間不必回頭改這段文字（也就不會留下假資訊）。 -->
-              <p class="ai-section-hint">
-                送出時會自動在後面補一行實際的服務時間(例:「服務時間：{{ serviceHoursPreview }}」),
+                   時間由上面的欄位帶,店家改營業時間不必回頭改這段文字（也就不會留下假資訊）。
+                   ⛔ 這行只在**真的會補**的時候出現：關著、或起訖同一分鐘／格式壞掉時
+                   appendServiceHoursLine 一個字都不會補,卻拿一個寫死的例子講「會自動補」,
+                   那就是在畫面上示範一句客人永遠不會收到的話。 -->
+              <p v-if="serviceHoursPreview" class="ai-section-hint">
+                送出時會自動在後面補一行實際的服務時間(「服務時間：{{ serviceHoursPreview }}」),
                 客人才知道要等到什麼時候。文案裡自己寫了時間就不會重複補。
               </p>
             </div>
@@ -909,8 +912,14 @@ function defaultForm(): FormShape {
 }
 
 const form = ref<FormShape>(defaultForm())
-// 說明文字裡示範的那句服務時間,跟客人真的會收到的字用同一支函式算,不要在畫面上另寫一份
-const serviceHoursPreview = computed(() => serviceHoursSentence({ ...form.value.serviceHours, enabled: true }) ?? '週一至週五 10:00–19:00')
+/**
+ * 說明文字裡示範的那句服務時間,跟客人真的會收到的字用**同一支函式**算。
+ * ⛔ 不可以有寫死的退路:回 null 代表這個設定下**一個字都不會補**（沒開、起訖同一分鐘＝
+ *    整天不服務、或時間格式壞掉）,這時拿一個編出來的例子講「會自動補」就是在示範
+ *    一句客人永遠不會收到的話。回 null 時整行說明不出現（見模板的 v-if）。
+ * ⛔ 也不要餵 enabled: true:那會讓「功能關著」也算出一句話來。
+ */
+const serviceHoursPreview = computed(() => serviceHoursSentence(form.value.serviceHours))
 const saving = ref(false)
 const showAdvanced = ref(false)
 const loadError = ref(false)

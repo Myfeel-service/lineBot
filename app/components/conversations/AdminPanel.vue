@@ -3320,8 +3320,20 @@ async function selectUser(c: ConvItem, opts?: { sessionId?: string }) {
   selectedUserId.value = c.userId
   selectedUser.value = c
   pendingQuickReplyId.value = ''
-  // 已讀章只蓋到「客人最後開口」為止（見 loadTimeline 裡的說明）
-  await loadTimeline(c.userId, { seenUpToMs: convRowCustomerMs(c), sessionId: opts?.sessionId })
+  /**
+   * 已讀章只蓋到「客人最後開口」為止（見 loadTimeline 裡的說明）。
+   *
+   * ⛔ **指定了某一場時不可以用 `convRowCustomerMs`**：那是**整段對話**最後一則客人訊息的
+   * 時間（跨所有場次），但畫面上只載入了那一場的內容。拿它蓋章＝把根本沒顯示出來的
+   * 新訊息一起標成已讀，紅點消失、而且沒有人會知道有那幾則（`markConversationRead`
+   * 取 max，所以只有「傳太大」會出事，傳小的是無害的 no-op）。
+   * 傳 0＝只用這一段實際載到的最新一則客人訊息蓋章，與 `selectSession` 的口徑一致
+   * （那支用的是 `sessionRowCustomerMs`＝那一場的）。
+   */
+  await loadTimeline(c.userId, {
+    seenUpToMs: opts?.sessionId ? 0 : convRowCustomerMs(c),
+    sessionId: opts?.sessionId,
+  })
 }
 
 /**

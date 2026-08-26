@@ -3254,6 +3254,18 @@ async function maybeSendWaitingButtonAck(
       waitingButtonAckSentAt.delete(key)
       throw e
     }
+    /**
+     * ⛔ 送出後**要一併蓋上文字那條的章**（單向：這條擋得住文字，文字擋不住這條）。
+     *
+     * 因為這句話本身就在叫客人「先把問題打在這裡」——他照做，五秒後就會收到
+     * 「已收到您的訊息，專員會盡快回覆您」，兩句同一個意思、還讓人以為前一次沒生效。
+     * 那正是 markWaitingAckSent 當初被加出來要防的事（見它的註解，實測發生過），
+     * 而這裡因為**是我們主動叫他打字**，不修的話是必然發生不是偶然。
+     *
+     * 反過來不擋：先收過文字 ack 的人再按選單，仍然要收到這一句——
+     * 「選單現在不會動」是文字 ack 沒講過的新資訊。
+     */
+    markWaitingAckSent(workspaceId, lineUserId)
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
       sender: 'system',
       senderName: '等待真人期間的自動回覆',

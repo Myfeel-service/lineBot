@@ -55,7 +55,7 @@ vi.mock('./ai-scripts', () => ({
 vi.mock('./conversation-media', () => ({ archiveConversationMedia: vi.fn(async () => ({ ok: false })) }))
 vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', question: '' })) }))
 
-import { handlePostbackEvent } from './handler'
+import { handleMessageEvent, handlePostbackEvent } from './handler'
 import { getDb } from './firebase'
 import { replyMessage } from './line'
 import { getSessionStatusCached, shouldSuppressInboundBotAutomationForSession } from './conversation-session'
@@ -117,6 +117,16 @@ function postbackEvent(lineUserId: string, moduleId: string): any {
     source: { type: 'user', userId: lineUserId },
     replyToken: `reply-${moduleId}`,
     postback: { data: `triggerModule=${moduleId}` },
+  }
+}
+
+function textEvent(lineUserId: string, text: string, atMs: number): any {
+  return {
+    type: 'message',
+    timestamp: atMs,
+    source: { type: 'user', userId: lineUserId },
+    replyToken: `reply-text-${atMs}`,
+    message: { type: 'text', id: `msg-${atMs}`, text },
   }
 }
 
@@ -251,5 +261,39 @@ describe('勿擾訊息要講清楚服務時間', () => {
     expect(dnd).toBeDefined()
     expect(dnd).not.toContain('服務時間：週一至週五')
     vi.useRealTimers()
+  })
+})
+
+/**
+ * 這一句話**自己叫客人去打字**（「您可以先把問題打在這裡」）。
+ * 所以「按了按鈕→照做打字→又收到一則同義的安撫語」不是偶發，是必然——
+ * 而那正是 markWaitingAckSent 當初被加出來要防的事（實測災情：兩句同義訊息隔一分鐘，
+ * 客人以為前一次沒生效又按一次轉接，真人其實兩小時後才回）。
+ */
+describe('按鈕回饋與文字安撫語不可以連放兩則', () => {
+  it('⛔ 按了按鈕收到回饋之後，客人照著打字不可以又收到「已收到您的訊息」', async () => {
+    const uid = 'U0000000000000000000000000000208'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
+    nowWaitingForHuman()
+
+    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    expect(sentTexts().some(t => t.includes(BTN_ACK_TYPE))).toBe(true)
+
+    await handleMessageEvent(textEvent(uid, '我想問訂單', Date.now()), { workspaceId: WS })
+
+    expect(sentTexts().filter(t => t.includes('已收到您的訊息'))).toHaveLength(0)
+  })
+
+  it('反過來不擋：先打過字的人再按選單，仍要收到「選單不會動」（那是新資訊）', async () => {
+    const uid = 'U0000000000000000000000000000209'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
+    nowWaitingForHuman()
+
+    await handleMessageEvent(textEvent(uid, '請問好了嗎', Date.now()), { workspaceId: WS })
+    expect(sentTexts().filter(t => t.includes('已收到您的訊息'))).toHaveLength(1)
+
+    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+
+    expect(sentTexts().some(t => t.includes(BTN_ACK_MENU))).toBe(true)
   })
 })
