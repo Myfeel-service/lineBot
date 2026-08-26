@@ -22,6 +22,7 @@
  */
 
 import type { TagCategory } from './types/tag-broadcast'
+import { daysBetween, taipeiDate } from './time'
 
 /** 收件匣上限：沒人清就先不加（同 userTagSuggestions 的精神，別變成沒人看的牆） */
 export const MAX_PENDING_DISCOVERIES = 6
@@ -195,6 +196,70 @@ export function discoveryState(input: DiscoveryStateInput): { tone: DiscoverySta
   }
 
   return { tone: 'idle', text: 'AI 每週會從對話裡找「還沒有標籤」的新主題。這次掃描沒有發現足夠明確的新主題。' }
+}
+
+/**
+ * 「上次什麼時候掃的、下次什麼時候會掃」——細條上那行事實（純函式，可測）。
+ *
+ * ⛔ **為什麼要有這行**：`discoveryState()` 那句話只講「AI 每週會…」，講不出**哪一天**。
+ * 老闆的實際問題是「按了立即掃描之後呢？自動的又落在什麼時候？」——畫面上一個時間都沒有，
+ * 於是這個功能看起來像沒在動（實測 2026-08-26：上次掃描 14:40、下次 9/2，但畫面一字未提）。
+ *
+ * 機制講清楚才寫得對：排程**每 10 分鐘檢查一次**，但閘門是「距離上次成功掃描滿
+ * `DISCOVERY_INTERVAL_MS`（約 6.5 天）」才真的跑；按「立即掃描一次」是寫一個請求標記，
+ * 讓下一輪跳過那道閘門。所以「下次自動掃描」＝上次掃描 ＋ 6.5 天。
+ *
+ * 回 null＝**這個情境沒有誠實的時間可講**（功能關著、或從沒成功掃過），
+ * 主句本來就會說明，這裡不要硬擠一個數字出來。
+ */
+export interface DiscoveryTimingInput {
+  enabled: boolean
+  lastScanMs: number
+  /** 比 lastScanMs 新＝有人按了「立即掃描一次」，還沒被排程撿走 */
+  rescanRequestedMs?: number
+  now?: number
+}
+
+/** 台北時區的 HH:mm（跨時區跑測試才不會飄） */
+function taipeiHhmm(ms: number): string {
+  const t = new Date(ms + 8 * 60 * 60 * 1000)
+  return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`
+}
+
+/** 'YYYY-MM-DD' → 'M/D'（畫面上不需要年份，今年的事佔九成九） */
+function shortDate(ymd: string): string {
+  const [, m, d] = ymd.split('-')
+  return `${Number(m)}/${Number(d)}`
+}
+
+export function discoveryTiming(input: DiscoveryTimingInput): string | null {
+  const now = input.now ?? Date.now()
+  if (!input.enabled) return null
+
+  // 排隊中最優先：按了按鈕之後最想知道的是「所以到底會不會跑、什麼時候」
+  if ((input.rescanRequestedMs ?? 0) > input.lastScanMs) {
+    return '已排進佇列，約 10 分鐘內會掃一次；掃完重新整理這一頁就看得到。'
+  }
+
+  if (!input.lastScanMs) return null
+
+  const today = taipeiDate(new Date(now))
+  const lastDay = taipeiDate(new Date(input.lastScanMs))
+  const daysAgo = daysBetween(lastDay, today)
+  const lastLabel = daysAgo === 0
+    ? `今天 ${taipeiHhmm(input.lastScanMs)}`
+    : daysAgo === 1
+      ? `昨天 ${taipeiHhmm(input.lastScanMs)}`
+      : `${shortDate(lastDay)} ${taipeiHhmm(input.lastScanMs)}`
+
+  const nextMs = input.lastScanMs + DISCOVERY_INTERVAL_MS
+  // 已經過了該掃的時間、排程還沒撿走（每 10 分鐘一輪，所以最多等一下下）
+  if (now >= nextMs) return `上次掃描：${lastLabel}．下次自動掃描：隨時會跑。`
+
+  const nextDay = taipeiDate(new Date(nextMs))
+  const daysLeft = daysBetween(today, nextDay)
+  const inLabel = daysLeft <= 0 ? '今天稍晚' : daysLeft === 1 ? '明天' : `約 ${daysLeft} 天後`
+  return `上次掃描：${lastLabel}．下次自動掃描：${shortDate(nextDay)}（${inLabel}）。`
 }
 
 /** 標籤 code 的清洗：合法就原樣、不合法回空字串（呼叫端自己給退路，這裡不編數字） */

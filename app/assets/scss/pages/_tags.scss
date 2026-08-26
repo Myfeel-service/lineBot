@@ -585,5 +585,22 @@
   b { color: var(--text-primary); }
 }
 
+/**
+ * 「上次掃描：…．下次自動掃描：…」——結論下面那行事實。
+ * 自己一行、字級再壓一階：它是佐證不是主旨，但**一定要在**
+ * （先前整條細條一個時間都沒有，功能看起來像沒在動）。
+ */
+.tags-discovery-strip__when {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 警告／壞掉時整條已經是彩色，這行跟著繼承才不會出現一段突兀的灰字 */
+.tags-discovery-strip.is-warning .tags-discovery-strip__when,
+.tags-discovery-strip.is-danger .tags-discovery-strip__when { color: inherit; opacity: 0.85; }
+
 .tags-discovery-strip.is-warning .tags-discovery-strip__txt b,
 .tags-discovery-strip.is-danger .tags-discovery-strip__txt b { color: inherit; }

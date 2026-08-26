@@ -41,5 +41,11 @@ export default defineEventHandler(async (event) => {
       proposedAtMs: p.proposedAtMs,
     })),
     lastScanMs: Number(doc?.lastScanMs ?? 0),
+    /**
+     * 有人按過「立即掃描一次」、排程還沒撿走（比 lastScanMs 新才算數）。
+     * ⛔ 一定要回：少了它，按完按鈕重新整理頁面就完全看不出「已經排隊了」，
+     * 只剩一則會消失的 toast——使用者會以為沒按到，然後再按一次（而那顆按鈕會花一次 LLM）。
+     */
+    rescanRequestedMs: Number(doc?.rescanRequestedMs ?? 0),
   }
 })

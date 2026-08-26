@@ -91,6 +91,13 @@
           <span class="tags-discovery-strip__icon" aria-hidden="true">{{ discoveryIdle.tone === 'idle' ? '🔍' : '⚠️' }}</span>
           <span class="tags-discovery-strip__txt">
             <b>AI 發現新標籤</b>：{{ discoveryIdle.text }}
+            <!--
+              ⛔ 時間另起一行，不要接在上面那句後面：上面講的是**結論**
+              （有沒有發現、是不是壞了），這行講的是**什麼時候**，混成一句沒人讀得完。
+              老闆 08-26：「立即掃描是否可以知道上次掃描是什麼時候、自動掃描會落在什麼時候」
+              ——先前這條細條一個時間都沒有，功能看起來像沒在動。
+            -->
+            <span v-if="discoveryTimingText" class="tags-discovery-strip__when">{{ discoveryTimingText }}</span>
           </span>
           <!-- ⛔ 開關關著時不給這顆按鈕：按了也不會掃，那是假的操作 -->
           <el-button
@@ -414,7 +421,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
-import { discoveryState } from '~~/shared/tag-discovery'
+import { discoveryState, discoveryTiming } from '~~/shared/tag-discovery'
 import { TAG_AI_SEGMENTS } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
@@ -538,6 +545,12 @@ async function requestRescan() {
       method: 'POST',
       body: { action: 'rescan' },
     })
+    /**
+     * 排上了就**當場把細條改成「排隊中」**，不要只丟一則會消失的 toast。
+     * ⛔ 少了這行，按完之後畫面完全看不出有排隊，使用者會以為沒按到而再按一次
+     *    ——而那顆按鈕每按一次就是一次 LLM。
+     */
+    if (res.queued) discoveryRescanRequestedMs.value = Date.now()
     // ⛔ queued:false 不是錯誤，是「剛掃過、不用再掃」——要講清楚而不是報失敗
     showToast(
       res.queued
@@ -573,6 +586,8 @@ const discoveryActing = ref('')
 /** 「AI 讀對話」總開關：關著的話卡片要先講清楚建了也不會自己運作 */
 const discoveryEnabled = ref(false)
 const discoveryLastScanMs = ref(0)
+/** 有人按過「立即掃描一次」、排程還沒撿走（比 lastScanMs 新才算數） */
+const discoveryRescanRequestedMs = ref(0)
 /** 掃描器連續失敗中（後端用掃描器自己記的失敗判定，不是拿游標猜） */
 const discoveryStalled = ref(false)
 /** 這次進頁面之後有沒有自己處理掉建議——⛔ 沒有這個的話，按掉最後一條之後畫面會
@@ -585,6 +600,18 @@ const discoveryHandledThisVisit = ref(false)
 const discoveryLoaded = ref(false)
 
 /** 那行小字的內容：全部交給純函式決定（可測），模板只負責印 */
+/**
+ * 細條第二行的事實：上次掃描什麼時候、下次自動掃描落在哪天、有沒有正在排隊。
+ * ⛔ 和上面那句分開：上面是**結論**（有沒有發現、是不是壞了），這行是**時間**。
+ *    混成一句話會變成一段沒人讀得完的長字串。
+ * 回 null＝這個情境沒有誠實的時間可講（功能關著、或從沒成功掃過），整行不出現。
+ */
+const discoveryTimingText = computed(() => discoveryTiming({
+  enabled: discoveryEnabled.value,
+  lastScanMs: discoveryLastScanMs.value,
+  rescanRequestedMs: discoveryRescanRequestedMs.value,
+}))
+
 const discoveryIdle = computed(() => discoveryState({
   enabled: discoveryEnabled.value,
   lastScanMs: discoveryLastScanMs.value,
@@ -604,11 +631,13 @@ async function loadDiscovery() {
       pending: DiscoveryRow[]
       enabled: boolean
       lastScanMs: number
+      rescanRequestedMs?: number
       stalled: boolean
     }>('/api/tag/discovery')
     discoveryPending.value = res.pending ?? []
     discoveryEnabled.value = res.enabled === true
     discoveryLastScanMs.value = Number(res.lastScanMs ?? 0)
+    discoveryRescanRequestedMs.value = Number(res.rescanRequestedMs ?? 0)
     discoveryStalled.value = res.stalled === true
     discoveryLoaded.value = true
   }

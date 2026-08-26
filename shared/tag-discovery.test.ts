@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   discoveryState,
+  discoveryTiming,
   MAX_PROPOSALS_PER_SCAN,
   pickSampleNames,
   normalizeTagName,
@@ -180,5 +181,54 @@ describe('標籤頁那行小字：狀態怎麼判（C-68 的沉默死亡不可�
     const s = discoveryState(base)
     expect(s.tone).toBe('idle')
     expect(s.text).toContain('沒有發現足夠明確的新主題')
+  })
+})
+
+/**
+ * 「上次掃描什麼時候、下次落在哪天」——老闆 2026-08-26 直接提的：
+ * 細條上一個時間都沒有，功能看起來像沒在動。
+ *
+ * 實測當時的真實資料：上次掃描 8/26 14:40、下次 9/2 02:40（6.5 天後），
+ * 但畫面上一個字都沒提。這幾條就是釘住那三個數字要講得出來、而且不准硬掰。
+ */
+describe('細條上的時間：上次掃了沒、下次什麼時候', () => {
+  const NOW = Date.parse('2026-08-26T20:00:00+08:00')
+  const base = { enabled: true, lastScanMs: Date.parse('2026-08-26T14:40:00+08:00'), now: NOW }
+
+  it('正常情況：講得出上次幾點、下次哪一天、還有幾天', () => {
+    const t = discoveryTiming(base)
+    expect(t).toContain('今天 14:40')
+    expect(t).toContain('9/2') // 上次 ＋ 6.5 天
+    expect(t).toContain('天後')
+  })
+
+  it('昨天掃的講「昨天」、更早的講日期（不要一律印完整時間戳）', () => {
+    expect(discoveryTiming({ ...base, lastScanMs: Date.parse('2026-08-25T09:05:00+08:00') })).toContain('昨天 09:05')
+    expect(discoveryTiming({ ...base, lastScanMs: Date.parse('2026-08-21T09:05:00+08:00') })).toContain('8/21 09:05')
+  })
+
+  it('⛔ 按過「立即掃描一次」之後，最想知道的是「所以會不會跑」——排隊訊息要蓋過一切', () => {
+    const t = discoveryTiming({ ...base, rescanRequestedMs: NOW })
+    expect(t).toContain('10 分鐘內')
+    expect(t).not.toContain('下次自動掃描') // 排隊中就不要再講一週後那個時間，會互相打架
+  })
+
+  it('已經超過該掃的時間、排程還沒撿走 → 講「隨時會跑」，不要印一個過去的日期', () => {
+    const t = discoveryTiming({ ...base, lastScanMs: NOW - 8 * 86_400_000 })
+    expect(t).toContain('隨時會跑')
+  })
+
+  it('⛔ 功能關著 → 不講時間（主句已經在教怎麼開，硬擠一個時間是誤導）', () => {
+    expect(discoveryTiming({ ...base, enabled: false })).toBeNull()
+  })
+
+  it('⛔ 從沒成功掃過 → 不講時間（沒有誠實的數字可講，不要拿 0 去算出 1970）', () => {
+    expect(discoveryTiming({ ...base, lastScanMs: 0 })).toBeNull()
+  })
+
+  it('請求標記比上次掃描舊＝那次已經被撿走跑完了，不可以還顯示「排隊中」', () => {
+    const t = discoveryTiming({ ...base, rescanRequestedMs: base.lastScanMs - 60_000 })
+    expect(t).toContain('上次掃描')
+    expect(t).not.toContain('排進佇列')
   })
 })
