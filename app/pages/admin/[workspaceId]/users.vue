@@ -15,6 +15,34 @@
         <el-button v-if="canOperate" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">
           從 LINE 同步好友
         </el-button>
+        <!--
+          原本這段說明是**一段三行的常駐文字，壓在表格正上方**——每天都要經過，
+          但它問的是「你的帳號是不是只有觸發過 Webhook 的人」，這件事沒有人答得出來。
+          它真正回答的是「為什麼我的好友數比 LINE 上少」，那是偶爾才冒出來的疑問，
+          所以收到同步按鈕旁邊：想問的時候按得到，不想問的時候不佔版面。
+          ⛔ 內容沒有刪掉，只是換了位置＋改成不必自己判斷條件的講法。
+        -->
+        <el-popover placement="bottom-end" :width="330" trigger="click">
+          <template #reference>
+            <el-button size="small" text class="users-sync-info" title="好友名單是怎麼來的？">
+              <el-icon><InfoFilled /></el-icon>
+            </el-button>
+          </template>
+          <div class="users-sync-pop">
+            <p class="users-sync-pop__title">好友名單是怎麼來的？</p>
+            <p>
+              這份清單來自我們自己的資料庫，<strong>可能比 LINE 後台看到的少</strong>——
+              只有跟你互動過的人（傳過訊息、按過按鈕、或加好友當下系統有收到通知）才會自動進來。
+            </p>
+            <p>
+              按左邊的「從 LINE 同步好友」可以把官方帳號的完整名單拉進來。
+              好友很多時會自動分批，<strong>按到人數不再增加就是完成了</strong>。
+            </p>
+            <p class="users-sync-pop__tech">
+              資料來源：Messaging API <code>/v2/bot/followers/ids</code>
+            </p>
+          </div>
+        </el-popover>
         <span v-if="syncingLine" class="text-xs text-muted">{{ syncProgress }}</span>
         <el-button size="small" @click="loadData">重新整理</el-button>
       </div>
@@ -29,12 +57,27 @@
           <el-button size="small" text @click="selectedIds = []">取消選取</el-button>
         </div>
 
+        <!--
+          AI 建議待辦條。**這是收件匣真正的入口**——先前唯一的入口是每一列名字後面那顆橘章，
+          它只說得出「這一列有」，說不出「這一頁有」：4 位建議散在 93 頁裡，
+          除非剛好翻到那一列，否則永遠不知道有事情等你決定。
+          ⛔ 沒有待辦就整條不出現（不做成永遠亮著的裝飾）。
+          ⛔ 數字**不吃畫面上的篩選**（見 API 的 pendingSuggestionTotal）：
+             篩選之後變小會讓人以為已經處理掉了。
+        -->
+        <button
+          v-if="pendingSuggestionTotal > 0 && !filterSuggested"
+          type="button"
+          class="users-todo"
+          @click="filterSuggested = true"
+        >
+          <span class="users-todo__text">
+            AI 有 <strong>{{ pendingSuggestionTotal }}</strong> 位客人的標籤建議等你決定
+          </span>
+          <span class="users-todo__cta">看一下 →</span>
+        </button>
+
         <div class="message-card users-page-card" data-tour="usr-list">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">篩選與表格</span>
-            </div>
-          </div>
           <div class="card-section-stack">
             <div class="users-toolbar" data-tour="usr-filter">
               <div class="users-toolbar__field users-toolbar__field--search">
@@ -64,12 +107,12 @@
                 <AdminFieldLabel text="AI 建議" tight />
                 <el-checkbox v-model="filterSuggested">只看有 AI 建議的</el-checkbox>
               </div>
-              <span class="tags-count text-muted">共 {{ total.toLocaleString('zh-TW') }} 位</span>
+              <!--
+                ⛔ 篩選之後這個數字講的是「符合條件的數量」不是好友總數。
+                原本兩種情況都寫「共 N 位」，篩到剩 12 位時顯示「共 12 位」＝會被讀成好友只剩 12 位。
+              -->
+              <span class="tags-count text-muted">{{ countLabel }}</span>
             </div>
-            <p class="users-sync-hint text-muted">
-              清單來自資料庫：若只有「曾傳訊／按鈕／加好友後有觸發 Webhook」的帳號，請按上方「從 LINE 同步好友」以拉取官方好友名單（Messaging API
-              <code class="users-sync-hint__code">/v2/bot/followers/ids</code>）。大量好友時會自動分批，可連按數次直到完成。
-            </p>
 
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />
@@ -94,8 +137,15 @@
                       />
                     </th>
                     <th>好友</th>
-                    <th>加入時間</th>
-                    <th class="users-table__th--actions">標籤操作</th>
+                    <!--
+                      這頁的用途就是貼標籤，先前列表上卻**一個標籤都看不到**（只有「標籤（1）」這個數字），
+                      要知道是哪一個得逐一點開。而標籤的名字與顏色**每次載入本來就跟著資料回來了**
+                      （list.get.ts 的 enriched.tags），只被拿去算長度——補這一欄零查詢、零後端改動。
+                    -->
+                    <th class="users-table__th--tags">標籤</th>
+                    <th class="users-table__th--time">加入時間</th>
+                    <!-- 欄名改「操作」：「查看」開的是整個人的檔案，跟標籤無關，原本的「標籤操作」名不符實 -->
+                    <th class="users-table__th--actions">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -124,13 +174,40 @@
                         <span v-if="user.hasTagSuggestions" class="badge badge-orange user-suggest-badge">AI 建議</span>
                       </div>
                     </td>
+                    <td>
+                      <!--
+                        點標籤欄＝開這個人的標籤視窗（原本「標籤（N）」那顆做的事）。
+                        ⛔ 超過 MAX_ROW_TAGS 顆就收成「＋N」：標籤多的人會把那一列撐成好幾行，
+                           整張表的列高又會回到參差不齊。
+                      -->
+                      <div
+                        class="user-tags-cell"
+                        :class="{ 'is-clickable': canTagCellOpen(user) }"
+                        :title="rowTagsTitle(user)"
+                        @click="canTagCellOpen(user) && openUserTagDialog(user)"
+                      >
+                        <template v-if="user.tags.length">
+                          <AdminTagTintChip
+                            v-for="tag in user.tags.slice(0, MAX_ROW_TAGS)"
+                            :key="tag.id"
+                            :color="tag.color"
+                          >{{ tag.name }}</AdminTagTintChip>
+                          <!-- 沿用共用的 .tag-chip-more（標籤頁那套膠囊的一員），不要另刻一顆 -->
+                          <span v-if="user.tags.length > MAX_ROW_TAGS" class="tag-chip-more">
+                            ＋{{ user.tags.length - MAX_ROW_TAGS }}
+                          </span>
+                        </template>
+                        <!-- ⛔ 空的時候不要留白：留白看不出「可以按這裡加」 -->
+                        <span v-else class="user-tags-cell__empty">{{ canOperate ? '＋ 加標籤' : '—' }}</span>
+                      </div>
+                    </td>
                     <td class="td-time">{{ formatZhDateOnly(user.createdAt) }}</td>
                     <td>
+                      <!-- 一行放得下就不要換行：先前欄寬 132px 裝不下 48+78 兩顆，
+                           每一列被撐成 77px（單行 44px），兩顆的左緣還差 12px -->
                       <div class="td-actions">
                         <el-button size="small" @click="openUserDetail(user)">查看</el-button>
-                        <el-button size="small" @click="openUserTagDialog(user)">
-                          標籤（{{ user.tags.length }}）
-                        </el-button>
+                        <el-button v-if="canOperate" size="small" @click="openUserTagDialog(user)">改標籤</el-button>
                       </div>
                     </td>
                   </tr>
@@ -278,7 +355,7 @@
 </template>
 
 <script setup lang="ts">
-import { User } from '@element-plus/icons-vue'
+import { InfoFilled, User } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
@@ -294,6 +371,7 @@ const {
   page,
   pageSize,
   truncated,
+  pendingSuggestionTotal,
   loadUsers,
 } = useAdminUserList()
 const { tags: allTags, loading: tagsLoading, loadTags: loadTagOptions } = useAdminTagList()
@@ -304,6 +382,39 @@ const filterTagIds = ref<string[]>([])
 const filterSuggested = ref(false)
 const selectedIds = ref<string[]>([])
 const { showToast } = useAdminToast()
+
+/**
+ * 一列最多直接列幾顆標籤，其餘收成「＋N」。
+ * ⛔ 不要拿掉這個上限：標籤多的人會把那一列撐成好幾行，整張表的列高又變參差
+ *    ——那正是這次要修掉的毛病（原本按鈕換行造成列高 77px）。
+ */
+const MAX_ROW_TAGS = 3
+
+/**
+ * 這一格能不能點開標籤視窗。
+ * ⛔ 唯讀角色**且這個人沒有標籤**時不給點：那會開出一個「尚無標籤」又不能加的死路。
+ *    有標籤的話唯讀角色仍可以點——被「＋N」收起來的那幾顆總要有地方看得到。
+ */
+function canTagCellOpen(user: any): boolean {
+  return canOperate.value || (user?.tags?.length ?? 0) > 0
+}
+
+/** 滑上去看完整的標籤（列上只顯示前幾顆，被收起來的那些要有地方看得到） */
+function rowTagsTitle(user: any): string {
+  const names = (user?.tags ?? []).map((t: any) => t.name).filter(Boolean)
+  if (!names.length) return canOperate.value ? '還沒有標籤，點一下可以加' : '還沒有標籤'
+  return canOperate.value ? `${names.join('、')}（點一下可以改）` : names.join('、')
+}
+
+/**
+ * 「共 N 位」在有篩選時講的其實是「符合條件的數量」。
+ * 兩種情況共用同一句話會誤導：篩到剩 12 位時顯示「共 12 位」，會被讀成好友只剩 12 位。
+ */
+const countLabel = computed(() => {
+  const n = total.value.toLocaleString('zh-TW')
+  const filtering = !!searchText.value.trim() || filterTagIds.value.length > 0 || filterSuggested.value
+  return filtering ? `符合條件 ${n} 位` : `共 ${n} 位`
+})
 
 const batchDialogVisible = ref(false)
 const batchMode = ref<'add' | 'remove'>('add')

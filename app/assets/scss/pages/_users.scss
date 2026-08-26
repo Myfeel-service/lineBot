@@ -42,18 +42,8 @@
   flex: 0 0 260px;
 }
 
-.users-sync-hint {
-  flex: 0 0 auto;
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.users-sync-hint__code {
-  font-size: 0.78em;
-}
+/* .users-sync-hint 已隨那段說明搬進頁首同步按鈕旁的說明泡泡（.users-sync-pop）刪除。
+   刪之前反向 grep 過全部 .vue，確認沒有別頁借用（本專案為「刪共用 partial 連坐破版」付過代價）。 */
 
 .users-batch-bar {
   display: flex;
@@ -75,14 +65,181 @@
   width: 36px;
 }
 
+/**
+ * 操作欄：**寬到兩顆按鈕排得下一行**。
+ * 原本 132px 裝不下 48+78 兩顆，於是換行，把每一列從 44px 撐成 77px
+ * ——那不是設計成上下兩排，是擠出來的。
+ */
 .users-table__th--actions {
-  width: 132px;
+  width: 156px;
+}
+
+/* 加入時間是次要資訊：給固定寬度,把剩下的寬度全部讓給標籤欄 */
+.users-table__th--time {
+  width: 108px;
+  white-space: nowrap;
+}
+
+/* 標籤欄不設寬度＝吃掉剩下的空間（這一欄的內容才是這頁的重點） */
+.users-table__th--tags {
+  min-width: 12rem;
+}
+
+.td-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  /* ⛔ 不換行：換行就是原本那個 77px 列高的成因 */
+  flex-wrap: nowrap;
+}
+
+/**
+ * 列上的標籤。整格可點＝開這個人的標籤視窗（原本「標籤（N）」那顆按鈕做的事）。
+ * ⛔ 這一格會被撐高就前功盡棄——超過三顆在模板裡就收成「＋N」了，這裡只負責不換行溢出。
+ */
+.user-tags-cell {
+  display: flex;
+  align-items: center;
+  /**
+   * ⛔ 一律單行,不換行。
+   * 量過：窄視窗（900px）下允許換行的話,有三顆標籤的那一列會從 58px 變成 109px
+   * ——整張表的列高又變參差,正是這次要修掉的毛病。
+   * 擠不下時讓膠囊自己縮（下面的 min-width: 0），完整內容在 title 與點開的視窗裡。
+   */
+  flex-wrap: nowrap;
+  overflow: hidden;
+  gap: 0.3rem;
+  border-radius: 6px;
+  padding: 0.15rem 0.3rem;
+  margin: -0.15rem -0.3rem;
+
+  &.is-clickable {
+    cursor: pointer;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+  }
+}
+
+/* 擠不下時膠囊自己縮，不要把那一列撐高（min-width: 0 才允許 flex 項目縮到內容以下） */
+.user-tags-cell .tag-chip {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 「＋N」沿用共用的 .tag-chip-more（_tags.scss），這裡不再定義一份。
+   ⛔ 它不可以被壓縮：擠的時候最該保住的就是「還有幾顆沒顯示」這個訊息 */
+.user-tags-cell .tag-chip-more {
+  flex-shrink: 0;
+}
+
+/* 沒有標籤時不要留白：留白看不出「這裡可以按」 */
+.user-tags-cell__empty {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/**
+ * AI 建議待辦條——列表真正的收件匣入口。
+ *
+ * 用**琥珀**不用綠：它是「有事等你做」不是「一切正常」（本專案綠＝好／完成）。
+ * ⛔ 也不要用紅：沒人處理不會傷到客人，紅色留給真的會影響客人的事（同異常中心的紅點規則）。
+ */
+.users-todo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 1rem;
+  /* 和共用的 .badge-orange（#fef3c7 / #b45309）同一條琥珀色階,只是整條的底色再淡一階
+     ——同一件事在列上是小章、在頂端是長條,顏色要讀得出是同一件事 */
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+  background: #fffbeb;
+  color: var(--text-primary);
+  font-size: 0.87rem;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #b45309;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+  }
+}
+
+.users-todo__text {
+  flex: 1;
+  min-width: 0;
+
+  strong {
+    font-weight: 700;
+  }
+}
+
+.users-todo__cta {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #b45309; /* 同 .badge-orange 的字色 */
+  white-space: nowrap;
+}
+
+/* 好友名單怎麼來的：收進頁首同步按鈕旁（原本是表格上方一段三行的常駐文字） */
+.users-sync-info {
+  padding: 0 0.35rem;
+  color: var(--text-muted);
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.users-sync-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  font-size: 0.83rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  p {
+    margin: 0;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+}
+
+.users-sync-pop__title {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* 技術細節留著但降級：要查的人查得到,不要的人不會被它擋住 */
+.users-sync-pop__tech {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+
+  code {
+    font-size: 0.95em;
+  }
 }
 
 .user-identity {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* 名字要能縮到省略號,flex 項目得先允許縮到內容寬以下 */
+  min-width: 0;
 }
 
 .user-avatar {
@@ -109,6 +266,12 @@
   font-weight: 600;
   font-size: 0.875rem;
   color: var(--text-primary);
+  /* 長名字用省略號,不要折成三行——量過：窄視窗下「IRENE 劉恩妙」會斷成三行,
+     那一列從 58px 變成 95px（跟旁邊的 58px 列高並排就是參差） */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .user-tags-row {
@@ -135,6 +298,12 @@
 
 .users-table {
   width: 100%;
+  /**
+   * 窄視窗時**寧可橫向捲動也不要把欄位擠爛**（.table-wrap 已經是 overflow-x: auto）。
+   * 沒有這條的話瀏覽器會壓縮欄寬，名字與標籤被迫折行，列高從 58px 一路長到 95px 以上，
+   * 整張表的節奏就散了——那正是這次要修的毛病。
+   */
+  min-width: 48rem;
 }
 
 .admin-table-pager {

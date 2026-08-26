@@ -56,7 +56,8 @@ function matchesSearch(user: UserBase, searchRaw: string): boolean {
  *   page      - 頁碼（預設 1）
  *   limit     - 每頁筆數（預設 50，上限 100）
  *
- * Response: { users, total, page, limit }
+ * Response: { users, total, page, limit, truncated, pendingSuggestionTotal }
+ *   pendingSuggestionTotal - 全工作區還有幾位客人的 AI 建議等人決定（**不吃畫面篩選**，見下方註解）
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
@@ -83,15 +84,37 @@ export default defineEventHandler(async (event) => {
   // 「只看有 AI 建議的」：hasPending 是寫入端維護的等值查詢欄位（Firestore 查不了「陣列非空」）。
   // 與標籤篩選同時開時取交集（兩個條件都要成立）
   const onlySuggested = String(query.suggested || '') === '1'
+
+  /**
+   * 還有幾位客人的 AI 建議等人決定——給列表頂端那條待辦用。
+   *
+   * ⛔ **刻意不吃畫面上的篩選**：它回答的是「還有幾件事等你決定」，不是「這一頁有幾件」。
+   *    跟著篩選變小會讓人以為已經處理掉了。
+   * 成本：`onlySuggested` 時直接用已經撈回來的那份名單（零額外讀取）；其餘走 count 聚合
+   *    ＝1 次讀取，而**這一次本來就在問了**（原本只拿它判斷「有沒有」，數字算出來就丟掉）。
+   */
+  let pendingSuggestionTotal = 0
+
   if (onlySuggested) {
     const snap = await db.collection('userTagSuggestions')
       .where('workspaceId', '==', workspaceId)
       .where('hasPending', '==', true)
       .get()
     const suggestedIds = new Set(snap.docs.map(d => d.id))
+    // ⛔ 取交集**之前**先記數：交集後是「這個篩選下還剩幾位」，不是待辦總數
+    pendingSuggestionTotal = suggestedIds.size
     filterUserIds = filterUserIds
       ? new Set([...filterUserIds].filter(id => suggestedIds.has(id)))
       : suggestedIds
+  }
+  else {
+    pendingSuggestionTotal = await db.collection('userTagSuggestions')
+      .where('workspaceId', '==', workspaceId)
+      .where('hasPending', '==', true)
+      .count()
+      .get()
+      .then(s => s.data().count)
+      .catch(() => 0) // 探測失敗只是少一條待辦，不該讓整個列表壞掉
   }
 
   let users: UserBase[]
@@ -116,7 +139,8 @@ export default defineEventHandler(async (event) => {
     truncated = counted.truncated
   }
 
-  if (!users.length) return { users: [], total, page, limit, truncated }
+  // ⛔ 空結果也要帶待辦總數：篩到沒東西時那條待辦更該在（那正是「我是不是漏了什麼」的時候）
+  if (!users.length) return { users: [], total, page, limit, truncated, pendingSuggestionTotal }
 
   const userIds = users.map((u) => u.id)
   const allUserTags: Array<{ userId: string; tagId: string }> = []
@@ -159,19 +183,11 @@ export default defineEventHandler(async (event) => {
   if (onlySuggested) {
     userIds.forEach(id => suggestedIds.add(id))
   }
-  else {
-    const anyPending = await db.collection('userTagSuggestions')
-      .where('workspaceId', '==', workspaceId)
-      .where('hasPending', '==', true)
-      .count()
-      .get()
-      .then(s => s.data().count > 0)
-      .catch(() => false) // 探測失敗只是少一顆提示章，不該讓整個列表壞掉
-    if (anyPending) {
-      const sugSnaps = await db.getAll(...userIds.map(id => db.collection('userTagSuggestions').doc(id)))
-      for (const s of sugSnaps) {
-        if (s.exists && s.data()?.hasPending === true) suggestedIds.add(s.id)
-      }
+  // 上面算待辦總數時已經問過「這個工作區有沒有」了，這裡直接沿用，不要再問一次
+  else if (pendingSuggestionTotal > 0) {
+    const sugSnaps = await db.getAll(...userIds.map(id => db.collection('userTagSuggestions').doc(id)))
+    for (const s of sugSnaps) {
+      if (s.exists && s.data()?.hasPending === true) suggestedIds.add(s.id)
     }
   }
 
@@ -191,7 +207,7 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  return { users: enriched, total, page, limit, truncated }
+  return { users: enriched, total, page, limit, truncated, pendingSuggestionTotal }
 })
 
 /**

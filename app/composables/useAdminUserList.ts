@@ -51,6 +51,12 @@ export function useAdminUserList() {
   const truncated = ref(false)
   const page = ref(1)
   const pageSize = ref(ADMIN_USER_PAGE_SIZE)
+  /**
+   * 全工作區還有幾位客人的 AI 建議等人決定（頂端待辦條用）。
+   * ⛔ 這個數字**不吃畫面上的篩選**——它回答「還有幾件事等你決定」，
+   *    跟著篩選變小會讓人以為處理掉了。
+   */
+  const pendingSuggestionTotal = ref(0)
   const { apiFetch } = useWorkspace()
 
   let inFlight: { key: string; promise: Promise<boolean> } | null = null
@@ -70,11 +76,13 @@ export function useAdminUserList() {
           page: number
           limit: number
           truncated?: boolean
+          pendingSuggestionTotal?: number
         }>(`/api/users/list?${search.toString()}`)
 
         users.value = res.users ?? []
         total.value = res.total ?? 0
         truncated.value = res.truncated === true
+        pendingSuggestionTotal.value = res.pendingSuggestionTotal ?? 0
         page.value = res.page ?? query?.page ?? 1
         pageSize.value = res.limit ?? query?.limit ?? ADMIN_USER_PAGE_SIZE
         return true
@@ -83,6 +91,7 @@ export function useAdminUserList() {
         users.value = []
         total.value = 0
         truncated.value = false
+        // ⛔ 載入失敗不要歸零：那會讓待辦條靜靜消失＝「查不到」被顯示成「沒有」
         return false
       }
       finally {
@@ -94,5 +103,5 @@ export function useAdminUserList() {
     return task
   }
 
-  return { users, loading, total, page, pageSize, truncated, loadUsers }
+  return { users, loading, total, page, pageSize, truncated, pendingSuggestionTotal, loadUsers }
 }
