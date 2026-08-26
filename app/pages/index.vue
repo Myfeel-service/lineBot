@@ -352,14 +352,20 @@
               <div class="lp-panel__bd lp-appcard__bd">
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div></div>
-                <div class="lp-chatdemo">
-                  <div class="lp-td lp-td--them">這款可以送禮嗎？</div>
-                  <div class="lp-td lp-td--me">可以，附禮盒包裝與提袋 🎁</div>
-                  <div class="lp-tdtag lp-tdtag--ok">答案來自你給它的商品資料</div>
-                  <div class="lp-td lp-td--them">我上一筆訂單想改地址…</div>
-                  <div class="lp-td lp-td--me lp-td--hand">這題我幫你轉給老闆，稍等一下 🙋</div>
-                  <div class="lp-tdtag lp-tdtag--warn">沒把握的，它不會亂猜</div>
-                </div>
+                <!-- ⚠️ 真實介面截圖（2026-08-26 老闆拍板「截我們自己系統的圖」）：
+                     後台對話頁，資料是種在測試工作區的示範對話（示範帳號、無真實客資）。
+                     內容重點：AI 半夜秒回兩題（AI 徽章）→ 改訂單轉真人（機器人徽章）→
+                     隔天早上真人跟進（真人徽章）。⛔ 要換圖用
+                     scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs 重截，
+                     不可以自己拼一張假的當截圖。 -->
+                <img
+                  class="lp-shot"
+                  src="/landing/admin-chat.png"
+                  alt="後台對話畫面：客人半夜詢問手沖與禮盒，AI 立即回覆並標示 AI 徽章；改訂單需求轉給真人，隔天早上真人回覆並標示真人徽章"
+                  loading="lazy"
+                  width="1280"
+                  height="1052"
+                >
                 <div class="lp-statrow lp-statrow--foot">
                   <div class="lp-stat"><span class="lp-stat__l">客人等回覆</span><span class="lp-stat__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
                   <div class="lp-stat"><span class="lp-stat__l">訊息回覆率</span><span class="lp-stat__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
@@ -378,6 +384,17 @@
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>回購喚醒</b><small>久沒來的，替你請回來</small></div></div>
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>生日與會員經營</b><small>該送券的時候自動送</small></div></div>
+                <!-- ⚠️ 真實介面截圖：後台「好友」頁的標籤欄，五位示範好友（無真實客資）。
+                     ⛔ 裁圖規矩：只能裁到示範資料那幾列——測試工作區下面幾列是**真實同事**
+                     的名字與頭像，入鏡就是把個資放上官網。重截用 scripts/landing-shots.mjs。 -->
+                <img
+                  class="lp-shot"
+                  src="/landing/admin-friends-tags.png"
+                  alt="後台好友列表：每位客人身上掛著彩色標籤，例如手沖愛好者、送禮客群、咖啡展加入，可直接篩選與改標籤"
+                  loading="lazy"
+                  width="1736"
+                  height="670"
+                >
                 <div class="lp-statrow lp-statrow--foot">
                   <div class="lp-stat"><span class="lp-stat__l">每月喚回的訂單</span><span class="lp-stat__v"><i>0 張</i><em>→</em><b>12–18 張</b></span></div>
                   <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
@@ -386,9 +403,11 @@
             </div>
           </div>
 
-          <!-- 這一區有具體數字與還沒上線的項目，圖說兩件事都要交代 -->
+          <!-- 這一區有具體數字與還沒上線的項目，圖說三件事都要交代：
+               截圖是真介面、資料是示範、哪些功能還沒上線 -->
           <p class="lp-figcap lp-figcap--center">
-            各區塊數據以 2,000 好友示範店估算，非實際績效。AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
+            對話與好友畫面為<b>系統實際操作介面</b>，客人與資料為示範。數據以 2,000 好友示範店估算，非實際績效。
+            AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
             <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>（客人資料目前沒有購買紀錄與生日欄位）。
           </p>
         </div>

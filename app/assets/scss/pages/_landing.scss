@@ -69,8 +69,8 @@
   --r-xl: 30px;
   --sh-card: 0 2px 6px rgba(20, 24, 22, 0.04), 0 18px 44px rgba(20, 24, 22, 0.07);
   --sh-soft: 0 2px 6px rgba(20, 24, 22, 0.03), 0 10px 26px rgba(20, 24, 22, 0.05);
-  /* ⛔ 綠色光暈**只給「要按的東西」**（.lp-btn--primary）與泡泡本體（08-26 草稿）：
-     光暈是「這個可以按／這是它在說話」的訊號，別掛到牆卡、數字磚上當裝飾。 */
+  /* ⛔ 綠色光暈**只給「要按的東西」**（.lp-btn--primary）：光暈是「這個可以按」的訊號，
+     別掛到泡泡、牆卡、數字磚上當裝飾（2026-08-21 老闆指名拿掉過）。 */
   --sh-green: 0 8px 22px rgba(6, 199, 85, 0.28);
 
   --wrap: 1160px;
@@ -446,18 +446,16 @@
   .lp-app b { display: block; font-size: 0.95rem; font-weight: 700; }
   .lp-app small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 3px; }
 
-  /* AI 客服卡裡的示意對話：含「答案來源」與「不會亂猜」兩個標籤，
-     這兩句是信任訊號，別為了省高度刪掉 */
-  .lp-chatdemo { background: var(--surf-2); border-radius: 12px; padding: 16px; margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-  .lp-td { max-width: 86%; font-size: 0.82rem; line-height: 1.6; padding: 9px 13px; border-radius: 14px; }
-  .lp-td--them { align-self: flex-start; background: #fff; border: 1px solid var(--hair); border-bottom-left-radius: 4px; }
-  .lp-td--me { align-self: flex-end; background: var(--g); color: #fff; border-bottom-right-radius: 4px; font-weight: 500; }
-  /* 轉真人那句：綠框白底＝「它決定不答、交給人」，跟直接回答視覺上分開 */
-  .lp-td--hand { background: #fff; border: 1.5px solid var(--g); color: var(--g-deep); font-weight: 600; }
-  .lp-tdtag { align-self: flex-end; font-size: 0.72rem; font-weight: 800; border-radius: var(--radius-pill); padding: 4px 11px; margin-bottom: 4px; }
-  .lp-tdtag--ok { background: var(--g-wash); color: var(--g-deep); }
-  /* 「不會亂猜」＝提醒類訊號，吃琥珀（狀態色），不吃草稿的奶油黃 */
-  .lp-tdtag--warn { background: var(--warn-wash); color: var(--warn-ink); }
+  /* ── 真實介面截圖（2026-08-26 老闆拍板「截我們自己系統的圖」）────
+   * 2 倍圖，寬高由 <img> 屬性帶（版面不跳）；細線框＋圓角讓它讀成「一塊畫面」而不是插圖。
+   * ⛔ 截圖必須是系統真的渲染出來的畫面（種示範資料再截），不可以自己拼一張假的。
+   *    重截流程＝scripts/landing-demo-seed.ts（種資料）→ scripts/landing-shots.mjs（截＋裁），
+   *    裁圖規矩（真實同事不可入鏡）寫在那兩支的檔頭。 */
+  .lp-shot {
+    display: block; width: 100%; height: auto; margin-top: 14px;
+    border: 1px solid var(--hair); border-radius: 12px;
+    background: var(--surf-2);
+  }
 
   /* ── 60 秒上線：三步時間軸 ────────────────────────────────
    * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
