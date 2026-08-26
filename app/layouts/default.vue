@@ -34,6 +34,7 @@
           >
             <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
+            <AdminNavAlertDot :path="item.to" />
           </NuxtLink>
 
           <!-- AI 客服 section -->
@@ -49,6 +50,7 @@
             >
               <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
               <span>{{ item.label }}</span>
+              <AdminNavAlertDot :path="item.to" />
             </NuxtLink>
           </template>
 
@@ -71,10 +73,12 @@
             >
               <el-icon class="nav-icon"><OfficeBuilding /></el-icon>
               <span>組織與 LINE</span>
+              <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/organization`" />
             </NuxtLink>
             <NuxtLink :to="`/admin/${workspaceId}/settings/billing`" class="nav-item" :class="{ active: route.path.includes('/settings/billing') }">
               <el-icon class="nav-icon"><CreditCard /></el-icon>
               <span>訂閱與付款</span>
+              <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/billing`" />
             </NuxtLink>
           </template>
         </nav>

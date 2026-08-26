@@ -15,6 +15,7 @@
 import { generateJson } from './gemini'
 import { normalizeScriptInput } from './ai-script-validation'
 import { findStuckCollects, validateScriptDoc, type ScriptNode, type ScriptStuckCollect } from '~~/shared/types/ai-script'
+import { isRiskyTriggerKeyword } from '~~/shared/script-trigger-keywords'
 
 export interface ScriptDraft {
   name: string
@@ -88,16 +89,12 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown; error?: unknown }
 
-/**
- * 高頻通用詞黑名單:這些詞當觸發關鍵字,子字串比對會把大量不相關的訊息攔進腳本
- * (「我的訂單有問題」中「問題」)。prompt 已教模型別用,這裡是確定性後檢的最後防線。
- * 只管生成端:既有腳本可能刻意這樣設(例:範本的「人工客服」),編輯器不回頭報錯。
+/*
+ * 高頻通用詞黑名單已搬到 `shared/script-trigger-keywords.ts`（2026-08-26 `D-33`）：
+ * 編輯器也要用同一份名單提醒人手打進去的爛關鍵字。⛔ 兩邊力度不同是刻意的——
+ * 生成端剔除（模型產的沒人看過），編輯器只提醒不阻擋（既有腳本可能刻意這樣設，
+ * 例：範本的「人工客服」）。
  */
-const GENERIC_TRIGGER_KEYWORDS = new Set([
-  '你好', '您好', '哈囉', '在嗎', '請問', '謝謝', '感謝', '麻煩', '拜託',
-  '客服', '服務', '問題', '怎麼', '什麼', '多少', '幫我', '想問', '請教',
-  'hi', 'hello', 'ok', '好的', '是的',
-])
 
 /**
  * 剔除會惹禍的觸發關鍵字,回傳剔掉了哪些(給 log 對帳):
@@ -113,7 +110,7 @@ function sanitizeTriggerKeywords(nodes: ScriptNode[], sensitiveTopics: readonly 
     if (n.type !== 'trigger') return n
     const kept = (n.keywords ?? []).filter((k) => {
       const norm = k.trim().toLowerCase()
-      const bad = norm.length <= 1 || GENERIC_TRIGGER_KEYWORDS.has(norm) || topics.some(t => norm.includes(t))
+      const bad = isRiskyTriggerKeyword(norm) || topics.some(t => norm.includes(t))
       if (bad) dropped.push(k)
       return !bad
     })

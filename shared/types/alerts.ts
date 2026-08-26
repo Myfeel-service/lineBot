@@ -210,6 +210,18 @@ export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<Worksp
  */
 export type WorkspaceAlertState = 'active' | 'clear' | 'unknown'
 
+/**
+ * 一顆異常涵蓋的「面向」（哪幾種設定出事）。
+ *
+ * 只有橫跨多個頁面的異常才需要：`brokenModuleButton` 一顆同時涵蓋圖文選單、機器人模組、
+ * 客服腳本、活動——註冊表只能寫一個 `route`，所以在 2026-08-26 之前它一律指到圖文選單，
+ * 壞在活動的人被帶去一個沒有問題的頁面。側欄狀態點更嚴重：**點會畫在錯的頁上，比沒有點更糟**。
+ *
+ * 有這個欄位之後，前端能把同一顆異常落到它真正涉及的每一頁。⛔ 值是路由對照表的鍵，
+ * 不是給人看的文字（白話標籤在前端註冊表）。
+ */
+export type WorkspaceAlertScope = 'richmenu' | 'flow' | 'script' | 'campaign'
+
 export interface WorkspaceAlertItem {
   id: WorkspaceAlertId
   state: WorkspaceAlertState
@@ -217,6 +229,8 @@ export interface WorkspaceAlertItem {
   count?: number
   /** 一句話補充，直接顯示給使用者看（例如失敗原因、最久等待時數）。 */
   detail?: string
+  /** 這顆異常實際壞在哪幾種設定上（只有跨頁的異常會帶，見 WorkspaceAlertScope）。 */
+  scopes?: WorkspaceAlertScope[]
 }
 
 export interface WorkspaceAlertsResponse {

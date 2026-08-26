@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedCampaign && !isCreating">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title">活動貼標</span>
+      <span class="split-sidebar-title">活動貼標<AdminPageHelpButton :topics="['campaigns']" /></span>
       <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="cmp-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -41,7 +41,10 @@
       <el-icon class="empty-icon"><Tickets /></el-icon>
       <h3>選擇一個活動開始編輯</h3>
       <p>或點擊左側「新增」建立新的活動貼標設定</p>
-      <el-button v-if="canOperate" type="primary" @click="openCreate">新增活動</el-button>
+      <div class="empty-actions">
+        <el-button v-if="canOperate" type="primary" @click="openCreate">新增活動</el-button>
+        <AdminPageHelpButton :topics="['campaigns']" label="第一次用？看一遍怎麼設" />
+      </div>
     </template>
 
     <!-- ── Editor Header ── -->
@@ -99,6 +102,30 @@
             </div>
           </div>
           <div class="card-section-stack">
+            <!--
+              沒設活動頁（LIFF）要**提前**講（D-33 P1）。
+              以前這件事只有按下「儲存」才擋（送出驗證那句「請先到組織與 LINE 設定預設 LIFF」），
+              所以是「填完一整張表才發現做不出連結」。教學也早就寫好了（liffSetup），這頁一行都沒用到。
+              ⚠️三態：讀不到 LIFF 設定時講「查不到」，⛔不可以講成「沒設定」（會叫人去改本來好的設定）。
+            -->
+            <AdminBlockStatus
+              v-if="liffLoadFailed"
+              tone="unknown"
+              title="這次讀不到活動頁（LIFF）設定，沒辦法確認活動連結做不做得出來"
+              detail="重新整理可以再試一次。這不代表沒設定。"
+            />
+            <AdminBlockStatus
+              v-else-if="!hasUsableLiff"
+              :tone="liffMissingTone"
+              title="還沒設定活動頁（LIFF），這個活動做不出可用的連結"
+              detail="客人點活動連結會打不開，綁定與貼標都不會發生。設定只要做一次，之後所有活動共用。"
+              action-label="去設定活動頁"
+              @action="goSetLiff"
+            >
+              <p class="ar-section-hint">
+                不知道去哪設、要填什麼？<AdminFieldHelp id="liffSetup" />
+              </p>
+            </AdminBlockStatus>
             <p class="ar-section-hint">
               這裡是客服／行政日常會看的重點。活動連結會在儲存後自動更新。
             </p>
@@ -298,6 +325,7 @@ const effectiveDefaultLiffId = ref('')
 /** LIFF 讀取是否失敗（區分「未設定」與「讀不到」，避免誤導成缺 LIFF） */
 const liffLoadFailed = ref(false)
 
+
 function campaignTimestampToPicker(v: unknown): string {
   if (v == null || v === '') return ''
   if (typeof v === 'string')
@@ -329,6 +357,28 @@ const defaultForm = () => ({
   isActive: true,
 })
 const form = ref(defaultForm())
+/**
+ * 這個活動做不做得出可用連結（D-33 P1）——本活動自己指定的 LIFF，或帳號層的預設 LIFF，
+ * 兩個有一個就行（跟產 CTA 的 fallback 同一個判斷，⛔別另立一套否則會出現
+ * 「這裡說沒設、連結卻正常」）。
+ */
+const hasUsableLiff = computed(() =>
+  Boolean(String(form.value.liffId || '').trim() || effectiveDefaultLiffId.value),
+)
+
+/**
+ * 已經上線的活動＝客人現在點就打不開（紅）；還在建、或已停用的＝還沒有人受影響（琥珀）。
+ * 嚴重度看的是「客人有沒有正在受影響」，不是看這件事重不重要。
+ */
+const liffMissingTone = computed<'critical' | 'warning'>(() =>
+  !isCreating.value && form.value.isActive ? 'critical' : 'warning',
+)
+
+/** 去設定活動頁。帶 ?focus=liff：到了那頁直接捲到 LIFF 區塊，不要再自己找一遍 */
+function goSetLiff() {
+  void navigateTo(`/admin/${workspaceId.value}/settings/organization?focus=liff`)
+}
+
 const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })

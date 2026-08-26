@@ -1,7 +1,7 @@
 <template>
   <AdminSplitLayout :is-empty="!selectedPreset && !isCreating">
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="sp-title">客服預存</span>
+      <span class="split-sidebar-title" data-tour="sp-title">客服預存<AdminPageHelpButton :topics="['support-presets']" /></span>
       <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="sp-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -120,6 +120,8 @@
             </div>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用貼標" tight />
+              <!-- 一句白話（D-33 P3）：這個開關的後果在別的地方（客人資料），畫面上看不到 -->
+              <p class="text-xs text-muted">開啟後，客服每次送出這則預存回覆，系統就順手幫那位客人貼上你指定的標籤，之後可以用標籤把這批人撈出來推播。</p>
               <el-switch
                 v-model="form.tagging.enabled"
                 active-text="啟用"

@@ -23,8 +23,10 @@
 }
 
 .split-layout--readonly {
-  .split-sidebar-header .el-button,
-  .split-empty-state .el-button,
+  /* ⚠️ `:not(.page-help-btn/.page-help-link)`：唯讀模式藏的是「會改資料的動作」，
+     ⛔別把「這頁怎麼用」也藏掉——觀察者最需要看得懂這頁在幹什麼（D-33 P1）。 */
+  .split-sidebar-header .el-button:not(.page-help-btn):not(.page-help-link),
+  .split-empty-state .el-button:not(.page-help-btn):not(.page-help-link),
   .admin-header-actions .el-button--primary,
   .admin-header-actions .el-button--danger {
     display: none !important;

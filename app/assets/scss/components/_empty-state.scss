@@ -12,3 +12,13 @@
 
 .empty-state .empty-icon { font-size: 3rem; }
 .empty-state p { font-size: 0.875rem; max-width: 280px; }
+
+/* 空清單一次給兩條路：主要動作＋「第一次用？」的導覽（D-33 P2）。
+   直排、教學在下：主要動作要先被看到，教學是退而求其次的那條路。 */
+.empty-state .empty-actions,
+.split-empty-state .empty-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}

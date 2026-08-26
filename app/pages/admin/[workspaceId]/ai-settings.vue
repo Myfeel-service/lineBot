@@ -5,6 +5,7 @@
         field-label="AI 客服"
         title="AI 設定"
         caption="開關、回覆模式、語氣與轉真人規則;細部參數收在最下方「進階調校」"
+        :help-topics="['ai-settings']"
       />
       <div v-if="canEditSettings" class="flex gap-1 admin-header-actions">
         <el-button :disabled="!dirty" @click="cancelEdits">取消</el-button>
@@ -606,6 +607,9 @@
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">回答行為調校</span>
+                <!-- 一組一顆求救鈕（D-33 P1）：每一格底下都已經有說明，缺的是「三個門檻
+                     在同一條線上的關係」。⛔別改成一格一顆＝五顆問號還是講不出那條線。 -->
+                <AdminFieldHelp id="aiThresholds" />
               </div>
             </div>
             <div class="card-section-stack">

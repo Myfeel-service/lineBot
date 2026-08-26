@@ -1,0 +1,104 @@
+/* ── 區塊狀態列（AdminBlockStatus，D-33 P0-3）─────────────────
+   「這一格出了什麼事」的就地告示。視覺沿用腳本編輯器那條健康狀態列，
+   讓兩邊看起來是同一件事——⛔別為某一頁另調一套顏色或圓角。 */
+
+.block-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+
+  .block-status__icon {
+    font-size: 15px;
+    flex-shrink: 0;
+    /* 對齊第一行文字的視覺中線（13px × 1.5 行高） */
+    margin-top: 2px;
+  }
+
+  .block-status__main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .block-status__title {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  /* 補充句用中性灰：整條都上色會讓「是哪一個」跟結論搶注意力 */
+  .block-status__detail {
+    margin: 2px 0 0;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  .block-status__action {
+    flex: 0 0 auto;
+    height: auto;
+    padding: 0;
+    margin-top: 1px;
+  }
+
+  &.is-ok {
+    background: var(--el-color-success-light-9);
+    color: var(--el-color-success);
+  }
+
+  &.is-warning {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
+  }
+
+  &.is-critical {
+    background: var(--el-color-danger-light-9);
+    color: var(--el-color-danger);
+  }
+
+  /* 查不到：灰底，看起來就是「還沒有答案」而不是「沒事」 */
+  &.is-unknown {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+  }
+}
+
+/* 卡片標題正下方時，跟下面的內容留一段 */
+.block-status + * {
+  margin-top: 12px;
+}
+
+/* ── 頁首「這頁怎麼用」（AdminPageHelpButton，D-33 P1-5）──────
+   跟在標題後面的一顆問號。刻意做小、做灰：它是隨時在的求救出口，
+   不是這一頁要人做的事——搶了主要動作的注意力就本末倒置。 */
+.page-help-btn.el-button {
+  height: auto;
+  padding: 2px;
+  margin-inline-start: 2px;
+  color: var(--text-muted);
+  vertical-align: middle;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--color-line);
+    background: transparent;
+  }
+}
+
+/* 空狀態那顆帶字的教學入口：灰字、不搶主要動作 */
+.page-help-link.el-button {
+  color: var(--text-muted);
+
+  &:hover,
+  &:focus-visible {
+    color: var(--color-line);
+    background: transparent;
+  }
+}
+
+.page-help-btn__steps {
+  margin-inline-start: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}

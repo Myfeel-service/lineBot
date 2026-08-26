@@ -5,6 +5,7 @@
         field-label="設定"
         title="成員管理"
         caption="以 Email 邀請成員（對方無需先註冊）。若已綁定組織，列表也會顯示組織擁有者／管理員（僅供檢視）。"
+        :help-topics="['members']"
       />
       <div class="flex gap-2 admin-header-actions">
         <el-button v-if="canManageSettings" type="primary" data-tour="mem-invite" @click="openInvite">邀請成員</el-button>
@@ -97,7 +98,11 @@
         <el-input v-model="inviteEmail" placeholder="對方 Email（可不已有 Firebase 帳號）" />
       </div>
       <div class="admin-field-group">
-        <AdminFieldLabel text="角色" tight />
+        <AdminFieldLabel tight>
+          角色
+          <!-- 選錯＝把帳單與 LINE 金鑰交給錯的人，這件事算資安不算 UX（D-33 P1） -->
+          <AdminFieldHelp id="memberRole" />
+        </AdminFieldLabel>
         <el-select v-model="inviteRole" style="width: 100%">
           <el-option label="管理員" value="admin" />
           <el-option label="客服" value="agent" />

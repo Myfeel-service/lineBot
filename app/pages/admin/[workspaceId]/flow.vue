@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedFlow && !isCreating">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="flow-title">機器人模組</span>
+      <span class="split-sidebar-title" data-tour="flow-title">機器人模組<AdminPageHelpButton :topics="['flow', 'msg-basic', 'msg-rich', 'msg-carousel', 'msg-quick', 'msg-userinput']" /></span>
       <AdminOperateGate>
         <div class="flex gap-1">
           <el-tooltip content="新增資料夾" placement="bottom" :show-after="300">

@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedItem && !isCreating">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="bc-title">推播</span>
+      <span class="split-sidebar-title" data-tour="bc-title">推播<AdminPageHelpButton :topics="['broadcasts']" /></span>
       <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="bc-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -42,7 +42,11 @@
       <el-icon class="empty-icon"><Promotion /></el-icon>
       <h3>選擇一則推播來查看或編輯</h3>
       <p>或點擊左側「新增」建立新推播</p>
-      <el-button v-if="canOperate" type="primary" @click="openCreate">新增推播</el-button>
+      <div class="empty-actions">
+        <el-button v-if="canOperate" type="primary" @click="openCreate">新增推播</el-button>
+        <!-- 空清單＝最不打擾的教學位（D-33 P2）：這裡本來就沒東西可看 -->
+        <AdminPageHelpButton :topics="['broadcasts']" label="第一次用？看一遍怎麼發" />
+      </div>
     </template>
 
     <!-- ── Editor Header ── -->
@@ -122,6 +126,11 @@
             <!-- 依標籤 -->
             <div v-if="form.audienceType === 'tags'" class="admin-field-group">
               <AdminFieldLabel text="選擇標籤（符合任一即納入）" tight />
+              <!-- 交集／聯集是分眾最常被誤解的一件事，而寄錯人收不回來（D-33 P1） -->
+              <p class="text-xs text-muted">
+                選兩顆以上是「或」：只要有其中一顆標籤的人都會收到，<b>不是</b>兩顆都要有。
+                想寄給「兩個條件都符合」的人，目前要先到「好友」頁篩出那批人。
+              </p>
               <el-select
                 v-model="form.tagIds"
                 multiple

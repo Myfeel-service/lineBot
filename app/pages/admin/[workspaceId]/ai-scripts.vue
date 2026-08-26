@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedScript && !isCreating">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title">自動回應</span>
+      <span class="split-sidebar-title">自動回應<AdminPageHelpButton :topics="['ai-scripts']" /></span>
       <el-button v-if="canEditScripts" :icon="Plus" type="primary" size="small" data-tour="scr-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -296,6 +296,19 @@
                         :placeholder="keywordPlaceholder(node)"
                         @update:model-value="updateKeywords(node, $event)"
                       />
+                      <!--
+                        打字當下就講（D-33 P1）：太短或太常見的關鍵字會攔到一大堆不相關的訊息
+                        （`C-25` 那場「觸發詞劫持」就是人手設的）。⛔只提醒不阻擋——
+                        既有腳本可能刻意這樣設，回頭報錯會擋住本來好好在跑的東西。
+                      -->
+                      <el-alert
+                        v-if="riskyKeywordsOf(node).length"
+                        type="warning"
+                        :closable="false"
+                        show-icon
+                        :title="`「${riskyKeywordsOf(node).join('、')}」太常見了，會攔到很多不相關的訊息`"
+                        description="關鍵字是「訊息裡有這幾個字就攔走」，例如設「問題」，客人打「我的訂單有問題」也會被這條接走、AI 就答不到了。建議改成這條流程專屬的具體詞（兩個字以上）。"
+                      />
                     </div>
                   </template>
 
@@ -382,7 +395,11 @@
                     </el-select>
                   </div>
                   <div v-if="node.format === 'custom'" class="admin-field-group">
-                    <AdminFieldLabel text="自訂格式（進階比對規則，需懂正規表達式；不確定可先用上面的預設格式）" tight />
+                    <AdminFieldLabel text="自訂格式（進階比對規則，需懂正規表達式；不確定可先用上面的預設格式）" tight>
+                      自訂格式（進階比對規則）
+                      <!-- 標籤自己寫著「需懂正規表達式」＝已經承認是術語，那就得給出口（D-33 P1） -->
+                      <AdminFieldHelp id="scriptCustomFormat" />
+                    </AdminFieldLabel>
                     <el-input v-model="node.pattern" placeholder="例：[A-Za-z]\d{3,}（訂單編號 A123）" />
                   </div>
                   <div v-if="(node.format ?? 'any') !== 'any'" class="admin-field-group">
@@ -698,6 +715,7 @@ import type { ScriptForReachability } from '~~/shared/types/ai-script-reachabili
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 import { AUTO_REPLY_COOLDOWN_OPTIONS } from '~~/shared/auto-reply-rule'
+import { riskyTriggerKeywords } from '~~/shared/script-trigger-keywords'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -828,6 +846,22 @@ function enableCooldown(node: ScriptTriggerNode) {
 }
 function clearCooldown(node: ScriptTriggerNode) {
   delete node.cooldownMs
+}
+
+/**
+ * 這個觸發填了哪幾個會惹禍的關鍵字（D-33 P1）。
+ *
+ * 名單與判斷來自 `shared/script-trigger-keywords`——跟 AI 生成端剔除用的是**同一份**，
+ * ⛔別在這裡自己另寫一組詞，否則會出現「生成端剔掉、編輯器說沒事」的兩套標準。
+ * 這裡只提醒不阻擋（既有腳本可能刻意這樣設）。
+ */
+function riskyKeywordsOf(node: ScriptTriggerNode): string[] {
+  if ((node.keywordMatch ?? 'any') === 'anyText')
+    return []
+  // 「完全符合」是一字不差地比對整句，不會誤攔別的訊息，所以不用提醒
+  if (node.keywordMatch === 'exact')
+    return []
+  return riskyTriggerKeywords(node.keywords ?? [])
 }
 
 function keywordPlaceholder(node: ScriptTriggerNode): string {

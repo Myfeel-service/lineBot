@@ -12,7 +12,7 @@
 import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
-import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
+import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
 // 嚴重度（ALERT_SEVERITY）與「這是系統這邊的狀況」（SYSTEM_OWNED_ALERTS）都定義在
@@ -31,6 +31,13 @@ export interface AlertDefinition {
   requires: 'settings' | 'operate'
   /** 去哪裡修 */
   route: (workspaceId: string) => string
+  /**
+   * 跨頁的異常：每個面向各自的落點（對應後端回的 `scopes`）。
+   *
+   * 有這個的異常，`route` 只是問不出面向時的退路。⛔別只留 `route`——側欄狀態點會照這裡
+   * 把點畫到每一個真的壞掉的頁；只有一個 route 的話點會畫在錯的頁上，比沒有點更糟。
+   */
+  scopeRoutes?: Partial<Record<WorkspaceAlertScope, (workspaceId: string) => string>>
   /** 有掛的話，卡片多一顆「用聊天帶我修」——對應的引導劇本（C-31 Phase 1，utils/agent-guides） */
   guideId?: AgentGuideId
 }
@@ -45,6 +52,8 @@ export interface ResolvedAlert extends AlertDefinition {
   state: WorkspaceAlertState
   count?: number
   detail?: string
+  /** 後端回的「壞在哪幾種設定上」（只有跨頁的異常會有） */
+  scopes?: WorkspaceAlertScope[]
 }
 
 /**
@@ -224,7 +233,16 @@ const ALERTS: AlertDefinition[] = [
     impact: '選單、圖卡、關鍵字回覆或活動指向已刪除／已停用的模組。客人觸發時收不到任何訊息，也不會看到錯誤提示。',
     cta: '去檢查設定',
     requires: 'settings',
+    // 退路：問不出面向時（舊版後端沒回 scopes）沿用原本的落點
     route: wid => `/admin/${wid}/richmenu`,
+    // 2026-08-26：這顆一顆管四種設定，以前一律指到圖文選單——壞在活動的人被帶去
+    // 一個沒有問題的頁面找半天。後端已經知道壞在哪（`scopes`），這裡照它分流。
+    scopeRoutes: {
+      richmenu: wid => `/admin/${wid}/richmenu`,
+      flow: wid => `/admin/${wid}/flow`,
+      script: wid => `/admin/${wid}/ai-scripts`,
+      campaign: wid => `/admin/${wid}/campaigns`,
+    },
   },
   {
     // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。
@@ -371,6 +389,21 @@ const ALERTS: AlertDefinition[] = [
 ]
 
 
+/**
+ * 這顆異常實際要落在哪幾頁：跨頁的照後端回的 `scopes` 展開，其餘就是它自己的 `route`。
+ * 問不出面向（舊後端、或 scopes 是空的）一律退回 `route`——寧可指到一個能修的頁，
+ * 也不要因為問不出來就不指。
+ */
+function alertRoutes(def: AlertDefinition, scopes: WorkspaceAlertScope[] | undefined, wid: string): string[] {
+  const map = def.scopeRoutes
+  if (map && scopes?.length) {
+    const hits = scopes.map(s => map[s]).filter(Boolean).map(fn => fn!(wid))
+    if (hits.length)
+      return [...new Set(hits)]
+  }
+  return [def.route(wid)]
+}
+
 /** 兩次自動檢查之間的最短間隔：頁面切換不該每次都打一輪彙總查詢 */
 const REFRESH_TTL_MS = 60_000
 /**
@@ -511,6 +544,7 @@ export function useWorkspaceAlerts() {
       .filter(a => (a.requires === 'settings' ? canManageSettings.value : canOperate.value))
       .map((a) => {
         const item = alertMap.value[a.id]
+        const scopes = item?.scopes
         // 標題來自 shared 的 ALERT_LABELS：面板與問助理工具講同一句話
         return {
           ...a,
@@ -520,6 +554,10 @@ export function useWorkspaceAlerts() {
           state: item?.state ?? 'unknown',
           count: item?.count,
           detail: item?.detail,
+          scopes,
+          // 跨頁異常：卡片上那顆按鈕改帶去真的壞掉的那一頁（多個面向就帶去第一個，
+          // 側欄的點會把其餘的面向也標出來）
+          route: (wid: string) => alertRoutes(a, scopes, wid)[0] ?? a.route(wid),
         }
       }),
   )
@@ -542,6 +580,41 @@ export function useWorkspaceAlerts() {
   const snoozedAlerts = computed(() =>
     visibleAlerts.value.filter(a => a.state === 'active' && isSnoozed(a)),
   )
+
+  /**
+   * 側欄狀態點（2026-08-26 `D-33` P0-1）：路徑 → 這一頁現在有什麼事。
+   *
+   * 為什麼：異常本來只在右下角小幫手講，使用者要「想到去點它」才看得到——17 個側欄入口
+   * 全是一樣的灰字，哪一頁出事完全看不出來。這裡不打任何新查詢，只是把同一份 `activeAlerts`
+   * 換一個位置畫出來。
+   *
+   * ⛔ 三條鐵律（改這裡之前先讀）：
+   * 1. **吃 `activeAlerts`，不要自己另外過濾一輪**——它已經處理掉沒權限、查不到（unknown）、
+   *    被靜音、以及建議類（老闆 08-26 拍板：建議不上側欄，常年都有的東西掛上去會變裝飾）。
+   * 2. **鍵是「去掉查詢字串」的路徑**：異常的 route 帶著 `?verify=`、`?health=`、`?tab=`
+   *    這些深連結，側欄項的 `to` 不帶——不剝掉就永遠對不上。
+   * 3. **紅蓋過琥珀**：同一頁兩種都有時畫紅色，句子照嚴重度排。
+   */
+  const navAlerts = computed<Record<string, { severity: AlertSeverity, titles: string[] }>>(() => {
+    const wid = workspaceId.value
+    if (!wid)
+      return {}
+    const out: Record<string, { severity: AlertSeverity, titles: string[] }> = {}
+    for (const a of activeAlerts.value) {
+      for (const full of alertRoutes(a, a.scopes, wid)) {
+        const path = full.split('?')[0]!
+        const cur = out[path]
+        if (!cur)
+          out[path] = { severity: a.severity, titles: [a.title] }
+        else {
+          cur.titles.push(a.title)
+          if (a.severity === 'critical')
+            cur.severity = 'critical'
+        }
+      }
+    }
+    return out
+  })
 
   /** 這次查不到狀態的項目（要現形，不能偷偷當成沒事） */
   const unknownAlerts = computed(() =>
@@ -582,6 +655,7 @@ export function useWorkspaceAlerts() {
     suggestionAlerts,
     snoozedAlerts,
     unknownAlerts,
+    navAlerts,
     checkedCount,
     loaded,
     loading,

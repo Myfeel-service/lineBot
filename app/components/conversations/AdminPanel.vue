@@ -3,16 +3,20 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <!-- 側欄選單昨天改叫「客服對話」了，這裡跟著改：同一個東西同一個名字（G-27⑤） -->
-      <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 客服對話</span>
+      <span class="split-sidebar-title conv-sidebar-title-row" data-tour="conv-list">💬 客服對話<AdminPageHelpButton :topics="['conversations']" /></span>
       <div class="conv-sidebar-actions">
         <!-- 換電腦／清過快取／新同事第一次登入時整排全紅，沒這顆就只能一位一位點開才消得掉 -->
-        <button
+        <el-tooltip
           v-if="unreadRowCount > 0"
-          type="button"
-          class="conv-mark-all-read"
-          title="把這份清單上看得到的紅點一次清掉（只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響）"
-          @click="markAllConversationsRead"
-        >標記全部已讀（{{ unreadRowCount }}）</button>
+          content="把這份清單上看得到的紅點一次清掉（只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響）"
+          placement="bottom"
+        >
+          <button
+            type="button"
+            class="conv-mark-all-read"
+            @click="markAllConversationsRead"
+          >標記全部已讀（{{ unreadRowCount }}）</button>
+        </el-tooltip>
         <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
       </div>
     </template>
@@ -38,6 +42,8 @@
           class="conv-status-more"
           @command="switchTab"
         >
+          <!-- ⚠️這顆刻意留原生 title：它是 el-dropdown 的觸發元件，外面再包一層
+               el-tooltip 會把觸發綁到 tooltip 上、下拉選單就打不開了（D-33 P2） -->
           <button
             type="button"
             class="conv-status-tab conv-status-tab--more"
@@ -64,18 +70,22 @@
         <el-input v-model="searchText" placeholder="搜尋名稱…" clearable size="small" />
         <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
              和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
-        <button
+        <el-tooltip
           v-if="activeTab === 'all'"
-          type="button"
-          class="conv-flag-filter"
-          :class="{ active: followUpFilterOn }"
-          :aria-pressed="followUpFilterOn"
-          title="待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）"
-          @click="toggleFollowUpFilter"
+          content="待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）"
+          placement="bottom"
         >
-          <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
-          只看待跟進{{ followUpCount > 0 ? `（${followUpCount}）` : '' }}
-        </button>
+          <button
+            type="button"
+            class="conv-flag-filter"
+            :class="{ active: followUpFilterOn }"
+            :aria-pressed="followUpFilterOn"
+            @click="toggleFollowUpFilter"
+          >
+            <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
+            只看待跟進{{ followUpCount > 0 ? `（${followUpCount}）` : '' }}
+          </button>
+        </el-tooltip>
       </div>
       <div v-if="listLoading && !sidebarItems.length" class="split-sidebar-loading">
         <div class="spinner" />
@@ -329,27 +339,31 @@
             </template>
           </el-dropdown>
           <div v-if="sessionToolbarMeta" class="conv-session-actions">
-            <el-button
-              v-if="canTakeOverSession"
-              size="small"
-              type="primary"
-              plain
-              :loading="takingOverSession"
-              title="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束"
-              @click="takeOverSelectedSession"
-            >
-              我接手（暫停自動回覆）
-            </el-button>
-            <el-button
+            <el-tooltip v-if="canTakeOverSession" content="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束" placement="top">
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :loading="takingOverSession"
+                @click="takeOverSelectedSession"
+              >
+                我接手（暫停自動回覆）
+              </el-button>
+            </el-tooltip>
+            <el-tooltip
               v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
-              size="small"
-              plain
-              :loading="handingBackSession"
-              title="交還後，機器人與 AI 會恢復自動回覆這位客人"
-              @click="handBackSelectedSession"
+              content="交還後，機器人與 AI 會恢復自動回覆這位客人"
+              placement="top"
             >
-              交還機器人
-            </el-button>
+              <el-button
+                size="small"
+                plain
+                :loading="handingBackSession"
+                @click="handBackSelectedSession"
+              >
+                交還機器人
+              </el-button>
+            </el-tooltip>
             <el-button
               v-if="canOperate && sessionToolbarMeta.status !== 'closed'"
               size="small"
@@ -722,11 +736,13 @@
                           >{{ MESSAGE_SENDER_LABELS[msg.sender] }}</span>
                           <span class="conv-bubble-time">{{ formatClockTime(msg.timestamp) }}</span>
                         </span>
-                        <span
+                        <el-tooltip
                           v-if="msg.direction === 'outgoing' && msg.readByPeer"
-                          class="conv-bubble-read"
-                          title="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
-                        >已讀</span>
+                          content="客人後來有回訊息或點按鈕，代表他應該已看過這則之前的訊息；這是系統推估的，跟 LINE App 裡的「已讀」不一定完全一樣。"
+                          placement="top"
+                        >
+                          <span class="conv-bubble-read">已讀</span>
+                        </el-tooltip>
                       </template>
                     </div>
                   </div>
@@ -740,10 +756,9 @@
                   跟「為什麼這樣答」同理由放泡泡下面自己一排，不塞旁邊那條 meta。
                 -->
                 <div v-if="getQuickReplyItems(msg).length" class="conv-quickreply-row" :class="msg.direction">
-                  <span
-                    class="conv-quickreply-row__tag"
-                    title="這則訊息在 LINE 裡附了這排按鈕，客人點一顆就會送出那段文字。這裡只是紀錄，按不了。"
-                  >客人看到的按鈕</span>
+                  <el-tooltip content="這則訊息在 LINE 裡附了這排按鈕，客人點一顆就會送出那段文字。這裡只是紀錄，按不了。" placement="top">
+                    <span class="conv-quickreply-row__tag">客人看到的按鈕</span>
+                  </el-tooltip>
                   <span
                     v-for="(opt, optIdx) in getQuickReplyItems(msg)"
                     :key="`${msg.id}-qr-${optIdx}`"
@@ -973,6 +988,7 @@
             @hide="pendingQuickReplyId = ''"
           >
             <template #reference>
+              <!-- ⚠️同上：這是 el-popover 的 reference，包 tooltip 會搶掉觸發（D-33 P2） -->
               <button
                 type="button"
                 class="conv-picker-trigger"

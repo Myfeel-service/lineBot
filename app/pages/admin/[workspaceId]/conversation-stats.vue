@@ -9,6 +9,7 @@
         field-label="統計"
         title="客服對話統計"
         caption="客人來了多少、誰接住的——這裡數的是「場」（一位客人 24 小時內的一段來回算一場）。"
+        :help-topics="['conversation-stats']"
       >
         <template #caption>
           想看 AI 自己搞定多少、還有什麼要補？<NuxtLink :to="`/admin/${route.params.workspaceId}/ai-usage`" class="admin-inline-link">看 AI 表現 →</NuxtLink>

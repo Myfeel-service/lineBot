@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedSource">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="kb-sources">你的資料</span>
+      <span class="split-sidebar-title" data-tour="kb-sources">你的資料<AdminPageHelpButton :topics="['knowledge', 'knowledge-manage']" /></span>
       <!-- 工具列只留「加入知識」一顆主動作。原本 5 顆平鋪（含只有工程場景才按的「重新學習全部」）
            讓第一屏就要做五選一;次要與維護動作收進「⋯」 -->
       <div class="flex gap-1">

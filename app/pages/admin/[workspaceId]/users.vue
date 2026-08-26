@@ -10,6 +10,7 @@
         field-label="好友"
         title="好友"
         caption="查看好友、貼標籤、看 AI 建議"
+        :help-topics="['users']"
       />
       <div class="flex gap-1 admin-header-actions">
         <el-button v-if="canOperate" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">

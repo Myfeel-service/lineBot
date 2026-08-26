@@ -107,6 +107,22 @@
 
 .nav-item .nav-icon { font-size: 1.1rem; width: 20px; text-align: center; }
 
+/* 側欄狀態點（D-33）：文字把空間撐開，點靠最右。
+   `:not(.nav-alert-dot)` 是必要的——不排除的話點自己也會 flex:1 被拉長成一條。 */
+.nav-item > span:not(.nav-alert-dot) { flex: 1 1 auto; min-width: 0; }
+
+.nav-alert-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  /* 語意色不吃主色（見 core/_variables.scss 的分工）：
+     紅＝客人正在受影響、琥珀＝該處理但客人還沒被影響。⛔沒有綠色，沒事就不畫。 */
+  background: var(--color-error);
+}
+
+.nav-alert-dot.is-warning { background: var(--color-warning); }
+
 .sidebar-footer {
   flex-shrink: 0;
   padding: 1rem 1.25rem 0;

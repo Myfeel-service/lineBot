@@ -30,7 +30,18 @@ export interface FieldHelpDef {
   hrefLabel?: string
 }
 
-export type FieldHelpId = 'channelAccessToken' | 'channelSecret' | 'webhookUrl' | 'liffSetup' | 'oamAutoReply'
+export type FieldHelpId =
+  | 'channelAccessToken'
+  | 'channelSecret'
+  | 'webhookUrl'
+  | 'liffSetup'
+  | 'oamAutoReply'
+  // 2026-08-26 `D-33` P1：逐頁盤點後真的缺教學的三格。
+  // ⚠️盤點的教訓：先看那一格「現在有沒有說明」再決定要不要加——這一頁大多數欄位
+  // 底下已經有一段白話 hint，再塞一顆問號只是把畫面弄吵。
+  | 'aiThresholds'
+  | 'scriptCustomFormat'
+  | 'memberRole'
 
 export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   channelAccessToken: {
@@ -71,6 +82,83 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
+  /**
+   * 三個門檻的關係（D-33 P1）。
+   *
+   * 為什麼是「一組一顆」不是「一格一顆」：這裡有五、六個 0 到 1 的小數，每一格底下都已經
+   * 有一句說明了——**缺的不是各自的定義，是它們之間的關係**。分開再各加一顆問號，等於五顆
+   * 問號還是講不出「這條線上哪一段會直接答、哪一段會反問、哪一段會轉真人」。
+   */
+  aiThresholds: {
+    button: '這幾個門檻怎麼看',
+    title: '三個門檻在講同一條線上的三個位置',
+    html: `
+      <p>AI 每次回答前，都會先在知識庫裡找最接近的一條，算出一個 <b>0 到 1 的相關度</b>。
+      下面這三個門檻，就是在這條線上畫界線——決定它<b>直接答、先問清楚、還是交給真人</b>。</p>
+      <svg viewBox="0 0 520 108" role="img" aria-label="0 到 1 的相關度軸線，分成轉真人、先問清楚、直接回答三段" style="width:100%;height:auto;margin:10px 0">
+        <rect x="20" y="34" width="140" height="22" fill="var(--el-color-danger-light-9)" />
+        <rect x="160" y="34" width="150" height="22" fill="var(--el-color-warning-light-9)" />
+        <rect x="310" y="34" width="190" height="22" fill="var(--el-color-success-light-9)" />
+        <line x1="20" y1="56" x2="500" y2="56" stroke="var(--border-active)" stroke-width="1" />
+        <text x="20" y="72" font-size="11" fill="var(--text-muted)">0</text>
+        <text x="486" y="72" font-size="11" fill="var(--text-muted)">1</text>
+        <text x="30" y="49" font-size="12" fill="var(--el-color-danger)">交給真人</text>
+        <text x="186" y="49" font-size="12" fill="var(--el-color-warning)">先問清楚（反問）</text>
+        <text x="356" y="49" font-size="12" fill="var(--el-color-success)">直接回答</text>
+        <text x="120" y="26" font-size="11" fill="var(--text-secondary)">↓ 反問下限</text>
+        <text x="272" y="26" font-size="11" fill="var(--text-secondary)">↓ 反問上限</text>
+        <text x="20" y="97" font-size="11" fill="var(--text-secondary)">往右拉＝AI 更敢答（也更可能答錯）　往左拉＝更常轉真人（客人要等人）</text>
+      </svg>
+      <p><b>信心門檻</b>：AI 對自己這次的答案有多少把握，低於它就不答、轉真人。<br>
+      <b>知識庫相關度門檻</b>：找到的那條知識夠不夠貼題，不夠就不硬掰。<br>
+      <b>反問下限／上限</b>：中間那一段——沾得上邊但不夠明確，才值得反問客人一句。</p>
+      <p>不確定就<b>別動</b>：上面的「回答風格」會幫你一次設好這一整組。真的要調，
+      一次只動一個、跑兩三天看「AI 表現」那頁的轉真人比例再決定下一步——同時動三個，
+      出問題會分不出是哪一個造成的。</p>
+    `,
+  },
+
+  /**
+   * 自訂格式（D-33 P1）。這一格的標籤自己就寫著「需懂正規表達式」＝已經承認是術語，
+   * 而旁邊沒有任何求救出口，只有一個 placeholder。
+   */
+  scriptCustomFormat: {
+    button: '給我幾個例子',
+    title: '自訂格式怎麼寫？',
+    html: `
+      <p>這一格是在教系統「客人回的這串字，長什麼樣才算對」。<b>先看上面的預設格式夠不夠用</b>
+      （純數字、英文＋數字、電話、Email…），大多數情況都不用自己寫。</p>
+      <p>真的要自訂，直接照抄改：</p>
+      <p><b>1 個英文字母＋3 碼以上數字</b>（A123、B4567）→ <code>[A-Za-z]\\d{3,}</code><br>
+      <b>固定 6 碼數字</b>（123456）→ <code>\\d{6}</code><br>
+      <b>兩個英文字母＋橫線＋4 碼數字</b>（OD-2024）→ <code>[A-Za-z]{2}-\\d{4}</code><br>
+      <b>只收「是」或「否」</b> → <code>^(是|否)$</code></p>
+      <p>意思：<code>\\d</code>＝一個數字、<code>[A-Za-z]</code>＝一個英文字母、
+      <code>{3,}</code>＝前面那個至少 3 次、<code>{2}</code>＝剛好 2 次、
+      <code>|</code>＝或、<code>^…$</code>＝整句只能是這樣。</p>
+      <p>寫完<b>一定要用上面的「測試觸發」實際打一句試試</b>：格式寫太嚴，客人打對了也會被系統
+      一直重問同一題——而後台看起來完全正常。</p>
+    `,
+  },
+
+  /**
+   * 邀請成員時選角色（D-33 P1）。這是四個下拉選項、零說明，而選錯的後果是
+   * 把金流與設定權限給錯人——這件事算資安，不算 UX。
+   */
+  memberRole: {
+    button: '各個角色差在哪',
+    title: '這三種角色看得到什麼、動得了什麼',
+    html: `
+      <p><b>管理員</b>：除了刪掉整個帳號以外什麼都能做——<b>包含訂閱與付款、LINE 金鑰、
+      成員邀請</b>。給錯人等於把帳單和金鑰一起交出去。</p>
+      <p><b>客服</b>：日常做事的角色。回客人訊息、接手對話、改知識庫與自動回應、發推播、貼標籤。
+      <b>看不到訂閱付款，也改不了 LINE 連線設定。</b>第一線同事選這個。</p>
+      <p><b>觀察者</b>：只能看，不能新增、儲存或發送。適合主管、實習生、外部顧問。</p>
+      <p>不確定就先給<b>客服</b>：不夠用隨時可以往上調，反過來收回權限之前，對方已經看過的東西
+      收不回來。</p>
+    `,
+  },
+
   oamAutoReply: {
     button: '教我怎麼關',
     title: '內建自動回應怎麼關？',

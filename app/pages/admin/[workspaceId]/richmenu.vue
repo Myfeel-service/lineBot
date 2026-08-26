@@ -1,7 +1,7 @@
 <template>
   <AdminSplitLayout :is-empty="!selectedMenu && !isCreating">
     <template #sidebar-header>
-      <span class="split-sidebar-title" data-tour="rm-title">圖文選單</span>
+      <span class="split-sidebar-title" data-tour="rm-title">圖文選單<AdminPageHelpButton :topics="['richmenu']" /></span>
       <el-button :icon="Plus" type="primary" size="small" data-tour="rm-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -38,7 +38,10 @@
       <el-icon class="empty-icon"><Grid /></el-icon>
       <h3>選擇一個圖文選單開始編輯</h3>
       <p>或點擊左側「新增」建立新的圖文選單</p>
-      <el-button type="primary" @click="openCreate">新增圖文選單</el-button>
+      <div class="empty-actions">
+        <el-button type="primary" @click="openCreate">新增圖文選單</el-button>
+        <AdminPageHelpButton :topics="['richmenu']" label="第一次用？看一遍怎麼做" />
+      </div>
     </template>
 
     <template #editor-header>
@@ -159,6 +162,24 @@
             <span class="text-xs text-muted">共 {{ form.areas.length }} 個區塊 · 設定點下去要做什麼</span>
           </div>
           <div class="card-section-stack">
+            <!--
+              壞掉的區塊要在畫面上講（D-33 P0-4）。以前這件事只有兩個地方看得到：
+              右下角小幫手的紅色異常，和「按了儲存」才擋——而客人早就在按那顆按鈕了。
+              ⚠️三態：查不到模組清單時講「沒辦法幫你檢查」，⛔不可以當成沒問題。
+            -->
+            <AdminBlockStatus
+              v-if="modulesLoadFailed"
+              tone="unknown"
+              title="這次沒能載入模組清單，沒辦法幫你檢查按鈕指向哪裡"
+              detail="重新整理可以再試一次。這不代表沒問題，也不代表有問題。"
+            />
+            <AdminBlockStatus
+              v-else-if="brokenAreas.length"
+              tone="critical"
+              :title="`有 ${brokenAreas.length} 個區塊按下去，客人收不到任何訊息`"
+              :detail="brokenAreasDetail"
+            />
+
             <AdminAreaEditorSection
               :areas="form.areas"
               section-label="區塊設定"
@@ -184,6 +205,15 @@
               @start-resize="startResize"
               @clamp="clampAreaByIndex"
             >
+              <!-- 那一格自己也要標出來：上面的狀態列講「有幾個」，這裡講「是這一格」 -->
+              <template #action-error="{ index }">
+                <AdminBlockStatus
+                  v-if="brokenAreaTitle(index)"
+                  tone="critical"
+                  :title="brokenAreaTitle(index)"
+                  detail="客人按下去收不到任何訊息，也不會看到錯誤提示。重新選一個模組再儲存。"
+                />
+              </template>
               <template #action-fields="{ area }">
                 <AdminAreaActionEditor
                   :model-value="area.action"
@@ -297,6 +327,52 @@ const defaultForm = () => ({
 const form = ref(defaultForm())
 const richMenuAreas = computed(() => form.value.areas as any[])
 
+/**
+ * 指向已刪除／已停用模組的區塊（D-33 P0-4）。
+ *
+ * 判定跟後端 `findBrokenModuleRefs` 同一把尺（模組不在清單＝missing、`isActive === false`＝
+ * inactive），這樣畫面上標紅的那幾格，就是小幫手那顆紅色異常算的那幾格——⛔兩邊口徑不同
+ * 就會變成「小幫手說有問題、頁面上每一格都正常」。
+ */
+interface BrokenArea { index: number, reason: 'missing' | 'inactive' }
+
+const brokenAreas = computed<BrokenArea[]>(() => {
+  if (modulesLoadFailed.value)
+    return []
+  const byId = new Map<string, any>(modules.value.map((m: any) => [String(m.id), m]))
+  const out: BrokenArea[] = []
+  richMenuAreas.value.forEach((area: any, index: number) => {
+    if (area?.action?.type !== 'module')
+      return
+    const id = String(area.action.moduleId || '')
+    // 還沒選模組不算壞掉（那是「還沒設完」，存檔時本來就會擋）
+    if (!id)
+      return
+    const target = byId.get(id)
+    if (!target)
+      out.push({ index, reason: 'missing' })
+    else if (target.isActive === false)
+      out.push({ index, reason: 'inactive' })
+  })
+  return out
+})
+
+const brokenAreaByIndex = computed(() => new Map(brokenAreas.value.map(b => [b.index, b])))
+
+/** 那一格自己的標題（空字串＝這一格沒事）。⛔用函式不用 map.get()!——Vue 模板不吃 TS 的 `!` */
+function brokenAreaTitle(index: number): string {
+  const hit = brokenAreaByIndex.value.get(index)
+  if (!hit)
+    return ''
+  return hit.reason === 'missing' ? '這一格指向的模組已經被刪除' : '這一格指向的模組已經停用'
+}
+
+/** 講「是哪幾格」用區塊編號（畫面上每張卡的標題就是「區塊 N」，對得起來） */
+const brokenAreasDetail = computed(() => {
+  const nums = brokenAreas.value.map(b => `區塊 ${b.index + 1}`).join('、')
+  return `${nums}——往下捲會看到那幾格被標紅。重新選一個還在的模組再儲存。`
+})
+
 const {
   dragState,
   guideLines,
@@ -340,6 +416,14 @@ function setRichMenuCanvasRef(el: HTMLElement | null) {
 }
 
 const modules = ref<any[]>([])
+/**
+ * 模組清單這次載到了沒有（D-33 P0-4）。
+ *
+ * ⛔ 一定要有這個旗標：壞掉的判斷是「這個 moduleId 不在清單裡」，載入失敗時清單是空的，
+ * 直接判會把每一格都標成壞掉（假警報），或反過來寫成「查不到就算沒事」（假綠燈）。
+ * 兩種都比不檢查更糟，所以第三態要現形。
+ */
+const modulesLoadFailed = ref(false)
 const richMenuLayoutPresets = RICH_LAYOUT_PRESETS
 const fixedLayoutIds = richMenuLayoutPresets
   .map((layout) => layout.id)
@@ -409,10 +493,13 @@ async function loadMenus() {
       loadTags({ status: 'active' }),
     ])
     modules.value = modulesData ?? []
+    modulesLoadFailed.value = false
     if (!tagOk) showToast('載入標籤失敗', 'error')
   }
   catch {
     modules.value = []
+    // ⛔別只清空就算了：空清單會讓「按鈕指向的模組還在嗎」這個檢查全部誤判
+    modulesLoadFailed.value = true
     showToast('載入圖文選單失敗', 'error')
   }
 }

@@ -8,6 +8,7 @@
         field-label="AI 客服"
         title="AI 表現"
         caption="你的 AI 做得好不好、還有什麼要補。"
+        :help-topics="['ai-usage']"
       >
         <template #caption>
           <br>想看客人來了多少、誰接住的？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>

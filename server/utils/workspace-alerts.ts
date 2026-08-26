@@ -1,5 +1,5 @@
 import type { Firestore, Timestamp } from 'firebase-admin/firestore'
-import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
+import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope } from '~~/shared/types/alerts'
 import { getAiSettings } from './ai-settings'
 import { cleanReason, humanizeHours } from './alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
@@ -152,13 +152,13 @@ export async function checkLineWebhook(wid: string, skipCache: boolean): Promise
   return result
 }
 
-type ProbeResult = { active: boolean; count?: number; detail?: string }
+type ProbeResult = { active: boolean; count?: number; detail?: string; scopes?: WorkspaceAlertScope[] }
 
 /** 把一次判定包成 active/clear；丟錯降級為 unknown（狀態未知，不等於沒問題） */
 async function probe(id: WorkspaceAlertId, fn: () => Promise<ProbeResult>): Promise<WorkspaceAlertItem> {
   try {
     const r = await fn()
-    return { id, state: r.active ? 'active' : 'clear', count: r.count, detail: r.detail }
+    return { id, state: r.active ? 'active' : 'clear', count: r.count, detail: r.detail, scopes: r.scopes }
   }
   catch (e) {
     console.warn(`[alerts] ${id} 檢查失敗:`, String((e as Error)?.message ?? e).slice(0, 160))
@@ -580,10 +580,14 @@ export async function collectWorkspaceAlerts(
           }
           const where = KIND_LABEL[first.sourceKind] ?? '模組'
           const why = first.reason === 'missing' ? '模組已被刪除' : '模組已停用'
+          // scopes＝壞在哪幾種設定上。⛔一定要回：註冊表只寫得下一個 route，沒有這個
+          // 前端就只能一律把人（與側欄的點）帶去圖文選單，壞在活動的人會被帶到沒問題的頁。
+          const scopes = [...new Set(broken.map(b => b.sourceKind))] as WorkspaceAlertScope[]
           return {
             active: true,
             count: broken.length,
             detail: `${where}「${first.sourceLabel}」的按鈕指向的${why}`,
+            scopes,
           }
         }),
       ]
