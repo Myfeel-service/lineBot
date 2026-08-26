@@ -123,8 +123,8 @@
    * ⛔ **泡泡不可以是滿版綠底白字**（做錯過兩次：2026-08-21 老闆說「這個樣式有點醜」、
    *    2026-08-26 照草稿又上一次又被打槍）。三個理由：
    *   ①**聊天的規矩剛好相反**：LINE 裡「對方講的話是白泡泡、自己講的話才是綠泡泡」。MiniMe 是在
-   *     跟老闆講話，做成綠的等於整頁都是老闆自言自語——而且本頁 .lp-pmsg 的手機示意圖就是照
-   *     正確規矩畫的（客人白、店家 LINE 綠），同一頁兩套邏輯。
+   *     跟老闆講話，做成綠的等於整頁都是老闆自言自語——而且本頁 AI 客服卡的真截圖就是照
+   *     正確規矩（客人白泡泡、我方綠泡泡），同一頁兩套邏輯。
    *   ②九個區塊＝九塊 900×250px 的 100% 飽和綠，綠色從「強調色」變成「底色」，
    *     整頁其他地方（按鈕、主牆卡、CTA 帶）的綠就都不強調了。
    *   ③白字 800 粗壓在飽和綠上會發光暈，而強調字只能用色塊，看起來像按鈕不像強調。
@@ -383,33 +383,17 @@
   .lp-wall__fix span { margin-right: 5px; }
   .lp-wall--main .lp-wall__fix { background: rgba(255, 255, 255, 0.17); color: #fff; }
 
-  /* ── 圖文選單：客人手機上的前後對照 ────────────────────────
-   * 左邊＝客人只能自己打字問；右邊＝常問的事變成選單按鈕。
-   * ⚠️ 手機殼裡刻意做成 LINE 的樣子（灰藍底、自己那側是 LINE 綠泡泡）——那是「客人在 LINE 裡
-   *    看到什麼」，不是我們的頁面配色，所以不受「全頁單一強調色」那條約束。
-   * ⛔ 但選單格子不照抄真實選單的花色（08-26 草稿又畫了一版五色平面 Banner，老闆看截圖說醜，
-   *    換回這組手機對照）：那五色跟全頁沒有關係，看起來像貼了一張別人的圖。
-   *    改用綠＋灰階，仍然一眼認得出是六宮格選單。
-   * ⚠️ 想放**真實截圖**時直接換掉右手機的 .lp-rm 區塊即可（外殼與圖說都留著）——
-   *    但截圖必須是真的介面，不可以自己拼一張假的當截圖。
-   */
-  .lp-phones { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; justify-items: center; }
-  .lp-phonecol { width: 100%; max-width: 340px; }
-  .lp-phonetag { display: inline-block; font-size: 0.8rem; font-weight: 800; border-radius: var(--radius-pill); padding: 6px 16px; margin-bottom: 14px; }
-  .lp-phonetag--off { background: var(--surf-2); color: var(--ink-soft); }
-  .lp-phonetag--on { background: var(--g); color: #fff; }
+  /* 手機殼＋圖文選單本體（窄帶在用）。
+     ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
+     ⛔ 選單格子不照抄真實選單的花色（08-26 草稿畫過一版五色平面 Banner，老闆說醜）：
+        那些顏色跟全頁沒有關係，看起來像貼了一張別人的圖。綠＋灰階仍然一眼認得出是選單。
+     ⚠️ .lp-pscreen 不給固定高度：窄帶裡的手機只放標頭＋選單，高度由內容決定
+        （前後對照時代那個 height:430px 已隨兩支手機的版面一起移除）。 */
   .lp-phone { background: var(--ink); border-radius: 30px; padding: 9px; box-shadow: var(--sh-card); }
-  .lp-pscreen { background: #e9edf3; border-radius: 23px; overflow: hidden; display: flex; flex-direction: column; height: 430px; }
+  .lp-pscreen { background: #e9edf3; border-radius: 23px; overflow: hidden; display: flex; flex-direction: column; }
   .lp-pscreen__top { background: #fff; border-bottom: 1px solid #e2e7ec; padding: 13px 15px; font-size: 0.88rem; font-weight: 800; display: flex; align-items: center; gap: 9px; }
   .lp-pscreen__ava { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none; }
-  .lp-pchat { flex: 1; padding: 14px 13px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
-  .lp-pchat--short { flex: none; padding-bottom: 10px; }
-  .lp-pmsg { max-width: 82%; font-size: 0.8rem; line-height: 1.6; padding: 9px 13px; border-radius: 15px; }
-  .lp-pmsg--them { align-self: flex-start; background: #fff; border-bottom-left-radius: 4px; }
-  .lp-pmsg--me { align-self: flex-end; background: #9be85f; color: #14290c; border-bottom-right-radius: 4px; }
-  .lp-pinput { margin-top: auto; background: #fff; border-top: 1px solid #e2e7ec; padding: 13px 16px; font-size: 0.8rem; color: #a9b2bc; }
-
-  .lp-rm { margin-top: auto; display: grid; gap: 2px; background: #d8dee6; }
+  .lp-rm { display: grid; gap: 2px; background: #d8dee6; }
   .lp-rm__r2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
   .lp-rm__r3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
   .lp-rm__c { padding: 13px 6px; text-align: center; font-size: 0.78rem; font-weight: 700; background: #fff; color: var(--ink-2); }
@@ -421,11 +405,30 @@
   }
   .lp-rm__brand { font-size: 1rem; font-weight: 800; }
   .lp-rm__go { font-size: 0.78rem; font-weight: 700; background: rgba(255, 255, 255, 0.26); border-radius: var(--radius-pill); padding: 5px 14px; }
-  .lp-phonecap { margin: 14px 0 0; text-align: center; font-size: 0.86rem; line-height: 1.7; }
-  .lp-phonecap--off { color: var(--ink-soft); }
-  .lp-phonecap--on { color: var(--ink-2); font-weight: 600; }
-  /* 兩支手機底下那句總結（08-26 草稿的文案），跟數據條之間留一口氣 */
-  .lp-phones__note { margin: 22px 0 0; font-size: 0.9rem; color: var(--ink-2); line-height: 1.8; text-align: center; }
+
+  /* ── 圖文選單窄帶（2026-08-27 從 791px 大卡降級）────────────
+   * 左文右手機。它是「客服更省力」的手段，版面刻意小於兩張主卡。
+   * ⛔ 舊的「兩支手機前後對照」樣式（.lp-phones／.lp-phonecol／.lp-phonetag／.lp-pchat／
+   *    .lp-pmsg／.lp-pinput／.lp-phonecap）已整組刪除——刪之前反向 grep 過全部 .vue。
+   *    手機殼本體（.lp-phone／.lp-pscreen／.lp-rm）保留，窄帶還在用。
+   * ⛔ 手機**不做出血裁切**：試過用負下邊距讓它長出窄帶下緣（省 60px），但切點正好落在
+   *    選單最後一排（商品資訊／訂單問題／真人客服）——那三格是有意義的內容，切掉就
+   *    看不出「常問的事變成按鈕」。整支顯示的窄帶約 320px，仍比原本 791px 的大卡省一半以上。
+   */
+  .lp-band {
+    margin-top: var(--card-gap); background: var(--surf-2); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 30px 32px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 268px; gap: 32px;
+    align-items: center; overflow: hidden;
+  }
+  .lp-band__text h3 { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.01em; }
+  .lp-band__text > p { margin: 10px 0 0; font-size: 0.97rem; color: var(--ink-2); line-height: 1.8; max-width: 44ch; }
+  /* 「現在做得到 vs 還沒上線」自己一行、與上面的敘述分開——讀者不必自己推論 */
+  .lp-band__status { margin-top: 14px !important; font-size: 0.9rem; color: var(--ink-soft); }
+  .lp-band__status b { color: var(--ink); font-weight: 700; }
+  /* 行內版徽章：標在那個詞旁邊，不用卡頂那種籠統的「部分即將推出」 */
+  .lp-soon--inline { margin-left: 7px; vertical-align: 1.5px; }
+  .lp-band__phone { align-self: center; }
 
   /* ── 前後對照數據條（設定時間、回覆速度⋯⋯）──────────────── */
   .lp-statrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--hair); }
@@ -465,6 +468,12 @@
     border: 1px solid var(--hair); border-radius: var(--r-sm);
     background: var(--surf-2);
   }
+  /* 撐滿卡片剩下的高度（2026-08-27 老闆指定：右圖要跟左圖一樣高，不靠湊列數）。
+     ⚠️ min-height:0 一定要給——flex item 的預設 min-height:auto 會讓圖片撐開卡片、
+        兩張卡就又不一樣高了。
+     ⛔ 源圖必須比容器「更高瘦」，cover 才會裁底部；源圖太扁會改裁寬度、把標籤欄切掉
+        （列數見 scripts/landing-demo-seed.ts，現在 12 列）。 */
+  .lp-shot--fill { flex: 1; min-height: 0; object-fit: cover; object-position: top; }
 
   /* ── 60 秒上線：三步時間軸 ────────────────────────────────
    * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
@@ -743,8 +752,9 @@
     .lp-stickybar__t1 { font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .lp-stickybar__t2 { display: none; }
 
-    /* 兩支手機並排在手機上一定裁到，改上下 */
-    .lp-phones { grid-template-columns: 1fr; }
+    /* 窄帶在手機上改上下：文字在上、手機置中且不再出血（下方就是圖說） */
+    .lp-band { grid-template-columns: 1fr; gap: 22px; padding: 24px 22px; }
+    .lp-band__phone { justify-self: center; width: 268px; }
 
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }

@@ -36,14 +36,28 @@ const TAGS = [
   { id: 'demolanding-tag-gift', code: 'demo_gift', name: '送禮客群', color: '#0f9d58', category: 'behavior' },
   { id: 'demolanding-tag-brew', code: 'demo_brew', name: '手沖愛好者', color: '#8a5a2b', category: 'behavior' },
   { id: 'demolanding-tag-expo', code: 'demo_expo', name: '咖啡展加入', color: '#4a7fb5', category: 'custom' },
+  { id: 'demolanding-tag-regular', code: 'demo_regular', name: '門市常客', color: '#8a6d3b', category: 'behavior' },
+  { id: 'demolanding-tag-sub', code: 'demo_sub', name: '豆子訂閱中', color: '#6b7f5a', category: 'behavior' },
 ]
 
+/**
+ * 示範好友。⚠️ **至少要 12 位**：官網「AI 行銷」卡的表格截圖要靠列數撐到跟左邊
+ * 對話截圖一樣高（見 scripts/landing-shots.mjs 圖二的裁切與斷言）。
+ * ⛔ 名字都要看得出是示範，別用真人姓名。
+ */
 const USERS = [
   { key: 'demolanding-u1', name: '曉彤', tags: ['demolanding-tag-gift'] },
   { key: 'demolanding-u2', name: 'Ariel 🌿', tags: ['demolanding-tag-brew', 'demolanding-tag-expo'] },
   { key: 'demolanding-u3', name: '阿翔', tags: ['demolanding-tag-expo'] },
   { key: 'demolanding-u4', name: 'Peggy Wang', tags: ['demolanding-tag-gift', 'demolanding-tag-brew'] },
   { key: 'demolanding-u5', name: '咖啡貓', tags: ['demolanding-tag-brew'] },
+  { key: 'demolanding-u6', name: '小綠', tags: ['demolanding-tag-regular'] },
+  { key: 'demolanding-u7', name: 'Jimmy C.', tags: ['demolanding-tag-sub', 'demolanding-tag-brew'] },
+  { key: 'demolanding-u8', name: '陳太太', tags: ['demolanding-tag-gift', 'demolanding-tag-regular'] },
+  { key: 'demolanding-u9', name: 'YUKI ☕', tags: ['demolanding-tag-expo', 'demolanding-tag-sub'] },
+  { key: 'demolanding-u10', name: '老王', tags: ['demolanding-tag-regular'] },
+  { key: 'demolanding-u11', name: 'Tina L.', tags: ['demolanding-tag-gift'] },
+  { key: 'demolanding-u12', name: '豆豆媽', tags: ['demolanding-tag-sub'] },
 ]
 
 for (const t of TAGS) {
@@ -131,4 +145,4 @@ await db.collection('workspaceMembers').doc(`${KEVIN_UID}_${DEMO_WS_ID}`).set({
   createdAt: Timestamp.fromMillis(now), joinedAt: Timestamp.fromMillis(now),
 }, { merge: true })
 
-console.log('seeded: 3 tags, 5 users, 1 conversation (7 msgs), 1 session, demo workspace 山丘咖啡')
+console.log(`seeded: ${TAGS.length} tags, ${USERS.length} users, 1 conversation (${MSGS.length} msgs), 1 session, demo workspace 山丘咖啡`)

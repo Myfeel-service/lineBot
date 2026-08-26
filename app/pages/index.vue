@@ -28,8 +28,10 @@
               （SiteFooter.vue），換 id 會變死連結。#diff（比較表）已隨 08-26 改版整區移除，
               頁尾的「功能比較」連結同步拿掉了。
 
-         ⛔ 還沒上線的功能一律掛「即將推出」（.lp-soon）並用圖說講清楚哪一半是現有的。
-            目前掛著的有：圖文選單代設、AI 行銷卡（回購喚醒／生日經營）。
+         ⛔ 還沒上線的功能一律掛「即將推出」（.lp-soon）並講清楚哪一半是現有的。
+            目前只有一處：圖文選單窄帶的「一句話代設」（標在那個詞旁邊，不用籠統的卡頂徽章）。
+            ⚠️ 2026-08-27 老闆拍板「回購喚醒與生日經營先不要出現」——連同它們的成效數字
+            （「每月喚回的訂單 0→12–18 張」）一起撤：功能不出現，它的數字更不能留。
             Hero 時機卡走另一套誠實機制（卡上只放真功能＋「以咖啡店為例」標示，見該區註解）。
             （判斷依據見 docs/STATUS.md）
          ⛔ 草稿裡的「付費後隨時可退」「前 14 天免費」**沒有照搬**：退費措辭只有一種寫法
@@ -297,111 +299,85 @@
                 <span class="lp-panel__pip" />
                 <span class="lp-panel__title">AI 行銷</span>
                 <span class="lp-panel__meta">系統實際畫面</span>
-                <span class="lp-soon">部分即將推出</span>
               </div>
               <div class="lp-panel__bd lp-appcard__bd">
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div></div>
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>回購喚醒</b><small>久沒來的，替你請回來</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>生日與會員經營</b><small>該送券的時候自動送</small></div></div>
                 <!-- ⚠️ 真實介面截圖：後台「好友」頁的標籤欄，五位示範好友（無真實客資）。
                      ⛔ 裁圖規矩：只能裁到示範資料那幾列——測試工作區下面幾列是**真實同事**
                      的名字與頭像，入鏡就是把個資放上官網。重截用 scripts/landing-shots.mjs。 -->
+                <!-- ⚠️ 這張刻意用 --fill（撐滿卡片剩餘高度、底部超出的列裁掉）：兩張卡的截圖
+                     天生高度差一倍，2026-08-27 老闆指定「讓右邊的圖高一些、跟左邊一樣高」。
+                     ⛔ 源圖必須夠高（現在 12 列）否則 cover 會改裁寬度、把標籤欄切掉——
+                     列數由 scripts/landing-demo-seed.ts 的 USERS 決定，重截見 landing-shots.mjs。 -->
                 <img
-                  class="lp-shot"
+                  class="lp-shot lp-shot--fill"
                   src="/landing/admin-friends-tags.png"
                   alt="後台好友列表：每位客人身上掛著彩色標籤，例如手沖愛好者、送禮客群、咖啡展加入，可直接篩選與改標籤"
                   loading="lazy"
                   width="1736"
-                  height="670"
+                  height="1484"
                 >
                 <div class="lp-statrow lp-statrow--foot">
-                  <div class="lp-stat"><span class="lp-stat__l">每月喚回的訂單</span><span class="lp-stat__v"><i>0 張</i><em>→</em><b>12–18 張</b></span></div>
+                  <!-- ⛔ 這兩格只能放**現有功能**的成效：原本第一格是「每月喚回的訂單 0→12–18 張」，
+                       那是「回購喚醒」的成效，而該功能 2026-08-27 已從卡上撤掉（還沒上線）——
+                       功能不出現、它的數字更不能留，否則是宣稱一個連清單上都沒有的能力。 -->
+                  <div class="lp-stat"><span class="lp-stat__l">節慶檔期</span><span class="lp-stat__v"><i>自己記日子</i><em>→</em><b>系統先提醒</b></span></div>
                   <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- 這一區有具體數字與還沒上線的項目，圖說要交代：資料是示範、數據是估算、
-               哪些還沒上線（「這是真介面」由卡片標頭的「系統實際畫面」meta 講）。
-               兩個短句各佔一行——原本一大段四件事擠 80 字寬，老闆截圖抓過難讀。 -->
+          <!-- 圖說只交代「資料是示範、數據是估算」——2026-08-27 起兩張卡上**只有現有功能**
+               （回購喚醒／生日經營已撤下），所以不再需要「哪些還沒上線」那半句；
+               「這是真介面」由卡片標頭的「系統實際畫面」meta 講。 -->
           <p class="lp-figcap lp-figcap--center">
-            畫面中的客人與資料為示範；數據以一家 2,000 位好友的店估算，非實際績效。<br>
-            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>，其餘皆為現有功能。
+            畫面中的客人與資料為示範；數據以一家 2,000 位好友的店估算，非實際績效。
           </p>
 
-          <!-- ── 圖文選單：客人手機上的前後對照 ──
-               「一句話代設」還沒上線 → 掛即將推出。
-               ⛔ 草稿這裡畫的是一張五色平面 Banner，老闆看截圖說醜（跟原版 SCSS 早就寫下的
-                  理由一樣：五色跟全頁沒關係，像貼了一張別人的圖）——沿用手機前後對照。
-               ⚠️ 之後想放**真實截圖**（例如真的 LINE 選單畫面）：換掉右手機的 .lp-rm 即可，
-                  但必須是真的介面截圖，不可以自己拼一張假的。 -->
-          <div class="lp-panel">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">圖文選單</span>
-              <span class="lp-panel__meta">客人自己點，不用打字問</span>
-              <span class="lp-soon">部分即將推出</span>
+          <!-- ── 圖文選單：一條窄帶（2026-08-27 老闆拍板從 791px 的大卡降級）──
+               它是「讓客服更省力」的手段，不是第三個能力，所以不給它跟兩張主卡同等的版面。
+               ⚠️ 資訊層次刻意分三層：標題＝客人得到什麼／一句話＝為什麼省事／
+                  底下一行＝**現在做得到 vs 還沒上線**（代設的徽章就標在那個詞旁邊，
+                  不用卡頂那種籠統的「部分即將推出」）。
+               ⛔ 只留「有選單」那一支手機：原本兩支做前後對照，但「沒有選單」那支只是在
+                  演示問題、佔掉一半版面，說服力全在「有選單」這支。
+               ⛔ 手機裡不放對話泡泡：這條窄帶講的是**選單**，聊天內容會分散焦點。 -->
+          <div class="lp-band">
+            <div class="lp-band__text">
+              <h3>常問的事變成按鈕，客人自己點</h3>
+              <p>客人一打開你的 LINE 就看到選單——不必打字問，你也少回一輪。</p>
+              <p class="lp-band__status">
+                選單<b>現在就能在後台自己編排</b>；<br>
+                想更省事，之後可以<b>一句話請 {{ brandName }} 代設</b><span class="lp-soon lp-soon--inline">即將推出</span>
+              </p>
             </div>
-            <div class="lp-panel__bd">
-              <div class="lp-phones">
-                <div class="lp-phonecol">
-                  <span class="lp-phonetag lp-phonetag--off">沒有選單</span>
-                  <div class="lp-phone">
-                    <div class="lp-pscreen">
-                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
-                      <div class="lp-pchat">
-                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
-                        <div class="lp-pmsg lp-pmsg--them">運費怎麼算？</div>
-                        <div class="lp-pmsg lp-pmsg--them">今天有開嗎…？</div>
-                      </div>
-                      <div class="lp-pinput">輸入訊息</div>
+            <div class="lp-band__phone">
+              <div class="lp-phone">
+                <div class="lp-pscreen">
+                  <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
+                  <div class="lp-rm">
+                    <div class="lp-rm__r2">
+                      <span class="lp-rm__c lp-rm__c--soft">本月精選</span>
+                      <span class="lp-rm__c lp-rm__c--soft">會員專屬</span>
+                    </div>
+                    <div class="lp-rm__hero">
+                      <span class="lp-rm__brand">{{ giftFestName }}禮盒</span>
+                      <span class="lp-rm__go">立即選購 ▸</span>
+                    </div>
+                    <div class="lp-rm__r3">
+                      <span class="lp-rm__c">商品資訊</span>
+                      <span class="lp-rm__c">訂單問題</span>
+                      <span class="lp-rm__c lp-rm__c--on">真人客服</span>
                     </div>
                   </div>
-                  <p class="lp-phonecap lp-phonecap--off">客人自己打字問，你一句一句回。</p>
                 </div>
-                <div class="lp-phonecol">
-                  <span class="lp-phonetag lp-phonetag--on">有選單</span>
-                  <div class="lp-phone">
-                    <div class="lp-pscreen">
-                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
-                      <div class="lp-pchat lp-pchat--short">
-                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
-                        <div class="lp-pmsg lp-pmsg--me">有的，{{ giftFestName }}禮盒已上架 ☕</div>
-                      </div>
-                      <div class="lp-rm">
-                        <div class="lp-rm__r2">
-                          <span class="lp-rm__c lp-rm__c--soft">本月精選</span>
-                          <span class="lp-rm__c lp-rm__c--soft">會員專屬</span>
-                        </div>
-                        <div class="lp-rm__hero">
-                          <span class="lp-rm__brand">禮盒專區</span>
-                          <span class="lp-rm__go">立即選購 ▸</span>
-                        </div>
-                        <div class="lp-rm__r3">
-                          <span class="lp-rm__c">商品資訊</span>
-                          <span class="lp-rm__c">訂單問題</span>
-                          <span class="lp-rm__c lp-rm__c--on">真人客服</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <p class="lp-phonecap lp-phonecap--on">常問的事變成按鈕，客人自己點。</p>
-                </div>
-              </div>
-              <p class="lp-phones__note">過去要自己切版、自己設連結——之後跟 {{ brandName }} 講一句話就好。</p>
-              <div class="lp-statrow">
-                <div class="lp-stat"><span class="lp-stat__l">設定要花的時間</span><span class="lp-stat__v"><i>2 小時</i><em>→</em><b>一句話</b></span></div>
-                <div class="lp-stat"><span class="lp-stat__l">客人要打字問的事</span><span class="lp-stat__v"><i>每一件</i><em>→</em><b>點按鈕就好</b></span></div>
               </div>
             </div>
           </div>
-          <!-- 這張卡的示意與數據條講到還沒上線的「代設」，圖說要交代哪一半是現有的 -->
-          <p class="lp-figcap lp-figcap--center">
-            示意畫面。<b>選單現在就能在後台自己編排</b>；<br>
-            「2 小時 → 一句話」的<b>一句話代設仍在開發中</b>。
-          </p>
+          <!-- 「哪些現有、哪些未上線」窄帶自己那行已經講了，這裡只需標示意 -->
+          <p class="lp-figcap lp-figcap--center">選單畫面為示意。</p>
         </div>
       </div>
     </section>

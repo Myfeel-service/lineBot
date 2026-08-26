@@ -123,25 +123,34 @@ if (!convClip) throw new Error('找不到 .conv-messages（對話沒開起來？
 await page.screenshot({ path: `${OUT}admin-chat.png`, clip: convClip })
 console.log('admin-chat.png ok')
 
-// 圖二：好友頁前 5 列（示範好友），只裁到「標籤」欄右緣——
-// 加入時間／操作欄在卡片縮圖裡讀不到，佔寬只會把名字擠小。
+// 圖二：好友頁前 12 列（示範好友），只裁到「標籤」欄右緣。
+// ⚠️ 為什麼要 12 列：官網「AI 行銷」卡用 object-fit:cover 讓這張圖**撐滿卡片高度**
+//    （跟左邊的對話截圖一樣高，2026-08-27 老闆指定）。源圖不夠高的話 cover 會改裁寬度，
+//    標籤欄就被切掉。列數由 landing-demo-seed.ts 的 USERS 決定（現在 12 位）。
+// ⛔ 加入時間／操作欄不入鏡：在卡片縮圖裡讀不到，佔寬只會把名字擠小。
 await page.goto(`${BASE}/admin/${WID}/users`, { waitUntil: 'networkidle2', timeout: 90000 })
-await page.waitForFunction(() => document.body.innerText.includes('曉彤'), { timeout: 45000 })
+await page.waitForFunction(() => document.body.innerText.includes('豆豆媽'), { timeout: 45000 })
 await new Promise(r => setTimeout(r, 2000))
-const usersClip = await page.evaluate(() => {
+const ROWS_IN_SHOT = 12
+const usersClip = await page.evaluate((n) => {
   const card = document.querySelector('.users-page-card')
   const rows = [...document.querySelectorAll('.users-page-card tbody tr')]
-  if (!card || rows.length < 5) return null
+  if (!card || rows.length < n) return { error: `列數只有 ${rows.length}，需要 ${n}` }
+  // ⛔ 安全閘門：入鏡的每一列都必須是示範好友（測試工作區後面幾列是真實同事的名字與頭像）
+  const DEMO = ['曉彤', 'Ariel', '阿翔', 'Peggy', '咖啡貓', '小綠', 'Jimmy', '陳太太', 'YUKI', '老王', 'Tina', '豆豆媽']
+  const inFrame = rows.slice(0, n).map(tr => tr.innerText.split('\n')[0].trim())
+  const stranger = inFrame.find(name => !DEMO.some(d => name.includes(d)))
+  if (stranger) return { error: `第 ${inFrame.indexOf(stranger) + 1} 列「${stranger}」不是示範好友，拒絕截圖` }
   const header = document.querySelector('.users-page-card thead')
   const r = card.getBoundingClientRect()
   const top = (header ?? rows[0]).getBoundingClientRect().top
-  const bottom = rows[4].getBoundingClientRect().bottom
+  const bottom = rows[n - 1].getBoundingClientRect().bottom
   const ths = [...document.querySelectorAll('.users-page-card thead th')]
   const tagTh = ths.find(th => th.textContent.trim() === '標籤')
   const right = tagTh ? tagTh.getBoundingClientRect().right : r.right - 1
   return { x: r.left + 1, y: top, width: right - r.left - 1, height: bottom - top }
-})
-if (!usersClip) throw new Error('好友頁列數不足 5（示範資料沒種？）')
+}, ROWS_IN_SHOT)
+if (!usersClip || usersClip.error) throw new Error(`好友頁截圖失敗：${usersClip?.error ?? '找不到表格'}`)
 await page.screenshot({ path: `${OUT}admin-friends-tags.png`, clip: usersClip })
 console.log('admin-friends-tags.png ok')
 
