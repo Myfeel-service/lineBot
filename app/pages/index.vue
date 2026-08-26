@@ -485,10 +485,14 @@
          ⛔ 底下那條「完整商品資訊」連結是首頁通往揭露頁的路，不能拿掉。 -->
     <section id="pricing" class="lp-section">
       <div class="lp-wrap">
+        <!-- 價格鎖排（lockup）：貨幣、數字、單位同一條基線一行讀完——
+             「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。 -->
         <div class="lp-bigprice lp-reveal">
           <span class="lp-bigprice__lbl">一個月只要</span>
-          <div class="lp-bigprice__num"><span class="lp-bigprice__cur">NT$</span>{{ fmt(lowestPaidPrice) }}</div>
-          <span class="lp-bigprice__unit">／月 · 不綁約、隨時可取消</span>
+          <div class="lp-bigprice__num">
+            <span class="lp-bigprice__cur">NT$</span>{{ fmt(lowestPaidPrice) }}<span class="lp-bigprice__per">／月</span>
+          </div>
+          <span class="lp-bigprice__unit">不綁約、隨時可取消</span>
         </div>
 
         <div class="lp-pricefeat lp-reveal">

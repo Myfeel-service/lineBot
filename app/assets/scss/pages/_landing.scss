@@ -492,13 +492,17 @@
   .lp-fast__note { margin: auto 0 0; padding-top: 16px; font-size: 0.86rem; color: var(--ink-soft); }
 
   /* ── 定價：大字報價＋三個特點（結構照 08-26 草稿，底色照本頁白灰節奏）── */
-  .lp-bigprice { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  .lp-bigprice { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
   .lp-bigprice__lbl { font-size: 1.05rem; font-weight: 600; color: var(--ink-2); }
+  /* 價格鎖排：NT$／399／「／月」三件事**鎖同一條基線**、一行讀完。
+     ⛔ 別改回「NT$ 掛左上（flex-start＋margin-top）、／月放下一行」——貨幣像飄著的
+     獨立單字、單位跟數字分家，第一眼要拼兩行才讀出「每月 399」（2026-08-26 老闆抓的）。 */
   .lp-bigprice__num {
     font-size: clamp(4.5rem, 12vw, 9.5rem); font-weight: 800; letter-spacing: -0.05em; line-height: 1;
-    color: var(--ink); display: flex; align-items: flex-start; gap: 6px; font-variant-numeric: tabular-nums;
+    color: var(--ink); display: flex; align-items: baseline; gap: 0.09em; font-variant-numeric: tabular-nums;
   }
-  .lp-bigprice__cur { font-size: 0.3em; font-weight: 800; margin-top: 0.22em; color: var(--ink-2); letter-spacing: -0.02em; }
+  .lp-bigprice__cur { font-size: 0.26em; font-weight: 800; color: var(--ink-2); letter-spacing: -0.01em; }
+  .lp-bigprice__per { font-size: 0.2em; font-weight: 600; color: var(--ink-soft); }
   .lp-bigprice__unit { font-size: 0.92rem; color: var(--ink-2); font-weight: 600; }
   .lp-pricefeat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
   .lp-pf { background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 24px 22px; box-shadow: var(--sh-soft); }
