@@ -5,9 +5,13 @@
     :class="{ 'is-stuck': stuck, 'is-anim': anim, 'is-menu-open': menuOpen }"
   >
     <!-- ══════════════════════════════════════════════════════════════
-         導購頁。2026-08-26 依老闆給的新版草稿（桌面「!DOCTYPE html.pages」，v30）整頁改版：
-         版面仍是「一段對話」，但改成 米綠底 × 深松綠段 × 奶油黃定價段 的節奏，
-         泡泡改回品牌綠底白字（草稿定案，蓋掉 2026-08-21「綠泡泡醜」的舊拍板——見 _landing.scss 檔頭）。
+         導購頁。2026-08-26 依老闆的新版草稿（桌面「!DOCTYPE html.pages」）改版**結構與文案**；
+         **視覺一律沿用既有設計系統**（白灰交錯、淡綠泡泡、單一綠強調）——老闆同日看截圖拍板
+         「這個 html 只是架構跟文案的參考」，草稿自帶的深松綠段／奶油黃段／綠泡泡不搬
+         （那套已經試過兩次、兩次都被打槍，詳見 _landing.scss 檔頭）。
+         ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯（灰的掛 .lp-section--tint）。
+            目前順序：Hero(白) why(白，跟 Hero 之間靠漸層收尾分段) fix(灰) value(白)
+            fast(灰) pricing(白) grow(灰) faq(白) 收尾CTA(綠)。新增或搬動區塊要跟著調。
 
          ⚠️ 兩件事會連坐別的頁面，動之前先看：
            1. 外殼類名（.lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot）與三個法務頁
@@ -219,9 +223,9 @@
       </div>
     </section>
 
-    <!-- ── 一關一關解掉（深松綠段）──────────────────────────────
+    <!-- ── 一關一關解掉 ────────────────────────────────────────
          問題→解法四列，與上面的四道牆逐一對應（編號要對得上，別調換順序）。 -->
-    <section id="fix" class="lp-section lp-section--dark">
+    <section id="fix" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -263,46 +267,81 @@
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <!-- 這顆泡泡是品牌綠底，logotype 要用 on-color 轉白才讀得到（深色段的白泡泡用一般版） -->
-            <h2>多一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" on-color :alt="brandName" />，</span><br>等於多了<span class="mark">半個客服、半個行銷</span>。</h2>
+            <h2>多一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>等於多了<span class="mark">半個客服、半個行銷</span>。</h2>
           </div>
         </div>
 
         <div class="lp-stack lp-reveal">
-          <!-- 圖文選單：客人一打開 LINE 看到的畫面。「一句話代設」還沒上線 → 掛即將推出 -->
+          <!-- ── 圖文選單：客人手機上的前後對照 ──
+               「一句話代設」還沒上線 → 掛即將推出。
+               ⛔ 草稿這裡畫的是一張五色平面 Banner，老闆看截圖說醜（跟原版 SCSS 早就寫下的
+                  理由一樣：五色跟全頁沒關係，像貼了一張別人的圖）——沿用手機前後對照。
+               ⚠️ 之後想放**真實截圖**（例如真的 LINE 選單畫面）：換掉右手機的 .lp-rm 即可，
+                  但必須是真的介面截圖，不可以自己拼一張假的。 -->
           <div class="lp-panel">
             <div class="lp-panel__hd">
               <span class="lp-panel__pip" />
               <span class="lp-panel__title">圖文選單</span>
-              <span class="lp-panel__meta">{{ brandName }} 幫你設定好</span>
-              <span class="lp-soon">即將推出</span>
+              <span class="lp-panel__meta">客人自己點，不用打字問</span>
+              <span class="lp-soon">部分即將推出</span>
             </div>
             <div class="lp-panel__bd">
-              <div class="lp-bn" aria-hidden="true">
-                <div class="lp-bn__r2">
-                  <div class="lp-bn__c lp-bn__c--green"><span class="lp-bn__t">父親節禮盒</span><span class="lp-bn__s">限時 88 折</span></div>
-                  <div class="lp-bn__c lp-bn__c--navy"><span class="lp-bn__t">會員專屬優惠</span><span class="lp-bn__s">生日月加碼</span></div>
-                </div>
-                <div class="lp-bn__hero">
-                  <div class="lp-bn__herotxt">
-                    <span class="lp-bn__brand">本月精選 · 日出配方</span>
-                    <span class="lp-bn__go">立即選購 ▸</span>
+              <div class="lp-phones">
+                <div class="lp-phonecol">
+                  <span class="lp-phonetag lp-phonetag--off">沒有選單</span>
+                  <div class="lp-phone">
+                    <div class="lp-pscreen">
+                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
+                      <div class="lp-pchat">
+                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
+                        <div class="lp-pmsg lp-pmsg--them">運費怎麼算？</div>
+                        <div class="lp-pmsg lp-pmsg--them">今天有開嗎…？</div>
+                      </div>
+                      <div class="lp-pinput">輸入訊息</div>
+                    </div>
                   </div>
-                  <div class="lp-bn__beans"><i /><i /><i /></div>
+                  <p class="lp-phonecap lp-phonecap--off">客人自己打字問，你一句一句回。</p>
                 </div>
-                <div class="lp-bn__r3">
-                  <div class="lp-bn__c lp-bn__c--tan"><span class="lp-bn__t">商品資訊</span></div>
-                  <div class="lp-bn__c lp-bn__c--pink"><span class="lp-bn__t">訂單問題</span></div>
-                  <div class="lp-bn__c lp-bn__c--purple"><span class="lp-bn__t">真人客服</span></div>
+                <div class="lp-phonecol">
+                  <span class="lp-phonetag lp-phonetag--on">有選單</span>
+                  <div class="lp-phone">
+                    <div class="lp-pscreen">
+                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
+                      <div class="lp-pchat lp-pchat--short">
+                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
+                        <div class="lp-pmsg lp-pmsg--me">有的，{{ giftFestName }}禮盒已上架 ☕</div>
+                      </div>
+                      <div class="lp-rm">
+                        <div class="lp-rm__r2">
+                          <span class="lp-rm__c lp-rm__c--soft">本月精選</span>
+                          <span class="lp-rm__c lp-rm__c--soft">會員專屬</span>
+                        </div>
+                        <div class="lp-rm__hero">
+                          <span class="lp-rm__brand">禮盒專區</span>
+                          <span class="lp-rm__go">立即選購 ▸</span>
+                        </div>
+                        <div class="lp-rm__r3">
+                          <span class="lp-rm__c">商品資訊</span>
+                          <span class="lp-rm__c">訂單問題</span>
+                          <span class="lp-rm__c lp-rm__c--on">真人客服</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="lp-phonecap lp-phonecap--on">常問的事變成按鈕，客人自己點。</p>
                 </div>
               </div>
-              <p class="lp-bn__note">客人一打開你的 LINE 就看到這個。過去要自己切版、自己設連結——現在跟 {{ brandName }} 講一句話就好。</p>
+              <p class="lp-phones__note">過去要自己切版、自己設連結——之後跟 {{ brandName }} 講一句話就好。</p>
               <div class="lp-statrow">
                 <div class="lp-stat"><span class="lp-stat__l">設定要花的時間</span><span class="lp-stat__v"><i>2 小時</i><em>→</em><b>一句話</b></span></div>
                 <div class="lp-stat"><span class="lp-stat__l">客人要打字問的事</span><span class="lp-stat__v"><i>每一件</i><em>→</em><b>點按鈕就好</b></span></div>
               </div>
             </div>
           </div>
+          <!-- 這張卡的示意與數據條講到還沒上線的「代設」，圖說要交代哪一半是現有的 -->
+          <p class="lp-figcap lp-figcap--center">
+            示意畫面。<b>選單現在就能在後台自己編排</b>；<b>用一句話請 {{ brandName }} 代設仍在開發中</b>（「2 小時 → 一句話」講的是代設上線後）。
+          </p>
 
           <div class="lp-appgrid">
             <div class="lp-panel lp-appcard">
@@ -356,9 +395,9 @@
       </div>
     </section>
 
-    <!-- ── 60 秒上線（深松綠段）────────────────────────────────
+    <!-- ── 60 秒上線 ───────────────────────────────────────────
          三步時間軸＝註冊後開通引導真的會問的事，不是行銷話術。 -->
-    <section id="fast" class="lp-section lp-section--dark">
+    <section id="fast" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -402,12 +441,12 @@
       </div>
     </section>
 
-    <!-- ── 價格（奶油黃段）──────────────────────────────────────
+    <!-- ── 價格 ────────────────────────────────────────────────
          大字報價，數字讀 plans.ts（單一事實來源），調價這裡自己跟上。
          方案卡目錄已隨 08-26 改版收掉（試銷期只主打 399，見 FEATURED_PLAN_IDS），
          但「商品資訊」卡**必須留**：商品名稱／說明／售價／付款與發票要集中同一處，
          信用卡收單風控逐項核對的就是這張卡（散在行銷文案裡會被退件）。 -->
-    <section id="pricing" class="lp-section lp-section--butter">
+    <section id="pricing" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-bigprice lp-reveal">
           <span class="lp-bigprice__lbl">一個月只要</span>
@@ -478,11 +517,11 @@
       </div>
     </section>
 
-    <!-- ── 生意成長（深松綠段）──────────────────────────────────
+    <!-- ── 生意成長 ────────────────────────────────────────────
          兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度、
          也刻意不畫格線（沒有刻度可對照，格線只是雜訊）。
          顏色是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
-    <section id="grow" class="lp-section lp-section--dark">
+    <section id="grow" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -742,6 +781,15 @@ const heroFests = computed(() =>
     soon: f.days <= 7,
     badge: f.days === 0 ? '今天' : f.days === 1 ? '明天' : f.days <= 7 ? `還有 ${f.days} 天` : '準備中',
   })),
+)
+
+/**
+ * 圖文選單示意裡那句「{節日}禮盒已上架」用的節日：接下來第一個**送禮檔期**。
+ * 為什麼挑送禮檔期而不是單純的下一個節日：那句話講的是禮盒，套到中元節、國慶日會語意不通。
+ * 為什麼不寫死：寫死的節日會過期（草稿寫「父親節」，做頁面的當天就已經過完了）。
+ */
+const giftFestName = computed(() =>
+  upcoming.value.find(x => /送禮|禮盒|伴手禮|禮物|紅包/.test(x.angle))?.name ?? '節慶',
 )
 
 // ── 互動（進場效果、黏性條、手機選單）──

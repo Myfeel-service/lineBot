@@ -1,15 +1,18 @@
 /* ── 對外 Landing Page（layout: false，類名皆掛在 .lp 下避免汙染全站樣式）──
  *
- * 設計語言（2026-08-26 依老闆新版草稿改版）：米綠紙底 ＋ 白卡 ＋ 品牌綠泡泡，
- * 區塊節奏靠三種底色帶出：米綠（預設）→ 深松綠（.lp-section--dark）→ 奶油黃（定價段）→ 綠（收尾 CTA）。
- * 每個區塊的標題是 MiniMe 講的一句話（綠泡泡＋頭像），底下是它端出來的東西。
- * ⚠️ 這版**推翻了兩條舊拍板**（都以 08-26 草稿為準，別再改回去也別再引用舊理由）：
- *    (1) 2026-08-14「別引進深色段／鵝黃段」——草稿整頁就是深松綠＋奶油黃的節奏。
- *    (2) 2026-08-21「泡泡不可以是綠底白字」——草稿的泡泡就是綠底白字＋奶油黃強調。
+ * 設計語言：白底 ＋ 品牌綠單一強調色、細線白卡、大留白。
+ * 版面結構與文案照 2026-08-26 老闆的新版草稿（桌面「!DOCTYPE html.pages」），
+ * 但**視覺一律沿用本檔既有的設計系統**——老闆同日看截圖拍板：
+ * 「這個 html 只是架構跟文案的參考」，草稿自帶的配色不搬。
+ * ⛔ 深色段／鵝黃段／綠底白字泡泡**已經試過兩次、兩次都被打槍**，別再試第三次：
+ *    (1) 2026-08-14 對話式配色版——與後台／法務頁調性不合，回退。
+ *    (2) 2026-08-26 照草稿又上了一次（深松綠段＋奶油黃定價＋綠泡泡）——老闆看截圖說醜，
+ *        同日回退到本設計系統（commit 紀錄在 d01d429 → 本次還原）。
+ * 每個區塊的標題仍是 MiniMe 講的一句話（淡綠泡泡＋頭像），底下是它端出來的東西。
  *
  * ⚠️ `.lp` 這層外殼是**首頁與三個法務頁共用**的（見 components/site/SiteLegalPage.vue）：
  *    .lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot 動到就會連坐那三頁。
- *    只在首頁生效的東西掛在 `.lp-home` 底下（米綠頁底就是掛這裡，法務頁維持白底）。
+ *    只在首頁生效的東西掛在 `.lp-home` 底下。
  *
  * 互動（reveal / nav 陰影 / 手機選單）在 pages/index.vue 的 <script setup>。
  */
@@ -37,14 +40,8 @@
   --surf-2: #f5f7f5;
   --hair: #ecefec;
 
-  /* 08-26 草稿的三個新底色（只給首頁的區塊節奏用，別拿去當元件強調色）：
-     深松綠＝「它在工作」的段落、奶油黃＝定價段與泡泡裡的強調字、米綠＝頁底。 */
-  --pine: #0b3a24;
-  --butter: #ffc94a;
-  --butter-soft: #fff3d4;
-  --paper-tint: #f4f7f2;
-
-  /* 琥珀：只給「久未互動／沒回覆」這種狀態訊號用，不當裝飾色。 */
+  /* 唯一的非綠色：琥珀。只給「久未互動／快到期」這種狀態訊號用，不當裝飾色。
+     ⛔ 草稿的深松綠（#0b3a24）與奶油黃（#ffc94a）不進色票——理由見檔頭「試過兩次」。 */
   --warn-ink: #b4762a;
   --warn-wash: #fff1e4;
 
@@ -88,20 +85,18 @@
 
   ::selection { background: var(--g-wash); }
 
-  /* 米綠頁底只給首頁：法務頁（.lp.lp-legal-page）維持白底 */
-  &.lp-home { background: var(--paper-tint); }
-
   .lp-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
   /* ── Utilities ─────────────────────────────────────────── */
   .lp-wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
   .lp-section { padding: clamp(64px, 9vw, 120px) 0; }
-
-  /* ── 區塊底色節奏（08-26 草稿）──────────────────────────────
-     米綠（預設，吃頁底）→ 深松綠 → 米綠 → 深松綠 → 奶油黃 → 深松綠 → 米綠 → 綠 CTA。
-     ⚠️ 新增或搬動區塊時要跟著排，別讓兩個深色段相鄰。 */
-  .lp-section--dark { background: var(--pine); color: #fff; }
-  .lp-section--butter { background: var(--butter-soft); }
+  /* 區塊節奏：隔一區換成中性淺灰（白 → 灰 → 白 → 灰⋯）。
+     ⚠️ 為什麼要做：全部白底、只靠 1px 細線分段的話，捲起來一路白到底沒有段落感，
+     區塊裡的白卡也只能靠陰影撐。交錯底色讓白卡浮起來，分段不必再靠線。
+     ⛔ 只能用中性灰不要用綠色淡底：泡泡已經是淡綠了，區塊底色也綠的話泡泡就消失了。
+     ⛔ 也不要換成深松綠／奶油黃段——見檔頭「試過兩次」。
+     ⚠️ 新增或搬動區塊時交錯要跟著調，不然會出現兩個同色區塊相鄰、看起來像漏了一段。 */
+  .lp-section--tint { background: var(--surf-2); }
 
   .lp-eyebrow {
     display: inline-flex; align-items: center; gap: 7px;
@@ -122,13 +117,24 @@
   /* ── 區塊標題＝MiniMe 講的一句話（對話式版面）──────────────
    * 整頁的節奏是「它開口 → 底下是它端出來的東西」，所以每一區的標題都是一顆對話泡泡＋頭像。
    *
-   * 08-26 草稿定案：**綠底白字＋奶油黃強調字**（蓋掉 08-21「綠泡泡醜」的舊拍板）。
-   * 深色段（.lp-section--dark）的泡泡翻成白底墨字，強調字同樣是奶油黃底——
-   * 兩種底色下「誰在說話」的訊號一致（頭像綠磚＋帶尾巴的泡泡）。
+   * ⛔ **泡泡不可以是滿版綠底白字**（做錯過兩次：2026-08-21 老闆說「這個樣式有點醜」、
+   *    2026-08-26 照草稿又上一次又被打槍）。三個理由：
+   *   ①**聊天的規矩剛好相反**：LINE 裡「對方講的話是白泡泡、自己講的話才是綠泡泡」。MiniMe 是在
+   *     跟老闆講話，做成綠的等於整頁都是老闆自言自語——而且本頁 .lp-pmsg 的手機示意圖就是照
+   *     正確規矩畫的（客人白、店家 LINE 綠），同一頁兩套邏輯。
+   *   ②九個區塊＝九塊 900×250px 的 100% 飽和綠，綠色從「強調色」變成「底色」，
+   *     整頁其他地方（按鈕、主牆卡、CTA 帶）的綠就都不強調了。
+   *   ③白字 800 粗壓在飽和綠上會發光暈，而強調字只能用色塊，看起來像按鈕不像強調。
+   * 現在的做法：**品牌綠最淺階當底 ＋ 綠細線 ＋ 墨色字**，強調字＝綠字加淡綠螢光筆底。
+   * ⚠️ 刻意**不給陰影**：底下的內容卡是「白底＋陰影」，泡泡是「淡綠＋細線、無陰影」——
+   *    兩種不同的物件才分得出「這是誰在說話」與「這是它端出來的東西」。試過白卡＋陰影的版本，
+   *    泡泡跟底下四張卡看起來是同一種東西，層次就沒了。
    */
   /* gap 16：尾巴往左突出 7px，寫 14 的話頭像與泡泡的視覺間隙只剩 7px */
   .lp-turn { display: flex; gap: 16px; align-items: flex-start; max-width: 760px; }
   /* 頭像＝36px 圓角磚，標誌**寬 20px**（左右各留 8px）。
+     ⛔**不要綠色陰影**（2026-08-21 老闆指名拿掉：光暈是「這個可以按」的訊號，而它只是
+        「誰在說話」的標示）。
      ⚠️ 尺寸一定要用**寬度**定，不可以用 `--brand-logo-h`：logomark 是橫長形狀（1.678:1），
         設高 19px 的實際寬度是 32px——在磚裡左右只剩 1px（2026-08-21 老闆截圖抓過）。
      ⚠️ 磚的尺寸改了要一起改 .lp-bubble::before 的 top（尾巴要對到磚的中心）。 */
@@ -139,17 +145,18 @@
   .lp-turn__ava .brand-logo { width: 20px; height: auto; }
   .lp-bubble {
     position: relative;
-    background: var(--g); color: #fff; padding: 24px 30px;
-    border-radius: var(--r-card);
-    box-shadow: 0 10px 30px -14px rgba(6, 199, 85, 0.55);
+    background: var(--g-wash-2); color: var(--ink); padding: 24px 30px;
+    border: 1px solid var(--g-line); border-radius: var(--r-card);
   }
-  /* 真的尾巴：一個轉 45° 的方塊。
-     ⛔ 別改回「左上角圓角切小」那招——那看起來只是「這個角切歪了」，不是對話框。
+  /* 真的尾巴：一個轉 45° 的方塊只留左上兩邊框。
+     ⛔ 原本是把左上角圓角改成 6px 當尾巴——那看起來只是「這個角切歪了」，不是對話框。
+     ⚠️ 這招要成立的前提是泡泡沒有陰影（有陰影的話尾巴接縫處會露出一條影子邊）。
      ⚠️ top 要讓尾巴的視覺中心對到頭像的中心（頭像 36px → 中心 18px；尾巴高 15px 轉 45°
         之後視覺中心約在 top+7.5），所以 top 給 11px。改頭像大小要一起改這裡。 */
   .lp-bubble::before {
-    content: ''; position: absolute; left: -6px; top: 11px; width: 15px; height: 15px;
-    background: var(--g);
+    content: ''; position: absolute; left: -7px; top: 11px; width: 15px; height: 15px;
+    background: var(--g-wash-2);
+    border-left: 1px solid var(--g-line); border-top: 1px solid var(--g-line);
     border-top-left-radius: 4px; transform: rotate(-45deg);
   }
   /* 比 .lp-h2 小一級：氣泡本身有 30px 內距，同字級會撐得比其他區塊的標題大一截。
@@ -157,13 +164,14 @@
      「NT$399」「LINE」這種拉丁字比旁邊的中文重一級（實測過），700 讓兩邊對得上。 */
   .lp-bubble h2 {
     margin: 0; font-size: clamp(1.5rem, 3.2vw, 2.25rem); font-weight: 700;
-    letter-spacing: -0.02em; line-height: 1.42; text-wrap: balance;
+    letter-spacing: -0.02em; line-height: 1.36; text-wrap: balance;
   }
   /* 副標寬度收住：泡泡是被最長的那一行撐出來的，副標比標題長很多時，
      泡泡會變得又寬又空、標題孤零零掛在左上角。 */
-  .lp-bubble p { margin: 10px 0 0; max-width: 46ch; font-size: 0.97rem; line-height: 1.8; color: rgba(255, 255, 255, 0.86); }
+  .lp-bubble p { margin: 10px 0 0; max-width: 46ch; font-size: 0.97rem; line-height: 1.8; color: var(--ink-2); }
   /* 句子裡提到品牌名就直接用 logo 檔（2026-08-21 老闆提的）。
-     ⚠️ 綠泡泡裡要用 on-color 版（白字），深色段的白泡泡才用一般版——模板各自指定。
+     ⚠️ 這個 logo **本身就是「MiniMe」那個字**（第二個 M 就是綠色打勾），不是「圖標＋字樣」——
+        所以它可以直接當一個字放進句子裡，而頭像那顆 logomark 是把字裡的 M 抽出來。
      高度給 0.72em ≈ 拉丁字母的大寫高度：它在句子裡的份量才跟旁邊的字一樣。 */
   .lp-bubble__logo {
     display: inline-block; --brand-logo-h: 0.72em;
@@ -173,31 +181,21 @@
      ⛔ 中文標點不可以出現在行首，但 logo 是圖片、瀏覽器允許在圖片後面斷行——手機上就真的斷出
         「多一個 MiniMe ／ ，等於多了⋯」這種行首逗號（實測）。只能把兩者包成 nowrap。 */
   .lp-nb { white-space: nowrap; }
-  /* 強調字＝奶油黃底墨字小色塊（08-26 草稿）。padding 只給左右、radius 收小，
-     才不會把行高撐開；綠底與白底（深色段）上這塊都讀得到。 */
+  /* 強調字＝綠字＋螢光筆底。
+     ⛔ 不做色塊膠囊（草稿的奶油黃塊也算）：有底色的方塊在句子中間看起來是可以點的按鈕。
+     螢光筆用 inset 陰影而不是 background，才只畫在字的下緣、不會把整行行高撐開；
+     0.26em 是量的——0.34em 時色帶會壓到數字的下半截。 */
   .lp-bubble .mark {
-    background: var(--butter); color: var(--ink);
-    border-radius: 6px; padding: 0 8px;
-    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+    background: none; color: var(--g-deep); padding: 0 1px;
+    box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0.2);
   }
 
-  /* 深色段的泡泡翻白（08-26 草稿：.dark .bubble） */
-  .lp-section--dark .lp-bubble {
-    background: var(--paper); color: var(--ink);
-    box-shadow: 0 14px 40px -16px rgba(0, 0, 0, 0.6);
-  }
-  .lp-section--dark .lp-bubble::before { background: var(--paper); }
-  .lp-section--dark .lp-bubble p { color: var(--ink-2); }
-
-  /* 氣泡與底下內容之間的固定節奏 */
+  /* 氣泡與底下內容之間的固定節奏（等同 eyebrow＋h2 之後的 --section-head-gap）*/
   .lp-stack { margin-top: var(--section-head-gap); }
 
   /* 圖說：示意畫面必須標示，數字才不會被當成真實績效 */
   .lp-figcap { margin: 14px 0 0; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.7; }
   .lp-figcap--center { text-align: center; margin-top: 24px; }
-  .lp-figcap b { color: var(--ink-2); }
-  .lp-section--dark .lp-figcap { color: rgba(255, 255, 255, 0.6); }
-  .lp-section--dark .lp-figcap b { color: rgba(255, 255, 255, 0.85); }
 
   /* 「即將推出」：功能還沒上線就一定要掛，不能當現有功能賣。
      line-height 寫死：繼承的 1.7 會讓它比隔壁純文字的標頭高 0.5px，並排兩張卡就差 1px。 */
@@ -259,11 +257,10 @@
   .lp-nav__burger span::after { position: absolute; top: 6px; }
 
   /* ── Hero ──────────────────────────────────────────────── */
-  .lp-hero { position: relative; padding: clamp(44px, 6vw, 88px) 0 clamp(56px, 8vw, 104px); background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper-tint) 62%); overflow: hidden; }
+  .lp-hero { position: relative; padding: clamp(44px, 6vw, 88px) 0 clamp(56px, 8vw, 104px); background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%); overflow: hidden; }
   .lp-hero__blob { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; z-index: 0; }
   .lp-hero__blob--1 { width: 420px; height: 420px; background: rgba(6, 199, 85, 0.12); top: -140px; right: -80px; }
-  /* 第二顆霧球換奶油黃（08-26 草稿）：預告定價段的顏色，也讓 Hero 不是單一綠 */
-  .lp-hero__blob--2 { width: 300px; height: 300px; background: rgba(255, 201, 74, 0.18); bottom: -120px; left: -100px; }
+  .lp-hero__blob--2 { width: 300px; height: 300px; background: rgba(6, 199, 85, 0.08); bottom: -120px; left: -100px; }
   /* ⚠️ 兩欄都要包 minmax(0, …)，不能只寫 `1.05fr 0.95fr`：
      `1fr` 的意思是 `minmax(auto, 1fr)`，欄寬會被欄內元素的 min-content 撐開——右邊時機卡的
      副標（.lp-op small）是 nowrap，min-content 就是整句話的寬度，
@@ -288,12 +285,6 @@
     transition: transform .2s ease, box-shadow .2s ease;
   }
   .lp-panel:hover { transform: translateY(-3px); box-shadow: var(--sh-card); }
-  /* 深色段上的白卡：細線收掉、陰影加深（細線在深底上會發亮，變成一圈灰框）。
-     ⚠️ color 一定要拉回墨色：深色段的 color:#fff 會繼承進白卡，
-        時間軸的步驟標題就變成白字白底（實測抓到的，別刪）。卡內圖說同理。 */
-  .lp-section--dark .lp-panel { border-color: transparent; box-shadow: 0 20px 50px -22px rgba(0, 0, 0, 0.7); color: var(--ink); }
-  .lp-section--dark .lp-panel .lp-figcap { color: var(--ink-soft); }
-  .lp-section--dark .lp-panel .lp-figcap b { color: var(--ink-2); }
   /* min-height：標頭右邊放純文字或膠囊時高度會差幾 px，並排的兩張卡就會整條錯開 */
   .lp-panel__hd {
     display: flex; align-items: center; gap: 10px; min-height: 54px;
@@ -330,8 +321,8 @@
     padding: 4px 10px; background: var(--surf-2); color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
-  /* 「快到了」＝時間訊號吃奶油黃（08-26 草稿）；人數＝可把握的量吃淡綠 */
-  .lp-op__tag--soon { background: var(--butter); color: var(--ink); }
+  /* 「快到了」＝時間訊號吃琥珀（全頁唯一非綠色，只當狀態訊號）；人數＝可把握的量吃淡綠 */
+  .lp-op__tag--soon { background: var(--warn-wash); color: var(--warn-ink); }
   .lp-op__tag--num { background: var(--g-wash); color: var(--g-deep); }
   .lp-ops__cta { padding: 16px var(--panel-pad-x) 20px; border-top: 1px solid var(--hair); background: var(--surf-2); }
 
@@ -366,53 +357,68 @@
   .lp-wall--main h3 { font-size: 1.32rem; }
   .lp-wall--main p { color: rgba(255, 255, 255, 0.82); }
 
-  /* ── 一關一關解掉（深色段的問題→解法四列，08-26 草稿的 solveList）── */
+  /* ── 一關一關解掉（問題→解法四列，結構照 08-26 草稿、視覺照本頁卡片語彙）──
+   * 左＝上一區的四道牆（灰、劃掉的舊狀態）、右＝解法（墨色粗體）。
+   * 編號磚沿用四道牆的同一顆（--mk-md 灰磚），讀者才對得上「第 2 關 → 第 2 列」。 */
   .lp-solves { display: flex; flex-direction: column; gap: 12px; }
   .lp-solve {
     display: grid; grid-template-columns: 1fr 46px 1.15fr; gap: 16px; align-items: center;
-    background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.13);
-    border-radius: 16px; padding: 20px 24px;
+    background: var(--paper); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 20px 24px; box-shadow: var(--sh-soft);
   }
-  .lp-solve__from { display: flex; align-items: center; gap: 12px; font-size: 1rem; font-weight: 600; color: rgba(255, 255, 255, 0.62); }
+  .lp-solve__from { display: flex; align-items: center; gap: 12px; font-size: 1rem; font-weight: 600; color: var(--ink-soft); }
   .lp-solve__n {
-    width: 26px; height: 26px; border-radius: 9px; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.75);
-    font-size: 0.8rem; font-weight: 800; display: grid; place-items: center; flex: none;
+    width: var(--mk-md); height: var(--mk-md); border-radius: 11px; background: var(--surf-2); color: var(--ink-2);
+    font-size: 0.86rem; font-weight: 800; display: grid; place-items: center; flex: none;
     font-variant-numeric: tabular-nums;
   }
-  .lp-solve__arrow { width: 32px; height: 12px; color: rgba(255, 255, 255, 0.35); justify-self: center; }
-  .lp-solve__to b { display: block; font-size: 1.15rem; font-weight: 700; color: #fff; letter-spacing: -0.01em; }
-  .lp-solve__to small { display: block; font-size: 0.84rem; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
+  .lp-solve__arrow { width: 32px; height: 12px; color: var(--g); justify-self: center; }
+  .lp-solve__to b { display: block; font-size: 1.15rem; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+  .lp-solve__to small { display: block; font-size: 0.84rem; color: var(--ink-soft); margin-top: 4px; }
 
-  /* ── 圖文選單 Banner（能做什麼區）──────────────────────────
-   * ⚠️ 這塊的配色是**示範店（咖啡店）自己的選單設計**，刻意不是品牌色——
-   *    它在示意「客人在 LINE 裡看到的店家選單」，整塊套品牌綠反而假。
+  /* ── 圖文選單：客人手機上的前後對照 ────────────────────────
+   * 左邊＝客人只能自己打字問；右邊＝常問的事變成選單按鈕。
+   * ⚠️ 手機殼裡刻意做成 LINE 的樣子（灰藍底、自己那側是 LINE 綠泡泡）——那是「客人在 LINE 裡
+   *    看到什麼」，不是我們的頁面配色，所以不受「全頁單一強調色」那條約束。
+   * ⛔ 但選單格子不照抄真實選單的花色（08-26 草稿又畫了一版五色平面 Banner，老闆看截圖說醜，
+   *    換回這組手機對照）：那五色跟全頁沒有關係，看起來像貼了一張別人的圖。
+   *    改用綠＋灰階，仍然一眼認得出是六宮格選單。
+   * ⚠️ 想放**真實截圖**時直接換掉右手機的 .lp-rm 區塊即可（外殼與圖說都留著）——
+   *    但截圖必須是真的介面，不可以自己拼一張假的當截圖。
    */
-  .lp-bn { border-radius: 16px; overflow: hidden; box-shadow: var(--sh-soft); }
-  .lp-bn__r2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
-  .lp-bn__r3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
-  .lp-bn__c { padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center; text-align: center; }
-  .lp-bn__t { font-size: 0.92rem; font-weight: 700; }
-  .lp-bn__s { font-size: 0.72rem; opacity: 0.8; }
-  .lp-bn__c--green { background: #2f8b4a; color: #fff; }
-  .lp-bn__c--navy { background: #1e3050; color: #fff; }
-  .lp-bn__c--tan { background: #c9ae92; color: #41301f; }
-  .lp-bn__c--pink { background: #dfa0b7; color: #4e1f30; }
-  .lp-bn__c--purple { background: #a497d4; color: #241b4a; }
-  .lp-bn__hero {
-    background: linear-gradient(120deg, #8fbee8, #5e97ce); padding: 26px 22px; margin: 3px 0;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  .lp-phones { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; justify-items: center; }
+  .lp-phonecol { width: 100%; max-width: 340px; }
+  .lp-phonetag { display: inline-block; font-size: 0.8rem; font-weight: 800; border-radius: var(--radius-pill); padding: 6px 16px; margin-bottom: 14px; }
+  .lp-phonetag--off { background: var(--surf-2); color: var(--ink-soft); }
+  .lp-phonetag--on { background: var(--g); color: #fff; }
+  .lp-phone { background: var(--ink); border-radius: 30px; padding: 9px; box-shadow: var(--sh-card); }
+  .lp-pscreen { background: #e9edf3; border-radius: 23px; overflow: hidden; display: flex; flex-direction: column; height: 430px; }
+  .lp-pscreen__top { background: #fff; border-bottom: 1px solid #e2e7ec; padding: 13px 15px; font-size: 0.88rem; font-weight: 800; display: flex; align-items: center; gap: 9px; }
+  .lp-pscreen__ava { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none; }
+  .lp-pchat { flex: 1; padding: 14px 13px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
+  .lp-pchat--short { flex: none; padding-bottom: 10px; }
+  .lp-pmsg { max-width: 82%; font-size: 0.8rem; line-height: 1.6; padding: 9px 13px; border-radius: 15px; }
+  .lp-pmsg--them { align-self: flex-start; background: #fff; border-bottom-left-radius: 4px; }
+  .lp-pmsg--me { align-self: flex-end; background: #9be85f; color: #14290c; border-bottom-right-radius: 4px; }
+  .lp-pinput { margin-top: auto; background: #fff; border-top: 1px solid #e2e7ec; padding: 13px 16px; font-size: 0.8rem; color: #a9b2bc; }
+
+  .lp-rm { margin-top: auto; display: grid; gap: 2px; background: #d8dee6; }
+  .lp-rm__r2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+  .lp-rm__r3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+  .lp-rm__c { padding: 13px 6px; text-align: center; font-size: 0.78rem; font-weight: 700; background: #fff; color: var(--ink-2); }
+  .lp-rm__c--on { background: var(--g); color: #fff; }
+  .lp-rm__c--soft { background: var(--g-wash); color: var(--g-ink, #04702f); }
+  .lp-rm__hero {
+    background: linear-gradient(150deg, #06c755, #03a040); color: #fff;
+    height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   }
-  .lp-bn__herotxt { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
-  .lp-bn__brand { font-size: 1.15rem; font-weight: 800; color: #0e2c47; }
-  .lp-bn__go { font-size: 0.8rem; font-weight: 700; color: #0e2c47; background: rgba(255, 255, 255, 0.75); border-radius: var(--radius-pill); padding: 7px 16px; }
-  .lp-bn__beans { display: flex; gap: 8px; }
-  .lp-bn__beans i {
-    width: 34px; height: 44px; border-radius: 50% 50% 46% 46%;
-    background: linear-gradient(150deg, #b98a5c, #6e4527); display: block; box-shadow: var(--sh-soft);
-  }
-  .lp-bn__beans i:nth-child(2) { transform: translateY(-6px) rotate(-8deg); }
-  .lp-bn__beans i:nth-child(3) { transform: translateY(3px) rotate(7deg); }
-  .lp-bn__note { margin: 16px 0 0; font-size: 0.88rem; color: var(--ink-2); line-height: 1.8; }
+  .lp-rm__brand { font-size: 1rem; font-weight: 800; }
+  .lp-rm__go { font-size: 0.78rem; font-weight: 700; background: rgba(255, 255, 255, 0.26); border-radius: var(--radius-pill); padding: 5px 14px; }
+  .lp-phonecap { margin: 14px 0 0; text-align: center; font-size: 0.86rem; line-height: 1.7; }
+  .lp-phonecap--off { color: var(--ink-soft); }
+  .lp-phonecap--on { color: var(--ink-2); font-weight: 600; }
+  /* 兩支手機底下那句總結（08-26 草稿的文案），跟數據條之間留一口氣 */
+  .lp-phones__note { margin: 22px 0 0; font-size: 0.9rem; color: var(--ink-2); line-height: 1.8; text-align: center; }
 
   /* ── 前後對照數據條（設定時間、回覆速度⋯⋯）──────────────── */
   .lp-statrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--hair); }
@@ -450,7 +456,8 @@
   .lp-td--hand { background: #fff; border: 1.5px solid var(--g); color: var(--g-deep); font-weight: 600; }
   .lp-tdtag { align-self: flex-end; font-size: 0.72rem; font-weight: 800; border-radius: var(--radius-pill); padding: 4px 11px; margin-bottom: 4px; }
   .lp-tdtag--ok { background: var(--g-wash); color: var(--g-deep); }
-  .lp-tdtag--warn { background: var(--butter-soft); color: #8a6a1e; }
+  /* 「不會亂猜」＝提醒類訊號，吃琥珀（狀態色），不吃草稿的奶油黃 */
+  .lp-tdtag--warn { background: var(--warn-wash); color: var(--warn-ink); }
 
   /* ── 60 秒上線：三步時間軸 ────────────────────────────────
    * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
@@ -474,7 +481,7 @@
   .lp-tl__step--done b { color: var(--g-deep); }
   .lp-tl__note { margin: 20px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
 
-  /* ── 定價（奶油黃段）：大字報價＋三個特點 ─────────────────── */
+  /* ── 定價：大字報價＋三個特點（結構照 08-26 草稿，底色照本頁白灰節奏）── */
   .lp-bigprice { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
   .lp-bigprice__lbl { font-size: 1.05rem; font-weight: 600; color: var(--ink-2); }
   .lp-bigprice__num {
@@ -484,7 +491,7 @@
   .lp-bigprice__cur { font-size: 0.3em; font-weight: 800; margin-top: 0.22em; color: var(--ink-2); letter-spacing: -0.02em; }
   .lp-bigprice__unit { font-size: 0.92rem; color: var(--ink-2); font-weight: 600; }
   .lp-pricefeat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
-  .lp-pf { background: var(--paper); border-radius: 16px; padding: 24px 22px; box-shadow: var(--sh-soft); }
+  .lp-pf { background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 24px 22px; box-shadow: var(--sh-soft); }
   .lp-pf__ico {
     width: var(--mk-xl); height: var(--mk-xl); border-radius: 14px; background: var(--g-wash);
     display: grid; place-items: center; margin-bottom: 16px;
@@ -500,9 +507,9 @@
 
   /* 商品資訊（商品名稱／說明／售價／付款與發票／銷售者）：金流風控的核對清單。
      ⛔ 這張卡不能跟著改版拿掉：四項要集中同一處，散在行銷文案裡會被退件。
-     奶油黃底上灰卡會發濁，改白卡。 */
+     法遵揭露要能一眼掃到、但不該比上面的報價搶眼——獨立灰底、字級行距收一級。 */
   .lp-product {
-    margin-top: 56px; background: var(--paper); border: 1px solid rgba(20, 24, 22, 0.08);
+    margin-top: 56px; background: var(--surf-2); border: 1px solid var(--hair);
     border-radius: var(--r-card); padding: 24px 26px;
   }
   .lp-product__h {
@@ -520,7 +527,7 @@
      這裡要補回連結的樣子，不然政策條款看起來像純文字、沒人會點。 */
   .lp-price__fine a, .lp-q .a a { color: var(--g-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
-  /* ── 成長曲線（#grow，深色段裡的白卡）──────────────────────
+  /* ── 成長曲線（#grow）─────────────────────────────────────
    * 線色 #067a3a／#848e88：量過在白卡上對比 ≥3:1、且紅綠色盲下仍分得開。
    * ⛔ 刻意只留一條基準線，不畫格線：Y 軸沒有刻度（示意模型沒有真實數字），
    *    格線沒有東西可以對照，畫上去只是雜訊（08-26 草稿畫了格線，這條刻意沒跟）。
@@ -588,8 +595,8 @@
     display: flex; align-items: center; gap: 18px; padding: 12px 12px 12px 26px;
   }
   .lp-stickybar__t1 { color: #fff; font-weight: 700; font-size: 0.95rem; }
-  /* 價格亮奶油黃（08-26 草稿）：深底上它是整條唯一的暖色，眼睛會先落在價格上 */
-  .lp-stickybar__t1 em { font-style: normal; color: var(--butter); }
+  /* 價格亮品牌綠：深底上它是整條唯一的彩色，眼睛會先落在價格上 */
+  .lp-stickybar__t1 em { font-style: normal; color: var(--g); }
   .lp-stickybar__t2 { color: rgba(255, 255, 255, 0.62); font-size: 0.84rem; }
   .lp-stickybar .lp-btn { margin-left: auto; }
   /* 幫黏性條在頁尾最後一列讓出高度：它是 fixed，不留這段就會蓋住頁尾的公司資訊列。
@@ -719,11 +726,8 @@
     .lp-stickybar__t1 { font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .lp-stickybar__t2 { display: none; }
 
-    /* Banner 主視覺在手機收窄 */
-    .lp-bn__hero { padding: 20px 16px; }
-    .lp-bn__brand { font-size: 1rem; }
-    .lp-bn__beans i { width: 26px; height: 34px; }
-    .lp-bn__t { font-size: 0.84rem; }
+    /* 兩支手機並排在手機上一定裁到，改上下 */
+    .lp-phones { grid-template-columns: 1fr; }
 
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
