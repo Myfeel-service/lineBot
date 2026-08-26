@@ -212,116 +212,154 @@
 
     <!-- ── Editor Header ── -->
     <template #editor-header>
+      <!--
+        標頭收成**兩列**（原本是四列，每列各自為政）：
+          第一列＝這是誰（頭像／名字　……　客人檔案 →）
+          第二列＝現況在左（狀態徽章＋負責人員）、我能做什麼在右（接手／交還／結束）
+        原本的問題是「亂」而且量得出來：四列的左緣分別落在 12／60／804／12／60 五個位置，
+        「客人檔案 →」還因為 margin-left:auto 落在 column 容器裡而獨占一整列飄在右上角。
+        收完之後只剩兩條左緣（頭像 12、名字 60），標頭高度 135px → 約 80px，
+        省下來的都給訊息區——這頁最缺的就是垂直空間。
+      -->
       <div class="conv-editor-header-block">
-        <div class="conv-user-info">
-          <img
-            v-if="selectedUser?.pictureUrl"
-            :src="selectedUser.pictureUrl"
-            class="conv-avatar"
-            :alt="selectedUser.displayName"
-          />
-          <span v-else class="conv-avatar-placeholder">👤</span>
-          <div>
-            <div class="split-editor-title">{{ selectedUser?.displayName }}</div>
+        <div class="conv-header-row conv-header-row--identity">
+          <div class="conv-user-info">
+            <img
+              v-if="selectedUser?.pictureUrl"
+              :src="selectedUser.pictureUrl"
+              class="conv-avatar"
+              :alt="selectedUser.displayName"
+            />
+            <span v-else class="conv-avatar-placeholder">👤</span>
+            <div>
+              <div class="split-editor-title">{{ selectedUser?.displayName }}</div>
+            </div>
           </div>
+          <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義） -->
+          <el-button
+            v-if="selectedUserId && !customerPanelOpen"
+            size="small"
+            text
+            type="primary"
+            class="conv-customer-reopen"
+            @click="customerPanelOpen = true"
+          >客人檔案 →</el-button>
         </div>
-        <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義） -->
-        <el-button
-          v-if="selectedUserId && !customerPanelOpen"
-          size="small"
-          text
-          type="primary"
-          class="conv-customer-reopen"
-          @click="customerPanelOpen = true"
-        >客人檔案 →</el-button>
+
         <!--
           G-27⑥ 色階：狀態用標籤、動作用同一款次要按鈕，
           **只有「當下最該做的那一件」給主色**——也就是客人在等人接手時的「我接手」。
           ⛔「交還機器人」不可以是綠的：這個專案裡綠＝好／完成，但它是一個動作不是好消息
           （原本三個控制項三種視覺重量，眼睛不知道該先看哪個）。
+
+          這一列的分工：**左邊全是「現在是什麼狀況」，右邊全是「我可以做什麼」**。
+          先前狀態徽章和三顆動作按鈕混在同一排、視覺重量又接近，眼睛分不出哪個是現況哪個能按。
         -->
-        <!--
-          負責人員（G-27 功能缺口②）：接手前先看得到「是誰在跟」，才不會兩個人同時回。
-          放頂部而不是右側客人卡：撞車是**回訊息之前**要擋的，視線不會先繞到右邊那張卡。
-          ⛔ 沒有選中客人時不出現（沒有對話可以指派）。
-        -->
-        <el-dropdown
-          v-if="selectedUserId && canOperate"
-          trigger="click"
-          placement="bottom-start"
-          class="conv-assignee"
-          :disabled="assigneeSaving"
-          @command="setAssignee"
-          @visible-change="onAssigneeMenuToggle"
+        <div
+          v-if="sessionToolbarMeta || (selectedUserId && canOperate)"
+          class="conv-header-row conv-header-row--session"
         >
-          <button
-            type="button"
-            class="conv-assignee__btn"
-            :class="{ 'is-set': !!currentAssignee.uid }"
-            :title="currentAssignee.uid
-              ? `負責人員：${currentAssignee.name}（點一下可換人或取消）`
-              : '指定一位同事負責這條線，其他人就看得出來已經有人在跟'"
-          >{{ currentAssignee.uid ? `👤 ${currentAssignee.name}` : '👤 指派負責人' }}</button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item v-if="assigneeLoading" disabled>載入同事名單…</el-dropdown-item>
-              <!-- ⛔ 查不到不可以靜靜顯示空選單（08-09「查不到≠沒問題」三態） -->
-              <el-dropdown-item v-else-if="assigneeLoadFailed" disabled>
-                同事名單載入失敗，請重新整理
-              </el-dropdown-item>
-              <el-dropdown-item v-else-if="!assignableMembers.length" disabled>
-                這個官方帳號只有你一位客服
-              </el-dropdown-item>
-              <template v-else>
-                <el-dropdown-item
-                  v-for="m in assignableMembers"
-                  :key="m.uid"
-                  :command="m.uid"
-                >
-                  <span :class="{ 'conv-assignee__current': m.uid === currentAssignee.uid }">
-                    {{ m.name }}
-                  </span>
-                </el-dropdown-item>
-                <el-dropdown-item v-if="currentAssignee.uid" command="" divided>
-                  取消指派
-                </el-dropdown-item>
-              </template>
-            </el-dropdown-menu>
+          <!--
+            這場的狀態是這一塊最重要的資訊（決定我現在該不該開口），先前**五種狀態全部
+            寫死 type="info"**＝一律同一顆藍徽章：客人在等人接手，和機器人正在自動回覆，
+            長得一模一樣。改成照急迫度給色（紅＞橘＞藍＞灰），見 sessionStateTone。
+          -->
+          <template v-if="sessionToolbarMeta">
+            <!--
+              ⛔ 只在看「某一場舊會話」時才標範圍：那是例外情況（按鈕作用在那一場、不是最新那場），
+              值得講。看進行中的那場是常態，多一個「進行中會話」的小灰字只是雜訊。
+            -->
+            <span v-if="selectedSessionId" class="conv-session-scope">此場會話</span>
+            <el-tag
+              size="small"
+              :type="sessionStateTone.type"
+              :class="{ 'conv-session-state--muted': sessionStateTone.muted }"
+              :title="sessionStateTone.hint"
+            >{{ sessionToolbarMeta.statusLabel }}</el-tag>
           </template>
-        </el-dropdown>
-        <div v-if="sessionToolbarMeta" class="conv-session-toolbar">
-          <span class="conv-session-toolbar__hint">{{ selectedSessionId ? '此場會話' : '進行中會話' }}</span>
-          <el-tag size="small" type="info">{{ sessionToolbarMeta.statusLabel }}</el-tag>
-          <el-button
-            v-if="canTakeOverSession"
-            size="small"
-            type="primary"
-            plain
-            :loading="takingOverSession"
-            title="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束"
-            @click="takeOverSelectedSession"
+          <!--
+            負責人員（G-27 功能缺口②）：接手前先看得到「是誰在跟」，才不會兩個人同時回。
+            放頂部而不是右側客人卡：撞車是**回訊息之前**要擋的，視線不會先繞到右邊那張卡。
+            ⛔ 沒有選中客人時不出現（沒有對話可以指派）。
+            ⛔ 它是**對話層級**的，不可以跟著 sessionToolbarMeta 一起消失——沒有進行中會話的
+               對話照樣要指派得了人。
+          -->
+          <el-dropdown
+            v-if="selectedUserId && canOperate"
+            trigger="click"
+            placement="bottom-start"
+            class="conv-assignee"
+            :disabled="assigneeSaving"
+            @command="setAssignee"
+            @visible-change="onAssigneeMenuToggle"
           >
-            我接手（暫停自動回覆）
-          </el-button>
-          <el-button
-            v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
-            size="small"
-            plain
-            :loading="handingBackSession"
-            title="交還後，機器人與 AI 會恢復自動回覆這位客人"
-            @click="handBackSelectedSession"
-          >
-            交還機器人
-          </el-button>
-          <el-button
-            v-if="canOperate && sessionToolbarMeta.status !== 'closed'"
-            size="small"
-            plain
-            :loading="closingSession"
-            @click="closeSelectedSession"
-          >
-            結束會話
-          </el-button>
+            <button
+              type="button"
+              class="conv-assignee__btn"
+              :class="{ 'is-set': !!currentAssignee.uid }"
+              :title="currentAssignee.uid
+                ? `負責人員：${currentAssignee.name}（點一下可換人或取消）`
+                : '指定一位同事負責這條線，其他人就看得出來已經有人在跟'"
+            >{{ currentAssignee.uid ? `👤 ${currentAssignee.name}` : '👤 指派負責人' }}</button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="assigneeLoading" disabled>載入同事名單…</el-dropdown-item>
+                <!-- ⛔ 查不到不可以靜靜顯示空選單（08-09「查不到≠沒問題」三態） -->
+                <el-dropdown-item v-else-if="assigneeLoadFailed" disabled>
+                  同事名單載入失敗，請重新整理
+                </el-dropdown-item>
+                <el-dropdown-item v-else-if="!assignableMembers.length" disabled>
+                  這個官方帳號只有你一位客服
+                </el-dropdown-item>
+                <template v-else>
+                  <el-dropdown-item
+                    v-for="m in assignableMembers"
+                    :key="m.uid"
+                    :command="m.uid"
+                  >
+                    <span :class="{ 'conv-assignee__current': m.uid === currentAssignee.uid }">
+                      {{ m.name }}
+                    </span>
+                  </el-dropdown-item>
+                  <el-dropdown-item v-if="currentAssignee.uid" command="" divided>
+                    取消指派
+                  </el-dropdown-item>
+                </template>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <div v-if="sessionToolbarMeta" class="conv-session-actions">
+            <el-button
+              v-if="canTakeOverSession"
+              size="small"
+              type="primary"
+              plain
+              :loading="takingOverSession"
+              title="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束"
+              @click="takeOverSelectedSession"
+            >
+              我接手（暫停自動回覆）
+            </el-button>
+            <el-button
+              v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
+              size="small"
+              plain
+              :loading="handingBackSession"
+              title="交還後，機器人與 AI 會恢復自動回覆這位客人"
+              @click="handBackSelectedSession"
+            >
+              交還機器人
+            </el-button>
+            <el-button
+              v-if="canOperate && sessionToolbarMeta.status !== 'closed'"
+              size="small"
+              plain
+              :loading="closingSession"
+              @click="closeSelectedSession"
+            >
+              結束會話
+            </el-button>
+          </div>
         </div>
       </div>
     </template>
@@ -2376,6 +2414,35 @@ const sessionToolbarMeta = computed<SessionPanelMeta | null>(() => {
   if (activeTab.value === 'all' && allTabActiveSession.value)
     return allTabActiveSession.value
   return null
+})
+
+/**
+ * 標頭那顆狀態徽章的顏色。先前五種狀態**全部寫死 `type="info"`**，
+ * 於是「客人在等人接手」和「機器人正在自動回覆」長得一模一樣——
+ * 而這是整個標頭最重要的一格（決定客服現在該不該開口）。
+ *
+ * 配色照**急迫度**排，不是照狀態名稱：紅（客人正在被晾著）＞橘（沒人碰過）＞
+ * 藍（有人在跟，資訊性）＞灰（不需要人）。
+ *
+ * ⛔ 刻意不用綠：這個專案的 `primary` 就是品牌綠（`element-variables.scss`），
+ *    旁邊的「我接手」正是綠色主按鈕。再給狀態一顆綠，同一列兩種綠語意不同
+ *    ——那正是 `C-72` 已經記在案、還沒拍板的老問題，不要在這裡再製造一個。
+ * ⛔ 這個調色盤裡 `info` 是**藍色**（#2563eb）不是灰，所以「中性灰」EP 給不了，
+ *    只能靠 muted 這個 class 把三個 --el-tag-* 變數改掉。
+ */
+const sessionStateTone = computed<{ type: 'danger' | 'warning' | 'info'; muted: boolean; hint: string }>(() => {
+  switch (sessionToolbarMeta.value?.status) {
+    case 'pending_human':
+      return { type: 'danger', muted: false, hint: '客人要求真人、還沒有人接手——這場最需要你' }
+    case 'open':
+      return { type: 'warning', muted: false, hint: '這場對話還沒有人處理過' }
+    case 'human_handling':
+      return { type: 'info', muted: false, hint: '已經有同事接手，機器人與 AI 暫停自動回覆' }
+    case 'bot_handling':
+      return { type: 'info', muted: true, hint: '目前由機器人／AI 自動回覆中，不需要人介入' }
+    default:
+      return { type: 'info', muted: true, hint: '' }
+  }
 })
 
 /**

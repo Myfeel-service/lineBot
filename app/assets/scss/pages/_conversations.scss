@@ -374,25 +374,91 @@
     position: relative;
   }
 
+  /**
+   * 標頭兩列（原本四列）。
+   *
+   * ⛔ align-items 維持 flex-start：這是 column 容器,直接塞進來的 inline 元素
+   *    （徽章、單顆按鈕）會被 stretch 撐成滿版色塊——這個專案踩過兩次。
+   *    列本身用 width:100% 自己撐滿,不靠 stretch。
+   */
   .conv-editor-header-block {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.5rem;
+    gap: 0.4rem;
     width: 100%;
   }
 
-  .conv-session-toolbar {
+  .conv-header-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.45rem;
-    padding-left: calc(36px + 0.75rem);
+    width: 100%;
   }
 
-  .conv-session-toolbar__hint {
-    font-size: 0.72rem;
+  /**
+   * 第二列：現況靠左、動作靠右。
+   *
+   * ⛔ 不再縮排對齊名字（原本 padding-left: 36px + 0.75rem）。整塊只留**一條左緣**
+   *    ——頭像、狀態徽章、負責人員全部從同一個 x 開始,那是最強的對齊訊號,
+   *    而且把省下來的 48px 讓給右邊三顆按鈕（窄螢幕才不會提早換行）。
+   */
+  .conv-header-row--session {
+    row-gap: 0.35rem;
+
+    /**
+     * 這一排的控制項**一律等高**。量過原本是三種高度混在一起：
+     * 狀態徽章 20px、負責人員 26px、按鈕 24px——參差一眼就看得出來,
+     * 而且三者其實是同一層級的東西（都是這場對話的控制列）。
+     * 以 el-button--small 的 24px 為準,另外兩個對過去。
+     */
+    --conv-header-control-h: 24px;
+
+    .el-tag,
+    .conv-assignee__btn {
+      height: var(--conv-header-control-h);
+    }
+  }
+
+  /** 動作群推到最右：左＝現況、右＝我可以做什麼,眼睛不必在同一排裡分辨 */
+  .conv-session-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-left: auto;
+  }
+
+  /**
+   * 「此場會話」＝**只在看舊會話時**才出現的範圍提示（例外才講,常態不吵）。
+   * 做成細長的中性膠囊,和右邊的狀態徽章拉出主次,不要兩顆一樣重。
+   */
+  .conv-session-scope {
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
     color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  /**
+   * 「不需要人」的兩種狀態（機器人處理中／已結束）＝中性灰。
+   *
+   * 這個調色盤的 `info` 是藍色（見 element-variables.scss）,EP 五種 type 裡
+   * **沒有一個是灰的**,所以只能把 el-tag 讀的三個變數就地改掉。
+   * ⛔ 不要改成無 type：EP 2.13 的 el-tag 預設 type 是 primary＝品牌綠。
+   * ⛔ 一定要連 `.el-tag` 一起寫（0,3,0）才蓋得過 EP 的 `.el-tag.el-tag--info`（0,2,0）。
+   *    只寫 class 名是 0,2,0＝同分,誰晚載入誰贏——headless 用最壞載入順序量過,
+   *    少寫這一節時整顆維持藍色（也就是這條修法會靜靜失效）。
+   */
+  .conv-session-state--muted.el-tag {
+    --el-tag-bg-color: var(--bg-elevated);
+    --el-tag-border-color: var(--border);
+    --el-tag-text-color: var(--text-secondary);
   }
 
   /**
@@ -712,6 +778,13 @@
    */
   .conv-assignee {
     flex-shrink: 0;
+    /**
+     * el-dropdown 預設是 inline-block,裡面那顆按鈕帶著行內文字的下緣空間,
+     * 於是外框比按鈕高 1px、置中時整顆往下掉 1px——量出來就是它和旁邊狀態徽章
+     * 差的那一格。改成 inline-flex 讓外框緊貼按鈕。
+     */
+    display: inline-flex;
+    align-items: center;
   }
 
   .conv-assignee__btn {
