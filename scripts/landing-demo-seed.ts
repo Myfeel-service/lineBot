@@ -110,4 +110,25 @@ await db.collection('conversations').doc(convId).set({
   currentSessionId: null,
 }, { merge: true })
 
-console.log('seeded: 3 tags, 5 users, 1 conversation (7 msgs), 1 session')
+// ── 示範工作區「山丘咖啡」：**刻意不接 LINE**，開 /admin/onboarding?workspaceId=<id>
+//    就會看到開通引導對話的起點（官網 60 秒區的截圖用）。
+//    掛在 Myfeel 測試組織下、免費方案；⛔ 別幫它接 LINE，接了引導就跳步、截不到起點。
+const DEMO_WS_ID = 'b3f1c9e2-71a4-4d2e-9c55-1a2b3c4d5e6f'
+const KEVIN_UID = 'UuLqUQVbd5OTEzzEHVQP0s4AGaX2'
+const TEST_ORG_ID = 'c8a7bcc6-a78c-430d-9e6a-ce5e7a519b20'
+const today = new Date(now)
+const periodStart = today.toISOString().slice(0, 10)
+const periodEnd = new Date(now + 30 * DAY).toISOString().slice(0, 10)
+await db.collection('workspaces').doc(DEMO_WS_ID).set({
+  name: '山丘咖啡',
+  organizationId: TEST_ORG_ID,
+  subscription: { planId: 'free', status: 'active', currentPeriodStart: periodStart, currentPeriodEnd: periodEnd, anchorDay: today.getDate() },
+  updatedAt: Timestamp.fromMillis(now),
+}, { merge: true })
+await db.collection('workspaceMembers').doc(`${KEVIN_UID}_${DEMO_WS_ID}`).set({
+  uid: KEVIN_UID, workspaceId: DEMO_WS_ID, organizationId: TEST_ORG_ID,
+  role: 'owner', invitedBy: null, invitedEmail: 'kevin.chiang@myfeel-tw.com',
+  createdAt: Timestamp.fromMillis(now), joinedAt: Timestamp.fromMillis(now),
+}, { merge: true })
+
+console.log('seeded: 3 tags, 5 users, 1 conversation (7 msgs), 1 session, demo workspace 山丘咖啡')

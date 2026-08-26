@@ -145,5 +145,25 @@ if (!usersClip) throw new Error('好友頁列數不足 5（示範資料沒種？
 await page.screenshot({ path: `${OUT}admin-friends-tags.png`, clip: usersClip })
 console.log('admin-friends-tags.png ok')
 
+// 圖三：開通引導對話（60 秒區）。用種好的「山丘咖啡」示範工作區——它**刻意沒接 LINE**，
+// 開這頁就會停在「拿鑰匙」步驟，畫面有進度條＋兩句引導＋兩顆選擇鈕。
+// ⚠️ 等「教我一步步拿」出現才截（訊息是逐句打出來的）；下緣裁到最後一顆按鈕＋26px。
+const DEMO_WS = 'b3f1c9e2-71a4-4d2e-9c55-1a2b3c4d5e6f'
+await page.goto(`${BASE}/admin/onboarding?workspaceId=${DEMO_WS}`, { waitUntil: 'networkidle2', timeout: 90000 })
+await page.waitForFunction(() => document.body.innerText.includes('教我一步步拿'), { timeout: 60000 })
+await new Promise(r => setTimeout(r, 1500))
+const onbClip = await page.evaluate(() => {
+  const shell = document.querySelector('.onbc-shell')
+  if (!shell) return null
+  const r = shell.getBoundingClientRect()
+  const btns = [...shell.querySelectorAll('button, .el-button')].filter(b => b.getBoundingClientRect().height > 0)
+  let bottom = 0
+  for (const b of btns) bottom = Math.max(bottom, b.getBoundingClientRect().bottom)
+  return { x: r.left, y: r.top, width: r.width, height: Math.min(bottom + 26, r.bottom) - r.top }
+})
+if (!onbClip) throw new Error('找不到 .onbc-shell（開通引導沒開起來？）')
+await page.screenshot({ path: `${OUT}admin-onboarding.png`, clip: onbClip })
+console.log('admin-onboarding.png ok')
+
 await browser.close()
 console.log('done →', OUT)

@@ -407,7 +407,8 @@
     </section>
 
     <!-- ── 60 秒上線 ───────────────────────────────────────────
-         三步時間軸＝註冊後開通引導真的會問的事，不是行銷話術。 -->
+         左＝三步時間軸（註冊後真的會走的三步，不是行銷話術）；
+         右＝開通引導對話的真實截圖（示範帳號「山丘咖啡」，見 scripts/landing-shots.mjs 圖三）。 -->
     <section id="fast" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
@@ -417,7 +418,7 @@
           </div>
         </div>
 
-        <div class="lp-stack lp-reveal">
+        <div class="lp-fast lp-stack lp-reveal">
           <div class="lp-panel">
             <div class="lp-panel__hd">
               <span class="lp-panel__pip" />
@@ -446,6 +447,27 @@
                 </div>
               </div>
               <p class="lp-tl__note">就像銀行開戶，只要身分證和手機號碼。</p>
+            </div>
+          </div>
+
+          <div class="lp-panel">
+            <div class="lp-panel__hd">
+              <span class="lp-panel__pip" />
+              <span class="lp-panel__title">接 LINE 的時候，有人陪</span>
+              <span class="lp-panel__meta">系統實際畫面</span>
+            </div>
+            <div class="lp-panel__bd">
+              <!-- ⚠️ 真實介面截圖：開通引導對話（示範帳號山丘咖啡，刻意沒接 LINE 才停在這一步）。
+                   重截用 scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs。 -->
+              <img
+                class="lp-shot lp-shot--flush"
+                src="/landing/admin-onboarding.png"
+                alt="開通引導對話畫面：進度條顯示建帳號、拿鑰匙、接線、傳話測試、完成五步，小幫手一句一句教你從 LINE 拿金鑰，並提供「教我一步步拿」按鈕"
+                loading="lazy"
+                width="1440"
+                height="648"
+              >
+              <p class="lp-fast__note">不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</p>
             </div>
           </div>
         </div>

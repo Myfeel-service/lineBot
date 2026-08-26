@@ -475,6 +475,17 @@
   .lp-tl__step--done b { color: var(--g-deep); }
   .lp-tl__note { margin: 20px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
 
+  /* 60 秒區兩欄：左時間軸卡、右開通引導真截圖。
+     minmax(0,…) 同 hero grid 的理由——圖片的 min-content 會把欄撐爆。 */
+  .lp-fast { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+  .lp-fast .lp-panel { display: flex; flex-direction: column; }
+  .lp-fast .lp-panel__bd { flex: 1; display: flex; flex-direction: column; }
+  /* 左卡（時間軸）比右卡矮：內容垂直置中，別讓下方留一大塊空白 */
+  .lp-fast .lp-panel:first-child .lp-panel__bd { justify-content: center; }
+  /* 截圖本身就是一張帶標頭的白卡，貼齊面板內距、下方說明推到卡底（跟左卡的 note 對齊） */
+  .lp-shot--flush { margin-top: 0; }
+  .lp-fast__note { margin: auto 0 0; padding-top: 16px; font-size: 0.86rem; color: var(--ink-soft); }
+
   /* ── 定價：大字報價＋三個特點（結構照 08-26 草稿，底色照本頁白灰節奏）── */
   .lp-bigprice { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
   .lp-bigprice__lbl { font-size: 1.05rem; font-weight: 600; color: var(--ink-2); }
@@ -660,7 +671,7 @@
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
     .lp-walls { grid-template-columns: 1fr 1fr; }
     .lp-wall--main { grid-column: 1 / -1; }
-    .lp-appgrid, .lp-pricefeat { grid-template-columns: 1fr; }
+    .lp-appgrid, .lp-pricefeat, .lp-fast { grid-template-columns: 1fr; }
   }
   @media (max-width: 900px) {
     /* Hero 手機版文字在上：標題才是鉤子，時機卡是佐證 */
