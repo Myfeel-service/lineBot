@@ -224,8 +224,19 @@ async function scanOneWorkspace(
       // 跨兩百行摘要做歸納命名，比「從清單挑選」難一階 → 用 flash 不用 lite；一週一次，費用可忽略
       model: 'gemini-2.5-flash',
       temperature: 0,
-      maxOutputTokens: 1500,
-      thinkingBudget: 0, // 短 JSON 輸出：thinking 會吃掉 output 配額把 JSON 截斷（見 gemini.ts）
+      // 實測三個提案的輸出約 1,800 字元，1500 tokens 邊界很窄；放寬一級避免偶爾截斷
+      // （截斷＝JSON parse 失敗＝這輪整個工作區報錯，代價遠大於多幾個 token）
+      maxOutputTokens: 2400,
+      /**
+       * ⛔⛔ **不要拿掉 thinkingBudget: 0，也不要調高**（2026-08-26 拿真實資料四組對照實測）。
+       *
+       * 我一度懷疑「0 對『讀 240 行做歸納』太苛，所以才提 0 個」——**方向剛好相反**：
+       *   · 保持 0（現況）→ finishReason=STOP，正常提出 3 個主題
+       *   · 拿掉 0（給模型思考額度）→ **finishReason=MAX_TOKENS，JSON 被截斷**
+       * 而 generateJson 解析失敗會 throw，等於整個工作區這輪掃描報錯。
+       * 照那個懷疑去「修」會把本來會動的功能弄壞。
+       */
+      thinkingBudget: 0,
     }))
 
   // 背景資料處理桶（import* ⊆ 總量子集慣例，同知識缺口掃描）；⛔ 不記 invocations/answered
@@ -238,11 +249,28 @@ async function scanOneWorkspace(
   await recordAiUsage(workspaceId, usage, db).catch(e => console.warn('[tag-discovery] usage record failed:', e))
 
   const room = MAX_PENDING_DISCOVERIES - pending.length
-  const cleaned = sanitizeDiscoveryProposals(Array.isArray(data?.topics) ? data.topics : [], {
+  const rawTopics = Array.isArray(data?.topics) ? data.topics : []
+  const cleaned = sanitizeDiscoveryProposals(rawTopics, {
     sessionUserIds: digests.map(d => d.userDocId),
     takenNames,
     maxProposals: Math.min(MAX_PROPOSALS_PER_SCAN, Math.max(0, room)),
   })
+
+  /**
+   * ⛔ **守門刷掉東西要留下痕跡**（08-26 查「線上為什麼提 0 個」時發現的洞）。
+   *
+   * 08-25 那次掃描 health 乾淨、`lastScanMs` 也寫了＝**正常跑完**，所以不是壞掉；
+   * 模型有回東西，是全部被 `sanitizeDiscoveryProposals` 刷掉了——但當時**一個字都沒記**，
+   * 完全無從查起。這是 `C-68` 同一種病（靜靜地什麼都沒說），只是這次發生在守門員身上。
+   * 只在「模型有提、但活下來變少」時才 log，正常情況不吵。
+   */
+  if (rawTopics.length !== cleaned.length) {
+    console.warn(
+      `[tag-discovery] ${workspaceId} 模型提了 ${rawTopics.length} 個、守門後剩 ${cleaned.length} 個`
+      + `（被刷掉的原因見 sanitizeDiscoveryProposals：撞既有名／支持的不同客人不足 ${MIN_DISTINCT_USERS} 位／缺名稱或條件）`
+      + `：${rawTopics.map(t => String(t?.name ?? '?')).join('、')}`,
+    )
+  }
 
   /**
    * 每條建議抓幾位客人的名字當證據（掃描時抓一次，見 shared 的欄位註解）。
