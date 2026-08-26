@@ -21,7 +21,7 @@
    ⚠️ #value / #pricing / #faq 這三個 id 是**外部連結的目標**——頁尾與三個法務頁的
    「產品介紹／定價／常見問題」都指它們（見 components/site/SiteFooter.vue），改名會變死連結。
    #diff（比較表）已隨 2026-08-26 改版整區移除，頁尾連結同步拿掉了。 */
-.lp #top, .lp #fix, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq { scroll-margin-top: 80px; }
+.lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq, .lp #product-info { scroll-margin-top: 80px; }
 
 .lp {
   /* Palette — 沿用全站共用品牌綠 token（門面頁統一同一套來源）*/
@@ -357,24 +357,20 @@
   .lp-wall--main h3 { font-size: 1.32rem; }
   .lp-wall--main p { color: rgba(255, 255, 255, 0.82); }
 
-  /* ── 一關一關解掉（問題→解法四列，結構照 08-26 草稿、視覺照本頁卡片語彙）──
-   * 左＝上一區的四道牆（灰、劃掉的舊狀態）、右＝解法（墨色粗體）。
-   * 編號磚沿用四道牆的同一顆（--mk-md 灰磚），讀者才對得上「第 2 關 → 第 2 列」。 */
-  .lp-solves { display: flex; flex-direction: column; gap: 12px; }
-  .lp-solve {
-    display: grid; grid-template-columns: 1fr 46px 1.15fr; gap: 16px; align-items: center;
-    background: var(--paper); border: 1px solid var(--hair);
-    border-radius: var(--r-card); padding: 20px 24px; box-shadow: var(--sh-soft);
+  /* ── 牆卡底部的解法列（08-26 版面重排①：問題與解法同一張卡）──
+   * margin-top:auto 把解法推到卡底：四張卡問題文長不一，解法列仍對齊同一條線。
+   * ✓ 磚沿用 .lp-app__c（同一套標記家族）；主牆（綠底）翻成白字版。 */
+  .lp-wall__fix {
+    margin-top: auto; padding-top: 14px; display: flex; align-items: flex-start; gap: 10px;
+    border-top: 1px dashed var(--hair);
   }
-  .lp-solve__from { display: flex; align-items: center; gap: 12px; font-size: 1rem; font-weight: 600; color: var(--ink-soft); }
-  .lp-solve__n {
-    width: var(--mk-md); height: var(--mk-md); border-radius: 11px; background: var(--surf-2); color: var(--ink-2);
-    font-size: 0.86rem; font-weight: 800; display: grid; place-items: center; flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-  .lp-solve__arrow { width: 32px; height: 12px; color: var(--g); justify-self: center; }
-  .lp-solve__to b { display: block; font-size: 1.15rem; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
-  .lp-solve__to small { display: block; font-size: 0.84rem; color: var(--ink-soft); margin-top: 4px; }
+  .lp-wall p + .lp-wall__fix { margin-top: 16px; }
+  .lp-wall__fix b { display: block; font-size: 0.95rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
+  .lp-wall__fix small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 2px; }
+  .lp-wall--main .lp-wall__fix { border-top-color: rgba(255, 255, 255, 0.3); }
+  .lp-wall--main .lp-wall__fix b { color: #fff; }
+  .lp-wall--main .lp-wall__fix small { color: rgba(255, 255, 255, 0.8); }
+  .lp-wall--main .lp-wall__fix .lp-app__c { background: rgba(255, 255, 255, 0.22); color: #fff; }
 
   /* ── 圖文選單：客人手機上的前後對照 ────────────────────────
    * 左邊＝客人只能自己打字問；右邊＝常問的事變成選單按鈕。
@@ -502,12 +498,17 @@
   .lp-pricecta { margin-top: 36px; text-align: center; }
   .lp-pricecta__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-2); }
   .lp-pricecta__fine b { color: var(--ink); }
+  .lp-pricecta__more { margin: 10px 0 0; font-size: 0.84rem; }
+  .lp-pricecta__more a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 2px; }
+  .lp-pricecta__more a:hover { color: var(--g-deep); }
 
   /* 商品資訊（商品名稱／說明／售價／付款與發票／銷售者）：金流風控的核對清單。
      ⛔ 這張卡不能跟著改版拿掉：四項要集中同一處，散在行銷文案裡會被退件。
-     法遵揭露要能一眼掃到、但不該比上面的報價搶眼——獨立灰底、字級行距收一級。 */
+     位置在頁尾正上方的獨立窄段（#product-info，08-26 版面重排③）——法遵揭露要能
+     一眼掃到、但不該打斷銷售敘事；定價區留了錨點連結過來。 */
+  .lp-productsec { padding: clamp(44px, 6vw, 64px) 0; }
   .lp-product {
-    margin-top: 56px; background: var(--surf-2); border: 1px solid var(--hair);
+    background: var(--paper); border: 1px solid var(--hair);
     border-radius: var(--r-card); padding: 24px 26px;
   }
   .lp-product__h {
@@ -659,9 +660,6 @@
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
     .lp-walls { grid-template-columns: 1fr 1fr; }
     .lp-wall--main { grid-column: 1 / -1; }
-    /* 解法列改直排：左問題右解法在平板寬度會把字擠成一欄兩字 */
-    .lp-solve { grid-template-columns: 1fr; gap: 10px; }
-    .lp-solve__arrow { justify-self: start; transform: rotate(90deg); }
     .lp-appgrid, .lp-pricefeat { grid-template-columns: 1fr; }
   }
   @media (max-width: 900px) {

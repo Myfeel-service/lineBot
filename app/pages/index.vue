@@ -10,8 +10,15 @@
          「這個 html 只是架構跟文案的參考」，草稿自帶的深松綠段／奶油黃段／綠泡泡不搬
          （那套已經試過兩次、兩次都被打槍，詳見 _landing.scss 檔頭）。
          ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯（灰的掛 .lp-section--tint）。
-            目前順序：Hero(白) why(白，跟 Hero 之間靠漸層收尾分段) fix(灰) value(白)
-            fast(灰) pricing(白) grow(灰) faq(白) 收尾CTA(綠)。新增或搬動區塊要跟著調。
+            目前順序：Hero(白) why(灰) value(白) fast(灰) pricing(白) grow(灰) faq(白)
+            product-info(灰) 收尾CTA(綠)。新增或搬動區塊要跟著調。
+         ⚠️ 2026-08-26 三處版面重排（老闆「排版只是參考，用資深 UIUX 重新想」）：
+            ①「四關」與「解法」併成一區——原本兩個整屏區塊講同一件事，解法列還把
+              四個問題重抄一遍；現在每張牆卡自帶解法（問題上、✓解法下），省一屏、對仗更強。
+            ②「能做什麼」先人後介面——AI 客服/AI 行銷（有真截圖）先出，圖文選單卡在後；
+              賣點是「多半個客服半個行銷」，選單是佐證不是主張。
+            ③ 商品資訊卡從定價區搬到頁尾正上方（#product-info）——它是金流風控揭露，
+              不是銷售內容，卡在報價和成長故事中間會打斷敘事；仍在同一頁、四項仍集中一處。
 
          ⚠️ 兩件事會連坐別的頁面，動之前先看：
            1. 外殼類名（.lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot）與三個法務頁
@@ -42,7 +49,6 @@
         </a>
         <div class="lp-nav__links">
           <a href="#why" @click="closeMenu">卡在哪</a>
-          <a href="#fix" @click="closeMenu">怎麼解</a>
           <a href="#value" @click="closeMenu">能做什麼</a>
           <a href="#pricing" @click="closeMenu">價格</a>
           <a href="#grow" @click="closeMenu">成長</a>
@@ -137,16 +143,20 @@
       </div>
     </header>
 
-    <!-- ── 為什麼卡住：四道牆 ──────────────────────────────────
+    <!-- ── 為什麼卡住：四道牆（問題＋解法同一張卡）─────────────
          四個原因不是平等的：第一道（沒人手）是前提，另外三個是它的後果，
-         所以第一張卡佔 1.45 倍寬並吃綠底。08-26 草稿給每道牆加了情境小圖（.lp-wall__scene），
-         內容是抽象示意圖形（人、對話、後台、價標），不含任何數字宣稱，不用掛示意圖說。 -->
-    <section id="why" class="lp-section">
+         所以第一張卡佔 1.45 倍寬並吃綠底。情境小圖（.lp-wall__scene）是抽象示意圖形
+         （人、對話、後台、價標），不含任何數字宣稱，不用掛示意圖說。
+         ⚠️ 每張牆卡底部帶自己的解法（✓ 綠字）——原本「四道牆」與「四關一次解掉」是
+            兩個整屏區塊，解法列還把問題重抄一遍才講解法；併卡之後問題與解法對得上、
+            省一整屏（08-26 版面重排①）。⛔ 解法別再拆回獨立區塊。 -->
+    <section id="why" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
             <h2>這件事，<br>老闆一直<span class="mark">卡在這四關</span>。</h2>
+            <p>還好，每一關都有 AI 能接住的解法——</p>
           </div>
         </div>
 
@@ -167,6 +177,10 @@
             <span class="lp-wall__n">1</span>
             <h3>沒有人可以做</h3>
             <p>員工就是這麼多，每個人手上都滿了。</p>
+            <div class="lp-wall__fix">
+              <span class="lp-app__c">✓</span>
+              <div><b>它 24 小時都在</b><small>不用增加人力，也不用排班</small></div>
+            </div>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -183,6 +197,10 @@
             <span class="lp-wall__n">2</span>
             <h3>派了員工，還要照顧他的情緒</h3>
             <p>多一件事，就是多一次溝通。</p>
+            <div class="lp-wall__fix">
+              <span class="lp-app__c">✓</span>
+              <div><b>交辦只要一句話</b><small>它不會累，也不用溝通</small></div>
+            </div>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -203,6 +221,10 @@
             <span class="lp-wall__n">3</span>
             <h3>自己動手，後台太複雜</h3>
             <p>打開來一堆設定，不知道從哪開始。</p>
+            <div class="lp-wall__fix">
+              <span class="lp-app__c">✓</span>
+              <div><b>一步一步跟著做就好</b><small>重點的地方 AI 幫你標出來</small></div>
+            </div>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -218,50 +240,20 @@
             <span class="lp-wall__n">4</span>
             <h3>找其他工具，好貴</h3>
             <p>一個月好幾千，還得有人學、有人顧。</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── 一關一關解掉 ────────────────────────────────────────
-         問題→解法四列，與上面的四道牆逐一對應（編號要對得上，別調換順序）。 -->
-    <section id="fix" class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2><span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" /></span> 把這四關一次解掉，<br>讓<span class="mark">一個你</span>，變成很多個你。</h2>
-          </div>
-        </div>
-
-        <div class="lp-solves lp-stack lp-reveal">
-          <div class="lp-solve">
-            <div class="lp-solve__from"><span class="lp-solve__n">1</span>沒有人可以做</div>
-            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            <div class="lp-solve__to"><b>它 24 小時都在</b><small>不用增加人力，也不用排班</small></div>
-          </div>
-          <div class="lp-solve">
-            <div class="lp-solve__from"><span class="lp-solve__n">2</span>派了員工，還要照顧情緒</div>
-            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            <div class="lp-solve__to"><b>交辦只要一句話</b><small>它不會累，也不用溝通</small></div>
-          </div>
-          <div class="lp-solve">
-            <div class="lp-solve__from"><span class="lp-solve__n">3</span>自己動手，後台太複雜</div>
-            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            <div class="lp-solve__to"><b>一步一步跟著做就好</b><small>畫面帶著你走，重點的地方 AI 幫你標出來</small></div>
-          </div>
-          <div class="lp-solve">
-            <div class="lp-solve__from"><span class="lp-solve__n">4</span>找其他工具，好貴</div>
-            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <!-- ⛔ 這裡不能寫「隨時可退」：退費措辭只有檔頭那一種寫法 -->
-            <div class="lp-solve__to"><b>一個月 NT${{ fmt(lowestPaidPrice) }}</b><small>不綁約、隨時可取消</small></div>
+            <div class="lp-wall__fix">
+              <span class="lp-app__c">✓</span>
+              <div><b>一個月 NT${{ fmt(lowestPaidPrice) }}</b><small>不綁約、隨時可取消</small></div>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
     <!-- ── 能做什麼：半個客服＋半個行銷 ─────────────────────────
-         ⚠️ id 沿用 #value：頁尾與法務頁的「產品介紹」都指這裡，換 id 會變死連結。 -->
+         ⚠️ id 沿用 #value：頁尾與法務頁的「產品介紹」都指這裡，換 id 會變死連結。
+         ⚠️ 順序＝AI 客服/AI 行銷（真截圖）先、圖文選單卡後（08-26 版面重排②）：
+            區塊主張是「多半個客服、半個行銷」，那兩張卡才是主張本體。 -->
     <section id="value" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
@@ -272,6 +264,74 @@
         </div>
 
         <div class="lp-stack lp-reveal">
+          <div class="lp-appgrid">
+            <div class="lp-panel lp-appcard">
+              <div class="lp-panel__hd">
+                <span class="lp-panel__pip" />
+                <span class="lp-panel__title">AI 客服</span>
+              </div>
+              <div class="lp-panel__bd lp-appcard__bd">
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div></div>
+                <!-- ⚠️ 真實介面截圖（2026-08-26 老闆拍板「截我們自己系統的圖」）：
+                     後台對話頁，資料是種在測試工作區的示範對話（示範帳號、無真實客資）。
+                     內容重點：AI 半夜秒回兩題（AI 徽章）→ 改訂單轉真人（機器人徽章）→
+                     隔天早上真人跟進（真人徽章）。⛔ 要換圖用
+                     scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs 重截，
+                     不可以自己拼一張假的當截圖。 -->
+                <img
+                  class="lp-shot"
+                  src="/landing/admin-chat.png"
+                  alt="後台對話畫面：客人半夜詢問手沖與禮盒，AI 立即回覆並標示 AI 徽章；改訂單需求轉給真人，隔天早上真人回覆並標示真人徽章"
+                  loading="lazy"
+                  width="1280"
+                  height="1052"
+                >
+                <div class="lp-statrow lp-statrow--foot">
+                  <div class="lp-stat"><span class="lp-stat__l">客人等回覆</span><span class="lp-stat__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
+                  <div class="lp-stat"><span class="lp-stat__l">訊息回覆率</span><span class="lp-stat__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lp-panel lp-appcard">
+              <div class="lp-panel__hd">
+                <span class="lp-panel__pip" />
+                <span class="lp-panel__title">AI 行銷</span>
+                <span class="lp-soon">部分即將推出</span>
+              </div>
+              <div class="lp-panel__bd lp-appcard__bd">
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>回購喚醒</b><small>久沒來的，替你請回來</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>生日與會員經營</b><small>該送券的時候自動送</small></div></div>
+                <!-- ⚠️ 真實介面截圖：後台「好友」頁的標籤欄，五位示範好友（無真實客資）。
+                     ⛔ 裁圖規矩：只能裁到示範資料那幾列——測試工作區下面幾列是**真實同事**
+                     的名字與頭像，入鏡就是把個資放上官網。重截用 scripts/landing-shots.mjs。 -->
+                <img
+                  class="lp-shot"
+                  src="/landing/admin-friends-tags.png"
+                  alt="後台好友列表：每位客人身上掛著彩色標籤，例如手沖愛好者、送禮客群、咖啡展加入，可直接篩選與改標籤"
+                  loading="lazy"
+                  width="1736"
+                  height="670"
+                >
+                <div class="lp-statrow lp-statrow--foot">
+                  <div class="lp-stat"><span class="lp-stat__l">每月喚回的訂單</span><span class="lp-stat__v"><i>0 張</i><em>→</em><b>12–18 張</b></span></div>
+                  <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 這一區有具體數字與還沒上線的項目，圖說三件事都要交代：
+               截圖是真介面、資料是示範、哪些功能還沒上線 -->
+          <p class="lp-figcap lp-figcap--center">
+            對話與好友畫面為<b>系統實際操作介面</b>，客人與資料為示範。數據以 2,000 好友示範店估算，非實際績效。
+            AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
+            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>（客人資料目前沒有購買紀錄與生日欄位）。
+          </p>
+
           <!-- ── 圖文選單：客人手機上的前後對照 ──
                「一句話代設」還沒上線 → 掛即將推出。
                ⛔ 草稿這裡畫的是一張五色平面 Banner，老闆看截圖說醜（跟原版 SCSS 早就寫下的
@@ -341,74 +401,6 @@
           <!-- 這張卡的示意與數據條講到還沒上線的「代設」，圖說要交代哪一半是現有的 -->
           <p class="lp-figcap lp-figcap--center">
             示意畫面。<b>選單現在就能在後台自己編排</b>；<b>用一句話請 {{ brandName }} 代設仍在開發中</b>（「2 小時 → 一句話」講的是代設上線後）。
-          </p>
-
-          <div class="lp-appgrid">
-            <div class="lp-panel lp-appcard">
-              <div class="lp-panel__hd">
-                <span class="lp-panel__pip" />
-                <span class="lp-panel__title">AI 客服</span>
-              </div>
-              <div class="lp-panel__bd lp-appcard__bd">
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div></div>
-                <!-- ⚠️ 真實介面截圖（2026-08-26 老闆拍板「截我們自己系統的圖」）：
-                     後台對話頁，資料是種在測試工作區的示範對話（示範帳號、無真實客資）。
-                     內容重點：AI 半夜秒回兩題（AI 徽章）→ 改訂單轉真人（機器人徽章）→
-                     隔天早上真人跟進（真人徽章）。⛔ 要換圖用
-                     scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs 重截，
-                     不可以自己拼一張假的當截圖。 -->
-                <img
-                  class="lp-shot"
-                  src="/landing/admin-chat.png"
-                  alt="後台對話畫面：客人半夜詢問手沖與禮盒，AI 立即回覆並標示 AI 徽章；改訂單需求轉給真人，隔天早上真人回覆並標示真人徽章"
-                  loading="lazy"
-                  width="1280"
-                  height="1052"
-                >
-                <div class="lp-statrow lp-statrow--foot">
-                  <div class="lp-stat"><span class="lp-stat__l">客人等回覆</span><span class="lp-stat__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
-                  <div class="lp-stat"><span class="lp-stat__l">訊息回覆率</span><span class="lp-stat__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="lp-panel lp-appcard">
-              <div class="lp-panel__hd">
-                <span class="lp-panel__pip" />
-                <span class="lp-panel__title">AI 行銷</span>
-                <span class="lp-soon">部分即將推出</span>
-              </div>
-              <div class="lp-panel__bd lp-appcard__bd">
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>回購喚醒</b><small>久沒來的，替你請回來</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>生日與會員經營</b><small>該送券的時候自動送</small></div></div>
-                <!-- ⚠️ 真實介面截圖：後台「好友」頁的標籤欄，五位示範好友（無真實客資）。
-                     ⛔ 裁圖規矩：只能裁到示範資料那幾列——測試工作區下面幾列是**真實同事**
-                     的名字與頭像，入鏡就是把個資放上官網。重截用 scripts/landing-shots.mjs。 -->
-                <img
-                  class="lp-shot"
-                  src="/landing/admin-friends-tags.png"
-                  alt="後台好友列表：每位客人身上掛著彩色標籤，例如手沖愛好者、送禮客群、咖啡展加入，可直接篩選與改標籤"
-                  loading="lazy"
-                  width="1736"
-                  height="670"
-                >
-                <div class="lp-statrow lp-statrow--foot">
-                  <div class="lp-stat"><span class="lp-stat__l">每月喚回的訂單</span><span class="lp-stat__v"><i>0 張</i><em>→</em><b>12–18 張</b></span></div>
-                  <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 這一區有具體數字與還沒上線的項目，圖說三件事都要交代：
-               截圖是真介面、資料是示範、哪些功能還沒上線 -->
-          <p class="lp-figcap lp-figcap--center">
-            對話與好友畫面為<b>系統實際操作介面</b>，客人與資料為示範。數據以 2,000 好友示範店估算，非實際績效。
-            AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
-            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>（客人資料目前沒有購買紀錄與生日欄位）。
           </p>
         </div>
       </div>
@@ -494,45 +486,9 @@
         <div class="lp-pricecta lp-reveal">
           <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <p class="lp-pricecta__fine">每個帳號都有免費額度，額度用完時 AI 會先轉真人接手，<b>不會自動扣款</b>。</p>
+          <!-- 法遵揭露搬到頁尾上方（#product-info），這裡留一條看得見的路過去 -->
+          <p class="lp-pricecta__more"><a href="#product-info">完整商品資訊、付款與發票說明 ↓</a></p>
         </div>
-
-        <!-- 商品資訊：把「商品名稱／說明／售價／付款與發票」集中一處。
-             信用卡收單的風控就是找這四項，散在行銷文案裡他們找不到（也是被退件的常見原因）。 -->
-        <div class="lp-product lp-reveal">
-          <h3 class="lp-product__h">商品資訊</h3>
-          <dl class="lp-product__list">
-            <div class="lp-product__row">
-              <dt>商品名稱</dt>
-              <dd><b>{{ serviceFullName }}</b></dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>商品說明</dt>
-              <dd>讓 LINE 官方帳號的商家用戶透過本系統，導入自動化 AI 客服回覆，以及行銷與客戶關係管理(CRM)系統。以線上訂閱方式提供，無實體商品、不需運送。</dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>商品售價</dt>
-              <dd>月租 {{ paidPriceList }}（新臺幣含稅價，以「LINE 官方帳號」為單位計價）；另有免費方案，企業需求為客製報價。</dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>付款與發票</dt>
-              <!-- 帳單請款名稱要在這裡露出：風控找的就是這張卡，客人事後對帳也翻得到
-                   （為什麼非講不可見 shared/billing/statement.ts）。 -->
-              <dd>
-                信用卡付款，由<b>統一金流 PAYUNi</b> 處理；付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。<template v-if="cardStatementName">信用卡帳單上會顯示「<b>{{ cardStatementName }}</b>」（{{ companyName }}）。</template>
-              </dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>銷售者</dt>
-              <dd>{{ companyName }}（統一編號 {{ taxId }}）　客服電話 {{ phone }}　客服信箱 {{ email }}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <!-- 付款方式、發票、含稅、計價單位都寫在上面的商品資訊卡了，這裡只補它沒講的 -->
-        <p class="lp-price__fine lp-reveal">
-          ＊不綁約、隨時可取消，取消後服務用到本期結束——詳見<NuxtLink to="/refund">退費與取消政策</NuxtLink>與<NuxtLink to="/terms">服務條款</NuxtLink>。
-          試銷期方案與額度可能調整，實際以後台顯示為準。
-        </p>
       </div>
     </section>
 
@@ -652,6 +608,52 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ── 商品資訊（金流風控揭露）─────────────────────────────
+         商品名稱／說明／售價／付款與發票必須**集中同一處且對外可見**——信用卡收單風控
+         逐項核對的就是這張卡，散在行銷文案裡是被退件的常見原因。
+         ⚠️ 08-26 版面重排③從定價區搬到這裡（頁尾正上方）：它是法遵揭露不是銷售內容，
+            留在報價正下方會打斷「報價→成長→FAQ」的敘事；定價區留了一條錨點連結過來。
+         ⛔ 要整個搬出 index 到獨立頁＝改到金流申報頁面的內容，先問過老闆／PAYUNi 再動。 -->
+    <section id="product-info" class="lp-section lp-section--tint lp-productsec">
+      <div class="lp-wrap">
+        <div class="lp-product lp-reveal">
+          <h3 class="lp-product__h">商品資訊</h3>
+          <dl class="lp-product__list">
+            <div class="lp-product__row">
+              <dt>商品名稱</dt>
+              <dd><b>{{ serviceFullName }}</b></dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>商品說明</dt>
+              <dd>讓 LINE 官方帳號的商家用戶透過本系統，導入自動化 AI 客服回覆，以及行銷與客戶關係管理(CRM)系統。以線上訂閱方式提供，無實體商品、不需運送。</dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>商品售價</dt>
+              <dd>月租 {{ paidPriceList }}（新臺幣含稅價，以「LINE 官方帳號」為單位計價）；另有免費方案，企業需求為客製報價。</dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>付款與發票</dt>
+              <!-- 帳單請款名稱要在這裡露出：風控找的就是這張卡，客人事後對帳也翻得到
+                   （為什麼非講不可見 shared/billing/statement.ts）。 -->
+              <dd>
+                信用卡付款，由<b>統一金流 PAYUNi</b> 處理；付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。<template v-if="cardStatementName">信用卡帳單上會顯示「<b>{{ cardStatementName }}</b>」（{{ companyName }}）。</template>
+              </dd>
+            </div>
+            <div class="lp-product__row">
+              <dt>銷售者</dt>
+              <dd>{{ companyName }}（統一編號 {{ taxId }}）　客服電話 {{ phone }}　客服信箱 {{ email }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 付款方式、發票、含稅、計價單位都寫在上面的商品資訊卡了，這裡只補它沒講的 -->
+        <p class="lp-price__fine lp-reveal">
+          ＊不綁約、隨時可取消，取消後服務用到本期結束——詳見<NuxtLink to="/refund">退費與取消政策</NuxtLink>與<NuxtLink to="/terms">服務條款</NuxtLink>。
+          試銷期方案與額度可能調整，實際以後台顯示為準。
+        </p>
       </div>
     </section>
 
