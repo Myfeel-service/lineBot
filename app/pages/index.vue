@@ -29,8 +29,9 @@
               頁尾的「功能比較」連結同步拿掉了。
 
          ⛔ 還沒上線的功能一律掛「即將推出」（.lp-soon）並用圖說講清楚哪一半是現有的。
-            目前掛著的有：圖文選單代設、AI 行銷卡（回購喚醒／生日經營）；
-            Hero 時機卡的「新好友還沒開口」名單寫在圖說裡。（判斷依據見 docs/STATUS.md）
+            目前掛著的有：圖文選單代設、AI 行銷卡（回購喚醒／生日經營）。
+            Hero 時機卡走另一套誠實機制（卡上只放真功能＋「示範店」標示，見該區註解）。
+            （判斷依據見 docs/STATUS.md）
          ⛔ 草稿裡的「付費後隨時可退」「前 14 天免費」**沒有照搬**：退費措辭只有一種寫法
             「不綁約、隨時可取消，取消後服務用到本期結束」——實際政策沒有退現金也沒有試用期，
             寫了就是對消費者的不實承諾（政策原文見 pages/refund.vue）。
@@ -63,10 +64,14 @@
     </nav>
 
     <!-- ── Hero ────────────────────────────────────────────────
-         右邊是「現在可以把握的時機」卡（08-26 草稿）：節慶、客戶狀態、標籤三組時機。
-         節慶那組吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆），
-         其餘兩組與好友數是虛構示範——所以圖說必須交代哪一半是真的（⛔ 拿掉圖說前先想清楚：
-         沒有那行，虛構人數就是被當成真實客戶資料在賣）。 -->
+         右邊是時機卡：節慶、該關心的客人、你分好的客群三組。
+         節慶那組吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆）。
+         ⚠️ 誠實機制（2026-08-26 老闆拍板拿掉圖說後的替代方案，⛔別拆）：
+           1. 卡片標頭右側掛「示範店 · 山丘咖啡」＝整張卡明示是示範資料，人數才可以出現；
+              拿掉這個標示、又不掛圖說，虛構人數就是被當成真實客戶資料在賣。
+           2. 卡上每一列都必須是**現在真的做得到**的事（節慶提醒、加入時間名單、
+              60 天沒互動自動標籤、標籤分眾都是真功能）——之前「還沒說過第一句話」
+              是開發中的偵測，已改掉。⛔要再放開發中的能力，免責圖說就得加回來。 -->
     <header id="top" class="lp-hero">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
@@ -79,6 +84,9 @@
             品牌的 LINE 官方帳號有好多好友，<br>
             <b>卻不知道如何經營他們嗎？</b>
           </p>
+          <!-- 解答句：敘事閉環的第三拍（值錢→沒空經營→它是你的分身→免費打造）。
+               ⛔刻意只有一行——「客服它回、行銷它提醒」往下捲整頁都在講，Hero 不多扛說明 -->
+          <p class="lp-hero__answer"><b>{{ brandName }}</b>，替你經營他們的 AI 分身。</p>
           <div class="lp-hero__actions">
             <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           </div>
@@ -91,8 +99,9 @@
           <div class="lp-panel lp-ops">
             <div class="lp-panel__hd">
               <span class="lp-panel__pip" />
-              <span class="lp-panel__title">現在可以把握的時機</span>
-              <span class="lp-panel__meta">2,148 位好友</span>
+              <span class="lp-panel__title">你的好友裡，藏著這些機會</span>
+              <!-- 「示範店」標示是人數能出現的前提（見區塊註解），⛔別為了版面把它換回好友數 -->
+              <span class="lp-panel__meta">示範店 · 山丘咖啡</span>
             </div>
 
             <div class="lp-ops__group">
@@ -105,10 +114,10 @@
             </div>
 
             <div class="lp-ops__group">
-              <div class="lp-ops__head">客戶狀態</div>
+              <div class="lp-ops__head">該關心的客人</div>
               <div class="lp-op">
                 <b>本週新加入的好友</b>
-                <small>還沒說過第一句話</small>
+                <small>可以送上一句歡迎</small>
                 <span class="lp-op__tag lp-op__tag--num">38 位</span>
               </div>
               <div class="lp-op">
@@ -119,7 +128,7 @@
             </div>
 
             <div class="lp-ops__group">
-              <div class="lp-ops__head">標籤</div>
+              <div class="lp-ops__head">你分好的客群</div>
               <div class="lp-op">
                 <b>南港展覽館咖啡展</b>
                 <small>展場加入的好友</small>
@@ -133,13 +142,9 @@
             </div>
 
             <div class="lp-ops__cta">
-              <NuxtLink class="lp-btn lp-btn--primary lp-btn--block" to="/login">建立你的 {{ brandName }}</NuxtLink>
+              <NuxtLink class="lp-btn lp-btn--primary lp-btn--block" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
             </div>
           </div>
-          <p class="lp-figcap">
-            示意畫面：好友數、人數與標籤為虛構示範。節慶檔期與「60 天沒聯絡」名單是現有功能、由系統自動產生；
-            「新好友還沒開口」的自動名單仍在開發中。
-          </p>
         </div>
       </div>
     </header>

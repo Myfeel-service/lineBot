@@ -273,6 +273,9 @@
   .lp-hero h1 .g { color: var(--g-deep); }
   .lp-hero__sub { color: var(--ink-2); font-size: clamp(1.05rem, 1.5vw, 1.24rem); line-height: 1.7; margin: 22px 0 0; max-width: 34ch; }
   .lp-hero__sub b { color: var(--ink); font-weight: 700; }
+  /* 解答句：比副標小半級、墨灰——它是「答案」不是第二個標題 */
+  .lp-hero__answer { color: var(--ink-2); font-size: 1rem; line-height: 1.8; margin: 14px 0 0; }
+  .lp-hero__answer b { color: var(--ink); font-weight: 700; }
   .lp-hero__actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
   .lp-hero__fine { margin: 20px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
   /* nowrap：手機上「NT$399 起」會斷在空白處，把「起」孤零零丟到下一行 */
