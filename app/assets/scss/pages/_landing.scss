@@ -194,8 +194,11 @@
   .lp-stack { margin-top: var(--section-head-gap); }
 
   /* 圖說：示意畫面必須標示，數字才不會被當成真實績效 */
-  .lp-figcap { margin: 14px 0 0; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.7; }
-  .lp-figcap--center { text-align: center; margin-top: 24px; }
+  .lp-figcap { margin: 14px 0 0; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.8; }
+  /* 置中圖說夾在兩塊卡片中間：上下**都要**留白（原本只有上邊距，字直接貼著下面的卡，
+     2026-08-26 老闆截圖抓的）；行寬鎖 44em ≈ 一行 44 個中文字——滿版 1160px 一行 80+ 字，
+     置中多行時每行起點都在跳，讀起來很吃力。 */
+  .lp-figcap--center { text-align: center; margin: 28px auto; max-width: 44em; }
 
   /* 「即將推出」：功能還沒上線就一定要掛，不能當現有功能賣。
      line-height 寫死：繼承的 1.7 會讓它比隔壁純文字的標頭高 0.5px，並排兩張卡就差 1px。 */
@@ -429,7 +432,9 @@
   .lp-stat__v b { font-size: 1.05rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
 
   /* ── AI 客服／AI 行銷 兩張卡 ─────────────────────────────── */
-  .lp-appgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; align-items: stretch; }
+  /* ⚠️ 不設 margin-top：它是 .lp-stack 的第一個孩子，節奏由 --section-head-gap 統一給
+     （先前殘留的 16px 讓這區「標題→內容」變 60px，其他區都是 44px）。 */
+  .lp-appgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
   .lp-appcard { display: flex; flex-direction: column; }
   .lp-appcard__bd { flex: 1; display: flex; flex-direction: column; }
   /* 分隔線畫在後一列的上緣（別用 :last-of-type 收尾——底下還有其他 div，會選錯） */

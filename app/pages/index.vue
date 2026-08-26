@@ -270,6 +270,7 @@
               <div class="lp-panel__hd">
                 <span class="lp-panel__pip" />
                 <span class="lp-panel__title">AI 客服</span>
+                <span class="lp-panel__meta">系統實際畫面</span>
               </div>
               <div class="lp-panel__bd lp-appcard__bd">
                 <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
@@ -299,6 +300,7 @@
               <div class="lp-panel__hd">
                 <span class="lp-panel__pip" />
                 <span class="lp-panel__title">AI 行銷</span>
+                <span class="lp-panel__meta">系統實際畫面</span>
                 <span class="lp-soon">部分即將推出</span>
               </div>
               <div class="lp-panel__bd lp-appcard__bd">
@@ -325,12 +327,12 @@
             </div>
           </div>
 
-          <!-- 這一區有具體數字與還沒上線的項目，圖說三件事都要交代：
-               截圖是真介面、資料是示範、哪些功能還沒上線 -->
+          <!-- 這一區有具體數字與還沒上線的項目，圖說要交代：資料是示範、數據是估算、
+               哪些還沒上線（「這是真介面」由卡片標頭的「系統實際畫面」meta 講）。
+               兩個短句各佔一行——原本一大段四件事擠 80 字寬，老闆截圖抓過難讀。 -->
           <p class="lp-figcap lp-figcap--center">
-            對話與好友畫面為<b>系統實際操作介面</b>，客人與資料為示範。數據以 2,000 好友示範店估算，非實際績效。
-            AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
-            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>（客人資料目前沒有購買紀錄與生日欄位）。
+            畫面中的客人與資料為示範；數據以 2,000 好友的示範店估算，非實際績效。<br>
+            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>，其餘皆為現有功能。
           </p>
 
           <!-- ── 圖文選單：客人手機上的前後對照 ──
@@ -401,7 +403,8 @@
           </div>
           <!-- 這張卡的示意與數據條講到還沒上線的「代設」，圖說要交代哪一半是現有的 -->
           <p class="lp-figcap lp-figcap--center">
-            示意畫面。<b>選單現在就能在後台自己編排</b>；<b>用一句話請 {{ brandName }} 代設仍在開發中</b>（「2 小時 → 一句話」講的是代設上線後）。
+            示意畫面。<b>選單現在就能在後台自己編排</b>；<br>
+            「2 小時 → 一句話」的<b>一句話代設仍在開發中</b>。
           </p>
         </div>
       </div>
