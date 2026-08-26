@@ -29,6 +29,9 @@
           <!-- ⛔ 別加回 /#diff：首頁的比較表 2026-08-26 隨新版草稿整區移除 -->
           <li><a href="/#value">產品介紹</a></li>
           <li><a href="/#pricing">定價</a></li>
+          <!-- 商品資訊＝金流風控的五項揭露（獨立頁）。⛔ 這條連結是全站可達性的保證，別拿掉；
+               也別把它搬進 POLICY_LINKS——那份清單餵結帳同意勾選，商品資訊不是要人同意的政策 -->
+          <li><NuxtLink to="/product-info">商品資訊</NuxtLink></li>
           <li><a href="/#faq">常見問題</a></li>
           <li><NuxtLink to="/login">免費註冊</NuxtLink></li>
           <li><NuxtLink to="/login">登入</NuxtLink></li>

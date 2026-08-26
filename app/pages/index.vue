@@ -11,14 +11,15 @@
          （那套已經試過兩次、兩次都被打槍，詳見 _landing.scss 檔頭）。
          ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯（灰的掛 .lp-section--tint）。
             目前順序：Hero(白) why(灰) value(白) fast(灰) pricing(白) grow(灰) faq(白)
-            product-info(灰) 收尾CTA(綠)。新增或搬動區塊要跟著調。
+            收尾CTA(綠)。新增或搬動區塊要跟著調。
          ⚠️ 2026-08-26 三處版面重排（老闆「排版只是參考，用資深 UIUX 重新想」）：
             ①「四關」與「解法」併成一區——原本兩個整屏區塊講同一件事，解法列還把
               四個問題重抄一遍；現在每張牆卡自帶解法（問題上、✓解法下），省一屏、對仗更強。
             ②「能做什麼」先人後介面——AI 客服/AI 行銷（有真截圖）先出，圖文選單卡在後；
               賣點是「多半個客服半個行銷」，選單是佐證不是主張。
-            ③ 商品資訊卡從定價區搬到頁尾正上方（#product-info）——它是金流風控揭露，
-              不是銷售內容，卡在報價和成長故事中間會打斷敘事；仍在同一頁、四項仍集中一處。
+            ③ 商品資訊卡已搬成**獨立頁 /product-info**（08-26 老闆拍板「直接開一個頁面」）：
+              金流風控要的五項揭露集中在那一頁，入口＝定價區連結＋全站頁尾「產品」欄。
+              ⚠️ 當初 PAYUNi 審的是首頁上的卡，搬頁後上線前建議知會 PAYUNi 業務一句。
 
          ⚠️ 兩件事會連坐別的頁面，動之前先看：
            1. 外殼類名（.lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot）與三個法務頁
@@ -508,8 +509,8 @@
         <div class="lp-pricecta lp-reveal">
           <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <p class="lp-pricecta__fine">每個帳號都有免費額度，額度用完時 AI 會先轉真人接手，<b>不會自動扣款</b>。</p>
-          <!-- 法遵揭露搬到頁尾上方（#product-info），這裡留一條看得見的路過去 -->
-          <p class="lp-pricecta__more"><a href="#product-info">完整商品資訊、付款與發票說明 ↓</a></p>
+          <!-- 法遵揭露在獨立頁（/product-info，頁尾也有入口），這裡留一條看得見的路過去 -->
+          <p class="lp-pricecta__more"><NuxtLink to="/product-info">完整商品資訊、付款與發票說明 →</NuxtLink></p>
         </div>
       </div>
     </section>
@@ -633,52 +634,6 @@
       </div>
     </section>
 
-    <!-- ── 商品資訊（金流風控揭露）─────────────────────────────
-         商品名稱／說明／售價／付款與發票必須**集中同一處且對外可見**——信用卡收單風控
-         逐項核對的就是這張卡，散在行銷文案裡是被退件的常見原因。
-         ⚠️ 08-26 版面重排③從定價區搬到這裡（頁尾正上方）：它是法遵揭露不是銷售內容，
-            留在報價正下方會打斷「報價→成長→FAQ」的敘事；定價區留了一條錨點連結過來。
-         ⛔ 要整個搬出 index 到獨立頁＝改到金流申報頁面的內容，先問過老闆／PAYUNi 再動。 -->
-    <section id="product-info" class="lp-section lp-section--tint lp-productsec">
-      <div class="lp-wrap">
-        <div class="lp-product lp-reveal">
-          <h3 class="lp-product__h">商品資訊</h3>
-          <dl class="lp-product__list">
-            <div class="lp-product__row">
-              <dt>商品名稱</dt>
-              <dd><b>{{ serviceFullName }}</b></dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>商品說明</dt>
-              <dd>讓 LINE 官方帳號的商家用戶透過本系統，導入自動化 AI 客服回覆，以及行銷與客戶關係管理(CRM)系統。以線上訂閱方式提供，無實體商品、不需運送。</dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>商品售價</dt>
-              <dd>月租 {{ paidPriceList }}（新臺幣含稅價，以「LINE 官方帳號」為單位計價）；另有免費方案，企業需求為客製報價。</dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>付款與發票</dt>
-              <!-- 帳單請款名稱要在這裡露出：風控找的就是這張卡，客人事後對帳也翻得到
-                   （為什麼非講不可見 shared/billing/statement.ts）。 -->
-              <dd>
-                信用卡付款，由<b>統一金流 PAYUNi</b> 處理；付款完成後依法開立<b>電子發票</b>並寄到你的帳務信箱。<template v-if="cardStatementName">信用卡帳單上會顯示「<b>{{ cardStatementName }}</b>」（{{ companyName }}）。</template>
-              </dd>
-            </div>
-            <div class="lp-product__row">
-              <dt>銷售者</dt>
-              <dd>{{ companyName }}（統一編號 {{ taxId }}）　客服電話 {{ phone }}　客服信箱 {{ email }}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <!-- 付款方式、發票、含稅、計價單位都寫在上面的商品資訊卡了，這裡只補它沒講的 -->
-        <p class="lp-price__fine lp-reveal">
-          ＊不綁約、隨時可取消，取消後服務用到本期結束——詳見<NuxtLink to="/refund">退費與取消政策</NuxtLink>與<NuxtLink to="/terms">服務條款</NuxtLink>。
-          試銷期方案與額度可能調整，實際以後台顯示為準。
-        </p>
-      </div>
-    </section>
-
     <!-- ── 收尾 CTA ────────────────────────────────────────────
          想找人談的路徑＝頁尾的客服電話／信箱＋這裡的來信洽詢（預約 Demo 表單 08-14 已移除，
          ⛔ 不要留 /#demo 死錨點）。 -->
@@ -722,7 +677,7 @@ definePageMeta({ layout: false })
 // ⚠️ brandName = 品牌／產品名（MiniMe）、companyName = 營運主體（麥菲爾股份有限公司），別混用。
 // ⚠️ 草稿裡寫「Mini Me」（有空格）的地方一律用 brandName 代入：商標、電子發票品名、
 //    向 PAYUNi 申報的商品名都是無空格的 MiniMe，門面自己寫另一種拼法會對不起來。
-const { brandName, serviceFullName, companyName, taxId, phone, email, emailHref, cardStatementName } = useSiteIdentity()
+const { brandName, email, emailHref } = useSiteIdentity()
 
 const plusIcon
   = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3v12M3 9h12"/></svg>'
@@ -742,22 +697,6 @@ const lowestPaidPrice = computed(() => {
     .filter((n): n is number => typeof n === 'number' && n > 0)
   return prices.length ? Math.min(...prices) : 0
 })
-
-/**
- * 商品資訊要揭露的售價：跟著檯面上在賣的（`FEATURED_PLAN_IDS`，試銷期只主打免費＋399，
- * 2026-08-14 老闆拍板、08-21 再確認）。
- *
- * ⚠️ 這是刻意的取捨，不是漏寫：風控的紅線是「門面出現**未申報**的價格」，
- *    列得比申報少不踩線，列得比申報多才會被退件。但 799 / 1,499 在 plans.ts 仍是
- *    可自助結帳的方案（系統收得到、官網沒寫），要真正停售見 STATUS `D-14`。
- */
-const paidPriceList = computed(() =>
-  FEATURED_PLAN_IDS
-    .map(id => BILLING_PLANS[id])
-    .filter(p => typeof p.priceMonthly === 'number' && p.priceMonthly > 0)
-    .map(p => `NT$${fmt(p.priceMonthly as number)}`)
-    .join('／'),
-)
 
 // ── SEO / 社群分享 ──
 // ⚠️ 這一段一定要放在 lowestPaidPrice 之後：ogDescription 是會被立刻求值的函式，

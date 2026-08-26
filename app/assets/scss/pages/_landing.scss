@@ -21,7 +21,7 @@
    ⚠️ #value / #pricing / #faq 這三個 id 是**外部連結的目標**——頁尾與三個法務頁的
    「產品介紹／定價／常見問題」都指它們（見 components/site/SiteFooter.vue），改名會變死連結。
    #diff（比較表）已隨 2026-08-26 改版整區移除，頁尾連結同步拿掉了。 */
-.lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq, .lp #product-info { scroll-margin-top: 80px; }
+.lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq { scroll-margin-top: 80px; }
 
 .lp {
   /* Palette — 沿用全站共用品牌綠 token（門面頁統一同一套來源）*/
@@ -514,14 +514,14 @@
   .lp-pricecta__more a:hover { color: var(--g-deep); }
 
   /* 商品資訊（商品名稱／說明／售價／付款與發票／銷售者）：金流風控的核對清單。
-     ⛔ 這張卡不能跟著改版拿掉：四項要集中同一處，散在行銷文案裡會被退件。
-     位置在頁尾正上方的獨立窄段（#product-info，08-26 版面重排③）——法遵揭露要能
-     一眼掃到、但不該打斷銷售敘事；定價區留了錨點連結過來。 */
-  .lp-productsec { padding: clamp(44px, 6vw, 64px) 0; }
+     ⚠️ 2026-08-26 起住在獨立頁 /product-info（pages/product-info.vue，用法務頁外殼）——
+     這組樣式現在只有那一頁在用。⛔ 五項揭露不能散掉，理由見該頁檔頭。 */
   .lp-product {
-    background: var(--paper); border: 1px solid var(--hair);
+    background: var(--surf-2); border: 1px solid var(--hair);
     border-radius: var(--r-card); padding: 24px 26px;
   }
+  /* 在內容頁裡卡片跟著上面的 h2 走，不用首頁時期的大留白 */
+  .lp-product--page { margin-top: 12px; }
   .lp-product__h {
     margin: 0 0 14px; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.04em;
     color: var(--ink-soft);

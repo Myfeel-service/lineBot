@@ -70,8 +70,11 @@ const props = defineProps<{
 // brandName 只用在商標連結的 aria-label（看得到的字樣在 logotype 圖檔裡）
 const { brandName, serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours } = useSiteIdentity()
 
-/** 「對本政策有疑問」的自稱：把標題的「政策 / 條款」尾字拿來用，讀起來才順。 */
-const shortName = computed(() => (props.title.endsWith('條款') ? '條款' : '政策'))
+/** 「對本政策有疑問」的自稱：把標題的「政策 / 條款」尾字拿來用，讀起來才順。
+    非政策類的頁（商品資訊）自稱「頁面」——寫「對本政策有疑問」會像走錯頁。 */
+const shortName = computed(() =>
+  props.title.endsWith('條款') ? '條款' : props.title.endsWith('政策') ? '政策' : '頁面',
+)
 
 const route = useRoute()
 /** 頁尾之外，條款彼此互連（審核與客戶都常一次看完三份）。 */
