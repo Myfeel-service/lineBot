@@ -21,7 +21,9 @@
 
 > 🔑 **2026-08-22 起推送不再卡 403**：部署跟的是 `myfeel` remote（`Myfeel-service/lineBot`），本機憑證就是 Myfeel-service，**`git push myfeel main` 直接推、推完 Amplify 自動部署**（用線上首頁指紋驗證過）。`origin` 已停用，不推、不對照。
 
-（目前沒有未 commit 的工作。）
+| 編號 | 項目 | 狀態 | 說明 |
+|---|---|---|---|
+| `C-82` | 頁面級提醒條：點進來的那一頁自己列出「有什麼事＋下一步按鈕」，全站同位置同長相（`D-33` 二輪） | `DOING` | **2026-08-27 老闆實看 `C-81` 後回饋**：「點左邊 bar 進來後不知道要做什麼、不知道異常在哪、每頁的異常提醒要統一 UX」——一輪只做到「側欄的點」與「個別頁的個別落點」，點把人帶到頁之後沒人接手，而且落點是各頁各刻（標籤頁一條、組織頁一條，長相位置都不保證一樣）。**修法＝新元件 `AdminPageAlertStrip` 掛在 layout（`default.vue`，AdminQuotaBanner 旁）**：每一頁進來，同一位置自動列出這一頁現在有的異常（標題＋件數＋白話後果＋一顆「下一步」按鈕），資料吃 `useWorkspaceAlerts.alertsForPath()`＝與側欄的點**同一個展開**（⛔保證「點亮在哪頁、那頁就列得出同一批事」，測試釘死這件事）。按鈕規則：深連結帶狀態（`?tab=`／`?health=`／`?verify=`）→ 跨頁 SPA 導航、**同頁一律整頁重載**（⛔實查過 conversations／knowledge／organization 三頁的 deep-link 都只在 onMounted 讀 query，同頁推 query 沒反應）；深連結就是本頁自己（無 query）→ 不給按鈕，「在哪一格」由頁內區塊層接手。**同輪拆掉 `C-81` 各頁自刻的兩條**（tags 的 scannerStalled、organization 的 maintenanceStalled）改吃統一條——每頁長得不一樣正是老闆抓的問題。系統端異常自動補一句「不用你操作」（D-8③ 口徑）。動到：`AdminPageAlertStrip.vue`（新）／`useWorkspaceAlerts.ts`（+`alertsForPath`）／`layouts/default.vue`／`tags.vue`／`settings/organization.vue`／`_block-status.scss`（含 split 頁全出血補邊距）／測試 +1（12 項全綠）。已驗：typecheck 0 錯、vitest 1679 全綠、`nuxt build` 成功、headless 渲染 split 頁頂端版面（紅琥珀兩列、間距 12px）。⚠️畫面未實機走（同 `C-81` 那四件一起驗） |
 
 ---
 

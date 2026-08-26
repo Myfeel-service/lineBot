@@ -69,6 +69,21 @@
   margin-top: 12px;
 }
 
+/* ── 頁面級提醒條（AdminPageAlertStrip，D-33 二輪）────────────
+   掛在 layout、AdminQuotaBanner 旁：每一頁的提醒都在同一個位置同一個長相。
+   沒事整條不渲染（v-if），所以不用處理空狀態的間距。 */
+.page-alert-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* split-layout 頁的 main-content 是零 padding 全出血（見 layout/_main.scss），
+   這裡自己補邊距，否則提醒條會貼著視窗邊緣 */
+.main-content:has(.split-layout) .page-alert-strip {
+  margin: 0.75rem 0.75rem 0;
+}
+
 /* ── 頁首「這頁怎麼用」（AdminPageHelpButton，D-33 P1-5）──────
    跟在標題後面的一顆問號。刻意做小、做灰：它是隨時在的求救出口，
    不是這一頁要人做的事——搶了主要動作的注意力就本末倒置。 */

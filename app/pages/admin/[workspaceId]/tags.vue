@@ -16,19 +16,8 @@
 
     <template #editor-body>
       <div class="solo-editor-body admin-panel-stack">
-        <!--
-          掃描停擺要在這一頁講（D-33 P2）。
-          小幫手那顆琥珀異常會把人帶到這一頁，但這頁本來什麼都不會說——而「沒有新建議」
-          和「掃描壞了所以不會有新建議」在畫面上長得一模一樣，看起來只是 AI 沒東西可提。
-          ⚠️卡片本身「沒建議就不出現」是刻意的，所以這條狀態列必須獨立於那張卡。
-        -->
-        <AdminBlockStatus
-          v-if="scannerStalled"
-          tone="warning"
-          title="AI 讀對話的背景掃描連續失敗中，暫時不會有新的標籤建議"
-          detail="已經建好的標籤與貼標規則照常運作，只有「自動發現新標籤」這件事停了。這是系統端的問題，不用你操作；若一整天都這樣請聯絡我們。"
-        />
-
+        <!-- 掃描停擺的提醒改由版型層的「頁面級提醒條」統一顯示（AdminPageAlertStrip，
+             D-33 二輪）——⛔別在這頁再自刻一條，每頁長得不一樣正是老闆抓的問題 -->
         <!-- ══ AI 發現的新標籤（老闆 08-25 拍板）═══════════════════
              掃描器每週讀一次最近的對話，找「很多客人在聊、但還沒有標籤」的主題。
              按「建立」才會真的新增（同時幫聊過的那批客人貼上）；按「不要」永不再提。
@@ -472,15 +461,6 @@ const { workspaceId, apiFetch } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 const { tags, loading, total, segments, page, pageSize, loadTags } = useAdminTagList()
 const { showToast } = useAdminToast()
-/**
- * 貼標掃描是不是停擺了（D-33 P2）。
- * ⛔ 讀的是小幫手那份共用狀態（`useWorkspaceAlerts`），**不另外打查詢**——
- * 同一件事兩支查詢就會出現「小幫手說壞了、這頁說沒事」。
- */
-const { alerts: workspaceAlerts } = useWorkspaceAlerts()
-const scannerStalled = computed(() =>
-  workspaceAlerts.value.some(a => a.id === 'scannerStalled' && a.state === 'active'),
-)
 
 const saving = ref(false)
 const dialogVisible = ref(false)

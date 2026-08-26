@@ -133,6 +133,28 @@ describe('側欄狀態點：什麼該畫、什麼不該畫', () => {
     })
   })
 
+  it('頁面級提醒條與側欄的點吃同一個展開：點亮在哪頁，那頁就列得出同一批事＋完整深連結', async () => {
+    const a = await load([
+      { id: 'humanBacklog', state: 'active', count: 2 },
+      { id: 'knowledgeSyncFailed', state: 'active', count: 1 },
+      { id: 'brokenModuleButton', state: 'active', count: 1, scopes: ['campaign'] },
+    ])
+
+    // 對話頁列出 backlog，按鈕帶著「切到待真人分頁」的深連結（這就是下一步）
+    const conv = a.alertsForPath('/admin/w1/conversations')
+    expect(conv.map(r => r.alert.id)).toEqual(['humanBacklog'])
+    expect(conv[0]!.to).toBe('/admin/w1/conversations?tab=pending_human')
+
+    // 壞在活動 → 活動頁列得出來；沒事的頁（圖文選單）一列都沒有——沒事就不出現
+    expect(a.alertsForPath('/admin/w1/campaigns').map(r => r.alert.id)).toEqual(['brokenModuleButton'])
+    expect(a.alertsForPath('/admin/w1/richmenu')).toEqual([])
+
+    // 與 navAlerts 完全同一批頁：兩邊各算各的就會「點亮著、進來卻空白」
+    expect(Object.keys(a.navAlerts.value).sort()).toEqual(
+      ['/admin/w1/campaigns', '/admin/w1/conversations', '/admin/w1/knowledge/sources'].sort(),
+    )
+  })
+
   it('換帳號時清空：把 A 家的紅點留在 B 家的側欄上是最糟的錯', async () => {
     const a = await load([{ id: 'lineWebhookBroken', state: 'active' }])
     expect(a.navAlerts.value['/admin/w1/settings/organization']?.severity).toBe('critical')

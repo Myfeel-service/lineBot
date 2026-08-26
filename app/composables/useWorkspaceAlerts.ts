@@ -616,6 +616,29 @@ export function useWorkspaceAlerts() {
     return out
   })
 
+  /**
+   * 「這一頁現在有的事」（D-33 二輪，2026-08-27 老闆回饋）：給頁面級提醒條用。
+   *
+   * 側欄的點只回答「去哪一頁」，人到了頁面沒有東西接手講「有什麼事、下一步按哪裡」——
+   * 這支跟 `navAlerts` 用**同一個展開**（alertRoutes），保證「點亮在哪頁、那頁就列得出同一批事」。
+   * 回傳的 `to` 是完整深連結（含 `?tab=`／`?health=`／`?verify=`），按鈕就是下一步。
+   */
+  function alertsForPath(path: string): { alert: ResolvedAlert, to: string }[] {
+    const wid = workspaceId.value
+    if (!wid)
+      return []
+    const out: { alert: ResolvedAlert, to: string }[] = []
+    for (const a of activeAlerts.value) {
+      for (const to of alertRoutes(a, a.scopes, wid)) {
+        if (to.split('?')[0] === path) {
+          out.push({ alert: a, to })
+          break // 同一顆異常在同一頁只列一次
+        }
+      }
+    }
+    return out // activeAlerts 已經紅在前，這裡不用再排
+  }
+
   /** 這次查不到狀態的項目（要現形，不能偷偷當成沒事） */
   const unknownAlerts = computed(() =>
     loaded.value ? visibleAlerts.value.filter(a => a.state === 'unknown') : [],
@@ -656,6 +679,7 @@ export function useWorkspaceAlerts() {
     snoozedAlerts,
     unknownAlerts,
     navAlerts,
+    alertsForPath,
     checkedCount,
     loaded,
     loading,

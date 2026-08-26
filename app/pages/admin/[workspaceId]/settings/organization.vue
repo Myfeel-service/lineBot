@@ -15,18 +15,8 @@
 
     <template #editor-body>
       <div class="ls-page-body admin-panel-stack">
-        <!--
-          背景維護停擺的落點（D-33 P3）。小幫手那顆琥珀異常會把人帶到這一頁，
-          但這頁只講 LINE 連線，使用者到了會找不到它在說什麼。
-          ⚠️這是系統端的事，文案要明講「不用你操作」，否則會有人反覆點進來找能按的東西。
-        -->
-        <AdminBlockStatus
-          v-if="maintenanceStalled"
-          tone="warning"
-          title="背景的自動維護停擺了（轉真人提醒、逾時自動交回、資料更新偵測）"
-          detail="LINE 連線本身沒事，客人照樣收得到回覆。這是系統端的問題，不用你操作；若持續一整天請聯絡我們。"
-        />
-
+        <!-- 背景維護停擺的提醒改由版型層的「頁面級提醒條」統一顯示（AdminPageAlertStrip，
+             D-33 二輪）——⛔別在這頁再自刻一條，每頁長得不一樣正是老闆抓的問題 -->
         <div class="message-card ar-section-card" data-tour="org-identity">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -306,14 +296,6 @@ type WorkspaceGet = {
 }
 
 const { showToast } = useAdminToast()
-/**
- * 背景維護是不是停擺了（D-33 P3）。
- * ⛔ 讀小幫手那份共用狀態，不另外打查詢——同一件事兩支查詢就會兩種說法。
- */
-const { alerts: workspaceAlerts } = useWorkspaceAlerts()
-const maintenanceStalled = computed(() =>
-  workspaceAlerts.value.some(a => a.id === 'maintenanceStalled' && a.state === 'active'),
-)
 const route = useRoute()
 const router = useRouter()
 const {
