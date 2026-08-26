@@ -158,9 +158,12 @@
          四個原因不是平等的：第一道（沒人手）是前提，另外三個是它的後果，
          所以第一張卡佔 1.45 倍寬並吃綠底。情境小圖（.lp-wall__scene）是抽象示意圖形
          （人、對話、後台、價標），不含任何數字宣稱，不用掛示意圖說。
-         ⚠️ 每張牆卡底部帶自己的解法（✓ 綠字）——原本「四道牆」與「四關一次解掉」是
-            兩個整屏區塊，解法列還把問題重抄一遍才講解法；併卡之後問題與解法對得上、
-            省一整屏（08-26 版面重排①）。⛔ 解法別再拆回獨立區塊。 -->
+         ⚠️ 每張牆卡底部帶自己的答案（淡底面板）——原本「四道牆」與「四關一次解掉」是
+            兩個整屏區塊，解法列還把問題重抄一遍才講解法；併卡之後問題與答案對得上、
+            省一整屏（08-26 版面重排①）。⛔ 解法別再拆回獨立區塊。
+         ⛔ 答案一律**一句話、一行**（08-27 老闆拍板）：窄卡裡答案的可用寬度量出來只有
+            113px ≈ 一行 7 個字，寫成「一句＋一句補充」四張全部折行、四塊高低不齊。
+            四句要保持對仗（都是 7–8 字的動作句），補充說明留給下面的區塊講。 -->
     <section id="why" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
@@ -185,13 +188,9 @@
                 </g>
               </svg>
             </div>
-            <span class="lp-wall__n">1</span>
             <h3>沒有人可以做</h3>
-            <p>員工就是這麼多，每個人手上都滿了。</p>
-            <div class="lp-wall__fix">
-              <span class="lp-app__c">✓</span>
-              <div><b>它 24 小時都在</b><small>不用增加人力，也不用排班</small></div>
-            </div>
+            <p class="lp-wall__sub">員工就是這麼多，每個人手上都滿了。</p>
+            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>它 24 小時都在</p>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -205,13 +204,9 @@
                 <path d="M62 54 q-30 0 -30 18" stroke="#c6cec6" stroke-width="1.6" fill="none" stroke-dasharray="3 3" />
               </svg>
             </div>
-            <span class="lp-wall__n">2</span>
             <h3>派了員工，還要照顧他的情緒</h3>
-            <p>多一件事，就是多一次溝通。</p>
-            <div class="lp-wall__fix">
-              <span class="lp-app__c">✓</span>
-              <div><b>交辦只要一句話</b><small>它不會累，也不用溝通</small></div>
-            </div>
+            <p class="lp-wall__sub">多一件事，就是多一次溝通。</p>
+            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>交辦只要一句話</p>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -229,13 +224,9 @@
                 </g>
               </svg>
             </div>
-            <span class="lp-wall__n">3</span>
             <h3>自己動手，後台太複雜</h3>
-            <p>打開來一堆設定，不知道從哪開始。</p>
-            <div class="lp-wall__fix">
-              <span class="lp-app__c">✓</span>
-              <div><b>一步一步跟著做就好</b><small>重點的地方 AI 幫你標出來</small></div>
-            </div>
+            <p class="lp-wall__sub">打開來一堆設定，不知道從哪開始。</p>
+            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
           </div>
 
           <div class="lp-wall lp-reveal">
@@ -248,14 +239,9 @@
                 </g>
               </svg>
             </div>
-            <span class="lp-wall__n">4</span>
             <h3>找其他工具，好貴</h3>
-            <p>一個月好幾千，還得有人學、有人顧。</p>
-            <!-- ⛔ 這裡不能寫「隨時可退」：退費措辭只有檔頭那一種寫法 -->
-            <div class="lp-wall__fix">
-              <span class="lp-app__c">✓</span>
-              <div><b>一個月 NT${{ fmt(lowestPaidPrice) }}</b><small>不綁約、隨時可取消</small></div>
-            </div>
+            <p class="lp-wall__sub">一個月好幾千，還得有人學、有人顧。</p>
+            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }}</p>
           </div>
         </div>
       </div>
@@ -506,18 +492,18 @@
         </div>
 
         <div class="lp-pricefeat lp-reveal">
+          <!-- ⛔ 這三張卡刻意**沒有圖示磚**：原本是 logo／✓／✓，兩顆一模一樣——
+               房規「每一列都長一樣的圖示等於沒有圖示」（同 Hero 檔期列拿掉方磚的理由）。
+               三個標題本身就講完了，磚只是裝飾。 -->
           <div class="lp-pf">
-            <span class="lp-pf__ico lp-pf__ico--brand"><BrandLogo mark on-color alt="" /></span>
             <b>友善的引導式設定</b>
             <small>一步一步帶你完成，部分步驟有 AI 協助標示——不用怕複雜。</small>
           </div>
           <div class="lp-pf">
-            <span class="lp-pf__ico">✓</span>
             <b>別人有的，我們都有</b>
             <small>自動化訊息、腳本、AI 客服、AI 行銷建議、報表。</small>
           </div>
           <div class="lp-pf">
-            <span class="lp-pf__ico">✓</span>
             <b>60 秒就能開始</b>
             <small>Email 登入、商家基礎資訊設定，今天就能讓它上工。</small>
           </div>
@@ -609,9 +595,14 @@
          而且退費、額度、資料刪除這幾題的答案都是照政策措辭寫的，拿掉等於少一處對消費者的揭露。 -->
     <section id="faq" class="lp-section lp-faqsec">
       <div class="lp-wrap">
-        <div class="lp-reveal">
-          <span class="lp-eyebrow lp-eyebrow--plain">常見問題</span>
-          <h2 class="lp-h2">你可能會想問</h2>
+        <!-- ⚠️ 這一區原本是 eyebrow＋h2，08-27 收成跟其他區塊一樣的泡泡：
+             全頁八個區塊只剩它不是「MiniMe 開口說話」，節奏斷在這裡；
+             而且 FAQ 本來就是它在回答問題，泡泡比中性標題更貼。 -->
+        <div class="lp-turn lp-reveal">
+          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
+          <div class="lp-bubble">
+            <h2>開始之前，<br>你可能還想問<span class="mark">這些</span>。</h2>
+          </div>
         </div>
         <div class="lp-faq lp-reveal">
           <div class="lp-faq__grid">

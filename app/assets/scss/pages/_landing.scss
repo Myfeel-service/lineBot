@@ -67,6 +67,13 @@
 
   --r-card: 20px;
   --r-xl: 30px;
+  /* 卡片裡的填色小方塊（統計格、示意圖容器、截圖、答案面板）一律這個圓角——
+     ⛔別再各寫 12/14px：同一種東西兩個圓角，並排時看得出來。
+     方磚（標記系統）另有規則＝邊長÷3，見上面。 */
+  --r-sm: 12px;
+  /* 並排卡片的間距：四道牆、AI 兩卡、定價三特點、60 秒兩卡全部吃這一個值
+     （原本 16／20 各寫，兩個 2 欄卡列並排時看得出差 4px） */
+  --card-gap: 16px;
   --sh-card: 0 2px 6px rgba(20, 24, 22, 0.04), 0 18px 44px rgba(20, 24, 22, 0.07);
   --sh-soft: 0 2px 6px rgba(20, 24, 22, 0.03), 0 10px 26px rgba(20, 24, 22, 0.05);
   /* ⛔ 綠色光暈**只給「要按的東西」**（.lp-btn--primary）：光暈是「這個可以按」的訊號，
@@ -104,15 +111,11 @@
     font-size: 0.76rem; font-weight: 800; letter-spacing: 0.06em;
     padding: 6px 14px; border-radius: var(--radius-pill);
   }
-  .lp-eyebrow--plain { background: var(--surf-2); color: var(--ink-soft); }
 
-  /* ⚠️ 級距與粗細必須跟 .lp-bubble h2 一致——`.lp-h2` 現在只用在常見問題這一區。 */
-  .lp-h2 {
-    font-size: clamp(1.5rem, 3.2vw, 2.25rem); font-weight: 700;
-    letter-spacing: -0.02em; line-height: 1.36; margin: 16px 0 0;
-    text-wrap: balance;
-  }
-  .lp-lede { color: var(--ink-soft); font-size: clamp(1rem, 1.4vw, 1.14rem); margin: 16px 0 0; max-width: 46ch; }
+  /* ⚠️ `.lp-eyebrow` 現在只有 Hero 在用（FAQ 08-27 收成泡泡）。
+     ⛔ 別再新增 eyebrow＋h2 的區塊標題：全頁的區塊標題統一是泡泡，
+        混用會讓那一區看起來像另一個網站貼過來的。原本的 .lp-h2／.lp-lede
+        因此整組刪除——要區塊標題就用 .lp-turn＋.lp-bubble。 */
 
   /* ── 區塊標題＝MiniMe 講的一句話（對話式版面）──────────────
    * 整頁的節奏是「它開口 → 底下是它端出來的東西」，所以每一區的標題都是一顆對話泡泡＋頭像。
@@ -159,7 +162,7 @@
     border-left: 1px solid var(--g-line); border-top: 1px solid var(--g-line);
     border-top-left-radius: 4px; transform: rotate(-45deg);
   }
-  /* 比 .lp-h2 小一級：氣泡本身有 30px 內距，同字級會撐得比其他區塊的標題大一截。
+  /* 級距刻意收在 2.25rem：氣泡本身有 30px 內距，字級再大就會撐得比 Hero 的 h1 還搶。
      ⚠️ 粗細用 700 不用 800／900：中文字型 600 以上被夾成同一個字面，寫 800 只會讓
      「NT$399」「LINE」這種拉丁字比旁邊的中文重一級（實測過），700 讓兩邊對得上。 */
   .lp-bubble h2 {
@@ -337,7 +340,7 @@
    * 「根本沒人手」是前提，另外三個是它的後果。四張等寬會讓讀者以為要自己挑一個對號入座。
    * 08-26 草稿給每道牆加了情境小圖（.lp-wall__scene）：抽象圖形、不含數字宣稱。
    */
-  .lp-walls { display: grid; grid-template-columns: 1.45fr 1fr 1fr 1fr; gap: 16px; margin-top: var(--section-head-gap); align-items: stretch; }
+  .lp-walls { display: grid; grid-template-columns: 1.45fr 1fr 1fr 1fr; gap: var(--card-gap); margin-top: var(--section-head-gap); align-items: stretch; }
   .lp-wall {
     background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card);
     padding: 20px 24px 26px; box-shadow: var(--sh-soft); display: flex; flex-direction: column;
@@ -348,35 +351,37 @@
   .lp-wall__scene svg { width: 100%; height: 100%; display: block; }
   /* 主牆上那個「缺的人」虛線人形緩慢閃爍——講「少一個人」不用一個字 */
   .lp-wall__blink { animation: lpBlinkSoft 2.6s ease-in-out infinite; }
-  .lp-wall__n {
-    width: var(--mk-md); height: var(--mk-md); border-radius: 11px; background: var(--surf-2); color: var(--ink-2);
-    display: grid; place-items: center; font-size: 0.86rem; font-weight: 800; margin-bottom: 16px;
-    font-variant-numeric: tabular-nums;
-  }
   .lp-wall h3 { margin: 0; font-size: 1.05rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
-  .lp-wall p { margin: 8px 0 0; font-size: 0.86rem; color: var(--ink-soft); line-height: 1.65; }
+  /* 痛點副標。⛔**一定要用 class 不能寫 `.lp-wall p`**：答案面板也是 <p>，元素選擇器
+     （0,1,1）會連它一起選到、蓋掉 `margin-top: auto`——同一個坑 08-27 踩了兩次。
+     下緣 18px＝痛點與答案面板之間的保證留白（flex 裡 margin 不塌陷）。 */
+  .lp-wall__sub { margin: 8px 0 18px; font-size: 0.86rem; color: var(--ink-soft); line-height: 1.65; }
   .lp-wall--main {
     background: linear-gradient(158deg, #06c755 0%, #03a040 100%);
     border-color: transparent; color: #fff; box-shadow: var(--sh-card);
   }
-  .lp-wall--main .lp-wall__n { background: rgba(255, 255, 255, 0.22); color: #fff; }
   .lp-wall--main h3 { font-size: 1.32rem; }
-  .lp-wall--main p { color: rgba(255, 255, 255, 0.82); }
+  .lp-wall--main .lp-wall__sub { color: rgba(255, 255, 255, 0.82); }
 
-  /* ── 牆卡底部的解法列（08-26 版面重排①：問題與解法同一張卡）──
-   * margin-top:auto 把解法推到卡底：四張卡問題文長不一，解法列仍對齊同一條線。
-   * ✓ 磚沿用 .lp-app__c（同一套標記家族）；主牆（綠底）翻成白字版。 */
+  /* ── 牆卡底部的答案面板（08-27）────────────────────────────
+   * 一句話、一行、填色面板貼卡底——四塊因此完全等高、上下緣都齊。
+   * ⛔ 三個做壞過的地方別重蹈：
+   *   ① `margin-top: auto` 是「貼卡底」的唯一機制，**不可以有任何規則再給它 margin-top**。
+   *      08-27 踩兩次：先是 `.lp-wall p + .lp-wall__fix { margin-top:16px }`（0,2,0），
+   *      改完把答案寫成 <p> 又被 `.lp-wall p`（0,1,1）蓋一次——兩次的症狀都是「答案沒貼底、
+   *      標題折兩行的卡往下掉 17–19px」。所以副標吃 `.lp-wall__sub`，不用元素選擇器。
+   *      要留白改成副標的 `margin-bottom`（flex 裡的 margin 不會塌陷）。
+   *   ② 別改回「虛線＋標題＋補充小字」：全頁只有那裡用虛線，而且窄卡的可用寬度只有
+   *      113px（≈7 個字），兩行文字必折行。
+   *   ③ 主牆（綠底）的面板只換底色與字色，**字級與其他三張一樣**——放大半級會讓
+   *      四塊面板高度差 2px，上緣就不齊了（實測）。 */
   .lp-wall__fix {
-    margin-top: auto; padding-top: 14px; display: flex; align-items: flex-start; gap: 10px;
-    border-top: 1px dashed var(--hair);
+    margin-top: auto; background: var(--g-wash-2); border-radius: var(--r-sm);
+    padding: 12px 14px; font-size: 1rem; font-weight: 800; color: var(--g-deep);
+    letter-spacing: -0.01em; line-height: 1.5;
   }
-  .lp-wall p + .lp-wall__fix { margin-top: 16px; }
-  .lp-wall__fix b { display: block; font-size: 0.95rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
-  .lp-wall__fix small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 2px; }
-  .lp-wall--main .lp-wall__fix { border-top-color: rgba(255, 255, 255, 0.3); }
-  .lp-wall--main .lp-wall__fix b { color: #fff; }
-  .lp-wall--main .lp-wall__fix small { color: rgba(255, 255, 255, 0.8); }
-  .lp-wall--main .lp-wall__fix .lp-app__c { background: rgba(255, 255, 255, 0.22); color: #fff; }
+  .lp-wall__fix span { margin-right: 5px; }
+  .lp-wall--main .lp-wall__fix { background: rgba(255, 255, 255, 0.17); color: #fff; }
 
   /* ── 圖文選單：客人手機上的前後對照 ────────────────────────
    * 左邊＝客人只能自己打字問；右邊＝常問的事變成選單按鈕。
@@ -388,7 +393,7 @@
    * ⚠️ 想放**真實截圖**時直接換掉右手機的 .lp-rm 區塊即可（外殼與圖說都留著）——
    *    但截圖必須是真的介面，不可以自己拼一張假的當截圖。
    */
-  .lp-phones { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; justify-items: center; }
+  .lp-phones { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; justify-items: center; }
   .lp-phonecol { width: 100%; max-width: 340px; }
   .lp-phonetag { display: inline-block; font-size: 0.8rem; font-weight: 800; border-radius: var(--radius-pill); padding: 6px 16px; margin-bottom: 14px; }
   .lp-phonetag--off { background: var(--surf-2); color: var(--ink-soft); }
@@ -427,7 +432,7 @@
   /* 掛在卡片底：兩張並排的卡內容行數不同時，數據條仍然對齊卡底 */
   .lp-statrow--foot { margin-top: auto; }
   .lp-appcard__bd .lp-statrow--foot { padding-top: 18px; margin-top: auto; }
-  .lp-stat { background: var(--surf-2); border-radius: 12px; padding: 14px 16px; }
+  .lp-stat { background: var(--surf-2); border-radius: var(--r-sm); padding: 14px 16px; }
   .lp-stat__l { display: block; font-size: 0.78rem; color: var(--ink-soft); font-weight: 600; }
   .lp-stat__v { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
   .lp-stat__v i { font-style: normal; font-size: 0.86rem; color: var(--ink-soft); text-decoration: line-through; text-decoration-color: #c6cec6; }
@@ -437,7 +442,7 @@
   /* ── AI 客服／AI 行銷 兩張卡 ─────────────────────────────── */
   /* ⚠️ 不設 margin-top：它是 .lp-stack 的第一個孩子，節奏由 --section-head-gap 統一給
      （先前殘留的 16px 讓這區「標題→內容」變 60px，其他區都是 44px）。 */
-  .lp-appgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+  .lp-appgrid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--card-gap); align-items: stretch; }
   .lp-appcard { display: flex; flex-direction: column; }
   .lp-appcard__bd { flex: 1; display: flex; flex-direction: column; }
   /* 分隔線畫在後一列的上緣（別用 :last-of-type 收尾——底下還有其他 div，會選錯） */
@@ -457,7 +462,7 @@
    *    裁圖規矩（真實同事不可入鏡）寫在那兩支的檔頭。 */
   .lp-shot {
     display: block; width: 100%; height: auto; margin-top: 14px;
-    border: 1px solid var(--hair); border-radius: 12px;
+    border: 1px solid var(--hair); border-radius: var(--r-sm);
     background: var(--surf-2);
   }
 
@@ -467,7 +472,7 @@
   .lp-tl { position: relative; padding: 8px 0 4px; }
   .lp-tl__track { position: absolute; left: 17%; right: 17%; top: 21px; height: 3px; background: #eaefe8; border-radius: var(--radius-pill); overflow: hidden; }
   .lp-tl__track i { display: block; height: 100%; width: 100%; background: var(--g); border-radius: var(--radius-pill); }
-  .lp-tl__steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .lp-tl__steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); }
   .lp-tl__step { text-align: center; }
   /* 步驟磚沿用全頁的圓角方磚標記（⛔別改回草稿的圓形，見檔頭標記系統） */
   .lp-tl__dot {
@@ -485,7 +490,7 @@
 
   /* 60 秒區兩欄：左時間軸卡、右開通引導真截圖。
      minmax(0,…) 同 hero grid 的理由——圖片的 min-content 會把欄撐爆。 */
-  .lp-fast { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+  .lp-fast { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--card-gap); align-items: stretch; }
   .lp-fast .lp-panel { display: flex; flex-direction: column; }
   .lp-fast .lp-panel__bd { flex: 1; display: flex; flex-direction: column; }
   /* 左卡（時間軸）比右卡矮：內容垂直置中，別讓下方留一大塊空白 */
@@ -507,15 +512,8 @@
   .lp-bigprice__cur { font-size: 0.26em; font-weight: 800; color: var(--ink-2); letter-spacing: -0.01em; }
   .lp-bigprice__per { font-size: 0.2em; font-weight: 600; color: var(--ink-soft); }
   .lp-bigprice__unit { font-size: 0.92rem; color: var(--ink-2); font-weight: 600; }
-  .lp-pricefeat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
+  .lp-pricefeat { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); margin-top: 48px; }
   .lp-pf { background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 24px 22px; box-shadow: var(--sh-soft); }
-  .lp-pf__ico {
-    width: var(--mk-xl); height: var(--mk-xl); border-radius: 14px; background: var(--g-wash);
-    display: grid; place-items: center; margin-bottom: 16px;
-    color: var(--g-deep); font-size: 1.1rem; font-weight: 800;
-  }
-  .lp-pf__ico--brand { background: var(--g); }
-  .lp-pf__ico--brand .brand-logo { width: 22px; height: auto; }
   .lp-pf b { display: block; font-size: 1.05rem; font-weight: 800; }
   .lp-pf small { display: block; font-size: 0.86rem; color: var(--ink-2); margin-top: 8px; line-height: 1.75; }
   .lp-pricecta { margin-top: 36px; text-align: center; }
@@ -554,7 +552,7 @@
    * ⛔ 刻意只留一條基準線，不畫格線：Y 軸沒有刻度（示意模型沒有真實數字），
    *    格線沒有東西可以對照，畫上去只是雜訊（08-26 草稿畫了格線，這條刻意沒跟）。
    */
-  .lp-chartwrap { background: var(--surf-2); border-radius: 14px; padding: 18px 10px 8px; }
+  .lp-chartwrap { background: var(--surf-2); border-radius: var(--r-sm); padding: 18px 10px 8px; }
   .lp-chart { width: 100%; height: auto; display: block; overflow: visible; }
   .lp-chart__axis { stroke: #dfe6dd; stroke-width: 1.5; }
   .lp-chart__base { stroke: #848e88; stroke-width: 3; fill: none; stroke-linecap: round; }
