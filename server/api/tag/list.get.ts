@@ -63,13 +63,6 @@ export default defineEventHandler(async (event) => {
   )
 
   const filtered = filterTags(tags, { statusFilter, categoryFilter, aiModeFilter, searchRaw })
-  /**
-   * 計數膠囊的三個數字（D-30①）。⛔ **刻意不套 aiModeFilter**：
-   * 分面篩選的通則是每一面的計數要排除它自己，否則點了「AI 判斷中」之後
-   * 「手動／系統」會顯示 0，看起來像那些標籤消失了。
-   * 這裡是記憶體運算，`tags` 上面已經撈過了，零額外讀取。
-   */
-  const segments = tagSegmentCounts(filterTags(tags, { statusFilter, categoryFilter, searchRaw }))
 
   const attachMemberCounts = async (rows: TagRow[]) => {
     if (!includeMemberCount || !rows.length) return rows
@@ -81,9 +74,20 @@ export default defineEventHandler(async (event) => {
     }))
   }
 
+  // ⛔ 計數要算在這一行**之後**：不分頁的呼叫端（好友頁載標籤選項）根本不看 segments，
+  //    算在前面等於每次都白跑一輪全表過濾再丟掉。
   if (!paginate) {
     return attachMemberCounts(filtered)
   }
+
+  /**
+   * 計數膠囊的數字（`D-30`①）。⛔ **刻意不套 aiModeFilter**：
+   * 分面篩選的通則是每一面的計數要排除它自己，否則點了「AI 判斷中」之後
+   * 「手動／系統」會顯示 0，看起來像那些標籤消失了。
+   * 這裡是記憶體運算，`tags` 上面已經撈過了，零額外讀取。
+   * `suggest`／`auto` 給進了「AI 判斷中」之後才出現的那排細分用。
+   */
+  const segments = tagSegmentCounts(filterTags(tags, { statusFilter, categoryFilter, searchRaw }))
 
   const total = filtered.length
   const pageItems = paginateArray(filtered, offset, limit)

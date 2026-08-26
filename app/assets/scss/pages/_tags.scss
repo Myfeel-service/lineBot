@@ -502,6 +502,58 @@
   flex-wrap: wrap;
 }
 
+/**
+ * 進了「AI 判斷中」之後才出現的第二層。
+ * 刻意比主膠囊**輕一階**（矮、無外框、字小）：它是「在剛才那一段裡再挑」，
+ * 不是另一組平行的選項——兩排一樣重的話會看不出誰包含誰。
+ * 縮排對齊主膠囊的文字起點，讓層級用位置也講一次。
+ */
+.tags-subsegments {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: -0.15rem;
+  padding-left: 0.7rem;
+}
+
+.tags-subsegments__lead {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.tags-subsegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 24px;
+  padding: 0 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: none;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  &.active {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+}
+
 .tags-segment {
   display: inline-flex;
   align-items: center;

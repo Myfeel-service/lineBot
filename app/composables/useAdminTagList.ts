@@ -55,7 +55,9 @@ export function useAdminTagList() {
   const total = ref(0)
   /** 各分段的標籤數（給計數膠囊用）。⛔ 算的時候**排除 aiMode 這個條件本身**，
    *  否則點了「AI 判斷中」之後其他兩顆會全部歸零（分面篩選的通則）。 */
-  const segments = ref<{ all: number, ai: number, manual: number }>({ all: 0, ai: 0, manual: 0 })
+  const segments = ref<{ all: number, ai: number, manual: number, suggest: number, auto: number }>(
+    { all: 0, ai: 0, manual: 0, suggest: 0, auto: 0 },
+  )
   const page = ref(1)
   const pageSize = ref(ADMIN_TAG_PAGE_SIZE)
   const { apiFetch } = useWorkspace()
@@ -100,6 +102,13 @@ export function useAdminTagList() {
       catch {
         tags.value = []
         total.value = 0
+        /**
+         * ⛔ 計數也要歸零。只清清單不清數字的話，畫面會同時出現
+         * 「全部 21 ｜ 🤖 AI 判斷中 3 ｜ 手動／系統 18」和一張空表格＋「符合 0 筆」
+         * ——兩個互相矛盾的說法，而使用者分不出是「真的沒有」還是「剛才沒載到」
+         * （同這一頁自己的「查不到≠沒問題」三態鐵律）。
+         */
+        segments.value = { all: 0, ai: 0, manual: 0, suggest: 0, auto: 0 }
         return false
       }
       finally {

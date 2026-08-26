@@ -43,6 +43,30 @@ export const TAG_AI_SEGMENTS = [
 
 export type TagAiSegment = (typeof TAG_AI_SEGMENTS)[number]['value']
 
+/**
+ * 進了「AI 判斷中」之後才出現的細分（2026-08-26 補）。
+ *
+ * ⛔ **不是把上面那排改成四顆**——那是上面刻意拍板不做的（會有一顆長期是 0、
+ * 點進去是死路）。這排只在已經選了「AI 判斷中」時才出現：那時你已經在這一段裡面，
+ * 看到「直接貼 0」是**有意義的答案**（沒有任何一顆在自動貼），不是一顆沒用的死膠囊。
+ *
+ * 為什麼要補：`aiMode='auto'`（AI 判到就直接貼、不用人點頭）是**風險最高的那一種**
+ * ——貼錯的下游是下次推播發錯人。先前要盤點它只能自己翻完整份清單一列一列看徽章，
+ * 而程式碼註解卻寫著「深連結不受影響」，實際上那一頁根本沒讀網址參數（已一併補上）。
+ */
+export const TAG_AI_SUB_SEGMENTS = [
+  { value: 'suggest', label: 'AI 先建議', hint: 'AI 判到會放進建議，等人按「採用」才貼上' },
+  { value: 'auto', label: 'AI 直接貼', hint: 'AI 判到就直接貼上，不用人點頭——風險最高的一種，值得定期看一眼' },
+] as const
+
+export type TagAiSubSegment = (typeof TAG_AI_SUB_SEGMENTS)[number]['value']
+
+/** 網址帶進來的 `?aiMode=` 是不是我們認得的值（認不得就當沒帶，不要篩出一片空白） */
+export function isTagAiFilterValue(raw: unknown): raw is TagAiSegment | TagAiSubSegment {
+  const v = String(raw ?? '')
+  return v === 'ai' || v === 'off' || v === 'suggest' || v === 'auto'
+}
+
 /** 一顆標籤算不算「AI 判斷中」。⛔ 缺欄位＝off（全系統口徑，舊標籤不誤判） */
 export function isAiJudgedTag(tag: { aiMode?: string | null }): boolean {
   return tag.aiMode === 'suggest' || tag.aiMode === 'auto'
@@ -57,8 +81,13 @@ export function isAiJudgedTag(tag: { aiMode?: string | null }): boolean {
  */
 export function tagSegmentCounts(
   tagsWithoutAiFilter: Array<{ aiMode?: string | null }>,
-): { all: number, ai: number, manual: number } {
-  let ai = 0
-  for (const t of tagsWithoutAiFilter) if (isAiJudgedTag(t)) ai++
-  return { all: tagsWithoutAiFilter.length, ai, manual: tagsWithoutAiFilter.length - ai }
+): { all: number, ai: number, manual: number, suggest: number, auto: number } {
+  let suggest = 0
+  let auto = 0
+  for (const t of tagsWithoutAiFilter) {
+    if (t.aiMode === 'suggest') suggest++
+    else if (t.aiMode === 'auto') auto++
+  }
+  const ai = suggest + auto
+  return { all: tagsWithoutAiFilter.length, ai, manual: tagsWithoutAiFilter.length - ai, suggest, auto }
 }

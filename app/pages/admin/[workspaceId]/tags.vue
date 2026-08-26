@@ -125,10 +125,30 @@
                 :key="seg.value || 'all'"
                 type="button"
                 class="tags-segment"
-                :class="{ active: filterAiMode === seg.value }"
-                :aria-pressed="filterAiMode === seg.value"
+                :class="{ active: isSegmentActive(seg.value) }"
+                :aria-pressed="isSegmentActive(seg.value)"
                 @click="filterAiMode = seg.value"
               >{{ seg.label }} <span class="tags-segment__n">{{ segmentCount(seg.value) }}</span></button>
+            </div>
+
+            <!-- ══ 進了「AI 判斷中」才出現的細分（2026-08-26）══════════
+                 ⛔ **不是把上面那排改成四顆**——那是刻意拍板不做的（會有一顆長期是 0、
+                 點進去是死路）。這排只在已經選了「AI 判斷中」時才出現：那時你已經在
+                 這一段裡面，看到「直接貼 0」是有意義的答案，不是一顆沒用的死膠囊。
+                 為什麼要補：「AI 直接貼」是**風險最高**的一種（貼錯的下游是推播發錯人），
+                 先前要盤點它只能自己翻完整份清單一列一列看徽章。 -->
+            <div v-if="isAiSegmentActive" class="tags-subsegments" role="group" aria-label="再分先建議或直接貼">
+              <span class="tags-subsegments__lead">這 {{ segmentCount('ai') }} 顆裡：</span>
+              <button
+                v-for="sub in TAG_AI_SUB_SEGMENTS"
+                :key="sub.value"
+                type="button"
+                class="tags-subsegment"
+                :class="{ active: filterAiMode === sub.value }"
+                :title="sub.hint"
+                :aria-pressed="filterAiMode === sub.value"
+                @click="filterAiMode = filterAiMode === sub.value ? 'ai' : sub.value"
+              >{{ sub.label }} <span class="tags-segment__n">{{ segmentCount(sub.value) }}</span></button>
             </div>
 
             <div class="tags-toolbar" data-tour="tag-filter">
@@ -422,7 +442,7 @@ import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
 import { discoveryState, discoveryTiming } from '~~/shared/tag-discovery'
-import { TAG_AI_SEGMENTS } from '~~/shared/tag-admin'
+import { TAG_AI_SEGMENTS, TAG_AI_SUB_SEGMENTS, isTagAiFilterValue } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
 /** 三段選擇的文案（D-27①）：信任程度由低到高，一次講完「讓不讓判＋判了怎麼處理」 */
@@ -531,7 +551,27 @@ async function createFromTemplates() {
 function segmentCount(value: string): number {
   if (value === 'ai') return segments.value.ai
   if (value === 'off') return segments.value.manual
+  if (value === 'suggest') return segments.value.suggest
+  if (value === 'auto') return segments.value.auto
   return segments.value.all
+}
+
+/**
+ * 細分那排要不要出現：**已經在「AI 判斷中」這一段裡面**才算。
+ * 選了細分（先建議／直接貼）時仍然算在裡面——否則按下去那排會自己消失，
+ * 等於把使用者踢出他剛進來的那一層。
+ */
+const isAiSegmentActive = computed(
+  () => filterAiMode.value === 'ai' || filterAiMode.value === 'suggest' || filterAiMode.value === 'auto',
+)
+
+/**
+ * 上面那排膠囊哪一顆是選中的。
+ * ⛔ 選了細分時「🤖 AI 判斷中」**仍然要亮著**：你人就在那一段裡面，
+ * 讓它看起來沒選中的話，畫面等於在說「你不在任何一段」卻又顯示著細分那排。
+ */
+function isSegmentActive(value: string): boolean {
+  return value === 'ai' ? isAiSegmentActive.value : filterAiMode.value === value
 }
 
 /* ── 立即掃描一次（D-30②）───────────────────────────────── */
@@ -804,6 +844,17 @@ async function submitForm() {
 }
 
 onMounted(() => {
+  /**
+   * `?aiMode=` 深連結（例：`…/tags?aiMode=auto` 直接落在「AI 直接貼」那幾顆）。
+   *
+   * ⛔ 這條**先前是假的**：`shared/tag-admin.ts` 的註解寫著「深連結不受影響」，
+   * 但這一頁從頭到尾沒有讀過網址參數，帶了也是整份未篩選的清單。
+   * 補上之後那句話才成立，小幫手／週報也才有路可以直接指到「風險最高的那幾顆」。
+   * ⛔ 認不得的值當沒帶：否則打錯字會篩出一片空白，看起來像「一顆都沒有」。
+   */
+  const q = useRoute().query.aiMode
+  if (isTagAiFilterValue(q)) filterAiMode.value = q
+
   void reloadTags(true)
   void loadDiscovery()
 })
