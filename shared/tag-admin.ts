@@ -22,3 +22,43 @@ export const TAG_PRESET_COLORS = [
 export function tagCategoryLabel(value: string) {
   return TAG_CATEGORY_OPTIONS.find((c) => c.value === value)?.label ?? value
 }
+
+/**
+ * 標籤列表的「AI 分段」（`D-30`①，2026-08-26）。
+ *
+ * 老闆問「所有標籤混在一個列表是好的嗎」。結論是**列表維持一個**（標籤只有一種身分，
+ * 推播選名單與好友頁篩選吃的都是同一批；拆頁之後同一顆標籤改設定還得搬家），
+ * 但要把「哪些在讓 AI 判」這個最常用的切法**放到檯面上**，不是藏在下拉裡。
+ *
+ * ⛔ 這三段只分「AI 判不判」，不分 suggest／auto：
+ *    細節由表格的「AI 判斷」欄的徽章負責（那裡本來就分得出先建議／直接貼）。
+ *    膠囊是粗篩、欄位是細節——四顆膠囊裡會有一顆長期是 0，點進去是死路。
+ *    （API 仍收 aiMode=suggest|auto，深連結不受影響。）
+ */
+export const TAG_AI_SEGMENTS = [
+  { value: '', label: '全部' },
+  { value: 'ai', label: '🤖 AI 判斷中' },
+  { value: 'off', label: '手動／系統' },
+] as const
+
+export type TagAiSegment = (typeof TAG_AI_SEGMENTS)[number]['value']
+
+/** 一顆標籤算不算「AI 判斷中」。⛔ 缺欄位＝off（全系統口徑，舊標籤不誤判） */
+export function isAiJudgedTag(tag: { aiMode?: string | null }): boolean {
+  return tag.aiMode === 'suggest' || tag.aiMode === 'auto'
+}
+
+/**
+ * 算三段的數字（純函式，可測）。
+ *
+ * ⛔ **傳進來的清單必須是「套過其他條件、但沒套 aiMode」的**：
+ *    分面篩選的通則是「每一面的計數要排除它自己」，否則點了「AI 判斷中」之後
+ *    「手動／系統」會顯示 0，看起來像那 21 顆消失了。
+ */
+export function tagSegmentCounts(
+  tagsWithoutAiFilter: Array<{ aiMode?: string | null }>,
+): { all: number, ai: number, manual: number } {
+  let ai = 0
+  for (const t of tagsWithoutAiFilter) if (isAiJudgedTag(t)) ai++
+  return { all: tagsWithoutAiFilter.length, ai, manual: tagsWithoutAiFilter.length - ai }
+}

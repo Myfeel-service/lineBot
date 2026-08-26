@@ -6,6 +6,7 @@ import { addTagsToUser } from '~~/server/utils/tagging'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import {
   DISCOVERY_CATEGORY_COLORS,
+  MANUAL_DISCOVERY_MIN_GAP_MS,
   MAX_DISMISSED_NAMES,
   sanitizeTagCode,
   type TagDiscoveryDoc,
@@ -31,13 +32,36 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event)
   const action = String(body?.action ?? '')
-  const proposalId = String(body?.proposalId ?? '').trim()
-  if ((action !== 'adopt' && action !== 'dismiss') || !proposalId) {
-    throw createError({ statusCode: 400, statusMessage: 'action(adopt|dismiss) 與 proposalId 必填' })
-  }
-
   const db = getDb()
   const docRef = db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId)
+
+  /**
+   * 「立即掃描一次」（D-30②）：只做標記，由 cron（10 分鐘一輪）撿走。
+   * ⛔ 不同步跑：掃描要讀兩百多場對話＋一次 LLM，塞進 HTTP 請求會撞閘道逾時
+   *   （preview-chunks 那次的前例）。
+   * ⛔ 有最小間隔地板：這顆按鈕會花錢，連點就是成本槓桿。
+   */
+  if (action === 'rescan') {
+    const snap = await docRef.get()
+    const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
+    const lastTouchMs = Math.max(Number(doc?.lastScanMs ?? 0), Number(doc?.rescanRequestedMs ?? 0))
+    if (lastTouchMs && Date.now() - lastTouchMs < MANUAL_DISCOVERY_MIN_GAP_MS) {
+      // ⛔ 回 200＋queued:false，不要回 4xx：這不是錯誤，是「剛掃過、不用再掃」
+      return { queued: false, reason: 'too_soon', minGapMs: MANUAL_DISCOVERY_MIN_GAP_MS }
+    }
+    await docRef.set({
+      workspaceId,
+      rescanRequestedMs: Date.now(),
+      updatedAt: FieldValue.serverTimestamp(),
+      ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+    }, { merge: true })
+    return { queued: true }
+  }
+
+  const proposalId = String(body?.proposalId ?? '').trim()
+  if ((action !== 'adopt' && action !== 'dismiss') || !proposalId) {
+    throw createError({ statusCode: 400, statusMessage: 'action(adopt|dismiss|rescan) 與 proposalId 必填' })
+  }
 
   // ── 認領：transaction 內把提案從 pending 摘走 ──────────────────
   const claimed = await db.runTransaction(async (tx) => {

@@ -108,11 +108,13 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
       const snap = await docRef.get()
       const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
       const lastScanMs = Number(doc?.lastScanMs ?? 0)
+      /** 使用者按過「立即掃描一次」而且還沒被消化 → 這一輪跳過間隔閘門 */
+      const rescanPending = Number(doc?.rescanRequestedMs ?? 0) > lastScanMs
       const pending = Array.isArray(doc?.pending) ? doc!.pending : []
       const dismissedNames = Array.isArray(doc?.dismissedNames) ? doc!.dismissedNames : []
 
-      // 間隔未到 → 走人（每輪只花上面那 1 次讀取）
-      if (Date.now() - lastScanMs < DISCOVERY_INTERVAL_MS) continue
+      // 間隔未到、而且沒有人按「立即掃描」→ 走人（每輪只花上面那 1 次讀取）
+      if (!rescanPending && Date.now() - lastScanMs < DISCOVERY_INTERVAL_MS) continue
       // 收件匣滿了就不掃：提了也放不進去，白燒一次 LLM。老闆清掉之後下一輪自然會掃
       if (pending.length >= MAX_PENDING_DISCOVERIES) continue
 
@@ -128,6 +130,8 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
         pending: [...pending, ...result.proposals],
         dismissedNames,
         lastScanMs: Date.now(),
+        // 消化掉手動要求（不清的話下一輪會再掃一次，等於一次按鈕掃兩輪）
+        ...(rescanPending ? { rescanRequestedMs: FieldValue.delete() } : {}),
         ...(healed ? { health: healed } : {}),
         updatedAt: FieldValue.serverTimestamp(),
         ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),

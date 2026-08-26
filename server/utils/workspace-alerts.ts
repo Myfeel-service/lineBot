@@ -747,6 +747,18 @@ export async function collectWorkspaceAlerts(
             detail: `上次執行約 ${humanizeHours(ageMs / 3600_000)}前`,
           }
         }),
+        probe('tagDiscoverySuggestions', async () => {
+          /**
+           * AI 發現的新標籤在等人決定（D-30②）。
+           * 根本問題是「建議躺在標籤頁，但沒人會沒事開標籤頁」——照知識庫建議的既有模式，
+           * 由小幫手主動說一聲。suggestion 級＝不亮紅點（沒有東西壞掉）。
+           * 單文件直讀，零掃描。
+           */
+          const snap = await db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get()
+          const pending = (snap.data() as { pending?: unknown[] } | undefined)?.pending
+          const n = Array.isArray(pending) ? pending.length : 0
+          return n ? { active: true, count: n } : { active: false }
+        }),
         probe('scannerStalled', async () => {
           /**
            * `C-68` 的治本（08-25）：AI 貼標掃描器因為缺一個索引每輪都炸，錯誤被 catch

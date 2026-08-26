@@ -36,6 +36,13 @@ export const DISCOVERY_INTERVAL_MS = 6.5 * 24 * 60 * 60 * 1000
 export const DISCOVERY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000
 /** 否決名單上限（FIFO）：防止文件無限長大；60 個主題名夠擋一年份的重複提議 */
 export const MAX_DISMISSED_NAMES = 60
+/**
+ * 手動「立即掃描一次」的最小間隔（D-30②）。
+ * ⛔ 一定要有地板：這顆按鈕按下去會花一次 LLM，連點就是成本槓桿
+ *   （同知識庫「重新掃描」的 MANUAL_SCAN_MIN_GAP_MS 精神）。
+ */
+export const MANUAL_DISCOVERY_MIN_GAP_MS = 30 * 60 * 1000
+
 /** 一次掃描最多提幾個（寧缺勿濫，一週能認真看完的量） */
 export const MAX_PROPOSALS_PER_SCAN = 3
 
@@ -77,6 +84,13 @@ export interface TagDiscoveryDoc {
   dismissedNames: string[]
   /** 上次掃描完成時間（不管有沒有提出東西都更新，掃描間隔靠它） */
   lastScanMs: number
+  /**
+   * 使用者按了「立即掃描一次」的時間（D-30②）。
+   * 比 lastScanMs 新＝下一輪排程要跳過「還沒到一週」的閘門，真的掃一次。
+   * ⛔ 只做標記、不同步跑：掃描要讀兩百多場對話＋一次 LLM，塞進 HTTP 請求會撞閘道逾時
+   *   （同知識庫 requestGapScan 的做法）。
+   */
+  rescanRequestedMs?: number
   updatedAt?: unknown
   createdAt?: unknown
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, anchoredPeriod, dayOfDate, isServiceDayOff, isServiceHoursDnd, nextAnchoredPeriod, normalizeAnchorDay, taipeiDate, taipeiYyyyMm } from './time'
+import { addDays, anchoredPeriod, dayOfDate, isServiceDayOff, isServiceHoursDnd, nextAnchoredPeriod, normalizeAnchorDay, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from './time'
 
 describe('taipeiYyyyMm（成本報表的月結桶）', () => {
   it('月中:UTC 與台灣同月', () => {
@@ -133,6 +133,42 @@ describe('isServiceHoursDnd（服務時間 / 勿擾時段，台灣時區）', ()
   it('設定壞掉（時間格式非法）→ 回 false，寧可不擋', () => {
     const bad = { enabled: true, start: '25:99', end: '18:00', weekendOff: false }
     expect(isServiceHoursDnd(bad, new Date('2026-07-20T12:00:00Z'))).toBe(false)
+  })
+})
+
+/**
+ * 勿擾訊息只說「目前非客服服務時間」，客人無從得知要等多久（`H-19`：那位客人因此
+ * 在 41 秒內按了 34 次選單）。這句話就是補上「等到什麼時候」的那半。
+ */
+describe('serviceHoursSentence（把服務時間講成一句人話）', () => {
+  it('週末休息 → 講「週一至週五」', () => {
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: true }))
+      .toBe('週一至週五 10:00–19:00')
+  })
+
+  it('週末不休息 → 講「每天」', () => {
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: false }))
+      .toBe('每天 10:00–19:00')
+  })
+
+  it('存成 "9:00" 也要唸成 "09:00"（跟設定畫面顯示的一致）', () => {
+    expect(serviceHoursSentence({ enabled: true, start: '9:00', end: '18:30', weekendOff: false }))
+      .toBe('每天 09:00–18:30')
+  })
+
+  it('沒開服務時間 → 沒有這句（不是講「每天 00:00」）', () => {
+    expect(serviceHoursSentence({ enabled: false, start: '10:00', end: '19:00', weekendOff: true })).toBeNull()
+    expect(serviceHoursSentence(null)).toBeNull()
+    expect(serviceHoursSentence(undefined)).toBeNull()
+  })
+
+  it('時間格式壞掉 → 沒有這句，不對客人講出半截的話', () => {
+    expect(serviceHoursSentence({ enabled: true, start: '25:99', end: '19:00', weekendOff: true })).toBeNull()
+  })
+
+  it('起訖同一分鐘（＝整天都不服務）→ 沒有這句', () => {
+    // isServiceHoursDnd 對這種設定是「整天勿擾」，照字面唸成「每天 09:00–09:00」只會更困惑
+    expect(serviceHoursSentence({ enabled: true, start: '09:00', end: '09:00', weekendOff: false })).toBeNull()
   })
 })
 

@@ -49,7 +49,7 @@ import { notifyHandoffToStaff } from './ai-handoff-notify'
 import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
-import { isServiceHoursDnd } from '~~/shared/time'
+import { isServiceHoursDnd, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
@@ -2970,6 +2970,21 @@ function markWaitingAckSent(workspaceId: string, lineUserId: string): void {
   capMapSize(waitingAckSentAt, WAITING_ACK_MAP_MAX_ENTRIES)
 }
 
+/**
+ * 「等真人期間按按鈕」的節流，**刻意和上面那個分開，不共用也不吃 markWaitingAckSent**。
+ *
+ * 為什麼：轉真人那則訊息（或勿擾訊息）送出的同時就會蓋掉上面那個節流章，而客人**正是**
+ * 在收到那則之後才開始按選單的。共用一個節流＝這個場景永遠靜音，等於沒修。
+ * 2026-08-24 實測：客人按「真人客服」收到勿擾訊息後，41 秒內又按了 34 次選單
+ * （查訂單 30 次、商品目錄 1 次），一則回覆都沒有，隔天早上才有人回（`H-19`）。
+ *
+ * 兩句話講的也不是同一件事，所以不算重複安撫：
+ *   上面那句＝「你傳的訊息我們收到了」
+ *   這句　　＝「你按的選單現在不會動，原因是這樣，你可以改用打字的」
+ */
+const WAITING_BUTTON_ACK_THROTTLE_MS = 30 * 60 * 1000
+const waitingButtonAckSentAt = new Map<string, number>()
+
 // ── 轉真人的兩個收斂點 ─────────────────────────────────────────────
 // 「把客人轉給真人」有六個入口（AI 護欄、二次確認、「找真人」攔截、腳本逃生門、
 // 腳本結尾 thenHandoff、按到「真人客服」模組），先前各自實作了一份，結果是同一件事
@@ -2990,7 +3005,27 @@ function markWaitingAckSent(workspaceId: string, lineUserId: string): void {
 async function dndHandoffReplyText(workspaceId: string): Promise<string | null> {
   const settings = await getAiSettings(workspaceId).catch(() => null)
   if (!isServiceHoursDnd(settings?.serviceHours)) return null
-  return settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
+  const base = settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
+  return appendServiceHoursLine(base, settings?.serviceHours)
+}
+
+/**
+ * 在勿擾訊息後面補一行實際的服務時間。
+ *
+ * 為什麼由程式補、不是叫店家自己寫進去：①店家改了營業時間只會改上面的時間欄位，
+ * 手寫在文案裡的那句會留在原地變成假資訊 ②預設文案（`DEFAULT_DND_REPLY`）本來就只說
+ * 「會在服務時間盡快回覆」，沒開口講服務時間是幾點——客人無從判斷要等 10 分鐘還是
+ * 到明天早上，只好一直重按（`H-19`）。
+ *
+ * ⛔ 店家自己已經寫了時間就不補：用「文案裡有沒有出現那個開始時間」判斷。
+ *    寧可漏補一次，也不要送出「…10:00–19:00 回覆您。服務時間：週一至週五 10:00–19:00」。
+ */
+function appendServiceHoursLine(base: string, cfg: ServiceHoursLike | null | undefined): string {
+  const sentence = serviceHoursSentence(cfg)
+  if (!sentence) return base
+  const startHhmm = sentence.split(' ')[1]?.split('–')[0] ?? ''
+  if (startHhmm && base.includes(startHhmm)) return base
+  return `${base}\n服務時間：${sentence}`
 }
 
 /**
@@ -3174,6 +3209,58 @@ async function maybeSendWaitingAck(
   }
   catch (e) {
     console.error('[waiting-ack] failed:', e)
+  }
+}
+
+/**
+ * 等真人期間**按了選單／按鈕**時的回饋。文字訊息有 maybeSendWaitingAck，按鈕先前完全沒接，
+ * 客人按下去畫面上一點動靜都沒有——同一位客人打字有回應、按按鈕像壞掉（`H-19`）。
+ *
+ * 三件事要在同一則裡講完，缺一則客人還是會繼續按：
+ *   ①「已經在排隊了」——不然他以為剛才那次也沒送出
+ *   ②「選單現在不會動」——這是他真正想知道的，沒講他會一直試
+ *   ③「可以改用打字的」——給一條真的走得通的路，而不是只有道歉
+ *
+ * 只在 pending_human（等真人）出聲；human_handling（真人正在對話）維持靜音，
+ * 沿用 maybeSendWaitingAck 的判斷——那時同事就在線上，客人按了什麼他在對話裡看得到
+ * 那一行紀錄，機器人再插一句反而像有人搶答。
+ */
+async function maybeSendWaitingButtonAck(
+  sessionId: string | null,
+  lineUserId: string,
+  replyToken: string,
+  workspaceId: string,
+): Promise<void> {
+  try {
+    const status = await getSessionStatusCached(sessionId)
+    if (status !== 'pending_human') return
+
+    const key = `${workspaceId}:${lineUserId}`
+    const now = Date.now()
+    if (now - (waitingButtonAckSentAt.get(key) ?? 0) < WAITING_BUTTON_ACK_THROTTLE_MS) return
+    // 先佔位再送（同 maybeSendWaitingAck）：連按 34 次是同時進來的 34 個 webhook，
+    // 等送出成功才記章的話會 34 則一起發出去。送失敗再回滾。
+    waitingButtonAckSentAt.set(key, now)
+    capMapSize(waitingButtonAckSentAt, WAITING_ACK_MAP_MAX_ENTRIES)
+
+    const msg: messagingApi.TextMessage = {
+      type: 'text',
+      text: '已經幫您安排專員了，上線後會直接回覆您 🙏\n（等候期間選單暫時不會有回應，您可以先把問題打在這裡，專員一上線就看得到）',
+    }
+    try {
+      await replyMessage(replyToken, [msg], workspaceId)
+    }
+    catch (e) {
+      waitingButtonAckSentAt.delete(key)
+      throw e
+    }
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+      sender: 'system',
+      senderName: '等待真人期間的自動回覆',
+    }).catch(e => console.error('[waiting-button-ack] save outgoing error:', e))
+  }
+  catch (e) {
+    console.error('[waiting-button-ack] failed:', e)
   }
 }
 
@@ -4067,6 +4154,11 @@ export async function handlePostbackEvent(
       moduleId: trigger.moduleId,
       lineEventTimestampMs: postbackTs,
     })
+    // 記一行給同事看還不夠——客人那邊仍是一片空白。等真人時給他一句節流過的回饋，
+    // 說清楚「排隊中／選單不會動／可以改用打字」，否則他只會一直按（`H-19`）。
+    if (event.replyToken) {
+      await maybeSendWaitingButtonAck(sessionId, userId, event.replyToken, workspaceId)
+    }
     return
   }
 
@@ -4081,6 +4173,12 @@ export async function handlePostbackEvent(
       name: '',
       lineEventTimestampMs: postbackTs,
     })
+  }
+  else if (event.replyToken) {
+    // 等真人期間按到「指不到模組的舊按鈕」：客人的體感和上面那條一模一樣（按了沒動靜），
+    // 所以同樣給回饋。⛔這裡不記 button_dead——真正的死按鈕警報只能在機器人服務中判定，
+    // 靜音期間本來就不會有回覆，記下去會讓異常中心把好按鈕誤報成壞掉的。
+    await maybeSendWaitingButtonAck(sessionId, userId, event.replyToken, workspaceId)
   }
 
   /**

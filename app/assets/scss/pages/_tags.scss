@@ -491,3 +491,99 @@
   flex-shrink: 0;
   gap: 0.4rem;
 }
+
+/* ── AI 分段膠囊（D-30①）─────────────────────────────────────
+   把「哪些在讓 AI 判」從下拉搬到檯面上。數字本身就是資訊，不點也看得到。
+   視覺沿用客服對話頁的狀態分頁（同一種「一排可點的粗篩」語彙，不另創一套）。 */
+.tags-segments {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tags-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 30px;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+    color: var(--text-primary);
+  }
+
+  &.active {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active);
+    outline-offset: 1px;
+  }
+}
+
+/* 數字要對得起來（等寬數字），而且比標籤淡一階——它是佐證不是主角 */
+.tags-segment__n {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.tags-segment.active .tags-segment__n { color: var(--text-primary); }
+
+/* ── 「AI 發現新標籤」常駐細條（D-30②）──────────────────────
+   ⛔ 沒有建議時**不可以整個消失**：功能不能只在有結果時才有臉（老闆 08-26 的反應
+   就是「這個好像沒有介面」）。做成細條不是卡片——講得清楚但不佔版面。 */
+.tags-discovery-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  /* 壞掉／太久沒跑不是中性資訊，用左色條講出嚴重度（同全站語彙） */
+  &.is-warning {
+    border-left: 3px solid var(--el-color-warning);
+    color: #a35b00;
+  }
+
+  &.is-danger {
+    border-left: 3px solid var(--el-color-danger);
+    color: var(--el-color-danger);
+  }
+}
+
+.tags-discovery-strip__icon {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.tags-discovery-strip__txt {
+  flex: 1;
+  min-width: 12rem;
+
+  b { color: var(--text-primary); }
+}
+
+.tags-discovery-strip.is-warning .tags-discovery-strip__txt b,
+.tags-discovery-strip.is-danger .tags-discovery-strip__txt b { color: inherit; }

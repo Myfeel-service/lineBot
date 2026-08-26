@@ -75,16 +75,31 @@
         </div>
 
         <!--
-          ⛔ 沒有建議時也要有生命跡象（08-25：`C-68` 那個排程壞了兩天沒人看得出來，
-          因為畫面上「沒東西」跟「壞掉」長得一模一樣）。做成一行小字不是卡片——不佔版面。
-          文案由 discoveryState() 這支純函式決定（可測），⛔ 不要在模板裡拼條件：
+          ══ 沒有建議時的常駐細條（D-30②）════════════════════════
+          ⛔ **不可以整個消失**：第一版是「沒建議只剩一行小灰字」，老闆的反應是
+          「這個功能好像沒有介面」——一個功能不能只在有結果的時候才有臉。
+          現在是一條看得見的細條：講清楚上次掃了沒、結果如何，並且給一顆
+          「立即掃描一次」，不用等它一週一次的節奏。
+          文案由 discoveryState() 純函式決定（可測），⛔ 不要在模板裡拼條件：
           第一版就是在這裡拼 v-if，結果「每輪都炸」被印成「第一次掃描還沒跑」。
         -->
-        <p
+        <div
           v-else-if="discoveryLoaded"
-          class="tags-discovery-idle"
+          class="tags-discovery-strip"
           :class="`is-${discoveryIdle.tone}`"
-        >{{ discoveryIdle.text }}</p>
+        >
+          <span class="tags-discovery-strip__icon" aria-hidden="true">{{ discoveryIdle.tone === 'idle' ? '🔍' : '⚠️' }}</span>
+          <span class="tags-discovery-strip__txt">
+            <b>AI 發現新標籤</b>：{{ discoveryIdle.text }}
+          </span>
+          <!-- ⛔ 開關關著時不給這顆按鈕：按了也不會掃，那是假的操作 -->
+          <el-button
+            v-if="canOperate && discoveryEnabled"
+            size="small"
+            :loading="rescanning"
+            @click="requestRescan"
+          >立即掃描一次</el-button>
+        </div>
 
         <div class="message-card tags-page-card">
           <div class="message-card-header">
@@ -93,6 +108,22 @@
             </div>
           </div>
           <div class="card-section-stack">
+            <!-- ══ AI 分段（D-30①）════════════════════════════════
+                 老闆問「所有標籤混在一個列表好嗎」。列表維持一個（標籤只有一種身分），
+                 但把最常用的切法從下拉搬到檯面上——數字本身就是資訊，不點也知道
+                 「有幾顆在讓 AI 判」。細分（先建議／直接貼）由表格那欄的徽章負責。 -->
+            <div class="tags-segments" role="group" aria-label="依 AI 判斷篩選">
+              <button
+                v-for="seg in TAG_AI_SEGMENTS"
+                :key="seg.value || 'all'"
+                type="button"
+                class="tags-segment"
+                :class="{ active: filterAiMode === seg.value }"
+                :aria-pressed="filterAiMode === seg.value"
+                @click="filterAiMode = seg.value"
+              >{{ seg.label }} <span class="tags-segment__n">{{ segmentCount(seg.value) }}</span></button>
+            </div>
+
             <div class="tags-toolbar" data-tour="tag-filter">
               <div class="tags-toolbar__field tags-toolbar__field--search">
                 <AdminFieldLabel text="搜尋（標籤名稱或英文代號）" tight />
@@ -116,15 +147,7 @@
                   <el-option label="停用" value="inactive" />
                 </el-select>
               </div>
-              <div class="tags-toolbar__field tags-toolbar__field--status">
-                <AdminFieldLabel text="AI 判斷" tight />
-                <el-select v-model="filterAiMode" placeholder="全部" clearable>
-                  <el-option label="不用（我自己貼）" value="off" />
-                  <el-option label="AI 先建議" value="suggest" />
-                  <el-option label="AI 直接貼" value="auto" />
-                </el-select>
-              </div>
-              <span class="tags-count text-muted">共 {{ total.toLocaleString('zh-TW') }} 筆</span>
+              <span class="tags-count text-muted">符合 {{ total.toLocaleString('zh-TW') }} 筆</span>
             </div>
 
             <div v-if="loading" class="tags-loading">
@@ -392,6 +415,7 @@ import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
 import { discoveryState } from '~~/shared/tag-discovery'
+import { TAG_AI_SEGMENTS } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
 /** 三段選擇的文案（D-27①）：信任程度由低到高，一次講完「讓不讓判＋判了怎麼處理」 */
@@ -405,7 +429,7 @@ definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { workspaceId, apiFetch } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
-const { tags, loading, total, page, pageSize, loadTags } = useAdminTagList()
+const { tags, loading, total, segments, page, pageSize, loadTags } = useAdminTagList()
 const { showToast } = useAdminToast()
 
 const saving = ref(false)
@@ -493,6 +517,40 @@ async function createFromTemplates() {
   }
   finally {
     creatingTemplates.value = false
+  }
+}
+
+/** 膠囊上的數字（D-30①）。⛔ 後端算的時候排除 aiMode 本身，所以點了某一段其他段不會歸零 */
+function segmentCount(value: string): number {
+  if (value === 'ai') return segments.value.ai
+  if (value === 'off') return segments.value.manual
+  return segments.value.all
+}
+
+/* ── 立即掃描一次（D-30②）───────────────────────────────── */
+const rescanning = ref(false)
+
+async function requestRescan() {
+  if (!assertCanOperate()) return
+  rescanning.value = true
+  try {
+    const res = await apiFetch<{ queued: boolean, reason?: string }>('/api/tag/discovery', {
+      method: 'POST',
+      body: { action: 'rescan' },
+    })
+    // ⛔ queued:false 不是錯誤，是「剛掃過、不用再掃」——要講清楚而不是報失敗
+    showToast(
+      res.queued
+        ? '已排入掃描，通常十分鐘內完成，完成後回來重整這一頁'
+        : '剛剛才掃過，先等一下再試（每半小時最多一次）',
+      res.queued ? 'success' : 'warning',
+    )
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '排入掃描失敗', 'error')
+  }
+  finally {
+    rescanning.value = false
   }
 }
 

@@ -163,3 +163,30 @@ export function isServiceHoursDnd(cfg: ServiceHoursLike | null | undefined, date
     : (nowMin >= start || nowMin < end) // 跨夜 22:00–06:00
   return !inService
 }
+
+/**
+ * 服務時間講成一句人話：「週一至週五 10:00–19:00」／「每天 10:00–19:00」。
+ *
+ * 為什麼要有這句：勿擾訊息只說「目前非客服服務時間」，客人**無從得知要等多久**——
+ * 2026-08-24 那位客人收到之後在 41 秒內按了 34 次選單，因為他不知道是要等到明天早上
+ * 還是訊息根本沒送出去（`H-19`）。給一個明確的時間，等待才變成可以接受的事。
+ *
+ * 三種情況回 null（呼叫端就不要接這句）：沒開、時間格式壞掉、起訖同一分鐘。
+ * 寧可少講一句，也不要對客人講出「週一至週五 undefined」或「每天 09:00–09:00」
+ * ——後者是 isServiceHoursDnd 眼中的「整天都不服務」，照字面唸出來只會讓客人更困惑。
+ */
+export function serviceHoursSentence(cfg: ServiceHoursLike | null | undefined): string | null {
+  if (!cfg?.enabled) return null
+  const start = hhmmToMinutes(cfg.start)
+  const end = hhmmToMinutes(cfg.end)
+  if (start === null || end === null) return null
+  if (start === end) return null
+  const days = cfg.weekendOff ? '週一至週五' : '每天'
+  // 用整理過的字串而不是原值：設定存的是 "9:00" 也要講成 "09:00"
+  return `${days} ${minutesToHhmm(start)}–${minutesToHhmm(end)}`
+}
+
+/** 午夜起算的分鐘 → "HH:mm"（補零，和設定畫面顯示的一致）。 */
+function minutesToHhmm(total: number): string {
+  return `${p2(Math.floor(total / 60))}:${p2(total % 60)}`
+}

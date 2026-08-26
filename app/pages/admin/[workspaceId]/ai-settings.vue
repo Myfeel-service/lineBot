@@ -546,6 +546,12 @@
                 :disabled="!form.serviceHours.enabled"
                 placeholder="您好,目前非客服服務時間,我們會在服務時間盡快回覆您 🙏"
               />
+              <!-- 客人看到的字會多一行,這裡不講清楚的話店家會以為系統擅自改了他的文案。
+                   時間由上面的欄位帶,店家改營業時間不必回頭改這段文字（也就不會留下假資訊）。 -->
+              <p class="ai-section-hint">
+                送出時會自動在後面補一行實際的服務時間(例:「服務時間：{{ serviceHoursPreview }}」),
+                客人才知道要等到什麼時候。文案裡自己寫了時間就不會重複補。
+              </p>
             </div>
           </div>
         </div>
@@ -846,7 +852,7 @@ import {
   INBOUND_TIME_TRACKING_SINCE,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
-import { taipeiYyyyMm } from '~~/shared/time'
+import { serviceHoursSentence, taipeiYyyyMm } from '~~/shared/time'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -903,6 +909,8 @@ function defaultForm(): FormShape {
 }
 
 const form = ref<FormShape>(defaultForm())
+// 說明文字裡示範的那句服務時間,跟客人真的會收到的字用同一支函式算,不要在畫面上另寫一份
+const serviceHoursPreview = computed(() => serviceHoursSentence({ ...form.value.serviceHours, enabled: true }) ?? '週一至週五 10:00–19:00')
 const saving = ref(false)
 const showAdvanced = ref(false)
 const loadError = ref(false)

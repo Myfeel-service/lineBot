@@ -3,6 +3,7 @@ import { parseAdminListPagination, paginateArray } from '~~/server/utils/admin-p
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import type { TagDoc } from '~~/shared/types/tag-broadcast'
+import { isAiJudgedTag, tagSegmentCounts } from '~~/shared/tag-admin'
 
 type TagRow = TagDoc & { id: string; memberCount?: number }
 
@@ -20,9 +21,10 @@ function filterTags(
   if (opts.categoryFilter) result = result.filter((t) => t.category === opts.categoryFilter)
   // 'off' 要把「沒有這個欄位」的舊標籤也算進去（缺欄＝off 是全系統口徑）
   if (opts.aiModeFilter) {
-    result = opts.aiModeFilter === 'off'
-      ? result.filter((t) => !t.aiMode || t.aiMode === 'off')
-      : result.filter((t) => t.aiMode === opts.aiModeFilter)
+    if (opts.aiModeFilter === 'off') result = result.filter((t) => !isAiJudgedTag(t))
+    // 'ai'＝suggest+auto 合起來（計數膠囊的粗篩；細分仍可傳 suggest / auto）
+    else if (opts.aiModeFilter === 'ai') result = result.filter((t) => isAiJudgedTag(t))
+    else result = result.filter((t) => t.aiMode === opts.aiModeFilter)
   }
   if (opts.searchRaw) {
     result = result.filter(
@@ -61,6 +63,13 @@ export default defineEventHandler(async (event) => {
   )
 
   const filtered = filterTags(tags, { statusFilter, categoryFilter, aiModeFilter, searchRaw })
+  /**
+   * 計數膠囊的三個數字（D-30①）。⛔ **刻意不套 aiModeFilter**：
+   * 分面篩選的通則是每一面的計數要排除它自己，否則點了「AI 判斷中」之後
+   * 「手動／系統」會顯示 0，看起來像那些標籤消失了。
+   * 這裡是記憶體運算，`tags` 上面已經撈過了，零額外讀取。
+   */
+  const segments = tagSegmentCounts(filterTags(tags, { statusFilter, categoryFilter, searchRaw }))
 
   const attachMemberCounts = async (rows: TagRow[]) => {
     if (!includeMemberCount || !rows.length) return rows
@@ -80,5 +89,5 @@ export default defineEventHandler(async (event) => {
   const pageItems = paginateArray(filtered, offset, limit)
   const items = await attachMemberCounts(pageItems)
 
-  return { items, total, page, limit }
+  return { items, total, page, limit, segments }
 })

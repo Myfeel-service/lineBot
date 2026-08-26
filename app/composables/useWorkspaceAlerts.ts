@@ -348,6 +348,18 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/tags`,
   },
   {
+    /**
+     * 「可以更好」：AI 從對話裡發現「你還沒有這顆標籤」的主題（D-30②）。
+     * 沒有這條的話建議只躺在標籤頁——而沒有人會沒事去開標籤頁。
+     */
+    id: 'tagDiscoverySuggestions',
+    icon: Opportunity,
+    impact: 'AI 讀最近的對話，發現有些主題很多客人在聊、但你還沒有對應的標籤。判斷條件我都擬好了，你按「建立」才會新增，而且會順手把聊過的那批客人標起來。',
+    cta: '去看建議',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/tags`,
+  },
+  {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
     id: 'knowledgeSuggestions',
     icon: Opportunity,
