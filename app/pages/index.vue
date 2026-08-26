@@ -5,25 +5,25 @@
     :class="{ 'is-stuck': stuck, 'is-anim': anim, 'is-menu-open': menuOpen }"
   >
     <!-- ══════════════════════════════════════════════════════════════
-         導購頁。版面是「一段對話」：每一區的標題都是 MiniMe 開口講的一句話
-         （綠氣泡＋頭像，見 _landing.scss 的 .lp-turn），底下是它端出來的東西。
+         導購頁。2026-08-26 依老闆給的新版草稿（桌面「!DOCTYPE html.pages」，v30）整頁改版：
+         版面仍是「一段對話」，但改成 米綠底 × 深松綠段 × 奶油黃定價段 的節奏，
+         泡泡改回品牌綠底白字（草稿定案，蓋掉 2026-08-21「綠泡泡醜」的舊拍板——見 _landing.scss 檔頭）。
 
          ⚠️ 兩件事會連坐別的頁面，動之前先看：
            1. 外殼類名（.lp-nav / .lp-brand / .lp-btn / .lp-wrap / .lp-foot）與三個法務頁
               共用（components/site/SiteLegalPage.vue）——只在首頁生效的東西掛 .lp-home。
-           2. #value / #diff / #pricing / #faq 這四個 id 是頁尾與法務頁的連結目標
-              （SiteFooter.vue 的「產品介紹／功能比較／定價／常見問題」），換 id 會變死連結。
+           2. #value / #pricing / #faq 這三個 id 是頁尾與法務頁的連結目標
+              （SiteFooter.vue），換 id 會變死連結。#diff（比較表）已隨 08-26 改版整區移除，
+              頁尾的「功能比較」連結同步拿掉了。
 
-         ⛔ 還沒上線的功能一律掛「即將推出」（.lp-soon）並在區塊底下用一行圖說講清楚
-            哪一半是現有的。目前掛著的有三處：節慶提案卡、自動化行銷示意、圖文選單代設。
-            要拿掉徽章之前，先確認功能真的上線了（判斷依據見 docs/STATUS.md）。
-         ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯⋯（灰的那幾區掛 .lp-section--tint）。
-            新增或搬動區塊時要跟著調，不然會出現兩個同色區塊相鄰、看起來像漏了一段。
-            目前順序：Hero(白) fix(灰) why(白) fast(灰) value(白) diff(灰) pricing(白)
-            grow(灰) faq(白) signup(灰) 收尾CTA(綠)。
-         ⛔ 退費措辭只有一種寫法：「不綁約、隨時可取消，取消後服務用到本期結束」。
-            不可以寫成「隨時可退」「前 N 天免費」——實際政策沒有退現金也沒有試用期，
+         ⛔ 還沒上線的功能一律掛「即將推出」（.lp-soon）並用圖說講清楚哪一半是現有的。
+            目前掛著的有：圖文選單代設、AI 行銷卡（回購喚醒／生日經營）；
+            Hero 時機卡的「新好友還沒開口」名單寫在圖說裡。（判斷依據見 docs/STATUS.md）
+         ⛔ 草稿裡的「付費後隨時可退」「前 14 天免費」**沒有照搬**：退費措辭只有一種寫法
+            「不綁約、隨時可取消，取消後服務用到本期結束」——實際政策沒有退現金也沒有試用期，
             寫了就是對消費者的不實承諾（政策原文見 pages/refund.vue）。
+         ⛔ 草稿末尾的「假註冊聊天視窗」（收 Email 後宣稱寄出開通連結）**沒有移植**：
+            那就是 2026-07-20 自助導購漏斗修掉的「demo 表單黑洞」。所有 CTA 通往真的 /login。
          ══════════════════════════════════════════════════════════════ -->
 
     <!-- ── Nav（與法務頁共用外殼，只換錨點標籤）───────────────── -->
@@ -37,11 +37,11 @@
           <BrandLogo mark class="lp-brand__mark" alt="" />
         </a>
         <div class="lp-nav__links">
-          <a href="#fix" @click="closeMenu">怎麼幫你</a>
-          <a href="#why" @click="closeMenu">為什麼卡住</a>
+          <a href="#why" @click="closeMenu">卡在哪</a>
+          <a href="#fix" @click="closeMenu">怎麼解</a>
           <a href="#value" @click="closeMenu">能做什麼</a>
-          <a href="#pricing" @click="closeMenu">定價</a>
-          <a href="#faq" @click="closeMenu">常見問題</a>
+          <a href="#pricing" @click="closeMenu">價格</a>
+          <a href="#grow" @click="closeMenu">成長</a>
         </div>
         <div class="lp-nav__right">
           <NuxtLink to="/login" class="lp-nav__signin">登入</NuxtLink>
@@ -52,11 +52,10 @@
     </nav>
 
     <!-- ── Hero ────────────────────────────────────────────────
-         右邊放「接下來的行銷檔期」而不是產品畫面：那張卡裡沒有一個編造的數字，
-         節日、日期與行銷切角全部來自 shared/taiwan-festivals.ts（系統本來就會在節前提醒老闆），
-         所以它同時是主張的證據，也是現有功能的展示。
-         ⛔ 別把「生日」「60 天沒回購」混進這張卡：那兩種時機目前偵測不到
-            （客人資料沒有生日欄位，也沒有購買紀錄），混進來就是拿還沒有的東西當門面。 -->
+         右邊是「現在可以把握的時機」卡（08-26 草稿）：節慶、客戶狀態、標籤三組時機。
+         節慶那組吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆），
+         其餘兩組與好友數是虛構示範——所以圖說必須交代哪一半是真的（⛔ 拿掉圖說前先想清楚：
+         沒有那行，虛構人數就是被當成真實客戶資料在賣）。 -->
     <header id="top" class="lp-hero">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
@@ -64,429 +63,379 @@
         <div class="lp-hero__text">
           <span class="lp-eyebrow">LINE 專用 · AI 客服與顧客經營</span>
           <h1>你的顧客，<br>其實很<span class="g">值錢</span>。</h1>
-          <!-- 兩句各佔一行（手機收掉 br 自然流）：擠在同一段時「只是」會被拆開，
-               行尾留一個「只」看起來像錯字 -->
+          <!-- 兩句各佔一行（手機收掉 br 自然流）：擠在同一段時斷行位置會把詞拆開 -->
           <p class="lp-hero__sub">
             品牌的 LINE 官方帳號有好多好友，<br>
-            <b>卻不知道怎麼經營他們嗎？</b>
+            <b>卻不知道如何經營他們嗎？</b>
           </p>
           <div class="lp-hero__actions">
-            <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費註冊</NuxtLink>
-            <a class="lp-btn lp-btn--ghost" href="#pricing">看定價 →</a>
+            <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           </div>
           <p class="lp-hero__fine">
-            <b>1 分鐘</b>完成註冊 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
+            <b>60 秒</b>完成設定 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
           </p>
         </div>
 
         <div class="lp-hero__visual">
-          <div class="lp-panel lp-friends">
+          <div class="lp-panel lp-ops">
             <div class="lp-panel__hd">
               <span class="lp-panel__pip" />
-              <span class="lp-panel__title">接下來可以把握的時機</span>
-              <span class="lp-panel__meta">台灣節慶檔期</span>
+              <span class="lp-panel__title">現在可以把握的時機</span>
+              <span class="lp-panel__meta">2,148 位好友</span>
             </div>
-            <div class="lp-friends__list">
-              <div
-                v-for="(f, i) in heroFestivals"
-                :key="f.id"
-                class="lp-fr"
-                :class="{ 'is-show': i < shownRows, 'lp-fr--soon': f.soon }"
-              >
-                <span class="lp-fr__txt"><b>{{ f.name }} {{ f.md }}</b><small>{{ f.angle }}</small></span>
-                <span class="lp-fr__meta">
-                  <span class="lp-fr__tag" :class="f.soon ? 'lp-fr__tag--soon' : 'lp-fr__tag--plan'">{{ f.badge }}</span>
-                </span>
+
+            <div class="lp-ops__group">
+              <div class="lp-ops__head">節慶</div>
+              <div v-for="f in heroFests" :key="f.id" class="lp-op">
+                <b>{{ f.name }} {{ f.md }}</b>
+                <small>{{ f.angle }}</small>
+                <span class="lp-op__tag" :class="{ 'lp-op__tag--soon': f.soon }">{{ f.badge }}</span>
               </div>
             </div>
-            <div class="lp-friends__foot">
-              未來一年還有 <b>{{ festivalsAheadShown }}</b> 個檔期，可以跟他們說說話
+
+            <div class="lp-ops__group">
+              <div class="lp-ops__head">客戶狀態</div>
+              <div class="lp-op">
+                <b>本週新加入的好友</b>
+                <small>還沒說過第一句話</small>
+                <span class="lp-op__tag lp-op__tag--num">38 位</span>
+              </div>
+              <div class="lp-op">
+                <b>上次聯絡超過 60 天</b>
+                <small>可以請他們回來看看</small>
+                <span class="lp-op__tag lp-op__tag--num">142 位</span>
+              </div>
+            </div>
+
+            <div class="lp-ops__group">
+              <div class="lp-ops__head">標籤</div>
+              <div class="lp-op">
+                <b>南港展覽館咖啡展</b>
+                <small>展場加入的好友</small>
+                <span class="lp-op__tag lp-op__tag--num">216 位</span>
+              </div>
+              <div class="lp-op">
+                <b>手沖愛好者</b>
+                <small>買過單品豆</small>
+                <span class="lp-op__tag lp-op__tag--num">184 位</span>
+              </div>
+            </div>
+
+            <div class="lp-ops__cta">
+              <NuxtLink class="lp-btn lp-btn--primary lp-btn--block" to="/login">建立你的 {{ brandName }}</NuxtLink>
             </div>
           </div>
-          <p class="lp-figcap">檔期表由系統內建，快到了會主動提醒你。</p>
+          <p class="lp-figcap">
+            示意畫面：好友數、人數與標籤為虛構示範。節慶檔期與「60 天沒聯絡」名單是現有功能、由系統自動產生；
+            「新好友還沒開口」的自動名單仍在開發中。
+          </p>
         </div>
       </div>
     </header>
 
-    <!-- ── 它先開口：節慶提案 ──────────────────────────────────
-         整區的主張是「它不是等你下指令，是它先開口」。
-         ⚠️ 節日／日期／切角是真的（節慶表），兩個客群的人數與訊息是示意，
-            而且「自動分客群＋代擬訊息＋一鍵採用」還沒上線 → 卡片掛「即將推出」。 -->
-    <section id="fix" class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2>你需要一個最懂你的 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span>幫你管理他們。</h2>
-            <p v-if="proposal">就拿{{ proposal.days <= 30 ? '快到的' : '下一個' }}{{ proposal.name }}來說——它會先開口，而且連要對誰說什麼都想好了。</p>
-          </div>
-        </div>
-
-        <div v-if="proposal" class="lp-stack lp-reveal">
-          <div class="lp-panel">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip lp-panel__pip--soon" />
-              <span class="lp-panel__title">{{ proposal.name }}檔期提案</span>
-              <span class="lp-panel__meta">{{ proposal.md }} · 建議 {{ proposal.startMd }} 前送出</span>
-              <span class="lp-soon">即將推出</span>
-            </div>
-            <div class="lp-panel__bd">
-              <div v-for="g in proposal.groups" :key="g.who" class="lp-prop">
-                <div class="lp-prop__hd">
-                  <span class="lp-prop__who">{{ g.who }}</span>
-                  <span class="lp-prop__n">{{ g.n }} 位</span>
-                </div>
-                <p class="lp-prop__angle">切角：{{ g.angle }}</p>
-                <p class="lp-prop__msg">「{{ g.msg }}」</p>
-              </div>
-              <!-- ⛔ 這兩顆是 <span> 不是 <button>：門面上不放按不動的按鈕。
-                   真正的行動鈕在下面的 .lp-prop__cta。 -->
-              <div class="lp-prop__foot">
-                <span class="lp-prop__act lp-prop__act--yes">就照這個做</span>
-                <span class="lp-prop__act lp-prop__act--edit">我想改一下</span>
-                <span class="lp-prop__note">改完它會記住你的口味，下次照你的習慣提案。</span>
-              </div>
-            </div>
-          </div>
-          <p class="lp-figcap">
-            示意畫面：節日、日期與行銷切角出自系統內建的節慶表，<b>快到了會主動提醒你（現有功能）</b>；
-            人數為示意，<b>自動分客群、代擬訊息與一鍵採用仍在開發中</b>。
-          </p>
-        </div>
-      </div>
-    </section>
-
     <!-- ── 為什麼卡住：四道牆 ──────────────────────────────────
          四個原因不是平等的：第一道（沒人手）是前提，另外三個是它的後果，
-         所以第一張卡佔 1.45 倍寬並吃綠底（見 .lp-walls 註解）。 -->
+         所以第一張卡佔 1.45 倍寬並吃綠底。08-26 草稿給每道牆加了情境小圖（.lp-wall__scene），
+         內容是抽象示意圖形（人、對話、後台、價標），不含任何數字宣稱，不用掛示意圖說。 -->
     <section id="why" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <!-- br 是為了不讓「多了」「少請」這種詞被折行拆開（中文可以斷在任何字之間）；
-                 ≤720px 由 CSS 收掉，讓它自然流。 -->
-            <h2>多一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>等於多了<span class="mark">半個客服、半個行銷</span>。</h2>
-            <p>因為顧客經營這件事，本來就沒人做得起來——</p>
+            <h2>這件事，<br>老闆一直<span class="mark">卡在這四關</span>。</h2>
           </div>
         </div>
+
         <div class="lp-walls">
-          <div
-            v-for="(w, i) in WALLS"
-            :key="w.title"
-            class="lp-wall lp-reveal"
-            :class="{ 'lp-wall--main': i === 0 }"
-          >
-            <span class="lp-wall__n">{{ i + 1 }}</span>
-            <h3>{{ w.title }}</h3>
-            <p>{{ w.sub }}</p>
+          <div class="lp-wall lp-wall--main lp-reveal">
+            <div class="lp-wall__scene" aria-hidden="true">
+              <svg viewBox="0 0 200 84">
+                <g transform="translate(8,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="20" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
+                <g transform="translate(56,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="24" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
+                <g transform="translate(104,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="16" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
+                <g transform="translate(152,14)" class="lp-wall__blink">
+                  <circle cx="16" cy="14" r="11" fill="none" stroke="rgba(255,255,255,.34)" stroke-width="1.6" stroke-dasharray="3 3" />
+                  <path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="none" stroke="rgba(255,255,255,.34)" stroke-width="1.6" stroke-dasharray="3 3" />
+                  <text x="16" y="64" text-anchor="middle" font-size="12" fill="rgba(255,255,255,.5)">？</text>
+                </g>
+              </svg>
+            </div>
+            <span class="lp-wall__n">1</span>
+            <h3>沒有人可以做</h3>
+            <p>員工就是這麼多，每個人手上都滿了。</p>
+          </div>
+
+          <div class="lp-wall lp-reveal">
+            <div class="lp-wall__scene" aria-hidden="true">
+              <svg viewBox="0 0 160 84">
+                <rect x="6" y="10" width="86" height="24" rx="10" fill="#edf1eb" />
+                <rect x="16" y="19" width="52" height="5" rx="2.5" fill="#c6cec6" />
+                <rect x="62" y="42" width="92" height="24" rx="10" fill="#e9fbf0" />
+                <rect x="74" y="51" width="42" height="5" rx="2.5" fill="#9fd9b4" />
+                <path d="M92 22 q26 0 26 20" stroke="#c6cec6" stroke-width="1.6" fill="none" stroke-dasharray="3 3" />
+                <path d="M62 54 q-30 0 -30 18" stroke="#c6cec6" stroke-width="1.6" fill="none" stroke-dasharray="3 3" />
+              </svg>
+            </div>
+            <span class="lp-wall__n">2</span>
+            <h3>派了員工，還要照顧他的情緒</h3>
+            <p>多一件事，就是多一次溝通。</p>
+          </div>
+
+          <div class="lp-wall lp-reveal">
+            <div class="lp-wall__scene" aria-hidden="true">
+              <svg viewBox="0 0 160 84">
+                <rect x="6" y="8" width="44" height="68" rx="7" fill="#edf1eb" />
+                <g fill="#d6ddd5"><rect x="12" y="15" width="32" height="5" rx="2.5" /><rect x="12" y="25" width="26" height="5" rx="2.5" /><rect x="12" y="35" width="30" height="5" rx="2.5" /><rect x="12" y="45" width="22" height="5" rx="2.5" /><rect x="12" y="55" width="28" height="5" rx="2.5" /><rect x="12" y="65" width="24" height="5" rx="2.5" /></g>
+                <rect x="58" y="8" width="96" height="68" rx="7" fill="#f5f8f4" />
+                <g stroke="#c6cec6" stroke-width="1.4" fill="none">
+                  <path d="M70 26h22M104 26h20M92 26q10 0 10 14t14 14M70 54h34" />
+                </g>
+                <g fill="#fff" stroke="#cbd3cb" stroke-width="1.2">
+                  <rect x="64" y="18" width="18" height="15" rx="4" /><rect x="98" y="18" width="18" height="15" rx="4" /><rect x="126" y="18" width="18" height="15" rx="4" />
+                  <rect x="64" y="46" width="18" height="15" rx="4" /><rect x="100" y="46" width="18" height="15" rx="4" />
+                </g>
+              </svg>
+            </div>
+            <span class="lp-wall__n">3</span>
+            <h3>自己動手，後台太複雜</h3>
+            <p>打開來一堆設定，不知道從哪開始。</p>
+          </div>
+
+          <div class="lp-wall lp-reveal">
+            <div class="lp-wall__scene" aria-hidden="true">
+              <svg viewBox="0 0 160 84">
+                <g transform="translate(2,22)">
+                  <path d="M34 2h36a8 8 0 0 1 8 8v18a8 8 0 0 1-8 8H34L4 20z" fill="#f1f4f0" stroke="#d6ddd5" stroke-width="1.5" />
+                  <circle cx="60" cy="19" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.4" />
+                  <text x="88" y="26" font-size="17" font-weight="700" fill="#96a499">$3,000+</text>
+                </g>
+              </svg>
+            </div>
+            <span class="lp-wall__n">4</span>
+            <h3>找其他工具，好貴</h3>
+            <p>一個月好幾千，還得有人學、有人顧。</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── 60 秒上線 ───────────────────────────────────────────
-         左＝你要準備什麼（兩樣）；右＝設定過程長什麼樣（真的有的對話式開通引導）。
-         兩張卡吃同一個 --demo-h，標題才會落在同一條線上。 -->
-    <section id="fast" class="lp-section lp-section--tint">
+    <!-- ── 一關一關解掉（深松綠段）──────────────────────────────
+         問題→解法四列，與上面的四道牆逐一對應（編號要對得上，別調換順序）。 -->
+    <section id="fix" class="lp-section lp-section--dark">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2>只要 <span class="mark">60 秒</span>，它就可以開始工作。</h2>
+            <h2><span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" /></span> 把這四關一次解掉，<br>讓<span class="mark">一個你</span>，變成很多個你。</h2>
           </div>
         </div>
-        <div class="lp-two">
-          <div class="lp-panel lp-reveal">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">你只需要準備兩樣</span>
-              <span class="lp-panel__meta">60 秒</span>
-            </div>
-            <div class="lp-panel__bd">
-              <div class="lp-mock lp-need">
-                <div class="lp-need__i">
-                  <span class="lp-need__ic" aria-hidden="true">@</span>
-                  <span class="lp-need__t"><b>登入 Email</b><small>收開通連結</small></span>
-                  <span class="lp-need__chk" aria-hidden="true">✓</span>
-                </div>
-                <div class="lp-need__i">
-                  <span class="lp-need__ic lp-need__ic--brand"><BrandLogo mark on-color alt="" /></span>
-                  <span class="lp-need__t"><b>你的 LINE 官方帳號</b><small>現在就有的那個</small></span>
-                  <span class="lp-need__chk" aria-hidden="true">✓</span>
-                </div>
-                <p class="lp-need__note">就像去銀行開戶，只要身分證和手機號碼。</p>
-              </div>
-              <h3>不用先準備資料才能開始</h3>
-              <p>Email 註冊、貼一組 Webhook 網址接上官方帳號，就可以開始設定。</p>
-            </div>
-          </div>
 
-          <div class="lp-panel lp-reveal">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">設定時</span>
-              <span class="lp-panel__meta">全程有 AI 陪你</span>
-            </div>
-            <div class="lp-panel__bd">
-              <div class="lp-mock lp-setup">
-                <div class="lp-sd lp-sd--ai lp-d1">你的店叫什麼名字？</div>
-                <div class="lp-sd lp-sd--me lp-d2">山丘咖啡</div>
-                <div class="lp-sd lp-sd--ai lp-d3">好的。把菜單或官網給我，我自己讀 <span class="ok">✓</span></div>
-                <div class="lp-sdbar lp-d4"><i /><span>設定完成 100%</span></div>
-              </div>
-              <h3>一步一步，跟著它做就好</h3>
-              <p>用聊天的方式把設定做完，不用進後台一頁頁點。</p>
-            </div>
+        <div class="lp-solves lp-stack lp-reveal">
+          <div class="lp-solve">
+            <div class="lp-solve__from"><span class="lp-solve__n">1</span>沒有人可以做</div>
+            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <div class="lp-solve__to"><b>它 24 小時都在</b><small>不用增加人力，也不用排班</small></div>
+          </div>
+          <div class="lp-solve">
+            <div class="lp-solve__from"><span class="lp-solve__n">2</span>派了員工，還要照顧情緒</div>
+            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <div class="lp-solve__to"><b>交辦只要一句話</b><small>它不會累，也不用溝通</small></div>
+          </div>
+          <div class="lp-solve">
+            <div class="lp-solve__from"><span class="lp-solve__n">3</span>自己動手，後台太複雜</div>
+            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <div class="lp-solve__to"><b>一步一步跟著做就好</b><small>畫面帶著你走，重點的地方 AI 幫你標出來</small></div>
+          </div>
+          <div class="lp-solve">
+            <div class="lp-solve__from"><span class="lp-solve__n">4</span>找其他工具，好貴</div>
+            <svg class="lp-solve__arrow" viewBox="0 0 32 12" aria-hidden="true"><path d="M0 6h24M19 1l6 5-6 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <!-- ⛔ 這裡不能寫「隨時可退」：退費措辭只有檔頭那一種寫法 -->
+            <div class="lp-solve__to"><b>一個月 NT${{ fmt(lowestPaidPrice) }}</b><small>不綁約、隨時可取消</small></div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── 能做什麼 ────────────────────────────────────────────
+    <!-- ── 能做什麼：半個客服＋半個行銷 ─────────────────────────
          ⚠️ id 沿用 #value：頁尾與法務頁的「產品介紹」都指這裡，換 id 會變死連結。 -->
     <section id="value" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2><BrandLogo class="lp-bubble__logo" :alt="brandName" /> 每天可以幫你做這些事。</h2>
+            <!-- 這顆泡泡是品牌綠底，logotype 要用 on-color 轉白才讀得到（深色段的白泡泡用一般版） -->
+            <h2>多一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" on-color :alt="brandName" />，</span><br>等於多了<span class="mark">半個客服、半個行銷</span>。</h2>
           </div>
         </div>
 
-        <div class="lp-demos">
-          <div class="lp-panel lp-demo lp-reveal">
+        <div class="lp-stack lp-reveal">
+          <!-- 圖文選單：客人一打開 LINE 看到的畫面。「一句話代設」還沒上線 → 掛即將推出 -->
+          <div class="lp-panel">
             <div class="lp-panel__hd">
-              <span class="lp-demo__k">1</span>
-              <span class="lp-panel__title">自動化行銷</span>
-              <span class="lp-soon">部分即將推出</span>
+              <span class="lp-panel__pip" />
+              <span class="lp-panel__title">圖文選單</span>
+              <span class="lp-panel__meta">{{ brandName }} 幫你設定好</span>
+              <span class="lp-soon">即將推出</span>
             </div>
             <div class="lp-panel__bd">
-              <div class="lp-mock lp-stage">
-                <div class="lp-seg"><span>買過禮盒</span><b>326 位</b></div>
-                <div class="lp-seg"><span>{{ proposal?.name ?? '節慶' }} · 送禮客群</span><b>214 位</b></div>
-                <div class="lp-seg"><span>60 天沒回購</span><b>142 位</b></div>
-                <span class="lp-stage__go">訊息已排程，週三 10:00 送出</span>
+              <div class="lp-bn" aria-hidden="true">
+                <div class="lp-bn__r2">
+                  <div class="lp-bn__c lp-bn__c--green"><span class="lp-bn__t">父親節禮盒</span><span class="lp-bn__s">限時 88 折</span></div>
+                  <div class="lp-bn__c lp-bn__c--navy"><span class="lp-bn__t">會員專屬優惠</span><span class="lp-bn__s">生日月加碼</span></div>
+                </div>
+                <div class="lp-bn__hero">
+                  <div class="lp-bn__herotxt">
+                    <span class="lp-bn__brand">本月精選 · 日出配方</span>
+                    <span class="lp-bn__go">立即選購 ▸</span>
+                  </div>
+                  <div class="lp-bn__beans"><i /><i /><i /></div>
+                </div>
+                <div class="lp-bn__r3">
+                  <div class="lp-bn__c lp-bn__c--tan"><span class="lp-bn__t">商品資訊</span></div>
+                  <div class="lp-bn__c lp-bn__c--pink"><span class="lp-bn__t">訂單問題</span></div>
+                  <div class="lp-bn__c lp-bn__c--purple"><span class="lp-bn__t">真人客服</span></div>
+                </div>
               </div>
-              <h3>名單自己分好，訊息按時送出</h3>
-              <p>沒回購的、過節的、生日的，時間到自己送。送出前一律由你確認。</p>
+              <p class="lp-bn__note">客人一打開你的 LINE 就看到這個。過去要自己切版、自己設連結——現在跟 {{ brandName }} 講一句話就好。</p>
+              <div class="lp-statrow">
+                <div class="lp-stat"><span class="lp-stat__l">設定要花的時間</span><span class="lp-stat__v"><i>2 小時</i><em>→</em><b>一句話</b></span></div>
+                <div class="lp-stat"><span class="lp-stat__l">客人要打字問的事</span><span class="lp-stat__v"><i>每一件</i><em>→</em><b>點按鈕就好</b></span></div>
+              </div>
             </div>
           </div>
 
-          <div class="lp-panel lp-demo lp-reveal">
-            <div class="lp-panel__hd">
-              <span class="lp-demo__k">2</span>
-              <span class="lp-panel__title">顧客貼標</span>
-            </div>
-            <div class="lp-panel__bd">
-              <!-- ⛔ 這三行只能列系統真的會記的欄位（標籤／聊過的內容／腳本收到的答案／最後來訊）。
-                   2026-08-23 拍板把「買過 禮盒 ×2」「客單價 NT$1,280」換掉：購買紀錄與金額
-                   系統沒有任何來源（見 STATUS C-58／C-60），寫在卡上是沒掛徽章的不實宣稱，
-                   而且底下圖說的免責也沒涵蓋到它。接了購買資料之後才可以把「買過／客單價」加回來。 -->
-              <div class="lp-mock lp-stage">
-                <div class="lp-prof"><span class="lp-prof__a" /><span><b>陳小姐</b><small>LINE 好友</small></span></div>
-                <div class="lp-info"><span>標籤</span><b>送禮客群</b></div>
-                <div class="lp-info"><span>問過</span><b>{{ proposal?.name ?? '節慶' }}禮盒有沒有貨</b></div>
-                <div class="lp-info"><span>最後來訊</span><b>3 天前</b></div>
+          <div class="lp-appgrid">
+            <div class="lp-panel lp-appcard">
+              <div class="lp-panel__hd">
+                <span class="lp-panel__pip" />
+                <span class="lp-panel__title">AI 客服</span>
               </div>
-              <h3>誰是誰、聊過什麼，自動記住</h3>
-              <p>客服與行銷資料打通，同一位客人前後文都在，不再靠印象認人。</p>
+              <div class="lp-panel__bd lp-appcard__bd">
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div></div>
+                <div class="lp-chatdemo">
+                  <div class="lp-td lp-td--them">這款可以送禮嗎？</div>
+                  <div class="lp-td lp-td--me">可以，附禮盒包裝與提袋 🎁</div>
+                  <div class="lp-tdtag lp-tdtag--ok">答案來自你給它的商品資料</div>
+                  <div class="lp-td lp-td--them">我上一筆訂單想改地址…</div>
+                  <div class="lp-td lp-td--me lp-td--hand">這題我幫你轉給老闆，稍等一下 🙋</div>
+                  <div class="lp-tdtag lp-tdtag--warn">沒把握的，它不會亂猜</div>
+                </div>
+                <div class="lp-statrow lp-statrow--foot">
+                  <div class="lp-stat"><span class="lp-stat__l">客人等回覆</span><span class="lp-stat__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
+                  <div class="lp-stat"><span class="lp-stat__l">訊息回覆率</span><span class="lp-stat__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lp-panel lp-appcard">
+              <div class="lp-panel__hd">
+                <span class="lp-panel__pip" />
+                <span class="lp-panel__title">AI 行銷</span>
+                <span class="lp-soon">部分即將推出</span>
+              </div>
+              <div class="lp-panel__bd lp-appcard__bd">
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>回購喚醒</b><small>久沒來的，替你請回來</small></div></div>
+                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>生日與會員經營</b><small>該送券的時候自動送</small></div></div>
+                <div class="lp-statrow lp-statrow--foot">
+                  <div class="lp-stat"><span class="lp-stat__l">每月喚回的訂單</span><span class="lp-stat__v"><i>0 張</i><em>→</em><b>12–18 張</b></span></div>
+                  <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="lp-panel lp-demo lp-reveal">
-            <div class="lp-panel__hd">
-              <span class="lp-demo__k">3</span>
-              <span class="lp-panel__title">AI 客服</span>
-            </div>
-            <div class="lp-panel__bd">
-              <div class="lp-mock lp-stage">
-                <div class="lp-qa lp-qa--q">這款豆子適合手沖嗎？</div>
-                <div class="lp-qa lp-qa--a">適合！中焙帶柑橘調，建議水溫 90–92°C</div>
-                <span class="lp-stage__pill">已回覆 · 23:41</span>
-              </div>
-              <h3>半夜、假日，客人問了都有人回</h3>
-              <p>客人問產品、問訂單，AI 依你上傳的知識庫即時回，答不了就轉真人。</p>
-            </div>
+          <!-- 這一區有具體數字與還沒上線的項目，圖說兩件事都要交代 -->
+          <p class="lp-figcap lp-figcap--center">
+            各區塊數據以 2,000 好友示範店估算，非實際績效。AI 客服、顧客貼標、標籤分眾與節慶提醒是現有功能；
+            <b>「回購喚醒」與「生日與會員經營」仍在開發中</b>（客人資料目前沒有購買紀錄與生日欄位）。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 60 秒上線（深松綠段）────────────────────────────────
+         三步時間軸＝註冊後開通引導真的會問的事，不是行銷話術。 -->
+    <section id="fast" class="lp-section lp-section--dark">
+      <div class="lp-wrap">
+        <div class="lp-turn lp-reveal">
+          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
+          <div class="lp-bubble">
+            <h2>只要 <span class="mark">60 秒</span>，<br>免費完成上線設定。</h2>
           </div>
         </div>
-        <!-- 三張卡都有具體數字，沒有這行會被當成真實客戶資料；同時交代第一張哪一半還沒上線 -->
-        <p class="lp-figcap lp-figcap--center">
-          示意畫面，數字非真實資料。<b>依標籤分眾、排程送出、送出前由你確認</b>都是現有功能；
-          <b>自動判斷「60 天沒回購」與「本月壽星」仍在開發中</b>（客人資料目前沒有生日與購買紀錄）。
-        </p>
 
-        <!-- ── 圖文選單：客人手機上的前後對照 ── -->
         <div class="lp-stack lp-reveal">
           <div class="lp-panel">
             <div class="lp-panel__hd">
-              <span class="lp-demo__k">4</span>
-              <span class="lp-panel__title">LINE 下方的功能選單</span>
-              <span class="lp-panel__meta">客人自己點，不用打字問</span>
-              <span class="lp-soon">部分即將推出</span>
+              <span class="lp-panel__pip" />
+              <span class="lp-panel__title">現在只需要兩步</span>
+              <span class="lp-panel__meta">60 秒</span>
             </div>
             <div class="lp-panel__bd">
-              <div class="lp-phones">
-                <div class="lp-phonecol">
-                  <span class="lp-phonetag lp-phonetag--off">沒有選單</span>
-                  <div class="lp-phone">
-                    <div class="lp-pscreen">
-                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
-                      <div class="lp-pchat">
-                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
-                        <div class="lp-pmsg lp-pmsg--them">運費怎麼算？</div>
-                        <div class="lp-pmsg lp-pmsg--them">今天有開嗎…？</div>
-                      </div>
-                      <div class="lp-pinput">輸入訊息</div>
-                    </div>
+              <div class="lp-tl">
+                <div class="lp-tl__track"><i /></div>
+                <div class="lp-tl__steps">
+                  <div class="lp-tl__step">
+                    <span class="lp-tl__dot">1</span>
+                    <b>登入 Email</b>
+                    <small>收開通連結</small>
                   </div>
-                  <p class="lp-phonecap lp-phonecap--off">客人自己打字問，你一句一句回。</p>
-                </div>
-                <div class="lp-phonecol">
-                  <span class="lp-phonetag lp-phonetag--on">有選單</span>
-                  <div class="lp-phone">
-                    <div class="lp-pscreen">
-                      <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
-                      <div class="lp-pchat lp-pchat--short">
-                        <div class="lp-pmsg lp-pmsg--them">請問有賣禮盒嗎？</div>
-                        <div class="lp-pmsg lp-pmsg--me">有的，{{ proposal?.name ?? '節慶' }}禮盒已上架 ☕</div>
-                      </div>
-                      <div class="lp-rm">
-                        <div class="lp-rm__r2">
-                          <span class="lp-rm__c lp-rm__c--soft">本月精選</span>
-                          <span class="lp-rm__c lp-rm__c--soft">會員專屬</span>
-                        </div>
-                        <div class="lp-rm__hero">
-                          <span class="lp-rm__brand">禮盒專區</span>
-                          <span class="lp-rm__go">立即選購 ▸</span>
-                        </div>
-                        <div class="lp-rm__r3">
-                          <span class="lp-rm__c">商品資訊</span>
-                          <span class="lp-rm__c">訂單問題</span>
-                          <span class="lp-rm__c lp-rm__c--on">真人客服</span>
-                        </div>
-                      </div>
-                    </div>
+                  <div class="lp-tl__step">
+                    <span class="lp-tl__dot">2</span>
+                    <b>填寫基礎商家資訊</b>
+                    <small>店名、行業、賣什麼</small>
                   </div>
-                  <p class="lp-phonecap lp-phonecap--on">常問的事變成按鈕，客人自己點。</p>
+                  <div class="lp-tl__step lp-tl__step--done">
+                    <span class="lp-tl__dot lp-tl__dot--ok">✓</span>
+                    <b>開始使用</b>
+                    <small>60 秒</small>
+                  </div>
                 </div>
               </div>
+              <p class="lp-tl__note">就像銀行開戶，只要身分證和手機號碼。</p>
             </div>
-          </div>
-          <p class="lp-figcap lp-figcap--center">
-            示意畫面。<b>選單現在就能在後台自己編排</b>；<b>用一句話請 {{ brandName }} 代設仍在開發中</b>。
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── 差別 ────────────────────────────────────────────────
-         右欄是浮起的勝方卡（超出表格上下緣），左欄樸素列舊做法。
-         ⚠️ .lp-cmp__winner 的寬度是照 grid 欄位比例算的，改欄寬要一起改。
-         ⛔ 右欄只能寫**現在真的做得到**的事：比較表是逐項對照，拿還沒上線的功能去比
-            等於拿別人沒有的東西比我們也沒有的東西。 -->
-    <section id="diff" class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2>跟其他行銷工具，差在<span class="mark">這裡</span>。</h2>
-            <p>差別不在功能多寡，在於哪些事還要你自己動手。</p>
-          </div>
-        </div>
-
-        <div class="lp-cmp lp-reveal">
-          <div class="lp-cmp__winner" aria-hidden="true" />
-          <div class="lp-cmp__row lp-cmp__row--head">
-            <div class="lp-cmp__dim">比較項目</div>
-            <div class="lp-cmp__old">一般行銷工具</div>
-            <!-- 這格底色是品牌綠，logotype 要用 on-color 轉白才讀得到 -->
-            <div class="lp-cmp__new"><BrandLogo class="lp-cmp__logo" on-color /><span class="lp-cmp__tag">最省事</span></div>
-          </div>
-          <div v-for="row in COMPARISON" :key="row.dim" class="lp-cmp__row">
-            <div class="lp-cmp__dim">{{ row.dim }}</div>
-            <div class="lp-cmp__old"><span class="lp-cmp__x">✕</span>{{ row.old }}</div>
-            <div class="lp-cmp__new"><span class="lp-cmp__v">✓</span>{{ row.mine }}</div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── 定價 ────────────────────────────────────────────────
-         先用「請人要多少錢」對比出量級，再往下才是方案目錄。
-         方案卡、商品資訊、FAQ 都保留：售價階段要與向金流申報的一致，
-         商品名稱／說明／售價／付款與發票必須集中在同一處（風控會逐項核對）。 -->
-    <section id="pricing" class="lp-section">
+    <!-- ── 價格（奶油黃段）──────────────────────────────────────
+         大字報價，數字讀 plans.ts（單一事實來源），調價這裡自己跟上。
+         方案卡目錄已隨 08-26 改版收掉（試銷期只主打 399，見 FEATURED_PLAN_IDS），
+         但「商品資訊」卡**必須留**：商品名稱／說明／售價／付款與發票要集中同一處，
+         信用卡收單風控逐項核對的就是這張卡（散在行銷文案裡會被退件）。 -->
+    <section id="pricing" class="lp-section lp-section--butter">
       <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2>一個月 <span class="mark">NT${{ fmt(lowestPaidPrice) }}</span> 起，<br>少請半個客服、半個行銷。</h2>
+        <div class="lp-bigprice lp-reveal">
+          <span class="lp-bigprice__lbl">一個月只要</span>
+          <div class="lp-bigprice__num"><span class="lp-bigprice__cur">NT$</span>{{ fmt(lowestPaidPrice) }}</div>
+          <span class="lp-bigprice__unit">／月 · 不綁約、隨時可取消</span>
+        </div>
+
+        <div class="lp-pricefeat lp-reveal">
+          <div class="lp-pf">
+            <span class="lp-pf__ico lp-pf__ico--brand"><BrandLogo mark on-color alt="" /></span>
+            <b>友善的引導式設定</b>
+            <small>一步一步帶你完成，部分步驟有 AI 協助標示——不用怕複雜。</small>
+          </div>
+          <div class="lp-pf">
+            <span class="lp-pf__ico">✓</span>
+            <b>別人有的，我們都有</b>
+            <small>自動化訊息、腳本、AI 客服、AI 行銷建議、報表。</small>
+          </div>
+          <div class="lp-pf">
+            <span class="lp-pf__ico">✓</span>
+            <b>60 秒就能開始</b>
+            <small>Email 登入、商家基礎資訊設定，今天就能讓它上工。</small>
           </div>
         </div>
 
-        <!-- ⛔ 這張卡刻意**沒有標頭列**：標頭原本寫「每月成本比較 · 示意估算」，但上面的區塊標題
-             已經是「一個月 NT$399 起，少請半個客服、半個行銷」、底下的圖說也已經寫「示意、非實際
-             報價」——再加一條標頭只是把同一句話講第三次。整頁的示意圖都套著同一款灰底標頭列，
-             那是後台控制台的樣子，門面上能省的就要省。 -->
-        <div class="lp-panel lp-panel--plain lp-reveal">
-          <div class="lp-panel__bd">
-            <div class="lp-sal">
-              <div class="lp-sal__who">半個客服<small>回訊息 · 查訂單</small></div>
-              <div class="lp-sal__bar"><i class="is-hi" style="--w: 88%" /></div>
-              <div class="lp-sal__v is-hi">NT$20,000</div>
-            </div>
-            <div class="lp-sal">
-              <div class="lp-sal__who">半個行銷<small>節慶檔期 · 分眾 · 推播</small></div>
-              <div class="lp-sal__bar"><i class="is-hi" style="--w: 100%" /></div>
-              <div class="lp-sal__v is-hi">NT$22,500</div>
-            </div>
-            <div class="lp-sal">
-              <div class="lp-sal__who">{{ brandName }}<small>兩件事都做 · 24 小時</small></div>
-              <div class="lp-sal__bar"><i class="is-lo" style="--w: 1.5%" /></div>
-              <div class="lp-sal__v is-lo">NT${{ fmt(lowestPaidPrice) }}</div>
-            </div>
-          </div>
-        </div>
-        <p class="lp-figcap">薪資為台灣市場常見水準之示意，非實際報價；各方案功能與額度見下方。</p>
-
-        <!-- 計費說明＋兩張方案卡＝一個置中的「方案」群組（別再拆開，理由見 _landing.scss 的 .lp-offer） -->
-        <div class="lp-offer lp-reveal">
-          <p class="lp-price__intro">
-            每個帳號都有免費額度，用完才按 AI 回覆的則數計價。<b>額度用完時 AI 會先轉真人接手，不會自動扣款。</b>
-          </p>
-
-          <!-- 試銷期只主打免費與 399 兩張（見 FEATURED_PLAN_IDS）。
-               進場效果掛在外層、不掛每張卡：手機上這排會橫向捲動，捲出畫面外的卡片
-               永遠不會與 viewport 交會，掛在卡上會讓它們一直是透明的。
-               ⛔ 2026-08-21 拍板：不加「NT$799 含完整 AI 客服」那段——沿用 08-14 的
-                  「先隱藏、只 show 399」，而且 799 與 399 的實際差別是額度／席次／知識庫
-                  份數與腳本自動化，399 本來就有 AI 客服，寫成「799 才有客服」是不實陳述。 -->
-          <div class="lp-plans lp-plans--featured">
-            <div
-              v-for="p in featuredPlans"
-              :key="p.id"
-              class="lp-plan"
-              :class="{ 'lp-plan--pro': p.price.unit }"
-            >
-              <span v-if="p.price.unit" class="lp-plan__ribbon">最受歡迎</span>
-              <span class="lp-plan__name">{{ p.name }}</span>
-              <div class="lp-plan__price">
-                {{ p.price.amount }}<small v-if="p.price.unit">{{ p.price.unit }}</small>
-              </div>
-              <p class="lp-plan__for">{{ p.quota }}</p>
-              <ul class="lp-plan__list">
-                <li v-for="(feat, i) in p.features" :key="i" :class="{ 'is-off': !feat.on }">
-                  <span class="tick">{{ feat.on ? '✓' : '✕' }}</span> {{ feat.label }}
-                </li>
-              </ul>
-              <NuxtLink
-                class="lp-btn lp-btn--block"
-                :class="p.price.unit ? 'lp-btn--primary' : 'lp-btn--ghost'"
-                to="/login"
-              >{{ p.cta }}</NuxtLink>
-            </div>
-          </div>
+        <div class="lp-pricecta lp-reveal">
+          <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+          <p class="lp-pricecta__fine">每個帳號都有免費額度，額度用完時 AI 會先轉真人接手，<b>不會自動扣款</b>。</p>
         </div>
 
         <!-- 商品資訊：把「商品名稱／說明／售價／付款與發票」集中一處。
@@ -529,10 +478,11 @@
       </div>
     </section>
 
-    <!-- ── 生意成長 ────────────────────────────────────────────
-         兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度。
-         顏色不是挑好看的，是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
-    <section id="grow" class="lp-section lp-section--tint">
+    <!-- ── 生意成長（深松綠段）──────────────────────────────────
+         兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度、
+         也刻意不畫格線（沒有刻度可對照，格線只是雜訊）。
+         顏色是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
+    <section id="grow" class="lp-section lp-section--dark">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -543,7 +493,7 @@
         </div>
 
         <div class="lp-stack lp-reveal">
-          <!-- 同上，刻意沒有標頭列：「營業額成長 · 示意模型」與圖說重複 -->
+          <!-- 刻意沒有標頭列：「營業額成長 · 示意模型」與圖說重複 -->
           <div class="lp-panel lp-panel--plain">
             <div class="lp-panel__bd">
               <div class="lp-chartwrap">
@@ -554,8 +504,6 @@
                       <stop offset="100%" stop-color="#06c755" stop-opacity="0" />
                     </linearGradient>
                   </defs>
-                  <!-- ⛔ 刻意只留一條基準線，不畫格線：Y 軸沒有刻度（示意模型沒有真實數字），
-                       格線沒有東西可以對照，畫上去只是雜訊。 -->
                   <line class="lp-chart__axis" x1="60" y1="284" x2="700" y2="284" />
                   <path
                     class="lp-chart__area"
@@ -603,8 +551,8 @@
     </section>
 
     <!-- ── 常見問題 ────────────────────────────────────────────
-         獨立成區，不要塞在定價底下：導覽列點「常見問題」會捲進價目表中間，
-         而且六題只有兩題跟錢有關（其餘是資料安全、支援哪種帳號、怎麼轉真人）。 -->
+         08-26 草稿沒有這一區，但保留：頁尾與法務頁的 /#faq 指這裡，
+         而且退費、額度、資料刪除這幾題的答案都是照政策措辭寫的，拿掉等於少一處對消費者的揭露。 -->
     <section id="faq" class="lp-section lp-faqsec">
       <div class="lp-wrap">
         <div class="lp-reveal">
@@ -649,60 +597,20 @@
       </div>
     </section>
 
-    <!-- ── 註冊三步 ────────────────────────────────────────────
-         這三步是註冊後開通引導真的會問的三件事，不是行銷話術。 -->
-    <section id="signup" class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-reveal">
-          <span class="lp-eyebrow">一分鐘註冊</span>
-          <h2 class="lp-h2">而且註冊超簡單</h2>
-          <p class="lp-lede">三個問題，一分鐘。你回答，它準備。</p>
-        </div>
-        <div class="lp-steps">
-          <div class="lp-step lp-reveal">
-            <div class="lp-step__n">1</div>
-            <h3>你的店叫什麼名字</h3>
-            <p>打上店名就好，之後隨時能改。</p>
-          </div>
-          <div class="lp-step lp-reveal">
-            <div class="lp-step__n">2</div>
-            <h3>給它菜單或官網</h3>
-            <p>貼連結或上傳 PDF,AI 自己讀完建成知識庫。</p>
-          </div>
-          <div class="lp-step lp-reveal">
-            <div class="lp-step__n">3</div>
-            <h3>試著問它一句話</h3>
-            <p>當一次客人，測測它答得好不好。</p>
-          </div>
-        </div>
-        <div class="lp-signup__cta lp-reveal">
-          <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費註冊</NuxtLink>
-          <span class="lp-signup__fine">免綁約 · 免信用卡 · 用你現有的 LINE 官方帳號開通</span>
-        </div>
-      </div>
-    </section>
-
     <!-- ── 收尾 CTA ────────────────────────────────────────────
-         2026-08-14 拍板把「預約 Demo」表單整區拿掉：主要動線已是免費註冊，
-         企業方案卡也不再露出（只主打 399），那張表單失去唯一的必要用途。
-         想找人談的路徑改成頁尾的客服電話／信箱＋這裡的來信洽詢。
-         ⛔ 頁尾原本的 /#demo 連結已一併移除，不要留死錨點。 -->
+         想找人談的路徑＝頁尾的客服電話／信箱＋這裡的來信洽詢（預約 Demo 表單 08-14 已移除，
+         ⛔ 不要留 /#demo 死錨點）。 -->
     <section class="lp-section lp-cta">
       <span class="lp-cta__blob lp-cta__blob--1" />
       <span class="lp-cta__blob lp-cta__blob--2" />
       <div class="lp-wrap lp-cta__in">
-        <h2>下一個時機，<br>就從今天開始。</h2>
-        <p class="lp-cta__sub">你的顧客已經在 LINE 裡。用你現有的官方帳號開通，一分鐘完成。</p>
+        <h2>從今天開始，<br>讓一個你，變成很多個你。</h2>
+        <p class="lp-cta__sub">連結你的 LINE 官方帳號，60 秒打造第一個 {{ brandName }}。</p>
         <div class="lp-cta__actions">
-          <NuxtLink class="lp-btn lp-btn--white" to="/login">免費註冊</NuxtLink>
+          <NuxtLink class="lp-btn lp-btn--white" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <a class="lp-cta__talk" :href="emailHref">想先聊聊？寄信給我們 →</a>
         </div>
-        <ul class="lp-rr">
-          <li><span class="tick">✓</span> 免費方案不用綁卡</li>
-          <li><span class="tick">✓</span> 不綁約，隨時停用</li>
-          <li><span class="tick">✓</span> 資料你擁有</li>
-          <li><span class="tick">✓</span> 1 分鐘完成註冊</li>
-        </ul>
+        <p class="lp-cta__fine">每月 NT${{ fmt(lowestPaidPrice) }} · 不綁約、隨時可取消，取消後服務用到本期結束</p>
       </div>
     </section>
 
@@ -713,24 +621,24 @@
          收起時 aria-hidden：不然螢幕閱讀器會在頁尾唸到一顆看不見的註冊鈕。 -->
     <div class="lp-stickybar" :class="{ 'is-show': barShown }" :aria-hidden="barShown ? undefined : 'true'">
       <div class="lp-stickybar__in">
-        <span class="lp-stickybar__t1">多半個客服＋半個行銷 · NT${{ fmt(lowestPaidPrice) }}／月</span>
-        <span class="lp-stickybar__t2">1 分鐘完成註冊 · 免綁約</span>
-        <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費註冊</NuxtLink>
+        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em>，多半個客服＋半個行銷</span>
+        <span class="lp-stickybar__t2">60 秒完成設定 · 不綁約、隨時可取消</span>
+        <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
-import { addDays, daysBetween, taipeiDate } from '~~/shared/time'
+import { daysBetween, taipeiDate } from '~~/shared/time'
 
 definePageMeta({ layout: false })
 
 // 品牌／產品／公司／客服窗口統一由這裡來（與法務頁、頁尾同一份來源）。
 // ⚠️ brandName = 品牌／產品名（MiniMe）、companyName = 營運主體（麥菲爾股份有限公司），別混用。
-// ⚠️ 行銷文案裡寫「Mini Me」（有空格）的地方一律用 brandName 代入：商標、電子發票品名、
+// ⚠️ 草稿裡寫「Mini Me」（有空格）的地方一律用 brandName 代入：商標、電子發票品名、
 //    向 PAYUNi 申報的商品名都是無空格的 MiniMe，門面自己寫另一種拼法會對不起來。
 const { brandName, serviceFullName, companyName, taxId, phone, email, emailHref, cardStatementName } = useSiteIdentity()
 
@@ -742,94 +650,8 @@ function fmt(n: number): string {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-// ── 定價卡：直接讀 shared/billing/plans.ts（單一事實來源），改價只動那份、不用改門面 ──
-function priceText(p: BillingPlan): { amount: string, unit: string } {
-  if (p.priceMonthly === null) return { amount: '面談', unit: '' }
-  if (p.priceMonthly === 0) return { amount: '免費', unit: '' }
-  return { amount: `NT$${fmt(p.priceMonthly)}`, unit: '／月' }
-}
-
-function quotaText(p: BillingPlan): string {
-  if (p.answeredQuota === null) return '客製 AI 回覆額度'
-  return `每月 ${fmt(p.answeredQuota)} 則 AI 回覆`
-}
-
-/**
- * 方案卡的功能列。**每張卡都列出同一組項目**，有的打勾、沒有的打叉。
- *
- * 為什麼不是「只列有的」：那樣各卡行數不一樣，兩張並排時行數少的那張會在
- * 按鈕上方空一大塊（實測免費卡空了 60px、輕量卡只空 22px）。行數一致還有個好處——
- * 一眼看得出升級到底多拿到什麼，不用左右來回比對。
- *
- * 只列出「檯面上至少有一個方案具備」的項目：兩張卡都沒有的（例如目前的腳本自動化）
- * 全列 ✕ 只是徒增行數，不放。
- */
-type PlanFeature = { label: string, on: boolean }
-
-function featureRows(p: BillingPlan, showBroadcast: boolean): PlanFeature[] {
-  const f: PlanFeature[] = [
-    { label: p.seats === null ? '團隊席次不限' : `團隊 ${p.seats} 席`, on: true },
-    { label: p.knowledgeSources === null ? '知識庫資料不限' : `知識庫 ${p.knowledgeSources} 份資料`, on: true },
-  ]
-  if (showBroadcast) {
-    const b = p.broadcast === 'advanced' ? '進階分眾推播' : '基礎推播'
-    f.push({ label: b, on: p.broadcast === 'basic' || p.broadcast === 'advanced' })
-  }
-  if (p.scripting) f.push({ label: '腳本自動化', on: true })
-  if (p.reports === 'export') f.push({ label: '報表匯出', on: true })
-  else if (p.reports === 'advanced') f.push({ label: '進階數據報表', on: true })
-  if (p.api) f.push({ label: 'API 串接', on: true })
-  return f
-}
-
-// 對外方案（排除 test/internal 與未向金流申報售價的 landingHidden）。
-const publicPlans = computed(() =>
-  BILLING_PLAN_ORDER
-    .map(id => BILLING_PLANS[id])
-    .filter(p => !p.internal && !p.landingHidden)
-    .map(p => ({
-      id: p.id,
-      name: p.name,
-      price: priceText(p),
-      quota: quotaText(p),
-      plan: p,
-      custom: p.custom,
-      // 全站 CTA 用詞統一「免費註冊」：所有按鈕都通往 /login，不要兩個名字
-      cta: '免費註冊',
-    })),
-)
-
-/**
- * 試銷期只主打免費＋399（2026-08-14 老闆拍板：只 show 399，2026-08-21 再次確認）。
- *
- * 清單本體在 shared/billing/plans.ts 的 `FEATURED_PLAN_IDS`——升級對話框也吃同一份，
- * 別在頁面層級另開清單（2026-08-17 就是因為各維護各的，付款彈窗漏改被老闆抓到）。
- *
- * ⛔ 這是**行銷展示**的取捨，跟「有沒有向金流申報」是兩回事，所以不要改 plans.ts 的
- *    `landingHidden` 來達成——那個旗標的意思是「這個價格沒申報、不可以出現在官網」。
- */
-const featuredPlans = computed(() => {
-  const picked = publicPlans.value.filter(p => FEATURED_PLAN_IDS.includes(p.id as BillingPlanId))
-  // 只要檯面上有任何一個方案含推播，每張卡都列這一行（沒有的打叉），行數才會一致
-  const showBroadcast = picked.some(p => p.plan.broadcast === 'basic' || p.plan.broadcast === 'advanced')
-  return picked.map(p => ({ ...p, features: featureRows(p.plan, showBroadcast) }))
-})
-
-/**
- * 商品資訊要揭露的售價：跟著檯面上在賣的（`FEATURED_PLAN_IDS`）。
- *
- * ⚠️ 這是刻意的取捨，不是漏寫：風控的紅線是「門面出現**未申報**的價格」，
- *    列得比申報少不踩線，列得比申報多才會被退件。但 799 / 1,499 在 plans.ts 仍是
- *    可自助結帳的方案（系統收得到、官網沒寫），要真正停售見 STATUS `D-14`。
- */
-const paidPriceList = computed(() =>
-  featuredPlans.value
-    .filter(p => p.price.unit) // 有「／月」單位 = 付費方案（免費與面談沒有）
-    .map(p => p.price.amount)
-    .join('／'),
-)
-
-// 「一個月 399 起」的 399 也讀 plans.ts，不寫死——調價時 Hero、定價區、黏性條會一起對。
+// ── 價格：直接讀 shared/billing/plans.ts（單一事實來源），改價只動那份、不用改門面 ──
+// 「一個月 399」的 399 讀 plans.ts，不寫死——調價時 Hero、解法列、定價區、黏性條會一起對。
 const lowestPaidPrice = computed(() => {
   const prices = BILLING_PLAN_ORDER
     .map(id => BILLING_PLANS[id])
@@ -838,6 +660,22 @@ const lowestPaidPrice = computed(() => {
     .filter((n): n is number => typeof n === 'number' && n > 0)
   return prices.length ? Math.min(...prices) : 0
 })
+
+/**
+ * 商品資訊要揭露的售價：跟著檯面上在賣的（`FEATURED_PLAN_IDS`，試銷期只主打免費＋399，
+ * 2026-08-14 老闆拍板、08-21 再確認）。
+ *
+ * ⚠️ 這是刻意的取捨，不是漏寫：風控的紅線是「門面出現**未申報**的價格」，
+ *    列得比申報少不踩線，列得比申報多才會被退件。但 799 / 1,499 在 plans.ts 仍是
+ *    可自助結帳的方案（系統收得到、官網沒寫），要真正停售見 STATUS `D-14`。
+ */
+const paidPriceList = computed(() =>
+  FEATURED_PLAN_IDS
+    .map(id => BILLING_PLANS[id])
+    .filter(p => typeof p.priceMonthly === 'number' && p.priceMonthly > 0)
+    .map(p => `NT$${fmt(p.priceMonthly as number)}`)
+    .join('／'),
+)
 
 // ── SEO / 社群分享 ──
 // ⚠️ 這一段一定要放在 lowestPaidPrice 之後：ogDescription 是會被立刻求值的函式，
@@ -865,40 +703,12 @@ useSeoMeta({
   twitterImage: ogImageUrl,
 })
 
-/**
- * 比較表：左欄講舊做法、右欄講我們怎麼做。
- * ⛔ 每一列都要是「同一件事的兩種做法」，不要放我們有、對手沒有的功能清單——那是型錄不是比較。
- * ⛔ 右欄只能寫**現在真的做得到**的事：所以沒有「它先開口幫你擬好訊息」那一列
- *    （那是節慶提案，還沒上線，掛在 #fix 的即將推出卡上）。
- */
-/* ⛔ 這裡刻意**沒有 icon 欄位**：原本每一列前面掛一顆 Element Plus 的線性圖示（齒輪／時鐘／
-   對話框⋯⋯），但①那六顆灰色小圖示沒有帶任何資訊，項目名本身就講完了 ②它們是全頁唯一的
-   「單線灰色圖示」家族，與全頁的標記系統（只有數字方磚）不同調。
-   拿掉之後這頁連 Element Plus 都不需要了（見標記系統的註解）。 */
-const COMPARISON = [
-  { dim: '開始設定', old: '從零建規則、自己拉流程', mine: '有 AI 陪你聊完，設定自動到位' },
-  { dim: '上線要多久', old: '導入排程動輒兩三週', mine: '貼一組 Webhook 網址就接通' },
-  { dim: '客服誰回', old: '你自己回，或再買一套客服工具', mine: 'AI 依你的知識庫即時回，需要時轉真人' },
-  { dim: '名單怎麼分', old: '自己下條件、自己拉名單', mine: '依標籤自動分眾，排程按時送出' },
-  { dim: '回答準不準', old: '罐頭關鍵字，常答非所問', mine: '只依你上傳的內容回答，不亂編' },
-  { dim: '每月要多少', old: '數千元起，還要有人學、有人顧', mine: `NT$${fmt(lowestPaidPrice.value)} 起，免費方案不用綁卡` },
-]
-
-/**
- * 為什麼顧客經營一直沒做起來：四道牆（訪談歸納，第一道是前提、另外三道是它的後果）。
- */
-const WALLS = [
-  { title: '沒有人可以做', sub: '員工就是這麼多，每個人手上都滿了。' },
-  { title: '派了人，還要顧他的情緒', sub: '多一件事，就是多一次溝通。' },
-  { title: '自己動手，後台太複雜', sub: '打開來一堆設定，不知道從哪開始。' },
-  { title: '找工具，一個月好幾千', sub: '買了還是得有人學、有人顧。' },
-]
-
 // ══════════════════════════════════════════════════════════════
-//  節慶檔期（Hero 清單與 #fix 提案卡）
+//  Hero 時機卡的「節慶」組
 //
 //  資料來源＝ shared/taiwan-festivals.ts，也就是系統真的用來提醒老闆的那張表。
-//  ⛔ 別在這裡另外寫一份節日清單：那張表加減節日時，門面要自己跟上。
+//  ⛔ 別在這裡另外寫一份節日清單：草稿寫死「父親節 8/8 下週」，做頁面的當下就已經過期了
+//     ——名稱與日期一律從表裡拿，才不會有這個問題。
 // ══════════════════════════════════════════════════════════════
 
 /**
@@ -922,64 +732,20 @@ const upcoming = computed(() =>
     .filter(f => f.days >= 0),
 )
 
-/** Hero 清單：接下來五個檔期。7 天內＝系統開始提醒的門檻（FESTIVAL_REMIND_DAYS 的最大值），標琥珀。 */
-const heroFestivals = computed(() =>
-  upcoming.value.slice(0, 5).map(f => ({
+/** 時機卡列接下來兩個檔期。7 天內＝系統開始提醒的門檻，標琥珀；更遠的標「準備中」（草稿用語）。 */
+const heroFests = computed(() =>
+  upcoming.value.slice(0, 2).map(f => ({
     id: f.id,
     name: f.name,
     md: monthDay(f.date),
     angle: f.angle,
     soon: f.days <= 7,
-    badge: f.days === 0 ? '今天' : f.days === 1 ? '明天' : `還有 ${f.days} 天`,
+    badge: f.days === 0 ? '今天' : f.days === 1 ? '明天' : f.days <= 7 ? `還有 ${f.days} 天` : '準備中',
   })),
 )
 
-/** 未來一年還有幾個檔期。節日表排到 2027 年底，所以這個數字在 2026 年內都是完整的。 */
-const festivalsAhead = computed(() => upcoming.value.filter(f => f.days <= 365).length)
-
-/**
- * #fix 提案卡用的節日：接下來第一個「送禮檔期」。
- *
- * 為什麼挑送禮檔期而不是單純的下一個節日：卡片裡那兩句示範訊息講的是送禮
- * （幫他挑、幫他準備），套到中元節或國慶日會語意不通。
- * 為什麼不寫死一個節日：寫死的例子會過期——2026-08 寫「父親節」，到了九月就變成
- * 在講一個已經過完的節日。名稱與日期都從表裡拿，訊息模板套進去，就不會有這個問題。
- */
-const proposal = computed(() => {
-  const f = upcoming.value.find(x => /送禮|禮盒|伴手禮|禮物|紅包/.test(x.angle)) ?? upcoming.value[0]
-  if (!f) return null
-  const md = monthDay(f.date)
-  return {
-    name: f.name,
-    md,
-    days: f.days,
-    // 建議開跑日＝節前 7 天，與系統第一次提醒的時間點一致
-    startMd: monthDay(addDays(f.date, -7)),
-    groups: [
-      {
-        who: '買過禮盒的老客',
-        n: 214,
-        angle: '他去年送過，今年大概還會再送一次',
-        msg: `${f.name}快到了。去年您挑的那款禮盒今年也備好了，${md} 前下單可以指定到貨日。`,
-      },
-      {
-        who: '還沒買過的新朋友',
-        n: 86,
-        angle: '第一次送禮，需要有人幫他挑',
-        msg: `${f.name}要送什麼好？我們把最常被選的三個組合整理好了，照預算挑就可以，不用自己比。`,
-      },
-    ],
-  }
-})
-
-// ── 互動（進場效果、名單逐列浮現、數字跳動、黏性條）──
-// 伺服器端與「減少動態效果」時直接給最終狀態（初值就是全部顯示、數字就是終值），
-// 所以沒有 JS 也讀得到完整內容。
-const HERO_ROWS = 5
-const shownRows = ref<number>(HERO_ROWS)
-const festivalsAheadShown = ref<number>(0)
-watchEffect(() => { festivalsAheadShown.value = festivalsAhead.value })
-
+// ── 互動（進場效果、黏性條、手機選單）──
+// 伺服器端與「減少動態效果」時直接給最終狀態，所以沒有 JS 也讀得到完整內容。
 const root = ref<HTMLElement | null>(null)
 const stuck = ref(false)
 const anim = ref(false)
@@ -991,8 +757,6 @@ function onScroll() { stuck.value = window.scrollY > 8 }
 
 let io: IntersectionObserver | undefined
 let barIo: IntersectionObserver | undefined
-let listTimers: ReturnType<typeof setTimeout>[] = []
-let countRaf = 0
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -1025,36 +789,13 @@ onMounted(() => {
       })
     }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' })
     els.forEach(el => io?.observe(el))
-
-    // 檔期一列一列進來，跑完再讓「還有幾個檔期」往上數——先看到時機，再看到數量才有衝擊
-    shownRows.value = 0
-    for (let i = 0; i < HERO_ROWS; i++) {
-      listTimers.push(setTimeout(() => { shownRows.value = i + 1 }, 420 + i * 230))
-    }
-    listTimers.push(setTimeout(countUpAhead, 420 + HERO_ROWS * 230 + 300))
   })
 })
-
-function countUpAhead() {
-  const target = festivalsAhead.value
-  const start = performance.now()
-  const dur = 1100
-  festivalsAheadShown.value = 0
-  const tick = (t: number) => {
-    const p = Math.min(1, (t - start) / dur)
-    festivalsAheadShown.value = Math.round(target * (1 - (1 - p) ** 3))
-    if (p < 1) countRaf = requestAnimationFrame(tick)
-  }
-  countRaf = requestAnimationFrame(tick)
-}
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   io?.disconnect()
   barIo?.disconnect()
-  listTimers.forEach(clearTimeout)
-  listTimers = []
-  if (countRaf) cancelAnimationFrame(countRaf)
   document.documentElement.style.scrollBehavior = ''
 })
 </script>

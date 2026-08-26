@@ -26,8 +26,8 @@
           <!-- 用 /#anchor（不是 #anchor）：法務頁上也要能跳回首頁對應段落 -->
           <!-- ⛔ 別加回 /#demo：首頁的預約 Demo 表單 2026-08-14 已整區移除，
                想找人談的走左邊「客服聯絡」那欄的電話與信箱 -->
+          <!-- ⛔ 別加回 /#diff：首頁的比較表 2026-08-26 隨新版草稿整區移除 -->
           <li><a href="/#value">產品介紹</a></li>
-          <li><a href="/#diff">功能比較</a></li>
           <li><a href="/#pricing">定價</a></li>
           <li><a href="/#faq">常見問題</a></li>
           <li><NuxtLink to="/login">免費註冊</NuxtLink></li>
