@@ -441,9 +441,15 @@ function openUserDetail(user: any) {
 }
 
 /** 通往完整對話：對話頁的 ?userId= 深連結是現成的（監控頁「開對話」同一條路） */
-function goConversation() {
+/**
+ * 打開這位客人的對話。
+ * 帶 sessionId＝從「AI 建議」按過來的，要直接落在**產生那條建議的那一場**
+ * （不指定的話會落在最新那場，而客人來過很多次時那多半不是同一場＝看了也判斷不了）。
+ */
+function goConversation(sessionId?: string) {
   if (!detailUser.value) return
-  navigateTo(`/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(detailUser.value.id)}`)
+  const base = `/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(detailUser.value.id)}`
+  navigateTo(sessionId ? `${base}&sessionId=${encodeURIComponent(sessionId)}` : base)
 }
 
 

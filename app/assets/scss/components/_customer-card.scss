@@ -225,6 +225,35 @@
   min-width: 0;
 }
 
+/**
+ * 「看這段對話 →」：AI 那句 30 字理由是**它自己的轉述**，要負責任地按下採用，
+ * 得看得到客人原話。做成連結樣式（不是按鈕）——它是通往證據的路，
+ * 不該跟旁邊的「採用／忽略」搶視覺重量。
+ */
+.cust-card__suggest-src {
+  flex-shrink: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    opacity: 0.78;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+}
+
 .cust-card__suggest-actions {
   display: flex;
   gap: 0.35rem;

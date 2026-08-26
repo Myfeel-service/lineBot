@@ -97,6 +97,22 @@
               {{ tagById(s.tagId)?.name ?? '（已刪除的標籤）' }}
             </AdminTagTintChip>
             <span v-if="s.reason" class="cust-card__suggest-why">{{ s.reason }}</span>
+            <!--
+              ⛔ 這條連結是「採用／忽略」能不能負責任地按下去的前提。
+              上面那句 reason 是 **AI 自己的轉述**（30 字），不是客人的原話：
+              要判斷這個標籤該不該貼，得看得到客人**實際說了什麼**。
+              每條建議都記著產生它的那一場對話（sessionId），這裡就是那份紀錄的入口。
+              ⛔ 兩個畫面都要有：好友頁＝跳到對話頁那一場；對話頁＝就地切到那一場
+                 （即使人已經在對話頁，正在看的也未必是產生建議的那一場）。
+              舊資料沒有 sessionId 就不顯示，不要給一個點了會跑錯地方的連結。
+            -->
+            <button
+              v-if="s.sessionId"
+              type="button"
+              class="cust-card__suggest-src"
+              title="看 AI 是根據哪一場對話判斷的"
+              @click="emit('open-conversation', s.sessionId)"
+            >看這段對話 →</button>
           </div>
           <div v-if="canOperate" class="cust-card__suggest-actions">
             <el-button size="small" type="primary" :loading="acting === s.tagId" @click="actOnSuggestion(s.tagId, 'apply')">採用</el-button>
@@ -266,7 +282,8 @@ interface CustomerDetail {
     lastMessageAtMs: number
     lastInboundMessageAtMs: number
   } | null
-  tagSuggestions: { pending: Array<{ tagId: string; reason: string; suggestedAtMs: number }> } | null
+  /** sessionId＝產生這條建議的那一場對話（舊資料可能是空字串，那就不給連結） */
+  tagSuggestions: { pending: Array<{ tagId: string; reason: string; sessionId: string; suggestedAtMs: number }> } | null
   note: CustomerNote
   /** 來過幾次；null＝查不到（畫面不顯示那一列，不拿 0 充數） */
   sessionCount: number | null
@@ -305,7 +322,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** 貼標／移標／採用建議之後：宿主可以重新載入自己的清單 */
   (e: 'changed'): void
-  (e: 'open-conversation'): void
+  /**
+   * 打開這位客人的對話。帶 sessionId＝指定「哪一場」（AI 建議的出處），
+   * 不帶＝最新那場（「看完整對話 →」）。
+   * ⛔ 宿主兩邊行為不同：好友頁跳頁、對話頁就地換場——所以由宿主決定，不在卡片裡寫死。
+   */
+  (e: 'open-conversation', sessionId?: string): void
 }>()
 
 const { showToast } = useAdminToast()

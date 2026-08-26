@@ -1080,6 +1080,7 @@
             :fallback-picture="selectedUser?.pictureUrl"
             :show-last-activity="false"
             :show-assignee="false"
+            @open-conversation="sid => sid && openSessionById(sid)"
           />
         </div>
       </aside>
@@ -3278,7 +3279,7 @@ function getActionSummary(preset: any): string {
  * ⛔ 不要退回 search=userId：那會走整段清單掃描（客人越舊掃越多，最舊一次要掃
  *    3,000 條對話），直達照編號讀只要 1 次，而且再舊的客人都找得到。
  */
-async function selectUserById(userId: string) {
+async function selectUserById(userId: string, opts?: { sessionId?: string }) {
   let target = conversations.value.find(c => c.userId === userId || c.userId.endsWith(`_${userId}`)) ?? null
   if (!target) {
     const res = await apiFetch<{ conversations: ConvItem[] }>('/api/conversations/list', {
@@ -3287,14 +3288,20 @@ async function selectUserById(userId: string) {
     target = res?.conversations?.[0] ?? null
   }
   if (target) {
-    await selectUser(target)
+    await selectUser(target, opts)
     return
   }
   // 找不到就要說:靜默不動的話,從監控頁按「開對話」會像連結壞掉
   showToast('找不到這位客人的對話，請用左側搜尋看看', 'warning')
 }
 
-async function selectUser(c: ConvItem) {
+/**
+ * @param opts.sessionId 指定要落在**哪一場**（AI 建議的出處、深連結）。
+ *   不給＝最新那場（一般點選客人的行為）。
+ *   ⛔ 要在這裡就帶進去、不要「先開最新那場再切過去」：那會讀兩次時間軸，
+ *      畫面還會先閃一下最新的對話再跳走。
+ */
+async function selectUser(c: ConvItem, opts?: { sessionId?: string }) {
   // 換人＝重新黏回底部。不重設的話，上一位客人翻到一半的狀態會跟著帶進來
   stickToBottom.value = true
   // 換人前先把打到一半的字收進這位客人的抽屜，再拿出下一位的
@@ -3302,7 +3309,7 @@ async function selectUser(c: ConvItem) {
     stashDraft()
     inputText.value = drafts.get(c.userId) ?? ''
   }
-  selectedSessionId.value = null
+  selectedSessionId.value = opts?.sessionId || null
   sessionMeta.value = null
   allTabActiveSession.value = null
   // 換人就重設基準時間，否則會拿上一位客人的時間戳去比、一進來就誤判成「有新訊息」
@@ -3314,7 +3321,24 @@ async function selectUser(c: ConvItem) {
   selectedUser.value = c
   pendingQuickReplyId.value = ''
   // 已讀章只蓋到「客人最後開口」為止（見 loadTimeline 裡的說明）
-  await loadTimeline(c.userId, { seenUpToMs: convRowCustomerMs(c) })
+  await loadTimeline(c.userId, { seenUpToMs: convRowCustomerMs(c), sessionId: opts?.sessionId })
+}
+
+/**
+ * 就地切到指定的那一場（人已經選好了）。
+ * 給右側客人檔案卡的「AI 建議 → 看這段對話」用：即使人已經在對話頁，
+ * 正在看的也未必是產生那條建議的那一場。
+ */
+async function openSessionById(sessionId: string) {
+  const userId = selectedUserId.value
+  if (!userId || !sessionId) return
+  if (selectedSessionId.value === sessionId) return
+  stickToBottom.value = true
+  selectedSessionId.value = sessionId
+  allTabActiveSession.value = null
+  sessionMeta.value = null
+  aiContextSeenAtMs = 0
+  await loadTimeline(userId, { sessionId })
 }
 
 // ── 對話時間軸：一段一段讀 ──────────────────────────────────────────
@@ -4873,9 +4897,15 @@ onMounted(() => {
     activeTab.value = qTab as TabValue
   // 從監控頁「開對話」帶進來的客人（?userId=）：載入清單後直接選中，不讓人再找一次
   const qUserId = String(route.query.userId || '')
+  /**
+   * 指定要落在哪一場（?sessionId=）。給好友頁「AI 建議 → 看這段對話」用：
+   * 要判斷該不該採用那個標籤，得看到**產生它的那一場**——客人來過很多次時，
+   * 最新那場多半不是同一場，落錯場等於看了也判斷不了。
+   */
+  const qSessionId = String(route.query.sessionId || '')
   void loadList('reset').then(() => {
     if (qUserId && activeTab.value === 'all')
-      void selectUserById(qUserId)
+      void selectUserById(qUserId, qSessionId ? { sessionId: qSessionId } : undefined)
   })
   loadSupportPresets()
   listPollTimer = setInterval(() => {

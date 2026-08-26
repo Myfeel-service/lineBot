@@ -23,6 +23,25 @@ function tsToMs(raw: unknown): number {
   return typeof sec === 'number' ? sec * 1000 : 0
 }
 
+/**
+ * 一條待處理的 AI 建議 → 畫面要的形狀。
+ *
+ * **抽出來是為了測得到**：`sessionId`（產生這條建議的那場對話）掃描器一直有存，
+ * 但先前在這一層被丟掉，於是卡片上只剩 AI 自己的一句轉述、沒有任何路可以看到
+ * 客人實際說了什麼——而那正是「要不要採用」唯一的判斷依據。
+ * 這種「中途被靜靜丟掉一個欄位」型別檢查抓不到（同 `G-21` 的篩選沒接上），只能靠測試。
+ */
+export function toPendingSuggestionView(raw: unknown) {
+  const p = (raw ?? {}) as Record<string, unknown>
+  return {
+    tagId: String(p.tagId ?? ''),
+    reason: String(p.reason ?? ''),
+    /** 舊資料可能沒有＝空字串，畫面就不給那個連結（不給一個點了會跑錯地方的路） */
+    sessionId: String(p.sessionId ?? ''),
+    suggestedAtMs: Number(p.suggestedAtMs ?? 0),
+  }
+}
+
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
 
@@ -119,11 +138,7 @@ export default defineEventHandler(async (event) => {
       : null,
     tagSuggestions: pending.length
       ? {
-          pending: pending.map((p: any) => ({
-            tagId: String(p?.tagId ?? ''),
-            reason: String(p?.reason ?? ''),
-            suggestedAtMs: Number(p?.suggestedAtMs ?? 0),
-          })),
+          pending: pending.map(toPendingSuggestionView),
         }
       : null,
   }
