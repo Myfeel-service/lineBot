@@ -58,6 +58,9 @@ g.useWorkspace = () => ({
   canOperate: ref(true),
 })
 g.$fetch = fetchSpy
+// 「同一瞬間只查一次」的機制（E-28）在 app 裡是自動匯入，測試要自己接上
+const { useSharedRequest } = await import('./useSharedRequest')
+g.useSharedRequest = useSharedRequest
 
 const { useSetupStatus } = await import('./useSetupStatus')
 

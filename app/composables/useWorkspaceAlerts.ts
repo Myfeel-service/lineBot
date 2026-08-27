@@ -501,26 +501,15 @@ export function useWorkspaceAlerts() {
   const tick = useState<number>('workspace-alerts-tick', () => 0)
 
   /**
-   * 進行中的那一次查詢也要放進**共用狀態**。
+   * 同一瞬間只查一次（機制見 `useSharedRequest`）。
    *
-   * ⛔ 用函式內的 `let` 等於每個呼叫端各自一份閂：這支 composable 同一個畫面上就有兩個
-   * 呼叫端一起掛上（頁頂提醒條 `AdminPageAlertStrip`、右下角小幫手 `TutorialAgent`），
-   * 兩邊在同一個 tick 發車、互相看不到對方正在查 → 每次開頁把全站最慢的那支彙總查詢
-   * 打兩遍（2026-08-27 正式站實測：17 個工作區頁面裡有 15 頁都是兩次，而它正是 11 個
-   * 頁面「最後才回來」的那一支）。
+   * ⛔ 這支 composable 同一個畫面上就有兩個呼叫端一起掛上（頁頂提醒條 `AdminPageAlertStrip`、
+   * 右下角小幫手 `TutorialAgent`），兩邊在同一個 tick 發車 → 不去重就是每次開頁把全站最慢
+   * 的那支彙總查詢打兩遍（2026-08-27 正式站實測：17 個工作區頁面裡有 15 頁都是兩次，
+   * 而它正是 11 個頁面「最後才回來」的那一支）。
    * 下面的 `checkedAt` 節流攔不住這種情形——同時發車時第一支還沒回來，沒有東西可比。
-   * 寫法與 `useWorkspace` 的 `workspace:loadInFlight` 一致。
    */
-  const inflight = useState<Promise<void> | null>('workspace-alerts-inflight', () => null)
-  /**
-   * 飛行中那一支是**誰的**。共用一支 promise 之前一定要先比帳號：
-   * 這支查詢正式站要 1.3～4.1 秒，使用者在這段時間內切帳號是真的會發生的順序，
-   * 拿 A 家的查詢回答 B 家＝B 家永遠沒被查、而且 A 家的異常會寫進 B 家畫面
-   * （`reset()` 自己的註解就說了：這比暫時沒有資料嚴重得多）。
-   */
-  const inflightFor = useState('workspace-alerts-inflight-for', () => '')
-  /** 第幾號查詢：收尾時用來確認「我還是最新那一支嗎」（⛔別拿 promise 自己比，會踩 TDZ） */
-  const inflightTicket = useState('workspace-alerts-inflight-ticket', () => 0)
+  const shared = useSharedRequest('workspace-alerts')
 
   async function refresh(options: { force?: boolean } = {}): Promise<void> {
     const wid = workspaceId.value
@@ -529,16 +518,15 @@ export function useWorkspaceAlerts() {
     loadSnoozes(wid)
     tick.value = Date.now()
     // 只有「同一個帳號」的查詢能共用飛行中的那一支
-    if (inflight.value && inflightFor.value === wid)
-      return inflight.value
+    const already = shared.pending(wid)
+    if (already)
+      return already
     // 節流：非強制刷新且剛查過就跳過（面板開開關關不該重打）
     if (!options.force && checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS)
       return
 
     loading.value = true
-    inflightFor.value = wid
-    const ticket = ++inflightTicket.value
-    const task = (async () => {
+    return shared.start(wid, async (isLatest) => {
       try {
         const token = await getBearer()
         const data = await $fetch<WorkspaceAlertsResponse>('/api/admin/alerts', {
@@ -548,10 +536,9 @@ export function useWorkspaceAlerts() {
           query: { workspaceId: wid, ...(options.force ? { force: '1' } : {}) },
           headers: { Authorization: `Bearer ${token}` },
         })
-        // ⛔ 落地前再比一次帳號：回應在路上時使用者可能已經切走了，
+        // ⛔ 落地前再確認一次：回應在路上時使用者可能已經切走了，
         //    而後端**有**回它是誰的（`data.workspaceId`），不比就是把 A 家的異常寫到 B 家。
-        //    比目前的 workspaceId 而不是比 wid：要擋的是「現在畫面是誰的」。
-        if ((data.workspaceId || wid) !== workspaceId.value)
+        if (!isLatest() || (data.workspaceId || wid) !== workspaceId.value)
           return
         const next: Record<string, WorkspaceAlertItem> = {}
         for (const item of data.items)
@@ -566,16 +553,11 @@ export function useWorkspaceAlerts() {
         lastRefreshFailed.value = true
       }
       finally {
-        // 只有自己還是「最新那一支」才收尾：切帳號後新的那支已經接手，舊的落地不能把它清掉
-        if (inflightTicket.value === ticket) {
+        // 只有自己還是「最新那一支」才收轉圈：切帳號後新的那支已經接手（旗標本身由 helper 收）
+        if (isLatest())
           loading.value = false
-          inflight.value = null
-          inflightFor.value = ''
-        }
       }
-    })()
-    inflight.value = task
-    return task
+    })
   }
 
   /**
@@ -588,17 +570,10 @@ export function useWorkspaceAlerts() {
     checkedAt.value = 0
     lastRefreshFailed.value = false
     snoozedMap.value = {} // 換工作區後由下一次 refresh 重新載入該工作區的靜音
-    // ⛔ 上一家還在飛的那支要放掉：不放的話「換帳號 → reset → 立刻 refresh」會被它擋住
-    //    （共用 promise 的代價），新帳號等於從來沒被查過。
-    //    ++ticket 讓舊的那支落地時自己認出已被接手，不會回頭清掉新的旗標。
-    //    ⛔ 只放掉**別家的**：同一家已經在飛的那支要留著讓後面的 refresh 共用，
-    //    否則切帳號時會送出兩支一模一樣的查詢（同 useSetupStatus 的註解）。
-    if (inflightFor.value !== workspaceId.value) {
-      inflight.value = null
-      inflightFor.value = ''
-      inflightTicket.value++
+    // 上一家還在飛的那支要放掉，否則「換帳號 → reset → 立刻 refresh」會被它擋住＝新帳號
+    // 等於從來沒被查過（⛔只放別家的，理由見 useSharedRequest）
+    if (shared.releaseOthers(workspaceId.value ?? ''))
       loading.value = false // 被放掉的那支不會再回來收轉圈（ticket 已經對不上）
-    }
   }
 
   // ── 靜音（只有 warning 可以）─────────────────────────────────

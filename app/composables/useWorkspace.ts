@@ -99,7 +99,12 @@ export const useWorkspace = () => {
 
   // ── Load workspace list ────────────────────────────────────────
   // in-flight dedup：避免 layout + page 同時 onMounted 並行打 `/api/admin/workspaces/my`
-  // 模組級單例：所有元件共用同一個進行中的 Promise
+  // 共用狀態，所有元件共用同一個進行中的 Promise。
+  //
+  // ⚠️ 這支**刻意不用** `useSharedRequest`（`E-28` 抽出去的那支）：那支是給「答案分帳號、
+  // 換帳號時舊的不可以蓋新的」那類查詢用的，而這份清單是「你有哪些帳號」——不分帳號、
+  // 也不會有跨帳號污染，而且它要回傳清單本身（helper 的 task 回 void）。差異是有意的，
+  // 不是漏改。
   const inFlight = useState<Promise<WorkspaceItem[]> | null>('workspace:loadInFlight', () => null)
 
   async function loadWorkspaceList(): Promise<WorkspaceItem[]> {

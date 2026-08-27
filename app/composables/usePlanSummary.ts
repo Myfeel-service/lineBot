@@ -34,7 +34,7 @@ export function usePlanSummary() {
   const checkedFor = useState('plan-summary-checked-for', () => '')
 
   /**
-   * 飛行中的那一次。
+   * 同一瞬間只查一次（機制見 `useSharedRequest`）。
    *
    * ⛔ 呼叫端有兩種而且會同時發車：外殼的 `AdminQuotaBanner`（layout 內，每頁都在）
    * 與頁內的方案卡（AI 設定／組織與 LINE／方案與帳單）。原本兩邊各自 `ref`，
@@ -42,10 +42,7 @@ export function usePlanSummary() {
    * ⚠️ 這裡刻意**不加時間節流**：翻頁與換帳號時要重新問（額度會變），
    * 只把「同一瞬間、同一個帳號」的重複請求收成一支。
    */
-  const inflight = useState<Promise<void> | null>('plan-summary-inflight', () => null)
-  const inflightFor = useState('plan-summary-inflight-for', () => '')
-  /** 第幾號查詢：舊的那支落地時用它認出「我已經被接手了」，不要蓋掉新的資料與旗標 */
-  const inflightTicket = useState('plan-summary-inflight-ticket', () => 0)
+  const shared = useSharedRequest('plan-summary')
 
   const matchesWorkspace = computed(() =>
     !!workspaceId.value && checkedFor.value === workspaceId.value,
@@ -60,17 +57,16 @@ export function usePlanSummary() {
 
   async function load() {
     const wid = workspaceId.value ?? ''
-    if (inflight.value && inflightFor.value === wid)
-      return inflight.value
+    const already = shared.pending(wid)
+    if (already)
+      return already
 
     loading.value = true
-    inflightFor.value = wid
-    const ticket = ++inflightTicket.value
-    const task = (async () => {
+    return shared.start(wid, async (isLatest) => {
       try {
         const res = await apiFetch<PlanSummaryResponse>('/api/ai/usage/plan-summary')
         // 落地前確認自己還是最新那一支（切帳號時舊的那支不可以蓋掉新的答案）
-        if (inflightTicket.value !== ticket)
+        if (!isLatest())
           return
         rawPlan.value = res.plan
         rawAnswered.value = res.answered ?? 0
@@ -78,7 +74,7 @@ export function usePlanSummary() {
         rawLoaded.value = true
       }
       catch {
-        if (inflightTicket.value !== ticket)
+        if (!isLatest())
           return
         rawPlan.value = null
         rawAnswered.value = 0
@@ -86,15 +82,10 @@ export function usePlanSummary() {
         rawLoaded.value = true
       }
       finally {
-        if (inflightTicket.value === ticket) {
+        if (isLatest())
           loading.value = false
-          inflight.value = null
-          inflightFor.value = ''
-        }
       }
-    })()
-    inflight.value = task
-    return task
+    })
   }
 
   return { plan, answered, state, loading, loaded, load }

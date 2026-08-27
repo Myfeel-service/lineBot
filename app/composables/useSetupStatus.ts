@@ -130,18 +130,14 @@ export function useSetupStatus() {
   const checkedFor = useState('setup-status-checked-for', () => '')
 
   /**
-   * 飛行中的那一支也要放進**共用狀態**（連同它是誰的、第幾號）。
+   * 同一瞬間只查一次（機制見 `useSharedRequest`）。
    *
-   * ⛔ 用函式內的 `let` 等於每個呼叫端各自一份閂：這支 composable 同一次載入就有兩個
-   * 呼叫端各自 `refresh()`（`layouts/default.vue` 的開通引導判定、右下角小幫手），
-   * 兩邊同時發車、互相看不到對方在查 → 每次開頁都把體檢打兩遍
+   * ⛔ 這支 composable 同一次載入就有兩個呼叫端各自 `refresh()`（`layouts/default.vue`
+   * 的開通引導判定、右下角小幫手），兩邊同時發車 → 不去重就是每次開頁把體檢打兩遍
    * （2026-08-27 正式站實測：17 個工作區頁面**全部**都是兩次）。
    * 下面的 TTL 節流攔不住同時發車：第一支還沒回來，`checkedAt` 還是舊的。
-   * 寫法與 `useWorkspace` 的 `workspace:loadInFlight` 一致。
    */
-  const inflight = useState<Promise<void> | null>('setup-status-inflight', () => null)
-  const inflightFor = useState('setup-status-inflight-for', () => '')
-  const inflightTicket = useState('setup-status-inflight-ticket', () => 0)
+  const shared = useSharedRequest('setup-status')
 
   /** 手上這份是不是「現在這個帳號」的 */
   const cacheMatchesWorkspace = computed(() =>
@@ -159,28 +155,27 @@ export function useSetupStatus() {
     if (!wid)
       return
     // 只有「同一個帳號」的查詢能共用飛行中的那一支
-    if (inflight.value && inflightFor.value === wid)
-      return inflight.value
+    const already = shared.pending(wid)
+    if (already)
+      return already
     // 快取只對得上自己那個帳號；換了帳號一律重查，不吃 TTL
     if (!options.force && checkedFor.value === wid && checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS)
       return
     loading.value = true
-    inflightFor.value = wid
-    const ticket = ++inflightTicket.value
-    const task = (async () => {
+    return shared.start(wid, async (isLatest) => {
       try {
         const token = await getBearer()
         const data = await $fetch<SetupStatusResponse>('/api/admin/setup-status', {
           query: { workspaceId: wid },
           headers: { Authorization: `Bearer ${token}` },
         })
-        // ⛔ 落地前先確認自己還是最新那一支：ticket 只守 finally 是不夠的。
+        // ⛔ 落地前先確認自己還是最新那一支：
         //    「A 送出 → 切到 B → B 先回來寫好 → A 才回來」是真的會發生的順序，
         //    A 一寫下去就把 checkedFor 蓋回 A：對 B 來說 cacheMatchesWorkspace 立刻變 false
         //    → 所有能力退回 unknown（面板顯示「這次查不到狀態」），更糟的是
         //    default.vue 的 maybePopOnboarding 會看到 onboardingIncomplete=false，
         //    把「其實還沒接完 LINE」的帳號放過去不再引導。
-        if (inflightTicket.value !== ticket)
+        if (!isLatest())
           return
         const next: Record<string, SetupItemStatus> = {}
         for (const item of data.items)
@@ -194,16 +189,11 @@ export function useSetupStatus() {
         // 靜默失敗，保留前一次結果；不要把查不到誤報成沒做
       }
       finally {
-        // 只有「最後發出的那一支」有資格收尾——中途換帳號時舊的那支落地不能把新的清掉
-        if (inflightTicket.value === ticket) {
+        // 只有「最後發出的那一支」有資格收轉圈（旗標本身由 helper 收）
+        if (isLatest())
           loading.value = false
-          inflight.value = null
-          inflightFor.value = ''
-        }
       }
-    })()
-    inflight.value = task
-    return task
+    })
   }
 
   /**
@@ -215,18 +205,10 @@ export function useSetupStatus() {
     rawLoaded.value = false
     checkedAt.value = 0
     checkedFor.value = ''
-    // 上一家還在飛的那支要放掉，否則「換帳號 → reset → 立刻 refresh」會被它擋住
-    // （共用 promise 的代價），新帳號等於從來沒被查過。++ticket 讓它落地時自己認出已被接手。
-    //
-    // ⛔ 但**只放掉別家的**：切帳號時 layout 的開通判定往往比這裡先一步、已經替新帳號
-    // 送出查詢了，連它一起放掉的話後面那次 refresh 會再送一支一模一樣的（實測：
-    // 切帳號時 setup-status 變成兩次）。同一家的就留著讓後面的 refresh 共用。
-    if (inflightFor.value !== (workspaceId.value ?? '')) {
-      inflight.value = null
-      inflightFor.value = ''
-      inflightTicket.value++
+    // 上一家還在飛的那支要放掉，否則「換帳號 → reset → 立刻 refresh」會被它擋住＝
+    // 新帳號等於從來沒被查過（⛔只放別家的，理由見 useSharedRequest）
+    if (shared.releaseOthers(workspaceId.value ?? ''))
       loading.value = false
-    }
   }
 
   const capabilities = computed<ResolvedCapability[]>(() =>

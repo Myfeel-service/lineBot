@@ -33,6 +33,10 @@ g.useWorkspace = () => ({
   canOperate: ref(true),
 })
 g.$fetch = fetchSpy
+// 「同一瞬間只查一次」的機制（E-28 抽出去的那支）在 app 裡是自動匯入，測試要自己接上；
+// 它只用到上面那個 useState 替身，所以照順序放在受測模組之前就好
+const { useSharedRequest } = await import('./useSharedRequest')
+g.useSharedRequest = useSharedRequest
 
 const { useWorkspaceAlerts } = await import('./useWorkspaceAlerts')
 
