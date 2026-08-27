@@ -98,6 +98,31 @@ export async function fetchLineWebhookEndpoint(
   }
 }
 
+/**
+ * PUT https://api.line.me/v2/bot/channel/webhook/endpoint —— 直接把 LINE 上登記的
+ * Webhook URL 換掉（`D-34` 一鍵修）。這是官方寫入 API，跟上面的 GET 同一個路徑、
+ * 同一把 Messaging API 的 Channel Access Token。
+ *
+ * ⚠️這個動作決定「客人的訊息送到哪」：呼叫端必須先給人看過「現在填的 → 要換成的」
+ * 並拿到明確確認才能打（alert-fix 的 preview→confirm 流程），⛔不可在背景自動呼叫。
+ * 只換網址——「Use webhook」開關與 Token 重發沒有公開 API，仍要進 LINE 後台。
+ */
+export async function putLineWebhookEndpoint(
+  channelAccessToken: string,
+  endpoint: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: unknown }> {
+  const res = await fetch(`${LINE_MESSAGING}/bot/channel/webhook/endpoint`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${channelAccessToken.trim()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ endpoint }),
+  })
+  if (!res.ok) return { ok: false, status: res.status, body: await readLineJson(res) }
+  return { ok: true }
+}
+
 /** POST https://api.line.me/v2/bot/channel/webhook/test（由 LINE 對已設定 URL 發送測試 POST；每小時約 60 次） */
 export async function postLineWebhookTest(
   channelAccessToken: string,

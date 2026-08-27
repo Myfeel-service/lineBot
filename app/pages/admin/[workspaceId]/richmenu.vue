@@ -13,7 +13,7 @@
         <span>尚無圖文選單</span>
         <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
-      <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="rm-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
           v-for="menu in sortedMenus"
           :key="menu.id"

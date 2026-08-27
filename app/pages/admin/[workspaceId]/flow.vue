@@ -26,7 +26,7 @@
           <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
         </AdminOperateGate>
       </div>
-      <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="flow-list" @scroll.passive="onSidebarListScroll">
         <!-- 系統模組永遠在最上方（不可分組） -->
         <AdminSplitListItem
           v-for="flow in systemFlows"

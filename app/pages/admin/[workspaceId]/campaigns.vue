@@ -16,7 +16,7 @@
         <p class="text-xs text-muted">建立問券活動，讓加好友即自動貼標</p>
         <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
-      <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="cmp-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
           v-for="c in campaigns"
           :key="c.id"

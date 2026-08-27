@@ -69,13 +69,17 @@ const PENDING_WAIT_ALERT_HOURS = 1
 const QUOTA_FORECAST_MIN_DAYS = 3
 const QUOTA_FORECAST_MIN_PERCENT = 40
 
-/** 知識卡 pending 超過 1 小時＝重試已放生或排程沒跑（大批匯入半小時內消化完是正常，不算） */
-const KNOWLEDGE_PENDING_STUCK_MS = 60 * 60_000
+/**
+ * 知識卡 pending 超過 1 小時＝重試已放生或排程沒跑（大批匯入半小時內消化完是正常，不算）。
+ * export：一鍵修（alert-fix-ops 的 knowledge-retry-index-stuck）要跟這顆 probe 用同一把
+ * 「多久算卡住」的尺——各寫一份的話，會出現「異常說卡了、一鍵修卻說沒東西可修」。
+ */
+export const KNOWLEDGE_PENDING_STUCK_MS = 60 * 60_000
 /** 首期綁卡失敗只看近 45 天：超過一期的舊單多半已用別的方式處理掉了 */
 const RENEWAL_BIND_WINDOW_MS = 45 * 24 * 3600_000
 
-/** 推播失敗只看近 3 天：上個月失敗過的推播不該一直掛警示 */
-const BROADCAST_FAILED_WINDOW_MS = 3 * 24 * 3600_000
+/** 推播失敗只看近 3 天：上個月失敗過的推播不該一直掛警示。export 理由同上（broadcast-reset-failed 同一扇窗） */
+export const BROADCAST_FAILED_WINDOW_MS = 3 * 24 * 3600_000
 /** 排定時間過了這麼久還沒開始送，才算卡住（排程每分鐘跑，幾分鐘內是正常延遲） */
 const BROADCAST_OVERDUE_GRACE_MS = 15 * 60_000
 /** 維護排程每 10 分鐘跳一次心跳；超過 60 分鐘沒跳＝連續漏了 6 次，不是抖動 */
@@ -100,6 +104,38 @@ type WebhookCheck =
   | { kind: 'mismatch'; endpoint: string } // 有設有開，但填的不是 PUBLIC_BASE_URL
   | { kind: 'ok' }
 const webhookProbeCache = new Map<string, { result: WebhookCheck; expires: number }>()
+
+/**
+ * 一鍵修剛改完 LINE 上的網址時要把快取戳掉：不戳的話接下來 5 分鐘的驗證
+ * 都會拿到改之前的答案，一直說「還沒好」（跟 skipCache 存在的理由是同一件事）。
+ */
+export function invalidateWebhookProbe(wid: string) {
+  webhookProbeCache.delete(wid)
+}
+
+/**
+ * 找出「客人輸入任何內容」就攔截的啟用中腳本（anyTextBlocking 的訊號本體）。
+ * export 給一鍵修（script-disable-anytext）用：probe 說「就是這幾條」、一鍵修就停用同幾條，
+ * 兩邊必須是同一個查法。觸發設定藏在 nodes 陣列裡 Firestore 查不到，只能撈啟用中的在記憶體濾。
+ */
+export async function findAnyTextBlockingScripts(
+  db: Firestore,
+  wid: string,
+): Promise<{ id: string; name: string }[]> {
+  const snap = await db.collection(SCRIPTS_COLLECTION)
+    .where('workspaceId', '==', wid)
+    .where('enabled', '==', true)
+    .limit(PROBLEM_SCAN_LIMIT)
+    .get()
+  return snap.docs
+    .filter((d) => {
+      const s = d.data() as Record<string, unknown>
+      const nodes = (Array.isArray(s.nodes) ? s.nodes : []) as Array<Record<string, unknown>>
+      const root = nodes.find(n => n?.id === s.rootNodeId)
+      return root?.type === 'trigger' && root?.keywordMatch === 'anyText'
+    })
+    .map(d => ({ id: d.id, name: String((d.data() as Record<string, unknown>).name ?? '(未命名設定)') }))
+}
 
 /**
  * 問 LINE 目前的 webhook 設定並分類（5 分鐘快取；skipCache＝使用者剛改完設定回頭確認，
@@ -324,28 +360,16 @@ export async function collectWorkspaceAlerts(
         probe('anyTextBlocking', async () => {
           // 「客人輸入任何內容」的觸發會接走所有訊息，AI 等於沒開。
           // 舊的關鍵字規則刪掉後這個陷阱沒有消失——它搬到腳本的 keywordMatch 上了，所以這裡改掃腳本。
-          // 觸發設定藏在 nodes 陣列裡，Firestore 查不到，只能撈啟用中的腳本在記憶體裡濾（數量很小）。
-          const [aiSettings, snap] = await Promise.all([
+          // 查法本體在 findAnyTextBlockingScripts（一鍵修停用的是同一個查法查出來的同幾條）。
+          const [aiSettings, hits] = await Promise.all([
             aiSettingsPromise!,
-            db.collection(SCRIPTS_COLLECTION)
-              .where('workspaceId', '==', wid)
-              .where('enabled', '==', true)
-              .limit(PROBLEM_SCAN_LIMIT)
-              .get(),
+            findAnyTextBlockingScripts(db, wid),
           ])
           if (!aiSettings) throw new Error('ai settings unavailable')
           // AI 沒開的時候，「攔截全部」是正常的兜底回覆，不是異常
           if (aiSettings.enabled !== true) return { active: false }
-          const hits = snap.docs
-            .map(d => d.data() as Record<string, unknown>)
-            .filter((s) => {
-              const nodes = (Array.isArray(s.nodes) ? s.nodes : []) as Array<Record<string, unknown>>
-              const root = nodes.find(n => n?.id === s.rootNodeId)
-              return root?.type === 'trigger' && root?.keywordMatch === 'anyText'
-            })
           if (!hits.length) return { active: false }
-          const name = String(hits[0]!.name ?? '(未命名設定)')
-          return { active: true, count: hits.length, detail: `設定「${name}」` }
+          return { active: true, count: hits.length, detail: `設定「${hits[0]!.name}」` }
         }),
         probe('llmError', async () => {
           // 走既有 composite index（workspaceId, aiMeta.lastHandoffReason, aiMeta.updatedAt DESC）

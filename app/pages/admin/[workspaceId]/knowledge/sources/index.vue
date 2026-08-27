@@ -266,7 +266,7 @@
           沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
           AI 建議的草稿要看內容，留在下方獨立區塊，不在這裡重複列一次。
         -->
-        <div v-if="todoItems.length || healthExpiredCount" class="src-todo">
+        <div v-if="todoItems.length || healthExpiredCount" class="src-todo" data-tour="kb-health">
           <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
             <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
             <span class="src-todo__title">

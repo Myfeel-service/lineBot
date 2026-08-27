@@ -1,0 +1,103 @@
+/* ── 一鍵修確認 popup（AlertFixDialog，D-34）─────────────────
+   「我會做什麼 → 你按確定 → 做完當場再驗」的三段畫面。
+   視覺跟著 Element Plus 的 dialog 走，只調內容排版——⛔別把它做成第二種彈窗長相。 */
+
+.afx-dialog {
+  .afx-loading {
+    padding: 8px 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  .afx-summary {
+    margin: 0 0 10px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  /* 會動到的那幾筆：名稱＋一句「會怎麼處理」。清單框起來＝這就是影響範圍 */
+  .afx-items {
+    margin: 0;
+    padding: 10px 12px;
+    list-style: none;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 260px;
+    overflow-y: auto;
+
+    li {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .afx-items__label {
+      display: block;
+      font-weight: 600;
+      word-break: break-all; /* 內容常是網址或長名稱，別把窗撐破 */
+    }
+
+    .afx-items__note {
+      display: block;
+      color: var(--text-secondary);
+    }
+  }
+
+  .afx-items--details {
+    margin-top: 10px;
+    background: transparent;
+  }
+
+  .afx-warning {
+    margin: 10px 0 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.6;
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning-dark-2, var(--el-color-warning));
+  }
+
+  .afx-clear {
+    margin: 10px 0 0;
+    font-size: 14px;
+    color: var(--el-color-success);
+  }
+
+  .afx-blocked p {
+    margin: 0 0 10px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  .afx-result {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.7;
+
+    &.is-fail {
+      color: var(--el-color-danger);
+    }
+  }
+
+  /* 驗證那一行：修好與否的最終結論，吃重查後同一份異常訊號 */
+  .afx-verify {
+    margin: 12px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+
+    &.is-clear {
+      color: var(--el-color-success);
+    }
+
+    &.is-active {
+      color: var(--el-color-warning-dark-2, var(--el-color-warning));
+    }
+  }
+}

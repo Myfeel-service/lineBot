@@ -16,7 +16,7 @@
         <p class="text-xs text-muted">建一條情境流程，把多步驟客服變成自動流程</p>
         <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
-      <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="scr-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
           v-for="script in scripts"
           :key="script.id"

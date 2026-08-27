@@ -163,3 +163,38 @@ describe('側欄狀態點：什麼該畫、什麼不該畫', () => {
     expect(a.navAlerts.value).toEqual({})
   })
 })
+
+describe('修復手段對應的一致性（D-34）：註冊表、op 表、劇本三處不能漂', () => {
+  it('掛在註冊表上的 fixOpId 都存在於 op 清單（打錯字＝「幫我修」按下去 400）', async () => {
+    const { ALERT_FIX_OP_IDS } = await import('~~/shared/types/alert-fix')
+    const a = useWorkspaceAlerts()
+    for (const def of a.alerts.value) {
+      if (def.fixOpId)
+        expect(ALERT_FIX_OP_IDS, `異常 ${def.id} 掛了不存在的 op ${def.fixOpId}`).toContain(def.fixOpId)
+    }
+  })
+
+  it('每個 op 至少被一顆異常掛著（孤兒 op＝寫了永遠沒人按得到）', async () => {
+    const { ALERT_FIX_OP_IDS } = await import('~~/shared/types/alert-fix')
+    const used = new Set(useWorkspaceAlerts().alerts.value.map(d => d.fixOpId).filter(Boolean))
+    for (const id of ALERT_FIX_OP_IDS)
+      expect(used.has(id), `op ${id} 沒有任何異常掛它`).toBe(true)
+  })
+
+  it('guideId 與劇本的 alertIds 互相對得上（兩邊各登記一份，靠這條釘住）', async () => {
+    const { AGENT_GUIDES } = await import('~/utils/agent-guides')
+    const a = useWorkspaceAlerts()
+    // 正向：註冊表掛的劇本，劇本自己也認這顆異常
+    for (const def of a.alerts.value) {
+      if (def.guideId)
+        expect(AGENT_GUIDES[def.guideId].alertIds, `劇本 ${def.guideId} 不認異常 ${def.id}`).toContain(def.id)
+    }
+    // 反向：劇本說自己修哪幾顆，那幾顆的註冊表也要掛回這條劇本
+    for (const guide of Object.values(AGENT_GUIDES)) {
+      for (const alertId of guide.alertIds) {
+        const def = a.alerts.value.find(d => d.id === alertId)
+        expect(def?.guideId, `異常 ${alertId} 沒掛回劇本 ${guide.id}`).toBe(guide.id)
+      }
+    }
+  })
+})

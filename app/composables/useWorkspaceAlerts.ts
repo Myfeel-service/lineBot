@@ -13,6 +13,7 @@ import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
+import type { AlertFixOpId } from '~~/shared/types/alert-fix'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
 // 嚴重度（ALERT_SEVERITY）與「這是系統這邊的狀況」（SYSTEM_OWNED_ALERTS）都定義在
@@ -38,8 +39,31 @@ export interface AlertDefinition {
    * 把點畫到每一個真的壞掉的頁；只有一個 route 的話點會畫在錯的頁上，比沒有點更糟。
    */
   scopeRoutes?: Partial<Record<WorkspaceAlertScope, (workspaceId: string) => string>>
+  /**
+   * 頁內錨點（D-33 三輪，2026-08-27 老闆回饋）：**這一頁的哪個區塊能處理這件事**。
+   *
+   * 為什麼：提醒條的按鈕在本頁上按，原本等於原地重整。老闆講的優先序是對的——
+   * 「頁面上有能解決它的區塊就帶人去那個區塊，沒有才用導航」。有掛錨點的異常，
+   * 提醒條在本頁會把按鈕換成聚光燈（el-tour 高亮那個區塊＋講一句怎麼做），零重整。
+   *
+   * - `selector`：CSS 選擇器，通常是既有的 `data-tour` 錨。可用逗號列多個——
+   *   跨頁異常（壞模組）在哪一頁就會亮哪一頁有的那個。
+   * - `note`：聚光燈上那句「在這裡怎麼做」。講動作，不要重複 impact 的後果句。
+   *
+   * ⚠️2026-08-27 五輪拍板：提醒帶**不因頁面自己也有呈現而閉嘴**（四輪曾做過
+   * presents 抑制，老闆否決：「進來之後就不知道問題在哪」）。頁內有重複呈現沒關係，
+   * 提醒帶負責第一眼，「帶我看」聚光燈負責指到那個區塊。
+   */
+  anchor?: { selector: string, note: string }
   /** 有掛的話，卡片多一顆「用聊天帶我修」——對應的引導劇本（C-31 Phase 1，utils/agent-guides） */
   guideId?: AgentGuideId
+  /**
+   * 一鍵修（`D-34`，2026-08-27 拍板）：有掛的話，提醒帶與小幫手卡片多一顆「幫我修」——
+   * 開確認 popup（AlertFixDialog）：後端 preview 講「會動哪幾筆」→ 人按確定 → 執行 →
+   * refresh({force}) 重跑同一份訊號驗證。op 本體在 server/utils/alert-fix-ops.ts，
+   * ⛔只掛「確定性動作、做錯可重來」的異常；錢／群發／憑證內容／刪除永遠不掛（紅線）。
+   */
+  fixOpId?: AlertFixOpId
 }
 
 export interface ResolvedAlert extends AlertDefinition {
@@ -71,7 +95,11 @@ const ALERTS: AlertDefinition[] = [
     // ?verify=webhook：進頁直接捲到「檢查連線」並實跑一次測試——
     // 使用者在卡片上已經按過一次「去檢查」，到頁面不該再自己找一遍要修什麼
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+    anchor: { selector: '[data-tour="org-verify"]', note: '在這裡按「測試連線」重新檢查，照跳出來的狀態卡指示到 LINE 後台修正。' },
     guideId: 'line-webhook',
+    // 一鍵只修得了「沒填網址」這種病因（LINE 有寫入 API）；Token 失效／開關沒開的病因
+    // preview 會如實說修不了、指去劇本——同一顆按鈕，能不能修由後端當下判斷
+    fixOpId: 'line-webhook-set-url',
   },
   {
     // 2026-08-08 老闆拍板升紅：實務上「不一致」＝填著已排定停用的舊網址，是顆定時炸彈——
@@ -83,7 +111,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+    anchor: { selector: '[data-tour="org-verify"]', note: '在這裡按「測試連線」，狀態卡會列出 LINE 現在填的網址；把 LINE 後台換成本頁給的正式網址。' },
     guideId: 'line-webhook',
+    fixOpId: 'line-webhook-set-url',
   },
   {
     // 紅：這是「看起來全綠、其實一則都收不到」的那種壞法，比明著壞掉更難自己發現。
@@ -95,6 +125,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
+    anchor: { selector: '[data-tour="org-verify"]', note: '先決定這個官方帳號要留在哪一邊；要留這邊的話，把另一邊的 LINE 連接清掉，再回這裡按「測試連線」確認。' },
   },
   {
     // 紅（2026-08-21 老闆拍板做）：這是「客人已經在外面點連結、點下去什麼都沒有」，
@@ -106,6 +137,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去設定活動頁',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?focus=liff`,
+    anchor: { selector: '[data-tour="org-liff"]', note: '在這裡把 LIFF ID 填進來就好；不知道去哪拿，按旁邊的「教我怎麼設」。' },
     guideId: 'liff-setup',
   },
   {
@@ -118,6 +150,7 @@ const ALERTS: AlertDefinition[] = [
     requires: 'settings',
     // ?verify=liff：進頁直接捲到 LIFF 區塊並重新檢查一次（跳過快取）
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+    anchor: { selector: '[data-tour="org-liff"]', note: '這一區會列出 LINE 上的登記狀態；到 LINE Developers 把該 LIFF 的 Endpoint URL 換成本區給的「活動 LIFF 頁」網址，再按「重新檢查」。' },
     guideId: 'liff-endpoint',
   },
   {
@@ -129,6 +162,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
+    anchor: { selector: '[data-tour="org-liff"]', note: '到 LINE Developers 把該 LIFF 的 Endpoint URL 換成本區給的「活動 LIFF 頁」網址，改完回來按「重新檢查」。' },
     guideId: 'liff-endpoint',
   },
   {
@@ -138,6 +172,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看這條設定',
     requires: 'operate',
     route: wid => `/admin/${wid}/ai-scripts`,
+    anchor: { selector: '[data-tour="scr-list"]', note: '觸發方式寫「客人輸入任何內容」的那條就在這份清單裡，點開把觸發改成關鍵字或範例句。' },
+    // 一鍵＝停用那條（可回復）；想保留內容改觸發的走頁面（popup 會講清楚兩條路）
+    fixOpId: 'script-disable-anytext',
   },
   {
     id: 'llmError',
@@ -150,6 +187,7 @@ const ALERTS: AlertDefinition[] = [
     // 一併帶 includeResolved:這個警示是看「近 24 小時發生過幾次」、不看有沒有被標處理,
     // 清單預設只顯示未處理 → 標過的那幾筆會讓人看到「N 次」卻是空清單。
     route: wid => `/admin/${wid}/ai-usage?reason=llm_error&includeResolved=1`,
+    anchor: { selector: '[data-tour="usg-cases"]', note: '案例都列在這裡；用上面的「原因」下拉選「AI 服務暫時失敗」，就只看這批。' },
   },
   {
     // 措辭與知識庫頁「要處理的事」同一句話（見 ALERT_LABELS）:
@@ -162,7 +200,9 @@ const ALERTS: AlertDefinition[] = [
     // ?health= 直接開對應的問題清單:使用者在這裡已經按過一次「去修」,
     // 到頁面後不該再自己找一遍同一件事
     route: wid => `/admin/${wid}/knowledge/sources?health=failedSources`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區就列著同步失敗的資料，照各筆的按鈕處理。' },
     guideId: 'knowledge-sync',
+    fixOpId: 'knowledge-refetch-sources',
   },
   {
     // 措辭與知識庫頁體檢同一件事（stalledSources）:輪播/隨機區塊的首頁每輪抓到的內容都不同,
@@ -173,6 +213,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看這些網址',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources?health=stalledSources`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著這些網址，建議換成內容固定的頁面當來源。' },
   },
   {
     id: 'knowledgeIndexFailed',
@@ -181,6 +222,8 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看這些知識',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources?health=failedChunks`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著 AI 讀不到的知識，照各筆的按鈕處理。' },
+    fixOpId: 'knowledge-retry-index',
   },
   {
     // critical 不是「有人回報」而已：同事看到 AI 用這條答錯客人、而它還沒被改過，
@@ -191,6 +234,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去修這些知識',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources?health=wrongAnswerChunks`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著被標答錯、又還沒改過的知識，點進去修內容。' },
   },
   {
     id: 'quotaExceeded',
@@ -224,6 +268,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去設定通知對象',
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
+    anchor: { selector: '[data-tour="ais-handoff"]', note: '在這一區把「通知對象」加上至少一位，AI 轉真人時才有人會收到通知。' },
     guideId: 'handoff-notify',
   },
   {
@@ -243,6 +288,8 @@ const ALERTS: AlertDefinition[] = [
       script: wid => `/admin/${wid}/ai-scripts`,
       campaign: wid => `/admin/${wid}/campaigns`,
     },
+    // 逗號選擇器：這顆會落在四頁，querySelector 會亮「這一頁有的那個」清單
+    anchor: { selector: '[data-tour="rm-list"], [data-tour="flow-list"], [data-tour="scr-list"], [data-tour="cmp-list"]', note: '壞掉的設定就在這份清單裡——照上面提到的名稱點開，就會看到哪裡壞、該改成什麼。' },
   },
   {
     // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。
@@ -254,6 +301,10 @@ const ALERTS: AlertDefinition[] = [
     cta: '去修這條流程',
     requires: 'operate',
     route: wid => `/admin/${wid}/ai-scripts`,
+    anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的紅色狀態列會直接指出是哪一題、旁邊就有補退路的按鈕。' },
+    // 一鍵＝補「我沒有這項資料」跳過出口（與 AI 生成端同一套確定性補法）；
+    // 按鈕字樣客人看得到，popup 會原文展示、人看過才執行（08-27 拍板的守門方式）
+    fixOpId: 'script-add-skip-exit',
   },
   {
     // 黃燈不是紅點：客人還是有 AI 或別的設定接住，壞的是「你設的流程沒生效」——
@@ -264,6 +315,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看這條流程',
     requires: 'operate',
     route: wid => `/admin/${wid}/ai-scripts`,
+    anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的黃色狀態列會講它為什麼輪不到、該調哪個設定。' },
   },
   {
     id: 'firstReplyBacklog',
@@ -273,6 +325,7 @@ const ALERTS: AlertDefinition[] = [
     requires: 'operate',
     // 與側欄「未首接」同一份佇列口徑，直接落在該分頁
     route: wid => `/admin/${wid}/conversations?tab=open`,
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '按「待處理」分頁，就只會看到還沒有人回過的客人，點進去回覆。' },
   },
   {
     id: 'humanBacklog',
@@ -282,6 +335,7 @@ const ALERTS: AlertDefinition[] = [
     requires: 'operate',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
     route: wid => `/admin/${wid}/conversations?tab=pending_human`,
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人、「真人處理」是接了還沒收尾的——處理完按「交回機器人」或「結束對話」。' },
   },
   {
     // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑
@@ -291,6 +345,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看這些知識',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources`,
+    // 雖在 SYSTEM_OWNED（卡住的根因在系統端），但「再排一次學習」是安全冪等的自救動作
+    // ——有 fixOpId 時 UI 不再講「不用你操作」（那句話在有按鈕可按之後就不是真的了）
+    fixOpId: 'knowledge-retry-index-stuck',
   },
   {
     id: 'knowledgeOutdated',
@@ -299,6 +356,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去重新同步',
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」的「前往比對」會逐份對照新舊內容。' },
   },
   {
     // 不用「蓋章 / system_notice」這種內部說法:客服看到的後果是「假的待處理」
@@ -334,6 +392,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看推播',
     requires: 'operate',
     route: wid => `/admin/${wid}/broadcasts`,
+    anchor: { selector: '[data-tour="bc-list"]', note: '失敗的那批就在這份清單（看狀態章），點開看失敗原因，可以「重設為草稿再發一次」。' },
+    // 一鍵＝重設回草稿（走既有 retry 端點，刻意不代發——發送留人＝群發紅線的正確形狀）
+    fixOpId: 'broadcast-reset-failed',
   },
   {
     id: 'broadcastOverdue',
@@ -342,6 +403,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看排程',
     requires: 'operate',
     route: wid => `/admin/${wid}/broadcasts`,
+    anchor: { selector: '[data-tour="bc-list"]', note: '逾時的排程就在這份清單裡，點開看它排定的時間；一直沒動請聯絡我們。' },
   },
   {
     // 系統端問題：使用者修不了，但影響要現形（轉真人提醒、自動回收都靠它）

@@ -628,6 +628,30 @@ export function findStuckCollects(nodes: ScriptNode[]): ScriptStuckCollect[] {
 }
 
 /**
+ * 確定性補跳過出口的預設按鈕字樣。客人看得到這幾個字——AI 生成端的最後防線
+ * 與異常一鍵修（`D-34`）都用這一份，改字兩邊一起變。
+ * ⛔換字前先過 validateScriptDoc 的撞名保護：不能撞到「找真人」這類求助詞。
+ */
+export const DEFAULT_SKIP_EXIT_LABEL = '我沒有這項資料'
+
+/**
+ * 幫指定的收集步驟補上跳過出口（確定性、零 LLM）：skipNext 指向該題原本的 next——
+ * 猜不到更聰明的備援路徑，但至少客人不會被同一題鎖死；想接去更好的地方由人在編輯器改。
+ * 這是 AI 生成端 repairStuckCollects 與一鍵修共用的同一套補法：
+ * 只動「在名單上、而且有 next」的 collect 節點，其餘原樣回傳（冪等，可重跑）。
+ */
+export function addSkipExitsToCollects(
+  nodes: ScriptNode[],
+  nodeIds: ReadonlySet<string>,
+  label: string = DEFAULT_SKIP_EXIT_LABEL,
+): ScriptNode[] {
+  return nodes.map((n) => {
+    if (n.type !== 'collect' || !nodeIds.has(n.id) || !n.next) return n
+    return { ...n, skipLabel: label, skipNext: n.next }
+  })
+}
+
+/**
  * AI 生成草稿的占位符格式：模型被要求「使用者沒提供的具體事實（營業時間、價格、網址…）
  * 一律寫【請填入：…】，不可自行編造」。這裡是唯一一份 regex——生成 prompt、編輯器黃燈
  * 都對這個格式，改格式要兩邊一起。

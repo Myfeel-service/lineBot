@@ -69,19 +69,113 @@
   margin-top: 12px;
 }
 
-/* ── 頁面級提醒條（AdminPageAlertStrip，D-33 二輪）────────────
+/* ── 頁面級提醒條（AdminPageAlertStrip，D-33 二〜六輪定案）─────
    掛在 layout、AdminQuotaBanner 旁：每一頁的提醒都在同一個位置同一個長相。
-   沒事整條不渲染（v-if），所以不用處理空狀態的間距。 */
+   沒事整條不渲染（v-if），所以不用處理空狀態的間距。
+
+   視覺定案（五輪）＝**滿版貼齊的系統橫帶**：與內容區同寬、貼頂、淡色底＋下緣細線，
+   讀成「介面的一部分」。⛔改回卡片前先看歷史：卡片版被老闆打過「不 float、不 fixed、
+   寬度又不拉滿」三不像。多件事只展開最嚴重那件，其餘收成「還有 N 件」一行（六輪）。 */
 .page-alert-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  /* solo 頁的 main-content 有 padding（2rem 2.5rem，見 layout/_main.scss），
+     用負邊距把橫帶推回容器邊緣才「拉滿」。⚠️值要跟 _main.scss 的 padding 對齊。
+     只有當第一個元件時才往上貼（前面有觀察者/額度橫幅時不能疊上去）。 */
+  margin: 0 -2.5rem;
+
+  &:first-child {
+    margin-top: -2rem;
+  }
 }
 
-/* split-layout 頁的 main-content 是零 padding 全出血（見 layout/_main.scss），
-   這裡自己補邊距，否則提醒條會貼著視窗邊緣 */
+/* split-layout 頁的 main-content 本來就是零 padding 全出血：不需要負邊距 */
 .main-content:has(.split-layout) .page-alert-strip {
-  margin: 0.75rem 0.75rem 0;
+  margin: 0;
+}
+
+.page-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* 左右內距（六輪老闆嫌 2.5rem 太寬改 1.25rem）；上下維持細帶的量感 */
+  padding: 0.625rem 1.25rem;
+
+  &.is-critical {
+    background: var(--el-color-danger-light-9);
+    border-bottom: 1px solid var(--el-color-danger-light-7);
+  }
+
+  &.is-warning {
+    background: var(--el-color-warning-light-9);
+    border-bottom: 1px solid var(--el-color-warning-light-7);
+  }
+}
+
+/* 語意色只住在圖示與按鈕；正文一律墨色（彩色長文難讀） */
+.page-alert__icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+  line-height: 1;
+  /* 對齊第一行標題的視覺中線（13.5px × 1.55 行高） */
+  margin-top: 3px;
+
+  .is-critical & { color: var(--color-error); }
+  .is-warning & { color: var(--color-warning); }
+}
+
+.page-alert__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-alert__title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.page-alert__detail {
+  margin: 2px 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.page-alert__action {
+  flex: 0 0 auto;
+  /* 對齊標題行的視覺中線，而不是整張卡置中（多行說明時按鈕跟著標題走） */
+  margin-top: 1px;
+}
+
+/* 「還有 N 件」摺疊列（六輪）：中性淡帶、看得出可按，但不跟上面的警示搶戲 */
+.page-alert-strip__more {
+  display: block;
+  width: 100%;
+  padding: 0.375rem 1.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.78125rem;
+  text-align: start;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+@media (max-width: 640px) {
+  .page-alert {
+    flex-wrap: wrap;
+  }
+
+  .page-alert__action {
+    width: 100%;
+  }
 }
 
 /* ── 頁首「這頁怎麼用」（AdminPageHelpButton，D-33 P1-5）──────

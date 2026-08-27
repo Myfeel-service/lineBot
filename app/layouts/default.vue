@@ -113,6 +113,8 @@
       <template #overlay>
         <AdminToastHost />
         <TutorialAgent v-if="workspaceId" />
+        <!-- 一鍵修確認 popup（D-34）：只掛這一份，提醒帶與小幫手兩個入口共用（useAlertFix） -->
+        <AdminAlertFixDialog v-if="workspaceId" />
       </template>
   </AdminShell>
 </template>

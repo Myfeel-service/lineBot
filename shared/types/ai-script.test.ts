@@ -5,6 +5,8 @@ import {
   cosineSimilarity,
   extractCollectValue,
   findPlaceholderTexts,
+  addSkipExitsToCollects,
+  DEFAULT_SKIP_EXIT_LABEL,
   findStuckCollects,
   matchesScriptKeywords,
   matchesSemanticTrigger,
@@ -308,6 +310,51 @@ describe('findStuckCollects：答不出來就卡死的步驟', () => {
     // 接線本身合法(驗證過得了),但流程實際走不通——所以這條檢查不能塞進 validateScriptDoc
     expect(validateScriptDoc({ name: 's', rootNodeId: 't', nodes })).toBeNull()
     expect(findStuckCollects(nodes).map(s => s.nodeId)).toEqual(['c1'])
+  })
+})
+
+describe('addSkipExitsToCollects：確定性補跳過出口（AI 生成端與一鍵修共用）', () => {
+  const collect = (over: Partial<ScriptNode> & { id: string }): ScriptNode => ({
+    type: 'collect', question: 'q', fieldName: 'f', expireMs: 60000, format: 'number', next: 'r1', ...over,
+  } as ScriptNode)
+
+  it('補完之後 findStuckCollects 要抓不到同一題（修法與判定必須成對）', () => {
+    const nodes: ScriptNode[] = [
+      collect({ id: 'c1', fieldName: 'order_id' }),
+      { id: 'r1', type: 'reply', text: 'ok', thenHandoff: false },
+    ]
+    const stuck = findStuckCollects(nodes)
+    expect(stuck.map(s => s.nodeId)).toEqual(['c1'])
+
+    const fixed = addSkipExitsToCollects(nodes, new Set(stuck.map(s => s.nodeId)))
+    const c1 = fixed.find(n => n.id === 'c1') as ScriptNode & { skipLabel?: string; skipNext?: string }
+    // skipNext＝原本的 next：至少不被鎖死；想接更聰明的備援由人在編輯器改
+    expect(c1.skipLabel).toBe(DEFAULT_SKIP_EXIT_LABEL)
+    expect(c1.skipNext).toBe('r1')
+    expect(findStuckCollects(fixed)).toEqual([])
+  })
+
+  it('只動名單上的題目；沒有 next 的孤兒節點不動（skipNext 會指去空氣）', () => {
+    const nodes: ScriptNode[] = [
+      collect({ id: 'c1' }),
+      collect({ id: 'c2', next: '' }),
+      collect({ id: 'c3' }), // 不在名單上
+      { id: 'r1', type: 'reply', text: 'ok', thenHandoff: false },
+    ]
+    const fixed = addSkipExitsToCollects(nodes, new Set(['c1', 'c2']))
+    expect((fixed.find(n => n.id === 'c1') as { skipLabel?: string }).skipLabel).toBe(DEFAULT_SKIP_EXIT_LABEL)
+    expect((fixed.find(n => n.id === 'c2') as { skipLabel?: string }).skipLabel).toBeUndefined()
+    expect((fixed.find(n => n.id === 'c3') as { skipLabel?: string }).skipLabel).toBeUndefined()
+  })
+
+  it('補出來的腳本要過得了存檔驗證（成對、目標存在、字樣不撞求助詞）', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['訂單'], priority: 50, next: 'c1' },
+      collect({ id: 'c1', fieldName: 'order_id', format: 'alphanumericSymbol' }),
+      { id: 'r1', type: 'reply', text: 'ok', thenHandoff: true },
+    ]
+    const fixed = addSkipExitsToCollects(nodes, new Set(['c1']))
+    expect(validateScriptDoc({ name: 's', rootNodeId: 't', nodes: fixed })).toBeNull()
   })
 })
 

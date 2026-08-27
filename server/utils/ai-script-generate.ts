@@ -14,7 +14,7 @@
  */
 import { generateJson } from './gemini'
 import { normalizeScriptInput } from './ai-script-validation'
-import { findStuckCollects, validateScriptDoc, type ScriptNode, type ScriptStuckCollect } from '~~/shared/types/ai-script'
+import { addSkipExitsToCollects, findStuckCollects, validateScriptDoc, type ScriptNode, type ScriptStuckCollect } from '~~/shared/types/ai-script'
 import { isRiskyTriggerKeyword } from '~~/shared/script-trigger-keywords'
 
 export interface ScriptDraft {
@@ -119,9 +119,6 @@ function sanitizeTriggerKeywords(nodes: ScriptNode[], sensitiveTopics: readonly 
   return { nodes: out, dropped }
 }
 
-/** 確定性補救用的跳過按鈕文字（模型兩次都不加時才會用到,人審草稿時可自行改字） */
-const FALLBACK_SKIP_LABEL = '我沒有這項資料'
-
 /** 把「卡死步驟」寫成模型看得懂的修正指示 */
 function stuckFeedback(stuck: ScriptStuckCollect[]): string {
   const lines = stuck.map(s => `- 節點 ${s.nodeId}(${s.fieldName}):「${s.question}」`).join('\n')
@@ -132,16 +129,11 @@ function stuckFeedback(stuck: ScriptStuckCollect[]): string {
 
 /**
  * 最後防線:模型兩次都不肯補跳過出口時,確定性補一顆「跳過這題往下走」的按鈕。
- * 目標刻意就用該題原本的 next——猜不到更聰明的備援路徑,但至少客人不會被鎖死；
+ * 補法（含預設按鈕字樣）在 shared 的 addSkipExitsToCollects——異常一鍵修補的是同一套,
  * 草稿本來就要人審，接哪裡由人改。
  */
 function repairStuckCollects(draft: ScriptDraft, stuck: ScriptStuckCollect[]): ScriptDraft {
-  const ids = new Set(stuck.map(s => s.nodeId))
-  const nodes = draft.nodes.map((n) => {
-    if (n.type !== 'collect' || !ids.has(n.id) || !n.next) return n
-    return { ...n, skipLabel: FALLBACK_SKIP_LABEL, skipNext: n.next }
-  })
-  return { ...draft, nodes }
+  return { ...draft, nodes: addSkipExitsToCollects(draft.nodes, new Set(stuck.map(s => s.nodeId))) }
 }
 
 /** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟清單)、驗證錯誤、或模型拒答 */

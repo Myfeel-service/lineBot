@@ -15,7 +15,7 @@
         <span>尚無推播</span>
         <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
-      <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="bc-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
           v-for="bc in broadcasts"
           :key="bc.id"

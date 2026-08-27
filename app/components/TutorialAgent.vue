@@ -121,13 +121,22 @@
                       <!-- 系統側（D-8③）：使用者去點什麼都不會讓它好。仍然照嚴重度顯示
                            （llmError 就是客人問了得不到回答），但要當場說清楚不用他動手，
                            否則他會反覆點進去找不到能做的事，最後學會忽略整個面板。 -->
-                      <span v-if="a.owner === 'system'" class="ta-alert__sys">不用你操作</span>
+                      <!-- ⛔有一鍵修的不講「不用你操作」：有按鈕可按之後那句話就不是真的了（D-34） -->
+                      <span v-if="a.owner === 'system' && !a.fixOpId" class="ta-alert__sys">不用你操作</span>
                     </span>
                     <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
                     <span class="ta-alert__impact">{{ a.impact }}</span>
                     <span class="ta-alert__cta">{{ a.cta }} →</span>
                   </span>
                 </button>
+                <!-- 「幫我修」（D-34 一鍵修）：開確認 popup——先講會動哪幾筆、人按確定才執行。
+                     排在聊天引導前面：能直接修好的，優先給最短的那條路 -->
+                <button
+                  v-if="a.fixOpId"
+                  type="button"
+                  class="ta-alert__guide ta-alert__guide--fix"
+                  @click="openFix(a)"
+                >幫我修 →</button>
                 <!-- 「用聊天帶我修」：有引導劇本的異常才有——把人留在面板裡一步步修＋當場驗證 -->
                 <button
                   v-if="a.guideId"
@@ -543,6 +552,8 @@ const {
   unsnoozeAll,
   POLL_INTERVAL_MS,
 } = useWorkspaceAlerts()
+// 一鍵修 popup（D-34）：openFix 只塞開窗狀態，dialog 本體掛在 layout（AlertFixDialog）
+const { openFix } = useAlertFix()
 const { brief, refresh: refreshBrief, reset: resetBrief } = useDailyBrief()
 const { setDemo, clearDemo } = useFlowDemo()
 
