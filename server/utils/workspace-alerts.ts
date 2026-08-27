@@ -533,11 +533,16 @@ export async function collectWorkspaceAlerts(
         probe('handoffNotifyMissing', async () => {
           const aiSettings = await aiSettingsPromise!
           if (!aiSettings) throw new Error('ai settings unavailable')
-          // AI 沒開就不會有 AI 轉真人，這時沒設通知不算異常
-          if (aiSettings.enabled !== true) return { active: false }
           const cfg = aiSettings.handoffNotify
           const off = !cfg?.enabled || !(cfg?.lineUserIds?.length)
-          return off ? { active: true } : { active: false }
+          if (!off) return { active: false }
+          // 這份名單擋的不只 AI 轉真人——每日摘要、額度、嚴重異常推播全部吃它，
+          // 所以不看 AI 開關（D-36③ 2026-08-27 拍板放寬：純真人客服帳號沒名單
+          // ＝整個通知系統靜音，之前這種帳號永遠不會被提醒去設）。
+          // 還沒接上 LINE 的帳號不喊：那是開通期，歸開通帶管，重複喊只會淹掉開通引導。
+          const creds = await getLineWorkspaceCredentials(wid).catch(() => null)
+          if (!creds?.channelAccessToken) return { active: false }
+          return { active: true }
         }),
         probe('claimPushUnmarked', async () => {
           // 一次點讀（cronState 內每工作區一筆）。蓋章成功會自己清掉，所以有值就代表最近真的壞過。
@@ -639,6 +644,54 @@ export async function collectWorkspaceAlerts(
             count: broken.length,
             detail: `${where}「${first.sourceLabel}」的按鈕指向的${why}`,
             scopes,
+          }
+        }),
+        // ⛔ 探針放哪一組要跟前端註冊表（useWorkspaceAlerts）的 requires 對齊：
+        //    下面兩顆前端標 requires:'operate'，放到 canSettings 那組會讓 agent 角色
+        //    永遠拿不到答案、固定顯示「這次查不到狀態」（C-88 就是這樣壞的）。
+        probe('tagDiscoverySuggestions', async () => {
+          /**
+           * AI 發現的新標籤在等人決定（D-30②）。
+           * 根本問題是「建議躺在標籤頁，但沒人會沒事開標籤頁」——照知識庫建議的既有模式，
+           * 由小幫手主動說一聲。suggestion 級＝不亮紅點（沒有東西壞掉）。
+           * 單文件直讀，零掃描。
+           */
+          const snap = await db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get()
+          const pending = (snap.data() as { pending?: unknown[] } | undefined)?.pending
+          const n = Array.isArray(pending) ? pending.length : 0
+          return n ? { active: true, count: n } : { active: false }
+        }),
+        probe('scannerStalled', async () => {
+          /**
+           * `C-68` 的治本（08-25）：AI 貼標掃描器因為缺一個索引每輪都炸，錯誤被 catch
+           * 吞掉 → 開關開著、畫面什麼都不說，兩天後才有人問「怎麼都沒建議」。
+           *
+           * ⛔ **不可以用「游標有沒有前進」判斷**：掃描器追上進度後本來就不寫入
+           *    （沒有新對話要處理），拿游標當訊號會天天誤報。唯一可靠的是掃描器
+           *    自己記下的連續失敗（見 shared/scanner-health.ts）。
+           *
+           * 只在「AI 讀對話」開著時才查——關著的話這兩支根本不會跑，
+           * 報「掃描失敗」只會讓人去找一個不存在的問題。
+           */
+          const settings = await aiSettingsPromise!
+          if (!settings) throw new Error('ai settings unavailable')
+          if (settings.autoTagSuggest?.enabled !== true) return { active: false }
+
+          const [suggestSnap, discoverySnap] = await Promise.all([
+            db.collection('cronState').doc(`tag-suggest-${wid}`).get(),
+            db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get(),
+          ])
+          const broken = ([
+            ['貼標建議', suggestSnap],
+            ['發現新標籤', discoverySnap],
+          ] as const).filter(([, snap]) =>
+            isScannerStalled(readScannerHealth(snap.data() as Record<string, unknown> | undefined)))
+
+          if (!broken.length) return { active: false }
+          return {
+            active: true,
+            count: broken.length,
+            detail: `${broken.map(([name]) => name).join('、')}的背景掃描連續失敗中`,
           }
         }),
       ]
@@ -790,50 +843,6 @@ export async function collectWorkspaceAlerts(
           return {
             active: true,
             detail: `上次執行約 ${humanizeHours(ageMs / 3600_000)}前`,
-          }
-        }),
-        probe('tagDiscoverySuggestions', async () => {
-          /**
-           * AI 發現的新標籤在等人決定（D-30②）。
-           * 根本問題是「建議躺在標籤頁，但沒人會沒事開標籤頁」——照知識庫建議的既有模式，
-           * 由小幫手主動說一聲。suggestion 級＝不亮紅點（沒有東西壞掉）。
-           * 單文件直讀，零掃描。
-           */
-          const snap = await db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get()
-          const pending = (snap.data() as { pending?: unknown[] } | undefined)?.pending
-          const n = Array.isArray(pending) ? pending.length : 0
-          return n ? { active: true, count: n } : { active: false }
-        }),
-        probe('scannerStalled', async () => {
-          /**
-           * `C-68` 的治本（08-25）：AI 貼標掃描器因為缺一個索引每輪都炸，錯誤被 catch
-           * 吞掉 → 開關開著、畫面什麼都不說，兩天後才有人問「怎麼都沒建議」。
-           *
-           * ⛔ **不可以用「游標有沒有前進」判斷**：掃描器追上進度後本來就不寫入
-           *    （沒有新對話要處理），拿游標當訊號會天天誤報。唯一可靠的是掃描器
-           *    自己記下的連續失敗（見 shared/scanner-health.ts）。
-           *
-           * 只在「AI 讀對話」開著時才查——關著的話這兩支根本不會跑，
-           * 報「掃描失敗」只會讓人去找一個不存在的問題。
-           */
-          const settings = await getAiSettings(wid, db)
-          if (settings.autoTagSuggest?.enabled !== true) return { active: false }
-
-          const [suggestSnap, discoverySnap] = await Promise.all([
-            db.collection('cronState').doc(`tag-suggest-${wid}`).get(),
-            db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get(),
-          ])
-          const broken = ([
-            ['貼標建議', suggestSnap],
-            ['發現新標籤', discoverySnap],
-          ] as const).filter(([, snap]) =>
-            isScannerStalled(readScannerHealth(snap.data() as Record<string, unknown> | undefined)))
-
-          if (!broken.length) return { active: false }
-          return {
-            active: true,
-            count: broken.length,
-            detail: `${broken.map(([name]) => name).join('、')}的背景掃描連續失敗中`,
           }
         }),
         probe('paymentPastDue', async () => {

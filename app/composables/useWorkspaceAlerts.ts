@@ -266,7 +266,8 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'handoffNotifyMissing',
     icon: Bell,
-    impact: 'AI 答不出來時會轉給真人，但目前沒設定要通知誰——客人可能等很久都沒人接手。',
+    // 這份名單擋的不只轉真人:每日摘要、額度、嚴重異常的 LINE 通知全部靠它(D-36③)
+    impact: '客人轉真人、每日摘要、額度與異常警報的 LINE 通知都要靠這份名單——現在沒有任何人會收到通知，客人可能等很久都沒人接手。',
     cta: '去設定通知對象',
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
