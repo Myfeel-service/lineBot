@@ -83,7 +83,8 @@ function dismiss() {
   catch { /* 無痕模式等情況：關不掉就下次再顯示，不是什麼大事 */ }
 }
 
-const loaded = ref(false)
+/** 已經為「哪個官方帳號」問過方案了。⛔不能只記 true/false：切帳號要重新問（見下面 watch） */
+const loadedFor = ref('')
 
 /**
  * ⚠️ **不能用 onMounted 判斷權限。**
@@ -92,9 +93,17 @@ const loaded = ref(false)
  * 永遠是「還沒有權限」，然後就直接 return、永遠不載入，整個橫幅形同不存在。
  * 改成 watch：等權限真的出現時才打 API（只打一次）。
  */
-watch(canManageSettings, async (can) => {
-  if (!can || loaded.value) return // 沒有計費權限的人不必打這支（plan-summary 需要 admin，打了只會拿到 403）
-  loaded.value = true
+/**
+ * ⛔ 也要跟著 workspaceId 重載，不能只在「權限出現時」載一次。
+ * 這個元件掛在 layout 上、切帳號時不會重新掛載：只載一次的話，切過去之後
+ * `usePlanSummary` 的帳號戳記對不上（那道戳記是為了不把 A 家的方案顯示在 B 家），
+ * 於是這條橫幅整條消失——B 家額度已經 100%、AI 停止回覆了卻沒有任何提示。
+ */
+watch([canManageSettings, workspaceId], async ([can, wid], [, prevWid]) => {
+  if (!can) return // 沒有計費權限的人不必打這支（plan-summary 需要 admin，打了只會拿到 403）
+  if (wid !== prevWid) loadedFor.value = '' // 換帳號＝要重新問一次
+  if (!wid || loadedFor.value === wid) return
+  loadedFor.value = wid
   await load()
   try {
     dismissed.value = localStorage.getItem(dismissKey.value) === '1'

@@ -2946,9 +2946,14 @@ const canSend = computed(() => !!inputText.value.trim())
  */
 type LoadListMode = 'reset' | 'more' | 'merge'
 
-async function loadList(mode: LoadListMode = 'reset') {
+/**
+ * 回傳「這一輪有沒有真的跑」（被上面三道閘門擋掉就是 false）。
+ * 呼叫端靠它決定要不要自己補一次分頁數字——被擋掉的那次連數字都沒重抓，
+ * 接手／交還／送訊息之後少了那一次，分頁上的「未首接 12」就會停在動作前的舊值。
+ */
+async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
   if (mode === 'reset') {
-    if (listLoading.value) return
+    if (listLoading.value) return false
     listLoading.value = true
     listPage.value = 1
     listHasMore.value = false
@@ -2956,12 +2961,12 @@ async function loadList(mode: LoadListMode = 'reset') {
     sessions.value = []
   }
   else if (mode === 'more') {
-    if (listLoadingMore.value || listLoading.value || !listHasMore.value) return
+    if (listLoadingMore.value || listLoading.value || !listHasMore.value) return false
     listLoadingMore.value = true
   }
   else {
     // 背景刷新不搶正在進行的載入，也不重入自己
-    if (listLoading.value || listLoadingMore.value || listMerging) return
+    if (listLoading.value || listLoadingMore.value || listMerging) return false
     listMerging = true
   }
 
@@ -2973,6 +2978,16 @@ async function loadList(mode: LoadListMode = 'reset') {
    * 併進新分頁的清單裡。
    */
   const seq = ++listLoadSeq
+
+  /**
+   * 分頁上的數字（未首接 12、待跟進 3…）跟清單**同時**出發。
+   *
+   * ⛔ 不要再接在清單後面 `await`：兩者沒有先後依賴，排成一條線的代價是清單回來了才開始
+   * 問數字——2026-08-27 正式站實測，清單第 3.8 秒回來、數字再花 2.3 秒＝整頁 6.1 秒，
+   * 而這一頁是全站唯一「瓶頸真的在自己資料」的頁面，那 2.3 秒是純排隊。
+   * 這支自己 try/catch（失敗只是數字維持上次的值），所以不會有沒人接的 rejection。
+   */
+  const countsTask = loadSessionCounts()
 
   // 背景刷新永遠只重抓第一頁：那裡才有最新的變化，後面幾頁維持原樣
   const page = mode === 'merge' ? 1 : listPage.value
@@ -3001,7 +3016,7 @@ async function loadList(mode: LoadListMode = 'reset') {
             : undefined,
         },
       })
-      if (seq !== listLoadSeq) return
+      if (seq !== listLoadSeq) return true
       const chunk = res.conversations ?? []
       conversations.value = mode === 'merge'
         ? mergeIntoList(conversations.value, chunk, c => c.userId, res.hasMore)
@@ -3027,7 +3042,7 @@ async function loadList(mode: LoadListMode = 'reset') {
             : undefined,
         },
       })
-      if (seq !== listLoadSeq) return
+      if (seq !== listLoadSeq) return true
       const chunk = res.sessions ?? []
       sessions.value = mode === 'merge'
         ? mergeIntoList(sessions.value, chunk, s => s.sessionId, res.hasMore)
@@ -3059,13 +3074,14 @@ async function loadList(mode: LoadListMode = 'reset') {
     }
     listMerging = false
   }
-  if (seq !== listLoadSeq) return
-  await loadSessionCounts()
+  if (seq !== listLoadSeq) return true
+  await countsTask
   maybeRefreshAiContext()
   // 只跟背景刷新走。reset（換分頁／按重整／搜尋）後面通常緊接著一次 selectUser 重讀，
   // 這裡再插一支就是同一段時間軸兩個請求在路上，沒好處
   if (mode === 'merge') maybeRefreshOpenTimeline()
   if (mode === 'reset') void autoFillSidebarList()
+  return true
 }
 
 /**
@@ -3192,8 +3208,8 @@ async function autoFillSidebarList() {
  * 以前捲下去超過 80px 就整個放棄、只更新分頁數字——因為那時是整份重載，
  * 一刷新捲軸就跳回頂端。現在改成併入 + 補回捲動位置，捲到哪裡都能安全刷新。
  */
-async function refreshListQuiet() {
-  await loadList('merge')
+async function refreshListQuiet(): Promise<boolean> {
+  return await loadList('merge')
 }
 
 let searchListTimer: ReturnType<typeof setTimeout> | null = null
@@ -3202,19 +3218,47 @@ watch(searchText, () => {
   searchListTimer = setTimeout(() => void loadList('reset'), 300)
 })
 
-async function loadSessionCounts() {
-  try {
-    const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number }>(
-      '/api/conversations/sessions-counts',
-    )
-    for (const k of Object.keys(sessionStatusCounts.value) as ConvSessionStatus[]) {
-      sessionStatusCounts.value[k] = Number(res.counts?.[k] ?? 0)
+/**
+ * 側欄分頁的數字。這一支後端是 8 個計數查詢，所以兩件事要把關：
+ *
+ * 1. **同一瞬間只跑一支**：`loadList` 一開頭就會叫它，而 reset 與 merge 是可以並存的
+ *    （merge 只被 `listMerging` 擋，reset 只被 `listLoading` 擋）——不收斂的話換分頁
+ *    撞上背景刷新就是兩份 8 個計數查詢同時出去。這個 repo 有讀取費暴衝的前科（`E-8`）。
+ * 2. **落後的那一支不准寫**：兩支同時在路上時，先發的可能後到，寫下去等於把新的數字
+ *    換回舊的——徽章上的「未首接 12」會比旁邊的清單舊好幾秒。
+ */
+let countsInflight: Promise<void> | null = null
+let countsSeq = 0
+
+/**
+ * @param options.force 動作剛寫進資料庫（接手／交還／送訊息）之後要用。
+ *   ⛔ 這種情境不可以共用飛行中的那一支：它可能是動作**之前**送出去的，
+ *   拿它的答案等於徽章停在動作前的舊值（交還後「未首接」不減一）。
+ */
+async function loadSessionCounts(options: { force?: boolean } = {}) {
+  if (countsInflight && !options.force) return countsInflight
+  const ticket = ++countsSeq
+  const task = (async () => {
+    try {
+      const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number }>(
+        '/api/conversations/sessions-counts',
+      )
+      if (ticket !== countsSeq) return
+      for (const k of Object.keys(sessionStatusCounts.value) as ConvSessionStatus[]) {
+        sessionStatusCounts.value[k] = Number(res.counts?.[k] ?? 0)
+      }
+      followUpCount.value = Number(res.followUp ?? 0)
     }
-    followUpCount.value = Number(res.followUp ?? 0)
-  }
-  catch {
-    // 分頁仍可用；數字維持上次成功值
-  }
+    catch {
+      // 分頁仍可用；數字維持上次成功值
+    }
+    finally {
+      // 只有「最新那一支」有資格收尾：force 造成兩支重疊時，落後的那支不能把新的旗標清掉
+      if (ticket === countsSeq) countsInflight = null
+    }
+  })()
+  countsInflight = task
+  return task
 }
 
 async function loadSupportPresets() {
@@ -3723,13 +3767,13 @@ async function reloadAfterOutgoing() {
   if (!userId) return
   if (selectedSessionId.value && Number(sessionMeta.value?.closedAtMs) > 0) {
     await leaveSessionSegment(userId)
-    await refreshListQuiet()
-    await loadSessionCounts()
+    // 清單那輪跑到的話它開頭已經發過一次數字；被閘門擋掉才補（force：剛送出的那則要算進去）
+    if (!(await refreshListQuiet())) await loadSessionCounts({ force: true })
     return
   }
   await reloadTimeline({ quiet: true })
-  if (selectedSessionId.value) await refreshListQuiet()
-  else await loadSessionCounts()
+  // 有選到場就重抓清單（`loadList` 開頭已含分頁數字那一支）；被閘門擋掉或沒選到場才單獨補
+  if (!selectedSessionId.value || !(await refreshListQuiet())) await loadSessionCounts({ force: true })
 }
 
 /**
@@ -3750,10 +3794,12 @@ async function takeOverSelectedSession() {
     // 讓它擋住接手的畫面更新沒有道理——接手本身已經成立，摘要晚兩秒出現即可。
     aiContextBanner.value?.refreshSummary()
     await reloadTimeline()
-    await refreshListQuiet()
+    const listRan = await refreshListQuiet()
     // 後端接手時會自動把負責人指給按的人；清單重抓後把它補到頂部那顆按鈕上
     syncSelectedAssigneeFromList()
-    await loadSessionCounts()
+    // 側欄分頁的數字：`loadList` 一開頭就會發一次（動作已經寫進資料庫了，那一次讀到的是新值），
+    // 所以只有它被閘門擋掉（正好有另一輪背景刷新在跑）時才需要自己補，否則就是白打一次八個計數查詢
+    if (!listRan) await loadSessionCounts({ force: true })
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '接手失敗', 'error')
@@ -3776,9 +3822,9 @@ async function handBackSelectedSession() {
     })
     showToast('已交還機器人，AI / 自動回覆恢復接手', 'success')
     await reloadTimeline()
-    await refreshListQuiet()
-    // 狀態變了，側欄分頁的數字也要跟著動（先前漏了，交還後徽章會停在舊值）
-    await loadSessionCounts()
+    // 狀態變了，側欄分頁的數字也要跟著動（先前漏了，交還後徽章會停在舊值）；
+    // `loadList` 跑到的話它自己開頭就發過一次，只有被擋掉才補
+    if (!(await refreshListQuiet())) await loadSessionCounts({ force: true })
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '交還機器人失敗', 'error')

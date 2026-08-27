@@ -198,3 +198,78 @@ describe('修復手段對應的一致性（D-34）：註冊表、op 表、劇本
     }
   })
 })
+
+/**
+ * 去重與跨帳號：這一組釘住 2026-08-27 那次效能修正（`E-20`）的兩個要求。
+ *
+ * 為什麼值得測：①「同一次載入只打一支」本來就沒人測，而防重複的閂是靠宣告位置成立的
+ * ——有人把它改回函式內的 `let`（為了好測、或順手重構）就會靜靜地退回每頁打兩次，
+ * 而唯一的證據是手動走一次瀏覽器。②共用同一支 promise 的代價是「拿 A 家的查詢回答 B 家」，
+ * 那比慢兩秒嚴重得多（reset() 自己的註解就是這樣寫的）。
+ */
+describe('去重與跨帳號（E-20）', () => {
+  /** 讓 $fetch 停在半空中，好模擬「還在路上時使用者切帳號」 */
+  function deferredFetch() {
+    const pending: Array<{ wid: string, resolve: (items: WorkspaceAlertItem[]) => void }> = []
+    fetchSpy.mockImplementation(((_url: string, opts: any) => {
+      const wid = String(opts?.query?.workspaceId ?? '')
+      return new Promise((resolve) => {
+        pending.push({ wid, resolve: its => resolve({ workspaceId: wid, items: its, checkedAt: 1 }) })
+      })
+    }) as never)
+    return pending
+  }
+
+  /** refresh() 內部先 await getBearer() 才打 $fetch，所以要放行一輪 microtask 才看得到請求 */
+  const flush = () => new Promise(r => setTimeout(r, 0))
+
+  it('兩個呼叫端同時要資料 → 只打一支 API（面板與提醒條共用同一次查詢）', async () => {
+    const pending = deferredFetch()
+    // 兩個不同的呼叫端各自 useWorkspaceAlerts()，模擬 TutorialAgent 與 AdminPageAlertStrip
+    const strip = useWorkspaceAlerts()
+    const fab = useWorkspaceAlerts()
+    const p1 = strip.refresh()
+    const p2 = fab.refresh()
+    await flush()
+
+    // 這一行紅掉＝防重複的閂又變成「每個呼叫端各一份」
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    pending[0]!.resolve([{ id: 'llmError', state: 'active', count: 2 }])
+    await Promise.all([p1, p2])
+    // 一支查詢餵飽兩個呼叫端（狀態是共用的）
+    expect(strip.activeAlerts.value.map(x => x.id)).toContain('llmError')
+    expect(fab.activeAlerts.value.map(x => x.id)).toContain('llmError')
+  })
+
+  it('查詢還在路上就換帳號 → 新帳號要自己被查一次，而且舊帳號的答案不准寫進新畫面', async () => {
+    const pending = deferredFetch()
+    const a = useWorkspaceAlerts()
+
+    const first = a.refresh() // w1 送出，卡在路上
+    await flush()
+    expect(pending).toHaveLength(1)
+    expect(pending[0]!.wid).toBe('w1')
+
+    // 使用者切到 w2（TutorialAgent 的 watch 會先 reset 再重查）
+    workspaceId.value = 'w2'
+    a.reset()
+    const second = a.refresh({ force: true })
+    await flush()
+
+    // ⛔ 這一行紅掉＝w2 被 w1 那支在飛的查詢擋掉，等於從來沒被查過
+    expect(pending).toHaveLength(2)
+    expect(pending[1]!.wid).toBe('w2')
+
+    // w2 先回來（正常情況），再讓落後的 w1 回來
+    pending[1]!.resolve([{ id: 'quotaExceeded', state: 'active', count: 1 }])
+    await second
+    pending[0]!.resolve([{ id: 'llmError', state: 'active', count: 99 }])
+    await first
+
+    // ⛔ 這兩行紅掉＝A 家的異常被寫到 B 家畫面上
+    const shown = a.activeAlerts.value.map(x => x.id)
+    expect(shown).not.toContain('llmError')
+    expect(shown).toContain('quotaExceeded')
+  })
+})

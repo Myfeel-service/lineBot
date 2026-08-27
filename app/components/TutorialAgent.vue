@@ -554,19 +554,31 @@ const {
 } = useWorkspaceAlerts()
 // 一鍵修 popup（D-34）：openFix 只塞開窗狀態，dialog 本體掛在 layout（AlertFixDialog）
 const { openFix } = useAlertFix()
-const { brief, refresh: refreshBrief, reset: resetBrief } = useDailyBrief()
+const { brief, loading: briefLoading, refresh: refreshBrief, reset: resetBrief } = useDailyBrief()
 const { setDemo, clearDemo } = useFlowDemo()
 
 /**
- * 三份資料（設定就緒度 + 目前異常 + 昨日摘要）一起重查。
+ * 設定就緒度 + 目前異常一起重查。
  * force 用在「使用者按重新檢查」與「剛跑完導覽要確認有沒有生效」——這兩種情境
  * 一定要拿到當下的真實狀態，不能被節流擋掉回舊答案。
+ *
+ * ⛔ 昨日摘要**不在這裡**：它只長在面板裡（`ta-brief`），而這個元件掛在 layout 上
+ * ＝每一頁都會跑一次 `onMounted`。原本一起抓的話，面板還沒打開就先打了 3 支 KPI
+ * （昨天／前天／前七天基準），每支都要掃一遍對話場——2026-08-27 正式站實測，
+ * 好友頁與圖文選單頁「最後才回來」的就是這三支，對話統計那支等了 4.4 秒，
+ * 而使用者根本沒打開面板、查完沒有人看。改由下面的 `watch(panelOpen)` 在打開時才查。
  */
 function refreshAll(force = false) {
-  return Promise.all([refresh({ force }), refreshAlerts({ force }), refreshBrief({ force })])
+  const tasks = [refresh({ force }), refreshAlerts({ force })]
+  // 面板已經開著時（例如按面板裡的「重新檢查」）摘要要跟著更新，否則畫面上的數字會停在舊的
+  if (panelOpen.value)
+    tasks.push(refreshBrief({ force }))
+  return Promise.all(tasks)
 }
 
-const busy = computed(() => loading.value || alertsLoading.value)
+// 摘要改成「打開面板才查」之後，它的載入也要算進 busy：否則面板剛打開的那幾秒，
+// 摘要區塊還不存在、header 卻寫「剛剛檢查」、「重新檢查」也能按，數字晚幾秒才突然長出來
+const busy = computed(() => loading.value || alertsLoading.value || briefLoading.value)
 
 /** 紅點：現在壞著的 + 必要設定沒做的。兩者都是「不處理就有事」，合成一個數字才不會互相遮蔽 */
 /** 英雄卡在場時「接上 LINE」由它代言，必要待辦不再重複列同一件事 */
@@ -1082,6 +1094,9 @@ watch(workspaceId, (next, prev) => {
 // 每次打開面板都重新體檢（有待驗證的修復就 force 並回報結果）；關閉時清掉一次性回應
 watch(panelOpen, (open) => {
   if (open) {
+    // 昨日摘要在這一刻才查（見 refreshAll 的註解）。不 force：useDailyBrief 自己有
+    // 10 分鐘節流與跨日重抓，開開關關不會重打，但隔天再打開會拿到新的日期
+    void refreshBrief()
     void verifyLastFix()
   }
   else {
