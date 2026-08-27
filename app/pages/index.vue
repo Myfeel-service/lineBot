@@ -402,27 +402,30 @@
               <span class="lp-panel__meta">60 秒</span>
             </div>
             <div class="lp-panel__bd">
-              <div class="lp-tl">
+              <!-- ⚠️ 只有**兩個**節點：標題就寫「兩步」。第三個節點（原本的「✓ 開始使用／60 秒」）
+                   不是步驟、是做完的結果，已改成卡底的結果面板（沿用四道牆的答案面板語彙）。
+                   ⛔ 別再把結果畫回第三個圈——標題說兩步、畫面三個圈，第一次看的人得自己數。
+                      這樣「60 秒」在同一屏也只剩兩次（泡泡＋卡片 meta）。
+                   ⚠️ 第一步是 **Google 一鍵登入**：2026-08-27 查證 app/pages/login.vue，
+                      登入只有 `GoogleAuthProvider`，沒有 email 開通連結——原本寫
+                      「登入 Email／收開通連結」是假的，客人點進去只會看到一顆 Google 按鈕。
+                      改文案前先確認登入方式還是不是這個。 -->
+              <div class="lp-tl lp-tl--two">
                 <div class="lp-tl__track"><i /></div>
                 <div class="lp-tl__steps">
                   <div class="lp-tl__step">
                     <span class="lp-tl__dot">1</span>
-                    <b>登入 Email</b>
-                    <small>收開通連結</small>
+                    <b>用 Google 帳號登入</b>
+                    <small>不用另外設密碼</small>
                   </div>
                   <div class="lp-tl__step">
                     <span class="lp-tl__dot">2</span>
                     <b>填寫基礎商家資訊</b>
                     <small>店名、行業、賣什麼</small>
                   </div>
-                  <div class="lp-tl__step lp-tl__step--done">
-                    <span class="lp-tl__dot lp-tl__dot--ok">✓</span>
-                    <b>開始使用</b>
-                    <small>60 秒</small>
-                  </div>
                 </div>
               </div>
-              <p class="lp-tl__note">就像銀行開戶，只要身分證和手機號碼。</p>
+              <div class="lp-tl__done"><span aria-hidden="true">✓</span>帳號就開好了，可以開始設定</div>
             </div>
           </div>
 
@@ -446,6 +449,13 @@
               <p class="lp-fast__note">不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</p>
             </div>
           </div>
+        </div>
+
+        <!-- ⚠️ 這一區原本**一顆按鈕都沒有**：讀者剛被說服「原來這麼簡單」，卻要自己滑到定價區
+             才找得到入口。⛔ 用詞跟全站一致（免費打造我的 MiniMe），別自己另取一個。 -->
+        <div class="lp-fast__cta lp-reveal">
+          <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+          <p class="lp-fast__fine"><b>免費方案不用綁卡</b>，接 LINE 的部分隨時可以再回來做。</p>
         </div>
       </div>
     </section>
@@ -481,7 +491,7 @@
           </div>
           <div class="lp-pf">
             <b>60 秒就能開始</b>
-            <small>Email 登入、商家基礎資訊設定，今天就能讓它上工。</small>
+            <small>Google 登入、填一下商家資訊，今天就能讓它上工。</small>
           </div>
         </div>
 

@@ -478,7 +478,7 @@
   /* ── 60 秒上線：三步時間軸 ────────────────────────────────
    * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
    */
-  .lp-tl { position: relative; padding: 8px 0 4px; }
+  .lp-tl { position: relative; padding: 8px 0 4px; margin-bottom: 20px; }
   .lp-tl__track { position: absolute; left: 17%; right: 17%; top: 21px; height: 3px; background: #eaefe8; border-radius: var(--radius-pill); overflow: hidden; }
   .lp-tl__track i { display: block; height: 100%; width: 100%; background: var(--g); border-radius: var(--radius-pill); }
   .lp-tl__steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); }
@@ -495,15 +495,34 @@
   .lp-tl__step b { display: block; font-size: 0.98rem; font-weight: 800; }
   .lp-tl__step small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 4px; }
   .lp-tl__step--done b { color: var(--g-deep); }
-  .lp-tl__note { margin: 20px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
+  /* 兩個節點時：軌道只需連起兩點，左右留白比三點版窄 */
+  .lp-tl--two .lp-tl__steps { grid-template-columns: repeat(2, 1fr); }
+  .lp-tl--two .lp-tl__track { left: 25%; right: 25%; }
+  /* 做完會得到什麼＝結果面板，不是第三個步驟（沿用四道牆答案面板的語彙：淡底、綠字、一句話）。
+     ⛔ **貼卡底的面板一律用 `<div>`，不要用 `<p>`**：`.lp-panel__bd > p`（0,1,1）會蓋掉
+        `margin-top: auto`，面板就浮在半空——這個特異性坑 08-27 一天踩了四次
+        （.lp-wall p + fix、.lp-wall p、artifact 的 .m-stat-top、這裡）。
+     ⛔ 也別再給它任何 margin-top 規則，留白改由上面那塊的 margin-bottom 給。 */
+  .lp-tl__done {
+    margin-top: auto; background: var(--g-wash-2); border-radius: var(--r-sm);
+    padding: 12px 14px; font-size: 1rem; font-weight: 800; color: var(--g-deep);
+    letter-spacing: -0.01em; line-height: 1.5;
+  }
+  .lp-tl__done span { margin-right: 5px; }
+
+  /* 區塊底部的行動出口（原本整區零個按鈕）*/
+  .lp-fast__cta { margin-top: 28px; text-align: center; }
+  .lp-fast__fine { margin: 14px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
+  .lp-fast__fine b { color: var(--ink-2); font-weight: 700; }
 
   /* 60 秒區兩欄：左時間軸卡、右開通引導真截圖。
      minmax(0,…) 同 hero grid 的理由——圖片的 min-content 會把欄撐爆。 */
   .lp-fast { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--card-gap); align-items: stretch; }
   .lp-fast .lp-panel { display: flex; flex-direction: column; }
   .lp-fast .lp-panel__bd { flex: 1; display: flex; flex-direction: column; }
-  /* 左卡（時間軸）比右卡矮：內容垂直置中，別讓下方留一大塊空白 */
-  .lp-fast .lp-panel:first-child .lp-panel__bd { justify-content: center; }
+  /* ⛔ 左卡的內容**不要**垂直置中：結果面板靠 `margin-top: auto` 貼卡底才會跟右卡的
+     說明文字對齊；置中會把那個 auto 吃掉的空間搶回來，面板就浮在半空（08-27 實測 50px）。
+     空白由「時間軸在上、結果在下」自然撐開，不需要置中。 */
   /* 截圖本身就是一張帶標頭的白卡，貼齊面板內距、下方說明推到卡底（跟左卡的 note 對齊） */
   .lp-shot--flush { margin-top: 0; }
   .lp-fast__note { margin: auto 0 0; padding-top: 16px; font-size: 0.86rem; color: var(--ink-soft); }
