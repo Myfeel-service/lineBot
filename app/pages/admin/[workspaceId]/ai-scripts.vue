@@ -748,7 +748,8 @@ const { tags: tagList, loadTags } = useAdminTagList()
 const modulesLoading = ref(true)
 const moduleOptions = ref<Array<{ value: string; label: string }>>([])
 async function loadModuleOptions() {
-  const list = await apiFetch<Array<Record<string, any>>>('/api/flow/list').catch(() => [])
+  // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與編號
+  const list = await apiFetch<Array<Record<string, any>>>('/api/flow/list?fields=picker').catch(() => [])
   // moduleId 就是 flows 的文件 id（見 getFlowByModuleId），所以直接用 m.id
   moduleOptions.value = (Array.isArray(list) ? list : [])
     .map(m => ({ value: String(m.id ?? ''), label: String(m.name ?? m.id ?? '(未命名模組)') }))

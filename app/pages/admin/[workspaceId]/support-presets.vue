@@ -215,7 +215,8 @@ const selectedPreset = computed(() => presets.value.find(p => p.id === selectedI
 
 async function loadModules() {
   modulesLoading.value = true
-  modules.value = await apiFetch<any[]>('/api/flow/list').catch(() => [])
+  // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與編號
+  modules.value = await apiFetch<any[]>('/api/flow/list?fields=picker').catch(() => [])
   modulesLoading.value = false
 }
 

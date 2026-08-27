@@ -625,7 +625,8 @@ async function loadData() {
     const [_, tagOk, flowList] = await Promise.all([
       loadBroadcasts(true),
       loadTagOptions({ status: 'active' }),
-      apiFetch<any[]>('/api/flow/list').catch(() => []),
+      // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與編號
+      apiFetch<any[]>('/api/flow/list?fields=picker').catch(() => []),
     ])
     flows.value = (flowList ?? []).map((f: any) => ({ id: f.id, name: f.name || f.id }))
     if (!tagOk) showToast('載入標籤失敗', 'error')

@@ -489,7 +489,8 @@ async function loadMenus() {
   try {
     const [_, modulesData, tagOk] = await Promise.all([
       loadMenusList(true),
-      apiFetch<any[]>('/api/flow/list'),
+      // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與啟用狀態
+      apiFetch<any[]>('/api/flow/list?fields=picker'),
       loadTags({ status: 'active' }),
     ])
     modules.value = modulesData ?? []
