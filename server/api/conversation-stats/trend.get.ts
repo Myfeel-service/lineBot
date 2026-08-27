@@ -1,8 +1,8 @@
 import { getDb } from '~~/server/utils/firebase'
-import { isPreInboundFollowSession, type TrendBucket, type TrendGranularity } from '~~/shared/types/conversation-stats'
+import type { TrendBucket, TrendGranularity } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { shiftToTaipei, taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
-import { TREND_SESSION_FIELDS } from '~~/server/utils/conversation-stats-fields'
+import { loadDayStats, mergeDays, taipeiDayKeysBetween } from '~~/server/utils/conversation-stats-rollup'
 
 /** 分桶用台北日曆（shiftToTaipei 後只能讀 getUTC*）；用本機 getters 在 UTC 伺服器上會把凌晨的場分去前一天 */
 function bucketKey(date: Date, granularity: TrendGranularity): string {
@@ -31,75 +31,52 @@ export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[
       : 'day'
 
   const db = getDb()
-  let ref = db.collection('conversationSessions') as FirebaseFirestore.Query
-  ref = ref.where('workspaceId', '==', workspaceId)
 
   // 日界線取台北時間，與 kpi.get.ts 同修（見 taipei-day.ts）
   const startDate = taipeiDayStart(query.startDate)
     ?? taipeiDayStart(taipeiDateKey(new Date(Date.now() - 29 * 24 * 3600_000)))!
   const endDate = taipeiDayEnd(query.endDate) ?? new Date()
 
-  ref = ref.where('openedAt', '>=', startDate).where('openedAt', '<=', endDate)
-  // 只搬分桶與分類用得到的那幾欄（清單與理由見 conversation-stats-fields.ts）
-  ref = ref.select(...TREND_SESSION_FIELDS)
+  /**
+   * 數字來源＝每一天的日結（沒有／過期／今天就現場算，見 conversation-stats-rollup.ts）。
+   * 90 天的趨勢原本要把 4,337 場對話整批翻回來（`E-29`）。
+   * 分桶（日／週／月）就是把那幾天加起來——算式與 KPI 共用同一支，不會各算各的。
+   */
+  const dayKeys = taipeiDayKeysBetween(startDate, endDate)
+  const { days } = await loadDayStats(db, workspaceId, dayKeys)
 
-  // 新朋友按同一套桶分（與 KPI 卡同資料源 users.createdAt）。
-  // 查失敗回 null → 整批省略 newFriends 欄位：圖上缺線比畫假的 0 線誠實。
-  const friendsPromise = db.collection('users')
-    .where('workspaceId', '==', workspaceId)
-    .where('createdAt', '>=', startDate)
-    .where('createdAt', '<=', endDate)
-    .select('createdAt')
-    .get()
-    .then(s => s.docs.map(d => d.data().createdAt?.toDate?.()).filter(Boolean) as Date[])
-    .catch((e) => {
-      console.error('[conversation-stats] trend newFriends error:', e)
-      return null
+  // 依 granularity 併桶
+  const grouped = new Map<string, string[]>()
+  for (const key of dayKeys) {
+    const bk = bucketKey(taipeiDayStart(key)!, granularity)
+    const list = grouped.get(bk)
+    if (list) list.push(key)
+    else grouped.set(bk, [key])
+  }
+
+  // 新朋友：只要有一天查不到就整批省略這個欄位——圖上缺線比畫假的 0 線誠實
+  const friendsUnavailable = dayKeys.some(k => days.get(k)?.newFriends == null)
+
+  const buckets: TrendBucket[] = []
+  for (const [bk, keys] of grouped) {
+    const merged = mergeDays(bk, keys.map(k => days.get(k)!).filter(Boolean))
+    // 與原本的行為一致：沒有對話、也沒有新朋友的日子不生桶
+    // （活動日常見的「加了一堆好友、還沒人開口」仍會生桶）
+    if (!merged.total && !(merged.newFriends ?? 0)) continue
+    buckets.push({
+      date: bk,
+      total: merged.total,
+      bot: merged.bot,
+      ai: merged.ai,
+      human: merged.human,
+      unhandled: merged.unhandled,
+      handoff: merged.handoff,
+      closed: merged.closed,
+      aiEscalated: merged.aiEscalated,
+      ...(friendsUnavailable ? {} : { newFriends: merged.newFriends ?? 0 }),
     })
-
-  const [snap, friendDates] = await Promise.all([ref.get(), friendsPromise])
-  const bucketMap = new Map<string, TrendBucket>()
-  const emptyBucket = (key: string): TrendBucket => ({
-    date: key, total: 0, bot: 0, ai: 0, human: 0, unhandled: 0, handoff: 0, closed: 0, aiEscalated: 0,
-    ...(friendDates ? { newFriends: 0 } : {}),
-  })
-
-  for (const doc of snap.docs) {
-    const s = doc.data()
-    const ts = s.openedAt?.toDate?.()
-    if (!ts) continue
-    // 與 KPI 同口徑:活動/加好友出生、客人未開口的 session 不進統計
-    if (isPreInboundFollowSession(s)) continue
-
-    const key = bucketKey(ts, granularity)
-    if (!bucketMap.has(key)) {
-      bucketMap.set(key, emptyBucket(key))
-    }
-    const bucket = bucketMap.get(key)!
-    bucket.total++
-    if (s.initialHandler === 'bot') bucket.bot++
-    else if (s.initialHandler === 'ai') bucket.ai++
-    else if (s.initialHandler === 'human') bucket.human++
-    else bucket.unhandled++
-    if (s.hasHandoff) bucket.handoff++
-    if (s.status === 'closed') bucket.closed++
-    // AI 首接×轉真人交叉（與 kpi.get.ts 的 aiEscalated 同一條件）：AI 表現頁算「全程搞定率」用
-    if (s.initialHandler === 'ai' && s.hasHandoff === true) bucket.aiEscalated++
   }
 
-  // 新朋友入桶：只有好友沒有對話的日子也要有桶（活動日常見：加了一堆好友、還沒人開口）
-  if (friendDates) {
-    for (const d of friendDates) {
-      const key = bucketKey(d, granularity)
-      if (!bucketMap.has(key)) bucketMap.set(key, emptyBucket(key))
-      const bucket = bucketMap.get(key)!
-      bucket.newFriends = (bucket.newFriends ?? 0) + 1
-    }
-  }
-
-  const buckets = Array.from(bucketMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, v]) => v)
-
+  buckets.sort((a, b) => a.date.localeCompare(b.date))
   return { buckets }
 })

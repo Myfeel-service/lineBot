@@ -18,6 +18,7 @@ import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { scanInactiveTag } from '~~/server/utils/inactive-tag'
 import { scanTagSuggestions } from '~~/server/utils/ai-tag-suggest'
 import { scanTagDiscovery } from '~~/server/utils/tag-discovery'
+import { rollupConversationStats } from '~~/server/utils/conversation-stats-rollup'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -65,6 +66,10 @@ export default defineEventHandler(async (event) => {
     // AI 發現新標籤（老闆 08-25 拍板）：每工作區約每週真跑一次（間隔閘在 tagDiscovery 文件上），
     // 其餘輪次每工作區只花 1 次讀取；一次掃描只打一次 LLM，見 tag-discovery.ts
     { name: 'crm:tag-discovery', run: () => scanTagDiscovery(db) },
+    // 對話統計日結（`E-29`）：每輪重算最近 3 天＋輪播一天更舊的＋補缺的日子。
+    // ⛔ 今天不建（今天還沒過完，讀取端一律現場算）。這支停掉不會壞畫面——
+    //    統計端點找不到日結就自動現場算，只是慢回原本的樣子。
+    { name: 'stats:rollup-daily', run: () => rollupConversationStats(db) },
     { name: 'conversation:auto-handback', run: () => autoHandbackIdleSessions(db) },
     // 真人接手中的會話不吃 24 小時自動結束，這是唯一會收殮它們的機制——停掉的話
     // 忘記按「結束會話」的對話會永遠掛著（那位客人也永遠收不到自動回覆）
