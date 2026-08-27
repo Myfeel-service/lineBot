@@ -206,6 +206,7 @@
 | `E-16` | ~~圖文選單「設為預設」只帶 LINE 側 ID 時不驗歸屬~~ | **2026-08-14 修完結案（`8e9cc88`）**：`setDefault` 一律反查歸屬才准（有 `firestoreId` 驗文件、只有 `richMenuId` 就用它反查同工作區的選單文件，查不到 404），順帶修掉只帶 LINE 側 ID 時 `isDefault` 旗標不寫的資料缺口。線上生效與否同批 `DEPLOY?` |
 | `E-17` | ~~小幫手 `get_ai_usage` 把 token 細目回給 viewer~~ | **2026-08-14 修完結案（`8e9cc88`）**：工具回傳拿掉 inputTokens/outputTokens/buildEmbeddingTokens（`F-5`：token 只給超管，聊天不能繞過），附測試釘住（假資料塞 99999 驗證不進 prompt）。線上生效與否同批 `DEPLOY?` |
 | `E-12` | docs 校期批次（08-12 盤點餘項） | ①`GOLIVE-BLOCKERS.md`：A2 申請書整段／附二用印信／附四客服信與 `B-1` 結案衝突要標作廢、A3 的 Caddyfile 摘要缺 `/api/trade/query` 要指向 `PAYUNI-RELAY-SETUP.md`、SES 教學要人填 `AWS_SES_REGION` 但 Amplify 擋 "AWS" 前綴存不進去（程式有 `AWS_REGION` 退路、教學要改）——⛔**老闆要先上傳這份文件，動它之前先問**（2026-08-12 交代） ②`PAYUNI-RECURRING-DESIGN.md` §10/§12「credit 這支沒被 IP 擋」已被 08-06 推翻（假 Token 在 IP 檢查前短路），是唯一沒補更正註的文件 ③`STATS-SIMPLIFICATION-20260807.md`（檔頭還寫「回填狀態」）與 `AI-PERFORMANCE-PAGE-REDESIGN-20260810.md` 補凍結聲明 ④`.env.example:86-87` 還是舊名 `AWS_COST_*`，照抄會讀不到憑證（`bb4f56e` 唯一漏網） ⑤`CONVERSATION-STATS-DEFINITIONS.md` 檔頭日期停在 08-06、`bot_flow` 說明還講已下架的「自動回覆」 |
+| `E-30` | **統計與收件匣剩下的「往返次數」** | **2026-08-27 那批載入優化做完後留下的**：現在各頁「最後在等」的已經不是重複查詢，而是各頁自己那一兩支的**往返次數**（不是文件筆數了）。兩處具體的：①`conversations/sessions-counts` 一次打 **8 個 count 查詢**（其中開放佇列那兩個還是循序），它是客服對話頁最後在等的其中一支 ②`kpi` 即使吃了日結，一次仍有約 4~5 趟往返（讀日結 getAll ＋ 今天現場算 ＋ 讀 AI 設定 ＋ 補 6 筆客人名字），線上中位數 2,326ms。⚠️**不急**：兩處各約省 0.5~1 秒，而且日結那輪已經證明「頁面秒數由往返與冷啟動主導」，所以要做就要真的減往返（合併查詢／把名字併進日結／設定走記憶體快取），不是再減筆數。⛔ 動之前先量，別憑直覺估效益（`E-26`／`E-29` 兩次都估錯） |
 
 ### F. 已知限制（不打算修，但別忘了）
 
