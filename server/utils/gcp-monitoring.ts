@@ -1,5 +1,5 @@
 import { GoogleAuth } from 'google-auth-library'
-import { taipeiDateKey } from './taipei-day'
+import { taipeiDateKey } from '~~/shared/taipei-day'
 
 /**
  * Cloud Monitoring 用量查詢（給超管成本頁用）。

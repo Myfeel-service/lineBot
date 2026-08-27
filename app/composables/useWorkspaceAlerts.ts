@@ -107,7 +107,11 @@ const ALERTS: AlertDefinition[] = [
     // 兩張卡，因為講的話不同：這張是「快斷了、趁現在改」，那張是「已經斷了」。
     id: 'lineWebhookUrlMismatch',
     icon: Link,
-    impact: 'LINE 後台填的收訊網址不是這套系統的正式網址，多半是換網域前的舊網址。訊息目前可能還進得來，但那個網址一停用，所有客人訊息會無聲斷掉、不會有任何預警。趁還沒斷，把 LINE 後台換成正式網址。',
+    // 文案長度紀律（2026-08-27）：卡片只留「後果一句＋要做什麼一句」。
+    // ⛔第一句不要重述標題（標題已經是「LINE 填的收訊網址不是正式網址」）——
+    // 面板只有 384px 寬，一張卡吃掉半個面板時，後面幾張紅卡會被擠到看不見。
+    // 詳細怎麼修交給 anchor 的 note 與「用聊天帶我修」劇本。
+    impact: '訊息目前可能還進得來，但那個網址一停用，所有客人訊息會無聲斷掉、不會有任何預警。多半是換網域前的舊網址，趁還沒斷把 LINE 後台換成正式網址。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
@@ -121,7 +125,7 @@ const ALERTS: AlertDefinition[] = [
     // 工作區綁著，正確的鑰匙在另一邊，訊息整批被接走。
     id: 'lineChannelConflict',
     icon: Link,
-    impact: '同一個 LINE 官方帳號同時接在兩個地方。客人傳的訊息只會進到其中一邊，另一邊一則都收不到——而且兩邊的檢查看起來都正常，不會有任何錯誤訊息。請決定這個官方帳號要留在哪一邊，另一邊把 LINE 連接清掉。',
+    impact: '客人傳的訊息只會進到其中一邊，另一邊一則都收不到——而且兩邊的檢查看起來都正常，不會有任何錯誤訊息。要決定這個官方帳號留在哪一邊，另一邊把 LINE 連接清掉。',
     cta: '去檢查 LINE 連接',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
@@ -147,7 +151,7 @@ const ALERTS: AlertDefinition[] = [
     // 是還到得了但會多繞（黃）。訊號來源＝LINE 公開轉址頁上登記的 Endpoint URL。
     id: 'liffEndpointBroken',
     icon: Promotion,
-    impact: '這個 LIFF 在 LINE 登記的開啟網址不是活動頁——客人點活動連結會被帶去別的網站或看到錯誤頁，貼標與綁定完全不會發生。到 LINE Developers 把該 LIFF 的 Endpoint URL 換成設定頁的「活動 LIFF 頁」網址。',
+    impact: '客人點活動連結會被帶去別的網站或看到錯誤頁，貼標與綁定完全不會發生。多半是 LINE Developers 那邊登記的 Endpoint URL 填錯或沒更新。',
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
     // ?verify=liff：進頁直接捲到 LIFF 區塊並重新檢查一次（跳過快取）
@@ -160,7 +164,7 @@ const ALERTS: AlertDefinition[] = [
     // 而且現在就有感——客人登入活動頁會在兩個網址間繞，部分情況卡在載入中。
     id: 'liffEndpointUrlMismatch',
     icon: Promotion,
-    impact: 'LINE 登記的活動頁網址不是這套系統的正式網址，多半是換網域前的舊網址。客人點活動連結登入時會在兩個網址之間繞，部分情況會卡在載入中；那個舊網址一停用，活動連結會整個打不開。把 LINE Developers 那邊換成設定頁的「活動 LIFF 頁」網址。',
+    impact: '客人點活動連結登入時會在兩個網址之間繞，有時卡在載入中；那個舊網址一停用，活動連結會整個打不開。多半是換網域前的舊網址沒改到。',
     cta: '去檢查 LIFF 設定',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
@@ -303,7 +307,7 @@ const ALERTS: AlertDefinition[] = [
     //   後台完全看不出來，只有自己去測才會發現。）
     id: 'scriptDeadEnd',
     icon: Guide,
-    impact: '這條流程中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒有給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。到腳本編輯器幫那一題加一顆跳過按鈕。',
+    impact: '中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。',
     cta: '去修這條流程',
     requires: 'operate',
     route: wid => `/admin/${wid}/ai-scripts`,
@@ -659,9 +663,22 @@ export function useWorkspaceAlerts() {
   )
   const criticalAlerts = computed(() => activeAlerts.value.filter(a => a.severity === 'critical'))
   const warningAlerts = computed(() => activeAlerts.value.filter(a => a.severity === 'warning'))
-  /** 「可以更好」：建議類，另立一區呈現，不進異常結論 */
+  /**
+   * 「可以更好」：建議類，另立一區呈現，不進異常結論。
+   *
+   * ⛔ 排除系統側的那幾筆（2026-08-27）：這一組的組名與開場白都在講「採用了 AI 會答更好」，
+   * 而系統側的建議級項目（目前只有「發票還在開立中」）是**純告知、使用者無事可做**——
+   * 混在一起的話，讀的人看到「發票開立中」會停下來想「我要更好什麼？」，
+   * 開場白的「N 個能讓 AI 答得更好的建議」也會多算一筆。
+   * 判定刻意用現成的兩份單一來源（`ALERT_SEVERITY` × `SYSTEM_OWNED_ALERTS`）交集，
+   * ⛔不要在這裡另寫一份 id 清單——第三份分類表遲早跟前兩份漂移。
+   */
   const suggestionAlerts = computed(() =>
-    visibleAlerts.value.filter(a => a.state === 'active' && a.severity === 'suggestion'),
+    visibleAlerts.value.filter(a => a.state === 'active' && a.severity === 'suggestion' && a.owner !== 'system'),
+  )
+  /** 「供你參考」：建議級的系統側項目——講一聲就好，沒有動作要做 */
+  const noticeAlerts = computed(() =>
+    visibleAlerts.value.filter(a => a.state === 'active' && a.severity === 'suggestion' && a.owner === 'system'),
   )
   /** 被靜音但其實還在發生的 warning：要現形（「已暫停提醒 N 項」），不能像沒事一樣 */
   const snoozedAlerts = computed(() =>
@@ -763,6 +780,7 @@ export function useWorkspaceAlerts() {
     criticalAlerts,
     warningAlerts,
     suggestionAlerts,
+    noticeAlerts,
     snoozedAlerts,
     unknownAlerts,
     navAlerts,

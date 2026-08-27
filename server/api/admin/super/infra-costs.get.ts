@@ -11,7 +11,7 @@ import {
   ASSUMED_BYTES_PER_READ,
   type DayUsage,
 } from '~~/server/utils/firestore-cost'
-import { TAIPEI_OFFSET_MS, taipeiDateKey, taipeiMidnightAfter } from '~~/server/utils/taipei-day'
+import { TAIPEI_OFFSET_MS, taipeiDateKey, taipeiMidnightAfter } from '~~/shared/taipei-day'
 
 /**
  * GET /api/admin/super/infra-costs?period=YYYYMM

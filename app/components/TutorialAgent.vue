@@ -1,6 +1,10 @@
 <template>
-  <!-- 常駐右下角的教學 agent。樣式見 assets/scss/components/_tutorial-agent.scss -->
-  <div class="tutorial-agent">
+  <!-- 常駐的教學 agent（預設右下角，可拖移）。樣式見 assets/scss/components/_tutorial-agent.scss -->
+  <div
+    class="tutorial-agent"
+    :class="{ 'is-dragging': dragging, 'is-left': dockSide === 'left', 'is-top': dockVertical === 'top' }"
+    :style="dockStyle"
+  >
     <!-- 異常小氣泡：壞掉的東西要主動講一次，不能只靠使用者注意到紅點 -->
     <!-- 外層是 div、內層兩顆真按鈕：按鈕不能包按鈕，且「關掉」要能用鍵盤獨立操作 -->
     <Transition name="ta-pop">
@@ -22,12 +26,16 @@
     <Transition name="ta-pop">
       <section
         v-if="panelOpen"
+        ref="panelEl"
         class="ta-panel"
         role="dialog"
         aria-label="小幫手"
+        tabindex="-1"
         @keydown.esc="closePanel"
       >
-        <header class="ta-panel__head">
+        <!-- 標頭也是拖曳把手（面板開著時要能搬）。裡面的分頁與關閉鈕照常點——
+             onDragStart 會把「從按鈕上按下去」的手勢讓掉 -->
+        <header class="ta-panel__head" @pointerdown="onDragStart">
           <div class="ta-panel__avatar"><el-icon><IconRobot /></el-icon></div>
           <div class="ta-panel__head-meta">
             <div class="ta-panel__name">小幫手</div>
@@ -110,7 +118,7 @@
                 v-for="a in g.items"
                 :key="a.id"
                 class="ta-alert"
-                :class="`is-${a.severity}`"
+                :class="g.key === 'notice' ? 'is-notice' : `is-${a.severity}`"
               >
                 <button type="button" class="ta-alert__hit" @click="onFixAlert(a)">
                   <span class="ta-alert__icon"><el-icon><component :is="a.icon" /></el-icon></span>
@@ -126,31 +134,40 @@
                     </span>
                     <span v-if="a.detail" class="ta-alert__detail">{{ a.detail }}</span>
                     <span class="ta-alert__impact">{{ a.impact }}</span>
-                    <span class="ta-alert__cta">{{ a.cta }} →</span>
                   </span>
                 </button>
-                <!-- 「幫我修」（D-34 一鍵修）：開確認 popup——先講會動哪幾筆、人按確定才執行。
-                     排在聊天引導前面：能直接修好的，優先給最短的那條路 -->
-                <button
-                  v-if="a.fixOpId"
-                  type="button"
-                  class="ta-alert__guide ta-alert__guide--fix"
-                  @click="openFix(a)"
-                >幫我修 →</button>
-                <!-- 「用聊天帶我修」：有引導劇本的異常才有——把人留在面板裡一步步修＋當場驗證 -->
-                <button
-                  v-if="a.guideId"
-                  type="button"
-                  class="ta-alert__guide"
-                  @click="openGuide(a)"
-                >用聊天帶我修 →</button>
-                <!-- 只有 warning 給靜音：正在影響客人的事沒有「不想看」這個選項 -->
-                <button
-                  v-if="a.severity === 'warning'"
-                  type="button"
-                  class="ta-alert__snooze"
-                  @click="snoozeAlert(a.id)"
-                >暫停提醒 7 天</button>
+                <!--
+                  動作收成一排真按鈕（2026-08-27）：這些是「怎麼修」的入口，原本是三行
+                  11px 純文字靠右堆疊——長得像備註、點擊目標又只有一行字高。順序＝最短的路排最前
+                  （一鍵 → 對話帶做 → 自己去那一頁），視覺重量也照這個順序遞減。
+                  ⛔「暫停提醒」永遠排最後且維持淡色：它是降噪的退路，不是修法。
+                -->
+                <div class="ta-alert__actions">
+                  <!-- 「幫我修」（D-34 一鍵修）：開確認 popup——先講會動哪幾筆、人按確定才執行 -->
+                  <button
+                    v-if="a.fixOpId"
+                    type="button"
+                    class="ta-alert__act ta-alert__act--primary"
+                    @click="openFix(a)"
+                  >幫我修</button>
+                  <!-- 「用聊天帶我修」：有引導劇本的異常才有——把人留在面板裡一步步修＋當場驗證 -->
+                  <button
+                    v-if="a.guideId"
+                    type="button"
+                    class="ta-alert__act"
+                    @click="openGuide(a)"
+                  >用聊天帶我修</button>
+                  <button type="button" class="ta-alert__act ta-alert__act--ghost" @click="onFixAlert(a)">
+                    {{ a.cta }}
+                  </button>
+                  <!-- 只有 warning 給靜音：正在影響客人的事沒有「不想看」這個選項 -->
+                  <button
+                    v-if="a.severity === 'warning'"
+                    type="button"
+                    class="ta-alert__snooze"
+                    @click="snoozeAlert(a.id)"
+                  >暫停提醒 7 天</button>
+                </div>
               </div>
             </div>
 
@@ -192,7 +209,8 @@
               <div class="ta-brief__total">
                 <span class="ta-brief__num">{{ briefY.total }}</span>
                 <span class="ta-brief__label">場對話</span>
-                <span class="ta-brief__delta">前天 {{ briefD?.total ?? 0 }}</span>
+                <!-- 帶單位：只寫「前天 12」要讀的人自己猜它跟左邊那個大數字是不是同一種東西 -->
+                <span class="ta-brief__delta">前天 {{ briefD?.total ?? 0 }} 場</span>
               </div>
 
               <!-- 問題一：互斥分項，加起來一定等於母數——讀的人不必自己減 -->
@@ -410,18 +428,23 @@
           <p v-else class="ta-options__empty">目前沒有可用的教學主題。</p>
         </div>
 
-        <footer v-if="activeGuide" class="ta-panel__foot">跟著做就好——每一步完成，我都會真的檢查有沒有生效。</footer>
-        <footer v-else-if="panelTab === 'setup'" class="ta-panel__foot">我只看你帳號真實的狀態，不會給你假資訊。</footer>
-        <footer v-else-if="panelTab === 'learn'" class="ta-panel__foot">每個教學都會在實際畫面上一步步帶你操作。</footer>
-        <footer v-else class="ta-panel__foot">回答都來自你帳號的真實資料;目前只能查詢,不能修改。</footer>
+        <!-- 頁尾：一句話講這個分頁的立場，＋搬過位置的人要有回原位的退路。
+             四個分頁本來各寫一個 <footer>，收成一個——同一條列印四份，改文案時漏一份就漂了 -->
+        <footer class="ta-panel__foot">
+          <span>{{ footNote }}</span>
+          <button v-if="moved" type="button" class="ta-panel__foot-reset" @click="resetPos">移回右下角</button>
+        </footer>
       </section>
     </Transition>
 
-    <!-- 浮動按鈕 -->
+    <!-- 浮動按鈕（也是拖曳把手：按住可以把整個小幫手搬到不擋事的位置） -->
     <button
+      ref="fabRef"
       class="ta-fab"
       :class="{ 'ta-fab--open': panelOpen }"
       :aria-label="panelOpen ? '關閉小幫手' : '開啟小幫手'"
+      title="按住可以拖到別的位置"
+      @pointerdown="onDragStart"
       @click="onFabClick"
     >
       <span class="ta-fab__icon"><el-icon><component :is="panelOpen ? Close : IconRobot" /></el-icon></span>
@@ -539,6 +562,7 @@ const {
   criticalAlerts,
   warningAlerts,
   suggestionAlerts,
+  noticeAlerts,
   snoozedAlerts,
   unknownAlerts: unknownAlertItems,
   checkedCount: alertsCheckedCount,
@@ -556,6 +580,8 @@ const {
 const { openFix } = useAlertFix()
 const { brief, loading: briefLoading, refresh: refreshBrief, reset: resetBrief } = useDailyBrief()
 const { setDemo, clearDemo } = useFlowDemo()
+// 可拖移（2026-08-27）：右下角常常正好壓著要看的東西，讓人搬走並記住位置
+const { fabRef, dockStyle, dockSide, dockVertical, dragging, moved, onDragStart, consumeDrag, resetPos } = useAgentDock()
 
 /**
  * 設定就緒度 + 目前異常一起重查。
@@ -775,11 +801,19 @@ const checkGapLines = computed(() => {
   return lines
 })
 
-/** 異常分組呈現：紅（影響客人中）、橘（建議處理）、藍（可以更好——沒壞，是機會） */
+/**
+ * 異常分組呈現：紅（影響客人中）、橘（建議處理）、藍（可以更好——沒壞，是機會）、
+ * 灰（供你參考——連機會都不是，純告知）。
+ *
+ * 第四組是 2026-08-27 分出來的：「發票還在開立中」原本掛在「可以更好」裡，
+ * 但那一組的組名在講「採用了 AI 會答更好」，而發票這張是「你什麼都不用做」——
+ * 語氣不合，讀的人會卡住。灰色、排最後，不跟有事可做的建議搶注意力。
+ */
 const alertGroups = computed(() => [
   { key: 'critical', label: '現在影響客人', items: criticalAlerts.value },
   { key: 'warning', label: '建議處理', items: warningAlerts.value },
   { key: 'suggestion', label: '可以更好', items: suggestionAlerts.value },
+  { key: 'notice', label: '供你參考（不用處理）', items: noticeAlerts.value },
 ].filter(g => g.items.length))
 
 /** agent 開場白：完全依真實狀態講白話文。順序＝先講壞了的，再講還沒做的，最後才是日報 */
@@ -878,6 +912,18 @@ function onFixAlert(alert: ResolvedAlert) {
  * 哪些異常有劇本看註冊表的 guideId。
  */
 const activeGuide = ref<AgentGuideId | null>(null)
+
+/** 頁尾那句話：講這個分頁的立場（誠實邊界／怎麼運作），不重複畫面上已經有的內容 */
+const footNote = computed(() => {
+  if (activeGuide.value)
+    return '跟著做就好——每一步完成，我都會真的檢查有沒有生效。'
+  if (panelTab.value === 'setup')
+    return '我只看你帳號真實的狀態，不會給你假資訊。'
+  if (panelTab.value === 'learn')
+    return '每個教學都會在實際畫面上一步步帶你操作。'
+  return '回答都來自你帳號的真實資料；目前只能查詢，不能修改。'
+})
+
 function openGuide(alert: ResolvedAlert) {
   if (!alert.guideId)
     return
@@ -1019,6 +1065,9 @@ function onNudgeClick() {
   openPanel()
 }
 function onFabClick() {
+  // 剛剛那一下是把小幫手拖走，不是要開面板——拖完面板自己彈出來會很煩
+  if (consumeDrag())
+    return
   if (!panelOpen.value) {
     dismissNudge()
     alertNudge.value = ''
@@ -1091,9 +1140,16 @@ watch(workspaceId, (next, prev) => {
   void refreshAll(true)
 })
 
+/**
+ * 面板本體。打開時要把焦點移進來，Esc 才關得掉——
+ * `@keydown.esc` 掛在面板上，焦點留在浮動按鈕的話這顆鍵一路都沒人接。
+ */
+const panelEl = ref<HTMLElement | null>(null)
+
 // 每次打開面板都重新體檢（有待驗證的修復就 force 並回報結果）；關閉時清掉一次性回應
 watch(panelOpen, (open) => {
   if (open) {
+    nextTick(() => panelEl.value?.focus())
     // 昨日摘要在這一刻才查（見 refreshAll 的註解）。不 force：useDailyBrief 自己有
     // 10 分鐘節流與跨日重抓，開開關關不會重打，但隔天再打開會拿到新的日期
     void refreshBrief()

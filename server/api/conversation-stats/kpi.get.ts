@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
+import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { DEFAULT_SLA_REMIND_MINUTES } from '~~/shared/types/ai-knowledge'

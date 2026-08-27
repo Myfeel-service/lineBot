@@ -388,6 +388,10 @@
 .agp {
   display: flex;
   flex-direction: column;
+  /* 同 .ta-panel__body：面板被拖到空間不足的位置時要跟著收縮，
+     ⛔ min-height: 0 不能拿掉（flex item 預設擋住收縮，會把面板從內部撐破） */
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 60vh;
   background: var(--el-bg-color);
 }

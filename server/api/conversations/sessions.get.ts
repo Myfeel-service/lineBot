@@ -5,7 +5,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { isOpenQueueSession } from '~~/server/utils/conversation-queue'
 import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
 import { NO_ASSIGNEE, readConversationAssignee, type ConversationAssignee } from '~~/shared/conversation-assignee'
-import { taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
+import { taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 
 const PAGE_SIZE = 30
 const CHUNK = 30

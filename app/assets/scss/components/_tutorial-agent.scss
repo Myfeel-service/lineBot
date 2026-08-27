@@ -1,14 +1,36 @@
 /* 新手教學 agent：右下角常駐按鈕 + 聊天面板。元件見 components/TutorialAgent.vue */
 
+/* 停靠位置（可拖移，2026-08-27）。
+   預設右下角＝這裡的 right/bottom；被搬過之後 useAgentDock 用 inline style 覆蓋四個邊，
+   並把 is-left / is-top 掛上來，好讓面板往「有空間的那一側」長。
+   ⛔inline style 一定要把沒用到的那兩邊寫成 auto——固定定位同時有 left 與 right 會被拉開變形。 */
 .tutorial-agent {
   position: fixed;
   right: 1.5rem;
   bottom: 1.5rem;
+  /* 錨邊到對邊的可用寬度：拖到畫面中間時面板跟著縮，不會溢出視窗 */
+  max-width: var(--ta-dock-maxw, calc(100vw - 3rem));
   z-index: 2400; /* 在 toast 之上、el-tour(3000) 之下 */
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.75rem;
+
+  /* 停在上半部：面板要往下長，所以按鈕排到最前面 */
+  &.is-top { flex-direction: column-reverse; }
+  /* 停在左半部：面板靠左緣對齊按鈕 */
+  &.is-left { align-items: flex-start; }
+
+  /* 拖曳中：不要有任何過場動畫跟著位置一起補間（會拖得黏黏的），
+     也不要選到文字 */
+  &.is-dragging {
+    user-select: none;
+
+    .ta-fab,
+    .ta-panel { transition: none; }
+    .ta-fab { cursor: grabbing; }
+    .ta-panel__head { cursor: grabbing; }
+  }
 }
 
 /* ── 浮動按鈕 ──────────────────────────────────────────────── */
@@ -26,6 +48,8 @@
   align-items: center;
   justify-content: center;
   transition: transform var(--t-fast), background var(--t-fast);
+  /* 拖曳把手：手指拖的時候不要順便捲動頁面 */
+  touch-action: none;
 
   &:hover {
     transform: translateY(-2px) scale(1.04);
@@ -48,21 +72,33 @@
   position: absolute;
   inset: 0;
   border-radius: var(--radius-pill);
-  box-shadow: 0 0 0 0 var(--color-line-glow);
   animation: ta-pulse 2.4s ease-out infinite;
   pointer-events: none;
 }
 
+/* 光暈用警示紅，跟數字徽章同一個顏色（2026-08-27）。
+   ⛔別改回黑灰：這顆光暈只在「有紅色異常或必要設定沒做」時才閃，講的就是「有急事」，
+   而徽章是紅的、光圈卻閃黑灰＝兩個訊號看起來是兩件事。
+   （原本寫死 rgba(0,0,0,.28)，把宣告在上面的 --color-line-glow 整個蓋掉了） */
 @keyframes ta-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.28); }
-  70% { box-shadow: 0 0 0 16px rgba(0, 0, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0.55); }
+  70% { box-shadow: 0 0 0 16px rgba(245, 108, 108, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0); }
+}
+
+/* 會動的東西要尊重系統設定：關掉動畫的人給一圈靜態光暈，訊號不消失 */
+@media (prefers-reduced-motion: reduce) {
+  .ta-fab__pulse {
+    animation: none;
+    box-shadow: 0 0 0 7px rgba(245, 108, 108, 0.28);
+  }
 }
 
 /* ── 聊天面板 ──────────────────────────────────────────────── */
 .ta-panel {
   width: 384px; /* 三分頁 + 異常/摘要收件匣後 340 太擠 */
-  max-width: calc(100vw - 3rem);
+  /* 上限由容器（.tutorial-agent 的 --ta-dock-maxw）決定：搬到畫面中間時要跟著縮 */
+  max-width: 100%;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -71,7 +107,21 @@
   display: flex;
   flex-direction: column;
   transform-origin: bottom right;
+  /* 被拖到剩餘空間不夠的位置時，整個面板的高度上限＝錨邊到對邊還剩多少
+     （--ta-dock-panelh 由 useAgentDock 算）。⛔上限要套在面板本體、不要套在內容區：
+     套內容區就得自己估「標頭＋頁尾佔幾 px」，估錯就溢出視窗（實測差 18px）。
+     內容區交給下面的 flex 收縮，外框高度讓瀏覽器自己算。 */
+  max-height: var(--ta-dock-panelh, none);
+
+  /* 開面板時焦點是程式移進來的（Esc 才接得到），不要因此畫一圈外框 */
+  &:focus { outline: none; }
 }
+
+/* 進出動畫的起點跟著停靠角落走，否則搬到左上角後面板會從「右下」縮放進來，
+   看起來像從別的地方飛過來 */
+.tutorial-agent.is-left .ta-panel { transform-origin: bottom left; }
+.tutorial-agent.is-top .ta-panel { transform-origin: top right; }
+.tutorial-agent.is-top.is-left .ta-panel { transform-origin: top left; }
 
 .ta-panel__head {
   display: flex;
@@ -80,6 +130,11 @@
   padding: 0.875rem 1rem;
   background: var(--color-line);
   color: #fff;
+  /* 標頭是第二個拖曳把手（面板開著時要能搬）。裡面的分頁與關閉鈕維持 pointer */
+  cursor: grab;
+  touch-action: none;
+
+  button { cursor: pointer; }
 }
 
 .ta-panel__avatar {
@@ -123,11 +178,16 @@
   &:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
 }
 
+/* 內容區：自身上限 60vh；面板被 --ta-dock-panelh 收窄時，靠 flex 再往下縮。
+   ⛔ `min-height: 0` 不能拿掉——flex item 預設 min-height:auto 會擋住收縮，
+      面板就會被內容從內部撐破、超出視窗（這是拖到畫面中央才看得到的那個 bug）。 */
 .ta-panel__body {
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 60vh;
   overflow-y: auto;
   background: var(--bg-elevated);
@@ -573,6 +633,8 @@
   &--critical::before { background: var(--color-error); }
   &--warning::before { background: var(--color-warning); }
   &--suggestion::before { background: var(--color-info); }
+  /* 供你參考：連「機會」都不是，純告知——中性灰，不給它任何語意色 */
+  &--notice::before { background: var(--text-muted); }
 }
 
 /* 卡片是 div 包兩顆真按鈕（主要動作 ta-alert__hit ＋ 暫停提醒）：按鈕不能包按鈕 */
@@ -606,6 +668,13 @@
     border-left-color: var(--color-info);
     .ta-alert__icon { color: var(--color-info); }
   }
+  /* 供你參考＝純告知、沒有動作要做（目前只有「發票還在開立中」）。
+     2026-08-27 從「可以更好」分出來：那一組的組名在講「採用了 AI 會答更好」，
+     混在一起讀的人會卡住想「發票開立中，我要更好什麼？」 */
+  &.is-notice {
+    border-left-color: var(--text-muted);
+    .ta-alert__icon { color: var(--text-muted); }
+  }
 }
 
 .ta-alert__hit {
@@ -621,20 +690,59 @@
   cursor: pointer;
 }
 
-/* 暫停提醒（只出現在 warning 卡）：小、灰、靠右——是退路不是主要動作 */
-// 「用聊天帶我修」：有引導劇本的異常卡入口（C-31 Phase 1）。
-// 跟靜音同一排視覺量級，但用主色講「這裡有路」——它是行動入口，不是降噪選項
-.ta-alert__guide {
-  align-self: flex-end;
-  padding: 0;
-  border: none;
-  background: none;
-  font-size: 0.6875rem;
+/* ── 異常卡的動作列（2026-08-27 改版）────────────────────────
+   原本是三顆 11px 純文字連結各自一行、靠右堆疊（.ta-alert__guide／__snooze）。
+   問題：這些是「怎麼修」的入口——面板上最重要的行動——卻長得像備註，
+   而且點擊目標只有一行字高，手機上很難點準。
+   改成一排真按鈕，順序＝最短的路排最前（一鍵修 → 對話帶做 → 自己去那頁），
+   視覺重量照同一順序遞減（實心 → 外框 → 淡外框）。
+   ⛔「暫停提醒」永遠排最後、維持純文字淡色：它是降噪的退路，不是修法，
+      給它按鈕的長相會鼓勵人先把提醒關掉。 */
+.ta-alert__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.15rem;
+}
+
+.ta-alert__act {
+  padding: 0.2rem 0.625rem;
+  border: 1px solid var(--el-color-primary);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
   color: var(--el-color-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
   cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
 
   &:hover {
-    text-decoration: underline;
+    background: var(--el-color-primary-light-9);
+  }
+
+  /* 一鍵修：能直接修好的給最強的長相 */
+  &--primary {
+    background: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+    color: #fff;
+
+    &:hover {
+      background: var(--el-color-primary-light-3);
+      border-color: var(--el-color-primary-light-3);
+    }
+  }
+
+  /* 「去某一頁自己處理」：永遠有、所以最淡，不要跟前兩顆搶 */
+  &--ghost {
+    border-color: var(--border-active);
+    color: var(--text-secondary);
+
+    &:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
   }
 }
 
@@ -647,8 +755,9 @@
   align-self: stretch;
 }
 
+/* 暫停提醒（只出現在 warning 卡）：排在動作列最後、維持純文字淡色 */
 .ta-alert__snooze {
-  align-self: flex-end;
+  margin-left: auto;
   padding: 0;
   border: none;
   background: none;
@@ -1176,11 +1285,32 @@
     ⛔灰、橘都試過，會被讀成「不急」） */
 
 .ta-panel__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
   padding: 0.625rem 1rem;
   font-size: 0.75rem;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
+}
+
+/* 搬過位置的人才看得到的退路：拖到怪地方要能一鍵回家。
+   ⛔別做成常駐按鈕——沒搬過的人看到「移回右下角」會困惑「它現在在哪」 */
+.ta-panel__foot-reset {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover { color: var(--text-primary); }
 }
 
 /* tour 卡片標題列：步數徽章 + 標題。步數由程式算，內容不寫「第 N 步」 */
@@ -1255,6 +1385,9 @@
 .ta-panel__chat {
   display: flex;
   flex-direction: column;
+  /* 同 .ta-panel__body：min-height 0 才收縮得動（見那邊的註解） */
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 60vh;
 }
 
@@ -1314,7 +1447,9 @@
   &__bubble {
     padding: 7px 11px;
     border-radius: 12px;
-    font-size: 13px;
+    /* 與「目前狀況」的 agent 泡泡（.ta-msg__bubble）同一階（2026-08-27）：
+       原本 13px、隔壁分頁 14px，切分頁時像換了一個產品 */
+    font-size: 0.875rem;
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-word;
@@ -1343,7 +1478,8 @@
   font-size: 12px;
 }
 
-/* 面板進出動畫 */
+/* 面板進出動畫。停在上半部時要從上方滑進來（面板是往下長的），
+   否則會出現「往上滑出、卻在下方展開」的反向感 */
 .ta-pop-enter-active,
 .ta-pop-leave-active {
   transition: opacity var(--t-fast), transform var(--t-fast);
@@ -1352,6 +1488,28 @@
 .ta-pop-leave-to {
   opacity: 0;
   transform: translateY(8px) scale(0.96);
+}
+.tutorial-agent.is-top {
+  .ta-pop-enter-from,
+  .ta-pop-leave-to {
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+/* 氣泡的小尾巴要指向按鈕：按鈕在左邊時尾巴也得換邊，
+   不然會出現「尾巴指著空白處」的怪樣子 */
+.tutorial-agent.is-left .ta-nudge {
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-xs);
+}
+.tutorial-agent.is-top .ta-nudge {
+  border-bottom-right-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-xs);
+}
+.tutorial-agent.is-top.is-left .ta-nudge {
+  border-top-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+  border-top-left-radius: var(--radius-xs);
 }
 
 @media (max-width: 600px) {

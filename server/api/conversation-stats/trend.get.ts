@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { TrendBucket, TrendGranularity } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { shiftToTaipei, taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
+import { shiftToTaipei, taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 import { loadDayStats, mergeDays, taipeiDayKeysBetween } from '~~/server/utils/conversation-stats-rollup'
 
 /** 分桶用台北日曆（shiftToTaipei 後只能讀 getUTC*）；用本機 getters 在 UTC 伺服器上會把凌晨的場分去前一天 */

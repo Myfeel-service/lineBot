@@ -5,7 +5,7 @@ import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { can } from '~~/shared/permissions'
 import { HANDOFF_EVENTS_COLLECTION } from '~~/server/utils/ai-handoff-events'
-import { TAIPEI_OFFSET_MS } from '~~/server/utils/taipei-day'
+import { TAIPEI_OFFSET_MS } from '~~/shared/taipei-day'
 import { bucketAiCosts, GEMINI_PRICING } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 

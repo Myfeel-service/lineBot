@@ -7,6 +7,7 @@
  * 兩處口徑漂移是這個後台踩過最痛的坑（詳見 docs/CONVERSATION-STATS-DEFINITIONS.md）。
  */
 
+import { taipeiDateKey } from '~~/shared/taipei-day'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 
 /**
@@ -59,11 +60,19 @@ export interface DailyBrief {
 /** 兩次抓取之間的最短間隔：昨天的數字不會變，開關面板不該重打 */
 const REFRESH_TTL_MS = 10 * 60_000
 
-function fmtDate(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+const DAY_MS = 24 * 3600_000
+
+/**
+ * 「N 天前」的台北日期字串。
+ *
+ * ⛔ 不可以用瀏覽器本機時區算（原本是 `new Date()` + `getFullYear/getMonth/getDate`）：
+ * 後端一律把 `YYYY-MM-DD` 當**台北**日界線解讀（見 `shared/taipei-day.ts` 檔頭），
+ * 而人在國外開後台時本機日期跟台北差一天——「昨日摘要」會提早或延後一整天切換，
+ * 老闆在時差地看到的「昨天」跟台灣同事看到的不是同一天。
+ * 兩邊用同一支 `taipeiDateKey` 就不會有第二把尺。
+ */
+function taipeiDaysAgo(days: number): string {
+  return taipeiDateKey(new Date(Date.now() - days * DAY_MS))
 }
 
 function toDay(k: KpiResult): DailyBriefDay {
@@ -99,11 +108,7 @@ export function useDailyBrief() {
     if (inflight)
       return inflight
 
-    const yesterday = new Date()
-    yesterday.setDate(yesterday.getDate() - 1)
-    const dayBefore = new Date()
-    dayBefore.setDate(dayBefore.getDate() - 2)
-    const yStr = fmtDate(yesterday)
+    const yStr = taipeiDaysAgo(1)
 
     // 節流；但跨日後（面板隔天才再打開）快取講的還是「前天」，一定要重抓
     const fresh = checkedAt.value && Date.now() - checkedAt.value < REFRESH_TTL_MS
@@ -111,21 +116,17 @@ export function useDailyBrief() {
       return
 
     loading.value = true
-    // 趨勢基準窗：昨天往前推 7 天（-8 ～ -2）
-    const baseStart = new Date()
-    baseStart.setDate(baseStart.getDate() - 8)
-    const baseEnd = new Date()
-    baseEnd.setDate(baseEnd.getDate() - 2)
 
     inflight = (async () => {
       try {
-        const dStr = fmtDate(dayBefore)
+        const dStr = taipeiDaysAgo(2)
         const [yk, dk, base] = await Promise.all([
           apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: yStr, endDate: yStr } }),
           apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: dStr, endDate: dStr } }),
           // 基準查失敗不拖垮日報本體：趨勢缺席比整份日報缺席無害
+          // 趨勢基準窗＝昨天往前推 7 天（-8 ～ -2）
           apiFetch<KpiResult>('/api/conversation-stats/kpi', {
-            params: { startDate: fmtDate(baseStart), endDate: fmtDate(baseEnd) },
+            params: { startDate: taipeiDaysAgo(8), endDate: taipeiDaysAgo(2) },
           }).catch(() => null),
         ])
         brief.value = {

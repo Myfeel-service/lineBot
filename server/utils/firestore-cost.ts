@@ -8,7 +8,7 @@
  * 幣別換算與帳單幣別無關（帳單本身是 TWD，這裡先算 USD 再乘匯率，與 AI 成本同做法）。
  * 改價只改這裡。
  */
-import { taipeiDateKey } from './taipei-day'
+import { taipeiDateKey } from '~~/shared/taipei-day'
 
 /** 每日免費額度（只適用預設資料庫；超出的部分才計費） */
 export const FIRESTORE_FREE_TIER = {

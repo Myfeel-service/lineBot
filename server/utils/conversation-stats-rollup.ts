@@ -1,7 +1,7 @@
 import type { Firestore, Query } from 'firebase-admin/firestore'
 import { isPreInboundFollowSession } from '~~/shared/types/conversation-stats'
 import { KPI_SESSION_FIELDS } from './conversation-stats-fields'
-import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from './taipei-day'
+import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 
 /**
  * 對話統計的「日結」（`E-29`）。
