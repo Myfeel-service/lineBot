@@ -119,9 +119,31 @@
   /* 語意色不吃主色（見 core/_variables.scss 的分工）：
      紅＝客人正在受影響、琥珀＝該處理但客人還沒被影響。⛔沒有綠色，沒事就不畫。 */
   background: var(--color-error);
+
+  /* 出現的那一下動一次，之後靜止（2026-08-27 老闆問「提示點要不要有動態」拍板）。
+     ⛔不做無限呼吸／閃爍：
+     - 這些事會掛好幾天（開通要等對方去 LINE 後台、額度要等下個週期），**一直閃的東西
+       看兩天就變壁紙**，跟不閃沒差還多一份煩；
+     - 側欄同時可能有兩三顆點（開通／額度／AI 停了），各自呼吸＝聖誕樹，嚴重度是靠
+       紅與琥珀分的，動態會把那條分界糊掉；
+     - 右下角小幫手的 FAB 已經在無限呼吸（components/_tutorial-agent.scss 的 ta-pulse），
+       再加第二個一直動的東西就是兩邊互相搶眼。
+     動畫的職責是標示「剛長出來這個變化」（例如人在後台時 AI 突然停了），不是標示狀態。 */
+  animation: nav-alert-dot-in 220ms ease-out;
 }
 
 .nav-alert-dot.is-warning { background: var(--color-warning); }
+
+@keyframes nav-alert-dot-in {
+  from { opacity: 0; transform: scale(0.3); }
+  60% { opacity: 1; transform: scale(1.35); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 系統設定「減少動態」的人一律不動（對話頁未讀紅點已有同樣處理） */
+@media (prefers-reduced-motion: reduce) {
+  .nav-alert-dot { animation: none; }
+}
 
 .sidebar-footer {
   flex-shrink: 0;

@@ -121,3 +121,35 @@ describe('useSetupStatus：這份體檢結果是「誰的」', () => {
     expect(setup.onboardingIncomplete.value).toBe(false)
   })
 })
+
+/**
+ * 開通期那幾句話與「哪一列該亮」的單一來源（2026-08-27）。
+ * 頁面級開通帶與側欄那顆點吃的是同一份，改了一邊不能讓另一邊各說各話。
+ */
+describe('useSetupStatus：開通期的文案與側欄指向', () => {
+  it('LINE 還沒接上 → 講「進不來」；接上了只差測試 → 換成「還差最後一步」', async () => {
+    const setup = useSetupStatus()
+
+    // kevin-test 的 fixture：鑰匙貼了（lineConnected done）、還沒收過訊息
+    workspaceId.value = 'kevin-test'
+    await setup.refresh()
+    expect(setup.onboardingBand.value.title).toBe('LINE 接上了，還差最後一步測試')
+    expect(setup.onboardingBand.value.navTip).toContain('還差最後一步')
+
+    // 完全沒接的帳號（查不到就是 unknown，lineConnected 不是 done）
+    workspaceId.value = 'brand-new'
+    await setup.refresh()
+    expect(setup.onboardingBand.value.title).toBe('LINE 官方帳號還沒接上')
+    expect(setup.onboardingBand.value.navTip).toContain('客人的訊息現在進不來')
+  })
+
+  it('側欄要亮的那一列＝「接上 LINE」那一項的頁面（沿用能力註冊表，不另寫路徑）', () => {
+    const setup = useSetupStatus()
+    workspaceId.value = 'kevin-test'
+    expect(setup.onboardingNavPath.value).toBe('/admin/kevin-test/settings/organization')
+
+    // 還沒選帳號時不給路徑：寧可不亮，也不要指到 /admin//settings/organization
+    workspaceId.value = ''
+    expect(setup.onboardingNavPath.value).toBe('')
+  })
+})

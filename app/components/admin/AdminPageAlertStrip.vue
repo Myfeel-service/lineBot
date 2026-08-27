@@ -93,7 +93,7 @@ import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
  */
 const route = useRoute()
 const { alertsForPath, refresh } = useWorkspaceAlerts()
-const { onboardingIncomplete, loaded: setupLoaded, onboardingSteps } = useSetupStatus()
+const { onboardingIncomplete, loaded: setupLoaded, onboardingBand } = useSetupStatus()
 const { workspaceId } = useWorkspace()
 const { startAdHocTour } = useTutorial()
 const { openFix } = useAlertFix()
@@ -113,20 +113,11 @@ const rows = computed(() => {
  * onboardingIncomplete 只看「接 LINE＋收到第一則」且限 admin（useSetupStatus 檔內有為什麼），
  * 所以文案能安心講 LINE；agent／viewer 看不到帶（他們也修不了）。
  * ⛔開通引導頁（/admin/onboarding）是 layout:false，不會出現這條，不用另外排除。
+ *
+ * 那兩句話（接上了沒／還差測試）住在 useSetupStatus.onboardingBand：側欄那顆點滑過去
+ * 講的是同一件事，措辭要同一份（同日加的那顆點，見 utils/nav-alert-dot.ts 規則 3）。
  */
 const showOnboardingBand = computed(() => setupLoaded.value && onboardingIncomplete.value)
-const onboardingBand = computed(() => {
-  const lineDone = onboardingSteps.value.find(s => s.id === 'lineConnected')?.done === true
-  return lineDone
-    ? {
-        title: 'LINE 接上了，還差最後一步測試',
-        detail: '還沒收到過任何訊息——用手機對官方帳號傳一句話，確認訊息真的進得來。在那之前，後台各頁還不會有資料。',
-      }
-    : {
-        title: 'LINE 官方帳號還沒接上',
-        detail: '客人現在傳訊息進不來，後台也不會有任何紀錄——各頁看到的 0 不是沒客人，是還沒接上。',
-      }
-})
 function goOnboarding() {
   void navigateTo(`/admin/onboarding?workspaceId=${workspaceId.value}`)
 }

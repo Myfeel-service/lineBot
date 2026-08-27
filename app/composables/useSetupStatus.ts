@@ -284,6 +284,41 @@ export function useSetupStatus() {
     { id: 'firstMessageReceived', label: '收到第一則訊息（傳話測試）', done: statusMap.value.firstMessageReceived === 'done' },
   ]))
 
+  /**
+   * 開通期那幾句話的**單一來源**（2026-08-27）。
+   *
+   * 頁面級開通帶（`AdminPageAlertStrip`）與側欄那顆點（`AdminNavAlertDot`）講的是同一件事，
+   * 措辭必須是同一份——兩邊各寫一次，改了一邊就開始各說各話（`ALERT_LABELS` 同一把尺）。
+   * 紅色＋「講後果」沿用 2026-08-07 拍板：還沒上線本身就是大問題。
+   */
+  const onboardingBand = computed(() => {
+    const lineDone = statusMap.value.lineConnected === 'done'
+    return lineDone
+      ? {
+          title: 'LINE 接上了，還差最後一步測試',
+          detail: '還沒收到過任何訊息——用手機對官方帳號傳一句話，確認訊息真的進得來。在那之前，後台各頁還不會有資料。',
+          /** 側欄那顆點的 tooltip：短句就好，細節交給上面那條帶 */
+          navTip: 'LINE 接上了，還差最後一步：用手機傳一句話測試',
+        }
+      : {
+          title: 'LINE 官方帳號還沒接上',
+          detail: '客人現在傳訊息進不來，後台也不會有任何紀錄——各頁看到的 0 不是沒客人，是還沒接上。',
+          navTip: 'LINE 官方帳號還沒接上：客人的訊息現在進不來',
+        }
+  })
+
+  /**
+   * 開通期唯一允許亮點的側欄項＝「接上 LINE」那一項的頁面（見 `utils/nav-alert-dot.ts` 規則 3）。
+   * 沿用註冊表的 `route`（跟缺項巡覽、健康卡同一份），⛔別在元件裡另寫一份路徑字串：
+   * 側欄的 `to` 與這裡對不上的話，那顆點會**安靜地永遠不亮**，而沒有人會發現。
+   */
+  const onboardingNavPath = computed(() => {
+    const wid = workspaceId.value
+    if (!wid)
+      return ''
+    return CAPABILITIES.find(c => c.id === 'lineConnected')?.route(wid) ?? ''
+  })
+
   /** 沒做完的項目（必要在前、進階在後，沿用註冊表順序） */
   const incompleteAll = computed(() =>
     visibleCapabilities.value.filter(c => c.status === 'incomplete'),
@@ -300,6 +335,8 @@ export function useSetupStatus() {
     incompleteRequired,
     onboardingIncomplete,
     onboardingSteps,
+    onboardingBand,
+    onboardingNavPath,
     incompleteAll,
     unknownCaps,
     requiredTotal,
