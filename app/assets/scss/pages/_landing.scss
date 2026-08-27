@@ -478,7 +478,11 @@
   /* ── 60 秒上線：三步時間軸 ────────────────────────────────
    * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
    */
-  .lp-tl { position: relative; padding: 8px 0 4px; margin-bottom: 20px; }
+  /* margin-top:auto ＋ 結果面板也有 margin-top:auto ＝ 兩個 auto 平分剩餘空間：
+     時間軸上方與「時間軸→結果面板」之間各拿一半，時間軸就落在上半區的視覺中心。
+     ⛔ 別改回貼齊上緣（就是 08-27 老闆說的「左邊要往下一點」），也別用 justify-content
+        置中——那會把結果面板的 auto 吃掉、面板浮在半空（同日實測差 50px）。 */
+  .lp-tl { position: relative; padding: 8px 0 4px; margin-top: auto; margin-bottom: 20px; }
   .lp-tl__track { position: absolute; left: 17%; right: 17%; top: 21px; height: 3px; background: #eaefe8; border-radius: var(--radius-pill); overflow: hidden; }
   .lp-tl__track i { display: block; height: 100%; width: 100%; background: var(--g); border-radius: var(--radius-pill); }
   .lp-tl__steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); }
