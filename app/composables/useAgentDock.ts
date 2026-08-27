@@ -123,8 +123,16 @@ export function useAgentDock() {
 
   const fabRef = ref<HTMLElement | null>(null)
 
+  /**
+   * 呈現用的錨點。**夾範圍在這裡做，不寫回 `pos`**——
+   * `pos` 存的是「使用者實際把它放在哪」，夾範圍只是「這個視窗現在畫得出來的位置」。
+   * 混在一起的後果：在手機或縮小的視窗開一次，就把使用者在大螢幕擺好的位置永久改掉了
+   * （縮回去也回不來）。分開之後，視窗變小時它會自己讓位，變大時回到原本那個位置。
+   */
   const anchors = computed<DockAnchors | null>(() =>
-    pos.value && vw.value && vh.value ? dockAnchors(pos.value, vw.value, vh.value) : null,
+    pos.value && vw.value && vh.value
+      ? dockAnchors(clampDockPos(pos.value, vw.value, vh.value), vw.value, vh.value)
+      : null,
   )
   const dockStyle = computed(() => anchors.value?.style)
   const dockSide = computed(() => anchors.value?.side ?? 'right')
@@ -206,29 +214,24 @@ export function useAgentDock() {
     return was
   }
 
+  /**
+   * 視窗尺寸變了只要更新尺寸就好：`anchors` 會用新尺寸重算，該讓位就讓位。
+   * ⛔不要在這裡改 `pos` 或寫 localStorage（理由見 `anchors` 的註解）。
+   */
   function syncViewport() {
     vw.value = window.innerWidth
     vh.value = window.innerHeight
-    if (!pos.value)
-      return
-    // 視窗縮小／轉向後可能已經超出範圍，夾回來並存起來（存的值也要是合法的，
-    // 否則下次開頁又從一個看不到的座標開始）
-    const next = clampDockPos(pos.value, vw.value, vh.value)
-    if (next.x !== pos.value.x || next.y !== pos.value.y) {
-      pos.value = next
-      persist()
-    }
   }
 
   onMounted(() => {
-    vw.value = window.innerWidth
-    vh.value = window.innerHeight
+    syncViewport()
     try {
       const raw = localStorage.getItem(STORE_KEY)
       if (raw) {
         const saved = JSON.parse(raw) as Partial<DockPos> | null
+        // 只驗「是不是數字」，不在這裡夾——呈現時才夾（舊座標在大螢幕上要回得去）
         if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y))
-          pos.value = clampDockPos({ x: saved!.x!, y: saved!.y! }, vw.value, vh.value)
+          pos.value = { x: saved!.x!, y: saved!.y! }
       }
     }
     catch {}
