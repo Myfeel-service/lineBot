@@ -123,7 +123,8 @@
                  條件命中的人剛好在後面就會查不到——要講出來並給下一步 -->
             <div v-else-if="!users.length" class="tags-empty">
               <span v-if="truncated">好友太多，只查了前 5,000 位就停下來——用上面的搜尋或標籤縮小範圍再看一次。</span>
-              <span v-else>{{ total ? '無符合條件的好友' : '尚無好友資料' }}</span>
+              <!-- 開通沒完成時「尚無好友資料」是誤導：不是還沒有人加，是加了也進不來（2026-08-27） -->
+              <span v-else>{{ total ? '無符合條件的好友' : (onboardingIncomplete ? '開通還沒完成——接上 LINE 後，加好友的客人會自動出現在這裡' : '尚無好友資料') }}</span>
             </div>
             <div v-else class="table-wrap">
               <table class="users-table">
@@ -362,6 +363,8 @@ import { formatZhDateOnly } from '~~/shared/firestore-date'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { workspaceId, apiFetch } = useWorkspace()
+// 開通沒完成時，空清單要講真話（不是還沒有人加好友，是加了也進不來）
+const { onboardingIncomplete } = useSetupStatus()
 const route = useRoute()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 

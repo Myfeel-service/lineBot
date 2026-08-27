@@ -10,11 +10,13 @@
  * 查不到≠修好也≠沒修好（誠實三態）、每一步有跳過出口。
  */
 import { escapeHtml } from '~~/shared/types/agent-messages'
+import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
+import type { BrokenModuleFixState, BrokenModuleRefRow, BrokenModuleRepointResult } from '~~/shared/types/alert-fix'
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentScriptRunner, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
-export type AgentGuideId = 'liff-endpoint' | 'liff-setup' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook'
+export type AgentGuideId = 'liff-endpoint' | 'liff-setup' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook' | 'broken-module' | 'line-channel'
 
 export interface AgentGuideCtx {
   r: AgentScriptRunner
@@ -772,6 +774,313 @@ const lineWebhookGuide: AgentGuideDef = {
   ],
 }
 
+// ── 按鈕指到已刪除／已停用的模組 ────────────────────────────────
+// C-87（2026-08-27 老闆拍板「執行二」）：這顆異常的修法要人做選擇（改指到哪個模組），
+// 一鍵修給不了合理預設——所以走對話：列壞在哪、白名單挑新指向、代改、當場重查。
+// ⛔模組選項只能來自後端白名單（劇本零 LLM，本來也沒有模型能生 ID）。
+
+// 回應合約與面向標籤都吃 shared（⛔別在這裡再宣告一份：欄位改名時兩邊各自編譯得過、
+// 畫面才靜靜壞掉；標籤各寫一份會讓異常卡與劇本在同一畫面用兩套稱呼）
+function brokenPlaceLines(refs: BrokenModuleRefRow[]): string {
+  return refs.slice(0, 6)
+    .map(r => `・${ALERT_SCOPE_LABELS[r.sourceKind] ?? '設定'}「<b>${escapeHtml(r.sourceLabel)}</b>」`)
+    .join('<br>') + (refs.length > 6 ? `<br>…共 ${refs.length} 處` : '')
+}
+
+async function fetchBrokenFix(c: AgentGuideCtx): Promise<BrokenModuleFixState | null> {
+  return c.r.apiRetry(() => c.apiFetch<BrokenModuleFixState>('/api/admin/broken-module-fix'), {
+    failText: '查詢壞掉的按鈕失敗',
+    skipLabel: '先不修',
+  })
+}
+
+/** 圖文選單頁的連結卡＋為什麼代改不了的說明（兩處會用到，話術只留一份） */
+function richmenuRepublishCard(c: AgentGuideCtx, menuNames: string[]) {
+  return c.r.say(
+    `⚠️ 圖文選單「<b>${menuNames.map(escapeHtml).join('」、「')}</b>」的按鈕我改不動——選單的按鈕是`
+    + '<b>發佈時燒進 LINE</b> 的，只改後台資料，客人按線上那顆還是沒反應。要到選單頁把那顆按鈕'
+    + '改好、<b>重新發佈</b>才會生效。',
+  ).then(() => {
+    c.r.card({ kind: 'link', internal: true, label: '前往「圖文選單」', href: `/admin/${c.workspaceId}/richmenu` })
+  })
+}
+
+/**
+ * 「挑一個模組改指過去」的共用流程：刪掉的模組、以及使用者選擇不復活的停用模組都走這裡。
+ * 只被圖文選單引用時直接短路——那種情況代改一定是 no-op，走完挑選只會白忙一趟
+ * 還在稽核留下一筆「改了 0 筆」的紀錄。
+ */
+async function repointBrokenGroup(
+  c: AgentGuideCtx,
+  modules: BrokenModuleFixState['modules'],
+  moduleId: string,
+  refs: BrokenModuleRefRow[],
+): Promise<void> {
+  const { r } = c
+  const menuNames = [...new Set(refs.filter(x => x.sourceKind === 'richmenu').map(x => x.sourceLabel))]
+  if (refs.every(x => x.sourceKind === 'richmenu')) {
+    await richmenuRepublishCard(c, menuNames)
+    return
+  }
+  if (!modules.length) {
+    await r.say('目前<b>沒有任何啟用中的模組</b>可以指過去——先到「機器人模組」建一個（或把要用的模組打開），再回來點我。')
+    r.card({ kind: 'link', internal: true, label: '前往「機器人模組」', href: `/admin/${c.workspaceId}/flow` })
+    return
+  }
+  if (modules.length > 8)
+    await r.say('下面列前 8 個模組；要指的不在裡面就按「先跳過」，到各設定頁自己改。')
+  const picked = await r.askPicker(modules.slice(0, 8).map(m => ({ id: m.id, label: m.name })), true)
+  if (!picked) {
+    await r.say('好，這組先跳過。紅點會一直盯著，修好就自己熄掉。')
+    return
+  }
+  const cardId = r.card({ kind: 'status', state: 'pending', text: `正在把按鈕改指到「${picked.label}」…` })
+  const done = await r.apiRetry(
+    () => c.apiFetch<BrokenModuleRepointResult>('/api/admin/broken-module-fix', {
+      method: 'POST',
+      body: { action: 'repoint', fromModuleId: moduleId, toModuleId: picked.id },
+    }),
+    { failText: '改指向失敗', skipLabel: '先跳過這組' },
+  )
+  if (!done) {
+    r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這組先跳過（沒有動到任何設定）' })
+    return
+  }
+  const parts: string[] = []
+  if (done.scripts) parts.push(`${done.scripts} 條客服流程`)
+  if (done.campaigns) parts.push(`${done.campaigns} 個活動`)
+  if (done.flows) parts.push(`${done.flows} 個模組的圖文訊息`)
+  r.updateMsg(cardId, {
+    kind: 'status',
+    state: 'ok',
+    text: `已把 ${parts.join('、')} 改指到「${done.toName}」`,
+  })
+  // 停用中的設定也一起改了，但它不在使用者剛看到的清單上——如實講，別讓數字對不上
+  if (done.hiddenDisabled)
+    await r.say(`另外順手改了 ${done.hiddenDisabled} 個<b>目前停用中</b>的設定（之後打開就不會又是壞按鈕）。`)
+  if (done.richmenus.length)
+    await richmenuRepublishCard(c, done.richmenus)
+}
+
+const brokenModuleGuide: AgentGuideDef = {
+  id: 'broken-module',
+  title: '修好沒反應的按鈕',
+  alertIds: ['brokenModuleButton'],
+  steps: [
+    {
+      id: 'fix-loop',
+      async run(c) {
+        const { r } = c
+        await r.say('這些按鈕客人按下去<b>什麼都不會收到</b>，也不會看到錯誤——只會覺得壞了。我帶你一組一組修。')
+        const res = await fetchBrokenFix(c)
+        if (!res) {
+          c.state.exit = true
+          await r.say('好，先不修。右下角的紅點會一直盯著這件事，想修的時候再點「用聊天帶我修」。')
+          return
+        }
+        if (!res.refs.length) {
+          c.state.exit = true
+          r.card({ kind: 'status', state: 'ok', text: '剛查了一次，沒有按鈕指向壞掉的模組' })
+          await r.say('看起來已經修好了（或有人剛處理過）✓ 沒有要做的事。')
+          return
+        }
+
+        // 同一顆壞模組被多處引用＝同一個決定，一組一起處理
+        const byModule = new Map<string, BrokenModuleRefRow[]>()
+        for (const ref of res.refs) {
+          const list = byModule.get(ref.moduleId) ?? []
+          list.push(ref)
+          byModule.set(ref.moduleId, list)
+        }
+
+        for (const [moduleId, refs] of byModule) {
+          const first = refs[0]!
+          if (first.reason === 'inactive') {
+            // 模組還在只是停用。重新啟用最省事，但**不能是唯一選項**：季節性活動刻意停用的
+            // 模組如果被按鈕指著，復活它等於把過期內容重新送給客人——那種情況要改指到別處。
+            await r.say(`這幾個地方的按鈕指向模組「<b>${escapeHtml(first.moduleName || moduleId)}</b>」——它還在，只是<b>被停用了</b>：<br>${brokenPlaceLines(refs)}`)
+            const choice = await r.askChoices([
+              { label: '重新啟用這個模組', value: 'reenable', primary: true },
+              { label: '改指到別的模組', value: 'repoint' },
+              { label: '先跳過這組', value: 'skip' },
+            ])
+            if (choice === 'skip') continue
+            if (choice === 'repoint') {
+              await r.say('好——這個模組維持停用，我把這些按鈕改指到你挑的模組。')
+              await repointBrokenGroup(c, res.modules.filter(m => m.id !== moduleId), moduleId, refs)
+              continue
+            }
+            const cardId = r.card({ kind: 'status', state: 'pending', text: '正在重新啟用…' })
+            const ok = await r.apiRetry(
+              () => c.apiFetch<{ ok: boolean; moduleName: string }>('/api/admin/broken-module-fix', {
+                method: 'POST',
+                body: { action: 'reenable', moduleId },
+              }),
+              { failText: '重新啟用失敗', skipLabel: '先跳過這組' },
+            )
+            if (!ok) {
+              r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這組先跳過（沒有動到任何設定）' })
+              continue
+            }
+            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: `模組「${ok.moduleName}」已重新啟用，這幾顆按鈕活回來了` })
+            continue
+          }
+
+          // 模組已刪除：挑一個現有模組整批改指過去（只被選單引用的情況會在裡面短路）
+          await r.say(`這幾個地方的按鈕指向的模組<b>已經被刪除了</b>：<br>${brokenPlaceLines(refs)}`)
+          await repointBrokenGroup(c, res.modules, moduleId, refs)
+        }
+      },
+    },
+    {
+      id: 'verify',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        const cardId = r.card({ kind: 'status', state: 'pending', text: '重新檢查一次…' })
+        const res = await fetchBrokenFix(c)
+        if (!res) {
+          r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒檢查成功（不代表沒修好）' })
+          return
+        }
+        if (!res.refs.length) {
+          r.updateMsg(cardId, { kind: 'status', state: 'ok', text: '所有按鈕都指向活著的模組了' })
+          await r.say('修好了 🎉 客人按這些按鈕會正常收到訊息。')
+          return
+        }
+        const menuLeft = res.refs.filter(x => x.sourceKind === 'richmenu').length
+        r.updateMsg(cardId, { kind: 'status', state: 'fail', text: `還有 ${res.refs.length} 處沒好` })
+        await r.say(
+          `還沒好的：<br>${brokenPlaceLines(res.refs)}`
+          + (menuLeft ? '<br>選單類要在選單頁改完並<b>重新發佈</b>後，這裡才會消掉。' : '<br>剛剛跳過的那幾組，想修的時候再點一次「用聊天帶我修」。'),
+        )
+      },
+    },
+  ],
+}
+
+// ── 同一個官方帳號接在兩個工作區 ────────────────────────────────
+// C-87：訊息只會進到簽章先對上的那一邊、兩邊檢查都是綠的（08-19 實測）。
+// 修法本質是「決定帳號留哪邊＋動另一邊的憑證」——憑證是紅線，動手永遠留人，
+// 劇本只負責把狀況講清楚、幫忙做決定、指路、最後真的重查一次。
+
+interface ConflictCheck {
+  state: 'active' | 'clear' | 'unknown'
+  detail: string
+}
+
+/**
+ * 窄探針：只問「這個官方帳號有沒有接在兩邊」。
+ * ⛔別改回打 `/api/admin/alerts?force=1`——那會讓整個工作區所有 probe 跳快取重跑
+ * （問 LINE、逐個 LIFF 的外部請求、額度、佇列掃描…）只為讀一個布林，而下面的驗證迴圈
+ * 是使用者可以連按的。判定本體共用 server 的 checkLineChannelConflict，口徑仍只有一份。
+ */
+async function fetchChannelConflict(c: AgentGuideCtx): Promise<ConflictCheck | null> {
+  return c.r.apiRetry(
+    () => c.apiFetch<ConflictCheck>('/api/admin/line-channel-check'),
+    { failText: '查詢連接狀態失敗', skipLabel: '先不處理' },
+  )
+}
+
+const lineChannelGuide: AgentGuideDef = {
+  id: 'line-channel',
+  title: '處理接在兩邊的官方帳號',
+  alertIds: ['lineChannelConflict'],
+  steps: [
+    {
+      id: 'decide',
+      async run(c) {
+        const { r } = c
+        await r.say('這個狀況麻煩在<b>兩邊的檢查看起來都正常</b>：同一個官方帳號接在兩個工作區時，客人的訊息只會進到其中一邊，另一邊一則都收不到、也不會有錯誤訊息。')
+        const check = await fetchChannelConflict(c)
+        if (!check) {
+          // ⛔不要靜默退出：面板會停在一則錯誤訊息、沒有任何交代（其他劇本都有收尾句）
+          c.state.exit = true
+          await r.say('好，先不處理。右下角的紅點會一直盯著這件事，想處理的時候再點「用聊天帶我修」。')
+          return
+        }
+        if (check.state === 'clear') {
+          c.state.exit = true
+          r.card({ kind: 'status', state: 'ok', text: '剛查了一次，這個官方帳號現在只接在這一邊' })
+          await r.say('看起來已經處理好了 ✓ 沒有要做的事。')
+          return
+        }
+        if (check.state === 'unknown') {
+          c.state.exit = true
+          r.card({ kind: 'status', state: 'skipped', text: '這次查不到（不代表沒問題）' })
+          await r.say('剛剛查不到 LINE 那邊的狀態——<b>查不到不代表沒事</b>，等幾分鐘再打開我檢查一次。')
+          return
+        }
+        if (check.detail)
+          await r.say(`查到了：${escapeHtml(check.detail)}。`)
+        await r.say('先做一個決定：這個官方帳號<b>要在哪一邊服務客人</b>？決定了我就告訴你另一邊怎麼處理。')
+
+        const choice = await r.askChoices([
+          { label: '留在這一邊（處理掉另一邊）', value: 'keep-here', primary: true },
+          { label: '留在另一邊（處理掉這一邊）', value: 'keep-there' },
+          { label: '先不處理', value: 'skip' },
+        ])
+        if (choice === 'skip') {
+          c.state.exit = true
+          await r.say('好。提醒一下：在處理好之前，其中一邊會一直收不到客人訊息、而且看不出來。想處理時再點「用聊天帶我修」。')
+          return
+        }
+        if (choice === 'keep-here') {
+          await r.say(
+            '好，帳號留這邊。要做的是把<b>另一邊工作區</b>存的 LINE 鑰匙處理掉，兩條路：<br>'
+            + '・那個工作區<b>還要用</b>（只是接錯帳號）→ 切換過去，到它的「組織與 LINE 設定」把鑰匙換成<b>它自己該用的官方帳號</b>。<br>'
+            + '・那個工作區<b>已經不用了</b> → 聯絡我們幫你把那邊的連接清空（目前畫面上沒有自助清除鈕）。',
+          )
+          await r.say('處理完回來按「幫我檢查」，我再跟 LINE 確認一次。')
+          return
+        }
+        // keep-there：這一邊要換成正確的鑰匙（或請我們清空）
+        await r.say(
+          '好，帳號留另一邊。那<b>這一邊</b>存的鑰匙就要處理掉，兩條路：<br>'
+          + '・這個工作區要接<b>別的官方帳號</b> → 點下面的卡，我在設定頁指給你看把 Token 換掉的位置。<br>'
+          + '・這個工作區<b>暫時不接任何帳號</b> → 聯絡我們幫你清空（目前畫面上沒有自助清除鈕）。',
+        )
+        orgFocusCard(c, 'token', '去設定頁換這一邊的鑰匙（我會指位置）')
+      },
+    },
+    {
+      id: 'verify-loop',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        while (true) {
+          const choice = await r.askChoices([
+            { label: '處理好了，幫我檢查', value: 'check', primary: true },
+            { label: '先跳過', value: 'skip' },
+          ])
+          if (choice !== 'check') {
+            await r.say('好。右下角的紅點會一直盯著這件事，處理好就自己熄掉。')
+            return
+          }
+          const cardId = r.card({ kind: 'status', state: 'pending', text: '正在重新確認這個官方帳號接在哪…' })
+          const check = await fetchChannelConflict(c)
+          if (!check) {
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒檢查成功（不代表沒處理好）' })
+            return
+          }
+          if (check.state === 'clear') {
+            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: '這個官方帳號現在只接在一邊了' })
+            await r.say('處理好了 🎉 客人的訊息現在會穩定進到正確的那一邊。')
+            return
+          }
+          if (check.state === 'unknown') {
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次查不到（不代表沒處理好）' })
+            await r.say('這次查不到——<b>查不到不代表沒處理好</b>，等幾分鐘再按一次檢查。')
+            continue
+          }
+          r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '兩邊都還接著' })
+          await r.say(`還是接在兩邊${check.detail ? `（${escapeHtml(check.detail)}）` : ''}。最常見是另一邊<b>只改了畫面沒按儲存</b>；若那邊已經不用、又沒有清除鈕，聯絡我們處理。好了再按檢查。`)
+        }
+      },
+    },
+  ],
+}
+
 // ── 註冊表 ──────────────────────────────────────────────────────
 
 export const AGENT_GUIDES: Record<AgentGuideId, AgentGuideDef> = {
@@ -780,4 +1089,6 @@ export const AGENT_GUIDES: Record<AgentGuideId, AgentGuideDef> = {
   'handoff-notify': handoffNotifyGuide,
   'knowledge-sync': knowledgeSyncGuide,
   'line-webhook': lineWebhookGuide,
+  'broken-module': brokenModuleGuide,
+  'line-channel': lineChannelGuide,
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { collectModuleRefs, findBrokenModuleRefs, invalidateBrokenModuleRefsCache } from './broken-module-refs'
+import { collectModuleRefs, findBrokenModuleRefs, invalidateBrokenModuleRefsCache, replaceModuleRefs, scanModuleGraph } from './broken-module-refs'
 
 const WS = 'ws1'
 
@@ -206,5 +206,77 @@ describe('findBrokenModuleRefs(空按鈕靜態檢查)', () => {
     invalidateBrokenModuleRefsCache(WS)
     await findBrokenModuleRefs(db, WS)
     expect(getCalls).toBe(8)
+  })
+})
+
+describe('replaceModuleRefs(壞按鈕整批改指向，C-87)', () => {
+  it('已編碼的 postback 字串：換 id、tags 原樣保留', () => {
+    const areas = [{ action: { type: 'postback', data: 'triggerModule=dead&tags=t1,t2' } }]
+    const r = replaceModuleRefs(areas, 'dead', 'alive')
+    expect(r.changed).toBe(true)
+    const data = (r.value as any)[0].action.data as string
+    expect(data.startsWith('triggerModule=alive')).toBe(true)
+    expect(data).toContain('tags=')
+    // 改完要能被同一套 parser 讀回來——編碼器與解析器不成對就是新的壞按鈕
+    expect([...collectModuleRefs(r.value)]).toEqual(['alive'])
+  })
+
+  it('未編碼的動作物件與深層結構都改得到（找得到的就要改得掉）', () => {
+    const messages = [{
+      contents: { columns: [{ footer: { contents: [{ action: { type: 'module', moduleId: 'dead' } }] } }] },
+    }]
+    const r = replaceModuleRefs(messages, 'dead', 'alive')
+    expect(r.changed).toBe(true)
+    expect([...collectModuleRefs(r.value)]).toEqual(['alive'])
+  })
+
+  it('沒有命中就原樣回傳（changed=false，呼叫端可跳過整筆寫入）', () => {
+    const messages = [{ actions: [{ type: 'module', moduleId: 'other' }] }]
+    const r = replaceModuleRefs(messages, 'dead', 'alive')
+    expect(r.changed).toBe(false)
+    expect(r.value).toBe(messages)
+  })
+
+  it('別的模組 id 不能被誤傷（只換完全相同的那顆）', () => {
+    const mixed = [
+      { action: { type: 'postback', data: 'triggerModule=dead' } },
+      { action: { type: 'module', moduleId: 'dead-2' } },
+    ]
+    const r = replaceModuleRefs(mixed, 'dead', 'alive')
+    expect(r.changed).toBe(true)
+    expect([...collectModuleRefs(r.value)].sort()).toEqual(['alive', 'dead-2'])
+  })
+})
+
+describe('scanModuleGraph：引用與模組清單來自同一次掃描（2026-08-27 review）', () => {
+  it('modules 含全部模組（不截斷）且帶 isActive，refs 與它對得上', async () => {
+    // 250 個模組：舊版 GET 另外查一趟帶 limit(200)，模組多的工作區會挑不到要指過去的那個
+    const flows = Array.from({ length: 250 }, (_, i) => ({
+      id: `mod-${i}`,
+      // 最後一個模組指向一顆已刪除的模組 → 應該被報為壞掉
+      data: (): Record<string, unknown> => ({
+        workspaceId: WS,
+        name: `模組${i}`,
+        isActive: true,
+        messages: i === 249 ? [{ actions: [{ type: 'module', moduleId: 'gone' }] }] : [],
+      }),
+    }))
+    const db = {
+      collection: (name: string) => ({
+        where: () => ({
+          get: async () => ({ docs: name === 'flows' ? flows : [] }),
+          where: () => ({ get: async () => ({ docs: [] }) }),
+          select: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
+        }),
+      }),
+    } as any
+
+    invalidateBrokenModuleRefsCache(WS)
+    const scan = await scanModuleGraph(db, WS, { skipCache: true })
+    expect(scan.modules).toHaveLength(250)
+    expect(scan.modules.every(m => m.isActive)).toBe(true)
+    expect(scan.refs.map(r => r.moduleId)).toEqual(['gone'])
+    // 被指的模組查不到＝真的不存在，不是被 limit 切掉的
+    expect(scan.modules.find(m => m.id === 'gone')).toBeUndefined()
   })
 })

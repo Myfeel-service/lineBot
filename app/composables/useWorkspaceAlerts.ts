@@ -126,6 +126,8 @@ const ALERTS: AlertDefinition[] = [
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
     anchor: { selector: '[data-tour="org-verify"]', note: '先決定這個官方帳號要留在哪一邊；要留這邊的話，把另一邊的 LINE 連接清掉，再回這裡按「測試連線」確認。' },
+    // 修法本質＝做決定＋動憑證（紅線，動手留人）→ 對話式帶決策與指路（C-87）
+    guideId: 'line-channel',
   },
   {
     // 紅（2026-08-21 老闆拍板做）：這是「客人已經在外面點連結、點下去什麼都沒有」，
@@ -290,6 +292,9 @@ const ALERTS: AlertDefinition[] = [
     },
     // 逗號選擇器：這顆會落在四頁，querySelector 會亮「這一頁有的那個」清單
     anchor: { selector: '[data-tour="rm-list"], [data-tour="flow-list"], [data-tour="scr-list"], [data-tour="cmp-list"]', note: '壞掉的設定就在這份清單裡——照上面提到的名稱點開，就會看到哪裡壞、該改成什麼。' },
+    // 修法要人做選擇（停用的重新啟用？刪掉的改指到哪？）→ 對話式收決定後代改（C-87）；
+    // ⛔圖文選單類代改不了（按鈕資料發佈時燒進 LINE），劇本會如實引導去重新發佈
+    guideId: 'broken-module',
   },
   {
     // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。

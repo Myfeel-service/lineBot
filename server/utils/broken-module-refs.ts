@@ -1,6 +1,6 @@
 import { capMapSize } from './bounded-cache'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
-import { TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
+import { encodeTriggerModule, TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
 
 /**
  * 「空按鈕」靜態檢查：找出圖文選單／圖卡／關鍵字自動回覆／活動上指向
@@ -32,7 +32,19 @@ export interface BrokenModuleRef {
  */
 const CACHE_TTL_MS = 5 * 60 * 1000
 const CACHE_MAX_ENTRIES = 50
-const cache = new Map<string, { data: BrokenModuleRef[]; expires: number }>()
+const cache = new Map<string, { data: ModuleGraphScan; expires: number }>()
+
+export interface ModuleGraphScan {
+  refs: BrokenModuleRef[]
+  /**
+   * 這個工作區的所有模組（掃描過程本來就讀了 flows，順手回出來）。
+   *
+   * ⛔別再另外查一次 `flows` 拿名稱或白名單：修復端點原本那樣做，除了多一趟讀取，
+   * 還因為那一趟帶了 `limit(200)` 而與這裡的全量掃描對不上——模組多的工作區會出現
+   * 「異常說它壞了，但清單裡查不到它的名字、也挑不到要指過去的那個模組」。
+   */
+  modules: { id: string; name: string; isActive: boolean }[]
+}
 
 /**
  * 深掃任意 JSON 找出所有被引用的模組 ID。
@@ -65,11 +77,70 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
   return out
 }
 
+/**
+ * 深走訪把「指向模組 A」的引用全部改指到 B（`C-87` 壞按鈕代改）。
+ *
+ * 與 collectModuleRefs **同一套走訪、認同兩種形態**——找得到的就改得掉，兩邊分開寫
+ * 遲早出現「偵測說壞在這、代改卻改不到」：
+ *   - 已編碼的 postback 字串：parse 後用 encodeTriggerModule 重組，**tags 原樣保留**
+ *   - 未編碼的動作物件：{ type: 'module', moduleId } 直接換 id
+ *
+ * 回傳新值與有沒有改到（沒改到＝原引用原樣回傳，呼叫端可跳過整筆寫入）。
+ */
+export function replaceModuleRefs(value: unknown, from: string, to: string): { value: unknown; changed: boolean } {
+  if (typeof value === 'string') {
+    if (value.startsWith(TRIGGER_MODULE_PREFIX)) {
+      const { moduleId, tagIds } = parseTriggerModuleData(value)
+      if (moduleId === from)
+        return { value: encodeTriggerModule(to, tagIds), changed: true }
+    }
+    return { value, changed: false }
+  }
+  if (Array.isArray(value)) {
+    let changed = false
+    const next = value.map((item) => {
+      const r = replaceModuleRefs(item, from, to)
+      if (r.changed) changed = true
+      return r.value
+    })
+    return { value: changed ? next : value, changed }
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    let changed = false
+    const next: Record<string, unknown> = {}
+    for (const key of Object.keys(obj)) {
+      const r = replaceModuleRefs(obj[key], from, to)
+      next[key] = r.value
+      if (r.changed) changed = true
+    }
+    if (obj.type === 'module' && String(obj.moduleId ?? '').trim() === from) {
+      next.moduleId = to
+      changed = true
+    }
+    return { value: changed ? next : value, changed }
+  }
+  return { value, changed: false }
+}
+
+/** 只要壞掉的引用（異常中心用；快取共用同一份掃描結果） */
 export async function findBrokenModuleRefs(
   db: FirebaseFirestore.Firestore,
   workspaceId: string,
 ): Promise<BrokenModuleRef[]> {
-  const cached = cache.get(workspaceId)
+  return (await scanModuleGraph(db, workspaceId)).refs
+}
+
+/**
+ * 掃一次「誰指向誰、被指的還在不在」。修復端點用 `skipCache`——人剛改完回頭驗證，
+ * 拿五分鐘內的舊答案會一直說「還沒好」。
+ */
+export async function scanModuleGraph(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+  opts: { skipCache?: boolean } = {},
+): Promise<ModuleGraphScan> {
+  const cached = opts.skipCache ? null : cache.get(workspaceId)
   if (cached && cached.expires > Date.now()) return cached.data
 
   // 一次把 flows 撈回來就同時拿到「誰引用了誰」和「被引用的還在不在／停用了沒」，
@@ -146,9 +217,13 @@ export async function findBrokenModuleRefs(
     if (moduleId) check(moduleId, String(data.name ?? '(未命名活動)'), 'campaign')
   }
 
-  cache.set(workspaceId, { data: broken, expires: Date.now() + CACHE_TTL_MS })
+  const data: ModuleGraphScan = {
+    refs: broken,
+    modules: [...flowById.entries()].map(([id, v]) => ({ id, name: v.name, isActive: v.isActive })),
+  }
+  cache.set(workspaceId, { data, expires: Date.now() + CACHE_TTL_MS })
   capMapSize(cache, CACHE_MAX_ENTRIES)
-  return broken
+  return data
 }
 
 /** 選單／模組存檔後呼叫，讓異常中心下一次輪詢就反映最新狀態（否則最多要等 5 分鐘） */

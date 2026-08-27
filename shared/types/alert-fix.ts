@@ -14,7 +14,7 @@
  * 加一個 op ＝ 這裡加 id ＋ server/utils/alert-fix-ops.ts 加一筆 ＋
  * useWorkspaceAlerts 註冊表對應異常掛 `fixOpId`（測試會釘住三處一致）。
  */
-import type { WorkspaceAlertId } from './alerts'
+import type { WorkspaceAlertId, WorkspaceAlertScope } from './alerts'
 
 export const ALERT_FIX_OP_IDS = [
   /** 把 LINE 上的收訊網址（Webhook URL）換成正式網址——LINE 有官方寫入 API */
@@ -57,6 +57,44 @@ export interface AlertFixPreview {
   warning?: string
   /** 確認鈕字樣（fixable 才有意義），例：「確定換網址」「確定停用」 */
   confirmLabel?: string
+}
+
+// ── 壞按鈕修復（引導劇本 broken-module 專用的端點合約）───────────
+// ⛔前端不要再自己宣告一份：`sourceKind` 是 `WorkspaceAlertScope`（同一個列舉），
+// 欄位改名時兩份各自編譯得過、畫面才靜靜壞掉（2026-08-27 code review）。
+
+export interface BrokenModuleRefRow {
+  moduleId: string
+  /** 被指向那個模組的名稱；已被刪除時查不到＝空字串（⛔不硬掰名字） */
+  moduleName: string
+  /** 引用它的地方（選單／模組／流程／活動的名稱） */
+  sourceLabel: string
+  sourceKind: WorkspaceAlertScope
+  /** missing＝模組被刪了；inactive＝還在但停用了 */
+  reason: 'missing' | 'inactive'
+}
+
+export interface BrokenModuleFixState {
+  refs: BrokenModuleRefRow[]
+  /** 可以指過去的模組白名單（啟用中）——⛔劇本只能從這裡挑，不收自由輸入的 ID */
+  modules: { id: string; name: string }[]
+}
+
+export interface BrokenModuleRepointResult {
+  ok: boolean
+  toName: string
+  /** 使用者在清單上看到的那些（啟用中的流程／活動）改了幾筆 */
+  scripts: number
+  campaigns: number
+  flows: number
+  /**
+   * 順手改掉、但**使用者清單上沒看到**的停用中設定筆數。
+   * 偵測刻意跳過停用的流程與活動（沒有客人受影響），但代改會一起改
+   * （之後被打開不該又冒出同一顆壞按鈕）——這個落差要如實回報，不能混進上面的數字。
+   */
+  hiddenDisabled: number
+  /** 還指著舊模組的圖文選單名稱：代改不了，要人去選單頁改完**重新發佈** */
+  richmenus: string[]
 }
 
 export interface AlertFixExecuteResult {

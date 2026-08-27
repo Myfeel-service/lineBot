@@ -1943,6 +1943,8 @@ const aiContextBanner = ref<{ refreshSummary: () => Promise<void> } | null>(null
  * 補知識 = knowledge.write（agent）、答錯標記 = ai-feedback 端點（agent）。
  */
 const { canOperate } = useWorkspace()
+// 開通沒完成時，空清單要講真話（見 sidebarEmpty）——只讀狀態，不在這裡發查詢
+const { onboardingIncomplete } = useSetupStatus()
 
 const inputRef = ref<{ focus: () => void, textarea?: HTMLTextAreaElement } | null>(null)
 
@@ -2393,7 +2395,12 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
       // 空清單不能只說「沒有」就結束：順便講怎麼標，不然這個篩選看起來像壞掉
       : { title: '目前沒有待跟進的對話', hint: '在左側對話上按右鍵（或滑過按 ⋯）→「標記待跟進」，之後就能從這裡找回來' }
   }
-  return { title: searchText.value ? '無符合結果' : '尚無對話紀錄', hint: '' }
+  if (searchText.value)
+    return { title: '無符合結果', hint: '' }
+  // 開通沒完成時「尚無對話紀錄」是誤導：不是客人不傳，是傳了也進不來（2026-08-27）
+  if (onboardingIncomplete.value)
+    return { title: '開通還沒完成，還不會有對話', hint: '接上 LINE 並收到第一則訊息後，客人的對話會自動出現在這裡' }
+  return { title: '尚無對話紀錄', hint: '' }
 })
 
 /**

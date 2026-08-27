@@ -1,4 +1,5 @@
 import type { Firestore, Timestamp } from 'firebase-admin/firestore'
+import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope } from '~~/shared/types/alerts'
 import { getAiSettings } from './ai-settings'
 import { cleanReason, humanizeHours } from './alert-format'
@@ -186,6 +187,36 @@ export async function checkLineWebhook(wid: string, skipCache: boolean): Promise
   webhookProbeCache.set(wid, { result, expires: Date.now() + WEBHOOK_PROBE_TTL_MS })
   capMapSize(webhookProbeCache, WEBHOOK_PROBE_CACHE_MAX)
   return result
+}
+
+/**
+ * 「同一個官方帳號接在兩個工作區」的判定（**單一事實來源**）。
+ *
+ * 訊息只會進到 webhook 簽章先對上的那一邊。存憑證時已經會擋（line-channel-binding），
+ * 這支是給**擋之前就已經雙綁**的舊資料用的——那種狀態自己完全看不出來（兩邊檢查都綠）。
+ *
+ * 抽出來的理由（2026-08-27 code review）：修復劇本要能反覆按「幫我檢查」，原本它打的是
+ * `/api/admin/alerts?force=1`＝**整個工作區所有 probe 全部跳快取重跑**（LINE、每個 LIFF
+ * 的外部請求、額度、佇列…）只為讀一個布林。這支讓劇本用窄探針，口徑仍與異常中心同一份。
+ */
+export type ChannelConflictCheck =
+  | { kind: 'unconfigured' } // 還沒接 LINE：那是設定沒做，不是壞掉
+  | { kind: 'unknown' } // 問不到官方帳號身分：不下結論
+  | { kind: 'clear' }
+  | { kind: 'conflict'; names: string[] }
+
+export async function checkLineChannelConflict(db: Firestore, wid: string): Promise<ChannelConflictCheck> {
+  const creds = await getLineWorkspaceCredentials(wid)
+  if (!creds.channelAccessToken.trim()) return { kind: 'unconfigured' }
+  const botUserId = await getOrLearnChannelBotUserId(db, wid, creds)
+  if (!botUserId) return { kind: 'unknown' }
+  const conflicts = await findOtherWorkspacesOnChannel(db, botUserId, wid)
+  return conflicts.length ? { kind: 'conflict', names: conflicts.map(c => c.name) } : { kind: 'clear' }
+}
+
+/** 衝突的白話補充句（面板與劇本共用，⛔別各寫一句） */
+export function channelConflictDetail(names: string[]): string {
+  return `同一個官方帳號也接在「${names.join('」、「')}」`
 }
 
 type ProbeResult = { active: boolean; count?: number; detail?: string; scopes?: WorkspaceAlertScope[] }
@@ -596,13 +627,9 @@ export async function collectWorkspaceAlerts(
           const broken = await findBrokenModuleRefs(db, wid)
           if (!broken.length) return { active: false }
           const first = broken[0]!
-          const KIND_LABEL: Record<string, string> = {
-            richmenu: '選單',
-            flow: '模組',
-            script: '客服腳本',
-            campaign: '活動',
-          }
-          const where = KIND_LABEL[first.sourceKind] ?? '模組'
+          // 面向的白話名稱吃 shared 的 ALERT_SCOPE_LABELS（修復劇本講的是同一份詞，
+          // 之前兩邊各寫一份＝同一畫面上下兩句話用兩套稱呼）
+          const where = ALERT_SCOPE_LABELS[first.sourceKind] ?? '設定'
           const why = first.reason === 'missing' ? '模組已被刪除' : '模組已停用'
           // scopes＝壞在哪幾種設定上。⛔一定要回：註冊表只寫得下一個 route，沒有這個
           // 前端就只能一律把人（與側欄的點）帶去圖文選單，壞在活動的人會被帶到沒問題的頁。
@@ -651,21 +678,11 @@ export async function collectWorkspaceAlerts(
             : { active: false }
         }),
         probe('lineChannelConflict', async () => {
-          // 同一個官方帳號被兩個工作區接著：訊息只會進到 webhook 簽章先對上的那一邊。
-          // 存憑證時已經會擋（line-channel-binding），這顆是給**擋之前就已經雙綁**的
-          // 舊資料用的——那種狀態自己完全看不出來，只能由系統指出來。
-          const creds = await getLineWorkspaceCredentials(wid)
-          if (!creds.channelAccessToken.trim()) return { active: false } // 還沒接 LINE：那是設定沒做，不是壞掉
-          const botUserId = await getOrLearnChannelBotUserId(db, wid, creds)
+          const c = await checkLineChannelConflict(db, wid)
           // 問不到身分就不下結論（丟錯＝unknown，誠實顯示「這次查不到」）
-          if (!botUserId) throw new Error('查不到這個工作區綁的是哪個 LINE 官方帳號')
-          const conflicts = await findOtherWorkspacesOnChannel(db, botUserId, wid)
-          if (!conflicts.length) return { active: false }
-          return {
-            active: true,
-            count: conflicts.length,
-            detail: `同一個官方帳號也接在「${conflicts.map(c => c.name).join('」、「')}」`,
-          }
+          if (c.kind === 'unknown') throw new Error('查不到這個工作區綁的是哪個 LINE 官方帳號')
+          if (c.kind !== 'conflict') return { active: false }
+          return { active: true, count: c.names.length, detail: channelConflictDetail(c.names) }
         }),
         probe('liffMissing', async () => {
           // 條件式（`D-19`）：只有「已經有活動在跑、卻沒有任何 LIFF 可用」才算災情。

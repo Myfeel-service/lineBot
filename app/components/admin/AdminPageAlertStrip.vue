@@ -1,5 +1,23 @@
 <template>
-  <div v-if="rows.length" class="page-alert-strip" role="alert">
+  <div v-if="rows.length || showOnboardingBand" class="page-alert-strip" role="alert">
+    <!-- 開通帶（2026-08-27 老闆拍板「加碼」）：開通沒完成時原本整條消失＝每一頁只剩
+         誤導的 0，唯一訊號躲在右下角紅點。改成顯示**單一條**開通帶——只有一條、
+         不逐項列（與 08-26「開通期側欄不整排亮」同一把尺：一多就變裝飾）。 -->
+    <div v-if="showOnboardingBand" class="page-alert is-critical">
+      <span class="page-alert__icon"><el-icon><Link /></el-icon></span>
+      <div class="page-alert__main">
+        <p class="page-alert__title">{{ onboardingBand.title }}</p>
+        <p class="page-alert__detail">{{ onboardingBand.detail }}</p>
+      </div>
+      <el-button
+        class="page-alert__action"
+        size="small"
+        type="danger"
+        @click="goOnboarding"
+      >
+        帶我完成開通
+      </el-button>
+    </div>
     <div
       v-for="r in visibleRows"
       :key="r.alert.id"
@@ -50,6 +68,7 @@
 </template>
 
 <script setup lang="ts">
+import { Link } from '@element-plus/icons-vue'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 
 /**
@@ -74,15 +93,43 @@ import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
  */
 const route = useRoute()
 const { alertsForPath, refresh } = useWorkspaceAlerts()
-const { onboardingIncomplete, loaded: setupLoaded } = useSetupStatus()
+const { onboardingIncomplete, loaded: setupLoaded, onboardingSteps } = useSetupStatus()
+const { workspaceId } = useWorkspace()
 const { startAdHocTour } = useTutorial()
 const { openFix } = useAlertFix()
 
 const rows = computed(() => {
+  // 開通沒做完：營運異常量不出來也不成立，異常列不出——但**不再整條消失**，
+  // 由上面的開通帶接手講真話（否則每一頁都是一片誤導的 0，見 showOnboardingBand）
   if (!setupLoaded.value || onboardingIncomplete.value)
     return []
   return alertsForPath(route.path)
 })
+
+/**
+ * 開通帶（2026-08-27 老闆拍板）：開通沒完成時，每一頁同位置顯示一條「開通還沒完成」。
+ * 起因＝小貓商店實測：什麼都沒接的帳號進後台一片祥和，統計頁還勸人「放寬到近 90 天」
+ * ——0 技術上正確、語意上誤導。紅色沿用 08-07 拍板「還沒上線本身就是大問題＝紅、講後果」。
+ * onboardingIncomplete 只看「接 LINE＋收到第一則」且限 admin（useSetupStatus 檔內有為什麼），
+ * 所以文案能安心講 LINE；agent／viewer 看不到帶（他們也修不了）。
+ * ⛔開通引導頁（/admin/onboarding）是 layout:false，不會出現這條，不用另外排除。
+ */
+const showOnboardingBand = computed(() => setupLoaded.value && onboardingIncomplete.value)
+const onboardingBand = computed(() => {
+  const lineDone = onboardingSteps.value.find(s => s.id === 'lineConnected')?.done === true
+  return lineDone
+    ? {
+        title: 'LINE 接上了，還差最後一步測試',
+        detail: '還沒收到過任何訊息——用手機對官方帳號傳一句話，確認訊息真的進得來。在那之前，後台各頁還不會有資料。',
+      }
+    : {
+        title: 'LINE 官方帳號還沒接上',
+        detail: '客人現在傳訊息進不來，後台也不會有任何紀錄——各頁看到的 0 不是沒客人，是還沒接上。',
+      }
+})
+function goOnboarding() {
+  void navigateTo(`/admin/onboarding?workspaceId=${workspaceId.value}`)
+}
 
 /**
  * 摺疊（D-33 六〜七輪）：**紅色永不收合**（正在影響客人的事沒有「先別看」這個選項，

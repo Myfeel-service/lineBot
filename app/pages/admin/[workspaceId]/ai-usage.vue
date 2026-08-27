@@ -138,7 +138,8 @@
                        「有客人但 AI 都沒接到」也不能說成「還沒有客人來」——那是另一回事。 -->
                   <template v-else>
                     <strong class="usage-hero__num">—</strong>
-                    <span class="usage-hero__label"><b>全程搞定</b><br>{{ (heroMonth?.total ?? 0) > 0 ? `${periodLabel} 客人來的 ${formatNumber(heroMonth?.total)} 場對話都由真人或選單流程服務，AI 沒有接到場` : `${periodLabel} 還沒有客人來過` }}</span>
+                    <!-- 開通沒完成時「還沒有客人來過」是誤導：不是客人不來，是根本進不來（2026-08-27） -->
+                    <span class="usage-hero__label"><b>全程搞定</b><br>{{ (heroMonth?.total ?? 0) > 0 ? `${periodLabel} 客人來的 ${formatNumber(heroMonth?.total)} 場對話都由真人或選單流程服務，AI 沒有接到場` : (onboardingIncomplete ? '開通還沒完成，客人的訊息還進不來——接上 LINE 後這裡才會開始有數字' : `${periodLabel} 還沒有客人來過`) }}</span>
                   </template>
                 </div>
                 <template v-if="(heroMonth?.ai ?? 0) > 0">
@@ -418,6 +419,8 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
 const { apiFetch, workspaceId } = useWorkspace()
+// 開通沒完成時，主指標的空狀態要講真話（0 場不是沒客人，是訊息還進不來）
+const { onboardingIncomplete } = useSetupStatus()
 const router = useRouter()
 const route = useRoute()
 const { showToast } = useAdminToast()

@@ -222,6 +222,22 @@ export type WorkspaceAlertState = 'active' | 'clear' | 'unknown'
  */
 export type WorkspaceAlertScope = 'richmenu' | 'flow' | 'script' | 'campaign'
 
+/**
+ * 面向的白話名稱（**單一事實來源**）。
+ *
+ * 2026-08-27 code review 抓到：後端 detail 用「選單／模組／客服腳本／活動」、
+ * 修復劇本用「圖文選單／機器人模組／客服流程／活動」——同一個 `sourceKind` 兩套詞，
+ * 而且是在同一個畫面上下相鄰兩句話裡。統一取這一份（跟側欄與 ALERT_LABELS 同一套詞：
+ * 側欄寫「機器人模組」「圖文選單」、ALERT_LABELS 寫「客服流程」）。
+ * ⛔加第五種面向時只改這裡，不要在任何地方再寫第二份對照表。
+ */
+export const ALERT_SCOPE_LABELS: Record<WorkspaceAlertScope, string> = {
+  richmenu: '圖文選單',
+  flow: '機器人模組',
+  script: '客服流程',
+  campaign: '活動',
+}
+
 export interface WorkspaceAlertItem {
   id: WorkspaceAlertId
   state: WorkspaceAlertState

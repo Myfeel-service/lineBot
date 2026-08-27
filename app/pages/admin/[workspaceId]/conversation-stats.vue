@@ -230,6 +230,13 @@
                 </el-table>
               </div>
             </template>
+            <!-- 開通沒完成時講真話（2026-08-27 小貓商店實測）：這時「放寬到近 90 天」是誤導
+                 ——放寬到 900 天也是 0，問題不在日期在還沒接上。
+                 ⛔這裡不放「帶我完成開通」按鈕：頁面頂端的開通帶同一屏就有一顆同字同去處的，
+                 兩顆並存＝同一件事講兩次（D-33 四輪抓過的病） -->
+            <div v-else-if="onboardingIncomplete" class="tags-empty conv-stats-empty">
+              <span>開通還沒完成——客人來的對話會從接上 LINE 之後開始累積，現在的 0 不是沒客人（上方的提醒帶有開通入口）</span>
+            </div>
             <div v-else class="tags-empty conv-stats-empty">
               <span>此區間無資料</span>
               <el-button size="small" @click="widenRange">放寬到近 90 天</el-button>
@@ -255,6 +262,9 @@ useHead({
 const { showToast } = useAdminToast()
 const { apiFetch } = useWorkspace()
 const route = useRoute()
+// 開通沒完成時，空狀態要講真話（0 不是沒客人，是還沒接上）——見趨勢區的空狀態分支。
+// 按鈕刻意不在這裡：開通帶（AdminPageAlertStrip）同一屏上方就有唯一那顆
+const { onboardingIncomplete } = useSetupStatus()
 
 function fmtDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
