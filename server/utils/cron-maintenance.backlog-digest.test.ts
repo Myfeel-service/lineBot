@@ -38,6 +38,10 @@ vi.mock('./ai-handoff-notify', () => ({
 const { pushMessage } = vi.hoisted(() => ({ pushMessage: vi.fn(async (..._a: any[]) => ({})) }))
 vi.mock('./line', () => ({ pushMessage }))
 
+// 摘要尾巴的「黃級異常」行（D-36①）吃這支探針彙總;預設回空＝既有案例的訊息內容不變
+const { collectWorkspaceAlerts } = vi.hoisted(() => ({ collectWorkspaceAlerts: vi.fn(async () => [] as any[]) }))
+vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts }))
+
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
 
@@ -148,6 +152,8 @@ beforeEach(() => {
   pushMessage.mockResolvedValue({})
   getAiSettings.mockReset()
   getAiSettings.mockResolvedValue(settings())
+  collectWorkspaceAlerts.mockClear()
+  collectWorkspaceAlerts.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -233,6 +239,53 @@ describe('dailyBacklogDigest 一天一則', () => {
 
     expect(state[WS]).toBe(TODAY)
     expect(tally).toMatchObject({ workspacesNotified: 1 })
+  })
+})
+
+/**
+ * 黃級異常搭便車（D-36①，2026-08-27 拍板）。
+ *
+ * 黃級異常只在後台顯示，「推播沒送出去」這種事商家幾天不開後台就永遠不知道——
+ * 摘要要發的時候順路查一次、尾巴加一行。⛔刻意不讓黃級異常單獨觸發摘要：
+ * 那要每輪對全租戶跑探針，成本形狀跟 08-11 讀取費暴衝同款。
+ */
+describe('dailyBacklogDigest 黃級異常搭便車', () => {
+  it('摘要要發時尾巴加一行,照允許清單的優先序點名最重要那件', async () => {
+    collectWorkspaceAlerts.mockResolvedValue([
+      { id: 'scriptUnreachable', state: 'active' },
+      { id: 'broadcastFailed', state: 'active' }, // 允許清單排第一=最重要
+      { id: 'humanBacklog', state: 'active' }, // 摘要本文已講,不在允許清單
+      { id: 'knowledgeDetectStalled', state: 'clear' }, // 沒發生
+    ])
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('另有 2 件建議處理的事')
+    expect(text).toContain('最重要:有推播沒有送出去')
+    expect(text).not.toContain('永遠不會被啟動') // 只點名最重要那件,不把異常面板搬進 LINE
+  })
+
+  it('只有黃級異常、沒有其他待辦 → 不發(只搭便車,不單獨觸發)', async () => {
+    collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastFailed', state: 'active' }])
+    const { db, state } = makeDb([])
+    const tally = await dailyBacklogDigest(db)
+
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(collectWorkspaceAlerts).not.toHaveBeenCalled() // 連探針都不跑(成本閘門)
+    expect(state[WS]).toBeUndefined()
+    expect(tally).toMatchObject({ workspacesNotified: 0 })
+  })
+
+  it('探針掛掉 → 摘要本體照發,只是沒有那一行', async () => {
+    collectWorkspaceAlerts.mockRejectedValue(new Error('boom'))
+    const { db } = makeDb(['U1'])
+    const tally = await dailyBacklogDigest(db)
+
+    expect(tally).toMatchObject({ workspacesNotified: 1 })
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('📋 每日客服摘要')
+    expect(text).not.toContain('建議處理的事')
   })
 })
 

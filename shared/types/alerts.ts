@@ -205,6 +205,28 @@ export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<Worksp
 ])
 
 /**
+ * 每日摘要尾巴會順路提的黃級異常（`D-36`①，2026-08-27 拍板）。
+ *
+ * 黃級本來只在後台顯示——「推播沒送出去」這種事，商家幾天不開後台就永遠不知道。
+ * 摘要要發的時候順路查一次、尾巴加一行，不開新通知、不加提醒疲勞。
+ *
+ * 挑選規則（新的黃級異常要不要進來，照這四條判）：
+ * ① 要人動手的才進——SYSTEM_OWNED「不用你操作」的事佔摘要版面只會稀釋
+ * ② 摘要本文已逐項講過的不重複（等待真人／沒人回／知識庫變動是摘要本文）
+ * ③ 有自己 LINE 通知路徑的不重複（quotaRunningOut 有 80% 預警；
+ *    handoffNotifyMissing 發生時摘要根本送不到任何人）
+ * ④ 營運類探針查得到的才進——摘要只跑 canOperate 那組（純 Firestore、無外部呼叫），
+ *    renewalNotBound 是帳單探針，刻意捨去
+ *
+ * 順序＝重要度：摘要的「最重要」取第一個命中的。
+ */
+export const DIGEST_WARNING_ALERTS: readonly WorkspaceAlertId[] = [
+  'broadcastFailed',
+  'knowledgeDetectStalled',
+  'scriptUnreachable',
+]
+
+/**
  * active = 現在有這個問題；clear = 檢查過沒問題；
  * unknown = 這次查不到（查詢失敗或沒權限看），**不等於沒問題**，UI 要誠實講。
  */

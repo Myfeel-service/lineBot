@@ -39,7 +39,7 @@ import {
   hasFestivalInWindow,
   pickFestivalReminder,
 } from '~~/shared/taiwan-festivals'
-import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import { ALERT_LABELS, ALERT_SEVERITY, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts } from './workspace-alerts'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
@@ -839,7 +839,8 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
 
 // ── 每日客服摘要 ─────────────────────────────────────────────────────────
 // 「知道就好」的事全部收進每天一則:客服積壓＋知識庫待辦(來源待審/同步失敗/到期卡/
-// 建議收件匣)。2026-08-06 拍板:原本各自即時推播的知識庫通知一律併進來,LINE 按則
+// 建議收件匣)＋黃級異常一行(D-36①,清單在 shared 的 DIGEST_WARNING_ALERTS)。
+// 2026-08-06 拍板:原本各自即時推播的知識庫通知一律併進來,LINE 按則
 // 計費,一則錢講完全部;事件當下的標記(outdatedAt/status='failed'/expiredAt/pending)
 // 都留在資料上,摘要每天照著標記喊,直到有人處理——比「事件當下那一則」更不會漏。
 // 每 workspace 每天最多一則(標記存 cronState/backlog-digest);沒事就不發。
@@ -1086,9 +1087,25 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
     if (!(await claimDailyDigest(db, stateRef, ws, today))) continue
 
+    // 摘要既然要發了,順路查一次黃級異常(D-36①):黃級只在後台顯示,「推播沒送出去」
+    // 這種事商家幾天不開後台就永遠不知道。只跑營運類探針(canSettings:false＝
+    // 純 Firestore 窄查詢,不打 LINE/LIFF 外部 API)。
+    // ⛔刻意只搭已經要發的摘要,不讓黃級異常單獨觸發——單獨觸發得每輪對全租戶跑探針,
+    // 成本形狀跟 08-11 讀取費暴衝同款。查掛了就當沒有,不准拖垮摘要本體。
+    const digestWarnings = await collectWorkspaceAlerts(db, ws, { canSettings: false, canOperate: true })
+      .then((items) => {
+        const active = new Set(items.filter(a => a.state === 'active').map(a => a.id))
+        // DIGEST_WARNING_ALERTS 的順序＝重要度,「最重要」取第一個命中的
+        return DIGEST_WARNING_ALERTS.filter(id => active.has(id))
+      })
+      .catch((e) => {
+        console.warn('[backlog-digest] warning probes failed:', ws, e)
+        return []
+      })
+
     // 當天只有節慶可講時換一個標題：掛在「每日客服摘要」底下會讓商家以為有客服待辦
     const lines: string[] = []
-    if (hasConversation || hasKnowledge) {
+    if (hasConversation || hasKnowledge || digestWarnings.length) {
       lines.push('📋 每日客服摘要')
       if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
       if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」(久到沒動靜的才會由系統自動收尾)`)
@@ -1098,8 +1115,14 @@ export async function dailyBacklogDigest(db: Firestore) {
       if (agg.suggestions) {
         lines.push(`・客人常問但 AI 答不好的主題 ${agg.suggestions} 個${agg.topSuggestTopic ? `(最常問:「${agg.topSuggestTopic}」)` : ''},草稿已擬好,審一眼按「採用」AI 就學會了`)
       }
-      const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
-      lines.push(`請到後台${places}頁處理。`)
+      if (digestWarnings.length) {
+        // 只點名最重要那件:一行是「去後台看」的鉤子,不是把異常面板搬進 LINE
+        lines.push(`・另有 ${digestWarnings.length} 件建議處理的事(最重要:${ALERT_LABELS[digestWarnings[0]!]}),後台右下角的小幫手會帶你處理`)
+      }
+      if (hasConversation || hasKnowledge) {
+        const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
+        lines.push(`請到後台${places}頁處理。`)
+      }
       // 空行隔開：節慶提醒跟上面的待辦是兩件事，黏在一起會被當成第 N 條待辦
       if (festival) lines.push('', `🎉 ${festivalReminderText(festival)}`)
     }
