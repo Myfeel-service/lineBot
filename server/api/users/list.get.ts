@@ -5,6 +5,21 @@ import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 const CHUNK = 30
 const FETCH_BATCH = 120
+/**
+ * 「沒有搜尋、沒有標籤篩選」時只取清單用得到的欄位。
+ * 客人文件上還有備註、標籤建議、綁定資料等清單不看的東西；一頁 20~50 筆時
+ * 光是少搬這些就明顯有感（2026-08-27 實測見 docs/ADMIN-PERF-AUDIT-20260827.md）。
+ */
+const LIST_FIELDS = ['displayName', 'pictureUrl', 'createdAt', 'isBlocked', 'lineUserId'] as const
+/**
+ * 快路徑需要 `users (workspaceId, isBlocked, createdAt DESC)` 這個索引。索引還沒建好時
+ * 程式會自動退回掃描路徑（見 `fetchUserPageDirect`），但**每次請求都先白撞一次失敗查詢**
+ * ＝多花一趟往返（實測好友頁多 0.4 秒）。撞到就先記下來，這段時間內直接走掃描路徑。
+ * 只存在記憶體、每個執行實例各自記；索引建好之後最多等這麼久就會自動改走快路徑。
+ */
+const FAST_PATH_RETRY_MS = 10 * 60_000
+let fastPathBlockedUntil = 0
+
 const MAX_SEARCH_SCAN = 5000
 /**
  * 已知 id 集合小於這個數就走「主鍵直讀」快路徑（getAll）而不是掃 users。
@@ -119,6 +134,8 @@ export default defineEventHandler(async (event) => {
 
   let users: UserBase[]
   let total: number
+  /** 快路徑的結果；null＝索引還沒好，落回下面的掃描路徑 */
+  let fast: { users: UserBase[], total: number } | null = null
   /** true＝掃描撞到上限，結果與總數都可能不完整（別讓畫面把「掃不完」講成「沒有」） */
   let truncated = false
 
@@ -131,6 +148,12 @@ export default defineEventHandler(async (event) => {
     const matched = await fetchUsersByIds({ db, workspaceId, ids: fastPathIds, searchRaw })
     total = matched.length
     users = matched.slice(offset, offset + limit)
+  }
+  else if (!searchRaw && !filterUserIds && (fast = await fetchUserPageDirect({ db, workspaceId, offset, limit }))) {
+    // 最常見的那種請求（好友頁直接開）：不必掃描，資料庫那一頁就是答案
+    users = fast.users
+    total = fast.total
+    truncated = false
   }
   else {
     users = await fetchUserPage({ db, workspaceId, offset, limit, filterUserIds, searchRaw })
@@ -248,6 +271,68 @@ async function fetchUsersByIds(opts: {
 
   out.sort((a, b) => tsToMs(b.createdAt) - tsToMs(a.createdAt))
   return out
+}
+
+/**
+ * 沒有搜尋也沒有標籤篩選時的快路徑（＝好友頁最常見的那一種請求）。
+ *
+ * ⛔ 為什麼要跟掃描路徑分開：掃描版一律從第 1 筆開始、一批 120 筆撈回**整份文件**再在
+ * 記憶體裡篩，為了 20 筆結果讀 120 筆；而沒有篩選條件時完全不需要掃描——Firestore
+ * 那一頁本來就是答案。這裡改成「從這一頁的位置直接取 limit＋緩衝、只取需要的欄位」。
+ *
+ * ⚠️ `offset()` 跳過的每一筆仍然計費（見記憶 project_firestore_read_cost_20260811），
+ * 所以這只解決「為 20 筆讀 120 筆」，翻很深的頁還是貴。要連那個也解掉得改成游標分頁，
+ * 但頁碼式分頁（可以直接跳第 5 頁）就沒辦法用游標——那是另一筆帳（`E-26` 註記）。
+ */
+async function fetchUserPageDirect(opts: {
+  db: FirebaseFirestore.Firestore
+  workspaceId: string
+  offset: number
+  limit: number
+}): Promise<{ users: UserBase[], total: number } | null> {
+  const { db, workspaceId, offset, limit } = opts
+  // ⛔ 封鎖的客人要在**查詢層**就排掉，不可以撈回來再於記憶體篩：
+  //    在記憶體篩的話「這一頁的第幾筆」跟「資料庫的第幾筆」就對不上，
+  //    補滿一頁會借到下一頁的第一筆 → 翻頁時同一個人出現兩次（正式資料實測到過）。
+  //    可以這樣查是因為 isBlocked 建檔時一定會寫（handler.ts 建立客人時 `isBlocked: false`），
+  //    不存在「沒有這個欄位所以被等值查詢靜靜排除」的舊資料（實測 4,697 筆全部有）。
+  if (Date.now() < fastPathBlockedUntil)
+    return null // 剛剛才確認過索引還沒好，先不要再白撞一次
+
+  const base = db.collection('users')
+    .where('workspaceId', '==', workspaceId)
+    .where('isBlocked', '==', false)
+
+  let ref = base.orderBy('createdAt', 'desc').select(...LIST_FIELDS) as FirebaseFirestore.Query
+  if (offset > 0) ref = ref.offset(offset)
+
+  try {
+    const [snap, total] = await Promise.all([
+      ref.limit(limit).get(),
+      base.count().get().then(s => s.data().count),
+    ])
+    return {
+      total,
+      users: snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          lineUserId: String(data.lineUserId || '').trim() || lineUserIdFromFirestoreDocId(d.id, workspaceId),
+          displayName: data.displayName ?? d.id,
+          pictureUrl: data.pictureUrl ?? '',
+          createdAt: data.createdAt ?? null,
+          isBlocked: false,
+        }
+      }),
+    }
+  }
+  catch (e: any) {
+    // 索引還沒建好／還在建（FAILED_PRECONDITION）→ 回 null 讓呼叫端走原本的掃描路徑。
+    // 部署順序不必綁：程式先上也不會壞，索引建好之後自動走快路徑。
+    fastPathBlockedUntil = Date.now() + FAST_PATH_RETRY_MS
+    console.warn('[users/list] 快路徑不可用，退回掃描：', String(e?.message).slice(0, 160))
+    return null
+  }
 }
 
 async function fetchUserPage(opts: {
