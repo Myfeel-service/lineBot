@@ -21,6 +21,59 @@ interface MyWorkspacesResponse {
 }
 
 /**
+ * 「你有哪些官方帳號」的上一次答案，存在瀏覽器裡。
+ *
+ * 為什麼要存：這份清單是**畫面級的閘門**——`middleware/auth.ts` 沒等到它就什麼都不畫，
+ * 實測這一支要 0.4～1.7 秒，而且它沒回來之前那一頁一支查詢都還沒發出去
+ * （標籤頁的資料是第 3.2 秒才開始查的，見 docs/ADMIN-PERF-AUDIT-20260827.md）。
+ * 開頁先用上次的答案把畫面長出來、同時在背景重新問一次，就省掉那段全白。
+ *
+ * ⛔ 這不是權限：每一支 API 在伺服器端都各自 `requireWorkspaceAccess`，
+ *    這份快取只影響「畫面要不要先長出來」。用它放行也只是樂觀——背景那次問完，
+ *    真的沒權限就照原本的規則把人送回帳號選擇頁。
+ * ⛔ 一定要綁 uid：不同人共用同一台電腦時，不可以拿別人的帳號清單來渲染。
+ */
+const WORKSPACE_LIST_CACHE_KEY = 'workspace-list-cache-v1'
+
+interface WorkspaceListCache {
+  uid: string
+  workspaces: WorkspaceItem[]
+  orgAdminOf: OrgAdminEntry[]
+  savedAt: number
+}
+
+function readWorkspaceListCache(uid: string): WorkspaceListCache | null {
+  if (!import.meta.client || !uid) return null
+  try {
+    const raw = localStorage.getItem(WORKSPACE_LIST_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as WorkspaceListCache
+    if (parsed?.uid !== uid || !Array.isArray(parsed.workspaces)) return null
+    return parsed
+  }
+  catch {
+    return null // 無痕模式／壞資料：當作沒有快取，照原本的流程等 API
+  }
+}
+
+function writeWorkspaceListCache(cache: WorkspaceListCache) {
+  if (!import.meta.client) return
+  try {
+    localStorage.setItem(WORKSPACE_LIST_CACHE_KEY, JSON.stringify(cache))
+  }
+  catch { /* 存不進去就算了，下次照舊等 API */ }
+}
+
+/** 登出時清掉：帳號清單含官方帳號名稱，不留在別人也會用的電腦上 */
+export function clearWorkspaceListCache() {
+  if (!import.meta.client) return
+  try {
+    localStorage.removeItem(WORKSPACE_LIST_CACHE_KEY)
+  }
+  catch { /* ignore */ }
+}
+
+/**
  * 提供目前作用中的 workspace 上下文，以及自動注入 auth token + workspaceId 的 fetch 工具。
  * workspaceId 來自路由參數 /admin/[workspaceId]/...
  */
@@ -59,6 +112,9 @@ export const useWorkspace = () => {
         })
         workspaceList.value = res.workspaces
         orgAdminOf.value = res.orgAdminOf
+        const uid = useAuth().user.value?.uid
+        if (uid)
+          writeWorkspaceListCache({ uid, workspaces: res.workspaces, orgAdminOf: res.orgAdminOf, savedAt: Date.now() })
         return res.workspaces
       }
       finally {
@@ -85,6 +141,24 @@ export const useWorkspace = () => {
     catch {
       return { loaded: false }
     }
+  }
+
+  /**
+   * 拿上次的答案先把畫面長出來（只在還沒有清單時）。回傳有沒有真的填進去。
+   *
+   * 搭配 `middleware/auth.ts`：填得進去就先放行、背景重新驗證；填不進去（第一次登入、
+   * 換帳號、無痕模式）就照原本的流程等 API 回來。
+   * ⛔ 這裡**不做權限判斷**：填進去之後守衛還是會看 `roleFor`，而且背景那次問完會再看一次。
+   */
+  function hydrateWorkspaceListFromCache(): boolean {
+    if (workspaceList.value.length > 0) return true
+    const uid = useAuth().user.value?.uid
+    if (!uid) return false
+    const cached = readWorkspaceListCache(uid)
+    if (!cached?.workspaces.length) return false
+    workspaceList.value = cached.workspaces
+    orgAdminOf.value = cached.orgAdminOf ?? []
+    return true
   }
 
   /**
@@ -139,6 +213,7 @@ export const useWorkspace = () => {
     apiFetch,
     loadWorkspaceList,
     ensureWorkspaceList,
+    hydrateWorkspaceListFromCache,
     roleFor,
   }
 }

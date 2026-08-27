@@ -42,7 +42,32 @@ export default defineNuxtRouteMiddleware(async (to) => {
   //
   // 清單本身就是權威來源：super admin 拿到全部、org admin 拿到組織底下全部、
   // 被 email 邀請但還沒轉正的也在內（見 /api/admin/workspaces/my），比對清單就夠。
-  const { ensureWorkspaceList, roleFor } = useWorkspace()
+  const { ensureWorkspaceList, hydrateWorkspaceListFromCache, loadWorkspaceList, roleFor } = useWorkspace()
+
+  /**
+   * 先用上次的答案放行（`E-27`）。
+   *
+   * 為什麼：這道閘門擋的是**整個畫面**——實測那支要 0.4～1.7 秒，而且它沒回來之前
+   * 這一頁一支查詢都還沒發出去（標籤頁的資料是第 3.2 秒才開始查的）。開頁先用瀏覽器裡
+   * 上次的清單把畫面長出來，同時在背景重新問一次，把那段全白省掉。
+   *
+   * ⛔ 安全性不變：每一支 API 在伺服器端都各自 `requireWorkspaceAccess`，這道只是畫面上的
+   *    體貼（它原本要擋的是「把網址換成別人的帳號、整個外殼照長出來」那種誤會）。
+   * ⛔ 只有「上次的清單說你有這個帳號」才樂觀放行。上次說沒有＝可能是剛被邀請進來，
+   *    那就照原本的流程等 API，不能拿舊答案把人擋在外面。
+   */
+  if (hydrateWorkspaceListFromCache() && roleFor(workspaceId)) {
+    // 背景重新驗證：真的被移除權限了還是要照原本的規則送回帳號選擇頁
+    void loadWorkspaceList()
+      .then(() => {
+        if (roleFor(workspaceId)) return
+        useAdminToast().showToast('你沒有這個官方帳號的權限，已回到帳號選擇頁', 'error')
+        void navigateTo('/admin/workspaces', { replace: true })
+      })
+      .catch(() => { /* 斷網／token 過期：不下判斷，交給頁面自己的錯誤處理 */ })
+    return
+  }
+
   const { loaded } = await ensureWorkspaceList()
   // 沒載成功（斷網／token 剛過期）→ 不下判斷，交給頁面自己的錯誤處理。
   // 否則一次網路抖動就會把有權限的人踢回帳號選擇頁。

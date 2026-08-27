@@ -29,6 +29,8 @@ export const useAuth = () => {
   }
 
   async function logout() {
+    // 帳號清單含官方帳號名稱，別留在別人也會用的電腦上（快取用途見 useWorkspace）
+    clearWorkspaceListCache()
     await signOut($auth)
     await navigateTo('/login')
   }
