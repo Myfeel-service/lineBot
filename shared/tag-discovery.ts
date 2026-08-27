@@ -47,6 +47,22 @@ export const MANUAL_DISCOVERY_MIN_GAP_MS = 30 * 60 * 1000
 /** 一次掃描最多提幾個（寧缺勿濫，一週能認真看完的量） */
 export const MAX_PROPOSALS_PER_SCAN = 3
 
+/**
+ * 決策紀錄保留幾筆（FIFO）。
+ *
+ * 為什麼要留：先前按過「建立」或「忽略」之後，那條提案就從文件上整個消失
+ * ——忽略只留下一個看不見的名字（`dismissedNames`），採用連「這顆標籤是 AI 提的」
+ * 都看不出來。老闆 08-28 直接問「是否把之前建議的紀錄保留、也保留當時的決策」，
+ * 答案是要：沒有這份紀錄，「按了幾次都沒有新的」就永遠只能靠印象回答。
+ *
+ * ⛔ 50 筆是刻意的上限：一份文件（1MB）裝得下，而且掃描一週一次、一次最多 3 條，
+ *    50 筆約等於一年份。無上限的陣列遲早把整份文件撐爆，連 pending 都讀不出來。
+ */
+export const MAX_DISCOVERY_HISTORY = 50
+
+/** 決策紀錄一筆最多存幾位客人的名字（同 pending 的證據快照） */
+export const HISTORY_SAMPLE_NAMES = 3
+
 export const DISCOVERY_NAME_MAX = 20
 export const DISCOVERY_CRITERIA_MAX = 200 // ＝標籤編輯器 aiCriteria 的 maxlength，同一個數字
 export const DISCOVERY_LINE_MAX = 80
@@ -78,6 +94,75 @@ export interface TagDiscoveryProposal {
   proposedAtMs: number
 }
 
+/** 一條提案最後被怎麼處理掉的 */
+export type TagDiscoveryDecisionAction = 'adopt' | 'dismiss'
+
+/**
+ * 一筆決策紀錄：這條建議長什麼樣、誰在什麼時候決定了什麼。
+ *
+ * ⛔ **不存 `userDocIds`**（pending 存、這裡不存）：一條提案可以掛到兩百多位客人，
+ * 50 筆 × 200 個 id 就是幾百 KB，會把整份文件推向 1MB 上限，連 pending 都讀不出來。
+ * 紀錄要回答的是「當時提了什麼、我決定了什麼」，人數與幾個名字就足夠；
+ * 真要看名單，採用的那條可以從 `tagId` 連到好友頁（那才是名單的家）。
+ */
+export interface TagDiscoveryDecision {
+  /** 沿用提案 id，方便和伺服器日誌對得起來 */
+  id: string
+  name: string
+  category: TagCategory
+  criteria: string
+  usage: string
+  reason: string
+  /** 提案當時有幾位不同客人聊過（證據強度的快照） */
+  userCount: number
+  sampleNames: string[]
+  proposedAtMs: number
+  decidedAtMs: number
+  action: TagDiscoveryDecisionAction
+  /** 誰按的：uid 一定有，email 是當下的快照（沒有就不顯示，⛔不要拿 uid 充當人名） */
+  decidedBy: string
+  decidedByEmail?: string
+  /** adopt 才有：建出來的標籤 id（畫面靠它連到好友頁的名單） */
+  tagId?: string
+  /** adopt 才有：實際幫幾位客人貼上（⛔ 可能少於 userCount，貼標是逐位進行、單人失敗不整批放棄） */
+  taggedCount?: number
+  /**
+   * dismiss 才有：後來按了「取消忽略」的時間。
+   * ⛔ 不把整筆刪掉：刪掉等於這個決定沒發生過，而它其實發生過也被推翻過——
+   * 兩件事都是紀錄的一部分。
+   */
+  undoneAtMs?: number
+}
+
+/** 一條提案沒能留下來的原因（畫面要講得出「AI 其實有提，但…」） */
+export type DiscoveryDropReason = 'duplicate' | 'too_few_users' | 'incomplete' | 'over_limit'
+
+/**
+ * 上一次掃描到底發生了什麼（`C-68` 同一種病的第三次治療）。
+ *
+ * ⛔ **為什麼非存不可**：08-26 查「線上為什麼提 0 個」時，掃描 health 乾淨、`lastScanMs`
+ * 也寫了＝正常跑完，模型也有回東西，全部被守門員刷掉——但**一個字都沒留在資料裡**
+ * （只有伺服器 log 的一行 warn，畫面上查不到）。使用者看到的就只有「沒有新建議」，
+ * 跟「壞掉了」長得一模一樣。老闆 08-28 的「按了幾次都沒有新的」問的就是這個。
+ */
+export interface DiscoveryScanOutcome {
+  atMs: number
+  kind: 'proposed' | 'no_topics' | 'all_filtered' | 'too_few_sessions'
+  /** 這次讀進來幾段對話（客人真的講過話的那些） */
+  sessionCount: number
+  /** 這些對話來自幾位不同客人 */
+  userCount: number
+  /** 模型提了幾個主題 */
+  rawCount: number
+  /** 守門後留下幾個（＝真的進收件匣的數量） */
+  keptCount: number
+  /** 被刷掉的主題與原因（上限見 MAX_OUTCOME_DROPPED） */
+  dropped: Array<{ name: string; reason: DiscoveryDropReason }>
+}
+
+/** 掃描結果裡最多記幾條「被刷掉的主題」（文件要小；講三五個就夠說明白了） */
+export const MAX_OUTCOME_DROPPED = 6
+
 export interface TagDiscoveryDoc {
   workspaceId: string
   pending: TagDiscoveryProposal[]
@@ -85,6 +170,10 @@ export interface TagDiscoveryDoc {
   dismissedNames: string[]
   /** 上次掃描完成時間（不管有沒有提出東西都更新，掃描間隔靠它） */
   lastScanMs: number
+  /** 上次掃描的結果明細（沒提出東西時，這是唯一講得出「為什麼」的地方） */
+  lastScan?: DiscoveryScanOutcome
+  /** 決策紀錄（新的在後面，FIFO 砍舊的） */
+  history?: TagDiscoveryDecision[]
   /**
    * 使用者按了「立即掃描一次」的時間（D-30②）。
    * 比 lastScanMs 新＝下一輪排程要跳過「還沒到一週」的閘門，真的掃一次。
@@ -153,7 +242,56 @@ export interface DiscoveryStateInput {
   stalled: boolean
   /** 這次進頁面之後，使用者自己處理掉了建議（採用或忽略） */
   handledThisVisit: boolean
+  /** 上次掃描的結果明細；沒有（舊資料）就退回泛用句子，⛔不要硬掰一個原因 */
+  lastScan?: DiscoveryScanOutcome | null
   now?: number
+}
+
+const DROP_REASON_TEXT: Record<DiscoveryDropReason, string> = {
+  duplicate: '你已經有相同或很接近的標籤（含你先前按過「不要」的主題）',
+  too_few_users: `聊過的客人不到 ${MIN_DISTINCT_USERS} 位`,
+  incomplete: '內容不完整',
+  over_limit: `一次最多提 ${MAX_PROPOSALS_PER_SCAN} 個，這幾個排在後面`,
+}
+
+/**
+ * 「這次掃描為什麼沒有新的」——一句話講完（純函式，可測）。
+ *
+ * ⛔ 這支的重點是**分得出三種「沒有」**：樣本太少、AI 看完覺得沒主題、AI 有提但被擋掉。
+ * 三種的下一步完全不同（等對話累積／這是正常的／去看看是不是擋錯了），
+ * 全部講成「沒有發現新主題」等於什麼都沒講。
+ *
+ * 回 null＝沒有可講的明細（舊資料沒存 lastScan），呼叫端退回原本的泛用句。
+ */
+export function discoveryScanOutcomeText(outcome: DiscoveryScanOutcome | null | undefined): string | null {
+  if (!outcome || typeof outcome.kind !== 'string') return null
+
+  if (outcome.kind === 'too_few_sessions') {
+    return `這次讀了最近兩週的 ${outcome.sessionCount} 段對話，可用的樣本太少`
+      + `（同一個主題至少要 ${MIN_DISTINCT_USERS} 位不同客人聊過才會提）。`
+  }
+
+  if (outcome.kind === 'no_topics') {
+    return `這次讀了 ${outcome.sessionCount} 段對話（${outcome.userCount} 位客人），`
+      + 'AI 沒有找到夠多人聊、而且你還沒有標籤的主題。'
+  }
+
+  if (outcome.kind === 'all_filtered') {
+    // 同原因的併成一組講，否則三個主題就是三句話，沒人讀得完
+    const groups = new Map<DiscoveryDropReason, string[]>()
+    for (const d of outcome.dropped ?? []) {
+      const list = groups.get(d.reason) ?? []
+      list.push(d.name)
+      groups.set(d.reason, list)
+    }
+    const parts = [...groups.entries()].map(([reason, names]) =>
+      `「${names.join('、')}」${DROP_REASON_TEXT[reason] ?? '被排除'}`)
+    const detail = parts.length ? `——${parts.join('；')}。` : '。'
+    return `這次 AI 有提出 ${outcome.rawCount} 個主題，但都沒有留下${detail}`
+  }
+
+  // proposed：正常情況下畫面會顯示收件匣而不是這行；人把建議清完了才會走到這裡
+  return `上次掃描提出了 ${outcome.keptCount} 個建議。`
 }
 
 /** 超過幾倍間隔沒成功掃描就算「太久沒動」（掃描約每 6.5 天一次，兩倍＝約兩週） */
@@ -195,7 +333,18 @@ export function discoveryState(input: DiscoveryStateInput): { tone: DiscoverySta
     return { tone: 'idle', text: '這批建議都處理完了。AI 每週會再從新的對話裡找新主題。' }
   }
 
-  return { tone: 'idle', text: 'AI 每週會從對話裡找「還沒有標籤」的新主題。這次掃描沒有發現足夠明確的新主題。' }
+  /**
+   * ⛔ 有明細就講明細：泛用的「沒有發現足夠明確的新主題」在三種情境下都會印同一句
+   * （樣本太少／AI 覺得沒主題／AI 有提但被擋掉），而這三種的下一步完全不同。
+   * 舊資料沒存 lastScan 才退回那句泛用的——不是所有人都會馬上有明細。
+   */
+  const scanText = discoveryScanOutcomeText(input.lastScan)
+  return {
+    tone: 'idle',
+    text: scanText
+      ? `AI 每週會從對話裡找「還沒有標籤」的新主題。${scanText}`
+      : 'AI 每週會從對話裡找「還沒有標籤」的新主題。這次掃描沒有發現足夠明確的新主題。',
+  }
 }
 
 /**
@@ -301,20 +450,50 @@ export function sanitizeDiscoveryProposals(
   raw: RawDiscoveryTopic[],
   ctx: SanitizeContext,
 ): Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs' | 'sampleNames'>> {
+  return sanitizeDiscoveryProposalsDetailed(raw, ctx).kept
+}
+
+export interface SanitizeResult {
+  kept: Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs' | 'sampleNames'>>
+  /** 被刷掉的：名字＋原因。⛔ 沒名字的（連 name 都空）不進來——講不出是哪一條，寫了也沒用 */
+  dropped: Array<{ name: string; reason: DiscoveryDropReason }>
+}
+
+/**
+ * 同上，但**連「誰被刷掉、為什麼」一起回**。
+ *
+ * ⛔ 為什麼要有這支：08-26 線上「提 0 個」查不出原因，就是因為守門員把東西默默丟掉、
+ * 一個字都沒留（`C-68` 同一種病發生在守門員身上）。`kept` 與上面那支保證逐字相同，
+ * 差別只在多回一份「被丟掉的清單」——判斷邏輯只有這一份，不會有兩套口徑。
+ */
+export function sanitizeDiscoveryProposalsDetailed(
+  raw: RawDiscoveryTopic[],
+  ctx: SanitizeContext,
+): SanitizeResult {
   const max = ctx.maxProposals ?? MAX_PROPOSALS_PER_SCAN
   const minUsers = ctx.minDistinctUsers ?? MIN_DISTINCT_USERS
   const taken = new Set(ctx.takenNames.map(normalizeTagName).filter(Boolean))
-  const out: Array<Omit<TagDiscoveryProposal, 'id' | 'proposedAtMs' | 'sampleNames'>> = []
+  const kept: SanitizeResult['kept'] = []
+  const dropped: SanitizeResult['dropped'] = []
+
+  /** 記一筆被刷掉的（沒名字的略過：畫面上「『』因為…被排除」是空話） */
+  const drop = (name: string, reason: DiscoveryDropReason) => {
+    if (name && dropped.length < MAX_OUTCOME_DROPPED) dropped.push({ name, reason })
+  }
 
   for (const topic of Array.isArray(raw) ? raw : []) {
-    if (out.length >= max) break
-
     const name = String(topic?.name ?? '').trim().slice(0, DISCOVERY_NAME_MAX)
     const criteria = String(topic?.criteria ?? '').trim().slice(0, DISCOVERY_CRITERIA_MAX)
-    if (!name || !criteria) continue
+    if (!name || !criteria) {
+      drop(name, 'incomplete')
+      continue
+    }
 
     const key = normalizeTagName(name)
-    if (!key || taken.has(key)) continue
+    if (!key || taken.has(key)) {
+      drop(name, 'duplicate')
+      continue
+    }
 
     // 場次索引 → 客人主鍵，去重（同一位客人多場只算一位）
     const sessions = Array.isArray(topic?.sessions) ? topic.sessions : []
@@ -323,13 +502,27 @@ export function sanitizeDiscoveryProposals(
         .map(s => ctx.sessionUserIds[Number(s)])
         .filter((u): u is string => typeof u === 'string' && !!u),
     )]
-    if (userDocIds.length < minUsers) continue
+    if (userDocIds.length < minUsers) {
+      drop(name, 'too_few_users')
+      continue
+    }
+
+    /**
+     * ⛔ 上限的檢查放在**所有內容檢查之後**：這樣「排在後面所以沒進來」的那幾條，
+     * 名字與原因都講得出來。先前是 `break`，後面的連看都沒看過，
+     * 於是「AI 其實提了 5 個」這件事在畫面上等於沒發生。
+     * `kept` 的結果與先前逐字相同（上限一樣不放行）。
+     */
+    if (kept.length >= max) {
+      drop(name, 'over_limit')
+      continue
+    }
 
     const category = VALID_CATEGORIES.includes(topic?.category as TagCategory)
       ? topic!.category as TagCategory
       : 'custom'
 
-    out.push({
+    kept.push({
       name,
       code: sanitizeTagCode(String(topic?.code ?? '')),
       category,
@@ -341,5 +534,5 @@ export function sanitizeDiscoveryProposals(
     taken.add(key) // 提案彼此也要去重
   }
 
-  return out
+  return { kept, dropped }
 }

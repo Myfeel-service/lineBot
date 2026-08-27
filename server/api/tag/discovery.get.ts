@@ -42,6 +42,18 @@ export default defineEventHandler(async (event) => {
     })),
     lastScanMs: Number(doc?.lastScanMs ?? 0),
     /**
+     * 上次掃描的明細（`C-94`）。⛔ 一定要回：只給 `lastScanMs` 的話，畫面對
+     * 「樣本太少」「AI 覺得沒主題」「AI 有提但被擋掉」只能印同一句話，
+     * 而老闆按了幾次「立即掃描」得到的就是那同一句（08-28 的實際回報）。
+     */
+    lastScan: doc?.lastScan ?? null,
+    /**
+     * 決策紀錄，**新的在前**（畫面由上往下讀＝由近到遠）。
+     * ⛔ 資料層是 append 到尾巴（FIFO 砍舊的靠 slice(-N)），呈現順序在這裡反轉，
+     *    不要為了顯示方便去改資料的排序——那會讓 FIFO 砍到最新的那幾筆。
+     */
+    history: (Array.isArray(doc?.history) ? doc!.history : []).slice().reverse(),
+    /**
      * 有人按過「立即掃描一次」、排程還沒撿走（比 lastScanMs 新才算數）。
      * ⛔ 一定要回：少了它，按完按鈕重新整理頁面就完全看不出「已經排隊了」，
      * 只剩一則會消失的 toast——使用者會以為沒按到，然後再按一次（而那顆按鈕會花一次 LLM）。

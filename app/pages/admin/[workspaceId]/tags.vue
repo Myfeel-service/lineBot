@@ -111,6 +111,77 @@
           >立即掃描一次</el-button>
         </div>
 
+        <!--
+          ══ 先前的建議與當時的決定（C-94）════════════════════════
+          老闆 08-28：「按了幾次都沒有新的，是否把之前建議的紀錄保留，
+          也保留之前決策是建立還是不要建立」。
+          ⛔ **預設收合**：這是回頭查用的，不是每天要看的東西——展開就佔掉半個畫面，
+             而上面那張「等你決定」的卡才是要被看見的主角。
+          ⛔ **沒有紀錄時整塊不出現**：一個空的「先前紀錄（0）」只是告訴人這裡沒東西，
+             那句話用不著一個區塊來講。
+        -->
+        <div v-if="discoveryLoaded && discoveryHistory.length" class="tags-history">
+          <button
+            type="button"
+            class="tags-history__toggle"
+            :class="{ 'is-open': showDiscoveryHistory }"
+            @click="showDiscoveryHistory = !showDiscoveryHistory"
+          >
+            <span class="tags-history__chevron" aria-hidden="true" />
+            {{ showDiscoveryHistory ? '收合' : '展開' }}先前的建議與決定（{{ discoveryHistory.length }} 筆）
+          </button>
+
+          <div v-if="showDiscoveryHistory" class="tags-history__body">
+            <p class="tags-desc-hint text-muted">
+              AI 提過的每一條，以及當時是誰、在什麼時候按了「建立」或「忽略」。
+              按過「忽略」的主題之後不會再被提；如果是按錯的，可以在這裡取消。
+            </p>
+            <div v-for="h in discoveryHistory" :key="h.id" class="tags-history-row">
+              <div class="tags-history-row__main">
+                <div class="tags-history-row__title">
+                  <!-- 決定本身是這一列的重點 → 放在名字前面，一眼掃得完整欄 -->
+                  <span
+                    class="badge"
+                    :class="h.action === 'adopt' ? 'badge-green' : 'badge-gray'"
+                  >{{ h.action === 'adopt' ? '已建立' : '已忽略' }}</span>
+                  <span class="tags-history-row__name">{{ h.name }}</span>
+                  <span class="badge badge-gray">{{ tagCategoryLabel(h.category) }}</span>
+                  <!-- 撤回過的忽略要看得出來：否則畫面說「已忽略」，實際上它隨時會再回來 -->
+                  <span v-if="h.undoneAtMs" class="badge badge-orange">已取消忽略</span>
+                </div>
+                <p class="tags-history-row__meta">
+                  <!-- ⛔ 查不到是誰就整段不講：「由 同事決定」既沒資訊、中英夾雜的空格還會歪掉 -->
+                  {{ elapsedSince(h.decidedAtMs) }}<template v-if="h.decidedByEmail">由 {{ h.decidedByEmail }} </template>決定．提議時有
+                  <strong>{{ h.userCount }} 位客人</strong>聊過<template v-if="h.sampleNames?.length">（{{ h.sampleNames.join('、') }}{{ h.userCount > h.sampleNames.length ? ' 等' : '' }}）</template>
+                  <!-- ⛔ 實際貼上人數可能少於提議人數（逐位貼、單人失敗不整批放棄）→ 據實顯示，不要拿 userCount 充數 -->
+                  <template v-if="h.action === 'adopt' && h.taggedCount !== undefined">
+                    ．實際幫 <strong>{{ h.taggedCount }} 位</strong>貼上
+                  </template>
+                </p>
+                <p class="tags-history-row__criteria" :title="h.criteria">AI 判斷條件：{{ h.criteria }}</p>
+              </div>
+              <div class="tags-history-row__actions">
+                <!-- 採用的那條連得到名單：標籤已經存在，好友頁靠 ?tagIds= 篩得出來 -->
+                <el-button
+                  v-if="h.action === 'adopt' && h.tagId"
+                  size="small"
+                  text
+                  @click="goTaggedFriends(h.tagId)"
+                >看這批客人</el-button>
+                <!-- ⛔ 文案是「取消忽略」不是「還原建議」：建議本身回不來（沒存名單），
+                     真正發生的是「這個主題重新有資格被提」 -->
+                <el-button
+                  v-if="canOperate && canUndoDismiss(h)"
+                  size="small"
+                  :loading="undoingDismiss === h.id"
+                  :disabled="!!undoingDismiss"
+                  @click="undoDismiss(h)"
+                >取消忽略</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="message-card tags-page-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -444,7 +515,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
-import { discoveryState, discoveryTiming } from '~~/shared/tag-discovery'
+import { discoveryState, discoveryTiming, type DiscoveryScanOutcome, type TagDiscoveryDecision } from '~~/shared/tag-discovery'
 import { TAG_AI_SEGMENTS, TAG_AI_SUB_SEGMENTS, isTagAiFilterValue } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
@@ -629,6 +700,18 @@ const discoveryActing = ref('')
 /** 「AI 讀對話」總開關：關著的話卡片要先講清楚建了也不會自己運作 */
 const discoveryEnabled = ref(false)
 const discoveryLastScanMs = ref(0)
+/**
+ * 上次掃描的明細：讀了幾段對話、AI 提了幾個、被擋掉哪幾個。
+ * ⛔ 沒有這個的話，「樣本太少」「AI 覺得沒主題」「AI 有提但撞名被擋」畫面上會印同一句話
+ *   ——老闆 08-28「按了幾次都沒有新的」問的正是這三種的哪一種。
+ */
+const discoveryLastScan = ref<DiscoveryScanOutcome | null>(null)
+/** 先前的建議與當時的決定（新的在前，後端已反轉） */
+const discoveryHistory = ref<TagDiscoveryDecision[]>([])
+/** 紀錄區塊預設收合：它是「回頭查」用的，不該每次開頁都佔掉半個畫面 */
+const showDiscoveryHistory = ref(false)
+/** 正在取消忽略的那筆紀錄 id（防連點） */
+const undoingDismiss = ref('')
 /** 有人按過「立即掃描一次」、排程還沒撿走（比 lastScanMs 新才算數） */
 const discoveryRescanRequestedMs = ref(0)
 /** 掃描器連續失敗中（後端用掃描器自己記的失敗判定，不是拿游標猜） */
@@ -660,7 +743,13 @@ const discoveryIdle = computed(() => discoveryState({
   lastScanMs: discoveryLastScanMs.value,
   stalled: discoveryStalled.value,
   handledThisVisit: discoveryHandledThisVisit.value,
+  lastScan: discoveryLastScan.value,
 }))
+
+/** 「還可以被 AI 再提一次」的只有沒撤回過的忽略；採用過的標籤已經存在，不會也不該再提 */
+function canUndoDismiss(h: TagDiscoveryDecision) {
+  return h.action === 'dismiss' && !h.undoneAtMs
+}
 
 /**
  * 載入失敗＝把 loaded 收回 false，那行說明就不出現。
@@ -676,17 +765,49 @@ async function loadDiscovery() {
       lastScanMs: number
       rescanRequestedMs?: number
       stalled: boolean
+      lastScan?: DiscoveryScanOutcome | null
+      history?: TagDiscoveryDecision[]
     }>('/api/tag/discovery')
     discoveryPending.value = res.pending ?? []
     discoveryEnabled.value = res.enabled === true
     discoveryLastScanMs.value = Number(res.lastScanMs ?? 0)
     discoveryRescanRequestedMs.value = Number(res.rescanRequestedMs ?? 0)
     discoveryStalled.value = res.stalled === true
+    discoveryLastScan.value = res.lastScan ?? null
+    discoveryHistory.value = res.history ?? []
     discoveryLoaded.value = true
   }
   catch {
     discoveryPending.value = []
+    discoveryLastScan.value = null
+    discoveryHistory.value = []
     discoveryLoaded.value = false
+  }
+}
+
+/**
+ * 取消忽略：把否決票撤回，讓這個主題**有機會**再被提。
+ *
+ * ⛔ 文案不可以講成「已還原這條建議」——建議沒有回來（決策紀錄刻意不存客人名單，
+ * 見 shared 的欄位註解）。真正發生的是「下次掃描時它可以再被提」，
+ * 而如果聊過的客人已經散掉、或超出兩週窗口，它就不會回來。講白比講好聽重要。
+ */
+async function undoDismiss(h: TagDiscoveryDecision) {
+  if (!assertCanOperate()) return
+  undoingDismiss.value = h.id
+  try {
+    await apiFetch('/api/tag/discovery', {
+      method: 'POST',
+      body: { action: 'undo-dismiss', proposalId: h.id },
+    })
+    showToast(`已取消忽略「${h.name}」，下次掃描如果還有客人在聊就會再提一次`, 'success')
+    await loadDiscovery()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '取消忽略失敗', 'error')
+  }
+  finally {
+    undoingDismiss.value = ''
   }
 }
 
@@ -707,6 +828,8 @@ async function actOnDiscovery(p: DiscoveryRow, action: 'adopt' | 'dismiss') {
     }
     discoveryPending.value = discoveryPending.value.filter((row: DiscoveryRow) => row.id !== p.id)
     discoveryHandledThisVisit.value = true
+    // 決策紀錄是後端寫的（含採用後補上的標籤連結與實際貼上人數）→ 重新載入才看得到這筆
+    await loadDiscovery()
   }
   catch (e: any) {
     // 404＝同事剛處理掉了：把這條從畫面拿掉並講原因，不是報錯了事

@@ -656,3 +656,97 @@
 
 .tags-discovery-strip.is-warning .tags-discovery-strip__txt b,
 .tags-discovery-strip.is-danger .tags-discovery-strip__txt b { color: inherit; }
+
+/* ── 先前的建議與決定（C-94）──────────────────────────────────
+   ⛔ 刻意**不做成卡片**：卡片是「要你看」的語彙，而這塊是回頭查用的。
+   收合時只是一行連結般的切換鈕，展開才長出內容——同對話統計頁「展開每期明細」的做法，
+   不另創一套折疊語彙（老闆對逐頁自刻極敏感）。 */
+.tags-history {
+  margin-top: -0.15rem; /* 貼著上面那條細條，讀起來是同一件事的下一層 */
+}
+
+.tags-history__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--el-color-primary);
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
+
+.tags-history__chevron {
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.tags-history__toggle.is-open .tags-history__chevron { transform: rotate(90deg); }
+
+.tags-history__body {
+  margin-top: 0.4rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.tags-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--border-light, var(--border));
+
+  &:first-of-type { border-top: 0; }
+}
+
+.tags-history-row__main { flex: 1; min-width: 0; }
+
+.tags-history-row__title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tags-history-row__name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tags-history-row__meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+
+  strong { color: var(--text-primary); font-weight: 600; }
+}
+
+.tags-history-row__criteria {
+  margin: 0.15rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  /* 同 pending 那份：條件可長到 200 字，兩行截斷、滑上去看全文 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tags-history-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}

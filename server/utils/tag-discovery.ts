@@ -29,7 +29,8 @@ import {
   MAX_PROPOSALS_PER_SCAN,
   MIN_DISTINCT_USERS,
   pickSampleNames,
-  sanitizeDiscoveryProposals,
+  sanitizeDiscoveryProposalsDetailed,
+  type DiscoveryScanOutcome,
   type RawDiscoveryTopic,
   type TagDiscoveryDoc,
   type TagDiscoveryProposal,
@@ -138,6 +139,13 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
         pending: [...pending, ...result.proposals],
         dismissedNames,
         lastScanMs: Date.now(),
+        /**
+         * 這次到底發生什麼事（`C-94`）。⛔ **提 0 個的時候更要寫**：
+         * 先前這種情況資料上只留下一個新的 `lastScanMs`，畫面只能講一句
+         * 「沒有發現足夠明確的新主題」，跟「壞掉了」分不出來，而老闆連按幾次
+         * 「立即掃描」得到的都是同一句話。
+         */
+        lastScan: result.outcome,
         // 消化掉手動要求（不清的話下一輪會再掃一次，等於一次按鈕掃兩輪）
         ...(rescanPending ? { rescanRequestedMs: FieldValue.delete() } : {}),
         ...(healed ? { health: healed } : {}),
@@ -179,8 +187,21 @@ async function scanOneWorkspace(
   workspaceId: string,
   pending: TagDiscoveryProposal[],
   dismissedNames: string[],
-): Promise<{ proposed: number; proposals: TagDiscoveryProposal[] }> {
-  const none = { proposed: 0, proposals: [] as TagDiscoveryProposal[] }
+): Promise<{ proposed: number; proposals: TagDiscoveryProposal[]; outcome: DiscoveryScanOutcome }> {
+  /** 樣本就不夠的那種「沒有」：連 LLM 都不會打，講「AI 沒找到主題」是不實陳述 */
+  const tooFewSessions = (sessionCount: number, userCount: number) => ({
+    proposed: 0,
+    proposals: [] as TagDiscoveryProposal[],
+    outcome: {
+      atMs: Date.now(),
+      kind: 'too_few_sessions',
+      sessionCount,
+      userCount,
+      rawCount: 0,
+      keptCount: 0,
+      dropped: [],
+    } satisfies DiscoveryScanOutcome,
+  })
 
   // 窗口：上次掃描之後的對話；第一次掃回看兩週（一次 LLM 的量，跟 tag-suggest
   // 「不追歷史」的考量不同——那支是一場一次 LLM，追歷史是幾千次）
@@ -200,7 +221,9 @@ async function scanOneWorkspace(
   const sessions = sessSnap.docs
     .map(d => d.data())
     .filter(s => s.hasInbound !== false && String(s.userId ?? ''))
-  if (sessions.length < MIN_DISTINCT_USERS) return none
+  if (sessions.length < MIN_DISTINCT_USERS) {
+    return tooFewSessions(sessions.length, new Set(sessions.map(s => String(s.userId))).size)
+  }
 
   // 逐場抽「客人說的話」摘要（分批併發，別串行等一分鐘）
   const digests: SessionDigest[] = []
@@ -231,7 +254,8 @@ async function scanOneWorkspace(
     }))
     digests.push(...results.filter((r): r is SessionDigest => !!r))
   }
-  if (new Set(digests.map(d => d.userDocId)).size < MIN_DISTINCT_USERS) return none
+  const distinctUsers = new Set(digests.map(d => d.userDocId)).size
+  if (distinctUsers < MIN_DISTINCT_USERS) return tooFewSessions(digests.length, distinctUsers)
 
   // 排除名單＝所有既有標籤名（不分 aiMode——同名就是重複，不管誰在判）＋pending＋否決過的
   const tagSnap = await db.collection('tags').where('workspaceId', '==', workspaceId).get()
@@ -273,11 +297,26 @@ async function scanOneWorkspace(
 
   const room = MAX_PENDING_DISCOVERIES - pending.length
   const rawTopics = Array.isArray(data?.topics) ? data.topics : []
-  const cleaned = sanitizeDiscoveryProposals(rawTopics, {
+  const { kept: cleaned, dropped } = sanitizeDiscoveryProposalsDetailed(rawTopics, {
     sessionUserIds: digests.map(d => d.userDocId),
     takenNames,
     maxProposals: Math.min(MAX_PROPOSALS_PER_SCAN, Math.max(0, room)),
   })
+
+  /**
+   * 三種「沒有新的」要分得出來，因為下一步完全不同：
+   * 樣本太少＝等對話累積（上面已回）／AI 覺得沒主題＝這通常就是正確答案／
+   * AI 有提但被擋掉＝可以去看看是不是擋錯了（例如否決名單裡有一條當初按錯的）。
+   */
+  const outcome: DiscoveryScanOutcome = {
+    atMs: Date.now(),
+    kind: cleaned.length ? 'proposed' : rawTopics.length ? 'all_filtered' : 'no_topics',
+    sessionCount: digests.length,
+    userCount: distinctUsers,
+    rawCount: rawTopics.length,
+    keptCount: cleaned.length,
+    dropped,
+  }
 
   /**
    * ⛔ **守門刷掉東西要留下痕跡**（08-26 查「線上為什麼提 0 個」時發現的洞）。
@@ -286,12 +325,14 @@ async function scanOneWorkspace(
    * 模型有回東西，是全部被 `sanitizeDiscoveryProposals` 刷掉了——但當時**一個字都沒記**，
    * 完全無從查起。這是 `C-68` 同一種病（靜靜地什麼都沒說），只是這次發生在守門員身上。
    * 只在「模型有提、但活下來變少」時才 log，正常情況不吵。
+   *
+   * `C-94` 起原因**同時寫進 `lastScan.dropped`**（畫面看得到），這行 log 留著給
+   * 查伺服器紀錄的人——但已經不是唯一的痕跡了。
    */
   if (rawTopics.length !== cleaned.length) {
     console.warn(
       `[tag-discovery] ${workspaceId} 模型提了 ${rawTopics.length} 個、守門後剩 ${cleaned.length} 個`
-      + `（被刷掉的原因見 sanitizeDiscoveryProposals：撞既有名／支持的不同客人不足 ${MIN_DISTINCT_USERS} 位／缺名稱或條件）`
-      + `：${rawTopics.map(t => String(t?.name ?? '?')).join('、')}`,
+      + `：${dropped.map(d => `${d.name}(${d.reason})`).join('、') || '（被刷掉的都沒有名稱）'}`,
     )
   }
 
@@ -318,5 +359,5 @@ async function scanOneWorkspace(
     id: randomUUID(), // ⛔ id 是伺服器產的，模型只產內容
     proposedAtMs: Date.now(),
   }))
-  return { proposed: proposals.length, proposals }
+  return { proposed: proposals.length, proposals, outcome }
 }

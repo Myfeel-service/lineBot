@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  discoveryScanOutcomeText,
   discoveryState,
   discoveryTiming,
   MAX_PROPOSALS_PER_SCAN,
+  MIN_DISTINCT_USERS,
   pickSampleNames,
   normalizeTagName,
   sanitizeDiscoveryProposals,
+  sanitizeDiscoveryProposalsDetailed,
   sanitizeTagCode,
+  type DiscoveryScanOutcome,
   type RawDiscoveryTopic,
 } from './tag-discovery'
 
@@ -96,6 +100,138 @@ describe('AI 發現新標籤：模型輸出的守門員', () => {
       { sessionUserIds: USERS, takenNames: [] },
     )
     expect(out[0]!.criteria).toHaveLength(200)
+  })
+})
+
+/**
+ * 守門員刷掉東西要說得出「誰、為什麼」（C-94）。
+ *
+ * ⛔ 這組存在的理由：08-26 查線上「為什麼提 0 個」時，掃描正常跑完、模型也有回東西，
+ * 全部被守門員刷掉——但資料裡一個字都沒留，完全無從查起。
+ * `kept` 必須與舊的那支**逐字相同**，否則等於偷偷改了守門標準。
+ */
+describe('守門員：被刷掉的要留下名字與原因', () => {
+  it('kept 與舊介面逐字相同（只多回一份被刷掉的清單，不動判斷標準）', () => {
+    const raw = [
+      topic(),
+      topic({ name: '想送禮', code: 'gift', sessions: [5, 6, 7, 8] }),
+      topic({ name: '問過運費', code: 'ship', sessions: [0, 1] }), // 人數不足
+    ]
+    const ctx = { sessionUserIds: USERS, takenNames: ['抱怨過'] }
+    expect(sanitizeDiscoveryProposalsDetailed(raw, ctx).kept).toEqual(sanitizeDiscoveryProposals(raw, ctx))
+  })
+
+  it('撞既有名 → duplicate；人數不足 → too_few_users；缺欄位 → incomplete', () => {
+    const { kept, dropped } = sanitizeDiscoveryProposalsDetailed([
+      topic(), // 撞下面的 takenNames
+      topic({ name: '想送禮', code: 'gift', sessions: [0, 1] }),
+      topic({ name: '問過運費', code: 'ship', criteria: '' }),
+    ], { sessionUserIds: USERS, takenNames: ['在看除濕機'] })
+
+    expect(kept).toHaveLength(0)
+    expect(dropped).toEqual([
+      { name: '在看除濕機', reason: 'duplicate' },
+      { name: '想送禮', reason: 'too_few_users' },
+      { name: '問過運費', reason: 'incomplete' },
+    ])
+  })
+
+  /** ⛔ 舊版在超過上限時直接 break，後面的連名字都沒看過＝「AI 其實提了 5 個」畫面上等於沒發生 */
+  it('超過一次上限的那幾條要記成 over_limit，不可以默默消失', () => {
+    const raw = ['在看除濕機', '想送禮', '問過運費', '抱怨過', '想找維修'].map((name, i) =>
+      topic({ name, code: `c${i}`, sessions: [0, 1, 2, 3, 4] }))
+    const { kept, dropped } = sanitizeDiscoveryProposalsDetailed(raw, { sessionUserIds: USERS, takenNames: [] })
+
+    expect(kept).toHaveLength(MAX_PROPOSALS_PER_SCAN)
+    expect(dropped).toEqual([
+      { name: '抱怨過', reason: 'over_limit' },
+      { name: '想找維修', reason: 'over_limit' },
+    ])
+  })
+
+  it('連名字都沒有的那條不記進清單（「『』因為…被排除」是空話）', () => {
+    const { dropped } = sanitizeDiscoveryProposalsDetailed(
+      [topic({ name: '' })],
+      { sessionUserIds: USERS, takenNames: [] },
+    )
+    expect(dropped).toEqual([])
+  })
+})
+
+/**
+ * 「按了幾次都沒有新的」到底是哪一種沒有（老闆 2026-08-28 直接問的）。
+ *
+ * ⛔ 這組釘的是**三種「沒有」不可以印同一句話**：樣本太少（等對話累積）、
+ * AI 看完覺得沒主題（這通常就是正確答案）、AI 有提但被擋掉（可以去看是不是擋錯了）
+ * ——下一步完全不同，混講等於什麼都沒講。
+ */
+describe('這次掃描為什麼沒有新的', () => {
+  const base: DiscoveryScanOutcome = {
+    atMs: 0, kind: 'no_topics', sessionCount: 40, userCount: 31, rawCount: 0, keptCount: 0, dropped: [],
+  }
+
+  it('樣本太少 → 講樣本、講門檻，⛔不可以說成「AI 沒找到主題」（LLM 根本沒被呼叫）', () => {
+    const t = discoveryScanOutcomeText({ ...base, kind: 'too_few_sessions', sessionCount: 3, userCount: 2 })!
+    expect(t).toContain('3 段對話')
+    expect(t).toContain(`${MIN_DISTINCT_USERS} 位不同客人`)
+    expect(t).not.toContain('AI 沒有找到')
+  })
+
+  it('AI 看完覺得沒主題 → 講讀了多少、幾位客人（讓人知道它真的讀了東西）', () => {
+    const t = discoveryScanOutcomeText(base)!
+    expect(t).toContain('40 段對話')
+    expect(t).toContain('31 位客人')
+  })
+
+  it('⛔ AI 有提但全被擋掉 → 要講出提了幾個、是哪幾個、為什麼，這是最容易被誤讀成「壞掉」的情況', () => {
+    const t = discoveryScanOutcomeText({
+      ...base,
+      kind: 'all_filtered',
+      rawCount: 3,
+      dropped: [
+        { name: '在看除濕機', reason: 'duplicate' },
+        { name: '想送禮', reason: 'duplicate' },
+        { name: '問過運費', reason: 'too_few_users' },
+      ],
+    })!
+    expect(t).toContain('3 個主題')
+    // 同原因併成一組講，否則三個主題就是三句話
+    expect(t).toContain('「在看除濕機、想送禮」')
+    expect(t).toContain('「問過運費」')
+    expect(t).toContain('已經有相同或很接近的標籤')
+  })
+
+  it('⛔ 沒有明細（舊資料）→ 回 null，讓呼叫端退回泛用句，不要硬掰一個原因', () => {
+    expect(discoveryScanOutcomeText(null)).toBeNull()
+    expect(discoveryScanOutcomeText(undefined)).toBeNull()
+  })
+
+  it('細條那行會把明細接在主句後面（有明細就不再印那句泛用的）', () => {
+    const NOW = Date.parse('2026-08-28T12:00:00+08:00')
+    const s = discoveryState({
+      enabled: true,
+      lastScanMs: NOW - 86_400_000,
+      stalled: false,
+      handledThisVisit: false,
+      lastScan: { ...base, kind: 'too_few_sessions', sessionCount: 3, userCount: 2 },
+      now: NOW,
+    })
+    expect(s.tone).toBe('idle')
+    expect(s.text).toContain('可用的樣本太少')
+    expect(s.text).not.toContain('沒有發現足夠明確的新主題')
+  })
+
+  it('⛔ 壞掉／太久沒跑仍然優先：有明細也不可以把「一直失敗」講成掃描結果', () => {
+    const s = discoveryState({
+      enabled: true,
+      lastScanMs: 0,
+      stalled: true,
+      handledThisVisit: false,
+      lastScan: base,
+    })
+    expect(s.tone).toBe('danger')
+    expect(s.text).toContain('一直失敗')
+    expect(s.text).not.toContain('段對話')
   })
 })
 
