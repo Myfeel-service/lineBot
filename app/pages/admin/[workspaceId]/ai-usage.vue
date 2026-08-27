@@ -394,7 +394,8 @@
               <el-button size="small" @click="loadSessions">重試</el-button>
             </div>
             <ClientOnly v-else-if="trendHasData">
-              <VChart class="usage-trend-chart" :option="trendOption" autoresize />
+              <!-- Lazy＝進這頁才下載圖表庫（見 AdminEChart.client.vue：它曾經每頁都載） -->
+              <LazyAdminEChart class="usage-trend-chart" :option="trendOption" />
               <template #fallback><div class="usage-loading"><div class="spinner" /></div></template>
             </ClientOnly>
             <div v-else class="usage-empty">

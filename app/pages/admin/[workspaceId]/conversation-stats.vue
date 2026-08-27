@@ -195,7 +195,8 @@
             </div>
             <template v-else-if="trend.buckets.length">
               <ClientOnly>
-                <VChart class="conv-echart" :option="chartOption" autoresize />
+                <!-- Lazy＝進這頁才下載圖表庫（見 AdminEChart.client.vue：它曾經每頁都載） -->
+                <LazyAdminEChart class="conv-echart" :option="chartOption" />
                 <template #fallback>
                   <div class="conv-echart-fallback">
                     <div class="spinner" />
