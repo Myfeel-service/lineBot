@@ -84,7 +84,9 @@ export const BROADCAST_FAILED_WINDOW_MS = 3 * 24 * 3600_000
 /** 排定時間過了這麼久還沒開始送，才算卡住（排程每分鐘跑，幾分鐘內是正常延遲） */
 const BROADCAST_OVERDUE_GRACE_MS = 15 * 60_000
 /** 維護排程每 10 分鐘跳一次心跳；超過 60 分鐘沒跳＝連續漏了 6 次，不是抖動 */
-const MAINTENANCE_STALE_MS = 60 * 60_000
+// export：超管「全站異常總覽」的心跳卡（C-91）要用同一把尺——兩處各寫一個門檻,
+// 遲早出現「小幫手說停擺、超管頁說正常」
+export const MAINTENANCE_STALE_MS = 60 * 60_000
 
 /**
  * webhook 檢查結果快取：這套 probe 會被輪詢，對 LINE 的外部查詢不該每次都打。

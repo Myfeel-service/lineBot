@@ -160,6 +160,22 @@ export async function recordAiUsage(
 }
 
 /**
+ * 本月「呼叫／答出」兩個計數（超管 C-91/C-7 高成本比警示用）。
+ * 一次點讀月結桶；沒有文件＝這個月還沒有任何 AI 活動，回兩個 0。
+ */
+export async function getCurrentMonthUsageCounts(
+  workspaceId: string,
+  db: Firestore = getDb(),
+): Promise<{ invocations: number, answered: number }> {
+  const snap = await db.collection(AI_USAGE_COLLECTION).doc(usageDocId(workspaceId, currentYyyyMm())).get()
+  const d = snap.data() as { invocations?: number, answered?: number } | undefined
+  return {
+    invocations: Number(d?.invocations ?? 0),
+    answered: Number(d?.answered ?? 0),
+  }
+}
+
+/**
  * 本月已用 token 總數（input + output + embedding）。
  *
  * 只在「沒有則數上限」時才會被讀（enterprise 客製未設額度 / 訂閱讀取失敗）——
