@@ -7,7 +7,7 @@
  * 就漏了標籤(UI 會直接顯示英文工具名)——這正是兩份表遲早漂移的實證。
  */
 export const ADMIN_AGENT_TOOL_LABELS = {
-  list_scripts: '腳本清單',
+  list_scripts: '客服流程清單',
   get_ai_settings: 'AI 設定',
   get_ai_usage: 'AI 用量',
   get_conversation_stats: '對話統計',

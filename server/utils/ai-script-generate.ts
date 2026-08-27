@@ -33,7 +33,7 @@ export const MAX_GENERATE_DESCRIPTION_LEN = 500
  * - branch(分支)不教:客人做選擇的分岔用 quickReply 就涵蓋;依欄位值分流的情境罕見
  *   且接線易錯,要用的話讓人在編輯器手動加(生成定位是「打草稿」,寧可簡單而對)。
  */
-const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。使用者用一句話描述想要的客服流程,你輸出一條可執行的腳本 JSON。
+const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。使用者用一句話描述想要的客服流程,你輸出一條可執行的客服流程 JSON。
 
 回傳 JSON(不要多餘文字):{ "name": string, "rootNodeId": string, "nodes": [...] }
 
@@ -45,8 +45,8 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 5. 回覆(終點,講完即結束):{ "id", "type": "reply", "text": "回覆文字", "thenHandoff": true|false }
 
 【做不到的事,要說做不到】
-- 描述根本不是客服對話流程(閒聊、寫詩、與客服無關的指令),或流程的**核心**是腳本做不到的能力
-  (依時間/日期自動判斷、隨機抽獎、腳本自己去查外部系統的資料、修改訂單),不要硬生腳本,
+- 描述根本不是客服對話流程(閒聊、寫詩、與客服無關的指令),或流程的**核心**是客服流程做不到的能力
+  (依時間/日期自動判斷、隨機抽獎、自己去查外部系統的資料、修改訂單),不要硬生流程,
   改回:{ "error": "一句話說明為什麼做不到＋建議改用什麼" }
 - ⛔ error 裡的建議只能指向**系統真的有**的東西:圖文選單、加好友歡迎訊息、AI 設定裡的勿擾時段、
   AI 知識庫(常見問答讓 AI 自己回答)、或「把需求改成先收資料再轉真人的流程」。不要編造功能名稱。
@@ -165,7 +165,7 @@ async function generateOnce(prompt: string, sensitiveTopics: readonly string[]):
   if (sanitized.dropped.length) {
     console.warn(`[scripts/generate] dropped trigger keywords: ${sanitized.dropped.join(', ')}`)
   }
-  const err = validateScriptDoc({ name: input.name || '未命名腳本', nodes: sanitized.nodes, rootNodeId: input.rootNodeId })
+  const err = validateScriptDoc({ name: input.name || '未命名流程', nodes: sanitized.nodes, rootNodeId: input.rootNodeId })
   if (err) return { ok: false, error: err, inputTokens, outputTokens }
 
   return {

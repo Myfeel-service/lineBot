@@ -59,7 +59,7 @@ export async function checkScriptHealth(
   const deadEnds: ScriptDeadEnd[] = []
   for (const s of scripts) {
     for (const stuck of findStuckCollects(s.nodes ?? [])) {
-      deadEnds.push({ scriptId: s.id, scriptName: String(s.name || '(未命名腳本)'), question: stuck.question })
+      deadEnds.push({ scriptId: s.id, scriptName: String(s.name || '(未命名流程)'), question: stuck.question })
     }
   }
 

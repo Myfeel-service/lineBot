@@ -82,7 +82,7 @@ export function findUnreachableScripts(
     if (trigger?.triggerEvent === 'follow') continue
     const keywords = (trigger?.keywords ?? []).map(norm).filter(Boolean)
     const examples = (trigger?.examples ?? []).map(e => String(e).trim()).filter(Boolean)
-    const name = String(script.name || '(未命名腳本)')
+    const name = String(script.name || '(未命名流程)')
     const push = (reason: ScriptBlockReason, detail: string) =>
       issues.push({ scriptId: script.id, scriptName: name, reason, detail })
 
@@ -110,7 +110,7 @@ export function findUnreachableScripts(
       return keywords.every(k => otherKeywords.some(ok => k.includes(ok)))
     })
     if (rival) {
-      push('otherScript', `「${name}」的觸發詞都被腳本「${String(rival.name || '(未命名腳本)')}」的觸發詞包住，會先被那條接走`)
+      push('otherScript', `「${name}」的觸發詞都被「${String(rival.name || '(未命名流程)')}」的觸發詞包住，會先被那條接走`)
     }
   }
 

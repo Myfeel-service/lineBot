@@ -53,7 +53,7 @@ const CAPABILITIES: SetupCapability[] = [
     id: 'aiEnabled',
     icon: MagicStick,
     title: '開啟 AI 自動回覆',
-    why: '這個開關關著的話，就算建了知識庫、腳本也都不會生效。',
+    why: '這個開關關著的話，就算建了知識庫、客服流程也都不會生效。',
     required: true,
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
@@ -74,7 +74,7 @@ const CAPABILITIES: SetupCapability[] = [
   {
     id: 'scriptReady',
     icon: Operation,
-    title: '啟用一支客服腳本',
+    title: '啟用一條客服流程',
     why: '用來處理固定流程，例如預約、報名、領取優惠。沒有也能運作。',
     required: false,
     requires: 'settings',

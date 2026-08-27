@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
     if (conflict) {
       throw createError({
         statusCode: 409,
-        statusMessage: `已經有一條在客人加好友時啟動的腳本（「${conflict.name}」）。兩條都開的話，客人一加好友會連收兩份訊息——請先停用那一條，或直接修改它。`,
+        statusMessage: `已經有一條在客人加好友時啟動的客服流程（「${conflict.name}」）。兩條都開的話，客人一加好友會連收兩份訊息——請先停用那一條，或直接修改它。`,
       })
     }
   }

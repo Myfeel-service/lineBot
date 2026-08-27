@@ -201,7 +201,7 @@ export async function scanModuleGraph(
   for (const d of scriptsSnap.docs) {
     const data = d.data() as Record<string, unknown>
     if (data.enabled === false) continue
-    const label = String(data.name ?? '(未命名腳本)')
+    const label = String(data.name ?? '(未命名流程)')
     for (const node of (Array.isArray(data.nodes) ? data.nodes : []) as Array<Record<string, unknown>>) {
       if (node?.type !== 'module') continue
       const moduleId = typeof node.moduleId === 'string' ? node.moduleId.trim() : ''

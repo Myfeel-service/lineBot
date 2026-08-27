@@ -160,7 +160,7 @@
                 <ul class="sa-cost-guide__list">
                   <li><b>看懂問題、找資料、寫出回覆</b>：一則客人訊息主要花在這 <span class="sa-cost-guide__price">最大宗</span></li>
                   <li><b>答不出來的判斷</b>：決定要轉真人、還是反問客人一句 <span class="sa-cost-guide__price">一樣算一次</span></li>
-                  <li><b>判斷該不該走腳本</b>：這句要不要交給自動流程接手 <span class="sa-cost-guide__price">幾乎免費</span></li>
+                  <li><b>判斷該不該走客服流程</b>：這句要不要交給自動流程接手 <span class="sa-cost-guide__price">幾乎免費</span></li>
                   <li><b>讀客人傳的照片</b>：看懂圖片內容才知道怎麼接 <span class="sa-cost-guide__price">併入同一則</span></li>
                 </ul>
                 <!-- 與上方「估算抓這個數字」同一個來源，兩處不會各說各的 -->
@@ -194,7 +194,7 @@
                   <li><b>知識庫試答</b>：存完卡片按試答，確認現在答得出來 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <li><b>採用建議後自動驗證</b>：系統用代表問句再試答一次 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">同回答客人</span></li>
-                  <li><b>一句話生成腳本</b>：吐出一整份腳本，比一則回覆貴 <span class="sa-cost-guide__price">約 8～10 倍</span></li>
+                  <li><b>一句話生成客服流程</b>：吐出一整份流程，比一則回覆貴 <span class="sa-cost-guide__price">約 8～10 倍</span></li>
                 </ul>
                 <div class="sa-cost-guide__foot">一次跟回答客人一樣價，不算到客人頭上</div>
               </div>

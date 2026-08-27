@@ -84,7 +84,7 @@ export async function findEnabledFollowScriptConflict(
   for (const d of snap.docs) {
     if (d.id === excludeScriptId) continue
     const s = d.data() as ScriptDoc
-    if (scriptTriggerEvent(s) === 'follow') return { id: d.id, name: String(s.name || '(未命名腳本)') }
+    if (scriptTriggerEvent(s) === 'follow') return { id: d.id, name: String(s.name || '(未命名流程)') }
   }
   return null
 }

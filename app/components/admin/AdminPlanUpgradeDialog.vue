@@ -32,7 +32,7 @@
         <el-table-column label="席次" min-width="58">
           <template #default="{ row }">{{ row.seats == null ? '不限' : `${row.seats} 席` }}</template>
         </el-table-column>
-        <el-table-column label="腳本" width="54" align="center">
+        <el-table-column label="流程" width="54" align="center">
           <template #default="{ row }"><span :class="row.scripting ? 'pu-yes' : 'pu-no'">{{ row.scripting ? '✓' : '—' }}</span></template>
         </el-table-column>
         <el-table-column label="API" width="52" align="center">

@@ -12,7 +12,7 @@
         <div class="spinner" />
       </div>
       <div v-else-if="!scripts.length" class="split-sidebar-empty">
-        <span>尚無腳本</span>
+        <span>尚無客服流程</span>
         <p class="text-xs text-muted">建一條情境流程，把多步驟客服變成自動流程</p>
         <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
@@ -20,7 +20,7 @@
         <AdminSplitListItem
           v-for="script in scripts"
           :key="script.id"
-          :title="script.name || '(未命名腳本)'"
+          :title="script.name || '(未命名流程)'"
           :active="selectedId === script.id"
           time-in-title-row
           title-row-chip
@@ -39,7 +39,7 @@
     <!-- ── Empty State ── -->
     <template #editor-empty>
       <el-icon class="empty-icon"><Operation /></el-icon>
-      <h3>選擇一條腳本開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
+      <h3>選擇一條客服流程開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
       <template v-if="canEditScripts">
         <div class="scripts-ai-generate" data-tour="scr-ai-gen">
           <span class="scripts-ai-generate-label">
@@ -54,7 +54,7 @@
             @keydown.enter.exact.prevent="generateFromAi"
           />
           <div class="scripts-ai-generate-actions">
-            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立腳本」才會存檔</span>
+            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立客服流程」才會存檔</span>
             <el-button type="primary" :loading="aiGenerating" :disabled="!aiGenDesc.trim()" @click="generateFromAi">
               {{ aiGenerating ? 'AI 生成中…' : 'AI 生成草稿' }}
             </el-button>
@@ -81,8 +81,8 @@
     <template #editor-header>
       <AdminEditorHeaderTitle
         v-model="form.name"
-        field-label="腳本名稱"
-        create-prefix="新增腳本:"
+        field-label="流程名稱"
+        create-prefix="新增客服流程："
         placeholder="例：訂單查詢、退換貨流程"
         caption="為這條情境流程取個名"
         :is-creating="isCreating"
@@ -93,7 +93,7 @@
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="Delete" type="danger" @click="deleteScript">刪除</el-button>
         <el-button @click="cancelEdit">{{ canEditScripts ? '取消' : '關閉' }}</el-button>
         <el-button v-if="canEditScripts" type="primary" :loading="saving" @click="submitForm">
-          {{ isCreating ? '建立腳本' : '儲存變更' }}
+          {{ isCreating ? '建立客服流程' : '儲存變更' }}
         </el-button>
       </div>
     </template>
@@ -188,7 +188,7 @@
             </div>
 
             <div class="admin-field-group">
-              <AdminFieldLabel text="啟用此腳本" tight />
+              <AdminFieldLabel text="啟用這條流程" tight />
               <el-switch
                 v-model="form.enabled"
                 active-text="啟用"
@@ -261,7 +261,7 @@
 
                   <template v-if="triggerUiMode(node) === 'follow'">
                     <p class="scripts-section-hint">
-                      客人把這個官方帳號加為好友（含封鎖後再解除）的那一刻就會走這條流程，不用打任何字。一個帳號只能有一條這種腳本。
+                      客人把這個官方帳號加為好友（含封鎖後再解除）的那一刻就會走這條流程，不用打任何字。一個帳號只能有一條這樣設定的流程。
                     </p>
                     <!-- 與 LINE 內建歡迎訊息打對台：兩邊都開＝客人一加好友連收兩份 -->
                     <el-alert
@@ -286,7 +286,7 @@
                         :closable="false"
                         show-icon
                         title="這條啟用後，會攔截「所有」文字訊息"
-                        description="客人不管打什麼都會走進這條流程，AI 客服和其他腳本都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
+                        description="客人不管打什麼都會走進這條流程，AI 客服和其他客服流程都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
                       />
                     </div>
                     <div v-if="node.keywordMatch !== 'anyText'" class="admin-field-group">
@@ -351,7 +351,7 @@
                   </button>
 
                   <div v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group">
-                    <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條腳本）" tight />
+                    <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條流程）" tight />
                     <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
                     <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
                       {{ triggerTestResult(node).state === 'hit' ? '✓ ' : triggerTestResult(node).state === 'maybe' ? '≈ ' : '✗ ' }}{{ triggerTestResult(node).text }}
@@ -652,7 +652,7 @@
         <div class="message-card scripts-section-card scripts-sim-card">
           <div class="message-card-header scripts-sim-head" role="button" tabindex="0" @click="showSim = !showSim" @keydown.enter="showSim = !showSim">
             <div class="card-header-main">
-              <span class="section-title">試跑這條腳本</span>
+              <span class="section-title">試跑這條流程</span>
               <span class="text-xs text-muted">假裝客人打字，看機器人怎麼回（純預覽，不會真的發送）</span>
             </div>
             <el-icon class="scripts-sim-caret" :class="{ 'is-open': showSim }"><ArrowRight /></el-icon>
@@ -660,7 +660,7 @@
           <div v-if="showSim" class="card-section-stack scripts-sim-panel">
             <div class="scripts-sim-chat">
               <p v-if="!simLog.length" class="scripts-sim-empty">
-                {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條腳本）' }}
+                {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條流程）' }}
               </p>
               <template v-for="(m, i) in simLog" :key="i">
                 <div v-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
@@ -895,7 +895,7 @@ const stats = computed(() => {
  * 這一支只驗「接線合不合法」——走得完、輪不輪得到是另外兩件事（見 flowWarnings）。
  */
 const flowIssue = computed(() =>
-  validateScriptDoc({ name: form.value.name.trim() || '未命名腳本', nodes: form.value.nodes, rootNodeId: form.value.rootNodeId }),
+  validateScriptDoc({ name: form.value.name.trim() || '未命名流程', nodes: form.value.nodes, rootNodeId: form.value.rootNodeId }),
 )
 
 /**
@@ -924,7 +924,7 @@ const reachabilityIssues = computed(() => {
   const draftId = selectedId.value ?? DRAFT_SCRIPT_ID
   const draft: ScriptForReachability = {
     id: draftId,
-    name: form.value.name.trim() || '這條腳本',
+    name: form.value.name.trim() || '這條流程',
     nodes: form.value.nodes,
     rootNodeId: form.value.rootNodeId,
     enabled: true,
@@ -997,19 +997,19 @@ const flowWarnings = computed<FlowWarning[]>(() => {
     if (rival) {
       out.push({
         key: 'follow:dup',
-        text: `「${rival.name || '(未命名腳本)'}」也是在客人加好友時啟動、而且開著——兩條都開的話客人會連收兩份，存檔會被擋下來。請先停用那一條，或直接改那一條`,
+        text: `「${rival.name || '(未命名流程)'}」也是在客人加好友時啟動、而且開著——兩條都開的話客人會連收兩份，存檔會被擋下來。請先停用那一條，或直接改那一條`,
       })
     }
   }
   for (const issue of reachabilityIssues.value) {
     // 被「另一條腳本」蓋住時，講「自動回覆排在前面」會把人指去翻錯的地方
-    const why = issue.reason === 'otherScript' ? '' : '（安全層排在腳本前面）'
+    const why = issue.reason === 'otherScript' ? '' : '（安全層排在客服流程前面）'
     out.push({ key: `reach:${issue.reason}`, text: `${issue.detail}${why}` })
   }
   if (reachabilityState.value === 'failed') {
     out.push({
       key: 'reach:unknown',
-      text: '讀不到 AI 設定，這次沒辦法確認這條腳本的觸發詞會不會撞到敏感情境詞。重新整理再看一次。',
+      text: '讀不到 AI 設定，這次沒辦法確認這條流程的觸發詞會不會撞到敏感情境詞。重新整理再看一次。',
     })
   }
   return out
@@ -1361,7 +1361,7 @@ function simFollowStart() {
   simPush({ who: 'sys', text: '（客人把你的官方帳號加為好友）' })
   const trig = form.value.nodes.find(n => n.type === 'trigger')
   if (!trig || trig.type !== 'trigger') {
-    simPush({ who: 'sys', text: '（這條腳本沒有觸發步驟）' })
+    simPush({ who: 'sys', text: '（這條流程沒有觸發步驟）' })
     return
   }
   simRun(trig.next)
@@ -1385,7 +1385,7 @@ function simSend(text?: string) {
 
   if (!simWaiting.value) {
     const trig = form.value.nodes.find(n => n.type === 'trigger')
-    if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條腳本沒有觸發步驟）' }); return }
+    if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條流程沒有觸發步驟）' }); return }
     simRun(trig.next)
     return
   }
@@ -1691,7 +1691,7 @@ function duplicateScript() {
   isCreating.value = true
   selectedId.value = null
   form.value = {
-    name: `${src.name || '未命名腳本'} 複本`,
+    name: `${src.name || '未命名流程'} 複本`,
     enabled: false,
     priority: src.priority || DEFAULT_SCRIPT_PRIORITY,
     rootNodeId: src.rootNodeId,
@@ -1700,7 +1700,7 @@ function duplicateScript() {
   markDirty()
   simReset()
   resetEditorDisclosure(form.value.nodes)
-  showToast('已複製成草稿，改完按「建立腳本」才會存檔。複本先停用，避免和原本那條搶同一組觸發詞', 'success')
+  showToast('已複製成草稿，改完按「建立客服流程」才會存檔。複本先停用，避免和原本那條搶同一組觸發詞', 'success')
 }
 
 // ── AI 一句話生成草稿 ────────────────────────────────────────────────
@@ -1731,7 +1731,7 @@ async function generateFromAi() {
     simReset()
     resetEditorDisclosure(form.value.nodes)
     aiGenDesc.value = ''
-    showToast('草稿已生成——看看上面的流程圖、試跑一次,調整後按「建立腳本」', 'success')
+    showToast('草稿已生成——看看上面的流程圖、試跑一次，調整後按「建立客服流程」', 'success')
   }
   catch (err: any) {
     showToast(err?.statusMessage || err?.data?.statusMessage || err?.message || 'AI 生成失敗,換個說法再試一次', 'error')
@@ -1899,7 +1899,7 @@ onMounted(() => {
 
 async function submitForm() {
   const name = form.value.name.trim()
-  if (!name) return showToast('請輸入腳本名稱', 'error')
+  if (!name) return showToast('請輸入流程名稱', 'error')
   // trigger 同步 priority
   const trig = form.value.nodes.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
   if (trig) trig.priority = form.value.priority
@@ -1915,7 +1915,7 @@ async function submitForm() {
     }
     if (isCreating.value) {
       const res = await apiFetch<{ id: string }>('/api/ai/scripts/create', { method: 'POST', body: payload })
-      showToast('腳本已建立', 'success')
+      showToast('客服流程已建立', 'success')
       await loadScripts(true)
       const fresh = scripts.value.find(s => s.id === res.id)
       if (fresh) selectScript(fresh, { skipDiscardConfirm: true })
@@ -1939,7 +1939,7 @@ async function submitForm() {
 async function deleteScript() {
   if (!selectedId.value) return
   try {
-    await ElMessageBox.confirm(`確定刪除「${form.value.name}」這條腳本？`, '刪除確認', {
+    await ElMessageBox.confirm(`確定刪除「${form.value.name}」這條客服流程？`, '刪除確認', {
       confirmButtonText: '刪除',
       cancelButtonText: '取消',
       confirmButtonClass: 'el-button--danger',

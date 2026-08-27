@@ -3,7 +3,7 @@
     <div ref="listEl" class="aa-chat__list">
       <!-- 開場白 + 唯讀說明 -->
       <div class="aa-msg aa-msg--ai">
-        <div class="aa-msg__bubble">想知道後台的什麼?我會查真實資料回答,不會亂編。<br><span class="aa-muted">(目前只能查詢,不能幫你修改設定)</span></div>
+        <div class="aa-msg__bubble">想知道後台的什麼？我會查真實資料回答，不會亂編。<br><span class="aa-muted">（目前只能查詢，不能幫你修改設定）</span></div>
       </div>
 
       <template v-for="(m, i) in msgs" :key="i">
@@ -17,7 +17,7 @@
               :entry="{ id: j, role: 'agent', msg: c }"
             />
           </div>
-          <div v-if="m.tools?.length" class="aa-msg__tools">查了:{{ m.tools.map(toolLabel).join('、') }}</div>
+          <div v-if="m.tools?.length" class="aa-msg__tools">查了：{{ m.tools.map(toolLabel).join('、') }}</div>
         </div>
       </template>
 
@@ -34,7 +34,7 @@
     <div class="aa-chat__input">
       <el-input
         v-model="input"
-        placeholder="例:哪些腳本沒啟用?"
+        placeholder="例：哪些客服流程沒啟用？"
         :disabled="loading"
         @keyup.enter="send()"
       />
@@ -69,10 +69,10 @@ const loading = ref(false)
 const listEl = ref<HTMLElement | null>(null)
 
 const starters = [
-  '現在有什麼要處理的?',
+  '現在有什麼要處理的？',
   '這個月 AI 用量如何?',
-  '哪些腳本還沒啟用?',
-  '知識庫有沒有匯入失敗?',
+  '哪些客服流程還沒啟用？',
+  '知識庫有沒有匯入失敗？',
 ]
 
 // 工具顯示名收 shared 單一來源:之前這裡手寫第二份,08-06 加 get_conversation_stats
@@ -108,7 +108,7 @@ async function send(preset?: string) {
   }
   catch (err: any) {
     if (stillHere())
-      msgs.value.push({ who: 'ai', text: err?.statusMessage || err?.data?.statusMessage || '查詢失敗了,稍後再試一次 🙏' })
+      msgs.value.push({ who: 'ai', text: err?.statusMessage || err?.data?.statusMessage || '查詢失敗了，稍後再試一次 🙏' })
   }
   finally {
     loading.value = false

@@ -29,8 +29,8 @@ export const AGENT_DESTINATIONS = {
     path: wid => `/admin/${wid}/ai-settings`,
   },
   'ai-scripts': {
-    label: '自動回應與腳本',
-    hint: '關鍵字自動回應、多步驟收資料的腳本、範本',
+    label: '自動回應與客服流程',
+    hint: '關鍵字自動回應、多步驟收資料的客服流程、範本',
     path: wid => `/admin/${wid}/ai-scripts`,
   },
   'knowledge-sources': {

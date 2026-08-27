@@ -487,7 +487,7 @@
           </div>
           <div class="lp-pf">
             <b>別人有的，我們都有</b>
-            <small>自動化訊息、腳本、AI 客服、AI 行銷建議、報表。</small>
+            <small>自動化訊息、客服流程、AI 客服、AI 行銷建議、報表。</small>
           </div>
           <div class="lp-pf">
             <b>60 秒就能開始</b>

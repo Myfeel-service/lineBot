@@ -67,11 +67,11 @@
                 <!-- 腳本觸發：正式 LINE 會由腳本接手，不跑 AI -->
                 <div v-if="turn.result.scriptTrigger" class="pg-script-trigger">
                   <div class="pg-bubble-head">
-                    <span class="badge badge-purple">觸發腳本</span>
+                    <span class="badge badge-purple">觸發流程</span>
                     <span class="text-xs text-muted">{{ turn.result.scriptTrigger.mode === 'semantic' ? '看意思命中' : '關鍵字命中' }}</span>
                   </div>
-                  <p class="pg-script-name">會啟動腳本：<strong>{{ turn.result.scriptTrigger.name }}</strong></p>
-                  <p class="text-muted">實際 LINE 對話會由這條腳本接手（AI 不會介入）。playground 不模擬腳本後續的多輪問答，請到「腳本」頁編輯流程。</p>
+                  <p class="pg-script-name">會啟動客服流程：<strong>{{ turn.result.scriptTrigger.name }}</strong></p>
+                  <p class="text-muted">實際 LINE 對話會由這條客服流程接手（AI 不會介入）。這裡不模擬後續的多輪問答，請到「自動回應」頁編輯。</p>
                 </div>
 
                 <template v-else>

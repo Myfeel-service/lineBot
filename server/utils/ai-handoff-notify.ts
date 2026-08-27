@@ -85,7 +85,7 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
 
   const reasonLabel = params.reason
     ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
-    : '腳本轉真人'
+    : '客服流程轉真人'
   const hasContext = Boolean(params.summary?.trim() || params.customerMessage.trim())
   const lines = params.slaReminderMinutes
     // missed_only 的首次通知帶完整內容（摘要/訊息由 remindOverdueHandoffs 從存檔補回）;

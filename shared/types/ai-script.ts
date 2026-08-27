@@ -327,7 +327,7 @@ export function resolveBranchNext(node: ScriptBranchNode, collected: Record<stri
 }
 
 export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootNodeId'>): string | null {
-  if (!String(doc.name || '').trim()) return '請輸入腳本名稱'
+  if (!String(doc.name || '').trim()) return '請輸入流程名稱'
   if (!Array.isArray(doc.nodes) || doc.nodes.length === 0) return '請至少新增一個步驟'
   if (doc.nodes.length > MAX_SCRIPT_NODES) return `步驟數超過上限 ${MAX_SCRIPT_NODES}`
 
@@ -344,11 +344,11 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
 
   // trigger 步驟只能有一個（單一入口）
   const triggerCount = doc.nodes.filter(n => n.type === 'trigger').length
-  if (triggerCount !== 1) return '腳本必須有且僅有一個觸發步驟'
+  if (triggerCount !== 1) return '客服流程必須有且僅有一個觸發步驟'
 
   // 至少要有一個「終點」步驟（且下方會驗它可達）：回覆，或送出機器人模組
   if (!doc.nodes.some(n => n.type === 'reply' || n.type === 'module')) {
-    return '腳本至少要有一個結尾步驟（回覆，或送出機器人模組）'
+    return '客服流程至少要有一個結尾步驟（回覆，或送出機器人模組）'
   }
 
   // collected 只會由 collect 步驟寫入；branch 條件與 saveLead 來源都讀 collected，

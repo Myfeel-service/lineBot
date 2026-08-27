@@ -26,7 +26,7 @@ export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
   liffReady: '設定 LIFF（活動頁入口）',
   aiEnabled: '開啟 AI 自動回覆',
   knowledgeReady: '建立知識庫',
-  scriptReady: '啟用一支客服腳本',
+  scriptReady: '啟用一條客服流程',
   firstMessageReceived: '收到第一則客人訊息',
 }
 

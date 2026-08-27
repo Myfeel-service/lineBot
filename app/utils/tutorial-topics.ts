@@ -158,7 +158,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="ais-toggle"]',
         title: '打開總開關',
         description:
-          '先把「<strong>啟用 AI 自動回覆</strong>」打開——關著的話，知識庫和腳本都不會生效。下面的「回覆模式」<strong>新導入建議先選「草稿」</strong>跑一兩週：AI 只給客服建議、不直接回客人，穩了再切「全自動」。',
+          '先把「<strong>啟用 AI 自動回覆</strong>」打開——關著的話，知識庫和客服流程都不會生效。下面的「回覆模式」<strong>新導入建議先選「草稿」</strong>跑一兩週：AI 只給客服建議、不直接回客人，穩了再切「全自動」。',
         placement: 'right',
       },
       {
@@ -277,22 +277,22 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     category: 'ai',
     requiresSettings: true,
     icon: Operation,
-    label: '建立客服腳本',
-    blurb: '腳本把多步驟流程自動化（預約、報名…）。帶你開第一條。',
+    label: '建立客服流程',
+    blurb: '客服流程把多步驟的問答自動化（預約、報名…）。帶你開第一條。',
     route: wid => `/admin/${wid}/ai-scripts`,
     steps: [
       {
         target: '[data-tour="scr-new"]',
-        title: '新增一條腳本',
+        title: '新增一條客服流程',
         description:
-          '腳本能把固定流程自動化，例如<strong>預約、報名、領優惠</strong>。點「<strong>新增</strong>」開一條新的。',
+          '客服流程能把固定的接待步驟自動化，例如<strong>預約、報名、領優惠</strong>。點「<strong>新增</strong>」開一條新的。',
         placement: 'right',
       },
       {
         target: '[data-tour="scr-ai-gen"]',
         title: '用一句話讓 AI 幫你搭',
         description:
-          '不想從空白開始？在這裡<strong>用一句話描述流程</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 就會幫你搭好整條腳本草稿。<strong>生成後會先進編輯器讓你檢查</strong>，按「建立腳本」才會存檔。',
+          '不想從空白開始？在這裡<strong>用一句話描述流程</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 就會幫你搭好整條流程草稿。<strong>生成後會先進編輯器讓你檢查</strong>，按「建立客服流程」才會存檔。',
         placement: 'top',
       },
       {
@@ -879,7 +879,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="cs-kpi"]',
         title: '看關鍵數字',
         description:
-          '這排是重點：總對話數、<strong>機器人先接住的比例</strong>（客人第一句就由 AI 回答）、轉真人和結案的比例——看 AI 幫你分擔了多少、哪裡還要再補知識或腳本。',
+          '這排是重點：總對話數、<strong>機器人先接住的比例</strong>（客人第一句就由 AI 回答）、轉真人和結案的比例——看 AI 幫你分擔了多少、哪裡還要再補知識或客服流程。',
         placement: 'bottom',
       },
     ],

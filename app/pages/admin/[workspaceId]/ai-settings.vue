@@ -78,7 +78,7 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ai-section-hint">關掉之後 AI 不接任何訊息;規則/腳本不受影響。</p>
+            <p class="ai-section-hint">關掉之後 AI 不接任何訊息;規則／客服流程不受影響。</p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用 AI 自動回覆" tight />
               <el-switch
@@ -193,7 +193,7 @@
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              AI 或腳本把對話轉給真人時,用官方帳號推播 LINE 訊息提醒以下客服人員。
+              AI 或客服流程把對話轉給真人時,用官方帳號推播 LINE 訊息提醒以下客服人員。
               收通知的人必須已加這個官方帳號為好友;同一位客人 10 分鐘內只通知一次。
             </p>
             <div class="admin-field-group">
@@ -493,7 +493,7 @@
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              設定服務時間後,非服務時間內不論腳本或 AI 要轉真人,都<strong>不推播通知客服</strong>(不半夜吵人),改回客人一則「勿擾訊息」。
+              設定服務時間後,非服務時間內不論客服流程或 AI 要轉真人,都<strong>不推播通知客服</strong>(不半夜吵人),改回客人一則「勿擾訊息」。
               轉真人本身照常發生——客服上班回來在「對話」頁就能接手。時間以台灣時區為準。
             </p>
             <p class="ai-section-hint">
