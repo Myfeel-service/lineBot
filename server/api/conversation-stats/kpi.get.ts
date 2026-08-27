@@ -6,6 +6,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { DEFAULT_SLA_REMIND_MINUTES } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
+import { KPI_SESSION_FIELDS } from '~~/server/utils/conversation-stats-fields'
 
 export default defineEventHandler(async (event): Promise<KpiResult> => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
@@ -22,6 +23,9 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
     ?? taipeiDayStart(taipeiDateKey(new Date(Date.now() - 29 * 24 * 3600_000)))!
   const endDate = taipeiDayEnd(query.endDate) ?? new Date()
   ref = ref.where('openedAt', '>=', startDate).where('openedAt', '<=', endDate)
+  // 只搬統計用得到的那幾欄（清單與理由見 conversation-stats-fields.ts）。
+  // ⛔ 加新算式時要同時把欄位加進那份清單，否則讀到的是 undefined、數字會靜靜地錯
+  ref = ref.select(...KPI_SESSION_FIELDS)
 
   // 新朋友（第一次加好友）：與對話數平行查。count() 只回數字不拉文件。
   // ⚠️ 索引方向要 users(workspaceId ASC, createdAt **ASC**)：這支沒有 orderBy，範圍條件

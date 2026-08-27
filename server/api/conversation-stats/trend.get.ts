@@ -2,6 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { isPreInboundFollowSession, type TrendBucket, type TrendGranularity } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { shiftToTaipei, taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/server/utils/taipei-day'
+import { TREND_SESSION_FIELDS } from '~~/server/utils/conversation-stats-fields'
 
 /** 分桶用台北日曆（shiftToTaipei 後只能讀 getUTC*）；用本機 getters 在 UTC 伺服器上會把凌晨的場分去前一天 */
 function bucketKey(date: Date, granularity: TrendGranularity): string {
@@ -39,6 +40,8 @@ export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[
   const endDate = taipeiDayEnd(query.endDate) ?? new Date()
 
   ref = ref.where('openedAt', '>=', startDate).where('openedAt', '<=', endDate)
+  // 只搬分桶與分類用得到的那幾欄（清單與理由見 conversation-stats-fields.ts）
+  ref = ref.select(...TREND_SESSION_FIELDS)
 
   // 新朋友按同一套桶分（與 KPI 卡同資料源 users.createdAt）。
   // 查失敗回 null → 整批省略 newFriends 欄位：圖上缺線比畫假的 0 線誠實。
