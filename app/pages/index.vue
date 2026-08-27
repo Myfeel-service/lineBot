@@ -616,7 +616,10 @@
               </details>
               <details class="lp-q">
                 <summary>支援哪種 LINE 帳號？<span class="plus" v-html="plusIcon" /></summary>
-                <div class="a">LINE 官方帳號（OA）,貼一組 Webhook 網址即可接通。</div>
+                <!-- ⚠️ 口徑跟 60 秒區一致（「每一步都用聊天帶你做」）：原本寫「貼一組 Webhook
+                     網址即可接通」——對不懂技術的讀者是天書，跟全頁「不懂技術也沒關係」打架
+                     （順帶修掉句中的半形逗號）。 -->
+                <div class="a">你現在用的 LINE 官方帳號（OA）就可以接。接通的每一步都有聊天引導帶你做，不懂技術也沒關係。</div>
               </details>
               <details class="lp-q">
                 <summary>客人想找真人怎麼辦？<span class="plus" v-html="plusIcon" /></summary>
@@ -652,7 +655,8 @@
          收起時 aria-hidden：不然螢幕閱讀器會在頁尾唸到一顆看不見的註冊鈕。 -->
     <div class="lp-stickybar" :class="{ 'is-show': barShown }" :aria-hidden="barShown ? undefined : 'true'">
       <div class="lp-stickybar__in">
-        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em>，多半個客服＋半個行銷</span>
+        <!-- 「多了半個」的「了」不能省：省掉會被讀成「多半（大概）個客服」，泡泡版就是有「了」 -->
+        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em>，多了半個客服＋半個行銷</span>
         <span class="lp-stickybar__t2">60 秒完成設定 · 不綁約、隨時可取消</span>
         <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
