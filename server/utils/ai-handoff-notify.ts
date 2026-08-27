@@ -221,6 +221,9 @@ export async function notifyOverdueHandoffBatch(params: {
 // 額度用完的瞬間所有客人訊息會轉真人(懸崖式)——在 80% 先通知管理員,留反應時間。
 // 每個「額度期間」只警告一次(標記存 aiQuotaAlerts/{workspaceId},換期自動重新警戒);
 // 收件人沿用轉真人通知名單(名單沒設就發不出去——那本來就是最優先待辦)。
+
+/** 額度通知推播全滅後的重試退避:期間內不重打,窗過後下一次跨門檻再試(C-89) */
+const QUOTA_PUSH_RETRY_MS = 6 * 3600_000
 export async function maybeWarnQuotaThreshold(params: {
   workspaceId: string
   /** 0~1 使用比例。呼叫端 <0.8 請勿呼叫,讓熱路徑零額外讀取 */
@@ -238,10 +241,14 @@ export async function maybeWarnQuotaThreshold(params: {
 
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
-  if ((snap.data() as { periodKey?: string } | undefined)?.periodKey === params.periodKey) return
-  // 先寫標記再推播:併發最壞重複推一次,可接受(同 handoff 通知取捨)。
+  const st = snap.data() as { periodKey?: string, warnAttemptKey?: string, warnAttemptAtMs?: number } | undefined
+  if (st?.periodKey === params.periodKey) return
+  // 全滅退避:上次嘗試整批失敗的退避窗內不再打——名單全失效時,少了這道
+  // 每則客人訊息都會重打一輪注定失敗的 LINE API
+  if (st?.warnAttemptKey === params.periodKey && Date.now() - (st.warnAttemptAtMs ?? 0) < QUOTA_PUSH_RETRY_MS) return
+  // 先記「嘗試過」再推播:併發最壞重複推一次,可接受(同 handoff 通知取捨)。
   // merge:同一份 doc 還有 100% 用完的標記(exhaustedPeriodKey),不能整份蓋掉
-  await ref.set({ periodKey: params.periodKey, ratioPct: Math.round(params.ratio * 100), warnedAt: FieldValue.serverTimestamp() }, { merge: true })
+  await ref.set({ warnAttemptKey: params.periodKey, warnAttemptAtMs: Date.now() }, { merge: true })
 
   const msg: messagingApi.TextMessage = {
     type: 'text',
@@ -253,6 +260,11 @@ export async function maybeWarnQuotaThreshold(params: {
       console.warn('[quota-warn] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
     }
   })
+  // 「這期已警告」只在至少送達一人時才記(C-89):每期一次的警報若在推播全滅的
+  // 那一刻記帳,這期就永遠沉默。全滅就留著,退避窗過後下一次跨門檻再試。
+  if (results.some(r => r.status === 'fulfilled')) {
+    await ref.set({ periodKey: params.periodKey, ratioPct: Math.round(params.ratio * 100), warnedAt: FieldValue.serverTimestamp() }, { merge: true })
+  }
 }
 
 // ── AI 額度 100% 用完通知 ──────────────────────────────────────────
@@ -275,8 +287,11 @@ export async function maybeNotifyQuotaExhausted(params: {
 
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
-  if ((snap.data() as { exhaustedPeriodKey?: string } | undefined)?.exhaustedPeriodKey === params.periodKey) return
-  await ref.set({ exhaustedPeriodKey: params.periodKey, exhaustedAt: FieldValue.serverTimestamp() }, { merge: true })
+  const st = snap.data() as { exhaustedPeriodKey?: string, exhaustedAttemptKey?: string, exhaustedAttemptAtMs?: number } | undefined
+  if (st?.exhaustedPeriodKey === params.periodKey) return
+  // 全滅退避與「送達才記帳」同 maybeWarnQuotaThreshold(C-89),理由見該處註解
+  if (st?.exhaustedAttemptKey === params.periodKey && Date.now() - (st.exhaustedAttemptAtMs ?? 0) < QUOTA_PUSH_RETRY_MS) return
+  await ref.set({ exhaustedAttemptKey: params.periodKey, exhaustedAttemptAtMs: Date.now() }, { merge: true })
 
   const consequence = params.action === 'handoff'
     ? '從現在起,客人訊息會全部轉給真人客服,請盯緊後台「對話」頁。'
@@ -291,4 +306,7 @@ export async function maybeNotifyQuotaExhausted(params: {
       console.warn('[quota-exhausted] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
     }
   })
+  if (results.some(r => r.status === 'fulfilled')) {
+    await ref.set({ exhaustedPeriodKey: params.periodKey, exhaustedAt: FieldValue.serverTimestamp() }, { merge: true })
+  }
 }

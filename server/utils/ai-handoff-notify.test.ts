@@ -31,7 +31,7 @@ const { getDb, convSet } = vi.hoisted(() => {
 })
 vi.mock('./firebase', () => ({ getDb }))
 
-import { notifyHandoffToStaff, notifyOverdueHandoffBatch, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyOverdueHandoffBatch, maybeNotifyQuotaExhausted, maybeWarnQuotaThreshold } from './ai-handoff-notify'
 
 function settingsWith(mode: 'always' | 'missed_only') {
   return {
@@ -42,6 +42,9 @@ function settingsWith(mode: 'always' | 'missed_only') {
 
 beforeEach(() => {
   pushMessage.mockClear()
+  // mockClear 只清呼叫紀錄不清實作:測「推播全滅」的案例用 mockRejectedValue 換過實作,
+  // 這裡要還原,否則洩漏到後面的測試
+  pushMessage.mockImplementation(async (...args: any[]) => ({ args }))
   convSet.mockClear()
   getAiSettings.mockReset()
 })
@@ -195,7 +198,7 @@ describe('notifyOverdueHandoffBatch 逾時提醒合併', () => {
 
 describe('maybeNotifyQuotaExhausted', () => {
   function makeAlertsDb(existing: Record<string, unknown> | undefined) {
-    const set = vi.fn(async () => ({}))
+    const set = vi.fn(async (..._args: any[]) => ({}))
     const db = {
       collection: (_: string) => ({
         doc: (_id: string) => ({
@@ -218,17 +221,102 @@ describe('maybeNotifyQuotaExhausted', () => {
     expect(pushMessage).not.toHaveBeenCalled()
   })
 
-  it('首次用完:寫標記並推播,handoff 策略講「全部轉真人」', async () => {
+  it('首次用完:記「嘗試過」→推播→送達才記「這期已發」,handoff 策略講「全部轉真人」', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     const { db, set } = makeAlertsDb(undefined)
     await maybeNotifyQuotaExhausted({
       workspaceId: 'WS', periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 1000/1000',
       action: 'handoff', db,
     })
-    expect(set).toHaveBeenCalledTimes(1)
+    // 兩筆寫入:推播前的「嘗試過」＋至少送達一人後的「這期已發」(C-89)
+    expect(set).toHaveBeenCalledTimes(2)
+    expect(set.mock.calls[0]![0]).toHaveProperty('exhaustedAttemptKey', 'p_2026-08-01')
+    expect(set.mock.calls[1]![0]).toHaveProperty('exhaustedPeriodKey', 'p_2026-08-01')
     expect(pushMessage).toHaveBeenCalledTimes(2)
     const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
     expect(text).toContain('🚫 AI 額度已用完')
     expect(text).toContain('全部轉給真人客服')
+  })
+
+  // C-89:原本「先寫標記再推播」,推播全滅只留 log → 每期一次的警報這期永遠沉默
+  it('推播全滅:不記「這期已發」,退避窗過後會重試', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    pushMessage.mockRejectedValue(new Error('名單全部不是好友'))
+    const { db, set } = makeAlertsDb(undefined)
+    await maybeNotifyQuotaExhausted({
+      workspaceId: 'WS', periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 1000/1000',
+      action: 'handoff', db,
+    })
+    expect(set).toHaveBeenCalledTimes(1) // 只有「嘗試過」
+    expect(set.mock.calls[0]![0]).not.toHaveProperty('exhaustedPeriodKey')
+
+    // 退避窗內(剛失敗過)→ 不重打 LINE API
+    pushMessage.mockClear()
+    const recent = makeAlertsDb({ exhaustedAttemptKey: 'p_2026-08-01', exhaustedAttemptAtMs: Date.now() - 60_000 })
+    await maybeNotifyQuotaExhausted({
+      workspaceId: 'WS', periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 1000/1000',
+      action: 'handoff', db: recent.db,
+    })
+    expect(pushMessage).not.toHaveBeenCalled()
+
+    // 退避窗過了 → 再試一次
+    pushMessage.mockClear()
+    pushMessage.mockResolvedValue({} as any)
+    const stale = makeAlertsDb({ exhaustedAttemptKey: 'p_2026-08-01', exhaustedAttemptAtMs: Date.now() - 7 * 3600_000 })
+    await maybeNotifyQuotaExhausted({
+      workspaceId: 'WS', periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 1000/1000',
+      action: 'handoff', db: stale.db,
+    })
+    expect(pushMessage).toHaveBeenCalledTimes(2)
+    expect(stale.set.mock.calls[1]![0]).toHaveProperty('exhaustedPeriodKey', 'p_2026-08-01')
+  })
+})
+
+describe('maybeWarnQuotaThreshold(80% 預警)', () => {
+  function makeAlertsDb(existing: Record<string, unknown> | undefined) {
+    const set = vi.fn(async (..._args: any[]) => ({}))
+    const db = {
+      collection: (_: string) => ({
+        doc: (_id: string) => ({
+          get: async () => ({ data: () => existing }),
+          set,
+        }),
+      }),
+    } as any
+    return { db, set }
+  }
+
+  it('低於 80% 直接返回,連設定都不讀(熱路徑零額外讀取)', async () => {
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.5, periodKey: 'p_2026-08-01', usageText: 'x', db: makeAlertsDb(undefined).db })
+    expect(getAiSettings).not.toHaveBeenCalled()
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('首次跨 80%:記「嘗試過」→推播→送達才記「這期已警告」', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db, set } = makeAlertsDb(undefined)
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.81, periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 812/1000', db })
+    expect(set).toHaveBeenCalledTimes(2)
+    expect(set.mock.calls[0]![0]).toHaveProperty('warnAttemptKey', 'p_2026-08-01')
+    expect(set.mock.calls[1]![0]).toHaveProperty('periodKey', 'p_2026-08-01')
+    expect(pushMessage).toHaveBeenCalledTimes(2)
+    expect((pushMessage.mock.calls[0]![1] as any)[0].text).toContain('⚠️ AI 用量預警')
+  })
+
+  it('同期已警告過 → 不再推', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db, set } = makeAlertsDb({ periodKey: 'p_2026-08-01' })
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.9, periodKey: 'p_2026-08-01', usageText: 'x', db })
+    expect(set).not.toHaveBeenCalled()
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('推播全滅 → 不記「這期已警告」(C-89:記了這期就永遠沉默)', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    pushMessage.mockRejectedValue(new Error('blocked'))
+    const { db, set } = makeAlertsDb(undefined)
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 'p_2026-08-01', usageText: 'x', db })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set.mock.calls[0]![0]).not.toHaveProperty('periodKey')
   })
 })
