@@ -41,6 +41,27 @@ export interface TutorialStep {
    * 導覽的正是這種新帳號。
    */
   requiresPresent?: string
+  /**
+   * 主目標查不到時退去指這個（2026-08-28 code review 修）。
+   *
+   * 有些錨點的渲染條件比「這一頁打得開」細一層，開場時算不出來：
+   * 例如對話頁那排「我接手／交還／結束」只在**這場有進行中的會話**時才渲染——
+   * 客服點開的第一則剛好是已結束的對話，那一步就會顯示「位置不在畫面上」。
+   * 填一個「同一塊、一定在」的上層錨點，就退而指它，說明照樣講得通。
+   *
+   * ⛔ 不是拿來當「隨便找個東西指」的萬用退路：填進來的必須是**同一件事的上層容器**，
+   *    指到不相干的地方比誠實說「不在畫面上」更糟。
+   */
+  targetFallback?: string
+  /**
+   * 主目標**比它所在的捲動區還高**時退去指這個（2026-08-28 code review 修）。
+   *
+   * 側欄那三段各有 6～10 列（「每天在用的」約 410px），而筆電短螢幕扣掉 logo 與帳號
+   * 切換之後，側欄看得到的地方只剩 350～460px。el-tour 是照元素的完整外框挖洞的，
+   * 挖出來會超出可視範圍、上下還有列藏在捲動區外——使用者看到一個框住空白的洞。
+   * 「捲到中間」那套機制救不了這種情況（它只處理比容器小的目標）。
+   */
+  targetTooTallFallback?: string
   /** 在機器人模組頁示範這種訊息卡（會在示範草稿裡放一張該類型的卡，下一步自動換掉） */
   demoType?: string
   /** 只寫「這步在做什麼」，不要加「第 N 步」——步數由畫面自動標 */
@@ -90,7 +111,12 @@ export type TutorialCategoryId = 'intro' | 'setup' | 'ai' | 'daily' | 'bot' | 'g
  * 「認識後台」總覽導覽的 id。開通引導結尾的「帶你認識後台」用 `?tour=` 帶這個值進後台
  * （見 useOnboardingChat 的 stepDone），所以兩邊吃同一個常數、不要各寫一次字串。
  */
-export const OVERVIEW_TOPIC_ID = 'overview'
+// ⛔ 這裡刻意**只 import 不 re-export**（2026-08-28 code review 修）：
+// 常數本體住在 utils/tutorial-ids.ts（沒有任何相依的小檔），開通頁自動匯入吃的是那一支，
+// 所以不會為了一個字串把這一千行內容與二十幾個圖示元件拉進它的 chunk。
+// 這裡再 export 一次就會變成兩個同名的自動匯入來源——Nuxt 會挑一個、另一個靜靜被忽略，
+// 而被挑中的若是這一支，上面那個 bundle 問題等於沒修。
+import { OVERVIEW_TOPIC_ID } from './tutorial-ids'
 
 export interface TutorialCategoryGroup {
   id: TutorialCategoryId
@@ -129,6 +155,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     steps: [
       {
         target: '[data-tour="nav-group-daily"]',
+        // 這一段沒有小標（它是第一段），太高就退去指第一列
+        targetTooTallFallback: '.nav-group[data-tour="nav-group-daily"] .nav-item',
         title: '每天的工作都在這一段',
         description:
           '客人傳來的訊息在<strong>客服對話</strong>；要主動發訊息給一群人用<strong>推播</strong>；'
@@ -137,6 +165,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="nav-group-ai"]',
+        // 短螢幕上整段比側欄看得到的範圍還高（遮罩挖的洞會超出可視區）：
+        // 太高就退去指這一段的小標，說明講的還是整段
+        targetTooTallFallback: '.nav-group[data-tour="nav-group-ai"] .nav-section-label',
         title: '教 AI 回答客人的一切',
         description:
           '先把商品、規則這些資料放進<strong>知識庫</strong>，AI 才有東西可以答；'
@@ -145,6 +176,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="nav-group-settings"]',
+        // 短螢幕上整段比側欄看得到的範圍還高（遮罩挖的洞會超出可視區）：
+        // 太高就退去指這一段的小標，說明講的還是整段
+        targetTooTallFallback: '.nav-group[data-tour="nav-group-settings"] .nav-section-label',
         title: '一次性的設定',
         description:
           '邀請同事、LINE 的連線狀態、方案與付款都在這裡。設定好之後，平常不太需要進來。',
@@ -160,7 +194,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="page-help"]',
-        title: '每一頁右上都有「這頁怎麼用」',
+        // ⛔別寫「右上」（2026-08-28 code review 抓到）：那顆問號一直都在**頁面標題旁邊**
+        // （側欄式頁面在左上的清單標題後、solo 頁在大標題後），包括這一步正在指的那一顆。
+        title: '每一頁標題旁都有「這頁怎麼用」',
         description:
           '點了就在<strong>真實畫面</strong>上一步步帶你操作。這支導覽也一樣——'
           + '之後想再看，從這裡或右下角小幫手的「教學」分頁都找得到。',
@@ -489,6 +525,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="conv-actions"]',
+        // 這排按鈕只在「這場有進行中的會話」時才渲染，而點開的第一則可能是已結束的對話——
+        // 退去指同一塊的標頭區塊（那裡一定在），說明照樣講得通
+        targetFallback: '[data-tour="conv-header"]',
         requiresPresent: '.conv-list-row .split-list-item',
         title: '接手、交還、結束',
         description:

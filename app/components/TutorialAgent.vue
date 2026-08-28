@@ -530,7 +530,7 @@ import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
 
 const { user } = useAuth()
-const { workspaceId } = useWorkspace()
+const { workspaceId, ensureWorkspaceList } = useWorkspace()
 const router = useRouter()
 // 只給 ?tour= 深連結用（開通引導結尾送人進來時開跑那一支）。
 // ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
@@ -1148,7 +1148,18 @@ onMounted(async () => {
   if (wantTour) {
     const { tour: _dropped, ...restQuery } = route.query
     void router.replace({ query: restQuery })
-    startTopicById(wantTour)
+    // ⛔ 開跑前一定要先等角色載進來（2026-08-28 code review 修）：子元件的初始化比版型早，
+    //    這一行原本會在「載入帳號清單」之前跑完。那一瞬間讀不到角色＝需要管理權限的步驟
+    //    會被靜靜丟掉，而過濾只在開場算一次、之後不會補——擁有者跑完一支少一步的導覽，
+    //    而且不知道自己少看了什麼。
+    await ensureWorkspaceList()
+    // ⛔ 認不得的值／這個角色一步都跑不起來時要**有出路**（同一輪 review 修）：
+    //    網址上那段已經被清掉了，重新整理救不回來，所以不能就這樣沉默結束。
+    //    退回「打開教學分頁」——讓人自己挑一支，這是唯一不會變成「按了沒反應」的收場。
+    if (!startTopicById(wantTour)) {
+      panelTab.value = 'learn'
+      openPanel()
+    }
   }
   await refreshAll()
   // 只有「真的還有必要項沒做」且沒看過，才彈引導
@@ -1243,6 +1254,23 @@ function scrollAndSettle(el: HTMLElement): Promise<void> {
 /** 這一步指定了 target 卻找不到元素。要顯示在卡片上，不能安靜退化成置中說明卡 */
 const targetMissing = ref(false)
 
+/**
+ * 這個元素塞得進它所在的捲動區嗎（給 targetTooTallFallback 用）。
+ *
+ * 往上找第一個真的會捲動的祖先（側欄是 .sidebar-scroll）；找不到就拿視窗高度比。
+ * 留 8px 餘裕：剛好等高時遮罩邊緣會壓在容器邊界上，看起來就是「超出去」。
+ */
+function fitsInScrollParent(el: HTMLElement): boolean {
+  let p: HTMLElement | null = el.parentElement
+  while (p) {
+    const style = getComputedStyle(p)
+    if (/(auto|scroll)/.test(style.overflowY) && p.clientHeight > 0)
+      return el.getBoundingClientRect().height <= p.clientHeight - 8
+    p = p.parentElement
+  }
+  return el.getBoundingClientRect().height <= window.innerHeight - 8
+}
+
 async function focusActiveStep() {
   if (!tourOpen.value) {
     liveTarget.value = null
@@ -1275,7 +1303,19 @@ async function focusActiveStep() {
   }
   const selector = step?.target
   // 空 target ＝ 置中說明卡（不高亮）；否則輪詢等元素出現（示範卡可能要時間渲染）
-  const el = selector ? await waitForElement(selector, 2000) : null
+  let el = selector ? await waitForElement(selector, 2000) : null
+  // ⛔ 兩個退路（2026-08-28 code review 修）——都只在「同一件事的上層」之間退，
+  //    不是拿來隨便找個東西指（理由寫在 utils/tutorial-topics.ts 的兩個欄位上）：
+  //    ① 主目標的渲染條件比「這頁打得開」細一層（對話頁那排動作要有進行中的會話）
+  //    ② 主目標比它所在的捲動區還高（側欄那三段在短螢幕上塞不進可視範圍，
+  //       遮罩挖的洞會超出去、上下還有列藏著；scrollAndSettle 只救得了比容器小的目標）
+  if (!el && step?.targetFallback)
+    el = await waitForElement(step.targetFallback, 800)
+  if (el && step?.targetTooTallFallback && !fitsInScrollParent(el)) {
+    const smaller = document.querySelector<HTMLElement>(step.targetTooTallFallback)
+    if (smaller)
+      el = smaller
+  }
   targetMissing.value = Boolean(selector) && !el
   if (!el) {
     liveTarget.value = null

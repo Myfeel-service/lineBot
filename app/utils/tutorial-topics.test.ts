@@ -74,10 +74,15 @@ describe('教學導覽的錨點', () => {
 
 describe('認識後台總覽導覽（2026-08-28）', () => {
   const src = readFileSync(TOPICS_FILE, 'utf8')
+  const ids = readFileSync(join(APP_DIR, 'utils/tutorial-ids.ts'), 'utf8')
   const onboardingChat = readFileSync(join(APP_DIR, 'composables/useOnboardingChat.ts'), 'utf8')
 
   it('總覽主題存在，而且掛在 OVERVIEW_TOPIC_ID 這個常數上', () => {
-    expect(src).toMatch(/export const OVERVIEW_TOPIC_ID = 'overview'/)
+    // 常數本體搬到沒有相依的小檔（開通頁只為了一個字串不該拖整套教學內容進 bundle）；
+    // ⛔這裡只 import 不 re-export，否則會出現兩個同名的自動匯入來源
+    expect(ids).toMatch(/export const OVERVIEW_TOPIC_ID = 'overview'/)
+    expect(src).toContain("import { OVERVIEW_TOPIC_ID } from './tutorial-ids'")
+    expect(src).not.toMatch(/export \{ OVERVIEW_TOPIC_ID \}/)
     expect(src).toContain('id: OVERVIEW_TOPIC_ID')
   })
 

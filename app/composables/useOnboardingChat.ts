@@ -818,9 +818,16 @@ export function useOnboardingChat() {
 
     let taught = false
     while (!verified) {
+      // ⛔ primary 不可以隨狀態換人（2026-08-28 code review 修）：選項鈕的排版規則是
+      //    「主要動作排最後（靠右）」，所以 primary 一換人，**兩顆鈕就互換位置**。
+      //    原本 walk/check 的 primary 跟著 `taught` 翻轉，實際後果是：使用者按「教我一步步貼」
+      //    走完三個節點回來，接下來要按的「貼好了，幫我檢查」從第 2 顆跑到第 4 顆，
+      //    而它原本的位置變成「再看一次教學」——手指停的地方剛好是他才剛做完的事。
+      //    這一步真正要完成的事永遠是「貼好了，幫我檢查」，主要動作就固定給它；
+      //    教學是輔助，標籤照 `taught` 換字沒問題（換字不換位置）。
       const c = await askChoices([
-        { label: taught ? '再看一次教學' : '教我一步步貼', value: 'walk', primary: !taught },
-        { label: '貼好了，幫我檢查', value: 'check', primary: taught },
+        { label: '貼好了，幫我檢查', value: 'check', primary: true },
+        { label: taught ? '再看一次教學' : '教我一步步貼', value: 'walk' },
         { label: '略過檢查，直接測試', value: 'skip', escape: true },
         { label: '改前面的設定', value: 'redo' },
       ])
