@@ -8,8 +8,10 @@ import {
   receiptEmail,
   chargeFailedEmail,
   renewalReminderEmail,
+  rebindCardEmail,
   quotaEmail,
 } from '~~/shared/billing/email-content'
+import { RENEWAL_BIND_WINDOW_MS } from './workspace-alerts'
 import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import { getBillingPlan, isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
@@ -150,13 +152,14 @@ const RECONCILE_SCAN_CAP = 2000
 export async function sendDueBillingEmails(
   now: Date = new Date(),
   db: Firestore = getDb(),
-): Promise<{ renewalReminders: number, quotaNotices: number }> {
-  if (!isEmailConfigured()) return { renewalReminders: 0, quotaNotices: 0 }
+): Promise<{ renewalReminders: number, quotaNotices: number, rebindNotices: number }> {
+  if (!isEmailConfigured()) return { renewalReminders: 0, quotaNotices: 0, rebindNotices: 0 }
 
   const today = taipeiDate(now)
   const brand = brandName()
   let renewalReminders = 0
   let quotaNotices = 0
+  let rebindNotices = 0
 
   // ── ① 續扣前提醒：本期末在 [today, today+N] 且自動續訂中 ──────────
   const windowEnd = (() => {
@@ -205,6 +208,44 @@ export async function sendDueBillingEmails(
     console.error('[billing-email] 續扣提醒階段失敗', (e as Error)?.message)
   }
 
+  // ── ①.5 首期付款成功、約定卡沒綁成：一次性提醒信（2026-08-28 拍板補的出口）──
+  // 這個狀態原本沒有任何主動通知：付了錢的客戶下期不會被扣款、會被靜默降回免費層，
+  // 唯一知道的方法是自己開後台。三個等值條件走自動索引合併；每筆訂單只寄一次
+  // （冪等標記 rebindEmailSentAt 記在訂單上）。窗口與異常那顆同一把尺（45 天）。
+  try {
+    const unbound = await db.collection(PAYMENT_ORDERS_COLLECTION)
+      .where('status', '==', 'paid')
+      .where('kind', '==', 'period_first')
+      .where('cardBound', '==', false)
+      .limit(200)
+      .get()
+    const cutoff = now.getTime() - RENEWAL_BIND_WINDOW_MS
+    for (const doc of unbound.docs) {
+      const o = doc.data() as PaymentOrderDoc & { workspaceId?: string, createdAt?: { toMillis?: () => number } }
+      if (o.rebindEmailSentAt) continue // 這筆已寄過
+      const createdMs = typeof o.createdAt?.toMillis === 'function' ? o.createdAt.toMillis() : 0
+      if (!createdMs || createdMs < cutoff) continue // 太舊的不追（多半已人工處理）
+      const wid = String(o.workspaceId ?? '').trim()
+      if (!wid) continue
+      const { email, workspaceName } = await resolveBillingRecipient(wid, db)
+      if (email) {
+        const content = rebindCardEmail({
+          brandName: brand,
+          workspaceName,
+          planName: getBillingPlan(o.planId as BillingPlanId).name,
+          manageUrl: billingUrl(wid),
+        })
+        await sendEmail({ to: email, ...content })
+        rebindNotices++
+      }
+      // 不論有無收件人都記旗標（同續扣提醒的理由：沒 email 的帳號不必天天重算）
+      await doc.ref.update({ rebindEmailSentAt: new Date() })
+    }
+  }
+  catch (e) {
+    console.error('[billing-email] 綁卡提醒階段失敗', (e as Error)?.message)
+  }
+
   // ── ② 額度快用完 / 已用完：掃描有訂閱的帳號，比對用量 ────────────
   // 沒有「用量接近上限」的現成查詢（用量在另一個 doc），只能全掃。掃描已被 isEmailConfigured 擋在門外，
   // 開通 SES 前完全不跑；開通後於目前租戶量級可接受。超過上限只處理前 N 筆並 log。
@@ -250,5 +291,5 @@ export async function sendDueBillingEmails(
     console.error('[billing-email] 額度通知階段失敗', (e as Error)?.message)
   }
 
-  return { renewalReminders, quotaNotices }
+  return { renewalReminders, quotaNotices, rebindNotices }
 }

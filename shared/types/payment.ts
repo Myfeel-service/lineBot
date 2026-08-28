@@ -52,6 +52,12 @@ export interface PaymentOrderDoc {
    * Token 本身只存在訂閱上（敏感憑證不重複落在帳本）。
    */
   cardBound?: boolean | null
+  /**
+   * 「自動扣款尚未設定完成」提醒信已寄出的時間（冪等標記，2026-08-28）。
+   * cardBound=false 的 paid period_first 每筆只寄一次——標記在訂單上而不是訂閱上，
+   * 因為同一個帳號可能先後有兩筆沒綁成的首期單，各自都該被提醒到。
+   */
+  rebindEmailSentAt?: unknown
   /** 約定卡末四碼（非憑證，稽核／客服對帳用）。 */
   cardLast4?: string | null
   /**

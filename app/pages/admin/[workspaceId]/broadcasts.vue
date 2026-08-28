@@ -8,6 +8,10 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- 節慶行銷提醒（2026-08-28 拍板）：人真的要動手排推播時就在這一頁——
+           「中秋節快到了」最該出現的地方。文案跟 LINE 每日摘要那段同一支函式產
+           （utils/festival-hint.ts），窗外整條不渲染。⛔不用警示色：這不是異常。 -->
+      <p v-if="festival" class="bc-festival-hint">🎉 {{ festival.text }}</p>
       <div v-if="loading && !broadcasts.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -370,8 +374,13 @@ import {
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { taipeiDate } from '~~/shared/time'
+import { festivalHint } from '~/utils/festival-hint'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
+
+/** 節慶行銷提醒（窗外回 null＝整條不渲染）。判定與文案見 utils/festival-hint.ts */
+const festival = festivalHint(taipeiDate())
 
 /** 排程：不可選今天以前的日期 */
 function disabledPastDate(d: Date) {

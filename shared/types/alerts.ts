@@ -215,12 +215,17 @@ export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<Worksp
  * ② 摘要本文已逐項講過的不重複（等待真人／沒人回／知識庫變動是摘要本文）
  * ③ 有自己 LINE 通知路徑的不重複（quotaRunningOut 有 80% 預警；
  *    handoffNotifyMissing 發生時摘要根本送不到任何人）
- * ④ 營運類探針查得到的才進——摘要只跑 canOperate 那組（純 Firestore、無外部呼叫），
- *    renewalNotBound 是帳單探針，刻意捨去
+ * ④ 便宜的才進——純 Firestore 窄查詢、無外部呼叫。
+ *    ~~renewalNotBound 是帳單探針，刻意捨去~~ → **2026-08-28 老闆拍板收進來**：
+ *    它是唯一「付了錢的客戶會被靜默降級、唯一知道的方法是自己開後台」的黃級，
+ *    而它的查詢本身就是一次純 Firestore 等值查詢，符合④的本意（當初捨去是因為
+ *    它掛在 canSettings 探針組，不是因為它貴）。摘要端用 countRecentUnboundRenewals
+ *    單獨查這一顆，不為它跑整組帳單探針。
  *
- * 順序＝重要度：摘要的「最重要」取第一個命中的。
+ * 順序＝重要度：摘要的「最重要」取第一個命中的。錢的事排最前。
  */
 export const DIGEST_WARNING_ALERTS: readonly WorkspaceAlertId[] = [
+  'renewalNotBound',
   'broadcastFailed',
   'knowledgeDetectStalled',
   'scriptUnreachable',

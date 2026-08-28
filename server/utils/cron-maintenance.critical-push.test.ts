@@ -27,14 +27,15 @@ vi.mock('./ai-source-extractors', () => ({ extractUrlText: vi.fn() }))
 vi.mock('./gsheet-sync', () => ({ syncGoogleSheetSource: vi.fn() }))
 vi.mock('./webhook-dedup', () => ({ WEBHOOK_EVENT_LOCKS_COLLECTION: 'webhookEventLocks' }))
 vi.mock('./conversation-session', () => ({ closeConversationSession: vi.fn(), handBackSessionToBot: vi.fn() }))
-vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOverdueHandoffBatch: vi.fn() }))
+const { wasQuotaExhaustedNotified } = vi.hoisted(() => ({ wasQuotaExhaustedNotified: vi.fn(async () => false) }))
+vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOverdueHandoffBatch: vi.fn(), wasQuotaExhaustedNotified }))
 
 const { pushMessage } = vi.hoisted(() => ({ pushMessage: vi.fn(async () => {}) }))
 vi.mock('./line', () => ({ pushMessage }))
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
 const { collectWorkspaceAlerts } = vi.hoisted(() => ({ collectWorkspaceAlerts: vi.fn() }))
-vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts }))
+vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts, countRecentUnboundRenewals: vi.fn(async () => 0) }))
 
 import { pushCriticalAlerts } from './cron-maintenance'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
@@ -176,6 +177,29 @@ describe('嚴重異常推播', () => {
     collectWorkspaceAlerts.mockResolvedValue([alert('lineWebhookBroken')])
     await pushCriticalAlerts(fakeDb(['ws1']))
     expect(pushMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it('額度用完:專屬那則（🚫）同一期已送達 → 彙總讓路,不連發兩則（2026-08-28 拍板修）', async () => {
+    wasQuotaExhaustedNotified.mockResolvedValue(true)
+    collectWorkspaceAlerts.mockResolvedValue([alert('quotaExceeded')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('額度用完:專屬那則還沒送達（全滅重試中）→ 彙總照講,寧可重複不可漏報', async () => {
+    wasQuotaExhaustedNotified.mockResolvedValue(false)
+    collectWorkspaceAlerts.mockResolvedValue([alert('quotaExceeded')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushedText()).toContain('本期回覆則數用完了')
+  })
+
+  it('額度用完被讓路時,同批其他紅燈照推（別把整則吞掉）', async () => {
+    wasQuotaExhaustedNotified.mockResolvedValue(true)
+    collectWorkspaceAlerts.mockResolvedValue([alert('quotaExceeded'), alert('lineWebhookBroken')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    const text = pushedText()
+    expect(text).toContain('機器人收不到客人訊息')
+    expect(text).not.toContain('本期回覆則數用完了')
   })
 
   it('🔴 一則都沒送成功就不記「已通知」，下一輪要重試', async () => {

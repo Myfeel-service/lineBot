@@ -11,6 +11,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { pushMessage } from './line'
 import { getAiSettings } from './ai-settings'
 import { getDb } from './firebase'
+import { resolveAnsweredQuota } from './billing'
 import { isServiceHoursDnd } from '~~/shared/time'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
@@ -309,4 +310,31 @@ export async function maybeNotifyQuotaExhausted(params: {
   if (results.some(r => r.status === 'fulfilled')) {
     await ref.set({ exhaustedPeriodKey: params.periodKey, exhaustedAt: FieldValue.serverTimestamp() }, { merge: true })
   }
+}
+
+/**
+ * 這一期的「🚫 額度已用完」是不是已經**送達**過了（給異常彙總推播判斷用）。
+ *
+ * 為什麼（2026-08-28 老闆拍板修）：額度用完同時是紅色異常，也有上面這支專屬通知——
+ * 兩條路都會發 LINE，客戶在同一天會連收兩則講同一件事的訊息。專屬那則更早、更詳細
+ * （寫了用量數字與後果），所以由彙總那邊讓路：發彙總前先問這支，同一期已送達就跳過。
+ *
+ * ⛔ 只認 exhaustedPeriodKey（推播**送達**才蓋的章），不認 attemptKey：
+ *    專屬那則全滅重試中的話，彙總照講——寧可重複，不可漏報。
+ * 期別鍵的組法必須跟 ai-answer.ts 呼叫端一模一樣（p_週期起日 / t_月份），
+ * 對不上的話這支永遠回 false，重複照舊、而且沒有人會發現。
+ */
+export async function wasQuotaExhaustedNotified(
+  workspaceId: string,
+  monthlyTokenCap: number,
+  db: Firestore,
+): Promise<boolean> {
+  const snap = await db.collection('aiQuotaAlerts').doc(workspaceId).get()
+  const sentKey = (snap.data() as { exhaustedPeriodKey?: string } | undefined)?.exhaustedPeriodKey
+  if (!sentKey) return false
+  const billing = await resolveAnsweredQuota(workspaceId, db)
+  const currentKey = billing.quota != null && billing.periodStart
+    ? `p_${billing.periodStart}`
+    : monthlyTokenCap > 0 ? `t_${new Date().toISOString().slice(0, 7)}` : null
+  return currentKey != null && sentKey === currentKey
 }

@@ -2,6 +2,19 @@
    推播編輯（split 右側；覆寫 flow 的 message-card 寬度）
 ═══════════════════════════════════════════════════════════════ */
 
+/* 節慶行銷提醒（2026-08-28 拍板：不再只在 LINE）——側欄清單頂上的一行。
+   ⛔不用警示色：這不是異常，紅橘是留給「壞掉」的。中性淡底＋一般字色，
+   跟小幫手裡那張節慶卡同一族（components/_tutorial-agent.scss 的 .ta-festival）。 */
+.bc-festival-hint {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
 /* 表單本體（外層 padding 由 .ar-editor-body，定義在 admin/_shared.scss 收容區） */
 .bc-editor-form {
   display: flex;

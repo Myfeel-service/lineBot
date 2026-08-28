@@ -77,7 +77,34 @@ const QUOTA_FORECAST_MIN_PERCENT = 40
  */
 export const KNOWLEDGE_PENDING_STUCK_MS = 60 * 60_000
 /** 首期綁卡失敗只看近 45 天：超過一期的舊單多半已用別的方式處理掉了 */
-const RENEWAL_BIND_WINDOW_MS = 45 * 24 * 3600_000
+export const RENEWAL_BIND_WINDOW_MS = 45 * 24 * 3600_000
+
+/**
+ * 首期收款成功但約定卡沒建成的近期筆數（`renewalNotBound` 的判定本體）。
+ *
+ * 抽成單一來源（2026-08-28 老闆拍板補出口）：這個判定現在有三個用家——
+ * 異常 probe、每日摘要尾巴、對帳的提醒信。⛔各寫一份查詢的話，三邊的「算不算」
+ * 遲早漂移，而漂掉的樣子是「摘要說有事、後台說沒事」。
+ *
+ * 四個等值條件走自動索引合併；cardBound 是新欄位，等值查詢不匹配缺欄位的舊單——
+ * 舊資料剛好不誤報。只算近 45 天：付了錢卻沒綁成、下期不會自動扣款，會靜默降級
+ * （付了錢的客戶一個月後突然變免費層）。
+ */
+export async function countRecentUnboundRenewals(db: Firestore, wid: string): Promise<number> {
+  const snap = await db.collection(PAYMENT_ORDERS_COLLECTION)
+    .where('workspaceId', '==', wid)
+    .where('status', '==', 'paid')
+    .where('kind', '==', 'period_first')
+    .where('cardBound', '==', false)
+    .select('createdAt')
+    .limit(PROBLEM_SCAN_LIMIT)
+    .get()
+  const cutoff = Date.now() - RENEWAL_BIND_WINDOW_MS
+  return snap.docs.filter((d) => {
+    const ms = tsToMs((d.data() as Record<string, unknown>).createdAt)
+    return ms >= cutoff
+  }).length
+}
 
 /** 推播失敗只看近 3 天：上個月失敗過的推播不該一直掛警示。export 理由同上（broadcast-reset-failed 同一扇窗） */
 export const BROADCAST_FAILED_WINDOW_MS = 3 * 24 * 3600_000
@@ -854,22 +881,7 @@ export async function collectWorkspaceAlerts(
           return { active: true, detail: reason || undefined }
         }),
         probe('renewalNotBound', async () => {
-          // 首期收款成功但約定卡沒建成：下期不會自動扣款，會靜默降級（付了錢的客戶
-          // 一個月後突然變免費層）。四個等值條件走自動索引合併；cardBound 是新欄位，
-          // 等值查詢不匹配缺欄位的舊單——舊資料剛好不誤報。
-          const snap = await db.collection(PAYMENT_ORDERS_COLLECTION)
-            .where('workspaceId', '==', wid)
-            .where('status', '==', 'paid')
-            .where('kind', '==', 'period_first')
-            .where('cardBound', '==', false)
-            .select('createdAt')
-            .limit(PROBLEM_SCAN_LIMIT)
-            .get()
-          const cutoff = Date.now() - RENEWAL_BIND_WINDOW_MS
-          const recent = snap.docs.filter((d) => {
-            const ms = tsToMs((d.data() as Record<string, unknown>).createdAt)
-            return ms >= cutoff
-          }).length
+          const recent = await countRecentUnboundRenewals(db, wid)
           return recent ? { active: true, count: recent } : { active: false }
         }),
         probe('invoiceFailed', async () => {

@@ -172,6 +172,34 @@ export function renewalReminderEmail(p: {
   return { subject, html, text }
 }
 
+// ── 3.5 付款成功但約定卡沒綁成 ──────────────────────────────
+// 2026-08-28 老闆拍板補的出口：這個狀態原本沒有任何主動通知（沒 LINE、沒 email），
+// 而後果是「付了錢的客戶下期不會被扣款、會被靜默降回免費層」。每筆訂單只寄一次
+// （冪等標記在訂單 doc 上，見 billing-emails.ts）。
+// ⛔口徑要準：錢**收到了**、服務**正常**，壞的只有「下期的自動扣款」。寫成「付款有問題」
+// 會嚇到人打電話來問這期是不是沒付成。
+export function rebindCardEmail(p: {
+  brandName: string
+  workspaceName: string
+  planName: string
+  manageUrl: string
+}): EmailContent {
+  const subject = `[${p.brandName}] 付款已收到，但自動扣款尚未設定完成`
+  const body
+    = paragraph(`「${p.workspaceName}」的 ${p.planName}方案本期款項已收到，服務正常運作中。`)
+    + paragraph('不過這次付款的信用卡沒有完成自動扣款的約定設定——下期不會自動扣款，方案到期後會被降回免費層。到後台重新設定一次付款方式，就會綁定完成。')
+    + button('前往重新設定付款方式', p.manageUrl)
+  const html = shell(p.brandName, '自動扣款尚未設定完成', body)
+  const text = [
+    '自動扣款尚未設定完成',
+    `「${p.workspaceName}」的 ${p.planName}方案本期款項已收到，服務正常運作中。`,
+    '不過這次付款的信用卡沒有完成自動扣款的約定設定——下期不會自動扣款，方案到期後會被降回免費層。到後台重新設定一次付款方式，就會綁定完成。',
+    '',
+    `重新設定付款方式：${p.manageUrl}`,
+  ].join('\n')
+  return { subject, html, text }
+}
+
 // ── 4. 額度快用完 / 已用完 ──────────────────────────────────
 export function quotaEmail(p: {
   brandName: string

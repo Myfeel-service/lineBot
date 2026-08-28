@@ -33,6 +33,7 @@ vi.mock('./webhook-dedup', () => ({ WEBHOOK_EVENT_LOCKS_COLLECTION: 'webhookEven
 vi.mock('./ai-handoff-notify', () => ({
   notifyHandoffToStaff: vi.fn(async () => true),
   notifyOverdueHandoffBatch: vi.fn(async () => true),
+  wasQuotaExhaustedNotified: vi.fn(async () => false),
 }))
 
 const { pushMessage } = vi.hoisted(() => ({ pushMessage: vi.fn(async (..._a: any[]) => ({})) }))
@@ -40,7 +41,8 @@ vi.mock('./line', () => ({ pushMessage }))
 
 // 摘要尾巴的「黃級異常」行（D-36①）吃這支探針彙總;預設回空＝既有案例的訊息內容不變
 const { collectWorkspaceAlerts } = vi.hoisted(() => ({ collectWorkspaceAlerts: vi.fn(async () => [] as any[]) }))
-vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts }))
+const { countRecentUnboundRenewals } = vi.hoisted(() => ({ countRecentUnboundRenewals: vi.fn(async () => 0) }))
+vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts, countRecentUnboundRenewals }))
 
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
@@ -154,6 +156,8 @@ beforeEach(() => {
   getAiSettings.mockResolvedValue(settings())
   collectWorkspaceAlerts.mockClear()
   collectWorkspaceAlerts.mockResolvedValue([])
+  countRecentUnboundRenewals.mockReset()
+  countRecentUnboundRenewals.mockResolvedValue(0)
 })
 
 afterEach(() => {
@@ -264,6 +268,27 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     expect(text).toContain('另有 2 件建議處理的事')
     expect(text).toContain('最重要:有推播沒有送出去')
     expect(text).not.toContain('永遠不會被啟動') // 只點名最重要那件,不把異常面板搬進 LINE
+  })
+
+  it('綁卡沒成那顆不在營運探針組,單獨查、而且排在允許清單第一（錢的事最重要）', async () => {
+    countRecentUnboundRenewals.mockResolvedValue(1)
+    collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastFailed', state: 'active' }])
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('另有 2 件建議處理的事')
+    expect(text).toContain('最重要:付款成功但自動扣款沒綁好')
+  })
+
+  it('綁卡查詢掛掉 → 當沒有,摘要與其他黃級照常（⛔不准拖垮摘要本體）', async () => {
+    countRecentUnboundRenewals.mockRejectedValue(new Error('boom'))
+    collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastFailed', state: 'active' }])
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('最重要:有推播沒有送出去')
   })
 
   it('只有黃級異常、沒有其他待辦 → 不發(只搭便車,不單獨觸發)', async () => {

@@ -286,6 +286,17 @@
             </template>
           </div>
 
+          <!-- 節慶行銷提醒（2026-08-28 老闆拍板：不再只在 LINE）。
+               LINE 那則是 7／3／1 天各一次的一次性訊息；這張卡是**常駐**的——
+               窗內每天打開面板都看得到，文案跟 LINE 同一支函式產（festival-hint.ts）。
+               排在昨日摘要後面：先講營運、再講行銷，跟 LINE 那則的段落順序同一套。
+               開通沒完成不顯示（連客人都還進不來，排什麼推播）。 -->
+          <div v-if="festival && !onboardingIncomplete" class="ta-festival">
+            <div class="ta-festival__head">🎉 {{ festival.name }}快到了</div>
+            <p class="ta-festival__text">{{ festival.text }}</p>
+            <button type="button" class="ta-festival__cta" @click="goBroadcasts">去排推播 →</button>
+          </div>
+
           <!-- 載入骨架 -->
           <div v-if="!loaded" class="ta-skeleton" aria-hidden="true">
             <span class="ta-skel-bar" />
@@ -514,6 +525,8 @@ import type { AgentGuideId } from '~/utils/agent-guides'
 import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import { festivalHint } from '~/utils/festival-hint'
+import { taipeiDate } from '~~/shared/time'
 
 const { user } = useAuth()
 const { workspaceId } = useWorkspace()
@@ -648,6 +661,17 @@ const briefDateLabel = computed(() => {
   return `（${Number(m)}/${Number(day)}）`
 })
 const briefD = computed(() => brief.value?.dayBefore ?? null)
+
+/**
+ * 節慶行銷提醒（判定與文案在 utils/festival-hint.ts，跟 LINE 那則同一套來源）。
+ * 日期用台北時區的「今天」：直接拿本機日期的話，凌晨（台北已換日、UTC 還沒）會慢一天。
+ * 只在面板打開的當下算一次就夠——節日窗是以「天」為單位的東西，不需要反應式跟著時鐘走。
+ */
+const festival = computed(() => festivalHint(taipeiDate()))
+function goBroadcasts() {
+  closePanel()
+  void navigateTo(`/admin/${workspaceId.value}/broadcasts`)
+}
 /**
  * 「第一句話誰回的」的互斥分項：**只有加起來等於總場數的東西可以並排**。
  * 這一排的全部價值就是「不用自己減」——所以舊資料湊不到總數時要補一格「其他」，

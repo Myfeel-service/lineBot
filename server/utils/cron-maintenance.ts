@@ -26,7 +26,7 @@ import { syncGoogleSheetSource } from './gsheet-sync'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
 import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
-import { notifyHandoffToStaff, notifyOverdueHandoffBatch } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasQuotaExhaustedNotified } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushMessage } from './line'
 import type { messagingApi } from '@line/bot-sdk'
@@ -41,7 +41,7 @@ import {
 } from '~~/shared/taiwan-festivals'
 import { ALERT_LABELS, ALERT_SEVERITY, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
-import { collectWorkspaceAlerts } from './workspace-alerts'
+import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
@@ -1093,8 +1093,13 @@ export async function dailyBacklogDigest(db: Firestore) {
     // ⛔刻意只搭已經要發的摘要,不讓黃級異常單獨觸發——單獨觸發得每輪對全租戶跑探針,
     // 成本形狀跟 08-11 讀取費暴衝同款。查掛了就當沒有,不准拖垮摘要本體。
     const digestWarnings = await collectWorkspaceAlerts(db, ws, { canSettings: false, canOperate: true })
-      .then((items) => {
+      .then(async (items) => {
         const active = new Set(items.filter(a => a.state === 'active').map(a => a.id))
+        // renewalNotBound 不在營運探針組,單獨查這一顆（一次純 Firestore 等值查詢）——
+        // 它是唯一「付了錢的客戶會被靜默降級」的黃級,2026-08-28 拍板收進尾巴
+        // （規則與理由見 shared/types/alerts.ts 的 DIGEST_WARNING_ALERTS）。
+        if (await countRecentUnboundRenewals(db, ws).catch(() => 0))
+          active.add('renewalNotBound')
         // DIGEST_WARNING_ALERTS 的順序＝重要度,「最重要」取第一個命中的
         return DIGEST_WARNING_ALERTS.filter(id => active.has(id))
       })
@@ -1317,7 +1322,15 @@ export async function pushCriticalAlerts(db: Firestore) {
 
     // ⚠️ 只認 active。unknown（這次查不到）刻意不推——「查不到」不是「壞掉」，
     // 拿它推播就是把我方的查詢失敗當成商家的災情，一次誤報就會讓人關掉這個功能。
-    const criticals = items.filter(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'critical')
+    let criticals = items.filter(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'critical')
+    // 額度用完有自己的專屬通知（🚫 那則：發生當下就推、寫了用量與後果、每期一次）。
+    // 同一期那則已經**送達**的話，這裡讓路——不然額度用完那天會連收兩則講同一件事
+    // （2026-08-28 拍板修）。專屬那則全滅重試中則照講：寧可重複，不可漏報。
+    if (criticals.some(i => i.id === 'quotaExceeded')) {
+      const already = await wasQuotaExhaustedNotified(wid, settings.quota?.monthlyTokenCap ?? 0, db)
+        .catch(() => false) // 查不到就當沒發過 → 照講（漏報比重複糟）
+      if (already) criticals = criticals.filter(i => i.id !== 'quotaExceeded')
+    }
     const sent = prev.sent ?? {}
     const fresh = criticals.filter(i => now - (sent[i.id] ?? 0) >= CRITICAL_PUSH_REPEAT_MS)
     if (!fresh.length) {

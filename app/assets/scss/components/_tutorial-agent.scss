@@ -869,6 +869,45 @@
   border-radius: var(--radius-md);
 }
 
+/* ── 節慶行銷提醒（2026-08-28 拍板：不再只在 LINE）────────────
+   長相跟昨日摘要同一族（卡片、同圓角同邊框）——它是日常資訊，不是異常，
+   ⛔別給它警示色：紅橘是留給「壞掉」的，節慶上色會稀釋那條線。 */
+.ta-festival {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 0.875rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ta-festival__head {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ta-festival__text {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.ta-festival__cta {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--brand-green-text);
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
+
 .ta-brief__head {
   display: flex;
   align-items: baseline;
