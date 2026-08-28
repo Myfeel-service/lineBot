@@ -12,7 +12,7 @@
 // 型別與內容都在 utils/tutorial-topics.ts（Nuxt 會自動匯入，這裡明寫是為了讀的人好找）
 import type { TutorialCategoryGroup, TutorialStep, TutorialTopic } from '~/utils/tutorial-topics'
 import { CATEGORY_META, TUTORIAL_TOPICS } from '~/utils/tutorial-topics'
-import { stepAllowedForRole } from '~/utils/tutorial-step-visibility'
+import { stepAllowedForRole, stepPreconditionMet } from '~/utils/tutorial-step-visibility'
 
 export function useTutorial() {
   const router = useRouter()
@@ -90,7 +90,11 @@ export function useTutorial() {
   async function startTopic(topic: TutorialTopic) {
     const wid = workspaceId.value
     if (!wid) return
-    const steps = visibleSteps(topic.steps)
+    // 角色／功能旗標先過（純判斷），再用畫面現況過一次「前提在不在」——
+    // 空收件匣的帳號權限完全正常，但對話頁右半邊那幾步一場都點不開，
+    // 不擋就是連續五次「位置不在畫面上」＋每次乾等兩秒（2026-08-28 code review 修）。
+    const has = (sel: string) => typeof document !== 'undefined' && !!document.querySelector(sel)
+    const steps = visibleSteps(topic.steps).filter(s => stepPreconditionMet(s, has))
     if (!steps.length) return
     activeSteps.value = steps
     lastTopicId.value = topic.id

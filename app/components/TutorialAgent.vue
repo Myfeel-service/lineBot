@@ -1262,9 +1262,12 @@ async function focusActiveStep() {
   else {
     clearDemo()
   }
-  // 顯示前先點某元素（例如先進入新增模式，編輯區才會出現），再等頁面渲染
-  if (step?.clickBefore) {
-    document.querySelector<HTMLElement>(step.clickBefore)?.click()
+  // 顯示前先點某元素（例如先進入新增模式，編輯區才會出現），再等頁面渲染。
+  // ⛔ 有 clickBeforeUnless 的先問「使用者手上是不是已經開著東西」——無條件點下去
+  //    等於把他正在讀的對話切掉，而按「上一步」回到這步還會再切一次
+  //    （2026-08-28 code review 修，規則在 utils/tutorial-step-visibility.ts）。
+  if (step && shouldRunClickBefore(step, sel => !!document.querySelector(sel))) {
+    document.querySelector<HTMLElement>(step.clickBefore!)?.click()
     await nextTick()
     await new Promise<void>(resolve =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),

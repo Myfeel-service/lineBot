@@ -509,15 +509,21 @@ export function useOnboardingChat() {
   ) {
     progress.value = 3
     await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
-    // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
-    // 等於沒講（2026-08-28 拍板）。查不到就維持上面那句純文字，不要生半殘的卡。
-    await showOaInvite()
     const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
 
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
     // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
     // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
     const poll = pollFirstMessage()
+
+    // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
+    // 等於沒講。查不到就維持上面那句純文字，不要生半殘的卡。
+    //
+    // ⛔ 這張卡**不可以 await 在等待卡與輪詢之前**（2026-08-28 code review 抓到）：
+    // 它要去問 LINE 拿官方帳號代號，那支請求沒有逾時。LINE 慢的時候「等待第一則訊息…」
+    // 還沒畫、輪詢也還沒開始——人已經被告知「我在這裡等」、照做傳了訊息，畫面卻毫無反應；
+    // 請求一直不回來的話，輪詢根本不會開始。所以：先開始等，卡片自己晚點補上來。
+    void showOaInvite().catch(() => {}) // 拿不到就算了，上面那句純文字仍然成立
     const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
 
     // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
@@ -591,6 +597,12 @@ export function useOnboardingChat() {
       if (val === 'skip')
         break
       if (val === 'verify') {
+        // ⛔驗過就把「等太久」那份提示關掉（2026-08-28 code review 抓到）：
+        // 提前給驗證出口的人（按過「略過檢查，直接測試」那群）會在 90 秒前就驗完，
+        // 而那段提示列的正是「Webhook 沒存檔／開關沒開／Secret 貼錯」——
+        // 剛檢查過的四件事又照本宣科念一次，還叫他按剛按過的按鈕。
+        // 驗證結果本身已經把該講的話講完了（不通的話 verifyAndAdvise 會逐項指路）。
+        hintPending = false
         const res = await verifyAndAdvise(webhookUrl, line)
         if (res === 'ok')
           await say('接線是通的——再用手機傳一句話試試，我繼續等。')
@@ -929,7 +941,11 @@ export function useOnboardingChat() {
   }
 
   async function stepDone(line: LineStatus) {
-    progress.value = 4
+    // ⛔進度不可以在「確認完成」之前就跳到最後一格（2026-08-28 code review 抓到）：
+    // 頁首那個「之後再說」的出口在最後一格會被藏起來，而下面這段要去問後端「真的完成了嗎」。
+    // 提前跳格＝在等答案的那段時間，出口已經沒了、畫面也沒有待答按鈕；那支查詢一卡住
+    // （伺服器剛醒、手機訊號不穩），人就坐在開通頁上沒有任何離開的方法。
+    // 改成拿到答案（或走到誠實出口）之後才跳格——在那之前出口一直都在。
     // 摘要不用劇本自己的記憶，重新跟後端要一次真實訊號——原則：agent 只轉述，不臆測。
     // 查不到就「不出成績單」：把剛做完的事顯示成沒做，比沒有摘要嚴重得多（查不到≠沒做）。
     let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
@@ -957,6 +973,10 @@ export function useOnboardingChat() {
         return
       }
     }
+
+    // 到這裡才是真的走到最後一格（成績單即將畫出來）：頁首的出口從這一刻才收掉，
+    // 而這一刻畫面上馬上就有成績單與那排「接下來做什麼」的按鈕，不會出現沒出路的空窗。
+    progress.value = 4
 
     card({
       kind: 'summary',

@@ -87,7 +87,7 @@ const props = defineProps<{
   label?: string
 }>()
 
-const { topics: visibleTopics, stepCount, startTopic } = useTutorial()
+const { topics: visibleTopics, stepCount, startTopic, tourOpen } = useTutorial()
 
 /** 這個帳號現在真的跑得起來的那幾支，順序照傳進來的順序（不是註冊表順序） */
 const available = computed<TutorialTopic[]>(() =>
@@ -129,23 +129,37 @@ onMounted(() => {
   const fire = () => {
     if (!available.value.length)
       return false
+    // ⛔導覽開著時先不放（2026-08-28 code review 抓到）：導覽的黑幕蓋在這顆氣泡上面，
+    // 放了等於在幕後亮四秒鐘給沒人看。而開通完成正是「交棒到對話頁 ＋ 同時開導覽」，
+    // 剛好就是這個情境——這個氣泡一輩子只出現一次，不能這樣被吃掉。
+    // 回 false＝這件事還沒處理完，下面的 watch 會在導覽關掉後再試一次。
+    if (tourOpen.value)
+      return false
     try {
       if (localStorage.getItem(hintKey()))
         return true
-      localStorage.setItem(hintKey(), '1')
     }
     catch {
       // 無痕視窗／擋 storage：寧可不提示，也不要變成每次進來都跳一次
       return true
     }
     hinting.value = true
-    window.setTimeout(dismissHint, HINT_MS)
+    // ⛔「已經看過」要等**真的顯示完**才記（同一輪 review 抓到）：先記再顯示的話，
+    // 任何讓它顯示不出來的情況都會把這一次性的機會永久花掉，而且沒有人會發現。
+    window.setTimeout(() => {
+      dismissHint()
+      try {
+        localStorage.setItem(hintKey(), '1')
+      }
+      catch { /* 記不起來就下次再提醒一次，比永久消失好 */ }
+    }, HINT_MS)
     return true
   }
   if (fire())
     return
-  // 角色與功能旗標是非同步載入的，載完才知道這一頁到底有沒有教學可跑
-  const stop = watch(available, () => {
+  // 兩件事都要等：角色／功能旗標是非同步載入的（載完才知道這一頁有沒有教學可跑），
+  // 而導覽開著時 fire() 會刻意讓路——所以也要盯著它關掉的那一刻補放。
+  const stop = watch([available, tourOpen], () => {
     if (fire())
       stop()
   })

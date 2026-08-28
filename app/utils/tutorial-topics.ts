@@ -23,6 +23,24 @@ export interface TutorialStep {
   target: string
   /** 顯示這步之前，先點一下這個 selector 的元素（例如先進入新增模式，編輯區才會出現） */
   clickBefore?: string
+  /**
+   * 有這個東西在畫面上就**不要**點 `clickBefore`（2026-08-28 code review 抓到）。
+   *
+   * 為什麼需要：對話頁那幾步靠 `clickBefore` 幫使用者點開第一筆，但客服很可能**正在讀某一場**——
+   * 無條件點下去等於把他手上的對話切掉，而且按導覽的「上一步」回到這步又會再切一次。
+   * 填「右半邊已經開著」的錨點，就變成「沒開才幫你開」。
+   */
+  clickBeforeUnless?: string
+  /**
+   * 這一步的**前提**必須先在畫面上，否則整步跳過（2026-08-28 code review 抓到）。
+   *
+   * 跟 `target` 的差別：`target` 常常是「點開之後才會出現」的東西（右半邊、編輯區），
+   * 開場當下本來就查不到；這一欄要填的是「有沒有東西可以點開」那個前提。
+   * 例：剛開通、還沒收到過任何客人訊息的帳號一場對話都沒有，對話頁右半邊那幾步
+   * 會連續跳五次「這一步要指的位置目前不在畫面上」、每次乾等兩秒——而最可能開這支
+   * 導覽的正是這種新帳號。
+   */
+  requiresPresent?: string
   /** 在機器人模組頁示範這種訊息卡（會在示範草稿裡放一張該類型的卡，下一步自動換掉） */
   demoType?: string
   /** 只寫「這步在做什麼」，不要加「第 N 步」——步數由畫面自動標 */
@@ -461,6 +479,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '[data-tour="conv-header"]',
         clickBefore: '.conv-list-row .split-list-item',
+        // 已經開著就不要切走使用者手上那一場（見 clickBeforeUnless 的說明）
+        clickBeforeUnless: '[data-tour="conv-header"]',
+        requiresPresent: '.conv-list-row .split-list-item',
         title: '點開一場對話',
         description:
           '最上面這排告訴你<strong>這場現在是誰在處理</strong>：狀態徽章、負責人，以及底下那行「新會話 → AI 客服 → 真人」的經過。',
@@ -468,6 +489,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="conv-actions"]',
+        requiresPresent: '.conv-list-row .split-list-item',
         title: '接手、交還、結束',
         description:
           '<strong>我接手</strong>＝這位客人先由你回，機器人與 AI 會暫停自動回覆，不會跟你搶話；'
@@ -477,6 +499,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="conv-messages"]',
+        requiresPresent: '.conv-list-row .split-list-item',
         title: 'AI 回的話，可以問它「為什麼」',
         description:
           'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
@@ -485,6 +508,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="conv-reply"]',
+        requiresPresent: '.conv-list-row .split-list-item',
         title: '直接在這裡回覆',
         description:
           'Enter 送出、Shift + Enter 換行。你送出的訊息會即時進到客人的 LINE。',
@@ -493,6 +517,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="conv-presets"]',
+        requiresPresent: '.conv-list-row .split-list-item',
         title: '常用回覆不用每次重打',
         description:
           '📦 是<strong>客服預存</strong>：挑一則就能直接送出，也可以先填進回覆框改幾個字再送。'
