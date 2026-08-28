@@ -97,6 +97,8 @@ export function useOnboardingChat() {
     onSkip,
   } = runner
   const progress = ref(0)
+  /** 「要加哪個帳號」那張卡出過了沒——傳話測試可以從成績單再進來一次，卡不要重複出 */
+  let oaInviteShown = false
 
   // 「跳過記憶」已整組拆除（2026-08-20）：它跟「開通沒做完每次進後台都拉回」的拍板
   // 直接打架——系統一邊說你有事沒做完把人拉進來，一邊又用舊記憶把人快轉到完成頁。
@@ -548,6 +550,20 @@ export function useOnboardingChat() {
       { label: '改前面的設定', value: 'redo' },
       { label: '先跳過測試', value: 'skip', escape: true },
     ]
+    /**
+     * 排障過之後選「繼續等」的安靜狀態（2026-08-28 code review 修）。
+     *
+     * ⛔ 不可以退回最初的 `waitOptions`：接線驗過的人那一份只有「先跳過測試」一顆，
+     * 而「等太久」提示是一次性的（`hintPending` 已經 false），按下去就再也回不到排障選單——
+     * 正在排障的人畫面上只剩「放棄測試」一條路。所以這一份保留兩個回頭的入口，
+     * 只把「檢查好了」自己收掉，而且**一顆都不設 primary**：他剛說要安靜等，
+     * 不該再有一顆填色按鈕在旁邊催。
+     */
+    const quietOptions: AgentChoice[] = [
+      { label: '還是沒收到？再驗一次', value: 'verify' },
+      { label: '改前面的設定', value: 'redo' },
+      { label: '先跳過測試', value: 'skip', escape: true },
+    ]
     let askOptions = waitOptions
 
     let received: FirstMessageRes | null = null
@@ -610,7 +626,7 @@ export function useOnboardingChat() {
         continue
       }
       if (val === 'wait') {
-        askOptions = waitOptions
+        askOptions = quietOptions
         continue
       }
       if (val === 'redo') {
@@ -849,9 +865,14 @@ export function useOnboardingChat() {
           },
           {
             // 選對卡的前導放進動畫裡——同名雙卡是最大雷點，教學開頭就要處理
-            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址 → 按「<b>Update</b>」<b>存檔</b>。<br>貼了沒按 Update 是接不通的第一名，存好再按下一步。',
+            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址 → 按「<b>Update</b>」<b>存檔</b>。<br>貼了沒按 Update 是接不通的第一名，存好再按下一步。<br>（動畫最後會順手把下面那個開關也打開——那是下一步要做的事，先做完也沒關係。）',
             image: ONBOARDING_SHOTS.webhookAnim,
-            alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
+            // ⚠️ alt 只描述**這一步**教的動作（2026-08-28 code review 修）：拆成兩步之後，
+            // 這張動畫的最後還是會演到「開 Use webhook」——那是下一步的事。
+            // 讀螢幕的人拿到的描述不能跟他正在讀的指令互相矛盾。
+            // ⚠️動畫本身尚未重裁，看得見畫面的人仍會提前看到開關被打開；重裁前先把
+            // 下一步的指令講在前面（見下一節點的文案），至少不會變成「做完了才被教」。
+            alt: '循環動畫：選 Messaging API 卡、切到 Messaging API 分頁、把 Webhook 網址貼進去並按 Update 存檔',
           },
           {
             html: '最後把網址欄位下面的「<b>Use webhook</b>」開關<b>打開</b>。<br>這個開關沒開的話，網址貼得再對訊息也不會進來（接不通的第二名）。做完回來按「貼好了，幫我檢查」。',
@@ -888,7 +909,9 @@ export function useOnboardingChat() {
     await say('測試前還有一個小開關：LINE 官方帳號內建的「自動回應訊息」預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>（LINE 的罐頭訊息＋我們的回覆）。')
     const howOff = await askChoices([
       { label: '教我一步步關', value: 'walk', primary: true },
-      { label: '我會關，直接測試', value: 'skip' },
+      // escape：跳過類固定排最左，遠離主要鈕與拇指落點（漏標會讓它緊貼主要鈕，
+      // 而兩頁前語意相同的「先跳過測試」在最左邊＝同一條流程兩種位置）
+      { label: '我會關，直接測試', value: 'skip', escape: true },
     ])
     if (howOff === 'walk') {
       const how = await walkNodes([
@@ -921,11 +944,19 @@ export function useOnboardingChat() {
    *    這時上面那句「加你的官方帳號好友」仍然成立，只是少了捷徑。
    */
   async function showOaInvite() {
+    // ⛔ 一場對話只出一張（2026-08-28 code review 修）：成績單的「回去做傳話測試」會把
+    //    stepFirstMessageWait 整段再跑一次，不擋的話同一段對話裡會出現兩張一模一樣的卡。
+    if (oaInviteShown)
+      return
     try {
       const r = await apiFetch<{ basicId: string, addFriendUrl: string, qrDataUrl: string }>(
         '/api/admin/onboarding/oa-invite',
       )
-      if (r?.basicId) {
+      // ⛔ 回來時先確認這場對話還在（同一輪 review 修）：這支是 fire-and-forget，
+      //    使用者可能早就離頁了。`card()` 不像 `say()` 會過 checkpoint，直接推就會寫進
+      //    一個已經被 dispose 的 transcript。
+      if (r?.basicId && !isDisposed()) {
+        oaInviteShown = true
         card({
           kind: 'oaInvite',
           basicId: r.basicId,

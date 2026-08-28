@@ -1163,8 +1163,13 @@ onMounted(async () => {
   }
   await refreshAll()
   // 只有「真的還有必要項沒做」且沒看過，才彈引導
+  // ⛔ 導覽正在跑就不要彈（2026-08-28 code review 修）：開通完成後按「帶你認識後台」
+  //    落地的那一刻，剛好同時滿足「必要項還沒做完」（新帳號的知識庫／AI 一定是空的）
+  //    與「沒看過這顆氣泡」——結果是一顆「要不要我帶你把設定做完」蓋在他剛剛選擇的
+  //    導覽旁邊，還就長在導覽下一步要高亮的那顆 FAB 上。這顆氣泡沒被 dismiss 就不會
+  //    寫記憶，所以只是延到下次進後台再說，不會消失。
   try {
-    if (!localStorage.getItem(nudgeKey()) && incompleteRequired.value.length > 0)
+    if (!tourOpen.value && !localStorage.getItem(nudgeKey()) && incompleteRequired.value.length > 0)
       showNudge.value = true
   }
   catch {}

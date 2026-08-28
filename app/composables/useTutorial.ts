@@ -119,7 +119,11 @@ export function useTutorial() {
 
   /** 依 topic id 啟動導覽（給健康摘要的「帶我做」按鈕用）；找不到回傳 false */
   function startTopicById(id: string): boolean {
-    const topic = TUTORIAL_TOPICS.find(t => t.id === id)
+    // ⛔ 查 topics（已依角色與功能旗標過濾）不是 TUTORIAL_TOPICS（2026-08-28 code review 修）：
+    //    `?tour=` 是使用者可以自己在網址列打的，用未過濾的清單找得到，等於把客服或觀察者
+    //    送進他沒權限的設定頁、然後每一步都指不到東西——那正是 stepAllowedForRole 要防的事，
+    //    在這一層又漏了回來。查不到就回 false，呼叫端已經有退路（退回教學分頁讓人自己挑）。
+    const topic = topics.value.find(t => t.id === id)
     if (!topic)
       return false
     void startTopic(topic)

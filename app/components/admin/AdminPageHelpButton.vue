@@ -111,6 +111,8 @@ function startFirst() {
 // ── 第一次進這一頁的一次性提示 ──
 const HINT_MS = 4200
 const hinting = ref(false)
+/** 顯示計時器：離開這一頁要收掉，否則「已經看過」會在元件拆掉之後才被寫進去 */
+let hintTimer: number | undefined
 
 /** 記憶的鍵用「這一頁教哪幾支」，不用路由——同一頁在不同官方帳號底下路徑不同，但教學是同一批 */
 function hintKey() {
@@ -146,7 +148,8 @@ onMounted(() => {
     hinting.value = true
     // ⛔「已經看過」要等**真的顯示完**才記（同一輪 review 抓到）：先記再顯示的話，
     // 任何讓它顯示不出來的情況都會把這一次性的機會永久花掉，而且沒有人會發現。
-    window.setTimeout(() => {
+    hintTimer = window.setTimeout(() => {
+      hintTimer = undefined
       dismissHint()
       try {
         localStorage.setItem(hintKey(), '1')
@@ -163,6 +166,21 @@ onMounted(() => {
     if (fire())
       stop()
   })
+})
+
+/**
+ * ⛔ 離開這一頁就把計時器收掉（2026-08-28 code review 修）。
+ *
+ * 不收的話：氣泡才出現 0.3 秒、使用者就換頁，元件已經拆了，計時器照樣在四秒後
+ * 把「已經看過」寫進 localStorage——這個一輩子只有一次的提示就這樣被花掉，
+ * 而且沒有任何人會發現。這正是上面那段「要等真的顯示完才記」想防的同一件事，
+ * 只是漏了「顯示到一半就走人」這條路。
+ */
+onBeforeUnmount(() => {
+  if (hintTimer !== undefined) {
+    clearTimeout(hintTimer)
+    hintTimer = undefined
+  }
 })
 </script>
 
