@@ -287,6 +287,16 @@
   gap: 8px;
 }
 
+/* 帳單頁：本期用量（進度條＋已用則數）。
+   包成一塊只為了「則數用完／快用完」時提醒帶有東西可以圈起來（data-tour="bill-quota"，
+   見 utils/alert-field-marks.ts）。⛔間距必須跟 .card-section-stack 一模一樣——
+   多包一層卻讓版面變了，是這種「為了掛錨點而加的容器」最典型的副作用。 */
+.billing-quota-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
 /* 帳單頁：自動續訂狀態列（下次扣款日 + 取消訂閱）。
    取消入口刻意不做成顯眼的紅色按鈕，但也絕不藏起來——訂閱制的基本要求是隨時退得掉。 */
 .billing-renew-row {

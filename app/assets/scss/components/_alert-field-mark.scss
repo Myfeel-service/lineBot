@@ -1,0 +1,96 @@
+/* ── 「壞掉的就是這一格」欄位標示（C-95，2026-08-28）────────────
+   屬性由 AdminPageAlertStrip 掛上（data-alert-mark / -label / -rel），
+   規則在 app/utils/alert-field-marks.ts。這裡只負責「長什麼樣」。
+
+   起因＝老闆截圖：頁頂紅帶寫著「LINE 官方帳號還沒接上」，往下捲之後 Token、Secret
+   兩個空欄位跟旁邊十幾個欄位長得一模一樣——講完了「有什麼事」，卻看不出「是哪一格」。
+
+   ⛔ 一條鐵律：**只用 box-shadow 畫框，不動 box model**。
+   被標的格子散在 17 個頁面上（欄位、清單、分頁列、卡片都有），一旦加了
+   padding / margin / border / outline-offset，就會在某一頁把版面擠歪，
+   而那種歪掉沒有任何錯誤訊息、也不會有人回報。 */
+
+[data-alert-mark] {
+  /* 只影響 box-shadow 的形狀：這些容器多半沒有自己的背景，圓角是看不出來的 */
+  border-radius: var(--radius-md, 8px);
+  /* 內圈淡底當「呼吸區」、外圈實線當框；7px 的量在 card-section-stack 的
+     1rem 內距裡放得下，不會被 .message-card 的 overflow:hidden 切掉 */
+  box-shadow:
+    0 0 0 6px var(--el-color-danger-light-9),
+    0 0 0 8px var(--el-color-danger-light-5);
+}
+
+[data-alert-mark="warning"] {
+  box-shadow:
+    0 0 0 6px var(--el-color-warning-light-9),
+    0 0 0 8px var(--el-color-warning-light-5);
+}
+
+/* 元件量過原本是 static 才會掛這一個：⛔別無條件寫 position:relative，
+   會把頁面自己的 sticky／absolute 定位靜靜地弄壞 */
+[data-alert-mark-rel] {
+  position: relative;
+}
+
+/* 那一句話：貼在框的下緣（＝一般表單錯誤訊息的位置），跟提醒帶上那一句同一份措辭。
+   ⛔用 ::after 而不是塞真的 DOM 節點：這些格子是 Vue 在管的，外部插節點會在下一次
+   patch 時打架。位置刻意選左下角外緣——欄位的右上角是「教我怎麼拿」那顆求助連結。 */
+[data-alert-mark][data-alert-mark-label]::after {
+  content: attr(data-alert-mark-label);
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: 10px;
+  transform: translateY(50%);
+  z-index: 3;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-error);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: nowrap;
+  /* 純標示：不要擋住底下真正能點的東西 */
+  pointer-events: none;
+}
+
+[data-alert-mark="warning"][data-alert-mark-label]::after {
+  background: var(--color-warning);
+}
+
+/* 落地時輕輕跳兩下：進到頁面那一眼要抓得住視線，之後就安靜當框。
+   ⛔不要做成無限循環——常年亮著的東西會被學會忽略（同「紅點不能什麼都算」那把尺）。 */
+@keyframes alert-field-mark-pulse {
+  0%,
+  100% { box-shadow: 0 0 0 6px var(--el-color-danger-light-9), 0 0 0 8px var(--el-color-danger-light-5); }
+  50%  { box-shadow: 0 0 0 10px var(--el-color-danger-light-9), 0 0 0 12px var(--el-color-danger-light-5); }
+}
+
+@keyframes alert-field-mark-pulse-warning {
+  0%,
+  100% { box-shadow: 0 0 0 6px var(--el-color-warning-light-9), 0 0 0 8px var(--el-color-warning-light-5); }
+  50%  { box-shadow: 0 0 0 10px var(--el-color-warning-light-9), 0 0 0 12px var(--el-color-warning-light-5); }
+}
+
+[data-alert-mark] {
+  animation: alert-field-mark-pulse 0.9s ease-in-out 2;
+}
+
+[data-alert-mark="warning"] {
+  animation-name: alert-field-mark-pulse-warning;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-alert-mark] {
+    animation: none;
+  }
+}
+
+/* 窄畫面：框照畫，但那句話容易被擠出容器外——改成不換行的省略，寧可看不完也不要破版 */
+@media (max-width: 640px) {
+  [data-alert-mark][data-alert-mark-label]::after {
+    max-width: calc(100% - 20px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

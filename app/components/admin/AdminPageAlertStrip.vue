@@ -69,6 +69,7 @@
 
 <script setup lang="ts">
 import { Link } from '@element-plus/icons-vue'
+import type { AlertFieldMark } from '~/utils/alert-field-marks'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 
 /**
@@ -209,8 +210,89 @@ function go(r: { alert: ResolvedAlert, to: string }) {
     void navigateTo(r.to)
 }
 
-// TTL 節流（60 秒內不重打）＋與小幫手共用 inflight，直接進頁也有資料可畫
-onMounted(() => { void refresh() })
+// ── 「壞掉的就是這一格」（C-95，2026-08-28 老闆回饋）─────────────
+//
+// 提醒帶在頁頂講完「這一頁有什麼事」，人往下捲之後欄位全長一樣——老闆截圖：紅帶寫著
+// 「LINE 官方帳號還沒接上」，底下 Token、Secret 兩個空欄位跟其他十幾格沒有任何差別。
+// 「帶我看」的聚光燈能指，但那要**按了才會發生**；這個圈是不用按的那一份。
+//
+// ⛔ 做法上的三條紀律：
+// 1. **只在這裡標**：這個元件已經是「這一頁有哪些事」的唯一決定者，頁面裡不要各自實作
+//    （每頁自刻正是這整案在修的毛病）。要標哪些格子的規則在 utils/alert-field-marks.ts。
+// 2. **只加屬性、不動 box model**：這些格子散在 17 個頁面上，樣式一旦加 padding/margin/border
+//    就會在某一頁擠歪版面，而且沒有人會發現。畫框全部交給 box-shadow（見 _alert-field-mark.scss）。
+// 3. **等得到才標**：頁面內容常比這條帶晚渲染，onMounted 當下 querySelector 是空的
+//    （六輪那顆「按鈕字樣退化」就是同一個坑）。
+// 4. **畫框那段抽在 utils**（clearAlertFieldMarks / paintAlertFieldMark）：它的失效方式
+//    跟「一切正常」長得一樣——屬性沒掛上去，畫面就只是一個普通頁面，不會有任何錯誤訊息。
+//    抽出去才驗得到（見 utils/alert-field-marks.test.ts 的瀏覽器實跑）。
+/** 等區塊出現的上限。資料要先載完才畫得出來的頁面（知識庫體檢、對話清單）要等得夠久 */
+const MARK_WAIT_MS = 5000
+/**
+ * 畫完之後再補畫的時間點。頁面資料回來時常把整段清單重建，屬性會跟著舊節點一起消失——
+ * 那種失效在畫面上跟「沒有異常」長得一模一樣，不補的話沒有人會發現。
+ * ⛔別改成全域 MutationObserver：對話頁那種一直在動的畫面，代價遠大於這兩次重畫。
+ */
+const MARK_REPAINT_MS = [1200, 3500]
+
+const fieldMarks = computed<AlertFieldMark[]>(() => {
+  // 開通沒做完時 rows 本來就是空的：這段路唯一該圈的是「還沒填的那兩格憑證」
+  if (showOnboardingBand.value) {
+    const selector = onboardingBand.value.mark
+    return selector
+      ? [{ selector, tone: 'critical' as const, label: onboardingBand.value.title }]
+      : []
+  }
+  return alertFieldMarks(rows.value.map(r => r.alert))
+})
+
+/** 每次重標換一個號碼：舊的那一輪等元素等到一半回來時要能認出自己已經過期 */
+let markRun = 0
+
+function clearMarks() {
+  if (import.meta.client)
+    clearAlertFieldMarks(document)
+}
+
+function syncMarks() {
+  if (!import.meta.client)
+    return
+  const run = ++markRun
+  clearMarks()
+  for (const spec of fieldMarks.value) {
+    // 逐項各自等：某一項在這一頁根本沒有這個區塊時，不該把其他項一起卡住
+    void waitForElement(spec.selector, MARK_WAIT_MS).then((found) => {
+      // 等到一半使用者已經換頁／問題已經修好了：這一輪的號碼對不上就不要再畫
+      if (!found || run !== markRun)
+        return
+      paintAlertFieldMark(document, spec)
+      for (const delay of MARK_REPAINT_MS)
+        setTimeout(() => { if (run === markRun) paintAlertFieldMark(document, spec) }, delay)
+    })
+  }
+}
+
+// 換頁、或這一頁的事情變了（修好了／新壞了）都要重標。
+// ⛔比對的是「標哪幾格、什麼顏色」這個指紋，不是陣列本身：背景每 10 分鐘重查一次就會
+// 產生一個新陣列，直接 watch 物件的話等於每 10 分鐘把 DOM 重標一遍、落地動畫再跳一次。
+watch(
+  [() => fieldMarks.value.map(m => `${m.tone}:${m.selector}`).join('|'), () => route.path],
+  () => { void syncMarks() },
+)
+// 這條帶住在 layout：離開後台版型時把標記收乾淨，⛔別留在 DOM 上
+// （順手換號碼，讓還在排隊的補畫認出自己已經過期）
+onBeforeUnmount(() => {
+  markRun++
+  clearMarks()
+})
+
+onMounted(() => {
+  // TTL 節流（60 秒內不重打）＋與小幫手共用 inflight，直接進頁也有資料可畫
+  void refresh()
+  // 資料已經在手上（別頁查過）時 watch 不會觸發，這裡補第一次
+  void syncMarks()
+})
 </script>
 
-<!-- 樣式在 app/assets/scss/components/_block-status.scss（同批 D-33 元件） -->
+<!-- 樣式：橫帶本身在 app/assets/scss/components/_block-status.scss（同批 D-33 元件）；
+     頁面上那些框在 _alert-field-mark.scss（C-95） -->

@@ -55,6 +55,19 @@ export interface AlertDefinition {
    * 提醒帶負責第一眼，「帶我看」聚光燈負責指到那個區塊。
    */
   anchor?: { selector: string, note: string }
+  /**
+   * 「壞掉的就是這一格」（`C-95`，2026-08-28 老闆回饋）：進到這一頁時要被圈起來的欄位／區塊。
+   *
+   * 為什麼：提醒帶在頁頂講完「這一頁有什麼事」，人往下捲之後二十幾個欄位長得一模一樣——
+   * 「LINE 官方帳號還沒接上」講完了，要填的是哪兩格完全看不出來。「帶我看」的聚光燈能指，
+   * 但那要**按了才會發生**。這個圈是不用按的那一份。
+   *
+   * ⛔ **不填就是沿用 `anchor.selector`**（「能處理它的區塊」通常就是壞掉的那一格），
+   * 所以絕大多數異常什麼都不用加。只有兩者不同時才填這一欄——例如額度用完，
+   * 能按的是頁頂「升級 / 續訂」，但要看的是方案卡裡那條用量。
+   * 規則（誰該標、誰不該標）在 `utils/alert-field-marks.ts`，⛔別在元件裡另加條件。
+   */
+  mark?: string
   /** 有掛的話，卡片多一顆「用聊天帶我修」——對應的引導劇本（C-31 Phase 1，utils/agent-guides） */
   guideId?: AgentGuideId
   /**
@@ -249,6 +262,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去升級方案',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+    // ⛔只圈不給「帶我看」：能按的（升級 / 續訂）在卡片頁首，要看的是卡片裡那條用量——
+    // 掛 anchor 的話按鈕會在每一頁都變成「帶我看」，但在別頁按下去其實是跳頁（見 rowActionLabel）
+    mark: '[data-tour="bill-quota"]',
   },
   {
     // 提前量：quotaExceeded 亮的時候 AI 已經停了。這顆在停之前就講
@@ -258,6 +274,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看用量與方案',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+    mark: '[data-tour="bill-quota"]',
   },
   {
     id: 'paymentPastDue',
@@ -266,6 +283,8 @@ const ALERTS: AlertDefinition[] = [
     cta: '去處理付款',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+    // 扣款失敗那張黃卡本來就只在 past_due 時出現＝這顆亮著時它一定在，圈得到
+    mark: '[data-tour="bill-past-due"]',
   },
   {
     id: 'handoffNotifyMissing',
@@ -384,6 +403,9 @@ const ALERTS: AlertDefinition[] = [
     cta: '去處理付款方式',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
+    // ⛔刻意沒有 mark：這顆亮著＝沒有生效中的委託（hasMandate=false），
+    // 而帳單頁的續訂列與「更新付款方式」按鈕都掛在 canCancel（＝有委託）之下＝**當下不存在**。
+    // 圈一個沒有東西可按的區塊比不圈更糟；出路寫在 impact 裡（重新設定付款方式／聯絡我們）。
   },
   {
     id: 'invoiceFailed',

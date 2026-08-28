@@ -62,7 +62,11 @@
             <el-button size="small" type="primary" @click="upgradeOpen = true">升級 / 續訂</el-button>
           </div>
           <div class="card-section-stack">
-            <template v-if="planState.limit != null">
+            <!-- data-tour="bill-quota"：則數用完／快用完時，提醒帶會把這一塊圈起來
+                 （「壞掉的就是這一格」，見 utils/alert-field-marks.ts）。
+                 ⛔包一層 div 是為了有東西可以圈——內距／間距照 card-section-stack 原樣，
+                 版面不能因為多這層而變。 -->
+            <div v-if="planState.limit != null" class="billing-quota-block" data-tour="bill-quota">
               <el-progress
                 :percentage="planState.percent"
                 :color="planState.color"
@@ -80,7 +84,7 @@
                   · 本期 {{ planView.currentPeriodStart }} ~ {{ planView.currentPeriodEnd }}
                 </template>
               </p>
-            </template>
+            </div>
             <p v-else class="text-xs text-muted">客製額度,無固定則數上限。</p>
 
             <!-- 續訂狀態：自動扣款這件事必須一眼看得到，而且**隨時退得掉**。
@@ -89,6 +93,7 @@
                  絕不能讓警告訊息把取消入口蓋掉。 -->
             <el-alert
               v-if="planView.status === 'past_due'"
+              data-tour="bill-past-due"
               type="warning"
               :closable="false"
               show-icon
