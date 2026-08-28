@@ -452,6 +452,7 @@
     <button
       ref="fabRef"
       class="ta-fab"
+      data-tour="ta-fab"
       :class="{ 'ta-fab--open': panelOpen }"
       :aria-label="panelOpen ? '關閉小幫手' : '開啟小幫手'"
       title="按住可以拖到別的位置"
@@ -531,6 +532,9 @@ import { taipeiDate } from '~~/shared/time'
 const { user } = useAuth()
 const { workspaceId } = useWorkspace()
 const router = useRouter()
+// 只給 ?tour= 深連結用（開通引導結尾送人進來時開跑那一支）。
+// ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
+const route = useRoute()
 
 /** 面板分頁:目前狀況(異常+待辦+日報)/ 教學(主題庫)/ 問助理(admin 查詢副駕 P1) */
 const panelTab = ref<'setup' | 'learn' | 'chat'>('setup')
@@ -1054,13 +1058,18 @@ async function onTourFinish() {
   // 一定要 force：使用者剛才就在改設定，這裡拿到舊快取就會誤報「還沒生效」
   await refresh({ force: true })
   const cap = finishedId ? capabilities.value.find(c => c.tourId === finishedId) : null
+  // 2026-08-28 拍板：**每一支**導覽跑完都要講「還能再看、去哪看」。
+  // 在這之前只有掛了 tourId 的那 4 支會回話，其餘 18 支按完最後一步畫面一個字都不多說，
+  // 而且全站沒有任何地方提過教學可以重開——正是老闆點名的缺口。
+  const reopen = '想再看一次？每頁頁首的「？」，或這裡的「教學」分頁隨時都在。'
   if (cap) {
-    postTourNote.value = cap.status === 'done'
+    const verdict = cap.status === 'done'
       ? `「${cap.title}」完成了，太好了！`
-      : `看起來「${cap.title}」還沒生效——設定完記得按「儲存」喔。需要的話可以再走一次。`
+      : `看起來「${cap.title}」還沒生效——設定完記得按「儲存」喔。`
+    postTourNote.value = `${verdict}${reopen}`
   }
   else {
-    postTourNote.value = ''
+    postTourNote.value = reopen
   }
   openPanel()
 }
@@ -1131,6 +1140,16 @@ watch(criticalAlerts, (list) => {
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
+  // 開通引導結尾的「帶你認識後台」把人送進後台之後，由這裡接手開跑（開通頁是 layout:false，
+  // 沒有側欄／小幫手這些要被高亮的元素，導覽只能在後台版型裡跑）。
+  // ⛔ 開跑前先把 query 拿掉：留著的話重新整理會一直重跑同一支導覽。
+  // ⛔ 認不得的值一律當沒帶（打錯字不要變成「按了沒反應」），沿用標籤頁 ?aiMode= 的守門方式。
+  const wantTour = String(route.query.tour || '').trim()
+  if (wantTour) {
+    const { tour: _dropped, ...restQuery } = route.query
+    void router.replace({ query: restQuery })
+    startTopicById(wantTour)
+  }
   await refreshAll()
   // 只有「真的還有必要項沒做」且沒看過，才彈引導
   try {

@@ -4,7 +4,7 @@
        ⛔ 別搬回底部 dock——面板高、對話短的時候，釘在底部等於離最新訊息半個螢幕遠 -->
   <div v-if="ask.kind === 'choices'" class="agm-choices">
     <el-button
-      v-for="opt in ask.options"
+      v-for="opt in laidOut"
       :key="opt.value"
       :type="opt.primary ? 'primary' : 'default'"
       round
@@ -15,10 +15,16 @@
 </template>
 
 <script setup lang="ts">
-import type { AgentAsk } from '~~/shared/types/agent-messages'
+import type { AgentAsk, AgentChoice } from '~~/shared/types/agent-messages'
+import { orderAgentChoices } from '~/utils/agent-choice-order'
 
-defineProps<{ ask: AgentAsk, busy?: boolean }>()
+const props = defineProps<{ ask: AgentAsk, busy?: boolean }>()
 defineEmits<{ choice: [value: string] }>()
+
+/** 版面順序：跳過／離開 → 其他 → 主要動作。規則與理由寫在 utils/agent-choice-order */
+const laidOut = computed<AgentChoice[]>(() =>
+  orderAgentChoices(props.ask.kind === 'choices' ? props.ask.options : []),
+)
 </script>
 
 <!-- 樣式在 app/assets/scss/components/_agent-chat.scss（.agm-choices） -->

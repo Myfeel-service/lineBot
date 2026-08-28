@@ -13,7 +13,6 @@ import type { AgentChoice } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
-import { leadEndpointUrl } from '~~/shared/liff-lead-path'
 import { type LineWebhookCause, diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
@@ -139,7 +138,7 @@ export function useOnboardingChat() {
     await say('一共四步，跟上面的進度條一格一格對得上：<b>建帳號</b> → <b>拿鑰匙</b> → <b>接線</b> → <b>傳一句話測試</b>，做完就亮最後一格「完成」。隨時可以離開，下次回來我會從沒做完的地方接著帶。')
     const c = await askChoices([
       { label: '開始吧', value: 'go', primary: true },
-      { label: '我想先自己逛逛', value: 'browse' },
+      { label: '我想先自己逛逛', value: 'browse', escape: true },
     ])
     if (c === 'browse') {
       await say('沒問題！想開始的時候，從「我想開始使用」進來就行。')
@@ -203,6 +202,10 @@ export function useOnboardingChat() {
 
   async function stepHasOA() {
     await say('你已經有 LINE 官方帳號了嗎？')
+    // 2026-08-28 拍板：不加第三顆「不確定」鈕，改成當場點得到的連結——按鈕要多繞一趟才拿到答案。
+    // ⛔ 第二句不能省：帳號多半是老闆／前同事用**他的** LINE 申請的，自己登入看到空列表就會
+    //    再建一個新帳號，好友得從頭加，代價比走錯流程大得多。
+    await say('不確定的話，<a href="https://manager.line.biz/" target="_blank" rel="noopener">打開官方帳號後台看一眼 ↗</a>——列表裡有帳號就是有。如果是同事或老闆申請的，要用<b>他的</b> LINE 登入才看得到，先問一聲比較快。')
     const c = await askChoices([
       { label: '有', value: 'yes', primary: true },
       { label: '還沒', value: 'no' },
@@ -231,7 +234,7 @@ export function useOnboardingChat() {
    * 這裡不假裝驗證任何事，只是使用者自己控節奏的翻頁；每一步都留「直接貼上」的出口，
    * 會的人不用被牽著走完。
    */
-  async function walkNodes(nodes: WalkNode[], exitLabel: string) {
+  async function walkNodes(nodes: WalkNode[], exitLabel: string): Promise<'done' | 'exit'> {
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i]!
       const isLast = i === nodes.length - 1
@@ -246,22 +249,23 @@ export function useOnboardingChat() {
       // 最後一步不再多一顆確認鈕（2026-08-19 老闆實測嫌多）：內容亮完直接返回，
       // 由呼叫端接手——貼鑰匙的直接亮輸入格、接線的直接回「幫我檢查」選單
       if (isLast)
-        return
+        return 'done'
       while (true) {
         const options: AgentChoice[] = [{ label: '下一步', value: 'next', primary: true }]
         if (n.detour)
           options.push({ label: n.detour.label, value: 'detour' })
-        options.push({ label: exitLabel, value: 'exit' })
+        options.push({ label: exitLabel, value: 'exit', escape: true })
         const c = await askChoices(options)
         if (c === 'detour' && n.detour) {
           await n.detour.run()
           continue // 岔路走完回到同一步，繼續問「下一步」
         }
         if (c === 'exit')
-          return
+          return 'exit'
         break
       }
     }
+    return 'done'
   }
 
   async function stepToken(line: LineStatus) {
@@ -501,9 +505,13 @@ export function useOnboardingChat() {
     line: LineStatus,
     setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>,
     webhookUrl: string,
+    opts: { offerVerifyUpfront?: boolean } = {},
   ) {
     progress.value = 3
     await say('來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
+    // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
+    // 等於沒講（2026-08-28 拍板）。查不到就維持上面那句純文字，不要生半殘的卡。
+    await showOaInvite()
     const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
 
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
@@ -519,12 +527,20 @@ export function useOnboardingChat() {
     })
     let hintPending = true
 
-    const waitOptions: AgentChoice[] = [{ label: '先跳過測試', value: 'skip' }]
+    // 90 秒才給排障選單，是為了不讓排障變成常態路徑（見 FIRST_MSG_HINT_MS 的註解）——
+    // 但那個前提是「接線已經驗過是通的」。**自己按了「略過檢查，直接測試」的人多半就是
+    // 接線還沒好的那群**，讓他乾等 90 秒只是延後發現（2026-08-28 拍板：只對這群人提前給）。
+    const waitOptions: AgentChoice[] = opts.offerVerifyUpfront
+      ? [
+          { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
+          { label: '先跳過測試', value: 'skip', escape: true },
+        ]
+      : [{ label: '先跳過測試', value: 'skip', escape: true }]
     const stallOptions: AgentChoice[] = [
       { label: '幫我再驗一次 Webhook', value: 'verify', primary: true },
       { label: '檢查好了，繼續等', value: 'wait' },
       { label: '改前面的設定', value: 'redo' },
-      { label: '先跳過測試', value: 'skip' },
+      { label: '先跳過測試', value: 'skip', escape: true },
     ]
     let askOptions = waitOptions
 
@@ -633,7 +649,7 @@ export function useOnboardingChat() {
     const how = await askChoices([
       { label: '教我一步步拿', value: 'walk', primary: true },
       { label: '我會拿，直接貼新的', value: 'paste' },
-      { label: cancelLabel, value: 'cancel' },
+      { label: cancelLabel, value: 'cancel', escape: true },
     ])
     if (how === 'cancel')
       return false
@@ -793,7 +809,7 @@ export function useOnboardingChat() {
       const c = await askChoices([
         { label: taught ? '再看一次教學' : '教我一步步貼', value: 'walk', primary: !taught },
         { label: '貼好了，幫我檢查', value: 'check', primary: taught },
-        { label: '略過檢查，直接測試', value: 'skip' },
+        { label: '略過檢查，直接測試', value: 'skip', escape: true },
         { label: '改前面的設定', value: 'redo' },
       ])
       if (c === 'redo') {
@@ -802,6 +818,10 @@ export function useOnboardingChat() {
       }
       if (c === 'walk') {
         taught = true
+        // 2026-08-28 拍板：貼網址與開開關**拆成兩步**——這兩件事正好就是接不通時
+        // 排障文案的原因①②（貼了沒按存檔／Use webhook 沒開），擠在同一步等於把最常出錯的
+        // 兩件事一起唸完。⛔動圖不必重裁：第三步用現成的 webhookUrl 靜圖，它本來就是
+        // 「Webhook URL 欄位①＋Use webhook 開關②」那張。
         await walkNodes([
           {
             html: '先按上面那張卡的「複製」拿到網址，然後打開 LINE Developers。',
@@ -810,9 +830,14 @@ export function useOnboardingChat() {
           },
           {
             // 選對卡的前導放進動畫裡——同名雙卡是最大雷點，教學開頭就要處理
-            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。做完回來按「貼好了，幫我檢查」。',
+            html: '照動畫做：選掛「<b>Messaging API</b>」小字的那張卡 → 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址 → 按「<b>Update</b>」<b>存檔</b>。<br>貼了沒按 Update 是接不通的第一名，存好再按下一步。',
             image: ONBOARDING_SHOTS.webhookAnim,
             alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
+          },
+          {
+            html: '最後把網址欄位下面的「<b>Use webhook</b>」開關<b>打開</b>。<br>這個開關沒開的話，網址貼得再對訊息也不會進來（接不通的第二名）。做完回來按「貼好了，幫我檢查」。',
+            image: ONBOARDING_SHOTS.webhookUrl,
+            alt: '靜態圖：Webhook URL 欄位①與 Use webhook 開關②',
           },
         ], '我貼好了，直接檢查')
         // 教學走完不自動驗（人可能還在 LINE 那邊操作），回選單時「幫我檢查」已是主鈕
@@ -835,7 +860,8 @@ export function useOnboardingChat() {
       await teachAutoReplyOff()
     }
 
-    await stepFirstMessageWait(line, setup, webhookUrl)
+    // 沒驗過就進測試（按了「略過檢查」）＝排障入口提前給，不用等 90 秒
+    await stepFirstMessageWait(line, setup, webhookUrl, { offerVerifyUpfront: !verified })
   }
 
   /** 教關掉 LINE 內建自動回應（開通接線後的必修課；抽出來是為了續走時可跳過） */
@@ -846,7 +872,7 @@ export function useOnboardingChat() {
       { label: '我會關，直接測試', value: 'skip' },
     ])
     if (howOff === 'walk') {
-      await walkNodes([
+      const how = await walkNodes([
         {
           html: '打開 <b>LINE 官方帳號後台</b>——注意，這是<b>另一個後台</b>，跟剛剛拿鑰匙那個不一樣。',
           href: 'https://manager.line.biz/',
@@ -860,6 +886,37 @@ export function useOnboardingChat() {
           alt: '循環動畫：右上設定、側欄回應設定、選手動聊天',
         },
       ], '我會關，直接測試')
+      // 2026-08-28 拍板：關完先收一個確認，再叫人拿手機——這是**跨兩個後台的兩件事**，
+      // 疊在一起會有人漏掉其中一件。
+      // ⛔ 只在真的走完教學時擋（'exit' ＝ 他按了「我會關，直接測試」，已經表態，別再攔一次）。
+      // ⚠️ 與 08-19「最後一步不再多一顆確認鈕」不衝突：那條治的是同一段教學**內部**多餘的
+      //    「下一步」，這裡是兩段任務的交界。
+      if (how === 'done')
+        await askChoices([{ label: '關好了，來測試', value: 'ok', primary: true }])
+    }
+  }
+
+  /**
+   * 出「要加哪個帳號」的卡（QR＋帳號 ID＋連結）。
+   * ⛔ 查不到帳號 ID 就什麼都不出——「查不到」不等於「沒有」，畫一張空 QR 比不畫更糟；
+   *    這時上面那句「加你的官方帳號好友」仍然成立，只是少了捷徑。
+   */
+  async function showOaInvite() {
+    try {
+      const r = await apiFetch<{ basicId: string, addFriendUrl: string, qrDataUrl: string }>(
+        '/api/admin/onboarding/oa-invite',
+      )
+      if (r?.basicId) {
+        card({
+          kind: 'oaInvite',
+          basicId: r.basicId,
+          addFriendUrl: r.addFriendUrl,
+          qrDataUrl: r.qrDataUrl,
+        })
+      }
+    }
+    catch {
+      // 拿不到就算了：這是加分項，不該讓它擋住見證時刻
     }
   }
 
@@ -915,11 +972,19 @@ export function useOnboardingChat() {
     // 結尾刻意一個字都不提知識庫／AI（2026-08-19 拍板二修：AI 的事完全不進開通，
     // 連結尾指路也不要）——接下來要做什麼，由右下角小幫手的清單接手盯
     await say('接通完成 🎉 接下來交給右下角的<b>小幫手</b>——下一步要做什麼、哪裡怪怪的，它都會主動說，點它隨時找得到我。')
+    // 2026-08-28 拍板（**翻掉 08-19「結尾連指路都不要」**）：當時擋的是「催人開 AI，
+    // 但那時知識庫是空的、只會答不出來」——介紹後台地圖不踩那個雷。剛做完一件事、
+    // 下一步是空白，是整段旅程裡唯一「介紹不會打斷任何事」的時機。
+    // ⛔ 仍然一個字都不提知識庫／AI：那些由小幫手的開通清單接手盯，這裡只給地圖。
+    await say('要不要先花 <b>2 分鐘認識一下後台</b>？我帶你逛一圈，知道東西都放在哪。')
     // 這頁也要有上一步（2026-08-20 老闆抓到：成績單擺著「已跳過」卻只有離開鈕＝卡死）：
     // 跳過的測試可以當場回去做、鑰匙可以當場重貼，改完成績單會重新整理
     while (true) {
       const options: AgentChoice[] = [
-        { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : `開始設定 ${brandName}`, value: 'workspace', primary: true },
+        { label: '帶你認識後台（約 2 分鐘）', value: 'tour', primary: true },
+        // ⛔ 這顆留著（2026-08-28 拍板）：它是這一頁唯一「不看導覽、直接進去」的出口，
+        //    而且收到訊息時的說法（去看剛剛那則對話）是這一刻唯一講得對的話
+        { label: setup.firstMessageReceived === 'done' ? '去看剛剛那則對話' : `開始設定 ${brandName}`, value: 'workspace' },
       ]
       if (setup.firstMessageReceived !== 'done')
         options.push({ label: '回去做傳話測試', value: 'test' })
@@ -941,6 +1006,12 @@ export function useOnboardingChat() {
       }
       if (c === 'check') {
         await navigateTo(`/admin/${wid.value}/settings/organization?verify=webhook`)
+        return
+      }
+      if (c === 'tour') {
+        // 導覽本體要高亮側欄、小幫手這些**後台版型裡的真實元素**，開通頁是 layout:false 沒有它們。
+        // 所以先落地、帶 ?tour= 進去，由 TutorialAgent 掛載後接手開跑。
+        await navigateTo(`${onboardingLandingPath(wid.value)}?tour=${OVERVIEW_TOPIC_ID}`)
         return
       }
       // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；

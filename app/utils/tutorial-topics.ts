@@ -38,6 +38,13 @@ export interface TutorialStep {
   actionTopicId?: string
   /** 此步驟依賴的功能旗標（關閉時整步跳過），對應 useFlowFeatures 的開關 */
   requiresFeature?: string
+  /**
+   * 這一步要指的東西只有「能操作的人」（agent 以上）畫面上才有——觀察者根本沒有那顆按鈕，
+   * 不跳過的話他會看到一句「這一步要指的位置目前不在畫面上」。
+   */
+  requiresOperate?: boolean
+  /** 同上，但限 owner/admin（例：側欄的「設定」那一段） */
+  requiresSettings?: boolean
 }
 
 export interface TutorialTopic {
@@ -59,7 +66,13 @@ export interface TutorialTopic {
   steps: TutorialStep[]
 }
 
-export type TutorialCategoryId = 'setup' | 'ai' | 'daily' | 'bot' | 'growth'
+export type TutorialCategoryId = 'intro' | 'setup' | 'ai' | 'daily' | 'bot' | 'growth'
+
+/**
+ * 「認識後台」總覽導覽的 id。開通引導結尾的「帶你認識後台」用 `?tour=` 帶這個值進後台
+ * （見 useOnboardingChat 的 stepDone），所以兩邊吃同一個常數、不要各寫一次字串。
+ */
+export const OVERVIEW_TOPIC_ID = 'overview'
 
 export interface TutorialCategoryGroup {
   id: TutorialCategoryId
@@ -69,6 +82,7 @@ export interface TutorialCategoryGroup {
 
 /** 分類顯示順序與名稱 */
 export const CATEGORY_META: { id: TutorialCategoryId, label: string }[] = [
+  { id: 'intro', label: '認識後台' },
   { id: 'setup', label: '開始設定' },
   { id: 'ai', label: 'AI 客服' },
   { id: 'daily', label: '日常客服' },
@@ -78,6 +92,64 @@ export const CATEGORY_META: { id: TutorialCategoryId, label: string }[] = [
 
 /** 目前提供的教學主題。要新增教學，往這個陣列加一筆即可（記得填 category）。 */
 export const TUTORIAL_TOPICS: TutorialTopic[] = [
+  /**
+   * 認識後台（2026-08-28）：整個後台的地圖，**不教任何操作**。
+   *
+   * 為什麼要有這一支：接完 LINE 之後畫面上有 17 個入口、右下角一顆圓鈕，
+   * 而 22 支現成導覽全是「單頁怎麼用」，沒有一支回答「東西都放在哪」。
+   * 一支同時解掉三件事：不認識後台、找不到頁首那顆「？」、不知道教學可以重看。
+   *
+   * ⛔ 不自動跑（2026-08-26 拍板）：入口在開通引導結尾與教學清單，點了才跑。
+   */
+  {
+    id: OVERVIEW_TOPIC_ID,
+    category: 'intro',
+    icon: Pointer,
+    label: '帶你認識後台',
+    blurb: '東西都放在哪、有問題找誰——不教操作，先給地圖。',
+    route: wid => `/admin/${wid}/conversations`,
+    steps: [
+      {
+        target: '[data-tour="nav-group-daily"]',
+        title: '每天的工作都在這一段',
+        description:
+          '客人傳來的訊息在<strong>客服對話</strong>；要主動發訊息給一群人用<strong>推播</strong>；'
+          + '客人在 LINE 看到的選單、以及自動回覆，也都在這一段設定。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="nav-group-ai"]',
+        title: '教 AI 回答客人的一切',
+        description:
+          '先把商品、規則這些資料放進<strong>知識庫</strong>，AI 才有東西可以答；'
+          + '在<strong>測試對話</strong>可以先問問看它會怎麼回，<strong>那裡的回答不會送給客人</strong>。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="nav-group-settings"]',
+        title: '一次性的設定',
+        description:
+          '邀請同事、LINE 的連線狀態、方案與付款都在這裡。設定好之後，平常不太需要進來。',
+        placement: 'right',
+        requiresSettings: true,
+      },
+      {
+        target: '[data-tour="ta-fab"]',
+        title: '有問題，先看右下角的小幫手',
+        description:
+          '哪裡壞了、下一步要做什麼，它會<strong>主動說</strong>。點開還能找到所有教學，也可以直接問它問題。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="page-help"]',
+        title: '每一頁右上都有「這頁怎麼用」',
+        description:
+          '點了就在<strong>真實畫面</strong>上一步步帶你操作。這支導覽也一樣——'
+          + '之後想再看，從這裡或右下角小幫手的「教學」分頁都找得到。',
+        placement: 'bottom',
+      },
+    ],
+  },
   {
     id: 'organization',
     category: 'setup',
@@ -382,6 +454,51 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '這排分頁幫你分流：<strong>待真人</strong>是 AI 轉過來、等你接手的，最優先看這個；接手後會移到<strong>真人處理</strong>，談完按「結束會話」。<strong>待處理</strong>是完全還沒有人回過的對話。',
         placement: 'right',
+      },
+      // 2026-08-28 起擴到右半邊（這頁是客服每天待最久的地方，之前只教了左邊兩步）。
+      // ⛔ 右半邊在「沒選對話」時整棵 DOM 都不存在（AdminSplitLayout 的 v-if/v-else），
+      //    所以這一步要先幫他點開第一筆；後面幾步才有東西可以指。
+      {
+        target: '[data-tour="conv-header"]',
+        clickBefore: '.conv-list-row .split-list-item',
+        title: '點開一場對話',
+        description:
+          '最上面這排告訴你<strong>這場現在是誰在處理</strong>：狀態徽章、負責人，以及底下那行「新會話 → AI 客服 → 真人」的經過。',
+        placement: 'bottom',
+      },
+      {
+        target: '[data-tour="conv-actions"]',
+        title: '接手、交還、結束',
+        description:
+          '<strong>我接手</strong>＝這位客人先由你回，機器人與 AI 會暫停自動回覆，不會跟你搶話；'
+          + '談完按<strong>交還機器人</strong>讓它繼續顧，或按<strong>結束會話</strong>把這一場收單。',
+        placement: 'bottom',
+        requiresOperate: true,
+      },
+      {
+        target: '[data-tour="conv-messages"]',
+        title: 'AI 回的話，可以問它「為什麼」',
+        description:
+          'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
+          + '答得不對就在那裡標「這題 AI 答錯了」——<strong>標了會進工作台</strong>，之後補資料時就知道要補什麼。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="conv-reply"]',
+        title: '直接在這裡回覆',
+        description:
+          'Enter 送出、Shift + Enter 換行。你送出的訊息會即時進到客人的 LINE。',
+        placement: 'top',
+        requiresOperate: true,
+      },
+      {
+        target: '[data-tour="conv-presets"]',
+        title: '常用回覆不用每次重打',
+        description:
+          '📦 是<strong>客服預存</strong>：挑一則就能直接送出，也可以先填進回覆框改幾個字再送。'
+          + '要新增或修改預存內容，去側欄的「客服預存」。',
+        placement: 'top',
+        requiresOperate: true,
       },
     ],
   },

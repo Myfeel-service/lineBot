@@ -21,7 +21,10 @@
           <span class="onbc-head__title">開通引導</span>
           <span class="onbc-head__sub">小幫手陪你把設定做完</span>
         </div>
-        <NuxtLink class="onbc-exit" :to="exitTo">之後再說</NuxtLink>
+        <!-- 完成畫面（progress 走到最後一格）不再給「之後再說」（2026-08-28 拍板）：
+             都做完了，沒有東西可以「之後再說」，那句話在這一頁語意是錯的。
+             出口交給對話裡那排——「去看剛剛那則對話」才是這一刻講得對的說法。 -->
+        <NuxtLink v-if="progress < ONBOARDING_PROGRESS_LABELS.length - 1" class="onbc-exit" :to="exitTo">之後再說</NuxtLink>
       </header>
 
       <div class="onbc-progress" aria-hidden="true">

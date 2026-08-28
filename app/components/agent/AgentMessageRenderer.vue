@@ -110,6 +110,28 @@
     <span>{{ entry.msg.text }}</span>
   </div>
 
+  <!-- 加好友邀請卡：先講「要加的是哪個帳號」，再講怎麼加（QR 產不出來時只少一張圖，不破版） -->
+  <div v-else-if="entry.msg.kind === 'oaInvite'" class="agm-card agm-invite">
+    <img
+      v-if="entry.msg.qrDataUrl"
+      class="agm-invite__qr"
+      :src="entry.msg.qrDataUrl"
+      :alt="`加入 ${entry.msg.basicId} 為好友的 QR Code`"
+      width="110"
+      height="110"
+    >
+    <div class="agm-invite__main">
+      <div class="agm-card__label">要加的是這個帳號</div>
+      <div class="agm-invite__id">{{ entry.msg.basicId }}</div>
+      <p class="agm-invite__how">
+        用手機掃左邊的 QR，或在 LINE 的「加入好友 → 搜尋」輸入這組 ID。
+      </p>
+      <a class="agm-invite__link" :href="entry.msg.addFriendUrl" target="_blank" rel="noopener">
+        用手機打開這個連結 ↗
+      </a>
+    </div>
+  </div>
+
   <!-- 強調卡：回顯第一則訊息 -->
   <div v-else-if="entry.msg.kind === 'highlight'" class="agm-card agm-highlight">
     <div class="agm-card__label">{{ entry.msg.label }}</div>

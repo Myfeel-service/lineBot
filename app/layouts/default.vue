@@ -23,22 +23,28 @@
           </div>
         </div>
 
+        <!-- 三段各自包一層 .nav-group：「認識後台」總覽導覽要能一次高亮整段
+             （每天在用的／AI 客服／設定），指單一列講不出這一段是幹什麼的。
+             ⛔ 不能用 display:contents 包——那樣元素沒有盒子，el-tour 量不到位置＝按了沒高亮。
+             .nav-group 自己也是 flex 直欄、gap 跟 .sidebar-nav 同值，所以列距與縮排跟包之前一樣。 -->
         <nav class="sidebar-nav">
-          <NuxtLink
-            v-for="item in navItems"
-            :key="item.to"
-            :to="item.to"
-            class="nav-item"
-            :data-tour="item.tour"
-            :class="{ active: route.path === item.to || (item.alsoActiveOn ?? []).includes(route.path) }"
-          >
-            <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
-            <AdminNavAlertDot :path="item.to" />
-          </NuxtLink>
+          <div class="nav-group" data-tour="nav-group-daily">
+            <NuxtLink
+              v-for="item in navItems"
+              :key="item.to"
+              :to="item.to"
+              class="nav-item"
+              :data-tour="item.tour"
+              :class="{ active: route.path === item.to || (item.alsoActiveOn ?? []).includes(route.path) }"
+            >
+              <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+              <AdminNavAlertDot :path="item.to" />
+            </NuxtLink>
+          </div>
 
           <!-- AI 客服 section -->
-          <template v-if="aiNavItems.length">
+          <div v-if="aiNavItems.length" class="nav-group" data-tour="nav-group-ai">
             <div class="nav-section-label">AI 客服</div>
             <NuxtLink
               v-for="item in aiNavItems"
@@ -52,10 +58,10 @@
               <span>{{ item.label }}</span>
               <AdminNavAlertDot :path="item.to" />
             </NuxtLink>
-          </template>
+          </div>
 
           <!-- Settings section (owner/admin only) -->
-          <template v-if="canManageSettings">
+          <div v-if="canManageSettings" class="nav-group" data-tour="nav-group-settings">
             <div class="nav-section-label">設定</div>
             <NuxtLink :to="`/admin/${workspaceId}/settings/members`" class="nav-item" :class="{ active: route.path.includes('/settings/members') }">
               <el-icon class="nav-icon"><UserFilled /></el-icon>
@@ -80,7 +86,7 @@
               <span>訂閱與付款</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/billing`" />
             </NuxtLink>
-          </template>
+          </div>
         </nav>
       </template>
 

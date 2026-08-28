@@ -71,6 +71,14 @@
   padding: 0 0.75rem 1rem;
 }
 
+/* 側欄分段容器（2026-08-28）：讓「認識後台」導覽能一次高亮一整段。
+   gap 與 .sidebar-nav 同值，所以包起來之後列距、縮排跟包之前一模一樣（headless 量過）。 */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .nav-section-label {
   font-size: 0.65rem;
   color: var(--text-muted);

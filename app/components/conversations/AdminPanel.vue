@@ -231,7 +231,7 @@
         收完之後只剩兩條左緣（頭像 12、名字 60），標頭高度 135px → 約 80px，
         省下來的都給訊息區——這頁最缺的就是垂直空間。
       -->
-      <div class="conv-editor-header-block">
+      <div class="conv-editor-header-block" data-tour="conv-header">
         <div class="conv-header-row conv-header-row--identity">
           <div class="conv-user-info">
             <img
@@ -338,7 +338,7 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <div v-if="sessionToolbarMeta" class="conv-session-actions">
+          <div v-if="sessionToolbarMeta" class="conv-session-actions" data-tour="conv-actions">
             <el-tooltip v-if="canTakeOverSession" content="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束" placement="top">
               <el-button
                 size="small"
@@ -424,6 +424,7 @@
       <div
         ref="messagesEl"
         class="conv-messages"
+        data-tour="conv-messages"
         :class="{ 'is-drop-target': canOperate && isDraggingImage }"
         @scroll.passive="onMessagesScroll"
         @load.capture="onMessagesContentGrew"
@@ -869,7 +870,7 @@
         點了才跳「觀察者無法執行此操作」。權限要在 markup 決定，不是靠按鈕顏色。
       -->
       <div v-if="canOperate" class="conv-input-tools">
-        <div class="conv-picker-actions">
+        <div class="conv-picker-actions" data-tour="conv-presets">
           <el-dropdown trigger="click" placement="top-start" @command="onQuickSendCommand">
             <button
               type="button"
@@ -1061,7 +1062,7 @@
              說明改掛在四顆圖示各自的 title 上（滑上去才講）。 -->
       </div>
 
-      <div v-if="canOperate" class="conv-input-row">
+      <div v-if="canOperate" class="conv-input-row" data-tour="conv-reply">
         <el-input
           ref="inputRef"
           v-model="inputText"

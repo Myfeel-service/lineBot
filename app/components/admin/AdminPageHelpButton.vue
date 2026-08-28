@@ -10,35 +10,49 @@
     {{ props.label }}
   </el-button>
 
-  <!-- 一支教學：一顆問號直接開跑 -->
-  <el-tooltip v-else-if="available.length === 1" content="這頁怎麼用" placement="top">
-    <el-button
-      class="page-help-btn"
-      text
-      size="small"
-      :icon="QuestionFilled"
-      aria-label="這頁怎麼用"
-      @click="startFirst()"
-    />
-  </el-tooltip>
-
-  <!-- 多支教學：先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選） -->
-  <el-dropdown v-else-if="available.length > 1" trigger="click" placement="bottom-start">
-    <el-tooltip content="這頁怎麼用" placement="top">
-      <el-button class="page-help-btn" text size="small" :icon="QuestionFilled" aria-label="這頁怎麼用" />
+  <!-- 問號版：包一層才放得下「第一次進這一頁」的一次性提示，也給總覽導覽一個錨點 -->
+  <span v-else-if="available.length" class="page-help" data-tour="page-help">
+    <!-- 一支教學：一顆問號直接開跑 -->
+    <el-tooltip v-if="available.length === 1" content="這頁怎麼用" placement="top">
+      <el-button
+        class="page-help-btn"
+        :class="{ 'is-hinting': hinting }"
+        text
+        size="small"
+        :icon="QuestionFilled"
+        aria-label="這頁怎麼用"
+        @click="startFirst()"
+      />
     </el-tooltip>
-    <template #dropdown>
-      <el-dropdown-menu>
-        <el-dropdown-item
-          v-for="t in available"
-          :key="t.id"
-          @click="start(t)"
-        >
-          {{ t.label }}<span class="page-help-btn__steps">{{ stepCount(t) }} 步</span>
-        </el-dropdown-item>
-      </el-dropdown-menu>
-    </template>
-  </el-dropdown>
+
+    <!-- 多支教學：先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選） -->
+    <el-dropdown v-else trigger="click" placement="bottom-start" @visible-change="dismissHint()">
+      <el-tooltip content="這頁怎麼用" placement="top">
+        <el-button
+          class="page-help-btn"
+          :class="{ 'is-hinting': hinting }"
+          text
+          size="small"
+          :icon="QuestionFilled"
+          aria-label="這頁怎麼用"
+        />
+      </el-tooltip>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item
+            v-for="t in available"
+            :key="t.id"
+            @click="start(t)"
+          >
+            {{ t.label }}<span class="page-help-btn__steps">{{ stepCount(t) }} 步</span>
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
+
+    <!-- 一次性提示：第一次進這一頁時讓這顆灰問號出個聲，點過或看過就永遠不再出現 -->
+    <span v-if="hinting" class="page-help-hint" role="status">這頁怎麼用？</span>
+  </span>
 </template>
 
 <script setup lang="ts">
@@ -56,6 +70,12 @@ import type { TutorialTopic } from '~/utils/tutorial-topics'
  *    使用者點了才跑。
  * ⛔ 沒有可跑的教學就整顆不畫：`topics` 已依角色與功能旗標過濾（觀察者、關掉的功能不顯示
  *    其教學），所以按了保證跑得起來——不要出現按了沒反應的按鈕。
+ *
+ * 2026-08-28 加上「第一次進這一頁」的一次性提示（老闆拍板）：這顆刻意做小做灰的問號
+ * 完全被動，全站沒有任何機制指出它的存在——同一個後台裡會動的只有異常紅點，
+ * 等於「壞了」會出聲、「怎麼用」永遠沉默。
+ * ⛔ 只亮一次、不循環閃爍：08-28 同日才拍板側欄只有紅點慢呼吸，再多一個常年會動的東西，
+ *    兩個都會被當成裝飾。看過就寫進 localStorage，永久不再出現。
  */
 const props = defineProps<{
   /** 這一頁的教學主題 id（對應 utils/tutorial-topics）。多支就讓使用者挑 */
@@ -77,6 +97,7 @@ const available = computed<TutorialTopic[]>(() =>
 )
 
 function start(topic: TutorialTopic) {
+  dismissHint()
   void startTopic(topic)
 }
 
@@ -86,6 +107,49 @@ function startFirst() {
   if (first)
     start(first)
 }
+
+// ── 第一次進這一頁的一次性提示 ──
+const HINT_MS = 4200
+const hinting = ref(false)
+
+/** 記憶的鍵用「這一頁教哪幾支」，不用路由——同一頁在不同官方帳號底下路徑不同，但教學是同一批 */
+function hintKey() {
+  return `page-help-seen:${props.topics.join('|')}`
+}
+
+function dismissHint() {
+  hinting.value = false
+}
+
+onMounted(() => {
+  // 帶字版本身就在說話了，不需要再提示
+  if (props.label)
+    return
+  /** 回傳「這件事處理完了」——沒有可跑的教學時回 false，等角色／旗標載完再試一次 */
+  const fire = () => {
+    if (!available.value.length)
+      return false
+    try {
+      if (localStorage.getItem(hintKey()))
+        return true
+      localStorage.setItem(hintKey(), '1')
+    }
+    catch {
+      // 無痕視窗／擋 storage：寧可不提示，也不要變成每次進來都跳一次
+      return true
+    }
+    hinting.value = true
+    window.setTimeout(dismissHint, HINT_MS)
+    return true
+  }
+  if (fire())
+    return
+  // 角色與功能旗標是非同步載入的，載完才知道這一頁到底有沒有教學可跑
+  const stop = watch(available, () => {
+    if (fire())
+      stop()
+  })
+})
 </script>
 
 <!-- 樣式在 app/assets/scss/components/_block-status.scss 末段（同批 D-33 元件） -->

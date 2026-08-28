@@ -72,6 +72,49 @@ describe('教學導覽的錨點', () => {
   })
 })
 
+describe('認識後台總覽導覽（2026-08-28）', () => {
+  const src = readFileSync(TOPICS_FILE, 'utf8')
+  const onboardingChat = readFileSync(join(APP_DIR, 'composables/useOnboardingChat.ts'), 'utf8')
+
+  it('總覽主題存在，而且掛在 OVERVIEW_TOPIC_ID 這個常數上', () => {
+    expect(src).toMatch(/export const OVERVIEW_TOPIC_ID = 'overview'/)
+    expect(src).toContain('id: OVERVIEW_TOPIC_ID')
+  })
+
+  it('開通引導結尾吃同一個常數，不是各寫一次字串', () => {
+    // 兩邊各寫一次 'overview' 的話，改 id 只會改到一邊，按鈕就變成按了沒反應
+    expect(onboardingChat).toContain('OVERVIEW_TOPIC_ID')
+    expect(onboardingChat, '⛔別把 tour 的 id 寫死在網址字串裡')
+      .not.toMatch(/\?tour=overview/)
+  })
+
+  it('總覽會帶到小幫手與頁首問號——這支導覽同時要解決「找不到教學入口」', () => {
+    expect(src).toContain('[data-tour="ta-fab"]')
+    expect(src).toContain('[data-tour="page-help"]')
+  })
+})
+
+describe('客服對話導覽擴到右半邊（2026-08-28）', () => {
+  const src = readFileSync(TOPICS_FILE, 'utf8')
+  const convBlock = src.slice(src.indexOf('id: \'conversations\''), src.indexOf('id: \'flow\''))
+
+  it('涵蓋接手／回覆／客服預存這幾件每天在做的事', () => {
+    for (const anchor of ['conv-header', 'conv-actions', 'conv-messages', 'conv-reply', 'conv-presets'])
+      expect(convBlock, `少了 ${anchor}：右半邊又變回沒人教`).toContain(`[data-tour="${anchor}"]`)
+  })
+
+  it('右半邊第一步會先幫使用者點開一筆對話', () => {
+    // ⛔ 沒選對話時右半邊整棵 DOM 都不存在（AdminSplitLayout 的 v-if/v-else），
+    //    不先點開的話後面每一步都會退化成「這一步要指的位置目前不在畫面上」
+    expect(convBlock).toMatch(/clickBefore:\s*'\.conv-list-row \.split-list-item'/)
+  })
+
+  it('只有能操作的角色才看得到那幾步（觀察者畫面上根本沒有那些按鈕）', () => {
+    const operateSteps = [...convBlock.matchAll(/requiresOperate:\s*true/g)]
+    expect(operateSteps.length).toBeGreaterThanOrEqual(3)
+  })
+})
+
 describe('教學文案的寫作規則', () => {
   const src = readFileSync(TOPICS_FILE, 'utf8')
 

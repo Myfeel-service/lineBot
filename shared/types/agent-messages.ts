@@ -60,6 +60,12 @@ export type AgentMsg =
   | { kind: 'status'; state: 'pending' | 'ok' | 'fail' | 'skipped'; text: string }
   /** 強調卡：回顯收到的第一則訊息（見證時刻） */
   | { kind: 'highlight'; label: string; title: string; meta?: string }
+  /**
+   * 加好友邀請卡（開通引導「等第一則訊息」那一步）：QR ＋ 帳號 ID ＋ 連結。
+   * 剛開通的官方帳號零好友，只說「拿手機加好友」等於沒說——他不知道要搜什麼
+   * （2026-08-28 拍板）。⛔ 帳號 ID 查不到就別出這張卡，畫一個空 QR 比不畫更糟。
+   */
+  | { kind: 'oaInvite'; basicId: string; addFriendUrl: string; qrDataUrl?: string }
   /** 完成摘要卡 */
   | { kind: 'summary'; items: { label: string; done: boolean; note?: string }[] }
 
@@ -75,6 +81,12 @@ export interface AgentChoice {
   value: string
   /** 主要動作（填色按鈕），一組選項最多一顆 */
   primary?: boolean
+  /**
+   * 跳過／離開類（例：先跳過測試、我會了直接貼上）。
+   * 只影響排版位置——會被排到最左邊，遠離拇指落點與主要鈕，降低誤按
+   * （2026-08-28 拍板，見 docs/ONBOARDING-FIRSTUSE-EVAL-20260828.md 附記三）。
+   */
+  escape?: boolean
 }
 
 export interface AgentPickerOption {

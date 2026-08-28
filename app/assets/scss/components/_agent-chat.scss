@@ -241,6 +241,51 @@
   &--skipped { color: var(--el-text-color-secondary); }
 }
 
+/* 加好友邀請卡（2026-08-28）：QR 在左、帳號 ID 與說法在右。
+   QR 產不出來時左邊整個不畫，右半照樣讀得懂——ID 與連結才是主體，圖是加速器。 */
+.agm-invite {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+
+  &__qr {
+    flex: none;
+    width: 110px;
+    height: 110px;
+    border-radius: 8px;
+    border: 1px solid var(--el-border-color-lighter);
+    background: #fff;
+  }
+
+  &__main {
+    min-width: 0;
+  }
+
+  /* 帳號 ID 是要照著打進 LINE 搜尋框的東西：等寬字、可以選取複製 */
+  &__id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--el-text-color-primary);
+    user-select: all;
+  }
+
+  &__how {
+    margin: 4px 0 6px;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__link {
+    color: var(--el-color-primary);
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+  }
+}
+
 .agm-highlight {
   border-color: var(--el-color-success);
   background: var(--el-color-success-light-9);

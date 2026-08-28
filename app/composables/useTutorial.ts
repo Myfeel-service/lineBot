@@ -12,6 +12,7 @@
 // 型別與內容都在 utils/tutorial-topics.ts（Nuxt 會自動匯入，這裡明寫是為了讀的人好找）
 import type { TutorialCategoryGroup, TutorialStep, TutorialTopic } from '~/utils/tutorial-topics'
 import { CATEGORY_META, TUTORIAL_TOPICS } from '~/utils/tutorial-topics'
+import { stepAllowedForRole } from '~/utils/tutorial-step-visibility'
 
 export function useTutorial() {
   const router = useRouter()
@@ -35,8 +36,18 @@ export function useTutorial() {
   // 最近一次啟動的主題 id（ad-hoc 巡覽為 null）；給導覽結束後的閉環判斷用
   const lastTopicId = useState<string | null>('tutorial-last-topic', () => null)
 
-  /** 過濾步驟：關閉的功能旗標對應的步驟跳過 */
-  const visibleSteps = (steps: TutorialStep[]) => steps.filter(s => featureOn(s.requiresFeature))
+  /**
+   * 過濾步驟：功能旗標關掉的、以及**這個角色畫面上根本沒有那個元素**的，都跳過。
+   * ⛔ 角色那半不能省：觀察者沒有接手／回覆／預存那幾顆按鈕，不跳過的話他會連續
+   *    看到好幾句「這一步要指的位置目前不在畫面上」，像是教學壞了。
+   */
+  const visibleSteps = (steps: TutorialStep[]) => steps.filter(s =>
+    featureOn(s.requiresFeature)
+    && stepAllowedForRole(s, {
+      canOperate: canOperate.value,
+      canManageSettings: canManageSettings.value,
+    }),
+  )
 
   /** 這個主題實際會跑幾步（扣掉被功能旗標關掉的）。畫面用它標步數，不要手寫 */
   const stepCount = (topic: TutorialTopic) => visibleSteps(topic.steps).length
