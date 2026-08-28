@@ -109,7 +109,10 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   llmError: 'AI 服務近 24 小時失敗過',
   quotaExceeded: '本期回覆則數用完了',
   quotaRunningOut: '回覆則數快用完了',
-  paymentPastDue: '自動扣款沒有成功',
+  // ⛔標題必須把「這期／下期」講出來（2026-08-28 老闆拍板）：這兩顆同在帳單頁，
+  // 原本叫「自動扣款沒有成功」與「付款成功但自動扣款沒綁好」——文案用詞重疊 26%（全表最高），
+  // 並列在清單裡幾乎分不出來。差別本來就只有一個字：壞的是**這期**還是**下期**。
+  paymentPastDue: '這期的自動扣款失敗了',
   // 對客戶顯示「開立中」不是「失敗」（2026-08-16 拍板;系統每日自動補開、客戶無事可做）;
   // 真實 failed 狀態超管在金流總覽看
   invoiceFailed: '有發票還在開立中',
@@ -117,7 +120,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   humanBacklog: '有客人在等真人回覆',
   firstReplyBacklog: '有客人的訊息一直沒人回',
   knowledgeIndexStuck: '有知識卡一直沒學完',
-  renewalNotBound: '付款成功但自動扣款沒綁好',
+  renewalNotBound: '下期不會自動扣款（卡沒綁成）',
   brokenModuleButton: '有按鈕按下去沒反應',
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',
   broadcastFailed: '有推播沒有送出去',

@@ -148,6 +148,61 @@
   margin-top: 1px;
 }
 
+/* ── 同一區的其他幾件（2026-08-28 分組）─────────────────────
+   一行一條、只給名字。為什麼不給後果句：那一整段在小幫手看得到，
+   而這裡的目的是「這一趟還要處理哪幾件」——六條紅帶 407px 的問題就出在
+   每一條都把後果句再講一次（見 utils/alert-strip-groups.ts 的實測數字）。
+   ⛔別把這一段做成可收合：收起來就等於少報一件事。 */
+.page-alert__group {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.page-alert__sub {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+
+  /* 前面一個小圓點：讓它讀成「同一組的第二、三件」而不是換一段話 */
+  &::before {
+    content: "・";
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+}
+
+.page-alert__subtitle {
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* 子項的一鍵修：做成文字連結而不是按鈕——它不該跟領頭那顆的實心按鈕搶第一眼，
+   但一定要按得到（分組不可以讓任何一顆的「幫我修」消失） */
+.page-alert__subfix {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--brand-green-text);
+  }
+}
+
 /* 「還有 N 件」摺疊列（六輪）：中性淡帶、看得出可按，但不跟上面的警示搶戲 */
 .page-alert-strip__more {
   display: block;
@@ -223,4 +278,61 @@
   margin-inline-start: 8px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ── 第一次進這一頁的一次性提示（2026-08-28 拍板）──────────────
+   上面那顆問號刻意做小做灰＝完全被動，全站沒有任何機制指出它的存在
+   （同一個後台裡會動的只有異常紅點：「壞了」會出聲、「怎麼用」永遠沉默）。
+   ⛔ 只亮一次、不循環：08-28 同日才拍板側欄只有紅點慢呼吸，再多一個常年會動的
+      東西，兩個都會被當成裝飾。看過就寫進 localStorage，永久不再出現。 */
+.page-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.page-help-btn.el-button.is-hinting {
+  color: var(--color-line);
+  animation: page-help-glow 1.1s ease-out 3;
+}
+
+@keyframes page-help-glow {
+  0% { box-shadow: 0 0 0 0 rgba(6, 199, 85, 0.5); }
+  100% { box-shadow: 0 0 0 12px rgba(6, 199, 85, 0); }
+}
+
+.page-help-hint {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 5;
+  white-space: nowrap;
+  border-radius: var(--radius-sm, 6px);
+  padding: 2px 8px;
+  background: var(--color-line);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  pointer-events: none;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -3px;
+    width: 7px;
+    height: 7px;
+    transform: translateX(-50%) rotate(45deg);
+    background: var(--color-line);
+  }
+}
+
+/* 會動的東西一律要有這個出口：關掉動畫，但仍然看得出「這顆在跟你講話」 */
+@media (prefers-reduced-motion: reduce) {
+  .page-help-btn.el-button.is-hinting {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(6, 199, 85, 0.3);
+  }
 }

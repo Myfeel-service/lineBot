@@ -18,37 +18,52 @@
         帶我完成開通
       </el-button>
     </div>
+    <!-- 一組＝「帶我看會亮同一個區塊」的那幾件（2026-08-28 拍板，規則在 utils/alert-strip-groups.ts）。
+         領頭那顆完整展開，其餘一行一條列在下面——每一件事都還看得到、各自的「幫我修」也還按得到，
+         省掉的只是重複的圖示／按鈕／內距。⛔這不是收合，別把 rest 藏起來。 -->
     <div
-      v-for="r in visibleRows"
-      :key="r.alert.id"
+      v-for="g in visibleGroups"
+      :key="g.lead.alert.id"
       class="page-alert"
-      :class="`is-${toneOf(r.alert)}`"
+      :class="`is-${toneOf(g.lead.alert)}`"
     >
-      <span class="page-alert__icon"><el-icon><component :is="r.alert.icon" /></el-icon></span>
+      <span class="page-alert__icon"><el-icon><component :is="g.lead.alert.icon" /></el-icon></span>
       <div class="page-alert__main">
-        <p class="page-alert__title">{{ rowTitle(r.alert) }}</p>
-        <p class="page-alert__detail">{{ rowDetail(r.alert) }}</p>
+        <p class="page-alert__title">{{ rowTitle(g.lead.alert) }}</p>
+        <p class="page-alert__detail">{{ rowDetail(g.lead.alert) }}</p>
+        <!-- 同一區的其他幾件：只給名字（後果句在小幫手看得到），各自留一顆「幫我修」 -->
+        <ul v-if="g.rest.length" class="page-alert__group">
+          <li v-for="r in g.rest" :key="r.alert.id" class="page-alert__sub">
+            <span class="page-alert__subtitle">{{ rowTitle(r.alert) }}</span>
+            <button
+              v-if="r.alert.fixOpId"
+              type="button"
+              class="page-alert__subfix"
+              @click="openFix(r.alert)"
+            >幫我修</button>
+          </li>
+        </ul>
       </div>
       <!-- 「幫我修」（D-34）：一鍵修確認 popup。實心＝主要動作；「帶我看」退居 plain。
            popup 會先講「會動哪幾筆」再等人按確定，所以這顆按了不會直接改任何東西 -->
       <el-button
-        v-if="r.alert.fixOpId"
+        v-if="g.lead.alert.fixOpId"
         class="page-alert__action"
         size="small"
-        :type="toneOf(r.alert) === 'critical' ? 'danger' : 'warning'"
-        @click="openFix(r.alert)"
+        :type="toneOf(g.lead.alert) === 'critical' ? 'danger' : 'warning'"
+        @click="openFix(g.lead.alert)"
       >
         幫我修
       </el-button>
       <el-button
-        v-if="rowActionLabel(r)"
+        v-if="rowActionLabel(g.lead)"
         class="page-alert__action"
         size="small"
         plain
-        :type="toneOf(r.alert) === 'critical' ? 'danger' : 'warning'"
-        @click="go(r)"
+        :type="toneOf(g.lead.alert) === 'critical' ? 'danger' : 'warning'"
+        @click="go(g.lead)"
       >
-        {{ rowActionLabel(r) }}
+        {{ rowActionLabel(g.lead) }}
       </el-button>
     </div>
 
@@ -142,20 +157,39 @@ function goOnboarding() {
 const expanded = ref(false)
 watch(() => route.path, () => { expanded.value = false })
 
-/** 收合狀態要露幾件：有紅全露、沒紅露第一件（rows 紅在前，直接取前段就是對的） */
+/**
+ * 分組（2026-08-28 拍板）：指向同一個區塊的收成一條。規則與理由在
+ * `utils/alert-strip-groups.ts`——⛔別在這裡另加條件。
+ * 摺疊改成以「組」為單位：一組就是使用者的一趟，拆開來數沒有意義。
+ */
+const groups = computed(() =>
+  groupStripRows(rows.value.map(r => ({
+    id: r.alert.id,
+    severity: r.alert.severity,
+    anchorSelector: r.alert.anchor?.selector,
+    alert: r.alert,
+    to: r.to,
+  }))),
+)
+
+/** 收合狀態要露幾組：有紅全露、沒紅露第一組（groups 紅在前，直接取前段就是對的） */
 const alwaysShownCount = computed(() => {
-  const crit = rows.value.filter(r => r.alert.severity === 'critical').length
-  return crit > 0 ? crit : Math.min(1, rows.value.length)
+  const crit = groups.value.filter(g => g.severity === 'critical').length
+  return crit > 0 ? crit : Math.min(1, groups.value.length)
 })
-const visibleRows = computed(() => expanded.value ? rows.value : rows.value.slice(0, alwaysShownCount.value))
+const visibleGroups = computed(() => expanded.value ? groups.value : groups.value.slice(0, alwaysShownCount.value))
 /** 有沒有東西可收（決定「還有 N 件／收合」那一行要不要出現） */
-const collapsibleCount = computed(() => rows.value.length - alwaysShownCount.value)
-/** 只藏一件時把標題講出來（幾乎零成本的線索）；多件才只講數字 */
+const collapsibleCount = computed(() => groups.value.length - alwaysShownCount.value)
+/**
+ * 摺疊列講的是**件數**不是組數：使用者關心的是「還有幾件事」，
+ * 而一組可能含好幾件——只講「還有 2 組」他無從換算。
+ */
 const moreLabel = computed(() => {
-  const hidden = rows.value.slice(alwaysShownCount.value)
-  if (hidden.length === 1)
-    return `還有 1 件：${hidden[0]!.alert.title} ▾`
-  return `還有 ${hidden.length} 件提醒 ▾`
+  const hidden = groups.value.slice(alwaysShownCount.value)
+  const count = hidden.reduce((n, g) => n + 1 + g.rest.length, 0)
+  if (count === 1)
+    return `還有 1 件：${hidden[0]!.lead.alert.title} ▾`
+  return `還有 ${count} 件提醒 ▾`
 })
 
 /**

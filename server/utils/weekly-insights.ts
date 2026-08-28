@@ -89,7 +89,10 @@ export function formatWeeklyInsightLines(input: WeeklyInsightInput): string[] | 
     lines.push(`・${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
   }
   if (input.pendingSuggestUsers > 0) {
-    lines.push(`・${input.pendingSuggestUsers} 位客人的 AI 標籤建議還沒看——後台「好友」頁勾「只看有 AI 建議的」`)
+    // ⛔叫「貼標建議」不叫「AI 建議」（2026-08-28 拍板）：摘要本文同一則訊息裡有一行
+    // 「客人常問但 AI 答不好的主題 N 個」＝知識庫建議收件匣，兩者是**不同的東西**，
+    // 但原本都叫「AI 建議」又相鄰，讀的人會以為同一件事講兩次。
+    lines.push(`・${input.pendingSuggestUsers} 位客人的貼標建議還沒看——後台「好友」頁勾「只看有 AI 建議的」`)
   }
   if (input.quietDown > 0) {
     // 文案跟資料窗口一字不差（14~28 天前，不是日曆上個月）＋這一行也要有下一步（G-22②④）

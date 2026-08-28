@@ -278,7 +278,7 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
 
     const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
     expect(text).toContain('另有 2 件建議處理的事')
-    expect(text).toContain('最重要:付款成功但自動扣款沒綁好')
+    expect(text).toContain('最重要:下期不會自動扣款（卡沒綁成）')
   })
 
   it('綁卡查詢掛掉 → 當沒有,摘要與其他黃級照常（⛔不准拖垮摘要本體）', async () => {

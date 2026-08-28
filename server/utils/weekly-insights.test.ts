@@ -83,8 +83,8 @@ describe('formatWeeklyInsightLines', () => {
     expect(lines[1]).toContain('「好友」頁')
     // 「會員」已於 2026-08-23 全面退場（側欄／頁題／訊息一律「好友」）——別讓它從指路文案復活
     expect(lines.join('\n')).not.toContain('會員')
-    expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('「好友」頁')
-    expect(lines.find(l => l.includes('AI 標籤建議'))).toContain('5 位')
+    expect(lines.find(l => l.includes('貼標建議'))).toContain('「好友」頁')
+    expect(lines.find(l => l.includes('貼標建議'))).toContain('5 位')
     // 文案要跟資料窗口（14~28 天前）一字不差，不寫「上個月」；而且要有下一步（G-22②④）
     const quiet = lines.find(l => l.includes('兩週沒再出現'))!
     expect(quiet).toContain('23 位')
