@@ -262,9 +262,11 @@ const ALERTS: AlertDefinition[] = [
     cta: '去升級方案',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
-    // ⛔只圈不給「帶我看」：能按的（升級 / 續訂）在卡片頁首，要看的是卡片裡那條用量——
-    // 掛 anchor 的話按鈕會在每一頁都變成「帶我看」，但在別頁按下去其實是跳頁（見 rowActionLabel）
-    mark: '[data-tour="bill-quota"]',
+    // 2026-08-28 全異常巡檢抓到：這顆（連同下面三顆帳單類）在帳單頁上**一顆按鈕都沒有**——
+    // 提醒帶只會出現在異常自己那一頁，而沒有 anchor、深連結又沒帶 query 時，
+    // `rowActionLabel` 會回空字串。使用者讀完「AI 已經停止回覆」之後沒有任何下一步可按。
+    // ⛔別擔心掛了 anchor 會讓別頁的按鈕字樣變錯：提醒帶只在本頁列這顆，小幫手那張卡走的是 cta。
+    anchor: { selector: '[data-tour="bill-quota"]', note: '這一區是本期用量；要加量請按這張卡右上角的「升級 / 續訂」。' },
   },
   {
     // 提前量：quotaExceeded 亮的時候 AI 已經停了。這顆在停之前就講
@@ -274,7 +276,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看用量與方案',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
-    mark: '[data-tour="bill-quota"]',
+    anchor: { selector: '[data-tour="bill-quota"]', note: '這一區是本期用量；趁還沒停，按這張卡右上角的「升級 / 續訂」換更大的方案。' },
   },
   {
     id: 'paymentPastDue',
@@ -283,8 +285,8 @@ const ALERTS: AlertDefinition[] = [
     cta: '去處理付款',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
-    // 扣款失敗那張黃卡本來就只在 past_due 時出現＝這顆亮著時它一定在，圈得到
-    mark: '[data-tour="bill-past-due"]',
+    // 扣款失敗那張黃卡本來就只在 past_due 時出現＝這顆亮著時它一定在，圈得到、也指得到
+    anchor: { selector: '[data-tour="bill-past-due"]', note: '這張卡會寫金流回報的失敗原因；卡片過期或額度不足的話，用卡片裡的「換一張卡付款」換一張。' },
   },
   {
     id: 'handoffNotifyMissing',
@@ -303,7 +305,13 @@ const ALERTS: AlertDefinition[] = [
     icon: Pointer,
     impact: '選單、圖卡、關鍵字回覆或活動指向已刪除／已停用的模組。客人觸發時收不到任何訊息，也不會看到錯誤提示。',
     cta: '去檢查設定',
-    requires: 'settings',
+    // 2026-08-28 老闆拍板改成 operate：這顆一顆管四種設定，其中**客服流程與活動客服人員
+    // 本來就改得動**，卻因為掛在 settings 而完全看不到——最可能第一個發現的人被擋在外面。
+    // 圖文選單那一路他們改不動，但至少能通報。⚠️另一半理由是成本：後端這顆 probe 一直
+    // 都放在 operate 組（＝每個客服人員開後台都會把模組／選單／流程／活動四整批撈回來比對），
+    // 前端卻把結果丟掉——白花的查詢。兩邊對齊之後這筆錢至少換得到東西。
+    // ⛔四個落點頁都只要 auth（ai-scripts 另加 ai-feature），agent 進得去，不會帶去權限牆。
+    requires: 'operate',
     // 退路：問不出面向時（舊版後端沒回 scopes）沿用原本的落點
     route: wid => `/admin/${wid}/richmenu`,
     // 2026-08-26：這顆一顆管四種設定，以前一律指到圖文選單——壞在活動的人被帶去
@@ -403,9 +411,11 @@ const ALERTS: AlertDefinition[] = [
     cta: '去處理付款方式',
     requires: 'settings',
     route: wid => `/admin/${wid}/settings/billing`,
-    // ⛔刻意沒有 mark：這顆亮著＝沒有生效中的委託（hasMandate=false），
-    // 而帳單頁的續訂列與「更新付款方式」按鈕都掛在 canCancel（＝有委託）之下＝**當下不存在**。
-    // 圈一個沒有東西可按的區塊比不圈更糟；出路寫在 impact 裡（重新設定付款方式／聯絡我們）。
+    // 2026-08-28 老闆拍板補出路：這顆亮著＝沒有生效中的委託，而帳單頁的續訂列與
+    // 「更新付款方式」都掛在「有委託」之下＝**當下整排都不存在**，使用者讀完紅字
+    // 在頁面上找不到「重新設定付款方式」在哪。已在帳單頁補一顆按鈕（bill-rebind），
+    // 顯示條件直接讀這顆異常本身＝不會漂。
+    anchor: { selector: '[data-tour="bill-rebind"]', note: '按「重新設定付款方式」，跳出來的說明會講清楚這筆會收多少、算在哪一期；完成後卡片就會綁上。' },
   },
   {
     id: 'invoiceFailed',
@@ -765,6 +775,38 @@ export function useWorkspaceAlerts() {
     return out // activeAlerts 已經紅在前，這裡不用再排
   }
 
+  /** 這一頁會落到哪些項目（不管它現在是 active 還是別的狀態）——給下面兩支共用 */
+  function pickForPath(list: ResolvedAlert[], path: string): ResolvedAlert[] {
+    const wid = workspaceId.value
+    if (!wid)
+      return []
+    return list.filter(a => alertRoutes(a, a.scopes, wid).some(to => to.split('?')[0] === path))
+  }
+
+  /**
+   * 這一頁「這次查不到狀態」的項目（`C-95` 二輪，2026-08-28 老闆拍板要講）。
+   *
+   * ⛔ 查不到 ≠ 沒問題。沒有這一支的話，偵測程式掛掉的那一頁跟「真的沒事」在畫面上
+   * **長得一模一樣**——右下角小幫手雖然有講，但沒有人會為了確認一頁有沒有事去點它。
+   * 這正是「過濾掉東西要說得出丟了什麼」那條規則要防的沉默死法。
+   * 建議類不列：它本來就不是「壞掉」，查不到也沒有下一步。
+   */
+  function unknownForPath(path: string): ResolvedAlert[] {
+    if (!loaded.value)
+      return []
+    return pickForPath(visibleAlerts.value.filter(a => a.state === 'unknown' && a.severity !== 'suggestion'), path)
+  }
+
+  /**
+   * 這一頁「你按過暫停提醒、但其實還在發生」的項目（同上，2026-08-28）。
+   *
+   * 靜音是使用者自己的決定，所以不重新吵他——但也不能讓那一頁看起來像沒事。
+   * 只講一行灰字，不給按鈕：要恢復請到右下角小幫手（那裡本來就有「全部恢復」）。
+   */
+  function snoozedForPath(path: string): ResolvedAlert[] {
+    return pickForPath(visibleAlerts.value.filter(a => a.state === 'active' && isSnoozed(a)), path)
+  }
+
   /** 這次查不到狀態的項目（要現形，不能偷偷當成沒事） */
   const unknownAlerts = computed(() =>
     loaded.value ? visibleAlerts.value.filter(a => a.state === 'unknown') : [],
@@ -807,6 +849,8 @@ export function useWorkspaceAlerts() {
     unknownAlerts,
     navAlerts,
     alertsForPath,
+    unknownForPath,
+    snoozedForPath,
     checkedCount,
     loaded,
     loading,

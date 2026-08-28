@@ -9,8 +9,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import type { Ref } from 'vue'
-import { ALERT_LABELS } from '~~/shared/types/alerts'
-import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
+import { ALERT_LABELS, ALERT_SEVERITY } from '~~/shared/types/alerts'
+import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
 
 // ── Nuxt 自動匯入的替身（要在 import 受測模組之前就位）────────────────
 const states = new Map<string, Ref<unknown>>()
@@ -211,6 +211,123 @@ describe('修復手段對應的一致性（D-34）：註冊表、op 表、劇本
  * 而唯一的證據是手動走一次瀏覽器。②共用同一支 promise 的代價是「拿 A 家的查詢回答 B 家」，
  * 那比慢兩秒嚴重得多（reset() 自己的註解就是這樣寫的）。
  */
+describe('這一頁「被濾掉的事」也要講（C-95 二輪，2026-08-28 老闆拍板）', () => {
+  /**
+   * 為什麼要測：這兩種情況的失效方式**在畫面上跟「這一頁沒事」長得一模一樣**——
+   * 沒有任何錯誤訊息、沒有人會發現。老闆已經為同一種沉默死法付過三次代價。
+   *
+   * ⚠️餵的是**整份**回應（後端每一顆 probe 都會回一筆，不是只回有問題的那幾筆）。
+   * 只餵一筆的話，其餘 31 顆會落在「沒回＝unknown」的預設值上，測到的就不是真實情況。
+   */
+  function fullResponse(over: Partial<Record<WorkspaceAlertId, WorkspaceAlertItem>>): WorkspaceAlertItem[] {
+    return (Object.keys(ALERT_SEVERITY) as WorkspaceAlertId[])
+      .map(id => over[id] ?? { id, state: 'clear' as const })
+  }
+
+  it('偵測掛掉（unknown）→ 那一頁要講「查不到」，⛔不可以當成沒事', async () => {
+    const a = await load(fullResponse({ knowledgeSyncFailed: { id: 'knowledgeSyncFailed', state: 'unknown' } }))
+    // 確定有問題的事：一件都沒有（unknown 不是 active，這點不變）
+    expect(a.alertsForPath('/admin/w1/knowledge/sources')).toEqual([])
+    // 但那一頁要說得出「有一項我這次沒查到」
+    expect(a.unknownForPath('/admin/w1/knowledge/sources').map(x => x.id)).toEqual(['knowledgeSyncFailed'])
+    // ⛔ 別頁不要跟著喊
+    expect(a.unknownForPath('/admin/w1/broadcasts')).toEqual([])
+  })
+
+  it('建議類查不到 → 不講（它本來就不是「壞掉」，查不到也沒有下一步）', async () => {
+    const a = await load(fullResponse({ knowledgeSuggestions: { id: 'knowledgeSuggestions', state: 'unknown' } }))
+    expect(a.unknownForPath('/admin/w1/knowledge/sources')).toEqual([])
+  })
+
+  it('全部查得到 → 一行都不多講（⛔別讓正常的一天長出灰字）', async () => {
+    const a = await load(fullResponse({}))
+    expect(a.unknownForPath('/admin/w1/knowledge/sources')).toEqual([])
+    expect(a.snoozedForPath('/admin/w1/knowledge/sources')).toEqual([])
+  })
+
+  it('按過「暫停提醒」→ 提醒帶不吵，但那一頁要講「你把它關掉了、事情還在」', async () => {
+    const a = await load(fullResponse({ broadcastFailed: { id: 'broadcastFailed', state: 'active', count: 2 } }))
+    expect(a.alertsForPath('/admin/w1/broadcasts')).toHaveLength(1)
+
+    a.snoozeAlert('broadcastFailed')
+    // 靜音後：確定有問題的那一區安靜了…
+    expect(a.alertsForPath('/admin/w1/broadcasts')).toEqual([])
+    // …但不可以整頁裝作沒事
+    expect(a.snoozedForPath('/admin/w1/broadcasts').map(x => x.id)).toEqual(['broadcastFailed'])
+  })
+})
+
+describe('註冊表指得到真的東西（2026-08-28 全異常巡檢後補的護欄）', () => {
+  /**
+   * 這一組守的是**最安靜的失效方式**：`data-tour` 被改名或刪掉之後，
+   * 「帶我看」會默默退化成跳頁、頁面上那個框永遠不會出現——
+   * 而畫面看起來完全正常，沒有任何錯誤訊息，不會有人回報。
+   */
+  it('每一個錨點／要圈的區塊，在 app/ 裡真的存在', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const appDir = fileURLToPath(new URL('../', import.meta.url))
+
+    const anchors = new Set<string>()
+    ;(function walk(d: string) {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.name === 'node_modules') continue
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith('.vue')) {
+          for (const m of readFileSync(p, 'utf8').matchAll(/data-tour="([^"]+)"/g))
+            anchors.add(m[1]!)
+        }
+      }
+    })(appDir)
+
+    // 註冊表與開通帶提到的每一個 data-tour 都要找得到（兩個檔一起掃：措辭與錨點同一批維護）
+    const referenced = new Set<string>()
+    for (const f of ['composables/useWorkspaceAlerts.ts', 'composables/useSetupStatus.ts']) {
+      for (const m of readFileSync(`${appDir}${f}`, 'utf8').matchAll(/data-tour="([^"]+)"/g))
+        referenced.add(m[1]!)
+    }
+    expect(referenced.size).toBeGreaterThan(10) // 掃空了就不算測到
+
+    // 側欄那幾個入口是動態綁的（`:data-tour="item.tour"`），字面上找不到——
+    // 這種就退一步確認那個名字還在 app/ 裡（改名／刪掉一樣會被抓到）
+    const asString = new Set<string>()
+    ;(function walk(d: string) {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.name === 'node_modules') continue
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p)
+        else if (/\.(vue|ts)$/.test(e.name) && !p.includes('useWorkspaceAlerts') && !p.includes('useSetupStatus')) {
+          const txt = readFileSync(p, 'utf8')
+          for (const n of referenced) {
+            if (txt.includes(`'${n}'`) || txt.includes(`"${n}"`)) asString.add(n)
+          }
+        }
+      }
+    })(appDir)
+
+    const missing = [...referenced].filter(n => !anchors.has(n) && !asString.has(n))
+    expect(missing).toEqual([])
+  })
+
+  it('每一顆異常指到的頁面真的存在（⛔指到不存在的網址＝按了進到 404）', async () => {
+    const { existsSync, readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const src = readFileSync(`${root}app/composables/useWorkspaceAlerts.ts`, 'utf8')
+
+    const paths = new Set<string>()
+    for (const m of src.matchAll(/`\/admin\/\$\{wid\}\/([a-z0-9/-]+)/g))
+      paths.add(m[1]!)
+    expect(paths.size).toBeGreaterThan(8)
+    const missing = [...paths].filter((p) => {
+      const base = `${root}app/pages/admin/[workspaceId]/${p}`
+      return !existsSync(`${base}.vue`) && !existsSync(`${base}/index.vue`)
+    })
+    expect(missing).toEqual([])
+  })
+})
+
 describe('去重與跨帳號（E-20）', () => {
   /** 讓 $fetch 停在半空中，好模擬「還在路上時使用者切帳號」 */
   function deferredFetch() {

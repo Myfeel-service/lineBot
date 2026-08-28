@@ -168,6 +168,19 @@
   }
 }
 
+/* 「被濾掉的事」那幾行（C-95 二輪）：這次查不到、你按過暫停提醒。
+   刻意做得比警示條輕——它們不是「確定壞了」，但也絕不能不講（不講的話那一頁
+   跟「真的沒事」長得一樣）。長相跟上面「還有 N 件」那一行同一套，讀成同一個底座。 */
+.page-alert-strip__note {
+  margin: 0;
+  padding: 0.375rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.78125rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 640px) {
   .page-alert {
     flex-wrap: wrap;

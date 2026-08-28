@@ -137,6 +137,21 @@
               <el-button size="small" text :loading="canceling" @click="cancelSubscription">取消訂閱</el-button>
             </div>
 
+            <!-- 首期收款成功、但約定卡沒綁成（2026-08-28 老闆拍板補這顆）。
+                 為什麼非補不可：這個狀態下 `canCancel`（＝有委託）是 false，所以上面那整排
+                 「更新付款方式／取消訂閱」都不會出現——使用者讀到「下期不會自動扣款」之後，
+                 在頁面上**找不到任何可以按的東西**（08-28 全異常巡檢抓到的唯一無出路項）。
+                 ⛔顯示條件直接讀那顆異常本身，不要在這裡另寫一份判斷：條件寫兩份就會漂，
+                 而漂掉的那一天畫面上看起來完全正常。 -->
+            <div v-if="showRebindCard" class="billing-renew-row" data-tour="bill-rebind">
+              <span class="text-xs text-muted">
+                這期的錢已經收到，但自動扣款的卡片沒有綁定成功——<strong>下期不會自動扣款</strong>，方案會被降回免費層。重新設定一次就會綁上。
+              </span>
+              <el-button size="small" type="primary" :loading="updatingCard" @click="updatePaymentMethod">
+                重新設定付款方式
+              </el-button>
+            </div>
+
             <!-- 已預約的期末降級：一定要能看到、也一定要能反悔。看不到的排程等於「莫名其妙
                  某天方案就變小了」，那是最難處理的客服case。 -->
             <div v-if="planView.pendingPlanName" class="billing-renew-row">
@@ -869,6 +884,23 @@ const cardChargeAmount = computed<number | null>(() => {
  * 400「此方案不支援線上結帳」。
  */
 const canUpdateCard = computed(() => canCancel.value && cardChargeAmount.value != null)
+
+/**
+ * 「首期付了、卡沒綁成」要不要顯示那顆補綁按鈕（2026-08-28）。
+ *
+ * ⛔ 判斷刻意直接讀 `renewalNotBound` 這顆異常，不在這裡另寫一份條件：
+ * 真正的判定（有 period_first 訂單、已付款、cardBound=false、且在時間窗內）在後端，
+ * 這裡照抄一份的話，兩邊遲早對不上——而漂掉的那天畫面看起來完全正常，沒有人會發現。
+ * 也順便保證「提醒帶指到這顆按鈕」時它一定在（提醒帶的錨點就是這一列）。
+ *
+ * 另外要求 `cardChargeAmount != null`：免費／客製方案按下去只會拿到
+ * 400「此方案不支援線上結帳」（同 `canUpdateCard` 的理由）。
+ */
+const { alerts: workspaceAlerts } = useWorkspaceAlerts()
+const showRebindCard = computed(() =>
+  cardChargeAmount.value != null
+  && workspaceAlerts.value.some(a => a.id === 'renewalNotBound' && a.state === 'active'),
+)
 
 const updatingCard = ref(false)
 async function updatePaymentMethod() {

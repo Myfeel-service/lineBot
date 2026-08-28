@@ -1,5 +1,5 @@
 <template>
-  <div v-if="rows.length || showOnboardingBand" class="page-alert-strip" role="alert">
+  <div v-if="rows.length || showOnboardingBand || notes.length" class="page-alert-strip" role="alert">
     <!-- 開通帶（2026-08-27 老闆拍板「加碼」）：開通沒完成時原本整條消失＝每一頁只剩
          誤導的 0，唯一訊號躲在右下角紅點。改成顯示**單一條**開通帶——只有一條、
          不逐項列（與 08-26「開通期側欄不整排亮」同一把尺：一多就變裝飾）。 -->
@@ -64,6 +64,12 @@
       <template v-if="!expanded">{{ moreLabel }}</template>
       <template v-else>收合，只顯示最重要的 ▴</template>
     </button>
+
+    <!-- 「這一頁還有什麼是我沒告訴你的」（C-95 二輪，2026-08-28 老闆拍板）。
+         上面那些條講的是「確定有問題的事」；這裡講的是**被濾掉的事**——這次查不到狀態、
+         以及你自己按過暫停提醒的。⛔沒有這兩行的話，那一頁跟「真的沒事」在畫面上長得
+         一模一樣，而使用者不會為了確認有沒有事去點右下角小幫手。 -->
+    <p v-for="n in notes" :key="n.kind" class="page-alert-strip__note">{{ n.text }}</p>
   </div>
 </template>
 
@@ -93,7 +99,7 @@ import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
  * 開通沒做完不顯示。⛔別在頁內另刻異常提醒，有異常訊號的一律走這條。
  */
 const route = useRoute()
-const { alertsForPath, refresh } = useWorkspaceAlerts()
+const { alertsForPath, unknownForPath, snoozedForPath, lastRefreshFailed, refresh } = useWorkspaceAlerts()
 const { onboardingIncomplete, loaded: setupLoaded, onboardingBand } = useSetupStatus()
 const { workspaceId } = useWorkspace()
 const { startAdHocTour } = useTutorial()
@@ -151,6 +157,42 @@ const moreLabel = computed(() => {
     return `還有 1 件：${hidden[0]!.alert.title} ▾`
   return `還有 ${hidden.length} 件提醒 ▾`
 })
+
+/**
+ * 底下那幾行灰字：**被濾掉的事**（C-95 二輪，2026-08-28 老闆拍板要講）。
+ *
+ * 三種「沒有」下一步完全不同，所以分開講、不合成一句：
+ * - 這次整批沒查成 → 看到的是稍早的結果，可能已經過期
+ * - 某幾項查不到 → ⛔查不到不等於沒問題
+ * - 你自己按過暫停提醒 → 事情還在，只是你叫它先別吵
+ *
+ * ⛔ 開通還沒做完時整組不講：那段路營運類訊號本來就量不出來，講「查不到」只是雜訊。
+ * ⛔ 不給按鈕：恢復提醒在右下角小幫手（那裡是「全部恢復」，掛在單頁上會誤導成只恢復這一頁）。
+ */
+const notes = computed<{ kind: string, text: string }[]>(() => {
+  if (!setupLoaded.value || onboardingIncomplete.value)
+    return []
+  const out: { kind: string, text: string }[] = []
+  if (lastRefreshFailed.value)
+    out.push({ kind: 'stale', text: '這次檢查沒有跑成功，上面顯示的是稍早的結果——可能已經不是現在的狀況。' })
+  const unknown = unknownForPath(route.path)
+  if (unknown.length)
+    out.push({ kind: 'unknown', text: `這一頁有 ${unknown.length} 項這次查不到狀態（查不到不等於沒問題）：${nameList(unknown)}` })
+  const snoozed = snoozedForPath(route.path)
+  if (snoozed.length)
+    out.push({ kind: 'snoozed', text: `這一頁有 ${snoozed.length} 件你按過「暫停提醒」，其實還在發生：${nameList(snoozed)}` })
+  return out
+})
+
+/**
+ * 名字最多列三個，其餘只講數量。
+ * ⛔ 這一行是灰字補充，不是主角：整批查不到時（例如後端整支掛掉）逐條列出來會是一面牆，
+ * 把上面真正要處理的紅字擠掉。數量已經在句首講過了，看得到「還有幾個」就夠。
+ */
+function nameList(list: ResolvedAlert[]): string {
+  const head = list.slice(0, 3).map(a => a.title).join('、')
+  return list.length > 3 ? `${head}…等 ${list.length} 項` : head
+}
 
 function toneOf(a: ResolvedAlert): 'critical' | 'warning' {
   return a.severity === 'critical' ? 'critical' : 'warning'
