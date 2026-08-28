@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { ALERT_MARK_ATTR, ALERT_MARK_LABEL_ATTR, ALERT_MARK_REL_ATTR, alertFieldMarks, clearAlertFieldMarks, paintAlertFieldMark } from './alert-field-marks'
+import { ALERT_MARK_ATTR, ALERT_MARK_FLUSH_ATTR, ALERT_MARK_LABEL_ATTR, ALERT_MARK_REL_ATTR, alertFieldMarks, clearAlertFieldMarks, markIsFlush, paintAlertFieldMark } from './alert-field-marks'
 import type { AlertMarkSource } from './alert-field-marks'
 
 function src(over: Partial<AlertMarkSource> & Pick<AlertMarkSource, 'id'>): AlertMarkSource {
@@ -120,6 +120,115 @@ function fakeRoot(els: FakeEl[]) {
   } as unknown as Document
 }
 
+/**
+ * 會量位置的假 DOM（`markIsFlush` 用）：多支援 parentElement、getBoundingClientRect
+ * 與 overflow。⚠️上面那個 FakeEl 刻意不加這些——它守的是「量不到位置時要退回原本的外描邊」。
+ */
+interface FakeRect { left: number, right: number, top: number, bottom: number }
+
+class FakeBoxEl {
+  attrs = new Map<string, string>()
+  parentElement: FakeBoxEl | null = null
+  scrollTop = 0
+  scrollLeft = 0
+  scrollHeight = 0
+  clientHeight = 0
+  scrollWidth = 0
+  clientWidth = 0
+  constructor(
+    public sel: string,
+    public rect: FakeRect,
+    public style: Record<string, string> = {},
+  ) {}
+
+  getAttribute(n: string) { return this.attrs.get(n) ?? null }
+  setAttribute(n: string, v: string) { this.attrs.set(n, v) }
+  removeAttribute(n: string) { this.attrs.delete(n) }
+  getBoundingClientRect() { return this.rect }
+  child(el: FakeBoxEl) { el.parentElement = this; return el }
+  get ownerDocument() {
+    return {
+      defaultView: {
+        getComputedStyle: (el: FakeBoxEl) => ({
+          position: 'static',
+          overflowX: 'visible',
+          overflowY: 'visible',
+          ...el.style,
+        }),
+      },
+    }
+  }
+}
+
+function asEl(el: FakeBoxEl) { return el as unknown as HTMLElement }
+
+describe('外描邊放不放得下（貼齊邊緣的區塊）', () => {
+  /** 側欄：`.split-list-container{overflow:hidden}` 裡塞一列跟它一樣寬的分頁列 */
+  function sidebarRow() {
+    const container = new FakeBoxEl('.split-list-container', { left: 220, right: 500, top: 140, bottom: 800 }, { overflowX: 'hidden', overflowY: 'hidden' })
+    return container.child(new FakeBoxEl('[data-tour="conv-tabs"]', { left: 220, right: 500, top: 140, bottom: 226 }))
+  }
+
+  it('全出血的整列＝貼齊：框畫在外面會被容器切掉，標籤還會壓到下一列', () => {
+    expect(markIsFlush(asEl(sidebarRow()))).toBe(true)
+  })
+
+  it('自己會捲的清單一律算貼齊：標籤是絕對定位在捲動內容裡，會掉到清單最底下看不到', () => {
+    const page = new FakeBoxEl('.split-editor-body', { left: 0, right: 900, top: 0, bottom: 900 })
+    const list = page.child(new FakeBoxEl('[data-tour="scr-list"]', { left: 100, right: 500, top: 100, bottom: 500 }, { overflowY: 'auto' }))
+    expect(markIsFlush(asEl(list))).toBe(true)
+  })
+
+  it('卡片裡的表單欄位不算貼齊：外面放得下，維持原本的外描邊', () => {
+    const card = new FakeBoxEl('.message-card', { left: 0, right: 900, top: 0, bottom: 400 }, { overflowX: 'hidden', overflowY: 'hidden' })
+    const field = card.child(new FakeBoxEl('[data-tour="org-liff"]', { left: 16, right: 884, top: 16, bottom: 200 }))
+    expect(markIsFlush(asEl(field))).toBe(false)
+  })
+
+  it('在摺線以下的格子不算貼齊：量的是內容裡有沒有空間，不是現在看得到的那一格畫面', () => {
+    // 後台表單頁的真實骨架：會捲的是 .split-editor-body，外面還包著一整疊 overflow:hidden
+    // 的容器（.split-editor-inner / .split-editor / .split-layout / .main-content…）
+    const outer = new FakeBoxEl('.split-editor-inner', { left: 0, right: 900, top: 0, bottom: 800 }, { overflowX: 'hidden', overflowY: 'hidden' })
+    const scroller = outer.child(new FakeBoxEl('.split-editor-body', { left: 0, right: 900, top: 0, bottom: 800 }, { overflowX: 'hidden', overflowY: 'auto' }))
+    scroller.scrollHeight = 2000
+    scroller.clientHeight = 800
+    const field = scroller.child(new FakeBoxEl('[data-tour="bill-quota"]', { left: 40, right: 860, top: 1100, bottom: 1300 }))
+    expect(markIsFlush(asEl(field))).toBe(false)
+    // 捲到底、格子貼在可視區上緣時也要是同一個答案（⛔不可以因為捲到哪裡而換一種畫法）
+    scroller.scrollTop = 1200
+    field.rect = { left: 40, right: 860, top: -100, bottom: 100 }
+    expect(markIsFlush(asEl(field))).toBe(false)
+  })
+
+  it('量不到位置（還沒進畫面）就當放得下——最差是回到原本的樣子，不會亂改版面', () => {
+    expect(markIsFlush(new FakeEl('[data-tour="conv-tabs"]') as unknown as HTMLElement)).toBe(false)
+  })
+
+  it('畫框時真的會把屬性掛上去、收框時真的會拔掉（沒掛＝樣式整套不會生效）', () => {
+    const el = sidebarRow()
+    const root = {
+      querySelectorAll: (selector: string) =>
+        selector === `[${ALERT_MARK_ATTR}]` ? [el].filter(e => e.attrs.has(ALERT_MARK_ATTR)) : [el],
+    } as unknown as Document
+    paintAlertFieldMark(root, { selector: '[data-tour="conv-tabs"]', tone: 'warning', label: '有客人在等真人回覆' })
+    expect(el.getAttribute(ALERT_MARK_FLUSH_ATTR)).toBe('')
+    clearAlertFieldMarks(root)
+    expect(el.getAttribute(ALERT_MARK_FLUSH_ATTR)).toBeNull()
+  })
+
+  it('補畫時會重量一次：第一次畫的時候清單還是空的，長出來之後位置不一樣', () => {
+    const el = sidebarRow()
+    const root = { querySelectorAll: () => [el] } as unknown as Document
+    const mark = { selector: '[data-tour="conv-tabs"]', tone: 'warning' as const, label: '有客人在等真人回覆' }
+    paintAlertFieldMark(root, mark)
+    expect(el.getAttribute(ALERT_MARK_FLUSH_ATTR)).toBe('')
+    // 側欄被拖寬、外面挪出空間之後（同一顆異常、同一格）：框要換回外描邊
+    el.rect = { left: 240, right: 480, top: 160, bottom: 226 }
+    paintAlertFieldMark(root, mark)
+    expect(el.getAttribute(ALERT_MARK_FLUSH_ATTR)).toBeNull()
+  })
+})
+
 describe('把框畫到 DOM 上', () => {
   it('一顆異常圈到好幾格時，只有第一格掛那句話（同一句印兩次是雜訊）', () => {
     const tok = new FakeEl('[data-tour="org-token"]')
@@ -201,6 +310,9 @@ describe('標記真的會被畫出來', () => {
     )
     expect(scss).toContain('[data-alert-mark]')
     expect(scss).toContain('[data-alert-mark="warning"]')
+    // 貼齊那一套：JS 掛了屬性但樣式沒有對應規則的話，框照樣被切、標籤照樣壓在下一列
+    expect(scss).toContain('[data-alert-mark-flush]')
+    expect(scss).toContain('alert-field-mark-pulse-inset')
     const main = readFileSync(
       fileURLToPath(new URL('../assets/scss/main.scss', import.meta.url)),
       'utf8',

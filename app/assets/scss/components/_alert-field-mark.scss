@@ -58,6 +58,51 @@
   background: var(--color-warning);
 }
 
+/* ── 貼著邊的區塊：框改畫在裡面（2026-08-29 老闆看對話頁抓到）──────────
+   側欄裡有一整批錨點是**全出血**的：對話頁的分頁列、腳本／圖文選單／流程／活動／
+   推播的清單。它們的寬度就是側欄的寬度，外面一格空間都沒有——實測結果是框的左右上
+   三邊被 `.split-list-container{overflow:hidden}` 切掉（看起來像一條莫名其妙的橫帶），
+   下緣那句話則整個壓在搜尋框上（分頁列底部與搜尋框頂部都在 y=228，中間零間距）。
+
+   放不放得下由 `markIsFlush` **量**出來（⛔不要改成列舉哪幾頁：下一個加錨點的人不會
+   知道有這條規則）。量到放不下就掛 `data-alert-mark-flush`，換成這一套：
+   框畫在裡面、那句話收進區塊上緣、並且只有掛字的那一格讓出一行的高度。 */
+[data-alert-mark][data-alert-mark-flush] {
+  /* 2px 實線貼著邊，內側 4px 淡底當呼吸區（＝外描邊那一套的裡外顛倒版） */
+  box-shadow:
+    inset 0 0 0 2px var(--el-color-danger-light-5),
+    inset 0 0 0 6px var(--el-color-danger-light-9);
+  animation-name: alert-field-mark-pulse-inset;
+}
+
+[data-alert-mark="warning"][data-alert-mark-flush] {
+  box-shadow:
+    inset 0 0 0 2px var(--el-color-warning-light-5),
+    inset 0 0 0 6px var(--el-color-warning-light-9);
+  animation-name: alert-field-mark-pulse-inset-warning;
+}
+
+/* 讓出標籤那一行。⚠️三個屬性是為了贏過頁面自己的 padding（`.conversations-page
+   .conv-status-tabs` 是 0,2,0，而 main.scss 裡 pages 排在 components 後面，同分會輸）；
+   ⛔只有**掛字**的那一格加，沒字的格子版面一格都不能動。 */
+[data-alert-mark][data-alert-mark-flush][data-alert-mark-label] {
+  padding-block-start: 1.65rem;
+}
+
+/* 那句話改貼上緣、收在框裡面（不再往下掉一半去壓下一列）。
+   ⚠️會捲的清單（`.split-list`）：它是絕對定位在捲動內容裡，人捲下去時會跟著離開畫面——
+   框還在，所以看得出「是這一份清單」。⛔別為了讓它跟著捲改成 sticky：::after 在 flex
+   容器裡會變成 flex item，整份清單的版面會跟著被推開。 */
+[data-alert-mark][data-alert-mark-flush][data-alert-mark-label]::after {
+  inset-block-start: 6px;
+  inset-block-end: auto;
+  inset-inline-start: 10px;
+  transform: none;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 落地時輕輕跳兩下：進到頁面那一眼要抓得住視線，之後就安靜當框。
    ⛔不要做成無限循環——常年亮著的東西會被學會忽略（同「紅點不能什麼都算」那把尺）。 */
 @keyframes alert-field-mark-pulse {
@@ -70,6 +115,19 @@
   0%,
   100% { box-shadow: 0 0 0 6px var(--el-color-warning-light-9), 0 0 0 8px var(--el-color-warning-light-5); }
   50%  { box-shadow: 0 0 0 10px var(--el-color-warning-light-9), 0 0 0 12px var(--el-color-warning-light-5); }
+}
+
+/* 內描邊版的落地動畫：往裡面長，不然那兩下又會被容器裁掉（＝看起來根本沒動） */
+@keyframes alert-field-mark-pulse-inset {
+  0%,
+  100% { box-shadow: inset 0 0 0 2px var(--el-color-danger-light-5), inset 0 0 0 6px var(--el-color-danger-light-9); }
+  50%  { box-shadow: inset 0 0 0 2px var(--el-color-danger-light-5), inset 0 0 0 10px var(--el-color-danger-light-9); }
+}
+
+@keyframes alert-field-mark-pulse-inset-warning {
+  0%,
+  100% { box-shadow: inset 0 0 0 2px var(--el-color-warning-light-5), inset 0 0 0 6px var(--el-color-warning-light-9); }
+  50%  { box-shadow: inset 0 0 0 2px var(--el-color-warning-light-5), inset 0 0 0 10px var(--el-color-warning-light-9); }
 }
 
 [data-alert-mark] {
