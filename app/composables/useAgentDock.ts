@@ -164,9 +164,15 @@ export function useAgentDock() {
     // 滑鼠只吃左鍵；右鍵/中鍵不該把東西拖走
     if (e.pointerType === 'mouse' && e.button !== 0)
       return
-    // 從按鈕上按下去的不算拖曳。⛔一定要擋：setPointerCapture 會把後續事件改派到
-    // 捕獲元件，click 的目標就變成標頭而不是那顆按鈕——分頁與關閉鈕會整個點不動
-    if ((e.target as HTMLElement | null)?.closest('button'))
+    // 從**別的**按鈕上按下去的不算拖曳（面板標頭裡的分頁鈕、關閉鈕）。
+    // ⛔ 一定要擋：setPointerCapture 會把後續事件改派到捕獲元件，click 的目標就變成
+    //    標頭而不是那顆按鈕——分頁與關閉鈕會整個點不動。
+    // ⛔ 但要排除「把手自己就是一顆按鈕」的情形：浮動按鈕本身就是 <button>，
+    //    只寫 closest('button') 的話它每次都命中自己 → 一按下就 return，
+    //    拖曳完全不會啟動（2026-08-27 交出去的第一版就是這個 bug，
+    //    而當時的測試把 target.closest 假造成永遠回 null，所以照樣綠燈）。
+    const pressedButton = (e.target as HTMLElement | null)?.closest('button')
+    if (pressedButton && pressedButton !== e.currentTarget)
       return
     // 還沒搬過時沒有座標可算 delta，就地量按鈕現在在哪（CSS 排出來的右下角）
     const rect = fabRef.value?.getBoundingClientRect()
@@ -176,10 +182,17 @@ export function useAgentDock() {
     // 每次手勢開頭都清掉，否則「從標頭拖完（沒有 click）」的旗標會留到下一次
     // 真的點按鈕時才被讀到，變成第一下點不開
     wasDrag.value = false
-    ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
     window.addEventListener('pointermove', onDragMove)
     window.addEventListener('pointerup', onDragEnd)
     window.addEventListener('pointercancel', onDragEnd)
+    // 捕獲指標＝游標移出視窗時仍收得到事件（拖到邊緣才不會斷）。
+    // ⛔ 但它**會丟例外**（NotFoundError：指標已經放開、或不是作用中的指標），
+    //    所以一定要排在註冊監聽**之後**並且包起來——放前面又沒包的話，
+    //    一丟例外後面三行就不會執行，拖曳會靜靜地完全失效、畫面上什麼線索都沒有。
+    try {
+      (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+    }
+    catch {}
   }
 
   function onDragMove(e: PointerEvent) {

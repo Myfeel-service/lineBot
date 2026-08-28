@@ -44,24 +44,67 @@ g.localStorage = {
 
 const { useAgentDock, DOCK_MARGIN, DOCK_FAB_SIZE } = await import('./useAgentDock')
 
-/** 假的浮動按鈕：只需要量得到位置、吃得下 setPointerCapture */
-function fakeFab(left: number, top: number) {
-  return {
-    getBoundingClientRect: () => ({ left, top }),
-    setPointerCapture: () => {},
-  }
+/**
+ * 假 DOM：`closest` 真的往上走父層鏈。
+ *
+ * ⛔ 這是這支測試的重點。第一版把 `target.closest` 假造成永遠回 `null`，
+ * 於是「按下去算不算拖曳」那段守門根本沒被考驗過——真實情況是**浮動按鈕自己就是
+ * 一顆 `<button>`**，`closest('button')` 一定命中它自己。程式因此一按就 return、
+ * 完全不能拖，測試卻全綠。假造的東西要對得上真實結構，否則測的是自己編的世界。
+ */
+interface FakeNode {
+  tag: string
+  parent: FakeNode | null
+  closest: (sel: string) => FakeNode | null
+  setPointerCapture?: () => void
+  getBoundingClientRect?: () => { left: number, top: number }
 }
 
-function pointerEvent(x: number, y: number, extra: Record<string, unknown> = {}) {
+function node(tag: string, parent: FakeNode | null = null): FakeNode {
+  const self: FakeNode = {
+    tag,
+    parent,
+    setPointerCapture: () => {},
+    closest(sel: string) {
+      let cur: FakeNode | null = self
+      while (cur) {
+        if (cur.tag === sel)
+          return cur
+        cur = cur.parent
+      }
+      return null
+    },
+  }
+  return self
+}
+
+/** 浮動按鈕：本身是 <button>，裡面有圖示 span 與數字徽章 span */
+function buildFab(left: number, top: number) {
+  const fab = node('button')
+  fab.getBoundingClientRect = () => ({ left, top })
+  return { fab, icon: node('span', fab), badge: node('span', fab) }
+}
+
+/** 面板標頭：<header> 本身不是按鈕，裡面有分頁鈕與關閉鈕 */
+function buildHead() {
+  const head = node('header')
+  return { head, blank: node('div', head), tab: node('button', head) }
+}
+
+function pointerEvent(
+  x: number,
+  y: number,
+  opts: { target?: FakeNode, currentTarget?: FakeNode, button?: number } = {},
+) {
+  const target = opts.target ?? node('div')
   return {
     pointerId: 1,
     pointerType: 'mouse',
-    button: 0,
+    button: opts.button ?? 0,
     clientX: x,
     clientY: y,
-    target: { closest: () => null },
-    currentTarget: { setPointerCapture: () => {} },
-    ...extra,
+    target,
+    currentTarget: opts.currentTarget ?? target,
   } as unknown as PointerEvent
 }
 
@@ -87,13 +130,82 @@ const START_Y = 800 - DOCK_FAB_SIZE - 24
 beforeEach(() => { store.clear() })
 
 describe('拖曳手勢', () => {
+  /**
+   * 在浮動按鈕上按下去：按到的是裡面的圖示 span，事件掛在按鈕本身。
+   * 這就是真實情況——**把手自己就是一顆 `<button>`**。
+   */
+  function pressFab(dock: ReturnType<typeof useAgentDock>, x = START_X, y = START_Y) {
+    const { fab, icon } = buildFab(START_X, START_Y)
+    dock.fabRef.value = fab as unknown as HTMLElement
+    dock.onDragStart(pointerEvent(x, y, { target: icon, currentTarget: fab }))
+    return { fab, icon }
+  }
+
+  it('⛔迴歸：在浮動按鈕上按住就要能拖（把手自己是 <button>，別被「按鈕不觸發拖曳」擋掉）', () => {
+    const dock = mountDock()
+    pressFab(dock)
+    // 守門若命中把手自己，這裡連監聽都不會註冊＝一按就 return，拖曳永遠不會開始
+    expect(listeners.get('pointermove')?.size ?? 0).toBe(1)
+
+    fire('pointermove', pointerEvent(START_X - 300, START_Y - 200))
+    fire('pointerup', pointerEvent(0, 0))
+    expect(dock.moved.value).toBe(true)
+  })
+
+  it('⛔迴歸：setPointerCapture 丟例外時，拖曳照樣要能用', () => {
+    // 真實瀏覽器會丟 NotFoundError（指標已放開／不是作用中的指標）。
+    // 這行若排在註冊監聽之前又沒包 try，例外會讓監聽整組掛不上＝完全不能拖，
+    // 而且畫面上不會有任何線索。
+    const dock = mountDock()
+    const { fab, icon } = buildFab(START_X, START_Y)
+    fab.setPointerCapture = () => { throw new Error('NotFoundError') }
+    dock.fabRef.value = fab as unknown as HTMLElement
+
+    dock.onDragStart(pointerEvent(START_X, START_Y, { target: icon, currentTarget: fab }))
+    fire('pointermove', pointerEvent(START_X - 300, START_Y - 200))
+    fire('pointerup', pointerEvent(0, 0))
+
+    expect(dock.moved.value).toBe(true)
+  })
+
+  it('按在徽章（按鈕裡的 span）上也能拖', () => {
+    const dock = mountDock()
+    const { fab, badge } = buildFab(START_X, START_Y)
+    dock.fabRef.value = fab as unknown as HTMLElement
+    dock.onDragStart(pointerEvent(START_X, START_Y, { target: badge, currentTarget: fab }))
+    fire('pointermove', pointerEvent(START_X - 300, START_Y - 200))
+    fire('pointerup', pointerEvent(0, 0))
+    expect(dock.moved.value).toBe(true)
+  })
+
+  it('拖標頭空白處可以搬；按標頭裡的分頁鈕則整個讓掉（分頁要點得動）', () => {
+    const dragByHeader = mountDock()
+    const { fab } = buildFab(START_X, START_Y)
+    dragByHeader.fabRef.value = fab as unknown as HTMLElement
+    const { head, blank, tab } = buildHead()
+
+    dragByHeader.onDragStart(pointerEvent(600, 300, { target: blank, currentTarget: head }))
+    expect(listeners.get('pointermove')?.size ?? 0).toBe(1)
+    fire('pointermove', pointerEvent(300, 200))
+    fire('pointerup', pointerEvent(0, 0))
+    expect(dragByHeader.moved.value).toBe(true)
+
+    // 換成按分頁鈕：不可以進入拖曳（否則 pointer capture 會把 click 目標改成標頭）
+    // 先清掉上面那次拖曳的存檔，新的 dock 才是乾淨的（否則它會讀回位置、moved 本來就是 true）
+    store.clear()
+    const clickTab = mountDock()
+    clickTab.fabRef.value = fab as unknown as HTMLElement
+    clickTab.onDragStart(pointerEvent(600, 300, { target: tab, currentTarget: head }))
+    expect(listeners.get('pointermove')?.size ?? 0).toBe(0)
+    expect(clickTab.moved.value).toBe(false)
+  })
+
   it('拖了一段 → 位置真的變了，而且 style 跟著換錨點', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
     expect(dock.moved.value).toBe(false)
     expect(dock.dockStyle.value).toBeUndefined() // 還沒搬＝交給 CSS 預設
 
-    dock.onDragStart(pointerEvent(START_X + 20, START_Y + 20))
+    pressFab(dock, START_X + 20, START_Y + 20)
     fire('pointermove', pointerEvent(START_X + 20 - 900, START_Y + 20 - 600))
     fire('pointerup', pointerEvent(0, 0))
 
@@ -107,9 +219,7 @@ describe('拖曳手勢', () => {
 
   it('只是點一下（位移 2px）→ 不算拖曳，面板照樣打得開', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(START_X + 2, START_Y + 1))
     fire('pointerup', pointerEvent(START_X + 2, START_Y + 1))
 
@@ -119,9 +229,7 @@ describe('拖曳手勢', () => {
 
   it('真的拖過 → 那一下的 click 要被吃掉（不然拖完面板自己彈出來）', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(START_X - 200, START_Y - 100))
     fire('pointerup', pointerEvent(START_X - 200, START_Y - 100))
 
@@ -132,42 +240,29 @@ describe('拖曳手勢', () => {
 
   it('從標頭拖完（後面沒有 click）→ 旗標不會留到下一次真的點按鈕', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-
     // 第一輪：拖，但沒有人來 consume（從面板標頭拖曳就是這個情形）
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(START_X - 300, START_Y - 200))
     fire('pointerup', pointerEvent(0, 0))
 
     // 第二輪：只是點一下按鈕
-    dock.onDragStart(pointerEvent(300, 300))
+    pressFab(dock, 300, 300)
     fire('pointerup', pointerEvent(300, 300))
 
     expect(dock.consumeDrag()).toBe(false) // ⛔這裡回 true 就是「第一下點不開」
   })
 
-  it('點在按鈕上（分頁／關閉鈕）→ 整個手勢讓掉，不會被當成拖標頭', () => {
-    const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-
-    dock.onDragStart(pointerEvent(500, 500, { target: { closest: (s: string) => (s === 'button' ? {} : null) } }))
-    // 沒有註冊任何監聽＝這一輪根本沒開始
-    expect(listeners.get('pointermove')?.size ?? 0).toBe(0)
-    expect(dock.moved.value).toBe(false)
-  })
-
   it('滑鼠右鍵不觸發拖曳', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-    dock.onDragStart(pointerEvent(500, 500, { button: 2 }))
+    const { fab, icon } = buildFab(START_X, START_Y)
+    dock.fabRef.value = fab as unknown as HTMLElement
+    dock.onDragStart(pointerEvent(500, 500, { target: icon, currentTarget: fab, button: 2 }))
     expect(listeners.get('pointermove')?.size ?? 0).toBe(0)
   })
 
   it('拖到視窗外 → 當場就被夾住，按鈕不會掉出畫面', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(START_X + 5000, START_Y + 5000))
     fire('pointerup', pointerEvent(0, 0))
 
@@ -178,8 +273,7 @@ describe('拖曳手勢', () => {
 
   it('放開後存進 localStorage；下次開頁讀回同一個位置', () => {
     const first = mountDock()
-    first.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-    first.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(first)
     // 拖到明確落在左半邊的位置（x≈298），錨點才會是 left
     fire('pointermove', pointerEvent(START_X - 900, START_Y - 400))
     fire('pointerup', pointerEvent(0, 0))
@@ -230,8 +324,7 @@ describe('拖曳手勢', () => {
 
   it('移回右下角：清掉位置也清掉存檔', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(100, 100))
     fire('pointerup', pointerEvent(0, 0))
     expect(dock.moved.value).toBe(true)
@@ -243,8 +336,7 @@ describe('拖曳手勢', () => {
 
   it('放開之後不再繼續跟著滑鼠跑（監聽有拆乾淨）', () => {
     const dock = mountDock()
-    dock.fabRef.value = fakeFab(START_X, START_Y) as unknown as HTMLElement
-    dock.onDragStart(pointerEvent(START_X, START_Y))
+    pressFab(dock)
     fire('pointermove', pointerEvent(START_X - 100, START_Y - 100))
     fire('pointerup', pointerEvent(0, 0))
     const after = dock.dockStyle.value?.right
