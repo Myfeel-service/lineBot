@@ -90,15 +90,6 @@ export const ALERT_MARK_REL_ATTR = 'data-alert-mark-rel'
  * 「外面畫不下」＝框改畫在裡面（見 `_alert-field-mark.scss`）。判斷在 `markRingFitsOutside`。
  */
 export const ALERT_MARK_INSET_ATTR = 'data-alert-mark-inset'
-/**
- * 「那句話掛不到下緣」＝標籤收進區塊上緣。判斷在 `markLabelFitsBelow`。
- *
- * ⚠️和上面那個**刻意分開兩個屬性**：它們卡的不是同一件事。知識庫「要處理的事」那一塊
- * （`.src-todo`）外面有 48px 空間、框畫得漂漂亮亮，但區塊自己是 `overflow:hidden`，
- * 把自己的 `::after` 從中間切一半（2026-08-29 老闆第二張截圖）。併成一個旗標的話，
- * 為了救那句話會連框一起改成內描邊——那是沒壞的東西被順手改掉。
- */
-export const ALERT_MARK_LABEL_IN_ATTR = 'data-alert-mark-label-inside'
 
 /**
  * 外描邊需要的呼吸空間：`_alert-field-mark.scss` 那圈 box-shadow 的外緣（6px 淡底 + 2px 實線，
@@ -165,28 +156,6 @@ export function markRingFitsOutside(el: HTMLElement): boolean {
   return true
 }
 
-/**
- * 那句話掛不掛得住在**下緣外面**（原設計＝貼著框的下緣往下掉一半，像表單的錯誤訊息）。
- *
- * 兩種掛不住，收進區塊裡面的理由不一樣，但結論一樣：
- *
- * 1. **這一格自己會裁**（`overflow` 不是 visible）——`::after` 是它的孩子，掉出去的那半
- *    會被自己切掉。知識庫「要處理的事」（`.src-todo{overflow:hidden}`）就是這樣被切成
- *    半截字的（2026-08-29 老闆第二張截圖）；`.split-list` 那種自己會捲的更慘，標籤會跟著
- *    內容掉到清單最底下，人在最上面時整句話看不到。
- * 2. **框本身就已經畫不出去**——外面連 12px 都沒有的地方，往下掉一半的標籤只會壓在
- *    下一列身上（對話頁分頁列底部 y=228、搜尋框頂部也是 228）。
- */
-export function markLabelFitsBelow(el: HTMLElement): boolean {
-  const view = el.ownerDocument?.defaultView
-  if (!view?.getComputedStyle || typeof el.getBoundingClientRect !== 'function')
-    return true
-  const self = view.getComputedStyle(el)
-  if (clips(self.overflowX) || clips(self.overflowY))
-    return false
-  return markRingFitsOutside(el)
-}
-
 function isScrollable(overflow: string): boolean {
   return overflow === 'auto' || overflow === 'scroll'
 }
@@ -203,7 +172,6 @@ export function clearAlertFieldMarks(root: Document | HTMLElement): void {
     el.removeAttribute(ALERT_MARK_LABEL_ATTR)
     el.removeAttribute(ALERT_MARK_REL_ATTR)
     el.removeAttribute(ALERT_MARK_INSET_ATTR)
-    el.removeAttribute(ALERT_MARK_LABEL_IN_ATTR)
   }
 }
 
@@ -246,17 +214,12 @@ export function paintAlertFieldMark(root: Document | HTMLElement, mark: AlertFie
 }
 
 /**
- * 量一次「框畫哪裡、標籤放哪裡」。⛔別在別處自己加這兩個屬性——量的規則只有這裡一份，
+ * 量一次「框畫得下畫不下在外面」。⛔別在別處自己加這個屬性——量的規則只有這裡一份，
  * 而且要跟 `_alert-field-mark.scss` 的 spread 對得上（`MARK_RING_PX`）。
  */
 function syncFit(el: HTMLElement): void {
-  toggle(el, ALERT_MARK_INSET_ATTR, !markRingFitsOutside(el))
-  toggle(el, ALERT_MARK_LABEL_IN_ATTR, !markLabelFitsBelow(el))
-}
-
-function toggle(el: HTMLElement, attr: string, on: boolean): void {
-  if (on)
-    el.setAttribute(attr, '')
+  if (markRingFitsOutside(el))
+    el.removeAttribute(ALERT_MARK_INSET_ATTR)
   else
-    el.removeAttribute(attr)
+    el.setAttribute(ALERT_MARK_INSET_ATTR, '')
 }

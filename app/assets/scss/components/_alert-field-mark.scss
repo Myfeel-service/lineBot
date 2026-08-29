@@ -32,16 +32,26 @@
   position: relative;
 }
 
-/* 那一句話：貼在框的下緣（＝一般表單錯誤訊息的位置），跟提醒帶上那一句同一份措辭。
+/* 那一句話：收在框**裡面**的左上角，並且讓出自己那一行的高度。
+
+   ⚠️原本是掛在框的下緣、往下掉一半（＝一般表單錯誤訊息的位置）。2026-08-29 老闆連問
+   兩張截圖之後把 16 個錨點全部量過一遍，結論是**那個位置在這個後台沒有一格放得下**：
+   要不被蓋到，元素自己的下內距要有 10px（放標籤的上半）、下面還要再留 10px（下半），
+   實測 16 個錨點只有「空的捲動清單」符合。實際發生的是——
+   帳單頁把「本期已用 920 / 1,000 則」整句蓋掉、續訂列把「下期不會自動扣款」蓋掉、
+   設定頁把欄位說明蓋掉、知識庫與 el-alert 那種 overflow:hidden 的區塊直接把它切成半截字。
+
    ⛔用 ::after 而不是塞真的 DOM 節點：這些格子是 Vue 在管的，外部插節點會在下一次
-   patch 時打架。位置刻意選左下角外緣——欄位的右上角是「教我怎麼拿」那顆求助連結。 */
+   patch 時打架。⛔別為了「跟著捲」改成 sticky：::after 在 flex 容器裡會變成 flex item，
+   整份清單的版面會跟著被推開。 */
 [data-alert-mark][data-alert-mark-label]::after {
   content: attr(data-alert-mark-label);
   position: absolute;
-  inset-block-end: 0;
+  inset-block-start: 6px;
   inset-inline-start: 10px;
-  transform: translateY(50%);
   z-index: 3;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--color-error);
@@ -50,8 +60,19 @@
   font-weight: 600;
   line-height: 1.55;
   white-space: nowrap;
+  text-overflow: ellipsis;
   /* 純標示：不要擋住底下真正能點的東西 */
   pointer-events: none;
+}
+
+/* 讓出標籤那一行。⚠️`!important` 是必要的：頁面自己的 padding 選擇器（例如
+   `.conversations-page .conv-status-tabs`）是 0,2,0，而 main.scss 裡 pages 排在
+   components 後面，不加就會輸給它、標籤直接壓在內容上。
+   ⛔只有**掛字**的那一格加，沒字的格子版面一格都不能動；也只在標記期間存在。
+   ⚠️目前 16 個錨點的上內距都遠小於這個值（最大 10.4px），所以只會撐開、不會壓縮；
+   之後若有錨點自己的上內距超過 1.65rem，要改成留白式的做法而不是直接蓋掉它。 */
+[data-alert-mark][data-alert-mark-label] {
+  padding-block-start: 1.65rem !important;
 }
 
 [data-alert-mark="warning"][data-alert-mark-label]::after {
@@ -78,32 +99,6 @@
     inset 0 0 0 2px var(--el-color-warning-light-5),
     inset 0 0 0 6px var(--el-color-warning-light-9);
   animation-name: alert-field-mark-pulse-inset-warning;
-}
-
-/* ── 那句話掛不到下緣：收進區塊上緣 ─────────────────────────────
-   ⚠️和上面那一段**分開判**（`markLabelFitsBelow`）：框畫得好好的、只有標籤掛不住的
-   情況真的存在——知識庫「要處理的事」外面有 48px 空間，但區塊自己是 overflow:hidden，
-   把自己的 ::after 從中間切成半截字（2026-08-29 老闆第二張截圖）。 */
-
-/* 讓出標籤那一行。⚠️三個屬性是為了贏過頁面自己的 padding（`.conversations-page
-   .conv-status-tabs` 是 0,2,0，而 main.scss 裡 pages 排在 components 後面，同分會輸）；
-   ⛔只有**掛字**的那一格加，沒字的格子版面一格都不能動。 */
-[data-alert-mark][data-alert-mark-label-inside][data-alert-mark-label] {
-  padding-block-start: 1.65rem;
-}
-
-/* 那句話改貼上緣、收在框裡面（不再往下掉一半去壓下一列、也不會被自己切掉）。
-   ⚠️會捲的清單（`.split-list`）：它是絕對定位在捲動內容裡，人捲下去時會跟著離開畫面——
-   框還在，所以看得出「是這一份清單」。⛔別為了讓它跟著捲改成 sticky：::after 在 flex
-   容器裡會變成 flex item，整份清單的版面會跟著被推開。 */
-[data-alert-mark][data-alert-mark-label-inside][data-alert-mark-label]::after {
-  inset-block-start: 6px;
-  inset-block-end: auto;
-  inset-inline-start: 10px;
-  transform: none;
-  max-width: calc(100% - 20px);
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* 落地時輕輕跳兩下：進到頁面那一眼要抓得住視線，之後就安靜當框。
@@ -144,14 +139,5 @@
 @media (prefers-reduced-motion: reduce) {
   [data-alert-mark] {
     animation: none;
-  }
-}
-
-/* 窄畫面：框照畫，但那句話容易被擠出容器外——改成不換行的省略，寧可看不完也不要破版 */
-@media (max-width: 640px) {
-  [data-alert-mark][data-alert-mark-label]::after {
-    max-width: calc(100% - 20px);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 }
