@@ -445,6 +445,61 @@
   }
 }
 
+/* ── 交棒卡（D-40）：匯完之後「客人聽不聽得到」 ──
+   沿用工作台待辦那套語言：結論一句、一句「不管它會怎樣」、一顆按鈕。
+   ⛔沒開 AI 用琥珀不用紅：東西沒壞，只是還差一步——紅色留給真的壞掉的事。 */
+.kb-handoff {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-light);
+
+  &.is-off {
+    border-color: var(--el-color-warning-light-5);
+    background: var(--el-color-warning-light-9);
+  }
+  &.is-live {
+    border-color: var(--el-color-success-light-5);
+    background: var(--el-color-success-light-9);
+  }
+
+  &__main { flex: 1; min-width: 0; }
+
+  &__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__why {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
+  /* 按鈕跟標題那一行對齊（說明常常兩行，置中會浮在中間對不到任何東西） */
+  .el-button { flex: none; margin-top: 2px; }
+}
+
+.kb-handoff-verify {
+  margin-bottom: 12px;
+
+  &__out {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+
+    &.is-ok { color: var(--el-color-success); }
+    /* 答不出來照實說（不報喜不報憂），但用琥珀不用紅：知識確實已經進庫了 */
+    &.is-warn { color: var(--el-color-warning); }
+  }
+}
+
 /* ── 預覽摘要：結論先行 + 主動作在最上面（不必捲過所有卡片才按得到） ── */
 .kb-preview-summary {
   padding: 12px;

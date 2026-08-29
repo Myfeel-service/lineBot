@@ -879,7 +879,15 @@
     }
   }
   &__tip { font-size: 12px; }
-  &__cta { margin-top: 8px; }
+  /* 主動作＋「第一次用？」教學鈕並排。工作台是左對齊版面，不能套 .empty-actions
+     那種置中欄（那是給置中空狀態用的），會跟上面兩段說明的左緣對不齊 */
+  &__cta {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
 }
 
 /* 選著資料時工作台看不到:側欄頂端一行入口,點了回工作台 */

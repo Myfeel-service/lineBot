@@ -252,8 +252,15 @@
             客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
           </p>
           <p class="text-muted src-workbench__tip">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
+          <!--
+            空清單＝最不打擾的教學位（D-33 P2）。圖文選單／推播／活動的空狀態早就有這顆帶字鈕，
+            知識庫（全站空狀態文案最好的一頁）反而漏了——第一次來的人只找得到右上角那顆灰問號。
+            ⛔只掛「建立與匯入」那一支：還沒有任何資料的人不需要先挑一份教學，
+            「整理與更新」等有東西之後從頁首問號進得去。
+          -->
           <div v-if="canEditKb && !sources.length" class="src-workbench__cta">
             <el-button :icon="Upload" type="primary" @click="goImport">加入第一份資料</el-button>
+            <AdminPageHelpButton :topics="['knowledge']" label="第一次用？看一遍怎麼做" />
           </div>
           <p v-if="!canEditKb" class="text-muted src-workbench__tip">（你的權限僅能檢視）</p>
         </div>

@@ -200,6 +200,15 @@
         </div>
       </el-alert>
 
+      <!-- 整站匯入完成後也要講「客人聽不聽得到」（D-40，與結果頁交棒卡同一句話） -->
+      <div v-if="siteFinished && siteSummary.ok && aiEnabled === false" class="kb-handoff is-off">
+        <div class="kb-handoff__main">
+          <p class="kb-handoff__title">知識進庫了，但客人現在還聽不到</p>
+          <p class="kb-handoff__why"><strong>AI 客服還沒開啟</strong>，所以這些內容目前不會用在回覆客人上。開啟之後才會生效。</p>
+        </div>
+        <el-button size="small" type="primary" @click="goEnableAi">前往開啟</el-button>
+      </div>
+
       <!--
         這批 AI 標了哪些產品名。整站匯入不逐頁預覽,產品名全由 AI 自己填了就進庫——
         同一台在不同頁被標成兩種寫法,客人指名問時就會被反問「您指的是哪一台」,
@@ -612,7 +621,14 @@
       </div>
     </div>
 
-    <!-- ── Step 3:結果(只有部分失敗才會看到;全成功直接關窗) ── -->
+    <!--
+      ── Step 3:結果＝交棒卡（D-40）──
+      以前只有「部分失敗」才會停在這一頁,全成功是跳一句 toast 就關窗。
+      但匯入成功正是使用者最想問「然後呢」的一刻,而那一刻的正確答案常常是
+      「AI 總開關還關著,客人聽不到這些」——那句提醒過去只長在資料頁的待辦清單裡,
+      匯完當下看不到。現在成功也停一下,把「進庫了幾條 / 客人聽不聽得到 / 要不要試問一題」
+      講完再放人走。
+    -->
     <div v-if="step === 'result' && result">
       <p class="kb-step-label">匯入結果</p>
       <div class="kb-result-summary">
@@ -628,6 +644,44 @@
           <span class="kb-result-label">失敗</span>
           <strong>{{ result.failed }}</strong>
         </div>
+      </div>
+
+      <!--
+        客人現在聽不聽得到這些內容。
+        ⛔ aiEnabled 為 null（讀不到設定）時整塊不畫:寧可少講一句,也不要誤報「AI 沒開」
+        害人跑去改一個本來就開著的開關（同 sources 頁 aiOff 待辦的判斷）。
+      -->
+      <div
+        v-if="result.indexed > 0 && aiEnabled !== null"
+        class="kb-handoff"
+        :class="aiEnabled ? 'is-live' : 'is-off'"
+      >
+        <div class="kb-handoff__main">
+          <p class="kb-handoff__title">
+            <template v-if="aiEnabled">這 {{ result.indexed }} 條，客人問到就會用上</template>
+            <template v-else>知識進庫了，但客人現在還聽不到</template>
+          </p>
+          <p class="kb-handoff__why">
+            <template v-if="aiEnabled">AI 客服是開啟的。想確認 AI 真的學會了，可以在這裡直接試問一題。</template>
+            <template v-else><strong>AI 客服還沒開啟</strong>，所以這些內容目前不會用在回覆客人上。開啟之後才會生效。</template>
+          </p>
+        </div>
+        <el-button v-if="!aiEnabled" size="small" type="primary" @click="goEnableAi">前往開啟</el-button>
+      </div>
+
+      <!-- 試問一題:拿剛匯入的內容真的問一次(不進統計),答得出來才敢說「學會了」 -->
+      <div v-if="result.indexed > 0 && verifyQuery" class="kb-handoff-verify">
+        <el-button
+          size="small"
+          plain
+          :loading="verifying"
+          @click="runVerify"
+        >
+          {{ verifyOutcome ? '再試一次' : `試問一題：「${verifyQuery.slice(0, 16)}${verifyQuery.length > 16 ? '…' : ''}」` }}
+        </el-button>
+        <p v-if="verifyOutcome" class="kb-handoff-verify__out" :class="`is-${verifyOutcome.tone}`">
+          {{ verifyOutcome.text }}
+        </p>
       </div>
 
       <div v-if="result.failed > 0" class="kb-result-failed-list">
@@ -680,6 +734,8 @@
 import { ElMessageBox } from 'element-plus'
 import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
+// 型別要明寫（自動匯入只帶函式，不帶 type）
+import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
 
 const props = defineProps<{
   modelValue: boolean
@@ -1270,6 +1326,9 @@ async function runSiteImport() {
   siteFinished.value = true
   siteImporting.value = false
   invalidateProductNames() // 這批標的產品名已經進了後端清單,下次開欄位要挑得到
+  // 整站這條路不會走到結果頁（結論列就長在頁面清單上），但「客人聽不聽得到」
+  // 這句話兩條路都要講——D-40 的交棒卡在這裡是結論列下面那一行
+  if (ok.length) void loadAiEnabled()
   // 中途關窗:視窗已不在,改用父層刷新讓已建立的資料立刻出現在列表(否則要手動重整才看得到)
   if (siteAborted.value) {
     if (ok.length) emit('imported', null)
@@ -1750,6 +1809,56 @@ const failedItems = computed(() =>
   (result.value?.items ?? []).filter(i => i.status === 'failed'),
 )
 
+// ── 交棒卡（D-40）：匯完之後「然後呢」 ──────────────────────
+/**
+ * AI 總開關現況。null＝讀不到（⛔這時整塊不畫，寧可少講一句也不要誤報「AI 沒開」
+ * 害人跑去改一個本來就開著的開關）。只在真的匯進東西之後才查，沒匯成功不多打一支 API。
+ */
+const aiEnabled = ref<boolean | null>(null)
+async function loadAiEnabled() {
+  try {
+    const s = await apiFetch<{ enabled?: boolean }>('/api/ai/settings')
+    aiEnabled.value = s?.enabled === true
+  }
+  catch {
+    aiEnabled.value = null
+  }
+}
+function goEnableAi() {
+  close()
+  void navigateTo(`/admin/${workspaceId.value}/ai-settings`)
+}
+
+/** 試問用的句子（判斷抽在 utils，跟 sources 頁存檔後的就地試答同一套） */
+const verifyQuery = computed(() => pickKbVerifyQuery(chunks.value))
+const verifying = ref(false)
+const verifyOutcome = ref<KbVerifyOutcome | null>(null)
+
+/**
+ * 拿剛匯入的內容真的問 AI 一次（isTest＝不計次數、不進統計、不消耗額度）。
+ * ⛔答不出來要照實說：這一步的價值就是「別讓人帶著假的安心離開」，
+ * 報喜不報憂的話還不如不做。判語全在 kbVerifyOutcome（有測試守著）。
+ */
+async function runVerify() {
+  const query = verifyQuery.value
+  if (!query) return
+  verifying.value = true
+  verifyOutcome.value = null
+  try {
+    const res = await apiFetch<{ timedOut: boolean; decision: string; confidence: number }>(
+      '/api/ai/knowledge/verify',
+      { method: 'POST', body: { query } },
+    )
+    verifyOutcome.value = kbVerifyOutcome({ query, timedOut: res.timedOut, decision: res.decision })
+  }
+  catch {
+    verifyOutcome.value = kbVerifyOutcome({ query, errored: true })
+  }
+  finally {
+    verifying.value = false
+  }
+}
+
 // ── 失敗就地重試（P1-6） ──────────────────────────────────
 // 原本只寫「可到知識庫點開那一條按重新學習」：要記住 N 個標題、換頁、一條條點。
 // 失敗原因也直接吐後端原文（多半是英文），使用者無從判斷是暫時性還是內容有問題。
@@ -1857,15 +1966,17 @@ async function runImport() {
     result.value = res
     clearJobMarker() // 卡已經進庫了,這份整理工作到此為止
     invalidateProductNames() // 這份資料的產品名已經進後端清單,下次填欄位要挑得到
-    // 全部成功直接關窗(關窗 handler 會通知父層刷新並選中新資料);
-    // 有失敗才停在結果頁,讓使用者看到哪幾張失敗、原因是什麼
-    if (res && res.failed === 0) {
-      showToast(`成功匯入 ${res.indexed} 條`, 'success')
-      close()
-    }
-    else if (res) {
+    // 一律停在結果頁（D-40）。以前全成功是「跳 toast 就關窗」——那是使用者最想問
+    // 「然後呢」的一刻，卻是整段流程唯一沉默的地方；而正確答案常常是「AI 還關著，
+    // 客人聽不到」。⛔別把交棒卡改成 toast：toast 3.5 秒就消失，這張卡上有要按的按鈕。
+    if (res) {
       step.value = 'result'
-      showToast(`匯入完成：${res.indexed} 成功 / ${res.failed} 失敗`, 'error')
+      verifyOutcome.value = null
+      void loadAiEnabled() // 背景查，查不到就整塊不畫（不擋畫面）
+      showToast(
+        res.failed === 0 ? `成功匯入 ${res.indexed} 條` : `匯入完成：${res.indexed} 成功 / ${res.failed} 失敗`,
+        res.failed === 0 ? 'success' : 'error',
+      )
     }
   }
   catch (err: any) {
