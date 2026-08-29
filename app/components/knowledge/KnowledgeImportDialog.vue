@@ -10,7 +10,7 @@
   >
     <!-- ── Step 1:一個投放區,自動判別是什麼(P1-2) ─────────── -->
     <div v-if="step === 'input'">
-      <p class="kb-step-label">把資料交給 AI 整理 — 檔案、網址、Google 試算表或一段文字都可以</p>
+      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>把資料交給 AI 整理 — 檔案、網址、Google 試算表或一段文字都可以</p>
 
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
       <div
@@ -175,7 +175,7 @@
 
     <!-- ── Step 1.5:整站匯入 — 頁面清單勾選 ─────────────── -->
     <div v-if="step === 'sitePages'">
-      <p class="kb-step-label">選擇要匯入的頁面</p>
+      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>{{ siteFinished ? '整站匯入完成' : '選擇要匯入的頁面' }}</p>
       <p class="kb-section-hint">
         在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
         （{{ siteFrom === 'sitemap' ? '來自網站自己提供的頁面清單（sitemap）' : '來自這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）。
@@ -321,7 +321,7 @@
 
     <!-- ── Step 2:預覽 + 編輯 ─────────────────────────── -->
     <div v-if="step === 'preview'">
-      <p class="kb-step-label">AI 整理的結果</p>
+      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>AI 整理的結果</p>
       <!-- 條數只在下面的摘要區講一次(原本這裡「N 條知識」、下面「N 條問答」同一個數字兩種單位);
            也不能在這裡教人「勾選要匯入的」——清單預設收起,畫面上根本沒有勾選框。只留截斷警告。 -->
       <p v-if="truncated" class="kb-section-hint">
@@ -630,7 +630,7 @@
       講完再放人走。
     -->
     <div v-if="step === 'result' && result">
-      <p class="kb-step-label">匯入結果</p>
+      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>匯入結果</p>
       <div class="kb-result-summary">
         <div class="kb-result-stat">
           <span class="kb-result-label">總計</span>
@@ -771,6 +771,12 @@ type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
 type Step = 'input' | 'sitePages' | 'preview' | 'result'
 
 const step = ref<Step>('input')
+/**
+ * 「第幾步／共幾步」（D-40）。四種畫面卻沒有任何進度指示，而第一步可能要等好幾分鐘
+ * ——等待畫面還明說「可以先關掉視窗去做別的事」，那就更該先講清楚全程有多長。
+ * 判斷抽在 utils（有測試守著總數不會跳動）。
+ */
+const stepProgress = computed(() => kbImportStepProgress(step.value, { siteFinished: siteFinished.value }))
 /**
  * 第一步收成「一個投放區」（P1-2）。
  *

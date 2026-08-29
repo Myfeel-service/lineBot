@@ -251,6 +251,11 @@
             你放進來的每一份資料（檔案、網址、Google 試算表、一段文字）都會由 AI 整理成一條條問答，
             客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
           </p>
+          <!--
+            「資料進來會發生什麼事」的心智圖（D-40）。只給還沒有任何資料的人看——
+            已經在用的人早就懂了，別佔他每天要看的版面。
+          -->
+          <KnowledgeConceptDiagram v-if="!sources.length" />
           <p class="text-muted src-workbench__tip">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
           <!--
             空清單＝最不打擾的教學位（D-33 P2）。圖文選單／推播／活動的空狀態早就有這顆帶字鈕，
@@ -510,6 +515,9 @@
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">自動偵測變動</span>
+              <!-- 一組一顆求救鈕（D-33 P2 列了沒做，D-40 補上）：三格是連動的，
+                   而使用者真正想問的是「它會不會自己改掉我編過的東西」。⛔別改成一格一顆。 -->
+              <AdminFieldHelp id="knowledgeAutoUpdate" />
             </div>
           </div>
           <div class="card-section-stack">

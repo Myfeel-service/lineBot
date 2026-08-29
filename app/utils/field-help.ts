@@ -42,6 +42,8 @@ export type FieldHelpId =
   | 'aiThresholds'
   | 'scriptCustomFormat'
   | 'memberRole'
+  // 2026-08-29 `D-40`：D-33 P2 就列了、一直沒做的那一組。
+  | 'knowledgeAutoUpdate'
 
 export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   channelAccessToken: {
@@ -145,6 +147,52 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
    * 邀請成員時選角色（D-33 P1）。這是四個下拉選項、零說明，而選錯的後果是
    * 把金流與設定權限給錯人——這件事算資安，不算 UX。
    */
+  /**
+   * 自動更新三格一組（D-33 P2 列了沒做，D-40 補上）。
+   *
+   * 為什麼是一組一顆：每一格自己都有說明，缺的是**三格之間的連動**——
+   * 「偵測到變動時」選了只記錄，下面那格就整個失效；「偵測頻率」選不自動偵測，
+   * 上面兩格講什麼都不會發生。而使用者真正想問的只有一句：
+   * <b>它會不會自己改掉我編過的東西</b>。那句話要第一個回答。
+   */
+  knowledgeAutoUpdate: {
+    button: '它會自己改我的知識嗎',
+    title: '自動更新會動什麼、不會動什麼',
+    html: `
+      <p><b>先回答最重要的一句：你自己編輯過的知識，永遠不會被自動蓋掉。</b>
+      自動更新只會動「從這個網址／試算表原封抓進來、之後沒人碰過」的那些。</p>
+      <svg viewBox="0 0 520 96" role="img" aria-label="流程示意：網頁改了之後，小幅文字更新會自動套用，新增刪除或大幅改版會先問過你" style="width:100%;height:auto;margin:10px 0">
+        <rect x="4" y="30" width="120" height="34" rx="5" fill="var(--el-fill-color-light)" stroke="var(--el-border-color-lighter)" />
+        <text x="64" y="51" font-size="12" text-anchor="middle" fill="var(--text-primary)">網頁改了</text>
+        <path d="M128 47 L162 47" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
+        <rect x="168" y="4" width="164" height="38" rx="5" fill="var(--el-color-success-light-9)" stroke="var(--el-color-success-light-5)" />
+        <text x="250" y="20" font-size="11" text-anchor="middle" fill="var(--el-color-success)">只是改字、錯字、小段落</text>
+        <text x="250" y="35" font-size="12" text-anchor="middle" fill="var(--text-primary)">自動更新，不吵你</text>
+        <rect x="168" y="52" width="164" height="38" rx="5" fill="var(--el-color-warning-light-9)" stroke="var(--el-color-warning-light-5)" />
+        <text x="250" y="68" font-size="11" text-anchor="middle" fill="var(--el-color-warning)">新增／刪除／大幅改版</text>
+        <text x="250" y="83" font-size="12" text-anchor="middle" fill="var(--text-primary)">先標提示，等你看過</text>
+        <path d="M336 23 L370 23" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
+        <path d="M336 71 L370 71" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
+        <rect x="376" y="30" width="140" height="34" rx="5" fill="var(--el-fill-color-light)" stroke="var(--el-border-color-lighter)" />
+        <text x="446" y="45" font-size="11" text-anchor="middle" fill="var(--text-primary)">你編過的那幾條</text>
+        <text x="446" y="58" font-size="11" text-anchor="middle" fill="var(--el-color-success)">一律保留</text>
+        <defs>
+          <marker id="fhArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0 0 L8 4 L0 8 z" fill="var(--border-active)" />
+          </marker>
+        </defs>
+      </svg>
+      <p>三格是<b>由上往下連動</b>的，設定前先看這個順序：</p>
+      <p><b>① 偵測頻率</b>＝多久去看一次。選「不自動偵測」的話，<b>下面兩格就都不會發生</b>，
+      要更新只能自己按「重新同步」。<br>
+      <b>② 偵測到變動時</b>＝發現不一樣了要不要告訴你。選「只記錄不通知」的話，
+      <b>第三格會整個變灰</b>——都不通知了，也就沒有「要不要自動套用」的問題。<br>
+      <b>③ 小幅文字變動</b>＝只有改字這種小變動，要直接套用還是等你確認。</p>
+      <p>不確定就用<b>預設值</b>（每天偵測、通知我、小幅自動更新）：這組的意思是
+      「錯字幫你跟上，重要的事一定問過你」。</p>
+    `,
+  },
+
   memberRole: {
     button: '各個角色差在哪',
     title: '這三種角色看得到什麼、動得了什麼',

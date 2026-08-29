@@ -879,6 +879,20 @@
     }
   }
   &__tip { font-size: 12px; }
+
+  /* 概念示意圖：圖本身用 viewBox 自適應，這裡只管上下留白與最大寬度
+     （工作台最寬 720px，圖再放大字會顯得鬆散）。
+     ⛔figure 預設有 margin，一定要歸零再給自己的值，否則會被瀏覽器的 40px 左右邊距推歪 */
+  .kb-concept {
+    margin: 12px 0 4px;
+    max-width: 560px;
+
+    .kb-concept__svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+  }
   /* 主動作＋「第一次用？」教學鈕並排。工作台是左對齊版面，不能套 .empty-actions
      那種置中欄（那是給置中空狀態用的），會跟上面兩段說明的左緣對不齊 */
   &__cta {
