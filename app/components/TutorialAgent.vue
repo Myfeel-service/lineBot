@@ -349,7 +349,7 @@
                 <span class="ta-todo__main">
                   <span class="ta-todo__title">{{ cap.title }}</span>
                   <span class="ta-todo__why">{{ cap.why }}</span>
-                  <span class="ta-todo__cta">{{ cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                  <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
                 </span>
               </button>
             </div>
@@ -367,7 +367,7 @@
                 <span class="ta-todo__main">
                   <span class="ta-todo__title">{{ cap.title }}</span>
                   <span class="ta-todo__why">{{ cap.why }}</span>
-                  <span class="ta-todo__cta">{{ cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                  <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
                 </span>
               </button>
             </div>
@@ -503,11 +503,11 @@
               這一步要指的位置目前不在畫面上——通常是還沒選任何一筆資料，或這個功能沒開。上面的說明仍然適用。
             </p>
             <el-button
-              v-if="step.actionTopicId"
+              v-if="step.actionTopicId || step.actionGuideId"
               type="primary"
               size="small"
               class="ta-tour-action"
-              @click="onStepAction(step.actionTopicId)"
+              @click="onStepAction(step.actionTopicId, step.actionGuideId)"
             >
               帶我做這項 →
             </el-button>
@@ -907,8 +907,18 @@ function toggleGroup(id: string) {
   expandedGroups.value = next
 }
 
-/** 點待辦：有導覽就帶著做，沒有就導到設定頁 */
+/**
+ * 點待辦：有劇本就跑劇本 → 其次導覽 → 都沒有才導到設定頁。
+ *
+ * 劇本優先（D-40）：導覽只教「畫面長怎樣」，跑完不知道你到底做完了沒有；
+ * 劇本會等真訊號、做完還會補最後一哩（例如知識放好了但 AI 開關還關著）。
+ * ⛔面板要留著：劇本是跑在面板裡的，closePanel 會把它關掉。
+ */
 function onFix(cap: ResolvedCapability) {
+  if (cap.guideId) {
+    activeGuide.value = cap.guideId
+    return
+  }
   if (cap.tourId && startTopicById(cap.tourId))
     return
   const wid = workspaceId.value
@@ -1037,14 +1047,24 @@ function startGapTour() {
       : `${cap.why}<br>點側欄這個項目進去設定。`,
     placement: 'right' as const,
     actionTopicId: cap.tourId,
+    actionGuideId: cap.guideId,
   }))
   void startAdHocTour(steps)
 }
 
-/** 巡覽步驟內的「帶我做這項」：收掉巡覽，直接開那一頁的逐步導覽 */
-function onStepAction(topicId: string) {
+/**
+ * 巡覽步驟內的「帶我做這項」：收掉巡覽，開那一項的教法。
+ * 有劇本就開劇本（跟清單點下去同一套——⛔同一件事不能因為入口不同就兩種教法）。
+ */
+function onStepAction(topicId?: string, guideId?: string) {
   endTour()
-  startTopicById(topicId)
+  if (guideId) {
+    activeGuide.value = guideId as AgentGuideId
+    openPanel()
+    return
+  }
+  if (topicId)
+    startTopicById(topicId)
 }
 
 const postTourNote = ref('')

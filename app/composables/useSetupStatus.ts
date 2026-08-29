@@ -9,6 +9,7 @@
 import type { Component } from 'vue'
 import { Iphone, Link, MagicStick, Operation, Reading } from '@element-plus/icons-vue'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
+import type { AgentGuideId } from '~/utils/agent-guides'
 
 export interface SetupCapability {
   id: SetupCapabilityId
@@ -25,6 +26,14 @@ export interface SetupCapability {
   route: (workspaceId: string) => string
   /** 若有對應的逐步導覽，填教學主題 id（對應 useTutorial 的 topic） */
   tourId?: string
+  /**
+   * 若這一項有「對話帶你做」的劇本（`utils/agent-guides`），填劇本 id。
+   *
+   * 有劇本就**優先跑劇本**（08-17 拍板的分工：做完之後後端驗得出來的任務走對話劇本，
+   * 認識畫面的教學才留給導覽）。導覽只能教「畫面長怎樣」，收不了尾——
+   * 它不會知道你到底做完了沒有，也就沒有人告訴你「還差開關沒開」。
+   */
+  guideId?: AgentGuideId
   /** 側欄入口的 data-tour 選擇器，給「缺項巡覽」高亮用 */
   navTarget: string
 }
@@ -69,6 +78,10 @@ const CAPABILITIES: SetupCapability[] = [
     requires: 'operate',
     route: wid => `/admin/${wid}/knowledge/sources`,
     tourId: 'knowledge',
+    // 這一項的「帶我做」走劇本（D-40）：放知識是有真訊號可驗的任務——放好了沒有、
+    // AI 學會了沒有、總開關開了沒有，三件事都查得到，導覽一件也收不了尾。
+    // tourId 保留：頁首問號與缺項巡覽仍然用得到那支導覽。
+    guideId: 'knowledge-first',
     navTarget: '[data-tour="nav-knowledge"]',
   },
   {

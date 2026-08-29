@@ -14,9 +14,10 @@ import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
 import type { BrokenModuleFixState, BrokenModuleRefRow, BrokenModuleRepointResult } from '~~/shared/types/alert-fix'
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
+import { kbVerifyOutcome } from '~/utils/kb-verify-outcome'
 import type { AgentScriptRunner, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
-export type AgentGuideId = 'liff-endpoint' | 'liff-setup' | 'handoff-notify' | 'knowledge-sync' | 'line-webhook' | 'broken-module' | 'line-channel'
+export type AgentGuideId = 'liff-endpoint' | 'liff-setup' | 'handoff-notify' | 'knowledge-sync' | 'knowledge-first' | 'line-webhook' | 'broken-module' | 'line-channel'
 
 export interface AgentGuideCtx {
   r: AgentScriptRunner
@@ -478,6 +479,176 @@ const knowledgeSyncGuide: AgentGuideDef = {
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: `還有 ${failed.length} 份沒好` })
           await r.say(`還沒好的：<br>${failedSourceLines(res.items)}<br>剛按重新同步的話要等它跑完（清單會顯示進度），過一下再按確認。`)
         }
+      },
+    },
+  ],
+}
+
+// ── 放進第一份知識（D-40） ──────────────────────────────────────
+/**
+ * 這條不是「修壞掉的東西」，是**從零到 AI 真的答得出一題**的那一段旅程。
+ *
+ * 為什麼要有：08-19 拍板把知識庫移出開通引導（當時知識庫是空的，開了 AI 也只會答不出來，
+ * 判斷正確），說好由小幫手的開通清單接手——但清單只是指路，指完就沒有下文了。
+ * 08-28 的初次上手評估把「開通完成 → AI 真的會回答」列為未接缺口第一名，這條就是接它。
+ *
+ * 形式為什麼是劇本不是導覽（08-17 拍板的分工）：這件事做完之後**後端驗得出來**
+ * （知識庫有沒有內容、AI 開關、試答），凡是有真訊號可驗的任務都走劇本。
+ *
+ * ⛔ 不重講匯入視窗裡已經有的說明（那一段的就地說明是全站密度最高的）：
+ *    劇本只負責「帶到那裡 → 等真的做完 → 確認 AI 真的學會 → 補上最後一哩」。
+ *    教材同一份寫兩處，之後必漂。
+ */
+interface KnowledgeCountRes {
+  items: { chunkCount?: number }[]
+}
+
+async function knowledgeChunkTotal(c: AgentGuideCtx): Promise<number | null> {
+  try {
+    const res = await c.apiFetch<KnowledgeCountRes>('/api/ai/sources/list')
+    return res.items.reduce((sum, i) => sum + Number(i.chunkCount ?? 0), 0)
+  }
+  catch {
+    // ⛔查不到 ≠ 沒有：回 null 讓呼叫端自己決定怎麼講，不要當成 0
+    return null
+  }
+}
+
+const knowledgeFirstGuide: AgentGuideDef = {
+  id: 'knowledge-first',
+  title: '帶你放進第一份知識',
+  // 這條不對應任何異常——它是「還沒開始」不是「壞了」。入口在開通清單的「建立知識庫」。
+  alertIds: [],
+  steps: [
+    {
+      id: 'intro',
+      async run(c) {
+        const { r } = c
+        const total = await knowledgeChunkTotal(c)
+        // 已經有東西了就不要假裝從零開始（也不要因為查不到就亂講）
+        if (total !== null && total > 0) {
+          c.state.exit = true
+          r.card({ kind: 'status', state: 'ok', text: `知識庫裡已經有 ${total} 條知識` })
+          await r.say('你的知識庫已經有內容了，這條「從零開始」的帶路就不用跑。想再放一份資料進來，直接用知識庫頁右上的「加入知識」就好。')
+          r.card({ kind: 'link', internal: true, label: '去知識庫看看', href: `/admin/${c.workspaceId}/knowledge/sources` })
+          return
+        }
+        await r.say('知識庫就是 <b>AI 回答客人時的依據</b>——你放什麼進去，它才答得出什麼。<b>沒放進來的事，AI 不會自己編</b>（它會轉給真人，不會亂掰）。')
+        await r.say('我帶你放第一份進去，大約 5 分鐘。<b>不用先準備完美的資料</b>：常見問答、價目表、商品說明，手邊有什麼就先放什麼，之後隨時能加。')
+      },
+    },
+    {
+      id: 'open-import',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        await r.say('點下面這顆，我直接幫你把「加入知識」的視窗打開。裡面每一種資料該注意什麼，視窗上都會講——<b>你照著做就好，我在這裡等你</b>。')
+        r.card({
+          kind: 'link',
+          internal: true,
+          label: '打開「加入知識」',
+          // ?import=1＝知識庫頁進頁自動開匯入視窗（既有參數，不是為這條劇本新做的）
+          href: `/admin/${c.workspaceId}/knowledge/sources?import=1`,
+        })
+        await r.say('小提醒：<b>檔案和貼上的文字是「當下固定」</b>，之後改了要重新放；<b>Google 試算表會自動跟著更新</b>。常常要改的價目表、商品清單，用試算表最省事。')
+      },
+    },
+    {
+      id: 'wait-for-knowledge',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        while (true) {
+          const choice = await r.askChoices([
+            { label: '我放好了，幫我確認', value: 'check', primary: true },
+            { label: '先跳過', value: 'skip', escape: true },
+          ])
+          if (choice !== 'check') {
+            c.state.exit = true
+            await r.say('好，先跳過。想繼續的時候，右下角小幫手的「建立知識庫」還會在那裡等你。')
+            return
+          }
+          const cardId = r.card({ kind: 'status', state: 'pending', text: '看看知識庫裡有沒有東西了…' })
+          const total = await knowledgeChunkTotal(c)
+          if (total === null) {
+            // ⛔查不到就照實說「查不到」，不要說成「你還沒放」——那是兩件不同的事
+            r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒查成功（不代表你沒放進去）' })
+            await r.say('剛剛查不到知識庫的狀態，網路或系統忙一下就會好。可以再按一次確認。')
+            continue
+          }
+          if (total > 0) {
+            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: `知識庫裡有 ${total} 條知識了` })
+            c.state.chunkTotal = total
+            await r.say(`收到，<b>${total} 條</b>知識進去了 🎉`)
+            return
+          }
+          r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '知識庫還是空的' })
+          await r.say('還沒看到內容耶。匯入要跑一小段時間（AI 要把資料整理成一條條問答），<b>如果視窗還在跑就等它跑完</b>；已經跑完的話，記得最後要按<b>「直接匯入 N 條」</b>那一顆，光是預覽不會存進去。')
+        }
+      },
+    },
+    {
+      id: 'verify-answerable',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        await r.say('進庫不等於學會。我用一句話真的問 AI 一次，確認它答得出來——<b>這次試問不計費、也不會算進統計</b>。')
+        const q = await r.askInput({
+          inputType: 'text',
+          placeholder: '例：你們幾點營業',
+          maxLength: 100,
+          skippable: true,
+          skipLabel: '先不試問',
+        })
+        if (!q) {
+          await r.say('好，那就先不試。之後想確認的話，「測試對話」那一頁隨時可以問。')
+          return
+        }
+        const cardId = r.card({ kind: 'status', state: 'pending', text: `問 AI：「${escapeHtml(q)}」…` })
+        const res = await r.apiRetry(
+          () => c.apiFetch<{ timedOut: boolean, decision: string }>('/api/ai/knowledge/verify', { method: 'POST', body: { query: q } }),
+          { failText: '試問沒跑成功', skipLabel: '先跳過' },
+        )
+        if (!res) {
+          r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒問成功（不影響已匯入的知識）' })
+          return
+        }
+        const outcome = kbVerifyOutcome({ query: q, timedOut: res.timedOut, decision: res.decision })
+        r.updateMsg(cardId, {
+          kind: 'status',
+          state: outcome.tone === 'ok' ? 'ok' : 'fail',
+          text: outcome.tone === 'ok' ? 'AI 答得出來' : 'AI 還答不出這一題',
+        })
+        await r.say(escapeHtml(outcome.text))
+        if (outcome.tone !== 'ok') {
+          await r.say('這很常見，通常是<b>客人的問法跟你寫的標題差太多</b>。到那一條知識裡補上「客人可能怎麼問」，答對率會馬上不一樣。')
+          r.card({ kind: 'link', internal: true, label: '去知識庫補問法', href: `/admin/${c.workspaceId}/knowledge/sources` })
+        }
+      },
+    },
+    {
+      id: 'last-mile-ai-switch',
+      guard: exited,
+      async run(c) {
+        const { r } = c
+        // 最後一哩：知識放好了但總開關關著＝客人完全感覺不到。
+        // 這正是匯入完成當下最容易漏掉的一步（同 D-40 交棒卡）。
+        const settings = await r.apiRetry(
+          () => c.apiFetch<{ enabled?: boolean }>('/api/ai/settings'),
+          { failText: '查 AI 設定失敗', skipLabel: '先跳過' },
+        )
+        if (!settings) {
+          await r.say('沒查到 AI 開關的狀態——記得到「AI 設定」確認它是開著的，客人才聽得到這些內容。')
+          return
+        }
+        if (settings.enabled === true) {
+          r.card({ kind: 'status', state: 'ok', text: 'AI 客服是開啟的' })
+          await r.say('都到位了 🎉 知識放好了、AI 也開著，客人問到相關問題就會用上這些內容。之後想加資料，隨時回知識庫按「加入知識」。')
+          return
+        }
+        r.card({ kind: 'status', state: 'fail', text: 'AI 客服還沒開啟' })
+        await r.say('還差最後一步：<b>AI 客服的總開關還關著</b>，所以剛剛放進去的知識目前不會用在回覆客人上。開了才算真的上線。')
+        r.card({ kind: 'link', internal: true, label: '去開啟 AI 客服', href: `/admin/${c.workspaceId}/ai-settings` })
       },
     },
   ],
@@ -1088,6 +1259,7 @@ export const AGENT_GUIDES: Record<AgentGuideId, AgentGuideDef> = {
   'liff-setup': liffSetupGuide,
   'handoff-notify': handoffNotifyGuide,
   'knowledge-sync': knowledgeSyncGuide,
+  'knowledge-first': knowledgeFirstGuide,
   'line-webhook': lineWebhookGuide,
   'broken-module': brokenModuleGuide,
   'line-channel': lineChannelGuide,

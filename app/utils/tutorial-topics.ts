@@ -75,6 +75,12 @@ export interface TutorialStep {
     | 'right' | 'right-start' | 'right-end'
   /** 該步驟內附「帶我做這項」按鈕時，要啟動的教學主題 id（給缺項巡覽用） */
   actionTopicId?: string
+  /**
+   * 同一顆「帶我做這項」改開對話劇本（`utils/agent-guides` 的 id）。
+   * 有這個就優先於 `actionTopicId`——同一件事不該因為從哪個入口進來就給不同的教法
+   * （D-40：知識庫那項從清單點是劇本、從缺項巡覽點卻是導覽，那就是兩套）。
+   */
+  actionGuideId?: string
   /** 此步驟依賴的功能旗標（關閉時整步跳過），對應 useFlowFeatures 的開關 */
   requiresFeature?: string
   /**
