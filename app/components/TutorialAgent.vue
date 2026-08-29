@@ -404,7 +404,36 @@
               <p>想學哪個功能？點一個主題，我直接在畫面上一步步帶你做。</p>
             </div>
           </div>
-          <div v-if="groupedTopics.length" class="ta-review">
+          <div v-if="groupedTopics.length || walkthroughGuides.length" class="ta-review">
+            <!-- 帶著做（D-40 補遺）：陪你做完並驗證的劇本。放最上面＝第一次用的人先看到；
+                 跟下面「看一遍畫面」的導覽分開住，不然選單裡兩個都在教「怎麼放知識」分不出差別 -->
+            <div v-if="walkthroughGuides.length" class="ta-review-group">
+              <button
+                class="ta-review-group__head"
+                :aria-expanded="expandedGroups.has('walkthrough')"
+                @click="toggleGroup('walkthrough')"
+              >
+                <span class="ta-review-group__title">帶著做（做完會幫你驗證）</span>
+                <span class="ta-review-group__count">{{ walkthroughGuides.length }}</span>
+                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has('walkthrough') }">▾</span>
+              </button>
+              <div v-if="expandedGroups.has('walkthrough')" class="ta-review-group__body">
+                <button
+                  v-for="g in walkthroughGuides"
+                  :key="g.id"
+                  class="ta-option ta-option--sm"
+                  @click="activeGuide = g.id"
+                >
+                  <span class="ta-option__icon"><el-icon><ChatDotRound /></el-icon></span>
+                  <span class="ta-option__body">
+                    <span class="ta-option__label">{{ g.title }}</span>
+                    <span class="ta-option__blurb">{{ g.blurb }}</span>
+                  </span>
+                  <span class="ta-option__arrow">→</span>
+                </button>
+              </div>
+            </div>
+
             <div v-for="g in groupedTopics" :key="g.id" class="ta-review-group">
               <button
                 class="ta-review-group__head"
@@ -436,7 +465,7 @@
               </div>
             </div>
           </div>
-          <p v-else class="ta-options__empty">目前沒有可用的教學主題。</p>
+          <p v-else-if="!walkthroughGuides.length" class="ta-options__empty">目前沒有可用的教學主題。</p>
         </div>
 
         <!-- 頁尾：一句話講這個分頁的立場，＋搬過位置的人要有回原位的退路。
@@ -530,7 +559,7 @@ import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
 
 const { user } = useAuth()
-const { workspaceId, ensureWorkspaceList } = useWorkspace()
+const { workspaceId, ensureWorkspaceList, canOperate, canManageSettings } = useWorkspace()
 const router = useRouter()
 // 只給 ?tour= 深連結用（開通引導結尾送人進來時開跑那一支）。
 // ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
@@ -545,6 +574,7 @@ const {
   groupedTopics,
   activeSteps,
   lastTopicId,
+  requestedGuideId,
   stepCount,
   openPanel,
   closePanel,
@@ -950,6 +980,25 @@ function onFixAlert(alert: ResolvedAlert) {
  * 哪些異常有劇本看註冊表的 guideId。
  */
 const activeGuide = ref<AgentGuideId | null>(null)
+
+/**
+ * 「帶著做」清單（教學分頁最上區＋頁首問號都吃這份）。
+ * 角色過濾跟導覽同一把尺：跑不動的劇本整條不出現，不要出現按了才說沒權限的按鈕。
+ */
+const walkthroughGuides = computed(() =>
+  WALKTHROUGH_GUIDES
+    .filter(g => (g.requires === 'settings' ? canManageSettings.value : canOperate.value))
+    .map(g => ({ ...g, title: AGENT_GUIDES[g.id].title })),
+)
+
+// 面板外的入口（頁首問號）要開劇本時會把 id 留在這格共享狀態（useTutorial.openGuide）
+watch(requestedGuideId, (id) => {
+  if (!id)
+    return
+  requestedGuideId.value = null
+  if (id in AGENT_GUIDES)
+    activeGuide.value = id as AgentGuideId
+})
 
 /** 頁尾那句話：講這個分頁的立場（誠實邊界／怎麼運作），不重複畫面上已經有的內容 */
 const footNote = computed(() => {

@@ -35,6 +35,12 @@ export function useTutorial() {
   const activeSteps = useState<TutorialStep[]>('tutorial-active-steps', () => [])
   // 最近一次啟動的主題 id（ad-hoc 巡覽為 null）；給導覽結束後的閉環判斷用
   const lastTopicId = useState<string | null>('tutorial-last-topic', () => null)
+  /**
+   * 待啟動的「帶著做」劇本 id（D-40 補遺）。劇本跑在小幫手面板裡、狀態長在
+   * TutorialAgent 元件內，頁首問號那種面板外的入口搆不到它——所以用這格共享狀態
+   * 傳話：入口呼叫 openGuide()，TutorialAgent watch 到就接手開跑並清空這格。
+   */
+  const requestedGuideId = useState<string | null>('tutorial-requested-guide', () => null)
 
   /**
    * 過濾步驟：功能旗標關掉的、以及**這個角色畫面上根本沒有那個元素**的，都跳過。
@@ -152,6 +158,12 @@ export function useTutorial() {
     tourStep.value = 0
   }
 
+  /** 從面板外（頁首問號等）啟動一條「帶著做」劇本：開面板＋留話給 TutorialAgent */
+  function openGuide(id: string) {
+    requestedGuideId.value = id
+    openPanel()
+  }
+
   return {
     // state
     panelOpen,
@@ -161,6 +173,7 @@ export function useTutorial() {
     groupedTopics,
     activeSteps,
     lastTopicId,
+    requestedGuideId,
     // helpers
     stepCount,
     // actions
@@ -171,5 +184,6 @@ export function useTutorial() {
     startTopicById,
     startAdHocTour,
     endTour,
+    openGuide,
   }
 }

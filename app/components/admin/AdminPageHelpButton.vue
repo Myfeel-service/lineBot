@@ -11,9 +11,9 @@
   </el-button>
 
   <!-- 問號版：包一層才放得下「第一次進這一頁」的一次性提示，也給總覽導覽一個錨點 -->
-  <span v-else-if="available.length" class="page-help" data-tour="page-help">
-    <!-- 一支教學：一顆問號直接開跑 -->
-    <el-tooltip v-if="available.length === 1" content="這頁怎麼用" placement="top">
+  <span v-else-if="available.length || availableGuides.length" class="page-help" data-tour="page-help">
+    <!-- 只有一支教學、也沒有劇本：一顆問號直接開跑 -->
+    <el-tooltip v-if="available.length === 1 && !availableGuides.length" content="這頁怎麼用" placement="top">
       <el-button
         class="page-help-btn"
         :class="{ 'is-hinting': hinting }"
@@ -45,6 +45,17 @@
             @click="start(t)"
           >
             {{ t.label }}<span class="page-help-btn__steps">{{ stepCount(t) }} 步</span>
+          </el-dropdown-item>
+          <!-- 帶著做的劇本（D-40 補遺）：跟導覽不同——導覽讓你看一遍畫面，劇本陪你做完
+               並驗證，所以尾註不是步數是「陪你做」。放導覽後面＋分隔線：問號的主客群是
+               「回來查怎麼用」的人，從零開始的人多半從空狀態或小幫手清單進來 -->
+          <el-dropdown-item
+            v-for="g in availableGuides"
+            :key="g.id"
+            :divided="available.length > 0"
+            @click="startGuide(g.id)"
+          >
+            {{ g.title }}<span class="page-help-btn__steps">陪你做</span>
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>
@@ -81,13 +92,33 @@ const props = defineProps<{
   /** 這一頁的教學主題 id（對應 utils/tutorial-topics）。多支就讓使用者挑 */
   topics: string[]
   /**
+   * 這一頁的「帶著做」劇本 id（對應 utils/agent-guides 的 WALKTHROUGH_GUIDES）。
+   * 跟導覽的差別要讓使用者看得出來：導覽看一遍畫面、劇本陪你做完並驗證（尾註「陪你做」）。
+   */
+  guides?: string[]
+  /**
    * 有給就改成一顆帶字的文字按鈕（空清單那種有位子講話的地方用）。
    * 這時只會跑第一支——空狀態不該再叫人先挑一份教學。
    */
   label?: string
 }>()
 
-const { topics: visibleTopics, stepCount, startTopic, tourOpen } = useTutorial()
+const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide } = useTutorial()
+const { canOperate, canManageSettings } = useWorkspace()
+
+/** 這一頁掛的劇本裡，這個角色真的跑得動的那幾條（同導覽：跑不動就整條不出現） */
+const availableGuides = computed(() =>
+  (props.guides ?? [])
+    .map(id => WALKTHROUGH_GUIDES.find(g => g.id === id))
+    .filter((g): g is (typeof WALKTHROUGH_GUIDES)[number] => Boolean(g))
+    .filter(g => (g.requires === 'settings' ? canManageSettings.value : canOperate.value))
+    .map(g => ({ id: g.id, title: AGENT_GUIDES[g.id].title })),
+)
+
+function startGuide(id: string) {
+  dismissHint()
+  openGuide(id)
+}
 
 /** 這個帳號現在真的跑得起來的那幾支，順序照傳進來的順序（不是註冊表順序） */
 const available = computed<TutorialTopic[]>(() =>

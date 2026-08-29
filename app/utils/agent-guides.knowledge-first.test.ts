@@ -201,6 +201,24 @@ describe('knowledge-first 掛在開通清單上', () => {
     expect(guide.alertIds).toEqual([])
   })
 
+  it('「帶著做」清單裡的每一條都真的存在，且 knowledge-first 在裡面（否則做完一次就叫不出來）', async () => {
+    const { WALKTHROUGH_GUIDES, AGENT_GUIDES: ALL } = await import('./agent-guides')
+    expect(WALKTHROUGH_GUIDES.length).toBeGreaterThan(0)
+    for (const g of WALKTHROUGH_GUIDES) {
+      expect(ALL[g.id], `WALKTHROUGH_GUIDES 指到不存在的劇本：${g.id}`).toBeTruthy()
+      expect(g.blurb.trim()).not.toBe('')
+      // 角色尺只有這兩種（跟 SetupCapability.requires 同一把）
+      expect(['operate', 'settings']).toContain(g.requires)
+    }
+    expect(WALKTHROUGH_GUIDES.some(g => g.id === 'knowledge-first')).toBe(true)
+  })
+
+  it('⛔修復劇本不進「帶著做」清單（東西沒壞還列修理教學，會讓人以為壞了）', async () => {
+    const { WALKTHROUGH_GUIDES, AGENT_GUIDES: ALL } = await import('./agent-guides')
+    for (const g of WALKTHROUGH_GUIDES)
+      expect(ALL[g.id].alertIds, `${g.id} 綁著異常＝修復劇本，不該進帶著做清單`).toEqual([])
+  })
+
   it('帶路要用既有的 ?import=1 直接開匯入視窗，不另做入口', async () => {
     const { r, ctx } = makeCtx({ sources: [{ items: [] }] })
     const done = r.runSteps(guide.steps, ctx)

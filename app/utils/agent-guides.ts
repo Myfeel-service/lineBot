@@ -41,6 +41,29 @@ export interface AgentGuideDef {
 /** 後續步驟的共用 guard：前面已經收工就不再往下走 */
 const exited = (c: AgentGuideCtx) => c.state.exit === true
 
+/**
+ * 「帶著做」清單（D-40 補遺）——不是修東西、是**陪你把一件事做完並驗證**的劇本。
+ *
+ * 為什麼要有這份清單：knowledge-first 原本唯一的入口是開通清單的「建立知識庫」，
+ * 而那份清單只列**還沒做完**的事——放完第一份知識，這項就從清單消失，劇本從此
+ * 叫不出來（想放第二份、新同事想走一遍，都沒有路）。更糟的是導覽跑完那句
+ * 「教學分頁隨時都在」對它是假話。這份清單讓它長進教學分頁與頁首問號。
+ *
+ * ⛔ 修復劇本（liff-endpoint、line-webhook…）不進這份清單：它們的入口是異常卡，
+ *    「東西沒壞還列出修理教學」只會讓人以為壞了。
+ */
+export interface WalkthroughGuideEntry {
+  id: AgentGuideId
+  /** 一句白話：這條會陪你做完什麼 */
+  blurb: string
+  /** 誰跑得動（對齊該任務實際需要的角色，跟 SetupCapability.requires 同一把尺） */
+  requires: 'operate' | 'settings'
+}
+
+export const WALKTHROUGH_GUIDES: WalkthroughGuideEntry[] = [
+  { id: 'knowledge-first', blurb: '陪你放進第一份資料，並確認 AI 真的答得出來。', requires: 'operate' },
+]
+
 // ── LIFF Endpoint ───────────────────────────────────────────────
 
 interface LiffCheckRes {
