@@ -87,10 +87,18 @@ export const ALERT_MARK_LABEL_ATTR = 'data-alert-mark-label'
 /** 元素原本是 static 時才掛：⛔別無條件覆蓋頁面自己的 sticky／absolute 定位 */
 export const ALERT_MARK_REL_ATTR = 'data-alert-mark-rel'
 /**
- * 「這一格貼著邊，外面畫不下」。掛上去之後樣式改成**內描邊＋標籤收進區塊裡**
- * （見 `_alert-field-mark.scss`）。判斷在 `markIsFlush`，理由寫在那支的註解。
+ * 「外面畫不下」＝框改畫在裡面（見 `_alert-field-mark.scss`）。判斷在 `markRingFitsOutside`。
  */
-export const ALERT_MARK_FLUSH_ATTR = 'data-alert-mark-flush'
+export const ALERT_MARK_INSET_ATTR = 'data-alert-mark-inset'
+/**
+ * 「那句話掛不到下緣」＝標籤收進區塊上緣。判斷在 `markLabelFitsBelow`。
+ *
+ * ⚠️和上面那個**刻意分開兩個屬性**：它們卡的不是同一件事。知識庫「要處理的事」那一塊
+ * （`.src-todo`）外面有 48px 空間、框畫得漂漂亮亮，但區塊自己是 `overflow:hidden`，
+ * 把自己的 `::after` 從中間切一半（2026-08-29 老闆第二張截圖）。併成一個旗標的話，
+ * 為了救那句話會連框一起改成內描邊——那是沒壞的東西被順手改掉。
+ */
+export const ALERT_MARK_LABEL_IN_ATTR = 'data-alert-mark-label-inside'
 
 /**
  * 外描邊需要的呼吸空間：`_alert-field-mark.scss` 那圈 box-shadow 的外緣（6px 淡底 + 2px 實線，
@@ -100,32 +108,22 @@ export const ALERT_MARK_FLUSH_ATTR = 'data-alert-mark-flush'
 export const MARK_RING_PX = 12
 
 /**
- * 這一格是不是「貼著邊」——外描邊會被裁掉、下緣的標籤會壓到別人身上。
+ * 框畫得畫不下在**外面**——不夠的話會被上層切掉。
  *
  * 為什麼要量（2026-08-29 老闆看對話頁抓到）：這圈框當初是為**表單欄位**做的，
  * 欄位外面有 1rem 內距，8〜12px 的外描邊放得下。但後台有一整批錨點是側欄裡的
  * **全出血區塊**——對話頁的分頁列、腳本／圖文選單／流程／活動／推播的清單——
- * 它們的寬度就是側欄的寬度，外面一格空間都沒有，結果是：
- *
- * 1. 框的左右上三邊被上層 `.split-list-container{overflow:hidden}` 切掉，
- *    看起來不是「圈起來」而是一條莫名其妙的橫帶；
- * 2. 下緣那句話（`::after` 往下掉一半）壓在下一列上——對話頁實測分頁列底部 y=228、
- *    搜尋框頂部剛好也是 228，標籤整個蓋在搜尋框的上緣。
- *
- * 另外**自己會捲的區塊**（`.split-list`）一律算貼齊：標籤是絕對定位在捲動內容裡，
- * 會跟著內容掉到清單最底下，人在最上面時根本看不到那句話。
+ * 它們的寬度就是側欄的寬度，外面一格空間都沒有，框的左右上三邊被上層
+ * `.split-list-container{overflow:hidden}` 切掉，看起來不是「圈起來」而是一條
+ * 莫名其妙的橫帶。
  *
  * ⛔ 不要改成「哪幾頁特別處理」：每頁自刻正是這整案在修的毛病，而且下一個加錨點的人
  *    不會知道有這條規則。量得到的事就用量的。
  */
-export function markIsFlush(el: HTMLElement): boolean {
+export function markRingFitsOutside(el: HTMLElement): boolean {
   const view = el.ownerDocument?.defaultView
   // 量不到（測試的假 DOM、還沒進畫面）就當放得下：畫成原本的外描邊，最差是回到現況
   if (!view?.getComputedStyle || typeof el.getBoundingClientRect !== 'function')
-    return false
-
-  const self = view.getComputedStyle(el)
-  if (isScrollable(self.overflowX) || isScrollable(self.overflowY))
     return true
 
   const box = el.getBoundingClientRect()
@@ -152,10 +150,10 @@ export function markIsFlush(el: HTMLElement): boolean {
     const pastRight = Math.max(0, (p.scrollWidth ?? 0) - (p.clientWidth ?? 0) - scrollLeft)
     if (clipX && (box.left - clip.left + scrollLeft < MARK_RING_PX
       || clip.right - box.right + pastRight < MARK_RING_PX))
-      return true
+      return false
     if (clipY && (box.top - clip.top + scrollTop < MARK_RING_PX
       || clip.bottom - box.bottom + belowFold < MARK_RING_PX))
-      return true
+      return false
     // ⛔這一層會捲就不要再往上問了：再上面那幾層裁的是**捲動視窗**，不是這一格。
     // 後台的骨架是 .split-editor-body（會捲）外面包一整疊 overflow:hidden 的容器——
     // 不停在這裡的話，凡是要捲一下才看得到的格子都會被那幾層量成「在框外」（實測 -403px）。
@@ -164,7 +162,29 @@ export function markIsFlush(el: HTMLElement): boolean {
     if (isScrollable(cs.overflowY))
       checkY = false
   }
-  return false
+  return true
+}
+
+/**
+ * 那句話掛不掛得住在**下緣外面**（原設計＝貼著框的下緣往下掉一半，像表單的錯誤訊息）。
+ *
+ * 兩種掛不住，收進區塊裡面的理由不一樣，但結論一樣：
+ *
+ * 1. **這一格自己會裁**（`overflow` 不是 visible）——`::after` 是它的孩子，掉出去的那半
+ *    會被自己切掉。知識庫「要處理的事」（`.src-todo{overflow:hidden}`）就是這樣被切成
+ *    半截字的（2026-08-29 老闆第二張截圖）；`.split-list` 那種自己會捲的更慘，標籤會跟著
+ *    內容掉到清單最底下，人在最上面時整句話看不到。
+ * 2. **框本身就已經畫不出去**——外面連 12px 都沒有的地方，往下掉一半的標籤只會壓在
+ *    下一列身上（對話頁分頁列底部 y=228、搜尋框頂部也是 228）。
+ */
+export function markLabelFitsBelow(el: HTMLElement): boolean {
+  const view = el.ownerDocument?.defaultView
+  if (!view?.getComputedStyle || typeof el.getBoundingClientRect !== 'function')
+    return true
+  const self = view.getComputedStyle(el)
+  if (clips(self.overflowX) || clips(self.overflowY))
+    return false
+  return markRingFitsOutside(el)
 }
 
 function isScrollable(overflow: string): boolean {
@@ -182,7 +202,8 @@ export function clearAlertFieldMarks(root: Document | HTMLElement): void {
     el.removeAttribute(ALERT_MARK_ATTR)
     el.removeAttribute(ALERT_MARK_LABEL_ATTR)
     el.removeAttribute(ALERT_MARK_REL_ATTR)
-    el.removeAttribute(ALERT_MARK_FLUSH_ATTR)
+    el.removeAttribute(ALERT_MARK_INSET_ATTR)
+    el.removeAttribute(ALERT_MARK_LABEL_IN_ATTR)
   }
 }
 
@@ -204,15 +225,15 @@ export function paintAlertFieldMark(root: Document | HTMLElement, mark: AlertFie
     // 一格只由一顆異常標：先到先得，但紅色可以把琥珀升上來
     // （同側欄狀態點的「紅蓋過琥珀」，⛔不要反過來）
     if (cur && !(cur === 'warning' && mark.tone === 'critical')) {
-      // 顏色不動，但「貼不貼得下這圈框」每一輪都重量一次：第一次畫的時候清單常常還是空的，
-      // 量到的位置跟資料回來、列都長出來之後不一樣（補畫的那兩次就是為了這個）
-      syncFlush(el)
+      // 顏色不動，但「框跟標籤放得下放不下」每一輪都重量一次：第一次畫的時候清單常常
+      // 還是空的，量到的位置跟資料回來、列都長出來之後不一樣（補畫的那兩次就是為了這個）
+      syncFit(el)
       continue
     }
     el.setAttribute(ALERT_MARK_ATTR, mark.tone)
     if (el.ownerDocument.defaultView?.getComputedStyle(el).position === 'static')
       el.setAttribute(ALERT_MARK_REL_ATTR, '')
-    syncFlush(el)
+    syncFit(el)
     // 一顆異常圈到好幾格時（憑證 Token＋Secret）只有第一格掛字：
     // 同一句話印兩次是雜訊，框本身已經說得出「這幾格是一組」
     if (!labelled) {
@@ -224,10 +245,18 @@ export function paintAlertFieldMark(root: Document | HTMLElement, mark: AlertFie
   return painted
 }
 
-/** 量一次「外描邊放不放得下」，放不下就換內描邊那一套（⛔別在別處自己加這個屬性） */
-function syncFlush(el: HTMLElement): void {
-  if (markIsFlush(el))
-    el.setAttribute(ALERT_MARK_FLUSH_ATTR, '')
+/**
+ * 量一次「框畫哪裡、標籤放哪裡」。⛔別在別處自己加這兩個屬性——量的規則只有這裡一份，
+ * 而且要跟 `_alert-field-mark.scss` 的 spread 對得上（`MARK_RING_PX`）。
+ */
+function syncFit(el: HTMLElement): void {
+  toggle(el, ALERT_MARK_INSET_ATTR, !markRingFitsOutside(el))
+  toggle(el, ALERT_MARK_LABEL_IN_ATTR, !markLabelFitsBelow(el))
+}
+
+function toggle(el: HTMLElement, attr: string, on: boolean): void {
+  if (on)
+    el.setAttribute(attr, '')
   else
-    el.removeAttribute(ALERT_MARK_FLUSH_ATTR)
+    el.removeAttribute(attr)
 }
