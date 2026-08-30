@@ -12,6 +12,21 @@
            「中秋節快到了」最該出現的地方。文案跟 LINE 每日摘要那段同一支函式產
            （utils/festival-hint.ts），窗外整條不渲染。⛔不用警示色：這不是異常。 -->
       <p v-if="festival" class="bc-festival-hint">🎉 {{ festival.text }}</p>
+      <!-- 草稿彙總（D-43④）：建了沒發的推播原本全站沒有一處會講，只有清單裡散落的灰章。
+           數字問後端拿全量 total，⛔不數已載入的清單頁（分頁會漏算）。
+           點了切成只看草稿——一行提醒不能是死路。篩選開著時就算歸零也要留著出口。 -->
+      <button
+        v-if="draftFilterOn || (draftTotal ?? 0) > 0"
+        type="button"
+        class="bc-draft-hint"
+        :class="{ active: draftFilterOn }"
+        :aria-pressed="draftFilterOn"
+        @click="toggleDraftFilter"
+      >
+        <span v-if="(draftTotal ?? 0) > 0">📝 有 {{ draftTotal }} 則草稿還沒發</span>
+        <span v-else>📝 草稿都處理完了</span>
+        <span class="bc-draft-hint__act">{{ draftFilterOn ? '顯示全部' : '只看草稿' }}</span>
+      </button>
       <div v-if="loading && !broadcasts.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -428,6 +443,8 @@ const { canOperate, assertCanOperate } = useAdminOperateGuard()
 // ── 狀態 ────────────────────────────────────────────────────────────
 const flows = ref<{ id: string; name: string }[]>([])
 const { tags: allTags, loadTags: loadTagOptions } = useAdminTagList()
+// 「只看草稿」篩選（D-43④）：list 端點本來就吃 ?status=，這裡只是把它接到畫面上
+const draftFilterOn = ref(false)
 const {
   items: broadcasts,
   loading,
@@ -435,7 +452,28 @@ const {
   listEl,
   load: loadBroadcasts,
   onScroll: onSidebarListScroll,
-} = useWorkspaceSidebarList<any>('/api/broadcast/list')
+} = useWorkspaceSidebarList<any>('/api/broadcast/list', () =>
+  draftFilterOn.value ? { status: 'draft' } : {})
+
+// 草稿總數：null＝還沒查到或查失敗（整行不顯示，⛔不拿 0 冒充「沒有草稿」）。
+// 掛在 loading 的 true→false 邊緣刷新：清單每次重載（發送/刪除/新增後）數字跟著對。
+const draftTotal = ref<number | null>(null)
+async function loadDraftTotal() {
+  try {
+    const res = await apiFetch<{ total?: number }>('/api/broadcast/list', {
+      params: { status: 'draft', page: 1, limit: 1 },
+    })
+    draftTotal.value = typeof res?.total === 'number' ? res.total : null
+  }
+  catch {
+    draftTotal.value = null
+  }
+}
+watch(loading, (now, was) => { if (was && !now) void loadDraftTotal() })
+function toggleDraftFilter() {
+  draftFilterOn.value = !draftFilterOn.value
+  void loadBroadcasts()
+}
 const saving = ref(false)
 const validating = ref(false)
 const sending = ref(false)

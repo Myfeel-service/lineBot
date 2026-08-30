@@ -365,6 +365,20 @@ const ALERTS: AlertDefinition[] = [
     anchor: { selector: '[data-tour="conv-tabs"]', note: '按「待處理」分頁，就只會看到還沒有人回過的客人，點進去回覆。' },
   },
   {
+    /**
+     * 草稿模式的「等人送出」彙總（D-43②）。與 firstReplyBacklog 是同一份佇列：
+     * 草稿模式亮這顆（無時間門檻——選了草稿模式就是每一則都要人審），
+     * 其他模式亮那顆（1 小時門檻）。後端探針保證兩顆不會同時 active。
+     */
+    id: 'aiDraftsWaiting',
+    icon: ChatDotRound,
+    impact: '草稿模式下 AI 只擬稿、不會自己發話：這些對話的客人到現在一句回覆都沒收到。點進對話，AI 擬好的草稿一鍵填入回覆框就能送出。',
+    cta: '去審草稿',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/conversations?tab=open`,
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '按「待處理」分頁逐場點開，AI 的草稿在右側「填入回覆框」，看過沒問題就送出。' },
+  },
+  {
     id: 'humanBacklog',
     icon: Service,
     impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停（久到沒動靜的才會由系統自動收尾）。',
@@ -482,13 +496,29 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/tags`,
   },
   {
+    /**
+     * 「可以更好」：客人層級的貼標建議在等人決定（D-43②，2026-08-31）。
+     * 與 tagDiscoverySuggestions 是兩回事：這顆是「幫這位客人貼既有標籤」。
+     * count＝有待審建議的客人數（跟標籤頁「待審 N 位」同一把尺）。
+     * ⛔無 fixOpId：採用前要看 60 字理由＋那場對話，一鍵全收＝盲簽（D-34 歸類 C）。
+     */
+    id: 'tagSuggestionsPending',
+    icon: Opportunity,
+    impact: 'AI 讀完對話後建議幫這些客人貼上標籤，每一條都附了理由和出處對話。採用或忽略都可以，放著不管 AI 就學不到你的標準。',
+    cta: '去看建議',
+    requires: 'operate',
+    // ?suggested=1 是好友頁現成的深連結（C-108）：落地就篩好「有 AI 建議的客人」
+    route: wid => `/admin/${wid}/users?suggested=1`,
+  },
+  {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
     id: 'knowledgeSuggestions',
     icon: Opportunity,
     impact: '這些是客人問過、但 AI 沒答好的主題。草稿我都擬好了，採用之後 AI 下次就答得出來。',
     cta: '去看建議',
     requires: 'operate',
-    route: wid => `/admin/${wid}/knowledge/sources`,
+    // ?suggest=1：落地自動捲到建議收件匣（D-43 缺口①——原本落在頁頂，收件匣在待辦下方要自己捲）
+    route: wid => `/admin/${wid}/knowledge/sources?suggest=1`,
   },
 ]
 

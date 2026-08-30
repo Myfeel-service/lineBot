@@ -97,6 +97,7 @@ function makeDb(opts: Options = {}) {
   const query = (docs: unknown[]) => {
     const q: any = {
       where: () => q,
+      select: () => q, // 貼標建議那條查詢有帶 select（D-43①），假 db 缺這個方法整包 Promise.all 會炸
       limit: () => q,
       get: async () => ({ size: docs.length, docs, empty: !docs.length }),
     }

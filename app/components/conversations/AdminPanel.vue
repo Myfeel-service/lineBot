@@ -72,7 +72,7 @@
              和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
         <el-tooltip
           v-if="activeTab === 'all'"
-          content="待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）"
+          :content="`待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）${followUpCount === null ? '。⚠️數量這次讀不到，篩選仍可用' : ''}`"
           placement="bottom"
         >
           <button
@@ -83,7 +83,7 @@
             @click="toggleFollowUpFilter"
           >
             <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
-            只看待跟進{{ followUpCount > 0 ? `（${followUpCount}）` : '' }}
+            只看待跟進{{ typeof followUpCount === 'number' && followUpCount > 0 ? `（${followUpCount}）` : '' }}
           </button>
         </el-tooltip>
       </div>
@@ -1927,7 +1927,8 @@ const searchText = ref('')
 const followUpFilterOn = ref(false)
 /** 待跟進數超過顯示上限時要在列表上明講，不要讓人以為看到的就是全部 */
 const followUpListTruncated = ref(false)
-const followUpCount = ref(0)
+// null＝這次讀不到（缺索引之類）：不顯示數字、tooltip 講明，⛔不可以拿 0 冒充（D-43④）
+const followUpCount = ref<number | null>(0)
 const contextMenuVisible = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
 const contextMenuTarget = ref<ConvItem | SessionItem | null>(null)
@@ -2854,7 +2855,7 @@ async function onContextMenuSelect(key: string) {
   // 先上畫面再送出：釘選要重排、標記要冒出膠囊，等 200~500ms 才動會像沒按到。
   // 失敗就整個轉回去（含數字），不要留下一個假的已標記狀態。
   applyLocalFlags(userId, isPin ? { pinned: next } : { followUp: next })
-  if (!isPin) followUpCount.value = Math.max(0, followUpCount.value + (next ? 1 : -1))
+  if (!isPin && followUpCount.value !== null) followUpCount.value = Math.max(0, followUpCount.value + (next ? 1 : -1))
 
   try {
     const res = await apiFetch<{ pinned: boolean, followUp: boolean }>(
@@ -2874,7 +2875,7 @@ async function onContextMenuSelect(key: string) {
   }
   catch (e: any) {
     applyLocalFlags(userId, isPin ? { pinned: !next } : { followUp: !next })
-    if (!isPin) followUpCount.value = Math.max(0, followUpCount.value + (next ? -1 : 1))
+    if (!isPin && followUpCount.value !== null) followUpCount.value = Math.max(0, followUpCount.value + (next ? -1 : 1))
     showToast(e?.data?.statusMessage || '標記失敗，請稍後再試', 'error')
   }
 }
@@ -3241,14 +3242,15 @@ async function loadSessionCounts(options: { force?: boolean } = {}) {
   const ticket = ++countsSeq
   const task = (async () => {
     try {
-      const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number }>(
+      const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number | null }>(
         '/api/conversations/sessions-counts',
       )
       if (ticket !== countsSeq) return
       for (const k of Object.keys(sessionStatusCounts.value) as ConvSessionStatus[]) {
         sessionStatusCounts.value[k] = Number(res.counts?.[k] ?? 0)
       }
-      followUpCount.value = Number(res.followUp ?? 0)
+      // null＝後端查不到（⛔不轉成 0——那會把「不知道」印成「沒有」）
+      followUpCount.value = typeof res.followUp === 'number' ? res.followUp : null
     }
     catch {
       // 分頁仍可用；數字維持上次成功值

@@ -71,6 +71,8 @@ function makeDb(
   pendingUserIds: string[],
   initialState: Record<string, string> = {},
   liveOnlyState: Record<string, string> = {},
+  /** 有貼標建議待審的客人數（D-43①）：一份 userTagSuggestions 文件＝一位客人 */
+  tagSuggestUsers = 0,
 ) {
   const snapshotState: Record<string, unknown> = { ...initialState }
   const state: Record<string, unknown> = { ...initialState, ...liveOnlyState }
@@ -99,15 +101,22 @@ function makeDb(
   const query = (docs: unknown[]) => {
     const q: any = {
       where: () => q,
+      select: () => q, // 貼標建議那條查詢有帶 select——假 db 沒有這個方法的話整包 Promise.all 會炸
       limit: () => q,
       get: async () => ({ size: docs.length, docs, empty: !docs.length }),
     }
     return q
   }
 
+  const tagSuggestDocs = Array.from({ length: tagSuggestUsers }, (_, i) => ({
+    id: `u${i}`,
+    data: () => ({ workspaceId: WS, hasPending: true }),
+  }))
+
   const db = {
     collection(name: string) {
       if (name === 'cronState') return { doc: () => stateRef }
+      if (name === 'userTagSuggestions') return query(tagSuggestDocs)
       if (name === 'conversationSessions') {
         // 第一個查詢是 pending_human、第二個是 human_handling（本測試只餵前者）
         let call = 0
@@ -253,6 +262,34 @@ describe('dailyBacklogDigest 一天一則', () => {
  * 摘要要發的時候順路查一次、尾巴加一行。⛔刻意不讓黃級異常單獨觸發摘要：
  * 那要每輪對全租戶跑探針，成本形狀跟 08-11 讀取費暴衝同款。
  */
+describe('dailyBacklogDigest 貼標建議待審（D-43①）', () => {
+  it('有客人的標籤建議待審 → 摘要多一行、落點指到「好友」頁', async () => {
+    const { db } = makeDb(['U1'], {}, {}, 2)
+    await dailyBacklogDigest(db)
+
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('2 位客人的標籤建議等你決定')
+    expect(text).toContain('「好友」')
+  })
+
+  it('只有貼標建議、沒有其他待辦 → 照發（68 條積壓就是「沒人講」欠的帳）', async () => {
+    const { db } = makeDb([], {}, {}, 3)
+    await dailyBacklogDigest(db)
+
+    expect(pushMessage).toHaveBeenCalled()
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('3 位客人的標籤建議等你決定')
+  })
+
+  it('沒有待審 → 不多這一行', async () => {
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).not.toContain('標籤建議')
+  })
+})
+
 describe('dailyBacklogDigest 黃級異常搭便車', () => {
   it('摘要要發時尾巴加一行,照允許清單的優先序點名最重要那件', async () => {
     collectWorkspaceAlerts.mockResolvedValue([

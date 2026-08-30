@@ -25,6 +25,11 @@
               「LINE 通知」綁定成員本人的 LINE 帳號後,
               「AI 設定 → 轉真人通知」的名單就能直接勾選這位成員,不必到好友清單裡用暱稱找人。
             </p>
+            <!-- 等對方動作的事彙總（D-43④）：邀請沒接受、綁定碼沒傳,原本只有表格裡一行小灰字,
+                 等太久也沒人會發現。這裡收成一行,細節與動作（取消重邀/重新產生）都在下面該列。 -->
+            <p v-if="pendingActionSummary" class="member-pending-note">
+              ⏳ {{ pendingActionSummary }}——都在等對方動作；太久沒動靜，可以在下面那一列重新處理。
+            </p>
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />
               <span>載入中…</span>
@@ -186,6 +191,18 @@ const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
 
 const loading = ref(false)
 const members = ref<any[]>([])
+
+// 等對方動作的事（D-43④）：這頁不分頁、members 就是全量,直接從已載入的資料算
+const pendingActionSummary = computed(() => {
+  const invites = members.value.filter(m => m.pendingInvite).length
+  const binds = members.value.filter(m =>
+    !m.pendingInvite && !m.readOnly && !m.lineUserId && m.hasPendingBindCode).length
+  const parts: string[] = []
+  if (invites) parts.push(`${invites} 份邀請還沒被接受`)
+  if (binds) parts.push(`${binds} 位成員的 LINE 綁定碼還沒傳送`)
+  return parts.join('、')
+})
+
 const showInvite = ref(false)
 const inviteEmail = ref('')
 const inviteRole = ref('agent')

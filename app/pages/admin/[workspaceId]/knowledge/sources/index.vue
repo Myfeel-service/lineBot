@@ -315,7 +315,7 @@
         </div>
 
         <!-- 建議收件匣（草稿要看內容，維持獨立區塊）;count 讓側欄的工作台入口有數字可顯示 -->
-        <KnowledgeSuggestions @accepted="loadSources(true)" @count="suggestCount = $event" />
+        <KnowledgeSuggestions @accepted="loadSources(true)" @count="onSuggestCount" />
       </div>
     </template>
 
@@ -2089,6 +2089,8 @@ interface HealthResponse {
   }
   chunkScanTruncated: boolean
   aliasCandidateCount: number
+  /** 建議收件匣待處理數（null＝這次查不到，⛔不等於 0；D-43 缺口②） */
+  pendingSuggestions: number | null
   /** 疑似重複（C-40(c)）：排程「向量篩候選 → AI 判官」的建議；合併/刪除留人拍板 */
   duplicates: { items: DupSuggestionRow[]; scannedAtMs: number }
 }
@@ -2111,6 +2113,7 @@ const emptyHealth = (): HealthResponse => ({
   wrongAnswerChunks: { count: 0, items: [], scanTruncated: false },
   chunkScanTruncated: false,
   aliasCandidateCount: 0,
+  pendingSuggestions: null,
   duplicates: { items: [], scannedAtMs: 0 },
 })
 const health = ref<HealthResponse>(emptyHealth())
@@ -2307,12 +2310,21 @@ const todoItems = computed<TodoItem[]>(() => {
 
 // ── 工作台入口(選著資料時) ──────────────────────────
 // 工作台(要處理的事+AI建議)只在未選取資料時顯示;選著資料時側欄留一行入口。
-// suggestCount 由 KnowledgeSuggestions 元件回報——收件匣的資料只有它自己知道。
+// 建議數有兩個來源(D-43 缺口②)：元件掛載後以它回報的為準(採用/忽略即時反映)；
+// 元件沒掛載時(選著資料、或深連結直接落在某張卡)退回 health 端點的計數——
+// 原本只吃元件回報，深連結進頁時「M 個 AI 建議」整段消失。
 const suggestCount = ref(0)
+const suggestCountReported = ref(false)
+function onSuggestCount(n: number) {
+  suggestCount.value = n
+  suggestCountReported.value = true
+}
+const effectiveSuggestCount = computed(() =>
+  suggestCountReported.value ? suggestCount.value : (health.value.pendingSuggestions ?? 0))
 const workbenchBadge = computed(() => {
   const parts: string[] = []
   if (todoItems.value.length) parts.push(`${todoItems.value.length} 件要處理`)
-  if (suggestCount.value) parts.push(`${suggestCount.value} 個 AI 建議`)
+  if (effectiveSuggestCount.value) parts.push(`${effectiveSuggestCount.value} 個 AI 建議`)
   return parts.join('、')
 })
 function backToWorkbench() {
@@ -3605,6 +3617,24 @@ onMounted(async () => {
     clearQuery()
     await loadHealth(true)
     openHealthList(healthParam as HealthCategory)
+    return
+  }
+
+  // 小幫手「去看建議」帶 ?suggest=1:捲到建議收件匣（D-43 缺口①）。
+  // 原本落地停在頁頂——收件匣在「要處理的事」下方,按過「去看建議」的人還得自己捲、
+  // 自己找,等於帶路帶到巷口就放人。收件匣的資料是元件自己載的,元素要等它掛出來,
+  // 所以用短輪詢等目標出現;等不到（權限不足之類）就安靜作罷,不能卡住頁面。
+  if (String(route.query.suggest ?? '') === '1') {
+    clearQuery()
+    selectedId.value = null // 收件匣只在未選取資料時渲染
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 150))
+      const el = document.querySelector('.kb-suggest')
+      if (el) {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        break
+      }
+    }
     return
   }
 

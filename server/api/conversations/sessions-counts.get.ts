@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
 async function countFollowUps(
   db: FirebaseFirestore.Firestore,
   workspaceId: string,
-): Promise<number> {
+): Promise<number | null> {
   try {
     const snap = await db
       .collection('conversations')
@@ -57,8 +57,11 @@ async function countFollowUps(
       .get()
     return snap.data().count
   }
-  catch {
-    // 缺複合索引時不要讓整排分頁數字消失：待跟進數就先當 0（畫面上等於不顯示數字）
-    return 0
+  catch (e) {
+    // 缺複合索引時不要讓整排分頁數字消失，但也⛔不可以回 0 冒充「沒有待跟進」——
+    // 0 會讓數字無聲消失、沒人知道壞了（D-43④順帶修）。回 null＝「這次查不到」，
+    // 前端一樣不顯示數字，但 tooltip 會講出「數量讀不到」而不是裝作沒事。
+    console.warn('[sessions-counts] followUp count failed (缺 conversations followUpAt 複合索引?):', (e as Error)?.message)
+    return null
   }
 }

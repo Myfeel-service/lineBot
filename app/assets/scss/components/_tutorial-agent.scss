@@ -1323,6 +1323,20 @@
 /* （--calm 退役：徽章一律紅。還沒上線本身就是大問題——2026-08-07 拍板；
     ⛔灰、橘都試過，會被讀成「不急」） */
 
+/* 「可以更好」的低調訊號（D-43③）：紅色數字是 0 才會畫（模板守門）。
+   刻意靜態、不計數、用中性灰藍——「會不會動」與「紅色」是嚴重度語言，建議級不可以搶；
+   尺寸比紅徽章小一號，讀起來是「裡面有東西」不是「出事了」。 */
+.ta-fab__hint {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 0 0 2px var(--bg-base);
+}
+
 .ta-panel__foot {
   display: flex;
   align-items: baseline;

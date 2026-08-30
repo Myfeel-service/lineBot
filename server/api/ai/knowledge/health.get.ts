@@ -9,6 +9,7 @@ import {
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_DUP_SCANS_COLLECTION } from '~~/server/utils/ai-duplicate-scan'
+import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from '~~/server/utils/ai-knowledge-suggest'
 import { isShortChunkContent, needsProductName } from '~~/shared/types/ai-knowledge'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
@@ -49,7 +50,7 @@ export default defineEventHandler(async (event) => {
 
   const feedbackCutoff = Timestamp.fromMillis(Date.now() - FEEDBACK_WINDOW_DAYS * 86_400_000)
 
-  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap, dupScanSnap] = await Promise.all([
+  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap, dupScanSnap, pendingSuggestions] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .limit(300)
@@ -78,6 +79,22 @@ export default defineEventHandler(async (event) => {
       }),
     // 疑似重複（C-40(c)）：讀排程掃好的結果（單筆文件），這裡零 LLM 費
     db.collection(KNOWLEDGE_DUP_SCANS_COLLECTION).doc(workspaceId).get().catch(() => null),
+    /**
+     * 建議收件匣的待處理數（D-43 缺口②）：側欄「工作台入口」的數字原本只有
+     * KnowledgeSuggestions 元件掛載後才報得出來——選著資料或深連結進頁時元件沒掛載，
+     * 「M 個 AI 建議」就整段消失。改由這支供給，畫面狀態不再影響數字。
+     * count() 聚合、兩個等值條件走自動索引。⛔查失敗回 null 不回 0（0＝真的沒有）。
+     */
+    db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('status', '==', 'pending')
+      .count()
+      .get()
+      .then(agg => agg.data().count)
+      .catch((e) => {
+        console.warn('[kb-health] pending suggestions count failed:', (e as Error)?.message)
+        return null
+      }),
   ])
 
   // reason 一併帶回:清單上直接看得到「為什麼失敗」(最常見是試算表沒分享給服務帳號),
@@ -199,6 +216,8 @@ export default defineEventHandler(async (event) => {
     },
     /** 卡片掃描是否達到上限(超大知識庫時計數可能低估) */
     chunkScanTruncated: chunksSnap.size >= CHUNK_SCAN_LIMIT,
+    /** 建議收件匣待處理數（null＝這次查不到，⛔不等於 0） */
+    pendingSuggestions,
     /**
      * 待確認的產品別名組數。放在體檢裡回:這支本來就撈了全部來源,不必為了工具列一個
      * 數字再打一支 API;更重要的是——不主動顯示的話,使用者永遠沒有理由去點那顆按鈕,

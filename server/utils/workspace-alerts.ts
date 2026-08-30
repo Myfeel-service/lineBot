@@ -506,9 +506,11 @@ export async function collectWorkspaceAlerts(
         }),
         probe('firstReplyBacklog', async () => {
           // 「未首接」佇列的口徑完全沿用側欄（countOpenQueueSessions / isOpenQueueSession），
-          // 不另立第二份。這顆主要堵草稿模式的黑洞：draft 下 AI 只擬稿不發話、
-          // session 不會轉 pending_human——沒人進後台審，客人就一句回覆都沒有；
-          // auto 模式下規則沒接住、也沒人理的訊息同樣落在這裡。
+          // 不另立第二份。auto 模式下規則沒接住、也沒人理的訊息落在這裡。
+          // 草稿模式讓位給 aiDraftsWaiting（同一份佇列，兩張卡同時亮＝重複喊同一件事）；
+          // 設定讀不到（null）時照舊跑——寧可用 1 小時門檻的保守版也不要靜默。
+          const settings = await aiSettingsPromise!
+          if (settings?.replyMode === 'draft') return { active: false }
           const n = await countOpenQueueSessions(db, wid)
           if (!n) return { active: false }
           const snap = await db.collection('conversationSessions')
@@ -535,6 +537,36 @@ export async function collectWorkspaceAlerts(
           }
           if (!waiting) return { active: false }
           return { active: true, count: waiting, detail: `最久 ${humanizeHours(oldestH)}沒有人回` }
+        }),
+        probe('aiDraftsWaiting', async () => {
+          // 草稿模式的「等人送出」彙總（D-43②）：draft 下 AI 只擬稿不發話，客人一句都收不到。
+          // 刻意不設 1 小時門檻——選草稿模式＝每一則都要人看過才送，「還有幾場沒審」
+          // 本身就是要看的數字；佇列清空這顆就滅。firstReplyBacklog 在草稿模式讓位給這顆。
+          const settings = await aiSettingsPromise!
+          if (!settings) throw new Error('ai settings unavailable')
+          if (settings.replyMode !== 'draft') return { active: false }
+          const n = await countOpenQueueSessions(db, wid)
+          if (!n) return { active: false }
+          // 補一句最久等多久：掃描口徑與 firstReplyBacklog 完全同一份，只是不設門檻
+          const snap = await db.collection('conversationSessions')
+            .where('workspaceId', '==', wid)
+            .where('status', '==', 'open')
+            .select('origin', 'hasInbound', 'lastActivityAt', 'openedAt')
+            .limit(SESSION_SCAN_LIMIT)
+            .get()
+          const now = Date.now()
+          let oldestH = 0
+          for (const d of snap.docs) {
+            const s = d.data() as Record<string, unknown>
+            if (!isOpenQueueSession(s)) continue
+            const sinceMs = tsToMs(s.lastActivityAt) || tsToMs(s.openedAt)
+            if (sinceMs) oldestH = Math.max(oldestH, (now - sinceMs) / 3600_000)
+          }
+          return {
+            active: true,
+            count: n,
+            detail: oldestH ? `最久的一場已等 ${humanizeHours(oldestH)}` : undefined,
+          }
         }),
         probe('knowledgeIndexStuck', async () => {
           // 卡在 pending＝embedding 一直沒跑完（重試滿 5 次被放生、或排程沒在跑）。
@@ -688,6 +720,23 @@ export async function collectWorkspaceAlerts(
           const snap = await db.collection(TAG_DISCOVERY_COLLECTION).doc(wid).get()
           const pending = (snap.data() as { pending?: unknown[] } | undefined)?.pending
           const n = Array.isArray(pending) ? pending.length : 0
+          return n ? { active: true, count: n } : { active: false }
+        }),
+        probe('tagSuggestionsPending', async () => {
+          /**
+           * 客人層級的貼標建議在等人採用／忽略（D-43②，2026-08-31）。
+           * 它跟 tagDiscoverySuggestions 是兩回事（幫這位客人貼 vs 建新標籤）——
+           * 08-30 實測 68 條建議只有 2 條被決定過，因為除了每週洞察一行，沒有任何地方會說一聲。
+           * count() 聚合數「有待審建議的客人數」：hasPending 是收件匣非空的鏡像欄位、
+           * 索引 (workspaceId, hasPending) 現成（C-108）。⛔count＝人數不是建議條數，
+           * 文案要照這個口徑講（跟標籤頁「待審 N 位」同一把尺）。
+           */
+          const agg = await db.collection('userTagSuggestions')
+            .where('workspaceId', '==', wid)
+            .where('hasPending', '==', true)
+            .count()
+            .get()
+          const n = agg.data().count
           return n ? { active: true, count: n } : { active: false }
         }),
         probe('scannerStalled', async () => {

@@ -947,7 +947,7 @@ export async function dailyBacklogDigest(db: Firestore) {
   }
   await stateRef.set({ __lastScanMs: nowMs }, { merge: true }).catch(() => {})
 
-  const [pendingSnap, humanSnap, outdatedSnap, failedSnap, expiredSnap, suggestSnap] = await Promise.all([
+  const [pendingSnap, humanSnap, outdatedSnap, failedSnap, expiredSnap, suggestSnap, tagSuggestSnap] = await Promise.all([
     db.collection('conversationSessions').where('status', '==', 'pending_human').limit(SESSION_SCAN_LIMIT).get(),
     db.collection('conversationSessions').where('status', '==', 'human_handling').limit(SESSION_SCAN_LIMIT).get(),
     db.collection(KNOWLEDGE_SOURCES_COLLECTION).where('outdatedAt', '>', Timestamp.fromMillis(0)).limit(DIGEST_SCAN_LIMIT).get(),
@@ -955,6 +955,10 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 近 24 小時剛到期下架的卡;更早的到期卡當天已經講過,不重複喊
     db.collection(KNOWLEDGE_CHUNKS_COLLECTION).where('expiredAt', '>', Timestamp.fromMillis(nowMs - 24 * 3600_000)).limit(DIGEST_SCAN_LIMIT).get(),
     db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION).where('status', '==', 'pending').limit(DIGEST_SCAN_LIMIT).get(),
+    // 貼標建議待審（D-43①，2026-08-31 拍板收進摘要）：一份文件＝一位有待審建議的客人。
+    // hasPending 是收件匣非空的鏡像欄位（C-108）；select 只拿分組要用的欄位——
+    // pending 陣列是這個 collection 最肥的部分，整份讀進來只為數個數太浪費。
+    db.collection('userTagSuggestions').where('hasPending', '==', true).select('workspaceId').limit(DIGEST_SCAN_LIMIT).get(),
   ])
 
   interface Agg {
@@ -967,11 +971,14 @@ export async function dailyBacklogDigest(db: Firestore) {
     suggestions: number
     topSuggestTopic: string
     topSuggestCount: number
+    /** 有貼標建議待審的客人數（一份 userTagSuggestions 文件＝一位客人） */
+    tagSuggestUsers: number
   }
   const emptyAgg = (): Agg => ({
     pending: 0, pendingOldestH: 0, stale: 0,
     outdatedSources: 0, failedSources: 0, expiredCards: 0,
     suggestions: 0, topSuggestTopic: '', topSuggestCount: 0,
+    tagSuggestUsers: 0,
   })
   const byWs = new Map<string, Agg>()
   const aggOf = (ws: string): Agg => {
@@ -1022,6 +1029,10 @@ export async function dailyBacklogDigest(db: Firestore) {
       a.topSuggestTopic = String((doc.data() as any)?.topic ?? '').trim()
     }
   }
+  for (const doc of tagSuggestSnap.docs) {
+    const ws = wsOf(doc)
+    if (ws) aggOf(ws).tagSuggestUsers++
+  }
 
   // ── 節慶提醒的前置準備 ────────────────────────────────────────────
   // 只有「真的有節日進入 7 天內」才做這兩件事，一年裡大多數日子完全跳過：
@@ -1054,16 +1065,18 @@ export async function dailyBacklogDigest(db: Firestore) {
     if (state[ws] === today) continue // 今天發過（便宜早退；真正的判斷在 claimDailyDigest）
     const hasConversation = agg.pending > 0 || agg.stale > 0
     const hasKnowledge = agg.outdatedSources > 0 || agg.failedSources > 0 || agg.expiredCards > 0 || agg.suggestions > 0
+    // 貼標建議待審（D-43①）：跟知識建議同款待遇——有就講一行，落點是「好友」頁不是知識庫
+    const hasTags = agg.tagSuggestUsers > 0
     // 節慶判定排在讀設定**之前**：只有節慶可講、而它今天早就講過的帳號,連設定都不用讀
     const reminder = festivalWindowOpen ? pickFestivalReminder(today, festivalState[ws] ?? {}) : null
     // 週一先別在這裡早退：週報有沒有東西要等設定與時段閘門過了才查（見下方 insights）
-    if (!hasConversation && !hasKnowledge && !reminder && !weeklyWindowOpen) continue
+    if (!hasConversation && !hasKnowledge && !hasTags && !reminder && !weeklyWindowOpen) continue
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
     const festival = cfg.festivalTips ? reminder : null
     // 商家把節慶提醒關掉、當天又沒有別的事 → 整則不發（不要為了節慶硬發空摘要）
-    if (!hasConversation && !hasKnowledge && !festival) continue
+    if (!hasConversation && !hasKnowledge && !hasTags && !festival) continue
     // 休假日整天不發（服務時間有開 + 勾了週六日休息）。摘要是照著資料上的標記每天重
     // 喊一次,今天跳過不會漏掉任何一條——上班日那則照樣會把週末累積的全部講完。
     // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
@@ -1081,7 +1094,7 @@ export async function dailyBacklogDigest(db: Firestore) {
           return null
         })
       : null
-    if (!hasConversation && !hasKnowledge && !festival && !insights) continue
+    if (!hasConversation && !hasKnowledge && !hasTags && !festival && !insights) continue
 
     // 認領排在所有「發不發」的判斷之後、推播之前:提早認領會讓「時段還沒到」也被
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
@@ -1110,7 +1123,7 @@ export async function dailyBacklogDigest(db: Firestore) {
 
     // 當天只有節慶可講時換一個標題：掛在「每日客服摘要」底下會讓商家以為有客服待辦
     const lines: string[] = []
-    if (hasConversation || hasKnowledge || digestWarnings.length) {
+    if (hasConversation || hasKnowledge || hasTags || digestWarnings.length) {
       lines.push('📋 每日客服摘要')
       if (agg.pending) lines.push(`・${agg.pending} 位客人在「等待真人」(最久約 ${Math.max(1, Math.round(agg.pendingOldestH))} 小時)`)
       if (agg.stale) lines.push(`・${agg.stale} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時 — AI 暫停中,處理完請按「交回機器人」或「結束對話」(久到沒動靜的才會由系統自動收尾)`)
@@ -1120,12 +1133,15 @@ export async function dailyBacklogDigest(db: Firestore) {
       if (agg.suggestions) {
         lines.push(`・客人常問但 AI 答不好的主題 ${agg.suggestions} 個${agg.topSuggestTopic ? `(最常問:「${agg.topSuggestTopic}」)` : ''},草稿已擬好,審一眼按「採用」AI 就學會了`)
       }
+      if (agg.tagSuggestUsers) {
+        lines.push(`・${agg.tagSuggestUsers} 位客人的標籤建議等你決定,到後台「好友」頁勾「只看有 AI 建議的」逐位審`)
+      }
       if (digestWarnings.length) {
         // 只點名最重要那件:一行是「去後台看」的鉤子,不是把異常面板搬進 LINE
         lines.push(`・另有 ${digestWarnings.length} 件建議處理的事(最重要:${ALERT_LABELS[digestWarnings[0]!]}),後台右下角的小幫手會帶你處理`)
       }
-      if (hasConversation || hasKnowledge) {
-        const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : ''].filter(Boolean).join('與')
+      if (hasConversation || hasKnowledge || hasTags) {
+        const places = [hasConversation ? '「對話」' : '', hasKnowledge ? '「AI 知識庫」' : '', hasTags ? '「好友」' : ''].filter(Boolean).join('與')
         lines.push(`請到後台${places}頁處理。`)
       }
       // 空行隔開：節慶提醒跟上面的待辦是兩件事，黏在一起會被當成第 N 條待辦

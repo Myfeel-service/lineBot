@@ -73,7 +73,19 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
     })))
   }
 
-  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated }
+  // 潛在客戶（D-43②）：status 單欄位等值走自動索引，一次 count() 聚合。
+  // 查失敗回 null 不回 0——0 是「確認過沒有」，null 是「這次不知道」，前端兩者都不畫點。
+  const newLeads = await db.collection('demoLeads')
+    .where('status', '==', 'new')
+    .count()
+    .get()
+    .then(agg => agg.data().count)
+    .catch((e) => {
+      console.warn('[super-alerts] demoLeads count failed:', (e as Error)?.message)
+      return null
+    })
+
+  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads }
   cache = { at: Date.now(), payload }
   return payload
 })

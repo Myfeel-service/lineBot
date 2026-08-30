@@ -27,4 +27,10 @@ export interface SuperAlertsOverviewPayload {
   workspaces: SuperAlertsWorkspace[]
   /** 租戶數撞掃描上限＝有帳號沒被檢查到（誠實回報，不做靜默截斷） */
   truncated: boolean
+  /**
+   * 還沒有人回覆的潛在客戶數（demoLeads status='new'；D-43②，2026-08-31）。
+   * 官網留了資料的真實客戶原本零提醒——側欄「潛在客戶名單」連一顆點都沒有，
+   * 超管要自己想到才會開那一頁。null＝這次查不到（⛔不等於 0，前端不畫點也不畫綠）。
+   */
+  newLeads: number | null
 }

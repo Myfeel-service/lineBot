@@ -7,6 +7,18 @@
   color: var(--el-text-color-secondary);
 }
 
+/* 等對方動作的彙總（D-43④）。⛔不用警示色：沒有東西壞掉,是「在等對方」 */
+.member-pending-note {
+  margin: 0 0 4px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-elevated, #f9fafb);
+  border: 1px solid var(--border, rgb(0 0 0 / 8%));
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
 .member-line-cell {
   display: flex;
   align-items: center;

@@ -84,6 +84,20 @@ export type WorkspaceAlertId =
   | 'knowledgeSuggestions'
   /** AI 從對話裡發現了「還沒有標籤」的新主題，等人決定要不要建。不是異常，是「可以更好」 */
   | 'tagDiscoverySuggestions'
+  /**
+   * 有客人的貼標建議（既有標籤 × 個別客人）躺在收件匣等人採用／忽略。不是異常，是「可以更好」。
+   * 與 tagDiscoverySuggestions 是兩回事：那顆是「建新標籤」，這顆是「幫這位客人貼」。
+   * D-43②（2026-08-31）：它原本是全站唯一「有完整審核按鈕、卻完全不在提醒系統裡」的佇列——
+   * 正式資料實測 68 條建議只有 2 條被人決定過，不是功能壞，是產出了沒有出口。
+   */
+  | 'tagSuggestionsPending'
+  /**
+   * 草稿模式下有對話還沒有人送出任何回覆（AI 只擬稿不發話）。
+   * 刻意無時間門檻（D-43②，2026-08-31）：選草稿模式＝每一則都要人看過才送，
+   * 「還有幾場沒審」本身就是要看的數字；firstReplyBacklog（1 小時門檻）在草稿模式讓位給這顆，
+   * 兩顆講的是同一份佇列、同一時間只會亮一顆。
+   */
+  | 'aiDraftsWaiting'
   /** 有啟用中的客服流程永遠輪不到（沒填觸發詞、或被規則／敏感情境／別條腳本先接走） */
   | 'scriptUnreachable'
   /** 有客服流程中間有「客人答不出來就卡死」的步驟，走進去出不來 */
@@ -129,6 +143,8 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   scannerStalled: 'AI 讀對話的背景掃描一直失敗',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
   tagDiscoverySuggestions: 'AI 從對話裡發現可以建的新標籤',
+  tagSuggestionsPending: '有客人的標籤建議等你決定',
+  aiDraftsWaiting: 'AI 擬好的回覆還沒送出',
   knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
   scriptUnreachable: '有客服流程永遠不會被啟動',
   scriptDeadEnd: '有客服流程客人走不完',
@@ -185,6 +201,10 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   scannerStalled: 'warning',
   knowledgeSuggestions: 'suggestion',
   tagDiscoverySuggestions: 'suggestion',
+  tagSuggestionsPending: 'suggestion',
+  // 客人正在等回覆但還不到「壞掉」——草稿模式的常態工作訊號。可暫停提醒 7 天。
+  // ⛔不進 DIGEST_WARNING_ALERTS：摘要本文已逐項講「沒人回」的對話（挑選規則②）。
+  aiDraftsWaiting: 'warning',
 }
 
 /**

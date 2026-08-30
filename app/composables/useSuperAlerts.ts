@@ -62,5 +62,15 @@ export function useSuperAlerts() {
     return anyWarning ? 'warning' : null
   })
 
-  return { data, loading, error, checkedAt, refresh, navSeverity }
+  /**
+   * 側欄「潛在客戶名單」的琥珀點（D-43②）：有還沒回覆的新名單就亮。
+   * 用琥珀不用紅——是「有客戶在等你回」不是「東西壞了」；null（查不到）不亮，
+   * 同側欄點三規則：查不到不畫點也不畫綠，誠實狀態在總覽頁講。
+   */
+  const leadsDotCount = computed<number>(() => {
+    const n = data.value?.newLeads
+    return typeof n === 'number' && n > 0 ? n : 0
+  })
+
+  return { data, loading, error, checkedAt, refresh, navSeverity, leadsDotCount }
 }

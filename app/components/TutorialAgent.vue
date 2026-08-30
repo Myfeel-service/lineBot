@@ -491,6 +491,15 @@
       <span class="ta-fab__icon"><el-icon><component :is="panelOpen ? Close : IconRobot" /></el-icon></span>
       <!-- 光暈等資料回來才閃：不然設定齊全的帳號每次載入都先閃一下（狼來了） -->
       <span v-if="!panelOpen && (criticalAlerts.length || (loaded && !allRequiredDone))" class="ta-fab__pulse" aria-hidden="true" />
+      <!-- 「可以更好」的低調訊號（D-43③，2026-08-31 拍板）：面板裡有建議時 FAB 上完全沒訊號，
+           等於永遠沒人知道要點開。規則＝紅色數字（badgeCount）永遠優先，只有它是 0 才畫這顆；
+           刻意是靜態小灰點、不呼吸不計數——「會不會動」是嚴重度語言，建議級不可以搶那個頻道。 -->
+      <span
+        v-if="!panelOpen && !badgeCount && suggestionBadgeCount"
+        class="ta-fab__hint"
+        role="img"
+        :aria-label="`有 ${suggestionBadgeCount} 個可以更好的建議`"
+      />
       <!-- 數字＝「現在壞著」＋「必要設定沒做」，一律紅：還沒上線本身就是大問題
            （2026-08-07 拍板，取代先前「純設定缺項用中性色」的分色）。黃色警示項不進數字 -->
       <span
@@ -662,6 +671,8 @@ const todosForList = computed(() =>
 )
 
 const badgeCount = computed(() => criticalAlerts.value.length + incompleteRequired.value.length)
+/** 「可以更好」的建議總數（notice「供你參考」不算）：FAB 小灰點與開場白共用同一個數 */
+const suggestionBadgeCount = computed(() => suggestionAlerts.value.reduce((s, a) => s + (a.count ?? 1), 0))
 const badgeLabel = computed(() => {
   const parts: string[] = []
   if (criticalAlerts.value.length)
@@ -884,8 +895,14 @@ const agentLine = computed(() => {
     : ''
   if (criticalAlerts.value.length)
     return `先講重要的：有 ${criticalAlerts.value.length} 個地方現在不正常，客人會受影響。點下面就能去處理。${setupTail}`
-  if (activeAlerts.value.length)
-    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。${setupTail}`
+  if (activeAlerts.value.length) {
+    // D-43③：原本只有「紅黃全清空」那個分支才提建議＝實務上永遠不提。
+    // 黃級分支順一句就好；紅級分支刻意不加——先講重要的，不稀釋。
+    const suggestTail = suggestionBadgeCount.value
+      ? `有空的話，下面「可以更好」還有 ${suggestionBadgeCount.value} 個建議。`
+      : ''
+    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。${setupTail}${suggestTail}`
+  }
   if (!loaded.value)
     return '我先幫你看一下目前的設定狀況…'
   // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
@@ -911,9 +928,8 @@ const agentLine = computed(() => {
     return `必要設定都完成了，可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
   }
   // 沒有壞的、沒有缺的：日報 + 機會（讓 AI 更聰明的建議）
-  const nSuggest = suggestionAlerts.value.reduce((s, a) => s + (a.count ?? 1), 0)
-  const suggestTail = nSuggest
-    ? `另外我整理了 ${nSuggest} 個能讓 AI 答得更好的建議，看看下面的「可以更好」。`
+  const suggestTail = suggestionBadgeCount.value
+    ? `另外我整理了 ${suggestionBadgeCount.value} 個能讓 AI 答得更好的建議，看看下面的「可以更好」。`
     : ''
   if (briefLine.value)
     return `一切正常。${briefLine.value}${suggestTail}`

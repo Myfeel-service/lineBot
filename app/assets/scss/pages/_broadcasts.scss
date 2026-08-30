@@ -15,6 +15,41 @@
   color: var(--text-secondary);
 }
 
+/* 草稿彙總（D-43④）——側欄清單頂上的一行，可點切「只看草稿」。
+   ⛔同上，不用警示色：草稿沒發不是異常，是「有東西在等你」。 */
+.bc-draft-hint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover .bc-draft-hint__act { color: var(--text-primary); }
+
+  &.active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.bc-draft-hint__act {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* 表單本體（外層 padding 由 .ar-editor-body，定義在 admin/_shared.scss 收容區） */
 .bc-editor-form {
   display: flex;
