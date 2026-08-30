@@ -24,6 +24,7 @@ import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser } from './tagging'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
+import { recordTagSuggestionEvents } from './tag-suggestion-log'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
@@ -259,6 +260,13 @@ export async function prunePendingForAppliedTags(
           updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true })
         pruned += pending.length - remaining.length
+        /**
+         * 走到這裡＝人自己手動貼了 AI 也正在建議的那顆標籤，**這是 AI 判對了**，
+         * 只是客服習慣自己加而沒按採用鈕。⛔ 不記的話這些會從分子憑空消失，
+         * 採用率被低報成「AI 老是猜不中」。
+         */
+        const superseded = pending.filter(p => tagIds.includes(p.tagId)).map(p => p.tagId)
+        await recordTagSuggestionEvents(db, workspaceId, 'superseded', snap.id, superseded)
       }
     }
   }
@@ -409,6 +417,10 @@ async function suggestForSession(
   if (autoIds.length) {
     const { added } = await addTagsToUser(convDocId, autoIds, 'ai', 'ai-tag-suggest:auto', workspaceId)
     autoApplied = added.length
+    // 成效底帳只記真的貼上的（added）：冪等略過的那些 AI 沒有真的改變任何事
+    if (added.length) {
+      await recordTagSuggestionEvents(db, workspaceId, 'auto_applied', convDocId, added, { sessionId })
+    }
   }
 
   // suggest：進收件匣（容量再守一次：上面只擋「已滿」，這裡擋「加了會爆」）
@@ -431,6 +443,9 @@ async function suggestForSession(
       ...(sugSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
     }
     await sugRef.set(docPatch, { merge: true })
+    // 「AI 提過幾次」＝採用率的分母。⛔ 記的是真的進了收件匣的（toAdd），
+    // 不是模型回來的（accepted）——被收件匣容量擋下來的那些沒人看得到，不該算它判過
+    await recordTagSuggestionEvents(db, workspaceId, 'suggested', convDocId, toAdd, { sessionId })
   }
   return { suggested: toAdd.length, autoApplied }
 }

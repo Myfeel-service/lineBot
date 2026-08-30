@@ -78,6 +78,19 @@
           <span class="users-todo__cta">看一下 →</span>
         </button>
 
+        <!--
+          從標籤頁「待審 N 位」點進來時的來路說明（D-42②）。
+          ⛔ 這條不是裝飾：那顆鈕寫「待審 3 位」、這頁卻列出全部有建議的客人，
+             不講的話就是一個對不上的數字。講清楚「這裡是全部、你要找的那顆在名字後面的橘章裡」。
+        -->
+        <p v-if="fromTagId && filterSuggested" class="users-fromtag-note">
+          你從標籤
+          <strong v-if="fromTagName">「{{ fromTagName }}」</strong>
+          <strong v-else>（那顆標籤已被刪除）</strong>
+          點進來。這頁列的是<strong>全部</strong>有 AI 建議的客人，不只那一顆，
+          所以人數會比剛才看到的多。點開客人就看得到每條建議是哪顆標籤。
+        </p>
+
         <div class="message-card users-page-card" data-tour="usr-list">
           <div class="card-section-stack">
             <div class="users-toolbar" data-tour="usr-filter">
@@ -382,10 +395,32 @@ const { tags: allTags, loading: tagsLoading, loadTags: loadTagOptions } = useAdm
 const loading = computed(() => usersLoading.value || tagsLoading.value)
 
 const searchText = ref('')
-const filterTagIds = ref<string[]>([])
-const filterSuggested = ref(false)
+
+/**
+ * 篩選條件的初始值**直接從網址帶進來**（`?tagIds=a,b` 從標籤頁「好友數」來、
+ * `?suggested=1` 從「待審 N 位」來）。
+ *
+ * ⛔ 一定要寫在 ref 的初始值裡，**不可以搬回 onMounted 設定**：那幾支 watch 會因為
+ * 「值變了」各觸發一次 reloadUsers，加上 loadData 自己那次＝一進頁打兩次
+ * `/api/users/list`。這頁的列表查詢正是 08-11 讀取費暴衝的那一支，白打一次就是白付一次。
+ * 寫成初始值則從頭到尾沒有「變過」，watcher 一次都不會醒。
+ */
+const filterTagIds = ref<string[]>(
+  String(route.query.tagIds ?? '').split(',').map(s => s.trim()).filter(Boolean))
+const filterSuggested = ref(String(route.query.suggested ?? '') === '1')
 const selectedIds = ref<string[]>([])
 const { showToast } = useAdminToast()
+
+/**
+ * 從標籤頁哪一顆點「待審 N 位」過來的（`?fromTag=`，D-42②）。
+ *
+ * 為什麼要記住它：那顆按鈕寫「待審 3 位」，點進來卻列出 12 位——因為第一版篩得到的是
+ * 「有 AI 建議的客人」，篩不到「有**這顆**標籤建議的客人」（要按標籤反查得先補鏡像欄位）。
+ * ⛔ 數字對不上就一定要當場解釋，不能讓人自己猜哪個是錯的。
+ */
+const fromTagId = ref(String(route.query.fromTag ?? '').trim())
+const fromTagName = computed(() =>
+  allTags.value.find(t => t.id === fromTagId.value)?.name ?? '')
 
 /**
  * 一列最多直接列幾顆標籤，其餘收成「＋N」。
@@ -685,13 +720,10 @@ async function removeUserTag(userId: string, tagId: string) {
 }
 
 /**
- * 從標籤管理頁點「好友數」帶進來的標籤（`?tagIds=a,b`）：載入前先套上篩選，
- * 這樣點進來直接就是那份名單，不用自己再選一次。
- * ⛔ 要在 loadData 之前設好——否則會先撈一次全部好友再重撈一次（白付一輪讀取）。
+ * 網址帶來的篩選（`?tagIds=` / `?suggested=` / `?fromTag=`）在上面 ref 的初始值就吃掉了，
+ * 這裡只要載入一次——⛔ 別把那幾行搬回來（會多打一次列表查詢，理由寫在 ref 那邊）。
  */
 onMounted(() => {
-  const q = String(route.query.tagIds ?? '').trim()
-  if (q) filterTagIds.value = q.split(',').map(s => s.trim()).filter(Boolean)
   void loadData()
 })
 </script>

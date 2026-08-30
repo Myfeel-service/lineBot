@@ -139,6 +139,55 @@ export interface TagLogDoc {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  Collection: tagSuggestionLogs
+//  Doc ID: uuid
+//  用途：AI 貼標建議的成效底帳（D-42 第一步），不做刪除
+//
+//  ⛔ **為什麼不能塞進 tagLogs**：那本帳記的是「標籤貼在誰身上」，只有貼上與拿掉
+//  兩種事件——而 AI 提過、人按了忽略的建議**從來沒貼上過**，在那本帳裡根本不存在。
+//  採用率的分母正是那些沒貼上的，所以非開一本不可。
+//
+//  ⚠️ 與 tagLogs 會有「同一件事兩邊各記一筆」（人按採用＝這裡 applied、那裡 add）。
+//  這是刻意的：兩本帳問的問題不同——這本問「這條建議的結局是什麼」，tagLogs 問
+//  「標籤現在在誰身上」。⛔ 兩邊數字**不保證相等**（採用一顆客人身上已經有的標籤時，
+//  tagLogs 冪等略過不寫，這裡照記——人確實做了決定），算成效一律只用這本，
+//  ⛔ 別把兩本加起來。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 一條 AI 貼標建議的結局。
+ *
+ * suggested    – AI 判定後進收件匣（等人決定）
+ * auto_applied – AI 判定後直接貼上（該顆設「AI 判到直接貼」，不經過人）
+ * applied      – 人按「採用」
+ * dismissed    – 人按「忽略」
+ * superseded   – 建議還掛在收件匣時，人自己走「管理標籤」手動貼了同一顆
+ *                ＝**同意 AI 的判斷**，只是沒走採用鈕；算成效時要跟 applied 同一邊，
+ *                漏掉它會低報準確率（客服習慣自己加標籤，這條路不算少）
+ *
+ * ⛔ 這裡**刻意沒有**「AI 自動貼上、事後被人拆掉」（否決票）這一種，兩個理由：
+ *    ① 那件事 tagLogs 查得到（action='remove' 對齊先前 sourceRefId='ai-tag-suggest:auto'
+ *      的 add），補得回來，不必現在多記一本
+ *    ② `recordManualRemovalAsDismissed` 是對「所有 AI 有在判的標籤」記否決票，
+ *      **不管當初是不是 AI 貼的**——照它記會把「人自己貼、自己拆」也算成 AI 的失分。
+ *    要做 auto 模式的存活率時，走 tagLogs 對齊 add/remove，別走這裡。
+ */
+export type TagSuggestionEvent = 'suggested' | 'auto_applied' | 'applied' | 'dismissed' | 'superseded'
+
+export interface TagSuggestionLogDoc {
+  workspaceId: string
+  event: TagSuggestionEvent
+  tagId: string
+  /** users 主鍵：`${workspaceId}_${lineUserId}` */
+  userId: string
+  /** 產生這條建議的那場對話（suggested／auto_applied 才有） */
+  sessionId: string | null
+  /** 按下採用／忽略的人（applied／dismissed 才有；排程寫的一律 null） */
+  operatorId: string | null
+  createdAt: Timestamp | FieldValue
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  Collection: audiences
 //  Doc ID: uuid
 // ═══════════════════════════════════════════════════════════════════

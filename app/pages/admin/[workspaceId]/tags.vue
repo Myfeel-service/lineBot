@@ -251,6 +251,12 @@
               <span class="tags-count text-muted">符合 {{ total.toLocaleString('zh-TW') }} 筆</span>
             </div>
 
+            <!-- ⛔ 「待審」讀失敗要講出來：整欄安靜消失的話，畫面看起來就是「沒有人等你決定」
+                 ——同一款沉默死亡這個專案已經吃過三次（C-68／守門員／C-94）。 -->
+            <p v-if="pendingCountsFailed" class="tags-pending-note">
+              ⚠️ 「待審」數字這次讀不到（其他資料正常）。重整這一頁再試一次。
+            </p>
+
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />
               <span>載入中…</span>
@@ -292,6 +298,18 @@
                       <span v-if="tag.aiMode === 'auto'" class="badge badge-green">AI 直接貼</span>
                       <span v-else-if="tag.aiMode === 'suggest'" class="badge badge-orange">AI 先建議</span>
                       <span v-else class="text-muted">—</span>
+                      <!-- 「還有幾位等你決定」（D-42②）：只在真的有的時候出現。
+                           ⛔ 0 位不顯示——每列都掛「待審 0 位」是純噪音；
+                           ⛔ 讀不到時也不顯示（不能拿 0 冒充「沒事」），改由表格上方那行說明。 -->
+                      <button
+                        v-if="pendingCountsLoaded && pendingCountFor(tag.id) > 0"
+                        type="button"
+                        class="tags-pending-link"
+                        :title="pendingCountsTruncated
+                          ? '去看這些建議（待審總數已達統計上限，實際可能更多）'
+                          : `去看還沒決定的 ${pendingCountFor(tag.id)} 位客人`"
+                        @click.stop="goPendingFriends(tag.id)"
+                      >待審 {{ pendingCountFor(tag.id) }} 位</button>
                     </td>
                     <td>
                       <span class="badge badge-gray">{{ tagCategoryLabel(tag.category) }}</span>
@@ -855,6 +873,49 @@ function goTaggedFriends(tagId: string) {
   navigateTo(`/admin/${workspaceId.value}/users?tagIds=${encodeURIComponent(tagId)}`)
 }
 
+/* ── 每顆標籤還有幾位客人等人決定（D-42②）──────────────────────
+   為什麼要放在這一頁：「這顆 AI 判得準不準、要不要升級成直接貼」是在這頁做的判斷，
+   但待審清單長在好友頁——這個數字就是把「那邊有事等你」搬到做決定的地方。
+   ⛔ 三態不可省：載入失敗時**不可以顯示 0**（那等於謊稱沒事要處理），整欄不出現＋上方講一句。 */
+const pendingCounts = ref<Record<string, number>>({})
+const pendingCountsLoaded = ref(false)
+const pendingCountsFailed = ref(false)
+/** 掃描撞到上限＝數字會低報，一定要講出來（見端點的 SCAN_LIMIT 註解） */
+const pendingCountsTruncated = ref(false)
+
+function pendingCountFor(tagId: string): number {
+  return pendingCounts.value[tagId] ?? 0
+}
+
+async function loadPendingCounts() {
+  try {
+    const res = await apiFetch<{ counts: Record<string, number>, truncated: boolean }>('/api/tag/pending-counts')
+    pendingCounts.value = res.counts ?? {}
+    pendingCountsTruncated.value = res.truncated === true
+    pendingCountsFailed.value = false
+  }
+  catch {
+    // 讀不到就整欄不出現：待審是輔助資訊，讀失敗不該讓標籤頁壞掉，但也不能假裝是 0
+    pendingCounts.value = {}
+    pendingCountsFailed.value = true
+  }
+  finally {
+    pendingCountsLoaded.value = true
+  }
+}
+
+/**
+ * 點「待審 N 位」→ 好友頁的 AI 建議收件匣。
+ *
+ * ⚠️ **第一版只篩得到「有建議的客人」，不是「有這顆標籤建議的客人」**（D-42 拍板的簡單版）：
+ * 建議存在「一位客人一份」的文件裡，要按標籤反查得先補鏡像欄位。所以帶著 `fromTag`
+ * 過去，讓那頁講明白「你從哪顆標籤過來、為什麼看到的人比 N 多」——⛔ 不講的話
+ * 就是一個對不上的數字（正是 D-41 整份報告在抓的那種病）。
+ */
+function goPendingFriends(tagId: string) {
+  navigateTo(`/admin/${workspaceId.value}/users?suggested=1&fromTag=${encodeURIComponent(tagId)}`)
+}
+
 function tagListQuery(targetPage = page.value) {
   return {
     page: targetPage,
@@ -983,5 +1044,7 @@ onMounted(() => {
 
   void reloadTags(true)
   void loadDiscovery()
+  // ⛔ 一次就好，不要跟著分頁／篩選重打：它是「全工作區的待審」，跟畫面上看哪幾顆無關
+  void loadPendingCounts()
 })
 </script>

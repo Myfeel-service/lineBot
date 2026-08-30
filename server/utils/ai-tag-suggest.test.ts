@@ -26,6 +26,8 @@ const WS = 'ws1'
  */
 function fakeSuggestDb(docs: Record<string, Record<string, unknown> | null>) {
   const writes: Array<{ id: string; data: any }> = []
+  /** 成效底帳（tagSuggestionLogs）收到的東西——⛔ 沒有這個，記帳寫失敗會被 try/catch 吞掉還全綠 */
+  const logs: Array<Record<string, any>> = []
   const makeSnap = (id: string) => {
     const data = docs[id]
     return {
@@ -36,10 +38,16 @@ function fakeSuggestDb(docs: Record<string, Record<string, unknown> | null>) {
     }
   }
   const db: any = {
-    collection: () => ({ doc: (id: string) => ({ __id: id }) }),
+    collection: (name: string) => ({ doc: (id: string) => ({ __id: id, __col: name }) }),
     getAll: async (...refs: Array<{ __id: string }>) => refs.map(r => makeSnap(r.__id)),
+    batch: () => ({
+      set: (ref: { __col: string }, data: Record<string, any>) => {
+        if (ref.__col === 'tagSuggestionLogs') logs.push(data)
+      },
+      commit: async () => {},
+    }),
   }
-  return { db, writes }
+  return { db, writes, logs }
 }
 
 describe('prunePendingForAppliedTags：標籤貼上了就把建議剪掉', () => {
@@ -82,6 +90,27 @@ describe('prunePendingForAppliedTags：標籤貼上了就把建議剪掉', () =>
     })
     expect(await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])).toBe(0)
     expect(writes).toHaveLength(0)
+  })
+
+  /**
+   * D-42 的成效底帳。人自己手動貼了 AI 也正在建議的那顆＝**AI 判對了**，
+   * 只是沒按採用鈕；不記的話這些會從採用率的分子憑空消失。
+   */
+  it('剪掉建議時記一筆 superseded（AI 猜中、人自己先貼了）', async () => {
+    const { db, logs } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't1' }, { tagId: 't2' }], hasPending: true },
+    })
+    await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toMatchObject({ workspaceId: WS, event: 'superseded', tagId: 't1', userId: 'u1' })
+  })
+
+  it('沒剪到就不記帳（沒發生的事不能進底帳）', async () => {
+    const { db, logs } = fakeSuggestDb({
+      u1: { workspaceId: WS, pending: [{ tagId: 't9' }], hasPending: true },
+    })
+    await prunePendingForAppliedTags(db, WS, ['u1'], ['t1'])
+    expect(logs).toHaveLength(0)
   })
 
   it('空輸入不打 db；批次多人各自處理', async () => {

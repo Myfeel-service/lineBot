@@ -110,6 +110,37 @@
   }
 }
 
+/* 「待審 N 位」＝AI 判斷徽章後面的待辦入口。
+   ⛔ **跟徽章同一行**（inline）不另起一行：只有部分標籤有待審，換行放會讓那幾列
+   比其他列高一截——列高參差正是這張表先前修掉的毛病（見 users 那頁 MAX_ROW_TAGS 的註解）。 */
+.tags-pending-link {
+  display: inline-block;
+  margin-left: 0.4rem;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  /* 同 .badge-orange 的字色（同一件事在這格是徽章、在下一行是連結，要讀得出同一族）。
+     ⛔ 不用 --color-warning(#d97706)：0.78rem 小字在白底對比度不到 AA */
+  color: #b45309;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
+/* 待審數字讀不到時的說明行（三態的第三態，⛔ 不可以退化成不顯示） */
+.tags-pending-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
 .td-name {
   font-weight: 600;
   color: var(--text-primary);

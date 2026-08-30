@@ -3,6 +3,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { addTagsToUser } from '~~/server/utils/tagging'
 import { AI_TAG_SUGGEST_SOURCE_REF } from '~~/server/utils/ai-tag-suggest'
+import { recordTagSuggestionEvents } from '~~/server/utils/tag-suggestion-log'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { UserTagSuggestionDoc } from '~~/shared/types/tag-broadcast'
 
@@ -16,7 +17,7 @@ import type { UserTagSuggestionDoc } from '~~/shared/types/tag-broadcast'
  *   （⛔ 判過的不再重生）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const userIdParam = getRouterParam(event, 'id')
   if (!userIdParam) throw createError({ statusCode: 400, statusMessage: 'userId is required' })
@@ -50,6 +51,18 @@ export default defineEventHandler(async (event) => {
   if (action === 'apply') {
     await addTagsToUser(fsUserDocId, target, 'ai', AI_TAG_SUGGEST_SOURCE_REF, workspaceId)
   }
+
+  /**
+   * 成效底帳（D-42）：**採用率的分子與分母都在這裡產生**，忽略尤其重要——
+   * 忽略只會寫進 dismissedTagIds（沒有時間、又跟手動移除混在一起），
+   * 不記在這裡就永遠算不出「這顆標籤 AI 判得準不準」。
+   * ⛔ 記的是 target（真的還在待審、這次被處理掉的），不是使用者送來的 tagIds。
+   */
+  await recordTagSuggestionEvents(
+    db, workspaceId,
+    action === 'apply' ? 'applied' : 'dismissed',
+    fsUserDocId, target, { operatorId: uid },
+  )
 
   const dismissedTagIds = Array.isArray(sugDoc.dismissedTagIds) ? sugDoc.dismissedTagIds : []
   const remaining = pending.filter(p => !target.includes(p.tagId))
