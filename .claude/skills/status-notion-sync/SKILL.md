@@ -30,6 +30,14 @@ git rev-list --count HEAD          # STATUS.md 檔尾
 
 檔尾的 commit 數幾乎每次都是舊的。
 
+⛔ **要看推送狀態就指名 remote，不要用 `@{u}`。** 這個專案有兩個 remote，而 `main` 的 upstream 設的是 `origin`（`splashdigilab/linebot`），**但部署跟的是 `myfeel`**（`Myfeel-service/lineBot`）：
+
+```bash
+git rev-list --count myfeel/main..HEAD   # 這個才是「有沒有推上部署來源」
+```
+
+2026-08-28 那輪用了 `@{u}` 就誤報「98 個 commit 沒推」，實際上 `myfeel/main` 落後 0、全推上去了。`origin` 落後不影響任何事。
+
 **④ 確認 `STATUS.md` 自己沒有內部矛盾。**
 真的發生過：`E-6` 同時出現在技術債與完成區且說法相反；`B-3` 標 DONE 但其中半件根本沒做。發現矛盾先查證再同步，不要把矛盾原樣推去 Notion。
 

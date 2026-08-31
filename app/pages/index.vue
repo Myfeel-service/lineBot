@@ -345,8 +345,7 @@
                   底下一行＝**現在做得到 vs 還沒上線**（代設的徽章就標在那個詞旁邊，
                   不用卡頂那種籠統的「部分即將推出」）。
                ⛔ 只留「有選單」那一支手機：原本兩支做前後對照，但「沒有選單」那支只是在
-                  演示問題、佔掉一半版面，說服力全在「有選單」這支。
-               ⛔ 手機裡不放對話泡泡：這條窄帶講的是**選單**，聊天內容會分散焦點。 -->
+                  演示問題、佔掉一半版面，說服力全在「有選單」這支。 -->
           <div class="lp-band lp-reveal">
             <div class="lp-band__text">
               <h3>常問的事變成按鈕，客人自己點</h3>
@@ -356,31 +355,130 @@
                 想更省事，之後可以<b>一句話請 {{ brandName }} 代設</b><span class="lp-soon lp-soon--inline">即將推出</span>
               </p>
             </div>
+
+            <!-- ⚠️ 2026-08-31 老闆拍板兩件事：①選單換成**真的圖文選單圖**（原本是 div 刻的
+                 綠＋灰階色塊）②整支要做得「像真的手機截圖」。所以由上而下照真機一層層疊：
+                 狀態列＋靈動島 → LINE 聊天室標頭 → 聊天區 → 輸入列 → 圖文選單 → Home 安全區。
+                 ⛔ 輸入列一定在圖文選單**上面**：LINE 的圖文選單是頂掉鍵盤的位置展開的，
+                    輸入列不會被蓋住。畫成選單壓在輸入列上面，用過 LINE 的人一眼就看得出是假的。
+                 ⚠️ 聊天區放**一則**歡迎訊息（2026-08-31 老闆指定「山丘咖啡可以傳一個歡迎訊息」，
+                    同時**推翻**了先前那條「⛔手機裡不放對話泡泡」——當初的顧慮是聊天內容會把焦點
+                    從選單身上拉走）。所以規矩改成：**只留這一則、而且內容要把人指回選單**
+                    （「下面選單可以直接逛禮盒、查訂單」）。⛔ 別再加第二則、更別演一來一往的對話，
+                    那就是當初想避免的失焦。
+                 ⚠️ 訊息靠聊天區**頂部**對齊、空白留在下面（2026-08-31 老闆抓到，我原本做成貼底）。
+                    ⛔ 別再改回貼底：「新訊息在最下面」講的是**內容超過一頁時的捲動位置**，
+                    訊息還沒填滿一頁時是從上往下排、空的是下半截——這支手機只有一則訊息，
+                    正是沒填滿的情況。
+                 ⛔ 泡泡旁邊不放店名：LINE 的一對一聊天室**不顯示對方名字**（只有群組才顯示），
+                    加了就露餡。頭像＋白泡泡＋右下角時間才是對的。
+                 ⚠️ 輸入列最左邊是**鍵盤**圖示、不是選單圖示：選單已經展開時那顆會切成鍵盤
+                    （點下去收起選單回去打字），它同時解釋了「為什麼這支手機的選單是開著的」。
+                 ⚠️ 尺寸全部對著 250px 的螢幕寬算＝ .lp-band__phone 的 268px 減掉 .lp-phone
+                    兩側各 9px 的殼；改寬度時 SCSS 那邊的固定值要一起校。 -->
             <div class="lp-band__phone">
               <div class="lp-phone">
                 <div class="lp-pscreen">
-                  <div class="lp-pscreen__top"><span class="lp-pscreen__ava" />山丘咖啡</div>
-                  <div class="lp-rm">
-                    <div class="lp-rm__r2">
-                      <span class="lp-rm__c lp-rm__c--soft">本月精選</span>
-                      <span class="lp-rm__c lp-rm__c--soft">會員專屬</span>
-                    </div>
-                    <div class="lp-rm__hero">
-                      <span class="lp-rm__brand">{{ giftFestName }}禮盒</span>
-                      <span class="lp-rm__go">立即選購 ▸</span>
-                    </div>
-                    <div class="lp-rm__r3">
-                      <span class="lp-rm__c">商品資訊</span>
-                      <span class="lp-rm__c">訂單問題</span>
-                      <span class="lp-rm__c lp-rm__c--on">真人客服</span>
+                  <div class="lp-pstatus">
+                    <span class="lp-pstatus__time">9:41</span>
+                    <span class="lp-pstatus__island" aria-hidden="true" />
+                    <svg class="lp-pstatus__sys" viewBox="0 0 47 12" aria-hidden="true">
+                      <g fill="currentColor">
+                        <rect x="0" y="7.5" width="2.5" height="3.5" rx=".7" />
+                        <rect x="3.8" y="6" width="2.5" height="5" rx=".7" />
+                        <rect x="7.6" y="4" width="2.5" height="7" rx=".7" />
+                        <rect x="11.4" y="2" width="2.5" height="9" rx=".7" />
+                        <circle cx="22" cy="9.8" r="1.15" />
+                        <rect x="32.3" y="3.7" width="8.2" height="4.8" rx="1.4" />
+                      </g>
+                      <g fill="none" stroke="currentColor" stroke-linecap="round">
+                        <path d="M17.1 5.1a7 7 0 0 1 9.8 0" stroke-width="1.5" />
+                        <path d="M19.1 7.4a4.2 4.2 0 0 1 5.8 0" stroke-width="1.5" />
+                        <rect x="31" y="2.4" width="13" height="7.4" rx="2.3" stroke-width="1" opacity=".45" />
+                        <path d="M45.3 5.2v2.2" stroke-width="1.4" opacity=".45" />
+                      </g>
+                    </svg>
+                  </div>
+
+                  <div class="lp-pnav">
+                    <svg class="lp-pnav__back" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M15 4.5 7.5 12l7.5 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <span class="lp-pnav__ava" aria-hidden="true" />
+                    <span class="lp-pnav__name">山丘咖啡</span>
+                    <svg class="lp-pnav__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6.4 3.4h3.1l1.5 4-2 1.5a12.4 12.4 0 0 0 6.1 6.1l1.5-2 4 1.5v3.1a2 2 0 0 1-2.2 2A17.2 17.2 0 0 1 4.4 5.6a2 2 0 0 1 2-2.2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+                    </svg>
+                    <svg class="lp-pnav__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    </svg>
+                  </div>
+
+                  <div class="lp-pbody">
+                    <span class="lp-pbody__day">今天</span>
+                    <div class="lp-pmsg">
+                      <span class="lp-pmsg__ava" aria-hidden="true" />
+                      <p class="lp-pmsg__bubble">歡迎加入山丘咖啡！<br>下面選單可以直接逛禮盒、查訂單，有問題也可以直接問我們。</p>
+                      <span class="lp-pmsg__time">9:41</span>
                     </div>
                   </div>
+
+                  <div class="lp-pbar">
+                    <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="2.5" y="6" width="19" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7" />
+                      <g fill="currentColor">
+                        <rect x="5.5" y="9" width="2" height="2" rx=".6" />
+                        <rect x="9" y="9" width="2" height="2" rx=".6" />
+                        <rect x="12.5" y="9" width="2" height="2" rx=".6" />
+                        <rect x="16" y="9" width="2.5" height="2" rx=".6" />
+                        <rect x="7.5" y="13" width="9" height="2" rx=".8" />
+                      </g>
+                    </svg>
+                    <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+                        <path d="M3 8.6h3.3l1.6-2.3h8.2l1.6 2.3H21v9.8H3z" />
+                        <circle cx="12" cy="13.2" r="3.3" />
+                      </g>
+                    </svg>
+                    <span class="lp-pbar__field" aria-hidden="true" />
+                    <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="8.6" />
+                        <path d="M8.6 14.2a4.4 4.4 0 0 0 6.8 0" />
+                      </g>
+                      <g fill="currentColor"><circle cx="9.2" cy="10" r="1.1" /><circle cx="14.8" cy="10" r="1.1" /></g>
+                    </svg>
+                    <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <rect x="9.2" y="3" width="5.6" height="10.4" rx="2.8" />
+                        <path d="M5.8 11.6a6.2 6.2 0 0 0 12.4 0M12 17.8V21" />
+                      </g>
+                    </svg>
+                  </div>
+
+                  <!-- ⚠️ 節日寫死在圖裡了：這張圖之前是 div 刻的，「{節日}禮盒」那句由
+                       shared/taiwan-festivals.ts 算出「下一個送禮檔期」自動代入（所以永遠不會過期）。
+                       換成整張圖之後那個機制沒了——**2026-09-25 中秋過完，官網就會掛著過期的圖**。
+                       換圖流程：原始檔在 docs/landing-shots-src/，壓縮指令見同資料夾 README。
+                       STATUS.md 有對應的待辦，別讓它沉掉。 -->
+                  <img
+                    class="lp-pmenu"
+                    src="/landing/richmenu-midautumn.webp"
+                    alt="LINE 圖文選單示意：上排兩格「本月精選」「會員專屬」，中間一整排是中秋節禮盒的主視覺與「立即選購」按鈕，下排三格「商品資訊」「訂單問題」「真人客服」"
+                    loading="lazy"
+                    width="800"
+                    height="540"
+                  >
+
+                  <div class="lp-phome" aria-hidden="true"><i /></div>
                 </div>
               </div>
             </div>
           </div>
-          <!-- 「哪些現有、哪些未上線」窄帶自己那行已經講了，這裡只需標示意 -->
-          <p class="lp-figcap lp-figcap--center lp-reveal">選單畫面為示意。</p>
+          <!-- 「哪些現有、哪些未上線」窄帶自己那行已經講了，這裡只需標示意。
+               ⚠️ 要講到「店家與商品為虛構」：選單換成實拍風格的圖之後，不講的人會以為
+                  這是某家真的店的選單（兩張後台截圖有「系統實際畫面」標頭，這支沒有）。 -->
+          <p class="lp-figcap lp-figcap--center lp-reveal">選單畫面為示意，店家與商品皆為虛構。</p>
         </div>
       </div>
     </section>
@@ -776,14 +874,15 @@ const heroFests = computed(() =>
   })),
 )
 
-/**
- * 圖文選單示意裡那句「{節日}禮盒已上架」用的節日：接下來第一個**送禮檔期**。
- * 為什麼挑送禮檔期而不是單純的下一個節日：那句話講的是禮盒，套到中元節、國慶日會語意不通。
- * 為什麼不寫死：寫死的節日會過期（草稿寫「父親節」，做頁面的當天就已經過完了）。
+/*
+ * ⚠️ 這裡本來有一個 giftFestName：圖文選單示意裡那句「{節日}禮盒」用的節日，從 upcoming
+ *    挑出接下來第一個**送禮檔期**代入（挑送禮檔期而不是下一個節日，是因為那句話講的是禮盒，
+ *    套到中元節、國慶日會語意不通）。它存在的理由是「寫死的節日會過期」——草稿寫「父親節」，
+ *    做頁面的當天就已經過完了。
+ *    2026-08-31 老闆拍板改用實拍的圖文選單圖，節日跟著進了圖裡，這段就沒有東西可以代入了，
+ *    所以整個移除（留著不用會變成沒人敢刪的死碼）。**過期問題沒有消失，只是換成人工換圖**，
+ *    追蹤在 STATUS.md。要復活的話這幾行照抄回來即可。
  */
-const giftFestName = computed(() =>
-  upcoming.value.find(x => /送禮|禮盒|伴手禮|禮物|紅包/.test(x.angle))?.name ?? '節慶',
-)
 
 // ── 互動（進場效果、黏性條、手機選單）──
 // 伺服器端與「減少動態效果」時直接給最終狀態，所以沒有 JS 也讀得到完整內容。

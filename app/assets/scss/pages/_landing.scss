@@ -389,37 +389,109 @@
   .lp-wall__fix span { margin-right: 5px; }
   .lp-wall--main .lp-wall__fix { background: rgba(255, 255, 255, 0.17); color: #fff; }
 
-  /* 手機殼＋圖文選單本體（窄帶在用）。
-     ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
-     ⛔ 選單格子不照抄真實選單的花色（08-26 草稿畫過一版五色平面 Banner，老闆說醜）：
-        那些顏色跟全頁沒有關係，看起來像貼了一張別人的圖。綠＋灰階仍然一眼認得出是選單。
-     ⚠️ .lp-pscreen 不給固定高度：窄帶裡的手機只放標頭＋選單，高度由內容決定
-        （前後對照時代那個 height:430px 已隨兩支手機的版面一起移除）。 */
-  .lp-phone { background: var(--ink); border-radius: 30px; padding: 9px; box-shadow: var(--sh-card); }
-  .lp-pscreen { background: #e9edf3; border-radius: 23px; overflow: hidden; display: flex; flex-direction: column; }
-  .lp-pscreen__top { background: #fff; border-bottom: 1px solid #e2e7ec; padding: 13px 15px; font-size: 0.88rem; font-weight: 800; display: flex; align-items: center; gap: 9px; }
-  .lp-pscreen__ava { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none; }
-  .lp-rm { display: grid; gap: 2px; background: #d8dee6; }
-  .lp-rm__r2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
-  .lp-rm__r3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
-  .lp-rm__c { padding: 13px 6px; text-align: center; font-size: 0.78rem; font-weight: 700; background: #fff; color: var(--ink-2); }
-  .lp-rm__c--on { background: var(--g); color: #fff; }
-  .lp-rm__c--soft { background: var(--g-wash); color: var(--g-ink, #04702f); }
-  .lp-rm__hero {
-    background: linear-gradient(150deg, #06c755, #03a040); color: #fff;
-    height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  /* ── 手機殼＋LINE 聊天室畫面（窄帶在用）────────────────────────
+   * ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
+   * ⚠️ 2026-08-31 老闆拍板「做得像真的手機截圖」：由上而下照真機一層層疊＝狀態列（靈動島）／
+   *    LINE 標頭／聊天區／輸入列／圖文選單／Home 安全區。堆疊順序與理由寫在 index.vue 那邊。
+   * ⛔ 08-26 訂的「選單格子不照抄真實選單的花色」（那版五色平面 Banner 被嫌醜）**已由老闆於
+   *    2026-08-31 推翻**：改放真的圖文選單圖 public/landing/richmenu-midautumn.webp。
+   *    別再改回 div 刻的色塊版——那條舊結論是針對「自己畫的假花色」，不是針對實圖。
+   * ⚠️ 下面的固定 px 都對著 **250px 螢幕寬**算（.lp-band__phone 268px － .lp-phone 兩側 9px）。
+   *    這個寬度桌機與手機是同一個值（見底部 media query），所以不需要第二套尺寸。
+   * ⛔ .lp-pscreen 不給固定高度：高度由內容決定（前後對照時代那個 height:430px 已移除）。 */
+  .lp-phone { background: var(--ink); border-radius: 32px; padding: 9px; box-shadow: var(--sh-card); }
+  .lp-pscreen { background: #eef1f5; border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* iOS 狀態列：靈動島用 absolute 疊在中間，所以時間與右邊的訊號圖示照常左右對齊。
+     ⚠️ 靈動島寬度抓螢幕的 ~29%（真機約 32%），再寬會擠到右邊的電池。 */
+  .lp-pstatus {
+    position: relative; background: #fff; color: #0d0f12;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 14px 8px; font-size: 0.6rem; font-weight: 700; line-height: 1;
   }
-  .lp-rm__brand { font-size: 1rem; font-weight: 800; }
-  .lp-rm__go { font-size: 0.78rem; font-weight: 700; background: rgba(255, 255, 255, 0.26); border-radius: var(--radius-pill); padding: 5px 14px; }
+  .lp-pstatus__island {
+    position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
+    width: 72px; height: 17px; border-radius: var(--radius-pill); background: var(--ink);
+  }
+  .lp-pstatus__sys { width: 47px; height: 12px; flex: none; }
+
+  /* LINE 聊天室標頭：返回鍵、頭像、店名、通話＋選單 */
+  .lp-pnav {
+    background: #fff; border-bottom: 1px solid #e6eaee;
+    display: flex; align-items: center; gap: 7px; padding: 7px 11px 9px;
+  }
+  .lp-pnav__back { width: 15px; height: 15px; color: #2b2f36; flex: none; }
+  .lp-pnav__ava { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none; }
+  .lp-pnav__name { font-size: 0.78rem; font-weight: 800; color: #14171c; letter-spacing: -0.01em; margin-right: auto; }
+  .lp-pnav__ico { width: 16px; height: 16px; color: #3a3f47; flex: none; }
+
+  /* 聊天區：日期膠囊＋一則歡迎訊息（2026-08-31 老闆指定，同時把手機整支拉高）。
+     ⛔ **justify-content: flex-start**——訊息從**上面**開始排、空白留在下半截。
+        08-31 我原本做成 flex-end（貼底）被老闆抓到：「新訊息在最下面」講的是**內容超過一頁
+        時的捲動位置**，內容還沒填滿一頁時就是從上往下排。這支手機只有一則訊息＝沒填滿。
+     ⚠️ 高度寫死 168px＝「手機高一些」的來源：其餘五層都是內容決定高度，只有這裡可以調，
+        而且調它剛好等於「聊天室看起來有多長」。改這個值就是改整支手機的高度。
+     ⛔ 別加第二則訊息（理由見 index.vue：這條窄帶講的是選單，對話會失焦）。 */
+  .lp-pbody {
+    height: 168px; flex: none; padding: 9px 9px 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 9px;
+  }
+  .lp-pbody__day {
+    flex: none; font-size: 0.56rem; font-weight: 600; color: #fff; line-height: 1;
+    background: rgba(38, 44, 52, 0.32); border-radius: var(--radius-pill); padding: 4px 10px;
+  }
+
+  /* 一則來自店家的訊息：頭像＋白泡泡＋泡泡右下角的時間。
+     ⛔ 不放店名——LINE 的一對一聊天室不顯示對方名字（只有群組才顯示），加了就露餡。
+     ⚠️ 三個元素**三種對齊**，這是 LINE 真的長相，不是隨手擺的：
+        頭像對泡泡的**上**緣（align-self: flex-start）、時間對泡泡的**下**緣、泡泡左上角有尖角。
+        頭像對到下緣（flex-end 的預設結果）多行訊息時會明顯不像。 */
+  .lp-pmsg { align-self: flex-start; display: flex; align-items: flex-end; gap: 6px; }
+  .lp-pmsg__ava {
+    align-self: flex-start; width: 24px; height: 24px; border-radius: 50%;
+    background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none;
+  }
+  .lp-pmsg__bubble {
+    position: relative; max-width: 158px; background: #fff; border-radius: 14px; padding: 7px 9px;
+    font-size: 0.6rem; line-height: 1.65; color: #14171c;
+  }
+  /* 指向頭像的小尖角。⛔ 用 border 畫三角形而不是旋轉方塊：旋轉的那顆會在泡泡圓角上露出邊 */
+  .lp-pmsg__bubble::before {
+    content: ''; position: absolute; left: -4px; top: 9px;
+    border: 4px solid transparent; border-left: 0; border-right-color: #fff;
+  }
+  .lp-pmsg__time { flex: none; font-size: 0.48rem; color: #9aa3ad; padding-bottom: 2px; }
+
+  /* 輸入列：真機在圖文選單展開時，這一列會留在選單**上方**（選單頂掉的是鍵盤） */
+  .lp-pbar {
+    background: #fff; border-top: 1px solid #e6eaee;
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  }
+  .lp-pbar__ico { width: 17px; height: 17px; color: #6b7280; flex: none; }
+  .lp-pbar__field { flex: 1 1 auto; height: 19px; border-radius: var(--radius-pill); background: #f0f2f5; }
+
+  /* 圖文選單本體＝實圖。比例 1527:1030（≒ LINE 官方 2500×1686），高度自己長不要寫死 */
+  .lp-pmenu { display: block; width: 100%; height: auto; }
+
+  /* Home 安全區：真機的指示條會落在圖文選單下面的白色安全區，不是壓在選單上 */
+  .lp-phome { background: #fff; padding: 5px 0 6px; display: flex; justify-content: center; }
+  .lp-phome i { width: 84px; height: 4px; border-radius: var(--radius-pill); background: var(--ink); opacity: 0.85; }
 
   /* ── 圖文選單窄帶（2026-08-27 從 791px 大卡降級）────────────
    * 左文右手機。它是「客服更省力」的手段，版面刻意小於兩張主卡。
    * ⛔ 舊的「兩支手機前後對照」樣式（.lp-phones／.lp-phonecol／.lp-phonetag／.lp-pchat／
    *    .lp-pmsg／.lp-pinput／.lp-phonecap）已整組刪除——刪之前反向 grep 過全部 .vue。
-   *    手機殼本體（.lp-phone／.lp-pscreen／.lp-rm）保留，窄帶還在用。
+   *    2026-08-31 再刪一組：div 刻的選單（.lp-rm／.lp-rm__r2／__r3／__c／__hero／__brand／__go
+   *    與 .lp-pscreen__top／__ava），同樣反向 grep 過 .vue/.ts/.mjs/.scss 才刪，只有 index.vue 在用。
    * ⛔ 手機**不做出血裁切**：試過用負下邊距讓它長出窄帶下緣（省 60px），但切點正好落在
    *    選單最後一排（商品資訊／訂單問題／真人客服）——那三格是有意義的內容，切掉就
-   *    看不出「常問的事變成按鈕」。整支顯示的窄帶約 320px，仍比原本 791px 的大卡省一半以上。
+   *    看不出「常問的事變成按鈕」。
+   * ⚠️ 窄帶高度＝**桌機 534px**（手機單欄 741px），手機殼本身 472px。這是 2026-08-31 兩輪
+   *    加高的結果：先補完整的手機介面（320→404），老闆再指定「高度可以高一些」＋加一則歡迎
+   *    訊息（404→534）。⚠️ **08-27「從 791px 大卡降級」的省版面初衷等於用掉了大半**——
+   *    現在只比那張大卡矮 257px。這是老闆兩次明確指示的結果，不是漂移；要再壓回去請先問他。
+   *    唯一該調的旋鈕是 .lp-pbody 的 height（其餘五層都由內容決定），改它＝改整支手機高度。
+   *    量測方式：headless 量 .lp-band 的 getBoundingClientRect（別用推算的，padding 會漏）。
    */
   .lp-band {
     margin-top: var(--card-gap); background: var(--surf-2); border: 1px solid var(--hair);
