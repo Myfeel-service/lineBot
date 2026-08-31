@@ -262,8 +262,11 @@
           </div>
         </div>
 
-        <div class="lp-stack lp-reveal">
-          <div class="lp-appgrid">
+        <!-- ⚠️ 進場動畫掛在**裡面每一塊**，不是掛在這層 .lp-stack：這一疊手機上有 2,126px 高，
+             整疊當一個單位的話，捲到最上緣時底下 1,500px 的圖文選單窄帶就已經「進場」過了，
+             真的捲到它時反而什麼都不會發生（而且元素越高，比例式的門檻越容易永遠達不到）。 -->
+        <div class="lp-stack">
+          <div class="lp-appgrid lp-reveal">
             <div class="lp-panel lp-appcard">
               <div class="lp-panel__hd">
                 <span class="lp-panel__pip" />
@@ -332,7 +335,7 @@
           <!-- 圖說只交代「資料是示範、數據是估算」——2026-08-27 起兩張卡上**只有現有功能**
                （回購喚醒／生日經營已撤下），所以不再需要「哪些還沒上線」那半句；
                「這是真介面」由卡片標頭的「系統實際畫面」meta 講。 -->
-          <p class="lp-figcap lp-figcap--center">
+          <p class="lp-figcap lp-figcap--center lp-reveal">
             畫面中的客人與資料為示範；數據以一家 2,000 位好友的店估算，非實際績效。
           </p>
 
@@ -344,7 +347,7 @@
                ⛔ 只留「有選單」那一支手機：原本兩支做前後對照，但「沒有選單」那支只是在
                   演示問題、佔掉一半版面，說服力全在「有選單」這支。
                ⛔ 手機裡不放對話泡泡：這條窄帶講的是**選單**，聊天內容會分散焦點。 -->
-          <div class="lp-band">
+          <div class="lp-band lp-reveal">
             <div class="lp-band__text">
               <h3>常問的事變成按鈕，客人自己點</h3>
               <p>客人一打開你的 LINE 就看到選單——不必打字問，你也少回一輪。</p>
@@ -377,7 +380,7 @@
             </div>
           </div>
           <!-- 「哪些現有、哪些未上線」窄帶自己那行已經講了，這裡只需標示意 -->
-          <p class="lp-figcap lp-figcap--center">選單畫面為示意。</p>
+          <p class="lp-figcap lp-figcap--center lp-reveal">選單畫面為示意。</p>
         </div>
       </div>
     </section>
@@ -536,12 +539,20 @@
                     d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40 L660 280 L60 280 Z"
                     fill="url(#lpGrowArea)"
                   />
+                  <!-- ⚠️ 兩條線都給 pathLength="1"：畫線動畫用 stroke-dasharray／dashoffset，
+                       這個屬性讓瀏覽器把「線有多長」一律當成 1，動畫就能寫成 1 → 0。
+                       ⛔ 別改回寫一個「比兩條都長」的固定值（原本是 1200，而兩條實際只有
+                          658 與 600）：那樣線在動畫走到 21% 時就已經畫完，後面 0.86 秒
+                          畫面是靜止的，然後標籤才突然浮出來——量過的，不是感覺。
+                       附帶好處：兩條長度不同的線會同時畫完，不會一條先到。 -->
                   <path
                     class="lp-chart__base"
+                    pathLength="1"
                     d="M60 265 C110 264,160 263,210 263 C260 262,310 261,360 260 C410 259,460 258,510 258 C560 257,610 256,660 256"
                   />
                   <path
                     class="lp-chart__me"
+                    pathLength="1"
                     d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40"
                   />
                   <g class="lp-chart__dots">
@@ -665,6 +676,8 @@
 </template>
 
 <script setup lang="ts">
+import type { BubbleTyping } from '~/utils/bubble-typing'
+import { prepareBubbleTyping } from '~/utils/bubble-typing'
 import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { daysBetween, taipeiDate } from '~~/shared/time'
@@ -785,6 +798,8 @@ function onScroll() { stuck.value = window.scrollY > 8 }
 
 let io: IntersectionObserver | undefined
 let barIo: IntersectionObserver | undefined
+/** 每顆對話泡泡的打字控制，key＝該泡泡的 .lp-turn（它同時就是 .lp-reveal 的觀察對象） */
+const typings = new Map<HTMLElement, BubbleTyping>()
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -807,15 +822,26 @@ onMounted(() => {
   anim.value = true
 
   nextTick(() => {
+    // 泡泡先把句子拆成一顆一顆的字（此時泡泡還是 opacity:0，拆的過程看不到），捲到才播。
+    // ⚠️ DOM 裡永遠是完整句子、只是先透明——爬蟲與沒有 JS 的人看到的內容不變，見 utils/bubble-typing.ts
+    root.value?.querySelectorAll<HTMLElement>('.lp-turn').forEach((turn) => {
+      const typing = prepareBubbleTyping(turn)
+      if (typing) typings.set(turn, typing)
+    })
+
     const els = root.value?.querySelectorAll<HTMLElement>('.lp-reveal') ?? []
+    // ⚠️ threshold 用 0 ＋ 底部 -12%（不是 threshold 0.12）：threshold 是**比例**，
+    //    元素比視窗高很多時比例永遠到不了門檻，那一塊就再也不會出現。
+    //    現況最險的是「能做什麼」那疊，手機上 2,126px、最大比例只有 0.29——今天還過得去，
+    //    但那是運氣不是設計。改成「上緣越過畫面 88% 就算進場」就沒有這個失敗模式。
     io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
-        if (e.isIntersecting) {
-          e.target.classList.add('in')
-          io?.unobserve(e.target)
-        }
+        if (!e.isIntersecting) return
+        e.target.classList.add('in')
+        typings.get(e.target as HTMLElement)?.play()
+        io?.unobserve(e.target)
       })
-    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' })
+    }, { threshold: 0, rootMargin: '0px 0px -12% 0px' })
     els.forEach(el => io?.observe(el))
   })
 })
@@ -824,6 +850,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   io?.disconnect()
   barIo?.disconnect()
+  typings.forEach(t => t.cancel())
+  typings.clear()
   document.documentElement.style.scrollBehavior = ''
 })
 </script>

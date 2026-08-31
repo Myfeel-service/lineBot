@@ -165,7 +165,10 @@
   /* 級距刻意收在 2.25rem：氣泡本身有 30px 內距，字級再大就會撐得比 Hero 的 h1 還搶。
      ⚠️ 粗細用 700 不用 800／900：中文字型 600 以上被夾成同一個字面，寫 800 只會讓
      「NT$399」「LINE」這種拉丁字比旁邊的中文重一級（實測過），700 讓兩邊對得上。 */
+  /* position:relative 是給打字效果的「正在輸入」三顆點定位用的（絕對定位到第一個字的位置，
+     才不會把第一行推開）——見本檔最後的「泡泡打字效果」段。 */
   .lp-bubble h2 {
+    position: relative;
     margin: 0; font-size: clamp(1.5rem, 3.2vw, 2.25rem); font-weight: 700;
     letter-spacing: -0.02em; line-height: 1.36; text-wrap: balance;
   }
@@ -191,6 +194,9 @@
   .lp-bubble .mark {
     background: none; color: var(--g-deep); padding: 0 1px;
     box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0.2);
+    /* 打字打完之後螢光筆才刷上去（打字中被下面的 .is-typing 改成透明）。
+       過渡放在這條基礎規則上，拿掉 .is-typing 時才會「刷」回來而不是瞬間出現。 */
+    transition: box-shadow .3s ease;
   }
 
   /* 氣泡與底下內容之間的固定節奏（等同 eyebrow＋h2 之後的 --section-head-gap）*/
@@ -691,22 +697,88 @@
   &.is-anim .lp-reveal { opacity: 0; transform: translateY(20px); }
   &.is-anim .lp-reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s ease; }
 
-  /* 60 秒時間軸：捲到才長出進度條 */
-  &.is-anim .lp-tl__track i { width: 0; }
-  &.is-anim .lp-reveal.in .lp-tl__track i { width: 100%; transition: width 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
+  /* 四道牆錯開 70ms 進場。⚠️ 四張卡是同時進入畫面的，不錯開的話就是一整片突然出現
+     ——那是「一塊東西閃出來」，不是四張卡。70ms 是刻意小的：只要能看出左到右的順序，
+     再大就變成要等第四張。 */
+  &.is-anim .lp-walls .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
+  &.is-anim .lp-walls .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
+  &.is-anim .lp-walls .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
+
+  /* 60 秒時間軸：捲到才長出進度條。
+     ⚠️ 用 scaleX 不用 width：width 每一幀都要重算版面，transform 不用（交給合成器）。
+     直式（手機）版在下面的 720px 斷點改成 scaleY。 */
+  &.is-anim .lp-tl__track i { transform: scaleX(0); transform-origin: left center; }
+  &.is-anim .lp-reveal.in .lp-tl__track i { transform: none; transition: transform 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
 
   /* 成長曲線：捲到才畫出來，線畫完才浮出面積、端點與標籤（先看到走勢，再看到誰是誰）。
-     dasharray 1200 是取「比兩條路徑都長」的值，路徑長度改了不用重算。 */
+     ⚠️ dasharray／dashoffset 都是 1，因為兩條 path 都掛了 pathLength="1"（見 index.vue），
+        「1」＝整條線。⛔ 別改回寫死一個「比兩條都長」的數字：原本寫 1200、線實際只有
+        658 與 600，於是線在 0.39 秒就畫完，接著**靜止 0.86 秒**才輪到標籤浮出來
+        （量出來的，不是感覺）。現在時間對得上：畫線 1.2 秒、1.05 秒開始浮標籤，接得上。 */
   &.is-anim {
-    .lp-chart__me, .lp-chart__base { stroke-dasharray: 1200; stroke-dashoffset: 1200; }
+    .lp-chart__me, .lp-chart__base { stroke-dasharray: 1; stroke-dashoffset: 1; }
     .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 0; }
     .lp-reveal.in {
-      .lp-chart__me, .lp-chart__base { stroke-dashoffset: 0; transition: stroke-dashoffset 1.8s cubic-bezier(.3, .8, .35, 1) .25s; }
-      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: opacity .7s ease 1.5s; }
+      .lp-chart__me, .lp-chart__base { stroke-dashoffset: 0; transition: stroke-dashoffset 1.2s cubic-bezier(.3, .8, .35, 1) .25s; }
+      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: opacity .55s ease 1.05s; }
     }
   }
 
+  /* 缺人的虛線人形：捲到才開始閃。⚠️ 無 JS 時（沒有 .is-anim）維持原本一直閃，
+     不然那格會變成完全靜止的虛線人。 */
+  &.is-anim .lp-wall__blink { animation-play-state: paused; }
+  &.is-anim .lp-reveal.in .lp-wall__blink { animation-play-state: running; }
+
   @keyframes lpBlinkSoft { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+  /* ── 泡泡的打字效果 ────────────────────────────────────────
+   * 每一區的標題都是 MiniMe 講的一句話，所以它應該是**打出來**的：
+   * 三顆點想一下 → 一顆字一顆字浮現 → 打完螢光筆才刷到重點上。
+   *
+   * ⚠️ 版面在第一幀就已經是最終尺寸：字全部先排好、只是 opacity:0，一顆一顆亮。
+   *    ⛔ 別改成「把字塞進去」的寫法——泡泡每顆都是兩行，字長出來的話泡泡會變高，
+   *       整個區塊在打字過程中被往下推一次。原因與拆字規則見 utils/bubble-typing.ts。
+   * ⚠️ 沒有 JS／爬蟲／「減少動態效果」時完全不會拆字，看到的就是完整句子。
+   */
+  /* ⛔ 字**不要**加淡入過渡（試過 .12s，看起來反而是壞的）：游標是掛在「正在打的那顆字」
+     身上的 ::after，而 opacity 會把整個子樹一起吃掉——字還在淡入的 120ms 內游標也是半透明，
+     可是每顆字只停留 30ms，於是游標永遠沒機會亮起來，等於看不到游標。
+     打字機本來就是一顆一顆「跳」出來的，直接切反而對。 */
+  .lp-tw__u { position: relative; }
+  &.is-anim .lp-turn.is-typing .lp-tw__u { opacity: 0; }
+  &.is-anim .lp-turn.is-typing .lp-tw__u.is-on { opacity: 1; }
+
+  /* 游標：絕對定位貼在「正在打的那顆字」右邊。
+     ⚠️ 一定要絕對定位——用會佔位置的寫法（例如 margin/inline-block）的話，游標每移動一顆字
+        就把後面的字推一次，長句子會邊打邊改斷行。 */
+  &.is-anim .lp-turn.is-typing .lp-tw__u.is-head::after {
+    content: ''; position: absolute; left: 100%; top: .18em;
+    width: 2px; height: .92em; background: var(--g-deep); border-radius: 1px;
+    animation: lpCaret .8s steps(1, end) infinite;
+  }
+
+  /* 「正在輸入」的三顆點：停在第一個字的位置（h2 是 position:relative）。 */
+  .lp-tw__dots {
+    position: absolute; left: 0; top: .42em;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .lp-tw__dots i {
+    width: 7px; height: 7px; border-radius: 50%; background: rgba(6, 199, 85, .55);
+    animation: lpDot 1.05s ease-in-out infinite;
+  }
+  .lp-tw__dots i:nth-child(2) { animation-delay: .16s; }
+  .lp-tw__dots i:nth-child(3) { animation-delay: .32s; }
+  .lp-tw__dots.is-out { opacity: 0; transition: opacity .12s ease; }
+
+  /* 打字中先不要螢光筆：它是畫在整段 .mark 上的，不關掉的話字都還沒出現就會先看到
+     一條綠色底線浮在空泡泡裡。打完拿掉 .is-typing，靠 .mark 自己的 transition 刷回來。 */
+  &.is-anim .lp-turn.is-typing .lp-bubble .mark { box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0); }
+
+  @keyframes lpCaret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @keyframes lpDot {
+    0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
 
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 960px) {
@@ -768,8 +840,9 @@
     .lp-tl--two .lp-tl__steps { grid-template-columns: 1fr; }
     .lp-tl--two .lp-tl__track { left: 21px; right: auto; }
     .lp-tl__track i { width: 100%; height: 100%; }
-    &.is-anim .lp-tl__track i { width: 100%; height: 0; }
-    &.is-anim .lp-reveal.in .lp-tl__track i { height: 100%; transition: height 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
+    /* 直式：改成由上往下長（桌機版是 scaleX，理由同上——不動版面只動 transform） */
+    &.is-anim .lp-tl__track i { transform: scaleY(0); transform-origin: center top; }
+    &.is-anim .lp-reveal.in .lp-tl__track i { transform: none; transition: transform 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
 
     /* 數據條、統計格改單欄 */
     .lp-statrow { grid-template-columns: 1fr; }
@@ -788,9 +861,12 @@
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
 
+  /* ⚠️ 這一段是**保險**，不是主要機制：勾了「減少動態效果」的人根本不會拿到 .is-anim
+     （index.vue 在掛上之前就 return 了）。它擋的是「載入後才去系統設定打開」那種情況。 */
   @media (prefers-reduced-motion: reduce) {
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
-    &.is-anim .lp-tl__track i { width: 100%; height: 100%; transition: none; }
+    &.is-anim .lp-walls .lp-reveal.in { transition-delay: 0s; }
+    &.is-anim .lp-tl__track i { transform: none; transition: none; }
     &.is-anim {
       .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
       .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }
@@ -798,5 +874,11 @@
     .lp-wall__blink { animation: none; }
     .lp-stickybar { transition: none; }
     .lp-btn:hover, .lp-wall:hover, .lp-panel:hover { transform: none; }
+
+    /* 打字：整句直接出現（選擇器要跟上面那三條同權重，才壓得回去） */
+    &.is-anim .lp-turn.is-typing .lp-tw__u { opacity: 1; transition: none; }
+    &.is-anim .lp-turn.is-typing .lp-tw__u.is-head::after { content: none; }
+    &.is-anim .lp-turn.is-typing .lp-bubble .mark { box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0.2); }
+    .lp-tw__dots { display: none; }
   }
 }
