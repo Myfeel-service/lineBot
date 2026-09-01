@@ -39,7 +39,7 @@ import {
   hasFestivalInWindow,
   pickFestivalReminder,
 } from '~~/shared/taiwan-festivals'
-import { ALERT_LABELS, ALERT_SEVERITY, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
@@ -1338,7 +1338,7 @@ export async function pushCriticalAlerts(db: Firestore) {
 
     // ⚠️ 只認 active。unknown（這次查不到）刻意不推——「查不到」不是「壞掉」，
     // 拿它推播就是把我方的查詢失敗當成商家的災情，一次誤報就會讓人關掉這個功能。
-    let criticals = items.filter(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'critical')
+    let criticals = items.filter(i => i.state === 'active' && severityOf(i) === 'critical')
     // 額度用完有自己的專屬通知（🚫 那則：發生當下就推、寫了用量與後果、每期一次）。
     // 同一期那則已經**送達**的話，這裡讓路——不然額度用完那天會連收兩則講同一件事
     // （2026-08-28 拍板修）。專屬那則全滅重試中則照講：寧可重複，不可漏報。

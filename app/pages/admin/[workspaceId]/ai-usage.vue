@@ -223,12 +223,17 @@
         <div ref="handoffCard" class="message-card usage-card" data-tour="usg-cases">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">近期轉真人案例</span>
-              <span class="text-xs text-muted">還沒處理的問題</span>
+              <!-- 「你修不了」的視角換一張臉：這裡不是待辦清單，是「誰被影響到了」（`D-44`①） -->
+              <span class="section-title">{{ unfixableView ? '這些客人被影響到了' : '近期轉真人案例' }}</span>
+              <span class="text-xs text-muted">{{ unfixableView ? 'AI 當下不通，已轉真人接手' : '還沒處理的問題' }}</span>
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="usage-hint">
+            <p v-if="unfixableView" class="usage-hint">
+              這些對話裡，AI 當下連不上外部服務、沒能自動回答，客人已經照轉真人流程接手（有收到回覆、也排進待處理）。
+              <strong>這個失敗不需要你處理</strong>——通常幾秒就自己恢復。你做得到的是去回覆這些被影響到的客人。
+            </p>
+            <p v-else class="usage-hint">
               AI 轉給真人的對話。預設只列「答不出來、補知識有救」的：點「補知識」直接到知識庫補一張對應卡；其他原因用下拉切換。
               同一題被問很多次的，AI 會先在知識庫的「建議收件匣」擬好草稿，<NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="admin-inline-link">去那裡採用更快 →</NuxtLink>
             </p>
@@ -270,6 +275,13 @@
                 <div class="usage-empty__desc">這裡只列「目前還卡著、尚未處理」的對話，不分月份，和上方本月的場數統計不是同一份計數。想回顧請勾「顯示已處理」。</div>
               </div>
             </div>
+            <div v-else-if="!handoffs.length && unfixableView" class="usage-empty usage-empty--good">
+              <span class="usage-empty__icon">✓</span>
+              <div>
+                <div class="usage-empty__title">沒有客人被這種失敗影響到</div>
+                <div class="usage-empty__desc">AI 連不上服務時才會列在這裡。想回顧發生過的，勾「顯示已處理」。</div>
+              </div>
+            </div>
             <div v-else-if="!handoffs.length" class="usage-empty">
               這個篩選下沒有案例。換個原因看看，或勾「顯示已處理」回顧處理過的。
             </div>
@@ -290,16 +302,21 @@
                 <div v-if="row.handoffReason === 'non_text_content'" class="usage-handoff-sources">
                   AI 目前看不懂圖片、影片這類內容，客人傳完後就要求真人。點「開對話」看客人傳了什麼。
                 </div>
+                <div v-else-if="isUnfixable(row.handoffReason)" class="usage-handoff-sources">
+                  AI 當下連不上服務，這一題沒有自動回答；客人已經轉給真人。補知識幫不上，直接回他就好。
+                </div>
                 <!-- 失敗當下對方回了什麼。只給超管:一般使用者看了也不能怎麼樣,
                      但沒有它我們事後分不出是額度、過載還是逾時(2026-09-01 查一場實例時整個查不到) -->
                 <div v-if="advancedOpen && row.errorDetail" class="usage-handoff-sources usage-handoff-sources--tech">
                   失敗原因：{{ row.errorDetail }}
                 </div>
                 <div class="usage-handoff-actions">
-                  <!-- 傳圖案例沒有「補知識」可按,主要動作換成開對話,不讓那一列全是次要按鈕 -->
-                  <el-button :icon="ChatDotRound" size="small" :type="row.handoffReason === 'non_text_content' ? 'primary' : undefined" plain @click="goConversation(row.userId)">開對話</el-button>
-                  <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路 -->
-                  <el-button v-if="row.handoffReason !== 'non_text_content'" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
+                  <!-- 補知識幫不上的案例（傳圖、AI 連不上服務）主要動作換成開對話,不讓那一列全是次要按鈕 -->
+                  <el-button :icon="ChatDotRound" size="small" :type="noKnowledgeFix(row.handoffReason) ? 'primary' : undefined" plain @click="goConversation(row.userId)">{{ isUnfixable(row.handoffReason) ? '開對話回覆他' : '開對話' }}</el-button>
+                  <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路。
+                       AI 連不上服務:知識庫本來就沒缺卡,補一張只會多一張沒人用的卡（重演反而有用——
+                       同一句話再問一次就知道服務恢復了沒,所以只擋補知識不擋重演）-->
+                  <el-button v-if="!noKnowledgeFix(row.handoffReason)" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
                   <el-button v-if="advancedOpen && row.handoffReason !== 'non_text_content'" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
                   <!-- 「已處理」只影響這份清單，不通知任何人——不講清楚的話沒人敢按 -->
                   <el-tooltip v-if="!row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
@@ -515,11 +532,39 @@ const reasonGroupOptions = [
   { label: '刻意設計要人接', value: 'order_status,sensitive_topic,commercial_inquiry' },
   { label: '客人指名真人', value: 'user_request' },
   { label: '傳了圖片/檔案', value: 'non_text_content' },
-  { label: '系統狀況（AI 失敗、額度用完…）', value: 'llm_error,quota_exceeded,auto_reply_repeat' },
+  // ⛔ 原本這兩個跟「自動回覆一直重複」擠在一個叫「系統狀況」的選項裡,但那個名字把
+  // **你修不了**（AI 連不上服務）和**很需要你修**（則數用完,不處理客人會一直被轉真人）
+  // 混成一袋（2026-09-01 `D-44`③ 老闆拍板拆開）。
+  // 「自動回覆一直重複」拿掉了:自動回覆功能 2026-08-09 整個下架,server 端已經沒有任何
+  // 地方會產生這個原因,只剩舊資料——舊的那幾筆用「全部原因」還是看得到,不是被藏起來。
+  { label: 'AI 服務當下不通（你修不了）', value: 'llm_error' },
+  { label: '回覆則數用完（要你處理）', value: 'quota_exceeded' },
   { label: '全部原因', value: '' },
 ]
+
+/**
+ * 「你修不了」的轉真人原因（`D-44`① 拍板）：這幾種的畫面要換一張臉。
+ *
+ * 為什麼：這類失敗補知識、改設定全都幫不上忙，把它放在「還沒處理的問題」底下配一顆
+ * 「補知識」，等於叫人去做他做不到的事（老闆原話：「我其實什麼也沒辦法做」）。
+ * 你**做得到**的只有一件事——去回那位被影響到的客人，所以主要動作換成開對話。
+ * ⛔ 這不是「把錯誤藏起來」：它照樣列出來、照樣看得到次數，只是改講「有人被影響」
+ * 而不是「你有一件事沒處理」。
+ * ⛔ 別把「則數用完」加進來：那個你修得了（升級／加購），而且不修客人會一直被轉真人。
+ */
+const UNFIXABLE_REASONS = new Set<HandoffReason>(['llm_error'])
+function isUnfixable(r: HandoffReason | null): boolean {
+  return !!r && UNFIXABLE_REASONS.has(r)
+}
+/** 補知識對這一列有沒有意義（傳圖那種原本就沒有） */
+function noKnowledgeFix(r: HandoffReason | null): boolean {
+  return r === 'non_text_content' || isUnfixable(r)
+}
 // 預設停在「答不出來」：這張卡的存在理由是補知識，指名真人／查訂單那些沒有動作可做
 const reasonFilter = ref<string>(GAP_FILTER)
+/** 整份清單都是「你修不了」的原因時，標題／說明／空狀態一起換掉 */
+const unfixableView = computed(() =>
+  !!reasonFilter.value && reasonFilter.value.split(',').every(r => UNFIXABLE_REASONS.has(r as HandoffReason)))
 /** 深連結帶進來的單一原因（如異常中心的 llm_error）——臨時加一個選項讓下拉顯示得出名字 */
 const extraReasonOption = ref<{ label: string; value: string } | null>(null)
 const reasonOptions = computed(() =>
@@ -1092,7 +1137,10 @@ onMounted(() => {
   const qReason = String(route.query.reason || '')
   const applied = !!qReason && qReason !== 'manual' && qReason in HANDOFF_REASON_LABELS
   if (applied) {
-    extraReasonOption.value = { label: `只看：${HANDOFF_REASON_LABELS[qReason as HandoffReason]}`, value: qReason }
+    // 已經是下拉裡的正式選項就不要再補一個（llm_error 自 2026-09-01 起是正式選項，
+    // 補了會變成兩個一模一樣的項目）
+    if (!reasonGroupOptions.some(o => o.value === qReason))
+      extraReasonOption.value = { label: `只看：${HANDOFF_REASON_LABELS[qReason as HandoffReason]}`, value: qReason }
     reasonFilter.value = qReason
     // 警示看的是「發生過幾次」而非「還沒處理」→ 連結帶 includeResolved 才不會落在空清單
     if (String(route.query.includeResolved || '') === '1') showResolved.value = true

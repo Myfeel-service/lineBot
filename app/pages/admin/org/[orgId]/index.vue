@@ -408,7 +408,7 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
 import { ALERT_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
-import { ALERT_SEVERITY } from '~~/shared/types/alerts'
+import { severityOf } from '~~/shared/types/alerts'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
@@ -489,7 +489,7 @@ const alertSummaries = computed<Record<string, WsAlertSummary>>(() => {
     const sum: WsAlertSummary = { critical: 0, warning: 0, titles: [] }
     for (const it of items) {
       if (it.state !== 'active' || FLAG_COVERED_ALERT_IDS.has(it.id)) continue
-      const sev = ALERT_SEVERITY[it.id]
+      const sev = severityOf(it)
       if (sev === 'critical') sum.critical++
       else if (sev === 'warning') sum.warning++
       else continue // suggestion 是「可以更好」，不是異常，組織彙總不計

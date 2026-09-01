@@ -124,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { USAGE_RATIO_FLAG_THRESHOLD, USAGE_RATIO_MIN_INVOCATIONS } from '~~/shared/billing/usage-ratio'
 import type { UsageRatioVerdict } from '~~/shared/billing/usage-ratio'
 import type { SuperAlertsWorkspace } from '~~/shared/types/super-alerts'
@@ -193,9 +193,9 @@ const rows = computed<Row[]>(() => (data.value?.workspaces ?? []).map((w) => {
   return {
     id: w.id,
     name: w.name,
-    critical: active.filter(i => ALERT_SEVERITY[i.id] === 'critical').map(toChip),
+    critical: active.filter(i => severityOf(i) === 'critical').map(toChip),
     // 建議處理＝黃級＋「可以更好」一起列:超管視角都是要掃一眼的事,分兩欄只會更擠
-    advisory: active.filter(i => ALERT_SEVERITY[i.id] !== 'critical').map(toChip),
+    advisory: active.filter(i => severityOf(i) !== 'critical').map(toChip),
     unknownCount: w.items.filter(i => i.state === 'unknown').length,
     usage: w.usage,
   }

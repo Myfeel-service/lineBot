@@ -11,7 +11,7 @@
 
 import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
-import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS } from '~~/shared/types/alerts'
+import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AlertFixOpId } from '~~/shared/types/alert-fix'
 import type { AgentGuideId } from '~/utils/agent-guides'
@@ -705,7 +705,9 @@ export function useWorkspaceAlerts() {
         return {
           ...a,
           title: ALERT_LABELS[a.id],
-          severity: ALERT_SEVERITY[a.id],
+          // 探針可以蓋掉預設分級（見 severityOf）：`llmError` 偶發一次算「供你參考」、
+          // 一小時內連著壞才升成紅色。item 還沒載到時退回預設表。
+          severity: item ? severityOf(item) : ALERT_SEVERITY[a.id],
           owner: SYSTEM_OWNED_ALERTS.has(a.id) ? 'system' as const : undefined,
           state: item?.state ?? 'unknown',
           count: item?.count,

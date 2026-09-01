@@ -1,6 +1,6 @@
 import type { Firestore, Timestamp } from 'firebase-admin/firestore'
 import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
-import type { WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope } from '~~/shared/types/alerts'
+import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope } from '~~/shared/types/alerts'
 import { getAiSettings } from './ai-settings'
 import { cleanReason, humanizeHours } from './alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
@@ -60,6 +60,16 @@ const WRONG_ANSWER_SCAN_LIMIT = 100
 const WRONG_ANSWER_CHUNK_LOOKUP = 30
 /** llm_error 只看近 24 小時：Gemini 兩週前抖過一次不該一直掛紅燈 */
 const LLM_ERROR_WINDOW_MS = 24 * 3600_000
+/**
+ * 「偶發」與「真的出事」的分界（2026-09-01 `D-44`② 老闆拍板）。
+ *
+ * 為什麼要分：`H-24` 修好之後，AI 連不上服務的客人已經被接住轉真人了，商家對這件事
+ * **什麼也做不了**。這種一次性抖動照樣推 LINE，只會養成對紅色推播無感（狼來了），
+ * 真的整天在壞那次反而被忽略。所以：一小時內連著壞 3 次以上才升成紅色（會推 LINE），
+ * 以下歸「供你參考」——後台仍然看得到、不會消失，只是不吵人。
+ */
+const LLM_ERROR_BURST_WINDOW_MS = 60 * 60_000
+const LLM_ERROR_BURST_MIN = 3
 /** 客人等真人超過此時數才算積壓（幾分鐘的等待是正常客服節奏，不是異常） */
 const PENDING_WAIT_ALERT_HOURS = 1
 
@@ -248,13 +258,61 @@ export function channelConflictDetail(names: string[]): string {
   return `同一個官方帳號也接在「${names.join('」、「')}」`
 }
 
-type ProbeResult = { active: boolean; count?: number; detail?: string; scopes?: WorkspaceAlertScope[] }
+/**
+ * 近期 `llm_error` 每一次的發生時間。
+ *
+ * ⛔ 為什麼不能只數 `conversations.aiMeta`：那是**每位客人一張、每輪覆寫**——
+ * 同一個人連壞三次只算一次，壞完又成功一次那筆整個消失。2026-09-01 老闆看到的
+ * 「1 次」就是這樣來的（實際不只）。所以優先逐回合數 `aiTurns`。
+ *
+ * `underCounted: true` ＝ 走了退路（多半是 `aiTurns` 的 collectionGroup 索引還沒部署），
+ * 回傳的是「有幾位客人的最後一次是失敗」，數字一定偏低。呼叫端要把這件事講出來，
+ * ⛔ 不可以當成準的用（「查不到就當沒問題」是這個專案付過三次代價的病）。
+ */
+async function recentLlmErrorTimes(
+  db: Firestore,
+  wid: string,
+  sinceMs: number,
+): Promise<{ times: number[]; underCounted: boolean }> {
+  try {
+    const snap = await db.collectionGroup('aiTurns')
+      .where('workspaceId', '==', wid)
+      .where('handoffReason', '==', 'llm_error')
+      .where('createdAt', '>=', new Date(sinceMs))
+      .limit(LLM_ERROR_SCAN_LIMIT)
+      .get()
+    return {
+      times: snap.docs.map(d => tsToMs((d.data() as { createdAt?: unknown }).createdAt)).filter(ms => ms >= sinceMs),
+      underCounted: false,
+    }
+  }
+  catch (e) {
+    console.warn('[alerts] llmError 逐回合查詢失敗，退回 aiMeta（數字會低估）:', String((e as Error)?.message ?? e).slice(0, 160))
+  }
+  // 退路：既有 composite index（workspaceId, aiMeta.lastHandoffReason, aiMeta.updatedAt DESC）
+  const snap = await db.collection('conversations')
+    .where('workspaceId', '==', wid)
+    .where('aiMeta.lastHandoffReason', '==', 'llm_error')
+    .orderBy('aiMeta.updatedAt', 'desc')
+    .limit(LLM_ERROR_SCAN_LIMIT)
+    .get()
+  return {
+    times: snap.docs
+      .map(d => tsToMs((d.data() as { aiMeta?: { updatedAt?: unknown } }).aiMeta?.updatedAt))
+      .filter(ms => ms >= sinceMs),
+    underCounted: true,
+  }
+}
+
+type ProbeResult = { active: boolean; count?: number; detail?: string; scopes?: WorkspaceAlertScope[]
+  /** 蓋掉預設嚴重度（見 shared 的 severityOf）。目前只有 llmError 用：偶發一次 vs 一直在壞是兩件事 */
+  severity?: AlertSeverity }
 
 /** 把一次判定包成 active/clear；丟錯降級為 unknown（狀態未知，不等於沒問題） */
 async function probe(id: WorkspaceAlertId, fn: () => Promise<ProbeResult>): Promise<WorkspaceAlertItem> {
   try {
     const r = await fn()
-    return { id, state: r.active ? 'active' : 'clear', count: r.count, detail: r.detail, scopes: r.scopes }
+    return { id, state: r.active ? 'active' : 'clear', count: r.count, detail: r.detail, scopes: r.scopes, severity: r.severity }
   }
   catch (e) {
     console.warn(`[alerts] ${id} 檢查失敗:`, String((e as Error)?.message ?? e).slice(0, 160))
@@ -432,25 +490,28 @@ export async function collectWorkspaceAlerts(
           return { active: true, count: hits.length, detail: `設定「${hits[0]!.name}」` }
         }),
         probe('llmError', async () => {
-          // 走既有 composite index（workspaceId, aiMeta.lastHandoffReason, aiMeta.updatedAt DESC）
-          const snap = await db.collection('conversations')
-            .where('workspaceId', '==', wid)
-            .where('aiMeta.lastHandoffReason', '==', 'llm_error')
-            .orderBy('aiMeta.updatedAt', 'desc')
-            .limit(LLM_ERROR_SCAN_LIMIT)
-            .get()
           const now = Date.now()
-          const cutoff = now - LLM_ERROR_WINDOW_MS
-          const recentMs = snap.docs
-            .map(d => tsToMs((d.data() as { aiMeta?: { updatedAt?: unknown } }).aiMeta?.updatedAt))
-            .filter(ms => ms >= cutoff)
-          if (!recentMs.length) return { active: false }
+          const { times, underCounted } = await recentLlmErrorTimes(db, wid, now - LLM_ERROR_WINDOW_MS)
+          if (!times.length) return { active: false }
           // 帶「最近一次是多久前」：正在壞和昨晚壞過一次，處理的急迫性完全不同
-          const newest = Math.max(...recentMs)
+          const newest = Math.max(...times)
+          const ago = `最近一次約 ${humanizeHours((now - newest) / 3600_000)}前`
+          // 一小時內連著壞才算真的出事（見 LLM_ERROR_BURST_MIN）。
+          // ⚠️ 退回舊查法時一小時窗沒有意義（那份資料每位客人只留最後一次，
+          // 同一人連壞三次會被算成一次）→ 改用 24 小時的筆數當門檻。
+          // 寧可多吵一次也不要漏報：這個模式下算出來的一定是**低估**。
+          const burst = underCounted
+            ? times.length
+            : times.filter(t => t >= now - LLM_ERROR_BURST_WINDOW_MS).length
+          const isBurst = burst >= LLM_ERROR_BURST_MIN
+          const prefix = underCounted ? '至少 ' : ''
           return {
             active: true,
-            count: recentMs.length,
-            detail: `最近一次約 ${humanizeHours((now - newest) / 3600_000)}前`,
+            count: times.length,
+            severity: isBurst ? 'critical' : 'suggestion',
+            detail: isBurst
+              ? `${prefix}${burst} 次，${ago}`
+              : `${prefix}${times.length} 次，${ago}；偶發，客人已轉真人接手`,
           }
         }),
         probe('humanBacklog', async () => {

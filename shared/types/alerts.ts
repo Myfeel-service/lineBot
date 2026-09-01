@@ -208,6 +208,15 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
 }
 
 /**
+ * 這一顆現在該算多嚴重：優先用探針帶回來的動態分級，否則用預設表。
+ * 畫面、側欄點、LINE 推播、超管總覽全部走這支，只有「這顆能不能被靜音」
+ * 這種講的是異常**種類**而不是**這一次**的判斷才直接查 ALERT_SEVERITY。
+ */
+export function severityOf(item: { id: WorkspaceAlertId; severity?: AlertSeverity }): AlertSeverity {
+  return item.severity ?? ALERT_SEVERITY[item.id]
+}
+
+/**
  * 「這是系統這邊的狀況，使用者動不了手」（2026-08-21 老闆拍板做，原 `D-8`③）。
  *
  * 外部服務暫時掛掉、背景排程沒跑、我方蓋章漏掉——使用者去點任何按鈕都不會讓它好。
@@ -291,6 +300,16 @@ export const ALERT_SCOPE_LABELS: Record<WorkspaceAlertScope, string> = {
 export interface WorkspaceAlertItem {
   id: WorkspaceAlertId
   state: WorkspaceAlertState
+  /**
+   * 這一次的嚴重度，蓋掉 {@link ALERT_SEVERITY} 的預設（**唯一的動態分級管道**）。
+   *
+   * 為什麼要有：有些異常「發生一次」與「一直在發生」是兩件事。`llmError` 就是實例——
+   * 偶爾一次外部服務抖動，客人已經被接住轉真人了，商家什麼也做不了，半夜推播只會養成
+   * 對紅色無感；但一小時內連著壞好幾次就是真的出事，那才值得打斷人（2026-09-01 `D-44`②拍板）。
+   * ⛔ 讀嚴重度一律走 {@link severityOf}，不要直接查 ALERT_SEVERITY——漏一處就會出現
+   * 「畫面是紅的、推播不推」這種對不起來的狀況（分級搬進 shared 就是為了避免這件事）。
+   */
+  severity?: AlertSeverity
   /** 影響幾個（來源數 / 卡數 / 筆數）；沒有數量概念的異常不帶。 */
   count?: number
   /** 一句話補充，直接顯示給使用者看（例如失敗原因、最久等待時數）。 */

@@ -7,7 +7,7 @@
  *
  * 端點本身有 5 分鐘整包快取，這裡的 60 秒 TTL 只是省 HTTP 往返。
  */
-import { ALERT_SEVERITY } from '~~/shared/types/alerts'
+import { severityOf } from '~~/shared/types/alerts'
 import type { SuperAlertsOverviewPayload } from '~~/shared/types/super-alerts'
 
 const REFRESH_TTL_MS = 60_000
@@ -55,10 +55,10 @@ export function useSuperAlerts() {
     if (!d) return null
     if (d.heartbeat.state === 'stalled') return 'critical'
     const anyCritical = d.workspaces.some(w =>
-      w.items.some(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'critical'))
+      w.items.some(i => i.state === 'active' && severityOf(i) === 'critical'))
     if (anyCritical) return 'critical'
     const anyWarning = d.workspaces.some(w =>
-      w.usage.flagged || w.items.some(i => i.state === 'active' && ALERT_SEVERITY[i.id] === 'warning'))
+      w.usage.flagged || w.items.some(i => i.state === 'active' && severityOf(i) === 'warning'))
     return anyWarning ? 'warning' : null
   })
 
