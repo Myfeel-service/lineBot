@@ -502,6 +502,14 @@ export interface AiConversationMeta {
    * 同客人之後又發生新互動（updatedAt 更新）會自動回到未處理。
    */
   handoffResolvedAt?: Timestamp | FieldValue | null
+  /**
+   * `llm_error` 時外部服務回了什麼（已去識別、截短，見 describeGeminiError）。
+   *
+   * 為什麼要存：2026-09-01 有一場真的失敗，事後想查是額度、過載還是逾時，
+   * 發現錯誤內容只進過主機的即時日誌、資料庫只留「失敗」兩個字，只能靠排除法猜。
+   * ⛔ 只給超管在「顯示技術細節」下看：這是給我們除錯的，不是給店家的待辦。
+   */
+  lastErrorDetail?: string
   updatedAt: Timestamp | FieldValue
 }
 
@@ -535,6 +543,8 @@ export interface AiTurnDoc {
   suggestedReply: string
   /** 轉真人時的對話摘要 */
   handoffSummary: string
+  /** `llm_error` 時外部服務回了什麼（已去識別、截短）；同 {@link AiConversationMeta.lastErrorDetail} */
+  errorDetail?: string
   createdAt: Timestamp | FieldValue
   /** 保留期同其他事件流（240 天）；TTL policy 兩專案各手動設一次 */
   expireAt: Timestamp

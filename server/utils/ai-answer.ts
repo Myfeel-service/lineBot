@@ -24,7 +24,7 @@ import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChu
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { contentSimilarity } from './ai-knowledge-resync'
 import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName } from './ai-product-alias'
-import { embedQuery, estimateTokens, generateJson, generateText } from './gemini'
+import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
 import { maybeWarnQuotaThreshold, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
@@ -549,9 +549,14 @@ export function isReplyingToBotQuestion(history: AiChatTurn[] | undefined, curre
 export interface AnswerOutput extends AiAnswerResult {
   /** Playground 用 */
   debugPrompt?: string
+  /**
+   * `llm_error` 時外部服務回了什麼（已去識別、截短）。呼叫端寫進 aiMeta／aiTurns，
+   * 超管的「顯示技術細節」看得到——沒有它，事後只查得到「失敗」兩個字。
+   */
+  errorDetail?: string
 }
 
-function handoff(reason: HandoffReason, sources: SimilarChunk[] = []): AnswerOutput {
+function handoff(reason: HandoffReason, sources: SimilarChunk[] = [], errorDetail?: string): AnswerOutput {
   return {
     decision: 'handoff',
     answer: '',
@@ -559,6 +564,7 @@ function handoff(reason: HandoffReason, sources: SimilarChunk[] = []): AnswerOut
     confidence: sources[0]?.similarity ?? 0,
     sources: sources.map(s => ({ chunkId: s.id, title: s.title, similarity: s.similarity })),
     handoffReason: reason,
+    ...(errorDetail ? { errorDetail } : {}),
   }
 }
 
@@ -1475,7 +1481,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     console.error('[ai-answer] embedQuery failed:', err)
     await record({ invocations: 1, handoffs: 1 })
     logHandoff('llm_error')
-    return handoff('llm_error')
+    // 帶上失敗原因：這一步（轉向量／意圖分類）與下面生成那一步都會變成同一個 llm_error，
+    // 不寫清楚是哪一步、對方回什麼，事後除了「失敗」兩個字什麼都查不到
+    return handoff('llm_error', [], `檢索前置（轉向量／意圖分類）：${describeGeminiError(err)}`)
   }
   // precomputed 的 router token 已由 handler 記帳，這裡歸零避免重複計
   const routerIn = input.precomputedIntent ? 0 : (intentRes?.inputTokens ?? 0)
@@ -2093,7 +2101,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       outputTokens: routerOut,
     })
     logHandoff('llm_error', chunks)
-    return handoff('llm_error', chunks)
+    return handoff('llm_error', chunks, `生成回答：${describeGeminiError(err)}`)
   }
 
   // ── 5.5 越界補抓（生成層）：router 漏掉、檢索又擦邊過門檻的閒聊 / 代工 / 打探類問題。

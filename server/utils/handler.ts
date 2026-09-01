@@ -43,6 +43,7 @@ import {
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
 import { answerWithAi, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
+import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
@@ -3649,20 +3650,50 @@ async function tryAiFallback(params: {
   const inCooldown = cooldownMs > 0 && askedAtMs > 0 && (Date.now() - askedAtMs) < cooldownMs
   const skipDisambiguation = isFollowup || inCooldown
 
-  // llm_error：Gemini 暴掉。不回客人（丟「已為您安排專員」反而誤導），但**不能靜默**——
-  // 客服必須知道有人在等：通知值班 + 寫 aiMeta 讓收件匣看得到這位客人。
-  const recordLlmError = async () => {
-    notifyHandoffToStaff({
-      workspaceId,
-      customerLineUserId: lineUserId,
-      customerName: userAttributes.displayName || lineUserId,
-      customerMessage: textContent,
-      reason: 'llm_error',
-    }).catch(e => console.error('[ai-fallback] notifyHandoffToStaff error:', e))
+  /**
+   * llm_error：外部 AI 服務打不通。**走和其他轉真人原因完全一樣的流程**，不再自成一格。
+   *
+   * ⛔ 2026-09-01 之前這裡是「只寫 aiMeta ＋ 呼叫 notifyHandoffToStaff」，不走 deliverHandoffReply。
+   * 當時的理由是「不回客人，丟『已為您安排專員』反而誤導」——但實測的代價是整條鏈都斷了：
+   *   ① 客人一個字都沒收到（實例：15:04 問問題、15:29 自己連按三次「真人客服」才被接住，中間 25 分鐘全靜音）
+   *   ② session 沒進 pending_human ＝ 不在待處理佇列裡，沒有任何人知道有客人在等
+   *   ③ 通知模式若是 missed_only，當下不推播、只把內容存起來，而回頭撈它的 remindOverdueHandoffs
+   *      **只掃 pending_human 的 session**——②沒發生，這則通知就永遠不會送出（100% 靜音）
+   *   ④ 那份存檔還會被客人下一次動作覆寫，連原本問了什麼都留不住
+   * 所以「不回客人」不是保守，是最不誠實的一種：畫面上寫「已轉真人」，實際誰也沒轉。
+   * 現在改成真的轉——那句「已為您安排專員」才不是空頭支票。
+   *
+   * 摘要刻意不生（其他 handoff 原因會呼叫 summarizeHandoffContext）：那也要打同一個 AI 服務，
+   * 而它正在壞，再打一次只是多等幾秒再拿到一個空字串。
+   */
+  const recordLlmError = async (errorDetail?: string) => {
+    // 草稿模式不對客人發話、也不鎖 session（沒承諾過客人「安排專員」），但仍通知值班客服。
+    // 與下方一般 handoff 路徑同一套規則，見 C-1。
+    if (draftMode) {
+      notifyHandoffToStaff({
+        workspaceId,
+        customerLineUserId: lineUserId,
+        customerName: userAttributes.displayName || lineUserId,
+        customerMessage: textContent,
+        reason: 'llm_error',
+      }).catch(e => console.error('[ai-fallback] notifyHandoffToStaff error:', e))
+    }
+    else {
+      await deliverHandoffReply({
+        workspaceId, lineUserId, replyToken, userAttributes, channelSecret,
+        sessionId, requestOrigin,
+        customerMessage: textContent,
+        reason: 'llm_error',
+        aiTurnId: turnId,
+      })
+    }
     await recordTurn({
       lastDecision: 'handoff',
       lastHandoffReason: 'llm_error',
       lastQuery: textContent,
+      // 對方回了什麼（已去識別、截短）。只有超管的「顯示技術細節」看得到；
+      // 沒有它，事後只查得到「失敗」兩個字，分不出是額度、過載還是逾時。
+      lastErrorDetail: errorDetail ?? '',
       // 瞬時錯誤不能清掉反問狀態：客人重點同一顆按鈕要仍被視為 followup、cooldown 不重置
       lastDisambiguation: prevAiMeta?.lastDisambiguation ?? null,
       suggestedReply: prevAiMeta?.suggestedReply ?? '',
@@ -3684,12 +3715,12 @@ async function tryAiFallback(params: {
   }
   catch (e) {
     console.error('[ai-fallback] answerWithAi failed:', e)
-    await recordLlmError()
+    await recordLlmError(`答題流程整個中斷：${describeGeminiError(e)}`)
     return
   }
 
   if (result.decision === 'handoff' && result.handoffReason === 'llm_error') {
-    await recordLlmError()
+    await recordLlmError(result.errorDetail)
     return
   }
 
@@ -3900,6 +3931,8 @@ const AI_META_DEFAULTS: Omit<AiConversationMeta, 'updatedAt' | 'lastDecision'> =
   suggestedReply: '',
   handoffSummary: '',
   lastDisambiguation: null,
+  // 只有 llm_error 會填；其餘決定一律清空，否則失敗一次之後每一輪都掛著同一句舊錯誤
+  lastErrorDetail: '',
 }
 
 /**
@@ -3935,6 +3968,7 @@ async function writeAiMeta(
     answerKind: merged.lastAnswerKind ?? 'kb',
     suggestedReply: merged.suggestedReply,
     handoffSummary: merged.handoffSummary,
+    errorDetail: merged.lastErrorDetail ?? '',
   })
 }
 

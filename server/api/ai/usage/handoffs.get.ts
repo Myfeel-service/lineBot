@@ -14,6 +14,11 @@ interface HandoffRow {
   updatedAtMs: number
   /** 已被標記處理（resolvedAt >= updatedAt） */
   resolved: boolean
+  /**
+   * `llm_error` 時外部服務回了什麼（已去識別、截短）。前端只在超管開「顯示技術細節」時印，
+   * 一般使用者看了也不能怎麼樣——但沒有它，事後連我們自己都查不出是哪一種失敗。
+   */
+  errorDetail: string
 }
 
 function tsToMs(raw: unknown): number {
@@ -114,6 +119,7 @@ export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; h
       })),
       updatedAtMs,
       resolved: resolvedAtMs > 0 && resolvedAtMs >= updatedAtMs,
+      errorDetail: String(meta.lastErrorDetail ?? ''),
     }
   })
 

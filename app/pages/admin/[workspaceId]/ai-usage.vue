@@ -290,6 +290,11 @@
                 <div v-if="row.handoffReason === 'non_text_content'" class="usage-handoff-sources">
                   AI 目前看不懂圖片、影片這類內容，客人傳完後就要求真人。點「開對話」看客人傳了什麼。
                 </div>
+                <!-- 失敗當下對方回了什麼。只給超管:一般使用者看了也不能怎麼樣,
+                     但沒有它我們事後分不出是額度、過載還是逾時(2026-09-01 查一場實例時整個查不到) -->
+                <div v-if="advancedOpen && row.errorDetail" class="usage-handoff-sources usage-handoff-sources--tech">
+                  失敗原因：{{ row.errorDetail }}
+                </div>
                 <div class="usage-handoff-actions">
                   <!-- 傳圖案例沒有「補知識」可按,主要動作換成開對話,不讓那一列全是次要按鈕 -->
                   <el-button :icon="ChatDotRound" size="small" :type="row.handoffReason === 'non_text_content' ? 'primary' : undefined" plain @click="goConversation(row.userId)">開對話</el-button>
@@ -476,6 +481,8 @@ interface HandoffRow {
   resolved: boolean
   sources: Array<{ chunkId: string; title: string }>
   updatedAtMs: number
+  /** AI 服務失敗時對方回了什麼（已去識別、截短）；只有超管開「顯示技術細節」時印 */
+  errorDetail?: string
 }
 
 const summary = ref<Summary | null>(null)

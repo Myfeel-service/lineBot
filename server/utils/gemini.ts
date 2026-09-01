@@ -48,6 +48,18 @@ const MAX_RETRIES = 1
 const BASE_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 2000
 
+/**
+ * 轉向量（embedding）專用的重試設定：**比生成多、間隔比生成短**。
+ *
+ * 為什麼要分開：生成那一步失敗還有備援模型（flash → flash-lite，等於 4 次機會），
+ * 轉向量沒有任何備用模型，照 MAX_RETRIES=1 走就只有 2 次機會——同一條答題路徑上
+ * 最薄的一道防線偏偏是最先跑的那一步，它一倒整題就變 llm_error（客人什麼都收不到）。
+ * 實測一次呼叫約 350ms，所以多兩次嘗試的成本很低；退避改短是為了不把客人的等待
+ * 拉長（最壞約 +1.5s，仍在「輸入中…」動畫的容忍範圍內）。
+ */
+const EMBED_MAX_RETRIES = 3
+const EMBED_BASE_BACKOFF_MS = 250
+
 export type EmbeddingTaskType =
   | 'RETRIEVAL_DOCUMENT'
   | 'RETRIEVAL_QUERY'
@@ -73,15 +85,21 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function callGemini<T>(path: string, body: unknown): Promise<T> {
+async function callGemini<T>(
+  path: string,
+  body: unknown,
+  retry: { maxRetries?: number; baseBackoffMs?: number } = {},
+): Promise<T> {
   const apiKey = getApiKey()
   // key 走 header 不走 query string，避免進到各層 access log
   const url = `${GEMINI_API_BASE}/${path}`
+  const maxRetries = retry.maxRetries ?? MAX_RETRIES
+  const baseBackoffMs = retry.baseBackoffMs ?? BASE_BACKOFF_MS
 
   let lastReason = ''
   let lastStatus = 0
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let res: Response
     try {
       res = await fetch(url, {
@@ -94,8 +112,8 @@ async function callGemini<T>(path: string, body: unknown): Promise<T> {
       // 網路層錯誤（DNS、TLS、連線中斷）也視為可重試
       lastReason = `network error: ${(err as Error).message}`
       lastStatus = 0
-      if (attempt < MAX_RETRIES) {
-        await sleep(backoffDelay(attempt))
+      if (attempt < maxRetries) {
+        await sleep(backoffDelay(attempt, baseBackoffMs))
         continue
       }
       throw createError({ statusCode: 502, statusMessage: `Gemini error: ${lastReason}` })
@@ -107,24 +125,47 @@ async function callGemini<T>(path: string, body: unknown): Promise<T> {
     lastReason = data?.error?.message || `Gemini API ${res.status}`
     lastStatus = res.status
 
-    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_RETRIES) {
-      throw createError({ statusCode: 502, statusMessage: `Gemini error: ${lastReason}` })
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === maxRetries) {
+      throw createError({ statusCode: 502, statusMessage: `Gemini error (${res.status}): ${lastReason}` })
     }
 
-    await sleep(backoffDelay(attempt))
+    await sleep(backoffDelay(attempt, baseBackoffMs))
   }
 
   throw createError({
     statusCode: 502,
-    statusMessage: `Gemini error (after ${MAX_RETRIES} retries, last status ${lastStatus}): ${lastReason}`,
+    statusMessage: `Gemini error (after ${maxRetries} retries, last status ${lastStatus}): ${lastReason}`,
   })
 }
 
 /** 指數退避 + 隨機抖動。attempt 從 0 起：500ms → 1s → 2s，上限 4s。 */
-function backoffDelay(attempt: number): number {
-  const base = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS)
+function backoffDelay(attempt: number, baseMs: number = BASE_BACKOFF_MS): number {
+  const base = Math.min(baseMs * 2 ** attempt, MAX_BACKOFF_MS)
   const jitter = Math.random() * base * 0.3
   return Math.round(base + jitter)
+}
+
+/** 金鑰長得像 `AIza…`；錯誤訊息偶爾會把整個請求 URL 回貼回來，存進資料庫前一律抹掉 */
+const API_KEY_RE = /AIza[0-9A-Za-z\-_]{10,}/g
+const ERROR_DETAIL_MAX_LEN = 300
+
+/**
+ * 把例外整理成一句「可以存進資料庫、可以給超管看」的失敗原因。
+ *
+ * ⛔ 一定要過這一關再寫進 Firestore：Gemini 的錯誤訊息會回貼請求內容，
+ * 裡面可能夾著金鑰或客人原話。這裡只留狀態碼與訊息本身，並截到 300 字。
+ */
+export function describeGeminiError(err: unknown): string {
+  const e = err as { statusCode?: number; statusMessage?: string; message?: string } | undefined
+  // ⛔ 最後那層不可以直接 String(err)：物件沒有 message 時會存成 "[object Object]"，
+  // 比空字串更糟——畫面上看起來「有原因」，點開卻什麼線索都沒有。
+  const fallback = typeof err === 'string' || typeof err === 'number' ? String(err) : ''
+  const raw = String(e?.statusMessage || e?.message || fallback).trim()
+  if (!raw) return '未知錯誤（沒有訊息）'
+  const cleaned = raw.replace(API_KEY_RE, 'AIza***').replace(/\s+/g, ' ')
+  return cleaned.length > ERROR_DETAIL_MAX_LEN
+    ? `${cleaned.slice(0, ERROR_DETAIL_MAX_LEN)}…`
+    : cleaned
 }
 
 /**
@@ -148,12 +189,13 @@ async function embed(text: string, taskType: EmbeddingTaskType): Promise<number[
   const input = String(text || '').trim()
   if (!input) throw createError({ statusCode: 400, statusMessage: 'embed: empty input' })
 
+  // 這一步沒有備用模型可切（見 EMBED_MAX_RETRIES），所以重試次數自己加厚
   const data = await callGemini<EmbedResponse>('models/gemini-embedding-001:embedContent', {
     model: 'models/gemini-embedding-001',
     content: { parts: [{ text: input }] },
     taskType,
     outputDimensionality: EMBEDDING_DIMENSION,
-  })
+  }, { maxRetries: EMBED_MAX_RETRIES, baseBackoffMs: EMBED_BASE_BACKOFF_MS })
   const values = data?.embedding?.values
   if (!Array.isArray(values) || values.length !== EMBEDDING_DIMENSION) {
     throw createError({

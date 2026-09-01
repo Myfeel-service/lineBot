@@ -459,6 +459,13 @@
   margin-bottom: 6px;
 }
 
+/* 超管的「顯示技術細節」才出現：原樣的錯誤訊息，等寬字才看得出狀態碼與斷點 */
+.usage-handoff-sources--tech {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--el-text-color-placeholder);
+  word-break: break-word;
+}
+
 .usage-handoff-actions {
   display: flex;
   flex-wrap: wrap; /* 窄視窗下四顆按鈕換行，不擠爆卡片 */
