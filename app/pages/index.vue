@@ -76,7 +76,10 @@
                  「以咖啡店為例」順便解釋了卡裡為什麼都是咖啡展、手沖這些內容。
            2. 卡上每一列都必須是**現在真的做得到**的事（節慶提醒、加入時間名單、
               60 天沒互動自動標籤、標籤分眾都是真功能）——之前「還沒說過第一句話」
-              是開發中的偵測，已改掉。⛔要再放開發中的能力，免責圖說就得加回來。 -->
+              是開發中的偵測，已改掉。⛔要再放開發中的能力，免責圖說就得加回來。
+           3. 印章那句話只寫到「你不用自己**盯**」＝這些名單與檔期是系統自己在看的（真的）。
+              ⛔別升級成「它會自動幫你發」——自動喚醒／生日祝福那類主動發送 08-27 老闆拍板
+              「先不要出現」，寫了就是賣還沒有的功能。 -->
     <header id="top" class="lp-hero">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
@@ -115,7 +118,6 @@
               <div class="lp-ops__head">節慶</div>
               <div v-for="f in heroFests" :key="f.id" class="lp-op">
                 <b>{{ f.name }} {{ f.md }}</b>
-                <small>{{ f.angle }}</small>
                 <span class="lp-op__tag" :class="{ 'lp-op__tag--soon': f.soon }">{{ f.badge }}</span>
               </div>
             </div>
@@ -124,12 +126,10 @@
               <div class="lp-ops__head">該關心的客人</div>
               <div class="lp-op">
                 <b>本週新加入的好友</b>
-                <small>可以送上一句歡迎</small>
                 <span class="lp-op__tag lp-op__tag--num">38 位</span>
               </div>
               <div class="lp-op">
                 <b>上次聯絡超過 60 天</b>
-                <small>可以請他們回來看看</small>
                 <span class="lp-op__tag lp-op__tag--num">142 位</span>
               </div>
             </div>
@@ -138,15 +138,28 @@
               <div class="lp-ops__head">你分好的客群</div>
               <div class="lp-op">
                 <b>南港展覽館咖啡展</b>
-                <small>展場加入的好友</small>
                 <span class="lp-op__tag lp-op__tag--num">216 位</span>
               </div>
               <div class="lp-op">
                 <b>手沖愛好者</b>
-                <small>買過單品豆</small>
                 <span class="lp-op__tag lp-op__tag--num">184 位</span>
               </div>
             </div>
+
+            <!-- 印章：接住上面整張清單的那句話（2026-09-02 老闆要的「蓋個印章說你不用管這些」）。
+                 同日改過兩輪位置：①排在名單與按鈕之間、誰都不壓 → ②「可以直接蓋在這些東西上面嗎」
+                 → ③「可以放在這張卡片的中央且大一點嗎」＝現在這版（絕對定位、對整張卡上下左右居中）。
+                 ⚠️ 它是**每一列的建議句被拿掉之後的替代品**：原本每列尾巴都掛一句「可以送上一句
+                    歡迎」這類建議＝同一件事在卡裡講了六次，卡片右半邊全是小字（老闆：「有點多文字」）。
+                    現在每列只回答「看到什麼、幾位」，「那我要做什麼」由這一顆印章統一回答。
+                 ⚠️ 它在 DOM 裡擺在名單後面、CTA 前面＝**讀螢幕的人聽到的順序**（先聽完機會再聽這句
+                    結論），位置純粹靠 CSS。⛔ 別為了「視覺在中間」把它搬到名單前面。
+                 ⛔ 別把建議句加回去；印章可以蓋住名稱，但**不可以蓋到人數**（那是這張卡的賣點）
+                    ——多大、各寬度怎麼縮、為什麼不能用 @media，寫在 _landing.scss 的 .lp-stamp 那段。 -->
+            <span class="lp-stamp">
+              <small>這些你都不用自己盯</small>
+              <b>交給 {{ brandName }} 就好</b>
+            </span>
 
             <div class="lp-ops__cta">
               <NuxtLink class="lp-btn lp-btn--primary lp-btn--block" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
@@ -542,7 +555,7 @@
               <img
                 class="lp-shot lp-shot--flush"
                 src="/landing/admin-onboarding.png"
-                alt="開通引導對話畫面：進度條顯示建帳號、拿鑰匙、接線、傳話測試、完成五步，小幫手一句一句教你從 LINE 拿金鑰，並提供「教我一步步拿」按鈕"
+                alt="開通引導對話畫面：進度條顯示建帳號、拿鑰匙、讓訊息進來、傳話測試、完成五步，小幫手一句一句教你從 LINE 拿金鑰，並提供「教我一步步拿」按鈕"
                 loading="lazy"
                 width="1440"
                 height="648"
@@ -862,13 +875,14 @@ const upcoming = computed(() =>
     .filter(f => f.days >= 0),
 )
 
-/** 時機卡列接下來兩個檔期。7 天內＝系統開始提醒的門檻，標琥珀；更遠的標「準備中」（草稿用語）。 */
+/** 時機卡列接下來兩個檔期。7 天內＝系統開始提醒的門檻，標琥珀；更遠的標「準備中」（草稿用語）。
+ *  ⚠️ 節日表的 `angle`（「禮盒與送禮的需求會明顯升溫」那句）2026-09-02 起不帶出來了：
+ *     時機卡每一列改成只有「看到什麼＋數字」，理由見上面模板裡印章那段註解。 */
 const heroFests = computed(() =>
   upcoming.value.slice(0, 2).map(f => ({
     id: f.id,
     name: f.name,
     md: monthDay(f.date),
-    angle: f.angle,
     soon: f.days <= 7,
     badge: f.days === 0 ? '今天' : f.days === 1 ? '明天' : f.days <= 7 ? `還有 ${f.days} 天` : '準備中',
   })),

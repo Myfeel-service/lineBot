@@ -274,9 +274,10 @@
   .lp-hero__blob--1 { width: 420px; height: 420px; background: rgba(6, 199, 85, 0.12); top: -140px; right: -80px; }
   .lp-hero__blob--2 { width: 300px; height: 300px; background: rgba(6, 199, 85, 0.08); bottom: -120px; left: -100px; }
   /* ⚠️ 兩欄都要包 minmax(0, …)，不能只寫 `1.05fr 0.95fr`：
-     `1fr` 的意思是 `minmax(auto, 1fr)`，欄寬會被欄內元素的 min-content 撐開——右邊時機卡的
-     副標（.lp-op small）是 nowrap，min-content 就是整句話的寬度，
-     在 390px 的手機上會把整個 grid 撐到比 .lp-wrap 的內容框還寬（實測 371px 那次超寬 29px）。 */
+     `1fr` 的意思是 `minmax(auto, 1fr)`，欄寬會被欄內元素的 min-content 撐開，
+     在 390px 的手機上會把整個 grid 撐到比 .lp-wrap 的內容框還寬（實測 371px 那次超寬 29px）。
+     ⚠️ 當時的元凶（時機卡的 nowrap 副標）09-02 已隨副標移除，但這個 minmax(0) 要留著：
+        它擋的是「欄裡任何一個不會折行的東西」，不是只擋那一句副標。 */
   .lp-hero__grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
   .lp-hero h1 { font-size: clamp(2.5rem, 6.2vw, 4.3rem); font-weight: 800; letter-spacing: -0.035em; line-height: 1.1; margin: 22px 0 0; text-wrap: balance; }
   .lp-hero h1 .g { color: var(--g-deep); }
@@ -325,12 +326,16 @@
   .lp-ops__group { padding: 6px 0 10px; }
   .lp-ops__group + .lp-ops__group { border-top: 1px solid var(--hair); }
   .lp-ops__head {
-    padding: 12px var(--panel-pad-x) 6px;
+    padding: 10px var(--panel-pad-x) 6px;
     font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; color: var(--ink-soft);
   }
-  .lp-op { display: flex; align-items: center; gap: 12px; padding: 10px var(--panel-pad-x); }
-  .lp-op b { font-size: 0.9rem; font-weight: 700; flex: none; }
-  .lp-op small { font-size: 0.78rem; color: var(--ink-soft); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 一列＝「看到什麼」＋「幾位／什麼時候」，兩段就滿了。
+     ⚠️ 2026-09-02 每列尾巴的建議句（「可以送上一句歡迎」「展場加入的好友」這類）**整排移除**：
+        老闆說「右邊有點多文字」——一列三段小字，六列就是同一句「你可以⋯」講六次，
+        而「那我要做什麼」現在由蓋在卡片中央的那顆印章（.lp-stamp）統一回答一次。
+     ⛔ 別把 `.lp-op small` 加回來：加回來就等於把印章那句話拆成六句小字，回到老闆抓的那版。 */
+  .lp-op { display: flex; align-items: center; gap: 12px; padding: 8px var(--panel-pad-x); }
+  .lp-op b { flex: 1; min-width: 0; font-size: 0.9rem; font-weight: 700; }
   .lp-op__tag {
     flex: none; font-size: 0.7rem; font-weight: 800; border-radius: var(--radius-pill);
     padding: 4px 10px; background: var(--surf-2); color: var(--ink-soft);
@@ -339,6 +344,84 @@
   /* 「快到了」＝時間訊號吃琥珀（全頁唯一非綠色，只當狀態訊號）；人數＝可把握的量吃淡綠 */
   .lp-op__tag--soon { background: var(--warn-wash); color: var(--warn-ink); }
   .lp-op__tag--num { background: var(--g-wash); color: var(--g-deep); }
+  /* ── 時機卡的印章：「這些你都不用自己盯／交給 MiniMe 就好」──────
+   * 2026-09-02 老闆點名要的：清單列出一堆該顧的事，印章一次收掉——「你不用管，交給它」。
+   * 同日第二輪老闆問「可以直接蓋在這些東西上面嗎」→ 改成**真的疊在名單上**（原本是排在
+   * 名單與按鈕之間、誰都不壓的一格）。
+   *
+   * 09-02 第三輪老闆要「放在這張卡片的中央、大一點」＝現在這版：對**整張卡**上下左右居中
+   * （`top/left: 50%` ＋ `translate(-50%, -50%)`），字級放大到印章約佔卡片 60%。
+   *
+   * ⚠️ 居中吃的是整張卡（含標頭與 CTA 頁尾）的幾何中心，落點會在「上次聯絡超過 60 天」
+   *    那一列上——那一列的**名稱**因此被蓋掉，這是老闆知情的取捨。
+   * ⛔ **右邊那排人數不可以被蓋到**（38／142／216／184 是這張卡唯一的說服力）：
+   *    印章能多寬就是被這件事鎖住的，不是憑感覺調的，各寬度的值見下面 @container。
+   * ⚠️ 底色刻意留一成透明（不是實心）：被蓋住的那幾列會透出一點淡淡的影子，看起來才像
+   *    墨蓋在紙上、不是貼了一張貼紙。⛔ 別調到全不透明，也別再往下調（會變成兩層字打架）。
+   * ⛔ 印章不吃 `--sh-green` 光暈：光暈只給「要按的東西」（見色票區註解），
+   *    印章不是按鈕，兩個都發光會分不出哪個能按。
+   * ⛔ 整張卡是 `overflow: hidden`（它要裁圓角），印章伸出卡外的部分會被切掉——
+   *    要伸出去就得先把圓角裁切改到別的地方，不是只加一行 position。
+   * ⚠️ 之前那顆「高度 0 的錨點」（.lp-ops__seal）已經整個移除：現在直接對 .lp-ops 定位，
+   *    而 .lp-ops 因為 container-type 本身就是絕對定位的容器塊。
+   */
+  /* ⚠️ `container-type: inline-size` 是給印章用的（見下面的 @container）：印章能多大
+     取決於**這張卡**多寬，而卡寬跟視窗寬不是同一件事——950px 視窗（兩欄）卡只有 406px，
+     720px 視窗（單欄）卡卻有 672px。⛔ 所以這裡不可以用 @media 斷點，那是錯的訊號。 */
+  .lp-ops { position: relative; container-type: inline-size; }
+  .lp-stamp {
+    position: absolute; left: 50%; top: 50%; z-index: 2;
+    display: inline-flex; flex-direction: column; align-items: center; white-space: nowrap;
+    padding: 14px 42px 15px;
+    border: 2px solid rgba(6, 199, 85, 0.52); border-radius: 16px;
+    /* 一成透明的淡綠：底下那兩列會透出一點影子（見上面）。
+       ⛔ 別再加白色外光暈（`box-shadow: 0 0 0 5px #fff` 試過）：它會把名單的分隔線切斷，
+          看起來就是貼了一張有白邊的貼紙，不是蓋上去的墨。 */
+    background: rgba(234, 250, 241, 0.9);
+    color: var(--g-deep);
+    /* 歪一點才像蓋上去的，不是排進去的。
+       ⚠️ translate(-50%, -50%) 是**定位的一部分**（left/top: 50% 之後要把自己拉回半個身體），
+          ⛔ 動畫的每一幀都要把它一起寫上——transform 是整串取代不是疊加，
+             漏掉的那一幀印章會整個跳到右下角去。 */
+    transform: translate(-50%, -50%) rotate(-6deg);
+  }
+  /* 內圈細框＝印章的雙線邊（單線太像徽章／標籤） */
+  .lp-stamp::before {
+    content: ''; position: absolute; inset: 3px;
+    border: 1px solid rgba(6, 199, 85, 0.34); border-radius: 9px; pointer-events: none;
+  }
+  .lp-stamp small { font-size: 0.88rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8; }
+  /* **字級就是印章的尺寸旋鈕**（左右內距只能微調）：現在約佔卡片 60%，
+     大到左緣壓在名稱上、右緣還差一截才碰到人數膠囊。
+     ⛔ 別為了再加寬把左右內距灌到 70px：框裡會空一大片，看起來是空框不是印章。 */
+  .lp-stamp b { font-size: 1.68rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.34; }
+
+  /* 卡片變窄就把印章縮一級——**唯一的規則是「不可以蓋到人數」**：名稱被蓋掉沒關係
+     （它本來就是要蓋在名單上），但 38／142／216／184 是這張卡的賣點。
+     ⚠️ 這幾組數字是量出來的（有腳本在六個寬度逐一驗印章與每顆 .lp-op__tag 沒有水平重疊），
+        改字級或內距要重新量一次，別憑感覺調。 */
+  @container (max-width: 470px) {
+    .lp-stamp { padding: 12px 28px 13px; }
+    .lp-stamp small { font-size: 0.78rem; }
+    .lp-stamp b { font-size: 1.2rem; }
+  }
+  @container (max-width: 375px) {
+    /* margin-left ＝往左推一點，把右邊的人數讓出來（純靠縮字級要縮到字太小）。
+       ⛔ 要推位置只能動 margin，不能動 `left`／`transform`：transform 那一串每一幀都寫在
+          動畫的關鍵影格裡，動一個地方就要動四處，漏掉就會在動畫途中跳位。 */
+    .lp-stamp { padding: 10px 18px 11px; margin-left: -8px; }
+    .lp-stamp small { font-size: 0.72rem; }
+    .lp-stamp b { font-size: 1.04rem; }
+  }
+  /* 320px 手機：卡只剩 272px，一列的名稱＋人數本來就快貼滿，縮到底也還是會壓到人數，
+     所以再往左推一截（讓它去蓋名稱、把右邊的人數讓出來）。 */
+  @container (max-width: 310px) {
+    .lp-stamp { padding: 9px 16px 10px; margin-left: -42px; }
+    .lp-stamp b { font-size: 1.06rem; }
+  }
+
+  /* ⚠️ padding-top 曾經被撐到 38／26px＝當時印章壓在這條接縫上、要讓出按鈕的距離；
+     09-02 印章搬到卡片正中央之後這個理由消失，收回原本的 16px。 */
   .lp-ops__cta { padding: 16px var(--panel-pad-x) 20px; border-top: 1px solid var(--hair); background: var(--surf-2); }
 
   /* ── 為什麼卡住：四道牆 ────────────────────────────────────
@@ -762,9 +845,74 @@
     flex-wrap: wrap; padding: 18px 24px; font-size: 0.8rem; color: var(--ink-soft);
   }
 
-  /* ── 進場動畫 ──────────────────────────────────────────
+  /* ── Hero 進場：一打開頁面就演一次 ─────────────────────────
+   * 2026-09-02 老闆要的「進入頁面時做動畫呈現」。順序＝左邊一句一句長出來、
+   * 右邊時機卡先出殼再一組一組填進去，最後印章「蓋」下來收尾（總長約 1.5 秒）。
+   *
+   * ⚠️ 這一段刻意**不掛 .is-anim**（跟底下捲動 reveal 的規則相反，別「順手統一」）：
+   *    .is-anim 是 onMounted 才掛上的，而 Hero 在**第一次繪製就已經在畫面上**——
+   *    先看到完整的 Hero、hydration 之後又被藏起來重演一次，那是閃一下的破圖。
+   *    純 CSS 動畫從第一幀就開始，沒有 JS 也會演完，爬蟲拿到的 DOM 一樣是完整的。
+   * ⚠️ fill-mode 一律 `backwards`，⛔不要用 `both`：宣告值本身就是最終狀態，
+   *    用 both 的話動畫結束後 100% 那一幀會**永久留在元素上**（動畫的套用值壓過一般宣告），
+   *    卡片的 `:hover { transform }` 從此再也不會動、印章也鎖死在那一幀。
+   * ⚠️ 只動 opacity/transform，不動高度：卡片第一幀就是最終尺寸，
+   *    填內容的過程不會把下面的區塊往下推。
+   */
+  @keyframes lpHeroIn { from { opacity: 0; transform: translateY(18px); } }
+  @keyframes lpHeroCardIn { from { opacity: 0; transform: translateY(24px) scale(0.985); } }
+  /* 印章：從大縮到小＝往下蓋。中間過頭一點點（.95 → 1.03）才有「敲到卡面」的手感；
+     一開始帶一點模糊，收下來時對焦。
+     ⚠️ 每一幀都要把 `translate(-50%, -50%) rotate(-6deg)` 完整寫一次：transform 是整串
+        取代不是疊加——漏掉 translate 印章會整顆跳到右下角，漏掉 rotate 會轉正再歪回去。
+     ⛔ 這兩個值要跟 .lp-stamp 的宣告值**一模一樣**：fill-mode 是 backwards，
+        演完會跳回宣告值，差一點就是最後那一下抖一下。 */
+  @keyframes lpStampIn {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1.9); filter: blur(3px); }
+    55% { opacity: 1; transform: translate(-50%, -50%) rotate(-6deg) scale(0.95); filter: blur(0); }
+    75% { transform: translate(-50%, -50%) rotate(-6deg) scale(1.03); }
+    100% { transform: translate(-50%, -50%) rotate(-6deg) scale(1); }
+  }
+  /* 蓋下去那一下擴出去的一圈墨痕，散掉就沒了（宣告值是 opacity: 0，動畫結束自己消失） */
+  @keyframes lpStampRing {
+    0% { opacity: 0; transform: scale(0.82); }
+    35% { opacity: 0.42; }
+    100% { opacity: 0; transform: scale(1.3); }
+  }
+
+  .lp-hero__text > * { animation: lpHeroIn 0.6s cubic-bezier(0.22, 0.75, 0.3, 1) backwards; }
+  .lp-hero__text > *:nth-child(1) { animation-delay: 0.05s; }
+  .lp-hero__text > *:nth-child(2) { animation-delay: 0.12s; }
+  .lp-hero__text > *:nth-child(3) { animation-delay: 0.2s; }
+  .lp-hero__text > *:nth-child(4) { animation-delay: 0.27s; }
+  .lp-hero__text > *:nth-child(5) { animation-delay: 0.34s; }
+  .lp-hero__text > *:nth-child(6) { animation-delay: 0.41s; }
+
+  .lp-ops { animation: lpHeroCardIn 0.66s cubic-bezier(0.22, 0.75, 0.3, 1) 0.14s backwards; }
+  /* ⚠️ 這幾條的 nth-child 是**按卡裡的順序**數的（標頭 1、三組名單 2–4、印章 5、頁尾 6）：
+     .lp-ops__group 沒辦法用 nth-of-type（它跟標頭、印章、頁尾都是 div，type 是同一種）。
+     ⛔ 在卡裡插一個新的 div 就要回來補這幾條，不然錯開的順序會跳號。
+     ⚠️ 內容的延遲別再往後加：卡殼先出現、內容還沒進來的那段時間，右邊就是一塊
+        640px 高的空白卡。現在空窗大約 0.3 秒（殼 0.14 → 第一組 0.38），再拉長就像壞掉。 */
+  .lp-ops .lp-panel__hd { animation: lpHeroIn 0.48s ease-out 0.3s backwards; }
+  .lp-ops__group:nth-child(2) { animation: lpHeroIn 0.48s ease-out 0.38s backwards; }
+  .lp-ops__group:nth-child(3) { animation: lpHeroIn 0.48s ease-out 0.46s backwards; }
+  .lp-ops__group:nth-child(4) { animation: lpHeroIn 0.48s ease-out 0.54s backwards; }
+  .lp-ops__cta { animation: lpHeroIn 0.48s ease-out 0.64s backwards; }
+  .lp-stamp { animation: lpStampIn 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) 0.86s backwards; }
+  /* 墨痕那一圈：延遲＝印章的延遲＋印章「敲到卡面」那一幀（0.86 + 0.5×0.55 ≈ 1.13s）。
+     ⛔ 別讓它先出現或晚太多，看起來就變成兩件事各演一次。 */
+  /* inset 要在白色外光暈（.lp-stamp 的 box-shadow 5px）之外，否則墨痕會壓在白邊上看不清 */
+  .lp-stamp::after {
+    content: ''; position: absolute; inset: -9px;
+    border: 2px solid var(--g); border-radius: 20px; opacity: 0; pointer-events: none;
+    animation: lpStampRing 0.55s ease-out 1.13s backwards;
+  }
+
+  /* ── 捲動進場動畫 ──────────────────────────────────────
    * 一律「預設就是最終狀態」，只有 JS 掛上 .is-anim 之後才藏起來再演。
    * 這樣沒有 JS、爬蟲、以及「減少動態效果」的使用者都直接看到完整內容。
+   * （Hero 是唯一的例外，理由見上面那一段。）
    */
   &.is-anim .lp-reveal { opacity: 0; transform: translateY(20px); }
   &.is-anim .lp-reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s ease; }
@@ -895,9 +1043,8 @@
     .lp-bubble { padding: 18px 20px; }
     .lp-bubble h2 br { display: none; }
 
-    /* 時機卡的列：副標在 390px 擠不下一行，讓它換到第二行全寬（草稿的手機規則） */
-    .lp-op { flex-wrap: wrap; gap: 6px 12px; }
-    .lp-op small { flex: 1 0 100%; order: 3; white-space: normal; }
+    /* 時機卡的列在 390px 只有「名稱＋數字」兩段，放得下一行（原本副標要換第二行的規則
+       跟著副標一起移除了，見 .lp-op 那段註解）。名稱太長時是在 b 裡面折行，不是整列換行。 */
 
     /* 時間軸改直式：磚在左、字在右，進度條轉直（跟著草稿的手機版） */
     .lp-tl__steps { grid-template-columns: 1fr; gap: 18px; }
@@ -936,6 +1083,15 @@
   /* ⚠️ 這一段是**保險**，不是主要機制：勾了「減少動態效果」的人根本不會拿到 .is-anim
      （index.vue 在掛上之前就 return 了）。它擋的是「載入後才去系統設定打開」那種情況。 */
   @media (prefers-reduced-motion: reduce) {
+    /* Hero 的進場是純 CSS（不等 .is-anim），所以這裡是它**唯一**的關法：
+       ⛔ 別漏掉 .lp-stamp::after（那圈墨痕自己有一支動畫），也別只關 .lp-hero__text。
+       關掉之後每個元素回到宣告值＝完整、最終狀態，印章仍然歪 -3.5deg 蓋在原位。
+       ⚠️ 三組名單一定要寫成 `:nth-child(n)`（權重 0,2,0）才壓得過上面
+          `.lp-ops__group:nth-child(2)` 那三條——只寫 `.lp-ops__group`（0,1,0）會輸，
+          勾了「減少動態效果」的人看到的是**空白的卡**（實測過，別把它改回去）。 */
+    .lp-hero__text > *, .lp-ops, .lp-ops .lp-panel__hd, .lp-ops__group:nth-child(n),
+    .lp-ops__cta, .lp-stamp, .lp-stamp::after { animation: none; }
+
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
     &.is-anim .lp-walls .lp-reveal.in { transition-delay: 0s; }
     &.is-anim .lp-tl__track i { transform: none; transition: none; }
