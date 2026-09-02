@@ -98,13 +98,14 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
   }
 
   /** agent 說一句話（打字節奏 → 泡泡）。html 僅限劇本文案＋已跳脫的輸入 */
-  async function say(html: string) {
+  /** aside＝預設收合的「為什麼／萬一沒做」，見 shared/types/agent-messages.ts 的判準 */
+  async function say(html: string, aside?: { summary: string, html: string, image?: string, alt?: string }) {
     checkpoint()
     typing.value = true
     await sleep(sayDelayMs)
     typing.value = false
     checkpoint()
-    push('agent', { kind: 'text', html })
+    push('agent', aside ? { kind: 'text', html, aside } : { kind: 'text', html })
     await sleep(sayDelayMs > 0 ? 120 : 0) // 句與句之間的小停頓；測試把 sayDelayMs 設 0 時一併歸零
   }
 

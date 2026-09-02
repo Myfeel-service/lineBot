@@ -4,7 +4,7 @@
     <div v-if="mode === 'locked'" class="onb-card">
       <div class="onb-head">
         <BrandLogo mark class="onb-mark" />
-        <h1>請管理員完成接線</h1>
+        <h1>請管理員完成開通</h1>
         <p class="onb-sub">接 LINE 憑證與 AI 設定需要管理員權限。你可以先進後台看看，管理員可以從右下角小幫手的「用聊天引導完成開通」接著做。</p>
       </div>
       <el-button type="primary" class="onb-primary-btn" @click="goWorkspace">先進後台看看</el-button>
@@ -24,7 +24,16 @@
         <!-- 完成畫面（progress 走到最後一格）不再給「之後再說」（2026-08-28 拍板）：
              都做完了，沒有東西可以「之後再說」，那句話在這一頁語意是錯的。
              出口交給對話裡那排——「去看剛剛那則對話」才是這一刻講得對的說法。 -->
-        <NuxtLink v-if="progress < ONBOARDING_PROGRESS_LABELS.length - 1" class="onbc-exit" :to="exitTo">之後再說</NuxtLink>
+        <!-- 2026-09-02：「隨時可以離開，下次回來從沒做完的地方接著帶」原本埋在開場第二則的
+             句尾（沒人讀得到）。那是全流程最能降低壓力的一句，要在**他想跑的那一刻**才有用，
+             所以搬到這顆按鈕上。用原生 title 不用 el-tooltip：手機沒有 hover，而這句是
+             錦上添花不是必要資訊，不值得為它多掛一層元件。 -->
+        <NuxtLink
+          v-if="progress < ONBOARDING_PROGRESS_LABELS.length - 1"
+          class="onbc-exit"
+          :to="exitTo"
+          title="現在離開沒關係，下次回來我會從沒做完的地方接著帶"
+        >之後再說</NuxtLink>
       </header>
 
       <div class="onbc-progress" aria-hidden="true">

@@ -43,8 +43,16 @@ export interface AgentHelpStep {
 }
 
 export type AgentMsg =
-  /** 一般泡泡。html 僅限劇本文案 + 已跳脫的使用者輸入 */
-  | { kind: 'text'; html: string }
+  /**
+   * 一般泡泡。html 僅限劇本文案 + 已跳脫的使用者輸入。
+   *
+   * `aside`＝預設**收合**的「為什麼／萬一沒做會怎樣」。
+   * 2026-09-02 量過：開通引導 48 句共 2,627 字，其中**約四成是解釋不是動作**，
+   * 全部攤在主線上＝使用者一句都不讀。⛔ 解法是收起來不是刪掉——那些解釋正好是
+   * 接不通時的第一名與第二名原因，刪掉會讓人做錯。
+   * 判準：**照著做需要的話留在外面，解釋為什麼要這樣做的收進去。**
+   */
+  | { kind: 'text'; html: string; aside?: { summary: string; html: string; image?: string; alt?: string } }
   /** 圖解步驟卡（「怎麼拿？」）：一步一格、可配示意圖；href 給可直接點開的入口（別讓使用者自己打網址） */
   | { kind: 'help'; summary: string; steps: AgentHelpStep[]; href?: string; hrefLabel?: string }
   /** 連結卡。internal＝站內頁（走 NuxtLink 同分頁導航）；否則視為外部連結另開分頁 */

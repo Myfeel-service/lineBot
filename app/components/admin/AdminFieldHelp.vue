@@ -14,6 +14,11 @@
     <!-- html 僅限 field-help 登記表裡我們自己寫的劇本文案 -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <p class="afh-dialog__text" v-html="def.html" />
+    <!-- 「填錯會怎樣」：刻意擺在動畫**之前**——動畫很高，擺在後面要捲才看得到，
+         而這一塊的內容正好是「畫面不會告訴你，所以你只能先知道」（見 field-help.ts 的判準）。
+         html 僅限 field-help 登記表裡我們自己寫的劇本文案 -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <p v-if="def.warn" class="afh-dialog__warn" v-html="def.warn" />
     <el-image
       v-if="def.image && !imgFailed"
       class="afh-dialog__shot"

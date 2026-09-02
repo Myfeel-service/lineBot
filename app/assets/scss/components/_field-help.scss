@@ -31,6 +31,19 @@
     color: var(--el-text-color-regular);
   }
 
+  /* 「填錯會怎樣」：警告色底＋左邊一條，跟一般說明明顯分開。
+     ⛔ 只有 field-help.ts 判準符合的欄位才會出現，不是每個欄位都掛。 */
+  &__warn {
+    margin: 0 0 12px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    border-left: 3px solid var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+    font-size: 13.5px;
+    line-height: 1.8;
+    color: var(--el-text-color-regular);
+  }
+
   /* 同 .agm-shot 的鐵律：⛔別設 max-height——el-image 的 overflow:hidden 會「裁掉」不是「縮小」 */
   &__shot {
     display: block;

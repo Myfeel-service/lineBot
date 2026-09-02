@@ -60,6 +60,27 @@
   .agm-typing i { animation: none; }
 }
 
+/* 泡泡裡的「為什麼／萬一沒做」：預設收合，語氣退一階不跟主句搶。
+   樣式刻意跟 .agm-help__aside 一致——同一種東西在兩個容器裡不該長得不一樣。 */
+.agm-bubble__aside {
+  margin-top: 6px;
+  font-size: 12px;
+
+  summary {
+    cursor: pointer;
+    color: var(--el-text-color-secondary);
+    font-weight: 500;
+    user-select: none;
+  }
+
+  > div {
+    margin-top: 4px;
+    padding-left: 2px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.7;
+  }
+}
+
 /* 結構化卡片（agent 側） */
 .agm-card {
   align-self: flex-start;

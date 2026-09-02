@@ -145,7 +145,15 @@ const liffEndpointGuide: AgentGuideDef = {
               href: 'https://developers.line.biz/console/',
               hrefLabel: '打開 LINE Developers ↗',
             },
-            { text: '選掛著「LINE Login」小字的那張卡（⚠️跟拿鑰匙相反——LIFF 住在 LINE Login 頻道下），切到 LIFF 分頁' },
+            {
+              // 2026-09-02 補圖：這支修復劇本原本**一張圖都沒有**，而「要點 LINE Login
+              // 那張、不是 Messaging API」正是整條路唯一反直覺的一步。
+              // ⛔ 這裡刻意用靜態對照圖不用帶路動畫：動畫演到「按 Add 新增」，
+              //    而修復的人是要**點進已經存在的那個** LIFF，演給他看反而教錯。
+              text: '選掛著「LINE Login」小字的那張卡（⚠️跟拿鑰匙相反——LIFF 住在 LINE Login 頻道下），切到 LIFF 分頁',
+              image: ONBOARDING_SHOTS.whichCardLiff,
+              alt: '兩張同名卡片並排：右邊掛 LINE Login 小字的那張圈綠框，左邊掛 Messaging API 小字的那張圈紅框並打叉',
+            },
             { text: '點進上面列出的那個 LIFF' },
             { text: 'Endpoint URL 換成剛剛那串，按 Update／存檔' },
           ],

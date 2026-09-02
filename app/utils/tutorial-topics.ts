@@ -202,11 +202,32 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="page-help"]',
         // ⛔別寫「右上」（2026-08-28 code review 抓到）：那顆問號一直都在**頁面標題旁邊**
         // （側欄式頁面在左上的清單標題後、solo 頁在大標題後），包括這一步正在指的那一顆。
-        title: '每一頁標題旁都有「這頁怎麼用」',
+        // ⛔ 不是「每一頁」：訂閱與付款那頁沒有掛（全站唯一）。講絕對值就會有人去驗，
+        // 驗到一次不對，後面講什麼都要打折（2026-09-02 改）
+        title: '幾乎每一頁標題旁都有「這頁怎麼用」',
         description:
           '點了就在<strong>真實畫面</strong>上一步步帶你操作。這支導覽也一樣——'
           + '之後想再看，從這裡或右下角小幫手的「教學」分頁都找得到。',
         placement: 'bottom',
+      },
+      {
+        // 2026-09-02 老闆拍板：開通結尾那排拿掉「去看剛剛那則對話」，改成**第一次一定
+        // 要看導覽**、由導覽自己把人送到終點。所以這一步是新的最後一步。
+        // 為什麼值得加：以前這支收在上面那句「每一頁都有問號」＝一個關於介面的註腳，
+        // 而客人剛剛親手讓機器人收到人生第一則訊息——那才是整段旅程的高點，導覽卻沒回到它。
+        target: '[data-tour="conv-messages"]',
+        // 右半邊在「沒選對話」時整棵 DOM 都不存在，先幫他點開第一筆（同下面 CONV 那幾步）
+        clickBefore: '.conv-list-row .split-list-item',
+        clickBeforeUnless: '[data-tour="conv-messages"]',
+        // ⛔ 一場對話都沒有就整步跳過——跳過傳話測試的人沒有那則訊息可指，
+        //    不擋的話會指著空氣。⚠️ 這條要有效，`startTopic` 的前提判斷必須在導航**之後**
+        //    才問（2026-09-02 一起修的，原本問的是上一頁的 DOM＝這一步 100% 被靜默刷掉）。
+        requiresPresent: '.conv-list-row .split-list-item',
+        title: '最後，你剛剛傳的那句話就在這裡',
+        description:
+          '客人傳的每一句話都會這樣進來，<strong>你直接在這裡回</strong>就送到他的 LINE。'
+          + '接下來就交給右下角的小幫手——哪裡怪怪的、下一步做什麼，它會主動說。',
+        placement: 'left',
       },
     ],
   },
@@ -538,7 +559,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '接手、交還、結束',
         description:
           '<strong>我接手</strong>＝這位客人先由你回，機器人與 AI 會暫停自動回覆，不會跟你搶話；'
-          + '談完按<strong>交還機器人</strong>讓它繼續顧，或按<strong>結束會話</strong>把這一場收單。',
+          + '談完按<strong>交還機器人</strong>讓它繼續顧，或按<strong>結束會話</strong>把這一場結掉。',
         placement: 'bottom',
         requiresOperate: true,
       },
@@ -548,7 +569,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: 'AI 回的話，可以問它「為什麼」',
         description:
           'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
-          + '答得不對就在那裡標「這題 AI 答錯了」——<strong>標了會進工作台</strong>，之後補資料時就知道要補什麼。',
+          + '答得不對就在那裡標「這題 AI 答錯了」——<strong>標了會收進小幫手的待辦清單</strong>，之後補資料時就知道要補什麼。',
         placement: 'left',
       },
       {

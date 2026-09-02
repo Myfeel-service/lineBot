@@ -7,7 +7,28 @@
   >
     <!-- html 僅限劇本文案＋已跳脫的使用者輸入（見 shared/types/agent-messages.ts 的警語） -->
     <!-- eslint-disable-next-line vue/no-v-html -->
-    <div class="agm-bubble" v-html="entry.msg.html" />
+    <div class="agm-bubble">
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <div v-html="entry.msg.html" />
+      <!-- 「為什麼／萬一沒做」預設收合：照著做需要的字留在外面，解釋收進來
+           （⛔ 與圖解步驟卡的 aside 刻意不同：那個是「只有一部分人會遇到」的岔路，
+             這個是所有人都適用、但不看也做得完的背景） -->
+      <details v-if="entry.msg.aside" class="agm-bubble__aside">
+        <summary>{{ entry.msg.aside.summary }}</summary>
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <div v-html="entry.msg.aside.html" />
+        <!-- 圖檔還沒補進 public/onboarding/ 時整塊不顯示、文字照常 -->
+        <el-image
+          v-if="entry.msg.aside.image && shotReady(entry.msg.aside.image)"
+          class="agm-help__shot"
+          :src="entry.msg.aside.image"
+          :alt="entry.msg.aside.alt || entry.msg.aside.summary"
+          fit="contain"
+          :preview-src-list="[entry.msg.aside.image]"
+          :preview-teleported="true"
+        />
+      </details>
+    </div>
   </div>
 
   <!-- 圖解步驟卡:一步一格,有圖就配圖(點圖放大)。預設展開——這是要照著做的東西,

@@ -92,17 +92,14 @@ export function useTutorial() {
     panelOpen.value = !panelOpen.value
   }
 
-  /** 選了某個主題：導航到該頁 → 等元素出現 → 開 tour */
+  /** 選了某個主題：導航到該頁 → 等元素出現 → 過濾前提 → 開 tour */
   async function startTopic(topic: TutorialTopic) {
     const wid = workspaceId.value
     if (!wid) return
-    // 角色／功能旗標先過（純判斷），再用畫面現況過一次「前提在不在」——
-    // 空收件匣的帳號權限完全正常，但對話頁右半邊那幾步一場都點不開，
-    // 不擋就是連續五次「位置不在畫面上」＋每次乾等兩秒（2026-08-28 code review 修）。
-    const has = (sel: string) => typeof document !== 'undefined' && !!document.querySelector(sel)
-    const steps = visibleSteps(topic.steps).filter(s => stepPreconditionMet(s, has))
-    if (!steps.length) return
-    activeSteps.value = steps
+    // 角色／功能旗標先過（純判斷，不需要 DOM）
+    const roleSteps = visibleSteps(topic.steps)
+    if (!roleSteps.length) return
+
     lastTopicId.value = topic.id
     tourStep.value = 0
     closePanel()
@@ -114,11 +111,34 @@ export function useTutorial() {
     }
 
     // 第一步若要示範訊息卡，先觸發示範，讓欄位元素出現（否則 waitForElement 會逾時）
-    const first = steps[0]
+    const first = roleSteps[0]
     if (first?.demoType)
       setDemo(first.demoType)
     if (first?.target)
       await waitForElement(first.target)
+
+    // ── 「前提在不在」一定要在**導航之後**才問（2026-09-02 修）─────────────────
+    // 原本這段在 router.push **之前**執行，問的是**上一頁**的 DOM。後果：任何
+    // `requiresPresent` 指向目標頁元素的步驟，只要導覽不是從那一頁自己開的，就會被
+    // 靜默刷掉——沒有錯誤、沒有 log，只是那幾步再也不會出現。
+    // 實際受害的是「看懂對話收件匣」右半邊那三步（從別頁開就消失），以及開通結尾接的
+    // 「帶你認識後台」最後一步（從開通頁開，對話清單根本還沒存在，100% 被刷掉）。
+    // ⛔ 而且不能只用一次性 querySelector：對話清單是非同步載入的，剛換頁那一瞬間
+    //    一定還是空的。所以改成**短暫等它出現**（1.5 秒），等不到才算真的沒有。
+    const present = new Map<string, boolean>()
+    for (const step of roleSteps) {
+      const sel = step.requiresPresent
+      if (!sel || present.has(sel))
+        continue
+      present.set(sel, !!(await waitForElement(sel, 1500)))
+    }
+    const steps = roleSteps.filter(s => stepPreconditionMet(s, sel => present.get(sel) ?? false))
+    if (!steps.length) return
+    activeSteps.value = steps
+
+    // 過濾後的第一步換人了（原本的第一步被前提刷掉）＝要改等它的目標
+    if (steps[0] !== first && steps[0]?.target)
+      await waitForElement(steps[0].target)
 
     tourOpen.value = true
   }

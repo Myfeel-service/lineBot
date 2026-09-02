@@ -25,6 +25,14 @@ export interface FieldHelpDef {
   /** 帶路動畫或標註圖（onboarding-shots 的路徑） */
   image?: string
   alt?: string
+  /**
+   * 「填錯會怎樣」——只給**填錯不會報錯、但客人一定壞掉**的欄位用。
+   *
+   * ⛔ 別拿它當第二段說明：這一塊是警告色，每個欄位都掛就等於沒有一個是警告。
+   * 判準：畫面上有沒有任何地方會告訴你填錯了？沒有的話才需要它。
+   * 目前只有 liffSetup 的 Endpoint URL 符合（客人卡在轉圈，後台一片正常）。
+   */
+  warn?: string
   /** 外部入口（另開分頁） */
   href?: string
   hrefLabel?: string
@@ -49,27 +57,30 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   channelAccessToken: {
     button: '教我怎麼拿',
     title: 'Channel Access Token 怎麼拿？',
-    html: '到 <b>LINE Developers</b>，選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張，認小字不認名稱），照動畫切到 <b>Messaging API</b> 分頁 → 捲到最下面按「<b>Issue</b>」發一把（發過的話按 Reissue）→ 按複製，回來貼進這一格。',
+    // ⚠️①②③要跟動畫上的紅色編號一致（2026-09-02，同 useOnboardingChat 的拿鑰匙教學）
+    html: '到 <b>LINE Developers</b>，選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張，認小字不認名稱）。照動畫做：<b>①</b> 切到 <b>Messaging API</b> 分頁 → 捲到最下面 → <b>②</b> 按「<b>Issue</b>」發一把（發過的話按 Reissue）→ <b>③</b> 按複製，回來貼進這一格。',
     image: ONBOARDING_SHOTS.getTokenAnim,
-    alt: '循環動畫：切到 Messaging API 分頁、捲到最下方、按 Issue 發鑰匙、按複製',
+    alt: '循環動畫三格：①切到 Messaging API 分頁、②按 Issue 發鑰匙、③按複製圖示',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
   channelSecret: {
     button: '教我怎麼拿',
     title: 'Channel Secret 怎麼拿？',
-    html: '同一個 <b>LINE Developers</b> 後台：照動畫切到「<b>Basic settings</b>」分頁，捲下來找到 <b>Channel secret</b>，整串複製回來貼進這一格。',
+    html: '同一個 <b>LINE Developers</b> 後台，照動畫做：<b>①</b> 切到「<b>Basic settings</b>」分頁 → 捲下來 → <b>②</b> 找到 <b>Channel secret</b>，整串複製回來貼進這一格。',
     image: ONBOARDING_SHOTS.channelSecretAnim,
-    alt: '循環動畫：切到 Basic settings 分頁、捲到 Channel secret 那一列',
+    alt: '循環動畫兩格：①切到 Basic settings 分頁、②Channel secret 那一列',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
   webhookUrl: {
     button: '教我怎麼用',
     title: 'Webhook 網址要貼去哪？',
-    html: '這一格<b>不用填</b>——按旁邊的「複製」拿到網址，照動畫貼到 LINE：選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張）→ 切到 <b>Messaging API</b> 分頁 → Webhook URL 按「<b>Edit</b>」打開輸入格 → 貼上網址按「<b>Update</b>」存檔 → 打開「<b>Use webhook</b>」開關。',
+    // ⚠️動畫只演到④存檔（2026-09-02 重裁）——開關那一步動畫裡沒有，文案必須自己講完，
+    // 否則跟著動畫做的人會漏掉「接不通的第二名」。這裡是單一彈窗，要覆蓋整件事。
+    html: '這一格<b>不用填</b>——按旁邊的「複製」拿到網址，照動畫貼到 LINE（動畫上的紅色號碼就是順序）：<b>①</b> 選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張）→ <b>②</b> 切到 <b>Messaging API</b> 分頁 → <b>③</b> Webhook URL 按「<b>Edit</b>」打開輸入格 → <b>④</b> 貼上網址按「<b>Update</b>」存檔。<br>最後再把網址下方的「<b>Use webhook</b>」開關<b>打開</b>——這一步動畫沒有演到，但沒開的話訊息一樣不會進來。',
     image: ONBOARDING_SHOTS.webhookAnim,
-    alt: '循環動畫：選 Messaging API 卡、切分頁、貼 Webhook 網址、開 Use webhook',
+    alt: '循環動畫四格：①選 Messaging API 卡、②切到 Messaging API 分頁、③按 Edit 打開輸入格、④貼上網址按 Update 存檔',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
@@ -78,9 +89,17 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     title: '活動頁 LIFF 怎麼設？',
     // ⚠️跟拿鑰匙相反：LIFF 住在「LINE Login」那張卡下面——拿鑰匙教學教人別點的那張，
     // 這裡必須明講，否則兩份教學互打（2026-08-19 D-17 盤點抓到的雷）
-    html: '活動頁的 LIFF 建在「<b>LINE Login</b>」那張卡下面——⚠️<b>跟拿鑰匙相反</b>，這次別點 Messaging API。流程：到 LINE Developers 點 <b>LINE Login</b> 那張卡 → 切到 <b>LIFF</b> 分頁按「Add」→ <b>Endpoint URL</b> 貼下面「活動 LIFF 頁」的網址（按它旁邊的「複製」）→ 建好後把 <b>LIFF ID</b>（長得像 2007123456-AbCdEfGh）複製回來貼進這一格。',
+    // 2026-09-02 老闆補拍了 LIFF 清單與 Add 表單，動畫從兩格補到四格（原本後半段只有文字）。
+    // ⛔ 第一句刻意先講「你可能不需要」：LIFF **只有活動連結在用**（`server/api/liff/` 底下
+    //    只有 claim／apply／config 三支，全是活動的）。客服對話、AI、推播、圖文選單、標籤、
+    //    成員收通知都不碰它——成員綁定走的是「綁定 XXXXXX」那組碼，跟 LIFF 無關。
+    //    不講的話，只想做客服的人會以為自己少做一步、卡在這裡研究。
+    html: '<b>還沒要辦活動的話可以先不設</b>——這一格只有「活動連結」會用到，不設不影響客服、AI、推播與圖文選單。<br>要設的話：活動頁的 LIFF 建在「<b>LINE Login</b>」那張卡下面（⚠️<b>跟拿鑰匙相反</b>，這次別點 Messaging API）。照動畫做：<b>①</b> 點 <b>LINE Login</b> 那張卡 → <b>②</b> 切到 <b>LIFF</b> 分頁 → <b>③</b> 按「<b>Add</b>」→ <b>④</b> <b>Endpoint URL</b> 貼下面「活動 LIFF 頁」的網址（按它旁邊的「複製」）。<br>建好後把 <b>LIFF ID</b>（長得像 2007123456-AbCdEfGh）複製回來貼進這一格。',
     image: ONBOARDING_SHOTS.liffSetupAnim,
-    alt: '循環動畫：LINE Login 頻道的 LIFF 分頁、Add LIFF、貼 Endpoint URL',
+    alt: '循環動畫四格：①點 LINE Login 那張卡、②切到 LIFF 分頁、③按 Add、④填 Endpoint URL',
+    // ⚠️ 這段非講不可（2026-08-07 換網域災情的形狀）：Endpoint URL 是整支教學唯一
+    //    「填錯不會報錯、但客人一定壞掉」的一格
+    warn: '<b>④ 那一格填錯，客人會卡在轉圈。</b>客人登入後，LINE <b>一定</b>把他送回這裡登記的網址——跟你分享出去的連結是什麼網域無關。填錯的話貼標與綁定都不會發生。',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
@@ -210,9 +229,9 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   oamAutoReply: {
     button: '教我怎麼關',
     title: '內建自動回應怎麼關？',
-    html: '到 <b>LINE 官方帳號後台</b>（綠色那個，跟拿鑰匙的後台不同）：照動畫點右上角「<b>設定</b>」→ 左邊選「<b>回應設定</b>」→「聊天的回應方式」選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
+    html: '到 <b>LINE 官方帳號後台</b>（綠色那個，跟拿鑰匙的後台不同），照動畫做：<b>①</b> 點右上角「<b>設定</b>」→ <b>②</b> 左邊選「<b>回應設定</b>」→ <b>③</b>「聊天的回應方式」選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
     image: ONBOARDING_SHOTS.oamAutoReplyAnim,
-    alt: '循環動畫：右上設定、側欄回應設定、選手動聊天',
+    alt: '循環動畫三格：①右上設定、②側欄回應設定、③選手動聊天',
     href: 'https://manager.line.biz/',
     hrefLabel: '打開官方帳號後台',
   },
