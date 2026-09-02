@@ -131,6 +131,24 @@
       ]
     },
     {
+      "collectionGroup": "broadcasts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "workspaceId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "audienceSnapshot.resolvedUserIds",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "completedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "conversationSessions",
       "queryScope": "COLLECTION",
       "fields": [

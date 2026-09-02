@@ -39,6 +39,9 @@ const MAX_PAGE_SIZE = 200
 /** 一段時間軸最多帶幾顆群發泡泡（時間軸不是推播報表，看到有發過就夠） */
 const BROADCAST_JOIN_LIMIT = 20
 
+/** 走 ASC 備援時最多掃幾筆（見 loadBroadcastItems 的 catch）。同一位客人被納入的群發本來就是個位數 */
+const BROADCAST_FALLBACK_SCAN = 200
+
 /** 回應的形狀定義在 shared/types/conversation-timeline.ts（前後端同一份，見那邊的說明） */
 type SessionMeta = TimelineSessionMeta
 
@@ -243,7 +246,6 @@ async function loadEventItems(
  * 「已讀」推定也跟著失準。收件人名單本來就完整存在 broadcasts.audienceSnapshot
  * .resolvedUserIds，直接反查即可，零額外寫入、內容只存一份。
  *
- * 缺索引或查詢失敗時回空陣列：群發泡泡不顯示，其餘時間軸照常，不讓整頁掛掉。
  * 規模上限：收件人名單是單一文件內的陣列，Firestore 單文件 1MB，約兩萬多人會頂到
  * （這個限制在寫入端本來就存在，不是這裡帶來的）。
  */
@@ -253,33 +255,71 @@ async function loadBroadcastItems(
   userDocId: string,
   w: TimeWindow,
 ): Promise<TimelineItem[]> {
-  try {
+  /**
+   * 只取畫面要用的三個欄位。整份群發文件帶著上千個收件人 id（846 人那筆就將近 30KB），
+   * 每開一次對話搬 20 份回來純粹是白花的讀取量與流量。
+   */
+  const scoped = () => {
     let ref = db.collection('broadcasts')
       .where('workspaceId', '==', workspaceId)
       .where('audienceSnapshot.resolvedUserIds', 'array-contains', userDocId)
       .where('completedAt', '>=', new Date(Math.max(w.fromMs, 0))) as FirebaseFirestore.Query
     if (Number.isFinite(w.toMs)) ref = ref.where('completedAt', '<=', new Date(w.toMs))
+    return ref.select('name', 'completedAt', 'sentCount')
+  }
 
+  let docs: FirebaseFirestore.QueryDocumentSnapshot[]
+  try {
     // ⚠️ 一定要自己指定由新到舊：範圍條件下 Firestore 的隱含排序是「由舊到新」，
     // 直接 limit(20) 會留下最舊的 20 筆、把客人剛收到的那幾封默默丟掉——而那正是
-    // 客服在看的東西。（既有索引是 completedAt ASC，方向全部反轉時可沿用同一份。）
-    const snap = await ref.orderBy('completedAt', 'desc').limit(BROADCAST_JOIN_LIMIT).get()
-    return snap.docs
-      // 全員送失敗的推播沒人收到，不該出現在客人的時間軸
-      .filter(d => Number(d.data().sentCount ?? 0) > 0)
-      .filter(d => inWindow(toMillis(d.data().completedAt), w))
-      .map(d => ({
-        id: `bc-${d.id}`,
-        type: 'broadcast' as TimelineItemType,
-        timestamp: d.data().completedAt,
-        label: `已發送群發：${String(d.data().name || '未命名推播').slice(0, 40)}`,
-        broadcastId: d.id,
-      }))
+    // 客服在看的東西。
+    docs = (await scoped().orderBy('completedAt', 'desc').limit(BROADCAST_JOIN_LIMIT).get()).docs
   }
   catch (e: unknown) {
-    console.warn('[timeline] broadcast join skipped:', String((e as Error)?.message ?? e).slice(0, 200))
-    return []
+    /**
+     * ⛔「既有索引是 completedAt ASC、方向全部反轉可沿用同一份」對這個形狀**不成立**。
+     * 2026-09-02 實測：帶 array-contains 時由新到舊會 `FAILED_PRECONDITION`，
+     * 而 2026-08-08 改成 desc 的那次以為不必加索引 → 從那天起每位客人的時間軸都一顆
+     * 群發泡泡都沒有（catch 只 console.warn，畫面上看不出少了東西）。
+     *
+     * 現在 `firestore.indexes.json` 有 DESC 那份了，但索引是逐專案手動部署的，
+     * 沒部署的租戶不該整排群發消失：退回 ASC（那份索引從第一天就在），多掃一點、
+     * 在記憶體裡取最新的幾筆。掃到上限＝更早的群發沒看過，要說出來。
+     */
+    const reason = String((e as Error)?.message ?? e).slice(0, 200)
+    try {
+      const scanned = (await scoped().orderBy('completedAt', 'asc').limit(BROADCAST_FALLBACK_SCAN).get()).docs
+      docs = [...scanned]
+        .sort((a, b) => toMillis(b.data().completedAt) - toMillis(a.data().completedAt))
+        .slice(0, BROADCAST_JOIN_LIMIT)
+      console.warn(
+        `[timeline] 群發改走 ASC 備援（completedAt DESC 索引未部署到 ${workspaceId}）：掃 ${scanned.length} 筆`
+        + (scanned.length >= BROADCAST_FALLBACK_SCAN ? `，已到 ${BROADCAST_FALLBACK_SCAN} 筆上限＝這位客人更早的群發沒看過` : '')
+        + `；原因：${reason}`,
+      )
+    }
+    catch (e2: unknown) {
+      // 兩條路都不通＝這位客人的時間軸看不到任何群發。這是「看起來正常但少了東西」，
+      // 一定要用 error 留下來（不是 warn），否則就是又一次沉默死亡
+      console.error(
+        `[timeline] 群發標記整批讀不到，${workspaceId} 的對話時間軸不會出現任何群發：`
+        + `desc=${reason}；asc=${String((e2 as Error)?.message ?? e2).slice(0, 200)}`,
+      )
+      return []
+    }
   }
+
+  return docs
+    // 全員送失敗的推播沒人收到，不該出現在客人的時間軸
+    .filter(d => Number(d.data().sentCount ?? 0) > 0)
+    .filter(d => inWindow(toMillis(d.data().completedAt), w))
+    .map(d => ({
+      id: `bc-${d.id}`,
+      type: 'broadcast' as TimelineItemType,
+      timestamp: d.data().completedAt,
+      label: `已發送群發：${String(d.data().name || '未命名推播').slice(0, 40)}`,
+      broadcastId: d.id,
+    }))
 }
 
 export default defineEventHandler(async (event) => {

@@ -2601,11 +2601,21 @@ const serverChatRows = computed<ChatRow[]>(() => {
 
 const allChatRows = computed<ChatRow[]>(() => [...serverChatRows.value, ...pendingRows.value])
 
+/**
+ * 收起狀態下這一列看不看得到。**開關的數字與實際隱藏的列一定要吃同一個判斷**——
+ * 先前是兩份各寫一套，沒帶 eventType 的列（群發標記、上線前的舊事件）在清單裡是「保守顯示」、
+ * 在數字裡卻被算成「已收起」，開關就會寫著「顯示系統紀錄（4）」但按下去一列都沒多出來。
+ */
+function isRowVisibleWhenCollapsed(r: ChatRow): boolean {
+  if (r.kind !== 'event') return true
+  if (r.variant === 'action') return true
+  // 沒帶型別 → 保守顯示（群發標記與這功能上線前的舊事件都走這條）
+  return r.eventType ? ALWAYS_SHOWN_EVENT_TYPES.has(r.eventType) : true
+}
+
 /** 收起來的純軌跡事件有幾筆（給開關顯示數字用；0 就不必出現那顆開關） */
 const hiddenEventCount = computed(() =>
-  allChatRows.value.filter(r =>
-    r.kind === 'event' && r.variant !== 'action'
-    && !(r.eventType && ALWAYS_SHOWN_EVENT_TYPES.has(r.eventType))).length,
+  allChatRows.value.filter(r => !isRowVisibleWhenCollapsed(r)).length,
 )
 
 /**
@@ -2614,11 +2624,7 @@ const hiddenEventCount = computed(() =>
  */
 const chatRows = computed<ChatRow[]>(() => {
   if (showAllEvents.value) return allChatRows.value
-  return allChatRows.value.filter(r =>
-    r.kind !== 'event'
-    || r.variant === 'action'
-    || (r.eventType ? ALWAYS_SHOWN_EVENT_TYPES.has(r.eventType) : true), // 舊資料沒帶型別 → 保守顯示
-  )
+  return allChatRows.value.filter(isRowVisibleWhenCollapsed)
 })
 
 /**

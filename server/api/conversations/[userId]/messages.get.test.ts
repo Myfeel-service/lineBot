@@ -55,6 +55,8 @@ interface FakeBroadcast {
   ms: number
   sentCount?: number
 }
+/** 哪一個排序方向要當成「索引沒部署」而炸掉（真實 Firestore 回 FAILED_PRECONDITION） */
+type BroadcastIndexGap = 'desc' | 'both' | null
 
 /** 只認測試會用到的那幾種查詢；沒對應到的直接回空，不要假裝支援 */
 function makeDb(data: {
@@ -62,6 +64,7 @@ function makeDb(data: {
   sessions?: FakeSession[]
   events?: FakeEvent[]
   broadcasts?: FakeBroadcast[]
+  broadcastIndexGap?: BroadcastIndexGap
   currentSessionId?: string
 }) {
   const messages = [...data.messages].sort((a, b) => a.ms - b.ms || a.id.localeCompare(b.id))
@@ -136,6 +139,7 @@ function makeDb(data: {
     where: () => emptyQuery,
     orderBy: () => emptyQuery,
     limit: () => emptyQuery,
+    select: () => emptyQuery,
     get: async () => ({ docs: [], empty: true }),
   }
 
@@ -143,15 +147,23 @@ function makeDb(data: {
    * 群發查詢的假實作。刻意照 Firestore 的行為做：**先排序再截斷**——
    * 這正是「沒寫 orderBy 就會留下最舊的那幾筆」的地方，假 db 不模擬這一段就測不出來。
    */
-  type BcQuery = { filters: Array<{ op: string, ms: number }>, dir: 'asc' | 'desc', cap?: number }
+  type BcQuery = { filters: Array<{ op: string, ms: number }>, dir: 'asc' | 'desc', cap?: number, ordered?: boolean }
   const bcQuery = (q: BcQuery): any => ({
     where: (field: string, op: string, value: unknown) =>
       (field === 'completedAt'
         ? bcQuery({ ...q, filters: [...q.filters, { op, ms: (value as Date).getTime() }] })
         : bcQuery(q)),
-    orderBy: (_f: string, dir: 'asc' | 'desc' = 'asc') => bcQuery({ ...q, dir }),
+    orderBy: (_f: string, dir: 'asc' | 'desc' = 'asc') => bcQuery({ ...q, dir, ordered: true }),
     limit: (n: number) => bcQuery({ ...q, cap: n }),
+    select: () => bcQuery(q),
     get: async () => {
+      // 索引沒部署時 Firestore 是丟錯，不是回空——回空測不出「整排群發默默消失」
+      const gap = data.broadcastIndexGap ?? null
+      if (q.ordered && (gap === 'both' || (gap === 'desc' && q.dir === 'desc'))) {
+        const err: any = new Error('The query requires an index.')
+        err.code = 9
+        throw err
+      }
       let rows = broadcasts.filter(b => q.filters.every((f) => {
         if (f.op === '>=') return b.ms >= f.ms
         if (f.op === '<=') return b.ms <= f.ms
@@ -430,5 +442,42 @@ describe('對話時間軸：分段讀', () => {
     expect(ids).toHaveLength(20)
     expect(ids).toContain('bc-bc25') // 最新的那封一定要在
     expect(ids).not.toContain('bc-bc01') // 最舊的那幾封才是該被截掉的
+  })
+
+  /**
+   * 2026-09-02 線上災情：老闆前一天發了 846 人的推播，客服對話裡一顆群發泡泡都沒有。
+   * 根因＝2026-08-08 把排序改成 desc 時以為「ASC 那份索引方向反轉可沿用」，實測不成立
+   * （帶 array-contains 的形狀會 FAILED_PRECONDITION），而 catch 只 console.warn
+   * → 從那天起每位客人的時間軸都少了整排群發，畫面上完全看不出來。
+   *
+   * 索引是逐專案手動部署的，所以「沒有那份索引」必須是可以活下去的狀態。
+   */
+  it('缺 completedAt DESC 索引時退回 ASC，群發還是看得到最新的那幾筆', async () => {
+    const broadcasts = Array.from({ length: 25 }, (_, i) => ({
+      id: `bc${String(i + 1).padStart(2, '0')}`,
+      ms: T0 + i * HOUR,
+    }))
+    useDb({ messages: seriesOf(3, T0 + 30 * HOUR), broadcasts, broadcastIndexGap: 'desc' })
+
+    const res = await call({ limit: 40 })
+    const ids = res.items.filter(i => i.type === 'broadcast').map(i => i.id)
+
+    expect(ids).toHaveLength(20)
+    expect(ids).toContain('bc-bc25')
+    expect(ids).not.toContain('bc-bc01')
+  })
+
+  /** 兩條路都不通時：其餘時間軸照常回，不讓整頁掛掉（但後端要留 error log，見端點） */
+  it('群發兩個方向都查不到時，訊息與事件照常回', async () => {
+    useDb({
+      messages: seriesOf(3, T0 + 30 * HOUR),
+      broadcasts: [{ id: 'bc01', ms: T0 + 29 * HOUR }],
+      broadcastIndexGap: 'both',
+    })
+
+    const res = await call({ limit: 40 })
+
+    expect(res.items.filter(i => i.type === 'broadcast')).toHaveLength(0)
+    expect(messageIds(res)).toEqual(['m1', 'm2', 'm3'])
   })
 })
