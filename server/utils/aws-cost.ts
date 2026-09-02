@@ -108,6 +108,82 @@ export async function fetchAwsCost(start: string, end: string): Promise<AwsCostR
   return parseCostResponse(res)
 }
 
+export type AwsUsageItem = {
+  /** Cost Explorer 的原始用量代碼（如 `APN1-BuildDuration`），認不得時畫面照樣印得出來 */
+  usageType: string
+  /** 原價（已濾掉折抵／退費） */
+  cost: number
+  /** 用量本身：分鐘、GB-秒、次數… */
+  quantity: number
+  /** 用量單位（Minutes／GB-Seconds／Requests／GigaBytes） */
+  unit: string
+}
+
+/**
+ * 撈某服務**在同一段期間內的逐項用量**（Amplify 專用，因為它一家就佔九成五）。
+ *
+ * 為什麼要多打一次：主查詢已經用掉 SERVICE＋RECORD_TYPE 兩個分組欄位（Cost Explorer
+ * 最多只給兩個），沒有空位再塞 USAGE_TYPE。而少了這一刀，畫面就只能說「Amplify NT$749」，
+ * 答不出老闆真正在問的「這是客人多還是我們一直推程式」。
+ *
+ * ⚠️ 這會讓每次冷載多付 US$0.01（成本總覽這頁自己的查詢費）；為了抵掉它，
+ *    呼叫端把快取從 6 小時拉長到 12 小時——帳單一天才更新一次，資訊一點都沒少。
+ */
+export async function fetchAwsServiceUsage(service: string, start: string, end: string): Promise<AwsUsageItem[]> {
+  let res
+  try {
+    res = await getClient().send(new GetCostAndUsageCommand({
+      TimePeriod: { Start: start, End: end },
+      Granularity: 'MONTHLY',
+      Metrics: ['UnblendedCost', 'UsageQuantity'],
+      // 直接在查詢端濾掉折抵／退費，這裡不需要像主查詢那樣自己拆帳
+      Filter: {
+        And: [
+          { Dimensions: { Key: 'SERVICE', Values: [service] } },
+          { Dimensions: { Key: 'RECORD_TYPE', Values: ['Usage'] } },
+        ],
+      },
+      GroupBy: [{ Type: 'DIMENSION', Key: 'USAGE_TYPE' }],
+    }))
+  }
+  catch (e) {
+    throw new AwsCostUnavailableError(describeError(e))
+  }
+  return parseUsageResponse(res)
+}
+
+/**
+ * 把逐項用量的回應攤平（跨 bucket 相加）。
+ *
+ * ⚠️ 查詢區間理論上只落在同一個月＝一個 bucket，但這裡照樣累加：跨月當天
+ * （end 推到「明天」）會多出第二個 bucket，只取第一個會靜靜少算一天。
+ */
+export function parseUsageResponse(res: GetCostAndUsageCommandOutput): AwsUsageItem[] {
+  const byType = new Map<string, AwsUsageItem>()
+  for (const bucket of res.ResultsByTime ?? []) {
+    for (const g of bucket.Groups ?? []) {
+      const usageType = g.Keys?.[0] ?? ''
+      if (!usageType) continue
+      const cost = Number(g.Metrics?.UnblendedCost?.Amount ?? 0)
+      const quantity = Number(g.Metrics?.UsageQuantity?.Amount ?? 0)
+      if (!Number.isFinite(cost)) continue
+      const prev = byType.get(usageType)
+      byType.set(usageType, {
+        usageType,
+        cost: (prev?.cost ?? 0) + cost,
+        quantity: (prev?.quantity ?? 0) + (Number.isFinite(quantity) ? quantity : 0),
+        unit: g.Metrics?.UsageQuantity?.Unit || prev?.unit || '',
+      })
+    }
+  }
+  return [...byType.values()]
+    .map(i => ({ ...i, cost: Number(i.cost.toFixed(6)), quantity: Number(i.quantity.toFixed(3)) }))
+    // 用量是 0 又不用錢的項目留著只會把清單塞滿；⛔ 但「有用量、金額是零頭」要留，
+    // 那才看得出「這項幾乎免費」而不是「這項不存在」
+    .filter(i => i.cost > 0 || i.quantity > 0)
+    .sort((a, b) => b.cost - a.cost)
+}
+
 /** 把 Cost Explorer 的回應整理成畫面要的形狀（抽成純函式讓拆帳邏輯測得到） */
 export function parseCostResponse(res: GetCostAndUsageCommandOutput): AwsCostResult {
   const byService = new Map<string, number>()

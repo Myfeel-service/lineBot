@@ -406,17 +406,61 @@
               原價 {{ ntTwdSoft(hostTotalTwd) }} − 折抵 {{ ntTwd(hostCreditTwd) }} ＝ 實付 {{ ntTwd(hostNetTwd) }}。
               折抵金用完之後，帳單就會回到原價。
             </div>
-            <div v-if="host.services.length" class="sa-host-list">
-              <div v-for="s in host.services" :key="s.name" class="sa-host-row">
-                <span class="sa-host-row__bar" :style="{ width: hostPct(s.cost) + '%' }" />
+            <!-- 老闆真正在問的那個數字：沒有客人也要付多少。
+                 五格相加＝上面的主機總額（最大餘數法配整數），所以可以並排。 -->
+            <template v-if="driverCells.length">
+              <div class="sa-infra-chart-head sa-infra-chart-head--spaced">
+                <span class="sa-infra-chart-title">這筆錢裡，哪些跟客人多寡有關</span>
+              </div>
+              <div class="sa-infra-grid">
+                <div v-for="c in driverCells" :key="c.key" class="sa-infra-cell" :class="{ 'sa-infra-cell--est': c.key === 'unknown' }">
+                  <div class="sa-infra-cell__label">{{ c.label }}</div>
+                  <div class="sa-infra-cell__val">{{ c.money }}</div>
+                  <div class="sa-infra-cell__sub">{{ c.note }}</div>
+                </div>
+              </div>
+            </template>
+
+            <div v-if="hostServiceRows.length" class="sa-host-list">
+              <div v-for="s in hostServiceRows" :key="s.name" class="sa-host-row">
+                <span class="sa-host-row__bar" :style="{ width: s.pct + '%' }" />
                 <span class="sa-host-row__name">{{ s.name }}</span>
-                <span class="sa-host-row__val">{{ hostMoney(s.cost) }}</span>
+                <span class="sa-host-row__val">{{ s.money }}</span>
               </div>
             </div>
             <div v-else class="sa-cost-empty">這個月 AWS 沒有產生費用（都在免費額度內）</div>
+
+            <!-- Amplify 一家佔九成五，只給一個總數答不出「為什麼這麼貴」，所以再拆一層。
+                 ⛔ 拆不開時要出聲（上面的分類會整筆落在「未分類」），不可以靜靜不畫。 -->
+            <template v-if="host.services.length">
+              <div class="sa-infra-chart-head sa-infra-chart-head--spaced">
+                <span class="sa-infra-chart-title">{{ host.itemizedService }} 那筆錢實際買了什麼</span>
+              </div>
+              <div v-if="host.amplifyUsage === null" class="sa-infra-warn">
+                ⚠ 這次拆不開：{{ host.amplifyUsageReason || '原因不明' }}。<br>
+                上面的分類把這筆整個放進「未分類」，不是它不用錢。
+              </div>
+              <div v-else-if="!amplifyItems.length" class="sa-cost-empty">這個月這個服務沒有任何用量</div>
+              <div v-else class="sa-host-usage">
+                <div v-for="it in amplifyItems" :key="it.key" class="sa-host-usage__row">
+                  <div class="sa-host-usage__head">
+                    <span class="sa-host-usage__name">{{ it.label }}</span>
+                    <span class="sa-host-usage__tag" :class="`sa-host-usage__tag--${it.driver}`">{{ it.driverLabel }}</span>
+                    <span class="sa-host-usage__val">{{ it.money }}</span>
+                  </div>
+                  <div class="sa-host-usage__note">{{ it.note }}</div>
+                  <div class="sa-host-usage__qty">
+                    用了 {{ it.quantityText }}<template v-if="it.rate"> ・ {{ it.rate }}</template>
+                  </div>
+                </div>
+              </div>
+            </template>
+
             <p class="sa-cost-est__foot">
               金額為 AWS Cost Explorer 的 UnblendedCost（原價＝扣除折抵金 Credit 與退費 Refund 前），
-              分日以 <b>UTC</b> 計（與台北日差 8 小時，月總額不受影響）。資料一天更新一次，本頁快取 6 小時。
+              分日以 <b>UTC</b> 計（與台北日差 8 小時，月總額不受影響）。資料一天更新一次，本頁快取 12 小時。
+              上面列的是<b>整個 AWS 帳號的所有服務</b>——之後開金流中繼站（Lightsail）之類的機器，
+              會自己出現在這張清單裡，不用改程式。
             </p>
           </div>
         </div>
@@ -426,6 +470,18 @@
 </template>
 
 <script setup lang="ts">
+import {
+  COST_DRIVER_LABEL,
+  COST_DRIVER_NOTE,
+  COST_DRIVER_ORDER,
+  allocateRounded,
+  amplifyUsageMeta,
+  buildCostLeaves,
+  formatUsageQuantity,
+  type CostDriver,
+  type CostLeaf,
+} from '~~/shared/aws-cost-usage'
+
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '成本總覽 — 超級管理員' })
 
@@ -517,6 +573,13 @@ interface Infra {
 type InfraResponse = Partial<Infra> & { status: 'ok' | 'unavailable' }
 
 // 主機（AWS）花費，來自 /api/admin/super/host-costs
+/** Amplify 的逐項用量（建置分鐘／執行時間／流量…） */
+interface HostUsageItem {
+  usageType: string
+  cost: number
+  quantity: number
+  unit: string
+}
 interface Host {
   status: 'ok' | 'unavailable'
   reason: string
@@ -529,6 +592,11 @@ interface Host {
   /** 實付＝原價＋折抵 */
   netTotal: number
   services: Array<{ name: string; cost: number }>
+  /** 哪個服務有再往下拆（目前只有 Amplify，它佔帳單九成五） */
+  itemizedService: string
+  /** ⛔ null＝這次拆不開（原因見 amplifyUsageReason），與「空陣列＝真的沒用量」是兩件事 */
+  amplifyUsage: HostUsageItem[] | null
+  amplifyUsageReason: string
 }
 type HostResponse = Partial<Host> & { status: 'ok' | 'unavailable' }
 
@@ -577,6 +645,7 @@ const prevInfraCostUsd = ref<number | null>(null)
 const hostLoading = ref(true)
 const host = ref<Host>({
   status: 'unavailable', reason: '', currency: 'USD', usdToTwd: USD_TO_TWD, totalCost: 0, creditTotal: 0, netTotal: 0, services: [],
+  itemizedService: 'AWS Amplify', amplifyUsage: null, amplifyUsageReason: '',
 })
 /** 上月主機花費；null＝讀不到 */
 const prevHostCost = ref<number | null>(null)
@@ -591,14 +660,79 @@ const hostCreditTwd = computed(() => host.value.status === 'ok' ? Math.abs(hostT
 const hostNetTwd = computed(() => host.value.status === 'ok' ? hostToTwd(host.value.netTotal) : 0)
 const grandTotalTwd = computed(() => aiTotalTwd.value + infraTotalTwd.value + hostTotalTwd.value)
 
-function hostMoney(amount: number) {
-  const t = hostToTwd(amount)
-  return (amount > 0 && t === 0) ? '<NT$1' : `NT$${t.toLocaleString('en-US')}`
-}
 function hostPct(cost: number) {
   const top = host.value.services[0]?.cost ?? 0
   return top > 0 ? Math.max(2, Math.round((cost / top) * 100)) : 0
 }
+
+/**
+ * ── 主機金額只在這裡換算成台幣一次 ────────────────────────────────
+ * 同一筆錢在畫面上出現三次（服務清單、分類格、Amplify 拆項）。三處各自四捨五入
+ * 就會互相打架——實測撞到「對外流量 NT$13」旁邊的分類格寫「客人越多越貴 NT$12」。
+ * 所以先攤成最小的格子、一次配成整數（總和保證等於上面那個主機總額），
+ * 三個地方全部從這一份加總而來，不可能對不起來。
+ */
+const hostLeaves = computed(() => buildCostLeaves(
+  host.value.status === 'ok' ? host.value.services : [],
+  host.value.amplifyUsage,
+))
+
+const hostLeafTwd = computed(() => {
+  const leaves = hostLeaves.value
+  const exact = leaves.map(l => (host.value.currency === 'USD' ? l.cost * USD_TO_TWD : l.cost))
+  const rounded = allocateRounded(exact, hostTotalTwd.value)
+  return new Map(leaves.map((l, i) => [l.id, rounded[i] ?? 0]))
+})
+
+/** 有花費但配到 0 元 → 顯示「<NT$1」，不要印成誤導的 NT$0 */
+function leafMoney(twdAmount: number, usd: number) {
+  return (usd > 0 && twdAmount === 0) ? '<NT$1' : `NT$${twdAmount.toLocaleString('en-US')}`
+}
+function sumLeaves(match: (l: CostLeaf) => boolean) {
+  return hostLeaves.value.filter(match).reduce((a, l) => a + (hostLeafTwd.value.get(l.id) ?? 0), 0)
+}
+
+/** 服務清單：Amplify 那一列＝它底下所有用量加起來，才會跟拆項對得上 */
+const hostServiceRows = computed(() => host.value.services.map(s => ({
+  name: s.name,
+  pct: hostPct(s.cost),
+  money: leafMoney(sumLeaves(l => l.service === s.name), s.cost),
+})))
+
+/**
+ * Amplify 那一筆的逐項用量（建置分鐘／執行時間／流量／請求數／存放）。
+ * 認不得的用量代碼**照樣列出來**並標成未分類——AWS 之後改代碼或加新項目時，
+ * 畫面要看得出「多了一項我不認得」，不能靜靜漏掉。
+ */
+const amplifyItems = computed(() => (host.value.amplifyUsage ?? []).map((it) => {
+  const meta = amplifyUsageMeta(it.usageType)
+  const driver: CostDriver = meta?.driver ?? 'unknown'
+  const id = `${host.value.itemizedService}/${it.usageType}`
+  return {
+    key: it.usageType,
+    label: meta?.label ?? it.usageType,
+    note: meta?.note ?? '帳單上新出現的項目，程式還認不得它。金額照實顯示，但沒有併進上面的分類。',
+    driver,
+    driverLabel: COST_DRIVER_LABEL[driver],
+    quantityText: meta
+      ? formatUsageQuantity(it.quantity, meta.unit)
+      : `${it.quantity.toLocaleString('en-US')} ${it.unit}`.trim(),
+    rate: meta?.rate ?? '',
+    money: leafMoney(hostLeafTwd.value.get(id) ?? 0, it.cost),
+  }
+}))
+
+/** 並排的分類格：由同一份葉節點加總，所以四格相加剛好等於上面那個主機總額 */
+const driverCells = computed(() => {
+  const leaves = hostLeaves.value
+  return COST_DRIVER_ORDER
+    .filter(k => leaves.some(l => l.driver === k && l.cost > 0))
+    .map((k) => {
+      const twdAmount = sumLeaves(l => (l as { driver: CostDriver }).driver === k)
+      const usd = leaves.filter(l => l.driver === k).reduce((a, l) => a + l.cost, 0)
+      return { key: k, label: COST_DRIVER_LABEL[k], note: COST_DRIVER_NOTE[k], money: leafMoney(twdAmount, usd) }
+    })
+})
 
 /** 哪幾筆讀不到 → hero 要講清楚總額少了什麼（絕不靜默當 0） */
 const missingParts = computed(() => {
@@ -803,6 +937,11 @@ function normalizeHost(res: HostResponse): Host {
     creditTotal: ok ? (res.creditTotal ?? 0) : 0,
     netTotal: ok ? (res.netTotal ?? res.totalCost ?? 0) : 0,
     services: ok ? (res.services || []) : [],
+    itemizedService: res.itemizedService || 'AWS Amplify',
+    // ⛔ 這裡不可以用 `|| []` 兜底：`null`（這次拆不開）與 `[]`（真的沒有用量）
+    //    在畫面上要走完全不同的分支，兜成同一個就變成「靜靜少一塊」
+    amplifyUsage: ok ? (res.amplifyUsage ?? null) : null,
+    amplifyUsageReason: res.amplifyUsageReason || '',
   }
 }
 

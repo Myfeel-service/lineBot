@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCostResponse } from './aws-cost'
+import { parseCostResponse, parseUsageResponse } from './aws-cost'
 
 /**
  * 這組測試守的是「原價 vs 折抵」的拆帳約定（2026-08-11）：
@@ -74,5 +74,69 @@ describe('parseCostResponse', () => {
     expect(res.creditTotal).toBe(0)
     expect(res.netTotal).toBeCloseTo(res.totalCost, 6)
     expect(res.currency).toBe('USD')
+  })
+})
+
+/**
+ * 逐項用量（2026-09-02 加）：Amplify 一家佔帳單九成五，只給一個總數答不出
+ * 「這是客人變多還是我們一直推程式」。查詢區間跨月時會回兩個 bucket，
+ * 只取第一個就會靜靜少算一天——這組測試守的就是那件事。
+ */
+function usageBucket(start: string, groups: Array<[usageType: string, cost: number, qty: number, unit: string]>) {
+  return {
+    TimePeriod: { Start: start, End: start },
+    Groups: groups.map(([t, c, q, u]) => ({
+      Keys: [t],
+      Metrics: {
+        UnblendedCost: { Amount: String(c), Unit: 'USD' },
+        UsageQuantity: { Amount: String(q), Unit: u },
+      },
+    })),
+  }
+}
+
+describe('parseUsageResponse', () => {
+  it('把用量攤平並依金額排序，用量單位跟著回來', () => {
+    const items = parseUsageResponse({
+      $metadata: {},
+      ResultsByTime: [usageBucket('2026-08-01', [
+        ['APN1-BuildDuration', 7.1482, 714.823, 'Minutes'],
+        ['APN1-HostingComputeRequestDuration', 15.7894, 284209.485, 'GB-Seconds'],
+        ['APN1-DataTransferOut', 0.3921, 2.614, 'GigaBytes'],
+      ])],
+    } as any)
+
+    expect(items.map(i => i.usageType)).toEqual([
+      'APN1-HostingComputeRequestDuration',
+      'APN1-BuildDuration',
+      'APN1-DataTransferOut',
+    ])
+    expect(items[0]!.quantity).toBeCloseTo(284209.485, 3)
+    expect(items[0]!.unit).toBe('GB-Seconds')
+    expect(items.reduce((a, i) => a + i.cost, 0)).toBeCloseTo(23.3297, 4)
+  })
+
+  it('跨月的兩個 bucket 要相加，不能只取第一個（否則靜靜少一天）', () => {
+    const items = parseUsageResponse({
+      $metadata: {},
+      ResultsByTime: [
+        usageBucket('2026-08-01', [['APN1-BuildDuration', 7.0, 700, 'Minutes']]),
+        usageBucket('2026-09-01', [['APN1-BuildDuration', 0.15, 15, 'Minutes']]),
+      ],
+    } as any)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.cost).toBeCloseTo(7.15, 6)
+    expect(items[0]!.quantity).toBeCloseTo(715, 3)
+  })
+
+  it('有用量但金額是零頭的項目要留著——那代表「這項幾乎免費」，不是「這項不存在」', () => {
+    const items = parseUsageResponse({
+      $metadata: {},
+      ResultsByTime: [usageBucket('2026-08-01', [
+        ['APN1-DataStorage', 0.0002, 0.01, 'GigaBytes'],
+        ['APN1-NothingUsed', 0, 0, 'Requests'],
+      ])],
+    } as any)
+    expect(items.map(i => i.usageType)).toEqual(['APN1-DataStorage'])
   })
 })

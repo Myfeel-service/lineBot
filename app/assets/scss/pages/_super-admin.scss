@@ -753,6 +753,90 @@ $cost-host: #8a6f5a;
   white-space: nowrap;
 }
 
+/* 主機逐項用量（Amplify 拆項）。
+   為什麼要拆：帳單只寫「AWS Amplify NT$749」，看不出是客人變多還是我們一直推程式，
+   而這兩件事該做的完全相反。分類標籤沿用本頁既有語意色，不另立一套：
+   琥珀=可以省的（建置分鐘）、沉穩藍=生意變好才會漲的、灰=中性／拆不開。 */
+.sa-host-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sa-host-usage__row {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--color-bg-subtle, #f9fafb);
+}
+
+.sa-host-usage__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.sa-host-usage__name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+}
+
+/* 金額推到最右邊：一整排數字要對得起來才讀得出誰大誰小 */
+.sa-host-usage__val {
+  margin-left: auto;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--color-text-primary, #111827);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sa-host-usage__tag {
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: $cost-test;
+  background: rgba(138, 147, 155, 0.14);
+
+  &--dev {
+    color: #92400e;
+    background: rgba(196, 127, 23, 0.14);
+  }
+
+  &--traffic {
+    color: $cost-conv;
+    background: rgba(47, 125, 154, 0.13);
+  }
+
+  &--unknown {
+    color: #92400e;
+    background: rgba(217, 119, 6, 0.12);
+  }
+}
+
+.sa-host-usage__note {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.sa-host-usage__qty {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 同一張卡裡連著出現的第二、第三個小標題要跟上一區拉開；
+   .sa-infra-chart-head 本身只有下緣間距（原本每張卡只用一次） */
+.sa-infra-chart-head--spaced {
+  margin-top: 1.4rem;
+}
+
 .sa-infra-top {
   margin-top: 1rem;
   padding: 0.7rem 0.9rem;
