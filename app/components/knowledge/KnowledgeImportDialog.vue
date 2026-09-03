@@ -184,7 +184,7 @@
             :aria-expanded="startOpen === 'web'"
             @click="pickStart('web')"
           >
-            官網有「常見問題」頁<span class="kb-start__chip-tag">最快</span>
+            貼官網現有的頁面<span class="kb-start__chip-tag">最快</span>
           </button>
           <button
             type="button"
@@ -206,13 +206,32 @@
           </button>
         </div>
 
-        <!-- 官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart） -->
-        <p v-if="startOpen === 'web'" class="kb-start__panel">
-          把「常見問題」或商品頁的<strong>網址貼到上面的框</strong>就好，不用準備任何東西。
-          之後網頁改了，系統會通知你要不要重新學。
-        </p>
+        <!--
+          官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart）。
+          ⚠️ 2026-09-03 老闆問「上傳網頁只適合用常見問題的頁面嗎」——不是，只要是**看得到文字**
+             的頁面都吃（商品頁、運費退換貨、關於我們⋯）。原本標籤寫「官網有『常見問題』頁」
+             把能力講窄了，等於誤教：沒有 FAQ 頁的店家會以為這條路不能用。
+             真正的限制不是「哪一種頁面」，而是「抓不抓得到文字」，所以下面照實列兩種抓不到的。
+        -->
+        <div v-if="startOpen === 'web'" class="kb-start__panel">
+          <p class="kb-start__ptxt">
+            <strong>只要頁面上看得到文字就可以貼</strong>，不限常見問題頁——
+            商品／方案介紹、運費與退換貨說明、關於我們、公告都算。
+            一頁貼一次；<strong>貼完系統會順便問你要不要把整個網站的其他頁一起匯入</strong>。
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--warn">
+            這兩種抓不到：<strong>要先登入</strong>才看得到的頁面、以及<strong>要滑動或點按才長出內容</strong>的頁面
+            （購物網站首頁的商品區塊多半是這種，改貼「商品列表頁」就好）。
+          </p>
+          <p class="kb-start__ptxt">之後網頁改了，系統會通知你要不要重新學。</p>
+        </div>
 
         <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
+          <!--
+            ⚠️ 圖刻意放在清單**外面**（2026-09-03 老闆問「用範本自己填是否可以再更優化」）：
+               第一版把它塞進第 1 步的 <li> 裡，圖把那一步撐成三倍高、第 2 步被推到很下面，
+               於是「這條路只有兩個動作」這件事看不出來。現在先讓兩個動作一眼讀完，圖再補在後面。
+          -->
           <ol class="kb-start__steps">
             <li>
               <el-button
@@ -223,12 +242,9 @@
                 size="small"
                 plain
               >
-                下載 FAQ 範本（Excel）
+                下載 FAQ 範本
               </el-button>
-              兩欄填完就好（欄位名稱範本已經填好）
-              <!-- 「兩欄」是抽象的：看一眼表格長什麼樣，「第一列要不要打欄位名」「一列一題還是一段」
-                   這兩個問題同時消失（老闆 09-03 問「是否有範本的樣貌」） -->
-              <KnowledgeFaqTemplateDiagram />
+              把答案填進去就好（欄位名稱已經填好，檔案裡還有一頁「<strong>使用說明</strong>」）
             </li>
             <li>
               <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
@@ -237,6 +253,7 @@
               <span class="text-xs text-muted">（或直接拖進上面的框）</span>
             </li>
           </ol>
+          <KnowledgeFaqTemplateDiagram />
         </div>
 
         <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">

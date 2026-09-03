@@ -861,6 +861,18 @@
     }
   }
 
+  /* 面板裡的段落（網頁那條是三句話，不是步驟清單） */
+  &__ptxt {
+    margin: 0;
+
+    & + & { margin-top: 6px; }
+
+    /* 「這兩種抓不到」＝先講清楚才不會白試一次；用琥珀字不用紅（不是壞了，是限制） */
+    &--warn {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
   &__steps {
     margin: 0;
     padding-left: 18px;
