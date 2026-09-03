@@ -101,7 +101,7 @@
             <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           </div>
           <p class="lp-hero__fine">
-            <b>60 秒</b>完成設定 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
+            <b>60 秒</b>開好帳號 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
           </p>
         </div>
 
@@ -690,13 +690,18 @@
             「兩步」裡（fine print：接 LINE 的部分隨時可以再回來做）
          ⚠️ 第一步是 **Google 一鍵登入**：2026-08-27 查證 app/pages/login.vue，
             登入只有 `GoogleAuthProvider`，沒有 email 開通連結——改文案前先確認
-            登入方式還是不是這個。 -->
+            登入方式還是不是這個。
+         ⚠️ 「60 秒」的口徑（09-03 `D-57` 拍板＝方案①）：60 秒只錨「**開好帳號**」
+            （Google 登入＋取名字，✓ 那行自己就是證據）；接 LINE 賣「有人陪」不賣快——
+            實際是 10 分鐘級，⛔別再把 60 秒跟「上線／完成設定／接 LINE」焊在一起
+            （舊版收尾 CTA 犯過）：承諾會在最難的一步爆掉，客人覺得被騙的時點剛好是
+            最需要信任的時點。全站「60 秒」共 6 處同口徑，改任一處先 grep。 -->
     <section id="fast" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2>只要 <span class="mark">60 秒</span>，<br>免費完成上線設定。</h2>
+            <h2><span class="mark">60 秒</span>開好帳號，<br>接 LINE 有人陪。</h2>
           </div>
         </div>
 
@@ -717,7 +722,7 @@
              ⚠️ 連接線的 .lp-cue 掛在**線自己**（.lp-path__rail）身上（見底下的 cueIo）：
                 它要在「那一段路」真的看得見時才長，不是跟著整列的淡入一起跑。 -->
         <div class="lp-path lp-stack">
-          <div class="lp-path__over lp-reveal">現在只需要兩步 · 60 秒</div>
+          <div class="lp-path__over lp-reveal">開帳號只要兩步 · 60 秒</div>
           <div class="lp-path__row lp-reveal lp-reveal--fade">
             <div class="lp-path__col">
               <span class="lp-path__dot">1</span>
@@ -854,7 +859,8 @@
           </div>
           <div class="lp-pf lp-reveal">
             <b>60 秒就能開始</b>
-            <small>Google 登入、填一下商家資訊，今天就能讓它上工。</small>
+            <!-- ⛔「填商家資訊」是不存在的步驟（#fast 區 09-03 查證過）：第二件事只有取名字 -->
+            <small>Google 登入、幫帳號取個名字，今天就能讓它上工。</small>
           </div>
         </div>
 
@@ -1095,7 +1101,7 @@
       <span class="lp-cta__blob lp-cta__blob--2" />
       <div class="lp-wrap lp-cta__in">
         <h2>從今天開始，<br>讓一個你，變成很多個你。</h2>
-        <p class="lp-cta__sub">連結你的 LINE 官方帳號，60 秒打造第一個 {{ brandName }}。</p>
+        <p class="lp-cta__sub">60 秒開好帳號，接 LINE 的每一步都有人陪。</p>
         <div class="lp-cta__actions">
           <NuxtLink class="lp-btn lp-btn--white" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <a class="lp-cta__talk" :href="emailHref">想先聊聊？寄信給我們 →</a>
@@ -1113,7 +1119,7 @@
       <div class="lp-stickybar__in">
         <!-- 「多了半個」的「了」不能省：省掉會被讀成「多半（大概）個客服」，泡泡版就是有「了」 -->
         <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em>，多了半個客服＋半個行銷</span>
-        <span class="lp-stickybar__t2">60 秒完成設定 · 不綁約、隨時可取消</span>
+        <span class="lp-stickybar__t2">60 秒開好帳號 · 不綁約、隨時可取消</span>
         <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
     </div>
