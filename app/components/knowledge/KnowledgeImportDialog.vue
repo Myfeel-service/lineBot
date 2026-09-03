@@ -85,9 +85,13 @@
           </p>
           <!-- 綠勾之後就不必再看分享說明了(事情已經做完);其餘狀態一律附上帳號與重測鈕 -->
           <template v-if="gsheetProbe?.status !== 'ok'">
-            <div v-if="serviceAccountEmail" class="kb-gsheet-share__row">
-              <code class="kb-gsheet-email">{{ serviceAccountEmail }}</code>
-              <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+            <!-- ⚠️ 重測鈕不可以藏在「拿得到服務帳號」的條件裡（2026-09-03 code review 抓到）：
+                 gsheet-account 那支在開窗時失敗（靜默）的話，畫面就只剩一句「請共用給下面這個帳號」
+                 下面什麼都沒有、也沒有重測鈕＝死路。帳號改用探測回傳的那份當備援。 -->
+            <div class="kb-gsheet-share__row">
+              <code v-if="shareEmail" class="kb-gsheet-email">{{ shareEmail }}</code>
+              <span v-else class="text-xs text-muted">（讀不到服務帳號，請重新整理頁面或聯絡我們）</span>
+              <el-button v-if="shareEmail" size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
               <el-button size="small" :loading="gsheetProbing" @click="probeGsheet(gsheetInput.trim(), true)">
                 分享好了，再測一次
               </el-button>
@@ -976,9 +980,15 @@ const textInput = ref('')
 const gsheetInput = ref('')
 const serviceAccountEmail = ref('')
 
+/**
+ * 要分享給哪個帳號。開窗時那支 gsheet-account 失敗的話（catch 是靜默的）就退用探測回傳的那份
+ * ——`gsheet-probe` 在「還讀不到」那條路刻意把它一起帶回來，正是為了這種情況。
+ */
+const shareEmail = computed(() => serviceAccountEmail.value || gsheetProbe.value?.serviceAccountEmail || '')
+
 async function copyServiceEmail() {
   try {
-    await navigator.clipboard.writeText(serviceAccountEmail.value)
+    await navigator.clipboard.writeText(shareEmail.value)
     showToast('已複製服務帳號 email', 'success')
   }
   catch {
@@ -993,7 +1003,7 @@ async function copyServiceEmail() {
  * 過期結果丟掉。差別是**失敗不靜音**——「還讀不到」正是使用者此刻最需要知道的事
  * （整站探頁數失敗只是少一個順手功能，靜音無妨）。
  */
-interface GsheetProbe { status: string, message: string, detail?: string }
+interface GsheetProbe { status: string, message: string, detail?: string, serviceAccountEmail?: string }
 const gsheetProbe = ref<GsheetProbe | null>(null)
 const gsheetProbing = ref(false)
 let gsheetProbedUrl = ''
@@ -1410,8 +1420,11 @@ async function runSiteImport() {
       try {
         const created = await apiFetch<{ jobId: string }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',
+          // ⛔ 不帶 backgroundAdvance：這一頁的 bulk-create 只在下面這個 worker 裡呼叫，
+          //    人一關窗就沒有人收結果，讓排程推完等於純燒錢（見 PreviewJobDoc 的說明）。
           body: { type: 'url', url: page.url, generateOverview: false },
         })
+        lastPreviewJobId.value = created.jobId // 逾時要停掉它（見下面的 catch）
         const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
         if (!res.chunks.length) throw new Error('沒有切出知識(頁面可能沒有實質內容)')
         const bulk = await apiFetch<{ total: number; indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
@@ -1446,7 +1459,21 @@ async function runSiteImport() {
       }
       catch (err: any) {
         page.status = 'failed'
-        page.error = String(err?.data?.statusMessage || err?.statusMessage || err?.message || '匯入失敗').slice(0, 80)
+        /**
+         * ⚠️ 逾時要單獨講（2026-09-03 code review 抓到）：整站這條路的 `bulk-create`
+         * **只在這個 worker 裡呼叫**，所以這一頁的工作即使被排程做完，切好的知識也沒有人收
+         * ——不能沿用單筆匯入那句「還在背景整理、好了會告訴你」，那是騙人的。
+         * 而且要主動把工作停掉：不停的話排程會付完整的 OCR／AI 費用把它做完，結果丟掉。
+         */
+        if (err?.code === PREVIEW_JOB_DEADLINE) {
+          page.error = '整理太久，這一頁跳過了（沒有匯入，可重新勾選再試）'
+          if (lastPreviewJobId.value) {
+            apiFetch(`/api/ai/knowledge/preview-jobs/${lastPreviewJobId.value}`, { method: 'DELETE' }).catch(() => {})
+          }
+        }
+        else {
+          page.error = String(err?.data?.statusMessage || err?.statusMessage || err?.message || '匯入失敗').slice(0, 80)
+        }
       }
       finally {
         siteDoneCount.value++
@@ -1497,7 +1524,16 @@ async function runSiteImport() {
   )
 }
 
-const includedCount = computed(() => chunks.value.filter(c => c.included).length)
+/**
+ * 這次真的會送出幾條。
+ * ⚠️ 過濾條件必須跟 `runImport` **一模一樣**（2026-09-03 code review 抓到）：
+ * 原本只數 `included`，但 runImport 還會濾掉標題或內容被清空的那些——於是清空一條的標題
+ * 卻留著勾選，按鈕說 20 條、實際只送 19 條，正是 `D-41` P0② 要修的「按鈕與結果對不上」；
+ * 全部清空時按鈕還會是可按的，按下去只得到「請至少選擇一條」的死路。
+ */
+const willImportChunks = computed(() =>
+  chunks.value.filter(c => c.included && c.title.trim() && c.content.trim()))
+const includedCount = computed(() => willImportChunks.value.length)
 
 /**
  * 這次真的會建幾條（`D-41` P0②）。
@@ -1750,8 +1786,14 @@ async function resumeStoredJob() {
   catch (err: any) {
     if (previewCancelled) return // 使用者自己按了取消
     // 等太久:伺服器那份工作還活著,記號留著下次進來再接。這次不出聲——
-    // 使用者只是打開了知識庫,沒有要求任何事,不該迎面丟一個錯誤給他
-    if (err?.code === PREVIEW_JOB_DEADLINE) return
+    // 使用者只是打開了知識庫,沒有要求任何事,不該迎面丟一個錯誤給他。
+    // ⚠️ 但**一定要立起「還在跑」的旗標**（2026-09-03 code review 抓到）:不立的話
+    //    jobState 會變成 'none',側欄那顆「一份資料整理中」當場消失,而工作其實還活著
+    //    ——記號在、畫面上卻一點痕跡都沒有,正是這輪要消滅的沉默死亡。
+    if (err?.code === PREVIEW_JOB_DEADLINE) {
+      previewStillRunning.value = true
+      return
+    }
     const code = Number(err?.statusCode ?? err?.data?.statusCode ?? 0)
     // 過期 / 被清掉 / 不是這個租戶的 → 記號沒用了,靜靜丟掉
     if (code === 404 || code === 403) {
@@ -1772,6 +1814,7 @@ async function resumeStoredJob() {
 
 onMounted(() => { void resumeStoredJob() })
 
+
 /** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
 const previewError = ref('')
 /**
@@ -1780,6 +1823,77 @@ const previewError = ref('')
  *    畫成錯誤的話使用者會去重傳一份，於是同一份資料兩個工作同時跑、OCR 錢付兩次。
  */
 const previewStillRunning = ref(false)
+
+/**
+ * 「好了會告訴你」要真的做到（2026-09-03 code review 抓到的第一條）。
+ *
+ * 畫面等太久之後 previewStillRunning 立起來、側欄顯示「一份資料整理中」——但在這支之前
+ * **沒有任何東西會再去看那份工作**：resumeStoredJob 只在 onMounted 跑，而這個元件沒有
+ * v-if、永遠不會重新掛載，重開視窗也不會重新輪詢。結果排程幾分鐘後把它做完了，
+ * 使用者卻要整頁重新載入才看得到——文案寫了一個程式沒做到的承諾。
+ *
+ * 做法：只在「還在跑」期間，每 45 秒打一次狀態（那支端點本身也會順手推進一步）。
+ * ⛔ 間隔不能太短:每次呼叫都可能真的做一步 AI 工作,這裡是背景等待不是使用者在等。
+ */
+const RECHECK_MS = 45_000
+let recheckTimer: ReturnType<typeof setInterval> | null = null
+
+async function recheckStoredJob() {
+  const marker = readJobMarker()
+  if (!marker) {
+    previewStillRunning.value = false
+    return
+  }
+  // 使用者已經在做別的事（挑整站頁面、跑批次、開始另一份整理）→ 這輪不打擾，下次再看
+  if (previewing.value || siteImporting.value || step.value !== 'input') return
+  try {
+    const res = await apiFetch<PreviewResult & { status: 'done' | 'processing' | 'error', error?: string }>(
+      `/api/ai/knowledge/preview-jobs/${encodeURIComponent(marker.jobId)}`,
+    )
+    if (res.status === 'processing') return
+    if (res.status === 'error') {
+      previewStillRunning.value = false
+      previewError.value = String(res.error || '整理失敗').slice(0, 300)
+      clearJobMarker()
+      return
+    }
+    // done：拿回結果直接攤到預覽頁（側欄的「整理好了，看結果」由 jobState 自己翻）
+    previewStillRunning.value = false
+    if (!res.chunks.length) {
+      clearJobMarker()
+      return
+    }
+    applyPreviewResult(res, marker.mode)
+    step.value = 'preview'
+  }
+  catch (err: any) {
+    const code = Number(err?.statusCode ?? err?.data?.statusCode ?? 0)
+    // 過期／被清掉／不是這個租戶 → 記號沒用了，收掉旗標（否則側欄會永遠停在「整理中」）
+    if (code === 404 || code === 403) {
+      previewStillRunning.value = false
+      clearJobMarker()
+    }
+    // 其他錯誤（網路抖動）不出聲，下一輪再看
+  }
+}
+
+watch(previewStillRunning, (on) => {
+  if (recheckTimer) {
+    clearInterval(recheckTimer)
+    recheckTimer = null
+  }
+  if (on) recheckTimer = setInterval(() => { void recheckStoredJob() }, RECHECK_MS)
+})
+
+// 使用者主動打開視窗＝他想看結果，不要讓他等下一次定時（45 秒在人站在畫面前時很長）
+watch(() => props.modelValue, (open) => {
+  if (open && previewStillRunning.value) void recheckStoredJob()
+})
+
+onBeforeUnmount(() => {
+  if (recheckTimer) clearInterval(recheckTimer)
+})
+
 /** 使用者主動取消：用來區分「取消」與「真的失敗」，取消不該顯示錯誤 */
 let previewCancelled = false
 
@@ -1830,7 +1944,13 @@ async function runPreview() {
   previewCancelled = false
   resetJobPoll()
   try {
-    const body: Record<string, unknown> = { type: mode.value, generateOverview: generateOverview.value }
+    // backgroundAdvance：只有這條路（單筆匯入）的結果有人會回來收——記號落在 localStorage、
+    // 回來自動接續，還有 recheck 定時器在看。整站每一頁刻意不帶（見 runSiteImport）。
+    const body: Record<string, unknown> = {
+      type: mode.value,
+      generateOverview: generateOverview.value,
+      backgroundAdvance: true,
+    }
     if (mode.value === 'file') {
       const file = selectedFile.value
       if (!file) return
@@ -1897,12 +2017,17 @@ async function runPreview() {
     // 等太久 ≠ 失敗:逾時的時候伺服器那份工作還活著(而且 2026-09-03 起維護排程會繼續推它),
     // 記號留著讓人下次進來接著看;真的失敗(伺服器已標 error)才清掉——留著只會在下次進頁面時
     // 再報一次同一個錯。
-    if (err?.code === PREVIEW_JOB_DEADLINE) previewStillRunning.value = true
+    const deadline = err?.code === PREVIEW_JOB_DEADLINE
+    if (deadline) previewStillRunning.value = true
     else clearJobMarker()
-    // 留在畫面上而不是 toast：等了幾分鐘的人常常沒盯著螢幕，3.5 秒的提示等於沒講
-    previewError.value = String(
-      err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
-    ).slice(0, 300)
+    // 留在畫面上而不是 toast：等了幾分鐘的人常常沒盯著螢幕，3.5 秒的提示等於沒講。
+    // 逾時那條路的「下一步」由這一端補（composable 只講發生什麼）——單筆匯入是三個呼叫端裡
+    // **唯一**能承諾背景做完還接得回來的（記號落地＋下面的 recheck 定時器）。
+    previewError.value = deadline
+      ? '等太久了，畫面先不等——整理仍在背景進行，完成後這裡會自動顯示結果'
+      : String(
+        err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
+      ).slice(0, 300)
   }
   finally {
     previewing.value = false
@@ -2100,8 +2225,13 @@ async function retryOne(item: { id: string; status: string; failureReason?: stri
       { method: 'POST' },
     )
     const row = (result.value?.items ?? []).find(i => i.id === item.id)
-    // 只有真的變成 indexed 才算學會；其餘（failed／回應沒帶狀態）一律留在失敗那一側
-    if (res?.status !== 'indexed') {
+    /**
+     * ⚠️ 判「失敗」要看 `status === 'failed'`，不是「不等於 indexed」（2026-09-03 code review 抓到）：
+     * `runIndexOnChunk` 對**停用中**的卡重算成功時回的是 `status: 'disabled'`（刻意的，
+     * 停用卡不落 failed 才不會被重試佇列復活）。用不等式判的話，那種成功會被報成
+     * 「還是沒學起來：原因不明」。
+     */
+    if (res?.status === 'failed') {
       if (row) row.failureReason = res?.failureReason || row.failureReason || '重試後仍然失敗'
       return false
     }
@@ -2148,8 +2278,8 @@ async function retryAllFailed() {
 }
 
 async function runImport() {
-  const selected = chunks.value
-    .filter(c => c.included && c.title.trim() && c.content.trim())
+  // 與畫面上的 includedCount 共用同一份判斷（見 willImportChunks 的說明）
+  const selected = willImportChunks.value
     .map(c => ({ title: c.title.trim(), content: c.content.trim(), tags: c.tags, questions: c.questions ?? [] }))
 
   if (!selected.length) return showToast('請至少選擇一條', 'error')
@@ -2226,6 +2356,11 @@ function resetAll() {
   result.value = null
   previewStillRunning.value = false
   metaOpen.value = false
+  // ⚠️ 探測狀態要一起清（2026-09-03 code review 抓到）：只清輸入不清這兩個的話，
+  //    再貼同一個試算表連結時 watcher 會因為「這個網址測過了」直接 return，
+  //    而結果早就被清成 null → 綠勾與「正在確認」都不會出現，畫面停在「還沒證明讀得到」。
+  gsheetProbe.value = null
+  gsheetProbedUrl = ''
   sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
   sitePages.value = []
   siteFilter.value = ''
@@ -2262,12 +2397,20 @@ async function onBeforeClose(done: () => void) {
   if (siteImporting.value) {
     const built = sitePages.value.filter(p => p.status === 'done')
     const cards = built.reduce((sum, p) => sum + p.cards, 0)
-    const left = siteBatchTotal.value - siteDoneCount.value
+    /**
+     * ⚠️ 「正在跑的」與「還沒開始的」要分開講（2026-09-03 code review 抓到）：
+     * worker 只在**開始下一頁之前**檢查中斷旗標，所以此刻正在整理的那幾頁會跑完、
+     * 也會真的進知識庫。把它們算進「不會匯入」的數字裡，等於告訴使用者一件不會發生的事。
+     */
+    const running = sitePages.value.filter(p => p.status === 'processing').length
+    const queued = Math.max(0, siteBatchTotal.value - siteDoneCount.value - running)
     try {
       await ElMessageBox.confirm(
-        `還有 ${left} 頁整理到一半。已完成的 ${built.length} 頁（${cards} 條知識）會保留在知識庫；停止的話，剩下這 ${left} 頁不會匯入。`,
+        `已完成的 ${built.length} 頁（${cards} 條知識）會保留在知識庫。`
+        + (running ? `正在整理的 ${running} 頁會跑完、也會匯入。` : '')
+        + (queued ? `還沒開始的 ${queued} 頁不會匯入。` : ''),
         '要停止整站匯入嗎？',
-        { confirmButtonText: '停止，保留已完成的', cancelButtonText: '繼續整理', type: 'warning' },
+        { confirmButtonText: '停止', cancelButtonText: '繼續整理', type: 'warning' },
       )
     }
     catch {

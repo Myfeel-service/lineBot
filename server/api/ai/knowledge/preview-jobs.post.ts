@@ -186,6 +186,9 @@ export default defineEventHandler(async (event) => {
     error: null,
     sourceFile,
     leaseUntil: 0,
+    // 只有單筆匯入會帶 true（見 PreviewJobDoc.backgroundAdvance 的說明）：
+    // 整站匯入的每一頁與重新同步都不帶，人一走就不該再花錢推進。
+    backgroundAdvance: body?.backgroundAdvance === true,
     createdAt: now,
     updatedAt: now,
     expiresAt: Timestamp.fromMillis(Date.now() + JOB_TTL_MS),

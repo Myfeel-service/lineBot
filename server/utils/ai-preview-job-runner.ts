@@ -277,8 +277,11 @@ export async function advancePreviewJob(
  *
  * 節制的地方（維護端點同時跑十幾項工作，這支不能拖住它）：
  *  · 一輪最多推 `maxJobs` 份，每份給較短的時間預算。
- *  · **只碰沒人持租約的**：使用者正盯著畫面輪詢的那份，租約還在手上，這裡直接跳過，
- *    絕不跟前端搶（搶了就是同一段切兩次、收兩次錢）。
+ *  · **只碰前景沒在動的**：使用者正盯著畫面輪詢的那份直接跳過，絕不跟前端搶
+ *    （搶了就是同一段切兩次、收兩次錢）。判斷看「最後一次寫入距今多久」，
+ *    ⛔不是只看租約——前景每步都會把租約寫回 0，見 FOREGROUND_QUIET_MS。
+ *  · **只碰做完有人收的**：見 PreviewJobDoc.backgroundAdvance。
+ *  · **不碰太舊的**：見 MAX_BACKGROUND_AGE_MS（否則會跟清理程式的續命邏輯互相餵養、永不過期）。
  *  · 沒有 job 時就是一次便宜的空查詢。
  *
  * ⛔ 回報一定要照實分類（見記憶 `feedback_filters_must_report_what_they_dropped`）：
@@ -302,11 +305,27 @@ export async function advanceStalePreviewJobs(
     .get()
 
   const picked = pickStaleJobs(
-    snap.docs.map(d => ({ id: d.id, ...(d.data() as PreviewJobDoc) })),
+    snap.docs.map((d) => {
+      const job = d.data() as PreviewJobDoc & { updatedAt?: { toMillis?: () => number }, createdAt?: { toMillis?: () => number } }
+      return {
+        id: d.id,
+        workspaceId: job.workspaceId,
+        leaseUntil: job.leaseUntil,
+        backgroundAdvance: job.backgroundAdvance === true,
+        updatedAtMs: typeof job.updatedAt?.toMillis === 'function' ? job.updatedAt.toMillis() : 0,
+        createdAtMs: typeof job.createdAt?.toMillis === 'function' ? job.createdAt.toMillis() : 0,
+      }
+    }),
     now,
     maxJobs,
   )
-  const { stale, leased, deferred, unusable } = picked
+  const { stale, leased, deferred, unusable, notEligible, tooOld } = picked
+  if (notEligible > 0) {
+    console.warn(`[advance-preview-jobs] ${notEligible} 份沒有開背景推進（整站每頁／重新同步），本輪不碰`)
+  }
+  if (tooOld > 0) {
+    console.warn(`[advance-preview-jobs] ${tooOld} 份太舊（超過 ${Math.round(MAX_BACKGROUND_AGE_MS / 60_000)} 分鐘）不再推，等清理程式收掉`)
+  }
   // ⛔ 被上限擋下的不能靜靜消失（見記憶 feedback_filters_must_report_what_they_dropped）：
   //    「還有 5 份排在後面」跟「沒有工作要推」在畫面與紀錄上必須長得不一樣，
   //    否則排程明明追不上，看起來卻像一切正常。
@@ -335,14 +354,40 @@ export async function advanceStalePreviewJobs(
     }
   }))
 
-  return { scanned: snap.size, leased, deferred, unusable, advanced, done, failed }
+  return { scanned: snap.size, leased, deferred, unusable, notEligible, tooOld, advanced, done, failed }
 }
+
+/**
+ * 背景推進的年齡上限。
+ *
+ * 為什麼一定要有：清理程式（`cleanupExpiredPreviewJobs`）看到「processing 且 30 分鐘內
+ * 有寫入」就會把 expiresAt 往後延一小時——而排程每推一步都會寫 updatedAt。兩者加起來
+ * 就是**永不過期**：一份使用者早就放棄的工作會被一直推、一直延命（2026-09-03 code review
+ * 抓到）。過了這個年齡就不再碰它，30 分鐘後清理程式就會把它收掉。
+ * ⚠️ 要小於 JOB_TTL_MS（1 小時），否則沒有意義。
+ */
+export const MAX_BACKGROUND_AGE_MS = 40 * 60 * 1000
+
+/**
+ * 「前景剛剛動過」的靜默期。
+ *
+ * ⛔ 不可以只看租約（第一版就是這樣，同輪 code review 抓到）：前景每推完一步就把
+ *    `leaseUntil` 寫回 0，而前端下一次輪詢要等 1.2 秒——落在那個空檔的排程會把
+ *    「使用者正盯著看的那份」當成沒人管，於是 `leased` 統計說謊（回報「沒有人在看」），
+ *    而且兩個名額會被正在被觀看的匯入吃掉、真正沒人管的那些反而一直排不到。
+ *    用「最後一次寫入距今多久」判斷才對得上實際行為。
+ */
+export const FOREGROUND_QUIET_MS = 20_000
 
 export interface StaleJobRunReport {
   /** 掃到幾份 processing 的 job */
   scanned: number
-  /** 其中幾份正被前端持著租約（使用者盯著畫面，讓他去） */
+  /** 其中幾份前景剛剛動過（使用者盯著畫面在輪詢，讓他去） */
   leased: number
+  /** 沒有開背景推進的份數（整站每頁／重新同步：做完沒人收，推了純燒錢） */
+  notEligible: number
+  /** 太舊、不再推的份數（讓清理程式收掉，見 MAX_BACKGROUND_AGE_MS） */
+  tooOld: number
   /** 該推但被本輪上限擋下、留到下一輪的份數 */
   deferred: number
   /** 資料異常推不了的份數（沒有 workspaceId） */
@@ -355,40 +400,82 @@ export interface StaleJobRunReport {
   failed: number
 }
 
-/**
- * 挑出「該由排程推」的工作——純函式，好測。
- *
- * 三種「不推」的理由**必須分開回報**，因為下一步完全不同：
- *  · leased   ＝有人在看，本來就不該碰（正常）
- *  · deferred ＝該推但這輪額度用完了（排程追不上的訊號）
- *  · unusable ＝資料壞了，永遠推不動（要有人去查）
- * 併成一個「跳過 N 份」的話，這三件事在紀錄上就分不出來了。
- */
 export function pickStaleJobs(
-  jobs: Array<{ id: string, workspaceId?: string, leaseUntil?: number }>,
+  jobs: Array<{
+    id: string
+    workspaceId?: string
+    leaseUntil?: number
+    backgroundAdvance?: boolean
+    updatedAtMs?: number
+    createdAtMs?: number
+  }>,
   now: number,
   maxJobs: number,
-): { stale: Array<{ jobId: string, workspaceId: string }>, leased: number, deferred: number, unusable: number } {
-  const stale: Array<{ jobId: string, workspaceId: string }> = []
+): {
+    stale: Array<{ jobId: string, workspaceId: string }>
+    leased: number
+    deferred: number
+    unusable: number
+    notEligible: number
+    tooOld: number
+  } {
+  const stale: Array<{ jobId: string, workspaceId: string, updatedAtMs: number }> = []
   let leased = 0
   let deferred = 0
   let unusable = 0
+  let notEligible = 0
+  let tooOld = 0
+
+  const candidates: Array<{ id: string, workspaceId: string, updatedAtMs: number }> = []
   for (const job of jobs) {
     if (!job.workspaceId) {
       unusable++
       continue
     }
-    if (job.leaseUntil && job.leaseUntil > now) {
+    // 沒開背景推進＝做完沒有人收（整站每頁／重新同步），碰它只是燒錢
+    if (job.backgroundAdvance !== true) {
+      notEligible++
+      continue
+    }
+    // 前景剛剛動過＝使用者就盯著畫面在輪詢（⛔別只看租約，見 FOREGROUND_QUIET_MS）
+    if ((job.leaseUntil && job.leaseUntil > now)
+      || (job.updatedAtMs && now - job.updatedAtMs < FOREGROUND_QUIET_MS)) {
       leased++
       continue
     }
-    // ⛔ 用 continue 不用 break（見記憶 feedback_filters_must_report_what_they_dropped）：
-    //    break 的話後面那幾份連「有沒有 workspaceId」都沒看過，deferred 也就數不準。
+    // 太舊就放手，讓清理程式收掉（見 MAX_BACKGROUND_AGE_MS）
+    if (job.createdAtMs && now - job.createdAtMs > MAX_BACKGROUND_AGE_MS) {
+      tooOld++
+      continue
+    }
+    candidates.push({ id: job.id, workspaceId: job.workspaceId, updatedAtMs: job.updatedAtMs ?? 0 })
+  }
+
+  /**
+   * 「最久沒被推的先推」——公平性（2026-09-03 code review 抓到）。
+   *
+   * 不排序的話 Firestore 回的是文件 id（uuid）順序，於是**每一輪都挑到同樣那兩份**，
+   * uuid 排在後面的工作可以永遠排不到；剛建立的還會因為 uuid 小而插到一小時前那份前面。
+   * ⛔ 刻意在記憶體裡排而不是 `orderBy`：等值條件加上另一個欄位的 orderBy 要開一份
+   *    複合索引（而且缺索引時整支查詢會 FAILED_PRECONDITION、這條路就整個靜靜停掉）。
+   *    掃描上限只有 20 筆，排序成本可忽略。
+   */
+  candidates.sort((a, b) => a.updatedAtMs - b.updatedAtMs)
+
+  for (const c of candidates) {
+    // ⛔ 用 continue 不用 break：break 的話後面那幾份連分類都沒看過，deferred 會少算
     if (stale.length >= maxJobs) {
       deferred++
       continue
     }
-    stale.push({ jobId: job.id, workspaceId: job.workspaceId })
+    stale.push({ jobId: c.id, workspaceId: c.workspaceId, updatedAtMs: c.updatedAtMs })
   }
-  return { stale, leased, deferred, unusable }
+  return {
+    stale: stale.map(({ jobId, workspaceId }) => ({ jobId, workspaceId })),
+    leased,
+    deferred,
+    unusable,
+    notEligible,
+    tooOld,
+  }
 }

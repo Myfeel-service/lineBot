@@ -151,6 +151,17 @@ export interface PreviewJobDoc {
   sourceFile: string | null
   /** 租約到期 ms epoch；0 = 未被 claim */
   leaseUntil: number
+  /**
+   * 這份工作「沒人在看的時候要不要由排程繼續推」（`D-50` 簡化 3）。
+   *
+   * ⛔ 預設 false，只有**單筆匯入**會設 true。原因是「做完之後有沒有人收」：
+   *  · 單筆匯入：jobId 落在 localStorage，使用者回來就接得回結果 → 值得推。
+   *  · 整站匯入的每一頁：`bulk-create` 只在那個 worker 裡呼叫，人一走結果就沒人收。
+   *  · 重新同步：產物是新舊比對，只活在前端流程裡。
+   * 不分辨的話，排程會付完整的 OCR／AI 費用把「沒人要的工作」做完再把結果丟掉
+   * （2026-09-03 code review 抓到；那一版是無條件推所有 processing 的工作）。
+   */
+  backgroundAdvance?: boolean
 }
 
 // ── WorkState 初始化 ────────────────────────────────────────────────

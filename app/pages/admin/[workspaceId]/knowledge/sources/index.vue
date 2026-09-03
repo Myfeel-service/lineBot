@@ -1326,6 +1326,7 @@
 import { Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
+import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1435,16 +1436,16 @@ const sources = ref<SourceSummary[]>([])
  */
 const aiEnabled = ref<boolean | null>(null)
 /**
- * 知識總條數（`D-41` P1④，2026-09-03 修）。
+ * 「AI 用得到幾條知識」（`D-41` P1④）。
  *
- * 原本只加總資料清單的 chunkCount，**漏掉未歸檔的舊版知識**（orphan：沒有掛在任何一份資料
- * 底下，但 AI 檢索照樣找得到它們）。於是「已經有 N 條知識」這句話會低報，
- * 而它正是「AI 還沒開，這些內容還沒發揮作用」那句提醒的分母。
- * ⚠️ 資料清單本身有 100 份上限（見 loadSources），超過的話這個數字仍然偏低——
- *    所以文案用「至少」而不是給一個看起來很精確的數字（見 aiOff 那條待辦）。
+ * ⛔ 不可以用資料清單的 `chunkCount` 加總：那是存在來源上的快取值（含停用／失敗），
+ *    而且孤兒卡不掛在任何來源底下。2026-09-03 第一版改成「加總 ＋ 孤兒數」，當天
+ *    code review 抓到那樣會把**回收桶裡的孤兒卡**也算進去（`/api/ai/sources/list` 的
+ *    孤兒計數沒有濾軟刪除）——低報修成了高報，而「至少」這個詞反而變成謊話。
+ * 現在改用體檢端點回的 `liveChunkCount`：那是唯一逐條看過狀態與回收桶的地方。
+ * ⚠️ 它有掃描上限，超過時 `chunkScanTruncated` 為 true → 文案要改口說「至少」。
  */
-const totalChunkCount = computed(() =>
-  sources.value.reduce((sum, s) => sum + (s.chunkCount ?? 0), 0) + orphanCount.value)
+const liveChunkCount = computed(() => health.value.liveChunkCount ?? 0)
 async function loadAiEnabled() {
   try {
     const s = await apiFetch<{ enabled?: boolean }>('/api/ai/settings')
@@ -2098,6 +2099,11 @@ interface HealthResponse {
     scanTruncated: boolean
   }
   chunkScanTruncated: boolean
+  /**
+   * AI 真的用得到的條數（已濾回收桶與非 indexed 狀態）。受掃描上限影響，
+   * `chunkScanTruncated` 為 true 時只是下界——畫面要據此改口說「至少」。
+   */
+  liveChunkCount: number
   aliasCandidateCount: number
   /** 建議收件匣待處理數（null＝這次查不到，⛔不等於 0；D-43 缺口②） */
   pendingSuggestions: number | null
@@ -2122,6 +2128,8 @@ const emptyHealth = (): HealthResponse => ({
   expiredChunks: { count: 0, items: [] },
   wrongAnswerChunks: { count: 0, items: [], scanTruncated: false },
   chunkScanTruncated: false,
+  // ⛔ 預設 0 是安全的：0 條就不會出現「AI 還沒開」那條待辦（讀不到時寧可少講一句）
+  liveChunkCount: 0,
   aliasCandidateCount: 0,
   pendingSuggestions: null,
   duplicates: { items: [], scannedAtMs: 0 },
@@ -2178,12 +2186,12 @@ const todoItems = computed<TodoItem[]>(() => {
    * 排第一個、紅色：知識庫建得再完整，總開關關著客人也感覺不到——
    * 這是最容易「做完一整天卻沒有任何效果」的坑，而且畫面原本完全不提。
    */
-  if (aiEnabled.value === false && totalChunkCount.value > 0) {
+  if (aiEnabled.value === false && liveChunkCount.value > 0) {
     items.push({
       id: 'aiOff',
       tone: 'danger',
       title: 'AI 客服還沒開啟',
-      why: `已經有至少 ${totalChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
+      why: `${health.value.chunkScanTruncated ? '已經有至少' : '已經有'} ${liveChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
       cta: '前往開啟',
       action: () => navigateTo(`/admin/${workspaceId.value}/ai-settings`),
     })
@@ -2413,11 +2421,11 @@ const healthListTruncatedNote = computed(() => {
   const group = health.value[cat]
   const notes: string[] = []
   if (group.count > group.items.length) {
-    notes.push(`共 ${group.count} 張,先列前 ${group.items.length} 張;處理完重新整理會再列出其餘的。`)
+    notes.push(`共 ${group.count} 條,先列前 ${group.items.length} 條;處理完重新整理會再列出其餘的。`)
   }
   // 掃描達上限時計數本身就是低估的,不講清楚店家會以為「清完就沒事了」
   if (health.value.chunkScanTruncated) {
-    notes.push('知識數量較多,體檢只掃描了其中一部分,實際張數可能更多。')
+    notes.push('知識數量較多,體檢只掃描了其中一部分,實際條數可能更多。')
   }
   if (cat === 'wrongAnswerChunks' && health.value.wrongAnswerChunks.scanTruncated) {
     notes.push('近期的標記筆數較多,只統計了最近的一批,實際被標記的內容可能更多。')
@@ -2954,6 +2962,8 @@ async function deleteSource() {
 // 舊版一個請求做完「重抓+LLM 重切+比對」,大頁面 30 秒必撞閘道逾時,使用者只看到
 // 「取得差異失敗」。改走匯入同一套背景狀態機:建 job → 輪詢進度 → 永不逾時,可取消。
 const { progress: resyncProgress, poll: pollResyncJob, cancel: cancelResync, reset: resetResyncPoll } = usePreviewJobPoll()
+/** 這次重新同步的工作編號：逾時／取消時要通知伺服器停掉它（見 startResync 的 catch） */
+const resyncJobId = ref('')
 
 const resyncButtonLabel = computed(() => {
   if (!resyncing.value) return '重新同步'
@@ -3003,6 +3013,7 @@ async function startResync(force = false) {
       await loadSources(true) // 後端已把「有變動」標記清掉,列表與體檢要跟上
       return
     }
+    resyncJobId.value = created.jobId
     const res = await pollResyncJob<ResyncDoneResponse>(created.jobId)
     if (!res.resync?.diff) throw new Error('比對結果不完整,請再試一次')
     const shrink = res.resync.shrink ?? null
@@ -3031,6 +3042,19 @@ async function startResync(force = false) {
     // 錯誤三要素:發生什麼 / 資料有沒有被動到 / 下一步。比對是唯讀的,可以誠實保證沒動到。
     if (err?.message === PREVIEW_JOB_CANCELLED) {
       showToast('已取消重新同步;你的知識沒有被改動', 'success')
+    }
+    /**
+     * ⚠️ 逾時要單獨講（2026-09-03 code review 抓到）：重新同步的產物（新舊比對）
+     * **只活在這個前端流程裡**——排程即使把工作做完，也沒有任何人會收那份結果。
+     * 所以這一端不能沿用單筆匯入那句「還在背景整理、好了會告訴你」（共用的 composable
+     * 已改成只講「畫面不等了」，下一步由各呼叫端自己補）；而且要主動把工作停掉，
+     * 否則排程會付完整的 AI 費用做完再丟掉。
+     */
+    else if (err?.code === PREVIEW_JOB_DEADLINE) {
+      if (resyncJobId.value) {
+        apiFetch(`/api/ai/knowledge/preview-jobs/${resyncJobId.value}`, { method: 'DELETE' }).catch(() => {})
+      }
+      showToast('這個網頁整理太久,這次先停了;你的知識沒有被改動。可以再按一次重新同步,或把內容複製下來用「貼上文字」匯入。', 'warning')
     }
     else {
       const reason = err?.data?.statusMessage || err?.statusMessage || err?.message || '重新整理沒有完成'
@@ -3088,7 +3112,7 @@ async function syncGsheetNow() {
     }
     else if (res.manualKept) {
       // 被手動編輯鎖住的分歧要講出來——不講的話，商家改了表格卻永遠不生效、也不知道為什麼
-      showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；另有 ${res.manualKept} 張手動編輯過的卡未跟表格更新（點卡片上的鎖頭可解除）`, 'warning')
+      showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；另有 ${res.manualKept} 條知識未跟表格更新（點鎖頭可解除）`, 'warning')
     }
     else {
       showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`, 'success')
@@ -3164,7 +3188,7 @@ async function applyDiff() {
       }
       const names = res.errors.slice(0, 3).map((er: any) => `「${titleOf(String(er.entryId))}」`).join('、')
       showToast(
-        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 張失敗:${names}${res.errors.length > 3 ? ' 等' : ''}。可以直接再按一次「套用」重試,不會重複建卡`,
+        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 條失敗:${names}${res.errors.length > 3 ? ' 等' : ''}。可以直接再按一次「套用」重試,不會重複建卡`,
         'warning',
       )
       console.warn('[resync-apply] errors:', res.errors)
@@ -3379,7 +3403,10 @@ async function reindexChunkFromModal() {
       `/api/ai/knowledge/${chunkEditingId.value}/reindex`,
       { method: 'POST' },
     )
-    const learned = res?.status === 'indexed'
+    // ⚠️ 判「失敗」看 status === 'failed',不是「不等於 indexed」（2026-09-03 code review 抓到）:
+    //    停用中的卡重算成功時回的是 'disabled'（刻意的,停用卡不落 failed 才不會被重試佇列復活）,
+    //    用不等式判會把那種成功報成「還是沒學起來」。
+    const learned = res?.status !== 'failed'
     showToast(
       learned ? '已重新學習' : `還是沒學起來：${res?.failureReason || '原因不明'}`,
       learned ? 'success' : 'error',

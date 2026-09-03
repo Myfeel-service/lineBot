@@ -341,6 +341,37 @@ export async function readGoogleSheetAsCards(
   }
 }
 
+/**
+ * 「我現在讀不讀得到這份試算表」的**有界**探測（`D-50` 簡化 4）。
+ *
+ * 與 readGoogleSheetAsCards 的差別只有讀多少：那支為了真的匯入，會把每個分頁整份讀完
+ * （5,000 列的商品表就是 5,000 列）；這支只為了回答「讀得到嗎／有資料嗎」，
+ * 所以只讀第一個目標分頁的前 PROBE_ROWS 列。
+ * ⛔ 不可以退成「只讀 metadata」：那樣「分享好了但那個分頁是空的」會過綠燈，
+ *    然後在按下整理時撞 422——正是這個探測要消滅的撞牆。
+ * ⛔ 回傳刻意**不含總列數**：只看前 20 列算不出全表有幾列，報一個算錯的數字比不報更糟。
+ */
+const PROBE_ROWS = 20
+
+export async function probeGoogleSheetAccess(
+  ref: ParsedSheetRef,
+  api: SheetsApiFn = sheetsApi,
+): Promise<{ sheetTitle: string; hasData: boolean }> {
+  const targets = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api)
+  const first = targets[0]
+  if (!first) throw createError({ statusCode: 422, statusMessage: '這份試算表沒有任何分頁' })
+  const data = await api<ValuesResponse>(
+    `${encodeURIComponent(ref.spreadsheetId)}/values/${encodeURIComponent(`${first.title}!A1:Z${PROBE_ROWS}`)}?majorDimension=ROWS`,
+  )
+  const rows = expandVerticalMerges(
+    (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
+    first.merges,
+  )
+  // 用同一支 rowsToCards 判「有沒有資料」：表頭列 + 至少一列資料才算
+  const { stats } = rowsToCards(rows)
+  return { sheetTitle: first.title, hasData: stats.rowCount > 0 }
+}
+
 /** 標題正規化當比對 key（去空白、轉小寫）；gsheet 同步、匯入健檢、合併重複列共用這一份。 */
 export function normTitle(s: string): string {
   return String(s ?? '').replace(/\s+/g, '').toLowerCase()

@@ -203,6 +203,17 @@ export default defineEventHandler(async (event) => {
   }
 
   return {
+    /**
+     * AI 真的用得到的條數（`deletedAt == null` 且 `status === 'indexed'`）。
+     *
+     * 為什麼由這支回：這裡是**唯一**一處真的逐條看過狀態與回收桶的地方。資料列表那邊
+     * 的 `chunkCount` 是存在來源上的快取值（含停用／失敗，且孤兒卡不在任何來源底下），
+     * 用它加總去講「已經有 N 條知識」兩個方向都會錯（2026-09-03 code review：先低報、
+     * 補上孤兒數之後變成把回收桶的也算進去）。
+     * ⚠️ 受 CHUNK_SCAN_LIMIT 上限影響，超過時 `chunkScanTruncated` 為 true——
+     *    畫面要據此改口說「至少」，不可以拿它當精確值。
+     */
+    liveChunkCount: liveChunkIds.size,
     failedSources,
     outdatedSources,
     stalledSources,

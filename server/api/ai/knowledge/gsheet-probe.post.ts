@@ -1,5 +1,5 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { getServiceAccountEmail, parseGoogleSheetUrl, readGoogleSheetAsCards } from '~~/server/utils/google-sheets'
+import { getServiceAccountEmail, parseGoogleSheetUrl, probeGoogleSheetAccess } from '~~/server/utils/google-sheets'
 import { classifyGsheetProbeError } from '~~/shared/gsheet-probe-status'
 
 /**
@@ -15,7 +15,9 @@ import { classifyGsheetProbeError } from '~~/shared/gsheet-probe-status'
  *    用 4xx 表示「還沒分享」的話，前端的錯誤處理會把它當成系統故障來報。
  * ⛔ 不可以只讀 metadata 就報綠燈：「分享好了但那個分頁沒有資料」會照樣通過，
  *    然後在按下整理時撞 422「沒有足夠資料」——那正是這支要消滅的撞牆。
- *    所以走與正式匯入**同一支** readGoogleSheetAsCards（不含任何 LLM，純讀取）。
+ * ⚠️ 但也不該為了回答一句話把整份表讀完（第一版直接呼叫 readGoogleSheetAsCards，
+ *    5,000 列的商品表就真的讀 5,000 列、切完所有卡再全部丟掉；而使用者每改一次網址、
+ *    每按一次「再測一次」都會重跑一遍）。改用 probeGoogleSheetAccess：同一套判定、只讀前 20 列。
  */
 export default defineEventHandler(async (event) => {
   await requireWorkspaceAccess(event, 'agent')
@@ -32,12 +34,19 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const res = await readGoogleSheetAsCards(ref)
+    const res = await probeGoogleSheetAccess(ref)
+    // 讀得到但沒資料也是「還不能匯入」，要當成一種狀態講清楚（不是綠燈）
+    if (!res.hasData) {
+      return {
+        status: 'no_data' as const,
+        message: `讀得到這份試算表，但「${res.sheetTitle}」分頁的前 20 列沒有資料（需要表頭列 ＋ 至少一列資料）。`,
+      }
+    }
+    // ⛔ 不報總列數：只讀了前 20 列，算不出全表有幾列（報一個算錯的數字比不報更糟）
     return {
       status: 'ok' as const,
-      rowCount: res.stats.rowCount,
       sheetTitle: res.sheetTitle,
-      message: `讀得到了（${res.stats.rowCount} 列）`,
+      message: `讀得到了（會讀「${res.sheetTitle}」分頁）`,
     }
   }
   catch (err: any) {
