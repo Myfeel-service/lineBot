@@ -865,10 +865,47 @@
   &__ptxt {
     margin: 0;
 
-    & + & { margin-top: 6px; }
+    & + & { margin-top: 7px; }
 
-    /* 「這兩種抓不到」＝先講清楚才不會白試一次；用琥珀字不用紅（不是壞了，是限制） */
-    &--warn {
+    /* 補充資訊（不是決策資訊）壓一階，眼睛可以跳過 */
+    &--dim {
+      color: var(--el-text-color-secondary);
+    }
+
+    /* 有標籤的那兩行：標籤與句子左右並排，折行後的字跟第一行對齊（不要跑到標籤底下）。
+       ⚠️ 這裡**可以**用 flex，因為模板把整句包在一個 `<span>` 裡＝只有兩個項目；
+          ⛔ 沒包的話 flex 會把句子與 `<strong>` 各自當成項目、用 gap 切開句子
+             （這個檔案已經踩過兩次）。
+       ⚠️ 先試過 `padding-left + 負 text-indent` 的懸掛縮排，實測**把標籤推出面板外**
+          （左邊被裁成「以貼」「不到」），已放棄那條路。 */
+    &--lbl {
+      display: flex;
+      align-items: baseline;
+      gap: 0;
+    }
+  }
+
+  /* 「可以貼」／「抓不到」的標籤。
+     ⛔ 顏色只給標籤，句子維持中性色——前一版把整句「抓不到⋯」上琥珀色，
+        整句著色等於整句在喊，讀者反而找不到重點（老闆 09-03 反映後改）。
+     ⛔「抓不到」用琥珀不用紅：那是限制不是故障。 */
+  &__lbl {
+    display: inline-block;
+    flex: none;
+    margin-right: 6px;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: 1px;
+
+    &--ok {
+      background: var(--el-color-primary-light-9);
+      color: var(--el-color-primary);
+    }
+    &--no {
+      background: var(--el-color-warning-light-9);
       color: var(--el-color-warning-dark-2);
     }
   }

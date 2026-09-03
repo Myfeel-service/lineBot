@@ -214,18 +214,26 @@
              真正的限制不是「哪一種頁面」，而是「抓不抓得到文字」，所以下面照實列兩種抓不到的。
         -->
         <div v-if="startOpen === 'web'" class="kb-start__panel">
-          <p class="kb-start__ptxt">
-            <strong>只要頁面上看得到文字就可以貼</strong>，不限常見問題頁——
-            商品／方案介紹、運費與退換貨說明、關於我們、公告都算。
-            一頁貼一次；<strong>貼完系統會順便問你要不要把整個網站的其他頁一起匯入</strong>。
+          <!--
+            ⚠️ 2026-09-03 三改。前一版是三段散文（約 130 字），而且「抓不到」那段**整句上琥珀色**
+               ——整句著色等於整句在喊，讀者反而找不到重點（老闆：「這邊的文案能不能也調整過」）。
+            改法：一行一件事，句子維持中性色，**顏色只留在最左邊那顆標籤上**
+               （同 `.ls-status` 的房規：結論用色塊帶，內文不著色）。
+            ⛔ 不要再把「一頁貼一次」這種操作常識寫進來：它不是決策資訊，
+               而這一塊唯一的工作是回答「我的頁面能不能貼」。
+          -->
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--ok">可以貼</span>
+            <span>商品或方案介紹、運費與退換貨、關於我們、公告——只要頁面上<strong>看得到文字</strong>就行，不限常見問題頁。</span>
           </p>
-          <p class="kb-start__ptxt kb-start__ptxt--warn">
-            這兩種抓不到：<strong>要先登入</strong>才看得到的頁面、以及<strong>要滑動或點按才長出內容</strong>的頁面
-            （購物網站首頁的商品區塊多半是這種，改貼「商品列表頁」就好）。
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--no">抓不到</span>
+            <span>要先登入、或要滑動、點按才長出內容的頁面（購物網站首頁的商品區多半是這種，改貼「商品列表頁」就好）。</span>
           </p>
-          <p class="kb-start__ptxt">之後網頁改了，系統會通知你要不要重新學。</p>
+          <p class="kb-start__ptxt kb-start__ptxt--dim">
+            貼完會問你要不要把網站其他頁一起匯入；之後網頁改了也會通知你。
+          </p>
         </div>
-
         <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
           <!--
             ⚠️ 圖刻意放在清單**外面**（2026-09-03 老闆問「用範本自己填是否可以再更優化」）：
