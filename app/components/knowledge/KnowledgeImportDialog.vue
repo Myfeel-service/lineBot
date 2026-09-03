@@ -1,7 +1,6 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="加入知識"
     width="min(760px, 92vw)"
     :close-on-click-modal="false"
     :before-close="onBeforeClose"
@@ -9,6 +8,31 @@
     @update:model-value="emit('update:modelValue', $event)"
     @close="onDialogClose"
   >
+    <!--
+      標題旁的「這頁怎麼用」（2026-09-03）。刻意跟**頁首那顆問號長得一模一樣**
+      （沿用 `.page-help` / `.page-help-btn`）——同一個後台裡「問號＝在真實畫面上帶我走一遍」
+      只能有一種樣子（⛔不發明第七種教學機制，見 `D-39` 拍板）。
+      差別只在它跑的是**視窗裡面**那幾步：視窗已經開著，所以用 startAdHocTour 而不是整支主題，
+      並把 `clickBefore` 拿掉（那顆「加入知識」按鈕現在在遮罩後面）。
+      ⚠️ `el-tour` 的 z-index 是 3000、對話框約 2001，所以聚光燈蓋得上來。
+    -->
+    <template #header="{ titleId, titleClass }">
+      <span :id="titleId" :class="titleClass" class="kb-import-title">
+        加入知識
+        <span class="page-help">
+          <el-tooltip content="在畫面上帶我走一遍" placement="bottom">
+            <el-button
+              class="page-help-btn"
+              text
+              size="small"
+              :icon="QuestionFilled"
+              aria-label="在畫面上帶我走一遍"
+              @click="startDialogTour"
+            />
+          </el-tooltip>
+        </span>
+      </span>
+    </template>
     <!-- ── Step 1:一個投放區,自動判別是什麼(P1-2) ─────────── -->
     <!--
       拖放handler掛在整個第一步而不是只掛投放框（2026-09-03 UI 打磨）：
@@ -201,7 +225,10 @@
               >
                 下載 FAQ 範本（Excel）
               </el-button>
-              兩欄（<strong>問題／答案</strong>）填完就好，其他問法 AI 會自動補
+              兩欄填完就好（欄位名稱範本已經填好）
+              <!-- 「兩欄」是抽象的：看一眼表格長什麼樣，「第一列要不要打欄位名」「一列一題還是一段」
+                   這兩個問題同時消失（老闆 09-03 問「是否有範本的樣貌」） -->
+              <KnowledgeFaqTemplateDiagram />
             </li>
             <li>
               <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
@@ -234,7 +261,7 @@
               <span class="text-xs text-muted">會在你的 Google 雲端硬碟建一份，欄位都填好了</span>
             </li>
             <li v-else>
-              在 Google 試算表新開一份，第一列打<strong>「問題」「答案」</strong>兩欄
+              在 Google 試算表新開一份，第一列打<strong>「客人會問的問題」「答案」</strong>兩欄
             </li>
             <li>
               填完後在 Google 按<strong>「共用」</strong>，分享給下面這個帳號（<strong>檢視</strong>權限就夠）：
@@ -906,7 +933,9 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
 import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
@@ -932,6 +961,17 @@ const emit = defineEmits<{
 
 
 const { apiFetch, workspaceId } = useWorkspace()
+const { startAdHocTour } = useTutorial()
+
+/**
+ * 標題旁那顆問號：在**這個視窗裡**帶走一遍。
+ * 步驟與「知識庫：建立與匯入」導覽共用 `KB_IMPORT_DIALOG_STEPS`（教材只一份）；
+ * ⛔ 要把 `clickBefore` 拿掉——視窗已經開著，而那顆「加入知識」按鈕在遮罩後面，
+ *    再點一次只會讓聚光燈去指一個蓋住的東西。
+ */
+function startDialogTour() {
+  void startAdHocTour(KB_IMPORT_DIALOG_STEPS.map(step => ({ ...step, clickBefore: undefined })))
+}
 const { showToast } = useAdminToast()
 // 產品名候選(與「所屬產品」欄位共用同一份快取):整站匯入結束要分辨哪些名字是這批新增的
 const {

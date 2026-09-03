@@ -888,6 +888,38 @@
   }
 }
 
+/* 標題旁那顆問號跟標題文字在同一行（沿用 .page-help / .page-help-btn 的外觀） */
+.kb-import-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 範本樣貌示意圖（KnowledgeFaqTemplateDiagram.vue）：跟共用示意圖同一套尺寸與圖說語彙 */
+.kb-tpl-fig {
+  margin: 8px 0 4px;
+  max-width: 460px;
+
+  &__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  &__cap {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-muted);
+
+    strong {
+      display: inline-block;
+      min-width: 14px;
+      color: var(--teach-mark);
+    }
+  }
+}
+
 /* Google 共用畫面的示意圖（KnowledgeSheetShareDiagram.vue）。
    ⛔ 上限寬度要收：這張圖是輔助，撐滿整個對話框會變成畫面主角。 */
 .kb-share-fig {

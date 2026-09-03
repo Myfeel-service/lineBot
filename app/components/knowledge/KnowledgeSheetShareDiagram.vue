@@ -28,13 +28,14 @@
 
       <!-- ① 貼上帳號的輸入格 -->
       <rect x="16" y="38" width="300" height="26" rx="4" fill="var(--el-fill-color-lighter)" stroke="var(--el-border-color-light)" />
-      <text x="26" y="55" font-size="11" fill="var(--text-muted)">貼上剛剛複製的帳號</text>
+      <text x="26" y="55" font-size="11" fill="var(--text-muted)">新增使用者和群組（把剛剛複製的帳號貼在這）</text>
       <rect x="13" y="35" width="306" height="32" rx="6" fill="none" stroke="var(--teach-mark)" stroke-width="1.5" />
       <circle cx="332" cy="51" r="9" fill="var(--teach-mark)" />
       <text x="332" y="55" font-size="11" font-weight="700" fill="#fff" text-anchor="middle">1</text>
 
       <!-- ② 權限下拉：預設是「編輯者」，要改成「檢視者」 -->
       <text x="16" y="96" font-size="11" fill="var(--text-secondary)">權限</text>
+      <!-- Google 的主要按鈕是藍色（#1a73e8）:這裡照它的顏色畫,認得出來比較重要 -->
       <rect x="46" y="82" width="88" height="24" rx="4" fill="var(--bg-surface)" stroke="var(--el-border-color-light)" />
       <text x="56" y="98" font-size="11" fill="var(--text-primary)">檢視者</text>
       <path d="M120 92 l5 5 l5 -5" fill="none" stroke="var(--text-muted)" stroke-width="1.2" />
@@ -50,14 +51,14 @@
       <!-- ③ 傳送 -->
       <rect x="316" y="120" width="60" height="26" rx="4" fill="var(--el-fill-color)" />
       <text x="346" y="137" font-size="11" fill="var(--text-secondary)" text-anchor="middle">取消</text>
-      <rect x="384" y="120" width="60" height="26" rx="4" fill="var(--brand-green, #06c755)" />
+      <rect x="384" y="120" width="60" height="26" rx="13" fill="#1a73e8" />
       <text x="414" y="137" font-size="11" font-weight="600" fill="#fff" text-anchor="middle">傳送</text>
       <rect x="381" y="117" width="66" height="32" rx="6" fill="none" stroke="var(--teach-mark)" stroke-width="1.5" />
       <circle cx="414" cy="107" r="9" fill="var(--teach-mark)" />
       <text x="414" y="111" font-size="11" font-weight="700" fill="#fff" text-anchor="middle">3</text>
     </svg>
     <!-- ⛔ 這句不能省：它是「示意圖」與「截圖」的分界，也是我們沒有假造 Google 畫面的證據 -->
-    <figcaption class="kb-share-fig__cap">示意圖（Google 的畫面配置與顏色可能略有不同，認「共用」和權限那一格就對了）</figcaption>
+    <figcaption class="kb-share-fig__cap">示意圖（我們畫的，非 Google 實際截圖）——Google 版面可能微調過，認<strong>「共用」</strong>、權限那一格、和右下角的送出鈕就對了</figcaption>
   </figure>
 </template>
 

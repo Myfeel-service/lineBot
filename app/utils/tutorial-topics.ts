@@ -140,6 +140,45 @@ export const CATEGORY_META: { id: TutorialCategoryId, label: string }[] = [
   { id: 'growth', label: '經營工具' },
 ]
 
+/**
+ * 匯入視窗**裡面**那幾步（單一事實來源）。
+ *
+ * 兩個地方吃同一份：①「知識庫：建立與匯入」導覽（前面多一步「點加入知識」把視窗開起來）
+ * ②視窗標題旁那顆問號（視窗已經開著，用 `startAdHocTour` 直接跑這幾步）。
+ * ⛔ 不可以在視窗那邊另抄一份：教材只有一份，抄兩份下次只會改到一邊
+ *    （`D-40` 明列「劇本不重講視窗內已有的說明＝教材只一份」的同一個道理）。
+ * ⛔ 問號那條路要記得把 `clickBefore` 拿掉：視窗已經開了，而那顆「加入知識」按鈕在遮罩後面。
+ */
+export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
+      {
+        target: '[data-tour="kb-drop"]',
+        clickBefore: '[data-tour="kb-import"]',
+        title: '丟進來就好，不用先選種類',
+        description:
+          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>手邊還沒有現成資料的話，框下面有三條路可以照著做</strong>；貼上之後視窗也會就地講該注意什麼。',
+        placement: 'bottom',
+      },
+      {
+        // 三顆起步選項只在投放框還空的時候才在畫面上（見 KnowledgeImportDialog 的 kb-start）：
+        // 使用者若有貼到一半的內容，這一步整步跳過而不是指著空氣
+        target: '[data-tour="kb-start"]',
+        requiresPresent: '[data-tour="kb-start"]',
+        clickBefore: '[data-tour="kb-import"]',
+        title: '手邊還沒有資料？挑一條',
+        description:
+          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。差別是準備時間，'
+          + '以及之後改了資料會不會自動更新。Google 試算表那條還附了共用畫面的示意圖。',
+        placement: 'top',
+      },
+      {
+        target: '[data-tour="kb-preview"]',
+        title: '先看 AI 整理的結果再匯入',
+        description:
+          '按這裡，AI 會先<strong>切好知識給你預覽</strong>：可以逐條改、取消不要的，確認才匯入——<strong>不會直接上線亂答</strong>。',
+        placement: 'top',
+      },
+]
+
 /** 目前提供的教學主題。要新增教學，往這個陣列加一筆即可（記得填 category）。 */
 export const TUTORIAL_TOPICS: TutorialTopic[] = [
   /**
@@ -352,33 +391,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           'AI 只會用你放進來的資料回答客人。點「<strong>加入知識</strong>」放第一份進去。',
         placement: 'bottom',
       },
-      {
-        target: '[data-tour="kb-drop"]',
-        clickBefore: '[data-tour="kb-import"]',
-        title: '丟進來就好，不用先選種類',
-        description:
-          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>手邊還沒有現成資料的話，框下面有三條路可以照著做</strong>；貼上之後視窗也會就地講該注意什麼。',
-        placement: 'bottom',
-      },
-      {
-        // 三顆起步選項只在投放框還空的時候才在畫面上（見 KnowledgeImportDialog 的 kb-start）：
-        // 使用者若有貼到一半的內容，這一步整步跳過而不是指著空氣
-        target: '[data-tour="kb-start"]',
-        requiresPresent: '[data-tour="kb-start"]',
-        clickBefore: '[data-tour="kb-import"]',
-        title: '手邊還沒有資料？挑一條',
-        description:
-          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。差別是準備時間，'
-          + '以及之後改了資料會不會自動更新。Google 試算表那條還附了共用畫面的示意圖。',
-        placement: 'top',
-      },
-      {
-        target: '[data-tour="kb-preview"]',
-        title: '先看 AI 整理的結果再匯入',
-        description:
-          '按這裡，AI 會先<strong>切好知識給你預覽</strong>：可以逐條改、取消不要的，確認才匯入——<strong>不會直接上線亂答</strong>。',
-        placement: 'top',
-      },
+      ...KB_IMPORT_DIALOG_STEPS,
     ],
   },
   {
