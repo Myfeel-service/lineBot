@@ -29,11 +29,6 @@
   margin: 0 0 12px;
 }
 
-.kb-warning {
-  color: var(--el-color-warning);
-  font-weight: 500;
-}
-
 .kb-dedup-warning,
 .kb-ocr-alert {
   margin-bottom: 12px;
@@ -66,15 +61,16 @@
   font-size: 13px;
 }
 
-.kb-overview-toggle {
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  background: var(--el-fill-color-light);
+/* 名稱／所屬產品的收合區（`D-50` 簡化 2）。摘要卡在上面下完結論，這裡才是「要改再點」。
+   ⛔ 不要加底色或框線把它做成一張卡:它是摘要卡的延伸,長成第二張卡就又變回
+      「兩個要填的欄位排在結果前面」那個問題。 */
+.kb-meta-editor {
+  margin-bottom: 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--el-border-color-lighter);
 
   .kb-section-hint {
-    margin: 6px 0 0;
+    margin: 0;
   }
 }
 
@@ -526,6 +522,25 @@
     font-size: 14px;
     color: var(--text-primary);
   }
+  /* 名稱・所屬產品收成一行（`D-50` 簡化 2）：是結論的附註，不能比結論搶眼 */
+  &__meta {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+  &__edit {
+    margin-left: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-size: 12px;
+    color: var(--el-color-primary);
+    cursor: pointer;
+
+    &:hover { text-decoration: underline; }
+    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+  }
   &__warn {
     margin: 6px 0 0;
     font-size: 12px;
@@ -600,7 +615,10 @@
     border-style: solid;
   }
 
-  &__paste :deep(.el-textarea__inner) {
+  /* ⛔ 這裡原本寫 `:deep(.el-textarea__inner)`——**全域 partial 不能用 `:deep()`**：
+     瀏覽器把它當未知偽類，整條規則靜默失效（貼上框的白底從來沒生效過）。
+     這個檔案沒有 scoped 作用域，直接寫子選擇器就好。見記憶 feedback_no_hand_rolled_form_inputs。 */
+  &__paste .el-textarea__inner {
     background: var(--el-fill-blank);
   }
 
@@ -664,6 +682,20 @@
     line-height: 1.6;
     color: var(--el-text-color-secondary);
   }
+  /* 「抓不到內容？」「怎麼變成知識？」——細節收在這顆後面（`D-50` 簡化 1）。
+     刻意做成文字連結而非按鈕:它是可選的補充,不該跟「先看 AI 整理的結果」爭主動作 */
+  &__more {
+    flex: none;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-size: 12px;
+    color: var(--el-color-primary);
+    cursor: pointer;
+
+    &:hover { text-decoration: underline; }
+    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+  }
 }
 
 .kb-gsheet-share {
@@ -678,6 +710,27 @@
     align-items: center;
     gap: 6px;
     margin-top: 4px;
+    flex-wrap: wrap;
+  }
+
+  /* 「讀不讀得到」的結論（`D-50` 簡化 4）。⛔ 讀不到用 danger 是對的:
+     這件事沒做完，按下整理 100% 會失敗——不是提醒而是真的擋路 */
+  &__state {
+    margin: 0 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+
+    &.is-ok { color: var(--el-color-success); }
+    &.is-blocked { color: var(--el-color-danger); }
+  }
+
+  /* Google 原始訊息:留著給查不出來的情況,但壓成灰小字(它不是給一般使用者讀的) */
+  &__detail {
+    margin: 4px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+    overflow-wrap: anywhere;
   }
 }
 
@@ -742,4 +795,10 @@
 .kb-tags-note {
   font-size: 11px;
   color: var(--el-text-color-placeholder);
+}
+
+/* 整站清單每一列的「N 條待學」（`D-41` P1⑤）：已經建進庫、但 AI 還沒學起來的條數。
+   ⛔ 用琥珀不用紅：知識確實建好了，只是還沒學會——紅色留給真的失敗那一列。 */
+.kb-site-status__warn {
+  color: var(--el-color-warning-dark-2);
 }

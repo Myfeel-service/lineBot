@@ -4,6 +4,7 @@
     title="加入知識"
     width="min(760px, 92vw)"
     :close-on-click-modal="false"
+    :before-close="onBeforeClose"
     class="kb-import-dialog"
     @update:model-value="emit('update:modelValue', $event)"
     @close="onDialogClose"
@@ -25,16 +26,20 @@
           <div class="kb-drop__file">
             <span class="kb-drop__filename">{{ fileName }}</span>
             <span class="text-xs text-muted">{{ fileSizeKb.toLocaleString('zh-TW') }} KB</span>
-            <el-button size="small" text @click="clearFile">換一個</el-button>
+            <el-button v-if="!previewing" size="small" text @click="clearFile">換一個</el-button>
+            <span v-else class="text-xs text-muted">正在整理這一份</span>
           </div>
         </template>
         <template v-else>
+          <!-- 整理中要鎖住（`D-41` 死路⑪）：原本整理跑到一半還能換檔案／改內容，
+               畫面顯示的是新檔名、實際在整理的卻是舊的那份（runPreview 早就把檔案抓走了）。 -->
           <el-input
             v-model="pasteInput"
             type="textarea"
             :rows="4"
             :maxlength="100000"
             resize="none"
+            :disabled="previewing"
             class="kb-drop__paste"
             placeholder="貼上網址、Google 試算表連結，或直接貼一大段文字（FAQ、政策原文都可以）"
           />
@@ -47,8 +52,8 @@
               class="kb-file-input"
               @change="onFileChosen"
             >
-            <el-button size="small" plain @click="fileInputEl?.click()">選擇檔案</el-button>
-            <span class="text-xs text-muted">PDF / Excel，也可以直接把檔案拖進這個框，單檔 10MB 內</span>
+            <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">選擇檔案</el-button>
+            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : 'PDF / Excel，也可以直接把檔案拖進這個框，單檔 10MB 內' }}</span>
           </div>
         </template>
       </div>
@@ -58,16 +63,37 @@
         <p class="kb-detected__head">
           <span class="kb-detected__label">{{ detected.label }}</span>
           <span class="kb-detected__sync">{{ detected.sync }}</span>
+          <button type="button" class="kb-detected__more" @click="hintOpen = !hintOpen">
+            {{ detected.hintLabel }}
+          </button>
         </p>
-        <p class="kb-detected__hint">{{ detected.hint }}</p>
+        <p v-if="hintOpen" class="kb-detected__hint">{{ detected.hint }}</p>
 
-        <!-- Google 試算表要先分享才讀得到:在偵測到的當下才講,不用先讀四段說明 -->
-        <div v-if="mode === 'gsheet' && serviceAccountEmail" class="kb-gsheet-share">
-          <span>還有一步:請把這份試算表「共用」給下面這個帳號(檢視權限就夠),否則系統讀不到。</span>
-          <div class="kb-gsheet-share__row">
-            <code class="kb-gsheet-email">{{ serviceAccountEmail }}</code>
-            <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
-          </div>
+        <!--
+          Google 試算表要先分享才讀得到。⛔別只留說明文字：「分享好了沒」原本要按下
+          「先看 AI 整理的結果」才知道，沒弄好的人先吃一次紅字、回 Google 重弄、再回來按一次
+          ——第一次匯入最容易卡死的就是這一段（`D-50` 簡化 4）。現在貼上就去實際讀一次。
+        -->
+        <div v-if="mode === 'gsheet'" class="kb-gsheet-share">
+          <p v-if="gsheetProbing" class="kb-gsheet-share__state">正在確認我讀不讀得到⋯</p>
+          <p
+            v-else-if="gsheetProbe"
+            class="kb-gsheet-share__state"
+            :class="gsheetProbe.status === 'ok' ? 'is-ok' : 'is-blocked'"
+          >
+            {{ gsheetProbe.status === 'ok' ? '✓' : '✗' }} {{ gsheetProbe.message }}
+          </p>
+          <!-- 綠勾之後就不必再看分享說明了(事情已經做完);其餘狀態一律附上帳號與重測鈕 -->
+          <template v-if="gsheetProbe?.status !== 'ok'">
+            <div v-if="serviceAccountEmail" class="kb-gsheet-share__row">
+              <code class="kb-gsheet-email">{{ serviceAccountEmail }}</code>
+              <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+              <el-button size="small" :loading="gsheetProbing" @click="probeGsheet(gsheetInput.trim(), true)">
+                分享好了，再測一次
+              </el-button>
+            </div>
+            <p v-if="gsheetProbe?.detail" class="kb-gsheet-share__detail">{{ gsheetProbe.detail }}</p>
+          </template>
         </div>
 
         <!-- 整站匯入主動浮出(P1-3):不用自己想到有這功能 -->
@@ -103,19 +129,13 @@
 
 
       <!--
-        等「偵測到內容」才出現:什麼都還沒貼就先問一個要讀四行字的問題,是空白狀態最重的負擔
-        (佔近半個視窗)。答不出來也沒關係:整理完看到條數多,預覽那一步會再主動問一次(見
-        suggestOverview)。標籤用敘述句不用問句——勾選框配問句,勾下去像在回答「有」,讀起來卡。
-        「官網首頁不適合」那句只跟貼網址有關,貼文字/傳檔的人看到只是干擾。
+        ⛔ 這裡曾經有一個「這是一份多樣商品的清單嗎」的勾選框（配兩行說明），2026-09-03
+           `D-50` 簡化 1 整塊移除。理由：那是在**還沒看到任何內容**時問的問題，第一次匯入的人
+           根本答不出來（勾錯的代價是客人問「你們賣什麼」時 AI 只能反問），而它卻佔掉第一步
+           近半個視窗。真正有依據回答的時機是「整理完、看到切出幾條」——那個機制本來就在
+           （見 suggestOverview：條數多就主動問一次，並老實講會再花一次 AI 用量）。
+           ⚠️ 所以 suggestOverview 的來源型別**不可以再縮**：勾選框沒了之後，它是總表唯一的入口。
       -->
-      <div v-if="detected && mode !== 'gsheet'" class="kb-overview-toggle" data-tour="kb-overview">
-        <el-checkbox v-model="generateOverview">
-          這是一份<strong>多樣商品</strong>的清單（AI 會多做一張「我們有賣什麼」的總表）
-        </el-checkbox>
-        <p class="kb-section-hint">
-          商品型錄、商品列表頁記得勾——客人問「你們有賣哪些東西」時可以一次答完，不會被反問。<template v-if="mode === 'url'"><strong>官網首頁不適合</strong>（商品區塊多半是滑動時才載入、抓不到，總表會做錯），請改貼商品列表頁。</template>
-        </p>
-      </div>
 
       <div class="kb-import-actions">
         <el-button
@@ -146,14 +166,16 @@
       <div v-if="previewing" class="kb-waiting">
         <p class="kb-waiting__text">{{ previewProgressText }}</p>
         <!--
-          這段話要跟實際行為對得上。以前寫「關掉視窗回來就看得到結果」,但工作編號只活在
-          記憶體裡:換頁或重整就撿不回來,伺服器那份還在也拿不到 → 只能重傳、重跑、重收費。
-          現在編號會落地(見 saveJobMarker),回到這一頁自動接續;但整理**只在有人看著時前進**,
-          所以只能承諾「接著跑、不會從頭來」,不能承諾「回來就好了」。
+          這段話要跟實際行為對得上,而行為已經換過兩輪:
+          ① 最早寫「關掉視窗回來就看得到結果」——但工作編號只活在記憶體裡,換頁或重整就撿不回來。
+          ② 編號落地之後改成「回來會接著跑」,並老實加註「離開的期間會暫停在原地」
+             （因為整理只在有人輪詢時才前進）。
+          ③ 2026-09-03（`D-50` 簡化 3）維護排程接手推進,那句附註才真的可以拿掉。
+          ⛔ 別把「好了會通知你」寫成「馬上」:排程約十分鐘一輪,人真的走開時完成會慢一點。
         -->
         <p class="kb-waiting__note">
-          內容長的話可能要幾分鐘。<strong>可以先關掉這個視窗、甚至切去別的頁面做別的事</strong>——
-          回到知識庫這一頁會自動接著整理，<strong>不會從頭重來</strong>（離開的期間會暫停在原地）。
+          內容長的話可能要幾分鐘。<strong>你可以直接去忙別的</strong>——關掉視窗、換頁都行，
+          整理會<strong>在背景繼續</strong>，好了會在知識庫這一頁告訴你（不會從頭重來）。
         </p>
         <el-button size="small" text @click="cancelPreview">取消</el-button>
       </div>
@@ -162,14 +184,17 @@
            等了好幾分鐘的人只要沒盯著螢幕,回來會看到一片乾淨畫面、完全不知道發生什麼事 -->
       <el-alert
         v-if="previewError && !previewing"
-        type="error"
+        :type="previewStillRunning ? 'info' : 'error'"
         show-icon
         :closable="true"
         :title="previewError"
         style="margin-top: 12px"
         @close="previewError = ''"
       >
-        <div>可以再試一次；內容很長的話，建議把文字分成幾段、分批貼進來。</div>
+        <div v-if="previewStillRunning">
+          可以關掉這個視窗去做別的事，整理完成後會出現在資料列表；這期間不用重傳，<strong>重傳會變成兩份同時在跑</strong>。
+        </div>
+        <div v-else>可以再試一次；內容很長的話，建議把文字分成幾段、分批貼進來。</div>
       </el-alert>
     </div>
 
@@ -194,9 +219,14 @@
           已建立 {{ siteSummary.ok }} 份資料、共 {{ siteSummary.cards }} 條知識
         </template>
         <div class="text-xs">
+          <!-- 已經建進庫、但 AI 還沒學起來的條數（`D-41` P1⑤）：不講的話這幾條就永遠沒人管，
+               客人問到相關問題會找不到它們。到資料頁按「重新學習」就能修。 -->
+          <template v-if="siteSummary.notLearned">
+            其中 <strong>{{ siteSummary.notLearned }}</strong> 條 AI 還沒學起來（客人問到會找不到）——到左邊那份資料點開該條按「重新學習」即可。
+          </template>
           <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
           <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
-          <template v-if="!siteSummary.failed && !siteSummary.warned">這些知識沒有經過逐條預覽，建議到知識庫抽幾條看看內容是否合用。</template>
+          <template v-if="!siteSummary.failed && !siteSummary.warned && !siteSummary.notLearned">這些知識沒有經過逐條預覽，建議到知識庫抽幾條看看內容是否合用。</template>
         </div>
       </el-alert>
 
@@ -297,7 +327,9 @@
           </div>
           <span class="kb-site-status" :class="`is-${p.status}`" :title="p.status === 'failed' ? p.error : ''">
             <template v-if="p.status === 'processing'">整理中⋯</template>
-            <template v-else-if="p.status === 'done'">✓ {{ p.cards }} 條</template>
+            <template v-else-if="p.status === 'done'">
+              ✓ {{ p.cards }} 條<span v-if="p.notLearned" class="kb-site-status__warn">（{{ p.notLearned }} 條待學）</span>
+            </template>
             <template v-else-if="p.status === 'failed'">✕ 失敗</template>
             <template v-else-if="p.imported">已匯入過</template>
           </span>
@@ -322,38 +354,89 @@
     <!-- ── Step 2:預覽 + 編輯 ─────────────────────────── -->
     <div v-if="step === 'preview'">
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>AI 整理的結果</p>
-      <!-- 條數只在下面的摘要區講一次(原本這裡「N 條知識」、下面「N 條問答」同一個數字兩種單位);
-           也不能在這裡教人「勾選要匯入的」——清單預設收起,畫面上根本沒有勾選框。只留截斷警告。 -->
-      <p v-if="truncated" class="kb-section-hint">
-        <span class="kb-warning">原文超過 10 萬字已截斷，可能漏掉後半部。</span>
-      </p>
-
-      <div class="kb-source-name-row">
-        <span class="kb-source-name-label">資料名稱</span>
-        <el-input
-          v-model="sourceMeta.name"
-          :maxlength="200"
-          size="small"
-          placeholder="顯示在知識庫資料列表的名稱"
-          class="kb-source-name-input"
-        />
+      <!--
+        ── 結論先行（2026-09-03 `D-50` 簡化 2）────────────────────────────
+        整理完的第一眼必須是「AI 整理出幾條」，不是兩個要填的欄位。
+        名稱與所屬產品 **AI 都已經自動填好了**，所以收進這張卡的一行字、按「改」才展開；
+        原本它們排在最上面、還各帶一行說明，第一次匯入的人看到的是「還有作業要交」。
+        ⛔ 摘要卡從清單下方搬到這裡，順序就是它存在的理由——別再把任何欄位插到它前面。
+      -->
+      <div class="kb-preview-summary">
+        <p class="kb-preview-summary__head">
+          AI 整理出 <strong>{{ chunks.length }}</strong> 條知識<template v-if="includedCount !== chunks.length">，目前選了 {{ includedCount }} 條</template>
+        </p>
+        <p class="kb-preview-summary__meta">
+          名稱：{{ sourceMeta.name || '未命名資料' }}<template v-if="sourceMeta.type !== 'gsheet'"> ・ 所屬產品：{{ sourceMeta.productName || '（無）' }}</template>
+          <button type="button" class="kb-preview-summary__edit" @click="metaOpen = !metaOpen">
+            {{ metaOpen ? '收起' : '改' }}
+          </button>
+        </p>
+        <p v-if="truncated" class="kb-preview-summary__warn">
+          原文超過 10 萬字已截斷，可能漏掉後半部。
+        </p>
+        <!--
+          「建議展開確認」原本只是一句話:按下去攤開的是全部幾十條,要自己一條條找哪幾條有數字。
+          該看的就是這幾條——直接讓這句話帶你到它們面前。
+        -->
+        <button
+          v-if="numericChunkCount"
+          type="button"
+          class="kb-preview-summary__warn kb-preview-summary__warn--action"
+          @click="showNumericOnly"
+        >
+          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字（價格、期限最容易看錯）——
+          <span class="kb-preview-summary__warn-cta">只看這幾條 →</span>
+        </button>
+        <div class="kb-preview-summary__actions">
+          <!-- 重做清單跑到一半時擋住匯入:按下去會把「即將被取代的那一份」寫進知識庫。
+               勾了總表時按鈕要把它算進去(見 importTotalLabel):按鈕說 20、結果頁說 21 是 `D-41` P0② -->
+          <el-button
+            type="primary"
+            :loading="importing"
+            :disabled="includedCount === 0 || previewing"
+            @click="runImport"
+          >
+            {{ importing ? '匯入並學習中⋯' : `直接匯入 ${importTotalLabel}` }}
+          </el-button>
+          <el-button text @click="chunkListOpen = !chunkListOpen">
+            {{ chunkListOpen ? '收起逐條檢查' : '先逐條檢查' }}
+          </el-button>
+          <el-button text @click="backToInput">← 換一份重新整理</el-button>
+        </div>
       </div>
 
-      <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。
-           欄位改成「可挑現成的」：手打是同一台被當成兩台的源頭（見 ProductNameField）。 -->
-      <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
-        <span class="kb-source-name-label">所屬產品</span>
-        <KnowledgeProductNameField
-          v-model="sourceMeta.productName"
-          size="small"
-          placeholder="這份內容都在講同一個產品時才填（含品牌與型號）"
-          :show-hint="false"
-          class="kb-source-name-input"
-        />
+      <!--
+        名稱／所屬產品：預設收起（見上面那張卡的說明）。
+        ⚠️ 有同名警告時**強制展開**——那句提醒叫人「改個名字」，收起來的話畫面上沒有東西可按。
+      -->
+      <div v-if="metaEditorOpen" class="kb-meta-editor">
+        <div class="kb-source-name-row">
+          <span class="kb-source-name-label">資料名稱</span>
+          <el-input
+            v-model="sourceMeta.name"
+            :maxlength="200"
+            size="small"
+            placeholder="顯示在知識庫資料列表的名稱"
+            class="kb-source-name-input"
+          />
+        </div>
+
+        <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。
+             欄位改成「可挑現成的」：手打是同一台被當成兩台的源頭（見 ProductNameField）。 -->
+        <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
+          <span class="kb-source-name-label">所屬產品</span>
+          <KnowledgeProductNameField
+            v-model="sourceMeta.productName"
+            size="small"
+            placeholder="這份內容都在講同一個產品時才填（含品牌與型號）"
+            :show-hint="false"
+            class="kb-source-name-input"
+          />
+        </div>
+        <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
+          {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改——同一台請從下拉挑現成的名字，自己重打一次容易被當成兩台。' : '點一下可以挑已經在用的產品；內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
+        </p>
       </div>
-      <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
-        {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改——同一台請從下拉挑現成的名字，自己重打一次容易被當成兩台。' : '點一下可以挑已經在用的產品；內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
-      </p>
 
       <el-alert
         v-if="ocrUsed"
@@ -395,7 +478,7 @@
           已存在 {{ dupMatches.length }} 個同名資料
         </template>
         <div class="kb-dedup-body">
-          <p class="text-xs">繼續建立會在資料列表出現多筆同名項目，可能不是你想要的。在上方「資料名稱」改個名字，這個提醒就會消失。</p>
+          <p class="text-xs">繼續建立會在資料列表出現多筆同名項目，可能不是你想要的。在上方「資料名稱」改個名字，這個提醒就會消失（欄位已為你展開）。</p>
           <ul class="kb-dedup-list">
             <li v-for="m in dupMatches" :key="m.id">
               「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）
@@ -433,52 +516,16 @@
         </div>
       </div>
 
-      <!-- 有勾「多樣商品」卻沒做出總表時要講一句:不講的話,勾了的人在這頁找不到總表,
-           只會以為勾了沒用、或系統壞了 -->
+      <!-- 要求重做總表、AI 卻做不出來時要講一句:不講的話,按了「重新整理並加上清單」的人
+           在這頁找不到總表,只會以為按了沒用、或系統壞了 -->
       <p v-else-if="generateOverview" class="kb-section-hint">
-        有勾「多樣商品」，但 AI 沒能從這份內容做出「我們有賣什麼」的總表（看起來不是商品清單）；下面這些一般問答不受影響。
+        AI 沒能從這份內容做出「我們有賣什麼」的總表（看起來不是商品清單）；下面這些一般知識不受影響。
       </p>
 
-      <!-- 摘要 + 主動作先行:預設就是全選,所以「直接匯入」才是主路徑。
-           原本一律攤開 N 條、主按鈕在最底部,50 張要捲上萬像素才按得到,
-           結果沒人真的逐張審、只是捲——審核變成儀式。 -->
-      <div class="kb-preview-summary">
-        <p class="kb-preview-summary__head">
-          AI 整理出 <strong>{{ chunks.length }}</strong> 條問答<template v-if="includedCount !== chunks.length">，目前選了 {{ includedCount }} 條</template>
-        </p>
-        <!--
-          「建議展開確認」原本只是一句話:按下去攤開的是全部幾十條,要自己一條條找哪幾條有數字。
-          該看的就是這幾條——直接讓這句話帶你到它們面前。
-        -->
-        <button
-          v-if="numericChunkCount"
-          type="button"
-          class="kb-preview-summary__warn kb-preview-summary__warn--action"
-          @click="showNumericOnly"
-        >
-          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字（價格、期限最容易看錯）——
-          <span class="kb-preview-summary__warn-cta">只看這幾條 →</span>
-        </button>
-        <div class="kb-preview-summary__actions">
-          <!-- 重做清單跑到一半時擋住匯入:按下去會把「即將被取代的那一份」寫進知識庫 -->
-          <el-button
-            type="primary"
-            :loading="importing"
-            :disabled="includedCount === 0 || previewing"
-            @click="runImport"
-          >
-            {{ importing ? '匯入並學習中⋯' : `直接匯入 ${includedCount} 條` }}
-          </el-button>
-          <el-button text @click="chunkListOpen = !chunkListOpen">
-            {{ chunkListOpen ? '收起逐條檢查' : '先逐條檢查' }}
-          </el-button>
-          <el-button text @click="backToInput">← 換一份重新整理</el-button>
-        </div>
-      </div>
-
       <!--
-        第一步那個勾選是在「還沒看到任何東西」時問的,答不出來很正常。
-        整理完條數這麼多,這裡才有依據主動問一次——而且要老實講這會再花一次 AI 用量。
+        「要不要順便做一張『我們有賣什麼』的清單」——整理完、看得到條數，才問得出來的那一次。
+        第一步那個勾選框已經移除（見 suggestOverview），所以這裡是總表唯一的入口；
+        而且要老實講這會再花一次 AI 用量。
       -->
       <div v-if="suggestOverview || redoingOverview" class="kb-overview-suggest">
         <!-- 重做中:等待畫面在第一步,這裡看不到,所以進度要自己講(不然按下去像沒反應) -->
@@ -616,7 +663,7 @@
           :disabled="includedCount === 0"
           @click="runImport"
         >
-          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${includedCount} 條` }}
+          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${importTotalLabel}` }}
         </el-button>
       </div>
     </div>
@@ -792,43 +839,61 @@ const pasteInput = ref('')
 // 當成知識內容匯進資料庫。mode 與 canPreview 共用同一份，不再各寫一次。
 const mode = computed<ImportMode>(() => detectImportKind(pasteInput.value, !!selectedFile.value))
 
-/** 偵測結果：名稱 + 那一句關鍵差異（會不會自動更新），沒東西時為 null */
+/**
+ * 偵測結果：名稱 ＋ 那一句關鍵差異（會不會自動更新）＋ 收在展開裡的細節。
+ *
+ * 2026-09-03（`D-50` 簡化 1）：`sync` 砍成一句、細節移到 `hint`（預設收起、按 `hintLabel` 才展開）。
+ * 原本貼完一個網址，畫面上一次冒出約 300 字——判別說明三行＋勾選題兩行＋整站詢問一行，
+ * 而其中真正當下要做決定的只有「這是什麼、要不要順便匯整站」。
+ * ⛔ 別把 `hint` 整段刪掉：那幾句是「抓不到內容」「數字要核對」唯一講清楚的地方，
+ *    刪了就變成撞到才知道；要的是**分層**不是變少。
+ */
 const detected = computed(() => {
   if (selectedFile.value) {
     const excel = /\.(xlsx|xls)$/i.test(fileName.value)
     return {
       label: excel ? 'Excel 表格' : '檔案',
-      sync: '上傳一次就固定。之後改了要重新上傳；想「改了自動更新」請改用 Google 試算表',
+      sync: '上傳一次就固定，之後改了要重新上傳',
       syncTone: 'static' as const,
+      hintLabel: '怎麼變成知識？',
       hint: excel
-        ? '一列變成一條知識：第一欄當標題（例：商品名稱），其餘欄位當內容。第一列請放欄位名稱。'
-        : '由 AI 判斷怎麼分段。用拍的、掃的檔案會由 AI 認字，請核對數字與價格有沒有看錯。',
+        ? '一列變成一條知識：第一欄當標題（例：商品名稱），其餘欄位當內容，第一列請放欄位名稱。想「改了自動更新」請改用 Google 試算表。'
+        : '由 AI 判斷怎麼分段。用拍的、掃的檔案會由 AI 認字，請核對數字與價格有沒有看錯。想「改了自動更新」請改用 Google 試算表。',
     }
   }
   if (!pasteInput.value.trim()) return null
   if (mode.value === 'gsheet') {
     return {
       label: 'Google 試算表',
-      sync: '你改試算表，AI 會定期自動跟著更新（你在後台手動改過的內容不會被蓋掉）',
+      sync: '你改試算表，AI 會定期自動跟著更新',
       syncTone: 'live' as const,
-      hint: '一列變成一條知識：第一欄當標題，其餘欄位當內容。第一欄請放看得懂的名字（例：商品名），不要放編號。',
+      hintLabel: '怎麼變成知識？',
+      hint: '一列變成一條知識：第一欄當標題，其餘欄位當內容。第一欄請放看得懂的名字（例：商品名），不要放編號。你在後台手動改過的內容不會被蓋掉。',
     }
   }
   if (mode.value === 'url') {
     return {
       label: '網頁',
-      sync: '抓取當下的內容。之後網頁改了，系統會通知你、由你決定要不要重新學',
+      sync: '抓當下內容；之後網頁改了會通知你',
       syncTone: 'semi' as const,
+      hintLabel: '抓不到內容？',
       hint: '只抓網頁上的文字。需要先登入、或要按按鈕才顯示內容的頁面可能抓不到；商城首頁的商品區塊常是動態載入，請改貼商品列表頁。',
     }
   }
+  // 字數留在永遠看得見的那一行（不收進展開）：貼上文字唯一會撞到的牆就是 10 萬字上限，
+  // 而瀏覽器是**靜默**截斷的——這個數字是使用者唯一能提前發現的訊號
   return {
     label: '一段文字',
-    sync: '貼進來就固定。之後要改就直接編輯知識內容',
+    sync: `貼進來就固定（目前 ${pasteInput.value.trim().length.toLocaleString('zh-TW')} 字，上限 100,000 字）`,
     syncTone: 'static' as const,
-    hint: `AI 會幫你切成多條（目前 ${pasteInput.value.trim().length.toLocaleString('zh-TW')} 字，上限 100,000 字）。`,
+    hintLabel: '怎麼變成知識？',
+    hint: 'AI 會讀完內容、自己判斷怎麼切成一條條知識。之後要改就直接編輯那一條。',
   }
 })
+
+/** 判別結果的細節展開（預設收起，見 detected 的說明）。換一種來源就收回去 */
+const hintOpen = ref(false)
+watch(() => detected.value?.label, () => { hintOpen.value = false })
 
 // ── File ──────────────────────────────────────────────────
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -855,6 +920,11 @@ const ACCEPTED_EXT_RE = /\.(pdf|xlsx|xls)$/i
 /** 檔案共用入口:選檔與拖放都走這裡,上限與型別檢查只有一份 */
 function acceptFile(file: File | undefined | null): boolean {
   if (!file) return false
+  // 畫面上的欄位鎖住了,但拖放不經過那些欄位——這一層才是真的守門（`D-41` 死路⑪）
+  if (previewing.value) {
+    showToast('正在整理目前這一份，要換的話請先按「取消」', 'warning')
+    return false
+  }
   if (!ACCEPTED_EXT_RE.test(file.name)) {
     showToast('只支援 PDF 與 Excel（.xlsx / .xls）', 'error')
     return false
@@ -884,6 +954,7 @@ function onDrop(e: DragEvent) {
     acceptFile(file)
     return
   }
+  if (previewing.value) return // 同 acceptFile：整理中不接受換內容
   // 拖的是一段文字/連結（從瀏覽器網址列或另一個頁面拖過來）也接受
   const text = e.dataTransfer?.getData('text')?.trim()
   if (text) pasteInput.value = text
@@ -914,6 +985,61 @@ async function copyServiceEmail() {
     showToast('複製失敗，請手動選取複製', 'error')
   }
 }
+
+/**
+ * 「我現在讀不讀得到這份試算表」（`D-50` 簡化 4）：貼上連結就實際讀一次。
+ *
+ * 沿用整站探頁數（sitePeek）那套節流規矩：停止輸入 1 秒才打、同一個網址只自動測一次、
+ * 過期結果丟掉。差別是**失敗不靜音**——「還讀不到」正是使用者此刻最需要知道的事
+ * （整站探頁數失敗只是少一個順手功能，靜音無妨）。
+ */
+interface GsheetProbe { status: string, message: string, detail?: string }
+const gsheetProbe = ref<GsheetProbe | null>(null)
+const gsheetProbing = ref(false)
+let gsheetProbedUrl = ''
+let gsheetProbeTimer: ReturnType<typeof setTimeout> | null = null
+
+async function probeGsheet(url: string, force = false) {
+  if (!url || !GSHEET_PATTERN.test(url)) return
+  if (!force && url === gsheetProbedUrl) return
+  gsheetProbing.value = true
+  try {
+    const res = await apiFetch<GsheetProbe>('/api/ai/knowledge/gsheet-probe', {
+      method: 'POST',
+      body: { url },
+    })
+    // 使用者在等待期間換了連結 → 過期結果丟掉（否則會拿舊表的綠勾蓋在新表上）
+    if (gsheetInput.value.trim() !== url) return
+    gsheetProbedUrl = url
+    gsheetProbe.value = res
+  }
+  catch (err: any) {
+    if (gsheetInput.value.trim() !== url) return
+    gsheetProbedUrl = url
+    // ⛔ 探測本身掛掉 ≠ 讀不到試算表：講「試不出來」而不是「還沒分享」，
+    //    否則會叫人去按一個本來就分享好的分享鈕。
+    gsheetProbe.value = {
+      status: 'unknown',
+      message: '試不出來（可能是暫時的網路問題），可以直接按下面的按鈕試試看。',
+      detail: String(err?.data?.statusMessage || err?.statusMessage || err?.message || '').slice(0, 200) || undefined,
+    }
+  }
+  finally {
+    gsheetProbing.value = false
+  }
+}
+
+watch([mode, pasteInput], () => {
+  if (gsheetProbeTimer) clearTimeout(gsheetProbeTimer)
+  const url = pasteInput.value.trim()
+  if (mode.value !== 'gsheet' || !GSHEET_PATTERN.test(url)) {
+    gsheetProbe.value = null
+    return
+  }
+  if (url === gsheetProbedUrl) return // 已經測過這個連結（結果留在畫面上）
+  gsheetProbe.value = null
+  gsheetProbeTimer = setTimeout(() => { void probeGsheet(url) }, 1000)
+})
 
 // 官方 FAQ 範本:有設定母本網址就轉成 /copy 連結(一鍵建立副本);沒設定或網址無法轉則退回下載 xlsx
 const faqTemplateCopyUrl = computed(() => {
@@ -984,7 +1110,14 @@ interface SitePageRow {
   title: string
   checked: boolean
   status: 'idle' | 'processing' | 'done' | 'failed'
+  /** 這一頁**實際建立**幾條知識（含 AI 還沒學起來的：它們已經進庫了） */
   cards: number
+  /**
+   * 其中 AI 沒學起來的條數（`D-41` P1⑤）。
+   * 原本結論只報「索引成功數」，於是索引失敗的卡**已經建進資料庫**卻不在數字裡、
+   * 也沒有任何清單可以重試——而整站這條路刻意不逐頁預覽，等於沒有人會發現它們。
+   */
+  notLearned: number
   /** 這一頁的匯入守門提醒原文(整站匯入沒有逐頁預覽,至少要看得到提醒內容) */
   warningTexts: string[]
   error: string
@@ -1050,7 +1183,9 @@ const siteSummary = computed(() => {
   const done = sitePages.value.filter(p => p.status === 'done')
   return {
     ok: done.length,
+    // 實際建立的總條數（含 AI 還沒學起來的）；notLearned 另外列，兩個數字加起來才對得上
     cards: done.reduce((s, p) => s + p.cards, 0),
+    notLearned: done.reduce((s, p) => s + p.notLearned, 0),
     failed: sitePages.value.filter(p => p.status === 'failed').length,
     warned: done.filter(p => p.warningTexts.length).length,
   }
@@ -1146,6 +1281,7 @@ async function loadSitePages(url: string): Promise<number> {
     checked: false,
     status: 'idle',
     cards: 0,
+    notLearned: 0,
     warningTexts: [],
     error: '',
     imported: p.imported === true,
@@ -1278,7 +1414,7 @@ async function runSiteImport() {
         })
         const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
         if (!res.chunks.length) throw new Error('沒有切出知識(頁面可能沒有實質內容)')
-        const bulk = await apiFetch<{ indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
+        const bulk = await apiFetch<{ total: number; indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
           body: {
             source: {
@@ -1299,7 +1435,9 @@ async function runSiteImport() {
             overviewCard: null,
           },
         })
-        page.cards = bulk.indexed
+        // 實際建立的條數（不是「學會的條數」）：失敗的那幾條也已經在知識庫裡了
+        page.cards = bulk.total ?? bulk.indexed
+        page.notLearned = bulk.failed ?? 0
         page.productName = res.suggestedProductName ?? ''
         page.warningTexts = res.warnings ?? []
         page.status = 'done'
@@ -1338,18 +1476,47 @@ async function runSiteImport() {
   // 中途關窗:視窗已不在,改用父層刷新讓已建立的資料立刻出現在列表(否則要手動重整才看得到)
   if (siteAborted.value) {
     if (ok.length) emit('imported', null)
+    // 視窗已經關了,結論列沒機會出現——但「做了什麼」一定要有人講（`D-41` P1⑤）。
+    // ⛔ 不可以靜靜 resetAll 就結束:那正是「建了幾份沒人知道」的原形。
+    showToast(
+      ok.length
+        ? `已停止整站匯入：完成的 ${ok.length} 頁（${ok.reduce((s, p) => s + p.cards, 0)} 條）已保留在知識庫`
+        : '已停止整站匯入：這批還沒有任何一頁完成，知識庫沒有變動',
+      ok.length ? 'success' : 'warning',
+    )
     resetAll()
     return
   }
+  const notLearned = ok.reduce((s, p) => s + p.notLearned, 0)
   showToast(
     bad.length
       ? `整站匯入完成:${ok.length} 頁成功、${bad.length} 頁失敗(清單有標原因)`
-      : `整站匯入完成:${ok.length} 頁、共 ${ok.reduce((s, p) => s + p.cards, 0)} 條`,
+      : `整站匯入完成:${ok.length} 頁、共 ${ok.reduce((s, p) => s + p.cards, 0)} 條${notLearned ? `（其中 ${notLearned} 條待學）` : ''}`,
+
     bad.length ? 'error' : 'success',
   )
 }
 
 const includedCount = computed(() => chunks.value.filter(c => c.included).length)
+
+/**
+ * 這次真的會建幾條（`D-41` P0②）。
+ *
+ * 總表卡不在 `includedCount` 裡（它是 overviewCard 另外送出的），所以按鈕寫「直接匯入 20 條」、
+ * 結果頁的「總計」卻是 21——兩個畫面對不上，使用者只能自己猜多出來的那一條是什麼。
+ * 按鈕改成把它講出來；不寫成「21 條」是刻意的：那張總表跟其他條不同種，合成一個數字
+ * 反而看不出多的是什麼。
+ */
+const overviewWillImport = computed(() => {
+  const ov = overviewCard.value
+  return !!(ov && ov.included && ov.title.trim() && ov.content.trim())
+})
+const importTotalLabel = computed(() =>
+  overviewWillImport.value ? `${includedCount.value} 條＋1 張總表` : `${includedCount.value} 條`,
+)
+
+/** 名稱／所屬產品欄位的展開（`D-50` 簡化 2：預設收起，結論先行）。判斷見 metaEditorOpen */
+const metaOpen = ref(false)
 
 /**
  * 逐條檢查預設收起。整理結果預設全選,所以主路徑是「直接匯入」——
@@ -1389,10 +1556,13 @@ function showNumericOnly() {
 /**
  * 「要不要順便做一張『我們有賣什麼』的清單」——整理完才問得出來的那一次。
  *
- * 第一步的勾選是在還沒看到任何內容時問的（「這份資料裡有很多樣商品嗎」），
- * 第一次用的人根本答不出來，勾錯的代價是客人問「你們賣什麼」時 AI 只能反問。
+ * 第一步原本有個勾選框問同一件事，但那是在還沒看到任何內容時問的，第一次用的人根本
+ * 答不出來（勾錯的代價是客人問「你們賣什麼」時 AI 只能反問）。2026-09-03（`D-50` 簡化 1）
+ * 勾選框整塊移除，**這裡成為總表唯一的入口**。
  * 條數多＝列了很多樣東西，這是我們手上唯一真的訊號，就在這時候問。
  *
+ * ⚠️ `text` 是勾選框移除的同一輪補進來的：以前貼上一大段商品清單的人只能靠勾選框，
+ *    這裡若還只認 url/file，那條路就變成完全沒有出口（gsheet 例外——它本來就免勾）。
  * 條件要嚴：接受重做等於再花一次 AI 用量，寧可少問也不要亂問。
  * 只在「原本的輸入還在」時出現——接回上一份工作時輸入框是空的，重做會直接失敗。
  */
@@ -1403,7 +1573,7 @@ const suggestOverview = computed(() =>
   && !overviewCard.value
   && !generateOverview.value
   && chunks.value.length >= OVERVIEW_SUGGEST_MIN_CHUNKS
-  && (sourceMeta.value.type === 'url' || sourceMeta.value.type === 'file')
+  && (sourceMeta.value.type === 'url' || sourceMeta.value.type === 'file' || sourceMeta.value.type === 'text')
   && canPreview.value)
 
 /**
@@ -1453,6 +1623,14 @@ const dupMatches = computed(() => {
   for (const m of existingMatches.value) if (!pool.has(m.id)) pool.set(m.id, m)
   return [...pool.values()].filter(m => m.name.trim() === name)
 })
+
+/**
+ * 名稱／所屬產品欄位要不要展開。
+ * ⚠️ 宣告在 dupMatches **之後**：這個檔案有過 TDZ 事故（watch 註冊當下就會讀一次 getter，
+ *    整個元件 setup 直接炸掉、知識庫變全站錯誤頁），所以凡是讀別人 ref 的衍生值一律排在後面。
+ * 有同名警告時強制展開——那句提醒叫人「改個名字」，收起來的話畫面上沒有東西可按。
+ */
+const metaEditorOpen = computed(() => metaOpen.value || dupMatches.value.length > 0)
 
 /** 預覽 job 完成時的回應形狀（與舊 preview-chunks 相同） */
 interface PreviewResult {
@@ -1533,6 +1711,9 @@ function readJobMarker(): JobMarker | null {
  */
 const jobState = computed<'running' | 'ready' | 'none'>(() => {
   if (previewing.value) return 'running'
+  // 畫面等太久先不等了、但排程還在推它（`D-50` 簡化 3）——這時側欄一定要照樣顯示
+  // 「一份資料整理中」,否則使用者關掉視窗就只剩一片安靜,又變成「系統把我的東西弄丟了」
+  if (previewStillRunning.value) return 'running'
   if (step.value === 'preview' && chunks.value.length > 0) return 'ready'
   return 'none'
 })
@@ -1550,6 +1731,7 @@ async function resumeStoredJob() {
   if (!marker) return
   previewing.value = true
   previewError.value = ''
+  previewStillRunning.value = false
   previewCancelled = false
   resetJobPoll()
   try {
@@ -1592,6 +1774,12 @@ onMounted(() => { void resumeStoredJob() })
 
 /** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
 const previewError = ref('')
+/**
+ * 「畫面不等了，但它還在背景跑」（`D-50` 簡化 3）。
+ * ⛔ 這種情況**不可以**畫成紅色錯誤：東西沒壞，工作還活著、排程正在推它；
+ *    畫成錯誤的話使用者會去重傳一份，於是同一份資料兩個工作同時跑、OCR 錢付兩次。
+ */
+const previewStillRunning = ref(false)
 /** 使用者主動取消：用來區分「取消」與「真的失敗」，取消不該顯示錯誤 */
 let previewCancelled = false
 
@@ -1638,6 +1826,7 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode) {
 async function runPreview() {
   previewing.value = true
   previewError.value = ''
+  previewStillRunning.value = false
   previewCancelled = false
   resetJobPoll()
   try {
@@ -1705,9 +1894,11 @@ async function runPreview() {
   }
   catch (err: any) {
     if (previewCancelled) return // 使用者自己按取消,不是錯誤(記號已在 cancelPreview 清掉)
-    // 等太久 ≠ 失敗:逾時的時候伺服器那份工作還活著,記號留著讓人下次進來接著跑;
-    // 真的失敗(伺服器已標 error)才清掉——留著只會在下次進頁面時再報一次同一個錯。
-    if (err?.code !== PREVIEW_JOB_DEADLINE) clearJobMarker()
+    // 等太久 ≠ 失敗:逾時的時候伺服器那份工作還活著(而且 2026-09-03 起維護排程會繼續推它),
+    // 記號留著讓人下次進來接著看;真的失敗(伺服器已標 error)才清掉——留著只會在下次進頁面時
+    // 再報一次同一個錯。
+    if (err?.code === PREVIEW_JOB_DEADLINE) previewStillRunning.value = true
+    else clearJobMarker()
     // 留在畫面上而不是 toast：等了幾分鐘的人常常沒盯著螢幕，3.5 秒的提示等於沒講
     previewError.value = String(
       err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
@@ -1891,12 +2082,30 @@ function plainFailure(reason?: string): { text: string; retryable: boolean } {
 const retryingIds = ref<Set<string>>(new Set())
 const retryAllRunning = ref(false)
 
+/**
+ * 重試一條。
+ *
+ * ⛔ **一定要看回應內容，不可以「沒 throw 就當成功」**（`D-41` P0①，2026-09-03 修）。
+ *    `/reindex` 走 `runIndexOnChunk`，那支的 catch 是 **return 不是 throw**——再次失敗時
+ *    回的是 HTTP 200 ＋ `{ status: 'failed' }`。原本這裡不看回應一律「可用 +1、失敗 −1」，
+ *    於是 AI 服務忙碌時按重試，畫面說「3 條都學會了」而實際 3 條全還是失敗：
+ *    客人問到照樣答不出來，而老闆以為修好了。資料頁的同功能本來就會重讀真狀態
+ *    （`sources/index.vue` 的 retryChunk），兩邊誠實度不同才是這個 bug 的形狀。
+ */
 async function retryOne(item: { id: string; status: string; failureReason?: string }): Promise<boolean> {
   retryingIds.value = new Set([...retryingIds.value, item.id])
   try {
-    await apiFetch(`/api/ai/knowledge/${item.id}/reindex`, { method: 'POST' })
-    // 就地改狀態：結果頁的統計與清單都跟著更新，不用重新匯入才看得到成果
+    const res = await apiFetch<{ status?: string; failureReason?: string }>(
+      `/api/ai/knowledge/${item.id}/reindex`,
+      { method: 'POST' },
+    )
     const row = (result.value?.items ?? []).find(i => i.id === item.id)
+    // 只有真的變成 indexed 才算學會；其餘（failed／回應沒帶狀態）一律留在失敗那一側
+    if (res?.status !== 'indexed') {
+      if (row) row.failureReason = res?.failureReason || row.failureReason || '重試後仍然失敗'
+      return false
+    }
+    // 就地改狀態：結果頁的統計與清單都跟著更新，不用重新匯入才看得到成果
     if (row && result.value) {
       row.status = 'indexed'
       row.failureReason = undefined
@@ -2015,6 +2224,8 @@ function resetAll() {
   ocrUsed.value = false
   healthWarnings.value = []
   result.value = null
+  previewStillRunning.value = false
+  metaOpen.value = false
   sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
   sitePages.value = []
   siteFilter.value = ''
@@ -2039,6 +2250,33 @@ function close() {
  * 統一在「關窗」時結算:只要有實際建立過資料(result 存在,全成功或部分成功),
  * 就通知父層刷新資料列表並重置狀態;中途關窗(還沒匯入)則保留輸入,下次打開接續。
  */
+/**
+ * 關窗前的確認（`D-41` P1⑤，2026-09-03 加）。
+ *
+ * 整站匯入跑到一半按 ESC／✕ 原本**直接收工、一句話都不說**：做完的那幾頁已經進了知識庫，
+ * 但結論列永遠不會出現，建了幾份、幾條全都沒交代。而那個畫面上還寫著「期間請保持這個
+ * 視窗開著」——使用者關掉它時完全不知道自己中斷了什麼。
+ * ⛔ 不可以擋著不讓關：他可能真的要走。要做的是「講清楚再放人」，並在收工時補一句交代。
+ */
+async function onBeforeClose(done: () => void) {
+  if (siteImporting.value) {
+    const built = sitePages.value.filter(p => p.status === 'done')
+    const cards = built.reduce((sum, p) => sum + p.cards, 0)
+    const left = siteBatchTotal.value - siteDoneCount.value
+    try {
+      await ElMessageBox.confirm(
+        `還有 ${left} 頁整理到一半。已完成的 ${built.length} 頁（${cards} 條知識）會保留在知識庫；停止的話，剩下這 ${left} 頁不會匯入。`,
+        '要停止整站匯入嗎？',
+        { confirmButtonText: '停止，保留已完成的', cancelButtonText: '繼續整理', type: 'warning' },
+      )
+    }
+    catch {
+      return // 選了「繼續整理」＝不關窗
+    }
+  }
+  done()
+}
+
 function onDialogClose() {
   // 整站批次還在跑時關窗(ESC / X):通知 worker 收工,收尾由 runSiteImport 負責
   // (它會 emit imported 讓列表帶出已建立的資料,再 resetAll)——這裡不能先 reset,

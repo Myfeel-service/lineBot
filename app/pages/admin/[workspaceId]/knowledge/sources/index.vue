@@ -306,7 +306,7 @@
               class="src-todo__muted"
               @click="openHealthList('expiredChunks')"
             >
-              另有 {{ healthExpiredCount }} 張內容已過期自動停用（正常，不用處理）
+              另有 {{ healthExpiredCount }} 條知識已過期自動停用（正常，不用處理）
             </button>
             <p v-if="health.chunkScanTruncated" class="src-todo__foot">
               內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
@@ -419,10 +419,10 @@
           class="src-outdated-alert"
         >
           <template #title>
-            有 {{ selectedSource.manualKeptCount }} 張卡不會跟著表格更新
+            有 {{ selectedSource.manualKeptCount }} 條知識不會跟著表格更新
           </template>
           <div>
-            這幾張卡在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
+            這幾條知識在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
             想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。
           </div>
         </el-alert>
@@ -813,7 +813,7 @@
   >
     <div v-if="diffData" class="diff-body">
       <p class="text-muted text-sm">
-        已重新抓一次網頁、重新整理成一條條知識，請逐張決定要換成新的、還是保留舊的。
+        已重新抓一次網頁、重新整理成一條條知識，請逐條決定要換成新的、還是保留舊的。
         你手動改過的內容預設保留你的版本。
       </p>
 
@@ -862,7 +862,7 @@
           這次的「新增 / 移除」多半不是網頁改了，而是 AI 換了一種分法
         </template>
         <div class="text-xs">
-          一張舊知識都沒有對上（未變 0），同時出現 {{ diffData.diff.summary.added }} 筆新增與
+          一條舊知識都沒有對上（未變 0），同時出現 {{ diffData.diff.summary.added }} 筆新增與
           {{ diffData.diff.summary.removed }} 筆移除——網頁整頁重寫才會長這樣。
           <strong>先比對內容再決定</strong>；看起來只是同一件事換句話說的話，直接按取消就好，
           你現有的知識完全不會被動到。
@@ -1234,7 +1234,7 @@
   >
     <p class="src-bin-hint">
       系統用「內容相似度＋AI 判斷」找出可能重複的組合，並附上理由。
-      <strong>不會自動合併或刪除</strong>——確認後用「整理產品名稱」合併、或把多的那張刪掉（會進回收桶，可還原）。
+      <strong>不會自動合併或刪除</strong>——確認後用「整理產品名稱」合併、或把多的那條刪掉（會進回收桶，可還原）。
       不是重複的按「忽略」，之後不會再報這一組。
     </p>
     <p v-if="!health.duplicates.items.length" class="src-bin-empty">目前沒有疑似重複的項目。</p>
@@ -1242,7 +1242,7 @@
       <div v-for="s in health.duplicates.items" :key="s.key" class="src-bin-row">
         <div class="src-bin-row__main">
           <span class="src-bin-row__title">
-            {{ s.kind === 'product_split' ? '同一台商品、兩個名字？' : '兩張卡講同一件事？' }}
+            {{ s.kind === 'product_split' ? '同一台商品、兩個名字？' : '兩條知識講同一件事？' }}
           </span>
           <span class="src-bin-row__meta">
             A「{{ s.a.title }}」{{ s.a.productName ? `（${s.a.productName}）` : '' }}
@@ -1434,7 +1434,17 @@ const sources = ref<SourceSummary[]>([])
  * null = 還沒讀到（讀失敗時不顯示提醒，寧可少講一句也不要誤報「AI 沒開」）。
  */
 const aiEnabled = ref<boolean | null>(null)
-const totalChunkCount = computed(() => sources.value.reduce((sum, s) => sum + (s.chunkCount ?? 0), 0))
+/**
+ * 知識總條數（`D-41` P1④，2026-09-03 修）。
+ *
+ * 原本只加總資料清單的 chunkCount，**漏掉未歸檔的舊版知識**（orphan：沒有掛在任何一份資料
+ * 底下，但 AI 檢索照樣找得到它們）。於是「已經有 N 條知識」這句話會低報，
+ * 而它正是「AI 還沒開，這些內容還沒發揮作用」那句提醒的分母。
+ * ⚠️ 資料清單本身有 100 份上限（見 loadSources），超過的話這個數字仍然偏低——
+ *    所以文案用「至少」而不是給一個看起來很精確的數字（見 aiOff 那條待辦）。
+ */
+const totalChunkCount = computed(() =>
+  sources.value.reduce((sum, s) => sum + (s.chunkCount ?? 0), 0) + orphanCount.value)
 async function loadAiEnabled() {
   try {
     const s = await apiFetch<{ enabled?: boolean }>('/api/ai/settings')
@@ -1824,7 +1834,7 @@ async function restoreChunk(r: RecycleRow) {
 async function unlockChunk(c: { id: string; title: string }) {
   try {
     await ElMessageBox.confirm(
-      `「${c.title}」目前以後台手動編輯的版本為準。解除鎖定後，下一次同步會改用表格／網頁的版本覆蓋這張卡。`,
+      `「${c.title}」目前以後台手動編輯的版本為準。解除鎖定後，下一次同步會改用表格／網頁的版本覆蓋這條知識。`,
       '解除手動編輯鎖定',
       { confirmButtonText: '解除鎖定', cancelButtonText: '維持人工版本', type: 'warning' },
     )
@@ -2173,7 +2183,7 @@ const todoItems = computed<TodoItem[]>(() => {
       id: 'aiOff',
       tone: 'danger',
       title: 'AI 客服還沒開啟',
-      why: `已經有 ${totalChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
+      why: `已經有至少 ${totalChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
       cta: '前往開啟',
       action: () => navigateTo(`/admin/${workspaceId.value}/ai-settings`),
     })
@@ -3359,14 +3369,33 @@ async function reindexChunkFromModal() {
   if (!chunkEditingId.value) return
   chunkReindexing.value = true
   try {
-    await apiFetch(`/api/ai/knowledge/${chunkEditingId.value}/reindex`, { method: 'POST' })
-    showToast('已重新學習', 'success')
+    /**
+     * ⛔ 要看回應內容，不可以「沒 throw 就報成功」（`D-41` P0①，2026-09-03 修）：
+     *    `/reindex` 再次失敗時回的是 HTTP 200 ＋ `{ status: 'failed' }`（那支的 catch 是
+     *    return 不是 throw）。原本一律跳「已重新學習」，於是 AI 服務忙碌時按下去，
+     *    畫面說學會了、卡其實還是失敗——客人問到照樣答不出來。
+     */
+    const res = await apiFetch<{ status?: string; failureReason?: string }>(
+      `/api/ai/knowledge/${chunkEditingId.value}/reindex`,
+      { method: 'POST' },
+    )
+    const learned = res?.status === 'indexed'
+    showToast(
+      learned ? '已重新學習' : `還是沒學起來：${res?.failureReason || '原因不明'}`,
+      learned ? 'success' : 'error',
+    )
     if (selectedId.value) await loadSourceDetail(selectedId.value)
     const updated = chunks.value.find(c => c.id === chunkEditingId.value)
     if (updated) {
       chunkEditStatus.value = updated.status
       chunkEditFailureReason.value = updated.failureReason ?? ''
     }
+    /**
+     * 修好一條就把體檢一起刷新（`D-41` P1⑦，2026-09-03 修）。
+     * 原本只重載這一份資料，所以「有 N 條內容 AI 沒學起來」會停在舊數字＝
+     * 修好了畫面還紅，使用者只能猜是不是沒修成功。
+     */
+    if (learned) void loadHealth(true)
   }
   catch (err: any) {
     showToast(err?.statusMessage || '重新學習失敗', 'error')
@@ -3484,7 +3513,9 @@ async function deleteChunkFromModal() {
   const title = chunkForm.value.title || '(未命名)'
   try {
     await ElMessageBox.confirm(
-      `要刪除「${title}」這一條片嗎？無法復原。`,
+      // 量詞一律「條」（`D-41` 三，2026-09-03）：原本這句是錯字「這一條片」——
+      // 08-04 拍板把「卡片」全面改叫「一條知識」時，這裡改了一半
+      `要刪除「${title}」這 1 條知識嗎？無法復原。`,
       '刪除知識',
       {
         confirmButtonText: '刪除',

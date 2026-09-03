@@ -349,7 +349,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="kb-import"]',
         title: '從「加入知識」開始',
         description:
-          '知識庫是由一份份「<strong>資料</strong>」組成的，AI 只會用這些資料裡的內容回答。點「<strong>加入知識</strong>」開始。',
+          'AI 只會用你放進來的資料回答客人。點「<strong>加入知識</strong>」放第一份進去。',
         placement: 'bottom',
       },
       {
@@ -357,24 +357,14 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-import"]',
         title: '丟進來就好，不用先選種類',
         description:
-          '把<strong>檔案拖進這個框</strong>（PDF、Excel，單檔 10MB 內），或直接<strong>貼上網址、Google 試算表連結、一大段文字</strong>——系統會自己認出你給的是什麼，然後告訴你<strong>「之後改了會不會自動更新」</strong>。那是唯一需要你知道的差別：<br>・<strong>Google 試算表</strong>＝你改，AI 定期自動跟著改（商品、價目表這種常改的最適合）<br>・<strong>網頁</strong>＝內容變了會通知你，由你決定要不要重新學<br>・<strong>檔案／貼上文字</strong>＝當下固定，之後要改就直接編輯知識<br>貼網址時，系統還會順便告訴你這個網站有幾頁，可以一次全部匯入。',
+          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼，並告訴你之後改了會不會自動更新。細節不用背：貼上之後，視窗會就地講該注意什麼。',
         placement: 'bottom',
-      },
-      {
-        // 這個勾選框要「貼了內容」才會出現(空白狀態刻意不擺,見 KnowledgeImportDialog),
-        // 導覽開的是空視窗指不到它——改用置中說明卡講「等一下會看到什麼」
-        target: '',
-        clickBefore: '[data-tour="kb-import"]',
-        title: '商品型錄記得勾「總表」',
-        description:
-          '貼上內容後，框下面會多一個「<strong>這是一份多樣商品的清單</strong>」的勾選框。商品型錄 / 列表頁記得勾——會多做一張「總表」，客人問「你們有賣什麼」時 AI 能一次答完，不會被一項項問倒。（Google 試算表免勾；忘了勾也沒關係，整理完條數多的話系統會再問你一次。）',
-        placement: 'top',
       },
       {
         target: '[data-tour="kb-preview"]',
         title: '先看 AI 整理的結果再匯入',
         description:
-          '選好資料後按這裡，AI 會先<strong>切好知識給你預覽</strong>。你可以逐張改標題／內容、取消不要的，確認沒問題再匯入——<strong>不會直接上線亂答</strong>。',
+          '按這裡，AI 會先<strong>切好知識給你預覽</strong>：可以逐條改、取消不要的，確認才匯入——<strong>不會直接上線亂答</strong>。',
         placement: 'top',
       },
     ],
@@ -407,14 +397,14 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-source-row"]',
         title: 'AI 把資料切成一條條「知識」，你能微調',
         description:
-          '我幫你選了第一份資料。每份資料會被拆成一條條「<strong>知識</strong>」，AI 就是一條一條地找答案。覺得哪一條不對，按「<strong>編輯</strong>」改標題和內容，或用「<strong>AI 整理一下</strong>」讓它更好被找到。<strong>你親手改過的內容會被鎖定</strong>，日後自動更新時不會被蓋掉。每條還能設「<strong>供 AI 使用</strong>」開關和<strong>有效期限</strong>——檔期活動設好期限，到期會自動停用並通知你，AI 不會拿過期資訊回答。',
+          '我幫你選了第一份資料。每份會被拆成一條條知識，AI 就是一條一條找答案。覺得哪一條不對，按「<strong>編輯</strong>」改它——<strong>你親手改過的不會被日後的自動更新蓋掉</strong>。（每條還能設停用與有效期限，檔期活動用得到。）',
         placement: 'left',
       },
       {
         target: '[data-tour="kb-sync-settings"]',
         title: '原始資料改了，知識會自動跟上',
         description:
-          '從<strong>網址</strong>或 <strong>Google Sheet</strong> 來的知識，系統會<strong>定期自動重讀</strong>（多久讀一次可以自己設）。網頁的<strong>小幅文字更新會自動套用並通知你</strong>；改動比較大時會先<strong>列出哪裡不一樣</strong>、讓你確認後再套用。Google Sheet 則一列一卡自動跟上。你親手改過的卡一律保留、<strong>不會被偷偷覆蓋</strong>。等不及排程時，隨時可在該資料右上按「<strong>重新同步</strong>」。<br>（這一區只有<strong>網址 / Google Sheet</strong> 資料才有；用檔案、手打文字建立的資料不會自動更新，改了要重新匯入。）',
+          '網址與 Google 試算表來的資料，系統會<strong>定期自動重讀</strong>：小改動自動套用並通知你，改動大會先列出差異讓你確認。<strong>你親手改過的一律保留</strong>。等不及就按右上「<strong>重新同步</strong>」。（檔案和手打的不會自動更新，改了要重新匯入。）',
         placement: 'left',
       },
       {

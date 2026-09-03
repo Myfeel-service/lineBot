@@ -65,9 +65,12 @@ export function usePreviewJobPoll() {
       if (res.status === 'error') throw new Error(res.error || '處理失敗')
       progress.value = res.progress ?? null
     }
-    // 錯誤訊息三要素:這裡只講「發生什麼 + 下一步」,呼叫端會補上「資料有沒有被動到」
+    // 錯誤訊息三要素:這裡只講「發生什麼 + 下一步」,呼叫端會補上「資料有沒有被動到」。
+    // ⚠️ 2026-09-03（`D-50` 簡化 3）改口徑:維護排程會接手推進,所以「畫面不等了」不等於
+    //    「這份完蛋了」——⛔不可以再寫「請再試一次」,那會叫人把一份正在跑的工作重傳一次
+    //    （重跑 OCR、重付一次錢），而且新舊兩份會同時在跑。
     throw Object.assign(
-      new Error('處理時間超過上限,可以再試一次;內容很長的話建議改用「貼上文字」分批匯入'),
+      new Error('這份還在背景整理（畫面等太久就先不等了）；好了會在知識庫這一頁告訴你'),
       { code: PREVIEW_JOB_DEADLINE },
     )
   }

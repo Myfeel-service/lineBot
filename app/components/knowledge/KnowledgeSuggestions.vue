@@ -13,12 +13,19 @@
       <span>
         <strong>AI 建議補的知識</strong>
         <template v-if="items.length">：{{ items.length }} 個主題待處理</template>
+        <!-- ⛔ 讀不到必須排在所有「沒有建議」的說法之前(`D-41` 死路②):
+             退成「還沒分析過」的話,壞掉跟真的沒缺口在畫面上完全一樣 -->
+        <template v-else-if="loadFailed">：讀不到（不是沒有建議）</template>
         <template v-else-if="!lastScanAtMs">：還沒分析過</template>
         <template v-else-if="gapEvents > 0">：有問題答不出來，還在等同類重複出現</template>
         <template v-else>：目前沒有——最近客人問的，AI 都答得出來</template>
       </span>
     </p>
     <p v-if="items.length" class="kb-suggest-hint">從「客人問過、但 AI 答不出來」的真實對話整理，草稿已擬好，審一眼就能用。</p>
+    <p v-else-if="loadFailed" class="kb-suggest-hint">
+      這一區的資料沒讀到，所以<strong>現在無法判斷有沒有要補的知識</strong>。重新整理頁面再看一次；一直這樣請告訴我們。
+      <span v-if="loadError" class="text-xs text-muted">（{{ loadError }}）</span>
+    </p>
     <p v-else-if="!lastScanAtMs" class="kb-suggest-hint">
       AI 開始服務客人後，系統會自動找出「客人問了但答不出來」的主題並擬好草稿。
     </p>
@@ -183,6 +190,12 @@ const { showToast } = useAdminToast()
 const canEdit = computed(() => can('knowledge.write'))
 
 const loaded = ref(false)
+/**
+ * 這一區的資料「讀不到」（`D-41` 死路②）。與 lastError（＝掃描本身失敗）是兩件事：
+ * lastError 是後端有回應、但上次掃描失敗；loadFailed 是**連回應都沒拿到**。
+ */
+const loadFailed = ref(false)
+const loadError = ref('')
 const items = ref<SuggestionRow[]>([])
 const lastScanAtMs = ref(0)
 /** 上次掃描窗口內「AI 答不出來」的事件數:用來分辨「沒缺口」與「有缺口但還沒重複」 */
@@ -213,6 +226,8 @@ const draftBlanks = computed(() => countKnowledgeDraftBlanks(form.value.content)
 const scanLabel = computed(() => {
   if (scanRequested.value) return '已排入重新掃描，約 10 分鐘內完成'
   // 掃描失敗要說出來:不講的話畫面是「剛剛掃過 + 沒有建議」,看起來像真的沒缺口
+  // 讀不到資料時最優先講:這一行原本會退成「尚未分析」,跟「真的還沒分析過」分不出來
+  if (loadFailed.value) return '讀不到分析結果（不是「沒有建議」）'
   if (lastError.value) return '上次分析失敗了，可以再按一次重新掃描'
   if (!lastScanAtMs.value) return '尚未分析'
   const mins = Math.floor((Date.now() - lastScanAtMs.value) / 60_000)
@@ -222,20 +237,35 @@ const scanLabel = computed(() => {
 })
 
 async function load() {
+  loadFailed.value = false
+  loadError.value = ''
   try {
     const res = await apiFetch<{
       items: SuggestionRow[]
       scan: { lastScanAtMs: number; requested: boolean; lastError: string; lastScanGapEvents: number }
     }>('/api/ai/knowledge/suggestions')
     items.value = res.items ?? []
+    loadFailed.value = false
     lastError.value = res.scan?.lastError ?? ''
     lastScanAtMs.value = res.scan?.lastScanAtMs ?? 0
     gapEvents.value = res.scan?.lastScanGapEvents ?? 0
     scanRequested.value = !!res.scan?.requested
   }
-  catch {
-    // 建議是加值資訊,載入失敗不打擾資料頁主流程
+  catch (err: any) {
+    /**
+     * ⛔ 載入失敗 ≠ 沒有建議（`D-41` 死路②，2026-09-03 修）。
+     *
+     * 原本這裡只把清單清空、什麼都不說，於是畫面顯示「尚未分析」——
+     * **API 掛掉跟「真的還沒分析過」長得一模一樣**。第一次來的人會以為功能還沒開始跑，
+     * 而實際上是壞了；已經在用的人會以為知識庫沒缺口，因此不去補。
+     * 這是本專案第四次同款的「查不到＝沒問題」（見記憶 feedback_absence_claims_need_verification）。
+     * 三種狀態要分得出來：有建議／真的沒有／讀不到。
+     */
     items.value = []
+    loadFailed.value = true
+    loadError.value = String(
+      err?.data?.statusMessage || err?.statusMessage || err?.message || '',
+    ).slice(0, 160)
   }
   finally {
     loaded.value = true

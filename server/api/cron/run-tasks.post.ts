@@ -13,6 +13,7 @@ import {
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
 import { cleanupExpiredPreviewJobs, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
+import { advanceStalePreviewJobs } from '~~/server/utils/ai-preview-job-runner'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { scanInactiveTag } from '~~/server/utils/inactive-tag'
@@ -46,6 +47,13 @@ export default defineEventHandler(async (event) => {
   const tasks: Array<{ name: string; run: () => Promise<unknown> }> = [
     { name: 'ai:retry-stuck-chunks', run: () => retryStuckChunks(db) },
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
+    /**
+     * 沒人在看的匯入工作，由這裡接手往前推（`D-50` 簡化 3）。
+     * 這支讓等待畫面那句「先去忙別的、整理會在背景繼續」真的成立——在它之前，
+     * 整理只在有人盯著畫面輪詢時才前進，關掉視窗就停在原地。
+     * 一輪最多推 2 份、每份 15 秒預算，且**跳過使用者正在輪詢的那份**（不跟前端搶）。
+     */
+    { name: 'ai:advance-preview-jobs', run: () => advanceStalePreviewJobs(db) },
     // 取消上傳留下的孤兒檔（只在排程清，不塞進使用者請求路徑——列舉+逐檔刪會拖垮匯入端點）
     { name: 'ai:cleanup-orphan-uploads', run: () => cleanupOrphanUploads() },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },

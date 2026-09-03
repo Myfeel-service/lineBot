@@ -110,6 +110,17 @@ export default defineEventHandler(async (event) => {
   const noProductSources: Array<{ id: string; name: string; chunkCount: number }> = []
   for (const d of sourcesSnap.docs) {
     const s = d.data() as any
+    /**
+     * 回收桶／已刪除的資料不進體檢（`D-41` P0③，2026-09-03 修）。
+     *
+     * 卡片層那個迴圈本來就有濾（見下面 `deletedAt != null` 那行），**來源層漏了**：
+     * 於是刪掉一份同步失敗的資料之後，「有 1 份資料抓不到內容」這行紅字永遠留著，
+     * 點進去撞「找不到這份資料（可能剛被刪除），請重新整理」，重新整理也沒用——
+     * 一條修不掉、也關不掉的死路。
+     * ⛔ 兩個欄位都要判：新的軟刪除路徑 `isDeleted` 與 `deletedAt` 都會寫，
+     *    但多租戶化前的舊 doc 沒有 `isDeleted` 欄位、只有 `deletedAt`（同 listSources 的判法）。
+     */
+    if (s?.isDeleted === true || s?.deletedAt != null) continue
     const name = String(s?.name ?? s?.url ?? '(未命名來源)')
     if (s?.status === 'failed') failedSources.push({ id: d.id, name, reason: String(s?.failureReason ?? '').slice(0, 120) })
     if (s?.outdatedAt) outdatedSources.push({ id: d.id, name })
