@@ -158,6 +158,35 @@
   font-size: 0.85em;
 }
 
+/**
+ * 標籤旁的「最近 9/3・3 次」（`D-55`）。
+ *
+ * 跟 `--tag-src`（來源）同一種灰度與字級＝讀成**同一組附註**，不要各自搶眼。
+ */
+.cust-card__tag-hit {
+  margin-left: 0.3rem;
+  opacity: 0.62;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums; // 數字等寬：多顆標籤上下疊時「3 次／12 次」對得齊
+}
+
+/**
+ * 🔴 **這張卡裡的 chip 必須能自己換行**，否則上面那截小字會把 chip 撐出容器。
+ *
+ * 共用的 `.tag-chip` 是 `white-space: nowrap`（標籤頁與列表要一顆一行不斷字，那裡是對的）。
+ * 但這張卡會出現在**對話頁右側約 320px 的面板**裡，而 MYFEEL 的標籤名有長到
+ * 「客服 - SHARP 頂級A咖｜iBarista 智慧咖啡機」這種——headless 實測：
+ *   加小字前 最寬 chip 294px（勉強容得下）→ 加小字後 407px、**超出容器右緣 95px**。
+ * ⛔ 不能去改共用的 `.tag-chip`（標籤頁／好友列表都在用，反向 grep 過）；
+ *   ⛔ 也不用 `@media`——寬度取決於**容器**不是視窗（同腳本編輯器那次的教訓），
+ *   這裡直接在卡片作用域內放行換行，兩種寬度都不必分支。
+ */
+.cust-card__tags .tag-chip {
+  max-width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
 /* `.cust-card__note` 已隨 G-27⑥ 的空狀態瘦身移除（唯一使用處改用 __empty），
    反向 grep 過整個 app/ 沒有其他 .vue 借用，才刪的 */
 .cust-card__empty {

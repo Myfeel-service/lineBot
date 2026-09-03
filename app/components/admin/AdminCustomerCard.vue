@@ -74,7 +74,11 @@
 
         <div v-if="tagRows.length" class="cust-card__tags">
           <AdminTagTintChip v-for="t in tagRows" :key="t.tagId" :color="t.color">
-            {{ t.name }}<small v-if="t.sourceLabel" class="cust-card__tag-src">{{ t.sourceLabel }}</small>
+            {{ t.name }}<small v-if="t.sourceLabel" class="cust-card__tag-src">{{ t.sourceLabel }}</small><small
+              v-if="t.hit.text"
+              class="cust-card__tag-hit"
+              :title="t.hit.title"
+            >{{ t.hit.text }}</small>
             <button
               v-if="canOperate"
               type="button"
@@ -275,7 +279,7 @@ interface CustomerDetail {
   isBlocked: boolean
   createdAtMs: number
   attributes: Record<string, string>
-  tags: Array<{ tagId: string; sourceType: string; createdAtMs: number }>
+  tags: Array<{ tagId: string; sourceType: string; createdAtMs: number; lastHitAtMs: number | null; hitCount: number }>
   conversation: {
     lastMessage: string
     lastDirection: 'incoming' | 'outgoing' | null
@@ -364,6 +368,8 @@ const tagRows = computed(() =>
     name: tagById(t.tagId)?.name ?? '（已刪除的標籤）',
     color: tagById(t.tagId)?.color ?? '#8a95a1',
     sourceLabel: TAG_SOURCE_LABELS[t.sourceType] ?? '',
+    /** 「最近 9/3・3 次」（`D-55`）；規則與踩雷見 app/utils/tag-hit-label.ts */
+    hit: tagHitLabel(t),
   })),
 )
 

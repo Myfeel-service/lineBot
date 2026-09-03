@@ -126,6 +126,15 @@ export default defineEventHandler(async (event) => {
         sourceType: String(t.sourceType ?? 'manual'),
         sourceRefId: t.sourceRefId ?? null,
         createdAtMs: tsToMs(t.createdAt),
+        /**
+         * `D-55`：最近一次「客人又表現了這個意圖」與累計次數。
+         *
+         * ⛔ 跟 `createdAtMs` 是兩件不同的事實（第一次貼上 vs 最後一次被判到），
+         * 沒有值時**不可以拿 createdAtMs 頂替**——那是製造假資料。
+         * 沒有值＝從來沒被自動判到過（後台手動貼的天生如此），次數讀成 0。
+         */
+        lastHitAtMs: typeof t.lastHitAtMs === 'number' ? t.lastHitAtMs : null,
+        hitCount: typeof t.hitCount === 'number' ? t.hitCount : 0,
       }
     }),
     conversation: conv
