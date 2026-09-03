@@ -895,9 +895,6 @@ const detected = computed(() => {
   }
 })
 
-/** 判別結果的細節展開（預設收起，見 detected 的說明）。換一種來源就收回去 */
-const hintOpen = ref(false)
-watch(() => detected.value?.label, () => { hintOpen.value = false })
 
 // ── File ──────────────────────────────────────────────────
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -912,6 +909,18 @@ const fileContentType = ref('')
 // ⚠️ 這個 watch 必須放在 selectedFile 宣告之後：watch 註冊當下就會讀一次 mode 當初始值，
 // 而 mode 的 getter 讀 selectedFile——放前面會 TDZ(「Cannot access before initialization」)，
 // 整個元件 setup 直接炸掉、知識庫頁面變全站錯誤頁。typecheck 抓不到這種執行時序問題。
+/**
+ * 判別結果的細節展開（預設收起，見 detected 的說明）。換一種來源就收回去。
+ *
+ * ⚠️ 這個 watch 必須放在 `selectedFile` 宣告**之後**（2026-09-03 實機炸掉才發現）：
+ *    watch 的來源在註冊當下就會求值一次，而 `detected` 的 getter 會讀 `selectedFile`
+ *    → 放前面就是 `Cannot access 'selectedFile' before initialization`，整個元件 setup 死掉、
+ *    按下「加入知識」只會看到一片空白。跟下面那個 watch 是同一顆雷（註解就寫在那裡，我還是踩了）。
+ *    ⛔ typecheck 抓不到這種：它只看得到直接引用，看不穿 getter 閉包。
+ */
+const hintOpen = ref(false)
+watch(() => detected.value?.label, () => { hintOpen.value = false })
+
 watch([pasteInput, mode], () => {
   const v = pasteInput.value.trim()
   urlInput.value = mode.value === 'url' ? v : ''
@@ -980,12 +989,6 @@ const textInput = ref('')
 const gsheetInput = ref('')
 const serviceAccountEmail = ref('')
 
-/**
- * 要分享給哪個帳號。開窗時那支 gsheet-account 失敗的話（catch 是靜默的）就退用探測回傳的那份
- * ——`gsheet-probe` 在「還讀不到」那條路刻意把它一起帶回來，正是為了這種情況。
- */
-const shareEmail = computed(() => serviceAccountEmail.value || gsheetProbe.value?.serviceAccountEmail || '')
-
 async function copyServiceEmail() {
   try {
     await navigator.clipboard.writeText(shareEmail.value)
@@ -1005,6 +1008,13 @@ async function copyServiceEmail() {
  */
 interface GsheetProbe { status: string, message: string, detail?: string, serviceAccountEmail?: string }
 const gsheetProbe = ref<GsheetProbe | null>(null)
+/**
+ * 要分享給哪個帳號。開窗時那支 gsheet-account 失敗的話（catch 是靜默的）就退用探測回傳的那份
+ * ——`gsheet-probe` 在「還讀不到」那條路刻意把它一起帶回來，正是為了這種情況。
+ * ⚠️ 宣告排在 gsheetProbe 之後：computed 雖然是延遲求值不會 TDZ，但這個檔案同輪已經因為
+ *    「衍生值排在來源前面」炸過兩次，一律排後面就不必每次判斷會不會炸。
+ */
+const shareEmail = computed(() => serviceAccountEmail.value || gsheetProbe.value?.serviceAccountEmail || '')
 const gsheetProbing = ref(false)
 let gsheetProbedUrl = ''
 let gsheetProbeTimer: ReturnType<typeof setTimeout> | null = null
@@ -1745,6 +1755,17 @@ function readJobMarker(): JobMarker | null {
  * 沒有它的話,關掉視窗的人得自己記得回來點「加入知識」才看得到——正是原本會被誤認為
  * 「系統把我的東西弄丟了」的那一段。
  */
+/**
+ * 「畫面不等了，但它還在背景跑」（`D-50` 簡化 3）。
+ * ⛔ 這種情況**不可以**畫成紅色錯誤：東西沒壞，工作還活著、排程正在推它；
+ *    畫成錯誤的話使用者會去重傳一份，於是同一份資料兩個工作同時跑、OCR 錢付兩次。
+ *
+ * ⚠️ 宣告必須在 `jobState` **之前**（2026-09-03 實機炸掉才發現）：下面那個
+ *    `watch(jobState, …, { immediate: true })` 在註冊當下就會求值 jobState，而 jobState 讀這個 ref
+ *    → 放後面就是 `Cannot access … before initialization`，整個元件 setup 死掉。
+ */
+const previewStillRunning = ref(false)
+
 const jobState = computed<'running' | 'ready' | 'none'>(() => {
   if (previewing.value) return 'running'
   // 畫面等太久先不等了、但排程還在推它（`D-50` 簡化 3）——這時側欄一定要照樣顯示
@@ -1817,12 +1838,6 @@ onMounted(() => { void resumeStoredJob() })
 
 /** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
 const previewError = ref('')
-/**
- * 「畫面不等了，但它還在背景跑」（`D-50` 簡化 3）。
- * ⛔ 這種情況**不可以**畫成紅色錯誤：東西沒壞，工作還活著、排程正在推它；
- *    畫成錯誤的話使用者會去重傳一份，於是同一份資料兩個工作同時跑、OCR 錢付兩次。
- */
-const previewStillRunning = ref(false)
 
 /**
  * 「好了會告訴你」要真的做到（2026-09-03 code review 抓到的第一條）。
