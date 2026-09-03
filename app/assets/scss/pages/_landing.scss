@@ -88,7 +88,13 @@
   color: var(--ink);
   font-family: 'Inter', 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
   line-height: 1.7;
-  overflow-x: hidden;
+  /* ⛔ 這裡一定要 clip 不能 hidden（2026-09-03 十七輪實測）：`overflow-x: hidden` 會讓
+     `overflow-y` 從 visible 變成 auto ＝整個 .lp 變成一個**捲動容器**，裡面所有
+     `position: sticky` 的東西改成對它定位——而它自己永遠不捲，等於 sticky 全部失效。
+     實測：捲到 1500px 時 .lp-nav 的 top 是 -1500（導覽列直接跟著跑掉），
+     `.is-stuck` 那條邊框與陰影因此從來沒有人看到過。
+     `clip` 一樣把橫向溢出裁掉，但不建立捲動容器 → 導覽列與「能做什麼」的左軌都活過來。 */
+  overflow-x: clip;
 
   ::selection { background: var(--g-wash); }
 
@@ -96,7 +102,10 @@
 
   /* ── Utilities ─────────────────────────────────────────── */
   .lp-wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
-  .lp-section { padding: clamp(64px, 9vw, 120px) 0; }
+  /* scroll-margin-top＝導覽列高度＋一點呼吸。導覽列真的釘住之後（見上面的 overflow-x: clip），
+     點頁尾／法務頁的 #value、#pricing 這些錨點會把區塊標題捲到導覽列**底下**藏起來，
+     這行是它的解。⚠️ 新增有錨點的區塊時不用另外處理，規則掛在 .lp-section 上。 */
+  .lp-section { padding: clamp(64px, 9vw, 120px) 0; scroll-margin-top: 84px; }
   /* 區塊節奏：隔一區換成中性淺灰（白 → 灰 → 白 → 灰⋯）。
      ⚠️ 為什麼要做：全部白底、只靠 1px 細線分段的話，捲起來一路白到底沒有段落感，
      區塊裡的白卡也只能靠陰影撐。交錯底色讓白卡浮起來，分段不必再靠線。
@@ -249,6 +258,11 @@
     border-bottom: 1px solid transparent; transition: border-color .2s ease, box-shadow .2s ease;
   }
   &.is-stuck .lp-nav { border-bottom-color: var(--hair); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03); }
+  /* 法務頁（components/site/SiteLegalPage.vue）沒有 index.vue 那支捲動監聽，導覽列一律帶底線。
+     ⚠️ 2026-09-03 十七輪之前這條導覽列的 sticky 其實是死的（原因見檔頭 .lp 的 overflow-x），
+        真的釘住之後，沒有這條分隔線的話條文會直接貼著半透明的導覽列滑過去。
+        文件頁本來就該永遠有線——不必為了「捲了才出現」再加一支監聽。 */
+  &.lp-legal-page .lp-nav { border-bottom-color: var(--hair); }
   .lp-nav__in { display: flex; align-items: center; justify-content: space-between; height: 68px; }
   /* 商標＝logotype 圖檔（圖標＋MiniMe 字樣），高度給 BrandLogo，寬度它自己算。
      手機版（≤720px）換成 logomark：含字樣的 logotype 有 144px 寬，
@@ -482,7 +496,19 @@
    * ⚠️ 下面的固定 px 都對著 **250px 螢幕寬**算（.lp-band__phone 268px － .lp-phone 兩側 9px）。
    *    這個寬度桌機與手機是同一個值（見底部 media query），所以不需要第二套尺寸。
    * ⛔ .lp-pscreen 不給固定高度：高度由內容決定（前後對照時代那個 height:430px 已移除）。 */
-  .lp-phone { background: var(--ink); border-radius: 32px; padding: 9px; box-shadow: var(--sh-card); }
+  /* ⚠️ 二十一輪：手機**排版仍然是 268px**，再用 zoom 等比縮到欄寬（桌機 223／268 ＝ 0.832）。
+   *    ⛔ 別改成「把 .lp-band__phone 的欄位設窄」——裡面每一個固定 px 都對著 250px 的螢幕寬算
+   *       （靈動島 72px ≈ 螢幕 29%、輸入列圖示、聊天區高度⋯），欄位一窄它們不會跟著縮，
+   *       比例全跑掉。zoom 是「一個數字縮整支」，連 layout 高度都會跟著變（transform: scale 不會，
+   *       版面會留一塊空的）。
+   *    ⚠️ 這裡用 zoom 跟 .lp-livewin 那條「⛔不加 zoom」不衝突：那條講的是**兩扇後台 live 視窗**
+   *       ——縮小會讓「這是系統實際畫面」變得像縮圖（六輪的教訓）。這支手機是示意圖、
+   *       圖說也寫明「選單畫面為示意」，沒有那個主張。
+   *    ⚠️ 手機版（≤720px）把 --phone-zoom 收回 1：那邊欄位本來就是 268px。 */
+  .lp-phone {
+    width: 268px; zoom: var(--phone-zoom, 0.832);
+    background: var(--ink); border-radius: 32px; padding: 9px; box-shadow: var(--sh-card);
+  }
   .lp-pscreen { background: #eef1f5; border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; }
 
   /* iOS 狀態列：靈動島用 absolute 疊在中間，所以時間與右邊的訊號圖示照常左右對齊。
@@ -554,6 +580,9 @@
   .lp-pbar__field { flex: 1 1 auto; height: 19px; border-radius: var(--radius-pill); background: #f0f2f5; }
 
   /* 圖文選單本體＝實圖。比例 1527:1030（≒ LINE 官方 2500×1686），高度自己長不要寫死 */
+  /* 選單的「槽」：高度由裡面的圖決定，overflow 用來裁掉還沒滑進來的部分（見動畫那段）。
+     ⛔ 別把 overflow 改成 visible：選單滑出來之前會蓋在底下的 Home 橫條上。 */
+  .lp-pmenu-slot { overflow: hidden; flex: none; }
   .lp-pmenu { display: block; width: 100%; height: auto; }
 
   /* Home 安全區：真機的指示條會落在圖文選單下面的白色安全區，不是壓在選單上 */
@@ -576,11 +605,28 @@
    *    唯一該調的旋鈕是 .lp-pbody 的 height（其餘五層都由內容決定），改它＝改整支手機高度。
    *    量測方式：headless 量 .lp-band 的 getBoundingClientRect（別用推算的，padding 會漏）。
    */
+  /* ⚠️ 2026-09-03 十九輪拆成兩塊（使用者：「把手機拉到色塊外面放左邊，右邊維持色塊跟資訊，
+   *    兩者等高」）：外層不再是卡片，只是一個兩欄的架子——**左邊是手機（沒有底色，
+   *    直接站在頁面白底上）、右邊才是那塊淡灰色卡片**。
+   *    ⚠️「兩者等高」＝ align-items: stretch，列高由**手機**決定（472px 是它自己的高度），
+   *       右邊那張卡跟著長到一樣高、內容垂直置中。⛔別給卡片寫死高度，手機一改就對不上。
+   *    ⚠️ 手機用 grid-column 排到第 1 欄、**DOM 順序沒動**（文字仍在前）：讀屏與手機單欄
+   *       維持「先講什麼、再看畫面」。手機版（≤720px）把欄位指定清掉，讓 DOM 順序自己生效。 */
+  /* ⚠️ 二十一輪欄寬改成 **223／447 ＝ 1:2**（使用者「常問的事變成按鈕跟右邊的比例也抓 1:2」）：
+     223 ＋ 32 ＋ 447 ＝ 702（畫面欄滿寬）。⚠️ 手機是**固定尺寸的模型**、不能直接把欄位改窄
+     （裡面每一個 px 都對著 250px 的螢幕寬算，欄一窄靈動島與圖示的比例全跑掉），
+     所以手機用 `zoom` 整支等比縮——見 .lp-phone 那行。 */
   .lp-band {
-    margin-top: var(--card-gap); background: var(--surf-2); border: 1px solid var(--hair);
-    border-radius: var(--r-card); padding: 30px 32px;
-    display: grid; grid-template-columns: minmax(0, 1fr) 268px; gap: 32px;
-    align-items: center; overflow: hidden;
+    margin-top: var(--card-gap);
+    display: grid; grid-template-columns: 223px minmax(0, 1fr); gap: 32px;
+    align-items: stretch;
+  }
+  .lp-band__text {
+    grid-column: 2;
+    background: var(--surf-2); border: 1px solid var(--hair);
+    border-radius: var(--r-card); padding: 30px 32px; overflow: hidden;
+    /* 卡片被拉高之後內容垂直置中——貼齊上緣的話下面會空一大截 */
+    display: flex; flex-direction: column; justify-content: center;
   }
   /* h3 跟 .lp-duo__text h3 同級同字級（09-03 五輪對齊，原本 1.24 略小一號＝隱性 drift） */
   .lp-band__text h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; }
@@ -589,7 +635,8 @@
   .lp-band__text p + .lp-app { margin-top: 12px; }
   /* 行內版徽章：標在那個詞旁邊，不用卡頂那種籠統的「部分即將推出」 */
   .lp-soon--inline { margin-left: 7px; vertical-align: 1.5px; }
-  .lp-band__phone { align-self: center; }
+  /* 手機在第 1 欄、它自己的高度就是這一列的高度（不 stretch，它是固定尺寸的模型） */
+  .lp-band__phone { grid-column: 1; grid-row: 1; align-self: center; }
 
   /* ── 前後對照成效帶（客人等回覆、訊息回覆率⋯⋯）────────────
      09-03 三輪：原本是兩顆分離的灰磚（.lp-stat），被反映像表單欄位——
@@ -606,27 +653,88 @@
   .lp-outcome__v em { font-style: normal; color: #a9b3aa; font-size: 0.8rem; }
   .lp-outcome__v b { font-size: 1.05rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
 
-  /* ── AI 客服／AI 行銷 交錯雙列（2026-09-03 取代並排雙卡，why 見 index.vue 模板註解）──
-   * 截圖視窗固定 480px（跟 .lp-band 手機欄固定 268px 同一種做法）：09-03 四輪回饋
-   * 「圖片小一點、整體畫面有點長」——視窗原本吃 1.16fr（實測 572px 寬），圖的高度
-   * 跟著寬度走，兩列各高出 60~80px。480px 是「還讀得到聊天字」的下限附近
-   * （源圖是 2 倍圖、原生設計寬 640px，480÷640＝75% 縮放）；⛔再小聊天內容就要瞇眼，
-   * 手機截圖可讀性已經是 G-33 列管的問題，別在桌機重演。
-   * align-items:center：文字欄天生比視窗矮一截，置中讓留白均分（跟 .lp-band 同一做法）。
-   * ⚠️ 不設 margin-top：第一列是 .lp-stack 的第一個孩子，節奏由 --section-head-gap 統一給
-   *   （先前殘留的 16px 讓這區「標題→內容」變 60px，其他區都是 44px）。
-   * ⚠️ 左右互換只用 order 做：DOM 永遠文字在前，讀屏與手機單欄維持「先講什麼、再看畫面」。 */
-  .lp-duo { display: grid; grid-template-columns: minmax(0, 1fr) 560px; gap: clamp(28px, 4vw, 46px); align-items: center; }
-  .lp-duo + .lp-duo { margin-top: 32px; }
-  /* ⚠️ 互換要連欄寬一起鏡射：order 只換位置不換欄寬，漏了這行第二列的視窗會拿到
-     另一欄的寬（踩過：兩列的截圖大小不一致）。 */
-  .lp-duo--flip { grid-template-columns: 560px minmax(0, 1fr); }
-  .lp-duo--flip .lp-duo__text { order: 2; }
-  .lp-duo--flip .lp-duo__win { order: 1; }
-  .lp-duo__text h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 6px; }
+  /* ── 能做什麼：左軌釘住、右邊畫面一扇扇捲過（2026-09-03 十七輪，why 見 index.vue 模板註解）──
+   * 取代 09-03 的交錯雙列 .lp-duo（三列都是「文字半欄／畫面半欄」的左右對半切）。
+   * 舊框架的病不在細節在切法：文字欄實測只有 ~300px 內容，卻要跟 600px 高的視窗
+   * 並排垂直置中，上下各留 150px 的空——同一種空法連做三次。
+   *
+   *   ┌ 232px 軌（sticky）┬──────── 816px 畫面欄 ─────────┐
+   *   │ 它在幫你做的事      │ AI 客服 ＋ 兩個能力（兩欄圖示列） │
+   *   │ ▍AI 客服 ←現在     │ ┌ 系統實際畫面（滿欄）────────┐ │
+   *   │   AI 行銷          │ └────────────────────────────┘ │
+   *   │   常問的事變成按鈕   │ 成效帶                          │
+   *
+   * ⚠️ 軌是「捲到哪」的指示器，**不是三個並列的能力**：圖文選單在版面上仍然是小一號的
+   *    窄帶（08-27 拍板「它是手段不是第三個能力」），軌上多一條不改變它的版面權重。
+   * ⚠️ 軌掛 aria-hidden：它逐字重複右欄的標題，讀屏聽第二次沒有意義。
+   * ⛔ 軌在 ≤960px 直接不顯示（手機沒有 sticky 可言）——所以每一塊的標題與說明一定要
+   *    留在右欄裡，⛔別為了讓軌「有料」把它們搬進去，手機會整個看不到。
+   * ⛔ sticky 需要祖先都不是捲動容器：.lp 那層是 overflow-x: **clip** 不是 hidden，
+   *    改回 hidden 這條軌與導覽列會一起失效（原因寫在檔案開頭 .lp 那段）。 */
+  /* ⚠️ 欄寬 2026-09-03 二十輪從 232／816 改成 **350／702 ≒ 1:2**（使用者「這邊是否可以再凸顯
+     一些、右邊的區塊反而可以稍微小一點，大約是 1:2」）。350 ＋ 60 ＋ 702 ＝ 1112（版心扣掉左右內距）。
+     ⚠️ 改這三個數字要一起算，而且要回頭量**圖文選單窄帶**：它的文字色塊＝畫面欄減掉固定 268px
+        的手機再減 gap，畫面欄一縮它最先出事（970px 那級就是這樣才要把軌收成 196px）。 */
+  .lp-rails { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 60px; align-items: start; }
+  /* top＝導覽列 68px ＋ 28px 呼吸。⚠️ 導覽列高度改了這裡要跟著改。 */
+  .lp-rails__rail { position: sticky; top: 96px; }
+  .lp-rail__lead {
+    margin: 0 0 22px; padding-left: 4px;
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; color: var(--ink-soft);
+  }
+  /* ⚠️ 2026-09-03 十九輪把「軌線＋圓點」整組拿掉（使用者：「還是有點生硬」）。
+   *    生硬的來源是那組**流程精靈的語彙**：一條穿到底的直線、等距的實心圓點、圓點外面
+   *    一圈光暈、淡綠底被直線切成一塊有稜有角的橫帶——整塊讀起來像設定精靈的步驟元件，
+   *    不像一份導覽。
+   *    現在只剩三顆**全圓角的軟底**：沒選到的沒有底，選到的鋪淡綠、左邊多一小段圓頭綠條。
+   *    ⛔ 別把直線、圓點、光暈加回來（連「只留一條很淡的線」也不要——線本身就是那個語彙）。
+   *    ⚠️ 進度感（讀到三分之幾）跟著那條線一起沒了，這是刻意的取捨：軌的工作是
+   *       「你現在在看哪一塊」，那顆淡綠色塊講得比進度條清楚。 */
+  .lp-rail__nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  /* 二十輪起是 <a>（點了捲到那一塊）：所以要有 hover 與 focus 的樣子，
+     不然它看起來還是一塊不能點的字。focus 的外框由全域的 a:focus-visible 給。 */
+  .lp-rail__item {
+    display: block; position: relative; padding: 18px 22px 19px 30px;
+    border-radius: 18px;
+    color: var(--ink-soft);
+    transition: color .3s ease, background-color .25s ease;
+  }
+  .lp-rail__item:hover { background: var(--surf-2); }
+  .lp-rail__item:hover b { color: var(--ink); }
+  /* 「你在這裡」的標記＝一小段圓頭綠條。⛔別換回圓點：點是 stepper 的語彙，條只是標記。
+     ⚠️ top 是量出來的——要對齊**標題那一行**的中線，不是整條的中線（副標會把中線拉低）。 */
+  .lp-rail__item::before {
+    content: ''; position: absolute; left: 13px; top: 24px;
+    width: 3px; height: 20px; border-radius: 2px;
+    background: var(--g);
+    opacity: 0; transform: scaleY(0.35);
+    transition: opacity .3s ease, transform .35s cubic-bezier(0.22, 0.75, 0.3, 1);
+  }
+  /* ⚠️ 亮起的那條 hover 時要**維持綠底**：讓它跟著變灰的話，滑過去像是「取消選取」 */
+  .lp-rail__item.is-on,
+  .lp-rail__item.is-on:hover { background: var(--g-wash); color: var(--ink-2); }
+  .lp-rail__item.is-on::before { opacity: 1; transform: none; }
+  .lp-rail__item b {
+    display: block; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.015em;
+    color: var(--ink-soft); transition: color .3s ease;
+  }
+  .lp-rail__item.is-on b, .lp-rail__item.is-on:hover b { color: var(--g-deep); }
+  .lp-rail__item small { display: block; margin-top: 6px; font-size: 0.9rem; line-height: 1.6; }
+
+  /* 一塊能力＝標頭（標題＋兩欄圖示列）→ 滿欄視窗 → 成效帶。
+     ⚠️ 三段各自掛 .lp-reveal（房規：淡入單位不可高過一個畫面，整塊有 780px）。 */
+  .lp-pane + .lp-pane { margin-top: 60px; }
+  /* 左軌點下去捲到這一塊時，標題不能被釘住的導覽列（68px）蓋掉。⚠️ 這條跟 .lp-section 的
+     scroll-margin-top 是兩回事：那條管的是 #value 這種區塊層級的錨點。 */
+  .lp-pane { scroll-margin-top: 100px; }
+  .lp-pane__hd h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 10px; }
+  /* 兩個能力並排：欄寬 816px 時一列一個會變成「一句話配一大片空白」 */
+  .lp-pane__apps { display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px; }
+  /* 成效帶在新版是**視窗的圖說**（說明→證據→成效），所以貼著視窗下緣、不再是文字欄的收尾 */
+  .lp-pane > .lp-outcome { margin-top: 14px; }
   .lp-win__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--hair); flex: none; }
   .lp-win__dot + .lp-win__dot { margin-left: -3px; }
-  .lp-duo__winlabel { margin-left: auto; }
+  .lp-win__label { margin-left: auto; }
 
   /* ── 「系統實際畫面」live 視窗（09-03 五輪換 SCSS 渲染、六七輪拿掉 zoom 與 inert）──
    * ⛔ 不加 zoom／transform:scale：五輪用 zoom 0.75 縮成跟舊 PNG 一樣的比例，
@@ -639,6 +747,11 @@
   /* 後台的訊息流頂端留 3.25rem 給浮動的「目前狀況」列，這扇窗沒有那條列，收回正常內距；
      它也不是捲動區（flex:1/overflow-y 是對著後台版面設的，這裡高度由內容決定）。 */
   .lp-livewin .conv-messages { flex: none; overflow: hidden; padding: 18px 18px 20px; }
+  /* 09-03 十七輪視窗從 560px 放大到滿欄（實測 816px）之後，泡泡若照吃後台預設的
+     min(84%, 680px)，最長那句 AI 回覆會拉成一行橫貫視窗的長字帶，讀起來不像對話。
+     收到 480px＝視窗很寬、泡泡貼兩側，正是桌機後台真正的樣子。
+     ⚠️ 只覆寫這扇窗的 token，⛔別去動 core/_variables.scss（那是後台自己的可讀性上限）。 */
+  .lp-livewin--chat { --chat-bubble-max: min(84%, 480px); }
   /* demo 對話區的上緣淡出（十三輪「更整齊」）：捲動中最上面那顆泡泡會被視窗上緣
      硬切一半、毛邊感重——加 16px 的遮罩讓它淡出而不是被切斷。⛔只遮上緣：
      下緣永遠停在最新一句的完整邊界，遮了反而讓最後一句看起來沒印完。 */
@@ -685,54 +798,58 @@
   /* （.lp-shot--fill 已隨 2026-09-03 交錯雙列改版移除：兩列上下疊、沒有「並排等高」
      的問題，兩張截圖都回到原始比例。改回並排時去 git log 把它連同源圖列數規矩找回來。） */
 
-  /* ── 60 秒上線＝置中直式一條到底（09-03 十二輪打破雙卡框架、十五輪拍板直式置中）──
-   * why 見 index.vue 該區模板註解。所有節點沿中軸直落，連接段掛在「被接上的那站」
-   *（.lp-path__step--linked 的 ::before 灰軌＋::after 綠線，從上一塊的下緣鋪到自己磚頂）。
-   * 桌機手機同一版——置中直式天生窄螢幕友善，不需要媒體查詢換版。 */
-  .lp-path { max-width: 820px; margin-left: auto; margin-right: auto; }
-  .lp-path__over { margin: 0 0 26px; text-align: center; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.05em; color: var(--ink-soft); }
-  .lp-path__step { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .lp-path__step--linked { margin-top: 46px; }
-  .lp-path__step--linked::before,
-  .lp-path__step--linked::after {
-    content: ""; position: absolute; left: calc(50% - 2px); width: 4px;
-    top: -42px; height: 36px; border-radius: var(--radius-pill);
-  }
-  .lp-path__step--linked::before { background: #eaefe8; }
-  .lp-path__step--linked::after { background: var(--g); }
+  /* ── 60 秒上線＝左軸清單（09-03 十二輪打破雙卡框架、二十三輪從置中直式收成左軸）──
+   * why 見 index.vue 該區模板註解。磚＋連接線收在左欄（__col），內容靠右一欄對齊。
+   * 連接線＝磚底下那截 .lp-path__rail：灰軌打底、::after 綠線蓋上（預設＝長完的最終
+   * 狀態，.is-anim 才收起來等自己的 .is-cued 開演）。
+   * ⚠️ 列與列**不留 margin**，間距全部走 __body 的 padding-bottom——rail 是 flex:1，
+   *    天生把列高填滿、軌道永遠接得到下一顆磚；文字換行、✓ 面板變高都不會把線扯斷。
+   *    ⛔別改回置中版那種 top/height 魔法數字的絕對定位線段：✓ 面板一變高線就搆不到磚。 */
+  .lp-path { max-width: 830px; margin-left: auto; margin-right: auto; }
+  .lp-path__over { margin: 0 0 22px; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.05em; color: var(--ink-soft); }
+  .lp-path__row { display: flex; gap: 18px; }
+  .lp-path__col { display: flex; flex-direction: column; align-items: center; flex: none; width: 52px; }
   /* 步驟磚沿用全頁的圓角方磚標記（⛔別改回草稿的圓形，見檔頭標記系統） */
   .lp-path__dot {
-    width: 52px; height: 52px; border-radius: 16px; margin-bottom: 12px;
+    width: 52px; height: 52px; border-radius: 16px;
     background: #fff; border: 3px solid var(--g); color: var(--g-deep);
     display: grid; place-items: center; font-size: 1.15rem; font-weight: 800;
-    position: relative; z-index: 1; font-variant-numeric: tabular-nums; flex: none;
+    font-variant-numeric: tabular-nums; flex: none;
   }
   /* 接 LINE 那站：聊天圖示不是數字——它不算在「兩步」裡 */
   .lp-path__dot--chat svg { width: 24px; height: 24px; }
-  .lp-path__body { min-width: 0; }
+  .lp-path__rail {
+    position: relative; width: 4px; flex: 1; margin: 6px 0 2px;
+    border-radius: var(--radius-pill); background: #eaefe8;
+  }
+  .lp-path__rail::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--g); }
+  /* padding-top 5px＝標題第一行的視覺頂線對到磚頂（磚有 3px 邊框吃掉一點高度） */
+  .lp-path__body { min-width: 0; flex: 1; padding: 5px 0 30px; }
   .lp-path__body > b { display: block; font-size: 1.12rem; font-weight: 800; }
   .lp-path__body > small { display: block; font-size: 0.88rem; color: var(--ink-soft); margin-top: 3px; }
-  /* 結果面板＝做完會得到什麼，不是第三個節點（08-27 語彙決策）；貼在第 2 步正下方
-     置中＝讀成它的結果，⛔別給它連接線（線只連「要做的事」） */
+  /* 結果面板＝做完會得到什麼，不是第三個節點（08-27 語彙決策）；縮排在第 2 步的文字欄裡
+     ＝讀成「做完這步的結果」，⛔別給它磚或連接線（磚與線只給「要做的事」） */
   .lp-path__done {
-    width: fit-content; margin: 18px auto 0; background: var(--g-wash-2); border-radius: var(--r-sm);
+    width: fit-content; margin: 12px 0 0; background: var(--g-wash-2); border-radius: var(--r-sm);
     padding: 10px 14px; font-size: 0.95rem; font-weight: 800; color: var(--g-deep);
     letter-spacing: -0.01em; line-height: 1.5;
   }
   .lp-path__done span { margin-right: 5px; }
-  .lp-path__step--station .lp-path__body { width: 100%; }
-  .lp-path__head { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  /* 聊天站是最後一列（沒有 rail、padding-bottom 歸零），標題列用 min-height 跟磚對中
+     （⚠️ 改磚尺寸要一起改這裡與手機斷點的 44px） */
+  .lp-path__row--station .lp-path__body { padding: 0; }
+  .lp-path__head { display: flex; align-items: center; gap: 10px; min-height: 52px; }
   .lp-path__head b { font-size: 1.12rem; font-weight: 800; }
-  /* 「系統實際畫面」細框膠囊（十三輪）：跟著置中標題走、貼在旁邊 */
+  /* 「系統實際畫面」細框膠囊（十三輪）：跟著標題走、貼在旁邊 */
   .lp-path__meta {
     flex: none; font-size: 0.72rem; color: var(--ink-soft);
     border: 1px solid var(--hair); border-radius: var(--radius-pill); padding: 3px 10px;
     background: var(--paper);
   }
-  /* ⚠️ text-align: left 必須留著：站容器為了置中版式設了 text-align center，
-     會滲進 demo 殼把「開通引導」標題排成置中——真頁面是靠左（十四輪實截抓到） */
-  .lp-path__step .lp-liveob { width: 100%; max-width: 760px; margin: 16px auto 0; text-align: left; }
-  .lp-path__note { margin: 14px 0 0; text-align: center; font-size: 0.86rem; color: var(--ink-soft); }
+  /* ⚠️ text-align: left 留著當保險：版式若再改回置中，demo 殼的「開通引導」標題
+     不能跟著置中——真頁面是靠左（十四輪實截抓到） */
+  .lp-path__row .lp-liveob { width: 100%; max-width: 760px; margin: 14px 0 0; text-align: left; }
+  .lp-path__note { margin: 12px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
 
   /* 區塊底部的行動出口（原本整區零個按鈕）；36px＝跟一條路的站距同級，CTA 讀成下一站 */
   .lp-fast__cta { margin-top: 36px; text-align: center; }
@@ -985,6 +1102,97 @@
      站往下位移 18px 的話線的上端會跟前一塊脫開，淡入過程看起來像斷掉。 */
   &.is-anim .lp-reveal--fade { transform: none; }
 
+  /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
+   * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
+   * 圖文選單從下面往上展開。全部走 `.lp-cue`（捲到眼前才演），⛔別改掛 `.lp-reveal.in`。
+   *
+   * ⛔ 三扇窗的內容**永遠都在 DOM 裡、只是先透明**，⛔不准改成「演到才塞進 DOM」：
+   *    視窗高度會邊演邊長，下面整頁在使用者眼前往下跳；而且每個寬度的折行都不同，
+   *    沒辦法先鎖一個高度擋住（開通引導那張卡能那樣演，是因為它的對話區是**固定高**的捲動欄）。
+   *    現在版位一開始就是滿的，演的過程零版面位移。
+   * ⛔ fill-mode 一律 `both`：宣告值是 opacity 0，只寫 backwards 的話演完會**跳回透明**。
+   * ⚠️ 每一顆的序號由模板的 `--d` 帶（聊天＝整串對話的流水號、名單＝列序），
+   *    ⛔別改用 nth-child：泡泡分在兩個 .conv-day-group 裡，序號會從頭數。
+   */
+  /* ⛔ 這四支**一定要寫出 `to`**（Hero 那幾支只寫 from 是因為它們的宣告值本來就是最終狀態）：
+     這裡的元素宣告值是 `opacity: 0`，只寫 from 的話瀏覽器會拿**宣告值**當終點＝從 0 演到 0，
+     動畫有跑但畫面上永遠是空的（十八輪第一版就是這樣，驗收工具的「0 → 0 句」抓到的）。 */
+  @keyframes lpMsgIn {
+    from { opacity: 0; transform: translate(var(--mx, 0), 9px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes lpSoftIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes lpRowIn {
+    from { opacity: 0; transform: translateY(7px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes lpTagIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: none; }
+  }
+  /* 圖文選單往上展開。⚠️ 二十輪換做法（回饋「有點生硬」）：
+     舊版用 `clip-path: inset(100% 0 0 0)` 由下往上揭開——**圖是不動的，動的是一條水平硬邊**，
+     那條線掃過去就是生硬的來源（而且等速掃完，沒有「滑進定位」的重量感）。
+     新版＝圖自己 translateY(100%) 往上滑進來，由 .lp-pmenu-slot（overflow:hidden）裁掉還沒到的部分；
+     曲線也換成尾巴更長的 cubic-bezier(.16,.84,.28,1)＝快進慢停，配一點淡入把剛冒頭的那一條磨掉。
+     ⛔ 別改回 clip-path，也⛔別把 translate 直接下在沒有槽的圖上（會蓋到 Home 橫條）。 */
+  @keyframes lpMenuUp {
+    from { transform: translateY(100%); opacity: 0.35; }
+    to { transform: none; opacity: 1; }
+  }
+
+  /* ① 聊天窗：客人問 → AI 答 → 已讀，一句一句到。
+       節奏＝每句 460ms（7 句約 3.4 秒），已讀比自己那句晚 650ms 蓋上去。 */
+  &.is-anim .lp-livewin--chat {
+    .conv-day-divider, .conv-bubble-row, .conv-bubble-read { opacity: 0; }
+    .conv-bubble-row.incoming { --mx: -8px; }
+    .conv-bubble-row.outgoing { --mx: 8px; }
+  }
+  &.is-anim .lp-livewin--chat.is-cued {
+    .conv-day-divider {
+      animation: lpSoftIn .34s ease-out both;
+      animation-delay: calc(var(--d) * .46s + .1s);
+    }
+    .conv-bubble-row {
+      animation: lpMsgIn .44s cubic-bezier(0.22, 0.75, 0.3, 1) both;
+      animation-delay: calc(var(--d) * .46s + .3s);
+    }
+    /* 已讀吃泡泡那一列的 --d（自訂屬性會繼承下來） */
+    .conv-bubble-read {
+      animation: lpSoftIn .3s ease-out both;
+      animation-delay: calc(var(--d) * .46s + .95s);
+    }
+  }
+
+  /* ② 好友表：名單一列一列進來，標籤再一顆顆貼上去——這扇窗講的就是「客戶貼標分眾」，
+       所以標籤要**晚於**它那一列出現（同時出現的話看不出是系統貼的）。
+       節奏＝每列 100ms（8 列 0.8 秒），標籤比自己那列晚 600ms。 */
+  &.is-anim .lp-livewin--users {
+    tbody tr, .tag-chip { opacity: 0; }
+  }
+  &.is-anim .lp-livewin--users.is-cued {
+    tbody tr {
+      animation: lpRowIn .4s cubic-bezier(0.22, 0.75, 0.3, 1) both;
+      animation-delay: calc(var(--d) * .1s + .2s);
+    }
+    .tag-chip {
+      animation: lpTagIn .34s cubic-bezier(0.34, 1.4, 0.5, 1) both;
+      transform-origin: left center;
+      animation-delay: calc(var(--d) * .1s + .8s);
+    }
+  }
+
+  /* ③ 手機：歡迎訊息進來 → 圖文選單往上展開（順序＝客人真的會看到的順序） */
+  &.is-anim .lp-band__phone {
+    .lp-pbody__day, .lp-pmsg { opacity: 0; }
+    .lp-pmenu { transform: translateY(100%); opacity: 0; }
+  }
+  &.is-anim .lp-band__phone.is-cued {
+    .lp-pbody__day { animation: lpSoftIn .32s ease-out both .2s; }
+    .lp-pmsg { animation: lpMsgIn .44s cubic-bezier(0.22, 0.75, 0.3, 1) both .4s; }
+    .lp-pmenu { animation: lpMenuUp .78s cubic-bezier(0.16, 0.84, 0.28, 1) both .9s; }
+  }
+
   /* 四道牆錯開 70ms 進場。⚠️ 四張卡是同時進入畫面的，不錯開的話就是一整片突然出現
      ——那是「一塊東西閃出來」，不是四張卡。70ms 是刻意小的：只要能看出左到右的順序，
      再大就變成要等第四張。 */
@@ -1003,25 +1211,24 @@
   &.is-anim .lp-faq .lp-reveal.in:nth-child(2) { transition-delay: .06s; }
   &.is-anim .lp-faq .lp-reveal.in:nth-child(3) { transition-delay: .12s; }
 
-  /* 窄帶裡的手機晚 80ms：桌機上它跟文字欄幾乎同時到達觸發線（上緣只差 49px），
-     差一個拍子讀成「先看字、再看手機」。手機版它排在文字下面 400px，自己到達觸發線，
-     這個延遲看不出來。
-     ⚠️ 交錯雙列（.lp-duo）刻意**沒有**這種延遲：截圖視窗比文字欄高一截，垂直置中之後
-        它的上緣比文字欄早 163px 進畫面——先到的先演才叫「跟著捲動」，硬排順序只會變成
-        「看得到了卻還沒動」。 */
-  &.is-anim .lp-band__phone.lp-reveal.in { transition-delay: .08s; }
+  /* ⛔ #value 這一區的三塊**都不加「誰先誰後」的進場延遲**，兩個理由都踩過：
+       ①能力區（.lp-pane）十七輪改成上下堆疊之後，標頭／視窗／成效帶本來就依序
+         到達觸發線，捲動自己給了順序。
+       ②窄帶的手機原本晚 80ms（讀成「先看字、再看手機」），十九輪手機搬到**左邊**、
+         色塊留右邊之後，眼睛先碰到的就是手機——再讓它晚一拍就是「看得到了卻還沒動」。
+     加延遲之前先問：使用者的眼睛真的會先落在另一個東西上嗎？ */
 
   /* 60 秒時間軸：捲到才長出進度條。
      ⚠️ 用 scaleX 不用 width：width 每一幀都要重算版面，transform 不用（交給合成器）。
      直式（手機）版在下面的 720px 斷點改成 scaleY。 */
-  /* 中軸綠線：捲到**那一段路**才往下長。
-     ⚠️ 觸發點掛在被接上的那一站自己身上（.lp-cue → .is-cued），不是掛在整條路的容器：
-        掛容器的話兩段線會在容器上緣一起跑完（聊天站那段在畫面下方 335px 處），
-        真的捲到時線早就在那裡了。現在是「捲到第 2 站→線長下來」「捲到聊天站→線再長下來」。
-     ⛔ 也因此舊的 0.95s 錯開延遲移除了：兩段線各自有觸發點，錯開的節奏由捲動給，
+  /* 左軸綠線：捲到**那一段路**才往下長。
+     ⚠️ 觸發點掛在線自己身上（.lp-path__rail 同時就是 .lp-cue → .is-cued），不是掛在
+        整條路的容器：掛容器的話兩段線會在容器上緣一起跑完，真的捲到時線早就在那裡了。
+        現在是「那截線進到畫面→往下長到下一顆磚」。
+     ⛔ 錯開延遲不要加回來：兩段線各自有觸發點，錯開的節奏由捲動給，
         再加延遲只會變成「捲到了還要再等一秒」。 */
-  &.is-anim .lp-path__step--linked::after { transform: scaleY(0); transform-origin: center top; }
-  &.is-anim .lp-path__step--linked.is-cued::after { transform: none; transition: transform 0.5s cubic-bezier(.3, .8, .35, 1) 0.15s; }
+  &.is-anim .lp-path__rail::after { transform: scaleY(0); transform-origin: center top; }
+  &.is-anim .lp-path__rail.is-cued::after { transform: none; transition: transform 0.5s cubic-bezier(.3, .8, .35, 1) 0.15s; }
 
   /* 成長曲線：捲到才畫出來，線畫完才浮出面積、端點與標籤（先看到走勢，再看到誰是誰）。
      ⚠️ dasharray／dashoffset 都是 1，因為兩條 path 都掛了 pathLength="1"（見 index.vue），
@@ -1116,17 +1323,38 @@
   }
 
   /* ── Responsive ────────────────────────────────────────── */
+  /* ── 軌隨版心逐級收窄（1:2 只在版心滿寬時成立）───────────────
+   * ⚠️ 為什麼一定要收：版心小於 1160px 之後被壓縮的是**畫面欄**，而圖文選單窄帶的文字色塊
+   *    ＝畫面欄 −268px（固定寬的手機）− 32px（gap）。它一窄，
+   *    「常問的事變成按鈕，客人自己點」就折成兩行——這是這一區最早出事的地方，
+   *    **每次動軌寬都要回頭量它**（量法：headless 取 h3 的 height ÷ line-height）。
+   * ⚠️ 兩條線都是**回推**出來的、不是抓整數：色塊要放得下一行標題約需 360px，
+   *    倒推「軌＋gap」在每個版心寬度下的上限。二十一輪手機從 268 縮到 223px 之後色塊多了
+   *    45px，1:2 的軌因此可以撐到 1101px（原本 1159 就得換級距）。
+   *    ⛔ 每次動軌寬或手機寬，這兩條線都要重新回推＋實測（量法：headless 取窄帶 h3 的
+   *       height ÷ line-height，>1 行就是過頭了）。
+   * ⚠️ 順序：max-width 由大到小往下寫，最後才是 960（整個收單欄那條）。 */
+  @media (max-width: 1100px) {
+    .lp-rails { grid-template-columns: 264px minmax(0, 1fr); gap: 48px; }
+  }
+  @media (max-width: 1000px) {
+    .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; }
+  }
   @media (max-width: 960px) {
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
     .lp-walls { grid-template-columns: 1fr 1fr; }
     .lp-wall--main { grid-column: 1 / -1; }
     .lp-pricefeat { grid-template-columns: 1fr; }
-    /* 交錯雙列收單欄：order 歸零回 DOM 順序＝一律文字在上、截圖在下 */
-    .lp-duo { grid-template-columns: 1fr; gap: 20px; }
-    .lp-duo--flip .lp-duo__text, .lp-duo--flip .lp-duo__win { order: 0; }
-    .lp-duo + .lp-duo { margin-top: 36px; }
+    /* 收單欄：左軌整條收掉（沒有 sticky 可言，而且它只是「捲到哪」的指示器）。
+       ⛔ 因此每一塊的標題與說明一定要留在右欄（.lp-pane__hd）——搬進軌的話這裡會整個消失。 */
+    .lp-rails { grid-template-columns: 1fr; gap: 0; }
+    .lp-rails__rail { display: none; }
+    .lp-pane__apps { grid-template-columns: 1fr; }
+    .lp-pane + .lp-pane { margin-top: 44px; }
     /* live 視窗手機也維持原字級（⛔別加回 zoom，見桌機那段的六輪教訓）：
-       342px 寬的聊天窗本來就像一支手機，泡泡多折幾行是自然的 */
+       窄視窗的聊天窗本來就像一支手機，泡泡多折幾行是自然的。上限也還原成後台預設
+       （滿欄那條 480px 是為了 816px 的寬視窗設的，窄螢幕會變成泡泡縮在左邊）。 */
+    .lp-livewin--chat { --chat-bubble-max: min(84%, 680px); }
   }
   @media (max-width: 900px) {
     /* Hero 手機版文字在上：標題才是鉤子，時機卡是佐證 */
@@ -1167,12 +1395,18 @@
     /* 時機卡的列在 390px 只有「名稱＋數字」兩段，放得下一行（原本副標要換第二行的規則
        跟著副標一起移除了，見 .lp-op 那段註解）。名稱太長時是在 b 裡面折行，不是整列換行。 */
 
-    /* 一條路＝置中直式（十五輪起桌機手機同一版），手機只收磚與字級一級 */
+    /* 一條路＝左軸清單（二十三輪起桌機手機同一版），手機收磚、字級與縮排一級。
+       ⚠️ demo 卡與圖說要**跳出縮排**吃回滿版寬：390px 扣掉左欄只剩 ~285px，
+          聊天窗塞不下（泡泡會窄到一字一行）。負 margin＝左欄 44px＋間距 13px，
+          改左欄尺寸這裡要跟著算。標題列仍留在磚旁邊（它是那一站的名字）。 */
+    .lp-path__row { gap: 13px; }
+    .lp-path__col { width: 44px; }
     .lp-path__dot { width: 44px; height: 44px; font-size: 1rem; border-radius: 14px; }
     .lp-path__dot--chat svg { width: 21px; height: 21px; }
     .lp-path__body > b, .lp-path__head b { font-size: 1.02rem; }
-    .lp-path__step--linked { margin-top: 38px; }
-    .lp-path__step--linked::before, .lp-path__step--linked::after { top: -36px; height: 30px; }
+    .lp-path__head { min-height: 44px; flex-wrap: wrap; row-gap: 4px; }
+    .lp-path__row--station .lp-liveob,
+    .lp-path__row--station .lp-path__note { width: calc(100% + 57px); margin-left: -57px; }
 
     /* 成效帶改單欄：分隔線從左緣轉到上緣 */
     .lp-outcome { grid-template-columns: 1fr; }
@@ -1184,9 +1418,13 @@
     .lp-stickybar__t1 { font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .lp-stickybar__t2 { display: none; }
 
-    /* 窄帶在手機上改上下：文字在上、手機置中且不再出血（下方就是圖說） */
-    .lp-band { grid-template-columns: 1fr; gap: 22px; padding: 24px 22px; }
-    .lp-band__phone { justify-self: center; width: 268px; }
+    /* 窄帶在手機上改上下：色塊在上、手機在色塊下面置中（下方就是圖說）。
+       ⚠️ 欄位指定要清掉，DOM 順序（文字 → 手機）才會生效——留著 grid-column 的話
+          手機會被釘在第 1 欄，變成「圖在上、字在下」。 */
+    .lp-band { grid-template-columns: 1fr; gap: 22px; }
+    .lp-band__text { grid-column: auto; padding: 24px 22px; }
+    /* 單欄時手機回到原尺寸（不再需要為了 1:2 縮小） */
+    .lp-band__phone { grid-column: auto; grid-row: auto; justify-self: center; width: 268px; --phone-zoom: 1; }
 
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -1208,14 +1446,26 @@
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-pricefeat .lp-reveal.in,
-    &.is-anim .lp-faq .lp-reveal.in,
-    &.is-anim .lp-band__phone.lp-reveal.in { transition-delay: 0s; }
-    &.is-anim .lp-path__step--linked::after { transform: none; transition: none; }
+    &.is-anim .lp-faq .lp-reveal.in { transition-delay: 0s; }
+    &.is-anim .lp-path__rail::after { transform: none; transition: none; }
     /* 開通引導 live 卡：關動態（demo 播放本身由 JS 的 reduced-motion 早退擋住，
        這裡管的是萬一 .is-anim 在場時的 CSS 動畫） */
     &.is-anim .lp-liveob .onbc-step.is-current::before { transform: none; transition: none; }
     &.is-anim .lp-liveob .agm-msg,
     &.is-anim .lp-liveob .agm-choices { animation: none; }
+    /* #value 三扇畫面的動態（十八輪）：關掉動畫還不夠——宣告值是 opacity: 0／clip-path
+       裁掉，⛔沒有把它們還原成最終狀態的話，勾了「減少動態效果」的人會看到
+       **空的對話窗、空的名單、沒有選單的手機**（同 .lp-ops__group 那個踩過的坑）。 */
+    &.is-anim .lp-livewin--chat {
+      .conv-day-divider, .conv-bubble-row, .conv-bubble-read { opacity: 1; animation: none; }
+    }
+    &.is-anim .lp-livewin--users {
+      tbody tr, .tag-chip { opacity: 1; animation: none; }
+    }
+    &.is-anim .lp-band__phone {
+      .lp-pbody__day, .lp-pmsg { opacity: 1; animation: none; }
+      .lp-pmenu { transform: none; opacity: 1; animation: none; }
+    }
     &.is-anim {
       .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
       .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }

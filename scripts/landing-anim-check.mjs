@@ -9,6 +9,7 @@
  *   ① 捲動實測：一步 90px 往下捲，記下每個動畫「開始跑的那一刻，元素在畫面裡露出幾成」。
  *      判準＝**有時間軸的動畫**（畫線／長條／打字／live demo，掛 .lp-cue → .is-cued）
  *      開演時元素上緣必須已在畫面內、且露出 ≥35%。
+ *      **錯開式**的（見下面的 STAGGERED）只判上緣在不在畫面內，理由寫在那裡。
  *      淡入（.lp-reveal → .in）只印不判：它本來就該在元素剛露出一條邊時開始。
  *   ② 功能實測：每段動畫的「前 → 後」數值真的有動（不是只有 class 掛上去而已），
  *      再加「減少動態效果」與「沒有 JS」兩種情況下內容必須完整看得到。
@@ -17,7 +18,8 @@
  *   1. 捲動一定要 behavior:'instant'——頁面自己把 documentElement 設成 scroll-behavior:smooth，
  *      用預設捲會邊捲邊量到半路的值。
  *   2. 一定要照**頁面順序**由上而下測：動畫只演一次，跳著測的話回頭量到的是「演完的樣子」，
- *      看起來就像動畫沒跑（第 2 站與 live 卡只差 357px，捲過頭會順手把下一個也觸發掉）。
+ *      看起來就像動畫沒跑（左軸清單收緊後第一截綠線與 live 卡只差 ~210px，
+ *      捲過頭會順手把下一個也觸發掉）。
  */
 import process from 'node:process'
 import puppeteer from 'puppeteer'
@@ -27,6 +29,14 @@ const VW = Number(process.argv[3] || 1440)
 const URL = process.env.LANDING_URL || 'http://localhost:3000/'
 const STEP = 90 // 每次捲 90px，約一次滑鼠滾輪
 const MIN_VISIBLE_PCT = 35 // 有時間軸的動畫開演時，元素至少要露出這麼多
+/**
+ * 「露出 35%」這條只適用**整塊一起演**的動畫（畫線、長條生長）。
+ * 下面這幾個是**一個一個小孩錯開**演的（對話一句句到、名單一列列進來）：動畫從元素的
+ * 最上面開始、跟著你往下捲一路演下去，本來就不需要整塊先露出來——而它們又比一個畫面
+ * 還高（手機上的聊天窗 800px+），套 35% 只會逼人把動畫改成「捲過頭才開演」。
+ * 這幾個改判「開演時**上緣**要在畫面內」＝第一個小孩看得到就算數。
+ */
+const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users'])
 
 const fails = []
 const ok = msg => console.log('  ✅ ' + msg)
@@ -93,11 +103,17 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   for (const e of log) {
     const isTimed = e.trigger === 'is-cued'
     if (isTimed) timed++
-    const pass = !isTimed || (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT)
-    if (!pass) fails.push(`${e.what} 的動畫在畫面外／露太少就開演（露出 ${e.visiblePct}%）`)
+    const stag = STAGGERED.has(e.what)
+    const pass = !isTimed || (stag ? (e.topInView >= 0 && e.topInView < VH) : (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT))
+    if (!pass) {
+      fails.push(stag
+        ? `${e.what} 錯開動畫開演時上緣不在畫面內（上緣 ${e.topInView}）`
+        : `${e.what} 的動畫在畫面外／露太少就開演（露出 ${e.visiblePct}%）`)
+    }
     console.log(
       `  ${e.trigger.padEnd(8)} | ${e.what.padEnd(35)} | ${String(e.scrollY).padStart(7)} `
       + `| ${String(e.topInView).padStart(4)} | ${String(e.h).padStart(4)} | ${String(e.visiblePct).padStart(3)}%`
+      + (stag && isTimed ? '  （錯開式：判上緣）' : '')
       + (pass ? '' : '  ❌ 在畫面外／露太少就開演'),
     )
   }
@@ -135,17 +151,61 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   onAfter > onBefore ? ok(`打字有跑：亮起的字 ${onBefore} → ${onAfter}`) : bad(`打字沒跑：${onBefore} → ${onAfter}`)
   stillTyping ? bad('打字沒收尾，is-typing 還在') : ok('打字有收尾（is-typing 拿掉、螢光筆刷回來）')
 
-  // 2) 一條路的中軸綠線
-  await go('.lp-path__step--linked', -830)
-  const lineBefore = await val('.lp-path__step--linked', 'transform', '::after')
-  // ⚠️ -450 不是 -300：第 2 站與 live 卡只差 357px，捲太多會順手把 live 卡也觸發掉
-  await go('.lp-path__step--linked', -450)
-  await wait(1400)
-  const lineAfter = await val('.lp-path__step--linked', 'transform', '::after')
-  collapsed(lineBefore) ? ok(`中軸綠線 起點＝收起 (${lineBefore})`) : bad(`中軸綠線 起點不是收起：${lineBefore}`)
-  grown(lineAfter) ? ok(`中軸綠線 終點＝長完 (${lineAfter})`) : bad(`中軸綠線 沒長完：${lineAfter}`)
+  // 2) #value 三扇畫面（09-03 十八輪）。⚠️ 一定要照頁面順序排在打字之後、一條路之前。
+  //    量的是「看得到的東西真的從無到有」，不是只有 class 掛上去——所以數的是
+  //    computed opacity > 0.9 的顆數（動畫是 CSS 的，class 不會變）。
+  const litCount = sel => page.$$eval(sel, els => els.filter(e => Number(getComputedStyle(e).opacity) > 0.9).length)
 
-  // 3) 開通引導 live 卡：進度條長出來＋demo 真的往下演
+  await go('.lp-livewin--chat', -830)
+  const bubBefore = await litCount('.lp-livewin--chat .conv-bubble-row')
+  const readBefore = await litCount('.lp-livewin--chat .conv-bubble-read')
+  await go('.lp-livewin--chat', -300)
+  await wait(3200) // 4 句 × 460ms ＋ 已讀那一拍
+  const bubAfter = await litCount('.lp-livewin--chat .conv-bubble-row')
+  const readAfter = await litCount('.lp-livewin--chat .conv-bubble-read')
+  bubBefore === 0 ? ok('對話 起點＝一句都沒出現') : bad(`對話 起點不是空的：已亮 ${bubBefore} 句`)
+  bubAfter === 4 ? ok(`對話 演完＝4 句全到（已讀 ${readBefore} → ${readAfter}）`) : bad(`對話 沒演完：${bubBefore} → ${bubAfter} 句`)
+
+  await go('.lp-livewin--users', -830)
+  const rowBefore = await litCount('.lp-livewin--users tbody tr')
+  await go('.lp-livewin--users', -300)
+  await wait(2400) // 6 列 × 100ms ＋ 標籤那一拍
+  const rowAfter = await litCount('.lp-livewin--users tbody tr')
+  const tagAfter = await litCount('.lp-livewin--users .tag-chip')
+  rowBefore === 0 ? ok('好友名單 起點＝一列都沒出現') : bad(`好友名單 起點不是空的：已亮 ${rowBefore} 列`)
+  rowAfter === 6 && tagAfter > 0
+    ? ok(`好友名單 演完＝6 列全到、標籤貼上 ${tagAfter} 顆`)
+    : bad(`好友名單 沒演完：列 ${rowBefore} → ${rowAfter}、標籤 ${tagAfter} 顆`)
+
+  // ⚠️ 20 輪起選單是「圖自己往上滑進槽裡」，量的是 transform 的 Y 位移（舊版量 clip-path）
+  const menuY = () => page.evaluate(() => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-pmenu')).transform)
+    return Math.round(m.m42)
+  })
+  await go('.lp-band__phone', -830)
+  const menuBefore = await menuY()
+  await go('.lp-band__phone', -300)
+  await wait(2200)
+  const menuAfter = await menuY()
+  const msgAfter = await litCount('.lp-band__phone .lp-pmsg')
+  menuBefore > 40 ? ok(`圖文選單 起點＝收在槽外面 (translateY ${menuBefore}px)`) : bad(`圖文選單 起點不是收起來：translateY ${menuBefore}px`)
+  menuAfter === 0
+    ? ok(`圖文選單 滑到定位 (translateY 0)、歡迎訊息 ${msgAfter} 則`)
+    : bad(`圖文選單 沒滑到定位：translateY ${menuBefore} → ${menuAfter}px`)
+
+  // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
+  //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）
+  await go('.lp-path__rail', -830)
+  const lineBefore = await val('.lp-path__rail', 'transform', '::after')
+  // ⚠️ -600 不是 -450：左軸清單收緊後第一截線到 live 卡只剩 ~210px，
+  //    捲太多會順手把 live 卡也觸發掉（cue 線在視窗 76%，900 高＝684px）
+  await go('.lp-path__rail', -600)
+  await wait(1400)
+  const lineAfter = await val('.lp-path__rail', 'transform', '::after')
+  collapsed(lineBefore) ? ok(`左軸綠線 起點＝收起 (${lineBefore})`) : bad(`左軸綠線 起點不是收起：${lineBefore}`)
+  grown(lineAfter) ? ok(`左軸綠線 終點＝長完 (${lineAfter})`) : bad(`左軸綠線 沒長完：${lineAfter}`)
+
+  // 4) 開通引導 live 卡：進度條長出來＋demo 真的往下演
   await go('.lp-liveob', -830)
   const barBefore = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
   const beatsBefore = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
@@ -161,7 +221,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok(`demo 有在演：泡泡 ${beatsBefore} → ${beatsAfter} 則、進度已完成 ${progDone} 格`)
     : bad(`demo 沒演，泡泡停在 ${beatsAfter}`)
 
-  // 4) 成長曲線
+  // 5) 成長曲線
   await go('.lp-chartwrap', -830)
   const chartBefore = await val('.lp-chart__me', 'stroke-dashoffset')
   await go('.lp-chartwrap', -300)
@@ -172,7 +232,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   num(chartAfter) < 0.01 ? ok(`成長曲線 終點＝畫完 (${chartAfter})`) : bad(`成長曲線 沒畫完：${chartAfter}`)
   num(lblAfter) > 0.99 ? ok(`曲線標籤 浮出來了 (${lblAfter})`) : bad(`曲線標籤 沒浮出：${lblAfter}`)
 
-  // 5) 整頁捲完不能留下還藏著的東西
+  // 6) 整頁捲完不能留下還藏著的東西
   await page.evaluate(async () => {
     const h = document.documentElement.scrollHeight
     for (let y = 0; y < h; y += 300) {
@@ -198,14 +258,20 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   console.log('\n③ 減少動態效果')
   const hidden = await page.evaluate(() => {
     const out = []
-    const sel = '.lp-reveal, .lp-cue, .lp-pf, .lp-q, .lp-liveob, .lp-duo__text, .lp-band__phone, '
-      + '.lp-hero__text > *, .lp-ops, .lp-ops__group, .lp-stamp'
+    // ⚠️ 09-03 十八輪加進來的三扇畫面：它們的宣告值是 opacity 0／clip-path 裁掉，
+    //    「減少動態效果」時要靠 CSS 保險還原——漏掉就是空對話窗／空名單／沒有選單的手機
+    const sel = '.lp-reveal, .lp-cue, .lp-pf, .lp-q, .lp-liveob, .lp-pane__hd, .lp-band__phone, '
+      + '.lp-hero__text > *, .lp-ops, .lp-ops__group, .lp-stamp, '
+      + '.lp-livewin--chat .conv-bubble-row, .lp-livewin--chat .conv-bubble-read, '
+      + '.lp-livewin--users tbody tr, .lp-livewin--users .tag-chip, .lp-band__phone .lp-pmsg'
     for (const el of document.querySelectorAll(sel)) {
       const o = Number(getComputedStyle(el).opacity)
       if (o < 0.99) out.push(el.className.toString().slice(0, 60) + ' opacity=' + o)
     }
     if (Number.parseFloat(getComputedStyle(document.querySelector('.lp-chart__me')).strokeDashoffset) > 0.01) out.push('成長曲線沒畫')
     if (Number(getComputedStyle(document.querySelector('.lp-chart__lbls')).opacity) < 0.99) out.push('曲線標籤沒出現')
+    const mt = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-pmenu')).transform)
+    if (Math.abs(mt.m42) > 1) out.push('圖文選單還滑在槽外面 translateY=' + Math.round(mt.m42))
     return out
   })
   const hasAnim = await page.evaluate(() => document.querySelector('.is-anim') !== null)
@@ -221,7 +287,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await page.setViewport({ width: 1440, height: 900 })
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 120000 })
   console.log('\n④ 沒有 JS')
-  const hidden = await page.evaluate(() => [...document.querySelectorAll('.lp-reveal, .lp-cue')]
+  const hidden = await page.evaluate(() => [...document.querySelectorAll(
+    '.lp-reveal, .lp-cue, .lp-livewin--chat .conv-bubble-row, .lp-livewin--users tbody tr, .lp-band__phone .lp-pmsg',
+  )]
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))
   hidden.length ? bad('沒 JS 卻藏著：\n     ' + hidden.join('\n     ')) : ok('全部看得到（.is-anim 沒掛上＝預設就是最終狀態）')
