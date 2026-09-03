@@ -14,6 +14,7 @@ vi.mock('./user-display-names', () => ({ fetchUserDisplayNames: vi.fn(async () =
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { buildDiscoveryPrompt, scanTagDiscovery } from './tag-discovery'
+import { MIN_DISTINCT_USERS, discoveryScanOutcomeText } from '~~/shared/tag-discovery'
 
 describe('AI 發現新標籤：prompt', () => {
   const digests = [
@@ -23,8 +24,8 @@ describe('AI 發現新標籤：prompt', () => {
 
   it('對話摘要逐行帶場次編號（模型靠編號指回名單）', () => {
     const p = buildDiscoveryPrompt(digests, [])
-    expect(p).toContain('S0: 請問除濕機保固多久')
-    expect(p).toContain('S1: 想買來送爸爸')
+    expect(p).toContain('S0（客人#1）: 請問除濕機保固多久')
+    expect(p).toContain('S1（客人#2）: 想買來送爸爸')
   })
 
   it('排除名單要整串進 prompt——既有標籤與否決過的主題不准再提', () => {
@@ -41,6 +42,49 @@ describe('AI 發現新標籤：prompt', () => {
     const p = buildDiscoveryPrompt(digests, [])
     expect(p).toContain('品類')
     expect(p).toContain('不要提「在看某品牌 6L 除濕機」')
+  })
+
+  /**
+   * 🔴 線上「一直沒有新標籤」的根因（2026-09-03，`C-130`）。
+   *
+   * 規則說「至少 4 位不同客人」，但輸出範例只列 3 個場次編號＝模型照範例回 3 個，
+   * 每次都被守門員判 `too_few_users` 整條丟掉（9/2 那次「提 3 個、留 0 個」全是這個死法）。
+   * **範例與規則自相矛盾時，模型跟的是範例**，所以這條釘的是範例本身。
+   * ⛔ 有人把範例改短、或把 MIN_DISTINCT_USERS 調高到超過範例長度，這條就會紅。
+   */
+  it('🔴 輸出範例的 sessions 必須多於「至少幾位客人」的門檻（否則照範例回答一定被刷掉）', () => {
+    const p = buildDiscoveryPrompt(digests, [])
+    const example = p.match(/"sessions":\[([0-9,\s]*)\]/)
+    expect(example).not.toBeNull()
+    const count = example![1]!.split(',').filter(s => s.trim()).length
+    expect(count).toBeGreaterThan(MIN_DISTINCT_USERS)
+  })
+
+  it('明講 sessions 要列出全部支持的場次、不是舉例（列少了整條會被丟掉）', () => {
+    const p = buildDiscoveryPrompt(digests, [])
+    expect(p).toContain('不是舉幾個例子')
+    expect(p).toContain('人數不足')
+  })
+
+  /**
+   * 🔴 門檻是「4 位不同客人」，所以模型必須看得出哪幾場是同一個人（自我複審抓到）。
+   * 先前每行只有 `S0:`，模型列了 7 場以為過關，守門員按客人去重只剩 3 位＝照樣被丟掉。
+   */
+  it('🔴 每行要標「客人#」，同一位客人的多場要看得出來是同一個人', () => {
+    const p = buildDiscoveryPrompt([
+      { userDocId: 'ws_u1', text: '第一場' },
+      { userDocId: 'ws_u2', text: '別人的一場' },
+      { userDocId: 'ws_u1', text: '同一個人的第二場' },
+    ], [])
+    expect(p).toContain('S0（客人#1）: 第一場')
+    expect(p).toContain('S1（客人#2）: 別人的一場')
+    expect(p).toContain('S2（客人#1）: 同一個人的第二場') // ⛔ 同一位客人＝同一個編號
+    expect(p).toContain('同一位客人的多場只算一位')
+  })
+
+  it('🔴 明講編號範圍（範例的量級會被模仿，超出範圍的編號會被默默丟掉）', () => {
+    const p = buildDiscoveryPrompt(digests, []) // 2 段 → S0 到 S1
+    expect(p).toContain('S0 到 S1')
   })
 })
 
@@ -66,7 +110,18 @@ function fakeDb(opts: {
   const writes: Array<Record<string, any>> = []
   const emptySnap = { size: 0, docs: [], empty: true }
 
-  const sessionDocs = opts.sessions.map(s => ({ data: () => ({ userId: s.userId, hasInbound: true }) }))
+  /** 假會話：openedAt/closedAt 給固定範圍，訊息時間戳落在裡面（見 shared/tag-transcript） */
+  const OPEN_MS = 1_700_000_000_000
+  const CLOSE_MS = OPEN_MS + 3600_000
+  const sessionDocs = opts.sessions.map(s => ({
+    data: () => ({
+      userId: s.userId,
+      hasInbound: true,
+      openedAt: { toMillis: () => OPEN_MS },
+      closedAt: { toMillis: () => CLOSE_MS },
+      lastActivityAt: { toMillis: () => CLOSE_MS },
+    }),
+  }))
   const tagDocs = (opts.tagNames ?? []).map(name => ({ data: () => ({ name }) }))
   // 逐場抽訊息時是用 users 主鍵（lineUserFirestoreDocId）撈的 → 先以 userId 建索引，撈時比對後綴
   const textsByUserId = new Map(opts.sessions.map(s => [s.userId, s.texts]))
@@ -100,8 +155,13 @@ function fakeDb(opts: {
           doc: (userDocId: string) => ({
             collection: () => {
               const hit = [...textsByUserId.entries()].find(([uid]) => userDocId.includes(uid))
-              const msgDocs = (hit?.[1] ?? []).map(text => ({
-                data: () => ({ direction: 'incoming', text, messageType: 'text' }),
+              const msgDocs = (hit?.[1] ?? []).map((text, i) => ({
+                data: () => ({
+                  direction: 'incoming',
+                  text,
+                  messageType: 'text',
+                  timestamp: { toMillis: () => OPEN_MS + 10 + i },
+                }),
               }))
               return chain({ docs: msgDocs })
             },
@@ -169,6 +229,25 @@ describe('掃描結果要寫進資料（沒提出東西時，這是唯一講得�
       { name: '想送禮', reason: 'too_few_users' },
     ])
     expect(writes[0]!.pending).toEqual([])
+  })
+
+  /**
+   * 🔴 撞上限要進資料，不能只 log（`C-132`）：畫面只有場數的話，
+   * 「只看了最新那批」跟「窗口裡就這麼多」長得一模一樣。
+   */
+  it('🔴 對話超過一次能讀的上限 → outcome 要帶 truncated，畫面文案也要講', async () => {
+    const { db, writes } = fakeDb({ sessions: manySessions(240), discoveryDoc: NEVER_SCANNED })
+    await scanTagDiscovery(db)
+
+    expect(writes[0]!.lastScan.truncated).toBe(true)
+    expect(discoveryScanOutcomeText(writes[0]!.lastScan)).toContain('只看了最近的那批')
+  })
+
+  it('沒撞上限 → 不要寫 truncated（沒發生的事不要留欄位）', async () => {
+    const { db, writes } = fakeDb({ sessions: manySessions(6), discoveryDoc: NEVER_SCANNED })
+    await scanTagDiscovery(db)
+
+    expect(writes[0]!.lastScan.truncated).toBeUndefined()
   })
 
   it('真的提出東西 → 寫 proposed，提案照樣進收件匣（沒有為了記結果而改掉原本的行為）', async () => {

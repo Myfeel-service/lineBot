@@ -158,6 +158,14 @@ export interface DiscoveryScanOutcome {
   keptCount: number
   /** 被刷掉的主題與原因（上限見 MAX_OUTCOME_DROPPED） */
   dropped: Array<{ name: string; reason: DiscoveryDropReason }>
+  /**
+   * 這次撞到「一次最多看幾場」的上限＝**這輪只看了窗口裡最新的那批**（`C-132`）。
+   *
+   * ⛔ 一定要存：只有 `sessionCount` 的話，「只看了最新 240 場」跟「窗口裡就這麼多」
+   * 在畫面上長得一模一樣，而前者代表這輪的結論本來就不完整
+   * （同記憶 `project_firestore_read_cost_20260811`：掃描上限會默默漏資料，要帶 truncated）。
+   */
+  truncated?: boolean
 }
 
 /** 掃描結果裡最多記幾條「被刷掉的主題」（文件要小；講三五個就夠說明白了） */
@@ -266,13 +274,21 @@ const DROP_REASON_TEXT: Record<DiscoveryDropReason, string> = {
 export function discoveryScanOutcomeText(outcome: DiscoveryScanOutcome | null | undefined): string | null {
   if (!outcome || typeof outcome.kind !== 'string') return null
 
+  /**
+   * 撞上限要講出來（`C-132`）：這輪的結論建立在「窗口裡最新的那批對話」上，
+   * 不是全部——不講的話下面每一句都會被讀成「整個窗口就這樣」。
+   */
+  const truncNote = outcome.truncated
+    ? '（對話量超過一次能讀的上限，這次只看了最近的那批，比較舊的沒進來）'
+    : ''
+
   if (outcome.kind === 'too_few_sessions') {
-    return `這次讀了最近兩週的 ${outcome.sessionCount} 段對話，可用的樣本太少`
+    return `這次讀了最近兩週的 ${outcome.sessionCount} 段對話${truncNote}，可用的樣本太少`
       + `（同一個主題至少要 ${MIN_DISTINCT_USERS} 位不同客人聊過才會提）。`
   }
 
   if (outcome.kind === 'no_topics') {
-    return `這次讀了 ${outcome.sessionCount} 段對話（${outcome.userCount} 位客人），`
+    return `這次讀了 ${outcome.sessionCount} 段對話（${outcome.userCount} 位客人）${truncNote}，`
       + 'AI 沒有找到夠多人聊、而且你還沒有標籤的主題。'
   }
 
@@ -287,11 +303,11 @@ export function discoveryScanOutcomeText(outcome: DiscoveryScanOutcome | null | 
     const parts = [...groups.entries()].map(([reason, names]) =>
       `「${names.join('、')}」${DROP_REASON_TEXT[reason] ?? '被排除'}`)
     const detail = parts.length ? `——${parts.join('；')}。` : '。'
-    return `這次 AI 有提出 ${outcome.rawCount} 個主題，但都沒有留下${detail}`
+    return `這次 AI 有提出 ${outcome.rawCount} 個主題，但都沒有留下${detail}${truncNote}`
   }
 
   // proposed：正常情況下畫面會顯示收件匣而不是這行；人把建議清完了才會走到這裡
-  return `上次掃描提出了 ${outcome.keptCount} 個建議。`
+  return `上次掃描提出了 ${outcome.keptCount} 個建議。${truncNote}`
 }
 
 /** 超過幾倍間隔沒成功掃描就算「太久沒動」（掃描約每 6.5 天一次，兩倍＝約兩週） */

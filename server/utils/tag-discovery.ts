@@ -21,7 +21,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
 import { recordScannerFailure } from './scanner-health'
 import { fetchUserDisplayNames } from './user-display-names'
-import { isCustomerActionMessage } from '~~/shared/customer-action'
+import { pickCustomerLines, sessionWindow, type TranscriptRow } from '~~/shared/tag-transcript'
 import {
   DISCOVERY_INTERVAL_MS,
   DISCOVERY_WINDOW_MS,
@@ -59,17 +59,47 @@ interface SessionDigest {
 }
 
 export function buildDiscoveryPrompt(digests: SessionDigest[], excludeNames: string[]): string {
-  const lines = digests.map((d, i) => `S${i}: ${d.text}`).join('\n')
+  /**
+   * ⛔ 每行要標**這場是第幾位客人**（`C-130` 第二個根因，2026-09-03 自我複審抓到）。
+   *
+   * 門檻是「至少 4 位**不同客人**」，但先前每行只有 `S0:`、`S1:`——模型完全看不出
+   * S4 與 S17 是同一個人，於是列了 7 場以為過關，守門員按客人去重後只剩 3 位，
+   * 整條照樣被判 `too_few_users` 丟掉。MYFEEL 兩週 228 場只來自 163 位客人，
+   * 這種「同一人多場」是常態不是例外，所以人數要讓模型自己算得出來。
+   */
+  const userIndex = new Map<string, number>()
+  const lines = digests.map((d, i) => {
+    if (!userIndex.has(d.userDocId)) userIndex.set(d.userDocId, userIndex.size + 1)
+    return `S${i}（客人#${userIndex.get(d.userDocId)}）: ${d.text}`
+  }).join('\n')
   const exclude = excludeNames.filter(Boolean).join('、') || '（無）'
+  const maxIndex = Math.max(0, digests.length - 1)
   return [
-    '你是 LINE 官方帳號的顧客分眾顧問。下面是最近兩週多場客服對話中「客人說過的話」，每行一場（S0、S1… 是場次編號）。',
+    '你是 LINE 官方帳號的顧客分眾顧問。下面是最近兩週多場客服對話中「客人說過的話」，'
+    + '每行一場：`S編號（客人#編號）`——**同一個「客人#」就是同一位客人的不同場對話**。',
     '',
     `任務：找出「很多客人都在聊、但店家還沒有對應標籤」的主題，提出最多 ${MAX_PROPOSALS_PER_SCAN} 個值得建立的新標籤。`,
     '',
     '規則：',
     '- 只提「從對話就看得出來」的意圖、興趣或行為（想買什麼品類、想送禮、問運費、抱怨過…）。會員等級、消費金額這種對話裡看不出來的不要提。',
     '- 粒度是「品類」不是「型號」：提「在看除濕機」，不要提「在看某品牌 6L 除濕機」。',
-    `- 每個主題至少要有 ${MIN_DISTINCT_USERS} 場**不同客人**的對話支持，把支持的場次編號列進 sessions；支持不夠的不要硬湊。`,
+    `- 每個主題至少要有 ${MIN_DISTINCT_USERS} 位**不同客人**（看「客人#」，同一位客人的多場只算一位）；不夠的不要硬湊。`,
+    /**
+     * ⛔⛔ 這條與下面範例裡 sessions 的長度**必須撐得過 MIN_DISTINCT_USERS**（2026-09-03）。
+     *
+     * 線上「一直沒有新標籤」的根因就在這裡：舊版只說「把支持的場次編號列進 sessions」，
+     * 而輸出範例寫的是 `"sessions":[0,3,17]`＝**三個**。模型跟的是範例的形狀，於是每次都
+     * 只回 3 個編號，被 `sanitizeDiscoveryProposalsDetailed` 判 `too_few_users` 整條丟掉
+     * ——9/2 那次掃描「模型提了 3 個、留下 0 個」，三條全是這個死法。
+     * 規則與範例互相矛盾時，模型跟的是範例，所以兩邊都要改。
+     */
+    '- sessions 要列出**所有**支持這個主題的場次編號，不是舉幾個例子：這串數字是我們唯一用來算「幾位不同客人聊過」的依據，列少了整條建議會被判人數不足而丟掉。',
+    /**
+     * ⛔ 範圍也要講（自我複審抓到）：範例裡的數字若比實際場數大，模型會跟著它的量級寫，
+     * 而 `sanitizeDiscoveryProposalsDetailed` 對超出範圍的編號是**默默丟掉**
+     * （`ctx.sessionUserIds[Number(s)]` 回 undefined），人數又被無聲扣掉一次。
+     */
+    `- 場次編號只能用上面真的出現過的（S0 到 S${maxIndex}），不要寫沒出現過的數字。`,
     `- 這些名稱已存在或已被店家否決，不要再提（含同義換句話說）：${exclude}`,
     '- criteria 用「什麼算＋什麼不算」的寫法（80 字內）；usage 一句話講這顆標籤拿來做什麼；reason 一句話講為什麼現在建議（給店家看的白話）。',
     '- code 用英文小寫加底線（例：intent_dehumidifier）。',
@@ -78,7 +108,9 @@ export function buildDiscoveryPrompt(digests: SessionDigest[], excludeNames: str
     '對話摘要：',
     lines,
     '',
-    '輸出 JSON：{"topics":[{"name":"...","code":"...","category":"interest|behavior|member_status|activity|custom","criteria":"...","usage":"...","reason":"...","sessions":[0,3,17]}]}',
+    // ⛔ 範例的 sessions 一定要多於 MIN_DISTINCT_USERS（見上面那條規則的註解），別改回 3 個；
+    //    ⛔ 也刻意用小數字——範例的量級會被模型模仿，寫大數字會誘導它產出超出範圍的編號
+    '輸出 JSON：{"topics":[{"name":"...","code":"...","category":"interest|behavior|member_status|activity|custom","criteria":"...","usage":"...","reason":"...","sessions":[0,2,5,9,11,14]}]}',
   ].join('\n')
 }
 
@@ -189,7 +221,7 @@ async function scanOneWorkspace(
   dismissedNames: string[],
 ): Promise<{ proposed: number; proposals: TagDiscoveryProposal[]; outcome: DiscoveryScanOutcome }> {
   /** 樣本就不夠的那種「沒有」：連 LLM 都不會打，講「AI 沒找到主題」是不實陳述 */
-  const tooFewSessions = (sessionCount: number, userCount: number) => ({
+  const tooFewSessions = (sessionCount: number, userCount: number, truncated = false) => ({
     proposed: 0,
     proposals: [] as TagDiscoveryProposal[],
     outcome: {
@@ -200,29 +232,46 @@ async function scanOneWorkspace(
       rawCount: 0,
       keptCount: 0,
       dropped: [],
+      ...(truncated ? { truncated: true } : {}),
     } satisfies DiscoveryScanOutcome,
   })
 
-  // 窗口：上次掃描之後的對話；第一次掃回看兩週（一次 LLM 的量，跟 tag-suggest
-  // 「不追歷史」的考量不同——那支是一場一次 LLM，追歷史是幾千次）
+  /**
+   * 窗口＝**固定往前兩週**（不是「上次掃描之後」——那句舊註解跟程式不符，已校正）。
+   * 一次 LLM 的量，跟 tag-suggest「不追歷史」的考量不同：那支是一場一次 LLM，追歷史是幾千次。
+   *
+   * ⛔ **排序必須是 `desc`（取窗口內最新的那批）**，2026-09-03 校正（`C-132`）。
+   * 先前是 `asc` ＝取**最舊**的 240 場，而 log 寫「其餘下次掃」——那句是錯的：
+   * 下一輪的窗口還是「現在往前兩週」，再取最舊那批，永遠補不到後面那些。
+   * MYFEEL 當時兩週內已有 228 場、上限 240，再多一點就會變成「這功能只看得到
+   * 兩週前那半段」，而它要回答的正是「客人**現在**在聊什麼」。
+   * `(workspaceId, status, lastActivityAt DESC)` 索引已存在＝零新索引。
+   */
   const sinceMs = Math.max(Date.now() - DISCOVERY_WINDOW_MS, 0)
   const sessSnap = await db.collection('conversationSessions')
     .where('workspaceId', '==', workspaceId)
     .where('status', '==', 'closed')
     .where('lastActivityAt', '>', Timestamp.fromMillis(sinceMs))
-    .orderBy('lastActivityAt', 'asc')
+    .orderBy('lastActivityAt', 'desc')
     .limit(MAX_SESSIONS_PER_SCAN)
     .get()
-  if (sessSnap.size >= MAX_SESSIONS_PER_SCAN) {
-    console.warn(`[tag-discovery] ${workspaceId} 窗口內對話超過 ${MAX_SESSIONS_PER_SCAN} 場，只取最舊那批（其餘下次掃）`)
+  /**
+   * 截斷要**存進資料**，不能只 log（`C-94` 的規則、`C-132` 補的洞）：
+   * 畫面只拿 `sessionCount` 的話，「只看了最新 240 場」跟「窗口裡就只有這些」
+   * 長得一模一樣，而前者代表這輪的結論本來就不完整。
+   */
+  const truncated = sessSnap.docs.length >= MAX_SESSIONS_PER_SCAN
+  if (truncated) {
+    console.warn(`[tag-discovery] ${workspaceId} 窗口內對話超過 ${MAX_SESSIONS_PER_SCAN} 場，只取最新那批（較舊的這輪看不到）`)
   }
 
-  // 客人真的講過話的場才有東西可看
+  // 客人真的講過話的場才有東西可看。⛔ 撈回來是新→舊，翻成舊→新讓 S0 仍然是最舊的一場
   const sessions = sessSnap.docs
+    .slice().reverse()
     .map(d => d.data())
     .filter(s => s.hasInbound !== false && String(s.userId ?? ''))
   if (sessions.length < MIN_DISTINCT_USERS) {
-    return tooFewSessions(sessions.length, new Set(sessions.map(s => String(s.userId))).size)
+    return tooFewSessions(sessions.length, new Set(sessions.map(s => String(s.userId))).size, truncated)
   }
 
   // 逐場抽「客人說的話」摘要（分批併發，別串行等一分鐘）
@@ -231,18 +280,29 @@ async function scanOneWorkspace(
     const chunk = sessions.slice(i, i + TRANSCRIPT_CONCURRENCY)
     const results = await Promise.all(chunk.map(async (sess) => {
       const userDocId = lineUserFirestoreDocId(String(sess.userId), workspaceId)
+      /**
+       * ⛔ **這一場的時間範圍算不出來就跳過這一場**（2026-09-03，`C-132`）。
+       *
+       * 先前這裡完全沒有時間範圍，直接拿「這位客人最近 20 則」當這一場的摘要，
+       * 跟 `C-131` 是同一個 bug 的另一半，而且在這支還多兩個後果：
+       * ①**同一位客人在窗口裡有三場，就產出三行一模一樣的摘要**——模型看成三場獨立支持，
+       *   守門員再按客人去重成一位，於是判 `too_few_users` 整條丟掉（正是 `C-130` 在追的症狀）。
+       *   MYFEEL 兩週 228 場只來自 163 位客人＝約 65 場是這種重複。
+       * ②同一批訊息被重複讀（一位客人 N 場就讀 N 次），純浪費讀取費。
+       */
+      const win = sessionWindow(sess)
+      if (!win) return null
       try {
         const msgSnap = await db.collection('conversations').doc(userDocId)
           .collection('messages')
           .orderBy('timestamp', 'desc')
           .limit(MESSAGES_PER_SESSION)
           .get()
-        // 只留客人打的字（動作紀錄不是話；店家的話對「客人在意什麼」沒資訊量還佔 token）
-        const texts = msgSnap.docs.slice().reverse()
-          .map(d => d.data() as { direction?: string; text?: string; messageType?: string })
-          .filter(m => m.direction === 'incoming' && !isCustomerActionMessage(m.messageType))
-          .map(m => String(m.text ?? '').trim())
-          .filter(t => t.length >= 2)
+        // 只留這一場裡客人打的字（規則與踩雷見 shared/tag-transcript）
+        const texts = pickCustomerLines(
+          msgSnap.docs.slice().reverse().map(d => d.data() as TranscriptRow),
+          win,
+        ).filter(t => t.length >= 2)
         if (!texts.length) return null
         const line = texts.join(' / ').slice(0, DIGEST_LINE_MAX)
         return { userDocId, text: line } satisfies SessionDigest
@@ -255,7 +315,7 @@ async function scanOneWorkspace(
     digests.push(...results.filter((r): r is SessionDigest => !!r))
   }
   const distinctUsers = new Set(digests.map(d => d.userDocId)).size
-  if (distinctUsers < MIN_DISTINCT_USERS) return tooFewSessions(digests.length, distinctUsers)
+  if (distinctUsers < MIN_DISTINCT_USERS) return tooFewSessions(digests.length, distinctUsers, truncated)
 
   // 排除名單＝所有既有標籤名（不分 aiMode——同名就是重複，不管誰在判）＋pending＋否決過的
   const tagSnap = await db.collection('tags').where('workspaceId', '==', workspaceId).get()
@@ -316,6 +376,7 @@ async function scanOneWorkspace(
     rawCount: rawTopics.length,
     keptCount: cleaned.length,
     dropped,
+    ...(truncated ? { truncated: true } : {}),
   }
 
   /**

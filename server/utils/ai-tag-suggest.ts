@@ -29,7 +29,7 @@ import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
 import { recordScannerFailure } from './scanner-health'
-import { isCustomerActionMessage } from '~~/shared/customer-action'
+import { pickCustomerLines, sessionWindow, type SessionWindow, type TranscriptRow } from '~~/shared/tag-transcript'
 import type { UserTagSuggestionDoc, UserTagSuggestionPending } from '~~/shared/types/tag-broadcast'
 
 /** 每輪每工作區最多處理幾場（10 分鐘一輪 ⇒ 一天可消化 ~1,100 場，遠超實際量） */
@@ -82,32 +82,53 @@ export function filterSuggestible(
   return out
 }
 
-/** 逐字稿一行的形狀（抽出來讓測試不用碰 Firestore doc） */
-export interface TranscriptTurn {
-  role: 'customer' | 'shop'
-  text: string
+/**
+ * 同一句理由被套到兩顆以上標籤 → 只留第一顆。
+ *
+ * 為什麼要有：一場最多可以建議 3 顆，模型會為了湊滿而把同一個依據重複用。線上實例——
+ * Yangyang 的「問過發票」「在等開賣」「問過出貨進度」三顆，理由是同一句「客人詢問出貨
+ * 時間，希望提早出貨」，他從沒提過發票也沒在等開賣（吳崑嶽 4 條有 3 條同款）。
+ * 一句話同時是三種不同意圖的依據，本身就是「這是湊的」的訊號。
+ *
+ * ⛔ 只比對**非空**的理由：理由留空是另一種毛病（沒有依據可看），不該在這裡被順手吃掉，
+ *   否則兩個問題混在一起，將來查不出是哪個。
+ */
+export function dropDuplicateReasons<T extends { reason: string }>(items: T[]): { kept: T[], dropped: T[] } {
+  const seen = new Set<string>()
+  const kept: T[] = []
+  const dropped: T[] = []
+  for (const item of items) {
+    const key = item.reason.replace(/[\s　。，、．,.!?！？「」『』()（）:：;；-]/g, '').toLowerCase()
+    if (key && seen.has(key)) { dropped.push(item); continue }
+    if (key) seen.add(key)
+    kept.push(item)
+  }
+  return { kept, dropped }
 }
 
-export function buildSuggestPrompt(catalog: TagCatalogItem[], transcript: TranscriptTurn[]): string {
+export function buildSuggestPrompt(catalog: TagCatalogItem[], customerLines: string[]): string {
   const tagLines = catalog
     .map(t => `- id: ${t.id}｜名稱: ${t.name}${t.criteria ? `｜判斷條件: ${t.criteria.slice(0, CRITERIA_IN_PROMPT_MAX)}` : ''}`)
     .join('\n')
-  const convoLines = transcript
-    .map(t => `${t.role === 'customer' ? '客' : '店'}: ${t.text}`)
-    .join('\n')
   return [
-    '你是客服系統的顧客分眾助手。根據下面「一場 LINE 對話」與「可用標籤清單」，判斷這位客人適合貼哪些標籤。',
+    '你是客服系統的顧客分眾助手。下面是「一場 LINE 對話裡客人說過的話」與「可用標籤清單」，判斷這位客人適合貼哪些標籤。',
     '',
     '規則：',
     `- 只能從清單中選，輸出標籤的 id；清單外的一律不要。最多 ${MAX_SUGGESTIONS_PER_SESSION} 個，沒把握就回空陣列。`,
-    '- 只挑對話裡有明確依據的：客人自己說出來的需求、意圖、身分。店家（店:）說的話不能當依據。',
-    '- reason 用一句話（30 字內）寫出依據，給店家看的白話文。',
+    /**
+     * ⛔ 這句取代舊版的「店家（店:）說的話不能當依據」。逐字稿現在只有客人的話
+     * （見 pickCustomerLines 的註解），所以要改成「你看不到我們說了什麼，也不要推測」
+     * ——留著舊句子會讓模型以為店家的話只是「不能當依據」但仍可參考。
+     */
+    '- 依據只能是客人自己說出來的需求、意圖、身分。我們（店家、機器人、推播通知）發出去的訊息刻意不放進來，所以你看不到我們說了什麼，也不要憑推測補上。',
+    '- 標籤的判斷條件裡寫「…的不算」的排除句，優先於你自己的推論：命中排除句就不要選那顆。',
+    `- reason 用一句話（30 字內）寫出依據，給店家看的白話文。**每顆標籤各自寫自己的依據**——同一句理由不可以套在兩顆以上的標籤上（那表示其中一顆是湊的，寧可少選）。`,
     '',
     '可用標籤：',
     tagLines,
     '',
-    '對話（客: = 客人，店: = 我們）：',
-    convoLines,
+    '客人說過的話（由舊到新）：',
+    customerLines.map(t => `客: ${t}`).join('\n'),
     '',
     '輸出 JSON：{"tags": [{"id": "...", "reason": "..."}]}',
   ].join('\n')
@@ -189,25 +210,60 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
 
       const usage: UsageDelta = {}
       let batchMaxMs = state.cursorMs
+      /**
+       * 這一輪「什麼都沒建議」的原因分類（`C-131`）。
+       *
+       * ⛔ 為什麼一定要存進資料、不能只寫 log：時間過濾上線後，「這場沒有客人講的話」
+       * 從罕見變成常見路徑——沒有這份計數，部署後「建議量掉了」跟「過濾把該有的也濾掉了」
+       * 完全分不出來，而當初查出 `C-131` 的那種逐條稽核不可能天天做。
+       * 同 `feedback_filters_must_report_what_they_dropped`：三種「沒有」下一步不同，要分型別。
+       */
+      const skips = { noWindow: 0, tooFewLines: 0, noCandidates: 0, failed: 0 }
 
       for (const sessDoc of sessSnap.docs) {
         const sess = sessDoc.data()
         batchMaxMs = Math.max(batchMaxMs, tsToMs(sess.lastActivityAt))
         if (!catalog.length) continue // 沒有可建議的標籤，游標照走（別讓佇列卡死）
 
+        /**
+         * 這一場的時間範圍——逐字稿只讀這個範圍內的訊息（見 shared/tag-transcript）。
+         * ⛔ 算不出範圍就跳過這一場（並記一筆），不可以退回「不限時間」：那就是回到
+         *   「翻幾個月前舊帳」的老毛病，而且比原本更寬鬆。
+         */
+        const win = sessionWindow(sess)
+        if (!win) {
+          skips.noWindow += 1
+          console.warn('[tag-suggest] 這場算不出時間範圍，跳過：', sessDoc.id)
+          continue
+        }
+
         // 單場失敗只跳過這一場：建議是錦上添花，卡住整條佇列才是事故
         try {
-          const processed = await suggestForSession(db, workspaceId, String(sess.userId ?? ''), sessDoc.id, catalog, usage)
+          const processed = await suggestForSession(db, workspaceId, String(sess.userId ?? ''), sessDoc.id, win, catalog, usage)
           stats.sessions += 1
           stats.suggested += processed.suggested
           stats.autoApplied += processed.autoApplied
+          if (processed.skip === 'too_few_lines') skips.tooFewLines += 1
+          if (processed.skip === 'no_candidates') skips.noCandidates += 1
         }
         catch (e) {
+          skips.failed += 1
           console.warn('[tag-suggest] session failed:', sessDoc.id, e)
         }
       }
 
-      await stateRef.set({ cursorMs: batchMaxMs, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+      await stateRef.set({
+        cursorMs: batchMaxMs,
+        /** 最後一輪的成績單（畫面與日後查證都靠它，見上面 skips 的註解） */
+        lastRound: {
+          atMs: Date.now(),
+          sessions: sessSnap.docs.length,
+          suggested: stats.suggested,
+          autoApplied: stats.autoApplied,
+          ...skips,
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
 
       if (usage.inputTokens || usage.outputTokens) {
         await recordAiUsage(workspaceId, usage, db).catch(e => console.warn('[tag-suggest] usage record failed:', e))
@@ -341,9 +397,16 @@ async function suggestForSession(
   workspaceId: string,
   lineUserId: string,
   sessionId: string,
+  /** 這一場的時間範圍；逐字稿只讀這個範圍內的訊息（見 shared/tag-transcript） */
+  win: SessionWindow,
   catalog: TagCatalogItem[],
   usage: UsageDelta,
-): Promise<{ suggested: number; autoApplied: number }> {
+): Promise<{
+  suggested: number
+  autoApplied: number
+  /** 沒產出建議時的原因（呼叫端要分型別計數，不能只當成 0 筆） */
+  skip?: 'no_candidates' | 'too_few_lines'
+}> {
   const none = { suggested: 0, autoApplied: 0 }
   if (!lineUserId) return none
   const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
@@ -366,27 +429,26 @@ async function suggestForSession(
     // ⛔ 收件匣滿了只擋「建議型」候選（沒位置放了）；auto 型不進收件匣，不受它牽制——
     //    否則「建議堆著沒人清」會連帶讓全自動標籤也停擺
     && !(inboxFull && t.mode === 'suggest'))
-  if (!candidates.length) return none
+  if (!candidates.length) return { ...none, skip: 'no_candidates' as const }
 
-  // 逐字稿：客人的動作紀錄（「客人點了…」）不是客人說的話，不進逐字稿
+  /**
+   * 逐字稿＝**這一場裡客人說過的話**（規則與踩雷全在 pickCustomerLines 的註解）。
+   * ⛔ 查詢照舊只撈最近 30 則、不加時間條件：篩選在記憶體做，讀取數不變也不用新索引。
+   */
   const msgSnap = await db.collection('conversations').doc(convDocId)
     .collection('messages')
     .orderBy('timestamp', 'desc')
     .limit(TRANSCRIPT_LIMIT)
     .get()
-  const transcript: TranscriptTurn[] = msgSnap.docs.slice().reverse()
-    .map(d => d.data() as { direction?: string; text?: string; messageType?: string })
-    .filter(m => !isCustomerActionMessage(m.messageType))
-    .map(m => ({
-      role: m.direction === 'incoming' ? 'customer' as const : 'shop' as const,
-      text: String(m.text ?? '').trim().slice(0, 300),
-    }))
-    .filter(t => t.text)
+  const customerLines = pickCustomerLines(
+    msgSnap.docs.slice().reverse().map(d => d.data() as TranscriptRow),
+    win,
+  )
 
   // 客人至少要講過兩句話才值得花一次 LLM（貼圖問候、單句「謝謝」這種場跳過）
-  if (transcript.filter(t => t.role === 'customer').length < 2) return none
+  if (customerLines.length < 2) return { ...none, skip: 'too_few_lines' as const }
 
-  const prompt = buildSuggestPrompt(candidates, transcript)
+  const prompt = buildSuggestPrompt(candidates, customerLines)
   const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
     generateJson<{ tags?: Array<{ id?: string; reason?: string }> }>(prompt, {
       model: 'gemini-2.5-flash-lite', // 從候選清單挑選是簡單任務；建議式有人把關，先用便宜的
@@ -403,7 +465,42 @@ async function suggestForSession(
 
   const rawTags = Array.isArray(data?.tags) ? data.tags : []
   const reasonById = new Map(rawTags.map(t => [String(t?.id ?? '').trim(), String(t?.reason ?? '').trim().slice(0, 60)]))
-  const accepted = filterSuggestible(rawTags.map(t => String(t?.id ?? '')), new Set(candidates.map(c => c.id)))
+
+  /**
+   * 順序是 **①白名單（不套上限）→ ②同理由去重 → ③才套上限**。
+   *
+   * ⛔ 三步不可以換順序：先套上限的話，湊數的重複項會**先佔掉名額**——模型回
+   * [A(理由r1) B(r1) C(r1) D(r2)] 時，上限 3 會先砍掉 D（唯一一個依據不同的），
+   * 去重再把 B、C 殺掉，最後只剩 A，而正確答案是 A＋D 兩顆。
+   * 這是 2026-09-03 自我複審抓到的（第一版就是先砍後去重）。
+   */
+  const whitelisted = filterSuggestible(
+    rawTags.map(t => String(t?.id ?? '')),
+    new Set(candidates.map(c => c.id)),
+    rawTags.length || 1, // ⛔ 這裡刻意不套 MAX_SUGGESTIONS_PER_SESSION，留給第③步
+  )
+  const { kept, dropped } = dropDuplicateReasons(
+    whitelisted.map(id => ({ id, reason: reasonById.get(id) ?? '' })),
+  )
+  const accepted = kept.slice(0, MAX_SUGGESTIONS_PER_SESSION).map(k => k.id)
+
+  /**
+   * ⛔ 刷掉東西要說得出丟了什麼，而且**兩種丟法要分開講**（`C-68` 同款病）：
+   * 只報「同理由丟掉 2 顆」會讓人以為其他都留著，而其實還有一顆是撞上限被砍的。
+   */
+  const overLimit = kept.length - accepted.length
+  if (dropped.length || overLimit > 0) {
+    const nameById = new Map(candidates.map(c => [c.id, c.name]))
+    const parts = [
+      dropped.length
+        ? `同一句理由套多顆丟掉 ${dropped.length} 顆（${dropped.map(d => `${nameById.get(d.id) ?? d.id}：「${d.reason}」`).join('、')}）`
+        : '',
+      overLimit > 0
+        ? `撞一場 ${MAX_SUGGESTIONS_PER_SESSION} 顆上限再丟掉 ${overLimit} 顆（${kept.slice(MAX_SUGGESTIONS_PER_SESSION).map(k => nameById.get(k.id) ?? k.id).join('、')}）`
+        : '',
+    ].filter(Boolean)
+    console.warn(`[tag-suggest] ${convDocId} 模型提了 ${rawTags.length} 顆、留下 ${accepted.length} 顆：${parts.join('；')}`)
+  }
   if (!accepted.length) return none
 
   // ── 依標籤的三段設定分流（D-27）────────────────────────
