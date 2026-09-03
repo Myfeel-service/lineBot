@@ -18,6 +18,8 @@ import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/
  *     color: string
  *     sourceType: string
  *     createdAt: Timestamp
+ *     lastHitAtMs: number | null   // 最近一次被自動判到（D-55；手動貼的沒有值）
+ *     hitCount: number             // 被自動判到幾次（含略過的那些次；沒有值讀成 0）
  *   }>
  * }
  */
@@ -68,6 +70,17 @@ export default defineEventHandler(async (event) => {
       color: tagData.color ?? '',
       sourceType: utData.sourceType,
       createdAt: utData.createdAt,
+      /**
+       * `D-55`：最近一次「客人又表現了這個意圖」與累計次數。
+       *
+       * ⛔ 一定要吐出來，否則就是「寫進資料庫但沒人看得見」——這個 repo 有零使用
+       * 功能的前科（見記憶 `feedback_absence_claims_need_verification`）。
+       * ⛔ 沒有值就回 null／0，**不要用 `createdAt` 頂替 `lastHitAtMs`**：
+       * 那兩個是不同的事實（第一次貼上 vs 最後一次被判到），頂替就是製造假資料。
+       * 後台手動貼的標籤天生沒有值＝從來沒被自動判到過，`hitCount` 讀成 0 是對的。
+       */
+      lastHitAtMs: typeof utData.lastHitAtMs === 'number' ? utData.lastHitAtMs : null,
+      hitCount: typeof utData.hitCount === 'number' ? utData.hitCount : 0,
     }
   })
 
