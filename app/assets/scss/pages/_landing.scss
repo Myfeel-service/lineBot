@@ -582,40 +582,93 @@
     display: grid; grid-template-columns: minmax(0, 1fr) 268px; gap: 32px;
     align-items: center; overflow: hidden;
   }
-  .lp-band__text h3 { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.01em; }
+  /* h3 跟 .lp-duo__text h3 同級同字級（09-03 五輪對齊，原本 1.24 略小一號＝隱性 drift） */
+  .lp-band__text h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; }
   .lp-band__text > p { margin: 10px 0 0; font-size: 0.97rem; color: var(--ink-2); line-height: 1.8; max-width: 44ch; }
-  /* 「現在做得到 vs 還沒上線」自己一行、與上面的敘述分開——讀者不必自己推論 */
-  .lp-band__status { margin-top: 14px !important; font-size: 0.9rem; color: var(--ink-soft); }
-  .lp-band__status b { color: var(--ink); font-weight: 700; }
+  /* 「現在做得到 vs 還沒上線」改用 .lp-app 圖示列（跟上面兩列同語言），第一列跟段落拉開 */
+  .lp-band__text p + .lp-app { margin-top: 12px; }
   /* 行內版徽章：標在那個詞旁邊，不用卡頂那種籠統的「部分即將推出」 */
   .lp-soon--inline { margin-left: 7px; vertical-align: 1.5px; }
   .lp-band__phone { align-self: center; }
 
-  /* ── 前後對照數據條（設定時間、回覆速度⋯⋯）──────────────── */
-  .lp-statrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--hair); }
-  /* 掛在卡片底：兩張並排的卡內容行數不同時，數據條仍然對齊卡底 */
-  .lp-statrow--foot { margin-top: auto; }
-  .lp-appcard__bd .lp-statrow--foot { padding-top: 18px; margin-top: auto; }
-  .lp-stat { background: var(--surf-2); border-radius: var(--r-sm); padding: 14px 16px; }
-  .lp-stat__l { display: block; font-size: 0.78rem; color: var(--ink-soft); font-weight: 600; }
-  .lp-stat__v { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-  .lp-stat__v i { font-style: normal; font-size: 0.86rem; color: var(--ink-soft); text-decoration: line-through; text-decoration-color: #c6cec6; }
-  .lp-stat__v em { font-style: normal; color: #a9b3aa; font-size: 0.8rem; }
-  .lp-stat__v b { font-size: 1.05rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
-
-  /* ── AI 客服／AI 行銷 兩張卡 ─────────────────────────────── */
-  /* ⚠️ 不設 margin-top：它是 .lp-stack 的第一個孩子，節奏由 --section-head-gap 統一給
-     （先前殘留的 16px 讓這區「標題→內容」變 60px，其他區都是 44px）。 */
-  .lp-appgrid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--card-gap); align-items: stretch; }
-  .lp-appcard { display: flex; flex-direction: column; }
-  .lp-appcard__bd { flex: 1; display: flex; flex-direction: column; }
-  /* 分隔線畫在後一列的上緣（別用 :last-of-type 收尾——底下還有其他 div，會選錯） */
-  .lp-app { display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; }
-  .lp-app + .lp-app { border-top: 1px solid var(--hair); }
-  .lp-app__c {
-    width: 22px; height: 22px; border-radius: 7px; background: var(--g-wash); color: var(--g-deep);
-    font-size: 0.72rem; font-weight: 800; display: grid; place-items: center; flex: none; margin-top: 2px;
+  /* ── 前後對照成效帶（客人等回覆、訊息回覆率⋯⋯）────────────
+     09-03 三輪：原本是兩顆分離的灰磚（.lp-stat），被反映像表單欄位——
+     併成一條帶、兩格中間一道髮絲線，整欄的收尾只剩一個容器。 */
+  .lp-outcome {
+    display: grid; grid-template-columns: 1fr 1fr; margin-top: 22px;
+    background: var(--surf-2); border-radius: var(--r-sm);
   }
+  .lp-outcome__cell { padding: 15px 18px; min-width: 0; }
+  .lp-outcome__cell + .lp-outcome__cell { border-left: 1px solid var(--hair); }
+  .lp-outcome__l { display: block; font-size: 0.78rem; color: var(--ink-soft); font-weight: 600; }
+  .lp-outcome__v { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .lp-outcome__v i { font-style: normal; font-size: 0.86rem; color: var(--ink-soft); text-decoration: line-through; text-decoration-color: #c6cec6; }
+  .lp-outcome__v em { font-style: normal; color: #a9b3aa; font-size: 0.8rem; }
+  .lp-outcome__v b { font-size: 1.05rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
+
+  /* ── AI 客服／AI 行銷 交錯雙列（2026-09-03 取代並排雙卡，why 見 index.vue 模板註解）──
+   * 截圖視窗固定 480px（跟 .lp-band 手機欄固定 268px 同一種做法）：09-03 四輪回饋
+   * 「圖片小一點、整體畫面有點長」——視窗原本吃 1.16fr（實測 572px 寬），圖的高度
+   * 跟著寬度走，兩列各高出 60~80px。480px 是「還讀得到聊天字」的下限附近
+   * （源圖是 2 倍圖、原生設計寬 640px，480÷640＝75% 縮放）；⛔再小聊天內容就要瞇眼，
+   * 手機截圖可讀性已經是 G-33 列管的問題，別在桌機重演。
+   * align-items:center：文字欄天生比視窗矮一截，置中讓留白均分（跟 .lp-band 同一做法）。
+   * ⚠️ 不設 margin-top：第一列是 .lp-stack 的第一個孩子，節奏由 --section-head-gap 統一給
+   *   （先前殘留的 16px 讓這區「標題→內容」變 60px，其他區都是 44px）。
+   * ⚠️ 左右互換只用 order 做：DOM 永遠文字在前，讀屏與手機單欄維持「先講什麼、再看畫面」。 */
+  .lp-duo { display: grid; grid-template-columns: minmax(0, 1fr) 560px; gap: clamp(28px, 4vw, 46px); align-items: center; }
+  .lp-duo + .lp-duo { margin-top: 32px; }
+  /* ⚠️ 互換要連欄寬一起鏡射：order 只換位置不換欄寬，漏了這行第二列的視窗會拿到
+     另一欄的寬（踩過：兩列的截圖大小不一致）。 */
+  .lp-duo--flip { grid-template-columns: 560px minmax(0, 1fr); }
+  .lp-duo--flip .lp-duo__text { order: 2; }
+  .lp-duo--flip .lp-duo__win { order: 1; }
+  .lp-duo__text h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .lp-win__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--hair); flex: none; }
+  .lp-win__dot + .lp-win__dot { margin-left: -3px; }
+  .lp-duo__winlabel { margin-left: auto; }
+
+  /* ── 「系統實際畫面」live 視窗（09-03 五輪換 SCSS 渲染、六七輪拿掉 zoom 與 inert）──
+   * ⛔ 不加 zoom／transform:scale：五輪用 zoom 0.75 縮成跟舊 PNG 一樣的比例，
+   *    被抓到「看起來還是圖片」——縮小版正是縮圖感的元兇。原尺寸＝後台原字級，
+   *    視窗寬 560px 是配合原字級的折行寬度。
+   * ⛔ 兩扇窗都**不掛 inert／role="img"／user-select:none**：擋掉互動＝選不了字、
+   *    沒 hover、點不動，行為上就是一張圖片（六輪聊天窗、七輪好友窗各中一次）。
+   *    活著的互動（反白、列 hover、checkbox 點得動）正是「這不是圖」的證明；
+   *    好友表的 checkbox 用 tabindex=-1＋aria-hidden 排除 Tab 與讀屏就好。 */
+  /* 後台的訊息流頂端留 3.25rem 給浮動的「目前狀況」列，這扇窗沒有那條列，收回正常內距；
+     它也不是捲動區（flex:1/overflow-y 是對著後台版面設的，這裡高度由內容決定）。 */
+  .lp-livewin .conv-messages { flex: none; overflow: hidden; padding: 18px 18px 20px; }
+  /* demo 對話區的上緣淡出（十三輪「更整齊」）：捲動中最上面那顆泡泡會被視窗上緣
+     硬切一半、毛邊感重——加 16px 的遮罩讓它淡出而不是被切斷。⛔只遮上緣：
+     下緣永遠停在最新一句的完整邊界，遮了反而讓最後一句看起來沒印完。 */
+  .lp-liveob .onbc-chat {
+    mask-image: linear-gradient(180deg, transparent 0, #000 16px);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16px);
+  }
+  /* 好友表：後台為了窄視窗橫捲設 min-width 48rem，這扇固定寬的視窗用不到。
+     ⛔ 別用 max-height 把列切一半——切到半列看起來就是裁過的圖（六輪教訓），
+     要少列就在模板少渲染幾列，收在完整列的邊界上。 */
+  .lp-livewin--users .users-table { min-width: 0; }
+
+  /* ── 「接 LINE 有人陪」開通引導 live 卡（09-03 八輪，同 live 視窗原則＋進場動態）──
+   * 樣式源頭 _onboarding.scss／_agent-chat.scss；這裡只做「從整頁變卡片內展示」的收邊：
+   * 真頁面的外殼是滿版置中（min-height:100vh、height:920px），塞進卡片要改內容自適高。 */
+  .lp-liveob .onbc-shell {
+    height: auto; max-width: none;
+    border: 1px solid var(--hair); box-shadow: var(--sh-soft); border-radius: var(--r-card);
+  }
+  /* 對話區跟真頁面同款＝固定高的捲動欄：demo 演到後面，舊訊息自己往上捲
+     （smooth 捲動與 overflow 都是 .onbc-chat 原樣式給的，這裡只給展示高度） */
+  .lp-liveob .onbc-chat { flex: none; height: 320px; }
+  /* 09-03 二輪：✓ 小勾換成 40px 圖示磚、列間髮絲線拿掉（「亂」的來源＝同一欄疊了
+     髮絲線與灰底磚兩種分隔語彙）；分組改靠留白與圖示錨點。 */
+  .lp-app { display: flex; align-items: center; gap: 14px; padding: 11px 0; }
+  .lp-app__i {
+    width: 40px; height: 40px; border-radius: 12px; background: var(--g-wash); color: var(--g-deep);
+    display: grid; place-items: center; flex: none;
+  }
+  .lp-app__i svg { width: 21px; height: 21px; }
   .lp-app b { display: block; font-size: 0.95rem; font-weight: 700; }
   .lp-app small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 3px; }
 
@@ -629,68 +682,65 @@
     border: 1px solid var(--hair); border-radius: var(--r-sm);
     background: var(--surf-2);
   }
-  /* 撐滿卡片剩下的高度（2026-08-27 老闆指定：右圖要跟左圖一樣高，不靠湊列數）。
-     ⚠️ min-height:0 一定要給——flex item 的預設 min-height:auto 會讓圖片撐開卡片、
-        兩張卡就又不一樣高了。
-     ⛔ 源圖必須比容器「更高瘦」，cover 才會裁底部；源圖太扁會改裁寬度、把標籤欄切掉
-        （列數見 scripts/landing-demo-seed.ts，現在 12 列）。 */
-  .lp-shot--fill { flex: 1; min-height: 0; object-fit: cover; object-position: top; }
+  /* （.lp-shot--fill 已隨 2026-09-03 交錯雙列改版移除：兩列上下疊、沒有「並排等高」
+     的問題，兩張截圖都回到原始比例。改回並排時去 git log 把它連同源圖列數規矩找回來。） */
 
-  /* ── 60 秒上線：三步時間軸 ────────────────────────────────
-   * 預設（無 JS／reduced-motion）進度條就是滿的；掛 .is-anim 之後才收回去等 reveal 再長出來。
-   */
-  /* margin-top:auto ＋ 結果面板也有 margin-top:auto ＝ 兩個 auto 平分剩餘空間：
-     時間軸上方與「時間軸→結果面板」之間各拿一半，時間軸就落在上半區的視覺中心。
-     ⛔ 別改回貼齊上緣（就是 08-27 老闆說的「左邊要往下一點」），也別用 justify-content
-        置中——那會把結果面板的 auto 吃掉、面板浮在半空（同日實測差 50px）。 */
-  .lp-tl { position: relative; padding: 8px 0 4px; margin-top: auto; margin-bottom: 20px; }
-  .lp-tl__track { position: absolute; left: 17%; right: 17%; top: 21px; height: 3px; background: #eaefe8; border-radius: var(--radius-pill); overflow: hidden; }
-  .lp-tl__track i { display: block; height: 100%; width: 100%; background: var(--g); border-radius: var(--radius-pill); }
-  .lp-tl__steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); }
-  .lp-tl__step { text-align: center; }
-  /* 步驟磚沿用全頁的圓角方磚標記（⛔別改回草稿的圓形，見檔頭標記系統） */
-  .lp-tl__dot {
-    width: var(--mk-xl); height: var(--mk-xl); border-radius: 14px;
-    background: #fff; border: 3px solid var(--g); color: var(--g-deep);
-    display: grid; place-items: center; font-size: 1rem; font-weight: 800;
-    margin: 0 auto 14px; position: relative; z-index: 1;
-    font-variant-numeric: tabular-nums;
+  /* ── 60 秒上線＝置中直式一條到底（09-03 十二輪打破雙卡框架、十五輪拍板直式置中）──
+   * why 見 index.vue 該區模板註解。所有節點沿中軸直落，連接段掛在「被接上的那站」
+   *（.lp-path__step--linked 的 ::before 灰軌＋::after 綠線，從上一塊的下緣鋪到自己磚頂）。
+   * 桌機手機同一版——置中直式天生窄螢幕友善，不需要媒體查詢換版。 */
+  .lp-path { max-width: 820px; margin-left: auto; margin-right: auto; }
+  .lp-path__over { margin: 0 0 26px; text-align: center; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.05em; color: var(--ink-soft); }
+  .lp-path__step { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .lp-path__step--linked { margin-top: 46px; }
+  .lp-path__step--linked::before,
+  .lp-path__step--linked::after {
+    content: ""; position: absolute; left: calc(50% - 2px); width: 4px;
+    top: -42px; height: 36px; border-radius: var(--radius-pill);
   }
-  .lp-tl__dot--ok { background: var(--g); border-color: var(--g); color: #fff; }
-  .lp-tl__step b { display: block; font-size: 0.98rem; font-weight: 800; }
-  .lp-tl__step small { display: block; font-size: 0.8rem; color: var(--ink-soft); margin-top: 4px; }
-  .lp-tl__step--done b { color: var(--g-deep); }
-  /* 兩個節點時：軌道只需連起兩點，左右留白比三點版窄 */
-  .lp-tl--two .lp-tl__steps { grid-template-columns: repeat(2, 1fr); }
-  .lp-tl--two .lp-tl__track { left: 25%; right: 25%; }
-  /* 做完會得到什麼＝結果面板，不是第三個步驟（沿用四道牆答案面板的語彙：淡底、綠字、一句話）。
-     ⛔ **貼卡底的面板一律用 `<div>`，不要用 `<p>`**：`.lp-panel__bd > p`（0,1,1）會蓋掉
-        `margin-top: auto`，面板就浮在半空——這個特異性坑 08-27 一天踩了四次
-        （.lp-wall p + fix、.lp-wall p、artifact 的 .m-stat-top、這裡）。
-     ⛔ 也別再給它任何 margin-top 規則，留白改由上面那塊的 margin-bottom 給。 */
-  .lp-tl__done {
-    margin-top: auto; background: var(--g-wash-2); border-radius: var(--r-sm);
-    padding: 12px 14px; font-size: 1rem; font-weight: 800; color: var(--g-deep);
+  .lp-path__step--linked::before { background: #eaefe8; }
+  .lp-path__step--linked::after { background: var(--g); }
+  /* 步驟磚沿用全頁的圓角方磚標記（⛔別改回草稿的圓形，見檔頭標記系統） */
+  .lp-path__dot {
+    width: 52px; height: 52px; border-radius: 16px; margin-bottom: 12px;
+    background: #fff; border: 3px solid var(--g); color: var(--g-deep);
+    display: grid; place-items: center; font-size: 1.15rem; font-weight: 800;
+    position: relative; z-index: 1; font-variant-numeric: tabular-nums; flex: none;
+  }
+  /* 接 LINE 那站：聊天圖示不是數字——它不算在「兩步」裡 */
+  .lp-path__dot--chat svg { width: 24px; height: 24px; }
+  .lp-path__body { min-width: 0; }
+  .lp-path__body > b { display: block; font-size: 1.12rem; font-weight: 800; }
+  .lp-path__body > small { display: block; font-size: 0.88rem; color: var(--ink-soft); margin-top: 3px; }
+  /* 結果面板＝做完會得到什麼，不是第三個節點（08-27 語彙決策）；貼在第 2 步正下方
+     置中＝讀成它的結果，⛔別給它連接線（線只連「要做的事」） */
+  .lp-path__done {
+    width: fit-content; margin: 18px auto 0; background: var(--g-wash-2); border-radius: var(--r-sm);
+    padding: 10px 14px; font-size: 0.95rem; font-weight: 800; color: var(--g-deep);
     letter-spacing: -0.01em; line-height: 1.5;
   }
-  .lp-tl__done span { margin-right: 5px; }
+  .lp-path__done span { margin-right: 5px; }
+  .lp-path__step--station .lp-path__body { width: 100%; }
+  .lp-path__head { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .lp-path__head b { font-size: 1.12rem; font-weight: 800; }
+  /* 「系統實際畫面」細框膠囊（十三輪）：跟著置中標題走、貼在旁邊 */
+  .lp-path__meta {
+    flex: none; font-size: 0.72rem; color: var(--ink-soft);
+    border: 1px solid var(--hair); border-radius: var(--radius-pill); padding: 3px 10px;
+    background: var(--paper);
+  }
+  /* ⚠️ text-align: left 必須留著：站容器為了置中版式設了 text-align center，
+     會滲進 demo 殼把「開通引導」標題排成置中——真頁面是靠左（十四輪實截抓到） */
+  .lp-path__step .lp-liveob { width: 100%; max-width: 760px; margin: 16px auto 0; text-align: left; }
+  .lp-path__note { margin: 14px 0 0; text-align: center; font-size: 0.86rem; color: var(--ink-soft); }
 
-  /* 區塊底部的行動出口（原本整區零個按鈕）*/
-  .lp-fast__cta { margin-top: 28px; text-align: center; }
+  /* 區塊底部的行動出口（原本整區零個按鈕）；36px＝跟一條路的站距同級，CTA 讀成下一站 */
+  .lp-fast__cta { margin-top: 36px; text-align: center; }
   .lp-fast__fine { margin: 14px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
   .lp-fast__fine b { color: var(--ink-2); font-weight: 700; }
 
-  /* 60 秒區兩欄：左時間軸卡、右開通引導真截圖。
-     minmax(0,…) 同 hero grid 的理由——圖片的 min-content 會把欄撐爆。 */
-  .lp-fast { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--card-gap); align-items: stretch; }
-  .lp-fast .lp-panel { display: flex; flex-direction: column; }
-  .lp-fast .lp-panel__bd { flex: 1; display: flex; flex-direction: column; }
-  /* ⛔ 左卡的內容**不要**垂直置中：結果面板靠 `margin-top: auto` 貼卡底才會跟右卡的
-     說明文字對齊；置中會把那個 auto 吃掉的空間搶回來，面板就浮在半空（08-27 實測 50px）。
-     空白由「時間軸在上、結果在下」自然撐開，不需要置中。 */
-  /* 截圖本身就是一張帶標頭的白卡，貼齊面板內距、下方說明推到卡底（跟左卡的 note 對齊） */
-  .lp-shot--flush { margin-top: 0; }
-  .lp-fast__note { margin: auto 0 0; padding-top: 16px; font-size: 0.86rem; color: var(--ink-soft); }
+  /* （60 秒區的兩欄卡框架＝.lp-fast 網格／.lp-tl 時間軸／.lp-shot--flush，已隨 09-03
+     十二輪「一條路」改版整組移除；回舊版看 git log。cta／fine 與新版共用所以留著。） */
 
   /* ── 定價：大字報價＋三個特點（結構照 08-26 草稿，底色照本頁白灰節奏）── */
   .lp-bigprice { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
@@ -913,9 +963,27 @@
    * 一律「預設就是最終狀態」，只有 JS 掛上 .is-anim 之後才藏起來再演。
    * 這樣沒有 JS、爬蟲、以及「減少動態效果」的使用者都直接看到完整內容。
    * （Hero 是唯一的例外，理由見上面那一段。）
+   *
+   * 兩條觸發線，分工不同（09-03 使用者反映「動畫常常還沒滑到就已經觸發完了」）：
+   *   `.in`（上緣越過畫面 88%）＝**淡入**。這時元素才剛露出一小條，淡入正好在眼前發生。
+   *   `.is-cued`（上緣越過畫面 76%）＝**有時間軸的動畫**（畫線、長條生長、打字、live demo）。
+   * ⚠️ 為什麼要分兩條：淡入 0.6 秒、跟著元素一起進畫面就好；但畫線／長條是 0.75～0.9 秒
+   *    的「表演」，用 88% 那條線的話它在元素只露出一條邊時就開演——等你真的捲到它面前，
+   *    早就演完了。門檻與觀察器都在 index.vue 的 REVEAL_MARGIN／CUE_MARGIN。
+   * ⛔ 別把有時間軸的動畫掛回祖先的 `.lp-reveal.in`：那等於用**容器上緣**當觸發點，
+   *    容器越高就越早（一條路那疊 1,038px 高，live 卡的進度條會在畫面外 532px 處長完）。
+   *    要掛在**動的那個元素自己**身上。
    */
-  &.is-anim .lp-reveal { opacity: 0; transform: translateY(20px); }
-  &.is-anim .lp-reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s ease; }
+  &.is-anim .lp-reveal { opacity: 0; transform: translateY(18px); }
+  /* 淡入用跟 Hero 同一條曲線（整頁只有一種進場手感）；opacity 比位移早收，
+     字在最後幾 px 落定之前就已經讀得清楚。 */
+  &.is-anim .lp-reveal.in {
+    opacity: 1; transform: none;
+    transition: opacity .42s ease-out, transform .58s cubic-bezier(0.22, 0.75, 0.3, 1);
+  }
+  /* 只淡入、不位移。給「位置本身有意義」的元素用：一條路的每一站之間有連接線，
+     站往下位移 18px 的話線的上端會跟前一塊脫開，淡入過程看起來像斷掉。 */
+  &.is-anim .lp-reveal--fade { transform: none; }
 
   /* 四道牆錯開 70ms 進場。⚠️ 四張卡是同時進入畫面的，不錯開的話就是一整片突然出現
      ——那是「一塊東西閃出來」，不是四張卡。70ms 是刻意小的：只要能看出左到右的順序，
@@ -924,30 +992,77 @@
   &.is-anim .lp-walls .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
   &.is-anim .lp-walls .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
 
+  /* 定價三張特點卡：桌機同一排、同時進畫面，同上錯開 70ms。
+     手機單欄時三張各自到達觸發線，延遲對它們沒有影響（是加在「到了才開始」之後）。 */
+  &.is-anim .lp-pricefeat .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
+  &.is-anim .lp-pricefeat .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
+
+  /* FAQ 一題一個單位，同欄內錯開 60ms（一欄三題，最後一題也只等 0.12s）。
+     ⚠️ nth-child 是**各欄自己數**的（兩欄各一個 div 容器），所以左右兩欄同時起跑、
+     不會變成右欄要等左欄演完。 */
+  &.is-anim .lp-faq .lp-reveal.in:nth-child(2) { transition-delay: .06s; }
+  &.is-anim .lp-faq .lp-reveal.in:nth-child(3) { transition-delay: .12s; }
+
+  /* 窄帶裡的手機晚 80ms：桌機上它跟文字欄幾乎同時到達觸發線（上緣只差 49px），
+     差一個拍子讀成「先看字、再看手機」。手機版它排在文字下面 400px，自己到達觸發線，
+     這個延遲看不出來。
+     ⚠️ 交錯雙列（.lp-duo）刻意**沒有**這種延遲：截圖視窗比文字欄高一截，垂直置中之後
+        它的上緣比文字欄早 163px 進畫面——先到的先演才叫「跟著捲動」，硬排順序只會變成
+        「看得到了卻還沒動」。 */
+  &.is-anim .lp-band__phone.lp-reveal.in { transition-delay: .08s; }
+
   /* 60 秒時間軸：捲到才長出進度條。
      ⚠️ 用 scaleX 不用 width：width 每一幀都要重算版面，transform 不用（交給合成器）。
      直式（手機）版在下面的 720px 斷點改成 scaleY。 */
-  &.is-anim .lp-tl__track i { transform: scaleX(0); transform-origin: left center; }
-  &.is-anim .lp-reveal.in .lp-tl__track i { transform: none; transition: transform 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
+  /* 中軸綠線：捲到**那一段路**才往下長。
+     ⚠️ 觸發點掛在被接上的那一站自己身上（.lp-cue → .is-cued），不是掛在整條路的容器：
+        掛容器的話兩段線會在容器上緣一起跑完（聊天站那段在畫面下方 335px 處），
+        真的捲到時線早就在那裡了。現在是「捲到第 2 站→線長下來」「捲到聊天站→線再長下來」。
+     ⛔ 也因此舊的 0.95s 錯開延遲移除了：兩段線各自有觸發點，錯開的節奏由捲動給，
+        再加延遲只會變成「捲到了還要再等一秒」。 */
+  &.is-anim .lp-path__step--linked::after { transform: scaleY(0); transform-origin: center top; }
+  &.is-anim .lp-path__step--linked.is-cued::after { transform: none; transition: transform 0.5s cubic-bezier(.3, .8, .35, 1) 0.15s; }
 
   /* 成長曲線：捲到才畫出來，線畫完才浮出面積、端點與標籤（先看到走勢，再看到誰是誰）。
      ⚠️ dasharray／dashoffset 都是 1，因為兩條 path 都掛了 pathLength="1"（見 index.vue），
         「1」＝整條線。⛔ 別改回寫死一個「比兩條都長」的數字：原本寫 1200、線實際只有
         658 與 600，於是線在 0.39 秒就畫完，接著**靜止 0.86 秒**才輪到標籤浮出來
-        （量出來的，不是感覺）。現在時間對得上：畫線 1.2 秒、1.05 秒開始浮標籤，接得上。 */
+        （量出來的，不是感覺）。
+     ⚠️ 09-03 反映「動畫可以快一點」：畫線 1.2s→0.75s。⛔ 兩組時間是**成對的**——
+        標籤要在畫線走到八成左右開始浮（0.15+0.75×0.8≒0.75），改畫線秒數時延遲要跟著算，
+        否則又回到「線畫完畫面靜止乾等」的老毛病。 */
+  /* ⚠️ 觸發點是 .lp-chartwrap 自己（.lp-cue → .is-cued），不是外層卡的 .lp-reveal.in：
+     那張卡桌機 616px 高、圖在卡的中段，掛卡上的話線會在圖還在畫面下方時就畫完。 */
   &.is-anim {
     .lp-chart__me, .lp-chart__base { stroke-dasharray: 1; stroke-dashoffset: 1; }
     .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 0; }
-    .lp-reveal.in {
-      .lp-chart__me, .lp-chart__base { stroke-dashoffset: 0; transition: stroke-dashoffset 1.2s cubic-bezier(.3, .8, .35, 1) .25s; }
-      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: opacity .55s ease 1.05s; }
+    .lp-chartwrap.is-cued {
+      .lp-chart__me, .lp-chart__base { stroke-dashoffset: 0; transition: stroke-dashoffset 0.75s cubic-bezier(.3, .8, .35, 1) 0.15s; }
+      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: opacity 0.4s ease 0.72s; }
     }
   }
 
   /* 缺人的虛線人形：捲到才開始閃。⚠️ 無 JS 時（沒有 .is-anim）維持原本一直閃，
-     不然那格會變成完全靜止的虛線人。 */
+     不然那格會變成完全靜止的虛線人。
+     ⚠️ 這是上面「別把動畫掛回祖先 .lp-reveal.in」那條規矩**刻意的例外**：它是無限循環
+        不是演一次的表演（早開演不會「錯過」），而且它住的那道牆自己就是 .lp-reveal、
+        高 295px＝祖先就是它的視覺單位。⛔別為了統一把它改掛 .lp-cue，那只是晚開始閃。 */
   &.is-anim .lp-wall__blink { animation-play-state: paused; }
   &.is-anim .lp-reveal.in .lp-wall__blink { animation-play-state: running; }
+
+  /* 開通引導 live 卡的動態（八輪「做動態的」、九輪「show 出更多步驟」）：
+     拍點與節奏由 JS 時間軸（index.vue 的 OB_BEATS／playObDemo）驅動——泡泡是演到那一拍
+     才掛進 DOM 的，所以這裡只給「掛載瞬間冒出來」的動畫，不再用 nth-child 定拍
+     （九輪前的舊做法；拍子改由資料驅動後，寫死的延遲只會跟 JS 打架）。
+     「拿鑰匙」進度條的初始生長照舊走「預設＝最終、.is-anim 才演」的規矩，觸發點是卡片
+     自己的 .is-cued（⛔別掛回祖先的 .lp-reveal.in：一條路那疊高 1,038px，掛上層的話
+     這條長條會在卡片還在畫面下方 532px 時就長完）；demo 中途換格（讓訊息進來→傳話測試→完成）
+     是 class 換位，.is-cued 已在場，不會重演生長動畫。 */
+  &.is-anim .lp-liveob .onbc-step.is-current::before { transform: scaleX(0); transform-origin: left center; }
+  &.is-anim .lp-liveob.is-cued .onbc-step.is-current::before { transform: none; transition: transform 0.9s cubic-bezier(.3, .8, .35, 1) 0.15s; }
+  &.is-anim .lp-liveob .agm-msg,
+  &.is-anim .lp-liveob .agm-choices { animation: lpObIn 0.38s ease-out backwards; }
+  @keyframes lpObIn { from { opacity: 0; transform: translateY(8px); } }
 
   @keyframes lpBlinkSoft { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
@@ -1005,7 +1120,13 @@
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
     .lp-walls { grid-template-columns: 1fr 1fr; }
     .lp-wall--main { grid-column: 1 / -1; }
-    .lp-appgrid, .lp-pricefeat, .lp-fast { grid-template-columns: 1fr; }
+    .lp-pricefeat { grid-template-columns: 1fr; }
+    /* 交錯雙列收單欄：order 歸零回 DOM 順序＝一律文字在上、截圖在下 */
+    .lp-duo { grid-template-columns: 1fr; gap: 20px; }
+    .lp-duo--flip .lp-duo__text, .lp-duo--flip .lp-duo__win { order: 0; }
+    .lp-duo + .lp-duo { margin-top: 36px; }
+    /* live 視窗手機也維持原字級（⛔別加回 zoom，見桌機那段的六輪教訓）：
+       342px 寬的聊天窗本來就像一支手機，泡泡多折幾行是自然的 */
   }
   @media (max-width: 900px) {
     /* Hero 手機版文字在上：標題才是鉤子，時機卡是佐證 */
@@ -1046,25 +1167,16 @@
     /* 時機卡的列在 390px 只有「名稱＋數字」兩段，放得下一行（原本副標要換第二行的規則
        跟著副標一起移除了，見 .lp-op 那段註解）。名稱太長時是在 b 裡面折行，不是整列換行。 */
 
-    /* 時間軸改直式：磚在左、字在右，進度條轉直（跟著草稿的手機版） */
-    .lp-tl__steps { grid-template-columns: 1fr; gap: 18px; }
-    .lp-tl__step { display: grid; grid-template-columns: var(--mk-xl) 1fr; grid-template-rows: auto auto; column-gap: 14px; row-gap: 2px; text-align: left; }
-    .lp-tl__dot { grid-row: 1 / 3; align-self: center; margin: 0; }
-    .lp-tl__step b { grid-column: 2; grid-row: 1; align-self: end; }
-    .lp-tl__step small { grid-column: 2; grid-row: 2; align-self: start; margin-top: 0; }
-    .lp-tl__track { left: 21px; right: auto; top: 26px; bottom: 40px; width: 3px; height: auto; }
-    /* 兩步版（.lp-tl--two）的桌機覆寫是 0,2,0，會壓過上面這組 0,1,0 的直式規則——
-       這裡要用同樣的權重壓回來，否則 390px 下兩步仍並排成兩窄欄、
-       直式綠線畫在第一步「帳號登入」的字上（08-27 砍第三步時漏補，實測破版）。 */
-    .lp-tl--two .lp-tl__steps { grid-template-columns: 1fr; }
-    .lp-tl--two .lp-tl__track { left: 21px; right: auto; }
-    .lp-tl__track i { width: 100%; height: 100%; }
-    /* 直式：改成由上往下長（桌機版是 scaleX，理由同上——不動版面只動 transform） */
-    &.is-anim .lp-tl__track i { transform: scaleY(0); transform-origin: center top; }
-    &.is-anim .lp-reveal.in .lp-tl__track i { transform: none; transition: transform 1.6s cubic-bezier(.3, .8, .35, 1) .3s; }
+    /* 一條路＝置中直式（十五輪起桌機手機同一版），手機只收磚與字級一級 */
+    .lp-path__dot { width: 44px; height: 44px; font-size: 1rem; border-radius: 14px; }
+    .lp-path__dot--chat svg { width: 21px; height: 21px; }
+    .lp-path__body > b, .lp-path__head b { font-size: 1.02rem; }
+    .lp-path__step--linked { margin-top: 38px; }
+    .lp-path__step--linked::before, .lp-path__step--linked::after { top: -36px; height: 30px; }
 
-    /* 數據條、統計格改單欄 */
-    .lp-statrow { grid-template-columns: 1fr; }
+    /* 成效帶改單欄：分隔線從左緣轉到上緣 */
+    .lp-outcome { grid-template-columns: 1fr; }
+    .lp-outcome__cell + .lp-outcome__cell { border-left: 0; border-top: 1px solid var(--hair); }
 
     /* 黏性條：手機只留主訴求與按鈕，副標擠不下（會把按鈕推出畫面） */
     .lp-stickybar { padding: 0 12px 12px; }
@@ -1093,8 +1205,17 @@
     .lp-ops__cta, .lp-stamp, .lp-stamp::after { animation: none; }
 
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
-    &.is-anim .lp-walls .lp-reveal.in { transition-delay: 0s; }
-    &.is-anim .lp-tl__track i { transform: none; transition: none; }
+    /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
+    &.is-anim .lp-walls .lp-reveal.in,
+    &.is-anim .lp-pricefeat .lp-reveal.in,
+    &.is-anim .lp-faq .lp-reveal.in,
+    &.is-anim .lp-band__phone.lp-reveal.in { transition-delay: 0s; }
+    &.is-anim .lp-path__step--linked::after { transform: none; transition: none; }
+    /* 開通引導 live 卡：關動態（demo 播放本身由 JS 的 reduced-motion 早退擋住，
+       這裡管的是萬一 .is-anim 在場時的 CSS 動畫） */
+    &.is-anim .lp-liveob .onbc-step.is-current::before { transform: none; transition: none; }
+    &.is-anim .lp-liveob .agm-msg,
+    &.is-anim .lp-liveob .agm-choices { animation: none; }
     &.is-anim {
       .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
       .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }

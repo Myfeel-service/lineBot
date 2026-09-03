@@ -279,68 +279,181 @@
              整疊當一個單位的話，捲到最上緣時底下 1,500px 的圖文選單窄帶就已經「進場」過了，
              真的捲到它時反而什麼都不會發生（而且元素越高，比例式的門檻越容易永遠達不到）。 -->
         <div class="lp-stack">
-          <div class="lp-appgrid lp-reveal">
-            <div class="lp-panel lp-appcard">
-              <div class="lp-panel__hd">
-                <span class="lp-panel__pip" />
-                <span class="lp-panel__title">AI 客服</span>
-                <span class="lp-panel__meta">系統實際畫面</span>
+          <!-- ⚠️ 2026-09-03 從「兩張並排鏡像卡」改成「一列一個能力、左右交錯」：
+               舊版被反映死板——兩張卡結構完全對稱（標頭／清單／截圖／數據磚一模一樣），
+               截圖被擠在半欄寬卡片的中段。內容物一件都沒換，只是重新組合：
+               文字（標題＋清單＋前後數據）不裝盒放一側，截圖獨立成「系統實際畫面」視窗
+               放另一側；第二列左右互換，跟下面的圖文選單窄帶（文左機右）連成
+               右→左→右 的交錯節奏。⚠️ DOM 永遠文字在前、互換用 CSS order 做
+               （讀屏與手機單欄都維持「先講什麼、再看畫面」）。 -->
+          <!-- ⚠️ 進場動畫掛在文字欄與視窗欄**各一個**、不是掛在 .lp-duo 這層：手機單欄時
+               這一列有 1,217px 高，整列當一個單位的話，捲到文字上緣時底下那扇 600px 的
+               視窗就已經淡完了（同上面那條房規；09-03 使用者反映「還沒滑到就觸發完」）。 -->
+          <div class="lp-duo">
+            <div class="lp-duo__text lp-reveal">
+              <h3>AI 客服</h3>
+              <!-- ⚠️ 特點列 09-03 二輪從「✓＋髮絲線清單」改成圖示列（反映「有點亂」＋「特點整理成圖示」）：
+                   一列一個綠底圖示當視覺錨點，列與列之間不再畫線——線是上一版「亂」的來源之一
+                   （清單髮絲線＋數據磚灰底兩種分隔語彙疊在同一欄）。⛔ UI 圖示不用 emoji（檔頭規矩），
+                   一律 inline SVG 線條圖、吃 currentColor。 -->
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v10l8 4 8-4V7l-8-4z" /><path d="M4 7l8 4 8-4M12 11v9" /></svg></span>
+                <div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div>
               </div>
-              <div class="lp-panel__bd lp-appcard__bd">
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>產品基本 QA</b><small>規格、成分、怎麼用、怎麼挑</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div></div>
-                <!-- ⚠️ 真實介面截圖（2026-08-26 老闆拍板「截我們自己系統的圖」）：
-                     後台對話頁，資料是種在測試工作區的示範對話（示範帳號、無真實客資）。
-                     內容重點：AI 半夜秒回兩題（AI 徽章）→ 改訂單轉真人（機器人徽章）→
-                     隔天早上真人跟進（真人徽章）。⛔ 要換圖用
-                     scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs 重截，
-                     不可以自己拼一張假的當截圖。 -->
-                <img
-                  class="lp-shot"
-                  src="/landing/admin-chat.png"
-                  alt="後台對話畫面：客人半夜詢問手沖與禮盒，AI 立即回覆並標示 AI 徽章；改訂單需求轉給真人，隔天早上真人回覆並標示真人徽章"
-                  loading="lazy"
-                  width="1280"
-                  height="1052"
-                >
-                <div class="lp-statrow lp-statrow--foot">
-                  <div class="lp-stat"><span class="lp-stat__l">客人等回覆</span><span class="lp-stat__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
-                  <div class="lp-stat"><span class="lp-stat__l">訊息回覆率</span><span class="lp-stat__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.6a7.6 7.6 0 0 1-7.6 7.6H4.2l1.5-3A7.6 7.6 0 1 1 21 11.6z" /><path d="M10.7 9.8a1.9 1.9 0 1 1 2.6 1.8c-.8.3-1.1.9-1.1 1.6" /><circle cx="12.2" cy="15.9" r=".9" fill="currentColor" stroke="none" /></svg></span>
+                <div><b>常見問題 QA</b><small>運費、出貨、退換、營業時間</small></div>
+              </div>
+              <!-- 09-03 三輪：兩顆分離的灰磚（被反映像表單欄位）併成一條成效帶——
+                   一個容器兩格、中間髮絲線分隔，欄位樣式（舊值刪除線→新值綠字）不變。 -->
+              <div class="lp-outcome">
+                <div class="lp-outcome__cell"><span class="lp-outcome__l">客人等回覆</span><span class="lp-outcome__v"><i>4 小時</i><em>→</em><b>秒回</b></span></div>
+                <div class="lp-outcome__cell"><span class="lp-outcome__l">訊息回覆率</span><span class="lp-outcome__v"><i>6 成</i><em>→</em><b>全部回覆</b></span></div>
+              </div>
+            </div>
+            <!-- ⚠️ 「系統實際畫面」＝**用後台真正的樣式現場渲染**（2026-09-03 五輪方向，
+                 取代 PNG 截圖：截圖縮放後字是點陣的、拖曳/反白會露餡成「一張照片」）。
+                 做法＝掛後台對話頁同一套 class（.conversations-page 作用域，樣式源頭
+                 _conversations.scss）——後台改「樣式」這裡自動跟上；改「結構」（class 換名/
+                 巢狀變）不會，那時這裡要跟著搬。
+                 ⛔ 內容不是自由發揮：對話的字句/時間/誰回的，必須跟
+                 scripts/landing-demo-seed.ts 的 MSGS 逐字一致（08-26「截我們自己系統的圖」
+                 用的同一份示範資料，這條規矩的精神＝畫面上的東西系統真的長這樣）。
+                 改對話請兩邊一起改。舊 PNG 產線（landing-shots.mjs）與圖檔保留沒刪，
+                 回退 PNG 版看 git log。
+                 ⚠️ 對話窗刻意**不掛 inert 也不掛 role="img"**（09-03 六輪）：泡泡文字要
+                 選得到反白——那是「這不是圖片」最直接的證明；內容讓讀屏照實唸。
+                 裡面沒有可聚焦元素，開著互動是安全的。 -->
+            <div class="lp-panel lp-duo__win lp-reveal">
+              <!-- 視窗欄長成「應用程式視窗」：左三顆窗鈕（中性灰，⛔別上紅黃綠——全頁唯一
+                   非綠的彩色保留給時機卡的琥珀）、右邊掛「系統實際畫面」標籤。
+                   09-03 三輪加的：純綠點＋標題那版被反映「看起來還是圖片」。 -->
+              <div class="lp-panel__hd">
+                <span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" />
+                <span class="lp-panel__title lp-duo__winlabel">系統實際畫面</span>
+              </div>
+              <div class="conversations-page lp-livewin lp-livewin--chat">
+                <div class="conv-messages">
+                  <div class="conv-day-group">
+                    <div class="conv-day-divider"><span class="conv-day-divider__label">昨天</span></div>
+                    <div class="conv-bubble-row incoming"><div class="conv-bubble-wrap incoming">
+                      <div class="conv-bubble incoming"><div class="conv-bubble-text"><div>請問日出配方適合手沖嗎？</div></div></div>
+                      <div class="conv-bubble-meta"><span class="conv-bubble-meta__line"><span class="conv-bubble-time">21:47</span></span></div>
+                    </div></div>
+                    <div class="conv-bubble-row outgoing"><div class="conv-bubble-wrap outgoing">
+                      <div class="conv-bubble outgoing"><div class="conv-bubble-text"><div>適合的！日出配方是中焙、帶柑橘與黑糖調，手沖建議水溫 90–92°C、粉水比 1:15，風味最平衡 ☕</div></div></div>
+                      <div class="conv-bubble-meta">
+                        <span class="conv-bubble-meta__line"><span class="conv-sender-tag">AI</span><span class="conv-bubble-time">21:47</span></span>
+                        <span class="conv-bubble-read">已讀</span>
+                      </div>
+                    </div></div>
+                    <div class="conv-bubble-row incoming"><div class="conv-bubble-wrap incoming">
+                      <div class="conv-bubble incoming"><div class="conv-bubble-text"><div>那有禮盒包裝嗎？想送人</div></div></div>
+                      <div class="conv-bubble-meta"><span class="conv-bubble-meta__line"><span class="conv-bubble-time">21:49</span></span></div>
+                    </div></div>
+                    <div class="conv-bubble-row outgoing"><div class="conv-bubble-wrap outgoing">
+                      <div class="conv-bubble outgoing"><div class="conv-bubble-text"><div>有的，禮盒含提袋與手寫卡片，下單備註想說的話，我們會幫您附上 🎁</div></div></div>
+                      <div class="conv-bubble-meta">
+                        <span class="conv-bubble-meta__line"><span class="conv-sender-tag">AI</span><span class="conv-bubble-time">21:49</span></span>
+                        <span class="conv-bubble-read">已讀</span>
+                      </div>
+                    </div></div>
+                    <div class="conv-bubble-row incoming"><div class="conv-bubble-wrap incoming">
+                      <div class="conv-bubble incoming"><div class="conv-bubble-text"><div>我上週的訂單想改寄送地址</div></div></div>
+                      <div class="conv-bubble-meta"><span class="conv-bubble-meta__line"><span class="conv-bubble-time">21:51</span></span></div>
+                    </div></div>
+                    <div class="conv-bubble-row outgoing"><div class="conv-bubble-wrap outgoing">
+                      <div class="conv-bubble outgoing"><div class="conv-bubble-text"><div>訂單資料的變更交給真人比較穩妥，已為您安排專員，上班時間會第一時間回覆您 🙋</div></div></div>
+                      <div class="conv-bubble-meta">
+                        <span class="conv-bubble-meta__line"><span class="conv-sender-tag">機器人</span><span class="conv-bubble-time">21:51</span></span>
+                      </div>
+                    </div></div>
+                  </div>
+                  <div class="conv-day-group">
+                    <div class="conv-day-divider"><span class="conv-day-divider__label">今天</span></div>
+                    <div class="conv-bubble-row outgoing"><div class="conv-bubble-wrap outgoing">
+                      <div class="conv-bubble outgoing"><div class="conv-bubble-text"><div>早安！地址幫您改好了，出貨後會再傳物流連結給您 😊</div></div></div>
+                      <div class="conv-bubble-meta">
+                        <span class="conv-bubble-meta__line"><span class="conv-sender-tag conv-sender-tag--human">真人</span><span class="conv-bubble-time">09:02</span></span>
+                      </div>
+                    </div></div>
+                  </div>
                 </div>
               </div>
             </div>
+          </div>
 
-            <div class="lp-panel lp-appcard">
-              <div class="lp-panel__hd">
-                <span class="lp-panel__pip" />
-                <span class="lp-panel__title">AI 行銷</span>
-                <span class="lp-panel__meta">系統實際畫面</span>
+          <div class="lp-duo lp-duo--flip">
+            <div class="lp-duo__text lp-reveal">
+              <h3>AI 行銷</h3>
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" /><circle cx="12" cy="14.8" r="1.6" fill="currentColor" stroke="none" /></svg></span>
+                <div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div>
               </div>
-              <div class="lp-panel__bd lp-appcard__bd">
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div></div>
-                <div class="lp-app"><span class="lp-app__c">✓</span><div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div></div>
-                <!-- ⚠️ 真實介面截圖：後台「好友」頁的標籤欄，五位示範好友（無真實客資）。
-                     ⛔ 裁圖規矩：只能裁到示範資料那幾列——測試工作區下面幾列是**真實同事**
-                     的名字與頭像，入鏡就是把個資放上官網。重截用 scripts/landing-shots.mjs。 -->
-                <!-- ⚠️ 這張刻意用 --fill（撐滿卡片剩餘高度、底部超出的列裁掉）：兩張卡的截圖
-                     天生高度差一倍，2026-08-27 老闆指定「讓右邊的圖高一些、跟左邊一樣高」。
-                     ⛔ 源圖必須夠高（現在 12 列）否則 cover 會改裁寬度、把標籤欄切掉——
-                     列數由 scripts/landing-demo-seed.ts 的 USERS 決定，重截見 landing-shots.mjs。 -->
-                <img
-                  class="lp-shot lp-shot--fill"
-                  src="/landing/admin-friends-tags.png"
-                  alt="後台好友列表：每位客人身上掛著彩色標籤，例如手沖愛好者、送禮客群、咖啡展加入，可直接篩選與改標籤"
-                  loading="lazy"
-                  width="1736"
-                  height="1484"
-                >
-                <div class="lp-statrow lp-statrow--foot">
-                  <!-- ⛔ 這兩格只能放**現有功能**的成效：原本第一格是「每月喚回的訂單 0→12–18 張」，
-                       那是「回購喚醒」的成效，而該功能 2026-08-27 已從卡上撤掉（還沒上線）——
-                       功能不出現、它的數字更不能留，否則是宣稱一個連清單上都沒有的能力。 -->
-                  <div class="lp-stat"><span class="lp-stat__l">節慶檔期</span><span class="lp-stat__v"><i>自己記日子</i><em>→</em><b>系統先提醒</b></span></div>
-                  <div class="lp-stat"><span class="lp-stat__l">客人資料</span><span class="lp-stat__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
-                </div>
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 11V4.5a1 1 0 0 1 1-1H11l9 9-6.9 6.9a1.4 1.4 0 0 1-2 0L3.5 11z" /><circle cx="7.6" cy="7.6" r="1.3" fill="currentColor" stroke="none" /></svg></span>
+                <div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div>
+              </div>
+              <div class="lp-outcome">
+                <!-- ⛔ 這兩格只能放**現有功能**的成效：原本第一格是「每月喚回的訂單 0→12–18 張」，
+                     那是「回購喚醒」的成效，而該功能 2026-08-27 已從卡上撤掉（還沒上線）——
+                     功能不出現、它的數字更不能留，否則是宣稱一個連清單上都沒有的能力。 -->
+                <div class="lp-outcome__cell"><span class="lp-outcome__l">節慶檔期</span><span class="lp-outcome__v"><i>自己記日子</i><em>→</em><b>系統先提醒</b></span></div>
+                <div class="lp-outcome__cell"><span class="lp-outcome__l">客人資料</span><span class="lp-outcome__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
+              </div>
+            </div>
+            <!-- ⚠️ 「系統實際畫面」＝用後台「好友」頁真正的樣式現場渲染（同上一扇窗的做法與
+                 規矩，樣式源頭 _users.scss ＋共用 _tables.scss/_tags.scss）。
+                 ⛔ 名單/標籤/順序必須跟 scripts/landing-demo-seed.ts 的 USERS/TAGS 一致
+                 （列序＝加入時間新到舊＝u12→u1，跟後台排序一樣）；只渲染 勾選/好友/標籤
+                 三欄＝沿用舊 PNG「只裁到標籤欄右緣」的裁法。示範資料、無真實客資。
+                 ⚠️ 只渲染前 8 列、收在**完整列**的邊界（09-03 六輪：五輪用 max-height
+                 把列切一半，看起來就是裁過的圖——要少列就少渲染，別裁）。舊註解留參考：
+                 12 列全高會比左欄高一截，五輪曾用容器上限裁底（≒更早 --fill 裁底的
+                 視覺，08-27 老闆看過的樣子）。頭像圈裡的人形是 inline SVG，不是後台的
+                 el-icon（⛔別為了這顆圖示把 Element Plus 拉進官網 bundle）。 -->
+            <!-- ⚠️ 這扇窗也**不掛 inert／role="img"**（09-03 七輪）：六輪只把聊天窗的互動
+                 打開、這扇忘了跟上——inert 讓它選不了字、滑過沒 hover、checkbox 點不動，
+                 行為上就是一張圖片，被當場抓到「這張還是一樣」。現在滑過列會亮、名字
+                 選得到、checkbox 點得動（勾了不影響任何東西，反而是「真介面」的證明）。
+                 checkbox 掛 tabindex="-1"＋aria-hidden：滑鼠玩得到，但不進 Tab 順序、
+                 讀屏不唸（對讀屏它是裝飾，名單與標籤才是內容）。 -->
+            <div class="lp-panel lp-duo__win lp-reveal">
+              <div class="lp-panel__hd">
+                <span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" />
+                <span class="lp-panel__title lp-duo__winlabel">系統實際畫面</span>
+              </div>
+              <div class="lp-livewin lp-livewin--users">
+                <table class="users-table">
+                  <thead>
+                    <tr>
+                      <th class="users-table__th--check"><input type="checkbox" tabindex="-1" aria-hidden="true"></th>
+                      <th>好友</th>
+                      <th class="users-table__th--tags">標籤</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="friend in landingDemoFriends.slice(0, 8)" :key="friend.name">
+                      <td><input type="checkbox" tabindex="-1" aria-hidden="true"></td>
+                      <td>
+                        <div class="user-identity">
+                          <span class="user-avatar-placeholder"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6" /><path d="M5 20a7 7 0 0 1 14 0" /></svg></span>
+                          <span class="user-name">{{ friend.name }}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="user-tags-cell">
+                          <span
+                            v-for="tag in friend.tags"
+                            :key="tag.name"
+                            class="tag-chip tag-chip--tinted"
+                            :style="{ '--tag-accent': tag.color }"
+                          >{{ tag.name }}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -355,18 +468,25 @@
           <!-- ── 圖文選單：一條窄帶（2026-08-27 老闆拍板從 791px 的大卡降級）──
                它是「讓客服更省力」的手段，不是第三個能力，所以不給它跟兩張主卡同等的版面。
                ⚠️ 資訊層次刻意分三層：標題＝客人得到什麼／一句話＝為什麼省事／
-                  底下一行＝**現在做得到 vs 還沒上線**（代設的徽章就標在那個詞旁邊，
-                  不用卡頂那種籠統的「部分即將推出」）。
+                  底下兩列＝**現在做得到 vs 還沒上線**（代設的徽章就標在那個詞旁邊，
+                  不用卡頂那種籠統的「部分即將推出」）。09-03 五輪把第三層從一段散文
+                  改成跟上面兩列同語言的圖示列（回饋「排版是否也能優化」——左欄字少
+                  盒子空，圖示列把留白撐起來也讓整區語彙一致）；⛔文案沿用原句，
+                  只收掉「想更省事，」這個連接詞。
                ⛔ 只留「有選單」那一支手機：原本兩支做前後對照，但「沒有選單」那支只是在
                   演示問題、佔掉一半版面，說服力全在「有選單」這支。 -->
           <div class="lp-band lp-reveal">
             <div class="lp-band__text">
               <h3>常問的事變成按鈕，客人自己點</h3>
               <p>客人一打開你的 LINE 就看到選單——不必打字問，你也少回一輪。</p>
-              <p class="lp-band__status">
-                選單<b>現在就能在後台自己編排</b>；<br>
-                想更省事，之後可以<b>一句話請 {{ brandName }} 代設</b><span class="lp-soon lp-soon--inline">即將推出</span>
-              </p>
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="15" rx="2.5" /><path d="M4 11h16M12 11v8.5" /></svg></span>
+                <div><b>選單現在就能在後台自己編排</b></div>
+              </div>
+              <div class="lp-app">
+                <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.4a7.4 7.4 0 0 1-7.4 7.4H4.4l1.4-2.9A7.4 7.4 0 1 1 20 11.4z" /><path d="M12 7.9l.95 2.15L15.1 11l-2.15.95L12 14.1l-.95-2.15L8.9 11l2.15-.95L12 7.9z" fill="currentColor" stroke="none" /></svg></span>
+                <div><b>之後可以一句話請 {{ brandName }} 代設<span class="lp-soon lp-soon--inline">即將推出</span></b></div>
+              </div>
             </div>
 
             <!-- ⚠️ 2026-08-31 老闆拍板兩件事：①選單換成**真的圖文選單圖**（原本是 div 刻的
@@ -389,7 +509,9 @@
                     （點下去收起選單回去打字），它同時解釋了「為什麼這支手機的選單是開著的」。
                  ⚠️ 尺寸全部對著 250px 的螢幕寬算＝ .lp-band__phone 的 268px 減掉 .lp-phone
                     兩側各 9px 的殼；改寬度時 SCSS 那邊的固定值要一起校。 -->
-            <div class="lp-band__phone">
+            <!-- 手機自己也是一個進場單位：手機版這支排在文字**下面** 400px 處，
+                 跟著整條窄帶一起淡的話，捲到它時早就淡完了 -->
+            <div class="lp-band__phone lp-reveal">
               <div class="lp-phone">
                 <div class="lp-pscreen">
                   <div class="lp-pstatus">
@@ -496,9 +618,18 @@
       </div>
     </section>
 
-    <!-- ── 60 秒上線 ───────────────────────────────────────────
-         左＝三步時間軸（註冊後真的會走的三步，不是行銷話術）；
-         右＝開通引導對話的真實截圖（示範帳號「山丘咖啡」，見 scripts/landing-shots.mjs 圖三）。 -->
+    <!-- ── 60 秒上線＝一條路（09-03 十二輪「重新思考排版、打破目前的框架」）─────
+         舊框架＝左右兩張等高白卡：左卡（兩步時間軸）內容天生小，右卡換成 live demo 後
+         高 ≈640px，左卡怎麼排都在填空（十一輪的直式置中已是舊框架下的極限）。
+         新框架＝**一條垂直旅程軸**：1 登入 → 2 商家資訊（＋結果面板）→「接 LINE
+         的時候，有人陪」站（demo 掛在軸上當證據）→ 軸的出口就是底下的 CTA。
+         整區從「兩張卡並排」變「一條往下走的路」，中欄置中、手機天生同一版。
+         ⚠️ 沿用的決策：①結果面板不是節點——✓ 不畫成第三個圈，上方 overline 才敢說
+            「兩步」（08-27 拍板）②接 LINE 那站的圓點用**聊天圖示**不用數字：它不算在
+            「兩步」裡（fine print：接 LINE 的部分隨時可以再回來做）
+         ⚠️ 第一步是 **Google 一鍵登入**：2026-08-27 查證 app/pages/login.vue，
+            登入只有 `GoogleAuthProvider`，沒有 email 開通連結——改文案前先確認
+            登入方式還是不是這個。 -->
     <section id="fast" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
@@ -508,59 +639,105 @@
           </div>
         </div>
 
-        <div class="lp-fast lp-stack lp-reveal">
-          <div class="lp-panel">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">現在只需要兩步</span>
-              <span class="lp-panel__meta">60 秒</span>
+        <!-- ⚠️ **置中直式一條到底**（09-03 十五輪拍板；十四輪的 T 字橫排被「直接置中直式」
+             取代）：所有節點沿中軸直落——1 → 2 → ✓ 章 → 聊天站 → demo → note，
+             桌機手機同一版（置中直式天生窄螢幕友善，不再需要媒體查詢整組換版）。
+             ⚠️ 第二步文案 09-03 使用者抓包：「填寫基礎商家資訊（店名、行業、賣什麼）」
+             **是不存在的步驟**——grep 過整個開通流程沒有商家資訊表單，真實的第二件事是
+             useOnboardingChat.ts stepCreate 的「先幫你的官方帳號取個名字，通常用品牌名，
+             之後隨時能改。」文案改成取名字（劇本原文改寫、沒有新宣稱），
+             「現在只需要兩步」因此仍然成立。⛔別把「行業／賣什麼」加回來——
+             那是早期自助精靈時代的殘影，現行系統問的只有名字。 -->
+        <!-- ⚠️ 進場動畫掛在**每一站**、不是掛在 .lp-path 這層（09-03 使用者反映「動畫常常
+             還沒滑到就已經觸發完了」）：整條路 1,038px 高，掛在外層的話一露出上緣就整條
+             淡完，而且中軸綠線與 live 卡的進度條也跟著在畫面外跑完——真的捲到時什麼都不會發生。
+             一站一個單位＝跟著捲動一站一站亮，跟 #value 那疊同一條房規。
+             ⚠️ 站與站之間的連接線用 .lp-cue 另外收線（見底下的 cueIo）：它要在「那一段路」
+                真的看得見時才長，不是跟著整站的淡入一起跑。 -->
+        <div class="lp-path lp-stack">
+          <div class="lp-path__over lp-reveal">現在只需要兩步 · 60 秒</div>
+          <div class="lp-path__step lp-reveal lp-reveal--fade">
+            <span class="lp-path__dot">1</span>
+            <div class="lp-path__body">
+              <b>用 Google 帳號登入</b>
+              <small>不用另外設密碼</small>
             </div>
-            <div class="lp-panel__bd">
-              <!-- ⚠️ 只有**兩個**節點：標題就寫「兩步」。第三個節點（原本的「✓ 開始使用／60 秒」）
-                   不是步驟、是做完的結果，已改成卡底的結果面板（沿用四道牆的答案面板語彙）。
-                   ⛔ 別再把結果畫回第三個圈——標題說兩步、畫面三個圈，第一次看的人得自己數。
-                      這樣「60 秒」在同一屏也只剩兩次（泡泡＋卡片 meta）。
-                   ⚠️ 第一步是 **Google 一鍵登入**：2026-08-27 查證 app/pages/login.vue，
-                      登入只有 `GoogleAuthProvider`，沒有 email 開通連結——原本寫
-                      「登入 Email／收開通連結」是假的，客人點進去只會看到一顆 Google 按鈕。
-                      改文案前先確認登入方式還是不是這個。 -->
-              <div class="lp-tl lp-tl--two">
-                <div class="lp-tl__track"><i /></div>
-                <div class="lp-tl__steps">
-                  <div class="lp-tl__step">
-                    <span class="lp-tl__dot">1</span>
-                    <b>用 Google 帳號登入</b>
-                    <small>不用另外設密碼</small>
+          </div>
+          <div class="lp-path__step lp-path__step--linked lp-cue lp-reveal lp-reveal--fade">
+            <span class="lp-path__dot">2</span>
+            <div class="lp-path__body">
+              <b>幫官方帳號取個名字</b>
+              <small>通常用品牌名，之後隨時能改</small>
+            </div>
+          </div>
+          <div class="lp-path__done lp-reveal lp-reveal--fade"><span aria-hidden="true">✓</span>帳號就開好了，可以開始設定</div>
+          <div class="lp-path__step lp-path__step--linked lp-path__step--station lp-cue lp-reveal lp-reveal--fade">
+            <span class="lp-path__dot lp-path__dot--chat" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.6a7.6 7.6 0 0 1-7.6 7.6H4.2l1.5-3A7.6 7.6 0 1 1 21 11.6z" /></svg></span>
+            <div class="lp-path__body">
+              <div class="lp-path__head">
+                <b>接 LINE 的時候，有人陪</b>
+                <span class="lp-path__meta">系統實際畫面</span>
+              </div>
+              <!-- ⚠️ 「系統實際畫面」＝用開通引導頁真正的樣式現場渲染（09-03 八輪，做法與
+                   #value 兩扇 live 視窗同一套；取代 admin-onboarding.png）。樣式源頭＝
+                   _onboarding.scss（.onbc-*）＋ _agent-chat.scss（.agm-*），後台改樣式這裡
+                   自動跟上、改「結構」要跟著搬。⛔擋互動的三件套（inert/role="img"/
+                   user-select:none）一件都不准掛——會退化回「一張圖」（六、七輪的教訓）。
+                   ⛔ 內容不是自由發揮：進度條五格＝useOnboardingChat.ts 的
+                   ONBOARDING_PROGRESS_LABELS（別 import——那支 composable 會把整包
+                   拖進官網 bundle，抄字＋這行註解就好）；兩句話與兩顆鈕＝同檔 stepSecret
+                   的原文（307/305 行附近），劇本改字這裡要跟著改。示範帳號山丘咖啡，
+                   停在「拿鑰匙」＝刻意沒接 LINE 的那一步。
+                   ⚠️ 進場動態（09-03 八輪「做動態的」＋九輪「show 出更多步驟」）：捲到之後
+                   由 JS 時間軸把整趟快樂路徑演完——對白一句句冒出（前面有真的打字點點）、
+                   進度條跟著對話一格格亮到「完成」；對話區＝固定高的捲動欄（跟真頁面同款），
+                   舊訊息自己往上捲。劇本資料與節奏在 OB_BEATS／playObDemo（本檔 script）。
+                   SSR／無 JS／減少動態＝停在「拿鑰匙」問句＋兩顆選項的靜態卡。 -->
+              <!-- 卡片自己是一個進場單位（lp-reveal）＋自己收動畫的線（lp-cue）：
+                   淡入→捲到眼前才開演，兩件事分兩條線。⛔別只留外層那站的 lp-reveal：
+                   那一站含標題與圖說有 594px 高，卡片會在畫面外淡完。 -->
+              <div ref="obCardEl" class="lp-liveob lp-reveal lp-cue">
+                <div class="onbc-shell">
+                  <header class="onbc-head">
+                    <BrandLogo mark class="onbc-mark" />
+                    <div class="onbc-head__text">
+                      <span class="onbc-head__title">開通引導</span>
+                      <span class="onbc-head__sub">小幫手陪你把設定做完</span>
+                    </div>
+                    <!-- 真頁面是 NuxtLink；這裡是展示品，用 span 掛同 class（點了不能把人
+                         帶去登入牆），title 那句照搬——滑過去有字＝又一個「它是活的」證明 -->
+                    <span class="onbc-exit" title="現在離開沒關係，下次回來我會從沒做完的地方接著帶">之後再說</span>
+                  </header>
+                  <div class="onbc-progress" aria-hidden="true">
+                    <div
+                      v-for="(label, i) in OB_PROGRESS_LABELS"
+                      :key="label"
+                      class="onbc-step"
+                      :class="{ 'is-done': i < obProgress, 'is-current': i === obProgress }"
+                    >{{ label }}</div>
                   </div>
-                  <div class="lp-tl__step">
-                    <span class="lp-tl__dot">2</span>
-                    <b>填寫基礎商家資訊</b>
-                    <small>店名、行業、賣什麼</small>
+                  <div ref="obChatEl" class="onbc-chat">
+                    <div
+                      v-for="(b, i) in OB_BEATS.slice(0, obBeat)"
+                      :key="i"
+                      class="agm-msg"
+                      :class="b.role === 'user' ? 'agm-msg--user' : 'agm-msg--agent'"
+                    >
+                      <!-- html 僅限上面 OB_BEATS 裡劇本原文的常數（同真渲染器的警語） -->
+                      <!-- eslint-disable-next-line vue/no-v-html -->
+                      <div class="agm-bubble"><div v-html="b.html" /></div>
+                    </div>
+                    <div v-if="obTyping" class="agm-msg agm-msg--agent"><div class="agm-bubble agm-typing"><i /><i /><i /></div></div>
+                    <!-- 選項鈕只在「還停在問句」時存在；使用者選了（demo 演到下一拍）就消失，跟真頁面一樣。
+                         順序照 orderAgentChoices：其他 → 主要動作（主鈕靠右） -->
+                    <div v-if="obBeat === 2 && !obTyping" class="agm-choices">
+                      <el-button round>我會拿，直接貼上</el-button>
+                      <el-button round type="primary">教我一步步拿</el-button>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="lp-tl__done"><span aria-hidden="true">✓</span>帳號就開好了，可以開始設定</div>
-            </div>
-          </div>
-
-          <div class="lp-panel">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">接 LINE 的時候，有人陪</span>
-              <span class="lp-panel__meta">系統實際畫面</span>
-            </div>
-            <div class="lp-panel__bd">
-              <!-- ⚠️ 真實介面截圖：開通引導對話（示範帳號山丘咖啡，刻意沒接 LINE 才停在這一步）。
-                   重截用 scripts/landing-demo-seed.ts ＋ scripts/landing-shots.mjs。 -->
-              <img
-                class="lp-shot lp-shot--flush"
-                src="/landing/admin-onboarding.png"
-                alt="開通引導對話畫面：進度條顯示建帳號、拿鑰匙、讓訊息進來、傳話測試、完成五步，小幫手一句一句教你從 LINE 拿金鑰，並提供「教我一步步拿」按鈕"
-                loading="lazy"
-                width="1440"
-                height="648"
-              >
-              <p class="lp-fast__note">不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</p>
+              <p class="lp-path__note">不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</p>
             </div>
           </div>
         </div>
@@ -591,19 +768,21 @@
           <span class="lp-bigprice__unit">不綁約、隨時可取消</span>
         </div>
 
-        <div class="lp-pricefeat lp-reveal">
+        <!-- 進場動畫掛在三張卡各自身上（不是這層網格）：手機單欄時三張疊成 436px，
+             掛外層的話第三張在畫面外就淡完了。桌機同一排＝靠 nth-child 錯開 70ms。 -->
+        <div class="lp-pricefeat">
           <!-- ⛔ 這三張卡刻意**沒有圖示磚**：原本是 logo／✓／✓，兩顆一模一樣——
                房規「每一列都長一樣的圖示等於沒有圖示」（同 Hero 檔期列拿掉方磚的理由）。
                三個標題本身就講完了，磚只是裝飾。 -->
-          <div class="lp-pf">
+          <div class="lp-pf lp-reveal">
             <b>友善的引導式設定</b>
             <small>一步一步帶你完成，部分步驟有 AI 協助標示——不用怕複雜。</small>
           </div>
-          <div class="lp-pf">
+          <div class="lp-pf lp-reveal">
             <b>別人有的，我們都有</b>
             <small>自動化訊息、客服流程、AI 客服、AI 行銷建議、報表。</small>
           </div>
-          <div class="lp-pf">
+          <div class="lp-pf lp-reveal">
             <b>60 秒就能開始</b>
             <small>Google 登入、填一下商家資訊，今天就能讓它上工。</small>
           </div>
@@ -636,12 +815,22 @@
           <!-- 刻意沒有標頭列：「營業額成長 · 示意模型」與圖說重複 -->
           <div class="lp-panel lp-panel--plain">
             <div class="lp-panel__bd">
-              <div class="lp-chartwrap">
-                <svg class="lp-chart" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="示意模型：同時經營舊客的成長曲線逐年拉開，只靠新客的曲線幾乎持平">
+              <!-- lp-cue：畫線／浮標籤要在圖本身看得見時才跑（跟著外層卡的淡入跑的話，
+                   圖還在畫面下方 300px 就畫完了） -->
+              <div class="lp-chartwrap lp-cue">
+                <svg class="lp-chart" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="示意模型：同時經營舊客的成長曲線逐年拉開，只靠新客則維持平緩的直線成長">
                   <defs>
                     <linearGradient id="lpGrowArea" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stop-color="#06c755" stop-opacity=".22" />
                       <stop offset="100%" stop-color="#06c755" stop-opacity="0" />
+                    </linearGradient>
+                    <!-- 灰線的面積漸層（09-03 反映「只靠新客也參考綠色的色塊」＋「深一點」）：
+                         同款做法、吃灰線的線色 #848e88。⚠️ 透明度 .26 比綠色的 .22 高一階
+                         是刻意的：漸層吃的是各自路徑的 bounding box，灰色那塊只有 54px 高、
+                         淡出跑得快，數字同階時看起來會比綠色淺很多（第一版 .16 被反映太淺） -->
+                    <linearGradient id="lpGrowAreaBase" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#848e88" stop-opacity=".26" />
+                      <stop offset="100%" stop-color="#848e88" stop-opacity="0" />
                     </linearGradient>
                   </defs>
                   <line class="lp-chart__axis" x1="60" y1="284" x2="700" y2="284" />
@@ -650,16 +839,27 @@
                     d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40 L660 280 L60 280 Z"
                     fill="url(#lpGrowArea)"
                   />
+                  <!-- ⚠️ 掛同一個 lp-chart__area class＝跟綠色面積同一組浮出動畫；
+                       疊在綠色面積上面（灰的那一帶綠色漸層已淡到近零，不會混濁）。
+                       路徑＝灰線原路徑收到軸線，改灰線座標時這裡要一起改 -->
+                  <path
+                    class="lp-chart__area"
+                    d="M60 265 C160 259,260 252,360 246 C460 240,560 233,660 226 L660 280 L60 280 Z"
+                    fill="url(#lpGrowAreaBase)"
+                  />
                   <!-- ⚠️ 兩條線都給 pathLength="1"：畫線動畫用 stroke-dasharray／dashoffset，
                        這個屬性讓瀏覽器把「線有多長」一律當成 1，動畫就能寫成 1 → 0。
                        ⛔ 別改回寫一個「比兩條都長」的固定值（原本是 1200，而兩條實際只有
                           658 與 600）：那樣線在動畫走到 21% 時就已經畫完，後面 0.86 秒
                           畫面是靜止的，然後標籤才突然浮出來——量過的，不是感覺。
                        附帶好處：兩條長度不同的線會同時畫完，不會一條先到。 -->
+                  <!-- 灰線＝直線式的緩升（09-03 反映「太平緩」：原本 600px 只升 9px、近乎水平，
+                       讀起來像「只靠新客＝原地踏步」，說過頭了）。現在升 39px＝有在成長、
+                       但沒有複利的弧度——跟綠線的差距講的是「加速度」，不是「動 vs 不動」。 -->
                   <path
                     class="lp-chart__base"
                     pathLength="1"
-                    d="M60 265 C110 264,160 263,210 263 C260 262,310 261,360 260 C410 259,460 258,510 258 C560 257,610 256,660 256"
+                    d="M60 265 C160 259,260 252,360 246 C460 240,560 233,660 226"
                   />
                   <path
                     class="lp-chart__me"
@@ -668,7 +868,7 @@
                   />
                   <g class="lp-chart__dots">
                     <circle class="lp-chart__dot--me" cx="660" cy="40" r="7" />
-                    <circle class="lp-chart__dot--base" cx="660" cy="256" r="6" />
+                    <circle class="lp-chart__dot--base" cx="660" cy="226" r="6" />
                   </g>
                   <g class="lp-chart__x">
                     <text x="60" y="308" text-anchor="middle">第 1 年</text>
@@ -680,7 +880,7 @@
                   <!-- 標籤吃墨色、不吃線色：顏色由線端圓點與下方圖例的色塊帶 -->
                   <g class="lp-chart__lbls">
                     <text class="lp-chart__lbl--me" x="644" y="24" text-anchor="end">也經營舊客</text>
-                    <text class="lp-chart__lbl--base" x="644" y="242" text-anchor="end">只靠新客</text>
+                    <text class="lp-chart__lbl--base" x="644" y="212" text-anchor="end">只靠新客</text>
                   </g>
                 </svg>
               </div>
@@ -712,38 +912,40 @@
             <h2>開始之前，<br>你可能還想問<span class="mark">這些</span>。</h2>
           </div>
         </div>
-        <div class="lp-faq lp-reveal">
+        <!-- 進場動畫掛在每一題（不是這層）：手機單欄時六題疊成 385px，
+             掛外層的話後面幾題在畫面外就淡完了。同欄內靠 nth-child 錯開 60ms。 -->
+        <div class="lp-faq">
           <div class="lp-faq__grid">
             <div>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>我不懂技術，也能設定嗎？<span class="plus" v-html="plusIcon" /></summary>
                 <div class="a">可以。註冊後有 AI 陪你用聊天的方式把設定做完——你回答店名、給一份菜單或官網，它自己讀完建成知識庫，全程不用寫程式。</div>
               </details>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>我的客戶資料安全嗎？<span class="plus" v-html="plusIcon" /></summary>
                 <!-- ⛔ 別把「可自行刪除」加回來：後台沒有刪除客人／對話的入口。這句要跟隱私權頁
                      （2026-08-21 已改成寄信處理）講一樣的話——做出自助刪除（STATUS H-15c）之前，
                      任何一處寫「隨時可刪」都是對消費者的不實承諾。 -->
                 <div class="a">資料存在你自己的工作區，我們不會另作他用。需要刪除特定客人或整批資料時，寄信到 <a :href="emailHref">{{ email }}</a>，我們會在確認你的身分後 30 日內處理。</div>
               </details>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>按用量計價，會不會爆帳單？<span class="plus" v-html="plusIcon" /></summary>
                 <div class="a">不會。每個帳號都有免費額度，之後按 AI 回覆則數計價。用量在後台看得到，額度用完時 AI 會停止自動回覆並轉真人接手，<b>不會自動加收超量費用</b>——要加購額度或升級方案都由你決定。</div>
               </details>
             </div>
             <div>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>需要綁約嗎？<span class="plus" v-html="plusIcon" /></summary>
                 <div class="a">不用。隨時可取消，取消後服務用到本期結束、不會再扣款。取消方式與退費規則見<NuxtLink to="/refund">退費與取消政策</NuxtLink>。</div>
               </details>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>支援哪種 LINE 帳號？<span class="plus" v-html="plusIcon" /></summary>
                 <!-- ⚠️ 口徑跟 60 秒區一致（「每一步都用聊天帶你做」）：原本寫「貼一組 Webhook
                      網址即可接通」——對不懂技術的讀者是天書，跟全頁「不懂技術也沒關係」打架
                      （順帶修掉句中的半形逗號）。 -->
                 <div class="a">你現在用的 LINE 官方帳號（OA）就可以接。接通的每一步都有聊天引導帶你做，不懂技術也沒關係。</div>
               </details>
-              <details class="lp-q">
+              <details class="lp-q lp-reveal">
                 <summary>客人想找真人怎麼辦？<span class="plus" v-html="plusIcon" /></summary>
                 <div class="a">可一鍵轉真人，對話統計也會記錄轉真人的情況。</div>
               </details>
@@ -803,6 +1005,93 @@ const { brandName, email, emailHref } = useSiteIdentity()
 
 const plusIcon
   = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3v12M3 9h12"/></svg>'
+
+// ── #value「系統實際畫面」好友視窗的示範資料 ─────────────────
+// ⛔ 跟 scripts/landing-demo-seed.ts 的 TAGS／USERS 是同一份（08-26「截我們自己系統的圖」
+//    的示範工作區資料，無真實客資），改名單/標籤兩邊一起改。
+//    列序＝加入時間新到舊（u12→u1）、每列標籤順序照後台實際渲染，跟舊 PNG 一致。
+const LP_DEMO_TAGS = {
+  gift: { name: '送禮客群', color: '#0f9d58' },
+  brew: { name: '手沖愛好者', color: '#8a5a2b' },
+  expo: { name: '咖啡展加入', color: '#4a7fb5' },
+  regular: { name: '門市常客', color: '#8a6d3b' },
+  sub: { name: '豆子訂閱中', color: '#6b7f5a' },
+}
+const landingDemoFriends = [
+  { name: '豆豆媽', tags: [LP_DEMO_TAGS.sub] },
+  { name: 'Tina L.', tags: [LP_DEMO_TAGS.gift] },
+  { name: '老王', tags: [LP_DEMO_TAGS.regular] },
+  { name: 'YUKI ☕', tags: [LP_DEMO_TAGS.expo, LP_DEMO_TAGS.sub] },
+  { name: '陳太太', tags: [LP_DEMO_TAGS.gift, LP_DEMO_TAGS.regular] },
+  { name: 'Jimmy C.', tags: [LP_DEMO_TAGS.brew, LP_DEMO_TAGS.sub] },
+  { name: '小綠', tags: [LP_DEMO_TAGS.regular] },
+  { name: '咖啡貓', tags: [LP_DEMO_TAGS.brew] },
+  { name: 'Peggy Wang', tags: [LP_DEMO_TAGS.brew, LP_DEMO_TAGS.gift] },
+  { name: '阿翔', tags: [LP_DEMO_TAGS.expo] },
+  { name: 'Ariel 🌿', tags: [LP_DEMO_TAGS.brew, LP_DEMO_TAGS.expo] },
+  { name: '曉彤', tags: [LP_DEMO_TAGS.gift] },
+]
+
+// ── 開通引導 live 卡的動態展示（09-03 九輪「show 出更多步驟」）──────
+// ⛔ 每一句對白都是 useOnboardingChat.ts 劇本的**原文**（stepWelcomeBack/stepToken/
+//    stepSecret 505 行/366 行、stepWebhookAndFirstMsg 891/957 行、stepFirstMessageWait
+//    548/714 行、stepDone 1107 行；使用者泡泡＝選項 label 原字），劇本改字這裡跟著改；
+//    「山丘咖啡」＝landing-demo-seed.ts 的示範帳號名。
+// 演的是快樂路徑的精華剪輯：真流程在貼鑰匙／貼網址中間還有輸入格、教學卡與網址卡，
+// 這裡跳過操作細節、只留每一步的關鍵對白——⛔跳過的段落不准腦補成新句子。
+type ObBeat = { role: 'agent' | 'user', html: string, progress?: 2 | 3 | 4 }
+const OB_BEATS: ObBeat[] = [
+  { role: 'agent', html: '歡迎回來，「山丘咖啡」！我們接著把剩下的設定做完，做過的我會直接跳過。' },
+  { role: 'agent', html: '要從 LINE 拿兩把鑰匙。第一把 <b>Channel Access Token</b>——機器人靠它替你傳訊息。' },
+  { role: 'user', html: '我會拿，直接貼上' },
+  { role: 'agent', html: '收到 ✓ 這把鑰匙是「<b>山丘咖啡</b>」的，已經幫你存好。' },
+  { role: 'agent', html: '第二把：<b>Channel Secret</b>——用來確認訊息真的來自 LINE、不是別人假冒的。' },
+  { role: 'agent', html: '兩把鑰匙都到手 ✓ 最後一步：把下面這串網址交給 LINE，客人傳的訊息才知道要送來哪裡。', progress: 2 },
+  { role: 'user', html: '貼好了，幫我檢查' },
+  { role: 'agent', html: '接上了！你的官方帳號已經連上系統，客人的訊息送得進來了。' },
+  { role: 'agent', html: '來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 3 },
+  { role: 'agent', html: '收到了！你的機器人正式活起來了 🎉 之後客人傳的每一句話，都會出現在後台的「對話」頁。' },
+  { role: 'agent', html: '接通完成 🎉 接下來交給右下角的<b>小幫手</b>——下一步要做什麼、哪裡怪怪的，它都會主動說。<br>要不要先花 <b>2 分鐘認識一下後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 4 },
+]
+// ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_PROGRESS_LABELS，抄字不 import——
+//    import 會把整支 composable（含後端呼叫）拖進官網 bundle
+const OB_PROGRESS_LABELS = ['建帳號', '拿鑰匙', '讓訊息進來', '傳話測試', '完成']
+/** SSR／無 JS／減少動態：停在「拿鑰匙」問句＋兩顆選項＝原本的靜態卡 */
+const obBeat = ref(2)
+const obTyping = ref(false)
+const obChatEl = ref<HTMLElement | null>(null)
+const obCardEl = ref<HTMLElement | null>(null)
+/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「拿鑰匙」＝1 */
+const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 1))
+// 開演的時機跟中軸綠線、成長曲線同一條線（.lp-cue → cueIo），這裡不再自己養一個觀察器
+let obTimers: ReturnType<typeof setTimeout>[] = []
+
+function obScroll() {
+  // 跟真頁面一樣往最新訊息捲（smooth 由 .onbc-chat 的 scroll-behavior 給）
+  nextTick(() => obChatEl.value?.scrollTo({ top: obChatEl.value.scrollHeight, behavior: 'smooth' }))
+}
+
+/** 捲到卡片才開演（只演一次）；reduced-motion 早退時根本不會被呼叫。
+ *  節奏（09-03 反映「動畫可以快一點」收緊過一輪，全長約 21s → 15s）：
+ *  打字點點 0.48s ＋ 讀句時間跟長度走（0.45s 起跳、每字 +14ms、上限 1.5s）。 */
+function playObDemo() {
+  // 開演前的一個呼吸拍。卡片的淡入在觸發線之前就跑完了（.lp-cue 比 .lp-reveal 晚一截），
+  // 所以這裡不是在等淡入，是「先讓人看清楚這是什麼，它再開口」。
+  let t = 420
+  for (let i = obBeat.value; i < OB_BEATS.length; i++) {
+    const b = OB_BEATS[i]!
+    if (b.role === 'agent') {
+      // 真頁面 say() 之前有打字點點，照演
+      obTimers.push(setTimeout(() => { obTyping.value = true; obScroll() }, t))
+      t += 480
+    }
+    else {
+      t += 300
+    }
+    obTimers.push(setTimeout(() => { obTyping.value = false; obBeat.value = i + 1; obScroll() }, t))
+    t += Math.min(1500, 450 + b.html.length * 14) // 讀句子的時間跟長度走
+  }
+}
 
 /** 千分位。刻意不用 toLocaleString：SSR（Node ICU）與瀏覽器可能給出不同字串，會造成 hydration 不一致。 */
 function fmt(n: number): string {
@@ -910,9 +1199,25 @@ function closeMenu() { menuOpen.value = false }
 function onScroll() { stuck.value = window.scrollY > 8 }
 
 let io: IntersectionObserver | undefined
+let cueIo: IntersectionObserver | undefined
 let barIo: IntersectionObserver | undefined
-/** 每顆對話泡泡的打字控制，key＝該泡泡的 .lp-turn（它同時就是 .lp-reveal 的觀察對象） */
+/** 每顆對話泡泡的打字控制，key＝該泡泡的 .lp-turn（它同時就是 .lp-cue 的觀察對象） */
 const typings = new Map<HTMLElement, BubbleTyping>()
+
+/**
+ * 兩條觸發線。⚠️ 都用 rootMargin（百分比是**視窗高度**的百分比）而不是 threshold：
+ * threshold 是「元素露出多少比例」，元素比視窗高很多時比例永遠到不了門檻，那一塊就
+ * 再也不會進場。（現況最險的是「能做什麼」那疊，手機上 2,126px、最大比例只有 0.29。）
+ *
+ * REVEAL＝**淡入**：上緣越過畫面 88%（＝離底部 12% 視窗高）就開始，這時它才剛露出一小條，
+ * 淡入正好在使用者眼前發生。
+ * CUE＝**有時間軸的動畫**（畫線、長條生長、打字、live demo）：晚一截，上緣要越過畫面 76%。
+ * ⚠️ 兩者不能共用一條線：畫線／長條是 0.75～0.9 秒的「表演」，用 88% 那條的話它在元素
+ *    只露出一條邊時就開演——等你真的捲到它面前早就演完了（09-03 使用者反映
+ *    「動畫常常還沒滑到就已經觸發完了」）。CSS 端的分工見 _landing.scss 的「捲動進場動畫」。
+ */
+const REVEAL_MARGIN = '0px 0px -12% 0px'
+const CUE_MARGIN = '0px 0px -24% 0px'
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -942,27 +1247,48 @@ onMounted(() => {
       if (typing) typings.set(turn, typing)
     })
 
-    const els = root.value?.querySelectorAll<HTMLElement>('.lp-reveal') ?? []
-    // ⚠️ threshold 用 0 ＋ 底部 -12%（不是 threshold 0.12）：threshold 是**比例**，
-    //    元素比視窗高很多時比例永遠到不了門檻，那一塊就再也不會出現。
-    //    現況最險的是「能做什麼」那疊，手機上 2,126px、最大比例只有 0.29——今天還過得去，
-    //    但那是運氣不是設計。改成「上緣越過畫面 88% 就算進場」就沒有這個失敗模式。
+    // ① 淡入：每個 .lp-reveal 到了就掛 .in，只演一次。
+    // ⚠️ .lp-reveal 要掛在「一個視覺單位」上，⛔別掛在高過一個畫面的容器：容器的上緣
+    //    一露出就整塊淡完，裡面的東西等你捲到時什麼都不會發生（一條路那疊 1,038px、
+    //    #value 兩列手機上各 1,200px，都是拆進去掛的）。
     io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
         if (!e.isIntersecting) return
         e.target.classList.add('in')
-        typings.get(e.target as HTMLElement)?.play()
         io?.unobserve(e.target)
       })
-    }, { threshold: 0, rootMargin: '0px 0px -12% 0px' })
-    els.forEach(el => io?.observe(el))
+    }, { threshold: 0, rootMargin: REVEAL_MARGIN })
+    root.value?.querySelectorAll<HTMLElement>('.lp-reveal').forEach(el => io?.observe(el))
+
+    // ② 有時間軸的動畫：晚一截才開跑，確保是在畫面上演給人看的。
+    //    對象＝模板裡標了 .lp-cue 的元素（中軸綠線的兩站、成長曲線、開通引導 live 卡）
+    //    ＋每顆會打字的對話泡泡。開通引導 demo 的播放也掛在這條線上（同一套規矩，
+    //    不再自己一個 threshold 0.3 的觀察器）。reduced-motion 在上面早退＝維持靜態卡。
+    const cues = [
+      ...(root.value?.querySelectorAll<HTMLElement>('.lp-cue') ?? []),
+      ...typings.keys(),
+    ]
+    cueIo = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return
+        const el = e.target as HTMLElement
+        el.classList.add('is-cued')
+        typings.get(el)?.play()
+        if (el === obCardEl.value) playObDemo()
+        cueIo?.unobserve(el)
+      })
+    }, { threshold: 0, rootMargin: CUE_MARGIN })
+    cues.forEach(el => cueIo?.observe(el))
   })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   io?.disconnect()
+  cueIo?.disconnect()
   barIo?.disconnect()
+  obTimers.forEach(clearTimeout)
+  obTimers = []
   typings.forEach(t => t.cancel())
   typings.clear()
   document.documentElement.style.scrollBehavior = ''
