@@ -10,17 +10,28 @@
     @close="onDialogClose"
   >
     <!-- ── Step 1:一個投放區,自動判別是什麼(P1-2) ─────────── -->
-    <div v-if="step === 'input'">
+    <!--
+      拖放handler掛在整個第一步而不是只掛投放框（2026-09-03 UI 打磨）：
+      檔案拖歪一點（掉在說明文字或按鈕上）原本會被瀏覽器**整頁打開檔案**，
+      這個視窗連同貼到一半的內容整個消失。掛在外層＝視窗內任何地方放開都算數。
+      ⛔ 投放框自己不再掛 drop：drop 事件會冒泡，兩層都掛等於 onDrop 跑兩次
+        （拒收的 toast 會連跳兩次）。
+    -->
+    <div
+      v-if="step === 'input'"
+      @dragover.prevent="dragOver = true"
+      @dragleave.prevent="dragOver = false"
+      @drop.prevent="onDrop"
+    >
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>把資料交給 AI 整理</p>
 
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
+      <!-- 點框裡任何空白處＝把游標放進輸入框：整塊就是「一個輸入」的心智模型 -->
       <div
         class="kb-drop"
         :class="{ 'kb-drop--over': dragOver, 'kb-drop--filled': !!detected }"
         data-tour="kb-drop"
-        @dragover.prevent="dragOver = true"
-        @dragleave.prevent="dragOver = false"
-        @drop.prevent="onDrop"
+        @click="focusPaste"
       >
         <template v-if="selectedFile">
           <div class="kb-drop__file">
@@ -1038,6 +1049,12 @@ watch(() => detected.value?.label, () => { hintOpen.value = false })
  */
 const startOpen = ref<'' | 'web' | 'excel' | 'sheet'>('')
 
+/** 點投放框的空白處＝聚焦輸入框；點到框裡的按鈕（選擇檔案）就讓按鈕自己來 */
+function focusPaste(e: MouseEvent) {
+  if ((e.target as HTMLElement | null)?.closest('button, a, input, textarea')) return
+  pasteInputEl.value?.focus?.()
+}
+
 function pickStart(route: 'web' | 'excel' | 'sheet') {
   startOpen.value = startOpen.value === route ? '' : route
   // 官網那條的「動作」就是貼網址：把游標放進框裡，使用者回來直接 ⌘V 就能貼
@@ -2026,6 +2043,13 @@ watch(previewStillRunning, (on) => {
 // 使用者主動打開視窗＝他想看結果，不要讓他等下一次定時（45 秒在人站在畫面前時很長）
 watch(() => props.modelValue, (open) => {
   if (open && previewStillRunning.value) void recheckStoredJob()
+  // 開窗自動聚焦（2026-09-03 UI 打磨）：第一個動作幾乎都是貼上，游標先放進框，
+  // 開窗直接 ⌘V 就能貼。⛔只在乾淨的第一步聚焦：接回預覽/結果頁時搶焦點會把人拉錯地方
+  if (open) {
+    nextTick(() => {
+      if (step.value === 'input' && !detected.value && !previewing.value) pasteInputEl.value?.focus?.()
+    })
+  }
 })
 
 onBeforeUnmount(() => {

@@ -4,10 +4,12 @@
   overflow-y: auto;
 }
 
+/* 每一步唯一的標題:比正文高半階（原 13px 跟說明文同大小,撐不起層級） */
 .kb-step-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  margin: 0 0 12px;
+  color: var(--text-primary);
+  margin: 0 0 14px;
 }
 
 /* 「第 N 步，共 3 步」（D-40）：進度是輔助資訊，不能比步驟名稱還搶眼 */
@@ -599,16 +601,32 @@
   }
 }
 
-/* ── Step 1 單一投放區(P1-2):不用先決定「我該用哪一種」 ─────────── */
+/* ── Step 1 單一投放區(P1-2):不用先決定「我該用哪一種」 ───────────
+   2026-09-03 UI 打磨:**拆掉框中框**——原本虛線框裡還有一個帶框線的白色輸入框，
+   讀起來是「盒子裡的盒子」。改成整塊就是一個輸入:內層 textarea 隱形（框線、底色全拿掉），
+   游標進來（focus-within）整塊亮品牌綠。⛔別給 textarea 加回自己的框線,雙重框線就是
+   這一版要修的病。 */
 .kb-drop {
   border: 1px dashed var(--el-border-color);
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   background: var(--el-fill-color-lighter);
-  transition: border-color .15s, background .15s;
+  cursor: text; /* 整塊點下去就是要打字/貼上（點擊聚焦見 focusPaste） */
+  transition: border-color .15s, background .15s, box-shadow .15s;
 
+  &:hover {
+    border-color: var(--el-text-color-placeholder);
+  }
+  /* 游標在裡面＝整塊是作用中的輸入。⛔亮的是外框不是內框（內框已拿掉） */
+  &:focus-within {
+    border-color: var(--brand-green, #06c755);
+    border-style: solid;
+    background: var(--el-bg-color);
+    box-shadow: 0 0 0 3px var(--brand-green-glow, rgba(6, 199, 85, 0.14));
+  }
   &--over {
     border-color: var(--el-color-primary);
+    border-style: solid;
     background: var(--el-color-primary-light-9);
   }
   &--filled {
@@ -616,18 +634,30 @@
   }
 
   /* ⛔ 這裡原本寫 `:deep(.el-textarea__inner)`——**全域 partial 不能用 `:deep()`**：
-     瀏覽器把它當未知偽類，整條規則靜默失效（貼上框的白底從來沒生效過）。
-     這個檔案沒有 scoped 作用域，直接寫子選擇器就好。見記憶 feedback_no_hand_rolled_form_inputs。 */
+     瀏覽器把它當未知偽類，整條規則靜默失效。這個檔案沒有 scoped 作用域，直接寫子選擇器。
+     Element Plus 的輸入框「框線」是用 box-shadow 畫的,關掉要關 box-shadow（含 focus 態）。 */
   &__paste .el-textarea__inner {
-    background: var(--el-fill-blank);
+    &,
+    &:hover,
+    &:focus {
+      border: none;
+      box-shadow: none;
+      outline: none; /* 聚焦的視覺由外層 .kb-drop:focus-within 統一給,內層不可以再畫一圈 */
+      background: transparent;
+    }
+    padding: 0;
+    border-radius: 0;
   }
 
+  /* 「或 選擇檔案」跟貼上區用髮絲虛線分段:同一塊裡的兩條路,不是另一個盒子 */
   &__or {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--el-border-color-lighter);
     font-size: 12px;
     color: var(--el-text-color-secondary);
   }
@@ -757,11 +787,9 @@
    二版＝一行標題＋三顆選項，點了哪條才展開哪條（一次只開一條）。
    ⛔ 只在投放框空的時候出現（模板的 v-if）；貼上內容後畫面回到「這是什麼＋一顆按鈕」。 */
 .kb-start {
-  margin-top: 12px;
-  padding: 10px 14px 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  background: var(--el-fill-color-light);
+  /* 卡疊卡拿掉（2026-09-03 UI 打磨）:對話框（白）→ 投放框（灰）→ 這一塊回到白底，
+     靠留白分段。展開的面板才上灰底——「按了才多出來的東西」用底色跟常駐內容分層 */
+  margin-top: 16px;
 
   &__head {
     margin: 0 0 8px;
@@ -817,16 +845,20 @@
     opacity: 0.75;
   }
 
-  /* 點開的那一條：白底面板，跟灰底的容器分層；一次只會有一個 */
+  /* 點開的那一條：灰底面板（容器已改白底，層次對調）；一次只會有一個 */
   &__panel {
-    margin: 8px 0 0;
-    padding: 10px 12px;
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 6px;
-    background: var(--el-bg-color);
+    margin: 10px 0 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--el-fill-color-light);
     font-size: 12.5px;
     line-height: 1.9;
     color: var(--el-text-color-regular);
+
+    /* 展開有個「長出來」的小動態（180ms，尊重減少動態設定）——回饋「我點的是它」 */
+    @media (prefers-reduced-motion: no-preference) {
+      animation: kb-start-panel-in 0.18s ease;
+    }
   }
 
   &__steps {
@@ -895,4 +927,16 @@
    ⛔ 用琥珀不用紅：知識確實建好了，只是還沒學會——紅色留給真的失敗那一列。 */
 .kb-site-status__warn {
   color: var(--el-color-warning-dark-2);
+}
+
+/* 起步區面板展開的入場（見 .kb-start__panel） */
+@keyframes kb-start-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
