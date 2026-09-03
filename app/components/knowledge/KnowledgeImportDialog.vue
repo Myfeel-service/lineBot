@@ -291,7 +291,7 @@
               在 Google 試算表新開一份，第一列打<strong>「客人會問的問題」「答案」</strong>兩欄
             </li>
             <li>
-              填完後按右上角<strong>「共用」</strong>，把這個帳號貼進去（<strong>檢視</strong>權限就夠）：
+              填完後按右上角<strong>「共用」</strong>，把這個帳號貼進去：
               <span v-if="shareEmail" class="kb-start__email">
                 <code class="kb-gsheet-email">{{ shareEmail }}</code>
                 <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
@@ -300,25 +300,32 @@
               <figure class="kb-shot">
                 <img
                   :src="SHOTS.gsheetShare1"
-                  alt="Google 共用視窗剛打開的樣子，紅框標示最上面的「新增使用者」欄位"
+                  alt="Google 共用視窗最上面那一格，紅框標示要貼帳號的位置"
                   loading="lazy"
                 >
-                <figcaption><span class="kb-shot__n">1</span>貼進紅框那一格（下面的「複製連結」不是這一步）</figcaption>
+                <figcaption><span class="kb-shot__n">1</span>貼在紅框那一格</figcaption>
               </figure>
             </li>
             <li>
-              把權限從「編輯者」改成<strong>「檢視者」</strong>，然後按<strong>「傳送」</strong>
+              把權限從「編輯者」改成<strong>「檢視者」</strong>
               <figure class="kb-shot">
                 <img
                   :src="SHOTS.gsheetShare2"
-                  alt="貼上帳號後的 Google 共用視窗，紅框標示權限下拉、通知勾選框與傳送按鈕"
+                  alt="貼上帳號後右邊出現權限下拉，預設是編輯者，紅框標示要改成檢視者"
                   loading="lazy"
                 >
-                <figcaption>
-                  <span class="kb-shot__n">2</span>權限改「檢視者」
-                  <span class="kb-shot__n">3</span>通知可以不勾
-                  <span class="kb-shot__n">4</span>按「傳送」
-                </figcaption>
+                <figcaption><span class="kb-shot__n">2</span>Google 預設給「編輯者」，改成「檢視者」就好</figcaption>
+              </figure>
+            </li>
+            <li>
+              按<strong>「傳送」</strong>（上面那個「通知共用對象」可以不勾）
+              <figure class="kb-shot">
+                <img
+                  :src="SHOTS.gsheetShare3"
+                  alt="共用視窗右下角，紅框標示傳送按鈕"
+                  loading="lazy"
+                >
+                <figcaption><span class="kb-shot__n">3</span>按右下角的「傳送」</figcaption>
               </figure>
             </li>
             <li>把試算表的連結貼到上面的框——貼上時會<strong>當場告訴你讀不讀得到</strong></li>

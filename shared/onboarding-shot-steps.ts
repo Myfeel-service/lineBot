@@ -7,7 +7,8 @@
 export const ONBOARDING_SHOT_STEPS: Record<string, number> = {
   'gsheet-copy.png': 0,
   'gsheet-share-1.png': 0,
-  'gsheet-share-2.png': 3,
+  'gsheet-share-2.png': 0,
+  'gsheet-share-3.png': 0,
   'gsheet-template.png': 0,
   'line-console-channel-secret.webp': 2,
   'line-console-channel.png': 0,

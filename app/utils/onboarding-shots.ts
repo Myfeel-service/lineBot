@@ -55,9 +55,15 @@ export const ONBOARDING_SHOTS = {
   gsheetCopy: '/onboarding/gsheet-copy.png',
   /** 範本副本長什麼樣（欄位名＋三列示範）。⛔這張刻意不打標註也不聚光：整張都是要讀的內容 */
   gsheetTemplate: '/onboarding/gsheet-template.png',
-  /** 共用視窗剛打開：①把服務帳號貼進最上面那一格（「複製連結」不是這一步） */
+  /**
+   * 共用流程三條**緊裁窄條**，一條一個動作：①貼帳號 ②權限改「檢視者」 ③按「傳送」。
+   *
+   * ⚠️ 鏡位刻意跟 LINE 那批一致（窄長條、框緊貼元件）：2026-09-03 老闆反映「紅框粗細要跟
+   *    創建時一樣」，實測後發現框線本來就都是 2px，差的是**裁切的廣角程度**——
+   *    原本把整個 Google 對話框收進來，同樣顯示寬度下框線看起來就變髮絲線。
+   * ⛔ 號碼跨三張連續（同一段流程），改順序要一起改 `make-onboarding-shots.py` 重跑。
+   */
   gsheetShare1: '/onboarding/gsheet-share-1.png',
-  /** 貼上帳號之後：②權限「編輯者」改「檢視者」 ③通知可不勾 ④按「傳送」。
-   *  ⛔號碼接續上一張的①——兩張是同一段流程，改順序要一起改 make-onboarding-shots.py */
   gsheetShare2: '/onboarding/gsheet-share-2.png',
+  gsheetShare3: '/onboarding/gsheet-share-3.png',
 } as const
