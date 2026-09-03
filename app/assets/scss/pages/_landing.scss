@@ -969,37 +969,59 @@
   .lp-voices__row:hover .lp-voices__track { animation-play-state: paused; }
   @keyframes lpVoicesDrift { to { transform: translateX(calc(-100% / 3)); } }
 
-  /* padding-block 8px＝卡片陰影的呼吸位（row 是 overflow:hidden，貼邊會把陰影切平） */
-  .lp-voices__set { display: flex; align-items: stretch; gap: var(--card-gap); margin: 0; padding: 8px calc(var(--card-gap) / 2); list-style: none; }
-  .lp-voice {
+  /* padding-block 10px＝泡泡陰影與 hover 浮起的呼吸位（row 是 overflow:hidden，貼邊會切平） */
+  .lp-voices__set { display: flex; align-items: stretch; gap: var(--card-gap); margin: 0; padding: 10px calc(var(--card-gap) / 2); list-style: none; }
+
+  /* ── 卡片＝白色對話泡泡＋店家籤（09-03 二輪「UI 美感再優化」）──
+     語彙沿全頁的「對話」：MiniMe 用淡綠泡泡開場、店家用**白泡泡**回話（跟後台
+     對話窗客人那側同色系）；尾巴指向下方的磚＝這句話是他說的。
+     ⛔ 泡泡不上綠底（綠泡泡被打槍過兩次，檔頭有記）。
+     ⚠️ 同一列等高＝li 被 set 拉伸、泡泡 flex:1 吃掉高度差——句子短的卡
+        店家籤才不會浮在半空。 */
+  .lp-voice { width: 340px; flex: none; display: flex; flex-direction: column; }
+  .lp-voice__bubble {
+    flex: 1; margin: 0;
     position: relative;
-    width: 340px; flex: none;
-    display: flex; flex-direction: column; gap: 14px;
-    /* 上內距比左右大＝給裝飾引號留位 */
-    padding: 38px 24px 20px;
+    padding: 20px 22px;
     background: var(--paper);
     border: 1px solid var(--hair);
     border-radius: var(--r-card);
     box-shadow: var(--sh-soft);
+    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
   }
-  /* 裝飾引號是字符不是圖示（標記系統⛔不引進圖示家族；「」也跟文案的中文引號同語言） */
-  .lp-voice::before {
-    content: '「';
-    position: absolute; top: 10px; left: 20px;
-    font-size: 1.6rem; font-weight: 800; line-height: 1;
-    color: var(--g); opacity: 0.35;
+  /* 尾巴＝旋轉 45° 的小方塊，只畫朝外的兩邊框；底色蓋掉泡泡自己的那一小段底框。
+     ⚠️ left 26px 是對著店家籤的磚（縮排 14px＋磚寬 32px＝磚心 30px）算的，
+        動磚的縮排或尺寸時要一起校。 */
+  .lp-voice__bubble::after {
+    content: '';
+    position: absolute; left: 26px; bottom: -6.5px;
+    width: 12px; height: 12px;
+    background: var(--paper);
+    border-right: 1px solid var(--hair);
+    border-bottom: 1px solid var(--hair);
+    transform: rotate(45deg);
   }
-  .lp-voice__quote { margin: 0; font-size: 0.93rem; line-height: 1.85; color: var(--ink-2); }
-  /* margin-top auto＝腳注釘在卡底：同一列等高（flex stretch），句子短的卡不能讓腳注浮在半空 */
-  .lp-voice__who { display: flex; align-items: center; gap: 10px; margin-top: auto; }
+  .lp-voice__bubble p { margin: 0; font-size: 0.94rem; line-height: 1.8; color: var(--ink-2); }
+  /* hover 微浮起＝跟牆卡同一種「這是一張卡」的回饋；那一列本來就會因 hover 停下，
+     浮起不會跟位移打架。reduced-motion 的歸零在最下面那區。 */
+  .lp-voice:hover .lp-voice__bubble { transform: translateY(-2px); border-color: var(--g-line); box-shadow: var(--sh-card); }
+
+  .lp-voice__who { display: flex; align-items: center; gap: 10px; margin: 13px 0 0 14px; }
+  /* 磚改白底髮絲框＋綠字：店家籤現在站在灰底段上，綠淡底磚跟背景太接近；
+     白磚跟泡泡同材質，綠色只留那一個業種字（單一綠強調）。 */
   .lp-voice__tile {
     width: var(--mk-md); height: var(--mk-md); flex: none;
     display: grid; place-items: center;
     border-radius: calc(var(--mk-md) / 3);
-    background: var(--g-wash); color: var(--g-deep);
+    background: var(--paper);
+    border: 1px solid var(--hair);
+    color: var(--g-deep);
     font-size: 0.95rem; font-weight: 800;
+    box-shadow: 0 1px 3px rgba(20, 24, 22, 0.05);
   }
-  .lp-voice__role { font-size: 0.84rem; font-weight: 600; color: var(--ink-soft); }
+  /* 店家籤兩層字階：業種深一階粗一階、職稱小一階淡一階——一眼先看到「誰」 */
+  .lp-voice__name { display: flex; flex-direction: column; line-height: 1.4; font-size: 0.9rem; font-weight: 700; color: var(--ink); }
+  .lp-voice__name small { font-size: 0.78rem; font-weight: 500; color: var(--ink-soft); }
 
   /* ── CTA band (green) ──────────────────────────────────── */
   .lp-cta { background: linear-gradient(135deg, #06c755 0%, #04a446 100%); color: #fff; position: relative; overflow: hidden; }
@@ -1493,7 +1515,8 @@
 
     /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
        （px/s 不變、可視寬變小＝掃過眼前的比例變快） */
-    .lp-voice { width: 300px; padding: 34px 20px 18px; }
+    .lp-voice { width: 300px; }
+    .lp-voice__bubble { padding: 17px 19px; }
     .lp-voices__track { animation-duration: 80s; }
     .lp-voices__track--rev { animation-duration: 96s; }
 
@@ -1553,6 +1576,7 @@
     .lp-wall__blink { animation: none; }
     .lp-stickybar { transition: none; }
     .lp-btn:hover, .lp-wall:hover, .lp-panel:hover { transform: none; }
+    .lp-voice:hover .lp-voice__bubble { transform: none; }
 
     /* 打字：整句直接出現（選擇器要跟上面那三條同權重，才壓得回去） */
     &.is-anim .lp-turn.is-typing .lp-tw__u { opacity: 1; transition: none; }

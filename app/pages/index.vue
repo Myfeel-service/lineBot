@@ -1062,11 +1062,17 @@
               class="lp-voices__set"
               :aria-hidden="n > 1 ? 'true' : undefined"
             >
-              <li v-for="v in row" :key="v.role" class="lp-voice">
-                <p class="lp-voice__quote">{{ v.text }}</p>
+              <!-- 卡片＝**白色對話泡泡＋店家籤**（09-03 二輪「UI 美感再優化」）：
+                   泡泡尾巴指向下方的磚——全頁的語彙就是對話（MiniMe 淡綠泡泡開場、
+                   後台對話窗客人是白泡泡），店家的話長成白泡泡剛好接上，
+                   也取代了一輪那顆飄在角落的裝飾引號。⛔泡泡不上綠底（綠泡泡被打槍過兩次）。 -->
+              <li v-for="v in row" :key="v.who" class="lp-voice">
+                <blockquote class="lp-voice__bubble">
+                  <p>{{ v.text }}</p>
+                </blockquote>
                 <div class="lp-voice__who">
                   <span class="lp-voice__tile" aria-hidden="true">{{ v.tile }}</span>
-                  <span class="lp-voice__role">{{ v.role }}</span>
+                  <span class="lp-voice__name">{{ v.who }}<small>{{ v.title }}</small></span>
                 </div>
               </li>
             </ul>
@@ -1203,22 +1209,22 @@ const landingDemoFriends = [
 //    ③ 老闆給了可具名的真素材後整包換掉、圖說改成具名授權的寫法，這段註解一併改。
 // 結構＝兩列（上列講客服、下列講行銷與上手），tile＝磚裡的單一業種字
 // （標記系統房規：磚裡只放數字或單一字符，⛔不引進圖示家族）。
-// role 刻意只寫「業種＋角色」不取店名：掛了店名（哪怕虛構）就是 Hero 註解裡
+// who／title 刻意只寫「業種＋角色」不取店名：掛了店名（哪怕虛構）就是 Hero 註解裡
 // 「山丘咖啡會被讀成他們的客戶」同一顆雷。
-const LP_VOICES: { tile: string, role: string, text: string }[][] = [
+const LP_VOICES: { tile: string, who: string, title: string, text: string }[][] = [
   [
-    { tile: '咖', role: '咖啡烘焙坊 · 老闆', text: '晚上十一點客人問手沖水溫，它馬上就答了。我早上起來只要看它答了什麼。' },
-    { tile: '甜', role: '甜點工作室 · 主理人', text: '以前訊息都積到打烊才回，現在常見的問題它先接住，我只處理要我決定的事。' },
-    { tile: '選', role: '選物店 · 店長', text: '規格、運費這些每天都有人問，把官網跟型錄餵給它，它就會答了。' },
-    { tile: '寵', role: '寵物用品店 · 老闆娘', text: '它答不了的會直接轉給我，不會硬答——這點我才敢放心讓它顧。' },
-    { tile: '書', role: '獨立書店 · 店主', text: '我完全不懂技術，照著聊天引導一步一步做，真的就設定完了。' },
+    { tile: '咖', who: '咖啡烘焙坊', title: '老闆', text: '晚上十一點客人問手沖水溫，它馬上就答了。我早上起來只要看它答了什麼。' },
+    { tile: '甜', who: '甜點工作室', title: '主理人', text: '以前訊息都積到打烊才回，現在常見的問題它先接住，我只處理要我決定的事。' },
+    { tile: '選', who: '選物店', title: '店長', text: '規格、運費這些每天都有人問，把官網跟型錄餵給它，它就會答了。' },
+    { tile: '寵', who: '寵物用品店', title: '老闆娘', text: '它答不了的會直接轉給我，不會硬答——這點我才敢放心讓它顧。' },
+    { tile: '書', who: '獨立書店', title: '店主', text: '我完全不懂技術，照著聊天引導一步一步做，真的就設定完了。' },
   ],
   [
-    { tile: '花', role: '花藝工作室 · 主理人', text: '母親節前它先提醒我準備檔期，要發給誰，選個標籤名單就在那裡。' },
-    { tile: '飾', role: '手作飾品品牌 · 負責人', text: '誰在問送禮、誰是回頭客，它會建議貼標籤，名單越用越乾淨。' },
-    { tile: '茶', role: '茶行 · 第二代', text: '後台看得到每句話是 AI 回的還是我回的，要接手的時候心裡有底。' },
-    { tile: '課', role: '烘焙教室 · 老師', text: '開課要通知，用標籤挑出上過課的人發就好，不用整包名單亂槍打鳥。' },
-    { tile: '健', role: '健身工作室 · 教練', text: '免費就能開始、不用綁卡，接自己本來的官方帳號，試了才知道多省事。' },
+    { tile: '花', who: '花藝工作室', title: '主理人', text: '母親節前它先提醒我準備檔期，要發給誰，選個標籤名單就在那裡。' },
+    { tile: '飾', who: '手作飾品品牌', title: '負責人', text: '誰在問送禮、誰是回頭客，它會建議貼標籤，名單越用越乾淨。' },
+    { tile: '茶', who: '茶行', title: '第二代', text: '後台看得到每句話是 AI 回的還是我回的，要接手的時候心裡有底。' },
+    { tile: '課', who: '烘焙教室', title: '老師', text: '開課要通知，用標籤挑出上過課的人發就好，不用整包名單亂槍打鳥。' },
+    { tile: '健', who: '健身工作室', title: '教練', text: '免費就能開始、不用綁卡，接自己本來的官方帳號，試了才知道多省事。' },
   ],
 ]
 
