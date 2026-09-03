@@ -907,48 +907,58 @@
   gap: 2px;
 }
 
-/* 範本樣貌示意圖（KnowledgeFaqTemplateDiagram.vue）：跟共用示意圖同一套尺寸與圖說語彙 */
-.kb-tpl-fig {
-  margin: 8px 0 4px;
+/* 教學截圖（`public/onboarding/` 的真截圖，走 make-onboarding-shots.py 產線）。
+   ⛔ 圖說**不要**寫成一長串夾著粗體數字的句子——老闆 09-03 明確反映「圖片下方的文字很不好閱讀」：
+      密排的小字＋行內數字，眼睛找不到斷點。改成短句＋跟圖上同色的圓形號碼徽章，
+      一眼就能把「圖上的③」跟「這句話」對起來。 */
+.kb-shot {
+  margin: 8px 0 2px;
   max-width: 460px;
 
-  &__svg {
+  img {
     display: block;
     width: 100%;
     height: auto;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--bg-surface);
   }
 
-  &__cap {
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.7;
-    color: var(--text-muted);
-
-    strong {
-      display: inline-block;
-      min-width: 14px;
-      color: var(--teach-mark);
-    }
-  }
-}
-
-/* Google 共用畫面的示意圖（KnowledgeSheetShareDiagram.vue）。
-   ⛔ 上限寬度要收：這張圖是輔助，撐滿整個對話框會變成畫面主角。 */
-.kb-share-fig {
-  margin: 8px 0 4px;
-  max-width: 460px;
-
-  &__svg {
-    display: block;
-    width: 100%;
-    height: auto;
+  /* ⛔ 圖說**不可以**做成 flex 容器（2026-09-03 第二次踩同一顆雷，headless 實測抓到）：
+     flex 會把每段文字與每個 <strong> 各自當成一個項目，句子被 gap 切開
+     （「範本長這樣：␣第一列的欄位名稱已經填好␣，下面⋯」）。文字流就是文字流。 */
+  figcaption {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--el-text-color-regular);
   }
 
-  &__cap {
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.6;
-    color: var(--text-muted);
+  /* 跟圖上的徽章同一個色與形狀（`--teach-mark` 與截圖產線的 RED 同值）。
+     ⚠️ inline-flex ＋ vertical-align：它要能待在文字流裡，不能讓整行變成排版格 */
+  &__n {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin: 0 3px 0 8px;
+    border-radius: 50%;
+    background: var(--teach-mark);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: -3px;
+
+    &:first-child { margin-left: 0; }
+  }
+
+  /* 很扁的參考圖（例：範本那條 880×132 的表格）：吃滿面板寬，字才讀得到。
+     ⛔ 不要對共用視窗那兩張用——它們有 400px 高，放大到滿版會讓面板高到得捲很久，
+        而它們的字在 460px 就已經讀得清楚（實測過）。 */
+  &--wide {
+    max-width: 100%;
   }
 }
 

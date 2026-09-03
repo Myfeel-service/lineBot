@@ -48,4 +48,16 @@ export const ONBOARDING_SHOTS = {
   oamAutoReplyAnim: '/onboarding/oam-auto-reply.webp',
   /** 循環動畫：建活動頁 LIFF（LINE Login 那張卡 → LIFF 分頁 → Add → 貼 Endpoint）。⚠️截圖尚缺，補進 src 後產 */
   liffSetupAnim: '/onboarding/line-console-liff-setup.webp',
+
+  // ── Google 試算表：把 FAQ 範本變成「改了自動更新」的資料來源（`C-106`，2026-09-03）──
+  // 這四張取代了我憑記憶畫的示意圖（那張畫錯四處）。**站外畫面才配圖**，站內一律聚光燈導覽。
+  /** `/copy` 的「複製文件」頁：圈唯一那顆「建立副本」 */
+  gsheetCopy: '/onboarding/gsheet-copy.png',
+  /** 範本副本長什麼樣（欄位名＋三列示範）。⛔這張刻意不打標註也不聚光：整張都是要讀的內容 */
+  gsheetTemplate: '/onboarding/gsheet-template.png',
+  /** 共用視窗剛打開：①把服務帳號貼進最上面那一格（「複製連結」不是這一步） */
+  gsheetShare1: '/onboarding/gsheet-share-1.png',
+  /** 貼上帳號之後：②權限「編輯者」改「檢視者」 ③通知可不勾 ④按「傳送」。
+   *  ⛔號碼接續上一張的①——兩張是同一段流程，改順序要一起改 make-onboarding-shots.py */
+  gsheetShare2: '/onboarding/gsheet-share-2.png',
 } as const

@@ -253,15 +253,25 @@
               <span class="text-xs text-muted">（或直接拖進上面的框）</span>
             </li>
           </ol>
-          <KnowledgeFaqTemplateDiagram />
+          <!-- --wide：這張很扁（880×132），吃滿面板寬字才讀得到（見 SCSS 的說明） -->
+          <figure class="kb-shot kb-shot--wide">
+            <img
+              :src="SHOTS.gsheetTemplate"
+              alt="範本的樣子：第一列是欄位名稱「客人會問的問題」與「答案」，下面每一列是一個問答"
+              loading="lazy"
+            >
+            <figcaption>範本長這樣：<strong>第一列的欄位名稱已經填好</strong>，下面一列一題往下加就好</figcaption>
+          </figure>
         </div>
 
         <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
           <!--
-            ⚠️ 分享這一步一定要**在貼之前**就講（附複製鈕）：它是知識庫體檢裡最常見的失敗原因，
-               而原本只有「貼了、失敗了」才看得到說明——第一次用的人會先撞一次紅字再回頭弄。
-            ⚠️ 第一步的講法要照**實際有沒有設定範本母本**走（faqTemplateCopyUrl）：
-               沒設定卻寫「點一下建立副本」會指向一個不存在的東西（母本＝STATUS `D-52`）。
+            2026-09-03 三版：**改用老闆拍的真截圖**（走既有截圖產線，見 `make-onboarding-shots.py`
+            的 gsheet 區塊）。前一版是我憑記憶畫的示意圖，四處畫錯（欄位名、權限下拉位置、
+            通知預設打勾、訊息框）——站外畫面就該用真截圖，這正是 08-28 拍板的分工。
+            ⚠️ 圖上的①②③④跟這裡的文字是**同一套號碼**：改這裡的順序要一起改產線重跑，
+               否則畫面上的③會指到別的動作，而且沒有任何測試會紅。
+            ⛔ 每張圖緊貼它自己那一步（不要把三張圖堆在最後）：使用者是一步一步照做的。
           -->
           <ol class="kb-start__steps">
             <li v-if="faqTemplateCopyUrl">
@@ -281,17 +291,35 @@
               在 Google 試算表新開一份，第一列打<strong>「客人會問的問題」「答案」</strong>兩欄
             </li>
             <li>
-              填完後在 Google 按<strong>「共用」</strong>，分享給下面這個帳號（<strong>檢視</strong>權限就夠）：
+              填完後按右上角<strong>「共用」</strong>，把這個帳號貼進去（<strong>檢視</strong>權限就夠）：
               <span v-if="shareEmail" class="kb-start__email">
                 <code class="kb-gsheet-email">{{ shareEmail }}</code>
                 <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
               </span>
               <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
-              <!--
-                這一步發生在**Google 的畫面上**，我們的聚光燈導覽指不到那裡，所以配圖
-                （08-29 `D-40`③ 拍板：站外畫面本來就該配圖）。⛔ 是示意圖不是截圖，見元件說明。
-              -->
-              <KnowledgeSheetShareDiagram />
+              <figure class="kb-shot">
+                <img
+                  :src="SHOTS.gsheetShare1"
+                  alt="Google 共用視窗剛打開的樣子，紅框標示最上面的「新增使用者」欄位"
+                  loading="lazy"
+                >
+                <figcaption><span class="kb-shot__n">1</span>貼進紅框那一格（下面的「複製連結」不是這一步）</figcaption>
+              </figure>
+            </li>
+            <li>
+              把權限從「編輯者」改成<strong>「檢視者」</strong>，然後按<strong>「傳送」</strong>
+              <figure class="kb-shot">
+                <img
+                  :src="SHOTS.gsheetShare2"
+                  alt="貼上帳號後的 Google 共用視窗，紅框標示權限下拉、通知勾選框與傳送按鈕"
+                  loading="lazy"
+                >
+                <figcaption>
+                  <span class="kb-shot__n">2</span>權限改「檢視者」
+                  <span class="kb-shot__n">3</span>通知可以不勾
+                  <span class="kb-shot__n">4</span>按「傳送」
+                </figcaption>
+              </figure>
             </li>
             <li>把試算表的連結貼到上面的框——貼上時會<strong>當場告訴你讀不讀得到</strong></li>
           </ol>
@@ -953,6 +981,8 @@ import { ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
+// 圖檔路徑的單一來源（同開通引導與修復劇本共用那份註冊表）
+import { ONBOARDING_SHOTS as SHOTS } from '~/utils/onboarding-shots'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
 import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'

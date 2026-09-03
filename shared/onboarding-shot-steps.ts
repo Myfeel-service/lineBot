@@ -5,6 +5,10 @@
  *    改圖的步數要改腳本重跑，這裡才會跟著動。
  */
 export const ONBOARDING_SHOT_STEPS: Record<string, number> = {
+  'gsheet-copy.png': 0,
+  'gsheet-share-1.png': 0,
+  'gsheet-share-2.png': 3,
+  'gsheet-template.png': 0,
   'line-console-channel-secret.webp': 2,
   'line-console-channel.png': 0,
   'line-console-channel.webp': 0,
