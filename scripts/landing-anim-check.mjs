@@ -232,7 +232,25 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   num(chartAfter) < 0.01 ? ok(`成長曲線 終點＝畫完 (${chartAfter})`) : bad(`成長曲線 沒畫完：${chartAfter}`)
   num(lblAfter) > 0.99 ? ok(`曲線標籤 浮出來了 (${lblAfter})`) : bad(`曲線標籤 沒浮出：${lblAfter}`)
 
-  // 6) 整頁捲完不能留下還藏著的東西
+  // 6) 證言牆跑馬燈（環境動態，無關 .is-cued）：真的在飄、滑鼠移上去那一列會停
+  const trackX = () => page.evaluate(() => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-voices__track')).transform)
+    return Math.round(m.m41)
+  })
+  await go('.lp-voices', -300)
+  const vx1 = await trackX()
+  await wait(1000)
+  const vx2 = await trackX()
+  Math.abs(vx2 - vx1) > 5 ? ok(`證言牆有在飄 (1 秒位移 ${Math.abs(vx2 - vx1)}px)`) : bad(`證言牆沒在飄：${vx1} → ${vx2}`)
+  await page.hover('.lp-voices__row')
+  await wait(250)
+  const vx3 = await trackX()
+  await wait(800)
+  const vx4 = await trackX()
+  Math.abs(vx4 - vx3) <= 1 ? ok('滑鼠移上去那一列停下來了') : bad(`hover 沒停：0.8 秒還位移 ${Math.abs(vx4 - vx3)}px`)
+  await page.mouse.move(0, 0) // 把滑鼠挪開，別讓暫停影響後面的檢查
+
+  // 7) 整頁捲完不能留下還藏著的東西
   await page.evaluate(async () => {
     const h = document.documentElement.scrollHeight
     for (let y = 0; y < h; y += 300) {
@@ -277,6 +295,16 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   const hasAnim = await page.evaluate(() => document.querySelector('.is-anim') !== null)
   hidden.length ? bad('這些被藏起來了：\n     ' + hidden.join('\n     ')) : ok('沒有任何區塊是藏起來的')
   ok(hasAnim ? '.is-anim 在場，CSS 保險有把東西還原' : '沒掛 .is-anim（JS 早退，符合設計）')
+  // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
+  const voices = await page.evaluate(() => ({
+    animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
+    dupHidden: [...document.querySelectorAll('.lp-voices__set[aria-hidden]')]
+      .every(el => getComputedStyle(el).display === 'none'),
+    visible: [...document.querySelectorAll('.lp-voice')].filter(el => el.getClientRects().length).length,
+  }))
+  voices.animName === 'none' ? ok('證言牆跑馬燈已停') : bad(`證言牆還在飄：animation-name=${voices.animName}`)
+  voices.dupHidden ? ok('重複的卡組已收掉') : bad('aria-hidden 的重複卡組還看得到')
+  voices.visible === 10 ? ok('10 張證言卡全部攤開') : bad(`攤開的證言卡只有 ${voices.visible} 張（該是 10）`)
   await page.close()
 }
 

@@ -939,6 +939,68 @@
   .lp-q[open] .plus { transform: rotate(45deg); }
   .lp-q .a { padding: 0 2px 20px; color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
 
+  /* ── 店家的話（證言牆，FAQ 與收尾 CTA 之間）──────────────────
+   * 呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停
+   * （讓人把那張卡讀完）。全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態
+   * ——跟 .lp-wall__blink 同一類（無限循環、早開演不會錯過），所以⛔不掛 .lp-cue、
+   * 也不等 .is-anim：純 CSS，沒有 JS 也照飄；「減少動態效果」時整面攤成靜態網格
+   * （見最下面的 reduced-motion 區）。
+   * ⚠️ 內容紅線（虛構示意、圖說不可拿掉——STATUS D-13）在 index.vue 的 LP_VOICES 註解。
+   *
+   * 無縫循環的機關：
+   *   track 裡放 **3 份**一樣的卡組（.lp-voices__set），動畫位移一份的寬度
+   *   （translateX(-100%/3)）後畫面跟起點一模一樣。
+   *   ⛔ 別減成 2 份：可視寬 > 總寬 − 一份寬 就會露出空檔——一份約 1,850px，
+   *      2 份在 2,560px 的螢幕就破了；3 份撐到 ~3,700px。
+   *   ⛔ 組與組的接縫＝每組自帶 padding-inline: gap/2，別改成 track 的 gap：
+   *      位移量是「一份的寬度」，gap 記在 track 上位移就對不上、每圈跳一下。
+   * ⚠️ 兩列速度刻意差一截（56s／70s）：同速反向讀起來是一條機械的「輸送帶」，
+   *    差速才像各自在飄。手機再放慢（見 720px 斷點）——卡片相對螢幕更大，同速會太快。 */
+  .lp-voices { margin-top: var(--section-head-gap); display: grid; }
+  .lp-voices__row {
+    overflow: hidden;
+    /* 兩側淡出用遮罩不用蓋色塊：這面牆在灰底段上，蓋 linear-gradient 色塊要寫死底色，
+       遮罩挖的是自己、跟底色無關 */
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  }
+  .lp-voices__track { display: flex; width: max-content; animation: lpVoicesDrift 56s linear infinite; }
+  .lp-voices__track--rev { animation-direction: reverse; animation-duration: 70s; }
+  .lp-voices__row:hover .lp-voices__track { animation-play-state: paused; }
+  @keyframes lpVoicesDrift { to { transform: translateX(calc(-100% / 3)); } }
+
+  /* padding-block 8px＝卡片陰影的呼吸位（row 是 overflow:hidden，貼邊會把陰影切平） */
+  .lp-voices__set { display: flex; align-items: stretch; gap: var(--card-gap); margin: 0; padding: 8px calc(var(--card-gap) / 2); list-style: none; }
+  .lp-voice {
+    position: relative;
+    width: 340px; flex: none;
+    display: flex; flex-direction: column; gap: 14px;
+    /* 上內距比左右大＝給裝飾引號留位 */
+    padding: 38px 24px 20px;
+    background: var(--paper);
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    box-shadow: var(--sh-soft);
+  }
+  /* 裝飾引號是字符不是圖示（標記系統⛔不引進圖示家族；「」也跟文案的中文引號同語言） */
+  .lp-voice::before {
+    content: '「';
+    position: absolute; top: 10px; left: 20px;
+    font-size: 1.6rem; font-weight: 800; line-height: 1;
+    color: var(--g); opacity: 0.35;
+  }
+  .lp-voice__quote { margin: 0; font-size: 0.93rem; line-height: 1.85; color: var(--ink-2); }
+  /* margin-top auto＝腳注釘在卡底：同一列等高（flex stretch），句子短的卡不能讓腳注浮在半空 */
+  .lp-voice__who { display: flex; align-items: center; gap: 10px; margin-top: auto; }
+  .lp-voice__tile {
+    width: var(--mk-md); height: var(--mk-md); flex: none;
+    display: grid; place-items: center;
+    border-radius: calc(var(--mk-md) / 3);
+    background: var(--g-wash); color: var(--g-deep);
+    font-size: 0.95rem; font-weight: 800;
+  }
+  .lp-voice__role { font-size: 0.84rem; font-weight: 600; color: var(--ink-soft); }
+
   /* ── CTA band (green) ──────────────────────────────────── */
   .lp-cta { background: linear-gradient(135deg, #06c755 0%, #04a446 100%); color: #fff; position: relative; overflow: hidden; }
   .lp-cta__blob { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, 0.1); filter: blur(50px); }
@@ -1211,6 +1273,9 @@
   &.is-anim .lp-faq .lp-reveal.in:nth-child(2) { transition-delay: .06s; }
   &.is-anim .lp-faq .lp-reveal.in:nth-child(3) { transition-delay: .12s; }
 
+  /* 證言牆兩列同時進畫面，第二列錯開 70ms（同四道牆的理由：看得出上下有先後就好） */
+  &.is-anim .lp-voices .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
+
   /* ⛔ #value 這一區的三塊**都不加「誰先誰後」的進場延遲**，兩個理由都踩過：
        ①能力區（.lp-pane）十七輪改成上下堆疊之後，標頭／視窗／成效帶本來就依序
          到達觸發線，捲動自己給了順序。
@@ -1426,6 +1491,12 @@
     /* 單欄時手機回到原尺寸（不再需要為了 1:2 縮小） */
     .lp-band__phone { grid-column: auto; grid-row: auto; justify-self: center; width: 268px; --phone-zoom: 1; }
 
+    /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
+       （px/s 不變、可視寬變小＝掃過眼前的比例變快） */
+    .lp-voice { width: 300px; padding: 34px 20px 18px; }
+    .lp-voices__track { animation-duration: 80s; }
+    .lp-voices__track--rev { animation-duration: 96s; }
+
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
@@ -1446,7 +1517,16 @@
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-pricefeat .lp-reveal.in,
-    &.is-anim .lp-faq .lp-reveal.in { transition-delay: 0s; }
+    &.is-anim .lp-faq .lp-reveal.in,
+    &.is-anim .lp-voices .lp-reveal.in { transition-delay: 0s; }
+
+    /* 證言牆：跑馬燈停下，攤成置中、可換行的靜態網格——
+       ⛔只停動畫不攤開的話，每列只看得到前三張、其他卡永遠在畫面外。
+       重複的兩份卡組（aria-hidden 那兩份）收掉，遮罩也拿掉（靜態網格不需要邊緣淡出）。 */
+    .lp-voices__track { animation: none; width: auto; }
+    .lp-voices__set { flex-wrap: wrap; justify-content: center; max-width: var(--wrap); margin: 0 auto; }
+    .lp-voices__set[aria-hidden='true'] { display: none; }
+    .lp-voices__row { overflow: visible; -webkit-mask-image: none; mask-image: none; }
     &.is-anim .lp-path__rail::after { transform: none; transition: none; }
     /* 開通引導 live 卡：關動態（demo 播放本身由 JS 的 reduced-motion 早退擋住，
        這裡管的是萬一 .is-anim 在場時的 CSS 動畫） */
