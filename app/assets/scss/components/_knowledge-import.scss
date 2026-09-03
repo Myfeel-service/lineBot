@@ -752,14 +752,120 @@
   }
 }
 
-.kb-first-time {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+/* ── 「還沒有現成資料？」三條路（2026-09-03）─────────────────────
+   取代原本那行「第一次匯入？用官方 FAQ 範本開始」：老闆看到簡化後的第一步的第一句話是
+   「我會有點不知道怎麼做」——格式清單答不了「我手邊什麼都沒有該怎麼辦」。
+   ⛔ 只在投放框空的時候出現（模板的 v-if），所以這一塊可以講得完整；
+      貼上內容之後畫面要回到「這是什麼＋一顆按鈕」的乾淨狀態。 */
+.kb-start {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+
+  &__head {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  &__row {
+    display: flex;
+    gap: 10px;
+
+    & + & {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--el-border-color-lighter);
+    }
+  }
+
+  /* 編號是真的順序資訊（由易到難、由快到慢），不是裝飾 */
+  &__no {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: var(--el-fill-color-dark, var(--el-border-color));
+    color: var(--el-text-color-regular);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
+  }
+
+  &__main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+  }
+
+  /* ⛔ 這一行**不可以**做成 flex 容器（2026-09-03 headless 實測抓到）：
+     裡面是「按鈕＋一整句話」，flex 會把每一段文字與每個 <strong> 各自當成一個項目，
+     於是句子被切開、結尾那個「」」單獨掉到下一行。要的是文字流，不是排版格。
+     按鈕維持 inline-flex，用 vertical-align 對齊基線就好。 */
+  &__why {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--el-text-color-secondary);
+
+    .el-button {
+      vertical-align: -1px;
+      margin-right: 4px;
+    }
+  }
+
+  /* 「最快・不用準備」「約 3 分鐘」「多一步分享」——三條路唯一真正的差別 */
+  &__tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 3px;
+    background: var(--el-fill-color);
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  /* 建議的那條用綠色（品牌主色）：它是零準備、最可能成功的一條 */
+  &__tag--fast {
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+  }
+
+  &__steps {
+    margin: 6px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--el-text-color-secondary);
+
+    li + li { margin-top: 2px; }
+
+    .el-button {
+      vertical-align: -1px;
+      margin-right: 4px;
+    }
+  }
+
+  /* 服務帳號那一行：長字串要能折，複製鈕貼在後面 */
+  &__email {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: 2px;
+  }
 }
 
 /* 匯入失敗就地重試(P1-6) */

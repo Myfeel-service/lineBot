@@ -357,7 +357,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-import"]',
         title: '丟進來就好，不用先選種類',
         description:
-          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼，並告訴你之後改了會不會自動更新。細節不用背：貼上之後，視窗會就地講該注意什麼。',
+          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>手邊還沒有現成資料的話，框下面有三條路可以照著做</strong>；貼上之後視窗也會就地講該注意什麼。',
         placement: 'bottom',
       },
       {

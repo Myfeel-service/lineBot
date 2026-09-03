@@ -112,24 +112,99 @@
         </div>
       </div>
 
-      <!-- 第一次用的人給一條捷徑,不佔版面 -->
-      <p v-if="!detected" class="kb-first-time">
-        第一次匯入?
-        <el-button
-          tag="a"
-          :href="faqTemplateCopyUrl || '/templates/faq-sheet-template.xlsx'"
-          target="_blank"
-          rel="noopener"
-          size="small"
-          text
-          type="primary"
-        >
-          用官方 FAQ 範本開始
-        </el-button>
-        <!-- 有母本連結=開 Google 試算表副本(填完貼連結回來);沒設定=下載 Excel 檔(要用「選擇檔案」傳回來)。
-             指示要照實際走的那條路講——寫死「貼回來」的話,下載 Excel 的人照字面做會卡住 -->
-        <span class="text-xs text-muted">兩欄(問題／答案)填完，{{ faqTemplateCopyUrl ? '把試算表連結貼回來' : '用「選擇檔案」把檔案傳回來' }}就好，其他問法 AI 會自動補</span>
-      </p>
+      <!--
+        ── 「還沒有現成資料？」三條路（2026-09-03，老闆看到簡化後的第一步說「不知道怎麼做」）──
+
+        為什麼要加回文字：簡化 1 拿掉「這是多樣商品清單嗎」那個**答不出來的問題**是對的，
+        但同一輪把「我該做什麼」也一起拿掉了——剩下的畫面只回答「我們收哪些格式」，
+        對「手邊什麼都還沒整理」的人是一片空白。⚠️這兩種文字不是同一件事：
+        前者要人替 AI 做判斷（拿掉），後者是告訴人下一個動作（要留）。
+
+        ⛔ 只在投放框還空的時候出現（`v-if="!detected"`）：貼上內容之後畫面必須回到
+           「這是什麼＋一顆按鈕」那個乾淨狀態，不可以把簡化 1 的成果吃回去。
+        ⛔ 每一條都要寫「準備時間」與「之後改了會不會自動更新」：那是三條路唯一真正的差別，
+           不寫的話使用者只能憑感覺猜，而猜錯的代價是整份資料要重做一次。
+      -->
+      <div v-if="!detected" class="kb-start">
+        <p class="kb-start__head">還沒有現成資料？從這裡開始</p>
+
+        <div class="kb-start__row">
+          <span class="kb-start__no">1</span>
+          <div class="kb-start__main">
+            <p class="kb-start__title">
+              官網有「常見問題」或商品頁 → <strong>把那一頁的網址貼到上面就好</strong>
+              <span class="kb-start__tag kb-start__tag--fast">最快・不用準備</span>
+            </p>
+            <p class="kb-start__why">之後網頁改了，系統會通知你要不要重新學。</p>
+          </div>
+        </div>
+
+        <div class="kb-start__row">
+          <span class="kb-start__no">2</span>
+          <div class="kb-start__main">
+            <p class="kb-start__title">
+              什麼都還沒整理 → 用我們的範本填
+              <span class="kb-start__tag">約 3 分鐘</span>
+            </p>
+            <p class="kb-start__why">
+              <el-button
+                tag="a"
+                href="/templates/faq-sheet-template.xlsx"
+                target="_blank"
+                rel="noopener"
+                size="small"
+                plain
+              >
+                下載 FAQ 範本（Excel）
+              </el-button>
+              兩欄（問題／答案）填完，用上面的<strong>「選擇檔案」</strong>傳回來。其他問法 AI 會自動補。
+            </p>
+          </div>
+        </div>
+
+        <div class="kb-start__row">
+          <span class="kb-start__no">3</span>
+          <div class="kb-start__main">
+            <p class="kb-start__title">
+              想要「<strong>改表格就自動更新</strong>」 → 用 Google 試算表
+              <span class="kb-start__tag">多一步分享</span>
+            </p>
+            <!--
+              ⚠️ 分享這一步一定要**在貼之前**就講（附複製鈕）：它是知識庫體檢裡最常見的失敗原因，
+                 而原本只有「貼了、失敗了」才看得到說明——第一次用的人會先撞一次紅字再回頭弄。
+              ⚠️ 第一步的講法要照**實際有沒有設定範本母本**走（faqTemplateCopyUrl）：
+                 沒設定卻寫「點一下建立副本」會指向一個不存在的東西。
+            -->
+            <ol class="kb-start__steps">
+              <li v-if="faqTemplateCopyUrl">
+                <el-button
+                  tag="a"
+                  :href="faqTemplateCopyUrl"
+                  target="_blank"
+                  rel="noopener"
+                  size="small"
+                  plain
+                >
+                  用官方範本建立副本
+                </el-button>
+                <span class="text-xs text-muted">會在你的 Google 雲端硬碟建一份，欄位都填好了</span>
+              </li>
+              <li v-else>
+                在 Google 試算表新開一份，第一列打<strong>「問題」「答案」</strong>兩欄
+              </li>
+              <li>
+                填完後在 Google 按<strong>「共用」</strong>，分享給下面這個帳號（<strong>檢視</strong>權限就夠）：
+                <span v-if="shareEmail" class="kb-start__email">
+                  <code class="kb-gsheet-email">{{ shareEmail }}</code>
+                  <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+                </span>
+                <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
+              </li>
+              <li>把試算表的連結貼到上面的框</li>
+            </ol>
+          </div>
+        </div>
+      </div>
 
 
       <!--
