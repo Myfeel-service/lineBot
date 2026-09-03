@@ -44,6 +44,14 @@
   --border: rgba(0, 0, 0, 0.08);
   --border-active: rgba(0, 0, 0, 0.3);
 
+  /* 教學標記色（低飽和磚紅）：教學圖上的框線與步驟編號徽章。
+     ⛔ 這個值與 `scripts/make-onboarding-shots.py` 的 `RED = (180, 84, 78)` 是**同一個色**
+        （2026-09-02 老闆拍板「低飽和紅細框＋步驟編號」）。改一邊要改兩邊，
+        否則截圖產線的圖與畫面上手繪的示意圖會是兩種紅。
+     ⛔ 不要拿它當「錯誤」色用：它的意思是「看這裡」，不是「壞了」。 */
+  --teach-mark: #b4544e;
+  --teach-mark-wash: rgba(180, 84, 78, 0.08);
+
   /* Status — 語意彩色（R1：UI 主色單色、狀態保留彩色）。
      用於狀態徽章/文字/開關等；與 element-variables.scss 的 el-color-* 對齊。 */
   --color-success: #16a34a;

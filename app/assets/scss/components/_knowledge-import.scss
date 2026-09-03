@@ -888,6 +888,28 @@
   }
 }
 
+/* Google 共用畫面的示意圖（KnowledgeSheetShareDiagram.vue）。
+   ⛔ 上限寬度要收：這張圖是輔助，撐滿整個對話框會變成畫面主角。 */
+.kb-share-fig {
+  margin: 8px 0 4px;
+  max-width: 460px;
+
+  &__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  &__cap {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+}
+
+
+
 /* 匯入失敗就地重試(P1-6) */
 .kb-failed-head {
   display: flex;

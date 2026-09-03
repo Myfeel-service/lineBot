@@ -152,7 +152,7 @@
       -->
       <div v-if="!detected" class="kb-start">
         <p class="kb-start__head">還沒有現成資料？挑一條開始：</p>
-        <div class="kb-start__chips">
+        <div class="kb-start__chips" data-tour="kb-start">
           <button
             type="button"
             class="kb-start__chip"
@@ -243,6 +243,11 @@
                 <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
               </span>
               <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
+              <!--
+                這一步發生在**Google 的畫面上**，我們的聚光燈導覽指不到那裡，所以配圖
+                （08-29 `D-40`③ 拍板：站外畫面本來就該配圖）。⛔ 是示意圖不是截圖，見元件說明。
+              -->
+              <KnowledgeSheetShareDiagram />
             </li>
             <li>把試算表的連結貼到上面的框——貼上時會<strong>當場告訴你讀不讀得到</strong></li>
           </ol>

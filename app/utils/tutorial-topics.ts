@@ -361,6 +361,18 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom',
       },
       {
+        // 三顆起步選項只在投放框還空的時候才在畫面上（見 KnowledgeImportDialog 的 kb-start）：
+        // 使用者若有貼到一半的內容，這一步整步跳過而不是指著空氣
+        target: '[data-tour="kb-start"]',
+        requiresPresent: '[data-tour="kb-start"]',
+        clickBefore: '[data-tour="kb-import"]',
+        title: '手邊還沒有資料？挑一條',
+        description:
+          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。差別是準備時間，'
+          + '以及之後改了資料會不會自動更新。Google 試算表那條還附了共用畫面的示意圖。',
+        placement: 'top',
+      },
+      {
         target: '[data-tour="kb-preview"]',
         title: '先看 AI 整理的結果再匯入',
         description:
