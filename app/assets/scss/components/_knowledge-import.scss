@@ -752,106 +752,94 @@
   }
 }
 
-/* ── 「還沒有現成資料？」三條路（2026-09-03）─────────────────────
-   取代原本那行「第一次匯入？用官方 FAQ 範本開始」：老闆看到簡化後的第一步的第一句話是
-   「我會有點不知道怎麼做」——格式清單答不了「我手邊什麼都沒有該怎麼辦」。
-   ⛔ 只在投放框空的時候出現（模板的 v-if），所以這一塊可以講得完整；
-      貼上內容之後畫面要回到「這是什麼＋一顆按鈕」的乾淨狀態。 */
+/* ── 「還沒有現成資料？」三條路・二版（2026-09-03）─────────────────
+   一版把三條路的說明全攤開（約 250 字），老闆實測「快 fade out」。
+   二版＝一行標題＋三顆選項，點了哪條才展開哪條（一次只開一條）。
+   ⛔ 只在投放框空的時候出現（模板的 v-if）；貼上內容後畫面回到「這是什麼＋一顆按鈕」。 */
 .kb-start {
   margin-top: 12px;
-  padding: 12px 14px;
+  padding: 10px 14px 12px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   background: var(--el-fill-color-light);
 
   &__head {
-    margin: 0 0 10px;
+    margin: 0 0 8px;
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
   }
 
-  &__row {
+  &__chips {
     display: flex;
-    gap: 10px;
-
-    & + & {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--el-border-color-lighter);
-    }
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  /* 編號是真的順序資訊（由易到難、由快到慢），不是裝飾 */
-  &__no {
-    flex: none;
-    width: 18px;
-    height: 18px;
-    margin-top: 1px;
-    border-radius: 50%;
-    background: var(--el-fill-color-dark, var(--el-border-color));
-    color: var(--el-text-color-regular);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 18px;
-    text-align: center;
-  }
-
-  &__main {
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__title {
-    margin: 0;
+  /* 選項膠囊：同 .kb-site-group-chip 的語彙（這一頁的「可選分類」都長這樣） */
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--el-border-color);
+    border-radius: 999px;
+    background: var(--el-bg-color);
+    padding: 4px 12px;
     font-size: 13px;
-    line-height: 1.7;
     color: var(--text-primary);
-  }
+    cursor: pointer;
 
-  /* ⛔ 這一行**不可以**做成 flex 容器（2026-09-03 headless 實測抓到）：
-     裡面是「按鈕＋一整句話」，flex 會把每一段文字與每個 <strong> 各自當成一個項目，
-     於是句子被切開、結尾那個「」」單獨掉到下一行。要的是文字流，不是排版格。
-     按鈕維持 inline-flex，用 vertical-align 對齊基線就好。 */
-  &__why {
-    margin: 4px 0 0;
-    font-size: 12px;
-    line-height: 1.9;
-    color: var(--el-text-color-secondary);
+    &:hover {
+      border-color: var(--el-color-primary);
+      color: var(--el-color-primary);
+    }
 
-    .el-button {
-      vertical-align: -1px;
-      margin-right: 4px;
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
+
+    &.is-active {
+      border-color: var(--el-color-primary);
+      background: var(--el-color-primary-light-9);
+      color: var(--el-color-primary);
     }
   }
 
-  /* 「最快・不用準備」「約 3 分鐘」「多一步分享」——三條路唯一真正的差別 */
-  &__tag {
-    display: inline-block;
-    margin-left: 6px;
-    padding: 0 6px;
-    border-radius: 3px;
-    background: var(--el-fill-color);
-    color: var(--el-text-color-secondary);
+  /* 膠囊裡的小註（最快／約 3 分鐘／Google 試算表）：比主文字輕一階 */
+  &__chip-tag {
     font-size: 11px;
-    font-weight: 500;
-    white-space: nowrap;
+    color: var(--el-text-color-secondary);
   }
-  /* 建議的那條用綠色（品牌主色）：它是零準備、最可能成功的一條 */
-  &__tag--fast {
-    background: var(--el-color-primary-light-9);
-    color: var(--el-color-primary);
+  &__chip.is-active &__chip-tag,
+  &__chip:hover &__chip-tag {
+    color: inherit;
+    opacity: 0.75;
+  }
+
+  /* 點開的那一條：白底面板，跟灰底的容器分層；一次只會有一個 */
+  &__panel {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--el-bg-color);
+    font-size: 12.5px;
+    line-height: 1.9;
+    color: var(--el-text-color-regular);
   }
 
   &__steps {
-    margin: 6px 0 0;
+    margin: 0;
     padding-left: 18px;
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.9;
-    color: var(--el-text-color-secondary);
+    color: var(--el-text-color-regular);
 
-    li + li { margin-top: 2px; }
+    li + li { margin-top: 4px; }
 
+    /* ⛔ 步驟裡的按鈕別做成 flex 項目（一版踩過:句子被切開、收尾引號掉到下一行）——
+       維持文字流，按鈕用 vertical-align 對齊基線 */
     .el-button {
       vertical-align: -1px;
       margin-right: 4px;

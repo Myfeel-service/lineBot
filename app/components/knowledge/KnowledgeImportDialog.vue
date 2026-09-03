@@ -11,7 +11,7 @@
   >
     <!-- ── Step 1:一個投放區,自動判別是什麼(P1-2) ─────────── -->
     <div v-if="step === 'input'">
-      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>把資料交給 AI 整理 — 檔案、網址、Google 試算表或一段文字都可以</p>
+      <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>把資料交給 AI 整理</p>
 
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
       <div
@@ -34,6 +34,7 @@
           <!-- 整理中要鎖住（`D-41` 死路⑪）：原本整理跑到一半還能換檔案／改內容，
                畫面顯示的是新檔名、實際在整理的卻是舊的那份（runPreview 早就把檔案抓走了）。 -->
           <el-input
+            ref="pasteInputEl"
             v-model="pasteInput"
             type="textarea"
             :rows="4"
@@ -53,7 +54,7 @@
               @change="onFileChosen"
             >
             <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">選擇檔案</el-button>
-            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : 'PDF / Excel，也可以直接把檔案拖進這個框，單檔 10MB 內' }}</span>
+            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : 'PDF / Excel，也可以直接拖進框裡（單檔 10MB 內）' }}</span>
           </div>
         </template>
       </div>
@@ -125,28 +126,60 @@
         ⛔ 每一條都要寫「準備時間」與「之後改了會不會自動更新」：那是三條路唯一真正的差別，
            不寫的話使用者只能憑感覺猜，而猜錯的代價是整份資料要重做一次。
       -->
-      <div v-if="!detected" class="kb-start">
-        <p class="kb-start__head">還沒有現成資料？從這裡開始</p>
+      <!--
+        ── 「還沒有現成資料？」三條路・二版（2026-09-03，老闆實測「光要讀完就快 fade out」）──
 
-        <div class="kb-start__row">
-          <span class="kb-start__no">1</span>
-          <div class="kb-start__main">
-            <p class="kb-start__title">
-              官網有「常見問題」或商品頁 → <strong>把那一頁的網址貼到上面就好</strong>
-              <span class="kb-start__tag kb-start__tag--fast">最快・不用準備</span>
-            </p>
-            <p class="kb-start__why">之後網頁改了，系統會通知你要不要重新學。</p>
-          </div>
+        一版把三條路的完整說明同時攤開（約 250 字）。說明本身沒錯，錯在**要人一次讀完
+        三條才能挑一條**。二版把「讀」改成「點」：預設只有一行標題＋三顆選項，
+        點了哪條才展開哪條，而且展開後每一步盡量是**可以按的動作**（下載範本、傳回檔案、
+        複製帳號），不是要照著讀的文字。
+        ⛔ 投放框永遠在最上面、不因為選了哪條而消失：熟手直接貼，這一塊只給
+           「不知道從哪開始」的人，不是流程的一部分（「不用先選種類」的設計不變）。
+        ⛔ 展開狀態刻意**不在關窗時重設**（resetAll 也不清）：走試算表那條的人會中途
+           去 Google 分享，回來時面板要還開著、帳號還在眼前——收起來等於叫他重想一次
+           剛剛做到哪。
+      -->
+      <div v-if="!detected" class="kb-start">
+        <p class="kb-start__head">還沒有現成資料？挑一條開始：</p>
+        <div class="kb-start__chips">
+          <button
+            type="button"
+            class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'web' }"
+            :aria-expanded="startOpen === 'web'"
+            @click="pickStart('web')"
+          >
+            官網有「常見問題」頁<span class="kb-start__chip-tag">最快</span>
+          </button>
+          <button
+            type="button"
+            class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'excel' }"
+            :aria-expanded="startOpen === 'excel'"
+            @click="pickStart('excel')"
+          >
+            用範本自己填<span class="kb-start__chip-tag">約 3 分鐘</span>
+          </button>
+          <button
+            type="button"
+            class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'sheet' }"
+            :aria-expanded="startOpen === 'sheet'"
+            @click="pickStart('sheet')"
+          >
+            要「改了自動更新」<span class="kb-start__chip-tag">Google 試算表</span>
+          </button>
         </div>
 
-        <div class="kb-start__row">
-          <span class="kb-start__no">2</span>
-          <div class="kb-start__main">
-            <p class="kb-start__title">
-              什麼都還沒整理 → 用我們的範本填
-              <span class="kb-start__tag">約 3 分鐘</span>
-            </p>
-            <p class="kb-start__why">
+        <!-- 官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart） -->
+        <p v-if="startOpen === 'web'" class="kb-start__panel">
+          把「常見問題」或商品頁的<strong>網址貼到上面的框</strong>就好，不用準備任何東西。
+          之後網頁改了，系統會通知你要不要重新學。
+        </p>
+
+        <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
+          <ol class="kb-start__steps">
+            <li>
               <el-button
                 tag="a"
                 href="/templates/faq-sheet-template.xlsx"
@@ -157,52 +190,51 @@
               >
                 下載 FAQ 範本（Excel）
               </el-button>
-              兩欄（問題／答案）填完，用上面的<strong>「選擇檔案」</strong>傳回來。其他問法 AI 會自動補。
-            </p>
-          </div>
+              兩欄（<strong>問題／答案</strong>）填完就好，其他問法 AI 會自動補
+            </li>
+            <li>
+              <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
+                傳回填好的檔案
+              </el-button>
+              <span class="text-xs text-muted">（或直接拖進上面的框）</span>
+            </li>
+          </ol>
         </div>
 
-        <div class="kb-start__row">
-          <span class="kb-start__no">3</span>
-          <div class="kb-start__main">
-            <p class="kb-start__title">
-              想要「<strong>改表格就自動更新</strong>」 → 用 Google 試算表
-              <span class="kb-start__tag">多一步分享</span>
-            </p>
-            <!--
-              ⚠️ 分享這一步一定要**在貼之前**就講（附複製鈕）：它是知識庫體檢裡最常見的失敗原因，
-                 而原本只有「貼了、失敗了」才看得到說明——第一次用的人會先撞一次紅字再回頭弄。
-              ⚠️ 第一步的講法要照**實際有沒有設定範本母本**走（faqTemplateCopyUrl）：
-                 沒設定卻寫「點一下建立副本」會指向一個不存在的東西。
-            -->
-            <ol class="kb-start__steps">
-              <li v-if="faqTemplateCopyUrl">
-                <el-button
-                  tag="a"
-                  :href="faqTemplateCopyUrl"
-                  target="_blank"
-                  rel="noopener"
-                  size="small"
-                  plain
-                >
-                  用官方範本建立副本
-                </el-button>
-                <span class="text-xs text-muted">會在你的 Google 雲端硬碟建一份，欄位都填好了</span>
-              </li>
-              <li v-else>
-                在 Google 試算表新開一份，第一列打<strong>「問題」「答案」</strong>兩欄
-              </li>
-              <li>
-                填完後在 Google 按<strong>「共用」</strong>，分享給下面這個帳號（<strong>檢視</strong>權限就夠）：
-                <span v-if="shareEmail" class="kb-start__email">
-                  <code class="kb-gsheet-email">{{ shareEmail }}</code>
-                  <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
-                </span>
-                <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
-              </li>
-              <li>把試算表的連結貼到上面的框</li>
-            </ol>
-          </div>
+        <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
+          <!--
+            ⚠️ 分享這一步一定要**在貼之前**就講（附複製鈕）：它是知識庫體檢裡最常見的失敗原因，
+               而原本只有「貼了、失敗了」才看得到說明——第一次用的人會先撞一次紅字再回頭弄。
+            ⚠️ 第一步的講法要照**實際有沒有設定範本母本**走（faqTemplateCopyUrl）：
+               沒設定卻寫「點一下建立副本」會指向一個不存在的東西（母本＝STATUS `D-52`）。
+          -->
+          <ol class="kb-start__steps">
+            <li v-if="faqTemplateCopyUrl">
+              <el-button
+                tag="a"
+                :href="faqTemplateCopyUrl"
+                target="_blank"
+                rel="noopener"
+                size="small"
+                plain
+              >
+                用官方範本建立副本
+              </el-button>
+              <span class="text-xs text-muted">會在你的 Google 雲端硬碟建一份，欄位都填好了</span>
+            </li>
+            <li v-else>
+              在 Google 試算表新開一份，第一列打<strong>「問題」「答案」</strong>兩欄
+            </li>
+            <li>
+              填完後在 Google 按<strong>「共用」</strong>，分享給下面這個帳號（<strong>檢視</strong>權限就夠）：
+              <span v-if="shareEmail" class="kb-start__email">
+                <code class="kb-gsheet-email">{{ shareEmail }}</code>
+                <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+              </span>
+              <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
+            </li>
+            <li>把試算表的連結貼到上面的框——貼上時會<strong>當場告訴你讀不讀得到</strong></li>
+          </ol>
         </div>
       </div>
 
@@ -973,6 +1005,8 @@ const detected = computed(() => {
 
 // ── File ──────────────────────────────────────────────────
 const fileInputEl = ref<HTMLInputElement | null>(null)
+/** 投放框的 el-input（「官網有頁面」那顆選項要把游標放進來） */
+const pasteInputEl = ref<{ focus: () => void } | null>(null)
 const fileName = ref('')
 const fileSizeKb = ref(0)
 // 留住 File 物件本身：預覽時才用 signed URL 直傳 Storage（不再前置轉 base64 塞 JSON，
@@ -995,6 +1029,20 @@ const fileContentType = ref('')
  */
 const hintOpen = ref(false)
 watch(() => detected.value?.label, () => { hintOpen.value = false })
+
+/**
+ * 「還沒有現成資料」三顆選項的展開狀態（'' = 都收起）。
+ * 一次只開一條：三條全開就回到一版「250 字同時攤開」的老問題（老闆：快 fade out）。
+ * ⛔ 刻意不在 resetAll／關窗時清掉：走試算表那條的人會中途去 Google 分享，
+ *    回來時面板要還開著、帳號還在眼前。
+ */
+const startOpen = ref<'' | 'web' | 'excel' | 'sheet'>('')
+
+function pickStart(route: 'web' | 'excel' | 'sheet') {
+  startOpen.value = startOpen.value === route ? '' : route
+  // 官網那條的「動作」就是貼網址：把游標放進框裡，使用者回來直接 ⌘V 就能貼
+  if (startOpen.value === 'web') nextTick(() => pasteInputEl.value?.focus?.())
+}
 
 watch([pasteInput, mode], () => {
   const v = pasteInput.value.trim()
