@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
+import { PENDING_SCAN_LIMIT } from '~~/shared/tag-pending-review'
 
 /**
  * 一次最多讀幾份收件匣。
@@ -8,8 +9,11 @@ import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
  * 為什麼要有上限：這支是「掃全工作區還沒決定的建議」，沒人清的話會一直長
  * （08-11 讀取費暴衝就是這種形狀）。⛔ 撞到上限**一定要講出來**，
  * 否則「待審 3 位」會被當成精確值，實際上是「掃到的前 500 份裡有 3 位」。
+ *
+ * ⛔ 常數放在 shared 是刻意的：`/api/tag/:id/pending`（點進去看清單那支）掃的是同一批資料，
+ * 兩邊深度不同的話會變成「badge 寫 34、點進去列 30」，而且沒有人說得出少的在哪。
  */
-const SCAN_LIMIT = 500
+const SCAN_LIMIT = PENDING_SCAN_LIMIT
 
 /**
  * GET /api/tag/pending-counts — 每顆標籤還有幾位客人的 AI 建議等人決定（D-42②）

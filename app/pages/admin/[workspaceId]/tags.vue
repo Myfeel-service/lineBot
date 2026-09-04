@@ -306,9 +306,9 @@
                         type="button"
                         class="tags-pending-link"
                         :title="pendingCountsTruncated
-                          ? '去看這些建議（待審總數已達統計上限，實際可能更多）'
-                          : `去看還沒決定的 ${pendingCountFor(tag.id)} 位客人`"
-                        @click.stop="goPendingFriends(tag.id)"
+                          ? '審這些建議（待審總數已達統計上限，實際可能更多）'
+                          : `審這 ${pendingCountFor(tag.id)} 位客人的建議`"
+                        @click.stop="openPendingReview(tag)"
                       >待審 {{ pendingCountFor(tag.id) }} 位</button>
                     </td>
                     <td>
@@ -525,6 +525,16 @@
       </el-button>
     </template>
   </el-dialog>
+
+  <!-- 一次審一顆標籤的 AI 建議（D-61）：點「待審 N 位」開這個 -->
+  <AdminTagSuggestionReview
+    v-model:visible="reviewVisible"
+    :tag="reviewTag"
+    :can-operate="canOperate"
+    :api-fetch="apiFetch"
+    @changed="loadPendingCounts"
+    @open-conversation="goConversation"
+  />
 
 </template>
 
@@ -904,16 +914,22 @@ async function loadPendingCounts() {
   }
 }
 
-/**
- * 點「待審 N 位」→ 好友頁的 AI 建議收件匣。
- *
- * ⚠️ **第一版只篩得到「有建議的客人」，不是「有這顆標籤建議的客人」**（D-42 拍板的簡單版）：
- * 建議存在「一位客人一份」的文件裡，要按標籤反查得先補鏡像欄位。所以帶著 `fromTag`
- * 過去，讓那頁講明白「你從哪顆標籤過來、為什麼看到的人比 N 多」——⛔ 不講的話
- * 就是一個對不上的數字（正是 D-41 整份報告在抓的那種病）。
- */
-function goPendingFriends(tagId: string) {
-  navigateTo(`/admin/${workspaceId.value}/users?suggested=1&fromTag=${encodeURIComponent(tagId)}`)
+/* ── 點「待審 N 位」→ 就地審這一顆（D-61）──────────────────────
+   ⚠️ **先前是連到好友頁**（D-42 拍板的簡單版），而那頁列的是**全部**有建議的客人、
+   不分標籤：按鈕寫「待審 34 位」、點進去看到 64 位，那 34 條還得一位一位開抽屜按。
+   09-04 線上 116 條積壓沒人清得完，卡的就是這一步。現在原地打開只有這一顆的清單。 */
+const reviewVisible = ref(false)
+const reviewTag = ref<{ id: string, name: string, color?: string, aiMode?: string } | null>(null)
+
+function openPendingReview(tag: any) {
+  reviewTag.value = { id: tag.id, name: tag.name, color: tag.color, aiMode: tag.aiMode }
+  reviewVisible.value = true
+}
+
+/** 從建議列表跳去看「AI 是根據哪一場對話判的」（跟好友頁同一條路：帶 userId＋sessionId） */
+function goConversation(userId: string, sessionId: string) {
+  const base = `/admin/${workspaceId.value}/conversations?userId=${encodeURIComponent(userId)}`
+  navigateTo(sessionId ? `${base}&sessionId=${encodeURIComponent(sessionId)}` : base)
 }
 
 function tagListQuery(targetPage = page.value) {

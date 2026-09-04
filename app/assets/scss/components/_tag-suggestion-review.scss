@@ -1,0 +1,169 @@
+/* ══════════════════════════════════════════════════════════════
+   一次審一顆標籤的 AI 建議（D-61）——標籤頁點「待審 N 位」開的抽屜。
+
+   版面沿用客人檔案卡那套（小標題／細線分隔／淡底說明框），
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   ══════════════════════════════════════════════════════════════ */
+
+.tag-review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-width: 0;
+  /* 底部那排操作鈕要黏在視窗底（清單長的時候不用捲到最後才按得到） */
+  height: 100%;
+}
+
+.tag-review__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.tag-review__hd {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tag-review__count {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.tag-review__hint {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  strong {
+    color: var(--text-primary);
+  }
+}
+
+/* 淡底說明框：截斷、以及「這顆已改成直接貼」的來龍去脈 */
+.tag-review__note {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.tag-review__empty {
+  padding: 1.4rem 0;
+  text-align: center;
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+}
+
+.tag-review__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.tag-review__selected {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.tag-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* 清單自己捲，抽屜的頭尾不動 */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.tag-review__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tag-review__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tag-review__who {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tag-review__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.tag-review__when {
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* AI 寫的那一句依據——是它讓「採用／忽略」按得下去，所以不能比名字小太多 */
+.tag-review__why {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-word;
+
+  &--none {
+    font-style: italic;
+  }
+}
+
+.tag-review__src {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--el-color-primary);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
+/* ⛔ 黏在底部：34 位的清單捲到最後才看得到按鈕的話，人會以為沒有批次操作 */
+.tag-review__actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-base);
+}
+
+/* 「關閉」永遠在（抽屜沒有標題列上的 ✕）：推到最右邊，不跟主要動作搶位置 */
+.tag-review__close {
+  margin-left: auto;
+}

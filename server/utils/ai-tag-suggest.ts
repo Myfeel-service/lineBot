@@ -425,10 +425,18 @@ async function suggestForSession(
   const tagged = new Set(taggedSnap.docs.map(d => String(d.data()?.tagId ?? '')))
 
   const candidates = catalog.filter(t =>
-    !tagged.has(t.id) && !dismissed.has(t.id) && !pendingIds.has(t.id)
-    // ⛔ 收件匣滿了只擋「建議型」候選（沒位置放了）；auto 型不進收件匣，不受它牽制——
-    //    否則「建議堆著沒人清」會連帶讓全自動標籤也停擺
-    && !(inboxFull && t.mode === 'suggest'))
+    !tagged.has(t.id) && !dismissed.has(t.id)
+    /**
+     * ⛔ 「這顆已經在收件匣等人決定」與「收件匣滿了」**都只擋得住「先建議」型**。
+     *
+     * 拿它們擋 auto 型會**靜靜卡死**：`D-54` 的 13 顆標籤 09-03 先退回「先建議」、
+     * 09-04 中午又全部切成「AI 判到直接貼」，於是線上 64 位客人身上留著 116 條
+     * 切換前產生的舊建議——那顆標籤現在明明是「判到就貼」，卻因為舊建議還掛在收件匣，
+     * AI 每一輪都跳過它。結果是 **AI 不會自己貼、人也沒在按，兩邊都不會發生**，
+     * 而畫面上只看得到一個不會減少的「待審 N 位」。
+     * 現在的規則：auto 型照判，判到就貼上，並把收件匣那條收掉（見下面 autoIds 那段）。
+     */
+    && !(t.mode === 'suggest' && (pendingIds.has(t.id) || inboxFull)))
   if (!candidates.length) return { ...none, skip: 'no_candidates' as const }
 
   /**
@@ -511,6 +519,12 @@ async function suggestForSession(
   // auto：直接貼。sourceType='ai' ＝客人單頁看得出是 AI 貼的、tagLogs 有紀錄、隨時可撤；
   // 週報「這週被貼最多」也吃 tagLogs，貼歪了每週一看得到
   let autoApplied = 0
+  /**
+   * 這位客人**現在**還在等人決定的建議。auto 貼上後可能會少幾條（見下面），
+   * ⛔ 後面寫回收件匣時一律用這一份，不可以再用最上面讀到的 `pending`——
+   * 那會把剛剛收掉的那幾條原封不動寫回去（自己造出一個永遠清不掉的待審）。
+   */
+  let pendingNow = pending
   if (autoIds.length) {
     const { added } = await addTagsToUser(convDocId, autoIds, 'ai', 'ai-tag-suggest:auto', workspaceId)
     autoApplied = added.length
@@ -518,10 +532,26 @@ async function suggestForSession(
     if (added.length) {
       await recordTagSuggestionEvents(db, workspaceId, 'auto_applied', convDocId, added, { sessionId })
     }
+    /**
+     * 這顆先前還掛在收件匣等人按（那時它還是「先建議」）→ 現在 AI 自己貼上了，
+     * 那條建議就沒有意義了，要收掉。⛔ 不收的話畫面會一直寫「待審 N 位」，
+     * 而它指向的那個決定**已經被系統自己做掉了**——正是這輪要修的那種假待辦。
+     * 結局在底帳裡記成 `auto_applied`（上面那筆），不另記 applied：沒有人按過。
+     */
+    const clearedByAuto = pendingNow.filter(p => added.includes(p.tagId))
+    if (clearedByAuto.length) {
+      pendingNow = pendingNow.filter(p => !added.includes(p.tagId))
+      await sugRef.set({
+        pending: pendingNow,
+        hasPending: pendingNow.length > 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      console.warn(`[tag-suggest] ${convDocId} 收掉 ${clearedByAuto.length} 條舊建議：那幾顆已改成「直接貼」且這次判到，AI 自己貼上了`)
+    }
   }
 
   // suggest：進收件匣（容量再守一次：上面只擋「已滿」，這裡擋「加了會爆」）
-  const room = MAX_PENDING_PER_USER - pending.length
+  const room = MAX_PENDING_PER_USER - pendingNow.length
   const toAdd = suggestIds.slice(0, Math.max(0, room))
   if (toAdd.length) {
     const newPending: UserTagSuggestionPending[] = toAdd.map(tagId => ({
@@ -533,7 +563,7 @@ async function suggestForSession(
     const docPatch: Partial<UserTagSuggestionDoc> = {
       workspaceId,
       userId: convDocId,
-      pending: [...pending, ...newPending],
+      pending: [...pendingNow, ...newPending],
       hasPending: true, // pending 的鏡像（列表等值查詢用）——這裡剛加了東西，必為 true
       dismissedTagIds: [...dismissed],
       updatedAt: FieldValue.serverTimestamp(),

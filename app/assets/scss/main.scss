@@ -36,6 +36,7 @@
 @use "./components/tutorial-agent";
 @use "./components/agent-chat";
 @use "./components/customer-card";
+@use "./components/tag-suggestion-review";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

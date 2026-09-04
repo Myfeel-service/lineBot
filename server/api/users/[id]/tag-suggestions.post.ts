@@ -1,11 +1,7 @@
-import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { addTagsToUser } from '~~/server/utils/tagging'
-import { AI_TAG_SUGGEST_SOURCE_REF } from '~~/server/utils/ai-tag-suggest'
-import { recordTagSuggestionEvents } from '~~/server/utils/tag-suggestion-log'
+import { reviewSuggestions } from '~~/server/utils/tag-suggestion-review'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import type { UserTagSuggestionDoc } from '~~/shared/types/tag-broadcast'
 
 /**
  * POST /api/users/:id/tag-suggestions — AI 標籤建議的採用／忽略（D-24 收件匣）
@@ -15,6 +11,9 @@ import type { UserTagSuggestionDoc } from '~~/shared/types/tag-broadcast'
  *   並從 pending 移除。之後若手動把標籤拿掉，AI 是可以再建議的——拿掉≠永不適用。
  * - dismiss：從 pending 移除並記進 dismissedTagIds，**這個標籤對這位客人永不再建議**
  *   （⛔ 判過的不再重生）。
+ *
+ * ⛔ 實際的寫入規則在 `server/utils/tag-suggestion-review.ts`（`D-61` 抽出去的）：
+ * 標籤頁的「一次審一整顆」走的是同一支，這裡只負責把結果翻成 HTTP 狀態碼。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
@@ -33,47 +32,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'tagIds array is required and must not be empty' })
   }
 
-  const db = getDb()
-  const sugRef = db.collection('userTagSuggestions').doc(fsUserDocId)
-  const sugSnap = await sugRef.get()
-  const sugDoc = sugSnap.data() as UserTagSuggestionDoc | undefined
-  if (!sugSnap.exists || sugDoc?.workspaceId !== workspaceId) {
+  const { outcome, processed } = await reviewSuggestions(getDb(), {
+    workspaceId, userDocId: fsUserDocId, tagIds, action, operatorId: uid,
+  })
+  if (outcome === 'not_found') {
     throw createError({ statusCode: 404, statusMessage: '這位客人沒有待處理的建議' })
   }
-
-  const pending = Array.isArray(sugDoc.pending) ? sugDoc.pending : []
-  // 只動「還在 pending 裡」的：兩個客服同時開著同一位，後按的那位不該重複貼標
-  const target = tagIds.filter(id => pending.some(p => p.tagId === id))
-  if (!target.length) {
+  if (outcome === 'already_handled') {
     throw createError({ statusCode: 400, statusMessage: '這些建議已經被處理過了，重新整理看看' })
   }
 
-  if (action === 'apply') {
-    await addTagsToUser(fsUserDocId, target, 'ai', AI_TAG_SUGGEST_SOURCE_REF, workspaceId)
-  }
-
-  /**
-   * 成效底帳（D-42）：**採用率的分子與分母都在這裡產生**，忽略尤其重要——
-   * 忽略只會寫進 dismissedTagIds（沒有時間、又跟手動移除混在一起），
-   * 不記在這裡就永遠算不出「這顆標籤 AI 判得準不準」。
-   * ⛔ 記的是 target（真的還在待審、這次被處理掉的），不是使用者送來的 tagIds。
-   */
-  await recordTagSuggestionEvents(
-    db, workspaceId,
-    action === 'apply' ? 'applied' : 'dismissed',
-    fsUserDocId, target, { operatorId: uid },
-  )
-
-  const dismissedTagIds = Array.isArray(sugDoc.dismissedTagIds) ? sugDoc.dismissedTagIds : []
-  const remaining = pending.filter(p => !target.includes(p.tagId))
-  await sugRef.set({
-    pending: remaining,
-    hasPending: remaining.length > 0, // pending 的鏡像（列表等值查詢用）
-    dismissedTagIds: action === 'dismiss'
-      ? [...new Set([...dismissedTagIds, ...target])]
-      : dismissedTagIds,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true })
-
-  return { action, processed: target }
+  return { action, processed }
 })

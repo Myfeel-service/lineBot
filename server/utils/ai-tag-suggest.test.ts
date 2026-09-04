@@ -28,6 +28,7 @@ vi.mock('./scanner-health', () => ({ recordScannerFailure: vi.fn(async () => {})
 
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
+import { addTagsToUser } from './tagging'
 import {
   buildSuggestPrompt,
   dropDuplicateReasons,
@@ -474,6 +475,8 @@ function fakeScanDb(opts: {
   sessionOpenedAtMs: number
   /** AI 在判的標籤 */
   tags?: Array<{ id: string, name: string, aiMode: 'suggest' | 'auto' }>
+  /** 這位客人收件匣裡**已經**掛著的建議（`D-61`：切成「直接貼」之前留下的那些） */
+  pending?: Array<{ tagId: string, reason?: string, sessionId?: string, suggestedAtMs?: number }>
 }) {
   const writes: Array<{ col: string, id: string, data: any }> = []
   const chain = (result: any) => {
@@ -509,9 +512,11 @@ function fakeScanDb(opts: {
           doc: (id: string) => ({
             get: async () => ({
               id,
-              exists: name === 'cronState',
+              exists: name === 'cronState' || (name === 'userTagSuggestions' && !!opts.pending),
               // 游標要有值，否則掃描器只會把游標定在「現在」就走人（開關剛打開的行為）
-              data: () => (name === 'cronState' ? { cursorMs: 1 } : undefined),
+              data: () => (name === 'cronState'
+                ? { cursorMs: 1 }
+                : (opts.pending ? { workspaceId: 'ws1', userId: id, pending: opts.pending, hasPending: true } : undefined)),
             }),
             set: async (data: any) => { writes.push({ col: name, id, data }) },
           }),
@@ -644,6 +649,80 @@ describe('scanTagSuggestions：送到模型手上的 prompt 真的只有「這�
 
     const inbox = writes.find(w => w.col === 'userTagSuggestions')
     expect(inbox!.data.pending.map((p: any) => p.tagId)).toEqual(['t_ship', 't_defect'])
+  })
+
+  /* ── 收件匣的舊建議不可以把「AI 直接貼」卡死（`D-61`）──────────────
+     09-04 線上實況：13 顆標籤全設成「判到直接貼」，但 64 位客人身上留著 116 條
+     切換前的舊建議。舊規則「這顆已經在等人決定就跳過」連 auto 也擋，於是
+     **AI 不會自己貼、人也沒在按**，兩邊都不會發生，而畫面只寫著一個不會少的「待審 N 位」。 */
+  it('🔴 收件匣掛著舊建議，也擋不住「AI 直接貼」：照判、照貼，並把那條舊建議收掉', async () => {
+    vi.mocked(generateJson).mockResolvedValue({ tags: [{ id: 't_ship', reason: '客人問出貨進度' }] } as any)
+    vi.mocked(addTagsToUser).mockResolvedValueOnce({ added: ['t_ship'], skipped: [], hits: [] })
+    const { db, writes } = fakeScanDb({
+      sessionOpenedAtMs: START,
+      tags: [{ id: 't_ship', name: '問過出貨進度', aiMode: 'auto' }],
+      pending: [{ tagId: 't_ship', reason: '（切成直接貼之前留下的）', suggestedAtMs: START - 86400_000 }],
+      messages: [
+        { direction: 'incoming', text: '請問出貨進度', atMs: START + 10 },
+        { direction: 'incoming', text: '可以提早出貨嗎', atMs: START + 20 },
+      ],
+    })
+    await scanTagSuggestions(db)
+
+    // ① 這顆有進候選＝真的被判了（先前這裡根本不會呼叫 LLM）
+    expect(generateJson).toHaveBeenCalledTimes(1)
+    // ② 真的貼上了
+    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[1]).toEqual(['t_ship'])
+    // ③ 那條舊建議要收掉，否則「待審 N 位」永遠不會減少
+    const inbox = writes.filter(w => w.col === 'userTagSuggestions')
+    expect(inbox).toHaveLength(1)
+    expect(inbox[0]!.data.pending).toEqual([])
+    expect(inbox[0]!.data.hasPending).toBe(false)
+    // ④ 結局記成 auto_applied（沒有人按過，不可以記成 applied 灌水採用率）
+    expect(writes.filter(w => w.col === 'tagSuggestionLogs').map(w => w.data.event)).toEqual(['auto_applied'])
+  })
+
+  it('「先建議」型有舊建議時照舊跳過（⛔ 同一個建議不可以每場對話都回來一次）', async () => {
+    const { db, writes } = fakeScanDb({
+      sessionOpenedAtMs: START,
+      tags: [{ id: 't_ship', name: '問過出貨進度', aiMode: 'suggest' }],
+      pending: [{ tagId: 't_ship', reason: '上一場就提過了', suggestedAtMs: START - 86400_000 }],
+      messages: [
+        { direction: 'incoming', text: '請問出貨進度', atMs: START + 10 },
+        { direction: 'incoming', text: '可以提早出貨嗎', atMs: START + 20 },
+      ],
+    })
+    await scanTagSuggestions(db)
+
+    expect(generateJson).not.toHaveBeenCalled() // 沒有候選＝連 LLM 都不該花
+    expect(writes.filter(w => w.col === 'userTagSuggestions')).toHaveLength(0)
+  })
+
+  it('🔴 同一輪又收又加：收掉的那條不可以被後面那次寫入原封不動塞回去', async () => {
+    vi.mocked(generateJson).mockResolvedValue({
+      tags: [
+        { id: 't_ship', reason: '客人問出貨進度' },
+        { id: 't_invoice', reason: '客人問發票怎麼開' },
+      ],
+    } as any)
+    vi.mocked(addTagsToUser).mockResolvedValueOnce({ added: ['t_ship'], skipped: [], hits: [] })
+    const { db, writes } = fakeScanDb({
+      sessionOpenedAtMs: START,
+      tags: [
+        { id: 't_ship', name: '問過出貨進度', aiMode: 'auto' },
+        { id: 't_invoice', name: '問過發票', aiMode: 'suggest' },
+      ],
+      pending: [{ tagId: 't_ship', reason: '（切成直接貼之前留下的）', suggestedAtMs: START - 86400_000 }],
+      messages: [
+        { direction: 'incoming', text: '請問出貨進度', atMs: START + 10 },
+        { direction: 'incoming', text: '發票可以開公司嗎', atMs: START + 20 },
+      ],
+    })
+    await scanTagSuggestions(db)
+
+    // 最後一次寫入才是收件匣的最終狀態：只能有新加的那顆
+    const inbox = writes.filter(w => w.col === 'userTagSuggestions')
+    expect(inbox.at(-1)!.data.pending.map((p: any) => p.tagId)).toEqual(['t_invoice'])
   })
 
   /** 這一輪什麼都沒建議時，原因要進資料（不是只留一行 log 讓人事後猜） */
