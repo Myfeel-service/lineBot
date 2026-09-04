@@ -76,19 +76,21 @@ export const OVERAGE_PER_REPLY_TWD = 0.8
 export const BILLING_PLAN_ORDER: BillingPlanId[] = ['free', 'lite', 'starter', 'growth', 'pro', 'enterprise', 'test', 'internal']
 
 /**
- * 檯面上主打的方案（2026-08-14 老闆拍板「先隱藏就好，目前只 show 399」）。
- * 官網定價區、商品資訊售價列、後台升級對話框的方案目錄**都吃這一份**。
+ * 檯面上主打的方案。官網定價區、商品資訊售價列、後台升級對話框的方案目錄**都吃這一份**。
  *
  * 為什麼放這裡：這份清單原本只寫在首頁頁面層級，升級對話框沒跟到——2026-08-17
  * 老闆抓到付款彈窗仍列出 799／1,499。凡是「對客戶展示的方案目錄」一律引用這個常數，
  * 不要再各頁自己維護一份。
  *
+ * 沿革：2026-08-14 老闆拍板「先隱藏就好，目前只 show 399」＝ ['free', 'lite']；
+ * 2026-09-04 老闆改口「定價區要呈現免費／399／799／1,499」，四個方案全部回到檯面上
+ * （`D-14` 的「只 show 399」到此結束，這裡不留舊值以免兩種說法並存）。
+ *
  * ⛔ 跟 `landingHidden` 是兩回事，不要互相借用：那個旗標＝「售價未申報，合規上不可
- *    露出也不可收費」；這份清單＝「申報過、收得到，但行銷上現在不主打」。
- *    starter(799)／growth(1,499) 不在清單上但仍可結帳（系統收得到、畫面不引導），
- *    要真正停售得另開項目處理既有訂閱戶，見 STATUS `D-14` 的殘留說明。
+ *    露出也不可收費」；這份清單＝「申報過、收得到，但行銷上現在主不主打」。
+ *    專業版 4,990 是前者（未申報），永遠不能靠加進這份清單來露出。
  */
-export const FEATURED_PLAN_IDS: BillingPlanId[] = ['free', 'lite']
+export const FEATURED_PLAN_IDS: BillingPlanId[] = ['free', 'lite', 'starter', 'growth']
 
 /** 未訂閱 / 找不到方案時的預設：每個帳號自動享有的免費額度。 */
 export const DEFAULT_BILLING_PLAN_ID: BillingPlanId = 'free'

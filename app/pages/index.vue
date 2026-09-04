@@ -258,7 +258,7 @@
             </div>
             <h3>找其他工具，好貴</h3>
             <p class="lp-wall__sub">一個月好幾千，還得有人學、有人顧。</p>
-            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }}</p>
+            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
           </div>
         </div>
       </div>
@@ -827,42 +827,71 @@
     </section>
 
     <!-- ── 價格 ────────────────────────────────────────────────
-         大字報價，數字讀 plans.ts（單一事實來源），調價這裡自己跟上。
-         方案卡目錄已隨 08-26 改版收掉（試銷期只主打 399，見 FEATURED_PLAN_IDS）；
+         大字報價＋方案一覽，數字全部讀 plans.ts（單一事實來源），調價這裡自己跟上。
+         方案一覽 08-26 曾收成「只主打 399」，2026-09-04 老闆要求四個方案都要呈現而回來
+         （清單本體＝FEATURED_PLAN_IDS，升級對話框與 /product-info 吃同一份）；
          金流風控的五項揭露住在獨立頁 /product-info（見該頁檔頭），
          ⛔ 底下那條「完整商品資訊」連結是首頁通往揭露頁的路，不能拿掉。 -->
     <section id="pricing" class="lp-section">
       <div class="lp-wrap">
         <!-- 價格鎖排（lockup）：貨幣、數字、單位同一條基線一行讀完——
-             「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。 -->
+             「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。
+             ⚠️「／月起」的「起」是 09-04 露出四個方案時補的：底下同時看得到 799 與 1,499，
+                大字若還寫死「一個月只要 399」就變成不實陳述。 -->
         <div class="lp-bigprice lp-reveal">
           <span class="lp-bigprice__lbl">一個月只要</span>
           <div class="lp-bigprice__num">
-            <span class="lp-bigprice__cur">NT$</span>{{ fmt(lowestPaidPrice) }}<span class="lp-bigprice__per">／月</span>
+            <span class="lp-bigprice__cur">NT$</span>{{ fmt(lowestPaidPrice) }}<span class="lp-bigprice__per">／月起</span>
           </div>
           <span class="lp-bigprice__unit">不綁約、隨時可取消</span>
         </div>
 
-        <!-- 進場動畫掛在三張卡各自身上（不是這層網格）：手機單欄時三張疊成 436px，
-             掛外層的話第三張在畫面外就淡完了。桌機同一排＝靠 nth-child 錯開 70ms。 -->
-        <div class="lp-pricefeat">
-          <!-- ⛔ 這三張卡刻意**沒有圖示磚**：原本是 logo／✓／✓，兩顆一模一樣——
-               房規「每一列都長一樣的圖示等於沒有圖示」（同 Hero 檔期列拿掉方磚的理由）。
-               三個標題本身就講完了，磚只是裝飾。 -->
-          <div class="lp-pf lp-reveal">
-            <b>友善的引導式設定</b>
-            <small>一步一步帶你完成，部分步驟有 AI 協助標示——不用怕複雜。</small>
-          </div>
-          <div class="lp-pf lp-reveal">
-            <b>別人有的，我們都有</b>
-            <small>自動化訊息、客服流程、AI 客服、AI 行銷建議、報表。</small>
-          </div>
-          <div class="lp-pf lp-reveal">
-            <b>60 秒就能開始</b>
-            <!-- ⛔「填商家資訊」是不存在的步驟（#fast 區 09-03 查證過）：第二件事只有取名字 -->
-            <small>Google 登入、幫帳號取個名字，今天就能讓它上工。</small>
+        <!-- 方案一覽（2026-09-04 老闆：這裡要呈現免費／399／799／1,499）。
+             ⛔ 清單本體讀 FEATURED_PLAN_IDS，別在頁面自己列 id——2026-08-17 就是因為官網與
+                付款彈窗各維護一份，改了官網沒改彈窗被老闆抓到。
+             ⛔ 卡上刻意只列「每月則數／席次／知識庫份數」而且沒有打叉的列：打叉會跟底下那行
+                圖說（AI 客服四個方案都能用）同一區自打嘴巴——同 2026-08-21「不寫 799 才有
+                完整 AI 客服」的拍板。要動這個口徑先看圖說那段的 ⛔（連著後台彈窗一起改）。
+             ⛔ 卡上刻意沒有各自的按鈕：官網買不到方案（要先註冊、在後台才選），四顆一模一樣
+                的按鈕只會讓人以為按下去就選定了，也違反「每一列都長一樣＝等於沒有」。
+             進場動畫掛在每張卡（不是這層網格）：手機單欄時四張疊起來，掛在外層網格的話
+             最後幾張在畫面外就淡完了。桌機同一排＝靠 nth-child 錯開 70ms。 -->
+        <div class="lp-plans">
+          <div
+            v-for="p in featuredPlans"
+            :key="p.id"
+            class="lp-plan lp-reveal"
+            :class="{ 'is-pick': p.id === entryPaidPlanId }"
+          >
+            <!-- 「推薦」＝上面大字報的那個價位，靠 entryPaidPlanId 導出來的，不會跟大字走散。
+                 ⛔ 別改成「最受歡迎」：那是可被查證的人數宣稱，我們沒有這個數字。 -->
+            <span v-if="p.id === entryPaidPlanId" class="lp-plan__ribbon">推薦</span>
+            <span class="lp-plan__name">{{ p.name }}</span>
+            <div class="lp-plan__price">
+              <span class="lp-plan__cur">NT$</span>{{ p.price }}<small>／月</small>
+            </div>
+            <p class="lp-plan__quota">每月 AI 回覆 <b>{{ p.quota }}</b> 則</p>
+            <ul class="lp-plan__spec">
+              <li v-for="s in p.specs" :key="s">{{ s }}</li>
+            </ul>
           </div>
         </div>
+        <!-- 方案卡的圖說。四張卡列的東西不一樣，讀者第一個念頭是「便宜的是不是被砍功能」，
+             所以這行要先把那個疑慮擋掉，再講差別。
+             ⚠️ 2026-09-04 老闆拍板把這底下原有的三張特點卡整組拿掉（「友善的引導式設定」與
+                「60 秒就能開始」都在重講正上方 #fast 那一段，見那兩處；三張裡唯一別處沒有的
+                只有一串功能清單），清單併進這一行才有工作做。
+             ⛔ 別把它改回卡片：那三張卡橫在四張方案卡與 CTA 之間 183px（平板 412px），
+                讀者正要按按鈕，中間插的卻不是「選哪個方案／會不會被扣款」。
+             ⛔ 這裡刻意**不寫「四個方案功能完全一樣」**，即使目前只有 answeredQuota 真的被
+                enforce：plans.ts 的 scripting 在免費／輕量是 false，而後台「選擇方案」彈窗
+                （AdminPlanUpgradeDialog 的「流程」欄）就是拿它印 ✓／— 給客戶看的。官網宣稱
+                一樣、彈窗印「—」＝ 2026-08-17 被抓過的同一種自打嘴巴。改口徑要連彈窗與
+                plans.ts 一起處理，見 STATUS 的 `D-59`。
+                「AI 客服四個方案都能用」是查得證的（四個方案的 answeredQuota 都 > 0）。 -->
+        <p class="lp-plans__note lp-reveal">
+          <b>AI 客服四個方案都能用</b>，差別只在<b>規模</b>：每月 AI 回覆則數、團隊席次與知識庫份數。隨時可以升級或降級，不綁約。
+        </p>
 
         <div class="lp-pricecta lp-reveal">
           <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
@@ -1106,7 +1135,7 @@
           <NuxtLink class="lp-btn lp-btn--white" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <a class="lp-cta__talk" :href="emailHref">想先聊聊？寄信給我們 →</a>
         </div>
-        <p class="lp-cta__fine">每月 NT${{ fmt(lowestPaidPrice) }} · 不綁約、隨時可取消，取消後服務用到本期結束</p>
+        <p class="lp-cta__fine">每月 NT${{ fmt(lowestPaidPrice) }} 起 · 不綁約、隨時可取消，取消後服務用到本期結束</p>
       </div>
     </section>
 
@@ -1117,8 +1146,9 @@
          收起時 aria-hidden：不然螢幕閱讀器會在頁尾唸到一顆看不見的註冊鈕。 -->
     <div class="lp-stickybar" :class="{ 'is-show': barShown }" :aria-hidden="barShown ? undefined : 'true'">
       <div class="lp-stickybar__in">
-        <!-- 「多了半個」的「了」不能省：省掉會被讀成「多半（大概）個客服」，泡泡版就是有「了」 -->
-        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em>，多了半個客服＋半個行銷</span>
+        <!-- 「多了半個」的「了」不能省：省掉會被讀成「多半（大概）個客服」，泡泡版就是有「了」。
+             「起」是 09-04 露出四個方案時補的（同大字報價）：定價區同時看得到 799 與 1,499。 -->
+        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起，多了半個客服＋半個行銷</span>
         <span class="lp-stickybar__t2">60 秒開好帳號 · 不綁約、隨時可取消</span>
         <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
@@ -1301,7 +1331,44 @@ function fmt(n: number): string {
 }
 
 // ── 價格：直接讀 shared/billing/plans.ts（單一事實來源），改價只動那份、不用改門面 ──
-// 「一個月 399」的 399 讀 plans.ts，不寫死——調價時 Hero、解法列、定價區、黏性條會一起對。
+
+/**
+ * 定價區的方案一覽（2026-09-04 老闆：免費／399／799／1,499 都要呈現）。
+ *
+ * ⛔ 清單本體在 shared/billing/plans.ts 的 `FEATURED_PLAN_IDS`——後台升級對話框與
+ *    /product-info 的售價列吃同一份，別在頁面層級另開一份（2026-08-17 就是各維護各的，
+ *    官網改了、付款彈窗沒改，被老闆抓到）。
+ * ⛔ 順序照 `BILLING_PLAN_ORDER`（低→高）而不是照 FEATURED_PLAN_IDS 的寫法：卡片由便宜排到貴
+ *    是讀者的預期，那份清單哪天被人重排也不該讓門面跟著亂。
+ * ⚠️ 月費或額度是 null 的方案（企業＝面談報價）不進來：這排卡是拿數字互相比較用的，
+ *    沒有數字的卡只會多一張看不懂的（企業卡 08-26 已依 `D-13④` 撤掉，別從這裡偷渡回來）。
+ */
+const featuredPlans = computed(() =>
+  BILLING_PLAN_ORDER
+    .map(id => BILLING_PLANS[id])
+    .filter(p => FEATURED_PLAN_IDS.includes(p.id) && !p.internal && !p.landingHidden && !p.custom)
+    .filter(p => typeof p.priceMonthly === 'number' && typeof p.answeredQuota === 'number')
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      priceMonthly: p.priceMonthly as number,
+      price: fmt(p.priceMonthly as number),
+      quota: fmt(p.answeredQuota as number),
+      // 每張卡的規格列數必須一樣多，行才對得齊（房規：對齊到像素級）
+      specs: [
+        p.seats === null ? '團隊席次不限' : `團隊 ${p.seats} 席`,
+        p.knowledgeSources === null ? '知識庫資料不限' : `知識庫 ${p.knowledgeSources} 份資料`,
+      ],
+    })),
+)
+
+/**
+ * 最便宜的那個付費方案＝大字報價的主角，也是唯一掛「推薦」標的卡。
+ * 導出來而不是寫死 'lite'：調價或改主打清單時，大字與標籤不會走散。
+ */
+const entryPaidPlanId = computed(() => featuredPlans.value.find(p => p.priceMonthly > 0)?.id ?? null)
+
+// 「一個月 399 起」的 399 讀 plans.ts，不寫死——調價時 Hero、解法列、定價區、黏性條會一起對。
 const lowestPaidPrice = computed(() => {
   const prices = BILLING_PLAN_ORDER
     .map(id => BILLING_PLANS[id])

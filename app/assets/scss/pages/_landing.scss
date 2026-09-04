@@ -76,9 +76,10 @@
   --card-gap: 16px;
   --sh-card: 0 2px 6px rgba(20, 24, 22, 0.04), 0 18px 44px rgba(20, 24, 22, 0.07);
   --sh-soft: 0 2px 6px rgba(20, 24, 22, 0.03), 0 10px 26px rgba(20, 24, 22, 0.05);
-  /* ⛔ 綠色光暈**只給「要按的東西」**（.lp-btn--primary）：光暈是「這個可以按」的訊號，
-     別掛到泡泡、牆卡、數字磚上當裝飾（2026-08-21 老闆指名拿掉過）。 */
-  --sh-green: 0 8px 22px rgba(6, 199, 85, 0.28);
+  /* ⛔ 這一頁**沒有綠色光暈**。原本有一個 `--sh-green`（`0 8px 22px rgba(6,199,85,.28)`）
+     掛在 .lp-btn--primary 底下，2026-09-04 老闆指名「移除所有按鈕底下的綠色陰影」整個拿掉。
+     ⛔ 別再為了「讓按鈕跳出來」把它加回來：主行動鈕是整頁唯一的實心綠塊，本來就跳得出來；
+        08-21 也已經因為同一個理由把光暈從泡泡／牆卡／數字磚上拿掉過一輪。 */
 
   --wrap: 1160px;
 
@@ -238,7 +239,8 @@
     transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
   }
   .lp-btn--sm { font-size: 0.9rem; padding: 11px 20px; }
-  .lp-btn--primary { background: var(--g); color: #fff; box-shadow: var(--sh-green); }
+  /* ⛔ 不掛 box-shadow：綠色光暈 2026-09-04 老闆指名拿掉（見色票區 --sh-green 那段註解）。 */
+  .lp-btn--primary { background: var(--g); color: #fff; }
   .lp-btn--primary:hover { background: var(--g-deep); transform: translateY(-2px); }
   .lp-btn--primary:active { background: var(--g-press); transform: translateY(0); }
   .lp-btn--ghost { background: var(--paper); color: var(--ink); border-color: var(--hair); }
@@ -372,8 +374,7 @@
    *    印章能多寬就是被這件事鎖住的，不是憑感覺調的，各寬度的值見下面 @container。
    * ⚠️ 底色刻意留一成透明（不是實心）：被蓋住的那幾列會透出一點淡淡的影子，看起來才像
    *    墨蓋在紙上、不是貼了一張貼紙。⛔ 別調到全不透明，也別再往下調（會變成兩層字打架）。
-   * ⛔ 印章不吃 `--sh-green` 光暈：光暈只給「要按的東西」（見色票區註解），
-   *    印章不是按鈕，兩個都發光會分不出哪個能按。
+   * ⛔ 印章不掛綠色光暈（整頁都沒有了，見色票區那段註解——2026-09-04 老闆指名拿掉）。
    * ⛔ 整張卡是 `overflow: hidden`（它要裁圓角），印章伸出卡外的部分會被切掉——
    *    要伸出去就得先把圓角裁切改到別的地方，不是只加一行 position。
    * ⚠️ 之前那顆「高度 0 的錨點」（.lp-ops__seal）已經整個移除：現在直接對 .lp-ops 定位，
@@ -892,11 +893,70 @@
   .lp-bigprice__cur { font-size: 0.26em; font-weight: 800; color: var(--ink-2); letter-spacing: -0.01em; }
   .lp-bigprice__per { font-size: 0.2em; font-weight: 600; color: var(--ink-soft); }
   .lp-bigprice__unit { font-size: 0.92rem; color: var(--ink-2); font-weight: 600; }
-  .lp-pricefeat { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--card-gap); margin-top: 48px; }
-  .lp-pf { background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card); padding: 24px 22px; box-shadow: var(--sh-soft); }
-  .lp-pf b { display: block; font-size: 1.05rem; font-weight: 800; }
-  .lp-pf small { display: block; font-size: 0.86rem; color: var(--ink-2); margin-top: 8px; line-height: 1.75; }
-  .lp-pricecta { margin-top: 36px; text-align: center; }
+
+  /* ── 方案一覽（四張：免費／399／799／1,499，2026-09-04 回到檯面上）────────
+     ⚠️ 四張卡要「同一列的字對得起來」才好比較，所以價格、額度、規格三段都是固定行數，
+        規格列由 featuredPlans 保證每張一樣多（見 index.vue 的註解）。
+     ⛔ 卡片不做 hover 位移：這排卡點不下去（官網買不到方案），會動就像是可以點。 */
+  .lp-plans {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--card-gap); margin-top: 44px; align-items: stretch;
+  }
+  .lp-plan {
+    position: relative; display: flex; flex-direction: column;
+    background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card);
+    padding: 24px 20px 22px; box-shadow: var(--sh-soft);
+  }
+  /* 推薦的那張只加綠框、不換底色：底色一換就跟深綠段落的節奏打架，而且旁邊三張會變成
+     「被淘汰的」。⛔ 內距要補回 1px（邊框從 1 變 2），不然四張卡的文字基線會差一格。 */
+  .lp-plan.is-pick { border: 2px solid var(--g); box-shadow: var(--sh-card); padding: 23px 19px 21px; }
+  .lp-plan__ribbon {
+    position: absolute; top: -12px; left: 19px;
+    font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em;
+    background: var(--g); color: #fff; padding: 4px 12px; border-radius: var(--radius-pill);
+    box-shadow: 0 3px 10px rgba(4, 150, 70, 0.22);
+  }
+  .lp-plan__name { font-size: 0.9rem; font-weight: 800; letter-spacing: 0.04em; color: var(--ink-soft); }
+  /* 價格鎖排同大字報價的規矩：NT$／數字／／月 鎖同一條基線，一行讀完 */
+  .lp-plan__price {
+    display: flex; align-items: baseline; gap: 0.06em;
+    font-size: 1.9rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15;
+    margin: 10px 0 0; color: var(--ink); font-variant-numeric: tabular-nums;
+  }
+  .lp-plan__cur { font-size: 0.5em; font-weight: 800; color: var(--ink-2); }
+  .lp-plan__price small { font-size: 0.42em; font-weight: 600; color: var(--ink-soft); letter-spacing: 0; }
+  /* 這一行才是方案真正的差別（賣的是則數），所以字級比規格列大、數字加粗 */
+  .lp-plan__quota { margin: 12px 0 0; font-size: 0.94rem; color: var(--ink-2); }
+  .lp-plan__quota b { color: var(--ink); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .lp-plan__spec {
+    list-style: none; margin: 16px 0 0; padding: 14px 0 0;
+    border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 9px;
+  }
+  .lp-plan__spec li { font-size: 0.88rem; color: var(--ink-soft); }
+  /* 方案卡的圖說：貼著卡片（20px）＝看得出它在講上面那四張，不是獨立的一段話。
+     ⛔ 寬度要收（60ch）：滿版 1112px 時這兩句會拉成一行 80 幾個字，眼睛掃不回行首。
+        1440px 量到 31 字／25 字兩行，斷在「、」後面——**這是寬度上限＋文案句序做到的**。
+     text-wrap: balance ＝改樣式表本身前後各量一次：**有** 31 字／25 字、**拿掉** 42 字／14 字
+     （手機 390px 還會掉出「不綁約。」四字孤行）。所以它對這一段是有效的。
+     ⛔ 但別把「balance 對中文有效」當通則：`G-38` 在本頁其他地方量到過**無效、甚至更差**，
+        它吃元素與那段字本身。動到這行就重量一次（量法＝逐字取 Range rect 依 top 分組）。
+     ⛔ 也別改成 pretty：同樣量過，pretty 排成 42／14，正是我們要避開的短尾行。
+     ⛔ 用 inline style 切 text-wrap 來做 A/B 會量到假數字（實測與拿掉宣告的結果對不上），
+        要比就改樣式表再量。 */
+  .lp-plans__note {
+    margin: 20px auto 0; max-width: 60ch; text-align: center;
+    font-size: 0.88rem; line-height: 1.85; color: var(--ink-2); text-wrap: balance;
+  }
+  .lp-plans__note b { color: var(--ink); font-weight: 700; }
+
+  /* （原本圖說底下還有三張特點卡＝.lp-pricefeat／.lp-pf，2026-09-04 老闆拍板整組拿掉：
+     「友善的引導式設定」與「60 秒就能開始」是在重講正上方 #fast 那一段，唯一別處沒有的
+     功能清單已併進上面的圖說。理由與量到的數字寫在 index.vue 圖說那段註解。
+     ⛔ 要復活的話別直接還原 class：那三張卡在 960px 以下會壓成整排通欄，
+        900px 實測每張 852×111px 的框只裝一行 26 個字＝三條空白色帶。） */
+  /* 圖說是卡片的圖說（貼著卡）→ 到按鈕要拉開一點，不然三段擠成一團；
+     原本是 36px（那時上面接的是特點卡的卡框，不是一行小字）。 */
+  .lp-pricecta { margin-top: 44px; text-align: center; }
   .lp-pricecta__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-2); }
   .lp-pricecta__fine b { color: var(--ink); }
   .lp-pricecta__more { margin: 10px 0 0; font-size: 0.84rem; }
@@ -1304,10 +1364,10 @@
   &.is-anim .lp-walls .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
   &.is-anim .lp-walls .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
 
-  /* 定價三張特點卡：桌機同一排、同時進畫面，同上錯開 70ms。
-     手機單欄時三張各自到達觸發線，延遲對它們沒有影響（是加在「到了才開始」之後）。 */
-  &.is-anim .lp-pricefeat .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
-  &.is-anim .lp-pricefeat .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
+  /* 四張方案卡：同上，由便宜到貴依序出現（順序本身就是「越往右越大」的提示）。 */
+  &.is-anim .lp-plans .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
+  &.is-anim .lp-plans .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
+  &.is-anim .lp-plans .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
 
   /* FAQ 一題一個單位，同欄內錯開 60ms（一欄三題，最後一題也只等 0.12s）。
      ⚠️ nth-child 是**各欄自己數**的（兩欄各一個 div 容器），所以左右兩欄同時起跑、
@@ -1453,7 +1513,9 @@
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
     .lp-walls { grid-template-columns: 1fr 1fr; }
     .lp-wall--main { grid-column: 1 / -1; }
-    .lp-pricefeat { grid-template-columns: 1fr; }
+    /* 方案卡收成 2×2（不是直接單欄）：四張卡是拿來互相比較的，兩兩並排還能比，
+       一欄疊四張就得靠記憶力。 */
+    .lp-plans { grid-template-columns: 1fr 1fr; }
     /* 收單欄：左軌整條收掉（沒有 sticky 可言，而且它只是「捲到哪」的指示器）。
        ⛔ 因此每一塊的標題與說明一定要留在右欄（.lp-pane__hd）——搬進軌的話這裡會整個消失。 */
     .lp-rails { grid-template-columns: 1fr; gap: 0; }
@@ -1489,6 +1551,10 @@
 
     .lp-walls { grid-template-columns: 1fr; }
     .lp-wall__scene { height: 70px; }
+
+    /* 手機：方案卡才收成單欄（2×2 在 390px 每張只剩 165px，「每月 AI 回覆 1,300 則」
+       會折成三行）。推薦框的緞帶跟著左邊界走，不用另外調。 */
+    .lp-plans { grid-template-columns: 1fr; }
 
     /* 標頭三個項目（標題／說明／即將推出）在 390px 排不下，讓它換行而不是互相壓縮。
        min-height 拿掉，否則換行後上下留白會比內容還多。 */
@@ -1561,7 +1627,7 @@
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
-    &.is-anim .lp-pricefeat .lp-reveal.in,
+    &.is-anim .lp-plans .lp-reveal.in,
     &.is-anim .lp-faq .lp-reveal.in,
     &.is-anim .lp-voices .lp-reveal.in { transition-delay: 0s; }
 

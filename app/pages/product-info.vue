@@ -77,7 +77,7 @@ function fmt(n: number): string {
 }
 
 /**
- * 要揭露的售價：跟著檯面上在賣的（FEATURED_PLAN_IDS，試銷期只主打免費＋399）。
+ * 要揭露的售價：跟著檯面上在賣的（FEATURED_PLAN_IDS，2026-09-04 起＝免費／399／799／1,499）。
  * 這個 computed 原本在 index.vue 的商品資訊卡上，整卡搬過來時一起搬——別兩邊各留一份。
  */
 const paidPriceList = computed(() =>

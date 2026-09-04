@@ -278,7 +278,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const out = []
     // ⚠️ 09-03 十八輪加進來的三扇畫面：它們的宣告值是 opacity 0／clip-path 裁掉，
     //    「減少動態效果」時要靠 CSS 保險還原——漏掉就是空對話窗／空名單／沒有選單的手機
-    const sel = '.lp-reveal, .lp-cue, .lp-pf, .lp-q, .lp-liveob, .lp-pane__hd, .lp-band__phone, '
+    // （.lp-pf 拿掉了：定價區那三張特點卡 2026-09-04 整組移除，見 index.vue 方案圖說註解）
+    const sel = '.lp-reveal, .lp-cue, .lp-q, .lp-liveob, .lp-pane__hd, .lp-band__phone, '
       + '.lp-hero__text > *, .lp-ops, .lp-ops__group, .lp-stamp, '
       + '.lp-livewin--chat .conv-bubble-row, .lp-livewin--chat .conv-bubble-read, '
       + '.lp-livewin--users tbody tr, .lp-livewin--users .tag-chip, .lp-band__phone .lp-pmsg'

@@ -13,10 +13,11 @@
   flex-shrink: 0;
 }
 
+/* ⛔ 不掛綠色投影（原本是 `0 2px 8px var(--color-line-glow)`）：
+   2026-09-04 老闆指名「移除所有按鈕底下的綠色陰影」，官網的 .lp-btn--primary 同時拿掉。 */
 .btn-primary {
   background: var(--color-line);
   color: var(--bg-base);
-  box-shadow: 0 2px 8px var(--color-line-glow);
 }
 .btn-primary:hover { background: var(--color-line-dark); box-shadow: var(--shadow-glow); }
 

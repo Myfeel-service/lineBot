@@ -54,7 +54,7 @@ describe('BILLING_PLANS catalog', () => {
   })
 
   it('檯面主打的方案必須是可對外露出的（不可 internal / landingHidden）', () => {
-    // FEATURED_PLAN_IDS 是行銷取捨（目前只 show 399），但露出底線是金流合規：
+    // FEATURED_PLAN_IDS 是行銷取捨（現在＝免費／399／799／1,499），但露出底線是金流合規：
     // 把 internal 或未申報（landingHidden）的方案加進主打清單，官網與升級對話框
     // 會直接把它端給客戶。這裡擋住「只改清單沒想到合規」的手滑。
     for (const id of FEATURED_PLAN_IDS) {
