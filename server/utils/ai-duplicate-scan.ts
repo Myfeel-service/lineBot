@@ -141,6 +141,36 @@ const JUDGE_SYSTEM_INSTRUCTION = `你在幫商家清理客服知識庫。使用�
 輸出格式（嚴格 JSON）：{ "results": [ { "index": 0, "verdict": "same", "reason": "string" } ] }`
 
 /**
+ * 判官規則 2 的程式後檢（`C-143`）：兩張卡的**標題數字對不上**就不准判 same。
+ *
+ * 為什麼 prompt 寫了還要程式再守一次：規則 2 白紙黑字寫「12L vs 16L 一律 different」，
+ * 但 2026-09-04 實測判官仍把「GPLUS除濕機6L開關機操作」與「12L開關機操作」判成 same
+ * ——同系列不同型號的操作說明內容幾乎一字不差，模型會被內容說服而無視標題上的型號。
+ * 這跟 C-27 觸發詞後檢是同一課：**寫在 prompt 裡的紅線，模型偶爾會踩，紅線要有程式版**。
+ *
+ * 判準＝比對兩個標題各自的「數字串多重集合」：
+ *   「6L 開關機」vs「12L 開關機」→ {6} vs {12} → 擋下（降成 unsure＝不出建議）
+ *   「HEALSIO 2.4L 功能」vs「HEALSIO 產品特色」→ {2.4} vs {} → 一邊沒有數字＝不擋
+ *   （缺型號 ≠ 不同型號；這組是真的同一鍋）
+ *   「BOYA mini2」vs「BOYA mini 2」→ {2} vs {2} → 不擋（空白差異不算）
+ * 寧可漏、不可誤：擋錯（真重複被放過）只是少一條建議，放錯（跨型號被合併）會讓 AI
+ * 拿 A 型號的規格回答 B 型號。
+ */
+export function titleModelConflict(titleA: string, titleB: string): boolean {
+  const digits = (t: string) =>
+    (String(t ?? '')
+      // 全形數字先轉半形（部分標題用全形排版）
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .match(/\d+(?:\.\d+)?/g) ?? [])
+      .sort()
+      .join(',')
+  const a = digits(titleA)
+  const b = digits(titleB)
+  if (!a || !b) return false // 一邊沒有數字＝比不出型號，交給判官
+  return a !== b
+}
+
+/**
  * 第 3 層：LLM 判官，一次呼叫判完整批候選。失敗 throw（呼叫端決定跳過本輪）。
  */
 export async function judgeCandidates(
@@ -271,6 +301,12 @@ export async function runDuplicateScan(
     suggestions = candidates
       .map((p, i) => ({ p, v: verdicts[i]! }))
       .filter(x => x.v.verdict === 'same') // ⛔different/unsure 都不出建議：寧可漏、不可誤
+      // 規則 2 的程式後檢（`C-143`）：標題數字對不上的，判官說 same 也不算數
+      .filter(({ p }) => {
+        if (!titleModelConflict(p.a.title, p.b.title)) return true
+        console.warn(`[dup-scan] 判官違反規則2被後檢擋下：「${p.a.title}」vs「${p.b.title}」`)
+        return false
+      })
       .map(({ p, v }) => ({
         key: dupPairKey(p.a.id, p.b.id),
         kind: p.kind,

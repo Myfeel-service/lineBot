@@ -29,8 +29,7 @@ import {
   dupPairKey,
   runDuplicateScan,
   topSimilarPairs,
-  type DupCardLite,
-} from './ai-duplicate-scan'
+  type DupCardLite, titleModelConflict } from './ai-duplicate-scan'
 
 const vec = (...v: number[]) => v
 const card = (id: string, over: Partial<DupCardLite> = {}): DupCardLite => ({
@@ -231,5 +230,37 @@ describe('掃描不覆寫 ignoredKeys（C-49 review #15）', () => {
     await runDuplicateScan(db, 'ws1', { force: true })
     const saved = writes.at(-1) as any
     expect('ignoredKeys' in saved).toBe(false)
+  })
+})
+
+/**
+ * `C-143`：判官規則 2 的程式後檢。
+ * 2026-09-04 實測判官把「6L開關機」與「12L開關機」判成 same——規則寫在 prompt 裡
+ * 模型偶爾會踩，紅線要有程式版（同 C-27 觸發詞後檢的教訓）。
+ * 案例全部取自正式資料當天的真實候選。
+ */
+describe('titleModelConflict（C-143：標題數字對不上就不准合）', () => {
+  it('🔴 6L vs 12L 要擋（判官當天真的判了 same）', () => {
+    expect(titleModelConflict('GPLUS除濕機6L開關機操作', 'GPLUS除濕機12L開關機操作')).toBe(true)
+    expect(titleModelConflict('GPLUS除濕機12L按鍵鎖功能', 'GPLUS除濕機6L按鍵鎖功能')).toBe(true)
+  })
+
+  it('一邊沒有數字＝比不出型號，不擋（HEALSIO 那組是真的同一鍋）', () => {
+    expect(titleModelConflict('SHARP HEALSIO 2.4L 自動調理零水鍋功能', 'SHARP HEALSIO 自動調理零水鍋產品特色')).toBe(false)
+    expect(titleModelConflict('GPLUS產品保固範圍與服務條款', 'GPLUS除濕機6L保固範圍服務條款')).toBe(false)
+  })
+
+  it('空白排版差異不算不同型號（BOYA mini2 vs mini 2 是真重複）', () => {
+    expect(titleModelConflict('BOYA mini2 迷你無線 AI 降噪麥克風特色', 'BOYA mini 2 產品特色')).toBe(false)
+  })
+
+  it('數字相同不擋；全形數字要先轉半形', () => {
+    expect(titleModelConflict('Kieslect 10S 規格參數', 'Kieslect 10S 規格')).toBe(false)
+    expect(titleModelConflict('除濕機１２L操作', '除濕機12L操作')).toBe(false)
+    expect(titleModelConflict('型號806說明', '型號807說明')).toBe(true)
+  })
+
+  it('兩邊都沒數字＝交給判官（W1 REGEN vs ULTRA 靠產品名分流，不靠這裡）', () => {
+    expect(titleModelConflict('模式切換', '模式切換說明')).toBe(false)
   })
 })
