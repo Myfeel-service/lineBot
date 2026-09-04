@@ -7,6 +7,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import {
   addWorkspaceProductName,
+  buildChunkSoftDeletePatch,
   invalidateSourceProductCache,
   invalidateTagIndexCache,
   KNOWLEDGE_CHUNKS_COLLECTION,
@@ -181,6 +182,69 @@ export async function listSources(
     .slice(0, limit)
 }
 
+export interface DuplicateSourceHit {
+  id: string
+  name: string
+  type: KnowledgeSourceType
+  chunkCount: number
+  updatedAtMs: number
+}
+
+/**
+ * 用內容指紋找「這份東西是不是已經匯進來過了」（`C-134`）。
+ *
+ * 為什麼要有這支：手動上傳從來沒有內容去重——同一份說明書重傳一次就是
+ * OCR ＋ 切卡 ＋ embedding 整套重跑重收費，而且**畫面上多一份一模一樣的資料**。
+ * 2026-09-04 在 MYFEEL 正式資料上看到同一本 Kieslect 說明書並存三份、45 張重複卡，
+ * 三份的產品名還各寫各的（產品鎖認的是名字字串 → 對系統來說變成三個產品）。
+ *
+ * ⚠️ 只認**這次改動之後**匯入的資料：舊來源的 `appliedContentHash` 是空字串
+ * （檔案類從來沒寫過），比不出來。所以查不到不等於沒有，呼叫端不可以拿它當
+ * 「確定沒重複」的證據——同名警告那條路仍然要留著。
+ *
+ * 型別要一起比：檔案的指紋算的是原始 bytes、網址算的是抽出來的純文字，
+ * 兩者語意不同，跨型別比中了也沒有意義。
+ */
+export async function findSourceByContentHash(
+  db: Firestore,
+  workspaceId: string,
+  contentHash: string,
+  type: KnowledgeSourceType,
+): Promise<DuplicateSourceHit | null> {
+  const hash = String(contentHash ?? '').trim()
+  // ⛔空字串一定要擋在查詢之前：舊資料整批存的就是 ''，照查會撈回一整包不相干的來源
+  if (!hash) return null
+
+  try {
+    // 兩個等值條件，Firestore 會合併既有的單欄位索引（不必另外部署複合索引）。
+    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('appliedContentHash', '==', hash)
+      .limit(10)
+      .get()
+    for (const d of snap.docs) {
+      const data = d.data() as Partial<KnowledgeSourceDoc> & { isDeleted?: boolean; deletedAt?: unknown }
+      // 已經丟進回收桶的不算重複：使用者刪掉就是想重來一次
+      if (data.isDeleted === true || data.deletedAt != null) continue
+      if ((data.type ?? 'file') !== type) continue
+      return {
+        id: d.id,
+        name: String(data.name ?? ''),
+        type: (data.type ?? 'file') as KnowledgeSourceType,
+        chunkCount: Number(data.chunkCount ?? 0),
+        updatedAtMs: tsToMs(data.updatedAt),
+      }
+    }
+    return null
+  }
+  catch (e) {
+    // 查不到就當「不確定」——去重是加值，不該讓它擋住匯入這條主路。
+    // ⛔但一定要 log：靜靜回 null 的話，去重整個失效也沒有人會知道。
+    console.warn('[ai-knowledge-sources] findSourceByContentHash failed:', e)
+    return null
+  }
+}
+
 /**
  * 取得單一 source（含 workspace 比對）。找不到回 null。
  */
@@ -253,6 +317,39 @@ export async function listChunksBySource(
       expiredAtMs: tsToMs(data?.expiredAt),
     }
   })
+}
+
+/**
+ * 把一個來源底下「還活著」的卡片整批移進回收桶，回傳實際移動的張數（`C-135`）。
+ *
+ * 給「更新既有那一份」用：重傳一份新版說明書時，舊卡要退場、但**來源本身要留著**
+ * （資料夾、產品名、同步設定、建立日期都在來源上）。用軟刪除不用真刪，是因為
+ * 蓋錯了要救得回來——回收桶留 30 天。
+ *
+ * ⛔ 已經在回收桶的不再蓋一次：`buildChunkSoftDeletePatch` 會把 `statusBeforeDelete`
+ *    記成當下的 status，而當下已經是 `disabled` → 還原時回不到刪除前的狀態。
+ */
+export async function recycleSourceChunks(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+): Promise<number> {
+  const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('sourceId', '==', sourceId)
+    .get()
+
+  const live = snap.docs.filter(d => (d.data() as { deletedAt?: unknown })?.deletedAt == null)
+  // 單一 batch 上限 500 writes，400 一批留餘裕（同 deleteSourceWithChunks：
+  // 超過就是整批 commit 失敗，不是部分成功——舊卡一張都不會退場）
+  for (let i = 0; i < live.length; i += 400) {
+    const batch = db.batch()
+    for (const d of live.slice(i, i + 400)) {
+      batch.update(d.ref, buildChunkSoftDeletePatch((d.data() as { status?: unknown })?.status))
+    }
+    await batch.commit()
+  }
+  return live.length
 }
 
 /**

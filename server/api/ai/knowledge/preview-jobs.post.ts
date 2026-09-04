@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { findSourceByContentHash } from '~~/server/utils/ai-knowledge-sources'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb, getStorage } from '~~/server/utils/firebase'
 import {
@@ -66,6 +68,22 @@ export default defineEventHandler(async (event) => {
   const work = makeWork(input)
   let sourceFile: string | null = null
 
+  /**
+   * 「這份東西已經匯進來過了」的攔截（`C-134`）。
+   *
+   * 擺在**抽取與整理之前**才有意義：真正的錢花在 OCR ＋ LLM 切卡 ＋ embedding，
+   * 等切完再說「其實重複了」等於白花一次（`C-12` 記的就是這筆）。
+   * 回 200 帶 `duplicate`（不是丟錯）——使用者要的是兩條路：去看既有那份，或
+   * 明知重複仍要再整理一次（`ignoreDuplicate`）。丟錯只會變成死路。
+   */
+  const ignoreDuplicate = body?.ignoreDuplicate === true
+  async function duplicateOf(hash: string, sourceType: 'file' | 'url' | 'text') {
+    if (ignoreDuplicate || !hash) return null
+    // text 存進 Firestore 時是 type='manual'（見 bulk-create 的說明），比對要照存進去的樣子
+    const hit = await findSourceByContentHash(getDb(), workspaceId, hash, sourceType === 'text' ? 'manual' : sourceType)
+    return hit ? { duplicate: hit } : null
+  }
+
   if (type === 'gsheet') {
     const url = String(body?.url ?? '').trim()
     const ref = parseGoogleSheetUrl(url)
@@ -91,6 +109,16 @@ export default defineEventHandler(async (event) => {
     const buffer = await readUploadedFileBuffer(body, workspaceId)
     if (buffer.length === 0) throw createError({ statusCode: 400, statusMessage: '檔案內容為空' })
     if (buffer.length > 10 * 1024 * 1024) throw createError({ statusCode: 400, statusMessage: '檔案超過 10MB 上限' })
+
+    /**
+     * 檔案的指紋算**原始 bytes**，不是抽出來的文字：
+     * ① 掃描檔還沒 OCR 就沒有文字可算，而掃描檔正是最貴的那一種，最需要提早擋；
+     * ② 「同一份檔案又傳一次」本來就是 bytes 相同，這是最直接的判準。
+     * 代價是同一份內容重新匯出成 PDF 會判不出重複——那種情況本來就該重新整理。
+     */
+    work.extractedHash = createHash('sha256').update(new Uint8Array(buffer)).digest('hex')
+    const dup = await duplicateOf(work.extractedHash, 'file')
+    if (dup) return dup
 
     work.sourceName = fileName
     work.sourceType = 'file'
@@ -157,8 +185,9 @@ export default defineEventHandler(async (event) => {
     work.sourceType = 'url'
     // 指紋在這裡就算好隨結果回前端：匯入完存成 source.appliedContentHash，
     // 之後「重新同步」才能直接回答「網頁跟你上次整理時比有沒有變」。
-    const { createHash } = await import('node:crypto')
     work.extractedHash = createHash('sha256').update(extracted.text).digest('hex')
+    const dupUrl = await duplicateOf(work.extractedHash, 'url')
+    if (dupUrl) return dupUrl
     setChunkingFromExtracted(work, extracted)
   }
   else if (type === 'text') {
@@ -168,6 +197,10 @@ export default defineEventHandler(async (event) => {
     work.sourceName = String(body?.name ?? '手打輸入').trim()
     work.sourceType = 'text'
     work.rawLength = text.length
+    // 貼上的文字：空白差異不算改動（同一段話重貼一次常常多／少一個換行）
+    work.extractedHash = createHash('sha256').update(text.replace(/\s+/g, ' ')).digest('hex')
+    const dupText = await duplicateOf(work.extractedHash, 'text')
+    if (dupText) return dupText
     primeChunking(work, text)
   }
   else {

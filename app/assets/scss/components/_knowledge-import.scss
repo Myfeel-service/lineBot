@@ -63,6 +63,32 @@
   font-size: 13px;
 }
 
+/* 同名的每一份各自帶一顆「更新這一份」（`C-135`）。
+   ⛔ 按鈕不可以擠成一排小字：那句提醒原本唯一的建議是「改個名字」，照做就是製造重複——
+      現在主要出口是這顆按鈕，它必須看得見、按得到。窄視窗折行不讓它壓到名字。 */
+.kb-dedup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+
+  > span {
+    flex: 1 1 200px;
+    min-width: 0; /* ⛔ flex 子項預設 min-width:auto，長檔名會把整列撐破版 */
+    /* ⛔ min-width: 0 只准它「縮」，斷不了行的字照樣頂出去：`AI_NotePods_10S_manual_
+       20260723_final_v2_revised.pdf` 這種底線串起來的檔名整串算一個字，實測 390px
+       螢幕溢出彈窗 92.5px（scripts/kb-import-dedup-row-check.mjs 量的）。
+       檔名本來就沒有語意斷點，anywhere 斷在哪裡都可以讀。 */
+    overflow-wrap: anywhere;
+  }
+}
+
+/* 「這份內容已經匯過了」：擋在整理之前，位置在第一步的錯誤提示旁邊 */
+.kb-dup-content {
+  margin-top: 12px;
+}
+
 /* 名稱／所屬產品的收合區（`D-50` 簡化 2）。摘要卡在上面下完結論，這裡才是「要改再點」。
    ⛔ 不要加底色或框線把它做成一張卡:它是摘要卡的延伸,長成第二張卡就又變回
       「兩個要填的欄位排在結果前面」那個問題。 */

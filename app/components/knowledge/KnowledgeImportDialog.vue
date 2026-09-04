@@ -410,6 +410,33 @@
         </div>
         <div v-else>可以再試一次；內容很長的話，建議把文字分成幾段、分批貼進來。</div>
       </el-alert>
+
+      <!--
+        「這份已經匯過了」（`C-134`）。擋在整理**之前**＝沒有花 AI 的錢，也不會多一份重複。
+        ⛔ 一定要給出路：擋住而沒有下一步，就是逼人改個名字再傳一次——那正是
+        2026-09-04 同一本說明書在 MYFEEL 並存三份的成因。
+      -->
+      <el-alert
+        v-if="duplicateHit && !previewing"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="kb-dup-content"
+      >
+        <template #title>
+          這份內容已經在知識庫裡了
+        </template>
+        <div class="kb-dedup-body">
+          <p class="text-xs">
+            跟「<strong>{{ duplicateHit.name }}</strong>」（{{ duplicateHit.chunkCount }} 條，{{ relativeTime(duplicateHit.updatedAtMs) || '未更新' }}）
+            一字不差，所以先停在這裡——再整理一次會多出一份一模一樣的資料，AI 答題時會撈到兩份。
+          </p>
+          <div class="flex gap-1">
+            <el-button size="small" type="primary" plain @click="openDuplicateSource">看那一份</el-button>
+            <el-button size="small" text @click="retryIgnoringDuplicate">內容其實不一樣，重新整理一次</el-button>
+          </div>
+        </div>
+      </el-alert>
     </div>
 
     <!-- ── Step 1.5:整站匯入 — 頁面清單勾選 ─────────────── -->
@@ -610,7 +637,7 @@
             :disabled="includedCount === 0 || previewing"
             @click="runImport"
           >
-            {{ importing ? '匯入並學習中⋯' : `直接匯入 ${importTotalLabel}` }}
+            {{ importing ? '匯入並學習中⋯' : importButtonLabel }}
           </el-button>
           <el-button text @click="chunkListOpen = !chunkListOpen">
             {{ chunkListOpen ? '收起逐條檢查' : '先逐條檢查' }}
@@ -649,6 +676,31 @@
         </div>
         <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
           {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改——同一台請從下拉挑現成的名字，自己重打一次容易被當成兩台。' : '點一下可以挑已經在用的產品；內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
+        </p>
+
+        <!--
+          放進哪個資料夾（`C-134`）。以前沒有這個欄位，所有匯進來的東西一律落在
+          「未分類」，要靠人事後拖——實況是沒人記得拖，於是店家打開產品資料夾找說明書
+          看到「沒有」，就再傳一次。這個欄位是那個災情的根治。
+        -->
+        <div v-if="folders?.length" class="kb-source-name-row">
+          <span class="kb-source-name-label">放進資料夾</span>
+          <el-select
+            v-model="sourceMeta.folderId"
+            size="small"
+            clearable
+            placeholder="未分類"
+            class="kb-source-name-input"
+            @change="folderAutoPicked = false"
+          >
+            <el-option v-for="f in folders" :key="f.id" :label="f.name" :value="f.id" />
+          </el-select>
+        </div>
+        <p v-if="folders?.length" class="kb-section-hint">
+          <!-- 猜的一定要講出來：不講的話「東西被放進某個資料夾」等於沒有人同意過 -->
+          {{ folderAutoPicked
+            ? '依名稱幫你選好了資料夾，不對可以直接改。'
+            : '選了就直接歸到那個資料夾底下；留空會放在最上面的「未分類」，之後要自己拖進去。' }}
         </p>
       </div>
 
@@ -691,13 +743,54 @@
         <template #title>
           已存在 {{ dupMatches.length }} 個同名資料
         </template>
+        <!--
+          ⛔ 這裡原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
+          （2026-09-04 MYFEEL 同一本說明書並存三份、45 張重複卡，就是這樣長出來的）。
+          人真正想做的事幾乎都是「我重傳了，用新的蓋掉舊的」，所以主要出口改成
+          「更新這一份」；改名字降級成次要選項。
+        -->
         <div class="kb-dedup-body">
-          <p class="text-xs">繼續建立會在資料列表出現多筆同名項目，可能不是你想要的。在上方「資料名稱」改個名字，這個提醒就會消失（欄位已為你展開）。</p>
+          <p class="text-xs">你是要更新原本那一份，還是另外建一份？</p>
           <ul class="kb-dedup-list">
-            <li v-for="m in dupMatches" :key="m.id">
-              「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）
+            <li v-for="m in dupMatches" :key="m.id" class="kb-dedup-row">
+              <span>「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）</span>
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :disabled="replaceTarget?.id === m.id"
+                @click="chooseReplaceTarget(m)"
+              >
+                {{ replaceTarget?.id === m.id ? '已選這份來更新' : '更新這一份' }}
+              </el-button>
             </li>
           </ul>
+          <p class="text-xs">
+            或者在上方「資料名稱」改個名字，另外建一份新的資料（這個提醒就會消失）。
+          </p>
+        </div>
+      </el-alert>
+
+      <!--
+        已經選好要覆蓋哪一份：狀態要一直看得見，並且隨時退得回來。
+        看不見的話，人按下匯入時不知道自己正在蓋掉東西——那是不可逆的誤會。
+      -->
+      <el-alert
+        v-if="replaceTarget"
+        type="info"
+        show-icon
+        :closable="false"
+        class="kb-dedup-warning"
+      >
+        <template #title>
+          會更新「{{ replaceTarget.name }}」，不會多一份
+        </template>
+        <div class="kb-dedup-body">
+          <p class="text-xs">
+            這份資料原本的 {{ replaceTarget.chunkCount }} 條知識會移到回收桶（30 天內都救得回來），
+            換成這次整理好的內容。資料夾、同步設定都會留著。
+          </p>
+          <el-button size="small" text @click="replaceTarget = null">改成另外建一份新的</el-button>
         </div>
       </el-alert>
 
@@ -877,7 +970,7 @@
           :disabled="includedCount === 0"
           @click="runImport"
         >
-          {{ importing ? '匯入並學習中⋯' : `確認匯入 ${importTotalLabel}` }}
+          {{ importing ? '匯入並學習中⋯' : (replaceTarget ? importButtonLabel : `確認匯入 ${importTotalLabel}`) }}
         </el-button>
       </div>
     </div>
@@ -906,6 +999,15 @@
           <strong>{{ result.failed }}</strong>
         </div>
       </div>
+
+      <!--
+        蓋掉東西一定要講出來，而且要講「舊的去哪了」（`C-135`）。
+        只報新的幾條、不提舊的幾條被換掉，等於讓人以為知識庫變多了。
+      -->
+      <p v-if="result.replacedChunks" class="kb-section-hint">
+        這份資料原本的 <strong>{{ result.replacedChunks }}</strong> 條知識已換成上面這批；
+        舊的移到<strong>回收桶</strong>，30 天內都救得回來。
+      </p>
 
       <!--
         客人現在聽不聽得到這些內容。
@@ -995,6 +1097,7 @@
 import { ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 // 圖檔路徑的單一來源（同開通引導與修復劇本共用那份註冊表）
 import { ONBOARDING_SHOTS as SHOTS } from '~/utils/onboarding-shots'
@@ -1009,6 +1112,12 @@ const props = defineProps<{
    * 只比對 preview 回傳的(原始名稱的)同名清單,會漏掉「改名撞進另一個既有資料」的情況。
    */
   existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
+  /**
+   * 父層的資料夾清單：匯入時要能選「放進哪個資料夾」。
+   * 沒有這個欄位的話，每一份匯進來的東西都掉在「未分類」，要靠人事後拖——
+   * 而人不會記得（`C-134`：MYFEEL 的說明書因此躺在未分類，店家去產品資料夾找說「沒有」）。
+   */
+  folders?: Array<{ id: string; name: string }>
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -1361,7 +1470,38 @@ const sourceMeta = ref({
   productName: '',
   /** 網址來源的內容指紋（存成 source.appliedContentHash＝重新同步的比對基準） */
   contentHash: '',
+  /** 放進哪個資料夾；null = 未分類。依名稱自動預選（`C-134`），使用者可改 */
+  folderId: null as string | null,
 })
+
+/**
+ * 資料夾是「照名字猜的」還是使用者自己選的。
+ * 猜的要在畫面上講出來——沒講的話，東西被放進某個資料夾這件事等於沒人同意過
+ * （而放錯資料夾比留在未分類更難查）。使用者一動手就不再是猜的。
+ */
+const folderAutoPicked = ref(false)
+
+/**
+ * 「更新既有那一份」的目標（`C-135`）。
+ * 有值時 `runImport` 走覆蓋：舊卡進回收桶、來源本身留著（資料夾／同步設定不會被洗掉）。
+ * 這是同名警告的正解——原本唯一的建議是「改個名字」，照做就是製造出第三份重複。
+ */
+const replaceTarget = ref<{ id: string; name: string; chunkCount: number } | null>(null)
+
+/** 後端回報「這份內容已經匯過了」（`C-134`）：內容指紋一模一樣的既有資料 */
+interface DuplicateHit {
+  id: string
+  name: string
+  type: string
+  chunkCount: number
+  updatedAtMs: number
+}
+const duplicateHit = ref<DuplicateHit | null>(null)
+/**
+ * 下一次整理要不要略過「已經匯過了」的守門。
+ * 一次性：用掉就歸位——不然使用者按過一次之後，這個視窗接下來每一份都不再守門。
+ */
+const ignoreDuplicateOnce = ref(false)
 
 // mode 已經是「判別結果」，這裡只需確認對應的輸入真的有值（規則共用 shared/knowledge-import-detect）
 const canPreview = computed(() => {
@@ -1675,12 +1815,26 @@ async function runSiteImport() {
       page.status = 'processing'
       page.error = ''
       try {
-        const created = await apiFetch<{ jobId: string }>('/api/ai/knowledge/preview-jobs', {
+        const created = await apiFetch<{ jobId?: string; duplicate?: DuplicateHit }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',
           // ⛔ 不帶 backgroundAdvance：這一頁的 bulk-create 只在下面這個 worker 裡呼叫，
           //    人一關窗就沒有人收結果，讓排程推完等於純燒錢（見 PreviewJobDoc 的說明）。
           body: { type: 'url', url: page.url, generateOverview: false },
         })
+        /**
+         * 這一頁的內容跟既有資料一字不差（`C-134`）——換了網址的同一頁、或同站兩個
+         * 網址指向同一份內容。當成「這頁做完了」而不是失敗，但**一定要在清單上講出來**：
+         * 靜靜跳過會變成「勾了 30 頁、只進了 22 頁」而沒有人知道少了哪幾頁、為什麼。
+         */
+        if (created.duplicate) {
+          page.status = 'done'
+          page.cards = 0
+          page.notLearned = 0
+          page.imported = true
+          page.warningTexts = [`內容與既有資料「${created.duplicate.name}」完全相同，已跳過（沒有重複建立）`]
+          continue
+        }
+        if (!created.jobId) throw new Error('建立整理工作失敗')
         lastPreviewJobId.value = created.jobId // 逾時要停掉它（見下面的 catch）
         const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
         if (!res.chunks.length) throw new Error('沒有切出知識(頁面可能沒有實質內容)')
@@ -1693,6 +1847,12 @@ async function runSiteImport() {
               url: page.url,
               productName: res.suggestedProductName ?? '',
               contentHash: res.contentHash ?? '',
+              // 整站匯入沒有逐頁預覽＝更沒有人會事後去拖資料夾（`C-134`）。
+              // 猜不到就是 null（未分類），跟單筆匯入同一把尺。
+              folderId: pickFolderForSource(props.folders ?? [], {
+                sourceName: page.title || res.sourceName || page.url,
+                productName: res.suggestedProductName ?? '',
+              })?.folderId ?? null,
             },
             // 冪等鍵（C-46）:單頁逾時重試不會生第二個來源
             importId: created.jobId,
@@ -1807,6 +1967,35 @@ const overviewWillImport = computed(() => {
 const importTotalLabel = computed(() =>
   overviewWillImport.value ? `${includedCount.value} 條＋1 張總表` : `${includedCount.value} 條`,
 )
+
+/**
+ * 主按鈕的字。選了覆蓋目標時**按鈕本身就要改口**（`C-135`）——
+ * 「匯入」跟「蓋掉既有那一份」是兩件事，按鈕說一樣的話等於沒有告知。
+ */
+const importButtonLabel = computed(() =>
+  replaceTarget.value ? `更新既有資料（${importTotalLabel.value}）` : `直接匯入 ${importTotalLabel.value}`,
+)
+
+/** 選定要覆蓋的既有資料；名稱同步過去，免得更新完列表上出現兩個不同名字指同一份東西 */
+function chooseReplaceTarget(m: { id: string; name: string; chunkCount: number }) {
+  replaceTarget.value = { id: m.id, name: m.name, chunkCount: m.chunkCount }
+  sourceMeta.value.name = m.name
+}
+
+/** 「這份已經匯過了」→ 關窗並跳去那一份（沿用 imported 訊號，父層會刷新列表並選中它） */
+function openDuplicateSource() {
+  const id = duplicateHit.value?.id ?? null
+  duplicateHit.value = null
+  emit('imported', id)
+  emit('update:modelValue', false)
+}
+
+/** 「內容其實不一樣」→ 略過這一次守門重跑。旗標用完即歸位（見 ignoreDuplicateOnce） */
+function retryIgnoringDuplicate() {
+  duplicateHit.value = null
+  ignoreDuplicateOnce.value = true
+  void runPreview()
+}
 
 /** 名稱／所屬產品欄位的展開（`D-50` 簡化 2：預設收起，結論先行）。判斷見 metaEditorOpen */
 const metaOpen = ref(false)
@@ -2026,6 +2215,9 @@ watch(jobState, v => emit('job-state', v), { immediate: true })
 /** 回到第一步(換一份重新整理)＝放棄目前這份工作,記號要跟著清掉 */
 function backToInput() {
   clearJobMarker()
+  // 回第一步＝要換一份了：覆蓋目標留著的話，下一份會被默默蓋到上一份的資料上
+  replaceTarget.value = null
+  duplicateHit.value = null
   step.value = 'input'
 }
 
@@ -2197,12 +2389,25 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode) {
       }
     : null
   existingMatches.value = res.existingMatches ?? []
+  replaceTarget.value = null // 新的一份＝回到「建立新資料」，別把上一輪選的覆蓋目標帶過來
+  /**
+   * 資料夾預選（`C-134`）：拿檔名＋AI 判出來的產品名去比現有資料夾。
+   * ⛔ 比對必須帶產品名——實測「KIESLECT 小耳記 說明書.pdf」單靠檔名比不到
+   * 「Kieselect 小耳記 AI NotePods 10S」這個資料夾（資料夾名字本身還打錯字）。
+   * 猜不出來就是 null（未分類），不硬塞：放錯資料夾比留在未分類更難查。
+   */
+  const guessed = pickFolderForSource(props.folders ?? [], {
+    sourceName: res.sourceName,
+    productName: res.suggestedProductName ?? '',
+  })
+  folderAutoPicked.value = Boolean(guessed)
   sourceMeta.value = {
     type: srcMode,
     name: res.sourceName,
     url: res.sourceUrl,
     productName: res.suggestedProductName ?? '',
     contentHash: res.contentHash ?? '',
+    folderId: guessed?.folderId ?? null,
   }
 }
 
@@ -2257,13 +2462,32 @@ async function runPreview() {
       body.name = `貼上文字 ${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`
     }
 
+    // 已經匯過一模一樣的內容時要略過去重（使用者在下面那張卡按了「還是要再整理一次」）
+    if (ignoreDuplicateOnce.value) body.ignoreDuplicate = true
+
     // 建 job(秒回)→ 輪詢推進(永不 504)。回應形狀與舊 preview-chunks 相同。
-    const created = await apiFetch<{ jobId: string }>(
+    const created = await apiFetch<{ jobId?: string; duplicate?: DuplicateHit }>(
       '/api/ai/knowledge/preview-jobs',
       { method: 'POST', body },
     )
     // 上傳大檔那段可能跑好幾秒,期間按了取消就別再往下建工作(否則會留下一份沒人要的記號)
     if (previewCancelled) return
+
+    /**
+     * 這份東西已經匯過了（`C-134`）：後端在**花錢整理之前**就擋下來，這裡只負責給兩條路。
+     * ⛔ 不可以做成「擋住就結束」——那是死路。人會有兩種真實意圖：去看既有那份，
+     *    或明知重複也要重新整理一次（換切法／上一次切壞了）。
+     */
+    if (created.duplicate) {
+      duplicateHit.value = created.duplicate
+      clearJobMarker()
+      return
+    }
+    if (!created.jobId) {
+      showToast('建立整理工作失敗，請再試一次', 'error')
+      return
+    }
+    ignoreDuplicateOnce.value = false // 用掉了就歸位，下一份重新守門
     lastPreviewJobId.value = created.jobId // 取消端點與 bulk-create 冪等鍵（C-46）都要用
     // 記號要在開始等之前就落地:最需要接回來的正是「等很久所以跑去做別的事」那一種
     saveJobMarker(created.jobId, mode.value)
@@ -2394,6 +2618,8 @@ const result = ref<{
   indexed: number
   failed: number
   items: Array<{ id: string; title: string; status: string; failureReason?: string }>
+  /** 「更新既有資料」時被移進回收桶的舊卡張數（`C-135`）；0 = 這次是新建一份 */
+  replacedChunks?: number
 } | null>(null)
 
 const failedItems = computed(() =>
@@ -2570,7 +2796,10 @@ async function runImport() {
           url: sourceMeta.value.url,
           productName: sourceMeta.value.productName.trim(),
           contentHash: sourceMeta.value.contentHash,
+          folderId: sourceMeta.value.folderId,
         },
+        // 「更新既有那一份」（`C-135`）：舊卡進回收桶、來源留著，不再多生一份同名資料
+        ...(replaceTarget.value ? { replaceSourceId: replaceTarget.value.id } : {}),
         chunks: selected,
         overviewCard: overviewPayload,
         // 冪等鍵（C-46）:逾時後重按「匯入」會覆寫同一批卡,不會多出殭屍來源＋重複卡
@@ -2630,7 +2859,12 @@ function resetAll() {
   //    而結果早就被清成 null → 綠勾與「正在確認」都不會出現，畫面停在「還沒證明讀得到」。
   gsheetProbe.value = null
   gsheetProbedUrl = ''
-  sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
+  sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '', folderId: null }
+  // 換一份就全部歸位：守門旗標若留著，接下來每一份都不再檢查重複（`C-134`）
+  folderAutoPicked.value = false
+  replaceTarget.value = null
+  duplicateHit.value = null
+  ignoreDuplicateOnce.value = false
   sitePages.value = []
   siteFilter.value = ''
   siteGroup.value = ''

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { invalidateCatalogSourceCache } from '~~/server/utils/ai-knowledge-sources'
+import { invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
@@ -74,6 +74,19 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
 
+  /**
+   * `replaceSourceId`（`C-135`）：把這批卡**蓋回既有那一份資料**，而不是新建一份。
+   *
+   * 為什麼要有：同名警告原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
+   * （2026-09-04 在 MYFEEL 看到同一本說明書並存三份的實況）。人真正想做的事是
+   * 「這份我重傳了、用新的蓋掉舊的」，那就得有一條路真的做得到。
+   *
+   * 舊卡走**軟刪除**（進回收桶 30 天）不是真刪：蓋錯了要救得回來，
+   * 而且來源本身留著＝資料夾、產品名、同步設定、卡片以外的設定都不會被洗掉。
+   */
+  const replaceSourceId = String(body?.replaceSourceId ?? '').trim().slice(0, 64)
+  let replacedChunks = 0
+
   // ── 建 knowledgeSource ────────────────────────
   // text 也建（type='manual'，C-47）：原本 text 不建 source → sourceId 恆 null、
   // 使用者確認過的「所屬產品」從未寫入任何地方（畫面有欄位、系統還花一次 LLM 預填＝白花），
@@ -105,7 +118,21 @@ export default defineEventHandler(async (event) => {
     // 底下 createKnowledgeChunk → runIndexOnChunk 會即時繼承（embedding 前綴 + 卡片欄位）。
     const productName = String(body?.source?.productName ?? '').trim().slice(0, 60)
 
-    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set({
+    // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
+    if (replaceSourceId) {
+      const existingSnap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(replaceSourceId).get()
+      const existing = existingSnap.data() as { workspaceId?: string } | undefined
+      // 跨租戶保護：找不到或不是自己的，寧可報錯也不要默默改成「新建一份」——
+      // 使用者按的是「更新」，結果多出一份重複，正是這條路要修掉的病
+      if (!existingSnap.exists || existing?.workspaceId !== workspaceId) {
+        throw createError({ statusCode: 404, statusMessage: '找不到要更新的資料（可能已被刪除），請重新整理後再試' })
+      }
+      sourceId = replaceSourceId
+      // 舊卡進回收桶（30 天內救得回來）；批次與「已在回收桶不重蓋」的規矩收在 utils 裡
+      replacedChunks = await recycleSourceChunks(db, workspaceId, sourceId)
+    }
+
+    const sourcePayload: Record<string, unknown> = {
       workspaceId,
       // 貼上文字沒有可重抓的外部來源 → 歸 manual（與手寫單卡同類：不排同步、不偵測變動）
       type: sourceType === 'text' ? 'manual' : sourceType,
@@ -132,7 +159,25 @@ export default defineEventHandler(async (event) => {
       chunkCount: inputs.length + (overviewInput ? 1 : 0),
       createdAt: now,
       updatedAt: now,
-    })
+    }
+
+    if (replaceSourceId) {
+      /**
+       * 更新既有資料＝**只蓋這次真的重傳的東西**，其餘一律留著。
+       * ⛔不可以整包覆蓋：那會把使用者在這份資料上做過的設定洗掉——所屬資料夾
+       * （沒帶就是「不改」，不是「移出資料夾」）、同步頻率、Google Sheet 的
+       * 分頁對應、建立日期。整包覆蓋洗掉設定這一課已經在金流的續扣資料上付過一次錢。
+       */
+      delete sourcePayload.createdAt
+      delete sourcePayload.refreshIntervalMinutes
+      delete sourcePayload.onChangeBehavior
+      if (typeof body?.source?.folderId !== 'string') delete sourcePayload.folderId
+      // 產品名沒帶＝不改（`...(productName ? …)` 本來就不會塞進去，這裡只是把話講明）
+      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set(sourcePayload, { merge: true })
+    }
+    else {
+      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set(sourcePayload)
+    }
     // 新型錄來源要讓答題端的 dedupeBySource 豁免立刻生效（不必等 60s 快取過期）
     if (overviewInput) invalidateCatalogSourceCache(workspaceId)
     // 產品索引自動維護（只增不刪）；建卡前先併入，讓 pickCardProduct 這批就吃得到
@@ -201,6 +246,8 @@ export default defineEventHandler(async (event) => {
     total: results.length,
     indexed,
     failed,
+    /** 「更新既有資料」時被移進回收桶的舊卡張數；結果頁要講出來（人有權知道舊的去哪了） */
+    replacedChunks: replaceSourceId ? replacedChunks : 0,
     items: results,
   }
 })

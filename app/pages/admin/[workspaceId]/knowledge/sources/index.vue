@@ -1153,6 +1153,7 @@
   <KnowledgeImportDialog
     v-model="importOpen"
     :existing-sources="sources"
+    :folders="folders"
     @imported="onImported"
     @job-state="importJobState = $event"
   />
