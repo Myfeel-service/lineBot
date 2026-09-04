@@ -189,25 +189,6 @@
   white-space: nowrap;
 }
 
-/* 從標籤頁「待審 N 位」點過來的來路說明。
-   ⛔ 刻意不用琥珀：它不是待辦（待辦是上面那條），是一句解釋數字為什麼對不上的話，
-   長得像待辦會多出一件看起來要處理的事 */
-.users-fromtag-note {
-  margin: 0;
-  padding: 0.5rem 0.85rem;
-  border-left: 3px solid var(--border-active);
-  background: var(--bg-elevated);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  line-height: 1.6;
-
-  strong {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-}
-
 /* 好友名單怎麼來的：收進頁首同步按鈕旁（原本是表格上方一段三行的常駐文字） */
 .users-sync-info {
   padding: 0 0.35rem;

@@ -27,3 +27,6 @@ logs
 .env.*
 .env_*
 !.env.example
+
+# 守門腳本的截圖含正式客戶資料，絕不進版（腳本已改寫到系統暫存，這行是第二道）
+tag-review-drawer*.png

@@ -16,7 +16,9 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 vi.mock('./gemini', () => ({ generateJson: vi.fn(), runWithLlmBudget: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
-vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn() }))
+// ⛔ 要回 Promise：主程式對它 `.catch(...)`，回 undefined 會在每一輪結尾炸掉，
+// 而那個錯誤被外層 try/catch 吞掉——測試照樣綠，但後面的程式其實一行都沒跑到
+vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(async () => ({ added: [] })) }))
 vi.mock('./scanner-health', () => ({ recordScannerFailure: vi.fn(async () => {}) }))
@@ -477,6 +479,13 @@ function fakeScanDb(opts: {
   tags?: Array<{ id: string, name: string, aiMode: 'suggest' | 'auto' }>
   /** 這位客人收件匣裡**已經**掛著的建議（`D-61`：切成「直接貼」之前留下的那些） */
   pending?: Array<{ tagId: string, reason?: string, sessionId?: string, suggestedAtMs?: number }>
+  /** 這位客人的「永不再提」名單（`D-61` code review：交易裡要重讀，不可以被舊快照蓋掉） */
+  dismissedTagIds?: string[]
+  /**
+   * 模擬「跑 LLM 的那幾秒之間，客服在標籤頁按了忽略」——
+   * 交易重讀的時候才會看到這份，開頭那次讀還是舊的。
+   */
+  concurrentEdit?: () => { pending?: any[], dismissedTagIds?: string[] }
 }) {
   const writes: Array<{ col: string, id: string, data: any }> = []
   const chain = (result: any) => {
@@ -510,13 +519,17 @@ function fakeScanDb(opts: {
       if (name === 'cronState' || name === 'userTagSuggestions') {
         return {
           doc: (id: string) => ({
+            __col: name,
+            __id: id,
             get: async () => ({
               id,
               exists: name === 'cronState' || (name === 'userTagSuggestions' && !!opts.pending),
               // 游標要有值，否則掃描器只會把游標定在「現在」就走人（開關剛打開的行為）
               data: () => (name === 'cronState'
                 ? { cursorMs: 1 }
-                : (opts.pending ? { workspaceId: 'ws1', userId: id, pending: opts.pending, hasPending: true } : undefined)),
+                : (opts.pending
+                    ? { workspaceId: 'ws1', userId: id, pending: opts.pending, hasPending: true, dismissedTagIds: opts.dismissedTagIds ?? [] }
+                    : undefined)),
             }),
             set: async (data: any) => { writes.push({ col: name, id, data }) },
           }),
@@ -532,6 +545,23 @@ function fakeScanDb(opts: {
     batch: () => ({
       set: (ref: { __col: string }, data: any) => { writes.push({ col: ref.__col, id: '', data }) },
       commit: async () => {},
+    }),
+    /**
+     * 交易：重點是 `tx.get` 回的是**當下**的資料，不是掃描器開頭讀到的那份。
+     * `concurrentEdit` 就是拿來塞「這幾秒之間客服按了忽略」的。
+     */
+    runTransaction: async (fn: any) => fn({
+      get: async (ref: any) => {
+        const live = opts.concurrentEdit?.() ?? {}
+        const base = opts.pending
+          ? { workspaceId: 'ws1', userId: ref.__id, pending: opts.pending, hasPending: true, dismissedTagIds: opts.dismissedTagIds ?? [] }
+          : undefined
+        const merged = base || live.pending || live.dismissedTagIds
+          ? { workspaceId: 'ws1', userId: ref.__id, pending: [], hasPending: false, dismissedTagIds: [], ...base, ...live }
+          : undefined
+        return { exists: !!merged, data: () => merged }
+      },
+      set: (ref: any, data: any) => { writes.push({ col: ref.__col, id: ref.__id, data }) },
     }),
   }
   return { db, writes }
@@ -723,6 +753,42 @@ describe('scanTagSuggestions：送到模型手上的 prompt 真的只有「這�
     // 最後一次寫入才是收件匣的最終狀態：只能有新加的那顆
     const inbox = writes.filter(w => w.col === 'userTagSuggestions')
     expect(inbox.at(-1)!.data.pending.map((p: any) => p.tagId)).toEqual(['t_invoice'])
+  })
+
+  /**
+   * 🔴 2026-09-04 `/code-review` 抓到的丟失更新：掃描器在一輪開頭把收件匣讀進記憶體，
+   * 中間要跑好幾秒的 LLM。舊寫法在結尾用**那份過期快照**整包蓋回去——如果這幾秒之間
+   * 客服在標籤頁按了「忽略」，那顆標籤會重新出現在收件匣，而且從「永不再提」名單裡消失。
+   * 畫面明明跟他說忽略是**永久**的。新的批次抽屜一次處理 100 位，讓這件事變成日常。
+   */
+  it('🔴 跑 LLM 的期間有人按了忽略 → 不可以被舊快照蓋回去（永不再提名單也不能被清掉）', async () => {
+    vi.mocked(generateJson).mockResolvedValue({
+      tags: [{ id: 't_invoice', reason: '客人問發票怎麼開' }],
+    } as any)
+    const { db, writes } = fakeScanDb({
+      sessionOpenedAtMs: START,
+      tags: [
+        { id: 't_ship', name: '問過出貨進度', aiMode: 'suggest' },
+        { id: 't_invoice', name: '問過發票', aiMode: 'suggest' },
+      ],
+      // 掃描器開頭讀到的：兩顆都還在等人決定、名單是空的
+      pending: [{ tagId: 't_ship', suggestedAtMs: START - 86400_000 }],
+      dismissedTagIds: [],
+      // 這幾秒之間客服按了「忽略 t_ship」：它離開待審、進了永不再提
+      concurrentEdit: () => ({ pending: [], dismissedTagIds: ['t_ship'] }),
+      messages: [
+        { direction: 'incoming', text: '請問出貨進度', atMs: START + 10 },
+        { direction: 'incoming', text: '發票可以開公司嗎', atMs: START + 20 },
+      ],
+    })
+    await scanTagSuggestions(db)
+
+    const inbox = writes.filter(w => w.col === 'userTagSuggestions')
+    const final = inbox.at(-1)!.data
+    // ① 剛被忽略掉的那顆不可以復活
+    expect(final.pending.map((p: any) => p.tagId)).not.toContain('t_ship')
+    // ② 掃描器根本不該碰「永不再提」名單（碰了就只有「用舊值蓋掉新值」一種後果）
+    expect(final).not.toHaveProperty('dismissedTagIds')
   })
 
   /** 這一輪什麼都沒建議時，原因要進資料（不是只留一行 log 讓人事後猜） */

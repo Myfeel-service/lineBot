@@ -57,21 +57,37 @@ export function pickPendingForTag(
   tagId: string,
   max: number = PENDING_ROWS_LIMIT,
 ): { rows: PendingReviewRow[], dropped: number } {
-  const all: PendingReviewRow[] = []
+  /**
+   * ⛔ 比對前要 trim、而且**以客人為單位去重**——這兩件事都是為了跟徽章對得起來。
+   *
+   * 徽章那支（`aggregatePendingByTag`）做的就是這兩件事，它的註解寫著
+   * 「數字的單位必須跟文案一致，不能靠上游保證」。這裡漏做的話：
+   *  · 某筆的 tagId 存成 `' t_ship'` → 徽章算它、清單漏它（34 vs 33，而且沒有人說得出少的是誰）
+   *  · 同一位客人同一顆有兩條 → 徽章算 1 人、清單列 2 列（畫面 key 重複、
+   *    送兩份重複的查詢，標題「N 位等你決定」數的變成筆數不是人數）
+   * 同一位有多條時留**最舊的那一條**（等最久的資訊才是這張清單要呈現的）。
+   */
+  const wanted = String(tagId ?? '').trim()
+  const byUser = new Map<string, PendingReviewRow>()
   for (const doc of docs) {
     const pending = Array.isArray(doc.pending) ? doc.pending : []
     for (const p of pending) {
-      if (String(p?.tagId ?? '') !== tagId) continue
+      if (String(p?.tagId ?? '').trim() !== wanted) continue
       const at = Number(p?.suggestedAtMs)
-      all.push({
+      const row: PendingReviewRow = {
         userId: doc.id,
         displayName: '',
         reason: String(p?.reason ?? '').trim(),
         sessionId: p?.sessionId ? String(p.sessionId) : null,
         suggestedAtMs: Number.isFinite(at) && at > 0 ? at : 0,
-      })
+      }
+      const prev = byUser.get(doc.id)
+      // 留最舊的；沒有時間的（0）不算「更舊」，只在還沒有任何一條時才用
+      if (!prev) byUser.set(doc.id, row)
+      else if (row.suggestedAtMs && (!prev.suggestedAtMs || row.suggestedAtMs < prev.suggestedAtMs)) byUser.set(doc.id, row)
     }
   }
+  const all = [...byUser.values()]
   all.sort((a, b) => {
     // 時間不明的一律沉到最後（0 不是「很舊」，是「不知道」）
     const av = a.suggestedAtMs || Number.POSITIVE_INFINITY
@@ -104,6 +120,14 @@ export interface BulkReviewResult {
   notProcessed: number
   /** 中途出錯的 */
   failed: number
+  /**
+   * 找不到這位客人的收件匣（id 對不上、資料已刪、不是這個工作區的）。
+   *
+   * ⛔ **不可以併進 `alreadyHandled`**：那句話會讓人以為「同事已經處理掉了、不用管」，
+   * 但實際上是**什麼都沒找到、什麼都沒寫**——下一步完全不同（一個是不用管、
+   * 一個是資料有問題要查）。這支端點的四個數字本來就是為了分辨這件事而存在的。
+   */
+  notFound: number
 }
 
 /**
@@ -119,6 +143,8 @@ export function bulkReviewOutcomeText(
   const verb = action === 'apply' ? '已貼上標籤' : '已忽略'
   const parts = [`${verb} ${res.processed} 位`]
   if (res.alreadyHandled) parts.push(`${res.alreadyHandled} 位已經被處理過（略過）`)
+  // 「找不到」要跟「已經被處理過」分開講：後者不用管，前者是資料對不上、要查
+  if (res.notFound) parts.push(`${res.notFound} 位找不到資料（不是被處理掉，請回報）`)
   if (res.notProcessed) parts.push(`還有 ${res.notProcessed} 位沒處理，再按一次`)
   if (res.failed) parts.push(`${res.failed} 位失敗`)
   return parts.join('；')

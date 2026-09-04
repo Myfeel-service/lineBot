@@ -78,19 +78,7 @@
           <span class="users-todo__cta">看一下 →</span>
         </button>
 
-        <!--
-          從標籤頁「待審 N 位」點進來時的來路說明（D-42②）。
-          ⛔ 這條不是裝飾：那顆鈕寫「待審 3 位」、這頁卻列出全部有建議的客人，
-             不講的話就是一個對不上的數字。講清楚「這裡是全部、你要找的那顆在名字後面的橘章裡」。
-        -->
-        <p v-if="fromTagId && filterSuggested" class="users-fromtag-note">
-          你從標籤
-          <strong v-if="fromTagName">「{{ fromTagName }}」</strong>
-          <strong v-else>（那顆標籤已被刪除）</strong>
-          點進來。這頁列的是<strong>全部</strong>有 AI 建議的客人，不只那一顆，
-          所以人數會比剛才看到的多。點開客人就看得到每條建議是哪顆標籤。
-        </p>
-
+        
         <div class="message-card users-page-card" data-tour="usr-list">
           <div class="card-section-stack">
             <div class="users-toolbar" data-tour="usr-filter">
@@ -412,17 +400,6 @@ const selectedIds = ref<string[]>([])
 const { showToast } = useAdminToast()
 
 /**
- * 從標籤頁哪一顆點「待審 N 位」過來的（`?fromTag=`，D-42②）。
- *
- * 為什麼要記住它：那顆按鈕寫「待審 3 位」，點進來卻列出 12 位——因為第一版篩得到的是
- * 「有 AI 建議的客人」，篩不到「有**這顆**標籤建議的客人」（要按標籤反查得先補鏡像欄位）。
- * ⛔ 數字對不上就一定要當場解釋，不能讓人自己猜哪個是錯的。
- */
-const fromTagId = ref(String(route.query.fromTag ?? '').trim())
-const fromTagName = computed(() =>
-  allTags.value.find(t => t.id === fromTagId.value)?.name ?? '')
-
-/**
  * 一列最多直接列幾顆標籤，其餘收成「＋N」。
  * ⛔ 不要拿掉這個上限：標籤多的人會把那一列撐成好幾行，整張表的列高又變參差
  *    ——那正是這次要修掉的毛病（原本按鈕換行造成列高 77px）。
@@ -720,7 +697,7 @@ async function removeUserTag(userId: string, tagId: string) {
 }
 
 /**
- * 網址帶來的篩選（`?tagIds=` / `?suggested=` / `?fromTag=`）在上面 ref 的初始值就吃掉了，
+ * 網址帶來的篩選（`?tagIds=` / `?suggested=`）在上面 ref 的初始值就吃掉了，
  * 這裡只要載入一次——⛔ 別把那幾行搬回來（會多打一次列表查詢，理由寫在 ref 那邊）。
  */
 onMounted(() => {

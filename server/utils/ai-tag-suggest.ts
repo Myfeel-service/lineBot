@@ -524,7 +524,7 @@ async function suggestForSession(
    * ⛔ 後面寫回收件匣時一律用這一份，不可以再用最上面讀到的 `pending`——
    * 那會把剛剛收掉的那幾條原封不動寫回去（自己造出一個永遠清不掉的待審）。
    */
-  let pendingNow = pending
+  let clearedByAuto: string[] = []
   if (autoIds.length) {
     const { added } = await addTagsToUser(convDocId, autoIds, 'ai', 'ai-tag-suggest:auto', workspaceId)
     autoApplied = added.length
@@ -538,41 +538,92 @@ async function suggestForSession(
      * 而它指向的那個決定**已經被系統自己做掉了**——正是這輪要修的那種假待辦。
      * 結局在底帳裡記成 `auto_applied`（上面那筆），不另記 applied：沒有人按過。
      */
-    const clearedByAuto = pendingNow.filter(p => added.includes(p.tagId))
-    if (clearedByAuto.length) {
-      pendingNow = pendingNow.filter(p => !added.includes(p.tagId))
-      await sugRef.set({
-        pending: pendingNow,
-        hasPending: pendingNow.length > 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true })
-      console.warn(`[tag-suggest] ${convDocId} 收掉 ${clearedByAuto.length} 條舊建議：那幾顆已改成「直接貼」且這次判到，AI 自己貼上了`)
-    }
+    clearedByAuto = added
   }
 
-  // suggest：進收件匣（容量再守一次：上面只擋「已滿」，這裡擋「加了會爆」）
-  const room = MAX_PENDING_PER_USER - pendingNow.length
-  const toAdd = suggestIds.slice(0, Math.max(0, room))
+  const newPending: UserTagSuggestionPending[] = suggestIds.map(tagId => ({
+    tagId,
+    reason: reasonById.get(tagId) ?? '',
+    sessionId,
+    suggestedAtMs: Date.now(),
+  }))
+
+  const { added: toAdd, cleared } = await commitPendingDelta(db, sugRef, {
+    workspaceId,
+    userDocId: convDocId,
+    removeTagIds: clearedByAuto,
+    add: newPending,
+  })
+  if (cleared) {
+    console.warn(`[tag-suggest] ${convDocId} 收掉 ${cleared} 條舊建議：那幾顆已改成「直接貼」且這次判到，AI 自己貼上了`)
+  }
   if (toAdd.length) {
-    const newPending: UserTagSuggestionPending[] = toAdd.map(tagId => ({
-      tagId,
-      reason: reasonById.get(tagId) ?? '',
-      sessionId,
-      suggestedAtMs: Date.now(),
-    }))
-    const docPatch: Partial<UserTagSuggestionDoc> = {
-      workspaceId,
-      userId: convDocId,
-      pending: [...pendingNow, ...newPending],
-      hasPending: true, // pending 的鏡像（列表等值查詢用）——這裡剛加了東西，必為 true
-      dismissedTagIds: [...dismissed],
-      updatedAt: FieldValue.serverTimestamp(),
-      ...(sugSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
-    }
-    await sugRef.set(docPatch, { merge: true })
     // 「AI 提過幾次」＝採用率的分母。⛔ 記的是真的進了收件匣的（toAdd），
     // 不是模型回來的（accepted）——被收件匣容量擋下來的那些沒人看得到，不該算它判過
     await recordTagSuggestionEvents(db, workspaceId, 'suggested', convDocId, toAdd, { sessionId })
   }
   return { suggested: toAdd.length, autoApplied }
+}
+
+/**
+ * 把這一輪對某位客人收件匣的改動寫進去——**在交易裡重讀一次再寫**（`D-61` code review）。
+ *
+ * 為什麼一定要重讀：這支掃描器在一輪開頭就把 `pending` 與 `dismissedTagIds` 讀進記憶體，
+ * 中間要跑 LLM（好幾秒）。如果**在這段期間**客服在標籤頁按了「忽略」，
+ * 舊寫法會用開頭那份過期快照整包蓋回去——那顆標籤重新出現在收件匣，而且從
+ * 「永不再提」名單裡消失。畫面明明跟他說忽略是**永久**的。
+ * 新的批次抽屜一次處理 100 位，把這個原本的邊角變成日常。
+ *
+ * ⛔ 這支**完全不寫 `dismissedTagIds`**：掃描器從來不改它，寫了就只有「用舊值蓋掉新值」
+ *    一種後果。要改那份名單的只有兩條路——人按忽略、人手動移除標籤。
+ */
+async function commitPendingDelta(
+  db: Firestore,
+  sugRef: FirebaseFirestore.DocumentReference,
+  opts: {
+    workspaceId: string
+    userDocId: string
+    /** AI 這輪自己貼上了、所以要從收件匣收掉的 */
+    removeTagIds: string[]
+    /** 這輪新產生的建議 */
+    add: UserTagSuggestionPending[]
+  },
+): Promise<{ added: string[], cleared: number }> {
+  const { workspaceId, userDocId, removeTagIds, add } = opts
+  if (!removeTagIds.length && !add.length) return { added: [], cleared: 0 }
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(sugRef)
+    const doc = (snap.data() ?? null) as UserTagSuggestionDoc | null
+    const freshPending = Array.isArray(doc?.pending) ? doc!.pending : []
+    const freshDismissed = new Set(Array.isArray(doc?.dismissedTagIds) ? doc!.dismissedTagIds : [])
+
+    const keep = freshPending.filter(p => !removeTagIds.includes(p.tagId))
+    const cleared = freshPending.length - keep.length
+
+    /**
+     * 容量再守一次（上面只擋「本來就滿了」，這裡擋「加了會爆」）。
+     * ⛔ 同時要重新過濾兩種「這輪之間才發生」的情況：
+     *    ① 人剛剛按了忽略 → 那顆進了 `dismissedTagIds`，不可以又被建議一次
+     *    ② 這顆已經在收件匣裡 → 別塞第二條（清單會出現重複列）
+     */
+    const room = Math.max(0, MAX_PENDING_PER_USER - keep.length)
+    const toAdd = add
+      .filter(np => !freshDismissed.has(np.tagId) && !keep.some(k => k.tagId === np.tagId))
+      .slice(0, room)
+
+    if (!cleared && !toAdd.length) return { added: [], cleared: 0 }
+
+    const next = [...keep, ...toAdd]
+    tx.set(sugRef, {
+      workspaceId,
+      userId: userDocId,
+      pending: next,
+      hasPending: next.length > 0, // pending 的鏡像（列表等值查詢用）
+      updatedAt: FieldValue.serverTimestamp(),
+      ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+    } satisfies Partial<UserTagSuggestionDoc>, { merge: true })
+
+    return { added: toAdd.map(p => p.tagId), cleared }
+  })
 }

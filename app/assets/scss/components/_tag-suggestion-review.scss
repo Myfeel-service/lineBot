@@ -94,6 +94,15 @@
   gap: 0.6rem;
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--border-color);
+
+  /* 勾選框跟**名字那一行**對齊（2026-09-04 code review 抓到，headless 量到中線差 4.5px）。
+     整列是 align-items: flex-start（內容有兩三行，勾選框不該垂直置中到中間），
+     所以要單獨把它壓回名字那一行的高度上。⛔ 別改成 align-items: center：
+     那會讓勾選框飄到「名字＋依據＋連結」三行的正中間，離要點的那一行更遠。 */
+  > .el-checkbox {
+    height: 1.35rem; /* ≈ 名字那一行的行高 */
+    margin-right: 0; /* 元件庫預設有 margin-right，這裡只靠 row 的 gap */
+  }
 }
 
 .tag-review__body {
@@ -153,14 +162,19 @@
   }
 }
 
-/* ⛔ 黏在底部：34 位的清單捲到最後才看得到按鈕的話，人會以為沒有批次操作 */
+/* ⛔ 永遠在底部：34 位的清單捲到最後才看得到按鈕的話，人會以為沒有批次操作。
+   位置本來就靠 `.tag-review{height:100%}` ＋ `.tag-review__list{flex:1 1 auto}` 撐出來，
+   不需要 sticky。
+   ⛔ 這裡**不要**上底色（2026-09-04 code review 抓到）：`--bg-base` 是灰的（#f3f4f6）、
+      抽屜本體是白的，實測就是白抽屜下方橫一條灰帶。底色只有在真的 sticky、要蓋住
+      下面捲過去的內容時才有意義，而這裡沒有。 */
 .tag-review__actions {
   display: flex;
+  flex-wrap: wrap; /* 窄視窗放不下三顆鈕就折行，別讓「關閉」被擠出抽屜（實測 390px 溢出 7.7px） */
   gap: 0.5rem;
   align-items: center;
   padding-top: 0.7rem;
   border-top: 1px solid var(--border-color);
-  background: var(--bg-base);
 }
 
 /* 「關閉」永遠在（抽屜沒有標題列上的 ✕）：推到最右邊，不跟主要動作搶位置 */

@@ -12,6 +12,8 @@
  * ⛔ 登入用的是**真的 token**（Admin SDK 開 custom token → 換 idToken → 塞進 Firebase 用的
  *    IndexedDB），不是假 JWT：不用攔 identitytoolkit，token 過期也會自己續。
  */
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { initializeApp, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -91,7 +93,13 @@ const info = await page.evaluate(() => {
     title: document.querySelector('.tag-review__hd')?.innerText.replace(/\n/g, ' '),
     rows: rows.length,
     first: rows[0]?.innerText.replace(/\n/g, ' | '),
-    hasReason: rows.every(r => r.querySelector('.tag-review__why')?.innerText.trim()),
+    /**
+     * ⛔ 不可以只判「有沒有 .tag-review__why 這個元素」（2026-09-04 code review 抓到）：
+     *    沒有依據時樣板照樣渲染一個同 class 的元素（寫著「這條沒有留下判斷依據（舊資料）」），
+     *    所以那樣寫**永遠不會紅**＝一盞裝成守門員的綠燈。
+     *    要數的是真的沒有依據的那幾列（帶 --none 的），並且把數字講出來。
+     */
+    noReason: rows.filter(r => r.querySelector('.tag-review__why--none')).length,
     actions: [...document.querySelectorAll('.tag-review__actions button')].map(b => b.innerText.trim()),
     overflowX: drawer ? drawer.scrollWidth > drawer.clientWidth + 1 : true,
   }
@@ -100,7 +108,10 @@ console.log(`抽屜：${info.title}｜列出 ${info.rows} 位`)
 console.log(`第一列：${info.first}`)
 console.log(`按鈕：${info.actions.join(' / ')}`)
 if (info.overflowX) fail('抽屜橫向破版')
-if (!info.hasReason) fail('有幾列沒有判斷依據——那兩顆鈕就按不下去了（要嘛補文案要嘛講「沒有依據」）')
+// 舊資料本來就可能沒有依據，所以這不是「失敗」而是「要講出來的事實」——
+// 全部都沒有依據才是真的壞掉（表示 reason 根本沒被寫進去或沒被回傳）
+console.log(`判斷依據：${info.rows - info.noReason}/${info.rows} 列有；${info.noReason} 列是舊資料沒有`)
+if (info.rows > 0 && info.noReason === info.rows) fail('每一列都沒有判斷依據＝reason 沒寫進去或沒回傳，那兩顆鈕就按不下去了')
 if (!info.actions.includes('關閉')) fail('沒有「關閉」＝這個抽屜沒有出口（它沒有標題列上的 ✕）')
 
 await page.click('.tag-review__row .el-checkbox')
@@ -109,6 +120,14 @@ const after = await page.evaluate(() => [...document.querySelectorAll('.tag-revi
 console.log(`勾一位後：${after.join(' / ')}`)
 if (!after.some(t => t.includes('採用選取的 1 位'))) fail('勾了人，按鈕上的數字沒跟著動＝選取沒接上')
 
-await page.screenshot({ path: 'tag-review-drawer.png' })
-console.log(process.exitCode ? '有問題，見上面 ❌' : '✅ 都對（截圖：tag-review-drawer.png）')
+/**
+ * ⛔ 截圖**不可以**寫進專案根目錄（2026-09-04 code review 抓到）：這支跑的是
+ * 正式 myfeel 資料，圖裡有真實客戶的顯示名稱與 AI 的判斷理由。`.gitignore` 沒有
+ * `*.png` 規則，一張未追蹤的 PII 圖躺在根目錄，離「不小心被 add 進 commit」只差一步
+ * （這個 repo 已經有過 `git add -A` 掃進別人檔案的前例）。
+ * 寫到系統暫存目錄，並把完整路徑印出來讓人找得到。
+ */
+const shotPath = join(tmpdir(), `tag-review-drawer-${process.pid}.png`)
+await page.screenshot({ path: shotPath })
+console.log(process.exitCode ? '有問題，見上面 ❌' : `✅ 都對（截圖：${shotPath}）`)
 await browser.close()

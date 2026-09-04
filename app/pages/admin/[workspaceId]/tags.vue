@@ -532,7 +532,7 @@
     :tag="reviewTag"
     :can-operate="canOperate"
     :api-fetch="apiFetch"
-    @changed="loadPendingCounts"
+    @changed="onPendingReviewChanged"
     @open-conversation="goConversation"
   />
 
@@ -895,6 +895,21 @@ const pendingCountsTruncated = ref(false)
 
 function pendingCountFor(tagId: string): number {
   return pendingCounts.value[tagId] ?? 0
+}
+
+/**
+ * 抽屜處理完之後。後端已經在同一輪掃描裡把每顆的待審數算好了 → 直接換上，
+ * 不必再打一次 `pending-counts`（`D-61` code review：按一次原本要掃三輪同樣的 501 份文件）。
+ * ⛔ 拿不到才退回重抓：中途失敗時後端沒有回這份，數字絕不能就這樣停在舊值。
+ */
+function onPendingReviewChanged(counts?: Record<string, number>) {
+  if (counts) {
+    pendingCounts.value = counts
+    pendingCountsFailed.value = false
+    pendingCountsLoaded.value = true
+    return
+  }
+  void loadPendingCounts()
 }
 
 async function loadPendingCounts() {
