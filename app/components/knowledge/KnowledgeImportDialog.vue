@@ -755,6 +755,7 @@
             <li v-for="m in dupMatches" :key="m.id" class="kb-dedup-row">
               <span>「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）</span>
               <el-button
+                v-if="canReplace(m)"
                 size="small"
                 type="primary"
                 plain
@@ -763,6 +764,10 @@
               >
                 {{ replaceTarget?.id === m.id ? '已選這份來更新' : '更新這一份' }}
               </el-button>
+              <!-- 型別不同不給覆蓋（`C-139`）：講出「為什麼不能」，不要只是把按鈕藏起來 -->
+              <span v-else class="text-xs text-muted">
+                那份是{{ SOURCE_TYPE_LABEL[m.type ?? ''] ?? '別種' }}來源，不能用這份覆蓋
+              </span>
             </li>
           </ul>
           <p class="text-xs">
@@ -1096,7 +1101,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
-import { detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { canReplaceSource, detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
 import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 // 圖檔路徑的單一來源（同開通引導與修復劇本共用那份註冊表）
@@ -1111,7 +1116,7 @@ const props = defineProps<{
    * 父層的完整資料清單:同名警告要比對「全部」既有名稱——
    * 只比對 preview 回傳的(原始名稱的)同名清單,會漏掉「改名撞進另一個既有資料」的情況。
    */
-  existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
+  existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>
   /**
    * 父層的資料夾清單：匯入時要能選「放進哪個資料夾」。
    * 沒有這個欄位的話，每一份匯進來的東西都掉在「未分類」，要靠人事後拖——
@@ -1461,7 +1466,7 @@ const truncated = ref(false)
 const ocrUsed = ref(false) // 掃描檔 PDF 由 AI 辨識文字 → 預覽時提醒逐張確認
 const healthWarnings = ref<string[]>([]) // 表格資料的匯入前健檢警告（提醒不擋匯入）
 const chunks = ref<Array<{ included: boolean; title: string; content: string; tags: string[]; questions: string[] }>>([])
-const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>>([])
+const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>>([])
 const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
@@ -2100,11 +2105,28 @@ async function redoWithOverview() {
 const dupMatches = computed(() => {
   const name = sourceMeta.value.name.trim()
   if (!name) return []
-  const pool = new Map<string, { id: string; name: string; chunkCount: number; updatedAtMs: number }>()
+  const pool = new Map<string, { id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>()
   for (const s of props.existingSources ?? []) pool.set(s.id, s)
   for (const m of existingMatches.value) if (!pool.has(m.id)) pool.set(m.id, m)
   return [...pool.values()].filter(m => m.name.trim() === name)
 })
+
+/**
+ * 這一份可不可以拿來「更新」（`C-139`）。
+ * 型別不同的不給按——把一份 Google 試算表覆蓋成檔案，會讓它從此不再自動同步，
+ * 而畫面上完全看不出來。⛔ 後端也擋（真正的守門在那裡），這裡只是別讓人按了才被拒絕。
+ */
+function canReplace(m: { type?: string }): boolean {
+  const mode = sourceMeta.value.type
+  if (!mode) return true
+  return canReplaceSource(mode as ImportMode, String(m.type ?? ''))
+}
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  file: '檔案',
+  url: '網址',
+  gsheet: 'Google 試算表',
+  manual: '手打文字',
+}
 
 /**
  * 名稱／所屬產品欄位要不要展開。
@@ -2122,7 +2144,7 @@ interface PreviewResult {
   sourceUrl: string
   truncated: boolean
   ocrUsed?: boolean
-  existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number }>
+  existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>
   /** 表格資料的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
   /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */

@@ -13,6 +13,8 @@ type LoadStatus = 'idle' | 'loading' | 'ready' | 'failed'
 
 interface ProductNameStore {
   names: Ref<string[]>
+  /** 每個名字目前有幾張卡在用（`C-136`）；沒有這個 key ≠ 0 張，是「算不出來」 */
+  usage: Ref<Record<string, number>>
   /** 曾經出現過的所有寫法（含已經合併掉的舊叫法）——用來判斷「這個名字是不是第一次出現」 */
   known: Ref<string[]>
   status: Ref<LoadStatus>
@@ -27,6 +29,7 @@ function storeFor(workspaceId: string): ProductNameStore {
   if (!store) {
     store = {
       names: ref<string[]>([]),
+      usage: ref<Record<string, number>>({}),
       known: ref<string[]>([]),
       status: ref<LoadStatus>('idle'),
       expiresAt: 0,
@@ -44,6 +47,7 @@ export function useProductNames() {
   // 綁死在 setup 當下那一份會留著上一個帳號的產品名
   const names = computed(() => storeFor(wid()).names.value)
   const known = computed(() => storeFor(wid()).known.value)
+  const usage = computed(() => storeFor(wid()).usage.value)
   const status = computed(() => storeFor(wid()).status.value)
   /** 清單是不是真的讀到了（用來判斷「不在清單裡」能不能當成「這是新的」） */
   const ready = computed(() => status.value === 'ready')
@@ -57,9 +61,10 @@ export function useProductNames() {
     if (!force && store.status.value === 'ready' && store.expiresAt > Date.now()) return
     store.status.value = 'loading'
     try {
-      const res = await apiFetch<{ names: string[], known: string[] }>('/api/ai/knowledge/product-names')
+      const res = await apiFetch<{ names: string[], known: string[], usage?: Record<string, number> }>('/api/ai/knowledge/product-names')
       store.names.value = Array.isArray(res?.names) ? res.names : []
       store.known.value = Array.isArray(res?.known) ? res.known : store.names.value
+      store.usage.value = (res?.usage && typeof res.usage === 'object') ? res.usage : {}
       store.expiresAt = Date.now() + CACHE_TTL_MS
       store.status.value = 'ready'
     }
@@ -82,5 +87,5 @@ export function useProductNames() {
     if (!store.known.value.includes(clean)) store.known.value = [...store.known.value, clean]
   }
 
-  return { names, known, status, ready, load, invalidate, addLocal }
+  return { names, known, usage, status, ready, load, invalidate, addLocal }
 }

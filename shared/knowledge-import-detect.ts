@@ -28,3 +28,30 @@ export function detectImportKind(pasted: string, hasFile = false): ImportKind {
   if (HTTP_URL_PATTERN.test(v)) return 'url'
   return 'text'
 }
+
+/**
+ * 匯入時選的種類 → 實際存進資料庫的來源型別。
+ *
+ * 只有「貼上一段文字」對不起來：它存成 `manual`（與手寫單卡同類，不排同步、不偵測變動）。
+ * 抽成共用函式是因為這個對照現在有三個地方要用——建立來源、重複偵測、
+ * 「更新既有那一份」的型別守門——各寫一份遲早會有一處忘了換，
+ * 而錯掉的後果是**把一份 Google 試算表覆蓋成檔案**：型別變了、同步設定卻還留著，
+ * 那份資料從此不再自動同步，畫面上完全看不出來（`C-139`）。
+ */
+export function storedSourceType(kind: ImportKind): 'file' | 'url' | 'gsheet' | 'manual' {
+  return kind === 'text' ? 'manual' : kind
+}
+
+/**
+ * 這一份既有資料，可不可以被這次匯入「更新」掉（`C-139`）。
+ *
+ * 同名警告列的是**名字相同**的所有資料，不分種類。上傳檔案時若按到一份 Google 試算表的
+ * 「更新這一份」，那份資料的型別會被改成檔案、網址被清空，但試算表的分頁對應還留著——
+ * 結果是**它從此不再自動同步**，而畫面上完全看不出來。
+ *
+ * `existingType` 空字串＝舊資料沒存型別，回 true 交給後端判（前端不該自己猜著擋）。
+ */
+export function canReplaceSource(kind: ImportKind, existingType: string): boolean {
+  if (!existingType) return true
+  return existingType === storedSourceType(kind)
+}

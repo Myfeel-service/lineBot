@@ -26,7 +26,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
-const { names, known, status, load } = useProductNames()
+const { names, known, usage, status, load } = useProductNames()
 onMounted(() => { void load() })
 
 const text = computed({
@@ -35,10 +35,26 @@ const text = computed({
 })
 
 /** 空字串 = 剛點進來還沒打字 → 列出全部（「看得到有哪些」正是這個欄位要解決的事） */
-function querySuggestions(query: string, cb: (items: Array<{ value: string }>) => void) {
+function querySuggestions(query: string, cb: (items: Array<{ value: string; hint: string }>) => void) {
   const kw = query.trim().toLowerCase()
   const list = kw ? names.value.filter(n => n.toLowerCase().includes(kw)) : names.value
-  cb(list.map(n => ({ value: n })))
+  /**
+   * 每個名字後面標「目前幾張卡在用」（`C-136`）。
+   *
+   * 為什麼不是把沒人用的名字刪掉：清單裡有**刻意種進去、還沒有卡片的別名**，
+   * 從資料反推不出哪些是這種，砍掉會把它們一起洗掉（見後端 product-names 的說明）。
+   * 但不處理的話下拉只會愈長愈亂——MYFEEL 20 個名字裡有 5 個沒有任何卡片在用，
+   * 其中兩個只差一個標點（「MATELASER《筋牌特務》 W1 REGEN」vs「MATELASER 筋牌特務 W1 REGEN」），
+   * 挑錯就是同一台被當成兩台。所以把數字講出來讓人自己分得清。
+   * ⛔ 算不出來（後端查詢失敗）時 usage 裡沒有這個 key → 不顯示，不可以當成 0 張。
+   */
+  const withHint = list.map(n => ({
+    value: n,
+    hint: usage.value[n] === undefined ? '' : (usage.value[n] ? `${usage.value[n]} 張` : '目前沒有卡片在用'),
+  }))
+  // 正在用的排前面：殘留的舊叫法沉到底下，最常挑的那個第一眼就看得到
+  withHint.sort((a, b) => (usage.value[b.value] ?? -1) - (usage.value[a.value] ?? -1))
+  cb(withHint)
 }
 
 /**
@@ -101,7 +117,16 @@ function keepMine() {
       clearable
       class="product-name-field__input"
       popper-class="product-name-field__popper"
-    />
+    >
+      <!-- 每個名字後面標「幾張卡在用」（`C-136`）：殘留的舊叫法一眼分得出來，
+           不必靠記憶去猜哪個才是主要在用的那個 -->
+      <template #default="{ item }">
+        <span class="product-name-field__opt">
+          <span class="product-name-field__opt-name">{{ item.value }}</span>
+          <span v-if="item.hint" class="product-name-field__opt-hint">{{ item.hint }}</span>
+        </span>
+      </template>
+    </el-autocomplete>
 
     <!-- 打字當下的攔截:跟現成名幾乎一樣 → 問「是同一台嗎」;全新名字 → 老實講會新增產品。
          這兩塊不吃 showHint(匯入預覽把 showHint 關了,但這裡正是它最需要出現的地方) -->

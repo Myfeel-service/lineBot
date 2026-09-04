@@ -86,6 +86,8 @@ export interface ExistingMatch {
   name: string
   chunkCount: number
   updatedAtMs: number
+  /** 來源種類：型別不同的不給「更新這一份」（`C-139`），畫面要分得出來 */
+  type: string
 }
 
 /** 放在 Storage work.json 的完整工作狀態（含大文字與累積結果）。 */
@@ -632,6 +634,7 @@ export async function findExistingSources(
         name: String(data?.name ?? ''),
         chunkCount: Number(data?.chunkCount ?? 0),
         updatedAtMs: typeof sec === 'number' ? sec * 1000 : 0,
+        type: String(data?.type ?? ''),
       }
     })
   }

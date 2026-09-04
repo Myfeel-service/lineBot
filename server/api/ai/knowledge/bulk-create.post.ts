@@ -16,6 +16,14 @@ import type { KnowledgeChunkStatus, KnowledgeSourceType } from '~~/shared/types/
 
 const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
 
+/** 錯誤訊息要講人話：「type 不符」對商家沒有意義 */
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  file: '檔案',
+  url: '網址',
+  gsheet: 'Google 試算表',
+  manual: '手打文字',
+}
+
 /** 同時跑幾張卡的 embedding。Gemini 免費層 RPM 15、付費層 1000+，5 算保守 */
 const EMBED_CONCURRENCY = 5
 
@@ -121,11 +129,27 @@ export default defineEventHandler(async (event) => {
     // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
     if (replaceSourceId) {
       const existingSnap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(replaceSourceId).get()
-      const existing = existingSnap.data() as { workspaceId?: string } | undefined
+      const existing = existingSnap.data() as { workspaceId?: string; type?: string } | undefined
       // 跨租戶保護：找不到或不是自己的，寧可報錯也不要默默改成「新建一份」——
       // 使用者按的是「更新」，結果多出一份重複，正是這條路要修掉的病
       if (!existingSnap.exists || existing?.workspaceId !== workspaceId) {
         throw createError({ statusCode: 404, statusMessage: '找不到要更新的資料（可能已被刪除），請重新整理後再試' })
+      }
+      /**
+       * ⛔ 型別不同不准覆蓋（`C-139`）。
+       * 同名警告列的是「名字相同」的所有資料，不分種類——上傳**檔案**時若按到一份
+       * **Google 試算表**的「更新這一份」，下面的 merge 會把 type 改成 file、url 清空，
+       * 但 `gsheetId` / `gsheetGid` 還留著：那份資料變成雜種，**自動同步從此不再跑**
+       * （型別已經不是 gsheet），而畫面上完全看不出來。
+       * 前端也會擋（不給按鈕），但前端擋不算擋——真正的守門在這裡。
+       */
+      const existingType = String(existing?.type ?? '')
+      const incomingType = sourceType === 'text' ? 'manual' : sourceType
+      if (existingType && existingType !== incomingType) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `「${String((existing as any)?.name ?? '這份資料')}」是${SOURCE_TYPE_LABEL[existingType] ?? '另一種'}來源，不能用${SOURCE_TYPE_LABEL[incomingType] ?? '這一種'}覆蓋它；請改名字另外建一份`,
+        })
       }
       sourceId = replaceSourceId
       // 舊卡進回收桶（30 天內救得回來）；批次與「已在回收桶不重蓋」的規矩收在 utils 裡
