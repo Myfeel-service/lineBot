@@ -174,11 +174,12 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId) {
-      const [sources, chunkCount] = await Promise.all([
+      const [listed, chunkCount] = await Promise.all([
         listSources(db, workspaceId, 200),
         db.collection(KNOWLEDGE_CHUNKS_COLLECTION).where('workspaceId', '==', workspaceId).count().get()
           .then(c => c.data().count).catch(() => null),
       ])
+      const sources = listed.items
       const byStatus: Record<string, number> = {}
       for (const s of sources) byStatus[s.status] = (byStatus[s.status] ?? 0) + 1
       return {
@@ -186,6 +187,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         sourceStatus: byStatus,
         failedSources: sources.filter(s => s.status === 'failed').map(s => ({ name: s.name, reason: s.failureReason ?? '' })),
         chunkCount,
+        // 清單降級時要講出來（`C-137`）：小幫手拿這個數字回答「你有幾份資料」,
+        // 少了東西卻照樣報一個乾淨的數字,就是拿不完整的資料騙人
+        ...(listed.degraded ? { warning: '資料庫索引缺失,這份清單可能不完整,數字僅供參考' } : {}),
       }
     },
   },

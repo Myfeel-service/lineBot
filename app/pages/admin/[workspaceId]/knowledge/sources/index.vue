@@ -113,6 +113,16 @@
         </div>
       </div>
 
+      <!--
+        清單可能不完整（`C-137`）。⛔ 這一條不可以拿掉也不可以做成 toast：
+        2026-09-04 的災情就是「少了東西、畫面卻長得完全正常」——老闆因此傳了三次
+        同一份說明書。少講這一句，下一次還是會有人以為自己沒上傳成功。
+      -->
+      <div v-if="sourcesDegraded" class="src-degraded">
+        <strong>這份清單可能不完整</strong>
+        <span>資料庫索引缺失，有些資料讀不出來（東西還在，只是這裡列不出來）。搜尋仍然找得到，請把這句話回報給我們。</span>
+      </div>
+
       <div v-if="loading && !sources.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -1462,6 +1472,12 @@ const selectedSource = computed(() => sources.value.find(s => s.id === selectedI
 
 // orphan chunks（sourceId === null）— 給「整理舊資料」橫幅用
 const orphanCount = ref(0)
+/**
+ * 後端回報「這份清單可能不完整」（`C-137`）。
+ * 主查詢需要的複合索引沒部署時，清單會少掉一整批來源而畫面完全看不出來——
+ * 2026-09-04 老闆就是因此以為說明書沒上傳成功，連傳三次。
+ */
+const sourcesDegraded = ref(false)
 const migrating = ref(false)
 
 // ── 資料夾分組 ───────────────────────────────────────
@@ -2056,11 +2072,12 @@ async function loadSources(forceHealth = false) {
   void loadHealth(forceHealth) // 體檢與列表平行載入;失敗不擋頁面
   try {
     const [sourcesRes, foldersRes] = await Promise.all([
-      apiFetch<{ items: SourceSummary[]; orphanCount?: number }>('/api/ai/sources/list'),
+      apiFetch<{ items: SourceSummary[]; orphanCount?: number; degraded?: boolean }>('/api/ai/sources/list'),
       apiFetch<{ items: FolderRow[] }>('/api/ai/folders').catch(() => ({ items: [] as FolderRow[] })),
     ])
     sources.value = sourcesRes.items
     orphanCount.value = Number(sourcesRes.orphanCount ?? 0)
+    sourcesDegraded.value = sourcesRes.degraded === true
     folders.value = foldersRes.items ?? []
     // 第一次載入：把所有資料夾預設展開（之後 toggle 會覆寫 localStorage 狀態）
     if (expandedFolders.value.size === 1 && expandedFolders.value.has('__none__')) {

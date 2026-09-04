@@ -1031,3 +1031,22 @@
   gap: 4px;
   align-items: center;
 }
+
+/* 「這份清單可能不完整」（`C-137`）。
+   ⛔ 不做成可關閉的提示：它講的是「你現在看到的東西少了一塊」，
+      關掉之後畫面就又變回那個「看起來完全正常」的謊。 */
+.src-degraded {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-5);
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong { color: var(--el-color-warning-dark-2); }
+  span { color: var(--el-text-color-regular); }
+}

@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
   const db = getDb()
 
-  const [items, orphanSnap] = await Promise.all([
+  const [listed, orphanSnap] = await Promise.all([
     listSources(db, workspaceId),
     db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
@@ -24,7 +24,12 @@ export default defineEventHandler(async (event) => {
   ])
 
   return {
-    items,
+    items: listed.items,
     orphanCount: orphanSnap.data().count,
+    /**
+     * 這份清單可能不完整（`C-137`）。畫面一定要講出來——
+     * 2026-09-04 就是因為少了東西卻長得很正常，老闆傳了三次同一份說明書。
+     */
+    degraded: listed.degraded,
   }
 })

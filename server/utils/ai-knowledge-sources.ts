@@ -139,6 +139,16 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
   }
 }
 
+export interface ListSourcesResult {
+  items: SourceSummary[]
+  /**
+   * 主查詢掛掉、只靠備援湊出來的清單（`C-137`）。
+   * true 代表**這份清單可能不完整**，呼叫端必須讓使用者看得到這件事——
+   * 一份少了東西卻長得很正常的清單，比一個錯誤訊息危險得多。
+   */
+  degraded: boolean
+}
+
 /**
  * 列出某 workspace 的所有 source（依 updatedAt 倒序）。
  */
@@ -146,15 +156,26 @@ export async function listSources(
   db: Firestore,
   workspaceId: string,
   limit = 100,
-): Promise<SourceSummary[]> {
+): Promise<ListSourcesResult> {
   /**
    * ⛔過濾要在查詢層做，不能「先 limit(100) 再用 JS 濾掉墓碑」（C-49E）：
    * 軟刪除會把 updatedAt 推到最新，墓碑因此排在 `orderBy('updatedAt','desc')` 的最前面——
    * 刪掉 40 張手寫卡就有 40 個墓碑佔滿視窗前段，濾完只剩 60 筆，真來源在畫面上消失 30 天。
-   * `isDeleted == false` 是等值條件，配 orderBy 走既有的自動索引合併。
-   * 舊資料沒有這個欄位 → 撈不到，所以多撈一輪「沒有這個欄位的舊 doc」補齊（一次性相容，
-   * 兩批合併後再排序取 limit）。
+   * 舊資料沒有 `isDeleted` 欄位 → 撈不到，所以多撈一輪「沒有這個欄位的舊 doc」補齊。
+   *
+   * 🔴 **2026-09-04 線上事故（`C-137`）**：`isDeleted == false` ＋ `orderBy updatedAt` 是
+   * 兩個欄位的複合查詢，**需要一支複合索引**，而那支索引從來沒宣告、沒部署。
+   * 於是主查詢在正式環境上一直是 `FAILED_PRECONDITION`，舊版的 `.catch(() => null)`
+   * 把它整個吞掉不留一個字——結果是 **8/19 之後每一份透過匯入建立的來源都不在清單上**
+   * （它們都帶 `isDeleted: false`，備援那一輪只認「沒有這個欄位」的舊 doc）。
+   * 老闆的回報正是這個：「知識庫搜尋找得到，但是選單上找不到。」
+   * ⛔ 這裡有兩條不可以再犯的規矩：
+   *   ① 唯讀路徑的 catch **一定要出聲**（見記憶：catch+回空＝整類東西從畫面靜靜消失）
+   *   ② 主查詢掛掉時，備援不可以「順便把新資料也濾掉」——降級要降在精度上，不是降在
+   *      「看不看得見」上。所以失敗時改用 `isDeleted !== true` 的寬鬆判準把兩種資料都收進來，
+   *      並回報 `degraded` 讓畫面說得出「這份清單可能不完整」。
    */
+  let indexMissing = false
   const [freshSnap, legacySnap] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
@@ -162,7 +183,11 @@ export async function listSources(
       .orderBy('updatedAt', 'desc')
       .limit(limit)
       .get()
-      .catch(() => null),
+      .catch((e) => {
+        indexMissing = true
+        console.warn('[ai-knowledge-sources] listSources 主查詢失敗，改用備援（清單可能不完整）：', e)
+        return null
+      }),
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .orderBy('updatedAt', 'desc')
@@ -171,15 +196,24 @@ export async function listSources(
   ])
   const byId = new Map<string, any>()
   for (const d of freshSnap?.docs ?? []) byId.set(d.id, d.data())
-  // 舊 doc（沒有 isDeleted 欄位）用 deletedAt 判：它們不可能是新軟刪除的（新路徑兩個都寫）
   for (const d of legacySnap.docs) {
     const data = d.data() as any
-    if (data?.isDeleted === undefined && data?.deletedAt == null) byId.set(d.id, data)
+    if (data?.deletedAt != null) continue
+    // 正常時：只補「沒有 isDeleted 欄位」的舊 doc（新的那批由主查詢負責，已經在上面了）。
+    // 降級時：主查詢什麼都沒回，這一輪要把新舊全部收下，否則新來源會整批消失。
+    const isTombstone = data?.isDeleted === true
+    const isLegacy = data?.isDeleted === undefined
+    if (isTombstone) continue
+    if (!indexMissing && !isLegacy) continue
+    byId.set(d.id, data)
   }
-  return [...byId.entries()]
-    .map(([id, data]) => docToSourceSummary(id, data))
-    .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
-    .slice(0, limit)
+  return {
+    items: [...byId.entries()]
+      .map(([id, data]) => docToSourceSummary(id, data))
+      .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      .slice(0, limit),
+    degraded: indexMissing,
+  }
 }
 
 export interface DuplicateSourceHit {

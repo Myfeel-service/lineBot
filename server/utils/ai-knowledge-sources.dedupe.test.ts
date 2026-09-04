@@ -10,7 +10,7 @@
  *    畫面照常、錯誤照常沒有，只是資料默默壞掉。
  */
 import { describe, expect, it, vi } from 'vitest'
-import { findSourceByContentHash, recycleSourceChunks } from './ai-knowledge-sources'
+import { findSourceByContentHash, listSources, recycleSourceChunks } from './ai-knowledge-sources'
 
 /** 假 Firestore：撐得住 collection().where()×N.limit().get() 與 batch().update()/commit() */
 function makeDb(docs: Array<{ id: string; data: Record<string, any> }>) {
@@ -150,5 +150,75 @@ describe('recycleSourceChunks：更新既有那一份時，舊卡怎麼退場', 
     expect(await recycleSourceChunks(db, WID, 's1')).toBe(901)
     expect(commits).toEqual([400, 400, 101])
     expect(updates).toHaveLength(901)
+  })
+})
+
+/**
+ * `C-137`：清單主查詢掛掉時不可以默默少掉一批來源。
+ *
+ * 2026-09-04 線上事故的形狀——`isDeleted == false` ＋ `orderBy updatedAt` 需要一支
+ * 複合索引，那支索引從來沒部署，主查詢在正式環境一直是 FAILED_PRECONDITION，
+ * 而舊版把錯誤整個吞掉。結果：8/19 之後每一份透過匯入建立的來源（都帶 `isDeleted: false`）
+ * 都不在清單上，畫面卻長得完全正常。老闆因此以為說明書沒上傳成功，連傳三次。
+ */
+describe('listSources：主查詢掛掉時的降級行為（C-137）', () => {
+  /** 兩支查詢的假 Firestore：第一支（帶 isDeleted）可指定成拋錯 */
+  function makeListDb(docs: Array<{ id: string; data: any }>, freshThrows: boolean) {
+    function q(filters: Array<[string, string, unknown]>): any {
+      return {
+        where: (f: string, op: string, v: unknown) => q([...filters, [f, op, v]]),
+        orderBy: () => q(filters),
+        limit: () => q(filters),
+        get: async () => {
+          const hasIsDeleted = filters.some(([f]) => f === 'isDeleted')
+          if (hasIsDeleted && freshThrows) {
+            throw Object.assign(new Error('9 FAILED_PRECONDITION: The query requires an index.'), { code: 9 })
+          }
+          const matched = docs.filter(d => filters.every(([f, , v]) => d.data[f] === v))
+          return { size: matched.length, docs: matched.map(d => ({ id: d.id, data: () => d.data })) }
+        },
+      }
+    }
+    return { collection: () => q([]) } as any
+  }
+
+  const WS = 'ws1'
+  const ts = (ms: number) => ({ toMillis: () => ms })
+  const DOCS = [
+    // 匯入建立的（帶 isDeleted: false）＝事故中整批消失的那種
+    { id: 'new1', data: { workspaceId: WS, name: '說明書.pdf', isDeleted: false, updatedAt: ts(300) } },
+    { id: 'new2', data: { workspaceId: WS, name: '耳機說明書.pdf', isDeleted: false, updatedAt: ts(200) } },
+    // 舊資料（沒有 isDeleted 欄位）＝事故中唯一看得到的那種
+    { id: 'old1', data: { workspaceId: WS, name: '客服（商品資訊）', updatedAt: ts(100) } },
+    // 回收桶：兩種情況都不該出現
+    { id: 'bin1', data: { workspaceId: WS, name: '刪掉的', isDeleted: true, deletedAt: ts(999), updatedAt: ts(999) } },
+  ]
+
+  it('索引正常時：新舊都在、墓碑不在、degraded 為 false', async () => {
+    const r = await listSources(makeListDb(DOCS, false), WS)
+    expect(r.items.map(x => x.id)).toEqual(['new1', 'new2', 'old1'])
+    expect(r.degraded).toBe(false)
+  })
+
+  it('🔴 主查詢掛掉時，匯入建立的來源仍要出現（事故本身）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await listSources(makeListDb(DOCS, true), WS)
+    // 舊行為：只剩 old1 → 老闆看到的就是這個
+    expect(r.items.map(x => x.id)).toEqual(['new1', 'new2', 'old1'])
+    expect(warn).toHaveBeenCalled() // ⛔ 唯讀路徑的 catch 一定要出聲
+    warn.mockRestore()
+  })
+
+  it('🔴 降級時要回報 degraded，畫面才講得出「清單可能不完整」', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect((await listSources(makeListDb(DOCS, true), WS)).degraded).toBe(true)
+    warn.mockRestore()
+  })
+
+  it('降級也不可以讓回收桶的東西跑出來', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await listSources(makeListDb(DOCS, true), WS)
+    expect(r.items.map(x => x.id)).not.toContain('bin1')
+    warn.mockRestore()
   })
 })
