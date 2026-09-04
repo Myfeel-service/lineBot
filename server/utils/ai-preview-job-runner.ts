@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
-import { computeDiff, loadOldChunksForDiff } from '~~/server/utils/ai-knowledge-resync'
+import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, pickCosmeticCandidates } from '~~/server/utils/ai-knowledge-resync'
 import {
   advanceWork,
   appendImportQualityWarnings,
@@ -128,6 +128,26 @@ export async function advancePreviewJob(
           tags: c.tags ?? [],
           questions: c.questions ?? [],
         })))
+        /**
+         * 意思判官（`C-144`）：modified 裡「數字沒變」的送 LLM 判「意思有沒有變」，
+         * 意思相同的標成措辭差異＝摺疊＋預設保留原卡。判官掛掉不擋 resync——
+         * 代價只是這批 modified 全部照舊攤給人看（多看幾條，不會做錯事）。
+         */
+        const cosmeticCandidates = pickCosmeticCandidates(work.resyncDiff)
+        if (cosmeticCandidates.length) {
+          try {
+            const judged = await runWithLlmBudget(workspaceId, () => judgeCosmeticRewrites(
+              cosmeticCandidates.map(e => ({ old: e.oldChunk?.content ?? '', next: e.newChunk?.content ?? '' })),
+            ))
+            work.usage.inputTokens += judged.inputTokens
+            work.usage.outputTokens += judged.outputTokens
+            const { folded } = applyCosmeticVerdicts(work.resyncDiff, cosmeticCandidates, judged.verdicts)
+            if (folded) console.log(`[resync] ${work.input.resyncSourceId} 意思判官摺掉 ${folded}/${cosmeticCandidates.length} 條措辭差異`)
+          }
+          catch (e) {
+            console.warn('[resync] 意思判官失敗（不擋，全部照舊給人看）:', (e as Error)?.message)
+          }
+        }
         // 縮水偵測(空內容當一等公民錯誤)。兩種都要抓,漏一種就會整源被刪:
         //  · 抓到的網頁字數暴跌 → 頁面掛掉 / 改成動態載入
         //  · 字數正常但**切出來的卡暴跌**(極端:LLM 回空陣列,不會 throw)→ 舊卡全被標成「移除」

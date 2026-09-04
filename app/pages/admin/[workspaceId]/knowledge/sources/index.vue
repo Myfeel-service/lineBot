@@ -903,8 +903,11 @@
         </template>
       </p>
 
-      <p v-if="hiddenUnchangedCount > 0" class="diff-unchanged-note text-muted text-xs">
-        {{ hiddenUnchangedCount }} 條未變的已收合(不需要做決定)
+      <p v-if="hiddenUnchangedCount > 0 || cosmeticCount > 0" class="diff-unchanged-note text-muted text-xs">
+        <template v-if="hiddenUnchangedCount > 0">{{ hiddenUnchangedCount }} 條未變</template>
+        <template v-if="hiddenUnchangedCount > 0 && cosmeticCount > 0">、</template>
+        <template v-if="cosmeticCount > 0">{{ cosmeticCount }} 條只是換句話說(意思沒變，已自動保留原卡)</template>
+        已收合(不需要做決定)
         <el-button text size="small" @click="showUnchangedDiff = !showUnchangedDiff">
           {{ showUnchangedDiff ? '收合' : '顯示' }}
         </el-button>
@@ -924,6 +927,9 @@
             <!-- 數字有沒有變 = 這張修改到底會不會改變客人拿到的答案 -->
             <span v-if="entry.kind === 'modified' && entry.numbersChanged" class="diff-entry-hint diff-entry-hint--alert">
               數字有變{{ formatNumberChanges(entry.numberChanges) }}
+            </span>
+            <span v-if="entry.cosmetic" class="diff-entry-hint">
+              換句話說(意思沒變)
             </span>
             <span v-else-if="entry.kind === 'modified' && entry.numbersChanged === false" class="diff-entry-hint">
               數字沒變
@@ -1409,6 +1415,8 @@ interface DiffEntry {
   newChunk?: { title: string; content: string; tags: string[] }
   /** kind='modified'：內容裡的數字(價格/天數/規格)有沒有變。false = 只是換句話說 */
   numbersChanged?: boolean
+  /** 意思判官認定「只是換句話說」（`C-144`）：收合、預設保留原卡 */
+  cosmetic?: boolean
   /** 變掉的數字,直接列給人看 */
   numberChanges?: { removed: string[]; added: string[] }
   /** kind='modified'：標題(忽略標點空白後)真的變了 */
@@ -1742,12 +1750,20 @@ const decisions = ref<Record<string, string>>({})
 // diff modal:「未變」的卡不需要人做決定,預設收合成一行摘要——大資料改一小處時,
 // 使用者才不用在幾十條未變裡找那一條有變的
 const showUnchangedDiff = ref(false)
+/**
+ * 措辭差異（`C-144`）跟「未變」一樣收合：意思判官認定只是換句話說的 modified，
+ * 預設保留原卡、不用人決定。⛔ 摺疊不是隱藏——數字講出來、可展開，
+ * 判官萬一看走眼，人展開還看得到。
+ */
 const visibleDiffEntries = computed(() => {
   const entries = diffData.value?.diff.entries ?? []
-  return showUnchangedDiff.value ? entries : entries.filter(e => e.kind !== 'unchanged')
+  return showUnchangedDiff.value ? entries : entries.filter(e => e.kind !== 'unchanged' && !e.cosmetic)
 })
 const hiddenUnchangedCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'unchanged').length,
+)
+const cosmeticCount = computed(() =>
+  (diffData.value?.diff.entries ?? []).filter(e => e.cosmetic).length,
 )
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeDiff, contentSimilarity, normalizeForCompare } from './ai-knowledge-resync'
+import { applyCosmeticVerdicts, computeDiff, contentSimilarity, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
 
 const oldChunk = (id: string, title: string, content: string, manual = false) => ({
   id,
@@ -219,5 +219,52 @@ describe('countDivergentKeeps（C-44：保留了與網頁不同的內容才算�
     })).toBe(0)
     // 沒帶決定 → 套用端視同保留 → 照算
     expect(countDivergentKeeps([{ id: 'mod:9', kind: 'modified' as const }], {})).toBe(1)
+  })
+})
+
+/**
+ * `C-144`：措辭差異的意思判官（案例取自 2026-09-04 BOYA FAQ resync 的真實 diff——
+ * 8 條 modified 全是措辭差異，字面相似度 0.53～0.94＝字串門檻判不動，只能 LLM 判意思、
+ * 數字紅線用程式守）。
+ */
+describe('pickCosmeticCandidates / applyCosmeticVerdicts（C-144）', () => {
+  const mkDiff = (entries: any[]): any => ({ entries, summary: { added: 0, modified: entries.length, removed: 0, unchanged: 0 } })
+  const mod = (id: string, numbersChanged: boolean): any => ({
+    id, kind: 'modified', defaultAction: 'use_new', numbersChanged,
+    oldChunk: { id, title: 't', content: '舊', tags: [], manuallyEdited: false },
+    newChunk: { title: 't', content: '新', tags: [], questions: [] },
+  })
+
+  it('🔴 數字有變的一律不送判（那是真變動，判官說什麼都不算數）', () => {
+    const diff = mkDiff([mod('a', false), mod('b', true), mod('c', false)])
+    const candidates = pickCosmeticCandidates(diff)
+    expect(candidates.map((e: any) => e.id)).toEqual(['a', 'c'])
+  })
+
+  it('判官說 same_meaning → 摺疊＋預設保留原卡；unsure / changed 保持原樣', () => {
+    const diff = mkDiff([mod('a', false), mod('b', false), mod('c', false)])
+    const candidates = pickCosmeticCandidates(diff)
+    const { folded } = applyCosmeticVerdicts(diff, candidates, ['same_meaning', 'unsure', 'changed'])
+    expect(folded).toBe(1)
+    expect(diff.entries[0]).toMatchObject({ cosmetic: true, defaultAction: 'keep_old' })
+    expect(diff.entries[1].cosmetic).toBeUndefined()
+    expect(diff.entries[1].defaultAction).toBe('use_new')
+    expect(diff.entries[2].cosmetic).toBeUndefined()
+  })
+
+  it('🔴 保險：就算呼叫端送錯候選，數字有變的也不准摺', () => {
+    const diff = mkDiff([mod('a', true)])
+    const { folded } = applyCosmeticVerdicts(diff, diff.entries, ['same_meaning'])
+    expect(folded).toBe(0)
+    expect(diff.entries[0].cosmetic).toBeUndefined()
+  })
+
+  it('unchanged / new / removed 不是候選（只有 modified 需要判意思）', () => {
+    const diff = mkDiff([
+      { id: 'x', kind: 'unchanged', defaultAction: 'keep_old' },
+      { id: 'y', kind: 'new', defaultAction: 'add_new' },
+      mod('z', false),
+    ])
+    expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['z'])
   })
 })

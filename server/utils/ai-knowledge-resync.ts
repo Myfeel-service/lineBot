@@ -53,6 +53,12 @@ export interface DiffEntry {
    * 預設仍是用新版（網頁才是事實來源），不替使用者默默決定。
    */
   numbersChanged?: boolean
+  /**
+   * 措辭級修改（`C-144`）：意思判官認定「兩版意思相同，只是換句話說」。
+   * UI 把這種摺疊起來、預設保留原卡——重切 LLM 每次輸出的措辭本來就會飄，
+   * 讓人逐條審「可享有→可享」這種差異，真的變動反而被淹沒。
+   */
+  cosmetic?: boolean
   /** kind=modified 且數字有變：變掉的數字（各最多 6 個），前端直接列給人看 */
   numberChanges?: { removed: string[]; added: string[] }
   /** kind=modified 才有：標題（正規化後）是否真的變了 */
@@ -443,4 +449,81 @@ export async function loadOldChunksForDiff(
     tags: c.tags,
     manuallyEditedAtMs: c.manuallyEditedAtMs,
   }))
+}
+
+// ── 措辭差異的意思判官（`C-144`）────────────────────────────────
+//
+// 為什麼要有：重新同步是「舊卡 vs LLM 重切產物」的比對，而 LLM 每次輸出的措辭本來就會飄
+// （temperature 0 也擋不住「可享有→可享」「支援 EQ 調整→EQ 設定調整」）。2026-09-04 實測
+// BOYA FAQ 一次 resync 的 8 條 modified **全是**這種措辭差異，而字面相似度從 0.53 到 0.94
+// 都有——**字串門檻判不動**（設低會把真改動一起吞掉），「意思一樣」只有 LLM 判得出來。
+//
+// ⛔ 紅線用程式守，不信 prompt（同 C-143 / C-27 的教訓）：
+//    **數字有變的一律不送判、不摺疊**——價格、期限、容量改了就是真變動，
+//    就算判官說「意思一樣」也不算數。
+
+const COSMETIC_JUDGE_SYSTEM = `你在幫商家審核客服知識卡的更新。使用者會給你幾組「舊版 vs 新版」的知識卡內容。任務：逐組判斷新版跟舊版的**意思**是否完全相同（只是換句話說、調整排版或重點行的寫法）。
+
+規則（嚴格遵守）：
+1. verdict 只能是 "same_meaning" / "changed" / "unsure"。
+2. 新版多了資訊、少了資訊、或任何事實面的改變（條件、範圍、步驟、限制）→ "changed"。
+3. 只是同義改寫、語序調整、重點行格式不同 → "same_meaning"。
+4. 沒有把握就回 "unsure"，不要猜。寧可多讓人看一條，不可把真變動藏起來。
+
+輸出格式（嚴格 JSON）：{ "results": [ { "index": 0, "verdict": "same_meaning" } ] }`
+
+/** 送判的候選：modified 且數字沒變（數字有變＝程式層紅線，直接不送） */
+export function pickCosmeticCandidates(diff: DiffResult): DiffEntry[] {
+  return diff.entries.filter(e => e.kind === 'modified' && !e.numbersChanged)
+}
+
+/**
+ * 把判官結果寫回 diff（純函式，可測）。
+ * ⛔ 只動「有送判、且判官明確說意思相同」的：unsure / changed / 沒回覆的一律保持原樣，
+ *    numbersChanged 的根本不在候選裡（見 pickCosmeticCandidates）。
+ */
+export function applyCosmeticVerdicts(
+  diff: DiffResult,
+  candidates: DiffEntry[],
+  verdicts: Array<'same_meaning' | 'changed' | 'unsure'>,
+): { folded: number } {
+  let folded = 0
+  candidates.forEach((entry, i) => {
+    if (verdicts[i] !== 'same_meaning') return
+    // ⛔ 保險再守一次：就算呼叫端送錯候選，數字有變的也不准摺
+    if (entry.numbersChanged) return
+    entry.cosmetic = true
+    entry.defaultAction = 'keep_old' // 意思沒變＝不動卡片（重寫只是燒 embedding 錢）
+    folded++
+  })
+  return { folded }
+}
+
+/**
+ * 意思判官本體：一次呼叫判完整批。失敗 throw（呼叫端自行決定跳過＝全部照舊給人看，
+ * 判官掛掉的代價只是「多看幾條」，不能讓它擋整個 resync）。
+ */
+export async function judgeCosmeticRewrites(
+  pairs: Array<{ old: string; next: string }>,
+): Promise<{ verdicts: Array<'same_meaning' | 'changed' | 'unsure'>; inputTokens: number; outputTokens: number }> {
+  if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0 }
+  const { generateJson } = await import('./gemini')
+  const prompt = [
+    '請逐組判斷新版與舊版的意思是否完全相同：',
+    ...pairs.map((p, i) => `[${i}]\n舊版：${p.old.slice(0, 800)}\n新版：${p.next.slice(0, 800)}`),
+  ].join('\n\n')
+  const { data, inputTokens, outputTokens } = await generateJson<{ results?: Array<{ index?: unknown; verdict?: unknown }> }>(prompt, {
+    systemInstruction: COSMETIC_JUDGE_SYSTEM,
+    temperature: 0,
+    maxOutputTokens: 2048,
+    thinkingBudget: 0,
+  })
+  const verdicts: Array<'same_meaning' | 'changed' | 'unsure'> = pairs.map(() => 'unsure')
+  for (const row of Array.isArray(data?.results) ? data.results : []) {
+    const idx = typeof row?.index === 'number' ? row.index : Number.NaN
+    if (!Number.isInteger(idx) || idx < 0 || idx >= verdicts.length) continue
+    const v = String(row?.verdict ?? '')
+    if (v === 'same_meaning' || v === 'changed' || v === 'unsure') verdicts[idx] = v
+  }
+  return { verdicts, inputTokens, outputTokens }
 }
