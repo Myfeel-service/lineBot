@@ -675,9 +675,29 @@
      一些、右邊的區塊反而可以稍微小一點，大約是 1:2」）。350 ＋ 60 ＋ 702 ＝ 1112（版心扣掉左右內距）。
      ⚠️ 改這三個數字要一起算，而且要回頭量**圖文選單窄帶**：它的文字色塊＝畫面欄減掉固定 268px
         的手機再減 gap，畫面欄一縮它最先出事（970px 那級就是這樣才要把軌收成 196px）。 */
-  .lp-rails { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 60px; align-items: start; }
-  /* top＝導覽列 68px ＋ 28px 呼吸。⚠️ 導覽列高度改了這裡要跟著改。 */
-  .lp-rails__rail { position: sticky; top: 96px; }
+  .lp-rails { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 60px; align-items: start; --rail-h: 351px; }
+  /* ── 軌釘在「畫面正中央」（2026-09-04 二十四輪）─────────────────────────
+   * 之前是 top: 96px（導覽列 68 ＋ 28 呼吸）＝貼著上緣釘住。使用者問「左邊區塊是否掛在
+   * 畫面中央」＝原本不是：軌只有 351px 高、乾淨可視區有 751px，實測上留 27px／下留 373px，
+   * 整條**高了 173px**，底下永遠空一大片。
+   *
+   *   top ＝ 導覽列 68 ＋（乾淨高 − 軌高）÷ 2，乾淨高 ＝ 100vh − 68（導覽列）− 80（置底吸底條）
+   *        ＝ 50vh − 軌高÷2 − 6px          ← 那個 6 ＝（吸底條 80 − 導覽列 68）÷ 2
+   *
+   * ⚠️ 「乾淨區」要扣掉 .lp-stickybar：它整條區間都是展開的（實測 is-show），不扣的話
+   *    視覺上會低 40px——置中是對著**看得到的地方**置中，不是對著視窗置中。
+   * ⚠️ --rail-h 是**量出來的**（headless 取 .lp-rails__rail 的 height）：350.5px＝三條
+   *    各一行標題一行副標。⛔ 動到軌的字級／內距／副標長度、或加減一條，都要重量一次
+   *    ——量法見二十四輪的驗收腳本，1000px 那級因為軌只剩 200px 寬會換行、所以是 406px。
+   * ⛔ 別改用「軌撐滿 100vh ＋ flex 置中」那種不用量高度的寫法（試過、實測退回）：盒子一變高，
+   *    sticky 提早 800px 就脫鉤，捲到第三塊（圖文選單那條窄帶）時整條軌已經滑出畫面上緣，
+   *    「你現在在看哪一塊」剛好在最需要的時候消失。盒子維持內容高才留得住。
+   * ⛔ 也別用 top: 50% ＋ translateY(-50%)：視窗比軌矮的時候上緣會被推出畫面，第一條
+   *    「AI 客服」直接看不到。max() 的下限 96px 就是這件事的保險（視窗 ≲554px 時退回貼上緣釘住）。
+   * ⚠️ 代價（改的時候就知道，不是 bug）：整區**剛進場**那一瞬間軌的文字會比右欄第一個 h3
+   *    低約 175px，要捲一下才對齊。⛔ 別為了那一瞬間把它改回貼上緣。
+   * ⚠️ 導覽列 68px／吸底條 80px 任一個高度改了，這裡的 6px 要跟著重算。 */
+  .lp-rails__rail { position: sticky; top: max(96px, calc(50vh - var(--rail-h) / 2 - 6px)); }
   .lp-rail__lead {
     margin: 0 0 22px; padding-left: 4px;
     font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; color: var(--ink-soft);
@@ -1425,7 +1445,9 @@
     .lp-rails { grid-template-columns: 264px minmax(0, 1fr); gap: 48px; }
   }
   @media (max-width: 1000px) {
-    .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; }
+    /* 軌只剩 200px 寬＝三條的標題與副標都會換行，量到 406.1px；置中要用這個高度算，
+       ⛔ 不能沿用上面那個 351（差 55px＝置中會低 28px）。 */
+    .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; --rail-h: 406px; }
   }
   @media (max-width: 960px) {
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
