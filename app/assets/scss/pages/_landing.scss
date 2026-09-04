@@ -890,8 +890,14 @@
     font-size: clamp(4.5rem, 12vw, 9.5rem); font-weight: 800; letter-spacing: -0.05em; line-height: 1;
     color: var(--ink); display: flex; align-items: baseline; gap: 0.09em; font-variant-numeric: tabular-nums;
   }
+  /* ⛔ 鎖排裡的每個小件都**必須自己宣告 letter-spacing**（2026-09-04 老闆看出「月跟起連在一起」）：
+     `letter-spacing` 繼承的是**算好的 px 不是 em**——大字 152px 的 `-0.05em` 算出來是 `-7.6px`，
+     這個 `-7.6px` 原封不動傳給 30.4px 的「／月起」＝ 對它而言是 **-0.25em**，每兩個字之間硬擠掉
+     四分之一個字，中文就黏死了（實測「月」與「起」的字框間距 0.0px）。
+     `__cur` 當初有寫所以逃過一劫，方案卡的「／月」也早就寫了 `letter-spacing: 0`＝同一個坑修過一次。
+     ⛔ 中文用 0 就好，別再給負值。 */
   .lp-bigprice__cur { font-size: 0.26em; font-weight: 800; color: var(--ink-2); letter-spacing: -0.01em; }
-  .lp-bigprice__per { font-size: 0.2em; font-weight: 600; color: var(--ink-soft); }
+  .lp-bigprice__per { font-size: 0.2em; font-weight: 600; color: var(--ink-soft); letter-spacing: 0; }
   .lp-bigprice__unit { font-size: 0.92rem; color: var(--ink-2); font-weight: 600; }
 
   /* ── 方案一覽（四張：免費／399／799／1,499，2026-09-04 回到檯面上）────────
@@ -959,7 +965,9 @@
   .lp-pricecta { margin-top: 44px; text-align: center; }
   .lp-pricecta__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-2); }
   .lp-pricecta__fine b { color: var(--ink); }
-  .lp-pricecta__more { margin: 10px 0 0; font-size: 0.84rem; }
+  /* 跟上面那行同字級（原本 0.84 vs 0.85＝差 0.16px 的漂移，沒有人是刻意設計 0.16px 的差）。
+     這一區的小字刻意只有三級：0.92（大字報價的單位）／0.88（方案卡圖說）／0.85（CTA 底下這兩行）。 */
+  .lp-pricecta__more { margin: 10px 0 0; font-size: 0.85rem; }
   .lp-pricecta__more a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 2px; }
   .lp-pricecta__more a:hover { color: var(--g-deep); }
 
