@@ -31,5 +31,7 @@ export default defineEventHandler(async (event) => {
      * 2026-09-04 就是因為少了東西卻長得很正常，老闆傳了三次同一份說明書。
      */
     degraded: listed.degraded,
+    /** 份數撞到上限、後面的沒回（`C-138`）：一樣要講，不能默默切掉 */
+    truncated: listed.truncated,
   }
 })

@@ -123,6 +123,12 @@
         <span>資料庫索引缺失，有些資料讀不出來（東西還在，只是這裡列不出來）。搜尋仍然找得到，請把這句話回報給我們。</span>
       </div>
 
+      <!-- 份數撞到上限（`C-138`）：搜尋／回收桶／體檢撞到都會講，這裡以前不會 -->
+      <div v-if="sourcesTruncated && !sourcesDegraded" class="src-degraded">
+        <strong>資料太多，這裡只列出前 {{ sources.length }} 份</strong>
+        <span>其餘的沒有不見，用上面的搜尋找得到。</span>
+      </div>
+
       <div v-if="loading && !sources.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -1478,6 +1484,8 @@ const orphanCount = ref(0)
  * 2026-09-04 老闆就是因此以為說明書沒上傳成功，連傳三次。
  */
 const sourcesDegraded = ref(false)
+/** 份數撞到後端上限、後面的沒回（`C-138`）：撞到就要講，不能默默少列 */
+const sourcesTruncated = ref(false)
 const migrating = ref(false)
 
 // ── 資料夾分組 ───────────────────────────────────────
@@ -2072,12 +2080,13 @@ async function loadSources(forceHealth = false) {
   void loadHealth(forceHealth) // 體檢與列表平行載入;失敗不擋頁面
   try {
     const [sourcesRes, foldersRes] = await Promise.all([
-      apiFetch<{ items: SourceSummary[]; orphanCount?: number; degraded?: boolean }>('/api/ai/sources/list'),
+      apiFetch<{ items: SourceSummary[]; orphanCount?: number; degraded?: boolean; truncated?: boolean }>('/api/ai/sources/list'),
       apiFetch<{ items: FolderRow[] }>('/api/ai/folders').catch(() => ({ items: [] as FolderRow[] })),
     ])
     sources.value = sourcesRes.items
     orphanCount.value = Number(sourcesRes.orphanCount ?? 0)
     sourcesDegraded.value = sourcesRes.degraded === true
+    sourcesTruncated.value = sourcesRes.truncated === true
     folders.value = foldersRes.items ?? []
     // 第一次載入：把所有資料夾預設展開（之後 toggle 會覆寫 localStorage 狀態）
     if (expandedFolders.value.size === 1 && expandedFolders.value.has('__none__')) {

@@ -147,6 +147,13 @@ export interface ListSourcesResult {
    * 一份少了東西卻長得很正常的清單，比一個錯誤訊息危險得多。
    */
   degraded: boolean
+  /**
+   * 資料份數撞到 `limit`，後面的沒有回（`C-138`）。
+   * 同一種病的第三種形狀：搜尋、回收桶、體檢撞上限時都會回報 `truncated`，
+   * 只有這支預設 100 份、撞到默默切掉——超過 100 份資料的帳號會有東西永遠看不到，
+   * 而且畫面完全正常。目前 MYFEEL 31 份還沒撞到，是「還沒中」不是「不會中」。
+   */
+  truncated: boolean
 }
 
 /**
@@ -207,12 +214,14 @@ export async function listSources(
     if (!indexMissing && !isLegacy) continue
     byId.set(d.id, data)
   }
+  const merged = [...byId.entries()]
+    .map(([id, data]) => docToSourceSummary(id, data))
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
   return {
-    items: [...byId.entries()]
-      .map(([id, data]) => docToSourceSummary(id, data))
-      .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
-      .slice(0, limit),
+    items: merged.slice(0, limit),
     degraded: indexMissing,
+    // 兩支查詢各自都撈滿了才算真的「還有更多」；合併後剛好等於 limit 也可能只是剛好
+    truncated: merged.length > limit || legacySnap.size >= limit || (freshSnap?.size ?? 0) >= limit,
   }
 }
 

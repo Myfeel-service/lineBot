@@ -222,3 +222,41 @@ describe('listSources：主查詢掛掉時的降級行為（C-137）', () => {
     warn.mockRestore()
   })
 })
+
+/**
+ * `C-138`：份數撞到上限也要講。
+ * 搜尋、回收桶、體檢撞上限時都會回 `truncated`，只有資料清單以前是默默切掉——
+ * 超過 100 份資料的帳號會有東西永遠看不到，畫面卻完全正常（同 `C-137` 的病，不同形狀）。
+ */
+describe('listSources：撞到份數上限要回報（C-138）', () => {
+  function makeDb(n: number) {
+    const docs = Array.from({ length: n }, (_, i) => ({
+      id: `s${i}`,
+      data: { workspaceId: 'ws1', name: `來源${i}`, isDeleted: false, updatedAt: { toMillis: () => 1000 - i } },
+    }))
+    function q(filters: Array<[string, string, unknown]>, lim = Infinity): any {
+      return {
+        where: (f: string, op: string, v: unknown) => q([...filters, [f, op, v]], lim),
+        orderBy: () => q(filters, lim),
+        limit: (l: number) => q(filters, l),
+        get: async () => {
+          const matched = docs.filter(d => filters.every(([f, , v]) => (d.data as any)[f] === v)).slice(0, lim)
+          return { size: matched.length, docs: matched.map(d => ({ id: d.id, data: () => d.data })) }
+        },
+      }
+    }
+    return { collection: () => q([]) } as any
+  }
+
+  it('沒撞到上限 → truncated 為 false', async () => {
+    const r = await listSources(makeDb(31), 'ws1', 100)
+    expect(r.items).toHaveLength(31)
+    expect(r.truncated).toBe(false)
+  })
+
+  it('🔴 撞到上限 → 一定要講（以前是默默切掉）', async () => {
+    const r = await listSources(makeDb(140), 'ws1', 100)
+    expect(r.items).toHaveLength(100)
+    expect(r.truncated).toBe(true)
+  })
+})
