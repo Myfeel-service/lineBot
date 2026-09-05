@@ -804,11 +804,21 @@ export async function handBackSessionToBot(
  * `opts.reason` 只有系統自動收尾時才帶（見 SessionCloseReason）：時間軸要分得出
  * 「客服按了結束」與「系統看它太久沒動靜幫忙收的」，並在 session 上留可回查的標記
  * （欄位沿用 scripts/close-stale-open-sessions.ts 那組，一次查詢就能撈出所有機器關掉的場）。
+ *
+ * `opts.preserveLastActivityAt`＝關掉它，但**不要**把「最後活動時間」蓋成現在（`D-64`）。
+ *
+ * ⛔ **這個選項是整條收尾機制的關鍵，不要順手拿掉**：AI 讀對話貼標籤與「AI 發現新標籤」
+ * 兩支排程，撈的都是「已結束 **而且** 最後活動時間在游標／兩週窗之後」的對話。
+ * 收尾如果照常蓋成現在，那 2,978 場躺了幾個月的舊對話會**整批跳到游標後面**，
+ * 被當成「剛剛結束」拿去跑 AI ——那是約三千次 LLM（以每 10 分鐘 8 場計要跑 62 小時），
+ * 而且會生出一大批三個月前對話的標籤建議倒進收件匣。
+ * `ai-tag-suggest.ts` 檔頭明寫「開關剛打開從現在開始，**不追歷史**」，蓋時間等於繞過那個決定。
+ * 保留原值同時也更誠實：**排程幫忙收尾不是「活動」**，那場對話最後真的有事發生就是三個月前。
  */
 export async function closeConversationSession(
   sessionId: string,
   userId: string,
-  opts: { reason?: SessionCloseReason } = {},
+  opts: { reason?: SessionCloseReason, preserveLastActivityAt?: boolean } = {},
 ): Promise<void> {
   const db = getDb()
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
@@ -838,7 +848,8 @@ export async function closeConversationSession(
   await sessionRef.update({
     status: 'closed' as ConversationStatus,
     closedAt: FieldValue.serverTimestamp(),
-    lastActivityAt: FieldValue.serverTimestamp(),
+    // ⛔ 見函式註解：保留原值是「別讓幾個月前的舊對話整批跑去餵 AI」的唯一機制
+    ...(opts.preserveLastActivityAt ? {} : { lastActivityAt: FieldValue.serverTimestamp() }),
     ...preview,
     ...(opts.reason
       ? { staleClosedAt: FieldValue.serverTimestamp(), staleClosedReason: opts.reason }

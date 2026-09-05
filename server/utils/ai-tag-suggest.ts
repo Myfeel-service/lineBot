@@ -9,6 +9,10 @@
  * - **排程批次掃、不掛 webhook**：對話關閉點分散在手動關閉／24h 換場／cron 收殮三處，
  *   掛任何一處都會漏另外兩處；排程用「closed + lastActivityAt 游標」一網打盡
  *   （關閉時 lastActivityAt 會蓋成關閉時間，現有複合索引反向掃即可，零新索引）。
+ *   ⚠️ **有一個刻意的例外**（`D-64`）：排程收殮「客人問完就沒再回來」的舊對話時
+ *   **保留原本的 lastActivityAt**，所以那些場一律落在游標之前＝這支永遠掃不到它們。
+ *   那是故意的——2,978 場躺了幾個月的對話一次湧進來就是約三千次 LLM，
+ *   正是下面「開關剛打開時從現在開始，不追歷史」那條決定要避免的事。
  * - **每場對話最多一次 LLM**（不是每則訊息），走 runWithLlmBudget 吃月額度上限。
  * - **開關剛打開時從「現在」開始**：不追歷史——幾千場舊對話 × 一次 LLM 是純浪費，
  *   而且舊對話的建議品質沒人驗證過。
@@ -176,6 +180,7 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
       }
 
       // 關閉時 lastActivityAt＝關閉時間；(workspaceId, status, lastActivityAt DESC) 索引反向掃
+      // ⚠️ 排程收殮的舊對話刻意保留原時間＝落在游標前，掃不到（見檔頭，`D-64`）
       const sessSnap = await db.collection('conversationSessions')
         .where('workspaceId', '==', workspaceId)
         .where('status', '==', 'closed')

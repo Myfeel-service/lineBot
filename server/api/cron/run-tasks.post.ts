@@ -2,6 +2,7 @@ import { assertCronAuthorized } from '~~/server/utils/cron-auth'
 import {
   detectSourceUpdates,
   autoHandbackIdleSessions,
+  autoCloseIdleBotSessions,
   autoCloseIdleHumanSessions,
   remindOverdueHandoffs,
   cleanupExpiredWebhookEventLocks,
@@ -82,6 +83,9 @@ export default defineEventHandler(async (event) => {
     // 真人接手中的會話不吃 24 小時自動結束，這是唯一會收殮它們的機制——停掉的話
     // 忘記按「結束會話」的對話會永遠掛著（那位客人也永遠收不到自動回覆）
     { name: 'conversation:auto-close-idle', run: () => autoCloseIdleHumanSessions(db) },
+    // 機器人那半（客人問完就沒再回來）——24 小時換場只在客人**再來訊**時才觸發,
+    // 沒有這支的話那些對話永遠掛著,而 AI 讀對話貼標籤只讀已結束的場（D-64）
+    { name: 'conversation:auto-close-idle-bot', run: () => autoCloseIdleBotSessions(db) },
     { name: 'conversation:handoff-sla', run: () => remindOverdueHandoffs(db) },
     { name: 'conversation:backlog-digest', run: () => dailyBacklogDigest(db) },
     // 紅色異常主動推到值班人員的 LINE（D-8②）。掛在這支既有排程上＝不用再去

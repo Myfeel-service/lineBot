@@ -109,6 +109,37 @@ describe('結束會話', () => {
     expect(state.events.at(-1)!.reason).toBeUndefined()
   })
 
+  /**
+   * `D-64`：這兩條守的是「收殮那 2,978 場舊對話」會不會變成約三千次 LLM。
+   * AI 讀對話貼標籤撈的是「已結束 ＋ 最後活動時間在游標之後」——收尾如果照常把時間
+   * 蓋成現在，躺了幾個月的舊對話會整批被當成「剛剛結束」拿去跑 AI。
+   */
+  it('⛔ 帶 preserveLastActivityAt 時**不可以**蓋掉最後活動時間（否則舊對話會整批跑去餵 AI）', async () => {
+    const { db, state } = makeDb(SESSION_ID)
+    vi.mocked(getDb).mockReturnValue(db as any)
+    const before = state.sessions[SESSION_ID]!.lastActivityAt
+
+    await closeConversationSession(SESSION_ID, LINE_UID, {
+      reason: 'idle_bot_auto',
+      preserveLastActivityAt: true,
+    })
+
+    expect(state.sessions[SESSION_ID]!.status).toBe('closed')
+    expect(state.sessions[SESSION_ID]!.closedAt).toBeDefined()
+    // 原本那個物件要原封不動地還在（不是被 serverTimestamp 換掉）
+    expect(state.sessions[SESSION_ID]!.lastActivityAt).toBe(before)
+  })
+
+  it('沒帶那個選項時照舊蓋成現在（客服按結束、真人那半的收尾都走這條）', async () => {
+    const { db, state } = makeDb(SESSION_ID)
+    vi.mocked(getDb).mockReturnValue(db as any)
+    const before = state.sessions[SESSION_ID]!.lastActivityAt
+
+    await closeConversationSession(SESSION_ID, LINE_UID)
+
+    expect(state.sessions[SESSION_ID]!.lastActivityAt).not.toBe(before)
+  })
+
   it('已經結束的會話重複呼叫不做事（冪等）', async () => {
     const { db, state } = makeDb(SESSION_ID)
     vi.mocked(getDb).mockReturnValue(db as any)

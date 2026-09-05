@@ -43,7 +43,7 @@ import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } 
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
-import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
+import { BOT_SESSION_MAX_IDLE_DAYS, HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
@@ -619,6 +619,83 @@ export async function autoCloseIdleHumanSessions(db: Firestore) {
 
   const tally = { scanned, closed, skippedFresh, skippedDisabled, truncated }
   if (closed || truncated) console.log('[conversation:auto-close-idle]', tally)
+  return tally
+}
+
+// ── 機器人那半的會話：閒置過久自動收尾（`D-64`）─────────────────────────────
+
+/** 機器人在處理、或還沒有人接手的兩種狀態（真人那兩種由上面那支負責） */
+const BOT_OWNED_STATUSES: ConversationStatus[] = ['open', 'bot_handling']
+
+/**
+ * 客人問完就沒再回來的對話，超過 `BOT_SESSION_MAX_IDLE_DAYS` 天沒動靜就自動結束。
+ *
+ * **為什麼非有不可（`D-64`，2026-09-04 老闆拍板）**：24 小時換場是**懶惰觸發**——只在
+ * 「客人下一則訊息進來、開新場」那個交易裡才把上一場關掉。客人沒再回來就永遠不關。
+ * 而 AI 讀對話貼標籤**只讀已結束的對話**，於是那些對話 AI 永遠讀不到：實測 MYFEEL
+ * 8/23 之後有動靜的 770 場只有 205 場（26.6%）進得了掃描器，另有 2,978 場超過 30 天
+ * 沒動靜還掛著。真人那半早就有收殮（見上面那支），機器人這半一直沒有。
+ *
+ * ⛔ **一定要帶 `preserveLastActivityAt`**：不帶的話那 2,978 場會被蓋成「剛剛結束」、
+ *   整批跳到 AI 掃描器的游標後面＝約三千次 LLM。理由見 `closeConversationSession` 的註解。
+ * ⛔ **沒有「關掉這個功能」的設定**（跟真人那邊不同）：關掉等於把問題養回來，
+ *   而且背景查詢會一直掃這批殭屍場。要調天數改 `BOT_SESSION_MAX_IDLE_DAYS`。
+ * ⛔ **不吃 workspace 設定**：這支跟真人那支不同，不需要逐場讀 `getAiSettings`
+ *   （那支每場都讀一次是因為門檻可調且預設關閉）。少掉那個讀取，一輪省 200 次查詢。
+ *
+ * 判斷基準用 `lastActivityAt`（雙方任一有動靜就會被 bump），沒有這個欄位的舊資料
+ * 退回 `openedAt`；兩個都沒有就**跳過不猜**——寧可留著，也不要把剛開的場誤收掉。
+ */
+export async function autoCloseIdleBotSessions(db: Firestore) {
+  const now = Date.now()
+  const maxIdleMs = BOT_SESSION_MAX_IDLE_DAYS * 24 * 3600_000
+  let closed = 0
+  let skippedFresh = 0
+  let skippedNoTime = 0
+  let scanned = 0
+  let truncated = false
+
+  for (const status of BOT_OWNED_STATUSES) {
+    const snap = await db.collection('conversationSessions')
+      .where('status', '==', status)
+      .limit(SESSION_SCAN_LIMIT)
+      .get()
+    scanned += snap.size
+    // 掃到上限＝這一輪沒看完，剩下的下一輪再收（第一次上線要收幾千場，本來就會跑好幾輪）
+    if (snap.size >= SESSION_SCAN_LIMIT) truncated = true
+
+    for (const doc of snap.docs) {
+      const data = doc.data() as any
+      const userId = String(data?.userId ?? '')
+      if (!userId) continue
+
+      const lastMs = tsToMs(data.lastActivityAt) || tsToMs(data.openedAt)
+      // ⛔ 兩個時間都讀不到就跳過：猜一個等於可能把剛開的場收掉，代價比留著大得多
+      if (!lastMs) {
+        skippedNoTime++
+        continue
+      }
+      if (now - lastMs < maxIdleMs) {
+        skippedFresh++
+        continue
+      }
+
+      try {
+        await closeConversationSession(doc.id, userId, {
+          reason: 'idle_bot_auto',
+          preserveLastActivityAt: true,
+        })
+        closed++
+      }
+      catch (err) {
+        // 單筆失敗不影響整批（下一輪會再撿到它）
+        console.warn('[auto-close-idle-bot] session close failed:', doc.id, err)
+      }
+    }
+  }
+
+  const tally = { scanned, closed, skippedFresh, skippedNoTime, truncated }
+  if (closed || truncated) console.log('[conversation:auto-close-idle-bot]', tally)
   return tally
 }
 
