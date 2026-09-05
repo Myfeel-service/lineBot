@@ -332,25 +332,20 @@
   .lp-panel__bd h3 { font-size: 1.12rem; font-weight: 800; margin: 18px 0 0; letter-spacing: -0.01em; }
   .lp-panel__bd > p { font-size: 0.94rem; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.7; }
 
-  /* ── Hero「現在可以把握的時機」卡（08-26 草稿的 opGroup）──────
-   * 三組時機：節慶（真資料，shared/taiwan-festivals.ts）、客戶狀態、標籤。
-   * 好友數與人數是虛構示範——圖說（.lp-figcap）必須交代哪一半是真的，拿掉圖說前先想清楚。
-   * ⛔ 分組標頭不掛 emoji（草稿的 📅👥🏷️ 刻意沒搬）：UI 圖示不用 emoji，見檔頭標記系統。
+  /* ── Hero「藏著賺錢的機會」卡（08-26 草稿的 opGroup；09-06 拆掉分組）──────
+   * 一張攤平的清單：節慶（真資料，shared/taiwan-festivals.ts）＋四種客人名單。
+   * 好友數與人數是虛構示範——標頭的「以咖啡店為例」是人數能出現的前提（見 index.vue）。
+   * ⚠️ 2026-09-06 老闆回饋分組標題（節慶／該關心的客人／已分好的客群）對小白難懂，
+   *    .lp-ops__head 與三組結構整組移除、每列自己講人話；⛔要再分組先回去看那輪回饋。
+   *    列的內距因此從 8px 放到 10px——沒有標頭撐開節奏後，8px 的六列擠成一塊。
    */
-  /* 分隔線畫在「後一組的上緣」而不是各組的下緣：CTA 也是 div，:last-of-type 會選錯
-     （lp-prop 時代踩過的同一個坑）。 */
-  .lp-ops__group { padding: 6px 0 10px; }
-  .lp-ops__group + .lp-ops__group { border-top: 1px solid var(--hair); }
-  .lp-ops__head {
-    padding: 10px var(--panel-pad-x) 6px;
-    font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; color: var(--ink-soft);
-  }
+  .lp-ops__group { padding: 10px 0 12px; }
   /* 一列＝「看到什麼」＋「幾位／什麼時候」，兩段就滿了。
      ⚠️ 2026-09-02 每列尾巴的建議句（「可以送上一句歡迎」「展場加入的好友」這類）**整排移除**：
         老闆說「右邊有點多文字」——一列三段小字，六列就是同一句「你可以⋯」講六次，
         而「那我要做什麼」現在由蓋在卡片中央的那顆印章（.lp-stamp）統一回答一次。
      ⛔ 別把 `.lp-op small` 加回來：加回來就等於把印章那句話拆成六句小字，回到老闆抓的那版。 */
-  .lp-op { display: flex; align-items: center; gap: 12px; padding: 8px var(--panel-pad-x); }
+  .lp-op { display: flex; align-items: center; gap: 12px; padding: 10px var(--panel-pad-x); }
   .lp-op b { flex: 1; min-width: 0; font-size: 0.9rem; font-weight: 700; }
   .lp-op__tag {
     flex: none; font-size: 0.7rem; font-weight: 800; border-radius: var(--radius-pill);
@@ -641,18 +636,21 @@
 
   /* ── 前後對照成效帶（客人等回覆、訊息回覆率⋯⋯）────────────
      09-03 三輪：原本是兩顆分離的灰磚（.lp-stat），被反映像表單欄位——
-     併成一條帶、兩格中間一道髮絲線，整欄的收尾只剩一個容器。 */
+     併成一條帶、兩格中間一道髮絲線，整欄的收尾只剩一個容器。
+     ⚠️ 09-06 老闆回饋「4 小時→秒回、6 成→全部這些要更顯眼、字大一點，像廣告強調價格」
+        → 結果值放大到 1.55rem（原 1.05）、舊值跟著升到 1rem，內距加一級。
+        語彙同投放廣告的價格對比：舊值小字劃線、新值大字綠色。⛔別再縮回去。 */
   .lp-outcome {
     display: grid; grid-template-columns: 1fr 1fr; margin-top: 22px;
     background: var(--surf-2); border-radius: var(--r-sm);
   }
-  .lp-outcome__cell { padding: 15px 18px; min-width: 0; }
+  .lp-outcome__cell { padding: 17px 20px 18px; min-width: 0; }
   .lp-outcome__cell + .lp-outcome__cell { border-left: 1px solid var(--hair); }
-  .lp-outcome__l { display: block; font-size: 0.78rem; color: var(--ink-soft); font-weight: 600; }
-  .lp-outcome__v { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-  .lp-outcome__v i { font-style: normal; font-size: 0.86rem; color: var(--ink-soft); text-decoration: line-through; text-decoration-color: #c6cec6; }
-  .lp-outcome__v em { font-style: normal; color: #a9b3aa; font-size: 0.8rem; }
-  .lp-outcome__v b { font-size: 1.05rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; }
+  .lp-outcome__l { display: block; font-size: 0.82rem; color: var(--ink-soft); font-weight: 600; }
+  .lp-outcome__v { display: flex; align-items: baseline; gap: 9px; margin-top: 6px; flex-wrap: wrap; }
+  .lp-outcome__v i { font-style: normal; font-size: 1rem; color: var(--ink-soft); text-decoration: line-through; text-decoration-color: #c6cec6; }
+  .lp-outcome__v em { font-style: normal; color: #a9b3aa; font-size: 0.9rem; }
+  .lp-outcome__v b { font-size: 1.55rem; font-weight: 800; color: var(--g-deep); letter-spacing: -0.01em; line-height: 1.2; }
 
   /* ── 能做什麼：左軌釘住、右邊畫面一扇扇捲過（2026-09-03 十七輪，why 見 index.vue 模板註解）──
    * 取代 09-03 的交錯雙列 .lp-duo（三列都是「文字半欄／畫面半欄」的左右對半切）。
@@ -1027,7 +1025,7 @@
   .lp-q[open] .plus { transform: rotate(45deg); }
   .lp-q .a { padding: 0 2px 20px; color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
 
-  /* ── 店家的話（證言牆，FAQ 與收尾 CTA 之間）──────────────────
+  /* ── 店家的話（證言牆，「能做什麼」與 60 秒區之間；09-06 老闆要求上移）──────
    * 呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停
    * （讓人把那張卡讀完）。全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態
    * ——跟 .lp-wall__blink 同一類（無限循環、早開演不會錯過），所以⛔不掛 .lp-cue、
@@ -1228,24 +1226,20 @@
   .lp-hero__text > *:nth-child(6) { animation-delay: 0.41s; }
 
   .lp-ops { animation: lpHeroCardIn 0.66s cubic-bezier(0.22, 0.75, 0.3, 1) 0.14s backwards; }
-  /* ⚠️ 這幾條的 nth-child 是**按卡裡的順序**數的（標頭 1、三組名單 2–4、印章 5、頁尾 6）：
-     .lp-ops__group 沒辦法用 nth-of-type（它跟標頭、印章、頁尾都是 div，type 是同一種）。
-     ⛔ 在卡裡插一個新的 div 就要回來補這幾條，不然錯開的順序會跳號。
+  /* ⚠️ 09-06 名單從三組收成一組（分組標頭拆掉），錯開跟著簡化：標頭 → 名單 → 頁尾 → 印章。
      ⚠️ 內容的延遲別再往後加：卡殼先出現、內容還沒進來的那段時間，右邊就是一塊
-        640px 高的空白卡。現在空窗大約 0.3 秒（殼 0.14 → 第一組 0.38），再拉長就像壞掉。 */
+        空白卡。現在空窗大約 0.3 秒（殼 0.14 → 名單 0.38），再拉長就像壞掉。 */
   .lp-ops .lp-panel__hd { animation: lpHeroIn 0.48s ease-out 0.3s backwards; }
-  .lp-ops__group:nth-child(2) { animation: lpHeroIn 0.48s ease-out 0.38s backwards; }
-  .lp-ops__group:nth-child(3) { animation: lpHeroIn 0.48s ease-out 0.46s backwards; }
-  .lp-ops__group:nth-child(4) { animation: lpHeroIn 0.48s ease-out 0.54s backwards; }
-  .lp-ops__cta { animation: lpHeroIn 0.48s ease-out 0.64s backwards; }
-  .lp-stamp { animation: lpStampIn 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) 0.86s backwards; }
-  /* 墨痕那一圈：延遲＝印章的延遲＋印章「敲到卡面」那一幀（0.86 + 0.5×0.55 ≈ 1.13s）。
-     ⛔ 別讓它先出現或晚太多，看起來就變成兩件事各演一次。 */
+  .lp-ops__group { animation: lpHeroIn 0.48s ease-out 0.38s backwards; }
+  .lp-ops__cta { animation: lpHeroIn 0.48s ease-out 0.5s backwards; }
+  .lp-stamp { animation: lpStampIn 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) 0.78s backwards; }
+  /* 墨痕那一圈：延遲＝印章的延遲＋印章「敲到卡面」那一幀（0.78 + 0.5×0.55 ≈ 1.06s）。
+     ⛔ 別讓它先出現或晚太多，看起來就變成兩件事各演一次；改印章的延遲要回來重算這條。 */
   /* inset 要在白色外光暈（.lp-stamp 的 box-shadow 5px）之外，否則墨痕會壓在白邊上看不清 */
   .lp-stamp::after {
     content: ''; position: absolute; inset: -9px;
     border: 2px solid var(--g); border-radius: 20px; opacity: 0; pointer-events: none;
-    animation: lpStampRing 0.55s ease-out 1.13s backwards;
+    animation: lpStampRing 0.55s ease-out 1.06s backwards;
   }
 
   /* ── 捲動進場動畫 ──────────────────────────────────────
@@ -1626,9 +1620,10 @@
     /* Hero 的進場是純 CSS（不等 .is-anim），所以這裡是它**唯一**的關法：
        ⛔ 別漏掉 .lp-stamp::after（那圈墨痕自己有一支動畫），也別只關 .lp-hero__text。
        關掉之後每個元素回到宣告值＝完整、最終狀態，印章仍然歪 -3.5deg 蓋在原位。
-       ⚠️ 三組名單一定要寫成 `:nth-child(n)`（權重 0,2,0）才壓得過上面
-          `.lp-ops__group:nth-child(2)` 那三條——只寫 `.lp-ops__group`（0,1,0）會輸，
-          勾了「減少動態效果」的人看到的是**空白的卡**（實測過，別把它改回去）。 */
+       ⚠️ 名單那條保留 `:nth-child(n)`（權重 0,2,0）：09-06 前宣告端是
+          `.lp-ops__group:nth-child(2..4)` 三條、只寫 `.lp-ops__group`（0,1,0）會輸，
+          勾了「減少動態效果」的人看到的是**空白的卡**（實測過）。宣告端現在收成一組
+          （0,1,0），高權重留著是保險、零成本。 */
     .lp-hero__text > *, .lp-ops, .lp-ops .lp-panel__hd, .lp-ops__group:nth-child(n),
     .lp-ops__cta, .lp-stamp, .lp-stamp::after { animation: none; }
 

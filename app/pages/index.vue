@@ -10,13 +10,15 @@
          「這個 html 只是架構跟文案的參考」，草稿自帶的深松綠段／奶油黃段／綠泡泡不搬
          （那套已經試過兩次、兩次都被打槍，詳見 _landing.scss 檔頭）。
          ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯（灰的掛 .lp-section--tint）。
-            目前順序：Hero(白) why(灰) value(白) fast(灰) pricing(白) grow(灰) faq(白)
-            證言牆(灰) 收尾CTA(綠)。新增或搬動區塊要跟著調。
+            目前順序：Hero(白) why(灰) value(白) 證言牆(灰) fast(白) pricing(灰) grow(白)
+            faq(灰) 收尾CTA(綠)。新增或搬動區塊要跟著調。
+            （2026-09-06 老闆回饋證言牆上移到 60 秒區之前，後半四區的灰白因此整組翻面。）
          ⚠️ 2026-08-26 三處版面重排（老闆「排版只是參考，用資深 UIUX 重新想」）：
             ①「四關」與「解法」併成一區——原本兩個整屏區塊講同一件事，解法列還把
               四個問題重抄一遍；現在每張牆卡自帶解法（問題上、✓解法下），省一屏、對仗更強。
             ②「能做什麼」先人後介面——AI 客服/AI 行銷（有真截圖）先出，圖文選單卡在後；
-              賣點是「多半個客服半個行銷」，選單是佐證不是主張。
+              賣點是「多了全年無休的客服與行銷」（09-06 前是「多半個客服半個行銷」），
+              選單是佐證不是主張。
               （2026-09-03 十七輪這一區的**切法**再改一次：左右對半切 → 左軌釘住＋
                右欄畫面一扇扇捲過，順序沒變，why 見該區註解。）
             ③ 商品資訊卡已搬成**獨立頁 /product-info**（08-26 老闆拍板「直接開一個頁面」）：
@@ -68,8 +70,11 @@
     </nav>
 
     <!-- ── Hero ────────────────────────────────────────────────
-         右邊是時機卡：節慶、該關心的客人、你分好的客群三組。
-         節慶那組吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆）。
+         右邊是機會卡：節慶檔期＋四種客人名單，一張攤平的清單。
+         ⚠️ 2026-09-06 老闆回饋「右圖無法理解」「節慶／該關心的客人／已分好的客群這些
+            分組標題對小白難懂」→ 三個分組標頭整組拆掉，每一列自己是一句人話（誰＋幾位），
+            卡片標題補上「賺錢」點明這張卡在講機會。⛔別把分組標頭加回來。
+         節慶那兩列吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆）。
          ⚠️ 誠實機制（2026-08-26 老闆拍板拿掉圖說後的替代方案，⛔別拆）：
            1. 卡片標頭右側掛「以咖啡店為例」＝整張卡明示是舉例，人數才可以出現；
               拿掉這個標示、又不掛圖說，虛構人數就是被當成真實客戶資料在賣。
@@ -87,7 +92,9 @@
       <span class="lp-hero__blob lp-hero__blob--2" />
       <div class="lp-wrap lp-hero__grid">
         <div class="lp-hero__text">
-          <span class="lp-eyebrow">LINE 專用 · AI 客服與顧客經營</span>
+          <!-- 09-06 老闆「換一個 slogan」：從類別標籤（LINE 專用 · AI 客服與顧客經營）
+               改成利益句，跟 h1「你的顧客很值錢」接成同一個故事。 -->
+          <span class="lp-eyebrow">把 LINE 好友，變成回頭客</span>
           <h1>你的顧客，<br>其實很<span class="g">值錢</span>。</h1>
           <!-- 兩句各佔一行（手機收掉 br 自然流）：擠在同一段時斷行位置會把詞拆開 -->
           <p class="lp-hero__sub">
@@ -109,41 +116,35 @@
           <div class="lp-panel lp-ops">
             <div class="lp-panel__hd">
               <span class="lp-panel__pip" />
-              <span class="lp-panel__title">你的好友裡，藏著這些機會</span>
+              <span class="lp-panel__title">你的好友裡，藏著賺錢的機會</span>
               <!-- 「以咖啡店為例」是人數能出現的前提（見區塊註解）：⛔別換回好友數（那會變成
                    拿虛構數字當真實客戶資料），也⛔別寫成店名（「示範店 · 山丘咖啡」被老闆抓過
                    ——訪客不懂「示範店」，還可能讀成「山丘咖啡是他們的客戶」＝假造客戶案例）。 -->
               <span class="lp-panel__meta">以咖啡店為例</span>
             </div>
 
+            <!-- 一張攤平的清單（09-06 拆分組，見區塊註解）：每列＝誰／什麼時候＋幾位。
+                 ⛔ 每一列都必須是**現在真的做得到**的事：節慶提醒、加入時間名單、
+                    60 天沒互動自動標籤、標籤分眾——列的字可以白話，能力不可以虛構。 -->
             <div class="lp-ops__group">
-              <div class="lp-ops__head">節慶</div>
               <div v-for="f in heroFests" :key="f.id" class="lp-op">
                 <b>{{ f.name }} {{ f.md }}</b>
                 <span class="lp-op__tag" :class="{ 'lp-op__tag--soon': f.soon }">{{ f.badge }}</span>
               </div>
-            </div>
-
-            <div class="lp-ops__group">
-              <div class="lp-ops__head">該關心的客人</div>
               <div class="lp-op">
-                <b>本週新加入的好友</b>
+                <b>這週剛加入的新朋友</b>
                 <span class="lp-op__tag lp-op__tag--num">38 位</span>
               </div>
               <div class="lp-op">
-                <b>上次聯絡超過 60 天</b>
+                <b>超過 60 天沒聯絡的客人</b>
                 <span class="lp-op__tag lp-op__tag--num">142 位</span>
               </div>
-            </div>
-
-            <div class="lp-ops__group">
-              <div class="lp-ops__head">你分好的客群</div>
               <div class="lp-op">
-                <b>南港展覽館咖啡展</b>
+                <b>在咖啡展認識的客人</b>
                 <span class="lp-op__tag lp-op__tag--num">216 位</span>
               </div>
               <div class="lp-op">
-                <b>手沖愛好者</b>
+                <b>愛手沖的熟客</b>
                 <span class="lp-op__tag lp-op__tag--num">184 位</span>
               </div>
             </div>
@@ -186,8 +187,9 @@
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2>這件事，<br>老闆一直<span class="mark">卡在這四關</span>。</h2>
-            <p>還好，每一關都有 AI 能接住的解法——</p>
+            <!-- 09-06 老闆給的改寫原文照用（原「這件事，老闆一直卡在這四關」被回饋難懂）。 -->
+            <h2>你知道 LINE 會員經營、客服溝通<br>有多重要，但你總是<span class="mark">卡在這四關</span>。</h2>
+            <p>還好，每一關都有 {{ brandName }} 能接住的解法——</p>
           </div>
         </div>
 
@@ -264,16 +266,20 @@
       </div>
     </section>
 
-    <!-- ── 能做什麼：半個客服＋半個行銷 ─────────────────────────
+    <!-- ── 能做什麼：全年無休的客服＋行銷（09-06 前叫「半個客服＋半個行銷」）──────
          ⚠️ id 沿用 #value：頁尾與法務頁的「產品介紹」都指這裡，換 id 會變死連結。
          ⚠️ 順序＝AI 客服/AI 行銷（真截圖）先、圖文選單卡後（08-26 版面重排②）：
-            區塊主張是「多半個客服、半個行銷」，那兩張卡才是主張本體。 -->
+            區塊主張是「多了全年無休的客服與行銷」，那兩張卡才是主張本體。 -->
     <section id="value" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2>多一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>等於多了<span class="mark">半個客服、半個行銷</span>。</h2>
+            <!-- 09-06 老闆改寫主標（原「多一個 MiniMe＝半個客服、半個行銷」）：他給的長句
+                 拆兩段裝——h2 收成「全年無休」，小字收他列的請假／鬧脾氣／休息／24 小時。
+                 ⚠️ 黏性行動條（頁尾）跟這裡同口徑，改一邊要一起改。 -->
+            <h2>多了一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>等於多了<span class="mark">全年無休</span>的客服與行銷。</h2>
+            <p>永遠不會請假、不會鬧脾氣、不用休息——24 小時都在。</p>
           </div>
         </div>
 
@@ -676,6 +682,69 @@
       </div>
     </section>
 
+    <!-- ── 店家的話（證言牆）─────────────────────────────────
+         版位＝「能做什麼」與 60 秒區之間（2026-09-06 老闆要求上移：先看它能做什麼 →
+         聽別人怎麼說 → 再看開始有多簡單）。掛灰底接上白灰交錯（value 白 → 這裡灰 →
+         fast 白）；⚠️ 它上移後，fast/pricing/grow/faq 四區的灰白整組翻面（見檔頭順序表）。
+         呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停。
+         全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態——所以它跟
+         .lp-wall__blink 同一類（無限循環、早開演不會錯過），不掛 .lp-cue、
+         沒有 JS 也照飄（純 CSS）。機關與房規見 _landing.scss 的證言牆那段。
+         ⚠️ 每列的卡組用 v-for 渲染 **3 份**＝無縫循環的機關（位移一份的寬度後畫面
+            跟起點一模一樣），第 2、3 份掛 aria-hidden——讀屏只該聽到一遍。
+         ⛔ 內容紅線（STATUS D-13 前科，08-14 老闆拍板「補社會證明→不做」因為沒有真素材）：
+            這面牆目前全部是**虛構店家的情境示意**，圖說那句「皆為情境示意」拿掉的瞬間
+            就從示意變假見證（造假）。細則見 script 的 LP_VOICES 註解。 -->
+    <section class="lp-section lp-section--tint">
+      <div class="lp-wrap">
+        <div class="lp-turn lp-reveal">
+          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
+          <div class="lp-bubble">
+            <h2>別只聽我說，<br>聽聽<span class="mark">開店的人</span>怎麼說。</h2>
+          </div>
+        </div>
+      </div>
+
+      <!-- 牆刻意在 .lp-wrap 外面＝滿版寬，兩側用遮罩淡出（見 SCSS）。
+           進場淡入掛在**每一列**（兩列各自是一個視覺單位），第二列錯開 70ms。 -->
+      <div class="lp-voices">
+        <div
+          v-for="(row, ri) in LP_VOICES"
+          :key="ri"
+          class="lp-voices__row lp-reveal"
+        >
+          <div class="lp-voices__track" :class="{ 'lp-voices__track--rev': ri === 1 }">
+            <ul
+              v-for="n in 3"
+              :key="n"
+              class="lp-voices__set"
+              :aria-hidden="n > 1 ? 'true' : undefined"
+            >
+              <!-- 卡片＝**白色對話泡泡＋店家籤**（09-03 二輪「UI 美感再優化」）：
+                   泡泡尾巴指向下方的磚——全頁的語彙就是對話（MiniMe 淡綠泡泡開場、
+                   後台對話窗客人是白泡泡），店家的話長成白泡泡剛好接上，
+                   也取代了一輪那顆飄在角落的裝飾引號。⛔泡泡不上綠底（綠泡泡被打槍過兩次）。 -->
+              <li v-for="v in row" :key="v.who" class="lp-voice">
+                <blockquote class="lp-voice__bubble">
+                  <p>{{ v.text }}</p>
+                </blockquote>
+                <div class="lp-voice__who">
+                  <span class="lp-voice__tile" aria-hidden="true">{{ v.tile }}</span>
+                  <span class="lp-voice__name">{{ v.who }}<small>{{ v.title }}</small></span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="lp-wrap">
+        <!-- ⛔ 這句圖說是這面牆能存在的前提（同 Hero「以咖啡店為例」的地位），不可拿掉；
+             拿到可具名的真素材後整包換掉、圖說改成具名授權的寫法。 -->
+        <p class="lp-figcap lp-figcap--center lp-reveal">以上店家與內容皆為情境示意，非真實客戶見證。</p>
+      </div>
+    </section>
+
     <!-- ── 60 秒上線＝一條路（09-03 十二輪打破雙卡框架；二十三輪「置中直式」收成**左軸清單**）─
          十二輪拆掉左右兩張等高白卡、十五輪拍板置中直式之後，使用者看實截再問「是否有
          更好的排法、可以捨棄現在的排版方式」。置中直式的病：每站「磚在上、字在下」的
@@ -696,7 +765,7 @@
             實際是 10 分鐘級，⛔別再把 60 秒跟「上線／完成設定／接 LINE」焊在一起
             （舊版收尾 CTA 犯過）：承諾會在最難的一步爆掉，客人覺得被騙的時點剛好是
             最需要信任的時點。全站「60 秒」共 6 處同口徑，改任一處先 grep。 -->
-    <section id="fast" class="lp-section lp-section--tint">
+    <section id="fast" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -832,7 +901,7 @@
          （清單本體＝FEATURED_PLAN_IDS，升級對話框與 /product-info 吃同一份）；
          金流風控的五項揭露住在獨立頁 /product-info（見該頁檔頭），
          ⛔ 底下那條「完整商品資訊」連結是首頁通往揭露頁的路，不能拿掉。 -->
-    <section id="pricing" class="lp-section">
+    <section id="pricing" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <!-- 價格鎖排（lockup）：貨幣、數字、單位同一條基線一行讀完——
              「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。
@@ -893,8 +962,10 @@
                 （.lp-bigprice__unit）已經寫了「不綁約、隨時可取消」，中間只隔約 300px，
                 同一個承諾講兩次（2026-09-04 老闆「小字是否也有點多」）。這一區三個風險
                 各留一次＝取消（大字底下）／換方案（這裡）／扣款（CTA 底下）。 -->
+        <!-- 「知識庫」那半句的白話解釋是 09-06 老闆回饋補的（「知識庫兩份資料不好理解」）：
+             方案卡上只有「知識庫 N 份資料」六個字，第一次看的人不知道那是什麼、多算多。 -->
         <p class="lp-plans__note lp-reveal">
-          <b>AI 客服四個方案都能用</b>，差別只在<b>規模</b>：每月 AI 回覆則數、團隊席次與知識庫份數。隨時可以升級或降級。
+          <b>AI 客服四個方案都能用</b>，差別只在<b>規模</b>：每月 AI 回覆則數、團隊席次，以及知識庫份數——知識庫就是你給 AI 讀的資料，菜單、價目表、官網都算。隨時可以升級或降級。
         </p>
 
         <div class="lp-pricecta lp-reveal">
@@ -914,7 +985,7 @@
          兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度、
          也刻意不畫格線（沒有刻度可對照，格線只是雜訊）。
          顏色是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
-    <section id="grow" class="lp-section lp-section--tint">
+    <section id="grow" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -1014,7 +1085,7 @@
     <!-- ── 常見問題 ────────────────────────────────────────────
          08-26 草稿沒有這一區，但保留：頁尾與法務頁的 /#faq 指這裡，
          而且退費、額度、資料刪除這幾題的答案都是照政策措辭寫的，拿掉等於少一處對消費者的揭露。 -->
-    <section id="faq" class="lp-section lp-faqsec">
+    <section id="faq" class="lp-section lp-section--tint lp-faqsec">
       <div class="lp-wrap">
         <!-- ⚠️ 這一區原本是 eyebrow＋h2，08-27 收成跟其他區塊一樣的泡泡：
              全頁八個區塊只剩它不是「MiniMe 開口說話」，節奏斷在這裡；
@@ -1068,68 +1139,6 @@
       </div>
     </section>
 
-    <!-- ── 店家的話（證言牆）─────────────────────────────────
-         版位＝FAQ 與收尾 CTA 之間（疑慮清完 → 聽別人怎麼說 → 行動），掛灰底剛好接上
-         白灰交錯（faq 白 → 這裡灰 → CTA 綠），其他區塊都不用動。
-         呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停。
-         全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態——所以它跟
-         .lp-wall__blink 同一類（無限循環、早開演不會錯過），不掛 .lp-cue、
-         沒有 JS 也照飄（純 CSS）。機關與房規見 _landing.scss 的證言牆那段。
-         ⚠️ 每列的卡組用 v-for 渲染 **3 份**＝無縫循環的機關（位移一份的寬度後畫面
-            跟起點一模一樣），第 2、3 份掛 aria-hidden——讀屏只該聽到一遍。
-         ⛔ 內容紅線（STATUS D-13 前科，08-14 老闆拍板「補社會證明→不做」因為沒有真素材）：
-            這面牆目前全部是**虛構店家的情境示意**，圖說那句「皆為情境示意」拿掉的瞬間
-            就從示意變假見證（造假）。細則見 script 的 LP_VOICES 註解。 -->
-    <section class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2>別只聽我說，<br>聽聽<span class="mark">開店的人</span>怎麼說。</h2>
-          </div>
-        </div>
-      </div>
-
-      <!-- 牆刻意在 .lp-wrap 外面＝滿版寬，兩側用遮罩淡出（見 SCSS）。
-           進場淡入掛在**每一列**（兩列各自是一個視覺單位），第二列錯開 70ms。 -->
-      <div class="lp-voices">
-        <div
-          v-for="(row, ri) in LP_VOICES"
-          :key="ri"
-          class="lp-voices__row lp-reveal"
-        >
-          <div class="lp-voices__track" :class="{ 'lp-voices__track--rev': ri === 1 }">
-            <ul
-              v-for="n in 3"
-              :key="n"
-              class="lp-voices__set"
-              :aria-hidden="n > 1 ? 'true' : undefined"
-            >
-              <!-- 卡片＝**白色對話泡泡＋店家籤**（09-03 二輪「UI 美感再優化」）：
-                   泡泡尾巴指向下方的磚——全頁的語彙就是對話（MiniMe 淡綠泡泡開場、
-                   後台對話窗客人是白泡泡），店家的話長成白泡泡剛好接上，
-                   也取代了一輪那顆飄在角落的裝飾引號。⛔泡泡不上綠底（綠泡泡被打槍過兩次）。 -->
-              <li v-for="v in row" :key="v.who" class="lp-voice">
-                <blockquote class="lp-voice__bubble">
-                  <p>{{ v.text }}</p>
-                </blockquote>
-                <div class="lp-voice__who">
-                  <span class="lp-voice__tile" aria-hidden="true">{{ v.tile }}</span>
-                  <span class="lp-voice__name">{{ v.who }}<small>{{ v.title }}</small></span>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <div class="lp-wrap">
-        <!-- ⛔ 這句圖說是這面牆能存在的前提（同 Hero「以咖啡店為例」的地位），不可拿掉；
-             拿到可具名的真素材後整包換掉、圖說改成具名授權的寫法。 -->
-        <p class="lp-figcap lp-figcap--center lp-reveal">以上店家與內容皆為情境示意，非真實客戶見證。</p>
-      </div>
-    </section>
-
     <!-- ── 收尾 CTA ────────────────────────────────────────────
          想找人談的路徑＝頁尾的客服電話／信箱＋這裡的來信洽詢（預約 Demo 表單 08-14 已移除，
          ⛔ 不要留 /#demo 死錨點）。 -->
@@ -1154,9 +1163,10 @@
          收起時 aria-hidden：不然螢幕閱讀器會在頁尾唸到一顆看不見的註冊鈕。 -->
     <div class="lp-stickybar" :class="{ 'is-show': barShown }" :aria-hidden="barShown ? undefined : 'true'">
       <div class="lp-stickybar__in">
-        <!-- 「多了半個」的「了」不能省：省掉會被讀成「多半（大概）個客服」，泡泡版就是有「了」。
-             「起」是 09-04 露出四個方案時補的（同大字報價）：定價區同時看得到 799 與 1,499。 -->
-        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起，多了半個客服＋半個行銷</span>
+        <!-- 主張句跟 #value 泡泡同口徑（09-06 從「半個客服＋半個行銷」改成「全年無休」），
+             改一邊要一起改。「起」是 09-04 露出四個方案時補的（同大字報價）：
+             定價區同時看得到 799 與 1,499。 -->
+        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起，多了全年無休的客服＋行銷</span>
         <span class="lp-stickybar__t2">60 秒開好帳號 · 不綁約、隨時可取消</span>
         <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
@@ -1242,7 +1252,7 @@ const landingDemoFriends = [
   { name: '曉彤', tags: [LP_DEMO_TAGS.gift] },
 ]
 
-// ── 店家的話（證言牆，FAQ 與收尾 CTA 之間）────────────────────
+// ── 店家的話（證言牆，「能做什麼」與 60 秒區之間；09-06 上移）────
 // ⛔ 內容紅線（STATUS.md D-13 前科：2026-08-14 老闆拍板「補社會證明→不做」，理由＝
 //    「沒有可具名的試用店家素材；⛔日後要補請給真材料，全示意數字的頁面加假見證會從
 //    『示意』變『造假』」）。這面牆目前全部是**虛構店家的情境示意**，所以：
