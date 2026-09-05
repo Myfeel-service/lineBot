@@ -1,5 +1,28 @@
 /** 後台標籤／好友／推播共用的選項與色票（單一來源，避免各頁複製） */
 
+import type { UserTagSourceType } from './types/tag-broadcast'
+
+/**
+ * 這個來源算不算「客人自己表現出來的」，而不是「我們自己圈的」。
+ *
+ * ⛔ `manual` 不算：`pushSupportPresetActionToUser`（真人客服按預存回覆順帶貼標）走的是
+ *   這條路，那是**我們的動作**。把它算進去，「這個月追了四次出貨」就會混進
+ *   「客服幫他貼了四次標」，而那兩件事的下一步完全不同。
+ * ⛔ `import` 也不算（名單匯入是一次性資料搬運，不是誰在意什麼）。
+ * 算的是：`system`（客人按按鈕／腳本／自己輸入觸發）、`ai`（從對話判到）、`rule`（規則命中客人的話）。
+ *
+ * **2026-09-04 從 `server/utils/tagging.ts` 搬到 shared**（`D-63`）：原本只有計次（`D-55`）在用，
+ * 現在貼標分析的「客人自己表現出來的興趣」排行也要吃同一條界線。
+ * ⛔ 不可以在別處另寫一份判斷——那等於讓「客人的訊號」有兩種定義。
+ * 為什麼排行非用它不可：`batch-add`（批次貼標）與單人手動貼標寫進資料庫的東西**一模一樣**
+ * （都是 `sourceType: 'manual'`、`sourceRefId: null`），事後**分不出來**；不靠這條界線的話，
+ * 自己批次貼 300 人就會霸佔排行第一名而且濾不掉（`G-22`⑤ 當時留著沒解的就是這件事）。
+ * `tagging.ts` 仍 re-export 同一支，既有匯入不受影響。
+ */
+export function countsAsCustomerHit(sourceType: UserTagSourceType): boolean {
+  return sourceType === 'system' || sourceType === 'ai' || sourceType === 'rule'
+}
+
 export const TAG_CATEGORY_OPTIONS = [
   // ⛔ 顯示文字 2026-08-23 由「會員狀態」改「好友狀態」（「會員」全面退場，見 STATUS G-23）。
   // **`value` 刻意不動**：它是既有標籤存在資料庫裡的分類值，改了等於要遷移全部既有標籤，

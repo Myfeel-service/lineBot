@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
+import { countsAsCustomerHit } from '~~/shared/tag-admin'
 import type { UserTagDoc, TagLogDoc, UserTagSourceType } from '~~/shared/types/tag-broadcast'
 
 export interface TaggingResult {
@@ -26,15 +27,12 @@ export const TAG_HIT_COOLDOWN_MS = 60 * 60 * 1000
 /**
  * 這個來源算不算「客人自己又表現了一次意圖」（`D-55` 的計次條件）。
  *
- * ⛔ `manual` 不算：`pushSupportPresetActionToUser`（真人客服按預存回覆順帶貼標）走的是
- *   這條路，那是**我們的動作**。把它算進次數，「這個月追了四次出貨」就會混進
- *   「客服幫他貼了四次標」，而那兩件事的下一步完全不同。
- * ⛔ `import` 也不算（名單匯入是一次性資料搬運，不是誰在意什麼）。
- * 算的是：`system`（客人按按鈕／腳本／自己輸入觸發）、`ai`（從對話判到）、`rule`（規則命中客人的話）。
+ * **本體 2026-09-04 搬到 `~~/shared/tag-admin`**（`D-63`：貼標分析的排行要吃同一條界線，
+ * 而那些聚合是前後端共用的純函式，不能相依 server）。這裡照舊 re-export，
+ * 既有的 `import { countsAsCustomerHit } from './tagging'` 全部不受影響。
+ * ⛔ 要改「哪些來源算客人訊號」請改 shared 那一支，不要在這裡另寫一份。
  */
-export function countsAsCustomerHit(sourceType: UserTagSourceType): boolean {
-  return sourceType === 'system' || sourceType === 'ai' || sourceType === 'rule'
-}
+export { countsAsCustomerHit }
 
 /**
  * 算出這一次「又被判到」之後該寫什麼（純函式，可測）。
