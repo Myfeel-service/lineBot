@@ -893,7 +893,7 @@
       </div>
 
       <!-- 把「該看哪幾張」講出來:修改裡只有數字變掉的那些會影響客人拿到的答案 -->
-      <p v-if="diffData.diff.summary.modified > 0" class="diff-unchanged-note text-muted text-xs">
+      <p v-if="diffNumbersChangedCount > 0 || diffRewordOnlyCount > 0" class="diff-unchanged-note text-muted text-xs">
         <template v-if="diffNumbersChangedCount > 0">
           「修改」裡有 <strong>{{ diffNumbersChangedCount }} 筆的數字變了</strong>(價格、天數、規格這類)，
           下方標了「數字有變」的請優先看。
@@ -1791,9 +1791,14 @@ const diffLooksResplit = computed(() => {
 const diffNumbersChangedCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'modified' && e.numbersChanged).length,
 )
+/**
+ * 「數字沒變、只是換個說法」還**需要人看**的筆數。
+ * ⛔ 要扣掉已自動摺疊的（`C-146`）：不扣的話同一批會被講兩次——上面說「8 筆只是換個說法、
+ *    下方請優先看」，下面又說「8 條已收合、不需要做決定」，而下方根本一列都沒有。
+ */
 const diffRewordOnlyCount = computed(() =>
   (diffData.value?.diff.entries ?? [])
-    .filter(e => e.kind === 'modified' && e.numbersChanged === false).length,
+    .filter(e => e.kind === 'modified' && e.numbersChanged === false && !e.cosmetic).length,
 )
 
 /** 「數字有變」badge 後面接的內容:「(1000 → 1200)」;只有一邊有值就只顯示那一邊 */
@@ -3193,6 +3198,10 @@ async function applyDiff() {
   // 但之後重新同步仍會再列出(後端因此不推進「已同步到哪一版」的指紋)。
   const divergentKeeps = diffData.value.diff.entries.filter((e) => {
     const a = decisions.value[e.id]
+    // ⛔ 措辭差異保留原卡不算（`C-146`，與後端 countDivergentKeeps 同一把尺）：
+    //    畫面剛跟人說「已自動保留原卡、不需要做決定」，套用時再跳一個
+    //    「你保留了 N 項與網頁不同的內容」等於自打嘴巴——而他根本沒做過任何決定。
+    if (e.cosmetic && (a === 'keep_old' || a === 'skip' || a === undefined)) return false
     return (e.kind === 'modified' && (a === 'keep_old' || a === 'skip'))
       || (e.kind === 'removed' && a === 'keep_old')
       || (e.kind === 'new' && a === 'skip')

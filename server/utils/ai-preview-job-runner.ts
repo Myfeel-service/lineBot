@@ -141,7 +141,7 @@ export async function advancePreviewJob(
             ))
             work.usage.inputTokens += judged.inputTokens
             work.usage.outputTokens += judged.outputTokens
-            const { folded } = applyCosmeticVerdicts(work.resyncDiff, cosmeticCandidates, judged.verdicts)
+            const { folded } = applyCosmeticVerdicts(cosmeticCandidates, judged.verdicts)
             if (folded) console.log(`[resync] ${work.input.resyncSourceId} 意思判官摺掉 ${folded}/${cosmeticCandidates.length} 條措辭差異`)
           }
           catch (e) {

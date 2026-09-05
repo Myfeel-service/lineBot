@@ -101,12 +101,22 @@ export interface DiffResult {
  * 「卡片已同步到這一版網頁」，下次重新同步會回「已是最新」，這次被保留的差異從此蒸發。
  */
 export function countDivergentKeeps(
-  entries: Array<Pick<DiffEntry, 'id' | 'kind'>>,
+  entries: Array<Pick<DiffEntry, 'id' | 'kind' | 'cosmetic'>>,
   decisions: Record<string, string>,
 ): number {
   let n = 0
   for (const e of entries) {
     const a = decisions[e.id]
+    /**
+     * ⛔ 措辭差異（`C-144`）保留原卡**不算**「保留了與網頁不同的內容」（`C-146`）：
+     * 意思判官已經認定兩版意思相同＝卡片在語意上就是這一版網頁，推進指紋是誠實的。
+     *
+     * 算進去的後果（2026-09-04 code review，三個獨立角度都指到這條）：重切的措辭本來就會飄，
+     * 於是幾乎每次重新同步都有 cosmetic → `divergentKeeps > 0` → 指紋永遠不推進
+     * → 排程下一輪又標「有變動」→ 再燒一次完整重切＋判官 → **永遠到不了「已是最新」**。
+     * 這跟排程自動套用那條路的 noop 分支同一個道理：內容等價時 `appliedContentHash` 要推進。
+     */
+    if (e.cosmetic && (a === 'keep_old' || a === 'skip' || a === undefined)) continue
     if (e.kind === 'modified' && (a === 'keep_old' || a === 'skip' || a === undefined)) n++
     else if (e.kind === 'removed' && (a === 'keep_old' || a === undefined)) n++
     else if (e.kind === 'new' && (a === 'skip' || a === undefined)) n++
@@ -472,18 +482,44 @@ const COSMETIC_JUDGE_SYSTEM = `你在幫商家審核客服知識卡的更新。�
 
 輸出格式（嚴格 JSON）：{ "results": [ { "index": 0, "verdict": "same_meaning" } ] }`
 
-/** 送判的候選：modified 且數字沒變（數字有變＝程式層紅線，直接不送） */
+/**
+ * 判官一次看得完的長度。超過就不送判——**看不完卻回「意思一樣」是最危險的那種錯**。
+ * ⛔ 不要改成「截斷後照送」：那正是 `C-146` 修掉的 bug（前 800 字相同、差異在第 900 字，
+ *    判官收到兩段一模一樣的內容，必回 same_meaning，真的新增內容就被摺疊藏起來）。
+ */
+export const COSMETIC_JUDGE_MAX_CHARS = 800
+
+/**
+ * 一次送幾組給判官。比照重複偵測判官的 30——`maxOutputTokens: 2048` 大約只夠回 60～70 列 JSON，
+ * 不分批的話 100 組會把輸出撐爆、JSON 解析失敗，**整批 token 白花而且零結論**。
+ */
+export const COSMETIC_JUDGE_BATCH = 25
+
+/**
+ * 送判的候選。三道程式紅線（`C-144` ＋ `C-146`），全部在花 LLM 的錢之前就擋掉：
+ *  ① 數字有變 → 不送（價格、期限、容量改了就是真變動）
+ *  ② 標題變了 → 不送：判官只收得到**內容**，看不到標題。內容一字未改、只有標題
+ *     從「除濕機6L操作」變成「12L操作」時，判官必回 same_meaning，型號修正就被摺疊掉
+ *     ——同日 `C-143` 的教訓（型號住在標題裡）在這個檔案重演。
+ *  ③ 任一邊長到看不完 → 不送（見 COSMETIC_JUDGE_MAX_CHARS）
+ * 擋掉的不是丟掉：它們照常以 modified 攤在畫面上給人看，只是不享有「自動摺疊」。
+ */
 export function pickCosmeticCandidates(diff: DiffResult): DiffEntry[] {
-  return diff.entries.filter(e => e.kind === 'modified' && !e.numbersChanged)
+  return diff.entries.filter(e =>
+    e.kind === 'modified'
+    && !e.numbersChanged
+    && !e.titleChanged
+    && (e.oldChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS
+    && (e.newChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS,
+  )
 }
 
 /**
- * 把判官結果寫回 diff（純函式，可測）。
+ * 把判官結果寫回那幾張卡（`candidates` 是 `diff.entries` 裡的物件，就地標記）。
  * ⛔ 只動「有送判、且判官明確說意思相同」的：unsure / changed / 沒回覆的一律保持原樣，
  *    numbersChanged 的根本不在候選裡（見 pickCosmeticCandidates）。
  */
 export function applyCosmeticVerdicts(
-  diff: DiffResult,
   candidates: DiffEntry[],
   verdicts: Array<'same_meaning' | 'changed' | 'unsure'>,
 ): { folded: number } {
@@ -508,22 +544,41 @@ export async function judgeCosmeticRewrites(
 ): Promise<{ verdicts: Array<'same_meaning' | 'changed' | 'unsure'>; inputTokens: number; outputTokens: number }> {
   if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0 }
   const { generateJson } = await import('./gemini')
-  const prompt = [
-    '請逐組判斷新版與舊版的意思是否完全相同：',
-    ...pairs.map((p, i) => `[${i}]\n舊版：${p.old.slice(0, 800)}\n新版：${p.next.slice(0, 800)}`),
-  ].join('\n\n')
-  const { data, inputTokens, outputTokens } = await generateJson<{ results?: Array<{ index?: unknown; verdict?: unknown }> }>(prompt, {
-    systemInstruction: COSMETIC_JUDGE_SYSTEM,
-    temperature: 0,
-    maxOutputTokens: 2048,
-    thinkingBudget: 0,
-  })
+
+  // 全部先預設 unsure：任何一批掛掉，那一批就是「沒判到」＝照常攤給人看
   const verdicts: Array<'same_meaning' | 'changed' | 'unsure'> = pairs.map(() => 'unsure')
-  for (const row of Array.isArray(data?.results) ? data.results : []) {
-    const idx = typeof row?.index === 'number' ? row.index : Number.NaN
-    if (!Number.isInteger(idx) || idx < 0 || idx >= verdicts.length) continue
-    const v = String(row?.verdict ?? '')
-    if (v === 'same_meaning' || v === 'changed' || v === 'unsure') verdicts[idx] = v
+  let inputTokens = 0
+  let outputTokens = 0
+
+  for (let start = 0; start < pairs.length; start += COSMETIC_JUDGE_BATCH) {
+    const batch = pairs.slice(start, start + COSMETIC_JUDGE_BATCH)
+    const prompt = [
+      '請逐組判斷新版與舊版的意思是否完全相同：',
+      // ⛔ 不再 slice：候選階段已經擋掉超長的（見 pickCosmeticCandidates ③）。
+      //    在這裡截斷＝判官看不完卻照樣給結論，那是 `C-146` 修掉的 bug。
+      ...batch.map((p, i) => `[${i}]\n舊版：${p.old}\n新版：${p.next}`),
+    ].join('\n\n')
+    try {
+      const res = await generateJson<{ results?: Array<{ index?: unknown; verdict?: unknown }> }>(prompt, {
+        systemInstruction: COSMETIC_JUDGE_SYSTEM,
+        temperature: 0,
+        maxOutputTokens: 2048,
+        thinkingBudget: 0,
+      })
+      inputTokens += res.inputTokens
+      outputTokens += res.outputTokens
+      for (const row of Array.isArray(res.data?.results) ? res.data.results : []) {
+        const idx = typeof row?.index === 'number' ? row.index : Number.NaN
+        if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length) continue
+        const v = String(row?.verdict ?? '')
+        if (v === 'same_meaning' || v === 'changed' || v === 'unsure') verdicts[start + idx] = v
+      }
+    }
+    catch (e) {
+      // ⛔ 一批失敗不放棄整輪：其餘批次照跑，這一批留在 unsure（攤給人看）。
+      //    不分批的話，一次 100 組會把輸出撐爆 → JSON 解析失敗 → 整批 token 白花、零結論。
+      console.warn(`[resync] 意思判官第 ${Math.floor(start / COSMETIC_JUDGE_BATCH) + 1} 批失敗（這批照常給人看）:`, (e as Error)?.message)
+    }
   }
   return { verdicts, inputTokens, outputTokens }
 }

@@ -264,3 +264,21 @@ describe('titleModelConflict（C-143：標題數字對不上就不准合）', ()
     expect(titleModelConflict('模式切換', '模式切換說明')).toBe(false)
   })
 })
+
+/**
+ * `C-146`：型號後檢改用共用的 `extractNumbers`（原本手寫版把千分位與全形小數點拆錯，
+ * 會把**真的重複**誤擋掉，而且只留一行 log）。
+ */
+describe('titleModelConflict 沿用共用數字抽取（C-146）', () => {
+  it('🔴 千分位不可以被拆成兩個數字（1,000 與 1000 是同一個價格）', () => {
+    expect(titleModelConflict('省電 1,000 元技巧', '省電 1000 元技巧')).toBe(false)
+  })
+
+  it('🔴 全形小數點要吃得對（２．４Ｌ 與 2.4L 是同一台）', () => {
+    expect(titleModelConflict('HEALSIO ２．４Ｌ 功能', 'HEALSIO 2.4L 功能')).toBe(false)
+  })
+
+  it('真的不同型號照樣擋（這才是後檢存在的理由）', () => {
+    expect(titleModelConflict('GPLUS除濕機6L開關機操作', 'GPLUS除濕機12L開關機操作')).toBe(true)
+  })
+})

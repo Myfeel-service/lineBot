@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { extractNumbers } from './ai-knowledge-resync'
 import { recordAiUsage } from './ai-usage'
 
 export const KNOWLEDGE_DUP_SCANS_COLLECTION = 'knowledgeDupScans'
@@ -148,8 +149,8 @@ const JUDGE_SYSTEM_INSTRUCTION = `你在幫商家清理客服知識庫。使用�
  * ——同系列不同型號的操作說明內容幾乎一字不差，模型會被內容說服而無視標題上的型號。
  * 這跟 C-27 觸發詞後檢是同一課：**寫在 prompt 裡的紅線，模型偶爾會踩，紅線要有程式版**。
  *
- * 判準＝比對兩個標題各自的「數字串多重集合」：
- *   「6L 開關機」vs「12L 開關機」→ {6} vs {12} → 擋下（降成 unsure＝不出建議）
+ * 判準＝比對兩個標題各自的「數字串多重集合」（對不上就從建議剔除＝不出建議）：
+ *   「6L 開關機」vs「12L 開關機」→ {6} vs {12} → 擋下（從建議剔除）
  *   「HEALSIO 2.4L 功能」vs「HEALSIO 產品特色」→ {2.4} vs {} → 一邊沒有數字＝不擋
  *   （缺型號 ≠ 不同型號；這組是真的同一鍋）
  *   「BOYA mini2」vs「BOYA mini 2」→ {2} vs {2} → 不擋（空白差異不算）
@@ -157,13 +158,13 @@ const JUDGE_SYSTEM_INSTRUCTION = `你在幫商家清理客服知識庫。使用�
  * 拿 A 型號的規格回答 B 型號。
  */
 export function titleModelConflict(titleA: string, titleB: string): boolean {
-  const digits = (t: string) =>
-    (String(t ?? '')
-      // 全形數字先轉半形（部分標題用全形排版）
-      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-      .match(/\d+(?:\.\d+)?/g) ?? [])
-      .sort()
-      .join(',')
+  /**
+   * ⛔ 沿用重新同步那邊的 `extractNumbers`，不要自己再寫一版（2026-09-04 code review）：
+   * 手寫版只轉全形**數字**，於是「1,000」被拆成 {1,000}、全形「２．４」被拆成 {2,4}，
+   * 跟「1000」「2.4」比就變成「型號不同」→ **真的重複被誤擋、而且只留一行 log**。
+   * `extractNumbers` 走 `normalizeForCompare`（全形標點也轉、空白去掉），千分位與小數都吃得對。
+   */
+  const digits = (t: string) => extractNumbers(t).sort().join(',')
   const a = digits(titleA)
   const b = digits(titleB)
   if (!a || !b) return false // 一邊沒有數字＝比不出型號，交給判官
@@ -278,11 +279,28 @@ export async function runDuplicateScan(
   const ignored = new Set<string>(Array.isArray(prev?.ignoredKeys) ? prev.ignoredKeys.map(String) : [])
 
   // 第 2 層：向量候選（同來源與已忽略的在取名額**之前**就排除，見 topSimilarPairs 註解）
+  /**
+   * ⛔ 型號後檢要在**取名額之前**就套用（2026-09-04 code review）。
+   * 放在判官之後的代價有兩層：①同系列不同型號的說明書內容幾乎一字不差＝相似度最高，
+   * 每次真掃都排在候選最前面被送去判、被判、再被丟掉——**每輪重付一次 LLM 錢**；
+   * ②它們還吃掉 30 個名額，把真正該被判的跨來源重複擠出批次外——這正是
+   * `topSimilarPairs` 註解裡那個 2026-08-19 事故的形狀。判官之後那道保留當保險。
+   */
+  const blockedByModel: Array<{ a: string; b: string }> = []
   const candidates = topSimilarPairs(
     cards,
     DUP_SIM_THRESHOLD,
     DUP_MAX_CANDIDATES,
-    (a, b) => classifyPair(a, b) != null && !ignored.has(dupPairKey(a.id, b.id)),
+    (a, b) => {
+      if (classifyPair(a, b) == null || ignored.has(dupPairKey(a.id, b.id))) return false
+      if (titleModelConflict(a.title, b.title)) {
+        // ⛔ 過濾掉東西要說得出丟了什麼：只留 console.warn 的話，
+        //    「按幾次都沒新的」又會變成沒人查得出原因的抱怨（C-68／C-94 同款）。
+        blockedByModel.push({ a: a.title, b: b.title })
+        return false
+      }
+      return true
+    },
   ).map(p => ({ ...p, kind: classifyPair(p.a, p.b)! }))
 
   // 第 3 層：LLM 判官（只有候選 > 0 才花這一次呼叫）
@@ -325,6 +343,13 @@ export async function runDuplicateScan(
     cardCount: cards.length,
     truncated: snap.size >= DUP_SCAN_CARD_LIMIT,
     suggestions,
+    /**
+     * 因「標題型號不同」被擋掉的組（`C-146`）：**存進資料、不是只寫 log**。
+     * 這是同系列不同型號（6L/12L）最常見的形狀，量可能不少；沒有這份紀錄的話，
+     * 「為什麼這兩張明明很像卻沒被建議合併」永遠查不出來（同 C-68／C-94 的沉默死亡）。
+     */
+    blockedByModel: blockedByModel.slice(0, 30),
+    blockedByModelCount: blockedByModel.length,
     // ⛔**不要**寫回 ignoredKeys：這支從頭到尾只讀不改它，而判官那幾秒內使用者可能剛按了
     // 「忽略」（dismiss 用 arrayUnion 寫入）——把掃描開始時的快照寫回去會把那次忽略吃掉，
     // 該組下次又冒出來。少寫一個欄位就沒有這個競態。

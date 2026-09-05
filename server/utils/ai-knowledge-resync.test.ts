@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyCosmeticVerdicts, computeDiff, contentSimilarity, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
+import { applyCosmeticVerdicts, computeDiff, contentSimilarity, countDivergentKeeps, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
 
 const oldChunk = (id: string, title: string, content: string, manual = false) => ({
   id,
@@ -244,7 +244,7 @@ describe('pickCosmeticCandidates / applyCosmeticVerdicts（C-144）', () => {
   it('判官說 same_meaning → 摺疊＋預設保留原卡；unsure / changed 保持原樣', () => {
     const diff = mkDiff([mod('a', false), mod('b', false), mod('c', false)])
     const candidates = pickCosmeticCandidates(diff)
-    const { folded } = applyCosmeticVerdicts(diff, candidates, ['same_meaning', 'unsure', 'changed'])
+    const { folded } = applyCosmeticVerdicts(candidates, ['same_meaning', 'unsure', 'changed'])
     expect(folded).toBe(1)
     expect(diff.entries[0]).toMatchObject({ cosmetic: true, defaultAction: 'keep_old' })
     expect(diff.entries[1].cosmetic).toBeUndefined()
@@ -254,7 +254,7 @@ describe('pickCosmeticCandidates / applyCosmeticVerdicts（C-144）', () => {
 
   it('🔴 保險：就算呼叫端送錯候選，數字有變的也不准摺', () => {
     const diff = mkDiff([mod('a', true)])
-    const { folded } = applyCosmeticVerdicts(diff, diff.entries, ['same_meaning'])
+    const { folded } = applyCosmeticVerdicts(diff.entries, ['same_meaning'])
     expect(folded).toBe(0)
     expect(diff.entries[0].cosmetic).toBeUndefined()
   })
@@ -266,5 +266,61 @@ describe('pickCosmeticCandidates / applyCosmeticVerdicts（C-144）', () => {
       mod('z', false),
     ])
     expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['z'])
+  })
+})
+
+/**
+ * `C-146`：`C-144` 的意思判官引入的三個回歸（2026-09-04 code review，三個獨立角度都指到第一條）。
+ *
+ * 共同的病根：「意思沒變、保留原卡」被下游當成「使用者刻意保留了與網頁不同的內容」。
+ */
+describe('C-146：意思判官的三個回歸', () => {
+  const mkModified = (id: string, extra: Record<string, unknown> = {}): any => ({
+    id, kind: 'modified', defaultAction: 'use_new', numbersChanged: false, titleChanged: false,
+    oldChunk: { id, title: 't', content: '舊', tags: [], manuallyEdited: false },
+    newChunk: { title: 't', content: '新', tags: [], questions: [] },
+    ...extra,
+  })
+
+  it('🔴 摺疊掉的「換句話說」不算「保留了與網頁不同的內容」——算了就永遠推不進指紋', () => {
+    // 這正是 C-144 的動機案例：BOYA FAQ 8 條 modified 全是措辭差異。
+    // 舊行為＝8 條都算 divergent → fingerprintSafe=false → contentHash 不推進
+    // → 排程下一輪又標「有變動」→ 每次重新同步再燒一次完整重切＋判官，永遠到不了「已是最新」。
+    const entries = Array.from({ length: 8 }, (_, i) => mkModified(`m${i}`, { cosmetic: true, defaultAction: 'keep_old' }))
+    const decisions = Object.fromEntries(entries.map(e => [e.id, 'keep_old']))
+    expect(countDivergentKeeps(entries, decisions)).toBe(0)
+  })
+
+  it('沒被判成措辭差異的 modified 保留原卡，照樣要算（C-44 的原意不能被弄丟）', () => {
+    const entries = [mkModified('a'), mkModified('b', { cosmetic: true, defaultAction: 'keep_old' })]
+    expect(countDivergentKeeps(entries, { a: 'keep_old', b: 'keep_old' })).toBe(1)
+  })
+
+  it('🔴 標題變了的不可以送去判「意思一樣」——判官只看得到內容，看不到標題', () => {
+    // 「除濕機6L操作」→「除濕機12L操作」而內容一字未改：內容比對出來 numbersChanged=false，
+    // 判官收到兩份一模一樣的內容 → 必回 same_meaning → 標題上的型號修正被摺疊、預設不套用。
+    // 這正是同日 C-143 的教訓（型號住在標題裡）在另一個檔案重演。
+    const diff: any = {
+      entries: [mkModified('title-changed', { titleChanged: true }), mkModified('normal')],
+      summary: { added: 0, modified: 2, removed: 0, unchanged: 0 },
+    }
+    expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['normal'])
+  })
+
+  it('🔴 內容長到會被截斷的不可以送判——判官看不到後半段，卻會回「意思一樣」', () => {
+    // 兩份內容前 800 字一模一樣、差異在第 900 字（例如網頁後面補了一句條件）：
+    // 判官收到的兩段完全相同 → same_meaning → 真的新增內容被摺疊藏起來。
+    const long = 'x'.repeat(900)
+    const diff: any = {
+      entries: [
+        mkModified('too-long', {
+          oldChunk: { id: 'too-long', title: 't', content: long, tags: [], manuallyEdited: false },
+          newChunk: { title: 't', content: `${long}（新增：本活動九月結束）`, tags: [], questions: [] },
+        }),
+        mkModified('short'),
+      ],
+      summary: { added: 0, modified: 2, removed: 0, unchanged: 0 },
+    }
+    expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['short'])
   })
 })
