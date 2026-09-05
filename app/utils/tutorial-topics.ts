@@ -200,12 +200,24 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     steps: [
       {
         target: '[data-tour="nav-group-daily"]',
-        // 這一段沒有小標（它是第一段），太高就退去指第一列
-        targetTooTallFallback: '.nav-group[data-tour="nav-group-daily"] .nav-item',
+        // 短螢幕上整段比側欄看得到的範圍還高：太高就退去指這一段的小標
+        // （2026-09-04 起這一段也有小標了，跟其他三段同一種退法）
+        targetTooTallFallback: '.nav-group[data-tour="nav-group-daily"] .nav-section-label',
         title: '每天的工作都在這一段',
         description:
-          '客人傳來的訊息在<strong>客服對話</strong>；要主動發訊息給一群人用<strong>推播</strong>；'
-          + '客人在 LINE 看到的選單、以及自動回覆，也都在這一段設定。',
+          '客人傳來的訊息在<strong>客服對話</strong>；客人在 LINE 看到的選單、'
+          + '以及自動回覆，也都在這一段設定。',
+        placement: 'right',
+      },
+      {
+        // 好友經營段（G-44，2026-09-04）：⛔ 這一步的順序不可以跟上一步互換——
+        // 講的是「先有名單、才談得上分群與發訊息」，倒過來說故事線就斷了。
+        target: '[data-tour="nav-group-crm"]',
+        targetTooTallFallback: '.nav-group[data-tour="nav-group-crm"] .nav-section-label',
+        title: '客人是誰、怎麼分群發訊息',
+        description:
+          '<strong>好友</strong>是加過你官方帳號的人。用<strong>標籤管理</strong>把他們分群'
+          + '（例如「問過出貨」、「買過東西」），再用<strong>推播</strong>只發給其中一群人。',
         placement: 'right',
       },
       {

@@ -23,14 +23,35 @@
           </div>
         </div>
 
-        <!-- 三段各自包一層 .nav-group：「認識後台」總覽導覽要能一次高亮整段
-             （每天在用的／AI 客服／設定），指單一列講不出這一段是幹什麼的。
+        <!-- 四段各自包一層 .nav-group：「認識後台」總覽導覽要能一次高亮整段
+             （每天在用的／好友經營／AI 客服／設定），指單一列講不出這一段是幹什麼的。
              ⛔ 不能用 display:contents 包——那樣元素沒有盒子，el-tour 量不到位置＝按了沒高亮。
              .nav-group 自己也是 flex 直欄、gap 跟 .sidebar-nav 同值，所以列距與縮排跟包之前一樣。 -->
         <nav class="sidebar-nav">
+          <!-- ⛔ 第一段的小標是 2026-09-04 補的，不要再拿掉：拉出「好友經營」之後，
+               沒有小標的那一段會變成四段裡唯一沒標題的一段，看起來像漏做的。
+               這一段的標題刻意講「多久用一次」不講主題——它裝的就是天天要開的那幾頁。 -->
           <div class="nav-group" data-tour="nav-group-daily">
+            <div class="nav-section-label">每天在用的</div>
             <NuxtLink
               v-for="item in navItems"
+              :key="item.to"
+              :to="item.to"
+              class="nav-item"
+              :data-tour="item.tour"
+              :class="{ active: route.path === item.to || (item.alsoActiveOn ?? []).includes(route.path) }"
+            >
+              <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+              <AdminNavAlertDot :path="item.to" />
+            </NuxtLink>
+          </div>
+
+          <!-- 好友經營 section（G-44）：名單 → 貼標分群 → 只發給其中一群，見 crmNavItems 註解 -->
+          <div class="nav-group" data-tour="nav-group-crm">
+            <div class="nav-section-label">好友經營</div>
+            <NuxtLink
+              v-for="item in crmNavItems"
               :key="item.to"
               :to="item.to"
               class="nav-item"
@@ -205,12 +226,6 @@ const navItems = computed<NavItem[]>(() => {
     { to: `/admin/${wid}/flow`, icon: Connection, label: '機器人模組' },
     { to: `/admin/${wid}/richmenu`, icon: Grid, label: '圖文選單' },
     { to: `/admin/${wid}/support-presets`, icon: Box, label: '客服預存' },
-    { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
-    { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
-    { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },
-    // ⛔ 叫「好友」不叫「會員」（2026-08-23 拍板）：LINE 後台自己就這樣叫，而「會員」
-    // 會讓店家以為有註冊／等級。**側欄名＝指路用的名字**，週報等訊息都照它寫。
-    { to: `/admin/${wid}/users`, icon: User, label: '好友' },
     // 「自動回應」＝客人講話、系統自動回。一句話回一件事與多步驟流程是同一種設定的不同深度
     // （見腳本頁的簡單模式），所以只有一個入口。舊的「自動回覆規則」已於 2026-08-09 下架。
     {
@@ -219,6 +234,32 @@ const navItems = computed<NavItem[]>(() => {
       label: '自動回應',
       tour: 'nav-auto-response',
     },
+  ]
+})
+
+/**
+ * 「好友經營」段（`G-44`，2026-09-04 老闆拍板拉出來）。
+ *
+ * 為什麼拆：原本這四項混在第一段裡，那段長到 10 項、是整個側欄最長的一段，而且
+ * 「標籤管理」與「活動標籤」相鄰卻看不出跟誰是一夥的。這四項合起來有一條**故事線**——
+ * 名單（好友）→ 貼標分群（標籤管理／活動標籤）→ 只發給其中一群（推播），
+ * 第一次看就知道「經營名單的事都在這」。
+ *
+ * ⛔ 不要只把兩顆標籤頁拉出來：那會把標籤跟**用標籤的地方**（好友篩選、推播分眾）切開，
+ *   兩顆自成一段也講不出這段是幹什麼的。
+ * ⛔ 這一段沒有 capability 閘門（跟第一段同級，viewer 也看得到），所以模板不加 v-if——
+ *   加了會讓導覽第二步在某些角色下指向不存在的元素。
+ */
+const crmNavItems = computed<NavItem[]>(() => {
+  const wid = workspaceId.value
+  if (!wid) return []
+  return [
+    // ⛔ 叫「好友」不叫「會員」（2026-08-23 拍板）：LINE 後台自己就這樣叫，而「會員」
+    // 會讓店家以為有註冊／等級。**側欄名＝指路用的名字**，週報等訊息都照它寫。
+    { to: `/admin/${wid}/users`, icon: User, label: '好友' },
+    { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
+    { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
+    { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },
   ]
 })
 
