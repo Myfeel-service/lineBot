@@ -47,7 +47,7 @@
       -->
       <div v-else-if="!rows.length" class="tag-review__empty">
         <span v-if="scanTruncated">
-          待審資料太多、這次沒有掃完，所以<strong>不確定</strong>這顆還有沒有人在等。
+          等你決定的建議太多、這次沒有掃完，所以<strong>不確定</strong>這顆還有沒有人在等。
           先處理其他標籤，或稍後再打開一次。
         </span>
         <span v-else>這顆標籤沒有人在等你決定了。</span>
@@ -79,7 +79,7 @@
           還有 {{ dropped }} 位沒列出來（一次最多列 {{ rows.length }} 位），處理完這批再打開一次就會看到。
         </p>
         <p v-if="scanTruncated" class="tag-review__note">
-          待審資料已達掃描上限，這次<strong>沒有全部看完</strong>，實際人數可能比這裡列的更多。
+          等你決定的建議已達掃描上限，這次<strong>沒有全部看完</strong>，實際人數可能比這裡列的更多。
         </p>
 
         <ul class="tag-review__list">
@@ -162,7 +162,7 @@ const emit = defineEmits<{
    * 宿主直接換上就好，不必再打一次 API（`D-61` code review：按一次原本要掃三輪同樣的資料）。
    * 沒帶就是拿不到（例如中途失敗），宿主自己去重抓。
    */
-  (e: 'changed', counts?: Record<string, number>): void
+  (e: 'changed', summary?: { counts?: Record<string, number>, users?: number }): void
   /** 看 AI 的依據是哪一場對話（宿主決定要跳頁還是就地換場） */
   (e: 'open-conversation', userId: string, sessionId: string): void
 }>()
@@ -267,7 +267,7 @@ async function submit(action: 'apply' | 'dismiss') {
    */
   let stoppedAt = ''
   /** 後端隨處理結果帶回來的最新畫面資料（省掉兩輪重複掃描） */
-  let fresh: { rows: PendingReviewRow[], dropped: number, scanTruncated: boolean, counts?: Record<string, number> } | null = null
+  let fresh: { rows: PendingReviewRow[], dropped: number, scanTruncated: boolean, counts?: Record<string, number>, users?: number } | null = null
   // ⛔ 分批送：後端一次最多處理 PENDING_BULK_LIMIT 位，一次全丟過去會有人被靜靜略過
   for (let i = 0; i < selected.value.length; i += PENDING_BULK_LIMIT) {
     const chunk = selected.value.slice(i, i + PENDING_BULK_LIMIT)
@@ -313,7 +313,9 @@ async function submit(action: 'apply' | 'dismiss') {
   // 只要真的動過任何一筆，宿主的「待審 N 位」與這份清單都要跟著更新——
   // 中斷不是「什麼都沒發生」，畫面停在舊數字才是真正會害人重複操作的那件事
   if (touched) {
-    emit('changed', fresh?.counts)
+    // ⛔ 位數與條數一起傳（`D-63` UI/UX 審查⑤）：宿主頁的橫幅兩個都要講，
+    //    只傳 counts 的話「幾位客人」會停在舊數字
+    emit('changed', fresh ? { counts: fresh.counts, users: fresh.users } : undefined)
     if (fresh) {
       // 後端已經回了最新狀態 → 直接換上，不用再打一次 GET（同一批資料不掃第三輪）
       rows.value = fresh.rows

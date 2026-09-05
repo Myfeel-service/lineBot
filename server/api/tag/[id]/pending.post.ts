@@ -126,5 +126,13 @@ export default defineEventHandler(async (event) => {
     scanTruncated,
     /** 每顆標籤的待審人數（前端直接換上，不用再打 pending-counts） */
     counts: aggregatePendingByTag(afterDocs),
+    /**
+     * 全帳號還有幾**位**客人在等（`D-63` UI/UX 審查⑤）。
+     *
+     * ⛔ 一定要跟 `counts` 一起回：標籤頁頂端那條橫幅同時講「幾位客人」與「幾條建議」，
+     * 條數可以從 `counts` 加總得到，**位數不行**（一位客人可能有好幾顆標籤在等）。
+     * 少回這個欄位的話，審完一顆之後橫幅的「45 位」會停在舊數字＝畫面說謊。
+     */
+    users: afterDocs.length,
   }
 })

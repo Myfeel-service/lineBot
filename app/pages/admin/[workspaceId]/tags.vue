@@ -16,6 +16,43 @@
 
     <template #editor-body>
       <div class="solo-editor-body admin-panel-stack">
+        <!--
+          ══ 有人在等你決定（`D-63` UI/UX 審查①②⑤⑥）════════════════
+          **為什麼加這一條**：審核抽屜（`D-61`）做好之後，線上仍積著 45 位客人沒人審。
+          查出來的原因是**版面的輕重反了**——「AI 發現的新標籤」（偶爾才有）佔了頁首一整張卡，
+          而「有 45 位在等你」只是散在表格 12 個小連結裡，整頁沒有任何地方講總數。
+          收到提醒的人在好友頁一位一位點（最慢的路），能一次審一顆的工具卻沒人知道它在。
+
+          ⛔ **排在「AI 發現的新標籤」之前**：這條是天天要做的事，那張卡是偶爾發生的事。
+          ⛔ **不做成篩選器**：標籤列表是分頁的，客戶端篩「有待審的」跨不了頁會漏；
+             直接把那幾顆列成可點的膠囊，一下就進到那一顆的審核抽屜，比篩選還少一步。
+          ⛔ 兩個數字要並排講（45 位客人／73 條建議）：好友頁講「位」、這頁的小連結加起來是「條」，
+             兩邊都對但沒人解釋過，任何人加一次就會以為系統壞了。
+        -->
+        <div v-if="pendingCountsLoaded && pendingTotalSuggestions > 0" class="tags-todo">
+          <p class="tags-todo__lead">
+            AI 判出 <strong>{{ pendingTotalSuggestions }}</strong> 條標籤建議，
+            分佈在 <strong>{{ pendingTotalUsers }}</strong> 位客人身上，等你決定。
+            <span v-if="pendingCountsTruncated" class="tags-todo__note">
+              （等你決定的太多、這次沒有掃完，實際可能更多）
+            </span>
+          </p>
+          <div class="tags-todo__chips">
+            <button
+              v-for="row in pendingTagRows"
+              :key="row.id"
+              type="button"
+              class="tags-todo__chip"
+              :title="`審這 ${row.count} 位客人的建議`"
+              @click="openPendingReview(row)"
+            >
+              <span class="tags-todo__chip-dot" :style="{ '--dot-bg': row.color || '#6B7280' }" />
+              {{ row.name }}
+              <span class="tags-todo__chip-n">{{ row.count }}</span>
+            </button>
+          </div>
+        </div>
+
         <!-- 掃描停擺的提醒改由版型層的「頁面級提醒條」統一顯示（AdminPageAlertStrip，
              D-33 二輪）——⛔別在這頁再自刻一條，每頁長得不一樣正是老闆抓的問題 -->
         <!-- ══ AI 發現的新標籤（老闆 08-25 拍板）═══════════════════
@@ -254,7 +291,7 @@
             <!-- ⛔ 「待審」讀失敗要講出來：整欄安靜消失的話，畫面看起來就是「沒有人等你決定」
                  ——同一款沉默死亡這個專案已經吃過三次（C-68／守門員／C-94）。 -->
             <p v-if="pendingCountsFailed" class="tags-pending-note">
-              ⚠️ 「待審」數字這次讀不到（其他資料正常）。重整這一頁再試一次。
+              ⚠️ 「等你決定」的數字這次讀不到（其他資料正常）。重整這一頁再試一次。
             </p>
 
             <div v-if="loading" class="tags-loading">
@@ -295,21 +332,28 @@
                     <!-- 一眼看出「這顆是誰在貼」：AI 有在動的才上色，off 給低調的「—」
                          （21 顆裡多數是 off，整欄都掛灰章只是噪音） -->
                     <td>
-                      <span v-if="tag.aiMode === 'auto'" class="badge badge-green">AI 直接貼</span>
-                      <span v-else-if="tag.aiMode === 'suggest'" class="badge badge-orange">AI 先建議</span>
+                      <!-- ⛔ 顏色語意（`D-63` UI/UX 審查③）：**綠色不可以給「AI 直接貼」**。
+                           全站綠＝正常、不用管，而直接貼是**風險最高**的一種（判錯的下游是
+                           下次推播發錯人，見 shared/tag-admin.ts 的 TAG_AI_SUB_SEGMENTS 提示）。
+                           先前綠給直接貼、橘給先建議＝等於用顏色叫人別看最該盯的那一類。
+                           現在：直接貼＝橘（要盯著）、先建議＝藍（正常在跑、有人把關）。 -->
+                      <span v-if="tag.aiMode === 'auto'" class="badge badge-orange">AI 直接貼</span>
+                      <span v-else-if="tag.aiMode === 'suggest'" class="badge badge-blue">AI 先建議</span>
                       <span v-else class="text-muted">—</span>
                       <!-- 「還有幾位等你決定」（D-42②）：只在真的有的時候出現。
-                           ⛔ 0 位不顯示——每列都掛「待審 0 位」是純噪音；
-                           ⛔ 讀不到時也不顯示（不能拿 0 冒充「沒事」），改由表格上方那行說明。 -->
+                           ⛔ 0 位不顯示——每列都掛「0 位」是純噪音；
+                           ⛔ 讀不到時也不顯示（不能拿 0 冒充「沒事」），改由表格上方那行說明。
+                           ⛔ 用詞跟好友頁與頁首橫幅一致（`D-63` UI/UX 審查④）：一律「等你決定」，
+                              「待審」是我們自己發明的詞，同一件事不要有兩個名字。 -->
                       <button
                         v-if="pendingCountsLoaded && pendingCountFor(tag.id) > 0"
                         type="button"
                         class="tags-pending-link"
                         :title="pendingCountsTruncated
-                          ? '審這些建議（待審總數已達統計上限，實際可能更多）'
+                          ? '審這些建議（總數已達統計上限，實際可能更多）'
                           : `審這 ${pendingCountFor(tag.id)} 位客人的建議`"
                         @click.stop="openPendingReview(tag)"
-                      >待審 {{ pendingCountFor(tag.id) }} 位</button>
+                      >{{ pendingCountFor(tag.id) }} 位等你決定</button>
                     </td>
                     <td>
                       <span class="badge badge-gray">{{ tagCategoryLabel(tag.category) }}</span>
@@ -893,18 +937,44 @@ const pendingCountsFailed = ref(false)
 /** 掃描撞到上限＝數字會低報，一定要講出來（見端點的 SCAN_LIMIT 註解） */
 const pendingCountsTruncated = ref(false)
 
+/** 有人在等的那幾顆標籤（名字／顏色／模式），由端點附回——列表是分頁的，湊不出來 */
+const pendingTags = ref<Array<{ id: string, name: string, color?: string, aiMode?: string }>>([])
+
 function pendingCountFor(tagId: string): number {
   return pendingCounts.value[tagId] ?? 0
 }
+
+/** 幾位客人在等（跟下面的「條」是兩個單位，⛔ 不會相等，畫面要並排講清楚） */
+const pendingTotalUsers = ref(0)
+/** 幾條建議在等＝每顆標籤的客人數加總（一位客人可能同時有好幾顆在等） */
+const pendingTotalSuggestions = computed(() =>
+  Object.values(pendingCounts.value).reduce((a, b) => a + b, 0),
+)
+
+/**
+ * 頁首膠囊：等你決定的標籤，多的排前面。
+ *
+ * ⛔ 只列端點確認還存在的標籤：`pendingCounts` 的鍵可能指向已被刪掉的標籤
+ * （建議還掛著、標籤沒了），列出來點進去是空的＝死路。
+ * ⛔ 同數量時照名字排，順序才不會每次重載都跳。
+ */
+const pendingTagRows = computed(() =>
+  pendingTags.value
+    .map(t => ({ ...t, count: pendingCountFor(t.id) }))
+    .filter(t => t.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hant')),
+)
 
 /**
  * 抽屜處理完之後。後端已經在同一輪掃描裡把每顆的待審數算好了 → 直接換上，
  * 不必再打一次 `pending-counts`（`D-61` code review：按一次原本要掃三輪同樣的 501 份文件）。
  * ⛔ 拿不到才退回重抓：中途失敗時後端沒有回這份，數字絕不能就這樣停在舊值。
  */
-function onPendingReviewChanged(counts?: Record<string, number>) {
-  if (counts) {
-    pendingCounts.value = counts
+function onPendingReviewChanged(summary?: { counts?: Record<string, number>, users?: number }) {
+  if (summary?.counts) {
+    pendingCounts.value = summary.counts
+    // ⛔ 位數也要換：只換條數的話，審完一顆之後頂端仍寫著「45 位客人」＝畫面說謊
+    if (typeof summary.users === 'number') pendingTotalUsers.value = summary.users
     pendingCountsFailed.value = false
     pendingCountsLoaded.value = true
     return
@@ -914,14 +984,23 @@ function onPendingReviewChanged(counts?: Record<string, number>) {
 
 async function loadPendingCounts() {
   try {
-    const res = await apiFetch<{ counts: Record<string, number>, truncated: boolean }>('/api/tag/pending-counts')
+    const res = await apiFetch<{
+      counts: Record<string, number>
+      users: number
+      tags: Array<{ id: string, name: string, color?: string, aiMode?: string }>
+      truncated: boolean
+    }>('/api/tag/pending-counts')
     pendingCounts.value = res.counts ?? {}
+    pendingTotalUsers.value = res.users ?? 0
+    pendingTags.value = res.tags ?? []
     pendingCountsTruncated.value = res.truncated === true
     pendingCountsFailed.value = false
   }
   catch {
-    // 讀不到就整欄不出現：待審是輔助資訊，讀失敗不該讓標籤頁壞掉，但也不能假裝是 0
+    // 讀不到就整欄不出現：這是輔助資訊，讀失敗不該讓標籤頁壞掉，但也不能假裝是 0
     pendingCounts.value = {}
+    pendingTags.value = []
+    pendingTotalUsers.value = 0
     pendingCountsFailed.value = true
   }
   finally {

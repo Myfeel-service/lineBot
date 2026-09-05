@@ -110,7 +110,82 @@
   }
 }
 
-/* 「待審 N 位」＝AI 判斷徽章後面的待辦入口。
+/* ── 「有人在等你決定」頁首橫幅（`D-63` UI/UX 審查①②⑤⑥）───────────
+   沿用好友頁 `.users-todo` 的琥珀語彙（同一條 #fde68a / #fffbeb / #b45309 色階），
+   ⛔ 不另創一套「待辦」樣式——同一件事在兩頁長不一樣正是老闆會抓的 drift。
+   差別只在這條要列出**是哪幾顆標籤**，所以多一排可點的膠囊。 */
+.tags-todo {
+  padding: 0.7rem 1rem;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+  background: #fffbeb;
+  color: var(--text-primary);
+}
+
+.tags-todo__lead {
+  margin: 0;
+  font-size: 0.87rem;
+  line-height: 1.6;
+
+  strong {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* 截斷提醒接在同一段後面（它是那句話的但書，不是另一件事） */
+.tags-todo__note {
+  color: #a35b00;
+  font-size: 0.8rem;
+}
+
+.tags-todo__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+/* 一顆膠囊＝一顆標籤的審核入口。白底讓它在琥珀底上讀得出是「可以按的東西」 */
+.tags-todo__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  cursor: pointer;
+
+  &:hover {
+    border-color: #b45309;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+  }
+}
+
+/* 標籤自己的顏色，讓膠囊跟表格裡那一列對得起來 */
+.tags-todo__chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot-bg, #6b7280);
+  flex-shrink: 0;
+}
+
+.tags-todo__chip-n {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #b45309;
+}
+
+/* 「N 位等你決定」＝AI 判斷徽章後面的待辦入口。
    ⛔ **跟徽章同一行**（inline）不另起一行：只有部分標籤有待審，換行放會讓那幾列
    比其他列高一截——列高參差正是這張表先前修掉的毛病（見 users 那頁 MAX_ROW_TAGS 的註解）。 */
 .tags-pending-link {

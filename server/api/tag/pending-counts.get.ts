@@ -44,9 +44,38 @@ export default defineEventHandler(async (event) => {
   const truncated = snap.size > SCAN_LIMIT
   const docs = snap.docs.slice(0, SCAN_LIMIT).map(d => d.data() as { pending?: Array<{ tagId?: string }> })
 
+  const counts = aggregatePendingByTag(docs)
+
+  /**
+   * 有人在等的那幾顆標籤，附上名字／顏色／判斷模式（`D-63` UI/UX 審查①）。
+   *
+   * 為什麼要在這裡回：標籤頁頂端那條「有人在等你決定」要**直接列出是哪幾顆**並且能點進去審，
+   * 而標籤列表是分頁的——有待審的那顆不一定在當前這一頁，光靠畫面上的清單湊不出名字。
+   *
+   * ⛔ 用 `getAll` 逐顆主鍵直讀，不要為了幾顆標籤去掃整個 `tags` 集合。
+   * ⛔ 讀不到的（標籤已被刪、建議還沒清）直接不列：與其列一顆點進去是空的，
+   *   不如不列——那條路是死路（見 `feedback_filters_must_report_what_they_dropped` 的精神）。
+   */
+  const tagIds = Object.keys(counts)
+  let tags: Array<{ id: string, name: string, color?: string, aiMode?: string }> = []
+  if (tagIds.length) {
+    const refs = tagIds.map(id => db.collection('tags').doc(id))
+    const tagSnaps = await db.getAll(...refs)
+    tags = tagSnaps
+      .filter(s => s.exists && (s.data() as { workspaceId?: string })?.workspaceId === workspaceId)
+      .map((s) => {
+        const v = s.data() as { name?: string, color?: string, aiMode?: string }
+        return { id: s.id, name: String(v.name ?? ''), color: v.color, aiMode: v.aiMode }
+      })
+      .filter(t => t.name)
+  }
+
   return {
-    counts: aggregatePendingByTag(docs),
+    counts,
     users: docs.length,
+    /** 建議條數＝每顆標籤的客人數加總。⛔ 跟 `users` 不會相等（一位客人可能有好幾顆在等） */
+    suggestions: Object.values(counts).reduce((a, b) => a + b, 0),
+    tags,
     truncated,
   }
 })
