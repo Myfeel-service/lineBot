@@ -97,12 +97,13 @@ describe('使用者看得到的字裡沒有「接線」', () => {
     // 漏掉的通常是 say() 或 label 裡的那幾句，而畫面上就會變成進度條寫「讓訊息進來」、
     // 小幫手嘴上還在講「最後一步接線」。
     expect(chatCode, '劇本的字串裡不可以再有「接線」（註解不算）').not.toContain('接線')
-    expect(chatCode).toContain("'讓訊息進來'")
+    // 2026-09-06 又換一次字：五格要跟開場那句四步用**同一組字**（見 ONBOARDING_PROGRESS_LABELS）
+    expect(chatCode).toContain("'接收 LINE 訊息'")
   })
 })
 
 describe('拿掉教學閘門之後不可以長回來', () => {
-  it('第二把鑰匙直接播教學，並留著「重貼第一把」的回頭路', () => {
+  it('第二組連線資訊直接播教學，並留著「重貼第一組」的回頭路', () => {
     // 踩到會怎樣：這支教學只有一則，「要不要教你拿」問下去省不到任何東西
     //（選「直接貼上」的人省下的就是那一則），閘門純粹多收一次點擊和一個決定。
     // 而「回上一步：重貼第一把」是剛存完第一把才發現貼錯的唯一回頭路，
@@ -110,19 +111,48 @@ describe('拿掉教學閘門之後不可以長回來', () => {
     const step = fnBody('async function stepSecret', 'async function walkSecretNodes')
     expect(step, '不可以再問「要不要教你拿」').not.toContain('教我怎麼拿')
     expect(step, '教學要直接播').toContain('await walkSecretNodes()')
-    expect(step, '回頭路不見了').toContain('回上一步：重貼第一把')
+    expect(step, '回頭路不見了').toContain('回上一步：重貼第一組')
   })
 
-  it('關自動回應直接播教學，而且那一排同時給得出「做完了」和「我會關」', () => {
-    // 踩到會怎樣：這一步沒有東西要貼回來，教學不擋在任何輸入框前面，問「要不要教」
+  it('接線教學直接播，不問「要不要教你」', () => {
+    // 踩到會怎樣：這兩步沒有東西要貼回來，教學不擋在任何輸入框前面，問「要不要教」
     // 實際上是在問「你知不知道有這個東西」——而 LINE 內建自動回應預設就是開的，
-    // 100% 的人都得做。拿掉閘門之後，底下那一排就是這一步**唯一**的按鈕列：
-    // 少了「我會關，直接測試」就沒有出口，少了「關好了，來測試」就少掉 08-28 拍板
-    // 要的那個確認（跨兩個後台的兩件事，疊在一起會有人漏掉其中一件）。
-    const step = fnBody('async function teachAutoReplyOff', 'async function showOaInvite')
+    // 100% 的人都得做。
+    // ⚠️ 2026-09-06 這一段從 `teachAutoReplyOff` 改名為 `teachConnect`：貼網址與回應設定
+    //    兩件事都搬到官方帳號後台之後，它們是同一段路，合成一支教學。
+    //    原本尾巴那兩顆（「關好了，來測試」／「我會關，直接測試」）也拿掉了——老闆問
+    //    「是否只需要一顆」，查下去發現**兩顆的回傳值根本沒被使用**、走向完全一樣＝假選擇；
+    //    現在教學跑完直接進下面的檢查選單，那一排本身就是確認。
+    const step = fnBody('async function teachConnect', 'async function showOaInvite')
     expect(step, '不可以再問「要不要教你關」').not.toContain('教我一步步關')
-    expect(step, '確認鈕不見了').toContain('關好了，來測試')
-    expect(step, '出口不見了').toContain('我會關，直接測試')
+    expect(step, '兩步都要在（貼網址、回應設定）').toContain('Webhook網址')
+    expect(step, '兩步都要在（貼網址、回應設定）').toContain('回應設定')
+  })
+
+  it('第二組連線資訊要從官方帳號後台拿，不可以改回 LINE Developers', () => {
+    // ⛔ 踩到會怎樣：**這是全流程唯一「照著做也會錯」的地方**。LINE Developers 的卡片清單裡
+    //    同名卡有兩張，點到 `LINE Login` 那張，它的 Basic settings **也有**一個 Channel secret，
+    //    貼進來系統照收、還回一句「收到 ✓ 已經幫你存好」，然後客人每句話都被當成假冒的丟掉，
+    //    而且**畫面上一切正常**、什麼地方都不會亮紅。
+    //    官方帳號後台那一頁沒有卡片可以挑（它就是「這個帳號」的設定頁），錯誤機會直接消失。
+    //    改回去＝把那個靜默災難請回來，而且會連帶需要重新掛回認錯卡對照圖與整段警告。
+    const fn = fnBody('async function walkSecretNodes', 'async function verifyWebhook')
+    expect(fn, '第二組要指官方帳號後台').toContain('manager.line.biz')
+    expect(fn, '不可以改回 LINE Developers').not.toContain('developers.line.biz')
+    expect(fn, '要用官方帳號後台那張圖').toContain('oamChannelSecretAnim')
+  })
+
+  it('接線教學必須播在「幫我檢查」之前', () => {
+    // ⛔ 踩到會怎樣：Webhook 開關現在跟「關自動回應」在**同一頁**（回應設定），
+    //    是 teachConnect 第二個節點才會教到的事。若把檢查排在教學之前（或把教學改回
+    //    「要不要教你」的閘門讓人可以先按檢查），**一定驗不過**——而那個失敗看起來像
+    //    「設定錯了」，其實只是「還沒做到」。被嚇到的人會回頭亂改已經正確的設定。
+    const fn = fnBody('async function stepWebhookAndFirstMsg', 'async function teachConnect')
+    const teach = fn.indexOf('await teachConnect()')
+    const loop = fn.indexOf('while (!verified)')
+    expect(teach, '找不到 teachConnect 的呼叫').toBeGreaterThan(-1)
+    expect(loop, '找不到檢查迴圈').toBeGreaterThan(-1)
+    expect(teach, '教學必須排在檢查迴圈之前').toBeLessThan(loop)
   })
 
   it('重貼鑰匙時主鈕是「直接貼新的」不是教學', () => {

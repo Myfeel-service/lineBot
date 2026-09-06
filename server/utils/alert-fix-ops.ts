@@ -100,13 +100,13 @@ async function diagnoseWebhookFix(ctx: AlertFixCtx): Promise<
   const { channelAccessToken } = await getLineWorkspaceCredentials(ctx.workspaceId)
   const token = channelAccessToken.trim()
   if (!token)
-    return { kind: 'blocked', summary: '這個工作區還沒存 LINE 的鑰匙（Channel Access Token），要先完成 LINE 連接才談得到收訊網址。' }
+    return { kind: 'blocked', summary: '這個工作區還沒存 LINE 的連線資訊（Channel Access Token），要先完成 LINE 連接才談得到收訊網址。' }
 
   const target = `${canonical}/webhook`
   const res = await fetchLineWebhookEndpoint(token)
   if (!res.ok) {
     if (res.status === 401)
-      return { kind: 'blocked', summary: 'LINE 不認得目前的鑰匙（Token 失效，多半是被重發過）——網址改不動。請按「用聊天帶我修」，我教你重發鑰匙。' }
+      return { kind: 'blocked', summary: 'LINE 不認得目前這組連線資訊（Token 失效，多半是被重發過）——網址改不動。請按「用聊天帶我修」，我教你重發鑰匙。' }
     if (res.status === 404)
       // LINE 後台連網址都還沒填：一樣用 PUT 直接填上（跟「填錯」是同一支寫入 API）
       return { kind: 'fixable', current: '', target, active: true, token }

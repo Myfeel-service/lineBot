@@ -20,7 +20,7 @@
 | 檔名 | 內容 | 圈什麼／幾格 | 來源檔 |
 |---|---|---|---|
 | `line-console-channel.png` | LINE Developers 帳號清單（靜態，修復劇本用） | 卡片下方的「Messaging API」**小字**（⛔同名可能兩張卡，認小字不認名稱）。0 格 | `src-channel-list.jpg` |
-| `line-console-channel.webp` | **循環動畫**：帳號清單整頁（含麵包屑定位）→ 聚焦「Messaging API」小字 | 1 個停格，0 格編號 | `src-channel-list.jpg` |
+| `line-console-channel.webp` | **循環動畫**：①登入頁 → ②帳號清單聚焦「Messaging API」小字 | 2 格。⚠️①的紅框**框整組三顆登入鈕**、不框單顆（2026-09-07 老闆問「是否也用紅框示意」）——08-19「登入頁不圈按鈕」的理由（圈哪顆都會誤導用其他方式登入的人）照樣守住，又跟其他停格視覺一致。⚠️ 這一格要**自己的左邊界 x0=130**：登入頁內容置中在 x≈675，沿用預設 240 會整塊偏左（老闆抓到「圖片是歪的」）。那一格還沒登入＝沒有個人資訊，不用打碼 | `src-login.jpg`＋`src-channel-list.jpg` |
 | `line-console-get-token.webp` | **循環動畫**：①切 Messaging API 分頁 → 捲到底 → ②按 Issue → ③按複製 | 3 格（分頁／Issue 鈕／複製圖示） | `src-messaging-api.jpg` |
 | `line-console-issue-token.png` | Messaging API 分頁最底 | Channel access token 的 Issue／Reissue 鈕。0 格 | `src-messaging-api.jpg` |
 | `line-console-channel-secret.webp` | **循環動畫**：①切 Basic settings 分頁 → 捲下來 → ②Channel secret 那一列 | 2 格（分頁／目標列） | `src-basic-settings.jpg` |
@@ -28,7 +28,11 @@
 | `line-console-which-card.png` | **認錯卡對照**：兩張同名卡並排，左邊（Messaging API）綠框＝要點的，右邊（LINE Login）紅框打叉＝不要點 | 0 格。⛔**綠紅不是唯一差別**（色盲看不出來）——錯的那張有一個大叉，那才是訊號 | `src-channel-list.jpg`（兩張卡本來就並排在同一張截圖裡，不用重截） |
 | `line-console-use-webhook.png` | 只圈 Use webhook 開關（上面留網址那列當定位）——**開通引導第三步專用** | 0 格。跟上面那張別混：只做一件事的步驟不能配兩個編號的全景圖 | `src-messaging-api.jpg` |
 | `line-console-webhook.webp` | **循環動畫**：①選 Messaging API 卡 → ②切分頁 → 捲下來 → ③按 Edit → ④貼網址按 Update | 4 格。⛔**停在④存檔**——開 Use webhook 是教學的下一步，演進來的話人會提前做完 | `src-channel-list.jpg`＋`src-basic-settings.jpg`＋`src-messaging-api.jpg` |
-| `oam-auto-reply.webp` | **循環動畫**：①右上「設定」→ ②側欄「回應設定」→ ③選「手動聊天」（＝關掉內建自動回應的新版做法） | 3 格 | `src-oam-response.jpg` |
+| `oam-response-settings.webp` | **循環動畫【開通流程用】**：①左欄「回應設定」→ ②把 Webhook 打開 → ③選「手動聊天」 | 3 格。⛔**刻意不含「點右上角設定」**——走到這一步的人前兩步（拿 Channel secret、貼網址）已經在「設定」裡面待過了，再叫他點一次是叫他去他已經站著的地方（2026-09-06 老闆抓到） | `src-oam-response.jpg`（與下面那支同一張） |
+| `oam-auto-reply.webp` | **循環動畫【冷啟動用】**：①右上「設定」→ ②側欄「回應設定」→ ③把 Webhook 打開 → ④選「手動聊天」 | 4 格。⚠️`field-help.ts` 的「教我怎麼關」用這一支：那裡的人從**我們自己的設定頁**點進來、沒進過 OA 後台，而連結**落在「主頁」不是設定頁**、左欄還沒展開——「先點右上角設定」對他是必要的第一步，不能省 | `src-oam-response.jpg`（與上面那支同一張） |
+| `oam-channel-secret.webp` | **循環動畫**：①右上「設定」→ ②左欄「Messaging API」→ ③`Channel secret` 那一列按「複製」 | 3 格。⛔**框整列不框按鈕**——`Channel ID` 與 `Channel secret` 各有一顆「複製」且上下相鄰，只圈按鈕分不出是哪一列 | `src-oam-messaging-api.jpg`。⛔ **不可以退回緊裁的一列靜態圖**：2026-09-06 第一版就是那樣做的，老闆一看說「根本不知道在哪裡」——本檔「拍攝／處理規格」那一節早就寫著緊裁圖缺定位、只用在「已經知道位置、回去再看一眼」的修復情境 |
+| `oam-webhook-url.webp` | **循環動畫**：①右上「設定」→ ②左欄「Messaging API」→ ③貼進「Webhook網址」→ ④按「儲存」 | 4 格。⚠️貼上與存檔**分兩格**：「貼了沒按儲存」是接不通的第一名 | `src-oam-messaging-api.jpg`。⚠️ 2026-09-07 老闆拍板**恢復①②導航**（推翻 09-06 的裁切）：上一步跟這一步**中間離開過**（回 MiniMe 貼 secret、複製網址），回來的人可能已經不在那一頁。⛔ 判準＝**「中間有沒有離開」不是「同不同一頁」**——「回應設定」那支緊接在後、沒離開，維持不含「點設定」 |
+| `oam-enable-messaging-api.webp` | **循環動畫**：①按「啟用Messaging API」→ ②建立服務提供者（填店名）→ ③隱私權兩欄可不填按確定 → ④最後確認按確定 | 4 格。⛔**停在④按確定，不演完成畫面**——演到「已經好了」會讓人以為不用按那顆（同 webhook 動畫踩過的坑），而且完成畫面上有明文 Channel secret | `src-oam-enable-messaging-api.jpg`＋`src-oam-enable-provider.jpg`＋`src-oam-enable-privacy.jpg`＋`src-oam-enable-confirm.jpg`。⛔ **動畫每一幀要自己遮**：`shot()` 的 blur 參數是逐次呼叫的、`build_anim` 沒有那個入口——第一版忘了，第①格把加好友 ID 與個人名字原封推出去（靜圖版有遮）。⚠️ vh 調到 700（彈窗最高 578px，照預設 620 會貼著上下邊） |
 | `oam-enable-messaging-api.png` | 官方帳號後台 → 設定 → Messaging API，**狀態「未使用」**＋「啟用Messaging API」鈕 | 啟用按鈕。0 格 | `src-oam-enable-messaging-api.jpg`。⚠️**必須是還沒啟用的帳號**——啟用過的那頁根本沒有這顆鈕（2026-09-02 老闆為此開了一個全新測試帳號來拍） |
 | `oam-account-list.png` | 官方帳號後台的**帳號一覽**：「你已經有 LINE 官方帳號了嗎？」那一題的配圖 | 整張表格。0 格 | `src-oam-account-list.jpg`。⛔ 三列都是**真實客戶**的帳號名稱與頭像，產線用高斯模糊糊掉（不是蓋色塊——這張要教的正是「列表長這樣」，蓋掉就沒東西可看了）；換圖要重對座標 |
 | `line-console-liff-setup.webp` | **循環動畫**：①LINE Login 那張卡 → ②LIFF 分頁 → ③按 Add → ④填 Endpoint URL | 4 格。④是重點：填錯客人會卡在轉圈 | `src-channel-list.jpg`＋`src-line-login-channel-DO-NOT-USE.jpg`＋`src-liff-list.jpg`＋`src-liff-add.jpg`。⚠️後兩張是 09-02 新拍的，**側欄比舊截圖窄**，那兩幀的左邊界要另外指定（`build_anim` 的第五個元素） |
@@ -49,6 +53,31 @@
   的不是同一把，教了就是把人送進「Secret 貼錯→訊息全被丟掉」的災難。檔名直接標了 DO NOT
   USE，留著只當「長這樣的頁面不要用」的對照。
 - `src-provider-settings.jpg`＝Provider 設定頁，目前沒有任何步驟用到。
+
+**2026-09-06 新批（老闆用 CITY PLAY 測試頻道從零走一次拍的，已由 `scripts/mask-onboarding-src.py` 處理過）**
+——這批的價值在於**畫面狀態是「還沒設定」**，舊那批全是設定完成的帳號，所以圖跟文案一直對不起來：
+
+- `src-token-empty.jpg`＝Messaging API 分頁最底，**Channel access token 還沒發**：空白列＋一顆 `Issue`，
+  旁邊**沒有複製圖示**。⛔ 拿 Token 教學的第②格要用這張——舊圖那顆按鈕寫的是 `Reissue`，
+  而新手看到的是 `Issue`。**不可以只把圖上的字 P 掉**：有值＋有複製圖示＋按鈕寫 `Issue` 這個組合
+  在真實後台不存在，那是假圖。
+- `src-token-issued.jpg`＝按下 `Issue` 之後：token 兩行、複製圖示出現、按鈕變 `Reissue`。第③格（按複製圖示）用這張。
+  ⚠️ token 值已模糊，**但複製圖示刻意留清楚**（右界停在 x=1130，1139~1153 是圖示）——那顆正是要圈的東西。
+- `src-webhook-editing.jpg`＝按 `Edit` 之後：輸入格打開、網址貼好、`Update`／`Cancel` 都在，
+  下面 `Use webhook` **是灰的**。接線教學第④格用這張（舊圖從頭到尾沒有 `Update` 這顆鈕）。
+- `src-webhook-saved.jpg`＝按完 `Update`：網址存好（`Verify`／`Edit`）、`Use webhook` **仍然是灰的**。
+  「打開 Use webhook」那張靜圖用這張（舊的 `line-console-use-webhook.png` 上開關已經是綠的＝教人開一個開好的東西）。
+- `src-basic-settings-secret.jpg`＝Channel secret 那一列**有值**（已模糊）。取代現在那張空白的——
+  空白列會讓新手以為自己那邊沒資料。
+- `src-secret-issue-warning.jpg`＝按到 **Channel secret 旁邊那顆 `Issue`** 跳出的確認框。
+  ⛔ 這是新發現的雷：**同一個後台有兩顆都叫 `Issue`**，一顆發 Access Token（Messaging API 分頁最底，
+  按了沒事），一顆重發 Channel Secret（Basic settings，**按了已接好的線當場斷，而且一小時內換不回來**），
+  連老闆自己都按錯。第二組連線資訊那一步要配這張警告「看到這個框就是按錯了，按 Cancel」。
+
+⚠️ **這批原始截圖裡有活的憑證**（真的 Channel access token 與 Channel secret），
+只有處理過的版本進 repo；未處理的原檔留在老闆桌面，不要搬進來。
+⚠️ 圖上的 Webhook 網址原本是 `world.splash-digilab.com/cityplay`（另一個專案），已換成
+`https://lineminime.com/webhook`——**做法是從 `src-messaging-api.jpg` 剪真實像素貼過去**，不是自己畫字。
 
 ## 拍攝／處理規格（換圖時照做）
 
@@ -110,4 +139,6 @@ LINE 後台改版時圖會過期，但**畫面不會自己通知我們**。換�
 | 2026-09-02 ④ | LIFF 動畫從 2 格補到 4 格（Add 與 Endpoint URL 兩幀）；新增 `line-console-which-card-liff.png`；產線的 `build_anim` 支援逐幀左邊界 | 老闆問「提及 LIFF 設定時是否都加上圖片」——盤點後修復劇本 `liff-endpoint` 原本**一張圖都沒有**，補上對照圖。⛔ 那裡刻意不用帶路動畫：動畫演到「按 Add 新增」，而修復的人是要點進**已經存在**的 LIFF，演給他看反而教錯。⚠️ 逐幀左邊界的鐵律＝**寬度必須一致**，差一像素 webp 動畫就拼不起來（腳本裡有 assert 擋著） |
 | 2026-09-02 ③ | 老闆開了一個全新測試官方帳號拍齊缺圖：補上 `oam-enable-messaging-api.png`（欠最久的那張）與新的 `oam-account-list.png`；產線加高斯模糊遮罩 | 同批還拿到「Webhook 全空的狀態」「LIFF 清單＋Add 表單」「申請官方帳號全流程」「啟用 Messaging API 的三個彈窗」等來源檔，尚未做成正式圖。⚠️**新來源檔裡有兩把明文 Channel secret**（CITY PLAY 的 Messaging API 與 LINE Login 各一），那兩張目前沒進 `docs/onboarding-shots-src/`，要用之前必須先遮 |
 | 2026-09-02 ② | 新增 `line-console-which-card.png`（認錯卡對照）；產線的標註加 `pick`／`reject` 兩種樣式 | 掛在第二把鑰匙那一步的收合警告裡。**這是全流程唯一「照著做也會錯」的地方**：點到 LINE Login 那張卡，Basic settings 裡也有一個 Channel secret，貼進來系統照收，然後客人每句話都被當成假冒的丟掉，而且畫面上一切正常 |
+| 2026-09-06 ② | **新增 `oam-enable-messaging-api.webp`**（啟用 Messaging API 全程四格）與三張來源檔 | 老闆問「第 3 條（建好帳號後補引導）要不要加」——盤點後**不加他說的那種過場漫畫**（那一步沒有按鈕要按、下一則本來就有圖、而且三格裡必有一格是我們自己的畫面＝踩到 08-28「站內不配圖」的拍板），改補在**真正會卡住的地方**：「還沒有官方帳號」那條路。原本「按啟用」只有四個字，實際上按下去要**連過三關**（選服務提供者／隱私權／最後確認），最後那關還跳「一旦與提供者連動即無法變更或解除」。素材是老闆 09-02 拍好、README 記著卻沒進資料夾的那批（`~/Desktop/截圖 2026-09-02 下午3.53.*`）。⛔ 完成畫面（`3.54.06`）刻意不收：有明文 Channel secret，而且演完成會讓人以為不用按最後那顆確定 |
+| 2026-09-06 | **來源檔補「還沒設定」狀態六張**（`src-token-empty` / `src-token-issued` / `src-webhook-editing` / `src-webhook-saved` / `src-basic-settings-secret` / `src-secret-issue-warning`），新增前處理腳本 `scripts/mask-onboarding-src.py` | 老闆對開通對話的文案回饋（`STATUS` 的 `D-66`）連帶查出來的：**這批圖全是拿「早就設定完成」的帳號截的**，所以①拿 Token 那格按鈕寫 `Reissue`（新手看到的是 `Issue`）②接線那格 `Update` 這顆鈕**從頭到尾沒出現過**、而且 `Use webhook` 已經是綠的③Channel secret 整列空白。⛔ **09-02 那次記著「webhook 動畫已重裁停在④存檔」是假的**——那次只挪了聚光位置，底圖狀態沒換，等於沒修。逐格拆 webp 才看得出來，改圖前務必自己拆開看。 |
 | 2026-09-02 | **全部重產**：標註加回低飽和紅細框（`#B4544E` 2px）＋動畫停格加編號徽章與「第幾格／共幾格」；webhook 動畫重裁停在④存檔；新增 `line-console-use-webhook.png` | 老闆拍板 B+C（框＋編號一起做）。順手收掉 08-28 記在程式裡的洞：webhook 動畫原本會演到「開 Use webhook」＝教學的下一步，看得見畫面的人會提前做完、讀螢幕的人拿到的描述跟指令互相矛盾。產線同時輸出 `shared/onboarding-shot-steps.ts` 給測試對帳 |

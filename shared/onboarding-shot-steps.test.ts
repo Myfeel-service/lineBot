@@ -27,6 +27,27 @@ const CIRCLED = '①②③④⑤⑥⑦⑧⑨'
  * 主圖就被配到 aside 的文案去了，四條測試同時變紅。所以現在先把 aside 整塊挖出來
  * 單獨配對，再拿剩下的原始碼跑主線的配對——兩邊都驗得到，不會互相汙染。
  */
+/**
+ * `html:` 後面那串字——**單引號與樣板字串都要吃**。
+ *
+ * ⚠️ 2026-09-06 踩到：把「按啟用要連過三關」那組①②③④抽成共用常數
+ * （`OAM_ENABLE_STEPS`，兩處引用）之後，`html` 變成 `` `…${OAM_ENABLE_STEPS}` ``，
+ * 圈號不再字面出現在 `html:` 裡——這支測試當場**看不到任何圈號**。
+ * 不吃樣板字串的話，抽共用常數就等於把守門關掉。
+ */
+const HTML_RE = /html:\s*(?:'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`)/
+
+/** 取出比對用的文字：單引號那組或樣板那組，並把 `${CONST}` 換成該常數的字面值 */
+function htmlText(m: RegExpMatchArray | undefined, source: string): string {
+  const raw = m?.[1] ?? m?.[2] ?? m?.[3] ?? m?.[4] ?? ''
+  // ⛔ 只展開「同檔案裡的頂層 const X = '…'」——把共用文案抽出去是好事，
+  //    但抽出去之後圈號還是得守得到
+  return raw.replace(/\$\{(\w+)\}/g, (whole, name: string) => {
+    const def = source.match(new RegExp(`const ${name} = '((?:[^'\\\\]|\\\\.)*)'`))
+    return def?.[1] ?? whole
+  })
+}
+
 function pairShotWithCopy(source: string): { shot: string, html: string }[] {
   const out: { shot: string, html: string }[] = []
 
@@ -50,20 +71,26 @@ function pairShotWithCopy(source: string): { shot: string, html: string }[] {
     }
     const block = source.slice(at, j + 1)
     const bShot = block.match(/(?:image|src):\s*ONBOARDING_SHOTS\.(\w+)/)
-    const bHtml = block.match(/html:\s*'((?:[^'\\]|\\.)*)'/)
+    const bHtml = block.match(HTML_RE)
     if (bShot && bHtml)
-      out.push({ shot: bShot[1]!, html: bHtml[1]! })
+      out.push({ shot: bShot[1]!, html: htmlText(bHtml ?? undefined, source) })
     i = j + 1
   }
 
   // ② 剩下的（拿掉 aside 之後）才跑「往前找最近的 html」
   // ⚠️ 也要吃 `src:`（2026-09-02）：圖卡 `card({ kind: 'image', src: ... })` 用的是 src，
   // 只認 `image:` 的話那些圖完全沒被守到——加一張帶編號的圖卡進來不會有東西變紅
+  // ⚠️ 「往前找最近的文案」要**同時認 `html:` 與 `say(…)`**（2026-09-06 補）。
+  // 踩到的實例：岔路「清單裡沒看到我的帳號？」的字是 `say()` 寫的、圖是 `card({ kind:'image' })`，
+  // 中間沒有任何 `html:`——舊版會一路往前撈到**別段**節點的 html。
+  // 那時兩邊剛好都沒有圈號，所以**一直是綠的**；換成有編號的動畫才炸出來。
+  // 又一次「查不到＝沒問題」的假綠燈，只是換了個地方。
+  const COPY_RE = new RegExp(`${HTML_RE.source}|say\\(\\s*(?:'((?:[^'\\\\]|\\\\.)*)'|\`((?:[^\`\\\\]|\\\\.)*)\`)`, 'g')
   for (const m of rest.matchAll(/(?:image|src):\s*ONBOARDING_SHOTS\.(\w+)/g)) {
     const before = rest.slice(0, m.index)
-    const html = [...before.matchAll(/html:\s*'((?:[^'\\]|\\.)*)'/g)].pop()
-    if (html)
-      out.push({ shot: m[1]!, html: html[1]! })
+    const copy = [...before.matchAll(COPY_RE)].pop()
+    if (copy)
+      out.push({ shot: m[1]!, html: htmlText(copy, source) })
   }
   return out
 }

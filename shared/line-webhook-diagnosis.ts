@@ -5,8 +5,8 @@
  * （401 → Channel Secret 貼錯），小幫手對話卻用字串比對 /HTTP 401/ 一律說成
  * 「Channel Access Token 貼錯」並叫人重貼 Token。兩個 401 根本是不同的病：
  *
- *   ① 我們拿 Token 去問 LINE，LINE 回 401 ＝ LINE 不認得這把 Token（第一把鑰匙的事）
- *   ② LINE 拿測試訊息打我們的網址，回 401 ＝ 我們的簽章驗不過（第二把鑰匙 Channel Secret 的事）
+ *   ① 我們拿 Token 去問 LINE，LINE 回 401 ＝ LINE 不認得這組 Token（第一組連線資訊的事）
+ *   ② LINE 拿測試訊息打我們的網址，回 401 ＝ 我們的簽章驗不過（第二組連線資訊 Channel Secret 的事）
  *
  * 混在一起的後果不是講得不夠好，是**把人指去改一個不是病因的地方**，而且改完再驗還是同一句話。
  * 所以「是什麼病」只在這裡判一次，各畫面只決定「怎麼說」。
@@ -30,7 +30,7 @@ export interface LineWebhookVerifyLike {
 }
 
 export type LineWebhookCause =
-  /** LINE 不認得我們的 Channel Access Token（第一把鑰匙） */
+  /** LINE 不認得我們的 Channel Access Token（第一組連線資訊） */
   | 'token'
   /** LINE 後台還沒填收訊網址 */
   | 'nourl'
@@ -42,7 +42,7 @@ export type LineWebhookCause =
   | 'mismatchDead'
   /** LINE 填的不是這套系統的網址，但還連得到 */
   | 'mismatch'
-  /** 網址是我們沒錯，但我們把 LINE 的測試訊息擋掉了＝Channel Secret（第二把鑰匙）對不上 */
+  /** 網址是我們沒錯，但我們把 LINE 的測試訊息擋掉了＝Channel Secret（第二組連線資訊）對不上 */
   | 'signature'
   /** 測試沒過，但講不出更精確的病因 */
   | 'testFailed'
@@ -63,7 +63,7 @@ export function diagnoseLineWebhook(r: LineWebhookVerifyLike): LineWebhookVerdic
     if (r.getStatus === 401) {
       return {
         cause: 'token',
-        badge: '✕ LINE 不認得這把鑰匙',
+        badge: '✕ LINE 不認得這組連線資訊',
         tone: 'danger',
         hint: 'LINE 不認得這頁存的 Channel Access Token（多半是在 LINE 後台被重新發過一次）。到 LINE Developers 重發一組貼回這頁，再按儲存。',
       }

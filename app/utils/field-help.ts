@@ -60,7 +60,7 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     // ⚠️①②③要跟動畫上的紅色編號一致（2026-09-02，同 useOnboardingChat 的拿鑰匙教學）
     html: '到 <b>LINE Developers</b>，選掛著「<b>Messaging API</b>」小字的那張卡（同名卡片可能有兩張，認小字不認名稱）。照動畫做：<b>①</b> 切到 <b>Messaging API</b> 分頁 → 捲到最下面 → <b>②</b> 按「<b>Issue</b>」發一把（發過的話按 Reissue）→ <b>③</b> 按複製，回來貼進這一格。',
     image: ONBOARDING_SHOTS.getTokenAnim,
-    alt: '循環動畫三格：①切到 Messaging API 分頁、②按 Issue 發鑰匙、③按複製圖示',
+    alt: '循環動畫三格：①切到 Messaging API 分頁、②按 Issue 發行一組、③按複製圖示',
     href: 'https://developers.line.biz/console/',
     hrefLabel: '打開 LINE Developers',
   },
@@ -94,7 +94,7 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     //    只有 claim／apply／config 三支，全是活動的）。客服對話、AI、推播、圖文選單、標籤、
     //    成員收通知都不碰它——成員綁定走的是「綁定 XXXXXX」那組碼，跟 LIFF 無關。
     //    不講的話，只想做客服的人會以為自己少做一步、卡在這裡研究。
-    html: '<b>還沒要辦活動的話可以先不設</b>——這一格只有「活動連結」會用到，不設不影響客服、AI、推播與圖文選單。<br>要設的話：活動頁的 LIFF 建在「<b>LINE Login</b>」那張卡下面（⚠️<b>跟拿鑰匙相反</b>，這次別點 Messaging API）。照動畫做：<b>①</b> 點 <b>LINE Login</b> 那張卡 → <b>②</b> 切到 <b>LIFF</b> 分頁 → <b>③</b> 按「<b>Add</b>」→ <b>④</b> <b>Endpoint URL</b> 貼下面「活動 LIFF 頁」的網址（按它旁邊的「複製」）。<br>建好後把 <b>LIFF ID</b>（長得像 2007123456-AbCdEfGh）複製回來貼進這一格。',
+    html: '<b>還沒要辦活動的話可以先不設</b>——這一格只有「活動連結」會用到，不設不影響客服、AI、推播與圖文選單。<br>要設的話：活動頁的 LIFF 建在「<b>LINE Login</b>」那張卡下面（⚠️<b>跟取得連線資訊相反</b>，這次別點 Messaging API）。照動畫做：<b>①</b> 點 <b>LINE Login</b> 那張卡 → <b>②</b> 切到 <b>LIFF</b> 分頁 → <b>③</b> 按「<b>Add</b>」→ <b>④</b> <b>Endpoint URL</b> 貼下面「活動 LIFF 頁」的網址（按它旁邊的「複製」）。<br>建好後把 <b>LIFF ID</b>（長得像 2007123456-AbCdEfGh）複製回來貼進這一格。',
     image: ONBOARDING_SHOTS.liffSetupAnim,
     alt: '循環動畫四格：①點 LINE Login 那張卡、②切到 LIFF 分頁、③按 Add、④填 Endpoint URL',
     // ⚠️ 這段非講不可（2026-08-07 換網域災情的形狀）：Endpoint URL 是整支教學唯一
@@ -229,7 +229,7 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   oamAutoReply: {
     button: '教我怎麼關',
     title: '內建自動回應怎麼關？',
-    html: '到 <b>LINE 官方帳號後台</b>（綠色那個，跟拿鑰匙的後台不同），照動畫做：<b>①</b> 點右上角「<b>設定</b>」→ <b>②</b> 左邊選「<b>回應設定</b>」→ <b>③</b>「聊天的回應方式」選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
+    html: '到 <b>LINE 官方帳號後台</b>（綠色那個，跟取得第一組連線資訊的後台不同），照動畫做：<b>①</b> 點右上角「<b>設定</b>」→ <b>②</b> 左邊選「<b>回應設定</b>」→ <b>③</b> 確認「<b>Webhook</b>」是<b>開的</b>（灰的就點一下）→ <b>④</b>「聊天的回應方式」選「<b>手動聊天</b>」——不要選「手動聊天＋自動回應訊息」。',
     image: ONBOARDING_SHOTS.oamAutoReplyAnim,
     alt: '循環動畫三格：①右上設定、②側欄回應設定、③選手動聊天',
     href: 'https://manager.line.biz/',

@@ -150,7 +150,7 @@ const liffEndpointGuide: AgentGuideDef = {
               // 那張、不是 Messaging API」正是整條路唯一反直覺的一步。
               // ⛔ 這裡刻意用靜態對照圖不用帶路動畫：動畫演到「按 Add 新增」，
               //    而修復的人是要**點進已經存在的那個** LIFF，演給他看反而教錯。
-              text: '選掛著「LINE Login」小字的那張卡（⚠️跟拿鑰匙相反——LIFF 住在 LINE Login 頻道下），切到 LIFF 分頁',
+              text: '選掛著「LINE Login」小字的那張卡（⚠️跟取得連線資訊相反——LIFF 住在 LINE Login 頻道下），切到 LIFF 分頁',
               image: ONBOARDING_SHOTS.whichCardLiff,
               alt: '兩張同名卡片並排：右邊掛 LINE Login 小字的那張圈綠框，左邊掛 Messaging API 小字的那張圈紅框並打叉',
             },
@@ -250,7 +250,7 @@ const liffSetupGuide: AgentGuideDef = {
               // ⚠️ 與「拿鑰匙」教學相反：那邊教人認 Messaging API、別點 LINE Login，
               // 這邊要點的正是 LINE Login。不明講的話兩份教學會互打
               // （2026-08-19 D-17 盤點抓到的雷）
-              text: '選掛著「LINE Login」小字的那張卡 ——⚠️跟拿鑰匙那次相反，這次別點 Messaging API',
+              text: '選掛著「LINE Login」小字的那張卡 ——⚠️跟取得連線資訊那次相反，這次別點 Messaging API',
               image: ONBOARDING_SHOTS.liffSetupAnim,
               alt: '循環動畫：LINE Login 頻道的 LIFF 分頁、Add LIFF、貼 Endpoint URL',
             },
@@ -759,7 +759,7 @@ async function fetchWebhookVerify(c: AgentGuideCtx, compareUrl: string): Promise
 /** Token 失效的修法（診斷與驗證迴圈都可能走到）：教重發＋聚光燈連結卡，走完即收工 */
 async function adviseTokenReissue(c: AgentGuideCtx) {
   const { r } = c
-  await r.say('修法分兩步：先去 LINE 重發一把新鑰匙，再回系統貼上。')
+  await r.say('修法分兩步：先去 LINE 重發一組新的連線資訊，再回系統貼上。')
   r.card({
     kind: 'help',
     summary: '怎麼重發？',
@@ -820,7 +820,7 @@ const lineWebhookGuide: AgentGuideDef = {
         }
         if (res === 'no-token') {
           c.state.exit = true
-          await r.say('系統這邊<b>還沒存 LINE 的鑰匙</b>（Channel Access Token），要先把它存回來才談得到收訊息。點下面這張卡，我會在設定頁指給你看要貼哪裡。')
+          await r.say('系統這邊<b>還沒存 LINE 的連線資訊</b>（Channel Access Token），要先把它存回來才談得到收訊息。點下面這張卡，我會在設定頁指給你看要貼哪裡。')
           orgFocusCard(c, 'token', '去設定頁存 Token（我會指位置）')
           return
         }
@@ -841,7 +841,7 @@ const lineWebhookGuide: AgentGuideDef = {
             return
           }
           case 'token': {
-            await r.say('查到了：LINE <b>不認得我們手上的鑰匙</b>（Channel Access Token 失效，多半是被重發過）。這段時間訊息進不來，機器人也發不出去。')
+            await r.say('查到了：LINE <b>不認得我們手上這組連線資訊</b>（Channel Access Token 失效，多半是被重發過）。這段時間訊息進不來，機器人也發不出去。')
             await adviseTokenReissue(c)
             return
           }
@@ -1229,8 +1229,8 @@ const lineChannelGuide: AgentGuideDef = {
         }
         if (choice === 'keep-here') {
           await r.say(
-            '好，帳號留這邊。要做的是把<b>另一邊工作區</b>存的 LINE 鑰匙處理掉，兩條路：<br>'
-            + '・那個工作區<b>還要用</b>（只是接錯帳號）→ 切換過去，到它的「組織與 LINE 設定」把鑰匙換成<b>它自己該用的官方帳號</b>。<br>'
+            '好，帳號留這邊。要做的是把<b>另一邊工作區</b>存的 LINE 連線資訊處理掉，兩條路：<br>'
+            + '・那個工作區<b>還要用</b>（只是接錯帳號）→ 切換過去，到它的「組織與 LINE 設定」把連線資訊換成<b>它自己該用的官方帳號</b>。<br>'
             + '・那個工作區<b>已經不用了</b> → 聯絡我們幫你把那邊的連接清空（目前畫面上沒有自助清除鈕）。',
           )
           await r.say('處理完回來按「幫我檢查」，我再跟 LINE 確認一次。')
@@ -1238,11 +1238,11 @@ const lineChannelGuide: AgentGuideDef = {
         }
         // keep-there：這一邊要換成正確的鑰匙（或請我們清空）
         await r.say(
-          '好，帳號留另一邊。那<b>這一邊</b>存的鑰匙就要處理掉，兩條路：<br>'
+          '好，帳號留另一邊。那<b>這一邊</b>存的連線資訊就要處理掉，兩條路：<br>'
           + '・這個工作區要接<b>別的官方帳號</b> → 點下面的卡，我在設定頁指給你看把 Token 換掉的位置。<br>'
           + '・這個工作區<b>暫時不接任何帳號</b> → 聯絡我們幫你清空（目前畫面上沒有自助清除鈕）。',
         )
-        orgFocusCard(c, 'token', '去設定頁換這一邊的鑰匙（我會指位置）')
+        orgFocusCard(c, 'token', '去設定頁換這一邊的連線資訊（我會指位置）')
       },
     },
     {
