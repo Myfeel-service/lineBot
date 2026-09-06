@@ -230,6 +230,14 @@
   color: var(--text-muted);
   position: relative;
   padding-top: 8px;
+  // ⚠️ 2026-09-07 進度條換長字（建立帳號／取得連線資訊／接收 LINE 訊息…＝跟開場那句同一組字）
+  //    之後，窄螢幕會折行：量過 390px 時格寬 58px、「取得連線資訊」11px 字要 66px，字縮到 10px
+  //    仍要 60px——一行塞不下是幾何事實，不是調字級能解的。所以折行當常態處理：行高收緊、
+  //    刻度（::before）本來就對齊上緣不受影響；≤430px 再縮一級字把 320px 的三行壓回兩行。
+  //    ⛔ 別把五格改成各自依內容寬——刻度會變成長短不一的進度條。
+  line-height: 1.3;
+
+  @media (max-width: 430px) { font-size: 10px; }
 
   &::before {
     content: "";

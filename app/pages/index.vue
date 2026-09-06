@@ -868,7 +868,7 @@
              同欄縮排）。桌機手機同一版，手機只收磚／字級一級＋讓 demo 卡跳出縮排。
              ⚠️ 第二步文案 09-03 使用者抓包：「填寫基礎商家資訊（店名、行業、賣什麼）」
              **是不存在的步驟**——grep 過整個開通流程沒有商家資訊表單，真實的第二件事是
-             useOnboardingChat.ts stepCreate 的「先幫你的官方帳號取個名字，通常用品牌名，
+             useOnboardingChat.ts stepCreate 的「先幫你的 MiniMe 取個名字吧！通常用品牌名，
              之後隨時能改。」文案改成取名字（劇本原文改寫、沒有新宣稱），
              「現在只需要兩步」因此仍然成立。⛔別把「行業／賣什麼」加回來——
              那是早期自助精靈時代的殘影，現行系統問的只有名字。 -->
@@ -896,7 +896,7 @@
               <span class="lp-path__rail lp-cue" aria-hidden="true" />
             </div>
             <div class="lp-path__body">
-              <b>幫官方帳號取個名字</b>
+              <b>幫你的 MiniMe 取個名字</b>
               <small>通常用品牌名，之後隨時能改</small>
               <div class="lp-path__done"><span aria-hidden="true">✓</span>帳號就開好了，可以開始設定</div>
             </div>
@@ -919,12 +919,12 @@
                    ONBOARDING_PROGRESS_LABELS（別 import——那支 composable 會把整包
                    拖進官網 bundle，抄字＋這行註解就好）；兩句話與兩顆鈕＝同檔 stepSecret
                    的原文（307/305 行附近），劇本改字這裡要跟著改。示範帳號山丘咖啡，
-                   停在「拿鑰匙」＝刻意沒接 LINE 的那一步。
+                   停在「取得連線資訊」＝刻意沒接 LINE 的那一步。
                    ⚠️ 進場動態（09-03 八輪「做動態的」＋九輪「show 出更多步驟」）：捲到之後
                    由 JS 時間軸把整趟快樂路徑演完——對白一句句冒出（前面有真的打字點點）、
                    進度條跟著對話一格格亮到「完成」；對話區＝固定高的捲動欄（跟真頁面同款），
                    舊訊息自己往上捲。劇本資料與節奏在 OB_BEATS／playObDemo（本檔 script）。
-                   SSR／無 JS／減少動態＝停在「拿鑰匙」問句＋兩顆選項的靜態卡。 -->
+                   SSR／無 JS／減少動態＝停在「取得連線資訊」問句＋兩顆選項的靜態卡。 -->
               <!-- 卡片自己是一個進場單位（lp-reveal）＋自己收動畫的線（lp-cue）：
                    淡入→捲到眼前才開演，兩件事分兩條線。⛔別只留外層那站的 lp-reveal：
                    那一站含標題與圖說有 594px 高，卡片會在畫面外淡完。 -->
@@ -1375,31 +1375,33 @@ const LP_VOICES: { tile: string, who: string, title: string, text: string }[][] 
 //    stepSecret 505 行/366 行、stepWebhookAndFirstMsg 891/957 行、stepFirstMessageWait
 //    548/714 行、stepDone 1107 行；使用者泡泡＝選項 label 原字），劇本改字這裡跟著改；
 //    「山丘咖啡」＝landing-demo-seed.ts 的示範帳號名。
-// 演的是快樂路徑的精華剪輯：真流程在貼鑰匙／貼網址中間還有輸入格、教學卡與網址卡，
+// 演的是快樂路徑的精華剪輯：真流程在貼連線資訊／貼網址中間還有輸入格、教學卡與網址卡，
 // 這裡跳過操作細節、只留每一步的關鍵對白——⛔跳過的段落不准腦補成新句子。
+// ⚠️ 2026-09-07 跟上 01f8035 的改道（「鑰匙」→「連線資訊」、第二組與貼網址搬進官方帳號後台、
+//    收尾只留一個「小幫手」）：每一句仍是劇本原文，長句只裁段、不改字。
 type ObBeat = { role: 'agent' | 'user', html: string, progress?: 2 | 3 | 4 }
 const OB_BEATS: ObBeat[] = [
   { role: 'agent', html: '歡迎回來，「山丘咖啡」！我們接著把剩下的設定做完，做過的我會直接跳過。' },
-  { role: 'agent', html: '要從 LINE 拿兩把鑰匙。第一把 <b>Channel Access Token</b>——機器人靠它替你傳訊息。' },
+  { role: 'agent', html: '接下來，我們要讓你的 MiniMe 可以透過 LINE 幫你收發訊息，所以要先從 LINE 取得<b>兩組連線資訊</b>。<br>第一組叫做 <b>Channel Access Token</b>，用途很簡單：讓 MiniMe 可以用你的 LINE 官方帳號幫你傳訊息。' },
   { role: 'user', html: '我會拿，直接貼上' },
-  { role: 'agent', html: '收到 ✓ 這把鑰匙是「<b>山丘咖啡</b>」的，已經幫你存好。' },
-  { role: 'agent', html: '第二把：<b>Channel Secret</b>——用來確認訊息真的來自 LINE、不是別人假冒的。' },
-  { role: 'agent', html: '兩把鑰匙都到手 ✓ 最後一步：把下面這串網址交給 LINE，客人傳的訊息才知道要送來哪裡。', progress: 2 },
-  { role: 'user', html: '貼好了，幫我檢查' },
-  { role: 'agent', html: '接上了！你的官方帳號已經連上系統，客人的訊息送得進來了。' },
-  { role: 'agent', html: '來見證一下。拿手機<b>加你的官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 3 },
-  { role: 'agent', html: '收到了！你的機器人正式活起來了 🎉 之後客人傳的每一句話，都會出現在後台的「對話」頁。' },
-  { role: 'agent', html: '接通完成 🎉 接下來交給右下角的<b>小幫手</b>——下一步要做什麼、哪裡怪怪的，它都會主動說。<br>要不要先花 <b>2 分鐘認識一下後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 4 },
+  { role: 'agent', html: '收到 ✓ 這組是「<b>山丘咖啡</b>」的連線資訊，我已經幫你存好了！' },
+  { role: 'agent', html: '接下來是<b>第二組連線資訊：Channel Secret</b>。<br>它的用途很簡單，就是幫忙確認：收到的訊息真的來自 LINE，而不是其他地方假冒傳來的。' },
+  { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 2 },
+  { role: 'user', html: '都設好了，幫我檢查' },
+  { role: 'agent', html: '連線成功了！🎉 你的 LINE 官方帳號已經成功連上系統，可以正式使用 MiniMe 了。' },
+  { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 3 },
+  { role: 'agent', html: '收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。' },
+  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 4 },
 ]
 // ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_PROGRESS_LABELS，抄字不 import——
 //    import 會把整支 composable（含後端呼叫）拖進官網 bundle
-const OB_PROGRESS_LABELS = ['建帳號', '拿鑰匙', '讓訊息進來', '傳話測試', '完成']
-/** SSR／無 JS／減少動態：停在「拿鑰匙」問句＋兩顆選項＝原本的靜態卡 */
+const OB_PROGRESS_LABELS = ['建立帳號', '取得連線資訊', '接收 LINE 訊息', '傳訊息測試', '完成']
+/** SSR／無 JS／減少動態：停在「取得連線資訊」問句＋兩顆選項＝原本的靜態卡 */
 const obBeat = ref(2)
 const obTyping = ref(false)
 const obChatEl = ref<HTMLElement | null>(null)
 const obCardEl = ref<HTMLElement | null>(null)
-/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「拿鑰匙」＝1 */
+/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「取得連線資訊」＝1 */
 const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 1))
 // 開演的時機跟中軸綠線、成長曲線同一條線（.lp-cue → cueIo），這裡不再自己養一個觀察器
 let obTimers: ReturnType<typeof setTimeout>[] = []
