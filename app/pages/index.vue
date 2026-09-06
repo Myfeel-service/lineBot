@@ -95,7 +95,11 @@
           <!-- 09-06 老闆「換一個 slogan」：從類別標籤（LINE 專用 · AI 客服與顧客經營）
                改成利益句，跟 h1「你的顧客很值錢」接成同一個故事。 -->
           <span class="lp-eyebrow">把 LINE 好友，變成回頭客</span>
-          <h1>你的顧客，<br>其實很<span class="g">值錢</span>。</h1>
+          <!-- ⚠️ 兩個全形標點包 .lp-hang：繁中的「，」「。」是**置中**在全形框裡的
+               （簡中才靠左下），所以 4.3rem 時每個標點左右各留約 0.25em＝17px 的空隙，
+               「值錢 。」中間那個洞在大標上很明顯。⛔ 字本身沒有改，只是把空隙收掉，
+               各縮多少寫在 _landing.scss 的 .lp-hang。 -->
+          <h1>你的顧客<span class="lp-hang">，</span><br>其實很<span class="g">值錢</span><span class="lp-hang">。</span></h1>
           <!-- 兩句各佔一行（手機收掉 br 自然流）：擠在同一段時斷行位置會把詞拆開 -->
           <p class="lp-hero__sub">
             品牌的 LINE 官方帳號有好多好友，<br>
