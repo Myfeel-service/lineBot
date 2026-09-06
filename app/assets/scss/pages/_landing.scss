@@ -674,7 +674,7 @@
      一些、右邊的區塊反而可以稍微小一點，大約是 1:2」）。350 ＋ 60 ＋ 702 ＝ 1112（版心扣掉左右內距）。
      ⚠️ 改這三個數字要一起算，而且要回頭量**圖文選單窄帶**：它的文字色塊＝畫面欄減掉固定 268px
         的手機再減 gap，畫面欄一縮它最先出事（970px 那級就是這樣才要把軌收成 196px）。 */
-  .lp-rails { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 60px; align-items: start; --rail-h: 351px; }
+  .lp-rails { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 60px; align-items: start; --rail-h: 455px; }
   /* ── 軌釘在「畫面正中央」（2026-09-04 二十四輪）─────────────────────────
    * 之前是 top: 96px（導覽列 68 ＋ 28 呼吸）＝貼著上緣釘住。使用者問「左邊區塊是否掛在
    * 畫面中央」＝原本不是：軌只有 351px 高、乾淨可視區有 751px，實測上留 27px／下留 373px，
@@ -685,9 +685,10 @@
    *
    * ⚠️ 「乾淨區」要扣掉 .lp-stickybar：它整條區間都是展開的（實測 is-show），不扣的話
    *    視覺上會低 40px——置中是對著**看得到的地方**置中，不是對著視窗置中。
-   * ⚠️ --rail-h 是**量出來的**（headless 取 .lp-rails__rail 的 height）：350.5px＝三條
-   *    各一行標題一行副標。⛔ 動到軌的字級／內距／副標長度、或加減一條，都要重量一次
-   *    ——量法見二十四輪的驗收腳本，1000px 那級因為軌只剩 200px 寬會換行、所以是 406px。
+   * ⚠️ --rail-h 是**量出來的**（headless 取 .lp-rails__rail 的 height）：455.1px＝四條
+   *    各一行標題一行副標（09-06 自動貼標升格成第三條後從 351 重量）。⛔ 動到軌的字級／
+   *    內距／副標長度、或加減一條，都要重量一次——1000px 那級因為軌只剩 200px 寬會換行、
+   *    量到 510.8px 所以是 511px。
    * ⛔ 別改用「軌撐滿 100vh ＋ flex 置中」那種不用量高度的寫法（試過、實測退回）：盒子一變高，
    *    sticky 提早 800px 就脫鉤，捲到第三塊（圖文選單那條窄帶）時整條軌已經滑出畫面上緣，
    *    「你現在在看哪一塊」剛好在最需要的時候消失。盒子維持內容高才留得住。
@@ -782,6 +783,15 @@
      ⛔ 別用 max-height 把列切一半——切到半列看起來就是裁過的圖（六輪教訓），
      要少列就在模板少渲染幾列，收在完整列的邊界上。 */
   .lp-livewin--users .users-table { min-width: 0; }
+
+  /* ── AI 行銷的推播窗（09-06 自動貼標升格後，好友名單窗搬去貼標塊，這扇新開）──
+   * 內容物全是後台真元素：.bc-festival-hint（pages/_broadcasts.scss）、
+   * .split-list-item（layout/_split-layout.scss）——後台改樣式這裡自動跟上。
+   * 這裡只做「從側欄/頁面搬進展示卡」的收邊：提醒條在卡裡不需要自己的底色與
+   * 下框線（卡的標頭列已經分段），列與列之間交給元件自己的間距。 */
+  .lp-livewin--bc { padding: 6px 10px 12px; }
+  .lp-livewin--bc .bc-festival-hint { border-bottom: 0; background: transparent; padding: 10px 8px 8px; }
+  .lp-livewin--bc .split-list { display: flex; flex-direction: column; }
 
   /* ── 「接 LINE 有人陪」開通引導 live 卡（09-03 八輪，同 live 視窗原則＋進場動態）──
    * 樣式源頭 _onboarding.scss／_agent-chat.scss；這裡只做「從整頁變卡片內展示」的收邊：
@@ -1507,9 +1517,9 @@
     .lp-rails { grid-template-columns: 264px minmax(0, 1fr); gap: 48px; }
   }
   @media (max-width: 1000px) {
-    /* 軌只剩 200px 寬＝三條的標題與副標都會換行，量到 406.1px；置中要用這個高度算，
-       ⛔ 不能沿用上面那個 351（差 55px＝置中會低 28px）。 */
-    .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; --rail-h: 406px; }
+    /* 軌只剩 200px 寬＝四條的標題與副標都會換行，量到 510.8px；置中要用這個高度算，
+       ⛔ 不能沿用上面那個 455（09-06 四條版重量：510.8px）。 */
+    .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; --rail-h: 511px; }
   }
   @media (max-width: 960px) {
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
@@ -1534,6 +1544,8 @@
     .lp-hero__grid { grid-template-columns: minmax(0, 1fr); }
     .lp-hero__sub { max-width: none; }
     .lp-hero__sub br { display: none; }
+    /* 解答句同款：桌機兩行是排的，手機窄欄讓它自然流 */
+    .lp-hero__answer br { display: none; }
     .lp-faq__grid { grid-template-columns: 1fr; }
     .lp-foot__in { grid-template-columns: 1fr 1fr; gap: 32px; padding: 40px 24px 32px; }
   }

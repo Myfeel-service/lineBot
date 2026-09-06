@@ -102,8 +102,11 @@
             <b>卻不知道如何經營他們嗎？</b>
           </p>
           <!-- 解答句：敘事閉環的第三拍（值錢→沒空經營→它是你的分身→免費打造）。
-               ⛔刻意只有一行——「客服它回、行銷它提醒」往下捲整頁都在講，Hero 不多扛說明 -->
-          <p class="lp-hero__answer"><b>{{ brandName }}</b>，替你經營他們的 AI 分身。</p>
+               09-06 改寫：老闆回饋原句「替你經營他們的 AI 分身」還沒改到（歧義：會被讀成
+               「經營『他們的分身』」），且老闆點名喜歡收尾那句「讓一個你變成很多個你」、
+               說可以拉上來當副標——改成「是你的分身＋讓一個你變成很多個你」兩拍。
+               收尾 CTA 刻意保留同一句＝首尾呼應。⛔說明仍不多扛：往下捲整頁都在講。 -->
+          <p class="lp-hero__answer"><b>{{ brandName }}</b> 是你的 AI 分身——<br>從今天開始，讓一個你，變成很多個你。</p>
           <div class="lp-hero__actions">
             <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           </div>
@@ -315,6 +318,13 @@
                     （一次是連結、一次是右邊的 h3）是頁內導覽的正常樣子。
                  ⚠️ href 指的是每一塊的 id（cap-*），⛔改 id 要兩邊一起改，
                     而且 .lp-pane 要有 scroll-margin-top，否則捲過去標題會被釘住的導覽列蓋掉。 -->
+            <!-- ⚠️ 09-06 老闆拍板「自動貼標要獨立成一個重點」→ 軌上從三條變**四條**：
+                 客服 → 行銷 → 貼標 → 選單。查證過自動貼標站得住：每顆標籤有三種模式
+                 （off／建議進收件匣／**auto＝AI 判到直接貼**，來源記 ai、可撤），加上
+                 活動來源與 60 天沒互動兩種本來就全自動。⛔文案別寫成「全部全自動」，
+                 「判到直接貼，或先擬好等你按」才是實況。
+                 行銷那條的 small 同輪換成老闆要的推播句（微調過：「馬上**就能**推播」，
+                 主詞留在店家——「就馬上推播」會被讀成系統自動發＝08-27 拍板撤下的能力）。 -->
             <nav class="lp-rails__rail lp-reveal" aria-labelledby="lp-rail-lead">
               <p id="lp-rail-lead" class="lp-rail__lead">它在幫你做的事</p>
               <ol class="lp-rail__nav">
@@ -325,11 +335,16 @@
                 </li>
                 <li>
                   <a class="lp-rail__item" :class="{ 'is-on': activeCap === 1 }" href="#cap-marketing">
-                    <b>AI 行銷</b><small>節到了，它先開口</small>
+                    <b>AI 行銷</b><small>節慶到了馬上就能推播</small>
                   </a>
                 </li>
                 <li>
-                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 2 }" href="#cap-richmenu">
+                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 2 }" href="#cap-tagging">
+                    <b>自動貼標</b><small>誰買過什麼，它幫你記</small>
+                  </a>
+                </li>
+                <li>
+                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 3 }" href="#cap-richmenu">
                     <b>常問的事變成按鈕</b><small>客人自己點，你少回一輪</small>
                   </a>
                 </li>
@@ -340,7 +355,8 @@
                  一塊有 780px 高，整塊當一個單位的話，捲到標頭上緣時底下那扇 600px 的
                  視窗就已經淡完了（同上面那條房規；09-03 使用者反映「還沒滑到就觸發完」）。
                  ⚠️ .lp-pane 同時是左軌的觀察對象（index.vue script 的 capIo）——
-                 三塊的順序就是軌上三條的順序，加減塊要兩邊一起改。 -->
+                 四塊的順序就是軌上四條的順序（09-06 自動貼標升格後從三變四），
+                 加減塊要兩邊一起改。 -->
             <div class="lp-rails__flow">
               <article id="cap-service" class="lp-pane">
                 <div class="lp-pane__hd lp-reveal">
@@ -424,13 +440,76 @@
                 <div class="lp-pane__hd lp-reveal">
                   <h3>AI 行銷</h3>
                   <div class="lp-pane__apps">
+                    <!-- 09-06：第一條的 small 換成老闆要的推播句（「就能」兩字是紅線微調，
+                         見上面軌的註解）；第二條原「客戶貼標分眾」升格成自己的一塊（#cap-tagging），
+                         這裡改講推播怎麼用那些標籤。 -->
                     <div class="lp-app">
                       <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" /><circle cx="12" cy="14.8" r="1.6" fill="currentColor" stroke="none" /></svg></span>
-                      <div><b>節慶檔期提案</b><small>節到了先開口，連分眾都擬好</small></div>
+                      <div><b>節慶檔期提案</b><small>節慶到了馬上就能推播，分眾都幫你選好</small></div>
                     </div>
                     <div class="lp-app">
+                      <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3.5 10.4 14.1" /><path d="M21 3.5l-6.8 17-3.8-6.4-6.9-3.4z" /></svg></span>
+                      <div><b>分眾推播</b><small>用標籤挑人發，不亂槍打鳥</small></div>
+                    </div>
+                  </div>
+                </div>
+                <!-- ⚠️ 「系統實際畫面」＝用後台「推播」頁真正的樣式現場渲染（09-06 自動貼標
+                     升格成自己的一塊後，好友名單窗搬去 #cap-tagging，這扇換成推播的證據）。
+                     兩個真元素：①節慶提醒（.bc-festival-hint）＝ broadcasts.vue 真的有的
+                     常駐提醒，文案吃同一支 festivalReminderText（見 script 的 lpBcHint 註解，
+                     ⛔別手寫節慶句子，會過期）②推播列＝後台同一顆 AdminSplitListItem 元件
+                     （樣式 layout/_split-layout.scss），狀態章「草稿／已完成」與 meta 格式
+                     照 broadcasts.vue 的 statusLabel／bcMetaText（草稿沒排程時間＝meta 只有人數）。
+                     ⛔ 列標題刻意「客群・主題」且**不含日期與節日名**：草稿第一列演的就是
+                     「擬好等你發」，而不寫死日期/節名＝這扇窗不會過期（richmenu 圖的教訓）。
+                     人數跟 Hero 機會卡對齊（手沖 184、咖啡展 216），示範資料、無真實客資。
+                     ⛔ 不掛 inert／role="img"（同兩扇舊窗的房規）：列滑過會亮、字選得到。 -->
+                <div class="lp-panel lp-pane__win lp-reveal">
+                  <div class="lp-panel__hd">
+                    <span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" /><span class="lp-win__dot" aria-hidden="true" />
+                    <span class="lp-panel__title lp-win__label">系統實際畫面</span>
+                  </div>
+                  <div class="lp-livewin lp-livewin--bc">
+                    <p v-if="lpBcHint" class="bc-festival-hint">🎉 {{ lpBcHint }}</p>
+                    <div class="split-list">
+                      <AdminSplitListItem
+                        v-for="r in LP_BC_ROWS"
+                        :key="r.title"
+                        :title="r.title"
+                        time-in-title-row
+                        title-row-chip
+                        :chip-text="r.chip"
+                        :chip-tone="r.tone"
+                        :meta-text="r.meta"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="lp-outcome lp-reveal">
+                  <!-- ⛔ 這兩格只能放**現有功能**的成效：原本第一格是「每月喚回的訂單 0→12–18 張」，
+                       那是「回購喚醒」的成效，而該功能 2026-08-27 已從卡上撤掉（還沒上線）——
+                       功能不出現、它的數字更不能留，否則是宣稱一個連清單上都沒有的能力。 -->
+                  <div class="lp-outcome__cell"><span class="lp-outcome__l">節慶檔期</span><span class="lp-outcome__v"><i>自己記日子</i><em>→</em><b>系統先提醒</b></span></div>
+                  <div class="lp-outcome__cell"><span class="lp-outcome__l">推播對象</span><span class="lp-outcome__v"><i>整包亂發</i><em>→</em><b>發給對的人</b></span></div>
+                </div>
+              </article>
+
+              <!-- ── 自動貼標（09-06 老闆拍板從 AI 行銷的一條小項**升格成自己的一塊**）──
+                   查證過的實況（⛔文案不可超出）：①活動來源標籤＝掃碼/登記自動貼 ②60 天沒
+                   互動自動標 ③AI 讀完對話貼標＝每顆標籤自選模式（建議進收件匣等人採用，
+                   或 auto＝判到直接貼、來源記 ai、可撤）。所以「自動」站得住，但第二條 app
+                   的 small 要保留「或先擬好等你按」那一半，別寫成全部全自動。 -->
+              <article id="cap-tagging" class="lp-pane">
+                <div class="lp-pane__hd lp-reveal">
+                  <h3>自動貼標</h3>
+                  <div class="lp-pane__apps">
+                    <div class="lp-app">
                       <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 11V4.5a1 1 0 0 1 1-1H11l9 9-6.9 6.9a1.4 1.4 0 0 1-2 0L3.5 11z" /><circle cx="7.6" cy="7.6" r="1.3" fill="currentColor" stroke="none" /></svg></span>
-                      <div><b>客戶貼標分眾</b><small>買過什麼、來自哪個展場</small></div>
+                      <div><b>來了就自動記</b><small>從哪個活動加入、多久沒互動</small></div>
+                    </div>
+                    <div class="lp-app">
+                      <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.6a7.6 7.6 0 0 1-7.6 7.6H4.2l1.5-3A7.6 7.6 0 1 1 21 11.6z" /><path d="M12 7.6l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" fill="currentColor" stroke="none" /></svg></span>
+                      <div><b>AI 看完對話也會貼</b><small>可以直接貼，或先擬好等你按</small></div>
                     </div>
                   </div>
                 </div>
@@ -493,11 +572,8 @@
                   </div>
                 </div>
                 <div class="lp-outcome lp-reveal">
-                  <!-- ⛔ 這兩格只能放**現有功能**的成效：原本第一格是「每月喚回的訂單 0→12–18 張」，
-                       那是「回購喚醒」的成效，而該功能 2026-08-27 已從卡上撤掉（還沒上線）——
-                       功能不出現、它的數字更不能留，否則是宣稱一個連清單上都沒有的能力。 -->
-                  <div class="lp-outcome__cell"><span class="lp-outcome__l">節慶檔期</span><span class="lp-outcome__v"><i>自己記日子</i><em>→</em><b>系統先提醒</b></span></div>
                   <div class="lp-outcome__cell"><span class="lp-outcome__l">客人資料</span><span class="lp-outcome__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
+                  <div class="lp-outcome__cell"><span class="lp-outcome__l">分眾名單</span><span class="lp-outcome__v"><i>自己整理</i><em>→</em><b>自動長好</b></span></div>
                 </div>
               </article>
 
@@ -764,13 +840,18 @@
             （Google 登入＋取名字，✓ 那行自己就是證據）；接 LINE 賣「有人陪」不賣快——
             實際是 10 分鐘級，⛔別再把 60 秒跟「上線／完成設定／接 LINE」焊在一起
             （舊版收尾 CTA 犯過）：承諾會在最難的一步爆掉，客人覺得被騙的時點剛好是
-            最需要信任的時點。全站「60 秒」共 6 處同口徑，改任一處先 grep。 -->
+            最需要信任的時點。09-06 起這區的 h2 不再扛 60 秒（老闆回饋原標題難懂），
+            門面文案剩 **4 處**同口徑（Hero 小字／這區 overline／收尾 CTA 副標／黏性條），
+            改任一處先 grep。 -->
     <section id="fast" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <h2><span class="mark">60 秒</span>開好帳號，<br>接 LINE 有人陪。</h2>
+            <!-- 09-06 老闆回饋「接 LINE 有人陪」字怪＋（矛盾的）「整區可拉掉」→ 拍板留區換講法：
+                 這區是全頁唯一回答「我不懂技術做不做得起來」的證據區（實況 demo＋FAQ 兩題靠它），
+                 標題不再扛 60 秒（口徑由底下 .lp-path__over 的「開帳號只要兩步 · 60 秒」講）。 -->
+            <h2>開始，<br>比你想的<span class="mark">簡單</span>。</h2>
           </div>
         </div>
 
@@ -1178,7 +1259,7 @@
 import type { BubbleTyping } from '~/utils/bubble-typing'
 import { prepareBubbleTyping } from '~/utils/bubble-typing'
 import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
-import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
+import { festivalReminderText, TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { daysBetween, taipeiDate } from '~~/shared/time'
 
 definePageMeta({ layout: false })
@@ -1464,6 +1545,29 @@ const heroFests = computed(() =>
   })),
 )
 
+// ── AI 行銷「系統實際畫面」推播窗的示範資料（09-06 自動貼標升格那輪新開的窗）──
+// 節慶提醒＝真功能（broadcasts.vue 的 .bc-festival-hint），句子用**同一支**
+// festivalReminderText 產（shared/taiwan-festivals），⛔別手寫節慶句子——寫死的
+// 過完節就過期（同 richmenu 圖那筆 STATUS 待辦）。真頁面只在 7 天窗內顯示（utils/
+// festival-hint.ts 的閘門）；這裡是常駐展示，所以不走那道閘，milestone 按剩餘天數
+// 自動換檔（>3 天用 7 天檔句型——dayPhrase 對任何天數都成立，句子永遠是真話）。
+const lpBcHint = computed(() => {
+  const f = upcoming.value[0]
+  if (!f) return null
+  const milestone = (f.days <= 1 ? 1 : f.days <= 3 ? 3 : 7) as 1 | 3 | 7
+  return festivalReminderText({ festival: f, milestone, daysUntil: f.days })
+})
+
+// 推播列（AdminSplitListItem 吃的示範資料）。⛔ 標題刻意「客群・主題」且不含日期／
+// 節日名：草稿列演的就是「擬好等你發」，不寫死節名＝不會過期；狀態章與 meta 格式照
+// broadcasts.vue（statusLabel／bcMetaText：草稿沒排程時間 → meta 只有人數）。
+// 人數對齊 Hero 機會卡與好友窗的標籤（手沖 184、咖啡展 216）；送禮 178 是這裡自己的。
+const LP_BC_ROWS = [
+  { title: '送禮客群・禮盒預購通知', chip: '草稿', tone: 'neutral', meta: '178 人' },
+  { title: '手沖愛好者・新豆到貨', chip: '已完成', tone: 'success', meta: '184 人' },
+  { title: '咖啡展加入・迎新優惠', chip: '已完成', tone: 'success', meta: '216 人' },
+] as const
+
 /*
  * ⚠️ 這裡本來有一個 giftFestName：圖文選單示意裡那句「{節日}禮盒」用的節日，從 upcoming
  *    挑出接下來第一個**送禮檔期**代入（挑送禮檔期而不是下一個節日，是因為那句話講的是禮盒，
@@ -1482,7 +1586,7 @@ const anim = ref(false)
 const menuOpen = ref(false)
 const barShown = ref(false)
 /**
- * 「能做什麼」左軌現在亮哪一條（0 客服／1 行銷／2 圖文選單）＝右欄哪一塊正在畫面中央。
+ * 「能做什麼」左軌現在亮哪一條（0 客服／1 行銷／2 自動貼標／3 圖文選單）＝右欄哪一塊正在畫面中央。
  * ⚠️ 預設 0：SSR 與沒有 JS 時第一條亮著，讀起來就是「從這裡開始」，不是三條全暗。
  * ⚠️ 它是**指示器不是動畫**，所以觀察器要裝在 reduced-motion 的早退**之前**（同黏性條）。
  */
