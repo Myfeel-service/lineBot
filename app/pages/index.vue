@@ -345,7 +345,7 @@
                 </li>
                 <li>
                   <a class="lp-rail__item" :class="{ 'is-on': activeCap === 3 }" href="#cap-richmenu">
-                    <b>常問的事變成按鈕</b><small>客人自己點，你少回一輪</small>
+                    <b>把你的 LINE 變好逛</b><small>客人自己點，你少回一輪</small>
                   </a>
                 </li>
               </ol>
@@ -604,7 +604,10 @@
                       「先講什麼、再看畫面」。 -->
               <div id="cap-richmenu" class="lp-band lp-pane lp-reveal">
                 <div class="lp-band__text">
-                  <h3>常問的事變成按鈕，客人自己點</h3>
+                  <!-- 09-06 老闆嫌「常問的事變成按鈕」難懂、他給的「裝飾你的 LINE」會把省力
+                       賣點講小 → 出三版拍板選「變好逛」；省力那半留在下一行的「你也少回一輪」。
+                       ⚠️ 這顆 h3 有一行寬度房規（見 _landing.scss 斷點那段），改字要重量。 -->
+                  <h3>把你的 LINE 變好逛，客人自己點</h3>
                   <p>客人一打開你的 LINE 就看到選單——不必打字問，你也少回一輪。</p>
                   <div class="lp-app">
                     <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="15" rx="2.5" /><path d="M4 11h16M12 11v8.5" /></svg></span>
