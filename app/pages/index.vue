@@ -579,14 +579,12 @@
                   <div class="lp-outcome__cell"><span class="lp-outcome__l">客人資料</span><span class="lp-outcome__v"><i>憑印象</i><em>→</em><b>自動記錄</b></span></div>
                   <div class="lp-outcome__cell"><span class="lp-outcome__l">分眾名單</span><span class="lp-outcome__v"><i>自己整理</i><em>→</em><b>自動長好</b></span></div>
                 </div>
+                <!-- 圖說只交代「資料是示範、數據是估算」——⛔這句不能刪（誠實機制：示範資料
+                     不標示範＝廣告不實風險，「這是真介面」由標頭的「系統實際畫面」講、
+                     「資料是假的」只有這句在講）。2026-09-07 老闆拍板搬進色塊內：
+                     它是**這一組卡共用**的註腳，照註腳慣例放最後一個井的底部。 -->
+                <p class="lp-figcap lp-reveal">畫面中的客人與資料為示範；數據以一家 2,000 位好友的店估算，非實際績效。</p>
               </article>
-
-              <!-- 圖說只交代「資料是示範、數據是估算」——2026-08-27 起兩張卡上**只有現有功能**
-                   （回購喚醒／生日經營已撤下），所以不再需要「哪些還沒上線」那半句；
-                   「這是真介面」由卡片標頭的「系統實際畫面」meta 講。 -->
-              <p class="lp-figcap lp-figcap--center lp-reveal">
-                畫面中的客人與資料為示範；數據以一家 2,000 位好友的店估算，非實際績效。
-              </p>
 
               <!-- ── 圖文選單：一條窄帶（2026-08-27 老闆拍板從 791px 的大卡降級）──
                    它是「讓客服更省力」的手段，不是第三個能力，所以不給它跟兩張主卡同等的版面。
@@ -621,6 +619,11 @@
                     <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.4a7.4 7.4 0 0 1-7.4 7.4H4.4l1.4-2.9A7.4 7.4 0 1 1 20 11.4z" /><path d="M12 7.9l.95 2.15L15.1 11l-2.15.95L12 14.1l-.95-2.15L8.9 11l2.15-.95L12 7.9z" fill="currentColor" stroke="none" /></svg></span>
                     <div><b>之後可以一句話請 {{ brandName }} 代設<span class="lp-soon lp-soon--inline">即將推出</span></b></div>
                   </div>
+                  <!-- ⛔ 這句不能刪：選單是實拍風格、店家看起來像真的，不標示意會被當成
+                       某家真實店家的選單（兩張後台卡有「系統實際畫面」標頭，這支手機沒有）。
+                       2026-09-07 老闆拍板搬進色塊（.lp-band__text）內——手機自己沒有底色，
+                       掛在手機下面會飄在白底上。 -->
+                  <p class="lp-figcap">選單畫面為示意，店家與商品皆為虛構。</p>
                 </div>
 
                 <!-- ⚠️ 2026-08-31 老闆拍板兩件事：①選單換成**真的圖文選單圖**（原本是 div 刻的
@@ -755,10 +758,6 @@
                   </div>
                 </div>
               </div>
-              <!-- 「哪些現有、哪些未上線」窄帶自己那行已經講了，這裡只需標示意。
-                   ⚠️ 要講到「店家與商品為虛構」：選單換成實拍風格的圖之後，不講的人會以為
-                      這是某家真的店的選單（兩張後台截圖有「系統實際畫面」標頭，這支沒有）。 -->
-              <p class="lp-figcap lp-figcap--center lp-reveal">選單畫面為示意，店家與商品皆為虛構。</p>
             </div>
           </div>
         </div>
@@ -910,6 +909,9 @@
                 <b>接 LINE 的時候，有人陪</b>
                 <span class="lp-path__meta">系統實際畫面</span>
               </div>
+              <!-- 2026-09-07 老闆：這句放標題下方（跟 1、2 步的副標同款位置），
+                   不要孤零零掛在卡片底下——樣式吃現成的 .lp-path__body > small -->
+              <small>不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</small>
               <!-- ⚠️ 「系統實際畫面」＝用開通引導頁真正的樣式現場渲染（09-03 八輪，做法與
                    #value 兩扇 live 視窗同一套；取代 admin-onboarding.png）。樣式源頭＝
                    _onboarding.scss（.onbc-*）＋ _agent-chat.scss（.agm-*），後台改樣式這裡
@@ -969,7 +971,6 @@
                   </div>
                 </div>
               </div>
-              <p class="lp-path__note">不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</p>
             </div>
           </div>
         </div>

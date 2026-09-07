@@ -1016,7 +1016,6 @@
   /* ⚠️ text-align: left 留著當保險：版式若再改回置中，demo 殼的「開通引導」標題
      不能跟著置中——真頁面是靠左（十四輪實截抓到） */
   .lp-path__row .lp-liveob { width: 100%; max-width: 760px; margin: 14px 0 0; text-align: left; }
-  .lp-path__note { margin: 12px 0 0; font-size: 0.86rem; color: var(--ink-soft); }
 
   /* 區塊底部的行動出口（原本整區零個按鈕）；36px＝跟一條路的站距同級，CTA 讀成下一站 */
   .lp-fast__cta { margin-top: 36px; text-align: center; }
@@ -1736,8 +1735,7 @@
     .lp-path__dot--chat svg { width: 21px; height: 21px; }
     .lp-path__body > b, .lp-path__head b { font-size: 1.02rem; }
     .lp-path__head { min-height: 44px; flex-wrap: wrap; row-gap: 4px; }
-    .lp-path__row--station .lp-liveob,
-    .lp-path__row--station .lp-path__note { width: calc(100% + 57px); margin-left: -57px; }
+    .lp-path__row--station .lp-liveob { width: calc(100% + 57px); margin-left: -57px; }
 
     /* 成效帶改單欄：分隔線從左緣轉到上緣 */
     .lp-outcome { grid-template-columns: 1fr; }
