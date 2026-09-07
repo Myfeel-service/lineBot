@@ -6,6 +6,40 @@
 
 ---
 
+## 這台機器現在實際在哪(2026-09-07 核實)
+
+⛔ **下面的教學是通用步驟,`relay.lineminime.com` 只是範例名。真正跑著的那台在這裡** ——
+`STATUS.md` 的 `B-4` 從 08-14 就記著「這台機器的存在與網域在 repo 文件裡完全沒有紀錄」,
+這一節就是補那個洞。下次沒人知道它在哪的時候,先看這裡。
+
+| 項目 | 實際值 |
+|---|---|
+| AWS 帳號 | **Myfeel Service(466577275750)** ——與 Amplify、Cost Explorer **同一個帳號** |
+| 服務 | Amazon Lightsail → 執行個體 **`payuni-relay`** |
+| 位置 | 東京(`ap-northeast-1`)可用區域 A |
+| 規格 | 512 MB RAM / 2 vCPU / 20 GB SSD ＝ Lightsail **最小方案(US$3.5/月)** |
+| 靜態 IP | **`54.249.132.4`**(反查 `ec2-54-249-132-4.ap-northeast-1.compute.amazonaws.com`) |
+| 正式主機名 | `pr-8f3a.lineminime.com` → `PAYUNI_RELAY_BASE`(Amplify 用這個) |
+| 沙盒主機名 | `pr-8f3a-test.lineminime.com`(本機 `.env` 指這台) |
+
+**怎麼隨時確認 IP 沒跑掉**(不用登入 AWS,只讀不寫):
+
+```bash
+dig +short pr-8f3a.lineminime.com        # 要印出 54.249.132.4
+dig +short pr-8f3a-test.lineminime.com   # 同一台,兩個名字掛同一顆 IP
+```
+
+⚠️ 這顆 IP 就是填進 **PAYUNi 白名單**與(目前)**光貿允許 IP** 的那一個。
+IP 一變,扣款會回 `CREDIT03010 不提供此IP幕後交易`、發票會回 `code 14 IP 錯誤`,
+而且**兩者都只會落在 log**,畫面上看不出來 —— 所以 IP 是這台機器唯一不能動的東西。
+
+💰 **費用**:這台在成本總覽的主機清單裡**可能看不到**,那不代表沒有它 ——
+Lightsail 最小方案對新帳號**前 3 個月免費**,0 元的服務舊版會被靜靜濾掉(已於 2026-09-07
+修成會點名,見 `A-19`)。免費期一過每月多 US$3.5(約 NT$110),
+時間點與 `A-18` 記的兩條 11 月死線(免費方案到期、折抵金用完)撞在同一個窗。
+
+---
+
 ## 0. 這台機器到底在做什麼(先看懂再動手)
 
 PAYUNi 的幕後扣款 API 會檢查「**是誰打過來的**」——只接受事先登記過的 IP。
