@@ -1241,7 +1241,9 @@
           <NuxtLink class="lp-btn lp-btn--white" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
           <a class="lp-cta__talk" :href="emailHref">想先聊聊？寄信給我們 →</a>
         </div>
-        <p class="lp-cta__fine">每月 NT${{ fmt(lowestPaidPrice) }} 起 · 不綁約、隨時可取消，取消後服務用到本期結束</p>
+        <!-- ⚠️ 口徑（2026-09-07）：按鈕寫「免費打造」、小字卻只講付費價＝在成交的那一刻
+             自打架。免費那半沿用 60 秒區已拍板的「免費方案不用綁卡」，付費那半原句不動。 -->
+        <p class="lp-cta__fine">免費方案不用綁卡 · 付費方案每月 NT${{ fmt(lowestPaidPrice) }} 起，不綁約、隨時可取消，取消後服務用到本期結束</p>
       </div>
     </section>
 

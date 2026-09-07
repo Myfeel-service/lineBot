@@ -397,6 +397,9 @@
   .lp-panel--plain > .lp-panel__bd { padding-top: 30px; padding-bottom: 28px; }
   .lp-panel__bd h3 { font-size: 1.12rem; font-weight: 800; margin: 18px 0 0; letter-spacing: -0.01em; }
   .lp-panel__bd > p { font-size: 0.94rem; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.7; }
+  /* ⚠️ 圖說不吃上面那條段落字級（2026-09-07 統一）：成長曲線的示意聲明是 .lp-panel__bd 的
+     直接子段落，被 `> p`（0-1-1）拉成 0.94rem——全站四張示意圖說要同一款 0.82rem。 */
+  .lp-panel__bd > p.lp-figcap { font-size: 0.82rem; margin: 14px 0 0; }
 
   /* ── Hero「藏著賺錢的機會」卡（08-26 草稿的 opGroup；09-06 拆掉分組）──────
    * 一張攤平的清單：節慶（真資料，shared/taiwan-festivals.ts）＋四種客人名單。
@@ -707,6 +710,10 @@
   /* h3 跟 .lp-duo__text h3 同級同字級（09-03 五輪對齊，原本 1.24 略小一號＝隱性 drift） */
   .lp-band__text h3 { font-size: 1.32rem; font-weight: 800; letter-spacing: -0.01em; }
   .lp-band__text > p { margin: 10px 0 0; font-size: 0.97rem; color: var(--ink-2); line-height: 1.8; max-width: 44ch; }
+  /* ⚠️ 示意聲明的小字**跟其他井裡的圖說同一款**（2026-09-07 老闆抓到不統一）：
+     上面那條 `> p` 是給導言段的，選擇器比 .lp-figcap 強（0-1-1 > 0-1-0），
+     搬進色塊的圖說被它拉成 0.97rem 深色——這條把它壓回圖說的字級。 */
+  .lp-band__text > p.lp-figcap { font-size: 0.82rem; color: var(--ink-soft); margin: 14px 0 0; }
   /* 「現在做得到 vs 還沒上線」改用 .lp-app 圖示列（跟上面兩列同語言），第一列跟段落拉開 */
   .lp-band__text p + .lp-app { margin-top: 12px; }
   /* 行內版徽章：標在那個詞旁邊，不用卡頂那種籠統的「部分即將推出」 */
