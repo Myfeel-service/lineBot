@@ -59,6 +59,15 @@ export interface DiffEntry {
    * 讓人逐條審「可享有→可享」這種差異，真的變動反而被淹沒。
    */
   cosmetic?: boolean
+  /**
+   * `kind='removed'` 專用（`C-154`）：這張卡的內容**其實還在剛抓下來的網頁上**，
+   * 只是這次 AI 換了一種分法所以沒對上。＝不是網頁刪掉了，是重切噪音。
+   *
+   * 為什麼這是根治：`C-145` 量過的實例是「移除 18／新增 1／修改 8」——
+   * 意思判官只碰得到「修改」那 8 筆（三成），而這一項處理的是最大那塊，
+   * 而且是**確定性的字串比對、零 LLM 成本**，判不錯。
+   */
+  stillOnPage?: boolean
   /** kind=modified 且數字有變：變掉的數字（各最多 6 個），前端直接列給人看 */
   numberChanges?: { removed: string[]; added: string[] }
   /** kind=modified 才有：標題（正規化後）是否真的變了 */
@@ -101,22 +110,28 @@ export interface DiffResult {
  * 「卡片已同步到這一版網頁」，下次重新同步會回「已是最新」，這次被保留的差異從此蒸發。
  */
 export function countDivergentKeeps(
-  entries: Array<Pick<DiffEntry, 'id' | 'kind' | 'cosmetic'>>,
+  entries: Array<Pick<DiffEntry, 'id' | 'kind'>>,
   decisions: Record<string, string>,
+  /**
+   * 可以豁免的項目 id——**只能由伺服器自己算出來的那份**（`C-153`）。
+   *
+   * ⛔ 這裡以前直接讀 `entry.cosmetic`，而那個欄位是**從瀏覽器送回來的**：
+   *    等於把「永久推進指紋」（推進後每次重新同步都直接回「已是最新」、差異從此蒸發）
+   *    的決定權交給一個伺服器驗不了的欄位。判定結果現在存在伺服器端，呼叫端傳這份進來。
+   *    傳空集合＝不豁免任何東西＝退回 `C-44` 的保守行為（方向安全）。
+   */
+  exemptIds: ReadonlySet<string> = new Set(),
 ): number {
   let n = 0
   for (const e of entries) {
     const a = decisions[e.id]
     /**
-     * ⛔ 措辭差異（`C-144`）保留原卡**不算**「保留了與網頁不同的內容」（`C-146`）：
-     * 意思判官已經認定兩版意思相同＝卡片在語意上就是這一版網頁，推進指紋是誠實的。
-     *
-     * 算進去的後果（2026-09-04 code review，三個獨立角度都指到這條）：重切的措辭本來就會飄，
-     * 於是幾乎每次重新同步都有 cosmetic → `divergentKeeps > 0` → 指紋永遠不推進
-     * → 排程下一輪又標「有變動」→ 再燒一次完整重切＋判官 → **永遠到不了「已是最新」**。
-     * 這跟排程自動套用那條路的 noop 分支同一個道理：內容等價時 `appliedContentHash` 要推進。
+     * 豁免的項目保留原卡**不算**「保留了與網頁不同的內容」：
+     * 系統已經確認過兩邊等價（措辭差異／內容其實還在網頁上），推進指紋是誠實的。
+     * 不豁免的後果是一個會自己延續的迴圈：重切措辭本來就會飄 → 幾乎每次都有差異
+     * → 指紋永不推進 → 排程又標「有變動」→ 再燒一次完整重切 → **永遠到不了「已是最新」**。
      */
-    if (e.cosmetic && (a === 'keep_old' || a === 'skip' || a === undefined)) continue
+    if (exemptIds.has(e.id) && (a === 'keep_old' || a === 'skip' || a === undefined)) continue
     if (e.kind === 'modified' && (a === 'keep_old' || a === 'skip' || a === undefined)) n++
     else if (e.kind === 'removed' && (a === 'keep_old' || a === undefined)) n++
     else if (e.kind === 'new' && (a === 'skip' || a === undefined)) n++
@@ -472,13 +487,16 @@ export async function loadOldChunksForDiff(
 //    **數字有變的一律不送判、不摺疊**——價格、期限、容量改了就是真變動，
 //    就算判官說「意思一樣」也不算數。
 
-const COSMETIC_JUDGE_SYSTEM = `你在幫商家審核客服知識卡的更新。使用者會給你幾組「舊版 vs 新版」的知識卡內容。任務：逐組判斷新版跟舊版的**意思**是否完全相同（只是換句話說、調整排版或重點行的寫法）。
+export const COSMETIC_JUDGE_SYSTEM = `你在幫商家審核客服知識卡的更新。使用者會給你幾組「舊版 vs 新版」的知識卡（含標題與內容）。任務：逐組判斷新版跟舊版的**意思**是否完全相同（只是換句話說、調整排版或重點行的寫法）。
 
 規則（嚴格遵守）：
 1. verdict 只能是 "same_meaning" / "changed" / "unsure"。
 2. 新版多了資訊、少了資訊、或任何事實面的改變（條件、範圍、步驟、限制）→ "changed"。
-3. 只是同義改寫、語序調整、重點行格式不同 → "same_meaning"。
-4. 沒有把握就回 "unsure"，不要猜。寧可多讓人看一條，不可把真變動藏起來。
+3. ⛔**標題裡的型號、容量、版本代碼不同**（例：6L vs 12L、W1 vs ULTRA）→ 一律 "changed"。
+   那是不同型號的兩張卡，不是換句話說。
+4. 標題只是換個說法而內容意思相同（例：「運費說明」→「運費與配送說明」）→ "same_meaning"。
+5. 只是同義改寫、語序調整、重點行格式不同 → "same_meaning"。
+6. 沒有把握就回 "unsure"，不要猜。寧可多讓人看一條，不可把真變動藏起來。
 
 輸出格式（嚴格 JSON）：{ "results": [ { "index": 0, "verdict": "same_meaning" } ] }`
 
@@ -496,19 +514,21 @@ export const COSMETIC_JUDGE_MAX_CHARS = 800
 export const COSMETIC_JUDGE_BATCH = 25
 
 /**
- * 送判的候選。三道程式紅線（`C-144` ＋ `C-146`），全部在花 LLM 的錢之前就擋掉：
- *  ① 數字有變 → 不送（價格、期限、容量改了就是真變動）
- *  ② 標題變了 → 不送：判官只收得到**內容**，看不到標題。內容一字未改、只有標題
- *     從「除濕機6L操作」變成「12L操作」時，判官必回 same_meaning，型號修正就被摺疊掉
- *     ——同日 `C-143` 的教訓（型號住在標題裡）在這個檔案重演。
- *  ③ 任一邊長到看不完 → 不送（見 COSMETIC_JUDGE_MAX_CHARS）
+ * 送判的候選。兩道程式紅線，都在花 LLM 的錢之前就擋掉：
+ *  ① 數字有變 → 不送（價格、期限、容量改了就是真變動，判官說什麼都不算數）
+ *  ② 任一邊長到看不完 → 不送（見 COSMETIC_JUDGE_MAX_CHARS）
  * 擋掉的不是丟掉：它們照常以 modified 攤在畫面上給人看，只是不享有「自動摺疊」。
+ *
+ * ⚠️ 這裡**曾經**有第三道「標題變了就不送」（`C-146`）。那道守門是在補一個更上游的錯：
+ * 判官當時只收得到內容、看不到標題，所以標題上的型號改動會被它判成「意思一樣」。
+ * 正解是**把標題也送進去**（`C-155`，重複偵測那個判官一開始就這樣做），
+ * 於是那道守門可以刪掉——而且刪掉才對：重切本來就常順手改標題
+ *（「運費說明」→「運費與配送說明」），那道守門等於把這個功能自己的主場排除在外。
  */
 export function pickCosmeticCandidates(diff: DiffResult): DiffEntry[] {
   return diff.entries.filter(e =>
     e.kind === 'modified'
     && !e.numbersChanged
-    && !e.titleChanged
     && (e.oldChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS
     && (e.newChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS,
   )
@@ -540,7 +560,7 @@ export function applyCosmeticVerdicts(
  * 判官掛掉的代價只是「多看幾條」，不能讓它擋整個 resync）。
  */
 export async function judgeCosmeticRewrites(
-  pairs: Array<{ old: string; next: string }>,
+  pairs: Array<{ oldTitle: string; old: string; nextTitle: string; next: string }>,
 ): Promise<{ verdicts: Array<'same_meaning' | 'changed' | 'unsure'>; inputTokens: number; outputTokens: number }> {
   if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0 }
   const { generateJson } = await import('./gemini')
@@ -556,7 +576,13 @@ export async function judgeCosmeticRewrites(
       '請逐組判斷新版與舊版的意思是否完全相同：',
       // ⛔ 不再 slice：候選階段已經擋掉超長的（見 pickCosmeticCandidates ③）。
       //    在這裡截斷＝判官看不完卻照樣給結論，那是 `C-146` 修掉的 bug。
-      ...batch.map((p, i) => `[${i}]\n舊版：${p.old}\n新版：${p.next}`),
+      ...batch.map((p, i) => [
+        `[${i}]`,
+        `舊版標題：${p.oldTitle}`,
+        `舊版內容：${p.old}`,
+        `新版標題：${p.nextTitle}`,
+        `新版內容：${p.next}`,
+      ].join('\n')),
     ].join('\n\n')
     try {
       const res = await generateJson<{ results?: Array<{ index?: unknown; verdict?: unknown }> }>(prompt, {
@@ -581,4 +607,123 @@ export async function judgeCosmeticRewrites(
     }
   }
   return { verdicts, inputTokens, outputTokens }
+}
+
+
+// ── 伺服器端的「可豁免項目」帳本（`C-153`）────────────────────────────
+//
+// 為什麼要落地到 Firestore：算出「這幾項等價」的是重新同步那份背景工作，
+// 而按下「套用」的是另一支端點，兩者之間只隔著使用者的瀏覽器。把判定結果放在
+// 回應裡繞一圈再送回來，等於讓前端有機會（無論惡意或只是 bug）決定要不要
+// 永久推進指紋——而指紋一推進，這次保留的差異就再也沒有人看得到。
+//
+// ⛔ 一定要綁 `contentHash`：這份帳本對應的是「那一版網頁」。排程可能在使用者
+//    看 diff 的期間又抓了一次並覆寫，對不上就當作沒有帳本（不豁免＝保守）。
+
+interface DiffLedgerDoc {
+  contentHash: string
+  exemptIds: string[]
+  savedAtMs: number
+}
+
+const DIFF_LEDGER_DOC = 'lastDiffExempt'
+
+/** 把這一輪算出來的「可豁免項目」存起來，供之後的套用查核 */
+export async function saveDiffExemptIds(
+  db: Firestore,
+  sourceId: string,
+  contentHash: string,
+  exemptIds: string[],
+): Promise<void> {
+  if (!sourceId || !contentHash) return
+  try {
+    await db.collection('knowledgeSources').doc(sourceId)
+      .collection('cache').doc(DIFF_LEDGER_DOC)
+      .set({ contentHash, exemptIds, savedAtMs: Date.now() } satisfies DiffLedgerDoc)
+  }
+  catch (e) {
+    // 寫不進去不擋流程：後果只是這次套用不豁免任何項目（保守方向）
+    console.warn('[resync] 可豁免項目帳本寫入失敗（這次套用一律不豁免）:', (e as Error)?.message)
+  }
+}
+
+/** 讀回「可豁免項目」。⛔ contentHash 對不上一律回空集合＝不豁免 */
+export async function loadDiffExemptIds(
+  db: Firestore,
+  sourceId: string,
+  contentHash: string,
+): Promise<Set<string>> {
+  if (!sourceId || !contentHash) return new Set()
+  try {
+    const snap = await db.collection('knowledgeSources').doc(sourceId)
+      .collection('cache').doc(DIFF_LEDGER_DOC).get()
+    const doc = snap.data() as DiffLedgerDoc | undefined
+    if (!doc || doc.contentHash !== contentHash) return new Set()
+    return new Set(Array.isArray(doc.exemptIds) ? doc.exemptIds.map(String) : [])
+  }
+  catch (e) {
+    console.warn('[resync] 可豁免項目帳本讀取失敗（這次套用一律不豁免）:', (e as Error)?.message)
+    return new Set()
+  }
+}
+
+
+// ── 「移除」其實只是換了分法（`C-154`）──────────────────────────────
+//
+// 重新同步每次都把整頁丟給 LLM 重切，而分組方式本來就會飄：同一段內容這次切成一塊、
+// 下次切成兩塊，於是舊卡對不上新卡 → 被列成「移除」。`C-145` 量到的實例是
+// 移除 18 筆裡幾乎全是這種，人卻要逐張判斷「要不要刪掉」。
+//
+// 判準：這張卡的內容是不是**還出現在剛抓下來的網頁純文字裡**。還在 → 網頁沒有刪掉它，
+// 只是這次沒對上 → 摺疊起來、預設保留（本來就是預設保留，這裡只是不再要人看）。
+//
+// ⛔ 確定性比對，不進 LLM：這是它比意思判官可靠的地方——判官會看走眼，字串比對不會。
+// ⛔ 用「內容的實質片段」比，不是整段比：重切常常順手改標點、合併空白，整段逐字比對
+//    幾乎一定失敗。正規化（全形轉半形、去空白，沿用 normalizeForCompare）之後取
+//    最長的幾段來比，任一段還在頁面上就算數。
+
+/** 一張卡至少要有幾個字才值得拿去比對（太短的片段在長網頁裡必然命中＝誤判） */
+const STILL_ON_PAGE_MIN_CHARS = 24
+
+/** 從卡片內容取出用來比對的片段：最長的幾行（跳過「重點：」那種摘要行） */
+export function pickProbeLines(content: string, max = 3): string[] {
+  return String(content ?? '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length >= STILL_ON_PAGE_MIN_CHARS && !l.startsWith('重點：'))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, max)
+}
+
+/**
+ * 這張卡的內容還在網頁上嗎（純函式，可測）。
+ *
+ * ⛔ 取不到夠長的片段時回 `false`（＝不摺疊、照樣攤給人看）：
+ *    短卡在長網頁裡幾乎一定「命中」，回 true 會把真的被刪掉的短卡也藏起來。
+ */
+export function contentStillOnPage(cardContent: string, pageText: string): boolean {
+  const probes = pickProbeLines(cardContent)
+  if (!probes.length) return false
+  const page = normalizeForCompare(pageText)
+  if (!page) return false
+  return probes.some(line => page.includes(normalizeForCompare(line)))
+}
+
+/**
+ * 把「其實還在網頁上」的移除項標記起來，回傳標了幾筆。
+ * 呼叫端負責把網頁純文字傳進來（重新同步時本來就剛抓過，不必多抓一次）。
+ */
+export function markRemovedStillOnPage(diff: DiffResult, pageText: string): { marked: number } {
+  if (!pageText.trim()) return { marked: 0 }
+  let marked = 0
+  for (const e of diff.entries) {
+    if (e.kind !== 'removed' || !e.oldChunk) continue
+    // 手動編輯過的卡本來就預設保留、而且人特別在意 → 不摺疊，照樣給人看
+    if (e.oldChunk.manuallyEdited) continue
+    if (!contentStillOnPage(e.oldChunk.content, pageText)) continue
+    e.stillOnPage = true
+    e.defaultAction = 'keep_old'
+    marked++
+  }
+  return { marked }
 }

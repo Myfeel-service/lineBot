@@ -14,7 +14,14 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 import { chunkTextWithLlm } from './ai-knowledge-chunker'
-import { computeDiff, type DiffResult } from './ai-knowledge-resync'
+import {
+  applyCosmeticVerdicts,
+  computeDiff,
+  judgeCosmeticRewrites,
+  markRemovedStillOnPage,
+  pickCosmeticCandidates,
+  type DiffResult,
+} from './ai-knowledge-resync'
 import { normalizeChunkInput, updateKnowledgeChunk, validateChunkInput } from './ai-knowledge-chunks'
 import { listChunksBySource } from './ai-knowledge-sources'
 import { recordAiUsage } from './ai-usage'
@@ -60,10 +67,18 @@ export function classifyMinorChange(
   opts: { oldTotalChars: number; newTotalChars: number; disabledChunkIds?: Set<string> },
 ): MinorChangeVerdict {
   const { summary } = diff
-  if (summary.added > 0 || summary.removed > 0) {
+  /**
+   * ⛔「移除」要扣掉**內容其實還在網頁上**的那幾筆（`C-157`）。
+   * 重切每次的分組方式都會飄（同一段這次一塊、下次兩塊），舊卡因此對不上而被列成移除
+   * ——實測一次 resync 的「移除 18」幾乎全是這種。不扣的話這條路每次都判 `manual`
+   * → `markSourceOutdated` → 店家被叫去看一份幾乎全是假移除的 diff，而**產生這份雜訊的
+   * 正是這條路自己**。`stillOnPage` 是確定性字串比對、零 LLM，判不錯。
+   */
+  const realRemoved = diff.entries.filter(e => e.kind === 'removed' && !e.stillOnPage).length
+  if (summary.added > 0 || realRemoved > 0) {
     return {
       kind: 'manual',
-      reason: `結構有變(新增 ${summary.added} 張、移除 ${summary.removed} 張卡)`,
+      reason: `結構有變(新增 ${summary.added} 張、移除 ${realRemoved} 張卡)`,
       toApply: [],
     }
   }
@@ -71,7 +86,12 @@ export function classifyMinorChange(
     return { kind: 'manual', reason: '新內容長度大幅縮水,疑似抓取不完整', toApply: [] }
   }
 
-  const modified = diff.entries.filter(e => e.kind === 'modified')
+  /**
+   * ⛔ 意思沒變的卡不重寫（`C-157`）：重寫會重算 embedding＝真的花錢，換來的是
+   * 「可享有→可享」這種零價值的改寫。判官標過的直接跳過；全部都是的話整輪當 noop
+   * ——noop 分支會把 `appliedContentHash` 推到新版，來源就不會一直掛著「有變動」。
+   */
+  const modified = diff.entries.filter(e => e.kind === 'modified' && !e.cosmetic)
   if (!modified.length) return { kind: 'noop', reason: '', toApply: [] }
 
   if (modified.some(e => e.oldChunk?.manuallyEdited)) {
@@ -84,19 +104,22 @@ export function classifyMinorChange(
   if (modified.some(e => e.oldChunk?.title !== e.newChunk?.title)) {
     return { kind: 'manual', reason: '卡片標題有變動(非原卡直接更新)', toApply: [] }
   }
+  // 比例用「真的要改的張數」算（`C-157`）：把措辭差異算進去會讓門檻假性偏高，
+  // 明明只有一張真的改了，卻因為另外七張只是換句話說而被判成「改版」退回人工。
+  const realModified = modified.length
   const oldCards = summary.modified + summary.unchanged
   if (oldCards >= RATIO_RULE_MIN_CARDS) {
-    if (summary.modified / oldCards > MAX_AUTO_MODIFIED_RATIO) {
+    if (realModified / oldCards > MAX_AUTO_MODIFIED_RATIO) {
       return {
         kind: 'manual',
-        reason: `變動比例過高(${summary.modified}/${oldCards} 張卡有改)`,
+        reason: `變動比例過高(${realModified}/${oldCards} 張卡有改)`,
         toApply: [],
       }
     }
   }
-  else if (summary.modified > 1) {
+  else if (realModified > 1) {
     // 小來源(<4 張卡)改用絕對張數:一次改多張多半是頁面改版,不是文字微調
-    return { kind: 'manual', reason: `這個來源只有 ${oldCards} 張卡,卻有 ${summary.modified} 張同時變動`, toApply: [] }
+    return { kind: 'manual', reason: `這個來源只有 ${oldCards} 張卡,卻有 ${realModified} 張同時變動`, toApply: [] }
   }
 
   // 寫入前跑與其他建卡路徑相同的正規化+驗證:自動路徑沒有人把關,不能讓超長/空白的
@@ -179,6 +202,30 @@ export async function tryAutoApplyMinorChange(
     if (!oldChunks.length) return manual('來源目前沒有卡片可比對')
     const disabledChunkIds = new Set(allChunks.filter(c => c.status === 'disabled').map(c => c.id))
     const diff = computeDiff(oldChunks, newChunks)
+
+    /**
+     * 跟手動「重新同步」走**同一套摺疊**（`C-157`）。以前只有手動那條路有，
+     * 於是每天在跑、會自己改卡片又會發通知的這一條，反而在跟重切雜訊硬碰硬。
+     * ① 確定性：內容其實還在網頁上的「移除」→ 不算結構有變（零成本，先做）
+     * ② 意思判官：措辭沒變的卡不重寫（省 embedding）。判官掛掉不擋——
+     *    退回原本的行為（照舊當成真的修改），方向安全。
+     */
+    markRemovedStillOnPage(diff, newText)
+    const cosmeticCandidates = pickCosmeticCandidates(diff)
+    if (cosmeticCandidates.length) {
+      try {
+        const judged = await judgeCosmeticRewrites(cosmeticCandidates.map(e => ({
+          oldTitle: e.oldChunk?.title ?? '',
+          old: e.oldChunk?.content ?? '',
+          nextTitle: e.newChunk?.title ?? '',
+          next: e.newChunk?.content ?? '',
+        })))
+        applyCosmeticVerdicts(cosmeticCandidates, judged.verdicts)
+      }
+      catch (e) {
+        console.warn('[autoapply] 意思判官失敗（照舊當成真的修改）:', (e as Error)?.message)
+      }
+    }
 
     const verdict = classifyMinorChange(diff, {
       oldTotalChars: oldChunks.reduce((s, c) => s + c.content.length, 0),

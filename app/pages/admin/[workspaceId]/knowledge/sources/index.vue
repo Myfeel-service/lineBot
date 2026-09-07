@@ -903,11 +903,8 @@
         </template>
       </p>
 
-      <p v-if="hiddenUnchangedCount > 0 || cosmeticCount > 0" class="diff-unchanged-note text-muted text-xs">
-        <template v-if="hiddenUnchangedCount > 0">{{ hiddenUnchangedCount }} 條未變</template>
-        <template v-if="hiddenUnchangedCount > 0 && cosmeticCount > 0">、</template>
-        <template v-if="cosmeticCount > 0">{{ cosmeticCount }} 條只是換句話說(意思沒變，已自動保留原卡)</template>
-        已收合(不需要做決定)
+      <p v-if="foldedNoteParts.length" class="diff-unchanged-note text-muted text-xs">
+        {{ foldedNoteParts.join('、') }}已收合(不需要做決定)
         <el-button text size="small" @click="showUnchangedDiff = !showUnchangedDiff">
           {{ showUnchangedDiff ? '收合' : '顯示' }}
         </el-button>
@@ -930,6 +927,9 @@
             </span>
             <span v-if="entry.cosmetic" class="diff-entry-hint">
               換句話說(意思沒變)
+            </span>
+            <span v-else-if="entry.stillOnPage" class="diff-entry-hint">
+              內容其實還在網頁上(換了分法)
             </span>
             <span v-else-if="entry.kind === 'modified' && entry.numbersChanged === false" class="diff-entry-hint">
               數字沒變
@@ -1260,6 +1260,15 @@
       <strong>不會自動合併或刪除</strong>——確認後用「整理產品名稱」合併、或把多的那條刪掉（會進回收桶，可還原）。
       不是重複的按「忽略」，之後不會再報這一組。
     </p>
+    <!--
+      ⛔ 被系統刻意排除的組數要講出來（`C-156`）：不講的話，「這兩張明明很像卻沒被建議合併」
+         只能翻伺服器 log 才查得到——同 C-68／C-94 那種「按幾次都沒新的」的沉默死亡。
+         用字要說清楚這是**刻意排除**、不是漏了。
+    -->
+    <p v-if="health.duplicates.blockedByModelCount" class="src-bin-empty">
+      另有 <strong>{{ health.duplicates.blockedByModelCount }}</strong> 組因為
+      <strong>標題型號不同</strong>（例如 6L 與 12L）被排除，不列在下面——同系列不同型號合併會答錯台。
+    </p>
     <p v-if="!health.duplicates.items.length" class="src-bin-empty">目前沒有疑似重複的項目。</p>
     <div v-else class="src-bin-list">
       <div v-for="s in health.duplicates.items" :key="s.key" class="src-bin-row">
@@ -1417,6 +1426,8 @@ interface DiffEntry {
   numbersChanged?: boolean
   /** 意思判官認定「只是換句話說」（`C-144`）：收合、預設保留原卡 */
   cosmetic?: boolean
+  /** 這筆「移除」的內容其實還在網頁上（`C-154`）＝重切換了分法，不是網頁刪了 */
+  stillOnPage?: boolean
   /** 變掉的數字,直接列給人看 */
   numberChanges?: { removed: string[]; added: string[] }
   /** kind='modified'：標題(忽略標點空白後)真的變了 */
@@ -1757,13 +1768,23 @@ const showUnchangedDiff = ref(false)
  */
 const visibleDiffEntries = computed(() => {
   const entries = diffData.value?.diff.entries ?? []
-  return showUnchangedDiff.value ? entries : entries.filter(e => e.kind !== 'unchanged' && !e.cosmetic)
+  return showUnchangedDiff.value
+    ? entries
+    : entries.filter(e => e.kind !== 'unchanged' && !e.cosmetic && !e.stillOnPage)
 })
 const hiddenUnchangedCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'unchanged').length,
 )
 const cosmeticCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.cosmetic).length,
+)
+/**
+ * 收合說明的各段。⛔ 用陣列 join 不用一串 v-if：這裡已經是第三種收合類別，
+ * 每加一種就要多寫一組「前面有沒有東西」的分隔符條件，遲早會多一個或少一個「、」。
+ */
+/** 「移除」其實還在網頁上的筆數（`C-154`）：重切換分法造成的假移除 */
+const stillOnPageCount = computed(() =>
+  (diffData.value?.diff.entries ?? []).filter(e => e.stillOnPage).length,
 )
 
 /**
@@ -2156,7 +2177,7 @@ interface HealthResponse {
   /** 建議收件匣待處理數（null＝這次查不到，⛔不等於 0；D-43 缺口②） */
   pendingSuggestions: number | null
   /** 疑似重複（C-40(c)）：排程「向量篩候選 → AI 判官」的建議；合併/刪除留人拍板 */
-  duplicates: { items: DupSuggestionRow[]; scannedAtMs: number }
+  duplicates: { items: DupSuggestionRow[]; scannedAtMs: number; blockedByModelCount?: number }
 }
 interface DupSuggestionRow {
   key: string
@@ -2180,7 +2201,7 @@ const emptyHealth = (): HealthResponse => ({
   liveChunkCount: 0,
   aliasCandidateCount: 0,
   pendingSuggestions: null,
-  duplicates: { items: [], scannedAtMs: 0 },
+  duplicates: { items: [], scannedAtMs: 0, blockedByModelCount: 0 },
 })
 const health = ref<HealthResponse>(emptyHealth())
 // 資料與知識分開計:「1 份資料同步失敗」= 整批知識凍結,「1 條過短」= 小瑕疵,
@@ -3036,6 +3057,14 @@ interface ResyncDoneResponse {
   }
 }
 
+const foldedNoteParts = computed(() => {
+  const parts: string[] = []
+  if (hiddenUnchangedCount.value) parts.push(`${hiddenUnchangedCount.value} 條未變`)
+  if (stillOnPageCount.value) parts.push(`${stillOnPageCount.value} 條「移除」其實還在網頁上(這次 AI 換了分法，已自動保留)`)
+  if (cosmeticCount.value) parts.push(`${cosmeticCount.value} 條只是換句話說(意思沒變，已自動保留原卡)`)
+  return parts
+})
+
 /** 縮水警示的二次確認(勾了才放行套用) */
 const shrinkAcknowledged = ref(false)
 
@@ -3201,7 +3230,7 @@ async function applyDiff() {
     // ⛔ 措辭差異保留原卡不算（`C-146`，與後端 countDivergentKeeps 同一把尺）：
     //    畫面剛跟人說「已自動保留原卡、不需要做決定」，套用時再跳一個
     //    「你保留了 N 項與網頁不同的內容」等於自打嘴巴——而他根本沒做過任何決定。
-    if (e.cosmetic && (a === 'keep_old' || a === 'skip' || a === undefined)) return false
+    if ((e.cosmetic || e.stillOnPage) && (a === 'keep_old' || a === 'skip' || a === undefined)) return false
     return (e.kind === 'modified' && (a === 'keep_old' || a === 'skip'))
       || (e.kind === 'removed' && a === 'keep_old')
       || (e.kind === 'new' && a === 'skip')

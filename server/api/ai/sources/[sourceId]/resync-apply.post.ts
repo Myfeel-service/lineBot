@@ -20,7 +20,13 @@ import {
 } from '~~/server/utils/ai-knowledge-chunks'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { regenerateOverviewCard } from '~~/server/utils/ai-overview'
-import { countDivergentKeeps, loadOldChunksForDiff, type DiffAction, type DiffEntry } from '~~/server/utils/ai-knowledge-resync'
+import {
+  countDivergentKeeps,
+  loadDiffExemptIds,
+  loadOldChunksForDiff,
+  type DiffAction,
+  type DiffEntry,
+} from '~~/server/utils/ai-knowledge-resync'
 
 /**
  * POST /api/ai/sources/:sourceId/resync-apply
@@ -190,7 +196,13 @@ export default defineEventHandler(async (event) => {
    * - 有逐卡失敗（errors）→ 不推進、也不清「有變動」旗標：部分失敗不能記成完整成功。
    * 不推進的代價只是下次重新同步要再跑一輪比對——方向安全。
    */
-  const divergentKeeps = countDivergentKeeps(entries, decisions)
+  /**
+   * 可豁免項目一律以**伺服器自己存的那份**為準（`C-153`），不看 body 上的 `cosmetic`：
+   * 這個決定會永久推進指紋，而指紋一推進，這次保留的差異就再也沒有人看得到。
+   * 帳本綁 contentHash，對不上（例如排程中途又抓了一次）就回空集合＝不豁免。
+   */
+  const exemptIds = await loadDiffExemptIds(db, sourceId, bodyHash)
+  const divergentKeeps = countDivergentKeeps(entries, decisions, exemptIds)
   const fingerprintSafe = errors.length === 0 && divergentKeeps === 0
   const newChunkCount = await countSourceChunks(db, workspaceId, sourceId)
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({

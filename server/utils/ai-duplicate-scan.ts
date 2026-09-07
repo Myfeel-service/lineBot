@@ -319,10 +319,16 @@ export async function runDuplicateScan(
     suggestions = candidates
       .map((p, i) => ({ p, v: verdicts[i]! }))
       .filter(x => x.v.verdict === 'same') // ⛔different/unsure 都不出建議：寧可漏、不可誤
-      // 規則 2 的程式後檢（`C-143`）：標題數字對不上的，判官說 same 也不算數
+      /**
+       * 規則 2 的最後一道保險（`C-143`）。
+       * ⚠️ `C-146` 把同一道檢查移到了「取名額之前」，所以**正常情況下這裡永遠不會攔到東西**
+       *    ——它現在的價值是「萬一上游那道被改壞了，這裡還擋得住」。
+       *    ⛔ 別因為「看起來沒作用」就刪掉：刪了就等於把紅線交給單一一處把關。
+       *    真正用來觀測「AI 還會不會違反規則」的是 `blockedByModel`（存進掃描結果那份）。
+       */
       .filter(({ p }) => {
         if (!titleModelConflict(p.a.title, p.b.title)) return true
-        console.warn(`[dup-scan] 判官違反規則2被後檢擋下：「${p.a.title}」vs「${p.b.title}」`)
+        console.warn(`[dup-scan] ⚠️ 上游守門漏了、被最後一道攔下：「${p.a.title}」vs「${p.b.title}」`)
         return false
       })
       .map(({ p, v }) => ({

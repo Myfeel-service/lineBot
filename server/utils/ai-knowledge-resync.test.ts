@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyCosmeticVerdicts, computeDiff, contentSimilarity, countDivergentKeeps, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
+import { COSMETIC_JUDGE_SYSTEM, applyCosmeticVerdicts, computeDiff, contentSimilarity, contentStillOnPage, countDivergentKeeps, markRemovedStillOnPage, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
 
 const oldChunk = (id: string, title: string, content: string, manual = false) => ({
   id,
@@ -288,23 +288,31 @@ describe('C-146：意思判官的三個回歸', () => {
     // → 排程下一輪又標「有變動」→ 每次重新同步再燒一次完整重切＋判官，永遠到不了「已是最新」。
     const entries = Array.from({ length: 8 }, (_, i) => mkModified(`m${i}`, { cosmetic: true, defaultAction: 'keep_old' }))
     const decisions = Object.fromEntries(entries.map(e => [e.id, 'keep_old']))
-    expect(countDivergentKeeps(entries, decisions)).toBe(0)
+    const exempt = new Set(entries.map(e => e.id)) // 伺服器自己算出來的那份
+    expect(countDivergentKeeps(entries, decisions, exempt)).toBe(0)
   })
 
   it('沒被判成措辭差異的 modified 保留原卡，照樣要算（C-44 的原意不能被弄丟）', () => {
     const entries = [mkModified('a'), mkModified('b', { cosmetic: true, defaultAction: 'keep_old' })]
-    expect(countDivergentKeeps(entries, { a: 'keep_old', b: 'keep_old' })).toBe(1)
+    expect(countDivergentKeeps(entries, { a: 'keep_old', b: 'keep_old' }, new Set(['b']))).toBe(1)
   })
 
-  it('🔴 標題變了的不可以送去判「意思一樣」——判官只看得到內容，看不到標題', () => {
-    // 「除濕機6L操作」→「除濕機12L操作」而內容一字未改：內容比對出來 numbersChanged=false，
-    // 判官收到兩份一模一樣的內容 → 必回 same_meaning → 標題上的型號修正被摺疊、預設不套用。
-    // 這正是同日 C-143 的教訓（型號住在標題裡）在另一個檔案重演。
+  /**
+   * ⚠️ 這條原本守的是「標題變了就不送判」（`C-146` 的守門②）。
+   * `C-155` 把**標題也送進判官**之後那道守門刪掉了——刪掉才對：重切本來就常順手改標題
+   *（「運費說明」→「運費與配送說明」），排除掉等於把這個功能自己的主場關在門外。
+   * 型號那一關改由 prompt 規則 3 ＋ 數字紅線把守，所以這條改成守「標題有真的被送進去」。
+   */
+  it('🔴 標題一定要送進判官（型號住在標題裡，看不到標題就會把型號修正判成「意思一樣」）', () => {
     const diff: any = {
-      entries: [mkModified('title-changed', { titleChanged: true }), mkModified('normal')],
-      summary: { added: 0, modified: 2, removed: 0, unchanged: 0 },
+      entries: [mkModified('title-changed', { titleChanged: true })],
+      summary: { added: 0, modified: 1, removed: 0, unchanged: 0 },
     }
-    expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['normal'])
+    // 標題變了的照樣是候選（不再被排除）
+    expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['title-changed'])
+    // 而 prompt 裡必須有「標題型號不同一律 changed」這條規則
+    expect(COSMETIC_JUDGE_SYSTEM).toContain('標題裡的型號')
+    expect(COSMETIC_JUDGE_SYSTEM).toContain('6L vs 12L')
   })
 
   it('🔴 內容長到會被截斷的不可以送判——判官看不到後半段，卻會回「意思一樣」', () => {
@@ -322,5 +330,96 @@ describe('C-146：意思判官的三個回歸', () => {
       summary: { added: 0, modified: 2, removed: 0, unchanged: 0 },
     }
     expect(pickCosmeticCandidates(diff).map((e: any) => e.id)).toEqual(['short'])
+  })
+})
+
+
+/**
+ * `C-153`：可豁免項目只認伺服器自己存的那份。
+ * 以前直接讀 body 上的 `cosmetic`，等於把「永久推進指紋」的決定權交給瀏覽器——
+ * 而指紋一推進，這次保留的差異就再也沒有人看得到（正是 C-44 註解明令禁止的後果）。
+ */
+describe('countDivergentKeeps 只信伺服器端的豁免清單（C-153）', () => {
+  const mod = (id: string, extra: Record<string, unknown> = {}): any => ({
+    id, kind: 'modified', defaultAction: 'keep_old', numbersChanged: false, titleChanged: false, ...extra,
+  })
+
+  it('🔴 body 上標了 cosmetic，但伺服器沒認可 → 照算（不可以被前端騙走指紋）', () => {
+    const entries = [mod('a', { cosmetic: true }), mod('b', { cosmetic: true })]
+    const decisions = { a: 'keep_old', b: 'keep_old' }
+    // 不傳豁免清單＝伺服器沒有認可任何一項
+    expect(countDivergentKeeps(entries, decisions)).toBe(2)
+    // 只認可 a
+    expect(countDivergentKeeps(entries, decisions, new Set(['a']))).toBe(1)
+  })
+
+  it('伺服器認可、使用者也維持預設保留 → 豁免（迴圈才不會回來）', () => {
+    const entries = [mod('a'), mod('b')]
+    expect(countDivergentKeeps(entries, { a: 'keep_old', b: 'keep_old' }, new Set(['a', 'b']))).toBe(0)
+  })
+
+  it('伺服器認可，但使用者自己改成用新版 → 本來就不算 divergent', () => {
+    const entries = [mod('a')]
+    expect(countDivergentKeeps(entries, { a: 'use_new' }, new Set(['a']))).toBe(0)
+  })
+})
+
+/**
+ * `C-154`：「移除」其實只是換了分法——確定性檢查（零 LLM）。
+ * 案例取自 2026-09-04 BOYA FAQ 那次：diff report 移除 18／新增 1／修改 8，
+ * 而「樂器收音」那兩張舊卡的內容**明明還在網頁上**，只因這次重切合併成一塊而沒對上。
+ */
+describe('contentStillOnPage / markRemovedStillOnPage（C-154）', () => {
+  const PAGE = [
+    'BOYA mini2 常見問題',
+    'Q：可以用來收樂器的聲音嗎？',
+    'A：可以。BOYA mini2 支援樂器收音，建議搭配防風毛套並將增益調低，避免破音。',
+    'Q：保固多久？',
+    'A：在 MYFEEL 集資期間下單可享 2 年保固，無需特別登錄保固資訊。',
+  ].join('\n')
+
+  it('🔴 舊卡內容還在網頁上 → 認得出來（這是雜訊的大宗）', () => {
+    const card = '重點：樂器收音\n\nBOYA mini2 支援樂器收音，建議搭配防風毛套並將增益調低，避免破音。'
+    expect(contentStillOnPage(card, PAGE)).toBe(true)
+  })
+
+  it('排版差異不影響（全形標點、空白都正規化過）', () => {
+    const card = 'BOYA mini2 支援樂器收音 ， 建議搭配防風毛套並將增益調低 ，避免破音。'
+    expect(contentStillOnPage(card, PAGE)).toBe(true)
+  })
+
+  it('🔴 網頁上真的沒有了 → 不可以摺疊（那是真的被刪掉）', () => {
+    const card = '重點：舊活動\n\n本次早鳥優惠已於六月底結束，恕不接受補登記或事後折抵。'
+    expect(contentStillOnPage(card, PAGE)).toBe(false)
+  })
+
+  it('⛔ 內容太短抓不到夠長的片段 → 回 false（短句在長網頁裡必然命中，回 true 會把真刪除藏起來）', () => {
+    expect(contentStillOnPage('可以。', PAGE)).toBe(false)
+    expect(contentStillOnPage('', PAGE)).toBe(false)
+  })
+
+  it('標記時：手動編輯過的不摺疊（人特別在意那幾張）', () => {
+    const mkRemoved = (id: string, content: string, manuallyEdited: boolean): any => ({
+      id, kind: 'removed', defaultAction: 'delete_old',
+      oldChunk: { id, title: 't', content, tags: [], manuallyEdited },
+    })
+    const kept = 'BOYA mini2 支援樂器收音，建議搭配防風毛套並將增益調低，避免破音。'
+    const diff: any = {
+      entries: [mkRemoved('auto', kept, false), mkRemoved('manual', kept, true)],
+      summary: { added: 0, modified: 0, removed: 2, unchanged: 0 },
+    }
+    expect(markRemovedStillOnPage(diff, PAGE).marked).toBe(1)
+    expect(diff.entries[0]).toMatchObject({ stillOnPage: true, defaultAction: 'keep_old' })
+    expect(diff.entries[1].stillOnPage).toBeUndefined()
+    expect(diff.entries[1].defaultAction).toBe('delete_old')
+  })
+
+  it('⛔ 網頁全文抓不到（空字串）→ 一筆都不摺疊，不可以當成「全都還在」', () => {
+    const diff: any = {
+      entries: [{ id: 'a', kind: 'removed', defaultAction: 'delete_old', oldChunk: { id: 'a', title: 't', content: 'BOYA mini2 支援樂器收音，建議搭配防風毛套並將增益調低。', tags: [], manuallyEdited: false } }],
+      summary: { added: 0, modified: 0, removed: 1, unchanged: 0 },
+    }
+    expect(markRemovedStillOnPage(diff, '   ').marked).toBe(0)
+    expect(diff.entries[0].stillOnPage).toBeUndefined()
   })
 })

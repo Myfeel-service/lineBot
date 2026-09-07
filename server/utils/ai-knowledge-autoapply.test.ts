@@ -134,3 +134,56 @@ describe('classifyMinorChange', () => {
     expect(v.toApply[0]!.questions).toBeUndefined()
   })
 })
+
+/**
+ * `C-157`：排程自動套用也要吃同一套摺疊。
+ * 以前只有手動「重新同步」有，於是每天在跑、會自己改卡片又會發通知的這一條，
+ * 反而在跟重切雜訊硬碰硬——不是被假移除逼回人工（發通知煩人），
+ * 就是把只換了措辭的卡整批重寫（重算 embedding＝真的花錢）。
+ */
+describe('classifyMinorChange 吃摺疊旗標（C-157）', () => {
+  const mk = (kind: string, id: string, extra: Record<string, unknown> = {}): any => ({
+    id, kind, defaultAction: 'use_new',
+    oldChunk: { id, title: 't' + id, content: '舊內容'.repeat(5), tags: [], manuallyEdited: false, manuallyEditedAtMs: 0 },
+    newChunk: { title: 't' + id, content: '新內容'.repeat(5), tags: [], questions: [] },
+    ...extra,
+  })
+  const sum = (o: Record<string, number>) => ({ added: 0, modified: 0, removed: 0, unchanged: 0, ...o })
+
+  it('🔴 「移除」其實還在網頁上 → 不算結構有變，不該被退回人工去煩店家', () => {
+    const diff: any = {
+      entries: [mk('removed', 'r1', { stillOnPage: true }), mk('unchanged', 'u1')],
+      summary: sum({ removed: 1, unchanged: 1 }),
+    }
+    const v = classifyMinorChange(diff, { oldTotalChars: 100, newTotalChars: 100 })
+    expect(v.kind).not.toBe('manual')
+  })
+
+  it('真的被網頁刪掉的照樣退回人工（這道守門不能被弄丟）', () => {
+    const diff: any = {
+      entries: [mk('removed', 'r1'), mk('unchanged', 'u1')],
+      summary: sum({ removed: 1, unchanged: 1 }),
+    }
+    expect(classifyMinorChange(diff, { oldTotalChars: 100, newTotalChars: 100 }).kind).toBe('manual')
+  })
+
+  it('🔴 全部只是換句話說 → noop（不重寫、不重算 embedding，而且會推進版本記號）', () => {
+    const diff: any = {
+      entries: [mk('modified', 'm1', { cosmetic: true }), mk('modified', 'm2', { cosmetic: true })],
+      summary: sum({ modified: 2 }),
+    }
+    expect(classifyMinorChange(diff, { oldTotalChars: 100, newTotalChars: 100 }).kind).toBe('noop')
+  })
+
+  it('比例判定只算「真的要改的」——七張換句話說＋一張真改，不該被當成改版', () => {
+    const entries = [
+      ...Array.from({ length: 7 }, (_, i) => mk('modified', `c${i}`, { cosmetic: true })),
+      mk('modified', 'real'),
+      ...Array.from({ length: 4 }, (_, i) => mk('unchanged', `u${i}`)),
+    ]
+    const diff: any = { entries, summary: sum({ modified: 8, unchanged: 4 }) }
+    const v = classifyMinorChange(diff, { oldTotalChars: 1000, newTotalChars: 1000 })
+    expect(v.kind).toBe('auto')
+    expect(v.toApply.map(c => c.chunkId)).toEqual(['real']) // 只重寫那一張
+  })
+})

@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
-import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, pickCosmeticCandidates } from '~~/server/utils/ai-knowledge-resync'
+import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
 import {
   advanceWork,
   appendImportQualityWarnings,
@@ -129,6 +129,16 @@ export async function advancePreviewJob(
           questions: c.questions ?? [],
         })))
         /**
+         * 先做**零成本**的確定性檢查（`C-154`）：被列成「移除」的卡，內容是不是其實
+         * 還在剛抓下來的網頁上——是的話就不是網頁刪了，只是這次 AI 換了一種分法。
+         * ⛔ 排在判官前面是刻意的：這一項處理的是雜訊的大宗（實測「移除 18／新增 1／修改 8」
+         *    裡的 18），而且不花 LLM 的錢、也不會判錯。判官只是補剩下的那三成。
+         */
+        const pageText = work.segments.join('\n')
+        const { marked } = markRemovedStillOnPage(work.resyncDiff, pageText)
+        if (marked) console.log(`[resync] ${work.input.resyncSourceId} 有 ${marked} 筆「移除」其實還在網頁上（重切換了分法）`)
+
+        /**
          * 意思判官（`C-144`）：modified 裡「數字沒變」的送 LLM 判「意思有沒有變」，
          * 意思相同的標成措辭差異＝摺疊＋預設保留原卡。判官掛掉不擋 resync——
          * 代價只是這批 modified 全部照舊攤給人看（多看幾條，不會做錯事）。
@@ -137,7 +147,12 @@ export async function advancePreviewJob(
         if (cosmeticCandidates.length) {
           try {
             const judged = await runWithLlmBudget(workspaceId, () => judgeCosmeticRewrites(
-              cosmeticCandidates.map(e => ({ old: e.oldChunk?.content ?? '', next: e.newChunk?.content ?? '' })),
+              cosmeticCandidates.map(e => ({
+                oldTitle: e.oldChunk?.title ?? '',
+                old: e.oldChunk?.content ?? '',
+                nextTitle: e.newChunk?.title ?? '',
+                next: e.newChunk?.content ?? '',
+              })),
             ))
             work.usage.inputTokens += judged.inputTokens
             work.usage.outputTokens += judged.outputTokens
@@ -148,6 +163,17 @@ export async function advancePreviewJob(
             console.warn('[resync] 意思判官失敗（不擋，全部照舊給人看）:', (e as Error)?.message)
           }
         }
+        /**
+         * 把「這一版網頁下可以豁免的項目」落地到伺服器（`C-153`）。
+         * ⛔ 套用端點只認這份，不認瀏覽器送回來的 `cosmetic` 欄位——那個欄位決定的是
+         *    「要不要永久推進指紋」，而指紋一推進，這次保留的差異就再也看不到了。
+         */
+        await saveDiffExemptIds(
+          db,
+          work.input.resyncSourceId,
+          work.resyncContentHash ?? '',
+          work.resyncDiff.entries.filter(e => e.cosmetic || e.stillOnPage).map(e => e.id),
+        )
         // 縮水偵測(空內容當一等公民錯誤)。兩種都要抓,漏一種就會整源被刪:
         //  · 抓到的網頁字數暴跌 → 頁面掛掉 / 改成動態載入
         //  · 字數正常但**切出來的卡暴跌**(極端:LLM 回空陣列,不會 throw)→ 舊卡全被標成「移除」

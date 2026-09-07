@@ -272,6 +272,13 @@ export default defineEventHandler(async (event) => {
         : []
       ).filter((s: any) => liveChunkIds.has(String(s?.a?.id)) && liveChunkIds.has(String(s?.b?.id))),
       scannedAtMs: Number((dupScanSnap?.data() as any)?.scannedAtMs ?? 0),
+      /**
+       * 因為「標題型號不同」被擋掉、所以**沒有**出現在建議裡的組數（`C-156`）。
+       * ⛔ 一定要有地方看得到：不然「這兩張明明很像，為什麼沒建議合併」永遠查不出來，
+       *    只能翻伺服器 log——正是 C-68／C-94 那種「按幾次都沒新的」的沉默死亡。
+       *    這是刻意擋掉的（6L/12L 是不同型號），所以講的是「已排除」不是「漏了」。
+       */
+      blockedByModelCount: Number((dupScanSnap?.data() as any)?.blockedByModelCount ?? 0),
     },
   }
 })
