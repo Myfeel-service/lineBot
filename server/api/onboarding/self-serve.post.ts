@@ -16,7 +16,7 @@ import { defaultFreeSubscription } from '~~/server/utils/billing'
  * Response: { workspaceId, organizationId }
  *
  * ⚠️ 防濫用：**每個 uid 只能自助建立一個組織**。組織內要再開帳號走 org 的 3-OA 上限
- *    （見 org/[orgId]/workspaces）。每個新帳號自帶 200 則免費額度，不設限的話一個人
+ *    （見 org/[orgId]/workspaces）。每個新帳號自帶免費層額度，不設限的話一個人
  *    就能無限開組織換無限免費額度。
  */
 

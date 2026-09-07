@@ -61,14 +61,16 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
       const [items, counts] = await Promise.all([
         collectWorkspaceAlerts(db, doc.id, { canSettings: true, canOperate: true, skipCache: force }),
         // 用量讀不到不擋異常總覽——回 0 會被低量護欄擋掉，不會誤標
-        getCurrentMonthUsageCounts(doc.id, db).catch(() => ({ invocations: 0, answered: 0 })),
+        getCurrentMonthUsageCounts(doc.id, db).catch(() => ({ invocations: 0, answered: 0, billable: 0 })),
       ])
       return {
         id: doc.id,
         name: String((doc.data() as { name?: string }).name ?? doc.id),
         items: items.filter(a => a.state !== 'clear'),
         probedCount: items.length,
-        usage: evaluateUsageRatio(counts.invocations, counts.answered),
+        // ⛔ 分母是計費則數不是 answered：反問已經收得到錢（`D-69`），拿 answered 當分母
+        // 會把愛反問的帳號誤標成「我們在吃成本」。
+        usage: evaluateUsageRatio(counts.invocations, counts.billable),
       }
     })))
   }

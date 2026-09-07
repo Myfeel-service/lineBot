@@ -11,7 +11,7 @@ import { DEFAULT_MAX_WORKSPACES_PER_ORG, type OrganizationDoc } from '~~/shared/
  * 組織管理員在**限額內**自行建立官方帳號。請求者自動成為新 workspace 的 owner。
  * Body: { name }
  *
- * ⚠️ 限額（maxWorkspaces）是**濫用防護**，不是產品分級：每個新 OA 都自帶 200 則免費額度，
+ * ⚠️ 限額（maxWorkspaces）是**濫用防護**，不是產品分級：每個新 OA 都自帶免費層額度，
  *    沒有上限的話一個人就能無限建 OA 換無限免費額度。super admin 不受限（他是在幫客戶開通）。
  */
 export default defineEventHandler(async (event) => {

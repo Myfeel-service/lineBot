@@ -205,12 +205,13 @@ export function monthlyBillable(data: { billable?: number; answered?: number } |
 export async function getCurrentMonthUsageCounts(
   workspaceId: string,
   db: Firestore = getDb(),
-): Promise<{ invocations: number, answered: number }> {
+): Promise<{ invocations: number, answered: number, billable: number }> {
   const snap = await db.collection(AI_USAGE_COLLECTION).doc(usageDocId(workspaceId, currentYyyyMm())).get()
-  const d = snap.data() as { invocations?: number, answered?: number } | undefined
+  const d = snap.data() as { invocations?: number, answered?: number, billable?: number } | undefined
   return {
     invocations: Number(d?.invocations ?? 0),
     answered: Number(d?.answered ?? 0),
+    billable: monthlyBillable(d),
   }
 }
 

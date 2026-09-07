@@ -36,7 +36,7 @@
             <div class="sa-pay-stat" :class="{ 'sa-pay-stat--alert': flaggedWsCount > 0 }">
               <div class="sa-pay-stat__label">高成本帳號</div>
               <div class="sa-pay-stat__value">{{ flaggedWsCount }} 個</div>
-              <div class="sa-pay-stat__hint">呼叫超過答出 {{ USAGE_RATIO_FLAG_THRESHOLD }} 倍才算</div>
+              <div class="sa-pay-stat__hint">呼叫超過計費則數 {{ USAGE_RATIO_FLAG_THRESHOLD }} 倍才算</div>
             </div>
           </div>
           <p v-if="data?.truncated" class="sa-alerts-foot sa-alerts-foot--pad sa-alerts-foot--warn">
@@ -93,12 +93,12 @@
                   <span v-else class="sa-alerts-none">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="本月 AI 呼叫 → 答出" width="180" align="right">
+              <el-table-column label="本月 AI 呼叫 → 計費" width="180" align="right">
                 <template #default="{ row }">
-                  <template v-if="row.usage.invocations || row.usage.answered">
-                    <div class="sa-alerts-usage">{{ row.usage.invocations }} → {{ row.usage.answered }}</div>
+                  <template v-if="row.usage.invocations || row.usage.billable">
+                    <div class="sa-alerts-usage">{{ row.usage.invocations }} → {{ row.usage.billable }}</div>
                     <el-tag v-if="row.usage.flagged" type="warning" size="small">
-                      {{ row.usage.ratio === null ? '都沒答出' : `是答出的 ${row.usage.ratio.toFixed(1)} 倍` }}
+                      {{ row.usage.ratio === null ? '一則都沒收到' : `是計費則數的 ${row.usage.ratio.toFixed(1)} 倍` }}
                     </el-tag>
                   </template>
                   <el-tooltip v-else placement="top" content="本月沒有 AI 活動">
@@ -113,7 +113,7 @@
               </el-table-column>
             </el-table>
             <p class="sa-alerts-foot">
-              其他 {{ healthyCount }} 個帳號檢查正常。高成本的標準：計費收在「答出」，呼叫多、答出少的帳號成本掛在我們身上——超過
+              其他 {{ healthyCount }} 個帳號檢查正常。高成本的標準：成本按「呼叫」走、收入按「計費則數」走（答出與反問才收得到錢，答不出轉真人不收），呼叫多、收得少的帳號成本掛在我們身上——超過
               {{ USAGE_RATIO_FLAG_THRESHOLD }} 倍才標（正常約 2～2.5 倍；本月呼叫不足 {{ USAGE_RATIO_MIN_INVOCATIONS }} 次的小樣本不判）。標「(系統端)」的異常是我們這邊要處理的，店家動不了手。
             </p>
           </div>

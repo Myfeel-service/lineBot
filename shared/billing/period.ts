@@ -193,7 +193,7 @@ function downgradeToFree(sub: WorkspaceSubscription): WorkspaceSubscription {
  *
  * ⚠️ 方案**必須由呼叫端從訂單傳進來**,不能沿用 roll 之後的 sub.planId——扣款若拖到
  *    超過寬限期,roll 早就把方案降成免費層了,直接沿用會變成「免費方案 active」,
- *    客戶付了錢卻只拿到 200 則。傳 planId 進來等於「錢收到了,把方案復原」。
+ *    客戶付了錢卻只拿到免費層額度。傳 planId 進來等於「錢收到了,把方案復原」。
  *    也因此**期末降級**只要把訂單的 planId 換成 pendingPlanId 就自然生效。
  */
 export function confirmRenewal(

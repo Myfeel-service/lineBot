@@ -18,7 +18,7 @@ describe('evaluateUsageRatio（C-7 呼叫/答出高成本警示）', () => {
     expect(evaluateUsageRatio(20, 1).flagged).toBe(false) // 比值 20 也不標
   })
 
-  it('answered=0 且呼叫夠多＝最極端，要標；比值回 null 不回 Infinity', () => {
+  it('一則都沒收到而呼叫夠多＝最極端，要標；比值回 null 不回 Infinity', () => {
     const v = evaluateUsageRatio(30, 0)
     expect(v.flagged).toBe(true)
     expect(v.ratio).toBeNull()
@@ -26,6 +26,6 @@ describe('evaluateUsageRatio（C-7 呼叫/答出高成本警示）', () => {
 
   it('髒輸入（負數、NaN）收斂成 0，不炸也不誤標', () => {
     const v = evaluateUsageRatio(Number.NaN, -5)
-    expect(v).toMatchObject({ invocations: 0, answered: 0, ratio: null, flagged: false })
+    expect(v).toMatchObject({ invocations: 0, billable: 0, ratio: null, flagged: false })
   })
 })

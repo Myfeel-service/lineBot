@@ -6,10 +6,10 @@
  *
  * ⚠️ 兩個設計重點：
  *
- * 1. **每個帳號一律有方案、一律攔截。** 沒有 subscription 欄位 = 免費層（200 則）,
+ * 1. **每個帳號一律有方案、一律攔截。** 沒有 subscription 欄位 = 免費層（額度看 plans.ts，別在註解裡寫死數字）,
  *    不是「不攔截」。（早期為了保護既有租戶留的「無訂閱不攔截」後門已移除——那是個
  *    吃到飽漏洞,而且逼得所有額度邏輯都要多帶一個「可能沒訂閱」的狀態。）
- *    唯一的 fail-open 是 **Firestore 讀取失敗**：基礎設施出問題不該把付費帳號鎖在 200 則。
+ *    唯一的 fail-open 是 **Firestore 讀取失敗**：基礎設施出問題不該把付費帳號鎖在免費層額度。
  *
  * 2. **週期在讀取時就地推算**（rollSubscriptionToCurrentPeriod）。每日排程只是把結果
  *    落地成資料,不是正確性的前提——排程沒跑,額度重置與到期降級照樣正確。
@@ -113,7 +113,7 @@ async function readRawSubscription(
  * 讀取帳號訂閱,並推進到「包含今天的那一期」。
  *
  * - 沒掛訂閱 → 合成一份免費層訂閱（錨定日 = 今天）,**不是**回 null。
- * - 回 null 只代表 **Firestore 讀取失敗** → 呼叫端 fail-open,別把付費帳號鎖在 200 則。
+ * - 回 null 只代表 **Firestore 讀取失敗** → 呼叫端 fail-open,別把付費帳號鎖在免費層額度。
  */
 export async function getWorkspaceSubscription(
   workspaceId: string,
@@ -205,9 +205,9 @@ export type QuotaAction = 'allow' | 'handoff' | 'downgrade'
  * 決定本次呼叫的 quota 處置（純函式，便於測試）。
  *
  * - **內部 / 測試方案**：完全不擋（真無限）。
- * - **有則數額度**：只看則數。則數本身即封住成本（專業 10,000 則 ≈ 50M tokens）,
+ * - **有則數額度**：只看則數。則數本身即封住成本（最高階方案的則數 × 每則 token 就是天花板）,
  *   不再疊 token 護欄——否則付費帳號會在遠低於所購則數處被固定的 token cap 提早切斷
- *   （1M token ≈ 200 則,那是照免費層校準的舊機制）。
+ *   （1M token 約當幾百則,那是照舊免費層校準的機制）。
  * - **無則數上限**（enterprise 客製未設額度 / 訂閱讀取失敗）：token 護欄是唯一煞車。
  */
 export function resolveQuotaAction(
