@@ -24,7 +24,8 @@ export const GEMINI_PRICING = {
   embedPerM: 0.15,
 } as const
 
-export const USD_TO_TWD = 32
+/** 匯率的單一來源在 `shared/usd-twd.ts`；這裡只是轉出去給舊的匯入點用 */
+export { USD_TO_TWD } from '~~/shared/usd-twd'
 
 export function usdForTokens(input: number, output: number, embed: number): number {
   return (input / 1_000_000) * GEMINI_PRICING.inputPerM

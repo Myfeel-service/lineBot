@@ -494,6 +494,37 @@ $cost-host: #8a6f5a;
 .sa-cost-dot--infra { background: $cost-infra; }
 .sa-cost-dot--host { background: $cost-host; }
 
+/*
+ * 口徑聲明：這張卡的一天／一個月跟台灣日曆差 15 小時。
+ * 中性藍底、不用警示色——這不是「出事了」，是「先講清楚在看什麼」，
+ * 用警示色會讓人以為數字有問題（2026-09-07）。
+ */
+.sa-infra-basis {
+  margin: 0 0 1.1rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: rgba(59, 130, 246, 0.06);
+  font-size: 0.8rem;
+  line-height: 1.75;
+  color: var(--color-text-secondary, #6b7280);
+
+  b { color: var(--color-text-primary, #111827); font-weight: 600; }
+}
+
+/*
+ * 被略過的 0 元服務要點名（見 `aws-cost.ts` 的 `zeroCostServices`）。
+ * 純說明、不是警示，所以只用小字灰字，不搶主清單的視線。
+ */
+.sa-host-zero {
+  margin: 0.6rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--color-text-secondary, #6b7280);
+
+  b { color: var(--color-text-primary, #111827); font-weight: 600; }
+}
+
 /* 讀不到用量時的警示：務必看得出「不是沒花錢，是沒查到」 */
 .sa-infra-warn {
   margin-top: 1rem;

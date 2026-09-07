@@ -78,7 +78,7 @@
                     </div>
                     <div v-if="(row.usage?.invocations ?? 0) > 0" class="text-xs text-muted">
                       答出 {{ (row.usage?.answered ?? 0).toLocaleString('zh-TW') }} 則
-                      <template v-if="(row.usage?.conversationCostUsd ?? 0) > 0">・約 NT${{ Math.round((row.usage?.conversationCostUsd ?? 0) * 32).toLocaleString('zh-TW') }}</template>
+                      <template v-if="(row.usage?.conversationCostUsd ?? 0) > 0">・約 NT${{ Math.round((row.usage?.conversationCostUsd ?? 0) * USD_TO_TWD).toLocaleString('zh-TW') }}</template>
                     </div>
                   </div>
                 </template>
@@ -209,6 +209,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS, BILLING_PLAN_ORDER, DEFAULT_BILLING_PLAN_ID } from '~~/shared/billing/plans'
 import type { BillingPlanId, SubscriptionStatus } from '~~/shared/billing/plans'
 import { CALL_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { USD_TO_TWD } from '~~/shared/usd-twd'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '官方帳號管理 — 超級管理員' })

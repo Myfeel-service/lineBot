@@ -1,5 +1,5 @@
 import { GoogleAuth } from 'google-auth-library'
-import { taipeiDateKey } from '~~/shared/taipei-day'
+import { billingDateKey } from '~~/shared/google-billing-day'
 
 /**
  * Cloud Monitoring 用量查詢（給超管成本頁用）。
@@ -41,11 +41,15 @@ function describeError(e: any): string {
 }
 
 /**
- * 撈一支指標的每日序列，回傳 `台北日期 → 數值`。
+ * 撈一支指標的每日序列，回傳 `Google 帳單日 → 數值`。
  *
- * 分日對齊：把查詢起點對到台北 00:00，`alignmentPeriod=86400s` 的每一桶就剛好是一個台北日。
- * （Google 的免費額度其實在**太平洋時間**半夜重置；2026-08-09 用小時級資料實測兩種分法
- * 的月費用只差約 2%，不值得為此把畫面上的日期改成看不懂的時區，故一律用台北日。）
+ * 分日對齊：把查詢的**結束時間**對到太平洋午夜（`billingMidnightAfter`），
+ * `alignmentPeriod=86400s` 的每一桶就剛好是一個帳單日。
+ *
+ * ⛔ 這裡曾經用台北日（2026-08-09～09-07）。當時的理由是「兩種分法的月費用只差約 2%，
+ * 不值得把畫面上的日期改成看不懂的時區」——**只看金額所以看漏了**：免費額度是逐日扣的，
+ * 切錯日界會讓「有沒有超出免費額度」這件事整個講反（2026-09-06 的寫入，台北切是兩天各
+ * 一萬多、Google 切是同一天 21,893 超額）。差異的原委寫在 `shared/google-billing-day.ts`。
  */
 export async function fetchDailyMetric(opts: {
   projectId: string
@@ -77,8 +81,8 @@ export async function fetchDailyMetric(opts: {
   const out = new Map<string, number>()
   for (const series of (res.data?.timeSeries ?? []) as any[]) {
     for (const p of series.points ?? []) {
-      // 每桶涵蓋 [end-24h, end)：取 end 前一毫秒換算台北日，才不會落到隔天
-      const day = taipeiDateKey(new Date(new Date(p.interval.endTime).getTime() - 1))
+      // 每桶涵蓋 [end-24h, end)：取 end 前一毫秒換算帳單日，才不會落到隔天
+      const day = billingDateKey(new Date(new Date(p.interval.endTime).getTime() - 1))
       const v = Number(p.value?.int64Value ?? p.value?.doubleValue ?? 0)
       out.set(day, (out.get(day) ?? 0) + v)
     }

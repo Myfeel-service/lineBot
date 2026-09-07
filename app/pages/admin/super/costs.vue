@@ -278,6 +278,17 @@
               資料庫是<b>按次計費</b>的：每讀一筆資料、每寫一筆資料都算錢，但<b>每天前 5 萬次讀取、2 萬次寫入免費</b>。
               所以平常幾乎不用錢，<b>只有「某天大量讀取」才會產生費用</b>（例如整批稽核、回填腳本、大量重整報表）。
             </p>
+            <!--
+              口徑聲明擺在數字前面：這張卡的「一天／一個月」跟台灣的日曆差 15 小時。
+              不講出來的話，跟主控台一比就會變成「兩邊數字對不上」的懸案（2026-09-07 實際發生過）。
+            -->
+            <p class="sa-infra-basis">
+              📅 這張卡的「一天」與「這個月」<b>跟著 Google 帳單走，不是台灣的日曆</b>：
+              Google 的一天從<b>台灣時間{{ infra.dayBoundaryTaipei }}</b>開始算，免費額度也是那時候重置。
+              所以下面每一根長條是「台灣的{{ infra.dayBoundaryTaipei }}到隔天{{ infra.dayBoundaryTaipei }}」，
+              「{{ periodLabel }}」也是從台灣 1 號{{ infra.dayBoundaryTaipei }}起算——這樣才對得上 Firebase 主控台。
+              （上面 AI 那張卡用的是台灣的月份，兩張卡的月界本來就不一樣。）
+            </p>
 
             <!-- 四項相加＝資料庫總花費，才並排 -->
             <div class="sa-infra-grid">
@@ -291,15 +302,20 @@
               <div class="sa-infra-cell">
                 <div class="sa-infra-cell__label">寫入資料</div>
                 <div class="sa-infra-cell__val">{{ ntdSoft(infra.totals.writeCostUsd) }}</div>
+                <!--
+                  ⛔ 超額時一定要把「其中幾次要錢」講出來，跟讀取那格對稱。
+                  原本只寫得出「都在免費額度內」，於是 2026-09-06 那天明明超額 1,898 次
+                  （主控台紅字寫「超出上限」），這裡卻因為金額四捨五入成 NT$0 而說沒事。
+                -->
                 <div class="sa-infra-cell__sub">
-                  {{ times(infra.totals.writes) }}<template v-if="infra.totals.billableWrites <= 0">，都在免費額度內</template>
+                  {{ times(infra.totals.writes) }}<template v-if="infra.totals.billableWrites > 0">，其中 {{ times(infra.totals.billableWrites) }}要錢</template><template v-else>，都在免費額度內</template>
                 </div>
               </div>
               <div class="sa-infra-cell">
                 <div class="sa-infra-cell__label">刪除資料</div>
                 <div class="sa-infra-cell__val">{{ ntdSoft(infra.totals.deleteCostUsd) }}</div>
                 <div class="sa-infra-cell__sub">
-                  {{ times(infra.totals.deletes) }}<template v-if="infra.totals.billableDeletes <= 0">，都在免費額度內</template>
+                  {{ times(infra.totals.deletes) }}<template v-if="infra.totals.billableDeletes > 0">，其中 {{ times(infra.totals.billableDeletes) }}要錢</template><template v-else>，都在免費額度內</template>
                 </div>
               </div>
               <div class="sa-infra-cell">
@@ -334,7 +350,7 @@
                   v-for="d in infra.days"
                   :key="d.day"
                   class="sa-infra-col"
-                  :title="`${d.day}：讀取 ${d.reads.toLocaleString()} 次、寫入 ${d.writes.toLocaleString()} 次 → ${ntdSoft(d.costUsd)}`"
+                  :title="`${dayTitle(d.day)}：讀取 ${d.reads.toLocaleString()} 次、寫入 ${d.writes.toLocaleString()} 次 → ${ntdSoft(d.costUsd)}`"
                 >
                   <span v-if="labelledDays.has(d.day)" class="sa-infra-col__tag">{{ ntdSoft(d.costUsd) }}</span>
                   <span class="sa-infra-col__bar" :style="{ height: barPct(d.reads) + '%' }">
@@ -349,10 +365,11 @@
 
             <div v-if="infra.topDays.length" class="sa-infra-top">
               錢主要花在
-              <b v-for="(d, i) in infra.topDays" :key="d.day">
+              <b v-for="(d, i) in infra.topDays" :key="d.day" :title="dayTitle(d.day)">
                 {{ i ? '、' : '' }}{{ Number(d.day.slice(5, 7)) }}/{{ Number(d.day.slice(8, 10)) }}（{{ ntdSoft(d.costUsd) }}）
               </b>
               。單日讀取暴增通常是整批稽核、回填腳本或反覆重整報表造成的，不是客人來訊。
+              <span class="text-muted">（日期是 Google 的日曆，滑上去看對應台灣的幾點到幾點）</span>
             </div>
 
             <p class="sa-cost-est__foot">
@@ -361,6 +378,10 @@
               只能用「讀取次數 × 每筆平均大小」推估（每 GB US${{ infra.pricing.egressPerGib }}）。
               每筆 {{ Math.round(infra.bytesPerRead / 1024 * 10) / 10 }} KB 是量測各集合實際大小後取的保守值，回推金額與 Google 帳單相符（誤差 5% 內）。
               另外這是<b>整個系統</b>的用量，Google 不會依官方帳號分開記，因此無法像 AI 那樣分攤到各帳號。
+              <br>
+              <b>跟主控台的「專案費用」比對時</b>：這裡算到<b>剛剛這一分鐘</b>，主控台的金額<b>會落後一到兩天</b>；
+              匯率固定用 NT${{ infra.usdToTwd }} 是刻意估高（實際約 30.6）。所以本月通常是這裡比較高，屬正常。
+              要逐元對帳請挑<b>已經結完的上個月</b>比，差異才有意義。
             </p>
           </div>
         </div>
@@ -430,6 +451,20 @@
             </div>
             <div v-else class="sa-cost-empty">這個月 AWS 沒有產生費用（都在免費額度內）</div>
 
+            <!--
+              ⛔ 被略過的服務要點名。2026-09-07 老闆問「怎麼沒看到 Lightsail 的費用」——
+              舊版答不出「它是 0 元被略過」還是「它不在這個 AWS 帳號」，而這兩件事的
+              下一步完全不同。所以：0 元的列在這裡，兩邊都沒有的就是真的沒紀錄。
+            -->
+            <p class="sa-host-zero">
+              <template v-if="host.zeroCostServices.length">
+                這個月<b>有用到但沒收錢</b>的服務（在免費額度內或試用期）：{{ host.zeroCostServices.join('、') }}。
+              </template>
+              <template v-else>這個月沒有「有用到但 0 元」的服務。</template>
+              上面清單與這一行<b>都沒出現的服務</b>，代表這組憑證看的 AWS 帳號這個月完全沒有它的紀錄——
+              最可能是<b>它開在另一個 AWS 帳號</b>（Cost Explorer 只看得到憑證所屬帳號）。
+            </p>
+
             <!-- Amplify 一家佔九成五，只給一個總數答不出「為什麼這麼貴」，所以再拆一層。
                  ⛔ 拆不開時要出聲（上面的分類會整筆落在「未分類」），不可以靜靜不畫。 -->
             <template v-if="host.services.length">
@@ -481,6 +516,8 @@ import {
   type CostDriver,
   type CostLeaf,
 } from '~~/shared/aws-cost-usage'
+import { USD_TO_TWD } from '~~/shared/usd-twd'
+import { billingDayTaipeiSpan } from '~~/shared/google-billing-day'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '成本總覽 — 超級管理員' })
@@ -565,6 +602,11 @@ interface Infra {
   multiRegion: boolean
   /** 流量估算所用的「每筆讀取多少 bytes」，要顯示給人看才知道估算依據 */
   bytesPerRead: number
+  /**
+   * Google 的一天在台灣是幾點換日（例：`下午 3 點`）。
+   * ⛔ 由後端回、不要在前端寫死——夏令時是下午 3 點、冬令時是下午 4 點。
+   */
+  dayBoundaryTaipei: string
   pricing: InfraPricing
   days: InfraDay[]
   totals: InfraTotals
@@ -592,6 +634,8 @@ interface Host {
   /** 實付＝原價＋折抵 */
   netTotal: number
   services: Array<{ name: string; cost: number }>
+  /** 有紀錄但 0 元的服務名；空陣列＝真的沒有這種服務，與「查不到」是兩件事 */
+  zeroCostServices: string[]
   /** 哪個服務有再往下拆（目前只有 Amplify，它佔帳單九成五） */
   itemizedService: string
   /** ⛔ null＝這次拆不開（原因見 amplifyUsageReason），與「空陣列＝真的沒用量」是兩件事 */
@@ -600,7 +644,8 @@ interface Host {
 }
 type HostResponse = Partial<Host> & { status: 'ok' | 'unavailable' }
 
-const USD_TO_TWD = 32
+// ⛔ 匯率不要在這裡再寫一份：單一來源在 `shared/usd-twd.ts`，後端三支端點回的
+// `usdToTwd` 也是同一個值（2026-09-07 收斂前這個數字全站有五份，B-44⑥）
 function twd(usd: number) { return Math.round((usd || 0) * USD_TO_TWD) }
 function ntd(usd: number) { return `NT$${twd(usd).toLocaleString('en-US')}` }
 // 有一點點花費、但四捨五入後不到 NT$1 → 顯示「<NT$1」而非誤導的「NT$0」
@@ -632,11 +677,14 @@ const EMPTY_INFRA_TOTALS: InfraTotals = {
   egressCostUsd: 0, measuredCostUsd: 0, totalCostUsd: 0,
 }
 const DEFAULT_INFRA_PRICING: InfraPricing = { readPer100k: 0.06, writePer100k: 0.18, deletePer100k: 0.02, storagePerGibMonth: 0.18, egressPerGib: 0.12 }
+// 後端沒回時的保底：一年裡夏令時佔多數，且這個字串只出現在說明句、不參與任何計算
+const DEFAULT_DAY_BOUNDARY = '下午 3 點'
 
 const infraLoading = ref(true)
 const infra = ref<Infra>({
   status: 'unavailable', reason: '', projectId: '', usdToTwd: USD_TO_TWD,
-  location: '', multiRegion: true, bytesPerRead: 1024, pricing: DEFAULT_INFRA_PRICING,
+  location: '', multiRegion: true, bytesPerRead: 1024, dayBoundaryTaipei: DEFAULT_DAY_BOUNDARY,
+  pricing: DEFAULT_INFRA_PRICING,
   days: [], totals: EMPTY_INFRA_TOTALS, topDays: [],
 })
 /** 上月資料庫花費；null＝讀不到（此時不可與本月相減） */
@@ -644,7 +692,8 @@ const prevInfraCostUsd = ref<number | null>(null)
 
 const hostLoading = ref(true)
 const host = ref<Host>({
-  status: 'unavailable', reason: '', currency: 'USD', usdToTwd: USD_TO_TWD, totalCost: 0, creditTotal: 0, netTotal: 0, services: [],
+  status: 'unavailable', reason: '', currency: 'USD', usdToTwd: USD_TO_TWD, totalCost: 0, creditTotal: 0, netTotal: 0,
+  services: [], zeroCostServices: [],
   itemizedService: 'AWS Amplify', amplifyUsage: null, amplifyUsageReason: '',
 })
 /** 上月主機花費；null＝讀不到 */
@@ -779,6 +828,16 @@ const locationLabel = computed(() => {
   return infra.value.multiRegion ? `${loc} 多區域` : `${loc} 單一區域`
 })
 
+/**
+ * 長條的說明文字：日期後面一定要接「台灣的幾點到幾點」。
+ * 這裡的 `d.day` 是 **Google 帳單日**（太平洋日曆），只印「9/6」會被讀成台灣的 9/6，
+ * 那正是 2026-09-07 跟主控台對不上的那個誤會。
+ */
+function dayTitle(day: string) {
+  const span = billingDayTaipeiSpan(day)
+  return `Google 的 ${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}（台灣 ${span.from} ～ ${span.to}）`
+}
+
 const maxReads = computed(() => Math.max(0, ...infra.value.days.map(d => d.reads)))
 function barPct(reads: number) { return maxReads.value > 0 ? (reads / maxReads.value) * 100 : 0 }
 function paidPct(d: InfraDay) { return d.reads > 0 ? (d.billableReads / d.reads) * 100 : 0 }
@@ -882,6 +941,7 @@ function normalizeInfra(res: InfraResponse): Infra {
     location: res.location || '',
     multiRegion: res.multiRegion ?? true,
     bytesPerRead: res.bytesPerRead || 1024,
+    dayBoundaryTaipei: res.dayBoundaryTaipei || DEFAULT_DAY_BOUNDARY,
     pricing: res.pricing || DEFAULT_INFRA_PRICING,
     days: ok ? (res.days || []) : [],
     totals: ok ? (res.totals || EMPTY_INFRA_TOTALS) : EMPTY_INFRA_TOTALS,
@@ -937,6 +997,7 @@ function normalizeHost(res: HostResponse): Host {
     creditTotal: ok ? (res.creditTotal ?? 0) : 0,
     netTotal: ok ? (res.netTotal ?? res.totalCost ?? 0) : 0,
     services: ok ? (res.services || []) : [],
+    zeroCostServices: ok ? (res.zeroCostServices || []) : [],
     itemizedService: res.itemizedService || 'AWS Amplify',
     // ⛔ 這裡不可以用 `|| []` 兜底：`null`（這次拆不開）與 `[]`（真的沒有用量）
     //    在畫面上要走完全不同的分支，兜成同一個就變成「靜靜少一塊」

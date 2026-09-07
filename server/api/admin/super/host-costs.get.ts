@@ -1,5 +1,6 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { fetchAwsCost, fetchAwsServiceUsage, AwsCostUnavailableError, type AwsUsageItem } from '~~/server/utils/aws-cost'
+import { USD_TO_TWD } from '~~/shared/usd-twd'
 
 /**
  * GET /api/admin/super/host-costs?period=YYYYMM
@@ -19,7 +20,6 @@ import { fetchAwsCost, fetchAwsServiceUsage, AwsCostUnavailableError, type AwsUs
  * ⚠️ Cost Explorer 每次查詢要 US$0.01 → 快取 12 小時（帳單資料一天才更新一次）。
  */
 
-const USD_TO_TWD = 32
 // 帳單一天更新一次，快取久一點；主要是為了不要每次重整都付 US$0.01。
 // 2026-09-02 從 6 小時拉長到 12：拆項查詢讓每次冷載從 1 次變 2 次，拉長快取正好抵掉。
 const CACHE_TTL_MS = 12 * 60 * 60_000
@@ -85,6 +85,8 @@ export default defineEventHandler(async (event) => {
       creditTotal: res.creditTotal,
       netTotal: res.netTotal,
       services: res.services,
+      /** 有紀錄但 0 元的服務名；⛔ 畫面要講出來，否則「沒看到 X」答不出是 0 元還是不在這個帳號 */
+      zeroCostServices: res.zeroCostServices,
       days: res.days,
       itemizedService: ITEMIZED_SERVICE,
       /** null＝這次拆不開（原因見 amplifyUsageReason），⛔ 不可與「空陣列＝真的沒用量」混為一談 */

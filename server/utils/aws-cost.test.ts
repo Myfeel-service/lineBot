@@ -66,6 +66,43 @@ describe('parseCostResponse', () => {
     expect(res.services).toEqual([{ name: 'AWS Amplify', cost: 3.2 }])
   })
 
+  it('0 元的服務不進主清單，但名字要留下來（否則「沒看到 Lightsail」答不出是哪一種）', () => {
+    const res = parseCostResponse({
+      $metadata: {},
+      ResultsByTime: [day('2026-09-01', [
+        ['AWS Amplify', 'Usage', 3.2],
+        ['Amazon Lightsail', 'Usage', 0],
+        ['Amazon Simple Storage Service', 'Usage', 0],
+      ])],
+    } as any)
+    expect(res.services).toEqual([{ name: 'AWS Amplify', cost: 3.2 }])
+    // 依名稱排序，畫面才不會每次重整順序都不一樣
+    expect(res.zeroCostServices).toEqual(['Amazon Lightsail', 'Amazon Simple Storage Service'])
+    // 總額不含 0 元那些（本來就是 0，但要確定沒被算成負或 NaN）
+    expect(res.totalCost).toBeCloseTo(3.2, 6)
+  })
+
+  it('完全沒出現的服務不會被編進 zeroCostServices（「沒紀錄」≠「0 元」）', () => {
+    const res = parseCostResponse({
+      $metadata: {},
+      ResultsByTime: [day('2026-09-01', [['AWS Amplify', 'Usage', 1]])],
+    } as any)
+    expect(res.zeroCostServices).toEqual([])
+    expect(res.services.map(s => s.name)).not.toContain('Amazon Lightsail')
+  })
+
+  it('折抵把某服務沖成 0 時算「0 元」而非消失（原價 3.2、折抵 -3.2 的那個不算，這裡測純 0）', () => {
+    const res = parseCostResponse({
+      $metadata: {},
+      ResultsByTime: [
+        day('2026-09-01', [['Amazon Lightsail', 'Usage', 0]]),
+        day('2026-09-02', [['Amazon Lightsail', 'Usage', 0]]),
+      ],
+    } as any)
+    // 跨兩天都是 0 → 只列一次名字，不重複
+    expect(res.zeroCostServices).toEqual(['Amazon Lightsail'])
+  })
+
   it('沒有折抵時 creditTotal 為 0、netTotal 等於 totalCost', () => {
     const res = parseCostResponse({
       $metadata: {},

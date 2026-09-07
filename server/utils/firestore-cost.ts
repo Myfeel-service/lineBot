@@ -8,9 +8,13 @@
  * 幣別換算與帳單幣別無關（帳單本身是 TWD，這裡先算 USD 再乘匯率，與 AI 成本同做法）。
  * 改價只改這裡。
  */
-import { taipeiDateKey } from '~~/shared/taipei-day'
-
-/** 每日免費額度（只適用預設資料庫；超出的部分才計費） */
+/**
+ * 每日免費額度（只適用預設資料庫；超出的部分才計費）。
+ *
+ * ⛔「每日」＝ **Google 的一天**（太平洋時間半夜重置＝台灣下午 3 點），不是台北的一天。
+ * 進來的 `DayUsage.day` 必須已經是帳單日（見 `shared/google-billing-day.ts`），
+ * 這裡只負責算術、不管切法——切錯了這裡看不出來，只會算出一個「看起來合理」的數字。
+ */
 export const FIRESTORE_FREE_TIER = {
   readsPerDay: 50_000,
   writesPerDay: 20_000,
@@ -58,7 +62,7 @@ export const ASSUMED_BYTES_PER_READ = 1024
 export const GIB = 1024 ** 3
 
 export type DayUsage = {
-  /** 台北日曆日 `YYYY-MM-DD` */
+  /** Google 帳單日 `YYYY-MM-DD`（太平洋日曆日，見 `shared/google-billing-day.ts`） */
   day: string
   reads: number
   writes: number
@@ -107,14 +111,6 @@ export type FirestoreCostResult = {
 
 const round6 = (n: number) => Number(n.toFixed(6))
 
-/** 列出 [start, end) 之間每一個台北日（`YYYY-MM-DD`） */
-export function enumerateTaipeiDays(start: Date, end: Date): string[] {
-  const out: string[] = []
-  for (let t = start.getTime(); t < end.getTime(); t += 86_400_000)
-    out.push(taipeiDateKey(new Date(t)))
-  return out
-}
-
 /**
  * 存量指標常有缺日（Google 不保證每天都送點）。缺的那天沿用前一個已知值，
  * 不能當 0 —— 否則會少算儲存費，畫面上也會出現莫名其妙的凹陷。
@@ -134,7 +130,8 @@ export function forwardFill(days: string[], series: Map<string, number>): Map<st
 /**
  * 把每日用量換算成費用。
  *
- * - 讀／寫／刪：**逐日**扣免費額後計價（不是整月加總後才扣，否則會少算很多）。
+ * - 讀／寫／刪：**逐日**扣免費額後計價（不是整月加總後才扣，否則會少算很多）；
+ *   「日」是 Google 的日，切法在 `shared/google-billing-day.ts`。
  * - 儲存：免費額是持續 1 GiB，費率是「每 GiB 每月」，故逐日攤提
  *   `(存量 - 免費額) × 月費率 ÷ 當月天數`。只跑了半個月就只算半個月，不會虛報。
  */

@@ -71,6 +71,16 @@ export type AwsCostResult = {
   netTotal: number
   /** 各服務花費（原價），由高到低 */
   services: Array<{ name: string; cost: number }>
+  /**
+   * 這個月**有紀錄但沒產生費用**的服務名稱（在免費額度內、或試用期）。
+   *
+   * ⛔ 這個欄位存在的唯一理由是「過濾掉東西要說得出丟了什麼」：
+   * 服務清單只列 >0 的，2026-09-07 老闆問「怎麼沒看到 Lightsail 的費用」時，
+   * 舊版根本答不出「它是 0 元被略過」還是「它不在這個 AWS 帳號裡」——
+   * 兩種下一步完全不同（一個不用管、一個要去接另一個帳號）。
+   * 所以「不在這兩個清單裡」＝這個帳號這個月**完全沒有它的紀錄**，是可以斷言的事實。
+   */
+  zeroCostServices: string[]
   /** 每日花費（原價，UTC 日） */
   days: Array<{ day: string; cost: number }>
 }
@@ -210,14 +220,16 @@ export function parseCostResponse(res: GetCostAndUsageCommandOutput): AwsCostRes
     days.push({ day: String(bucket.TimePeriod?.Start ?? ''), cost: Number(dayTotal.toFixed(6)) })
   }
 
-  const services = [...byService.entries()]
+  const priced = [...byService.entries()]
     .map(([name, cost]) => ({ name, cost: Number(cost.toFixed(6)) }))
-    // 零元服務（用了但在免費額度內）留著沒意義，只會把清單塞滿
-    .filter(s => s.cost > 0)
-    .sort((a, b) => b.cost - a.cost)
+
+  // 零元服務不進主清單（只會把清單塞滿），但**名字要留下來**：
+  // 「0 元被略過」與「這個帳號沒有這個服務」是兩件事，畫面必須答得出是哪一種
+  const services = priced.filter(s => s.cost > 0).sort((a, b) => b.cost - a.cost)
+  const zeroCostServices = priced.filter(s => s.cost <= 0).map(s => s.name).sort()
 
   const totalCost = Number(services.reduce((a, s) => a + s.cost, 0).toFixed(6))
   creditTotal = Number(creditTotal.toFixed(6))
   const netTotal = Number((totalCost + creditTotal).toFixed(6))
-  return { currency, totalCost, creditTotal, netTotal, services, days }
+  return { currency, totalCost, creditTotal, netTotal, services, zeroCostServices, days }
 }
