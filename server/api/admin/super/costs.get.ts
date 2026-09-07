@@ -1,5 +1,5 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
-import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
+import { AI_USAGE_COLLECTION, currentYyyyMm, monthlyBillable } from '~~/server/utils/ai-usage'
 import { bucketAiCosts, GEMINI_PRICING, USD_TO_TWD } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
@@ -69,6 +69,7 @@ export default defineEventHandler(async (event) => {
       aiEnabled: enabledByWs.get(d.id) ?? false,
       invocations: Number(u?.invocations ?? 0),
       answered: Number(u?.answered ?? 0),
+      billable: monthlyBillable(u), // 計費則數（含反問）；answered 是品質數字，兩者自 `D-69` 起不同
       testInvocations: Number(u?.testInvocations ?? 0),
       conversationCostUsd: round4(c.conversation),
       buildCostUsd: round4(c.build),
@@ -79,7 +80,7 @@ export default defineEventHandler(async (event) => {
 
   workspaces.sort((a, b) => b.totalCostUsd - a.totalCostUsd)
 
-  const acc = { conversationCostUsd: 0, buildCostUsd: 0, testCostUsd: 0, totalCostUsd: 0, invocations: 0, answered: 0, testInvocations: 0, activeWorkspaces: 0 }
+  const acc = { conversationCostUsd: 0, buildCostUsd: 0, testCostUsd: 0, totalCostUsd: 0, invocations: 0, answered: 0, billable: 0, testInvocations: 0, activeWorkspaces: 0 }
   for (const r of workspaces) {
     acc.conversationCostUsd += r.conversationCostUsd
     acc.buildCostUsd += r.buildCostUsd
@@ -87,6 +88,7 @@ export default defineEventHandler(async (event) => {
     acc.totalCostUsd += r.totalCostUsd
     acc.invocations += r.invocations
     acc.answered += r.answered
+    acc.billable += r.billable
     acc.testInvocations += r.testInvocations
     if (r.totalCostUsd > 0) acc.activeWorkspaces += 1
   }
@@ -108,6 +110,7 @@ export default defineEventHandler(async (event) => {
       totalCostUsd: round4(acc.totalCostUsd),
       invocations: acc.invocations,
       answered: acc.answered,
+      billable: acc.billable,
       testInvocations: acc.testInvocations,
       activeWorkspaces: acc.activeWorkspaces,
     },

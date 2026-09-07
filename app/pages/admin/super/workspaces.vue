@@ -51,6 +51,9 @@
                    成本總覽（「呼叫 AI 235 次（答出 95 則）」）發現這裡把同一個 235 寫成「則」——
                    而且它就排在「計費方案」右邊，會被直接讀成計費則數（真值是 95，差 2.5 倍）。
                    兩個數字都要在：管理視角問的是「有沒有在用（次）」與「收得到多少錢（則）」。
+                   ⛔ 2026-09-07（`D-69`）起「則」要讀 `billable` **不是** `answered`：
+                   反問開始計費之後，answered（AI 自己答完幾題）已經不等於收得到的則數，
+                   照舊讀 answered 就會低報——正是這一格 08-11 被抓包的同一種病。
                    ⚠️ 這裡的則數是**日曆月**桶，不是額度的錨定期——所以不並排額度上限，
                    免得看起來像進度條卻跟攔截點對不上（額度看組織頁 / 帳號的方案卡）。 -->
               <el-table-column label="本月 AI 用量" min-width="190">
@@ -77,7 +80,7 @@
                       <span class="text-sm">呼叫 {{ (row.usage?.invocations ?? 0).toLocaleString('zh-TW') }} 次</span>
                     </div>
                     <div v-if="(row.usage?.invocations ?? 0) > 0" class="text-xs text-muted">
-                      答出 {{ (row.usage?.answered ?? 0).toLocaleString('zh-TW') }} 則
+                      計費 {{ (row.usage?.billable ?? 0).toLocaleString('zh-TW') }} 則
                       <template v-if="(row.usage?.conversationCostUsd ?? 0) > 0">・約 NT${{ Math.round((row.usage?.conversationCostUsd ?? 0) * USD_TO_TWD).toLocaleString('zh-TW') }}</template>
                     </div>
                   </div>

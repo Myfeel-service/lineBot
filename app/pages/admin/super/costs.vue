@@ -96,7 +96,7 @@
           <div class="sa-cost-body">
             <div class="sa-cost-hero">
               <div class="sa-cost-hero__sub">
-                {{ activeCount }} 個帳號有花費 ・ 客人這邊呼叫 AI {{ totals.invocations.toLocaleString() }} 次（答出 {{ totals.answered.toLocaleString() }} 則）・ 後台自用 {{ totals.testInvocations.toLocaleString() }} 次
+                {{ activeCount }} 個帳號有花費 ・ 客人這邊呼叫 AI {{ totals.invocations.toLocaleString() }} 次（計費 {{ totals.billable.toLocaleString() }} 則）・ 後台自用 {{ totals.testInvocations.toLocaleString() }} 次
               </div>
             </div>
 
@@ -532,6 +532,8 @@ interface CostRow {
   aiEnabled: boolean
   invocations: number
   answered: number
+  /** 計費則數（含反問）。⛔ 與 answered 不同，畫面講「則」一律用這個（`D-69`） */
+  billable: number
   testInvocations: number
   conversationCostUsd: number
   buildCostUsd: number
@@ -545,6 +547,7 @@ interface Totals {
   totalCostUsd: number
   invocations: number
   answered: number
+  billable: number
   testInvocations: number
   activeWorkspaces: number
 }
@@ -662,7 +665,7 @@ function currentPeriod() {
 const loading = ref(false)
 const period = ref(currentPeriod())
 const workspaces = ref<CostRow[]>([])
-const totals = ref<Totals>({ conversationCostUsd: 0, buildCostUsd: 0, testCostUsd: 0, totalCostUsd: 0, invocations: 0, answered: 0, testInvocations: 0, activeWorkspaces: 0 })
+const totals = ref<Totals>({ conversationCostUsd: 0, buildCostUsd: 0, testCostUsd: 0, totalCostUsd: 0, invocations: 0, answered: 0, billable: 0, testInvocations: 0, activeWorkspaces: 0 })
 const prevTotalCostUsd = ref(0)
 
 // ── 資料庫（Firebase）實際花費 ────────────────────────────────
@@ -797,7 +800,7 @@ function grandPct(twdAmount: number) {
 }
 
 const grandSubText = computed(() => {
-  const parts = [`${activeCount.value} 個帳號有花費`, `AI 回答 ${totals.value.answered.toLocaleString()} 則`]
+  const parts = [`${activeCount.value} 個帳號有花費`, `AI 計費 ${totals.value.billable.toLocaleString()} 則`]
   if (infra.value.status === 'ok') parts.push(`資料庫讀取 ${times(infra.value.totals.reads)}`)
   return parts.join(' ・ ')
 })
@@ -885,7 +888,7 @@ const periodLabel = computed(() => {
  * 實測差距只有幾個百分點（差在每題撈到多少參考資料），拆成兩個數字只會讓人以為有差別。
  *
  * 分母是「AI 被呼叫幾次」＝客人每來一則訊息算一次（不論最後是答出來、轉真人還是反問），
- * 加上後台自己操作的次數。⛔ 別拿「答出幾則」當分母，那只佔全部呼叫的四成左右。
+ * 加上後台自己操作的次數。⛔ 別拿計費則數當分母，那只佔全部呼叫的一半上下（答不出的那些不計費，成本卻照付）。
  *
  * 再**無條件進位到分位**當估算值：一來好乘，二來順便蓋掉「有些呼叫其實沒花到錢」
  * （客人直接說找真人 → 直接轉接不呼叫 AI）造成的平均值稀釋，估出來只會偏高不會偏低。

@@ -1,5 +1,5 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
-import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
+import { AI_USAGE_COLLECTION, currentYyyyMm, monthlyBillable } from '~~/server/utils/ai-usage'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
 // Gemini 牌價（USD / 每百萬 token），與 /api/ai/usage/summary 同一份估算基準。
@@ -58,6 +58,9 @@ export default defineEventHandler(async (event) => {
         aiEnabled: enabledByWs.get(d.id) ?? false,
         invocations: Number(u?.invocations ?? 0),
         answered: Number(u?.answered ?? 0),
+        // 計費則數（含反問）。與 answered 分開回：answered 是「AI 自己答完幾題」的品質數字，
+        // 畫面上講「收得到多少錢」時要用這個（`D-69`）。
+        billable: monthlyBillable(u),
         handoffs: Number(u?.handoffs ?? 0),
         conversationCostUsd: Number(conversationCostUsd.toFixed(4)),
       },

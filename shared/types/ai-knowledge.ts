@@ -392,8 +392,15 @@ export interface AiUsageDoc {
   embeddingTokens: number
   /** 觸發 AI 回答的次數（含 handoff 與成功回答） */
   invocations: number
-  /** 信心過關直接回答的次數 */
+  /** 信心過關直接回答的次數。⛔ **這是品質指標，不是計費則數**（見 `billable`）。 */
   answered: number
+  /**
+   * 計費則數（答出 ＋ 反問；不含「答不出轉真人」）——畫面上講「幾則」要用這個。
+   *
+   * 2026-09-07（`D-69`）才開始寫，之前的月份沒有這個欄位；讀取一律走
+   * `monthlyBillable()`，它會退回 `answered`——那是當時正確的歷史值（舊口徑下兩者相等）。
+   */
+  billable?: number
   /** 因信心 / 敏感詞 / grounding 不過而 handoff 的次數 */
   handoffs: number
   /** 觸發反問澄清的次數 */

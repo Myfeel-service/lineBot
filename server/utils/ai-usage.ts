@@ -162,6 +162,9 @@ export async function recordAiUsage(
   if (delta.outputTokens) updates.outputTokens = FieldValue.increment(delta.outputTokens)
   if (delta.embeddingTokens) updates.embeddingTokens = FieldValue.increment(delta.embeddingTokens)
   if (delta.invocations) updates.invocations = FieldValue.increment(delta.invocations)
+  // 計費則數也進月結桶：額度桶每期換一顆、只回答得了「這一期用了多少」，
+  // 但成本／超管報表要按月看「這個月收了幾則」。兩顆桶各記各的，不互相推算。
+  if (delta.billable) updates.billable = FieldValue.increment(delta.billable)
   if (delta.answered) updates.answered = FieldValue.increment(delta.answered)
   if (delta.handoffs) updates.handoffs = FieldValue.increment(delta.handoffs)
   if (delta.disambiguations) updates.disambiguations = FieldValue.increment(delta.disambiguations)
@@ -182,6 +185,17 @@ export async function recordAiUsage(
   catch (e) {
     console.error('[ai-usage] recordAiUsage failed:', e)
   }
+}
+
+/**
+ * 從月結桶讀「這個月計費幾則」。
+ *
+ * ⚠️ `billable` 這個欄位是 2026-09-07（`D-69`）才開始寫的，之前的月份沒有它——
+ * 這時退回 `answered` 是**正確的歷史值**，不是湊數：在那之前計費口徑就是「答出才算」，
+ * 兩個數字當時本來就相等。⛔ 不要為此回填舊資料（回填等於偽造當時的帳）。
+ */
+export function monthlyBillable(data: { billable?: number; answered?: number } | undefined | null): number {
+  return Number(data?.billable ?? data?.answered ?? 0)
 }
 
 /**

@@ -16,7 +16,7 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('./firebase', () => ({ getDb: () => { throw new Error('test 必須自帶 db') } }))
 vi.mock('./billing', () => ({ getWorkspaceSubscription: vi.fn() }))
 
-import { recordAiUsage, QUOTA_USAGE_COLLECTION, type UsageDelta } from './ai-usage'
+import { monthlyBillable, recordAiUsage, QUOTA_USAGE_COLLECTION, type UsageDelta } from './ai-usage'
 import { getWorkspaceSubscription } from './billing'
 
 /** 攔下所有 set()，讓測試能問「額度桶被加了幾則」。 */
@@ -101,5 +101,31 @@ describe('額度桶寫不進去的時候', () => {
   it('訂閱讀不到（沒有本期）→ 跳過扣款，不要因為記帳失敗擋掉客人的回覆', async () => {
     vi.mocked(getWorkspaceSubscription).mockResolvedValue(null)
     expect(quotaCharged(await record({ invocations: 1, answered: 1, billable: 1 }))).toBeNull()
+  })
+})
+
+describe('月結桶的計費則數（超管成本頁 / 官方帳號管理讀它）', () => {
+  it('計費則數也會寫進月結桶——額度桶每期換一顆，答不了「這個月收多少」', async () => {
+    const writes = await record({ invocations: 1, answered: 1, billable: 1 })
+    const monthly = writes.find(w => w.collection !== QUOTA_USAGE_COLLECTION)!
+    expect(monthly.data.billable.__inc).toBe(1)
+  })
+
+  it('反問只加計費則數，不加 answered（畫面兩個數字本來就該不一樣）', async () => {
+    const writes = await record({ invocations: 1, disambiguations: 1, billable: 1 })
+    const monthly = writes.find(w => w.collection !== QUOTA_USAGE_COLLECTION)!
+    expect(monthly.data.billable.__inc).toBe(1)
+    expect(monthly.data.answered).toBeUndefined()
+  })
+
+  /**
+   * ⛔ 2026-09-07 之前的月份沒有 billable 欄位。退回 answered 不是湊數——
+   * 舊口徑下「答出才計費」，那時兩個數字本來就相等，所以那是**正確的歷史值**。
+   * 若這裡改成回 0，超管成本頁的歷史月份會整批變成「這個月零收入」。
+   */
+  it('舊月份沒有 billable → 退回 answered（那是當時正確的帳，不是回填造假）', () => {
+    expect(monthlyBillable({ answered: 95 })).toBe(95)
+    expect(monthlyBillable({ billable: 120, answered: 95 })).toBe(120)
+    expect(monthlyBillable(undefined)).toBe(0)
   })
 })
