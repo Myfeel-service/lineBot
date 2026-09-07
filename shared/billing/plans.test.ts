@@ -99,7 +99,7 @@ describe('getBillingPlan', () => {
 
 describe('effectiveAnsweredQuota', () => {
   it('無 override 時用方案預設', () => {
-    expect(effectiveAnsweredQuota(BILLING_PLANS.starter)).toBe(1300)
+    expect(effectiveAnsweredQuota(BILLING_PLANS.starter)).toBe(BILLING_PLANS.starter.answeredQuota)
   })
 
   it('override 覆蓋方案預設（含企業客製從 null 變有值）', () => {

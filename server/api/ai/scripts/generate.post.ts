@@ -2,6 +2,8 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateScriptDraft } from '~~/server/utils/ai-script-generate'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { assertPlanAllows } from '~~/server/utils/billing'
+import { planAllowsScripting } from '~~/shared/billing/plans'
 
 /**
  * AI 一句話生成腳本草稿。只回草稿、不寫資料庫——
@@ -9,6 +11,8 @@ import { recordAiUsage } from '~~/server/utils/ai-usage'
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'scripts.write')
+  // 方案功能閘門（D-69 拍板④）：腳本是入門方案起才有的權益，以前只印在方案表上。
+  await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含腳本功能，請升級方案後再使用')
   const body = await readBody(event)
   // 敏感情境詞排在腳本之前攔截,生成端要拿它剔除「永遠輪不到」的觸發關鍵字。
   // 讀不到設定就用空清單:生成照跑,只是少了這層剔除(編輯器的輪得到檢查還會再把關一次)

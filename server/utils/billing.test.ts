@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Firestore } from 'firebase-admin/firestore'
 import type { SubscriptionStatus, WorkspaceSubscription } from '~~/shared/billing/plans'
+import { BILLING_PLANS } from '~~/shared/billing/plans'
+
+// ⛔ 額度數字不寫死在斷言裡：2026-09-07 調整方案額度時這一整批測試全紅，
+//    但沒有一條是真的壞掉——那種紅燈只會訓練人忽略紅燈。
+const FREE_QUOTA = BILLING_PLANS.free.answeredQuota
 import type { AnsweredQuotaResolution } from './billing'
 import { buildPlanView, defaultFreeSubscription, getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache, resolveAnsweredQuota, resolveQuotaAction } from './billing'
 
@@ -36,10 +41,10 @@ function sub(planId: WorkspaceSubscription['planId'], status: SubscriptionStatus
 beforeEach(() => invalidateWorkspaceSubscriptionCache())
 
 describe('resolveAnsweredQuota — 攔截策略（每個帳號一律有方案、一律攔截）', () => {
-  it('沒掛訂閱 → 視為免費層並攔截於 200 則（不再有「無訂閱不攔截」的後門）', async () => {
+  it('沒掛訂閱 → 視為免費層並攔截於免費層額度（不再有「無訂閱不攔截」的後門）', async () => {
     const db = fakeDb({ ws_none: undefined })
     const r = await resolveAnsweredQuota('ws_none', db, TODAY)
-    expect(r.quota).toBe(200)
+    expect(r.quota).toBe(FREE_QUOTA)
     expect(r.planId).toBe('free')
     expect(r.periodStart).toBe(TODAY)
   })
@@ -54,7 +59,7 @@ describe('resolveAnsweredQuota — 攔截策略（每個帳號一律有方案、
   it('active 方案 → 額度為方案預設', async () => {
     const db = fakeDb({ ws_pro: sub('pro', 'active') })
     const r = await resolveAnsweredQuota('ws_pro', db, TODAY)
-    expect(r.quota).toBe(10_000)
+    expect(r.quota).toBe(BILLING_PLANS.pro.answeredQuota)
     expect(r.planId).toBe('pro')
   })
 
@@ -66,19 +71,19 @@ describe('resolveAnsweredQuota — 攔截策略（每個帳號一律有方案、
 
   it('trialing 也算已開通', async () => {
     const db = fakeDb({ ws_trial: sub('starter', 'trialing') })
-    expect((await resolveAnsweredQuota('ws_trial', db, TODAY)).quota).toBe(1_300)
+    expect((await resolveAnsweredQuota('ws_trial', db, TODAY)).quota).toBe(BILLING_PLANS.starter.answeredQuota)
   })
 
   it('past_due 仍計量（不因欠費獲得無限量）', async () => {
     const db = fakeDb({ ws_pastdue: sub('lite', 'past_due') })
-    expect((await resolveAnsweredQuota('ws_pastdue', db, TODAY)).quota).toBe(700)
+    expect((await resolveAnsweredQuota('ws_pastdue', db, TODAY)).quota).toBe(BILLING_PLANS.lite.answeredQuota)
   })
 
   it('canceled → 回到免費層並攔截（不再是「不攔截」）', async () => {
     const db = fakeDb({ ws_cancel: sub('pro', 'canceled', 50_000) })
     const r = await resolveAnsweredQuota('ws_cancel', db, TODAY)
     expect(r.planId).toBe('free')
-    expect(r.quota).toBe(200) // 特批額度一併失效
+    expect(r.quota).toBe(FREE_QUOTA) // 特批額度一併失效
   })
 
   it('quotaOverride 覆蓋方案預設', async () => {
@@ -104,7 +109,7 @@ describe('resolveAnsweredQuota — 攔截策略（每個帳號一律有方案、
   })
 
   it('quota 與 periodStart 同進同出：沒有週期就不回報額度上限（否則會靜默變吃到飽）', async () => {
-    // 沒有 periodStart 就沒有計數桶可讀,若還回報 quota=10000,呼叫端會拿「已用 0 則」
+    // 沒有 periodStart 就沒有計數桶可讀,若還回報 pro 的額度,呼叫端會拿「已用 0 則」
     // 去比對 → 永遠放行。這裡確認防呆分支把 quota 一併關掉,退回 token 護欄。
     const db = fakeDb({ ws_broken: { planId: 'pro', status: 'active', currentPeriodStart: null, currentPeriodEnd: null } })
     const r = await resolveAnsweredQuota('ws_broken', db, TODAY)
@@ -116,7 +121,7 @@ describe('resolveAnsweredQuota — 攔截策略（每個帳號一律有方案、
     const db = fakeDb({ ws_late: sub('pro', 'active') }) // 本期到 2026-08-27
     const r = await resolveAnsweredQuota('ws_late', db, '2026-09-15')
     expect(r.planId).toBe('free')
-    expect(r.quota).toBe(200)
+    expect(r.quota).toBe(FREE_QUOTA)
     expect(r.periodStart).toBe('2026-08-28') // 已滾到當期 → 額度桶換了一顆 = 自動歸零
   })
 })
@@ -133,10 +138,10 @@ describe('defaultFreeSubscription — 新建帳號預設訂閱', () => {
     })
   })
 
-  it('掛上後 → resolveAnsweredQuota 攔截於 200 則', async () => {
+  it('掛上後 → resolveAnsweredQuota 攔截於免費層額度', async () => {
     const db = fakeDb({ ws_new: defaultFreeSubscription(TODAY) })
     const r = await resolveAnsweredQuota('ws_new', db, TODAY)
-    expect(r.quota).toBe(200)
+    expect(r.quota).toBe(FREE_QUOTA)
     expect(r.planId).toBe('free')
   })
 })
@@ -146,11 +151,11 @@ describe('buildPlanView — 前端顯示視圖', () => {
     expect(buildPlanView(null)).toBeNull()
   })
 
-  it('免費訂閱 → 免費視圖（200 則、無超量加購）,含本期起訖', () => {
+  it('免費訂閱 → 免費視圖（免費層額度、無超量加購）,含本期起訖', () => {
     const v = buildPlanView(sub('free', 'active'))
     expect(v?.id).toBe('free')
     expect(v?.name).toBe('免費')
-    expect(v?.answeredQuota).toBe(200)
+    expect(v?.answeredQuota).toBe(FREE_QUOTA)
     expect(v?.overagePerReply).toBeNull()
     expect(v?.currentPeriodStart).toBe('2026-07-28')
     expect(v?.currentPeriodEnd).toBe('2026-08-27')
@@ -160,7 +165,7 @@ describe('buildPlanView — 前端顯示視圖', () => {
     expect(buildPlanView(sub('starter', 'active', 5_000))?.answeredQuota).toBe(5_000)
   })
 
-  it('canceled → 顯示為免費層（與攔截一致,不會「顯示 pro 但只給 200 則」）', () => {
+  it('canceled → 顯示為免費層（與攔截一致,不會「顯示 pro 但只給免費層額度」）', () => {
     expect(buildPlanView(sub('pro', 'canceled'))?.id).toBe('free')
   })
 })

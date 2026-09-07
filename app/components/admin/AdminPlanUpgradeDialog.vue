@@ -32,6 +32,12 @@
         <el-table-column label="席次" min-width="58">
           <template #default="{ row }">{{ row.seats == null ? '不限' : `${row.seats} 席` }}</template>
         </el-table-column>
+        <!-- AI 知識量：官網定價區有這一列、這張表沒有＝又一次 2026-08-17 的兩邊不一致
+             （那次是付款彈窗仍列著官網已經拿掉的方案）。凡是對客戶展示的方案權益，
+             兩邊必須列同一組欄位。 -->
+        <el-table-column label="AI 知識量" min-width="82">
+          <template #default="{ row }">{{ row.knowledgeChunks == null ? '不限' : `${row.knowledgeChunks.toLocaleString()} 條` }}</template>
+        </el-table-column>
         <el-table-column label="流程" width="54" align="center">
           <template #default="{ row }"><span :class="row.scripting ? 'pu-yes' : 'pu-no'">{{ row.scripting ? '✓' : '—' }}</span></template>
         </el-table-column>

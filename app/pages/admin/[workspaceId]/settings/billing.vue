@@ -570,7 +570,8 @@ const canceling = ref(false)
 async function cancelSubscription() {
   try {
     await ElMessageBox.confirm(
-      `取消後不再自動扣款，「${planView.value?.name}」方案可以用到 ${planView.value?.currentPeriodEnd}，之後降回免費層（每月 200 則）。`,
+      // ⛔ 免費層額度不可寫死：2026-09-07 從 200 改成 50 時這句就會開始說謊（`D-69`）。
+      `取消後不再自動扣款，「${planView.value?.name}」方案可以用到 ${planView.value?.currentPeriodEnd}，之後降回免費層（每月 ${BILLING_PLANS.free.answeredQuota} 則）。`,
       '取消自動續訂',
       { confirmButtonText: '確認取消訂閱', cancelButtonText: '再想想', type: 'warning' },
     )

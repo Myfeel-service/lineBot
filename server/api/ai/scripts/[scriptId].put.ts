@@ -5,9 +5,13 @@ import { findEnabledFollowScriptConflict, invalidateScriptsCache, SCRIPTS_COLLEC
 import { invalidateScriptHealthCache } from '~~/server/utils/script-health'
 import { normalizeScriptInput, stripTriggerEmbeddings } from '~~/server/utils/ai-script-validation'
 import { scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
+import { assertPlanAllows } from '~~/server/utils/billing'
+import { planAllowsScripting } from '~~/shared/billing/plans'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'scripts.write')
+  // 方案功能閘門（D-69 拍板④）：腳本是入門方案起才有的權益，以前只印在方案表上。
+  await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含腳本功能，請升級方案後再使用')
   const scriptId = String(getRouterParam(event, 'scriptId') ?? '').trim()
   if (!scriptId) throw createError({ statusCode: 400, statusMessage: 'scriptId required' })
 

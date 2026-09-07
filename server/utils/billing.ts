@@ -129,6 +129,41 @@ export async function getWorkspaceSubscription(
   return rollSubscriptionToCurrentPeriod(raw ?? defaultFreeSubscription(today), today).sub
 }
 
+/**
+ * 取帳號目前生效的方案（權益欄位都在裡面：seats / knowledgeChunks / scripting / broadcast…）。
+ *
+ * 回 `null` **只代表 Firestore 讀取失敗**，沿用本檔既有的 fail-open 慣例：
+ * 基礎設施出問題時不該把客戶鎖在門外（尤其付費客戶），呼叫端一律「讀不到就放行」。
+ * 沒掛訂閱不會回 null——那是免費層，會如實回免費方案並照免費層的上限擋。
+ */
+export async function getWorkspacePlan(
+  workspaceId: string,
+  db: Firestore = getDb(),
+  today: string = taipeiDate(),
+): Promise<BillingPlan | null> {
+  const sub = await getWorkspaceSubscription(workspaceId, db, today)
+  if (!sub) return null
+  return effectivePlanOf(sub).plan
+}
+
+/**
+ * 方案不允許這個功能就丟 403（`D-69` 拍板④的統一擋法）。
+ *
+ * `allowed` 是 shared/billing/plans.ts 的純函式（planAllowsScripting / planAllowsBroadcast…），
+ * 前端拿同一支把買不到的功能藏起來，後端拿同一支擋 API——兩邊同一份判斷，
+ * 不會出現「看得到卻 403」，也不會「只濾 UI 被直接打 API 繞過」。
+ */
+export async function assertPlanAllows(
+  workspaceId: string,
+  allowed: (plan: BillingPlan) => boolean,
+  message: string,
+  db: Firestore = getDb(),
+): Promise<void> {
+  const plan = await getWorkspacePlan(workspaceId, db)
+  if (!plan || allowed(plan)) return // 讀取失敗 → fail-open
+  throw createError({ statusCode: 403, statusMessage: message })
+}
+
 export interface AnsweredQuotaResolution {
   /** 本期則數上限；null = 不設上限（內部方案 / enterprise 客製未設額度 / 訂閱讀取失敗）。 */
   quota: number | null

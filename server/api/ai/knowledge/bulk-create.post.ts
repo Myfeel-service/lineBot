@@ -5,6 +5,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
   addWorkspaceProductName,
@@ -63,6 +64,9 @@ export default defineEventHandler(async (event) => {
   if (rawChunks.length > MAX_BULK_CHUNKS) {
     throw createError({ statusCode: 400, statusMessage: `單次最多匯入 ${MAX_BULK_CHUNKS} 張卡` })
   }
+  // 方案知識量前置檢查（D-69 拍板④）：同 assertMaintenanceBudget 的用意——
+  // 在開始 embedding 之前就講清楚「不夠」，而不是建到一半才死。
+  await assertKnowledgeChunkQuota(workspaceId, rawChunks.length)
 
   const inputs = rawChunks.map(normalizeChunkInput)
   for (const input of inputs) {
@@ -264,6 +268,8 @@ export default defineEventHandler(async (event) => {
 
   const indexed = results.filter(r => r.status === 'indexed').length
   const failed = results.filter(r => r.status === 'failed').length
+
+  invalidateKnowledgeChunkCount(workspaceId)
 
   return {
     sourceId,

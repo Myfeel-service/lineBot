@@ -28,7 +28,19 @@ export interface BillingPlan {
   /** 顯示名稱（繁中） */
   name: string
   /**
-   * 每月 AI 回覆則數額度（對應 aiUsage 的 answered 計數）。
+   * 每月 AI 回覆則數額度。
+   *
+   * **一則＝AI 出手回答一次**（2026-09-07 老闆拍板，見 `docs/STATUS.md` `D-69`）：
+   *   · 正常答出 → 算一則。
+   *   · 反問澄清（「你問的是 A 款還是 B 款？」）→ **也算一則**：它幫客人釐清了需求，
+   *     也真的花了我們的錢；不算的話「故意設計成一直反問再轉真人」就能白吃服務。
+   *   · 「這題我不確定，幫你請真人回覆」→ **不算**。這是對外的賣點（答不出不扣額度），
+   *     也是誘因對齊：答不出的成本我們自己吸收，我們才有動機把知識庫做好。
+   *
+   * ⛔ 數的是「AI 出手幾次」，不是 LINE 訊息則數——一次回答可能拆成文字＋圖卡＋按鈕
+   * 好幾則訊息，那仍然只算一則。（記帳看 `UsageDelta.billable`，不是 `answered`：
+   * `answered` 是品質指標「AI 自己答完的比率」，兩者刻意分開，見 server/utils/ai-usage.ts。）
+   *
    * null = 客製 / 面談（enterprise）；實際額度由訂閱層的 quotaOverride 指定。
    */
   answeredQuota: number | null
@@ -41,8 +53,19 @@ export interface BillingPlan {
   overagePerReply: number | null
   /** 團隊成員席次上限。null = 不限。 */
   seats: number | null
-  /** 知識庫來源數上限。null = 不限。 */
-  knowledgeSources: number | null
+  /**
+   * AI 知識量上限：**知識卡張數**（chunk 數），對外叫「AI 知識量 X 條」。
+   *
+   * 2026-09-07 老闆拍板從「知識庫幾份資料」改成「幾條」（`D-69`）。為什麼換單位：
+   *   · 份數擋不住量——十份文件併成一個 PDF 就是「1 份」。
+   *   · 份數會誤傷學習迴圈——手寫一張卡、採用一則 AI 建議，各自都會生一個 manual
+   *     來源（見 knowledge/create.post.ts、suggestions/[id]/accept.post.ts），照份數算
+   *     免費帳號傳完一份菜單就再也不能教 AI，而那是這個產品最重要的日常動作。
+   *   · 條數天生對齊價值與成本，而且只要鎖 `createKnowledgeChunk` 一個入口就全鎖。
+   *
+   * null = 不限。「幾份資料」仍在來源列表顯示，但**不再是限制**。
+   */
+  knowledgeChunks: number | null
   /** 數據報表等級。 */
   reports: ReportTier
   /** 群發 / 分眾行銷等級。 */
@@ -66,8 +89,14 @@ export interface BillingPlan {
   landingHidden?: boolean
 }
 
-/** 統一超量加購單價（TWD/則）；付費非客製方案共用，改這裡即全站生效。 */
-export const OVERAGE_PER_REPLY_TWD = 0.8
+/**
+ * 統一超量加購單價（TWD/則）；付費非客製方案共用，改這裡即全站生效。
+ *
+ * 2026-09-07 從 0.8 調到 1.5（`D-69`）：額度縮小後 0.8 會讓超量**永遠比升級便宜**
+ * （輕量想多用 300 則＝399＋240＝639 < 入門 799），客人就永遠卡在低階方案。
+ * 1.5 讓「偶爾超一點不心痛、長期超量比升級貴」，階梯才推得動人。
+ */
+export const OVERAGE_PER_REPLY_TWD = 1.5
 
 /**
  * 方案由低到高的排序，供顯示與升降級比較用。
@@ -102,11 +131,13 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
   free: {
     id: 'free',
     name: '免費',
-    answeredQuota: 200,
+    // 50 而不是 200：免費與 399 同量的話，付 399 只多買到一個席次，付費方案賣不動。
+    // 50 則＝每天 1–2 個客人提問，夠體驗「AI 真的會回」但不夠拿來營運。
+    answeredQuota: 50,
     priceMonthly: 0,
     overagePerReply: null, // 撞頂 → 引導升級，不開放加購
     seats: 1,
-    knowledgeSources: 1,
+    knowledgeChunks: 50,
     reports: 'basic',
     broadcast: 'none',
     scripting: false,
@@ -116,11 +147,11 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
   lite: {
     id: 'lite',
     name: '輕量',
-    answeredQuota: 700,
+    answeredQuota: 200,
     priceMonthly: 399,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 2,
-    knowledgeSources: 2,
+    knowledgeChunks: 200,
     reports: 'basic',
     broadcast: 'basic',
     scripting: false,
@@ -130,11 +161,11 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
   starter: {
     id: 'starter',
     name: '入門',
-    answeredQuota: 1_300,
+    answeredQuota: 500,
     priceMonthly: 799,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 3,
-    knowledgeSources: 5,
+    knowledgeChunks: 500,
     reports: 'basic',
     broadcast: 'basic',
     scripting: true,
@@ -144,11 +175,11 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
   growth: {
     id: 'growth',
     name: '成長',
-    answeredQuota: 3_500,
+    answeredQuota: 1_500,
     priceMonthly: 1_499,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 5,
-    knowledgeSources: 10,
+    knowledgeChunks: 1_500,
     reports: 'advanced',
     broadcast: 'advanced',
     scripting: true,
@@ -158,11 +189,11 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
   pro: {
     id: 'pro',
     name: '專業',
-    answeredQuota: 10_000,
+    answeredQuota: 6_000,
     priceMonthly: 4_990,
     overagePerReply: OVERAGE_PER_REPLY_TWD,
     seats: 10,
-    knowledgeSources: null,
+    knowledgeChunks: 6_000,
     reports: 'advanced',
     broadcast: 'advanced',
     scripting: true,
@@ -177,7 +208,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     priceMonthly: null, // 面談
     overagePerReply: null, // 走合約
     seats: null,
-    knowledgeSources: null,
+    knowledgeChunks: null,
     reports: 'export',
     broadcast: 'advanced',
     scripting: true,
@@ -192,7 +223,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     priceMonthly: 0,
     overagePerReply: null,
     seats: null,
-    knowledgeSources: null,
+    knowledgeChunks: null,
     reports: 'export',
     broadcast: 'advanced',
     scripting: true,
@@ -207,7 +238,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     priceMonthly: 0,
     overagePerReply: null,
     seats: null,
-    knowledgeSources: null,
+    knowledgeChunks: null,
     reports: 'export',
     broadcast: 'advanced',
     scripting: true,
@@ -366,6 +397,44 @@ export function isSelfServePaidPlan(id: BillingPlanId): boolean {
 export function isCheckoutablePlan(id: BillingPlanId): boolean {
   const p = BILLING_PLANS[id]
   return isSelfServePaidPlan(id) && !p.landingHidden
+}
+
+// ── 方案功能閘門（2026-09-07 `D-69` 拍板④：這些權益以前只印在方案表上，後端零攔截）──
+//
+// ⚠️ 純函式放這裡是刻意的：前端用同一份判斷把買不到的功能**藏起來**，後端用同一份判斷
+//    擋 API。只擋後端會變成「看得到卻 403」（違反 shared/permissions.ts 的既有政策），
+//    只濾前端則直接打 API 就繞過（2026-08-16 `B-39` 已經踩過一次）。
+
+/** 群發等級高低（none < basic < advanced），供 `planAllowsBroadcast` 比較。 */
+const BROADCAST_TIER_LEVEL: Record<BroadcastTier, number> = { none: 0, basic: 1, advanced: 2 }
+
+/** 報表等級高低（basic < advanced < export），供 `planAllowsReport` 比較。 */
+const REPORT_TIER_LEVEL: Record<ReportTier, number> = { basic: 0, advanced: 1, export: 2 }
+
+/** 這個方案的群發權限是否達到 `min` 等級。`advanced` = 分眾（標籤／受眾／匯入名單）。 */
+export function planAllowsBroadcast(plan: BillingPlan, min: BroadcastTier): boolean {
+  return BROADCAST_TIER_LEVEL[plan.broadcast] >= BROADCAST_TIER_LEVEL[min]
+}
+
+/** 這個方案的報表權限是否達到 `min` 等級。 */
+export function planAllowsReport(plan: BillingPlan, min: ReportTier): boolean {
+  return REPORT_TIER_LEVEL[plan.reports] >= REPORT_TIER_LEVEL[min]
+}
+
+/**
+ * 這個方案能不能用腳本／流程自動化。
+ * 免費與輕量沒有——這是 799 入門方案最主要的升級理由之一。
+ */
+export function planAllowsScripting(plan: BillingPlan): boolean {
+  return plan.scripting
+}
+
+/**
+ * 撞到上限時給客人看的話。**要講三件事**：現在幾個、上限幾個、怎麼解決。
+ * 只寫「已達上限」的話客人只能來問客服（`C-94` 那次的教訓：沒說清楚就等於沒說）。
+ */
+export function planLimitMessage(what: string, used: number, limit: number, planName: string): string {
+  return `${what}已達${planName}方案上限（${used}／${limit}）。刪掉不需要的，或升級方案以取得更多額度。`
 }
 
 // dev 自我檢查：BILLING_PLAN_ORDER 必須剛好涵蓋 BILLING_PLANS 的所有 key。

@@ -1,6 +1,8 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess, invalidateWorkspaceMemberCache } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
+import { getWorkspacePlan } from '~~/server/utils/billing'
+import { planLimitMessage } from '~~/shared/billing/plans'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
 const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
@@ -29,7 +31,7 @@ async function deleteWorkspaceInvitesForEmail(db: Firestore, workspaceId: string
  * Body: { email: string, role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { uid: inviterUid, workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { uid: inviterUid, workspaceId, isSuperAdmin } = await requireWorkspaceAccess(event, 'admin')
 
   const body = await readBody(event)
   const { email, role } = body
@@ -49,6 +51,33 @@ export default defineEventHandler(async (event) => {
     .get()
   if (!pendingSnap.empty) {
     throw createError({ statusCode: 409, statusMessage: '此 Email 已有待處理的邀請' })
+  }
+
+  /**
+   * 席次上限（`D-69` 拍板④）。2026-09-07 之前 `plan.seats` 只印在方案表上、後端零攔截。
+   *
+   * 口徑：**已加入的成員（含 owner）＋ 還沒被接受的邀請**。邀請要算進去，否則一次送出
+   * 二十封邀請就整批繞過上限；而且畫面上本來就把待處理邀請跟成員列在同一份清單裡
+   * （members/index.get.ts），數法跟客人看到的一致才不會吵架。
+   *
+   * ⚠️ 已接受的邀請不會重複計算：materializeWorkspaceInviteIfAny 是刪一筆邀請、
+   * 建一筆成員，淨額 0。super admin 豁免（比照 org/workspaces 建立上限的既有慣例）。
+   */
+  if (!isSuperAdmin) {
+    const plan = await getWorkspacePlan(workspaceId, db)
+    if (plan?.seats != null) {
+      const [memberAgg, inviteAgg] = await Promise.all([
+        db.collection('workspaceMembers').where('workspaceId', '==', workspaceId).count().get(),
+        db.collection('workspaceInvites').where('workspaceId', '==', workspaceId).count().get(),
+      ])
+      const used = memberAgg.data().count + inviteAgg.data().count
+      if (used >= plan.seats) {
+        throw createError({
+          statusCode: 403,
+          statusMessage: planLimitMessage('團隊成員數', used, plan.seats, plan.name),
+        })
+      }
+    }
   }
 
   const workspaceSnap = await db.collection('workspaces').doc(workspaceId).get()

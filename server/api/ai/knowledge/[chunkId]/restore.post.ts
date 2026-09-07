@@ -9,6 +9,7 @@ import {
   runIndexOnChunk,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 
 /**
  * POST /api/ai/knowledge/:chunkId/restore
@@ -33,6 +34,14 @@ export default defineEventHandler(async (event) => {
   }
   if (chunk.deletedAt == null) return { id: chunkId, status: String(chunk.status ?? 'pending') } // 不在回收桶，冪等
 
+  /**
+   * 還原＝知識量 +1，所以這裡也要守門（`D-69` 二次掃描抓到的洞）。
+   * 不擋的話「刪 100 條 → 匯入 100 條新的 → 把舊的還原回來」就繞過了上限。
+   *
+   * ⚠️ 擺在冪等早退之後：對「已經不在回收桶」的卡重按不該噴錯。
+   */
+  await assertKnowledgeChunkQuota(workspaceId, 1, db)
+
   const restored = resolveRestoredStatus(chunk.statusBeforeDelete, !!chunk.embedding)
   await ref.update({
     status: restored,
@@ -43,6 +52,7 @@ export default defineEventHandler(async (event) => {
     updatedAt: FieldValue.serverTimestamp(),
   })
   invalidateTagIndexCache(workspaceId)
+  invalidateKnowledgeChunkCount(workspaceId)
 
   // 來源側：manual 連坐的一併還原；一般來源重算張數
   if (chunk.sourceId) {

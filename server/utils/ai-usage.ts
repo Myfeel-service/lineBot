@@ -5,8 +5,13 @@
  *    能按月比較、對得上財務期間。記 token、次數、轉真人率等所有欄位。
  *
  * ② `quotaUsage/{workspaceId}_{periodStart}` —— **則數額度攔截**。對齊訂閱週期（錨定日）,
- *    只記 answered。換一期 = 換一顆 doc,所以「額度歸零」不需要任何寫入或排程,
+ *    只記計費則數。換一期 = 換一顆 doc,所以「額度歸零」不需要任何寫入或排程,
  *    也不會出現「月底升級 → 額度被同月份的免費用量吃掉」。
+ *
+ * ⛔ **`billable`（要扣客人額度嗎）與 `answered`（AI 自己答完了嗎）是兩件事,不要合併。**
+ *    2026-09-07 `D-69` 拍板「反問澄清也算一則」之後兩者正式分家：反問要扣額度（billable）
+ *    但**不是**「答完了」（answered）——混用的話，要嘛反問收不到錢、要嘛 AI 表現頁的
+ *    「自己搞定率」被反問灌水。桶 ① 記 answered 看品質，桶 ② 記 billable 收錢。
  *
  * 兩者都用 Firestore 原子 increment 避免 race；失敗只 log,不阻塞回覆。
  */
@@ -44,8 +49,11 @@ export async function getQuotaAnswered(
 }
 
 /**
- * 把 answered 記進「本期」額度桶。週期由訂閱決定（讀取時就地推算,60s 快取）。
+ * 把**計費則數**記進「本期」額度桶。週期由訂閱決定（讀取時就地推算,60s 快取）。
  * 訂閱讀不到就跳過——寧可漏記一則,也不要因為記帳失敗而擋掉客人的回覆。
+ *
+ * doc 裡的欄位仍叫 `answered`（沿用既有資料,額度桶每期換一顆、不必回填），
+ * 但語意自 2026-09-07 起是「計費則數」＝答出 ＋ 反問，不含「答不出轉真人」。
  */
 async function recordQuotaAnswered(workspaceId: string, answered: number, db: Firestore): Promise<void> {
   try {
@@ -70,6 +78,21 @@ export interface UsageDelta {
   outputTokens?: number
   embeddingTokens?: number
   invocations?: number
+  /**
+   * **要扣客人幾則額度**（唯一驅動 quotaUsage 額度桶的欄位）。
+   *
+   * 2026-09-07 `D-69` 拍板的口徑：AI 出手回答一次算一則，**反問澄清也算**，
+   * 只有「這題我不確定，幫你請真人回覆」不算。所以它跟 {@link answered} 不同：
+   *   · 答出 → `answered: 1, billable: 1`
+   *   · 反問 → `disambiguations: 1, billable: 1`（沒有 answered——那不是「答完了」）
+   *   · 答不出轉真人 → `handoffs: 1`，**沒有 billable**（對外的賣點：答不出不扣額度）
+   *   · 反問後客人點選項、AI 答出 → `followupAnswered: 1, billable: 1`
+   *     （次數欄位刻意不計避免品質率灌水，但**錢照收**——客人確實拿到了答案）
+   *   · playground 測試 → 一律不帶（測試不該扣客人的錢）
+   *
+   * ⛔ 別把它接回 `answered`：那顆是品質指標，動它會讓 AI 表現頁的「自己搞定率」失真。
+   */
+  billable?: number
   answered?: number
   handoffs?: number
   disambiguations?: number
@@ -112,7 +135,7 @@ export interface UsageDelta {
 }
 
 /**
- * 把這次 AI 介入的用量記帳：報表月結桶（全部欄位）+ 額度週期桶（只記 answered）。
+ * 把這次 AI 介入的用量記帳：報表月結桶（全部欄位）+ 額度週期桶（只記 billable）。
  * 失敗只 log 不阻塞主流程。
  */
 export async function recordAiUsage(
@@ -120,10 +143,12 @@ export async function recordAiUsage(
   delta: UsageDelta,
   db: Firestore = getDb(),
 ): Promise<void> {
-  // answered 同時要記進「本期」額度桶——攔截看的是它,不是月結桶。
+  // 額度桶只吃 billable（不是 answered）——攔截看的是它,不是月結桶。
+  // 兩者的差別見 UsageDelta.billable 的說明；⛔ 改回 answered 會讓反問白做工、
+  // 或讓「AI 自己答完的比率」被反問灌水,兩邊都錯。
   // 兩顆 doc 互不相干,並行寫（這段在回覆路徑上,不該串著等）。
-  const quotaWrite = delta.answered
-    ? recordQuotaAnswered(workspaceId, delta.answered, db)
+  const quotaWrite = delta.billable
+    ? recordQuotaAnswered(workspaceId, delta.billable, db)
     : Promise.resolve()
 
   const yyyyMm = currentYyyyMm()

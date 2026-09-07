@@ -8,6 +8,7 @@ import {
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import {
   KNOWLEDGE_SUGGESTIONS_COLLECTION,
   SUGGESTION_RESOLVED_TTL_DAYS,
@@ -52,6 +53,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = getDb()
+
+  // 方案知識量守門（D-69 拍板④）。**擺在交易之前**：額度不夠時連建議的狀態都不該動，
+  // 否則它會先被佔成 accepting、再靠 catch 放回 pending，中間那段從清單上消失。
+  await assertKnowledgeChunkQuota(workspaceId, 1, db)
+
   const suggestionRef = db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION).doc(id)
 
   // 在交易裡把 pending 佔走（改成中間態 accepting）再建卡。
@@ -114,6 +120,7 @@ export default defineEventHandler(async (event) => {
       .catch(() => {})
     throw e
   }
+  invalidateKnowledgeChunkCount(workspaceId)
 
   // 2. 建議銷案（處理完的建議帶 expireAt，靠 TTL 自動清；不清的話去重比對的上限總會被撞到）
   await suggestionRef.set({

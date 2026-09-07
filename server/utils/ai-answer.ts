@@ -1338,7 +1338,22 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 計數欄位（invocations/answered/handoffs/disambiguations）只在「非 followup 且非測試」記——
   // 客人點反問按鈕的重跑、以及管理員 playground 測試，都不該讓次數與品質率灌水。
   const recordTokensOnly = input.isFollowup || input.isTest
-  const record = (delta: UsageDelta): Promise<void> => {
+
+  /**
+   * 計費訊號（要扣客人幾則）**在這裡集中導出**，不散在六個終點各寫一次——
+   * 散著寫的話新增一個答題出口就會忘記帶，而「忘了收錢」是不會有人來抱怨的那種 bug。
+   *
+   * 規則（`D-69` 拍板）：答出＝計費；反問由該終點自己帶 `billable`（它沒有 answered）；
+   * 轉真人不計費。⛔ 測試對話一律不計費——playground 試打不該扣客人的額度。
+   */
+  const withBilling = (delta: UsageDelta): UsageDelta => {
+    if (input.isTest) return delta
+    if (delta.billable || !delta.answered) return delta
+    return { ...delta, billable: delta.answered }
+  }
+
+  const record = (rawDelta: UsageDelta): Promise<void> => {
+    const delta = withBilling(rawDelta)
     if (!recordTokensOnly) return recordAiUsage(workspaceId, delta, db)
     const tokensOnly: UsageDelta = {}
     if (input.isTest) {
@@ -1354,6 +1369,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       // 唯一例外：answered 訊號轉記 followupAnswered——反問後成功答出是「反問有效」的
       // 直接證據，完全不記的話反問的成果全隱形（AI 表現頁「先問清楚」會看起來像死路）。
       if (delta.answered) tokensOnly.followupAnswered = delta.answered
+      // ⚠️ 但**錢照收**：客人點完選項、AI 真的答出來了，那就是他要的答案。
+      // 2026-09-07 之前這裡連 billable 都被吃掉＝反問後答出整串完全免費（`D-69` 抓到的洞）。
+      if (delta.billable) tokensOnly.billable = delta.billable
       if (delta.inputTokens) tokensOnly.inputTokens = delta.inputTokens
       if (delta.outputTokens) tokensOnly.outputTokens = delta.outputTokens
       if (delta.embeddingTokens) tokensOnly.embeddingTokens = delta.embeddingTokens
@@ -1817,6 +1835,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       await record({
         invocations: 1,
         disambiguations: 1,
+        // 反問也算一則（`D-69`）：它幫客人釐清了需求、也真的花了錢。
+        // 不收的話「故意設計成一直反問再轉真人」就能白吃服務。
+        billable: 1,
         embeddingTokens: embedTokenEstimate,
         inputTokens: dis.inputTokens + routerIn,
         outputTokens: dis.outputTokens + routerOut,
@@ -1856,6 +1877,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         await record({
           invocations: 1,
           disambiguations: 1,
+          billable: 1, // 反問也算一則（`D-69`），同上
           embeddingTokens: embedTokenEstimate,
           inputTokens: routerIn,
           outputTokens: routerOut,

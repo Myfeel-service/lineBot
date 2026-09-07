@@ -9,6 +9,7 @@ import {
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 
 /**
  * POST /api/ai/knowledge/create
@@ -33,6 +34,9 @@ export default defineEventHandler(async (event) => {
   if (err) throw createError({ statusCode: 400, statusMessage: err })
 
   const db = getDb()
+
+  // 方案知識量守門（D-69 拍板④）。手寫卡也算一條——它就是 AI 記住的一件事。
+  await assertKnowledgeChunkQuota(workspaceId, 1, db)
 
   // 若沒指定 sourceId → 自動建一個 type='manual' 的 source
   let sourceId = input.sourceId
@@ -84,6 +88,7 @@ export default defineEventHandler(async (event) => {
     questions: input.questions,
     sourceId,
   })
+  invalidateKnowledgeChunkCount(workspaceId)
 
   return {
     id: result.id,

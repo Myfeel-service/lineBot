@@ -8,6 +8,8 @@ import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 import { parseTriggerModuleData } from '~~/shared/action-schema'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
+import { getWorkspacePlan } from './billing'
+import { planAllowsBroadcast, type BroadcastTier } from '~~/shared/billing/plans'
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
 import { BROADCAST_ALL_RECIPIENTS_FAILED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
@@ -56,6 +58,24 @@ export async function executeBroadcastSend(
 
   if (!data.messages?.length) {
     throw new Error('No messages to send')
+  }
+
+  /**
+   * 方案群發權限（`D-69` 拍板④）。**擋在這裡而不是只擋建立端點**，因為這是唯一的收斂點：
+   * 手動送出、排程 cron（trigger-scheduled 沒有 workspace context）、重試，全都經過這裡。
+   * 只擋 create 的話，「先建好再等排程送出」就整條繞過去了。
+   *
+   * 分眾（tags / audience / import）要 advanced；全體推播要 basic。
+   */
+  const plan = await getWorkspacePlan(workspaceId, db)
+  if (plan) {
+    const needsAdvanced = data.audienceSource.type !== 'all'
+    const need: BroadcastTier = needsAdvanced ? 'advanced' : 'basic'
+    if (!planAllowsBroadcast(plan, need)) {
+      throw new Error(needsAdvanced
+        ? `${plan.name}方案不含分眾推播，請改用全體推播或升級方案`
+        : `${plan.name}方案不含群發推播，請升級方案`)
+    }
   }
 
   // ── 解析受眾 ──────────────────────────────────────────────────────

@@ -96,7 +96,7 @@
         <AdminFieldLabel text="官方帳號數量上限" tight />
         <el-input v-model="editForm.maxWorkspaces" :placeholder="`留空 = 預設 ${DEFAULT_MAX_WORKSPACES_PER_ORG} 個・填 0 = 不限`" />
         <p class="text-xs text-muted">
-          濫用防護：每個新官方帳號都自帶 200 則免費額度，沒有上限的話一個人就能無限建帳號換免費額度。
+          濫用防護：每個新官方帳號都自帶 {{ BILLING_PLANS.free.answeredQuota }} 則免費額度，沒有上限的話一個人就能無限建帳號換免費額度。
           代理商 / 多品牌客戶在這裡調高，或填 0 表示不限。
         </p>
       </div>
@@ -162,6 +162,8 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { DEFAULT_MAX_WORKSPACES_PER_ORG } from '~~/shared/types/organization'
+// ⛔ 免費層額度不可寫死在文案裡（2026-09-07 從 200 改成 50 就會說謊，見 `D-69`）
+import { BILLING_PLANS } from '~~/shared/billing/plans'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '組織管理 — 超級管理員' })
