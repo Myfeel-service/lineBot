@@ -454,11 +454,13 @@
      ⛔ 這不是 09-04 拿掉的「按鈕底下的綠色陰影」——那條禁的是靜置的彩色投影；
         這圈是動畫提示、醒來就沒了。老闆若不喜歡，砍這兩條規則即可，不影響其他。 */
   .lp-hero.is-asleep .lp-rev--btn.is-grown .lp-wake::after {
-    content: ''; position: absolute; inset: -3px; border-radius: 999px;
+    content: ''; position: absolute; inset: -2px; border-radius: 999px;
     border: 2px solid rgba(6, 199, 85, 0.55); opacity: 0; pointer-events: none;
     animation: lpWakeHint 2s ease-out infinite;
   }
-  @keyframes lpWakeHint { 0% { opacity: 0.7; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.22); } }
+  /* ⛔ 別改回 transform: scale()：按鈕是寬藥丸，等比放大＝左右外擴 ±24px、上下只 ±5px，
+     光圈看起來歪一圈（09-08 使用者抓的）。inset 逐像素外擴才四邊等距。 */
+  @keyframes lpWakeHint { 0% { opacity: 0.7; inset: -2px; } 70%, 100% { opacity: 0; inset: -14px; } }
 
   /* ── 結算與收尾 ── */
   .lp-tally { margin: 30px 0 0; font-size: 1rem; font-weight: 700; color: var(--ink-2); }
@@ -475,7 +477,7 @@
   .lp-scrollcue {
     position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 3;
     display: flex; flex-direction: column; align-items: center; gap: 3px;
-    padding: 6px 12px; transition: opacity 0.5s ease;
+    padding: 6px 12px; transition: opacity 0.5s ease, transform 0.55s cubic-bezier(0.25, 0.8, 0.25, 1);
   }
   .lp-scrollcue__t { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.03em; color: var(--ink-soft); }
   .lp-scrollcue:hover .lp-scrollcue__t { color: var(--g-text); }
@@ -491,7 +493,8 @@
     0%, 100% { transform: rotate(45deg) translate(0, 0); opacity: 0.75; }
     50% { transform: rotate(45deg) translate(4px, 4px); opacity: 1; }
   }
-  .lp-hero.is-staged:not(.is-done) .lp-scrollcue { opacity: 0; pointer-events: none; }
+  /* 出現帶位移：藏著時往下沉 10px，.is-done 浮上來（transform 要帶著置中的 translateX） */
+  .lp-hero.is-staged:not(.is-done) .lp-scrollcue { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); }
 
   /* ── 通用面板（有標頭列的白卡）─────────────────────────── */
   /* 卡片高度層級：靜置一律 --sh-soft、hover 才升到 --sh-card。
@@ -1819,6 +1822,6 @@ html.lp-wake-boot .lp {
   /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合 */
   .lp-rev { grid-template-rows: 0fr; }
   .lp-rev > div { opacity: 0; overflow: hidden; }
-  /* 「往下看」箭頭跟著示範走：boot 期先藏（醒著的預設才看得見） */
-  .lp-scrollcue { opacity: 0; pointer-events: none; }
+  /* 「往下看」箭頭跟著示範走：boot 期先藏（醒著的預設才看得見），下沉位置跟 staged 版一致 */
+  .lp-scrollcue { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); }
 }
