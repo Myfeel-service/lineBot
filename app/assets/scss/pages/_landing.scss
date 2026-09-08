@@ -317,7 +317,11 @@
     min-height: max(620px, calc(100vh - 68px));
     min-height: max(620px, calc(100svh - 68px));
     padding: clamp(44px, 5vw, 64px) 0;
-    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%);
+    /* 尾端 84%→100% 融進下一區的灰（#why＝--surf-2）：滿版舞台收尾用硬切最突兀。
+       ⚠️ 09-08 評估過「白灰交界是否都改漸層」＝**只做 hero 這一個**：交錯底色的
+       功能就是分段，內文區塊之間的俐落界線才讀得出「換主題了」，⛔別把其他交界
+       也改成漸層（會抹糊段落感、每個交界還要各調高度）。 */
+    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--surf-2) 100%);
     transition: background 0.9s ease;
   }
   /* 睡著＝抽掉綠意的亮灰。⛔不是深色段（被打槍×2），亮度跟醒著只差一階 */
@@ -495,6 +499,9 @@
   }
   /* 出現帶位移：藏著時往下沉 10px，.is-done 浮上來（transform 要帶著置中的 translateX） */
   .lp-hero.is-staged:not(.is-done) .lp-scrollcue { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); }
+  /* 一往下捲就收掉（訊息已送達）；捲回頂端會再回來。is-scrolled＝跟導覽列同一個
+     scrollY>8 的訊號（index.vue 的 stuck） */
+  .lp-hero.is-scrolled .lp-scrollcue { opacity: 0; pointer-events: none; }
 
   /* ── 通用面板（有標頭列的白卡）─────────────────────────── */
   /* 卡片高度層級：靜置一律 --sh-soft、hover 才升到 --sh-card。

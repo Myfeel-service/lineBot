@@ -87,7 +87,7 @@
             ⛔不可以改成 onMounted 才把 hero 藏起來重演——先看到完整畫面再被藏起來
             就是閃一下的破圖（hero 的老規矩）。SSR／爬蟲／無 JS／減少動態拿到的
             都是醒著的完整內容。 -->
-    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone, 'is-typed': heroTyped }">
+    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone, 'is-typed': heroTyped, 'is-scrolled': stuck }">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
       <!-- 誠實機制的常駐標示。⛔別因為「版面乾淨」拿掉 -->
