@@ -74,8 +74,9 @@
          都睡著了：沒被記錄、沒貼標籤（滿屏無名灰點）→ 你發一則推播叫醒
          （喚醒波掃全場、灰點長出標籤、580 位結算、按鈕變回註冊 CTA）。
          ⚠️ 誠實機制（08-26 拍板那套的延續，⛔別拆）：
-           1. 人數（580）出現的前提是「以咖啡店為例」——右下角常駐一句、結算數字旁再掛
-              一句。⛔拿掉標示，虛構人數就是被當成真實客戶資料在賣。
+           1. 人數（580）出現的前提是「以咖啡店為例」＝右下角那顆常駐標示（09-08 起
+              整屏只剩它一顆——結算旁那句依使用者回饋收掉了）。⛔拿掉它，
+              虛構人數就是被當成真實客戶資料在賣。
            2. chip 上的標籤都必須是店家**現在真的貼得出來**的標籤（「60 天沒來」更是
               現有的自動標籤功能）；能力不可以虛構。
          ⚠️ 08-27 紅線：發推播的主詞永遠是**店家**——按鈕是「（你）發一則喚醒推播」，
@@ -115,17 +116,19 @@
                   兩段之間：只包後半的話逗號會被擠到第二行行首、都不包的話
                   text-wrap: balance 會切在「其／實」中間（390px 兩種都實拍抓過）。 -->
           <h1><span class="lp-h1seg">你的顧客<span class="lp-hang">，</span></span><span class="lp-h1seg">其實很<span class="g">值錢<i class="lp-zzz lp-zzz--h1" aria-hidden="true">z</i><i class="lp-zzz lp-zzz--h1b" aria-hidden="true">z</i></span><span class="lp-hang">。</span></span></h1>
-          <p class="lp-hero__sub">只是都睡著了——<b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
+          <p class="lp-hero__sub">只是都睡著了<span class="lp-dash">——</span><b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
         </div>
 
         <!-- 逐段浮出（.lp-rev）：每開一段，置中的文字就被往上頂一點。
              順序＝按鈕（第一頂）→ 結算（第二頂）→ 收尾句 → 小字＋重播。 -->
         <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
           <div>
-            <div class="lp-wakewrap" :class="{ 'is-go': wakeRings }">
+            <div class="lp-wakewrap" :class="{ 'is-go': wakeRings, 'is-swapping': wakeSwap }">
               <span class="lp-ring" /><span class="lp-ring lp-ring--2" />
               <!-- 示範中＝喚醒鈕（主詞是店家）；示範前後＝真的註冊 CTA。
                    SSR／無 JS／減少動態走 v-else 那顆連結＝永遠有入口。 -->
+              <!-- 換字（喚醒鈕 → 註冊 CTA）走淡出→換→淡入（is-swapping），
+                   ⛔別改回 v-if 直接切：瞬間換字會被讀成「壞掉跳了一下」（09-08 使用者抓過） -->
               <button
                 v-if="heroDemo" type="button" class="lp-btn lp-btn--primary lp-wake"
                 :class="{ 'is-pressed': wakePressed }" @click="playWake"
@@ -137,14 +140,19 @@
 
         <div class="lp-rev" :class="{ 'is-open': rev.tally }">
           <div>
-            <p class="lp-tally"><b>{{ tallyShown }}</b>位睡著的客人，醒了<small>以咖啡店為例</small></p>
+            <!-- 結算三段＝因果講全：一則推播發出去 → 580 → 位睡著的客人被叫醒。
+                 09-08 使用者回饋「正常人看不懂」改的：原版只有「580 位睡著的客人，醒了」，
+                 數字沒有「因」（推播）、量詞主體也含糊。
+                 ⚠️「以咖啡店為例」從結算收掉＝整屏只剩右下角那顆常駐標示，
+                    ⛔右下角那顆從此**不可拿掉**（虛構人數能出現全靠它，08-26 誠實機制）。 -->
+            <p class="lp-tally"><small>一則推播發出去<span class="lp-dash">——</span></small><b>{{ tallyShown }}</b>位睡著的客人，被叫醒了</p>
           </div>
         </div>
 
         <div class="lp-rev" :class="{ 'is-open': rev.payoff }">
           <div>
             <!-- 收尾句＝解答：記下來、貼標籤、推播叫醒。⛔主詞是店家，別寫成「它會自動」 -->
-            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤——一則推播，就叫得醒。</p>
+            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤<span class="lp-dash">——</span>一則推播，就叫得醒。</p>
           </div>
         </div>
 
@@ -1622,6 +1630,8 @@ const revBtnGrown = ref(true)
 const chipLit = ref<boolean[]>(HERO_CHIPS.map(() => false))
 const wakeRings = ref(false)
 const wakePressed = ref(false)
+/** 換字（喚醒鈕↔註冊 CTA）的淡出遮罩：true＝按鈕透明。⛔別拿掉直接 v-if 切＝瞬間跳字 */
+const wakeSwap = ref(false)
 const tallyShown = ref(HERO_WAKE_TOTAL)
 /** v-for 的 :ref 回呼（⛔別用陣列 ref：v-for 的陣列 ref 不保證順序，喚醒波的
  *  距離延遲會配錯顆——這裡按 index 對號入座） */
@@ -1684,12 +1694,15 @@ function playWake() {
   heroLater(() => { rev.tally = true; tallyShown.value = 0; heroCountUp(800) }, 1450)
   heroLater(() => { rev.payoff = true }, 2350)
   heroLater(() => { rev.fine = true }, 2850)
+  /* 換字三拍：淡出 → 換（此時還是透明的）→ 淡入。中間留 60ms 讓新按鈕先以
+     透明狀態掛上 DOM，再拿掉遮罩＝淡入；一次做完會變成「瞬間跳字」。 */
+  heroLater(() => { rev.replay = true; wakeSwap.value = true }, 3150)
   heroLater(() => {
-    rev.replay = true
     heroDemo.value = false // 按鈕變回「免費打造我的 MiniMe」＝看完示範，下一步在手邊
     heroPlaying = false
     heroPlayed = true
-  }, 3150)
+  }, 3480)
+  heroLater(() => { wakeSwap.value = false }, 3540)
 }
 
 /** 進睡著狀態後排「按鈕浮出 → 自動按下」。mount 與重播共用 */
@@ -1708,6 +1721,7 @@ function replayWake() {
   heroAsleep.value = true
   heroAwake.value = false
   heroDemo.value = true
+  wakeSwap.value = false // 重播的換字發生在收合的 rev 裡＝本來就看不到，不用演淡入
   chipLit.value = HERO_CHIPS.map(() => false)
   rev.btn = rev.tally = rev.payoff = rev.fine = rev.replay = false
   revBtnGrown.value = false
