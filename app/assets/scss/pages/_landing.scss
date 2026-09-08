@@ -1359,13 +1359,21 @@
      ⚠️ 副標不在了，大標到按鈕的距離就改由這一行的 margin-top 決定（原本它量的是
         「副標 → 按鈕」）。34px 沿用下來實測是 34px（大標的行高盒底線起算），與定價區
         「四張卡 → 按鈕」的 44px 同屬一組節奏，headless 量過後決定不動。 */
+  /* 2026-09-08 改直式後這一列只裝主按鈕（「想先聊聊」搬到小字下面＝.lp-cta__alt）。
+     ⛔ 別把 justify-content 拿掉：主按鈕的置中現在只靠它（並排時代量到 −99px 偏移，
+        why 與量法見 index.vue 那段 ⭐）。 */
   .lp-cta__actions { margin-top: 34px; display: flex; align-items: center; justify-content: center; gap: 22px; flex-wrap: wrap; }
   .lp-cta__talk { color: #fff; font-weight: 600; font-size: 0.98rem; border-bottom: 2px solid rgba(255, 255, 255, 0.45); padding-bottom: 2px; }
   .lp-cta__talk:hover { border-bottom-color: #fff; }
-  /* ⛔ 退費／取消的措辭只有一種寫法（「不綁約、隨時可取消，取消後服務用到本期結束」，
-     09-08 精簡後這行只留後半「隨時可取消，服務用到本期結束」，見 index.vue 那段 ⚠️），
-     別抄草稿的「付費後隨時可退」——實際政策沒有退現金（見 pages/refund.vue）。 */
-  .lp-cta__fine { margin: 18px 0 0; font-size: 0.88rem; color: rgba(255, 255, 255, 0.85); }
+  /* 按鈕的說明小字。14px＝與定價區「按鈕 → .lp-pricecta__fine」同一個值（同一種關係，
+     同一個距離）；原本是 18px，那時它下面沒有東西、也不必跟替代路徑分層。
+     ⛔ 這一行**不要**再寫退費／取消：整句只有一種寫法（「不綁約、隨時可取消，取消後
+        服務用到本期結束」），而 09-08 已拍板把它交給正上方的常見問答與 /product-info、
+        /refund；⛔ 更不要抄草稿的「付費後隨時可退」——實際政策沒有退現金（見 pages/refund.vue）。 */
+  .lp-cta__fine { margin: 14px 0 0; font-size: 0.88rem; color: rgba(255, 255, 255, 0.85); }
+  /* 替代路徑那一行。26px＝刻意比上面的 14px 大一倍有找：
+     「按鈕＋它的保證」是一組，這一行是另一條路，靠距離分層而不是靠分隔線。 */
+  .lp-cta__alt { margin: 26px 0 0; }
 
   /* ── 黏性行動條（捲離 Hero 之後從底部升起）──────────────────
    * z-index 55：壓在 sticky nav（60）之下，兩者不會疊在一起。
