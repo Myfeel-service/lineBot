@@ -309,7 +309,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     // ⚠️ 09-08 起 Hero＝滿版喚醒劇場：減少動態時 head 腳本不掛 lp-wake-boot、示範不啟動，
     //    大標／chip／結算／收尾句／小字（.lp-rev 的內容）從第一幀就要全部看得到。
     const sel = '.lp-reveal, .lp-cue, .lp-q, .lp-liveob, .lp-pane__hd, .lp-band__phone, '
-      + '.lp-hero__text > *, .lp-chip, .lp-tally, .lp-hero__payoff, .lp-hero__fine, .lp-hero .lp-rev > div, .lp-scrollcue, '
+      + '.lp-hero__text > *, .lp-chip, .lp-tally, .lp-hero__fine, .lp-hero .lp-rev > div, .lp-scrollcue, '
       + '.lp-livewin--chat .conv-bubble-row, .lp-livewin--chat .conv-bubble-read, '
       + '.lp-livewin--users tbody tr, .lp-livewin--users .tag-chip, .lp-band__phone .lp-pmsg'
     for (const el of document.querySelectorAll(sel)) {

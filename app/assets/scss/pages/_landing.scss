@@ -413,7 +413,7 @@
 
   /* ── 逐段浮出（.lp-rev）───────────────────────────────────
    * 高度從 0fr 長到內容高：置中的文字被「一段一段」往上頂——按鈕第一頂、
-   * 結算第二頂、收尾句第三頂、小字與重播第四頂。⛔別改成 opacity 佔位版：
+   * 結算第二頂、小字第三頂（09-08 A 案瘦身後就這三段）。⛔別改成 opacity 佔位版：
    * 佔位的空白會讓開場的「置中」變成「偏上」（09-07 實拍抓過）。 */
   .lp-rev { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.55s cubic-bezier(0.25, 0.8, 0.25, 1); }
   /* 開＝淡入等**高度長完**（延遲＝grow 的 0.55s）才開始：成長期間內容全透明，
@@ -456,12 +456,8 @@
   .lp-tally { margin: 30px 0 0; font-size: 1rem; font-weight: 700; color: var(--ink-2); }
   /* 大字綠用 --g-deep 不用 --g-text：37px+ 的展示數字，壓深會把力道洗掉（色票區規則②） */
   .lp-tally b { display: block; font-size: clamp(2.3rem, 4vw, 3.2rem); font-weight: 900; color: var(--g-deep); line-height: 1.15; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-  /* small＝數字上面那句「因」（一則推播發出去）：比底下那行退一階，數字才是主角 */
-  .lp-tally small { display: block; margin-bottom: 4px; font-size: 0.84rem; font-weight: 600; color: var(--ink-soft); }
   /* 全形破折號「——」貼著前後字會糊成一塊，左右開一點呼吸（09-08 使用者要求） */
   .lp-hero .lp-dash { margin: 0 0.13em; }
-  .lp-hero__payoff { margin: 16px 0 0; font-size: 1rem; line-height: 1.75; color: var(--ink-2); }
-  .lp-hero__payoff b { color: var(--ink); font-weight: 700; }
   .lp-hero__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
   /* nowrap：手機上「NT$399 起」會斷在空白處，把「起」孤零零丟到下一行 */
   .lp-hero__fine b { color: var(--ink-2); font-weight: 700; white-space: nowrap; }

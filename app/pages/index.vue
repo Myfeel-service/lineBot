@@ -120,7 +120,7 @@
         </div>
 
         <!-- 逐段浮出（.lp-rev）：每開一段，置中的文字就被往上頂一點。
-             順序＝按鈕（第一頂）→ 結算（第二頂）→ 收尾句 → 小字。 -->
+             順序＝按鈕（第一頂）→ 結算（第二頂）→ 小字（第三頂）。 -->
         <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
           <div>
             <div class="lp-wakewrap" :class="{ 'is-go': wakeRings, 'is-swapping': wakeSwap }">
@@ -140,21 +140,16 @@
 
         <div class="lp-rev" :class="{ 'is-open': rev.tally }">
           <div>
-            <!-- 結算三段＝因果講全：一則推播發出去 → 580 → 位睡著的客人被叫醒。
-                 09-08 使用者回饋「正常人看不懂」改的：原版只有「580 位睡著的客人，醒了」，
-                 數字沒有「因」（推播）、量詞主體也含糊。
-                 ⚠️「以咖啡店為例」從結算收掉＝整屏只剩右下角那顆常駐標示，
-                    ⛔右下角那顆從此**不可拿掉**（虛構人數能出現全靠它，08-26 誠實機制）。 -->
-            <!-- 「快被忘記的客人」＝「睡著」的白話版（09-08 使用者：睡著的客人要更直觀），
-                 跟副標「沒被記錄」同一個邏輯、也接住收尾句的「記下來」。 -->
-            <p class="lp-tally"><small>一則推播發出去<span class="lp-dash">——</span></small><b>{{ tallyShown }}</b>位快被忘記的客人，被叫醒了</p>
-          </div>
-        </div>
-
-        <div class="lp-rev" :class="{ 'is-open': rev.payoff }">
-          <div>
-            <!-- 收尾句＝解答：記下來、貼標籤、分眾叫醒。⛔主詞是店家，別寫成「它會自動」 -->
-            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤<span class="lp-dash">——</span>想叫醒哪一群客人，一則推播就夠。</p>
+            <!-- 結算＝數字＋一行把因果講完：「快被忘記的客人」是「睡著」的白話版
+                 （跟副標「沒被記錄」同一個邏輯）、「被一則推播叫醒」把因收進句尾。
+                 ⚠️ 09-08 A 案瘦身：原本的 lead（一則推播發出去——）與收尾句
+                    （記下來、貼好標籤——一則推播就夠）整段拿掉——收尾句是把動畫
+                    講第二遍（貼標籤＝副標反面＋灰點長出標籤演過；推播＝這行講了），
+                    「推播」一詞當時在中央出現三次。⛔別把說明句加回來：hero 的分工
+                    是動畫演機制、下一區講產品。
+                 ⚠️「以咖啡店為例」不在結算旁＝整屏只剩右下角那顆常駐標示，
+                    ⛔右下角那顆**不可拿掉**（虛構人數能出現全靠它，08-26 誠實機制）。 -->
+            <p class="lp-tally"><b>{{ tallyShown }}</b>位快被忘記的客人，被一則推播叫醒</p>
           </div>
         </div>
 
@@ -1626,7 +1621,7 @@ const heroAwake = ref(false)
 /** true＝按鈕是「發一則喚醒推播」；false（SSR 預設）＝真的註冊 CTA */
 const heroDemo = ref(false)
 /** ⚠️ SSR 預設全開＝無 JS／爬蟲看到完整內容；boot 期由 html.lp-wake-boot 強制收合 */
-const rev = reactive({ btn: true, tally: true, payoff: true, fine: true })
+const rev = reactive({ btn: true, tally: true, fine: true })
 /** 示範演完＝true：滿版舞台底部的「往下看」箭頭這時才浮出 */
 const heroDone = ref(false)
 const revBtnGrown = ref(true)
@@ -1695,18 +1690,17 @@ function playWake() {
 
   heroLater(() => { heroAsleep.value = false; heroAwake.value = true }, 900)
   heroLater(() => { rev.tally = true; tallyShown.value = 0; heroCountUp(800) }, 1450)
-  heroLater(() => { rev.payoff = true }, 2350)
-  heroLater(() => { rev.fine = true }, 2850)
+  heroLater(() => { rev.fine = true }, 2350)
   /* 換字三拍：淡出 → 換（此時還是透明的）→ 淡入。中間留 60ms 讓新按鈕先以
      透明狀態掛上 DOM，再拿掉遮罩＝淡入；一次做完會變成「瞬間跳字」。 */
-  heroLater(() => { wakeSwap.value = true }, 3150)
+  heroLater(() => { wakeSwap.value = true }, 2750)
   heroLater(() => {
     heroDemo.value = false // 按鈕變回「免費打造我的 MiniMe」＝看完示範，下一步在手邊
     heroDone.value = true // 底部「往下看」箭頭浮出（09-08 起沒有重播鍵，出口只有往下）
     heroPlaying = false
     heroPlayed = true
-  }, 3480)
-  heroLater(() => { wakeSwap.value = false }, 3540)
+  }, 3080)
+  heroLater(() => { wakeSwap.value = false }, 3140)
 }
 
 /** 進睡著狀態後排「按鈕浮出 → 自動按下」（訪客也可以搶先按） */
@@ -1770,7 +1764,7 @@ onMounted(() => {
     heroStaged.value = true
     heroAsleep.value = true
     heroDemo.value = true
-    rev.btn = rev.tally = rev.payoff = rev.fine = false
+    rev.btn = rev.tally = rev.fine = false
     revBtnGrown.value = false
     tallyShown.value = 0
     // 等 Vue 把睡著狀態畫上去（同一套視覺）再拆 boot class——中間沒有任何一幀會醒來
