@@ -259,7 +259,11 @@ export function useOnboardingChat() {
       await walkNodes([
         {
           html: '先去申請一個 <b>LINE 官方帳號</b>，是<b>免費</b>的。申請時要填店名、聯絡信箱跟行業別，跟著畫面走就好。',
-          href: 'https://tw.linebiz.com/entry/',
+          // ⛔ 2026-09-08 修死連結：`tw.linebiz.com/entry/` 已經 404（老闆點連結才發現，
+          //    08-07 從日本入口改台灣時它還是活的）。正解是 `/account/`——那頁的
+          //    「免費開設帳號」就是申請入口。⚠️ 這是**外部網址會自己腐爛**的第一個案例，
+          //    所以同輪加了 `scripts/check-external-links.mjs`，別再靠使用者回報。
+          href: 'https://tw.linebiz.com/account/',
           hrefLabel: '前往申請 LINE 官方帳號（台灣） ↗',
         },
         {
