@@ -169,7 +169,7 @@
 
       <!-- 滿版舞台的出口：示範演完才浮出的「往下看」箭頭（09-08 使用者要的 scroll down 提示；
            同輪拿掉了重播示範）。無 JS／減少動態＝預設就看得見，錨點連結不用 JS 也能跳。 -->
-      <a class="lp-scrollcue" href="#why" aria-label="往下看更多"><span class="lp-scrollcue__chev" /></a>
+      <a class="lp-scrollcue" href="#why"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
     </header>
 
     <!-- ── 為什麼卡住：四道牆（問題＋解法同一張卡）─────────────
@@ -1598,24 +1598,24 @@ const HERO_WAKE_TOTAL = 580
  */
 interface HeroChip { x: number; y: number; label: string; z?: boolean; z2?: boolean; hm?: boolean }
 const HERO_CHIPS: readonly HeroChip[] = [
-  { x: 10, y: 7, label: '愛手沖', z: true },
-  { x: 30, y: 7, label: '買過禮盒', hm: true },
-  { x: 50, y: 7, label: '60 天沒來', z: true, z2: true },
-  { x: 70, y: 7, label: '住附近', hm: true },
-  { x: 90, y: 7, label: '咖啡展認識', z: true },
-  { x: 20, y: 32, label: '新朋友' },
-  { x: 40, y: 32, label: '每週都來', hm: true },
-  { x: 60, y: 32, label: '只逛沒買過', z: true, hm: true },
-  { x: 80, y: 32, label: '愛手沖' },
-  { x: 10, y: 58, label: '60 天沒來' },
-  { x: 30, y: 58, label: '咖啡展認識', hm: true },
-  { x: 50, y: 58, label: '新朋友', hm: true },
-  { x: 70, y: 58, label: '買過禮盒', z: true, hm: true },
-  { x: 90, y: 58, label: '每週都來' },
-  { x: 20, y: 84, label: '住附近', z: true },
-  { x: 40, y: 84, label: '咖啡展認識', hm: true },
-  { x: 60, y: 84, label: '愛手沖', hm: true },
-  { x: 80, y: 84, label: '60 天沒來', z: true },
+  { x: 10, y: 10, label: '愛手沖', z: true },
+  { x: 30, y: 10, label: '買過禮盒', hm: true },
+  { x: 50, y: 10, label: '60 天沒來', z: true, z2: true },
+  { x: 70, y: 10, label: '住附近', hm: true },
+  { x: 90, y: 10, label: '咖啡展認識', z: true },
+  { x: 20, y: 36, label: '新朋友' },
+  { x: 40, y: 36, label: '每週都來', hm: true },
+  { x: 60, y: 36, label: '只逛沒買過', z: true, hm: true },
+  { x: 80, y: 36, label: '愛手沖' },
+  { x: 10, y: 62, label: '60 天沒來' },
+  { x: 30, y: 62, label: '咖啡展認識', hm: true },
+  { x: 50, y: 62, label: '新朋友', hm: true },
+  { x: 70, y: 62, label: '買過禮盒', z: true, hm: true },
+  { x: 90, y: 62, label: '每週都來' },
+  { x: 20, y: 88, label: '住附近', z: true },
+  { x: 40, y: 88, label: '咖啡展認識', hm: true },
+  { x: 60, y: 88, label: '愛手沖', hm: true },
+  { x: 80, y: 88, label: '60 天沒來', z: true },
 ]
 
 const heroEl = ref<HTMLElement | null>(null)

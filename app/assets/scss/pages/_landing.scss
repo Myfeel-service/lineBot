@@ -393,7 +393,7 @@
    * 淡出邊緣才是「標籤在字後面」的層次，實心塊就變成一張卡了。 */
   .lp-hero__center { position: relative; z-index: 2; max-width: 720px; text-align: center; }
   .lp-hero__center::before {
-    content: ''; position: absolute; inset: -70px -150px; z-index: -1; pointer-events: none;
+    content: ''; position: absolute; inset: -130px -240px; z-index: -1; pointer-events: none;
     background: radial-gradient(closest-side, rgba(251, 253, 251, 0.95) 42%, rgba(251, 253, 251, 0.72) 66%, rgba(251, 253, 251, 0) 100%);
   }
   /* letter-spacing 的由來見 09-06 那輪：CJK 大標合理範圍 0 ~ -0.02em，別再收緊 */
@@ -473,10 +473,12 @@
    * 預設（SSR／無 JS／減少動態）就看得見；示範進行中藏著、演完（.is-done）才浮出。
    * 錨點連結 #why＝沒有 JS 也能跳，有 JS 時吃頁面的 smooth scroll。 */
   .lp-scrollcue {
-    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3;
-    display: flex; align-items: center; justify-content: center;
-    width: 44px; height: 44px; transition: opacity 0.5s ease;
+    position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 3;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 12px; transition: opacity 0.5s ease;
   }
+  .lp-scrollcue__t { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.03em; color: var(--ink-soft); }
+  .lp-scrollcue:hover .lp-scrollcue__t { color: var(--g-text); }
   .lp-scrollcue__chev {
     width: 13px; height: 13px; margin-top: -6px;
     border-right: 2.5px solid var(--ink-soft); border-bottom: 2.5px solid var(--ink-soft);
@@ -1658,7 +1660,7 @@
     .lp-chip { padding: 5px 12px 5px 6px; }
     .lp-chip__av { width: 24px; height: 24px; }
     .lp-chip__lb { font-size: 0.72rem; }
-    .lp-hero__center::before { inset: -48px -40px; }
+    .lp-hero__center::before { inset: -84px -64px; }
     .lp-faq__grid { grid-template-columns: 1fr; }
     .lp-foot__in { grid-template-columns: 1fr 1fr; gap: 32px; padding: 40px 24px 32px; }
   }
