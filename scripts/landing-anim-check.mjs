@@ -353,6 +353,12 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await page.setJavaScriptEnabled(false)
   await page.setViewport({ width: 1440, height: 900 })
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 120000 })
+  // ⚠️ 一定要等：Hero 的進場是**純 CSS**（不等 .is-anim，見 _landing.scss 那段），
+  //    .lp-hero__text 的子元素帶 lpHeroIn（0.16s 延遲＋0.6s、fill-mode backwards）＝
+  //    動畫還沒跑完時 opacity 本來就是 0。在 domcontentloaded 立刻量會跟動畫賽跑，
+  //    量到 `.lp-hero__sub opacity=0` 就誤報「沒 JS 卻藏著」（2026-09-08 偶發紅，
+  //    逐次探測三輪確認 1.2s 後一律回到 1）。⛔ 別把這個 wait 拿掉。
+  await wait(1400)
   console.log('\n④ 沒有 JS')
   const hidden = await page.evaluate(() => [...document.querySelectorAll(
     '.lp-reveal, .lp-cue, .lp-livewin--chat .conv-bubble-row, .lp-livewin--users tbody tr, .lp-band__phone .lp-pmsg, '
