@@ -233,20 +233,22 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
 
   // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
   //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）
+  // ⚠️ 2026-09-08 兩欄化（流程在左、示意在右）之後**live 卡與第一截綠線在同一條水平線上**
+  //    （右欄的卡頂量到只比左欄第 1 顆磚低 2.8px），所以「把綠線捲到看得見、能開演」的
+  //    任何位置都會同時把卡片也觸發掉。⛔ 別再調 -600 那個數字想閃避——單欄時代它們相差
+  //    ~210px 所以閃得掉，現在相差 ~0px，閃不掉。
+  //    改成：**兩個「起點」都在同一個還沒捲下去的位置一起量**，之後再各自量終點。
   await go('.lp-path__rail', -830)
   const lineBefore = await val('.lp-path__rail', 'transform', '::after')
-  // ⚠️ -600 不是 -450：左軸清單收緊後第一截線到 live 卡只剩 ~210px，
-  //    捲太多會順手把 live 卡也觸發掉（cue 線在視窗 76%，900 高＝684px）
+  const barBefore = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
+  const beatsBefore = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
   await go('.lp-path__rail', -600)
   await wait(1400)
   const lineAfter = await val('.lp-path__rail', 'transform', '::after')
   collapsed(lineBefore) ? ok(`左軸綠線 起點＝收起 (${lineBefore})`) : bad(`左軸綠線 起點不是收起：${lineBefore}`)
   grown(lineAfter) ? ok(`左軸綠線 終點＝長完 (${lineAfter})`) : bad(`左軸綠線 沒長完：${lineAfter}`)
 
-  // 4) 開通引導 live 卡：進度條長出來＋demo 真的往下演
-  await go('.lp-liveob', -830)
-  const barBefore = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
-  const beatsBefore = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
+  // 4) 開通引導 live 卡：進度條長出來＋demo 真的往下演（起點在上面就量掉了，見那段 ⚠️）
   await go('.lp-liveob', -250)
   await wait(1800)
   const barAfter = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')

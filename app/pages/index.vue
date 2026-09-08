@@ -909,79 +909,95 @@
             <div class="lp-path__body">
               <div class="lp-path__head">
                 <b>接 LINE 的時候，有人陪</b>
-                <span class="lp-path__meta">系統實際畫面</span>
               </div>
               <!-- 2026-09-07 老闆：這句放標題下方（跟 1、2 步的副標同款位置），
                    不要孤零零掛在卡片底下——樣式吃現成的 .lp-path__body > small -->
               <small>不懂技術也沒關係——每一步都用聊天帶你做，卡住就點「教我一步步拿」。</small>
-              <!-- ⚠️ 「系統實際畫面」＝用開通引導頁真正的樣式現場渲染（09-03 八輪，做法與
-                   #value 兩扇 live 視窗同一套；取代 admin-onboarding.png）。樣式源頭＝
-                   _onboarding.scss（.onbc-*）＋ _agent-chat.scss（.agm-*），後台改樣式這裡
-                   自動跟上、改「結構」要跟著搬。⛔擋互動的三件套（inert/role="img"/
-                   user-select:none）一件都不准掛——會退化回「一張圖」（六、七輪的教訓）。
-                   ⛔ 內容不是自由發揮：進度條五格＝useOnboardingChat.ts 的
-                   ONBOARDING_PROGRESS_LABELS（別 import——那支 composable 會把整包
-                   拖進官網 bundle，抄字＋這行註解就好）；兩句話與兩顆鈕＝同檔 stepSecret
-                   的原文（307/305 行附近），劇本改字這裡要跟著改。示範帳號山丘咖啡，
-                   停在「取得連線資訊」＝刻意沒接 LINE 的那一步。
-                   ⚠️ 進場動態（09-03 八輪「做動態的」＋九輪「show 出更多步驟」）：捲到之後
-                   由 JS 時間軸把整趟快樂路徑演完——對白一句句冒出（前面有真的打字點點）、
-                   進度條跟著對話一格格亮到「完成」；對話區＝固定高的捲動欄（跟真頁面同款），
-                   舊訊息自己往上捲。劇本資料與節奏在 OB_BEATS／playObDemo（本檔 script）。
-                   SSR／無 JS／減少動態＝停在「取得連線資訊」問句＋兩顆選項的靜態卡。 -->
-              <!-- 卡片自己是一個進場單位（lp-reveal）＋自己收動畫的線（lp-cue）：
-                   淡入→捲到眼前才開演，兩件事分兩條線。⛔別只留外層那站的 lp-reveal：
-                   那一站含標題與圖說有 594px 高，卡片會在畫面外淡完。 -->
-              <div ref="obCardEl" class="lp-liveob lp-reveal lp-cue">
-                <div class="onbc-shell">
-                  <header class="onbc-head">
-                    <BrandLogo mark class="onbc-mark" />
-                    <div class="onbc-head__text">
-                      <span class="onbc-head__title">開通引導</span>
-                      <span class="onbc-head__sub">小幫手陪你把設定做完</span>
-                    </div>
-                    <!-- 真頁面是 NuxtLink；這裡是展示品，用 span 掛同 class（點了不能把人
-                         帶去登入牆），title 那句照搬——滑過去有字＝又一個「它是活的」證明 -->
-                    <span class="onbc-exit" title="現在離開沒關係，下次回來我會從沒做完的地方接著帶">之後再說</span>
-                  </header>
-                  <div class="onbc-progress" aria-hidden="true">
-                    <div
-                      v-for="(label, i) in OB_PROGRESS_LABELS"
-                      :key="label"
-                      class="onbc-step"
-                      :class="{ 'is-done': i < obProgress, 'is-current': i === obProgress }"
-                    >{{ label }}</div>
+            </div>
+          </div>
+
+          <!-- ── 右欄＝那張 live demo（2026-09-08 使用者「三個步驟都統一放左邊、示意放右邊」）──
+               ⚠️ 卡片從第三站的 __body 裡**搬出來**成為 .lp-path 的直接子項，桌機才進得了第 2 欄。
+               ⚠️ 「系統實際畫面」那顆膠囊**跟著卡片搬**（原本在第三站的標題旁）：它是對**這張卡**
+                  的事實聲明（這不是美術示意圖），離開卡片 350px 就變成一句飄著的話。
+                  放在卡片上方左緣＝跟左欄的 overline 同一條上緣，兩欄都以一顆小標籤開頭。
+               ⛔ 別把它塞回左欄標題旁：那裡看不到它在講誰。
+               ⚠️ DOM 位置在第三站之後、CTA 之前＝手機收單欄時的閱讀順序跟兩欄化之前一模一樣
+                  （標題 → 圖說 → 卡 → 按鈕）。 -->
+          <div class="lp-path__demo">
+            <span class="lp-path__meta">系統實際畫面</span>
+            <!-- ⚠️ 「系統實際畫面」＝用開通引導頁真正的樣式現場渲染（09-03 八輪，做法與
+                 #value 兩扇 live 視窗同一套；取代 admin-onboarding.png）。樣式源頭＝
+                 _onboarding.scss（.onbc-*）＋ _agent-chat.scss（.agm-*），後台改樣式這裡
+                 自動跟上、改「結構」要跟著搬。⛔擋互動的三件套（inert/role="img"/
+                 user-select:none）一件都不准掛——會退化回「一張圖」（六、七輪的教訓）。
+                 ⛔ 內容不是自由發揮：進度條五格＝useOnboardingChat.ts 的
+                 ONBOARDING_PROGRESS_LABELS（別 import——那支 composable 會把整包
+                 拖進官網 bundle，抄字＋這行註解就好）；兩句話與兩顆鈕＝同檔 stepSecret
+                 的原文（307/305 行附近），劇本改字這裡要跟著改。示範帳號山丘咖啡，
+                 停在「取得連線資訊」＝刻意沒接 LINE 的那一步。
+                 ⚠️ 進場動態（09-03 八輪「做動態的」＋九輪「show 出更多步驟」）：捲到之後
+                 由 JS 時間軸把整趟快樂路徑演完——對白一句句冒出（前面有真的打字點點）、
+                 進度條跟著對話一格格亮到「完成」；對話區＝固定高的捲動欄（跟真頁面同款），
+                 舊訊息自己往上捲。劇本資料與節奏在 OB_BEATS／playObDemo（本檔 script）。
+                 SSR／無 JS／減少動態＝停在「取得連線資訊」問句＋兩顆選項的靜態卡。 -->
+            <!-- 卡片自己是一個進場單位（lp-reveal）＋自己收動畫的線（lp-cue）：
+                 淡入→捲到眼前才開演，兩件事分兩條線。⛔別只留外層那站的 lp-reveal：
+                 那一站含標題與圖說有 594px 高，卡片會在畫面外淡完。 -->
+            <div ref="obCardEl" class="lp-liveob lp-reveal lp-cue">
+              <div class="onbc-shell">
+                <header class="onbc-head">
+                  <BrandLogo mark class="onbc-mark" />
+                  <div class="onbc-head__text">
+                    <span class="onbc-head__title">開通引導</span>
+                    <span class="onbc-head__sub">小幫手陪你把設定做完</span>
                   </div>
-                  <div ref="obChatEl" class="onbc-chat">
-                    <div
-                      v-for="(b, i) in OB_BEATS.slice(0, obBeat)"
-                      :key="i"
-                      class="agm-msg"
-                      :class="b.role === 'user' ? 'agm-msg--user' : 'agm-msg--agent'"
-                    >
-                      <!-- html 僅限上面 OB_BEATS 裡劇本原文的常數（同真渲染器的警語） -->
-                      <!-- eslint-disable-next-line vue/no-v-html -->
-                      <div class="agm-bubble"><div v-html="b.html" /></div>
-                    </div>
-                    <div v-if="obTyping" class="agm-msg agm-msg--agent"><div class="agm-bubble agm-typing"><i /><i /><i /></div></div>
-                    <!-- 選項鈕只在「還停在問句」時存在；使用者選了（demo 演到下一拍）就消失，跟真頁面一樣。
-                         順序照 orderAgentChoices：其他 → 主要動作（主鈕靠右） -->
-                    <div v-if="obBeat === 2 && !obTyping" class="agm-choices">
-                      <el-button round>我會拿，直接貼上</el-button>
-                      <el-button round type="primary">教我一步步拿</el-button>
-                    </div>
+                  <!-- 真頁面是 NuxtLink；這裡是展示品，用 span 掛同 class（點了不能把人
+                       帶去登入牆），title 那句照搬——滑過去有字＝又一個「它是活的」證明 -->
+                  <span class="onbc-exit" title="現在離開沒關係，下次回來我會從沒做完的地方接著帶">之後再說</span>
+                </header>
+                <div class="onbc-progress" aria-hidden="true">
+                  <div
+                    v-for="(label, i) in OB_PROGRESS_LABELS"
+                    :key="label"
+                    class="onbc-step"
+                    :class="{ 'is-done': i < obProgress, 'is-current': i === obProgress }"
+                  >{{ label }}</div>
+                </div>
+                <div ref="obChatEl" class="onbc-chat">
+                  <div
+                    v-for="(b, i) in OB_BEATS.slice(0, obBeat)"
+                    :key="i"
+                    class="agm-msg"
+                    :class="b.role === 'user' ? 'agm-msg--user' : 'agm-msg--agent'"
+                  >
+                    <!-- html 僅限上面 OB_BEATS 裡劇本原文的常數（同真渲染器的警語） -->
+                    <!-- eslint-disable-next-line vue/no-v-html -->
+                    <div class="agm-bubble"><div v-html="b.html" /></div>
+                  </div>
+                  <div v-if="obTyping" class="agm-msg agm-msg--agent"><div class="agm-bubble agm-typing"><i /><i /><i /></div></div>
+                  <!-- 選項鈕只在「還停在問句」時存在；使用者選了（demo 演到下一拍）就消失，跟真頁面一樣。
+                       順序照 orderAgentChoices：其他 → 主要動作（主鈕靠右） -->
+                  <div v-if="obBeat === 2 && !obTyping" class="agm-choices">
+                    <el-button round>我會拿，直接貼上</el-button>
+                    <el-button round type="primary">教我一步步拿</el-button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- ⚠️ 這一區原本**一顆按鈕都沒有**：讀者剛被說服「原來這麼簡單」，卻要自己滑到定價區
-             才找得到入口。⛔ 用詞跟全站一致（免費打造我的 MiniMe），別自己另取一個。 -->
-        <div class="lp-fast__cta lp-reveal">
-          <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
-          <p class="lp-fast__fine"><b>免費方案不用綁卡</b>，接 LINE 的部分隨時可以再回來做。</p>
+          <!-- ⚠️ 這一區原本**一顆按鈕都沒有**：讀者剛被說服「原來這麼簡單」，卻要自己滑到定價區
+               才找得到入口。⛔ 用詞跟全站一致（免費打造我的 MiniMe），別自己另取一個。
+               ⚠️ 09-08 兩欄化把它**搬進 .lp-path 裡面**（原本是 .lp-path 的兄弟）：桌機它要落在
+                  左欄「兩步」的正下方（那顆鈕就是那兩步的下一步，而且左欄本來會空 250px），
+                  手機收單欄時它是整區最後一個＝跟以前一樣置中收尾。
+               ⛔ DOM 順序不可以改成「CTA 在 station 之前」：手機沒有欄位可言、照 DOM 讀，
+                  會變成「還沒看到 demo 就先叫人按鈕」。桌機的左右位置一律靠 grid 指定，不靠 DOM。 -->
+          <div class="lp-fast__cta lp-reveal">
+            <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+            <p class="lp-fast__fine"><b>免費方案不用綁卡</b>，接 LINE 的部分隨時可以再回來做。</p>
+          </div>
         </div>
       </div>
     </section>

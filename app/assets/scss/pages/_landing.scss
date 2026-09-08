@@ -1024,7 +1024,47 @@
    * ⚠️ 列與列**不留 margin**，間距全部走 __body 的 padding-bottom——rail 是 flex:1，
    *    天生把列高填滿、軌道永遠接得到下一顆磚；文字換行、✓ 面板變高都不會把線扯斷。
    *    ⛔別改回置中版那種 top/height 魔法數字的絕對定位線段：✓ 面板一變高線就搆不到磚。 */
-  .lp-path { max-width: 830px; margin-left: auto; margin-right: auto; }
+  /* ── 兩欄：流程在左、示意在右（2026-09-08 使用者「是否切左右兩邊，讓頁面不這麼冗長」）──
+   * 單欄版把「兩步」與 442px 的 demo 卡上下疊，這一區 1,372px 高、而左右兩側各空掉一大片
+   * （830px 的內容置中在 1,112px 的版心裡，步驟文字實際只用到 ~470px）＝**垂直不夠用、
+   * 水平用不完**。切兩欄後量到 967px（−405px）。
+   *
+   * ⚠️ 欄寬直接沿用 `.lp-rails` 的 **350 ／ 60 ／ 702（1:2）**——同一頁已經有這組兩欄
+   *    （#value 那疊），不要另外發明一組比例。
+   * ⚠️ 這是**部分翻回** 09-03 十二輪拆掉的左右版，所以要交代那兩個病有沒有解掉：
+   *    ①「兩張等高白卡」→ 沒有卡框了，左欄是裸文字、右欄是 live demo。
+   *    ②「窄欄置中文字直落到 760px 的卡、兩者沒有共用的邊，卡是浮的」→ `align-items: start`
+   *       ＝兩欄**共用上緣**（overline 對到右欄那站的標題列），卡不再是浮的。
+   * ⚠️ **三站全部留在左欄**（2026-09-08 使用者「是否三個步驟都統一放左邊」）：左軸清單
+   *    1 → 2 → 3 整條保持完整（＝二十三輪那個決策原封不動），兩欄化只把那張 demo 卡
+   *    從清單底下搬到右邊。⛔ 別為了「60 秒不含接 LINE」把第三站拆去右欄——那件事本來
+   *    就由「第三顆磚是聊天圖示不是 3」＋第 2 步後面的 ✓ 面板講，拆欄會把一條路砍成兩截。
+   * ⚠️ grid-template-rows **必須寫出五列**：demo 用 `grid-row: 1 / -1` 跨滿，而 `-1` 指的是
+   *    「明確網格的最後一條線」——不宣告列數的話 `-1` 會退化成第 1 列，右欄只佔一列高，
+   *    左欄剩下的項目會被推到卡片下面（踩過）。五列＝overline／1／2／接 LINE／CTA。 */
+  .lp-path {
+    display: grid; grid-template-columns: 350px minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto;
+    column-gap: 60px; align-items: start;
+  }
+  .lp-path > * { grid-column: 1; }
+  .lp-path > .lp-path__demo { grid-column: 2; grid-row: 1 / -1; }
+  /* 左欄的 CTA：對齊步驟的文字欄（磚 52 ＋ 間距 18），不置中——它現在是「這條路的下一步」，
+     不是整區的收尾。⚠️ 動磚尺寸或 __row 的 gap 要跟著改這個 70px。 */
+  .lp-path > .lp-fast__cta { text-align: left; padding-left: 70px; }
+  /* 「系統實際畫面」在右欄自己一行（原本是第三站標題旁的 inline 膠囊）＝兩欄都以一顆
+     小標籤開頭，共用上緣看得出來。
+     ⚠️ `-3px` 是**量出來的**：膠囊有 3px 內距＋1px 邊框、字級與行高又都比 overline 小
+        （11.52/19.58 對 12.8/21.76），不補這 3px 兩顆標籤的文字會差 3px＝看得出沒對齊。
+        順帶把卡頂拉到跟第 1 顆磚幾乎同高（量到剩 2.8px）。
+     ⛔ 量這種東西一定要**先捲到區塊裡等 .lp-reveal 進場完成**再量：沒進場的元素帶著
+        translateY，量到的位置全是假的（09-08 這輪就先量到一組錯的才發現）。
+     ⚠️ 動到膠囊或 overline 的字級／內距，這 3px 要重量。
+     ⛔ 這裡**必須 `display: block` ＋ `width: fit-content`**（跟 .lp-path__done 同一招），
+        不能用 inline-block：inline-block 的垂直 margin 不會移動它的文字基線（基線照
+        行框對齊），`margin-top: -3px` 會完全沒有效果——這輪先寫 inline-block 才發現，
+        computed style 看得到負值、量出來卻一點都沒動。 */
+  .lp-path__demo > .lp-path__meta { display: block; width: fit-content; margin: -3px 0 22px; }
   .lp-path__over { margin: 0 0 22px; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.05em; color: var(--ink-soft); }
   .lp-path__row { display: flex; gap: 18px; }
   .lp-path__col { display: flex; flex-direction: column; align-items: center; flex: none; width: 52px; }
@@ -1067,7 +1107,10 @@
   }
   /* ⚠️ text-align: left 留著當保險：版式若再改回置中，demo 殼的「開通引導」標題
      不能跟著置中——真頁面是靠左（十四輪實截抓到） */
-  .lp-path__row .lp-liveob { width: 100%; max-width: 760px; margin: 14px 0 0; text-align: left; }
+  /* ⚠️ 選擇器 09-08 從 `.lp-path__row .lp-liveob` 換成 `.lp-path__demo`：卡片已經搬出第三站的
+     __body、不再是 __row 的後代，舊選擇器會**整條靜靜失效**（卡片變成沒有寬度上限與左對齊）。
+     max-width 760 在兩欄下不再咬得到（右欄 702），留著是為了單欄時仍然有上限。 */
+  .lp-path__demo .lp-liveob { width: 100%; max-width: 760px; margin: 0; text-align: left; }
 
   /* 區塊底部的行動出口（原本整區零個按鈕）；36px＝跟一條路的站距同級，CTA 讀成下一站 */
   .lp-fast__cta { margin-top: 36px; text-align: center; }
@@ -1656,11 +1699,23 @@
    * ⚠️ 順序：max-width 由大到小往下寫，最後才是 960（整個收單欄那條）。 */
   @media (max-width: 1100px) {
     .lp-rails { grid-template-columns: 264px minmax(0, 1fr); gap: 48px; }
+    /* 一條路的左欄跟著收，但**不能跟軌一樣收到 264**：左欄裝的是步驟標題（1.12rem）、
+       ✓ 面板與 CTA 按鈕，不是短標籤。300 是量出來的下限（見 1000px 那條）。 */
+    .lp-path { grid-template-columns: 300px minmax(0, 1fr); column-gap: 48px; }
   }
   @media (max-width: 1000px) {
     /* 軌只剩 200px 寬＝四條的標題與副標都會換行，量到 510.8px；置中要用這個高度算，
        ⛔ 不能沿用上面那個 455（09-06 四條版重量：510.8px）。 */
     .lp-rails { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; --rail-h: 511px; }
+    /* 一條路**收回單欄**＝2026-09-03 二十三輪那個左軸清單原封不動（DOM 順序本來就是
+       overline → 1 → 2 → 接 LINE 那站 → CTA，所以退回來自然就對）。
+       ⚠️ 這條比 .lp-rails 的 960 早收：再窄下去左欄放不下 CTA 按鈕、右欄的聊天窗也會
+          窄到泡泡一字一行（實測下限見 1100px 那條的 300px）。
+       ⛔ display: block 之後 grid-column／grid-row 自動失效，不用一條條清。 */
+    .lp-path { display: block; max-width: 830px; margin-left: auto; margin-right: auto; }
+    .lp-path > .lp-fast__cta { text-align: center; padding-left: 0; }
+    /* 膠囊回到卡片正上方那一行（單欄時沒有另一欄要對齊，那 -5px 與 22px 都不需要） */
+    .lp-path__demo > .lp-path__meta { margin: 0 0 10px; }
   }
   @media (max-width: 960px) {
     /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
@@ -1730,16 +1785,17 @@
     .lp-bubble h2 br { display: none; }
 
     /* 一條路＝左軸清單（二十三輪起桌機手機同一版），手機收磚、字級與縮排一級。
-       ⚠️ demo 卡與圖說要**跳出縮排**吃回滿版寬：390px 扣掉左欄只剩 ~285px，
-          聊天窗塞不下（泡泡會窄到一字一行）。負 margin＝左欄 44px＋間距 13px，
-          改左欄尺寸這裡要跟著算。標題列仍留在磚旁邊（它是那一站的名字）。 */
+       ⚠️ 09-08 兩欄化後 demo 卡已經是 .lp-path 的直接子項＝天生就是滿欄寬，
+          原本那條「負 margin 破格」（width: calc(100% + 57px)／margin-left: -57px）
+          **已經拔掉**：卡片不再被 __body 的 57px 縮排推進去，留著會反向溢出版心 57px。
+          ⛔ 卡片若哪天搬回 __body 裡面，這條要一起搬回來（不然聊天窗只剩 ~285px、
+          泡泡會窄到一字一行）。標題列仍留在磚旁邊（它是那一站的名字）。 */
     .lp-path__row { gap: 13px; }
     .lp-path__col { width: 44px; }
     .lp-path__dot { width: 44px; height: 44px; font-size: 1rem; border-radius: 14px; }
     .lp-path__dot--chat svg { width: 21px; height: 21px; }
     .lp-path__body > b, .lp-path__head b { font-size: 1.02rem; }
     .lp-path__head { min-height: 44px; flex-wrap: wrap; row-gap: 4px; }
-    .lp-path__row--station .lp-liveob { width: calc(100% + 57px); margin-left: -57px; }
 
     /* 成效帶改單欄：分隔線從左緣轉到上緣 */
     .lp-outcome { grid-template-columns: 1fr; }
