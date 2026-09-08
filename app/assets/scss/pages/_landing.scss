@@ -427,7 +427,9 @@
   .lp-hero h1 .lp-hang { display: inline-block; margin: 0 -0.28em 0 -0.22em; }
   /* 後半句不可分割：折行只准落在逗號後（沒有這條，390px 會切在「其／實」中間） */
   .lp-hero h1 .lp-h1seg { display: inline-block; }
-  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; transition: opacity 0.45s ease; }
+  /* ⚠️ 09-08 起副標住在自己的 .lp-rev 裡（出現時要頂一次），淡入與位移都由那一層負責，
+     所以這裡不再有 transition／opacity 規則。margin-top 留著＝它跟大標的距離。 */
+  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; }
   .lp-hero__sub b { color: var(--ink); font-weight: 700; }
   /* ── 大標打字（09-08 使用者指定：「你的顧客，」停一拍再打完）─────────
    * 每個字一顆 .lp-h1t：預設（SSR／無 JS／減少動態）整句亮著；示範開場時
@@ -435,7 +437,6 @@
    * 置中與折行都不會因為打字而位移。副標等打完（hero .is-typed）才淡入。 */
   .lp-h1t { transition: opacity 0.08s linear; }
   .lp-hero.is-staged h1 .lp-h1t:not(.is-on) { opacity: 0; }
-  .lp-hero.is-staged:not(.is-typed) .lp-hero__sub { opacity: 0; }
 
   /* ── 逐段浮出（.lp-rev）───────────────────────────────────
    * 高度從 0fr 長到內容高：置中的文字被「一段一段」往上頂——按鈕第一頂、
@@ -1389,8 +1390,8 @@
    *    both 會讓 100% 那一幀永久留在元素上，hover 的 transform 從此不動（踩過）。 */
   @keyframes lpHeroIn { from { opacity: 0; transform: translateY(18px); } }
   .lp-hero__text > * { animation: lpHeroIn 0.6s cubic-bezier(0.22, 0.75, 0.3, 1) backwards; }
+  /* .lp-hero__text 09-08 起只剩 h1（副標搬進自己的 .lp-rev）＝只需要第一條延遲 */
   .lp-hero__text > *:nth-child(1) { animation-delay: 0.05s; }
-  .lp-hero__text > *:nth-child(2) { animation-delay: 0.16s; }
 
   /* ── 捲動進場動畫 ──────────────────────────────────────
    * 一律「預設就是最終狀態」，只有 JS 掛上 .is-anim 之後才藏起來再演。
@@ -1845,9 +1846,9 @@ html.lp-wake-boot .lp {
   .lp-chip .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
   .lp-chip .lp-zzz--d2 { animation-delay: 0.9s; }
   .lp-hero h1 .g { color: #a4aaa5; }
-  /* 打字進場：boot 期一個字都還沒打、副標也還沒輪到（h1 的 zzz 同理不出現） */
+  /* 打字進場：boot 期一個字都還沒打（h1 的 zzz 同理不出現）。
+     副標不用在這裡藏——它住在 .lp-rev 裡，下面那條收合規則已經蓋掉它。 */
   .lp-hero h1 .lp-h1t { opacity: 0; }
-  .lp-hero__sub { opacity: 0; }
   /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合。
      下沉位移與擋點擊要跟 .lp 裡「關著」那組一致，接手那一幀才不會跳。 */
   .lp-rev { grid-template-rows: 0fr; }

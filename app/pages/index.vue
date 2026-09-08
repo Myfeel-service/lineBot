@@ -120,12 +120,20 @@
                   就是最終尺寸，置中不會因為打字位移；SSR／無 JS／減少動態整句直接亮。
                   讀屏靠 h1 的 aria-label 唸完整句（拆字的 span 對它是雜訊）。 -->
           <h1 aria-label="你的顧客，其實很值錢。"><span class="lp-h1seg" aria-hidden="true"><span class="lp-h1t">你</span><span class="lp-h1t">的</span><span class="lp-h1t">顧</span><span class="lp-h1t">客</span><span class="lp-hang lp-h1t">，</span></span><span class="lp-h1seg" aria-hidden="true"><span class="lp-h1t">其</span><span class="lp-h1t">實</span><span class="lp-h1t">很</span><span class="g"><span class="lp-h1t">值</span><span class="lp-h1t">錢</span><i class="lp-zzz lp-zzz--h1">z</i><i class="lp-zzz lp-zzz--h1b">z</i></span><span class="lp-hang lp-h1t">。</span></span></h1>
-          <p class="lp-hero__sub">只是都睡著了<span class="lp-dash">——</span><b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
         </div>
 
         <!-- 逐段浮出（.lp-rev）：每開一段，那一段自己從下方 18px 升上來、同時淡入，
-             置中的文字也跟著被往上頂一點。順序＝按鈕（第一頂）→ 結算（第二頂）→
-             小字（第三頂）。⛔ 位移與淡入要同時（09-08 使用者：不要「先頂開、再原地出現」）。 -->
+             上面的字也跟著被往上頂一次。順序＝**副標**（第一頂）→ 按鈕（第二頂）→
+             結算（第三頂）→ 小字（第四頂）。
+             ⛔ 位移與淡入要同時（09-08 使用者：不要「先頂開、再原地出現」）。
+             ⚠️ 副標 09-08 從 .lp-hero__text 搬出來變成一段 rev＝使用者要它「出現時也頂一次」；
+                在那之前它固定佔位、只做淡入，所以大標一個字都還沒打就已經替它留好位置、
+                它出現時什麼都不會動。搬出來之後開場置中的只有大標（更符合「一開始置中」）。 -->
+        <div class="lp-rev" :class="{ 'is-open': rev.sub }">
+          <div>
+            <p class="lp-hero__sub">只是都睡著了<span class="lp-dash">——</span><b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
+          </div>
+        </div>
         <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
           <div>
             <div class="lp-wakewrap" :class="{ 'is-go': wakeRings, 'is-swapping': wakeSwap }">
@@ -1626,10 +1634,10 @@ const heroAwake = ref(false)
 /** true＝按鈕是「發一則喚醒推播」；false（SSR 預設）＝真的註冊 CTA */
 const heroDemo = ref(false)
 /** ⚠️ SSR 預設全開＝無 JS／爬蟲看到完整內容；boot 期由 html.lp-wake-boot 強制收合 */
-const rev = reactive({ btn: true, tally: true, fine: true })
+const rev = reactive({ sub: true, btn: true, tally: true, fine: true })
 /** 示範演完＝true：滿版舞台底部的「往下看」箭頭這時才浮出 */
 const heroDone = ref(false)
-/** 大標打完字＝true：副標與「值錢」旁的 zzz 這時才進場 */
+/** 大標打完字＝true：「值錢」旁的 zzz 這時才開始飄（副標改由 rev.sub 那一頂帶進來） */
 const heroTyped = ref(false)
 /** 按鈕那一段升到位了＝邀請點擊的光圈這時才開始脈動（升上來的途中就閃會很躁） */
 const revBtnGrown = ref(true)
@@ -1721,15 +1729,18 @@ function typeHeadline() {
     t += 85
     if (el.textContent === '，') t += 480 // 「你的顧客，」——停一拍
   })
-  heroLater(() => { heroTyped.value = true }, t + 80)
+  // 打完的那一刻＝zzz 開始飄、副標升上來（第一頂）。⚠️ 綁在實際打完的時間點上，
+  // 不要另外寫死一個延遲——改打字節奏（字數／停頓）時這裡會自己跟上。
+  heroLater(() => { heroTyped.value = true; rev.sub = true }, t + 80)
+  return t + 80
 }
 
 /** 進睡著狀態後排「打字 → 按鈕浮出 → 自動按下」（訪客也可以搶先按） */
 function armWake() {
-  typeHeadline() // 打完約在 1.7s（300 + 11 字 × 85ms + 逗號停 480ms）
-  heroLater(() => { rev.btn = true }, 2000)
-  heroLater(() => { revBtnGrown.value = true }, 2650)
-  heroLater(() => { playWake() }, 3300)
+  const typedAt = typeHeadline() // 打完約在 1.8s（300 + 11 字 × 85ms + 逗號停 480ms）
+  heroLater(() => { rev.btn = true }, typedAt + 450) // 第二頂：按鈕
+  heroLater(() => { revBtnGrown.value = true }, typedAt + 1100)
+  heroLater(() => { playWake() }, typedAt + 1500) // 之後的結算／小字是第三、第四頂
 }
 
 // ── 互動（進場效果、黏性條、手機選單）──
@@ -1786,7 +1797,7 @@ onMounted(() => {
     heroStaged.value = true
     heroAsleep.value = true
     heroDemo.value = true
-    rev.btn = rev.tally = rev.fine = false
+    rev.sub = rev.btn = rev.tally = rev.fine = false
     revBtnGrown.value = false
     tallyShown.value = 0
     // 等 Vue 把睡著狀態畫上去（同一套視覺）再拆 boot class——中間沒有任何一幀會醒來

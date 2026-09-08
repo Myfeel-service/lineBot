@@ -171,7 +171,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   const typing = await page.evaluate(() => ({
     chars: document.querySelectorAll('.lp-h1t').length,
     on: document.querySelectorAll('.lp-h1t.is-on').length,
-    subOp: Number(getComputedStyle(document.querySelector('.lp-hero__sub')).opacity),
+    // ⚠️ 副標住在 .lp-rev 裡（09-08）：淡入掛在那一格的內層 div 上，
+    //    量 .lp-hero__sub 自己永遠是 1＝斷言會永遠綠。要量它的父格。
+    subOp: Number(getComputedStyle(document.querySelector('.lp-hero__sub').closest('.lp-rev > div')).opacity),
   }))
   typing.chars > 0 && typing.on === typing.chars && typing.subOp > 0.9
     ? ok(`大標打完＝${typing.on}/${typing.chars} 字全亮、副標已進場`)
