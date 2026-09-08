@@ -87,7 +87,7 @@
             ⛔不可以改成 onMounted 才把 hero 藏起來重演——先看到完整畫面再被藏起來
             就是閃一下的破圖（hero 的老規矩）。SSR／爬蟲／無 JS／減少動態拿到的
             都是醒著的完整內容。 -->
-    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake }">
+    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone }">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
       <!-- 誠實機制的常駐標示。⛔別因為「版面乾淨」拿掉 -->
@@ -120,7 +120,7 @@
         </div>
 
         <!-- 逐段浮出（.lp-rev）：每開一段，置中的文字就被往上頂一點。
-             順序＝按鈕（第一頂）→ 結算（第二頂）→ 收尾句 → 小字＋重播。 -->
+             順序＝按鈕（第一頂）→ 結算（第二頂）→ 收尾句 → 小字。 -->
         <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
           <div>
             <div class="lp-wakewrap" :class="{ 'is-go': wakeRings, 'is-swapping': wakeSwap }">
@@ -145,14 +145,16 @@
                  數字沒有「因」（推播）、量詞主體也含糊。
                  ⚠️「以咖啡店為例」從結算收掉＝整屏只剩右下角那顆常駐標示，
                     ⛔右下角那顆從此**不可拿掉**（虛構人數能出現全靠它，08-26 誠實機制）。 -->
-            <p class="lp-tally"><small>一則推播發出去<span class="lp-dash">——</span></small><b>{{ tallyShown }}</b>位睡著的客人，被叫醒了</p>
+            <!-- 「快被忘記的客人」＝「睡著」的白話版（09-08 使用者：睡著的客人要更直觀），
+                 跟副標「沒被記錄」同一個邏輯、也接住收尾句的「記下來」。 -->
+            <p class="lp-tally"><small>一則推播發出去<span class="lp-dash">——</span></small><b>{{ tallyShown }}</b>位快被忘記的客人，被叫醒了</p>
           </div>
         </div>
 
         <div class="lp-rev" :class="{ 'is-open': rev.payoff }">
           <div>
-            <!-- 收尾句＝解答：記下來、貼標籤、推播叫醒。⛔主詞是店家，別寫成「它會自動」 -->
-            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤<span class="lp-dash">——</span>一則推播，就叫得醒。</p>
+            <!-- 收尾句＝解答：記下來、貼標籤、分眾叫醒。⛔主詞是店家，別寫成「它會自動」 -->
+            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤<span class="lp-dash">——</span>想叫醒哪一群客人，一則推播就夠。</p>
           </div>
         </div>
 
@@ -164,12 +166,11 @@
           </div>
         </div>
 
-        <div class="lp-rev" :class="{ 'is-open': rev.replay }">
-          <div>
-            <button type="button" class="lp-replay" @click="replayWake">重播示範</button>
-          </div>
-        </div>
       </div>
+
+      <!-- 滿版舞台的出口：示範演完才浮出的「往下看」箭頭（09-08 使用者要的 scroll down 提示；
+           同輪拿掉了重播示範）。無 JS／減少動態＝預設就看得見，錨點連結不用 JS 也能跳。 -->
+      <a class="lp-scrollcue" href="#why" aria-label="往下看更多"><span class="lp-scrollcue__chev" /></a>
     </header>
 
     <!-- ── 為什麼卡住：四道牆（問題＋解法同一張卡）─────────────
@@ -1571,7 +1572,7 @@ const LP_BC_ROWS = [
 //
 //  時間軸：載入（睡著、文字置中）→ 1.3s 按鈕浮出（把字往上頂）→ 2.6s 自動按下
 //  （訪客也可以先按）→ 喚醒波掃全場（離按鈕越近越先醒）→ 結算 580、收尾句、
-//  小字逐段浮出 → 按鈕變回註冊 CTA。重播鍵可以再看一次。
+//  小字逐段浮出 → 按鈕變回註冊 CTA、底部浮出「往下看」箭頭（09-08 起不設重播鍵）。
 //
 //  ⚠️ 開場「睡著」不能等 onMounted 才掛：hero 第一次繪製就在畫面上，先看到醒著的
 //     完整畫面、hydration 後又被藏起來重演＝閃一下的破圖（hero 進場那條老規矩）。
@@ -1625,7 +1626,9 @@ const heroAwake = ref(false)
 /** true＝按鈕是「發一則喚醒推播」；false（SSR 預設）＝真的註冊 CTA */
 const heroDemo = ref(false)
 /** ⚠️ SSR 預設全開＝無 JS／爬蟲看到完整內容；boot 期由 html.lp-wake-boot 強制收合 */
-const rev = reactive({ btn: true, tally: true, payoff: true, fine: true, replay: true })
+const rev = reactive({ btn: true, tally: true, payoff: true, fine: true })
+/** 示範演完＝true：滿版舞台底部的「往下看」箭頭這時才浮出 */
+const heroDone = ref(false)
 const revBtnGrown = ref(true)
 const chipLit = ref<boolean[]>(HERO_CHIPS.map(() => false))
 const wakeRings = ref(false)
@@ -1696,37 +1699,21 @@ function playWake() {
   heroLater(() => { rev.fine = true }, 2850)
   /* 換字三拍：淡出 → 換（此時還是透明的）→ 淡入。中間留 60ms 讓新按鈕先以
      透明狀態掛上 DOM，再拿掉遮罩＝淡入；一次做完會變成「瞬間跳字」。 */
-  heroLater(() => { rev.replay = true; wakeSwap.value = true }, 3150)
+  heroLater(() => { wakeSwap.value = true }, 3150)
   heroLater(() => {
     heroDemo.value = false // 按鈕變回「免費打造我的 MiniMe」＝看完示範，下一步在手邊
+    heroDone.value = true // 底部「往下看」箭頭浮出（09-08 起沒有重播鍵，出口只有往下）
     heroPlaying = false
     heroPlayed = true
   }, 3480)
   heroLater(() => { wakeSwap.value = false }, 3540)
 }
 
-/** 進睡著狀態後排「按鈕浮出 → 自動按下」。mount 與重播共用 */
+/** 進睡著狀態後排「按鈕浮出 → 自動按下」（訪客也可以搶先按） */
 function armWake() {
   heroLater(() => { rev.btn = true }, 1300)
   heroLater(() => { revBtnGrown.value = true }, 1950)
   heroLater(() => { playWake() }, 2600)
-}
-
-function replayWake() {
-  clearHeroTimers()
-  cancelAnimationFrame(heroRaf)
-  heroPlaying = false
-  heroPlayed = false
-  heroStaged.value = true
-  heroAsleep.value = true
-  heroAwake.value = false
-  heroDemo.value = true
-  wakeSwap.value = false // 重播的換字發生在收合的 rev 裡＝本來就看不到，不用演淡入
-  chipLit.value = HERO_CHIPS.map(() => false)
-  rev.btn = rev.tally = rev.payoff = rev.fine = rev.replay = false
-  revBtnGrown.value = false
-  tallyShown.value = 0
-  armWake()
 }
 
 // ── 互動（進場效果、黏性條、手機選單）──
@@ -1783,7 +1770,7 @@ onMounted(() => {
     heroStaged.value = true
     heroAsleep.value = true
     heroDemo.value = true
-    rev.btn = rev.tally = rev.payoff = rev.fine = rev.replay = false
+    rev.btn = rev.tally = rev.payoff = rev.fine = false
     revBtnGrown.value = false
     tallyShown.value = 0
     // 等 Vue 把睡著狀態畫上去（同一套視覺）再拆 boot class——中間沒有任何一幀會醒來

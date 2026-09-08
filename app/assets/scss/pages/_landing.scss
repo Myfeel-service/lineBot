@@ -311,10 +311,11 @@
   .lp-hero {
     position: relative; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
-    /* 滿版舞台：吃掉一個視窗（扣 68px 導覽列）。min() 擋超高螢幕無限拉；
-       svh 那行給手機（網址列收合不跳動），不支援 svh 的舊瀏覽器落在上一行的 vh。 */
-    min-height: min(calc(100vh - 68px), 880px);
-    min-height: min(calc(100svh - 68px), 880px);
+    /* 真滿版（09-08 使用者拍板）：整塊吃滿一個視窗（扣 68px 導覽列），不設上限；
+       max() 的 620px 是橫拿手機的地板。svh 那行給手機（網址列收合不跳動），
+       不支援 svh 的舊瀏覽器落在上一行的 vh。 */
+    min-height: max(620px, calc(100vh - 68px));
+    min-height: max(620px, calc(100svh - 68px));
     padding: clamp(44px, 5vw, 64px) 0;
     background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%);
     transition: background 0.9s ease;
@@ -415,12 +416,12 @@
    * 結算第二頂、收尾句第三頂、小字與重播第四頂。⛔別改成 opacity 佔位版：
    * 佔位的空白會讓開場的「置中」變成「偏上」（09-07 實拍抓過）。 */
   .lp-rev { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.55s cubic-bezier(0.25, 0.8, 0.25, 1); }
-  /* 開＝淡入要**晚**（0.26s 延遲）：高度還在長的時候內容被 overflow 裁著，太早現身
-     就是「被切一半的按鈕」（09-08 使用者抓過）。關＝立刻淡出（收合多半在重播重置，
-     先消失再縮，才不會演一次反向的裁切）。 */
+  /* 開＝淡入等**高度長完**（延遲＝grow 的 0.55s）才開始：成長期間內容全透明，
+     被 overflow 裁著的樣子永遠不會被看到（09-08 使用者兩度抓到切割感，第一版只延
+     0.26s 還是會露出裁到一半的按鈕）。關＝立刻淡出。 */
   .lp-rev > div { overflow: hidden; min-height: 0; opacity: 0; transition: opacity 0.2s ease; }
   .lp-rev.is-open { grid-template-rows: 1fr; }
-  .lp-rev.is-open > div { opacity: 1; transition: opacity 0.4s ease 0.26s; }
+  .lp-rev.is-open > div { opacity: 1; transition: opacity 0.45s ease 0.55s; }
   /* 按鈕那一段開完之後要放行 overflow：喚醒波的漣漪與邀請光圈都伸出這一格 */
   .lp-rev.is-grown > div { overflow: visible; }
   /* boot 期的強制收合寫在檔尾的 html.lp-wake-boot 區塊（必須在 .lp 巢狀之外） */
@@ -464,8 +465,27 @@
   .lp-hero__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
   /* nowrap：手機上「NT$399 起」會斷在空白處，把「起」孤零零丟到下一行 */
   .lp-hero__fine b { color: var(--ink-2); font-weight: 700; white-space: nowrap; }
-  .lp-replay { margin-top: 10px; font-size: 0.8rem; color: var(--ink-soft); text-decoration: underline; background: none; border: 0; cursor: pointer; font-family: inherit; }
-  .lp-replay:hover { color: var(--g-text); }
+  /* ── 滿版舞台的出口：「往下看」箭頭（09-08 拿掉重播示範後唯一的收尾動作）────
+   * 預設（SSR／無 JS／減少動態）就看得見；示範進行中藏著、演完（.is-done）才浮出。
+   * 錨點連結 #why＝沒有 JS 也能跳，有 JS 時吃頁面的 smooth scroll。 */
+  .lp-scrollcue {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3;
+    display: flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; transition: opacity 0.5s ease;
+  }
+  .lp-scrollcue__chev {
+    width: 13px; height: 13px; margin-top: -6px;
+    border-right: 2.5px solid var(--ink-soft); border-bottom: 2.5px solid var(--ink-soft);
+    transform: rotate(45deg);
+    animation: lpCueBob 1.8s ease-in-out infinite;
+  }
+  .lp-scrollcue:hover .lp-scrollcue__chev { border-color: var(--g-text); }
+  /* 位移寫在 rotate 之後＝沿旋轉後的軸走，(4px,4px) 在 45° 座標裡就是往正下方 ~5.7px */
+  @keyframes lpCueBob {
+    0%, 100% { transform: rotate(45deg) translate(0, 0); opacity: 0.75; }
+    50% { transform: rotate(45deg) translate(4px, 4px); opacity: 1; }
+  }
+  .lp-hero.is-staged:not(.is-done) .lp-scrollcue { opacity: 0; pointer-events: none; }
 
   /* ── 通用面板（有標頭列的白卡）─────────────────────────── */
   /* 卡片高度層級：靜置一律 --sh-soft、hover 才升到 --sh-card。
@@ -1718,7 +1738,7 @@
        喚醒示範不會跑：head 腳本查了 matchMedia 根本不掛 lp-wake-boot、index.vue 也
        早退＝從第一幀就停在醒著的完整畫面。這裡再把殘餘的環境動畫（chip 漂浮、zzz、
        邀請光圈）也關掉——它們是無限循環，對勾了減少動態的人就是干擾。 */
-    .lp-hero__text > *, .lp-chip, .lp-chip.is-lit, .lp-zzz, .lp-ring,
+    .lp-hero__text > *, .lp-chip, .lp-chip.is-lit, .lp-zzz, .lp-ring, .lp-scrollcue__chev,
     .lp-hero.is-awake h1 .g, .lp-hero.is-asleep .lp-rev--btn.is-grown .lp-wake::after { animation: none; }
 
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
@@ -1792,4 +1812,6 @@ html.lp-wake-boot .lp {
   /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合 */
   .lp-rev { grid-template-rows: 0fr; }
   .lp-rev > div { opacity: 0; overflow: hidden; }
+  /* 「往下看」箭頭跟著示範走：boot 期先藏（醒著的預設才看得見） */
+  .lp-scrollcue { opacity: 0; pointer-events: none; }
 }
