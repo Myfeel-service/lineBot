@@ -1179,29 +1179,24 @@
     border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 9px;
   }
   .lp-plan__spec li { font-size: 0.88rem; color: var(--ink-soft); }
-  /* 方案卡的圖說：貼著卡片（20px）＝看得出它在講上面那四張，不是獨立的一段話。
-     ⛔ 寬度要收（60ch）：滿版 1112px 時這兩句會拉成一行 80 幾個字，眼睛掃不回行首。
-        1440px 量到 31 字／25 字兩行，斷在「、」後面——**這是寬度上限＋文案句序做到的**。
-     text-wrap: balance ＝改樣式表本身前後各量一次：**有** 31 字／25 字、**拿掉** 42 字／14 字
-     （手機 390px 還會掉出「不綁約。」四字孤行）。所以它對這一段是有效的。
-     ⛔ 但別把「balance 對中文有效」當通則：`G-38` 在本頁其他地方量到過**無效、甚至更差**，
-        它吃元素與那段字本身。動到這行就重量一次（量法＝逐字取 Range rect 依 top 分組）。
-     ⛔ 也別改成 pretty：同樣量過，pretty 排成 42／14，正是我們要避開的短尾行。
-     ⛔ 用 inline style 切 text-wrap 來做 A/B 會量到假數字（實測與拿掉宣告的結果對不上），
-        要比就改樣式表再量。 */
-  .lp-plans__note {
-    margin: 20px auto 0; max-width: 60ch; text-align: center;
-    font-size: 0.88rem; line-height: 1.85; color: var(--ink-2); text-wrap: balance;
-  }
-  .lp-plans__note b { color: var(--ink); font-weight: 700; }
+  /* （方案卡底下原本有一行圖說＝.lp-plans__note，2026-09-08 使用者拍板整行移除，
+     為什麼寫在 index.vue 那段 ══ 註解裡。這裡留下量過的版面知識，復活時不用重量一次：
+       · 寬度必須收（原本 max-width: 60ch）：滿版 1112px 時兩句會拉成一行 80 幾個字，
+         眼睛掃不回行首；1440px 量到 31 字／25 字兩行。
+       · text-wrap: balance 對**那一段**有效——改樣式表本身前後各量：有 31／25、
+         拿掉 42／14（手機 390px 還會掉出「不綁約。」四字孤行）。
+       · ⛔ 別把「balance 對中文有效」當通則：`G-38` 在本頁其他地方量到過無效、甚至更差，
+         它吃元素與那段字本身。⛔ 也別改成 pretty（量過是 42／14，正是要避開的短尾行）。
+       · ⛔ 用 inline style 切 text-wrap 做 A/B 會量到假數字（與拿掉宣告的結果對不上），
+         要比就改樣式表再量。量法＝逐字取 Range rect 依 top 分組。） */
 
-  /* （原本圖說底下還有三張特點卡＝.lp-pricefeat／.lp-pf，2026-09-04 老闆拍板整組拿掉：
-     「友善的引導式設定」與「60 秒就能開始」是在重講正上方 #fast 那一段，唯一別處沒有的
-     功能清單已併進上面的圖說。理由與量到的數字寫在 index.vue 圖說那段註解。
+  /* （再往前一層：2026-09-04 之前這個位置是三張特點卡＝.lp-pricefeat／.lp-pf，老闆拍板
+     整組拿掉——「友善的引導式設定」與「60 秒就能開始」都在重講 #fast 那一段。
      ⛔ 要復活的話別直接還原 class：那三張卡在 960px 以下會壓成整排通欄，
         900px 實測每張 852×111px 的框只裝一行 26 個字＝三條空白色帶。） */
-  /* 圖說是卡片的圖說（貼著卡）→ 到按鈕要拉開一點，不然三段擠成一團；
-     原本是 36px（那時上面接的是特點卡的卡框，不是一行小字）。 */
+  /* 現在按鈕直接接在四張卡下面。⚠️ 44px 是「卡框 → 按鈕」的距離，
+     不是「一行小字 → 按鈕」的距離——圖說移除後這個值沒有跟著改，實測四張卡到按鈕
+     的留白讀起來仍是一組（卡片本身有邊框，不需要再靠留白分段）。 */
   .lp-pricecta { margin-top: 44px; text-align: center; }
   .lp-pricecta__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-2); }
   .lp-pricecta__fine b { color: var(--ink); }
@@ -1358,7 +1353,12 @@
   .lp-cta__blob--2 { width: 260px; height: 260px; bottom: -140px; left: 10%; }
   .lp-cta__in { position: relative; z-index: 1; text-align: center; }
   .lp-cta h2 { font-size: clamp(1.9rem, 3.8vw, 2.9rem); font-weight: 800; letter-spacing: -0.025em; line-height: 1.22; margin: 0; text-wrap: balance; }
-  .lp-cta__sub { color: rgba(255, 255, 255, 0.92); margin: 18px auto 0; max-width: 40ch; font-size: 1.05rem; }
+  /* （大標底下原本有一行副標＝.lp-cta__sub，2026-09-08 使用者拍板移除，理由見 index.vue
+     那段 ══ 註解——重點是「有人陪」把 AI 說成了人。復活時的版面值：
+     `color: rgba(255,255,255,.92); margin: 18px auto 0; max-width: 40ch; font-size: 1.05rem;`）
+     ⚠️ 副標不在了，大標到按鈕的距離就改由這一行的 margin-top 決定（原本它量的是
+        「副標 → 按鈕」）。34px 沿用下來實測是 34px（大標的行高盒底線起算），與定價區
+        「四張卡 → 按鈕」的 44px 同屬一組節奏，headless 量過後決定不動。 */
   .lp-cta__actions { margin-top: 34px; display: flex; align-items: center; justify-content: center; gap: 22px; flex-wrap: wrap; }
   .lp-cta__talk { color: #fff; font-weight: 600; font-size: 0.98rem; border-bottom: 2px solid rgba(255, 255, 255, 0.45); padding-bottom: 2px; }
   .lp-cta__talk:hover { border-bottom-color: #fff; }
