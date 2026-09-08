@@ -87,7 +87,7 @@
             ⛔不可以改成 onMounted 才把 hero 藏起來重演——先看到完整畫面再被藏起來
             就是閃一下的破圖（hero 的老規矩）。SSR／爬蟲／無 JS／減少動態拿到的
             都是醒著的完整內容。 -->
-    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone }">
+    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone, 'is-typed': heroTyped }">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
       <!-- 誠實機制的常駐標示。⛔別因為「版面乾淨」拿掉 -->
@@ -114,8 +114,12 @@
                大標 09-06 拍板句原封不動，只從兩行排版改成置中一行。
                ⚠️ 前後兩個半句各包一顆 .lp-h1seg（inline-block）＝手機折行只能落在
                   兩段之間：只包後半的話逗號會被擠到第二行行首、都不包的話
-                  text-wrap: balance 會切在「其／實」中間（390px 兩種都實拍抓過）。 -->
-          <h1><span class="lp-h1seg">你的顧客<span class="lp-hang">，</span></span><span class="lp-h1seg">其實很<span class="g">值錢<i class="lp-zzz lp-zzz--h1" aria-hidden="true">z</i><i class="lp-zzz lp-zzz--h1b" aria-hidden="true">z</i></span><span class="lp-hang">。</span></span></h1>
+                  text-wrap: balance 會切在「其／實」中間（390px 兩種都實拍抓過）。
+               ⚠️ 每個字包一顆 .lp-h1t＝打字進場的最小單位（09-08 使用者要的：
+                  「你的顧客，」停一拍再打完）。字是先透明不是不存在＝h1 從第一幀
+                  就是最終尺寸，置中不會因為打字位移；SSR／無 JS／減少動態整句直接亮。
+                  讀屏靠 h1 的 aria-label 唸完整句（拆字的 span 對它是雜訊）。 -->
+          <h1 aria-label="你的顧客，其實很值錢。"><span class="lp-h1seg" aria-hidden="true"><span class="lp-h1t">你</span><span class="lp-h1t">的</span><span class="lp-h1t">顧</span><span class="lp-h1t">客</span><span class="lp-hang lp-h1t">，</span></span><span class="lp-h1seg" aria-hidden="true"><span class="lp-h1t">其</span><span class="lp-h1t">實</span><span class="lp-h1t">很</span><span class="g"><span class="lp-h1t">值</span><span class="lp-h1t">錢</span><i class="lp-zzz lp-zzz--h1">z</i><i class="lp-zzz lp-zzz--h1b">z</i></span><span class="lp-hang lp-h1t">。</span></span></h1>
           <p class="lp-hero__sub">只是都睡著了<span class="lp-dash">——</span><b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
         </div>
 
@@ -1624,6 +1628,8 @@ const heroDemo = ref(false)
 const rev = reactive({ btn: true, tally: true, fine: true })
 /** 示範演完＝true：滿版舞台底部的「往下看」箭頭這時才浮出 */
 const heroDone = ref(false)
+/** 大標打完字＝true：副標與「值錢」旁的 zzz 這時才進場 */
+const heroTyped = ref(false)
 const revBtnGrown = ref(true)
 const chipLit = ref<boolean[]>(HERO_CHIPS.map(() => false))
 const wakeRings = ref(false)
@@ -1703,11 +1709,25 @@ function playWake() {
   heroLater(() => { wakeSwap.value = false }, 3140)
 }
 
-/** 進睡著狀態後排「按鈕浮出 → 自動按下」（訪客也可以搶先按） */
+/** 大標打字：一顆一顆亮，逗號後停一拍再打完（09-08 使用者指定的節奏）。
+ *  字的 span 是靜態內容（沒有任何綁定），直接 classList 不會被 Vue 重繪洗掉。 */
+function typeHeadline() {
+  const chars: Element[] = heroEl.value ? Array.from(heroEl.value.querySelectorAll('h1 .lp-h1t')) : []
+  let t = 300
+  chars.forEach((el) => {
+    heroLater(() => { el.classList.add('is-on') }, t)
+    t += 85
+    if (el.textContent === '，') t += 480 // 「你的顧客，」——停一拍
+  })
+  heroLater(() => { heroTyped.value = true }, t + 80)
+}
+
+/** 進睡著狀態後排「打字 → 按鈕浮出 → 自動按下」（訪客也可以搶先按） */
 function armWake() {
-  heroLater(() => { rev.btn = true }, 1300)
-  heroLater(() => { revBtnGrown.value = true }, 1950)
-  heroLater(() => { playWake() }, 2600)
+  typeHeadline() // 打完約在 1.7s（300 + 11 字 × 85ms + 逗號停 480ms）
+  heroLater(() => { rev.btn = true }, 2000)
+  heroLater(() => { revBtnGrown.value = true }, 2650)
+  heroLater(() => { playWake() }, 3300)
 }
 
 // ── 互動（進場效果、黏性條、手機選單）──

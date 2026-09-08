@@ -383,8 +383,9 @@
   @keyframes lpZFloat { 0% { transform: translateY(0); opacity: 0; } 25% { opacity: 0.9; } 100% { transform: translateY(-16px); opacity: 0; } }
   .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
   .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-zzz--d2 { animation-delay: 0.9s; }
-  .lp-hero.is-asleep h1 .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
-  .lp-hero.is-asleep h1 .lp-zzz--h1b { animation-delay: 0.8s; }
+  /* 「值錢」旁的 zzz 等大標**打完字**才開始飄（.is-typed）——字還沒打到，zzz 浮在空位上很怪 */
+  .lp-hero.is-asleep.is-typed h1 .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
+  .lp-hero.is-asleep.is-typed h1 .lp-zzz--h1b { animation-delay: 0.8s; }
 
   /* ── 中央文字區＋柔光 ──────────────────────────────────────
    * 標籤鋪滿整屏之後，字底下墊一層白色半透明的橢圓柔光（中心 ~95% 白、往外淡出）：
@@ -408,8 +409,15 @@
   .lp-hero h1 .lp-hang { display: inline-block; margin: 0 -0.28em 0 -0.22em; }
   /* 後半句不可分割：折行只准落在逗號後（沒有這條，390px 會切在「其／實」中間） */
   .lp-hero h1 .lp-h1seg { display: inline-block; }
-  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; }
+  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; transition: opacity 0.45s ease; }
   .lp-hero__sub b { color: var(--ink); font-weight: 700; }
+  /* ── 大標打字（09-08 使用者指定：「你的顧客，」停一拍再打完）─────────
+   * 每個字一顆 .lp-h1t：預設（SSR／無 JS／減少動態）整句亮著；示範開場時
+   * 先透明、JS 逐顆掛 .is-on。字是透明不是不存在＝h1 從第一幀就是最終尺寸，
+   * 置中與折行都不會因為打字而位移。副標等打完（hero .is-typed）才淡入。 */
+  .lp-h1t { transition: opacity 0.08s linear; }
+  .lp-hero.is-staged h1 .lp-h1t:not(.is-on) { opacity: 0; }
+  .lp-hero.is-staged:not(.is-typed) .lp-hero__sub { opacity: 0; }
 
   /* ── 逐段浮出（.lp-rev）───────────────────────────────────
    * 高度從 0fr 長到內容高：置中的文字被「一段一段」往上頂——按鈕第一頂、
@@ -1803,8 +1811,9 @@ html.lp-wake-boot .lp {
   .lp-chip .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
   .lp-chip .lp-zzz--d2 { animation-delay: 0.9s; }
   .lp-hero h1 .g { color: #a4aaa5; }
-  .lp-hero h1 .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
-  .lp-hero h1 .lp-zzz--h1b { animation-delay: 0.8s; }
+  /* 打字進場：boot 期一個字都還沒打、副標也還沒輪到（h1 的 zzz 同理不出現） */
+  .lp-hero h1 .lp-h1t { opacity: 0; }
+  .lp-hero__sub { opacity: 0; }
   /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合 */
   .lp-rev { grid-template-rows: 0fr; }
   .lp-rev > div { opacity: 0; overflow: hidden; }
