@@ -1566,11 +1566,14 @@
   &.is-anim .lp-plans .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
   &.is-anim .lp-plans .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
 
-  /* FAQ 一題一個單位，同欄內錯開 60ms（一欄三題，最後一題也只等 0.12s）。
+  /* FAQ 一題一個單位，同欄內錯開 60ms（最後一題也只等 0.18s）。
      ⚠️ nth-child 是**各欄自己數**的（兩欄各一個 div 容器），所以左右兩欄同時起跑、
-     不會變成右欄要等左欄演完。 */
+     不會變成右欄要等左欄演完。
+     ⚠️ 2026-09-08 補到第 4 題（左欄多了「AI 知識量的『一條』是什麼？」）：**加題目一定要
+        在這裡補一條**，否則新那題沒有延遲＝跟第 1 題同時淡入，看起來就是漏了一格。 */
   &.is-anim .lp-faq .lp-reveal.in:nth-child(2) { transition-delay: .06s; }
   &.is-anim .lp-faq .lp-reveal.in:nth-child(3) { transition-delay: .12s; }
+  &.is-anim .lp-faq .lp-reveal.in:nth-child(4) { transition-delay: .18s; }
 
   /* 證言牆兩列同時進畫面，第二列錯開 70ms（同四道牆的理由：看得出上下有先後就好） */
   &.is-anim .lp-voices .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
