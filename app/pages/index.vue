@@ -351,7 +351,7 @@
                 </li>
                 <li>
                   <a class="lp-rail__item" :class="{ 'is-on': activeCap === 3 }" href="#cap-richmenu">
-                    <b>把你的 LINE 變好逛</b><small>客人自己點，你少回一輪</small>
+                    <b>圖文選單</b><small>客人自己點，你少回一輪</small>
                   </a>
                 </li>
               </ol>
@@ -608,10 +608,20 @@
                       「先講什麼、再看畫面」。 -->
               <div id="cap-richmenu" class="lp-band lp-pane lp-reveal">
                 <div class="lp-band__text">
-                  <!-- 09-06 老闆嫌「常問的事變成按鈕」難懂、他給的「裝飾你的 LINE」會把省力
-                       賣點講小 → 出三版拍板選「變好逛」；省力那半留在下一行的「你也少回一輪」。
-                       ⚠️ 這顆 h3 有一行寬度房規（見 _landing.scss 斷點那段），改字要重量。 -->
-                  <h3>把你的 LINE 變好逛，客人自己點</h3>
+                  <!-- 標題演進：09-06 老闆嫌「常問的事變成按鈕」難懂、他給的「裝飾你的 LINE」
+                       會把省力賣點講小 → 出三版拍板選「把你的 LINE 變好逛，客人自己點」；
+                       **2026-09-08 使用者拍板改成「圖文選單」四個字**（左軌那條同步）——
+                       理由是軌上四條的前三條都是功能名（AI 客服／AI 行銷／自動貼標），
+                       第四條掛一句賣點式的長標題讀起來不是同一套東西；而且「圖文選單」是
+                       LINE 官方用語，開過官方帳號的店家本來就認得（⛔這是這頁少數可以用
+                       產品術語的地方，別推廣到別區）。
+                       ⚠️ 賣點沒有消失，兩個位置都還在講：左軌的 small「客人自己點，你少回
+                          一輪」＋下面這句 p。⛔別因為標題變短就把 p 也砍掉，砍完這一塊就
+                          只剩一個名詞、沒人知道它解決什麼。
+                       ⚠️ 順帶解掉一條房規：舊標題有「一行寬度」的限制（色塊要 ≥360px 才不折
+                          兩行），斷點級距就是回推它來的。四個字之後這顆 h3 不再是瓶頸，但
+                          ⛔級距先不要跟著放寬（見 _landing.scss 斷點那段的說明）。 -->
+                  <h3>圖文選單</h3>
                   <p>客人一打開你的 LINE 就看到選單——不必打字問，你也少回一輪。</p>
                   <div class="lp-app">
                     <span class="lp-app__i" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="15" rx="2.5" /><path d="M4 11h16M12 11v8.5" /></svg></span>
