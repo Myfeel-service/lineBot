@@ -1362,7 +1362,8 @@
   .lp-cta__actions { margin-top: 34px; display: flex; align-items: center; justify-content: center; gap: 22px; flex-wrap: wrap; }
   .lp-cta__talk { color: #fff; font-weight: 600; font-size: 0.98rem; border-bottom: 2px solid rgba(255, 255, 255, 0.45); padding-bottom: 2px; }
   .lp-cta__talk:hover { border-bottom-color: #fff; }
-  /* ⛔ 這行的措辭只有一種寫法（「不綁約、隨時可取消，取消後服務用到本期結束」），
+  /* ⛔ 退費／取消的措辭只有一種寫法（「不綁約、隨時可取消，取消後服務用到本期結束」，
+     09-08 精簡後這行只留後半「隨時可取消，服務用到本期結束」，見 index.vue 那段 ⚠️），
      別抄草稿的「付費後隨時可退」——實際政策沒有退現金（見 pages/refund.vue）。 */
   .lp-cta__fine { margin: 18px 0 0; font-size: 0.88rem; color: rgba(255, 255, 255, 0.85); }
 
