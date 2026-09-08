@@ -141,6 +141,39 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     sel, prop, pseudo,
   )
 
+  // 0) Hero 喚醒示範（09-08 滿版劇場）：載入自動演一次 → 驗最終狀態；再按重播驗它真的會動。
+  //    時間軸＝mount + 2.6s 自動按下、再 3.2s 收尾；networkidle0 + 上面 1500ms 之後再等 7 秒必定演完。
+  await wait(7000)
+  const heroEnd = await page.evaluate(() => ({
+    chips: document.querySelectorAll('.lp-chip').length,
+    lit: document.querySelectorAll('.lp-chip.is-lit').length,
+    tally: document.querySelector('.lp-tally b')?.textContent ?? '',
+    cta: !!document.querySelector('.lp-wakewrap a'),
+    asleep: document.querySelector('.lp-hero')?.classList.contains('is-asleep') ?? true,
+    boot: document.documentElement.classList.contains('lp-wake-boot'),
+  }))
+  heroEnd.chips > 0 && heroEnd.lit === heroEnd.chips
+    ? ok(`Hero 演完＝${heroEnd.lit}/${heroEnd.chips} 顆客人全醒`)
+    : bad(`Hero 沒演完：醒了 ${heroEnd.lit}/${heroEnd.chips} 顆`)
+  heroEnd.tally === '580' ? ok('結算數字跑到 580') : bad(`結算不是 580：「${heroEnd.tally}」`)
+  heroEnd.cta && !heroEnd.asleep && !heroEnd.boot
+    ? ok('按鈕變回註冊 CTA、背景醒了、boot class 已拆')
+    : bad(`收尾狀態不對：cta=${heroEnd.cta} asleep=${heroEnd.asleep} boot=${heroEnd.boot}`)
+  // 重播＝先回到睡著（0 顆亮），再自動演完一輪——驗「動畫真的重跑」而不是狀態殘留
+  await page.click('.lp-replay')
+  await wait(600)
+  const litMid = await page.$$eval('.lp-chip.is-lit', e => e.length)
+  litMid === 0 ? ok('重播＝回到睡著（0 顆亮）') : bad(`重播沒回到睡著：還有 ${litMid} 顆亮著`)
+  await wait(7500)
+  const replayEnd = await page.evaluate(() => ({
+    lit: document.querySelectorAll('.lp-chip.is-lit').length,
+    chips: document.querySelectorAll('.lp-chip').length,
+    tally: document.querySelector('.lp-tally b')?.textContent ?? '',
+  }))
+  replayEnd.lit === replayEnd.chips && replayEnd.tally === '580'
+    ? ok('重播演完＝再次全醒、結算 580')
+    : bad(`重播沒演完：${replayEnd.lit}/${replayEnd.chips} 顆、結算「${replayEnd.tally}」`)
+
   // 1) 泡泡打字
   await go('#why .lp-turn', -830)
   const onBefore = await page.$$eval('#why .lp-turn .lp-tw__u.is-on', e => e.length)
@@ -279,8 +312,10 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     // ⚠️ 09-03 十八輪加進來的三扇畫面：它們的宣告值是 opacity 0／clip-path 裁掉，
     //    「減少動態效果」時要靠 CSS 保險還原——漏掉就是空對話窗／空名單／沒有選單的手機
     // （.lp-pf 拿掉了：定價區那三張特點卡 2026-09-04 整組移除，見 index.vue 方案圖說註解）
+    // ⚠️ 09-08 起 Hero＝滿版喚醒劇場：減少動態時 head 腳本不掛 lp-wake-boot、示範不啟動，
+    //    大標／chip／結算／收尾句／小字（.lp-rev 的內容）從第一幀就要全部看得到。
     const sel = '.lp-reveal, .lp-cue, .lp-q, .lp-liveob, .lp-pane__hd, .lp-band__phone, '
-      + '.lp-hero__text > *, .lp-ops, .lp-ops__group, .lp-stamp, '
+      + '.lp-hero__text > *, .lp-chip, .lp-tally, .lp-hero__payoff, .lp-hero__fine, .lp-hero .lp-rev > div, '
       + '.lp-livewin--chat .conv-bubble-row, .lp-livewin--chat .conv-bubble-read, '
       + '.lp-livewin--users tbody tr, .lp-livewin--users .tag-chip, .lp-band__phone .lp-pmsg'
     for (const el of document.querySelectorAll(sel)) {
@@ -317,7 +352,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 120000 })
   console.log('\n④ 沒有 JS')
   const hidden = await page.evaluate(() => [...document.querySelectorAll(
-    '.lp-reveal, .lp-cue, .lp-livewin--chat .conv-bubble-row, .lp-livewin--users tbody tr, .lp-band__phone .lp-pmsg',
+    '.lp-reveal, .lp-cue, .lp-livewin--chat .conv-bubble-row, .lp-livewin--users tbody tr, .lp-band__phone .lp-pmsg, '
+    + '.lp-chip, .lp-tally, .lp-hero .lp-rev > div',
   )]
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))

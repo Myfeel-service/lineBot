@@ -130,14 +130,7 @@
      ⚠️ 新增或搬動區塊時交錯要跟著調，不然會出現兩個同色區塊相鄰、看起來像漏了一段。 */
   .lp-section--tint { background: var(--surf-2); }
 
-  .lp-eyebrow {
-    display: inline-flex; align-items: center; gap: 7px;
-    background: var(--g-wash); color: var(--g-text);
-    font-size: 0.76rem; font-weight: 800; letter-spacing: 0.06em;
-    padding: 6px 14px; border-radius: var(--radius-pill);
-  }
-
-  /* ⚠️ `.lp-eyebrow` 現在只有 Hero 在用（FAQ 08-27 收成泡泡）。
+  /* ⚠️ `.lp-eyebrow` 已整組移除（2026-09-08 Hero 改滿版劇場、小標語跟著刪＝它最後一個使用者）。
      ⛔ 別再新增 eyebrow＋h2 的區塊標題：全頁的區塊標題統一是泡泡，
         混用會讓那一區看起來像另一個網站貼過來的。原本的 .lp-h2／.lp-lede
         因此整組刪除——要區塊標題就用 .lp-turn＋.lp-bubble。 */
@@ -299,80 +292,171 @@
   .lp-nav__burger span::before { position: absolute; top: -6px; }
   .lp-nav__burger span::after { position: absolute; top: 6px; }
 
-  /* ── Hero ──────────────────────────────────────────────── */
-  .lp-hero { position: relative; padding: clamp(44px, 6vw, 88px) 0 clamp(56px, 8vw, 104px); background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%); overflow: hidden; }
-  .lp-hero__blob { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; z-index: 0; }
-  .lp-hero__blob--1 { width: 420px; height: 420px; background: rgba(6, 199, 85, 0.12); top: -140px; right: -80px; }
-  /* ⚠️ 2026-09-06 第二顆從左下角搬到右下：左下角是大標與主行動鈕的地盤，那裡不需要光
-     （放在那裡只會讓黑字底下泛一層淡綠）。⛔ 搬的時候 `left` 一定要歸 auto，
-     不然 left 與 right 同時存在，圓會被拉寬。 */
-  .lp-hero__blob--2 { width: 300px; height: 300px; background: rgba(6, 199, 85, 0.06); bottom: -130px; left: auto; right: 8%; }
-  /* ⚠️ 兩欄都要包 minmax(0, …)，不能只寫 `1.05fr 0.95fr`：
-     `1fr` 的意思是 `minmax(auto, 1fr)`，欄寬會被欄內元素的 min-content 撐開，
-     在 390px 的手機上會把整個 grid 撐到比 .lp-wrap 的內容框還寬（實測 371px 那次超寬 29px）。
-     ⚠️ 當時的元凶（時機卡的 nowrap 副標）09-02 已隨副標移除，但這個 minmax(0) 要留著：
-        它擋的是「欄裡任何一個不會折行的東西」，不是只擋那一句副標。 */
-  .lp-hero__grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
-  /* ⚠️ letter-spacing 2026-09-06 從 -0.035em 放到 -0.02em：-0.035em 是給拉丁字設計的
-     收緊值，套在中文黑體上每一對字距都被扣掉 2.4px（4.3rem 時），「你的顧客」會擠成一塊。
-     CJK 大標的合理範圍是 0 ~ -0.02em。⚠️ 換行是 <br> 寫死的，放寬不會改變斷行，
-     只有整行寬度多約 5px。 */
-  .lp-hero h1 { font-size: clamp(2.5rem, 6.2vw, 4.3rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; margin: 22px 0 0; text-wrap: balance; }
-  /* ⛔ 大標的綠留 --g-deep 不換 --g-text：字級 40–69px，壓深會把品牌那一擊洗掉
-     （規則見色票區 --g-text 那段的第②條）。 */
-  .lp-hero h1 .g { color: var(--g-deep); }
-  /* 全形標點收邊（2026-09-06）：繁中的「，」「。」置中在全形框裡，左右各留約 0.25em——
-     4.3rem 時就是兩邊各 17px 的空隙，「值錢 。」中間看起來破一個洞。
-     ⚠️ 只收**大標**：副標 17.9px 的同款空隙只有 4px，看不出來，不值得為它加標籤。
-     ⛔ 別再加大：-0.22 已經讓標點幾乎貼著前一個字，再拉會疊上去。 */
-  .lp-hero h1 .lp-hang { display: inline-block; margin: 0 -0.28em 0 -0.22em; }
-  /* ── 問題句與答案句的階級（2026-09-06）──────────────────────────
-   * 原本兩段字級接近、同一個墨灰、同一種間距，四行灰字讀起來糊成一塊——
-   * 「卻不知道如何經營他們嗎？」是**問題**、「MiniMe 是你的 AI 分身」是**答案**，
-   * 這個轉折只存在於文字裡，眼睛看不到。
-   * 現在：問題退一級（1.24 → 1.12）、答案升一級（1.00 → 1.08）並改吃近黑，
-   * 左邊掛一段圓頭綠條。
-   * ⚠️ 兩段的字級刻意還是**幾乎一樣**（1.12 vs 1.08）：原本那條註解寫的
-   *    「它是答案不是第二個標題」仍然成立——答案是靠**顏色與標記**站出來的，
-   *    不是靠字級搶。⛔ 別再把 .lp-hero__answer 往上加級，加過頭它就變副標題了。
-   * ⚠️ 綠條是整頁已經在用的語彙（左軌亮起來那條就是一段圓頭綠條），意思一樣＝
-   *    「這一句才是重點」。⛔ 不是新的裝飾，別順手改成整塊淡綠底。 */
-  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.7; margin: 22px 0 0; max-width: 34ch; }
-  .lp-hero__sub b { color: var(--ink); font-weight: 700; }
-  .lp-hero__answer {
-    color: var(--ink); font-size: 1.08rem; line-height: 1.8; margin: 20px 0 0;
-    border-left: 3px solid var(--g); border-radius: 0 6px 6px 0; padding: 2px 0 2px 15px;
+  /* ── Hero：滿版「沉睡→喚醒」劇場（2026-09-08 落地，脈絡見 STATUS `D-70`）────
+   * 取代 09-06 的「左文案＋右時機卡」兩欄版。故事三拍：顧客很值錢（大標）→
+   * 都睡著了：沒被記錄、沒貼標籤（滿屏無名灰點）→ 你發一則推播叫醒
+   * （喚醒波掃全場、灰點長出標籤、580 位結算）。
+   *
+   * 狀態機（誰在什麼時候掛，見 index.vue 的 HERO_CHIPS 那段註解）：
+   *   html.lp-wake-boot   第一幀的睡著開場（head 同步腳本掛，JS 接手前）
+   *   .lp-hero.is-staged  示範進行中（Vue 接手後的同一套「灰點」視覺）
+   *   .lp-hero.is-asleep  背景調灰、「值錢」還沒亮；喚醒那一拍換成 .is-awake
+   *   .lp-chip.is-lit     這顆客人醒了（長出標籤、亮回白底）
+   *   .lp-rev.is-open     這一段浮出來了（高度 0fr→1fr，把上面的字往上頂）
+   * ⛔ 預設（一個 class 都沒有）＝醒著的完整內容：SSR／爬蟲／無 JS／減少動態
+   *    全都拿到完整畫面。這是 hero 的老規矩（先看到再被藏起來重演＝閃圖），別反過來。
+   * ⚠️ 「睡著」是**調灰的亮色調**，⛔不是深色段（被打槍×2）；浮的是人物 chip
+   *    （頭像＋標籤），⛔不是聊天泡泡（綠泡泡被打槍×2）。
+   */
+  .lp-hero {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    /* 滿版舞台：吃掉一個視窗（扣 68px 導覽列）。min() 擋超高螢幕無限拉；
+       svh 那行給手機（網址列收合不跳動），不支援 svh 的舊瀏覽器落在上一行的 vh。 */
+    min-height: min(calc(100vh - 68px), 880px);
+    min-height: min(calc(100svh - 68px), 880px);
+    padding: clamp(44px, 5vw, 64px) 0;
+    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%);
+    transition: background 0.9s ease;
   }
-  .lp-hero__answer b { color: var(--ink); font-weight: 700; }
-  .lp-hero__actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
-  .lp-hero__fine { margin: 20px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
+  /* 睡著＝抽掉綠意的亮灰。⛔不是深色段（被打槍×2），亮度跟醒著只差一階 */
+  .lp-hero.is-asleep { background: #f2f4f3; }
+  .lp-hero__blob { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; z-index: 0; transition: background 1.1s ease; }
+  .lp-hero__blob--1 { width: 460px; height: 460px; background: rgba(6, 199, 85, 0.12); top: -160px; right: -90px; }
+  .lp-hero__blob--2 { width: 340px; height: 340px; background: rgba(6, 199, 85, 0.07); bottom: -140px; left: -120px; }
+  /* 睡著時光暈也抽成灰，醒來 transition 回品牌綠＝「世界亮起來」那一拍 */
+  .lp-hero.is-asleep .lp-hero__blob--1 { background: rgba(112, 122, 118, 0.11); }
+  .lp-hero.is-asleep .lp-hero__blob--2 { background: rgba(112, 122, 118, 0.06); }
+
+  /* 誠實機制的常駐標示（08-26 拍板那套的延續）：滿屏的標籤與 580 都是示範。
+     ⛔別因為「版面乾淨」拿掉——拿掉之後虛構人數就是被當成真實客戶資料在賣。 */
+  .lp-hero__marker { position: absolute; right: 20px; bottom: 14px; z-index: 3; font-size: 0.75rem; color: var(--ink-soft); }
+
+  /* ── 睡著的客人：18 顆人物 chip 鋪滿整屏 ─────────────────────
+   * 排法＝交錯格（quincunx）四列、一列一列**對齊**：滿而不亂（隨手散落那版被使用者
+   * 抓過「畫面有點凌亂」，已淘汰）。位置寫在 index.vue 的 HERO_CHIPS，改要整列一起動。
+   * 睡著（boot／staged 且還沒 .is-lit）＝沒有名字的灰點；醒來＝長出標籤、亮回白底。 */
+  .lp-chips { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .lp-chip {
+    position: absolute; transform: translate(-50%, -50%);
+    display: flex; align-items: center; gap: 7px;
+    background: var(--paper); border-radius: var(--radius-pill); padding: 6px 14px 6px 7px;
+    box-shadow: 0 2px 12px rgba(20, 24, 22, 0.09);
+    transition: background 0.5s ease, box-shadow 0.5s ease, padding 0.45s ease;
+    animation: lpBob 3.4s ease-in-out infinite;
+  }
+  /* 漂浮節奏錯開用 nth-child。⛔別用亂數：SSR 與瀏覽器會對不上（hydration） */
+  .lp-chip:nth-child(odd) { animation-duration: 4.1s; animation-delay: -1.3s; }
+  .lp-chip:nth-child(3n) { animation-duration: 3.7s; animation-delay: -2.1s; }
+  /* 漂浮用 margin 不用 transform：transform 已經被 translate(-50%,-50%) 佔走了 */
+  @keyframes lpBob { 0%, 100% { margin-top: 0; } 50% { margin-top: -7px; } }
+  .lp-chip__av {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--g-wash); color: var(--g-text); transition: background 0.5s ease, color 0.5s ease;
+  }
+  .lp-chip__av svg { width: 15px; height: 15px; }
+  .lp-chip__lb {
+    font-size: 0.8rem; font-weight: 700; color: var(--ink); white-space: nowrap;
+    max-width: 8em; overflow: hidden;
+    transition: max-width 0.5s ease, opacity 0.4s ease, margin 0.5s ease;
+  }
+  /* 灰點＝標籤收進 max-width:0（醒來時「長出名字」的就是這條 transition） */
+  .lp-hero.is-staged .lp-chip:not(.is-lit) { background: #e7eae8; box-shadow: none; padding: 6px 7px; }
+  .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-chip__av { background: #d9ddda; color: #9aa09b; }
+  .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-chip__lb { max-width: 0; opacity: 0; margin-left: -7px; }
+  .lp-chip.is-lit { animation: lpBob 3.4s ease-in-out infinite, lpChipPop 0.5s ease; }
+  /* ⚠️ keyframe 每一幀都要把 translate(-50%,-50%) 完整寫上：transform 是整串取代
+     不是疊加（時機卡印章那次的教訓），漏掉那一幀 chip 會整顆跳位。 */
+  @keyframes lpChipPop {
+    0% { transform: translate(-50%, -50%) scale(0.85); }
+    55% { transform: translate(-50%, -50%) scale(1.12); }
+    100% { transform: translate(-50%, -50%) scale(1); }
+  }
+
+  /* zzz：睡著時才有，醒了淡出。位置變體＝chip 上／大標「值錢」旁 */
+  .lp-zzz { position: absolute; top: -16px; right: 2px; font-style: italic; font-weight: 900; font-size: 15px; color: #9aa09b; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; }
+  .lp-zzz--d2 { top: -26px; right: -8px; font-size: 11px; }
+  .lp-zzz--h1 { top: -12px; right: -22px; font-size: 17px; }
+  .lp-zzz--h1b { top: -26px; right: -36px; font-size: 12px; }
+  @keyframes lpZFloat { 0% { transform: translateY(0); opacity: 0; } 25% { opacity: 0.9; } 100% { transform: translateY(-16px); opacity: 0; } }
+  .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
+  .lp-hero.is-staged .lp-chip:not(.is-lit) .lp-zzz--d2 { animation-delay: 0.9s; }
+  .lp-hero.is-asleep h1 .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
+  .lp-hero.is-asleep h1 .lp-zzz--h1b { animation-delay: 0.8s; }
+
+  /* ── 中央文字區＋柔光 ──────────────────────────────────────
+   * 標籤鋪滿整屏之後，字底下墊一層白色半透明的橢圓柔光（中心 ~95% 白、往外淡出）：
+   * 畫面中間的 chip 被壓淡成背景質感，字永遠清楚。⛔別改成實心白塊——柔光的
+   * 淡出邊緣才是「標籤在字後面」的層次，實心塊就變成一張卡了。 */
+  .lp-hero__center { position: relative; z-index: 2; max-width: 720px; text-align: center; }
+  .lp-hero__center::before {
+    content: ''; position: absolute; inset: -70px -150px; z-index: -1; pointer-events: none;
+    background: radial-gradient(closest-side, rgba(251, 253, 251, 0.95) 42%, rgba(251, 253, 251, 0.72) 66%, rgba(251, 253, 251, 0) 100%);
+  }
+  /* letter-spacing 的由來見 09-06 那輪：CJK 大標合理範圍 0 ~ -0.02em，別再收緊 */
+  .lp-hero h1 { font-size: clamp(2.35rem, 5.2vw, 3.9rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.16; margin: 0; text-wrap: balance; }
+  /* ⛔ 大標的綠留 --g-deep 不換 --g-text：字級 38–62px，壓深會把品牌那一擊洗掉
+     （規則見色票區 --g-text 那段的第②條）。睡著時退成灰、喚醒那拍 transition 回綠。 */
+  .lp-hero h1 .g { position: relative; display: inline-block; color: var(--g-deep); transition: color 0.6s ease; }
+  .lp-hero.is-asleep h1 .g { color: #a4aaa5; }
+  .lp-hero.is-awake h1 .g { animation: lpGPop 0.55s ease both; }
+  @keyframes lpGPop { 0% { transform: scale(1); } 45% { transform: scale(1.1); } 100% { transform: scale(1); } }
+  /* 全形標點收邊（2026-09-06）：繁中的「，」「。」置中在全形框裡，左右各留約 0.25em，
+     「值錢 。」中間會破一個洞。⛔ 別再加大：-0.22 已讓標點幾乎貼著前一個字。 */
+  .lp-hero h1 .lp-hang { display: inline-block; margin: 0 -0.28em 0 -0.22em; }
+  /* 後半句不可分割：折行只准落在逗號後（沒有這條，390px 會切在「其／實」中間） */
+  .lp-hero h1 .lp-h1seg { display: inline-block; }
+  .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; }
+  .lp-hero__sub b { color: var(--ink); font-weight: 700; }
+
+  /* ── 逐段浮出（.lp-rev）───────────────────────────────────
+   * 高度從 0fr 長到內容高：置中的文字被「一段一段」往上頂——按鈕第一頂、
+   * 結算第二頂、收尾句第三頂、小字與重播第四頂。⛔別改成 opacity 佔位版：
+   * 佔位的空白會讓開場的「置中」變成「偏上」（09-07 實拍抓過）。 */
+  .lp-rev { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.55s cubic-bezier(0.25, 0.8, 0.25, 1); }
+  .lp-rev > div { overflow: hidden; min-height: 0; opacity: 0; transition: opacity 0.45s ease 0.12s; }
+  .lp-rev.is-open { grid-template-rows: 1fr; }
+  .lp-rev.is-open > div { opacity: 1; }
+  /* 按鈕那一段開完之後要放行 overflow：喚醒波的漣漪與邀請光圈都伸出這一格 */
+  .lp-rev.is-grown > div { overflow: visible; }
+  /* boot 期的強制收合寫在檔尾的 html.lp-wake-boot 區塊（必須在 .lp 巢狀之外） */
+
+  /* ── 喚醒按鈕與漣漪 ── */
+  .lp-wakewrap { position: relative; display: inline-block; margin-top: 30px; }
+  .lp-ring {
+    position: absolute; left: 50%; top: 50%; width: 24px; height: 24px;
+    margin: -12px 0 0 -12px; border-radius: 50%;
+    border: 2px solid rgba(6, 199, 85, 0.5); opacity: 0; pointer-events: none;
+  }
+  .lp-wakewrap.is-go .lp-ring { animation: lpRingGrow 1.5s ease-out forwards; }
+  .lp-wakewrap.is-go .lp-ring--2 { animation-delay: 0.25s; }
+  /* scale 會把 2px 邊框一起放大成一圈寬寬的軟波——這是要的效果（喚醒「波」），不是 bug */
+  @keyframes lpRingGrow { 0% { opacity: 0.8; transform: scale(1); } 100% { opacity: 0; transform: scale(80); } }
+  .lp-wake { position: relative; transition: transform 0.15s ease; }
+  .lp-wake.is-pressed { transform: scale(0.95); }
+  /* 睡著時按鈕帶一圈往外散的邀請光圈（::after 的邊框，不是 box-shadow）。
+     ⛔ 這不是 09-04 拿掉的「按鈕底下的綠色陰影」——那條禁的是靜置的彩色投影；
+        這圈是動畫提示、醒來就沒了。老闆若不喜歡，砍這兩條規則即可，不影響其他。 */
+  .lp-hero.is-asleep .lp-rev--btn.is-grown .lp-wake::after {
+    content: ''; position: absolute; inset: -3px; border-radius: 999px;
+    border: 2px solid rgba(6, 199, 85, 0.55); opacity: 0; pointer-events: none;
+    animation: lpWakeHint 2s ease-out infinite;
+  }
+  @keyframes lpWakeHint { 0% { opacity: 0.7; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.22); } }
+
+  /* ── 結算與收尾 ── */
+  .lp-tally { margin: 30px 0 0; font-size: 1rem; font-weight: 700; color: var(--ink-2); }
+  /* 大字綠用 --g-deep 不用 --g-text：37px+ 的展示數字，壓深會把力道洗掉（色票區規則②） */
+  .lp-tally b { display: block; font-size: clamp(2.3rem, 4vw, 3.2rem); font-weight: 900; color: var(--g-deep); line-height: 1.15; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .lp-tally small { display: block; margin-top: 2px; font-size: 0.74rem; font-weight: 400; color: var(--ink-soft); }
+  .lp-hero__payoff { margin: 16px 0 0; font-size: 1rem; line-height: 1.75; color: var(--ink-2); }
+  .lp-hero__payoff b { color: var(--ink); font-weight: 700; }
+  .lp-hero__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
   /* nowrap：手機上「NT$399 起」會斷在空白處，把「起」孤零零丟到下一行 */
   .lp-hero__fine b { color: var(--ink-2); font-weight: 700; white-space: nowrap; }
-  .lp-hero__visual { position: relative; z-index: 1; }
-  /* ── 卡片後面的那團光（2026-09-06）────────────────────────────────
-   * 病灶：Hero 的底是「上淡綠、下白」的直向漸層，而時機卡剛好落在**已經變白**的那一段
-   * ——白卡壓在白底上，只剩 1px 灰線和很淺的陰影撐著，浮不起來。
-   * 兩顆 .lp-hero__blob 幫不上忙：它們貼在角落、又大半被 `overflow: hidden` 裁掉。
-   *
-   * ⚠️ 光掛在 .lp-hero__visual 上而不是 .lp-hero 的背景，是因為**只有它會跟著卡片跑**。
-   *    試過在 .lp-hero 鋪一層 `radial-gradient(... at 74% 40%)`：卡片中心在 1200／1440／1920
-   *    分別落在 75%／70%／65%，為了在每個寬度都蓋到卡，半徑得開到 115%×82%——
-   *    結果整片 Hero 連左半邊的大標區都泛綠（實拍確認），那正好是被打槍兩次的
-   *    「整段綠底」的樣子。⛔ 別再走回百分比背景那條路。
-   * ⚠️ z-index: -1 之所以不會掉到 .lp-hero 背景後面：.lp-hero__visual 自己有 z-index: 1
-   *    ＝它是一個堆疊環境，-1 只會退到**這個盒子裡**卡片的後面。
-   * ⛔ 這不是把 2026-09-04 拿掉的綠色光暈加回來：那條拿掉的是**按鈕底下的 box-shadow**
-   *    （硬邊的彩色投影）。這裡是同一套 `filter: blur` 的環境光，跟兩顆 blob 同語彙。
-   * ⚠️ 只給桌機（≥961px）：手機是單欄、卡片本來就滿版，沒有「白卡壓在白底」的問題，
-   *    但光會跟著卡片攤成滿版＝整個 Hero 從上到下泛綠（390px 實拍確認）。
-   *    ⛔ 別把這個 @media 拿掉。 */
-  @media (min-width: 961px) {
-    .lp-hero__visual::before {
-      content: ''; position: absolute; z-index: -1; pointer-events: none;
-      inset: -16% -14%; border-radius: 50%;
-      background: rgba(6, 199, 85, 0.16); filter: blur(70px);
-    }
-  }
+  .lp-replay { margin-top: 10px; font-size: 0.8rem; color: var(--ink-soft); text-decoration: underline; background: none; border: 0; cursor: pointer; font-family: inherit; }
+  .lp-replay:hover { color: var(--g-text); }
 
   /* ── 通用面板（有標頭列的白卡）─────────────────────────── */
   /* 卡片高度層級：靜置一律 --sh-soft、hover 才升到 --sh-card。
@@ -401,116 +485,9 @@
      直接子段落，被 `> p`（0-1-1）拉成 0.94rem——全站四張示意圖說要同一款 0.82rem。 */
   .lp-panel__bd > p.lp-figcap { font-size: 0.82rem; margin: 14px 0 0; }
 
-  /* ── Hero「藏著賺錢的機會」卡（08-26 草稿的 opGroup；09-06 拆掉分組）──────
-   * 一張攤平的清單：節慶（真資料，shared/taiwan-festivals.ts）＋四種客人名單。
-   * 好友數與人數是虛構示範——標頭的「以咖啡店為例」是人數能出現的前提（見 index.vue）。
-   * ⚠️ 2026-09-06 老闆回饋分組標題（節慶／該關心的客人／已分好的客群）對小白難懂，
-   *    .lp-ops__head 與三組結構整組移除、每列自己講人話；⛔要再分組先回去看那輪回饋。
-   *    列的內距因此從 8px 放到 10px——沒有標頭撐開節奏後，8px 的六列擠成一塊。
-   */
-  .lp-ops__group { padding: 10px 0 12px; }
-  /* 一列＝「看到什麼」＋「幾位／什麼時候」，兩段就滿了。
-     ⚠️ 2026-09-02 每列尾巴的建議句（「可以送上一句歡迎」「展場加入的好友」這類）**整排移除**：
-        老闆說「右邊有點多文字」——一列三段小字，六列就是同一句「你可以⋯」講六次，
-        而「那我要做什麼」現在由蓋在卡片中央的那顆印章（.lp-stamp）統一回答一次。
-     ⛔ 別把 `.lp-op small` 加回來：加回來就等於把印章那句話拆成六句小字，回到老闆抓的那版。 */
-  .lp-op { display: flex; align-items: center; gap: 12px; padding: 10px var(--panel-pad-x); }
-  .lp-op b { flex: 1; min-width: 0; font-size: 0.9rem; font-weight: 700; }
-  /* ⚠️ min-width 是**量出來的**（2026-09-06，headless 1440x900 量六顆膠囊的實際寬度）：
-   *   準備中 53.61 ／ 38 位 48.69 ／ 142・216・184 位 55.94 → 取最寬的 56px。
-   * 沒有這個值的時候六顆膠囊靠右對齊＝右緣齊、**左緣三種位置**，六列看下來像六個各自
-   * 為政的標籤，不是一欄資料。tabular-nums 只解決「數字等寬」，解決不了「膠囊等寬」。
-   * ⛔ 別憑感覺調大：膠囊變寬是往**左**長的（右緣固定），左緣一路逼近印章，
-   *    56 → 70 就會撞到「印章不可以蓋到人數」那條紅線。改這個值要重跑量測腳本
-   *    把每個寬度的「印章右緣 vs 最左膠囊左緣」再驗一次。
-   * ⚠️ 「準備中」換成別的節慶狀態字（更長）時這個值要重量。 */
-  .lp-op__tag {
-    flex: none; font-size: 0.7rem; font-weight: 800; border-radius: var(--radius-pill);
-    padding: 4px 10px; background: var(--surf-2); color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-    min-width: 56px; text-align: center;
-  }
-  /* 「快到了」＝時間訊號吃琥珀（全頁唯一非綠色，只當狀態訊號）；人數＝可把握的量吃淡綠 */
-  .lp-op__tag--soon { background: var(--warn-wash); color: var(--warn-ink); }
-  .lp-op__tag--num { background: var(--g-wash); color: var(--g-text); }
-  /* ── 時機卡的印章：「這些你都不用自己盯／交給 MiniMe 就好」──────
-   * 2026-09-02 老闆點名要的：清單列出一堆該顧的事，印章一次收掉——「你不用管，交給它」。
-   * 同日第二輪老闆問「可以直接蓋在這些東西上面嗎」→ 改成**真的疊在名單上**（原本是排在
-   * 名單與按鈕之間、誰都不壓的一格）。
-   *
-   * 09-02 第三輪老闆要「放在這張卡片的中央、大一點」＝現在這版：對**整張卡**上下左右居中
-   * （`top/left: 50%` ＋ `translate(-50%, -50%)`），字級放大到印章約佔卡片 60%。
-   *
-   * ⚠️ 居中吃的是整張卡（含標頭與 CTA 頁尾）的幾何中心，落點會在「上次聯絡超過 60 天」
-   *    那一列上——那一列的**名稱**因此被蓋掉，這是老闆知情的取捨。
-   * ⛔ **右邊那排人數不可以被蓋到**（38／142／216／184 是這張卡唯一的說服力）：
-   *    印章能多寬就是被這件事鎖住的，不是憑感覺調的，各寬度的值見下面 @container。
-   * ⚠️ 底色刻意留一成透明（不是實心）：被蓋住的那幾列會透出一點淡淡的影子，看起來才像
-   *    墨蓋在紙上、不是貼了一張貼紙。⛔ 別調到全不透明，也別再往下調（會變成兩層字打架）。
-   * ⛔ 印章不掛綠色光暈（整頁都沒有了，見色票區那段註解——2026-09-04 老闆指名拿掉）。
-   * ⛔ 整張卡是 `overflow: hidden`（它要裁圓角），印章伸出卡外的部分會被切掉——
-   *    要伸出去就得先把圓角裁切改到別的地方，不是只加一行 position。
-   * ⚠️ 之前那顆「高度 0 的錨點」（.lp-ops__seal）已經整個移除：現在直接對 .lp-ops 定位，
-   *    而 .lp-ops 因為 container-type 本身就是絕對定位的容器塊。
-   */
-  /* ⚠️ `container-type: inline-size` 是給印章用的（見下面的 @container）：印章能多大
-     取決於**這張卡**多寬，而卡寬跟視窗寬不是同一件事——950px 視窗（兩欄）卡只有 406px，
-     720px 視窗（單欄）卡卻有 672px。⛔ 所以這裡不可以用 @media 斷點，那是錯的訊號。 */
-  .lp-ops { position: relative; container-type: inline-size; }
-  .lp-stamp {
-    position: absolute; left: 50%; top: 50%; z-index: 2;
-    display: inline-flex; flex-direction: column; align-items: center; white-space: nowrap;
-    padding: 14px 42px 15px;
-    border: 2px solid rgba(6, 199, 85, 0.52); border-radius: 16px;
-    /* 一成透明的淡綠：底下那兩列會透出一點影子（見上面）。
-       ⛔ 別再加白色外光暈（`box-shadow: 0 0 0 5px #fff` 試過）：它會把名單的分隔線切斷，
-          看起來就是貼了一張有白邊的貼紙，不是蓋上去的墨。 */
-    background: rgba(234, 250, 241, 0.9);
-    color: var(--g-text);
-    /* 歪一點才像蓋上去的，不是排進去的。
-       ⚠️ translate(-50%, -50%) 是**定位的一部分**（left/top: 50% 之後要把自己拉回半個身體），
-          ⛔ 動畫的每一幀都要把它一起寫上——transform 是整串取代不是疊加，
-             漏掉的那一幀印章會整個跳到右下角去。 */
-    transform: translate(-50%, -50%) rotate(-6deg);
-  }
-  /* 內圈細框＝印章的雙線邊（單線太像徽章／標籤） */
-  .lp-stamp::before {
-    content: ''; position: absolute; inset: 3px;
-    border: 1px solid rgba(6, 199, 85, 0.34); border-radius: 9px; pointer-events: none;
-  }
-  .lp-stamp small { font-size: 0.88rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8; }
-  /* **字級就是印章的尺寸旋鈕**（左右內距只能微調）：現在約佔卡片 60%，
-     大到左緣壓在名稱上、右緣還差一截才碰到人數膠囊。
-     ⛔ 別為了再加寬把左右內距灌到 70px：框裡會空一大片，看起來是空框不是印章。 */
-  .lp-stamp b { font-size: 1.68rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.34; }
-
-  /* 卡片變窄就把印章縮一級——**唯一的規則是「不可以蓋到人數」**：名稱被蓋掉沒關係
-     （它本來就是要蓋在名單上），但 38／142／216／184 是這張卡的賣點。
-     ⚠️ 這幾組數字是量出來的（有腳本在六個寬度逐一驗印章與每顆 .lp-op__tag 沒有水平重疊），
-        改字級或內距要重新量一次，別憑感覺調。 */
-  @container (max-width: 470px) {
-    .lp-stamp { padding: 12px 28px 13px; }
-    .lp-stamp small { font-size: 0.78rem; }
-    .lp-stamp b { font-size: 1.2rem; }
-  }
-  @container (max-width: 375px) {
-    /* margin-left ＝往左推一點，把右邊的人數讓出來（純靠縮字級要縮到字太小）。
-       ⛔ 要推位置只能動 margin，不能動 `left`／`transform`：transform 那一串每一幀都寫在
-          動畫的關鍵影格裡，動一個地方就要動四處，漏掉就會在動畫途中跳位。 */
-    .lp-stamp { padding: 10px 18px 11px; margin-left: -8px; }
-    .lp-stamp small { font-size: 0.72rem; }
-    .lp-stamp b { font-size: 1.04rem; }
-  }
-  /* 320px 手機：卡只剩 272px，一列的名稱＋人數本來就快貼滿，縮到底也還是會壓到人數，
-     所以再往左推一截（讓它去蓋名稱、把右邊的人數讓出來）。 */
-  @container (max-width: 310px) {
-    .lp-stamp { padding: 9px 16px 10px; margin-left: -42px; }
-    .lp-stamp b { font-size: 1.06rem; }
-  }
-
-  /* ⚠️ padding-top 曾經被撐到 38／26px＝當時印章壓在這條接縫上、要讓出按鈕的距離；
-     09-02 印章搬到卡片正中央之後這個理由消失，收回原本的 16px。 */
-  .lp-ops__cta { padding: 16px var(--panel-pad-x) 20px; border-top: 1px solid var(--hair); background: var(--surf-2); }
+  /* ⚠️ 時機卡（.lp-ops／.lp-op／.lp-stamp「交給 MiniMe 就好」）2026-09-08 隨 Hero 改滿版
+     劇場整組移除（拍板脈絡見 STATUS `D-70`）。印章三輪拍板的做法、膠囊等寬量測值、
+     @container 縮級表都在 git 歷史這一段——要復活從這個 commit 的前一版抄回來。 */
 
   /* ── 為什麼卡住：四道牆 ────────────────────────────────────
    * 第一道牆（「沒有人可以做」）刻意佔 1.45 倍寬並吃綠底：四個原因不是平等的，
@@ -1336,65 +1313,17 @@
     flex-wrap: wrap; padding: 18px 24px; font-size: 0.8rem; color: var(--ink-soft);
   }
 
-  /* ── Hero 進場：一打開頁面就演一次 ─────────────────────────
-   * 2026-09-02 老闆要的「進入頁面時做動畫呈現」。順序＝左邊一句一句長出來、
-   * 右邊時機卡先出殼再一組一組填進去，最後印章「蓋」下來收尾（總長約 1.5 秒）。
-   *
-   * ⚠️ 這一段刻意**不掛 .is-anim**（跟底下捲動 reveal 的規則相反，別「順手統一」）：
-   *    .is-anim 是 onMounted 才掛上的，而 Hero 在**第一次繪製就已經在畫面上**——
-   *    先看到完整的 Hero、hydration 之後又被藏起來重演一次，那是閃一下的破圖。
-   *    純 CSS 動畫從第一幀就開始，沒有 JS 也會演完，爬蟲拿到的 DOM 一樣是完整的。
+  /* ── Hero 進場（滿版劇場版，2026-09-08）─────────────────────
+   * 大標與副標從第一幀就站在畫面正中央，只做一個輕輕的浮入（純 CSS、不等 JS）。
+   * 喚醒示範的整條編排（灰點 → 按鈕浮出 → 喚醒波 → 結算）在 index.vue；
+   * 開場的「睡著」狀態由 head 的同步腳本掛 html.lp-wake-boot——
+   * ⛔ 別改成 onMounted 才藏：先看到完整畫面再被藏起來重演＝閃一下的破圖（老規矩）。
    * ⚠️ fill-mode 一律 `backwards`，⛔不要用 `both`：宣告值本身就是最終狀態，
-   *    用 both 的話動畫結束後 100% 那一幀會**永久留在元素上**（動畫的套用值壓過一般宣告），
-   *    卡片的 `:hover { transform }` 從此再也不會動、印章也鎖死在那一幀。
-   * ⚠️ 只動 opacity/transform，不動高度：卡片第一幀就是最終尺寸，
-   *    填內容的過程不會把下面的區塊往下推。
-   */
+   *    both 會讓 100% 那一幀永久留在元素上，hover 的 transform 從此不動（踩過）。 */
   @keyframes lpHeroIn { from { opacity: 0; transform: translateY(18px); } }
-  @keyframes lpHeroCardIn { from { opacity: 0; transform: translateY(24px) scale(0.985); } }
-  /* 印章：從大縮到小＝往下蓋。中間過頭一點點（.95 → 1.03）才有「敲到卡面」的手感；
-     一開始帶一點模糊，收下來時對焦。
-     ⚠️ 每一幀都要把 `translate(-50%, -50%) rotate(-6deg)` 完整寫一次：transform 是整串
-        取代不是疊加——漏掉 translate 印章會整顆跳到右下角，漏掉 rotate 會轉正再歪回去。
-     ⛔ 這兩個值要跟 .lp-stamp 的宣告值**一模一樣**：fill-mode 是 backwards，
-        演完會跳回宣告值，差一點就是最後那一下抖一下。 */
-  @keyframes lpStampIn {
-    0% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1.9); filter: blur(3px); }
-    55% { opacity: 1; transform: translate(-50%, -50%) rotate(-6deg) scale(0.95); filter: blur(0); }
-    75% { transform: translate(-50%, -50%) rotate(-6deg) scale(1.03); }
-    100% { transform: translate(-50%, -50%) rotate(-6deg) scale(1); }
-  }
-  /* 蓋下去那一下擴出去的一圈墨痕，散掉就沒了（宣告值是 opacity: 0，動畫結束自己消失） */
-  @keyframes lpStampRing {
-    0% { opacity: 0; transform: scale(0.82); }
-    35% { opacity: 0.42; }
-    100% { opacity: 0; transform: scale(1.3); }
-  }
-
   .lp-hero__text > * { animation: lpHeroIn 0.6s cubic-bezier(0.22, 0.75, 0.3, 1) backwards; }
   .lp-hero__text > *:nth-child(1) { animation-delay: 0.05s; }
-  .lp-hero__text > *:nth-child(2) { animation-delay: 0.12s; }
-  .lp-hero__text > *:nth-child(3) { animation-delay: 0.2s; }
-  .lp-hero__text > *:nth-child(4) { animation-delay: 0.27s; }
-  .lp-hero__text > *:nth-child(5) { animation-delay: 0.34s; }
-  .lp-hero__text > *:nth-child(6) { animation-delay: 0.41s; }
-
-  .lp-ops { animation: lpHeroCardIn 0.66s cubic-bezier(0.22, 0.75, 0.3, 1) 0.14s backwards; }
-  /* ⚠️ 09-06 名單從三組收成一組（分組標頭拆掉），錯開跟著簡化：標頭 → 名單 → 頁尾 → 印章。
-     ⚠️ 內容的延遲別再往後加：卡殼先出現、內容還沒進來的那段時間，右邊就是一塊
-        空白卡。現在空窗大約 0.3 秒（殼 0.14 → 名單 0.38），再拉長就像壞掉。 */
-  .lp-ops .lp-panel__hd { animation: lpHeroIn 0.48s ease-out 0.3s backwards; }
-  .lp-ops__group { animation: lpHeroIn 0.48s ease-out 0.38s backwards; }
-  .lp-ops__cta { animation: lpHeroIn 0.48s ease-out 0.5s backwards; }
-  .lp-stamp { animation: lpStampIn 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) 0.78s backwards; }
-  /* 墨痕那一圈：延遲＝印章的延遲＋印章「敲到卡面」那一幀（0.78 + 0.5×0.55 ≈ 1.06s）。
-     ⛔ 別讓它先出現或晚太多，看起來就變成兩件事各演一次；改印章的延遲要回來重算這條。 */
-  /* inset 要在白色外光暈（.lp-stamp 的 box-shadow 5px）之外，否則墨痕會壓在白邊上看不清 */
-  .lp-stamp::after {
-    content: ''; position: absolute; inset: -9px;
-    border: 2px solid var(--g); border-radius: 20px; opacity: 0; pointer-events: none;
-    animation: lpStampRing 0.55s ease-out 1.06s backwards;
-  }
+  .lp-hero__text > *:nth-child(2) { animation-delay: 0.16s; }
 
   /* ── 捲動進場動畫 ──────────────────────────────────────
    * 一律「預設就是最終狀態」，只有 JS 掛上 .is-anim 之後才藏起來再演。
@@ -1688,12 +1617,15 @@
     .lp-livewin--chat { --chat-bubble-max: min(84%, 680px); }
   }
   @media (max-width: 900px) {
-    /* Hero 手機版文字在上：標題才是鉤子，時機卡是佐證 */
-    .lp-hero__grid { grid-template-columns: minmax(0, 1fr); }
-    .lp-hero__sub { max-width: none; }
-    .lp-hero__sub br { display: none; }
-    /* 解答句同款：桌機兩行是排的，手機窄欄讓它自然流 */
-    .lp-hero__answer br { display: none; }
+    /* Hero 滿版劇場的手機版：chip 收一半（.lp-chip--hm）、其餘縮一級；
+       柔光跟著文字欄縮小，否則會蓋掉大半個畫面、chip 全糊掉。
+       ⚠️ 邊緣兩欄（x=10%/90%）的 chip 在 390px 會被 overflow 裁掉幾 px——刻意的，
+          「探出畫面」比「全部往內擠壓到字」好；⛔別為了不裁而把 x 往內收，會撞柔光。 */
+    .lp-chip--hm { display: none; }
+    .lp-chip { padding: 5px 12px 5px 6px; }
+    .lp-chip__av { width: 24px; height: 24px; }
+    .lp-chip__lb { font-size: 0.72rem; }
+    .lp-hero__center::before { inset: -48px -40px; }
     .lp-faq__grid { grid-template-columns: 1fr; }
     .lp-foot__in { grid-template-columns: 1fr 1fr; gap: 32px; padding: 40px 24px 32px; }
   }
@@ -1728,9 +1660,6 @@
     .lp-turn { gap: 13px; }
     .lp-bubble { padding: 18px 20px; }
     .lp-bubble h2 br { display: none; }
-
-    /* 時機卡的列在 390px 只有「名稱＋數字」兩段，放得下一行（原本副標要換第二行的規則
-       跟著副標一起移除了，見 .lp-op 那段註解）。名稱太長時是在 b 裡面折行，不是整列換行。 */
 
     /* 一條路＝左軸清單（二十三輪起桌機手機同一版），手機收磚、字級與縮排一級。
        ⚠️ demo 卡與圖說要**跳出縮排**吃回滿版寬：390px 扣掉左欄只剩 ~285px，
@@ -1776,15 +1705,12 @@
   /* ⚠️ 這一段是**保險**，不是主要機制：勾了「減少動態效果」的人根本不會拿到 .is-anim
      （index.vue 在掛上之前就 return 了）。它擋的是「載入後才去系統設定打開」那種情況。 */
   @media (prefers-reduced-motion: reduce) {
-    /* Hero 的進場是純 CSS（不等 .is-anim），所以這裡是它**唯一**的關法：
-       ⛔ 別漏掉 .lp-stamp::after（那圈墨痕自己有一支動畫），也別只關 .lp-hero__text。
-       關掉之後每個元素回到宣告值＝完整、最終狀態，印章仍然歪 -3.5deg 蓋在原位。
-       ⚠️ 名單那條保留 `:nth-child(n)`（權重 0,2,0）：09-06 前宣告端是
-          `.lp-ops__group:nth-child(2..4)` 三條、只寫 `.lp-ops__group`（0,1,0）會輸，
-          勾了「減少動態效果」的人看到的是**空白的卡**（實測過）。宣告端現在收成一組
-          （0,1,0），高權重留著是保險、零成本。 */
-    .lp-hero__text > *, .lp-ops, .lp-ops .lp-panel__hd, .lp-ops__group:nth-child(n),
-    .lp-ops__cta, .lp-stamp, .lp-stamp::after { animation: none; }
+    /* Hero 的進場是純 CSS（不等 .is-anim），所以這裡是它**唯一**的關法。
+       喚醒示範不會跑：head 腳本查了 matchMedia 根本不掛 lp-wake-boot、index.vue 也
+       早退＝從第一幀就停在醒著的完整畫面。這裡再把殘餘的環境動畫（chip 漂浮、zzz、
+       邀請光圈）也關掉——它們是無限循環，對勾了減少動態的人就是干擾。 */
+    .lp-hero__text > *, .lp-chip, .lp-chip.is-lit, .lp-zzz, .lp-ring,
+    .lp-hero.is-awake h1 .g, .lp-hero.is-asleep .lp-rev--btn.is-grown .lp-wake::after { animation: none; }
 
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
@@ -1834,4 +1760,27 @@
     &.is-anim .lp-turn.is-typing .lp-bubble .mark { box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0.2); }
     .lp-tw__dots { display: none; }
   }
+}
+
+/* ── Hero 喚醒示範的 boot 開場（html.lp-wake-boot）───────────────────
+ * ⚠️ 必須寫在 .lp 巢狀**之外**：整份檔案包在 .lp {} 裡，巢狀裡寫 html… 會被
+ *    編譯成 `.lp html…`＝永遠匹配不到（實測踩過：開場先閃一幀醒著的畫面才入睡）。
+ * 這一塊＝onMounted 接手前的「睡著」開場，宣告要跟 .lp 裡 .is-staged／.is-asleep
+ * 那組**一模一樣**——差一條就會在接手那一幀跳一下。誰在什麼時候掛／拆這個 class，
+ * 見 index.vue 的 HERO_CHIPS 註解（head 同步腳本＋8 秒保險絲＋onMounted 接手）。 */
+html.lp-wake-boot .lp {
+  .lp-hero { background: #f2f4f3; }
+  .lp-hero__blob--1 { background: rgba(112, 122, 118, 0.11); }
+  .lp-hero__blob--2 { background: rgba(112, 122, 118, 0.06); }
+  .lp-chip { background: #e7eae8; box-shadow: none; padding: 6px 7px; }
+  .lp-chip .lp-chip__av { background: #d9ddda; color: #9aa09b; }
+  .lp-chip .lp-chip__lb { max-width: 0; opacity: 0; margin-left: -7px; }
+  .lp-chip .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
+  .lp-chip .lp-zzz--d2 { animation-delay: 0.9s; }
+  .lp-hero h1 .g { color: #a4aaa5; }
+  .lp-hero h1 .lp-zzz { opacity: 1; animation: lpZFloat 2.4s ease-in-out infinite; }
+  .lp-hero h1 .lp-zzz--h1b { animation-delay: 0.8s; }
+  /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合 */
+  .lp-rev { grid-template-rows: 0fr; }
+  .lp-rev > div { opacity: 0; overflow: hidden; }
 }

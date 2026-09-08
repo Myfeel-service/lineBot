@@ -69,111 +69,96 @@
       </div>
     </nav>
 
-    <!-- ── Hero ────────────────────────────────────────────────
-         右邊是機會卡：節慶檔期＋四種客人名單，一張攤平的清單。
-         ⚠️ 2026-09-06 老闆回饋「右圖無法理解」「節慶／該關心的客人／已分好的客群這些
-            分組標題對小白難懂」→ 三個分組標頭整組拆掉，每一列自己是一句人話（誰＋幾位），
-            卡片標題補上「賺錢」點明這張卡在講機會。⛔別把分組標頭加回來。
-         節慶那兩列吃 shared/taiwan-festivals.ts 的真資料（系統本來就會在節前提醒老闆）。
-         ⚠️ 誠實機制（2026-08-26 老闆拍板拿掉圖說後的替代方案，⛔別拆）：
-           1. 卡片標頭右側掛「以咖啡店為例」＝整張卡明示是舉例，人數才可以出現；
-              拿掉這個標示、又不掛圖說，虛構人數就是被當成真實客戶資料在賣。
-              ⚠️ 用「舉例」而不是店名：一句「示範店 · 山丘咖啡」除了沒人懂「示範店」，
-                 還可能被讀成「山丘咖啡是他們的客戶」——那比沒標示更糟（假造客戶案例）。
-                 「以咖啡店為例」順便解釋了卡裡為什麼都是咖啡展、手沖這些內容。
-           2. 卡上每一列都必須是**現在真的做得到**的事（節慶提醒、加入時間名單、
-              60 天沒互動自動標籤、標籤分眾都是真功能）——之前「還沒說過第一句話」
-              是開發中的偵測，已改掉。⛔要再放開發中的能力，免責圖說就得加回來。
-           3. 印章那句話只寫到「你不用自己**盯**」＝這些名單與檔期是系統自己在看的（真的）。
-              ⛔別升級成「它會自動幫你發」——自動喚醒／生日祝福那類主動發送 08-27 老闆拍板
-              「先不要出現」，寫了就是賣還沒有的功能。 -->
-    <header id="top" class="lp-hero">
+    <!-- ── Hero：滿版「沉睡→喚醒」劇場（2026-09-08 落地，拍板脈絡見 STATUS `D-70`）──
+         取代 09-06 的「左文案＋右時機卡」兩欄版。故事三拍：顧客很值錢（大標）→
+         都睡著了：沒被記錄、沒貼標籤（滿屏無名灰點）→ 你發一則推播叫醒
+         （喚醒波掃全場、灰點長出標籤、580 位結算、按鈕變回註冊 CTA）。
+         ⚠️ 誠實機制（08-26 拍板那套的延續，⛔別拆）：
+           1. 人數（580）出現的前提是「以咖啡店為例」——右下角常駐一句、結算數字旁再掛
+              一句。⛔拿掉標示，虛構人數就是被當成真實客戶資料在賣。
+           2. chip 上的標籤都必須是店家**現在真的貼得出來**的標籤（「60 天沒來」更是
+              現有的自動標籤功能）；能力不可以虛構。
+         ⚠️ 08-27 紅線：發推播的主詞永遠是**店家**——按鈕是「（你）發一則喚醒推播」，
+            {{ brandName }} 只負責記錄、貼標、把名單準備好。⛔文案不可升級成「它會自動叫醒」。
+         ⚠️ 浮的是「客人」（頭像＋標籤的人物 chip）⛔不是聊天泡泡（綠泡泡被打槍×2）；
+            「睡著」是調灰的亮色調⛔不是深色段（深色段被打槍×2）。
+         ⚠️ 開場「睡著」狀態的掛法見 script 的 HERO_CHIPS 註解（html.lp-wake-boot）：
+            ⛔不可以改成 onMounted 才把 hero 藏起來重演——先看到完整畫面再被藏起來
+            就是閃一下的破圖（hero 的老規矩）。SSR／爬蟲／無 JS／減少動態拿到的
+            都是醒著的完整內容。 -->
+    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake }">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
-      <div class="lp-wrap lp-hero__grid">
+      <!-- 誠實機制的常駐標示。⛔別因為「版面乾淨」拿掉 -->
+      <span class="lp-hero__marker">以咖啡店為例</span>
+
+      <!-- 睡著的客人：18 顆 chip 鋪滿整屏（交錯格，位置在 HERO_CHIPS）。
+           純裝飾示意 → aria-hidden：內容都在中央文字與結算裡，讀屏的人沒有損失。 -->
+      <div class="lp-chips" aria-hidden="true">
+        <div
+          v-for="(c, i) in HERO_CHIPS" :key="i" :ref="el => setChipEl(el, i)"
+          class="lp-chip" :class="{ 'lp-chip--hm': c.hm, 'is-lit': chipLit[i] }"
+          :style="{ left: `${c.x}%`, top: `${c.y}%` }"
+        >
+          <span class="lp-chip__av"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5z" /></svg></span>
+          <span class="lp-chip__lb">{{ c.label }}</span>
+          <i v-if="c.z" class="lp-zzz">z</i>
+          <i v-if="c.z2" class="lp-zzz lp-zzz--d2">z</i>
+        </div>
+      </div>
+
+      <div class="lp-wrap lp-hero__center">
         <div class="lp-hero__text">
-          <!-- 09-06 老闆「換一個 slogan」：從類別標籤（LINE 專用 · AI 客服與顧客經營）
-               改成利益句，跟 h1「你的顧客很值錢」接成同一個故事。 -->
-          <span class="lp-eyebrow">把 LINE 好友，變成回頭客</span>
-          <!-- ⚠️ 兩個全形標點包 .lp-hang：繁中的「，」「。」是**置中**在全形框裡的
-               （簡中才靠左下），所以 4.3rem 時每個標點左右各留約 0.25em＝17px 的空隙，
-               「值錢 。」中間那個洞在大標上很明顯。⛔ 字本身沒有改，只是把空隙收掉，
-               各縮多少寫在 _landing.scss 的 .lp-hang。 -->
-          <h1>你的顧客<span class="lp-hang">，</span><br>其實很<span class="g">值錢</span><span class="lp-hang">。</span></h1>
-          <!-- 兩句各佔一行（手機收掉 br 自然流）：擠在同一段時斷行位置會把詞拆開 -->
-          <p class="lp-hero__sub">
-            品牌的 LINE 官方帳號有好多好友，<br>
-            <b>卻不知道如何經營他們嗎？</b>
-          </p>
-          <!-- 解答句：敘事閉環的第三拍（值錢→沒空經營→它是你的分身→免費打造）。
-               09-06 改寫：老闆回饋原句「替你經營他們的 AI 分身」還沒改到（歧義：會被讀成
-               「經營『他們的分身』」），且老闆點名喜歡收尾那句「讓一個你變成很多個你」、
-               說可以拉上來當副標——改成「是你的分身＋讓一個你變成很多個你」兩拍。
-               收尾 CTA 刻意保留同一句＝首尾呼應。⛔說明仍不多扛：往下捲整頁都在講。 -->
-          <p class="lp-hero__answer"><b>{{ brandName }}</b> 是你的 AI 分身——<br>從今天開始，讓一個你，變成很多個你。</p>
-          <div class="lp-hero__actions">
-            <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
-          </div>
-          <p class="lp-hero__fine">
-            <b>60 秒</b>開好帳號 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
-          </p>
+          <!-- ⚠️ 兩個全形標點包 .lp-hang（收全形框的空隙），規則見 _landing.scss。
+               大標 09-06 拍板句原封不動，只從兩行排版改成置中一行。
+               ⚠️ 前後兩個半句各包一顆 .lp-h1seg（inline-block）＝手機折行只能落在
+                  兩段之間：只包後半的話逗號會被擠到第二行行首、都不包的話
+                  text-wrap: balance 會切在「其／實」中間（390px 兩種都實拍抓過）。 -->
+          <h1><span class="lp-h1seg">你的顧客<span class="lp-hang">，</span></span><span class="lp-h1seg">其實很<span class="g">值錢<i class="lp-zzz lp-zzz--h1" aria-hidden="true">z</i><i class="lp-zzz lp-zzz--h1b" aria-hidden="true">z</i></span><span class="lp-hang">。</span></span></h1>
+          <p class="lp-hero__sub">只是都睡著了——<b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
         </div>
 
-        <div class="lp-hero__visual">
-          <div class="lp-panel lp-ops">
-            <div class="lp-panel__hd">
-              <span class="lp-panel__pip" />
-              <span class="lp-panel__title">你的好友裡，藏著賺錢的機會</span>
-              <!-- 「以咖啡店為例」是人數能出現的前提（見區塊註解）：⛔別換回好友數（那會變成
-                   拿虛構數字當真實客戶資料），也⛔別寫成店名（「示範店 · 山丘咖啡」被老闆抓過
-                   ——訪客不懂「示範店」，還可能讀成「山丘咖啡是他們的客戶」＝假造客戶案例）。 -->
-              <span class="lp-panel__meta">以咖啡店為例</span>
+        <!-- 逐段浮出（.lp-rev）：每開一段，置中的文字就被往上頂一點。
+             順序＝按鈕（第一頂）→ 結算（第二頂）→ 收尾句 → 小字＋重播。 -->
+        <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
+          <div>
+            <div class="lp-wakewrap" :class="{ 'is-go': wakeRings }">
+              <span class="lp-ring" /><span class="lp-ring lp-ring--2" />
+              <!-- 示範中＝喚醒鈕（主詞是店家）；示範前後＝真的註冊 CTA。
+                   SSR／無 JS／減少動態走 v-else 那顆連結＝永遠有入口。 -->
+              <button
+                v-if="heroDemo" type="button" class="lp-btn lp-btn--primary lp-wake"
+                :class="{ 'is-pressed': wakePressed }" @click="playWake"
+              >發一則喚醒推播</button>
+              <NuxtLink v-else class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
             </div>
+          </div>
+        </div>
 
-            <!-- 一張攤平的清單（09-06 拆分組，見區塊註解）：每列＝誰／什麼時候＋幾位。
-                 ⛔ 每一列都必須是**現在真的做得到**的事：節慶提醒、加入時間名單、
-                    60 天沒互動自動標籤、標籤分眾——列的字可以白話，能力不可以虛構。 -->
-            <div class="lp-ops__group">
-              <div v-for="f in heroFests" :key="f.id" class="lp-op">
-                <b>{{ f.name }} {{ f.md }}</b>
-                <span class="lp-op__tag" :class="{ 'lp-op__tag--soon': f.soon }">{{ f.badge }}</span>
-              </div>
-              <div class="lp-op">
-                <b>這週剛加入的新朋友</b>
-                <span class="lp-op__tag lp-op__tag--num">38 位</span>
-              </div>
-              <div class="lp-op">
-                <b>超過 60 天沒聯絡的客人</b>
-                <span class="lp-op__tag lp-op__tag--num">142 位</span>
-              </div>
-              <div class="lp-op">
-                <b>在咖啡展認識的客人</b>
-                <span class="lp-op__tag lp-op__tag--num">216 位</span>
-              </div>
-              <div class="lp-op">
-                <b>愛手沖的熟客</b>
-                <span class="lp-op__tag lp-op__tag--num">184 位</span>
-              </div>
-            </div>
+        <div class="lp-rev" :class="{ 'is-open': rev.tally }">
+          <div>
+            <p class="lp-tally"><b>{{ tallyShown }}</b>位睡著的客人，醒了<small>以咖啡店為例</small></p>
+          </div>
+        </div>
 
-            <!-- 印章：接住上面整張清單的那句話（2026-09-02 老闆要的「蓋個印章說你不用管這些」）。
-                 同日改過兩輪位置：①排在名單與按鈕之間、誰都不壓 → ②「可以直接蓋在這些東西上面嗎」
-                 → ③「可以放在這張卡片的中央且大一點嗎」＝現在這版（絕對定位、對整張卡上下左右居中）。
-                 ⚠️ 它是**每一列的建議句被拿掉之後的替代品**：原本每列尾巴都掛一句「可以送上一句
-                    歡迎」這類建議＝同一件事在卡裡講了六次，卡片右半邊全是小字（老闆：「有點多文字」）。
-                    現在每列只回答「看到什麼、幾位」，「那我要做什麼」由這一顆印章統一回答。
-                 ⚠️ 它在 DOM 裡擺在名單後面、CTA 前面＝**讀螢幕的人聽到的順序**（先聽完機會再聽這句
-                    結論），位置純粹靠 CSS。⛔ 別為了「視覺在中間」把它搬到名單前面。
-                 ⛔ 別把建議句加回去；印章可以蓋住名稱，但**不可以蓋到人數**（那是這張卡的賣點）
-                    ——多大、各寬度怎麼縮、為什麼不能用 @media，寫在 _landing.scss 的 .lp-stamp 那段。 -->
-            <span class="lp-stamp">
-              <small>這些你都不用自己盯</small>
-              <b>交給 {{ brandName }} 就好</b>
-            </span>
+        <div class="lp-rev" :class="{ 'is-open': rev.payoff }">
+          <div>
+            <!-- 收尾句＝解答：記下來、貼標籤、推播叫醒。⛔主詞是店家，別寫成「它會自動」 -->
+            <p class="lp-hero__payoff"><b>{{ brandName }}</b> 把每一位客人記下來、貼好標籤——一則推播，就叫得醒。</p>
+          </div>
+        </div>
 
-            <div class="lp-ops__cta">
-              <NuxtLink class="lp-btn lp-btn--primary lp-btn--block" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
-            </div>
+        <div class="lp-rev" :class="{ 'is-open': rev.fine }">
+          <div>
+            <p class="lp-hero__fine">
+              <b>60 秒</b>開好帳號 · 免費方案不用綁卡 · 付費每月 <b>NT${{ fmt(lowestPaidPrice) }} 起</b>
+            </p>
+          </div>
+        </div>
+
+        <div class="lp-rev" :class="{ 'is-open': rev.replay }">
+          <div>
+            <button type="button" class="lp-replay" @click="replayWake">重播示範</button>
           </div>
         </div>
       </div>
@@ -1518,7 +1503,7 @@ useSeoMeta({
 })
 
 // ══════════════════════════════════════════════════════════════
-//  Hero 時機卡的「節慶」組
+//  節慶資料（現在只剩「AI 行銷」那扇推播窗在用；Hero 的節慶列 09-08 隨滿版劇場移除）
 //
 //  資料來源＝ shared/taiwan-festivals.ts，也就是系統真的用來提醒老闆的那張表。
 //  ⛔ 別在這裡另外寫一份節日清單：草稿寫死「父親節 8/8 下週」，做頁面的當下就已經過期了
@@ -1533,30 +1518,11 @@ useSeoMeta({
  */
 const today = useState<string>('lp-today', () => taipeiDate())
 
-/** 09-25 → 9/25（去掉前導零，跟訊息裡的寫法一致） */
-function monthDay(date: string): string {
-  const [, m, d] = date.split('-')
-  return `${Number(m)}/${Number(d)}`
-}
-
 /** 還沒過的節日，由近到遠。節日表本身已依日期排序（有測試在顧）。 */
 const upcoming = computed(() =>
   TAIWAN_FESTIVALS
     .map(f => ({ ...f, days: daysBetween(today.value, f.date) }))
     .filter(f => f.days >= 0),
-)
-
-/** 時機卡列接下來兩個檔期。7 天內＝系統開始提醒的門檻，標琥珀；更遠的標「準備中」（草稿用語）。
- *  ⚠️ 節日表的 `angle`（「禮盒與送禮的需求會明顯升溫」那句）2026-09-02 起不帶出來了：
- *     時機卡每一列改成只有「看到什麼＋數字」，理由見上面模板裡印章那段註解。 */
-const heroFests = computed(() =>
-  upcoming.value.slice(0, 2).map(f => ({
-    id: f.id,
-    name: f.name,
-    md: monthDay(f.date),
-    soon: f.days <= 7,
-    badge: f.days === 0 ? '今天' : f.days === 1 ? '明天' : f.days <= 7 ? `還有 ${f.days} 天` : '準備中',
-  })),
 )
 
 // ── AI 行銷「系統實際畫面」推播窗的示範資料（09-06 自動貼標升格那輪新開的窗）──
@@ -1591,6 +1557,163 @@ const LP_BC_ROWS = [
  *    所以整個移除（留著不用會變成沒人敢刪的死碼）。**過期問題沒有消失，只是換成人工換圖**，
  *    追蹤在 STATUS.md。要復活的話這幾行照抄回來即可。
  */
+
+// ══════════════════════════════════════════════════════════════
+//  Hero「沉睡→喚醒」示範（2026-09-08 滿版劇場，拍板脈絡見 STATUS `D-70`）
+//
+//  時間軸：載入（睡著、文字置中）→ 1.3s 按鈕浮出（把字往上頂）→ 2.6s 自動按下
+//  （訪客也可以先按）→ 喚醒波掃全場（離按鈕越近越先醒）→ 結算 580、收尾句、
+//  小字逐段浮出 → 按鈕變回註冊 CTA。重播鍵可以再看一次。
+//
+//  ⚠️ 開場「睡著」不能等 onMounted 才掛：hero 第一次繪製就在畫面上，先看到醒著的
+//     完整畫面、hydration 後又被藏起來重演＝閃一下的破圖（hero 進場那條老規矩）。
+//     做法＝head 裡一支**同步** inline 腳本（下面的 useHead）趕在第一幀之前往 <html>
+//     掛 `lp-wake-boot`，SCSS 用它畫睡著開場；onMounted 後由這裡的 reactive 狀態接手
+//     （掛 .is-staged／.is-asleep＝同一套視覺）再拆掉 html 上那個 class，中間沒有
+//     任何一幀會醒來。
+//  ⚠️ head 腳本自帶 8 秒保險絲：JS 醒不來（hydration 失敗）就自己把 class 拆掉，
+//     頁面退回醒著的完整內容——⛔沒有這條的話壞掉的頁面會永遠睡著。
+//  ⚠️ 減少動態：head 腳本查 matchMedia 後**根本不掛** class＝從第一幀就是完整內容，
+//     onMounted 那邊也不會啟動示範。
+// ══════════════════════════════════════════════════════════════
+
+/** 580 ＝ 142+184+216+38（09-06 前機會卡那組示範人數的總和）。
+ *  誠實機制：這個數字出現的兩個地方（結算、右下角）都掛著「以咖啡店為例」。 */
+const HERO_WAKE_TOTAL = 580
+
+/**
+ * 滿版的睡著客人：交錯格（quincunx）四列，x/y 是相對 hero 的 %。
+ * hm＝手機（≤900px）收起來，剩 10 顆。z／z2＝這顆掛 zzz。
+ * ⛔ 標籤必須是店家現在真的貼得出來的（「60 天沒來」是現有的自動標籤功能）；
+ *    別放開發中的能力或看起來像真實客戶的資訊（人名、頭像照片）。
+ * ⚠️ 位置一列一列對齊才「滿而不亂」（隨手散落那版被使用者抓過凌亂）——改要整列動。
+ */
+interface HeroChip { x: number; y: number; label: string; z?: boolean; z2?: boolean; hm?: boolean }
+const HERO_CHIPS: readonly HeroChip[] = [
+  { x: 10, y: 7, label: '愛手沖', z: true },
+  { x: 30, y: 7, label: '買過禮盒', hm: true },
+  { x: 50, y: 7, label: '60 天沒來', z: true, z2: true },
+  { x: 70, y: 7, label: '住附近', hm: true },
+  { x: 90, y: 7, label: '咖啡展認識', z: true },
+  { x: 20, y: 32, label: '新朋友' },
+  { x: 40, y: 32, label: '每週都來', hm: true },
+  { x: 60, y: 32, label: '只逛沒買過', z: true, hm: true },
+  { x: 80, y: 32, label: '愛手沖' },
+  { x: 10, y: 58, label: '60 天沒來' },
+  { x: 30, y: 58, label: '咖啡展認識', hm: true },
+  { x: 50, y: 58, label: '新朋友', hm: true },
+  { x: 70, y: 58, label: '買過禮盒', z: true, hm: true },
+  { x: 90, y: 58, label: '每週都來' },
+  { x: 20, y: 84, label: '住附近', z: true },
+  { x: 40, y: 84, label: '咖啡展認識', hm: true },
+  { x: 60, y: 84, label: '愛手沖', hm: true },
+  { x: 80, y: 84, label: '60 天沒來', z: true },
+]
+
+const heroEl = ref<HTMLElement | null>(null)
+const heroStaged = ref(false)
+const heroAsleep = ref(false)
+const heroAwake = ref(false)
+/** true＝按鈕是「發一則喚醒推播」；false（SSR 預設）＝真的註冊 CTA */
+const heroDemo = ref(false)
+/** ⚠️ SSR 預設全開＝無 JS／爬蟲看到完整內容；boot 期由 html.lp-wake-boot 強制收合 */
+const rev = reactive({ btn: true, tally: true, payoff: true, fine: true, replay: true })
+const revBtnGrown = ref(true)
+const chipLit = ref<boolean[]>(HERO_CHIPS.map(() => false))
+const wakeRings = ref(false)
+const wakePressed = ref(false)
+const tallyShown = ref(HERO_WAKE_TOTAL)
+/** v-for 的 :ref 回呼（⛔別用陣列 ref：v-for 的陣列 ref 不保證順序，喚醒波的
+ *  距離延遲會配錯顆——這裡按 index 對號入座） */
+const chipEls: (HTMLElement | null)[] = HERO_CHIPS.map(() => null)
+function setChipEl(el: unknown, i: number) { chipEls[i] = el instanceof HTMLElement ? el : null }
+
+let heroTimers: ReturnType<typeof setTimeout>[] = []
+let heroRaf = 0
+let heroPlaying = false
+let heroPlayed = false
+
+// ⛔ 這支必須是同步 inline（不能 defer／module／外部檔）：要趕在第一幀之前跑完
+useHead({
+  script: [{
+    innerHTML: '(function(){try{if(matchMedia("(prefers-reduced-motion: reduce)").matches)return;var d=document.documentElement;d.classList.add("lp-wake-boot");window.__lpWakeBoot=setTimeout(function(){d.classList.remove("lp-wake-boot")},8000)}catch(e){}})()',
+  }],
+})
+
+function heroLater(fn: () => void, ms: number) { heroTimers.push(setTimeout(fn, ms)) }
+function clearHeroTimers() { heroTimers.forEach(clearTimeout); heroTimers = [] }
+
+/** 結算從 0 衝到 580（ease-out cubic） */
+function heroCountUp(ms: number) {
+  const t0 = performance.now()
+  const step = (t: number) => {
+    const p = Math.min(1, (t - t0) / ms)
+    tallyShown.value = Math.round(HERO_WAKE_TOTAL * (1 - (1 - p) ** 3))
+    if (p < 1) heroRaf = requestAnimationFrame(step)
+  }
+  heroRaf = requestAnimationFrame(step)
+}
+
+/** 按下推播（自動示範或訪客自己按）：喚醒波掃全場 → 結算 → 收尾 → 按鈕變回 CTA */
+function playWake() {
+  if (heroPlaying || heroPlayed) return
+  heroPlaying = true
+  clearHeroTimers() // 訪客搶先按＝取消還沒到的自動按
+
+  wakePressed.value = true
+  heroLater(() => { wakePressed.value = false }, 300)
+  wakeRings.value = true
+  heroLater(() => { wakeRings.value = false }, 1800)
+
+  // 喚醒波＝離按鈕越近越先醒：量實際幾何算延遲，不寫死順序（版面改了它自己會對）
+  const btnBox = heroEl.value?.querySelector('.lp-wakewrap')?.getBoundingClientRect()
+  const dists = chipEls.map((el) => {
+    if (!el || !btnBox) return 0
+    const r = el.getBoundingClientRect()
+    return Math.hypot(
+      r.left + r.width / 2 - (btnBox.left + btnBox.width / 2),
+      r.top + r.height / 2 - (btnBox.top + btnBox.height / 2),
+    )
+  })
+  const maxDist = Math.max(...dists, 1)
+  dists.forEach((d, i) => {
+    heroLater(() => { chipLit.value[i] = true }, 250 + (d / maxDist) * 950)
+  })
+
+  heroLater(() => { heroAsleep.value = false; heroAwake.value = true }, 900)
+  heroLater(() => { rev.tally = true; tallyShown.value = 0; heroCountUp(800) }, 1450)
+  heroLater(() => { rev.payoff = true }, 2350)
+  heroLater(() => { rev.fine = true }, 2850)
+  heroLater(() => {
+    rev.replay = true
+    heroDemo.value = false // 按鈕變回「免費打造我的 MiniMe」＝看完示範，下一步在手邊
+    heroPlaying = false
+    heroPlayed = true
+  }, 3150)
+}
+
+/** 進睡著狀態後排「按鈕浮出 → 自動按下」。mount 與重播共用 */
+function armWake() {
+  heroLater(() => { rev.btn = true }, 1300)
+  heroLater(() => { revBtnGrown.value = true }, 1950)
+  heroLater(() => { playWake() }, 2600)
+}
+
+function replayWake() {
+  clearHeroTimers()
+  cancelAnimationFrame(heroRaf)
+  heroPlaying = false
+  heroPlayed = false
+  heroStaged.value = true
+  heroAsleep.value = true
+  heroAwake.value = false
+  heroDemo.value = true
+  chipLit.value = HERO_CHIPS.map(() => false)
+  rev.btn = rev.tally = rev.payoff = rev.fine = rev.replay = false
+  revBtnGrown.value = false
+  tallyShown.value = 0
+  armWake()
+}
 
 // ── 互動（進場效果、黏性條、手機選單）──
 // 伺服器端與「減少動態效果」時直接給最終狀態，所以沒有 JS 也讀得到完整內容。
@@ -1635,6 +1758,30 @@ onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
   onScroll()
 
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  // ── Hero 喚醒示範：從 head 腳本手上接棒（機制見 HERO_CHIPS 那段註解）──
+  // ⚠️ 擺在 reduced-motion 早退之前：就算 reduce 也要把保險絲計時器清掉。
+  const bootHtml = document.documentElement
+  const bootFuse = (window as unknown as { __lpWakeBoot?: number }).__lpWakeBoot
+  if (bootFuse) clearTimeout(bootFuse)
+  if (!reduce && bootHtml.classList.contains('lp-wake-boot')) {
+    heroStaged.value = true
+    heroAsleep.value = true
+    heroDemo.value = true
+    rev.btn = rev.tally = rev.payoff = rev.fine = rev.replay = false
+    revBtnGrown.value = false
+    tallyShown.value = 0
+    // 等 Vue 把睡著狀態畫上去（同一套視覺）再拆 boot class——中間沒有任何一幀會醒來
+    nextTick(() => {
+      bootHtml.classList.remove('lp-wake-boot')
+      armWake()
+    })
+  } else {
+    // reduce（head 腳本本來就沒掛）或保險絲已把 class 拆掉＝維持醒著的完整內容，示範不啟動
+    bootHtml.classList.remove('lp-wake-boot')
+  }
+
   // 黏性條與動畫無關（它是行動入口，不是效果），所以擺在 reduced-motion 的早退之前
   const hero = root.value?.querySelector('.lp-hero')
   if (hero) {
@@ -1667,7 +1814,6 @@ onMounted(() => {
     capPanes.forEach(el => capIo?.observe(el))
   }
 
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   if (reduce) return
 
   document.documentElement.style.scrollBehavior = 'smooth'
@@ -1722,6 +1868,8 @@ onBeforeUnmount(() => {
   cueIo?.disconnect()
   barIo?.disconnect()
   capIo?.disconnect()
+  clearHeroTimers()
+  cancelAnimationFrame(heroRaf)
   obTimers.forEach(clearTimeout)
   obTimers = []
   typings.forEach(t => t.cancel())
