@@ -123,8 +123,9 @@
           <p class="lp-hero__sub">只是都睡著了<span class="lp-dash">——</span><b>沒被記錄、沒貼標籤，想找也找不到。</b></p>
         </div>
 
-        <!-- 逐段浮出（.lp-rev）：每開一段，置中的文字就被往上頂一點。
-             順序＝按鈕（第一頂）→ 結算（第二頂）→ 小字（第三頂）。 -->
+        <!-- 逐段浮出（.lp-rev）：每開一段，那一段自己從下方 18px 升上來、同時淡入，
+             置中的文字也跟著被往上頂一點。順序＝按鈕（第一頂）→ 結算（第二頂）→
+             小字（第三頂）。⛔ 位移與淡入要同時（09-08 使用者：不要「先頂開、再原地出現」）。 -->
         <div class="lp-rev lp-rev--btn" :class="{ 'is-open': rev.btn, 'is-grown': revBtnGrown }">
           <div>
             <div class="lp-wakewrap" :class="{ 'is-go': wakeRings, 'is-swapping': wakeSwap }">
@@ -1630,6 +1631,7 @@ const rev = reactive({ btn: true, tally: true, fine: true })
 const heroDone = ref(false)
 /** 大標打完字＝true：副標與「值錢」旁的 zzz 這時才進場 */
 const heroTyped = ref(false)
+/** 按鈕那一段升到位了＝邀請點擊的光圈這時才開始脈動（升上來的途中就閃會很躁） */
 const revBtnGrown = ref(true)
 const chipLit = ref<boolean[]>(HERO_CHIPS.map(() => false))
 const wakeRings = ref(false)

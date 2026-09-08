@@ -441,15 +441,23 @@
    * 高度從 0fr 長到內容高：置中的文字被「一段一段」往上頂——按鈕第一頂、
    * 結算第二頂、小字第三頂（09-08 A 案瘦身後就這三段）。⛔別改成 opacity 佔位版：
    * 佔位的空白會讓開場的「置中」變成「偏上」（09-07 實拍抓過）。 */
-  .lp-rev { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.55s cubic-bezier(0.25, 0.8, 0.25, 1); }
-  /* 開＝淡入等**高度長完**（延遲＝grow 的 0.55s）才開始：成長期間內容全透明，
-     被 overflow 裁著的樣子永遠不會被看到（09-08 使用者兩度抓到切割感，第一版只延
-     0.26s 還是會露出裁到一半的按鈕）。關＝立刻淡出。 */
-  .lp-rev > div { overflow: hidden; min-height: 0; opacity: 0; transition: opacity 0.2s ease; }
+  .lp-rev { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.5s cubic-bezier(0.25, 0.8, 0.25, 1); }
+  /* ⚠️ 2026-09-08 使用者：「位移要跟出現同時發生，希望是從下往上頂一個一個出現」——
+   *    在此之前是「先長高把上面的字頂開 → 內容才原地淡入」（為了遮成長期的裁切，
+   *    淡入被延到 0.55s 之後），看起來就是按鈕憑空冒出來。
+   * 現在：內容自己帶 translateY(18px → 0)，跟高度成長**同一條曲線同一個時長**跑，
+   *    元素是從下方升進位置的。⛔ 因此 `overflow: hidden` 必須拿掉（留著就會把
+   *    升上來途中的元素裁一半＝使用者兩度抓到的切割感）；成長期間內容雖然探出
+   *    格子外，但它同時是半透明的、且上下鄰居此刻都還關著（高度 0），看不到疊字。
+   * ⛔ 別改成 opacity 佔位版：佔位的空白會讓開場的「置中」變成「偏上」（09-07 實拍抓過）。 */
+  .lp-rev > div {
+    min-height: 0; opacity: 0; transform: translateY(18px);
+    transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+  /* 關著的時候要擋掉點擊：沒有 overflow 裁切之後，opacity:0 的按鈕仍然是可點的 */
+  .lp-rev:not(.is-open) > div { pointer-events: none; }
   .lp-rev.is-open { grid-template-rows: 1fr; }
-  .lp-rev.is-open > div { opacity: 1; transition: opacity 0.45s ease 0.55s; }
-  /* 按鈕那一段開完之後要放行 overflow：喚醒波的漣漪與邀請光圈都伸出這一格 */
-  .lp-rev.is-grown > div { overflow: visible; }
+  .lp-rev.is-open > div { opacity: 1; transform: none; }
   /* boot 期的強制收合寫在檔尾的 html.lp-wake-boot 區塊（必須在 .lp 巢狀之外） */
 
   /* ── 喚醒按鈕與漣漪 ── */
@@ -1840,9 +1848,10 @@ html.lp-wake-boot .lp {
   /* 打字進場：boot 期一個字都還沒打、副標也還沒輪到（h1 的 zzz 同理不出現） */
   .lp-hero h1 .lp-h1t { opacity: 0; }
   .lp-hero__sub { opacity: 0; }
-  /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合 */
+  /* SSR 出來的 .lp-rev 都掛著 is-open（無 JS 要全開），boot 期要贏過它強制收合。
+     下沉位移與擋點擊要跟 .lp 裡「關著」那組一致，接手那一幀才不會跳。 */
   .lp-rev { grid-template-rows: 0fr; }
-  .lp-rev > div { opacity: 0; overflow: hidden; }
+  .lp-rev > div { opacity: 0; transform: translateY(18px); pointer-events: none; }
   /* 「往下看」箭頭跟著示範走：boot 期先藏（醒著的預設才看得見），下沉位置跟 staged 版一致 */
   .lp-scrollcue { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); }
 }
