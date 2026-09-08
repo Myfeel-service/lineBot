@@ -662,8 +662,14 @@
                      跟著整條窄帶一起淡的話，捲到它時早就淡完了。
                      ⚠️ 十八輪多掛一個 lp-cue：淡入之後再演「歡迎訊息進來 → 圖文選單往上展開」，
                      兩件事分兩條觸發線（lp-reveal 88%／lp-cue 76%），跟全站同一條房規。 -->
-                <div class="lp-band__phone lp-reveal lp-cue">
-                  <div class="lp-phone">
+                <div ref="phoneEl" class="lp-band__phone lp-reveal lp-cue">
+                  <!-- ⛔ `is-menu-up` 掛在**手機殼**上、不可以掛到外層那個 .lp-reveal .lp-cue：
+                       那一層的 `in`／`is-cued` 是進場觀察器用 classList.add **手動加**上去的，
+                       而 Vue 的 :class 一重繪就會把整個 class 屬性重寫一次＝把那兩顆洗掉。
+                       實際踩過（2026-09-08）：選單一展開，外層就掉了 `in` 與 `is-cued`
+                       →**整支手機變透明、歡迎訊息退回不見**，驗收工具的「捲完還藏著」抓到的。
+                       規矩：**同一個元素不要一邊給 Vue 綁 class、一邊用 JS 手動加 class。** -->
+                  <div class="lp-phone" :class="{ 'is-menu-up': phoneMenuOpen }">
                     <div class="lp-pscreen">
                       <div class="lp-pstatus">
                         <span class="lp-pstatus__time">9:41</span>
@@ -710,16 +716,49 @@
                       </div>
 
                       <div class="lp-pbar">
-                        <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
-                          <rect x="2.5" y="6" width="19" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7" />
-                          <g fill="currentColor">
-                            <rect x="5.5" y="9" width="2" height="2" rx=".6" />
-                            <rect x="9" y="9" width="2" height="2" rx=".6" />
-                            <rect x="12.5" y="9" width="2" height="2" rx=".6" />
-                            <rect x="16" y="9" width="2.5" height="2" rx=".6" />
-                            <rect x="7.5" y="13" width="9" height="2" rx=".8" />
-                          </g>
-                        </svg>
+                        <!-- ⚠️ 2026-09-08：這顆從**靜態圖示**變成**真的可以按的切換鈕**
+                             （使用者「至少優化這塊的操作或是特效動畫」）。
+                             真機行為就是這樣：選單收起時它是田字格（點了展開選單）、選單展開時
+                             它切成鍵盤（點了收起、回去打字）。原本只是靜態畫一顆鍵盤來「解釋
+                             為什麼這支手機的選單是開著的」——現在改成**演給你看**：
+                             點擊漣漪 → 圖示由田字格切成鍵盤 → 選單滑上來（因果三拍，見 script
+                             的 armPhoneMenu 與 _landing.scss 的「圖文選單窄帶的手機」那段）。
+                             ⛔ 這是全頁唯一一個「假手機裡的真按鈕」，之所以敢做是因為它**只**
+                                做真機真的會做的事（收起／展開自己）。⛔ 別讓它送出訊息、也
+                                ⛔ 別讓選單那六格變成可以按的東西：那張是實圖（老闆 08-31 拍板），
+                                按了要嘛沒事（看起來壞掉）要嘛得假造回覆（08-31 拍板⛔手機裡
+                                只留一則歡迎訊息、不演一來一往）。
+                             ⚠️ 兩顆圖示是**疊在一起互相淡入淡出**（grid-area 同格），不是換
+                                src——換的話切的瞬間會閃一下白。 -->
+                        <button
+                          class="lp-pbar__sw"
+                          :class="{ 'is-tapped': phoneTap }"
+                          type="button"
+                          :aria-pressed="phoneMenuOpen"
+                          :aria-label="phoneMenuOpen ? '示意手機：收起圖文選單' : '示意手機：展開圖文選單'"
+                          :title="phoneMenuOpen ? '收起選單（跟客人在 LINE 裡按的是同一顆）' : '展開選單（跟客人在 LINE 裡按的是同一顆）'"
+                          @click="togglePhoneMenu"
+                        >
+                          <span class="lp-pbar__tap" :class="{ 'is-on': phoneTap }" aria-hidden="true" />
+                          <svg class="lp-pbar__ico lp-pbar__ico--grid" viewBox="0 0 24 24" aria-hidden="true">
+                            <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+                              <rect x="3.7" y="3.7" width="7" height="7" rx="1.6" />
+                              <rect x="13.3" y="3.7" width="7" height="7" rx="1.6" />
+                              <rect x="3.7" y="13.3" width="7" height="7" rx="1.6" />
+                              <rect x="13.3" y="13.3" width="7" height="7" rx="1.6" />
+                            </g>
+                          </svg>
+                          <svg class="lp-pbar__ico lp-pbar__ico--kbd" viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="2.5" y="6" width="19" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7" />
+                            <g fill="currentColor">
+                              <rect x="5.5" y="9" width="2" height="2" rx=".6" />
+                              <rect x="9" y="9" width="2" height="2" rx=".6" />
+                              <rect x="12.5" y="9" width="2" height="2" rx=".6" />
+                              <rect x="16" y="9" width="2.5" height="2" rx=".6" />
+                              <rect x="7.5" y="13" width="9" height="2" rx=".8" />
+                            </g>
+                          </svg>
+                        </button>
                         <svg class="lp-pbar__ico" viewBox="0 0 24 24" aria-hidden="true">
                           <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
                             <path d="M3 8.6h3.3l1.6-2.3h8.2l1.6 2.3H21v9.8H3z" />
@@ -1559,6 +1598,49 @@ function playObDemo() {
   }
 }
 
+// ── 圖文選單窄帶的示意手機：「客人按一下 → 選單就開」（2026-09-08）──────────
+/**
+ * 選單是不是展開的。
+ * ⚠️ 預設 **true**＝SSR／沒有 JS／勾了「減少動態效果」的人一進來就看到展開的選單
+ *    （這塊在賣的就是「客人一打開就看到選單」，收起來的手機等於沒在講事情）。
+ *    只有動畫真的要演時（onMounted 且非 reduced-motion）才先把它收起來當起點。
+ * ⚠️ 它同時決定輸入列那顆圖示是鍵盤還是田字格——**一個狀態管兩件事**，
+ *    ⛔別各養一個 ref：兩者分開之後總有一天會出現「鍵盤圖示配收起來的選單」這種真機不存在的畫面。
+ */
+const phoneMenuOpen = ref(true)
+/** 點擊漣漪演一次（進場那一拍、以及每次真的被按下時）。播完自己歸 false，下次才播得起來。 */
+const phoneTap = ref(false)
+const phoneEl = ref<HTMLElement | null>(null)
+let phoneTimers: ReturnType<typeof setTimeout>[] = []
+
+function phoneRipple() {
+  phoneTap.value = false
+  // 先歸 false 再開：同一顆 class 沒拿掉的話 CSS animation 不會重播（連按兩次就只動一次）
+  nextTick(() => {
+    phoneTap.value = true
+    phoneTimers.push(setTimeout(() => { phoneTap.value = false }, 560))
+  })
+}
+
+/** 按輸入列最左邊那顆＝真機的收起／展開。⚠️ reduced-motion 時照樣可以按（它是操作不是動畫），
+ *  只是 CSS 那邊沒有 .is-anim ＝不做滑動、直接切。 */
+function togglePhoneMenu() {
+  phoneMenuOpen.value = !phoneMenuOpen.value
+  phoneRipple()
+}
+
+/**
+ * 捲到手機才演的三拍因果（⚠️ 順序＝真人真的會做的順序，⛔別把選單排在點擊之前）：
+ *   0.60s 點擊漣漪落在輸入列那顆圖示上
+ *   0.90s 圖示由田字格切成鍵盤 ＋ 選單開始往上滑（同一個 phoneMenuOpen 帶動）
+ * ⚠️ 0.9 這個數字要跟歡迎訊息那一拍（CSS 的 .4s）錯開，不然兩件事同時發生就看不出先後。
+ * ⚠️ 只演一次；之後要再看就按那顆鈕（cueIo 那邊已經 unobserve）。
+ */
+function armPhoneMenu() {
+  phoneTimers.push(setTimeout(() => phoneRipple(), 600))
+  phoneTimers.push(setTimeout(() => { phoneMenuOpen.value = true }, 900))
+}
+
 /** 千分位。刻意不用 toLocaleString：SSR（Node ICU）與瀏覽器可能給出不同字串，會造成 hydration 不一致。 */
 function fmt(n: number): string {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -1966,6 +2048,10 @@ onMounted(() => {
   document.documentElement.style.scrollBehavior = 'smooth'
   anim.value = true
 
+  // 示意手機的起點＝選單收起、輸入列是田字格（要演「客人按一下才展開」就得從沒展開開始）。
+  // ⚠️ 這行**只**在這裡出現：reduced-motion 在上面就早退了，勾了那個設定的人維持展開。
+  phoneMenuOpen.value = false
+
   nextTick(() => {
     // 泡泡先把句子拆成一顆一顆的字（此時泡泡還是 opacity:0，拆的過程看不到），捲到才播。
     // ⚠️ DOM 裡永遠是完整句子、只是先透明——爬蟲與沒有 JS 的人看到的內容不變，見 utils/bubble-typing.ts
@@ -2002,6 +2088,7 @@ onMounted(() => {
         el.classList.add('is-cued')
         typings.get(el)?.play()
         if (el === obCardEl.value) playObDemo()
+        if (el === phoneEl.value) armPhoneMenu()
         cueIo?.unobserve(el)
       })
     }, { threshold: 0, rootMargin: CUE_MARGIN })
@@ -2019,6 +2106,8 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(heroRaf)
   obTimers.forEach(clearTimeout)
   obTimers = []
+  phoneTimers.forEach(clearTimeout)
+  phoneTimers = []
   typings.forEach(t => t.cancel())
   typings.clear()
   document.documentElement.style.scrollBehavior = ''

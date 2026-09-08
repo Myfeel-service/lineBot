@@ -698,6 +698,53 @@
   .lp-pbar__ico { width: 17px; height: 17px; color: #6b7280; flex: none; }
   .lp-pbar__field { flex: 1 1 auto; height: 19px; border-radius: var(--radius-pill); background: #f0f2f5; }
 
+  /* ── 輸入列最左邊那顆＝**真的可以按**的「選單／鍵盤」切換鈕（2026-09-08）──────
+   * why 與紅線寫在 index.vue 那顆 button 上面。這裡只講量出來的事：
+   * ⚠️ 按鈕做 26px（好按），但**不可以把輸入列撐高**——整支手機的高度是量過的（472px），
+   *    輸入列一高全部連坐。做法＝四邊各 -4.5px 負邊距，讓它在版面上只佔回原本 17px 圖示的位置
+   *    （算過：圖示中心仍落在 x=18.5px，跟改版前同一個位置，⛔ 別只拉左邊，右邊的 gap 會少 4.5px）。
+   * ⚠️ 兩顆圖示疊在同一格互相淡入淡出（grid-area: 1/1），⛔別改成換 src：切換那一瞬間會閃白。 */
+  .lp-pbar__sw {
+    position: relative; flex: none; display: grid; place-items: center;
+    width: 26px; height: 26px; margin: -4.5px; padding: 0;
+    border: 0; border-radius: 50%; background: none; color: #6b7280;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background-color .18s ease;
+  }
+  .lp-pbar__sw:hover { background: #e7eaef; }
+  /* 焦點框用中性深色、不用品牌綠：這顆在「LINE 的畫面」裡面，綠框會被讀成 LINE 自己的元件 */
+  .lp-pbar__sw:focus-visible { outline: 2px solid #3a3f47; outline-offset: 1px; }
+  .lp-pbar__sw > .lp-pbar__ico { grid-area: 1 / 1; transition: opacity .2s ease; }
+  /* 預設（SSR／沒有 JS／勾了減少動態）＝選單是展開的，所以露出鍵盤那顆 */
+  .lp-pbar__ico--grid { opacity: 0; }
+  .lp-phone:not(.is-menu-up) {
+    .lp-pbar__ico--grid { opacity: 1; }
+    .lp-pbar__ico--kbd { opacity: 0; }
+  }
+  /* 點擊漣漪：從圖示中心擴散一次的 LINE 綠。
+     ⚠️ 沒有畫手指，所以這圈是「有人按了這顆」的唯一線索——要比圖示大一圈才看得出來。
+     ⚠️ 用 #06C755（LINE 綠）不是頁面的品牌綠：它落在手機螢幕裡＝那是 LINE 的介面語彙。
+     ⚠️ **圈**（border）＋很淡的底，⛔別用實心色塊：實心的那版截圖看起來是「田字格圖示
+        自己變成綠色的」（線條圖的縫全被填滿），不是「有人按了它」。 */
+  .lp-pbar__tap {
+    position: absolute; left: 50%; top: 50%; width: 34px; height: 34px;
+    margin: -17px 0 0 -17px; border-radius: 50%; pointer-events: none;
+    background: rgba(6, 199, 85, 0.13); border: 1.6px solid rgba(6, 199, 85, 0.5);
+    opacity: 0; transform: scale(0.28);
+  }
+  .lp-pbar__tap.is-on { animation: lpTapRing .56s ease-out; }
+  /* 圖示自己也被壓一下：漣漪只講「這裡被碰到」，縮一下才講「被按下去」。 */
+  .lp-pbar__sw.is-tapped > .lp-pbar__ico { animation: lpTapPress .3s ease-out; }
+  @keyframes lpTapRing {
+    0% { opacity: .95; transform: scale(0.3); }
+    70% { opacity: .4; }
+    100% { opacity: 0; transform: scale(1); }
+  }
+  @keyframes lpTapPress {
+    0%, 100% { transform: none; }
+    45% { transform: scale(0.84); }
+  }
+
   /* 圖文選單本體＝實圖。比例 1527:1030（≒ LINE 官方 2500×1686），高度自己長不要寫死 */
   /* 選單的「槽」：高度由裡面的圖決定，overflow 用來裁掉還沒滑進來的部分（見動畫那段）。
      ⛔ 別把 overflow 改成 visible：選單滑出來之前會蓋在底下的 Home 橫條上。 */
@@ -1502,16 +1549,6 @@
     from { opacity: 0; transform: scale(0.8); }
     to { opacity: 1; transform: none; }
   }
-  /* 圖文選單往上展開。⚠️ 二十輪換做法（回饋「有點生硬」）：
-     舊版用 `clip-path: inset(100% 0 0 0)` 由下往上揭開——**圖是不動的，動的是一條水平硬邊**，
-     那條線掃過去就是生硬的來源（而且等速掃完，沒有「滑進定位」的重量感）。
-     新版＝圖自己 translateY(100%) 往上滑進來，由 .lp-pmenu-slot（overflow:hidden）裁掉還沒到的部分；
-     曲線也換成尾巴更長的 cubic-bezier(.16,.84,.28,1)＝快進慢停，配一點淡入把剛冒頭的那一條磨掉。
-     ⛔ 別改回 clip-path，也⛔別把 translate 直接下在沒有槽的圖上（會蓋到 Home 橫條）。 */
-  @keyframes lpMenuUp {
-    from { transform: translateY(100%); opacity: 0.35; }
-    to { transform: none; opacity: 1; }
-  }
 
   /* ① 聊天窗：客人問 → AI 答 → 已讀，一句一句到。
        節奏＝每句 460ms（7 句約 3.4 秒），已讀比自己那句晚 650ms 蓋上去。 */
@@ -1554,16 +1591,37 @@
     }
   }
 
-  /* ③ 手機：歡迎訊息進來 → 圖文選單往上展開（順序＝客人真的會看到的順序） */
+  /* ③ 手機（2026-09-08 從「選單自己滑上來」改成**三拍因果**）：
+   *    歡迎訊息進來（.4s）→ 有人按了輸入列最左邊那顆（.6s 漣漪）→ 選單滑上來（.9s）。
+   *    ⚠️ 順序就是真人真的會做的順序，⛔別把選單排在點擊之前——那又回到「選單自己會開」。
+   *    ⚠️ 前兩拍的時間點：漣漪與圖示切換由 JS 排（index.vue 的 armPhoneMenu），
+   *       歡迎訊息這一拍留在 CSS（它跟聊天窗、名單是同一種寫法）。
+   *
+   * ⚠️ 選單**不再用 keyframes**（原本的 lpMenuUp 已刪），改成吃 `.is-menu-up`
+   *    （Vue 的 phoneMenuOpen）的 transition。⛔ 別改回 animation：keyframes 的 fill 會把
+   *    最終值釘死，使用者按那顆鈕之後就動不了——試過再疊 `animation: none` 解，結果是
+   *    「收起會滑、展開瞬移」（動畫一停，transform 直接跳回 fill 的值）。
+   * ⚠️ 手感沒有換：.78s ＋ cubic-bezier(.16,.84,.28,1)（快進慢停）＋ 一點淡入，
+   *    全都是二十輪調出來的原值（那一輪從 clip-path 換成位移，理由＝「圖不動、一條硬邊掃過去」
+   *    才是生硬的來源）。⛔ 別改回 clip-path，也⛔別把位移下在沒有槽的圖上（會蓋到 Home 橫條）。
+   * ⚠️ 進場的 .9s 延遲是**計時器**不是 CSS delay：所以之後手動按的收起／展開都是按了立刻動。 */
   &.is-anim .lp-band__phone {
     .lp-pbody__day, .lp-pmsg { opacity: 0; }
-    .lp-pmenu { transform: translateY(100%); opacity: 0; }
   }
   &.is-anim .lp-band__phone.is-cued {
     .lp-pbody__day { animation: lpSoftIn .32s ease-out both .2s; }
     .lp-pmsg { animation: lpMsgIn .44s cubic-bezier(0.22, 0.75, 0.3, 1) both .4s; }
-    .lp-pmenu { animation: lpMenuUp .78s cubic-bezier(0.16, 0.84, 0.28, 1) both .9s; }
   }
+  /* 收起／展開（進場那一次與之後每次手動按，走的都是這兩條）。
+     ⚠️ transition 掛在 **.is-cued** 上、不是掛在起點那條：起點是 `.is-anim` 一掛上去就生效的
+        （onMounted，那時手機通常還在畫面外），連 transition 一起給的話那一下「收起來」本身
+        就會滑一次——重新整理時如果剛好停在這一區，看到的是選單先滑下去再滑上來。
+        釘在 .is-cued 上＝**收起是瞬間的、只有展開會滑**，也就是我們要演的那一下。 */
+  &.is-anim .lp-band__phone .lp-pmenu { transform: translateY(100%); opacity: 0.35; }
+  &.is-anim .lp-band__phone.is-cued .lp-pmenu {
+    transition: transform .78s cubic-bezier(0.16, 0.84, 0.28, 1), opacity .5s ease;
+  }
+  &.is-anim .lp-band__phone .lp-phone.is-menu-up .lp-pmenu { transform: none; opacity: 1; }
 
   /* 四道牆錯開 70ms 進場。⚠️ 四張卡是同時進入畫面的，不錯開的話就是一整片突然出現
      ——那是「一塊東西閃出來」，不是四張卡。70ms 是刻意小的：只要能看出左到右的順序，
@@ -1887,8 +1945,14 @@
     }
     &.is-anim .lp-band__phone {
       .lp-pbody__day, .lp-pmsg { opacity: 1; animation: none; }
-      .lp-pmenu { transform: none; opacity: 1; animation: none; }
+      /* ⚠️ 選單 09-08 起是 transition 驅動（不是 animation）：這裡連 transition 一起關掉，
+         那顆切換鈕仍然可以按（它是**操作**不是動畫），只是收起／展開變成瞬間切換。 */
+      .lp-pmenu { transform: none; opacity: 1; transition: none; }
+      .lp-pbar__tap { animation: none; opacity: 0; }
+      .lp-pbar__sw > .lp-pbar__ico { transition: none; animation: none; }
     }
+    /* 收起狀態要能反映出來（按了鈕），只是不做過場 */
+    &.is-anim .lp-band__phone .lp-phone:not(.is-menu-up) .lp-pmenu { transform: translateY(100%); }
     &.is-anim {
       .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
       .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }

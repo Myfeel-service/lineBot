@@ -220,16 +220,47 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-pmenu')).transform)
     return Math.round(m.m42)
   })
+  // 2026-09-08 起輸入列最左邊那顆是「選單／鍵盤」切換鈕：兩顆圖示疊在一起用 opacity 互換，
+  // 所以「現在顯示哪一顆」＝量 computed opacity（class 不會變，跟上面數泡泡同一個道理）。
+  const swIcon = () => page.evaluate(() => {
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    const grid = o('.lp-pbar__ico--grid')
+    const kbd = o('.lp-pbar__ico--kbd')
+    return grid > 0.9 && kbd < 0.1 ? 'grid' : (kbd > 0.9 && grid < 0.1 ? 'kbd' : `混在一起(格 ${grid.toFixed(2)}／鍵 ${kbd.toFixed(2)})`)
+  })
   await go('.lp-band__phone', -830)
   const menuBefore = await menuY()
+  const iconBefore = await swIcon()
   await go('.lp-band__phone', -300)
   await wait(2200)
   const menuAfter = await menuY()
+  const iconAfter = await swIcon()
   const msgAfter = await litCount('.lp-band__phone .lp-pmsg')
   menuBefore > 40 ? ok(`圖文選單 起點＝收在槽外面 (translateY ${menuBefore}px)`) : bad(`圖文選單 起點不是收起來：translateY ${menuBefore}px`)
   menuAfter === 0
     ? ok(`圖文選單 滑到定位 (translateY 0)、歡迎訊息 ${msgAfter} 則`)
     : bad(`圖文選單 沒滑到定位：translateY ${menuBefore} → ${menuAfter}px`)
+  // 三拍因果的前兩拍：選單還沒開時圖示必須是**田字格**、開了之後必須切成**鍵盤**。
+  // ⛔ 這兩條分開判：只判終點的話「圖示從頭到尾都是鍵盤」也會過，那就等於沒演因果。
+  iconBefore === 'grid' ? ok('切換鈕 起點＝田字格（選單還沒展開）') : bad(`切換鈕 起點不是田字格：${iconBefore}`)
+  iconAfter === 'kbd' ? ok('切換鈕 演完＝鍵盤（選單展開中）') : bad(`切換鈕 演完不是鍵盤：${iconAfter}`)
+
+  // 3) 那顆切換鈕**真的能按**（不是只有進場動畫）：按一下收起、再按一下展開，圖示跟著換。
+  // ⚠️ 按完要等：收起／展開是 .78s 的過場，量太早會抓到半路的值。
+  await page.click('.lp-pbar__sw')
+  await wait(1100)
+  const menuClosed = await menuY()
+  const iconClosed = await swIcon()
+  await page.click('.lp-pbar__sw')
+  await wait(1100)
+  const menuReopened = await menuY()
+  const iconReopened = await swIcon()
+  menuClosed > 40 && iconClosed === 'grid'
+    ? ok(`切換鈕 按一下＝選單收起 (translateY ${menuClosed}px)、圖示回田字格`)
+    : bad(`切換鈕 按了沒收起：translateY ${menuClosed}px、圖示 ${iconClosed}`)
+  menuReopened === 0 && iconReopened === 'kbd'
+    ? ok('切換鈕 再按一下＝選單展開、圖示回鍵盤')
+    : bad(`切換鈕 按不回來：translateY ${menuReopened}px、圖示 ${iconReopened}`)
 
   // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
   //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）
@@ -384,6 +415,20 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))
   hidden.length ? bad('沒 JS 卻藏著：\n     ' + hidden.join('\n     ')) : ok('全部看得到（.is-anim 沒掛上＝預設就是最終狀態）')
+  // 09-08：選單的收起／展開改成吃 SSR 就要印對的 class（`is-menu-up`）。沒 JS 時如果那個
+  // class 沒印出來，看到的是**一支沒有選單的手機**——這塊在賣的就是選單，等於整塊失去意義。
+  // ⛔ 只量 opacity 抓不到這件事（選單是被位移出去的，opacity 還是 1），所以這裡量 transform。
+  const noJs = await page.evaluate(() => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-pmenu')).transform)
+    return {
+      y: Math.round(m.m42),
+      open: document.querySelector('.lp-phone')?.classList.contains('is-menu-up') ?? false,
+      kbd: Number(getComputedStyle(document.querySelector('.lp-pbar__ico--kbd')).opacity),
+    }
+  })
+  noJs.y === 0 && noJs.open && noJs.kbd > 0.9
+    ? ok('沒 JS 也看得到展開的圖文選單（SSR 就印了 is-menu-up、圖示是鍵盤）')
+    : bad(`沒 JS 的選單狀態不對：translateY ${noJs.y}px、is-menu-up=${noJs.open}、鍵盤圖示 opacity=${noJs.kbd}`)
   await page.close()
 }
 
