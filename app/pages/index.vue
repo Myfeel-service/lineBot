@@ -851,7 +851,9 @@
             最需要信任的時點。09-06 起這區的 h2 不再扛 60 秒（老闆回饋原標題難懂），
             門面文案剩 **4 處**同口徑（Hero 小字／這區 overline／收尾 CTA 副標／黏性條），
             改任一處先 grep。 -->
-    <section id="fast" class="lp-section">
+    <!-- ⚠️ 2026-09-08 使用者「這塊先隱藏好了」＝整區暫時不出現（旗標與完整理由見 script 的
+         `SHOW_FAST_SECTION`）。⛔ 程式刻意留著不刪，旗標改 true 就整區回來。 -->
+    <section v-if="SHOW_FAST_SECTION" id="fast" class="lp-section">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -1008,7 +1010,9 @@
          （清單本體＝FEATURED_PLAN_IDS，升級對話框與 /product-info 吃同一份）；
          金流風控的五項揭露住在獨立頁 /product-info（見該頁檔頭），
          ⛔ 底下那條「完整商品資訊」連結是首頁通往揭露頁的路，不能拿掉。 -->
-    <section id="pricing" class="lp-section lp-section--tint">
+    <!-- 底色跟著 #fast 的開關翻面（見 script 的 tintWhenFastShown）：藏起來時這區要變白，
+         否則上面的證言牆＋這區＝連兩塊灰。 -->
+    <section id="pricing" class="lp-section" :class="tintWhenFastShown">
       <div class="lp-wrap">
         <!-- 價格鎖排（lockup）：貨幣、數字、單位同一條基線一行讀完——
              「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。
@@ -1094,7 +1098,8 @@
          兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度、
          也刻意不畫格線（沒有刻度可對照，格線只是雜訊）。
          顏色是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
-    <section id="grow" class="lp-section">
+    <!-- 同上：#fast 藏起來時這區要補灰（底色翻面，見 tintWhenFastHidden） -->
+    <section id="grow" class="lp-section" :class="tintWhenFastHidden">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -1194,7 +1199,8 @@
     <!-- ── 常見問題 ────────────────────────────────────────────
          08-26 草稿沒有這一區，但保留：頁尾與法務頁的 /#faq 指這裡，
          而且退費、額度、資料刪除這幾題的答案都是照政策措辭寫的，拿掉等於少一處對消費者的揭露。 -->
-    <section id="faq" class="lp-section lp-section--tint lp-faqsec">
+    <!-- 同上：#fast 藏起來時這區要變白（見 tintWhenFastShown） -->
+    <section id="faq" class="lp-section lp-faqsec" :class="tintWhenFastShown">
       <div class="lp-wrap">
         <!-- ⚠️ 這一區原本是 eyebrow＋h2，08-27 收成跟其他區塊一樣的泡泡：
              全頁八個區塊只剩它不是「MiniMe 開口說話」，節奏斷在這裡；
@@ -1302,6 +1308,39 @@ const { brandName, email, emailHref } = useSiteIdentity()
 
 const plusIcon
   = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3v12M3 9h12"/></svg>'
+
+/**
+ * #fast「開始，比你想的簡單」整區的開關。**2026-09-08 使用者拍板「這塊先隱藏好了」。**
+ *
+ * 背景：那一輪先把這區改成左右兩欄（流程在左、示意在右，`G-51`），使用者接著問要不要
+ * 再往前做——拿掉 CTA、右邊示意改成跟著捲動切換、左邊配一條同步長的綠條、整組用 GSAP，
+ * 也就是做成跟「等於多了全年無休的客服＋行銷」那區同款的捲動敘事，並且要求示意與動圖
+ * 都得是真的畫面。評估結論是「方向對但很貴」（見 STATUS `D-71`：那個做法需要把左欄
+ * 撐到 2～3 個畫面高，跟「頁面不要冗長」互相打架），使用者因此決定**先整區收起來**。
+ *
+ * ⛔ 不要因此把這一區的程式刪掉。整區的兩欄版面、逐字對過的劇本鏡像（11 句全部命中
+ *    `useOnboardingChat.ts`）、進場動畫都還在，改成 `true` 就整區回來。刪掉的話那些
+ *    決策紀錄與逐字比對得整個重做一次。
+ *
+ * ⚠️ 藏起來會**一起消失**的東西（要不要復活時的判斷依據）：
+ *    ① 全頁唯一回答「我不懂技術做不做得起來」的證據＝開通引導實況 demo
+ *    ② 常見問答「我不懂技術也能設定嗎」「支援哪種 LINE 帳號」兩題的畫面依據
+ *       （文字答案還在，但讀者不再是「我剛剛看過」）
+ *    ③「開帳號只要兩步」這個說法在門面的唯一一處。⚠️ 60 秒的口徑其餘 **3 處仍在**
+ *       （Hero 小字／收尾 CTA 副標／黏性條），要改口徑先 grep 那三處。
+ * ⚠️ `scripts/landing-anim-check.mjs` 會偵測這區不在，並**明講**跳過了哪兩段動畫。
+ */
+const SHOW_FAST_SECTION = false
+
+/**
+ * 白灰交錯的底色（`lp-section--tint` ＝灰）。
+ * ⚠️ #fast 是**白**的，藏掉之後它前後會變成**連兩塊灰**（證言牆＋定價），整頁的節奏斷在那裡，
+ *    所以它後面每一區的底色都要跟著翻面。綁在同一個旗標上＝這區復活時自動翻回去，
+ *    不用去記「還要手動改三個 class」（09-08 隱藏時差點漏掉這件事）。
+ * ⚠️ 收尾 CTA 那區不吃這個（它有自己的深底），別加進來。
+ */
+const tintWhenFastShown = SHOW_FAST_SECTION ? 'lp-section--tint' : ''
+const tintWhenFastHidden = SHOW_FAST_SECTION ? '' : 'lp-section--tint'
 
 // ── #value「系統實際畫面」聊天視窗的示範對話 ────────────────
 // ⛔ 每一句的字、時間、誰回的，都必須跟 scripts/landing-demo-seed.ts 的 MSGS **逐字一致**

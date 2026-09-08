@@ -238,28 +238,41 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   //    任何位置都會同時把卡片也觸發掉。⛔ 別再調 -600 那個數字想閃避——單欄時代它們相差
   //    ~210px 所以閃得掉，現在相差 ~0px，閃不掉。
   //    改成：**兩個「起點」都在同一個還沒捲下去的位置一起量**，之後再各自量終點。
-  await go('.lp-path__rail', -830)
-  const lineBefore = await val('.lp-path__rail', 'transform', '::after')
-  const barBefore = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
-  const beatsBefore = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
-  await go('.lp-path__rail', -600)
-  await wait(1400)
-  const lineAfter = await val('.lp-path__rail', 'transform', '::after')
-  collapsed(lineBefore) ? ok(`左軸綠線 起點＝收起 (${lineBefore})`) : bad(`左軸綠線 起點不是收起：${lineBefore}`)
-  grown(lineAfter) ? ok(`左軸綠線 終點＝長完 (${lineAfter})`) : bad(`左軸綠線 沒長完：${lineAfter}`)
+  // ⚠️ 2026-09-08 起 #fast 整區可能是**藏起來的**（index.vue 的 `SHOW_FAST_SECTION`，
+  //    使用者「這塊先隱藏好了」）＝這兩段的元素根本不存在。
+  // ⛔ 偵測到就**明講跳過了什麼**，不可以靜靜跳過：靜靜跳過的話「這兩個動畫壞了」跟
+  //    「這兩個動畫不在了」在輸出上長得一模一樣，而這兩件事下一步完全不同。
+  // ⛔ 也不可以把它算成不合格：那會讓整支驗收在一個「刻意的產品決定」上永遠是紅的。
+  const hasFast = await page.$('.lp-path__rail')
+  if (!hasFast) {
+    console.log('  ⏭  跳過「左軸綠線」與「開通引導 live 卡」兩段：#fast 整區目前是隱藏的'
+      + '（index.vue 的 SHOW_FAST_SECTION = false），元素不存在＝沒有東西可驗，不是壞了。'
+      + '要驗這兩段就把那個旗標打開再跑一次。')
+  }
+  else {
+    await go('.lp-path__rail', -830)
+    const lineBefore = await val('.lp-path__rail', 'transform', '::after')
+    const barBefore = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
+    const beatsBefore = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
+    await go('.lp-path__rail', -600)
+    await wait(1400)
+    const lineAfter = await val('.lp-path__rail', 'transform', '::after')
+    collapsed(lineBefore) ? ok(`左軸綠線 起點＝收起 (${lineBefore})`) : bad(`左軸綠線 起點不是收起：${lineBefore}`)
+    grown(lineAfter) ? ok(`左軸綠線 終點＝長完 (${lineAfter})`) : bad(`左軸綠線 沒長完：${lineAfter}`)
 
-  // 4) 開通引導 live 卡：進度條長出來＋demo 真的往下演（起點在上面就量掉了，見那段 ⚠️）
-  await go('.lp-liveob', -250)
-  await wait(1800)
-  const barAfter = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
-  await wait(6000)
-  const beatsAfter = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
-  const progDone = await page.$$eval('.lp-liveob .onbc-step.is-done', e => e.length)
-  collapsed(barBefore) ? ok(`進度條 起點＝收起 (${barBefore})`) : bad(`進度條 起點不是收起：${barBefore}`)
-  grown(barAfter) ? ok(`進度條 終點＝長完 (${barAfter})`) : bad(`進度條 沒長完：${barAfter}`)
-  beatsAfter > beatsBefore
-    ? ok(`demo 有在演：泡泡 ${beatsBefore} → ${beatsAfter} 則、進度已完成 ${progDone} 格`)
-    : bad(`demo 沒演，泡泡停在 ${beatsAfter}`)
+    // 4) 開通引導 live 卡：進度條長出來＋demo 真的往下演（起點在上面就量掉了，見那段 ⚠️）
+    await go('.lp-liveob', -250)
+    await wait(1800)
+    const barAfter = await val('.lp-liveob .onbc-step.is-current', 'transform', '::before')
+    await wait(6000)
+    const beatsAfter = await page.$$eval('.lp-liveob .agm-msg', e => e.length)
+    const progDone = await page.$$eval('.lp-liveob .onbc-step.is-done', e => e.length)
+    collapsed(barBefore) ? ok(`進度條 起點＝收起 (${barBefore})`) : bad(`進度條 起點不是收起：${barBefore}`)
+    grown(barAfter) ? ok(`進度條 終點＝長完 (${barAfter})`) : bad(`進度條 沒長完：${barAfter}`)
+    beatsAfter > beatsBefore
+      ? ok(`demo 有在演：泡泡 ${beatsBefore} → ${beatsAfter} 則、進度已完成 ${progDone} 格`)
+      : bad(`demo 沒演，泡泡停在 ${beatsAfter}`)
+  }
 
   // 5) 成長曲線
   await go('.lp-chartwrap', -830)
