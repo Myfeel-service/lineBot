@@ -1565,7 +1565,27 @@
      ⚠️ `border-radius: inherit` 是必要的：不繼承的話紗是方角、井是 24px 圓角，四個角會露出來。
      ⚠️ 紗在 `.lp-band` 這種 grid 容器裡**不會變成格線裡的一格**（絕對定位的子元素不是 grid item），
         所以兩欄版面不受影響。 */
-  .lp-pane { position: relative; }
+  /* ⚠️ `isolation: isolate` 是必要的：底下那顆柔光是 `z-index: -1`，沒有自己的堆疊脈絡時
+     負值會掉到**井的背景後面**＝整顆看不見（實際踩過）。
+     ⚠️ `overflow: clip` 不是 `hidden`：clip 不會產生捲動容器，所以不會影響井裡面任何
+     sticky 的東西（同檔頭 `.lp` 那條的理由）。柔光會漂出井外，一定要裁。 */
+  .lp-pane { position: relative; isolation: isolate; overflow: clip; }
+  /* 柔光本體（動的部分是下面 lpGlowDrift）。⚠️ 不支援捲動時間軸的瀏覽器只會看到一顆
+     不會動的淡光斑——那是可以接受的靜態樣子，所以位置與濃度要單獨看得過去。 */
+  .lp-pane::before {
+    content: ''; position: absolute; z-index: -1; pointer-events: none;
+    left: 6%; top: 10%; width: 52%; aspect-ratio: 1;
+    background: radial-gradient(circle, rgba(6, 199, 85, 0.3), rgba(6, 199, 85, 0) 68%);
+    filter: blur(26px);
+  }
+  /* ⛔ **窄帶（圖文選單那塊）不裁切、也不放柔光**，這是量出來的例外：
+     那支示意手機排在井的最底部、井底只剩 19px，而它自己的**進場位移就吃掉 18px**
+     （`.lp-reveal` 的 translateY(18px)，那是 09-03 調出來的進場，不能動）——
+     再加上視差就會被裁掉（實測手機版會裁掉 12.7px＝Home 橫條整條消失）。
+     沒有裁切就沒有這個問題；代價是這塊沒有柔光（它的視覺重點是那支會傾斜的手機）。
+     ⚠️ 柔光在 scale 1.2 ＋ 位移到極端時會超出井外約 30px，所以**其他三塊的裁切不能拿掉**。 */
+  .lp-band { overflow: visible; }
+  .lp-band::before { content: none; }
   .lp-pane::after {
     content: ''; position: absolute; inset: 0; z-index: 3;
     border-radius: inherit; background: var(--paper);
@@ -1613,26 +1633,54 @@
    *    往上就會吃掉那個 0px 的間距（第一版 ±6 實測就是 −6px＝疊到標頭上）。
    *    往下最多吃掉 8px 的「畫面↔成效帶」預算（14 − 8 ＝ 還剩 6px）。
    *    ⛔ 這條的教訓可以帶走：**視差的幅度上限是間距，而間距要量不要猜；沒有間距的方向就別動。**
-   * ⚠️ 現在的層次感靠兩件事：①井整塊漂 ±12（塊與塊間距 32px，實測最小仍是 32px，不會撞）
-   *    ②裡面最大的視覺物件（系統畫面）再單向慢 8px＝它相對於自己的井慢半拍。
-   *    ⛔ 動這兩個數字要重跑間距實測（scripts/landing-anim-check.mjs 的視差那段會量）。 */
-  @keyframes lpDriftPane { from { translate: 0 12px; } to { translate: 0 -12px; } }
+   * ⚠️ **井的幅度沒有上限問題，可以放大**（2026-09-09 第三輪從 ±12 加到 ±26）：塊與塊之間的
+   *    間距**只會變大不會變小**——上面那塊的進度永遠領先下面那塊，所以上面往上、下面往下，
+   *    縫是被拉開的。（第二輪我保守估成 ±12，使用者實際看的結論是「跟原本沒兩樣」，是對的。）
+   * ⚠️ 真正**看得出來**的那一層是柔光（下面 lpGlowDrift，漂 100px 以上）：這一區全是內容、
+   *    沒有裝飾層，而內容之間只有 0／14px 的縫＝內容本身動不了多少。⛔ 想加大效果請加在
+   *    柔光那層，不要去加大內容的幅度。 */
+  /* 井：位移 ±26 ＋ **縮放 0.96 → 1 → 0.96**。縮放才是「看得出來」的那一半：
+     ⚠️ 進畫面時 0.96（700px 寬的井＝左右邊緣各往內 14px）、**走到畫面中央剛好 1**、離開再縮回去。
+        配上淡出的紗，讀起來是「現在這張卡走到前面來」。
+     ⚠️ 用 `scale` 這個獨立屬性（同 translate 的理由：不能碰 transform，會蓋掉進場位移）。
+     ⚠️ 為什麼敢縮放文字：非主角的時候本來就蓋著 0.42 的紗＝看不清楚也沒關係，
+        而**走到中央時是剛好 1.0**＝在讀的那一刻是清楚的。⛔ 別把中央那個 1 改掉。
+     ⚠️ 縮放不影響版面（不佔空間、不會推開別人），所以沒有間距問題。
+        ⛔ 但別再縮更小：0.94 以下四個井的左右邊緣會在同一畫面上明顯不齊。 */
+  @keyframes lpDriftPane {
+    0% { translate: 0 26px; scale: 0.96; }
+    50% { translate: 0 0; scale: 1; }
+    100% { translate: 0 -26px; scale: 0.96; }
+  }
   @keyframes lpDriftWin { from { translate: 0 8px; } to { translate: 0 0; } }
+  /* ── 柔光：每個井裡一顆模糊的綠色光斑，隨捲動斜著飄過去並縮放 ────────────
+   * 這是這一輪「看得出來」的主角。它是**裝飾層**，所以可以漂 100px 以上都不會撞到任何字。
+   * ⚠️ 語彙沿用 Hero 的柔光（`.lp-hero__blob` 也是 blur 的綠色圓）＝不是新發明的視覺。
+   *    ⛔ 這**不是**被打槍兩次的「深色段／綠底白字」那類（見檔頭）：底色仍是幾乎白的
+   *       `--g-wash-2`，這只是同一個綠在上面淡淡地移動。
+   * ⚠️ 幅度刻意做大（垂直 130px、水平 16%、縮放 0.8→1.2）：模糊的東西動 20px 是看不出來的。
+   * ⛔ 井一定要 `overflow: clip`，不然光斑會漂到井外面變成「頁面上有一團綠霧」。 */
+  @keyframes lpGlowDrift {
+    from { translate: -8% 70px; scale: 0.8; }
+    to { translate: 8% -60px; scale: 1.2; }
+  }
   /* 圖文選單那支手機：除了位移再加**1.2 度的傾斜**。它是全區唯一長得像實體物件的東西，
      微微轉一下讀起來是「一支被拿在手上的手機」；⛔ 別加大（超過 2 度就會被讀成「圖歪了」），
      ⛔ 也別對其他三塊做傾斜（那三塊是後台畫面，歪掉只會像壞了）。 */
   @keyframes lpDriftPhone {
-    from { translate: 0 14px; rotate: 1.2deg; }
-    to { translate: 0 -14px; rotate: -1.2deg; }
+    from { translate: 0 10px; rotate: 1.8deg; }
+    to { translate: 0 -10px; rotate: -1.8deg; }
   }
+
   @supports (animation-timeline: view()) {
     &.is-anim {
-      .lp-pane, .lp-pane__win, .lp-band__phone {
+      .lp-pane, .lp-pane::before, .lp-pane__win, .lp-band__phone {
         animation-timing-function: linear;
         animation-fill-mode: both;
         animation-timeline: view();
       }
       .lp-pane { animation-name: lpDriftPane; }
+      .lp-pane::before { animation-name: lpGlowDrift; }
       .lp-pane__win { animation-name: lpDriftWin; }
       .lp-band__phone { animation-name: lpDriftPhone; }
     }
@@ -2051,8 +2099,9 @@
     /* 捲動視差整組關掉：⛔ 只關 animation-name 不夠，`translate`／`rotate` 要顯式歸零
        （fill-mode: both 會把 from 的值留在元素上＝關掉動畫反而定在偏移 4～20px 的位置）。 */
     &.is-anim .lp-pane,
+    &.is-anim .lp-pane::before,
     &.is-anim .lp-pane__win,
-    &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; }
+    &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; scale: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-plans .lp-reveal.in,
