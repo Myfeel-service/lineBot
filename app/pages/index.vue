@@ -366,10 +366,10 @@
                 </div>
                 <div class="lp-scene__ft"><span class="lp-scene__field" /></div>
               </div>
-              <!-- 成交章（09-09 第六輪使用者提議）：跟左窗的紅章對仗——「沒了 vs 成了」，
-                   綠色、往另一邊斜。品牌在這區刻意**不放圖形 logo**（兩個標籤＋自動回覆
+              <!-- 成交章（09-09 第六輪使用者提議、第八輪老闆改字＝直接寫「成交」、跟紅章
+                   **同一個角度**）。品牌在這區刻意**不放圖形 logo**（兩個標籤＋自動回覆
                    小字已扛；放 logo 會破壞「客人手機畫面」的戲），成交章就是蓋章時刻。 -->
-              <p class="lp-vs__stamp lp-vs__stamp--o vb-15">這筆生意，成了</p>
+              <p class="lp-vs__stamp lp-vs__stamp--o vb-15">成交</p>
             </div>
           </div>
 
@@ -2112,8 +2112,8 @@ let io: IntersectionObserver | undefined
 let cueIo: IntersectionObserver | undefined
 /** 50% 那條線的觀察器（.lp-cue--mid＝一整齣戲，見 MID_CUE_MARGIN） */
 let cueMidIo: IntersectionObserver | undefined
-/** 「等標題講完才開演」的保險絲計時器（見 onCued），離開頁面要清掉 */
-const cueFuses: number[] = []
+/** 延後開演的計時器（對照表等上面兩扇窗演完，見 onCued），離開頁面要清掉 */
+const cueTimers: number[] = []
 let barIo: IntersectionObserver | undefined
 let capIo: IntersectionObserver | undefined
 /** 每顆對話泡泡的打字控制，key＝該泡泡的 .lp-turn（它同時就是 .lp-cue 的觀察對象） */
@@ -2145,6 +2145,8 @@ const typings = new Map<HTMLElement, BubbleTyping>()
 const REVEAL_MARGIN = '0px 0px -12% 0px'
 const CUE_MARGIN = '0px 0px -24% 0px'
 const MID_CUE_MARGIN = '0px 0px -50% 0px'
+/** 對照舞台上半（兩扇窗）演完要多久＝兩顆章 1.75s＋0.3s 動作（⚠️ 跟 _landing.scss 的拍點成對） */
+const STAGE_TOP_MS = 2100
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -2260,19 +2262,15 @@ onMounted(() => {
       ...typings.keys(),
     ]
     /**
-     * 一整齣戲（.lp-cue--mid）要等**同一區的標題講完**才開演。
-     * ⚠️ 為什麼：標題是打字機，對照舞台只在它底下 200 px——實測正常捲動 0.2~0.6 秒後
-     *    舞台就越線，於是「標題還在打第三個字、底下的痛已經演到買別家」＝兩個焦點打架，
-     *    而那顆標題正是這一段要先讀懂的那句話。
-     * ⚠️ 等的是**標題**（1.35s）不是整顆泡泡（1.9s）：泡泡裡的副標在戲演完前是透明的，
-     *    等它＝讓人對著一扇空的聊天窗多乾等 0.55 秒（見 bubble-typing 的 whenHeadingDone）。
-     * ⚠️ 已經講完（或這一區沒有打字泡泡）＝立刻開演，whenHeadingDone 會直接回呼。
-     * ⛔ 別把這個等待寫成 CSS 的 :has(.is-typing)：那條規則萬一失效（不支援 :has()）
-     *    是**戲永遠不演、內容永遠透明**＝fail-closed。JS 這邊還有下面那條保險絲。
+     * 對照表要等**上面兩扇窗演完**才開演（第八輪老闆：「上面統一跑，跑完之後下面統一跑」）。
+     * 兩扇窗自己越線就演（桌機並排＝同一刻、同一條時間軸；手機各自捲到才演）；
+     * 表捲到時上面若還在演，就等到上面收完那一刻再開。
+     * ⚠️ STAGE_TOP_MS 跟 _landing.scss「對照舞台的戲」的拍點是**成對的**，改那邊要一起改這裡。
+     * ⚠️ 第七輪曾加過「舞台等標題打完才開演」，第八輪拆掉：那是純等待（實測 0.85~1.35 秒的
+     *    空聊天窗），跟老闆「動畫還是跑很久」的方向相反；改成兩窗同步後整場只剩 2 秒，
+     *    跟標題打字重疊那一下不再是問題。⛔ 別加回來。
      */
-    const gateOf = (el: HTMLElement) => (el.classList.contains('lp-cue--mid')
-      ? typings.get(el.closest('.lp-wrap')?.querySelector<HTMLElement>('.lp-turn') as HTMLElement)
-      : undefined)
+    let stageTopStartedAt = 0
     // ⚠️ 開演的事情做完就 unobserve（只演一次）——用回呼帶進來的 observer，
     //    不要抓外面的變數：同一個回呼給兩條線共用，抓錯變數會變成解除錯的觀察器。
     const onCued = (entries: IntersectionObserverEntry[], obs: IntersectionObserver) => {
@@ -2280,21 +2278,18 @@ onMounted(() => {
         if (!e.isIntersecting) return
         const el = e.target as HTMLElement
         obs.unobserve(el)
-        let played = false
         const start = () => {
-          if (played) return
-          played = true
           el.classList.add('is-cued')
           typings.get(el)?.play()
           if (el === obCardEl.value) playObDemo()
           if (el === phoneEl.value) armPhoneMenu()
         }
-        const gate = gateOf(el)
-        if (!gate) { start(); return }
-        gate.whenHeadingDone(start)
-        // 保險絲：打字用 rAF 跑，分頁被切到背景時 rAF 會停＝通知不會來。
-        // ⛔ 沒有這條的話那一段戲會**永遠停在透明**（fail-closed），寧可搶拍也不要不演。
-        cueFuses.push(window.setTimeout(start, 3000))
+        if (el.classList.contains('lp-vs__side')) stageTopStartedAt = performance.now()
+        if (el.classList.contains('lp-vs__grid') && stageTopStartedAt) {
+          const waitMs = stageTopStartedAt + STAGE_TOP_MS - performance.now()
+          if (waitMs > 0) { cueTimers.push(window.setTimeout(start, waitMs)); return }
+        }
+        start()
       })
     }
     // 76% 那條線（絕大多數的元素）
@@ -2312,7 +2307,7 @@ onBeforeUnmount(() => {
   io?.disconnect()
   cueIo?.disconnect()
   cueMidIo?.disconnect()
-  cueFuses.forEach(id => clearTimeout(id))
+  cueTimers.forEach(id => clearTimeout(id))
   barIo?.disconnect()
   capIo?.disconnect()
   clearHeroTimers()
