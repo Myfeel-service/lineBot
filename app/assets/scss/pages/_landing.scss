@@ -431,7 +431,9 @@
   /* ⚠️ 09-08 起副標住在自己的 .lp-rev 裡（出現時要頂一次），淡入與位移都由那一層負責，
      所以這裡不再有 transition／opacity 規則。margin-top 留著＝它跟大標的距離。 */
   .lp-hero__sub { color: var(--ink-2); font-size: clamp(1rem, 1.3vw, 1.12rem); line-height: 1.75; margin: 14px 0 0; }
-  .lp-hero__sub b { color: var(--ink); font-weight: 700; }
+  // inline-block＝後半句（09-09 新句「久了，連你自己都找不到。」）是一個不可拆的塊：
+  // 手機 390px 折行才會落在破折號後，不會切成「連你自己都／找不到」（實拍抓過）。
+  .lp-hero__sub b { display: inline-block; color: var(--ink); font-weight: 700; }
   /* ── 大標打字（09-08 使用者指定：「你的顧客，」停一拍再打完）─────────
    * 每個字一顆 .lp-h1t：預設（SSR／無 JS／減少動態）整句亮著；示範開場時
    * 先透明、JS 逐顆掛 .is-on。字是透明不是不存在＝h1 從第一幀就是最終尺寸，

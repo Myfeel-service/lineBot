@@ -155,7 +155,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   heroEnd.chips > 0 && heroEnd.lit === heroEnd.chips
     ? ok(`Hero 演完＝${heroEnd.lit}/${heroEnd.chips} 顆客人全醒`)
     : bad(`Hero 沒演完：醒了 ${heroEnd.lit}/${heroEnd.chips} 顆`)
-  heroEnd.tally === '580' ? ok('結算數字跑到 580') : bad(`結算不是 580：「${heroEnd.tally}」`)
+  // 09-09 拍板：「位」要在大字行裡（原本數字獨行、「位」掉到下一行小字，讀不出「580 位」）
+  //             ——所以這裡驗整串「580 位」不是只驗數字：位掉出去這條就會紅。
+  heroEnd.tally === '580 位' ? ok('結算數字跑到「580 位」（位在大字行內）') : bad(`結算不是「580 位」：「${heroEnd.tally}」`)
   heroEnd.cta && !heroEnd.asleep && !heroEnd.boot
     ? ok('按鈕變回註冊 CTA、背景醒了、boot class 已拆')
     : bad(`收尾狀態不對：cta=${heroEnd.cta} asleep=${heroEnd.asleep} boot=${heroEnd.boot}`)
