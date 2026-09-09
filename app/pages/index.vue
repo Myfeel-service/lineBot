@@ -183,9 +183,79 @@
       </div>
 
       <!-- 滿版舞台的出口：示範演完才浮出的「往下看」箭頭（09-08 使用者要的 scroll down 提示；
-           同輪拿掉了重播示範）。無 JS／減少動態＝預設就看得見，錨點連結不用 JS 也能跳。 -->
-      <a class="lp-scrollcue" href="#why"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
+           同輪拿掉了重播示範）。無 JS／減少動態＝預設就看得見，錨點連結不用 JS 也能跳。
+           ⚠️ 09-09 起指向 #keep（留客橋段）不是 #why：橋段插在中間，仍指 #why 的話
+           「往下看」會直接跳過整段新內容。 -->
+      <a class="lp-scrollcue" href="#keep"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
     </header>
+
+    <!-- ── 留客橋段（第二卡）：泡泡＋名單卡（09-09 老闆拍板 D-73④ 方案 B，mockup `fbf05df1`）──
+         分工（09-09 拍板）：第一卡讓人懂大概（痛／解法／價錢／行動，機制由動畫演），
+         這一段**補充**第一卡沒講的那塊——MiniMe 是什麼、實際留下了什麼名單。
+         文案來源：標題收外部顧問 B 版最強句、內文用 A 版骨架改寫；⛔三版**整段**都沒收
+         （跟第一卡動畫重複、580 寫死進正文、B 版推播主詞變 MiniMe）——評估見 STATUS `D-73`。
+         右卡＝v3.2 改版離場的機會卡回歸（`D-70`① 名單卡下移接住）：樣式與印章從 `aa69887`
+         前一版原封抄回（量測值照舊；⛔印章不可蓋到人數）。
+         ⚠️ 誠實機制：四份名單 38+142+216+184＝580＝第一卡結算的同一批人（HERO_WAKE_TOTAL），
+            動人數要兩處一起動；虛構人數能出現的前提＝卡上那顆「以咖啡店為例」。
+         ⚠️ 08-27 紅線：發推播主詞是店家——「想找回誰，一則推播的事」講省力，⛔不可寫成
+            成效承諾（「就能找回」這類）。
+         ⚠️ 刻意不放 CTA：第一卡剛給過唯一主按鈕，半個畫面內第二顆會互相搶
+            （舊機會卡卡尾的按鈕因此不跟著回歸）。
+         演出：泡泡照全站規矩打字（.lp-turn 自動接）；印章慢一拍蓋下去（.lp-cue 76% 線，
+         戲寫在 _landing.scss「留客橋段」段）。底案＝蓋好的完整狀態（減少動態／沒 JS 直接看到）。 -->
+    <section id="keep" class="lp-section lp-keep">
+      <div class="lp-wrap">
+        <div class="lp-keep__grid">
+          <div class="lp-turn lp-reveal">
+            <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
+            <div class="lp-bubble">
+              <!-- 兩個半句各包 .lp-keep__seg（inline-block）＝手機折行只落在句間
+                   （hero 大標同一招：390px 不包的話 text-wrap: balance 會切在句中）。 -->
+              <h2><span class="lp-keep__seg">好不容易成交的顧客，</span><span class="lp-keep__seg"><span class="mark">別只做一次生意</span>。</span></h2>
+              <p>{{ brandName }} 幫你自動留下每一位來過的客人——記錄、貼標籤、整理互動。名單在手，想找回誰，一則推播的事。</p>
+            </div>
+          </div>
+
+          <div class="lp-panel lp-ops lp-reveal lp-cue">
+            <div class="lp-panel__hd">
+              <span class="lp-panel__pip" />
+              <span class="lp-panel__title">哪 580 位？就這些名單</span>
+              <!-- 「以咖啡店為例」是人數能出現的前提：⛔別換回好友數（拿虛構數字當真實
+                   客戶資料）、⛔別寫店名（「示範店 · 山丘咖啡」被老闆抓過＝像假造客戶案例）。 -->
+              <span class="lp-panel__meta">以咖啡店為例</span>
+            </div>
+            <!-- ⛔ 每一列都必須是**現在真的做得到**的事：加入時間名單、60 天沒互動自動標籤、
+                 標籤分眾——列的字可以白話，能力不可以虛構。 -->
+            <div class="lp-ops__group">
+              <div class="lp-op">
+                <b>這週剛加入的新朋友</b>
+                <span class="lp-op__tag lp-op__tag--num">38 位</span>
+              </div>
+              <div class="lp-op">
+                <b>超過 60 天沒聯絡的客人</b>
+                <span class="lp-op__tag lp-op__tag--num">142 位</span>
+              </div>
+              <div class="lp-op">
+                <b>在咖啡展認識的客人</b>
+                <span class="lp-op__tag lp-op__tag--num">216 位</span>
+              </div>
+              <div class="lp-op">
+                <b>愛手沖的熟客</b>
+                <span class="lp-op__tag lp-op__tag--num">184 位</span>
+              </div>
+            </div>
+            <!-- 印章（09-02 三輪拍板的那顆，回歸）：清單列一堆該顧的事，它一次收掉。
+                 DOM 擺在名單後面＝讀螢幕的人先聽完名單再聽這句結論；視覺置中純靠 CSS，
+                 ⛔別為了「視覺在中間」搬到名單前面。⛔印章可以蓋名稱，不可以蓋到人數。 -->
+            <span class="lp-stamp">
+              <small>這些你都不用自己盯</small>
+              <b>交給 {{ brandName }} 就好</b>
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- ── 為什麼卡住：「沒有的那夜 vs 有的同一晚」對照舞台（09-09 第三版，使用者拍板）──
          演進：四張痛點卡（b7d4c27）→ 單窗對話舞台（8bddd92，回饋「還是不痛、排版太陽春」）

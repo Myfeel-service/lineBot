@@ -166,8 +166,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const el = document.querySelector('.lp-scrollcue')
     return el ? { op: Number(getComputedStyle(el).opacity), href: el.getAttribute('href') } : null
   })
-  cue && cue.op > 0.9 && cue.href === '#why'
-    ? ok('「往下看」箭頭浮出、指向 #why')
+  // 09-09 起指向 #keep（留客橋段插在 hero 與 #why 之間，指 #why 會跳過整段新內容）
+  cue && cue.op > 0.9 && cue.href === '#keep'
+    ? ok('「往下看」箭頭浮出、指向 #keep（留客橋段）')
     : bad(`往下看箭頭不對：${JSON.stringify(cue)}`)
   // 大標打字（09-08）：演完後 11 顆字全亮、副標看得見
   const typing = await page.evaluate(() => ({
@@ -180,6 +181,30 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   typing.chars > 0 && typing.on === typing.chars && typing.subOp > 0.9
     ? ok(`大標打完＝${typing.on}/${typing.chars} 字全亮、副標已進場`)
     : bad(`大標打字沒收尾：${typing.on}/${typing.chars} 字、副標 opacity=${typing.subOp}`)
+
+  // 0.5) 留客橋段（09-09 D-73④）：印章慢一拍蓋下去、名單加總＝第一卡結算的 580、
+  //      印章不可蓋到人數（舊機會卡的紅線——@container 縮級表就是為它存在的，
+  //      改印章字級／內距／膠囊 min-width 全靠這條抓）。
+  await go('.lp-ops', -830)
+  const stampBefore = await page.$eval('.lp-stamp', el => Number(getComputedStyle(el).opacity))
+  await go('.lp-ops', -300)
+  await wait(1800) // 0.9s 延遲 ＋ 0.4s 戲 ＋ 呼吸
+  const keep = await page.evaluate(() => {
+    const stamp = document.querySelector('.lp-stamp')
+    const nums = [...document.querySelectorAll('.lp-op__tag--num')]
+    const sum = nums.reduce((a, el) => a + Number.parseInt(el.textContent, 10), 0)
+    const s = stamp.getBoundingClientRect()
+    const overlapped = nums.some((el) => {
+      const r = el.getBoundingClientRect()
+      return Math.min(s.bottom, r.bottom) - Math.max(s.top, r.top) > 2
+        && Math.min(s.right, r.right) - Math.max(s.left, r.left) > 2
+    })
+    return { op: Number(getComputedStyle(stamp).opacity), sum, overlapped }
+  })
+  stampBefore < 0.1 ? ok('橋段印章 起點＝還沒蓋') : bad(`橋段印章 起點不是藏起來：opacity ${stampBefore}`)
+  keep.op > 0.9 ? ok('橋段印章 演完＝蓋下去了') : bad(`橋段印章沒蓋下去：opacity ${keep.op}`)
+  keep.sum === 580 ? ok('名單四份加總＝580（跟第一卡結算同一批人）') : bad(`名單加總不是 580：${keep.sum}`)
+  keep.overlapped ? bad('印章蓋到人數了（紅線）') : ok('印章沒蓋到人數')
 
   // 1) 泡泡打字
   await go('#why .lp-turn', -830)
@@ -602,6 +627,15 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   ;(stage.all && stage.relief > 0.99)
     ? ok('四關直接是演完的完整對照（兩窗、✕✓、紅章、「還好」都在）')
     : bad(`四關在減少動態下不完整：全到=${stage.all}、還好 ${stage.relief}`)
+  // 09-09 留客橋段：減少動態＝名單四列與印章直接是「蓋好」的完整狀態
+  //（藏與戲都只在 .is-anim 底下，跟對照舞台同一條房規）
+  const keepReduced = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#keep .lp-op').length,
+    stamp: Number(getComputedStyle(document.querySelector('#keep .lp-stamp')).opacity),
+  }))
+  keepReduced.rows === 4 && keepReduced.stamp > 0.99
+    ? ok('留客橋段完整（名單 4 列、印章蓋好）')
+    : bad(`留客橋段不完整：列 ${keepReduced.rows}、印章 opacity ${keepReduced.stamp}`)
   // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
   const voices = await page.evaluate(() => ({
     animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
@@ -643,6 +677,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   stageNoJs.all
     ? ok('四關沒 JS 也直接是演完的完整對照（兩窗、✕✓、紅章都在）')
     : bad(`四關沒 JS 卻不完整：全到=${stageNoJs.all}`)
+  // 09-09 留客橋段：沒 JS＝沒有 .is-anim＝印章直接是蓋好的
+  const keepNoJs = await page.evaluate(() => Number(getComputedStyle(document.querySelector('#keep .lp-stamp')).opacity))
+  keepNoJs > 0.99 ? ok('留客橋段沒 JS 也是蓋好的印章') : bad(`留客橋段沒 JS 卻藏著印章：opacity ${keepNoJs}`)
   // 09-08：選單的收起／展開改成吃 SSR 就要印對的 class（`is-menu-up`）。沒 JS 時如果那個
   // class 沒印出來，看到的是**一支沒有選單的手機**——這塊在賣的就是選單，等於整塊失去意義。
   // ⛔ 只量 opacity 抓不到這件事（選單是被位移出去的，opacity 還是 1），所以這裡量 transform。

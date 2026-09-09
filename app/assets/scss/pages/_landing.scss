@@ -318,11 +318,13 @@
     min-height: max(620px, calc(100vh - 68px));
     min-height: max(620px, calc(100svh - 68px));
     padding: clamp(44px, 5vw, 64px) 0;
-    /* 尾端 84%→100% 融進下一區的灰（#why＝--surf-2）：滿版舞台收尾用硬切最突兀。
+    /* 尾端 84%→100% 融進下一區的底色：滿版舞台收尾用硬切最突兀。
+       ⚠️ 09-09 起下一區是留客橋段（#keep＝白底），融色終點從 --surf-2 改 --paper；
+          橋段若再搬走，這裡要跟著下一區的底色改。
        ⚠️ 09-08 評估過「白灰交界是否都改漸層」＝**只做 hero 這一個**：交錯底色的
        功能就是分段，內文區塊之間的俐落界線才讀得出「換主題了」，⛔別把其他交界
        也改成漸層（會抹糊段落感、每個交界還要各調高度）。 */
-    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--surf-2) 100%);
+    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--paper) 100%);
     transition: background 0.9s ease;
   }
   /* 睡著＝抽掉綠意的亮灰。⛔不是深色段（被打槍×2），亮度跟醒著只差一階 */
@@ -556,9 +558,102 @@
      直接子段落，被 `> p`（0-1-1）拉成 0.94rem——全站四張示意圖說要同一款 0.82rem。 */
   .lp-panel__bd > p.lp-figcap { font-size: 0.82rem; margin: 14px 0 0; }
 
-  /* ⚠️ 時機卡（.lp-ops／.lp-op／.lp-stamp「交給 MiniMe 就好」）2026-09-08 隨 Hero 改滿版
-     劇場整組移除（拍板脈絡見 STATUS `D-70`）。印章三輪拍板的做法、膠囊等寬量測值、
-     @container 縮級表都在 git 歷史這一段——要復活從這個 commit 的前一版抄回來。 */
+  /* ── 留客橋段（#keep＝第二卡，2026-09-09 老闆拍板 D-73④ 方案 B）──────────
+   * 泡泡（標題）＋名單卡並排。泡泡沿用全站區塊標題語彙（.lp-turn＋.lp-bubble、
+   * 字級不縮＝「小一級」是相對 hero 大標本來就成立的層級，⛔別另開一款小泡泡）；
+   * 名單卡＝v3.2 改版離場的時機卡回歸（D-70①「名單卡下移接住」），樣式從 aa69887
+   * 前一版原封抄回（拍板量測值照舊，見下面各段註解）。
+   * align-items: center：泡泡打字不會改高度（字先透明不是不存在），置中不會跳。 */
+  .lp-keep__grid {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: clamp(28px, 4vw, 44px); align-items: center;
+    max-width: 960px; margin: 0 auto;
+  }
+  /* 手機單欄：泡泡在前＝先讀論點、再看證據（DOM 順序本來就這樣，不用 order） */
+  @media (max-width: 860px) { .lp-keep__grid { grid-template-columns: minmax(0, 1fr); } }
+  /* 標題兩個半句各自成塊＝折行只能落在句間（hero 大標 .lp-h1seg 同一招，
+     390px 實測不包的話 text-wrap: balance 會切在「一次／生意」中間） */
+  .lp-keep__seg { display: inline-block; }
+
+  /* ── 名單卡（時機卡回歸——以下到 @container 縮級表整段從 aa69887 前一版抄回，
+   *    拍板脈絡與量測值照舊；差異只有：①節慶列沒回歸（--soon 膠囊跟著留在歷史裡）
+   *    ②卡尾 CTA 沒回歸（第一卡剛給過唯一主按鈕）③印章多了「蓋下去」的戲（見段尾）。──
+   * 一列＝「看到什麼」＋「幾位」，兩段就滿了。
+   * ⛔ 別把 `.lp-op small` 建議句加回來：那等於把印章那句話拆成四句小字（09-02 老闆抓過）。 */
+  .lp-ops__group { padding: 10px 0 12px; }
+  .lp-op { display: flex; align-items: center; gap: 12px; padding: 10px var(--panel-pad-x); }
+  .lp-op b { flex: 1; min-width: 0; font-size: 0.9rem; font-weight: 700; }
+  /* ⚠️ min-width 56px 是**量出來的**（2026-09-06 headless 量膠囊實際寬度：38 位 48.69、
+   *   142・216・184 位 55.94）。沒有它的話膠囊右緣齊、左緣各自為政，四列不像一欄資料；
+   *   tabular-nums 只解決「數字等寬」，解決不了「膠囊等寬」。
+   * ⛔ 別憑感覺調大：膠囊變寬是往**左**長的（右緣固定），56 → 70 就會撞到
+   *   「印章不可以蓋到人數」那條紅線——anim-check 有一條專門量這件事。 */
+  .lp-op__tag {
+    flex: none; font-size: 0.7rem; font-weight: 800; border-radius: var(--radius-pill);
+    padding: 4px 10px; background: var(--surf-2); color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+    min-width: 56px; text-align: center;
+  }
+  /* 人數＝可把握的量吃淡綠 */
+  .lp-op__tag--num { background: var(--g-wash); color: var(--g-text); }
+  /* ── 印章：「這些你都不用自己盯／交給 MiniMe 就好」（09-02 三輪拍板原樣回歸）──
+   * 對**整張卡**上下左右居中（落點會壓到名單列的名稱＝老闆知情的取捨）。
+   * ⛔ **右邊那排人數不可以被蓋到**（38／142／216／184 是這張卡唯一的說服力）：
+   *    印章能多寬就是被這件事鎖住的，各寬度的值見下面 @container，⛔不可換成 @media
+   *    （印章能多大取決於**這張卡**多寬，卡寬跟視窗寬不是同一件事）。
+   * ⚠️ 底色刻意留一成透明：被蓋住的列透出淡淡的影子，像墨蓋在紙上不是貼紙。
+   * ⛔ 不掛綠色光暈（09-04 老闆指名拿掉）、⛔不加白色外光暈（會把分隔線切斷）。
+   * ⚠️ translate(-50%, -50%) 是**定位的一部分**：任何狀態的 transform 都要整串帶著，
+   *    漏掉的那一幀印章會跳到右下角（transform 是整串取代不是疊加）。 */
+  .lp-ops { position: relative; container-type: inline-size; }
+  .lp-stamp {
+    position: absolute; left: 50%; top: 50%; z-index: 2;
+    display: inline-flex; flex-direction: column; align-items: center; white-space: nowrap;
+    padding: 14px 42px 15px;
+    border: 2px solid rgba(6, 199, 85, 0.52); border-radius: 16px;
+    background: rgba(234, 250, 241, 0.9);
+    color: var(--g-text);
+    transform: translate(-50%, -50%) rotate(-6deg);
+  }
+  /* 內圈細框＝印章的雙線邊（單線太像徽章／標籤） */
+  .lp-stamp::before {
+    content: ''; position: absolute; inset: 3px;
+    border: 1px solid rgba(6, 199, 85, 0.34); border-radius: 9px; pointer-events: none;
+  }
+  .lp-stamp small { font-size: 0.88rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8; }
+  /* 字級就是印章的尺寸旋鈕（左右內距只能微調）。⛔別為了加寬把內距灌大＝空框不是印章 */
+  .lp-stamp b { font-size: 1.68rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.34; }
+  /* 卡片變窄就縮一級——唯一的規則是「不可以蓋到人數」。這幾組數字是量出來的，
+     改字級或內距要重跑 anim-check 那條重疊檢查，別憑感覺調。 */
+  @container (max-width: 470px) {
+    .lp-stamp { padding: 12px 28px 13px; }
+    .lp-stamp small { font-size: 0.78rem; }
+    .lp-stamp b { font-size: 1.2rem; }
+  }
+  @container (max-width: 375px) {
+    /* margin-left＝往左推、把右邊的人數讓出來。⛔推位置只能動 margin 不能動 transform */
+    .lp-stamp { padding: 10px 18px 11px; margin-left: -8px; }
+    .lp-stamp small { font-size: 0.72rem; }
+    .lp-stamp b { font-size: 1.04rem; }
+  }
+  @container (max-width: 310px) {
+    .lp-stamp { padding: 9px 16px 10px; margin-left: -42px; }
+    .lp-stamp b { font-size: 1.06rem; }
+  }
+  /* 印章的戲（09-09 新增）：名單先進場（卡自己是 .lp-reveal），印章慢一拍「蓋」下去
+     （卡也是 .lp-cue＝76% 線才開演，跟全站有時間軸的動畫同一條線）。
+     底案＝蓋好的完整狀態；「藏」只發生在 .is-anim 底下、開演之前——
+     減少動態／沒 JS 直接看到蓋好的卡（跟對照舞台同一條房規）。
+     ⚠️ 過渡（含 0.9s 延遲）寫在藏的那條上＝is-cued 掛上時才照這組時間跑。 */
+  &.is-anim .lp-keep .lp-stamp {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(-10deg) scale(1.4);
+    transition: opacity 0.4s ease 0.9s, transform 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) 0.9s;
+  }
+  &.is-anim .lp-keep .lp-cue.is-cued .lp-stamp {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(-6deg) scale(1);
+  }
 
   /* ── 為什麼卡住：「沒有的晚上 vs 有的同一晚」對照舞台（2026-09-09 第三版）─────
    * 演進：四張卡（b7d4c27）→ 單窗舞台＋清單（8bddd92，「還是不痛、太陽春」）→ 本版。
