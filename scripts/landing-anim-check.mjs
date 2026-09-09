@@ -275,12 +275,9 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       const panes = [...document.querySelectorAll('#value .lp-pane')]
       const rails = [...document.querySelectorAll('.lp-rail__item')]
       const vh = window.innerHeight
-      const val = (el) => {
-        const f = getComputedStyle(el).filter
-        if (f === 'none') return 1
-        const m = /opacity\(([\d.]+)\)/.exec(f)
-        return m ? Number(m[1]) : 1
-      }
+      // ⚠️ 09-09 淡出從 filter 換成蓋一層紙色的紗（`::after` 的 opacity）＝量法也要跟著換。
+      //    紗越透明表示那塊越亮，所以「亮度」＝ 1 − 紗的 opacity。
+      const val = el => 1 - Number(getComputedStyle(el, '::after').opacity || 0)
       const lit = panes.map(val)
       const seen = panes.map((el) => {
         const b = el.getBoundingClientRect()
@@ -302,25 +299,83 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       : bad(`捲到「${name}」主角判定不對：亮的有 ${s.litCount} 塊、主角#${s.主角 + 1}、佔最多#${s.佔最多 + 1}、軌#${s.軌 + 1}`)
   }
 
-  // 2.6) 捲動吸附：用滾輪捲、停下來之後主角那塊的上緣要落在 100px（＝.lp-pane 的
-  //      scroll-margin-top，離導覽列 31px）。⚠️ 這是「一屏一塊」實際做到的部分——
-  //      釘住換片做不到（最高的一塊 778px > 乾淨可視區，理由寫在 _landing.scss 檔頭那段）。
-  await go('#value', -400)
-  await wait(500)
-  const snapTops = []
-  for (let i = 0; i < 3; i++) {
-    await page.mouse.move(720, 450)
-    for (let k = 0; k < 6; k++) { await page.mouse.wheel({ deltaY: 100 }); await wait(16) }
-    await wait(900)
-    snapTops.push(await page.evaluate(() => {
-      const on = document.querySelector('#value .lp-pane.is-on')
-      return on ? Math.round(on.getBoundingClientRect().top) : null
-    }))
+  // 2.6) 捲動視差（2026-09-09）：三層要**跟著捲動連續變化**，而且層與層的速度不一樣。
+  //      ⚠️ 這是 `animation-timeline: view()`（原生捲動時間軸）做的，所以量法是
+  //      「同一個元素在兩個捲動位置的 translate 不一樣」＝真的綁在捲動上，不是播一次就結束。
+  //      ⛔ 不能只量「有沒有 translate」：fill-mode: both 會讓沒開始的動畫也留著 from 的值，
+  //         那樣寫出來的斷言在動畫壞掉（例如時間軸沒生效）時照樣會綠。
+  const driftAt = offset => page.evaluate(async (off) => {
+    const el = document.querySelector('#cap-tagging')
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY + off, behavior: 'instant' })
+    await new Promise(r => requestAnimationFrame(r))
+    await new Promise(r => requestAnimationFrame(r))
+    const y = (node) => {
+      const t = getComputedStyle(node).translate
+      if (!t || t === 'none') return 0
+      return Math.round(Number.parseFloat(t.split(' ')[1] ?? '0'))
+    }
+    // 井本體（±12）＋裡面的系統畫面（單向 0→+8）；標頭與成效帶刻意沒有自己的幅度
+    return { pane: y(el), win: y(el.querySelector('.lp-pane__win')) }
+  }, offset)
+  const supported = await page.evaluate(() => CSS.supports('animation-timeline', 'view()'))
+  if (!supported) {
+    console.log('  ⏭  跳過捲動視差：這個瀏覽器不支援 animation-timeline: view()（頁面設計成完全不動＝正常退化，不是壞了）')
   }
-  await page.mouse.move(0, 0)
-  snapTops.every(t => t !== null && Math.abs(t - 100) <= 2)
-    ? ok(`捲動吸附：三次滾輪停下來，主角上緣都在 100px（量到 ${snapTops.join('／')}）`)
-    : bad(`捲動吸附沒生效：主角上緣 ${snapTops.join('／')}px（該是 100）`)
+  else {
+    // ⚠️ 取樣點要讓**三層都在自己的 view() 範圍內**：成效帶在塊的最底部，
+    //    塊頂還在畫面下半的時候它根本還沒進範圍（量到的會是 from 的固定值）。
+    //    -250／+250 是回推出來的：778px 的塊在 900px 畫面裡，這兩點三層都在範圍內。
+    const a = await driftAt(-250)
+    const b = await driftAt(250)
+    // ⛔ 兩件事都要驗，缺一個斷言就會漏掉一種壞法：
+    //    ①井跟著捲動在動＝時間軸真的接上了（沒接上的話 fill-mode 會留著固定值，看起來也「有位移」）
+    //    ②畫面的位移量跟井**不一樣**＝有層差；一樣的話就只是整塊平移，沒有視差可言。
+    const paneMoved = Math.abs(b.pane - a.pane)
+    const winMoved = Math.abs(b.win - a.win)
+    paneMoved >= 4
+      ? ok(`捲動視差：井跟著捲動在動（${a.pane} → ${b.pane} px，兩個取樣點差 ${paneMoved}px）`)
+      : bad(`捲動視差沒綁到捲動：井的位移只有 ${paneMoved}px（${JSON.stringify(a)} → ${JSON.stringify(b)}）`)
+    paneMoved !== winMoved
+      ? ok(`系統畫面跟井不同速＝有層差（井 ${paneMoved}px vs 畫面 ${winMoved}px）`)
+      : bad(`系統畫面跟井同速（都 ${paneMoved}px）＝只是整塊平移，沒有視差`)
+
+    // ⛔ **視差最容易出事的地方＝把東西推到疊在一起**，而且只有量才看得出來
+    //    （2026-09-09 第一版三層視差實測到標頭↔畫面 −6px、成效帶↔圖說 −8px）。
+    //    這裡整區掃一遍，記每一組相鄰元素的最小間距。門檻是「名目間距」回推的：
+    //    標頭↔畫面名目 **0px**（設計上就貼齊）→ 只要不變負；畫面↔成效帶名目 14px → 留 4px；
+    //    成效帶↔圖說名目 14px → 留 4px；井↔井名目 32px（手機 20px）→ 留 16px。
+    const gaps = await page.evaluate(async () => {
+      const sec = document.querySelector('#value')
+      const top = sec.getBoundingClientRect().top + window.scrollY
+      const H = sec.getBoundingClientRect().height
+      const panes = [...document.querySelectorAll('#value .lp-pane')]
+      const min = { pane: 1e9, hdWin: 1e9, winOut: 1e9, outCap: 1e9 }
+      const gap = (a, z) => (a && z ? z.getBoundingClientRect().top - a.getBoundingClientRect().bottom : null)
+      for (let y = top - window.innerHeight; y < top + H + 200; y += 60) {
+        window.scrollTo({ top: y, behavior: 'instant' })
+        await new Promise(r => requestAnimationFrame(r))
+        for (let i = 0; i < panes.length - 1; i++) min.pane = Math.min(min.pane, gap(panes[i], panes[i + 1]))
+        for (const p of panes) {
+          const hd = p.querySelector('.lp-pane__hd')
+          const win = p.querySelector('.lp-pane__win')
+          const out = p.querySelector('.lp-outcome')
+          const cap = p.querySelector('.lp-figcap')
+          if (hd && win) min.hdWin = Math.min(min.hdWin, gap(hd, win))
+          if (win && out) min.winOut = Math.min(min.winOut, gap(win, out))
+          if (out && cap) min.outCap = Math.min(min.outCap, gap(out, cap))
+        }
+      }
+      return Object.fromEntries(Object.entries(min).map(([k, v]) => [k, v > 1e8 ? null : Math.round(v)]))
+    })
+    const gapBad = []
+    if (gaps.hdWin !== null && gaps.hdWin < 0) gapBad.push(`標頭↔畫面 ${gaps.hdWin}px（疊到了）`)
+    if (gaps.winOut !== null && gaps.winOut < 4) gapBad.push(`畫面↔成效帶 ${gaps.winOut}px`)
+    if (gaps.outCap !== null && gaps.outCap < 4) gapBad.push(`成效帶↔圖說 ${gaps.outCap}px`)
+    if (gaps.pane !== null && gaps.pane < 16) gapBad.push(`井↔井 ${gaps.pane}px`)
+    gapBad.length
+      ? bad(`視差把東西推到太近：${gapBad.join('、')}——幅度要收，見 _landing.scss 視差那段`)
+      : ok(`視差全程沒把東西推到疊在一起（最小間距：井↔井 ${gaps.pane}、標頭↔畫面 ${gaps.hdWin}、畫面↔成效帶 ${gaps.winOut}、成效帶↔圖說 ${gaps.outCap} px）`)
+  }
 
   // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
   //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）

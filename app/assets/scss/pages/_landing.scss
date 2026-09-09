@@ -23,27 +23,6 @@
    #diff（比較表）已隨 2026-08-26 改版整區移除，頁尾連結同步拿掉了。 */
 .lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq { scroll-margin-top: 80px; }
 
-/* ── 「能做什麼」四塊：捲動停下來時對齊到一塊（2026-09-09「優化整個滾動時的呈現」）──
- * ⚠️ 這是「一屏一塊」**做得到的版本**。原本想做的是「右欄釘住、捲動原地換片」，
- *    量下來**做不到**：最高的一塊是 778px，而乾淨可視區＝視窗高 − 導覽 69 − 置底行動條 80，
- *    實測 1440×900 只有 **751px**（差 27px）、1440×800 只有 651px（差 127px）、
- *    1512×760 只有 611px（差 167px）——**釘住的東西超出畫面就永遠捲不到**，
- *    那不是不好看，是有內容看不到。要真的做釘住，得先把「系統實際畫面」那幾扇窗縮小
- *    （⛔ 09-03 六輪的教訓：縮小就會被讀成「這是截圖」）或讓置底行動條在這一區收起來，
- *    兩個都要老闆／使用者拍板，記在 STATUS 的 `D-71`。
- * ⚠️ 所以改用 scroll-snap：不釘住，但捲動**停下來時**會吸到某一塊的上緣＝
- *    「一次停在一塊上」而不是停在兩塊的接縫上（實測改版前有 53% 的捲動距離同時看到兩塊）。
- * ⚠️ `proximity` 不是 `mandatory`：只有你本來就停在附近才吸過去，不會搶捲動。
- *    ⛔ 別改成 mandatory——內容比畫面高的區塊用 mandatory 會把人卡在中間出不去。
- * ⚠️ 對齊點吃 .lp-pane 現成的 `scroll-margin-top: 100px`＝停下來時上緣離導覽列 32px。
- * ⚠️ 只有這四塊有對齊點，其他區塊（Hero、定價、常見問答⋯）完全不受影響。
- * ⛔ 手機關掉：手機是慣性捲動，吸附會變成「甩不出去」。
- * ⚠️ 用 `:has(.lp-home)` 鎖在首頁：`scroll-snap-type` 必須下在**捲動容器**（html）上，
- *    而這支 partial 其他規則都鎖在 `.lp` 底下——法務頁也吃 `.lp`，別讓它們也吸附。 */
-@media (min-width: 961px) {
-  html:has(.lp-home) { scroll-snap-type: y proximity; }
-  .lp-home .lp-pane { scroll-snap-align: start; }
-}
 
 .lp {
   /* Palette — 沿用全站共用品牌綠 token（門面頁統一同一套來源）*/
@@ -1576,8 +1555,88 @@
    *    則跟主角分不出來。⛔ 改這個值要在 1440 與 390 兩個寬度各看一次。
    * ⚠️ 掛在 `.is-anim` 底下＝勾了「減少動態效果」或沒有 JS 時四塊一律全亮
    *    （那時軌照樣會亮燈——它是指示器不是動畫）。 */
-  &.is-anim .lp-pane { transition: filter .45s ease; }
-  &.is-anim .lp-pane:not(.is-on) { filter: opacity(0.58); }
+  /* ⚠️ 淡出用**一層紙色的紗**（`::after`）而不是 `filter: opacity()`（09-09 第一版是 filter，
+     同日改掉）。兩個理由：
+     ①`filter` 會把整塊變成一張合成圖層，而下面那組**捲動視差**的動畫就跑在這塊裡面
+       ——祖先有 filter 時瀏覽器每一幀都得把整塊重畫一次，那才是真的會卡。
+     ②紗只是一個實色方塊在動 opacity，是 GPU 最便宜的那種動畫。
+     ⛔ 別改回 opacity（會跟 `.lp-band` 自己的 `.lp-reveal` 搶同一個屬性、第四塊永遠不淡），
+        也⛔別改回 filter（見上面①）。
+     ⚠️ `border-radius: inherit` 是必要的：不繼承的話紗是方角、井是 24px 圓角，四個角會露出來。
+     ⚠️ 紗在 `.lp-band` 這種 grid 容器裡**不會變成格線裡的一格**（絕對定位的子元素不是 grid item），
+        所以兩欄版面不受影響。 */
+  .lp-pane { position: relative; }
+  .lp-pane::after {
+    content: ''; position: absolute; inset: 0; z-index: 3;
+    border-radius: inherit; background: var(--paper);
+    opacity: 0; pointer-events: none;
+  }
+  &.is-anim .lp-pane::after { transition: opacity .45s ease; }
+  &.is-anim .lp-pane:not(.is-on)::after { opacity: 0.42; }
+
+  /* ══ 捲動視差：動畫進度**綁在捲動位置上**（2026-09-09，使用者「希望滾動有一些特效動畫、
+   *    類似 gsap」）══════════════════════════════════════════════
+   * 這就是 GSAP 的 ScrollTrigger scrub 在做的事——**你捲一點它動一點、往回捲會倒退**——
+   * 只是用瀏覽器原生的捲動時間軸（`animation-timeline: view()`）做，所以：
+   *   ⭐ **不用載任何函式庫**（GSAP core ＋ ScrollTrigger 約 34KB 進首頁關鍵路徑）
+   *   ⭐ **跑在合成執行緒上**，不占主執行緒＝捲動不會卡（JS 版的視差每一幀都要算）
+   *
+   * 每一塊裡面三層用**不同速度**移動（這是視差的全部：層與層的速度差才是深度感）：
+   *   標頭 ±4px（最慢）→ 系統畫面 ±10px → 成效帶 ±20px（最快）
+   * ⚠️ 幅度是**回推出來的、不是抓整數**：層與層的相對位移必須小於它們之間的間距，
+   *    否則捲到極端位置時會疊在一起。標頭↔畫面間距 12px（相對位移 6px）、
+   *    畫面↔成效帶間距 14px（相對位移 10px）——都留了餘裕。⛔ 要放大幅度得先重算這兩個間距。
+   * ⚠️ 用 `translate`／`rotate` **這兩個獨立屬性**，不是 `transform`：
+   *    `.lp-reveal` 的進場淡入吃的就是 `transform`（translateY(18px) → none），
+   *    而**動畫一定贏過 transition**——寫成 transform 的話進場那 18px 的上浮會被這組視差蓋掉。
+   *    `translate` 與 `transform` 是分開的屬性、會相乘疊加，兩件事因此可以共存。
+   *    ⛔ 別把這裡改寫成 transform。
+   * ⚠️ `view()` 是**每個元素自己的**時間軸：0＝它剛從畫面下緣進來、1＝它剛從上緣離開，
+   *    所以每一塊捲過去時都會自己演一次，不必寫任何觸發點。
+   * ⚠️ 整組包在 `@supports` 裡：不支援的瀏覽器（`animation-timeline` 是新東西）
+   *    就是**完全不動**＝退回這一輪之前的樣子，不會壞掉、也不需要 JS 偵測。
+   * ⚠️ 掛在 `.is-anim` 底下＝勾了「減少動態效果」的人不會有任何位移（下面 media query
+   *    還有一層保險把 animation-name 關掉）。 */
+  /* ⚠️ 幅度（px，from → to ＝「剛進畫面 → 剛離開畫面」）：**井本體 ±12、系統畫面 ±6**。
+   *    標頭、成效帶、圖說不給自己的幅度＝跟著井一起走。
+   * ⛔ **我第一版做了「標頭 ±6／畫面 ±12／成效帶 ±22」的三層視差，量下來會撞在一起，已撤。**
+   *    原因是每一個元素有**自己的** `view()` 進度（它們在塊裡的高度不同，進畫面的時間也不同），
+   *    所以兩個元素的相對位移最壞會接近**兩個幅度相加**，不是相減——我一開始按相減算，
+   *    實測（整區每 30px 掃一遍量最小間距）直接抓到：標頭↔畫面 **−6px（疊到了）**、
+   *    畫面↔成效帶 4px、成效帶↔圖說 **−8px**。
+   *    而這一塊裡面的間距只有 12／14px，**放不下任何有感的層差**。
+   *    ⚠️ 所以規矩是：**要做多層視差就得先有間距**。硬要做的話得把塊內間距從 12／14
+   *       拉到 30px 以上（每塊多 ~18px 高），那是版面決策不是動畫決策，要先問。
+   * ⚠️ 塊內間距的真實數字（量過，⛔別憑印象）：**標頭↔系統畫面是 0px**（兩個盒子貼在一起，
+   *    連標頭最後一列的字底也剛好貼齊畫面上緣）、系統畫面↔成效帶 14px、成效帶↔圖說 14px。
+   * ⚠️ 所以系統畫面的幅度做成**單向**（0 → +8px，只會往下、不會往上）：
+   *    往上就會吃掉那個 0px 的間距（第一版 ±6 實測就是 −6px＝疊到標頭上）。
+   *    往下最多吃掉 8px 的「畫面↔成效帶」預算（14 − 8 ＝ 還剩 6px）。
+   *    ⛔ 這條的教訓可以帶走：**視差的幅度上限是間距，而間距要量不要猜；沒有間距的方向就別動。**
+   * ⚠️ 現在的層次感靠兩件事：①井整塊漂 ±12（塊與塊間距 32px，實測最小仍是 32px，不會撞）
+   *    ②裡面最大的視覺物件（系統畫面）再單向慢 8px＝它相對於自己的井慢半拍。
+   *    ⛔ 動這兩個數字要重跑間距實測（scripts/landing-anim-check.mjs 的視差那段會量）。 */
+  @keyframes lpDriftPane { from { translate: 0 12px; } to { translate: 0 -12px; } }
+  @keyframes lpDriftWin { from { translate: 0 8px; } to { translate: 0 0; } }
+  /* 圖文選單那支手機：除了位移再加**1.2 度的傾斜**。它是全區唯一長得像實體物件的東西，
+     微微轉一下讀起來是「一支被拿在手上的手機」；⛔ 別加大（超過 2 度就會被讀成「圖歪了」），
+     ⛔ 也別對其他三塊做傾斜（那三塊是後台畫面，歪掉只會像壞了）。 */
+  @keyframes lpDriftPhone {
+    from { translate: 0 14px; rotate: 1.2deg; }
+    to { translate: 0 -14px; rotate: -1.2deg; }
+  }
+  @supports (animation-timeline: view()) {
+    &.is-anim {
+      .lp-pane, .lp-pane__win, .lp-band__phone {
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: view();
+      }
+      .lp-pane { animation-name: lpDriftPane; }
+      .lp-pane__win { animation-name: lpDriftWin; }
+      .lp-band__phone { animation-name: lpDriftPhone; }
+    }
+  }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
    * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
@@ -1987,7 +2046,13 @@
 
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
     /* 「不是主角就淡下去」也算動態：關掉之後四塊一律全亮（軌照樣亮燈，它是指示器） */
-    &.is-anim .lp-pane, &.is-anim .lp-pane:not(.is-on) { filter: none; transition: none; }
+    &.is-anim .lp-pane::after,
+    &.is-anim .lp-pane:not(.is-on)::after { opacity: 0; transition: none; }
+    /* 捲動視差整組關掉：⛔ 只關 animation-name 不夠，`translate`／`rotate` 要顯式歸零
+       （fill-mode: both 會把 from 的值留在元素上＝關掉動畫反而定在偏移 4～20px 的位置）。 */
+    &.is-anim .lp-pane,
+    &.is-anim .lp-pane__win,
+    &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-plans .lp-reveal.in,
