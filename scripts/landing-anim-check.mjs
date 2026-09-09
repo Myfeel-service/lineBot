@@ -377,6 +377,85 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       : ok(`視差全程沒把東西推到疊在一起（最小間距：井↔井 ${gaps.pane}、標頭↔畫面 ${gaps.hdWin}、畫面↔成效帶 ${gaps.winOut}、成效帶↔圖說 ${gaps.outCap} px）`)
   }
 
+  // 2.7) 「四關」的捲動蓋章（2026-09-09）：先痛、後解。剛捲到＝四張答案面板是灰的、
+  //      第一卡蓋著紙色的皮；捲到眼前＝面板由左到右翻綠、皮淡掉、「還好——」那句淡入。
+  //      ⛔ 底案＝解掉的狀態（今天的設計），所以只看最終樣子永遠是好的——一定要在
+  //      「剛進畫面」那個位置抓到**痛的狀態**，才證明時間軸真的接上了（同 2.6 那條：
+  //      fill-mode: both 讓壞掉的動畫也有 from 值，斷言只驗一端就會在動畫壞掉時照樣綠）。
+  //      這一段全是往回捲（#why 在 #value 上面），不會把下面還沒演的一次性動畫提前觸發掉。
+  if (supported) {
+    // 把第 i 張卡捲到它自己的 view() 進度 P（P = (捲動位置＋視窗高−卡頂) / (視窗高＋卡高)）
+    const wallAt = (i, p) => page.evaluate(async ([idx, prog]) => {
+      const el = document.querySelectorAll('#why .lp-wall')[idx]
+      const vh = window.innerHeight
+      const top = el.getBoundingClientRect().top + window.scrollY
+      window.scrollTo({ top: Math.max(0, top - vh + prog * (vh + el.offsetHeight)), behavior: 'instant' })
+      await new Promise(r => requestAnimationFrame(r))
+      await new Promise(r => requestAnimationFrame(r))
+      return {
+        bg: getComputedStyle(el.querySelector('.lp-wall__fix')).backgroundColor,
+        skin: Number(getComputedStyle(el, '::before').opacity),
+        ink: getComputedStyle(el).color,
+      }
+    }, [i, p])
+    const WASH = 'rgb(242, 251, 246)' // --g-wash-2＝翻綠之後面板的底色
+    const PAIN = 'rgb(242, 243, 242)' // keyframes 0% 的灰面板
+    const w0a = await wallAt(0, 0.12)
+    const w0b = await wallAt(0, 0.60)
+    ;(w0a.skin > 0.95 && w0a.ink === 'rgb(31, 32, 35)' && w0a.bg === PAIN)
+      ? ok(`第一卡剛進畫面是「痛」的樣子（紙皮 ${w0a.skin}、墨字、灰面板）`)
+      : bad(`第一卡剛進畫面就已經是解掉的樣子：皮 ${w0a.skin}、字 ${w0a.ink}、面板 ${w0a.bg}——時間軸沒接上或 range 錯了`)
+    ;(w0b.skin < 0.05 && w0b.ink === 'rgb(255, 255, 255)')
+      ? ok('第一卡捲到眼前翻回綠底白字（最終狀態＝08-26 拍板的設計）')
+      : bad(`第一卡捲到眼前沒翻面：皮 ${w0b.skin}、字 ${w0b.ink}`)
+    for (const i of [1, 2, 3]) {
+      const a = await wallAt(i, 0.12)
+      const b = await wallAt(i, 0.60)
+      a.bg === PAIN && b.bg === WASH
+        ? ok(`第 ${i + 1} 卡的答案面板會蓋章（灰 → 綠）`)
+        : bad(`第 ${i + 1} 卡的答案面板沒蓋章：剛進畫面 ${a.bg} → 眼前 ${b.bg}`)
+    }
+    // 桌機四張同列＝同一個 view() 進度，「由左到右」全靠 animation-range 錯開——
+    // 挑一個中途點驗：第一卡翻完（range 收在 36%）、第四卡還沒開始（44% 才開始）。
+    // 手機不驗這條：卡疊直、每張自己的進度天生錯開，中途點沒有「同時」可言。
+    if (VW >= 1000) {
+      const mid = await page.evaluate(async () => {
+        const walls = [...document.querySelectorAll('#why .lp-wall')]
+        const el = walls[0]
+        const vh = window.innerHeight
+        const top = el.getBoundingClientRect().top + window.scrollY
+        window.scrollTo({ top: top - vh + 0.385 * (vh + el.offsetHeight), behavior: 'instant' })
+        await new Promise(r => requestAnimationFrame(r))
+        await new Promise(r => requestAnimationFrame(r))
+        return {
+          first: Number(getComputedStyle(el, '::before').opacity),
+          last: getComputedStyle(walls[3].querySelector('.lp-wall__fix')).backgroundColor,
+        }
+      })
+      mid.first < 0.05 && mid.last === PAIN
+        ? ok('蓋章是由左到右錯開的（中途點：第一卡翻完、第四卡還沒）')
+        : bad(`蓋章沒有錯開：中途點第一卡皮 ${mid.first}、第四卡面板 ${mid.last}`)
+    }
+    // 「還好，每一關都有解法——」：剛進畫面看不到、捲到眼前才出現（字沒動，動的是時機）
+    const reliefAt = p => page.evaluate(async (prog) => {
+      const el = document.querySelector('#why .lp-bubble__relief')
+      const vh = window.innerHeight
+      const top = el.getBoundingClientRect().top + window.scrollY
+      window.scrollTo({ top: Math.max(0, top - vh + prog * (vh + el.offsetHeight)), behavior: 'instant' })
+      await new Promise(r => requestAnimationFrame(r))
+      await new Promise(r => requestAnimationFrame(r))
+      return Number(getComputedStyle(el).opacity)
+    }, p)
+    const ra = await reliefAt(0.15)
+    const rb = await reliefAt(0.70)
+    ra < 0.15 && rb > 0.9
+      ? ok(`「還好——」那句捲到眼前才出現（opacity ${ra} → ${rb}）`)
+      : bad(`「還好——」那句的時機不對：剛進畫面 ${ra}、眼前 ${rb}（該是 0 → 1）`)
+  }
+  else {
+    console.log('  ⏭  跳過四關的捲動蓋章：不支援 animation-timeline: view()（底案＝解掉的狀態，正常退化不是壞了）')
+  }
+
   // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
   //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）
   // ⚠️ 2026-09-08 兩欄化（流程在左、示意在右）之後**live 卡與第一截綠線在同一條水平線上**
@@ -513,6 +592,17 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   const hasAnim = await page.evaluate(() => document.querySelector('.is-anim') !== null)
   hidden.length ? bad('這些被藏起來了：\n     ' + hidden.join('\n     ')) : ok('沒有任何區塊是藏起來的')
   ok(hasAnim ? '.is-anim 在場，CSS 保險有把東西還原' : '沒掛 .is-anim（JS 早退，符合設計）')
+  // 09-09 四關的捲動蓋章：減少動態＝直接是「解掉的狀態」（面板綠、第一卡綠底、
+  // 「還好——」那句看得到）。⛔ 這裡驗的是 CSS 保險——痛的狀態只准存在 keyframes 裡，
+  // 誰把它搬進底案，勾了減少動態的人就會永遠停在「沒人來解」的畫面。
+  const stamp = await page.evaluate(() => ({
+    relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
+    skin: Number(getComputedStyle(document.querySelector('#why .lp-wall--main'), '::before').opacity),
+    bg: getComputedStyle(document.querySelector('#why .lp-wall:nth-child(2) .lp-wall__fix')).backgroundColor,
+  }))
+  ;(stamp.relief > 0.99 && stamp.skin < 0.01 && stamp.bg === 'rgb(242, 251, 246)')
+    ? ok('四關直接是解掉的狀態（面板綠、第一卡綠底、「還好」看得到）')
+    : bad(`四關在減少動態下不是解掉的狀態：還好 ${stamp.relief}、紙皮 ${stamp.skin}、面板 ${stamp.bg}`)
   // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
   const voices = await page.evaluate(() => ({
     animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
@@ -541,11 +631,19 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   console.log('\n④ 沒有 JS')
   const hidden = await page.evaluate(() => [...document.querySelectorAll(
     '.lp-reveal, .lp-cue, .lp-livewin--chat .conv-bubble-row, .lp-livewin--users tbody tr, .lp-band__phone .lp-pmsg, '
-    + '.lp-chip, .lp-h1t, .lp-hero__sub, .lp-tally, .lp-hero .lp-rev > div, .lp-scrollcue',
+    + '.lp-chip, .lp-h1t, .lp-hero__sub, .lp-tally, .lp-hero .lp-rev > div, .lp-scrollcue, .lp-bubble__relief',
   )]
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))
   hidden.length ? bad('沒 JS 卻藏著：\n     ' + hidden.join('\n     ')) : ok('全部看得到（.is-anim 沒掛上＝預設就是最終狀態）')
+  // 09-09 四關的捲動蓋章綁在 .is-anim 底下：沒 JS＝沒有 .is-anim＝直接是解掉的狀態
+  const stampNoJs = await page.evaluate(() => ({
+    skin: Number(getComputedStyle(document.querySelector('#why .lp-wall--main'), '::before').opacity),
+    bg: getComputedStyle(document.querySelector('#why .lp-wall:nth-child(2) .lp-wall__fix')).backgroundColor,
+  }))
+  ;(stampNoJs.skin < 0.01 && stampNoJs.bg === 'rgb(242, 251, 246)')
+    ? ok('四關沒 JS 也直接是解掉的狀態（面板綠、第一卡綠底）')
+    : bad(`四關沒 JS 卻停在痛的狀態：紙皮 ${stampNoJs.skin}、面板 ${stampNoJs.bg}`)
   // 09-08：選單的收起／展開改成吃 SSR 就要印對的 class（`is-menu-up`）。沒 JS 時如果那個
   // class 沒印出來，看到的是**一支沒有選單的手機**——這塊在賣的就是選單，等於整塊失去意義。
   // ⛔ 只量 opacity 抓不到這件事（選單是被位移出去的，opacity 還是 1），所以這裡量 transform。

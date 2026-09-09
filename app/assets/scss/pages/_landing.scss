@@ -606,6 +606,27 @@
   .lp-wall__fix span { margin-right: 5px; }
   .lp-wall--main .lp-wall__fix { background: rgba(255, 255, 255, 0.17); color: #fff; }
 
+  /* ── 捲動蓋章的兩個底座（動畫本體在下面「四關的捲動蓋章」那段）────────
+   * ① 每張卡一條**具名**的 view 時間軸（--lpw）：卡裡的皮、字色、答案面板全綁同一條，
+   *    整卡才會在同一個捲動位置一起翻面。⛔ 別改回匿名 view()：每個元素有自己的進度
+   *    （在卡裡的高度不同），第一卡會皮先掉、字再翻、面板最後——翻成三段。
+   *    不支援的瀏覽器直接忽略這行，零副作用。
+   * ② 第一卡的「痛的皮」：一層紙色＋細框的 ::before 蓋在綠底上，捲動時淡出＝
+   *    綠色跟著解法一起到場。**底案 opacity 0**＝不支援捲動時間軸／減少動態／沒 JS
+   *    的人看到的就是今天的綠卡，一個像素都不變。
+   *    ⚠️ inset 是 -1px 不是 0：絕對定位的 inset: 0 只蓋到 padding box，而卡的背景
+   *       （綠漸層）預設畫到 border box——卡的 1px 透明框後面會漏一圈綠邊。
+   *       圓角因此也不能用 inherit（那是 border box 的圓角值，剛好 -1px 對上 var(--r-card)）。
+   *    ⚠️ isolation: isolate 是必要的：z-index -1 沒有自己的堆疊脈絡會掉到卡的背景
+   *       後面＝整層看不見（同 .lp-pane 柔光那條，實際踩過的坑）。 */
+  .lp-wall { view-timeline: --lpw; }
+  .lp-wall--main { position: relative; isolation: isolate; }
+  .lp-wall--main::before {
+    content: ''; position: absolute; inset: -1px; z-index: -1; pointer-events: none;
+    border-radius: var(--r-card); background: var(--paper); border: 1px solid var(--hair);
+    opacity: 0;
+  }
+
   /* ── 手機殼＋LINE 聊天室畫面（窄帶在用）────────────────────────
    * ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
    * ⚠️ 2026-08-31 老闆拍板「做得像真的手機截圖」：由上而下照真機一層層疊＝狀態列（靈動島）／
@@ -1697,6 +1718,77 @@
     }
   }
 
+  /* ══ 「四關」的捲動蓋章：先痛、後解（2026-09-09，使用者「是痛點但看起來不太痛」）═════
+   * 病灶不是動畫不夠花：這一區把痛點跟綠色的答案「同一眼」給你——讀者從來沒有停在
+   * 問題裡的那一秒；而全頁的綠色都是好消息（CTA、✓、成效），最大的痛點卡整張綠漸層
+   * ＝長得最像喜訊。所以把「先痛、後解」的時間差做回來，用上面同一組原生捲動時間軸：
+   *   剛捲到＝四張卡都是「痛」：第一卡蓋著紙色的皮、字是墨色，四張答案面板都是灰的；
+   *   往下捲＝答案由左到右一張張「蓋章」翻綠、第一卡的皮淡掉＝綠色跟著解法一起到場；
+   *   往回捲＝倒退回「還沒解」。標頭那句「還好，每一關都有解法——」也捲到眼前才淡入
+   *   （字一個都沒動——那是 09-06 老闆的原文，動的只有出現時機）。
+   * ⚠️ **底案＝解掉的狀態（今天的設計）**：痛的狀態只存在 keyframes 的 0%。不支援
+   *    `animation-timeline`、勾了減少動態、沒有 JS——三種人看到的都是解掉的樣子，
+   *    沒有人會被卡在「永遠沒人來解」的畫面。⛔ 別把痛的狀態搬進底案。
+   * ⚠️ 只動 color／background-color／opacity／scale——**沒有任何位移**，所以上面
+   *    「視差幅度上限是間距」那條雷跟這段無關（scale 0.94 縮在面板自己的框裡，
+   *    不佔空間、不會推開別人）。也因此不用進「整區掃最小間距」那條驗收。
+   * ⚠️ 錯開靠 animation-range 一卡一格：桌機四張同列＝同進度，range 錯開才有「由左到右」；
+   *    手機疊直＝每張卡自己的進度天生錯開，同一組 range 照用（每張都在自己走到畫面
+   *    下三分之一～中央的路上翻面）。
+   * ⚠️ range 是回推的（卡高 ~330、可視 900 → view() 行程 ~1230px）：cover 50% ≈ 卡在畫面
+   *    正中，所以整段蓋章收在 28%→52%＝把這區捲到眼前的路上剛好演完，停下來讀的時候
+   *    四張都翻好了。⛔ 別把尾端推過 60%：正常的停留位置會看到最後一張永遠沒翻。
+   * ⚠️ 蓋章的「彈跳」（scale 0.94 → 過衝 1.03 → 1）寫在 keyframes 的 82%——scrub 之下
+   *    彈跳速度＝捲動速度，慢慢捲就是慢慢壓下去，一樣成立。 */
+  @keyframes lpWallSkin { from { opacity: 1; } to { opacity: 0; } }
+  @keyframes lpWallInk { from { color: var(--ink); } to { color: #fff; } }
+  @keyframes lpWallSubInk { from { color: var(--ink-soft); } to { color: rgba(255, 255, 255, 0.82); } }
+  @keyframes lpFixStamp {
+    0% { background-color: #f2f3f2; color: #a4aaa4; scale: 0.94; }
+    60% { background-color: var(--g-wash-2); color: var(--g-text); }
+    82% { scale: 1.03; }
+    100% { background-color: var(--g-wash-2); color: var(--g-text); scale: 1; }
+  }
+  @keyframes lpFixStampMain {
+    0% { background-color: #f2f3f2; color: #a4aaa4; scale: 0.94; }
+    60% { background-color: rgba(255, 255, 255, 0.17); color: #fff; }
+    82% { scale: 1.03; }
+    100% { background-color: rgba(255, 255, 255, 0.17); color: #fff; scale: 1; }
+  }
+  @keyframes lpReliefIn { from { opacity: 0; } to { opacity: 1; } }
+  @supports (animation-timeline: view()) {
+    &.is-anim {
+      .lp-wall--main,
+      .lp-wall--main::before,
+      .lp-wall--main .lp-wall__sub,
+      .lp-wall__fix,
+      .lp-bubble__relief {
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+      }
+      /* 第一卡整卡翻面（皮＋字＋副標＋面板）綁**同一條**具名時間軸、同一格 range */
+      .lp-wall--main { animation-name: lpWallInk; }
+      .lp-wall--main::before { animation-name: lpWallSkin; }
+      .lp-wall--main .lp-wall__sub { animation-name: lpWallSubInk; }
+      .lp-wall__fix { animation-name: lpFixStamp; }
+      .lp-wall--main .lp-wall__fix { animation-name: lpFixStampMain; }
+      .lp-wall--main,
+      .lp-wall--main::before,
+      .lp-wall--main .lp-wall__sub,
+      .lp-wall__fix { animation-timeline: --lpw; }
+      .lp-wall--main,
+      .lp-wall--main::before,
+      .lp-wall--main .lp-wall__sub,
+      .lp-wall--main .lp-wall__fix { animation-range: cover 28% cover 36%; }
+      .lp-wall:nth-child(2) .lp-wall__fix { animation-range: cover 34% cover 42%; }
+      .lp-wall:nth-child(3) .lp-wall__fix { animation-range: cover 40% cover 48%; }
+      .lp-wall:nth-child(4) .lp-wall__fix { animation-range: cover 44% cover 52%; }
+      /* 「還好——」那句：只動 opacity 不動版面。用自己的匿名 view()（它不在卡裡，
+         沒有要跟誰同步），走到畫面下三分之一～中央之間淡入＝痛點先讀到、這句才接上 */
+      .lp-bubble__relief { animation-name: lpReliefIn; animation-timeline: view(); animation-range: cover 30% cover 55%; }
+    }
+  }
+
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
    * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
    * 圖文選單從下面往上展開。全部走 `.lp-cue`（捲到眼前才演），⛔別改掛 `.lp-reveal.in`。
@@ -2113,6 +2205,13 @@
     &.is-anim .lp-pane::before,
     &.is-anim .lp-pane__win,
     &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; scale: none; }
+    /* 四關的捲動蓋章整組關掉＝直接是解掉的狀態（底案就是它；color／背景／皮的 opacity
+       關掉動畫就回底案，scale 照上面那條的教訓顯式歸零） */
+    &.is-anim .lp-wall--main,
+    &.is-anim .lp-wall--main::before,
+    &.is-anim .lp-wall--main .lp-wall__sub,
+    &.is-anim .lp-wall__fix,
+    &.is-anim .lp-bubble__relief { animation-name: none; scale: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-plans .lp-reveal.in,

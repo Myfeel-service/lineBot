@@ -183,8 +183,13 @@
 
     <!-- ── 為什麼卡住：四道牆（問題＋解法同一張卡）─────────────
          四個原因不是平等的：第一道（沒人手）是前提，另外三個是它的後果，
-         所以第一張卡佔 1.45 倍寬並吃綠底。情境小圖（.lp-wall__scene）是抽象示意圖形
-         （人、對話、後台、價標），不含任何數字宣稱，不用掛示意圖說。
+         所以第一張卡佔 1.45 倍寬並吃綠底。情境小圖（.lp-wall__scene）畫的是
+         「什麼時候痛」的具體瞬間（深夜來訊沒人在、交辦滾成一長串、設定路徑打結、價標），
+         不含任何**成效數字**宣稱（23:41 這種情境時間不算），不用掛示意圖說。
+         ⚠️ 09-09 起這一區有「先痛、後解」的捲動蓋章（樣式在 _landing.scss「四關的捲動蓋章」）：
+            剛捲到＝四張卡都是痛的樣子（第一卡紙底墨字、答案面板灰的），往下捲答案由左到右
+            一張張翻綠、第一卡整卡翻成綠底＝**翻完的最終狀態就是 08-26 拍板的這個設計**，
+            捲動只是把「解掉的過程」演出來。不支援／減少動態／沒 JS 一律直接看到最終狀態。
          ⚠️ 每張牆卡底部帶自己的答案（淡底面板）——原本「四道牆」與「四關一次解掉」是
             兩個整屏區塊，解法列還把問題重抄一遍才講解法；併卡之後問題與答案對得上、
             省一整屏（08-26 版面重排①）。⛔ 解法別再拆回獨立區塊。
@@ -196,23 +201,34 @@
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
-            <!-- 09-06 老闆給的改寫原文照用（原「這件事，老闆一直卡在這四關」被回饋難懂）。 -->
+            <!-- 09-06 老闆給的改寫原文照用（原「這件事，老闆一直卡在這四關」被回饋難懂）。
+                 ⚠️ 09-09「還好——」這句掛 .lp-bubble__relief＝捲到眼前才淡入（捲動蓋章的一部分，
+                    見 _landing.scss「四關的捲動蓋章」）：不然痛點還沒讀到就先被這句爆雷「都有解」。
+                    ⛔ 字一個都不能動（老闆原文），動的只有出現時機；不支援捲動時間軸／減少動態／
+                    沒 JS 的人從第一眼就看得到它（底案 opacity 1）。 -->
             <h2>你知道 LINE 會員經營、客服溝通<br>有多重要，但你總是<span class="mark">卡在這四關</span>。</h2>
-            <p>還好，每一關都有 {{ brandName }} 能接住的解法——</p>
+            <p class="lp-bubble__relief">還好，每一關都有 {{ brandName }} 能接住的解法——</p>
           </div>
         </div>
 
         <div class="lp-walls">
           <div class="lp-wall lp-wall--main lp-reveal">
+            <!-- 09-09 icon 重畫（使用者「icon 有點不明所以」）：原本三個人形＋一個缺席的，
+                 讀不出「什麼時候痛」。改成**具體的瞬間**——客人深夜來訊、卻沒有人在：
+                 一顆客人的訊息泡泡（「請問還有貨嗎？」＋23:41）＋那個缺席的虛線人形（保留
+                 .lp-wall__blink 的緩慢閃爍）。⚠️ 23:41 是**情境**不是數字宣稱（08-26 房規管的是
+                 成效類數字）。⚠️ 整張改用 currentColor：跟著捲動蓋章的字色動畫一起翻——
+                 痛的時候（紙底）是墨色線稿，翻綠後跟原本一樣是白線，⛔別改回寫死的白色。 -->
             <div class="lp-wall__scene" aria-hidden="true">
               <svg viewBox="0 0 200 84">
-                <g transform="translate(8,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="20" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
-                <g transform="translate(56,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="24" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
-                <g transform="translate(104,14)"><circle cx="16" cy="14" r="11" fill="rgba(255,255,255,.28)" /><path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="rgba(255,255,255,.28)" /><rect x="2" y="52" width="28" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /><rect x="2" y="61" width="16" height="5" rx="2.5" fill="rgba(255,255,255,.5)" /></g>
-                <g transform="translate(152,14)" class="lp-wall__blink">
-                  <circle cx="16" cy="14" r="11" fill="none" stroke="rgba(255,255,255,.34)" stroke-width="1.6" stroke-dasharray="3 3" />
-                  <path d="M0 46c0-11 7-17 16-17s16 6 16 17" fill="none" stroke="rgba(255,255,255,.34)" stroke-width="1.6" stroke-dasharray="3 3" />
-                  <text x="16" y="64" text-anchor="middle" font-size="12" fill="rgba(255,255,255,.5)">？</text>
+                <path d="M16 8h100a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H26l-16 11 4-12.5A10 10 0 0 1 6 32V18A10 10 0 0 1 16 8z" fill="currentColor" opacity=".13" />
+                <path d="M16 8h100a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H26l-16 11 4-12.5A10 10 0 0 1 6 32V18A10 10 0 0 1 16 8z" fill="none" stroke="currentColor" stroke-opacity=".38" stroke-width="1.4" />
+                <text x="18" y="29.5" font-size="12.5" fill="currentColor" opacity=".88">請問還有貨嗎？</text>
+                <text x="132" y="41" font-size="9" fill="currentColor" opacity=".55">23:41</text>
+                <g class="lp-wall__blink">
+                  <circle cx="170" cy="26" r="11" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.6" stroke-dasharray="3 3" />
+                  <path d="M154 58c0-11 7-17 16-17s16 6 16 17" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.6" stroke-dasharray="3 3" />
+                  <text x="170" y="76" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">？</text>
                 </g>
               </svg>
             </div>
@@ -222,14 +238,21 @@
           </div>
 
           <div class="lp-wall lp-reveal">
+            <!-- 09-09 icon 重畫：原本兩顆泡泡＋虛線箭頭讀不出「多一次溝通」。改成
+                 「一句交辦滾出一長串來回」——右邊綠的是你、左邊灰的是員工，一來一往
+                 越滾越長、最後一則還在打字（三個點）＝事情還沒完。長度本身就是訊息。 -->
             <div class="lp-wall__scene" aria-hidden="true">
               <svg viewBox="0 0 160 84">
-                <rect x="6" y="10" width="86" height="24" rx="10" fill="#edf1eb" />
-                <rect x="16" y="19" width="52" height="5" rx="2.5" fill="#c6cec6" />
-                <rect x="62" y="42" width="92" height="24" rx="10" fill="#e9fbf0" />
-                <rect x="74" y="51" width="42" height="5" rx="2.5" fill="#9fd9b4" />
-                <path d="M92 22 q26 0 26 20" stroke="#c6cec6" stroke-width="1.6" fill="none" stroke-dasharray="3 3" />
-                <path d="M62 54 q-30 0 -30 18" stroke="#c6cec6" stroke-width="1.6" fill="none" stroke-dasharray="3 3" />
+                <rect x="96" y="4" width="58" height="15" rx="7.5" fill="#e9fbf0" />
+                <rect x="106" y="9.5" width="38" height="4.5" rx="2.25" fill="#9fd9b4" />
+                <rect x="6" y="25" width="66" height="15" rx="7.5" fill="#edf1eb" />
+                <rect x="16" y="30.5" width="46" height="4.5" rx="2.25" fill="#c6cec6" />
+                <rect x="76" y="46" width="78" height="15" rx="7.5" fill="#e9fbf0" />
+                <rect x="86" y="51.5" width="58" height="4.5" rx="2.25" fill="#9fd9b4" />
+                <rect x="6" y="67" width="90" height="15" rx="7.5" fill="#edf1eb" />
+                <g fill="#aab3aa">
+                  <circle cx="42" cy="74.5" r="2.2" /><circle cx="51" cy="74.5" r="2.2" /><circle cx="60" cy="74.5" r="2.2" />
+                </g>
               </svg>
             </div>
             <h3>派了員工，還要照顧他的情緒</h3>
@@ -238,18 +261,21 @@
           </div>
 
           <div class="lp-wall lp-reveal">
+            <!-- 09-09 icon 重畫：原本畫的是一個**很整齊**的後台 wireframe——跟「太複雜」
+                 講的正好相反。改成「從起點出發的一條設定路徑，走著走著打結」：
+                 實線自己繞圈交叉、設定碎片東倒西歪，複雜要看起來亂才是對的。 -->
             <div class="lp-wall__scene" aria-hidden="true">
               <svg viewBox="0 0 160 84">
-                <rect x="6" y="8" width="44" height="68" rx="7" fill="#edf1eb" />
-                <g fill="#d6ddd5"><rect x="12" y="15" width="32" height="5" rx="2.5" /><rect x="12" y="25" width="26" height="5" rx="2.5" /><rect x="12" y="35" width="30" height="5" rx="2.5" /><rect x="12" y="45" width="22" height="5" rx="2.5" /><rect x="12" y="55" width="28" height="5" rx="2.5" /><rect x="12" y="65" width="24" height="5" rx="2.5" /></g>
-                <rect x="58" y="8" width="96" height="68" rx="7" fill="#f5f8f4" />
-                <g stroke="#c6cec6" stroke-width="1.4" fill="none">
-                  <path d="M70 26h22M104 26h20M92 26q10 0 10 14t14 14M70 54h34" />
+                <circle cx="12" cy="16" r="5" fill="#c6cec6" />
+                <path d="M17 16 C 66 10, 24 66, 80 58 C 128 51, 102 14, 62 28 C 38 37, 84 76, 126 64 S 148 40, 138 30" fill="none" stroke="#c6cec6" stroke-width="1.6" />
+                <g fill="#f5f8f4" stroke="#cbd3cb" stroke-width="1.2">
+                  <rect x="44" y="6" width="36" height="17" rx="4" transform="rotate(-7 62 14.5)" />
+                  <rect x="112" y="10" width="36" height="17" rx="4" transform="rotate(5 130 18.5)" />
+                  <rect x="14" y="58" width="36" height="17" rx="4" transform="rotate(4 32 66.5)" />
                 </g>
-                <g fill="#fff" stroke="#cbd3cb" stroke-width="1.2">
-                  <rect x="64" y="18" width="18" height="15" rx="4" /><rect x="98" y="18" width="18" height="15" rx="4" /><rect x="126" y="18" width="18" height="15" rx="4" />
-                  <rect x="64" y="46" width="18" height="15" rx="4" /><rect x="100" y="46" width="18" height="15" rx="4" />
-                </g>
+                <g transform="rotate(-7 62 14.5)"><circle cx="53" cy="14.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="61" y="12.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
+                <g transform="rotate(5 130 18.5)"><circle cx="121" cy="18.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="129" y="16.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
+                <g transform="rotate(4 32 66.5)"><circle cx="23" cy="66.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="31" y="64.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
               </svg>
             </div>
             <h3>自己動手，後台太複雜</h3>
