@@ -560,74 +560,82 @@
      劇場整組移除（拍板脈絡見 STATUS `D-70`）。印章三輪拍板的做法、膠囊等寬量測值、
      @container 縮級表都在 git 歷史這一段——要復活從這個 commit 的前一版抄回來。 */
 
-  /* ── 為什麼卡住：四道牆 ────────────────────────────────────
-   * 第一道牆（「沒有人可以做」）刻意佔 1.45 倍寬並吃綠底：四個原因不是平等的，
-   * 「根本沒人手」是前提，另外三個是它的後果。四張等寬會讓讀者以為要自己挑一個對號入座。
-   * 08-26 草稿給每道牆加了情境小圖（.lp-wall__scene）：抽象圖形、不含數字宣稱。
-   */
-  .lp-walls { display: grid; grid-template-columns: 1.45fr 1fr 1fr 1fr; gap: var(--card-gap); margin-top: var(--section-head-gap); align-items: stretch; }
-  .lp-wall {
+  /* ── 為什麼卡住：對話舞台＋四關清單（2026-09-09 方向一）──────────────
+   * 前身＝四張痛點卡（08-26 併卡版＋09-09 上午的捲動蓋章，樣式在 git b7d4c27）。
+   * 使用者拍板整區換掉：左邊演「一筆生意怎麼溜走→有 MiniMe 之後被接住」，
+   * 右邊四關一行一行。戲的時間軸在下面「四關的對話舞台」那段。
+   * ⚠️ 底案＝演完的完整狀態（整段對話、綠答案都看得見）；「藏」只發生在
+   *    .is-anim 底下、開演之前——減少動態／沒 JS 直接看到結局。 */
+  .lp-why { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 44px; margin-top: var(--section-head-gap); align-items: center; }
+
+  /* 舞台＝LINE 聊天窗（客人視角）。像真的 LINE 是刻意的（08-31 拍板、同窄帶那支手機）：
+   * 這是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。⛔ 客人自己的綠泡泡也是同一條
+   * 拍板的範圍（LINE 視窗框裡的樣子），不是被打槍過的「拿綠泡泡當網站版面」。 */
+  .lp-scene__frame {
+    background: #eef1f4; border: 1px solid var(--hair); border-radius: 18px;
+    overflow: hidden; box-shadow: var(--sh-soft);
+  }
+  .lp-scene__hd {
+    display: flex; align-items: center; gap: 10px; padding: 11px 15px;
+    background: #fff; border-bottom: 1px solid #e6eaee;
+  }
+  .lp-scene__back { width: 9px; height: 15px; color: #2b2f36; flex: none; }
+  .lp-scene__ava { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(140deg, #b08d63, #6e4a28); flex: none; }
+  .lp-scene__hd .lp-scene__ava { width: 27px; height: 27px; }
+  .lp-scene__name { font-size: 0.92rem; font-weight: 800; color: #14171c; letter-spacing: -0.01em; }
+  .lp-scene__bd { display: flex; flex-direction: column; gap: 13px; padding: 16px 15px 19px; }
+  .lp-scene__day {
+    align-self: center; font-size: 0.7rem; font-weight: 600; color: #fff; line-height: 1;
+    background: rgba(38, 44, 52, 0.32); border-radius: var(--radius-pill); padding: 5px 12px;
+  }
+  /* 「有 MiniMe 之後」的膠囊換綠底＝解法到場的分界線（全戲唯一的品牌綠） */
+  .lp-scene__day--on { background: var(--g); margin-top: 5px; }
+  /* 訊息列。⚠️ 三種對齊是 LINE 真的長相（同手機殼那條房規）：頭像對泡泡**上**緣、
+     時間對泡泡**下**緣、客人自己的訊息靠右、時間在泡泡**左**側（已讀疊在時間上面）。 */
+  .lp-scene__msg { display: flex; align-items: flex-end; gap: 7px; }
+  .lp-scene__msg .lp-scene__ava { align-self: flex-start; }
+  .lp-scene__msg--me { justify-content: flex-end; }
+  .lp-scene__bub {
+    position: relative; max-width: 76%; background: #fff; border-radius: 16px;
+    padding: 9px 13px; font-size: 0.88rem; line-height: 1.6; color: #14171c;
+  }
+  /* 指向頭像的小尖角，⛔ 用 border 畫不是旋轉方塊（同手機殼：旋轉那顆會在圓角上露邊） */
+  .lp-scene__bub::before {
+    content: ''; position: absolute; left: -5px; top: 10px;
+    border: 5px solid transparent; border-left: 0; border-right-color: #fff;
+  }
+  .lp-scene__msg--me .lp-scene__bub { background: #8de05f; }
+  .lp-scene__msg--me .lp-scene__bub::before {
+    left: auto; right: -5px; border: 5px solid transparent; border-right: 0; border-left-color: #8de05f;
+  }
+  .lp-scene__meta {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+    font-size: 0.62rem; color: #9aa3ad; line-height: 1.2; flex: none; padding-bottom: 3px;
+  }
+  .lp-scene__msg:not(.lp-scene__msg--me) .lp-scene__meta { align-items: flex-start; }
+  .lp-scene__read, .lp-scene__tag { font-style: normal; }
+  .lp-scene__tag { color: var(--g-text); font-weight: 700; }
+  .lp-scene__cap { margin: 10px 4px 0; font-size: 0.78rem; color: var(--ink-soft); text-align: right; }
+
+  /* 四關清單。答案面板沿用 08-27 拍板的「一句話、一行」＋淡綠底綠字（底案＝翻好的綠）。 */
+  .lp-rows { display: flex; flex-direction: column; gap: 14px; }
+  .lp-row {
+    display: flex; align-items: center; gap: 18px;
     background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-card);
-    padding: 20px 24px 26px; box-shadow: var(--sh-soft); display: flex; flex-direction: column;
-    transition: transform .2s ease, box-shadow .2s ease;
+    padding: 17px 20px; box-shadow: var(--sh-soft);
   }
-  .lp-wall:hover { transform: translateY(-4px); box-shadow: var(--sh-card); }
-  .lp-wall__scene { height: 84px; margin: 0 0 16px; display: flex; align-items: center; }
-  .lp-wall__scene svg { width: 100%; height: 100%; display: block; }
-  /* 主牆上那個「缺的人」虛線人形緩慢閃爍——講「少一個人」不用一個字 */
-  .lp-wall__blink { animation: lpBlinkSoft 2.6s ease-in-out infinite; }
-  .lp-wall h3 { margin: 0; font-size: 1.05rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
-  /* 痛點副標。⛔**一定要用 class 不能寫 `.lp-wall p`**：答案面板也是 <p>，元素選擇器
-     （0,1,1）會連它一起選到、蓋掉 `margin-top: auto`——同一個坑 08-27 踩了兩次。
-     下緣 18px＝痛點與答案面板之間的保證留白（flex 裡 margin 不塌陷）。 */
-  .lp-wall__sub { margin: 8px 0 18px; font-size: 0.86rem; color: var(--ink-soft); line-height: 1.65; }
-  .lp-wall--main {
-    background: linear-gradient(158deg, #06c755 0%, #03a040 100%);
-    border-color: transparent; color: #fff; box-shadow: var(--sh-card);
+  .lp-row__txt { flex: 1 1 auto; min-width: 0; }
+  .lp-row h3 { margin: 0; font-size: 1.02rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
+  .lp-row__txt p { margin: 3px 0 0; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
+  /* ⚠️ nowrap 是安全的**只因為**它掛在 flex: none 的一側、旁邊的 .lp-row__txt 有
+     min-width: 0 可以縮——別把 nowrap 搬到會被 grid 1fr 量 min-content 的地方
+     （09-09 手機分頁列那發隱形破版的雷）。≤560px 改上下疊、面板自己一行。 */
+  .lp-row__fix {
+    flex: none; margin: 0; background: var(--g-wash-2); border-radius: var(--r-sm);
+    padding: 10px 14px; font-size: 0.95rem; font-weight: 800; color: var(--g-text);
+    letter-spacing: -0.01em; line-height: 1.5; white-space: nowrap;
   }
-  .lp-wall--main h3 { font-size: 1.32rem; }
-  .lp-wall--main .lp-wall__sub { color: rgba(255, 255, 255, 0.82); }
-
-  /* ── 牆卡底部的答案面板（08-27）────────────────────────────
-   * 一句話、一行、填色面板貼卡底——四塊因此完全等高、上下緣都齊。
-   * ⛔ 三個做壞過的地方別重蹈：
-   *   ① `margin-top: auto` 是「貼卡底」的唯一機制，**不可以有任何規則再給它 margin-top**。
-   *      08-27 踩兩次：先是 `.lp-wall p + .lp-wall__fix { margin-top:16px }`（0,2,0），
-   *      改完把答案寫成 <p> 又被 `.lp-wall p`（0,1,1）蓋一次——兩次的症狀都是「答案沒貼底、
-   *      標題折兩行的卡往下掉 17–19px」。所以副標吃 `.lp-wall__sub`，不用元素選擇器。
-   *      要留白改成副標的 `margin-bottom`（flex 裡的 margin 不會塌陷）。
-   *   ② 別改回「虛線＋標題＋補充小字」：全頁只有那裡用虛線，而且窄卡的可用寬度只有
-   *      113px（≈7 個字），兩行文字必折行。
-   *   ③ 主牆（綠底）的面板只換底色與字色，**字級與其他三張一樣**——放大半級會讓
-   *      四塊面板高度差 2px，上緣就不齊了（實測）。 */
-  .lp-wall__fix {
-    margin-top: auto; background: var(--g-wash-2); border-radius: var(--r-sm);
-    padding: 12px 14px; font-size: 1rem; font-weight: 800; color: var(--g-text);
-    letter-spacing: -0.01em; line-height: 1.5;
-  }
-  .lp-wall__fix span { margin-right: 5px; }
-  .lp-wall--main .lp-wall__fix { background: rgba(255, 255, 255, 0.17); color: #fff; }
-
-  /* ── 捲動蓋章的兩個底座（動畫本體在下面「四關的捲動蓋章」那段）────────
-   * ① 每張卡一條**具名**的 view 時間軸（--lpw）：卡裡的皮、字色、答案面板全綁同一條，
-   *    整卡才會在同一個捲動位置一起翻面。⛔ 別改回匿名 view()：每個元素有自己的進度
-   *    （在卡裡的高度不同），第一卡會皮先掉、字再翻、面板最後——翻成三段。
-   *    不支援的瀏覽器直接忽略這行，零副作用。
-   * ② 第一卡的「痛的皮」：一層紙色＋細框的 ::before 蓋在綠底上，捲動時淡出＝
-   *    綠色跟著解法一起到場。**底案 opacity 0**＝不支援捲動時間軸／減少動態／沒 JS
-   *    的人看到的就是今天的綠卡，一個像素都不變。
-   *    ⚠️ inset 是 -1px 不是 0：絕對定位的 inset: 0 只蓋到 padding box，而卡的背景
-   *       （綠漸層）預設畫到 border box——卡的 1px 透明框後面會漏一圈綠邊。
-   *       圓角因此也不能用 inherit（那是 border box 的圓角值，剛好 -1px 對上 var(--r-card)）。
-   *    ⚠️ isolation: isolate 是必要的：z-index -1 沒有自己的堆疊脈絡會掉到卡的背景
-   *       後面＝整層看不見（同 .lp-pane 柔光那條，實際踩過的坑）。 */
-  .lp-wall { view-timeline: --lpw; }
-  .lp-wall--main { position: relative; isolation: isolate; }
-  .lp-wall--main::before {
-    content: ''; position: absolute; inset: -1px; z-index: -1; pointer-events: none;
-    border-radius: var(--r-card); background: var(--paper); border: 1px solid var(--hair);
-    opacity: 0;
-  }
+  .lp-row__fix span { margin-right: 5px; }
 
   /* ── 手機殼＋LINE 聊天室畫面（窄帶在用）────────────────────────
    * ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
@@ -1359,7 +1367,7 @@
   /* ── 店家的話（證言牆，「能做什麼」與 60 秒區之間；09-06 老闆要求上移）──────
    * 呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停
    * （讓人把那張卡讀完）。全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態
-   * ——跟 .lp-wall__blink 同一類（無限循環、早開演不會錯過），所以⛔不掛 .lp-cue、
+   * ——無限循環、早開演不會錯過，所以⛔不掛 .lp-cue、
    * 也不等 .is-anim：純 CSS，沒有 JS 也照飄；「減少動態效果」時整面攤成靜態網格
    * （見最下面的 reduced-motion 區）。
    * ⚠️ 內容紅線（虛構示意、圖說不可拿掉——STATUS D-13）在 index.vue 的 LP_VOICES 註解。
@@ -1720,76 +1728,53 @@
     }
   }
 
-  /* ══ 「四關」的捲動蓋章：先痛、後解（2026-09-09，使用者「是痛點但看起來不太痛」）═════
-   * 病灶不是動畫不夠花：這一區把痛點跟綠色的答案「同一眼」給你——讀者從來沒有停在
-   * 問題裡的那一秒；而全頁的綠色都是好消息（CTA、✓、成效），最大的痛點卡整張綠漸層
-   * ＝長得最像喜訊。所以把「先痛、後解」的時間差做回來，用上面同一組原生捲動時間軸：
-   *   剛捲到＝四張卡都是「痛」：第一卡蓋著紙色的皮、字是墨色，四張答案面板都是灰的；
-   *   往下捲＝答案由左到右一張張「蓋章」翻綠、第一卡的皮淡掉＝綠色跟著解法一起到場；
-   *   往回捲＝倒退回「還沒解」。標頭那句「還好，每一關都有解法——」也捲到眼前才淡入
-   *   （字一個都沒動——那是 09-06 老闆的原文，動的只有出現時機）。
-   * ⚠️ **底案＝解掉的狀態（今天的設計）**：痛的狀態只存在 keyframes 的 0%。不支援
-   *    `animation-timeline`、勾了減少動態、沒有 JS——三種人看到的都是解掉的樣子，
-   *    沒有人會被卡在「永遠沒人來解」的畫面。⛔ 別把痛的狀態搬進底案。
-   * ⚠️ 只動 color／background-color／opacity／scale——**沒有任何位移**，所以上面
-   *    「視差幅度上限是間距」那條雷跟這段無關（scale 0.94 縮在面板自己的框裡，
-   *    不佔空間、不會推開別人）。也因此不用進「整區掃最小間距」那條驗收。
-   * ⚠️ 錯開靠 animation-range 一卡一格：桌機四張同列＝同進度，range 錯開才有「由左到右」；
-   *    手機疊直＝每張卡自己的進度天生錯開，同一組 range 照用（每張都在自己走到畫面
-   *    下三分之一～中央的路上翻面）。
-   * ⚠️ range 是回推的（卡高 ~330、可視 900 → view() 行程 ~1230px）：cover 50% ≈ 卡在畫面
-   *    正中，所以整段蓋章收在 28%→52%＝把這區捲到眼前的路上剛好演完，停下來讀的時候
-   *    四張都翻好了。⛔ 別把尾端推過 60%：正常的停留位置會看到最後一張永遠沒翻。
-   * ⚠️ 蓋章的「彈跳」（scale 0.94 → 過衝 1.03 → 1）寫在 keyframes 的 82%——scrub 之下
-   *    彈跳速度＝捲動速度，慢慢捲就是慢慢壓下去，一樣成立。 */
-  @keyframes lpWallSkin { from { opacity: 1; } to { opacity: 0; } }
-  @keyframes lpWallInk { from { color: var(--ink); } to { color: #fff; } }
-  @keyframes lpWallSubInk { from { color: var(--ink-soft); } to { color: rgba(255, 255, 255, 0.82); } }
-  @keyframes lpFixStamp {
-    0% { background-color: #f2f3f2; color: #a4aaa4; scale: 0.94; }
-    60% { background-color: var(--g-wash-2); color: var(--g-text); }
-    82% { scale: 1.03; }
-    100% { background-color: var(--g-wash-2); color: var(--g-text); scale: 1; }
+  /* ══ 四關的對話舞台：先痛、後解，捲到就演一次（2026-09-09 方向一）══════════
+   * 兩條拍板：①「動畫滾到位置後觸發、不要跟著滾輪」（前一版綁 view() scrub 被打回）
+   *          ②「不要讓客人按」＝零互動，全部自動播、演完定格。
+   * 時間軸（秒，從 .lp-scene 的 lp-cue 進 76% 線起算）：
+   *   0.35 客人問肉桂捲 → 1.7「隔天」 → 2.4「我在別家買了」（痛演完）
+   *   → 3.7「有 MiniMe 之後」 → 4.4 同一句 23:41 → 5.1 已讀 → 5.4 秒回 → 6.3 成交
+   *   → 7.0／7.15／7.3／7.45 四個答案由上到下翻綠 → 7.9「還好——」浮出。
+   * ⚠️ 底案＝演完的樣子；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到結局）。
+   * ⚠️ 答案翻綠是 transition 不是 animation：灰（痛）由「還沒開演」那條
+   *    `.lp-scene:not(.is-cued) + .lp-rows` 規則給，開演後規則消失、面板帶著 delay
+   *    回到底案的綠——同一個機制天生就是「演完定格、往回捲不重播」。
+   * ⚠️「還好——」要跨子樹同步（它在標題泡泡裡、戲在旁邊那欄），用 :has() 從共同祖先
+   *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，
+   *    fail-open 不會把老闆的原文弄丟。
+   * ⚠️ 用 translate 不用 transform（同視差那條：transform 會蓋掉 .lp-reveal 的進場位移）。 */
+  @keyframes lpSceneIn { from { opacity: 0; translate: 0 9px; } to { opacity: 1; translate: 0 0; } }
+  &.is-anim .lp-scene .lp-scene__msg,
+  &.is-anim .lp-scene .lp-scene__day,
+  &.is-anim .lp-scene .lp-scene__read { opacity: 0; }
+  &.is-anim .lp-scene.is-cued {
+    .lp-scene__msg, .lp-scene__day { animation: lpSceneIn .5s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__read { animation: lpSceneIn .3s ease-out both; }
+    .sc-1 { animation-delay: .35s; }
+    .sc-2 { animation-delay: 1.7s; }
+    .sc-3 { animation-delay: 2.4s; }
+    .sc-4 { animation-delay: 3.7s; }
+    .sc-5 { animation-delay: 4.4s; }
+    .sc-6 { animation-delay: 5.1s; }
+    .sc-7 { animation-delay: 5.4s; }
+    .sc-8 { animation-delay: 6.3s; }
   }
-  @keyframes lpFixStampMain {
-    0% { background-color: #f2f3f2; color: #a4aaa4; scale: 0.94; }
-    60% { background-color: rgba(255, 255, 255, 0.17); color: #fff; }
-    82% { scale: 1.03; }
-    100% { background-color: rgba(255, 255, 255, 0.17); color: #fff; scale: 1; }
+  /* ⛔ 翻綠的 7 秒 delay 一定要掛在 `.is-cued` 之後的狀態上，不能掛在預設狀態：
+     掛預設的話「進灰」也吃同一個 delay（而且 nth-child 那幾條權重 7 > 痛那條的 6，
+     `transition-delay: 0s` 壓不回來）＝頁面載入後面板要**等 7 秒才變灰**，
+     快速捲下來的人整場只看到綠、痛的那一拍直接消失（實測抓到的，不是理論）。 */
+  &.is-anim .lp-scene + .lp-rows .lp-row__fix {
+    transition: background-color .45s ease, color .45s ease, scale .5s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  @keyframes lpReliefIn { from { opacity: 0; } to { opacity: 1; } }
-  @supports (animation-timeline: view()) {
-    &.is-anim {
-      .lp-wall--main,
-      .lp-wall--main::before,
-      .lp-wall--main .lp-wall__sub,
-      .lp-wall__fix,
-      .lp-bubble__relief {
-        animation-timing-function: linear;
-        animation-fill-mode: both;
-      }
-      /* 第一卡整卡翻面（皮＋字＋副標＋面板）綁**同一條**具名時間軸、同一格 range */
-      .lp-wall--main { animation-name: lpWallInk; }
-      .lp-wall--main::before { animation-name: lpWallSkin; }
-      .lp-wall--main .lp-wall__sub { animation-name: lpWallSubInk; }
-      .lp-wall__fix { animation-name: lpFixStamp; }
-      .lp-wall--main .lp-wall__fix { animation-name: lpFixStampMain; }
-      .lp-wall--main,
-      .lp-wall--main::before,
-      .lp-wall--main .lp-wall__sub,
-      .lp-wall__fix { animation-timeline: --lpw; }
-      .lp-wall--main,
-      .lp-wall--main::before,
-      .lp-wall--main .lp-wall__sub,
-      .lp-wall--main .lp-wall__fix { animation-range: cover 28% cover 36%; }
-      .lp-wall:nth-child(2) .lp-wall__fix { animation-range: cover 34% cover 42%; }
-      .lp-wall:nth-child(3) .lp-wall__fix { animation-range: cover 40% cover 48%; }
-      .lp-wall:nth-child(4) .lp-wall__fix { animation-range: cover 44% cover 52%; }
-      /* 「還好——」那句：只動 opacity 不動版面。用自己的匿名 view()（它不在卡裡，
-         沒有要跟誰同步），走到畫面下三分之一～中央之間淡入＝痛點先讀到、這句才接上 */
-      .lp-bubble__relief { animation-name: lpReliefIn; animation-timeline: view(); animation-range: cover 30% cover 55%; }
-    }
+  &.is-anim .lp-scene.is-cued + .lp-rows .lp-row:nth-child(1) .lp-row__fix { transition-delay: 7s; }
+  &.is-anim .lp-scene.is-cued + .lp-rows .lp-row:nth-child(2) .lp-row__fix { transition-delay: 7.15s; }
+  &.is-anim .lp-scene.is-cued + .lp-rows .lp-row:nth-child(3) .lp-row__fix { transition-delay: 7.3s; }
+  &.is-anim .lp-scene.is-cued + .lp-rows .lp-row:nth-child(4) .lp-row__fix { transition-delay: 7.45s; }
+  &.is-anim .lp-scene:not(.is-cued) + .lp-rows .lp-row__fix {
+    background-color: #f2f3f2; color: #a4aaa4; scale: 0.96;
   }
+  &.is-anim .lp-wrap:has(.lp-scene) .lp-bubble__relief { transition: opacity .55s ease 7.9s; }
+  &.is-anim .lp-wrap:not(:has(.lp-scene.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
    * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
@@ -1893,12 +1878,11 @@
   }
   &.is-anim .lp-band__phone .lp-phone.is-menu-up .lp-pmenu { transform: none; opacity: 1; }
 
-  /* 四道牆錯開 70ms 進場。⚠️ 四張卡是同時進入畫面的，不錯開的話就是一整片突然出現
-     ——那是「一塊東西閃出來」，不是四張卡。70ms 是刻意小的：只要能看出左到右的順序，
-     再大就變成要等第四張。 */
-  &.is-anim .lp-walls .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
-  &.is-anim .lp-walls .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
-  &.is-anim .lp-walls .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
+  /* 四關清單錯開 70ms 進場（前身四道牆的同一條規矩）：不錯開就是一整片突然出現。
+     70ms 是刻意小的：看得出上到下的順序就好，再大就變成要等第四行。 */
+  &.is-anim .lp-rows .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
+  &.is-anim .lp-rows .lp-reveal.in:nth-child(3) { transition-delay: .14s; }
+  &.is-anim .lp-rows .lp-reveal.in:nth-child(4) { transition-delay: .21s; }
 
   /* 四張方案卡：同上，由便宜到貴依序出現（順序本身就是「越往右越大」的提示）。 */
   &.is-anim .lp-plans .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
@@ -1955,14 +1939,6 @@
     }
   }
 
-  /* 缺人的虛線人形：捲到才開始閃。⚠️ 無 JS 時（沒有 .is-anim）維持原本一直閃，
-     不然那格會變成完全靜止的虛線人。
-     ⚠️ 這是上面「別把動畫掛回祖先 .lp-reveal.in」那條規矩**刻意的例外**：它是無限循環
-        不是演一次的表演（早開演不會「錯過」），而且它住的那道牆自己就是 .lp-reveal、
-        高 295px＝祖先就是它的視覺單位。⛔別為了統一把它改掛 .lp-cue，那只是晚開始閃。 */
-  &.is-anim .lp-wall__blink { animation-play-state: paused; }
-  &.is-anim .lp-reveal.in .lp-wall__blink { animation-play-state: running; }
-
   /* 開通引導 live 卡的動態（八輪「做動態的」、九輪「show 出更多步驟」）：
      拍點與節奏由 JS 時間軸（index.vue 的 OB_BEATS／playObDemo）驅動——泡泡是演到那一拍
      才掛進 DOM 的，所以這裡只給「掛載瞬間冒出來」的動畫，不再用 nth-child 定拍
@@ -1976,8 +1952,6 @@
   &.is-anim .lp-liveob .agm-msg,
   &.is-anim .lp-liveob .agm-choices { animation: lpObIn 0.38s ease-out backwards; }
   @keyframes lpObIn { from { opacity: 0; transform: translateY(8px); } }
-
-  @keyframes lpBlinkSoft { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
   /* ── 泡泡的打字效果 ────────────────────────────────────────
    * 每一區的標題都是 MiniMe 講的一句話，所以它應該是**打出來**的：
@@ -2066,9 +2040,10 @@
     .lp-path__demo > .lp-path__meta { margin: 0 0 10px; }
   }
   @media (max-width: 960px) {
-    /* 四道牆收成 2×2；主牆仍佔一整列，它是前提不是選項之一 */
-    .lp-walls { grid-template-columns: 1fr 1fr; }
-    .lp-wall--main { grid-column: 1 / -1; }
+    /* 對話舞台＋四關收成單欄（上戲下清單）；舞台限寬置中＝維持手機聊天窗的比例，
+       太寬的 LINE 視窗一眼就假 */
+    .lp-why { grid-template-columns: 1fr; gap: 26px; }
+    .lp-scene { max-width: 460px; margin: 0 auto; width: 100%; }
     /* 方案卡收成 2×2（不是直接單欄）：四張卡是拿來互相比較的，兩兩並排還能比，
        一欄疊四張就得靠記憶力。 */
     .lp-plans { grid-template-columns: 1fr 1fr; }
@@ -2127,8 +2102,9 @@
     &.is-menu-open .lp-nav__burger span::after { top: 0; transform: rotate(-45deg); }
     .lp-nav__right { gap: 10px; }
 
-    .lp-walls { grid-template-columns: 1fr; }
-    .lp-wall__scene { height: 70px; }
+    /* 四關的答案面板在 390px 跟標題擠同一行會把文字壓扁：改上下疊、面板靠左自成一行 */
+    .lp-row { flex-direction: column; align-items: flex-start; gap: 10px; padding: 15px 16px; }
+    .lp-row__fix { align-self: stretch; white-space: normal; text-align: center; }
 
     /* 手機：方案卡才收成單欄（2×2 在 390px 每張只剩 165px，「每月 AI 回覆 1,300 則」
        會折成三行）。推薦框的緞帶跟著左邊界走，不用另外調。 */
@@ -2207,15 +2183,18 @@
     &.is-anim .lp-pane::before,
     &.is-anim .lp-pane__win,
     &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; scale: none; }
-    /* 四關的捲動蓋章整組關掉＝直接是解掉的狀態（底案就是它；color／背景／皮的 opacity
-       關掉動畫就回底案，scale 照上面那條的教訓顯式歸零） */
-    &.is-anim .lp-wall--main,
-    &.is-anim .lp-wall--main::before,
-    &.is-anim .lp-wall--main .lp-wall__sub,
-    &.is-anim .lp-wall__fix,
-    &.is-anim .lp-bubble__relief { animation-name: none; scale: none; }
+    /* 四關的對話舞台整組關掉＝直接是演完的完整狀態（整段對話、綠答案、「還好」都在）。
+       ⚠️ 「藏」的規則都掛在 .is-anim 底下，理論上關掉動畫就回底案，但照視差那條的教訓
+       一樣顯式還原，並把「還沒開演＝灰」那條藏的規則也壓回去（同權重、宣告序在後）。 */
+    &.is-anim .lp-scene .lp-scene__msg,
+    &.is-anim .lp-scene .lp-scene__day,
+    &.is-anim .lp-scene .lp-scene__read { opacity: 1; animation: none; }
+    &.is-anim .lp-scene:not(.is-cued) + .lp-rows .lp-row__fix {
+      background-color: var(--g-wash-2); color: var(--g-text); scale: none; transition: none;
+    }
+    &.is-anim .lp-wrap:not(:has(.lp-scene.is-cued)) .lp-bubble__relief { opacity: 1; transition: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
-    &.is-anim .lp-walls .lp-reveal.in,
+    &.is-anim .lp-rows .lp-reveal.in,
     &.is-anim .lp-plans .lp-reveal.in,
     &.is-anim .lp-faq .lp-reveal.in,
     &.is-anim .lp-voices .lp-reveal.in { transition-delay: 0s; }
@@ -2256,9 +2235,8 @@
       .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
       .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }
     }
-    .lp-wall__blink { animation: none; }
     .lp-stickybar { transition: none; }
-    .lp-btn:hover, .lp-wall:hover, .lp-panel:hover { transform: none; }
+    .lp-btn:hover, .lp-panel:hover { transform: none; }
     .lp-voice:hover .lp-voice__bubble { transform: none; }
 
     /* 打字：整句直接出現（選擇器要跟上面那三條同權重，才壓得回去） */

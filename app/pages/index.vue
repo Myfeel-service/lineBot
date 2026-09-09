@@ -187,121 +187,113 @@
       <a class="lp-scrollcue" href="#why"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
     </header>
 
-    <!-- ── 為什麼卡住：四道牆（問題＋解法同一張卡）─────────────
-         四個原因不是平等的：第一道（沒人手）是前提，另外三個是它的後果，
-         所以第一張卡佔 1.45 倍寬並吃綠底。情境小圖（.lp-wall__scene）畫的是
-         「什麼時候痛」的具體瞬間（深夜來訊沒人在、交辦滾成一長串、設定路徑打結、價標），
-         不含任何**成效數字**宣稱（23:41 這種情境時間不算），不用掛示意圖說。
-         ⚠️ 09-09 起這一區有「先痛、後解」的捲動蓋章（樣式在 _landing.scss「四關的捲動蓋章」）：
-            剛捲到＝四張卡都是痛的樣子（第一卡紙底墨字、答案面板灰的），往下捲答案由左到右
-            一張張翻綠、第一卡整卡翻成綠底＝**翻完的最終狀態就是 08-26 拍板的這個設計**，
-            捲動只是把「解掉的過程」演出來。不支援／減少動態／沒 JS 一律直接看到最終狀態。
-         ⚠️ 每張牆卡底部帶自己的答案（淡底面板）——原本「四道牆」與「四關一次解掉」是
-            兩個整屏區塊，解法列還把問題重抄一遍才講解法；併卡之後問題與答案對得上、
-            省一整屏（08-26 版面重排①）。⛔ 解法別再拆回獨立區塊。
-         ⛔ 答案一律**一句話、一行**（08-27 老闆拍板）：窄卡裡答案的可用寬度量出來只有
-            113px ≈ 一行 7 個字，寫成「一句＋一句補充」四張全部折行、四塊高低不齊。
-            四句要保持對仗（都是 7–8 字的動作句），補充說明留給下面的區塊講。 -->
+    <!-- ── 為什麼卡住：左邊演「一筆生意怎麼溜走」、右邊列四關（09-09 使用者拍板方向一）──
+         前身＝四張痛點卡（08-26 併卡版，第一卡 1.45 倍寬吃綠底；09-09 上午加過捲動蓋章＋
+         icon 重畫＝commit b7d4c27）。使用者看過後拍板整區換掉：「是痛點但看起來不太痛」的
+         病根是抽象小圖怎麼修都是示意——痛要有感，只能演給他看。要復活卡片版從 b7d4c27 抄。
+         左＝客人視角的 LINE 對話（沿用 08-31 拍板的「像真的 LINE」語彙，同窄帶那支手機）：
+           23:41 問肉桂捲 → 一夜沒人回 → 隔天 11:06「我在別家買了」＝第一關的痛演出來；
+           「有 MiniMe 之後」同一句 23:41 被秒回 → 客人成交。
+         右＝四關一行一行（標題＋副標＋答案；文案沿用卡片版一字不動，
+           ⛔ 答案仍守 08-27 拍板的「一句話、一行」）。
+         ⚠️ 整場戲**全自動**（09-09 使用者拍板「不要讓客人按，客人不一定會去按」）：
+            捲到 76% 線就演、演完定格、往回捲不重播；沒有任何內容藏在點擊或 hover 後面。
+            戲演完右邊答案才由上到下翻綠、「還好——」同時浮出。
+         ⚠️ 底案＝演完的完整狀態：減少動態／沒 JS 直接看到整段對話＋綠答案。
+         ⚠️ 對話是虛構情境 → 窗底掛常駐「示意情境，以咖啡店為例」（同 hero 的誠實機制）；
+            內容零成效數字宣稱（23:41／11:06 是情境時間）。 -->
     <section id="why" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
             <!-- 09-06 老闆給的改寫原文照用（原「這件事，老闆一直卡在這四關」被回饋難懂）。
-                 ⚠️ 09-09「還好——」這句掛 .lp-bubble__relief＝捲到眼前才淡入（捲動蓋章的一部分，
-                    見 _landing.scss「四關的捲動蓋章」）：不然痛點還沒讀到就先被這句爆雷「都有解」。
-                    ⛔ 字一個都不能動（老闆原文），動的只有出現時機；不支援捲動時間軸／減少動態／
-                    沒 JS 的人從第一眼就看得到它（底案 opacity 1）。 -->
+                 ⚠️ 09-09「還好——」這句掛 .lp-bubble__relief＝左邊那場戲**演完**才淡入（樣式在
+                    _landing.scss「四關的對話舞台」）：不然痛還沒演完就先被這句爆雷「都有解」。
+                    ⛔ 字一個都不能動（老闆原文），動的只有出現時機；減少動態／沒 JS／
+                    不支援 :has() 的瀏覽器從第一眼就看得到它（藏它的規則失效＝顯示，fail-open）。 -->
             <h2>你知道 LINE 會員經營、客服溝通<br>有多重要，但你總是<span class="mark">卡在這四關</span>。</h2>
             <p class="lp-bubble__relief">還好，每一關都有 {{ brandName }} 能接住的解法——</p>
           </div>
         </div>
 
-        <div class="lp-walls">
-          <div class="lp-wall lp-wall--main lp-reveal">
-            <!-- 09-09 icon 重畫（使用者「icon 有點不明所以」）：原本三個人形＋一個缺席的，
-                 讀不出「什麼時候痛」。改成**具體的瞬間**——客人深夜來訊、卻沒有人在：
-                 一顆客人的訊息泡泡（「請問還有貨嗎？」＋23:41）＋那個缺席的虛線人形（保留
-                 .lp-wall__blink 的緩慢閃爍）。⚠️ 23:41 是**情境**不是數字宣稱（08-26 房規管的是
-                 成效類數字）。⚠️ 整張改用 currentColor：跟著捲動蓋章的字色動畫一起翻——
-                 痛的時候（紙底）是墨色線稿，翻綠後跟原本一樣是白線，⛔別改回寫死的白色。 -->
-            <div class="lp-wall__scene" aria-hidden="true">
-              <svg viewBox="0 0 200 84">
-                <path d="M16 8h100a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H26l-16 11 4-12.5A10 10 0 0 1 6 32V18A10 10 0 0 1 16 8z" fill="currentColor" opacity=".13" />
-                <path d="M16 8h100a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H26l-16 11 4-12.5A10 10 0 0 1 6 32V18A10 10 0 0 1 16 8z" fill="none" stroke="currentColor" stroke-opacity=".38" stroke-width="1.4" />
-                <text x="18" y="29.5" font-size="12.5" fill="currentColor" opacity=".88">請問還有貨嗎？</text>
-                <text x="132" y="41" font-size="9" fill="currentColor" opacity=".55">23:41</text>
-                <g class="lp-wall__blink">
-                  <circle cx="170" cy="26" r="11" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.6" stroke-dasharray="3 3" />
-                  <path d="M154 58c0-11 7-17 16-17s16 6 16 17" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.6" stroke-dasharray="3 3" />
-                  <text x="170" y="76" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">？</text>
-                </g>
-              </svg>
+        <div class="lp-why">
+          <!-- 左：示意對話。lp-cue 捲到眼前（76% 線）演一次，時間差全寫在 CSS
+               （sc-1～sc-8 的 animation-delay），零 JS 改動、零互動。
+               ⛔ 別加任何要按的東西（重播鍵也不要）：09-09 拍板「客人不一定會去按」。
+               ⛔ is-cued 由 IO 加在這個元素上，別再用 Vue 的 :class 綁同一個元素（G-57 的雷）。
+               aria-hidden：這場演出是裝飾，四關的實質內容在右邊清單（讀屏的人讀那邊）。 -->
+          <div class="lp-scene lp-reveal lp-cue" aria-hidden="true">
+            <div class="lp-scene__frame">
+              <!-- LINE 一對一聊天（客人視角）：客人自己的訊息＝右側綠泡泡、店家回覆＝左側
+                   白泡泡＋頭像、時間貼泡泡下緣外側、⛔一對一不顯示對方店名在訊息旁——
+                   跟窄帶那支手機同一套「像真的 LINE」規矩（08-31 拍板）。
+                   店名「◯◯咖啡」＝明白的占位符，不發明一個像真的品牌。 -->
+              <div class="lp-scene__hd">
+                <svg class="lp-scene__back" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
+                <span class="lp-scene__ava" />
+                <span class="lp-scene__name">◯◯咖啡</span>
+              </div>
+              <div class="lp-scene__bd">
+                <div class="lp-scene__msg lp-scene__msg--me sc-1">
+                  <span class="lp-scene__meta">23:41</span>
+                  <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
+                </div>
+                <div class="lp-scene__day sc-2">隔天</div>
+                <div class="lp-scene__msg lp-scene__msg--me sc-3">
+                  <span class="lp-scene__meta">11:06</span>
+                  <span class="lp-scene__bub">不用了，我在別家買了</span>
+                </div>
+                <div class="lp-scene__day lp-scene__day--on sc-4">有 {{ brandName }} 之後</div>
+                <div class="lp-scene__msg lp-scene__msg--me sc-5">
+                  <span class="lp-scene__meta"><i class="lp-scene__read sc-6">已讀</i>23:41</span>
+                  <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
+                </div>
+                <div class="lp-scene__msg sc-7">
+                  <span class="lp-scene__ava" />
+                  <span class="lp-scene__bub">有的，明天早上出爐！要幫您保留嗎？</span>
+                  <span class="lp-scene__meta"><i class="lp-scene__tag">{{ brandName }} 自動回覆</i>23:41</span>
+                </div>
+                <div class="lp-scene__msg lp-scene__msg--me sc-8">
+                  <span class="lp-scene__meta">23:42</span>
+                  <span class="lp-scene__bub">好，幫我留兩個！</span>
+                </div>
+              </div>
             </div>
-            <h3>沒有人可以做</h3>
-            <p class="lp-wall__sub">員工就是這麼多，每個人手上都滿了。</p>
-            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>它 24 小時都在</p>
+            <p class="lp-scene__cap">示意情境，以咖啡店為例</p>
           </div>
 
-          <div class="lp-wall lp-reveal">
-            <!-- 09-09 icon 重畫：原本兩顆泡泡＋虛線箭頭讀不出「多一次溝通」。改成
-                 「一句交辦滾出一長串來回」——右邊綠的是你、左邊灰的是員工，一來一往
-                 越滾越長、最後一則還在打字（三個點）＝事情還沒完。長度本身就是訊息。 -->
-            <div class="lp-wall__scene" aria-hidden="true">
-              <svg viewBox="0 0 160 84">
-                <rect x="96" y="4" width="58" height="15" rx="7.5" fill="#e9fbf0" />
-                <rect x="106" y="9.5" width="38" height="4.5" rx="2.25" fill="#9fd9b4" />
-                <rect x="6" y="25" width="66" height="15" rx="7.5" fill="#edf1eb" />
-                <rect x="16" y="30.5" width="46" height="4.5" rx="2.25" fill="#c6cec6" />
-                <rect x="76" y="46" width="78" height="15" rx="7.5" fill="#e9fbf0" />
-                <rect x="86" y="51.5" width="58" height="4.5" rx="2.25" fill="#9fd9b4" />
-                <rect x="6" y="67" width="90" height="15" rx="7.5" fill="#edf1eb" />
-                <g fill="#aab3aa">
-                  <circle cx="42" cy="74.5" r="2.2" /><circle cx="51" cy="74.5" r="2.2" /><circle cx="60" cy="74.5" r="2.2" />
-                </g>
-              </svg>
+          <!-- 右：四關。文案沿用卡片版一字不動；答案（.lp-row__fix）戲演完才由上到下翻綠。 -->
+          <div class="lp-rows">
+            <div class="lp-row lp-reveal">
+              <div class="lp-row__txt">
+                <h3>沒有人可以做</h3>
+                <p>員工就是這麼多，每個人手上都滿了。</p>
+              </div>
+              <p class="lp-row__fix"><span aria-hidden="true">✓</span>它 24 小時都在</p>
             </div>
-            <h3>派了員工，還要照顧他的情緒</h3>
-            <p class="lp-wall__sub">多一件事，就是多一次溝通。</p>
-            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>交辦只要一句話</p>
-          </div>
 
-          <div class="lp-wall lp-reveal">
-            <!-- 09-09 icon 重畫：原本畫的是一個**很整齊**的後台 wireframe——跟「太複雜」
-                 講的正好相反。改成「從起點出發的一條設定路徑，走著走著打結」：
-                 實線自己繞圈交叉、設定碎片東倒西歪，複雜要看起來亂才是對的。 -->
-            <div class="lp-wall__scene" aria-hidden="true">
-              <svg viewBox="0 0 160 84">
-                <circle cx="12" cy="16" r="5" fill="#c6cec6" />
-                <path d="M17 16 C 66 10, 24 66, 80 58 C 128 51, 102 14, 62 28 C 38 37, 84 76, 126 64 S 148 40, 138 30" fill="none" stroke="#c6cec6" stroke-width="1.6" />
-                <g fill="#f5f8f4" stroke="#cbd3cb" stroke-width="1.2">
-                  <rect x="44" y="6" width="36" height="17" rx="4" transform="rotate(-7 62 14.5)" />
-                  <rect x="112" y="10" width="36" height="17" rx="4" transform="rotate(5 130 18.5)" />
-                  <rect x="14" y="58" width="36" height="17" rx="4" transform="rotate(4 32 66.5)" />
-                </g>
-                <g transform="rotate(-7 62 14.5)"><circle cx="53" cy="14.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="61" y="12.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
-                <g transform="rotate(5 130 18.5)"><circle cx="121" cy="18.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="129" y="16.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
-                <g transform="rotate(4 32 66.5)"><circle cx="23" cy="66.5" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.2" /><rect x="31" y="64.5" width="14" height="4" rx="2" fill="#d6ddd5" /></g>
-              </svg>
+            <div class="lp-row lp-reveal">
+              <div class="lp-row__txt">
+                <h3>派了員工，還要照顧他的情緒</h3>
+                <p>多一件事，就是多一次溝通。</p>
+              </div>
+              <p class="lp-row__fix"><span aria-hidden="true">✓</span>交辦只要一句話</p>
             </div>
-            <h3>自己動手，後台太複雜</h3>
-            <p class="lp-wall__sub">打開來一堆設定，不知道從哪開始。</p>
-            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
-          </div>
-
-          <div class="lp-wall lp-reveal">
-            <div class="lp-wall__scene" aria-hidden="true">
-              <svg viewBox="0 0 160 84">
-                <g transform="translate(2,22)">
-                  <path d="M34 2h36a8 8 0 0 1 8 8v18a8 8 0 0 1-8 8H34L4 20z" fill="#f1f4f0" stroke="#d6ddd5" stroke-width="1.5" />
-                  <circle cx="60" cy="19" r="4" fill="#fff" stroke="#c6cec6" stroke-width="1.4" />
-                  <text x="88" y="26" font-size="17" font-weight="700" fill="#96a499">$3,000+</text>
-                </g>
-              </svg>
+            <div class="lp-row lp-reveal">
+              <div class="lp-row__txt">
+                <h3>自己動手，後台太複雜</h3>
+                <p>打開來一堆設定，不知道從哪開始。</p>
+              </div>
+              <p class="lp-row__fix"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
             </div>
-            <h3>找其他工具，好貴</h3>
-            <p class="lp-wall__sub">一個月好幾千，還得有人學、有人顧。</p>
-            <p class="lp-wall__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
+            <div class="lp-row lp-reveal">
+              <div class="lp-row__txt">
+                <h3>找其他工具，好貴</h3>
+                <p>一個月好幾千，還得有人學、有人顧。</p>
+              </div>
+              <p class="lp-row__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
+            </div>
           </div>
         </div>
       </div>
@@ -859,9 +851,9 @@
          聽別人怎麼說 → 再看開始有多簡單）。掛灰底接上白灰交錯（value 白 → 這裡灰 →
          fast 白）；⚠️ 它上移後，fast/pricing/grow/faq 四區的灰白整組翻面（見檔頭順序表）。
          呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停。
-         全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態——所以它跟
-         .lp-wall__blink 同一類（無限循環、早開演不會錯過），不掛 .lp-cue、
-         沒有 JS 也照飄（純 CSS）。機關與房規見 _landing.scss 的證言牆那段。
+         全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態——無限循環、
+         早開演也不會錯過，所以不掛 .lp-cue、沒有 JS 也照飄（純 CSS）。
+         機關與房規見 _landing.scss 的證言牆那段。
          ⚠️ 每列的卡組用 v-for 渲染 **3 份**＝無縫循環的機關（位移一份的寬度後畫面
             跟起點一模一樣），第 2、3 份掛 aria-hidden——讀屏只該聽到一遍。
          ⛔ 內容紅線（STATUS D-13 前科，08-14 老闆拍板「補社會證明→不做」因為沒有真素材）：
