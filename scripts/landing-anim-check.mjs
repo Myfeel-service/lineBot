@@ -36,7 +36,7 @@ const MIN_VISIBLE_PCT = 35 // 有時間軸的動畫開演時，元素至少要�
  * 還高（手機上的聊天窗 800px+），套 35% 只會逼人把動畫改成「捲過頭才開演」。
  * 這幾個改判「開演時**上緣**要在畫面內」＝第一個小孩看得到就算數。
  */
-const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users', 'lp-scene'])
+const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users', 'lp-vs'])
 
 const fails = []
 const ok = msg => console.log('  ✅ ' + msg)
@@ -483,82 +483,78 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await page.close()
 }
 
-// ── ②½ 四關的對話舞台：先痛、後解，捲到就演一次（2026-09-09 方向一）─────
-// ⛔ 底案＝演完的樣子，所以一定要用**新的分頁**在「還沒開演」時抓到痛的狀態——
+// ── ②½ 四關的對照舞台：先痛、後解，捲到就演一次（2026-09-09 第三版）─────
+// ⛔ 底案＝演完的完整對照，所以一定要用**新的分頁**在「還沒開演」時抓到藏起來的狀態——
 //    part ① 已經把整頁捲過一輪，那個分頁裡戲早就演完了，量到的永遠是結局。
 {
   const page = await browser.newPage()
   await page.setViewport({ width: VW, height: VH })
   await page.goto(URL, { waitUntil: 'networkidle0', timeout: 120000 })
   await wait(2000)
-  console.log('\n②½ 四關的對話舞台')
-  const WASH = 'rgb(242, 251, 246)' // 答案翻綠後的底色（--g-wash-2）
-  const PAIN = 'rgb(242, 243, 242)' // 開演前的灰
-  // 停在戲只露出一小條、還沒過 76% 觸發線的位置：這裡必須是「痛」
+  console.log('\n②½ 四關的對照舞台')
+  const op = sel => page.evaluate(s => Number(getComputedStyle(document.querySelector(s)).opacity), sel)
+  // 停在舞台只露出一小條、還沒過 76% 觸發線的位置：這裡必須什麼都還沒演
   const before = await page.evaluate(async () => {
-    const sc = document.querySelector('#why .lp-scene')
-    const top = sc.getBoundingClientRect().top + window.scrollY
+    const vs = document.querySelector('#why .lp-vs')
+    const top = vs.getBoundingClientRect().top + window.scrollY
     window.scrollTo({ top: Math.max(0, top - window.innerHeight + 40), behavior: 'instant' })
     await new Promise(r => setTimeout(r, 250))
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return {
-      cued: sc.classList.contains('is-cued'),
-      m1: Number(getComputedStyle(sc.querySelector('.sc-1')).opacity),
-      fix: getComputedStyle(document.querySelector('#why .lp-rows .lp-row:nth-child(1) .lp-row__fix')).backgroundColor,
-      relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
+      cued: vs.classList.contains('is-cued'),
+      m1: o('#why .vb-1'),
+      x1: o('#why .lp-vs__list .lp-vs__item:nth-child(1)'),
+      stamp: o('#why .lp-vs__stamp'),
+      sideO: o('#why .lp-vs__side--o'),
+      relief: o('#why .lp-bubble__relief'),
     }
   })
-  !before.cued && before.m1 < 0.05 && before.fix === PAIN && before.relief < 0.05
-    ? ok(`開演前是痛的狀態（訊息藏著、答案灰、「還好」還沒出現）`)
-    : bad(`開演前就穿幫：cued=${before.cued} 第一句 ${before.m1} 答案 ${before.fix} 還好 ${before.relief}`)
+  !before.cued && before.m1 < 0.05 && before.x1 < 0.05 && before.stamp < 0.05 && before.sideO < 0.05 && before.relief < 0.05
+    ? ok('開演前整場藏著（訊息、✕、紅章、右半、「還好」都還沒出現）')
+    : bad(`開演前就穿幫：cued=${before.cued} 第一句 ${before.m1} ✕ ${before.x1} 紅章 ${before.stamp} 右半 ${before.sideO} 還好 ${before.relief}`)
   // 捲到眼前（過 76% 線）→ 自動開演。⛔ 之後**不再捲動**＝驗「觸發後自己播完」，
   // 不是跟著滾輪走（09-09 拍板「不要用滑鼠控制」）。
   await page.evaluate(() => {
-    const sc = document.querySelector('#why .lp-scene')
-    window.scrollTo({ top: sc.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
+    const vs = document.querySelector('#why .lp-vs')
+    window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
   })
-  await wait(1100) // sc-1 在 0.35s、sc-3 在 2.4s、sc-7 在 5.4s
-  const early = await page.evaluate(() => ({
-    m1: Number(getComputedStyle(document.querySelector('#why .sc-1')).opacity),
-    m3: Number(getComputedStyle(document.querySelector('#why .sc-3')).opacity),
-    m7: Number(getComputedStyle(document.querySelector('#why .sc-7')).opacity),
-  }))
-  early.m1 > 0.9 && early.m3 < 0.05 && early.m7 < 0.05
-    ? ok('開演照順序：23:41 那句先到、後面的還沒（1.1s 取樣）')
-    : bad(`開演順序不對（1.1s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、回覆 ${early.m7}`)
-  await wait(2200) // 累計 3.3s：「買別家」(2.4s) 到了、回覆 (5.4s) 還沒＝痛先於解
-  const mid = await page.evaluate(() => ({
-    m3: Number(getComputedStyle(document.querySelector('#why .sc-3')).opacity),
-    m7: Number(getComputedStyle(document.querySelector('#why .sc-7')).opacity),
-    fix: getComputedStyle(document.querySelector('#why .lp-rows .lp-row:nth-child(1) .lp-row__fix')).backgroundColor,
-  }))
-  mid.m3 > 0.9 && mid.m7 < 0.05 && mid.fix === PAIN
-    ? ok('痛先演完才輪到解：「買別家」已到、回覆還沒、答案還是灰的（3.3s 取樣）')
-    : bad(`痛與解的順序不對（3.3s）：買別家 ${mid.m3}、回覆 ${mid.m7}、答案 ${mid.fix}`)
-  await wait(5500) // 累計 8.8s：全演完（最後一拍「還好」在 7.9s）
-  const fin = await page.evaluate(() => ({
-    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day')]
-      .every(el => Number(getComputedStyle(el).opacity) > 0.95),
-    fixes: [...document.querySelectorAll('#why .lp-row__fix')].map(el => getComputedStyle(el).backgroundColor),
-    relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
-  }))
-  fin.all && fin.fixes.length === 4 && fin.fixes.every(b => b === WASH) && fin.relief > 0.9
-    ? ok('演完定格：整段對話都在、四個答案全翻綠、「還好——」浮出')
-    : bad(`演完狀態不對：對話全到=${fin.all} 答案=${fin.fixes.join('/')} 還好=${fin.relief}`)
+  await wait(1100) // vb-1 在 0.3s、vb-3（買別家）在 2.1s、右半在 4.2s
+  const early = { m1: await op('#why .vb-1'), m3: await op('#why .vb-3'), sideO: await op('#why .lp-vs__side--o') }
+  early.m1 > 0.9 && early.m3 < 0.05 && early.sideO < 0.05
+    ? ok('開演照順序：23:41 那句先到、「買別家」與右半都還沒（1.1s 取樣）')
+    : bad(`開演順序不對（1.1s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、右半 ${early.sideO}`)
+  await wait(2700) // 累計 3.8s：痛演完（買別家 2.1s＋紅章 2.9s＋✕ 3.1~3.55s），右半 4.2s 還沒亮
+  const mid = await page.evaluate(() => {
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    return { m3: o('#why .vb-3'), stamp: o('#why .lp-vs__stamp'), x1: o('#why .lp-vs__list .lp-vs__item:nth-child(1)'), sideO: o('#why .lp-vs__side--o') }
+  })
+  mid.m3 > 0.9 && mid.stamp > 0.9 && mid.x1 > 0.9 && mid.sideO < 0.05
+    ? ok('痛先演完才輪到解：「買別家」＋紅章＋✕ 都到了、右半還沒亮（3.8s 取樣）')
+    : bad(`痛與解的順序不對（3.8s）：買別家 ${mid.m3}、紅章 ${mid.stamp}、✕ ${mid.x1}、右半 ${mid.sideO}`)
+  await wait(4800) // 累計 8.6s：全演完（最後一拍「還好」在 7.6s＋0.55s 過場）
+  const fin = await page.evaluate(() => {
+    const o = el => Number(getComputedStyle(el).opacity)
+    return {
+      all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item, #why .lp-vs__stamp')].every(el => o(el) > 0.95),
+      ans: [...document.querySelectorAll('#why .lp-vs__ans')].map(el => o(el)),
+      relief: o(document.querySelector('#why .lp-bubble__relief')),
+    }
+  })
+  fin.all && fin.ans.length === 4 && fin.ans.every(v => v > 0.95) && fin.relief > 0.9
+    ? ok('演完定格：完整對照都在（兩窗、✕✓、紅章）、「還好——」浮出')
+    : bad(`演完狀態不對：全到=${fin.all} ✓=${fin.ans.join('/')} 還好=${fin.relief}`)
   // 演完就定格：捲走再回來不重播、不倒退（is-cued 是一次性的 class）
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await wait(300)
   await page.evaluate(() => {
-    const sc = document.querySelector('#why .lp-scene')
-    window.scrollTo({ top: sc.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
+    const vs = document.querySelector('#why .lp-vs')
+    window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
   })
   await wait(300)
-  const again = await page.evaluate(() => ({
-    m1: Number(getComputedStyle(document.querySelector('#why .sc-1')).opacity),
-    fix: getComputedStyle(document.querySelector('#why .lp-rows .lp-row:nth-child(4) .lp-row__fix')).backgroundColor,
-  }))
-  again.m1 > 0.95 && again.fix === WASH
+  const again = { m1: await op('#why .vb-1'), a4: await op('#why .lp-vs__list--o .lp-vs__ans:nth-child(4)') }
+  again.m1 > 0.95 && again.a4 > 0.95
     ? ok('捲走再回來：定格在演完的樣子（不重播、不倒退）')
-    : bad(`捲走再回來卻變回痛的樣子：第一句 ${again.m1}、第四答案 ${again.fix}`)
+    : bad(`捲走再回來卻倒退：第一句 ${again.m1}、第四個 ✓ ${again.a4}`)
   await page.close()
 }
 
@@ -594,18 +590,17 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   const hasAnim = await page.evaluate(() => document.querySelector('.is-anim') !== null)
   hidden.length ? bad('這些被藏起來了：\n     ' + hidden.join('\n     ')) : ok('沒有任何區塊是藏起來的')
   ok(hasAnim ? '.is-anim 在場，CSS 保險有把東西還原' : '沒掛 .is-anim（JS 早退，符合設計）')
-  // 09-09 四關的對話舞台：減少動態＝直接是「演完的完整狀態」（整段對話都在、答案綠、
-  // 「還好——」看得到）。⛔ 這裡驗的是 CSS 保險——「藏」只准發生在 .is-anim 底下開演前，
-  // 誰把痛的狀態搬進底案，勾了減少動態的人就會永遠停在「沒人來解」的畫面。
+  // 09-09 四關的對照舞台：減少動態＝直接是「演完的完整對照」（兩窗、✕✓、紅章、
+  // 「還好——」全都在）。⛔ 這裡驗的是 CSS 保險——「藏」只准發生在 .is-anim 底下開演前，
+  // 誰把藏的狀態搬進底案，勾了減少動態的人就會永遠停在「沒人來解」的畫面。
   const stage = await page.evaluate(() => ({
-    msgs: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day')]
+    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item, #why .lp-vs__ans, #why .lp-vs__stamp, #why .lp-vs__side--o')]
       .every(el => Number(getComputedStyle(el).opacity) > 0.99),
     relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
-    bg: getComputedStyle(document.querySelector('#why .lp-rows .lp-row:nth-child(2) .lp-row__fix')).backgroundColor,
   }))
-  ;(stage.msgs && stage.relief > 0.99 && stage.bg === 'rgb(242, 251, 246)')
-    ? ok('四關直接是演完的完整狀態（整段對話都在、答案綠、「還好」看得到）')
-    : bad(`四關在減少動態下不完整：對話全到=${stage.msgs}、還好 ${stage.relief}、答案 ${stage.bg}`)
+  ;(stage.all && stage.relief > 0.99)
+    ? ok('四關直接是演完的完整對照（兩窗、✕✓、紅章、「還好」都在）')
+    : bad(`四關在減少動態下不完整：全到=${stage.all}、還好 ${stage.relief}`)
   // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
   const voices = await page.evaluate(() => ({
     animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
@@ -639,15 +634,14 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))
   hidden.length ? bad('沒 JS 卻藏著：\n     ' + hidden.join('\n     ')) : ok('全部看得到（.is-anim 沒掛上＝預設就是最終狀態）')
-  // 09-09 四關的對話舞台綁在 .is-anim 底下：沒 JS＝沒有 .is-anim＝直接是演完的完整狀態
+  // 09-09 四關的對照舞台綁在 .is-anim 底下：沒 JS＝沒有 .is-anim＝直接是演完的完整對照
   const stageNoJs = await page.evaluate(() => ({
-    msgs: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day')]
+    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-vs__item, #why .lp-vs__ans, #why .lp-vs__stamp, #why .lp-vs__side--o')]
       .every(el => Number(getComputedStyle(el).opacity) > 0.99),
-    bg: getComputedStyle(document.querySelector('#why .lp-rows .lp-row:nth-child(2) .lp-row__fix')).backgroundColor,
   }))
-  ;(stageNoJs.msgs && stageNoJs.bg === 'rgb(242, 251, 246)')
-    ? ok('四關沒 JS 也直接是演完的完整狀態（整段對話都在、答案綠）')
-    : bad(`四關沒 JS 卻不完整：對話全到=${stageNoJs.msgs}、答案 ${stageNoJs.bg}`)
+  stageNoJs.all
+    ? ok('四關沒 JS 也直接是演完的完整對照（兩窗、✕✓、紅章都在）')
+    : bad(`四關沒 JS 卻不完整：全到=${stageNoJs.all}`)
   // 09-08：選單的收起／展開改成吃 SSR 就要印對的 class（`is-menu-up`）。沒 JS 時如果那個
   // class 沒印出來，看到的是**一支沒有選單的手機**——這塊在賣的就是選單，等於整塊失去意義。
   // ⛔ 只量 opacity 抓不到這件事（選單是被位移出去的，opacity 還是 1），所以這裡量 transform。

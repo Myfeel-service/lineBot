@@ -187,29 +187,28 @@
       <a class="lp-scrollcue" href="#why"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
     </header>
 
-    <!-- ── 為什麼卡住：左邊演「一筆生意怎麼溜走」、右邊列四關（09-09 使用者拍板方向一）──
-         前身＝四張痛點卡（08-26 併卡版，第一卡 1.45 倍寬吃綠底；09-09 上午加過捲動蓋章＋
-         icon 重畫＝commit b7d4c27）。使用者看過後拍板整區換掉：「是痛點但看起來不太痛」的
-         病根是抽象小圖怎麼修都是示意——痛要有感，只能演給他看。要復活卡片版從 b7d4c27 抄。
-         左＝客人視角的 LINE 對話（沿用 08-31 拍板的「像真的 LINE」語彙，同窄帶那支手機）：
-           23:41 問肉桂捲 → 一夜沒人回 → 隔天 11:06「我在別家買了」＝第一關的痛演出來；
-           「有 MiniMe 之後」同一句 23:41 被秒回 → 客人成交。
-         右＝四關一行一行（標題＋副標＋答案；文案沿用卡片版一字不動，
-           ⛔ 答案仍守 08-27 拍板的「一句話、一行」）。
-         ⚠️ 整場戲**全自動**（09-09 使用者拍板「不要讓客人按，客人不一定會去按」）：
-            捲到 76% 線就演、演完定格、往回捲不重播；沒有任何內容藏在點擊或 hover 後面。
-            戲演完右邊答案才由上到下翻綠、「還好——」同時浮出。
-         ⚠️ 底案＝演完的完整狀態：減少動態／沒 JS 直接看到整段對話＋綠答案。
-         ⚠️ 對話是虛構情境 → 窗底掛常駐「示意情境，以咖啡店為例」（同 hero 的誠實機制）；
-            內容零成效數字宣稱（23:41／11:06 是情境時間）。 -->
+    <!-- ── 為什麼卡住：「沒有的那夜 vs 有的同一晚」對照舞台（09-09 第三版，使用者拍板）──
+         演進：四張痛點卡（b7d4c27）→ 單窗對話舞台（8bddd92，回饋「還是不痛、排版太陽春」）
+         → 本版。病根確診為三件：①痛會蒸發（演完定格在快樂結局，痛只活在動畫前 3 秒）
+         ②全頁沒有負面視覺詞彙（只有綠與 ✓，發不出痛的訊號）③清單長得像後台設定頁。
+         解法＝業界 with/without 對照（Paperbox 式）＋日系 LP「こんなお悩み」共感清單：
+         左半「沒有 MiniMe 的晚上」＝沒人回的窗（去彩度、微左傾、蓋紅章「這筆生意，沒了」）
+           ＋四關 ✕ 大字清單；右半「有 MiniMe 的同一晚」＝同一句被秒回的窗（亮、微右傾）
+           ＋四句 ✓ 答案。**演完整個對照留在版面上**＝痛不再蒸發，慢慢看跟快速滑過
+           得到同一個故事。⚠️ 暖紅（✕ 與紅章）是使用者 09-09 拍板開的，全頁只用在這幾點。
+         ⚠️ 整場戲仍**全自動**（拍板「不要讓客人按」）：捲到 76% 線演一次（約 7.6 秒）、
+            演完定格、零互動；左窗悲劇先演＋✕ 落下 → MiniMe 頭像從中線進場 → 右窗重演
+            同一晚＋✓ 蓋章 →「還好——」浮出。底案＝演完的完整狀態（減少動態／沒 JS 直接看到）。
+         ⚠️ 文案紅線：四關標題／副標／答案沿用拍板文案一字不動；對話是虛構情境 →
+            舞台下掛常駐「示意情境，以咖啡店為例」；零成效數字（23:41／11:06 是情境時間）。 -->
     <section id="why" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
           <div class="lp-bubble">
             <!-- 09-06 老闆給的改寫原文照用（原「這件事，老闆一直卡在這四關」被回饋難懂）。
-                 ⚠️ 09-09「還好——」這句掛 .lp-bubble__relief＝左邊那場戲**演完**才淡入（樣式在
-                    _landing.scss「四關的對話舞台」）：不然痛還沒演完就先被這句爆雷「都有解」。
+                 ⚠️ 09-09「還好——」這句掛 .lp-bubble__relief＝下面的對照舞台**演完**才淡入（樣式在
+                    _landing.scss「對照舞台的戲」）：不然痛還沒演完就先被這句爆雷「都有解」。
                     ⛔ 字一個都不能動（老闆原文），動的只有出現時機；減少動態／沒 JS／
                     不支援 :has() 的瀏覽器從第一眼就看得到它（藏它的規則失效＝顯示，fail-open）。 -->
             <h2>你知道 LINE 會員經營、客服溝通<br>有多重要，但你總是<span class="mark">卡在這四關</span>。</h2>
@@ -217,85 +216,90 @@
           </div>
         </div>
 
-        <div class="lp-why">
-          <!-- 左：示意對話。lp-cue 捲到眼前（76% 線）演一次，時間差全寫在 CSS
-               （sc-1～sc-8 的 animation-delay），零 JS 改動、零互動。
-               ⛔ 別加任何要按的東西（重播鍵也不要）：09-09 拍板「客人不一定會去按」。
-               ⛔ is-cued 由 IO 加在這個元素上，別再用 Vue 的 :class 綁同一個元素（G-57 的雷）。
-               aria-hidden：這場演出是裝飾，四關的實質內容在右邊清單（讀屏的人讀那邊）。 -->
-          <div class="lp-scene lp-reveal lp-cue" aria-hidden="true">
-            <div class="lp-scene__frame">
-              <!-- LINE 一對一聊天（客人視角）：客人自己的訊息＝右側綠泡泡、店家回覆＝左側
-                   白泡泡＋頭像、時間貼泡泡下緣外側、⛔一對一不顯示對方店名在訊息旁——
-                   跟窄帶那支手機同一套「像真的 LINE」規矩（08-31 拍板）。
-                   店名「◯◯咖啡」＝明白的占位符，不發明一個像真的品牌。 -->
-              <div class="lp-scene__hd">
-                <svg class="lp-scene__back" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
-                <span class="lp-scene__ava" />
-                <span class="lp-scene__name">◯◯咖啡</span>
-              </div>
-              <div class="lp-scene__bd">
-                <div class="lp-scene__msg lp-scene__msg--me sc-1">
-                  <span class="lp-scene__meta">23:41</span>
-                  <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
-                </div>
-                <div class="lp-scene__day sc-2">隔天</div>
-                <div class="lp-scene__msg lp-scene__msg--me sc-3">
-                  <span class="lp-scene__meta">11:06</span>
-                  <span class="lp-scene__bub">不用了，我在別家買了</span>
-                </div>
-                <div class="lp-scene__day lp-scene__day--on sc-4">有 {{ brandName }} 之後</div>
-                <div class="lp-scene__msg lp-scene__msg--me sc-5">
-                  <span class="lp-scene__meta"><i class="lp-scene__read sc-6">已讀</i>23:41</span>
-                  <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
-                </div>
-                <div class="lp-scene__msg sc-7">
+        <!-- 對照舞台。lp-cue 捲到眼前（76% 線）演一次，時間差全寫在 CSS（vb-* 與
+             nth-child 的 animation-delay），零 JS 改動、零互動。
+             ⛔ 別加任何要按的東西（重播鍵也不要）：09-09 拍板「客人不一定會去按」。
+             ⛔ is-cued 由 IO 加在這個元素上，別再用 Vue 的 :class 綁同一個元素（G-57 的雷）。
+             兩扇窗掛 aria-hidden（演出是裝飾）；✕／✓ 清單是實質內容，讀屏讀得到。 -->
+        <div class="lp-vs lp-reveal lp-cue">
+          <!-- 左半：沒有 MiniMe 的晚上（痛的一半，演完也**一直留在版面上**） -->
+          <div class="lp-vs__side lp-vs__side--x">
+            <p class="lp-vs__tag lp-vs__tag--x">沒有 {{ brandName }} 的晚上</p>
+            <!-- LINE 一對一聊天（客人視角）：客人自己的訊息＝右側綠泡泡、店家回覆＝左側
+                 白泡泡＋頭像、時間貼泡泡下緣外側——跟窄帶那支手機同一套「像真的 LINE」
+                 規矩（08-31 拍板）。店名「◯◯咖啡」＝明白的占位符，不發明像真的品牌。
+                 這扇窗整體去彩度＋微左傾＝「壞掉的那一半」；紅章在窗角，2.9s 蓋下。 -->
+            <div class="lp-scene lp-scene--x" aria-hidden="true">
+              <div class="lp-scene__frame">
+                <div class="lp-scene__hd">
+                  <svg class="lp-scene__back" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
                   <span class="lp-scene__ava" />
-                  <span class="lp-scene__bub">有的，明天早上出爐！要幫您保留嗎？</span>
-                  <span class="lp-scene__meta"><i class="lp-scene__tag">{{ brandName }} 自動回覆</i>23:41</span>
+                  <span class="lp-scene__name">◯◯咖啡</span>
                 </div>
-                <div class="lp-scene__msg lp-scene__msg--me sc-8">
-                  <span class="lp-scene__meta">23:42</span>
-                  <span class="lp-scene__bub">好，幫我留兩個！</span>
+                <div class="lp-scene__bd">
+                  <div class="lp-scene__msg lp-scene__msg--me vb-1">
+                    <span class="lp-scene__meta">23:41</span>
+                    <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
+                  </div>
+                  <div class="lp-scene__day vb-2">隔天</div>
+                  <div class="lp-scene__msg lp-scene__msg--me vb-3">
+                    <span class="lp-scene__meta">11:06</span>
+                    <span class="lp-scene__bub">不用了，我在別家買了</span>
+                  </div>
                 </div>
               </div>
+              <p class="lp-vs__stamp vb-4">這筆生意，沒了</p>
             </div>
-            <p class="lp-scene__cap">示意情境，以咖啡店為例</p>
+            <!-- 四關＝✕ 共感清單（日系 LP「こんなお悩み」的做法）。文案一字不動。 -->
+            <ul class="lp-vs__list">
+              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></li>
+              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>派了員工，還要照顧他的情緒</h3><p>多一件事，就是多一次溝通。</p></div></li>
+              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>自己動手，後台太複雜</h3><p>打開來一堆設定，不知道從哪開始。</p></div></li>
+              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>找其他工具，好貴</h3><p>一個月好幾千，還得有人學、有人顧。</p></div></li>
+            </ul>
           </div>
 
-          <!-- 右：四關。文案沿用卡片版一字不動；答案（.lp-row__fix）戲演完才由上到下翻綠。 -->
-          <div class="lp-rows">
-            <div class="lp-row lp-reveal">
-              <div class="lp-row__txt">
-                <h3>沒有人可以做</h3>
-                <p>員工就是這麼多，每個人手上都滿了。</p>
-              </div>
-              <p class="lp-row__fix"><span aria-hidden="true">✓</span>它 24 小時都在</p>
-            </div>
+          <!-- 中線：MiniMe 進場（4.2s，戲的轉場記號；手機版收掉） -->
+          <span class="lp-vs__join vb-9" aria-hidden="true"><BrandLogo mark on-color alt="" /></span>
 
-            <div class="lp-row lp-reveal">
-              <div class="lp-row__txt">
-                <h3>派了員工，還要照顧他的情緒</h3>
-                <p>多一件事，就是多一次溝通。</p>
+          <!-- 右半：有 MiniMe 的同一晚（整個半邊 4.2s 才亮相＝先痛、後解） -->
+          <div class="lp-vs__side lp-vs__side--o vb-10">
+            <p class="lp-vs__tag lp-vs__tag--o">有 {{ brandName }} 的同一晚</p>
+            <div class="lp-scene lp-scene--o" aria-hidden="true">
+              <div class="lp-scene__frame">
+                <div class="lp-scene__hd">
+                  <svg class="lp-scene__back" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
+                  <span class="lp-scene__ava" />
+                  <span class="lp-scene__name">◯◯咖啡</span>
+                </div>
+                <div class="lp-scene__bd">
+                  <div class="lp-scene__msg lp-scene__msg--me vb-11">
+                    <span class="lp-scene__meta"><i class="lp-scene__read vb-12">已讀</i>23:41</span>
+                    <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
+                  </div>
+                  <div class="lp-scene__msg vb-13">
+                    <span class="lp-scene__ava" />
+                    <span class="lp-scene__bub">有的，明天早上出爐！要幫您保留嗎？</span>
+                    <span class="lp-scene__meta"><i class="lp-scene__tag">{{ brandName }} 自動回覆</i>23:41</span>
+                  </div>
+                  <div class="lp-scene__msg lp-scene__msg--me vb-14">
+                    <span class="lp-scene__meta">23:42</span>
+                    <span class="lp-scene__bub">好，幫我留兩個！</span>
+                  </div>
+                </div>
               </div>
-              <p class="lp-row__fix"><span aria-hidden="true">✓</span>交辦只要一句話</p>
             </div>
-            <div class="lp-row lp-reveal">
-              <div class="lp-row__txt">
-                <h3>自己動手，後台太複雜</h3>
-                <p>打開來一堆設定，不知道從哪開始。</p>
-              </div>
-              <p class="lp-row__fix"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
-            </div>
-            <div class="lp-row lp-reveal">
-              <div class="lp-row__txt">
-                <h3>找其他工具，好貴</h3>
-                <p>一個月好幾千，還得有人學、有人顧。</p>
-              </div>
-              <p class="lp-row__fix"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
-            </div>
+            <!-- 四句答案＝✓ 清單，跟左邊的 ✕ 對仗。答案沿用 08-27 拍板的一句話一行。 -->
+            <ul class="lp-vs__list lp-vs__list--o">
+              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>它 24 小時都在</li>
+              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>交辦只要一句話</li>
+              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>畫面帶你一步步做</li>
+              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</li>
+            </ul>
           </div>
         </div>
+        <!-- 誠實標示：常駐、不參與動畫（08-26 誠實機制，同 hero 的「以咖啡店為例」） -->
+        <p class="lp-vs__cap">示意情境，以咖啡店為例</p>
       </div>
     </section>
 
