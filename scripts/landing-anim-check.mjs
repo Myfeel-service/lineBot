@@ -462,6 +462,22 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     .filter(el => Number(getComputedStyle(el).opacity) < 0.99)
     .map(el => el.className.toString().slice(0, 50)))
   leftHidden.length ? bad('捲完還藏著：\n     ' + leftHidden.join('\n     ')) : ok('整頁捲完，沒有任何區塊還藏著')
+  // 2026-09-09：進場位移從純垂直改成 `translate(-26px, 18px)`（往右上落定）之後，
+  // ⛔ 只驗 opacity 不夠——位移卡住的話東西會**永遠停在左邊 26px**，而 opacity 已經是 1
+  //    ＝看起來「有出現」但整排左緣對不齊，這種歪掉最難用眼睛抓。所以加驗「有沒有歸零」。
+  const notSettled = await page.evaluate(() => [...document.querySelectorAll('.lp-reveal.in')]
+    .map((el) => {
+      const t = getComputedStyle(el).transform
+      if (t === 'none') return null
+      const m = new DOMMatrixReadOnly(t)
+      return (Math.abs(m.m41) > 1 || Math.abs(m.m42) > 1)
+        ? `${el.className.toString().slice(0, 40)} 停在 (${Math.round(m.m41)}, ${Math.round(m.m42)})`
+        : null
+    })
+    .filter(Boolean))
+  notSettled.length
+    ? bad('進場位移沒歸零（會整排左緣對不齊）：\n     ' + notSettled.join('\n     '))
+    : ok('進場位移全部歸零（沒有東西停在左邊或下面）')
   await page.close()
 }
 
