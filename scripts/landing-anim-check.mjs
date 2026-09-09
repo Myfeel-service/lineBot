@@ -518,20 +518,21 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const vs = document.querySelector('#why .lp-vs')
     window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
   })
-  await wait(1100) // vb-1 在 0.3s、vb-3（買別家）在 2.1s、右半在 4.2s
+  await wait(700) // 第四輪時間軸壓到 4.4s：vb-1 在 0.2s、vb-3（買別家）在 1.25s、右半在 2.7s
   const early = { m1: await op('#why .vb-1'), m3: await op('#why .vb-3'), sideO: await op('#why .lp-vs__side--o') }
   early.m1 > 0.9 && early.m3 < 0.05 && early.sideO < 0.05
-    ? ok('開演照順序：23:41 那句先到、「買別家」與右半都還沒（1.1s 取樣）')
-    : bad(`開演順序不對（1.1s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、右半 ${early.sideO}`)
-  await wait(2700) // 累計 3.8s：痛演完（買別家 2.1s＋紅章 2.9s＋✕ 3.1~3.55s），右半 4.2s 還沒亮
+    ? ok('開演照順序：23:41 那句先到、「買別家」與右半都還沒（0.7s 取樣）')
+    : bad(`開演順序不對（0.7s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、右半 ${early.sideO}`)
+  await wait(1600) // 累計 ~2.4s：痛演完（買別家 1.25＋紅章 1.7＋✕ 1.9~2.2s），右半 2.7s 還沒亮
+  //               ⛔ 這個取樣點跟右半亮相之間只有 ~0.3s 餘裕：時間軸再壓就會把它擠掉（見 SCSS 那段）
   const mid = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { m3: o('#why .vb-3'), stamp: o('#why .lp-vs__stamp'), x1: o('#why .lp-vs__list .lp-vs__item:nth-child(1)'), sideO: o('#why .lp-vs__side--o') }
   })
   mid.m3 > 0.9 && mid.stamp > 0.9 && mid.x1 > 0.9 && mid.sideO < 0.05
-    ? ok('痛先演完才輪到解：「買別家」＋紅章＋✕ 都到了、右半還沒亮（3.8s 取樣）')
-    : bad(`痛與解的順序不對（3.8s）：買別家 ${mid.m3}、紅章 ${mid.stamp}、✕ ${mid.x1}、右半 ${mid.sideO}`)
-  await wait(4800) // 累計 8.6s：全演完（最後一拍「還好」在 7.6s＋0.55s 過場）
+    ? ok('痛先演完才輪到解：「買別家」＋紅章＋✕ 都到了、右半還沒亮（2.4s 取樣）')
+    : bad(`痛與解的順序不對（2.4s）：買別家 ${mid.m3}、紅章 ${mid.stamp}、✕ ${mid.x1}、右半 ${mid.sideO}`)
+  await wait(2800) // 累計 ~5.2s：全演完（最後一拍「還好」在 4.4s＋0.5s 過場）
   const fin = await page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
     return {

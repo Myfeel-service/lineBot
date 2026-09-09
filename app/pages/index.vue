@@ -196,9 +196,10 @@
            ＋四關 ✕ 大字清單；右半「有 MiniMe 的同一晚」＝同一句被秒回的窗（亮、微右傾）
            ＋四句 ✓ 答案。**演完整個對照留在版面上**＝痛不再蒸發，慢慢看跟快速滑過
            得到同一個故事。⚠️ 暖紅（✕ 與紅章）是使用者 09-09 拍板開的，全頁只用在這幾點。
-         ⚠️ 整場戲仍**全自動**（拍板「不要讓客人按」）：捲到 76% 線演一次（約 7.6 秒）、
-            演完定格、零互動；左窗悲劇先演＋✕ 落下 → MiniMe 頭像從中線進場 → 右窗重演
-            同一晚＋✓ 蓋章 →「還好——」浮出。底案＝演完的完整狀態（減少動態／沒 JS 直接看到）。
+         ⚠️ 整場戲仍**全自動**（拍板「不要讓客人按」）：捲到 76% 線演一次（第四輪從 7.6s
+            壓到 **4.4 秒**收完——「跑太久大家根本看不完」）、演完定格、零互動；
+            左窗悲劇先演＋✕ 落下 → MiniMe 頭像從中線進場 → 右窗重演同一晚＋✓ 蓋章 →
+            「還好——」浮出。底案＝演完的完整狀態（減少動態／沒 JS 直接看到）。
          ⚠️ 文案紅線：四關標題／副標／答案沿用拍板文案一字不動；對話是虛構情境 →
             舞台下掛常駐「示意情境，以咖啡店為例」；零成效數字（23:41／11:06 是情境時間）。 -->
     <section id="why" class="lp-section lp-section--tint">
@@ -247,6 +248,7 @@
                     <span class="lp-scene__bub">不用了，我在別家買了</span>
                   </div>
                 </div>
+                <div class="lp-scene__ft"><span class="lp-scene__field" /></div>
               </div>
               <p class="lp-vs__stamp vb-4">這筆生意，沒了</p>
             </div>
@@ -277,9 +279,11 @@
                     <span class="lp-scene__meta"><i class="lp-scene__read vb-12">已讀</i>23:41</span>
                     <span class="lp-scene__bub">請問明天還有肉桂捲嗎？</span>
                   </div>
+                  <!-- ⚠️ 回覆刻意短：420px 的窗裡折成兩行會把右窗撐高、下面的 ✓ 清單
+                       跟左邊的 ✕ 對不齊行（第四輪量到 25px 的落差就是它） -->
                   <div class="lp-scene__msg vb-13">
                     <span class="lp-scene__ava" />
-                    <span class="lp-scene__bub">有的，明天早上出爐！要幫您保留嗎？</span>
+                    <span class="lp-scene__bub">有的，明天出爐！要幫您留嗎？</span>
                     <span class="lp-scene__meta"><i class="lp-scene__tag">{{ brandName }} 自動回覆</i>23:41</span>
                   </div>
                   <div class="lp-scene__msg lp-scene__msg--me vb-14">
@@ -287,6 +291,7 @@
                     <span class="lp-scene__bub">好，幫我留兩個！</span>
                   </div>
                 </div>
+                <div class="lp-scene__ft"><span class="lp-scene__field" /></div>
               </div>
             </div>
             <!-- 四句答案＝✓ 清單，跟左邊的 ✕ 對仗。答案沿用 08-27 拍板的一句話一行。 -->
