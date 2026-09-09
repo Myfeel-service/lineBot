@@ -596,35 +596,49 @@
      punch 動畫只動 scale/opacity——individual properties，不碰 transform）。 */
   .lp-vs__stamp {
     position: absolute; top: -13px; right: 10px; margin: 0; z-index: 2;
-    rotate: -7deg; color: var(--vs-red); border: 2px solid var(--vs-red);
+    rotate: 7deg; color: var(--vs-red); border: 2px solid var(--vs-red);
     background: rgba(255, 255, 255, 0.88); border-radius: 9px; padding: 6px 11px;
     font-size: 0.88rem; font-weight: 800; letter-spacing: 0.04em; line-height: 1;
   }
-  /* 四關對照表（09-09 第五輪「統一下面四點列點、由左到右」）：一行＝✕ 痛 → ✓ 解。
-   * ⛔ 別做回白卡＋綠標籤（「像後台設定頁」被打回過）：字在扛，✕✓ 當錨點、不加卡片框。
-   * li 是 display: contents ＝ 兩個 cell 直接進這層 grid：同一行天生等高、
-   * 左欄自然對齊左面板、右欄對齊右面板（column 寬度與外層 .lp-vs 一致）。
-   * 分隔線畫在 cell 上、第一行不畫——中縫斷開剛好呼應「兩個世界」。 */
+  /* 成交章（右窗）：跟紅章對仗——「沒了 vs 成了」，綠色、往另一邊斜 */
+  .lp-vs__stamp--o { color: var(--g-text); border-color: var(--g-text); rotate: -6deg; }
+  /* 四關對照表（09-09 第五輪「統一下面四點列點、由左到右」；第六輪加了美感層）：
+   * 一行＝✕ 痛 → ✓ 解。li 是 display: contents ＝ 兩個 cell 直接進這層 grid：
+   * 同一行天生等高、左欄自然對齊左面板、右欄對齊右面板。
+   * 第六輪（使用者「列點用更有美感的 UIUX 呈現」）：cell 帶著**自己那半邊的地色**
+   * 往下延伸（左暖灰、右淡綠）＝對照表跟上面兩個世界是同一件事；✕✓ 收進小圓徽當
+   * 行的錨點；頭尾行圓角收邊、行間用同色系細線。⛔ 仍然不是白卡＋標籤（被打回過）。 */
   .lp-vs__grid {
     grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0;
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 26px;
   }
   .lp-vs__pair { display: contents; }
-  .lp-vs__item, .lp-vs__ans { padding: 15px 30px 14px; border-top: 1px solid rgba(31, 32, 35, 0.08); }
+  .lp-vs__item, .lp-vs__ans { padding: 16px 24px; margin: 0; }
+  .lp-vs__item { background: #f2f1ee; display: flex; gap: 13px; align-items: flex-start; }
+  .lp-vs__pair:not(:first-child) .lp-vs__item { border-top: 1px solid #e5e3de; }
+  .lp-vs__pair:not(:first-child) .lp-vs__ans { border-top: 1px solid #dcefe4; }
   .lp-vs__pair:first-child .lp-vs__item,
-  .lp-vs__pair:first-child .lp-vs__ans { border-top: 0; }
-  .lp-vs__item { display: flex; gap: 12px; align-items: flex-start; }
-  .lp-vs__x { flex: none; font-size: 1.05rem; font-weight: 800; color: var(--vs-red); line-height: 1.5; }
+  .lp-vs__pair:first-child .lp-vs__ans { border-radius: 14px 14px 0 0; }
+  .lp-vs__pair:last-child .lp-vs__item,
+  .lp-vs__pair:last-child .lp-vs__ans { border-radius: 0 0 14px 14px; }
+  .lp-vs__x {
+    flex: none; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%;
+    background: rgba(192, 68, 43, 0.12); color: var(--vs-red);
+    display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; line-height: 1;
+  }
   .lp-vs__item h3 { margin: 0; font-size: 1.06rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
   .lp-vs__item p { margin: 2px 0 0; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
-  /* 答案 cell：垂直置中＝每句 ✓ 對著同一行的 ✕ */
+  /* 答案 cell：淡綠地、垂直置中＝每句 ✓ 對著同一行的 ✕ */
   .lp-vs__ans {
-    display: flex; gap: 12px; align-items: center; margin: 0;
+    background: #eefaf3; display: flex; gap: 13px; align-items: center;
     font-size: 1.06rem; font-weight: 800; color: var(--g-text); line-height: 1.5;
     letter-spacing: -0.01em;
   }
-  .lp-vs__ans span { flex: none; font-size: 1.05rem; }
-  .lp-vs__cap { margin: 14px 4px 0; font-size: 0.78rem; color: var(--ink-soft); text-align: center; }
+  .lp-vs__ans span {
+    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    background: rgba(6, 199, 85, 0.16); color: var(--g-text);
+    display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; line-height: 1;
+  }
 
   /* 兩扇窗的性格：左＝去彩度（壞掉的那一半）、右＝亮＋影子高一階。
    * ⚠️ 09-09 第五輪把 ±1 度的傾斜拿掉（使用者提議＋我同意）：1 度太小，讀起來不像
@@ -1790,15 +1804,15 @@
   /* ══ 對照舞台的戲：先痛、後解，捲到就演一次（2026-09-09 第三版）══════════
    * 三條拍板：①「動畫滾到位置後觸發、不要跟著滾輪」②「不要讓客人按」＝零互動
    *          ③暖紅開（✕ 與紅章）。
-   * 時間軸（秒，從 .lp-vs 的 lp-cue 進 76% 線起算）——**第四輪從 7.6s 壓到 4.4s**
-   * （使用者「動畫跑太久了，大家根本看不完」）：
-   *   0.2 客人問肉桂捲 → 0.8「隔天」 → 1.25「我在別家買了」 → 1.7 紅章「這筆生意，沒了」
-   *   → 1.9～2.2 四個 ✕ 落下（痛演完，左半從此**定格留在版面上**）
-   *   → 2.7 右半亮相 → 2.85 同一句 23:41 → 3.1 已讀 → 3.25 秒回
-   *   → 3.6 成交 → 3.8～4.1 四個 ✓ 蓋上 → 4.4「還好——」浮出（含過場 ~4.9s 全結束）。
-   * ⛔ 再壓要小心兩件事：①「問了沒人回」那 0.6s 的空檔是痛的本體，砍掉故事就不成立
-   *    ②✕ 演完（2.2+0.38）到右半亮相（2.7）要留 ≥0.25s 的空檔，驗收的「痛先於解」
-   *    取樣點（2.45s）就落在這裡，擠掉會變成搶拍且驗收會 flaky。
+   * 時間軸（秒，從 .lp-vs 的 lp-cue 進 76% 線起算）——第四輪 7.6s→4.4s、
+   * **第六輪再壓到 3.5s 收完**（使用者兩度「動畫還是太長」；動作本體也縮到 .3s）：
+   *   0.15 客人問肉桂捲 → 0.55「隔天」 → 0.85「我在別家買了」 → 1.15 紅章「沒了」
+   *   → 1.25～1.49 四個 ✕ 落下（痛演完，左半從此**定格留在版面上**）
+   *   → 2.0 右半亮相 → 2.1 同一句 23:41 → 2.3 已讀 → 2.4 秒回 → 2.7 成交
+   *   → 3.0 成交章「成了」 → 3.1～3.34 四個 ✓ → 3.5「還好——」浮出（~3.95s 全結束）。
+   * ⛔ 再壓的地板差不多到了：①每顆泡泡要 0.3~0.4s 的閱讀時間，再快眼睛跟不上
+   *    ②✕ 演完（1.49+0.3）到右半亮相（2.0）的空檔要留 ≥0.2s——驗收「痛先於解」的
+   *    取樣點（~1.7s）落在這裡，擠掉會搶拍且驗收 flaky。
    * ⚠️ 底案＝演完的完整對照；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到）。
    * ⚠️「還好——」要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
    *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，fail-open。
@@ -1820,28 +1834,29 @@
   &.is-anim .lp-vs .lp-vs__side--o { opacity: 0; }
   &.is-anim .lp-vs.is-cued {
     .lp-scene__msg, .lp-scene__day, .lp-vs__item, .lp-vs__ans,
-    .lp-vs__side--o { animation: lpSceneIn .38s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__read { animation: lpSceneIn .26s ease-out both; }
-    .lp-vs__stamp { animation: lpStampIn .36s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
-    .vb-1 { animation-delay: 0.2s; }
-    .vb-2 { animation-delay: 0.8s; }
-    .vb-3 { animation-delay: 1.25s; }
-    .vb-4 { animation-delay: 1.7s; }
-    .lp-vs__pair:nth-child(1) .lp-vs__item { animation-delay: 1.9s; }
-    .lp-vs__pair:nth-child(2) .lp-vs__item { animation-delay: 2s; }
-    .lp-vs__pair:nth-child(3) .lp-vs__item { animation-delay: 2.1s; }
-    .lp-vs__pair:nth-child(4) .lp-vs__item { animation-delay: 2.2s; }
-    .vb-10 { animation-delay: 2.7s; }
-    .vb-11 { animation-delay: 2.85s; }
-    .vb-12 { animation-delay: 3.1s; }
-    .vb-13 { animation-delay: 3.25s; }
-    .vb-14 { animation-delay: 3.6s; }
-    .lp-vs__pair:nth-child(1) .lp-vs__ans { animation-delay: 3.8s; }
-    .lp-vs__pair:nth-child(2) .lp-vs__ans { animation-delay: 3.9s; }
-    .lp-vs__pair:nth-child(3) .lp-vs__ans { animation-delay: 4s; }
-    .lp-vs__pair:nth-child(4) .lp-vs__ans { animation-delay: 4.1s; }
+    .lp-vs__side--o { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__read { animation: lpSceneIn .22s ease-out both; }
+    .lp-vs__stamp { animation: lpStampIn .3s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
+    .vb-1 { animation-delay: 0.15s; }
+    .vb-2 { animation-delay: 0.55s; }
+    .vb-3 { animation-delay: 0.85s; }
+    .vb-4 { animation-delay: 1.15s; }
+    .lp-vs__pair:nth-child(1) .lp-vs__item { animation-delay: 1.25s; }
+    .lp-vs__pair:nth-child(2) .lp-vs__item { animation-delay: 1.33s; }
+    .lp-vs__pair:nth-child(3) .lp-vs__item { animation-delay: 1.41s; }
+    .lp-vs__pair:nth-child(4) .lp-vs__item { animation-delay: 1.49s; }
+    .vb-10 { animation-delay: 2s; }
+    .vb-11 { animation-delay: 2.1s; }
+    .vb-12 { animation-delay: 2.3s; }
+    .vb-13 { animation-delay: 2.4s; }
+    .vb-14 { animation-delay: 2.7s; }
+    .vb-15 { animation-delay: 3s; }
+    .lp-vs__pair:nth-child(1) .lp-vs__ans { animation-delay: 3.1s; }
+    .lp-vs__pair:nth-child(2) .lp-vs__ans { animation-delay: 3.18s; }
+    .lp-vs__pair:nth-child(3) .lp-vs__ans { animation-delay: 3.26s; }
+    .lp-vs__pair:nth-child(4) .lp-vs__ans { animation-delay: 3.34s; }
   }
-  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .5s ease 4.4s; }
+  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 3.5s; }
   &.is-anim .lp-wrap:not(:has(.lp-vs.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
@@ -2109,8 +2124,11 @@
     .lp-vs { grid-template-columns: 1fr; gap: 30px; }
     .lp-vs__side { max-width: 480px; margin: 0 auto; width: 100%; }
     .lp-vs__grid { grid-template-columns: 1fr; max-width: 480px; margin: 0 auto; width: 100%; }
-    .lp-vs__item { padding-bottom: 4px; }
-    .lp-vs__ans { border-top: 0; padding-top: 0; padding-left: 59px; }
+    /* 單欄時每一組「痛＋解」疊成一張兩色小塊（上灰下綠）、組與組之間留 10px。
+       選擇器用 :nth-child(n) 撐權重（要壓過桌機那組 :first/:last-child 的圓角規則）。 */
+    .lp-vs__pair:nth-child(n) .lp-vs__item { border-top: 0; border-radius: 14px 14px 0 0; padding-bottom: 13px; }
+    .lp-vs__pair:nth-child(n) .lp-vs__ans { border-top: 0; border-radius: 0 0 14px 14px; padding-top: 13px; margin-bottom: 10px; }
+    .lp-vs__pair:last-child .lp-vs__ans { margin-bottom: 0; }
     /* 方案卡收成 2×2（不是直接單欄）：四張卡是拿來互相比較的，兩兩並排還能比，
        一欄疊四張就得靠記憶力。 */
     .lp-plans { grid-template-columns: 1fr 1fr; }
