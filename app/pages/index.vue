@@ -289,14 +289,22 @@
           </div>
         </div>
 
-        <!-- 對照舞台。lp-cue 捲到眼前（76% 線）演一次，時間差全寫在 CSS（vb-* 與
-             nth-child 的 animation-delay），零 JS 改動、零互動。
+        <!-- 對照舞台。⚠️ 09-09 第七輪：整座舞台**不再是一個觸發單位**（原本掛在這層的
+             `lp-cue` 已移除）——它桌機 690px／手機 1,375px 高，用 76% 那條線開演時實測
+             主角在畫面外：第一顆泡泡上緣落在 802px（黏性行動條佔 820~885＝**半顆被黑條蓋住**）、
+             ✕✓ 對照表 1,079px、手機的右半 1,025px 全在畫面外＝「先痛後解」演給空氣看。
+             改成**三個各自越線的單位**（左窗／右窗／對照表，都掛 `lp-cue--mid`＝50% 線，
+             見 index.vue 的 MID_CUE_MARGIN 與 _landing.scss「對照舞台的戲」）。
+             時間差仍然全寫在 CSS（vb-* 與 nth-child 的 animation-delay），零互動。
              ⛔ 別加任何要按的東西（重播鍵也不要）：09-09 拍板「客人不一定會去按」。
-             ⛔ is-cued 由 IO 加在這個元素上，別再用 Vue 的 :class 綁同一個元素（G-57 的雷）。
+             ⛔ is-cued 由 IO 加在那三個元素上，別再用 Vue 的 :class 綁同一個元素（G-57 的雷）。
              兩扇窗掛 aria-hidden（演出是裝飾）；✕／✓ 清單是實質內容，讀屏讀得到。 -->
-        <div class="lp-vs lp-reveal lp-cue">
-          <!-- 左半：沒有 MiniMe 的晚上（痛的一半，演完也**一直留在版面上**） -->
-          <div class="lp-vs__side lp-vs__side--x">
+        <div class="lp-vs lp-reveal">
+          <!-- 左半：沒有 MiniMe 的晚上（痛的一半，演完也**一直留在版面上**）。
+               ⚠️ 這半邊是自己的觸發單位（第七輪）：面板上緣過 50% 線才開演，這樣第一顆
+               泡泡落在畫面中段、不會躲在黏性行動條底下。⛔ cue 掛面板不掛裡面的窗——
+               掛窗的話要再多捲 71px（標籤＋內距）才越線，泡泡又被推回黑條附近。 -->
+          <div class="lp-vs__side lp-vs__side--x lp-cue lp-cue--mid">
             <p class="lp-vs__tag lp-vs__tag--x">沒有 {{ brandName }} 的晚上</p>
             <!-- LINE 一對一聊天（客人視角）：客人自己的訊息＝右側綠泡泡、店家回覆＝左側
                  白泡泡＋頭像、時間貼泡泡下緣外側——跟窄帶那支手機同一套「像真的 LINE」
@@ -330,7 +338,7 @@
                ⚠️ 09-09 第五輪拿掉了中線的 MiniMe logo 圓球（使用者「放那邊不明所以」＋
                我的判斷一致：沒有標籤的浮球讀起來像壞掉的按鈕）——品牌的進場時刻由
                這半邊的綠標籤＋回覆上的「MiniMe 自動回覆」小字扛。⛔ 別加回來。 -->
-          <div class="lp-vs__side lp-vs__side--o vb-10">
+          <div class="lp-vs__side lp-vs__side--o lp-cue lp-cue--mid">
             <p class="lp-vs__tag lp-vs__tag--o">有 {{ brandName }} 的同一晚</p>
             <div class="lp-scene lp-scene--o" aria-hidden="true">
               <div class="lp-scene__frame">
@@ -371,7 +379,10 @@
                ⚠️ 文案紅線照舊：痛點標題／副標／答案沿用拍板文案一字不動。
                ⚠️ li 是 display: contents（cell 直接進外層 grid）＝兩欄天生同行等高，
                   手機收單欄時順序自動變成「痛→解、痛→解」。 -->
-          <ul class="lp-vs__grid">
+          <!-- ⚠️ 第七輪：對照表是**第三個舞台單位**（自己的 lp-cue--mid）——四行 ✕ 落下、
+               四行 ✓ 跟上是它自己的一段戲（0.94s），不跟上面兩扇窗綁在同一條時間軸；
+               桌機它在兩扇窗底下 400px 處，捲到才演＝演的時候人看得到。 -->
+          <ul class="lp-vs__grid lp-cue lp-cue--mid">
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></div>
               <p class="lp-vs__ans"><span aria-hidden="true">✓</span>它 24 小時都在</p>
@@ -2099,6 +2110,10 @@ function onScroll() { stuck.value = window.scrollY > 8 }
 
 let io: IntersectionObserver | undefined
 let cueIo: IntersectionObserver | undefined
+/** 50% 那條線的觀察器（.lp-cue--mid＝一整齣戲，見 MID_CUE_MARGIN） */
+let cueMidIo: IntersectionObserver | undefined
+/** 「等標題講完才開演」的保險絲計時器（見 onCued），離開頁面要清掉 */
+const cueFuses: number[] = []
 let barIo: IntersectionObserver | undefined
 let capIo: IntersectionObserver | undefined
 /** 每顆對話泡泡的打字控制，key＝該泡泡的 .lp-turn（它同時就是 .lp-cue 的觀察對象） */
@@ -2115,9 +2130,21 @@ const typings = new Map<HTMLElement, BubbleTyping>()
  * ⚠️ 兩者不能共用一條線：畫線／長條是 0.75～0.9 秒的「表演」，用 88% 那條的話它在元素
  *    只露出一條邊時就開演——等你真的捲到它面前早就演完了（09-03 使用者反映
  *    「動畫常常還沒滑到就已經觸發完了」）。CSS 端的分工見 _landing.scss 的「捲動進場動畫」。
+ *
+ * MID＝**第三條線，給「一整齣戲」用的**（2026-09-09 第七輪加，目前只有對照舞台在用）：
+ * 上緣要越過畫面 **50%**。⚠️ 為什麼 76% 不夠：76% 是為「一塊不高的東西」訂的，元素上緣
+ * 到那條線時它自己往下還有幾百 px。對照舞台的一扇窗有 286px、底下還有黏性行動條佔掉
+ * 畫面最後 ~80px——實測開演瞬間第一顆泡泡落在 802px（900px 畫面）＝**一半被黑條蓋住**，
+ * 手機更慘（右半與對照表整個在畫面外）。50% 線讓一扇窗開演時**整扇都在畫面裡**
+ * （桌機 450~799px、手機 422~771px，都在黏性條上方）。
+ * ⛔ 別把 CUE_MARGIN 整條改成 50%：那條線上還掛著中軸綠線、成長曲線、打字泡泡等
+ *    十幾個小元素，它們在 76% 開演是對的（改了會變成「捲過頭才開演」，等於全站倒退）。
+ * ⛔ 也別再往下拉（例如 35%）：越低越接近「捲過去才演」，而且高過半個畫面的東西
+ *    （手機上的對照表 559px）會永遠等不到自己的上緣越線。
  */
 const REVEAL_MARGIN = '0px 0px -12% 0px'
 const CUE_MARGIN = '0px 0px -24% 0px'
+const MID_CUE_MARGIN = '0px 0px -50% 0px'
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -2232,18 +2259,51 @@ onMounted(() => {
       ...(root.value?.querySelectorAll<HTMLElement>('.lp-cue') ?? []),
       ...typings.keys(),
     ]
-    cueIo = new IntersectionObserver((entries) => {
+    /**
+     * 一整齣戲（.lp-cue--mid）要等**同一區的標題講完**才開演。
+     * ⚠️ 為什麼：標題是打字機，對照舞台只在它底下 200 px——實測正常捲動 0.2~0.6 秒後
+     *    舞台就越線，於是「標題還在打第三個字、底下的痛已經演到買別家」＝兩個焦點打架，
+     *    而那顆標題正是這一段要先讀懂的那句話。
+     * ⚠️ 等的是**標題**（1.35s）不是整顆泡泡（1.9s）：泡泡裡的副標在戲演完前是透明的，
+     *    等它＝讓人對著一扇空的聊天窗多乾等 0.55 秒（見 bubble-typing 的 whenHeadingDone）。
+     * ⚠️ 已經講完（或這一區沒有打字泡泡）＝立刻開演，whenHeadingDone 會直接回呼。
+     * ⛔ 別把這個等待寫成 CSS 的 :has(.is-typing)：那條規則萬一失效（不支援 :has()）
+     *    是**戲永遠不演、內容永遠透明**＝fail-closed。JS 這邊還有下面那條保險絲。
+     */
+    const gateOf = (el: HTMLElement) => (el.classList.contains('lp-cue--mid')
+      ? typings.get(el.closest('.lp-wrap')?.querySelector<HTMLElement>('.lp-turn') as HTMLElement)
+      : undefined)
+    // ⚠️ 開演的事情做完就 unobserve（只演一次）——用回呼帶進來的 observer，
+    //    不要抓外面的變數：同一個回呼給兩條線共用，抓錯變數會變成解除錯的觀察器。
+    const onCued = (entries: IntersectionObserverEntry[], obs: IntersectionObserver) => {
       entries.forEach((e) => {
         if (!e.isIntersecting) return
         const el = e.target as HTMLElement
-        el.classList.add('is-cued')
-        typings.get(el)?.play()
-        if (el === obCardEl.value) playObDemo()
-        if (el === phoneEl.value) armPhoneMenu()
-        cueIo?.unobserve(el)
+        obs.unobserve(el)
+        let played = false
+        const start = () => {
+          if (played) return
+          played = true
+          el.classList.add('is-cued')
+          typings.get(el)?.play()
+          if (el === obCardEl.value) playObDemo()
+          if (el === phoneEl.value) armPhoneMenu()
+        }
+        const gate = gateOf(el)
+        if (!gate) { start(); return }
+        gate.whenHeadingDone(start)
+        // 保險絲：打字用 rAF 跑，分頁被切到背景時 rAF 會停＝通知不會來。
+        // ⛔ 沒有這條的話那一段戲會**永遠停在透明**（fail-closed），寧可搶拍也不要不演。
+        cueFuses.push(window.setTimeout(start, 3000))
       })
-    }, { threshold: 0, rootMargin: CUE_MARGIN })
-    cues.forEach(el => cueIo?.observe(el))
+    }
+    // 76% 那條線（絕大多數的元素）
+    cueIo = new IntersectionObserver(onCued, { threshold: 0, rootMargin: CUE_MARGIN })
+    // 50% 那條線：標了 .lp-cue--mid 的「一整齣戲」（見 MID_CUE_MARGIN 的註解）。
+    // ⚠️ 兩個觀察器、同一個回呼；元素身上兩個 class 都掛（.lp-cue 是給驗收工具與
+    //    CSS 認的語彙，--mid 只換那條線），所以這裡要把清單分成兩堆、⛔別重複觀察。
+    cueMidIo = new IntersectionObserver(onCued, { threshold: 0, rootMargin: MID_CUE_MARGIN })
+    cues.forEach(el => (el.classList.contains('lp-cue--mid') ? cueMidIo : cueIo)?.observe(el))
   })
 })
 
@@ -2251,6 +2311,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   io?.disconnect()
   cueIo?.disconnect()
+  cueMidIo?.disconnect()
+  cueFuses.forEach(id => clearTimeout(id))
   barIo?.disconnect()
   capIo?.disconnect()
   clearHeroTimers()

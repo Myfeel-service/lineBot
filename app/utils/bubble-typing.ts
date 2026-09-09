@@ -158,6 +158,19 @@ export interface BubbleTyping {
   play: () => void
   /** 離開頁面時呼叫：停掉 rAF 並讓句子留在完整狀態。 */
   cancel: () => void
+  /**
+   * **標題那幾行**打完時通知（2026-09-09 加：對照舞台要等標題講完才開演，
+   * 不然標題還在打字、底下的戲已經演到一半，兩個焦點打架）。
+   *
+   * ⚠️ 為什麼是「標題打完」而不是「整顆泡泡打完」：泡泡裡的副標（「還好，每一關都有
+   *    MiniMe 能接住的解法——」）在戲演完前是 opacity 0＝**打的過程根本看不到**，
+   *    等它等於讓使用者對著一扇空的聊天窗乾等——實測整顆要 1.9 秒、只等標題 1.35 秒，
+   *    那 0.55 秒是純粹的空窗（人在看的是舞台、不是還沒現身的副標）。
+   * ⚠️ **已經打完才註冊＝立刻呼叫**：註冊的人通常比打字晚很久才捲到，
+   *    那時早就打完了；⛔ 別改成「只通知未來的完成」，那等於整段戲不演。
+   * ⚠️ cancel()（離開頁面）也算打完＝一律會被通知，不會留下沒人收的等待。
+   */
+  whenHeadingDone: (cb: () => void) => void
 }
 
 /**
@@ -198,6 +211,17 @@ export function prepareBubbleTyping(turn: HTMLElement): BubbleTyping | null {
   let raf = 0
   let started = false
   let head: HTMLElement | null = null
+  let headingDone = false
+  /** 等「標題講完」的人（對照舞台的三個單位），到了就一次通知完並清空 */
+  const waiting: Array<() => void> = []
+  /** 標題（h2）的最後一顆字在 units 裡的位置——過了它就算標題講完 */
+  const lastHeadingIdx = blocks.lastIndexOf(heading)
+
+  function tellHeadingDone(): void {
+    if (headingDone) return
+    headingDone = true
+    while (waiting.length) waiting.shift()!()
+  }
 
   function done(): void {
     if (raf) cancelAnimationFrame(raf)
@@ -207,6 +231,7 @@ export function prepareBubbleTyping(turn: HTMLElement): BubbleTyping | null {
     for (const unit of units) unit.classList.add('is-on')
     turn.classList.remove('is-typing')
     dots.remove()
+    tellHeadingDone()
   }
 
   return {
@@ -228,6 +253,8 @@ export function prepareBubbleTyping(turn: HTMLElement): BubbleTyping | null {
             while (shown < units.length && typed >= schedule.startAt[shown]!) units[shown++]!.classList.add('is-on')
             head = units[shown - 1]!
             head.classList.add('is-head')
+            // 標題的最後一顆字亮了＝可以放下面那齣戲開演（見 whenHeadingDone）
+            if (shown > lastHeadingIdx) tellHeadingDone()
           }
         }
         if (elapsed >= DOTS_MS + schedule.total + TAIL_MS) { done(); return }
@@ -236,5 +263,9 @@ export function prepareBubbleTyping(turn: HTMLElement): BubbleTyping | null {
       raf = requestAnimationFrame(tick)
     },
     cancel: done,
+    whenHeadingDone(cb) {
+      if (headingDone) cb()
+      else waiting.push(cb)
+    },
   }
 }

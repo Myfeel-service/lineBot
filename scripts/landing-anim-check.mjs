@@ -36,7 +36,21 @@ const MIN_VISIBLE_PCT = 35 // 有時間軸的動畫開演時，元素至少要�
  * 還高（手機上的聊天窗 800px+），套 35% 只會逼人把動畫改成「捲過頭才開演」。
  * 這幾個改判「開演時**上緣**要在畫面內」＝第一個小孩看得到就算數。
  */
-const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users', 'lp-vs'])
+/* ⚠️ 2026-09-09 第七輪把 'lp-vs' 從這裡**拿掉**：對照舞台已經拆成三個各自越線的單位
+   （左窗／右窗／對照表，走 50% 的 lp-cue--mid 線），開演時它們本來就大半在畫面裡——
+   所以要吃回嚴格的「露出 ≥35%」那條規則。⛔ 別因為某段紅了又把它加回豁免名單：
+   紅了代表「戲又開始在畫面外演」，那正是這一輪要修掉的病。 */
+const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users'])
+/**
+ * 「等上面那顆標題泡泡講完話才開演」的元素（2026-09-09 第七輪，對照舞台的三個單位）。
+ * ⚠️ 為什麼要豁免 part ① 的位置規則：這支工具是**每 60ms 捲 90px＝約 1,500px/s** 的
+ *    快速捲動模擬，而標題打字要 ~1.9 秒——刻意等它講完的元素，在這種捲法下必然
+ *    「越線後 1.9 秒才掛 is-cued」，那時工具已經捲過去 1,900px 了。這不是 bug，
+ *    是這一輪刻意的設計（不等的話標題還在打字、底下的痛已經演完）。
+ * ⚠️ 真正的位置保證改由 **②½ 用「捲到就停下」的實際幾何**驗（開演時整扇窗要在
+ *    畫面裡、且在黏性行動條上方）——⛔ 別因為這裡豁免了就以為沒人在看那件事。
+ */
+const GATED_ON_TYPING = new Set(['lp-vs__side.lp-vs__side--x', 'lp-vs__side.lp-vs__side--o', 'lp-vs__grid'])
 
 const fails = []
 const ok = msg => console.log('  ✅ ' + msg)
@@ -62,7 +76,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const all = () => document.querySelectorAll('.lp-reveal, .lp-cue, .lp-turn')
     const label = (el) => {
       const c = el.className.toString().split(/\s+/)
-        .filter(x => x.startsWith('lp-') && !x.startsWith('lp-reveal') && x !== 'lp-cue')
+        .filter(x => x.startsWith('lp-') && !x.startsWith('lp-reveal') && !x.startsWith('lp-cue'))
       return (c[0] || el.tagName.toLowerCase()) + (c[1] ? '.' + c[1] : '')
     }
     window.__probe = () => {
@@ -104,7 +118,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const isTimed = e.trigger === 'is-cued'
     if (isTimed) timed++
     const stag = STAGGERED.has(e.what)
-    const pass = !isTimed || (stag ? (e.topInView >= 0 && e.topInView < VH) : (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT))
+    const gated = GATED_ON_TYPING.has(e.what)
+    const pass = !isTimed || gated || (stag ? (e.topInView >= 0 && e.topInView < VH) : (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT))
     if (!pass) {
       fails.push(stag
         ? `${e.what} 錯開動畫開演時上緣不在畫面內（上緣 ${e.topInView}）`
@@ -114,6 +129,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       `  ${e.trigger.padEnd(8)} | ${e.what.padEnd(35)} | ${String(e.scrollY).padStart(7)} `
       + `| ${String(e.topInView).padStart(4)} | ${String(e.h).padStart(4)} | ${String(e.visiblePct).padStart(3)}%`
       + (stag && isTimed ? '  （錯開式：判上緣）' : '')
+      + (gated && isTimed ? '  （等標題講完才開演：位置由 ②½ 驗）' : '')
       + (pass ? '' : '  ❌ 在畫面外／露太少就開演'),
     )
   }
@@ -508,9 +524,12 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await page.close()
 }
 
-// ── ②½ 四關的對照舞台：先痛、後解，捲到就演一次（2026-09-09 第三版）─────
+// ── ②½ 四關的對照舞台：三個舞台單位，各自越線、各自演（2026-09-09 第七輪）─────
 // ⛔ 底案＝演完的完整對照，所以一定要用**新的分頁**在「還沒開演」時抓到藏起來的狀態——
 //    part ① 已經把整頁捲過一輪，那個分頁裡戲早就演完了，量到的永遠是結局。
+// ⚠️ 第七輪起這一段有**三個**觸發點（左窗／右窗／對照表，都走 50% 的 lp-cue--mid 線），
+//    所以下面的形狀是「捲到某一段 → 只驗那一段 → 再捲去下一段」；
+//    ⛔ 別再改回「一條 3.5 秒時間軸連續取樣」——那是第六輪的口徑，會整段紅。
 {
   const page = await browser.newPage()
   await page.setViewport({ width: VW, height: VH })
@@ -518,15 +537,25 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await wait(2000)
   console.log('\n②½ 四關的對照舞台')
   const op = sel => page.evaluate(s => Number(getComputedStyle(document.querySelector(s)).opacity), sel)
-  // 停在舞台只露出一小條、還沒過 76% 觸發線的位置：這裡必須什麼都還沒演
+  /** 把某個單位的上緣停在畫面 50% 線再往上 8px＝剛剛好越線開演（8px 是為了避開
+      「上緣正好等於線」那個零重疊的邊界，IO 在那裡不會觸發） */
+  const park = sel => page.evaluate((s) => {
+    const el = document.querySelector(s)
+    const top = el.getBoundingClientRect().top + window.scrollY
+    window.scrollTo({ top: Math.max(0, top - window.innerHeight * 0.5 + 8), behavior: 'instant' })
+  }, sel)
+
+  // 停在舞台整個還在畫面下方（連 50% 線都沒碰到）：這裡必須什麼都還沒演
   const before = await page.evaluate(async () => {
     const vs = document.querySelector('#why .lp-vs')
     const top = vs.getBoundingClientRect().top + window.scrollY
     window.scrollTo({ top: Math.max(0, top - window.innerHeight + 40), behavior: 'instant' })
     await new Promise(r => setTimeout(r, 250))
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    const units = [...document.querySelectorAll('#why .lp-cue--mid')]
     return {
-      cued: vs.classList.contains('is-cued'),
+      units: units.length,
+      cued: units.some(el => el.classList.contains('is-cued')),
       m1: o('#why .vb-1'),
       x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'),
       stamp: o('#why .lp-vs__stamp'),
@@ -534,48 +563,97 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       relief: o('#why .lp-bubble__relief'),
     }
   })
+  before.units === 3
+    ? ok('舞台是三個各自越線的單位（左窗／右窗／對照表）')
+    : bad(`舞台單位數不對：${before.units} 個 .lp-cue--mid（應為 3＝左窗／右窗／對照表）`)
   !before.cued && before.m1 < 0.05 && before.x1 < 0.05 && before.stamp < 0.05 && before.sideO < 0.05 && before.relief < 0.05
     ? ok('開演前整場藏著（訊息、✕、紅章、右半、「還好」都還沒出現）')
     : bad(`開演前就穿幫：cued=${before.cued} 第一句 ${before.m1} ✕ ${before.x1} 紅章 ${before.stamp} 右半 ${before.sideO} 還好 ${before.relief}`)
-  // 捲到眼前（過 76% 線）→ 自動開演。⛔ 之後**不再捲動**＝驗「觸發後自己播完」，
-  // 不是跟著滾輪走（09-09 拍板「不要用滑鼠控制」）。
-  await page.evaluate(() => {
-    const vs = document.querySelector('#why .lp-vs')
-    window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
+
+  // ── 第一段：左窗（痛）。⛔ 停下來之後**不再捲動**＝驗「觸發後自己播完」，
+  //    不是跟著滾輪走（09-09 拍板「不要用滑鼠控制」）。
+  await park('#why .lp-vs__side--x')
+  await wait(300)
+  // 第七輪：**標題還在打字時，底下的戲不准開演**（不然標題打到第三個字、
+  // 痛已經演到「我在別家買了」，而那顆標題正是這一段要先讀懂的那句話）。
+  // ⚠️ 判準是**標題（h2）打完沒有**，不是整顆泡泡的 is-typing：泡泡裡的副標
+  //    （「還好——」）在戲演完前是透明的，等它＝多 0.55 秒的空窗（見 whenHeadingDone）。
+  const gated = await page.evaluate(() => ({
+    headDone: document.querySelector('#why .lp-bubble h2').querySelectorAll('.lp-tw__u:not(.is-on)').length === 0,
+    m1: Number(getComputedStyle(document.querySelector('#why .vb-1')).opacity),
+  }))
+  !gated.headDone && gated.m1 < 0.05
+    ? ok('標題還在打字時戲還沒開演（舞台等標題打完才接手）')
+    : bad(`標題與戲搶拍：標題打完了=${gated.headDone}、第一句已經 ${gated.m1}（應該還是 0）`)
+  // 標題打完那一刻＝這段戲的 t0，之後的取樣都從這裡算
+  await page.waitForFunction(
+    () => document.querySelector('#why .lp-bubble h2').querySelectorAll('.lp-tw__u:not(.is-on)').length === 0,
+    { timeout: 9000, polling: 30 },
+  )
+  // ⭐ 第七輪的病根就在這裡：**開演那一刻整扇窗要看得到**（在畫面內、且在黏性行動條
+  //    上方）。改壞的話這條會紅——part ① 對這三個單位是豁免的，位置只有這裡在守。
+  const geo = await page.evaluate(() => {
+    const f = document.querySelector('#why .lp-scene--x .lp-scene__frame').getBoundingClientRect()
+    const bar = document.querySelector('.lp-stickybar')
+    const barTop = bar ? bar.getBoundingClientRect().top : window.innerHeight
+    return { top: Math.round(f.top), bottom: Math.round(f.bottom), barTop: Math.round(barTop), vh: window.innerHeight }
   })
-  await wait(550) // 第六輪時間軸壓到 3.5s：vb-1 在 0.15s、vb-3（買別家）在 0.85s、右半在 2.0s
+  geo.top >= 0 && geo.bottom <= geo.barTop
+    ? ok(`開演時整扇窗都看得到（窗 ${geo.top}~${geo.bottom}px、黏性行動條在 ${geo.barTop}px）`)
+    : bad(`開演時窗沒有完整露出：窗 ${geo.top}~${geo.bottom}px、黏性條 ${geo.barTop}px、畫面高 ${geo.vh}px`)
+  await wait(550) // 左窗時間軸：0.15 第一句／0.55「隔天」／0.85 買別家／1.15 紅章
   const early = { m1: await op('#why .vb-1'), m3: await op('#why .vb-3'), sideO: await op('#why .lp-vs__side--o') }
   early.m1 > 0.9 && early.m3 < 0.05 && early.sideO < 0.05
-    ? ok('開演照順序：23:41 那句先到、「買別家」與右半都還沒（0.55s 取樣）')
-    : bad(`開演順序不對（0.55s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、右半 ${early.sideO}`)
-  await wait(1150) // 累計 ~1.7s：痛演完（買別家 0.85＋紅章 1.15＋✕ 1.25~1.49s），右半 2.0s 還沒亮
-  //               ⛔ 這個取樣點跟右半亮相之間只有 ~0.3s 餘裕：時間軸再壓就會把它擠掉（見 SCSS 那段）
+    ? ok('左窗照順序開演：23:41 那句先到、「買別家」與右半都還沒（0.55s 取樣）')
+    : bad(`左窗開演順序不對（0.55s 取樣）：第一句 ${early.m1}、買別家 ${early.m3}、右半 ${early.sideO}`)
+
+  await wait(1050) // 累計 ~1.6s：痛演完（買別家 0.85＋紅章 1.15，各 0.3s 動作）
   const mid = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { m3: o('#why .vb-3'), stamp: o('#why .lp-vs__stamp'), x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'), sideO: o('#why .lp-vs__side--o') }
   })
-  mid.m3 > 0.9 && mid.stamp > 0.9 && mid.x1 > 0.9 && mid.sideO < 0.05
-    ? ok('痛先演完才輪到解：「買別家」＋紅章＋✕ 都到了、右半還沒亮（1.7s 取樣）')
-    : bad(`痛與解的順序不對（1.7s）：買別家 ${mid.m3}、紅章 ${mid.stamp}、✕ ${mid.x1}、右半 ${mid.sideO}`)
-  await wait(2600) // 累計 ~4.3s：全演完（最後一拍「還好」在 3.5s＋0.45s 過場；成交章 3.0s）
+  // ⚠️ 這一條同時驗兩件事：①痛先於解（右半桌機吃 2s 讓拍、手機根本還沒越線）
+  //    ②對照表**等自己的線**（✕ 還沒出現＝沒有跟著左窗一起演）
+  mid.m3 > 0.9 && mid.stamp > 0.9 && mid.sideO < 0.05 && mid.x1 < 0.05
+    ? ok('痛先演完才輪到解：「買別家」＋紅章都到了、右半與 ✕ 都還沒（1.6s 取樣）')
+    : bad(`痛與解的順序不對（1.6s）：買別家 ${mid.m3}、紅章 ${mid.stamp}、✕ ${mid.x1}、右半 ${mid.sideO}`)
+
+  await wait(750) // 累計 ~2.35s：「還好——」在左窗演完後 1.7s 起、0.45s 過場
+  const relief = await op('#why .lp-bubble__relief')
+  relief > 0.9
+    ? ok('「還好，每一關都有解法——」在痛演完之後浮出（橋接到右半，2.35s 取樣）')
+    : bad(`「還好——」沒有在痛演完後浮出：opacity ${relief}（應 >0.9）`)
+
+  // ── 第二段：對照表。捲到它自己的線才開演，✕ 四行先落、✓ 四行跟上
+  await park('#why .lp-vs__grid')
+  await wait(220)
+  const tbl = await page.evaluate(() => {
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    return { x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'), a1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__ans') }
+  })
+  tbl.x1 > 0.4 && tbl.a1 < 0.05
+    ? ok('對照表捲到才演、且 ✕ 先於 ✓（0.22s 取樣：✕ 動了、✓ 還沒）')
+    : bad(`對照表的順序不對（0.22s）：✕ ${tbl.x1}（應 >0.4）、✓ ${tbl.a1}（應 <0.05）`)
+
+  // ── 全部演完＝定格在完整對照（手機的右窗是這一捲才越線的，多等一拍）
+  await wait(1600)
   const fin = await page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
     return {
       all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item, #why .lp-vs__stamp')].every(el => o(el) > 0.95),
       ans: [...document.querySelectorAll('#why .lp-vs__ans')].map(el => o(el)),
+      sideO: o(document.querySelector('#why .lp-vs__side--o')),
       relief: o(document.querySelector('#why .lp-bubble__relief')),
     }
   })
-  fin.all && fin.ans.length === 4 && fin.ans.every(v => v > 0.95) && fin.relief > 0.9
-    ? ok('演完定格：完整對照都在（兩窗、✕✓、紅章）、「還好——」浮出')
-    : bad(`演完狀態不對：全到=${fin.all} ✓=${fin.ans.join('/')} 還好=${fin.relief}`)
+  fin.all && fin.ans.length === 4 && fin.ans.every(v => v > 0.95) && fin.sideO > 0.95 && fin.relief > 0.9
+    ? ok('演完定格：完整對照都在（兩窗、✕✓、紅章與成交章）、「還好——」也在')
+    : bad(`演完狀態不對：全到=${fin.all} ✓=${fin.ans.join('/')} 右半=${fin.sideO} 還好=${fin.relief}`)
+
   // 演完就定格：捲走再回來不重播、不倒退（is-cued 是一次性的 class）
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await wait(300)
-  await page.evaluate(() => {
-    const vs = document.querySelector('#why .lp-vs')
-    window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
-  })
+  await park('#why .lp-vs__side--x')
   await wait(300)
   const again = { m1: await op('#why .vb-1'), a4: await op('#why .lp-vs__pair:nth-child(4) .lp-vs__ans') }
   again.m1 > 0.95 && again.a4 > 0.95

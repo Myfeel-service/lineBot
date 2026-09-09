@@ -666,7 +666,10 @@
   .lp-vs {
     --vs-red: #c0442b;
     position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 26px; margin-top: var(--section-head-gap); align-items: stretch;
+    /* ⚠️ 這一區的標題間距刻意比全站的 --section-head-gap（44px）小：第七輪為了讓
+       900px 的筆電在**一個畫面裡看到「兩窗＋四行表」**（＝演完定格的完整對照，這區的
+       主張本體），這裡跟面板內距、表格內距一起各收一級，總共回收 52px。 */
+    gap: 26px; margin-top: 32px; align-items: stretch;
   }
   /* 兩半各自有「地」（09-09 第四輪 UIUX 收拾）：⛔ 之前兩堆東西浮在同一片底色上＝
    * 「鬆散的拼貼」，with/without 要成立，兩個世界得各有一塊地。左＝帶灰的暖紙色、
@@ -674,11 +677,15 @@
    * align-items: stretch ＋ 清單列固定節奏（下面 min-height）＝兩塊面板等高、
    * 四行 ✕ 與四行 ✓ 一行對一行。 */
   .lp-vs__side {
-    display: flex; flex-direction: column; gap: 18px; min-width: 0;
-    border-radius: var(--r-card); padding: 24px 28px 26px;
+    display: flex; flex-direction: column; gap: 14px; min-width: 0;
+    border-radius: var(--r-card); padding: 20px 24px 22px;
   }
   .lp-vs__side--x { background: #f2f1ee; border: 1px solid #e7e5e0; }
-  .lp-vs__side--o { background: #eefaf3; border: 1px solid #ddf0e5; }
+  /* --vs-o-lead＝右半（解）比左半（痛）晚多久進場。⚠️ 這是**桌機才需要的**東西：
+     兩塊面板並排＝上緣同高＝同一刻越線，不給右半一個延遲的話「先痛後解」會同時發生。
+     手機收單欄之後右半要再捲 400px 才越線，**捲動順序本身就是先痛後解**，那裡改 0
+     （見 ≤960px 的覆寫）——⛔ 別在手機上留 2 秒：客人已經捲到它面前了還在等空面板。 */
+  .lp-vs__side--o { background: #eefaf3; border: 1px solid #ddf0e5; --vs-o-lead: 2s; }
   .lp-vs__tag {
     margin: 0; align-self: flex-start; font-size: 0.82rem; font-weight: 800; line-height: 1;
     color: #fff; border-radius: var(--radius-pill); padding: 8px 14px; letter-spacing: 0.02em;
@@ -704,11 +711,13 @@
    * 往下延伸（左暖灰、右淡綠）＝對照表跟上面兩個世界是同一件事；✕✓ 收進小圓徽當
    * 行的錨點；頭尾行圓角收邊、行間用同色系細線。⛔ 仍然不是白卡＋標籤（被打回過）。 */
   .lp-vs__grid {
-    grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0;
+    grid-column: 1 / -1; list-style: none; margin: 0; padding: 0;
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 26px;
   }
   .lp-vs__pair { display: contents; }
-  .lp-vs__item, .lp-vs__ans { padding: 16px 24px; margin: 0; }
+  /* ⚠️ 兩種 cell 的內距**必須一樣**：✕ 與 ✓ 的圓徽是靠「同樣的 padding-top＋同樣的
+     margin-top」對齊成一條線的（第七輪量到原本差 11px，因為 ✓ 那格是垂直置中）。 */
+  .lp-vs__item, .lp-vs__ans { padding: 13px 20px; margin: 0; }
   .lp-vs__item { background: #f2f1ee; display: flex; gap: 13px; align-items: flex-start; }
   .lp-vs__pair:not(:first-child) .lp-vs__item { border-top: 1px solid #e5e3de; }
   .lp-vs__pair:not(:first-child) .lp-vs__ans { border-top: 1px solid #dcefe4; }
@@ -723,14 +732,19 @@
   }
   .lp-vs__item h3 { margin: 0; font-size: 1.06rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
   .lp-vs__item p { margin: 2px 0 0; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
-  /* 答案 cell：淡綠地、垂直置中＝每句 ✓ 對著同一行的 ✕ */
+  /* 答案 cell：淡綠地、**上緣對齊**（第七輪改，原本是垂直置中）。
+   * ⚠️ 為什麼不置中：左格有標題＋副標兩行、右格只有一句，置中的話那句話會落在
+   *    左格兩行的中間＝跟它要回答的那個標題差 11px，四行看下來右欄像「浮著、沒填完」。
+   *    上緣對齊之後「✕ 這個痛 → ✓ 這樣解」是同一條水平線上的兩件事，眼睛橫著讀就對得上。
+   * ⚠️ 字級比左邊的標題大半級（1.06→1.1rem）＝答案是這一區的 payoff，讓它有重量；
+   *    ⛔ 別再往上加：跟 ✕ 標題差太多就變成兩種層級，對照表就不是「一對一」了。 */
   .lp-vs__ans {
-    background: #eefaf3; display: flex; gap: 13px; align-items: center;
-    font-size: 1.06rem; font-weight: 800; color: var(--g-text); line-height: 1.5;
+    background: #eefaf3; display: flex; gap: 13px; align-items: flex-start;
+    font-size: 1.1rem; font-weight: 800; color: var(--g-text); line-height: 1.5;
     letter-spacing: -0.01em;
   }
   .lp-vs__ans span {
-    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    flex: none; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%;
     background: rgba(6, 199, 85, 0.16); color: var(--g-text);
     display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; line-height: 1;
   }
@@ -745,7 +759,10 @@
    *    是針對「祖先掛 filter＋裡面跑捲動動畫」，這裡只有開演那幾秒有子元素動畫、
    *    範圍一扇窗，量過可接受。⛔ 別把 filter 拿去做成隨捲動變化。 */
   .lp-scene { position: relative; max-width: 420px; width: 100%; margin: 0 auto; }
-  .lp-scene--x .lp-scene__frame { filter: grayscale(0.45) contrast(0.96); }
+  /* 第七輪把去彩度再加一階（0.45→0.62）＋窗身壓一點透明：0.45 只把客人的綠泡泡染成
+     橄欖綠，整扇窗看起來仍是一個「正常的 LINE 畫面」，分開左右的其實只有紅章。
+     ⛔ 上限就到這裡：全黑白會變成「這是舊照片」而不是「這一晚沒人回」，也⛔不走深色底。 */
+  .lp-scene--x .lp-scene__frame { filter: grayscale(0.62) contrast(0.95) opacity(0.94); }
   .lp-scene--o .lp-scene__frame { box-shadow: var(--sh-card); }
 
   /* 聊天窗本體＝LINE 客人視角。像真的 LINE 是刻意的（08-31 拍板、同窄帶那支手機）：
@@ -775,9 +792,12 @@
     content: '＋'; flex: none; font-size: 0.9rem; font-weight: 600; color: #8a929c; line-height: 1;
   }
   .lp-scene__field { flex: 1 1 auto; height: 26px; border-radius: var(--radius-pill); background: #f0f2f5; }
+  /* 「隔天」膠囊：第七輪把底色從 32% 加深到 45%。⚠️ 這顆是**痛的本體**——整個左窗
+     要講的是「問了之後隔了一夜沒人回」，那一夜就靠這顆膠囊與兩個時間戳說出來，
+     它們卻是全段最小最淡的東西（量到時間戳對窗底的對比只有 2.3:1）。 */
   .lp-scene__day {
-    align-self: center; font-size: 0.7rem; font-weight: 600; color: #fff; line-height: 1;
-    background: rgba(38, 44, 52, 0.32); border-radius: var(--radius-pill); padding: 5px 12px;
+    align-self: center; font-size: 0.72rem; font-weight: 600; color: #fff; line-height: 1;
+    background: rgba(38, 44, 52, 0.45); border-radius: var(--radius-pill); padding: 5px 12px;
   }
   /* 訊息列。⚠️ 三種對齊是 LINE 真的長相（同手機殼那條房規）：頭像對泡泡**上**緣、
      時間對泡泡**下**緣、客人自己的訊息靠右、時間在泡泡**左**側（已讀疊在時間上面）。 */
@@ -797,13 +817,19 @@
   .lp-scene__msg--me .lp-scene__bub::before {
     left: auto; right: -5px; border: 5px solid transparent; border-right: 0; border-left-color: #8de05f;
   }
+  /* 時間戳與「已讀」：第七輪升一級（0.62→0.7rem）＋顏色深一階（#9aa3ad→#7d8590）。
+     真 LINE 的時間戳是更小的，但這裡它不只是擬真的裝飾——「23:41 問、隔天 11:06 才放棄」
+     是這扇窗的劇情，讀不到就只剩「兩顆綠泡泡」。可讀性優先於擬真（第七輪拍板）。 */
   .lp-scene__meta {
     display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
-    font-size: 0.62rem; color: #9aa3ad; line-height: 1.2; flex: none; padding-bottom: 3px;
+    font-size: 0.7rem; color: #7d8590; line-height: 1.2; flex: none; padding-bottom: 3px;
   }
   .lp-scene__msg:not(.lp-scene__msg--me) .lp-scene__meta { align-items: flex-start; }
   .lp-scene__read, .lp-scene__tag { font-style: normal; }
-  .lp-scene__tag { color: var(--g-text); font-weight: 700; }
+  /* ⚠️ 「MiniMe 自動回覆」這個標籤**刻意不跟著放大**：它跟時間戳在同一欄裡，420px 的窗
+     只有 392px 可分配，放大它會把秒回那顆泡泡擠到折兩行——右窗一折行就比左窗高，
+     底下的 ✓ 就跟 ✕ 對不齊行（第四輪量到的 25px 落差就是這條）。 */
+  .lp-scene__tag { color: var(--g-text); font-weight: 700; font-size: 0.63rem; }
 
   /* ── 手機殼＋LINE 聊天室畫面（窄帶在用）────────────────────────
    * ⚠️ 手機殼裡刻意做成 LINE 的樣子——那是「客人在 LINE 裡看到什麼」，不是我們的頁面配色。
@@ -1896,24 +1922,42 @@
     }
   }
 
-  /* ══ 對照舞台的戲：先痛、後解，捲到就演一次（2026-09-09 第三版）══════════
-   * 三條拍板：①「動畫滾到位置後觸發、不要跟著滾輪」②「不要讓客人按」＝零互動
-   *          ③暖紅開（✕ 與紅章）。
-   * 時間軸（秒，從 .lp-vs 的 lp-cue 進 76% 線起算）——第四輪 7.6s→4.4s、
-   * **第六輪再壓到 3.5s 收完**（使用者兩度「動畫還是太長」；動作本體也縮到 .3s）：
-   *   0.15 客人問肉桂捲 → 0.55「隔天」 → 0.85「我在別家買了」 → 1.15 紅章「沒了」
-   *   → 1.25～1.49 四個 ✕ 落下（痛演完，左半從此**定格留在版面上**）
-   *   → 2.0 右半亮相 → 2.1 同一句 23:41 → 2.3 已讀 → 2.4 秒回 → 2.7 成交
-   *   → 3.0 成交章「成了」 → 3.1～3.34 四個 ✓ → 3.5「還好——」浮出（~3.95s 全結束）。
-   * ⛔ 再壓的地板差不多到了：①每顆泡泡要 0.3~0.4s 的閱讀時間，再快眼睛跟不上
-   *    ②✕ 演完（1.49+0.3）到右半亮相（2.0）的空檔要留 ≥0.2s——驗收「痛先於解」的
-   *    取樣點（~1.7s）落在這裡，擠掉會搶拍且驗收 flaky。
+  /* ══ 對照舞台的戲：先痛、後解，捲到就演一次（2026-09-09 第七輪＝三個舞台單位）══
+   * 三條拍板照舊：①「動畫滾到位置後觸發、不要跟著滾輪」②「不要讓客人按」＝零互動
+   *              ③暖紅開（✕ 與紅章）。
+   *
+   * ⭐ 第七輪的大改：**一座舞台拆成三個各自越線的單位**（左窗／右窗／對照表），
+   *    每個單位的時間軸從**它自己**進 50% 線那一刻起算（`lp-cue--mid`，見 index.vue）。
+   *    為什麼：整座舞台當一個單位、用 76% 線開演時，實測開演瞬間戲的主角在畫面外——
+   *    桌機第一顆泡泡落在 802px 而黏性行動條佔 820~885px（**半顆被黑條蓋住**）、
+   *    ✕✓ 對照表在 1,079px；手機更糟，右半 1,025px、對照表 1,438px 全在畫面外，
+   *    「先痛後解」整段演給空氣看。拆開之後每一段都在**看得到它的時候**才演。
+   * ⚠️ 順帶的好處：使用者感受到的長度變短了（一次只演一段 1.3~1.5s，不是一口氣 3.5s），
+   *    而總時長沒有增加——「動畫太長」被抱怨過兩次，⛔ 別再把三段串回一條時間軸。
+   *
+   * 時間軸（秒，各自從自己越線起算）：
+   *   ① 左窗（痛）：0.15 客人問肉桂捲 → 0.55「隔天」 → 0.85「我在別家買了」
+   *                → 1.15 紅章「沒了」（1.45 收）
+   *   ② 右窗（解）：桌機 +2.0s 起（--vs-o-lead，因為兩窗並排＝同一刻越線，要自己讓拍）、
+   *                手機 +0s（單欄＝捲到才越線，順序天生就對）：
+   *                面板亮相 → +0.1 同一句 23:41 → +0.3 已讀 → +0.4 秒回 → +0.7 成交
+   *                → +1.0 成交章「成了」（+1.3 收）
+   *   ③ 對照表：0～0.24 四個 ✕ 落下 → 0.4～0.64 四個 ✓ 跟上（0.94 收）
+   *   ④「還好，每一關都有 MiniMe 能接住的解法——」：左窗演完後 1.7s 浮出。
+   *      ⚠️ 第七輪改成掛在**左窗**（原本是整座舞台 3.5s）＝它現在是**橋**：
+   *      痛演完 → 這句話 → 右半的解。原本 3.5s 是全部演完才出現，讀起來像多餘的總結。
+   * ⛔ 每段再壓的地板：每顆泡泡要 0.3~0.4s 的閱讀時間，再快眼睛跟不上。
    * ⚠️ 底案＝演完的完整對照；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到）。
    * ⚠️「還好——」要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
    *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，fail-open。
    * ⚠️ 用 translate／scale 這些 individual properties，不用 transform（同視差那條：
    *    transform 會蓋掉 .lp-reveal 的進場位移）。 */
   @keyframes lpSceneIn { from { opacity: 0; translate: 0 9px; } to { opacity: 1; translate: 0 0; } }
+  /* 泡泡：從自己的尾巴那側微微長出來（第七輪）——⛔ 全部元素同一種進場的話，
+     540px 的一整塊面板會跟一顆泡泡「跳」得一樣，層級講不出來。 */
+  @keyframes lpBubbleIn { from { opacity: 0; translate: 0 7px; scale: 0.97; } to { opacity: 1; translate: 0 0; scale: 1; } }
+  /* 面板：**只淡入、不位移**，慢一點（0.45s）＝一塊地出現的方式不該跟一句話一樣 */
+  @keyframes lpPanelIn { from { opacity: 0; } to { opacity: 1; } }
   /* 紅章：像真的蓋章——大而虛 → 壓實。fill both＝開演前停在 from（透明） */
   @keyframes lpStampIn {
     0% { opacity: 0; scale: 1.7; }
@@ -1927,32 +1971,46 @@
   &.is-anim .lp-vs .lp-vs__ans,
   &.is-anim .lp-vs .lp-vs__stamp,
   &.is-anim .lp-vs .lp-vs__side--o { opacity: 0; }
-  &.is-anim .lp-vs.is-cued {
-    .lp-scene__msg, .lp-scene__day, .lp-vs__item, .lp-vs__ans,
-    .lp-vs__side--o { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__read { animation: lpSceneIn .22s ease-out both; }
+  /* 泡泡的縮放原點＝尾巴那一側（客人的訊息靠右、店家的靠左） */
+  .lp-vs .lp-scene__msg { transform-origin: left bottom; }
+  .lp-vs .lp-scene__msg--me { transform-origin: right bottom; }
+  /* ── ① 左窗（痛）────────────────────────────────── */
+  &.is-anim .lp-vs__side--x.is-cued {
+    .lp-scene__msg { animation: lpBubbleIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__day { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
     .lp-vs__stamp { animation: lpStampIn .3s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
     .vb-1 { animation-delay: 0.15s; }
     .vb-2 { animation-delay: 0.55s; }
     .vb-3 { animation-delay: 0.85s; }
     .vb-4 { animation-delay: 1.15s; }
-    .lp-vs__pair:nth-child(1) .lp-vs__item { animation-delay: 1.25s; }
-    .lp-vs__pair:nth-child(2) .lp-vs__item { animation-delay: 1.33s; }
-    .lp-vs__pair:nth-child(3) .lp-vs__item { animation-delay: 1.41s; }
-    .lp-vs__pair:nth-child(4) .lp-vs__item { animation-delay: 1.49s; }
-    .vb-10 { animation-delay: 2s; }
-    .vb-11 { animation-delay: 2.1s; }
-    .vb-12 { animation-delay: 2.3s; }
-    .vb-13 { animation-delay: 2.4s; }
-    .vb-14 { animation-delay: 2.7s; }
-    .vb-15 { animation-delay: 3s; }
-    .lp-vs__pair:nth-child(1) .lp-vs__ans { animation-delay: 3.1s; }
-    .lp-vs__pair:nth-child(2) .lp-vs__ans { animation-delay: 3.18s; }
-    .lp-vs__pair:nth-child(3) .lp-vs__ans { animation-delay: 3.26s; }
-    .lp-vs__pair:nth-child(4) .lp-vs__ans { animation-delay: 3.34s; }
   }
-  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 3.5s; }
-  &.is-anim .lp-wrap:not(:has(.lp-vs.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
+  /* ── ② 右窗（解）：整塊面板自己也要淡入，延遲吃 --vs-o-lead（桌機 2s／手機 0s）── */
+  &.is-anim .lp-vs__side--o.is-cued {
+    animation: lpPanelIn .45s ease var(--vs-o-lead) both;
+    .lp-scene__msg { animation: lpBubbleIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__read { animation: lpSceneIn .22s ease-out both; }
+    .lp-vs__stamp { animation: lpStampIn .3s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
+    .vb-11 { animation-delay: calc(var(--vs-o-lead) + 0.1s); }
+    .vb-12 { animation-delay: calc(var(--vs-o-lead) + 0.3s); }
+    .vb-13 { animation-delay: calc(var(--vs-o-lead) + 0.4s); }
+    .vb-14 { animation-delay: calc(var(--vs-o-lead) + 0.7s); }
+    .vb-15 { animation-delay: calc(var(--vs-o-lead) + 1s); }
+  }
+  /* ── ③ 對照表：✕ 四行落下、✓ 四行跟上（一行對一行的節奏自己成一段戲）── */
+  &.is-anim .lp-vs__grid.is-cued {
+    .lp-vs__item, .lp-vs__ans { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-vs__pair:nth-child(1) .lp-vs__item { animation-delay: 0s; }
+    .lp-vs__pair:nth-child(2) .lp-vs__item { animation-delay: 0.08s; }
+    .lp-vs__pair:nth-child(3) .lp-vs__item { animation-delay: 0.16s; }
+    .lp-vs__pair:nth-child(4) .lp-vs__item { animation-delay: 0.24s; }
+    .lp-vs__pair:nth-child(1) .lp-vs__ans { animation-delay: 0.4s; }
+    .lp-vs__pair:nth-child(2) .lp-vs__ans { animation-delay: 0.48s; }
+    .lp-vs__pair:nth-child(3) .lp-vs__ans { animation-delay: 0.56s; }
+    .lp-vs__pair:nth-child(4) .lp-vs__ans { animation-delay: 0.64s; }
+  }
+  /* ── ④「還好——」＝痛與解之間的橋（第七輪從「全部演完 3.5s」改成「左窗演完 1.7s」）── */
+  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 1.7s; }
+  &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
    * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
@@ -2218,6 +2276,9 @@
        ✓ 行貼著它的 ✕ ＝不畫分隔線、用留白分組。 */
     .lp-vs { grid-template-columns: 1fr; gap: 30px; }
     .lp-vs__side { max-width: 480px; margin: 0 auto; width: 100%; }
+    /* 單欄＝右半要再捲一整塊面板的高度才越線，**捲動順序本身就是先痛後解**，
+       所以把桌機那 2 秒的讓拍收成 0（⛔ 留著的話客人已經捲到它面前還在等空面板）。 */
+    .lp-vs__side--o { --vs-o-lead: 0s; }
     .lp-vs__grid { grid-template-columns: 1fr; max-width: 480px; margin: 0 auto; width: 100%; }
     /* 單欄時每一組「痛＋解」疊成一張兩色小塊（上灰下綠）、組與組之間留 10px。
        選擇器用 :nth-child(n) 撐權重（要壓過桌機那組 :first/:last-child 的圓角規則）。 */
@@ -2284,10 +2345,10 @@
 
     /* 390px：面板內距收一級；紅章縮一號別壓到窗的標頭；✕✓ 清單字級收半級、
        行高改跟內容走（單欄沒有「跟對面對行」的需求） */
-    .lp-vs__side { padding: 18px 18px 20px; }
+    .lp-vs__side { padding: 16px 16px 18px; }
     .lp-vs__stamp { font-size: 0.78rem; padding: 5px 9px; right: 4px; }
     .lp-vs__item h3 { font-size: 1.02rem; }
-    .lp-vs__ans { font-size: 1rem; }
+    .lp-vs__ans { font-size: 1.04rem; }
 
     /* 手機：方案卡才收成單欄（2×2 在 390px 每張只剩 165px，「每月 AI 回覆 1,300 則」
        會折成三行）。推薦框的緞帶跟著左邊界走，不用另外調。 */
@@ -2375,9 +2436,11 @@
     &.is-anim .lp-vs .lp-vs__item,
     &.is-anim .lp-vs .lp-vs__ans,
     &.is-anim .lp-vs .lp-vs__stamp,
-
-    &.is-anim .lp-vs .lp-vs__side--o { opacity: 1; animation: none; scale: none; }
-    &.is-anim .lp-wrap:not(:has(.lp-vs.is-cued)) .lp-bubble__relief { opacity: 1; transition: none; }
+    /* ⚠️ translate／scale 都要顯式歸零（不只 scale）：第七輪泡泡的進場改用
+       lpBubbleIn（帶 translate＋scale），fill-mode: both 會把 from 的值留在元素上＝
+       關掉動畫反而定在「縮小 3%、往下 7px」的位置。 */
+    &.is-anim .lp-vs .lp-vs__side--o { opacity: 1; animation: none; translate: none; scale: none; }
+    &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 1; transition: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-plans .lp-reveal.in,
     &.is-anim .lp-faq .lp-reveal.in,
