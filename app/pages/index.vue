@@ -192,13 +192,13 @@
          → 本版。病根確診為三件：①痛會蒸發（演完定格在快樂結局，痛只活在動畫前 3 秒）
          ②全頁沒有負面視覺詞彙（只有綠與 ✓，發不出痛的訊號）③清單長得像後台設定頁。
          解法＝業界 with/without 對照（Paperbox 式）＋日系 LP「こんなお悩み」共感清單：
-         左半「沒有 MiniMe 的晚上」＝沒人回的窗（去彩度、微左傾、蓋紅章「這筆生意，沒了」）
+         左半「沒有 MiniMe 的晚上」＝沒人回的窗（去彩度、蓋紅章「這筆生意，沒了」）
            ＋四關 ✕ 大字清單；右半「有 MiniMe 的同一晚」＝同一句被秒回的窗（亮、微右傾）
            ＋四句 ✓ 答案。**演完整個對照留在版面上**＝痛不再蒸發，慢慢看跟快速滑過
            得到同一個故事。⚠️ 暖紅（✕ 與紅章）是使用者 09-09 拍板開的，全頁只用在這幾點。
          ⚠️ 整場戲仍**全自動**（拍板「不要讓客人按」）：捲到 76% 線演一次（第四輪從 7.6s
             壓到 **4.4 秒**收完——「跑太久大家根本看不完」）、演完定格、零互動；
-            左窗悲劇先演＋✕ 落下 → MiniMe 頭像從中線進場 → 右窗重演同一晚＋✓ 蓋章 →
+            左窗悲劇先演＋✕ 落下 → 右半亮相、重演同一晚＋✓ 蓋章 →
             「還好——」浮出。底案＝演完的完整狀態（減少動態／沒 JS 直接看到）。
          ⚠️ 文案紅線：四關標題／副標／答案沿用拍板文案一字不動；對話是虛構情境 →
             舞台下掛常駐「示意情境，以咖啡店為例」；零成效數字（23:41／11:06 是情境時間）。 -->
@@ -229,7 +229,7 @@
             <!-- LINE 一對一聊天（客人視角）：客人自己的訊息＝右側綠泡泡、店家回覆＝左側
                  白泡泡＋頭像、時間貼泡泡下緣外側——跟窄帶那支手機同一套「像真的 LINE」
                  規矩（08-31 拍板）。店名「◯◯咖啡」＝明白的占位符，不發明像真的品牌。
-                 這扇窗整體去彩度＋微左傾＝「壞掉的那一半」；紅章在窗角，2.9s 蓋下。 -->
+                 這扇窗整體去彩度＝「壞掉的那一半」；紅章在窗角，1.7s 蓋下。 -->
             <div class="lp-scene lp-scene--x" aria-hidden="true">
               <div class="lp-scene__frame">
                 <div class="lp-scene__hd">
@@ -252,19 +252,12 @@
               </div>
               <p class="lp-vs__stamp vb-4">這筆生意，沒了</p>
             </div>
-            <!-- 四關＝✕ 共感清單（日系 LP「こんなお悩み」的做法）。文案一字不動。 -->
-            <ul class="lp-vs__list">
-              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></li>
-              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>派了員工，還要照顧他的情緒</h3><p>多一件事，就是多一次溝通。</p></div></li>
-              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>自己動手，後台太複雜</h3><p>打開來一堆設定，不知道從哪開始。</p></div></li>
-              <li class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>找其他工具，好貴</h3><p>一個月好幾千，還得有人學、有人顧。</p></div></li>
-            </ul>
           </div>
 
-          <!-- 中線：MiniMe 進場（4.2s，戲的轉場記號；手機版收掉） -->
-          <span class="lp-vs__join vb-9" aria-hidden="true"><BrandLogo mark on-color alt="" /></span>
-
-          <!-- 右半：有 MiniMe 的同一晚（整個半邊 4.2s 才亮相＝先痛、後解） -->
+          <!-- 右半：有 MiniMe 的同一晚（半邊 2.7s 才亮相＝先痛、後解）。
+               ⚠️ 09-09 第五輪拿掉了中線的 MiniMe logo 圓球（使用者「放那邊不明所以」＋
+               我的判斷一致：沒有標籤的浮球讀起來像壞掉的按鈕）——品牌的進場時刻由
+               這半邊的綠標籤＋回覆上的「MiniMe 自動回覆」小字扛。⛔ 別加回來。 -->
           <div class="lp-vs__side lp-vs__side--o vb-10">
             <p class="lp-vs__tag lp-vs__tag--o">有 {{ brandName }} 的同一晚</p>
             <div class="lp-scene lp-scene--o" aria-hidden="true">
@@ -294,14 +287,32 @@
                 <div class="lp-scene__ft"><span class="lp-scene__field" /></div>
               </div>
             </div>
-            <!-- 四句答案＝✓ 清單，跟左邊的 ✕ 對仗。答案沿用 08-27 拍板的一句話一行。 -->
-            <ul class="lp-vs__list lp-vs__list--o">
-              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>它 24 小時都在</li>
-              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>交辦只要一句話</li>
-              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>畫面帶你一步步做</li>
-              <li class="lp-vs__ans"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</li>
-            </ul>
           </div>
+
+          <!-- 四關對照表（09-09 第五輪，使用者「統一下面四點列點、由左到右」）：
+               一行＝「✕ 這個痛 → ✓ 這樣解」，左欄對齊左面板、右欄對齊右面板——
+               因果第一次被排版講出來，也治好右欄稀疏漂浮的問題。
+               ⚠️ 文案紅線照舊：痛點標題／副標／答案沿用拍板文案一字不動。
+               ⚠️ li 是 display: contents（cell 直接進外層 grid）＝兩欄天生同行等高，
+                  手機收單欄時順序自動變成「痛→解、痛→解」。 -->
+          <ul class="lp-vs__grid">
+            <li class="lp-vs__pair">
+              <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></div>
+              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>它 24 小時都在</p>
+            </li>
+            <li class="lp-vs__pair">
+              <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>派了員工，還要照顧他的情緒</h3><p>多一件事，就是多一次溝通。</p></div></div>
+              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>交辦只要一句話</p>
+            </li>
+            <li class="lp-vs__pair">
+              <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>自己動手，後台太複雜</h3><p>打開來一堆設定，不知道從哪開始。</p></div></div>
+              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
+            </li>
+            <li class="lp-vs__pair">
+              <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>找其他工具，好貴</h3><p>一個月好幾千，還得有人學、有人顧。</p></div></div>
+              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
+            </li>
+          </ul>
         </div>
         <!-- 誠實標示：常駐、不參與動畫（08-26 誠實機制，同 hero 的「以咖啡店為例」） -->
         <p class="lp-vs__cap">示意情境，以咖啡店為例</p>

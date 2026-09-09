@@ -503,7 +503,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     return {
       cued: vs.classList.contains('is-cued'),
       m1: o('#why .vb-1'),
-      x1: o('#why .lp-vs__list .lp-vs__item:nth-child(1)'),
+      x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'),
       stamp: o('#why .lp-vs__stamp'),
       sideO: o('#why .lp-vs__side--o'),
       relief: o('#why .lp-bubble__relief'),
@@ -527,7 +527,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   //               ⛔ 這個取樣點跟右半亮相之間只有 ~0.3s 餘裕：時間軸再壓就會把它擠掉（見 SCSS 那段）
   const mid = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
-    return { m3: o('#why .vb-3'), stamp: o('#why .lp-vs__stamp'), x1: o('#why .lp-vs__list .lp-vs__item:nth-child(1)'), sideO: o('#why .lp-vs__side--o') }
+    return { m3: o('#why .vb-3'), stamp: o('#why .lp-vs__stamp'), x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'), sideO: o('#why .lp-vs__side--o') }
   })
   mid.m3 > 0.9 && mid.stamp > 0.9 && mid.x1 > 0.9 && mid.sideO < 0.05
     ? ok('痛先演完才輪到解：「買別家」＋紅章＋✕ 都到了、右半還沒亮（2.4s 取樣）')
@@ -552,7 +552,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     window.scrollTo({ top: vs.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.35, behavior: 'instant' })
   })
   await wait(300)
-  const again = { m1: await op('#why .vb-1'), a4: await op('#why .lp-vs__list--o .lp-vs__ans:nth-child(4)') }
+  const again = { m1: await op('#why .vb-1'), a4: await op('#why .lp-vs__pair:nth-child(4) .lp-vs__ans') }
   again.m1 > 0.95 && again.a4 > 0.95
     ? ok('捲走再回來：定格在演完的樣子（不重播、不倒退）')
     : bad(`捲走再回來卻倒退：第一句 ${again.m1}、第四個 ✓ ${again.a4}`)
