@@ -23,6 +23,28 @@
    #diff（比較表）已隨 2026-08-26 改版整區移除，頁尾連結同步拿掉了。 */
 .lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq { scroll-margin-top: 80px; }
 
+/* ── 「能做什麼」四塊：捲動停下來時對齊到一塊（2026-09-09「優化整個滾動時的呈現」）──
+ * ⚠️ 這是「一屏一塊」**做得到的版本**。原本想做的是「右欄釘住、捲動原地換片」，
+ *    量下來**做不到**：最高的一塊是 778px，而乾淨可視區＝視窗高 − 導覽 69 − 置底行動條 80，
+ *    實測 1440×900 只有 **751px**（差 27px）、1440×800 只有 651px（差 127px）、
+ *    1512×760 只有 611px（差 167px）——**釘住的東西超出畫面就永遠捲不到**，
+ *    那不是不好看，是有內容看不到。要真的做釘住，得先把「系統實際畫面」那幾扇窗縮小
+ *    （⛔ 09-03 六輪的教訓：縮小就會被讀成「這是截圖」）或讓置底行動條在這一區收起來，
+ *    兩個都要老闆／使用者拍板，記在 STATUS 的 `D-71`。
+ * ⚠️ 所以改用 scroll-snap：不釘住，但捲動**停下來時**會吸到某一塊的上緣＝
+ *    「一次停在一塊上」而不是停在兩塊的接縫上（實測改版前有 53% 的捲動距離同時看到兩塊）。
+ * ⚠️ `proximity` 不是 `mandatory`：只有你本來就停在附近才吸過去，不會搶捲動。
+ *    ⛔ 別改成 mandatory——內容比畫面高的區塊用 mandatory 會把人卡在中間出不去。
+ * ⚠️ 對齊點吃 .lp-pane 現成的 `scroll-margin-top: 100px`＝停下來時上緣離導覽列 32px。
+ * ⚠️ 只有這四塊有對齊點，其他區塊（Hero、定價、常見問答⋯）完全不受影響。
+ * ⛔ 手機關掉：手機是慣性捲動，吸附會變成「甩不出去」。
+ * ⚠️ 用 `:has(.lp-home)` 鎖在首頁：`scroll-snap-type` 必須下在**捲動容器**（html）上，
+ *    而這支 partial 其他規則都鎖在 `.lp` 底下——法務頁也吃 `.lp`，別讓它們也吸附。 */
+@media (min-width: 961px) {
+  html:has(.lp-home) { scroll-snap-type: y proximity; }
+  .lp-home .lp-pane { scroll-snap-align: start; }
+}
+
 .lp {
   /* Palette — 沿用全站共用品牌綠 token（門面頁統一同一套來源）*/
   --g: var(--brand-green);
@@ -932,6 +954,26 @@
   .lp-rail__item.is-on b, .lp-rail__item.is-on:hover b { color: var(--g-text); }
   .lp-rail__item small { display: block; margin-top: 6px; font-size: 0.9rem; line-height: 1.6; }
 
+  /* ── 手機的「你在哪」吸頂分頁列（2026-09-09）───────────────────────
+   * ≤960px 左軌整條不顯示，所以手機原本是 **4.6 個畫面**的卡片一路往下、全程沒有
+   * 「我在哪、還有幾塊」。這條列＝把軌的工作交給手機，代價約 40px。
+   * ⚠️ 桌機 display:none：那邊有軌，兩個一起出現就是同一件事講兩次。
+   * ⚠️ 四格**等寬**（flex: 1）而不是靠內容寬＋橫向捲：390px 下四個標籤剛好放得下，
+   *    做成可以左右滑的話「被切掉半個字」看起來像壞的（量法：headless 量每格的 scrollWidth
+   *    有沒有超過 clientWidth）。
+   * ⚠️ top 是導覽列的 68px；z-index 40＝壓在導覽列（60）與置底行動條（55）之下。
+   * ⛔ 底色一定要**實色**：吸頂時底下的井會從它後面滑過去，半透明會看到字疊字。 */
+  .lp-caps { display: none; }
+  .lp-caps__i {
+    flex: 1 1 0; min-width: 0; text-align: center;
+    padding: 7px 4px; border-radius: var(--radius-pill);
+    font-size: 0.8rem; font-weight: 700; line-height: 1.4; letter-spacing: -0.01em;
+    color: var(--ink-soft); background: var(--surf-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: color .25s ease, background-color .25s ease;
+  }
+  .lp-caps__i.is-on { color: var(--g-text); background: var(--g-wash); }
+
   /* 一塊能力＝標頭（標題＋兩欄圖示列）→ 滿欄視窗 → 成效帶。
      ⚠️ 三段各自掛 .lp-reveal（房規：淡入單位不可高過一個畫面，整塊有 780px）。 */
   /* ── 每一塊裝進一個淡綠的井（2026-09-06）───────────────────────────
@@ -1521,6 +1563,22 @@
      站往下位移 18px 的話線的上端會跟前一塊脫開，淡入過程看起來像斷掉。 */
   &.is-anim .lp-reveal--fade { transform: none; }
 
+  /* ── 「能做什麼」：不是主角的那幾塊淡下去（2026-09-09「優化整個滾動時的呈現」）──────
+   * ⚠️ 病灶是量出來的：四塊高 669／621／778／437px，畫面 900px＝**每一塊都比一個畫面矮**，
+   *    所以捲這一區時有 **53%** 的距離畫面上同時看到兩塊、而且亮度一樣——左軌卻只指著一塊。
+   *    「捲起來很糊」的來源是這個，不是動畫不夠花。誰是主角由 index.vue 的 capIo 決定
+   *    （佔畫面最多的那一塊 → `is-on`）。
+   * ⚠️ 用 **filter: opacity()** 不是 opacity：`.lp-band`（第四塊）**自己就是 .lp-reveal**，
+   *    進場淡入吃的就是 opacity，兩邊搶同一個屬性時 `.in` 那條會贏＝第四塊永遠不淡。
+   *    filter 是另一個屬性、跟 opacity 相乘（進場那一刻 0 × 任何值還是 0，淡入不會被破壞）。
+   *    ⛔ 別改回 opacity，也⛔別把 .lp-reveal 從 .lp-band 搬走（那條進場是 09-03 調出來的）。
+   * ⚠️ 0.58 是挑過的：更低（0.42）在白底上會被讀成「這塊壞了／不能用」，更高（0.75）
+   *    則跟主角分不出來。⛔ 改這個值要在 1440 與 390 兩個寬度各看一次。
+   * ⚠️ 掛在 `.is-anim` 底下＝勾了「減少動態效果」或沒有 JS 時四塊一律全亮
+   *    （那時軌照樣會亮燈——它是指示器不是動畫）。 */
+  &.is-anim .lp-pane { transition: filter .45s ease; }
+  &.is-anim .lp-pane:not(.is-on) { filter: opacity(0.58); }
+
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
    * 三扇窗各自演一件**那扇窗在講的事**：對話一句一句到、名單一列一列進來然後標籤貼上去、
    * 圖文選單從下面往上展開。全部走 `.lp-cue`（捲到眼前才演），⛔別改掛 `.lp-reveal.in`。
@@ -1804,8 +1862,21 @@
     .lp-plans { grid-template-columns: 1fr 1fr; }
     /* 收單欄：左軌整條收掉（沒有 sticky 可言，而且它只是「捲到哪」的指示器）。
        ⛔ 因此每一塊的標題與說明一定要留在右欄（.lp-pane__hd）——搬進軌的話這裡會整個消失。 */
-    .lp-rails { grid-template-columns: 1fr; gap: 0; }
+    /* ⛔ 一定是 `minmax(0, 1fr)` 不是 `1fr`：`1fr` 的最小值是**內容的 min-content**，
+       所以欄裡只要有一個不換行的東西，整欄就會被撐到那個寬度、而且**看不出來**
+       （`.lp` 是 overflow-x: clip，超出去的部分被靜靜裁掉）。2026-09-09 加吸頂分頁列
+       時實際踩到：四個 `white-space: nowrap` 的標籤把整條畫面欄從 342px 撐到 **406px**，
+       320～430px 每個寬度都一樣被撐，四塊井全部溢出畫面右邊——而瀏覽器不會出現橫向捲軸，
+       所以只有截圖跟量盒模型看得出來。 */
+    .lp-rails { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .lp-rails__rail { display: none; }
+    /* 軌收掉之後接手的那條吸頂分頁列（why 見上面 .lp-caps） */
+    .lp-caps {
+      display: flex; gap: 6px;
+      position: sticky; top: 68px; z-index: 40;
+      margin: 0 0 14px; padding: 8px 0 10px;
+      background: var(--paper);
+    }
     .lp-pane__apps { grid-template-columns: 1fr; }
     /* 井在手機收窄一級：24px 的頁面邊距外再吃 26px 的井內距，內容會被擠掉一大截。
        塊距也跟著收——手機一次只看得到一塊，不需要 44px 去分它們，井自己就是邊界。 */
@@ -1915,6 +1986,8 @@
     .lp-hero.is-awake h1 .g, .lp-hero.is-asleep .lp-rev--btn.is-grown .lp-wake::after { animation: none; }
 
     &.is-anim .lp-reveal { opacity: 1; transform: none; }
+    /* 「不是主角就淡下去」也算動態：關掉之後四塊一律全亮（軌照樣亮燈，它是指示器） */
+    &.is-anim .lp-pane, &.is-anim .lp-pane:not(.is-on) { filter: none; transition: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-walls .lp-reveal.in,
     &.is-anim .lp-plans .lp-reveal.in,

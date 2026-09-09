@@ -331,27 +331,16 @@
                  「判到直接貼，或先擬好等你按」才是實況。
                  行銷那條的 small 同輪換成老闆要的推播句（微調過：「馬上**就能**推播」，
                  主詞留在店家——「就馬上推播」會被讀成系統自動發＝08-27 拍板撤下的能力）。 -->
+            <!-- ⚠️ 2026-09-09：四條改用 v-for 吃 CAP_TABS（script 裡那份），因為同一組名字
+                 現在有**兩個**出口——桌機這條軌、手機那條吸頂分頁列。硬寫兩份的話
+                 「軌寫自動貼標、分頁列寫貼標」這種漂移遲早發生（改名的成本從 1 處變 2 處）。
+                 ⛔ 加減塊要同時動 CAP_TABS 與右欄的四塊，順序必須一致（軌的亮燈是靠索引對的）。 -->
             <nav class="lp-rails__rail lp-reveal" aria-labelledby="lp-rail-lead">
               <p id="lp-rail-lead" class="lp-rail__lead">它在幫你做的事</p>
               <ol class="lp-rail__nav">
-                <li>
-                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 0 }" href="#cap-service">
-                    <b>AI 客服</b><small>有人問，馬上有人回</small>
-                  </a>
-                </li>
-                <li>
-                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 1 }" href="#cap-marketing">
-                    <b>AI 行銷</b><small>節慶到了馬上就能推播</small>
-                  </a>
-                </li>
-                <li>
-                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 2 }" href="#cap-tagging">
-                    <b>自動貼標</b><small>誰買過什麼，它幫你記</small>
-                  </a>
-                </li>
-                <li>
-                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === 3 }" href="#cap-richmenu">
-                    <b>圖文選單</b><small>客人自己點，你少回一輪</small>
+                <li v-for="(c, i) in CAP_TABS" :key="c.id">
+                  <a class="lp-rail__item" :class="{ 'is-on': activeCap === i }" :href="`#${c.id}`">
+                    <b>{{ c.label }}</b><small>{{ c.hint }}</small>
                   </a>
                 </li>
               </ol>
@@ -364,6 +353,24 @@
                  四塊的順序就是軌上四條的順序（09-06 自動貼標升格後從三變四），
                  加減塊要兩邊一起改。 -->
             <div class="lp-rails__flow">
+              <!-- ⚠️ 手機專用的「你在哪」分頁列（2026-09-09）：≤960px 左軌整條不顯示，
+                   原本手機是 4.6 個畫面的卡片一路往下、**全程沒有任何「我在哪、還有幾塊」**。
+                   這條吸頂列就是把軌的功能給手機，只佔約 40px。
+                   ⚠️ 桌機不顯示：那邊有軌，兩個同時出現＝同一件事講兩次。
+                   ⚠️ 只負責定位，⛔別把副標也搬進來（軌的 hint 在手機上沒有位置放）。
+                   ⚠️ 放在畫面欄（.lp-rails__flow）裡面而不是 #value 底下：它要在整個
+                      「能做什麼」的捲動範圍內都吸著，而這一欄剛好就是那個範圍。 -->
+              <nav class="lp-caps" aria-label="能做什麼：四個段落">
+                <a
+                  v-for="(c, i) in CAP_TABS"
+                  :key="c.id"
+                  class="lp-caps__i"
+                  :class="{ 'is-on': activeCap === i }"
+                  :aria-current="activeCap === i ? 'true' : undefined"
+                  :href="`#${c.id}`"
+                >{{ c.label }}</a>
+              </nav>
+
               <article id="cap-service" class="lp-pane">
                 <div class="lp-pane__hd lp-reveal">
                   <h3>AI 客服</h3>
@@ -1957,6 +1964,17 @@ const barShown = ref(false)
  * ⚠️ 它是**指示器不是動畫**，所以觀察器要裝在 reduced-motion 的早退**之前**（同黏性條）。
  */
 const activeCap = ref(0)
+/**
+ * 「能做什麼」四塊的名字＝**桌機左軌與手機吸頂分頁列共用這一份**（2026-09-09）。
+ * ⛔ 順序就是右欄四塊的順序，加減塊兩邊要一起改（亮燈是靠索引對的，不是靠 id 找）。
+ * ⚠️ label 與右欄每塊的 h3 刻意逐字相同（導覽與內容同名才對得上），hint 只有軌上放得下。
+ */
+const CAP_TABS = [
+  { id: 'cap-service', label: 'AI 客服', hint: '有人問，馬上有人回' },
+  { id: 'cap-marketing', label: 'AI 行銷', hint: '節慶到了馬上就能推播' },
+  { id: 'cap-tagging', label: '自動貼標', hint: '誰買過什麼，它幫你記' },
+  { id: 'cap-richmenu', label: '圖文選單', hint: '客人自己點，你少回一輪' },
+] as const
 
 function closeMenu() { menuOpen.value = false }
 function onScroll() { stuck.value = window.scrollY > 8 }
@@ -2021,25 +2039,40 @@ onMounted(() => {
     barIo.observe(hero)
   }
 
-  // 「能做什麼」左軌的高亮：畫面**正中央**那條 10% 高的橫線碰到哪一塊，軌上就亮哪一條。
-  // ⚠️ 用 rootMargin 夾出中央橫線、不用 threshold：三塊高度差很多（780／604／534px），
-  //    用比例門檻的話高的那塊永遠先達標。
-  // ⚠️ 這個觀察器**不 unobserve**（它要一直跟著捲動走，往回捲也要跟著退回去），
+  // ── 「能做什麼」現在在看哪一塊（軌的亮燈／手機分頁列／非主角淡出，三件事同一個來源）──
+  // ⚠️ 2026-09-09 換口徑：**佔畫面最多的那一塊**（舊版是「碰到畫面中央那條 10% 橫線的
+  //    第一塊」）。為什麼要換：實測四塊是 669／621／778／437px、畫面 900px＝**每一塊都比
+  //    一個畫面矮**，所以有 53% 的捲動距離畫面上同時看到兩塊；中線那條規則在接縫附近會
+  //    選到「上面那塊」，而眼睛看到的主角是下面那塊——軌講的話跟畫面對不上。
+  // ⚠️ 因此 threshold 要給一整排（每 5% 一格）：可見高度是連續變化的，只給 0 的話
+  //    觀察器在中間完全不回報，主角換了也不知道。⛔ 別改用 scroll 監聽重算（那是每一幀
+  //    都要量四個盒子，這裡的 21 段門檻等價但便宜）。
+  // ⚠️ 這個觀察器**不 unobserve**（要一直跟著捲動走，往回捲也要退回去），
   //    而且刻意裝在 reduced-motion 早退之前——它是「你在看哪」的指示器，不是動畫。
-  // ⚠️ 沒有任何一塊碰到中線時（例如夾在兩塊之間的圖說）刻意**不動**，維持上一條亮著；
-  //    歸零的話軌會在捲動中途閃回第一條。
+  // ⚠️ 全部都不在畫面上時刻意**不動**，維持上一塊亮著；歸零的話軌會在捲動中途閃回第一條。
+  // ⛔ 淡出用 classList 直接掛 `is-on`，**不要**改成 Vue 的 `:class`：這幾個元素上的
+  //    `in`／`is-cued` 是進場觀察器手動加的，Vue 一重繪會把整個 class 屬性重寫＝把它們洗掉
+  //    （09-08 實際踩過，見那支示意手機的模板註解）。
   const capPanes = [...(root.value?.querySelectorAll<HTMLElement>('#value .lp-pane') ?? [])]
   if (capPanes.length) {
-    const inView = new Set<number>()
+    const seenH = new Map<number, number>()
     capIo = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
         const i = capPanes.indexOf(e.target as HTMLElement)
         if (i < 0) return
-        if (e.isIntersecting) inView.add(i)
-        else inView.delete(i)
+        seenH.set(i, e.isIntersecting ? e.intersectionRect.height : 0)
       })
-      if (inView.size) activeCap.value = Math.min(...inView)
-    }, { threshold: 0, rootMargin: '-45% 0px -45% 0px' })
+      let best = -1
+      let bestH = 0
+      capPanes.forEach((_, i) => {
+        const h = seenH.get(i) ?? 0
+        // +2px 的門檻＝防抖：兩塊各露一半時不要在接縫上來回跳
+        if (h > bestH + 2) { bestH = h; best = i }
+      })
+      if (best < 0) return
+      activeCap.value = best
+      capPanes.forEach((el, i) => el.classList.toggle('is-on', i === best))
+    }, { threshold: Array.from({ length: 21 }, (_, i) => i / 20) })
     capPanes.forEach(el => capIo?.observe(el))
   }
 

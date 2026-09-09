@@ -261,6 +261,66 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   menuReopened === 0 && iconReopened === 'kbd'
     ? ok('切換鈕 再按一下＝選單展開、圖示回鍵盤')
     : bad(`切換鈕 按不回來：translateY ${menuReopened}px、圖示 ${iconReopened}`)
+  // ⛔ 按完一定要把滑鼠挪開：click 會把游標留在那個位置，之後捲到證言牆時游標可能正好
+  //    落在跑馬燈上＝那一列 hover 暫停，下面「證言牆有在飄」會誤報壞掉（2026-09-09 踩過）。
+  await page.mouse.move(0, 0)
+
+  // 2.5) 「能做什麼」的捲動呈現（2026-09-09）：同一時間只有一塊是主角、而且主角＝佔畫面
+  //      最多的那一塊、軌上亮的也是它。⚠️ 淡出有 .45s 過場，量之前一定要等（不等會量到
+  //      半路的值，`filter` 會是 opacity(0.83) 這種中間值＝看起來「沒有一塊是亮的」）。
+  const capState = async (sel) => {
+    await go(sel, -100)
+    await wait(700)
+    return page.evaluate(() => {
+      const panes = [...document.querySelectorAll('#value .lp-pane')]
+      const rails = [...document.querySelectorAll('.lp-rail__item')]
+      const vh = window.innerHeight
+      const val = (el) => {
+        const f = getComputedStyle(el).filter
+        if (f === 'none') return 1
+        const m = /opacity\(([\d.]+)\)/.exec(f)
+        return m ? Number(m[1]) : 1
+      }
+      const lit = panes.map(val)
+      const seen = panes.map((el) => {
+        const b = el.getBoundingClientRect()
+        return Math.max(0, Math.min(b.bottom, vh) - Math.max(b.top, 0))
+      })
+      return {
+        litCount: lit.filter(v => v > 0.95).length,
+        主角: lit.indexOf(Math.max(...lit)),
+        佔最多: seen.indexOf(Math.max(...seen)),
+        軌: rails.findIndex(a => a.classList.contains('is-on')),
+        暗的: lit.filter(v => v < 0.95).map(v => v.toFixed(2)).join('/'),
+      }
+    })
+  }
+  for (const [sel, name] of [['#cap-marketing', 'AI 行銷'], ['#cap-tagging', '自動貼標']]) {
+    const s = await capState(sel)
+    s.litCount === 1 && s.主角 === s.佔最多 && s.軌 === s.主角
+      ? ok(`捲到「${name}」：只有它是亮的（其他三塊 ${s.暗的}）、軌也亮在它身上`)
+      : bad(`捲到「${name}」主角判定不對：亮的有 ${s.litCount} 塊、主角#${s.主角 + 1}、佔最多#${s.佔最多 + 1}、軌#${s.軌 + 1}`)
+  }
+
+  // 2.6) 捲動吸附：用滾輪捲、停下來之後主角那塊的上緣要落在 100px（＝.lp-pane 的
+  //      scroll-margin-top，離導覽列 31px）。⚠️ 這是「一屏一塊」實際做到的部分——
+  //      釘住換片做不到（最高的一塊 778px > 乾淨可視區，理由寫在 _landing.scss 檔頭那段）。
+  await go('#value', -400)
+  await wait(500)
+  const snapTops = []
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.move(720, 450)
+    for (let k = 0; k < 6; k++) { await page.mouse.wheel({ deltaY: 100 }); await wait(16) }
+    await wait(900)
+    snapTops.push(await page.evaluate(() => {
+      const on = document.querySelector('#value .lp-pane.is-on')
+      return on ? Math.round(on.getBoundingClientRect().top) : null
+    }))
+  }
+  await page.mouse.move(0, 0)
+  snapTops.every(t => t !== null && Math.abs(t - 100) <= 2)
+    ? ok(`捲動吸附：三次滾輪停下來，主角上緣都在 100px（量到 ${snapTops.join('／')}）`)
+    : bad(`捲動吸附沒生效：主角上緣 ${snapTops.join('／')}px（該是 100）`)
 
   // 3) 一條路的左軸綠線（二十三輪起線＝.lp-path__rail 自己，::after 是綠色那層；
   //    querySelector 拿到的是第一截——步驟 1 到步驟 2 那段）
@@ -429,6 +489,42 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   noJs.y === 0 && noJs.open && noJs.kbd > 0.9
     ? ok('沒 JS 也看得到展開的圖文選單（SSR 就印了 is-menu-up、圖示是鍵盤）')
     : bad(`沒 JS 的選單狀態不對：translateY ${noJs.y}px、is-menu-up=${noJs.open}、鍵盤圖示 opacity=${noJs.kbd}`)
+  await page.close()
+}
+
+// ── ⑤ 手機的「你在哪」吸頂分頁列（2026-09-09）─────────────────────
+// 手機沒有左軌（≤960px 整條 display:none），這條列是唯一的定位線索——所以它要
+// ①真的顯示 ②吸在導覽列下面 ③四格都放得下不被切字 ④亮的那格跟主角一致。
+// ⛔ 這一關固定用手機寬度自己開一頁：上面②③④都是 1440，量不到它。
+{
+  const page = await browser.newPage()
+  await page.setViewport({ width: 390, height: 844 })
+  await page.goto(URL, { waitUntil: 'networkidle0', timeout: 120000 })
+  await wait(2200)
+  console.log('\n⑤ 手機分頁列（390 寬）')
+  const railHidden = await page.evaluate(() => getComputedStyle(document.querySelector('.lp-rails__rail')).display === 'none')
+  railHidden ? ok('左軌在手機上收掉了（所以下面這條列是唯一的定位線索）') : bad('手機上左軌沒收掉')
+  for (const [sel, name, idx] of [['#cap-marketing', 'AI 行銷', 1], ['#cap-richmenu', '圖文選單', 3]]) {
+    await page.evaluate((s) => {
+      const el = document.querySelector(s)
+      window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 120, behavior: 'instant' })
+    }, sel)
+    await wait(800)
+    const st = await page.evaluate(() => {
+      const nav = document.querySelector('.lp-caps')
+      const items = [...nav.querySelectorAll('.lp-caps__i')]
+      return {
+        shown: getComputedStyle(nav).display !== 'none',
+        top: Math.round(nav.getBoundingClientRect().top),
+        on: items.findIndex(a => a.classList.contains('is-on')),
+        cut: items.filter(a => a.scrollWidth > a.clientWidth + 1).map(a => a.textContent.trim()),
+        w: items.map(a => Math.round(a.getBoundingClientRect().width)).join('/'),
+      }
+    })
+    st.shown && Math.abs(st.top - 68) <= 1 && st.on === idx && !st.cut.length
+      ? ok(`捲到「${name}」：分頁列吸在 ${st.top}px、亮第 ${st.on + 1} 格、四格 ${st.w} 都沒被切字`)
+      : bad(`分頁列不對（${name}）：顯示=${st.shown} 吸頂=${st.top}px 亮第 ${st.on + 1} 格（該是 ${idx + 1}）被切字=${st.cut.join('、') || '無'}`)
+  }
   await page.close()
 }
 
