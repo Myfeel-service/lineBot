@@ -3013,6 +3013,19 @@ const waitingButtonAckSentAt = new Map<string, number>()
 // 差別只剩「誰負責把那則訊息送出去」，那本來就該由呼叫端決定。
 
 /**
+ * 勿擾時段裡，AI 已經先答了一般規則（見 deliverHandoffReply 的 prefixText）時，
+ * 接在那段答案後面的銜接句。
+ *
+ * 為什麼需要：勿擾文案本身（「目前非客服服務時間…」）是為「客人在等人接手」寫的。
+ * 緊跟在一段完整答案後面，讀起來像在否定前一句（2026-09-10：客人問下訂後多久到貨，
+ * AI 答完出貨時程，下一則就說非服務時間）。銜接句把兩段的關係講明：
+ * 一般狀況已經回答了，剩下「他那一筆」要等人查。
+ *
+ * ⛔ 沒有 prefixText 時不要加——沒有「以上」可指，會變成空話。
+ */
+const DND_AFTER_ANSWER_LEAD = '以上是一般的說明；您這一筆的實際狀況要請專員幫您查。'
+
+/**
  * 勿擾時段時，客人不該收到「已為您安排專員」——承諾「馬上有人」卻整夜沒人接更糟。
  * 回傳非 null＝這段話要**取代**原本要送出的轉真人訊息（不是追加：兩則並存會自相矛盾）。
  *
@@ -3334,6 +3347,9 @@ async function deliverHandoffReply(params: {
   // 但客人收到的不是「已為您安排專員」而是勿擾訊息（避免承諾「馬上有人」卻整夜沒人）。
   const dndText = await dndHandoffReplyText(workspaceId)
 
+  // 規則先講、再講「幫您轉專員」。勿擾時段也照講（規則本身仍然有用，只是沒人接手）。
+  const prefixText = String(params.prefixText ?? '').trim()
+
   let handoffMessages: messagingApi.Message[] = []
   // 這幾則對話上要標成誰回的：勿擾那句出自 AI 設定（後台沒有模組可改）＝system，
   // 其餘出自「真人客服」系統模組＝bot。轉接的**決定**雖然常是 AI 下的，但客服要改的是文案，
@@ -3341,7 +3357,13 @@ async function deliverHandoffReply(params: {
   let handoffSender: MessageSender = 'bot'
   let handoffSenderName = '「真人客服」模組'
   if (dndText) {
-    handoffMessages = [{ type: 'text', text: dndText } as messagingApi.TextMessage]
+    // AI 剛剛已經把一般規則答完（prefixText）時要先接一句，否則客人讀到的是
+    // 「完整答案」後面緊跟「目前非客服服務時間」——像在說前面那句不算數
+    // （2026-09-10 實例）。沒有規則可講時不加，那句會變成指不到東西的空話。
+    handoffMessages = [{
+      type: 'text',
+      text: prefixText ? `${DND_AFTER_ANSWER_LEAD}\n${dndText}` : dndText,
+    } as messagingApi.TextMessage]
     handoffSender = 'system'
     handoffSenderName = '勿擾時段回覆'
   }
@@ -3360,8 +3382,6 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  // 規則先講、再講「幫您轉專員」。勿擾時段也照講（規則本身仍然有用，只是沒人接手）。
-  const prefixText = String(params.prefixText ?? '').trim()
   const prefixMessages: messagingApi.Message[] = prefixText
     ? [{ type: 'text', text: prefixText } as messagingApi.TextMessage]
     : []

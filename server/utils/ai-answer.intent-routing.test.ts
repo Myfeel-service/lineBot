@@ -60,7 +60,7 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
   getProductAliases: vi.fn(async () => ({ aliases: {}, displays: {} })),
 }))
 
-const { answerWithAi } = await import('./ai-answer')
+const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { generateJson } = await import('./gemini')
 const { searchSimilarChunks } = await import('./ai-knowledge-chunks')
@@ -169,6 +169,115 @@ describe('個案訂單狀態：先給規則、再真的轉真人', () => {
     const line = src.split('\n').find(l => l.includes('HANDOFF_CONFIRM_REASONS = new Set'))
     expect(line).toBeTruthy()
     expect(line).not.toContain('order_status')
+  })
+})
+
+/**
+ * order_status 後檢（2026-09-10 正式站災情後補）。
+ *
+ * 災情：客人問「請問下訂後多久會收到？」——還沒下單、問的是一般出貨時程，卻被分類器
+ * 判成 order_status。AI 已經完整答出「9 月底依訂單順序陸續出貨」，後面照樣接一句轉接訊息；
+ * 當下又在勿擾時段，那句轉接訊息被換成「目前非客服服務時間」＝客人看到 AI 答完又說沒人在，
+ * 而勿擾時段不推播客服，那場就躺在待真人佇列到隔天。記帳上還記 handoff 不記 answered。
+ *
+ * 判成 order_status 的代價（必轉真人＋跳過二次確認）比其他意圖都高，所以模型判完再確認一次
+ * 句子裡真的有「他自己那一筆」。方向單向：只收窄、不擴張。
+ */
+describe('order_status 後檢：沒有「他那一筆」的線索就不轉真人', () => {
+  /** 讓路由器回一個指定的 intent（模擬模型判斷），下一次 generateJson 才是答題生成 */
+  function mockRouter(kind: MessageIntent, standaloneQuery: string) {
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { scriptId: null, intent: kind, isFollowup: false, standaloneQuery, compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+  }
+
+  it('「請問下訂後多久會收到？」被判 order_status → 退回 question', async () => {
+    mockRouter('order_status', '請問下訂後多久會收到？')
+
+    const route = await routeMessage('請問下訂後多久會收到？', [])
+
+    expect(route?.intent).toBe('question')
+    expect(route?.orderStatusDemoted).toBe(true)
+  })
+
+  it('整條路走完：AI 答完就結案，不再接一句轉接訊息', async () => {
+    // handler 的實際做法：routeMessage 的結果當 precomputedIntent 餵給 answerWithAi
+    mockRouter('order_status', '請問下訂後多久會收到？')
+    const route = await routeMessage('請問下訂後多久會收到？', [])
+
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'ship1', title: '出貨時程', content: '預計 9 月底依訂單順序陸續出貨。', similarity: 0.82 }),
+    ])
+    vi.mocked(generateJson).mockResolvedValue({
+      data: { answer: '預計 9 月底依照訂單順序陸續出貨喔！', hasInfo: true },
+      inputTokens: 20, outputTokens: 30,
+    } as any)
+
+    const res = await answerWithAi({ workspaceId: 'ws1', query: '請問下訂後多久會收到？', precomputedIntent: route! })
+
+    // 修好之前這裡是 handoff / order_status：客人拿到答案之後又被轉真人
+    expect(res.decision).toBe('answered')
+    expect(res.handoffReason).toBeNull()
+    expect(deltas().some(d => d.answered === 1)).toBe(true)
+    expect(deltas().some(d => d.handoffs)).toBe(false)
+  })
+
+  it('真的在問自己那一筆 → 照舊轉真人（後檢只收窄，不誤殺）', async () => {
+    for (const q of [
+      '我的訂單到哪了',
+      '這筆到哪了',
+      '單號 M123456 寄了嗎',
+      '東西已經寄回去了為什麼還沒退款',
+      '商品早已收回系統仍顯示退貨處理中',
+      '我上禮拜買的怎麼還沒到',
+    ]) {
+      mockRouter('order_status', q)
+      const route = await routeMessage(q, [])
+      expect(route?.intent, q).toBe('order_status')
+      expect(route?.orderStatusDemoted, q).toBeFalsy()
+    }
+  })
+
+  it('只問規則的問法即使被判 order_status，也一律退回 question', async () => {
+    for (const q of ['退款要幾天', '怎麼申請退貨', '運費多少', '下單後幾天出貨', '預購什麼時候寄', '什麼時候到貨']) {
+      mockRouter('order_status', q)
+      const route = await routeMessage(q, [])
+      expect(route?.intent, q).toBe('question')
+      expect(route?.orderStatusDemoted, q).toBe(true)
+    }
+  })
+
+  it('線索只在改寫句裡（客人先報過單號、這句只說「那多久會到」）→ 保留 order_status', async () => {
+    mockRouter('order_status', '我的訂單 M123456 多久會到')
+
+    const route = await routeMessage('那多久會到', [])
+
+    expect(route?.intent).toBe('order_status')
+    expect(route?.orderStatusDemoted).toBeFalsy()
+  })
+
+  it('classifyIntent（路由器失敗時的後備）走同一道後檢', async () => {
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { intent: 'order_status', isFollowup: false, standaloneQuery: '請問下訂後多久會收到？', compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+
+    const res = await classifyIntent('請問下訂後多久會收到？')
+
+    expect(res?.intent).toBe('question')
+    expect(res?.orderStatusDemoted).toBe(true)
+  })
+
+  it('後檢只對 order_status 生效，其他意圖原封不動', async () => {
+    mockRouter('question', '這台除濕機多少錢')
+    const route = await routeMessage('這台除濕機多少錢', [])
+
+    expect(route?.intent).toBe('question')
+    expect(route?.orderStatusDemoted).toBe(false)
+    // 線索表本身：規則問法不該命中、個案問法要命中
+    expect(mentionsOwnOrder('請問下訂後多久會收到？')).toBe(false)
+    expect(mentionsOwnOrder('我的訂單到哪了')).toBe(true)
   })
 })
 

@@ -52,6 +52,11 @@ import { getSessionStatusCached, shouldSuppressInboundBotAutomationForSession, e
 import { notifyHandoffToStaff } from './ai-handoff-notify'
 import { getAiSettings } from './ai-settings'
 import { loadActiveScripts, startScript } from './ai-scripts'
+import { answerWithAi } from './ai-answer'
+
+// 走 AI 那條路的案例要一份「欄位齊全」的設定（反問 cooldown 等都會被讀到），
+// 自己拼容易漏欄位、也會跟真實預設漂掉 → 用真的正規化函式造（./ai-settings 本身被 mock 掉了）
+const { normalizeAiSettings } = await vi.importActual<typeof import('./ai-settings')>('./ai-settings')
 
 /** 服務時間內、AI 全自動（clearAllMocks 不會還原 mockResolvedValue，逐個 describe 自己設回來） */
 const AI_SETTINGS_DEFAULT = { enabled: true, replyMode: 'auto', sensitiveTopics: [] }
@@ -89,6 +94,8 @@ function makeDb(lineUserId: string, opts: { workspaceId?: string; flows?: Record
         update: vi.fn(async () => {}),
         collection: () => ({
           doc: (msgId?: string) => ({ id: msgId ?? `auto-${++autoId}`, set: vi.fn(async () => {}) }),
+          // 走 AI 那條路時會往回讀最近訊息當上下文（loadAiConvoContext）；這些案例不需要歷史
+          orderBy: () => ({ limit: () => ({ get: vi.fn(async () => ({ empty: true, docs: [] })) }) }),
         }),
       }),
     }),
@@ -206,6 +213,73 @@ describe('轉真人的回覆要用店家自己設的文案', () => {
     await handleMessageEvent(textEvent(uid, '找真人', Date.now()), { workspaceId: WS3 })
 
     expect(sentTexts().some(t => t.includes('已為您安排專員'))).toBe(true)
+  })
+})
+
+/**
+ * 2026-09-10 實例：客人問「請問下訂後多久會收到？」，AI 完整答出出貨時程之後，
+ * 下一則緊接著「您好,目前非客服服務時間…」——讀起來像在說前面那句不算數。
+ * 兩則都沒錯，錯在中間沒有話把它們接起來。
+ */
+describe('勿擾時段：AI 已經先答了一般規則時要接一句', () => {
+  const WS_DND = 'ws-dnd-order'
+
+  /** start===end ＝沒有任何一分鐘落在服務時間內，測試不受執行時間影響 */
+  function allDayDnd() {
+    vi.mocked(getAiSettings).mockResolvedValue(normalizeAiSettings({
+      enabled: true,
+      replyMode: 'auto',
+      systemPrompt: '你是客服',
+      shopUrl: '',
+      serviceHours: { enabled: true, start: '09:00', end: '09:00', dndReply: '目前非客服服務時間，我們會在服務時間盡快回覆您 🙏' },
+    }) as any)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
+    vi.mocked(getSessionStatusCached).mockResolvedValue('open' as any)
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+    allDayDnd()
+  })
+
+  it('AI 給了規則 → 勿擾那則前面補一句銜接', async () => {
+    const uid = 'U0000000000000000000000000000110'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_DND }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'handoff',
+      answer: '一般是訂單成立後 3～5 個工作日出貨喔。',
+      confidence: 0.8,
+      sources: [],
+      handoffReason: 'order_status',
+    } as any)
+
+    await handleMessageEvent(textEvent(uid, '我的訂單到哪了', Date.now()), { workspaceId: WS_DND })
+
+    // 規則本身照樣先送（勿擾不影響它）
+    expect(sentTexts()).toContain('一般是訂單成立後 3～5 個工作日出貨喔。')
+    const dnd = sentTexts().find(t => t.includes('非客服服務時間'))
+    expect(dnd).toContain('以上是一般的說明')
+    expect(dnd).toContain('要請專員幫您查')
+  })
+
+  it('知識庫連規則都沒有（answer 空）→ 不加那句（沒有「以上」可指，會變空話）', async () => {
+    const uid = 'U0000000000000000000000000000111'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_DND }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'handoff',
+      answer: '',
+      confidence: 0.2,
+      sources: [],
+      // 仍用 order_status：low_confidence 會先走「要不要幫您轉接」的二次確認，走不到這裡
+      handoffReason: 'order_status',
+    } as any)
+
+    await handleMessageEvent(textEvent(uid, '我的訂單到哪了', Date.now()), { workspaceId: WS_DND })
+
+    const dnd = sentTexts().find(t => t.includes('非客服服務時間'))
+    expect(dnd).toBeTruthy()
+    expect(dnd).not.toContain('以上是一般的說明')
   })
 })
 
