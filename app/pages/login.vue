@@ -60,7 +60,7 @@
       </div>
 
       <!--
-        頁尾＝一個出口（`G-72`：2026-09-10 使用者「這邊字很多，『想先了解』是否可以不用放這邊」）。
+        頁尾＝一個出口（`G-73`：2026-09-10 使用者「這邊字很多，『想先了解』是否可以不用放這邊」）。
 
         ⛔ **移除了「想先了解？聯繫我們 / 預約 Demo →」**，理由三條：
           ① 走到這一頁的人**上一頁就是首頁**（八顆註冊鈕全部從那裡來），而首頁的收尾 CTA
@@ -107,7 +107,7 @@ const { brandName } = useSiteIdentity()
  */
 const isStart = computed(() => isSignupStartIntent(route.query.intent))
 
-// ⚠️ `supportContact`（聯繫我們）2026-09-10 `G-72` 從這一頁移除＝這裡不再需要讀 runtimeConfig。
+// ⚠️ `supportContact`（聯繫我們）2026-09-10 `G-73` 從這一頁移除＝這裡不再需要讀 runtimeConfig。
 //    想找人談的入口在首頁（收尾 CTA＋頁尾）與登入後的帳號選擇頁空狀態，理由見上面 template 的註解。
 const loading = ref(false)
 const errorMsg = ref('')
