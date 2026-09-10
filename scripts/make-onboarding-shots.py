@@ -753,6 +753,21 @@ def main() -> None:
         (login, 1700, login_secret_row, 2400),  # ③同一頁捲下來的 Channel secret
     ])
 
+    # 申請 Email 權限（arProject 用：後台要看得到會員 Email）。
+    # ⛔ **這一步原本被教錯**：arProject 的教學寫「在 LIFF 的 Scopes 勾 email」，但實際畫面上
+    #    LIFF 的 Scopes 只有 openid／profile／chat_message.write——**沒有 email 那一格**。
+    #    email 是 channel 層的權限，在 LINE Login 卡的 Basic settings **最下面**
+    #    「OpenID Connect → Email address permission」，而且要**送申請**（截圖上是 `Unapplied`）。
+    # ⚠️ 送出之後會不會讓 LIFF 的 Scopes 多出 email 那一格，**手上的截圖證明不了**，
+    #    所以文案只講「先申請、通過才拿得到」，不要替它把後半段補完。
+    # ⚠️ top 只能 2413（來源 3033 高、窗 620），那一列剛好落在畫面中段。
+    email_permission = (289, 2735, 640, 2790)
+    build_carousel('line-login-email', [
+        (lst, 84, None, 900),
+        (lst, 84, card_login, 1800),            # ①一樣是「LINE Login」那張卡
+        (login, 2413, email_permission, 2600),  # ②Basic settings 最下面 → 送出申請
+    ])
+
     # 拿 **Messaging API** 那張卡的 Channel access token（arProject 用：推播要這個值）。
     # ⛔ 跟上面那支**是不同的卡**：同一個帳號下兩張同名卡，一張 LINE Login（登入用）、
     #    一張 Messaging API（推播用），所以第①格就要先把卡挑對。
