@@ -155,6 +155,78 @@ def build_anim(name: str, spec, x0: int = 240, x1: int = 1330, vh: int = VH) -> 
     STEPS[name] = stops if numbered else 0
 
 
+CAROUSEL_LEADIN_MS = 600    # 「無框」那一幀停多久（讓人先看清楚原本的畫面）
+CAROUSEL_MARK_MS = 2600     # 「框亮起」那一幀停多久（loop=1，所以其實就停在這裡不動了）
+
+
+def build_carousel(prefix: str, spec, x0: int = 240, x1: int = 1330, vh: int = VH) -> None:
+    """把一支循環動畫的每個停格，拆成輪播用的**一步一支**小動畫。
+
+    輸出 `{prefix}-1.webp`、`{prefix}-2.webp`…，接在 `ONBOARDING_CAROUSELS` 上。
+    spec 格式跟 `build_anim` 一模一樣（刻意的：同一段路只維護一份座標，
+    循環動畫版與輪播版吃同一個 spec）。
+
+    每一支長這樣：**（捲動帶過的幾幀）→ 無框 → 框亮起**，然後 `loop=1` 停在框亮的那一幀。
+    ⛔ 不可以 `loop=0`：那會變成永遠在閃。輪播卡自己有計時器在推進「換到下一步」，
+       圖再無限閃就是兩個東西同時在動，人不知道該看哪個。播一次、停在「要按的地方亮著」
+       才是這張圖該有的休止狀態。
+    ⛔ **不畫右下角的「第幾格／共幾格」**（`counter=None`）：步序由輪播卡自己的計數器與
+       步驟軌講，圖上再標一次就是同一件事講兩次。⚠️ 但**紅色編號徽章要留著**——
+       它指的是畫面上那個框，跟「第幾步」不是同一個意思。
+    ⚠️ 沒有前導幀的停格（例如同一頁連著標三個地方）會**自動補一張無框的**：
+       少了它就沒有「本來長這樣 → 要按這裡」的對比，紅框變成一開始就在那裡。
+
+    ⚠️ 2026-09-10 這支是**事後補的產線**：那批圖是先做出來、驗過、才回頭寫腳本。
+       重跑會覆蓋掉當時那批，內容一致但**時間軸有一處不同**——
+       `line-console-get-token-2.webp` 當時的前導幀是 850ms，這裡一律 600ms。
+       不影響教學內容（那一幀是「捲到最底、還沒按」的畫面）。
+    """
+    stops = sum(1 for e in spec if e[2])
+    numbered = stops > 1
+    width = x1 - x0
+    pending: list[tuple] = []   # 還沒歸給任何一支的（捲動／開場）幀
+    i = 0
+
+    def render(entry, marks):
+        src_im, top = entry[0], entry[1]
+        fx0 = entry[4] if len(entry) > 4 else x0
+        return shot(src_im, (fx0, top, fx0 + width, top + vh), marks, out_w=TARGET_W)
+
+    def crop_key(entry):
+        return (id(entry[0]), entry[1], entry[4] if len(entry) > 4 else x0)
+
+    for entry in spec:
+        box = entry[2]
+        if not box:
+            pending.append(entry)
+            continue
+        i += 1
+        frames: list = []
+        durations: list[int] = []
+        # 前導幀＝「同一個裁切、還沒框」的那一張。剛好是 pending 最後一張就直接用它
+        # （只把停留時間統一成 600ms）；不是的話自己補一張。
+        lead_is_pending = bool(pending) and crop_key(pending[-1]) == crop_key(entry)
+        carried = pending[:-1] if lead_is_pending else pending
+        for e in carried:
+            frames.append(render(e, []))
+            durations.append(e[3])
+        frames.append(render(pending[-1] if lead_is_pending else entry, []))
+        durations.append(CAROUSEL_LEADIN_MS)
+
+        frames.append(render(entry, [(box, i if numbered else None)]))
+        durations.append(CAROUSEL_MARK_MS)
+
+        name = f'{prefix}-{i}.webp'
+        sizes = {f.size for f in frames}
+        assert len(sizes) == 1, f'{name}: 幀尺寸不一致 {sizes}——webp 動畫會拼不起來'
+        frames[0].save(OUT / name, save_all=True, append_images=frames[1:],
+                       duration=durations, loop=1, quality=82, method=4)
+        # ⛔ 輪播分鏡**不進** `ONBOARDING_SHOT_STEPS`：那份清單是給「文案裡的①②③要對得上
+        #    圖上有幾顆編號」那支測試用的，而輪播的圖說跟分鏡綁在同一個物件裡、也沒有圈號。
+        #    守門改由 `app/utils/onboarding-carousels.test.ts` 負責。
+        pending = []
+
+
 def write_steps_manifest() -> None:
     """把「每張圖上有幾顆編號」寫成 TS 常數，給測試對照文案裡的①②③。
 
@@ -578,6 +650,87 @@ def main() -> None:
         (liff_list, 136, (745, 705, 789, 737), 1800, 200),   # ③按「Add」
         (liff_add, 70, (337, 118, 1000, 156), 2800, 200),    # ④Endpoint URL 貼活動頁網址
     ])
+
+    # ── 步驟輪播的分鏡（2026-09-10）─────────────────────────────
+    #
+    # 開通引導從「一支動畫演三四個動作」換成「一步一張圖」之後要的東西。
+    # ⛔ **spec 一律沿用上面那些循環動畫的**（連變數都不重打）：同一段路只維護一份座標，
+    #    否則 LINE 改版時改了一邊、另一邊靜靜地繼續教舊畫面。
+    # ⚠️ 每支輪播有幾步、每一步配哪一句，看 `app/utils/onboarding-shots.ts`
+    #    的 `ONBOARDING_CAROUSELS`——**步數要對得上**，這裡多產一張那邊沒接就是白產。
+    # 「你已經有 LINE 官方帳號了嗎？」——最早的分岔，答錯整條路白走。
+    # ⚠️ 第①格跟 `line-console-channel` 用**同一張登入頁**，這不是偷懶：兩個後台都走
+    #    **LINE Business ID** 登入，畫面就是同一個（產出的檔也是逐位元組相同的）。
+    #    ⛔ 一樣不圈單顆按鈕、只框整組三種方式（08-19 拍板的理由對兩處都成立）。
+    # ⛔ 第②格要**自己先遮**（`build_carousel` 跟 `build_anim` 一樣沒有 blur 入口）：
+    #    那三列是**真實客戶**的帳號名稱與頭像，`public/onboarding/` 是對外公開網址。
+    # ⚠️ top 只能到 137（來源只有 757 高，620 的窗再往下就裁出黑邊）——所以這一格
+    #    的鏡位跟靜圖版 `oam-account-list.png`（top=190 的緊裁）不一樣，別互相套。
+    oam_list_anim = oam_list.copy()
+    for _b in [(308, 336, 462, 372), (308, 398, 478, 434), (308, 460, 435, 495), (1214, 14, 1340, 40)]:
+        oam_list_anim.paste(oam_list_anim.crop(_b).filter(ImageFilter.GaussianBlur(7)), _b)
+    build_carousel('oam-account-list', [
+        (login_pg, 80, (492, 336, 860, 556), 2000, 130),   # ①先登入（框整組，不指定方式）
+        (oam_list_anim, 137, None, 900),
+        (oam_list_anim, 137, (296, 266, 1190, 500), 2400),  # ②列表裡有帳號就是有
+    ], x0=250, x1=1340)
+
+    build_carousel('oam-channel-secret', [
+        (oam_api, 0, None, 900),
+        (oam_api, 0, oam_settings, 1500),
+        (oam_api, 0, oam_mapi_nav, 1500),
+        (oam_api, 0, (466, 354, 998, 394), 2400),
+    ], x0=0, x1=1352)
+
+    build_carousel('oam-webhook-url', [
+        (oam_api, 0, None, 900),
+        (oam_api, 0, oam_settings, 1500),
+        (oam_api, 0, oam_mapi_nav, 1500),
+        (oam_api, 0, (466, 408, 930, 452), 1800),
+        (oam_api, 0, (928, 410, 996, 450), 2000),
+    ], x0=0, x1=1352)
+
+    build_carousel('oam-response-settings', [
+        (oam, 0, None, 900),
+        (oam, 0, (44, 213, 190, 247), 1500),
+        (oam, 0, (548, 452, 600, 488), 2000),
+        (oam, 200, None, 130),
+        (oam, 420, None, 130),
+        (oam, 610, None, 300),
+        (oam, 610, (546, 750, 652, 792), 2400),
+    ], x0=0, x1=1352)
+
+    build_carousel('oam-enable-messaging-api', [
+        (oam_enable_anim, 0, None, 900),
+        (oam_enable_anim, 0, (691, 365, 912, 405), 1800),
+        (oam_prov, 0, (414, 274, 845, 344), 2400),
+        (oam_priv, 0, (876, 558, 936, 604), 1800),
+        (oam_conf, 0, (876, 496, 936, 541), 2400),
+    ], x0=0, x1=1352, vh=700)
+
+    build_carousel('line-console-channel', [
+        (login_pg, 80, (492, 336, 860, 556), 2000, 130),
+        (lst, 84, None, 900),
+        (lst, 84, card_mapi, 2400),
+    ])
+
+    build_carousel('line-console-get-token', [
+        (api, 90, None, 900),
+        (api, 90, tab_mapi, 1600),
+        (api, 280, None, 130),
+        (api, 560, None, 130),
+        (api, 900, None, 130),
+        (api, 1220, None, 300),
+        (tok0, NEW_TOP, None, 250),
+        (tok0, NEW_TOP, n_issue, 1900),
+        (tok1, NEW_TOP, n_copy, 1900),
+    ])
+
+    # ⛔ `line-signup-entry-{1,2}.webp`（申請入口那兩張）**這裡產不出來**：
+    #    它們的來源截圖（tw.linebiz.com 的開設帳號頁、Business ID 登入頁）
+    #    2026-09-02 拍過但一直沒收進 `docs/onboarding-shots-src/`，見那批的 README 附註。
+    #    現在資料夾裡那兩支是 09-10 從示意頁搬過來的成品。
+    #    ⚠️ LINE 改版要重製時得**先補來源檔**再照上面的樣子加一段——不要就地手改成品。
 
     write_steps_manifest()
 

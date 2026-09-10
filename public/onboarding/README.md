@@ -43,6 +43,40 @@
 重跑腳本。⛔動畫是「整頁截圖裁不同捲動位置」拼出來的，不是錄影——換截圖重跑即可重製，
 別改成錄螢幕（錄的沒人會重錄，過期了只能整段作廢）。
 
+## 步驟輪播的分鏡（`*-1.webp`、`*-2.webp`…，2026-09-10）
+
+**開通引導現在走這一批**，不是上表那些循環動畫。一支循環動畫演三四個動作的問題：
+中途接上的人不知道演到第幾步、想多看一眼第②步只能等它繞回來，而該做什麼的字全擠在
+旁邊的泡泡裡（`①…→②…→③…`）——眼睛要在一行長字與一直在動的圖之間來回對照。
+輪播改成**一步一張圖、圖在上步驟在下**，這一格的圖配這一格的說明。
+
+| 前綴 | 幾步 | 從哪支循環動畫拆出來的 |
+|---|---|---|
+| `oam-account-list-*` | 2 | ①登入頁與 `line-console-channel` **共用**（兩個後台都是 LINE Business ID 登入，產出逐位元組相同）②`src-oam-account-list.jpg` |
+| `line-signup-entry-*` | 2 | ⛔ **產線做不出來**：來源截圖（`tw.linebiz.com` 開設帳號頁、Business ID 登入頁）2026-09-02 拍過但沒收進 `docs/onboarding-shots-src/`。現在這兩支是 09-10 從示意頁搬進來的成品，**要重製得先補來源檔** |
+| `oam-enable-messaging-api-*` | 4 | `oam-enable-messaging-api.webp` |
+| `line-console-channel-*` | 2 | `line-console-channel.webp` |
+| `line-console-get-token-*` | 3 | `line-console-get-token.webp` |
+| `oam-channel-secret-*` | 3 | `oam-channel-secret.webp` |
+| `oam-webhook-url-*` | 4 | `oam-webhook-url.webp` |
+| `oam-response-settings-*` | 3 | `oam-response-settings.webp` |
+
+規格（`build_carousel()` 產，spec **直接沿用**循環動畫那份座標，同一段路只維護一份）：
+
+- 一支＝**（捲動帶過的幾幀）→ 無框 → 框亮起**，`loop=1` 播一次就停在框亮的那一幀。
+  ⛔ 不可以 `loop=0`：輪播卡自己有計時器在推「換到下一步」，圖再無限閃就是兩個東西同時
+  在動，人不知道該看哪個。前導 600ms、停格 2600ms。
+- **紅色編號徽章留著**（它指的是畫面上那個框），但**右下角的「第幾格／共幾格」拿掉**
+  （`counter=None`）——步序由輪播卡自己的計數器與步驟軌講，圖上再標一次是同一件事講兩次。
+- 圖說寫在 `app/utils/onboarding-shots.ts` 的 `ONBOARDING_CAROUSELS`，**跟 `src` 綁在同一個物件**：
+  舊做法「圖上的號碼」與「文案裡的①②③」住在兩個檔案，改了一邊不會有東西變紅。
+  ⛔ 所以圖說裡**不准出現圈號**（`app/utils/onboarding-carousels.test.ts` 會擋）。
+- 版面與行為的守門在 `scripts/onboarding-carousel-check.mjs`（真的開瀏覽器量）。
+
+⚠️ 2026-09-10 的產線是**事後補的**：那批圖先做出來、驗過、才回頭寫 `build_carousel()`。
+重跑驗證過**逐像素相同**，唯一差異是 `line-console-get-token-2.webp` 的前導幀
+850ms → 600ms（那一幀是「捲到最底、還沒按」的畫面，不影響教學內容）。
+
 （`src-login.jpg` 登入頁：2026-08-19 拍板不配圖——登入頁人人認得，而且圈哪顆按鈕都會誤導
 用其他方式登入的人；文案改講「用你平常的方式登入」。來源檔留著。）
 
