@@ -62,8 +62,10 @@
           <a href="#grow" @click="closeMenu">成長</a>
         </div>
         <div class="lp-nav__right">
+          <!-- ⛔ 「登入」維持裸 `/login`（回訪的客戶與被邀請的成員走這條，登入頁給中性文案）；
+               「免費註冊」跟所有 CTA 一樣帶註冊意圖（見 shared/signup-entry.ts）。 -->
           <NuxtLink to="/login" class="lp-nav__signin">登入</NuxtLink>
-          <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login">免費註冊</NuxtLink>
+          <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" :to="SIGNUP_ENTRY_PATH">免費註冊</NuxtLink>
           <button class="lp-nav__burger" aria-label="選單" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen"><span /></button>
         </div>
       </div>
@@ -151,7 +153,7 @@
                 v-if="heroDemo" type="button" class="lp-btn lp-btn--primary lp-wake"
                 :class="{ 'is-pressed': wakePressed }" @click="playWake"
               >發一則喚醒推播</button>
-              <NuxtLink v-else class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+              <NuxtLink v-else class="lp-btn lp-btn--primary" :to="SIGNUP_ENTRY_PATH">免費打造我的 {{ brandName }}</NuxtLink>
             </div>
           </div>
         </div>
@@ -1219,7 +1221,7 @@
                ⛔ DOM 順序不可以改成「CTA 在 station 之前」：手機沒有欄位可言、照 DOM 讀，
                   會變成「還沒看到 demo 就先叫人按鈕」。桌機的左右位置一律靠 grid 指定，不靠 DOM。 -->
           <div class="lp-fast__cta lp-reveal">
-            <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+            <NuxtLink class="lp-btn lp-btn--primary" :to="SIGNUP_ENTRY_PATH">免費打造我的 {{ brandName }}</NuxtLink>
             <p class="lp-fast__fine"><b>免費方案不用綁卡</b>，接 LINE 的部分隨時可以再回來做。</p>
           </div>
         </div>
@@ -1302,7 +1304,7 @@
                   復活時別把「不綁約」再寫一次（與大字底下只隔約 300px）。 -->
 
         <div class="lp-pricecta lp-reveal">
-          <NuxtLink class="lp-btn lp-btn--primary" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+          <NuxtLink class="lp-btn lp-btn--primary" :to="SIGNUP_ENTRY_PATH">免費打造我的 {{ brandName }}</NuxtLink>
           <!-- ⛔ 開頭刻意**不再寫**「每個帳號都有免費額度」（2026-09-04 老闆「小字是否也有點多」）：
                正上方第一張卡就是「免費／NT$0／每月 AI 回覆 50 則」，那句話是在用文字重講一張
                已經看得到的卡。這一行只留這區唯一沒別處講過的風險答案＝額度用完會怎樣。
@@ -1524,7 +1526,7 @@
              ⚠️ 這個 div 現在只有一個小孩，`gap`／`flex-wrap` 是為了以後多一顆按鈕時仍然對齊；
                 要拿掉的話記得主按鈕的置中就得改由別的東西負責。 -->
         <div class="lp-cta__actions">
-          <NuxtLink class="lp-btn lp-btn--white" to="/login">免費打造我的 {{ brandName }}</NuxtLink>
+          <NuxtLink class="lp-btn lp-btn--white" :to="SIGNUP_ENTRY_PATH">免費打造我的 {{ brandName }}</NuxtLink>
         </div>
         <!-- ⚠️ 口徑（2026-09-07）：按鈕寫「免費打造」、小字卻只講付費價＝在成交的那一刻
              自打架。免費那半沿用 60 秒區已拍板的「免費方案不用綁卡」。
@@ -1561,7 +1563,7 @@
              定價區同時看得到 799 與 1,499。 -->
         <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起，多了全年無休的客服＋行銷</span>
         <span class="lp-stickybar__t2">60 秒開好帳號 · 不綁約、隨時可取消</span>
-        <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
+        <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" :to="SIGNUP_ENTRY_PATH" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
     </div>
   </div>
@@ -1571,6 +1573,9 @@
 import type { BubbleTyping } from '~/utils/bubble-typing'
 import { prepareBubbleTyping } from '~/utils/bubble-typing'
 import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
+// 註冊入口（`/login?intent=start`）：五顆 CTA ＋導覽列「免費註冊」共用同一個常數。
+// ⛔ 別改回字面 `/login`——登入頁靠這個參數換成註冊口吻、零帳號的人才會被直接送進開通引導。
+import { SIGNUP_ENTRY_PATH } from '~~/shared/signup-entry'
 import { festivalReminderText, TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { daysBetween, taipeiDate } from '~~/shared/time'
 

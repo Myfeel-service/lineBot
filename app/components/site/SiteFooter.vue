@@ -33,7 +33,9 @@
                也別把它搬進 POLICY_LINKS——那份清單餵結帳同意勾選，商品資訊不是要人同意的政策 -->
           <li><NuxtLink to="/product-info">商品資訊</NuxtLink></li>
           <li><a href="/#faq">常見問題</a></li>
-          <li><NuxtLink to="/login">免費註冊</NuxtLink></li>
+          <!-- ⛔ 註冊帶註冊意圖、「登入」維持裸 `/login`（見 shared/signup-entry.ts）：
+               同一扇門，但登入頁的招呼語與登入後落點看那個參數決定 -->
+          <li><NuxtLink :to="SIGNUP_ENTRY_PATH">免費註冊</NuxtLink></li>
           <li><NuxtLink to="/login">登入</NuxtLink></li>
         </ul>
       </div>
@@ -67,6 +69,7 @@
 // ⚠️ 品牌／服務名（MiniMe）與營運主體（麥菲爾股份有限公司）是兩件事，都要看得到：
 //    發票賣方、法務頁主體、風控核對的「公司名稱」用的是後者。
 import { POLICY_LINKS } from '~~/shared/legal'
+import { SIGNUP_ENTRY_PATH } from '~~/shared/signup-entry'
 
 // 品牌名不在這裡取用：商標由 <BrandLogo /> 出（logotype 已含 MiniMe 字樣）
 const { serviceFullName, companyName, taxId, email, emailHref, phone, phoneHref, hours, cardStatementName } = useSiteIdentity()

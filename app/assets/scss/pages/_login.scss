@@ -67,6 +67,66 @@
   font-size: 0.875rem;
 }
 
+/* logotype 當連結（回首頁）：不要有連結色與底線，圖本身就是可點的東西 */
+.login-page .login-brand a {
+  display: inline-flex;
+  text-decoration: none;
+}
+
+/* ── 註冊那條路才出現的三行字（`?intent=start`，2026-09-10 `D-74`）──────
+ * 版位刻意跟中性文案**同一個位置**：換的是字不是版面，兩種進場的卡高只差這幾行。
+ * ⛔ 選擇器一定要帶 `.login-logo`：這兩個是 `.login-logo` 底下的 `p`，而上面那條
+ *    `.login-page .login-logo p`（0,2,1）**贏過**只寫 `.login-page .login-title`（0,2,0）——
+ *    第一版就是這樣寫的，標題被壓成 0.875rem 的灰字（看起來像圖說，不像這一頁的主張），
+ *    實際渲染才看得出來。 */
+.login-page .login-logo .login-title {
+  color: var(--text-primary);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.login-page .login-logo .login-step {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* 按鈕底下那行「下一步是什麼」：比提示字重一級（它是決定要不要按的資訊，不是註腳） */
+.login-page .login-next {
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+
+  /* 「免費方案不用綁卡」自己一行：這句在 300px 的欄寬裡一定會換行，跟上半句擠在一起時
+     實際渲染成「⋯開好了 · 免費方」／「案不用綁卡」＝斷在詞中間（首頁那句也是自己一行，
+     見 `.lp-cta__fine`）。⛔ 別改回同一行用「·」隔開：分隔點也會掉到行首（同 `G-33`⑦）。 */
+  b {
+    display: block;
+    color: var(--brand-green-text);
+    font-weight: 700;
+  }
+}
+
+/* 退路：卡片最後一行，最輕的一級——它是出口不是動線 */
+.login-page .login-back {
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  /* 手指目標：頁尾連結那種 16px 高的可點區域在手機上會誤觸（見 STATUS G-33⑤） */
+  padding: 0.5rem 0.75rem;
+  margin: -0.25rem 0;
+
+  &:hover {
+    color: var(--text-secondary);
+  }
+}
+
 .login-page .login-error {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);

@@ -1,10 +1,29 @@
 <template>
   <div class="login-page">
     <div class="login-card">
-      <!-- Logo：品牌名在 logotype 圖裡，h1 留著才有頁面標題語意（alt 就是品牌名） -->
+      <!-- Logo：品牌名在 logotype 圖裡，h1 留著才有頁面標題語意（alt 就是品牌名）。
+           2026-09-10 `D-74`：logotype 包成連回首頁的連結（BrandLogo 預設 alt＝品牌名，
+           讀出來就是「MiniMe，連結」＝全站通用慣例，h1 的標題語意不變）。 -->
       <div class="login-logo">
-        <h1 class="login-brand"><BrandLogo /></h1>
-        <p>管理後台 · 使用 Google 帳號登入</p>
+        <h1 class="login-brand"><NuxtLink to="/"><BrandLogo /></NuxtLink></h1>
+        <!--
+          招呼語分兩種人（2026-09-10 `D-74` 老闆拍板 A 案）：
+          ① 門面「免費打造／免費註冊」按進來的（`?intent=start`）——用他**剛按的那句話**
+             接住他，並把「登入完還要做什麼」講完。原本這裡第一行寫「管理後台」，
+             人還沒建任何東西就被帶到「後台」＝像走進員工入口。
+          ② 裸 `/login`（導覽列「登入」、書籤、middleware 轉址）——維持原本的中性文案。
+          ⛔ 兩邊的字都不要各自發明：intent 那組沿用首頁 CTA 與 `#fast` 區**已拍板的字**
+             （「免費打造我的 MiniMe」／「用 Google 帳號登入」＋「不用另外設密碼」／
+             「幫你的 MiniMe 取個名字」／「免費方案不用綁卡」），改首頁要一起改。
+          ⚠️ 全站唯一講「用 Google 帳號登入、不用另外設密碼」的是 `#fast` 區，而它
+             2026-09-08 起整區隱藏（`SHOW_FAST_SECTION`）＝客人現在是到這一頁才第一次
+             知道要用 Google 帳號，所以這句話在這裡不是重複、是唯一一次。
+        -->
+        <template v-if="isStart">
+          <p class="login-title">免費打造我的 {{ brandName }}</p>
+          <p class="login-step">第一步：用 Google 帳號登入，不用另外設密碼</p>
+        </template>
+        <p v-else>管理後台 · 使用 Google 帳號登入</p>
       </div>
 
       <!-- Error -->
@@ -28,15 +47,31 @@
         使用 Google 登入
       </button>
 
+      <!-- 註冊那條路：按鈕底下先講**下一步是什麼**。他按下去之前最後一個顧慮是
+           「登入完會不會就要給卡號、要弄多久」，這一行就是那個問題的答案，
+           而且跟首頁承諾的「兩步 · 60 秒」對得上（登入＋取名字）。
+           ⛔「免費方案不用綁卡」不可拿掉：首頁按鈕底下那行也是這句。 -->
+      <p v-if="isStart" class="login-next">
+        接著幫你的 {{ brandName }} 取個名字，帳號就開好了<b>免費方案不用綁卡</b>
+      </p>
+
       <!--
         登入頁要同時服務三種人：想開始用的新客、被團隊邀請的成員、想先了解的人。
         原本只寫「邀請制」會把新客擋在門外；改成中性歡迎語，登入後的迎賓頁再分流
         （見 admin/workspaces.vue 空狀態）。
+        ⚠️ 2026-09-10 `D-74`：`?intent=start` 進來的人已經在上面被講過「登入完要做什麼」，
+           這裡只留受邀成員那半句——把「第一次使用？登入後可以建立…」再講一次
+           會變成同一件事說兩遍（而且他按的按鈕就是那個意思）。
       -->
-      <p class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
+      <p v-if="isStart" class="login-hint">被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
+      <p v-else class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
       <p v-if="contactHref" class="login-hint">
         想先了解？<a :href="contactHref" target="_blank" rel="noopener" class="login-contact">聯繫我們 / 預約 Demo →</a>
       </p>
+
+      <!-- 退路（2026-09-10 `D-74`）：這一頁原本除了「聯繫我們」之外沒有任何路回門面，
+           猶豫的人只剩瀏覽器上一頁。字與法務頁的 `.lp-legal__back` 同一句。 -->
+      <NuxtLink class="login-back" to="/">← 回首頁</NuxtLink>
     </div>
 
     <!-- Background decorations -->
@@ -48,8 +83,18 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 
+import { isSignupStartIntent, resolveLoginRedirect } from '~~/shared/signup-entry'
+
 const route = useRoute()
 const { loginWithGoogle, isLoggedIn, waitForAuthReady } = useAuth()
+// 品牌名走 runtimeConfig（多租戶可覆寫），不寫死租戶名
+const { brandName } = useSiteIdentity()
+
+/**
+ * 是不是從門面的「免費打造／免費註冊」按進來的（`?intent=start`，見 shared/signup-entry.ts）。
+ * 只影響**招呼語與登入後落點**，不影響權限；裸 `/login` 一律維持原本的中性文案。
+ */
+const isStart = computed(() => isSignupStartIntent(route.query.intent))
 
 // 不是客戶的人也會走到登入頁 → 給他一個不用登入就能走的出口
 const config = useRuntimeConfig()
@@ -60,12 +105,13 @@ const contactHref = contact
 const loading = ref(false)
 const errorMsg = ref('')
 
+/**
+ * 登入成功後去哪：`?redirect=` 優先（被 middleware 擋下來的人有明確目的地），
+ * 其次是註冊意圖（把 `intent=start` 帶去帳號選擇頁，零帳號的人在那裡被直接送進開通引導），
+ * 都沒有就是原本的帳號選擇頁。判斷本體與理由在 shared/signup-entry.ts（有測試釘住）。
+ */
 function loginRedirectTarget(): string {
-  const redirect = route.query.redirect
-  if (typeof redirect === 'string' && redirect.startsWith('/admin')) {
-    return redirect
-  }
-  return '/admin/workspaces'
+  return resolveLoginRedirect(route.query)
 }
 
 // 已登入時離開登入頁（等 auth 就緒，避免重整流程誤觸）

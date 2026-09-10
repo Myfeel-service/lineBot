@@ -9,8 +9,10 @@
         </NuxtLink>
         <div class="lp-nav__right">
           <NuxtLink to="/login" class="lp-nav__signin">登入</NuxtLink>
-          <!-- 主要動線＝自助註冊（與首頁一致）；想先談的人走頁尾的客服電話／信箱 -->
-          <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" to="/login">免費註冊</NuxtLink>
+          <!-- 主要動線＝自助註冊（與首頁一致）；想先談的人走頁尾的客服電話／信箱。
+               ⛔ 註冊帶 `SIGNUP_ENTRY_PATH`、「登入」維持裸 `/login`：兩顆按鈕同一扇門，
+                  但登入頁的招呼語與落點看這個參數決定（見 shared/signup-entry.ts）。 -->
+          <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" :to="SIGNUP_ENTRY_PATH">免費註冊</NuxtLink>
         </div>
       </div>
     </nav>
@@ -61,6 +63,7 @@
  * 版面沿用門面的 .lp 設計語言（外層 .lp 才吃得到 pages/_landing.scss 的變數與 nav/foot 樣式）。
  */
 import { POLICY_LINKS, POLICY_VERSION } from '~~/shared/legal'
+import { SIGNUP_ENTRY_PATH } from '~~/shared/signup-entry'
 
 const props = defineProps<{
   /** 頁面標題，例「隱私權政策」。 */

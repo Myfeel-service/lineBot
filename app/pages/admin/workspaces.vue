@@ -5,7 +5,11 @@
         <!-- logotype 已含品牌名，h1 只補「管理後台」；讀出來仍是「MiniMe 管理後台」 -->
         <h1><BrandLogo /><span>管理後台</span></h1>
       </div>
-      <p class="ws-select-sub">選擇要管理的官方帳號</p>
+      <!-- ⚠️ 2026-09-10 `D-74`：沒有任何帳號時不出這一行——他沒有東西可選，
+           而下面出的是歡迎卡（三選一）。載入中照舊出（維持原本的畫面、不多一次位移），
+           代價是**裸 `/login` 進來的全新使用者會看到這行閃一下**（一個轉圈的時間）；
+           `?intent=start` 進來的人根本不會停在這一頁。 -->
+      <p v-if="loading || groupedWorkspaces.length > 0" class="ws-select-sub">選擇要管理的官方帳號</p>
 
       <div v-if="loading" class="ws-select-loading">
         <div class="spinner" />
@@ -175,10 +179,12 @@ const { showToast } = useAdminToast()
 import type { WorkspaceItem } from '~~/app/composables/useWorkspace'
 import { DEFAULT_LINE_WORKSPACE_ID } from '~~/shared/line-workspace'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
+import { isSignupStartIntent, shouldFastLaneToOnboarding } from '~~/shared/signup-entry'
 
 definePageMeta({ middleware: 'auth', layout: false })
 useHead({ title: useAdminTitle('選擇官方帳號') })
 
+const route = useRoute()
 const { logout } = useAuth()
 const { loadWorkspaceList, orgAdminOf } = useWorkspace()
 const { $auth } = useNuxtApp()
@@ -354,15 +360,31 @@ async function submitCreate() {
 // ── Init ──────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  let listLoaded = false
   try {
     const [list, tokenResult] = await Promise.all([
       loadWorkspaceList(),
       $auth.currentUser?.getIdTokenResult(),
     ])
     workspaceList.value = list
+    listLoaded = true
     isSuperAdmin.value = tokenResult?.claims.superAdmin === true
     // 沒有任何權限時要顯示給他看（同事要邀請他就是需要這個信箱）
     userEmail.value = $auth.currentUser?.email ?? ''
+
+    // ── 註冊快車道（2026-09-10 `D-74` 老闆拍板 A 案）───────────────────
+    // 從門面「免費打造」按進來、而且真的一個帳號都沒有 → 直接進開通引導，
+    // 不要再問他一次「選一個最符合你狀況的方式」——他按那顆按鈕時就回答過了。
+    // 判斷本體（含「清單沒查到時不可以送」等四個條件）在 shared/signup-entry.ts，有測試釘住。
+    // ⛔ replace 不用 push：他不該按上一頁又回到這個中繼頁。
+    if (shouldFastLaneToOnboarding({
+      intentIsStart: isSignupStartIntent(route.query.intent),
+      listLoaded,
+      groupCount: groupedWorkspaces.value.length,
+      isSuperAdmin: isSuperAdmin.value,
+    })) {
+      return await navigateTo('/admin/onboarding', { replace: true })
+    }
 
     const onlyWorkspace = visibleWorkspaceList.value.length === 1 ? visibleWorkspaceList.value[0] : undefined
     if (!isSuperAdmin.value && onlyWorkspace && orgAdminOf.value.length === 0) {
