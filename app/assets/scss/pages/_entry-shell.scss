@@ -68,66 +68,50 @@
   --brand-logo-h: 34px;
 }
 
-/* ── MiniMe 說一句話：頭像＋淡綠泡泡（`G-75`）────────────────────────
- * 這是**首頁的招牌裝置**（`.lp-turn` ／ `.lp-bubble`，門面五個區塊的標題都是它），
+/* ── MiniMe 說一句話：淡綠泡泡（`G-75`／`G-76`）──────────────────────
+ * 這是**首頁的招牌裝置**（`.lp-bubble`，門面五個區塊的標題都是它），
  * 搬過來讓入口頁不再只是「白卡上一排字」。
  * ⛔ 這是**淡綠底＋深色字**的泡泡，不是「綠底白字泡泡」——後者 2026-08-14 與 08-26
  *    試過兩次、兩次都被打槍，別搞混。
- * ⛔ 頭像**不掛綠色陰影**（2026-08-21 老闆指名拿掉：光暈是「這個可以按」的訊號，
- *    而它只是「誰在說話」的標示）。
- * ⚠️ 尺寸與尾巴的數字是從 `_landing.scss` 原封抄來的（磚 36px、圓角 12px、尾巴 15px
- *    轉 −45°、`top: 11px` 讓尖端對到磚的中心）——⛔ 改磚的大小要一起改尾巴的 top。
- * ⚠️ `.lp` 的變數（`--g` / `--g-wash-2` / `--g-line`）只活在 `.lp` 底下，這裡吃不到，
+ * ⚠️ `.lp` 的變數（`--g-wash-2` / `--g-line`）只活在 `.lp` 底下，這裡吃不到，
  *    所以用全站共用的品牌 token；`--g-wash-2`（#f2fbf6）在全站沒有對應的 token，
- *    直接寫值並註明它跟門面泡泡是同一個色。 */
+ *    直接寫值並註明它跟門面泡泡是同一個色。
+ *
+ * ⭐ `G-76`（使用者：「是否把對話框旁邊的 logo 拿掉，因為上面就有 Logo 了」＋「有點偏一邊」）：
+ *    **頭像那顆綠磚整個移除**、泡泡改成整寬置中、尾巴移到**正上方中央**。
+ *    量到的理由：頭像 36px＋間距 12px 把泡泡推離中軸 **+24px**，泡泡裡的標題文字實際偏
+ *    **−40px**，而 logotype／按鈕／說明／小標／回首頁五塊都量到 **0px**＝一顆卡上
+ *    六個東西置中、一個不置中，那就是「偏一邊」的來源。
+ * ⛔ 尾巴**不可以留在左邊**：頭像沒了，它會指著一片空白。指上面＝那顆 logotype 在說話。 */
 .entry-say {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  text-align: left;
-}
-
-.entry-say__ava {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  background: var(--brand-green);
-  display: grid;
-  place-items: center;
-  flex: none;
-
-  /* ⛔ 磚裡的 logomark 一定要用**寬度**定尺寸（20px、左右各留 8px），
-     不可以讓它吃 `--brand-logo-h`：logomark 是橫長形狀（249.91:148.92＝1.678:1），
-     設高 26px（BrandLogo 的預設）實際寬度是 44px＝比磚還寬、整個溢出。
-     2026-08-21 老闆截圖抓過同一件事（見 `_landing.scss` 的 `.lp-turn__ava`），
-     我這一輪讀了那條註解還是漏掉，實際渲染才看出來。 */
-  .brand-logo {
-    width: 20px;
-    height: auto;
-  }
+  flex-direction: column;
 }
 
 .entry-say__bubble {
   position: relative;
-  flex: 1;
-  min-width: 0;
   background: #f2fbf6; /* ＝門面 --g-wash-2，同一個淡綠 */
   border: 1px solid rgba(6, 199, 85, 0.24); /* ＝門面 --g-line */
   border-radius: var(--radius-lg);
   padding: 0.85rem 1rem;
+  /* 文字置中：卡上其他每一塊都是置中的，泡泡裡的字靠左會讓整塊又讀成偏的
+     （量到的 −40px 就是它）。 */
+  text-align: center;
 
+  /* 尾巴：15px 方塊轉 45°、只留左上兩條邊＝一個朝上的圓角尖角（跟門面手機版那顆
+     同一組數字，只是 left 改成置中）。⚠️ `calc(50% - 7.5px)`＝尖角的視覺中心落在中軸。 */
   &::before {
     content: '';
     position: absolute;
-    left: -7px;
-    top: 11px;
+    left: calc(50% - 7.5px);
+    top: -7px;
     width: 15px;
     height: 15px;
     background: #f2fbf6;
     border-left: 1px solid rgba(6, 199, 85, 0.24);
     border-top: 1px solid rgba(6, 199, 85, 0.24);
     border-top-left-radius: 4px;
-    transform: rotate(-45deg);
+    transform: rotate(45deg);
   }
 }
 
