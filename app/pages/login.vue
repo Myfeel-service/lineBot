@@ -60,28 +60,30 @@
       </div>
 
       <!--
-        頁尾＝說明＋兩個出口，一組（`D-75`⑧：原本這三行各自獨立、用了灰／深綠／亮綠
-        三種顏色在跟主按鈕爭注意力，而它們都不是這一頁的主要動作）。
+        頁尾＝一個出口（`G-72`：2026-09-10 使用者「這邊字很多，『想先了解』是否可以不用放這邊」）。
 
-        登入頁要同時服務三種人：想開始用的新客、被團隊邀請的成員、想先了解的人。
-        原本只寫「邀請制」會把新客擋在門外；改成中性歡迎語，登入後的迎賓頁再分流
-        （見 admin/workspaces.vue 空狀態）。
-        ⚠️ 2026-09-10 `D-74`：`?intent=start` 進來的人已經在上面被講過「登入完要做什麼」，
-           這裡只留受邀成員那半句——把「第一次使用？登入後可以建立…」再講一次
-           會變成同一件事說兩遍（而且他按的按鈕就是那個意思）。
+        ⛔ **移除了「想先了解？聯繫我們 / 預約 Demo →」**，理由三條：
+          ① 走到這一頁的人**上一頁就是首頁**（八顆註冊鈕全部從那裡來），而首頁的收尾 CTA
+             有「想先聊聊？寄信給我們」、頁尾有客服電話／信箱——按「回首頁」一步就回得去。
+          ② 這一刻他要的是「按下去會怎樣」，不是「找人談」；那行還是全卡唯一跟主按鈕
+             搶注意力的綠色連結。
+          ③ 措辭本身**已經過期**：預約 Demo 表單 2026-08-14 整區移除，首頁同日改口徑成
+             「寄信給我們」，這兩頁沒跟上（那行點下去其實只是開信件視窗）。
+        ⚠️ 這**不是**首頁那條紅線（`index.vue` 收尾 CTA 的「想先聊聊」＝全頁唯一找人談的
+           入口、⛔不可拿掉）；登入頁從來沒有那條拍板。
+        ⚠️ 真的需要找人談的路徑仍在：回首頁→收尾 CTA／頁尾，以及**登入後**帳號選擇頁
+           空狀態那行（那裡刻意保留：已經登入、零帳號、講「企業需求」＝真的銷售時機）。
+        ⛔「← 回首頁」不可拿掉：移除上面那行之後，它是這一頁**唯一**的退路。
+
+        受邀成員那半句：`?intent=start` 進來的人是**按了「免費打造」**的，不是被邀請的，
+        而且他登入後會落在帳號選擇頁的三選一，那裡有「我是被邀請加入團隊的」＋信箱＋複製鈕
+        （比這裡一句提示更有用）。所以 start 模式不再放這句；裸 `/login`（導覽列「登入」、
+        書籤、middleware 轉址＝回訪客戶與受邀成員在走的路）保留完整那一句。
       -->
       <div class="login-foot">
-        <p v-if="isStart" class="login-hint">被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
-        <p v-else class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
+        <p v-if="!isStart" class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
 
-        <!-- 兩個出口併成一行（`D-75`⑫ 同一種病：原本「想先了解？聯繫我們 / 預約 Demo →」
-             在窄卡片裡會把箭頭擠到下一行變成孤立的「→」，所以連結整段 nowrap）。
-             ⛔「回首頁」不可拿掉：這一頁除了「聯繫我們」之外沒有別的路回門面（`D-74`）。 -->
         <p class="entry-foot">
-          <template v-if="contactHref">
-            <span class="entry-foot__seg">想先了解？<a :href="contactHref" target="_blank" rel="noopener" class="entry-link">聯繫我們 / 預約 Demo →</a></span>
-            <span class="entry-foot__dot" aria-hidden="true">·</span>
-          </template>
           <NuxtLink class="entry-link entry-link--quiet" to="/">← 回首頁</NuxtLink>
         </p>
       </div>
@@ -105,12 +107,8 @@ const { brandName } = useSiteIdentity()
  */
 const isStart = computed(() => isSignupStartIntent(route.query.intent))
 
-// 不是客戶的人也會走到登入頁 → 給他一個不用登入就能走的出口
-const config = useRuntimeConfig()
-const contact = String(config.public.supportContact ?? '').trim()
-const contactHref = contact
-  ? (contact.startsWith('http') ? contact : `mailto:${contact}`)
-  : ''
+// ⚠️ `supportContact`（聯繫我們）2026-09-10 `G-72` 從這一頁移除＝這裡不再需要讀 runtimeConfig。
+//    想找人談的入口在首頁（收尾 CTA＋頁尾）與登入後的帳號選擇頁空狀態，理由見上面 template 的註解。
 const loading = ref(false)
 const errorMsg = ref('')
 

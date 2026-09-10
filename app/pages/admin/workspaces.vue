@@ -61,10 +61,15 @@
           </div>
 
           <!-- ③ 想先了解 / 企業需求
-               ⚠️ 連結整段 nowrap（`D-75`⑫）：390px 實截時箭頭被擠到下一行、變成孤立的一個「→」。 -->
+               ⚠️ 連結整段 nowrap（`D-75`⑫）：390px 實截時箭頭被擠到下一行、變成孤立的一個「→」。
+               ⚠️ 2026-09-10 `G-72` 措辭更正：原本寫「聯繫我們 / 預約 Demo →」，但**預約 Demo 表單
+                  2026-08-14 已整區移除**、首頁同日把口徑改成「寄信給我們」——這行點下去其實只是
+                  開信件視窗，承諾一個不存在的東西。⛔ 改文案要跟首頁收尾 CTA 那句同口徑。
+               ⛔ 這一行**刻意保留**（登入頁那行同日移除）：這裡是已經登入、零帳號、還講「企業需求」
+                  ＝真的銷售時機，而且這一頁沒有別的路可以找人談。 -->
           <p v-if="contactHref" class="ws-empty-ask">
             想先了解或有企業需求？
-            <a :href="contactHref" target="_blank" rel="noopener" class="entry-link">聯繫我們 / 預約 Demo →</a>
+            <a :href="contactHref" target="_blank" rel="noopener" class="entry-link">寄信給我們 →</a>
           </p>
         </div>
 
