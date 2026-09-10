@@ -513,6 +513,12 @@
   .lp-tally { margin: 30px 0 0; font-size: 1rem; font-weight: 700; color: var(--ink-2); }
   /* 大字綠用 --g-deep 不用 --g-text：37px+ 的展示數字，壓深會把力道洗掉（色票區規則②） */
   .lp-tally b { display: block; font-size: clamp(2.3rem, 4vw, 3.2rem); font-weight: 900; color: var(--g-deep); line-height: 1.15; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  /* 「位」＝單位，字級收到數字的 0.44 倍、粗細降一級（2026-09-10 老闆「把位縮小」）。
+     ⚠️ 用 em 不用 rem／px：數字本身是 clamp(2.3~3.2rem) 的流動級距，em 才會跟著等比縮
+     （桌機 51→22px、手機 37→16px）。⚠️ 顏色刻意不動＝跟數字同一個詞。
+     ⛔ 不要順手把它改成 `display: block` 或加 margin 換行：09-09 拍板「位」必須留在
+        大字那一行（讀的人才拆得出「580 位」是一個詞），驗收工具也在守這條。 */
+  .lp-tally__unit { font-size: 0.44em; font-weight: 800; letter-spacing: 0; }
   /* 全形破折號「——」貼著前後字會糊成一塊，左右開一點呼吸（09-08 使用者要求） */
   .lp-hero .lp-dash { margin: 0 0.13em; }
   .lp-hero__fine { margin: 14px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
