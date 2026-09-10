@@ -726,6 +726,51 @@ def main() -> None:
         (tok1, NEW_TOP, n_copy, 1900),
     ])
 
+    # 建 LIFF 的四步。⚠️ 這一支**目前是 arProject 在用**（廠商整合頁的「完整設定教學」）——
+    # 那邊的來源截圖不在它自己的 repo，一直是**複製這裡的產物**過去（見那頁的註解）。
+    # ⛔ 所以 LINE 主控台改版重拍時，這裡重跑完要**手動把 4 張複製過去**，不會自動同步。
+    # ⚠️ LIFF 住在「LINE Login」那張卡下面，跟拿連線資訊**正好相反**（那邊教人別點它）。
+    build_carousel('line-console-liff-setup', [
+        (lst, 84, None, 900),
+        (lst, 84, card_login, 1800),
+        (login, 90, tab_liff, 1800),
+        (liff_list, 136, (745, 705, 789, 737), 1800, 200),
+        (liff_add, 70, (337, 118, 1000, 156), 2800, 200),
+    ])
+
+    # 拿 **LINE Login** 那張卡的 Channel ID 與 Channel secret（arProject 用：登入驗證要這兩個值）。
+    # ⛔ 跟本 repo 的 `line-console-channel-secret.webp` **不是同一件事**：那支拍的是
+    #    **Messaging API** 卡的 secret（收訊息用）。arProject 是拿 LINE Login 卡的，
+    #    兩者長得幾乎一樣但值不同——貼錯的下場是登入永遠失敗。所以另外產一支。
+    # ⚠️ 第③格的框**刻意只框到複製圖示為止**（右邊界 820）：那一列最右邊有一顆 `Issue`，
+    #    按下去會**重發 Channel secret**，已經接好的登入當場斷。框進去等於把它一起指出來。
+    login_channel_id = (289, 526, 620, 580)     # Basic settings 最上面那列的複製圖示
+    login_secret_row = (289, 1950, 820, 2002)   # Channel secret 那一列（不含最右邊的 Issue）
+    build_carousel('line-login-keys', [
+        (lst, 84, None, 900),
+        (lst, 84, card_login, 1800),          # ①挑「LINE Login」那張卡
+        (login, 200, login_channel_id, 2000),  # ②Basic settings 最上面的 Channel ID
+        (login, 1700, login_secret_row, 2400),  # ③同一頁捲下來的 Channel secret
+    ])
+
+    # 拿 **Messaging API** 那張卡的 Channel access token（arProject 用：推播要這個值）。
+    # ⛔ 跟上面那支**是不同的卡**：同一個帳號下兩張同名卡，一張 LINE Login（登入用）、
+    #    一張 Messaging API（推播用），所以第①格就要先把卡挑對。
+    # ⚠️ ②③④沿用本 repo 開通引導那三格的座標（`line-console-get-token`），
+    #    差別只在前面多一格挑卡——那邊的人是從教學一路走進來的，已經在卡裡面了。
+    build_carousel('line-messaging-token', [
+        (lst, 84, None, 900),
+        (lst, 84, card_mapi, 1800),        # ①挑「Messaging API」那張卡
+        (api, 90, tab_mapi, 1600),         # ②切到 Messaging API 分頁
+        (api, 280, None, 130),             # 捲動帶過…
+        (api, 560, None, 130),
+        (api, 900, None, 130),
+        (api, 1220, None, 300),
+        (tok0, NEW_TOP, None, 250),
+        (tok0, NEW_TOP, n_issue, 1900),    # ③捲到最底，按 Issue
+        (tok1, NEW_TOP, n_copy, 1900),     # ④按複製圖示整串複製
+    ])
+
     # ⛔ `line-signup-entry-{1,2}.webp`（申請入口那兩張）**這裡產不出來**：
     #    它們的來源截圖（tw.linebiz.com 的開設帳號頁、Business ID 登入頁）
     #    2026-09-02 拍過但一直沒收進 `docs/onboarding-shots-src/`，見那批的 README 附註。
