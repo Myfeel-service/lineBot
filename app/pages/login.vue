@@ -19,11 +19,20 @@
              2026-09-08 起整區隱藏（`SHOW_FAST_SECTION`）＝客人現在是到這一頁才第一次
              知道要用 Google 帳號，所以這句話在這裡不是重複、是唯一一次。
         -->
-        <template v-if="isStart">
-          <p class="login-title">免費打造我的 {{ brandName }}</p>
-          <p class="login-step">第一步：用 Google 帳號登入，不用另外設密碼</p>
-        </template>
-        <p v-else>管理後台 · 使用 Google 帳號登入</p>
+        <p v-if="!isStart">管理後台 · 使用 Google 帳號登入</p>
+      </div>
+
+      <!-- 註冊那條路的招呼語＝**首頁的招牌裝置**（頭像＋淡綠泡泡，`G-75`）：
+           門面五個區塊的標題都是「MiniMe 說一句話」，搬過來這一頁才不會只是白卡上一排字。
+           ⛔ 淡綠底＋深色字，**不是**綠底白字泡泡（那個試過兩次都被打槍）。
+           ⚠️ 字沿用已拍板的那組（標題＝首頁 CTA 的同一句、小字＝`#fast` 區的「不用另外設密碼」）。 -->
+      <div v-if="isStart" class="entry-say">
+        <span class="entry-say__ava"><BrandLogo mark on-color alt="" /></span>
+        <div class="entry-say__bubble">
+          <p class="entry-say__t">免費打造我的 {{ brandName }}</p>
+          <!-- ⚠️「不用另外設密碼」包 `.entry-nb`：390px 實測它會被斷成「不用／另外設密碼」 -->
+          <p class="entry-say__s">第一步：用 Google 帳號登入，<span class="entry-nb">不用另外設密碼</span></p>
+        </div>
       </div>
 
       <!-- Error -->
@@ -55,8 +64,11 @@
              而且跟首頁承諾的「兩步 · 60 秒」對得上（登入＋取名字）。
              ⛔「免費方案不用綁卡」不可拿掉：首頁按鈕底下那行也是這句。 -->
         <p v-if="isStart" class="login-next">
-          接著幫你的 {{ brandName }} 取個名字，帳號就開好了<b>免費方案不用綁卡</b>
+          接著幫你的 {{ brandName }} 取個名字，帳號就開好了
         </p>
+        <!-- 「免費方案不用綁卡」＝安心小標（`G-75`）：沿用門面 `.lp-soon` 那顆 wash 標籤的做法，
+             把一行粗體綠字變成一個做過設計的元素。⛔ 文字不可改（首頁按鈕底下那行也是這句）。 -->
+        <span v-if="isStart" class="entry-chip">免費方案不用綁卡</span>
       </div>
 
       <!--

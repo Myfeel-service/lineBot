@@ -48,8 +48,13 @@
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  padding: 2.5rem 2rem;
+  /* 陰影＝首頁那組**兩層**的柔和陰影（`--sh-card` 的值，門面卡片全都是它）。
+     ⛔ 別改回單層的 `--shadow-lg`（`0 8px 24px rgba(0,0,0,.12)`）：它跟按鈕自己的陰影
+        一樣重，兩個都在浮、誰也不在上面；而且 1px 邊框＋重陰影＝同一條邊描兩次。 */
+  box-shadow: 0 2px 6px rgba(20, 24, 22, 0.04), 0 18px 44px rgba(20, 24, 22, 0.07);
+  /* 上下 32px：原本 40px，而卡內群組只隔 24px＝外框留白比內容間距還大，
+     內容看起來像浮在一個盒子裡（`G-75` 量到 41／24／24／41）。 */
+  padding: 2rem;
   display: flex;
   flex-direction: column;
   /* 卡內「群組之間」的距離。群組**內部**的距離由各頁自己定（見 `D-75`⑨ 的三層節奏）。 */
@@ -63,6 +68,112 @@
   --brand-logo-h: 34px;
 }
 
+/* ── MiniMe 說一句話：頭像＋淡綠泡泡（`G-75`）────────────────────────
+ * 這是**首頁的招牌裝置**（`.lp-turn` ／ `.lp-bubble`，門面五個區塊的標題都是它），
+ * 搬過來讓入口頁不再只是「白卡上一排字」。
+ * ⛔ 這是**淡綠底＋深色字**的泡泡，不是「綠底白字泡泡」——後者 2026-08-14 與 08-26
+ *    試過兩次、兩次都被打槍，別搞混。
+ * ⛔ 頭像**不掛綠色陰影**（2026-08-21 老闆指名拿掉：光暈是「這個可以按」的訊號，
+ *    而它只是「誰在說話」的標示）。
+ * ⚠️ 尺寸與尾巴的數字是從 `_landing.scss` 原封抄來的（磚 36px、圓角 12px、尾巴 15px
+ *    轉 −45°、`top: 11px` 讓尖端對到磚的中心）——⛔ 改磚的大小要一起改尾巴的 top。
+ * ⚠️ `.lp` 的變數（`--g` / `--g-wash-2` / `--g-line`）只活在 `.lp` 底下，這裡吃不到，
+ *    所以用全站共用的品牌 token；`--g-wash-2`（#f2fbf6）在全站沒有對應的 token，
+ *    直接寫值並註明它跟門面泡泡是同一個色。 */
+.entry-say {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.entry-say__ava {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--brand-green);
+  display: grid;
+  place-items: center;
+  flex: none;
+
+  /* ⛔ 磚裡的 logomark 一定要用**寬度**定尺寸（20px、左右各留 8px），
+     不可以讓它吃 `--brand-logo-h`：logomark 是橫長形狀（249.91:148.92＝1.678:1），
+     設高 26px（BrandLogo 的預設）實際寬度是 44px＝比磚還寬、整個溢出。
+     2026-08-21 老闆截圖抓過同一件事（見 `_landing.scss` 的 `.lp-turn__ava`），
+     我這一輪讀了那條註解還是漏掉，實際渲染才看出來。 */
+  .brand-logo {
+    width: 20px;
+    height: auto;
+  }
+}
+
+.entry-say__bubble {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: #f2fbf6; /* ＝門面 --g-wash-2，同一個淡綠 */
+  border: 1px solid rgba(6, 199, 85, 0.24); /* ＝門面 --g-line */
+  border-radius: var(--radius-lg);
+  padding: 0.85rem 1rem;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: -7px;
+    top: 11px;
+    width: 15px;
+    height: 15px;
+    background: #f2fbf6;
+    border-left: 1px solid rgba(6, 199, 85, 0.24);
+    border-top: 1px solid rgba(6, 199, 85, 0.24);
+    border-top-left-radius: 4px;
+    transform: rotate(-45deg);
+  }
+}
+
+/* 泡泡裡的主張句與底下那行小字 */
+.entry-say__t {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.entry-say__s {
+  margin: 0.2rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+/* 不能被拆開的詞（同門面的 `.lp-nb`）：390px 實測「不用另外設密碼」被斷成
+   「不用」／「另外設密碼」，包起來之後換行只發生在它前面。
+   ⛔ 別改用 `text-wrap: balance`／`pretty`：中文實測完全無效（`G-33` 二輪量過）。 */
+.entry-nb {
+  white-space: nowrap;
+}
+
+/* ── 安心小標（「免費方案不用綁卡」）──────────────────────────────
+ * 沿用門面 `.lp-soon` 那顆 wash 標籤的做法（淡綠底＋可讀深綠字＋膠囊＋細綠線），
+ * 把一行粗體綠字變成一個**做過設計的元素**。
+ * ⛔ 文字不可改：首頁按鈕底下那行也是這句（改要一起改）。 */
+.entry-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--brand-green-wash);
+  border: 1px solid rgba(6, 199, 85, 0.24);
+  color: var(--brand-green-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 /* 主要按鈕＝首頁那顆白色膠囊（`.lp-btn--white`）的同一套語言（`D-75`⑦）：
    首頁全站是膠囊＋1rem/700，這兩頁原本一個是 10px 圓角灰底細框、一個是 Element 方鈕，
    三頁三種按鈕語言。⛔ 不掛綠色光暈（2026-09-04 老闆指名拿掉，見 `_landing.scss` 色票區）。 */
@@ -71,8 +182,15 @@
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  width: 100%;
-  padding: 0.9rem 1.25rem;
+  /* 寬度：**貼著內容**、置中，不再整列拉滿（`G-75` 量到 374px 寬但字只佔 157px＝
+     58% 是空的，一顆這麼扁長的膠囊看起來像一條橫槓不像按鈕；首頁的 `.lp-btn` 也是
+     貼著內容的 inline 元素）。⚠️ 手機（≤480px）改回整寬＝那是手機表單的慣例，
+     而且窄螢幕上「貼內容」會讓手指目標變小。 */
+  align-self: center;
+  width: auto;
+  min-width: 15rem;
+  max-width: 100%;
+  padding: 0.9rem 1.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: var(--bg-surface);
@@ -101,6 +219,13 @@
     cursor: not-allowed;
     transform: none;
     box-shadow: var(--shadow-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .entry-btn {
+    align-self: stretch;
+    width: 100%;
   }
 }
 

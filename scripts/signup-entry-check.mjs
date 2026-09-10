@@ -173,7 +173,9 @@ for (const [tag, path, want, unwanted] of [
   await page.goto(`${BASE}/login?intent=start`, { waitUntil: 'networkidle0', timeout: 60_000 })
   const m = await page.evaluate(() => {
     const card = document.querySelector('.login-card').getBoundingClientRect()
-    const title = document.querySelector('.login-title')
+    // ⚠️ 2026-09-10 `G-75`：招呼語改成頭像＋淡綠泡泡，標題的 class 從 `.login-title`
+    //    換成 `.entry-say__t`。這條檢查的**用意沒變**：標題在 390px 不可以折行。
+    const title = document.querySelector('.entry-say__t')
     return {
       cardW: Math.round(card.width), cardH: Math.round(card.height),
       titleLines: title ? Math.round(title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight)) : 0,

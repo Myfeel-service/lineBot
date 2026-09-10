@@ -49,31 +49,19 @@
   color: var(--color-error);
 }
 
-/* ── 註冊那條路才出現的兩行招呼語（`?intent=start`，2026-09-10 `D-74`）──
- * ⛔ 選擇器一定要帶 `.login-logo`：這兩個是 `.login-logo` 底下的 `p`，而上面那條
- *    `.login-page .login-logo p`（0,2,1）**贏過**只寫 `.login-page .login-title`（0,2,0）——
- *    第一版就是這樣寫的，標題被壓成 0.875rem 的灰字（看起來像圖說，不像這一頁的主張），
- *    實際渲染才看得出來。 */
-.login-page .login-logo .login-title {
-  color: var(--text-primary);
-  font-size: 1.15rem;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: 0;
-}
+/* ⚠️ 2026-09-10 `G-75`：註冊那條路的招呼語改成**頭像＋淡綠泡泡**（`.entry-say`，
+ *    樣式在 `_entry-shell.scss`），`.login-title`／`.login-step` 兩個 class 一併移除。
+ * ⛔ 若要把純文字版本改回來，記得選擇器要帶 `.login-logo`：
+ *    `.login-page .login-logo p`（0,2,1）會**贏過**只寫 `.login-page .login-title`（0,2,0），
+ *    `D-75` 的第一版就是這樣把標題壓成 0.875rem 的灰字（看起來像圖說），實際渲染才看得出來。 */
 
-.login-page .login-logo .login-step {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  line-height: 1.6;
-  margin: 0;
-}
-
-/* 按鈕與它的說明＝一組（組內 12px）。按鈕本體吃 `.entry-btn`（共用外殼）。 */
+/* 按鈕與它的說明＝一組（組內 10px）。按鈕本體吃 `.entry-btn`（共用外殼）、
+   安心小標吃 `.entry-chip`；兩者都自己置中，所以這裡用 stretch 不會把它們拉開。 */
 .login-page .login-main {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  align-items: center;
+  gap: 0.65rem;
 }
 
 .login-page .btn-google .spinner {
