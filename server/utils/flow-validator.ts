@@ -1,5 +1,6 @@
 import { createError } from 'h3'
 import { validateUnifiedAction } from '~~/shared/action-schema'
+import { lineTextOverflowMessage, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
 
 const FLOW_MESSAGE_LIMIT = 5
 const USER_INPUT_ATTRIBUTE_RE = /^[A-Za-z][A-Za-z0-9_]{0,49}$/
@@ -15,6 +16,17 @@ function ensureTaggingSelection(tagging: any, prefix: string): void {
       : []
     if (tagIds.length === 0) fail(`${prefix}：已啟用貼標，請至少選擇一個標籤`)
   }
+}
+
+/**
+ * ⛔ 文字長度一定要在這裡擋，不能只靠前端的 `maxlength`。
+ * `maxlength` 只擋「當下打的字」——先把長文貼好、之後才加按鈕，舊值不會被裁，
+ * 上限形同虛設（`H-27` 就是這樣進來的：5 則模組存著超長文字、發出去被切一半）。
+ * 這裡是唯一的收斂點（建立與更新兩支端點都走 `assertValidFlowMessages`）。
+ */
+function validateTextLength(msg: any): void {
+  const measure = measureLineText(String(msg?.text || ''), messageHasButtons(msg))
+  if (measure.willTruncate) fail(lineTextOverflowMessage(measure))
 }
 
 function validateTextButtons(msg: any): void {
@@ -186,6 +198,7 @@ function validateMessageByType(msg: any): void {
 
   if (type === 'text') {
     if (!String(msg?.text || '').trim()) fail('文字模組：回覆文字不可為空')
+    validateTextLength(msg)
     validateTextButtons(msg)
     return
   }

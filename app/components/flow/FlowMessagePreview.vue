@@ -17,9 +17,14 @@
         <div v-for="(msg, i) in messages" :key="i" class="fmp-row">
           <!-- 文字（無按鈕＝純氣泡；有按鈕＝按鈕範本卡） -->
           <template v-if="msg.type === 'text'">
-            <div v-if="!hasButtons(msg)" class="fmp-bubble">{{ msg.text || '（文字內容）' }}</div>
+            <div v-if="!hasButtons(msg)" class="fmp-bubble">{{ keptText(msg) }}</div>
             <div v-else class="fmp-card">
-              <p class="fmp-card-text">{{ msg.text || '（文字內容）' }}</p>
+              <p class="fmp-card-text">{{ keptText(msg) }}</p>
+              <!-- 超過 160 字的部分：照樣顯示，但明講「送不出去」 -->
+              <div v-if="droppedText(msg)" class="fmp-card-cut">
+                <span class="fmp-card-cut-label">↓ 以下 {{ droppedText(msg).length }} 字送不出去（有按鈕時 LINE 只收 160 字）</span>
+                <p class="fmp-card-cut-text">{{ droppedText(msg) }}</p>
+              </div>
               <div class="fmp-btns">
                 <span v-for="(b, bi) in msg.buttons" :key="bi" class="fmp-btn">{{ b.label || '按鈕' }}</span>
               </div>
@@ -120,13 +125,31 @@
 import { ChatDotRound, Picture, Postcard, VideoCamera } from '@element-plus/icons-vue'
 import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
+import { measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
 
 const props = defineProps<{ messages: any[]; richMessages?: any[]; oaName?: string }>()
 
 const oaInitial = computed(() => (props.oaName || '官').trim().charAt(0).toUpperCase())
 
 function hasButtons(msg: any) {
-  return Array.isArray(msg.buttons) && msg.buttons.length > 0
+  return messageHasButtons(msg)
+}
+
+/*
+ * ⛔ 預覽的文字一定要照送出端的規則截斷（`H-27`）。
+ * 原本這裡原封渲染 `msg.text`，掛按鈕的長文在預覽裡看起來好好的、客人卻只收到前
+ * 160 字——**預覽在說謊**比沒有預覽更糟。截斷法與 `buildLineMessages` 共用
+ * `shared/line-text-limits`，兩邊保證切在同一格。
+ * 被切掉的那段不是不顯示，而是另外標出來——過濾掉東西要說得出丟了什麼。
+ */
+function textMeasure(msg: any) {
+  return measureLineText(String(msg?.text || ''), hasButtons(msg))
+}
+function keptText(msg: any): string {
+  return textMeasure(msg).kept || '（文字內容）'
+}
+function droppedText(msg: any): string {
+  return textMeasure(msg).dropped
 }
 function imgUrl(msg: any): string {
   return msg.previewImageUrl || msg.originalContentUrl || ''

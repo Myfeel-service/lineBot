@@ -383,6 +383,21 @@
     min-height: 0;
   }
 
+  /*
+   * 超出上限時字數要變紅（`H-27`）。
+   * ⛔ 兩個細節都踩過：
+   *   ① `.is-exceed` 是掛在 **`.el-textarea` 這個外層**，不是掛在 `.el-input__count`
+   *      上（textarea 版的 Element Plus 就是這樣，`theme-chalk/src/input.scss` 的
+   *      `b(textarea) { when(exceed) }`）。寫成 `.el-input__count.is-exceed` 永遠不中。
+   *   ② 中了也還不夠：下面那條 `--var-inset .el-textarea .el-input__count` 是 4 個 class，
+   *      專一度贏過 EP 的 3 個，所以字數會被壓回灰色。這裡要 5 個 class 才蓋得回來。
+   * 實機驗過才發現（`scripts/flow-text-limit-live-check.mjs` ①），光看程式看不出來。
+   */
+  &.flow-textarea-wrapper--var-inset .el-textarea.is-exceed .el-input__count {
+    color: var(--el-color-danger);
+    font-weight: 700;
+  }
+
   &.flow-textarea-wrapper--var-inset .el-textarea .el-input__count {
     position: absolute;
     left: 0.55rem;
@@ -589,6 +604,21 @@
   font-size: 0.75rem;
   color: #d97706;  /* specific warning orange hue used here */
   line-height: 1.5;
+}
+
+/*
+ * 文字超過 LINE 上限的警告（`H-27`）。
+ * 用紅不用橘：這不是「建議調整」，是「按下儲存會被擋、而且現在這樣發出去客人收不到」。
+ */
+.flow-text-overflow {
+  margin: 0.4rem 0 0;
+  padding: 0.45rem 0.6rem;
+  border-left: 3px solid var(--el-color-danger, #f56c6c);
+  border-radius: var(--radius-sm);
+  background: var(--el-color-danger-light-9, #fef0f0);
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--el-color-danger, #f56c6c);
 }
 
 /* ─── Sub-card horizontal rail (Carousel) ──────────────── */

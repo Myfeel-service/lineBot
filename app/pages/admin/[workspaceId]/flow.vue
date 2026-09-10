@@ -315,15 +315,29 @@
               <div v-if="msg.type === 'text'" class="message-bubble-wrap">
                 <div class="admin-field-group">
                   <AdminFieldLabel tight>
-                    回覆文字 <span class="text-muted">(最多 5000 字；若有按鈕最多 160 字)</span>
+                    回覆文字 <span class="text-muted">{{ textLimitHint(msg) }}</span>
                   </AdminFieldLabel>
                   <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                    <el-input v-model="msg.text" type="textarea" :rows="3" placeholder="輸入回覆文字..." :maxlength="msg.buttons && msg.buttons.length > 0 ? 160 : 5000" />
+                    <el-input
+                      v-model="msg.text"
+                      type="textarea"
+                      :rows="3"
+                      placeholder="輸入回覆文字..."
+                      :maxlength="lineTextLimit(messageHasButtons(msg))"
+                      show-word-limit
+                    />
                     <FlowVariableInset
                       :options="variableTokenOptions"
                       @pick="(token) => insertVariableToken(msg, 'text', String(token))"
                     />
                   </div>
+                  <!--
+                    ⛔ 這句不能省。maxlength 只擋「當下打的字」，先貼長文再加按鈕的話
+                    舊值原封不動，畫面上完全看不出有問題（`H-27` 就是這樣發出去的）。
+                  -->
+                  <p v-if="textOverflowOf(msg) > 0" class="flow-text-overflow" role="alert">
+                    超過 {{ textOverflowOf(msg) }} 字，這些字客人收不到。文字底下掛了按鈕時 LINE 只收 160 字——請刪到 160 字以內，或把按鈕移除改用純文字（可到 {{ LINE_TEXT_MESSAGE_MAX }} 字）。
+                  </p>
                 </div>
                 <div v-if="msg.buttons && msg.buttons.length" class="carousel-actions">
                   <div v-for="(btn, bIdx) in msg.buttons" :key="bIdx">
@@ -1125,6 +1139,13 @@ import {
 } from '~~/shared/line-image-spec'
 import { loadImageNaturalSize, loadVideoNaturalSize, simplifyAspectRatio } from '~~/shared/media-preview'
 import {
+  LINE_TEXT_MESSAGE_MAX,
+  lineTextLimit,
+  lineTextOverflowMessage,
+  measureLineText,
+  messageHasButtons,
+} from '~~/shared/line-text-limits'
+import {
   createRichMessageActions,
   normalizeRichMessageActions,
   richMessageEditorActionsOverlap,
@@ -1391,6 +1412,21 @@ function msgBadgeClass(type: string) {
 
 function isCarouselType(type: string) {
   return type === 'carousel' || type === 'imageCarousel' || type === 'flexImageCarousel'
+}
+
+// ── 文字長度（`H-27`）────────────────────────────────
+// 掛了按鈕的文字訊息得用 LINE 的按鈕範本送，文字上限從 5000 掉到 160。
+// 上限本身是動態的，所以標籤與警告也要跟著 msg 走——寫死一句「最多 5000 字」
+// 正是原本讓人放心貼長文、送出才被切掉的原因。
+function textLimitHint(msg: any): string {
+  return messageHasButtons(msg)
+    ? '(底下有按鈕：LINE 最多只收 160 字)'
+    : `(最多 ${LINE_TEXT_MESSAGE_MAX} 字；一旦加上按鈕會降到 160 字)`
+}
+
+/** 超出幾字；沒超出回 0（模板用它決定要不要出警告） */
+function textOverflowOf(msg: any): number {
+  return measureLineText(String(msg?.text || ''), messageHasButtons(msg)).overflow
 }
 
 // ── Load ──────────────────────────────────────────────
@@ -2588,6 +2624,14 @@ function validateMessages(messages: any[]): string | null {
   for (const [msgIdx, msg] of (messages ?? []).entries()) {
     // 每則訊息的驗證包成 IIFE，回傳的錯誤自動帶上「第 N 則」位置，方便定位
     const perMessageError = ((): string | null => {
+    // 文字長度：掛按鈕時 LINE 只收 160 字，超過的部分送出時會被切掉（`H-27`）。
+    // ⛔ 規則與後端 `server/utils/flow-validator.ts` 共用 `shared/line-text-limits`，
+    // 兩邊不可各寫一份——不然會出現「後台放行、伺服器擋下」或反過來的窘況。
+    if (msg?.type === 'text') {
+      const measure = measureLineText(String(msg.text || ''), messageHasButtons(msg))
+      if (measure.willTruncate) return lineTextOverflowMessage(measure)
+    }
+
     // text message optional buttons, but if a button exists it must be complete
     if (msg?.type === 'text' && Array.isArray(msg.buttons)) {
       for (const btn of msg.buttons) {

@@ -154,6 +154,40 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+/*
+ * 送不出去的那一段（`H-27`）。
+ * 刻意「照樣顯示、但一眼看得出被切掉」：斜線底紋＋灰字＋刪除線，並在上方直說幾字送不出去。
+ * ⛔ 不要改成整段隱藏——看不到就等於預覽繼續說謊，只是換一種說法。
+ */
+.fmp-card-cut {
+  border-top: 1px dashed var(--el-color-danger, #f56c6c);
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(245, 108, 108, 0.06),
+    rgba(245, 108, 108, 0.06) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.fmp-card-cut-label {
+  display: block;
+  padding: 0.4rem 0.8rem 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--el-color-danger, #f56c6c);
+}
+.fmp-card-cut-text {
+  margin: 0;
+  padding: 0 0.8rem 0.6rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #9a9a9a;
+  text-decoration: line-through;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .fmp-btns { display: flex; flex-direction: column; }
 .fmp-btn {
   padding: 0.5rem;

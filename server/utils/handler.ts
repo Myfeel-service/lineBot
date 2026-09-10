@@ -26,6 +26,7 @@ import {
 import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
+import { LINE_BUTTONS_TEMPLATE_TEXT_MAX, LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
 import { archiveConversationMedia } from './conversation-media'
 import { logHandoffEvent } from './ai-handoff-events'
 import { readInboundImage } from './media-describe'
@@ -1457,7 +1458,10 @@ function buildLineMessages(
         altText: renderedText.slice(0, 400),
         template: {
           type: 'buttons',
-          text: (renderedText || '無內容').slice(0, 160),
+          // ⛔ 這裡的截斷法必須與後台預覽同一份（`shared/line-text-limits`）——兩邊切在
+          // 不同格，預覽就又開始說謊。存檔端已擋下超長文字（`H-27`），這裡只是最後一道
+          // 保險：舊資料與變數展開後才變長的情況仍可能走到。
+          text: truncateLineText(renderedText || '無內容', LINE_BUTTONS_TEMPLATE_TEXT_MAX),
           actions: msg.buttons.slice(0, 4).map((b: any) => {
             if (b.type === 'uri') {
               return {
@@ -1859,7 +1863,7 @@ function buildLineMessages(
     if (msg.type === 'text') {
       return [{
         ...msg,
-        text: renderWithAttributes(msg.text || '', attributes).slice(0, 5000)
+        text: truncateLineText(renderWithAttributes(msg.text || '', attributes), LINE_TEXT_MESSAGE_MAX)
       } as messagingApi.TextMessage]
     }
 
