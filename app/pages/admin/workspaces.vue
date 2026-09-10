@@ -30,16 +30,20 @@
       -->
       <template v-else-if="groupedWorkspaces.length === 0">
         <div class="ws-select-empty">
-          <p class="ws-empty-title">歡迎使用{{ brandName }}</p>
-          <p class="text-xs text-muted ws-empty-lead">選一個最符合你狀況的方式繼續：</p>
+          <!-- ⚠️ 中英之間留一個空格（`D-75`⑭）：登入頁的「免費打造我的 MiniMe」有，這裡原本沒有 -->
+          <p class="ws-empty-title">歡迎使用 {{ brandName }}</p>
+          <!-- ⛔ 不掛 `text-muted` 工具類（`D-75`A①：2.54:1）；字級與顏色都由 partial 給 -->
+          <p class="ws-empty-lead">選一個最符合你狀況的方式繼續：</p>
 
-          <!-- ① 想開始使用 → 自助開通精靈（建立自己的組織＋第一個帳號＋免費方案） -->
+          <!-- ① 想開始使用 → 自助開通精靈（建立自己的組織＋第一個帳號＋免費方案）
+               ⚠️ ≤480px 時整張卡改成上下堆疊（`D-75`⑬）：並排時文字欄被壓到 130px、
+                  說明折成三行擠在 88px 的按鈕旁邊。堆疊規則在 `_workspaces.scss`。 -->
           <div class="ws-welcome-opt ws-welcome-opt--primary">
             <div class="ws-welcome-opt__body">
               <div class="ws-welcome-opt__title">我想開始使用</div>
               <div class="ws-welcome-opt__desc">建立你自己的官方帳號空間，免費方案不需綁卡。</div>
             </div>
-            <el-button type="primary" @click="startOnboarding">開始使用</el-button>
+            <el-button type="primary" class="ws-welcome-opt__btn" @click="startOnboarding">開始使用</el-button>
           </div>
 
           <!-- ② 受邀成員 → 提供信箱給管理員邀請 -->
@@ -56,10 +60,11 @@
             </div>
           </div>
 
-          <!-- ③ 想先了解 / 企業需求 -->
-          <p v-if="contactHref" class="text-xs text-muted">
+          <!-- ③ 想先了解 / 企業需求
+               ⚠️ 連結整段 nowrap（`D-75`⑫）：390px 實截時箭頭被擠到下一行、變成孤立的一個「→」。 -->
+          <p v-if="contactHref" class="ws-empty-ask">
             想先了解或有企業需求？
-            <a :href="contactHref" target="_blank" rel="noopener" class="ws-empty-contact">聯繫我們 / 預約 Demo →</a>
+            <a :href="contactHref" target="_blank" rel="noopener" class="entry-link">聯繫我們 / 預約 Demo →</a>
           </p>
         </div>
 
@@ -68,9 +73,14 @@
           <span>超級管理員後台</span>
           <span class="ws-item-arrow">→</span>
         </NuxtLink>
-        <div class="ws-select-footer">
-          <el-button @click="logout">登出</el-button>
-        </div>
+        <!-- 頁尾一行（`D-75`⑪）：原本「登出」是這一頁**唯一的按鈕**、置中在底部，
+             看起來像主要動作（而它是最不該按的那個）。改成「我是誰 · 登出」一行，
+             順便回答「我到底是用哪個 Google 帳號登進來的」——原本只有受邀那個選項看得到信箱。 -->
+        <p class="entry-foot">
+          <span v-if="userEmail" class="ws-foot-who" :title="userEmail">以 {{ userEmail }} 登入</span>
+          <span v-if="userEmail" class="entry-foot__dot" aria-hidden="true">·</span>
+          <button type="button" class="entry-link entry-link--quiet" @click="logout">登出</button>
+        </p>
       </template>
 
       <template v-else>
@@ -104,7 +114,12 @@
                 class="ws-item"
                 @click="enter(ws.workspaceId)"
               >
-                <div class="ws-item-icon"><el-icon><ChatDotRound /></el-icon></div>
+                <!-- 帳號名的第一個字當頭像（`D-75`⑩）：原本每個帳號都是同一顆聊天圖示，
+                     清單掃過去每一列長得一樣、認不出誰是誰。單一色調＋首字＝差異在**字**上，
+                     不發明一組裝飾用的配色（也不跟方案標籤的語意色搶）。
+                     視覺沿用首頁 `.lp-chip__av`（綠 wash 底＋可讀深綠字）。
+                     ⚠️ aria-hidden：名字就在右邊，讀屏不必再唸一次首字。 -->
+                <div class="ws-item-avatar" aria-hidden="true">{{ initialOf(ws.name) }}</div>
                 <div class="ws-item-info">
                   <div class="ws-item-name">{{ ws.name }}</div>
                   <div class="ws-item-role">
@@ -138,9 +153,14 @@
           <span class="ws-item-arrow">→</span>
         </NuxtLink>
 
-        <div class="ws-select-footer">
-          <el-button @click="logout">登出</el-button>
-        </div>
+        <!-- 頁尾一行（`D-75`⑪）：原本「登出」是這一頁**唯一的按鈕**、置中在底部，
+             看起來像主要動作（而它是最不該按的那個）。改成「我是誰 · 登出」一行，
+             順便回答「我到底是用哪個 Google 帳號登進來的」——原本只有受邀那個選項看得到信箱。 -->
+        <p class="entry-foot">
+          <span v-if="userEmail" class="ws-foot-who" :title="userEmail">以 {{ userEmail }} 登入</span>
+          <span v-if="userEmail" class="entry-foot__dot" aria-hidden="true">·</span>
+          <button type="button" class="entry-link entry-link--quiet" @click="logout">登出</button>
+        </p>
       </template>
     </div>
   </div>
@@ -174,7 +194,8 @@
 </template>
 
 <script setup lang="ts">
-import { ChatDotRound, OfficeBuilding, Setting } from '@element-plus/icons-vue'
+// ⚠️ ChatDotRound 2026-09-10 移除：帳號圖示改成「名字首字頭像」（`D-75`⑩）
+import { OfficeBuilding, Setting } from '@element-plus/icons-vue'
 const { showToast } = useAdminToast()
 import type { WorkspaceItem } from '~~/app/composables/useWorkspace'
 import { DEFAULT_LINE_WORKSPACE_ID } from '~~/shared/line-workspace'
@@ -259,6 +280,18 @@ function isInternalPlan(id: string) {
 
 function roleLabel(role: string) {
   return ROLE_LABELS[role] ?? role
+}
+
+/**
+ * 帳號名的第一個字＝頭像上的字（`D-75`⑩）。
+ *
+ * ⚠️ 用 `Array.from` 取字元、不用 `name[0]`：emoji 與部分罕用字是兩個 code unit，
+ *    `name[0]` 會切出半個字、畫面上變成「�」。
+ * ⚠️ 名字全空白／空字串時回「·」，⛔ 不要回空字串——圓圈裡什麼都沒有比一個點更像壞掉。
+ */
+function initialOf(name: string): string {
+  const s = String(name ?? '').trim()
+  return Array.from(s)[0] ?? '·'
 }
 
 interface OrgGroup {

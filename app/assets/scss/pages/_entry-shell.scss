@@ -1,0 +1,170 @@
+/* ── 入口頁共用外殼：登入頁（.login-page）＋帳號選擇頁（.ws-select-page）──────
+ *
+ * 為什麼要有這一份（2026-09-10 `D-75` B 組）：
+ * 這兩頁是**連續的兩頁**（按完「使用 Google 登入」就到選帳頁），但實測是兩套幾何——
+ * 卡寬 400 vs 460、內距 48/40 vs 40/32、logo 40 vs 30px、手機邊距 **0** vs 32px、
+ * 一頁有兩顆綠光暈一頁純灰。走過去會抖一下，而抖的地方沒有任何理由。
+ *
+ * 依據＝2026-07-17 老闆拍板「門面／入口頁（landing、login、選帳、死路頁）延續品牌綠、
+ * **統整成共用品牌樣式**；後台維持單色」。所以外殼（寬、內距、圓角、陰影、底色、logo 高）
+ * 收在這一份，兩頁各自的檔案只留自己的內容樣式。
+ *
+ * ⛔ 別把這裡的值複製回 `_login.scss`／`_workspaces.scss`——那正是這輪在修的 drift。
+ * ⚠️ `main.scss` 的 `@use` 順序：這份必須排在 `pages/login`／`pages/workspaces` **之前**，
+ *    同權重時後面的才蓋得過（兩頁刻意保留少數覆寫，例如卡內的分組節奏）。
+ */
+
+.login-page,
+.ws-select-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  /* 手機邊距（`D-75`⑤）：登入頁原本一個 padding 都沒有，390px 時卡片 x=0 貼齊螢幕邊，
+     24px 圓角與外圍陰影整條被切掉（看起來像沒做完）。兩頁統一 20px。
+     ⛔ 別用 `overflow: hidden`：卡片比視窗高時（選帳頁列 4 個帳號就 726px）
+        置中＋裁切會把卡片上緣切掉而且捲不到。 */
+  padding: 2rem 1.25rem;
+
+  /* 底色（`D-75`⑥）：白裡透一點品牌綠。改用畫在頁面上的兩層 radial-gradient，
+     不再靠兩顆空的 `.bg-glow` div（登入頁原本的做法、選帳頁沒有＝兩頁不同底）。
+     ⛔ 這**不是**深色段也不是綠底段（2026-08-14、08-26 各被打槍一次）；
+        透明度 0.07／0.05 是「隱約有顏色」的量，不是色塊。 */
+  background:
+    radial-gradient(620px 420px at 6% -8%, rgba(6, 199, 85, 0.07), rgba(6, 199, 85, 0) 70%),
+    radial-gradient(520px 380px at 100% 106%, rgba(6, 199, 85, 0.05), rgba(6, 199, 85, 0) 70%),
+    var(--bg-base);
+}
+
+.login-card,
+.ws-select-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  /* 440＝原本 400（登入）與 460（選帳）之間。選帳頁的長帳號名靠這 40px 少裁一點字，
+     登入頁的單行標題仍然一行放得下（實測 390px 不折行）。 */
+  max-width: 440px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  /* 卡內「群組之間」的距離。群組**內部**的距離由各頁自己定（見 `D-75`⑨ 的三層節奏）。 */
+  gap: 1.5rem;
+}
+
+/* logo 高度兩頁同一級（原本 40 vs 30px＝走過去大小會跳一次）。
+   ⚠️ 選帳頁的 logo 旁邊還有「管理後台」四個字，那行的字級在 `_workspaces.scss` 裡跟著這個高度走。 */
+.login-brand,
+.ws-select-logo h1 {
+  --brand-logo-h: 34px;
+}
+
+/* 主要按鈕＝首頁那顆白色膠囊（`.lp-btn--white`）的同一套語言（`D-75`⑦）：
+   首頁全站是膠囊＋1rem/700，這兩頁原本一個是 10px 圓角灰底細框、一個是 Element 方鈕，
+   三頁三種按鈕語言。⛔ 不掛綠色光暈（2026-09-04 老闆指名拿掉，見 `_landing.scss` 色票區）。 */
+.entry-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.9rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+  /* 沿用首頁白鈕的陰影量（0 8px 22px rgba(0,0,0,.12)），讓它自己浮起來＝
+     全卡最重的元素就是「唯一該按的那顆」（`D-75`⑧）。 */
+  box-shadow: 0 2px 6px rgba(20, 24, 22, 0.04), 0 8px 22px rgba(20, 24, 22, 0.12);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(20, 24, 22, 0.05), 0 12px 28px rgba(20, 24, 22, 0.14);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+/* 卡片最底的一行：出口與「我是誰」。兩頁同一種語言＝一行、置中、可點的部分是連結色。
+   ⚠️ 顏色用 `--text-secondary` 不用 `--text-muted`：muted 在白底只有 2.54:1（`D-75`A①）。
+      層級靠字級與粗細拉開，不靠把字調淡到看不見。 */
+.entry-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* 一段（說明字＋它的連結）不可被拆開：原本「想先了解？聯繫我們 / 預約 Demo →」
+   在窄卡片裡把箭頭擠到下一行，變成孤立的一個「→」（`D-75`⑫ 實截抓到）。 */
+.entry-foot__seg {
+  white-space: nowrap;
+}
+
+/* 分隔點：`·` 掉到行首看起來像壞掉（同 `G-33`⑦ 頁尾那個），
+   所以換行只發生在點之後——它跟前一段之間不給斷點。
+   ⚠️ 顏色跟著整行走（secondary），⛔ 不要為了「低調」給它 `--text-muted`：
+      2.54:1 的分隔點幾乎看不到，那一行會讀成兩段黏在一起——
+      這輪的守門員（`scripts/entry-pages-check.mjs`）就是這樣抓到我自己寫的這個洞。 */
+.entry-foot__dot {
+  user-select: none;
+  margin-left: -0.2rem;
+}
+
+/* 入口頁的文字連結（聯繫我們／回首頁／登出）。
+   ⛔ 綠色文字一律 `--brand-green-text`（白底 5.45:1），
+      ⛔ 不可用 `--brand-green-deep`（2.81:1）——`_landing.scss` 2026-09-06 就訂了這條，
+      這兩頁當時沒跟上（`D-75`A②）。 */
+.entry-link {
+  color: var(--brand-green-text);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  /* 手指目標（同 `G-33`⑤ 頁尾那條）：純文字連結在手機上只有 19px 高、很容易點到隔壁。
+     ⛔ 別改回 `padding: 0`：2026-09-10 這一輪重排頁尾時我自己弄丟過一次，
+        `signup-entry-check.mjs` 當場抓到（可點高度 36px → 0px）。 */
+  padding: 0.4rem 0;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* 中性的出口（回首頁／登出）：是路不是主張，所以不吃品牌綠 */
+.entry-link--quiet {
+  color: var(--text-secondary);
+  font-weight: 400;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}

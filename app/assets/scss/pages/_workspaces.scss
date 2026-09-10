@@ -1,45 +1,32 @@
-/* ── Workspace 選擇頁 ────────────────────────────────────────── */
-
-.ws-select-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-base);
-  padding: 2rem;
-}
-
-.ws-select-card {
-  background: var(--bg-surface);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  padding: 2.5rem 2rem;
-  width: 100%;
-  max-width: 460px;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
+/* ── Workspace 選擇頁 ──────────────────────────────────────────
+ *
+ * ⚠️ 外殼（頁面底色／邊距、卡片寬度／內距／圓角／陰影、logo 高度、頁尾一行）
+ *    在 `_entry-shell.scss`，與**登入頁共用**（2026-09-10 `D-75` B 組）。
+ *    這裡只留這一頁自己的內容：標頭、組織分組、帳號列、迎賓三選一。
+ * ⛔ 別把外殼的值搬回這裡。
+ */
 
 .ws-select-logo {
   display: flex;
   align-items: center;
 
-  /* logotype 圖檔＋「管理後台」併成一個 h1：品牌名在圖裡（alt），文字只補後半段 */
+  /* logotype 圖檔＋「管理後台」併成一個 h1：品牌名在圖裡（alt），文字只補後半段。
+     ⚠️ logo 高度（34px）由 `_entry-shell.scss` 給＝與登入頁同一級；字級跟著它走。 */
   h1 {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    font-size: 1.2rem;
+    font-size: 1.25rem;
     font-weight: 700;
     margin: 0;
     color: var(--text-primary);
-    --brand-logo-h: 30px;
   }
 }
 
+/* ⚠️ 顏色一律 secondary 不用 muted（`D-75`A①）：muted #9ca3af 在白底只有 2.54:1，
+   而這一行是「這一頁要你做什麼」，不是裝飾。同一條規則適用本檔所有說明文字。 */
 .ws-select-sub {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
   margin: -0.75rem 0 0;
 }
@@ -48,7 +35,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -88,19 +75,20 @@
   user-select: all;
 }
 
-.ws-empty-contact {
-  color: var(--brand-green-deep);
-  text-decoration: none;
-  font-weight: 600;
+/* ── 迎賓頁三岔選項 ─────────────────────────────────────── */
 
-  &:hover {
-    text-decoration: underline;
-  }
+/* 「想先了解或有企業需求？」那一行（連結本體吃共用的 `.entry-link`，含 nowrap） */
+.ws-empty-ask {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
 }
 
-/* ── 迎賓頁三岔選項 ─────────────────────────────────────── */
 .ws-empty-lead {
   margin: 0.25rem 0 0.15rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
 }
 
 .ws-welcome-opt {
@@ -112,6 +100,29 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-base);
+}
+
+/* 主要動作也吃首頁的膠囊語言（`D-75`⑦）：這一頁原本是 Element 的方角預設鈕，
+   跟登入頁的圓角灰底鈕、首頁的膠囊各一種。⛔ 不加綠色光暈。 */
+.ws-welcome-opt__btn.el-button {
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+  height: 38px;
+  padding: 0 1.15rem;
+  flex: none;
+}
+
+/* ≤480px：整張卡改上下堆疊（`D-75`⑬）。並排時實測文字欄只剩 130px、
+   說明被折成三行擠在 88px 的按鈕旁邊，而右邊還空著。 */
+@media (max-width: 480px) {
+  .ws-welcome-opt {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ws-welcome-opt__btn.el-button {
+    width: 100%;
+  }
 }
 
 /* 主要出口（我想開始使用）：綠框凸顯，這是最高意願的路 */
@@ -167,13 +178,16 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* 組織後台入口：靠右、低調，但不能藏——管 10 個 OA 的人需要它 */
+/* 組織後台入口：靠右、低調，但不能藏——管 10 個 OA 的人需要它。
+   ⚠️ 字級 0.68rem→0.75rem（`D-75`A③：10.9px 低於中文 12px 的地板，見 `G-33`）；
+   ⛔ 綠色改 `--brand-green-text`：`--brand-green-deep` 當文字在白底只有 2.81:1，
+      這條規則 `_landing.scss` 2026-09-06 就訂了，這一頁當時沒跟上（`D-75`A②）。 */
 .ws-group-link {
   margin-left: auto;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--brand-green-deep);
+  letter-spacing: 0.02em;
+  color: var(--brand-green-text);
   text-decoration: none;
   white-space: nowrap;
 
@@ -195,10 +209,10 @@
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--brand-green-deep);
+  letter-spacing: 0.02em;
+  color: var(--brand-green-text);
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
@@ -237,11 +251,26 @@
   }
 }
 
-.ws-item-icon {
-  font-size: 1.25rem;
-  flex-shrink: 0;
-  width: 28px;
-  text-align: center;
+/* 帳號頭像＝名字的第一個字（`D-75`⑩，取代原本每列都一樣的聊天圖示）。
+   視覺沿用首頁 `.lp-chip__av`：綠 wash 底＋可讀深綠字（#067a3a 在 #eafaf1 上 5.05:1）。
+   ⛔ 不做「依名字給不同顏色」：那會跟方案標籤的語意色（免費藍／付費綠）打架，
+      而且這一列真正的識別是**字**，顏色只是底。 */
+.ws-item-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--brand-green-wash);
+  color: var(--brand-green-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  /* CJK 的字面比拉丁字母滿，兩者都要看起來落在圓心：靠 flex 置中＋不加額外偏移，
+     若日後改用等寬字再回來調。 */
+  overflow: hidden;
 }
 
 .ws-item-info {
@@ -258,31 +287,33 @@
   text-overflow: ellipsis;
 }
 
-/* 角色 + 方案標籤同一列：用 flex 對齊基線並留間距（原本 tag 直接黏在文字後、上下沒對齊） */
+/* 角色 + 方案標籤同一列：用 flex 對齊基線並留間距（原本 tag 直接黏在文字後、上下沒對齊）。
+   ⚠️ 0.72rem→0.75rem、muted→secondary（`D-75`A①A③：11.5px／2.54:1 兩項都不合格）。 */
 .ws-item-role {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.35rem;
-  font-size: 0.72rem;
-  color: var(--text-muted);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
   margin-top: 0.15rem;
   min-width: 0;
 }
 
-/* 方案標籤：壓到與角色文字相稱的視覺重量，不要喧賓奪主（el-tag 預設 small 仍偏大） */
+/* 方案標籤：與角色文字相稱、不喧賓奪主（el-tag 預設 small 仍偏大）。
+   ⚠️ 0.66rem→0.75rem（`D-75`A③：10.6px 是全卡最小的字，而它是付費狀態）。 */
 .ws-item-plan-tag.el-tag {
-  height: 17px;
-  padding: 0 5px;
-  font-size: 0.66rem;
-  line-height: 15px;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 0.75rem;
+  line-height: 18px;
   border-radius: 4px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .ws-item-arrow {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.9rem;
   flex-shrink: 0;
   transition: transform var(--t-fast);
@@ -315,19 +346,24 @@
 
   .ws-item-arrow {
     margin-left: auto;
-    color: var(--text-muted);
+    color: var(--text-secondary);
   }
 }
 
-.ws-select-footer {
-  display: flex;
-  justify-content: center;
+/* 頁尾「以 xxx@xxx 登入 · 登出」：整行的排版吃共用的 `.entry-foot`（`_entry-shell.scss`），
+   這裡只處理信箱太長時的收尾。 */
+.ws-foot-who {
+  min-width: 0;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 組織內無 workspace 時的提示文字 */
 .ws-group-empty {
   font-size: 0.78rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 0.5rem 0.25rem;
 }
 

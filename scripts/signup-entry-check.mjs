@@ -147,7 +147,10 @@ for (const [tag, path, want, unwanted] of [
   // 版面：卡片不溢出、退路的手指目標夠大
   const box = await page.evaluate(() => {
     const card = document.querySelector('.login-card')
-    const back = document.querySelector('.login-back')
+    // ⚠️ 2026-09-10 `D-75` 把頁尾重排成一行（「聯繫我們 · 回首頁」），
+    //    「回首頁」的 class 從 `.login-back` 換成共用的 `.entry-link--quiet`。
+    //    這條檢查的**用意沒變**：回門面的路要在、而且手指點得到。
+    const back = [...document.querySelectorAll('.entry-foot a')].find(a => a.getAttribute('href') === '/')
     const logoLink = document.querySelector('.login-brand a')
     return {
       cardW: Math.round(card.getBoundingClientRect().width),

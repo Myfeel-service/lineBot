@@ -31,12 +31,15 @@
         {{ errorMsg }}
       </div>
 
-      <!-- Login Button -->
-      <button
-        class="btn-google"
-        :disabled="loading"
-        @click="handleLogin"
-      >
+      <!-- 按鈕＋它的說明＝一組（`D-75`⑨ 的三層節奏之二）。
+           ⚠️ `.entry-btn` 是與選帳頁共用的白色膠囊（`_entry-shell.scss`）＝首頁 `.lp-btn--white`
+              的同一套語言；`D-75`⑧ 之前這顆是全卡**最輕**的元素，而它是這一頁唯一該按的東西。 -->
+      <div class="login-main">
+        <button
+          class="entry-btn btn-google"
+          :disabled="loading"
+          @click="handleLogin"
+        >
         <span v-if="loading" class="spinner" />
         <svg v-else width="18" height="18" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -44,18 +47,22 @@
           <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
           <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
         </svg>
-        使用 Google 登入
-      </button>
+          使用 Google 登入
+        </button>
 
-      <!-- 註冊那條路：按鈕底下先講**下一步是什麼**。他按下去之前最後一個顧慮是
-           「登入完會不會就要給卡號、要弄多久」，這一行就是那個問題的答案，
-           而且跟首頁承諾的「兩步 · 60 秒」對得上（登入＋取名字）。
-           ⛔「免費方案不用綁卡」不可拿掉：首頁按鈕底下那行也是這句。 -->
-      <p v-if="isStart" class="login-next">
-        接著幫你的 {{ brandName }} 取個名字，帳號就開好了<b>免費方案不用綁卡</b>
-      </p>
+        <!-- 註冊那條路：按鈕底下先講**下一步是什麼**。他按下去之前最後一個顧慮是
+             「登入完會不會就要給卡號、要弄多久」，這一行就是那個問題的答案，
+             而且跟首頁承諾的「兩步 · 60 秒」對得上（登入＋取名字）。
+             ⛔「免費方案不用綁卡」不可拿掉：首頁按鈕底下那行也是這句。 -->
+        <p v-if="isStart" class="login-next">
+          接著幫你的 {{ brandName }} 取個名字，帳號就開好了<b>免費方案不用綁卡</b>
+        </p>
+      </div>
 
       <!--
+        頁尾＝說明＋兩個出口，一組（`D-75`⑧：原本這三行各自獨立、用了灰／深綠／亮綠
+        三種顏色在跟主按鈕爭注意力，而它們都不是這一頁的主要動作）。
+
         登入頁要同時服務三種人：想開始用的新客、被團隊邀請的成員、想先了解的人。
         原本只寫「邀請制」會把新客擋在門外；改成中性歡迎語，登入後的迎賓頁再分流
         （見 admin/workspaces.vue 空狀態）。
@@ -63,20 +70,22 @@
            這裡只留受邀成員那半句——把「第一次使用？登入後可以建立…」再講一次
            會變成同一件事說兩遍（而且他按的按鈕就是那個意思）。
       -->
-      <p v-if="isStart" class="login-hint">被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
-      <p v-else class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
-      <p v-if="contactHref" class="login-hint">
-        想先了解？<a :href="contactHref" target="_blank" rel="noopener" class="login-contact">聯繫我們 / 預約 Demo →</a>
-      </p>
+      <div class="login-foot">
+        <p v-if="isStart" class="login-hint">被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
+        <p v-else class="login-hint">第一次使用？登入後可以建立自己的官方帳號空間。被團隊邀請的話，用受邀的 Google 信箱登入即可。</p>
 
-      <!-- 退路（2026-09-10 `D-74`）：這一頁原本除了「聯繫我們」之外沒有任何路回門面，
-           猶豫的人只剩瀏覽器上一頁。字與法務頁的 `.lp-legal__back` 同一句。 -->
-      <NuxtLink class="login-back" to="/">← 回首頁</NuxtLink>
+        <!-- 兩個出口併成一行（`D-75`⑫ 同一種病：原本「想先了解？聯繫我們 / 預約 Demo →」
+             在窄卡片裡會把箭頭擠到下一行變成孤立的「→」，所以連結整段 nowrap）。
+             ⛔「回首頁」不可拿掉：這一頁除了「聯繫我們」之外沒有別的路回門面（`D-74`）。 -->
+        <p class="entry-foot">
+          <template v-if="contactHref">
+            <span class="entry-foot__seg">想先了解？<a :href="contactHref" target="_blank" rel="noopener" class="entry-link">聯繫我們 / 預約 Demo →</a></span>
+            <span class="entry-foot__dot" aria-hidden="true">·</span>
+          </template>
+          <NuxtLink class="entry-link entry-link--quiet" to="/">← 回首頁</NuxtLink>
+        </p>
+      </div>
     </div>
-
-    <!-- Background decorations -->
-    <div class="bg-glow bg-glow-1" />
-    <div class="bg-glow bg-glow-2" />
   </div>
 </template>
 

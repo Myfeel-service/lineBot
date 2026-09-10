@@ -1,70 +1,28 @@
-/* ── 登入頁（layout: false，類名皆掛在 .login-page 下避免汙染）──── */
-.login-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-base);
-  position: relative;
-  overflow: hidden;
-}
+/* ── 登入頁（layout: false，類名皆掛在 .login-page 下避免汙染）────
+ *
+ * ⚠️ 外殼（頁面底色／邊距、卡片寬度／內距／圓角／陰影、logo 高度、主要按鈕、頁尾一行）
+ *    在 `_entry-shell.scss`，與**帳號選擇頁共用**（2026-09-10 `D-75` B 組）。
+ *    這裡只留這一頁自己的內容：招呼語三行、按鈕底下的說明、卡內的分組節奏。
+ * ⛔ 別把外殼的值搬回這裡。
+ */
 
-.login-page .bg-glow {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  pointer-events: none;
-}
-
-.login-page .bg-glow-1 {
-  width: 400px;
-  height: 400px;
-  top: -100px;
-  left: -100px;
-  background: rgba(6, 199, 85, 0.08);
-}
-
-.login-page .bg-glow-2 {
-  width: 300px;
-  height: 300px;
-  bottom: -80px;
-  right: -80px;
-  background: rgba(6, 199, 85, 0.05);
-}
-
-.login-page .login-card {
-  position: relative;
-  z-index: 1;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  padding: 3rem 2.5rem;
-  width: 100%;
-  max-width: 400px;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  box-shadow: var(--shadow-lg);
-}
-
+/* 卡內三層節奏（`D-75`⑨）：原本卡內所有子元素等距 20px＝眼睛讀不出分組。
+   現在是「標題區 ／ 按鈕＋它的說明 ／ 頁尾出口」三組，組間 24px（外殼的 gap）、
+   組內 8~12px。⛔ 別改回把每個 <p> 都當卡片的直接子元素（那就沒有組可言了）。 */
 .login-page .login-logo {
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
+  gap: 0.5rem;
 }
 
-/* h1 只是為了保留頁面標題語意，實際看到的是 logotype 圖檔（alt＝品牌名） */
+/* h1 只是為了保留頁面標題語意，實際看到的是 logotype 圖檔（alt＝品牌名）；
+   高度由 `_entry-shell.scss` 的 `--brand-logo-h` 給。 */
 .login-page .login-brand {
   margin: 0;
-  --brand-logo-h: 40px;
-}
-
-.login-page .login-logo p {
-  color: var(--text-muted);
-  font-size: 0.875rem;
+  /* logo 與底下第一行字的距離自己給大一點：它是「品牌」與「這頁要幹嘛」之間的縫 */
+  margin-bottom: 0.15rem;
 }
 
 /* logotype 當連結（回首頁）：不要有連結色與底線，圖本身就是可點的東西 */
@@ -73,8 +31,25 @@
   text-decoration: none;
 }
 
-/* ── 註冊那條路才出現的三行字（`?intent=start`，2026-09-10 `D-74`）──────
- * 版位刻意跟中性文案**同一個位置**：換的是字不是版面，兩種進場的卡高只差這幾行。
+/* 中性文案那行（裸 `/login`：「管理後台 · 使用 Google 帳號登入」）。
+   ⚠️ 顏色用 secondary 不用 muted：muted 在白底 2.54:1（`D-75`A①）。 */
+.login-page .login-logo p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.login-page .login-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--color-error);
+}
+
+/* ── 註冊那條路才出現的兩行招呼語（`?intent=start`，2026-09-10 `D-74`）──
  * ⛔ 選擇器一定要帶 `.login-logo`：這兩個是 `.login-logo` 底下的 `p`，而上面那條
  *    `.login-page .login-logo p`（0,2,1）**贏過**只寫 `.login-page .login-title`（0,2,0）——
  *    第一版就是這樣寫的，標題被壓成 0.875rem 的灰字（看起來像圖說，不像這一頁的主張），
@@ -94,7 +69,19 @@
   margin: 0;
 }
 
-/* 按鈕底下那行「下一步是什麼」：比提示字重一級（它是決定要不要按的資訊，不是註腳） */
+/* 按鈕與它的說明＝一組（組內 12px）。按鈕本體吃 `.entry-btn`（共用外殼）。 */
+.login-page .login-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.login-page .btn-google .spinner {
+  border-color: #ddd;
+  border-top-color: #333;
+}
+
+/* 按鈕底下那行「下一步是什麼」：它是決定要不要按的資訊，不是註腳，所以比頁尾重一級 */
 .login-page .login-next {
   text-align: center;
   font-size: 0.82rem;
@@ -102,7 +89,7 @@
   line-height: 1.7;
   margin: 0;
 
-  /* 「免費方案不用綁卡」自己一行：這句在 300px 的欄寬裡一定會換行，跟上半句擠在一起時
+  /* 「免費方案不用綁卡」自己一行：這句在 300px 上下的欄寬裡一定會換行，跟上半句擠在一起時
      實際渲染成「⋯開好了 · 免費方」／「案不用綁卡」＝斷在詞中間（首頁那句也是自己一行，
      見 `.lp-cta__fine`）。⛔ 別改回同一行用「·」隔開：分隔點也會掉到行首（同 `G-33`⑦）。 */
   b {
@@ -112,77 +99,20 @@
   }
 }
 
-/* 退路：卡片最後一行，最輕的一級——它是出口不是動線 */
-.login-page .login-back {
-  align-self: center;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  text-decoration: none;
-  /* 手指目標：頁尾連結那種 16px 高的可點區域在手機上會誤觸（見 STATUS G-33⑤） */
-  padding: 0.5rem 0.75rem;
-  margin: -0.25rem 0;
-
-  &:hover {
-    color: var(--text-secondary);
-  }
-}
-
-.login-page .login-error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  font-size: 0.875rem;
-  color: var(--color-error);
-}
-
-.login-page .btn-google {
+/* ── 頁尾：說明＋兩個出口＝一組（最淡的一級，但仍過 AA）───────────
+ * `D-75`⑧：原本這裡是三個各自獨立的 <p>／連結、用了灰／深綠／亮綠三種顏色，
+ * 每一行都在爭注意力，而它們全都不是這一頁的主要動作。 */
+.login-page .login-foot {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.85rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: 0.95rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all var(--t-fast);
-}
-
-.login-page .btn-google:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-active);
-}
-
-.login-page .btn-google:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.login-page .btn-google .spinner {
-  border-color: #ddd;
-  border-top-color: #333;
+  gap: 0.35rem;
 }
 
 .login-page .login-hint {
   text-align: center;
   font-size: 0.78rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
-}
-
-.login-page .login-contact {
-  color: var(--brand-green-deep);
-  text-decoration: none;
-  font-weight: 600;
-
-  &:hover {
-    text-decoration: underline;
-  }
 }

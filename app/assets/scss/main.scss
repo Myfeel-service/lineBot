@@ -43,6 +43,8 @@
 @use "./pages/richmenu";
 @use "./pages/flow";
 @use "./pages/campaigns";
+// 入口頁（登入／選帳）共用外殼：⚠️ 一定要排在 login／workspaces 之前，兩頁才蓋得過共用值
+@use "./pages/entry-shell";
 @use "./pages/login";
 @use "./pages/error";
 @use "./pages/landing";

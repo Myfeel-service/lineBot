@@ -2,12 +2,26 @@
   flex: 1;
 }
 
-/* 內部/測試（無限）方案標籤：改用 app 自己的暖中性灰，取代 EP info 的冷灰
-   （避免在小尺寸看起來偏藍）。跨頁一致：組織頁＋帳號選擇頁共用。 */
-.plan-tag--internal {
+/* 內部/測試（無限）方案標籤：改用 app 自己的中性灰，取代 EP info 的藍
+   （內部帳號不是一種「狀態」，不該跟「免費」共用同一顆語意色）。
+   跨頁一致：組織頁＋帳號選擇頁共用。
+
+   ⛔ **只設 `--el-tag-*` 變數是沒有用的**（2026-09-10 `D-75`⑮ 實測抓到）：
+      `effect="plain"` 的標籤吃的是 EP 自己的 `.el-tag--info.is-plain`（權重 0,2,0），
+      它在同一組變數上再設一次、贏過只有 0,1,0 的 `.plan-tag--internal`——
+      於是「內部／測試」渲染成 **#2563eb 藍色、跟「免費」一模一樣**（兩種意思一種顏色），
+      而且從 CSS 上看以為已經改好了。
+   ⭐ 修法＝把 `color`／`background-color`／`border-color` **直接寫在 `.el-tag` 複合選擇器上**
+      （0,2,0，而 EP 的 base 規則是 `.el-tag { color: var(--el-tag-text-color) }`＝0,1,0），
+      不管變數被誰蓋過都贏。變數也一起留著，讓 EP 其他部件（關閉鈕等）跟著同一組顏色。
+   ⚠️ 這個 class 用在三處（帳號選擇頁、組織頁的兩張表），改這裡三處一起變。 */
+.el-tag.plan-tag--internal {
   --el-tag-bg-color: var(--bg-elevated);
   --el-tag-border-color: var(--border);
   --el-tag-text-color: var(--text-secondary);
+  color: var(--text-secondary);
+  background-color: var(--bg-elevated);
+  border-color: var(--border);
 }
 
 /**
