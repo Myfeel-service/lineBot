@@ -14,7 +14,7 @@ import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { type LineWebhookCause, diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
-import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
+import { ONBOARDING_CAROUSELS } from '~/utils/onboarding-shots'
 import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
 
 /**
@@ -239,13 +239,19 @@ export function useOnboardingChat() {
     // 2026-09-02：原本「問題」與「不確定的話…」拆成兩則泡泡，一個問題佔兩顆；併成一則、
     // 問句放最後（緊接著下面的選項鈕）。⛔「同事／老闆申請的」那段不能刪，只能收起來——
     // 自己登入看到空列表就再建一個新帳號，好友得從頭加，代價比走錯流程大得多。
+    // 2026-09-10 文案瘦身（示意頁落地）：「怎麼確認」整包收進 aside——資訊都在，
+    // 只給不確定的人看。⛔ 主線行內連結歸零（主線動作＝連結卡、收合內＝行內），
+    // 「列表是空的但同事說有」那段不能刪、只能收起來：自己登入看到空列表就再建一個新帳號，
+    // 好友得從頭加，代價比走錯流程大得多。
     await say(
-      '不確定的話，<a href="https://manager.line.biz/" target="_blank" rel="noopener">打開官方帳號後台看一眼 ↗</a>——列表裡有帳號就是有。<br><b>你已經有 LINE 官方帳號了嗎？</b>',
-      { summary: '列表是空的，但同事說有？', html: '帳號多半是老闆或前同事用<b>他的</b> LINE 申請的，你自己登入會看到空列表。先問一聲比較快——自己再建一個新的，好友要從頭加。' },
+      '接下來，把你的 MiniMe 跟你的 <b>LINE 官方帳號</b>連在一起。<br><b>你已經有 LINE 官方帳號了嗎？</b>',
+      { summary: '不確定有沒有、或列表是空的？', html: '打開後台看一眼就知道（下面一步一步看）。<br><b>列表是空的，但同事說有？</b>帳號多半是老闆或前同事用<b>他的</b> LINE 申請的，你自己登入會看到空列表。先問一聲比較快——自己再建一個新的，好友要從頭加。' },
     )
     // 2026-09-02 補圖：這是最早的分岔、答錯整條路白走，原本一張圖都沒有。
-    // 圖檔沒進來也不會壞（卡片載不到就只顯示文字）
-    card({ kind: 'image', src: ONBOARDING_SHOTS.oamAccountList, alt: '官方帳號後台的帳號一覽：表格列出帳號名稱、好友數、權限與方案；列表裡有帳號就是「有」' })
+    // 2026-09-10 靜圖 → 步驟輪播：靜圖只演「列表長這樣」，沒演「先登入」——
+    // 而卡在這一題的人有一半是還沒登入、看到空列表就以為自己沒有帳號。
+    card({ kind: 'carousel', steps: ONBOARDING_CAROUSELS.accountList })
+    card({ kind: 'link', label: '打開官方帳號後台', href: 'https://manager.line.biz/' })
     const c = await askChoices([
       { label: '有', value: 'yes', primary: true },
       { label: '還沒', value: 'no' },
@@ -260,41 +266,52 @@ export function useOnboardingChat() {
       //    卻一張圖都沒有。順序是反的。
       await walkNodes([
         {
-          html: '先去申請一個 <b>LINE 官方帳號</b>，是<b>免費</b>的。申請時要填店名、聯絡信箱跟行業別，跟著畫面走就好。',
+          // 2026-09-10 補輪播：這一步原本**一張圖都沒有**，只有一顆連結就把人丟到
+          // LINE 的行銷頁——而那一頁要先捲一段才看得到「免費開設帳號」，
+          // 頁面更下面還有一個長得很像的 LINE 廣告申請入口。
+          html: '先去申請一個 <b>LINE 官方帳號</b>，是<b>免費</b>的（下面一步一步看）。'
+            + '<br>登入之後手機會收到一次驗證碼，然後填店名、Email、行業別，跟著畫面走就好。',
+          aside: { summary: '我想用手機申請', html: 'LINE 自己那一頁寫著：用行動裝置的話<b>要先下載「LINE Official Account」App</b>，在 App 裡完成註冊。用電腦就不用裝。' },
           // ⛔ 2026-09-08 修死連結：`tw.linebiz.com/entry/` 已經 404（老闆點連結才發現，
           //    08-07 從日本入口改台灣時它還是活的）。正解是 `/account/`——那頁的
           //    「免費開設帳號」就是申請入口。⚠️ 這是**外部網址會自己腐爛**的第一個案例，
           //    所以同輪加了 `scripts/check-external-links.mjs`，別再靠使用者回報。
           href: 'https://tw.linebiz.com/account/',
           hrefLabel: '前往申請 LINE 官方帳號（台灣） ↗',
+          carousel: ONBOARDING_CAROUSELS.signupEntry,
         },
         {
-          html: `申請好之後還有一個小步驟：到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用</b>」——按下去要連過三個小視窗，都很快。<br>${OAM_ENABLE_STEPS}`,
+          html: '申請好之後還有一個小步驟：到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用Messaging API</b>」——'
+            + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。',
           aside: { summary: '為什麼要按啟用？', html: '沒按啟用的話，等一下要取得連線資訊的地方<b>找不到你的帳號</b>——那份清單只列出已經啟用的。' },
           href: 'https://manager.line.biz/',
           hrefLabel: '打開官方帳號後台 ↗',
-          image: ONBOARDING_SHOTS.oamEnableAnim,
-          alt: '循環動畫四格：①按「啟用Messaging API」、②建立服務提供者並填名稱、③隱私權兩欄可不填按確定、④最後確認按確定',
+          carousel: ONBOARDING_CAROUSELS.enableMessagingApi,
         },
       ], '')
       await askChoices([{ label: '都好了，繼續', value: 'ok', primary: true }])
     }
   }
 
-/**
- * 「按啟用 Messaging API」按下去要連過的三關——**兩處共用同一份字**
- *（「還沒有官方帳號」那條路，以及「清單裡沒看到我的帳號？」那條岔路）。
- *
- * 走到這兩處的人**都沒做過這件事**，所以兩邊都給同一支動畫，不是一邊動畫一邊靜圖。
- * ⚠️ ①②③④要跟 `oam-enable-messaging-api.webp` 上的紅色編號一致（改順序要一起改產圖腳本）。
+/*
+ * ⛔ `OAM_ENABLE_STEPS`（那句 `①…→②…→③…→④…` 的長字串）2026-09-10 移除：
+ *    四個動作改由 `ONBOARDING_CAROUSELS.enableMessagingApi` 一步一格講，
+ *    圖說跟分鏡綁在同一個地方。兩處呼叫點（「還沒有官方帳號」那條路、
+ *    「清單裡沒看到我的帳號？」那條岔路）照舊共用同一支——走到這兩處的人都沒做過這件事。
  */
-const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Messaging API</b>」→ <b>②</b> 選「<b>建立服務提供者</b>」，名稱<b>用你的店名就好</b>，按「同意」→ <b>③</b> 隱私權那兩欄<b>可以不填</b>，直接按「確定」→ <b>④</b> 最後那句「無法變更或解除」是正常的，按「<b>確定</b>」。'
 
-  /** 節點式教學的一步：一句話＋（選配）連結／示意圖／岔路 */
+  /** 節點式教學的一步：一句話＋（選配）連結／步驟輪播／示意圖／岔路 */
   interface WalkNode {
     html: string
     href?: string
     hrefLabel?: string
+    /**
+     * 步驟輪播（一步一張圖）——**站外畫面要人照著找按鈕時的預設做法**。
+     * 分鏡與圖說都在 `ONBOARDING_CAROUSELS`，這裡只指定用哪一支。
+     * ⛔ 別再把 `①…→②…→③…` 塞回上面的 `html`：那正是輪播要取代的東西。
+     */
+    carousel?: readonly { readonly src: string, readonly caption: string }[]
+    /** 單張示意圖（沒有步驟順序、整張都是要讀的內容時才用） */
     image?: string
     alt?: string
     /** 岔路按鈕：走完岔路回到同一步（例：清單裡沒看到帳號） */
@@ -319,6 +336,9 @@ const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Mess
       // 連結卡模板會自己補「 ↗」，字樣裡不能再帶（會變雙箭頭）
       if (n.href)
         card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
+      // 連結在輪播上面：他得先「打開那個後台」才有畫面可以對照
+      if (n.carousel)
+        card({ kind: 'carousel', steps: n.carousel })
       if (n.image)
         card({ kind: 'image', src: n.image, alt: n.alt || '' })
       // 最後一步不再多一顆確認鈕（2026-08-19 老闆實測嫌多）：內容亮完直接返回，
@@ -380,41 +400,40 @@ const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Mess
           // 登入方式刻意不指定：不是每個人都用 LINE 帳號（也可能用電子郵件的商用帳號）。
           // 真實畫面查證過的陷阱：同一個帳號會有兩張同名卡（Messaging API／LINE Login），
           // 靠名字選五五開會選錯——選錯的下場是拿到另一把不能用的鑰匙。
-          // ⚠️①②要跟動畫上的紅色編號一致。①那一格框的是**整組三顆登入鈕**不是單顆——
-          // 08-19 拍板「登入頁不圈按鈕」的理由（圈哪顆都會誤導用其他方式登入的人）照樣守住，
-          // 文案也維持「用你平常的方式」不指定。
-          html: '打開 LINE Developers，照下面的動畫做：<b>①</b> 先登入——<b>用你平常的方式</b>就可以（第一次通常選「LINE帳號」）→ <b>②</b> 進去之後選你的官方帳號：<b>同名卡片可能有兩張</b>，認卡片下面<b>寫著</b>「Messaging API」小字的那張，點進去。',
+          // ⚠️ 登入那一格框的是**整組三顆登入鈕**不是單顆——08-19 拍板「登入頁不圈按鈕」
+          // 的理由（圈哪顆都會誤導用其他方式登入的人）照樣守住，文案也維持
+          // 「用你平常的方式」不指定。
+          // 2026-09-10：兩個動作的字搬進輪播圖說，泡泡只留「這是什麼、為什麼要去那裡」。
+          html: '打開 <b>LINE Developers</b>——它跟官方帳號後台是<b>同一個登入</b>。<br>進去之後選你的官方帳號：<b>同名卡片可能有兩張</b>，認卡片下面<b>寫著</b>「Messaging API」小字的那張，點進去。',
           // 2026-09-02：兩個後台的差別原本要等到第 20 幾則（關自動回應）才講，但人從這裡
           // 就開始在兩個後台之間跳了——會在錯的後台找 Messaging API 分頁找到懷疑人生
           // ⚠️ 2026-09-06 分工整個變了（第二組連線資訊與貼網址都搬到中文後台），這段話跟著改
-          aside: { summary: 'LINE 怎麼有兩個後台？', html: '對，兩個都會用到，分工很清楚：<br><b>LINE Developers</b>＝<b>只用來拿第一組連線資訊</b>，也就是現在這個，做完就不用再回來了。<br><b>LINE 官方帳號後台</b>＝<b>後面全部</b>——第二組連線資訊、貼網址、把回應方式設好。' },
+          // 「要我登入？」跟「怎麼有兩個後台」是同一刻會冒出的兩個疑問，合成一則收合
+          aside: { summary: '要我登入？LINE 怎麼有兩個後台？', html: '登入<b>用你平常的方式</b>就可以；<b>第一次用</b>會先請你填開發者名稱和 Email，填完就進得去。<br>兩個後台都會用到，分工很清楚：<br><b>LINE Developers</b>＝<b>只用來拿第一組連線資訊</b>，也就是現在這個，做完就不用再回來了。<br><b>LINE 官方帳號後台</b>＝<b>後面全部</b>——第二組連線資訊、貼網址、把回應方式設好。' },
           href: 'https://developers.line.biz/console/',
           hrefLabel: '打開 LINE Developers ↗',
-          image: ONBOARDING_SHOTS.consoleChannelAnim,
-          alt: '循環動畫兩格：①登入頁（三種登入方式框成一組）、②帳號清單聚焦卡片下方的 Messaging API 小字',
+          carousel: ONBOARDING_CAROUSELS.consoleChannel,
           detour: {
             label: '清單裡沒看到我的帳號？',
             run: async () => {
-              // ⚠️ 跟「還沒有官方帳號」那條路是**同一件事**，用同一支動畫與同一份步驟字——
+              // ⚠️ 跟「還沒有官方帳號」那條路是**同一件事**，用同一支輪播——
               //    走到這裡的人也從來沒做過，不是「回去再看一眼」，不能只給一張「按這裡」的靜圖
-              await say(`那是還沒啟用的關係。到官方帳號後台的「設定 → Messaging API」按<b>啟用</b>，它才會出現在剛剛的清單裡。<br>${OAM_ENABLE_STEPS}`)
+              await say('那是還沒啟用的關係。到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用Messaging API</b>」——'
+                + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。<br>啟用完，它就會出現在剛剛的清單裡。')
               card({ kind: 'link', label: '打開官方帳號後台', href: 'https://manager.line.biz/' })
-              card({ kind: 'image', src: ONBOARDING_SHOTS.oamEnableAnim, alt: '循環動畫四格：①按「啟用Messaging API」、②建立服務提供者並填名稱、③隱私權兩欄可不填按確定、④最後確認按確定' })
+              card({ kind: 'carousel', steps: ONBOARDING_CAROUSELS.enableMessagingApi })
             },
           },
         },
         {
-          // 老闆拍板：切分頁→捲到底→發鑰匙→複製是一氣呵成的動作，合成一節點配循環動畫。
-          // ⚠️①②③要跟動畫上的紅色編號一致（2026-09-02）——動畫循環播放，中途接上的人
-          // 靠號碼才知道自己看到的是哪一句。「捲到最下面」刻意不編號：那是捲動不是停格。
-          // 「動畫上的紅色號碼就是順序」原本三支教學各寫一次（2026-09-02 刪）：
-          // 兩邊都有號碼，一看就對得起來，不需要每次解釋
-          html: '照下面的動畫做：<b>①</b> 切到「<b>Messaging API</b>」分頁 → 捲到最下面 → <b>②</b> Channel access token 按「<b>Issue</b>」（發行）產生一組 → <b>③</b> 按<b>複製</b>圖示整串複製。',
+          // 老闆拍板：切分頁→捲到底→發鑰匙→複製是一氣呵成的動作，合成一節點。
+          // 2026-09-10 循環動畫 → 步驟輪播：三個動作的字搬進圖說，一格配一句。
+          // 「捲到最下面」併在第 2 格的圖說裡——那是捲動不是停格，不值得自己一步。
+          html: '進到那張卡之後，要把 <b>Channel access token</b> 發一組出來再整串複製。',
           // 2026-09-06 換掉原本的「第二把鑰匙在哪？」——第二組已經不在隔壁分頁了（搬到中文後台），
           // 那句話會把人帶錯地方。改成擋另一個真實情況：發過的帳號按鈕寫的是 Reissue。
           aside: { summary: '我的按鈕寫的是「Reissue」？', html: '那代表這個帳號以前發過一次，按下去會<b>重新發一組新的</b>、舊的當場失效。如果舊的沒有別的地方在用，按下去就可以；不確定的話先問一下之前設定的人。' },
-          image: ONBOARDING_SHOTS.getTokenAnim,
-          alt: '循環動畫三格：①切到 Messaging API 分頁、②按 Issue 發行一組、③按複製圖示',
+          carousel: ONBOARDING_CAROUSELS.getToken,
         },
       ], '我拿到了，直接貼上')
   }
@@ -463,13 +482,13 @@ const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Mess
   async function walkSecretNodes() {
     await walkNodes([
       {
-        // ⚠️①②③要跟動畫上的紅色編號一致（改順序要一起改產圖腳本重跑）
         // 2026-09-07 老闆回饋：不要解釋英文／中文哪個後台，「越解釋越糊塗」——講「換一個後台」就好
-        html: '接下來要換到<b>另一個後台</b>：<b>LINE 官方帳號後台</b>。<br>照下面的動畫做：<b>①</b> 點右上角「<b>設定</b>」→ <b>②</b> 左邊選「<b>Messaging API</b>」→ <b>③</b> 找到 <b>Channel secret</b> 那一列，按右邊的「<b>複製</b>」。<br>⚠️ 上面一列是 <b>Channel ID</b>，也有一顆複製鈕，別按錯。',
+        // 2026-09-10：三個動作與「別按到 Channel ID」的警語都搬進輪播圖說（第 3 格）
+        html: '接下來拿<b>第二組連線資訊：Channel Secret</b>——這次換到<b>另一個後台：LINE 官方帳號後台</b>。',
+        aside: { summary: '這串是做什麼的？', html: '幫忙確認收到的訊息真的來自 LINE，不是別人假冒的。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
-        image: ONBOARDING_SHOTS.oamChannelSecretAnim,
-        alt: '循環動畫三格：①右上角「設定」、②左欄「Messaging API」、③Channel secret 那一列與它右邊的「複製」',
+        carousel: ONBOARDING_CAROUSELS.channelSecret,
       },
     ], '')
   }
@@ -1015,15 +1034,15 @@ const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Mess
   async function teachConnect() {
     await walkNodes([
       {
-        // ⚠️①②③④要跟動畫上的紅色編號一致。
-        // 2026-09-07 老闆拍板恢復①②導航（中間離開過去貼 secret，回來可能已經迷路），
-        // 所以這則的字也從「回到剛剛那一頁」改成整條路重新帶一次。
-        html: '先按上面那張卡的「<b>複製</b>」把網址複製起來，再回到<b>官方帳號後台</b>。<br>照動畫做：<b>①</b> 點右上角「<b>設定</b>」→ <b>②</b> 左邊選「<b>Messaging API</b>」→ <b>③</b> 把網址貼進「<b>Webhook網址</b>」那一格 → <b>④</b> 按右邊的「<b>儲存</b>」。',
+        // 2026-09-07 老闆拍板恢復導航兩格（中間離開過去貼 secret，回來可能已經迷路）。
+        // 2026-09-10 改輪播之後多給一句「還停在那一頁的話直接跳到第 3 步」——
+        // 步驟軌讓「跳著看」變成點一下的事，那句話才有地方可去。
+        html: '先按上面那張卡的「<b>複製</b>」把網址複製起來，再回到<b>官方帳號後台</b>貼上。'
+          + '<br>剛剛複製第二組的那個分頁<b>多半還開著</b>：還停在那一頁的話，<b>直接跳到第 3 步</b>就好。',
         aside: { summary: '為什麼特別強調存檔？', html: '貼了沒按「儲存」是接不通的<b>第一名</b>——網址看起來在格子裡，其實沒存進去。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
-        image: ONBOARDING_SHOTS.oamWebhookUrlAnim,
-        alt: '循環動畫四格：①右上角「設定」、②左欄「Messaging API」、③「Webhook網址」輸入格、④它右邊的「儲存」鈕',
+        carousel: ONBOARDING_CAROUSELS.webhookUrl,
       },
       {
         // 2026-08-19 對實際畫面校正過：新版介面沒有「聊天機器人」那組選項了，
@@ -1034,12 +1053,12 @@ const OAM_ENABLE_STEPS = '照下面的動畫做：<b>①</b> 按「<b>啟用Mess
         // ⛔ 這裡用的是**不含「點右上角設定」**的那一支（2026-09-06）：他前兩步都在設定裡，
         //    再叫他點一次是叫他去他已經站著的地方。⚠️但補一句給「重新點連結進去」的人——
         //    我們的連結落在「主頁」，那種情況左邊那排選單還沒展開。
-        html: '<b>還在同一個後台</b>，這一頁要做<b>兩件事</b>。<br>照動畫做：<b>①</b> 左邊選「<b>回應設定</b>」→ <b>②</b> 把「<b>Webhook</b>」<b>打開</b>（開好像圖上那樣是綠的；已經是綠的就不用動）→ <b>③</b>「聊天的回應方式」選「<b>手動聊天</b>」。<br>⛔ 不要選「手動聊天＋自動回應訊息」——那等於沒關。<br>（如果左邊沒有那排選單，先點右上角的「設定」。）',
+        html: '<b>還在同一個後台</b>，這一頁要做<b>兩件事</b>：把 Webhook 打開、把回應方式改成手動聊天。'
+          + '<br>（如果左邊沒有那排選單，先點右上角的「<b>設定</b>」。）',
         aside: { summary: '為什麼要關掉自動回應？', html: 'LINE 內建的自動回應預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>——LINE 那句制式回覆，再加上 MiniMe 的回覆。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
-        image: ONBOARDING_SHOTS.oamResponseSettingsAnim,
-        alt: '循環動畫三格：①側欄「回應設定」、②打開 Webhook 開關、③選手動聊天',
+        carousel: ONBOARDING_CAROUSELS.responseSettings,
       },
     ], '')
   }

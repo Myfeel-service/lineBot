@@ -223,6 +223,217 @@
   }
 }
 
+/* ── 步驟輪播卡（AgentStepCarousel.vue）──────────────────────────
+   ⛔ 整張卡＝**上面圖、下面步驟**。圖是主角、貼著卡的上緣（圓角吃在圖上，像有封面圖的卡）；
+      跟「步驟」有關的東西——第幾步／共幾步、步驟軌、這一步的說明、切換與重播的鈕
+      ——全部收在圖下面同一塊。
+   ⛔ 整張卡只切一條線＝「圖 ↔ 步驟」那條；步驟塊裡面**不再切線**，靠間距分行，
+      否則一塊會被切成三塊、就不叫統一了。
+   ⛔ 也別把「第幾步」或狀態文字搬回圖上面：那樣同一個步驟的資訊會被整張圖隔開，
+      而狀態文字（「演完了 · 可以按再看一次」）講的是最下面那顆鈕，擺上排時兩者隔了約 700px。
+   ⚠️ `container-type`＝底下那條 `@container` 要的：這張卡住在對話欄裡，
+      **版面要看卡片自己的寬度、不是視窗寬度**（手機視窗 390px 時這張卡只有 290px）。 */
+.agm-carousel {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 88%;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  overflow: hidden;
+  outline: none;
+  container-type: inline-size;
+
+  &:focus-visible { box-shadow: 0 0 0 2px var(--el-color-primary); }
+
+  &__img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--el-fill-color-lighter);
+  }
+
+  /* 計數器那一行：「第 N 步」靠左、「共 N 步」靠右，進度條在它們下面整條展開。
+     ⭐「共 N 步」的右緣與軌的右端**同一條垂直線**（兩者左右內距都是 11px）
+        ＝它正好在標「這條到哪裡結束」，不再只是跟在「第 N 步」後面的一句括號。
+     ⚠️ `align-items: baseline`：「第 2 步」的數字是 15px、「共 2 步」是 11.5px，
+        靠 baseline 才會落在同一條字腳線上（用 center 會看起來一高一低）。
+     ⛔ 括號拿掉了：搬到另一端之後它是獨立標示，再帶括號會像一句沒收尾的插話
+        （讀螢幕的 alt 仍是完整句子「第 2 步（共 2 步）：…」，那裡是唸出來的）。 */
+  &__bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 11px 7px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__no {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+
+    b {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--el-color-primary);
+    }
+  }
+
+  &__total {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 步驟軌：一格＝一步。三段式明暗階梯，**位置永遠是最亮的那格**：
+     還沒到＝灰 → 走過＝淡綠 → 現在這格＝亮綠。
+     ⚠️ 形狀語彙照開通進度條（`.onbc-progress`）＝同一頁只有一種進度長相，
+        但**顏色刻意不照抄**（那條走過是深綠）：走到最後一步時「深綠×3＋亮綠×1」
+        四格幾乎一樣綠，位置看不出來——那條有文字標籤撐著，這條沒有，得靠明暗自己講。
+     ⛔ 別把走過那格改回深綠，也別把「還沒到」改成更淺的灰（太淺會數不出「共幾步」）。
+     ⛔ 這條同時取代了「右上角小圓點」與「卡片底部的播放條」——兩個都在講進度卻分居卡片
+        兩端、單位還不同（點＝第幾步、條＝這一步還剩多久）。合成一條之後：格數＝總步數、
+        亮綠＝你在這裡、自動播的時間就走在「現在這格」裡面。 */
+  &__track {
+    display: flex;
+    gap: 3px;
+    padding: 0 11px 8px;
+
+    i {
+      position: relative;
+      flex: 1;
+      height: 6px;
+      border-radius: 99px;
+      background: var(--el-fill-color-dark);
+      cursor: pointer;
+
+      /* 6px 高的東西點不到——把可按範圍撐到 22px（視覺不變） */
+      &::after {
+        content: "";
+        position: absolute;
+        inset: -8px 0;
+      }
+
+      &:hover { box-shadow: 0 0 0 2px var(--el-color-primary-light-7); }
+
+      &.is-done { background: var(--el-color-primary-light-5); }
+
+      b {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        border-radius: 99px;
+        background: var(--el-color-primary);
+      }
+    }
+  }
+
+  /* 綠＝圖上要找的那個東西。⛔ 別加 margin（那是舊的圈號用的） */
+  &__cap {
+    padding: 0 12px 6px;
+    font-size: 13px;
+    line-height: 1.7;
+
+    b { color: var(--el-color-primary); }
+  }
+
+  /* ⛔ 操作列＝**「再看一次」在最左、上一步／下一步在最右**，中間隔開：
+     ⭐ 上一步／下一步靠右＝跟這個產品自己的另一個步驟器對齊（導覽泡泡的頁腳就是
+        「計數在左、上一步／下一步推到右」）。同一種控制同一個位置。
+     ⭐「再看一次」**不跟它們併排**＝它不是導航，是「從頭重來」。三顆併在一起會出事：
+        連按「下一步」讀到最後一步時「下一步」變灰，手指再往右一點就是「回到第 1 步」，
+        一按就失去讀到的位置。分站兩端後兩者相距 500px 以上（桌機），誤按成本歸零。
+     ⚠️ **代價講清楚**：這讓實心綠的鈕落在**左邊**，跟全站「主要動作靠右」相反。
+        判斷＝「再看一次」不是這裡的主要動作（讀完步驟去 LINE 做事才是），它是
+        **沒看清楚時的補救**，補救鈕擺遠離主要路徑那一端才對。
+     ⚠️ 狀態文字用 `margin-left: auto` 貼在導航鈕左邊（「也可以用左右鍵切換」講的就是那兩顆）。 */
+  &__nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 11px 10px;
+
+    button {
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 32px;
+      padding: 4px 12px;
+      border-radius: 99px;
+      background: var(--el-bg-color);
+      color: var(--el-text-color-regular);
+      border: 1px solid var(--el-border-color);
+
+      &:hover:not(:disabled) {
+        color: var(--el-color-primary);
+        border-color: var(--el-color-primary-light-5);
+        background: var(--el-color-primary-light-9);
+      }
+
+      &:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+    }
+
+    /* ⚠️ 這條一定要**巢在 `&__nav` 裡面**：上面那條 `&__nav button` 是 (0,1,1)，
+       單寫 `.agm-carousel__replay` 只有 (0,1,0)，會被壓成跟導航鈕一樣的白底
+       （2026-09-10 headless 近拍才看出來——「實心綠」是老闆指定的視覺）。 */
+    .agm-carousel__replay {
+      background: var(--el-color-primary);
+      border-color: var(--el-color-primary);
+      color: #fff;
+
+      &:hover:not(:disabled) {
+        background: var(--el-color-primary-dark-2);
+        border-color: var(--el-color-primary-dark-2);
+        color: #fff;
+      }
+
+      /* 現身時亮 3 下就停（沿用「？」按鈕那套）。⛔ 不做無限閃：
+         「畫面永遠在動」才剛拿掉，無限閃會從後門把它加回來 */
+      &.is-glow { animation: agm-carousel-glow 1.1s ease-out 3; }
+    }
+  }
+
+  &__state {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+@keyframes agm-carousel-glow {
+  0% { box-shadow: 0 0 0 0 var(--el-color-primary-light-5); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+
+/* 觸控目標用 @media（那是裝置的事，不是卡片寬度的事） */
+@media (max-width: 560px) {
+  .agm-carousel__nav button { min-height: 44px; }
+}
+
+/* 卡片放不下「狀態文字＋三顆鈕」時：狀態自己占一行（排到最上），下面那排維持
+   **再看一次靠左、上一步／下一步靠右**的分站關係（⛔ 不要因為變窄就把它們併回一起）。
+   ⛔ 用 @container 不是 @media：門檻是這張卡的寬度。400px＝量出來的臨界
+   （最長的狀態文字約 110px ＋ 三顆鈕 232px ＋ 間距 18 ＋ 內距 22 ≒ 382px）。 */
+@container (max-width: 400px) {
+  .agm-carousel__state {
+    flex-basis: 100%;
+    order: -1;
+    margin-left: 0;
+  }
+
+  .agm-carousel__prev { margin-left: auto; }
+}
+
 .agm-link {
   display: inline-block;
   color: var(--el-color-primary);

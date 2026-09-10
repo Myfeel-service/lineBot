@@ -105,7 +105,15 @@ function shotFileNames(): Record<string, string> {
 }
 
 const FILES = shotFileNames()
-const SOURCES = ['app/composables/useOnboardingChat.ts', 'app/utils/field-help.ts']
+/**
+ * 只剩 `field-help.ts` 還在用「一支動畫演三四個動作＋文案寫①②③」那套。
+ *
+ * ⛔ `useOnboardingChat.ts` **2026-09-10 移出**（不是漏掉）：開通引導整段換成步驟輪播
+ * （`ONBOARDING_CAROUSELS`），圖說跟分鏡寫在同一個地方、也不再有圈號可以對——
+ * 這支測試要守的那個漂移（兩個檔案兩份資料）在那條路上已經**結構性消失**。
+ * 輪播那邊改由 `app/utils/onboarding-carousels.test.ts` 守（分鏡檔要真的在、圖說不准標號）。
+ */
+const SOURCES = ['app/utils/field-help.ts']
 
 describe('教學圖上的編號與文案裡的圈號', () => {
   it('每張圖都登記在 onboarding-shots.ts 裡（漏登記＝測不到）', () => {

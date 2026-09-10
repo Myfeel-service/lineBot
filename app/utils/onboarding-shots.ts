@@ -14,6 +14,17 @@
  * 就要一起改 `scripts/make-onboarding-shots.py` 重跑**，否則畫面上的③會指到別的動作，
  * 而且沒有任何測試會紅——只有使用者會發現。
  */
+/**
+ * ⚠️ **2026-09-10 起，開通引導那條路已經不吃這張表**——它改用下面的 `ONBOARDING_CAROUSELS`
+ * （一步一張圖）。這裡剩下的呼叫點是 `field-help.ts`（設定頁欄位旁的「教我怎麼拿」）
+ * 與 `agent-guides.ts`（帶你修好的診斷劇本）。
+ *
+ * 底下這六支**當天起零呼叫點**（檔案與產線都還在，沒有刪）：
+ * `oamAccountList`、`oamEnableAnim`、`consoleChannelAnim`、`oamChannelSecretAnim`、
+ * `oamWebhookUrlAnim`、`oamResponseSettingsAnim`。
+ * ⛔ 留著不是忘了刪，是**輪播還沒上過真機**：真的出問題時，換回 `kind: 'image'` 就退得回去。
+ * 退場時機記在 `docs/STATUS.md`（連同該不該一起從產線拿掉）。
+ */
 export const ONBOARDING_SHOTS = {
   /** LINE Developers 帳號清單（靜態，修復劇本用）：認卡片下方「Messaging API」小字 */
   consoleChannel: '/onboarding/line-console-channel.png',
@@ -130,4 +141,99 @@ export const ONBOARDING_SHOTS = {
   gsheetShare1: '/onboarding/gsheet-share-1.png',
   gsheetShare2: '/onboarding/gsheet-share-2.png',
   gsheetShare3: '/onboarding/gsheet-share-3.png',
+} as const
+
+/**
+ * 步驟輪播的分鏡與圖說（2026-09-10 落地，示意頁第四十二～四十六版拍板）。
+ *
+ * **一步一張圖、圖在上步驟在下**，取代上面那些「一支動畫演三四個動作」的循環 webp。
+ * 循環動畫的病：中途接上的人不知道演到第幾步、想多看一眼第②步只能等它繞回來，
+ * 而該做什麼的字全擠在泡泡裡（`①…→②…→③…`）——眼睛要在一行長字與一直在動的圖之間對照。
+ *
+ * ⛔ **圖與圖說寫在同一個地方**（不是圖放這裡、①②③放劇本），這是刻意的：
+ *    舊做法「動畫上的紅色編號」與「文案裡的①②③」是兩個檔案裡的兩份資料，
+ *    改了一邊不會有任何測試變紅，只有使用者會發現③指到別的動作。綁在一起就不可能漂。
+ * ⚠️ 分鏡檔上的紅色編號徽章**仍然在**（它指的是畫面上那個框），但右下角的
+ *    「第幾格／共幾格」已經拿掉——步序由輪播卡自己的計數器與步驟軌講。
+ * ⚠️ 圖說裡的 `<b>` 是**畫面上要找的那個東西**（會上綠色），不是拿來加強語氣的。
+ * ⚠️ 檔名固定不帶日期，圖還沒補進 `public/onboarding/` 也能出貨：載不起來的那一步
+ *    會被輪播卡自己濾掉，全部載不到就整張卡不畫、文字照常。
+ */
+export const ONBOARDING_CAROUSELS = {
+  /** 「你已經有 LINE 官方帳號了嗎？」——最早的分岔，答錯整條路白走 */
+  accountList: [
+    { src: '/onboarding/oam-account-list-1.webp', caption: '先登入，<b>用你平常的方式</b>就可以' },
+    { src: '/onboarding/oam-account-list-2.webp', caption: '列表裡<b>有帳號就是有</b>' },
+  ],
+  /**
+   * 還沒有官方帳號 → 去申請。
+   * ⚠️ 第一格特別點名「別按錯」：那一頁**更下面還有 LINE 廣告的申請入口**，
+   *    長得很像，按下去是完全另一條路。
+   */
+  signupEntry: [
+    { src: '/onboarding/line-signup-entry-1.webp', caption: '捲到「<b>LINE 官方帳號</b>」那一段，按下面的「<b>免費開設帳號</b>」<br>⚠️ 頁面更下面還有 LINE 廣告的申請，別按錯' },
+    { src: '/onboarding/line-signup-entry-2.webp', caption: '用你平常的方式登入' },
+  ],
+  /**
+   * 啟用 Messaging API——**兩處共用同一份**（「還沒有官方帳號」那條路，
+   * 以及「清單裡沒看到我的帳號？」那條岔路）：走到這兩處的人都沒做過這件事。
+   * ⛔ 停在第 4 步，**不演完成畫面**：演到「已經好了」會讓人以為不用按那顆確定。
+   */
+  enableMessagingApi: [
+    { src: '/onboarding/oam-enable-messaging-api-1.webp', caption: '按「<b>啟用Messaging API</b>」' },
+    { src: '/onboarding/oam-enable-messaging-api-2.webp', caption: '選「<b>建立服務提供者</b>」，名稱<b>用你的店名就好</b>，按「同意」' },
+    { src: '/onboarding/oam-enable-messaging-api-3.webp', caption: '隱私權那兩欄<b>可以不填</b>，直接按「確定」' },
+    { src: '/onboarding/oam-enable-messaging-api-4.webp', caption: '最後那句「無法變更或解除」是正常的，按「<b>確定</b>」' },
+  ],
+  /**
+   * LINE Developers：登入 → 在清單裡挑對卡。
+   * ⚠️ 第一格**刻意零標註**：圈哪顆登入按鈕都會誤導用其他方式登入的人，
+   *    它在這裡的作用是定位（「你會看到這一頁」），不是指路。
+   */
+  consoleChannel: [
+    { src: '/onboarding/line-console-channel-1.webp', caption: '先登入，<b>用你平常的方式</b>就可以' },
+    { src: '/onboarding/line-console-channel-2.webp', caption: '<b>同名卡片可能有兩張</b>：認下面寫著「Messaging API」小字的那張' },
+  ],
+  /**
+   * 拿第一組連線資訊（Channel Access Token）。
+   * ⚠️ 第 2、3 格是用**還沒發過 token** 的帳號拍的：舊圖那顆按鈕寫「Reissue」，
+   *    而第一次來的人看到的是「Issue」；第 3 格的複製圖示也是按完之後才會出現。
+   */
+  getToken: [
+    { src: '/onboarding/line-console-get-token-1.webp', caption: '切到「<b>Messaging API</b>」分頁' },
+    { src: '/onboarding/line-console-get-token-2.webp', caption: '捲到最下面，Channel access token 按「<b>Issue</b>」（發行）' },
+    { src: '/onboarding/line-console-get-token-3.webp', caption: 'token 出來了 → 按<b>複製</b>圖示整串複製' },
+  ],
+  /**
+   * 拿第二組連線資訊（Channel Secret）——在**官方帳號後台**，不是 LINE Developers。
+   * ⚠️ Channel ID 與 Channel secret 上下相鄰、**各有一顆複製鈕**，所以第 3 格框的是
+   *    整列不是按鈕，圖說也明講「上面一列是 Channel ID」。
+   */
+  channelSecret: [
+    { src: '/onboarding/oam-channel-secret-1.webp', caption: '點右上角「<b>設定</b>」' },
+    { src: '/onboarding/oam-channel-secret-2.webp', caption: '左邊選「<b>Messaging API</b>」' },
+    { src: '/onboarding/oam-channel-secret-3.webp', caption: '找到 <b>Channel secret</b> 那一列，按右邊的「<b>複製</b>」<br>⚠️ 上面一列是 Channel ID，別按錯' },
+  ],
+  /**
+   * 貼 Webhook 網址。⛔ 停在「按儲存」，**不演開 Use webhook**：那是下一支的事，
+   * 演進來的話人會提前做完。
+   * ⚠️ 含①②導航是刻意的：上一步跟這一步中間**離開過**（回來貼 secret、複製網址），
+   *    回來的人可能已經不在那一頁——重新帶路是接住迷路的人，不是重複。
+   */
+  webhookUrl: [
+    { src: '/onboarding/oam-webhook-url-1.webp', caption: '點右上角「<b>設定</b>」' },
+    { src: '/onboarding/oam-webhook-url-2.webp', caption: '左邊選「<b>Messaging API</b>」' },
+    { src: '/onboarding/oam-webhook-url-3.webp', caption: '把網址貼進「<b>Webhook網址</b>」那一格' },
+    { src: '/onboarding/oam-webhook-url-4.webp', caption: '按右邊的「<b>儲存</b>」——<b>沒按儲存是接不通的第一名</b>' },
+  ],
+  /**
+   * 開 Webhook 開關＋把回應方式改成手動聊天（同一頁做完兩件事）。
+   * ⛔ 這一支**刻意不含「點右上角設定」**：走到這一步的人前兩步已經在「設定」裡面待過了，
+   *    再叫他點一次是叫他去他已經站著的地方。判準是「中間有沒有離開」，不是「同不同一頁」。
+   */
+  responseSettings: [
+    { src: '/onboarding/oam-response-settings-1.webp', caption: '左邊選「<b>回應設定</b>」' },
+    { src: '/onboarding/oam-response-settings-2.webp', caption: '把「<b>Webhook</b>」<b>打開</b>（已經是綠的就不用動）' },
+    { src: '/onboarding/oam-response-settings-3.webp', caption: '「聊天的回應方式」選「<b>手動聊天</b>」⛔ 別選「手動聊天＋自動回應訊息」' },
+  ],
 } as const

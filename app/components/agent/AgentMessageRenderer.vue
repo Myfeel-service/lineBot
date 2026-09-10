@@ -91,6 +91,12 @@
     :preview-teleported="true"
   />
 
+  <!-- 步驟輪播卡：一步一張圖、圖在上步驟在下。全部圖都載不到就整張不畫（元件自己判斷） -->
+  <AgentStepCarousel
+    v-else-if="entry.msg.kind === 'carousel'"
+    :steps="entry.msg.steps"
+  />
+
   <!-- 站內連結卡：走 NuxtLink 同分頁導航（用 <a> 會整頁重載） -->
   <NuxtLink
     v-else-if="entry.msg.kind === 'link' && entry.msg.internal"

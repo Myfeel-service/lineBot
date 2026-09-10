@@ -123,10 +123,13 @@ describe('拿掉教學閘門之後不可以長回來', () => {
     //    原本尾巴那兩顆（「關好了，來測試」／「我會關，直接測試」）也拿掉了——老闆問
     //    「是否只需要一顆」，查下去發現**兩顆的回傳值根本沒被使用**、走向完全一樣＝假選擇；
     //    現在教學跑完直接進下面的檢查選單，那一排本身就是確認。
+    // ⚠️ 2026-09-10 改看輪播的名字，不看文案字串：兩步的操作說明搬進
+    //    `ONBOARDING_CAROUSELS`（圖說跟分鏡綁在一起），`teachConnect` 裡不再字面出現
+    //    「Webhook網址」「回應設定」。守的東西沒變——**這兩步都還在**。
     const step = fnBody('async function teachConnect', 'async function showOaInvite')
     expect(step, '不可以再問「要不要教你關」').not.toContain('教我一步步關')
-    expect(step, '兩步都要在（貼網址、回應設定）').toContain('Webhook網址')
-    expect(step, '兩步都要在（貼網址、回應設定）').toContain('回應設定')
+    expect(step, '兩步都要在（貼網址、回應設定）').toContain('ONBOARDING_CAROUSELS.webhookUrl')
+    expect(step, '兩步都要在（貼網址、回應設定）').toContain('ONBOARDING_CAROUSELS.responseSettings')
   })
 
   it('第二組連線資訊要從官方帳號後台拿，不可以改回 LINE Developers', () => {
@@ -139,7 +142,8 @@ describe('拿掉教學閘門之後不可以長回來', () => {
     const fn = fnBody('async function walkSecretNodes', 'async function verifyWebhook')
     expect(fn, '第二組要指官方帳號後台').toContain('manager.line.biz')
     expect(fn, '不可以改回 LINE Developers').not.toContain('developers.line.biz')
-    expect(fn, '要用官方帳號後台那張圖').toContain('oamChannelSecretAnim')
+    // 2026-09-10：循環動畫 `oamChannelSecretAnim` → 步驟輪播 `channelSecret`（同一段路、同一個後台）
+    expect(fn, '要用官方帳號後台那支輪播').toContain('ONBOARDING_CAROUSELS.channelSecret')
   })
 
   it('接線教學必須播在「幫我檢查」之前', () => {
