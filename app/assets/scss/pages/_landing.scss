@@ -160,6 +160,9 @@
      ⚠️ 尺寸一定要用**寬度**定，不可以用 `--brand-logo-h`：logomark 是橫長形狀（1.678:1），
         設高 19px 的實際寬度是 32px——在磚裡左右只剩 1px（2026-08-21 老闆截圖抓過）。
      ⚠️ 磚的尺寸改了要一起改 .lp-bubble::before 的 top（尾巴要對到磚的中心）。 */
+  /* 頭像（那顆綠色圓角方塊裡的 logomark）。桌機維持與泡泡上緣**齊平**（LINE 的做法）；
+     往上提只在手機做（2026-09-10 老闆：「logo 是否往上放」→ 追問後補「只有手機版要往上」），
+     規則在 ≤720px 那段。 */
   .lp-turn__ava {
     width: 36px; height: 36px; border-radius: 12px; background: var(--g);
     display: grid; place-items: center; flex: none;
@@ -213,6 +216,12 @@
   .lp-bubble .mark {
     background: none; color: var(--g-deep); padding: 0 1px;
     box-shadow: inset 0 -0.26em 0 rgba(6, 199, 85, 0.2);
+    /* ⛔ 螢光筆畫的那幾個字不可以被折斷（2026-09-10 老闆看手機版抓到）：
+       「全年無休」在 390px 被折成「全年無」＋「休」，螢光筆跟著斷成兩截色帶，
+       讀起來像兩個沒關係的詞被各自畫線。⚠️ 這頁所有 .mark 都 ≤5 個字（最寬約 120px，
+       手機行寬 251px），nowrap 只會讓整個詞一起換到下一行、不會溢出；
+       ⛔ 但**新增更長的強調詞前要重量**（量法：`.mark.getClientRects().length` 要是 1）。 */
+    white-space: nowrap;
     /* 打字打完之後螢光筆才刷上去（打字中被下面的 .is-typing 改成透明）。
        過渡放在這條基礎規則上，拿掉 .is-typing 時才會「刷」回來而不是瞬間出現。 */
     transition: box-shadow .3s ease;
@@ -1591,10 +1600,10 @@
   .lp-chart__x text { fill: var(--ink-soft); font-size: 13px; }
   .lp-chart__lbl--me { fill: var(--ink); font-size: 17px; font-weight: 800; }
   .lp-chart__lbl--base { fill: var(--ink-soft); font-size: 15px; font-weight: 600; }
-  /* 綠線末端的 MiniMe 圖標（2026-09-10 老闆：「是否在也經營舊客附近加上 MiniMe 的 logo」）。
-     ⚠️ 位置刻意放在**線的端點右邊**、不是標籤左邊：標籤是 text-anchor="end"，字級一放大
-     就往左長，放左邊的圖標會被字追上去疊住（手機那段真的把字級放大了）。
-     ⚠️ 它是「這條線是誰做到的」的署名，不是圖例——圖例在下面 .lp-chartlegend。 */
+  /* 「也經營舊客」標籤左邊的 MiniMe 圖標（2026-09-10 老闆：先問「是否加 logo」，
+     再指定「放也經營舊客左邊」）。它是「這條線是誰做到的」署名，不是圖例
+     （圖例在下面 .lp-chartlegend）。
+     ⚠️ 座標在 index.vue 上，是**桌機字級**算的；手機那一級的位移在 ≤720px 那段。 */
   .lp-chart__brand { opacity: 0.92; }
   .lp-chartlegend { display: flex; gap: 12px 26px; flex-wrap: wrap; margin-top: 20px; }
   .lp-cl { display: flex; align-items: center; gap: 9px; font-size: 0.88rem; color: var(--ink-2); }
@@ -1934,13 +1943,17 @@
         而**走到中央時是剛好 1.0**＝在讀的那一刻是清楚的。⛔ 別把中央那個 1 改掉。
      ⚠️ 縮放不影響版面（不佔空間、不會推開別人），所以沒有間距問題。
         ⛔ 但別再縮更小：0.94 以下四個井的左右邊緣會在同一畫面上明顯不齊（現在是 0.945）。
-     ⚠️ 09-09 第四輪起位移是**斜的**（左下 → 右上，水平 ±10px）：使用者要「淡入淡出加一點
-        往右的位移」，而斜著動比純上下動明顯得多（同一個幅度，眼睛更容易察覺）。
-        水平幅度的上限＝版心內距 24px，⛔ 別超過（超出的部分會被 `overflow-x: clip` 裁掉）。 */
+     ⚠️ ~~09-09 第四輪起位移是**斜的**（左下 → 右上，水平 ±10px）~~ **2026-09-10 老闆自己收回**：
+        「原本會有往右的位移，先不用左右位移，但 scale 可以大一點」——所以水平歸零、
+        用縮放去換那個「明顯」。⛔ 別再把水平位移加回來（09-09 那條要求已經被同一個人取消）。
+     ⚠️ 縮放因此從 0.945 加深到 **0.92**。上面那條「⛔ 別低於 0.94，四個井的左右邊緣會不齊」
+        是**對著有水平位移的版本**算的：那時邊緣差最壞＝縮放造成的 19px ＋ 位移 10px ＝ 29px；
+        現在沒有位移，0.92 的邊緣差＝700 × 0.08 ÷ 2 ＝ **28px**，比原本還小一點＝沒有變糟。
+        ⛔ 要再放大縮放就得重算這個數字（公式＝井寬 ×(1−scale)÷2，與位移相加才是實際差距）。 */
   @keyframes lpDriftPane {
-    0% { translate: -10px 38px; scale: 0.945; }
+    0% { translate: 0 38px; scale: 0.92; }
     50% { translate: 0 0; scale: 1; }
-    100% { translate: 10px -38px; scale: 0.945; }
+    100% { translate: 0 -38px; scale: 0.92; }
   }
   @keyframes lpDriftWin { from { translate: 0 8px; } to { translate: 0 0; } }
   /* ── 柔光：每個井裡一顆模糊的綠色光斑，隨捲動斜著飄過去並縮放 ────────────
@@ -2406,7 +2419,11 @@
        （滿欄那條 480px 是為了 816px 的寬視窗設的，窄螢幕會變成泡泡縮在左邊）。
        ⚠️ 09-10 從 84% 放到 88%：同一輪「拉寬一點」的第三個來源（另兩個是井內距與下面
           那條訊息流內距）。三處加起來泡泡可用寬度 227→266px。 */
-    .lp-livewin--chat { --chat-bubble-max: min(88%, 680px); }
+    /* ⚠️ 09-10 第二輪再放到 96%（老闆「綠色的在手機版是否可以寬一點」，這是同一天第二次
+       要求）。⚠️ 這個 token 吃的是 **`.conv-bubble-wrap`**＝「時間／已讀那一欄 ＋ 泡泡」的
+       總寬，不是泡泡自己：欄佔 55px，所以 96% 的 298px 列＝泡泡 226px（88% 時只有 202px）。
+       ⛔ 別再往上加到 100%：泡泡會貼到訊息流的內距邊，看起來像被切掉。 */
+    .lp-livewin--chat { --chat-bubble-max: min(96%, 680px); }
     /* 訊息流的內距：後台那 18px 是給寬視窗的，手機上兩側各吃 18px＝泡泡少 36px。 */
     .lp-livewin .conv-messages { padding: 14px 10px 16px; }
   }
@@ -2474,6 +2491,12 @@
     .lp-turn { gap: 13px; }
     .lp-bubble { padding: 18px 20px; }
     .lp-bubble h2 br { display: none; }
+    /* 頭像往上提（2026-09-10 老闆「logo 是否往上放」＋「**只有手機版**要往上」）：
+       手機的泡泡上內距 18px、標題字級也小一級，36px 的頭像跟泡泡上緣齊平時，中心會落在
+       第一行字下面、讀起來像掛在半空中。提 10px ＝頭像中心大約落在泡泡上緣，也對上左上角
+       那條尾巴的起點。⛔ 別提超過 12px（頭像會脫離泡泡變成浮在空白裡的方塊）、
+       ⛔ 也別把這條搬去桌機（老闆明確只要手機版）。 */
+    .lp-turn__ava { margin-top: -10px; }
 
     /* 一條路＝左軸清單（二十三輪起桌機手機同一版），手機收磚、字級與縮排一級。
        ⚠️ 09-08 兩欄化後 demo 卡已經是 .lp-path 的直接子項＝天生就是滿欄寬，
@@ -2548,7 +2571,17 @@
     .lp-chart__lbl--base { font-size: 30px; }
     .lp-chart__me { stroke-width: 6; }
     .lp-chart__base { stroke-width: 5; }
-    .lp-chart__brand { width: 58px; height: 34px; }
+    /* 圖標：手機放大 ＋ **整顆往左移**。⚠️ 為什麼要移：標籤 `text-anchor="end"` 固定收在
+       x 644，字級 17→34px 之後它從 x 559 往左長到 **x 474**（實測 bbox），沿用桌機的 x 519
+       就會被字疊住。translate −122px ＝ 讓放大後的圖標右緣落在 455＝標籤左邊留 19 個單位
+       （≈6.6 螢幕 px，跟桌機那 10 單位≈13.7px 的**視覺**間距相當——手機整張圖只有 ×0.41）；
+       −13px ＝ 對齊放大後標籤的垂直中心。
+       ⛔ 改字級（上面那三條）就要重量這兩個數字。⚠️ 量法＝**用螢幕座標換回 viewBox**
+          （`getBoundingClientRect()` ÷ 縮放比）：`getBBox()` **不含 transform**，
+          拿它量會看到圖標停在桌機位置、誤判成「translate 沒生效」（實際踩過）。
+       ⚠️ 用 transform 不用 CSS 的 x/y：x/y 當 CSS 屬性的瀏覽器支援度沒有 transform 穩，
+          萬一不吃，圖標會停在桌機位置＝疊在字上；transform 不吃的機率低得多。 */
+    .lp-chart__brand { width: 58px; height: 34px; transform: translate(-122px, -13px); }
 
     /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
        （px/s 不變、可視寬變小＝掃過眼前的比例變快） */

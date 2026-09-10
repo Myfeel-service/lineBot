@@ -59,9 +59,13 @@
           <BrandLogo mark class="lp-brand__mark" alt="" />
         </a>
         <div class="lp-nav__links">
-          <!-- 2026-09-10 老闆「卡在哪換個方式說」：改「四個難關」＝直接說裡面有什麼
-               （跟隔壁三條同一種語言：能做什麼／價格／成長，都是名詞短語）。 -->
-          <a href="#why" @click="closeMenu">四個難關</a>
+          <!-- 2026-09-10 老闆「卡在哪換個方式說」→ 我先改「四個難關」，他回「還是有點怪，
+               應該是類似『為什麼需要 MiniMe』或『你會遇到什麼困難』之類的詞」。
+               ⚠️ 定案「你遇到的難題」：①它是**對讀者說話**，跟整頁「MiniMe 與店主對話」的
+                  口吻一致（那一區的第一句就是「你總是卡在這四關」）②那一區的內容真的就是
+                  「你的問題 → 我們怎麼解」③「為什麼需要 MiniMe」是**講我們**，而且緊貼左邊
+                  的商標會把品牌名講兩次。⛔ 別改回「四個難關」（老闆說怪）或「卡在哪」（更早那版）。 -->
+          <a href="#why" @click="closeMenu">你遇到的難題</a>
           <a href="#value" @click="closeMenu">能做什麼</a>
           <a href="#pricing" @click="closeMenu">價格</a>
           <a href="#grow" @click="closeMenu">成長</a>
@@ -447,7 +451,10 @@
                  拆兩段裝——h2 收成「全年無休」，小字收他列的請假／鬧脾氣／休息／24 小時。
                  ⚠️ 黏性行動條（頁尾）跟這裡同口徑，改一邊要一起改。 -->
             <h2>多了一個 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>等於多了<span class="mark">全年無休</span>的客服與行銷。</h2>
-            <p>永遠不會請假、不會鬧脾氣、不用休息——24 小時都在。</p>
+            <!-- ⚠️ 「休息——」綁 nowrap（2026-09-10 手機版收尾）：390px 實測折成
+                 「⋯不用休」＋「息——24 小時都在。」——「休息」被拆開、破折號還落在行首
+                 （中文排版不該讓破折號起頭）。⚠️ 只綁這 3 個字，綁整句會讓上一行空一大截。 -->
+            <p>永遠不會請假、不會鬧脾氣、不用<span class="lp-nb">休息——</span>24 小時都在。</p>
           </div>
         </div>
 
@@ -1420,11 +1427,15 @@
                     <text class="lp-chart__lbl--me" x="644" y="24" text-anchor="end">也經營舊客</text>
                     <text class="lp-chart__lbl--base" x="644" y="212" text-anchor="end">只靠新客</text>
                     <!-- MiniMe 圖標＝這條綠線的署名（2026-09-10 老闆：「是否在也經營舊客附近
-                         加上 MiniMe 的 logo」）。⚠️ 放在**線的端點右邊**（x 672 起）不是標籤左邊：
-                         標籤是 text-anchor="end"，字級一放大就往左長，放左邊會被字疊住；
-                         這裡右邊到 viewBox 邊界還有 88px，而端點圓點只到 x 667，不會撞。
+                         加上 MiniMe 的 logo」；同日第二輪指定**放到標籤左邊**）。
+                         ⚠️ 這裡的 x/y 是 viewBox 座標，**桌機字級（17px）算的**：標籤靠右對齊、
+                            實測佔 x 559→644，所以圖標右緣收在 549＝留 10px 的字距。
+                         ⛔ 手機不能沿用這個 x：那邊字級放大到 34px，標籤往左長到 x 474
+                            （靠右對齊＝往左長），圖標會被字追上去疊住。所以手機那一級用
+                            `transform: translate()` 把它整顆往左移，數字與量法寫在
+                            _landing.scss 的 `.lp-chart__brand`。
                          ⚠️ alt 交給整張圖的 aria-label，這顆是裝飾（讀屏不必再唸一次品牌名）。 -->
-                    <image class="lp-chart__brand" href="/logomark.svg" x="672" y="8" width="36" height="21" aria-hidden="true" />
+                    <image class="lp-chart__brand" href="/logomark.svg" x="519" y="9" width="30" height="18" aria-hidden="true" />
                   </g>
                 </svg>
               </div>
