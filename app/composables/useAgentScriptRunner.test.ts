@@ -32,6 +32,40 @@ describe('useAgentScriptRunner（原語）', () => {
     expect(r.ask.value.kind).toBe('idle')
   })
 
+  it('askChoices：silent 的選項按下去不留使用者泡泡（回看教學那種導覽鈕）', async () => {
+    // ⛔ 這條看起來只是「少一則泡泡」，其實是**捲回能不能成立**的前提：
+    //    使用者泡泡一 push 進去，頁面的 watcher 就會把畫面拉回底部，
+    //    剛好抵銷掉劇本要求的「捲回上面那則教學」——按鈕會看起來完全沒反應。
+    const r = make()
+    const p = r.askChoices([
+      { label: '幫我檢查', value: 'check', primary: true },
+      { label: '回看教學', value: 'walk', silent: true },
+    ])
+    await tick()
+    r.onChoice('walk')
+    await expect(p).resolves.toBe('walk')
+    expect(r.entries.value, '導覽動作不該留下對話內容').toHaveLength(0)
+
+    // 對照組：同一組選單裡沒標 silent 的那顆照樣留泡泡
+    const p2 = r.askChoices([{ label: '幫我檢查', value: 'check', primary: true }])
+    await tick()
+    r.onChoice('check')
+    await expect(p2).resolves.toBe('check')
+    expect(r.entries.value.at(-1)).toMatchObject({ role: 'user', msg: { kind: 'text', html: '幫我檢查' } })
+  })
+
+  it('say：回傳這一則的 id（「回看教學」要靠它捲回去）', async () => {
+    const r = make()
+    const first = await r.say('第一則')
+    const second = await r.say('第二則')
+    expect(first).not.toBe(second)
+    expect(r.entries.value.find(e => e.id === first)).toMatchObject({ msg: { html: '第一則' } })
+
+    // scrollToEntry 只放請求、不自己捲（頁面負責）——⛔ 存 id 不存索引
+    r.scrollToEntry(first)
+    expect(r.scrollToId.value).toBe(first)
+  })
+
   it('askInput：validate 打回票會重問；secret 泡泡遮罩；skip 回 null', async () => {
     const r = make()
     const p = r.askInput({

@@ -85,10 +85,11 @@ export function useOnboardingChat() {
   // 也吃同一顆引擎（C-31 Phase 1 抽出）。這裡只留開通情境專屬的東西：
   // 步驟劇本、真實訊號 fetch、跳過記憶、進度條。
   const runner = useAgentScriptRunner()
-  const { entries, ask, typing, busy } = runner
+  const { entries, ask, typing, busy, scrollToId } = runner
   const {
     say,
     card,
+    scrollToEntry,
     updateMsg,
     waitAsk,
     settle,
@@ -153,7 +154,11 @@ export function useOnboardingChat() {
     //   壓力的一句，埋在開場句尾沒人讀得到，要在他想跑的那一刻才看得見（onboarding.vue）
     // 2026-09-09 老闆指定：「客服機器人」→「MiniMe」（對外品牌統一 MiniMe，開場白跟著走；
     // 全 repo 另一處「客服機器人」在 ai-answer.ts 的交接摘要 prompt＝內部指令，刻意不動）
-    await say('嗨，我是小幫手 👋 我會一步一步陪你把 MiniMe 接上 LINE，不用懂程式也沒關係。<br>只要完成四個步驟：<b>建立帳號</b> → <b>取得連線資訊</b> → <b>接收 LINE 訊息</b> → <b>傳訊息測試</b>。<br>完成後，你就可以在 LINE 上跟你的 MiniMe 成功對話了 🎉')
+    // 2026-09-10 再瘦一次（示意頁定版）：**四個步驟不用在這裡念一遍**——
+    // 頁首的進度條就長在上面，同一組字寫兩次，第二次是雜訊。改成指過去（「照上面那條進度」），
+    // 開場從三行縮成兩行。⛔ 進度條的字（`ONBOARDING_PROGRESS_LABELS`）就成了唯一那份，
+    // 改它之前先確認這句話還指得過去。
+    await say('嗨，我是小幫手 👋 我會照上面那條進度，一步一步陪你把 MiniMe 接上 LINE，不用懂程式也沒關係。<br>完成後，你就可以在 LINE 上跟你的 MiniMe 對話了 🎉')
     // 2026-09-07 老闆拍板**加回**出口鈕（推翻我 09-06「跟頁首『之後再說』去同一個地方就拿掉」）：
     // 同一個目的地≠同一個功能——頁首那顆藏在對話焦點之外、而且講不出「怎麼回來」；
     // 這顆按下去會補一句回來的路，那正是第一個畫面就決定不做的人最需要的資訊。
@@ -196,11 +201,11 @@ export function useOnboardingChat() {
         // 方案／額度／綁卡搬到結尾成績單（2026-09-02）：取完名字那一刻他只想知道下一步，
         // 這裡塞計費資訊會讓人停下來想「我是不是要付錢」
         await say(`「${escapeHtml(name)}」建好了 ✓`)
-        // 2026-09-06 補過場：老闆反映「建好之後怎麼突然跳出 LINE 官方帳號」。
-        // 缺的不是圖是**交代**——下一則就要問他有沒有 LINE 官方帳號，這裡先說一句要換場地了。
-        // ⛔ 這一步刻意不配圖：它沒有任何按鈕要按，而下一則本來就配著帳號一覽的圖，
-        //    連兩張圖會把一句「換場地了」講成一段教學（老闆原本要的三格漫畫因此不做）。
-        await say('接下來，我們要把你的 MiniMe 和你的 <b>LINE 官方帳號</b>連在一起。<br>從這一步開始會帶你到 LINE 的後台操作，照著畫面一步一步做就可以。')
+        // ⛔ 2026-09-10 刪掉這裡的過場泡泡（09-06 補的那句「接下來要把 MiniMe 和你的
+        //    LINE 官方帳號連在一起…」）：它要交代的事**下一則自己就說了**——`stepHasOA`
+        //    的第一句就是「接下來，把你的 MiniMe 跟你的 LINE 官方帳號連在一起」，
+        //    後面直接接問句。兩則連著出現＝同一句話講兩次，中間還多一次打字停頓。
+        //    09-06 補它的理由（「建好之後怎麼突然跳出 LINE 官方帳號」）由那則的前半句承接。
         progress.value = 1
         return true
       }
@@ -314,6 +319,8 @@ export function useOnboardingChat() {
     /** 單張示意圖（沒有步驟順序、整張都是要讀的內容時才用） */
     image?: string
     alt?: string
+    /** 這一步的泡泡一出現就回報它的 id——之後想把畫面捲回這一則的人要接住它 */
+    onFirstSaid?: (entryId: number) => void
     /** 岔路按鈕：走完岔路回到同一步（例：清單裡沒看到帳號） */
     detour?: { label: string, run: () => Promise<void> }
     /** 預設收合的「為什麼／萬一沒做」——照著做需要的字留在外面，解釋收進來 */
@@ -332,7 +339,7 @@ export function useOnboardingChat() {
       const isLast = i === nodes.length - 1
       // 單節點不標步數（「1/1」很傻）；多節點用小徽章標，別用粗體＋直線硬拼
       const stepno = nodes.length > 1 ? `<span class="agm-stepno">${i + 1} / ${nodes.length}</span>` : ''
-      await say(`${stepno}${n.html}`, n.aside)
+      n.onFirstSaid?.(await say(`${stepno}${n.html}`, n.aside))
       // 連結卡模板會自己補「 ↗」，字樣裡不能再帶（會變雙箭頭）
       if (n.href)
         card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
@@ -371,7 +378,12 @@ export function useOnboardingChat() {
     if (line.tokenConfigured)
       return
     // 「都在 LINE Developers 後台」下一則教學第一句就會再講一次（2026-09-02 刪）
-    await say('接下來，我們要讓你的 MiniMe 可以透過 LINE 幫你收發訊息，所以要先從 LINE 取得<b>兩組連線資訊</b>。<br>第一組叫做 <b>Channel Access Token</b>，用途很簡單：讓 MiniMe 可以用你的 LINE 官方帳號幫你傳訊息。')
+    // 2026-09-10：「這串是做什麼的」收進 aside——照著做不需要它，想知道的人點開就有
+    //（判準同全流程：**照著做需要的字留在外面，解釋為什麼要這樣做的收進去**）
+    await say(
+      '接下來要從 LINE 拿<b>兩組連線資訊</b>。先拿第一組：<b>Channel Access Token</b>。',
+      { summary: '這串是做什麼的？', html: '讓 MiniMe 可以用你的 LINE 官方帳號幫你傳訊息。' },
+    )
     const how = await askChoices([
       { label: '教我一步步拿', value: 'walk', primary: true },
       { label: '我會拿，直接貼上', value: 'paste' },
@@ -418,8 +430,16 @@ export function useOnboardingChat() {
             run: async () => {
               // ⚠️ 跟「還沒有官方帳號」那條路是**同一件事**，用同一支輪播——
               //    走到這裡的人也從來沒做過，不是「回去再看一眼」，不能只給一張「按這裡」的靜圖
-              await say('那是還沒啟用的關係。到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用Messaging API</b>」——'
-                + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。<br>啟用完，它就會出現在剛剛的清單裡。')
+              await say(
+                '那是還沒啟用的關係。到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用Messaging API</b>」——'
+                + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。<br>啟用完，它就會出現在剛剛的清單裡。',
+                // ⚠️ 走到這條岔路的人有兩種：**有帳號但沒啟用**（多數）、以及**根本還沒申請**。
+                //    後者按「啟用」會發現連後台都進不去，卻沒有任何地方告訴他要先申請——
+                //    所以那條路的入口收在這裡，不佔多數人的版面。
+                { summary: '我連 LINE 官方帳號都還沒申請', html: '那要先申請一個，是<b>免費</b>的（下面那張卡就是入口）。申請好再回來按啟用。' },
+              )
+              // 上下兩張卡，順序照事情發生的先後：先申請、才有帳號可以啟用
+              card({ kind: 'link', label: '前往申請 LINE 官方帳號（台灣）', href: 'https://tw.linebiz.com/account/' })
               card({ kind: 'link', label: '打開官方帳號後台', href: 'https://manager.line.biz/' })
               card({ kind: 'carousel', steps: ONBOARDING_CAROUSELS.enableMessagingApi })
             },
@@ -441,7 +461,11 @@ export function useOnboardingChat() {
   async function stepSecret(line: LineStatus) {
     if (line.secretConfigured)
       return
-    await say('接下來是<b>第二組連線資訊：Channel Secret</b>。<br>它的用途很簡單，就是幫忙確認：收到的訊息真的來自 LINE，而不是其他地方假冒傳來的。<br>加油，已經快完成了！拿完這組，剩下就是<b>貼一串網址</b>、<b>傳一句話測試</b>。')
+    // ⛔ 2026-09-10 刪掉這裡的開場泡泡：它講的三件事全部有更好的去處——
+    //    「這是第二組 Channel Secret」下一則教學的第一句就講（而且順帶交代要換後台）、
+    //    「用途是確認訊息真的來自 LINE」收進那一則的 aside、
+    //    「加油快完成了，剩下貼網址跟測試」是**進度條已經在說的事**（同開場白那條理由）。
+    //    留著就是在教學正上方多一則沒有動作的泡泡，把圖又往下推一段。
     // 2026-09-02 拍板：這一步**不問「要不要教你拿」**，教學直接播。
     // 理由是這支教學只有一則——選「我會拿，直接貼上」的人省下的就是那一則，
     // 閘門本身反而多收了一次點擊和一個決定。⛔ 這個結論不能無條件套到別步：
@@ -455,8 +479,10 @@ export function useOnboardingChat() {
       const ok = await askAndSaveSecret(line, { escapeLabel: '回上一步：重貼第一組' })
       if (ok)
         break
-      if (await redoKeyFlow(line, 'token', '不換了，回來貼第二組'))
-        await say('第一組換好了 ✓ 回到第二組。')
+      // ⛔ 換成功時不再補「第一組換好了 ✓ 回到第二組」：`askAndSaveToken` 已經說了
+      //    「換好了 ✓ 這組是「店名」的連線資訊。」，而「回到第二組」由下面重播的教學本身講
+      //    （它第一句就是「接下來拿第二組連線資訊」）。取消的那句也已經收在 `redoKeyFlow` 裡。
+      await redoKeyFlow(line, 'token', '不換了，回來貼第二組')
       // 繞完回頭路，教學已經被推到很上面——重播一次再問，不要叫人往上滑
       await walkSecretNodes()
     }
@@ -562,11 +588,12 @@ export function useOnboardingChat() {
    * 都會被回「收到 ✓ 已經幫你存好」，一路到兩步之後的接線檢查才爆——那時人早就不會
    * 聯想到是鑰匙的問題。驗過的還會回顯帳號名，「貼成另一個官方帳號」也當場看得出來。
    */
-  async function askAndSaveToken(line: LineStatus, opts: { escapeLabel?: string } = {}): Promise<boolean> {
+  async function askAndSaveToken(line: LineStatus, opts: { escapeLabel?: string, redo?: boolean } = {}): Promise<boolean> {
     while (true) {
       const v = await askInput({
         inputType: 'secret',
-        placeholder: '貼上 Channel Access Token',
+        // 重貼時說「新的」：輸入格是全流程唯一分不出「第一次貼」與「換一把」的地方
+        placeholder: opts.redo ? '貼上新的 Channel Access Token' : '貼上 Channel Access Token',
         // 後門：一開始選「直接貼上」的人，對話裡沒有教學也叫不出來——輸入格不能是死路
         skippable: !!opts.escapeLabel,
         skipLabel: opts.escapeLabel,
@@ -587,23 +614,30 @@ export function useOnboardingChat() {
         continue
       line.tokenConfigured = true
       // 問不到（check 是 null，或 valid 是 null）就只說存好了——不假裝驗過
-      if (check?.valid === true && check.displayName)
-        await say(`收到 ✓ 這組是「<b>${escapeHtml(check.displayName)}</b>」的連線資訊，我已經幫你存好了！`)
-      else
-        await say('收到 ✓ 已經幫你存好。')
+      if (check?.valid === true && check.displayName) {
+        await say(opts.redo
+          ? `換好了 ✓ 這組是「<b>${escapeHtml(check.displayName)}</b>」的連線資訊。`
+          : `收到 ✓ 這組是「<b>${escapeHtml(check.displayName)}</b>」的連線資訊，我已經幫你存好了！`)
+      }
+      else {
+        await say(opts.redo ? '換好了 ✓' : '收到 ✓ 已經幫你存好。')
+      }
       return true
     }
   }
 
   /** 收第二組連線資訊。⚠️這組沒辦法單獨驗真假（LINE 沒有這種 API），只能靠接線測試才驗得出來 */
-  async function askAndSaveSecret(line: LineStatus, opts: { escapeLabel?: string } = {}): Promise<boolean> {
+  async function askAndSaveSecret(line: LineStatus, opts: { escapeLabel?: string, redo?: boolean } = {}): Promise<boolean> {
     while (true) {
       const v = await askInput({
         inputType: 'secret',
-        placeholder: '貼上 Channel Secret',
+        placeholder: opts.redo ? '貼上新的 Channel Secret' : '貼上 Channel Secret',
         skippable: !!opts.escapeLabel,
         skipLabel: opts.escapeLabel,
-        validate: t => t.length < 10 ? '這串看起來太短了，請到 Basic settings 分頁整串複製 Channel secret。' : null,
+        // ⛔ 2026-09-10 修：這句一直指著 **LINE Developers 的 Basic settings**，
+        //    但 09-06 整段已經改道到官方帳號後台了——教學把人帶去 A、貼錯時的提示卻叫他回 B，
+        //    而 B 那頁的 Channel secret **同名卡有兩張**，正是改道要消滅的那個雷。
+        validate: t => t.length < 10 ? '這串看起來太短了，請回到官方帳號後台的「設定 → Messaging API」整串複製 Channel secret。' : null,
       })
       if (v == null)
         return false
@@ -613,6 +647,10 @@ export function useOnboardingChat() {
       )
       if (ok !== null) {
         line.secretConfigured = true
+        // ⚠️ 第二組沒辦法當場驗真假，所以重貼時只能說「換好了」——⛔ 不要加「✓ 已確認」
+        //    之類的字，那會變成又一次「說你設好了但其實沒有」
+        if (opts.redo)
+          await say('換好了 ✓')
         return true
       }
     }
@@ -771,7 +809,8 @@ export function useOnboardingChat() {
       }
       if (val === 'redo') {
         // 重貼期間輪詢照跑（訊息一進來下一輪 race 就接走），改完回排障選單
-        await offerRedo(line)
+        // 走到等訊息這一段的人網址一定貼過了 → 網址那項列得出來
+        await offerRedo(line, webhookUrl)
         askOptions = stallOptions
         continue
       }
@@ -822,16 +861,23 @@ export function useOnboardingChat() {
       { label: '教我一步步拿', value: 'walk' },
       { label: cancelLabel, value: 'cancel', escape: true },
     ])
-    if (how === 'cancel')
+    if (how === 'cancel') {
+      // ⚠️ 這句 2026-09-10 從呼叫端搬進來：原本 `reenterToken`／`reenterSecret` 各講一次、
+      //    而 `offerRedo` 那條路按取消**什麼都不說**（人按了鈕、畫面沒反應）。
+      //    收在這裡＝三個入口一致，而且以後多一個入口也不會漏。
+      await say('好，先不換。想換的時候再按一次就行。')
       return false
+    }
     let taught = how === 'walk'
     if (taught)
       await (isToken ? walkTokenNodes() : walkSecretNodes())
     while (true) {
-      const escapeLabel = taught ? '再看一次教學' : '等等，我想看教學'
+      // 走過教學的人不再給「再看一次教學」（教學就在輸入格正上方）；
+      // 選「直接貼新的」的人這顆要留——那是他唯一的入口
+      const escapeLabel = taught ? undefined : '等等，我想看教學'
       const ok = isToken
-        ? await askAndSaveToken(line, { escapeLabel })
-        : await askAndSaveSecret(line, { escapeLabel })
+        ? await askAndSaveToken(line, { escapeLabel, redo: true })
+        : await askAndSaveSecret(line, { escapeLabel, redo: true })
       if (ok)
         return true
       taught = true
@@ -840,32 +886,70 @@ export function useOnboardingChat() {
   }
 
   /**
+   * 重貼訊息接收網址（`Webhook URL`）。
+   *
+   * ⛔ 只有**已經貼過網址**的人走得到（見 `offerRedo` 的過濾）：在「取得連線資訊」階段
+   * 就把它列出來，是叫人去重做一件還沒做過的事。
+   * ⚠️ 這條路不重播整支教學：網址沒變，要的只是「再複製一次、貼回去、按儲存」。
+   */
+  async function redoWebhookUrl(webhookUrl: string) {
+    await say('網址沒變，重貼一次就好——複製下面這串，回官方帳號後台的「設定 → Messaging API」貼進「<b>Webhook網址</b>」再按儲存。')
+    card({ kind: 'copy', label: '你的訊息接收網址（Webhook URL）', value: webhookUrl })
+    card({ kind: 'link', label: '打開官方帳號後台', href: 'https://manager.line.biz/' })
+    await askChoices([{ label: '貼好了', value: 'ok', primary: true }])
+    await say('好，等一下檢查就會看到結果。')
+  }
+
+  /**
    * 「改前面的設定」：聊天中主動回頭重做（2026-08-20 拍板）。
    * 不做精靈式的每步上一步——聊天不是表單，回上一步的實際需求是「重做某個動作」。
    * 檢查失敗的自動診斷仍是主要回頭路；這裡接的是「不等檢查失敗、自己想改」的情境
    * （例：頻道雙綁時錯的 Secret 也能通過檢查，人只能主動回頭換）。改完回原地繼續。
    */
-  async function offerRedo(line: LineStatus) {
-    while (true) {
-      const c = await askChoices([
-        { label: '都不用，回來繼續', value: 'back', primary: true },
-        { label: '重貼第一組連線資訊', value: 'token' },
-        { label: '重貼第二組連線資訊', value: 'secret' },
-      ])
-      if (c === 'token' || c === 'secret') {
-        await redoKeyFlow(line, c)
-        continue
-      }
+  async function offerRedo(line: LineStatus, webhookUrl = '') {
+    // ⛔ **只列已經貼過的**（2026-09-08 老闆抓到的第二個問題）：原本無論走到哪裡都列
+    //    「重貼第一組／第二組」，在「取得連線資訊」階段就叫人去重做還沒做過的事。
+    // ⚠️ 網址那項多一個條件：`webhookUrl` 有值才給得出可複製的東西。
+    const avail: AgentChoice[] = [
+      ...(line.tokenConfigured ? [{ label: '重貼第一組（Channel Access Token）', value: 'token' }] : []),
+      ...(line.secretConfigured ? [{ label: '重貼第二組（Channel Secret）', value: 'secret' }] : []),
+      ...(webhookUrl ? [{ label: '重貼訊息接收網址', value: 'url' }] : []),
+    ]
+    if (!avail.length) {
+      await say('目前還沒有貼過任何連線資訊，沒有東西可以重貼。')
       return
     }
+    // 只有一樣可重貼就別問「要哪一個」——只有一個選項的選單是多的一次點擊
+    if (avail.length === 1) {
+      const only = avail[0]!.value
+      if (only === 'url')
+        await redoWebhookUrl(webhookUrl)
+      else
+        await redoKeyFlow(line, only as 'token' | 'secret')
+      return
+    }
+    const c = await askChoices([...avail, { label: '不用了', value: 'cancel', escape: true }])
+    if (c === 'cancel') {
+      await say('好，先不換。想換的時候再按一次就行。')
+      return
+    }
+    if (c === 'url') {
+      await redoWebhookUrl(webhookUrl)
+      return
+    }
+    await redoKeyFlow(line, c as 'token' | 'secret')
   }
 
-  /** Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一組連線資訊 */
+  /**
+   * Webhook 檢查判定是「LINE 不認得我們的 Token」時的出口：讓人當場重貼第一組連線資訊。
+   *
+   * ⛔ 2026-09-10 把尾巴那兩句拿掉：換成功時 `askAndSaveToken` 已經說了「換好了 ✓ 這組是…」、
+   *    取消時 `redoKeyFlow` 已經說了「好，先不換…」，這裡再補一句就是同一件事講兩次；
+   *    而且回去之後**檢查選單本來就會再出現一次**（那排鈕自己就在說「都設好了，幫我檢查」），
+   *    不需要再用一句話催。
+   */
   async function reenterToken(line: LineStatus) {
-    if (await redoKeyFlow(line, 'token', '先不換了'))
-      await say('再檢查一次看看。')
-    else
-      await say('好，先不換。想換的時候再按一次檢查就行。')
+    await redoKeyFlow(line, 'token')
   }
 
   /**
@@ -873,10 +957,8 @@ export function useOnboardingChat() {
    * 這條路以前不存在——同一個 401 被當成 Token 的問題，人被指去重貼一把根本沒壞的鑰匙。
    */
   async function reenterSecret(line: LineStatus) {
-    if (await redoKeyFlow(line, 'secret', '先不換了'))
-      await say('換好了 ✓ 再檢查一次看看。')
-    else
-      await say('好，先不換。想換的時候再按一次檢查就行。')
+    // 尾巴那兩句拿掉的理由同 `reenterToken`
+    await redoKeyFlow(line, 'secret')
   }
 
   /**
@@ -986,16 +1068,25 @@ export function useOnboardingChat() {
       //    這一步真正要完成的事永遠是「幫我檢查」，主要動作就固定給它。
       const c = await askChoices([
         { label: '都設好了，幫我檢查', value: 'check', primary: true },
-        { label: '再看一次教學', value: 'walk' },
+        // silent＝這是導覽動作不是對話內容（而且使用者泡泡會把畫面拉回底部，抵銷掉捲回）
+        { label: '回看教學', value: 'walk', silent: true },
         { label: '略過檢查，直接測試', value: 'skip', escape: true },
         { label: '重貼連線資訊或網址', value: 'redo' },
       ])
       if (c === 'redo') {
-        await offerRedo(line)
+        await offerRedo(line, webhookUrl)
         continue
       }
       if (c === 'walk') {
-        await teachConnect()
+        // ⛔ **捲回，不重播**（2026-09-10）：那兩則教學確實已經捲出視野一千多像素，
+        //    所以這顆鈕有存在理由；但重播的代價更高——聊天記錄多一份一模一樣的內容，
+        //    而且要再按一次「下一步」才回得到原地。
+        // ⚠️ 圖還沒補進資料夾、或劇本被改到沒經過 teachConnect 時 id 會是 null，
+        //    那時退回舊行為（重播）而不是什麼都不做——按了沒反應比多一份記錄糟。
+        if (connectFirstEntryId != null)
+          scrollToEntry(connectFirstEntryId)
+        else
+          await teachConnect()
         continue
       }
       if (c === 'skip') {
@@ -1031,9 +1122,16 @@ export function useOnboardingChat() {
    *    輸入框前面；而且 100% 的人都得做。（原本 08-28 留閘門的理由是「接線那組是動作選單」，
    *    那個選單還在——只是移到教學之後，變成「做完了沒」而不是「要不要教」。）
    */
+  /**
+   * 接線教學第一則的 id——「回看教學」要捲回的就是它（見 `walkNodes` 的 `onFirstSaid`）。
+   * ⛔ 存 id 不存索引：`entries` 只會往後長，索引在任何插入下都會漂。
+   */
+  let connectFirstEntryId: number | null = null
+
   async function teachConnect() {
     await walkNodes([
       {
+        onFirstSaid: (id: number) => { connectFirstEntryId = id },
         // 2026-09-07 老闆拍板恢復導航兩格（中間離開過去貼 secret，回來可能已經迷路）。
         // 2026-09-10 改輪播之後多給一句「還停在那一頁的話直接跳到第 3 步」——
         // 步驟軌讓「跳著看」變成點一下的事，那句話才有地方可去。
@@ -1205,7 +1303,8 @@ export function useOnboardingChat() {
         continue
       }
       if (c === 'redo') {
-        await offerRedo(line)
+        // 走到成績單的人網址一定貼過了，所以「重貼訊息接收網址」在這裡列得出來
+        await offerRedo(line, `${line.publicBaseUrl || window.location.origin}/webhook`)
         continue
       }
       if (c === 'test') {
@@ -1308,6 +1407,8 @@ export function useOnboardingChat() {
     ask,
     typing,
     busy,
+    /** 劇本要求把畫面捲回哪一則（頁面在「捲到底」那個 watcher 裡順便處理） */
+    scrollToId,
     progress,
     /** 這一場對話作用中的 workspaceId（建立後才有值）；給頁面算「之後再說」的出口用 */
     activeWorkspaceId: readonly(wid),

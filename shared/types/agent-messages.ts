@@ -110,6 +110,16 @@ export interface AgentChoice {
    * （2026-08-28 拍板，見 docs/ONBOARDING-FIRSTUSE-EVAL-20260828.md 附記三）。
    */
   escape?: boolean
+  /**
+   * 按下去**不留使用者泡泡**（2026-09-10）。
+   *
+   * 用在「這是導覽動作，不是對話內容」的鈕——例如「回看教學」，它做的事是把畫面捲回
+   * 上面某一則，聊天記錄裡多一句「回看教學」只是雜訊。
+   * ⚠️ 而且它是**捲回能成立的前提**：使用者泡泡一 push 進去就會把畫面拉回底部，
+   *    剛好抵銷掉那次捲回。
+   * ⛔ 別拿它藏真正的回答（例：「有」「還沒」）——那些是使用者說過的話，記錄要留。
+   */
+  silent?: boolean
 }
 
 export interface AgentPickerOption {

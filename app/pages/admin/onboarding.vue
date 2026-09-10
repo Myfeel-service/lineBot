@@ -88,7 +88,7 @@ const continueWid = computed(() => String(route.query.workspaceId || '').trim())
 const mode = ref<'chat' | 'locked'>('chat')
 
 const {
-  entries, ask, typing, busy, progress, activeWorkspaceId,
+  entries, ask, typing, busy, progress, activeWorkspaceId, scrollToId,
   onChoice, onSubmit, onPick, onSkip,
   start, dispose,
 } = useOnboardingChat()
@@ -116,7 +116,29 @@ watch([() => continueWid.value, activeWorkspaceId], ([cw, aw]) => {
 
 const listEl = ref<HTMLElement | null>(null)
 watch([() => entries.value.length, typing, ask], () => {
-  nextTick(() => listEl.value?.scrollTo({ top: listEl.value.scrollHeight }))
+  nextTick(() => {
+    // 劇本要求捲回上面某一則（「回看教學」）就先處理它，這一輪不要捲到底——
+    // ⛔ 兩件事一定要在**同一個 watcher** 裡分流：拆成兩個 watcher 會互相打架
+    //    （捲回之後另一個馬上把畫面拉回底部，看起來像按鈕沒反應）。
+    // ⚠️ 也因此 `scrollToEntry()` 之後必須接著做一件會改動這三個依賴的事（實務上就是
+    //    馬上 `askChoices`），這個 watcher 才會醒來。
+    const want = scrollToId.value
+    if (want != null) {
+      scrollToId.value = null
+      // 訊息節點與 entries 同序（打字指示器排在最後面），拿索引就找得到那一則。
+      // ⛔ 別用 `scrollIntoView`：它會連外層頁面一起捲，`.onbc-chat` 是自己的捲動容器。
+      // ⛔ 也別用 `offsetTop`：`.onbc-chat` 沒有 `position: relative`，offsetParent 是更上層的
+      //    `.onbc-wrap`，基準是錯的。用兩個 rect 相減就跟 offsetParent 是誰無關。
+      const i = entries.value.findIndex(e => e.id === want)
+      const el = i >= 0 ? listEl.value?.children[i] as HTMLElement | undefined : undefined
+      if (el && listEl.value) {
+        const delta = el.getBoundingClientRect().top - listEl.value.getBoundingClientRect().top
+        listEl.value.scrollTo({ top: listEl.value.scrollTop + delta - 8 })
+        return
+      }
+    }
+    listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+  })
 })
 
 onMounted(async () => {

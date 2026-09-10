@@ -59,6 +59,20 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
 
   const entries = ref<AgentChatEntry[]>([])
   const ask = ref<AgentAsk>({ kind: 'idle' })
+  /**
+   * 劇本想把畫面**捲回**上面某一則（頁面負責真的捲，這裡只放請求）。
+   *
+   * 用在「回看教學」這種鈕：那兩則教學已經捲出視野一千多像素，但**重播的代價更高**——
+   * 聊天記錄多一份一模一樣的內容、還要再按一次「下一步」才回得到原地。
+   * ⛔ 存的是 **id 不是索引**：`entries` 只會往後長，索引在任何截斷／插入下都會漂。
+   * ⚠️ 頁面是在「捲到底」那個 watcher 裡順便處理這件事的，所以呼叫它之後**要接著**
+   *    做一件會改動 `entries`／`typing`／`ask` 的事（實務上就是馬上 `askChoices`），
+   *    否則那個 watcher 不會醒來。
+   */
+  const scrollToId = ref<number | null>(null)
+  function scrollToEntry(id: number) {
+    scrollToId.value = id
+  }
   const typing = ref(false)
   const busy = ref(false)
 
@@ -99,14 +113,16 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
 
   /** agent 說一句話（打字節奏 → 泡泡）。html 僅限劇本文案＋已跳脫的輸入 */
   /** aside＝預設收合的「為什麼／萬一沒做」，見 shared/types/agent-messages.ts 的判準 */
-  async function say(html: string, aside?: { summary: string, html: string, image?: string, alt?: string }) {
+  /** 回傳這則的 id——想在之後把畫面捲回這一則（`scrollToEntry`）的呼叫端要接著它 */
+  async function say(html: string, aside?: { summary: string, html: string, image?: string, alt?: string }): Promise<number> {
     checkpoint()
     typing.value = true
     await sleep(sayDelayMs)
     typing.value = false
     checkpoint()
-    push('agent', aside ? { kind: 'text', html, aside } : { kind: 'text', html })
+    const id = push('agent', aside ? { kind: 'text', html, aside } : { kind: 'text', html })
     await sleep(sayDelayMs > 0 ? 120 : 0) // 句與句之間的小停頓；測試把 sayDelayMs 設 0 時一併歸零
+    return id
   }
 
   function card(msg: AgentMsg): number {
@@ -146,7 +162,10 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     // 不能默默 settle——上一組選單的值被當成這一組的答案，就是「沒人按過卻跳過了」
     if (!opt)
       return
-    sayUser(opt.label)
+    // silent＝導覽動作不是對話內容（例：回看教學），不留使用者泡泡；
+    // 也因為 push 一則就會把畫面拉回底部，會抵銷掉劇本剛要求的「捲回上面那則」
+    if (!opt.silent)
+      sayUser(opt.label)
     settle({ type: 'choice', value })
   }
 
@@ -315,6 +334,8 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     ask,
     typing,
     busy,
+    scrollToId,
+    scrollToEntry,
     // AgentAskDock 的四個事件
     onChoice,
     onSubmit,
