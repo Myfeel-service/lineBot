@@ -314,21 +314,73 @@ export async function generateParts(parts: GeminiPart[], opts: GenerateOptions =
 }
 
 /**
+ * 取出模型輸出裡的**第一份完整 JSON**，多出來的殘句丟掉；取不到回 null。
+ *
+ * 為什麼需要：`responseMimeType: 'application/json'` 不保證整段輸出只有一份 JSON。
+ * 2026-09-10 拿正式站客人傳的圖實測，同一張圖同一組參數跑五次，其中兩次 flash-lite
+ * 吐出「完整 JSON + 換行 + 一截殘句」（`…"question":"這款電子鍋有什麼優惠？"}\n現省多少錢？"}`），
+ * finishReason 是正常的 STOP、離輸出上限還很遠——不是被截斷，就是模型多話。
+ * 整份 JSON.parse 會失敗，於是明明填對的欄位被連坐丟掉（客人因此收到「我只能閱讀文字」）。
+ *
+ * ⛔ 只從第一個 `{`／`[` 起算，而且**一定要找到對應的收尾**才回傳：被截斷的 JSON 必須維持失敗。
+ *    ai-knowledge-chunker 靠「parse 失敗」判斷切卡輸出被截斷、據以縮小輸入重試（見 isChunkTruncationError），
+ *    這裡如果連半份也照收，那條重試邏輯會拿到缺一半的卡片當成功。
+ */
+export function parseFirstJsonValue<T>(raw: string): T | null {
+  const text = String(raw ?? '').trim()
+  if (!text) return null
+  // 快路徑：乾淨的輸出（絕大多數）行為與過去完全相同
+  try {
+    return JSON.parse(text) as T
+  }
+  catch {
+    // 落到下面的補救；不吞掉結果，取不到一樣回 null
+  }
+
+  const start = text.search(/[[{]/)
+  if (start < 0) return null
+  const open = text[start]!
+  const close = open === '{' ? '}' : ']'
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]!
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === open) depth++
+    else if (ch === close) {
+      depth--
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as T
+        }
+        catch {
+          return null
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
  * 呼叫 Gemini 並要求回傳 JSON。失敗時拋錯（避免拿不完整 JSON 去 parse）。
  */
 export async function generateJson<T>(prompt: string, opts: Omit<GenerateOptions, 'responseMimeType'> = {}): Promise<{ data: T; inputTokens: number; outputTokens: number }> {
   const res = await generateText(prompt, { ...opts, responseMimeType: 'application/json' })
-  try {
-    return {
-      data: JSON.parse(res.text) as T,
-      inputTokens: res.inputTokens,
-      outputTokens: res.outputTokens,
-    }
-  }
-  catch (err) {
+  const data = parseFirstJsonValue<T>(res.text)
+  if (data === null) {
     throw createError({
       statusCode: 502,
-      statusMessage: `Gemini JSON parse failed: ${(err as Error).message}. Raw: ${res.text.slice(0, 200)}`,
+      statusMessage: `Gemini JSON parse failed: 取不到完整 JSON。Raw: ${res.text.slice(0, 200)}`,
     })
   }
+  return { data, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
 }

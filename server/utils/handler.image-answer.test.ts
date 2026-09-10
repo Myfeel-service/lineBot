@@ -146,7 +146,7 @@ beforeEach(() => {
 describe('看圖作答：開關關著時什麼都不變', () => {
   it('沒開 → 客人照舊收到引導語，AI 不會被叫去答題', async () => {
     setSettings(false)
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的杯子', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的杯子', question: '', state: 'noQuestion' })
 
     await handleMessageEvent(imageEvent(), { workspaceId: WS })
 
@@ -161,7 +161,7 @@ describe('看圖作答：開了之後', () => {
     vi.mocked(getDb).mockReturnValue(db as any)
     setSettings(true)
     vi.mocked(readInboundImage).mockResolvedValue({
-      description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎',
+      description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎', state: 'ok',
     })
     vi.mocked(answerWithAi).mockResolvedValue({
       decision: 'answered', answer: '收到，破損可在七天內換貨，我們會幫您安排。',
@@ -185,7 +185,7 @@ describe('看圖作答：開了之後', () => {
   it('拿去查知識庫的是「問句」不是「描述」——描述是名詞句，會撈到商品介紹卡', async () => {
     setSettings(true)
     vi.mocked(readInboundImage).mockResolvedValue({
-      description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎',
+      description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎', state: 'ok',
     })
     vi.mocked(answerWithAi).mockResolvedValue({
       decision: 'answered', answer: '可以換貨', confidence: 0.9, sources: [], handoffReason: null, answerKind: 'kb',
@@ -198,7 +198,7 @@ describe('看圖作答：開了之後', () => {
 
   it('看不出想問什麼（自拍/風景）→ 退回引導語，不硬掰問題去問 AI', async () => {
     setSettings(true)
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '在海邊的自拍照', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '在海邊的自拍照', question: '', state: 'noQuestion' })
 
     await handleMessageEvent(imageEvent(), { workspaceId: WS })
 
@@ -208,7 +208,7 @@ describe('看圖作答：開了之後', () => {
 
   it('讀圖整個失敗（Gemini 掛了）→ 一樣退回引導語，客人不會被已讀不回', async () => {
     setSettings(true)
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '', question: '', state: 'unavailable' })
 
     await handleMessageEvent(imageEvent(), { workspaceId: WS })
 
@@ -219,7 +219,7 @@ describe('看圖作答：開了之後', () => {
     setSettings(true)
     vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(true)
     vi.mocked(readInboundImage).mockResolvedValue({
-      description: '破掉的杯子', question: '杯子破掉可以換貨嗎',
+      description: '破掉的杯子', question: '杯子破掉可以換貨嗎', state: 'ok',
     })
 
     await handleMessageEvent(imageEvent(), { workspaceId: WS })
@@ -231,7 +231,7 @@ describe('看圖作答：開了之後', () => {
   it('AI 答不出來 → 走既有的轉真人流程，不會自己掰一個答案', async () => {
     setSettings(true)
     vi.mocked(readInboundImage).mockResolvedValue({
-      description: '看不出品牌的零件', question: '這個零件叫什麼',
+      description: '看不出品牌的零件', question: '這個零件叫什麼', state: 'ok',
     })
     vi.mocked(answerWithAi).mockResolvedValue({
       decision: 'handoff', answer: '', confidence: 0.2, sources: [], handoffReason: 'no_grounding',
@@ -246,7 +246,7 @@ describe('看圖作答：開了之後', () => {
   it('草稿模式：AI 照樣讀圖產草稿，但一個字都不對客人說', async () => {
     setSettings(true, 'draft')
     vi.mocked(readInboundImage).mockResolvedValue({
-      description: '破掉的杯子', question: '杯子破掉可以換貨嗎',
+      description: '破掉的杯子', question: '杯子破掉可以換貨嗎', state: 'ok',
     })
     vi.mocked(answerWithAi).mockResolvedValue({
       decision: 'answered', answer: '可以換貨', confidence: 0.9, sources: [], handoffReason: null, answerKind: 'kb',

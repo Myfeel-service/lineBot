@@ -1,4 +1,4 @@
-import { generateParts } from './gemini'
+import { generateParts, parseFirstJsonValue } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { getStorage } from './firebase'
@@ -70,15 +70,27 @@ function clampOneLine(raw: unknown, max: number): string {
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine
 }
 
+/**
+ * 為什麼沒有問句——**三種「沒有」的下一步完全不同，不能都只留一行 log**：
+ *   - `noQuestion`：AI 明講看不出客人想問什麼（自拍／風景）→ 退回引導語是對的，不用管。
+ *   - `malformed`：AI 其實讀懂了，只是交回來的格式壞掉 → 客人白白收到「我只能閱讀文字」，
+ *     這是要修的 bug。2026-09-10 之前它只寫進 console，正式站上壞了兩週沒有人知道，
+ *     是老闆自己看到對話截圖才發現的。
+ *   - `unavailable`：根本沒讀（AI 沒開／圖太小／下載失敗／逾時）。
+ */
+export type InboundImageReadState = 'ok' | 'noQuestion' | 'malformed' | 'answerOff' | 'unavailable'
+
 /** 讀圖的產物。`question` 只有工作區開了看圖作答、而且 AI 判斷得出來時才有值 */
 export interface InboundImageReading {
   /** 給客服看的一句描述 */
   description: string
   /** 客人可能想問的問句（拿去查知識庫）；空字串＝判斷不出來，該退回引導語 */
   question: string
+  /** 這次讀圖的結果分類；`malformed` 是唯一代表「壞掉」的值 */
+  state: InboundImageReadState
 }
 
-const EMPTY_READING: InboundImageReading = { description: '', question: '' }
+const EMPTY_READING: InboundImageReading = { description: '', question: '', state: 'unavailable' }
 
 /**
  * 讀圖。任何失敗都回空值——這是錦上添花的功能，
@@ -154,20 +166,21 @@ export async function readInboundImage(opts: {
         .catch(e => console.error('[media-describe] recordAiUsage error:', e))
     }
 
-    if (!wantQuestion) return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), question: '' }
+    if (!wantQuestion) return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), question: '', state: 'answerOff' }
 
-    // JSON 壞掉不能讓整張圖白讀：至少把原文當描述留下來給客服，只是不作答。
-    let parsed: { description?: unknown; question?: unknown } | null = null
-    try {
-      parsed = JSON.parse(res.text)
-    }
-    catch {
+    // 模型偶爾會在合法 JSON 後面多吐一截殘句（見 parseFirstJsonValue 的實測紀錄）——
+    // 取第一份完整的就好，不能因為後面有雜訊就把填對的兩格一起丟掉。
+    const parsed = parseFirstJsonValue<{ description?: unknown; question?: unknown }>(res.text)
+    if (!parsed) {
+      // 連一份完整的都撿不到：至少把原文當描述留下來給客服，但絕不拿壞掉的內容去回客人。
       console.warn('[media-describe] JSON parse failed, falling back to description only')
-      return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), question: '' }
+      return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), question: '', state: 'malformed' }
     }
+    const question = clampOneLine(parsed.question, MAX_QUESTION_CHARS)
     return {
-      description: clampOneLine(parsed?.description, MAX_DESCRIPTION_CHARS),
-      question: clampOneLine(parsed?.question, MAX_QUESTION_CHARS),
+      description: clampOneLine(parsed.description, MAX_DESCRIPTION_CHARS),
+      question,
+      state: question ? 'ok' : 'noQuestion',
     }
   }
   catch (err) {

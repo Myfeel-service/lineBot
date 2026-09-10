@@ -2099,6 +2099,8 @@ async function answerImageQuestion(params: {
  *      轉真人案例的原句就不只是「[圖片]」，而是「[圖片] 破掉的杯子」
  *
  * 回傳「客人可能想問的問句」給呼叫端拿去作答（沒開看圖作答時一律是空字串）。
+ * 同時把這次讀圖的結果分類寫進 `mediaReadState`——沒有問句有兩種完全不同的原因
+ * （AI 說看不出來 vs. AI 交回來的格式壞掉），分不出來就只能靠人翻對話發現。
  *
  * 描述失敗（Gemini 掛了 / 逾時 / AI 未啟用）一律安靜跳過：圖片本身已經存好也顯示得出來，
  * 少一句說明不該讓客服看不到圖。
@@ -2111,7 +2113,7 @@ async function describeAndAttachImage(params: {
   contentType: string
 }): Promise<string> {
   const { workspaceId, userIdOrDocId, storagePath, contentType } = params
-  const { description, question } = await readInboundImage({ workspaceId, storagePath, contentType })
+  const { description, question, state } = await readInboundImage({ workspaceId, storagePath, contentType })
   if (!description) return question
 
   const db = getDb()
@@ -2121,10 +2123,19 @@ async function describeAndAttachImage(params: {
   // 等它落地再寫描述,才不會被那個清空動作蓋掉。
   const messageId = await params.messageIdPromise
 
+  // 看圖作答真的跑過才記這個欄位（沒開就沒有意義）。
+  // 為什麼要存成資料而不是只寫 console：`malformed`＝AI 其實讀懂了、只是交回來的格式壞掉，
+  // 客人會白白收到「我只能閱讀文字」。這種失敗在 2026-09-10 之前只進主機日誌（我們沒在看），
+  // 正式站上連壞三週沒人知道，最後是靠對話裡漏出來的原文才被發現。
+  const messagePatch: Record<string, unknown> = { mediaDescription: description }
+  if (state === 'ok' || state === 'noQuestion' || state === 'malformed') {
+    messagePatch.mediaReadState = state
+  }
+
   await Promise.all([
     messageId
       ? db.collection('conversations').doc(convDocId).collection('messages').doc(messageId)
-          .set({ mediaDescription: description }, { merge: true })
+          .set(messagePatch, { merge: true })
       : Promise.resolve(),
     db.collection('conversations').doc(convDocId)
       .set({ lastNonTextInboundSummary: description }, { merge: true }),

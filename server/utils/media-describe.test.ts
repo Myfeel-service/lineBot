@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
-vi.mock('./gemini', () => ({ generateParts: vi.fn() }))
+// parseFirstJsonValue 用真的：這支測試要驗的正是「模型多吐殘句時還撿不撿得回來」，
+// 把它一起 mock 掉就等於把要驗的東西拿掉了
+vi.mock('./gemini', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./gemini')>()),
+  generateParts: vi.fn(),
+}))
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
 vi.mock('./firebase', () => ({ getStorage: vi.fn() }))
@@ -83,7 +88,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
 
     await expect(
       readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' }),
-    ).resolves.toEqual({ description: '', question: '' })
+    ).resolves.toEqual({ description: '', question: '', state: 'unavailable' })
   })
 
   it('存檔讀不到（過期/剛好被清掉）也只是安靜跳過', async () => {
@@ -92,7 +97,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
 
     await expect(
       readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' }),
-    ).resolves.toEqual({ description: '', question: '' })
+    ).resolves.toEqual({ description: '', question: '', state: 'unavailable' })
     expect(vi.mocked(generateParts)).not.toHaveBeenCalled()
   })
 
@@ -171,7 +176,7 @@ describe('看圖作答（工作區開了 imageAnswer 才會走）', () => {
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
-    expect(r).toEqual({ description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎' })
+    expect(r).toEqual({ description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎', state: 'ok' })
   })
 
   it('看不出想問什麼（自拍/風景）→ 問句留空，讓流程退回引導語而不是硬掰', async () => {
@@ -182,6 +187,24 @@ describe('看圖作答（工作區開了 imageAnswer 才會走）', () => {
 
     expect(r.description).toBe('在海邊的自拍照')
     expect(r.question).toBe('')
+    // 「AI 說看不出來」跟「AI 交回來的格式壞掉」都是沒有問句，但一個是正常出口、
+    // 一個是要修的 bug——分不出來就只能靠人翻對話發現（正式站上就是這樣壞了三週）
+    expect(r.state).toBe('noQuestion')
+  })
+
+  // 2026-09-10 正式站實況：同一張圖用相同參數重跑五次，兩次的輸出是「完整 JSON + 後面多一截殘句」
+  // （`{"description":"…","question":"這款電子鍋有什麼優惠？"}\n現省多少錢？"}`）。
+  // 舊做法整份 JSON.parse 失敗 → 問句連坐丟掉 → 客人收到「我目前只能閱讀文字」，
+  // 但那兩格其實都填對了。指定 responseMimeType 也擋不住，所以要在讀的這一端容忍。
+  it('模型在合法 JSON 後面多吐殘句：取第一份完整的就好，不能把填對的兩格一起丟掉', async () => {
+    mockStorage()
+    mockGemini(`${JSON.stringify({ description: '飛利浦鍋具特價 NT$6,990', question: '這款電子鍋有什麼優惠' })}\n現省多少錢？"}`)
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.description).toBe('飛利浦鍋具特價 NT$6,990')
+    expect(r.question).toBe('這款電子鍋有什麼優惠')
+    expect(r.state).toBe('ok')
   })
 
   it('JSON 壞掉時至少保住描述給客服，但絕不拿壞掉的內容去回客人', async () => {
@@ -192,6 +215,7 @@ describe('看圖作答（工作區開了 imageAnswer 才會走）', () => {
 
     expect(r.description).toBe('這不是 JSON，是模型隨口講的一句話')
     expect(r.question).toBe('')
+    expect(r.state).toBe('malformed')
   })
 
   it('問句過長會截斷：它是要拿去做向量檢索的查詢句，太長會稀釋重點', async () => {

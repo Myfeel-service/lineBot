@@ -49,7 +49,7 @@ vi.mock('./conversation-media', () => ({
   })),
 }))
 // 讀圖是另一支的職責（media-describe.test.ts 有自己的測試），這裡只驗它的產物有沒有被用上
-vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', question: '' })) }))
+vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', question: '', state: 'unavailable' })) }))
 
 import { handleMessageEvent } from './handler'
 import { getDb } from './firebase'
@@ -232,7 +232,7 @@ describe('傳圖後找真人：轉真人原因要記得起因是圖片', () => {
   it('AI 讀出圖片內容時，轉真人案例要寫「[圖片] 破掉的馬克杯」而不是光一個 [圖片]', async () => {
     const { db, conversations, messages } = makeDb()
     vi.mocked(getDb).mockReturnValue(db as any)
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '', state: 'noQuestion' })
 
     const now = Date.now()
     await handleMessageEvent(imageEvent(now - 60_000), { workspaceId: WS })
@@ -249,10 +249,10 @@ describe('傳圖後找真人：轉真人原因要記得起因是圖片', () => {
     vi.mocked(getDb).mockReturnValue(db as any)
 
     const now = Date.now()
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '破掉的白色馬克杯', question: '', state: 'noQuestion' })
     await handleMessageEvent(imageEvent(now - 120_000), { workspaceId: WS })
     // 第二張圖：Gemini 逾時 → 描述空字串
-    vi.mocked(readInboundImage).mockResolvedValue({ description: '', question: '' })
+    vi.mocked(readInboundImage).mockResolvedValue({ description: '', question: '', state: 'unavailable' })
     await handleMessageEvent(imageEvent(now - 60_000), { workspaceId: WS })
     await handleMessageEvent(textEvent('找真人', now), { workspaceId: WS })
 
