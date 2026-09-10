@@ -2360,7 +2360,27 @@
     }
     /* 邊線改由小卡自己畫：組內只留「痛／解」中間那一條，四邊交給 .lp-vs__pair */
     .lp-vs__item, .lp-vs__ans { border: 0; }
-    .lp-vs__pair .lp-vs__ans { border-top: 1px solid var(--vs-line); }
+    /* ⚠️ `position: relative` 要掛在**下半格**（.lp-vs__ans）身上，箭頭才是相對「分隔線」
+       定位。⛔ 掛在 .lp-vs__pair 上會讓 `top: -6px` 變成「卡片上緣往上 6px」，箭頭跑到
+       整張卡的頂端去（第一版就是這樣，截圖才看出來）。 */
+    .lp-vs__pair .lp-vs__ans { position: relative; border-top: 1px solid var(--vs-line); }
+    /* ── 「問題 → 解法」在手機上要看得出是**因果**，不是兩則並列的敘述（2026-09-10 老闆
+     *    第三輪問「這真的是最好的方式了嗎」）。上一輪把每一組包成小卡解掉了「配對關係
+     *    消失」，剩下的問題是**兩半的份量一樣**：同樣的字級、同樣的兩行結構，讀起來像
+     *    「兩件事」而不是「這件事被解掉了」。兩個動作（都只在手機）：
+     *      ① 在徽章那一欄的分隔線上放一個**往下的箭頭**＝把 ✕ → ✓ 的流向畫出來
+     *         （純 CSS 的 V 形，不進 SVG、不加標籤文字：這裡不需要「換成」這種字）
+     *      ② 解法那半的標題大半級（1.02→1.09rem），問題那半維持原級
+     *         ⛔ **只在手機**：桌機是左右兩欄、兩邊 h3 的字級刻意一樣（行高要對得上，
+     *            見上面 .lp-vs__ans h3 的註解），那條規矩在單欄不成立、在桌機仍然要守。
+     * ⚠️ 箭頭的 left 22px ＝格子左內距 16 ＋ 徽章半徑 13 − 箭頭一半（7）；⛔ 改格子內距
+     *    或徽章尺寸要一起改這個數字（不然箭頭會歪出那一欄）。 */
+    .lp-vs__pair .lp-vs__ans::before {
+      content: ''; position: absolute; left: 22px; top: -6px;
+      width: 9px; height: 9px; rotate: 45deg;
+      border-right: 2px solid var(--g); border-bottom: 2px solid var(--g);
+    }
+    .lp-vs__ans h3 { font-size: 1.09rem; }
     /* 手機的左窗自己演（右窗在畫面外）：問完到「隔天」不能空 0.85 秒沒事發生，
        拍點收緊成 0.55／0.8／1.1。桌機那組是「右邊在回、左邊空著」才撐得起長空檔。 */
     &.is-anim .lp-vs__side--x.is-cued .vb-2 { animation-delay: 0.55s; }
@@ -2565,23 +2585,29 @@
      * ⛔ 改這幾個數字要回頭量「螢幕上的實際字級」＝值 ×（畫出來的寬 ÷ 760），
      *    別只看 SCSS 裡的數字覺得夠大了。 */
     .lp-panel--plain > .lp-panel__bd { padding-left: 12px; padding-right: 12px; }
-    .lp-chartwrap { padding: 14px 4px 6px; }
+    /* ⚠️ 上內距 14→22px 是為了放下面那顆**疊在標籤上方的圖標**：它會畫到 viewBox 上緣
+       外面 14.4px（見 .lp-chart__brand），而灰底盒的內距**也是灰底的一部分**，所以圖標
+       仍然在盒子裡面。⛔ 要改小這個內距就要先把圖標的位移一起算，不然圖標會爬到灰底外面。 */
+    .lp-chartwrap { padding: 22px 4px 6px; }
     .lp-chart__x text { font-size: 26px; }
     .lp-chart__lbl--me { font-size: 34px; }
     .lp-chart__lbl--base { font-size: 30px; }
     .lp-chart__me { stroke-width: 6; }
     .lp-chart__base { stroke-width: 5; }
-    /* 圖標：手機放大 ＋ **整顆往左移**。⚠️ 為什麼要移：標籤 `text-anchor="end"` 固定收在
-       x 644，字級 17→34px 之後它從 x 559 往左長到 **x 474**（實測 bbox），沿用桌機的 x 519
-       就會被字疊住。translate −122px ＝ 讓放大後的圖標右緣落在 455＝標籤左邊留 19 個單位
-       （≈6.6 螢幕 px，跟桌機那 10 單位≈13.7px 的**視覺**間距相當——手機整張圖只有 ×0.41）；
-       −13px ＝ 對齊放大後標籤的垂直中心。
-       ⛔ 改字級（上面那三條）就要重量這兩個數字。⚠️ 量法＝**用螢幕座標換回 viewBox**
-          （`getBoundingClientRect()` ÷ 縮放比）：`getBBox()` **不含 transform**，
-          拿它量會看到圖標停在桌機位置、誤判成「translate 沒生效」（實際踩過）。
-       ⚠️ 用 transform 不用 CSS 的 x/y：x/y 當 CSS 屬性的瀏覽器支援度沒有 transform 穩，
-          萬一不吃，圖標會停在桌機位置＝疊在字上；transform 不吃的機率低得多。 */
-    .lp-chart__brand { width: 58px; height: 34px; transform: translate(-122px, -13px); }
+    /* ── 手機的圖標：**疊在「也經營舊客」上方**（2026-09-10 老闆第三輪指定；桌機維持在
+     *    標籤左邊）。要成立得兩件一起做，因為圖裡**沒有現成的垂直空間**：
+     *    ① 標籤先往下 10 單位（`translateY`）——它原本的字框上緣在 y −8（字級 34 撐出來的），
+     *       上面根本擠不出位置；往下 10 之後字框是 2~41，而它那段 x（474~644）的綠線在
+     *       y ≥ 47，所以**不會壓到線**（量過才敢動）。
+     *    ② 圖標放在 y −34~−4、水平置中對齊標籤（標籤 474~644，中心 559）。
+     *       ⚠️ 它會超出 viewBox 上緣 34 單位＝**14.4 螢幕 px**，畫在灰底盒的上內距裡
+     *          （上面那條 22px 就是為它留的）——灰底盒的內距也是灰底，所以看起來仍在盒內。
+     *       ⛔ 依賴 `.lp-chart { overflow: visible }`（本檔上面那條），別改成 hidden。
+     * ⛔ 改字級或改上內距都要重算這兩組數字。⚠️ 量法＝**螢幕座標 ÷ 縮放比換回 viewBox**：
+     *    `getBBox()` **不含 transform**，拿它量會以為位移沒生效（實際踩過一次）。
+     * ⚠️ 用 transform 不用 CSS 的 x/y：x/y 當 CSS 屬性的支援度沒 transform 穩。 */
+    .lp-chart__lbl--me { transform: translateY(10px); }
+    .lp-chart__brand { width: 52px; height: 30px; transform: translate(14px, -43px); }
 
     /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
        （px/s 不變、可視寬變小＝掃過眼前的比例變快） */

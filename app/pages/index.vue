@@ -1363,7 +1363,19 @@
               <!-- lp-cue：畫線／浮標籤要在圖本身看得見時才跑（跟著外層卡的淡入跑的話，
                    圖還在畫面下方 300px 就畫完了） -->
               <div class="lp-chartwrap lp-cue">
-                <svg class="lp-chart" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="示意模型：同時經營舊客的成長曲線逐年拉開，只靠新客則維持平緩的直線成長">
+                <!-- ⚠️ 2026-09-10 老闆「左右間距可以統一嗎」＝圖裡的內容離左右兩邊不一樣寬
+                     （實測桌機 55.8 vs 82.3px、手機 8.7 vs 23.9px，而且**兩級的差還不一樣**，
+                     因為左右兩端的年份字級在手機是桌機的兩倍、往外撐的量不同）。
+                     三件一起改才對稱，⛔ 缺一件就會在某個寬度歪回去：
+                       ① viewBox 寬 760 → **727**（右邊多出來的空白裁掉；727＝60 左留白
+                          ＋ 內容到 x 667（末端圓點 cx 660 ＋ r 7）＋ 60 右留白）
+                       ② 軸線收到最後一個資料點 x=660（原本伸到 700，右邊憑空多 40 單位）
+                       ③ **頭尾兩個年份改「往內對齊」**（第 1 年 text-anchor=start、第 5 年 end）
+                          ——這條才是關鍵：中間三個維持 middle，頭尾若也 middle 就會各往外
+                          撐半個字寬，**而那個寬度隨字級變**，永遠對不齊。
+                     結果＝內容固定落在 x 60~667、兩邊各留 60 單位，**跟字級無關**（實測：
+                     桌機 86.4／86.4px、手機 25.5／25.5px；改前是 55.8／82.3 與 8.7／23.9）。 -->
+                <svg class="lp-chart" viewBox="0 0 727 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="示意模型：同時經營舊客的成長曲線逐年拉開，只靠新客則維持平緩的直線成長">
                   <defs>
                     <linearGradient id="lpGrowArea" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stop-color="#06c755" stop-opacity=".22" />
@@ -1378,7 +1390,9 @@
                       <stop offset="100%" stop-color="#848e88" stop-opacity="0" />
                     </linearGradient>
                   </defs>
-                  <line class="lp-chart__axis" x1="60" y1="284" x2="700" y2="284" />
+                  <!-- 軸線收在最後一個資料點（x=660）：原本伸到 700 是憑空多出來的一截，
+                       它就是右邊留白比左邊寬的一半原因（見上面 svg 的註解）。 -->
+                  <line class="lp-chart__axis" x1="60" y1="284" x2="660" y2="284" />
                   <path
                     class="lp-chart__area"
                     d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40 L660 280 L60 280 Z"
@@ -1415,12 +1429,17 @@
                     <circle class="lp-chart__dot--me" cx="660" cy="40" r="7" />
                     <circle class="lp-chart__dot--base" cx="660" cy="226" r="6" />
                   </g>
+                  <!-- ⛔ 頭尾兩個**不可以**用 text-anchor="middle"：那會讓它們各往圖外撐半個
+                       字寬，而那個寬度**隨字級變**（手機的年份字級是桌機的兩倍），左右留白
+                       因此永遠對不齊（2026-09-10 老闆「左右間距可以統一嗎」的真因）。
+                       改成頭 start／尾 end＝兩端的字緣剛好落在軸的兩端，跟字級無關。
+                       中間三個維持 middle（它們不碰邊界）。 -->
                   <g class="lp-chart__x">
-                    <text x="60" y="308" text-anchor="middle">第 1 年</text>
+                    <text x="60" y="308" text-anchor="start">第 1 年</text>
                     <text x="210" y="308" text-anchor="middle">第 2 年</text>
                     <text x="360" y="308" text-anchor="middle">第 3 年</text>
                     <text x="510" y="308" text-anchor="middle">第 4 年</text>
-                    <text x="660" y="308" text-anchor="middle">第 5 年</text>
+                    <text x="660" y="308" text-anchor="end">第 5 年</text>
                   </g>
                   <!-- 標籤吃墨色、不吃線色：顏色由線端圓點與下方圖例的色塊帶 -->
                   <g class="lp-chart__lbls">
