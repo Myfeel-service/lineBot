@@ -730,19 +730,22 @@
   }
   .lp-vs__item h3 { margin: 0; font-size: 1.06rem; font-weight: 800; line-height: 1.5; letter-spacing: -0.01em; }
   .lp-vs__item p { margin: 2px 0 0; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
-  /* 答案 cell：淡綠地、**上緣對齊**（第七輪改，原本是垂直置中）。
-   * ⚠️ 為什麼不置中：左格有標題＋副標兩行、右格只有一句，置中的話那句話會落在
-   *    左格兩行的中間＝跟它要回答的那個標題差 11px，四行看下來右欄像「浮著、沒填完」。
-   * ⚠️ 字級比左邊的標題大半級（1.06→1.1rem）＝答案是這一區的 payoff；⛔ 別再往上加。 */
+  /* 答案 cell：淡綠地、上緣對齊（第七輪）；第九輪改成跟左邊**同構**＝一句主張（h3）＋一句白話（p）。
+   * ⚠️ 為什麼同構：老闆「最後的呈現是否有機會再更生動」——原本右欄一句話浮在兩行高的格子裡，
+   *    左右不對稱、右欄像沒填完；主張＋白話之後每一行是「痛的兩行 vs 解的兩行」，眼睛橫著讀
+   *    是一對一的辯論，而且多出來那一行正好放行銷句（半夜也秒回／不用多請人／不綁約）。
+   * ⚠️ 兩邊 h3／p 的字級行高**刻意一樣**（h3 1.06→答案 1.1 只差半級），行高才會左右一致；
+   *    ⛔ 別再放大答案：差太多就變兩種層級，不是一對一了。
+   * ⚠️ ✓ 徽**實心綠白勾**、✕ 徽淡紅底：解要亮、痛要悶，這是這一區唯一的「情緒色」對比。 */
   .lp-vs__ans {
     background: var(--vs-o); border-left: 1px solid var(--vs-line);
     display: flex; gap: 13px; align-items: flex-start;
-    font-size: 1.1rem; font-weight: 800; color: var(--g-text); line-height: 1.5;
-    letter-spacing: -0.01em;
   }
-  .lp-vs__ans span {
+  .lp-vs__ans h3 { margin: 0; font-size: 1.1rem; font-weight: 800; color: var(--g-text); line-height: 1.5; letter-spacing: -0.01em; }
+  .lp-vs__ans p { margin: 2px 0 0; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
+  .lp-vs__ok {
     flex: none; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%;
-    background: rgba(6, 199, 85, 0.16); color: var(--g-text);
+    background: var(--g); color: #fff;
     display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; line-height: 1;
   }
 
@@ -1955,8 +1958,11 @@
   &.is-anim .lp-vs .lp-scene__msg,
   &.is-anim .lp-vs .lp-scene__day,
   &.is-anim .lp-vs .lp-scene__read,
-  &.is-anim .lp-vs .lp-vs__item,
-  &.is-anim .lp-vs .lp-vs__ans,
+  /* ⚠️ 對照表**藏的是格子裡的東西、不是格子**（第九輪老闆看到等待期間下半張卡一片白：
+     「default 是否就維持兩邊的底色就好」）——格子的地色、中線、行線永遠在，等上面演完的那
+     2 秒看到的是一張有底色的空表，不是壞掉的白區。 */
+  &.is-anim .lp-vs .lp-vs__item > *,
+  &.is-anim .lp-vs .lp-vs__ans > *,
   &.is-anim .lp-vs .lp-vs__stamp { opacity: 0; }
   /* 泡泡的縮放原點＝尾巴那一側（客人的訊息靠右、店家的靠左） */
   .lp-vs .lp-scene__msg { transform-origin: left bottom; }
@@ -1981,11 +1987,11 @@
   }
   /* ── 對照表：一行一行出來，同一行的 ✕ 與 ✓ 同時（「下面統一跑」）── */
   &.is-anim .lp-vs__grid.is-cued {
-    .lp-vs__item, .lp-vs__ans { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-vs__pair:nth-child(1) > * { animation-delay: 0s; }
-    .lp-vs__pair:nth-child(2) > * { animation-delay: 0.08s; }
-    .lp-vs__pair:nth-child(3) > * { animation-delay: 0.16s; }
-    .lp-vs__pair:nth-child(4) > * { animation-delay: 0.24s; }
+    .lp-vs__item > *, .lp-vs__ans > * { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-vs__pair:nth-child(1) > * > * { animation-delay: 0s; }
+    .lp-vs__pair:nth-child(2) > * > * { animation-delay: 0.08s; }
+    .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.16s; }
+    .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.24s; }
   }
   /* ──「還好——」：兩顆章落地之後浮出 ── */
   &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 2.2s; }
@@ -2326,7 +2332,7 @@
     .lp-vs__side { padding: 16px 16px 18px; }
     .lp-vs__stamp { font-size: 0.78rem; padding: 5px 9px; right: 4px; }
     .lp-vs__item h3 { font-size: 1.02rem; }
-    .lp-vs__ans { font-size: 1.04rem; }
+    .lp-vs__ans h3 { font-size: 1.02rem; }
 
     /* 手機：方案卡才收成單欄（2×2 在 390px 每張只剩 165px，「每月 AI 回覆 1,300 則」
        會折成三行）。推薦框的緞帶跟著左邊界走，不用另外調。 */
@@ -2411,8 +2417,8 @@
     &.is-anim .lp-vs .lp-scene__msg,
     &.is-anim .lp-vs .lp-scene__day,
     &.is-anim .lp-vs .lp-scene__read,
-    &.is-anim .lp-vs .lp-vs__item,
-    &.is-anim .lp-vs .lp-vs__ans,
+    &.is-anim .lp-vs .lp-vs__item > *,
+    &.is-anim .lp-vs .lp-vs__ans > *,
     /* ⚠️ translate／scale 都要顯式歸零（不只 scale）：第七輪泡泡的進場改用
        lpBubbleIn（帶 translate＋scale），fill-mode: both 會把 from 的值留在元素上＝
        關掉動畫反而定在「縮小 3%、往下 7px」的位置。 */

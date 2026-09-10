@@ -376,7 +376,13 @@
           <!-- 四關對照表（09-09 第五輪，使用者「統一下面四點列點、由左到右」）：
                一行＝「✕ 這個痛 → ✓ 這樣解」，左欄對齊左面板、右欄對齊右面板——
                因果第一次被排版講出來，也治好右欄稀疏漂浮的問題。
-               ⚠️ 文案紅線照舊：痛點標題／副標／答案沿用拍板文案一字不動。
+               ⚠️ 文案：✕ 那側（痛點標題／副標）沿用拍板文案一字不動。✓ 那側 09-09 第九輪依老闆
+                  「它改成 MiniMe／交辦改設定好就好／提到可以用說的／免費就能開始、付費 399 起／
+                  用行銷的方式陳述」改寫成「一句主張＋一句白話」，跟左邊同構（標題＋副標）——
+                  這是**提案**，老闆看過實際畫面再拍板。價格照舊只從 lowestPaidPrice 來（plans.ts
+                  單一來源）；「不綁約、隨時可取消」跟黏性行動條同一句。⚠️ 第三句「想改什麼直接用
+                  一句話交代」講的是後台小幫手（從查到做，Phase 0+1 已上）——說法要跟它實際做得到的
+                  範圍一致，能力縮了要回來改字。
                ⚠️ li 是 display: contents（cell 直接進外層 grid）＝兩欄天生同行等高，
                   手機收單欄時順序自動變成「痛→解、痛→解」。 -->
           <!-- ⚠️ 第七輪：對照表是**第三個舞台單位**（自己的 lp-cue--mid）——四行 ✕ 落下、
@@ -385,19 +391,19 @@
           <ul class="lp-vs__grid lp-cue lp-cue--mid">
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></div>
-              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>它 24 小時都在</p>
+              <div class="lp-vs__ans"><span class="lp-vs__ok" aria-hidden="true">✓</span><div><h3>{{ brandName }} 24 小時都在</h3><p>半夜兩點的訊息也馬上回，不用多請一個人。</p></div></div>
             </li>
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>派了員工，還要照顧他的情緒</h3><p>多一件事，就是多一次溝通。</p></div></div>
-              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>交辦只要一句話</p>
+              <div class="lp-vs__ans"><span class="lp-vs__ok" aria-hidden="true">✓</span><div><h3>設定一次，之後都自動回</h3><p>不用交辦、不會累，也沒有情緒要照顧。</p></div></div>
             </li>
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>自己動手，後台太複雜</h3><p>打開來一堆設定，不知道從哪開始。</p></div></div>
-              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>畫面帶你一步步做</p>
+              <div class="lp-vs__ans"><span class="lp-vs__ok" aria-hidden="true">✓</span><div><h3>不用學後台，跟 {{ brandName }} 說就好</h3><p>畫面一步步帶著做，想改什麼直接用一句話交代。</p></div></div>
             </li>
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>找其他工具，好貴</h3><p>一個月好幾千，還得有人學、有人顧。</p></div></div>
-              <p class="lp-vs__ans"><span aria-hidden="true">✓</span>一個月 NT${{ fmt(lowestPaidPrice) }} 起</p>
+              <div class="lp-vs__ans"><span class="lp-vs__ok" aria-hidden="true">✓</span><div><h3>免費就能開始</h3><p>付費最低一個月 NT${{ fmt(lowestPaidPrice) }} 起，不綁約、隨時可取消。</p></div></div>
             </li>
           </ul>
         </div>

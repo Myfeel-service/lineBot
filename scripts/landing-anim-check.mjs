@@ -557,7 +557,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       units: units.length,
       cued: units.some(el => el.classList.contains('is-cued')),
       m1: o('#why .vb-1'), m11: o('#why .vb-11'),
-      x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item'),
+      x1: o('#why .lp-vs__pair:nth-child(1) .lp-vs__item > div'),
       stamp: o('#why .lp-vs__stamp'),
       relief: o('#why .lp-bubble__relief'),
     }
@@ -651,18 +651,21 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   }, sel)
   const rows = () => page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
-    const x = [...document.querySelectorAll('#why .lp-vs__item')].map(o)
-    const a = [...document.querySelectorAll('#why .lp-vs__ans')].map(o)
-    return { x, a, cued: document.querySelector('#why .lp-vs__grid').classList.contains('is-cued') }
+    const x = [...document.querySelectorAll('#why .lp-vs__item > div')].map(o)
+    const a = [...document.querySelectorAll('#why .lp-vs__ans > div')].map(o)
+    // 等待期間格子本身要看得到（地色在）：藏的是格子裡的東西、不是格子（第九輪老闆的要求）
+    const cell = document.querySelector('#why .lp-vs__item')
+    const cellOn = o(cell) > 0.95 && getComputedStyle(cell).backgroundColor !== 'rgba(0, 0, 0, 0)'
+    return { x, a, cellOn, cued: document.querySelector('#why .lp-vs__grid').classList.contains('is-cued') }
   })
   await park('#why .lp-vs__side--x')
   await wait(400)
   await park('#why .lp-vs__grid') // 上面才演 0.4s 就捲到表：表要等
   await wait(900) // 累計 ~1.3s（< 2.1s）
   const early = await rows()
-  !early.cued && early.x.every(v => v < 0.05) && early.a.every(v => v < 0.05)
-    ? ok('捲到表時上面還在演：表等著（1.3s，✕✓ 全部還藏著）')
-    : bad(`表沒有等上面演完：cued=${early.cued} ✕=${early.x.map(v => v.toFixed(2)).join('/')} ✓=${early.a.map(v => v.toFixed(2)).join('/')}`)
+  !early.cued && early.x.every(v => v < 0.05) && early.a.every(v => v < 0.05) && early.cellOn
+    ? ok('捲到表時上面還在演：表等著（1.3s，✕✓ 內容還藏著、格子的底色在）')
+    : bad(`表沒有等上面演完或等的時候底色不見：cued=${early.cued} 格子底色=${early.cellOn} ✕=${early.x.map(v => v.toFixed(2)).join('/')} ✓=${early.a.map(v => v.toFixed(2)).join('/')}`)
   // 上面收完（桌機 t0 起 2.1s；手機的右窗是捲到表那一刻才開演＝0.4s+2.1s）→ 表開演，取中途一幀
   await wait(desk() ? 950 : 1350) // 累計 ~2.25s／~2.65s＝表開演後 ~0.15s：第一行半亮、後面幾行還沒
   const mid = await rows()
@@ -674,7 +677,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   const fin = await page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
     return {
-      all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item, #why .lp-vs__ans, #why .lp-vs__stamp')].every(el => o(el) > 0.95),
+      all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item > *, #why .lp-vs__ans > *, #why .lp-vs__stamp')].every(el => o(el) > 0.95),
       relief: o(document.querySelector('#why .lp-bubble__relief')),
     }
   })
@@ -688,7 +691,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await wait(300)
   const again = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
-    return { m1: o('#why .vb-1'), a4: o('#why .lp-vs__pair:nth-child(4) .lp-vs__ans') }
+    return { m1: o('#why .vb-1'), a4: o('#why .lp-vs__pair:nth-child(4) .lp-vs__ans > div') }
   })
   again.m1 > 0.95 && again.a4 > 0.95
     ? ok('捲走再回來：定格在演完的樣子（不重播、不倒退）')
@@ -733,7 +736,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   // 「還好——」全都在）。⛔ 這裡驗的是 CSS 保險——「藏」只准發生在 .is-anim 底下開演前，
   // 誰把藏的狀態搬進底案，勾了減少動態的人就會永遠停在「沒人來解」的畫面。
   const stage = await page.evaluate(() => ({
-    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item, #why .lp-vs__ans, #why .lp-vs__stamp, #why .lp-vs__side--o')]
+    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item > *, #why .lp-vs__ans > *, #why .lp-vs__stamp, #why .lp-vs__side--o')]
       .every(el => Number(getComputedStyle(el).opacity) > 0.99),
     relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
   }))
@@ -784,7 +787,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   hidden.length ? bad('沒 JS 卻藏著：\n     ' + hidden.join('\n     ')) : ok('全部看得到（.is-anim 沒掛上＝預設就是最終狀態）')
   // 09-09 四關的對照舞台綁在 .is-anim 底下：沒 JS＝沒有 .is-anim＝直接是演完的完整對照
   const stageNoJs = await page.evaluate(() => ({
-    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-vs__item, #why .lp-vs__ans, #why .lp-vs__stamp, #why .lp-vs__side--o')]
+    all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-vs__item > *, #why .lp-vs__ans > *, #why .lp-vs__stamp, #why .lp-vs__side--o')]
       .every(el => Number(getComputedStyle(el).opacity) > 0.99),
   }))
   stageNoJs.all
