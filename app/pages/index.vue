@@ -49,14 +49,19 @@
     <nav class="lp-nav">
       <div class="lp-wrap lp-nav__in">
         <!-- 商標＝品牌／產品名（MiniMe）；公司名（麥菲爾股份有限公司）在頁尾與法務頁揭露。
-             兩個圖檔都出、由 CSS 切換：手機導覽列擠不下含字樣的 logotype（會把選單鈕推出畫面），
-             ≤720px 改出 logomark。品牌名由 a 的 aria-label 提供，所以兩張圖都 alt=""。 -->
+             兩個圖檔都出、由 CSS 切換。品牌名由 a 的 aria-label 提供，所以兩張圖都 alt=""。
+             ⚠️ 2026-09-10 起**手機也出含字樣的 logotype**（老闆指定），代價是首頁手機的
+                導覽列 CTA 讓位——為什麼讓得起、為什麼法務頁不讓，見 _landing.scss ≤720px 那段。
+             ⚠️ logomark 目前只有「桌機以外」用不到了，但檔案與 class 留著：法務頁與未來更窄的
+                版位還可能要它，而且它是全站唯一的 logo 輸出點（BrandLogo）的一半。 -->
         <a class="lp-brand" href="#top" :aria-label="brandName">
           <BrandLogo class="lp-brand__type" alt="" />
           <BrandLogo mark class="lp-brand__mark" alt="" />
         </a>
         <div class="lp-nav__links">
-          <a href="#why" @click="closeMenu">卡在哪</a>
+          <!-- 2026-09-10 老闆「卡在哪換個方式說」：改「四個難關」＝直接說裡面有什麼
+               （跟隔壁三條同一種語言：能做什麼／價格／成長，都是名詞短語）。 -->
+          <a href="#why" @click="closeMenu">四個難關</a>
           <a href="#value" @click="closeMenu">能做什麼</a>
           <a href="#pricing" @click="closeMenu">價格</a>
           <a href="#grow" @click="closeMenu">成長</a>
@@ -514,15 +519,20 @@
                    ⚠️ 只負責定位，⛔別把副標也搬進來（軌的 hint 在手機上沒有位置放）。
                    ⚠️ 放在畫面欄（.lp-rails__flow）裡面而不是 #value 底下：它要在整個
                       「能做什麼」的捲動範圍內都吸著，而這一欄剛好就是那個範圍。 -->
+              <!-- ⚠️ 2026-09-10 多包一層 .lp-caps__track（老闆「手機版也要優化一下」）：
+                   外層 .lp-caps 只負責「吸頂 ＋ 實色底」（底下的井會從它後面滑過去），
+                   軌的灰底與圓角掛在 track 上。⛔ 別把兩層併回一層，理由在 _landing.scss。 -->
               <nav class="lp-caps" aria-label="能做什麼：四個段落">
-                <a
-                  v-for="(c, i) in CAP_TABS"
-                  :key="c.id"
-                  class="lp-caps__i"
-                  :class="{ 'is-on': activeCap === i }"
-                  :aria-current="activeCap === i ? 'true' : undefined"
-                  :href="`#${c.id}`"
-                >{{ c.label }}</a>
+                <div class="lp-caps__track">
+                  <a
+                    v-for="(c, i) in CAP_TABS"
+                    :key="c.id"
+                    class="lp-caps__i"
+                    :class="{ 'is-on': activeCap === i }"
+                    :aria-current="activeCap === i ? 'true' : undefined"
+                    :href="`#${c.id}`"
+                  >{{ c.label }}</a>
+                </div>
               </nav>
 
               <article id="cap-service" class="lp-pane">
@@ -1409,6 +1419,12 @@
                   <g class="lp-chart__lbls">
                     <text class="lp-chart__lbl--me" x="644" y="24" text-anchor="end">也經營舊客</text>
                     <text class="lp-chart__lbl--base" x="644" y="212" text-anchor="end">只靠新客</text>
+                    <!-- MiniMe 圖標＝這條綠線的署名（2026-09-10 老闆：「是否在也經營舊客附近
+                         加上 MiniMe 的 logo」）。⚠️ 放在**線的端點右邊**（x 672 起）不是標籤左邊：
+                         標籤是 text-anchor="end"，字級一放大就往左長，放左邊會被字疊住；
+                         這裡右邊到 viewBox 邊界還有 88px，而端點圓點只到 x 667，不會撞。
+                         ⚠️ alt 交給整張圖的 aria-label，這顆是裝飾（讀屏不必再唸一次品牌名）。 -->
+                    <image class="lp-chart__brand" href="/logomark.svg" x="672" y="8" width="36" height="21" aria-hidden="true" />
                   </g>
                 </svg>
               </div>
@@ -1561,8 +1577,13 @@
         <!-- 主張句跟 #value 泡泡同口徑（09-06 從「半個客服＋半個行銷」改成「全年無休」），
              改一邊要一起改。「起」是 09-04 露出四個方案時補的（同大字報價）：
              定價區同時看得到 799 與 1,499。 -->
-        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起，多了全年無休的客服＋行銷</span>
-        <span class="lp-stickybar__t2">60 秒開好帳號 · 不綁約、隨時可取消</span>
+        <!-- ⚠️ 兩句都切成「桌機才有的那半截（__t1x／__t2x）＋手機也放得下的那半截」
+             （2026-09-10 老闆：「手機版的這個寫一半」＝整句 316px 塞進 226px 的框、
+             被省略號切在「多了全年無休...」）。手機只出價格那句＋「不綁約、隨時可取消」。
+             ⛔ 文案只有這一份，別為手機另外複製一句（會各改各的）；改字要重量寬度，
+             量法與理由寫在 _landing.scss 的 ≤720px 那段。 -->
+        <span class="lp-stickybar__t1">一個月只要 <em>NT${{ fmt(lowestPaidPrice) }}</em> 起<span class="lp-stickybar__t1x">，多了全年無休的客服＋行銷</span></span>
+        <span class="lp-stickybar__t2"><span class="lp-stickybar__t2x">60 秒開好帳號 · </span>不綁約、隨時可取消</span>
         <NuxtLink class="lp-btn lp-btn--primary lp-btn--sm" :to="SIGNUP_ENTRY_PATH" :tabindex="barShown ? undefined : -1">免費打造</NuxtLink>
       </div>
     </div>

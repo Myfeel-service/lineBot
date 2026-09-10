@@ -1186,8 +1186,15 @@
    *    做成可以左右滑的話「被切掉半個字」看起來像壞的（量法：headless 量每格的 scrollWidth
    *    有沒有超過 clientWidth）。
    * ⚠️ top 是導覽列的 68px；z-index 40＝壓在導覽列（60）與置底行動條（55）之下。
-   * ⛔ 底色一定要**實色**：吸頂時底下的井會從它後面滑過去，半透明會看到字疊字。 */
+   * ⛔ 底色一定要**實色**：吸頂時底下的井會從它後面滑過去，半透明會看到字疊字。
+   * ⚠️ 2026-09-10 老闆「手機版也要優化一下」→ 改成**分段控制**（segmented control）：
+   *    四顆各自獨立的灰膠囊看起來像四顆按鈕（四個獨立的動作），一條軌裡亮一格才讀得出
+   *    「這是同一組、我在第幾格」——這條列的工作本來就是定位，不是提供四個動作。
+   *    ⚠️ 因此分兩層：`.lp-caps` 是**吸頂的實色底**（上面那條房規靠它守），`.lp-caps__track`
+   *       才是那條軌。⛔ 別把軌的圓角與灰底搬回 `.lp-caps` 自己身上——軌左右有版心留白，
+   *       灰底只鋪到軌上的話，吸頂時井會從留白那兩段透出來。 */
   .lp-caps { display: none; }
+  .lp-caps__track { display: flex; }
   .lp-caps__i {
     flex: 1 1 0; min-width: 0; text-align: center;
     padding: 7px 4px; border-radius: var(--radius-pill);
@@ -1576,9 +1583,19 @@
   .lp-chart__me { stroke: #067a3a; stroke-width: 4; fill: none; stroke-linecap: round; }
   .lp-chart__dot--me { fill: #067a3a; }
   .lp-chart__dot--base { fill: #848e88; }
+  /* ⚠️ 這三條的 px 是 **viewBox 的使用者單位**，不是螢幕上的 px：圖是 760 寬的 viewBox
+   *    等比縮到欄寬，所以螢幕上的實際字級＝這個值 ×（畫出來的寬 ÷ 760）。
+   *    桌機畫 656px（×0.86）→ 13px 看起來 11px，剛好；**手機畫 272px（×0.36）→ 4.7px**，
+   *    等於沒有字（2026-09-10 老闆：「這張圖在手機上太小了很難讀」）。放大的規則在 ≤720px
+   *    那一段，⛔ 別在這裡把值調大——桌機會變成大字報。 */
   .lp-chart__x text { fill: var(--ink-soft); font-size: 13px; }
   .lp-chart__lbl--me { fill: var(--ink); font-size: 17px; font-weight: 800; }
   .lp-chart__lbl--base { fill: var(--ink-soft); font-size: 15px; font-weight: 600; }
+  /* 綠線末端的 MiniMe 圖標（2026-09-10 老闆：「是否在也經營舊客附近加上 MiniMe 的 logo」）。
+     ⚠️ 位置刻意放在**線的端點右邊**、不是標籤左邊：標籤是 text-anchor="end"，字級一放大
+     就往左長，放左邊的圖標會被字追上去疊住（手機那段真的把字級放大了）。
+     ⚠️ 它是「這條線是誰做到的」的署名，不是圖例——圖例在下面 .lp-chartlegend。 */
+  .lp-chart__brand { opacity: 0.92; }
   .lp-chartlegend { display: flex; gap: 12px 26px; flex-wrap: wrap; margin-top: 20px; }
   .lp-cl { display: flex; align-items: center; gap: 9px; font-size: 0.88rem; color: var(--ink-2); }
   .lp-cl i { width: 22px; height: 4px; border-radius: var(--radius-pill); flex: none; }
@@ -2298,13 +2315,39 @@
   @media (max-width: 960px) {
     /* 對照卡收成單欄（先「沒有的晚上」、後「有的同一晚」，對照表跟在最後）；
        整張卡限寬置中＝維持手機聊天窗的比例，太寬的 LINE 視窗一眼就假。
-       中線在單欄裡變成「右半的上邊線」；對照表的 ✓ 欄不再有左邊線、改用上邊線接在它的 ✕ 底下
-       ＝每一組「痛＋解」是上灰下綠的成對色塊，組與組之間靠顏色交替分組（卡內零間距）。 */
+       中線在單欄裡變成「右半的上邊線」。 */
     .lp-vs { grid-template-columns: 1fr; max-width: 480px; margin-left: auto; margin-right: auto; width: 100%; }
     .lp-vs__side--o { border-left: 0; border-top: 1px solid var(--vs-line); }
-    .lp-vs__grid { grid-template-columns: 1fr; }
-    .lp-vs__ans { border-left: 0; }
-    .lp-vs__pair:nth-child(n) .lp-vs__ans { border-top: 1px solid var(--vs-line); }
+    /* ── 對照表在手機上改「一組一張小卡」（2026-09-10 老闆：手機版這樣的排版很怪）──
+     * 舊做法＝八格從上到下連成一片、只靠灰／綠交替分組、格與格之間零間距。桌機上那是
+     * **一列＝左痛右解**、橫著讀就是一對一；收成單欄之後同一組的「痛」與「解」變成上下，
+     * 而**上一組的解**與**下一組的痛**中間也只有一條同樣的細線——四組八格讀起來是
+     * 一份長條清單（老闆看到的「很怪」），配對關係整個消失。
+     * 解法＝把每一組包成一張圓角小卡（`.lp-vs__pair` 從 display:contents 變成一個真的盒子），
+     * 組內零間距（上灰下綠仍然是「問題→解法」），組與組之間留 10px。
+     * ⚠️ `display: contents` → `block` 不影響進場動畫：那組選擇器吃的是 `.lp-vs__pair > * > *`。
+     * ⚠️ 卡外框用 `--vs-line`（同一條分隔線的色），⛔別另開顏色。
+     * ⛔ 別把小卡改成白底＋標籤（那個方向被打回過，見上面 .lp-vs__grid 的註解）。 */
+    .lp-vs__grid {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 10px 8px 12px; border-top: 1px solid var(--vs-line);
+    }
+    /* 格子的左右內距跟著收（桌機 24px）：小卡外面多了 8px 的留白，不收的話每一格的字
+       比原本窄 22px，四句白話全部多折一行、整段長 137px。16px ＝跟上面兩扇窗在手機上的
+       內距同一個值（`.lp-vs__side` 也是 16），✕✓ 圓徽與窗裡的泡泡仍然對在同一條線上。
+       ⚠️ 兩種格子**必須同值**（見上面 .lp-vs__item 那段：圓徽是靠同樣的內距對齊的）。 */
+    .lp-vs__item, .lp-vs__ans { padding: 13px 16px; }
+    /* 白話那一行在手機一定會折兩行（最長那句 272px、格子只有 239px），`balance` 讓兩行
+       分得平均一點，不要留下「人。」這種一個字的尾行。⚠️ 不支援的瀏覽器就是原本的折法
+       （fail-open，不會破版）；⛔ 別把它加到聊天泡泡上——那扇窗要跟後台逐字一樣。 */
+    .lp-vs__item p, .lp-vs__ans p { text-wrap: balance; }
+    .lp-vs__pair {
+      display: block; border: 1px solid var(--vs-line);
+      border-radius: 14px; overflow: hidden;
+    }
+    /* 邊線改由小卡自己畫：組內只留「痛／解」中間那一條，四邊交給 .lp-vs__pair */
+    .lp-vs__item, .lp-vs__ans { border: 0; }
+    .lp-vs__pair .lp-vs__ans { border-top: 1px solid var(--vs-line); }
     /* 手機的左窗自己演（右窗在畫面外）：問完到「隔天」不能空 0.85 秒沒事發生，
        拍點收緊成 0.55／0.8／1.1。桌機那組是「右邊在回、左邊空著」才撐得起長空檔。 */
     &.is-anim .lp-vs__side--x.is-cued .vb-2 { animation-delay: 0.55s; }
@@ -2323,23 +2366,49 @@
        所以只有截圖跟量盒模型看得出來。 */
     .lp-rails { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .lp-rails__rail { display: none; }
-    /* 軌收掉之後接手的那條吸頂分頁列（why 見上面 .lp-caps） */
+    /* 軌收掉之後接手的那條吸頂分頁列（why 與兩層結構見上面 .lp-caps） */
     .lp-caps {
-      display: flex; gap: 6px;
+      display: block;
       position: sticky; top: 68px; z-index: 40;
       margin: 0 0 14px; padding: 8px 0 10px;
       background: var(--paper);
     }
+    .lp-caps__track {
+      gap: 3px; padding: 3px;
+      background: var(--surf-2); border: 1px solid var(--hair);
+      border-radius: var(--radius-pill);
+    }
+    /* 軌裡的四格：沒被選到的**不畫自己的底**（底是軌的），選到的那格才是一顆白片。
+       ⚠️ 白片＋一點影子是刻意的（不是綠底）：它要讀成「軌上被推到這一格」，
+          綠底會讀成「這一格被按下去了」＝又變回按鈕。字級升半級（0.8→0.84rem）。 */
+    .lp-caps__i { background: transparent; padding: 8px 4px; font-size: 0.84rem; }
+    .lp-caps__i.is-on {
+      color: var(--g-text); background: var(--paper);
+      box-shadow: 0 1px 2px rgba(16, 24, 20, 0.1), 0 0 0 1px rgba(16, 24, 20, 0.04);
+    }
     .lp-pane__apps { grid-template-columns: 1fr; }
     /* 井在手機收窄一級：24px 的頁面邊距外再吃 26px 的井內距，內容會被擠掉一大截。
-       塊距也跟著收——手機一次只看得到一塊，不需要 44px 去分它們，井自己就是邊界。 */
-    .lp-pane { padding: 20px 16px 18px; border-radius: 18px; }
-    .lp-band { padding: 18px 16px 18px; }
+       塊距也跟著收——手機一次只看得到一塊，不需要 44px 去分它們，井自己就是邊界。
+       ⚠️ 2026-09-10 左右再從 16 收到 10px（老闆「手機版可以直接拉寬一點」，指的是
+          AI 客服那扇窗）：這 6px 直接變成聊天窗的寬度，而井離螢幕邊還有版心的 24px。
+       ⛔ `.lp-band` **不可以**再寫自己的 padding（09-10 老闆抓到「圖文選單的 padding
+          跟其他的不一樣」）：它同時掛 `.lp-pane`，多寫一條就是四個井裡有一個對不齊。
+          桌機那邊左右也是刻意跟其他三塊同 26px，只有上下矮一級。 */
+    .lp-pane { padding: 20px 10px 18px; border-radius: 18px; }
     .lp-pane + .lp-pane { margin-top: 20px; }
+    /* ⚠️ 錨點偏移在手機要**多讓出吸頂分頁列的高度**：桌機是 100px（只有導覽列 68 要讓），
+       手機那條列佔到 129px，用 100 的話點下去那一格的標題正好躲在列的下面
+       （實測井上緣落在 y=100、列的下緣 129＝標題被蓋掉 9px）。140 ＝ 129 ＋ 11px 呼吸。
+       ⛔ 改分頁列的高度（內距／字級）要回頭改這個數字，量法＝點一格再量井的 top。 */
+    .lp-pane { scroll-margin-top: 140px; }
     /* live 視窗手機也維持原字級（⛔別加回 zoom，見桌機那段的六輪教訓）：
        窄視窗的聊天窗本來就像一支手機，泡泡多折幾行是自然的。上限也還原成後台預設
-       （滿欄那條 480px 是為了 816px 的寬視窗設的，窄螢幕會變成泡泡縮在左邊）。 */
-    .lp-livewin--chat { --chat-bubble-max: min(84%, 680px); }
+       （滿欄那條 480px 是為了 816px 的寬視窗設的，窄螢幕會變成泡泡縮在左邊）。
+       ⚠️ 09-10 從 84% 放到 88%：同一輪「拉寬一點」的第三個來源（另兩個是井內距與下面
+          那條訊息流內距）。三處加起來泡泡可用寬度 227→266px。 */
+    .lp-livewin--chat { --chat-bubble-max: min(88%, 680px); }
+    /* 訊息流的內距：後台那 18px 是給寬視窗的，手機上兩側各吃 18px＝泡泡少 36px。 */
+    .lp-livewin .conv-messages { padding: 14px 10px 16px; }
   }
   @media (max-width: 900px) {
     /* Hero 滿版劇場的手機版：chip 收一半（.lp-chip--hm）、其餘縮一級；
@@ -2360,9 +2429,25 @@
     &.is-menu-open .lp-nav__links { display: flex; }
     .lp-nav__signin { display: none; }
     .lp-nav__burger { display: flex; }
-    /* 商標只留圖標，讓 CTA ＋漢堡鈕在 320px 寬也放得下 */
-    .lp-brand__type { display: none; }
-    .lp-brand__mark { display: block; }
+    /* ── 手機導覽列：完整商標（2026-09-10 老闆「手機版還是希望有完整 Logo」）────
+     * 舊做法只出 logomark（40px 寬），理由是「logo＋CTA＋漢堡鈕」在 320px 放不下——
+     * 實測 logotype 在 24px 高＝**128px 寬**，320px 的導覽列只有 272px 可用：
+     * 128 ＋ 免費註冊 100 ＋ 漢堡 42 ＋ 兩個間距 ＝ 290 > 272，真的放不下。
+     * 所以同一輪回答老闆的第二個問題（「免費註冊評估是否要在 Header」）：**首頁讓位**。
+     * ⚠️ 讓得起的理由＝手機上任何時候都有一顆 CTA 在畫面上，沒有空窗：
+     *    hero 在畫面內時它自己有一顆大的；hero 一離開畫面，置底行動條就上來
+     *    （`barShown` 的 IntersectionObserver 觀察的就是 `.lp-hero`）。
+     * ⛔ **法務頁（`.lp-legal-page`）不可以一起讓**：那三頁沒有 hero、也沒有置底行動條，
+     *    導覽列那顆是全頁唯一的入口。所以這條只掛 `.lp-home`。
+     * ⚠️ 漢堡選單裡**刻意沒有**補一顆註冊鈕：選單打開時置底行動條（或 hero 的大按鈕）
+     *    仍然在畫面上，不缺入口。⚠️ 之後若要補，那顆的目的地要用 `SIGNUP_ENTRY_PATH`
+     *    （`shared/signup-entry.ts`），⛔別寫字面 `/login`——註冊意圖的參數是另一輪
+     *    2026-09-10 收斂好的，五顆 CTA 都走那條。 */
+    .lp-brand { --brand-logo-h: 24px; }
+    /* ⛔ 一定要 `&.lp-home`（＝`.lp.lp-home`）不是 `.lp-home`：那兩個 class 掛在**同一個**
+       元素上，寫成後代選擇器（`.lp .lp-home`）永遠不會命中——實測 CTA 照樣留在畫面上。
+       同樣的寫法見下面頁尾那條 `&.lp-home .lp-foot__bar-in`。 */
+    &.lp-home .lp-nav__right > .lp-btn { display: none; }
     &.is-menu-open .lp-nav__burger span { background: transparent; }
     &.is-menu-open .lp-nav__burger span::before { top: 0; transform: rotate(45deg); }
     &.is-menu-open .lp-nav__burger span::after { top: 0; transform: rotate(-45deg); }
@@ -2407,19 +2492,63 @@
     .lp-outcome { grid-template-columns: 1fr; }
     .lp-outcome__cell + .lp-outcome__cell { border-left: 0; border-top: 1px solid var(--hair); }
 
-    /* 黏性條：手機只留主訴求與按鈕，副標擠不下（會把按鈕推出畫面） */
+    /* 黏性條（2026-09-10 老闆：「手機版的這個寫一半」）：
+       ⚠️ 舊做法＝整句照桌機出，再用 `text-overflow: ellipsis` 切掉——實測那句 316px、
+          框只有 226px，**每一支手機都固定看到「⋯」**（切在「多了全年無休...」）。
+          省略號適合「偶爾有人的名字特別長」，不適合一句每次都放不下的固定文案。
+       正解＝手機**換一句短的**：句尾那半截（`__t1x`）藏起來，只留價格那句；
+       原本整條藏掉的副標（`__t2`）改成只留後半「不綁約、隨時可取消」放回來——
+       ⚠️ 兩行都在但都放得下，比一行被切一半好讀，而且「不綁約」是這裡最有用的一句。
+       ⛔ 別把 ellipsis 加回來：真的放不下時應該改文案，不是把字切掉。
+       ⚠️ 改這幾句要重量一次（量法＝`__t1`／`__t2` 的 scrollWidth 有沒有超過 clientWidth）。 */
     .lp-stickybar { padding: 0 12px 12px; }
-    .lp-stickybar__in { padding: 10px 10px 10px 18px; gap: 12px; }
-    .lp-stickybar__t1 { font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .lp-stickybar__t2 { display: none; }
+    /* ⚠️ 手機改**兩欄的 grid**：左欄兩行字（價格／不綁約）、右欄一顆按鈕跨兩行。
+       ⛔ 不能沿用桌機的 flex 一列：t2 放回來之後三個東西並排，實測按鈕被推到 x=404、
+          而條子只到 378＝按鈕有一截在框外（改這裡要量 `.lp-stickybar .lp-btn` 的 right）。 */
+    .lp-stickybar__in {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center; column-gap: 12px; row-gap: 0;
+      padding: 9px 10px 9px 18px;
+    }
+    .lp-stickybar__t1 { grid-area: 1 / 1; font-size: 0.84rem; white-space: nowrap; }
+    .lp-stickybar__t2 { grid-area: 2 / 1; font-size: 0.76rem; white-space: nowrap; }
+    .lp-stickybar .lp-btn { grid-area: 1 / 2 / 3 / 3; margin-left: 0; }
+    .lp-stickybar__t1x, .lp-stickybar__t2x { display: none; }
 
     /* 窄帶在手機上改上下：色塊在上、手機在色塊下面置中（下方就是圖說）。
        ⚠️ 欄位指定要清掉，DOM 順序（文字 → 手機）才會生效——留著 grid-column 的話
           手機會被釘在第 1 欄，變成「圖在上、字在下」。 */
     .lp-band { grid-template-columns: 1fr; gap: 22px; }
-    .lp-band__text { grid-column: auto; padding: 24px 22px; }
+    /* ⛔ 文字區**不可以有自己的左右內距**（2026-09-10 老闆抓到「圖文選單的 padding 跟
+       其他的不一樣」）：井已經給了內距，再加 22px＝這一塊的標題比其他三塊往右縮 22px，
+       四個井的內容左緣對不齊。這 `24px 22px` 是 09-03 十九輪的遺跡——那時右半是一塊
+       獨立的灰色卡片、內距是卡片自己的；09-06 灰色塊拿掉之後它就只剩副作用。
+       ⚠️ 上下也歸零：井自己有 20/18px，再疊 24px 上緣會空一大截（桌機是 flex 垂直置中，
+          靠的是跟手機等高、不是靠這個 padding）。 */
+    .lp-band__text { grid-column: auto; padding: 0; }
     /* 單欄時手機回到原尺寸（不再需要為了 1:2 縮小） */
     .lp-band__phone { grid-column: auto; grid-row: auto; justify-self: center; width: 268px; --phone-zoom: 1; }
+
+    /* ── 成長曲線在手機上要讀得到（2026-09-10 老闆：「這張圖在手機上太小了很難讀」）──
+     * 病灶是**兩件事乘在一起**：①圖被兩層內距夾到只剩 272px 寬（版心 24＋卡 24＋圖框 10）
+     * ②viewBox 是 760 寬，所以整張圖等比縮到 ×0.36，13px 的年份字在螢幕上只有 **4.7px**。
+     * ⚠️ 不能靠「把圖拉高」解決：viewBox 固定 760×330＝2.3:1，寬度一定，高度就定了
+     *    （`preserveAspectRatio` 只會留白，不會變比例）。所以兩件都要治：
+     *    ①內距收一級（卡 24→12、圖框 10→4）→ 圖 272→322px、×0.42
+     *    ②字級在 viewBox 裡放大到 ×2（13→26、17→34、15→30）→ 螢幕上 11／14.3／12.6px
+     * ⚠️ 線也加粗（4→6、3→5 使用者單位）：×0.42 之後 4px 的線只有 1.7px，看起來會斷。
+     * ⚠️ 圖標跟著放大（CSS 的 width/height 對 SVG `<image>` 是幾何屬性，改得動；
+     *    不支援的瀏覽器維持 attribute 的 36×21＝仍然看得見，fail-open）。
+     * ⛔ 改這幾個數字要回頭量「螢幕上的實際字級」＝值 ×（畫出來的寬 ÷ 760），
+     *    別只看 SCSS 裡的數字覺得夠大了。 */
+    .lp-panel--plain > .lp-panel__bd { padding-left: 12px; padding-right: 12px; }
+    .lp-chartwrap { padding: 14px 4px 6px; }
+    .lp-chart__x text { font-size: 26px; }
+    .lp-chart__lbl--me { font-size: 34px; }
+    .lp-chart__lbl--base { font-size: 30px; }
+    .lp-chart__me { stroke-width: 6; }
+    .lp-chart__base { stroke-width: 5; }
+    .lp-chart__brand { width: 58px; height: 34px; }
 
     /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
        （px/s 不變、可視寬變小＝掃過眼前的比例變快） */
