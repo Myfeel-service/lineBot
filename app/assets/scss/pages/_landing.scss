@@ -688,14 +688,27 @@
   .lp-vs__side--x { background: var(--vs-x); }
   /* 中線＝右半的左邊框（下面 ✓ 那欄同一條），從卡的頭到腳連成一條 */
   .lp-vs__side--o { background: var(--vs-o); border-left: 1px solid var(--vs-line); }
+  /* 兩半的標籤。⚠️ 用 inline-flex＋gap：右邊那顆多了 logo，要跟字**垂直居中**且左右
+     內距與左邊那顆一致（不然兩個標籤的高度與基線會差幾 px，並排時看得出來）。 */
   .lp-vs__tag {
     margin: 0; align-self: flex-start; font-size: 0.82rem; font-weight: 800; line-height: 1;
     color: #fff; border-radius: var(--radius-pill); padding: 8px 14px; letter-spacing: 0.02em;
+    display: inline-flex; align-items: center; gap: 7px;
   }
   .lp-vs__tag--x { background: #454b53; }
   .lp-vs__tag--o { background: var(--g); }
-  /* ⚠️ 09-09 第五輪拿掉了中線的 MiniMe logo 圓球（沒有標籤的浮球＝不明所以的按鈕），
-     ⛔ 別加回來——品牌進場由右半的綠標籤＋「MiniMe 自動回覆」小字扛。 */
+  /* MiniMe 圖標放在**綠標籤裡**（第十一輪老闆：「是否將 Logo 放在右邊、呈現出有 MiniMe」）。
+   * ⭐ 這條翻掉第六輪的「Logo 拍板不放」；⛔ 但只放在標籤（我們的標註層）——
+   *    ⛔ 不可以放進聊天窗的標頭或回覆頭像：那是客人在 LINE 看到的**店家**帳號，
+   *       MiniMe 是替店家回話，放進去等於宣稱「客人會看到 MiniMe 的頭像」＝假的。
+   * ⚠️ 圖標高度用 --brand-logo-h（BrandLogo 的規矩：大小由外層給，元件不開 size prop）；
+   *    on-color＝白色版，綠底上才看得見。
+   * ⚠️ 09-09 第五輪拿掉的是**中線那顆沒有標籤的浮球**（讀起來像壞掉的按鈕）——
+   *    ⛔ 那顆仍然不要加回來，跟這裡「標籤裡的小圖標」是兩件事。
+   * ⚠️ 圖標高度**不可以超過那行字的行框**（0.82rem × line-height 1 ＝ 13.1px）：flex 容器的高
+   *    由最高的那個孩子決定，放 15px 就會把右邊標籤撐成 31px、左邊仍 29px——兩顆並排差 2px，
+   *    下緣對不齊（實測到才改的）。13px 之下兩顆同高 29px。 */
+  .lp-vs__tag--o .brand-logo { --brand-logo-h: 13px; height: var(--brand-logo-h); width: auto; flex: none; }
   /* 兩顆章：蓋在各自那扇窗的右上角，像驗訖章（靜態 rotate，punch 動畫只動 scale/opacity
      ——individual properties，不碰 transform）。
      ⚠️ 第八輪老闆拍板：**兩顆同一個角度**（原本紅 +7° 綠 -6° 互斜「對仗」被問「為什麼要不一樣」），

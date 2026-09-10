@@ -339,7 +339,14 @@
                我的判斷一致：沒有標籤的浮球讀起來像壞掉的按鈕）——品牌的進場時刻由
                這半邊的綠標籤＋回覆上的「MiniMe 自動回覆」小字扛。⛔ 別加回來。 -->
           <div class="lp-vs__side lp-vs__side--o lp-cue lp-cue--mid">
-            <p class="lp-vs__tag lp-vs__tag--o">有 {{ brandName }} 的同一晚</p>
+            <!-- ⚠️ 第十一輪老闆：「是否將 MiniMe 的 Logo 放在右邊、呈現出有 MiniMe」——
+                 ⭐ 這條**翻掉第六輪「Logo 拍板不放」**（當時的理由是圖形 logo 會破壞「客人手機
+                 畫面」的戲），依老闆新指示加回來，但只放在**這個標籤上**＝我們自己的標註層。
+                 ⛔ 不放進聊天畫面裡（窗的標頭、回覆的頭像）：那扇窗是客人在 LINE 看到的
+                 **店家**帳號（◯◯咖啡），MiniMe 是替店家回話、不是另一個帳號——把 logo 放進去
+                 等於告訴客人「他會看到 MiniMe 的頭像」，那是假的。
+                 標籤本來就寫著「有 MiniMe 的同一晚」，logo 補的是**看一眼就認得**那一半。 -->
+            <p class="lp-vs__tag lp-vs__tag--o"><BrandLogo mark on-color alt="" />有 {{ brandName }} 的同一晚</p>
             <div class="lp-scene lp-scene--o" aria-hidden="true">
               <div class="lp-scene__frame">
                 <div class="lp-scene__hd">
