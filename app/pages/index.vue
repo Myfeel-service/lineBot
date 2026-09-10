@@ -87,7 +87,9 @@
             ⛔不可以改成 onMounted 才把 hero 藏起來重演——先看到完整畫面再被藏起來
             就是閃一下的破圖（hero 的老規矩）。SSR／爬蟲／無 JS／減少動態拿到的
             都是醒著的完整內容。 -->
-    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone, 'is-typed': heroTyped, 'is-scrolled': stuck }">
+    <!-- ⚠️ `is-keep-next`＝下一區是留客橋段（白底）：hero 尾端的融色要跟著下一區的底色換，
+         綁旗標＝這區復活時自動換回去（理由見 script 的 `SHOW_KEEP_SECTION`）。 -->
+    <header id="top" ref="heroEl" class="lp-hero" :class="{ 'is-staged': heroStaged, 'is-asleep': heroAsleep, 'is-awake': heroAwake, 'is-done': heroDone, 'is-typed': heroTyped, 'is-scrolled': stuck, 'is-keep-next': SHOW_KEEP_SECTION }">
       <span class="lp-hero__blob lp-hero__blob--1" />
       <span class="lp-hero__blob lp-hero__blob--2" />
       <!-- 誠實機制的常駐標示。⛔別因為「版面乾淨」拿掉 -->
@@ -184,9 +186,10 @@
 
       <!-- 滿版舞台的出口：示範演完才浮出的「往下看」箭頭（09-08 使用者要的 scroll down 提示；
            同輪拿掉了重播示範）。無 JS／減少動態＝預設就看得見，錨點連結不用 JS 也能跳。
-           ⚠️ 09-09 起指向 #keep（留客橋段）不是 #why：橋段插在中間，仍指 #why 的話
-           「往下看」會直接跳過整段新內容。 -->
-      <a class="lp-scrollcue" href="#keep"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
+           ⚠️ 目的地跟著 `SHOW_KEEP_SECTION` 走：留客橋段在＝指 #keep（否則「往下看」會
+           直接跳過整段），藏起來＝指回 #why。⛔別寫死其中一個：09-10 藏這區時，
+           寫死的 `#keep` 就是一個指向不存在元素的死錨點（按了完全沒反應）。 -->
+      <a class="lp-scrollcue" :href="SHOW_KEEP_SECTION ? '#keep' : '#why'"><span class="lp-scrollcue__t">往下看更多</span><span class="lp-scrollcue__chev" /></a>
     </header>
 
     <!-- ── 留客橋段（第二卡）：泡泡＋名單卡（09-09 老闆拍板 D-73④ 方案 B，mockup `fbf05df1`）──
@@ -203,8 +206,10 @@
          ⚠️ 刻意不放 CTA：第一卡剛給過唯一主按鈕，半個畫面內第二顆會互相搶
             （舊機會卡卡尾的按鈕因此不跟著回歸）。
          演出：泡泡照全站規矩打字（.lp-turn 自動接）；印章慢一拍蓋下去（.lp-cue 76% 線，
-         戲寫在 _landing.scss「留客橋段」段）。底案＝蓋好的完整狀態（減少動態／沒 JS 直接看到）。 -->
-    <section id="keep" class="lp-section lp-keep">
+         戲寫在 _landing.scss「留客橋段」段）。底案＝蓋好的完整狀態（減少動態／沒 JS 直接看到）。
+         ⚠️ 2026-09-10 老闆「先隱藏這個區塊吧」＝整區暫時不出現（旗標與完整理由見 script 的
+            `SHOW_KEEP_SECTION`）。⛔ 程式刻意留著不刪，旗標改 true 就整區回來。 -->
+    <section v-if="SHOW_KEEP_SECTION" id="keep" class="lp-section lp-keep">
       <div class="lp-wrap">
         <div class="lp-keep__grid">
           <div class="lp-turn lp-reveal">
@@ -1595,6 +1600,28 @@ const SHOW_FAST_SECTION = false
  */
 const tintWhenFastShown = SHOW_FAST_SECTION ? 'lp-section--tint' : ''
 const tintWhenFastHidden = SHOW_FAST_SECTION ? '' : 'lp-section--tint'
+
+/**
+ * 留客橋段（`#keep`「好不容易成交的顧客，別只做一次生意」＋名單卡）整區的開關。
+ * **2026-09-10 老闆拍板「先隱藏這個區塊吧，這兩個設計還是很不滿意」。**
+ *
+ * 背景：這區是 `D-73`④ 落地的（`G-63`／`d5c7a1e`），落地後老闆連看七輪 mockup 都不滿意
+ * （每一輪的回饋與診斷都在 STATUS `D-73`：儀表板美感 → 沒有「被搞定」的感覺 → 延續感 →
+ * 580 過度強調 → 亂與整理好像兩個設計 → 動畫卡卡 → 不直觀、沒主角）。⛔ 別再憑感覺
+ * 重畫第八輪：**要復活得先解掉那七輪共同的病根**（畫面是「要人解讀的圖解」、沒有主角），
+ * 或改採 mockup 最後留的第五條路——**這區不放動畫，只留大字＋印章**。
+ *
+ * 藏起來一起消失的東西（復活的判斷依據）：
+ *   ① `D-70`① 一直開著的「名單卡下移第二區接住」又變回沒人接（滿屏 hero 少了那塊賣點證據）
+ *   ② 外部顧問三版文案唯一被採用的那句「好不容易成交的顧客，別只做一次生意」的露出
+ *   ③ 「MiniMe 是什麼、實際留下了什麼」這個補充——第一卡只講痛與解法，不講產品本身
+ * ⚠️ 藏起來之後 hero 的下一區變回 `#why`（灰底），所以 hero 融色的終點也要跟著換：
+ *    綁在 `.lp-hero` 的 `is-keep-next` 上（見 `_landing.scss`），⛔別在 CSS 裡寫死顏色，
+ *    否則旗標改 true 時會留下一條白融進灰的接縫（09-10 差點漏掉這件事）。
+ * ⚠️ 「往下看」箭頭的目的地也綁這個旗標（見 `.lp-scrollcue`），⛔別寫死 `#keep`＝死錨點。
+ * ⚠️ `scripts/landing-anim-check.mjs` 會偵測這區不在，並**明講**跳過了哪幾條檢查。
+ */
+const SHOW_KEEP_SECTION = false
 
 // ── #value「系統實際畫面」聊天視窗的示範對話 ────────────────
 // ⛔ 每一句的字、時間、誰回的，都必須跟 scripts/landing-demo-seed.ts 的 MSGS **逐字一致**

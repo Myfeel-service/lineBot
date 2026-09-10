@@ -173,10 +173,13 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const el = document.querySelector('.lp-scrollcue')
     return el ? { op: Number(getComputedStyle(el).opacity), href: el.getAttribute('href') } : null
   })
-  // 09-09 起指向 #keep（留客橋段插在 hero 與 #why 之間，指 #why 會跳過整段新內容）
-  cue && cue.op > 0.9 && cue.href === '#keep'
-    ? ok('「往下看」箭頭浮出、指向 #keep（留客橋段）')
-    : bad(`往下看箭頭不對：${JSON.stringify(cue)}`)
+  // 目的地跟著留客橋段在不在走（index.vue 的 SHOW_KEEP_SECTION）：在＝#keep、不在＝#why。
+  // ⛔ 不可寫死其中一個：寫死 #keep 而那區被藏起來，驗收會綠、實際卻是個死錨點。
+  const hasKeep = await page.$('#keep') !== null
+  const cueWant = hasKeep ? '#keep' : '#why'
+  cue && cue.op > 0.9 && cue.href === cueWant
+    ? ok(`「往下看」箭頭浮出、指向 ${cueWant}${hasKeep ? '（留客橋段）' : '（留客橋段已隱藏，指回四關）'}`)
+    : bad(`往下看箭頭不對（該指 ${cueWant}）：${JSON.stringify(cue)}`)
   // 大標打字（09-08）：演完後 11 顆字全亮、副標看得見
   const typing = await page.evaluate(() => ({
     chars: document.querySelectorAll('.lp-h1t').length,
@@ -192,6 +195,12 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   // 0.5) 留客橋段（09-09 D-73④）：印章慢一拍蓋下去、名單加總＝第一卡結算的 580、
   //      印章不可蓋到人數（舊機會卡的紅線——@container 縮級表就是為它存在的，
   //      改印章字級／內距／膠囊 min-width 全靠這條抓）。
+  // ⚠️ 這區 09-10 起用旗標藏著（SHOW_KEEP_SECTION）：不在就**明講跳過**——⛔不靜靜跳過，
+  //    那會讓「動畫壞了」跟「動畫不在了」在輸出上長得一樣；也不算不合格（那是產品決定）。
+  if (!hasKeep) {
+    console.log('  ⏭️  留客橋段整區不在（index.vue 的 SHOW_KEEP_SECTION=false）→ 跳過 4 條：'
+      + '印章起點／印章蓋下去／名單加總 580／印章不蓋人數')
+  } else {
   await go('.lp-ops', -830)
   const stampBefore = await page.$eval('.lp-stamp', el => Number(getComputedStyle(el).opacity))
   await go('.lp-ops', -300)
@@ -212,6 +221,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   keep.op > 0.9 ? ok('橋段印章 演完＝蓋下去了') : bad(`橋段印章沒蓋下去：opacity ${keep.op}`)
   keep.sum === 580 ? ok('名單四份加總＝580（跟第一卡結算同一批人）') : bad(`名單加總不是 580：${keep.sum}`)
   keep.overlapped ? bad('印章蓋到人數了（紅線）') : ok('印章沒蓋到人數')
+  }
 
   // 1) 泡泡打字
   await go('#why .lp-turn', -830)
@@ -758,13 +768,15 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     : bad(`四關在減少動態下不完整：全到=${stage.all}、還好 ${stage.relief}`)
   // 09-09 留客橋段：減少動態＝名單四列與印章直接是「蓋好」的完整狀態
   //（藏與戲都只在 .is-anim 底下，跟對照舞台同一條房規）
-  const keepReduced = await page.evaluate(() => ({
-    rows: document.querySelectorAll('#keep .lp-op').length,
-    stamp: Number(getComputedStyle(document.querySelector('#keep .lp-stamp')).opacity),
-  }))
-  keepReduced.rows === 4 && keepReduced.stamp > 0.99
-    ? ok('留客橋段完整（名單 4 列、印章蓋好）')
-    : bad(`留客橋段不完整：列 ${keepReduced.rows}、印章 opacity ${keepReduced.stamp}`)
+  // ⚠️ 09-10 起這區用旗標藏著：不在就明講跳過（理由同 ② 那段）
+  const keepReduced = await page.evaluate(() => {
+    const sec = document.querySelector('#keep')
+    if (!sec) return null
+    return { rows: sec.querySelectorAll('.lp-op').length, stamp: Number(getComputedStyle(sec.querySelector('.lp-stamp')).opacity) }
+  })
+  if (!keepReduced) console.log('  ⏭️  留客橋段整區不在 → 跳過 1 條：減少動態下名單與印章是否完整')
+  else if (keepReduced.rows === 4 && keepReduced.stamp > 0.99) ok('留客橋段完整（名單 4 列、印章蓋好）')
+  else bad(`留客橋段不完整：列 ${keepReduced.rows}、印章 opacity ${keepReduced.stamp}`)
   // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
   const voices = await page.evaluate(() => ({
     animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
@@ -806,9 +818,14 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   stageNoJs.all
     ? ok('四關沒 JS 也直接是演完的完整對照（兩窗、✕✓、紅章都在）')
     : bad(`四關沒 JS 卻不完整：全到=${stageNoJs.all}`)
-  // 09-09 留客橋段：沒 JS＝沒有 .is-anim＝印章直接是蓋好的
-  const keepNoJs = await page.evaluate(() => Number(getComputedStyle(document.querySelector('#keep .lp-stamp')).opacity))
-  keepNoJs > 0.99 ? ok('留客橋段沒 JS 也是蓋好的印章') : bad(`留客橋段沒 JS 卻藏著印章：opacity ${keepNoJs}`)
+  // 09-09 留客橋段：沒 JS＝沒有 .is-anim＝印章直接是蓋好的（09-10 起可能整區藏著＝明講跳過）
+  const keepNoJs = await page.evaluate(() => {
+    const el = document.querySelector('#keep .lp-stamp')
+    return el ? Number(getComputedStyle(el).opacity) : null
+  })
+  if (keepNoJs === null) console.log('  ⏭️  留客橋段整區不在 → 跳過 1 條：沒 JS 下印章是否蓋好')
+  else if (keepNoJs > 0.99) ok('留客橋段沒 JS 也是蓋好的印章')
+  else bad(`留客橋段沒 JS 卻藏著印章：opacity ${keepNoJs}`)
   // 09-08：選單的收起／展開改成吃 SSR 就要印對的 class（`is-menu-up`）。沒 JS 時如果那個
   // class 沒印出來，看到的是**一支沒有選單的手機**——這塊在賣的就是選單，等於整塊失去意義。
   // ⛔ 只量 opacity 抓不到這件事（選單是被位移出去的，opacity 還是 1），所以這裡量 transform。

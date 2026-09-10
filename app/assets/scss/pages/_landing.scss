@@ -318,14 +318,20 @@
     min-height: max(620px, calc(100vh - 68px));
     min-height: max(620px, calc(100svh - 68px));
     padding: clamp(44px, 5vw, 64px) 0;
-    /* 尾端 84%→100% 融進下一區的底色：滿版舞台收尾用硬切最突兀。
-       ⚠️ 09-09 起下一區是留客橋段（#keep＝白底），融色終點從 --surf-2 改 --paper；
-          橋段若再搬走，這裡要跟著下一區的底色改。
+    /* 尾端 84%→100% 融進**下一區的底色**：滿版舞台收尾用硬切最突兀。
+       ⚠️ 下一區是誰會變：留客橋段（#keep，白底）藏起來時下一區是 #why（灰底 --surf-2），
+          所以終點色綁在 `.is-keep-next` 上（Vue 依 `SHOW_KEEP_SECTION` 掛，見 index.vue）。
+          ⛔ 別在這裡寫死顏色：09-09 橋段落地時改成白、09-10 藏起來又要改回灰，
+          寫死就等於每次開關都要記得手動改一次（漏掉＝一條白融進灰的接縫）。
        ⚠️ 09-08 評估過「白灰交界是否都改漸層」＝**只做 hero 這一個**：交錯底色的
        功能就是分段，內文區塊之間的俐落界線才讀得出「換主題了」，⛔別把其他交界
        也改成漸層（會抹糊段落感、每個交界還要各調高度）。 */
-    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--paper) 100%);
+    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--surf-2) 100%);
     transition: background 0.9s ease;
+  }
+  /* 下一區是留客橋段（白底）時，融色終點跟著換成白 */
+  .lp-hero.is-keep-next {
+    background: linear-gradient(180deg, var(--g-wash-2) 0%, var(--paper) 62%, var(--paper) 84%, var(--paper) 100%);
   }
   /* 睡著＝抽掉綠意的亮灰。⛔不是深色段（被打槍×2），亮度跟醒著只差一階 */
   .lp-hero.is-asleep { background: #f2f4f3; }
