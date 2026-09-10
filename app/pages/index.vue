@@ -385,10 +385,12 @@
                   範圍一致，能力縮了要回來改字。
                ⚠️ li 是 display: contents（cell 直接進外層 grid）＝兩欄天生同行等高，
                   手機收單欄時順序自動變成「痛→解、痛→解」。 -->
-          <!-- ⚠️ 第七輪：對照表是**第三個舞台單位**（自己的 lp-cue--mid）——四行 ✕ 落下、
-               四行 ✓ 跟上是它自己的一段戲（0.94s），不跟上面兩扇窗綁在同一條時間軸；
-               桌機它在兩扇窗底下 400px 處，捲到才演＝演的時候人看得到。 -->
-          <ul class="lp-vs__grid lp-cue lp-cue--mid">
+          <!-- ⚠️ 第十輪（老闆：「上半部跑完就直接跑下半部動畫」）：對照表**不再是自己越線的單位**
+               （`lp-cue--mid` 已移除）——改由兩扇窗演完直接接上，`is-cued` 由 JS 掛（見下面的
+               `STAGE_TOP_MS`）。所以捲到窗前停著不動也會看到整段演完，不必再往下捲才觸發下半部。
+               ⚠️ 代價：手機上表在右窗底下，接上的時候可能有一半在畫面外——老闆指定順序優先。
+               ⛔ 別把 lp-cue 加回來：加回去就是「表要自己被捲到才演」，等於把這條拍板改掉。 -->
+          <ul class="lp-vs__grid">
             <li class="lp-vs__pair">
               <div class="lp-vs__item"><span class="lp-vs__x" aria-hidden="true">✕</span><div><h3>沒有人可以做</h3><p>員工就是這麼多，每個人手上都滿了。</p></div></div>
               <div class="lp-vs__ans"><span class="lp-vs__ok" aria-hidden="true">✓</span><div><h3>{{ brandName }} 24 小時都在</h3><p>半夜兩點的訊息也馬上回，不用多請一個人。</p></div></div>
@@ -2118,7 +2120,7 @@ let io: IntersectionObserver | undefined
 let cueIo: IntersectionObserver | undefined
 /** 50% 那條線的觀察器（.lp-cue--mid＝一整齣戲，見 MID_CUE_MARGIN） */
 let cueMidIo: IntersectionObserver | undefined
-/** 延後開演的計時器（對照表等上面兩扇窗演完，見 onCued），離開頁面要清掉 */
+/** 延後開演的計時器（對照表接在上面兩扇窗後面，見 onCued），離開頁面要清掉 */
 const cueTimers: number[] = []
 let barIo: IntersectionObserver | undefined
 let capIo: IntersectionObserver | undefined
@@ -2151,8 +2153,8 @@ const typings = new Map<HTMLElement, BubbleTyping>()
 const REVEAL_MARGIN = '0px 0px -12% 0px'
 const CUE_MARGIN = '0px 0px -24% 0px'
 const MID_CUE_MARGIN = '0px 0px -50% 0px'
-/** 對照舞台上半（兩扇窗）演完要多久＝兩顆章 1.75s＋0.3s 動作（⚠️ 跟 _landing.scss 的拍點成對） */
-const STAGE_TOP_MS = 2100
+/** 對照舞台上半（兩扇窗）演完要多久＝兩顆章 1.4s＋0.26s 動作（⚠️ 跟 _landing.scss 的拍點成對） */
+const STAGE_TOP_MS = 1700
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -2268,15 +2270,14 @@ onMounted(() => {
       ...typings.keys(),
     ]
     /**
-     * 對照表要等**上面兩扇窗演完**才開演（第八輪老闆：「上面統一跑，跑完之後下面統一跑」）。
-     * 兩扇窗自己越線就演（桌機並排＝同一刻、同一條時間軸；手機各自捲到才演）；
-     * 表捲到時上面若還在演，就等到上面收完那一刻再開。
+     * 對照表由**上面兩扇窗演完**直接接上（第八輪「上面統一跑，跑完之後下面統一跑」＋
+     * 第十輪「上半部跑完就直接跑下半部動畫」）。
+     * ⚠️ 掛在**右窗**（`--o`）身上、不是左窗：桌機兩窗並排＝同一刻越線，掛哪邊都一樣；
+     *    手機單欄時右窗在左窗底下、表又在右窗底下，掛右窗才會是「看完右邊的解 → 表接上」，
+     *    掛左窗的話表會在使用者還在看左窗時就先演完（而且是在畫面外）。
+     * ⚠️ 表**不是** `.lp-cue`：它不等自己被捲到，所以停在窗前不動也會看到整段演完。
      * ⚠️ STAGE_TOP_MS 跟 _landing.scss「對照舞台的戲」的拍點是**成對的**，改那邊要一起改這裡。
-     * ⚠️ 第七輪曾加過「舞台等標題打完才開演」，第八輪拆掉：那是純等待（實測 0.85~1.35 秒的
-     *    空聊天窗），跟老闆「動畫還是跑很久」的方向相反；改成兩窗同步後整場只剩 2 秒，
-     *    跟標題打字重疊那一下不再是問題。⛔ 別加回來。
      */
-    let stageTopStartedAt = 0
     // ⚠️ 開演的事情做完就 unobserve（只演一次）——用回呼帶進來的 observer，
     //    不要抓外面的變數：同一個回呼給兩條線共用，抓錯變數會變成解除錯的觀察器。
     const onCued = (entries: IntersectionObserverEntry[], obs: IntersectionObserver) => {
@@ -2284,18 +2285,14 @@ onMounted(() => {
         if (!e.isIntersecting) return
         const el = e.target as HTMLElement
         obs.unobserve(el)
-        const start = () => {
-          el.classList.add('is-cued')
-          typings.get(el)?.play()
-          if (el === obCardEl.value) playObDemo()
-          if (el === phoneEl.value) armPhoneMenu()
+        el.classList.add('is-cued')
+        typings.get(el)?.play()
+        if (el === obCardEl.value) playObDemo()
+        if (el === phoneEl.value) armPhoneMenu()
+        if (el.classList.contains('lp-vs__side--o')) {
+          const grid = el.closest('.lp-vs')?.querySelector<HTMLElement>('.lp-vs__grid')
+          if (grid) cueTimers.push(window.setTimeout(() => grid.classList.add('is-cued'), STAGE_TOP_MS))
         }
-        if (el.classList.contains('lp-vs__side')) stageTopStartedAt = performance.now()
-        if (el.classList.contains('lp-vs__grid') && stageTopStartedAt) {
-          const waitMs = stageTopStartedAt + STAGE_TOP_MS - performance.now()
-          if (waitMs > 0) { cueTimers.push(window.setTimeout(start, waitMs)); return }
-        }
-        start()
       })
     }
     // 76% 那條線（絕大多數的元素）

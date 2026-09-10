@@ -41,15 +41,9 @@ const MIN_VISIBLE_PCT = 35 // 有時間軸的動畫開演時，元素至少要�
    所以要吃回嚴格的「露出 ≥35%」那條規則。⛔ 別因為某段紅了又把它加回豁免名單：
    紅了代表「戲又開始在畫面外演」，那正是這一輪要修掉的病。 */
 const STAGGERED = new Set(['lp-livewin.lp-livewin--chat', 'lp-livewin.lp-livewin--users'])
-/**
- * 「等上面兩扇窗演完才開演」的元素（2026-09-09 第八輪：對照表）。
- * ⚠️ 為什麼要豁免 part ① 的位置規則：這支工具是**每 60ms 捲 90px＝約 1,500px/s** 的快速捲動
- *    模擬，表在兩扇窗越線後 0.3 秒就跟著越線，但它刻意等上面演完（2.1 秒）才掛 is-cued——
- *    那時工具已經捲過去 3,000px。這不是 bug，是老闆拍板的「上面跑完下面才跑」。
- * ⚠️ 真正的位置保證改由 **②½ 用「捲到就停下」的實際幾何**驗；兩扇窗本身**沒有**豁免
- *    （它們越線就演，開演時整扇要在畫面裡）。⛔ 別因為這裡豁免了就以為沒人在看那件事。
- */
-const GATED_ON_STAGE = new Set(['lp-vs__grid'])
+/* ⚠️ 2026-09-10 第十輪起**沒有任何豁免**：對照表改由兩扇窗演完接上、不再是 .lp-cue，
+   所以根本不會被 part ① 掃到（它的節奏由 ②¾ 驗）；兩扇窗自己越線就演，吃嚴格的
+   「開演時露出 ≥35%」那條。⛔ 別為了讓某段變綠又開豁免名單——紅了代表戲在畫面外演。 */
 
 const fails = []
 const ok = msg => console.log('  ✅ ' + msg)
@@ -117,8 +111,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const isTimed = e.trigger === 'is-cued'
     if (isTimed) timed++
     const stag = STAGGERED.has(e.what)
-    const gated = GATED_ON_STAGE.has(e.what)
-    const pass = !isTimed || gated || (stag ? (e.topInView >= 0 && e.topInView < VH) : (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT))
+    const pass = !isTimed || (stag ? (e.topInView >= 0 && e.topInView < VH) : (e.topInView < VH && e.visiblePct >= MIN_VISIBLE_PCT))
     if (!pass) {
       fails.push(stag
         ? `${e.what} 錯開動畫開演時上緣不在畫面內（上緣 ${e.topInView}）`
@@ -128,7 +121,6 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       `  ${e.trigger.padEnd(8)} | ${e.what.padEnd(35)} | ${String(e.scrollY).padStart(7)} `
       + `| ${String(e.topInView).padStart(4)} | ${String(e.h).padStart(4)} | ${String(e.visiblePct).padStart(3)}%`
       + (stag && isTimed ? '  （錯開式：判上緣）' : '')
-      + (gated && isTimed ? '  （等上面兩扇窗演完才開演：位置由 ②½ 驗）' : '')
       + (pass ? '' : '  ❌ 在畫面外／露太少就開演'),
     )
   }
@@ -562,9 +554,10 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       relief: o('#why .lp-bubble__relief'),
     }
   })
-  before.units === 3
-    ? ok('舞台是三個各自越線的單位（左窗／右窗／對照表）')
-    : bad(`舞台單位數不對：${before.units} 個 .lp-cue--mid（應為 3＝左窗／右窗／對照表）`)
+  // 第十輪：越線的單位只剩**兩扇窗**（對照表改由上面演完接上，見 ②¾）
+  before.units === 2
+    ? ok('越線的單位是兩扇窗（對照表改由上面接上，不自己越線）')
+    : bad(`舞台單位數不對：${before.units} 個 .lp-cue--mid（第十輪起應為 2＝左窗／右窗）`)
   !before.cued && before.m1 < 0.05 && before.m11 < 0.05 && before.x1 < 0.05 && before.stamp < 0.05 && before.relief < 0.05
     ? ok('開演前整場藏著（兩窗的訊息、✕、章、「還好」都還沒出現）')
     : bad(`開演前就穿幫：cued=${before.cued} 左第一句 ${before.m1} 右第一句 ${before.m11} ✕ ${before.x1} 章 ${before.stamp} 還好 ${before.relief}`)
@@ -592,7 +585,11 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
 
   // ── 第一段：兩扇窗。⛔ 停下來之後**不再捲動**＝驗「觸發後自己播完」（09-09 拍板「不要用滑鼠控制」）
   await park('#why .lp-vs__side--x')
-  await wait(120)
+  // ⚠️ 取樣一律用**絕對時間**（從 park 這一刻起算），⛔ 別再用一串相對 wait 累加：
+  //    每次 evaluate 有 20~40ms 開銷，第十輪把拍點壓到 0.06~0.25 秒之後，累加誤差會吃掉整個餘裕。
+  const t0 = Date.now()
+  const until = async (ms) => { const left = t0 + ms - Date.now(); if (left > 0) await wait(left) }
+  await until(120)
   // ⭐ 開演那一刻整扇窗要看得到（在畫面內、且在黏性行動條上方）——第七輪的病根，改壞這條會紅
   const geo = await page.evaluate(() => {
     const f = document.querySelector('#why .lp-scene--x .lp-scene__frame').getBoundingClientRect()
@@ -608,42 +605,53 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok(desk ? '桌機兩窗並排＝同一刻越線（右窗也已開演）' : '手機右窗還沒越線（各自捲到才演）')
     : bad(`右窗觸發不對：桌機=${desk} 右窗已開演=${geo.cuedO}`)
 
-  await wait(330) // 累計 ~0.45s：兩邊的第一句（0.15）都到了、「隔天」還沒（桌機 1.1／手機 0.55）
-  const t1 = { m1: await op('#why .vb-1'), m11: await op('#why .vb-11'), day: await op('#why .vb-2') }
-  t1.m1 > 0.9 && (!desk || t1.m11 > 0.9) && t1.day < 0.05
-    ? ok(desk ? '同一句話兩邊同時出現（0.45s）、「隔天」還沒' : '左窗第一句到了（0.45s）、「隔天」還沒')
-    : bad(`開場不對（0.45s）：左第一句 ${t1.m1}、右第一句 ${t1.m11}、隔天 ${t1.day}`)
+  await until(420) // 兩邊的第一句（0.10＋0.24 動作＝0.34 收）都到了；「隔天」桌機 0.95／手機 0.55 還沒
+  const t1 = await page.evaluate(() => {
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    return { m1: o('#why .vb-1'), m11: o('#why .vb-11'), day: o('#why .vb-2') }
+  })
+  t1.m1 > 0.85 && (!desk || t1.m11 > 0.85) && t1.day < 0.05
+    ? ok(desk ? '同一句話兩邊同時出現（0.42s）、「隔天」還沒' : '左窗第一句到了（0.42s）、「隔天」還沒')
+    : bad(`開場不對（0.42s）：左第一句 ${t1.m1}、右第一句 ${t1.m11}、隔天 ${t1.day}`)
 
-  await wait(550) // 累計 ~1.0s：桌機＝右邊已秒回（0.6）、左邊還空著（隔天 1.1）；手機＝隔天（0.55）到了
-  const t2 = { reply: await op('#why .vb-13'), day: await op('#why .vb-2') }
-  ;(desk ? (t2.reply > 0.9 && t2.day < 0.05) : (t2.day > 0.9))
-    ? ok(desk ? '右邊在回、左邊還空著（1.0s：秒回到了、「隔天」還沒）' : '左窗自己的節奏：「隔天」1.0s 已到（手機不用等右邊）')
-    : bad(`中段不對（1.0s）：秒回 ${t2.reply}、隔天 ${t2.day}`)
+  // 桌機：右邊正在回（秒回 0.45 起）、左邊還空著（隔天 0.95）＝這一區的主張本體
+  // 手機：右窗不在場，左窗自己的「隔天」（0.55＋0.24＝0.79 收）要到
+  await until(desk ? 580 : 900)
+  const t2 = await page.evaluate(() => {
+    const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
+    return { reply: o('#why .vb-13'), day: o('#why .vb-2') }
+  })
+  ;(desk ? (t2.reply > 0.2 && t2.day < 0.05) : (t2.day > 0.9))
+    ? ok(desk ? '右邊在回、左邊還空著（0.58s：秒回正在出、「隔天」還沒）' : '左窗自己的節奏：「隔天」0.9s 已到（手機不用等右邊）')
+    : bad(`中段不對（${desk ? '0.58' : '0.9'}s）：秒回 ${t2.reply}、隔天 ${t2.day}`)
 
-  await wait(1150) // 累計 ~2.15s：兩顆章 1.75s 同時蓋下（手機左章 1.15）
+  await until(1750) // 兩顆章 1.40s 同時蓋下、1.66 收（手機左章 1.10）
   const t3 = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { x: o('#why .vb-4'), o: o('#why .vb-15'), m3: o('#why .vb-3') }
   })
   t3.m3 > 0.9 && t3.x > 0.9 && (!desk || t3.o > 0.9)
-    ? ok(desk ? '兩顆章同時蓋下：沒了／成交（2.15s）' : '左窗演完：買別家＋紅章（2.15s）')
-    : bad(`收尾不對（2.15s）：買別家 ${t3.m3}、紅章 ${t3.x}、成交章 ${t3.o}`)
+    ? ok(desk ? '兩顆章同時蓋下：沒了／成交（1.75s）' : '左窗演完：買別家＋紅章（1.75s）')
+    : bad(`收尾不對（1.75s）：買別家 ${t3.m3}、紅章 ${t3.x}、成交章 ${t3.o}`)
 
-  await wait(600) // 累計 ~2.75s：「還好——」2.2s 起、0.45s 過場
+  await until(2200) // 「還好——」1.6s 起、0.45s 過場＝2.05 收
   const relief = await op('#why .lp-bubble__relief')
   relief > 0.9
-    ? ok('「還好，每一關都有解法——」在兩顆章落地之後浮出（2.75s）')
+    ? ok('「還好，每一關都有解法——」在兩顆章落地之後浮出（2.2s）')
     : bad(`「還好——」沒有浮出：opacity ${relief}（應 >0.9）`)
   await page.close()
 }
-// ── ②¾ 對照表：捲到才演、且要等上面演完；一行的 ✕ 與 ✓ 同時出來（第八輪「跑完之後下面統一跑」）──
-// ⚠️ 要另開分頁：上一段停在窗前 2.75 秒、上面早演完了，測不到「等」。
+// ── ②¾ 對照表：上面演完**自動接上**，不必再往下捲（2026-09-10 第十輪）─────────────
+// ⚠️ 要另開分頁：上一段在窗前停了 2.2 秒、表早就接上演完了，測不到「接」。
+// ⚠️ 這一段刻意**park 右窗之後就不再捲動**：表在畫面外也要自己演完——那正是老闆要的
+//    「上半部跑完就直接跑下半部」。⛔ 別改成「捲到表再驗」，那會把這條拍板測掉。
 {
+  const desk = VW > 960
   const page = await browser.newPage()
   await page.setViewport({ width: VW, height: VH })
   await page.goto(URL, { waitUntil: 'networkidle0', timeout: 120000 })
   await wait(2000)
-  console.log('\n②¾ 對照表等上面演完')
+  console.log('\n②¾ 上面演完直接接下面')
   const park = sel => page.evaluate((s) => {
     const el = document.querySelector(s)
     const top = el.getBoundingClientRect().top + window.scrollY
@@ -658,22 +666,28 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     const cellOn = o(cell) > 0.95 && getComputedStyle(cell).backgroundColor !== 'rgba(0, 0, 0, 0)'
     return { x, a, cellOn, cued: document.querySelector('#why .lp-vs__grid').classList.contains('is-cued') }
   })
-  await park('#why .lp-vs__side--x')
-  await wait(400)
-  await park('#why .lp-vs__grid') // 上面才演 0.4s 就捲到表：表要等
-  await wait(900) // 累計 ~1.3s（< 2.1s）
+  // 表不可以是 .lp-cue：它不等自己被捲到（第十輪拍板）
+  const notCue = await page.evaluate(() => !document.querySelector('#why .lp-vs__grid').classList.contains('lp-cue'))
+  notCue ? ok('對照表不是自己越線的單位（改由上面接上）') : bad('對照表還掛著 lp-cue＝變回「要捲到才演」，違反第十輪拍板')
+
+  // park 右窗＝上半部開演（桌機兩窗同一刻；手機右窗自己這一刻）。之後**不再捲動**。
+  await park('#why .lp-vs__side--o')
+  const t0 = Date.now()
+  const until = async (ms) => { const left = t0 + ms - Date.now(); if (left > 0) await wait(left) }
+  await until(1300) // 上半部還在演（章 1.40 還沒蓋）：表要還沒動、但格子的底色要在
   const early = await rows()
   !early.cued && early.x.every(v => v < 0.05) && early.a.every(v => v < 0.05) && early.cellOn
-    ? ok('捲到表時上面還在演：表等著（1.3s，✕✓ 內容還藏著、格子的底色在）')
-    : bad(`表沒有等上面演完或等的時候底色不見：cued=${early.cued} 格子底色=${early.cellOn} ✕=${early.x.map(v => v.toFixed(2)).join('/')} ✓=${early.a.map(v => v.toFixed(2)).join('/')}`)
-  // 上面收完（桌機 t0 起 2.1s；手機的右窗是捲到表那一刻才開演＝0.4s+2.1s）→ 表開演，取中途一幀
-  await wait(desk() ? 950 : 1350) // 累計 ~2.25s／~2.65s＝表開演後 ~0.15s：第一行半亮、後面幾行還沒
+    ? ok('上面還在演的時候表還沒動、但格子的底色在（1.3s）')
+    : bad(`表提早動或等的時候底色不見：cued=${early.cued} 格子底色=${early.cellOn} ✕=${early.x.map(v => v.toFixed(2)).join('/')} ✓=${early.a.map(v => v.toFixed(2)).join('/')}`)
+
+  await until(1850) // 上半部 1.66 收 → 表 1.70 接上；這裡是接上後 ~0.15s：第一行半亮、後面幾行還沒
   const mid = await rows()
   const paired = mid.x.every((v, i) => Math.abs(v - mid.a[i]) < 0.15)
-  mid.cued && paired && mid.x[0] > 0.2
-    ? ok('表一行一行出來、同一行的 ✕ 與 ✓ 同時（開演 0.15s：' + mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' ') + '）')
-    : bad(`表的節奏不對：cued=${mid.cued} ✕/✓＝${mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' ')}`)
-  await wait(1000)
+  mid.cued && paired && mid.x[0] > 0.2 && mid.x[3] < 0.9
+    ? ok('上面一演完表就自己接上（沒有再捲動），一行一行、同一行的 ✕✓ 同時：' + mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' '))
+    : bad(`表沒有自己接上或節奏不對（1.85s）：cued=${mid.cued} ✕/✓＝${mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' ')}`)
+
+  await until(2600) // 2.12 全收
   const fin = await page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
     return {
@@ -682,8 +696,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     }
   })
   fin.all && fin.relief > 0.9
-    ? ok('演完定格：完整對照都在（兩窗、✕✓、兩顆章）、「還好——」也在')
-    : bad(`演完狀態不對：全到=${fin.all} 還好=${fin.relief}`)
+    ? ok('整段 2.6 秒內演完定格（兩窗、✕✓、兩顆章、「還好——」都在）')
+    : bad(`2.6 秒還沒演完：全到=${fin.all} 還好=${fin.relief}`)
   // 演完就定格：捲走再回來不重播、不倒退（is-cued 是一次性的 class）
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await wait(300)
@@ -697,7 +711,6 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok('捲走再回來：定格在演完的樣子（不重播、不倒退）')
     : bad(`捲走再回來卻倒退：第一句 ${again.m1}、第四個 ✓ ${again.a4}`)
   await page.close()
-  function desk() { return VW > 960 }
 }
 
 // ── ③ 減少動態效果：內容必須完整 ────────────────────────────

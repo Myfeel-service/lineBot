@@ -699,10 +699,11 @@
   /* 兩顆章：蓋在各自那扇窗的右上角，像驗訖章（靜態 rotate，punch 動畫只動 scale/opacity
      ——individual properties，不碰 transform）。
      ⚠️ 第八輪老闆拍板：**兩顆同一個角度**（原本紅 +7° 綠 -6° 互斜「對仗」被問「為什麼要不一樣」），
-        右邊直接寫「成交」。⛔ 別再各斜各的。 */
+        右邊直接寫「成交」。⛔ 別再各斜各的。
+     ⚠️ 第十輪老闆：「印章可以傾斜另一個方向」＝ -6° 換 **+6°**（往右下斜）。兩顆一起換。 */
   .lp-vs__stamp {
     position: absolute; top: -13px; right: 10px; margin: 0; z-index: 2;
-    rotate: -6deg; color: var(--vs-red); border: 2px solid var(--vs-red);
+    rotate: 6deg; color: var(--vs-red); border: 2px solid var(--vs-red);
     background: rgba(255, 255, 255, 0.9); border-radius: 9px; padding: 6px 11px;
     font-size: 0.9rem; font-weight: 800; letter-spacing: 0.05em; line-height: 1;
   }
@@ -1922,25 +1923,26 @@
     }
   }
 
-  /* ══ 對照舞台的戲：同一晚、兩個結局，捲到就演一次（2026-09-09 第八輪）══════════
+  /* ══ 對照舞台的戲：同一晚、兩個結局，捲到就演一次（2026-09-10 第十輪）══════════
    * 拍板脈絡：①「動畫滾到位置後觸發、不要跟著滾輪」②「不要讓客人按」＝零互動
-   *          ③暖紅開（✕ 與紅章）④第八輪老闆：「上面統一跑，跑完之後下面統一跑，不用分左右」
-   *            ＝兩扇窗**同一條時間軸**（右邊不再晚 2 秒讓拍），對照表等上面演完才整排出來。
+   *          ③暖紅開（✕ 與紅章）④第八輪：「上面統一跑，跑完之後下面統一跑，不用分左右」
+   *            ＝兩扇窗**同一條時間軸**，⛔ 別再加回「右邊晚 N 秒」（第三～七輪的先痛後解已被推翻）
+   *          ⑤第十輪：「上半部跑完就直接跑下半部動畫、動畫整體都再快一點」
+   *            ＝ⓐ對照表**不再是自己越線的單位**，改由兩扇窗演完直接接上（index.vue 的
+   *              `STAGE_TOP_MS`＋`.lp-vs__side--o` 被 cue 時掛的計時器，⚠️ 跟這裡的拍點成對）
+   *              ——所以捲到窗前不動也會看到整段演完，不必再往下捲才觸發下半部
+   *              ⚠️ 代價：手機上表在右窗底下、接上時可能有一半在畫面外（老闆指定的順序優先）
+   *              ⓑ拍點全面壓緊、動作本體 .3→.24s（章 .26s），整段 2.65s → **2.12s**
    *
-   * 三個各自越線的單位（左窗／右窗／對照表，`lp-cue--mid`＝50% 線，見 index.vue）：
-   *   桌機兩窗並排＝同一刻越線＝天生同步，不需要任何「等對方」的機制；
-   *   手機單欄＝各自捲到才演（左窗的拍點在 ≤960px 收緊，見那邊）。
-   *   ⛔ 別再加「右邊晚 N 秒」：那是第七輪以前「先痛後解」的做法，老闆嫌長、也嫌左右分開跑。
-   *
-   * 時間軸（秒，兩窗同一個 0）——**同一句話同時出現，然後右邊在回、左邊空著**：
-   *   0.15 兩邊同時：客人問肉桂捲
-   *   0.45 右：已讀 → 0.60 右：秒回 → 0.95 右：「好，幫我留兩個！」
-   *   1.10 左：「隔天」→ 1.40 左：「我在別家買了」（左邊那 0.95 秒的空白就是痛）
-   *   1.75 兩顆章**同時**蓋下：沒了／成交（2.05 收）
-   *   → 對照表：捲到才演，且不早於上面收完（index.vue 的 STAGE_TOP_MS＝2.1s，⚠️ 跟這裡成對）；
-   *     四行**一行一行、✕ 與 ✓ 同時**出來（0／0.08／0.16／0.24，0.55 收）
-   *   →「還好——」2.2s 浮出（兩顆章落地之後）。
-   * ⛔ 每顆泡泡要 0.3~0.4s 的閱讀時間，再壓眼睛跟不上。
+   * 時間軸（秒，兩窗同一個 0；桌機兩窗並排＝同一刻越線＝天生同步）：
+   *   0.10 兩邊同時：客人問肉桂捲
+   *   0.32 右：已讀 → 0.45 右：秒回 → 0.72 右：「好，幫我留兩個！」
+   *   0.95 左：「隔天」→ 1.15 左：「我在別家買了」（左邊那 0.85 秒的空白就是痛）
+   *   1.40 兩顆章**同時**蓋下：沒了／成交（1.66 收）
+   *   1.60「還好——」浮出（章落地時，它是橋：痛與解都蓋章了 → 這句 → 下面四關的答案）
+   *   1.70 對照表自動接上：四行**一行一行、✕ 與 ✓ 同時**（0.06 錯開，2.12 全收）
+   *   手機單欄的左窗自己演（右窗在畫面外），拍點另有一組見 ≤960px。
+   * ⛔ 地板差不多到了：同一扇窗裡兩顆泡泡之間要留 ≥0.2s，再快就會兩顆一起動、看不出先後。
    * ⚠️ 底案＝演完的完整對照；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到）。
    * ⚠️「還好——」要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
    *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，fail-open。
@@ -1959,8 +1961,8 @@
   &.is-anim .lp-vs .lp-scene__day,
   &.is-anim .lp-vs .lp-scene__read,
   /* ⚠️ 對照表**藏的是格子裡的東西、不是格子**（第九輪老闆看到等待期間下半張卡一片白：
-     「default 是否就維持兩邊的底色就好」）——格子的地色、中線、行線永遠在，等上面演完的那
-     2 秒看到的是一張有底色的空表，不是壞掉的白區。 */
+     「default 是否就維持兩邊的底色就好」）——格子的地色、中線、行線永遠在，等上面演完的
+     那 1.7 秒看到的是一張有底色的空表，不是壞掉的白區。 */
   &.is-anim .lp-vs .lp-vs__item > *,
   &.is-anim .lp-vs .lp-vs__ans > *,
   &.is-anim .lp-vs .lp-vs__stamp { opacity: 0; }
@@ -1969,32 +1971,32 @@
   .lp-vs .lp-scene__msg--me { transform-origin: right bottom; }
   /* ── 兩扇窗（同一條時間軸；各自從自己越線起算，桌機兩邊同一刻）── */
   &.is-anim .lp-vs__side.is-cued {
-    .lp-scene__msg { animation: lpBubbleIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__day { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__read { animation: lpSceneIn .22s ease-out both; }
-    .lp-vs__stamp { animation: lpStampIn .3s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
+    .lp-scene__msg { animation: lpBubbleIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__day { animation: lpSceneIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__read { animation: lpSceneIn .18s ease-out both; }
+    .lp-vs__stamp { animation: lpStampIn .26s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
     /* 左窗（沒有）：問 → 空到隔天 → 買別家 → 章 */
-    .vb-1 { animation-delay: 0.15s; }
-    .vb-2 { animation-delay: 1.1s; }
-    .vb-3 { animation-delay: 1.4s; }
-    .vb-4 { animation-delay: 1.75s; }
+    .vb-1 { animation-delay: 0.1s; }
+    .vb-2 { animation-delay: 0.95s; }
+    .vb-3 { animation-delay: 1.15s; }
+    .vb-4 { animation-delay: 1.4s; }
     /* 右窗（有）：同一句 → 已讀 → 秒回 → 成交 → 章（跟左邊的章同一拍） */
-    .vb-11 { animation-delay: 0.15s; }
-    .vb-12 { animation-delay: 0.45s; }
-    .vb-13 { animation-delay: 0.6s; }
-    .vb-14 { animation-delay: 0.95s; }
-    .vb-15 { animation-delay: 1.75s; }
+    .vb-11 { animation-delay: 0.1s; }
+    .vb-12 { animation-delay: 0.32s; }
+    .vb-13 { animation-delay: 0.45s; }
+    .vb-14 { animation-delay: 0.72s; }
+    .vb-15 { animation-delay: 1.4s; }
   }
-  /* ── 對照表：一行一行出來，同一行的 ✕ 與 ✓ 同時（「下面統一跑」）── */
+  /* ── 對照表：上面演完自動接上（is-cued 由 JS 掛，不是自己越線）；一行一行、同一行的 ✕✓ 同時 ── */
   &.is-anim .lp-vs__grid.is-cued {
-    .lp-vs__item > *, .lp-vs__ans > * { animation: lpSceneIn .3s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-vs__item > *, .lp-vs__ans > * { animation: lpSceneIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
     .lp-vs__pair:nth-child(1) > * > * { animation-delay: 0s; }
-    .lp-vs__pair:nth-child(2) > * > * { animation-delay: 0.08s; }
-    .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.16s; }
-    .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.24s; }
+    .lp-vs__pair:nth-child(2) > * > * { animation-delay: 0.06s; }
+    .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.12s; }
+    .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.18s; }
   }
-  /* ──「還好——」：兩顆章落地之後浮出 ── */
-  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 2.2s; }
+  /* ──「還好——」：兩顆章落地那一刻浮出，接著就是下面四關的答案 ── */
+  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 1.6s; }
   &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
@@ -2264,11 +2266,11 @@
     .lp-vs__grid { grid-template-columns: 1fr; }
     .lp-vs__ans { border-left: 0; }
     .lp-vs__pair:nth-child(n) .lp-vs__ans { border-top: 1px solid var(--vs-line); }
-    /* 手機的左窗自己演（右窗在畫面外）：問完到「隔天」不能空 0.95 秒沒事發生，
-       拍點收回第七輪的節奏（0.55／0.85／1.15）。桌機那組是「右邊在回、左邊空著」才撐得起長空檔。 */
+    /* 手機的左窗自己演（右窗在畫面外）：問完到「隔天」不能空 0.85 秒沒事發生，
+       拍點收緊成 0.55／0.8／1.1。桌機那組是「右邊在回、左邊空著」才撐得起長空檔。 */
     &.is-anim .lp-vs__side--x.is-cued .vb-2 { animation-delay: 0.55s; }
-    &.is-anim .lp-vs__side--x.is-cued .vb-3 { animation-delay: 0.85s; }
-    &.is-anim .lp-vs__side--x.is-cued .vb-4 { animation-delay: 1.15s; }
+    &.is-anim .lp-vs__side--x.is-cued .vb-3 { animation-delay: 0.8s; }
+    &.is-anim .lp-vs__side--x.is-cued .vb-4 { animation-delay: 1.1s; }
     /* 方案卡收成 2×2（不是直接單欄）：四張卡是拿來互相比較的，兩兩並排還能比，
        一欄疊四張就得靠記憶力。 */
     .lp-plans { grid-template-columns: 1fr 1fr; }
