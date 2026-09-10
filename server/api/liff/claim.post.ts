@@ -6,6 +6,7 @@ import { getUserProfile } from '~~/server/utils/line'
 import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
 import { verifyLiffAccessToken, warnOnLiffChannelMismatch } from '~~/server/utils/liff-token'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
+import { assertCampaignLinkActive } from '~~/server/utils/lead-campaign-active'
 
 function sharedUserClaimDocId(campaignId: string, lineUserId: string): string {
   return createHash('sha256').update(`lead_shared|${campaignId}|${lineUserId}`).digest('hex')
@@ -180,6 +181,10 @@ export default defineEventHandler(async (event) => {
 
   const claim = claimData
   const docRef = claimRef
+
+  // 活動停用＝這個連結不能再用來進來（2026-09-10 拍板）。放在兩條路徑的共同出口，
+  // 而且一定要在任何寫入之前——擋下來卻已經寫了一半，等於停用了還是留下半筆綁定。
+  await assertCampaignLinkActive(db, String(claim.campaignId || ''))
 
   // 若已完成（applied），同一使用者可重新觸發貼標與模組；不同使用者則拒絕
   if (claim.status === 'applied') {

@@ -21,10 +21,14 @@
       <p v-else class="liff-lead-hint">貼標與活動訊息已即時套用，請至 LINE 查收。</p>
     </template>
     <template v-else-if="phase === 'error'">
-      <p class="liff-lead-title">無法完成綁定</p>
+      <p class="liff-lead-title">{{ endedCampaign ? '活動已結束' : '無法完成綁定' }}</p>
       <p class="liff-lead-msg liff-lead-err">{{ errorText }}</p>
-      <p class="liff-lead-hint">請重新整理再試一次；若仍無法完成，請直接聯繫這個官方帳號的商家。</p>
-      <button type="button" class="liff-lead-btn" @click="reloadPage">重新整理再試</button>
+      <!-- 活動已結束不是故障：不叫人重試（按幾次都一樣），也不暗示是他那邊出問題 -->
+      <p v-if="endedCampaign" class="liff-lead-hint">這個連結已經停止使用。若你認為是誤會，請直接聯繫這個官方帳號的商家。</p>
+      <template v-else>
+        <p class="liff-lead-hint">請重新整理再試一次；若仍無法完成，請直接聯繫這個官方帳號的商家。</p>
+        <button type="button" class="liff-lead-btn" @click="reloadPage">重新整理再試</button>
+      </template>
       <div v-if="debugInfo && showDebug" class="liff-lead-debug">
         <p class="liff-lead-debug-title">診斷資訊（請截圖提供給工程）</p>
         <pre class="liff-lead-debug-body">{{ debugInfo }}</pre>
@@ -37,6 +41,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { $fetch } from 'ofetch'
 import { buildLoginRedirectUri, liffChannelIdFromLiffId, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
+import { CAMPAIGN_INACTIVE_CODE, type LeadFailureReason } from '~~/shared/lead-page-failure'
 
 definePageMeta({ layout: false, ssr: false })
 
@@ -60,8 +65,40 @@ const showDebug = computed(() => route.query.debug === '1' || route.query.debug 
 function reloadPage() {
   if (typeof window !== 'undefined') window.location.reload()
 }
+/**
+ * 這次的失敗是不是「活動已結束」。與其他錯誤分開，是因為它**不是故障**：
+ * 標題不該說「無法完成綁定」（聽起來像客人做錯了），也不該給重試按鈕
+ * （按幾次都一樣，只會讓人以為是自己網路的問題）。
+ */
+const endedCampaign = ref(false)
 const needAddFriend = ref(false)
 const addFriendUrl = ref('')
+
+/**
+ * 把「客人這次打不開」回報回去（`server/utils/lead-page-failures.ts`）。
+ *
+ * 為什麼要有：在此之前這件事完全沒有出口——客人一個都進不來，後台一片綠燈。
+ * ⛔ 絕不可以讓回報本身影響客人看到的畫面：失敗一律吞掉，也不 await。
+ * keepalive 是因為錯誤畫面之後客人多半直接關掉分頁。
+ */
+function reportLeadFailure(reason: LeadFailureReason, extra?: { liffId?: string, campaignCode?: string, detail?: string }) {
+  if (typeof fetch === 'undefined') return
+  try {
+    fetch('/api/liff/lead-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason,
+        liffId: extra?.liffId || '',
+        liffClientId: readCallbackParam('liffClientId'),
+        campaignCode: extra?.campaignCode || '',
+        detail: String(extra?.detail || '').slice(0, 200),
+      }),
+      keepalive: true,
+    }).catch(() => {})
+  }
+  catch { /* 回報不到就算了，不能讓它變成第二個錯誤 */ }
+}
 /**  Official Account `basicId`（例：@abc），用於對話 deeplink／加好友連結 */
 const oaBasicId = ref('')
 
@@ -283,6 +320,7 @@ onMounted(async () => {
       phase.value = 'error'
       errorText.value = '載入逾時，請重新整理再試一次。'
       debugInfo.value = buildDebugInfo({ reason: 'loading_watchdog', ...ctx })
+      reportLeadFailure('load_timeout', { liffId: String(ctx.liffId || ''), detail: 'loading_watchdog' })
     }, LOADING_WATCHDOG_MS)
     let watchdog = armWatchdog()
     document.addEventListener('visibilitychange', () => {
@@ -380,6 +418,8 @@ onMounted(async () => {
     phase.value = 'error'
     errorText.value = '這個連結不完整、沒辦法辨識活動。請聯繫這個官方帳號的商家，重新提供正確的連結。'
     debugInfo.value = buildDebugInfo({ reason: 'missing_liff_id', mergedParsed: parsed, ...ctx })
+    // 有租戶線索才記得到帳號上；連線索都沒有時後端會直接丟掉（記到別家更糟）
+    reportLeadFailure('config_missing', { campaignCode: parsed.campaignCode, detail: String(ctx.liffIdSource || '') })
     return
   }
 
@@ -406,6 +446,7 @@ onMounted(async () => {
     phase.value = 'error'
     errorText.value = `LIFF 初始化失敗：${err?.message || '未知錯誤'}`
     debugInfo.value = buildDebugInfo({ reason: 'liff_init_failed', mergedParsed: parsed, ...ctx })
+    reportLeadFailure('liff_init_failed', { liffId, campaignCode: parsed.campaignCode, detail: err?.message || '' })
     return
   }
   ctx.postInitUrl = typeof window !== 'undefined' ? window.location.href : ''
@@ -436,6 +477,7 @@ onMounted(async () => {
       ? '這個連結少了活動資料，可能是複製到錯的網址、或轉傳時被截斷了。請聯繫這個官方帳號的商家，重新提供正確的活動連結。'
       : '這個連結不完整、少了必要資料。請聯繫這個官方帳號的商家，重新提供最新的連結。'
     debugInfo.value = buildDebugInfo({ reason: 'missing_ct', mergedParsed: parsed, ...ctx })
+    reportLeadFailure('link_incomplete', { liffId, campaignCode: parsed.campaignCode, detail: malformedCtOnly ? 'malformed_ct' : 'missing_ct' })
     return
   }
 
@@ -500,10 +542,17 @@ onMounted(async () => {
     }
   }
   catch (e: unknown) {
-    const err = e as { data?: { statusMessage?: string }; message?: string }
+    const err = e as { data?: { statusMessage?: string, data?: { code?: string } }; message?: string }
     phase.value = 'error'
+    // 活動已停用是後台按下去的、預期內的結果，不是故障——換標題、不給重試
+    endedCampaign.value = err?.data?.data?.code === CAMPAIGN_INACTIVE_CODE
     errorText.value = err?.data?.statusMessage || err?.message || '發生錯誤，請稍後再試。'
     debugInfo.value = buildDebugInfo({ reason: 'run_claim_failed', mergedParsed: parsed, errorMessage: err?.data?.statusMessage || err?.message || 'unknown', ...ctx })
+    reportLeadFailure(endedCampaign.value ? 'campaign_inactive' : 'claim_failed', {
+      liffId,
+      campaignCode: parsed.campaignCode,
+      detail: String(err?.data?.statusMessage || err?.message || '').slice(0, 200),
+    })
   }
 })
 </script>

@@ -19,6 +19,66 @@
   }
 }
 
+/* ── 活動頁（LIFF）就地修好 ──────────────────────────────────────
+   住在 .block-status 的 slot 裡，父層是 column flex。
+   ⛔ 單顆 el-button 不可以直接當子項：column flex 預設 align-items:stretch
+   會把它拉成滿版色塊（角色標籤、狀態徽章各踩過一次）——一律包一層。 */
+.cmp-liff-fix {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+
+  > div > .el-button {
+    align-self: flex-start;
+  }
+}
+
+.cmp-liff-step {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0.15rem 0 0;
+}
+
+/* ── 客人打不開的分項 ────────────────────────────────────────────
+   次數靠右對齊成一欄（可以直接掃「哪一種最多」），說明另起一行不跟數字擠。 */
+.cmp-lead-errors {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  li {
+    display: grid;
+    /* ⛔ 右欄一律 minmax(0, 1fr)：min-content 會被長句子撐破容器 */
+    grid-template-columns: minmax(3.2rem, auto) minmax(0, 1fr);
+    gap: 0.1rem 0.55rem;
+    align-items: baseline;
+  }
+}
+
+.cmp-lead-errors__count {
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.cmp-lead-errors__label {
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.cmp-lead-errors__hint {
+  grid-column: 2;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .cmp-url-hint {
   font-size: 0.78rem;
   color: var(--text-muted);

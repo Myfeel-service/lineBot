@@ -1,6 +1,6 @@
-import { findWorkspacesByLiffChannelId, getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
+import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
-import { liffChannelIdFromLiffId } from '~~/server/utils/liff-token'
+import { resolveWorkspaceIdByLiffChannelId } from '~~/server/utils/liff-tenant-resolve'
 
 /**
  * 活動 LIFF 頁的公開設定（liffId／OA basicId）。兩種指定租戶的方式：
@@ -27,23 +27,11 @@ export default defineEventHandler(async (event) => {
     resolvedWorkspaceId = workspaceId
     liffId = (await getLineWorkspaceCredentials(workspaceId)).defaultLiffId
   }
-  else if (/^\d+$/.test(liffClientId)) {
-    // 前綴範圍查詢最多讀 2 筆（見 findWorkspacesByLiffChannelId）；再用同一支解析函式復核，
-    // 免得「前綴相同但格式不是 {id}-{suffix}」的資料被當成命中
-    const matches = (await findWorkspacesByLiffChannelId(liffClientId))
-      .filter(r => liffChannelIdFromLiffId(r.credentials.defaultLiffId) === liffClientId)
-    const only = matches.length === 1 ? matches[0] : undefined
-    if (only) {
-      resolvedWorkspaceId = only.workspaceId
-      liffId = only.credentials.defaultLiffId
-    }
-    else if (matches.length > 1) {
-      console.warn(
-        '[liff/config] liffClientId matches multiple workspaces, refusing to guess:',
-        liffClientId,
-        matches.map(m => m.workspaceId),
-      )
-    }
+  else if (liffClientId) {
+    // 反查邏輯與 /api/liff/lead-error 共用（見 resolveWorkspaceIdByLiffChannelId）
+    const hit = await resolveWorkspaceIdByLiffChannelId(liffClientId)
+    resolvedWorkspaceId = hit.workspaceId
+    liffId = hit.defaultLiffId
   }
 
   // 認不出租戶：回空值且不設快取標頭，避免把「查不到」快取五分鐘

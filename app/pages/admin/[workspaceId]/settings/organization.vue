@@ -84,7 +84,12 @@
             <p class="ls-subgroup">LIFF（活動頁）</p>
             <div class="admin-field-group" data-tour="org-liff">
               <div class="afh-row">
-                <AdminFieldLabel text="預設 LIFF（選填，活動頁用）" tight />
+                <!--
+                  ⛔ 只寫「選填」會誤導（`G-83`）：那是站在整個帳號的角度說的
+                  （不辦活動確實用不到），但活動頁那邊沒有它就**不能建活動**。
+                  一個準備辦活動的人先走到這一頁，看到「選填」就會直接跳過。
+                -->
+                <AdminFieldLabel text="預設 LIFF（選填；要辦活動就必填）" tight />
                 <AdminFieldHelp id="liffSetup" />
               </div>
               <el-input

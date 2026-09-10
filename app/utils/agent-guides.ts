@@ -10,6 +10,7 @@
  * 查不到≠修好也≠沒修好（誠實三態）、每一步有跳過出口。
  */
 import { escapeHtml } from '~~/shared/types/agent-messages'
+import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
 import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
 import type { BrokenModuleFixState, BrokenModuleRefRow, BrokenModuleRepointResult } from '~~/shared/types/alert-fix'
@@ -204,9 +205,6 @@ const liffEndpointGuide: AgentGuideDef = {
 // ── 還沒有活動頁（LIFF）──────────────────────────────────────────
 // 與上面那條的分工：liff-endpoint 修「已經有 LIFF 但登記錯了」，
 // 這條處理「根本還沒有 LIFF、活動連結點下去什麼都沒有」（D-19，2026-08-21 拍板）。
-
-/** LIFF ID 長得像 2007123456-AbCdEfGh：純數字的 channel id ＋ 連字號 ＋ 一串英數 */
-const LIFF_ID_RE = /^\d{8,}-[A-Za-z0-9]+$/
 
 const liffSetupGuide: AgentGuideDef = {
   id: 'liff-setup',

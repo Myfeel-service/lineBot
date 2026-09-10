@@ -63,9 +63,30 @@
           刪除
         </el-button>
         <el-button @click="cancelEdit">取消</el-button>
-        <el-button v-if="canOperate" type="primary" :loading="saving" @click="submitForm">
-          {{ isCreating ? '建立活動' : '儲存變更' }}
-        </el-button>
+        <!--
+          ⛔ 按下去會拿到假結果才擋（房規）：沒有 LIFF＝存了也產不出連結，這種要擋。
+          原本是「填完一整張表 → 按儲存 → 閃過一行紅字 → 什麼都沒發生」；按鈕上看不出
+          任何異狀，橫幅也還是琥珀色（＝提醒），顏色跟行為對不起來。
+          ⚠️ 登記錯（mismatch／broken）**不擋**——那種情況連結是對的，人去 LINE 改完就通。
+          span 是給 tooltip 掛的：按鈕 disabled 之後自己不會發出滑鼠事件。
+        -->
+        <el-tooltip
+          v-if="canOperate"
+          :disabled="!saveBlockedReason"
+          :content="saveBlockedReason"
+          placement="bottom-end"
+        >
+          <span>
+            <el-button
+              type="primary"
+              :loading="saving"
+              :disabled="Boolean(saveBlockedReason)"
+              @click="submitForm"
+            >
+              {{ isCreating ? '建立活動' : '儲存變更' }}
+            </el-button>
+          </span>
+        </el-tooltip>
       </div>
     </template>
 
@@ -81,7 +102,16 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ar-section-hint">停用的活動儲存後會隱藏活動進入網址。</p>
+            <!--
+              ⛔ 原本這裡寫「停用的活動儲存後會隱藏活動進入網址」，兩件事都不是真的：
+              網址照樣顯示，而且客人端根本沒讀過啟用狀態——停用後舊連結還是能綁定貼標。
+              2026-09-10 拍板讓停用真的擋掉連結（server/utils/lead-campaign-active.ts）後，
+              這句話才改成現在的說法。
+            -->
+            <p class="ar-section-hint">
+              停用後，客人點這個活動的連結會看到「活動已結束」，後台也會把網址收起來。
+              重新啟用並儲存，同一串網址會再生效（不會換一組新的）。
+            </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用狀態" tight />
               <el-switch
@@ -109,23 +139,88 @@
               ⚠️三態：讀不到 LIFF 設定時講「查不到」，⛔不可以講成「沒設定」（會叫人去改本來好的設定）。
             -->
             <AdminBlockStatus
-              v-if="liffLoadFailed"
-              tone="unknown"
-              title="這次讀不到活動頁（LIFF）設定，沒辦法確認活動連結做不做得出來"
-              detail="重新整理可以再試一次。這不代表沒設定。"
-            />
-            <AdminBlockStatus
-              v-else-if="!hasUsableLiff"
-              :tone="liffMissingTone"
-              title="還沒設定活動頁（LIFF），這個活動做不出可用的連結"
-              detail="客人點活動連結會打不開，綁定與貼標都不會發生。設定只要做一次，之後所有活動共用。"
+              v-if="liffBanner"
+              :tone="liffBanner.tone"
+              :title="liffBanner.title"
+              :detail="liffBanner.detail"
               action-label="去設定活動頁"
               @action="goSetLiff"
             >
-              <p class="ar-section-hint">
-                不知道去哪設、要填什麼？<AdminFieldHelp id="liffSetup" />
+              <!--
+                就地把事情做完（`G-81`）：原本只有一顆「去設定活動頁」，跳過去之後
+                沒有任何一條路回得來，填到一半的表單也在跳走時被丟掉。這裡直接給
+                ①要貼到 LINE 的網址 ②貼回來的輸入框，人不用離開這一頁。
+              -->
+              <div v-if="liffBanner.setup !== 'none'" class="cmp-liff-fix">
+                <template v-if="liffExpectedUrl">
+                  <p class="cmp-liff-step">
+                    <b>①</b> 複製這串網址，貼到 LINE Developers →
+                    <b>LINE Login</b> 那張卡 → LIFF → 該 LIFF 的 <b>Endpoint URL</b>
+                  </p>
+                  <div class="cmp-url-row">
+                    <el-input :model-value="liffExpectedUrl" readonly />
+                    <el-button @click="copyLiffExpectedUrl">複製</el-button>
+                  </div>
+                </template>
+                <p v-else class="cmp-url-hint">
+                  系統這邊還沒設定正式網址，給不出要貼的活動頁網址——請到「組織與 LINE」設定處理。
+                </p>
+
+                <template v-if="liffBanner.setup === 'fill'">
+                  <p class="cmp-liff-step">
+                    <b>②</b> 建好之後把 <b>LIFF ID</b> 貼回這裡（長得像 2007123456-AbCdEfGh）
+                  </p>
+                  <div class="cmp-url-row">
+                    <el-input v-model="inlineLiffId" placeholder="2007123456-AbCdEfGh" />
+                    <el-button type="primary" :loading="savingInlineLiff" @click="saveInlineLiff">
+                      存起來並檢查
+                    </el-button>
+                  </div>
+                </template>
+                <div v-else>
+                  <el-button size="small" :loading="liffChecking" @click="loadLiffChecks({ force: true })">
+                    改好了，重新檢查
+                  </el-button>
+                </div>
+
+                <p class="ar-section-hint">
+                  不知道去哪設、要填什麼？<AdminFieldHelp id="liffSetup" />
+                </p>
+              </div>
+            </AdminBlockStatus>
+
+            <!--
+              客人打不開的時候，商家本來完全不會知道（`G-82`）：登記檢查只查得到
+              「Endpoint URL 有沒有寫對」，連結被轉傳截斷、LIFF 被停用這些它都看不到。
+              ⚠️ 講「次」不講「位客人」——回報端點沒辦法驗身分，這是提醒訊號不是報表。
+            -->
+            <AdminBlockStatus
+              v-if="leadErrors && !leadErrors.ok"
+              tone="unknown"
+              title="這次查不到客人在活動頁的失敗紀錄"
+              detail="重新整理可以再試一次。這不代表沒有客人失敗。"
+            />
+            <AdminBlockStatus
+              v-else-if="leadErrorRows.length"
+              :tone="leadErrorFaultTotal > 0 ? 'critical' : 'warning'"
+              :title="`近 ${leadErrors?.days ?? 7} 天有 ${leadErrors?.total ?? 0} 次打不開活動頁`"
+              detail="這些是客人那一端實際回報的，不是推算的。"
+            >
+              <ul class="cmp-lead-errors">
+                <li v-for="row in leadErrorRows" :key="row.reason">
+                  <span class="cmp-lead-errors__count">{{ row.count }} 次</span>
+                  <span class="cmp-lead-errors__label">{{ row.label }}</span>
+                  <span class="cmp-lead-errors__hint">{{ row.hint }}</span>
+                </li>
+              </ul>
+              <p v-if="leadErrors?.truncated" class="cmp-url-hint">
+                失敗筆數太多，這裡只算得到最近一段——實際次數比上面顯示的更多。
               </p>
             </AdminBlockStatus>
+            <p v-else-if="leadErrors" class="ar-section-hint">
+              近 {{ leadErrors.days }} 天沒有客人回報打不開活動頁。
+            </p>
+
             <p class="ar-section-hint">
               這裡是客服／行政日常會看的重點。活動連結會在儲存後自動更新。
             </p>
@@ -177,12 +272,20 @@
               </p>
               <div class="admin-field-group">
                 <AdminFieldLabel text="活動進入網址" tight />
-                <div v-if="ctaUrl" class="cmp-url-row">
+                <!--
+                  ⛔ 看「存起來的」啟用狀態不是表單開關：用表單的話，人一撥開關網址就
+                  先消失，但那時連結其實還活著（要按儲存才生效），畫面會比事實早一步。
+                -->
+                <div v-if="!savedIsActive" class="ar-any-text-note">
+                  活動已停用，這串連結現在點下去會被擋掉（客人看到「活動已結束」）。
+                  重新啟用並儲存後，同一串網址會再生效。
+                </div>
+                <div v-else-if="ctaUrl" class="cmp-url-row">
                   <el-input :model-value="ctaUrl" readonly />
                   <el-button @click="copyCtaUrl">複製</el-button>
                 </div>
                 <div v-else class="ar-any-text-note">
-                  尚未有網址：請確認活動為「啟用」，再按上方「儲存變更」。
+                  {{ ctaMissingReason }}
                 </div>
               </div>
 
@@ -292,9 +395,12 @@
 <script setup lang="ts">
 import { Delete, Plus, Tickets } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
+import { LEAD_FAILURE_LABELS, LEAD_FAILURE_REASONS, type LeadFailureReason } from '~~/shared/lead-page-failure'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-const { workspaceId, apiFetch } = useWorkspace()
+// canManageSettings：LIFF 登記狀態的檢查端點限管理員（客服查不到，見 liffVerdict）
+const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
@@ -324,6 +430,45 @@ const statsLoading = ref(false)
 const effectiveDefaultLiffId = ref('')
 /** LIFF 讀取是否失敗（區分「未設定」與「讀不到」，避免誤導成缺 LIFF） */
 const liffLoadFailed = ref(false)
+/**
+ * 問過了沒。⛔ 沒有這個旗標的話，第一次繪製時 `effectiveDefaultLiffId` 還是空字串，
+ * 畫面會先閃一下紅色的「還沒設定活動頁」——對設定好好的帳號說謊，只是說得很短。
+ */
+const liffConfigLoaded = ref(false)
+
+// ── LINE 上的登記狀態（`G-81`）────────────────────────────────────────────
+// ⛔ 這一頁原本只檢查「LIFF ID 這一格有沒有字」，等於**沒填就紅、填了就綠**。
+// 但客人打不開的頭號原因不是沒填，是**填了、LINE 那邊的 Endpoint URL 卻指著舊網域**
+// （2026-08-07 換網域災情的形狀）。那種情況下這頁一片正常，連結發出去才發現是死的。
+// 設定頁早就有一支真的去 LINE 對答案的檢查，這裡改成用同一支——同一個訊號只有一份口徑。
+type LiffCheckItem = {
+  liffId: string
+  source: 'default' | 'campaign'
+  status: 'ok' | 'mismatch' | 'broken' | 'unknown'
+  endpoint: string | null
+  reason?: 'wrong_page' | 'unreachable' | 'deleted'
+}
+const liffChecks = ref<LiffCheckItem[]>([])
+/** 該登記的網址（正式網址＋活動頁路徑）；後端沒設正式網址時為空字串 */
+const liffExpectedUrl = ref('')
+/** 預設 true：管理員一進頁就會去問 LINE，在答案回來前不可以先下任何結論 */
+const liffChecking = ref(true)
+/** 查詢本身失敗（≠「沒問題」）。⛔ 查不到一律現形，不可以靜靜當成綠燈 */
+const liffCheckFailed = ref(false)
+/** 就地補設定用的輸入框 */
+const inlineLiffId = ref('')
+const savingInlineLiff = ref(false)
+
+// ── 客人在活動頁失敗了幾次（`G-82`）───────────────────────────────────────
+// 後台的 LIFF 登記檢查只查得到「Endpoint URL 有沒有寫對」，其他壞法（連結被轉傳
+// 截斷、LIFF 被停用、客人環境）它一概看不到——那些情況下客人一個都進不來而後台全綠。
+const leadErrors = ref<{
+  ok: boolean
+  total: number
+  byReason: Record<string, number> | null
+  truncated: boolean
+  days: number
+} | null>(null)
 
 
 function campaignTimestampToPicker(v: unknown): string {
@@ -366,13 +511,144 @@ const hasUsableLiff = computed(() =>
   Boolean(String(form.value.liffId || '').trim() || effectiveDefaultLiffId.value),
 )
 
+/** 這個活動實際會用到的那一顆 LIFF（活動自己指定的優先，否則吃帳號預設） */
+const campaignLiffId = computed(() =>
+  String(form.value.liffId || '').trim() || effectiveDefaultLiffId.value,
+)
+
 /**
  * 已經上線的活動＝客人現在點就打不開（紅）；還在建、或已停用的＝還沒有人受影響（琥珀）。
  * 嚴重度看的是「客人有沒有正在受影響」，不是看這件事重不重要。
  */
-const liffMissingTone = computed<'critical' | 'warning'>(() =>
-  !isCreating.value && form.value.isActive ? 'critical' : 'warning',
+const liveNow = computed(() => !isCreating.value && form.value.isActive)
+
+/**
+ * 這一格到底怎麼了。**`ok` 只有真的查成功才准回**——「查不到就當沒問題」是這頁原本的病。
+ *
+ * - `missing`：連 LIFF ID 都沒有
+ * - `unverified`：有 ID，但這個角色查不到 LINE 上的登記狀態（檢查端點限管理員）
+ * - `checking` / `unreadable`：查詢中／查不到，兩者都不下結論
+ * - `broken` / `mismatch` / `ok`：真的問過 LINE 才有的答案
+ */
+type LiffVerdict = 'missing' | 'unverified' | 'checking' | 'unreadable' | 'broken' | 'mismatch' | 'ok'
+
+const campaignLiffCheck = computed<LiffCheckItem | null>(() =>
+  liffChecks.value.find(c => c.liffId === campaignLiffId.value) ?? null,
 )
+
+const liffVerdict = computed<LiffVerdict>(() => {
+  if (!liffConfigLoaded.value) return 'checking'
+  if (liffLoadFailed.value) return 'unreadable'
+  if (!hasUsableLiff.value) return 'missing'
+  if (!canManageSettings.value) return 'unverified'
+  if (liffChecking.value) return 'checking'
+  if (liffCheckFailed.value) return 'unreadable'
+  const hit = campaignLiffCheck.value
+  // 查回來了卻沒有這一顆（例如剛存好還沒重查）→ 一樣不下結論
+  if (!hit || hit.status === 'unknown') return 'unreadable'
+  return hit.status
+})
+
+const LIFF_BROKEN_DETAIL: Record<NonNullable<LiffCheckItem['reason']>, string> = {
+  deleted: '這個 LIFF 在 LINE 上已經不存在了（被刪掉、或 ID 貼錯）。',
+  unreachable: 'LINE 上登記的網址已經連不上了（多半是舊網域停用了）。',
+  wrong_page: 'LINE 上登記的網址不是這套系統的活動頁，客人會被帶去別的地方。',
+}
+
+/** 橫幅要不要出現、長什麼樣。回 null＝這一格沒事，不要製造雜訊 */
+const liffBanner = computed<{
+  tone: 'critical' | 'warning' | 'unknown'
+  title: string
+  detail: string
+  /** 要不要展開就地設定（複製網址／貼 LIFF ID／重新檢查） */
+  setup: 'fill' | 'recheck' | 'none'
+} | null>(() => {
+  switch (liffVerdict.value) {
+    case 'ok':
+    case 'unverified':
+      // ⚠️ unverified 不出橫幅是刻意的：客服角色既查不到也改不了，掛一條灰色的
+      //    「無法確認」在每一個活動上只是雜訊。真的壞掉時管理員那邊會紅。
+      return null
+    case 'checking':
+      return null
+    case 'missing':
+      return {
+        tone: liveNow.value ? 'critical' : 'warning',
+        title: '還沒設定活動頁（LIFF），這個活動做不出可用的連結',
+        detail: '客人點活動連結會打不開，綁定與貼標都不會發生。設定只要做一次，之後所有活動共用。',
+        setup: canManageSettings.value ? 'fill' : 'none',
+      }
+    case 'broken':
+      return {
+        // 連結已經在外面流通，不管這個活動啟不啟用都有人會踩到 → 一律紅
+        tone: 'critical',
+        title: '客人點活動連結會打不開',
+        detail: `${LIFF_BROKEN_DETAIL[campaignLiffCheck.value?.reason ?? 'wrong_page']}把下面那串網址貼回 LINE 的 Endpoint URL。`,
+        setup: canManageSettings.value ? 'recheck' : 'none',
+      }
+    case 'mismatch':
+      return {
+        tone: liveNow.value ? 'critical' : 'warning',
+        title: 'LINE 上登記的是別的網址',
+        detail: `登記的是 ${campaignLiffCheck.value?.endpoint || '（查不到）'}。客人登入會多繞一圈，那個網址一停用，活動連結就整個打不開。`,
+        setup: canManageSettings.value ? 'recheck' : 'none',
+      }
+    case 'unreadable':
+      return {
+        tone: 'unknown',
+        title: '這次確認不了活動頁（LIFF）的狀態',
+        detail: '重新整理可以再試一次。這不代表沒設定，也不代表沒問題。',
+        setup: 'none',
+      }
+  }
+  return null
+})
+
+/**
+ * 存檔會不會白存。⛔ 判斷標準是「按下去會不會拿到假結果」，不是「有沒有警告」：
+ * 沒有 LIFF＝活動存了也產不出連結（後端直接跳過），這種要擋；
+ * 登記錯（mismatch／broken）＝連結產得出來、也是對的，人去 LINE 改完就會通，這種**不擋**——
+ * 擋在可能誤報的警告上，會把正常編輯整個鎖死。
+ */
+const saveBlockedReason = computed(() => {
+  if (!liffConfigLoaded.value) return '正在確認活動頁（LIFF）設定，稍等一下。'
+  if (liffLoadFailed.value) return '這次讀不到活動頁（LIFF）設定，沒辦法確認活動連結做不做得出來。請重新整理再試。'
+  if (!hasUsableLiff.value) return '還沒設定活動頁（LIFF）：現在存下去也產不出活動連結。請先在上面那一格設定。'
+  return ''
+})
+
+/**
+ * 近 7 天客人失敗的分項。只列真的有數字的，故障類排前面
+ * （`campaign_inactive` 是預期內的擋下，不該把它算進「要修的事」）。
+ */
+const leadErrorRows = computed(() => {
+  const by = leadErrors.value?.byReason
+  if (!by) return []
+  return LEAD_FAILURE_REASONS
+    .map(r => ({ reason: r as LeadFailureReason, count: Number(by[r] || 0), ...LEAD_FAILURE_LABELS[r] }))
+    .filter(r => r.count > 0)
+    .sort((a, b) => Number(b.fault) - Number(a.fault) || b.count - a.count)
+})
+
+const leadErrorFaultTotal = computed(() =>
+  leadErrorRows.value.filter(r => r.fault).reduce((s, r) => s + r.count, 0),
+)
+
+/**
+ * 這個活動「存起來的」啟用狀態。
+ * ⛔ 不可以看 `form.isActive`：那是畫面上還沒存的開關，用它會在按下儲存前就先改變說法。
+ */
+const savedIsActive = computed(() => selectedCampaign.value?.isActive !== false)
+
+/**
+ * 沒有網址的原因。⛔ 原本一律講「請確認活動為啟用，再按儲存」——
+ * 缺 LIFF 的人照著做會被存檔擋下來，變成一條死路。三種「沒有」下一步不同就要分開講。
+ */
+const ctaMissingReason = computed(() => {
+  if (!hasUsableLiff.value)
+    return '還沒有網址，因為活動頁（LIFF）還沒設定——上面那一格處理完，儲存後就會自動產生。'
+  return '尚未有網址：請按上方「儲存變更」重新產生一次。'
+})
 
 /** 去設定活動頁。帶 ?focus=liff：到了那頁直接捲到 LIFF 區塊，不要再自己找一遍 */
 function goSetLiff() {
@@ -412,13 +688,110 @@ async function loadWorkspaceEffectiveLiff() {
     effectiveDefaultLiffId.value = ''
     liffLoadFailed.value = true
   }
+  finally {
+    liffConfigLoaded.value = true
+  }
 }
 
-onMounted(() => {
+/**
+ * 問 LINE：這幾顆 LIFF 登記的 Endpoint URL 到底是什麼。與設定頁「LINE 上的登記狀態」
+ * 同一支端點、同一份口徑（⛔ 別在這裡另立一套判斷，那就會出現「這頁說沒事、那頁說壞了」）。
+ *
+ * 端點限管理員：客服角色會收 403，這時走 `unverified`——**不是**當成沒問題。
+ */
+async function loadLiffChecks(opts?: { force?: boolean }) {
+  if (!canManageSettings.value) {
+    // 不會去問，就不要一直卡在「查詢中」（verdict 會走 unverified）
+    liffChecking.value = false
+    return
+  }
+  liffChecking.value = true
+  try {
+    const data = await apiFetch<{ expectedUrl?: string, checks?: LiffCheckItem[] }>(
+      '/api/admin/liff-endpoint-check',
+      { query: opts?.force ? { force: 1 } : {} },
+    )
+    liffChecks.value = Array.isArray(data?.checks) ? data.checks : []
+    liffExpectedUrl.value = String(data?.expectedUrl || '').trim()
+    liffCheckFailed.value = false
+  }
+  catch {
+    // ⛔ 這裡不可以回空陣列就算了：空陣列會讓 liffVerdict 找不到那一顆而看起來像「沒查到問題」
+    liffChecks.value = []
+    liffCheckFailed.value = true
+  }
+  finally {
+    liffChecking.value = false
+  }
+}
+
+/** 客人在活動頁失敗了幾次（近 7 天） */
+async function loadLeadErrors() {
+  try {
+    const data = await apiFetch<{
+      ok: boolean
+      total: number
+      byReason: Record<string, number> | null
+      truncated: boolean
+      days: number
+    }>('/api/campaigns/lead-errors')
+    leadErrors.value = data
+  }
+  catch {
+    // 查不到就說查不到（下方畫面會顯示 unknown），⛔ 不可以顯示成 0 次
+    leadErrors.value = { ok: false, total: 0, byReason: null, truncated: false, days: 7 }
+  }
+}
+
+/**
+ * 就地把預設 LIFF 存起來，不用離開這一頁。
+ *
+ * 為什麼不只給一顆「去設定活動頁」：跳過去之後沒有任何一條路帶你回剛剛那個活動，
+ * 而填到一半的表單在跳走時就被丟掉了——設定完還要自己找回來、重填一次。
+ */
+async function saveInlineLiff() {
+  // 存 LINE 憑證是管理員的權限（端點也是 admin）。⛔ 不可以用 canOperate 當守衛：
+  // 客服按下去只會收到 403，看起來像壞掉而不是「你沒有這個權限」。
+  if (!canManageSettings.value) return showToast('這一格要管理員才能改，請找帳號管理員設定', 'warning')
+  const id = inlineLiffId.value.trim()
+  if (!LIFF_ID_RE.test(id)) {
+    return showToast('這串看起來不像 LIFF ID。它長得像 2007123456-AbCdEfGh', 'error')
+  }
+  savingInlineLiff.value = true
+  try {
+    await apiFetch('/api/admin/line-workspace', { method: 'PUT', body: { defaultLiffId: id } })
+    inlineLiffId.value = ''
+    await loadWorkspaceEffectiveLiff()
+    // 剛在 LINE 那邊改完，一定要跳過 5 分鐘快取重查，否則會拿到修好前的答案
+    await loadLiffChecks({ force: true })
+    showToast('已存起來，正在確認 LINE 上的登記狀態', 'success')
+  }
+  catch {
+    showToast('儲存失敗，請再試一次', 'error')
+  }
+  finally {
+    savingInlineLiff.value = false
+  }
+}
+
+async function copyLiffExpectedUrl() {
+  try {
+    await navigator.clipboard.writeText(liffExpectedUrl.value)
+    showToast('已複製活動頁網址', 'success')
+  }
+  catch {
+    showToast('複製失敗，請手動複製', 'error')
+  }
+}
+
+onMounted(async () => {
   loadCampaigns(true)
   loadModules()
   loadTags({ status: 'active' })
-  loadWorkspaceEffectiveLiff()
+  loadLeadErrors()
+  // 先知道有沒有 LIFF ID，再去問 LINE 那顆登記對不對（後者要前者才知道要查誰）
+  await loadWorkspaceEffectiveLiff()
+  loadLiffChecks()
 })
 
 // ── Select / Create ───────────────────────────────────────
@@ -477,14 +850,10 @@ function cancelEdit() {
 async function submitForm() {
   if (!assertCanOperate()) return
   if (!form.value.name.trim()) return showToast('請輸入活動名稱', 'error')
-  if (!effectiveDefaultLiffId.value.trim()) {
-    return showToast(
-      liffLoadFailed.value
-        ? '無法讀取 LIFF 設定，請重新整理後再試'
-        : '請先到「組織與 LINE」設定預設 LIFF',
-      'error',
-    )
-  }
+  // ⛔ 與畫面上的橫幅共用同一個判斷（`saveBlockedReason`／`hasUsableLiff`）。
+  //    原本橫幅看「活動自己的 LIFF 或帳號預設」、存檔只看「帳號預設」，於是舊資料裡
+  //    自帶 LIFF 的活動會出現「畫面說沒問題、按儲存卻被擋」。
+  if (saveBlockedReason.value) return showToast(saveBlockedReason.value, 'error')
   if (!form.value.tagIds.length) return showToast('請至少選擇一個標籤', 'error')
   if (form.value.action.type === 'module' && !String(form.value.action.moduleId || '').trim()) {
     return showToast('請選擇要觸發的模組，或改成「不觸發動作」', 'error')
@@ -500,7 +869,9 @@ async function submitForm() {
   try {
     const payload = {
       name: form.value.name,
-      liffId: '',
+      // 這一頁沒有「這個活動用哪顆 LIFF」的欄位（一律吃帳號預設），所以新活動送空字串。
+      // ⛔ 但不可以寫死空字串：後端是整欄覆蓋，舊資料裡自帶 LIFF 的活動一按儲存就被清掉。
+      liffId: String(form.value.liffId || '').trim(),
       tagIds: form.value.tagIds,
       moduleId: form.value.action.type === 'module'
         ? (form.value.action.moduleId || null)

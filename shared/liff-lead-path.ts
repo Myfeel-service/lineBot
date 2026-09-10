@@ -8,6 +8,12 @@
  */
 export const LEAD_PATH = '/liff/lead'
 
+/**
+ * LIFF ID 的長相：`{loginChannelId}-{suffix}`，例 `2007123456-AbCdEfGh`。
+ * 小幫手劇本與活動頁的就地設定都要驗這一格，⛔ 兩處各寫一份的話「什麼算合法」會漂掉。
+ */
+export const LIFF_ID_RE = /^\d{8,}-[A-Za-z0-9]+$/
+
 /** 組完整 Endpoint URL；base 空字串時回空字串（呼叫端自己決定兜底或不顯示） */
 export function leadEndpointUrl(base: string): string {
   const b = String(base || '').trim().replace(/\/$/, '')
