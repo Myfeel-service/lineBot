@@ -123,6 +123,12 @@ export interface AnswerInput {
 const GREETING_RE = /^(hi+|hello+|hey+|嗨+|哈囉+|哈摟+|你好|妳好|您好|安安|早安|午安|晚安|在嗎|有人嗎|請問有人嗎)$/i
 const THANKS_RE = /^(謝謝你?|謝謝啦|謝謝喔|感謝你?|感恩|多謝|thanks?|thankyou|thx|3q)$/i
 const FAREWELL_RE = /^(掰掰|拜拜|再見|bye+|byebye|seeyou)$/i
+/**
+ * 「我沒事 / 不用了」＝婉拒，不是問題。⛔ 單看這張表不能下結論——
+ * 同樣一句「沒有」，接在「有什麼可以為您服務嗎」後面是婉拒，接在「請問您收到了嗎」
+ * 後面卻是回答。一定要配 {@link applyNoNeedGuard} 看上一則 bot 講了什麼。
+ */
+const NO_NEED_RE = /^(目前|現在|暫時|我)?(沒有|沒|不用|不需要|不必|沒事|沒什麼|先這樣|就這樣|先這樣就好|看看|再看看|先看看|隨便看看)(了|啦|囉|喔|哦|唷|耶|欸)?$/
 
 /**
  * 「假轉接」偵測：answered 內文不該出現的轉接承諾。轉接由系統流程處理（含二次確認），
@@ -178,25 +184,76 @@ export function isUnresolvedFeedback(text: string, history?: AiChatTurn[]): bool
 export const DEFAULT_GREETING_REPLY = '您好，請問有什麼可以為您服務的嗎？😊'
 export const DEFAULT_THANKS_REPLY = '不客氣！還有需要都可以再跟我說 😊'
 export const DEFAULT_FAREWELL_REPLY = '再見，有需要再來找我喔！😊'
+export const DEFAULT_NO_NEED_REPLY = '好的，有需要隨時再跟我說 😊'
+
+/**
+ * 「開放式招呼／收尾問句」——問的是「還有沒有事」，不是在要一個具體答案。
+ * 客人回「沒有」是把話收掉，不是在回答什麼，所以只有這一類問句後面才承認婉拒。
+ */
+const OPEN_OFFER_RE = /有(什麼|甚麼)?(可以|能)(為|幫)您|有(什麼|甚麼)(需要|可以)|(還有|有)(其他|什麼|甚麼|別的)?(問題|需要|疑問|想問|要問|想知道)|需要(什麼|甚麼)?(其他)?(協助|幫忙|服務)/
+
+/**
+ * 這則 bot 訊息是不是在「問一個具體問題」（等一個實質答案）。
+ * ⛔ 尾字比對前要先剝掉表情符號：反問澄清常長成「請問是哪一台呢 😊」（沒有問號、
+ *    靠「呢／嗎」收尾），表情符號沒剝掉就判成「沒在問問題」，客人那句「沒有」
+ *    會被當成婉拒把對話收掉——那是這道後檢最該擋下的誤判。
+ */
+function botAskedSpecificQuestion(text: string): boolean {
+  const t = String(text || '').trim().replace(/[\p{Extended_Pictographic}️‍\s]+$/gu, '')
+  const asksSomething = /[?？]/.test(t) || /[呢嗎]$/.test(t)
+  return asksSomething && !OPEN_OFFER_RE.test(t)
+}
+
+/**
+ * 婉拒（no_need）後檢：只有「上一則是 bot、而且沒有在問具體問題」時才承認。
+ *
+ * 2026-09-11 正式站實例：AI 開場問「請問有什麼可以為您服務的嗎？」，客人回「目前沒有(喔)」，
+ * 卻被當成「客人問了一個我答不出來的問題」→ 送出「這個問題我不太確定該怎麼回答，
+ * 需要幫您轉接專員嗎？」＋轉接按鈕。客人說沒事、系統要轉他去真人；只要他按下那顆按鈕，
+ * 真人就被叫來處理一個不存在的問題。記帳上這輪還記 handoff 不記 answered，扣「全程搞定率」。
+ *
+ * ⛔ 方向刻意單向（只收窄、不擴張），跟 {@link applyOrderStatusGuard} 同一個理由：
+ *    漏判只是照舊問「要不要轉接」＝現況，不會比今天更糟；誤判卻會把客人**真正的回答**
+ *    當成「他沒事了」收掉對話（bot 問「請問您收到了嗎」→ 客人「沒有」→ 回一句「好的」就結束）。
+ */
+function applyNoNeedGuard(
+  intent: MessageIntent,
+  history: AiChatTurn[] | undefined,
+): { intent: MessageIntent; noNeedDemoted: boolean } {
+  if (intent !== 'no_need') return { intent, noNeedDemoted: false }
+  const last = history?.[history.length - 1]
+  const demote = (why: string) => {
+    // 退回要看得見：這是「AI 本來要把話收掉、被擋下來照常查知識庫」，誤擋的話客人會多收一句轉接詢問
+    console.warn(`[intent] no_need → question（${why}）`)
+    return { intent: 'question' as MessageIntent, noNeedDemoted: true }
+  }
+  if (!last || last.role !== 'bot') return demote('上一則不是機器人說的話，沒有東西可以婉拒')
+  if (botAskedSpecificQuestion(last.text)) return demote('上一則機器人在問具體問題，這句是回答不是婉拒')
+  return { intent, noNeedDemoted: false }
+}
 
 /** 社交意圖 → 罐頭回覆；非社交回 null。intent router 與 regex fallback 共用。 */
 export function socialReplyForIntent(intent: MessageIntent): string | null {
   if (intent === 'greeting') return DEFAULT_GREETING_REPLY
   if (intent === 'thanks') return DEFAULT_THANKS_REPLY
   if (intent === 'farewell') return DEFAULT_FAREWELL_REPLY
+  if (intent === 'no_need') return DEFAULT_NO_NEED_REPLY
   return null
 }
 
 /**
  * Regex fallback：intent router 失敗（LLM 逾時 / 429）時用，沿用收緊的關鍵字判斷。
  * 命中社交語句回對應罐頭回覆；否則回 null（續走 RAG）。
+ * 婉拒（沒有 / 不用了）多一道 history 後檢，理由見 {@link applyNoNeedGuard}。
  */
-export function socialCannedReply(text: string): string | null {
-  const t = String(text || '').trim().replace(/[!！。.~～、,，?？\s]/g, '')
+export function socialCannedReply(text: string, history?: AiChatTurn[]): string | null {
+  // 括號一起剝：實例「目前沒有(喔)」的括號不在原本那組標點裡，留著就整句比不中
+  const t = String(text || '').trim().replace(/[!！。.~～、,，?？()（）\s]/g, '')
   if (!t || t.length > 8) return null
   if (GREETING_RE.test(t)) return DEFAULT_GREETING_REPLY
   if (THANKS_RE.test(t)) return DEFAULT_THANKS_REPLY
   if (FAREWELL_RE.test(t)) return DEFAULT_FAREWELL_REPLY
+  if (NO_NEED_RE.test(t) && applyNoNeedGuard('no_need', history).intent === 'no_need') return DEFAULT_NO_NEED_REPLY
   return null
 }
 
@@ -208,7 +265,7 @@ export function socialCannedReply(text: string): string | null {
 //  通用、不綁租戶；敏感詞另由 detectSensitiveTopic 關鍵字硬擋,這裡只是語意補抓。
 // ═══════════════════════════════════════════════════════════════════
 
-export type MessageIntent = 'greeting' | 'thanks' | 'farewell' | 'find_human' | 'sensitive' | 'compare' | 'commercial' | 'list' | 'offtopic' | 'order_status' | 'question'
+export type MessageIntent = 'greeting' | 'thanks' | 'farewell' | 'no_need' | 'find_human' | 'sensitive' | 'compare' | 'commercial' | 'list' | 'offtopic' | 'order_status' | 'question'
 
 export interface IntentResult {
   intent: MessageIntent
@@ -232,11 +289,16 @@ export interface IntentResult {
    * （見 applyOrderStatusGuard）。只作記錄用，不影響行為——`intent` 已經是退回後的值。
    */
   orderStatusDemoted?: boolean
+  /**
+   * 模型判了 no_need（婉拒），但上一則機器人其實在問具體問題，已被後檢退回 question
+   * （見 applyNoNeedGuard）。只作記錄用，不影響行為——`intent` 已經是退回後的值。
+   */
+  noNeedDemoted?: boolean
   inputTokens: number
   outputTokens: number
 }
 
-const VALID_INTENTS: MessageIntent[] = ['greeting', 'thanks', 'farewell', 'find_human', 'sensitive', 'compare', 'commercial', 'list', 'offtopic', 'order_status', 'question']
+const VALID_INTENTS: MessageIntent[] = ['greeting', 'thanks', 'farewell', 'no_need', 'find_human', 'sensitive', 'compare', 'commercial', 'list', 'offtopic', 'order_status', 'question']
 
 /**
  * 「客人在講他自己那一筆」的線索。分組只是為了看得懂，比對時是同一個 alternation。
@@ -306,6 +368,8 @@ intent 擇一：
 - greeting：純打招呼（你好、嗨、在嗎、早安）
 - thanks：純道謝（謝謝、感謝、感恩、3Q）
 - farewell：純道別（掰掰、再見、bye）
+- no_need：客人表示「現在沒有事要問 / 不用了」＝把話收掉（沒有、目前沒有、沒事、不用了、不需要、先這樣、我再看看）。**不是問題，不要當成答不出來的問題。**
+  ⛔ **只有在「客服上一句是開放式招呼或收尾」（有什麼可以為您服務嗎／還有其他問題嗎）時才算 no_need**；客服上一句若在問一個具體問題（「請問是哪一台呢？」「請問您收到了嗎？」），客人回「沒有」是**回答**那個問題 → question。
 - find_human：明確要求真人 / 客服專員（我要找真人、轉接專員、要跟人講）
 - sensitive：**真正**需真人介入的敏感情境——自殺 / 自傷、法律訴訟威脅（提告、找律師）、消費金錢糾紛爭議、醫療診斷、投資建議、個資外洩。**注意：退貨 / 退款 / 取消訂單 / 改地址 / 修改訂單 / 發票問題「不算」敏感**（那是一般訂單客服，知識庫多半有說明）→ 一律歸 question，不要歸 sensitive。
 - compare：想「比較**已點名的**多個產品 / 在它們之間挑選」（例「A 跟 B 哪個好」「這幾台比一下」「A 和 B 差在哪」「A vs B」）
@@ -370,7 +434,9 @@ export async function classifyIntent(text: string, history?: AiChatTurn[]): Prom
       : 'question'
     // 改寫為空 / 非字串時回退原文；截 200 字防 LLM 暴衝
     const rewritten = String(data?.standaloneQuery ?? '').trim().slice(0, 200)
-    const { intent, orderStatusDemoted } = applyOrderStatusGuard(rawIntent, text, rewritten || text)
+    const ordered = applyOrderStatusGuard(rawIntent, text, rewritten || text)
+    const orderStatusDemoted = ordered.orderStatusDemoted
+    const { intent, noNeedDemoted } = applyNoNeedGuard(ordered.intent, history)
     const compareItems = intent === 'compare' && Array.isArray(data?.compareItems)
       ? data.compareItems.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 4)
       : []
@@ -385,6 +451,7 @@ export async function classifyIntent(text: string, history?: AiChatTurn[]): Prom
       compareItems,
       subQuestions: subQuestions.length >= 2 ? subQuestions : [],
       orderStatusDemoted,
+      noNeedDemoted,
       inputTokens,
       outputTokens,
     }
@@ -437,9 +504,10 @@ scriptId 規則：
 - 不確定 / 都不符合 → 填 null，交給 AI。**寧可 null 也不要硬塞**。
 - **敏感情境優先**：涉及自殺自傷 / 法律訴訟威脅 / 消費金錢糾紛爭議 / 醫療診斷 / 投資建議 / 個資外洩 → scriptId 一律 null 且 intent=sensitive。**但退貨 / 退款 / 取消訂單 / 改地址 / 修改訂單 / 發票問題「不算」敏感**——那是一般訂單客服，有腳本就走腳本、否則 intent=question 交給 AI 查知識庫。
 
-intent 擇一：greeting（純打招呼）/ thanks（純道謝）/ farewell（純道別）/ find_human（要求真人）/ sensitive（上述真正敏感情境，退貨退款改單發票除外）/ compare（比較已點名的多個產品）/ list（問某類別「有哪些」）/ order_status（問**他自己那一筆**訂單的進度／狀態，需查訂單系統）/ question（其他一般詢問）。
+intent 擇一：greeting（純打招呼）/ thanks（純道謝）/ farewell（純道別）/ no_need（客人說沒事了、不用了、先這樣）/ find_human（要求真人）/ sensitive（上述真正敏感情境，退貨退款改單發票除外）/ compare（比較已點名的多個產品）/ list（問某類別「有哪些」）/ order_status（問**他自己那一筆**訂單的進度／狀態，需查訂單系統）/ question（其他一般詢問）。
 - 同時有社交詞與實際問題（「謝謝，但想問運費」）以實際問題為準。
 - 單獨產品名/品類（小獴友、除濕機）一律 question，不是社交。
+- no_need 只給「把話收掉」的回覆（沒有、目前沒有、沒事、不用了、先這樣、我再看看），且**客服上一句必須是開放式招呼／收尾**（有什麼可以為您服務嗎、還有其他問題嗎）；客服上一句在問具體問題時（「是哪一台呢？」「您收到了嗎？」），客人回「沒有」是**回答** → question。
 - order_status 只給「指涉自己個案」的問法（這筆 / 我的訂單 / 單號 / 已經寄回為什麼還沒退 / 仍顯示處理中）；只問規則的（退款要幾天、怎麼申請退貨）仍是 question。**還沒下單的人問時程（下訂後多久會收到、下單後幾天出貨、什麼時候到貨、預購什麼時候寄）也是 question**——那是一般出貨時程，不是他那一筆。
 
 isFollowup：脫離上一輪就看不懂（多少錢、有貨嗎、那這個呢 = true；自帶主題 = false）。
@@ -464,12 +532,15 @@ subQuestions：客人一句話問了 2 件以上不同的事時，拆成各自�
     })
     const rawIntent = VALID_INTENTS.includes(data?.intent as MessageIntent) ? (data!.intent as MessageIntent) : 'question'
     const rawScriptId = String(data?.scriptId ?? '').trim()
-    // 防 LLM 亂編 id：只接受清單裡的 id；敏感情境一律不進腳本
-    const scriptId = rawScriptId && rawScriptId !== 'null' && validIds.has(rawScriptId) && rawIntent !== 'sensitive'
+    const rewritten = String(data?.standaloneQuery ?? '').trim().slice(0, 200)
+    const ordered = applyOrderStatusGuard(rawIntent, text, rewritten || text)
+    const orderStatusDemoted = ordered.orderStatusDemoted
+    const { intent, noNeedDemoted } = applyNoNeedGuard(ordered.intent, history)
+    // 防 LLM 亂編 id：只接受清單裡的 id；敏感情境一律不進腳本。
+    // no_need 同理——客人說「沒事了」還把他推進一條腳本流程，是拉著要走的人繼續問問題。
+    const scriptId = rawScriptId && rawScriptId !== 'null' && validIds.has(rawScriptId) && intent !== 'sensitive' && intent !== 'no_need'
       ? rawScriptId
       : null
-    const rewritten = String(data?.standaloneQuery ?? '').trim().slice(0, 200)
-    const { intent, orderStatusDemoted } = applyOrderStatusGuard(rawIntent, text, rewritten || text)
     const compareItems = intent === 'compare' && Array.isArray(data?.compareItems)
       ? data.compareItems.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 4)
       : []
@@ -484,6 +555,7 @@ subQuestions：客人一句話問了 2 件以上不同的事時，拆成各自�
       compareItems,
       subQuestions: subQuestions.length >= 2 ? subQuestions : [],
       orderStatusDemoted,
+      noNeedDemoted,
       inputTokens,
       outputTokens,
     }
@@ -1613,8 +1685,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const orderStatusMode = intentRes?.intent === 'order_status'
   /** order_status 一律直接轉真人：原因收斂成 order_status，就不會落進二次確認的名單 */
   const reasonFor = (r: HandoffReason): HandoffReason => (orderStatusMode ? 'order_status' : r)
-  // 社交（招呼 / 道謝 / 道別）→ 罐頭，不走 RAG
-  const social = intentRes ? socialReplyForIntent(intentRes.intent) : socialCannedReply(text)
+  // 社交（招呼 / 道謝 / 道別 / 婉拒）→ 罐頭，不走 RAG
+  const social = intentRes ? socialReplyForIntent(intentRes.intent) : socialCannedReply(text, input.history)
   if (social) {
     await record({ invocations: 1, answered: 1, inputTokens: routerIn, outputTokens: routerOut })
     // answerKind='social'：沒查知識庫。後台脈絡卡靠它避免把「謝謝」講成「知識庫沒有相關資訊」

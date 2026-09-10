@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SimilarChunk } from './ai-knowledge-chunks'
-import type { IntentResult, MessageIntent } from './ai-answer'
+import type { AiChatTurn, IntentResult, MessageIntent } from './ai-answer'
 
 vi.mock('./firebase', () => ({ getDb: () => ({}) }))
 
@@ -60,7 +60,7 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
   getProductAliases: vi.fn(async () => ({ aliases: {}, displays: {} })),
 }))
 
-const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder } = await import('./ai-answer')
+const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder, socialCannedReply } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { generateJson } = await import('./gemini')
 const { searchSimilarChunks } = await import('./ai-knowledge-chunks')
@@ -297,5 +297,143 @@ describe('招呼語照舊計入則數（老闆拍板：不分開算）', () => {
     expect(res.decision).toBe('answered')
     expect(res.answerKind).toBe('offtopic')
     expect(deltas().some(d => d.answered === 1)).toBe(true)
+  })
+})
+
+/**
+ * 婉拒（no_need）＋ 後檢（2026-09-11 正式站災情後補）。
+ *
+ * 災情：12:12 AI 開場問「請問有什麼可以為您服務的嗎？」，12:13 客人回「目前沒有(喔)」，
+ * AI 把它當成「客人問了一個我答不出來的問題」，回「這個問題我不太確定該怎麼回答，
+ * 需要幫您轉接專員嗎？」＋兩顆按鈕。客人說沒事、系統要轉他去真人；只要按下那顆按鈕，
+ * 真人就被叫來處理一個不存在的問題。記帳上這輪還記 handoff 不記 answered。
+ *
+ * ⛔ 後檢的方向跟 order_status 一樣是單向收窄：誤判的代價是把客人**真正的回答**
+ *    （bot 問「您收到了嗎」→「沒有」）當成「他沒事了」收掉，比漏判嚴重得多。
+ */
+describe('婉拒：客人說「沒事了」不算答不出來', () => {
+  function mockRouter(kind: MessageIntent, standaloneQuery: string) {
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { scriptId: null, intent: kind, isFollowup: false, standaloneQuery, compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+  }
+  /** 災情當下的上一則：AI 的開場招呼（⛔ 句尾是表情符號，不是問號） */
+  const afterGreeting: AiChatTurn[] = [{ role: 'bot', text: '您好，請問有什麼可以為您服務的嗎？😊' }]
+
+  it('開場招呼後回「目前沒有(喔)」→ 保留 no_need', async () => {
+    mockRouter('no_need', '目前沒有')
+
+    const route = await routeMessage('目前沒有(喔)', [], afterGreeting)
+
+    expect(route?.intent).toBe('no_need')
+    expect(route?.noNeedDemoted).toBeFalsy()
+  })
+
+  it('整條路走完：回一句「有需要隨時再跟我說」，不問要不要轉接、不記 handoff', async () => {
+    mockRouter('no_need', '目前沒有')
+    const route = await routeMessage('目前沒有(喔)', [], afterGreeting)
+
+    const res = await answerWithAi({
+      workspaceId: 'ws1',
+      query: '目前沒有(喔)',
+      history: afterGreeting,
+      precomputedIntent: route!,
+    })
+
+    // 修好之前這裡是 handoff / low_confidence：客人說沒事，系統問他要不要轉接專員
+    expect(res.decision).toBe('answered')
+    expect(res.handoffReason).toBeNull()
+    expect(res.answerKind).toBe('social')
+    expect(res.answer).toContain('有需要隨時再跟我說')
+    expect(deltas().some(d => d.answered === 1)).toBe(true)
+    expect(deltas().some(d => d.handoffs)).toBe(false)
+    // 沒去查知識庫（罐頭直接短路）
+    expect(vi.mocked(searchSimilarChunks)).not.toHaveBeenCalled()
+  })
+
+  it('「還有其他問題嗎」這種收尾問句後面的「沒有」也算婉拒', async () => {
+    for (const bot of ['還有其他問題嗎？', '請問還有什麼需要幫您服務的嗎？😊', '有什麼可以幫您的嗎']) {
+      mockRouter('no_need', '沒有了')
+      const route = await routeMessage('沒有了', [], [{ role: 'bot', text: bot }])
+      expect(route?.intent, bot).toBe('no_need')
+    }
+  })
+
+  it('⛔ 上一則機器人在問具體問題 → 這句是回答，退回 question', async () => {
+    for (const bot of [
+      '請問是哪一台除濕機呢？',
+      '請問您收到商品了嗎？',
+      '方便提供訂單編號嗎？',
+      '請問要選 A 還是 B？',
+      // ⛔ 沒有問號、靠「呢」收尾、後面還掛表情符號——反問澄清最常見的長相
+      '請問是哪一台除濕機呢 😊',
+    ]) {
+      mockRouter('no_need', '沒有')
+      const route = await routeMessage('沒有', [], [{ role: 'bot', text: bot }])
+      expect(route?.intent, bot).toBe('question')
+      expect(route?.noNeedDemoted, bot).toBe(true)
+    }
+  })
+
+  it('⛔ 上一則不是機器人說的話（沒有東西可以婉拒）→ 退回 question', async () => {
+    for (const history of [
+      [] as AiChatTurn[],
+      [{ role: 'user' as const, text: '我想問除濕機' }],
+    ]) {
+      mockRouter('no_need', '沒有')
+      const route = await routeMessage('沒有', [], history)
+      expect(route?.intent).toBe('question')
+      expect(route?.noNeedDemoted).toBe(true)
+    }
+  })
+
+  it('判成 no_need 就不進腳本（說沒事了還被推進流程＝拉著要走的人繼續問）', async () => {
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { scriptId: 's1', intent: 'no_need', isFollowup: false, standaloneQuery: '沒有', compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+
+    const route = await routeMessage('沒有', [{ id: 's1', name: '查詢訂單', hints: ['查訂單'] }], afterGreeting)
+
+    expect(route?.intent).toBe('no_need')
+    expect(route?.scriptId).toBeNull()
+  })
+
+  it('classifyIntent（路由器失敗時的後備）走同一道後檢', async () => {
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { intent: 'no_need', isFollowup: false, standaloneQuery: '沒有', compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+    const kept = await classifyIntent('目前沒有(喔)', afterGreeting)
+    expect(kept?.intent).toBe('no_need')
+
+    vi.mocked(generateJson).mockResolvedValueOnce({
+      data: { intent: 'no_need', isFollowup: false, standaloneQuery: '沒有', compareItems: [], subQuestions: [] },
+      inputTokens: 5, outputTokens: 5,
+    } as any)
+    const demoted = await classifyIntent('沒有', [{ role: 'bot', text: '請問您收到商品了嗎？' }])
+    expect(demoted?.intent).toBe('question')
+    expect(demoted?.noNeedDemoted).toBe(true)
+  })
+
+  it('連 LLM 都掛掉時的 regex 後備：一樣要看上一則講了什麼', () => {
+    // 命中：開場招呼後的婉拒（括號要先剝掉，否則「目前沒有(喔)」整句比不中）
+    for (const q of ['目前沒有(喔)', '沒有', '沒事了', '不用了', '不需要', '先這樣', '我再看看']) {
+      expect(socialCannedReply(q, afterGreeting), q).toContain('有需要隨時再跟我說')
+    }
+    // 不命中：上一則在問具體問題（這句是回答）／沒有上一則機器人訊息
+    expect(socialCannedReply('沒有', [{ role: 'bot', text: '請問您收到商品了嗎？' }])).toBeNull()
+    expect(socialCannedReply('沒有')).toBeNull()
+    // 不命中：帶了實際問題
+    expect(socialCannedReply('沒有耶，那運費多少', afterGreeting)).toBeNull()
+  })
+
+  it('後檢只對 no_need 生效，其他意圖原封不動', async () => {
+    mockRouter('question', '這台除濕機多少錢')
+    const route = await routeMessage('這台除濕機多少錢', [], afterGreeting)
+
+    expect(route?.intent).toBe('question')
+    expect(route?.noNeedDemoted).toBe(false)
   })
 })
