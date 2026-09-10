@@ -3,7 +3,6 @@ import {
   SIGNUP_ENTRY_PATH,
   isSignupStartIntent,
   resolveLoginRedirect,
-  shouldFastLaneToOnboarding,
 } from './signup-entry'
 
 // 這條路上的每個判斷都只在「第一次註冊」跑一次，而且錯了不會噴錯、只會把人送錯地方
@@ -41,8 +40,11 @@ describe('signup-entry', () => {
       expect(resolveLoginRedirect({})).toBe('/admin/workspaces')
     })
 
-    it('帶 intent=start＝把意圖帶去帳號選擇頁', () => {
-      expect(resolveLoginRedirect({ intent: 'start' })).toBe('/admin/workspaces?intent=start')
+    // ⚠️ 2026-09-10 `D-77`：這條的期待值被**刻意反轉**——原本是
+    //    「帶 intent=start 就把意圖帶去帳號選擇頁」（給已移除的「註冊快車道」用）。
+    //    現在那一頁沒有任何東西讀它，所以不再帶過去。⛔ 這不是壞掉的測試，是拍板改了。
+    it('帶 intent=start 也只去帳號選擇頁（`D-77` 推翻快車道後，那一頁不再讀這個參數）', () => {
+      expect(resolveLoginRedirect({ intent: 'start' })).toBe('/admin/workspaces')
     })
 
     it('redirect 優先於 intent：被 middleware 擋下來的人有明確目的地，不可被註冊意圖劫走', () => {
@@ -56,33 +58,14 @@ describe('signup-entry', () => {
       expect(resolveLoginRedirect({ redirect: '/liff/lead' })).toBe('/admin/workspaces')
     })
 
-    it('redirect 被攔掉但有 intent 時，仍走註冊那條（不要讓他掉回中性落點）', () => {
+    it('站外 redirect 被攔掉、有沒有 intent 都落在帳號選擇頁', () => {
       expect(resolveLoginRedirect({ redirect: '//evil.com', intent: 'start' }))
-        .toBe('/admin/workspaces?intent=start')
+        .toBe('/admin/workspaces')
     })
   })
 
-  describe('shouldFastLaneToOnboarding', () => {
-    const base = { intentIsStart: true, listLoaded: true, groupCount: 0, isSuperAdmin: false }
-
-    it('來註冊、清單查到了、零帳號、不是超管＝直接進開通引導', () => {
-      expect(shouldFastLaneToOnboarding(base)).toBe(true)
-    })
-
-    it('裸 /login 進來的人維持迎賓頁三選一', () => {
-      expect(shouldFastLaneToOnboarding({ ...base, intentIsStart: false })).toBe(false)
-    })
-
-    it('⛔ 清單沒查到（斷網／token 過期）時不送——那時的「零帳號」是假的', () => {
-      expect(shouldFastLaneToOnboarding({ ...base, listLoaded: false })).toBe(false)
-    })
-
-    it('已經有帳號（或有 org 但底下零帳號）的人照舊看帳號選擇頁', () => {
-      expect(shouldFastLaneToOnboarding({ ...base, groupCount: 1 })).toBe(false)
-    })
-
-    it('超管不送：他的空狀態畫面上有「超級管理員後台」入口，送走就看不到', () => {
-      expect(shouldFastLaneToOnboarding({ ...base, isSuperAdmin: true })).toBe(false)
-    })
-  })
+  // ⛔ `shouldFastLaneToOnboarding` 那一組測試（5 條）2026-09-10 `D-77` 連同函式一起移除：
+  //    使用者看實際行為後推翻 `D-74` A 案的「零帳號直接進開通引導」，改成
+  //    「第一次登入先看到迎賓三選一，按下開始使用才進引導」。
+  //    ⛔ 不要因為「測試少了幾條」就把函式與測試復活——理由寫在 signup-entry.ts 檔尾。
 })

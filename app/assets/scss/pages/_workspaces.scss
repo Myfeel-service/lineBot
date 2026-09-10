@@ -11,15 +11,38 @@
   align-items: center;
 
   /* logotype 圖檔＋「管理後台」併成一個 h1：品牌名在圖裡（alt），文字只補後半段。
-     ⚠️ logo 高度（34px）由 `_entry-shell.scss` 給＝與登入頁同一級；字級跟著它走。 */
+     ⚠️ logo 高度（34px）由 `_entry-shell.scss` 給＝與登入頁同一級。 */
   h1 {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    font-size: 1.25rem;
-    font-weight: 700;
     margin: 0;
-    color: var(--text-primary);
+  }
+
+  /* ── 「管理後台」＝**頁面標籤，不是商標的一部分**（2026-09-10 `D-77`）────
+   * 原本是 20px／700／`--text-primary`——跟商標的墨色同一個重量，兩者被讀成
+   * 「一個叫做『MiniMe 管理後台』的商標鎖定圖」，而它其實只是在說「你在後台」。
+   * ⚠️ 垂直對齊本來就是準的（實測商標中心 294.0、文字視覺中心 293.9，差 0.1px），
+   *    所以這一輪動的是**階級**不是位置。
+   * 做法＝品牌／標籤之間加一條細豎線分隔（brand │ product area 的通用寫法），
+   * 標籤降到 0.95rem／600／secondary：商標仍是最重的，標籤退到說明的層級。
+   * ⛔ 別把它改回跟商標同重量，也⛔別整個拿掉：第一次登入的人需要知道這裡是後台。 */
+  h1 span {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    /* 細豎線：用 ::before 而不是 border-left，才能只吃文字的高度（20px）
+       而不是被 flex 拉成整個 34px。 */
+    &::before {
+      content: '';
+      display: block;
+      width: 1px;
+      height: 1.25rem;
+      background: var(--border);
+    }
   }
 }
 
@@ -60,6 +83,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  /* 撐滿那張選項卡的內寬（`D-77` 使用者指定）：這個框是要被整串選取、複製給管理員的，
+     ⚠️ 它原本只有內容寬＝右邊空一截，看起來像沒對齊到卡片的右邊界。
+     ⚠️ `width: 100%` 而不是靠 flex 拉伸：它的父層 `.ws-welcome-opt__body` 是 column flex，
+        子元素預設會 stretch，但**信箱那一列在受邀選項裡是 `.ws-empty-email` 直接掛在
+        body 底下**，一旦以後有人給 body 加 `align-items` 就會縮回內容寬——寫死比較穩。 */
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.6rem 0.75rem;
   background: var(--bg-base);
   border: 1px solid var(--border);

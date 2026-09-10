@@ -205,12 +205,12 @@ const { showToast } = useAdminToast()
 import type { WorkspaceItem } from '~~/app/composables/useWorkspace'
 import { DEFAULT_LINE_WORKSPACE_ID } from '~~/shared/line-workspace'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
-import { isSignupStartIntent, shouldFastLaneToOnboarding } from '~~/shared/signup-entry'
+// ⚠️ 2026-09-10 `D-77`：`shared/signup-entry` 的 import 整條移除——「註冊快車道」被推翻，
+//    這一頁不再看 `?intent=start`（理由寫在 onMounted 裡那段 ⛔ 註解）。
 
 definePageMeta({ middleware: 'auth', layout: false })
 useHead({ title: useAdminTitle('選擇官方帳號') })
 
-const route = useRoute()
 const { logout } = useAuth()
 const { loadWorkspaceList, orgAdminOf } = useWorkspace()
 const { $auth } = useNuxtApp()
@@ -398,32 +398,27 @@ async function submitCreate() {
 // ── Init ──────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  let listLoaded = false
   try {
     const [list, tokenResult] = await Promise.all([
       loadWorkspaceList(),
       $auth.currentUser?.getIdTokenResult(),
     ])
     workspaceList.value = list
-    listLoaded = true
     isSuperAdmin.value = tokenResult?.claims.superAdmin === true
     // 沒有任何權限時要顯示給他看（同事要邀請他就是需要這個信箱）
     userEmail.value = $auth.currentUser?.email ?? ''
 
-    // ── 註冊快車道（2026-09-10 `D-74` 老闆拍板 A 案）───────────────────
-    // 從門面「免費打造」按進來、而且真的一個帳號都沒有 → 直接進開通引導，
-    // 不要再問他一次「選一個最符合你狀況的方式」——他按那顆按鈕時就回答過了。
-    // 判斷本體（含「清單沒查到時不可以送」等四個條件）在 shared/signup-entry.ts，有測試釘住。
-    // ⛔ replace 不用 push：他不該按上一頁又回到這個中繼頁。
-    if (shouldFastLaneToOnboarding({
-      intentIsStart: isSignupStartIntent(route.query.intent),
-      listLoaded,
-      groupCount: groupedWorkspaces.value.length,
-      isSuperAdmin: isSuperAdmin.value,
-    })) {
-      return await navigateTo('/admin/onboarding', { replace: true })
-    }
-
+    // ⛔ **這裡刻意沒有「註冊快車道」**（2026-09-10 `D-77` 使用者看實際行為後推翻 `D-74` A 案）。
+    //
+    // `D-74` 當時拍板：從門面「免費打造」按進來、零帳號的人登入後**直接進開通引導**、
+    // 跳過這一頁的三選一（理由是「他按那顆按鈕時就回答過了」）。實際跑起來之後
+    // 使用者的指示是相反的：「**第一次登入後應該來到這個畫面，按下開始使用才進入引導教學**」。
+    //
+    // ⛔ 別再把它加回來（`shouldFastLaneToOnboarding` 已整支移除，連測試一起）：
+    //    第一次登入的人需要先看到自己有哪些路可以走（開始使用／我是被邀請的／有企業需求），
+    //    被直接丟進一段聊天引導是沒得選。
+    // ⚠️ `?intent=start` **仍然有用、不要拿掉**：登入頁靠它換成註冊口吻（`D-74` 的另一半，
+    //    那部分沒有被推翻）。它只影響登入頁的文案，不再影響落點。
     const onlyWorkspace = visibleWorkspaceList.value.length === 1 ? visibleWorkspaceList.value[0] : undefined
     if (!isSuperAdmin.value && onlyWorkspace && orgAdminOf.value.length === 0) {
       await enter(onlyWorkspace.workspaceId)

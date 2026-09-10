@@ -188,24 +188,30 @@ for (const [tag, path, want, unwanted] of [
   await page.close()
 }
 
-// ══ ③ 登入後落點（新程式真的跑到了嗎）═══════════════════════════════════
-console.log('\n③ 登入後落點：四種人 × 有沒有帶意圖')
+// ══ ③ 登入後落點 ═══════════════════════════════════════════════════════
+//
+// ⭐ **這一節的期待值 2026-09-10 `D-77` 被刻意反轉**，⛔ 不是壞掉的測試：
+//    `D-74` 原本拍板「零帳號＋帶 `?intent=start` → 直接進 `/admin/onboarding`」（跳過三選一），
+//    使用者看到實際行為後改成「**第一次登入先停在迎賓頁，按下開始使用才進引導教學**」。
+//    所以現在**不管有沒有帶意圖，零帳號的人都要停在 `/admin/workspaces`**。
+// ⛔ 若哪天又看到有人把「快車道」加回來，這一節會紅——那是刻意的守門，不要改回去。
+console.log('\n③ 登入後落點：零帳號一律停在迎賓頁（`D-77` 推翻快車道）')
 for (const [tag, opts, to, want] of [
-  ['來註冊、零帳號 → 直接進開通引導（跳過三選一）', { list: EMPTY }, '/admin/workspaces?intent=start', '/admin/onboarding'],
-  ['⛔ 裸 /login 的零帳號人 → 維持迎賓頁三選一', { list: EMPTY }, '/admin/workspaces', '/admin/workspaces'],
-  ['⛔ 清單查不到（500）時不可送走——那時的「零帳號」是假的', { list: 'fail' }, '/admin/workspaces?intent=start', '/admin/workspaces?intent=start'],
-  ['⛔ 超管不送（他的空狀態畫面上有超管後台入口）', { list: EMPTY, claims: { superAdmin: true } }, '/admin/workspaces?intent=start', '/admin/workspaces?intent=start'],
+  ['零帳號＋帶註冊意圖 → **停在迎賓頁**（⛔ 不可自動跑進開通引導）', { list: EMPTY }, '/admin/workspaces?intent=start', '/admin/workspaces?intent=start'],
+  ['零帳號、裸進來 → 停在迎賓頁', { list: EMPTY }, '/admin/workspaces', '/admin/workspaces'],
+  ['清單查不到（500）也停在原地，不亂送人', { list: 'fail' }, '/admin/workspaces?intent=start', '/admin/workspaces?intent=start'],
+  ['超管的零帳號畫面照舊（他要看得到超管後台入口）', { list: EMPTY, claims: { superAdmin: true } }, '/admin/workspaces?intent=start', '/admin/workspaces?intent=start'],
 ]) {
   const page = await signedInPage(opts)
   const landed = await landOn(page, to)
   check(landed === want, tag, landed)
   await page.close()
 }
-// 已經有帳號的人：帶了意圖也不可以被劫走（單一帳號會自動進那個帳號）
+// 已經有帳號的人：唯一的自動轉址（單一帳號直接進那個帳號）仍然要在
 {
   const page = await signedInPage({ list: WS })
   const landed = await landOn(page, '/admin/workspaces?intent=start')
-  check(landed.startsWith('/admin/ws-1/'), '已經有帳號的人：帶意圖也照原本規則進帳號，不進開通引導', landed)
+  check(landed.startsWith('/admin/ws-1/'), '只有一個帳號的人：照舊自動進那個帳號（這條自動轉址沒有被推翻）', landed)
   await page.close()
 }
 
