@@ -569,8 +569,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok('越線的單位是兩扇窗（對照表改由上面接上，不自己越線）')
     : bad(`舞台單位數不對：${before.units} 個 .lp-cue--mid（第十輪起應為 2＝左窗／右窗）`)
   !before.cued && before.m1 < 0.05 && before.m11 < 0.05 && before.x1 < 0.05 && before.stamp < 0.05 && before.relief < 0.05
-    ? ok('開演前整場藏著（兩窗的訊息、✕、章、「還好」都還沒出現）')
-    : bad(`開演前就穿幫：cued=${before.cued} 左第一句 ${before.m1} 右第一句 ${before.m11} ✕ ${before.x1} 章 ${before.stamp} 還好 ${before.relief}`)
+    ? ok('開演前整場藏著（兩窗的訊息、✕、章、解法那句副標都還沒出現）')
+    : bad(`開演前就穿幫：cued=${before.cued} 左第一句 ${before.m1} 右第一句 ${before.m11} ✕ ${before.x1} 章 ${before.stamp} 副標 ${before.relief}`)
 
   // 一張卡：兩扇窗與四行表要在同一個容器裡（老闆：「為什麼現在有四個區塊」）
   const card = await page.evaluate(() => {
@@ -644,11 +644,14 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok(desk ? '兩顆章同時蓋下：沒了／成交（1.75s）' : '左窗演完：買別家＋紅章（1.75s）')
     : bad(`收尾不對（1.75s）：買別家 ${t3.m3}、紅章 ${t3.x}、成交章 ${t3.o}`)
 
-  await until(2200) // 「還好——」1.6s 起、0.45s 過場＝2.05 收
+  await until(2200) // 解法那句副標 1.6s 起、0.45s 過場＝2.05 收
   const relief = await op('#why .lp-bubble__relief')
+  // ⚠️ 這裡一律用「副標」稱呼那句、不要引用它的字：2026-09-10 老闆把它從
+  //    「還好，每一關都有 MiniMe 能接住的解法——」換成「讓 MiniMe 為你解決這所有的問題。」，
+  //    引用字面的訊息會過期（選擇器吃的是 .lp-bubble__relief，不受文案影響）。
   relief > 0.9
-    ? ok('「還好，每一關都有解法——」在兩顆章落地之後浮出（2.2s）')
-    : bad(`「還好——」沒有浮出：opacity ${relief}（應 >0.9）`)
+    ? ok('解法那句副標在兩顆章落地之後浮出（2.2s）')
+    : bad(`解法那句副標沒有浮出：opacity ${relief}（應 >0.9）`)
   await page.close()
 }
 // ── ②¾ 對照表：上面演完**自動接上**，不必再往下捲（2026-09-10 第十輪）─────────────
@@ -706,8 +709,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     }
   })
   fin.all && fin.relief > 0.9
-    ? ok('整段 2.6 秒內演完定格（兩窗、✕✓、兩顆章、「還好——」都在）')
-    : bad(`2.6 秒還沒演完：全到=${fin.all} 還好=${fin.relief}`)
+    ? ok('整段 2.6 秒內演完定格（兩窗、✕✓、兩顆章、副標都在）')
+    : bad(`2.6 秒還沒演完：全到=${fin.all} 副標=${fin.relief}`)
   // 演完就定格：捲走再回來不重播、不倒退（is-cued 是一次性的 class）
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await wait(300)
@@ -756,7 +759,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   hidden.length ? bad('這些被藏起來了：\n     ' + hidden.join('\n     ')) : ok('沒有任何區塊是藏起來的')
   ok(hasAnim ? '.is-anim 在場，CSS 保險有把東西還原' : '沒掛 .is-anim（JS 早退，符合設計）')
   // 09-09 四關的對照舞台：減少動態＝直接是「演完的完整對照」（兩窗、✕✓、紅章、
-  // 「還好——」全都在）。⛔ 這裡驗的是 CSS 保險——「藏」只准發生在 .is-anim 底下開演前，
+  // 解法那句副標全都在）。⛔ 這裡驗的是 CSS 保險——「藏」只准發生在 .is-anim 底下開演前，
   // 誰把藏的狀態搬進底案，勾了減少動態的人就會永遠停在「沒人來解」的畫面。
   const stage = await page.evaluate(() => ({
     all: [...document.querySelectorAll('#why .lp-scene__msg, #why .lp-scene__day, #why .lp-vs__item > *, #why .lp-vs__ans > *, #why .lp-vs__stamp, #why .lp-vs__side--o')]
@@ -764,8 +767,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     relief: Number(getComputedStyle(document.querySelector('#why .lp-bubble__relief')).opacity),
   }))
   ;(stage.all && stage.relief > 0.99)
-    ? ok('四關直接是演完的完整對照（兩窗、✕✓、紅章、「還好」都在）')
-    : bad(`四關在減少動態下不完整：全到=${stage.all}、還好 ${stage.relief}`)
+    ? ok('四關直接是演完的完整對照（兩窗、✕✓、紅章、副標都在）')
+    : bad(`四關在減少動態下不完整：全到=${stage.all}、副標 ${stage.relief}`)
   // 09-09 留客橋段：減少動態＝名單四列與印章直接是「蓋好」的完整狀態
   //（藏與戲都只在 .is-anim 底下，跟對照舞台同一條房規）
   // ⚠️ 09-10 起這區用旗標藏著：不在就明講跳過（理由同 ② 那段）

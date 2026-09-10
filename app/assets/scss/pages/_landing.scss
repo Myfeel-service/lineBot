@@ -1289,6 +1289,24 @@
      ⛔ 別用 max-height 把列切一半——切到半列看起來就是裁過的圖（六輪教訓），
      要少列就在模板少渲染幾列，收在完整列的邊界上。 */
   .lp-livewin--users .users-table { min-width: 0; }
+  /* ⚠️ 2026-09-10 修手機破版（量出來的，不是看出來的）：上面那條只解掉**表格自己**的
+   *    min-width，欄位那兩條沒解 → 整張表的 min-content 仍是 **370px**
+   *    （36px 勾選欄 ＋ 好友欄 ＋ 標籤欄的 `min-width: 12rem`＝192px），而井在 390px 手機
+   *    只有 306px：最右邊那顆標籤被 `.lp-panel` 的 overflow:hidden 切一半
+   *    （實測 ≤440px 每個寬度都被切，390px 切掉 62px）。
+   * ⛔ 這種破版**看不見**：`.lp` 是 overflow-x: clip，瀏覽器連橫向捲軸都不會出現，
+   *    只有截圖跟量盒模型抓得到（同 09-09 吸頂分頁列那次的病）。
+   * ⛔ 不可以用「手機少渲染幾顆標籤」解決：這扇窗的名單／標籤要跟 landing-demo-seed.ts
+   *    逐筆一致，而「一個人身上兩顆標籤」正是自動貼標要展示的東西——切掉或濾掉都是
+   *    把展示品悄悄拿走。
+   * 解法＝只有這扇窗放寬後台的兩條規矩：標籤欄可以縮、擠不下時膠囊換行。
+   *    後台堅持 nowrap 是為了列高整齊（理由與量測在 _users.scss `.user-tags-cell`），
+   *    展示窗換行只是那一列多長一截，比切掉半顆標籤好；⛔別把 wrap 推廣回後台。 */
+  .lp-livewin--users .users-table__th--tags { min-width: 0; }
+  .lp-livewin--users .user-tags-cell { flex-wrap: wrap; overflow: visible; row-gap: 4px; }
+  /* ⚠️ 名字的換行**只開到 ≤360px**（見下面那個 media query），不是全開：
+     標籤欄放寬之後 380px 以上就已經放得下 nowrap 的名字，全開的話 390px 手機會把
+     「YUKI ☕」斷成「YUKI」＋「☕」、「Jimmy C.」斷成兩行——沒有破版但讀起來很糟。 */
 
   /* ── AI 行銷的推播窗（09-06 自動貼標升格後，好友名單窗搬去貼標塊，這扇新開）──
    * 內容物全是後台真元素：.bc-festival-hint（pages/_broadcasts.scss）、
@@ -1958,12 +1976,12 @@
    *   0.32 右：已讀 → 0.45 右：秒回 → 0.72 右：「好，幫我留兩個！」
    *   0.95 左：「隔天」→ 1.15 左：「我在別家買了」（左邊那 0.85 秒的空白就是痛）
    *   1.40 兩顆章**同時**蓋下：沒了／成交（1.66 收）
-   *   1.60「還好——」浮出（章落地時，它是橋：痛與解都蓋章了 → 這句 → 下面四關的答案）
+   *   1.60 泡泡的副標浮出（章落地時，它是橋：痛與解都蓋章了 → 這句 → 下面四關的答案）
    *   1.70 對照表自動接上：四行**一行一行、✕ 與 ✓ 同時**（0.06 錯開，2.12 全收）
    *   手機單欄的左窗自己演（右窗在畫面外），拍點另有一組見 ≤960px。
    * ⛔ 地板差不多到了：同一扇窗裡兩顆泡泡之間要留 ≥0.2s，再快就會兩顆一起動、看不出先後。
    * ⚠️ 底案＝演完的完整對照；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到）。
-   * ⚠️「還好——」要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
+   * ⚠️ 這句副標要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
    *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，fail-open。
    * ⚠️ 用 translate／scale 這些 individual properties，不用 transform（同視差那條：
    *    transform 會蓋掉 .lp-reveal 的進場位移）。 */
@@ -2014,7 +2032,9 @@
     .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.12s; }
     .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.18s; }
   }
-  /* ──「還好——」：兩顆章落地那一刻浮出，接著就是下面四關的答案 ── */
+  /* ── 泡泡的副標（.lp-bubble__relief，2026-09-10 起是「讓 MiniMe 為你解決這所有的問題。」）：
+        兩顆章落地那一刻浮出，接著就是下面四關的答案。⚠️ 這條選擇器吃 class 不吃字，
+        文案再換也不用動它——⛔ 但別在註解裡改用當下的字當代號，換一次就過期一次。 ── */
   &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 1.6s; }
   &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
@@ -2411,6 +2431,34 @@
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
+  /* ── 320px 級的小螢幕：那支手機模型要縮，不然整條窄帶溢出井外 ────────
+   * ⚠️ 2026-09-10 量到的：≤720px 這一段把手機收回原尺寸（`width: 268px`／zoom 1），
+   *    但 320px 螢幕的井內只剩 **240px**（320 − 版心 48 − 井內距 32）——268 的固定寬會把
+   *    單欄的 grid 撐到 268，連右邊的文字區一起溢出 28px，然後被 `.lp` 的 overflow-x: clip
+   *    靜靜切掉（⛔ 沒有橫向捲軸可看，只有量盒模型抓得到）。
+   * ⛔ 不要改成把 `.lp-phone` 的 width 設窄：裡面每個 px 都對著 250px 螢幕寬算（見
+   *    `.lp-phone` 那段）。縮整支的唯一旋鈕是 `--phone-zoom`，而且 zoom 會連 layout 寬高
+   *    一起縮，所以外層的固定 268px 也要一起放掉（留著＝欄位仍被撐到 268）。
+   * ⚠️ 0.8＝268 × 0.8 ≒ 214px，300px 螢幕（240 − 20 邊距）也還放得下；改這個數字要重跑
+   *    寬度掃描（scripts 沒收這支，量法＝headless 逐寬量 `#cap-richmenu` 內每個孩子的
+   *    右緣有沒有超過井的內容框）。 */
+  @media (max-width: 360px) {
+    .lp-band__phone { width: auto; }
+    .lp-phone { --phone-zoom: 0.8; }
+    /* 好友表在這一級再讓兩步（上面那條「標籤欄可縮＋膠囊換行」是全寬度的，這裡是加碼）：
+       ① 名字可以換行——`table-layout: auto` 的欄寬吃 min-content，後台的 `.user-name`
+          是 `nowrap` ＋省略號，而**省略號不會讓 min-content 變小**，所以「Jimmy C.」
+          整串（實測那一格 108px）在 ≤360px 又把表格撐出去 7~67px。
+          ⛔ 不改成 `table-layout: fixed` 硬切成「Jimmy…」：後台在窄視窗是橫捲、不是省略，
+             這扇窗掛著「系統實際畫面」不能演一個系統不會出現的樣子。換行一個字都沒少。
+       ② 欄距收一級（共用表格是 1rem＝16px）：換行都放寬之後，320px 還差 28px，
+          全在三欄的內距上（實測 45＋115＋108＝268，井內只有 240）。
+       ⛔ 兩條都只在這一級、也只在這扇窗：後台的 nowrap 是列高整齊、16px 是點擊與可讀，
+          別跟著改（理由與量測在 _users.scss）。
+       `:is()` 是為了壓過 `.users-table td` 的同分特異性（0-2-1 > 0-1-1），不是為了好看。 */
+    .lp-livewin--users .user-name { white-space: normal; overflow: visible; }
+    .lp-livewin--users .users-table :is(th, td) { padding-left: 9px; padding-right: 9px; }
+  }
 
   /* ⚠️ 這一段是**保險**，不是主要機制：勾了「減少動態效果」的人根本不會拿到 .is-anim
      （index.vue 在掛上之前就 return 了）。它擋的是「載入後才去系統設定打開」那種情況。 */
@@ -2432,7 +2480,7 @@
     &.is-anim .lp-pane::before,
     &.is-anim .lp-pane__win,
     &.is-anim .lp-band__phone { animation-name: none; translate: none; rotate: none; scale: none; }
-    /* 對照舞台整組關掉＝直接是演完的完整對照（兩扇窗、✕✓ 清單、紅章、「還好」都在）。
+    /* 對照舞台整組關掉＝直接是演完的完整對照（兩扇窗、✕✓ 清單、紅章、副標都在）。
        ⚠️ 「藏」的規則都掛在 .is-anim 底下，理論上關掉動畫就回底案，但照視差那條的教訓
        一樣顯式還原（同權重、宣告序在後壓回去）。 */
     &.is-anim .lp-vs .lp-scene__msg,
