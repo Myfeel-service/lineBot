@@ -2260,8 +2260,14 @@ const typings = new Map<HTMLElement, BubbleTyping>()
 const REVEAL_MARGIN = '0px 0px -12% 0px'
 const CUE_MARGIN = '0px 0px -24% 0px'
 const MID_CUE_MARGIN = '0px 0px -50% 0px'
-/** 對照舞台上半（兩扇窗）演完要多久＝兩顆章 1.4s＋0.26s 動作（⚠️ 跟 _landing.scss 的拍點成對） */
-const STAGE_TOP_MS = 1700
+/**
+ * 對照舞台上半（兩扇窗）演完要多久＝兩顆章 1.06s ＋ 0.22s 動作 ＝ 1.28s，取 1.3s。
+ * ⚠️ 跟 _landing.scss「對照舞台的戲」的拍點是**成對的**，改那邊要一起改這裡。
+ * ⚠️ 2026-09-10 第十二輪從 1700 壓到 1300（老闆「動畫出來的時間有點慢」）：
+ *    同一輪把手機的第四拍（章）改成跟桌機同刻，所以這**一個**數字兩級都貼得剛好
+ *    ——手機原本章 1.10 收完卻要等到 1.70，中間 340ms 是空的。
+ */
+const STAGE_TOP_MS = 1300
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })

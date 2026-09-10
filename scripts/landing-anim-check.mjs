@@ -615,42 +615,42 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     ? ok(desk ? '桌機兩窗並排＝同一刻越線（右窗也已開演）' : '手機右窗還沒越線（各自捲到才演）')
     : bad(`右窗觸發不對：桌機=${desk} 右窗已開演=${geo.cuedO}`)
 
-  await until(420) // 兩邊的第一句（0.10＋0.24 動作＝0.34 收）都到了；「隔天」桌機 0.95／手機 0.55 還沒
+  await until(300) // 兩邊的第一句（0.06＋0.20 動作＝0.26 收）都到了；「隔天」桌機 0.74／手機 0.45 還沒
   const t1 = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { m1: o('#why .vb-1'), m11: o('#why .vb-11'), day: o('#why .vb-2') }
   })
   t1.m1 > 0.85 && (!desk || t1.m11 > 0.85) && t1.day < 0.05
-    ? ok(desk ? '同一句話兩邊同時出現（0.42s）、「隔天」還沒' : '左窗第一句到了（0.42s）、「隔天」還沒')
-    : bad(`開場不對（0.42s）：左第一句 ${t1.m1}、右第一句 ${t1.m11}、隔天 ${t1.day}`)
+    ? ok(desk ? '同一句話兩邊同時出現（0.3s）、「隔天」還沒' : '左窗第一句到了（0.3s）、「隔天」還沒')
+    : bad(`開場不對（0.3s）：左第一句 ${t1.m1}、右第一句 ${t1.m11}、隔天 ${t1.day}`)
 
-  // 桌機：右邊正在回（秒回 0.45 起）、左邊還空著（隔天 0.95）＝這一區的主張本體
-  // 手機：右窗不在場，左窗自己的「隔天」（0.55＋0.24＝0.79 收）要到
-  await until(desk ? 580 : 900)
+  // 桌機：右邊正在回（秒回 0.34 起）、左邊還空著（隔天 0.74）＝這一區的主張本體
+  // 手機：右窗不在場，左窗自己的「隔天」（0.45＋0.20＝0.65 收）要到
+  await until(desk ? 450 : 700)
   const t2 = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { reply: o('#why .vb-13'), day: o('#why .vb-2') }
   })
   ;(desk ? (t2.reply > 0.2 && t2.day < 0.05) : (t2.day > 0.9))
-    ? ok(desk ? '右邊在回、左邊還空著（0.58s：秒回正在出、「隔天」還沒）' : '左窗自己的節奏：「隔天」0.9s 已到（手機不用等右邊）')
-    : bad(`中段不對（${desk ? '0.58' : '0.9'}s）：秒回 ${t2.reply}、隔天 ${t2.day}`)
+    ? ok(desk ? '右邊在回、左邊還空著（0.45s：秒回正在出、「隔天」還沒）' : '左窗自己的節奏：「隔天」0.7s 已到（手機不用等右邊）')
+    : bad(`中段不對（${desk ? '0.45' : '0.7'}s）：秒回 ${t2.reply}、隔天 ${t2.day}`)
 
-  await until(1750) // 兩顆章 1.40s 同時蓋下、1.66 收（手機左章 1.10）
+  await until(1350) // 兩顆章 1.06s 同時蓋下、1.28 收（手機第四拍刻意跟桌機同刻）
   const t3 = await page.evaluate(() => {
     const o = s => Number(getComputedStyle(document.querySelector(s)).opacity)
     return { x: o('#why .vb-4'), o: o('#why .vb-15'), m3: o('#why .vb-3') }
   })
   t3.m3 > 0.9 && t3.x > 0.9 && (!desk || t3.o > 0.9)
-    ? ok(desk ? '兩顆章同時蓋下：沒了／成交（1.75s）' : '左窗演完：買別家＋紅章（1.75s）')
-    : bad(`收尾不對（1.75s）：買別家 ${t3.m3}、紅章 ${t3.x}、成交章 ${t3.o}`)
+    ? ok(desk ? '兩顆章同時蓋下：沒了／成交（1.35s）' : '左窗演完：買別家＋紅章（1.35s）')
+    : bad(`收尾不對（1.35s）：買別家 ${t3.m3}、紅章 ${t3.x}、成交章 ${t3.o}`)
 
-  await until(2200) // 解法那句副標 1.6s 起、0.45s 過場＝2.05 收
+  await until(1650) // 解法那句副標 1.2s 起、0.35s 過場＝1.55 收
   const relief = await op('#why .lp-bubble__relief')
   // ⚠️ 這裡一律用「副標」稱呼那句、不要引用它的字：2026-09-10 老闆把它從
   //    「還好，每一關都有 MiniMe 能接住的解法——」換成「讓 MiniMe 為你解決這所有的問題。」，
   //    引用字面的訊息會過期（選擇器吃的是 .lp-bubble__relief，不受文案影響）。
   relief > 0.9
-    ? ok('解法那句副標在兩顆章落地之後浮出（2.2s）')
+    ? ok('解法那句副標在兩顆章落地之後浮出（1.65s）')
     : bad(`解法那句副標沒有浮出：opacity ${relief}（應 >0.9）`)
   await page.close()
 }
@@ -687,20 +687,20 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   await park('#why .lp-vs__side--o')
   const t0 = Date.now()
   const until = async (ms) => { const left = t0 + ms - Date.now(); if (left > 0) await wait(left) }
-  await until(1300) // 上半部還在演（章 1.40 還沒蓋）：表要還沒動、但格子的底色要在
+  await until(1000) // 上半部還在演（章 1.06 還沒收）：表要還沒動、但格子的底色要在
   const early = await rows()
   !early.cued && early.x.every(v => v < 0.05) && early.a.every(v => v < 0.05) && early.cellOn
-    ? ok('上面還在演的時候表還沒動、但格子的底色在（1.3s）')
+    ? ok('上面還在演的時候表還沒動、但格子的底色在（1.0s）')
     : bad(`表提早動或等的時候底色不見：cued=${early.cued} 格子底色=${early.cellOn} ✕=${early.x.map(v => v.toFixed(2)).join('/')} ✓=${early.a.map(v => v.toFixed(2)).join('/')}`)
 
-  await until(1850) // 上半部 1.66 收 → 表 1.70 接上；這裡是接上後 ~0.15s：第一行半亮、後面幾行還沒
+  await until(1450) // 上半部 1.28 收 → 表 1.30 接上；這裡是接上後 ~0.15s：第一行半亮、後面幾行還沒
   const mid = await rows()
   const paired = mid.x.every((v, i) => Math.abs(v - mid.a[i]) < 0.15)
   mid.cued && paired && mid.x[0] > 0.2 && mid.x[3] < 0.9
     ? ok('上面一演完表就自己接上（沒有再捲動），一行一行、同一行的 ✕✓ 同時：' + mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' '))
-    : bad(`表沒有自己接上或節奏不對（1.85s）：cued=${mid.cued} ✕/✓＝${mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' ')}`)
+    : bad(`表沒有自己接上或節奏不對（1.45s）：cued=${mid.cued} ✕/✓＝${mid.x.map((v, i) => `${v.toFixed(2)}/${mid.a[i].toFixed(2)}`).join(' ')}`)
 
-  await until(2600) // 2.12 全收
+  await until(2000) // 1.65 全收（第十二輪壓快，⚠️ 這條同時在守「不准變慢」）
   const fin = await page.evaluate(() => {
     const o = el => Number(getComputedStyle(el).opacity)
     return {
@@ -709,8 +709,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
     }
   })
   fin.all && fin.relief > 0.9
-    ? ok('整段 2.6 秒內演完定格（兩窗、✕✓、兩顆章、副標都在）')
-    : bad(`2.6 秒還沒演完：全到=${fin.all} 副標=${fin.relief}`)
+    ? ok('整段 2.0 秒內演完定格（兩窗、✕✓、兩顆章、副標都在）')
+    : bad(`2.0 秒還沒演完：全到=${fin.all} 副標=${fin.relief}`)
   // 演完就定格：捲走再回來不重播、不倒退（is-cued 是一次性的 class）
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await wait(300)

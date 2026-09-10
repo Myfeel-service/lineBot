@@ -2001,15 +2001,21 @@
    *              ⚠️ 代價：手機上表在右窗底下、接上時可能有一半在畫面外（老闆指定的順序優先）
    *              ⓑ拍點全面壓緊、動作本體 .3→.24s（章 .26s），整段 2.65s → **2.12s**
    *
+   * ⚠️ **2026-09-10 第十二輪又壓快一次**（老闆：「動畫出來的時間有點慢」）：動作本體
+   *    .24→**.20s**（章 .26→.22s）、拍點全面往前，整段 **2.12s → 1.65s**。
+   *    ⭐ 同一輪也把**手機的空檔**修掉：手機的左窗原本第三拍壓到 1.10s、章 1.10s 就收完，
+   *      但表統一等到 1.70s 才接＝手機有 340ms 什麼都沒發生（老闆看的就是手機）。
+   *      現在手機只覆寫前兩拍、**章與桌機同一刻（1.06）**，所以一個 `STAGE_TOP_MS` 兩級通用。
    * 時間軸（秒，兩窗同一個 0；桌機兩窗並排＝同一刻越線＝天生同步）：
-   *   0.10 兩邊同時：客人問肉桂捲
-   *   0.32 右：已讀 → 0.45 右：秒回 → 0.72 右：「好，幫我留兩個！」
-   *   0.95 左：「隔天」→ 1.15 左：「我在別家買了」（左邊那 0.85 秒的空白就是痛）
-   *   1.40 兩顆章**同時**蓋下：沒了／成交（1.66 收）
-   *   1.60 泡泡的副標浮出（章落地時，它是橋：痛與解都蓋章了 → 這句 → 下面四關的答案）
-   *   1.70 對照表自動接上：四行**一行一行、✕ 與 ✓ 同時**（0.06 錯開，2.12 全收）
-   *   手機單欄的左窗自己演（右窗在畫面外），拍點另有一組見 ≤960px。
-   * ⛔ 地板差不多到了：同一扇窗裡兩顆泡泡之間要留 ≥0.2s，再快就會兩顆一起動、看不出先後。
+   *   0.06 兩邊同時：客人問肉桂捲
+   *   0.22 右：已讀 → 0.34 右：秒回 → 0.56 右：「好，幫我留兩個！」
+   *   0.74 左：「隔天」→ 0.94 左：「我在別家買了」（左邊那 0.68 秒的空白就是痛）
+   *   1.06 兩顆章**同時**蓋下：沒了／成交（1.28 收）
+   *   1.20 泡泡的副標浮出（.35s 過場，1.55 收；它是橋：痛與解都蓋章了 → 這句 → 下面的答案）
+   *   1.30 對照表自動接上：四行**一行一行、✕ 與 ✓ 同時**（0.05 錯開，1.65 全收）
+   *   手機單欄的左窗自己演（右窗在畫面外），前兩拍另有一組見 ≤960px。
+   * ⛔ 地板到了：同一扇窗裡兩顆泡泡之間要留 ≥0.2s，再快就會兩顆一起動、看不出先後
+   *    （現在最窄的一組是 0.74→0.94 與 0.34→0.56，剛好貼著地板）。
    * ⚠️ 底案＝演完的完整對照；「藏」與「演」都掛 .is-anim 底下（減少動態／沒 JS 直接看到）。
    * ⚠️ 這句副標要跨子樹同步（它在標題泡泡裡、戲在下面的舞台），用 :has() 從共同祖先
    *    看 is-cued。不支援 :has() 的瀏覽器＝藏它的那條規則整條失效＝永遠看得見，fail-open。
@@ -2038,34 +2044,34 @@
   .lp-vs .lp-scene__msg--me { transform-origin: right bottom; }
   /* ── 兩扇窗（同一條時間軸；各自從自己越線起算，桌機兩邊同一刻）── */
   &.is-anim .lp-vs__side.is-cued {
-    .lp-scene__msg { animation: lpBubbleIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__day { animation: lpSceneIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
-    .lp-scene__read { animation: lpSceneIn .18s ease-out both; }
-    .lp-vs__stamp { animation: lpStampIn .26s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
+    .lp-scene__msg { animation: lpBubbleIn .2s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__day { animation: lpSceneIn .2s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-scene__read { animation: lpSceneIn .16s ease-out both; }
+    .lp-vs__stamp { animation: lpStampIn .22s cubic-bezier(0.2, 0.9, 0.35, 1.2) both; }
     /* 左窗（沒有）：問 → 空到隔天 → 買別家 → 章 */
-    .vb-1 { animation-delay: 0.1s; }
-    .vb-2 { animation-delay: 0.95s; }
-    .vb-3 { animation-delay: 1.15s; }
-    .vb-4 { animation-delay: 1.4s; }
+    .vb-1 { animation-delay: 0.06s; }
+    .vb-2 { animation-delay: 0.74s; }
+    .vb-3 { animation-delay: 0.94s; }
+    .vb-4 { animation-delay: 1.06s; }
     /* 右窗（有）：同一句 → 已讀 → 秒回 → 成交 → 章（跟左邊的章同一拍） */
-    .vb-11 { animation-delay: 0.1s; }
-    .vb-12 { animation-delay: 0.32s; }
-    .vb-13 { animation-delay: 0.45s; }
-    .vb-14 { animation-delay: 0.72s; }
-    .vb-15 { animation-delay: 1.4s; }
+    .vb-11 { animation-delay: 0.06s; }
+    .vb-12 { animation-delay: 0.22s; }
+    .vb-13 { animation-delay: 0.34s; }
+    .vb-14 { animation-delay: 0.56s; }
+    .vb-15 { animation-delay: 1.06s; }
   }
   /* ── 對照表：上面演完自動接上（is-cued 由 JS 掛，不是自己越線）；一行一行、同一行的 ✕✓ 同時 ── */
   &.is-anim .lp-vs__grid.is-cued {
-    .lp-vs__item > *, .lp-vs__ans > * { animation: lpSceneIn .24s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
+    .lp-vs__item > *, .lp-vs__ans > * { animation: lpSceneIn .2s cubic-bezier(0.22, 0.75, 0.3, 1) both; }
     .lp-vs__pair:nth-child(1) > * > * { animation-delay: 0s; }
-    .lp-vs__pair:nth-child(2) > * > * { animation-delay: 0.06s; }
-    .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.12s; }
-    .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.18s; }
+    .lp-vs__pair:nth-child(2) > * > * { animation-delay: 0.05s; }
+    .lp-vs__pair:nth-child(3) > * > * { animation-delay: 0.1s; }
+    .lp-vs__pair:nth-child(4) > * > * { animation-delay: 0.15s; }
   }
   /* ── 泡泡的副標（.lp-bubble__relief，2026-09-10 起是「讓 MiniMe 為你解決這所有的問題。」）：
         兩顆章落地那一刻浮出，接著就是下面四關的答案。⚠️ 這條選擇器吃 class 不吃字，
         文案再換也不用動它——⛔ 但別在註解裡改用當下的字當代號，換一次就過期一次。 ── */
-  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .45s ease 1.6s; }
+  &.is-anim .lp-wrap:has(.lp-vs) .lp-bubble__relief { transition: opacity .35s ease 1.2s; }
   &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 0; transition: none; }
 
   /* ══ #value 三扇畫面的動態（2026-09-03 十八輪「希望可以再加上動態在右邊的圖」）══
@@ -2360,32 +2366,24 @@
     }
     /* 邊線改由小卡自己畫：組內只留「痛／解」中間那一條，四邊交給 .lp-vs__pair */
     .lp-vs__item, .lp-vs__ans { border: 0; }
-    /* ⚠️ `position: relative` 要掛在**下半格**（.lp-vs__ans）身上，箭頭才是相對「分隔線」
-       定位。⛔ 掛在 .lp-vs__pair 上會讓 `top: -6px` 變成「卡片上緣往上 6px」，箭頭跑到
-       整張卡的頂端去（第一版就是這樣，截圖才看出來）。 */
-    .lp-vs__pair .lp-vs__ans { position: relative; border-top: 1px solid var(--vs-line); }
+    .lp-vs__pair .lp-vs__ans { border-top: 1px solid var(--vs-line); }
     /* ── 「問題 → 解法」在手機上要看得出是**因果**，不是兩則並列的敘述（2026-09-10 老闆
      *    第三輪問「這真的是最好的方式了嗎」）。上一輪把每一組包成小卡解掉了「配對關係
      *    消失」，剩下的問題是**兩半的份量一樣**：同樣的字級、同樣的兩行結構，讀起來像
-     *    「兩件事」而不是「這件事被解掉了」。兩個動作（都只在手機）：
-     *      ① 在徽章那一欄的分隔線上放一個**往下的箭頭**＝把 ✕ → ✓ 的流向畫出來
-     *         （純 CSS 的 V 形，不進 SVG、不加標籤文字：這裡不需要「換成」這種字）
-     *      ② 解法那半的標題大半級（1.02→1.09rem），問題那半維持原級
-     *         ⛔ **只在手機**：桌機是左右兩欄、兩邊 h3 的字級刻意一樣（行高要對得上，
-     *            見上面 .lp-vs__ans h3 的註解），那條規矩在單欄不成立、在桌機仍然要守。
-     * ⚠️ 箭頭的 left 22px ＝格子左內距 16 ＋ 徽章半徑 13 − 箭頭一半（7）；⛔ 改格子內距
-     *    或徽章尺寸要一起改這個數字（不然箭頭會歪出那一欄）。 */
-    .lp-vs__pair .lp-vs__ans::before {
-      content: ''; position: absolute; left: 22px; top: -6px;
-      width: 9px; height: 9px; rotate: 45deg;
-      border-right: 2px solid var(--g); border-bottom: 2px solid var(--g);
-    }
+     *    「兩件事」而不是「這件事被解掉了」。⇒ 解法那半的標題大半級（1.02→1.09rem）。
+     * ⛔ **只在手機**：桌機是左右兩欄、兩邊 h3 的字級刻意一樣（行高要對得上，見上面
+     *    .lp-vs__ans h3 的註解），那條規矩在單欄不成立、在桌機仍然要守。
+     * ⛔ 分隔線上那顆「往下的箭頭」**已移除**（2026-09-10 老闆第四輪：「加那個箭頭很醜」）：
+     *    別再加回來。份量差（大半級的標題）＋上灰下綠的成對色塊就是流向的訊號，
+     *    不需要再畫一個符號。 */
     .lp-vs__ans h3 { font-size: 1.09rem; }
     /* 手機的左窗自己演（右窗在畫面外）：問完到「隔天」不能空 0.85 秒沒事發生，
        拍點收緊成 0.55／0.8／1.1。桌機那組是「右邊在回、左邊空著」才撐得起長空檔。 */
-    &.is-anim .lp-vs__side--x.is-cued .vb-2 { animation-delay: 0.55s; }
-    &.is-anim .lp-vs__side--x.is-cued .vb-3 { animation-delay: 0.8s; }
-    &.is-anim .lp-vs__side--x.is-cued .vb-4 { animation-delay: 1.1s; }
+    &.is-anim .lp-vs__side--x.is-cued .vb-2 { animation-delay: 0.45s; }
+    &.is-anim .lp-vs__side--x.is-cued .vb-3 { animation-delay: 0.7s; }
+    /* ⛔ 第四拍（章）**刻意不覆寫**＝跟桌機同一刻（1.06s）：2026-09-10 第十二輪抓到的
+       毛病就是手機把章壓到 1.10 收完、但表統一等到 1.70 才接＝**340ms 什麼都沒發生**。
+       章與桌機同刻之後，一個 `STAGE_TOP_MS`（1300）兩級都貼得剛好。 */
     /* 方案卡收成 2×2（不是直接單欄）：四張卡是拿來互相比較的，兩兩並排還能比，
        一欄疊四張就得靠記憶力。 */
     .lp-plans { grid-template-columns: 1fr 1fr; }
