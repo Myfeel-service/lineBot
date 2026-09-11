@@ -509,9 +509,9 @@
       >{{ badgeCount }}</span>
     </button>
 
-    <!-- 導覽（Element Plus Tour）；用 zh-cn locale 讓按鈕是中文 -->
+    <!-- 導覽（Element Plus Tour）；locale 一定要用 zh-tw：zh-cn 的「結束導覽／關閉此對話框」是簡體 -->
     <ClientOnly>
-      <el-config-provider :locale="zhCn">
+      <el-config-provider :locale="zhTw">
         <el-tour
           v-model="tourOpen"
           :current="tourStep"
@@ -563,7 +563,7 @@ import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 import type { AgentGuideId } from '~/utils/agent-guides'
 import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import IconRobot from '~/components/icons/IconRobot.vue'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
 
