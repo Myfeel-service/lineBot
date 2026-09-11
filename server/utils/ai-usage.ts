@@ -187,15 +187,31 @@ export async function recordAiUsage(
   }
 }
 
+/** `billable` 欄位開始被寫入的月份（`D-69` 上線於 2026-09-07，故 2026-09 是跨口徑的那個月）。 */
+export const BILLABLE_FIELD_SINCE = '202609'
+
 /**
  * 從月結桶讀「這個月計費幾則」。
  *
- * ⚠️ `billable` 這個欄位是 2026-09-07（`D-69`）才開始寫的，之前的月份沒有它——
- * 這時退回 `answered` 是**正確的歷史值**，不是湊數：在那之前計費口徑就是「答出才算」，
- * 兩個數字當時本來就相等。⛔ 不要為此回填舊資料（回填等於偽造當時的帳）。
+ * ⚠️ `billable` 這個欄位是 2026-09-07（`D-69`）才開始寫的，分三段處理：
+ *
+ * 1. **`D-69` 之前的月份** → 回 `answered`。那是**正確的歷史值**，不是湊數：當時計費口徑
+ *    就是「答出才算」，兩個數字本來就相等。⛔ 不要為此回填舊資料（回填等於偽造當時的帳）。
+ * 2. **2026-09（跨口徑那個月）** → `billable` 只從 9/7 起算，直接讀它會少掉月初那幾天
+ *    （實測 myfeel：billable=18，整月照新口徑其實是 62）。改用分項還原整月——
+ *    依 {@link UsageDelta.billable} 的規則，`billable ≡ answered + disambiguations + followupAnswered`。
+ * 3. **之後的月份** → 分項和 ≤ `billable`（「反問後客人點選項、AI 又反問一次」只記 billable，
+ *    沒有對應的分項欄位），所以 `Math.max` 會自動選 `billable`，這裡不必再改一次。
  */
-export function monthlyBillable(data: { billable?: number; answered?: number } | undefined | null): number {
-  return Number(data?.billable ?? data?.answered ?? 0)
+export function monthlyBillable(
+  data: { billable?: number; answered?: number; disambiguations?: number; followupAnswered?: number; period?: string } | undefined | null,
+): number {
+  if (!data) return 0
+  const answered = Number(data.answered ?? 0)
+  const period = String(data.period ?? '')
+  if (period && period < BILLABLE_FIELD_SINCE) return answered
+  const derived = answered + Number(data.disambiguations ?? 0) + Number(data.followupAnswered ?? 0)
+  return Math.max(Number(data.billable ?? 0), derived)
 }
 
 /**
@@ -207,7 +223,9 @@ export async function getCurrentMonthUsageCounts(
   db: Firestore = getDb(),
 ): Promise<{ invocations: number, answered: number, billable: number }> {
   const snap = await db.collection(AI_USAGE_COLLECTION).doc(usageDocId(workspaceId, currentYyyyMm())).get()
-  const d = snap.data() as { invocations?: number, answered?: number, billable?: number } | undefined
+  // 整包丟給 monthlyBillable：它要 disambiguations / followupAnswered / period 才還原得出
+  // 跨口徑月份的則數（少帶欄位會靜靜地少算，不會報錯）。
+  const d = snap.data() as Partial<AiUsageDoc> | undefined
   return {
     invocations: Number(d?.invocations ?? 0),
     answered: Number(d?.answered ?? 0),

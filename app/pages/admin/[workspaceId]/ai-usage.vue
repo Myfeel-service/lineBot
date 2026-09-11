@@ -374,11 +374,14 @@
                 </p>
               </template>
               <!-- 無上限也要給用量（2026-08-10 老闆拍板）：「無限」是計費條件，不是隱藏數字的理由。
-                   ⛔ 窗口改用「上方報表選的月份」（summary.answered）而不是訂閱期的 quotaAnswered——
+                   ⛔ 窗口改用「上方報表選的月份」（billableReplies）而不是訂閱期的 quotaAnswered——
                    無限方案沒有額度要對，卻繼承續約日窗口只會多一條時間軸（老闆實測「94 則哪來的」）。
+                   ⛔ 數字讀 billableReplies **不是** answered：下面那行白紙黑字寫「含反問問清楚」，
+                   讀 answered 就會把反問那幾則漏掉，畫面自己跟自己打架（2026-09-11 老闆抓到：
+                   myfeel 顯示 52，照卡片自己寫的規則應該是 62）。
                    給事實不給焦慮：沒有進度條、剩餘、升級鈕。 -->
               <p v-else class="usage-hint">
-                {{ periodLabel }} AI 已回答 <strong>{{ formatNumber(summary?.answered) }}</strong> 則
+                {{ periodLabel }} AI 出手回答 <strong>{{ formatNumber(summary?.billableReplies) }}</strong> 則
                 <el-tooltip placement="top" :content="QUOTA_UNIT_TIP">
                   <el-icon class="usage-info"><InfoFilled /></el-icon>
                 </el-tooltip>
@@ -462,6 +465,8 @@ interface Summary {
   quotaAnswered: number
   invocations: number
   answered: number
+  /** 這個月的計費則數＝答出 ＋ 反問（`D-69`）。畫面上寫「幾則」一律用它，別用 answered。 */
+  billableReplies: number
   handoffs: number
   /** invocations − directHandoffs（後端算好），成績的分母 */
   aiEngaged: number

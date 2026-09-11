@@ -128,4 +128,25 @@ describe('月結桶的計費則數（超管成本頁 / 官方帳號管理讀它�
     expect(monthlyBillable({ billable: 120, answered: 95 })).toBe(120)
     expect(monthlyBillable(undefined)).toBe(0)
   })
+
+  it('⛔ D-69 之前的月份不套新口徑：那時反問不計費，加進去等於偽造當時的帳', () => {
+    // 2026-08 的 myfeel 實際數字：反問 75 次當時一毛都沒收
+    expect(monthlyBillable({ period: '202608', answered: 256, disambiguations: 75, followupAnswered: 6 })).toBe(256)
+  })
+
+  /**
+   * 2026-09 是跨口徑的月份：`billable` 只從 9/7 起算。直接讀它，卡片會少報月初那幾天
+   * （myfeel 實測：billable=18，整月照新口徑是 52+9+1=62）——老闆 9/11 就是看到少報的數字。
+   */
+  it('跨口徑那個月用分項還原整月，不要只讀寫了一半的 billable', () => {
+    expect(monthlyBillable({ period: '202609', answered: 52, disambiguations: 9, followupAnswered: 1, billable: 18 })).toBe(62)
+  })
+
+  /**
+   * 之後的月份 billable 才是完整的，而且會 ≥ 分項和：「反問後客人點選項、AI 又反問一次」
+   * 只記 billable、沒有對應的分項欄位。max 會自動選 billable，這條紅了代表還原式蓋掉了真帳。
+   */
+  it('口徑統一後以 billable 為準（它比分項和多算 followup 再反問那種）', () => {
+    expect(monthlyBillable({ period: '202610', answered: 100, disambiguations: 20, followupAnswered: 5, billable: 128 })).toBe(128)
+  })
 })

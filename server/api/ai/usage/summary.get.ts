@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered } from '~~/server/utils/ai-usage'
+import { AI_USAGE_COLLECTION, currentYyyyMm, getQuotaAnswered, monthlyBillable } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { can } from '~~/shared/permissions'
@@ -128,6 +128,7 @@ export default defineEventHandler(async (event) => {
       quotaAnswered,
       invocations: 0,
       answered: 0,
+      billableReplies: 0,
       handoffs: 0,
       disambiguations: 0,
       answeredThenHandoffs: 0,
@@ -184,6 +185,12 @@ export default defineEventHandler(async (event) => {
     quotaAnswered,
     invocations,
     answered,
+    /**
+     * 這個月的**計費則數**（答出 ＋ 反問）——畫面上寫「幾則」的地方要用它。
+     * ⛔ 別改用 `answered`：那是品質指標，自 `D-69`（2026-09-07 反問開始計費）起兩者不同，
+     * 用 answered 會把反問那幾則從畫面上抹掉（myfeel 2026-09 實測差 10 則）。
+     */
+    billableReplies: monthlyBillable(data),
     handoffs,
     disambiguations,
     answeredThenHandoffs,
