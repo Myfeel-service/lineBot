@@ -267,6 +267,68 @@
     line-height: 1;
   }
 
+  /**
+   * 同一顆標題，但這一區收不起來（搜尋結果的「講過這句話的對話」）。
+   * 沿用 .conv-list-group 的重量，只是拿掉「可以按」的訊號——不然看起來像壞掉的按鈕。
+   */
+  .conv-list-group--static {
+    cursor: default;
+
+    &:hover { color: var(--text-muted); }
+  }
+
+  /* ── 搜尋對話內容：命中的那一句 ─────────────────────────────── */
+
+  /**
+   * 前綴（客人：／我們：）與命中的句子排同一行，句子自己吃掉剩下的寬度。
+   * ⛔ 一定要 min-width: 0：nowrap 的內容在 flex 子項裡預設撐到內容寬，
+   *    239px 的側欄會被一句長訊息整個撐破（這個專案 2026-09-10 才因為同一件事破過版）。
+   * gap 0.4rem 是拿來抵銷 .split-list-meta-prefix 的 -0.4rem（全形冒號自帶空白）。
+   */
+  .conv-hit-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .conv-hit-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.72rem;
+    line-height: 1.25;
+    color: var(--text-secondary);
+  }
+
+  /**
+   * 命中的字標起來——「我為什麼搜到這一列」是這份清單唯一要回答的問題。
+   * 用螢光筆的琥珀色（和對話裡亮起來的那一則同一個顏色），不用品牌綠：
+   * 綠色在這個後台是「主要動作」的意思，拿來標字會被讀成可以按。
+   */
+  .conv-hit-mark {
+    padding: 0 0.1rem;
+    border-radius: 2px;
+    background: rgba(230, 162, 60, 0.28);
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+
+  .conv-hit-ellipsis {
+    color: var(--text-muted);
+  }
+
+  /* 同一條對話裡不只一則命中：講出來，否則點進去只看到一則會以為搜尋漏了 */
+  .conv-hit-count {
+    display: block;
+    margin-top: 0.1rem;
+    font-size: 0.68rem;
+    line-height: 1.3;
+    color: var(--text-muted);
+  }
+
   /* ── 列表列：滑過露出「⋯」 ───────────────────────────────────── */
   .conv-list-row {
     position: relative;
@@ -600,6 +662,17 @@
     background: var(--bg-elevated);
     border-style: solid;
     border-color: var(--border-active);
+  }
+
+  /* 搜尋結果點進來的那一則，剛好是客人動作（和泡泡那條路同一個琥珀環） */
+  .conv-timeline-event.is-search-hit {
+    outline: 2px solid rgba(230, 162, 60, 0.85);
+    outline-offset: 2px;
+    animation: conv-search-hit-flash 1.4s ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .conv-timeline-event.is-search-hit { animation: none; }
   }
 
   .conv-timeline-event__icon {
@@ -976,6 +1049,30 @@
 
   .conv-bubble-row.outgoing {
     justify-content: flex-end;
+  }
+
+  /**
+   * 搜尋結果點進來的那一則。
+   *
+   * 畫面會捲到它（見 scrollToHighlightedMessage），但捲到之後還是要看得出「就是這一則」
+   * ——四十則泡泡長得都一樣，不標的話等於把人放在正確的位置卻不告訴他。
+   * 用 outline 不用 border／padding：那兩個會把泡泡撐大一圈，前後的行距整段跳動。
+   * 顏色和清單裡標起來的字同一個琥珀，兩邊看得出是同一件事。
+   */
+  .conv-bubble-row.is-search-hit .conv-bubble {
+    outline: 2px solid rgba(230, 162, 60, 0.85);
+    outline-offset: 2px;
+    animation: conv-search-hit-flash 1.4s ease-out;
+  }
+
+  @keyframes conv-search-hit-flash {
+    0% { outline-color: rgba(230, 162, 60, 1); outline-width: 3px; }
+    60% { outline-color: rgba(230, 162, 60, 1); outline-width: 3px; }
+    100% { outline-color: rgba(230, 162, 60, 0.85); outline-width: 2px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .conv-bubble-row.is-search-hit .conv-bubble { animation: none; }
   }
 
   .conv-bubble-wrap {

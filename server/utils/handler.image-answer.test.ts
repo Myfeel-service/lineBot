@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
 vi.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: () => '__ts__', delete: () => '__del__' },
+  // arrayUnion：圖片的 AI 描述會把可搜尋片段**加**到那一則訊息上（見 describeAndAttachImage）。
+  // 少了它整支描述寫入會炸掉，而呼叫端是 catch 起來的＝圖片說明默默不見
+  FieldValue: {
+    serverTimestamp: () => '__ts__',
+    delete: () => '__del__',
+    arrayUnion: (...values: unknown[]) => ({ __arrayUnion: values }),
+  },
   Timestamp: { now: () => ({ toMillis: () => 0 }), fromMillis: (m: number) => ({ toMillis: () => m }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))

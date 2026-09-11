@@ -68,6 +68,7 @@ import {
   isCustomerActionMessage,
   type CustomerActionType,
 } from '~~/shared/customer-action'
+import { messageSearchTokens } from '~~/shared/message-search'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -2131,6 +2132,16 @@ async function describeAndAttachImage(params: {
   if (state === 'ok' || state === 'noQuestion' || state === 'malformed') {
     messagePatch.mediaReadState = state
   }
+  /**
+   * 圖片的 AI 描述也要搜得到（「找那張有收據的圖」）。
+   *
+   * 用 arrayUnion **加上去**而不是整包覆寫：這則訊息存的時候已經有自己的片段了
+   * （文字是「[圖片]」），直接寫一份新的會把它換掉。
+   */
+  const descriptionTokens = messageSearchTokens([description]).tokens
+  if (descriptionTokens.length) {
+    messagePatch.searchTokens = FieldValue.arrayUnion(...descriptionTokens)
+  }
 
   await Promise.all([
     messageId
@@ -2265,12 +2276,30 @@ export async function saveConversationMessage(
     }
   }
 
+  /**
+   * 對話內容搜尋用的片段（見 shared/message-search.ts）。
+   *
+   * 為什麼要在寫入時就算：Firestore 沒有全文檢索，事後才想找「誰講過這句話」只能整批
+   * 掃訊息，而掃描範圍就是涵蓋範圍——忙的帳號一次搜尋只看得到最近幾天。存了片段之後
+   * 搜尋是一支精準查詢，讀取量跟結果數成正比，保留期內（180 天）的每一則都找得到。
+   *
+   * `workspaceId` 也要存在訊息上（對話文件有，訊息子集合原本沒有）：搜尋走
+   * collectionGroup 掃整個資料庫的 messages，沒有這個欄位就沒辦法只找自己這一家的
+   * ——同一個 Firebase 專案裡有好幾個租戶。
+   */
+  const search = messageSearchTokens([text])
+
   await Promise.all([
     msgRef.set({
       direction,
       text,
       timestamp: messageTimestamp,
       messageType: options?.messageType || 'text',
+      workspaceId: wid,
+      ...(search.tokens.length ? { searchTokens: search.tokens } : {}),
+      // 只有真的被切掉才寫：這個欄位的意思是「這則的後半段搜不到」，
+      // 平常不該出現在資料上（出現就代表有人貼了很長的東西進來）
+      ...(search.cut ? { searchTextCut: true } : {}),
       ...(options?.aiGenerated ? { aiGenerated: true } : {}),
       // sender 只標 outgoing：客人自己傳的不需要標，寫進去反而讓查詢多一種要排除的值
       ...(direction === 'outgoing' && options?.sender ? { sender: options.sender } : {}),

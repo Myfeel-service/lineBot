@@ -24,7 +24,7 @@
       ><el-icon><User /></el-icon></span>
     </span>
     <div class="split-list-item__main">
-      <template v-if="props.timeInTitleRow && !$slots.meta">
+      <template v-if="props.timeInTitleRow">
         <div class="split-list-item__title-row">
           <span
             v-if="trimmedTitleIcon"
@@ -49,8 +49,16 @@
             class="split-list-item__time"
           >{{ trimmedChipText }}</span>
         </div>
+        <!--
+          摘要那一行自己排版（例：對話內容搜尋要把命中的字標起來）。
+          放在這裡而不是另外長一套列：時間在標題列的版型是對話列表的樣子，
+          搜尋結果混在同一份清單裡，不該有兩種列高與對齊方式。
+        -->
+        <div v-if="$slots.meta" class="split-list-meta split-list-meta--stacked">
+          <slot name="meta" />
+        </div>
         <div
-          v-if="trimmedMetaText || trimmedMetaTag || trimmedMetaPrefix"
+          v-else-if="trimmedMetaText || trimmedMetaTag || trimmedMetaPrefix"
           class="split-list-meta split-list-meta--stacked"
           :class="{ 'has-inline-lead': hasInlineLead, 'is-strong': props.metaStrong }"
         >

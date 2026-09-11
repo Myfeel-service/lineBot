@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
 vi.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: () => '__ts__', delete: () => '__del__' },
+  // arrayUnion：見 handler.image-answer.test.ts 的說明（圖片描述要把片段加到那一則訊息上）
+  FieldValue: {
+    serverTimestamp: () => '__ts__',
+    delete: () => '__del__',
+    arrayUnion: (...values: unknown[]) => ({ __arrayUnion: values }),
+  },
   Timestamp: { now: () => ({ toMillis: () => 0 }), fromMillis: (m: number) => ({ toMillis: () => m }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))

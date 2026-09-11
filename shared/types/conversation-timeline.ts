@@ -68,4 +68,10 @@ export interface TimelineResponse {
   activeSession: TimelineSessionMeta | null
   /** 帶了 ?sessionId= 時，那一場的資料 */
   session: TimelineSessionMeta | null
+  /**
+   * 帶了 ?aroundId=（搜尋結果點進來的那一則）但那一則已經不在了——保留期只留 180 天的
+   * 訊息，會話與事件卻是永久的。這時回的是「最新一段」，畫面必須說一句：
+   * 靜靜停在最新訊息上，看起來就跟點了沒反應一樣。
+   */
+  anchorMissing?: boolean
 }

@@ -28,6 +28,8 @@ import type { TimelineItem, TimelineItemType, TimelineSessionMeta } from '~~/sha
  *   · beforeId  往上讀：比這一則更早的一段（游標是訊息 id，不是時間戳——同一毫秒
  *               連送兩則時用時間戳當游標會漏或重複）
  *   · afterId   往下讀：比這一則更晚的一段
+ *   · aroundId  以某一則為中心讀（前後各半段）。給對話內容搜尋用：搜到三個月前那句話，
+ *               點進去要直接停在那一則，不是停在今天的訊息上讓人自己往上翻幾千則。
  *   · sessionId 從會話分頁點進來的那一場。那場**已結束**時，第一段就從那場的尾巴
  *               往回讀（否則客服點三天前那場，畫面停在今天的訊息上，等於沒點）。
  */
@@ -335,6 +337,7 @@ export default defineEventHandler(async (event) => {
     : DEFAULT_PAGE_SIZE
   const beforeId = String(query.beforeId || '').trim()
   const afterId = String(query.afterId || '').trim()
+  const aroundId = String(query.aroundId || '').trim()
   const anchorSessionId = String(query.sessionId || '').trim()
 
   const db = getDb()
@@ -376,7 +379,7 @@ export default defineEventHandler(async (event) => {
    * 從那場的結束時間往回讀，畫面第一眼就是他點的那一場；還在進行中的那場結束時間就是現在，
    * 等於直接讀最新一段，不必特別處理。
    */
-  const anchorCloseMs = (anchorSession && !beforeId && !afterId ? anchorSession.closedAtMs : 0) ?? 0
+  const anchorCloseMs = (anchorSession && !beforeId && !afterId && !aroundId ? anchorSession.closedAtMs : 0) ?? 0
 
   let pageDocs: FirebaseFirestore.QueryDocumentSnapshot[] = []
   let hasOlder = false
@@ -388,7 +391,68 @@ export default defineEventHandler(async (event) => {
     toExclusive: false,
   }
 
-  if (afterId) {
+  /**
+   * 這一段的下界。
+   *
+   * 還有更早的一段沒讀時只收這一段之內的事件；已經讀到最早了也**不能**敞開到 epoch——
+   * 保留期清掉的只有訊息，會話與事件是永久留著的（見 cleanup.post.ts），敞開的下界會把
+   * 老客人這輩子的事件全撈出來蓋在那幾則訊息上面。取「最舊那一則所屬那一場」的開始時間：
+   * 既留住「新會話開始」那一行，又不會把更早的場次拖進來。
+   */
+  const applyFromBound = () => {
+    if (hasOlder && pageDocs.length) {
+      w.fromMs = toMillis(pageDocs[0]!.data().timestamp)
+      w.fromExclusive = false
+      return
+    }
+    const oldestMs = pageDocs.length ? toMillis(pageDocs[0]!.data().timestamp) : 0
+    const owning = oldestMs > 0
+      ? sessions
+          .filter(s => (s.openedAtMs ?? 0) > 0 && (s.openedAtMs ?? 0) <= oldestMs)
+          .sort((a, b) => (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0))[0]
+      : anchorSession
+    // 對不到任何一場就維持原本的敞開（寧可多幾行，也不要把事件行整段弄不見）
+    if (owning?.openedAtMs) {
+      w.fromMs = owning.openedAtMs
+      w.fromExclusive = false
+    }
+  }
+
+  /**
+   * 搜尋結果點進來的那一則。
+   *
+   * 游標用 DocumentSnapshot（startAt / startAfter）而不是時間戳：同一毫秒連送兩則時
+   * 用時間戳會漏掉或重複，而「搜到的那一則沒出現在畫面上」正是這條路唯一不能出的錯。
+   *
+   * 那一則已經被保留期清掉時（見 cleanup.post.ts）不擋在這裡：下面會落到「最新一段」，
+   * 畫面至少看得到這條對話，再用 `anchorMissing` 說明一句為什麼沒跳過去。
+   */
+  const anchorCursor = aroundId ? await msgCol.doc(aroundId).get() : null
+  const anchorMissing = Boolean(aroundId) && !anchorCursor?.exists
+
+  if (anchorCursor?.exists) {
+    // 以那一則為中心，前後各半段
+    const olderWanted = Math.max(1, Math.floor(limit / 2))
+    const newerWanted = Math.max(1, limit - olderWanted)
+    const [olderSnap, newerSnap] = await Promise.all([
+      // startAt 含游標自己，所以「更舊的那半段」會連那一則一起回來
+      msgCol.orderBy('timestamp', 'desc').startAt(anchorCursor).limit(olderWanted + 1).get(),
+      msgCol.orderBy('timestamp', 'asc').startAfter(anchorCursor).limit(newerWanted + 1).get(),
+    ])
+    hasOlder = olderSnap.docs.length > olderWanted
+    hasNewer = newerSnap.docs.length > newerWanted
+    pageDocs = [
+      ...olderSnap.docs.slice(0, olderWanted).reverse(),
+      ...newerSnap.docs.slice(0, newerWanted),
+    ]
+    // 下面還有沒載入的內容時，事件只收到這一段最新一則為止，否則同一顆
+    // 「會話已結束」會在這一段與下一段各出現一次
+    if (hasNewer && pageDocs.length) {
+      w.toMs = toMillis(pageDocs[pageDocs.length - 1]!.data().timestamp)
+    }
+    applyFromBound()
+  }
+  else if (afterId) {
     const cursor = await msgCol.doc(afterId).get()
     // 游標那則已被保留期清掉（見 cleanup.post.ts）＝就停在這裡，不要偷偷跳到別的地方
     if (!cursor.exists) {
@@ -436,42 +500,13 @@ export default defineEventHandler(async (event) => {
     }
 
     /**
-     * 下界：還有更早的一段沒讀時，事件只收這一段之內的；已經讀到最早了就不設下界，
-     * 好讓「新會話開始」那一行落在第一則訊息之前也看得到。
+     * 下界見 applyFromBound。
      *
-     * 往下讀（afterId）那條路刻意不套這個：那時下界是「游標那一則的時間」，
-     * 換成這一段最舊一則會把兩者之間的事件整段吃掉——「會話已結束」正好落在那裡
-     * （客人的最後一句之後才蓋，而下一則訊息可能是幾小時後的事）。
+     * 往下讀（afterId）那條路刻意不套它：那時下界是「游標那一則的時間」，換成這一段
+     * 最舊一則會把兩者之間的事件整段吃掉——「會話已結束」正好落在那裡（客人的最後一句
+     * 之後才蓋，而下一則訊息可能是幾小時後的事）。
      */
-    if (hasOlder && pageDocs.length) {
-      w.fromMs = toMillis(pageDocs[0]!.data().timestamp)
-      w.fromExclusive = false
-    }
-    else {
-      /**
-       * 已經讀到最早的一則了——但下界**不能**就這樣敞開到 epoch。
-       *
-       * 保留期清掉的只有訊息，會話與事件是永久留著的（見 cleanup.post.ts）。老客人被清到
-       * 只剩幾十則訊息時，敞開的下界會把他這輩子的每一筆事件全部撈出來（每 30 場一次
-       * `in` 查詢，讀取量跟著長），再整疊蓋在那幾則訊息上面——畫面上是一整片
-       * 「新會話開始／會話已結束」，真正的對話被推到看不見的地方。
-       *
-       * 取「這一則所屬那一場」的開始時間當下界：既留住「新會話開始」那一行（它正好落在
-       * 第一則訊息之前，也是當初不設下界的理由），又不會把更早的場次拖進來。
-       * 一則訊息都沒有時（例如剛加好友、或這一場的訊息已被清掉）就用點進來的那一場。
-       */
-      const oldestMs = pageDocs.length ? toMillis(pageDocs[0]!.data().timestamp) : 0
-      const owning = oldestMs > 0
-        ? sessions
-            .filter(s => (s.openedAtMs ?? 0) > 0 && (s.openedAtMs ?? 0) <= oldestMs)
-            .sort((a, b) => (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0))[0]
-        : anchorSession
-      // 對不到任何一場就維持原本的敞開（寧可多幾行，也不要把事件行整段弄不見）
-      if (owning?.openedAtMs) {
-        w.fromMs = owning.openedAtMs
-        w.fromExclusive = false
-      }
-    }
+    applyFromBound()
   }
 
   const items: TimelineItem[] = []
@@ -514,5 +549,10 @@ export default defineEventHandler(async (event) => {
     activeSession,
     /** ?sessionId= 點進來的那一場（會話分頁工具列 + AI 脈絡卡的時間窗口） */
     session: anchorSession,
+    /**
+     * ?aroundId= 指定的那一則已經不在了（保留期清掉）＝這一段是「最新一段」，不是他點的那裡。
+     * 前端一定要說出來：靜靜停在最新訊息上，看起來就像搜尋結果點了沒反應。
+     */
+    ...(anchorMissing ? { anchorMissing: true } : {}),
   }
 })

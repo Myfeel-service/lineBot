@@ -86,6 +86,8 @@ function makeDb(data: {
     dir: 'asc' | 'desc'
     filters: Array<{ op: string, ms: number }>
     startAfterId?: string
+    /** startAt：**含**游標那一則（跳到搜尋結果那一則時用來把它自己也帶回來） */
+    startAtId?: string
     cap?: number
   }
 
@@ -101,6 +103,10 @@ function makeDb(data: {
       const idx = rows.findIndex(m => m.id === q.startAfterId)
       rows = idx >= 0 ? rows.slice(idx + 1) : []
     }
+    if (q.startAtId) {
+      const idx = rows.findIndex(m => m.id === q.startAtId)
+      rows = idx >= 0 ? rows.slice(idx) : []
+    }
     if (q.cap !== undefined) rows = rows.slice(0, q.cap)
     return { docs: rows.map(msgDoc), empty: rows.length === 0 }
   }
@@ -110,6 +116,7 @@ function makeDb(data: {
     where: (_f: string, op: string, value: Date) =>
       msgQuery({ ...q, filters: [...q.filters, { op, ms: value.getTime() }] }),
     startAfter: (snap: { id: string }) => msgQuery({ ...q, startAfterId: snap.id }),
+    startAt: (snap: { id: string }) => msgQuery({ ...q, startAtId: snap.id }),
     limit: (n: number) => msgQuery({ ...q, cap: n }),
     get: async () => runMsgQuery(q),
   })
@@ -268,6 +275,7 @@ async function call(query: Record<string, unknown> = {}) {
     hasNewer: boolean
     activeSession: { sessionId: string } | null
     session: { sessionId: string, closedAtMs: number } | null
+    anchorMissing?: boolean
   }
 }
 
@@ -479,5 +487,54 @@ describe('對話時間軸：分段讀', () => {
 
     expect(res.items.filter(i => i.type === 'broadcast')).toHaveLength(0)
     expect(messageIds(res)).toEqual(['m1', 'm2', 'm3'])
+  })
+})
+
+/**
+ * 對話內容搜尋點進來的那一則（aroundId）。
+ *
+ * 這條路唯一不能出的錯就是「搜到的那一則不在畫面上」——那會讓搜尋結果看起來像點了沒反應。
+ */
+describe('對話時間軸：跳到指定的那一則', () => {
+  it('以那一則為中心，前後各半段，上下都還有', async () => {
+    useDb({ messages: seriesOf(100) })
+    const res = await call({ limit: 40, aroundId: 'm50' })
+    const ids = messageIds(res)
+
+    expect(ids).toContain('m50')
+    expect(ids).toHaveLength(40)
+    // 前半段（含自己）20 則、後半段 20 則
+    expect(ids[0]).toBe('m31')
+    expect(ids[ids.length - 1]).toBe('m70')
+    expect(res.hasOlder).toBe(true)
+    expect(res.hasNewer).toBe(true)
+  })
+
+  it('那一則就在最早／最新邊界時，不會多說「還有更多」', async () => {
+    useDb({ messages: seriesOf(10) })
+    const oldest = await call({ limit: 40, aroundId: 'm1' })
+    expect(messageIds(oldest)).toEqual(seriesOf(10).map(m => m.id))
+    expect(oldest.hasOlder).toBe(false)
+    expect(oldest.hasNewer).toBe(false)
+  })
+
+  it('⛔ 那一則已被保留期清掉時：回最新一段並明講跳不過去，不可以靜靜停在最新訊息上', async () => {
+    useDb({ messages: seriesOf(60) })
+    const res = await call({ limit: 40, aroundId: '不存在的訊息id' })
+
+    expect(res.anchorMissing).toBe(true)
+    // 不是空畫面：至少看得到這條對話的最新一段
+    expect(messageIds(res)).toEqual(seriesOf(60).slice(20).map(m => m.id))
+    expect(res.hasOlder).toBe(true)
+  })
+
+  it('跳到某一則時，那一段之內的事件行照樣看得到', async () => {
+    useDb({
+      messages: seriesOf(60),
+      sessions: [{ id: 's1', openedMs: T0 - MINUTE }],
+      events: [{ id: 'e-handoff', sessionId: 's1', ms: T0 + 29 * MINUTE + 30_000, eventType: 'handoff_request' }],
+    })
+    const res = await call({ limit: 40, aroundId: 'm30' })
+    expect(res.items.some(i => i.id === 'e-handoff')).toBe(true)
   })
 })

@@ -67,7 +67,12 @@
         </el-dropdown>
       </div>
       <div class="conv-search-bar">
-        <el-input v-model="searchText" placeholder="搜尋名稱…" clearable size="small" />
+        <el-input
+          v-model="searchText"
+          placeholder="搜尋名字或對話內容…"
+          clearable
+          size="small"
+        />
         <!-- 兩顆篩選放同一列（側欄夠寬時並排、窄了自己換行）：它們是同一種東西
              ——「把清單縮到某一群」，和上面那排「換一個清單」的分頁不同 -->
         <div class="conv-filter-row">
@@ -125,10 +130,14 @@
           @click="scanMoreForUnread"
         >{{ listLoadingMore ? '找找看…' : '再往下找' }}</button>
       </div>
-      <div v-if="listLoading && !sidebarItems.length" class="split-sidebar-loading">
+      <!--
+        搜尋中（searchActive）一律走下面那份清單，即使名字一個都沒中：內容搜尋的結果與
+        說明都在那裡面。走整片空狀態的話，明明有「講過這句話」的對話卻看不到。
+      -->
+      <div v-if="listLoading && !sidebarItems.length && !searchActive" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
-      <div v-else-if="!sidebarItems.length" class="split-sidebar-empty">
+      <div v-else-if="!sidebarItems.length && !searchActive" class="split-sidebar-empty">
         <span>{{ sidebarEmpty.title }}</span>
         <!-- 空清單不要變死路：這裡順便講怎麼標，這也是唯一會說明「待跟進怎麼來」的地方 -->
         <span v-if="sidebarEmpty.hint" class="conv-empty-hint">{{ sidebarEmpty.hint }}</span>
@@ -147,6 +156,17 @@
         <div v-if="listAutoRefreshPaused" class="conv-list-notice">
           搜尋結果不會自動更新，新訊息與紅點請清空搜尋或按「重整」
         </div>
+        <!--
+          搜尋分兩區，各自要說得出自己的狀態（名字這一區在這裡講）。
+          空的原因沿用 sidebarEmpty：還套著「只看未讀」「只看待跟進」時，
+          真正的原因是那些篩選，不是名字沒中。
+        -->
+        <template v-if="searchActive">
+          <div v-if="listLoading" class="conv-list-notice">正在找名字…</div>
+          <div v-else-if="!sidebarItems.length" class="conv-list-notice">
+            {{ sidebarEmpty.title }}
+          </div>
+        </template>
         <!--
           G-27③：釘選區的標題。
           釘選一律置頂，釘到 12 筆時第一screen 就整片都是 📌，中間沒有任何字說明
@@ -248,6 +268,61 @@
           <div class="spinner" />
           <span>載入更多…</span>
         </div>
+        <!--
+          ── 搜尋對話內容（H-30）──────────────────────────────────────
+          名字命中列在上面，這一區是「誰講過這句話」。分成兩區而不是混成一份清單：
+          兩者的涵蓋範圍不一樣（名字是全部客人、內容是保留期 180 天內的訊息），
+          混在一起就沒有地方講得清楚這次找到哪為止——而那正是下面那幾行說明要回答的。
+        -->
+        <template v-if="searchActive">
+          <div class="conv-list-group conv-list-group--static">
+            <span>💬 講過「{{ searchText.trim() }}」的對話{{ contentMatches.length ? `（${contentMatches.length}）` : '' }}</span>
+          </div>
+          <div v-if="contentSearchLoading" class="conv-list-notice">正在翻對話內容…</div>
+          <template v-else>
+            <!-- conv-hit-row：和上面那份清單分得出來（右鍵選單、釘選線都不套在這一區） -->
+            <div
+              v-for="m in contentMatches"
+              :key="`${m.userId}-${m.messageId}`"
+              class="conv-list-row conv-hit-row"
+            >
+              <AdminSplitListItem
+                :title="m.displayName"
+                :leading-avatar-url="m.pictureUrl"
+                show-leading-avatar-fallback
+                time-in-title-row
+                :active="selectedUserId === m.userId && highlightMessageId === m.messageId"
+                :chip-text="formatTime(m.timestamp)"
+                @select="openContentMatch(m)"
+              >
+                <!-- 命中的字要標起來：看不出自己為什麼搜到這一列的話，這份清單等於沒用 -->
+                <template #meta>
+                  <span class="conv-hit-line">
+                    <span class="split-list-meta-prefix">{{ m.direction === 'outgoing' ? '我們：' : '客人：' }}</span>
+                    <span class="conv-hit-text"><span
+                      v-if="m.snippet.cutHead"
+                      class="conv-hit-ellipsis"
+                    >…</span>{{ m.snippet.before }}<mark class="conv-hit-mark">{{ m.snippet.match }}</mark>{{ m.snippet.after }}<span
+                      v-if="m.snippet.cutTail"
+                      class="conv-hit-ellipsis"
+                    >…</span></span>
+                  </span>
+                  <span v-if="m.matchCount > 1" class="conv-hit-count">這段對話裡還有 {{ m.matchCount - 1 }} 則</span>
+                </template>
+              </AdminSplitListItem>
+            </div>
+            <!--
+              ⛔ 這幾行不能省：搜不到有四種完全不同的原因（字太短／索引沒建好／
+              舊訊息還沒補完／真的沒人講過），下一步也完全不同。
+              全部長成「無符合結果」就是在說謊。
+            -->
+            <div
+              v-for="(note, idx) in contentSearchNotes"
+              :key="`cn-${idx}`"
+              class="conv-list-notice"
+            >{{ note }}</div>
+          </template>
+        </template>
       </div>
     </template>
 
@@ -499,10 +574,20 @@
             <span class="conv-day-divider__label">{{ group.label }}</span>
           </div>
           <template v-for="row in group.rows" :key="row.key">
+            <!--
+              客人動作（按按鈕／加好友／活動登記）在資料上是一則**訊息**，只是畫面上長成
+              一行事件。搜尋搜得到它，所以跳轉與標記也要接在這裡——少了 data-msg-id，
+              搜到「按了按鈕：查詢訂單」點進去就會停在對話最新處、什麼都沒亮（實機守門員抓到）。
+              系統事件（新會話開始…）不是訊息，沒有 id 可以指，不套。
+            -->
             <div
               v-if="row.kind === 'event'"
               class="conv-timeline-event"
-              :class="{ 'conv-timeline-event--action': row.variant === 'action' }"
+              :data-msg-id="row.variant === 'action' ? row.key : undefined"
+              :class="{
+                'conv-timeline-event--action': row.variant === 'action',
+                'is-search-hit': row.variant === 'action' && row.key === highlightMessageId,
+              }"
               :title="row.variant === 'action' ? '客人在 LINE 裡做的動作（按按鈕、加好友、活動登記），不是他傳的訊息' : undefined"
             >
               <span v-if="row.variant === 'action'" class="conv-timeline-event__icon" aria-hidden="true">👆</span>
@@ -512,9 +597,11 @@
             </div>
             <template v-else>
               <template v-for="msg in [row.msg]" :key="msg.id">
+                <!-- data-msg-id：搜尋結果點進來時要捲到這一則（見 scrollToHighlightedMessage） -->
                 <div
                   class="conv-bubble-row"
-                  :class="msg.direction"
+                  :data-msg-id="msg.id"
+                  :class="[msg.direction, { 'is-search-hit': msg.id === highlightMessageId }]"
                 >
                   <div
                     class="conv-bubble-wrap"
@@ -1976,6 +2063,43 @@ const unreadFilterOn = ref(false)
 const followUpListTruncated = ref(false)
 // null＝這次讀不到（缺索引之類）：不顯示數字、tooltip 講明，⛔不可以拿 0 冒充（D-43④）
 const followUpCount = ref<number | null>(0)
+
+/**
+ * 搜尋對話**內容**（H-30）：「那個問過退貨的客人是誰」。
+ *
+ * 和名字搜尋分開跑、分開顯示，因為兩者的涵蓋範圍與失敗模式完全不同：名字是掃 users
+ * 一趟查詢就完事，內容走的是訊息的片段索引（見 shared/message-search.ts）。
+ * 混在同一份清單裡，就沒有地方講得清楚「這次找到哪為止」。
+ */
+type ContentMatch = {
+  userId: string
+  displayName: string
+  pictureUrl: string
+  messageId: string
+  timestamp: unknown
+  direction: 'incoming' | 'outgoing'
+  matchCount: number
+  snippet: { before: string, match: string, after: string, cutHead: boolean, cutTail: boolean }
+}
+const contentMatches = ref<ContentMatch[]>([])
+const contentSearchLoading = ref(false)
+/**
+ * 這次內容搜尋的結果狀態。**四態**，因為「沒有結果」的下一步完全不同：
+ * · idle        沒在搜尋
+ * · ok          真的找完了（範圍見 contentSearchNote）
+ * · too_short   只打了一個字，這條路走不了
+ * · unavailable 資料庫索引還沒部署／查詢失敗＝功能不能用，不是「沒有結果」
+ */
+const contentSearchState = ref<'idle' | 'ok' | 'too_short' | 'unavailable'>('idle')
+/** 這次掃了幾則候選、有沒有掃到上限、掃到哪一天為止 */
+const contentScannedCount = ref(0)
+const contentScanTruncated = ref(false)
+const contentOldestScannedMs = ref(0)
+/** 舊訊息有沒有補過索引（沒補＝只找得到功能上線後的新訊息，畫面要講） */
+const contentBackfillDone = ref(true)
+const contentBackfillFromMs = ref(0)
+/** 搜尋結果點進去時，要在對話裡亮起來的那一則 */
+const highlightMessageId = ref('')
 const contextMenuVisible = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
 const contextMenuTarget = ref<ConvItem | SessionItem | null>(null)
@@ -2478,6 +2602,52 @@ const lastPinnedSessionIndex = computed(() => lastPinnedEdge(sessionSidebarItems
  */
 const listAutoRefreshPaused = computed(() => activeTab.value === 'all' && !!searchText.value.trim())
 
+/** 搜尋框裡有字＝側欄變成「搜尋結果」的樣子（名字一區、對話內容一區） */
+const searchActive = computed(() => Boolean(searchText.value.trim()))
+
+/** 日期只給年月日：「到 8/12 為止」這種說明要一眼看得懂，不需要時分 */
+function formatDateShort(ms: number): string {
+  if (!ms) return ''
+  return new Date(ms).toLocaleDateString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric' })
+}
+
+/**
+ * 對話內容那一區的說明。
+ *
+ * ⛔ 「沒找到」有四種，下一步完全不同，所以不可以共用一句「無符合結果」：
+ *   · 字太短      → 再多打一個字（功能是好的）
+ *   · 索引沒建好  → 功能整個不能用，要有人去部署（**不是**沒人講過）
+ *   · 還沒回填    → 只找得到新訊息，舊的要等批次補完
+ *   · 真的沒有    → 這時才是「沒人講過這句話」
+ * 截斷也要講：翻到上限就停，更早的沒找過——說成「沒有」就是這個專案付過三次帳的那種謊。
+ */
+const contentSearchNotes = computed<string[]>(() => {
+  const kw = searchText.value.trim()
+  if (!kw || contentSearchLoading.value) return []
+  if (contentSearchState.value === 'too_short') {
+    return ['對話內容要打兩個字以上才找得到（一個字會命中太多，等於沒篩）']
+  }
+  if (contentSearchState.value === 'unavailable') {
+    return ['對話內容這次查不到（資料庫索引還沒建好）——這不代表沒有人講過，請先確認索引已部署']
+  }
+  const notes: string[] = []
+  if (!contentMatches.value.length) notes.push(`對話內容裡沒有「${kw}」`)
+  if (contentScanTruncated.value) {
+    const until = formatDateShort(contentOldestScannedMs.value)
+    notes.push(
+      `含這幾個字的訊息太多，只翻了最近 ${contentScannedCount.value} 則`
+      + `${until ? `（到 ${until} 為止）` : ''}，更早的沒找過——關鍵字再打長一點會更準`,
+    )
+  }
+  if (!contentBackfillDone.value) {
+    notes.push('舊訊息還在補索引，現在只找得到這個功能上線後新進來的訊息')
+  }
+  else if (!contentMatches.value.length && contentBackfillFromMs.value > 0) {
+    notes.push(`（對話內容找得到 ${formatDateShort(contentBackfillFromMs.value)} 之後的訊息，更早的已超過保留期限）`)
+  }
+  return notes
+})
+
 const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
   /**
    * 「只看未讀」的空清單有**兩種**，下一步完全不同，所以不能共用一句「沒有未讀」：
@@ -2516,8 +2686,9 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
       // 空清單不能只說「沒有」就結束：順便講怎麼標，不然這個篩選看起來像壞掉
       : { title: '目前沒有待跟進的對話', hint: '在左側對話上按右鍵（或滑過按 ⋯）→「標記待跟進」，之後就能從這裡找回來' }
   }
+  // 搜尋中：這一句只回答「名字」那一區（對話內容那一區有自己的說明，見 contentSearchNotes）
   if (searchText.value)
-    return { title: '無符合結果', hint: '' }
+    return { title: `名字裡沒有「${searchText.value.trim()}」`, hint: '' }
   // 開通沒完成時「尚無對話紀錄」是誤導：不是客人不傳，是傳了也進不來（2026-08-27）
   if (onboardingIncomplete.value)
     return { title: '開通還沒完成，還不會有對話', hint: '接上 LINE 並收到第一則訊息後，客人的對話會自動出現在這裡' }
@@ -3259,6 +3430,57 @@ async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
 }
 
 /**
+ * 搜尋對話內容（H-30）。
+ *
+ * 一次獨立的查詢，不跟著每 30 秒的背景刷新跑（搜尋中的清單本來就停止自動更新，
+ * 見 listAutoRefreshPaused）——內容搜尋比名字搜尋重，讓它每半分鐘自己重跑一次
+ * 就是 2026-08-11 那筆讀取費暴衝的做法。
+ */
+let contentSearchSeq = 0
+async function loadContentMatches() {
+  const keyword = searchText.value.trim()
+  const seq = ++contentSearchSeq
+  if (!keyword) {
+    contentMatches.value = []
+    contentSearchState.value = 'idle'
+    contentScanTruncated.value = false
+    return
+  }
+  contentSearchLoading.value = true
+  try {
+    const res = await apiFetch<{
+      status: 'ok' | 'too_short' | 'unavailable'
+      rows: ContentMatch[]
+      scanned: number
+      truncated: boolean
+      oldestScannedMs: number
+      backfill: { done: boolean, indexedFromMs: number }
+    }>('/api/conversations/search-messages', { params: { q: keyword } })
+    // 回來時使用者已經改了字：整批丟掉，不要把上一個關鍵字的結果貼在現在這個下面
+    if (seq !== contentSearchSeq) return
+    contentSearchState.value = res.status
+    contentMatches.value = res.status === 'ok' ? res.rows ?? [] : []
+    contentScannedCount.value = Number(res.scanned || 0)
+    contentScanTruncated.value = res.truncated === true
+    contentOldestScannedMs.value = Number(res.oldestScannedMs || 0)
+    contentBackfillDone.value = res.backfill?.done === true
+    contentBackfillFromMs.value = Number(res.backfill?.indexedFromMs || 0)
+  }
+  catch {
+    if (seq !== contentSearchSeq) return
+    /**
+     * ⛔ 失敗不可以留在「找不到」：那會被讀成「客人沒講過這句話」。
+     * 一律倒向 unavailable，畫面上會寫「這次查不到，不是沒有」。
+     */
+    contentSearchState.value = 'unavailable'
+    contentMatches.value = []
+  }
+  finally {
+    if (seq === contentSearchSeq) contentSearchLoading.value = false
+  }
+}
+
+/**
  * 開著的那個對話，客人來訊時把新的一段自己讀進來。
  *
  * 沒有這一支的話：每 30 秒的背景刷新只重整左側清單，右邊的泡泡不會動——客人在客服正
@@ -3389,7 +3611,14 @@ async function refreshListQuiet(): Promise<boolean> {
 let searchListTimer: ReturnType<typeof setTimeout> | null = null
 watch(searchText, () => {
   if (searchListTimer) clearTimeout(searchListTimer)
-  searchListTimer = setTimeout(() => void loadList('reset'), 300)
+  // 名字與內容兩支一起發（互不相干，沒有理由排隊）：名字那支通常先回來，
+  // 清單先長出來、內容那一區稍後補上，不會整個畫面等最慢的那一支
+  // 清空搜尋＝離開搜尋結果，對話裡那一則不用再亮著
+  if (!searchText.value.trim()) highlightMessageId.value = ''
+  searchListTimer = setTimeout(() => {
+    void loadList('reset')
+    void loadContentMatches()
+  }, 300)
 })
 
 /**
@@ -3521,7 +3750,7 @@ function getActionSummary(preset: any): string {
  * ⛔ 不要退回 search=userId：那會走整段清單掃描（客人越舊掃越多，最舊一次要掃
  *    3,000 條對話），直達照編號讀只要 1 次，而且再舊的客人都找得到。
  */
-async function selectUserById(userId: string, opts?: { sessionId?: string }) {
+async function selectUserById(userId: string, opts?: { sessionId?: string, messageId?: string }) {
   let target = conversations.value.find(c => c.userId === userId || c.userId.endsWith(`_${userId}`)) ?? null
   if (!target) {
     const res = await apiFetch<{ conversations: ConvItem[] }>('/api/conversations/list', {
@@ -3538,14 +3767,29 @@ async function selectUserById(userId: string, opts?: { sessionId?: string }) {
 }
 
 /**
+ * 點一筆「講過這句話」的搜尋結果：開那條對話，並**停在那一則**。
+ *
+ * 不只是開對話：搜到的可能是三個月前那句話，只把對話打開等於把人丟在最新訊息上，
+ * 要自己往上翻幾千則才找得到——那樣這份搜尋結果只回答了一半的問題。
+ */
+async function openContentMatch(m: ContentMatch) {
+  await selectUserById(m.userId, { messageId: m.messageId })
+}
+
+/**
  * @param opts.sessionId 指定要落在**哪一場**（AI 建議的出處、深連結）。
  *   不給＝最新那場（一般點選客人的行為）。
  *   ⛔ 要在這裡就帶進去、不要「先開最新那場再切過去」：那會讀兩次時間軸，
  *      畫面還會先閃一下最新的對話再跳走。
  */
-async function selectUser(c: ConvItem, opts?: { sessionId?: string }) {
-  // 換人＝重新黏回底部。不重設的話，上一位客人翻到一半的狀態會跟著帶進來
-  stickToBottom.value = true
+async function selectUser(c: ConvItem, opts?: { sessionId?: string, messageId?: string }) {
+  /**
+   * 換人＝重新黏回底部。不重設的話，上一位客人翻到一半的狀態會跟著帶進來。
+   * ⛔ 從搜尋結果點進來（指定某一則）時**不可以**黏底：黏著的話圖片載完會把畫面
+   *    一路貼回最新訊息，客服點的那一則又被推出畫面外（等於點了沒反應）。
+   */
+  stickToBottom.value = !opts?.messageId
+  highlightMessageId.value = opts?.messageId || ''
   // 換人前先把打到一半的字收進這位客人的抽屜，再拿出下一位的
   if (selectedUserId.value !== c.userId) {
     stashDraft()
@@ -3575,6 +3819,7 @@ async function selectUser(c: ConvItem, opts?: { sessionId?: string }) {
   await loadTimeline(c.userId, {
     seenUpToMs: opts?.sessionId ? 0 : convRowCustomerMs(c),
     sessionId: opts?.sessionId,
+    messageId: opts?.messageId,
   })
 }
 
@@ -3652,10 +3897,12 @@ function isStaleTimelineResponse(userId: string, sessionId: string): boolean {
 
 async function loadTimeline(
   userId: string,
-  options?: { sessionId?: string, quiet?: boolean, seenUpToMs?: number },
+  options?: { sessionId?: string, quiet?: boolean, seenUpToMs?: number, messageId?: string },
 ) {
   const quiet = options?.quiet === true
   const sessionId = options?.sessionId || ''
+  /** 搜尋結果點進來的那一則：這一段要以它為中心讀，讀完捲到它 */
+  const aroundId = options?.messageId || ''
   let loaded = false
   if (!quiet) {
     timelineItems.value = []
@@ -3665,7 +3912,11 @@ async function loadTimeline(
   }
   try {
     const res = await apiFetch<TimelineResponse>(`/api/conversations/${userId}/messages`, {
-      params: { limit: TIMELINE_PAGE_SIZE, sessionId: sessionId || undefined },
+      params: {
+        limit: TIMELINE_PAGE_SIZE,
+        sessionId: sessionId || undefined,
+        aroundId: aroundId || undefined,
+      },
     })
     // 回來時人或會話已經切走了就整段丟掉，不要把上一個畫面的內容貼到現在這個上面
     if (isStaleTimelineResponse(userId, sessionId)) return
@@ -3685,8 +3936,27 @@ async function loadTimeline(
     allTabActiveSession.value = sessionId ? null : res.activeSession ?? null
     if (sessionId && res.session) sessionMeta.value = res.session
     await nextTick()
-    // 安靜刷新（自己剛送完）不強拉：客服正在往上翻舊訊息時，畫面不該自己跳走
-    scrollToBottom({ force: !quiet })
+    if (aroundId) {
+      /**
+       * 搜尋結果點進來：捲到那一則，不要捲到底。
+       *
+       * 那一則已經超過保留期被清掉時，後端會回最新一段並帶 anchorMissing——
+       * ⛔ 一定要說出來：靜靜停在最新訊息上，看起來就跟「點了沒反應」一樣，
+       * 而客服會以為是搜尋結果有問題，不會知道是訊息被保留期清掉了。
+       */
+      if (res.anchorMissing) {
+        highlightMessageId.value = ''
+        showToast('這則訊息已超過保留期限（180 天），只能看到這條對話最新的內容', 'warning')
+        scrollToBottom({ force: true })
+      }
+      else {
+        scrollToHighlightedMessage()
+      }
+    }
+    else {
+      // 安靜刷新（自己剛送完）不強拉：客服正在往上翻舊訊息時，畫面不該自己跳走
+      scrollToBottom({ force: !quiet })
+    }
     /**
      * 已讀章只吃**客人那側的訊息時間**，跟紅點比的欄位同一族（見 isRowUnread）。
      *
@@ -4320,6 +4590,33 @@ function scrollToBottomNow() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
+/**
+ * 捲到搜尋結果點進來的那一則，並讓它在畫面**正中央**（不是貼在頂端）。
+ *
+ * 置中是因為客服要看的是「那句話前後在講什麼」；貼頂的話上文全在畫面外。
+ *
+ * ⛔ 不用 `scrollIntoView`：它會連外層可捲動的祖先一起捲，後台外殼跟著位移。
+ *    用兩個 getBoundingClientRect 相減自己算，只動對話區這一個容器。
+ */
+async function scrollToHighlightedMessage() {
+  await nextTick()
+  const el = messagesEl.value
+  const id = highlightMessageId.value
+  if (!el || !id) return
+  const target = el.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`)
+  // 找不到就停在原地：這時畫面上是那一段的內容，硬捲到別處只會更難懂
+  if (!target) return
+  const box = el.getBoundingClientRect()
+  const rect = target.getBoundingClientRect()
+  el.scrollTop += (rect.top - box.top) - (box.height - rect.height) / 2
+  /**
+   * 明確放掉「黏在底部」：客服現在要看的是這一則，不是最新那一則。
+   * 不放掉的話，這一段裡任何一張圖片載完都會把畫面拉到底（見 onMessagesContentGrew）。
+   */
+  stickToBottom.value = false
+  stopPinBottom()
+}
+
 function stopPinBottom() {
   if (pinBottomTimer) clearInterval(pinBottomTimer)
   pinBottomTimer = null
@@ -4334,6 +4631,15 @@ function stopPinBottom() {
 function onMessagesScroll() {
   const el = messagesEl.value
   if (!el) return
+  /**
+   * ⛔ 載入中收到的捲動事件不是人捲的，是**畫面被清空**造成的（換一段時間軸時
+   * timelineItems 先清空，容器高度掉到 0 → 這裡算出來「在底部」→ 又把黏底打開）。
+   *
+   * 那個誤判在搜尋結果跳轉時會直接毀掉整個功能：捲到那一則之後，只要上面有任何一張
+   * 圖片載完（onMessagesContentGrew），畫面就被拉回最新訊息——客服看到的是「點了會跳一下
+   * 又跑掉」。2026-09-11 實機守門員量到那一則被推到畫面外 1,086px。
+   */
+  if (msgLoading.value) return
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
   /**
    * 停在「已載入的最後一則」不等於停在對話的最後一則：看已結束的舊會話時，下面還有
