@@ -552,8 +552,12 @@ body.is-resizing-split {
   overflow: visible;
 }
 
-/* 標籤／會員：填滿視窗，表格在卡片內捲動 */
-.split-editor-body > .solo-editor-body:has(.tags-page-card),
+/* 會員：填滿視窗，表格在卡片內捲動。
+   ⛔ **標籤頁刻意不在這裡**（2026-09-11）：這個模式只撐得住「表格上面只有一條小橫幅」的頁。
+   標籤頁後來長出「有人在等你決定」＋「AI 發現的新標籤」＋歷程三塊，那三塊是 flex:none，
+   一多就把 flex:1 的表格卡壓成 0 高，而這層又是 overflow:hidden ——
+   表格整個看不見、連捲軸都不出現（實測 4 個建議就中，表格卡剩 2px）。
+   標籤頁改回上面那條「依內容撐高、由 .split-editor-body 捲」的通則。 */
 .split-editor-body > .solo-editor-body:has(.users-page-card) {
   flex: 1;
   min-height: 0;

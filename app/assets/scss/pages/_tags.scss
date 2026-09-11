@@ -6,17 +6,14 @@
 .tags-page-card.message-card {
   width: 100%;
   max-width: 100%;
-  flex: 1 1 auto;
+  /* ⛔ 別改回 `flex: 1 1 auto`（2026-09-11）：上面那幾塊（等你決定／AI 發現的新標籤／歷程）
+     是 flex:none，這張卡是這一疊裡唯一可壓縮的，內容一多就被壓成 0 高 ——
+     表格連同分頁器整個消失，而且外層 overflow:hidden 連捲軸都不給。
+     現在整頁由 `.split-editor-body` 捲（和自動回覆／腳本同一套），這張卡照內容撐高就好。 */
+  flex: none;
   min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.tags-page-card .card-section-stack {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .tags-toolbar {
@@ -472,7 +469,8 @@
 
 /* ── AI 發現的新標籤（08-25）：標籤頁頂部的建議卡 ─────────────────
    一列一個提案。做得比表格輕：它是等你決定的建議，不是已存在的資料。
-   ⛔ 不能套 .tags-page-card：那個為了讓表格撐滿有 flex:1，建議卡會被拉高吃掉表格。 */
+   套自己的 class 不共用 .tags-page-card：兩張卡在同一疊裡，高度規則要各講各的
+   （2026-09-11 起兩張都是 flex:none＝照內容撐高，整頁由 .split-editor-body 捲）。 */
 .tags-discovery-card.message-card {
   width: 100%;
   max-width: 100%;
