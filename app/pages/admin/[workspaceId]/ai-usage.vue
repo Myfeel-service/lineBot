@@ -38,12 +38,14 @@
           </div>
           <!-- 額度即時數（2026-08-10 老闆拍板 A 案）：跟錢有關的要第一眼看到——
                放狀態列比整張卡搬上來更快，且不動「先講價值再講帳」的卡片順序。
-               只有「有上限」方案顯示（無限方案沒有「剩多少」可言）；點了捲到方案卡看細節。 -->
+               2026-09-11 起無上限方案也顯示（改成「這個月 N 則」，見 quotaChip 的說明）；
+               點了捲到方案卡看細節，hover 看得到「一則」是怎麼算的。 -->
           <button
             v-if="quotaChip"
             type="button"
             class="usage-status__quota"
             :class="`usage-status__quota--${quotaState}`"
+            :title="QUOTA_UNIT_TIP"
             @click="scrollToQuota"
           >
             {{ quotaChip }}
@@ -946,13 +948,22 @@ const planQuota = computed(() => summary.value?.plan ?? null)
 const QUOTA_UNIT_TIP = REPLY_UNIT_TIP
 
 /**
- * 狀態列右側的額度即時數（2026-08-10 老闆拍板 A 案）：「跟錢有關的要第一眼看到」。
- * 只有「有上限」方案有東西可顯示；無限方案沒有「剩多少」的概念，不佔位。
- * 顏色沿用 derivePlanState 的門檻（ok/near/over），與方案卡、頁頂警示同一套規則。
+ * 狀態列右側的額度即時數（2026-08-10 老闆拍板 A 案）：「跟錢有關的要第一眼看到」，
+ * 放狀態列而不是把整張方案卡搬上來——不動「先講價值、再講帳」的卡片順序。
+ *
+ * 2026-09-11 補上無上限方案那半：原本這顆只做給「有上限」的方案，於是內部／客製帳號
+ * （myfeel 就是）第一眼**什麼數字都沒有**，要一路捲到頁尾才看得到用量——老闆問
+ * 「這個區塊是否應該放第一個」的真正起因。無上限沒有「剩多少」可講，但「做了多少」照樣要看得到。
+ *
+ * ⛔ 兩種方案的**窗口不同，量詞也必須不同**：有上限講「本期」（訂閱錨定日一期），
+ *    無上限講上方報表選的那個月（跟著 periodLabel 走）。⛔ 無上限那句別寫「本期」——
+ *    同一顆標籤在兩種方案下指涉不同區間，就是 2026-08-10「94 則哪來的」那個坑。
+ * 顏色沿用 derivePlanState 的門檻（ok/near/over）；無上限恆為 ok，不會亮警示色。
  */
 const quotaChip = computed(() => {
-  if (!planQuota.value || quotaLimit.value == null) return ''
-  return `本期 ${formatNumber(quotaUsed.value)}／${formatNumber(quotaLimit.value)} 則`
+  if (!planQuota.value) return ''
+  if (quotaLimit.value != null) return `本期 ${formatNumber(quotaUsed.value)}／${formatNumber(quotaLimit.value)} 則`
+  return `${periodLabel.value} ${formatNumber(summary.value?.billableReplies)} 則`
 })
 const quotaCard = ref<HTMLElement | null>(null)
 function scrollToQuota() {

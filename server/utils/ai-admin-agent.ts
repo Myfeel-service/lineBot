@@ -13,6 +13,10 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { generateJson } from './gemini'
 import { getAiSettings } from './ai-settings'
+// ⛔ 只取唯讀的三支（讀訂閱／組方案視圖／讀本期已用則數）——本檔的鐵律是不 import 會寫入的東西。
+import { getWorkspaceSubscription, buildPlanView } from './billing'
+import { getQuotaAnswered, getCurrentMonthUsageCounts, currentYyyyMm, monthlyBillable } from './ai-usage'
+import { derivePlanState } from '~~/shared/billing/plan-state'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
@@ -118,11 +122,16 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
   },
   get_ai_usage: {
     // ⛔ 量詞要在 description 就綁死,否則小幫手會把 invocations 講成「則」——
-    //    畫面上「則」是收錢的單位(＝answered),兩者差 2～3 倍,講錯等於報錯帳。
+    //    畫面上「則」是收錢的單位,兩者差 2～3 倍,講錯等於報錯帳。
+    // ⛔ 2026-09-11 修:這段原本寫「answered＝這才是計費與額度的單位」,那是 `D-69`
+    //    (2026-09-07 反問也算一則)之前的舊口徑。小幫手照著講會少報反問那幾則
+    //    (myfeel 2026-09 實測會回 52,正確是 62),跟方案卡當時的 bug 是同一個。
     description: 'AI 月用量。args 可帶 {"month":"YYYY-MM"},不帶=本月。問「這個月 AI 回了幾則 / 用量 / 轉真人幾次」時用。'
       + '回傳欄位的量詞:invocations＝AI 被呼叫幾**次**(客人每來一則訊息算一次,含轉真人與反問);'
-      + 'answered＝AI 真的答出幾**則**(這才是計費與額度的單位);handoffs/disambiguations＝幾**次**。'
-      + '⛔ 講用量時 invocations 一律說「次」、answered 一律說「則」,不可互換。',
+      + 'billableReplies＝計費與額度的單位「幾**則**」(＝答出 ＋ 反問問清楚,答不出轉真人不算);'
+      + 'answered＝AI 自己答完幾**次**(品質指標,**不是**計費單位,比則數少);handoffs/disambiguations＝幾**次**。'
+      + '⛔ 客人問「用了幾則 / 扣了幾則」一律回 billableReplies,不可回 answered。'
+      + '⛔ invocations 一律說「次」,不可說「則」。這裡只有「做了多少」,額度與剩餘要用 get_plan_quota。',
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId, args) {
@@ -133,6 +142,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       return {
         month: `${ym.slice(0, 4)}-${ym.slice(4)}`,
         invocations: u.invocations ?? 0,
+        // 計費則數走 monthlyBillable(與方案卡、超管成本頁同一支):它處理了
+        // 「舊月份沒有 billable 欄位」與「跨口徑那個月只記了半個月」兩件事。
+        billableReplies: monthlyBillable(u),
         answered: u.answered ?? 0,
         handoffs: u.handoffs ?? 0,
         disambiguations: u.disambiguations ?? 0,
@@ -140,6 +152,62 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         // ⛔ token 細目刻意不回(E-17):正規端點 ai/usage/summary 只給 super admin
         //    (F-5 政策:token 是平台進貨價,租戶拿到就能反推毛利)。
         //    之前這裡回給了 viewer,等於聊天問一句就繞過那道守衛。
+      }
+    },
+  },
+  get_plan_quota: {
+    // 2026-09-11 新增(老闆問「小幫手是否也可以即時看到目前額度」——原本不行:
+    // 它只看得到「這個月做了多少事」,方案/上限/剩餘/重置日一概不知,
+    // 只有快用完或已用完時才會從「目前異常」間接看到一行字,無上限帳號連那行都不會有)。
+    description: '目前方案與額度:方案名、上限幾則、已用幾則、還剩幾則、什麼時候重置、有沒有超量加購單價。'
+      + '問「我是什麼方案 / 額度還剩多少 / 這期用了多少 / 什麼時候重置 / 會不會被停掉」時用。'
+      + '⛔ 講已用則數時**一定要照抄 usedWindow 那句話**(例如「本期(8/13~9/12)」或「這個月」)——'
+      + '有上限的方案按續約日一期、無上限的看日曆月,兩者不是同一個區間,少講窗口就會跟畫面上的數字對不起來。'
+      + 'unlimited=true 代表不限則數:只講已用、⛔ 不要講剩餘、百分比或「會被停掉」。'
+      + '⛔ 別拿 get_ai_usage 的月數字當「本期已用」,那是另一把尺。',
+    requires: 'usage.read',
+    mutates: false,
+    async run(db, workspaceId) {
+      const sub = await getWorkspaceSubscription(workspaceId, db)
+      const plan = buildPlanView(sub)
+      const unlimited = plan?.answeredQuota == null
+
+      // ⛔ 兩種方案要用**各自**的窗口,不能都回「本期」:
+      //  · 有上限 → 額度桶(訂閱週期),與真正會擋下客人的那顆計數器同一顆,說「還剩 N 則」才算數。
+      //  · 無上限 → 沒有額度可對,回日曆月的計費則數,跟方案卡顯示的**同一個數字**。
+      //    (拿訂閱週期去回無上限帳號,小幫手會說 198、卡片寫 62,就是 2026-08-10「94 則哪來的」重演。)
+      if (unlimited) {
+        const counts = await getCurrentMonthUsageCounts(workspaceId, db)
+        return {
+          planName: plan?.name ?? '(讀不到訂閱)',
+          unlimited: true,
+          used: counts.billable,
+          usedWindow: `這個月(${currentYyyyMm().slice(0, 4)}-${currentYyyyMm().slice(4)})`,
+          quotaLimit: null,
+          quotaRemaining: null,
+          usedPercent: null,
+          quotaState: 'ok',
+          overagePerReply: null,
+        }
+      }
+
+      const used = sub?.currentPeriodStart ? await getQuotaAnswered(workspaceId, sub.currentPeriodStart, db) : 0
+      const s = derivePlanState(plan, used)
+      return {
+        planName: plan?.name ?? '(讀不到訂閱)',
+        unlimited: false,
+        used: s.used,
+        usedWindow: plan?.currentPeriodStart && plan.currentPeriodEnd
+          ? `本期(${plan.currentPeriodStart} ~ ${plan.currentPeriodEnd},按續約日算一期,不是日曆月)`
+          : '本期',
+        quotaLimit: s.limit,
+        quotaRemaining: s.remaining,
+        usedPercent: s.percentRaw,
+        // ok / near(達 80%) / over(已用完,AI 自動回覆會暫停改轉真人)
+        quotaState: s.state,
+        resetsOn: plan?.currentPeriodEnd ?? null,
+        overagePerReply: plan?.overagePerReply ?? null,
+        // ⛔ 金額、卡號、扣款委託一律不回:這裡是「還能不能用」,不是帳務頁。
       }
     },
   },

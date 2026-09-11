@@ -28,7 +28,13 @@ import { runAdminAgentChat, TOOLS } from './ai-admin-agent'
 const asViewer = { role: 'viewer' as const }
 
 /** 最小假 Firestore:collection().where().get() + doc().get()(agent 工具只用這些讀法) */
-function makeDb(data: { scripts?: any[]; aiUsage?: Record<string, any> } = {}) {
+function makeDb(data: {
+  scripts?: any[]
+  aiUsage?: Record<string, any>
+  /** get_plan_quota 要讀:訂閱掛在 workspaces doc 上、本期已用在額度桶 */
+  workspaces?: Record<string, any>
+  quotaUsage?: Record<string, any>
+} = {}) {
   return {
     collection(name: string) {
       return {
@@ -157,6 +163,83 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     expect(p).toContain('"answered":30')
     expect(p).not.toContain('inputTokens')
     expect(p).not.toContain('99999')
+  })
+
+  /**
+   * `D-69`(2026-09-07)之後「一則」＝答出 ＋ 反問。小幫手原本被教成「answered 才是計費單位」,
+   * 於是問它「這個月用了幾則」會少報反問那幾則(myfeel 2026-09 會回 52,正確是 62)——
+   * 跟方案卡當時的 bug 同源。這條盯的是「模型拿到的數字」裡有沒有計費則數。
+   */
+  it('get_ai_usage:「幾則」回的是計費則數(含反問),不是 answered', async () => {
+    const ym = new Date().toISOString().slice(0, 7).replace('-', '')
+    // 形狀取自 myfeel 2026-09 的真實紀錄:答出 52、反問 9、反問後答出 1 → 計費 62 則
+    const db = makeDb({ aiUsage: { [`w1_${ym}`]: {
+      period: ym, invocations: 126, answered: 52, disambiguations: 9, followupAnswered: 1, handoffs: 65,
+    } } })
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_usage', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '這個月用了幾則?' })
+    const p = generateJson.mock.calls[1]![0] as string
+    expect(p).toContain('"billableReplies":62')
+    // answered 照樣給(品質指標),但 description 已綁死它不是「則」
+    expect(p).toContain('"answered":52')
+  })
+
+  /**
+   * 2026-09-11 新增(老闆問「小幫手是否也可以即時看到目前額度」)。在此之前它只看得到
+   * 「這個月做了多少事」,方案/上限/剩餘/重置日一概不知。⛔ 額度的窗口是訂閱週期不是日曆月,
+   * 所以這支讀的是額度桶(與攔截同一顆計數器),不是月結桶。
+   */
+  it('get_plan_quota:回得出方案、本期上限與剩餘(額度桶,不是月結桶)', async () => {
+    const day = 86400_000
+    const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+    const start = iso(Date.now() - 5 * day)
+    const end = iso(Date.now() + 25 * day)
+    const db = makeDb({
+      workspaces: { wq1: { subscription: { planId: 'lite', status: 'active', currentPeriodStart: start, currentPeriodEnd: end } } },
+      quotaUsage: { [`wq1_${start}`]: { answered: 180 } },
+    })
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_plan_quota', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    // usage.read 是 admin 級能力,viewer 會被閘門擋下 → 這裡用 admin
+    await runAdminAgentChat({ db, workspaceId: 'wq1', role: 'admin', message: '額度還剩多少?' })
+    const p = generateJson.mock.calls[1]![0] as string
+    expect(p).toContain('"quotaLimit":200')
+    expect(p).toContain('"used":180')
+    expect(p).toContain('"quotaRemaining":20')
+    expect(p).toContain('"quotaState":"near"') // 90% → 近上限,講得出「快用完了」
+    // 窗口要講明是續約日制那一期,否則跟畫面上的月數字對不起來
+    expect(p).toContain('按續約日算一期')
+  })
+
+  /**
+   * ⛔ 無上限帳號**不可以**回訂閱週期的數字:那顆是 198,而方案卡寫的是日曆月的 62——
+   * 小幫手與畫面各講一個數,就是 2026-08-10「94 則哪來的」重演。兩邊必須同一個窗口。
+   */
+  it('get_plan_quota:無上限方案回「這個月」的計費則數,跟方案卡同一個數字', async () => {
+    const day = 86400_000
+    const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+    const start = iso(Date.now() - 5 * day)
+    const ym = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7).replace('-', '')
+    const db = makeDb({
+      workspaces: { wq2: { subscription: { planId: 'internal', status: 'active', currentPeriodStart: start, currentPeriodEnd: iso(Date.now() + 25 * day) } } },
+      // 額度桶(訂閱週期)是 198,月結桶(日曆月)照 myfeel 真實形狀＝62：回錯窗口這條就會紅
+      quotaUsage: { [`wq2_${start}`]: { answered: 198 } },
+      aiUsage: { [`wq2_${ym}`]: { period: ym, invocations: 126, answered: 52, disambiguations: 9, followupAnswered: 1 } },
+    })
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_plan_quota', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db, workspaceId: 'wq2', role: 'admin', message: '我是什麼方案?' })
+    const p = generateJson.mock.calls[1]![0] as string
+    expect(p).toContain('"unlimited":true')
+    expect(p).toContain('"used":62')
+    expect(p).not.toContain('198')
+    expect(p).toContain('"quotaLimit":null')
+    expect(p).toContain('"quotaRemaining":null')
+    expect(p).toContain('"usedPercent":null')
   })
 
   it('權限閘門:requires 不足 → 工具不執行,模型收到如實訊息;權限夠 → 照常執行', async () => {

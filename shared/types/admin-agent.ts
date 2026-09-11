@@ -10,6 +10,7 @@ export const ADMIN_AGENT_TOOL_LABELS = {
   list_scripts: '客服流程清單',
   get_ai_settings: 'AI 設定',
   get_ai_usage: 'AI 用量',
+  get_plan_quota: '方案與額度',
   get_conversation_stats: '對話統計',
   get_knowledge_status: '知識庫',
   list_auto_responses: '自動回應設定',
