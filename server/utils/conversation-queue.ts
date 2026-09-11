@@ -85,16 +85,22 @@ export async function countOpenQueueSessions(
     .where('workspaceId', '==', workspaceId)
     .where('status', '==', 'open')
 
-  const openSnap = await base.count().get()
-  const open = openSnap.data().count
-
-  try {
+  /**
+   * 兩個計數一起發：要扣多少不影響總數怎麼查，排隊只是多一趟 Firestore 往返。
+   * 這支在清單每次載入的路上（`sessions-counts` 每次都叫它）。
+   * ⛔ 要扣的那支自己接住錯誤，不能讓它把總數那支一起拖垮（缺索引時仍要回得出數字）。
+   */
+  const [openSnap, preInbound] = await Promise.all([
+    base.count().get(),
     // 三個等值條件 Firestore 會自動合併單欄索引，免複合索引
-    const preSnap = await base.where('hasInbound', '==', false).count().get()
-    return Math.max(0, open - preSnap.data().count)
-  }
-  catch (e: any) {
-    console.warn('[conversation-queue] pre-inbound subtract failed:', String(e?.message).slice(0, 120))
-    return open
-  }
+    base.where('hasInbound', '==', false).count().get()
+      .then(snap => snap.data().count)
+      .catch((e: any) => {
+        console.warn('[conversation-queue] pre-inbound subtract failed:', String(e?.message).slice(0, 120))
+        return null
+      }),
+  ])
+  const open = openSnap.data().count
+  // null＝這次查不到要扣多少 → 不扣，寧可偏多也不炸頁
+  return preInbound === null ? open : Math.max(0, open - preInbound)
 }

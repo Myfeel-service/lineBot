@@ -90,24 +90,27 @@ function makeDb(opts: { humanAgoMs?: number | null; currentSessionId?: string | 
     }
   }
 
+  const applySet = (col: string, id: string, patch: Record<string, any>) => {
+    if (col === 'conversationSessions') state.sessions[id] = { ...state.sessions[id], ...patch }
+    if (col === 'conversations') applyMerge(state.conv, patch)
+    if (col === 'conversationEvents') {
+      state.events.push({
+        sessionId: String(patch.sessionId),
+        eventType: String(patch.eventType),
+        reason: patch.reason,
+      })
+    }
+  }
+  const applyUpdate = (col: string, id: string, patch: Record<string, any>) => {
+    if (col === 'conversationSessions') Object.assign(state.sessions[id]!, patch)
+  }
+
   const docFor = (col: string, id: string) => ({
     __col: col,
     __id: id,
     get: vi.fn(async () => snap(col, id)),
-    set: vi.fn(async (patch: Record<string, any>) => {
-      if (col === 'conversationSessions') state.sessions[id] = { ...state.sessions[id], ...patch }
-      if (col === 'conversations') applyMerge(state.conv, patch)
-      if (col === 'conversationEvents') {
-        state.events.push({
-          sessionId: String(patch.sessionId),
-          eventType: String(patch.eventType),
-          reason: patch.reason,
-        })
-      }
-    }),
-    update: vi.fn(async (patch: Record<string, any>) => {
-      if (col === 'conversationSessions') Object.assign(state.sessions[id]!, patch)
-    }),
+    set: vi.fn(async (patch: Record<string, any>) => applySet(col, id, patch)),
+    update: vi.fn(async (patch: Record<string, any>) => applyUpdate(col, id, patch)),
   })
 
   let autoId = 0
@@ -127,7 +130,23 @@ function makeDb(opts: { humanAgoMs?: number | null; currentSessionId?: string | 
         if (ref.__col === 'conversationSessions') Object.assign(state.sessions[ref.__id]!, patch)
       },
     })),
-    batch: () => ({ update: () => {}, commit: async () => {} }),
+    /**
+     * ⛔ 不可以退回空殼（`update: () => {}`）：結束會話的三份文件全走 batch，
+     * 空殼等於「一筆都沒寫」照樣測成綠的（見記憶 feedback_verify_new_code_actually_runs）。
+     */
+    batch: () => {
+      const queued: { kind: 'set' | 'update', ref: any, patch: Record<string, any> }[] = []
+      return {
+        set: (ref: any, patch: Record<string, any>) => { queued.push({ kind: 'set', ref, patch }) },
+        update: (ref: any, patch: Record<string, any>) => { queued.push({ kind: 'update', ref, patch }) },
+        commit: async () => {
+          for (const w of queued) {
+            if (w.kind === 'set') applySet(w.ref.__col, w.ref.__id, w.patch)
+            else applyUpdate(w.ref.__col, w.ref.__id, w.patch)
+          }
+        },
+      }
+    },
   }
   return { db, state }
 }

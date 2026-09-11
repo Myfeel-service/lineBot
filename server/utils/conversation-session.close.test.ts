@@ -40,23 +40,41 @@ function makeDb(currentSessionId: string | null) {
   }
   state.convs[`${WS}_${LINE_UID}`] = { currentSessionId }
 
+  /** 實際落地的那一下；batch 與單筆寫入共用，兩條路寫出來的東西才會是同一份 */
+  const applyWrite = (col: string, id: string, patch: Record<string, any>) => {
+    if (col === 'conversations') state.convs[id] = { ...state.convs[id], ...patch }
+    if (col === 'conversationEvents') state.events.push(patch)
+    if (col === 'conversationSessions') Object.assign(state.sessions[id]!, patch)
+  }
+
   const docFor = (col: string, id: string) => ({
+    __col: col,
+    __id: id,
     get: vi.fn(async () => {
       const data = col === 'conversationSessions' ? state.sessions[id] : state.convs[id]
       return { exists: !!data, data: () => data }
     }),
-    set: vi.fn(async (patch: Record<string, any>) => {
-      if (col === 'conversations') state.convs[id] = { ...state.convs[id], ...patch }
-      if (col === 'conversationEvents') state.events.push(patch)
-    }),
-    update: vi.fn(async (patch: Record<string, any>) => {
-      if (col === 'conversationSessions') Object.assign(state.sessions[id]!, patch)
-    }),
+    set: vi.fn(async (patch: Record<string, any>) => applyWrite(col, id, patch)),
+    update: vi.fn(async (patch: Record<string, any>) => applyWrite(col, id, patch)),
   })
 
   let autoId = 0
   const db = {
     collection: (col: string) => ({ doc: (id?: string) => docFor(col, id ?? `auto-${++autoId}`) }),
+    /**
+     * ⛔ 這個假 db 一定要有 batch()：結束會話的三份文件是同一個 batch 寫出去的，
+     * 少了它，「一筆都沒寫」也會測成綠的（見記憶 feedback_verify_new_code_actually_runs）。
+     */
+    batch: () => {
+      const queued: { ref: any, patch: Record<string, any> }[] = []
+      return {
+        set: (ref: any, patch: Record<string, any>) => { queued.push({ ref, patch }) },
+        update: (ref: any, patch: Record<string, any>) => { queued.push({ ref, patch }) },
+        commit: vi.fn(async () => {
+          for (const w of queued) applyWrite(w.ref.__col, w.ref.__id, w.patch)
+        }),
+      }
+    },
   }
   return { db, state }
 }
@@ -138,6 +156,50 @@ describe('結束會話', () => {
     await closeConversationSession(SESSION_ID, LINE_UID)
 
     expect(state.sessions[SESSION_ID]!.lastActivityAt).not.toBe(before)
+  })
+
+  /**
+   * 這兩條守的是「按下去要等 3 秒」那件事：同一份 session 讀兩次、三份文件分三趟寫，
+   * 每一趟都是一次 Firestore 往返，而客服等的就是它們疊起來的時間。
+   * 退回去不會讓任何功能壞掉（所以只有這裡咬得住），但按鈕會再變慢。
+   */
+  it('三份文件是同一個 batch 寫出去的（不是三趟往返）', async () => {
+    const { db, state } = makeDb(SESSION_ID)
+    const batches: any[] = []
+    const realBatch = db.batch
+    db.batch = () => { const b = realBatch(); batches.push(b); return b }
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await closeConversationSession(SESSION_ID, LINE_UID)
+
+    expect(batches).toHaveLength(1)
+    expect(batches[0].commit).toHaveBeenCalledTimes(1)
+    // 三份都要真的落地：session 狀態、對話指標、時間軸事件
+    expect(state.sessions[SESSION_ID]!.status).toBe('closed')
+    expect(state.convs[`${WS}_${LINE_UID}`]!.currentSessionId).toBeNull()
+    expect(state.events).toHaveLength(1)
+  })
+
+  it('呼叫端把剛讀到的 session 帶進來時，不可以再讀一次那份文件', async () => {
+    const { db, state } = makeDb(SESSION_ID)
+    const sessionGets: any[] = []
+    const realCollection = db.collection
+    db.collection = (col: string) => {
+      const c = realCollection(col)
+      return {
+        doc: (id?: string) => {
+          const d = c.doc(id)
+          if (col === 'conversationSessions') sessionGets.push(d.get)
+          return d
+        },
+      }
+    }
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await closeConversationSession(SESSION_ID, LINE_UID, { session: state.sessions[SESSION_ID] })
+
+    expect(sessionGets.every(g => g.mock.calls.length === 0)).toBe(true)
+    expect(state.sessions[SESSION_ID]!.status).toBe('closed')
   })
 
   it('已經結束的會話重複呼叫不做事（冪等）', async () => {

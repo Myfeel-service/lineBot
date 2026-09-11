@@ -4298,8 +4298,22 @@ async function closeSelectedSession() {
       method: 'POST',
     })
     showToast('已結束會話', 'success')
-    await reloadTimeline()
-    await refreshListQuiet()
+    /**
+     * 時間軸與左側清單一起發，不要接成一條線。
+     *
+     * 兩者沒有先後依賴，而它們各自都不便宜：2026-09-11 打正式資料實測，時間軸約 2.4 秒、
+     * 清單約 2.4 秒，排隊等於按下去要看著轉圈 5 秒（老闆回報的「3 秒」是正式站 Lambda
+     * 與 Firestore 同區的版本，形狀一樣）。同 `loadList` 開頭把分頁數字跟清單一起發的理由。
+     *
+     * 時間軸走**安靜刷新**：結束會話只是在尾巴多一行「會話已結束」，整份清空再轉圈長回來，
+     * 客服看到的是對話整個閃掉一次——那也是「感覺很慢」的一半來源。
+     */
+    const [, listed] = await Promise.all([
+      reloadTimeline({ quiet: true }),
+      refreshListQuiet(),
+    ])
+    // 清單那支被閘門擋掉時它開頭那次分頁數字也沒發出去 → 徽章會停在結束前的舊值（同交還機器人）
+    if (!listed) await loadSessionCounts({ force: true })
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '結束會話失敗', 'error')

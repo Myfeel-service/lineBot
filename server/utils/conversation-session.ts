@@ -107,6 +107,39 @@ async function refreshSessionStatusFromDb(sessionId: string): Promise<Conversati
 
 // ── Event Recording ───────────────────────────────────────────────
 
+interface ConversationEventExtras {
+  moduleType?: ModuleType
+  moduleId?: string
+  workspaceId?: string
+  /** conversation_closed 專用：系統自動收尾時帶，時間軸才講得出是誰收的 */
+  reason?: SessionCloseReason
+}
+
+/**
+ * 事件文件的內容（寫出去那一下由呼叫端決定）。
+ *
+ * 抽出來是為了讓「同一個動作要寫好幾份文件」的呼叫端（closeConversationSession）能把它
+ * 塞進同一個 batch——三次 `await set()` 就是三趟 Firestore 往返，而客服按下按鈕時等的
+ * 就是這幾趟疊起來的時間。
+ */
+function conversationEventDoc(
+  sessionId: string,
+  userId: string,
+  eventType: ConversationEventType,
+  extras?: ConversationEventExtras,
+): Record<string, unknown> {
+  return {
+    sessionId,
+    userId,
+    eventType,
+    ...(extras?.workspaceId ? { workspaceId: extras.workspaceId } : {}),
+    ...(extras?.moduleType ? { moduleType: extras.moduleType } : {}),
+    ...(extras?.moduleId ? { moduleId: extras.moduleId } : {}),
+    ...(extras?.reason ? { reason: extras.reason } : {}),
+    timestamp: FieldValue.serverTimestamp(),
+  }
+}
+
 /**
  * 寫一筆會話事件。
  *
@@ -120,26 +153,11 @@ export async function recordConversationEvent(
   sessionId: string,
   userId: string,
   eventType: ConversationEventType,
-  extras?: {
-    moduleType?: ModuleType
-    moduleId?: string
-    workspaceId?: string
-    /** conversation_closed 專用：系統自動收尾時帶，時間軸才講得出是誰收的 */
-    reason?: SessionCloseReason
-  },
+  extras?: ConversationEventExtras,
 ): Promise<void> {
   const db = getDb()
   const eventRef = db.collection('conversationEvents').doc()
-  await eventRef.set({
-    sessionId,
-    userId,
-    eventType,
-    ...(extras?.workspaceId ? { workspaceId: extras.workspaceId } : {}),
-    ...(extras?.moduleType ? { moduleType: extras.moduleType } : {}),
-    ...(extras?.moduleId ? { moduleId: extras.moduleId } : {}),
-    ...(extras?.reason ? { reason: extras.reason } : {}),
-    timestamp: FieldValue.serverTimestamp(),
-  })
+  await eventRef.set(conversationEventDoc(sessionId, userId, eventType, extras))
 }
 
 /**
@@ -818,14 +836,21 @@ export async function handBackSessionToBot(
 export async function closeConversationSession(
   sessionId: string,
   userId: string,
-  opts: { reason?: SessionCloseReason, preserveLastActivityAt?: boolean } = {},
+  opts: {
+    reason?: SessionCloseReason
+    preserveLastActivityAt?: boolean
+    /**
+     * 呼叫端剛讀過這份 session 就把資料帶進來，省掉這裡再讀一次。
+     * `close.post.ts` 本來就得先讀一次驗工作區歸屬，不帶的話同一份文件會被讀兩趟——
+     * 客服按下按鈕時等的就是這種一趟接一趟的往返。
+     */
+    session?: Record<string, any>
+  } = {},
 ): Promise<void> {
   const db = getDb()
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
-  const sessionSnap = await sessionRef.get()
-  if (!sessionSnap.exists) return
-
-  const session = sessionSnap.data() as any
+  const session: any = opts.session ?? (await sessionRef.get()).data()
+  if (!session) return
   if (session.status === 'closed') return
 
   /**
@@ -845,18 +870,6 @@ export async function closeConversationSession(
   const isCurrent = convData?.currentSessionId === sessionId
   const preview = isCurrent ? sessionClosingPreview(convData, session.lastActivityAt) : {}
 
-  await sessionRef.update({
-    status: 'closed' as ConversationStatus,
-    closedAt: FieldValue.serverTimestamp(),
-    // ⛔ 見函式註解：保留原值是「別讓幾個月前的舊對話整批跑去餵 AI」的唯一機制
-    ...(opts.preserveLastActivityAt ? {} : { lastActivityAt: FieldValue.serverTimestamp() }),
-    ...preview,
-    ...(opts.reason
-      ? { staleClosedAt: FieldValue.serverTimestamp(), staleClosedReason: opts.reason }
-      : {}),
-  })
-  _updateSessionStatusCache(sessionId, 'closed')
-  _invalidateUserSessionCache(lineUserId)
   /**
    * 只有在這場**確實是**對話目前指著的那一場時才清指標。無條件清會誤傷：關掉一場殘留的
    * 舊 session（競態留下的孤兒，或排程收殮到的那種）時，會把對話指向進行中那場的指標
@@ -870,8 +883,29 @@ export async function closeConversationSession(
    * 客人交回 AI」，正是這次要修掉的行為。
    */
   const releaseHuman = !opts.reason
+
+  /**
+   * 三份文件一次寫完。
+   *
+   * 先前是 `session.update()` → `conv.set()` → 事件 `set()` 三次 `await`，三趟 Firestore
+   * 往返排成一條線；改成 batch 只剩一趟。順手也把「結束」變成不可分割的一件事——原本
+   * session 已標 closed、conv 的指標還沒清的那個空窗裡若剛好有訊息進來，讀到的是一場
+   * 結束了卻仍被指著的會話。
+   */
+  const batch = db.batch()
+  batch.update(sessionRef, {
+    status: 'closed' as ConversationStatus,
+    closedAt: FieldValue.serverTimestamp(),
+    // ⛔ 見函式註解：保留原值是「別讓幾個月前的舊對話整批跑去餵 AI」的唯一機制
+    ...(opts.preserveLastActivityAt ? {} : { lastActivityAt: FieldValue.serverTimestamp() }),
+    ...preview,
+    ...(opts.reason
+      ? { staleClosedAt: FieldValue.serverTimestamp(), staleClosedReason: opts.reason }
+      : {}),
+  })
   if (isCurrent || releaseHuman) {
-    await convRef.set(
+    batch.set(
+      convRef,
       {
         ...(isCurrent ? { currentSessionId: null } : {}),
         ...(releaseHuman ? { lastHumanActionAt: FieldValue.delete() } : {}),
@@ -879,10 +913,18 @@ export async function closeConversationSession(
       { merge: true },
     )
   }
-  await recordConversationEvent(sessionId, lineUserId, 'conversation_closed', {
-    workspaceId: String(session.workspaceId ?? ''),
-    ...(opts.reason ? { reason: opts.reason } : {}),
-  })
+  batch.set(
+    db.collection('conversationEvents').doc(),
+    conversationEventDoc(sessionId, lineUserId, 'conversation_closed', {
+      workspaceId: String(session.workspaceId ?? ''),
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    }),
+  )
+  await batch.commit()
+
+  // 記憶體快取：要等寫入真的成功才更新，否則 commit 失敗時本行程會以為那場已經結束
+  _updateSessionStatusCache(sessionId, 'closed')
+  _invalidateUserSessionCache(lineUserId)
 }
 
 /**
