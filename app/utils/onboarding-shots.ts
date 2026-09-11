@@ -177,22 +177,32 @@ export const ONBOARDING_CAROUSELS = {
   /**
    * 啟用 Messaging API——**兩處共用同一份**（「還沒有官方帳號」那條路，
    * 以及「清單裡沒看到我的帳號？」那條岔路）：走到這兩處的人都沒做過這件事。
-   * ⛔ 停在第 4 步，**不演完成畫面**：演到「已經好了」會讓人以為不用按那顆確定。
+   * ⚠️ 2026-09-11 補上前兩格帶路（原本第 1 格就是「按啟用」）：判準跟 `webhookUrl`
+   *    那支同一條——**中間有沒有離開**。上一步把人送去 `tw.linebiz.com` 申請帳號，
+   *    而卡片的連結開起來是後台主頁、不是這一頁，第 1 格的畫面根本對不上他眼前的螢幕。
+   * ⛔ 停在最後一個小視窗，**不演完成畫面**：演到「已經好了」會讓人以為不用按那顆確定。
    */
   enableMessagingApi: [
-    { src: '/onboarding/oam-enable-messaging-api-1.webp', caption: '按「<b>啟用Messaging API</b>」' },
-    { src: '/onboarding/oam-enable-messaging-api-2.webp', caption: '選「<b>建立服務提供者</b>」，名稱<b>用你的店名就好</b>，按「同意」' },
-    { src: '/onboarding/oam-enable-messaging-api-3.webp', caption: '隱私權那兩欄<b>可以不填</b>，直接按「確定」' },
-    { src: '/onboarding/oam-enable-messaging-api-4.webp', caption: '最後那句「無法變更或解除」是正常的，按「<b>確定</b>」' },
+    { src: '/onboarding/oam-enable-messaging-api-1.webp', caption: '點右上角「<b>設定</b>」' },
+    { src: '/onboarding/oam-enable-messaging-api-2.webp', caption: '左邊選「<b>Messaging API</b>」' },
+    { src: '/onboarding/oam-enable-messaging-api-3.webp', caption: '按「<b>啟用Messaging API</b>」' },
+    { src: '/onboarding/oam-enable-messaging-api-4.webp', caption: '選「<b>建立服務提供者</b>」，名稱<b>用你的店名就好</b>，按「同意」' },
+    { src: '/onboarding/oam-enable-messaging-api-5.webp', caption: '隱私權那兩欄<b>可以不填</b>，直接按「確定」' },
+    { src: '/onboarding/oam-enable-messaging-api-6.webp', caption: '最後那句「無法變更或解除」是正常的，按「<b>確定</b>」' },
   ],
   /**
-   * LINE Developers：登入 → 在清單裡挑對卡。
+   * LINE Developers：登入 → 在 Providers 清單點自己的帳號 → 在清單裡挑對卡。
    * ⚠️ 第一格**刻意零標註**：圈哪顆登入按鈕都會誤導用其他方式登入的人，
    *    它在這裡的作用是定位（「你會看到這一頁」），不是指路。
+   * ⚠️ 2026-09-11 補上中間那格：登入後落在 **Console home（TOP）**，
+   *    而挑卡片的頁面在 provider 底下——不點一下到不了，原本這段是斷的。
+   * ⚠️ 圖上有三個帳號、他多半只有一個（就是啟用 Messaging API 時取的那個名字），
+   *    所以圖說要明講「只有一個是正常的」，否則他會以為自己少了什麼。
    */
   consoleChannel: [
     { src: '/onboarding/line-console-channel-1.webp', caption: '先登入，<b>用你平常的方式</b>就可以' },
-    { src: '/onboarding/line-console-channel-2.webp', caption: '<b>同名卡片可能有兩張</b>：認下面寫著「Messaging API」小字的那張' },
+    { src: '/onboarding/line-console-channel-2.webp', caption: '左邊「<b>Providers</b>」底下點<b>你的帳號</b>（啟用時取的那個名字）<br>⚠️ 圖上有三個，你多半<b>只有一個</b>，那是正常的' },
+    { src: '/onboarding/line-console-channel-3.webp', caption: '<b>同名卡片可能有兩張</b>：認下面寫著「Messaging API」小字的那張' },
   ],
   /**
    * 拿第一組連線資訊（Channel Access Token）。

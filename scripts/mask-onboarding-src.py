@@ -29,6 +29,16 @@ def half(name):
     im=Image.open(DESK+name).convert('RGB')
     return im.resize((1352, im.size[1]//2), Image.LANCZOS)
 
+def fit1352(name):
+    """等比縮到 1352 寬。
+
+    ⛔ 不能用 `half()`：那支寫死「寬 1352、高砍一半」，只對**2704 寬**（1352 的 2x）
+       的舊批成立。2026-09-11 那批是 3024 寬（視窗變寬了），砍一半會變成
+       1352×857 ——橫向壓了 2.24 倍、縱向只壓 2 倍，整頁被壓扁而且沒有任何錯誤訊息。
+    """
+    im=Image.open(DESK+name).convert('RGB')
+    return im.resize((1352, round(im.size[1]*1352/im.size[0])), Image.LANCZOS)
+
 def bbox_dark(img, box, thr=170):
     a=np.array(img.crop(box).convert('L')); d=a<thr
     if not d.any(): return None
@@ -118,6 +128,30 @@ for b in OAM_HEADER:
 blur(im, (570, 318, 660, 345), 5)    # Channel ID
 blur(im, (570, 360, 825, 387), 5)    # Channel secret（真的值）
 out['src-oam-messaging-api.jpg'] = im
+
+
+# ⑪ LINE Developers 的 Console home（TOP）——**登入後真正會先看到的那一頁**（2026-09-11）。
+# 為什麼要補：`line-console-channel` 那支輪播從「登入」直接跳到「挑對卡片」，
+# 但挑卡片的頁面是 **provider 底下的 Channels**，登入後不會自己到那裡——
+# 中間要先在 Providers 清單點自己的帳號。少了這一格，人停在 TOP 頁面無事可做。
+#
+# ⚠️ 用**沒捲動**的那張（11.16.16），不用捲到下方 Providers 表格的那張（11.16.23）：
+#    要指的是**左側欄**的 Providers 清單——它不用捲就在眼前，而且不管他頁面捲到哪
+#    都在那裡；下方那份表格要先捲過整片「Recently visited channels」才看得到，
+#    而第一次進 console 的人根本沒有訪問紀錄、那一區不會出現，捲動距離也就跟圖上不同。
+# ⛔ 三個 provider 名稱是老闆自己的（含別的專案），糊掉；**只糊名字不糊整塊**，
+#    同 `src-oam-enable-provider.jpg` 的理由：整塊蓋掉就看不出這是一份清單了。
+# ⚠️ 四張「Recently visited channels」卡的標題也是真實專案名，連同第四張的頭像一起糊。
+# ⚠️ 下緣露出的表格第一列同樣是真實名稱（雖然多半會被裁切窗切掉），一併糊。
+im = fit1352('截圖 2026-09-11 上午11.16.16.png')
+blur(im, (25, 300, 128, 320), 5)        # 側欄 provider ①
+blur(im, (25, 336, 120, 356), 5)        # 側欄 provider ②
+blur(im, (25, 372, 125, 392), 5)        # 側欄 provider ③
+blur(im, (259, 368, 1310, 398), 6)      # 四張卡的標題
+blur(im, (1146, 278, 1220, 351), 8)     # 第四張卡的頭像
+blur(im, (1248, 24, 1281, 56), 5)       # 右上角頭像
+blur(im, (259, 742, 1310, 766), 6)      # 下緣露出的表格第一列
+out['src-console-home.jpg'] = im
 
 for name,img in out.items():
     img.save(DST+name, quality=92)

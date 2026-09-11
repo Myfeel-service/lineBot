@@ -253,6 +253,7 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
     lst = load('src-channel-list.jpg')          # 帳號清單（同名雙卡）
+    home = load('src-console-home.jpg')         # Console home（TOP）：登入後第一眼＋Providers 清單
     api = load('src-messaging-api.jpg')         # Messaging API 分頁整頁
     bs = load('src-basic-settings.jpg')         # Basic settings 分頁整頁
     oam = load('src-oam-response.jpg')          # 官方帳號後台的回應設定
@@ -700,16 +701,45 @@ def main() -> None:
         (oam, 610, (546, 750, 652, 792), 2400),
     ], x0=0, x1=1352)
 
+    # 啟用 Messaging API：①右上設定 → ②左欄 Messaging API → ③啟用 → ④⑤⑥三個小視窗。
+    #
+    # ⚠️ 2026-09-11 補上前兩格導航（原本第①格就是「按啟用」，背景已經在 Messaging API 那頁）。
+    #    照的是 `oam-webhook-url` 那條**「中間有沒有離開」**的判準：這一步的上一步把人送去
+    #    `tw.linebiz.com` 申請帳號，離開得最徹底；而卡片上的連結是 `manager.line.biz/`，
+    #    開起來是主頁不是這一頁——人按完連結看到的畫面跟第①格對不起來，正是輪播要消滅的落差。
+    # ⚠️ 走到這裡的是**剛申請完帳號的新手**，反而比已經跑過一輪的 `oam-channel-secret`
+    #    更需要帶路；原本只有後者有導航，順序是反的。
+    # ⚠️ 座標沿用 `oam_settings` / `oam_mapi_nav`（量在 `src-oam-messaging-api.jpg` 上）：
+    #    兩張來源都是 1352 寬、只差 2px 高（756／758），頁首與側欄位置一致，目檢對過。
     build_carousel('oam-enable-messaging-api', [
         (oam_enable_anim, 0, None, 900),
-        (oam_enable_anim, 0, (691, 365, 912, 405), 1800),
+        (oam_enable_anim, 0, oam_settings, 1500),      # ①右上「設定」
+        (oam_enable_anim, 0, oam_mapi_nav, 1500),      # ②左欄「Messaging API」
+        (oam_enable_anim, 0, (691, 365, 912, 405), 1800),  # ③按「啟用Messaging API」
         (oam_prov, 0, (414, 274, 845, 344), 2400),
         (oam_priv, 0, (876, 558, 936, 604), 1800),
         (oam_conf, 0, (876, 496, 936, 541), 2400),
     ], x0=0, x1=1352, vh=700)
 
+    # LINE Developers：①登入 → ②在 Providers 清單點自己的帳號 → ③挑對卡片。
+    #
+    # ⚠️ 2026-09-11 補上第②格（老闆問「第二步之前是不是還有一個選擇帳號的步驟」——是）：
+    #    原本從登入直接跳到「同名卡片可能有兩張」，但那張圖是 **provider 底下的 Channels 頁**，
+    #    登入後會先落在 **Console home（TOP）**，不點 provider 到不了。少這一格的人
+    #    停在 TOP 頁面、手上那張圖跟螢幕對不起來——跟啟用那支同一個病。
+    # ⚠️ 指的是**左側欄**的 Providers 清單，不是頁面下方那份表格（老闆 09-11：「點選左邊的
+    #    bar 條比較直觀」）——側欄不用捲就在眼前，而且他頁面捲到哪它都在；下方表格要先捲過
+    #    整片「Recently visited channels」，而第一次進 console 的人根本沒有訪問紀錄。
+    # ⚠️ 框**整份清單**不框單列（同 `oam-account-list`）：他的清單只有一個、名字也跟圖上不同，
+    #    圈某一列等於指著一個他沒有的東西。三個名字在來源檔就糊掉了。
+    # ⚠️ 這一格從**頁面左緣**起算（x0=0），不跟其他格一樣從內容欄（240）——側欄住在 x<215，
+    #    用內容欄的裁切窗根本框不到它（老闆 09-11：「是否要是全螢幕畫面」）。
+    # ⛔ **三格沒有一起改成整頁寬**，試過了：`src-channel-list.jpg` 的側欄在更早一批打碼時是
+    #    **把名字整個抹白**（不是模糊），第③格一旦露出側欄就會出現兩個空的「Admin／No role」
+    #    群組，看起來像頁面沒載入完。要三格統一取景得先補拍那張的來源檔。
     build_carousel('line-console-channel', [
         (login_pg, 80, (492, 336, 860, 556), 2000, 130),
+        (home, 0, (14, 255, 205, 398), 2400, 0),         # ②左側欄點你的帳號
         (lst, 84, None, 900),
         (lst, 84, card_mapi, 2400),
     ])
