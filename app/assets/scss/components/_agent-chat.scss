@@ -269,6 +269,37 @@
     background: var(--el-fill-color-lighter);
   }
 
+  /* 圖本身是一顆按鈕（點了放大）。⚠️ 按鈕的預設樣式要清乾淨，否則圖上會多一圈框與內距 */
+  &__zoom {
+    display: block;
+    position: relative;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+    font: inherit;
+
+    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
+  }
+
+  /* ⚠️ 這顆記號**不做成 hover 才出現**：手機沒有 hover，看不到記號就沒有人知道圖可以點。
+     擺右上角＝不擋紅框（紅框在畫面中段偏右下），半透明黑底在白色後台截圖上一定看得到。 */
+  &__zoom-hint {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: rgb(0 0 0 / 45%);
+    color: #fff;
+    font-size: 14px;
+    line-height: 26px;
+    text-align: center;
+    pointer-events: none;
+  }
+
   /* 計數器那一行：「第 N 步」靠左、「共 N 步」靠右，進度條在它們下面整條展開。
      ⭐「共 N 步」的右緣與軌的右端**同一條垂直線**（兩者左右內距都是 11px）
         ＝它正好在標「這條到哪裡結束」，不再只是跟在「第 N 步」後面的一句括號。
@@ -856,4 +887,60 @@
   /* 同 .onbc-chat：訊息不參與壓縮（圖片會被壓扁），超高就捲動 */
   > * { flex: none; }
   gap: 0.5rem;
+}
+
+/* 教學圖的放大檢視（2026-09-11「點擊圖片是否可以放大」）。
+   ⚠️ 它 Teleport 到 body，所以規則寫在最外層、不是包在 .agm-carousel 裡面
+      （那張卡有 overflow: hidden，疊在裡面會被裁掉一大半）。
+   ⚠️ 圖用 `max-height` 夾住高度而不是滿版拉伸：這些是 880×約 400 的橫圖，
+      拉滿高度會超出視窗寬度，反而要左右捲。 */
+.agm-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgb(0 0 0 / 72%);
+  cursor: zoom-out;
+
+  &__img {
+    display: block;
+    max-width: min(96vw, 1200px);
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  &__cap {
+    margin: 0;
+    max-width: min(96vw, 1200px);
+    color: #fff;
+    font-size: 13.5px;
+    line-height: 1.7;
+    text-align: center;
+
+    b { color: var(--el-color-primary-light-3); }
+  }
+
+  &__close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 18%);
+    color: #fff;
+    font-size: 15px;
+    cursor: pointer;
+
+    &:hover { background: rgb(255 255 255 / 30%); }
+  }
 }

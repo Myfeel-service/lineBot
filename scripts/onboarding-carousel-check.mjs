@@ -189,6 +189,39 @@ ok('2 步版按一次就給鈕（本來就對）', two.no === '第 2 步' && two
 
 ok('沒有 JS 例外', errs.length === 0, errs.slice(0, 3).join(' | '))
 
+// ── 點圖放大（2026-09-11）────────────────────────────────────────────────
+// ⚠️ 這四條守的是「真的打得開、打開時底下不會偷偷換步、關得掉」——
+//    全部是 typecheck 與單元測試看不到的東西（Teleport 到 body、CSS 疊層、焦點）。
+{
+  const card = '[data-carousel="webhookUrl"] '
+  const hint = await page.$eval(`${card}.agm-carousel__zoom-hint`, (e) => {
+    const r = e.getBoundingClientRect()
+    return { w: Math.round(r.width), h: Math.round(r.height), op: getComputedStyle(e).opacity }
+  }).catch(() => null)
+  ok('圖上有「可以放大」的記號（不是 hover 才出現）', !!hint && hint.w > 12 && hint.op === '1', JSON.stringify(hint))
+
+  const before = await page.$eval(`${card}.agm-carousel__no`, e => e.textContent.trim())
+  const inCard = await page.$eval(`${card}.agm-carousel__img`, e => Math.round(e.getBoundingClientRect().width))
+  await page.click(`${card}.agm-carousel__zoom`)
+  await new Promise(r => setTimeout(r, 400))
+  const box = await page.$eval('.agm-lightbox__img', (e) => {
+    const r = e.getBoundingClientRect()
+    return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) }
+  }).catch(() => null)
+  ok('點圖會打開放大檢視', !!box, JSON.stringify(box))
+  ok('放大之後真的比卡片裡大', !!box && box.w > inCard * 1.2, `${box?.w} vs 卡片內 ${inCard}`)
+
+  // 自動播在放大時要凍住：等超過一步的時間，底下的步驟不可以自己跳走
+  await new Promise(r => setTimeout(r, 4600))
+  const during = await page.$eval(`${card}.agm-carousel__no`, e => e.textContent.trim())
+  ok('放大時底下的步驟不會自己跳走', during === before, `${before} → ${during}`)
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, 300))
+  const closed = await page.$('.agm-lightbox')
+  ok('Esc 關得掉', !closed)
+}
+
 await page.screenshot({ path: `${OUT}/carousel-${W}.png`, fullPage: true })
 const card1 = await page.$('[data-carousel="webhookUrl"] .agm-carousel')
 await card1.screenshot({ path: `${OUT}/carousel-close-${W}.png` })

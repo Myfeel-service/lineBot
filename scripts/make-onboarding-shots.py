@@ -157,6 +157,17 @@ def build_anim(name: str, spec, x0: int = 240, x1: int = 1330, vh: int = VH) -> 
 
 CAROUSEL_LEADIN_MS = 600    # 「無框」那一幀停多久（讓人先看清楚原本的畫面）
 CAROUSEL_MARK_MS = 2600     # 「框亮起」那一幀停多久（loop=1，所以其實就停在這裡不動了）
+# 推近（2026-09-11）：全景 → 目標區。倍率 1.75＝卡片裡的實際顯示從 0.45 倍變約 0.78 倍
+# （LINE 後台一顆 36px 的開關從 16px 變 28px、一顆「儲存」從 30px 變 53px）。
+# ⛔ 別調更大：1352÷1.75＝773px 的裁切還**大於**卡片顯示寬度（約 603px）＝仍在 1:1 以上不會糊；
+#    再近就是放大模糊。而且更近會**裁掉左邊的欄位名稱**，人就不知道自己在設哪一欄——
+#    2.1 倍那一版實測「按儲存」只剩一顆綠鈕浮在沒有名字的灰線旁邊。
+CAROUSEL_ZOOM = 1.75
+CAROUSEL_ZOOM_STEPS = (0.45, 0.8)   # 中間幀的推近進度（最後一幀＝1.0，跟框一起出現）
+CAROUSEL_ZOOM_MS = 110      # 每一中間幀停多久——要像「推鏡頭」，不是換圖
+# 推近時框的左右要留多少原圖像素：**左邊留得多**，因為這兩個後台都是「欄位名稱在左、
+# 要按的東西在右」——置中裁會把欄位名稱切掉半個字（實測「Webhook網址」→「ebhook網址」）。
+ZOOM_PAD_L, ZOOM_PAD_R = 210, 80
 
 
 def build_carousel(prefix: str, spec, x0: int = 240, x1: int = 1330, vh: int = VH) -> None:
@@ -195,6 +206,45 @@ def build_carousel(prefix: str, spec, x0: int = 240, x1: int = 1330, vh: int = V
     def crop_key(entry):
         return (id(entry[0]), entry[1], entry[4] if len(entry) > 4 else x0)
 
+    def zoom_crop(entry, box, t: float):
+        """全景 → 目標區的中間裁切；t=0 全景、t=1 最近。
+
+        ⚠️ **所有幀的輸出尺寸必須一樣**（webp 動畫拼不起來會直接 assert），
+           所以只能等比例縮小裁切框、不能改長寬比。
+        ⚠️ 縮到多近＝`CAROUSEL_ZOOM`。挑 2.1 不是隨便挑的：卡片實際顯示約 603px，
+           全景裁 1352px 寬＝**0.45 倍**（LINE 後台一顆 36px 的開關在畫面上只有 16px，
+           老闆說「圖片有時候太小」就是這個）。裁一半左右 ⇒ 約 0.9 倍，開關變 33px；
+           而且裁切寬度（644）仍**大於**顯示寬度（603），等於還在 1:1 以上，不會糊。
+           ⛔ 別再往更近裁：裁到比 603 窄就是放大模糊，字反而更難讀。
+        """
+        src_im, top = entry[0], entry[1]
+        fx0 = entry[4] if len(entry) > 4 else x0
+        full = (fx0, top, fx0 + width, top + vh)
+        if t <= 0:
+            return full
+        # 目標裁切：等比例縮到 1/CAROUSEL_ZOOM；框比它還寬就退到「框＋左右留白」剛好放得下
+        need_w = max(width / CAROUSEL_ZOOM, (box[2] - box[0]) + ZOOM_PAD_L + ZOOM_PAD_R)
+        k = min(1.0, need_w / width)
+        cw, ch = width * k, vh * k
+        # ⛔ 水平**不置中，把框推到裁切的右側**、左邊留最多。這兩個後台的版面都是
+        #    「欄位名稱在左、要按的東西在右」，置中或往右偏就會**把他正在設哪一欄裁掉**：
+        #    實測置中時「Webhook網址」變成「ebhook網址」；而「按儲存」那格更慘——
+        #    只剩一顆綠色鈕浮在幾條沒有名字的灰線旁邊，根本看不出在存什麼。
+        cx1 = box[2] + ZOOM_PAD_R - cw
+        cx1 = min(max(cx1, fx0), fx0 + width - cw)
+        cy = (box[1] + box[3]) / 2
+        cy = min(max(cy, top + ch / 2), top + vh - ch / 2)
+        near = (cx1, cy - ch / 2, cx1 + cw, cy + ch / 2)
+        return tuple(round(full[j] + (near[j] - full[j]) * t) for j in range(4))
+
+    # ⚠️ 推近的中間幀四捨五入後長寬可能差 1px，輸出高度就會不一致（webp 動畫直接拼不起來）。
+    #    最後統一縮到同一個尺寸，差 1px 的縮放看不出來，但把「幀尺寸不一致」這個坑堵死。
+    frame_size = (TARGET_W, round(vh * TARGET_W / width))
+
+    def render_crop(entry, crop, marks):
+        im = shot(entry[0], crop, marks, out_w=TARGET_W)
+        return im if im.size == frame_size else im.resize(frame_size)
+
     for entry in spec:
         box = entry[2]
         if not box:
@@ -210,10 +260,21 @@ def build_carousel(prefix: str, spec, x0: int = 240, x1: int = 1330, vh: int = V
         for e in carried:
             frames.append(render(e, []))
             durations.append(e[3])
-        frames.append(render(pending[-1] if lead_is_pending else entry, []))
+        lead = pending[-1] if lead_is_pending else entry
+        frames.append(render(lead, []))
         durations.append(CAROUSEL_LEADIN_MS)
 
-        frames.append(render(entry, [(box, i if numbered else None)]))
+        # ⭐ 2026-09-11 推近（老闆：「圖片有時候太小，是否可以從大範圍 zoom 到需要操作的範圍」）：
+        #    前導幀是**全景**（回答「我在哪一頁」），接著幾幀推到目標區（回答「按哪裡」），
+        #    最後停在推近＋框亮的那一幀。⛔ 兩件事都要：只給全景看不清楚，
+        #    只給特寫又會變成 README 明令禁止的「緊裁圖缺定位」。
+        #    ⚠️ 推近用的是**同一格畫面**（同一個 top／來源），不是換一張圖——中途不會跳位。
+        for t in CAROUSEL_ZOOM_STEPS:
+            frames.append(render_crop(lead, zoom_crop(lead, box, t), []))
+            durations.append(CAROUSEL_ZOOM_MS)
+
+        near = zoom_crop(entry, box, 1.0)
+        frames.append(render_crop(entry, near, [(box, i if numbered else None)]))
         durations.append(CAROUSEL_MARK_MS)
 
         name = f'{prefix}-{i}.webp'

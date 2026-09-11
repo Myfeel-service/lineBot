@@ -10,16 +10,47 @@
     @touchstart.passive="onTouchStart"
     @touchend.passive="onTouchEnd"
   >
-    <!-- 圖在最上面、貼著卡的上緣（圓角吃在圖上）。跟「步驟」有關的東西全收在圖下面同一塊 -->
-    <img
-      ref="imgEl"
-      class="agm-carousel__img"
-      :src="current.src"
-      :alt="`第 ${idx + 1} 步（共 ${items.length} 步）：${plain(current.caption)}`"
-      @mouseenter="hover = true"
-      @mouseleave="hover = false"
-      @load="onImgLoad"
+    <!-- 圖在最上面、貼著卡的上緣（圓角吃在圖上）。跟「步驟」有關的東西全收在圖下面同一塊。
+         2026-09-11 可以點開放大：分鏡已經會從全景推近到要按的地方，但卡片實際只有約 603px 寬，
+         想再看仔細（或已經演完了想回頭對一眼）只能放大。⚠️ 角落那顆 ⤢ 是必要的——
+         hover 才變色的提示在手機上等於不存在，沒有可見記號就沒有人知道圖可以點。 -->
+    <button
+      type="button"
+      class="agm-carousel__zoom"
+      :aria-label="`放大第 ${idx + 1} 步的圖`"
+      @click="lightbox = true"
     >
+      <img
+        ref="imgEl"
+        class="agm-carousel__img"
+        :src="current.src"
+        :alt="`第 ${idx + 1} 步（共 ${items.length} 步）：${plain(current.caption)}`"
+        @mouseenter="hover = true"
+        @mouseleave="hover = false"
+        @load="onImgLoad"
+      >
+      <span class="agm-carousel__zoom-hint" aria-hidden="true">⤢</span>
+    </button>
+
+    <!-- 放大檢視：⚠️ Teleport 到 body——這張卡有 `overflow: hidden`（圓角吃圖用的），
+         疊在卡裡會被裁掉一大半。⚠️ 點背景或按 Esc 都關得掉，不要只留一顆 ✕。 -->
+    <Teleport to="body">
+      <div
+        v-if="lightbox"
+        class="agm-lightbox"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`第 ${idx + 1} 步的圖`"
+        ref="lightboxEl"
+        tabindex="-1"
+        @click="lightbox = false"
+        @keydown.esc="lightbox = false"
+      >
+        <img class="agm-lightbox__img" :src="current.src" :alt="plain(current.caption)">
+        <p class="agm-lightbox__cap" v-html="current.caption" />
+        <button type="button" class="agm-lightbox__close" aria-label="關閉">✕</button>
+      </div>
+    </Teleport>
 
     <!-- 「第 N 步」靠左、「共 N 步」靠右：右緣與步驟軌的末端同一條垂直線
          （兩者左右內距都是 11px），它正好在標「這條軌到哪裡結束」 -->
@@ -121,6 +152,14 @@ const auto = ref(false)
 /** 自己演完一輪了嗎（狀態文字要說得出「演完了」） */
 const finished = ref(false)
 const hover = ref(false)
+/** 放大檢視開著嗎（2026-09-11「點擊圖片是否可以放大」） */
+const lightbox = ref(false)
+const lightboxEl = ref<HTMLElement | null>(null)
+// ⚠️ 開啟時要把焦點移進去，Esc 才關得掉（`@keydown.esc` 綁在那個 div 上，沒焦點就收不到）；
+//    關掉再把焦點還給卡片，鍵盤使用者不會被丟回頁面最上面。
+watch(lightbox, (open) => {
+  nextTick(() => (open ? lightboxEl.value : rootEl.value)?.focus())
+})
 /** 在畫面內嗎（規則⑥） */
 const visible = ref(false)
 const glow = ref(false)
@@ -161,8 +200,8 @@ function tick(ts: number) {
   raf = 0
   if (!auto.value)
     return
-  // 凍住：不累加（hover 或不在畫面內）
-  if (hover.value || !visible.value) {
+  // 凍住：不累加（hover、不在畫面內，或正在放大看——底下的步驟自己跳走會很錯亂）
+  if (hover.value || !visible.value || lightbox.value) {
     last = ts
     raf = requestAnimationFrame(tick)
     return
