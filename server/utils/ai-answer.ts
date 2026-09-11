@@ -76,6 +76,28 @@ export function taiwanTodayLabel(now = new Date()): string {
   return new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: 'long', day: 'numeric' }).format(now)
 }
 
+/**
+ * 檔期判讀規則（含上面那個「今天」）。
+ *
+ * 只注入日期是不夠的——實測 2026-08-17（AROMIC 募資）：命中的唯一一張卡只寫
+ * 「9/30 號專案結束後 50 天內出貨」，**沒有**募資結束日。模型判定「這檔過期了」之後，
+ * 要填「已於某日結束」那個空格卻無日可填，就拿手邊唯一有的日期——注入的今天——去填，
+ * 回出「募資已於 2026 年 8 月 17 日前結束」（8/17 正是當天，「前」字就是它在心虛）。
+ * 同一段話後半又照抄卡片講「9 月 30 日專案結束」→ 一則回覆兩個結束日，而且把還在
+ * 募資中的案子講成已結束，客人直接不下單。
+ *
+ * 所以除了給日期，還要明文擋三件事：拿今天當結束日、沒年份就當過期、一則講兩個結束日。
+ */
+export function dateAwarenessRules(now = new Date()): string[] {
+  return [
+    `今天日期：${taiwanTodayLabel(now)}（台灣時間）。知識卡提到活動、募資、優惠、預購或出貨的期間／截止日時，請對照今天日期判斷還在不在期間內：`,
+    '  - **結束日一律照抄卡片原文，不准自己生一個出來**：卡片沒有明確寫結束日時，**絕對不要**說「已於某日結束」，更**不可以拿上面那個「今天日期」當成結束日**。這種情況只回「實際期間請以官網最新公告為準」。',
+    '  - **日期沒有年份時**（卡片只寫「9/30」這種），不要自行補年份，也不要因此判定已過期；照卡片原文回答，並補一句「實際以官網最新公告為準」。',
+    '  - 只有「卡片寫了結束日、而且那天早於今天」才說**已於某日結束**，不要當成現在進行式。',
+    '  - 同一則回覆裡**不可以出現兩個不同的結束日**：卡片上只有一個日期，就只講那一個。',
+  ]
+}
+
 export interface AnswerInput {
   workspaceId: string
   query: string
@@ -2132,7 +2154,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       ? [`（提醒：客人這句話一共問了 ${subQuestions.length} 件事——${subQuestions.map((s, i) => `${i + 1}. ${s}`).join('；')}。請依「一句多問」規則**逐一**回應，能答的都要答到，不要只答第一件。）`]
       : []),
     '',
-    `今天日期：${taiwanTodayLabel()}（台灣時間）。知識卡若提到活動、募資、優惠、預購或出貨的期間／截止日，請對照今天日期——**已過期的要明說「已於某日結束」**，不要當成現在進行式；不確定是否仍有效時，補一句「實際以官網最新公告為準」。`,
+    ...dateAwarenessRules(),
     '',
     '回傳 JSON：{ "answer": string, "hasInfo": boolean, "offTopic": boolean }',
     '請依「知識卡內容」回答，回覆文字放在 answer。',

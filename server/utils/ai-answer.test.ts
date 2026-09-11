@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import {
   truncateAtSentence,
@@ -18,6 +19,7 @@ import {
   buildNamedGuessConfirm,
   cleanProductLabel,
   taiwanTodayLabel,
+  dateAwarenessRules,
   isUnresolvedFeedback,
   expandCompareItems,
   longestCommonRun,
@@ -717,6 +719,44 @@ describe('taiwanTodayLabel', () => {
   it('以台灣時區換日（UTC 晚上 10 點 = 台灣隔天早上 6 點）', () => {
     expect(taiwanTodayLabel(new Date('2026-07-31T22:00:00Z'))).toBe('2026年8月1日')
     expect(taiwanTodayLabel(new Date('2026-07-31T10:00:00Z'))).toBe('2026年7月31日')
+  })
+})
+
+describe('dateAwarenessRules', () => {
+  const rules = dateAwarenessRules(new Date('2026-08-17T10:00:00Z'))
+  const text = rules.join('\n')
+
+  it('第一行帶今天（台灣時區）', () => {
+    expect(rules[0]).toContain('2026年8月17日')
+  })
+
+  // 2026-08-17 AROMIC：卡上沒有募資結束日，模型拿注入的「今天」填進「已於某日結束」，
+  // 回出「已於 2026 年 8 月 17 日前結束」。這三道閘門缺任何一道都會重演，所以逐條釘住。
+  it('擋住「拿今天當結束日」', () => {
+    expect(text).toContain('今天日期')
+    expect(text).toMatch(/不可以拿上面那個「今天日期」當成結束日/)
+    expect(text).toMatch(/沒有明確寫結束日/)
+  })
+
+  it('擋住「日期沒年份就當已過期」', () => {
+    expect(text).toMatch(/沒有年份/)
+    expect(text).toMatch(/不要因此判定已過期/)
+  })
+
+  it('擋住「一則回覆兩個結束日」', () => {
+    expect(text).toMatch(/不可以出現兩個不同的結束日/)
+  })
+
+  it('確定過期的仍要明說已結束（原本的用途沒被改掉）', () => {
+    expect(text).toMatch(/早於今天.*已於某日結束/)
+  })
+
+  // 抽成函式後最容易犯的錯是「抽出來了卻沒接回去」——那樣單元測試全綠，
+  // 線上卻連原本的今天日期都不見了，比改壞更難發現。
+  it('真的被接進答題 prompt', () => {
+    const src = readFileSync(new URL('./ai-answer.ts', import.meta.url), 'utf8')
+    const userPrompt = src.slice(src.indexOf('const userPrompt = ['))
+    expect(userPrompt.slice(0, userPrompt.indexOf('\n  ]'))).toContain('...dateAwarenessRules()')
   })
 })
 
