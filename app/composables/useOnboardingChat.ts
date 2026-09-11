@@ -85,11 +85,12 @@ export function useOnboardingChat() {
   // 也吃同一顆引擎（C-31 Phase 1 抽出）。這裡只留開通情境專屬的東西：
   // 步驟劇本、真實訊號 fetch、跳過記憶、進度條。
   const runner = useAgentScriptRunner()
-  const { entries, ask, typing, busy, scrollToId } = runner
+  const { entries, ask, typing, busy, scrollToId, turnStartId } = runner
   const {
     say,
     card,
     scrollToEntry,
+    startTurn,
     updateMsg,
     waitAsk,
     settle,
@@ -106,8 +107,11 @@ export function useOnboardingChat() {
     onSkip,
   } = runner
   const progress = ref(0)
-  /** 「要加哪個帳號」那張卡出過了沒——傳話測試可以從成績單再進來一次，卡不要重複出 */
-  let oaInviteShown = false
+  /**
+   * 「要加哪個帳號」查到的東西（見證卡的第①步要用）。
+   * 快取住：傳話測試可以從成績單再進來一次，那時要的是同一份資料畫到新的卡上，不是再問一次 LINE。
+   */
+  let oaInvite: { basicId: string, addFriendUrl: string, qrDataUrl?: string } | null = null
 
   // 「跳過記憶」已整組拆除（2026-08-20）：它跟「開通沒做完每次進後台都拉回」的拍板
   // 直接打架——系統一邊說你有事沒做完把人拉進來，一邊又用舊記憶把人快轉到完成頁。
@@ -321,6 +325,12 @@ export function useOnboardingChat() {
     alt?: string
     /** 這一步的泡泡一出現就回報它的 id——之後想把畫面捲回這一則的人要接住它 */
     onFirstSaid?: (entryId: number) => void
+    /**
+     * 「下一步」那顆鈕的字樣。用在**要確認一個動作、不只是翻頁**的節點
+     * （例：換後台那步＝「我打開了，下一步」）。
+     * ⛔ 別整批換掉：翻頁就是翻頁，多數步驟不需要人宣示什麼。
+     */
+    nextLabel?: string
     /** 岔路按鈕：走完岔路回到同一步（例：清單裡沒看到帳號） */
     detour?: { label: string, run: () => Promise<void> }
     /** 預設收合的「為什麼／萬一沒做」——照著做需要的字留在外面，解釋收進來 */
@@ -353,7 +363,7 @@ export function useOnboardingChat() {
       if (isLast)
         return 'done'
       while (true) {
-        const options: AgentChoice[] = [{ label: '下一步', value: 'next', primary: true }]
+        const options: AgentChoice[] = [{ label: n.nextLabel || '下一步', value: 'next', primary: true }]
         if (n.detour)
           options.push({ label: n.detour.label, value: 'detour' })
         // exitLabel 空字串＝這支教學沒有中途出口（單節點的那幾支都是）。
@@ -373,6 +383,19 @@ export function useOnboardingChat() {
     }
     return 'done'
   }
+
+  /**
+   * 交棒到輸入格的那一句（2026-09-11）。
+   *
+   * **為什麼非有不可**：整條流程從頭到尾都是「按對話裡的按鈕」，選項鈕就長在最新那則旁邊；
+   * 只有貼連線資訊這兩步，動作**換了位置**——跑到最下面那條輸入區，而且沒有任何一句話說。
+   * 教學最後一格演的是「在 LINE 那邊按複製」，演完畫面靜止，人會繼續等下一張圖。
+   * ⚠️ 它放在對話流的最後一則＝**緊貼著輸入框上緣**，眼睛不用跨區找；
+   *    放在 `while` 迴圈裡＝每次教學重播完都會再講一次（那正是又要貼一次的時候）。
+   * ⚠️ 👇 排在最前面跟「輪到你了」同一組＝**箭頭指方向、字講動作**，後面就不必再說「最下面」。
+   * ⛔「按「送出」」不能省：那顆鈕在他從沒去過的輸入區，省掉就會有人貼完在那裡等。
+   */
+  const HANDOFF = '輪到你了 👇 把剛剛複製的那一串貼進<b>最下面的輸入框</b>，按「送出」。'
 
   async function stepToken(line: LineStatus) {
     if (line.tokenConfigured)
@@ -403,6 +426,7 @@ export function useOnboardingChat() {
     // ⛔ 走「我會拿，直接貼上」快路的人**照舊要給**：那是他唯一的教學入口，
     //    按完教學就在上面、這顆鈕下一圈自然消失。
     while (!line.tokenConfigured) {
+      await say(HANDOFF)
       const ok = await askAndSaveToken(line, { escapeLabel: taught ? undefined : '等等，我想看教學' })
       if (!ok && !line.tokenConfigured) {
         taught = true
@@ -441,7 +465,10 @@ export function useOnboardingChat() {
               //    走到這裡的人也從來沒做過，不是「回去再看一眼」，不能只給一張「按這裡」的靜圖
               await say(
                 '那是還沒啟用的關係。到官方帳號後台的「<b>設定 → Messaging API</b>」按「<b>啟用Messaging API</b>」——'
-                + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。<br>啟用完，它就會出現在剛剛的清單裡。',
+                // ⚠️ 2026-09-11 補「回去」那半句：這條岔路是**另一個方向的換後台**——把人送去
+                //    官方帳號後台辦一件事，辦完要自己走回 LINE Developers。原本只說「就會出現在
+                //    剛剛的清單裡」，沒說要回哪個分頁、也沒說清單不會自己更新。
+                + '按下去會<b>連跳三個小視窗，一路按下去就好</b>（下面一步一步看）。<br>啟用完，<b>回到 LINE Developers 那個分頁</b>重新整理一次，清單裡就有了。',
                 // ⚠️ 走到這條岔路的人有兩種：**有帳號但沒啟用**（多數）、以及**根本還沒申請**。
                 //    後者按「啟用」會發現連後台都進不去，卻沒有任何地方告訴他要先申請——
                 //    所以那條路的入口收在這裡，不佔多數人的版面。
@@ -485,6 +512,7 @@ export function useOnboardingChat() {
     // 錯、並給重貼入口。⛔ 這裡刻意不再給「再看一次教學」：圖就在輸入格正上方那一則。
     await walkSecretNodes()
     while (!line.secretConfigured) {
+      await say(HANDOFF)
       const ok = await askAndSaveSecret(line, { escapeLabel: '回上一步：重貼第一組' })
       if (ok)
         break
@@ -517,12 +545,28 @@ export function useOnboardingChat() {
   async function walkSecretNodes() {
     await walkNodes([
       {
-        // 2026-09-07 老闆回饋：不要解釋英文／中文哪個後台，「越解釋越糊塗」——講「換一個後台」就好
-        // 2026-09-10：三個動作與「別按到 Channel ID」的警語都搬進輪播圖說（第 3 格）
-        html: '接下來拿<b>第二組連線資訊：Channel Secret</b>——這次換到<b>另一個後台：LINE 官方帳號後台</b>。',
-        aside: { summary: '這串是做什麼的？', html: '幫忙確認收到的訊息真的來自 LINE，不是別人假冒的。' },
+        // ⛔ 2026-09-11 拆成兩步（使用者：「有些人會以為還在原本的後台」）：
+        //    **換後台自己要一刀**——原本「換到另一個後台」只是第一則泡泡的後半句，
+        //    底下緊接著就是「點右上角設定」的輪播，而那顆「設定」在**兩個後台都有**：
+        //    人留在 LINE Developers 照著做，一路做得下去，錯要到最後接不通才爆。
+        //    ⚠️ 這**不是**推翻 09-02 的「開後台不值得自己一步」：那講的是**第一次開**
+        //       （他本來就不在任何後台，沒有搞混的對象）。判準是「**跟上一步不同才切**」。
+        //    ⚠️ 這一步**刻意不放輪播**（使用者 09-11）：它唯一要傳達的是「換後台了」，
+        //       而自動播放的圖會把眼睛拉過去、那張圖又跟「換了地方」毫無關係，
+        //       強調反而被圖蓋掉。「先點進你的帳號」只有一個動作，一句話講得完。
+        //    ⚠️ 強調用三層、都不加句子：琥珀徽章（第一眼）＋兩邊並排的對照（指名道姓比
+        //       「不在剛剛那個後台」硬）＋按鈕字樣改成要他宣示「我打開了」。
+        //    ⛔ 不要再加「（中文那個）」：09-07 老闆拍板「不要解釋英文／中文哪個後台，越解釋越糊塗」。
+        html: '<span class="agm-flag">換後台</span>剛剛是 <b>LINE Developers</b>，這一步換到 <b>LINE 官方帳號後台</b>——第二組連線資訊在那裡。<br>用下面的連結打開，在帳號一覽<b>點進你的帳號</b>。',
+        aside: { summary: '剛剛那個後台要關掉嗎？', html: '不用關，但<b>不會再回去了</b>——LINE Developers 只用來拿第一組。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
+        nextLabel: '我打開了，下一步',
+      },
+      {
+        // 2026-09-10：三個動作與「別按到 Channel ID」的警語都搬進輪播圖說（第 3 格）
+        html: '到了之後，要把<b>第二組連線資訊：Channel Secret</b> 整串複製起來。',
+        aside: { summary: '這串是做什麼的？', html: '幫忙確認收到的訊息真的來自 LINE，不是別人假冒的。' },
         carousel: ONBOARDING_CAROUSELS.channelSecret,
       },
     ], '')
@@ -678,8 +722,37 @@ export function useOnboardingChat() {
     opts: { offerVerifyUpfront?: boolean } = {},
   ) {
     progress.value = 3
-    await say('來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。')
-    const waitId = card({ kind: 'status', state: 'pending', text: '等待第一則訊息…' })
+    // ⛔ 2026-09-11 改寫（使用者：「這塊也是會讓人卡住的地方，大家到這裡會不知道要做什麼」）。
+    //    原本那一句「拿手機加你的 LINE 官方帳號好友，隨便傳一句話給它」三個病全中：
+    //    ① **動作換到另一台裝置**——前面每一步都在這個畫面上按鈕或去另一個分頁，這一步突然要拿
+    //       手機，而畫面上唯一的東西是一張在轉圈、不能按的等待卡。
+    //    ② **兩個動作寫成一句話**：加好友＋傳訊息。⚠️ 而後端**只認真的訊息**（加好友寫的是
+    //       traceOnly 的 customer_action、不會蓋 lastPeerActivityAt）——「加完好友就坐在那裡等」
+    //       的人會等到天荒地老，畫面還在轉圈。
+    //    ③ **「隨便傳一句話」是一個決定**：要打什麼？給一個字就不用想。
+    //    ①②③ 的解法不是把字寫長，是把它們**拆成兩步、每一步旁邊放那一步要用的東西**（見證卡）。
+    // ⛔ 這裡也不再說「連線成功了 🎉」：上一則就是那張 ✔「接上了，LINE 那邊確認收得到」，
+    //    同一件事講兩次。🎉 併進這一句，慶祝與交棒一次講完。
+    await say('太好了 🎉 <b>最後一步</b>：拿起你的<b>手機</b>，照下面兩步做。')
+    /**
+     * 第②步的狀態（就是以前那張獨立的等待卡）。
+     * ⚠️ 用一個變數存著、每次重畫整張卡——`updateMsg` 是整則覆蓋，
+     *    不這樣做的話「補上帳號代號」會把已經變成 ✓ 的狀態洗回 pending。
+     */
+    let wait: { state: 'pending' | 'ok' | 'skipped', text: string } = { state: 'pending', text: '等你傳過來…' }
+    const waitId = card({ kind: 'witness', waitState: wait.state, waitText: wait.text })
+    const renderWitness = () => updateMsg(waitId, {
+      kind: 'witness',
+      basicId: oaInvite?.basicId,
+      addFriendUrl: oaInvite?.addFriendUrl,
+      qrDataUrl: oaInvite?.qrDataUrl,
+      waitState: wait.state,
+      waitText: wait.text,
+    })
+    const setWait = (state: 'pending' | 'ok' | 'skipped', text: string) => {
+      wait = { state, text }
+      renderWitness()
+    }
 
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
     // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
@@ -687,13 +760,13 @@ export function useOnboardingChat() {
     const poll = pollFirstMessage()
 
     // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
-    // 等於沒講。查不到就維持上面那句純文字，不要生半殘的卡。
+    // 等於沒講。查不到就只少 QR 與代號那一塊，兩步照樣讀得懂（見證卡自己有 fallback）。
     //
-    // ⛔ 這張卡**不可以 await 在等待卡與輪詢之前**（2026-08-28 code review 抓到）：
-    // 它要去問 LINE 拿官方帳號代號，那支請求沒有逾時。LINE 慢的時候「等待第一則訊息…」
-    // 還沒畫、輪詢也還沒開始——人已經被告知「我在這裡等」、照做傳了訊息，畫面卻毫無反應；
-    // 請求一直不回來的話，輪詢根本不會開始。所以：先開始等，卡片自己晚點補上來。
-    void showOaInvite().catch(() => {}) // 拿不到就算了，上面那句純文字仍然成立
+    // ⛔ 這件事**不可以 await 在見證卡與輪詢之前**（2026-08-28 code review 抓到）：
+    // 它要去問 LINE 拿官方帳號代號，那支請求沒有逾時。LINE 慢的時候見證卡還沒畫、
+    // 輪詢也還沒開始——人已經照做傳了訊息，畫面卻毫無反應；請求一直不回來的話，
+    // 輪詢根本不會開始。所以：先畫卡、先開始等，代號自己晚點補上來。
+    void loadOaInvite().then(() => { if (!isDisposed()) renderWitness() }).catch(() => {})
     const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
 
     // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
@@ -773,11 +846,17 @@ export function useOnboardingChat() {
           // 這是整段流程最有價值的一則，但出現的時機正好是人卡住又焦慮的時候，
           // 而那時最讀不下去的就是一整段文字。排成清單，字一個都沒少，但變成
           // 可以一條一條對著檢查。
-          await say('還沒等到訊息——最常見的是這四種，按下面「幫我再驗一次」我全部幫你看一遍。這段時間我也還在聽，訊息一進來就會告訴你。')
+          // ⚠️ 2026-09-11 不再寫「這四種…我**全部**幫你看一遍」：驗 Webhook 查不到第①條
+          //    （只加好友沒傳訊息）也查不到第④條（加到別的帳號），原本那句本來就多講了。
+          await say('還沒等到訊息——最常見的是這五種。<b>第一條先自己看一眼</b>，設定那幾條按下面「幫我再驗一次」我幫你查。這段時間我也還在聽，訊息一進來就會告訴你。')
           card({
             kind: 'help',
-            summary: '照這四條檢查',
+            summary: '照這五條檢查',
             steps: [
+              // ⛔ 2026-09-11 補上第一條：這是**唯一一條跟設定無關的**，而且最可能——
+              //    後端只認真的訊息（加好友寫的是 traceOnly 的 customer_action）。
+              //    ⚠️ 排在最前面：卡住的人不該先被送去重查四項其實沒壞的設定。
+              { text: '只加了好友，<b>還沒真的傳訊息</b>（加好友不算）' },
               { text: '網址貼進「Webhook網址」了，但還沒按「<b>儲存</b>」' },
               { text: '「回應設定」那一頁的 <b>Webhook</b> 開關沒打開' },
               { text: '手機加好友加到別的帳號了' },
@@ -844,7 +923,14 @@ export function useOnboardingChat() {
       const title = received.messageType === 'text' && received.text
         ? `「${received.text}」`
         : typeLabel ? `（${typeLabel}訊息）` : '（收到你的訊息）'
-      updateMsg(waitId, {
+      // ⚠️ 見證卡**不換成強調卡**（2026-09-11 併卡後改的）：第②步要收在打勾上，
+      //    整張卡才有始有終——換掉的話那一步只剩「打你好就可以」，看起來像還沒做完。
+      //    引用原文那張強調卡改成接在它後面。
+      setWait('ok', '收到了')
+      // 訊息是自己飄進來的、不是使用者按了什麼，所以要自己宣告新的一輪，
+      // 畫面才會停在「收到第一則訊息」那張卡、而不是繼續釘在上一輪的第一句
+      startTurn()
+      card({
         kind: 'highlight',
         label: '收到第一則訊息',
         title,
@@ -854,7 +940,7 @@ export function useOnboardingChat() {
       setup.firstMessageReceived = 'done'
     }
     else {
-      updateMsg(waitId, { kind: 'status', state: 'skipped', text: '略過測試——之後隨時可以加好友傳一句話試試' })
+      setWait('skipped', '略過測試——之後隨時可以加好友傳一句話試試')
     }
     progress.value = 3
   }
@@ -1111,7 +1197,11 @@ export function useOnboardingChat() {
       }
       const res = await verifyAndAdvise(webhookUrl, line)
       if (res === 'ok') {
-        await say('連線成功了！🎉 你的 LINE 官方帳號已經成功連上系統，可以正式使用 MiniMe 了。')
+        // ⛔ 2026-09-11 去重：原本是「連線成功了！…已經**成功連上系統**，可以正式使用 **MiniMe** 了」
+        //    ——同一件事講兩次，而且「系統」與「MiniMe」是同一個東西的兩個名字（房規：我們自己一律叫 MiniMe）。
+        // ⛔ 2026-09-11 整則刪掉：它跟**正上方那張 ✔ 狀態卡**（「接上了，LINE 那邊確認收得到」）
+        //    講的是同一件事——狀態卡是結果，這則只是再唸一次。🎉 併進見證時刻的第一句
+        //    （「太好了 🎉 最後一步…」），慶祝與交棒一次講完。
         verified = true
       }
     }
@@ -1150,7 +1240,10 @@ export function useOnboardingChat() {
         // 2026-09-10 改輪播之後多給一句「還停在那一頁的話直接跳到第 3 步」——
         // 步驟軌讓「跳著看」變成點一下的事，那句話才有地方可去。
         html: '先按上面那張卡的「<b>複製</b>」把網址複製起來，再回到<b>官方帳號後台</b>貼上。'
-          + '<br>剛剛複製第二組的那個分頁<b>多半還開著</b>：還停在那一頁的話，<b>直接跳到第 3 步</b>就好。',
+          // ⛔ 2026-09-11 刪掉前半句「剛剛複製第二組的那個分頁**多半還開著**」（使用者點名）：
+          //    那是**替他猜他螢幕上的狀況**，而後半句本來就帶著條件（「還停在那一頁的話」）——
+          //    猜對了是廢話、猜錯了是雜訊，條件句自己就把話講完了。
+          + '<br>還停在剛剛那一頁的話，<b>直接跳到第 3 步</b>。',
         aside: { summary: '為什麼特別強調存檔？', html: '貼了沒按「儲存」是接不通的<b>第一名</b>——網址看起來在格子裡，其實沒存進去。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
@@ -1165,7 +1258,9 @@ export function useOnboardingChat() {
         // ⛔ 這裡用的是**不含「點右上角設定」**的那一支（2026-09-06）：他前兩步都在設定裡，
         //    再叫他點一次是叫他去他已經站著的地方。⚠️但補一句給「重新點連結進去」的人——
         //    我們的連結落在「主頁」，那種情況左邊那排選單還沒展開。
-        html: '<b>還在同一個後台</b>，這一頁要做<b>兩件事</b>：把 Webhook 打開、把回應方式改成手動聊天。'
+        // 2026-09-11「兩件事」→「三件事」：補上「聊天」那顆開關（老闆實機截圖抓到我們沒教，
+        // 關著的話 LINE 後台的「聊天」整頁是「功能目前關閉中」，而「聊天的回應方式」掛在它底下）
+        html: '<b>還在同一個後台</b>，這一頁要做<b>三件事</b>：把「聊天」和 Webhook 打開、把回應方式改成手動聊天。'
           + '<br>（如果左邊沒有那排選單，先點右上角的「<b>設定</b>」。）',
         aside: { summary: '為什麼要關掉自動回應？', html: 'LINE 內建的自動回應預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>——LINE 那句制式回覆，再加上 MiniMe 的回覆。' },
         href: 'https://manager.line.biz/',
@@ -1176,31 +1271,23 @@ export function useOnboardingChat() {
   }
 
   /**
-   * 出「要加哪個帳號」的卡（QR＋帳號 ID＋連結）。
-   * ⛔ 查不到帳號 ID 就什麼都不出——「查不到」不等於「沒有」，畫一張空 QR 比不畫更糟；
-   *    這時上面那句「加你的官方帳號好友」仍然成立，只是少了捷徑。
+   * 去問「要加哪個帳號」（帳號代號＋加好友連結＋QR），**存進 `oaInvite` 不自己出卡**——
+   * 卡片是見證卡的第①步，由 `stepFirstMessageWait` 重畫（2026-09-11 併卡後改的）。
+   *
+   * ⛔ 查不到就維持 `null`：「查不到」不等於「沒有」，畫一張空 QR 比不畫更糟；
+   *    見證卡的第①步會退成一句「在 LINE 裡搜尋你的官方帳號，加它為好友」，兩步照樣讀得懂。
+   * ⚠️ 結果**快取起來**：成績單的「回去做傳話測試」會把 `stepFirstMessageWait` 整段再跑一次，
+   *    那時要的是「同一份資料畫到新的那張卡上」，不是再打一次 LINE。
    */
-  async function showOaInvite() {
-    // ⛔ 一場對話只出一張（2026-08-28 code review 修）：成績單的「回去做傳話測試」會把
-    //    stepFirstMessageWait 整段再跑一次，不擋的話同一段對話裡會出現兩張一模一樣的卡。
-    if (oaInviteShown)
+  async function loadOaInvite() {
+    if (oaInvite)
       return
     try {
       const r = await apiFetch<{ basicId: string, addFriendUrl: string, qrDataUrl: string }>(
         '/api/admin/onboarding/oa-invite',
       )
-      // ⛔ 回來時先確認這場對話還在（同一輪 review 修）：這支是 fire-and-forget，
-      //    使用者可能早就離頁了。`card()` 不像 `say()` 會過 checkpoint，直接推就會寫進
-      //    一個已經被 dispose 的 transcript。
-      if (r?.basicId && !isDisposed()) {
-        oaInviteShown = true
-        card({
-          kind: 'oaInvite',
-          basicId: r.basicId,
-          addFriendUrl: r.addFriendUrl,
-          qrDataUrl: r.qrDataUrl,
-        })
-      }
+      if (r?.basicId)
+        oaInvite = { basicId: r.basicId, addFriendUrl: r.addFriendUrl, qrDataUrl: r.qrDataUrl }
     }
     catch {
       // 拿不到就算了：這是加分項，不該讓它擋住見證時刻
@@ -1423,6 +1510,8 @@ export function useOnboardingChat() {
     busy,
     /** 劇本要求把畫面捲回哪一則（頁面在「捲到底」那個 watcher 裡順便處理） */
     scrollToId,
+    /** 這一輪的第一則——頁面把它貼到頂，讓人從第一句開始讀（2026-09-11） */
+    turnStartId,
     progress,
     /** 這一場對話作用中的 workspaceId（建立後才有值）；給頁面算「之後再說」的出口用 */
     activeWorkspaceId: readonly(wid),

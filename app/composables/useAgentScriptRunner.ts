@@ -99,9 +99,28 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
       throw new AgentScriptCancelled()
   }
 
+  /**
+   * 這一輪的**第一則**（頁面拿它決定捲到哪，見 `onboarding.vue` 的捲動 watcher）。
+   *
+   * ⭐ 2026-09-11：捲到底的意思其實是「**從最後一句開始看**」——一步的內容是
+   * 泡泡→連結卡→教學圖，捲到底剛好把「這一步要做什麼」那句話推出畫面，
+   * 人看到的是一張沒有前因的圖。改成**這一輪的第一則貼到頂**。
+   * 一輪＝使用者動一次之後、agent 說完到再次輪到他為止。
+   */
+  const turnStartId = ref<number | null>(null)
+  let pendingTurnStart = true
+  /** 宣告「新的一輪開始了」：下一則被 push 的東西就是這一輪的第一則 */
+  function startTurn() {
+    pendingTurnStart = true
+  }
+
   function push(role: 'agent' | 'user', msg: AgentMsg): number {
     const id = nextId++
     entries.value.push({ id, role, msg })
+    if (pendingTurnStart) {
+      pendingTurnStart = false
+      turnStartId.value = id
+    }
     return id
   }
 
@@ -158,6 +177,10 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     if (ask.value.kind !== 'choices')
       return
     const opt = ask.value.options.find(o => o.value === value)
+    // ⚠️ 這四支都要在 `sayUser` **之前**宣告新的一輪：這樣「這一輪的第一則」就是
+    //    使用者自己那句回答，畫面停在「我剛剛答了什麼」＋接下來這一段的第一句
+    if (opt)
+      startTurn()
     // 對不上目前的選項（例如點到剛被換掉的舊按鈕）：整個當沒發生，
     // 不能默默 settle——上一組選單的值被當成這一組的答案，就是「沒人按過卻跳過了」
     if (!opt)
@@ -172,6 +195,7 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
   function onSubmit(text: string) {
     if (ask.value.kind !== 'input')
       return
+    startTurn()
     sayUser(ask.value.inputType === 'secret' ? '••••••••••（已輸入）' : text)
     settle({ type: 'text', value: text })
   }
@@ -179,6 +203,7 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
   function onPick(option: AgentPickerOption) {
     if (ask.value.kind !== 'picker')
       return
+    startTurn()
     sayUser(option.label)
     settle({ type: 'pick', option })
   }
@@ -187,6 +212,7 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     // 只有輸入格／選人格有跳過鈕；游離的 skip 事件不能憑空冒出「先跳過」泡泡
     if (ask.value.kind !== 'input' && ask.value.kind !== 'picker')
       return
+    startTurn()
     // 泡泡跟按鈕字樣一致：輸入格可以自訂跳過鈕字樣（例：等等，我想看教學）
     sayUser((ask.value.kind === 'input' && ask.value.skipLabel) || '先跳過')
     settle({ type: 'skip' })
@@ -336,6 +362,8 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
     busy,
     scrollToId,
     scrollToEntry,
+    turnStartId,
+    startTurn,
     // AgentAskDock 的四個事件
     onChoice,
     onSubmit,

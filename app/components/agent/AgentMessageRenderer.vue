@@ -137,25 +137,53 @@
     <span>{{ entry.msg.text }}</span>
   </div>
 
-  <!-- 加好友邀請卡：先講「要加的是哪個帳號」，再講怎麼加（QR 產不出來時只少一張圖，不破版） -->
-  <div v-else-if="entry.msg.kind === 'oaInvite'" class="agm-card agm-invite">
-    <img
-      v-if="entry.msg.qrDataUrl"
-      class="agm-invite__qr"
-      :src="entry.msg.qrDataUrl"
-      :alt="`加入 ${entry.msg.basicId} 為好友的 QR Code`"
-      width="110"
-      height="110"
-    >
-    <div class="agm-invite__main">
-      <div class="agm-card__label">要加的是這個帳號</div>
-      <div class="agm-invite__id">{{ entry.msg.basicId }}</div>
-      <p class="agm-invite__how">
-        用手機掃左邊的 QR，或在 LINE 的「加入好友 → 搜尋」輸入這組 ID。
-      </p>
-      <a class="agm-invite__link" :href="entry.msg.addFriendUrl" target="_blank" rel="noopener">
-        用手機打開這個連結 ↗
-      </a>
+  <!-- 見證時刻的兩步驟卡：每一步旁邊就是那一步要用的東西（①＝QR 與代號、②＝現在的狀態）。
+       ⚠️ 帳號代號拿不到時只少 QR 與代號那一塊，兩步照樣讀得懂——不破版。 -->
+  <div v-else-if="entry.msg.kind === 'witness'" class="agm-witness">
+    <div class="agm-witness__row">
+      <span class="agm-witness__no">1</span>
+      <div class="agm-witness__body">
+        <div class="agm-witness__t">加它為好友</div>
+        <div v-if="entry.msg.basicId" class="agm-witness__qrrow">
+          <img
+            v-if="entry.msg.qrDataUrl"
+            class="agm-witness__qr"
+            :src="entry.msg.qrDataUrl"
+            :alt="`加入 ${entry.msg.basicId} 為好友的 QR Code`"
+            width="104"
+            height="104"
+          >
+          <div class="agm-witness__main">
+            <div class="agm-witness__id">{{ entry.msg.basicId }}</div>
+            <!-- 「用手機掃」的下一個問題是拿什麼掃，所以講明是相機 -->
+            <p class="agm-witness__how">
+              用手機的<b>相機</b>對著左邊的 QR，<br>或在 LINE 的「加入好友 → 搜尋」輸入這組 ID。
+            </p>
+            <!-- ⛔ 不能寫「用手機打開這個連結」：它出現在**電腦畫面上**，等於叫他用手機點電腦上的連結 -->
+            <a class="agm-witness__link" :href="entry.msg.addFriendUrl" target="_blank" rel="noopener">
+              <b>正在用手機看這一頁？</b>點這裡直接加好友 ↗
+            </a>
+          </div>
+        </div>
+        <p v-else class="agm-witness__how">
+          在 LINE 裡搜尋你的官方帳號，加它為好友。
+        </p>
+      </div>
+    </div>
+    <div class="agm-witness__row">
+      <span class="agm-witness__no">2</span>
+      <div class="agm-witness__body">
+        <div class="agm-witness__t">在聊天室裡傳一句話給它</div>
+        <p class="agm-witness__how">
+          打「<b>你好</b>」就可以——<b>加好友還不算</b>，要真的傳一句話。
+        </p>
+        <div class="agm-status agm-witness__wait" :class="`agm-witness__wait--${entry.msg.waitState}`">
+          <el-icon v-if="entry.msg.waitState === 'pending'" class="is-loading"><Loading /></el-icon>
+          <el-icon v-else-if="entry.msg.waitState === 'ok'"><CircleCheckFilled /></el-icon>
+          <el-icon v-else><Remove /></el-icon>
+          <span>{{ entry.msg.waitText }}</span>
+        </div>
+      </div>
     </div>
   </div>
 

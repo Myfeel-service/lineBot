@@ -13,6 +13,7 @@
         :maxlength="ask.maxLength"
         :disabled="busy"
         class="agd__input"
+        :class="{ 'is-turn': glow }"
         @keyup.enter="submit"
       />
       <el-button v-if="ask.skippable" text class="agd__skip" :disabled="busy" @click="$emit('skip')">
@@ -64,12 +65,20 @@ const emit = defineEmits<{
 
 const text = ref('')
 const inputEl = ref<{ focus: () => void } | null>(null)
+/** 輸入格現身時亮三下（見 `_agent-chat.scss` 的 `agd-turn-glow`） */
+const glow = ref(false)
 
 // 換一題就清空上一題打到一半的字，並把游標放進輸入框
 watch(() => props.ask, (ask) => {
   text.value = ''
-  if (ask.kind === 'input')
-    nextTick(() => inputEl.value?.focus())
+  // ⚠️ 先關再開：連著問兩格輸入時元素不會重建，不關掉的話 CSS 動畫不會重播
+  glow.value = false
+  if (ask.kind === 'input') {
+    nextTick(() => {
+      inputEl.value?.focus()
+      glow.value = true
+    })
+  }
 })
 
 function submit() {

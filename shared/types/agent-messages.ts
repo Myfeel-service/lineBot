@@ -84,11 +84,26 @@ export type AgentMsg =
   /** 強調卡：回顯收到的第一則訊息（見證時刻） */
   | { kind: 'highlight'; label: string; title: string; meta?: string }
   /**
-   * 加好友邀請卡（開通引導「等第一則訊息」那一步）：QR ＋ 帳號 ID ＋ 連結。
-   * 剛開通的官方帳號零好友，只說「拿手機加好友」等於沒說——他不知道要搜什麼
-   * （2026-08-28 拍板）。⛔ 帳號 ID 查不到就別出這張卡，畫一個空 QR 比不畫更糟。
+   * 見證時刻的**兩步驟卡**（2026-09-11 取代舊的 `oaInvite` ＋ 另一張獨立的等待狀態卡）。
+   *
+   * ⭐ 為什麼要併：原本 ①② 寫在泡泡裡、①要用的 QR 在下一張卡、②的狀態（還在等）在
+   * 再下一張卡——**三個區塊講同一件事**，讀者得自己把「② 傳一句話」跟最底下那張轉圈的卡
+   * 連起來。併成一張之後**每一步旁邊就是那一步要用的東西**。
+   *
+   * ⚠️ `basicId` 等三個欄位是**選填**：這張卡必須在問 LINE 拿帳號代號**之前**就先畫出來
+   * （那支請求沒有逾時，等它回來才畫＝人已經照做了、畫面卻什麼都沒有）。拿到之後再
+   * `updateMsg` 補上；拿不到就只少了 QR 與代號，第①②步照樣讀得懂。
+   * ⚠️ 第②步的狀態是**這張卡的一部分**（`waitState`／`waitText`），不是另一張 status 卡；
+   * 收到訊息時改成 `ok` 而**不是把它拿掉**——整張卡要收在打勾上，拿掉會像那一步沒做完。
    */
-  | { kind: 'oaInvite'; basicId: string; addFriendUrl: string; qrDataUrl?: string }
+  | {
+    kind: 'witness'
+    basicId?: string
+    addFriendUrl?: string
+    qrDataUrl?: string
+    waitState: 'pending' | 'ok' | 'skipped'
+    waitText: string
+  }
   /** 完成摘要卡 */
   | { kind: 'summary'; items: { label: string; done: boolean; note?: string }[] }
 

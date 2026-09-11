@@ -23,7 +23,7 @@ export const ONBOARDING_SHOT_STEPS: Record<string, number> = {
   'line-console-which-card-liff.png': 0,
   'line-console-which-card.png': 0,
   'oam-account-list.png': 0,
-  'oam-auto-reply.webp': 4,
+  'oam-auto-reply.webp': 5,
   'oam-channel-secret.webp': 3,
   'oam-enable-messaging-api.png': 0,
   'oam-enable-messaging-api.webp': 4,

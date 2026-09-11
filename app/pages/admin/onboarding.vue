@@ -88,7 +88,7 @@ const continueWid = computed(() => String(route.query.workspaceId || '').trim())
 const mode = ref<'chat' | 'locked'>('chat')
 
 const {
-  entries, ask, typing, busy, progress, activeWorkspaceId, scrollToId,
+  entries, ask, typing, busy, progress, activeWorkspaceId, scrollToId, turnStartId,
   onChoice, onSubmit, onPick, onSkip,
   start, dispose,
 } = useOnboardingChat()
@@ -136,6 +136,20 @@ watch([() => entries.value.length, typing, ask], () => {
         listEl.value.scrollTo({ top: listEl.value.scrollTop + delta - 8 })
         return
       }
+    }
+    // ⭐ 2026-09-11：不再一律捲到底。捲到底的意思其實是「**從最後一句開始看**」——
+    //    一步的內容是泡泡→連結卡→教學圖，捲到底剛好把「這一步要做什麼」那句話推出畫面，
+    //    人看到的是一張沒有前因的圖。改成**這一輪的第一則貼到頂**（`turnStartId`）。
+    // ⚠️ 整輪都要釘著，不能只在「內容講完」時捲一次：這個 watcher 每加一則就醒來一次，
+    //    最後那一下會把先前的捲動蓋掉。
+    // ⚠️ 內容不滿一頁時瀏覽器自己夾住＝效果跟捲到底一樣，不會留白。
+    const anchor = turnStartId.value
+    const ai = anchor == null ? -1 : entries.value.findIndex(e => e.id === anchor)
+    const aEl = ai >= 0 ? listEl.value?.children[ai] as HTMLElement | undefined : undefined
+    if (aEl && listEl.value) {
+      const delta = aEl.getBoundingClientRect().top - listEl.value.getBoundingClientRect().top
+      listEl.value.scrollTo({ top: Math.max(0, listEl.value.scrollTop + delta - 12) })
+      return
     }
     listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
   })

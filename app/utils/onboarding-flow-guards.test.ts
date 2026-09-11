@@ -15,6 +15,9 @@ const APP_DIR = fileURLToPath(new URL('..', import.meta.url))
 const chat = readFileSync(`${APP_DIR}composables/useOnboardingChat.ts`, 'utf8')
 const tutorial = readFileSync(`${APP_DIR}composables/useTutorial.ts`, 'utf8')
 const topics = readFileSync(`${APP_DIR}utils/tutorial-topics.ts`, 'utf8')
+// 2026-09-11：捲動那條不變量橫跨引擎與頁面（引擎記「這一輪的第一則」、頁面負責真的捲）
+const runner = readFileSync(`${APP_DIR}composables/useAgentScriptRunner.ts`, 'utf8')
+const page = readFileSync(`${APP_DIR}pages/admin/onboarding.vue`, 'utf8')
 
 describe('等第一則訊息時不能走進死路', () => {
   it('「檢查好了，繼續等」之後仍留得住回排障的入口', () => {
@@ -126,7 +129,9 @@ describe('拿掉教學閘門之後不可以長回來', () => {
     // ⚠️ 2026-09-10 改看輪播的名字，不看文案字串：兩步的操作說明搬進
     //    `ONBOARDING_CAROUSELS`（圖說跟分鏡綁在一起），`teachConnect` 裡不再字面出現
     //    「Webhook網址」「回應設定」。守的東西沒變——**這兩步都還在**。
-    const step = fnBody('async function teachConnect', 'async function showOaInvite')
+    // ⚠️ 2026-09-11 `showOaInvite` 改名 `loadOaInvite`：見證時刻併成一張兩步驟卡之後，
+    //    這支只負責去查帳號代號、不自己出卡（卡由 `stepFirstMessageWait` 重畫）。
+    const step = fnBody('async function teachConnect', 'async function loadOaInvite')
     expect(step, '不可以再問「要不要教你關」').not.toContain('教我一步步關')
     expect(step, '兩步都要在（貼網址、回應設定）').toContain('ONBOARDING_CAROUSELS.webhookUrl')
     expect(step, '兩步都要在（貼網址、回應設定）').toContain('ONBOARDING_CAROUSELS.responseSettings')
@@ -214,5 +219,68 @@ describe('第一次一定要看導覽（2026-09-02 拍板）', () => {
     expect(check, '前提判斷不可以早於導航').toBeGreaterThan(push)
     // ⛔ 也不能退回一次性 querySelector：對話清單是非同步載入的，剛換頁一定還是空的
     expect(fn, '前提要「短暫等它出現」不是問一次就算').toMatch(/waitForElement\(sel/)
+  })
+})
+
+describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被改回去', () => {
+  it('貼連線資訊前要有交棒句，而且在迴圈裡（教學重播完會再講一次）', () => {
+    // 踩到會怎樣：整條流程都是「按對話裡的按鈕」，只有貼連線資訊這兩步動作跑到**最下面
+    // 那條輸入區**。教學最後一格演的是「在 LINE 那邊按複製」，演完畫面靜止——
+    // 沒有這一句，人會繼續等下一張圖。
+    expect(chatCode, '交棒句不見了').toContain('const HANDOFF =')
+    for (const [fn, next] of [
+      ['async function stepToken', 'async function walkTokenNodes'],
+      ['async function stepSecret', 'async function walkSecretNodes'],
+    ] as const) {
+      const step = fnBody(fn, next)
+      const loop = step.slice(step.indexOf('while ('))
+      expect(loop, `${fn} 的迴圈裡要有交棒句`).toContain('await say(HANDOFF)')
+    }
+  })
+
+  it('換後台是獨立一步，而且那一步不放教學圖', () => {
+    // 踩到會怎樣：「換到另一個後台」如果只是泡泡的後半句，底下緊接著「點右上角設定」的
+    // 輪播——而那顆「設定」**兩個後台都有**，人留在 LINE Developers 照著做一路做得下去，
+    // 錯要到最後接不通才爆（正是 09-06 大搬家要消滅的那類「照著做也會錯」）。
+    // ⛔ 那一步也不可以放輪播：它唯一要傳達的是「換後台了」，自動播放的圖會把眼睛拉走。
+    const walk = fnBody('async function walkSecretNodes', 'async function verifyWebhook')
+    expect(walk, '換後台那一步的按鈕要他宣示「我打開了」').toContain("nextLabel: '我打開了，下一步'")
+    expect(walk, '要有「換後台」徽章').toContain('class="agm-flag"')
+    expect(walk, '兩個後台都要指名道姓').toContain('LINE Developers')
+    const first = walk.slice(0, walk.indexOf("nextLabel: '我打開了，下一步'"))
+    expect(first, '換後台那一步不可以放輪播').not.toContain('carousel:')
+    expect(walk.match(/carousel:/g)?.length, '教學圖只留在第二步').toBe(1)
+  })
+
+  it('見證時刻是一張兩步驟卡，收到訊息時打勾而不是把卡換掉', () => {
+    // 踩到會怎樣：①②寫在泡泡、①要用的 QR 在下一張卡、②的狀態在再下一張卡——
+    // 讀者得自己連線。而後端**只認真的訊息**（加好友寫的是 traceOnly 的 customer_action），
+    // 所以「加好友還不算」這句一定要在第②步旁邊。
+    const step = fnBody('async function stepFirstMessageWait', 'async function redoKeyFlow')
+    expect(step, '見證卡不見了').toContain("kind: 'witness'")
+    expect(step, '收到訊息要打勾（不是把卡換成強調卡）').toContain("setWait('ok'")
+    expect(step, '強調卡要另外接在後面').toContain("kind: 'highlight'")
+    expect(step, '訊息是自己飄進來的，要自己宣告新的一輪').toContain('startTurn()')
+    // 卡住那張清單的第一條＝唯一一條跟設定無關、而且最可能的那條
+    expect(step, '卡住清單要有「只加了好友」那條').toContain('只加了好友')
+    expect(step, '清單是五條').toContain("summary: '照這五條檢查'")
+  })
+
+  it('一輪的第一則要記下來（頁面靠它把第一句貼到頂）', () => {
+    // 踩到會怎樣：捲到底的意思其實是「從最後一句開始看」——一步的內容是泡泡→連結卡→教學圖，
+    // 捲到底剛好把「這一步要做什麼」那句話推出畫面，人看到的是一張沒有前因的圖。
+    const runnerCode = stripComments(runner)
+    expect(runnerCode, 'turnStartId 不見了').toContain('const turnStartId =')
+    // ⛔ 切到**下一支函式的宣告**，不要用「往後抓 N 個字」——第一版抓 600 字，
+    //    視窗直接蓋到隔壁的 onSkip，把 onPick 的 startTurn 整行刪掉測試照樣綠（實測過）。
+    for (const fn of ['function onChoice', 'function onSubmit', 'function onPick', 'function onSkip']) {
+      const i = runnerCode.indexOf(fn)
+      expect(i, `找不到 ${fn}`).toBeGreaterThan(-1)
+      const rest = runnerCode.slice(i + fn.length)
+      const end = rest.search(/\n {2}(?:async )?function /)
+      const body = end > 0 ? rest.slice(0, end) : rest
+      expect(body, `${fn} 要宣告新的一輪`).toContain('startTurn()')
+    }
+    expect(stripComments(page), '頁面要用 turnStartId 決定捲到哪').toContain('turnStartId.value')
   })
 })

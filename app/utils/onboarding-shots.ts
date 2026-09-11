@@ -201,7 +201,9 @@ export const ONBOARDING_CAROUSELS = {
    */
   consoleChannel: [
     { src: '/onboarding/line-console-channel-1.webp', caption: '先登入，<b>用你平常的方式</b>就可以' },
-    { src: '/onboarding/line-console-channel-2.webp', caption: '左邊「<b>Providers</b>」底下點<b>你的帳號</b>（啟用時取的那個名字）<br>⚠️ 圖上有三個，你多半<b>只有一個</b>，那是正常的' },
+    // ⛔ 「你多半只有一個，那是正常的」2026-09-11 改寫（同「多半還開著」那條）：
+    //    不替他猜螢幕上有幾個，直接講結論——他要的是「只有一個不是我少了什麼」。
+    { src: '/onboarding/line-console-channel-2.webp', caption: '左邊「<b>Providers</b>」底下點<b>你的帳號</b>（啟用時取的那個名字）<br>⚠️ 圖上有三個，<b>你只有一個也正常</b>' },
     { src: '/onboarding/line-console-channel-3.webp', caption: '<b>同名卡片可能有兩張</b>：認下面寫著「Messaging API」小字的那張' },
   ],
   /**
@@ -242,8 +244,14 @@ export const ONBOARDING_CAROUSELS = {
    *    再叫他點一次是叫他去他已經站著的地方。判準是「中間有沒有離開」，不是「同不同一頁」。
    */
   responseSettings: [
+    // ⚠️ 2026-09-11 補第 2 格「聊天」（老闆實機截圖抓到）：「回應功能」那一區有**三個開關**，
+    //    我們原本只教 Webhook。「聊天」關著的話，他點進 LINE 後台的「聊天」會看到整頁
+    //    「『聊天』功能目前關閉中」，而第 4 格要設的「聊天的回應方式」也是掛在它底下的。
+    //    ⛔ 中間那顆「加入好友的歡迎訊息」**明講不用動**——一次要人動兩顆開關，不講清楚
+    //       哪顆不要碰，就會有人三顆一起開。
     { src: '/onboarding/oam-response-settings-1.webp', caption: '左邊選「<b>回應設定</b>」' },
-    { src: '/onboarding/oam-response-settings-2.webp', caption: '把「<b>Webhook</b>」<b>打開</b>（已經是綠的就不用動）' },
-    { src: '/onboarding/oam-response-settings-3.webp', caption: '「聊天的回應方式」選「<b>手動聊天</b>」⛔ 別選「手動聊天＋自動回應訊息」' },
+    { src: '/onboarding/oam-response-settings-2.webp', caption: '把「<b>聊天</b>」<b>打開</b>（已經是綠的就不用動）' },
+    { src: '/onboarding/oam-response-settings-3.webp', caption: '再把「<b>Webhook</b>」<b>打開</b>——中間那個「加入好友的歡迎訊息」<b>不用動</b>' },
+    { src: '/onboarding/oam-response-settings-4.webp', caption: '「聊天的回應方式」選「<b>手動聊天</b>」⛔ 別選「手動聊天＋自動回應訊息」' },
   ],
 } as const

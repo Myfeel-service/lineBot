@@ -1810,7 +1810,8 @@ const OB_BEATS: ObBeat[] = [
   { role: 'agent', html: '接下來是<b>第二組連線資訊：Channel Secret</b>。<br>它的用途很簡單，就是幫忙確認：收到的訊息真的來自 LINE，而不是其他地方假冒傳來的。' },
   { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 2 },
   { role: 'user', html: '都設好了，幫我檢查' },
-  { role: 'agent', html: '連線成功了！🎉 你的 LINE 官方帳號已經成功連上系統，可以正式使用 MiniMe 了。' },
+  // 2026-09-11 跟著劇本去重（原本「連線成功了！…成功連上系統，可以正式使用 MiniMe 了」講兩次）
+  { role: 'agent', html: '連線成功了 🎉 LINE 那邊跟 MiniMe 已經接上了。' },
   { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 3 },
   { role: 'agent', html: '收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。' },
   { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 4 },

@@ -192,6 +192,22 @@
   white-space: nowrap;
 }
 
+/* 「換後台」記號（泡泡文案裡的 <span class="agm-flag">換後台</span>，2026-09-11）。
+   ⛔ 不是再加一句話：那則泡泡的粗體已經用滿（兩處），再加粗只會互相稀釋。
+   形狀沿用旁邊的步數徽章＝同一頁只有一種徽章長相，只換顏色：琥珀＝「這裡要注意一下」。 */
+.agm-flag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+  font-size: 11.5px;
+  font-weight: 700;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
 /* 選項鈕：長在對話流的最新訊息下面（LINE 快速按鈕位置，2026-08-19 老闆拍板）。
    靠右＝使用者這一側；點了會變成右側的使用者泡泡，按鈕列即消失 */
 .agm-choices {
@@ -473,48 +489,151 @@
   &--skipped { color: var(--el-text-color-secondary); }
 }
 
-/* 加好友邀請卡（2026-08-28）：QR 在左、帳號 ID 與說法在右。
-   QR 產不出來時左邊整個不畫，右半照樣讀得懂——ID 與連結才是主體，圖是加速器。 */
-.agm-invite {
-  display: flex;
-  gap: 12px;
-  align-items: center;
+/* 見證時刻的兩步驟卡（2026-09-11，取代舊的 .agm-invite ＋ 一張獨立的等待狀態卡）。
+   ⭐ 每一步旁邊就是**那一步要用的東西**：①＝QR 與帳號代號、②＝現在的狀態。
+   ⚠️ 這張卡自己畫外框（不套 .agm-card）：它是兩段式的，內距要落在每一段上。 */
+.agm-witness {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 88%;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 14px;
 
+  /* position 是為了下面那條**內縮**分隔線（用 ::before 畫、不用 border-top）：
+     滿版的線把卡切成兩半，內縮到跟內容同一條左界才像「同一張卡的兩段」。 */
+  &__row {
+    position: relative;
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  &__row + &__row::before {
+    content: "";
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    top: 0;
+    height: 1px;
+    background: var(--el-border-color-lighter);
+  }
+
+  /* 編號：實心圓點＋一圈淡光暈。⛔ 不用純文字「①」——它同時當這一步的錨，
+     眼睛沿著左邊那一欄走得下來；光暈讓它浮起來，又不搶走標題的注意力。 */
+  &__no {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--el-color-primary);
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__t {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: var(--el-text-color-primary);
+    line-height: 1.65;
+  }
+
+  /* 窄的時候 QR 與說明各佔一行 */
+  &__qrrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 10px;
+    align-items: flex-start;
+  }
+
+  /* ⚠️ QR 要留白邊（quiet zone）才掃得到，所以是 padding 不是把圖撐滿整格——
+     真實的 QR 也長這樣，緊貼邊框看起來就不像可以掃的東西。 */
   &__qr {
     flex: none;
-    width: 110px;
-    height: 110px;
-    border-radius: 8px;
+    width: 104px;
+    height: 104px;
+    box-sizing: border-box;
+    padding: 7px;
     border: 1px solid var(--el-border-color-lighter);
+    border-radius: 10px;
     background: #fff;
   }
 
   &__main {
+    flex: 1;
     min-width: 0;
   }
 
-  /* 帳號 ID 是要照著打進 LINE 搜尋框的東西：等寬字、可以選取複製 */
+  /* 帳號代號是要照著打進 LINE 搜尋框的東西：等寬字、可以選取複製；
+     放進淡底膠囊＝「這就是那個值」，也是第①步的視覺重心 */
   &__id {
+    display: inline-block;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 15px;
     font-weight: 700;
     color: var(--el-text-color-primary);
+    background: var(--el-fill-color-light);
+    border-radius: 8px;
+    padding: 4px 10px;
     user-select: all;
   }
 
   &__how {
-    margin: 4px 0 6px;
+    margin: 6px 0 8px;
     font-size: 12.5px;
-    line-height: 1.7;
+    line-height: 1.75;
     color: var(--el-text-color-secondary);
   }
 
+  /* 「正在用手機看這一頁？」是一個**動作**不是一句附註，所以長得像可以按的東西 */
   &__link {
-    color: var(--el-color-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12.5px;
     font-weight: 600;
+    color: var(--el-color-primary);
     text-decoration: none;
+    border: 1px solid var(--el-color-primary-light-7);
+    border-radius: 999px;
+    padding: 5px 12px;
 
-    &:hover { text-decoration: underline; }
+    &:hover {
+      background: var(--el-color-primary-light-9);
+      border-color: var(--el-color-primary-light-5);
+    }
+  }
+
+  /* 狀態做成膠囊＝跟旁邊的正文分開，一眼看出「這是現在的狀態」。
+     ⚠️ inline-flex 要蓋掉 .agm-status 的 flex，否則會拉成滿版一條。 */
+  &__wait {
+    display: inline-flex;
+    margin-top: 10px;
+    font-size: 12.5px;
+    background: var(--el-fill-color-light);
+    border-radius: 999px;
+    padding: 5px 12px;
+
+    &--ok {
+      background: var(--el-color-success-light-9);
+      color: var(--el-color-success);
+      font-weight: 600;
+    }
+
+    &--skipped {
+      background: var(--el-color-warning-light-9);
+      color: var(--el-text-color-secondary);
+    }
   }
 }
 
@@ -591,7 +710,32 @@
     align-items: center;
   }
 
-  &__input { flex: 1; min-width: 0; }
+  &__input {
+    flex: 1;
+    min-width: 0;
+
+    /* 輪到你了：輸入格現身時**亮三下就停**（2026-09-11）。
+       ⭐ 為什麼需要：整條流程從頭到尾都是「按對話裡的按鈕」，只有貼連線資訊這兩步
+          動作換了位置——跑到最下面這條輸入區，而且沒有任何一句話說。
+       ⛔ 不做無限閃：一來「畫面永遠在動」才剛拿掉，二來一直閃會被讀成「這裡出錯了」——
+          這裡沒有錯，只是輪到你。⚠️ 動畫掛在 el-input 的外框上（`.el-input__wrapper`
+          才是看得到邊框的那層）；⛔ 這是全域 partial，不能用 `:deep()`（會靜默失效）。 */
+    &.is-turn .el-input__wrapper {
+      animation: agd-turn-glow 1.1s ease-out 3;
+    }
+  }
+
+  @keyframes agd-turn-glow {
+    0% { box-shadow: 0 0 0 0 var(--el-color-primary-light-5); }
+    100% { box-shadow: 0 0 0 10px rgb(0 0 0 / 0%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &__input.is-turn .el-input__wrapper {
+      animation: none;
+      box-shadow: 0 0 0 3px var(--el-color-primary-light-7);
+    }
+  }
 
   &__skip {
     flex: none;
