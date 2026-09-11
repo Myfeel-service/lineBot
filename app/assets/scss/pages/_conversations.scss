@@ -98,6 +98,21 @@
   }
 
   /**
+   * 兩顆篩選（只看未讀／只看待跟進）同一列。
+   *
+   * 側欄可以拖寬（200〜520px）：寬的時候兩顆並排、窄的時候自己換行，
+   * ⛔ 不要用 nowrap——兩顆加起來約 240px，239px 的預設寬度會直接把第二顆擠出去
+   *    （側欄 overflow-x 是 hidden，擠出去就是**看不見也捲不到**，不是出現捲軸）。
+   */
+  .conv-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  /**
    * 人工標記的篩選。刻意和上面那排狀態分頁長得不一樣（旗子 + 暖色），
    * 因為它跟那排不是同一種東西：那排是系統判定的會話狀態，這個是人自己標的。
    */
@@ -146,6 +161,25 @@
     outline-offset: 1px;
   }
 
+  /**
+   * 「只看未讀」用列表上那顆紅點當圖示，不用 emoji：按鈕要和它篩的東西是同一個記號，
+   * 人才不用先讀文字才知道兩者是同一件事（旗子那顆同理，對應右鍵選單的「待跟進」）。
+   */
+  .conv-flag-filter__dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: var(--el-color-danger, #f56c6c);
+    flex-shrink: 0;
+  }
+
+  /* 亮起來用紅點自己的顏色（待跟進那顆是琥珀）：兩個篩選一眼分得出誰在作用 */
+  .conv-flag-filter--unread.active {
+    background: rgba(245, 108, 108, 0.14);
+    border-color: rgba(245, 108, 108, 0.45);
+    color: #b23c3c;
+  }
+
   /* 清單被上限截斷時的說明，不要讓人以為看到的就是全部 */
   .conv-list-notice {
     margin: 0 0.25rem 0.35rem;
@@ -155,6 +189,37 @@
     color: #a35b00;
     font-size: 0.72rem;
     line-height: 1.35;
+  }
+
+  /**
+   * 「只看未讀」掃到哪為止那一行。它在捲動區**外面**（釘在搜尋列底下），
+   * 所以左右邊距要對齊上面的搜尋框（0.75rem），不是清單列的 0.25rem。
+   */
+  .conv-unread-scan {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.4rem;
+    margin: 0.4rem 0.75rem 0;
+    flex-shrink: 0;
+  }
+
+  .conv-unread-scan__more {
+    border: 0;
+    background: none;
+    padding: 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .conv-unread-scan__more:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 
   /* 空清單的補充說明（例如：待跟進是空的時候，講一下怎麼標） */

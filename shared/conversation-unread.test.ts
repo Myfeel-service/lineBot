@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { customerLastMessageMs, isConversationUnread } from './conversation-unread'
+import { customerLastMessageMs, isConversationUnread, keepUnreadRows } from './conversation-unread'
 
 /** 客人 09:00 傳的那句 */
 const CUSTOMER_MS = 1_700_000_000_000
@@ -59,5 +59,34 @@ describe('舊資料退路：2026-08-19 之前的對話沒有「客人最後一�
   it('新欄位一旦有值就完全蓋過退路（不會被「最後一則是我們回的」擋掉）', () => {
     const row = { customerLastMs: CUSTOMER_MS, lastMessageMs: REPLY_MS, lastDirection: 'outgoing' }
     expect(customerLastMessageMs(row)).toBe(CUSTOMER_MS)
+  })
+})
+
+describe('「只看未讀」篩選（H-29）', () => {
+  /** 三列：A 未讀、B 已讀、C 已讀但正開著 */
+  const rows = [{ id: 'A' }, { id: 'B' }, { id: 'C' }]
+  const unread = (r: { id: string }) => r.id === 'A'
+
+  it('只留未讀的那幾列', () => {
+    expect(keepUnreadRows(rows, unread, () => false)).toEqual([{ id: 'A' }])
+  })
+
+  it('正在看的那一列即使已讀也要留著（點開的當下就蓋已讀，不留會當場從清單消失）', () => {
+    expect(keepUnreadRows(rows, unread, r => r.id === 'C')).toEqual([{ id: 'A' }, { id: 'C' }])
+  })
+
+  it('留下來的順序照原本的清單，不會因為被留下而跳到別的位置', () => {
+    const kept = keepUnreadRows(rows, r => r.id !== 'B', () => false)
+    expect(kept.map(r => r.id)).toEqual(['A', 'C'])
+  })
+
+  it('一列未讀都沒有、也沒開著任何一列 → 空清單（呼叫端據此決定要不要再往下掃幾頁）', () => {
+    expect(keepUnreadRows(rows, () => false, () => false)).toEqual([])
+  })
+
+  it('不動原本的陣列（清單本身還要餵給其他計數，篩選只能是一層視角）', () => {
+    const original = [...rows]
+    keepUnreadRows(rows, unread, () => false)
+    expect(rows).toEqual(original)
   })
 })

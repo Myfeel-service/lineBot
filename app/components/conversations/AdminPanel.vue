@@ -68,24 +68,62 @@
       </div>
       <div class="conv-search-bar">
         <el-input v-model="searchText" placeholder="搜尋名稱…" clearable size="small" />
-        <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
-             和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
-        <el-tooltip
-          v-if="activeTab === 'all'"
-          :content="`待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）${followUpCount === null ? '。⚠️數量這次讀不到，篩選仍可用' : ''}`"
-          placement="bottom"
-        >
-          <button
-            type="button"
-            class="conv-flag-filter"
-            :class="{ active: followUpFilterOn }"
-            :aria-pressed="followUpFilterOn"
-            @click="toggleFollowUpFilter"
+        <!-- 兩顆篩選放同一列（側欄夠寬時並排、窄了自己換行）：它們是同一種東西
+             ——「把清單縮到某一群」，和上面那排「換一個清單」的分頁不同 -->
+        <div class="conv-filter-row">
+          <!-- 紅點看得到卻沒辦法只看那幾列：整排掃下來很容易漏掉中間那一顆（H-29）。
+               五個分頁都給，因為紅點本來就五個分頁都會亮 -->
+          <el-tooltip
+            :content="`未讀＝客人講過話、還沒有人看過那段對話（和列表上的紅點同一個口徑）。已讀記在你這台電腦，同事看過不影響你這邊。${unreadFilterOn ? `目前掃過已載入的 ${unreadScannedCount} 筆` : '只看得到已載入的那幾頁，往下捲會繼續掃'}`"
+            placement="bottom"
           >
-            <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
-            只看待跟進{{ typeof followUpCount === 'number' && followUpCount > 0 ? `（${followUpCount}）` : '' }}
-          </button>
-        </el-tooltip>
+            <button
+              type="button"
+              class="conv-flag-filter conv-flag-filter--unread"
+              :class="{ active: unreadFilterOn }"
+              :aria-pressed="unreadFilterOn"
+              @click="toggleUnreadFilter"
+            >
+              <span class="conv-flag-filter__dot" aria-hidden="true" />
+              只看未讀{{ unreadRowCount > 0 ? `（${unreadRowCount}）` : '' }}
+            </button>
+          </el-tooltip>
+          <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
+               和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
+          <el-tooltip
+            v-if="activeTab === 'all'"
+            :content="`待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）${followUpCount === null ? '。⚠️數量這次讀不到，篩選仍可用' : ''}`"
+            placement="bottom"
+          >
+            <button
+              type="button"
+              class="conv-flag-filter"
+              :class="{ active: followUpFilterOn }"
+              :aria-pressed="followUpFilterOn"
+              @click="toggleFollowUpFilter"
+            >
+              <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
+              只看待跟進{{ typeof followUpCount === 'number' && followUpCount > 0 ? `（${followUpCount}）` : '' }}
+            </button>
+          </el-tooltip>
+        </div>
+      </div>
+      <!--
+        「只看未讀」掃到哪為止。
+
+        ⛔ 這行字不能省：已讀存在這台電腦，所以篩選只能在前端做，它**只掃得到已經載入的
+        那幾頁**。不講的話，未讀落在第 3 頁的人看到的是一個空清單（或少幾列的清單），
+        而畫面上沒有任何東西告訴他「還有沒看過的沒被算進來」。
+        ⛔ 也刻意放在捲動區**外面**：放進清單裡會跟著捲走，一捲下去就等於沒講。
+      -->
+      <div v-if="unreadFilterOn && listHasMore" class="conv-list-notice conv-unread-scan">
+        <span>只看未讀：掃過已載入的 {{ unreadScannedCount }} 筆，更早的還沒載入</span>
+        <button
+          type="button"
+          class="conv-unread-scan__more"
+          :disabled="listLoading || listLoadingMore"
+          @click="scanMoreForUnread"
+        >{{ listLoadingMore ? '找找看…' : '再往下找' }}</button>
       </div>
       <div v-if="listLoading && !sidebarItems.length" class="split-sidebar-loading">
         <div class="spinner" />
@@ -1269,7 +1307,7 @@ import {
 } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
 import { assigneeInitial, NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
-import { customerLastMessageMs, isConversationUnread } from '~~/shared/conversation-unread'
+import { customerLastMessageMs, isConversationUnread, keepUnreadRows } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
@@ -1925,6 +1963,15 @@ const inputText = ref('')
 const searchText = ref('')
 /** 「只看待跟進」：只在「全部」分頁有意義（其他分頁看的是會話狀態，不是人工標記） */
 const followUpFilterOn = ref(false)
+/**
+ * 「只看未讀」（H-29）。和上面那個不一樣的地方有兩處，都是刻意的：
+ *
+ * 1. **五個分頁都有**——紅點本來就五個分頁都會亮（已讀記在客人身上，見 convLastReadMs），
+ *    只在「全部」給篩選的話，在「待真人」看到三顆紅點卻沒有辦法只看那三列。
+ * 2. **不送給後端**——已讀存在每台電腦自己的 localStorage，後端不知道誰看過什麼，
+ *    所以這是畫面層的篩選（見 shared/conversation-unread.ts 的 keepUnreadRows）。
+ */
+const unreadFilterOn = ref(false)
 /** 待跟進數超過顯示上限時要在列表上明講，不要讓人以為看到的就是全部 */
 const followUpListTruncated = ref(false)
 // null＝這次讀不到（缺索引之類）：不顯示數字、tooltip 講明，⛔不可以拿 0 冒充（D-43④）
@@ -2350,25 +2397,66 @@ function applyPinnedGroup<T extends { pinned?: boolean }>(rows: T[]): T[] {
   return pinnedGroupOpen.value ? sorted : sorted.filter(r => !r.pinned)
 }
 
-const sessionSidebarItems = computed<SessionItem[]>(() => {
+/**
+ * 「只看未讀」篩完的對話列（還沒套釘選區）。規則與那條「正在看的那一列要留著」的
+ * 例外寫在 shared/conversation-unread.ts，這裡只負責把兩種列各自的欄位餵進去。
+ *
+ * ⛔ 篩選要在**套釘選區之前**做：釘選區的標題「📌 釘選中（12）」數的是同一份列表，
+ *    在後面篩的話會變成標題寫 12、底下一列都沒有。
+ */
+const convRowsInView = computed<ConvItem[]>(() => {
+  if (!unreadFilterOn.value) return conversations.value
+  return keepUnreadRows(
+    conversations.value,
+    c => isRowUnread(c.userId, convRowCustomerMs(c)),
+    // 「全部」分頁選中的是人（沒有選特定某一場）＝和列表上 :active 同一個判斷
+    c => c.userId === selectedUserId.value && !selectedSessionId.value,
+  )
+})
+
+const sessionRowsInView = computed<SessionItem[]>(() => {
   const kw = searchText.value.toLowerCase().trim()
   const rows = !kw || activeTab.value === 'all'
     ? sessions.value
     : sessions.value.filter(s => s.displayName.toLowerCase().includes(kw))
-  return applyPinnedGroup(rows)
+  if (!unreadFilterOn.value) return rows
+  return keepUnreadRows(
+    rows,
+    s => isRowUnread(s.userId, sessionRowCustomerMs(s)),
+    s => s.sessionId === selectedSessionId.value,
+  )
 })
 
-const convSidebarItems = computed<ConvItem[]>(() => applyPinnedGroup(conversations.value))
+const sessionSidebarItems = computed<SessionItem[]>(() => applyPinnedGroup(sessionRowsInView.value))
+
+const convSidebarItems = computed<ConvItem[]>(() => applyPinnedGroup(convRowsInView.value))
 
 /**
- * 這個分頁上有幾筆被釘選（給區塊標題用）。
- * ⛔ 要數收起來之前的原始清單，不能數 sidebarItems——收起來之後那份是 0，
- *    標題就會變成「釘選中（0）」而且再也點不開。
+ * 「只看未讀」現在留下幾列（含正在看的那一列）。
+ * 刻意數**套釘選區之前**那份：釘選區收起來時 sidebarItems 會少掉釘選那幾列，
+ * 拿它判斷「要不要再往下掃」就會在收起釘選區時白掃好幾頁。
+ */
+const unreadRowsInViewCount = computed(() =>
+  activeTab.value === 'all' ? convRowsInView.value.length : sessionRowsInView.value.length,
+)
+
+/** 「只看未讀」到目前為止掃過幾筆對話＝已經載進來的列數（不是篩完剩下的筆數） */
+const unreadScannedCount = computed(() =>
+  activeTab.value === 'all' ? conversations.value.length : sessions.value.length,
+)
+
+/**
+ * 這個分頁上有幾筆被釘選（給區塊標題用）＝數**套釘選區之前、篩選之後**那一份。
+ *
+ * ⛔ 不能數 sidebarItems（套過釘選區的）——收起來之後那份是 0，標題就會變成
+ *    「釘選中（0）」而且再也點不開。
+ * ⛔ 也不能數原始清單——「只看未讀」開著時原始清單裡的釘選多半已經被篩掉，
+ *    標題會寫「釘選中（12）」，底下一列都沒有。
  */
 const pinnedRowCount = computed(() => {
   const rows: { pinned?: boolean }[] = activeTab.value === 'all'
-    ? conversations.value
-    : sessions.value
+    ? convRowsInView.value
+    : sessionRowsInView.value
   return rows.filter(r => r.pinned).length
 })
 
@@ -2391,6 +2479,37 @@ const lastPinnedSessionIndex = computed(() => lastPinnedEdge(sessionSidebarItems
 const listAutoRefreshPaused = computed(() => activeTab.value === 'all' && !!searchText.value.trim())
 
 const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
+  /**
+   * 「只看未讀」的空清單有**兩種**，下一步完全不同，所以不能共用一句「沒有未讀」：
+   *
+   * · 後面還有沒載入的頁 → 真正的意思是「**掃到的這幾筆**裡沒有未讀」，要繼續往下找。
+   * · 已經掃到底     → 才是真的一封未讀都沒有，可以收工。
+   *
+   * 先前若寫成同一句，第一種情況就是在說謊：人以為清空了，其實只是還沒載到那幾列。
+   */
+  /**
+   * ⛔ 只有在「這個分頁本來有東西、是篩選把它們拿掉的」時候才講未讀。
+   * 底下一筆都沒載到（例如「待真人（0）」本來就是空的）卻寫「沒有未讀的對話」，
+   * 等於把分頁的空狀態說成篩選的結果——人會以為「我已經讀完了」，其實是那個分頁本來就沒人。
+   */
+  if (unreadFilterOn.value && unreadScannedCount.value > 0) {
+    // 同時還套著別的條件時要一起講：不講的話「沒有未讀」會被讀成整個 workspace 的結論
+    const also = [
+      followUpFilterOn.value ? '待跟進' : '',
+      searchText.value.trim() ? `搜尋「${searchText.value.trim()}」` : '',
+    ].filter(Boolean).join('＋')
+    const alsoText = also ? `（還套著${also}）` : ''
+    if (listHasMore.value) {
+      return {
+        title: `已載入的 ${unreadScannedCount.value} 筆對話裡沒有未讀${alsoText}`,
+        hint: '更早的對話還沒載入——按上面那行的「再往下找」繼續掃，或關掉這個篩選',
+      }
+    }
+    return {
+      title: `沒有未讀的對話${alsoText}`,
+      hint: '未讀＝客人講過話、還沒有人看過那段對話（和列表上的紅點同一個口徑）。已讀記在你這台電腦，同事看過不影響你這邊',
+    }
+  }
   if (followUpFilterOn.value) {
     return searchText.value
       ? { title: '待跟進裡沒有符合的對話', hint: '' }
@@ -2891,10 +3010,55 @@ async function toggleFollowUpFilter() {
   await loadList('reset')
 }
 
+/**
+ * 「只看未讀」一次往下掃幾頁（一頁 30 筆）。
+ *
+ * 有上限是因為這個 repo 有讀取費暴衝的前科（`E-8`）：一頁就是一次查詢，
+ * 沒有上限的話「往下找到有為止」在一個都沒有的帳號上會把整個 workspace 掃過一遍。
+ * 掃到就停（見 scanMoreForUnread），所以常見情況根本用不到 5 次。
+ */
+const UNREAD_SCAN_PAGES = 5
+
+/**
+ * 往下多載幾頁，直到「篩完的清單長出新的一列」為止。
+ *
+ * 為什麼需要它：清單是往下捲才載下一頁的，而「只看未讀」篩完通常只剩零星幾列，
+ * 撐不出捲軸＝捲動事件永遠不會觸發（既有的 autoFillSidebarList 也接不上手，
+ * 它要拿到清單那顆 DOM 才會動，空清單時那顆根本不存在）。
+ * 沒有這一支的話，未讀剛好落在第 2 頁的人打開篩選只會看到一個空清單，
+ * 而且沒有任何辦法讓它繼續找。
+ */
+async function scanMoreForUnread() {
+  for (let i = 0; i < UNREAD_SCAN_PAGES; i++) {
+    if (!listHasMore.value) return
+    const foundBefore = unreadRowsInViewCount.value
+    const loadedBefore = unreadScannedCount.value
+    await loadMoreList()
+    // 沒長就停：後端 hasMore 若一直為真（或這次載入失敗），不要在這裡空轉
+    if (unreadScannedCount.value <= loadedBefore) return
+    if (unreadRowsInViewCount.value > foundBefore) return
+  }
+}
+
+/**
+ * 篩選開著、但這一頁一列未讀都沒有 → 多半是未讀落在還沒載入的後面幾頁，自己往下掃幾頁，
+ * 不要丟一個空清單給人。掃到哪為止、還剩多少沒掃，清單上方那行字會講（見 template）。
+ */
+async function maybeScanForUnread() {
+  if (unreadFilterOn.value && unreadRowsInViewCount.value === 0) await scanMoreForUnread()
+}
+
+async function toggleUnreadFilter() {
+  unreadFilterOn.value = !unreadFilterOn.value
+  await maybeScanForUnread()
+}
+
 async function switchTab(tab: TabValue) {
   activeTab.value = tab
   // 「只看待跟進」是「全部」分頁專用的視角，切走就關掉，免得切回來還套著看不見的篩選
   if (tab !== 'all') followUpFilterOn.value = false
+  // ⛔「只看未讀」刻意**不**跟著關：紅點五個分頁都會亮，它在每個分頁都成立，
+  //   而且那顆按鈕在每個分頁都看得見（不是看不見的篩選）
   selectedSessionId.value = null
   allTabActiveSession.value = null
   sessionMeta.value = null
@@ -2904,6 +3068,8 @@ async function switchTab(tab: TabValue) {
   if (tab === 'all' && selectedUserId.value && selectedUser.value) {
     await selectUser(selectedUser.value)
   }
+  // 換分頁等於重新載入第一頁，未讀篩選要重新掃一次（否則切過來就是一個空清單）
+  await maybeScanForUnread()
 }
 
 async function selectSession(s: SessionItem) {

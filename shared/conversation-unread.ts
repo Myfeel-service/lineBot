@@ -58,3 +58,24 @@ export function isConversationUnread(row: UnreadRowTimes, readMs: number): boole
   const ms = customerLastMessageMs(row)
   return ms > 0 && ms > readMs
 }
+
+/**
+ * 「只看未讀」要留下哪幾列（H-29）。規則本體是上面那支，這裡只多一條例外：
+ *
+ * **正在看的那一列，就算紅點已經消掉也要留著。** 點開一列的同一瞬間就蓋了已讀
+ * （見 AdminPanel.vue 的 markConversationRead），不留的話那一列會在手指還壓在上面時
+ * 從清單消失、下一列遞補到游標底下（下一次點擊就點到別人），而且右邊明明開著這段對話，
+ * 左邊卻找不到它在哪一列——看起來像自己把它弄丟了。
+ *
+ * ⛔ 這是**畫面層**的篩選，不是查詢條件：已讀記在每台電腦自己的 localStorage
+ *    （見 convLastReadMs），後端不知道誰看過什麼，所以它只掃得到「已經載進來的那幾頁」。
+ *    沒掃到的部分一定要在畫面上講出來，不可以讓人以為看到的就是全部——
+ *    清單上方那行「掃過最新的 N 筆」就是幹這件事的。
+ */
+export function keepUnreadRows<T>(
+  rows: T[],
+  isUnread: (row: T) => boolean,
+  isOpen: (row: T) => boolean,
+): T[] {
+  return rows.filter(row => isUnread(row) || isOpen(row))
+}
