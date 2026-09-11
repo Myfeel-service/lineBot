@@ -393,8 +393,17 @@ export function useOnboardingChat() {
       await walkTokenNodes()
     // 教學走完（或選直接貼）就亮輸入格；輸入格的後門「我想看教學」按了直接切教學，
     // 不再回選單繞一圈（2026-08-19 老闆實測：回選單要多按一次，泡泡疊一排很吵）
+    //
+    // ⛔ 2026-09-11 補上漏掉的一處：**走過教學的人不再給「再看一次教學」**——
+    //    判準是「教學現在還在不在畫面上」，不是「他看過了嗎」。聊天記錄不會消失，
+    //    走過教學的人教學就在輸入格正上方（量過：100% 可見、距輸入格 168px），
+    //    而按下去會從第一則重走、還要再按一次「下一步」，聊天記錄從 1,233px 長到 1,815px。
+    //    這條規則 `redoKeyFlow`（`taught ? undefined : …`）與第二組的輸入格早就這樣做了，
+    //    只有這裡沒跟上——而第一組的輸入格正是當初點名的那一處。
+    // ⛔ 走「我會拿，直接貼上」快路的人**照舊要給**：那是他唯一的教學入口，
+    //    按完教學就在上面、這顆鈕下一圈自然消失。
     while (!line.tokenConfigured) {
-      const ok = await askAndSaveToken(line, { escapeLabel: taught ? '再看一次教學' : '等等，我想看教學' })
+      const ok = await askAndSaveToken(line, { escapeLabel: taught ? undefined : '等等，我想看教學' })
       if (!ok && !line.tokenConfigured) {
         taught = true
         await walkTokenNodes()
@@ -774,11 +783,16 @@ export function useOnboardingChat() {
               { text: '手機加好友加到別的帳號了' },
               { text: '第二組連線資訊（Channel Secret）貼錯——訊息其實有送到，被我們當成假冒的丟掉' },
             ],
-            // 2026-09-02 補：這張卡原本一個連結都沒有。前三條都要人回 LINE Developers
-            // 才檢查得了，卡住的人照著念完卻沒有一個地方點得過去——這一段正好是全流程
-            // 最需要「當場點過去」的時刻。第四條在同一個後台的另一個分頁，同一個連結到得了。
-            href: 'https://developers.line.biz/console/',
-            hrefLabel: '打開 LINE Developers 對照',
+            // 2026-09-02 補：這張卡原本一個連結都沒有。四條都要人回後台才檢查得了，
+            // 卡住的人照著念完卻沒有一個地方點得過去——這一段正好是全流程
+            // 最需要「當場點過去」的時刻。
+            // ⛔ 2026-09-11 改指官方帳號後台（原本指 LINE Developers）：09-06 的
+            //    「第二組連線資訊、貼網址、開開關全搬進官方帳號後台」（commit 01f8035）
+            //    之後，這四條**沒有一條**還在 LINE Developers ——①網址與④Channel Secret
+            //    在「設定 → Messaging API」、②開關在「回應設定」、③跟後台無關。
+            //    這一則出現的時機正是人卡住又焦慮的時候，送錯後台等於多繞一趟。
+            href: 'https://manager.line.biz/',
+            hrefLabel: '打開官方帳號後台對照',
           })
           askOptions = stallOptions
           continue
