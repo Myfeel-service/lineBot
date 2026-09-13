@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { isLeadFailureReason } from '~~/shared/lead-page-failure'
+import { isLeadFailureReason, isLeadTimeoutStage } from '~~/shared/lead-page-failure'
 import { resolveWorkspaceIdByLiffChannelId } from '~~/server/utils/liff-tenant-resolve'
 import { liffChannelIdFromLiffId } from '~~/server/utils/liff-token'
 import { recordLeadPageFailure } from '~~/server/utils/lead-page-failures'
@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
     return { ok: false as const, recorded: false as const }
   }
 
-  const b = body as { liffId?: unknown, liffClientId?: unknown, campaignCode?: unknown, detail?: unknown }
+  const b = body as { liffId?: unknown, liffClientId?: unknown, campaignCode?: unknown, detail?: unknown, stage?: unknown }
   const liffId = String(b.liffId || '').trim()
   const channelHint = String(b.liffClientId || '').trim() || liffChannelIdFromLiffId(liffId)
 
@@ -44,6 +44,9 @@ export default defineEventHandler(async (event) => {
       reason,
       campaignCode: String(b.campaignCode || ''),
       detail: String(b.detail || ''),
+      // 舊版前端不會送 stage；認不得的值一律當 unknown，⛔ 不可以照單寫進去
+      // （那會在統計裡長出一堆只出現一次的假階段，跟沒分是一樣的）
+      stage: isLeadTimeoutStage(b.stage) ? b.stage : 'unknown',
     })
   }
   catch (e) {

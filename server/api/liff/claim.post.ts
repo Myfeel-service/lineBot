@@ -7,6 +7,7 @@ import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
 import { verifyLiffAccessToken, warnOnLiffChannelMismatch } from '~~/server/utils/liff-token'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { assertCampaignLinkActive } from '~~/server/utils/lead-campaign-active'
+import { recordLeadPageSuccess } from '~~/server/utils/lead-page-failures'
 
 function sharedUserClaimDocId(campaignId: string, lineUserId: string): string {
   return createHash('sha256').update(`lead_shared|${campaignId}|${lineUserId}`).digest('hex')
@@ -247,6 +248,12 @@ export default defineEventHandler(async (event) => {
   const immediatelyApplied = !!followProfile
 
   const redirectUrl = String(claim.redirectUrl || '').trim() || undefined
+
+  // 記一次成功，給後台「幾次沒完成」當分母。
+  // ⛔ 不 await、失敗吞掉：這只是統計，絕不能讓它擋下或弄壞一次已經成立的綁定。
+  recordLeadPageSuccess(db, claimWorkspaceId).catch(e =>
+    console.warn('[liff/claim] 記成功次數失敗（不影響綁定）:', String((e as Error)?.message ?? e).slice(0, 160)),
+  )
 
   console.log('[liff/claim] claimed:', docRef.id, 'userId:', lineUserId, 'immediatelyApplied:', immediatelyApplied)
   return {

@@ -193,6 +193,12 @@
               客人打不開的時候，商家本來完全不會知道（`G-82`）：登記檢查只查得到
               「Endpoint URL 有沒有寫對」，連結被轉傳截斷、LIFF 被停用這些它都看不到。
               ⚠️ 講「次」不講「位客人」——回報端點沒辦法驗身分，這是提醒訊號不是報表。
+
+              ⭐ 2026-09-13 改版（`G-90`）：**只列商家動得了的項目**。
+              原本六種並排成一張紅色清單、每列都附「去哪裡改什麼」，但其中兩種
+              （客人網路慢、綁定途中斷線）根本不是商家能處理的，而且佔了絕大多數——
+              看到只會覺得系統壞了卻不知道能做什麼。現在動得了的才列成清單、
+              紅燈也只為它們亮；動不了的收成一句話，並把同期成功人數放進來當分母。
             -->
             <AdminBlockStatus
               v-if="leadErrors && !leadErrors.ok"
@@ -201,24 +207,31 @@
               detail="重新整理可以再試一次。這不代表沒有客人失敗。"
             />
             <AdminBlockStatus
-              v-else-if="leadErrorRows.length"
-              :tone="leadErrorFaultTotal > 0 ? 'critical' : 'warning'"
-              :title="`近 ${leadErrors?.days ?? 7} 天有 ${leadErrors?.total ?? 0} 次打不開活動頁`"
-              detail="這些是客人那一端實際回報的，不是推算的。"
+              v-else-if="leadSummary.needsBlock"
+              :tone="leadSummary.tone"
+              :title="leadSummary.blockTitle"
+              :detail="leadSummary.blockDetail"
             >
-              <ul class="cmp-lead-errors">
-                <li v-for="row in leadErrorRows" :key="row.reason">
+              <!-- 只列商家動得了的項目。⛔ 不要把「客人網路慢」也排進來附一句「去改設定」 -->
+              <ul v-if="leadSummary.ownerRows.length" class="cmp-lead-errors">
+                <li v-for="row in leadSummary.ownerRows" :key="row.reason">
                   <span class="cmp-lead-errors__count">{{ row.count }} 次</span>
                   <span class="cmp-lead-errors__label">{{ row.label }}</span>
                   <span class="cmp-lead-errors__hint">{{ row.hint }}</span>
                 </li>
               </ul>
-              <p v-if="leadErrors?.truncated" class="cmp-url-hint">
+              <p v-if="leadSummary.notOwnerTotal" class="cmp-lead-note">
+                另外 {{ leadSummary.notOwnerTotal }} 次：{{ LEAD_FAILURE_NOT_OWNER_NOTE }}
+              </p>
+              <p v-if="leadSummary.inactiveCount" class="cmp-lead-note">
+                另有 {{ leadSummary.inactiveCount }} 次是客人點到已經停用的活動。這是正常的擋下，不是故障——舊連結還在外面流通時就會出現。
+              </p>
+              <p v-if="leadErrors?.truncated" class="cmp-lead-note">
                 失敗筆數太多，這裡只算得到最近一段——實際次數比上面顯示的更多。
               </p>
             </AdminBlockStatus>
             <p v-else-if="leadErrors" class="ar-section-hint">
-              近 {{ leadErrors.days }} 天沒有客人回報打不開活動頁。
+              {{ leadSummary.quietLine }}
             </p>
 
             <p class="ar-section-hint">
@@ -396,7 +409,7 @@
 import { Delete, Plus, Tickets } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
-import { LEAD_FAILURE_LABELS, LEAD_FAILURE_REASONS, type LeadFailureReason } from '~~/shared/lead-page-failure'
+import { LEAD_FAILURE_NOT_OWNER_NOTE, summarizeLeadFailures } from '~~/shared/lead-page-failure'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 // canManageSettings：LIFF 登記狀態的檢查端點限管理員（客服查不到，見 liffVerdict）
@@ -466,6 +479,8 @@ const leadErrors = ref<{
   ok: boolean
   total: number
   byReason: Record<string, number> | null
+  /** 同期順利完成幾次＝失敗次數的分母（⛔ 0 可能是「還沒開始記」，不可以當成「沒人成功」） */
+  succeeded: number
   truncated: boolean
   days: number
 } | null>(null)
@@ -618,21 +633,19 @@ const saveBlockedReason = computed(() => {
 })
 
 /**
- * 近 7 天客人失敗的分項。只列真的有數字的，故障類排前面
- * （`campaign_inactive` 是預期內的擋下，不該把它算進「要修的事」）。
+ * 畫面該說什麼，全部由 `summarizeLeadFailures` 決定（純函式，規矩由測試釘住）。
+ *
+ * ⭐ 2026-09-13 改版（`G-90`）：**只有商家動得了的項目才列成清單、才點紅燈**。
+ * 原本六種並排成一張紅色清單、每列都附「去哪裡改什麼」，但其中兩種（客人網路慢、
+ * 綁定途中斷線）根本不是商家能處理的，而且佔了絕大多數——看到只會覺得系統壞了
+ * 卻不知道能做什麼。⛔ 要改這裡的判斷，改那支純函式，不要在這頁另寫一套。
  */
-const leadErrorRows = computed(() => {
-  const by = leadErrors.value?.byReason
-  if (!by) return []
-  return LEAD_FAILURE_REASONS
-    .map(r => ({ reason: r as LeadFailureReason, count: Number(by[r] || 0), ...LEAD_FAILURE_LABELS[r] }))
-    .filter(r => r.count > 0)
-    .sort((a, b) => Number(b.fault) - Number(a.fault) || b.count - a.count)
-})
-
-const leadErrorFaultTotal = computed(() =>
-  leadErrorRows.value.filter(r => r.fault).reduce((s, r) => s + r.count, 0),
-)
+const leadSummary = computed(() => summarizeLeadFailures({
+  byReason: leadErrors.value?.byReason,
+  total: Number(leadErrors.value?.total || 0),
+  succeeded: Number(leadErrors.value?.succeeded || 0),
+  days: leadErrors.value?.days ?? 7,
+}))
 
 /**
  * 這個活動「存起來的」啟用狀態。
@@ -732,6 +745,7 @@ async function loadLeadErrors() {
       ok: boolean
       total: number
       byReason: Record<string, number> | null
+      succeeded: number
       truncated: boolean
       days: number
     }>('/api/campaigns/lead-errors')
@@ -739,7 +753,7 @@ async function loadLeadErrors() {
   }
   catch {
     // 查不到就說查不到（下方畫面會顯示 unknown），⛔ 不可以顯示成 0 次
-    leadErrors.value = { ok: false, total: 0, byReason: null, truncated: false, days: 7 }
+    leadErrors.value = { ok: false, total: 0, byReason: null, succeeded: 0, truncated: false, days: 7 }
   }
 }
 

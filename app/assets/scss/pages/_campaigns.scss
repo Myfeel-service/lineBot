@@ -79,6 +79,15 @@
   line-height: 1.5;
 }
 
+/* 商家處理不掉的那幾次（以及「點到已停用的活動」）收成的一行字。
+   刻意不做成清單的一列：排在動得了的項目旁邊，會被讀成「這也是我要修的」。 */
+.cmp-lead-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.55rem;
+  line-height: 1.5;
+}
+
 .cmp-url-hint {
   font-size: 0.78rem;
   color: var(--text-muted);

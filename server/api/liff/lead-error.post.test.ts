@@ -62,6 +62,30 @@ describe('POST /api/liff/lead-error', () => {
     }))
   })
 
+  it('逾時會把前端回報的「卡在哪一步」帶下去', async () => {
+    body = { reason: 'load_timeout', liffId: '2007123456-AbCdEfGh', stage: 'load_sdk' }
+    await call()
+    expect(recordLeadPageFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      stage: 'load_sdk',
+    }))
+  })
+
+  it('⛔ 不認得的階段一律當 unknown，不照單寫進去（否則統計裡會長出一堆只出現一次的假階段）', async () => {
+    body = { reason: 'load_timeout', liffId: '2007123456-AbCdEfGh', stage: '<script>' }
+    await call()
+    expect(recordLeadPageFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      stage: 'unknown',
+    }))
+  })
+
+  it('舊版前端沒送階段 → unknown（＝「還沒開始記」，不是查不出來）', async () => {
+    body = { reason: 'load_timeout', liffId: '2007123456-AbCdEfGh' }
+    await call()
+    expect(recordLeadPageFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      stage: 'unknown',
+    }))
+  })
+
   it('寫入失敗不對外拋錯（客人不該因為回報失敗再看到一個錯誤）', async () => {
     vi.mocked(recordLeadPageFailure).mockRejectedValueOnce(new Error('firestore down'))
     body = { reason: 'claim_failed', liffId: '2007123456-AbCdEfGh' }

@@ -36,6 +36,10 @@ export default defineEventHandler(async (event) => {
       byReason: null,
       total: 0,
       unknownReasons: [],
+      // ⛔ 同上：查不到就不要回一個看起來像「這段時間有 0 人成功」的分母
+      succeeded: 0,
+      byTimeoutStage: null,
+      unknownStages: [],
       truncated: false,
     }
   }

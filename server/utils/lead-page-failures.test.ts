@@ -14,6 +14,7 @@ const {
   failureBucketDocId,
   sumFailureBuckets,
   recordLeadPageFailure,
+  recordLeadPageSuccess,
 } = await import('./lead-page-failures')
 
 describe('桶鍵（純函式）', () => {
@@ -67,6 +68,33 @@ describe('sumFailureBuckets', () => {
     expect(r.total).toBe(0)
     expect(r.byReason.load_timeout).toBe(0)
   })
+
+  it('成功次數（分母）也一起加起來，而且不算進失敗總數', () => {
+    const r = sumFailureBuckets([
+      { counts: { load_timeout: 2 }, okCount: 30 },
+      { okCount: 12 },
+      { counts: { load_timeout: 1 } },
+    ])
+    expect(r.succeeded).toBe(42)
+    expect(r.total).toBe(3)
+  })
+
+  it('⛔ 舊桶沒有 okCount 時是 0，不可以變成 NaN（畫面會拿它算比例）', () => {
+    const r = sumFailureBuckets([{ counts: { load_timeout: 1 } }, { okCount: 'x' }])
+    expect(r.succeeded).toBe(0)
+    expect(Number.isNaN(r.succeeded)).toBe(false)
+  })
+
+  it('逾時卡在哪一步會逐項加總；不認得的階段要現形不可以靜靜丟掉', () => {
+    const r = sumFailureBuckets([
+      { stages: { load_sdk: 3, liff_init: 1 } },
+      { stages: { load_sdk: 2, some_new_stage: 5 } },
+    ])
+    expect(r.byTimeoutStage.load_sdk).toBe(5)
+    expect(r.byTimeoutStage.liff_init).toBe(1)
+    expect(r.byTimeoutStage.claiming).toBe(0)
+    expect(r.unknownStages).toEqual(['some_new_stage'])
+  })
 })
 
 describe('recordLeadPageFailure', () => {
@@ -96,5 +124,45 @@ describe('recordLeadPageFailure', () => {
     await recordLeadPageFailure(db, { workspaceId: 'ws1', reason: 'claim_failed', detail: 'x'.repeat(500) })
     const [payload] = set.mock.calls[0] as unknown as [Record<string, string>]
     expect(payload.lastDetail).toHaveLength(200)
+  })
+
+  it('逾時會把「卡在哪一步」也 increment 下去（只靠 lastDetail 一個桶只留得住一筆）', async () => {
+    const set = vi.fn(async () => {})
+    const db = { collection: () => ({ doc: () => ({ set }) }) } as never
+    await recordLeadPageFailure(db, { workspaceId: 'ws1', reason: 'load_timeout', stage: 'load_sdk' })
+    const [payload] = set.mock.calls[0] as unknown as [Record<string, unknown>]
+    expect(payload.stages).toEqual({ load_sdk: { __inc: 1 } })
+  })
+
+  it('⛔ 只有逾時才記階段：其他原因就算傳了 stage 也不寫（那格只對逾時有意義）', async () => {
+    const set = vi.fn(async () => {})
+    const db = { collection: () => ({ doc: () => ({ set }) }) } as never
+    await recordLeadPageFailure(db, { workspaceId: 'ws1', reason: 'claim_failed', stage: 'claiming' })
+    const [payload] = set.mock.calls[0] as unknown as [Record<string, unknown>]
+    expect(payload.stages).toBeUndefined()
+  })
+})
+
+describe('recordLeadPageSuccess', () => {
+  it('跟失敗寫進同一份桶文件，只加 okCount（這樣讀失敗那支查詢就順便撈到分母，不用開新索引）', async () => {
+    const set = vi.fn(async () => {})
+    const doc = vi.fn(() => ({ set }))
+    const db = { collection: vi.fn(() => ({ doc })) } as never
+
+    await recordLeadPageSuccess(db, 'ws1')
+
+    expect(doc.mock.calls[0]?.[0]).toMatch(/^ws1__\d{10}$/)
+    const [payload, opts] = set.mock.calls[0] as unknown as [Record<string, unknown>, { merge: boolean }]
+    expect(opts).toEqual({ merge: true })
+    expect(payload.okCount).toEqual({ __inc: 1 })
+    // ⛔ 不可以連 counts 一起送：整包 merge 會把同一小時的失敗分項洗掉
+    expect(payload.counts).toBeUndefined()
+  })
+
+  it('沒有 workspaceId 就什麼都不寫（⛔ 記到別家比不記更糟）', async () => {
+    const set = vi.fn(async () => {})
+    const db = { collection: () => ({ doc: () => ({ set }) }) } as never
+    await recordLeadPageSuccess(db, '  ')
+    expect(set).not.toHaveBeenCalled()
   })
 })

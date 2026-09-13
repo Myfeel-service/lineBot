@@ -41,7 +41,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { $fetch } from 'ofetch'
 import { buildLoginRedirectUri, liffChannelIdFromLiffId, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
-import { CAMPAIGN_INACTIVE_CODE, type LeadFailureReason } from '~~/shared/lead-page-failure'
+import { CAMPAIGN_INACTIVE_CODE, type LeadFailureReason, type LeadTimeoutStage } from '~~/shared/lead-page-failure'
 
 definePageMeta({ layout: false, ssr: false })
 
@@ -81,7 +81,10 @@ const addFriendUrl = ref('')
  * ⛔ 絕不可以讓回報本身影響客人看到的畫面：失敗一律吞掉，也不 await。
  * keepalive 是因為錯誤畫面之後客人多半直接關掉分頁。
  */
-function reportLeadFailure(reason: LeadFailureReason, extra?: { liffId?: string, campaignCode?: string, detail?: string }) {
+function reportLeadFailure(
+  reason: LeadFailureReason,
+  extra?: { liffId?: string, campaignCode?: string, detail?: string, stage?: LeadTimeoutStage },
+) {
   if (typeof fetch === 'undefined') return
   try {
     fetch('/api/liff/lead-error', {
@@ -93,6 +96,7 @@ function reportLeadFailure(reason: LeadFailureReason, extra?: { liffId?: string,
         liffClientId: readCallbackParam('liffClientId'),
         campaignCode: extra?.campaignCode || '',
         detail: String(extra?.detail || '').slice(0, 200),
+        ...(extra?.stage ? { stage: extra.stage } : {}),
       }),
       keepalive: true,
     }).catch(() => {})
@@ -306,7 +310,17 @@ async function tryOpenInLineAppBeforeInit(liffId: string) {
 }
 
 onMounted(async () => {
-  const ctx: Record<string, unknown> = { v: 8 }
+  const ctx: Record<string, unknown> = { v: 9 }
+
+  /**
+   * 目前走到哪一步，給看門狗回報用。
+   *
+   * ⭐ 為什麼要有：在此之前逾時只記得下一句寫死的 `loading_watchdog`，
+   * 「客人網路慢」「SDK 載不下來」「LINE 沒回應」「綁定請求卡住」四種毛病
+   * 全擠在同一個數字裡。2026-09-13 查 myfeel 那 94 次就是卡在這裡查不下去（`G-88`）。
+   */
+  let stage: LeadTimeoutStage = 'parse'
+  const at = (s: LeadTimeoutStage) => { stage = s; ctx.stage = s }
 
   // ── 轉圈看門狗 ──────────────────────────────────────────────────────────
   // liff.init() 在跨網域登入流程卡住時 promise 永遠不會 settle（2026-08-07 實測），
@@ -320,7 +334,12 @@ onMounted(async () => {
       phase.value = 'error'
       errorText.value = '載入逾時，請重新整理再試一次。'
       debugInfo.value = buildDebugInfo({ reason: 'loading_watchdog', ...ctx })
-      reportLeadFailure('load_timeout', { liffId: String(ctx.liffId || ''), detail: 'loading_watchdog' })
+      reportLeadFailure('load_timeout', {
+        liffId: String(ctx.liffId || ''),
+        campaignCode: String(ctx.campaignCode || ''),
+        detail: `loading_watchdog:${stage}`,
+        stage,
+      })
     }, LOADING_WATCHDOG_MS)
     let watchdog = armWatchdog()
     document.addEventListener('visibilitychange', () => {
@@ -367,6 +386,8 @@ onMounted(async () => {
     if (stored) { parsed = mergeParsedLead(parsed, stored); ctx.storedParams = { ...stored }; ctx.restoredFromStorage = true }
   }
   ctx.step1bParsed = { ...parsed }
+  ctx.campaignCode = parsed.campaignCode
+  at('resolve_liff')
 
   // --- Step 2: Resolve liffId — localStorage cache → URL params → API ---
   // API fetch runs in parallel with liffImportPromise when liffId already known.
@@ -426,16 +447,21 @@ onMounted(async () => {
   // ⛔ 登入 callback 上不可跳去 LINE App：深連結會把網址上的 code 一起複製過去，
   // 而那個 code 用過即棄；客人會在 App 裡拿著已消耗的 code 開 LIFF 而失敗，
   // 同時持有這次登入的瀏覽器也回不去了。這裡直接讓 liff.init() 收掉 callback。
-  if (hasOAuthCallbackParams)
+  if (hasOAuthCallbackParams) {
     ctx.skippedLineAppDeepLink = true
-  else
+  }
+  else {
+    at('open_line_app')
     await tryOpenInLineAppBeforeInit(liffId)
+  }
 
   // --- Step 3: Await LIFF SDK (已與 Step 2 並行載入) ---
+  at('load_sdk')
   const liffMod = await liffImportPromise
   const liff = liffMod.default
 
   ctx.preInitUrl = typeof window !== 'undefined' ? window.location.href : ''
+  at('liff_init')
   try {
     await liff.init({ liffId, withLoginOnExternalBrowser: true })
     ctx.initOk = true
@@ -482,6 +508,7 @@ onMounted(async () => {
   }
 
   // --- Step 7: Claim ---
+  at('claiming')
   try {
     // userId 由後端向 LINE 驗證 access token 取得，前端不再自報
     const accessToken = liff.getAccessToken()
@@ -512,13 +539,23 @@ onMounted(async () => {
       }).catch(() => {})
     }
 
+    if (String(res.lineOaBasicId || '').trim())
+      applyKnownOaBasicId(String(res.lineOaBasicId))
+
+    // ⛔ 綁定成功之後**不可以再停在 loading**。
+    // 20 秒看門狗只看 phase，而下面每一條出路都不保證會發生：轉址的目標可能很慢、
+    // liff.closeWindow() 可能被 LINE 忽略、沒有基本 ID 時根本無處可跳。原本這三種
+    // 情形都會讓畫面繼續轉圈，滿 20 秒後把一位**已經綁定成功的客人**記成
+    // `load_timeout`（2026-09-13 查證：94 次逾時與成功人數等比例，`G-88`）。
+    // 先把畫面收成「完成」，再去做那些不保證會發生的後續動作。
+    phase.value = 'done'
+    doneMessage.value = '已將你的 LINE 與活動綁定。'
+    needAddFriend.value = !res.immediatelyApplied
+
     if (res.redirectUrl) {
       window.location.href = res.redirectUrl
       return
     }
-
-    if (String(res.lineOaBasicId || '').trim())
-      applyKnownOaBasicId(String(res.lineOaBasicId))
 
     // LINE app 內但非 LIFF in-client 容器時，isInClient() 可能是 false；
     // 這時改用 location 跳轉對話，避免使用者卡在完成頁。
@@ -526,20 +563,11 @@ onMounted(async () => {
       finishInLineClientWithoutCampaignRedirect(liff)
       return
     }
-    if (isLikelyLineClientUserAgent()) {
+    if (isLikelyLineClientUserAgent())
       goToChatOrAddFriendByLocation()
-      return
-    }
-
-    phase.value = 'done'
-    if (res.immediatelyApplied) {
-      doneMessage.value = '已將你的 LINE 與活動綁定。'
-      needAddFriend.value = false
-    }
-    else {
-      doneMessage.value = '已將你的 LINE 與活動綁定。'
-      needAddFriend.value = true
-    }
+    // 沒有對話／加好友連結可跳時，就留在上面那個「綁定完成」畫面。
+    // ⛔ 這裡原本是 `return` 且不跳任何地方，而畫面還停在 loading＝永遠轉圈，
+    //    只能等看門狗把一次成功收成一次失敗。
   }
   catch (e: unknown) {
     const err = e as { data?: { statusMessage?: string, data?: { code?: string } }; message?: string }
