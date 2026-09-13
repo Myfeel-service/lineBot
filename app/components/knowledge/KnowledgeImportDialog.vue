@@ -198,8 +198,28 @@
         ⛔ 兩條都叫「範本」會被混在一起講（試算表那條的第一步也是「用官方範本建立副本」）：
            所以第三條改叫「下載範本自己填」、第一條明寫「Google 試算表」，光看選項就分得開。
       -->
+      <!--
+        ── 四版：從「挑一條」變成「把能怎麼做都列出來」（2026-09-13，老闆：「這是教學匯入方式，
+           所以我覺得應該要把能怎麼做都列出教學」）──
+
+        三版只列三條，是**照推薦排序**在挑；四版的定位改成**教材**：投放框收得了的每一種都要
+        有一條，不能因為「我覺得那條不該推薦」就讓它整個不存在。補上兩條：
+          · 直接打字貼上——⚠️ 它本來就收（`detectImportKind` 認得純文字），但三顆選項裡完全沒提，
+            等於一個「打開就能用、還不用任何外部工具」的入口只寫在投放框那行小字裡。
+          · 上傳現成檔案（PDF／Excel）——同理，PDF 連拍的掃的都吃，卻一個字都沒提。
+
+        ⛔ 排序仍照三版那兩把尺（精準度、之後會不會自己爛掉），新來的兩條按同一把尺插進去：
+           打字排第二（內容是自己寫的＝最準，但切法由 AI 決定、不會自動更新）；
+           上傳現成檔案排第四（零工作量，但 AI 認字要核對、而且完全不會更新）。
+        ⛔ 小註口徑不變、**五條一律回答「之後改了會怎樣」**——包括官網那條：它原本掛「最快」
+           （速度），五條並排時只有它答的是別的問題，等於把唯一能橫向比較的那一欄弄花。
+           速度改寫在它自己面板的第一行。
+        ⛔ 手寫單卡與「AI 建議補的知識」**不做成第六、第七顆膠囊**：那兩個入口在這個視窗裡按不到
+           （都在背後那一頁上），做成膠囊就是給一顆按了沒反應的按鈕。改用下面 `__more` 那行
+           指路——教材要完整，但不能假裝這裡做得到。
+      -->
       <div v-if="!detected" class="kb-start">
-        <p class="kb-start__head">還沒有現成資料？挑一條開始：</p>
+        <p class="kb-start__head">還沒有現成資料？五種做法，挑一條開始：</p>
         <div class="kb-start__chips" data-tour="kb-start">
           <button
             type="button"
@@ -213,11 +233,29 @@
           <button
             type="button"
             class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'text' }"
+            :aria-expanded="startOpen === 'text'"
+            @click="pickStart('text')"
+          >
+            直接打字貼上<span class="kb-start__chip-tag">改了自己編</span>
+          </button>
+          <button
+            type="button"
+            class="kb-start__chip"
             :class="{ 'is-active': startOpen === 'web' }"
             :aria-expanded="startOpen === 'web'"
             @click="pickStart('web')"
           >
-            貼官網現有的頁面<span class="kb-start__chip-tag">最快</span>
+            貼官網現有的頁面<span class="kb-start__chip-tag">改了會通知你</span>
+          </button>
+          <button
+            type="button"
+            class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'file' }"
+            :aria-expanded="startOpen === 'file'"
+            @click="pickStart('file')"
+          >
+            上傳現成檔案<span class="kb-start__chip-tag">改了要重傳</span>
           </button>
           <button
             type="button"
@@ -304,6 +342,25 @@
         </div>
 
         <!--
+          打字這條的「動作」就是在上面的框裡打字：點選項時已順手把游標放進去（見 pickStart）。
+          ⚠️ 這條刻意**不用 --lead**：那個 class 是給「下面接 <ol>」的面板補間距用的
+             （步驟清單 margin 是 0），這裡接的是 <p>，兩個間距會疊成 15px。
+          ⛔ 「切法由 AI 決定」這件事一定要寫：它是這條路跟表格類唯一的實質差別，
+             而畫面上看不出來——AI 切錯要到預覽那一步才會發現，沒先講的人不會去看。
+        -->
+        <div v-else-if="startOpen === 'text'" class="kb-start__panel">
+          <p class="kb-start__ptxt">
+            最快能讓 AI 有東西可用：把客人最常問的十來題<strong>連問題帶答案打進上面的框</strong>（一題一段，中間空一行就好），不用任何檔案或帳號。
+          </p>
+          <p class="kb-start__ptxt">
+            內容是你自己寫的客服答案、不是行銷文案，<strong>這一點比任何一條都準</strong>；但<strong>怎麼切成一條條是 AI 決定的</strong>（不像表格是「一列一條」由你畫界線），所以整理完請看一下預覽。
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--dim">
+            之後答案改了，直接編輯那一條就好（不必整份重傳），但不會自己更新。
+          </p>
+        </div>
+
+        <!--
           官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart）。
           ⚠️ 2026-09-03 老闆問「上傳網頁只適合用常見問題的頁面嗎」——不是，只要是**看得到文字**
              的頁面都吃（商品頁、運費退換貨、關於我們⋯）。原本標籤寫「官網有『常見問題』頁」
@@ -319,6 +376,13 @@
             ⛔ 不要再把「一頁貼一次」這種操作常識寫進來：它不是決策資訊，
                而這一塊唯一的工作是回答「我的頁面能不能貼」。
           -->
+          <!--
+            ⚠️ 2026-09-13 四版補這一行：小註原本掛「最快」，改成統一回答「之後改了會怎樣」之後，
+               速度這個賣點就沒地方講了——它是這條路唯一贏過其他四條的地方，不能整個消失。
+          -->
+          <p class="kb-start__ptxt">
+            <strong>五條裡最快的</strong>：貼一個網址就好，其他什麼都不用準備。
+          </p>
           <p class="kb-start__ptxt kb-start__ptxt--lbl">
             <span class="kb-start__lbl kb-start__lbl--ok">可以貼</span>
             <span>商品或方案介紹、運費與退換貨、關於我們、公告——只要頁面上<strong>看得到文字</strong>就行，不限常見問題頁。</span>
@@ -329,6 +393,37 @@
           </p>
           <p class="kb-start__ptxt kb-start__ptxt--dim">
             貼完會問你要不要把網站其他頁一起匯入；之後網頁改了也會通知你。
+          </p>
+        </div>
+
+        <!--
+          「我已經有檔案了」那條（2026-09-13 四版新增）。跟「下載範本自己填」的分工是
+          **手邊有沒有現成檔案**：有就走這條，沒有才去下載範本做一份——所以兩條的小註一樣
+          （都是上傳一次就固定），差別寫在各自的第一行。
+          ⛔ 收不了的那一行不可以拿掉：`ACCEPTED_EXT_RE` 只認 pdf／xlsx／xls，而**購物平台匯出的
+             多半是 .csv**（`D-51` 還沒拍板要不要收）。不寫的話，遇到的人會以為是自己檔案壞了
+             ——擋下來的東西一定要說出擋的是什麼。
+          ⚠️ 兩顆標籤刻意都是三個字（收得了／收不了）：長度不一樣的話，右邊句子的起點會差一截，
+             同一個面板裡兩行讀起來就歪了。
+        -->
+        <div v-else-if="startOpen === 'file'" class="kb-start__panel">
+          <p class="kb-start__ptxt">
+            手邊已經有商品型錄、價目表、產品說明？
+            <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
+              選擇檔案
+            </el-button>
+            <span class="text-xs text-muted">（或直接拖進上面的框）</span>
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--ok">收得了</span>
+            <span>PDF 與 Excel（.xlsx／.xls）。<strong>用拍的、掃的 PDF 也行</strong>，會由 AI 認字——請核對數字與價格有沒有看錯。</span>
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--no">收不了</span>
+            <span>購物平台匯出的 .csv 目前不收，請先用 Excel 另存成 .xlsx 再上傳。</span>
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--dim">
+            Excel 是一列一條知識，PDF 由 AI 判斷怎麼分段；兩種都是上傳一次就固定，之後改了要重新上傳。
           </p>
         </div>
         <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
@@ -343,7 +438,7 @@
                末句刻意給一條回頭路（改用試算表），不然使用者只知道有坑、不知道往哪走。
           -->
           <p class="kb-start__ptxt kb-start__ptxt--lead">
-            填完大約 3 分鐘，不用 Google 帳號。之後答案改了要<strong>再傳一次整份</strong>，
+            <strong>手邊沒有現成檔案、又不想用 Google 帳號</strong>時走這條，填完大約 3 分鐘。之後答案改了要<strong>再傳一次整份</strong>，
             系統不會自己更新，也不會提醒你——想省掉這一步，就改用上面的 Google 試算表。
           </p>
           <ol class="kb-start__steps">
@@ -377,6 +472,19 @@
             <figcaption>範本長這樣：<strong>第一列的欄位名稱已經填好</strong>，下面一列一題往下加就好</figcaption>
           </figure>
         </div>
+
+        <!--
+          教材要完整，但這兩種在這個視窗裡按不到（都在背後那一頁上，見 sources/index.vue：
+          「⋯」選單的「手動新增知識」、以及頁面上的 KnowledgeSuggestions 那一區），
+          所以用一行指路而不是做成膠囊——⛔ 做成膠囊就是給一顆按了沒反應的按鈕。
+          ⚠️ 指路詞寫「按鈕上的字」不寫顏色或位置：同 `C-180` 那一課（文案裡寫死畫面長相，
+             等於埋一份沒人維護、測試也抓不到的畫面副本）。
+        -->
+        <p class="kb-start__more">
+          還有兩種不在這個視窗、但同一頁上就有：右上角「⋯」裡的<strong>手動新增知識</strong>，一次一張、
+          是唯一能自己指定「客人會怎麼問」的入口；另外等 AI 開始服務客人之後，
+          <strong>「AI 建議補的知識」</strong>那一區會從「客人問了、但 AI 答不出來」的真實對話整理主題並擬好草稿，審一眼就能用。
+        </p>
       </div>
 
 
@@ -1301,12 +1409,13 @@ const hintOpen = ref(false)
 watch(() => detected.value?.label, () => { hintOpen.value = false })
 
 /**
- * 「還沒有現成資料」三顆選項的展開狀態（'' = 都收起）。
- * 一次只開一條：三條全開就回到一版「250 字同時攤開」的老問題（老闆：快 fade out）。
+ * 「還沒有現成資料」五顆選項的展開狀態（'' = 都收起）。
+ * 一次只開一條：全開就回到一版「250 字同時攤開」的老問題（老闆：快 fade out）——
+ * 四版把選項從三顆加到五顆之後，這條規矩比先前更重要，不可以改成多開。
  * ⛔ 刻意不在 resetAll／關窗時清掉：走試算表那條的人會中途去 Google 分享，
  *    回來時面板要還開著、帳號還在眼前。
  */
-const startOpen = ref<'' | 'sheet' | 'web' | 'excel'>('')
+const startOpen = ref<'' | 'sheet' | 'text' | 'web' | 'file' | 'excel'>('')
 
 /** 點投放框的空白處＝聚焦輸入框；點到框裡的按鈕（選擇檔案）就讓按鈕自己來 */
 function focusPaste(e: MouseEvent) {
@@ -1314,10 +1423,12 @@ function focusPaste(e: MouseEvent) {
   pasteInputEl.value?.focus?.()
 }
 
-function pickStart(route: 'sheet' | 'web' | 'excel') {
+function pickStart(route: 'sheet' | 'text' | 'web' | 'file' | 'excel') {
   startOpen.value = startOpen.value === route ? '' : route
-  // 官網那條的「動作」就是貼網址：把游標放進框裡，使用者回來直接 ⌘V 就能貼
-  if (startOpen.value === 'web') nextTick(() => pasteInputEl.value?.focus?.())
+  // 官網與打字這兩條的「動作」都是在上面那個框裡輸入：把游標放進去，使用者回來直接打字／⌘V 就能用。
+  // ⛔ 其餘三條不要搶焦點：它們的下一步是按面板裡的按鈕（建立副本／下載範本／選擇檔案），
+  //    游標被拉走只會讓人以為自己點錯了。
+  if (startOpen.value === 'web' || startOpen.value === 'text') nextTick(() => pasteInputEl.value?.focus?.())
 }
 
 watch([pasteInput, mode], () => {

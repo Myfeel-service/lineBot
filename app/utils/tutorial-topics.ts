@@ -155,23 +155,26 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         clickBefore: '[data-tour="kb-import"]',
         title: '丟進來就好，不用先選種類',
         description:
-          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>手邊還沒有現成資料的話，框下面有三條路可以照著做</strong>；貼上之後視窗也會就地講該注意什麼。',
+          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>不知道該丟什麼的話，框下面把五種做法都列出來了</strong>；貼上之後視窗也會就地講該注意什麼。',
         placement: 'bottom',
       },
       {
-        // 三顆起步選項只在投放框還空的時候才在畫面上（見 KnowledgeImportDialog 的 kb-start）：
+        // 起步選項只在投放框還空的時候才在畫面上（見 KnowledgeImportDialog 的 kb-start）：
         // 使用者若有貼到一半的內容，這一步整步跳過而不是指著空氣
         target: '[data-tour="kb-start"]',
         requiresPresent: '[data-tour="kb-start"]',
         clickBefore: '[data-tour="kb-import"]',
-        title: '手邊還沒有資料？挑一條',
+        title: '五種做法都在這裡',
         // ⚠️ 2026-09-13 換口徑：原本寫「差別是準備時間」，但視窗那邊的順序已改成
         //    試算表優先（理由見 KnowledgeImportDialog 的三版說明），準備時間正好是它最吃虧的維度。
         //    教材跟畫面講反了比沒教還糟，所以這裡也改成先講「改了會不會自動更新」。
+        // ⚠️ 同日四版再改：選項從三顆變五顆，且定位從「挑一條」改成「把能怎麼做都列出來」。
+        //    ⛔ 這裡別再寫死顆數以外的細節（哪一條排第幾），順序之後可能再調，
+        //       寫死了就是下一個 `C-180`（文案裡埋一份沒人維護的畫面副本）。
         description:
-          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。主要差別是'
-          + '<strong>之後資料改了會不會自動更新</strong>：排第一的 Google 試算表會自己更新（還附了共用畫面的示意圖），'
-          + '最後一條的檔案改了要再傳一次整份。要花多少時間寫在各自展開後的第一行。',
+          '這裡把<strong>能怎麼做都列出來了</strong>，點一下就會展開那一條要做什麼。小字一律回答同一個問題：'
+          + '<strong>之後資料改了會怎樣</strong>——只有 Google 試算表會自己跟著更新，其餘都要回來動手。'
+          + '要花多少時間、有什麼限制，寫在各自展開後的第一行。',
         placement: 'top',
       },
       {
