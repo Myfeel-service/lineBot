@@ -23,6 +23,7 @@
 
 import type { TagCategory } from './types/tag-broadcast'
 import { daysBetween, taipeiDate } from './time'
+import { SIMILAR_MAX_HITS, findSimilarNames, normalizeTagName } from './tag-similarity'
 
 /** 收件匣上限：沒人清就先不加（同 userTagSuggestions 的精神，別變成沒人看的牆） */
 export const MAX_PENDING_DISCOVERIES = 6
@@ -92,10 +93,46 @@ export interface TagDiscoveryProposal {
    */
   sampleNames: string[]
   proposedAtMs: number
+  /**
+   * 這條提案跟哪幾顆**既有標籤**講的是同一件事（`C-178`）。
+   *
+   * 為什麼要存在提案上而不是每次現算：判官要打 LLM，開標籤頁時現算等於每次開頁都
+   * 花一次額度＋等好幾秒。掃描一週一次，算一次存起來剛好。
+   * （讀取當下還會再補一次**免費的字面比對**，補的是「掃描之後才建出來的標籤」——
+   * 見 `discovery.get.ts`。所以這裡沒列到的不代表現在也沒有。）
+   */
+  similarTo?: DiscoverySimilarTag[]
+  /**
+   * 這條提案有沒有真的做過相似檢查。
+   *
+   * ⛔ 三態不可省（`08-09` 拍板的「查不到≠沒問題」）：判官失敗那輪 `similarTo` 也是空的，
+   * 跟「查過了、沒有相似的」長得一模一樣。少了這個旗標，畫面只能拿空陣列當「乾淨」，
+   * 而那是一句**假的否定**。
+   */
+  similarChecked?: boolean
 }
 
-/** 一條提案最後被怎麼處理掉的 */
-export type TagDiscoveryDecisionAction = 'adopt' | 'dismiss'
+/** 一條提案撞到的既有標籤 */
+export interface DiscoverySimilarTag {
+  tagId: string
+  name: string
+  /**
+   * 白話一句「為什麼算同一件事」（判官寫的，會直接印在卡片上）。
+   * 空字串＝這條是**讀取當下用字面比出來的**，還沒有人判過（文案要軟：「有點像」）。
+   */
+  reason: string
+  /** true＝判官確認過「會貼到同一群客人」；false＝只是名字看起來像 */
+  confirmed: boolean
+}
+
+/**
+ * 一條提案最後被怎麼處理掉的。
+ *
+ * `merge`（`C-178`）＝**不另外開一顆**，把這批客人貼到既有的那顆標籤上。
+ * ⛔ 這條路非有不可：先前只有「建立」與「忽略」兩顆按鈕，而忽略等於把那 8 位
+ * 聊過的客人整批丟掉——所以人明知重複還是只能按建立，標籤就一顆一顆長出來。
+ */
+export type TagDiscoveryDecisionAction = 'adopt' | 'dismiss' | 'merge'
 
 /**
  * 一筆決策紀錄：這條建議長什麼樣、誰在什麼時候決定了什麼。
@@ -207,12 +244,59 @@ const VALID_CATEGORIES: TagCategory[] = ['member_status', 'interest', 'behavior'
 /**
  * 主題名的比對鍵：去空白（含全形）、去常見標點、轉小寫。
  * 「在看 除濕機」「在看除濕機。」要算同一個，否則否決名單擋不住換個寫法的重提。
+ *
+ * ⛔ 實作搬到 `tag-similarity`（`C-178`）並從那裡 re-export——「完全同名」與「名字很像」
+ * 必須用同一份正規化，分兩份的下場是同一組名字兩支給不同答案。
+ * 這裡保留出口是為了既有的 import（`discovery.post.ts` 等）不用動。
  */
-export function normalizeTagName(raw: string): string {
-  return String(raw ?? '')
-    .toLowerCase()
-    .replace(/[\s　]+/g, '')
-    .replace(/[。，、．,.!?！？「」『』()（）:：;；-]/g, '')
+export { normalizeTagName }
+
+/**
+ * 一條提案「現在」撞到哪幾顆既有標籤（`C-178`）——存起來的判決 ＋ 讀取當下的字面比對。
+ *
+ * 為什麼讀取時還要再比一次，不能只用存起來的：
+ *  1. **掃描之後才建出來的標籤撞不到。** 同一批提了「在看無線麥克風」與「在看錄音麥克風」，
+ *     兩條掃描當下都沒撞到任何既有標籤；你按了第一條之後，第二條就變成在重複它了，
+ *     但存起來的判決是一週前算的，不會知道。
+ *  2. **標籤會被改名或刪掉。** 存的是 id＋當時的名字，指向已刪標籤的那條，
+ *     「改貼到這顆」按下去就是 404；改過名的則會印著舊名字。
+ *
+ * 兩者的可信度不同，所以**合併但分得出來**：存起來的是判官確認過的（`confirmed`，
+ * 有白話理由）；讀取當下補的只是字面像（文案要軟：「有點像」）。
+ * ⛔ 不可以把補進來的也標成 confirmed——那是拿「名字有共用的字」冒充「判過是同一件事」。
+ */
+export function mergeSimilarTags(
+  proposalName: string,
+  stored: DiscoverySimilarTag[] | undefined,
+  liveTags: Array<{ id: string; name: string }>,
+  opts: { generic?: Set<string>; max?: number } = {},
+): DiscoverySimilarTag[] {
+  const liveById = new Map(liveTags.map(t => [t.id, t.name]))
+  const out: DiscoverySimilarTag[] = []
+  const seen = new Set<string>()
+
+  for (const s of Array.isArray(stored) ? stored : []) {
+    const liveName = liveById.get(s?.tagId ?? '')
+    // ⛔ 標籤已經不在了就整條丟掉：留著就是一顆按下去 404 的按鈕
+    if (!liveName || seen.has(s.tagId)) continue
+    seen.add(s.tagId)
+    // ⛔ 名字以現在的為準（存的是快照，改過名就過期了）
+    out.push({ tagId: s.tagId, name: liveName, reason: String(s.reason ?? ''), confirmed: s.confirmed !== false })
+  }
+
+  for (const hit of findSimilarNames(proposalName, liveTags.map(t => ({ id: t.id, name: t.name })), {
+    generic: opts.generic,
+    corpus: liveTags.map(t => t.name),
+    max: liveTags.length,
+  })) {
+    if (!hit.id || seen.has(hit.id)) continue
+    seen.add(hit.id)
+    out.push({ tagId: hit.id, name: hit.name, reason: '', confirmed: false })
+  }
+
+  // 判官確認過的排前面（那才是有把握的那幾條）
+  out.sort((a, b) => Number(b.confirmed) - Number(a.confirmed))
+  return out.slice(0, opts.max ?? SIMILAR_MAX_HITS)
 }
 
 /**

@@ -54,7 +54,7 @@ const PROPOSAL = {
  * transaction 直接跑（單執行緒測試不需要真的併發），寫入累積回同一份 doc，
  * 這樣「第二個 transaction 讀得到第一個寫的東西」才測得出來。
  */
-function makeDb(initial: Record<string, any> | null) {
+function makeDb(initial: Record<string, any> | null, existingTags: Record<string, any> = {}) {
   let doc: Record<string, any> | null = initial ? { ...initial } : null
   const tagWrites: Array<Record<string, any>> = []
 
@@ -69,7 +69,11 @@ function makeDb(initial: Record<string, any> | null) {
       // tags：建立時先查 code 有沒有撞號（回空＝沒撞），再 set 一份新文件
       const q: any = { where: () => q, limit: () => q, get: async () => ({ empty: true }) }
       return Object.assign(q, {
-        doc: () => ({ set: async (d: Record<string, any>) => { tagWrites.push(d) } }),
+        // doc(id).get()＝merge 要先驗「這顆標籤在不在」；doc().set()＝adopt 建新的
+        doc: (id?: string) => ({
+          get: async () => ({ exists: !!existingTags[id ?? ''], data: () => existingTags[id ?? ''] }),
+          set: async (d: Record<string, any>) => { tagWrites.push(d) },
+        }),
       })
     },
     runTransaction: async (fn: (tx: any) => Promise<any>) => fn({
@@ -161,6 +165,84 @@ describe('建立：紀錄要接上「後來真的發生了什麼」', () => {
 
     await call({ action: 'adopt', proposalId: 'p1' })
     expect(current()!.dismissedNames).toEqual([])
+  })
+})
+
+/**
+ * 改貼到既有標籤（`C-178`，老闆 2026-09-11）。
+ *
+ * 為什麼要有這條路：帳號裡已經有「在看收音麥克風」，AI 又提「在看無線麥克風」——
+ * 先前畫面只有「建立」與「忽略」兩顆按鈕，而忽略等於把那 8 位聊過的客人整批丟掉，
+ * 所以人明知重複還是只能按建立。三顆麥克風標籤就是這樣長出來的。
+ */
+describe('改貼到既有標籤：不另外開一顆，客人照樣貼上', () => {
+  const TARGET = { workspaceId: WS, name: '在看收音麥克風' }
+
+  it('不建新標籤，把客人貼到既有那顆，回「已併入」而不是「已建立」', async () => {
+    const { db, tagWrites } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': TARGET },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+
+    const res: any = await call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })
+
+    // ⛔ 一顆標籤都不可以被建出來——這整條路的重點就是「不要再多一顆」
+    expect(tagWrites).toEqual([])
+    expect(res.created).toBeUndefined()
+    expect(res.merged).toEqual({ id: 'tag-mic', name: '在看收音麥克風' })
+    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[1]).toEqual(['tag-mic'])
+    // 來源要分得出是併進來的（日後查「這批人怎麼被貼上的」）
+    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[3]).toBe('tag-discovery:merge')
+  })
+
+  /**
+   * ⛔ 少了這條，這個主題下週原封不動再被提一次：掃描的排除名單只認「既有標籤名」
+   * 與「否決過的名」，而「在看無線麥克風」併進去之後這個名字從來沒變成標籤、
+   * 也沒被否決過——於是每週回來一次，每次的正確動作都是再併一次。
+   */
+  it('名字要進「不再建議」名單，否則下週同一條會再回來', async () => {
+    const { db, current } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': TARGET },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })
+
+    expect(current()!.dismissedNames).toEqual(['在看除濕機'])
+    expect(current()!.history[0]).toMatchObject({ action: 'merge', tagId: 'tag-mic', taggedCount: 4 })
+  })
+
+  /**
+   * ⛔ 驗標籤要在認領提案**之前**：順序反過來的話，標籤 id 是錯的時候提案已經
+   * 從收件匣摘走了——那條建議連同它的客人名單就這樣消失，而且什麼都沒貼到。
+   */
+  it('目標標籤不存在 → 404，而且提案還留在收件匣', async () => {
+    const { db, current } = makeDb({ workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] }, {})
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await expect(call({ action: 'merge', proposalId: 'p1', tagId: 'gone' })).rejects.toThrow('找不到要貼上的那顆標籤')
+    expect(current()!.pending).toEqual([PROPOSAL])
+    expect(addTagsToUser).not.toHaveBeenCalled()
+  })
+
+  it('別的工作區的標籤不算數（跨租戶不可貼）', async () => {
+    const { db, current } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': { workspaceId: 'other-ws', name: '別人的標籤' } },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await expect(call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })).rejects.toThrow('找不到要貼上的那顆標籤')
+    expect(current()!.pending).toEqual([PROPOSAL])
+  })
+
+  it('沒帶要貼到哪一顆 → 400', async () => {
+    const { db } = makeDb({ workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] }, {})
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await expect(call({ action: 'merge', proposalId: 'p1' })).rejects.toThrow('要帶 tagId')
   })
 })
 

@@ -13,6 +13,7 @@ import {
   normalizeTagName,
   sanitizeTagCode,
   type TagDiscoveryDecision,
+  type TagDiscoveryDecisionAction,
   type TagDiscoveryDoc,
   type TagDiscoveryProposal,
 } from '~~/shared/tag-discovery'
@@ -101,8 +102,27 @@ export default defineEventHandler(async (event) => {
     return { undone: true }
   }
 
-  if ((action !== 'adopt' && action !== 'dismiss') || !proposalId) {
-    throw createError({ statusCode: 400, statusMessage: 'action(adopt|dismiss|undo-dismiss|rescan) 與 proposalId 必填' })
+  if ((action !== 'adopt' && action !== 'dismiss' && action !== 'merge') || !proposalId) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'action(adopt|merge|dismiss|undo-dismiss|rescan) 與 proposalId 必填',
+    })
+  }
+
+  /**
+   * `merge`＝改貼到既有標籤（`C-178`）。目標標籤要**先驗過再認領提案**：
+   * ⛔ 順序反過來的話，標籤 id 是錯的（已刪／別的工作區）時，提案已經從收件匣摘走了
+   * ——那條建議連同它的客人名單就這樣消失，而且什麼都沒貼到。
+   */
+  let mergeTarget: { id: string; name: string } | null = null
+  if (action === 'merge') {
+    const targetId = String(body?.tagId ?? '').trim()
+    if (!targetId) throw createError({ statusCode: 400, statusMessage: 'merge 要帶 tagId（要貼到哪一顆）' })
+    const targetSnap = await db.collection('tags').doc(targetId).get()
+    if (!targetSnap.exists || targetSnap.data()?.workspaceId !== workspaceId) {
+      throw createError({ statusCode: 404, statusMessage: '找不到要貼上的那顆標籤（可能剛被刪掉）' })
+    }
+    mergeTarget = { id: targetId, name: String(targetSnap.data()?.name ?? '') }
   }
 
   // ── 認領：transaction 內把提案從 pending 摘走，同時留下決策紀錄 ──────
@@ -119,7 +139,15 @@ export default defineEventHandler(async (event) => {
       history: [...history, toDecision(target, action, uid, token?.email)].slice(-MAX_DISCOVERY_HISTORY),
       updatedAt: FieldValue.serverTimestamp(),
     }
-    if (action === 'dismiss') {
+    /**
+     * `merge` 也要記進否決名單（`C-178`）。
+     *
+     * ⛔ 少了這一步，這個主題下週會**原封不動再被提一次**：掃描的排除名單只認
+     * 「既有標籤名」與「否決過的名」，而「在看無線麥克風」併進「在看收音麥克風」之後，
+     * 前者這個名字從來沒有變成標籤、也沒有被否決過——於是同一條建議每週回來一次，
+     * 而每次按下去的正確動作都是再併一次。收件匣遲早沒人看。
+     */
+    if (action === 'dismiss' || action === 'merge') {
       // 否決名單 FIFO 上限：塞爆文件比漏擋一個舊主題更糟
       const dismissed = Array.isArray(doc?.dismissedNames) ? doc!.dismissedNames : []
       patch.dismissedNames = [...dismissed, target.name].slice(-MAX_DISMISSED_NAMES)
@@ -133,8 +161,8 @@ export default defineEventHandler(async (event) => {
   }
   if (action === 'dismiss') return { dismissed: true }
 
-  // ── adopt：建標籤 ────────────────────────────────────────────
-  const tag = await createTagFromProposal(db, workspaceId, uid, claimed)
+  // ── adopt＝建一顆新的；merge＝用既有那顆（上面已驗過存在且同工作區）────
+  const tag = mergeTarget ?? await createTagFromProposal(db, workspaceId, uid, claimed)
 
   // 幫聊過的那批客人貼上。⛔ 單人失敗不整批放棄：貼標是冪等的（addTagsToUser 會略過已存在），
   // 剩下沒貼到的頂多少幾位，比「標籤建了卻回 500」好收拾
@@ -143,7 +171,8 @@ export default defineEventHandler(async (event) => {
   for (let i = 0; i < userDocIds.length; i += 10) {
     const chunk = userDocIds.slice(i, i + 10)
     const results = await Promise.all(chunk.map(userDocId =>
-      addTagsToUser(userDocId, [tag.id], 'ai', 'tag-discovery', workspaceId)
+      // 來源標成 merge：日後查「這批人怎麼被貼上的」分得出是建新的還是併進來的
+      addTagsToUser(userDocId, [tag.id], 'ai', action === 'merge' ? 'tag-discovery:merge' : 'tag-discovery', workspaceId)
         .then(r => r.added.length)
         .catch((e) => { console.warn('[tag-discovery] apply failed:', userDocId, e); return 0 }),
     ))
@@ -167,7 +196,10 @@ export default defineEventHandler(async (event) => {
     }, { merge: true })
   }).catch(e => console.warn('[tag-discovery] history patch failed:', workspaceId, e))
 
-  return { created: { id: tag.id, name: tag.name }, tagged, proposed: userDocIds.length }
+  // ⛔ merge 回 `merged` 不是 `created`：畫面那句 toast 不可以說「已建立」——沒有建立任何東西
+  return action === 'merge'
+    ? { merged: { id: tag.id, name: tag.name }, tagged, proposed: userDocIds.length }
+    : { created: { id: tag.id, name: tag.name }, tagged, proposed: userDocIds.length }
 })
 
 /**
@@ -179,7 +211,7 @@ export default defineEventHandler(async (event) => {
  */
 function toDecision(
   p: TagDiscoveryProposal,
-  action: 'adopt' | 'dismiss',
+  action: TagDiscoveryDecisionAction,
   uid: string,
   email?: string,
 ): TagDiscoveryDecision {

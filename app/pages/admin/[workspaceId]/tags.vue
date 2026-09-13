@@ -77,6 +77,15 @@
               從最近兩週的對話歸納出來的主題。按「建立」才會真的新增標籤，
               並幫聊過的那批客人貼上（記為 AI 貼的，隨時可拿掉）；按「忽略」之後不會再建議同一個主題。
             </p>
+            <!--
+              ⛔ 三態（`C-178`）：這一輪之前提的建議**沒有做過**重複檢查，而「沒查過」
+                 跟「查過了、沒有重複」在畫面上長得一模一樣——沉默會被讀成「乾淨」。
+                 講一次就好（每條各講一次是噪音），而且下次掃描後這行會自己消失。
+            -->
+            <p v-if="discoveryUncheckedCount" class="tags-discovery-warn tags-discovery-warn--soft">
+              其中 {{ discoveryUncheckedCount }} 條是「重複檢查」上線前提的，只比對過名字、沒有完整檢查過。
+              下次自動掃描之後就會補上。
+            </p>
             <div v-for="p in discoveryPending" :key="p.id" class="tags-discovery-row">
               <div class="tags-discovery-row__main">
                 <div class="tags-discovery-row__title">
@@ -95,15 +104,54 @@
                 <p v-if="p.reason" class="tags-discovery-row__reason">{{ p.reason }}</p>
                 <!-- 條件會被裁成兩行，但它正是要按下去的依據 → 滑上去看得到全文 -->
                 <p class="tags-discovery-row__criteria" :title="p.criteria">AI 判斷條件：{{ p.criteria }}</p>
+                <!--
+                  ══ 這條在重複既有標籤（`C-178`）════════════════════════
+                  老闆 09-11：帳號裡已經有「在看收音麥克風」，AI 又提「在看無線麥克風」。
+                  兩顆都按下去＝三顆麥克風標籤，而標籤的下游是推播分眾：發一次優惠要記得
+                  三顆都勾，漏勾一顆那批客人就沒收到，事後還看不出來漏了誰。
+                  ⛔ **只提醒不擋**：萬一這家店真的分開賣，硬擋就是幫倒忙。
+                  ⛔ 判官確認過的（confirmed）與只是名字像的，文案要分得出來——
+                     後者是讀取當下用字面比的，把它講成「是同一件事」就是冒充。
+                -->
+                <p v-if="p.similarTo?.length" class="tags-discovery-row__similar">
+                  ⚠️
+                  <template v-for="(s, i) in p.similarTo" :key="s.tagId">
+                    <template v-if="i">；</template>
+                    <template v-if="s.confirmed">
+                      跟你現有的「<strong>{{ s.name }}</strong>」是同一件事<template v-if="s.reason">（{{ s.reason }}）</template>
+                    </template>
+                    <template v-else>
+                      跟你現有的「<strong>{{ s.name }}</strong>」有點像
+                    </template>
+                  </template>
+                </p>
               </div>
               <div v-if="canOperate" class="tags-discovery-row__actions">
+                <!--
+                  ⛔ 撞到重複時「建立」就不該是主鈕：主鈕是人眼睛會先落到的地方，
+                     把它留給「再開一顆」等於用版面推著人做出正要避免的事。
+                -->
                 <el-button
                   size="small"
-                  type="primary"
-                  :loading="discoveryActing === p.id"
+                  :type="hasConfirmedSimilar(p) ? 'default' : 'primary'"
+                  :loading="discoveryActing === p.id && discoveryActingKind === 'adopt'"
                   :disabled="!!discoveryActing && discoveryActing !== p.id"
                   @click="actOnDiscovery(p, 'adopt')"
                 >建立並幫 {{ p.userCount }} 位貼上</el-button>
+                <!--
+                  「改貼到現有標籤」（`C-178`）——這顆是整件事的重點。
+                  先前只有「建立」跟「忽略」，而忽略等於把這 8 位聊過的客人整批丟掉，
+                  所以人明知重複還是只能按建立。沒有這顆，提醒也救不了。
+                -->
+                <el-button
+                  v-for="s in mergeTargets(p)"
+                  :key="s.tagId"
+                  size="small"
+                  :type="s.confirmed ? 'primary' : 'default'"
+                  :loading="discoveryActing === p.id && discoveryActingKind === s.tagId"
+                  :disabled="!!discoveryActing && discoveryActing !== p.id"
+                  @click="actOnDiscovery(p, 'merge', s)"
+                >改貼到「{{ s.name }}」</el-button>
                 <el-button
                   size="small"
                   :disabled="!!discoveryActing"
@@ -170,17 +218,19 @@
 
           <div v-if="showDiscoveryHistory" class="tags-history__body">
             <p class="tags-desc-hint text-muted">
-              AI 提過的每一條，以及當時是誰、在什麼時候按了「建立」或「忽略」。
-              按過「忽略」的主題之後不會再被提；如果是按錯的，可以在這裡取消。
+              AI 提過的每一條，以及當時是誰、在什麼時候決定了什麼。
+              按過「忽略」或「改貼到現有標籤」的主題之後不會再被提；忽略如果是按錯的，可以在這裡取消。
             </p>
             <div v-for="h in discoveryHistory" :key="h.id" class="tags-history-row">
               <div class="tags-history-row__main">
                 <div class="tags-history-row__title">
                   <!-- 決定本身是這一列的重點 → 放在名字前面，一眼掃得完整欄 -->
+                  <!-- ⛔ 三種決定要有三個標籤（`C-178` 新增「已併入」）：把併入講成「已忽略」
+                       會讓人以為那批客人被丟掉了，但他們其實有被貼上，只是貼到別顆 -->
                   <span
                     class="badge"
-                    :class="h.action === 'adopt' ? 'badge-green' : 'badge-gray'"
-                  >{{ h.action === 'adopt' ? '已建立' : '已忽略' }}</span>
+                    :class="h.action === 'adopt' ? 'badge-green' : h.action === 'merge' ? 'badge-blue' : 'badge-gray'"
+                  >{{ h.action === 'adopt' ? '已建立' : h.action === 'merge' ? '已併入' : '已忽略' }}</span>
                   <span class="tags-history-row__name">{{ h.name }}</span>
                   <span class="badge badge-gray">{{ tagCategoryLabel(h.category) }}</span>
                   <!-- 撤回過的忽略要看得出來：否則畫面說「已忽略」，實際上它隨時會再回來 -->
@@ -191,7 +241,7 @@
                   {{ elapsedSince(h.decidedAtMs) }}<template v-if="h.decidedByEmail">由 {{ h.decidedByEmail }} </template>決定．提議時有
                   <strong>{{ h.userCount }} 位客人</strong>聊過<template v-if="h.sampleNames?.length">（{{ h.sampleNames.join('、') }}{{ h.userCount > h.sampleNames.length ? ' 等' : '' }}）</template>
                   <!-- ⛔ 實際貼上人數可能少於提議人數（逐位貼、單人失敗不整批放棄）→ 據實顯示，不要拿 userCount 充數 -->
-                  <template v-if="h.action === 'adopt' && h.taggedCount !== undefined">
+                  <template v-if="(h.action === 'adopt' || h.action === 'merge') && h.taggedCount !== undefined">
                     ．實際幫 <strong>{{ h.taggedCount }} 位</strong>貼上
                   </template>
                 </p>
@@ -200,7 +250,7 @@
               <div class="tags-history-row__actions">
                 <!-- 採用的那條連得到名單：標籤已經存在，好友頁靠 ?tagIds= 篩得出來 -->
                 <el-button
-                  v-if="h.action === 'adopt' && h.tagId"
+                  v-if="(h.action === 'adopt' || h.action === 'merge') && h.tagId"
                   size="small"
                   text
                   @click="goTaggedFriends(h.tagId)"
@@ -260,6 +310,47 @@
                 :aria-pressed="filterAiMode === sub.value"
                 @click="filterAiMode = filterAiMode === sub.value ? 'ai' : sub.value"
               >{{ sub.label }} <span class="tags-segment__n">{{ segmentCount(sub.value) }}</span></button>
+            </div>
+
+            <!--
+              ══ 現有標籤裡有沒有重複的（`C-178`）════════════════════
+              為什麼要有：「防止以後再長出重複的」修好之後，**已經在裡面的那些沒人查過**。
+              老闆只是剛好看到那組麥克風，其他 20 顆有沒有同樣的事，沒有人知道。
+              ⛔ 這一段純在瀏覽器裡算（名字已經載進來了）：零 API、零 LLM、零費用，
+                 所以可以隨時按、按幾次都不心疼。
+              ⛔ 三態：沒按過／按了有／按了沒有，三句話不一樣。
+            -->
+            <div class="tags-dupcheck">
+              <el-button
+                size="small"
+                :disabled="!allTagNames.length"
+                @click="runDuplicateCheck"
+              >檢查有沒有重複的標籤</el-button>
+              <span v-if="!allTagNames.length" class="tags-hint">（標籤清單還沒載入完）</span>
+              <span v-else-if="dupCheckRan && !duplicatePairs.length" class="tags-hint">
+                查過了：這 {{ allTagNames.length }} 顆裡沒有名字相近的。
+              </span>
+            </div>
+            <div v-if="dupCheckRan && duplicatePairs.length" class="tags-discovery-warn">
+              <p class="tags-dupcheck__lead">
+                這 {{ allTagNames.length }} 顆裡有 {{ duplicatePairs.length }} 組名字很相近。
+                重複的標籤最痛的地方是<strong>發推播要記得每顆都勾</strong>，漏勾一顆那批客人就收不到，
+                而且事後看不出來漏了誰。
+              </p>
+              <!-- ⛔ 只列出來、不提供「一鍵合併」：合併是不可逆的（兩顆的客人混在一起就分不回去），
+                   而且哪一顆該留是生意上的判斷，不是程式該替人做的決定。 -->
+              <ul class="tags-dupcheck__list">
+                <li v-for="pair in duplicatePairs" :key="`${pair.a.id}-${pair.b.id}`">
+                  「<button type="button" class="tags-similar-hint__link" @click="goTaggedFriends(pair.a.id)">{{ pair.a.name }}</button>」
+                  跟
+                  「<button type="button" class="tags-similar-hint__link" @click="goTaggedFriends(pair.b.id)">{{ pair.b.name }}</button>」
+                  <template v-if="pair.exact">——<strong>名字完全一樣</strong></template>
+                </li>
+              </ul>
+              <p class="tags-hint">
+                點名字可以看那顆貼了哪些客人。要合併的話：先決定留哪一顆，
+                把另一顆的客人貼過去，再把不要的那顆停用。
+              </p>
             </div>
 
             <div class="tags-toolbar" data-tour="tag-filter">
@@ -434,6 +525,33 @@
         <div class="admin-field-group" data-tour="tag-name">
           <AdminFieldLabel text="顯示名稱（最多 30 字）" tight />
           <el-input v-model="form.name" placeholder="例如 美食愛好者" maxlength="30" />
+          <!--
+            ══ 已經有很像的標籤了（`C-178`）════════════════════════
+            老闆 09-11：「是否不要再額外建立類似但是不同的標籤」。
+            三顆麥克風標籤的代價是發推播要記得三顆都勾，漏勾一顆那批客人就沒收到。
+            ⛔ **只提醒、不擋、不改值**：這裡不打 LLM（要即時、要免費），純比字面，
+               所以它只有資格問一句，沒有資格替人做決定。
+            ⛔ 撞到的那顆要能直接點開看：沒有出口的警告只會被當成雜訊跳過。
+          -->
+          <p v-if="createSimilarTop" class="tags-similar-hint">
+            ⚠️
+            <template v-if="createSimilarTop.exact">
+              你已經有一顆叫「<strong>{{ createSimilarTop.name }}</strong>」的標籤了。
+            </template>
+            <template v-else>
+              你已經有
+              <template v-for="(h, i) in createSimilarHits" :key="h.id">
+                <template v-if="i">、</template>「<strong>{{ h.name }}</strong>」
+              </template>
+              ，確定要另外開一顆嗎？
+            </template>
+            <button
+              v-if="createSimilarTop.id"
+              type="button"
+              class="tags-similar-hint__link"
+              @click="goTaggedFriends(createSimilarTop.id)"
+            >看那顆貼了哪些人 →</button>
+          </p>
         </div>
 
         <div class="admin-field-group">
@@ -587,7 +705,10 @@ import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
-import { discoveryState, discoveryTiming, type DiscoveryScanOutcome, type TagDiscoveryDecision } from '~~/shared/tag-discovery'
+import { discoveryState, discoveryTiming, type DiscoveryScanOutcome, type DiscoverySimilarTag, type TagDiscoveryDecision } from '~~/shared/tag-discovery'
+import { findSimilarNames, findSimilarPairs } from '~~/shared/tag-similarity'
+import { bulkReviewOutcomeText, type BulkReviewResult } from '~~/shared/tag-pending-review'
+import { ElMessageBox } from 'element-plus'
 import { TAG_AI_SEGMENTS, TAG_AI_SUB_SEGMENTS, isTagAiFilterValue } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
 
@@ -626,6 +747,13 @@ const defaultForm = () => ({
 })
 const form = ref(defaultForm())
 
+/* ── 切成「AI 直接貼」時，舊建議怎麼辦（`C-178`，老闆 2026-09-11）──────
+   先前把「AI 先建議」改成「AI 直接貼」按儲存，系統**一句話都不會問**，
+   那幾條舊建議還躺在收件匣裡；人得自己想起來回列表點那顆小小的「N 位等你決定」。
+   09-04 線上 116 條積壓就是這樣攢出來的。 */
+const editOriginalAiMode = ref<TagAiMode>('off')
+const editOriginalCriteria = ref('')
+
 /**
  * 切到「讓 AI 判」而條件還是空的 → 把說明**預填**進去當底稿讓人改。
  * ⛔ 是預填不是靜默沿用：欄位裡看得到、能整段改掉——「AI 偷偷拿說明當條件」正是
@@ -636,6 +764,54 @@ watch(() => form.value.aiMode, (mode, prev) => {
     form.value.aiCriteria = form.value.description.trim()
   }
 })
+
+/* ── 已經有很像的標籤了嗎（`C-178`）──────────────────────────────
+   ⛔ 不能用畫面上的 `tags`：那是**分頁過的**，撞到的那顆很可能在第二頁，
+      於是「有沒有重複」這件事會隨著你現在翻到第幾頁而改變——最糟的一種假否定。 */
+const allTagNames = ref<Array<{ id: string; name: string }>>([])
+
+async function loadAllTagNames() {
+  try {
+    // 不帶 page/limit＝整份回來（後端本來就是全讀再分頁，這裡沒有多花讀取數）
+    const rows = await apiFetch<Array<{ id: string; name: string }>>('/api/tag/list')
+    allTagNames.value = (rows ?? []).map(t => ({ id: t.id, name: t.name })).filter(t => !!t.name)
+  }
+  catch {
+    // ⛔ 讀不到就不提醒，但**絕不**假裝「沒有重複」：提示不出現 ≠ 畫面說你沒有重複
+    allTagNames.value = []
+  }
+}
+
+/**
+ * 正在打的這個名字，跟現有哪幾顆很像。
+ *
+ * ⛔ 編輯既有標籤時要**把自己排除**：否則一打開編輯視窗就跳出
+ * 「你已經有一顆叫『在看咖啡機』的標籤了」——在講它自己。
+ */
+const createSimilarHits = computed(() => {
+  const name = form.value.name.trim()
+  if (!dialogVisible.value || !name) return []
+  const others = allTagNames.value.filter(t => t.id !== form.value.id)
+  return findSimilarNames(name, others, { corpus: allTagNames.value.map(t => t.name), max: 2 })
+})
+
+/** 模板不吃 TS 的 `!` 斷言 → 第一筆單獨拉出來 */
+const createSimilarTop = computed(() => createSimilarHits.value[0] ?? null)
+
+/* ── 現有標籤裡有沒有重複的（`C-178`）────────────────────────────
+   「以後不會再長出重複的」修好之後，已經在裡面的那些仍然沒有人查過。 */
+const duplicatePairs = ref<ReturnType<typeof findSimilarPairs>>([])
+/**
+ * 按過了沒。⛔ 三態：沒有這個旗標的話，「還沒查」跟「查過沒有重複」在畫面上
+ * 長得一模一樣——而沉默會被讀成「乾淨」（08-09 拍板的「查不到≠沒問題」）。
+ */
+const dupCheckRan = ref(false)
+
+function runDuplicateCheck() {
+  // 名字已經在手上 → 純本機計算，零 API、零費用，按幾次都無所謂
+  duplicatePairs.value = findSimilarPairs(allTagNames.value)
+  dupCheckRan.value = true
+}
 
 // ── 範本（D-27③）──────────────────────────────────────
 const templateDialogVisible = ref(false)
@@ -764,11 +940,21 @@ interface DiscoveryRow {
   userCount: number
   sampleNames: string[]
   proposedAtMs: number
+  /** 這條在重複哪幾顆既有標籤（`C-178`；後端已合併「判官判決」與「讀取當下的字面比對」） */
+  similarTo?: DiscoverySimilarTag[]
+  /** ⛔ false＝**沒查過**，不是「查過沒有」——空的 similarTo 不可以被當成「乾淨」 */
+  similarChecked?: boolean
 }
 
 const discoveryPending = ref<DiscoveryRow[]>([])
 /** 目前正在處理的提案 id（同一時間只准按一條，防連點與互相蓋寫） */
 const discoveryActing = ref('')
+/**
+ * 正在按的是哪一顆鈕（'adopt' / 'dismiss' / 要併進去的 tagId）。
+ * ⛔ 只有 `discoveryActing` 的話，同一列的三顆鈕會**一起**轉圈——人分不出自己按到了哪顆，
+ *    而這一列的三顆鈕結果天差地別（多一顆標籤 vs 併進去 vs 丟掉這批客人）。
+ */
+const discoveryActingKind = ref('')
 /** 「AI 讀對話」總開關：關著的話卡片要先講清楚建了也不會自己運作 */
 const discoveryEnabled = ref(false)
 const discoveryLastScanMs = ref(0)
@@ -821,6 +1007,33 @@ const discoveryIdle = computed(() => discoveryState({
 /** 「還可以被 AI 再提一次」的只有沒撤回過的忽略；採用過的標籤已經存在，不會也不該再提 */
 function canUndoDismiss(h: TagDiscoveryDecision) {
   return h.action === 'dismiss' && !h.undoneAtMs
+}
+
+/* ── 這條建議在重複既有標籤嗎（`C-178`）────────────────────────── */
+
+/**
+ * 還沒做過完整重複檢查的建議有幾條。
+ * ⛔ 三態：這是為了不讓「沒查過」被讀成「查過了、沒有重複」——沉默會被當成乾淨
+ *    （同 08-09 拍板的「凡是查不到就等於沒問題的檢查都要三態」）。
+ */
+const discoveryUncheckedCount = computed(() =>
+  discoveryPending.value.filter(p => p.similarChecked !== true).length,
+)
+
+/** 有判官確認過「是同一件事」的——主鈕要讓給「改貼到現有標籤」 */
+function hasConfirmedSimilar(p: DiscoveryRow): boolean {
+  return (p.similarTo ?? []).some(s => s.confirmed)
+}
+
+/**
+ * 要長出幾顆「改貼到…」按鈕。
+ *
+ * ⛔ 最多兩顆：這一列本來就有「建立」與「忽略」，再多就是一排按鈕牆，人只會全部跳過。
+ * 撞到三顆的情況很罕見，而排序已經把最有把握的放前面（判官確認過的在最前），
+ * 沒長出按鈕的那幾顆仍然寫在上面那行提醒裡，不是靜靜消失。
+ */
+function mergeTargets(p: DiscoveryRow): DiscoverySimilarTag[] {
+  return (p.similarTo ?? []).slice(0, 2)
 }
 
 /**
@@ -883,17 +1096,40 @@ async function undoDismiss(h: TagDiscoveryDecision) {
   }
 }
 
-async function actOnDiscovery(p: DiscoveryRow, action: 'adopt' | 'dismiss') {
+async function actOnDiscovery(
+  p: DiscoveryRow,
+  action: 'adopt' | 'dismiss' | 'merge',
+  target?: DiscoverySimilarTag,
+) {
   if (!assertCanOperate()) return
+  if (action === 'merge' && !target) return
   discoveryActing.value = p.id
+  discoveryActingKind.value = action === 'merge' ? target!.tagId : action
   try {
-    const res = await apiFetch<{ created?: { name: string }; tagged?: number; dismissed?: boolean }>(
+    const res = await apiFetch<{
+      created?: { name: string }
+      merged?: { name: string }
+      tagged?: number
+      dismissed?: boolean
+    }>(
       '/api/tag/discovery',
-      { method: 'POST', body: { action, proposalId: p.id } },
+      { method: 'POST', body: { action, proposalId: p.id, ...(target ? { tagId: target.tagId } : {}) } },
     )
     if (action === 'adopt') {
       showToast(`已建立「${res.created?.name ?? p.name}」並幫 ${res.tagged ?? 0} 位客人貼上（AI 先建議模式）`, 'success')
       await refreshTags() // 新標籤要馬上出現在下面的表格裡
+    }
+    else if (action === 'merge') {
+      /**
+       * ⛔ 這句不可以說「已建立」——什麼都沒建立。而且一定要講「不會再提」：
+       * 人按這顆的心智模型是「我拒絕多開一顆」，如果同一條下週又回來，
+       * 他會以為按了沒用（`C-94` 那次「按幾次都沒有新的」的反面）。
+       */
+      showToast(
+        `已把 ${res.tagged ?? 0} 位客人貼到「${res.merged?.name ?? target!.name}」，沒有新增標籤；之後不會再建議「${p.name}」`,
+        'success',
+      )
+      await refreshTags() // 那顆標籤的好友數變了
     }
     else {
       showToast('已忽略，之後不會再建議這個主題', 'success')
@@ -915,6 +1151,7 @@ async function actOnDiscovery(p: DiscoveryRow, action: 'adopt' | 'dismiss') {
   }
   finally {
     discoveryActing.value = ''
+    discoveryActingKind.value = ''
   }
 }
 
@@ -1046,6 +1283,12 @@ async function reloadTags(resetPage = false) {
 
 async function refreshTags() {
   await reloadTags()
+  /**
+   * 標籤增減了 → 重複檢查的比對基準也跟著變（`C-178`）。
+   * ⛔ 少了這一行，剛按「建立在看無線麥克風」之後，下一條「在看錄音麥克風」
+   * 仍然比對不到它——而那正是最需要擋住的那一刻。
+   */
+  await loadAllTagNames()
 }
 
 async function onPageChange(nextPage: number) {
@@ -1069,6 +1312,12 @@ function openCreate() {
 
 function openEdit(tag: any) {
   isEditing.value = true
+  /**
+   * 打開時的原樣（`C-178`）：儲存後要靠它判斷「這次有沒有從『先建議』切成『直接貼』」。
+   * ⛔ 不能事後拿畫面上的 `tags` 比：那份在 `refreshTags()` 之後已經是新值了。
+   */
+  editOriginalAiMode.value = (tag.aiMode === 'suggest' || tag.aiMode === 'auto' ? tag.aiMode : 'off') as TagAiMode
+  editOriginalCriteria.value = String(tag.aiCriteria ?? '')
   form.value = {
     id: tag.id,
     code: tag.code,
@@ -1097,6 +1346,13 @@ async function submitForm() {
   const err = validateForm()
   if (err) return showToast(err, 'error')
   saving.value = true
+  /** 這次儲存要不要接著問「舊建議怎麼辦」（`C-178`）；null＝不用問 */
+  let pendingAfterAuto: {
+    tagId: string
+    tagName: string
+    switchedToAuto: boolean
+    criteriaChanged: boolean
+  } | null = null
   try {
     if (isEditing.value) {
       await apiFetch(`/api/tag/${form.value.id}`, {
@@ -1112,6 +1368,13 @@ async function submitForm() {
         },
       })
       showToast('標籤已更新', 'success')
+      // 這次有沒有從「先建議」切成「直接貼」→ 舊建議要不要順手處理掉（`C-178`）
+      pendingAfterAuto = {
+        tagId: form.value.id,
+        tagName: form.value.name.trim(),
+        switchedToAuto: editOriginalAiMode.value === 'suggest' && form.value.aiMode === 'auto',
+        criteriaChanged: editOriginalCriteria.value.trim() !== form.value.aiCriteria.trim(),
+      }
     }
     else {
       await apiFetch('/api/tag/create', {
@@ -1138,6 +1401,93 @@ async function submitForm() {
   finally {
     saving.value = false
   }
+
+  /**
+   * ⛔ 放在 `finally` 之後、而且**只有儲存成功才會有值**：
+   * 存失敗卻跳出「要不要把舊建議一起貼上」，等於拿一個沒發生的改動去問人。
+   */
+  if (pendingAfterAuto?.switchedToAuto) await offerApplyPendingAfterAuto(pendingAfterAuto)
+}
+
+/**
+ * 切成「AI 直接貼」之後：舊建議要一起貼上嗎（`C-178`）。
+ *
+ * 為什麼要問：改成直接貼之後，AI 本來就會在那些客人下次聊天時自己貼上——
+ * 那幾條舊建議指向的決定，系統遲早自己做掉。放著只會變成一個永遠不會歸零的
+ * 「N 位等你決定」，而那正是 09-04 積壓 116 條的形狀。
+ *
+ * ⛔ **判斷條件也一起改過的話，預設不要貼**：那幾條是照**舊條件**判出來的，
+ * 可能已經不算數了。這種時候主鈕讓給「留著我自己看」。
+ *
+ * ⛔ 這裡刻意**不提供「全部忽略」**：忽略是**永久**的（那顆標籤對那位客人 AI 永不再提），
+ * 這種不可逆的事不該藏在一個快速確認框裡按一下就發生——要忽略就去清單裡，
+ * 看得到是哪幾位、還能逐位取消勾選。所以文案末尾把人指過去。
+ */
+async function offerApplyPendingAfterAuto(ctx: { tagId: string; tagName: string; criteriaChanged: boolean }) {
+  const count = pendingCountFor(ctx.tagId)
+  if (!count) return
+
+  const applyText = `把這 ${count} 位一起貼上`
+  const keepText = '留著我自己看'
+  /**
+   * ⛔ 純文字：ElMessageBox 預設不解析 HTML，`\n` 與 `**粗體**` 都會原樣印出來。
+   * 而標籤名字是使用者自己打的 → **不要**為了排版改用 `dangerouslyUseHTMLString`，
+   * 那等於把一個人可以自由輸入的字串當 HTML 塞進畫面。
+   */
+  const message = ctx.criteriaChanged
+    ? `「${ctx.tagName}」還有 ${count} 位客人的舊建議沒決定。`
+      + '不過你這次也改了判斷條件，那幾條是照舊條件判出來的，可能已經不算數了——'
+      + `建議選「${keepText}」，之後點那一列的「${count} 位等你決定」逐位看過再決定。`
+    : `「${ctx.tagName}」還有 ${count} 位客人的舊建議沒決定。`
+      + '改成「AI 直接貼」之後，這些人下次聊天時 AI 本來就會自己貼上，現在一起貼完就歸零了。'
+      + '（想一次全部忽略的話請按「留著我自己看」，再點那一列的「等你決定」，'
+      + '在清單裡看得到是哪幾位——忽略是永久的，不適合在這裡按一下就決定。）'
+
+  try {
+    await ElMessageBox.confirm(message, '還有舊建議沒處理', {
+      // 改過條件時把主鈕讓給「留著」：不確定的事不該由預設鍵替人決定
+      confirmButtonText: ctx.criteriaChanged ? keepText : applyText,
+      cancelButtonText: ctx.criteriaChanged ? applyText : keepText,
+      type: ctx.criteriaChanged ? 'warning' : 'info',
+    })
+    if (ctx.criteriaChanged) return // 改過條件時，主鈕＝留著
+    await applyAllPendingFor(ctx.tagId, ctx.tagName)
+  }
+  catch {
+    // 取消／關掉＝留著（什麼都不做）。⛔ 改過條件時「取消」才是「一起貼上」
+    if (ctx.criteriaChanged) await applyAllPendingFor(ctx.tagId, ctx.tagName)
+  }
+}
+
+/**
+ * 把某顆標籤現在所有的待審建議一次採用。
+ *
+ * 走的是抽屜那支同一個端點（`D-61`），所以四個數字、掃描上限、批次上限的規矩都一樣：
+ * ⛔ 結果一定要照實講（成功幾位、幾位被同事先處理掉、幾位沒處理到），
+ * 只講「已貼上 30 位」的話，勾了 34 位的人不知道另外 4 位發生什麼事。
+ */
+async function applyAllPendingFor(tagId: string, tagName: string) {
+  try {
+    const list = await apiFetch<{ rows: Array<{ userId: string }> }>(`/api/tag/${encodeURIComponent(tagId)}/pending`)
+    const userIds = (list.rows ?? []).map(r => r.userId)
+    if (!userIds.length) {
+      showToast('這顆標籤已經沒有人在等你決定了', 'info')
+      return
+    }
+    const res = await apiFetch<BulkReviewResult & {
+      counts?: Record<string, number>
+      users?: number
+    }>(`/api/tag/${encodeURIComponent(tagId)}/pending`, {
+      method: 'POST',
+      body: { action: 'apply', userIds },
+    })
+    showToast(`「${tagName}」${bulkReviewOutcomeText('apply', res)}`, 'success')
+    // 後端已經在同一輪掃描裡把每顆的待審數算好了 → 直接換上，不用再打一次
+    onPendingReviewChanged({ counts: res.counts, users: res.users })
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '貼上失敗，請點那一列的「等你決定」再試一次', 'error')
+  }
 }
 
 onMounted(() => {
@@ -1156,5 +1506,7 @@ onMounted(() => {
   void loadDiscovery()
   // ⛔ 一次就好，不要跟著分頁／篩選重打：它是「全工作區的待審」，跟畫面上看哪幾顆無關
   void loadPendingCounts()
+  // 重複檢查要比對**全部**標籤，不是畫面這一頁（`C-178`）
+  void loadAllTagNames()
 })
 </script>

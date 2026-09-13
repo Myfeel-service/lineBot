@@ -2,7 +2,8 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
-import type { TagDiscoveryDoc } from '~~/shared/tag-discovery'
+import { mergeSimilarTags, type TagDiscoveryDoc } from '~~/shared/tag-discovery'
+import { genericFragments } from '~~/shared/tag-similarity'
 import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 
 /**
@@ -21,6 +22,19 @@ export default defineEventHandler(async (event) => {
     db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId).get(),
   ])
   const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
+  const pending = Array.isArray(doc?.pending) ? doc!.pending : []
+
+  /**
+   * 相似提醒（`C-178`）要拿**現在**的標籤清單比一次。
+   *
+   * ⛔ 只在真的有提案時才讀：沒有提案時這張卡整個不出現，多讀一整個 tags collection
+   * 就是白花讀取數（`project_firestore_read_cost_20260811`）。
+   */
+  const liveTags = pending.length
+    ? (await db.collection('tags').where('workspaceId', '==', workspaceId).select('name').get())
+        .docs.map(d => ({ id: d.id, name: String(d.data()?.name ?? '') })).filter(t => !!t.name)
+    : []
+  const generic = genericFragments(liveTags.map(t => t.name))
 
   return {
     enabled: settings.autoTagSuggest?.enabled === true,
@@ -29,7 +43,7 @@ export default defineEventHandler(async (event) => {
      * 「每輪都炸」看起來會跟「還沒跑第一次」一模一樣（`C-68` 的沉默死亡）。
      */
     stalled: isScannerStalled(readScannerHealth(snap.data() as Record<string, unknown> | undefined)),
-    pending: (Array.isArray(doc?.pending) ? doc!.pending : []).map(p => ({
+    pending: pending.map(p => ({
       id: p.id,
       name: p.name,
       category: p.category,
@@ -39,6 +53,13 @@ export default defineEventHandler(async (event) => {
       userCount: Array.isArray(p.userDocIds) ? p.userDocIds.length : 0,
       sampleNames: Array.isArray(p.sampleNames) ? p.sampleNames : [],
       proposedAtMs: p.proposedAtMs,
+      /** 這條在重複哪幾顆既有標籤（存起來的判決＋現在再比一次，見 mergeSimilarTags） */
+      similarTo: mergeSimilarTags(p.name, p.similarTo, liveTags, { generic }),
+      /**
+       * ⛔ 三態：`false`＝掃描那輪判官沒跑成（額度用完／模型出錯），**不是**「查過沒有」。
+       * 舊提案沒有這個欄位也算沒查過——那批是 `C-178` 之前產生的，當時根本沒有這個檢查。
+       */
+      similarChecked: p.similarChecked === true,
     })),
     lastScanMs: Number(doc?.lastScanMs ?? 0),
     /**

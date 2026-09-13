@@ -312,6 +312,34 @@
   line-height: 1.4;
 }
 
+/**
+ * 「你已經有很像的標籤了」（`C-178`）——名稱欄底下那一行。
+ *
+ * 刻意長得像**提示**不像錯誤：這裡純比字面、沒問過 AI，只有資格問一句
+ * 「確定要另外開一顆嗎」。做成紅色錯誤會讓人以為存不進去，但它從來不擋。
+ */
+.tags-similar-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #a35b00;
+
+  strong { color: #7a4400; }
+}
+
+/* 撞到的那顆要點得進去：沒有出口的警告只會被當成雜訊跳過 */
+.tags-similar-hint__link {
+  margin-left: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--el-color-primary);
+  font-size: inherit;
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
+
 .tags-dialog-select {
   width: 100%;
 }
@@ -503,6 +531,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-base);
+  /* 窄畫面讓按鈕整區掉到下一行（`C-178`，量測見 scripts/tag-discovery-row-check.mjs） */
+  flex-wrap: wrap;
 }
 
 /* 總開關關著卻有舊建議：結論先行的警告條（借 ls-status 的語彙：左色條＋淡底） */
@@ -515,6 +545,17 @@
   color: var(--text-primary);
   font-size: 0.78rem;
   line-height: 1.6;
+
+  /**
+   * 輕一階的版本（`C-178`）：用在「這幾條還沒做過重複檢查」那句。
+   * 它講的是**我們的檢查還沒補上**，不是這批建議有問題——跟上面那句
+   * 「總開關關著，建了也不會運作」不是同一個重量級，同色同粗細會蓋掉真正的警告。
+   */
+  &--soft {
+    border-left-color: var(--border-color, #dcdfe6);
+    background: var(--fill-light, #f5f7fa);
+    color: var(--text-secondary);
+  }
 }
 
 /**
@@ -536,7 +577,9 @@
 }
 
 .tags-discovery-row__main {
-  flex: 1;
+  /* ⛔ 基準給 260px 不是 0：整列會換行了，基準 0 會讓文字區被壓成一條再換行，
+     變成「窄窄一行字 ＋ 一整排按鈕」這種誰都讀不了的版型 */
+  flex: 1 1 260px;
   min-width: 0;
 }
 
@@ -590,10 +633,59 @@
   overflow: hidden;
 }
 
+/**
+ * 「這條在重複既有標籤」的提醒（`C-178`）。
+ *
+ * 位置在判斷條件**之下、按鈕之上**：它是按下去之前最後一件該知道的事。
+ * 用琥珀色（同全站「要看一下」的語意）而不是紅色——這不是錯誤，
+ * 而且刻意**不擋**：真的分開賣無線與錄音麥克風的店，按建立是對的。
+ */
+.tags-discovery-row__similar {
+  margin: 0.3rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: #a35b00;
+
+  strong {
+    color: #7a4400;
+  }
+}
+
 .tags-discovery-row__actions {
   display: flex;
-  flex-shrink: 0;
   gap: 0.4rem;
+  /**
+   * ⛔ `flex-wrap: wrap` 一定要配 **`flex-shrink: 1`**（原本是 0）。
+   *
+   * 撞到重複時這一排從兩顆變**四顆**（建立／改貼到 A／改貼到 B／忽略），而
+   * 「改貼到「在看收音麥克風」」這種鈕本身就很長。只加 wrap 不改 shrink 的話，
+   * **換行永遠不會觸發**——不准縮的盒子會一路長到 max-content 把右邊撐出去，
+   * 而這張卡沒有水平捲軸＝按鈕是「看不見」不是「擠在一起」
+   * （`feedback_verify_new_code_actually_runs` 第五種）。
+   * 實測（scripts/tag-discovery-row-check.mjs）：修前 600px 溢出 80px、390px 溢出 290px。
+   */
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
+  /* 換行後每排之間也要有距離（gap 已含 row-gap，這行只是講清楚意圖） */
+  row-gap: 0.4rem;
+
+  /**
+   * 標籤名字有多長是使用者決定的（MYFEEL 有「客服 - SHARP 頂級A咖｜iBarista 智慧咖啡機」
+   * 這種），而 el-button 預設不換行 → 一顆鈕就能把整排撐爆。
+   * ⛔ 用省略號夾住，不是讓它換行：按鈕文字折成兩行會把整排的高度撐歪。
+   * 完整名字在上面那行提醒裡看得到，這裡不是唯一的出處。
+   */
+  .el-button {
+    max-width: 100%;
+  }
+
+  .el-button > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* ── AI 分段膠囊（D-30①）─────────────────────────────────────
@@ -853,4 +945,27 @@
   display: flex;
   flex-shrink: 0;
   gap: 0.4rem;
+}
+
+/* ── 「檢查有沒有重複的標籤」（`C-178`）──────────────────────────
+   按鈕與結果分兩塊：按鈕常駐（隨時可按、純本機計算不花錢），
+   結果只有真的查到才出現——查完沒事的那句話跟在按鈕旁邊就夠了。 */
+.tags-dupcheck {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tags-dupcheck__lead {
+  margin: 0 0 0.4rem;
+  line-height: 1.6;
+}
+
+.tags-dupcheck__list {
+  margin: 0 0 0.4rem;
+  padding-left: 1.1rem;
+  line-height: 1.7;
+
+  li { margin: 0; }
 }

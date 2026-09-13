@@ -30,11 +30,14 @@ import {
   MIN_DISTINCT_USERS,
   pickSampleNames,
   sanitizeDiscoveryProposalsDetailed,
+  type DiscoverySimilarTag,
   type DiscoveryScanOutcome,
   type RawDiscoveryTopic,
   type TagDiscoveryDoc,
   type TagDiscoveryProposal,
 } from '~~/shared/tag-discovery'
+import { findSimilarNames, genericFragments } from '~~/shared/tag-similarity'
+import { judgeSimilarTagNames, type JudgeNamePair } from './tag-similarity-judge'
 import { randomUUID } from 'node:crypto'
 
 export const TAG_DISCOVERY_COLLECTION = 'tagDiscovery'
@@ -325,6 +328,21 @@ async function scanOneWorkspace(
     ...dismissedNames,
   ].filter(Boolean)
 
+  /**
+   * 相似檢查（`C-178`）要用的既有標籤：id＋名字＋判斷條件。
+   *
+   * ⛔ 沿用上面**同一份**查詢結果，不要再打一次：這是整個工作區的標籤，
+   * 重讀一次就是白花一整批讀取數（`project_firestore_read_cost_20260811`）。
+   * 判斷條件也帶上——「錄音麥克風」與「錄音耳機」光看名字分不出來，看條件就分得出來。
+   */
+  const existingTags = tagSnap.docs
+    .map(d => ({
+      id: d.id,
+      name: String(d.data()?.name ?? ''),
+      aiCriteria: String(d.data()?.aiCriteria ?? ''),
+    }))
+    .filter(t => !!t.name)
+
   const prompt = buildDiscoveryPrompt(digests, takenNames)
   const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
     generateJson<{ topics?: RawDiscoveryTopic[] }>(prompt, {
@@ -411,7 +429,10 @@ async function scanOneWorkspace(
   )]
   const nameById = await fetchUserDisplayNames(db, candidateIds)
 
-  const proposals: TagDiscoveryProposal[] = cleaned.map(p => ({
+  // 這幾條提案是不是在重複既有標籤（`C-178`）——字面挑候選 → 判官確認
+  const similar = await resolveSimilarTags(db, workspaceId, cleaned, existingTags)
+
+  const proposals: TagDiscoveryProposal[] = cleaned.map((p, i) => ({
     ...p,
     sampleNames: pickSampleNames(
       p.userDocIds.slice(0, SAMPLE_NAME_CANDIDATES).map(id => nameById[id]),
@@ -419,6 +440,81 @@ async function scanOneWorkspace(
     ),
     id: randomUUID(), // ⛔ id 是伺服器產的，模型只產內容
     proposedAtMs: Date.now(),
+    similarTo: similar.similar[i] ?? [],
+    similarChecked: similar.checked,
   }))
   return { proposed: proposals.length, proposals, outcome }
+}
+
+/**
+ * 每條提案跟哪幾顆既有標籤「會貼到同一群客人」（`C-178`）。
+ *
+ * 兩層漏斗：
+ *  ① 字面挑候選（`findSimilarNames`，免費）——「在看無線麥克風」撈出「在看收音麥克風」。
+ *  ② 判官確認（一次 LLM）——把字面誤撈的剔掉（「錄音麥克風」vs「錄音耳機」都有「錄音」，
+ *     但那是兩種產品）。⛔ 只有判 `same` 的才留下來，`different`/`unsure` 都不出聲。
+ *
+ * 回傳的 `checked` 是三態的關鍵：判官沒跑成時 `similar` 也是空的，跟「查過沒有」
+ * 長得一模一樣——呼叫端要靠 `checked` 把這兩件事分開存，畫面才不會拿空陣列當「乾淨」。
+ */
+async function resolveSimilarTags(
+  db: Firestore,
+  workspaceId: string,
+  proposals: Array<{ name: string; criteria: string }>,
+  existing: Array<{ id: string; name: string; aiCriteria: string }>,
+): Promise<{ similar: DiscoverySimilarTag[][]; checked: boolean }> {
+  const empty = proposals.map(() => [] as DiscoverySimilarTag[])
+  // 沒提案、或這個帳號還沒有標籤 → 沒有東西可以撞，這是「查過了、沒有」不是「沒查」
+  if (!proposals.length || !existing.length) return { similar: empty, checked: true }
+
+  const generic = genericFragments(existing.map(t => t.name))
+  const pairs: JudgeNamePair[] = []
+  /** 第 i 組配對是「哪一條提案 × 哪一顆標籤」——判官只回 index，要靠這份對回來 */
+  const owner: Array<{ proposalIndex: number; tag: { id: string; name: string } }> = []
+
+  proposals.forEach((p, proposalIndex) => {
+    for (const hit of findSimilarNames(p.name, existing, { generic })) {
+      const tag = existing.find(t => t.id === hit.id)
+      if (!tag) continue
+      owner.push({ proposalIndex, tag: { id: tag.id, name: tag.name } })
+      pairs.push({
+        candidate: p.name,
+        candidateCriteria: p.criteria,
+        existing: tag.name,
+        existingCriteria: tag.aiCriteria,
+      })
+    }
+  })
+  // ⛔ 零組配對就**不呼叫**判官：別為了問一個空問題燒一次額度
+  if (!pairs.length) return { similar: empty, checked: true }
+
+  const judged = await judgeSimilarTagNames(workspaceId, pairs)
+  if (!judged) return { similar: empty, checked: false }
+
+  /**
+   * 判官這次花的 token 單獨記一筆。
+   * ⛔ 不併進上面主要那次的 `usage`：那筆在 sanitize 之前就寫出去了，
+   * 為了併帳把它整個往後搬，等於讓中間任何一步出錯都變成「這次掃描完全沒記帳」。
+   */
+  if (judged.inputTokens || judged.outputTokens) {
+    await recordAiUsage(workspaceId, {
+      importInputTokens: judged.inputTokens,
+      importOutputTokens: judged.outputTokens,
+      inputTokens: judged.inputTokens,
+      outputTokens: judged.outputTokens,
+    }, db).catch(e => console.warn('[tag-similarity] usage record failed:', e))
+  }
+
+  judged.verdicts.forEach((v, i) => {
+    if (v.verdict !== 'same') return
+    const o = owner[i]
+    if (!o) return
+    empty[o.proposalIndex]!.push({
+      tagId: o.tag.id,
+      name: o.tag.name,
+      reason: v.reason,
+      confirmed: true,
+    })
+  })
+  return { similar: empty, checked: true }
 }

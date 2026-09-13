@@ -4,6 +4,7 @@ import {
   discoveryState,
   discoveryTiming,
   MAX_PROPOSALS_PER_SCAN,
+  mergeSimilarTags,
   MIN_DISTINCT_USERS,
   pickSampleNames,
   normalizeTagName,
@@ -366,5 +367,79 @@ describe('細條上的時間：上次掃了沒、下次什麼時候', () => {
     const t = discoveryTiming({ ...base, rescanRequestedMs: base.lastScanMs - 60_000 })
     expect(t).toContain('上次掃描')
     expect(t).not.toContain('排進佇列')
+  })
+})
+
+/**
+ * 提案「現在」撞到哪幾顆既有標籤（`C-178`）。
+ *
+ * 存起來的判決是掃描當下算的（一週前），讀取時要拿現在的標籤清單再對一次——
+ * 這一段釘的就是那兩件會讓存起來的判決過期的事：標籤被刪／改名、
+ * 以及掃描之後才建出來的標籤（同一批提案裡先按下去的那一條）。
+ */
+describe('相似提醒：存起來的判決 ＋ 讀取當下再比一次', () => {
+  const LIVE = [
+    { id: 't-mic', name: '在看收音麥克風' },
+    { id: 't-pot', name: '在看料理鍋具' },
+    { id: 't-coffee', name: '在看咖啡機' },
+    { id: 't-invoice', name: '問過發票' },
+    { id: 't-price', name: '問過價格優惠' },
+    { id: 't-ship', name: '問過出貨進度' },
+  ]
+
+  it('判官確認過的照原樣留著，並帶著白話理由', () => {
+    const out = mergeSimilarTags('在看無線麥克風', [
+      { tagId: 't-mic', name: '在看收音麥克風', reason: '兩顆都是在看麥克風的客人', confirmed: true },
+    ], LIVE)
+    expect(out).toEqual([
+      { tagId: 't-mic', name: '在看收音麥克風', reason: '兩顆都是在看麥克風的客人', confirmed: true },
+    ])
+  })
+
+  /** ⛔ 留著就是一顆按下去 404 的按鈕（「改貼到這顆」指向一顆已經不存在的標籤） */
+  it('標籤已經被刪掉 → 整條丟掉', () => {
+    const out = mergeSimilarTags('在等特賣', [
+      { tagId: 't-gone', name: '早就被刪掉的標籤', reason: '同一件事', confirmed: true },
+    ], LIVE)
+    expect(out).toEqual([])
+  })
+
+  /** ⛔ 存的是掃描當下的名字快照，改過名就過期了——畫面不可以印舊名字 */
+  it('標籤改過名 → 用現在的名字，不用存起來的快照', () => {
+    const out = mergeSimilarTags('在看無線麥克風', [
+      { tagId: 't-mic', name: '麥克風（舊名）', reason: '同一件事', confirmed: true },
+    ], LIVE)
+    expect(out[0]?.name).toBe('在看收音麥克風')
+  })
+
+  /**
+   * 掃描當下這條誰都沒撞到（存起來是空的），但你剛剛才按下「建立在看收音麥克風」。
+   * 只信存起來的判決就會漏掉——而這正是同一批提案裡最容易出事的情況。
+   */
+  it('掃描之後才建出來的標籤也要抓到，但標成「只是名字像」', () => {
+    const out = mergeSimilarTags('在看無線麥克風', [], LIVE)
+    expect(out).toEqual([
+      { tagId: 't-mic', name: '在看收音麥克風', reason: '', confirmed: false },
+    ])
+  })
+
+  /** ⛔ 不可以把字面比出來的也標成 confirmed：那是拿「名字有共用的字」冒充「判過是同一件事」 */
+  it('同一顆同時來自兩邊時，以判官那筆為準、不重複列', () => {
+    const out = mergeSimilarTags('在看無線麥克風', [
+      { tagId: 't-mic', name: '在看收音麥克風', reason: '兩顆都是麥克風', confirmed: true },
+    ], LIVE)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.confirmed).toBe(true)
+  })
+
+  it('判官確認過的排在「只是名字像」前面', () => {
+    const out = mergeSimilarTags('在看收音麥克風壓縮包', [
+      { tagId: 't-coffee', name: '在看咖啡機', reason: '判官說同一件事', confirmed: true },
+    ], LIVE)
+    expect(out.map(o => o.confirmed)).toEqual([true, false])
+  })
+
+  it('沒有相似的就回空（不無中生有）', () => {
+    expect(mergeSimilarTags('在看除濕機', [], LIVE)).toEqual([])
   })
 })
