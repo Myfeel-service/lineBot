@@ -222,6 +222,121 @@
     opacity: 0.6;
   }
 
+  /**
+   * ── 批次列（勾選模式）─────────────────────────────────────────
+   * 和「只看未讀」那條一樣釘在捲動區外面，所以左右邊距對齊搜尋框（0.75rem）。
+   * 底色比清單淺一階、加一條下框線：它是「現在處在勾選模式」的持續提示，
+   * 不是一次性的警告（警告用 .conv-list-notice 的琥珀色，兩者要分得出來）。
+   */
+  .conv-batch-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex-shrink: 0;
+    margin: 0.35rem 0.75rem 0.25rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--bg-elevated);
+  }
+
+  .conv-batch-bar__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+  }
+
+  .conv-batch-bar__count {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    /* 數字變長（已選 1 → 已選 100）時不要把右邊那兩顆連結推掉 */
+    min-width: 0;
+    margin-right: auto;
+  }
+
+  .conv-batch-bar__link {
+    border: 0;
+    background: none;
+    padding: 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .conv-batch-bar__link:hover {
+    color: var(--text-primary);
+  }
+
+  /* 動作按鈕：側欄很窄，擠不下就換行，不要橫向溢出（可壓縮欄一律允許換行） */
+  .conv-batch-bar__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+
+    .el-button {
+      margin-left: 0;
+    }
+  }
+
+  .conv-batch-bar__hint {
+    font-size: 0.7rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  /* 批次做完的逐筆回報（略過／失敗是誰）。沿用 .conv-list-notice 的底色 */
+  .conv-batch-report {
+    margin: 0 0.75rem 0.35rem;
+    flex-shrink: 0;
+  }
+
+  .conv-batch-report__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-weight: 700;
+  }
+
+  .conv-batch-report__line {
+    margin-top: 0.2rem;
+  }
+
+  /**
+   * 勾選框那一欄。
+   *
+   * ⛔ 列本身要變成 flex，而且列表項必須 `min-width: 0`：不給的話名字那行的
+   *    ellipsis 失效，第二行的訊息預覽會把整列撐寬，側欄橫向溢出（同 09-10
+   *    那次 min-content 把手機版撐爆的病）。作法照 _flow.scss 的側欄列。
+   */
+  .conv-list-row.is-selecting {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+
+    .split-list-item {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  .conv-row-check {
+    flex: 0 0 auto;
+    height: auto;
+    margin: 0 0 0 0.15rem;
+
+    /* 沒有文字的勾選框，EP 預設還是留著 label 的間距。
+       ⛔ 這裡是全域 partial，不可以用 :deep()（會靜默失效） */
+    .el-checkbox__label {
+      display: none;
+    }
+  }
+
   /* 空清單的補充說明（例如：待跟進是空的時候，講一下怎麼標） */
   .conv-empty-hint {
     display: block;

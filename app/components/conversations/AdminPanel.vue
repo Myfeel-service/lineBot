@@ -17,6 +17,15 @@
             @click="markAllConversationsRead"
           >標記全部已讀（{{ unreadRowCount }}）</button>
         </el-tooltip>
+        <!-- 一次處理好幾筆的入口。平常不出現勾選框：那一欄會吃掉名字與訊息預覽的寬度
+             （239px 的側欄，手機更明顯），所以做成可切換的模式 -->
+        <el-button
+          v-if="canOperate"
+          size="small"
+          :type="selectionMode ? 'primary' : undefined"
+          :plain="selectionMode"
+          @click="toggleSelectionMode"
+        >{{ selectionMode ? '結束勾選' : '勾選' }}</el-button>
         <el-button size="small" :loading="listLoading" @click="loadList('reset')">重整</el-button>
       </div>
     </template>
@@ -114,6 +123,95 @@
         </div>
       </div>
       <!--
+        ── 批次列（勾選模式）────────────────────────────────────────
+        ⛔ 放在捲動區**外面**：跟著清單捲走的話，勾到第 20 列時「已選 8 場」和那幾顆
+           按鈕都在畫面外，人只會以為勾選沒生效。
+        ⛔ 有勾到東西才出現動作按鈕：一排永遠亮著的「結束會話」在這份清單上太危險。
+      -->
+      <div v-if="selectionMode" class="conv-batch-bar">
+        <div class="conv-batch-bar__head">
+          <!-- ⛔ 沒勾東西時不要把量詞套進句子：「勾選要一起處理的位」不是中文 -->
+          <span class="conv-batch-bar__count">
+            {{ selectedRows.length ? `已選 ${selectedRows.length} ${selectionUnit}` : '勾選要一起處理的對話' }}
+          </span>
+          <button
+            v-if="selectableVisibleRows.length"
+            type="button"
+            class="conv-batch-bar__link"
+            :title="visibleSelectableTruncated
+              ? `一次最多 ${CONVERSATION_BATCH_LIMIT} ${selectionUnit}，這裡只會勾最上面的 ${CONVERSATION_BATCH_LIMIT} ${selectionUnit}`
+              : '只勾目前載入的這幾列，還沒捲到的下面幾頁不受影響'"
+            @click="selectAllVisibleRows"
+          >{{ visibleSelectableTruncated
+            ? `勾最上面的 ${CONVERSATION_BATCH_LIMIT} ${selectionUnit}`
+            : `勾這 ${selectableVisibleRows.length} ${selectionUnit}` }}</button>
+          <button
+            v-if="selectedRows.length"
+            type="button"
+            class="conv-batch-bar__link"
+            @click="clearSelection"
+          >取消選取</button>
+        </div>
+        <div v-if="selectedRows.length" class="conv-batch-bar__actions">
+          <!-- 結束會話＝系統判定的會話狀態，會進結案率統計；待跟進是人工標記，不進統計。
+               兩種東西刻意分開擺（同一排會被當成同一種操作，見 shared/conversation-flags.ts） -->
+          <el-button
+            v-if="canBatchCloseHere"
+            size="small"
+            type="danger"
+            plain
+            :loading="batchRunning === 'close'"
+            :disabled="!!batchRunning"
+            @click="batchCloseSelected"
+          >結束會話</el-button>
+          <el-button
+            size="small"
+            plain
+            :loading="batchRunning === 'followUpOn'"
+            :disabled="!!batchRunning"
+            @click="batchSetFollowUp(true)"
+          >🚩 標記待跟進</el-button>
+          <el-button
+            size="small"
+            plain
+            :loading="batchRunning === 'followUpOff'"
+            :disabled="!!batchRunning"
+            @click="batchSetFollowUp(false)"
+          >取消待跟進</el-button>
+        </div>
+        <!--
+          兩句說明，缺一句就會有人做白工或做錯事：
+          ① 「全部」分頁每一列是一位客人、不是一場對話 → 這裡沒有「結束會話」可按。
+             勾了東西才講：沒勾的時候本來就沒有按鈕可缺席，先講只是多一段灰字。
+          ② 勾選中清單停止自動更新（不停的話 30 秒一到整批重排，按下去關到的是別人的對話）。
+          「只勾得到已載入的那幾列」不放這裡：它掛在上面那顆「勾這 N 位」的 title 上，
+          講的是那顆按鈕的行為，寫成第三句灰字只會把這一區變成一堵牆。
+        -->
+        <span v-if="selectedRows.length && activeTab === 'all'" class="conv-batch-bar__hint">
+          這裡的每一列是「一位客人」不是「一場對話」；要批次結束會話請切到狀態分頁
+        </span>
+        <span v-else-if="selectedRows.length && activeTab === 'closed'" class="conv-batch-bar__hint">
+          這個分頁的會話都結束了，只能批次標記
+        </span>
+        <span v-if="selectedRows.length" class="conv-batch-bar__hint">
+          勾選中清單暫停自動更新，結束勾選後恢復
+        </span>
+      </div>
+      <!--
+        批次做完的回報。⛔ 不可以只用一句 toast「完成」草草帶過：
+        勾了 8 筆、其中 2 筆是同事先關掉的或資料已被清掉，那兩位客人會就這樣從視野裡消失
+        （這個專案為「過濾掉東西卻不吭聲」付過三次帳）。所以略過與失敗的**逐筆列名字**。
+      -->
+      <div v-if="batchReport" class="conv-list-notice conv-batch-report">
+        <div class="conv-batch-report__head">
+          <span>{{ batchReport.summary }}</span>
+          <button type="button" class="conv-batch-bar__link" @click="batchReport = null">知道了</button>
+        </div>
+        <div v-for="(line, i) in batchReport.lines" :key="i" class="conv-batch-report__line">
+          {{ line }}
+        </div>
+      </div>
+      <!--
         「只看未讀」掃到哪為止。
 
         ⛔ 這行字不能省：已讀存在這台電腦，所以篩選只能在前端做，它**只掃得到已經載入的
@@ -192,8 +290,20 @@
             v-for="(s, idx) in sessionSidebarItems"
             :key="s.sessionId"
             class="conv-list-row"
-            :class="{ 'is-pinned-edge': idx === lastPinnedSessionIndex }"
+            :class="{ 'is-pinned-edge': idx === lastPinnedSessionIndex, 'is-selecting': selectionMode }"
           >
+            <!--
+              勾選框與「點開這一列」刻意分開：要不要結束一場對話，多半得先點進去看客人講了什麼。
+              整列都變成勾選就沒辦法邊看邊決定了。
+            -->
+            <el-checkbox
+              v-if="selectionMode"
+              class="conv-row-check"
+              :model-value="isRowSelected(s.sessionId)"
+              :aria-label="`勾選 ${s.displayName}`"
+              @click.stop
+              @update:model-value="toggleRowSelected(rowKeyOfSession(s))"
+            />
             <AdminSplitListItem
               :title="s.displayName"
               :leading-avatar-url="s.pictureUrl"
@@ -230,8 +340,16 @@
             v-for="(c, idx) in convSidebarItems"
             :key="c.userId"
             class="conv-list-row"
-            :class="{ 'is-pinned-edge': idx === lastPinnedIndex }"
+            :class="{ 'is-pinned-edge': idx === lastPinnedIndex, 'is-selecting': selectionMode }"
           >
+            <el-checkbox
+              v-if="selectionMode"
+              class="conv-row-check"
+              :model-value="isRowSelected(c.userId)"
+              :aria-label="`勾選 ${c.displayName}`"
+              @click.stop
+              @update:model-value="toggleRowSelected(rowKeyOfConv(c))"
+            />
             <AdminSplitListItem
               :title="c.displayName"
               :leading-avatar-url="c.pictureUrl"
@@ -1393,6 +1511,12 @@ import {
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
+import {
+  CONVERSATION_BATCH_LIMIT,
+  CONVERSATION_BATCH_SKIP_LABELS,
+  describeConversationBatchResult,
+  type ConversationBatchResult,
+} from '~~/shared/conversation-batch'
 import { assigneeInitial, NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
 import { customerLastMessageMs, isConversationUnread, keepUnreadRows } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
@@ -1747,8 +1871,9 @@ function onVisibilityChange() {
   flushPendingReadStamp()
   applyUnreadDocumentTitle()
   // 背景時輪詢是停的（見 listPollTimer），回前景補刷一次把漏掉的變化拉回來。
-  // 搜尋中一樣不重抓（口徑同輪詢，否則每次切回分頁就重掃一次全 workspace 的對話）
-  if (typeof document !== 'undefined' && !document.hidden && !listAutoRefreshPaused.value
+  // 搜尋中一樣不重抓（口徑同輪詢，否則每次切回分頁就重掃一次全 workspace 的對話）；
+  // 勾選中也不重抓——切走再切回來就把勾到一半的清單重排掉，理由見 selectionPaused
+  if (typeof document !== 'undefined' && !document.hidden && !listPollPaused.value
     && !listLoading.value && !listLoadingMore.value)
     void refreshListQuiet()
 }
@@ -3181,6 +3306,228 @@ async function toggleFollowUpFilter() {
   await loadList('reset')
 }
 
+// ── 勾選批次處理 ──────────────────────────────────────────────────
+/**
+ * 「一次處理好幾筆」。兩種動作、語意刻意分開：
+ *
+ * · **結束會話**＝系統判定的會話狀態（餵結案率統計），一場一場關，語意與單筆那顆按鈕
+ *   完全相同（客人下次來訊由 AI／機器人恢復接手）。
+ * · **待跟進**＝人工標記，不進任何統計。
+ *
+ * ⛔ 不要為了「一次標成已處理」而發明第三種狀態寫進 `status`——那會讓統計跟著人工操作
+ *    漂走（docs/CONVERSATION-STATS-DEFINITIONS.md 的明文禁令）。
+ */
+interface SelectedRow {
+  /** 這一列在畫面上的鍵：會話分頁用 sessionId、「全部」分頁用 userId */
+  key: string
+  /** 對話主鍵（待跟進要用）。會話分頁的列也有，因為標記是掛在客人身上不是會話上 */
+  userId: string
+  /** 會話分頁才有（「全部」分頁的列不是一場對話，見批次列上的說明） */
+  sessionId: string
+  /**
+   * 勾的時候就把名字留下來。回報「這 2 筆略過了」時需要它，而那時候那幾列
+   * 可能已經不在清單上（結束之後就離開「待處理」分頁了），去清單裡找會找不到。
+   */
+  displayName: string
+}
+
+const selectionMode = ref(false)
+const selectedRows = ref<SelectedRow[]>([])
+/** 正在跑哪一個批次動作（給按鈕轉圈＋互相擋住，不要兩個批次同時出去） */
+const batchRunning = ref<'' | 'close' | 'followUpOn' | 'followUpOff'>('')
+const batchReport = ref<{ summary: string, lines: string[] } | null>(null)
+
+/** 這個分頁上一列是什麼：會話分頁數「場」、「全部」分頁數「位」（同一份清單兩種列） */
+const selectionUnit = computed(() => (activeTab.value === 'all' ? '位' : '場'))
+
+/** 「結束會話」只在還沒結束的會話分頁上有意義（理由寫在批次列的說明） */
+const canBatchCloseHere = computed(() =>
+  activeTab.value !== 'all' && activeTab.value !== 'closed'
+  && selectedRows.value.some(r => r.sessionId),
+)
+
+function rowKeyOfSession(s: SessionItem): SelectedRow {
+  return { key: s.sessionId, userId: s.userId, sessionId: s.sessionId, displayName: s.displayName }
+}
+
+function rowKeyOfConv(c: ConvItem): SelectedRow {
+  return { key: c.userId, userId: c.userId, sessionId: '', displayName: c.displayName }
+}
+
+/**
+ * 目前**畫面上**可勾的那幾列。
+ *
+ * ⛔ 只能是「已經載入的這幾頁」，不可以做成「選取這個分頁的全部」：待處理分頁裡有上千筆
+ *    從沒開口的殭屍場（STATUS `E-10`），那顆按鈕等於讓人一鍵關掉上千場沒人看過的對話。
+ */
+const selectableVisibleRows = computed<SelectedRow[]>(() =>
+  activeTab.value === 'all'
+    ? convSidebarItems.value.map(rowKeyOfConv)
+    : sessionSidebarItems.value.map(rowKeyOfSession),
+)
+
+/** 畫面上可勾的比一次上限還多：按鈕要改口，別讓人以為全都勾到了 */
+const visibleSelectableTruncated = computed(() =>
+  selectableVisibleRows.value.length > CONVERSATION_BATCH_LIMIT,
+)
+
+function isRowSelected(key: string): boolean {
+  return selectedRows.value.some(r => r.key === key)
+}
+
+function toggleRowSelected(row: SelectedRow) {
+  const idx = selectedRows.value.findIndex(r => r.key === row.key)
+  if (idx > -1) {
+    selectedRows.value.splice(idx, 1)
+    return
+  }
+  if (selectedRows.value.length >= CONVERSATION_BATCH_LIMIT) {
+    showToast(`一次最多 ${CONVERSATION_BATCH_LIMIT} ${selectionUnit.value}，請分批處理`, 'error')
+    return
+  }
+  selectedRows.value.push(row)
+}
+
+function selectAllVisibleRows() {
+  selectedRows.value = selectableVisibleRows.value.slice(0, CONVERSATION_BATCH_LIMIT)
+}
+
+function clearSelection() {
+  selectedRows.value = []
+}
+
+function toggleSelectionMode() {
+  if (!assertCanOperate()) return
+  selectionMode.value = !selectionMode.value
+  clearSelection()
+  batchReport.value = null
+  /**
+   * 離開勾選模式時把清單補刷一次：勾選期間輪詢是停的（見 listPollPaused），
+   * 不補的話畫面會停在進入勾選那一刻，新訊息與紅點都不會進來。
+   */
+  if (!selectionMode.value && !listLoading.value && !listLoadingMore.value)
+    void refreshListQuiet()
+}
+
+/**
+ * 勾選中暫停清單自動更新。
+ *
+ * ⛔ 這條不是效能考量，是安全考量：清單每 30 秒重抓一次並照時間重排，勾到一半重排之後
+ *    「第 3 列」已經換人——按下去結束的是別人的對話。所以有勾到東西就停，並在批次列
+ *    上明講（同搜尋中那條的處理方式：停就停，但要講出來）。
+ */
+const selectionPaused = computed(() => selectionMode.value && selectedRows.value.length > 0)
+
+/** 輪詢與回前景補刷的總開關（搜尋中或勾選中） */
+const listPollPaused = computed(() => listAutoRefreshPaused.value || selectionPaused.value)
+
+/** 批次結果 → 畫面上的逐筆回報（略過與失敗都要看得到是誰） */
+function buildBatchReport(
+  res: ConversationBatchResult,
+  rows: SelectedRow[],
+  unit: string,
+  verb: string,
+): { summary: string, lines: string[] } {
+  const nameOf = (id: string) =>
+    rows.find(r => r.key === id || r.userId === id || r.sessionId === id)?.displayName || '（不明）'
+  const lines: string[] = []
+  for (const s of res.skipped)
+    lines.push(`略過 ${nameOf(s.id)}：${CONVERSATION_BATCH_SKIP_LABELS[s.reason] ?? s.reason}`)
+  for (const f of res.failed)
+    lines.push(`失敗 ${nameOf(f.id)}：${f.message}（請再試一次）`)
+  return { summary: describeConversationBatchResult(res, unit, verb), lines }
+}
+
+async function batchCloseSelected() {
+  if (!assertCanOperate() || batchRunning.value) return
+  const rows = selectedRows.value.filter(r => r.sessionId)
+  if (!rows.length) return
+
+  try {
+    await ElMessageBox.confirm(
+      `要結束這 ${rows.length} 場會話嗎？`
+      + `結束後這 ${rows.length} 位客人下次來訊會被視為新的一段對話，機器人／AI 會恢復自動回覆。`,
+      '批次結束會話',
+      { confirmButtonText: `結束這 ${rows.length} 場`, cancelButtonText: '取消', type: 'warning' },
+    )
+  }
+  catch { return }
+
+  batchRunning.value = 'close'
+  batchReport.value = null
+  try {
+    const res = await apiFetch<ConversationBatchResult>(
+      '/api/conversations/sessions/batch-close',
+      { method: 'POST', body: { sessionIds: rows.map(r => r.sessionId) } },
+    )
+    batchReport.value = buildBatchReport(res, rows, '場', '已結束')
+    showToast(batchReport.value.summary, res.failed.length ? 'error' : 'success')
+
+    /**
+     * 失敗的那幾筆**留著勾**（要重試的就是它們），做完與略過的取消勾選——
+     * 不清掉的話下一次按同一顆按鈕會把已經結束的那幾場再送一次。
+     */
+    const handled = new Set([...res.doneIds, ...res.skipped.map(s => s.id)])
+    selectedRows.value = selectedRows.value.filter(r => !handled.has(r.sessionId))
+
+    // 開著的那場如果剛被關掉，右邊的對話要跟著出現「會話已結束」（安靜刷新，不要整個閃掉）
+    const closedOpenOne = selectedSessionId.value && res.doneIds.includes(selectedSessionId.value)
+    const [, listed] = await Promise.all([
+      closedOpenOne ? reloadTimeline({ quiet: true }) : Promise.resolve(),
+      refreshListQuiet(),
+    ])
+    // 清單那支被閘門擋掉時它開頭那次分頁數字也沒發出去 → 徽章會停在結束前的舊值（同單筆結束）
+    if (!listed) await loadSessionCounts({ force: true })
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '批次結束會話失敗', 'error')
+  }
+  finally {
+    batchRunning.value = ''
+  }
+}
+
+async function batchSetFollowUp(next: boolean) {
+  if (!assertCanOperate() || batchRunning.value) return
+  const rows = [...selectedRows.value]
+  if (!rows.length) return
+
+  batchRunning.value = next ? 'followUpOn' : 'followUpOff'
+  batchReport.value = null
+  try {
+    const res = await apiFetch<ConversationBatchResult>(
+      '/api/conversations/batch-flags',
+      { method: 'POST', body: { userIds: rows.map(r => r.userId), followUp: next } },
+    )
+    batchReport.value = buildBatchReport(
+      res,
+      rows,
+      activeTab.value === 'all' ? '位' : '場',
+      next ? '已標記待跟進' : '已取消待跟進',
+    )
+    showToast(batchReport.value.summary, 'success')
+
+    // 畫面上那幾列的旗子要跟著動（不重載整份清單）
+    for (const id of res.doneIds) applyLocalFlags(id, { followUp: next })
+    // 側欄「只看待跟進（N）」的數字：null＝後端這次查不到，⛔不要從 null 開始加減
+    if (followUpCount.value !== null) {
+      followUpCount.value = Math.max(0, followUpCount.value + (next ? res.done : -res.done))
+    }
+
+    const handled = new Set([...res.doneIds, ...res.skipped.map(s => s.id)])
+    selectedRows.value = selectedRows.value.filter(r => !handled.has(r.userId))
+
+    // 正在「只看待跟進」時取消標記，那幾筆要當場消失，不然畫面在說謊（同單筆）
+    if (!next && followUpFilterOn.value && res.done > 0) await loadList('reset')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '批次標記失敗，請稍後再試', 'error')
+  }
+  finally {
+    batchRunning.value = ''
+  }
+}
+
 /**
  * 「只看未讀」一次往下掃幾頁（一頁 30 筆）。
  *
@@ -3228,6 +3575,13 @@ async function switchTab(tab: TabValue) {
   activeTab.value = tab
   // 「只看待跟進」是「全部」分頁專用的視角，切走就關掉，免得切回來還套著看不見的篩選
   if (tab !== 'all') followUpFilterOn.value = false
+  /**
+   * ⛔ 勾選一定要跟著分頁清掉：兩種分頁的列不是同一種東西（會話分頁一列是一場、
+   *    「全部」一列是一位客人），勾著切過去再按「結束會話」就是在關另一批東西。
+   *    勾選模式本身留著（人正在做批次這件事，不要替他關掉）。
+   */
+  clearSelection()
+  batchReport.value = null
   // ⛔「只看未讀」刻意**不**跟著關：紅點五個分頁都會亮，它在每個分頁都成立，
   //   而且那顆按鈕在每個分頁都看得見（不是看不見的篩選）
   selectedSessionId.value = null
@@ -5492,7 +5846,9 @@ onMounted(() => {
     // 全 workspace 的對話。但**分頁上的數字照更新**（那支只讀計數、很便宜），
     // 而且清單上會明講「搜尋結果不會自己更新」——先前是整支輪詢直接 return，
     // 客服搜完名字沒清掉字（很常見）就再也收不到新訊息與紅點，畫面上一點徵兆都沒有。
-    if (listAutoRefreshPaused.value) {
+    // 勾選中同樣不重抓清單（重排會讓人按下去結束到別人的對話，見 selectionPaused），
+    // 但分頁上的數字照更新——那支只讀計數、很便宜，而且不會動到清單的順序
+    if (listPollPaused.value) {
       void loadSessionCounts()
       return
     }
