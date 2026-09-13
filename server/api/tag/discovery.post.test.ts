@@ -25,7 +25,7 @@ vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
   requireWorkspaceAccess: vi.fn(async () => ({ uid: UID, workspaceId: WS, token: { email: EMAIL } })),
 }))
-vi.mock('~~/server/utils/tagging', () => ({ addTagsToUser: vi.fn() }))
+vi.mock('~~/server/utils/tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn() }))
 vi.mock('uuid', () => ({ v4: () => 'new-tag-id' }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -34,7 +34,7 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 
 const { default: handler } = await import('./discovery.post')
 const { getDb } = await import('~~/server/utils/firebase')
-const { addTagsToUser } = await import('~~/server/utils/tagging')
+const { addTagsToUser, removeTagsFromUser } = await import('~~/server/utils/tagging')
 
 const PROPOSAL = {
   id: 'p1',
@@ -54,13 +54,24 @@ const PROPOSAL = {
  * transaction 直接跑（單執行緒測試不需要真的併發），寫入累積回同一份 doc，
  * 這樣「第二個 transaction 讀得到第一個寫的東西」才測得出來。
  */
-function makeDb(initial: Record<string, any> | null, existingTags: Record<string, any> = {}) {
+function makeDb(
+  initial: Record<string, any> | null,
+  existingTags: Record<string, any> = {},
+  /** 合併還原資料：`tagDiscovery/{ws}/merges/{proposalId}` 一筆一個合併 */
+  merges: Record<string, any> = {},
+) {
   let doc: Record<string, any> | null = initial ? { ...initial } : null
   const tagWrites: Array<Record<string, any>> = []
 
   const docRef = {
     get: async () => ({ exists: !!doc, data: () => doc ?? undefined }),
     set: async (patch: Record<string, any>) => { doc = { ...(doc ?? {}), ...patch } },
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => ({ exists: name in { merges: 1 } && !!merges[id], data: () => merges[id] }),
+        set: async (d: Record<string, any>) => { merges[id] = d },
+      }),
+    }),
   }
 
   const db: any = {
@@ -81,7 +92,7 @@ function makeDb(initial: Record<string, any> | null, existingTags: Record<string
       set: (ref: any, patch: Record<string, any>) => { void ref.set(patch) },
     }),
   }
-  return { db, tagWrites, current: () => doc }
+  return { db, tagWrites, current: () => doc, merges }
 }
 
 const call = (body: Record<string, unknown>) => (handler as any)({ __body: body })
@@ -90,6 +101,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('readBody', async (e: any) => e.__body)
   vi.mocked(addTagsToUser).mockResolvedValue({ added: ['x'] } as any)
+  vi.mocked(removeTagsFromUser).mockResolvedValue({ removed: ['x'] } as any)
 })
 
 describe('忽略：留下決策紀錄，而且不是只留一個看不見的名字', () => {
@@ -192,8 +204,8 @@ describe('改貼到既有標籤：不另外開一顆，客人照樣貼上', () =
     expect(res.created).toBeUndefined()
     expect(res.merged).toEqual({ id: 'tag-mic', name: '在看收音麥克風' })
     expect(vi.mocked(addTagsToUser).mock.calls[0]?.[1]).toEqual(['tag-mic'])
-    // 來源要分得出是併進來的（日後查「這批人怎麼被貼上的」）
-    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[3]).toBe('tag-discovery:merge')
+    // 來源要分得出是併進來的（日後查「這批人怎麼被貼上的」）；`C-180` 起還要帶提案 id
+    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[3]).toBe('tag-discovery:merge:p1')
   })
 
   /**
@@ -243,6 +255,131 @@ describe('改貼到既有標籤：不另外開一顆，客人照樣貼上', () =
     vi.mocked(getDb).mockReturnValue(db)
 
     await expect(call({ action: 'merge', proposalId: 'p1' })).rejects.toThrow('要帶 tagId')
+  })
+})
+
+/**
+ * 解除合併（`C-180`，老闆 2026-09-13 問「是否也跟知識庫一樣合併的可以解除」）。
+ *
+ * 為什麼非有不可：按「改貼到現有標籤」會把主題名**永久**記進「不再建議」
+ * （不記的話下週原封不動再來一次）——沒有這條路，併錯了就再也叫不回來。
+ * 知識庫的產品名合併早就有「解除」（那邊能解是因為它只是一張對照表、沒動到資料；
+ * 這邊是真的把標籤貼到人身上，所以要靠合併當下留下的還原資料）。
+ */
+describe('解除合併：把後悔藥補上', () => {
+  const TARGET = { workspaceId: WS, name: '在看收音麥克風' }
+  const merged = (over: Record<string, any> = {}) => ({
+    workspaceId: WS,
+    pending: [],
+    dismissedNames: ['在看除濕機'],
+    history: [{
+      id: 'p1',
+      name: '在看除濕機',
+      action: 'merge',
+      category: 'interest',
+      criteria: 'x',
+      usage: '',
+      reason: '',
+      userCount: 4,
+      sampleNames: [],
+      proposedAtMs: 1,
+      decidedAtMs: 2,
+      decidedBy: UID,
+      tagId: 'tag-mic',
+      taggedCount: 2,
+      ...over,
+    }],
+  })
+
+  /**
+   * ⛔ 還原資料只能存「**這次真的被貼上**的人」：本來就有這顆標籤的那幾位不是這次給的，
+   * 解除時動他們就是把別人的資料改掉。
+   */
+  it('合併時留下還原資料，而且只記真的被貼上的那幾位', async () => {
+    const { db, merges } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': TARGET },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+    // u2 本來就有這顆標籤（addTagsToUser 回空 added＝略過）
+    vi.mocked(addTagsToUser).mockImplementation(async (userDocId: string) =>
+      (userDocId === 'ws1_u2' ? { added: [], skipped: ['tag-mic'], hits: [] } : { added: ['tag-mic'], skipped: [], hits: [] }) as any)
+
+    await call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })
+
+    expect(merges.p1.tagId).toBe('tag-mic')
+    expect(merges.p1.userDocIds).toEqual(['ws1_u1', 'ws1_u3', 'ws1_u4']) // ⛔ 不含 u2
+  })
+
+  /** ⛔ 同一顆標籤可能被併進兩次（先「無線麥克風」再「錄音麥克風」）→ 記號要帶提案 id */
+  it('貼標來源帶提案 id，兩次併進同一顆才分得出是哪一批', async () => {
+    const { db } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': TARGET },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+    await call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })
+    expect(vi.mocked(addTagsToUser).mock.calls[0]?.[3]).toBe('tag-discovery:merge:p1')
+  })
+
+  it('解除＝摘掉那批人的標籤＋讓這個主題可以再被提＋紀錄標上已解除', async () => {
+    const { db, current } = makeDb(merged(), {}, {
+      p1: { workspaceId: WS, tagId: 'tag-mic', userDocIds: ['ws1_u1', 'ws1_u3'], mergedAtMs: 5 },
+    })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    const res: any = await call({ action: 'unmerge', proposalId: 'p1' })
+
+    expect(res.unmerged).toBe(true)
+    expect(res.removed).toBe(2)
+    expect(vi.mocked(removeTagsFromUser).mock.calls.map(c => c[0])).toEqual(['ws1_u1', 'ws1_u3'])
+    expect(vi.mocked(removeTagsFromUser).mock.calls[0]?.[1]).toEqual(['tag-mic'])
+    expect(current()!.dismissedNames).toEqual([]) // 主題放回可再提
+    expect(current()!.history[0].unmergedAtMs).toBeGreaterThan(0)
+  })
+
+  /**
+   * ⛔ 沒有還原資料就**不可以**假裝解除成功：摘 0 位卻回「已解除」＝畫面說謊，
+   * 而且紀錄一旦標成已解除，按鈕就消失、再也修不回來。
+   */
+  it('沒有還原資料（功能上線前併的）→ 報錯，且不標成已解除', async () => {
+    const { db, current } = makeDb(merged())
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await expect(call({ action: 'unmerge', proposalId: 'p1' })).rejects.toThrow('沒有留下還原資料')
+    expect(current()!.history[0].unmergedAtMs).toBeUndefined()
+    expect(removeTagsFromUser).not.toHaveBeenCalled()
+    expect(current()!.dismissedNames).toEqual(['在看除濕機']) // 也不可以順手解鎖
+  })
+
+  it('已經解除過的不可以再解一次', async () => {
+    const { db } = makeDb(merged({ unmergedAtMs: 999 }))
+    vi.mocked(getDb).mockReturnValue(db)
+    await expect(call({ action: 'unmerge', proposalId: 'p1' })).rejects.toThrow('已經解除過')
+  })
+
+  /**
+   * 另一種後悔：「併得沒錯，但這主題值得單獨開一顆」——要的是讓 AI 重新提議，
+   * ⛔ **不是**把已經貼好的客人標籤拔掉。
+   */
+  it('只放回可再提：標籤一顆都不動，而且不吃掉「解除合併」', async () => {
+    const { db, current } = makeDb(merged())
+    vi.mocked(getDb).mockReturnValue(db)
+
+    const res: any = await call({ action: 'unblock', proposalId: 'p1' })
+
+    expect(res.unblocked).toBe(true)
+    expect(removeTagsFromUser).not.toHaveBeenCalled()
+    expect(current()!.dismissedNames).toEqual([])
+    expect(current()!.history[0].unblockedAtMs).toBeGreaterThan(0)
+    // ⛔ 沒有標上 unmergedAtMs＝後悔藥還在（標籤還在客人身上，本來就該還能拉回來）
+    expect(current()!.history[0].unmergedAtMs).toBeUndefined()
+  })
+
+  it('不是合併的紀錄不能解除（別動到「已建立」那些）', async () => {
+    const { db } = makeDb(merged({ action: 'adopt' }))
+    vi.mocked(getDb).mockReturnValue(db)
+    await expect(call({ action: 'unmerge', proposalId: 'p1' })).rejects.toThrow('找不到這筆合併紀錄')
   })
 })
 

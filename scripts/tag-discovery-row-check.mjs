@@ -47,54 +47,86 @@ const ROW = `
   </div>
 </div></div>`
 
+/**
+ * 「先前的建議與決定」那一列（`C-180` 之後多一顆「解除合併」）。
+ * 同一個陷阱要量兩次：這一列本來也是 `flex-shrink: 0`，而它現在也會有兩顆鈕。
+ */
+const HISTORY_ROW = `
+<div class="message-card tags-discovery-card"><div class="card-section-stack">
+  <div class="tags-history"><div class="tags-history__body">
+    <div class="tags-history-row">
+      <div class="tags-history-row__main">
+        <div class="tags-history-row__title">
+          <span class="badge badge-blue">已併入</span>
+          <span class="tags-history-row__name">在看無線麥克風</span>
+          <span class="badge badge-gray">興趣偏好</span>
+        </div>
+        <p class="tags-history-row__meta">2 天前由 kevin.chiang@myfeel-tw.com 決定．提議時有 <strong>8 位客人</strong>聊過．實際幫 <strong>8 位</strong>貼上</p>
+        <p class="tags-history-row__criteria">AI 判斷條件：客人明確表示想購買或詢問無線麥克風產品。</p>
+      </div>
+      <div class="tags-history-row__actions">
+        <button class="el-button el-button--small"><span>看這批客人</span></button>
+        <button class="el-button el-button--small"><span>解除合併</span></button>
+      </div>
+    </div>
+  </div></div>
+</div></div>`
+
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
 const page = await browser.newPage()
 
 /** 後台內容區實測寬度：桌機、筆電、平板直、手機 */
 const WIDTHS = [1100, 820, 600, 390]
-const rows = []
 
-for (const w of WIDTHS) {
-  await page.setViewport({ width: w, height: 900 })
-  await page.setContent(`<style>${css}
-    body{margin:0;font-family:system-ui,"Noto Sans TC",sans-serif;font-size:14px}
-    /* el-button 的真樣式不在 main.scss 裡 → 給一個保守的近似值（真的按鈕只會更寬不會更窄） */
-    .el-button{display:inline-flex;align-items:center;padding:5px 11px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;font-size:12px;white-space:nowrap}
-  </style>${ROW}`)
+async function measure(html, rowSel, actionsSel) {
+  const out = []
+  for (const w of WIDTHS) {
+    await page.setViewport({ width: w, height: 900 })
+    await page.setContent(`<style>${css}
+      body{margin:0;font-family:system-ui,"Noto Sans TC",sans-serif;font-size:14px}
+      /* el-button 的真樣式不在 main.scss 裡 → 給一個保守的近似值（真的按鈕只會更寬不會更窄） */
+      .el-button{display:inline-flex;align-items:center;padding:5px 11px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;font-size:12px;white-space:nowrap}
+    </style>${html}`)
 
-  rows.push(await page.evaluate(() => {
-    const card = document.querySelector('.tags-discovery-card')
-    const row = document.querySelector('.tags-discovery-row')
-    const actions = document.querySelector('.tags-discovery-row__actions')
-    const cr = card.getBoundingClientRect()
-    const ar = actions.getBoundingClientRect()
-    return {
-      cardRight: Math.round(cr.right),
-      actionsRight: Math.round(ar.right),
-      actionsW: Math.round(ar.width),
-      rowScrollW: row.scrollWidth,
-      rowClientW: row.clientWidth,
-      // 按鈕有沒有真的換行＝不只一個 top
-      buttonRows: new Set([...actions.querySelectorAll('button')].map(b => Math.round(b.getBoundingClientRect().top))).size,
-    }
-  }))
+    out.push(await page.evaluate(([rs, as]) => {
+      const card = document.querySelector('.tags-discovery-card')
+      const row = document.querySelector(rs)
+      const actions = document.querySelector(as)
+      return {
+        cardRight: Math.round(card.getBoundingClientRect().right),
+        actionsRight: Math.round(actions.getBoundingClientRect().right),
+        actionsW: Math.round(actions.getBoundingClientRect().width),
+        rowScrollW: row.scrollWidth,
+        rowClientW: row.clientWidth,
+        // 按鈕有沒有真的換行＝不只一個 top（⛔ 只量溢出不夠：`flex-wrap` 有沒有生效看這個）
+        buttonRows: new Set([...actions.querySelectorAll('button')].map(b => Math.round(b.getBoundingClientRect().top))).size,
+      }
+    }, [rowSel, actionsSel]))
+  }
+  return out
 }
 
 let bad = 0
-console.log('寬度   卡片右緣  按鈕右緣  按鈕區寬  橫向溢出  按鈕排數')
-WIDTHS.forEach((w, i) => {
-  const r = rows[i]
-  const overflow = Math.max(0, r.actionsRight - r.cardRight, r.rowScrollW - r.rowClientW)
-  if (overflow > 1) bad++
-  console.log(
-    `${String(w).padEnd(6)} ${String(r.cardRight).padEnd(9)} ${String(r.actionsRight).padEnd(9)} `
-    + `${String(r.actionsW).padEnd(9)} ${overflow > 1 ? `❌ ${overflow}px` : '✅ 0'}      ${r.buttonRows}`,
-  )
-})
+function report(title, rows) {
+  console.log(`\n── ${title} ──`)
+  console.log('寬度   卡片右緣  按鈕右緣  按鈕區寬  橫向溢出  按鈕排數')
+  WIDTHS.forEach((w, i) => {
+    const r = rows[i]
+    const overflow = Math.max(0, r.actionsRight - r.cardRight, r.rowScrollW - r.rowClientW)
+    if (overflow > 1) bad++
+    console.log(
+      `${String(w).padEnd(6)} ${String(r.cardRight).padEnd(9)} ${String(r.actionsRight).padEnd(9)} `
+      + `${String(r.actionsW).padEnd(9)} ${overflow > 1 ? `❌ ${overflow}px` : '✅ 0'}      ${r.buttonRows}`,
+    )
+  })
+}
+
+report('AI 發現的新標籤（撞到重複＝四顆鈕）', await measure(ROW, '.tags-discovery-row', '.tags-discovery-row__actions'))
+report('先前的建議與決定（已併入＝兩顆鈕）', await measure(HISTORY_ROW, '.tags-history-row', '.tags-history-row__actions'))
 
 await browser.close()
 if (bad) {
   console.error(`\n❌ ${bad} 個寬度下按鈕被推出卡片外（而且沒有捲軸＝直接看不見）`)
   process.exit(1)
 }
-console.log('\n✅ 四個寬度都沒有溢出')
+console.log('\n✅ 兩種列 × 四個寬度都沒有溢出')

@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { addTagsToUser } from '~~/server/utils/tagging'
+import { addTagsToUser, removeTagsFromUser } from '~~/server/utils/tagging'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import {
   DISCOVERY_CATEGORY_COLORS,
@@ -12,6 +12,8 @@ import {
   MAX_DISMISSED_NAMES,
   normalizeTagName,
   sanitizeTagCode,
+  TAG_MERGE_UNDO_SUBCOLLECTION,
+  type TagMergeUndoDoc,
   type TagDiscoveryDecision,
   type TagDiscoveryDecisionAction,
   type TagDiscoveryDoc,
@@ -102,6 +104,95 @@ export default defineEventHandler(async (event) => {
     return { undone: true }
   }
 
+  /**
+   * ══ 解除合併（`C-180`）════════════════════════════════════════
+   *
+   * 為什麼非有不可：按下「改貼到現有標籤」之後，那個主題名會**永久**進「不再建議」名單
+   * （不記的話下週同一條原封不動回來）。少了這條路，併錯了就再也叫不回來——
+   * 我自己加的一道單向門。知識庫那邊的產品名合併早就有「解除」，這裡要跟上。
+   *
+   * 兩種力道，因為是兩個不同的後悔：
+   *  · `unmerge`＝整件事推翻：把**這次合併貼上的那幾位**身上的標籤摘掉 ＋ 放回可再提。
+   *  · `unblock`＝只放回可再提，**標籤留在客人身上**（「併得沒錯，但這主題值得單獨開一顆」）。
+   *
+   * ⛔ 兩者記在**不同欄位**：合成一欄的話，「標籤到底還在不在那些人身上」就看不出來了。
+   * ⛔ `unblock` 不吃掉 `unmerge`：放回可再提之後仍然可以改變主意把標籤拉回來。
+   */
+  if (action === 'unmerge' || action === 'unblock') {
+    if (!proposalId) throw createError({ statusCode: 400, statusMessage: '需要 proposalId' })
+
+    const snap = await docRef.get()
+    const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
+    const history = Array.isArray(doc?.history) ? doc!.history : []
+    const entry = history.find(h => h.id === proposalId && h.action === 'merge')
+    if (!entry) throw createError({ statusCode: 404, statusMessage: '找不到這筆合併紀錄' })
+    if (action === 'unmerge' && entry.unmergedAtMs) {
+      throw createError({ statusCode: 409, statusMessage: '這筆合併已經解除過了' })
+    }
+
+    /**
+     * 先摘標籤再寫紀錄。
+     * ⛔ 順序不能反：先把紀錄標成「已解除」、摘標卻失敗的話，畫面會說解除完成、
+     * 標籤其實還在那些人身上，而且按鈕已經消失＝再也修不回來。
+     */
+    let removed = 0
+    let missing = 0
+    if (action === 'unmerge') {
+      const undoSnap = await docRef.collection(TAG_MERGE_UNDO_SUBCOLLECTION).doc(proposalId).get()
+      const undo = (undoSnap.data() ?? null) as TagMergeUndoDoc | null
+      /**
+       * ⛔ 沒有還原資料就**不要假裝解除成功**：那是合併當時那份小文件沒寫成
+       * （或這筆是這個功能上線前併的）。摘 0 位卻回「已解除」＝畫面說謊。
+       */
+      if (!undo || !Array.isArray(undo.userDocIds)) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: '這筆合併沒有留下還原資料（可能是這個功能上線前併的），只能到好友頁手動把標籤拿掉',
+        })
+      }
+      const targetTagId = String(undo.tagId || entry.tagId || '')
+      for (let i = 0; i < undo.userDocIds.length; i += 10) {
+        const chunk = undo.userDocIds.slice(i, i + 10)
+        const results = await Promise.all(chunk.map(userDocId =>
+          removeTagsFromUser(userDocId, [targetTagId], 'ai', `tag-discovery:unmerge:${proposalId}`, workspaceId)
+            .then(r => r.removed.length)
+            .catch((e) => { console.warn('[tag-discovery] unmerge failed:', userDocId, e); return -1 }),
+        ))
+        for (const n of results) {
+          if (n > 0) removed += n
+          // 0＝那位身上早就沒有這顆了（有人手動摘掉／標籤被刪）；-1＝這位出錯了
+          else missing += 1
+        }
+      }
+    }
+
+    const done = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(docRef)
+      const freshDoc = (fresh.data() ?? null) as TagDiscoveryDoc | null
+      const freshHistory = Array.isArray(freshDoc?.history) ? freshDoc!.history : []
+      const target = freshHistory.find(h => h.id === proposalId && h.action === 'merge')
+      if (!target) return false
+
+      // 兩種力道都會把名字放回「可以再被提」（名字比對走 normalize，同 undo-dismiss）
+      const key = normalizeTagName(target.name)
+      const dismissed = Array.isArray(freshDoc?.dismissedNames) ? freshDoc!.dismissedNames : []
+      const stamp = action === 'unmerge' ? { unmergedAtMs: Date.now() } : { unblockedAtMs: Date.now() }
+      tx.set(docRef, {
+        dismissedNames: dismissed.filter(n => normalizeTagName(n) !== key),
+        // ⛔ 不刪這筆紀錄：這個決定發生過、也被推翻過，兩件事都是紀錄的一部分
+        history: freshHistory.map(h => (h.id === proposalId ? { ...h, ...stamp } : h)),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      return true
+    })
+    if (!done) throw createError({ statusCode: 404, statusMessage: '找不到這筆合併紀錄（可能剛被同事處理過）' })
+
+    // ⛔ 四個數字照實回：摘了幾位、幾位身上本來就沒有了——合起來講會蓋掉「有人手動動過」
+    return action === 'unmerge'
+      ? { unmerged: true, removed, missing, name: entry.name }
+      : { unblocked: true, name: entry.name }
+  }
+
   if ((action !== 'adopt' && action !== 'dismiss' && action !== 'merge') || !proposalId) {
     throw createError({
       statusCode: 400,
@@ -167,16 +258,49 @@ export default defineEventHandler(async (event) => {
   // 幫聊過的那批客人貼上。⛔ 單人失敗不整批放棄：貼標是冪等的（addTagsToUser 會略過已存在），
   // 剩下沒貼到的頂多少幾位，比「標籤建了卻回 500」好收拾
   let tagged = 0
+  /** merge 專用：這次真的被貼上的人（解除合併就是照這份把標籤摘回來） */
+  const mergedUserDocIds: string[] = []
   const userDocIds = Array.isArray(claimed.userDocIds) ? claimed.userDocIds : []
   for (let i = 0; i < userDocIds.length; i += 10) {
     const chunk = userDocIds.slice(i, i + 10)
     const results = await Promise.all(chunk.map(userDocId =>
-      // 來源標成 merge：日後查「這批人怎麼被貼上的」分得出是建新的還是併進來的
-      addTagsToUser(userDocId, [tag.id], 'ai', action === 'merge' ? 'tag-discovery:merge' : 'tag-discovery', workspaceId)
-        .then(r => r.added.length)
-        .catch((e) => { console.warn('[tag-discovery] apply failed:', userDocId, e); return 0 }),
+      /**
+       * 來源標成 merge：日後查「這批人怎麼被貼上的」分得出是建新的還是併進來的。
+       * ⛔ 併入的記號要**帶提案 id**（`C-180`）：同一顆標籤可能被併進兩次
+       * （先「無線麥克風」再「錄音麥克風」），共用一個字串的話解除時分不出是哪一批。
+       */
+      addTagsToUser(
+        userDocId,
+        [tag.id],
+        'ai',
+        action === 'merge' ? `tag-discovery:merge:${claimed.id}` : 'tag-discovery',
+        workspaceId,
+      )
+        .then(r => (r.added.length ? userDocId : null))
+        .catch((e) => { console.warn('[tag-discovery] apply failed:', userDocId, e); return null }),
     ))
-    tagged += results.reduce((a, b) => a + b, 0)
+    for (const userDocId of results) {
+      if (userDocId) mergedUserDocIds.push(userDocId)
+    }
+    tagged += results.filter(Boolean).length
+  }
+
+  /**
+   * 合併要留還原資料（`C-180`）——「解除合併」唯一的依據。
+   *
+   * ⛔ 存的是**真的被貼上的那幾位**（`added`），不是提案的全部人：本來就有這顆標籤的
+   * 那幾位不是這次合併給的，解除時動他們就是把別人的資料改掉。
+   * ⛔ 寫失敗不讓整支 500：標籤已經貼好了，這份只是後悔藥；但要 log，
+   * 否則「為什麼這筆沒有解除按鈕」查不出來。
+   */
+  if (action === 'merge') {
+    await docRef.collection(TAG_MERGE_UNDO_SUBCOLLECTION).doc(claimed.id).set({
+      workspaceId,
+      tagId: tag.id,
+      userDocIds: mergedUserDocIds,
+      mergedAtMs: Date.now(),
+    } satisfies TagMergeUndoDoc).catch(e =>
+      console.warn('[tag-discovery] 合併還原資料寫入失敗（這筆將無法解除）:', workspaceId, claimed.id, e))
   }
 
   /**

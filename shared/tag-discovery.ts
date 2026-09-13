@@ -64,6 +64,30 @@ export const MAX_DISCOVERY_HISTORY = 50
 /** 決策紀錄一筆最多存幾位客人的名字（同 pending 的證據快照） */
 export const HISTORY_SAMPLE_NAMES = 3
 
+/**
+ * 「這次合併貼了哪些人」存在哪（`C-180`）：`tagDiscovery/{workspaceId}/{此值}/{proposalId}`。
+ *
+ * ⛔ **為什麼不存進決策紀錄裡**：那份刻意不帶客人名單（50 筆 × 兩百多個 id 會把主文件
+ * 推向 1MB 上限，連 pending 都讀不出來）。一個合併一份小文件，只有按「解除合併」時才讀。
+ * ⛔ **為什麼不改用查詢**（`userTags` 撈 `sourceRefId`）：那要一支新的複合索引，
+ * 而索引要手動部署（見 `docs/` 與部署筆記）——等於這顆按鈕在索引部署前是壞的。
+ */
+export const TAG_MERGE_UNDO_SUBCOLLECTION = 'merges'
+
+/** 一次合併的還原資料 */
+export interface TagMergeUndoDoc {
+  workspaceId: string
+  /** 併進了哪一顆既有標籤 */
+  tagId: string
+  /**
+   * 這次**真的被貼上**的人。
+   * ⛔ 不是提案的全部人：本來就有這顆標籤的那幾位不在裡面——解除時不可以動他們，
+   * 他們身上這顆標籤不是這次合併給的。
+   */
+  userDocIds: string[]
+  mergedAtMs: number
+}
+
 export const DISCOVERY_NAME_MAX = 20
 export const DISCOVERY_CRITERIA_MAX = 200 // ＝標籤編輯器 aiCriteria 的 maxlength，同一個數字
 export const DISCOVERY_LINE_MAX = 80
@@ -159,10 +183,26 @@ export interface TagDiscoveryDecision {
   /** 誰按的：uid 一定有，email 是當下的快照（沒有就不顯示，⛔不要拿 uid 充當人名） */
   decidedBy: string
   decidedByEmail?: string
-  /** adopt 才有：建出來的標籤 id（畫面靠它連到好友頁的名單） */
+  /** adopt／merge 才有：貼到哪顆標籤（adopt＝新建的那顆；merge＝併進去的既有那顆） */
   tagId?: string
-  /** adopt 才有：實際幫幾位客人貼上（⛔ 可能少於 userCount，貼標是逐位進行、單人失敗不整批放棄） */
+  /** adopt／merge 才有：實際幫幾位客人貼上（⛔ 可能少於 userCount，貼標是逐位進行、單人失敗不整批放棄） */
   taggedCount?: number
+  /**
+   * merge 才有：這次合併被解除的時間（`C-180`）。
+   *
+   * ⛔ 跟 `undoneAtMs` 分開的理由見下面那欄：這裡記的是「整件事被推翻」，
+   * 而 `unblockedAtMs` 記的是「只是讓 AI 可以再提」——兩個是不同的決定，
+   * 合成一欄的話「標籤到底還在不在那些人身上」就看不出來了。
+   */
+  unmergedAtMs?: number
+  /**
+   * merge 才有：只把這個主題放回「AI 可以再提」、**標籤留在客人身上**的時間（`C-180`）。
+   *
+   * 為什麼要有這條路：併完之後才發現「其實這個主題值得單獨開一顆」——那時你想要的是
+   * 讓 AI 重新提議，而不是把已經貼好的客人身上的標籤拔掉。
+   * ⛔ 它**不吃掉**「解除合併」：放回可再提之後，你仍然可以改變主意把標籤拉回來。
+   */
+  unblockedAtMs?: number
   /**
    * dismiss 才有：後來按了「取消忽略」的時間。
    * ⛔ 不把整筆刪掉：刪掉等於這個決定沒發生過，而它其實發生過也被推翻過——

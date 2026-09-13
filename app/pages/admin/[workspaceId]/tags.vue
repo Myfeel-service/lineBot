@@ -219,7 +219,8 @@
           <div v-if="showDiscoveryHistory" class="tags-history__body">
             <p class="tags-desc-hint text-muted">
               AI 提過的每一條，以及當時是誰、在什麼時候決定了什麼。
-              按過「忽略」或「改貼到現有標籤」的主題之後不會再被提；忽略如果是按錯的，可以在這裡取消。
+              按過「忽略」或「改貼到現有標籤」的主題之後不會再被提——兩種都按錯得回來：
+              忽略按「取消忽略」，合併按「解除合併」（可以連標籤一起拿掉，也可以只讓 AI 重新提議）。
             </p>
             <div v-for="h in discoveryHistory" :key="h.id" class="tags-history-row">
               <div class="tags-history-row__main">
@@ -235,6 +236,14 @@
                   <span class="badge badge-gray">{{ tagCategoryLabel(h.category) }}</span>
                   <!-- 撤回過的忽略要看得出來：否則畫面說「已忽略」，實際上它隨時會再回來 -->
                   <span v-if="h.undoneAtMs" class="badge badge-orange">已取消忽略</span>
+                  <!--
+                    解除合併的兩種力道要分得出來（`C-180`）：
+                    ⛔ 「已解除合併」＝標籤**已經從那些人身上拿掉了**；
+                       「已可再被提議」＝標籤還在，只是這個主題重新開放給 AI 提。
+                       兩個講成同一句話，人就不知道客人身上現在到底有沒有那顆標籤。
+                  -->
+                  <span v-if="h.unmergedAtMs" class="badge badge-orange">已解除合併</span>
+                  <span v-else-if="h.unblockedAtMs" class="badge badge-gray">已可再被提議</span>
                 </div>
                 <p class="tags-history-row__meta">
                   <!-- ⛔ 查不到是誰就整段不講：「由 同事決定」既沒資訊、中英夾雜的空格還會歪掉 -->
@@ -264,6 +273,18 @@
                   :disabled="!!undoingDismiss"
                   @click="undoDismiss(h)"
                 >取消忽略</el-button>
+                <!--
+                  合併的後悔藥（`C-180`）。按下「改貼到現有標籤」會把這個主題名**永久**
+                  記進「不再建議」（否則下週原封不動再來一次）——沒有這顆鈕的話，
+                  併錯了就再也叫不回來。知識庫的產品名合併早就有「解除」，這裡跟上。
+                -->
+                <el-button
+                  v-if="canOperate && canUnmerge(h)"
+                  size="small"
+                  :loading="unmerging === h.id"
+                  :disabled="!!unmerging"
+                  @click="unmergeDecision(h)"
+                >解除合併</el-button>
               </div>
             </div>
           </div>
@@ -1007,6 +1028,75 @@ const discoveryIdle = computed(() => discoveryState({
 /** 「還可以被 AI 再提一次」的只有沒撤回過的忽略；採用過的標籤已經存在，不會也不該再提 */
 function canUndoDismiss(h: TagDiscoveryDecision) {
   return h.action === 'dismiss' && !h.undoneAtMs
+}
+
+/**
+ * 這筆合併還解得掉嗎（`C-180`）。
+ * ⛔ 只看 `unmergedAtMs`：只按過「讓 AI 可以再提」（`unblockedAtMs`）的那些
+ *    **標籤還在客人身上**，所以後悔藥要留著。
+ */
+function canUnmerge(h: TagDiscoveryDecision) {
+  return h.action === 'merge' && !h.unmergedAtMs
+}
+
+/** 正在解除的那筆（防連點） */
+const unmerging = ref('')
+
+/**
+ * 解除合併：兩種力道讓人自己選。
+ *
+ * ⛔ 不做成一顆按下去就全做完的鈕：「把標籤從 11 個人身上拿掉」跟「讓 AI 可以再提這個主題」
+ * 是兩個不同的後悔，而前者會改到客人資料。混成一個動作，想要後者的人會連帶失去已經貼好的標籤。
+ */
+async function unmergeDecision(h: TagDiscoveryDecision) {
+  if (!assertCanOperate()) return
+  const full = `連標籤一起拿掉（${h.taggedCount ?? 0} 位）`
+  const keep = '標籤留著，只讓 AI 可以再提'
+  let action: 'unmerge' | 'unblock'
+  try {
+    await ElMessageBox.confirm(
+      `「${h.name}」當初併進了「${h.tagId ? '既有標籤' : '某顆標籤'}」並幫 ${h.taggedCount ?? 0} 位客人貼上。`
+      + `要連那些標籤一起拿掉嗎？（只會拿掉這次合併貼上的那幾位，本來就有這顆標籤的人不受影響）`
+      + `　如果只是想讓 AI 重新提議這個主題、標籤留著，選右邊那個。`,
+      '解除合併',
+      { confirmButtonText: full, cancelButtonText: keep, type: 'warning', distinguishCancelAndClose: true },
+    )
+    action = 'unmerge'
+  }
+  catch (e) {
+    // ⛔ 關掉／ESC＝什麼都不做，不可以當成「只放回可再提」（那也是一個會改資料的動作）
+    if (e !== 'cancel') return
+    action = 'unblock'
+  }
+
+  unmerging.value = h.id
+  try {
+    const res = await apiFetch<{ removed?: number; missing?: number; unblocked?: boolean }>(
+      '/api/tag/discovery',
+      { method: 'POST', body: { action, proposalId: h.id } },
+    )
+    if (action === 'unblock') {
+      showToast(`「${h.name}」之後 AI 可以再提議；已經貼上的標籤留著沒動`, 'success')
+    }
+    else {
+      /**
+       * ⛔ 「摘掉幾位」跟「幾位身上本來就沒有了」要分開講：合起來只報一個數字的話，
+       * 有人手動動過那幾位這件事就被蓋掉了（同批次審核那四個數字的理由）。
+       */
+      const parts = [`已從 ${res.removed ?? 0} 位客人身上拿掉標籤`]
+      if (res.missing) parts.push(`${res.missing} 位身上已經沒有這顆了（有人先動過）`)
+      parts.push('這個主題之後 AI 可以再提議')
+      showToast(parts.join('；'), 'success')
+      await refreshTags() // 那顆標籤的好友數變了
+    }
+    await loadDiscovery()
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '解除失敗', 'error')
+  }
+  finally {
+    unmerging.value = ''
+  }
 }
 
 /* ── 這條建議在重複既有標籤嗎（`C-178`）────────────────────────── */
