@@ -65,7 +65,7 @@ export const MAX_DISCOVERY_HISTORY = 50
 export const HISTORY_SAMPLE_NAMES = 3
 
 /**
- * 「這次合併貼了哪些人」存在哪（`C-180`）：`tagDiscovery/{workspaceId}/{此值}/{proposalId}`。
+ * 「這次合併貼了哪些人」存在哪（`C-181`）：`tagDiscovery/{workspaceId}/{此值}/{proposalId}`。
  *
  * ⛔ **為什麼不存進決策紀錄裡**：那份刻意不帶客人名單（50 筆 × 兩百多個 id 會把主文件
  * 推向 1MB 上限，連 pending 都讀不出來）。一個合併一份小文件，只有按「解除合併」時才讀。
@@ -188,7 +188,7 @@ export interface TagDiscoveryDecision {
   /** adopt／merge 才有：實際幫幾位客人貼上（⛔ 可能少於 userCount，貼標是逐位進行、單人失敗不整批放棄） */
   taggedCount?: number
   /**
-   * merge 才有：這次合併被解除的時間（`C-180`）。
+   * merge 才有：這次合併被解除的時間（`C-181`）。
    *
    * ⛔ 跟 `undoneAtMs` 分開的理由見下面那欄：這裡記的是「整件事被推翻」，
    * 而 `unblockedAtMs` 記的是「只是讓 AI 可以再提」——兩個是不同的決定，
@@ -196,7 +196,7 @@ export interface TagDiscoveryDecision {
    */
   unmergedAtMs?: number
   /**
-   * merge 才有：只把這個主題放回「AI 可以再提」、**標籤留在客人身上**的時間（`C-180`）。
+   * merge 才有：只把這個主題放回「AI 可以再提」、**標籤留在客人身上**的時間（`C-181`）。
    *
    * 為什麼要有這條路：併完之後才發現「其實這個主題值得單獨開一顆」——那時你想要的是
    * 讓 AI 重新提議，而不是把已經貼好的客人身上的標籤拔掉。

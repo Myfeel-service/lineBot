@@ -204,7 +204,7 @@ describe('改貼到既有標籤：不另外開一顆，客人照樣貼上', () =
     expect(res.created).toBeUndefined()
     expect(res.merged).toEqual({ id: 'tag-mic', name: '在看收音麥克風' })
     expect(vi.mocked(addTagsToUser).mock.calls[0]?.[1]).toEqual(['tag-mic'])
-    // 來源要分得出是併進來的（日後查「這批人怎麼被貼上的」）；`C-180` 起還要帶提案 id
+    // 來源要分得出是併進來的（日後查「這批人怎麼被貼上的」）；`C-181` 起還要帶提案 id
     expect(vi.mocked(addTagsToUser).mock.calls[0]?.[3]).toBe('tag-discovery:merge:p1')
   })
 
@@ -259,7 +259,7 @@ describe('改貼到既有標籤：不另外開一顆，客人照樣貼上', () =
 })
 
 /**
- * 解除合併（`C-180`，老闆 2026-09-13 問「是否也跟知識庫一樣合併的可以解除」）。
+ * 解除合併（`C-181`，老闆 2026-09-13 問「是否也跟知識庫一樣合併的可以解除」）。
  *
  * 為什麼非有不可：按「改貼到現有標籤」會把主題名**永久**記進「不再建議」
  * （不記的話下週原封不動再來一次）——沒有這條路，併錯了就再也叫不回來。
