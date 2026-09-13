@@ -3646,13 +3646,29 @@ const canSend = computed(() => !!inputText.value.trim())
 type LoadListMode = 'reset' | 'more' | 'merge'
 
 /**
+ * 被擋下來的 reset：等前一輪跑完要補跑的那一次。
+ *
+ * ⛔ 沒有這一格的話，reset 撞上「還在載入」就是**整個不見**，而且不會再有人補——
+ * 而 reset 全是使用者主動的動作（搜尋、換分頁、按重整）。2026-09-13 實測正式資料：
+ * 進頁後清單要三、四秒才載得完，這段時間打「日常」，帶關鍵字的那次請求根本沒送出去，
+ * 畫面就停在全部對話（王小菀、李冠甫Jessica…），但提示條與內容搜尋那一區已經切成
+ * 搜尋狀態——看起來就是「搜尋日常搜到一堆沒講過日常的人」。畫面說謊比搜不到更糟。
+ *
+ * 只記一格（不排隊）：補跑時讀的是**當下**的搜尋字與分頁，中間被擋掉的那幾次本來就過期了。
+ */
+let resetQueued = false
+
+/**
  * 回傳「這一輪有沒有真的跑」（被上面三道閘門擋掉就是 false）。
  * 呼叫端靠它決定要不要自己補一次分頁數字——被擋掉的那次連數字都沒重抓，
  * 接手／交還／送訊息之後少了那一次，分頁上的「未首接 12」就會停在動作前的舊值。
  */
 async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
   if (mode === 'reset') {
-    if (listLoading.value) return false
+    if (listLoading.value) {
+      resetQueued = true
+      return false
+    }
     listLoading.value = true
     listPage.value = 1
     listHasMore.value = false
@@ -3772,6 +3788,15 @@ async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
       listLoadingMore.value = false
     }
     listMerging = false
+    /**
+     * 剛才被擋掉的那次 reset 現在補跑（見 resetQueued）。
+     * 旗標先清再叫：新那輪萬一又被擋，它自己會再排一次，兩邊不會互相等。
+     * 還在載入（自己被追過、新那批沒跑完）就不補，等真正結束的那一輪來接。
+     */
+    if (resetQueued && !listLoading.value) {
+      resetQueued = false
+      void loadList('reset')
+    }
   }
   if (seq !== listLoadSeq) return true
   await countsTask
