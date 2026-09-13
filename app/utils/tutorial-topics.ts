@@ -165,9 +165,13 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         requiresPresent: '[data-tour="kb-start"]',
         clickBefore: '[data-tour="kb-import"]',
         title: '手邊還沒有資料？挑一條',
+        // ⚠️ 2026-09-13 換口徑：原本寫「差別是準備時間」，但視窗那邊的順序已改成
+        //    試算表優先（理由見 KnowledgeImportDialog 的三版說明），準備時間正好是它最吃虧的維度。
+        //    教材跟畫面講反了比沒教還糟，所以這裡也改成先講「改了會不會自動更新」。
         description:
-          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。差別是準備時間，'
-          + '以及之後改了資料會不會自動更新。Google 試算表那條還附了共用畫面的示意圖。',
+          '這三顆是三種起步方式，<strong>點一下就會展開那一條要做什麼</strong>。主要差別是'
+          + '<strong>之後資料改了會不會自動更新</strong>：排第一的 Google 試算表會自己更新（還附了共用畫面的示意圖），'
+          + '最後一條的檔案改了要再傳一次整份。要花多少時間寫在各自展開後的第一行。',
         placement: 'top',
       },
       {

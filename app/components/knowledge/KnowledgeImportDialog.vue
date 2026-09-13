@@ -174,9 +174,42 @@
            去 Google 分享，回來時面板要還開著、帳號還在眼前——收起來等於叫他重想一次
            剛剛做到哪。
       -->
+      <!--
+        ── 三版：換推薦順序（2026-09-13）──
+        順序改成 **Google 試算表 → 貼官網 → 下載範本**，理由是查完三條路的實際行為：
+
+        ① 精準度只有兩級，不是三級：試算表與下載範本用的是**同一份範本、同一種切法**
+           （一列一卡、第一欄當標題，見下方 hintText 的「一列變成一條知識」），AI 不必猜分段；
+           官網那條是整頁文字丟給 AI 自己判斷怎麼切。所以這兩條的勝負不在精準度，
+           在**之後會不會自己爛掉**。
+        ② 資料改了之後會怎樣（server/utils/cron-maintenance.ts 的 checkOneSource）：
+             gsheet → 排程自己重讀、直接套用新增／修改／刪除
+             url    → 排程發現頁面變了會**通知**，要人回來處理
+             檔案   → **完全不在那支排程裡**（type 不是 url/gsheet 就直接 return unchanged）
+           ⛔ 所以「下載範本」是三條裡唯一「做完就開始過期、而且系統看不見它過期」的路：
+              方案從 399 改成 499，走這條的人不會收到任何提醒，AI 會一直講 399。
+              它是**沒有 Google 帳號時的退路**，不是主推——排最後。
+        ③ 官網排中間而不是最後：精準度雖然最差，卻是唯一**零工作量**的入口（貼個網址就有東西），
+           而這一塊的受眾正是「手邊什麼都還沒有」的人，需要一條立刻看得到成果的路。
+
+        ⛔ 小註（chip-tag）必須跟著換口徑：二版三顆寫的是**準備時間**（最快／約 3 分鐘／Google 試算表），
+           而準備時間正好是試算表最吃虧的維度——順序調了、小註沒調，等於把看起來最麻煩的擺第一。
+           現在小註一律回答「之後改了會怎樣」，準備時間降級到各自面板的第一行（仍然要寫，見二版規矩）。
+        ⛔ 兩條都叫「範本」會被混在一起講（試算表那條的第一步也是「用官方範本建立副本」）：
+           所以第三條改叫「下載範本自己填」、第一條明寫「Google 試算表」，光看選項就分得開。
+      -->
       <div v-if="!detected" class="kb-start">
         <p class="kb-start__head">還沒有現成資料？挑一條開始：</p>
         <div class="kb-start__chips" data-tour="kb-start">
+          <button
+            type="button"
+            class="kb-start__chip"
+            :class="{ 'is-active': startOpen === 'sheet' }"
+            :aria-expanded="startOpen === 'sheet'"
+            @click="pickStart('sheet')"
+          >
+            用 Google 試算表<span class="kb-start__chip-tag">改了自動更新</span>
+          </button>
           <button
             type="button"
             class="kb-start__chip"
@@ -193,94 +226,24 @@
             :aria-expanded="startOpen === 'excel'"
             @click="pickStart('excel')"
           >
-            用範本自己填<span class="kb-start__chip-tag">約 3 分鐘</span>
-          </button>
-          <button
-            type="button"
-            class="kb-start__chip"
-            :class="{ 'is-active': startOpen === 'sheet' }"
-            :aria-expanded="startOpen === 'sheet'"
-            @click="pickStart('sheet')"
-          >
-            要「改了自動更新」<span class="kb-start__chip-tag">Google 試算表</span>
+            下載範本自己填<span class="kb-start__chip-tag">改了要重傳</span>
           </button>
         </div>
 
         <!--
-          官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart）。
-          ⚠️ 2026-09-03 老闆問「上傳網頁只適合用常見問題的頁面嗎」——不是，只要是**看得到文字**
-             的頁面都吃（商品頁、運費退換貨、關於我們⋯）。原本標籤寫「官網有『常見問題』頁」
-             把能力講窄了，等於誤教：沒有 FAQ 頁的店家會以為這條路不能用。
-             真正的限制不是「哪一種頁面」，而是「抓不抓得到文字」，所以下面照實列兩種抓不到的。
+          2026-09-03 三版：**改用老闆拍的真截圖**（走既有截圖產線，見 `make-onboarding-shots.py`
+          的 gsheet 區塊）。前一版是我憑記憶畫的示意圖，四處畫錯（欄位名、權限下拉位置、
+          通知預設打勾、訊息框）——站外畫面就該用真截圖，這正是 08-28 拍板的分工。
+          ⚠️ 圖上的①②③④跟這裡的文字是**同一套號碼**：改這裡的順序要一起改產線重跑，
+             否則畫面上的③會指到別的動作，而且沒有任何測試會紅。
+          ⛔ 每張圖緊貼它自己那一步（不要把三張圖堆在最後）：使用者是一步一步照做的。
+          ⚠️ 2026-09-13 這塊整塊**從最後搬到最前**（只換位置，步驟與號碼原封不動）：
+             理由見上面三版的說明。
         -->
-        <div v-if="startOpen === 'web'" class="kb-start__panel">
-          <!--
-            ⚠️ 2026-09-03 三改。前一版是三段散文（約 130 字），而且「抓不到」那段**整句上琥珀色**
-               ——整句著色等於整句在喊，讀者反而找不到重點（老闆：「這邊的文案能不能也調整過」）。
-            改法：一行一件事，句子維持中性色，**顏色只留在最左邊那顆標籤上**
-               （同 `.ls-status` 的房規：結論用色塊帶，內文不著色）。
-            ⛔ 不要再把「一頁貼一次」這種操作常識寫進來：它不是決策資訊，
-               而這一塊唯一的工作是回答「我的頁面能不能貼」。
-          -->
-          <p class="kb-start__ptxt kb-start__ptxt--lbl">
-            <span class="kb-start__lbl kb-start__lbl--ok">可以貼</span>
-            <span>商品或方案介紹、運費與退換貨、關於我們、公告——只要頁面上<strong>看得到文字</strong>就行，不限常見問題頁。</span>
+        <div v-if="startOpen === 'sheet'" class="kb-start__panel">
+          <p class="kb-start__ptxt kb-start__ptxt--lead">
+            下面五步大約 5 分鐘，<strong>只做這一次</strong>；之後表格改了內容就自動更新，不用再回來這裡。
           </p>
-          <p class="kb-start__ptxt kb-start__ptxt--lbl">
-            <span class="kb-start__lbl kb-start__lbl--no">抓不到</span>
-            <span>要先登入、或要滑動、點按才長出內容的頁面（購物網站首頁的商品區多半是這種，改貼「商品列表頁」就好）。</span>
-          </p>
-          <p class="kb-start__ptxt kb-start__ptxt--dim">
-            貼完會問你要不要把網站其他頁一起匯入；之後網頁改了也會通知你。
-          </p>
-        </div>
-        <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
-          <!--
-            ⚠️ 圖刻意放在清單**外面**（2026-09-03 老闆問「用範本自己填是否可以再更優化」）：
-               第一版把它塞進第 1 步的 <li> 裡，圖把那一步撐成三倍高、第 2 步被推到很下面，
-               於是「這條路只有兩個動作」這件事看不出來。現在先讓兩個動作一眼讀完，圖再補在後面。
-          -->
-          <ol class="kb-start__steps">
-            <li>
-              <el-button
-                tag="a"
-                href="/templates/faq-sheet-template.xlsx"
-                target="_blank"
-                rel="noopener"
-                size="small"
-                plain
-              >
-                下載 FAQ 範本
-              </el-button>
-              把答案填進去就好（欄位名稱已經填好，檔案裡還有一頁「<strong>使用說明</strong>」）
-            </li>
-            <li>
-              <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
-                傳回填好的檔案
-              </el-button>
-              <span class="text-xs text-muted">（或直接拖進上面的框）</span>
-            </li>
-          </ol>
-          <!-- --wide：這張很扁（880×132），吃滿面板寬字才讀得到（見 SCSS 的說明） -->
-          <figure class="kb-shot kb-shot--wide">
-            <img
-              :src="SHOTS.gsheetTemplate"
-              alt="範本的樣子：第一列是欄位名稱「客人會問的問題」與「答案」，下面每一列是一個問答"
-              loading="lazy"
-            >
-            <figcaption>範本長這樣：<strong>第一列的欄位名稱已經填好</strong>，下面一列一題往下加就好</figcaption>
-          </figure>
-        </div>
-
-        <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
-          <!--
-            2026-09-03 三版：**改用老闆拍的真截圖**（走既有截圖產線，見 `make-onboarding-shots.py`
-            的 gsheet 區塊）。前一版是我憑記憶畫的示意圖，四處畫錯（欄位名、權限下拉位置、
-            通知預設打勾、訊息框）——站外畫面就該用真截圖，這正是 08-28 拍板的分工。
-            ⚠️ 圖上的①②③④跟這裡的文字是**同一套號碼**：改這裡的順序要一起改產線重跑，
-               否則畫面上的③會指到別的動作，而且沒有任何測試會紅。
-            ⛔ 每張圖緊貼它自己那一步（不要把三張圖堆在最後）：使用者是一步一步照做的。
-          -->
           <ol class="kb-start__steps">
             <li v-if="faqTemplateCopyUrl">
               <el-button
@@ -338,6 +301,81 @@
             </li>
             <li>把試算表的連結貼到上面的框——貼上時會<strong>當場告訴你讀不讀得到</strong></li>
           </ol>
+        </div>
+
+        <!--
+          官網那條的「動作」就是貼網址：點選項時已順手把游標放進上面的框（見 pickStart）。
+          ⚠️ 2026-09-03 老闆問「上傳網頁只適合用常見問題的頁面嗎」——不是，只要是**看得到文字**
+             的頁面都吃（商品頁、運費退換貨、關於我們⋯）。原本標籤寫「官網有『常見問題』頁」
+             把能力講窄了，等於誤教：沒有 FAQ 頁的店家會以為這條路不能用。
+             真正的限制不是「哪一種頁面」，而是「抓不抓得到文字」，所以下面照實列兩種抓不到的。
+        -->
+        <div v-else-if="startOpen === 'web'" class="kb-start__panel">
+          <!--
+            ⚠️ 2026-09-03 三改。前一版是三段散文（約 130 字），而且「抓不到」那段**整句上琥珀色**
+               ——整句著色等於整句在喊，讀者反而找不到重點（老闆：「這邊的文案能不能也調整過」）。
+            改法：一行一件事，句子維持中性色，**顏色只留在最左邊那顆標籤上**
+               （同 `.ls-status` 的房規：結論用色塊帶，內文不著色）。
+            ⛔ 不要再把「一頁貼一次」這種操作常識寫進來：它不是決策資訊，
+               而這一塊唯一的工作是回答「我的頁面能不能貼」。
+          -->
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--ok">可以貼</span>
+            <span>商品或方案介紹、運費與退換貨、關於我們、公告——只要頁面上<strong>看得到文字</strong>就行，不限常見問題頁。</span>
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--lbl">
+            <span class="kb-start__lbl kb-start__lbl--no">抓不到</span>
+            <span>要先登入、或要滑動、點按才長出內容的頁面（購物網站首頁的商品區多半是這種，改貼「商品列表頁」就好）。</span>
+          </p>
+          <p class="kb-start__ptxt kb-start__ptxt--dim">
+            貼完會問你要不要把網站其他頁一起匯入；之後網頁改了也會通知你。
+          </p>
+        </div>
+        <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
+          <!--
+            ⚠️ 圖刻意放在清單**外面**（2026-09-03 老闆問「用範本自己填是否可以再更優化」）：
+               第一版把它塞進第 1 步的 <li> 裡，圖把那一步撐成三倍高、第 2 步被推到很下面，
+               於是「這條路只有兩個動作」這件事看不出來。現在先讓兩個動作一眼讀完，圖再補在後面。
+            ⚠️ 2026-09-13 這條從第二順位降到最後，並補上第一行的代價說明：它跟試算表那條
+               **精準度完全一樣**（同一份範本、同一種一列一卡的切法），輸的是之後改了不會自己更新，
+               而且排程根本看不到這種來源（cron-maintenance 只處理 url／gsheet）——
+               ⛔ 所以這一行一定要寫，且**不可以壓成 --dim**：它是選這條路的代價，不是補充說明。
+               末句刻意給一條回頭路（改用試算表），不然使用者只知道有坑、不知道往哪走。
+          -->
+          <p class="kb-start__ptxt kb-start__ptxt--lead">
+            填完大約 3 分鐘，不用 Google 帳號。之後答案改了要<strong>再傳一次整份</strong>，
+            系統不會自己更新，也不會提醒你——想省掉這一步，就改用上面的 Google 試算表。
+          </p>
+          <ol class="kb-start__steps">
+            <li>
+              <el-button
+                tag="a"
+                href="/templates/faq-sheet-template.xlsx"
+                target="_blank"
+                rel="noopener"
+                size="small"
+                plain
+              >
+                下載 FAQ 範本
+              </el-button>
+              把答案填進去就好（欄位名稱已經填好，檔案裡還有一頁「<strong>使用說明</strong>」）
+            </li>
+            <li>
+              <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
+                傳回填好的檔案
+              </el-button>
+              <span class="text-xs text-muted">（或直接拖進上面的框）</span>
+            </li>
+          </ol>
+          <!-- --wide：這張很扁（880×132），吃滿面板寬字才讀得到（見 SCSS 的說明） -->
+          <figure class="kb-shot kb-shot--wide">
+            <img
+              :src="SHOTS.gsheetTemplate"
+              alt="範本的樣子：第一列是欄位名稱「客人會問的問題」與「答案」，下面每一列是一個問答"
+              loading="lazy"
+            >
+            <figcaption>範本長這樣：<strong>第一列的欄位名稱已經填好</strong>，下面一列一題往下加就好</figcaption>
+          </figure>
         </div>
       </div>
 
@@ -1268,7 +1306,7 @@ watch(() => detected.value?.label, () => { hintOpen.value = false })
  * ⛔ 刻意不在 resetAll／關窗時清掉：走試算表那條的人會中途去 Google 分享，
  *    回來時面板要還開著、帳號還在眼前。
  */
-const startOpen = ref<'' | 'web' | 'excel' | 'sheet'>('')
+const startOpen = ref<'' | 'sheet' | 'web' | 'excel'>('')
 
 /** 點投放框的空白處＝聚焦輸入框；點到框裡的按鈕（選擇檔案）就讓按鈕自己來 */
 function focusPaste(e: MouseEvent) {
@@ -1276,7 +1314,7 @@ function focusPaste(e: MouseEvent) {
   pasteInputEl.value?.focus?.()
 }
 
-function pickStart(route: 'web' | 'excel' | 'sheet') {
+function pickStart(route: 'sheet' | 'web' | 'excel') {
   startOpen.value = startOpen.value === route ? '' : route
   // 官網那條的「動作」就是貼網址：把游標放進框裡，使用者回來直接 ⌘V 就能貼
   if (startOpen.value === 'web') nextTick(() => pasteInputEl.value?.focus?.())
