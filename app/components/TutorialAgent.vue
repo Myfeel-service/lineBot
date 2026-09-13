@@ -908,10 +908,13 @@ const agentLine = computed(() => {
   // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
   if (!hasItems.value)
     return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
-  // 開通期泡泡只講「下一步」：結論已經由上面的紅條講過，再複述一次＝兩個聲音講同一件事
+  // 開通期泡泡只講「下一步」：結論已經由上面的英雄卡標題扛（開通期 verdict 回 null、
+  // 沒有結論列），再複述一次＝兩個聲音講同一件事。
+  // ⛔指路不要寫顏色：原本寫「按上面綠色卡片」，同一天英雄卡就改成 danger 紅（ffc18f5）
+  // 而這句沒跟著改，指路詞變成假的。改講按鈕上的字，之後再換色也不會再壞一次。
   if (onboardingIncomplete.value) {
     const next = onboardingSteps.value.find(st => !st.done)
-    return `下一步：${next?.label || '完成開通'}。按上面綠色卡片，我用聊天帶你做完。`
+    return `下一步：${next?.label || '完成開通'}。按上面那張卡片的「用聊天引導完成開通」，我帶你做完。`
   }
   // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況
   if (incompleteRequired.value.length)
