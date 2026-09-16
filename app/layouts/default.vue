@@ -107,6 +107,12 @@
               <span>訂閱與付款</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/billing`" />
             </NuxtLink>
+            <!-- 操作紀錄（C-31 Phase 2 地基）：誰把什麼改成什麼，含小幫手代辦的每一筆。
+                 擺在「設定」段最後＝它是回頭查帳的地方，不是日常動線。 -->
+            <NuxtLink :to="`/admin/${workspaceId}/settings/activity`" class="nav-item" :class="{ active: route.path.includes('/settings/activity') }">
+              <el-icon class="nav-icon"><Document /></el-icon>
+              <span>操作紀錄</span>
+            </NuxtLink>
           </div>
         </nav>
       </template>
@@ -149,7 +155,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import {
-  Box, ChatDotRound, Connection, CreditCard, DataLine, Grid, Lightning,
+  Box, ChatDotRound, Connection, CreditCard, DataLine, Document, Grid, Lightning,
   Monitor, OfficeBuilding, PriceTag, Promotion, Reading,
   Setting, SwitchButton, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'

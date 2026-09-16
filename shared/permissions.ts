@@ -44,6 +44,9 @@ export const CAPABILITIES = {
   // ── 設定類（管理員 admin+）──────────────────────────────────
   'ai.settings.write': 'admin', // AI 設定儲存
   'usage.read': 'admin', // 計費資訊（方案、額度、超量單價）——2026-08-10 起不再擋整頁，改由 API 逐欄位擋
+  // 操作紀錄（誰把什麼改成什麼，含小幫手代辦的每一筆）。放 admin 的理由：
+  // 紀錄裡看得到設定的前後值與是誰動的，等級比照「能改設定的人才看得到改了什麼」。
+  'audit.read': 'admin',
   'knowledge.reindexAll': 'admin', // 知識庫全量重建
   'members.manage': 'admin', // 成員 邀請/改角色/移除
   'line.manage': 'admin', // 組織與 LINE 憑證 讀取/儲存

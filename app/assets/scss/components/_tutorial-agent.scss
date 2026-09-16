@@ -1531,6 +1531,100 @@
   font-size: 12px;
 }
 
+/* 代辦確認卡（C-31 Phase 2）：小幫手提議了一件事，還沒做。
+   刻意長得跟 AI 的說話泡泡不一樣——它不是一句話，是一個等你決定的東西。 */
+.aa-op {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color);
+  border-left: 3px solid var(--el-color-warning);
+  border-radius: 10px;
+  background: var(--el-bg-color);
+  max-width: 100%;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+
+  &__title {
+    font-size: 0.8125rem;
+    font-weight: 700;
+  }
+
+  /* 「還沒執行」是這張卡最重要的一句話：看到卡就要知道什麼都還沒發生 */
+  &__badge {
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 0 6px;
+    border-radius: 999px;
+    color: var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+    border: 1px solid var(--el-color-warning-light-7);
+  }
+
+  &__summary {
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    margin: 0 0 6px;
+  }
+
+  &__items {
+    list-style: none;
+    margin: 0 0 6px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+
+    li {
+      display: flex;
+      flex-direction: column;
+      font-size: 12px;
+      line-height: 1.5;
+      /* 可壓縮欄位一律容得下換行：長網址與長流程名撐破小面板是這個後台踩過的版型坑 */
+      word-break: break-word;
+    }
+  }
+
+  &__item-label { font-weight: 600; }
+  &__item-note { color: var(--el-text-color-secondary); }
+
+  &__warning {
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0 0 8px;
+    color: var(--el-text-color-regular);
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  &__status {
+    margin: 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+
+    &.is-done { color: var(--el-color-success); }
+    &.is-failed { color: var(--el-color-danger); }
+  }
+
+  /* 做完／取消之後，卡片退到背景：它已經不是要你決定的東西了 */
+  &.is-done,
+  &.is-cancelled,
+  &.is-failed {
+    border-left-color: var(--el-border-color);
+    background: var(--el-fill-color-lighter);
+  }
+}
+
 /* 面板進出動畫。停在上半部時要從上方滑進來（面板是往下長的），
    否則會出現「往上滑出、卻在下方展開」的反向感 */
 .ta-pop-enter-active,

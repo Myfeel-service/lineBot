@@ -26,6 +26,9 @@ describe('can — role × capability matrix', () => {
     'playground.use': 'agent',
     'ai.settings.write': 'admin',
     'usage.read': 'admin',
+    // 2026-09-16（`C-31` Phase 2 地基）：操作紀錄。裡面看得到設定的前後值與是誰動的，
+    // 門檻比照「能改設定的人才看得到改了什麼」。
+    'audit.read': 'admin',
     'knowledge.reindexAll': 'admin',
     'members.manage': 'admin',
     'line.manage': 'admin',

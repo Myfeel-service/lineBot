@@ -25,7 +25,8 @@ vi.mock('./gemini', () => ({ generateJson }))
 import { runAdminAgentChat, TOOLS } from './ai-admin-agent'
 
 /** 每個測試都用 viewer:現有 8 個工具的門檻最高就是 ai.read(=viewer),行為與改版前一致 */
-const asViewer = { role: 'viewer' as const }
+// uid 是 C-31 Phase 2 加的(代辦提議的憑證要綁死是給誰的);查詢路徑用不到,給個固定值即可
+const asViewer = { role: 'viewer' as const, uid: 'u1' }
 
 /** 最小假 Firestore:collection().where().get() + doc().get()(agent 工具只用這些讀法) */
 function makeDb(data: {
@@ -204,7 +205,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_plan_quota', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
     // usage.read 是 admin 級能力,viewer 會被閘門擋下 → 這裡用 admin
-    await runAdminAgentChat({ db, workspaceId: 'wq1', role: 'admin', message: '額度還剩多少?' })
+    await runAdminAgentChat({ db, workspaceId: 'wq1', role: 'admin', uid: 'u1', message: '額度還剩多少?' })
     const p = generateJson.mock.calls[1]![0] as string
     expect(p).toContain('"quotaLimit":200')
     expect(p).toContain('"used":180')
@@ -232,7 +233,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_plan_quota', args: {} }))
       .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
-    await runAdminAgentChat({ db, workspaceId: 'wq2', role: 'admin', message: '我是什麼方案?' })
+    await runAdminAgentChat({ db, workspaceId: 'wq2', role: 'admin', uid: 'u1', message: '我是什麼方案?' })
     const p = generateJson.mock.calls[1]![0] as string
     expect(p).toContain('"unlimited":true')
     expect(p).toContain('"used":62')
@@ -249,7 +250,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
       generateJson
         .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_admin_tool', args: {} }))
         .mockResolvedValueOnce(step({ action: 'answer', text: '你的權限看不到' }))
-      const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'viewer', message: '查設定' })
+      const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'viewer', uid: 'u1', message: '查設定' })
       expect(run).not.toHaveBeenCalled()
       expect(res.toolCalls).toEqual([]) // 沒真的執行就不記 toolCalls
       expect(generateJson.mock.calls[1]![0] as string).toContain('沒有權限')
@@ -258,7 +259,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
       generateJson
         .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_admin_tool', args: {} }))
         .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
-      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', message: '查設定' })
+      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', uid: 'u1', message: '查設定' })
       expect(run).toHaveBeenCalledTimes(1)
     }
     finally {
@@ -273,7 +274,7 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
       generateJson
         .mockResolvedValueOnce(step({ action: 'tool', tool: '__test_write_tool', args: {} }))
         .mockResolvedValueOnce(step({ action: 'answer', text: '目前只能查詢' }))
-      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', message: '幫我改設定' })
+      await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'admin', uid: 'u1', message: '幫我改設定' })
       expect(run).not.toHaveBeenCalled()
       expect(generateJson.mock.calls[1]![0] as string).toContain('已擋下')
     }
