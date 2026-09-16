@@ -130,6 +130,14 @@ export function useSetupStatus() {
   // 全域共享，FAB 與面板共用同一份狀態
   const rawStatusMap = useState<Record<string, SetupItemStatus>>('setup-status-map', () => ({}))
   const rawLoaded = useState('setup-status-loaded', () => false)
+  /**
+   * 這一輪查失敗了（⛔不是「沒做完」，是「問不到」）。
+   * 2026-09-16 code review 抓到：查失敗時 `loaded` 永遠是 false，而自動導覽的判斷
+   * 看到 `setupLoaded=false` 就一直回「再等等」——一次 5xx 就讓導覽與那句
+   * 「這頁怎麼用？」的提示**全站永久消失，而且無聲**。有了這個旗標，判斷才知道
+   * 該放棄自動導覽、把提示放出來。
+   */
+  const rawFailed = useState('setup-status-failed', () => false)
   const loading = useState('setup-status-loading', () => false)
   const checkedAt = useState('setup-status-checked-at', () => 0)
   /**
@@ -162,6 +170,8 @@ export function useSetupStatus() {
     cacheMatchesWorkspace.value ? rawStatusMap.value : {},
   )
   const loaded = computed(() => cacheMatchesWorkspace.value && rawLoaded.value)
+  /** 這次問不到（查詢失敗）。⛔ 與 loaded 分開：「還沒好」與「問不到」的下一步不一樣 */
+  const failed = computed(() => rawFailed.value && !loaded.value)
 
   async function refresh(options: { force?: boolean } = {}): Promise<void> {
     const wid = workspaceId.value
@@ -197,9 +207,13 @@ export function useSetupStatus() {
         checkedFor.value = wid
         checkedAt.value = Date.now()
         rawLoaded.value = true
+        rawFailed.value = false
       }
       catch {
-        // 靜默失敗，保留前一次結果；不要把查不到誤報成沒做
+        // 靜默失敗，保留前一次結果；不要把查不到誤報成沒做。
+        // 但要留下「這次問不到」的訊號——不然等它的人會等到天荒地老（見 rawFailed）
+        if (isLatest())
+          rawFailed.value = true
       }
       finally {
         // 只有「最後發出的那一支」有資格收轉圈（旗標本身由 helper 收）
@@ -340,6 +354,7 @@ export function useSetupStatus() {
   )
 
   return {
+    failed,
     capabilities,
     hasItems,
     incompleteRequired,

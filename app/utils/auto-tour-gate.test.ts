@@ -39,6 +39,17 @@ describe('decideAutoTour', () => {
     })
   })
 
+  it('🔴 體檢問不到就別再等：等下去會連「這頁怎麼用？」那句提示一起永久消失（無聲）', () => {
+    // 還在載入＝繼續等（這是對的）
+    expect(decide({ setupLoaded: false })).toBe('wait')
+    // 查失敗＝放棄自動導覽，但要讓呼叫端往下走（提示才放得出來）
+    expect(decide({ setupLoaded: false, setupFailed: true })).toBe('skip')
+  })
+
+  it('查失敗但連「看過沒」都還沒查完：還是先等（那一步失敗會自己退回本機記憶）', () => {
+    expect(decide({ seenReady: false, setupLoaded: false, setupFailed: true })).toBe('wait')
+  })
+
   it('開通還沒做完就不插隊（那條流程結尾本來就會問要不要導覽）', () => {
     expect(decide({ onboardingIncomplete: true })).toBe('skip')
   })

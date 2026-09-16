@@ -28,9 +28,20 @@ export default defineEventHandler(async (event) => {
 
   // ⛔ 整包寫回、不要用 `seenTours.${key}` 這種欄位路徑：鑰匙裡有 `|`，而欄位路徑的
   //    分隔符是點——一旦哪天有人在鑰匙裡放進點，寫進去的就是巢狀結構而不是一個鍵。
-  await ref.set(
-    { seenTours: withSeenTour(prev, key, Date.now()), updatedAt: FieldValue.serverTimestamp() },
-    { merge: true },
-  )
+  //
+  // ⛔ **而且不能用 `set(..., { merge: true })`**（2026-09-16 code review 抓到）：
+  //    merge 對 map 欄位是**逐鍵合併**，`withSeenTour` 砍掉的那幾把舊鑰匙不會出現在
+  //    payload 裡，Firestore 就原封不動留著它們——200 筆上限形同虛設，文件會一直長大，
+  //    連 `readSeenTours` 丟掉的壞資料也永遠清不掉。
+  //    `update()` 對 map 欄位是**整個取代**，正是這裡要的語意；文件還不存在時才用 set 建。
+  const seenTours = withSeenTour(prev, key, Date.now())
+  const payload = { seenTours, updatedAt: FieldValue.serverTimestamp() }
+  if (snap.exists) {
+    // 極罕見：這中間文件被刪掉 → update 會失敗，退回建立一份
+    await ref.update(payload).catch(() => ref.set(payload))
+  }
+  else {
+    await ref.set(payload)
+  }
   return { ok: true }
 })

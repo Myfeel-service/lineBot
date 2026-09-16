@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MAX_SEEN_TOURS, isValidSeenTourKey, readSeenTours, withSeenTour } from './admin-user-prefs'
 
@@ -54,5 +56,30 @@ describe('withSeenTour', () => {
     expect(next.newest).toBe(99999)
     expect(next.p0).toBeUndefined()
     expect(next.p1).toBe(1)
+  })
+})
+
+/**
+ * 寫回方式的守門（2026-09-16 code review 抓到）。
+ *
+ * `withSeenTour` 砍掉的舊鑰匙，只有在**整個欄位被取代**時才真的消失。
+ * `set(..., { merge: true })` 對 map 欄位是逐鍵合併：payload 裡沒有的鍵會被原封不動留著，
+ * 於是 200 筆上限形同虛設、文件一路長大，而且從程式碼上完全看不出來（測試也測不到，
+ * 因為純函式那一半是對的）。這條守門釘的是端點的寫法。
+ */
+describe('導覽記憶的寫回方式', () => {
+  const endpoint = readFileSync(
+    fileURLToPath(new URL('../api/admin/tour-seen.post.ts', import.meta.url)),
+    'utf8',
+  )
+
+  it('⛔ 不可以用 merge 寫回 seenTours（刪掉的鑰匙會被留著，上限等於沒有）', () => {
+    const code = endpoint.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+    expect(code).not.toContain('merge: true')
+  })
+
+  it('文件存在時用 update（整個欄位取代），不存在時才 set 建立', () => {
+    expect(endpoint).toContain('ref.update(payload)')
+    expect(endpoint).toContain('ref.set(payload)')
   })
 })

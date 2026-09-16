@@ -110,7 +110,7 @@ const props = defineProps<{
 const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide, endTour, lastTopicId } = useTutorial()
 const { canOperate, canManageSettings } = useWorkspace()
 const { ensureLoaded: ensureTourSeen, hasSeen: tourSeen, markSeen: markTourSeen } = useTourSeen()
-const { loaded: setupLoaded, onboardingIncomplete } = useSetupStatus()
+const { loaded: setupLoaded, failed: setupFailed, onboardingIncomplete } = useSetupStatus()
 
 /** 這一頁掛的劇本裡，這個角色真的跑得動的那幾條（同導覽：跑不動就整條不出現） */
 const availableGuides = computed(() =>
@@ -182,6 +182,7 @@ function tryAutoTour(seenReady: boolean): boolean {
   const decision = decideAutoTour({
     seenReady,
     setupLoaded: setupLoaded.value,
+    setupFailed: setupFailed.value,
     onboardingIncomplete: onboardingIncomplete.value,
     hasTopics: available.value.length > 0,
     tourOpen: tourOpen.value,
@@ -250,7 +251,7 @@ onMounted(() => {
       autoTourState.value = 'off'
     return
   }
-  const stop = watch([seenReady, setupLoaded, onboardingIncomplete, available, tourOpen], () => {
+  const stop = watch([seenReady, setupLoaded, setupFailed, onboardingIncomplete, available, tourOpen], () => {
     if (!tryAutoTour(seenReady.value))
       return
     if (autoTourState.value === 'deciding')
