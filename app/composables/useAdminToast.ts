@@ -1,6 +1,8 @@
-type ToastType = 'success' | 'error' | 'warning'
+// 2026-09-16：補上 'info'。標籤頁早就在用它（「這顆標籤已經沒有人在等你決定了」那句），
+// 型別沒有這一項＝typecheck 一直是紅的，而畫面上它會掉進沒有樣式的預設樣子。
+export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
-interface AdminToast {
+export interface AdminToast {
   id: number
   msg: string
   type: ToastType

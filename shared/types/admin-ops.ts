@@ -22,6 +22,8 @@
 export const ADMIN_OP_LABELS = {
   'ai-settings-service-hours': '調整服務時間／勿擾時段',
   'script-set-enabled': '上架或下架一條自動回應',
+  'ai-settings-handoff-sla': '調整「客人等太久」的提醒時間',
+  'ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
 } as const satisfies Record<string, string>
 
 export type AdminOpId = keyof typeof ADMIN_OP_LABELS
@@ -38,6 +40,10 @@ export type AdminOpId = keyof typeof ADMIN_OP_LABELS
 export const ADMIN_OP_RISK: Record<AdminOpId, 'low' | 'medium'> = {
   'ai-settings-service-hours': 'medium',
   'script-set-enabled': 'medium',
+  // 只影響後台的人什麼時候被提醒，客人那一側毫無感覺
+  'ai-settings-handoff-sla': 'low',
+  // 加字＝更容易轉給真人（往保守的方向動）；拿掉字才是放寬，所以預覽一定要分開講
+  'ai-settings-sensitive-topic': 'medium',
 }
 
 /** 稽核動作代號：操作紀錄上看到的就是這個（與 audit 的白話對照成對） */

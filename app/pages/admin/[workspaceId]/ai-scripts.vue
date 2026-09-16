@@ -1897,12 +1897,55 @@ onMounted(() => {
   loadModuleOptions()
 })
 
+/**
+ * 上下架之前先問後端「按下去之後誰會變得輪不到、誰會活過來」。
+ *
+ * ⛔ 只有**看不見的影響**才跳確認（這條開了也輪不到、或它會把別條蓋掉）：
+ *    「這條不再回覆客人」開關底下那句話已經講了，每次都跳只會訓練人閉眼按確定。
+ * 讀不到影響時一律放行——查不到不等於有問題，不能因為問不到就擋住人存檔。
+ */
+async function confirmToggleImpact(scriptId: string, enabled: boolean): Promise<boolean> {
+  let impact: {
+    hasImpact: boolean
+    selfStillBlocked: { detail: string } | null
+    newlyBlocked: { detail: string }[]
+    newlyFreed: { detail: string }[]
+  }
+  try {
+    impact = await apiFetch('/api/ai/scripts/preview-impact', { method: 'POST', body: { scriptId, enabled } })
+  }
+  catch {
+    return true
+  }
+  if (!impact.hasImpact) return true
+
+  const lines = [
+    ...(impact.selfStillBlocked ? [`・${impact.selfStillBlocked.detail}（開了等於沒開）`] : []),
+    ...impact.newlyBlocked.map(i => `・${i.detail}`),
+    ...impact.newlyFreed.map(i => `・${i.detail}（會恢復作用）`),
+  ]
+  return await ElMessageBox.confirm(
+    `${enabled ? '開啟' : '關閉'}這條流程會連帶影響其他流程：\n\n${lines.join('\n')}\n\n確定要存檔嗎？`,
+    '存檔前先確認影響',
+    { confirmButtonText: '確定存檔', cancelButtonText: '先不要', type: 'warning' },
+  ).then(() => true).catch(() => false)
+}
+
 async function submitForm() {
   const name = form.value.name.trim()
   if (!name) return showToast('請輸入流程名稱', 'error')
   // trigger 同步 priority
   const trig = form.value.nodes.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
   if (trig) trig.priority = form.value.priority
+
+  // 上下架的影響常常不在這條身上，在別條身上——存檔前講清楚（原本這裡完全沒有確認）
+  if (!isCreating.value && selectedId.value) {
+    const stored = scripts.value.find(s => s.id === selectedId.value)
+    if (stored && stored.enabled !== form.value.enabled) {
+      const go = await confirmToggleImpact(selectedId.value, form.value.enabled)
+      if (!go) return
+    }
+  }
 
   saving.value = true
   try {

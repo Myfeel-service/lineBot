@@ -33,12 +33,26 @@ function actionsWrittenInServerCode(): { action: string, file: string }[] {
   for (const file of walk(SERVER_DIR)) {
     const src = readFileSync(file, 'utf8')
     for (const call of src.matchAll(/writeAuditLog\(/g)) {
-      const block = src.slice(call.index!, call.index! + 600)
-      const m = block.match(/action:\s*'([^']+)'/)
+      const m = callBody(src, call.index! + call[0].length).match(/action:\s*'([^']+)'/)
       if (m) out.push({ action: m[1]!, file: file.slice(SERVER_DIR.length + 1) })
     }
   }
   return out
+}
+
+/**
+ * 取這個呼叫括號裡的內容（逐字配對到收括號）。
+ * ⛔ 不要用「往後抓 N 個字」：那會抓到呼叫結束之後的程式碼——
+ *    2026-09-16 實際踩到，把下一段型別宣告裡的 `action: 'add'` 當成稽核動作，
+ *    逼人去幫一個不存在的東西寫說明。
+ */
+function callBody(src: string, from: number): string {
+  let depth = 1
+  for (let i = from; i < src.length; i++) {
+    if (src[i] === '(') depth++
+    else if (src[i] === ')' && --depth === 0) return src.slice(from, i)
+  }
+  return src.slice(from)
 }
 
 describe('操作紀錄的動作代號都有白話說明', () => {

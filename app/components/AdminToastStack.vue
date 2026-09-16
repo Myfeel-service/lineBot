@@ -9,13 +9,11 @@
 
 <script setup lang="ts">
 import { CircleCheckFilled, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
-interface AdminToastItem {
-  id: number
-  msg: string
-  type: 'success' | 'error' | 'warning'
-}
+// ⛔ 型別取 composable 那一份（2026-09-16）：這裡原本自己抄了一份，
+// 而 'info' 早就有人在用——兩份表漂移之後 typecheck 才紅出來。
+import type { AdminToast } from '~/composables/useAdminToast'
 
 defineProps<{
-  toasts: AdminToastItem[]
+  toasts: AdminToast[]
 }>()
 </script>

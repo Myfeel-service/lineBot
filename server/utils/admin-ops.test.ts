@@ -15,7 +15,11 @@ import { ADMIN_OP_LABELS, ADMIN_OP_RISK, adminOpAuditAction } from '~~/shared/ty
 import { AUDIT_ACTION_LABELS } from '~~/shared/types/audit'
 import { CAPABILITIES } from '~~/shared/permissions'
 
-const settingsStore = { serviceHours: { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' } }
+const settingsStore: Record<string, any> = {
+  serviceHours: { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' },
+  handoffNotify: { enabled: true, lineUserIds: ['U1'], slaRemindMinutes: 30 },
+  sensitiveTopics: ['退款'],
+}
 const setCalls: any[] = []
 const auditLogs: any[] = []
 const invalidated: string[] = []
@@ -57,6 +61,8 @@ beforeEach(() => {
   updates.length = 0
   scriptDocs.length = 0
   settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' }
+  settingsStore.handoffNotify = { enabled: true, lineUserIds: ['U1'], slaRemindMinutes: 30 }
+  settingsStore.sensitiveTopics = ['退款']
 })
 
 describe('操作模組表的不變量', () => {
@@ -149,6 +155,74 @@ describe('op：服務時間／勿擾時段', () => {
   })
 })
 
+describe('op：客人等太久的提醒時間', () => {
+  const op = ADMIN_OPS['ai-settings-handoff-sla']
+
+  it('改分鐘數只動那一格，收件人名單與開關原封不動', async () => {
+    const res = await op.execute(ctx, op.normalize({ minutes: 15 }))
+
+    expect(res.ok).toBe(true)
+    expect(setCalls[0]).toEqual({ handoffNotify: { slaRemindMinutes: 15 } })
+    expect(auditLogs[0]).toMatchObject({ actor: 'agent', before: { slaRemindMinutes: 30 }, after: { slaRemindMinutes: 15 } })
+  })
+
+  it('0＝不提醒，是合法的設定不是錯誤', () => {
+    expect(op.normalize({ minutes: 0 })).toMatchObject({ minutes: 0 })
+  })
+
+  it('沒講數字、或超出一天：要求問清楚，⛔不自己填一個', () => {
+    expect(() => op.normalize({})).toThrow(AdminOpUserError)
+    expect(() => op.normalize({ minutes: 5000 })).toThrow(AdminOpUserError)
+  })
+
+  it('🔴 通知本身是關的：要當場講「改了也不會有人被提醒」', async () => {
+    settingsStore.handoffNotify = { enabled: false, lineUserIds: [], slaRemindMinutes: 30 }
+    const preview = await op.preview(ctx, op.normalize({ minutes: 10 }))
+
+    expect(preview.warning).toContain('不會有人被提醒')
+  })
+})
+
+describe('op：一提到就轉真人的字', () => {
+  const op = ADMIN_OPS['ai-settings-sensitive-topic']
+
+  it('加字：整份清單一起寫回去（陣列是取代不是合併，只丟新字會洗掉舊的）', async () => {
+    const res = await op.execute(ctx, op.normalize({ action: 'add', word: '客訴' }))
+
+    expect(res.ok).toBe(true)
+    expect(setCalls[0]).toEqual({ sensitiveTopics: ['退款', '客訴'] })
+    expect(auditLogs[0]).toMatchObject({ before: { sensitiveTopics: ['退款'] }, after: { sensitiveTopics: ['退款', '客訴'] } })
+  })
+
+  it('拿掉字：剩下的都留著', async () => {
+    settingsStore.sensitiveTopics = ['退款', '客訴']
+    await op.execute(ctx, op.normalize({ action: 'remove', word: '退款' }))
+
+    expect(setCalls[0]).toEqual({ sensitiveTopics: ['客訴'] })
+  })
+
+  it('🔴 加字與拿掉字的後果要分開講（一個變保守、一個是放寬）', async () => {
+    const add = await op.preview(ctx, op.normalize({ action: 'add', word: '客訴' }))
+    const remove = await op.preview(ctx, op.normalize({ action: 'remove', word: '退款' }))
+
+    expect(add.warning).toContain('直接轉給真人')
+    expect(remove.warning).toContain('不再自動轉給真人')
+  })
+
+  it('已經在清單裡／本來就不在：說不用改，且不寫入', async () => {
+    expect((await op.preview(ctx, op.normalize({ action: 'add', word: '退款' }))).noop).toBe(true)
+    expect((await op.preview(ctx, op.normalize({ action: 'remove', word: '沒有這個' }))).noop).toBe(true)
+
+    await op.execute(ctx, op.normalize({ action: 'add', word: '退款' }))
+    expect(setCalls).toHaveLength(0)
+  })
+
+  it('沒講要加還是拿掉、或沒講是哪個字：要求問清楚', () => {
+    expect(() => op.normalize({ word: '退款' })).toThrow(AdminOpUserError)
+    expect(() => op.normalize({ action: 'add' })).toThrow(AdminOpUserError)
+  })
+})
+
 describe('op：自動回應上架／下架', () => {
   const op = ADMIN_OPS['script-set-enabled']
 
@@ -186,6 +260,17 @@ describe('op：自動回應上架／下架', () => {
     expect(updates[0]!.patch.enabled).toBe(false)
     expect(invalidated).toEqual(['w1'])
     expect(auditLogs[0]).toMatchObject({ actor: 'agent', before: { enabled: true }, after: { enabled: false } })
+  })
+
+  it('🔴 上架會蓋掉別條時要當場講出來（影響常常不在這條身上，在別條身上）', async () => {
+    seed([
+      { id: 'd1', name: '出貨查詢', enabled: true, keywords: ['出貨'] },
+      { id: 'd2', name: '全部攔截', enabled: false, keywords: ['出'] }, // 「出」包住「出貨」
+    ])
+    const preview = await op.preview(ctx, op.normalize({ name: '全部攔截', enabled: true }))
+
+    const labels = preview.items.map(i => i.label).join('｜')
+    expect(labels).toContain('「出貨查詢」會被蓋掉')
   })
 
   it('🔴 找不到那條流程：列出現有的讓它反問，⛔不挑最接近的那一條', async () => {

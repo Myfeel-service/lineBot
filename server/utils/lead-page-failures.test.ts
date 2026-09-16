@@ -151,8 +151,10 @@ describe('recordLeadPageSuccess', () => {
 
     await recordLeadPageSuccess(db, 'ws1')
 
-    expect(doc.mock.calls[0]?.[0]).toMatch(/^ws1__\d{10}$/)
-    const [payload, opts] = set.mock.calls[0] as unknown as [Record<string, unknown>, { merge: boolean }]
+    // 文件 id 是「工作區＋小時」：mock 沒宣告參數型別，取值前先轉一次（2026-09-16 修 typecheck 紅）
+    expect((doc.mock.calls as unknown as [string][])[0]?.[0]).toMatch(/^ws1__\d{10}$/)
+    expect(set).toHaveBeenCalledTimes(1)
+    const [payload, opts] = (set.mock.calls as unknown as [Record<string, unknown>, { merge: boolean }][])[0]!
     expect(opts).toEqual({ merge: true })
     expect(payload.okCount).toEqual({ __inc: 1 })
     // ⛔ 不可以連 counts 一起送：整包 merge 會把同一小時的失敗分項洗掉

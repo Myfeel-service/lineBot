@@ -41,6 +41,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // 小幫手代辦（`C-31` Phase 2）：actor 欄位會顯示「小幫手代辦」，所以這裡只寫做了什麼
   'agent-op/ai-settings-service-hours': '改了服務時間／勿擾時段',
   'agent-op/script-set-enabled': '上架或下架一條自動回應',
+  'agent-op/ai-settings-handoff-sla': '改了「客人等太久」的提醒時間',
+  'agent-op/ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */

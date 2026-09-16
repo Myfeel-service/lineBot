@@ -15,6 +15,10 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
+import {
+  previewScriptToggleImpact,
+  toReachabilityScriptsWithDisabled,
+} from '~~/shared/types/ai-script-reachability'
 import type { Capability } from '~~/shared/permissions'
 import {
   ADMIN_OP_LABELS,
@@ -233,15 +237,21 @@ function readScriptRow(id: string, data: Record<string, any>): ScriptRow {
   }
 }
 
+/** 撈這個工作區全部的流程（含停用的——上下架預覽要拿它算影響） */
+async function listScriptDocs(ctx: AdminOpCtx): Promise<Record<string, any>[]> {
+  const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
+    .where('workspaceId', '==', ctx.workspaceId)
+    .get()
+  return snap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, any>) }))
+}
+
 /**
  * 名字 → 流程。⛔ 模型不生 ID，也⛔不猜「最接近的那一條」：
  * 對不到就把現有名字列出來讓它反問，撞名就要求講得更清楚。
  */
-async function resolveScript(ctx: AdminOpCtx, name: string): Promise<ScriptRow> {
-  const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
-    .where('workspaceId', '==', ctx.workspaceId)
-    .get()
-  const rows = snap.docs.map(d => readScriptRow(d.id, d.data() as Record<string, any>))
+async function resolveScript(ctx: AdminOpCtx, name: string, docs?: Record<string, any>[]): Promise<ScriptRow> {
+  const raw = docs ?? await listScriptDocs(ctx)
+  const rows = raw.map(d => readScriptRow(String(d.id), d))
   const want = name.trim().toLowerCase()
   const hits = rows.filter(r => r.name.trim().toLowerCase() === want)
 
@@ -280,7 +290,8 @@ const scriptSetEnabled: AdminOpDef = {
 
   async preview(ctx, raw) {
     const args = raw as unknown as ScriptEnabledArgs
-    const row = await resolveScript(ctx, args.name)
+    const docs = await listScriptDocs(ctx)
+    const row = await resolveScript(ctx, args.name, docs)
     const base = { opId: 'script-set-enabled' as const }
 
     if (row.enabled === args.enabled) {
@@ -299,15 +310,30 @@ const scriptSetEnabled: AdminOpDef = {
         ? '客人不管打什麼都會走這條'
         : '（這條沒有設定觸發字）'
 
+    // 真正的影響常常不在這條身上，在**別條**身上：新開的這條可能把另一條的觸發詞整個包住。
+    // 拿異常中心同一支分析器跑「改之前／改之後」比出來，⛔不另寫一套判定。
+    const settings = await getAiSettings(ctx.workspaceId, ctx.db).catch(() => null)
+    const impact = previewScriptToggleImpact(
+      toReachabilityScriptsWithDisabled(docs),
+      { id: row.id, enabled: args.enabled },
+      { sensitiveTopics: settings?.sensitiveTopics ?? [] },
+    )
+
+    const items = [
+      { label: row.name, note: row.enabled ? '現在：啟用中' : '現在：已停用' },
+      { label: trigger, note: '觸發方式' },
+      // 「開了等於沒開」比任何影響都該先講
+      ...(impact.selfStillBlocked ? [{ label: '⚠️ 開了也還是輪不到', note: impact.selfStillBlocked.detail }] : []),
+      ...impact.newlyBlocked.map(i => ({ label: `「${i.scriptName}」會被蓋掉`, note: i.detail })),
+      ...impact.newlyFreed.map(i => ({ label: `「${i.scriptName}」會恢復作用`, note: i.detail })),
+    ]
+
     return {
       ...base,
       summary: args.enabled
         ? `我會把「${row.name}」上架，之後它就會開始接客人的訊息。`
         : `我會把「${row.name}」下架，它就不再接客人的訊息（內容都留著，隨時可以再開回來）。`,
-      items: [
-        { label: row.name, note: row.enabled ? '現在：啟用中' : '現在：已停用' },
-        { label: trigger, note: '觸發方式' },
-      ],
+      items,
       warning: args.enabled
         ? '上架之後，打中這些字的客人會走這條流程，AI 不會再回答那幾句話。'
         : '下架之後，這條原本回覆的內容客人就收不到了；那些訊息會改由 AI 或其他設定接手。',
@@ -348,11 +374,177 @@ const scriptSetEnabled: AdminOpDef = {
   },
 }
 
+// ── op③：客人等太久的提醒時間 ───────────────────────────────────
+
+interface HandoffSlaArgs { minutes: number }
+
+const aiSettingsHandoffSla: AdminOpDef = {
+  capability: 'ai.settings.write',
+  argsHint: '參數：{"minutes":30}＝客人被轉給真人後等超過幾分鐘要提醒客服；'
+    + '{"minutes":0}＝不要提醒。⛔ 使用者沒講數字就先問，不要自己填一個。',
+
+  normalize(raw) {
+    const n = Number(raw?.minutes)
+    if (!Number.isFinite(n))
+      throw new AdminOpUserError('要先問清楚「等幾分鐘」要提醒（或說不用提醒）。')
+    const minutes = Math.round(n)
+    if (minutes < 0 || minutes > 1440)
+      throw new AdminOpUserError('提醒時間只能設 0 到 1440 分鐘（也就是一天以內）；0 代表不提醒。')
+    return { minutes } satisfies HandoffSlaArgs as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    return String(s.handoffNotify?.slaRemindMinutes ?? 0)
+  },
+
+  async preview(ctx, raw) {
+    const args = raw as unknown as HandoffSlaArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const before = Number(s.handoffNotify?.slaRemindMinutes ?? 0)
+    const say = (m: number) => (m > 0 ? `等超過 ${m} 分鐘就提醒` : '不提醒')
+    const base = { opId: 'ai-settings-handoff-sla' as const }
+
+    if (before === args.minutes) {
+      return { ...base, summary: `現在就是「${say(before)}」，不用改。`, items: [], confirmLabel: '知道了', noop: true }
+    }
+    return {
+      ...base,
+      summary: '我會改「客人被轉給真人之後，等多久還沒人回就提醒客服」。',
+      items: [
+        { label: say(before), note: '現在' },
+        { label: say(args.minutes), note: '改成' },
+      ],
+      // 通知本身沒開的話，改這個數字不會有任何效果——這種「改了也沒用」要當場講
+      warning: s.handoffNotify?.enabled === true
+        ? '這只影響你們這邊收到的提醒，客人不會收到任何東西。'
+        : '⚠️ 目前「轉真人通知」是關的，所以改了這個數字也不會有人被提醒——要先把通知打開。',
+      confirmLabel: '確定改提醒時間',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as HandoffSlaArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const before = Number(s.handoffNotify?.slaRemindMinutes ?? 0)
+    if (before === args.minutes)
+      return { ok: true, message: `本來就是這個設定，沒有動任何東西。` }
+
+    // 只帶這一格：handoffNotify 是深合併，收件人名單與開關原封不動
+    await setAiSettings(ctx.workspaceId, { handoffNotify: { slaRemindMinutes: args.minutes } } as never, ctx.db)
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('ai-settings-handoff-sla'),
+      before: { slaRemindMinutes: before },
+      after: { slaRemindMinutes: args.minutes },
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: args.minutes > 0
+        ? `改好了：客人等超過 ${args.minutes} 分鐘還沒人回，就會提醒客服。`
+        : '改好了：不再發等太久的提醒。',
+    }
+  },
+}
+
+// ── op④：一提到就轉真人的字 ─────────────────────────────────────
+
+interface SensitiveTopicArgs { action: 'add' | 'remove', word: string }
+
+const aiSettingsSensitiveTopic: AdminOpDef = {
+  capability: 'ai.settings.write',
+  argsHint: '參數：{"action":"add"|"remove","word":"退款"}。'
+    + 'add＝客人一提到這個字就直接轉真人（AI 不回答）；remove＝把這個字拿掉。'
+    + '⛔ 一次只處理一個字；使用者一次講好幾個就分次提議。',
+
+  normalize(raw) {
+    const action = String(raw?.action ?? '').trim()
+    if (action !== 'add' && action !== 'remove')
+      throw new AdminOpUserError('要問清楚是要「加一個字」還是「拿掉一個字」。')
+    const word = String(raw?.word ?? '').trim().slice(0, 30)
+    if (!word)
+      throw new AdminOpUserError('要問清楚是哪一個字或詞。')
+    return { action, word } satisfies SensitiveTopicArgs as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    return JSON.stringify(s.sensitiveTopics ?? [])
+  },
+
+  async preview(ctx, raw) {
+    const args = raw as unknown as SensitiveTopicArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const list = (s.sensitiveTopics ?? []).map(String)
+    const has = list.some(w => w.trim().toLowerCase() === args.word.toLowerCase())
+    const base = { opId: 'ai-settings-sensitive-topic' as const }
+
+    if (args.action === 'add' && has)
+      return { ...base, summary: `「${args.word}」已經在清單裡了，不用再加。`, items: [], confirmLabel: '知道了', noop: true }
+    if (args.action === 'remove' && !has)
+      return { ...base, summary: `清單裡沒有「${args.word}」，沒有東西要拿掉。`, items: [], confirmLabel: '知道了', noop: true }
+
+    return {
+      ...base,
+      summary: args.action === 'add'
+        ? `我會把「${args.word}」加進「一提到就轉真人」的清單。`
+        : `我會把「${args.word}」從「一提到就轉真人」的清單拿掉。`,
+      items: [
+        { label: list.length ? list.join('、') : '（目前是空的）', note: '現在的清單' },
+        { label: `共 ${list.length} 個字`, note: args.action === 'add' ? `加完會變成 ${list.length + 1} 個` : `拿掉會變成 ${list.length - 1} 個` },
+      ],
+      // 加字是往保守的方向動、拿掉字是放寬——兩者的後果完全不同，⛔不能用同一句話帶過
+      warning: args.action === 'add'
+        ? `加了之後，客人只要講到「${args.word}」就會直接轉給真人，AI 不會先回答（連問清楚都不會）。`
+        : `⚠️ 拿掉之後，客人講到「${args.word}」時 AI 會自己回答，不再自動轉給真人。`,
+      confirmLabel: args.action === 'add' ? '確定加進去' : '確定拿掉',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as SensitiveTopicArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const list = (s.sensitiveTopics ?? []).map(String)
+    const has = list.some(w => w.trim().toLowerCase() === args.word.toLowerCase())
+
+    if (args.action === 'add' && has) return { ok: true, message: `「${args.word}」本來就在清單裡，沒有動任何設定。` }
+    if (args.action === 'remove' && !has) return { ok: true, message: `清單裡本來就沒有「${args.word}」，沒有動任何設定。` }
+
+    // 陣列是整份取代（不是深合併）：先讀現值再寫回完整清單，⛔不可以只丟一個新字進去
+    const after = args.action === 'add'
+      ? [...list, args.word]
+      : list.filter(w => w.trim().toLowerCase() !== args.word.toLowerCase())
+
+    await setAiSettings(ctx.workspaceId, { sensitiveTopics: after } as never, ctx.db)
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('ai-settings-sensitive-topic'),
+      before: { sensitiveTopics: list },
+      after: { sensitiveTopics: after },
+      note: `${args.action === 'add' ? '加入' : '移除'}「${args.word}」`,
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: args.action === 'add'
+        ? `加好了：客人提到「${args.word}」就會直接轉給真人。`
+        : `拿掉了：客人提到「${args.word}」時，AI 會照常回答。`,
+    }
+  },
+}
+
 // ── 註冊表 ──────────────────────────────────────────────────────
 
 export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
   'ai-settings-service-hours': aiSettingsServiceHours,
   'script-set-enabled': scriptSetEnabled,
+  'ai-settings-handoff-sla': aiSettingsHandoffSla,
+  'ai-settings-sensitive-topic': aiSettingsSensitiveTopic,
 }
 
 /** 端點／迴圈用：不認得的 op 一律擋下（⛔不做「最接近的那個」） */
