@@ -176,3 +176,58 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* 用 AI 產生底圖（C-193）：擺在上傳區下面，是「沒有設計稿時」的備援路 */
+.rm-gen {
+  margin-top: var(--space-form-stack-gap);
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rm-gen__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rm-gen__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rm-gen__labels {
+  display: grid;
+  /* ⛔ 可壓縮欄位一律 minmax(0, 1fr)：用 1fr 的話 min-content 會把格子撐爆、整排溢出 */
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rm-gen__label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rm-gen__idx {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rm-gen__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .rm-gen__labels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -384,3 +384,68 @@ export async function generateJson<T>(prompt: string, opts: Omit<GenerateOptions
   }
   return { data, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
 }
+
+// ── 生圖 ────────────────────────────────────────────────────────────
+
+interface ImageResponse {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> }
+    finishReason?: string
+  }>
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+  error?: { message?: string }
+}
+
+export interface GeneratedImage {
+  /** base64(不含 data: 前綴) */
+  data: string
+  mimeType: string
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
+ * 產生一張圖（`C-193`）。
+ *
+ * ⚠️ 目前唯一的用途是**圖文選單的底圖**，而那裡有一條硬規矩：
+ * 畫出來的東西不可以有按鈕、文字或格線——那些是我們自己用程式疊上去的，
+ * 這樣「看得到的格子」才會跟「按得到的區域」對得剛剛好。
+ * ⛔ 讓模型把整張選單畫出來，按鈕一定會歪；歪掉的選單客人點了沒反應，
+ *    而畫面上完全看不出來哪裡錯。所以生圖只負責氣氛，不負責結構。
+ */
+export async function generateImage(
+  prompt: string,
+  opts: { model?: string, aspectRatio?: string } = {},
+): Promise<GeneratedImage> {
+  const model = opts.model ?? 'gemini-2.5-flash-image'
+  const data = await callGemini<ImageResponse>(`models/${model}:generateContent`, {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      // ⛔ 沒有這一格的話模型會回**文字**（「好的，我為你設計了一張…」）而不是圖，
+      //    而且 finishReason 照樣是 STOP——看起來像成功，實際一張圖都沒有。
+      //    2026-09-17 實機第一次呼叫就踩到。
+      responseModalities: ['TEXT', 'IMAGE'],
+      // ⚠️ 不指定的話一律回 1:1 正方形。拿正方形去裁寬版橫幅，
+      //    上下的裝飾（月亮、邊框）會整個被裁掉，只剩中間一片素色。
+      ...(opts.aspectRatio ? { imageConfig: { aspectRatio: opts.aspectRatio } } : {}),
+    },
+  })
+  const part = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data)
+  if (!part?.inlineData?.data) {
+    // ⛔ 不要回一張空圖讓呼叫端以為成功:底圖沒生出來,後面疊上去的格子會蓋在白底上,
+    //    看起來像「做好了但很醜」,而不是「這一步失敗了」。
+    // ⛔ 也不要只吐 finishReason:「STOP」對看的人毫無意義。模型**用講的回你**的時候
+    //    那句話才是真正的線索（實測它回過「好的，這是一張符合您要求的…」然後沒有圖）。
+    const said = data?.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('').trim()
+    const why = said
+      ? `模型只回了文字沒有給圖（它說：「${said.slice(0, 60)}…」）`
+      : (data?.error?.message ?? data?.candidates?.[0]?.finishReason ?? '沒有回傳圖片')
+    throw createError({ statusCode: 502, statusMessage: `產生底圖失敗：${why}` })
+  }
+  return {
+    data: part.inlineData.data,
+    mimeType: part.inlineData.mimeType ?? 'image/png',
+    inputTokens: data?.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: data?.usageMetadata?.candidatesTokenCount ?? 0,
+  }
+}

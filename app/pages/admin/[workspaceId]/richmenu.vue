@@ -14,6 +14,8 @@
         <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="rm-list" @scroll.passive="onSidebarListScroll">
+        <!-- ⛔ 沒上線的以前是一片空白，看起來像「還沒弄好」而不是「存好了、客人看不到」。
+             兩種狀態都要講出來，人才敢把「建了但不設預設」當半成品的存放處用。 -->
         <AdminSplitListItem
           v-for="menu in sortedMenus"
           :key="menu.id"
@@ -21,8 +23,8 @@
           :active="selectedId === menu.id"
           time-in-title-row
           title-row-chip
-          :chip-text="menu.isDefault ? '預設' : ''"
-          chip-tone="success"
+          :chip-text="menu.isDefault ? '預設' : '客人看不到'"
+          :chip-tone="menu.isDefault ? 'success' : 'neutral'"
           :meta-text="`${menu.areas?.length ?? 0} 個區塊`"
           @select="selectMenu(menu)"
         />
@@ -106,6 +108,42 @@
                   hint="JPG / PNG · 最大 500KB（建議 2500x1686 或 2500x843）"
                   @file-selected="onRichMenuImageSelected"
                 />
+
+                <!-- 沒有設計稿的時候用這個湊一張。
+                     ⛔ AI 只畫底圖，格子與字是照**真正的可點區域**疊上去的——
+                     整張交給 AI 畫的話，看得到的按鈕跟按得到的區域一定對不齊。 -->
+                <div class="rm-gen">
+                  <div class="rm-gen__head">
+                    <span class="rm-gen__title">沒有現成的圖？讓 AI 幫你做一張</span>
+                    <span class="text-xs text-muted">AI 只畫背景，按鈕格子與文字由系統照實際可點區域疊上去，不會歪掉</span>
+                  </div>
+                  <el-input
+                    id="rm-gen-theme"
+                    v-model="genTheme"
+                    placeholder="想要什麼風格？例：中秋節，深藍配金色，有月亮跟燈籠"
+                    :disabled="genBusy"
+                    maxlength="120"
+                    @keyup.enter="onGenerateBackground"
+                  />
+                  <div v-if="form.areas.length" class="rm-gen__labels">
+                    <div v-for="(a, i) in form.areas" :key="`gl-${i}`" class="rm-gen__label">
+                      <span class="rm-gen__idx">第 {{ i + 1 }} 格</span>
+                      <el-input
+                        :id="`rm-gen-label-${i}`"
+                        v-model="genLabels[i]"
+                        placeholder="這一格上面要印什麼字"
+                        :disabled="genBusy"
+                        maxlength="12"
+                      />
+                    </div>
+                  </div>
+                  <div class="rm-gen__actions">
+                    <el-button type="primary" plain :loading="genBusy" @click="onGenerateBackground">
+                      {{ genBusy ? '產生中…' : '產生一張' }}
+                    </el-button>
+                    <span v-if="genNote" class="text-xs text-muted">{{ genNote }}</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -262,7 +300,7 @@ definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { apiFetch } = useWorkspace()
 
-const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, markDirty, confirmLeaveIfDirty } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
@@ -630,6 +668,73 @@ function cancelEdit() {
   markClean()
 }
 
+// ── 用 AI 產生底圖（`C-193`）────────────────────────────────────────
+const genTheme = ref('')
+const genLabels = ref<string[]>([])
+const genBusy = ref(false)
+const genNote = ref('')
+
+// 換一張選單或換版型時，格子數會變 → 讓文字欄位跟著對齊，⛔不要留著上一張的字
+watch(() => form.value.areas.length, (n) => {
+  genLabels.value = Array.from({ length: n }, (_, i) => genLabels.value[i] ?? '')
+}, { immediate: true })
+
+async function onGenerateBackground() {
+  if (genBusy.value) return
+  if (!genTheme.value.trim()) {
+    showToast('先講一下你想要什麼風格，例如「中秋節，深藍配金色」', 'error')
+    return
+  }
+  const width = getMenuWidth()
+  const height = getMenuHeight()
+  if (!form.value.areas.length) applyRichMenuLayout(form.value.layoutId)
+
+  genBusy.value = true
+  genNote.value = ''
+  try {
+    const res = await apiFetch<{ imageBase64: string, contentType: string }>('/api/richmenu/generate-background', {
+      method: 'POST',
+      body: { theme: genTheme.value.trim(), tall: height > 1000 },
+    })
+    const bgDataUrl = `data:${res.contentType || 'image/png'};base64,${res.imageBase64}`
+
+    // ⛔ 疊字用的座標＝等一下真的會送去 LINE 的那一份，不是另外算一份
+    const { dataUrl, bytes } = await composeRichMenuImage({
+      backgroundDataUrl: bgDataUrl,
+      areas: form.value.areas.map((a: any, i: number) => ({
+        bounds: a.bounds,
+        label: String(genLabels.value[i] ?? '').trim(),
+      })),
+      width,
+      height,
+      maxBytes: IMAGE_MAX_BYTES,
+    })
+
+    if (bytes > IMAGE_MAX_BYTES) {
+      // ⛔ 不要默默交出一張存檔時才會失敗的圖
+      genNote.value = ''
+      showToast(`壓到最低品質還是 ${Math.round(bytes / 1024)}KB，超過 500KB 上限。請換一個簡單一點的風格再試。`, 'error')
+      return
+    }
+
+    form.value.width = width
+    form.value.height = height
+    form.value.previewUrl = dataUrl
+    const comma = dataUrl.indexOf(',')
+    form.value.imageBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+    form.value.contentType = 'image/jpeg'
+    markDirty()
+    genNote.value = `已產生 ${width}×${height}，${Math.round(bytes / 1024)}KB。不滿意就再按一次，每次都不一樣。`
+    showToast('底圖做好了，看一下滿不滿意', 'success')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage ?? e?.message ?? '產生失敗，請再試一次', 'error')
+  }
+  finally {
+    genBusy.value = false
+  }
+}
+
 async function onRichMenuImageSelected(payload: LocalSelectedFile) {
   if (payload.file.size > IMAGE_MAX_BYTES) {
     showToast('圖片不能超過 500KB', 'error')
@@ -795,14 +900,21 @@ async function submitForm() {
     return a
   })
 
-  // 建立＝第一次上線到 LINE，會立即對所有好友生效 → 部署前確認一次
+  // ⛔ 這句話以前不分情況都說「所有好友的圖文選單會即時更新」——但沒打開「設為預設」
+  //    的話，一個好友的畫面都不會變。每次建立都嚇一次，等於把唯一安全的中間狀態
+  //    （建好但不上線）講得跟上線一樣危險，難怪沒人敢用它存半成品。
+  //    現在照「有沒有要設為預設」講兩種話，講的跟做的才對得上。
   if (isCreating.value) {
+    // 文案抽在 richmenu-confirm-copy.ts：這段在畫面上很難走到（前面還有名稱、
+    // 區塊動作那幾道跟它無關的檢查），但講錯的代價是店家以為自己動到了所有客人的畫面
+    const copy = richMenuCreateConfirmCopy(form.value.setAsDefault)
     try {
-      await ElMessageBox.confirm(
-        '建立後會立即部署到 LINE，所有好友的圖文選單會即時更新。確定要部署嗎？',
-        '確認部署',
-        { confirmButtonText: '建立並部署', cancelButtonText: '再檢查一下', type: 'warning' },
-      )
+      await ElMessageBox.confirm(copy.message, copy.title, {
+        confirmButtonText: copy.confirmButtonText,
+        cancelButtonText: copy.cancelButtonText,
+        type: copy.type,
+        dangerouslyUseHTMLString: false,
+      })
     }
     catch { return }
   }
@@ -839,16 +951,36 @@ async function submitForm() {
       })
       createdFirestoreId = String(docResponse?.id || '')
 
-      await apiFetch('/api/richmenu/upload', {
-        method: 'POST',
-        body: {
-          richMenuId: docResponse.richMenuId,
-          firestoreId: docResponse.id,
-          imageBase64: form.value.imageBase64,
-          contentType: form.value.contentType,
-        },
-      })
-      showToast('圖文選單已成功建立與部署', 'success')
+      // ⛔ 建立與傳圖是兩支請求，而選單在第一支就已經建到 LINE 上了。
+      //    傳圖這支失敗的話，以前只跳一個錯誤訊息，那張**沒有圖的選單就留在 LINE 上**，
+      //    沒有人會去清——下次再建又留一張。所以這裡自己收拾乾淨再把錯誤丟出去。
+      try {
+        await apiFetch('/api/richmenu/upload', {
+          method: 'POST',
+          body: {
+            richMenuId: docResponse.richMenuId,
+            firestoreId: docResponse.id,
+            imageBase64: form.value.imageBase64,
+            contentType: form.value.contentType,
+          },
+        })
+      }
+      catch (uploadErr: any) {
+        let cleaned = false
+        try {
+          // ⛔ 只有**LINE 那邊真的刪掉了**才算收拾乾淨：刪除那支在 LINE 失敗時
+          //    仍會清掉我們自己的紀錄並回 success，光看 success 會講出一句假話。
+          const res = await apiFetch<{ lineDeleted?: boolean }>(`/api/richmenu/${createdFirestoreId}`, { method: 'DELETE' })
+          cleaned = res?.lineDeleted !== false
+        }
+        catch { /* 收拾也失敗：下面照實講，⛔不要假裝沒事發生 */ }
+        createdFirestoreId = ''
+        const why = uploadErr?.data?.statusMessage ?? uploadErr?.message ?? '圖片上傳失敗'
+        throw new Error(cleaned
+          ? `${why}——沒有建立成功，剛剛那張已經收回去了，請換一張圖再試一次。`
+          : `${why}——而且沒收拾乾淨，LINE 上可能留著一張沒有圖的「${form.value.name}」，請到清單確認並手動刪除。`)
+      }
+      showToast(form.value.setAsDefault ? '已建立並上線，客人現在看得到了' : '已建立，客人還看不到', 'success')
     }
 
     await loadMenusList(true)
