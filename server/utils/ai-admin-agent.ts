@@ -37,6 +37,7 @@ import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-de
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
+import { hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
@@ -505,6 +506,9 @@ ${adminOpCatalogueForPrompt()}
 ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——${d.hint}`).join('\n')}
 
 【規則】
+- ⛔ **任何情況都只能輸出上面那三種 JSON 之一,話一律寫進 "text" 欄位**。
+  要講「我做不到」「我一次只能處理一個」「這是清單」也一樣——**直接吐純文字會讓使用者看到錯誤畫面**,
+  而他問的其實是個合理的問題(2026-09-16 實測:「所有流程都關掉」與「把推播發出去」各踩過一次)。
 - 先查再答:回答裡的每個數字都必須來自【工具結果】,不知道就先查,絕不臆測或編造。
 - ⛔ **一句話問了幾件事,就要查到幾件事**:例如「用了幾則?還剩多少?有沒有要處理的?」是三件事,
   要分別查完再一起回答。**沒查過的那一件絕對不可以順口回答**(尤其不可以說「目前沒有異常」)——
@@ -522,16 +526,30 @@ ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——
 【提議修改的規矩】
 - 參數裡的名稱一律**照抄工具結果上的原字**(例如流程名字),⛔不要自己拼、不要猜最接近的那一條;不確定就先查清單、或直接反問使用者。
 - 使用者話裡缺的資訊(要改哪一條、開還是關、幾點到幾點)⛔不要自己補一個常見值——問清楚再提議。
-- ⛔ **一次只能提議一個操作**:使用者說「把所有流程都停掉」「全部關起來」這種批次要求,
-  要如實說「我一次只能處理一條」,並把清單列出來問他先從哪一條開始——
-  ⛔ 不可以因為做不到整批就不回答他。
+- 反問缺的資訊時,**要先講現在是多少**再問要改成多少——只問「要改成幾分鐘」他沒有基準可以回答。
+- ⛔ **相對的量要先查現值再算**(兩倍、一半、短一點、久一點、提早):查到現值算完再提議,
+  ⛔不可以憑印象給一個數字。
+- ⛔ **他只抱怨一邊,就不要動另一邊**:講「晚上太晚」是在講結束時間,
+  ⛔不要連開始時間一起往前挪——那會讓他更早被打擾,而他根本沒要求。
+- ⛔ **一次只能提議一個操作**,而且**每一種操作都適用**(客服流程、敏感詞都一樣):
+  遇到「全部」「都」這種批次要求,先把**現在有哪些**列出來,再問他先從哪一個開始。
+  ⛔不可以因為做不到整批就不回答;⛔更不可以從前幾句話裡挑一個出來當成他要的那個。
+- ⛔ **使用者說「刪掉」「砍掉」「移除」某條流程時,不可以自作主張改成提議下架**:
+  先講你不能刪,再問他要不要改成下架——⛔不要直接給一張下架的確認卡。
 - 【提議失敗】會告訴你哪裡不對,照它說的去反問或改正,同一個提議最多再試一次。
 - 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
 
 【接續上一個提議】
 有【上一個提議】而使用者這句是在**修改它**(例如「改成早上九點」「第二題改成問電話」「名字換一個」),
 就用**同一個操作 id** 重新提議,並帶上**修改後的完整參數**——⛔不要只帶被改動的那一格,
-也⛔不要把上一個提議當成已經做完的事。若他講的是另一件事,就照一般情況處理。`
+也⛔不要把上一個提議當成已經做完的事。若他講的是另一件事,就照一般情況處理。
+
+⛔ **【上一個提議】從來沒有被執行過**(沒有人按過確定)。所以:
+- ⛔不要說「已經幫你改好了」「幫你重新啟用」「已經加進去了」這類話——那件事還沒發生。
+- ⛔不要以為它已經生效:他說「再加一個」的時候,**前一個也還沒做**,
+  你這一次只能提議一件事,要老實講「上一個還沒執行」。
+- 使用者問「這樣會怎樣」「確定嗎」是在**問後果,不是叫你動手**:好好解釋就好,
+  ⛔不要回「是的,我會改成…」然後什麼提議都沒給——那句話聽起來像你已經去做了。`
 }
 
 /**
@@ -625,6 +643,33 @@ export async function runAdminAgentChat(params: {
           throw new AdminOpUserError(`這個帳號的權限不能做「${ADMIN_OP_LABELS[opId]}」,請改由管理員操作(你可以告訴他要改什麼)。`)
 
         const rawArgs = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
+        // 使用者自己講過的話(這一輪 ＋ 先前輪次他自己打的)。⛔助理講過的不算:
+        // 那等於「助理自己提一個對象,然後自己拿來當使用者的要求」。
+        const userSaid = [message, ...(params.history ?? []).filter(t => t.role === 'user').map(t => String(t.text ?? ''))]
+
+        // ⛔ 這句話只是「好」「做」這種同意詞,沒有講要對**哪一個**東西動手。
+        // 2026-09-16 實測(`C-192`):批次被拒絕後助理問「請問您想先關閉哪一個?」,
+        // 使用者回一個「做」,模型就提議下架清單**第一條**——那是正在服務客人的那條,
+        // 而且確認卡跟正常提議長得一模一樣。開放問題沒有預設值,模型卻自己補了最危險的那個。
+        // ⚠️ 正在修改上一個提議時不擋:那時候的「好」是在回應一件已經指名道姓的事。
+        if (!lastProposal && isBareAssent(message)) {
+          throw new AdminOpUserError(
+            '使用者這句話只是「好」「做」這類同意的話,並沒有講要對**哪一個**東西動手。'
+            + '⛔ 不可以自己挑一個(尤其不可以挑清單的第一個)。'
+            + '請把可以選的項目列出來,問他要哪一個。',
+          )
+        }
+
+        // ⛔ 參數是時間／數量的操作,使用者從頭到尾沒講過任何數值就不准提議。
+        // 2026-09-16 實測:「晚上太晚有人敲我,幫我設一下」→ 直接提議 22:00–08:00,
+        // 還順手把使用者沒抱怨的早上也提前兩小時。
+        if (op.needsUserNumber && !hasNumberSignal(userSaid)) {
+          throw new AdminOpUserError(
+            '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見值(例如 22:00–08:00)。'
+            + '請先告訴他現在設定的是什麼,再問他要改成幾點(或幾分鐘)。',
+          )
+        }
+
         // 來源檢查(安全面):自由文字若是從剛查到的資料裡照抄的、而使用者沒講過,一律擋下。
         // ⛔ 查到的資料是別人寫的(知識卡、流程名稱、客人訊息),裡面塞一句話就讓小幫手照抄出去,
         //    是這條路上唯一會真的傷到客人的攻擊——擋它要靠機制,不能只靠 prompt 拜託模型。
@@ -633,8 +678,8 @@ export async function runAdminAgentChat(params: {
           const history = params.history ?? []
           const issue = checkArgProvenance(
             picked,
-            // 使用者講過的話:這一輪 ＋ 先前輪次他自己打的
-            [message, ...history.filter(t => t.role === 'user').map(t => String(t.text ?? ''))],
+            // 使用者講過的話:這一輪 ＋ 先前輪次他自己打的(與上面兩道閘門同一份)
+            userSaid,
             // 不可信來源:這一輪查到的資料 ＋ **先前輪次助理覆述過的內容**
             // ⛔ 少了後者的話,「上一輪查到被汙染的卡、這一輪說『好照做』」會整個繞過這道檢查
             [...toolResults, ...history.filter(t => t.role === 'assistant').map(t => String(t.text ?? ''))],
@@ -647,13 +692,29 @@ export async function runAdminAgentChat(params: {
         if (op.prepare) args = await op.prepare(ctx, args)
         // 現況指紋:按確定時會再算一次,中間被別人改過就不執行(拿舊世界的判斷去寫新世界＝覆蓋別人的修改)
         const guard = await op.fingerprint(ctx, args)
-        const preview = await op.preview(ctx, args)
+        const rawPreview = await op.preview(ctx, args)
+
+        // ⛔ 上一個提議**沒有被執行過**,而這一次不會連它一起做——這件事一定要講出來。
+        // 2026-09-16 實測(`C-192`):提議加「退費」之後使用者說「順便把客訴也加進去」,
+        // 結果只會加「客訴」,而「退費」那件事再也沒有人提過——使用者以為兩個都在隊列裡。
+        const supersede = lastProposal && JSON.stringify(lastProposal.args ?? {}) !== JSON.stringify(rawArgs)
+          // ⚠️ 這一句是**原樣印在確認卡上**給店家看的，標點跟著畫面用全形
+          ? '⚠️ 上一個提議還沒有被執行，這次只會做上面列的這一件事。'
+          : ''
+        const preview = supersede
+          ? { ...rawPreview, warning: [supersede, rawPreview.warning].filter(Boolean).join('\n') }
+          : rawPreview
 
         // r＝模型原話的參數:接續修改時要餵回去的是它,不是收斂後的結果(收斂後餵不回 normalize)
         const token = issueAdminOpToken({ w: workspaceId, u: uid, op: opId, a: args, r: rawArgs, g: guard })
         const text = String(data?.text ?? '').trim()
         return {
-          reply: text || preview.summary,
+          // ⛔ 「本來就是這樣」(noop)時一律用後端查出來的那句話,不採用模型寫的。
+          // admin-ops.ts 開頭的紀律是「講的跟做的必須出自同一次查詢」,但那道紀律
+          // 以前**只套到卡片**:2026-09-16 實測兩次看到卡片說「已經是啟用中,不用改」,
+          // 泡泡卻說「我會將『新增備註』重新啟用」。noop 連確認鈕都沒有,
+          // 畫面上只剩那句「我會…」,人只會以為它做了。
+          reply: preview.noop ? preview.summary : (text || preview.summary),
           toolCalls,
           messages: [],
           pendingOp: {

@@ -64,9 +64,18 @@ export default defineEventHandler(async (event) => {
     // 拿舊世界的判斷去寫新世界＝安靜地覆蓋掉別人的修改。
     const guard = await op.fingerprint(ctx, payload.a)
     if (guard !== payload.g) {
+      // 指紋對不上有兩種，下一步完全不同，⛔不可以都講成「有人改過」：
+      //   ① 這張憑證剛剛才執行過（連點兩下、重新送出）——世界已經**就是**他要的樣子了
+      //   ② 真的有別人動過同一個設定
+      // 分辨法：拿同一份參數重算一次預覽，`noop` 代表現況已經等於這張憑證要的結果。
+      // 2026-09-16 實測連按兩次，看到的是「這段期間有人改過同一個設定」——
+      // 而按的人什麼都沒改、也沒有別人在動，那句話只會讓他跑去查根本不存在的事。
+      const already = await op.preview(ctx, payload.a).then(p => p.noop === true).catch(() => false)
       throw createError({
         statusCode: 409,
-        statusMessage: '這段期間有人改過同一個設定，所以我沒有動手。請再問我一次，我會用最新的狀況重新確認。',
+        statusMessage: already
+          ? '這個提議剛剛已經執行過了，所以我沒有再做一次——現在的設定就是你要的那樣。'
+          : '這段期間有人改過同一個設定，所以我沒有動手。請再問我一次，我會用最新的狀況重新確認。',
       })
     }
 

@@ -227,3 +227,121 @@ describe('提議一個操作', () => {
       expect(tool.mutates, `${name} 變成寫入工具了——代辦要走操作模組表，不是把閘門拆掉`).toBe(false)
   })
 })
+
+/**
+ * 2026-09-16 當使用者請它「做事」時實測抓到的四件事（`C-192`）。
+ * 四件在 prompt 裡本來就有對應的規則，照樣中——所以這裡釘的是**機制**那一半。
+ */
+describe('當使用者的話不足以決定要動什麼', () => {
+  const ask = (message: string, extra: Record<string, unknown> = {}) =>
+    runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message, ...extra } as any)
+
+  it('🔴 助理問完「要關哪一條」，使用者回一個「做」→ ⛔不可以替他挑清單第一條', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'script-set-enabled', args: { name: '出貨查詢', enabled: false } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '請問你要關哪一條？' }))
+
+    const res = await ask('做', {
+      history: [
+        { role: 'user', text: '所有流程都關掉' },
+        { role: 'assistant', text: '我一次只能處理一條。目前啟用的有：出貨查詢。請問您想先關閉哪一個？' },
+      ],
+    })
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(updates).toHaveLength(0)
+    // 失敗原因要回到模型手上，它才知道該去把清單列出來問
+    const second = generateJson.mock.calls[1]?.[0] as string
+    expect(second).toContain('提議失敗')
+    expect(second).toContain('哪一個')
+  })
+
+  it('⛔ 助理講過的話不算數：清單是助理列的，不是使用者指定的', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'script-set-enabled', args: { name: '出貨查詢', enabled: false } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '要哪一條？' }))
+
+    // 助理的話裡出現過「出貨查詢」，但使用者從頭到尾只說了「好」
+    const res = await ask('好', {
+      history: [{ role: 'assistant', text: '目前啟用的有：出貨查詢、更改地址。' }],
+    })
+    expect(res.pendingOp).toBeUndefined()
+  })
+
+  it('正在修改上一個提議時，「好」不擋——那是在回應一件已經指名道姓的事', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+    }))
+    const res = await ask('好', {
+      // 時間是他前一輪自己講的——⛔數值那道閘門看的是「他講過沒有」，不是只看這一句
+      history: [{ role: 'user', text: '勿擾改成晚上十一點到早上八點' }],
+      lastProposal: { opId: 'ai-settings-service-hours', args: { mode: 'dnd', start: '23:00', end: '08:00' } },
+    })
+    expect(res.pendingOp?.opId).toBe('ai-settings-service-hours')
+  })
+
+  it('🔴 一個數字都沒講就要改時間 → ⛔不可以自己填 22:00–08:00', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
+
+    const res = await ask('晚上太晚有人敲我 受不了 幫我設一下')
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(setCalls).toHaveLength(0)
+    const second = generateJson.mock.calls[1]?.[0] as string
+    expect(second).toContain('沒有講到任何時間或數字')
+  })
+
+  it('講了數字就照做（⛔別把正常需求一起擋掉）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '23:00', end: '09:00' },
+    }))
+    const res = await ask('把勿擾改成晚上十一點到早上九點')
+    expect(res.pendingOp?.opId).toBe('ai-settings-service-hours')
+  })
+})
+
+describe('泡泡那句話不可以跟確認卡打架', () => {
+  it('🔴 本來就是這樣（noop）：一律用後端查出來的那句，⛔不用模型寫的「我會幫你重新啟用」', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'script-set-enabled',
+      args: { name: '出貨查詢', enabled: true },
+      text: '我會將「出貨查詢」這個自動回應重新啟用。',
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '把出貨查詢打開',
+    })
+
+    expect(res.pendingOp?.preview.noop).toBe(true)
+    // ⛔ 模型那句「我會…重新啟用」不可以出現：noop 連確認鈕都沒有，人只會以為它做了
+    expect(res.reply).not.toContain('重新啟用')
+    expect(res.reply).toBe(res.pendingOp?.preview.summary)
+    expect(updates).toHaveLength(0)
+  })
+
+  it('🔴 上一個提議還沒被執行 → 影響欄要講出來（「順便把 X 也加進去」會漏掉前一個）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '23:00', end: '09:00' },
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(),
+      workspaceId: 'w1',
+      uid: 'u1',
+      role: 'admin',
+      message: '改成晚上十一點到早上九點',
+      lastProposal: { opId: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } },
+    })
+
+    expect(res.pendingOp?.preview.warning).toContain('上一個提議還沒有被執行')
+  })
+})

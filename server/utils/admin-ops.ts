@@ -73,6 +73,16 @@ export interface AdminOpDef {
    * 裡面塞一句話就讓小幫手照抄出去，是這條路上唯一會真的傷到客人的攻擊。
    */
   freeTextFields?: string[]
+  /**
+   * 這個操作的參數是**數值或時間**（幾點、幾分鐘）。
+   *
+   * 標了的話，使用者自己講過的話裡必須出現得了一個數值，否則不准提議。
+   * ⛔ 2026-09-16 實測：「晚上太晚有人敲我，幫我設一下」——一個數字都沒講，
+   *    模型直接提議 22:00–08:00，還順手把使用者沒抱怨的早上也提前兩小時。
+   *    prompt 裡早就寫著「⛔不要自己補一個常見值」，照樣中，所以改成機制
+   *    （判斷在 `shared/agent-user-signal.ts`，與 `freeTextFields` 那道來源檢查同一個位置把關）。
+   */
+  needsUserNumber?: boolean
   /** 收斂＋驗證：吐出正規化後的參數，或一句要使用者補充的話 */
   normalize: (raw: Record<string, unknown>) => Record<string, unknown>
   /**
@@ -124,6 +134,7 @@ interface ServiceHoursArgs {
 
 const aiSettingsServiceHours: AdminOpDef = {
   capability: 'ai.settings.write',
+  needsUserNumber: true,
   argsHint: '參數：{"mode":"service"|"dnd","start":"HH:mm","end":"HH:mm","weekendOff":true|false} '
     + '或關掉整個功能用 {"enabled":false}。'
     + '⛔ mode 一定要照使用者的原話選：他講「服務時間 9 點到 6 點」→ mode="service"；'
@@ -420,6 +431,7 @@ interface HandoffSlaArgs { minutes: number }
 
 const aiSettingsHandoffSla: AdminOpDef = {
   capability: 'ai.settings.write',
+  needsUserNumber: true,
   argsHint: '參數：{"minutes":30}＝客人被轉給真人後等超過幾分鐘要提醒客服；'
     + '{"minutes":0}＝不要提醒。⛔ 使用者沒講數字就先問，不要自己填一個。',
 
