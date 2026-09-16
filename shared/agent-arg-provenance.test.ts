@@ -22,7 +22,9 @@ describe('代辦參數的來源檢查', () => {
       TOOL_OUTPUT,
     )
     expect(issue?.field).toBe('text')
-    expect(issue?.message).toContain('不能當成指令')
+    // 措辭要把決定權交回給人：他只要自己再講一次就放行，⛔不是指控模型
+    expect(issue?.message).toContain('從系統查到的資料裡照抄')
+    expect(issue?.message).toContain('自己說一次')
   })
 
   it('使用者自己講的話照做：不擋（這是正常使用）', () => {

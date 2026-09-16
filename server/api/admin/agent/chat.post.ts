@@ -34,7 +34,11 @@ export default defineEventHandler(async (event) => {
   // 上一個提議:只採信**驗得過簽章**的憑證(前端原樣送回來的那一串)。
   // ⛔ 不接受前端自己描述「我上次提議了什麼」——那等於開一個可以偽造上下文的後門。
   const lastChecked = body?.lastToken ? verifyAdminOpToken(String(body.lastToken), { workspaceId, uid }) : null
-  const lastProposal = lastChecked?.ok ? { opId: lastChecked.payload.op, args: lastChecked.payload.a } : undefined
+  // ⛔ 接續要餵**原話**那一份:收斂後的參數餵不回去(勿擾時段少了「哪一種時間」那一格),
+  //    模型照著重提就缺欄位,結果是它回頭再問一次使用者同樣的問題。
+  const lastProposal = lastChecked?.ok
+    ? { opId: lastChecked.payload.op, args: lastChecked.payload.r ?? lastChecked.payload.a }
+    : undefined
 
   const db = getDb()
   // 包進額度境域:這支端點原本**完全沒有**費用閘門——gemini.ts 的守門是「境域內才查」,

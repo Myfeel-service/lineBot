@@ -123,10 +123,27 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     expect(generateJson.mock.calls[1]![0] as string).toContain('"total":5')
   })
 
+  it('🔴 提示裡要有「今天是幾號」：沒有的話它會自己編一個日期，然後很有自信地回一整排 0', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '上禮拜對話幾場?' })
+
+    const prompt = generateJson.mock.calls[0]![0] as string
+    const instruction = (generateJson.mock.calls[0]![1] as any).systemInstruction as string
+    // 台北日期（伺服器跑 UTC，午夜前後差一天）
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
+    expect(instruction).toContain(today)
+    expect(instruction).toContain('今天的日期')
+    // ⛔ 相對時間要照提示裡的日期算，不可以用模型自己記得的
+    expect(instruction).toContain('絕不用你自己記得的日期')
+    expect(prompt).toContain('上禮拜對話幾場')
+  })
+
   it('模型輸出不合規(未知工具)→ 優雅收斂,不 throw', async () => {
     generateJson.mockResolvedValueOnce(step({ action: 'tool', tool: 'delete_everything', args: {} }))
     const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '刪掉全部' })
-    expect(res.reply).toContain('查不太到')
+    // ⛔ 措辭要講「沒整理出答案」不是「查不到」：後者是錯的歸因，實測讓合理需求看起來像功能壞了
+    expect(res.reply).toContain('沒整理出答案')
+    expect(res.reply).not.toContain('查不到資料」')
     expect(res.toolCalls).toEqual([])
   })
 

@@ -182,7 +182,23 @@ describe('提議一個操作', () => {
 
     expect(res.pendingOp).toBeUndefined()
     // 失敗原因要回給模型，它才知道要回去問使用者
-    expect(generateJson.mock.calls[2]?.[0]).toContain('不能當成指令')
+    expect(generateJson.mock.calls[2]?.[0]).toContain('從系統查到的資料裡照抄')
+  })
+
+  it('🔴 憑證要留住「模型原話的參數」：收斂後的形狀餵不回 normalize（勿擾少了 mode 那一格）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+    }))
+    const res = await run('admin')
+    const checked = verifyAdminOpToken(res.pendingOp!.token, { workspaceId: 'w1', uid: 'u1' })
+    expect(checked.ok).toBe(true)
+    if (!checked.ok) return
+    // 執行用的是收斂後的（服務時間 08:00–22:00）
+    expect(checked.payload.a).toMatchObject({ start: '08:00', end: '22:00' })
+    // 接續用的是原話（帶著 mode）——沒有它，「剛剛那個改成早上十點」會被回頭再問一次
+    expect(checked.payload.r).toMatchObject({ mode: 'dnd', start: '22:00', end: '08:00' })
   })
 
   it('接續上一個提議：「改成早上九點」要看得到上次提了什麼，⛔大欄位不進提示', async () => {
