@@ -326,6 +326,40 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
     expect(updates).toHaveLength(0)
   })
 
+  it('🔴 泡泡講了一個卡片上沒有的數字 → 整句不採用，改用卡片的主句', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+      // 卡片上是 09:00–18:00（現在）與 08:00–22:00（改成），沒有「早上七點」這回事
+      text: '我會把勿擾時段從早上 7 點改成晚上 10 點。',
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '勿擾改成晚上十點到早上八點',
+    })
+
+    expect(res.reply).not.toContain('7')
+    expect(res.reply).toBe(res.pendingOp?.preview.summary)
+    expect(setCalls).toHaveLength(0)
+  })
+
+  it('⛔ 把時間換算成白話是好事，不可以連這種也擋掉', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+      // 卡片寫 08:00–22:00，這句把 22:00 講成「晚上 10 點」——同一件事的白話講法
+      text: '我會把勿擾時段設成晚上 10 點到早上 8 點。',
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '勿擾改成晚上十點到早上八點',
+    })
+
+    expect(res.reply).toContain('晚上 10 點')
+  })
+
   it('🔴 上一個提議還沒被執行 → 影響欄要講出來（「順便把 X 也加進去」會漏掉前一個）', async () => {
     generateJson.mockResolvedValueOnce(step({
       action: 'propose',

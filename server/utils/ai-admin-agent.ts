@@ -38,6 +38,7 @@ import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/t
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
 import { hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
+import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
@@ -538,6 +539,8 @@ ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——
   先講你不能刪,再問他要不要改成下架——⛔不要直接給一張下架的確認卡。
 - 【提議失敗】會告訴你哪裡不對,照它說的去反問或改正,同一個提議最多再試一次。
 - 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
+- ⛔ **提議時那句話裡的數字,只能講你這次要改成的值**:「現在是多少」確認卡自己會顯示,
+  你不必也不要去講——講錯的話畫面上會出現兩個對不起來的數字(系統會擋掉整句,改用卡片的主句)。
 
 【接續上一個提議】
 有【上一個提議】而使用者這句是在**修改它**(例如「改成早上九點」「第二題改成問電話」「名字換一個」),
@@ -708,13 +711,28 @@ export async function runAdminAgentChat(params: {
         // r＝模型原話的參數:接續修改時要餵回去的是它,不是收斂後的結果(收斂後餵不回 normalize)
         const token = issueAdminOpToken({ w: workspaceId, u: uid, op: opId, a: args, r: rawArgs, g: guard })
         const text = String(data?.text ?? '').trim()
+        // 卡片上的每一句都是後端當場查出來的 → 拿它當泡泡裡數字的唯一事實來源。
+        // ⛔ 實測:使用者連調兩次提醒時間、一次確定都沒按,第二次的泡泡卻寫
+        //    「從 30 分鐘調整為 5 分鐘」——30 是它自己上次提議、使用者沒答應的數字,
+        //    而卡片寫的是「等超過 60 分鐘就提醒 ── 現在」,兩邊各講一套。
+        // ⚠️ 允許換算:把 23:00 講成「晚上 11 點」是好事,那支函式兩種寫法都認。
+        const strayNumbers = text ? numbersWithoutSource(text, [
+          preview.summary,
+          ...preview.items.flatMap(i => [i.label, i.note ?? '']),
+          preview.warning ?? '',
+          preview.confirmLabel,
+        ]) : []
+        if (strayNumbers.length)
+          console.warn('[admin-agent] 泡泡出現卡片上沒有的數字,改用卡片主句:', opId, strayNumbers)
+
         return {
           // ⛔ 「本來就是這樣」(noop)時一律用後端查出來的那句話,不採用模型寫的。
           // admin-ops.ts 開頭的紀律是「講的跟做的必須出自同一次查詢」,但那道紀律
           // 以前**只套到卡片**:2026-09-16 實測兩次看到卡片說「已經是啟用中,不用改」,
           // 泡泡卻說「我會將『新增備註』重新啟用」。noop 連確認鈕都沒有,
           // 畫面上只剩那句「我會…」,人只會以為它做了。
-          reply: preview.noop ? preview.summary : (text || preview.summary),
+          // ⛔ 數字對不上時**整句換掉**,不要把數字挖掉改寫——被動過手腳的句子更難察覺。
+          reply: (preview.noop || strayNumbers.length || !text) ? preview.summary : text,
           toolCalls,
           messages: [],
           pendingOp: {
