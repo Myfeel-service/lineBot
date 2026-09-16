@@ -1,6 +1,8 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
 import { AUDIT_LOGS_COLLECTION } from '~~/server/utils/audit-log'
+import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
+import { planRevert } from '~~/server/utils/audit-revert'
 import type { AuditActor, AuditLogRow } from '~~/shared/types/audit'
 
 /**
@@ -74,8 +76,19 @@ export default defineEventHandler(async (event) => {
   const items: AuditLogRow[] = page.map((d) => {
     const data = d.data()
     const ts = data.createdAt as { toMillis?: () => number } | undefined
+    // 能不能還原由後端算：⛔前端自己判斷的話，兩邊遲早對不起來
+    //（畫面給了按鈕、按下去卻說不行，比沒有按鈕更糟）
+    const plan = planRevert({
+      id: d.id,
+      action: String(data.action ?? ''),
+      before: (data.before ?? null) as Record<string, unknown> | null,
+      after: (data.after ?? null) as Record<string, unknown> | null,
+      ...(data.targetId ? { targetId: String(data.targetId) } : {}),
+    })
     return {
       id: d.id,
+      revertible: plan.ok,
+      ...(plan.ok ? {} : { revertReason: plan.reason }),
       action: String(data.action ?? ''),
       actor: data.actor === 'agent' ? 'agent' : 'human',
       uid: String(data.uid ?? ''),
@@ -103,9 +116,25 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  // 這個月小幫手提了幾次、你按了幾次確定。⛔兩個數字取同一顆月結桶，
+  // 不去掃紀錄推算——推算出來的東西一旦跟畫面對不起來，就再也沒人相信它。
+  const usage = await db.collection(AI_USAGE_COLLECTION)
+    .doc(`${workspaceId}_${currentYyyyMm()}`)
+    .get()
+    .catch(() => null)
+  const proposed = Number(usage?.data()?.agentProposed ?? 0)
+  const executed = Number(usage?.data()?.agentExecuted ?? 0)
+
   return {
     items,
     uidEmails,
     nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+    agentStats: {
+      proposed,
+      executed,
+      // 提了卻沒按確定的次數。⚠️「取消」與「看一看就走掉」在資料上分不出來，
+      // 所以措辭一律是「沒有按確定」，⛔不要寫成「被拒絕」。
+      notConfirmed: Math.max(0, proposed - executed),
+    },
   }
 })

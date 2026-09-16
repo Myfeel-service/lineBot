@@ -378,6 +378,7 @@ const scriptSetEnabled: AdminOpDef = {
       uid: ctx.uid,
       actor: 'agent',
       action: adminOpAuditAction('script-set-enabled'),
+      targetId: row.id,
       before: { enabled: row.enabled },
       after: { enabled: args.enabled },
       note: `「${row.name}」${args.enabled ? '上架' : '下架'}`,
@@ -775,6 +776,140 @@ const scriptCreateFromDescription: AdminOpDef = {
   },
 }
 
+// ── op⑦：建一則推播草稿（⛔只建草稿，發送永遠留人按）────────────
+
+interface BroadcastDraftArgs {
+  name: string
+  text: string
+  /** 只發給貼這個標籤的人；沒帶＝全部好友 */
+  tagName?: string
+  /** prepare 解析出來的標籤 id（模型不生 ID） */
+  tagId?: string
+  /** prepare 當下試算的人數（預覽用；⚠️真正發送時會重算） */
+  estimated?: number | null
+}
+
+const broadcastDraftCreate: AdminOpDef = {
+  capability: 'broadcast.write',
+  argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
+    + '⛔ 只會建**草稿**，不會發送——發送一定要人到推播頁自己按。'
+    + '⛔ 內容要照使用者說的寫，不要自己加促銷詞或表情符號。',
+
+  normalize(raw) {
+    const name = String(raw?.name ?? '').trim().slice(0, 60)
+    const text = String(raw?.text ?? '').trim().slice(0, 1000)
+    if (!name) throw new AdminOpUserError('要先問清楚這則推播叫什麼名字（這個名字只有你們後台看得到）。')
+    if (text.length < 2) throw new AdminOpUserError('要先問清楚要發什麼內容給客人。')
+    const tagName = String(raw?.tagName ?? '').trim().slice(0, 40)
+    return { name, text, ...(tagName ? { tagName } : {}) } satisfies BroadcastDraftArgs as unknown as Record<string, unknown>
+  },
+
+  async prepare(ctx, raw) {
+    const args = raw as unknown as BroadcastDraftArgs
+    let tagId: string | undefined
+    if (args.tagName) {
+      // 名字 → 標籤：⛔模型不生 ID，對不到就列出現有的讓它反問
+      const snap = await ctx.db.collection('tags').where('workspaceId', '==', ctx.workspaceId).get()
+      const rows = snap.docs.map(d => ({ id: d.id, name: String((d.data() as any).name ?? '') }))
+      const hits = rows.filter(r => r.name.trim().toLowerCase() === args.tagName!.toLowerCase())
+      if (hits.length !== 1) {
+        const names = rows.map(r => `「${r.name}」`).slice(0, 10).join('、')
+        throw new AdminOpUserError(
+          hits.length > 1
+            ? `有不只一個標籤叫「${args.tagName}」，請他講得更明確，或直接到推播頁挑。`
+            : `找不到叫「${args.tagName}」的標籤。目前有：${names || '（還沒有標籤）'}。`,
+        )
+      }
+      tagId = hits[0]!.id
+    }
+
+    // 試算人數（唯讀）：讓確認卡講得出「大概會發給幾個人」
+    let estimated: number | null = null
+    try {
+      const res = await $fetch<{ estimatedCount: number }>('/api/audience/estimate', {
+        method: 'POST',
+        query: { workspaceId: ctx.workspaceId },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+        body: {
+          filter: {
+            conditions: tagId ? [{ type: 'includeAny', tagIds: [tagId] }] : [],
+            joinedAfter: null,
+            joinedBefore: null,
+            isBlocked: null,
+          },
+        },
+      })
+      estimated = Number(res?.estimatedCount ?? 0)
+    }
+    catch {
+      // ⛔ 試算失敗不擋建立，但也不可以假裝算得出來——預覽會說「這次算不出來」
+      estimated = null
+    }
+
+    return { ...args, ...(tagId ? { tagId } : {}), estimated } as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx, raw) {
+    // 同名草稿已經存在 → 執行前擋下（避免重複建）
+    const args = raw as unknown as BroadcastDraftArgs
+    const snap = await ctx.db.collection('broadcasts')
+      .where('workspaceId', '==', ctx.workspaceId)
+      .get()
+      .catch(() => null)
+    const exists = !!snap?.docs.some(d => String((d.data() as any).name ?? '').trim() === args.name)
+    return String(exists)
+  },
+
+  async preview(_ctx, raw) {
+    const args = raw as unknown as BroadcastDraftArgs
+    return {
+      opId: 'broadcast-draft-create',
+      summary: `我會建一則推播草稿「${args.name}」。⛔ 只是草稿，**不會發出去**。`,
+      items: [
+        { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容' },
+        {
+          label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
+          note: args.estimated === null
+            ? '這次算不出大概幾個人（不影響建立）'
+            : `目前大約 ${args.estimated} 人${args.tagName ? '' : '（全部好友）'}`,
+        },
+      ],
+      warning: '要不要真的發、什麼時候發，都要你到推播頁自己按——我不會幫你送出去。發送當下人數會重新計算。',
+      confirmLabel: '確定建草稿',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as BroadcastDraftArgs
+    // 走既有的建立端點（轉發呼叫者憑證）：欄位驗證與方案權益沿用那一支
+    const res = await $fetch<{ id: string }>('/api/broadcast/create', {
+      method: 'POST',
+      query: { workspaceId: ctx.workspaceId },
+      headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      body: {
+        name: args.name,
+        audienceSource: args.tagId ? { type: 'tags', tagIds: [args.tagId] } : { type: 'all' },
+        messages: [{ type: 'text', text: args.text }],
+      },
+    })
+
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('broadcast-draft-create'),
+      after: { name: args.name, audience: args.tagName ?? '全部好友' },
+      note: `建立推播草稿「${args.name}」（未發送）`,
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: `草稿「${args.name}」建好了，**還沒有發送**。到推播頁確認內容與對象，要發的時候自己按發送。`,
+      details: [`推播代號：${res.id}`],
+    }
+  },
+}
+
 // ── 註冊表 ──────────────────────────────────────────────────────
 
 export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
@@ -784,6 +919,7 @@ export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
   'ai-settings-sensitive-topic': aiSettingsSensitiveTopic,
   'ai-settings-reply-mode': aiSettingsReplyMode,
   'script-create-from-description': scriptCreateFromDescription,
+  'broadcast-draft-create': broadcastDraftCreate,
 }
 
 /** 端點／迴圈用：不認得的 op 一律擋下（⛔不做「最接近的那個」） */

@@ -26,6 +26,7 @@ export const ADMIN_OP_LABELS = {
   'ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
   'ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',
   'script-create-from-description': '用一句話建一條自動回應',
+  'broadcast-draft-create': '建一則推播草稿（不發送）',
 } as const satisfies Record<string, string>
 
 export type AdminOpId = keyof typeof ADMIN_OP_LABELS
@@ -56,6 +57,8 @@ export const ADMIN_OP_RISK: Record<AdminOpId, 'low' | 'medium'> = {
   'ai-settings-reply-mode': 'medium',
   // 建好一律停用，客人不會馬上走到；要人看過才上架
   'script-create-from-description': 'medium',
+  // 草稿不會送出去，客人那一側零影響；⛔發送是紅線，永遠不掛進這張表
+  'broadcast-draft-create': 'low',
 }
 
 /** 稽核動作代號：操作紀錄上看到的就是這個（與 audit 的白話對照成對） */

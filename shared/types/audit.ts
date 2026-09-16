@@ -45,6 +45,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'agent-op/ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
   'agent-op/ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',
   'agent-op/script-create-from-description': '用一句話建了一條自動回應（建好是停用的）',
+  'agent-op/broadcast-draft-create': '建了一則推播草稿（沒有發送）',
+  // 還原也是一次操作：⛔原本那一筆不刪不改，這裡再記一筆
+  'audit/revert': '把先前的某一筆改動還原回去',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */
@@ -108,6 +111,10 @@ export interface AuditLogRow {
   note?: string
   /** 發生時間（毫秒）。⛔可能是 null：serverTimestamp 寫入後到讀取前有極短的空窗 */
   createdAt: number | null
+  /** 這一筆能不能一鍵還原（後端算，⛔前端不要自己判斷） */
+  revertible?: boolean
+  /** 不能還原時的原因（人看得懂的一句話，畫面直接顯示） */
+  revertReason?: string
 }
 
 export interface AuditLogListResult {

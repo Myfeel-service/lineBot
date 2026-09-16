@@ -33,6 +33,12 @@ export interface AuditLogInput {
   before?: Record<string, unknown> | null
   after?: Record<string, unknown> | null
   note?: string
+  /**
+   * 這次動到的那份文件 id（流程、選單…）。
+   * 2026-09-16 補：做「還原這筆」時才發現沒有它就找不到要改回哪一份——
+   * 舊紀錄沒有這個欄位，所以只還原得了「整份設定型」的動作，畫面要如實說清楚。
+   */
+  targetId?: string
 }
 
 /** 遞迴淨化稽核值:遮罩憑證欄位、截斷長字串、限制深度與陣列長度 */
@@ -90,6 +96,7 @@ export async function writeAuditLog(input: AuditLogInput, db: Firestore = getDb(
       before: sanitizeAuditValue(input.before ?? null),
       after: sanitizeAuditValue(input.after ?? null),
       ...(input.note ? { note: String(input.note).slice(0, 500) } : {}),
+      ...(input.targetId ? { targetId: String(input.targetId).slice(0, 200) } : {}),
       createdAt: FieldValue.serverTimestamp(),
     })
   }

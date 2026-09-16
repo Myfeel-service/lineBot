@@ -24,6 +24,7 @@ describe('can — role × capability matrix', () => {
     'folders.write': 'agent',
     'scripts.write': 'agent',
     'playground.use': 'agent',
+    'broadcast.write': 'agent',
     'ai.settings.write': 'admin',
     'usage.read': 'admin',
     // 2026-09-16（`C-31` Phase 2 地基）：操作紀錄。裡面看得到設定的前後值與是誰動的，

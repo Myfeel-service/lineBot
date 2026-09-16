@@ -86,6 +86,30 @@ const FAKE_PENDING = {
   },
 }
 
+/** 建流程那種多行的卡：五個步驟＋警告，版面壓力跟兩行的卡完全不同 */
+const FAKE_PENDING_BUILD = {
+  opId: 'script-create-from-description',
+  label: '用一句話建一條自動回應',
+  risk: 'medium',
+  token: 'fake-token-build',
+  expiresInSec: 600,
+  preview: {
+    opId: 'script-create-from-description',
+    summary: '我照你說的擬了一條「退貨申請」。下面是客人實際會經歷的過程，看一下對不對：',
+    items: [
+      { label: '1. 客人打「退貨、退錢」的時候啟動' },
+      { label: '2. 問客人：「好的，請提供您的訂單編號，以便我們查詢 🔍」並把回答記下來，答不出來可以按「我沒有訂單編號」跳過' },
+      { label: '3. 問客人：「請問您要退哪一項商品呢？請描述商品名稱或品項。」並把回答記下來' },
+      { label: '4. 問客人：「沒問題！請提供當時下單的 Email，我們會協助查詢您的訂單。」並把回答記下來' },
+      { label: '5. 回覆客人：「已收到您的退貨申請資料，我們將在三個工作天內回覆您處理進度，謝謝您的耐心等候 🙇」' },
+    ],
+    warning: '建好之後是**關著**的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再上架。',
+    confirmLabel: '確定建立（先不上架）',
+  },
+}
+/** 下一次聊天要回哪一張卡（測試中途換） */
+let nextPending = FAKE_PENDING
+
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
 
 async function openLoggedInPage() {
@@ -120,7 +144,7 @@ async function openLoggedInPage() {
       return req.respond({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ reply: '我打算把服務時間改成 08:00–22:00，你確認一下。', toolCalls: ['get_ai_settings'], messages: [], pendingOp: FAKE_PENDING }),
+        body: JSON.stringify({ reply: '我打算這樣做，你確認一下。', toolCalls: ['get_ai_settings'], messages: [], pendingOp: nextPending }),
       })
     }
     if (url.includes('/api/admin/agent/confirm')) {
@@ -236,6 +260,13 @@ try {
   if (/成員操作|小幫手代辦/.test(table)) pass('每一列都標得出「人改的」還是「小幫手代的」')
   else fail(`看不到操作者類別，表格內容：${table.slice(0, 160)}`)
 
+  // 還原欄位（`C-186` 續）：每一列要嘛給得出「還原」鈕，要嘛說得出為什麼不能還原——
+  // ⛔ 兩者都沒有＝把問題藏起來
+  const revertCol = await page.$$eval('.el-table__body tr', rows =>
+    rows.map(r => r.innerText).filter(t => /還原|不能還原/.test(t)).length)
+  if (rowCount === 0 || revertCol > 0) pass('每一列都給得出「還原」或「不能還原」的答案')
+  else fail('操作紀錄的列上既沒有還原鈕、也沒有說為什麼不能還原')
+
   // 剛部署的索引：這個篩選以前會被擋下並說原因，現在該真的回得出資料
   const filtered = await apiGet(page, `/api/admin/audit-logs?workspaceId=${WORKSPACE_ID}&actor=human`)
   if (filtered.status === 200) pass('「只看成員操作」篩選回 200＝剛部署的複合索引真的生效了')
@@ -334,6 +365,39 @@ try {
   if (overflow.card <= overflow.panel + 1) pass(`390px 下卡片沒有撐破面板（${Math.round(overflow.card)}px ≤ ${Math.round(overflow.panel)}px）`)
   else fail(`卡片撐破面板：卡片 ${Math.round(overflow.card)}px > 面板 ${Math.round(overflow.panel)}px`)
   await page.setViewport({ width: 1440, height: 1000 })
+
+  // ── ②-2 建流程那種多行的確認卡（`C-186`）────────────────────
+  // 兩行的卡過了不代表五行的卡也過：長句、清單、emoji 都是版面壓力
+  nextPending = FAKE_PENDING_BUILD
+  await askAgent('幫我建一條退貨查詢的流程')
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.aa-op')]
+    return cards.length > 0 && /退貨申請/.test(cards[cards.length - 1].textContent ?? '')
+  }, { timeout: 30_000 })
+  const buildCard = await page.$$eval('.aa-op', els => els[els.length - 1].innerText)
+  const shownSteps = [1, 2, 3, 4, 5].filter(n => buildCard.includes(`${n}. `))
+  if (shownSteps.length === 5) pass('建流程的卡片五個步驟都印得出來（不是被截掉一半）')
+  else fail(`步驟沒有全部出現，只看到 ${shownSteps.join('、')}：${buildCard.slice(0, 200)}`)
+  if (/關著/.test(buildCard)) pass('卡片講明建好之後是關著的')
+  else fail('卡片沒有講「建好是關著的」——那是這個操作最重要的一句話')
+  if (/確定建立（先不上架）/.test(buildCard)) pass('確認鈕字樣把「先不上架」寫在按鈕上')
+  else fail(`確認鈕字樣不對：${buildCard.slice(-80)}`)
+
+  // 手機寬度：長清單最容易在這裡撐破
+  await page.setViewport({ width: 390, height: 844 })
+  await sleep(600)
+  const buildOverflow = await page.$$eval('.aa-op', (els) => {
+    const el = els[els.length - 1]
+    const panel = el.closest('.ta-panel, .tutorial-agent') ?? document.body
+    const scrollable = el.scrollWidth > el.clientWidth + 1
+    return { card: el.getBoundingClientRect().width, panel: panel.getBoundingClientRect().width, scrollable }
+  })
+  if (buildOverflow.card <= buildOverflow.panel + 1 && !buildOverflow.scrollable)
+    pass(`390px 下多行卡片沒有撐破、也沒有橫向捲軸（${Math.round(buildOverflow.card)}px ≤ ${Math.round(buildOverflow.panel)}px）`)
+  else
+    fail(`多行卡片在 390px 撐破：${JSON.stringify(buildOverflow)}`)
+  await page.setViewport({ width: 1440, height: 1000 })
+  nextPending = FAKE_PENDING
 
   // ── ③ 上下架存檔前的確認框 ──────────────────────────────────
   // 先用唯讀的方式問後端：哪一條流程上下架**真的**會連帶影響別條？

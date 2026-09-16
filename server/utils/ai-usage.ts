@@ -105,6 +105,15 @@ export interface UsageDelta {
   /** AI answered 後 30 分鐘內客人又被轉真人 — 品質 proxy（回答沒解決問題） */
   answeredThenHandoffs?: number
   /**
+   * 小幫手「提議了一個操作」幾次（`C-31` Phase 2）。
+   * 與 {@link agentExecuted} 成對，是目前唯一看得出「它提得準不準」的訊號——
+   * 提很多次卻很少被按確定＝它在亂提議，那比「它不會做事」更糟（會訓練人不看就按取消）。
+   * ⛔ 兩個都記在後台自用的那一側：這不是客人用掉的東西。
+   */
+  agentProposed?: number
+  /** 使用者按了確定、而且真的執行成功幾次 */
+  agentExecuted?: number
+  /**
    * handoffs 的子集（比照 importInputTokens ⊆ inputTokens 的子集慣例）：
    * 客人一開口就指名真人（「找真人」捷徑，含傳圖後被引導語叫來的）——**AI 根本沒出手**。
    * 沒有這個分項的話，這種「客人偏好」會被算進 AI 的成績單，把自己搞定率往下拉
@@ -162,6 +171,8 @@ export async function recordAiUsage(
   if (delta.outputTokens) updates.outputTokens = FieldValue.increment(delta.outputTokens)
   if (delta.embeddingTokens) updates.embeddingTokens = FieldValue.increment(delta.embeddingTokens)
   if (delta.invocations) updates.invocations = FieldValue.increment(delta.invocations)
+  if (delta.agentProposed) updates.agentProposed = FieldValue.increment(delta.agentProposed)
+  if (delta.agentExecuted) updates.agentExecuted = FieldValue.increment(delta.agentExecuted)
   // 計費則數也進月結桶：額度桶每期換一顆、只回答得了「這一期用了多少」，
   // 但成本／超管報表要按月看「這個月收了幾則」。兩顆桶各記各的，不互相推算。
   if (delta.billable) updates.billable = FieldValue.increment(delta.billable)

@@ -58,6 +58,7 @@ vi.mock('./ai-usage', () => ({
 const fetchCalls: any[] = []
 ;(globalThis as any).$fetch = async (url: string, opts: any) => {
   fetchCalls.push({ url, ...opts })
+  if (url.includes('/api/audience/estimate')) return { estimatedCount: 42, previewUserIds: [] }
   return { id: 'new-script-id' }
 }
 
@@ -67,10 +68,16 @@ const { ADMIN_OPS, AdminOpUserError, getAdminOp } = await import('./admin-ops')
 const scriptDocs: { id: string, data: Record<string, any> }[] = []
 const updates: { id: string, patch: Record<string, unknown> }[] = []
 
+/** 其他 collection 的資料（標籤、推播）；沒列到的名字一律回流程清單，維持既有測試不變 */
+const extraCollections: Record<string, { id: string, data: Record<string, any> }[]> = { tags: [], broadcasts: [] }
+
 const db = {
-  collection: () => ({
+  collection: (name: string) => ({
     where: () => ({
-      get: async () => ({ docs: scriptDocs.map(d => ({ id: d.id, data: () => d.data })) }),
+      get: async () => {
+        const rows = extraCollections[name] ?? scriptDocs
+        return { docs: rows.map(d => ({ id: d.id, data: () => d.data })) }
+      },
     }),
     doc: (id: string) => ({
       update: async (patch: Record<string, unknown>) => { updates.push({ id, patch }) },
@@ -86,6 +93,8 @@ beforeEach(() => {
   invalidated.length = 0
   updates.length = 0
   scriptDocs.length = 0
+  extraCollections.tags = []
+  extraCollections.broadcasts = []
   fetchCalls.length = 0
   draftSeq = 0
   settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' }
@@ -416,5 +425,63 @@ describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () 
   it('描述太籠統就先問清楚，⛔不要生一個空殼流程出來', () => {
     expect(() => op.normalize({ description: '建一個' })).toThrow(AdminOpUserError)
     expect(() => op.normalize({})).toThrow(AdminOpUserError)
+  })
+})
+
+describe('op：建一則推播草稿（⛔只建草稿，發送永遠留人按）', () => {
+  const op = ADMIN_OPS['broadcast-draft-create']
+  const seedTag = (name: string, id = 't1') => { (extraCollections.tags ??= []).push({ id, data: { name } }) }
+
+  it('沒指定標籤＝全部好友，並且會先試算大概幾個人', async () => {
+    const args = await op.prepare!(ctx, op.normalize({ name: '中秋通知', text: '中秋連假出貨會順延一天' }))
+    const preview = await op.preview(ctx, args)
+
+    expect(preview.summary).toContain('不會發出去')
+    expect(preview.items[1]?.label).toBe('全部好友')
+    expect(preview.items[1]?.note).toContain('42 人')
+    expect(preview.warning).toContain('自己按')
+  })
+
+  it('指定標籤：名字對到才算，⛔對不到就列出現有的讓它反問', async () => {
+    seedTag('VIP')
+    const ok = await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' }))
+    expect((ok as any).tagId).toBe('t1')
+
+    await expect(op.prepare!(ctx, op.normalize({ name: 'x', text: 'yy', tagName: '黃金會員' })))
+      .rejects.toThrow(/VIP/)
+  })
+
+  it('🔴 執行只建草稿：走既有建立端點、內容照抄，⛔沒有碰任何發送端點', async () => {
+    seedTag('VIP')
+    const args = await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' }))
+    fetchCalls.length = 0
+    const res = await op.execute(ctx, args)
+
+    expect(res.ok).toBe(true)
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0].url).toBe('/api/broadcast/create')
+    expect(fetchCalls[0].body.audienceSource).toEqual({ type: 'tags', tagIds: ['t1'] })
+    expect(fetchCalls[0].body.messages).toEqual([{ type: 'text', text: '感謝支持' }])
+    // ⛔ 發送是紅線：整條路上不可以出現任何 send/schedule
+    expect(fetchCalls.some(c => /send|schedule/.test(c.url))).toBe(false)
+    expect(res.message).toContain('還沒有發送')
+  })
+
+  it('試算失敗不擋建立，但也不可以假裝算得出來', async () => {
+    const prev = (globalThis as any).$fetch
+    ;(globalThis as any).$fetch = async (url: string, opts: any) => {
+      if (url.includes('estimate')) throw new Error('boom')
+      fetchCalls.push({ url, ...opts })
+      return { id: 'b1' }
+    }
+    const args = await op.prepare!(ctx, op.normalize({ name: '通知', text: '內容' }))
+    const preview = await op.preview(ctx, args)
+    expect(preview.items[1]?.note).toContain('算不出')
+    ;(globalThis as any).$fetch = prev
+  })
+
+  it('名稱或內容沒講就先問，⛔不自己編一則推播', () => {
+    expect(() => op.normalize({ text: '內容' })).toThrow(AdminOpUserError)
+    expect(() => op.normalize({ name: '通知' })).toThrow(AdminOpUserError)
   })
 })

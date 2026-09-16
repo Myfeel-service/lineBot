@@ -5,6 +5,7 @@ import { ADMIN_OP_LABELS } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, getAdminOp } from '~~/server/utils/admin-ops'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
+import { recordAiUsage } from '~~/server/utils/ai-usage'
 
 /**
  * POST /api/admin/agent/confirm —— 小幫手代辦的**唯一執行入口**（`C-31` Phase 2）。
@@ -70,6 +71,11 @@ export default defineEventHandler(async (event) => {
     }
 
     const result = await op.execute(ctx, payload.a)
+    // 真的做成幾次（與 chat 端點的「提議幾次」成對，用來看它提得準不準）
+    if (result.ok) {
+      recordAiUsage(workspaceId, { agentExecuted: 1 }, db)
+        .catch(e => console.error('[admin-agent/confirm] recordAiUsage error:', e))
+    }
     return { opId, label: ADMIN_OP_LABELS[opId], ...result }
   }
   catch (e: any) {

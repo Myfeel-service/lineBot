@@ -29,6 +29,12 @@
               日常的回訊息、貼標籤不會記在這裡。
             </p>
 
+            <!-- 小幫手提得準不準：提了幾次、你按了幾次確定。
+                 ⚠️「沒有按確定」包含取消與看一看就走掉——資料上分不出來，所以不寫成「被拒絕」 -->
+            <p v-if="stats && stats.proposed > 0" class="text-xs text-muted">
+              這個月小幫手提議了 {{ stats.proposed }} 次，你按確定的有 {{ stats.executed }} 次<template v-if="stats.notConfirmed"> （{{ stats.notConfirmed }} 次沒有按確定）</template>。
+            </p>
+
             <p v-if="error" class="text-xs" role="alert">⚠️ {{ error }}</p>
 
             <div v-if="loading && !rows.length" class="tags-loading">
@@ -73,6 +79,18 @@
                   <span v-else class="text-xs text-muted">—</span>
                 </template>
               </el-table-column>
+              <!-- 還原：改錯的第一時間需求是收回去，不是自己想起來原本是什麼。
+                   ⛔ 還原不了的那些要講出原因，不要只是把按鈕藏起來（藏起來等於沒有回答） -->
+              <el-table-column label="" width="92">
+                <template #default="{ row }">
+                  <el-button v-if="row.revertible" size="small" :loading="reverting === row.id" @click="revert(row)">
+                    還原
+                  </el-button>
+                  <el-tooltip v-else-if="row.revertReason" :content="row.revertReason" placement="left">
+                    <span class="text-xs text-muted">不能還原</span>
+                  </el-tooltip>
+                </template>
+              </el-table-column>
             </el-table>
 
             <div v-if="nextCursor" class="flex justify-center">
@@ -93,6 +111,7 @@
  * 出事時「是誰改的、改前是什麼」查不到。小幫手要開始代人動手之前，這個洞得先補上。
  * ⛔ 這頁**只讀不寫**：稽核紀錄不提供編輯或刪除（能改的紀錄不叫紀錄）。
  */
+import { ElMessageBox } from 'element-plus'
 import {
   AUDIT_ACTOR_LABELS,
   auditActionLabel,
@@ -106,7 +125,13 @@ useHead({ title: useAdminTitle('操作紀錄') })
 
 const { apiFetch } = useWorkspace()
 
-interface ListRes { items: AuditLogRow[], uidEmails: Record<string, string>, nextCursor: string | null }
+interface AgentStats { proposed: number, executed: number, notConfirmed: number }
+interface ListRes {
+  items: AuditLogRow[]
+  uidEmails: Record<string, string>
+  nextCursor: string | null
+  agentStats?: AgentStats
+}
 
 const rows = ref<AuditLogRow[]>([])
 const uidEmails = ref<Record<string, string>>({})
@@ -114,6 +139,9 @@ const nextCursor = ref<string | null>(null)
 const actorFilter = ref<'all' | 'human' | 'agent'>('all')
 const loading = ref(false)
 const error = ref('')
+const stats = ref<AgentStats | null>(null)
+const reverting = ref('')
+const { showToast } = useAdminToast()
 
 const emptyText = computed(() =>
   actorFilter.value === 'agent'
@@ -157,6 +185,7 @@ async function load(cursor: string | null) {
       },
     })
     rows.value = cursor ? [...rows.value, ...res.items] : res.items
+    if (res.agentStats) stats.value = res.agentStats
     uidEmails.value = { ...uidEmails.value, ...res.uidEmails }
     nextCursor.value = res.nextCursor
   }
@@ -167,6 +196,34 @@ async function load(cursor: string | null) {
   }
   finally {
     loading.value = false
+  }
+}
+
+/**
+ * 還原一筆。先講清楚要把什麼改回什麼再按——還原本身也是一次會影響客人的改動。
+ * ⛔ 後端會再驗一次「這段期間有沒有被改過」，前端這裡只是把話講清楚。
+ */
+async function revert(row: AuditLogRow) {
+  const lines = changes(row).map(c => `${c.label}：${c.after} → ${c.before}`).join('\n')
+  const go = await ElMessageBox.confirm(
+    `要把這筆改回去嗎？\n\n${lines || auditActionLabel(row.action)}`,
+    '還原這一筆',
+    { confirmButtonText: '確定還原', cancelButtonText: '取消', type: 'warning' },
+  ).then(() => true).catch(() => false)
+  if (!go) return
+
+  reverting.value = row.id
+  try {
+    const res = await apiFetch<{ message: string }>('/api/admin/audit-logs/revert', { method: 'POST', body: { id: row.id } })
+    showToast(res.message, 'success')
+    await load(null)
+  }
+  catch (e: any) {
+    // 被擋下來的理由（這段期間又被改過、權限不夠）要原樣講，⛔不要收斂成「失敗」
+    showToast(e?.statusMessage || e?.data?.statusMessage || '還原失敗，請到對應頁面確認現在的設定。', 'error')
+  }
+  finally {
+    reverting.value = ''
   }
 }
 

@@ -40,6 +40,9 @@ export const CAPABILITIES = {
   'folders.write': 'agent', // 資料夾 新增/編輯/刪除/排序
   'scripts.write': 'agent', // 客服腳本 新增/編輯/刪除
   'playground.use': 'agent', // 測試對話
+  // 2026-09-16：推播頁的端點本來就是 agent 級，但能力表一直沒有這一項——
+  // 小幫手要掛「建推播草稿」時才發現門檻只存在於端點裡。⛔發送不在這裡（紅線，永遠留人按）。
+  'broadcast.write': 'agent', // 建立／編輯推播**草稿**
 
   // ── 設定類（管理員 admin+）──────────────────────────────────
   'ai.settings.write': 'admin', // AI 設定儲存
