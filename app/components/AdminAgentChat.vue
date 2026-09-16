@@ -82,6 +82,12 @@ watchEffect(() => {
 
 const input = ref('')
 const loading = ref(false)
+/**
+ * 上一個還沒執行的提議憑證：下一句話帶回後端，讓「第二題改成問電話」這種接續要求接得住。
+ * ⛔ 帶的是憑證本身（後端會驗簽章），不是我們自己描述上次提議了什麼。
+ * 按了確定或取消之後就清掉——那件事已經結束了，再帶回去只會誤導它。
+ */
+const lastPendingToken = ref('')
 const listEl = ref<HTMLElement | null>(null)
 
 const starters = [
@@ -103,12 +109,14 @@ function scrollToBottom() {
 
 /** 代辦執行完：結果進對話（成功失敗都講，⛔不要只在卡片上留一個小勾） */
 function onOpDone(res: { ok: boolean, message: string, details?: string[] }) {
+  lastPendingToken.value = '' // 這件事已經結束了，別再當成「上一個提議」帶回去
   const detail = res.details?.length ? `\n${res.details.join('\n')}` : ''
   msgs.value.push({ who: 'ai', text: `${res.message}${detail}` })
   scrollToBottom()
 }
 
 function onOpCancel() {
+  lastPendingToken.value = ''
   msgs.value.push({ who: 'ai', text: '好，那就不改。需要的時候再跟我說。' })
   scrollToBottom()
 }
@@ -134,10 +142,12 @@ async function send(preset?: string) {
       pendingOp?: AdminOpPending
     }>('/api/admin/agent/chat', {
       method: 'POST',
-      body: { message: text, history },
+      body: { message: text, history, ...(lastPendingToken.value ? { lastToken: lastPendingToken.value } : {}) },
     })
-    if (stillHere())
+    if (stillHere()) {
       msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls, cards: res.messages, pending: res.pendingOp })
+      lastPendingToken.value = res.pendingOp?.token ?? ''
+    }
   }
   catch (err: any) {
     if (stillHere())

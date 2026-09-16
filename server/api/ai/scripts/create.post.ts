@@ -6,11 +6,12 @@ import { findEnabledFollowScriptConflict, invalidateScriptsCache, SCRIPTS_COLLEC
 import { invalidateScriptHealthCache } from '~~/server/utils/script-health'
 import { normalizeScriptInput, stripTriggerEmbeddings, type ScriptInput } from '~~/server/utils/ai-script-validation'
 import { scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { assertPlanAllows } from '~~/server/utils/billing'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'scripts.write')
+  const { workspaceId, uid } = await requireCapability(event, 'scripts.write')
   // 方案功能閘門（D-69 拍板④）：腳本是入門方案起才有的權益，以前只印在方案表上。
   await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含腳本功能，請升級方案後再使用')
   const body = await readBody(event)
@@ -44,6 +45,17 @@ export default defineEventHandler(async (event) => {
   invalidateScriptsCache(workspaceId)
   // 腳本改完,異常中心的「輪不到／走不完」要立刻反映,不要等 5 分鐘快取過期
   invalidateScriptHealthCache(workspaceId)
+
+  // 操作紀錄（⛔小幫手代建會記，人自己建卻不記的話，時間軸是斷的）
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'ai/scripts.create',
+    targetId: id,
+    after: { name: input.name, enabled: input.enabled, stepCount: input.nodes.length },
+  })
+
   // stripTriggerEmbeddings：清掉舊資料可能殘留的 embedding，不回傳給前端
   return { id, ...input, nodes: stripTriggerEmbeddings(input.nodes) }
 })

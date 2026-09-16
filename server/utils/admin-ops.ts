@@ -65,6 +65,14 @@ export interface AdminOpDef {
   capability: Capability
   /** 給模型的參數說明（會灌進 prompt，所以要寫得像講給人聽的） */
   argsHint: string
+  /**
+   * 哪些參數是**自由文字**（會變成客人看得到的內容、或變成設定的內容）。
+   *
+   * 這些欄位會被檢查來源：一字不差地出現在「剛查到的資料」裡、卻不在使用者自己講的話裡
+   * → 擋下來。⛔ 這是機制，不是 prompt 的請求——查到的資料是別人寫的，
+   * 裡面塞一句話就讓小幫手照抄出去，是這條路上唯一會真的傷到客人的攻擊。
+   */
+  freeTextFields?: string[]
   /** 收斂＋驗證：吐出正規化後的參數，或一句要使用者補充的話 */
   normalize: (raw: Record<string, unknown>) => Record<string, unknown>
   /**
@@ -475,6 +483,7 @@ interface SensitiveTopicArgs { action: 'add' | 'remove', word: string }
 
 const aiSettingsSensitiveTopic: AdminOpDef = {
   capability: 'ai.settings.write',
+  freeTextFields: ['word'],
   argsHint: '參數：{"action":"add"|"remove","word":"退款"}。'
     + 'add＝客人一提到這個字就直接轉真人（AI 不回答）；remove＝把這個字拿掉。'
     + '⛔ 一次只處理一個字；使用者一次講好幾個就分次提議。',
@@ -688,6 +697,7 @@ interface CreateScriptArgs {
 
 const scriptCreateFromDescription: AdminOpDef = {
   capability: 'scripts.write',
+  freeTextFields: ['description'],
   argsHint: '參數：{"description":"整句描述這條流程要做什麼"}。'
     + '把使用者的原話盡量完整帶進去（要問客人什麼、依序問幾題、最後回什麼）；'
     + '⛔ 描述太籠統（例如「建一個流程」）就先問清楚用途再提議。',
@@ -791,6 +801,7 @@ interface BroadcastDraftArgs {
 
 const broadcastDraftCreate: AdminOpDef = {
   capability: 'broadcast.write',
+  freeTextFields: ['name', 'text'],
   argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
     + '⛔ 只會建**草稿**，不會發送——發送一定要人到推播頁自己按。'
     + '⛔ 內容要照使用者說的寫，不要自己加促銷詞或表情符號。',

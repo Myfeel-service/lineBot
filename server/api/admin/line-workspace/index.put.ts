@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   invalidateLineWorkspaceCredentialsCache,
 } from '~~/server/utils/line-workspace-credentials'
@@ -54,7 +55,7 @@ function normalizeWebhookUrl(raw: string): string {
  * 傳空字串表示刪除該欄位（改由環境變數補齊）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
   const wid = String(workspaceId || '').trim()
   if (!wid) throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 
@@ -123,6 +124,17 @@ export default defineEventHandler(async (event) => {
 
   await ref.set(updates, { merge: true })
   invalidateLineWorkspaceCredentialsCache()
+
+  // 操作紀錄：⛔只記「哪幾項被動過」，值本身由稽核層遮罩（憑證絕不可落進紀錄裡，
+  // 那會讓稽核自己變成第二個外洩面）。換過鑰匙卻查不到是誰換的，是最不該有的空白。
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'line-workspace.put',
+    after: Object.fromEntries(Object.keys(updates).map(k => [k, '（已更新）'])),
+    note: `更新了 ${Object.keys(updates).length} 項 LINE 連線設定`,
+  })
   if (boundBotUserId) await rememberChannelBinding(db, wid, boundBotUserId)
 
   let webhookVerification: WebhookVerificationResult | undefined

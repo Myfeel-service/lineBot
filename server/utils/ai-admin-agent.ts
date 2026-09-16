@@ -32,6 +32,7 @@ import { can, type Capability } from '~~/shared/permissions'
 import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
+import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
@@ -352,7 +353,26 @@ ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——
 - 參數裡的名稱一律**照抄工具結果上的原字**(例如流程名字),⛔不要自己拼、不要猜最接近的那一條;不確定就先查清單、或直接反問使用者。
 - 使用者話裡缺的資訊(要改哪一條、開還是關、幾點到幾點)⛔不要自己補一個常見值——問清楚再提議。
 - 【提議失敗】會告訴你哪裡不對,照它說的去反問或改正,同一個提議最多再試一次。
-- 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。`
+- 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
+
+【接續上一個提議】
+有【上一個提議】而使用者這句是在**修改它**(例如「改成早上九點」「第二題改成問電話」「名字換一個」),
+就用**同一個操作 id** 重新提議,並帶上**修改後的完整參數**——⛔不要只帶被改動的那一格,
+也⛔不要把上一個提議當成已經做完的事。若他講的是另一件事,就照一般情況處理。`
+
+/**
+ * 把上一個提議的參數壓成一行給模型看。
+ * ⛔ 大欄位(例如整份流程草稿)要丟掉:它對「使用者想改什麼」沒有幫助,
+ *    只會把提示塞爆,還可能讓模型照抄一份舊草稿當成新的。
+ */
+function summarizeArgs(args: Record<string, unknown>): string {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(args ?? {})) {
+    const json = JSON.stringify(v ?? null)
+    if (json && json.length <= 200) out[k] = v
+  }
+  return JSON.stringify(out)
+}
 
 /** 執行一輪查詢對話:回傳最終回答與工具呼叫紀錄(供 endpoint 審計+記帳) */
 export async function runAdminAgentChat(params: {
@@ -362,12 +382,21 @@ export async function runAdminAgentChat(params: {
   role: WorkspaceMemberRole
   /** 呼叫者的 uid:提議的確認憑證會綁死是給誰的(別人拿到也用不了) */
   uid: string
+  /**
+   * 上一個還沒被執行的提議（`C-31`：「第二題改成問電話」這種接續要求）。
+   *
+   * 為什麼要帶：對話本身是無狀態的,模型只看得到文字。沒有這個的話,
+   * 使用者說「改成早上九點」時它只能從頭猜一次,常常猜出另一件事。
+   * ⛔ 內容來自**驗過簽章的憑證**,不是前端隨便塞的 JSON——否則等於開一個
+   *    「前端說它上次提議過什麼就算什麼」的後門。
+   */
+  lastProposal?: { opId: string, args: Record<string, unknown> }
   message: string
   history?: AdminAgentTurn[]
   /** 呼叫者的 Authorization header,給需要打自家 API 的工具轉發用 */
   authHeader?: string
 }): Promise<AdminAgentReply> {
-  const { db, workspaceId, role, uid, authHeader } = params
+  const { db, workspaceId, role, uid, authHeader, lastProposal } = params
   const message = String(params.message || '').trim().slice(0, 1000)
   if (!message) throw createError({ statusCode: 400, statusMessage: '請輸入想查詢的問題' })
 
@@ -383,6 +412,7 @@ export async function runAdminAgentChat(params: {
   for (let step = 0; step <= MAX_TOOL_STEPS; step++) {
     const prompt = [
       recent ? `【先前對話】\n${recent}` : '',
+      lastProposal ? `【上一個提議(還沒執行)】\n操作:${lastProposal.opId}\n參數:${summarizeArgs(lastProposal.args)}` : '',
       `【使用者這句】\n${message}`,
       toolResults.length ? `【工具結果】\n${toolResults.join('\n')}` : '',
       // 步數用盡:強制收斂成回答,避免無限查
@@ -417,7 +447,16 @@ export async function runAdminAgentChat(params: {
         if (!can(role, op.capability))
           throw new AdminOpUserError(`這個帳號的權限不能做「${ADMIN_OP_LABELS[opId]}」,請改由管理員操作(你可以告訴他要改什麼)。`)
 
-        let args = op.normalize((data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {})
+        const rawArgs = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
+        // 來源檢查(安全面):自由文字若是從剛查到的資料裡照抄的、而使用者沒講過,一律擋下。
+        // ⛔ 查到的資料是別人寫的(知識卡、流程名稱、客人訊息),裡面塞一句話就讓小幫手照抄出去,
+        //    是這條路上唯一會真的傷到客人的攻擊——擋它要靠機制,不能只靠 prompt 拜託模型。
+        if (op.freeTextFields?.length) {
+          const picked = Object.fromEntries(op.freeTextFields.map(f => [f, rawArgs[f]]))
+          const issue = checkArgProvenance(picked, message, toolResults)
+          if (issue) throw new AdminOpUserError(issue.message)
+        }
+        let args = op.normalize(rawArgs)
         // 要先生內容的 op(例如「用一句話建一條流程」):**只生這一次**,結果跟著憑證走。
         // ⛔ 執行時重生＝使用者按確定同意的,跟系統實際建出來的是兩份東西。
         if (op.prepare) args = await op.prepare(ctx, args)

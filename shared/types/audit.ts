@@ -48,6 +48,12 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'agent-op/broadcast-draft-create': '建了一則推播草稿（沒有發送）',
   // 還原也是一次操作：⛔原本那一筆不刪不改，這裡再記一筆
   'audit/revert': '把先前的某一筆改動還原回去',
+  // 人自己在頁面上改的（2026-09-16 補接）：小幫手的每一筆都記了，人改的卻沒有，時間軸會是斷的
+  'ai/scripts.put': '編輯了一條自動回應',
+  'ai/scripts.create': '新增了一條自動回應',
+  'ai/scripts.delete': '刪掉了一條自動回應',
+  'members/role.put': '改了某位成員的權限',
+  'line-workspace.put': '改了 LINE 連線設定',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */

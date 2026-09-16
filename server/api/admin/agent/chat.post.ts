@@ -3,6 +3,7 @@ import { runAdminAgentChat, type AdminAgentTurn } from '~~/server/utils/ai-admin
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
+import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { getDb } from '~~/server/utils/firebase'
 import { FieldValue } from 'firebase-admin/firestore'
 
@@ -30,6 +31,11 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  // 上一個提議:只採信**驗得過簽章**的憑證(前端原樣送回來的那一串)。
+  // ⛔ 不接受前端自己描述「我上次提議了什麼」——那等於開一個可以偽造上下文的後門。
+  const lastChecked = body?.lastToken ? verifyAdminOpToken(String(body.lastToken), { workspaceId, uid }) : null
+  const lastProposal = lastChecked?.ok ? { opId: lastChecked.payload.op, args: lastChecked.payload.a } : undefined
+
   const db = getDb()
   // 包進額度境域:這支端點原本**完全沒有**費用閘門——gemini.ts 的守門是「境域內才查」,
   // 沒包等於不查,月用量爆掉時知識庫那些維運工作會被擋、小幫手卻照跑。
@@ -38,6 +44,7 @@ export default defineEventHandler(async (event) => {
     workspaceId,
     role, // 每個工具執行前比對自己的 requires 門檻(端點這道 viewer 只是最低消)
     uid, // 提議的確認憑證綁死給誰:別人拿到那串也執行不了
+    lastProposal, // 「第二題改成問電話」這種接續要求要接得住
     message: String(body?.message ?? ''),
     history,
     // 轉發呼叫者憑證:get_current_alerts / get_setup_status 打自家 API 時沿用同一套權限

@@ -1,4 +1,5 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
 const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
@@ -11,7 +12,7 @@ const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
  * Body: { role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
 
   const targetUid = event.context.params?.uid
   if (!targetUid) throw createError({ statusCode: 400, statusMessage: 'uid is required' })
@@ -34,7 +35,19 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: "Cannot change owner's role. Use ownership transfer instead." })
   }
 
+  const before = String(snap.data()?.role ?? '')
   await db.collection('workspaceMembers').doc(memberDocId).update({ role })
+
+  // 誰把誰改成什麼權限，是出事時第一個要查的東西
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'members/role.put',
+    targetId: targetUid,
+    before: { role: before },
+    after: { role },
+  })
 
   return { id: memberDocId, uid: targetUid, workspaceId, role }
 })
