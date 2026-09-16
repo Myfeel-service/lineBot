@@ -29,6 +29,9 @@ import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
 import { can, type Capability } from '~~/shared/permissions'
+import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/types/audit'
+import { AUDIT_LOGS_COLLECTION } from './audit-log'
+import { getFirebaseAuth } from './firebase'
 import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
@@ -320,6 +323,142 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       })
       const STATUS: Record<string, string> = { done: '已完成', incomplete: '還沒做', unknown: '這次查不到' }
       return res.items.map(i => ({ item: SETUP_LABELS[i.id] ?? i.id, status: STATUS[i.status] ?? i.status }))
+    },
+  },
+  get_recent_changes: {
+    // 2026-09-16 新增:小幫手開始代人動手之後,「它到底改了什麼」只能自己去開操作紀錄頁看,
+    // 那在「用講的查後台」這件事上是個很刺眼的洞。
+    description: '最近誰改了什麼設定(操作紀錄):時間、是人改的還是小幫手代的、改了哪一項、前後值。'
+      + 'args 可帶 {"limit":10}(最多 20)與 {"actor":"human"|"agent"}(只看人改的／只看小幫手代的)。'
+      + '問「昨天誰改了設定 / 小幫手最近做了什麼 / 這個設定是誰動的」時用。'
+      + '⛔ 這裡只記**會改變系統行為的設定類操作**(AI 設定、流程、圖文選單、成員權限、一鍵修…),'
+      + '日常回訊息與貼標籤不在裡面——查不到不等於沒發生過,要如實這樣講。',
+    requires: 'audit.read',
+    mutates: false,
+    async run(db, workspaceId, args) {
+      const limit = Math.min(20, Math.max(1, Number(args?.limit) || 10))
+      const actor = args?.actor === 'human' || args?.actor === 'agent' ? String(args.actor) : null
+
+      let q = db.collection(AUDIT_LOGS_COLLECTION).where('workspaceId', '==', workspaceId)
+      if (actor) q = q.where('actor', '==', actor)
+      const snap = await q.orderBy('createdAt', 'desc').limit(limit).get()
+
+      const rows = snap.docs.map((d) => {
+        const data = d.data() as Record<string, any>
+        const ts = data.createdAt as { toMillis?: () => number } | undefined
+        const before = (data.before ?? {}) as Record<string, unknown>
+        const after = (data.after ?? {}) as Record<string, unknown>
+        const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+        return {
+          when: typeof ts?.toMillis === 'function'
+            ? new Date(ts.toMillis() + 8 * 3600_000).toISOString().replace('T', ' ').slice(0, 16)
+            : '(剛剛)',
+          who: data.actor === 'agent' ? '小幫手代辦' : '成員操作',
+          uid: String(data.uid ?? ''),
+          what: AUDIT_ACTION_LABELS[String(data.action ?? '')] ?? String(data.action ?? ''),
+          // 前後值只講有變的那幾格；物件不展開（展開會把回答塞爆）
+          changes: keys.map(k => `${auditFieldLabel(k)}：${auditValueText(before[k])} → ${auditValueText(after[k])}`),
+          ...(data.note ? { note: String(data.note) } : {}),
+        }
+      })
+
+      // uid 換成 Email：只講 uid 等於沒回答「是誰」
+      const uids = [...new Set(rows.map(r => r.uid).filter(Boolean))].slice(0, 20)
+      const emails: Record<string, string> = {}
+      if (uids.length) {
+        try {
+          const res = await getFirebaseAuth().getUsers(uids.map(uid => ({ uid })))
+          for (const u of res.users) if (u.email) emails[u.uid] = u.email
+        }
+        catch { /* 換不到就留 uid，紀錄本身照給 */ }
+      }
+      return rows.map(({ uid, ...rest }) => ({ ...rest, who: `${rest.who}（${emails[uid] || uid || '查不到是誰'}）` }))
+    },
+  },
+  get_tag_audience: {
+    description: '某個標籤現在貼在幾個人身上(也可以問總共有幾個好友)。args 帶 {"tagName":"標籤名"},不帶＝全部好友。'
+      + '問「貼了某標籤的有幾個人 / 我有幾個好友 / 發給這群大概幾人」時用。'
+      + '⛔ 標籤名要一字不差；對不到會回現有的標籤清單,那時要反問使用者是哪一個。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由 estimate 端點自行把關（viewer 起）
+    async run(db, workspaceId, args, ctx) {
+      const wanted = String(args?.tagName ?? '').trim()
+      let tagId: string | null = null
+
+      if (wanted) {
+        const snap = await db.collection('tags').where('workspaceId', '==', workspaceId).get()
+        const rows = snap.docs.map(d => ({ id: d.id, name: String((d.data() as any).name ?? '') }))
+        const hits = rows.filter(r => r.name.trim().toLowerCase() === wanted.toLowerCase())
+        if (hits.length !== 1) {
+          // ⛔ 不猜最接近的那個：把清單給模型，讓它回去問
+          return {
+            found: false,
+            reason: hits.length > 1 ? `有不只一個標籤叫「${wanted}」` : `找不到叫「${wanted}」的標籤`,
+            availableTags: rows.map(r => r.name).slice(0, 20),
+          }
+        }
+        tagId = hits[0]!.id
+      }
+
+      const res = await $fetch<{ estimatedCount: number }>('/api/audience/estimate', {
+        method: 'POST',
+        query: { workspaceId },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+        body: {
+          filter: {
+            conditions: tagId ? [{ type: 'includeAny', tagIds: [tagId] }] : [],
+            joinedAfter: null,
+            joinedBefore: null,
+            isBlocked: null,
+          },
+        },
+      })
+      return {
+        found: true,
+        scope: wanted ? `貼了「${wanted}」的人` : '全部好友',
+        count: res.estimatedCount,
+        // 這是「現在算出來的人數」，發送當下會再算一次——不要講成保證發得到這麼多人
+        note: '這是現在算出來的人數；真的發送時會重新計算',
+      }
+    },
+  },
+  get_broadcast_results: {
+    description: '最近的推播與成效:名稱、狀態(草稿/已排程/發送中/已完成/失敗)、發給幾人、成功幾人、失敗幾人、什麼時候發的。'
+      + 'args 可帶 {"limit":5}(最多 10)。問「上次推播發給幾個人 / 有沒有推播失敗 / 排程中的推播」時用。'
+      + '⛔ 這裡沒有開封率與點擊率(那要另外查 LINE),不要憑空講。',
+    requires: 'ai.read',
+    mutates: false,
+    async run(db, workspaceId, args) {
+      const limit = Math.min(10, Math.max(1, Number(args?.limit) || 5))
+      const snap = await db.collection('broadcasts')
+        .where('workspaceId', '==', workspaceId)
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get()
+
+      const STATUS: Record<string, string> = {
+        draft: '草稿（還沒發）',
+        scheduled: '已排程',
+        processing: '發送中',
+        completed: '已完成',
+        failed: '發送失敗',
+        cancelled: '已取消',
+      }
+      return snap.docs.map((d) => {
+        const b = d.data() as Record<string, any>
+        const done = b.completedAt as { toMillis?: () => number } | undefined
+        return {
+          name: String(b.name ?? '(未命名)'),
+          status: STATUS[String(b.status ?? '')] ?? String(b.status ?? ''),
+          total: Number(b.totalCount ?? 0),
+          sent: Number(b.sentCount ?? 0),
+          failed: Number(b.failedCount ?? 0),
+          skipped: Number(b.skippedCount ?? 0),
+          completedAt: typeof done?.toMillis === 'function'
+            ? new Date(done.toMillis() + 8 * 3600_000).toISOString().replace('T', ' ').slice(0, 16)
+            : null,
+          ...(b.failureReason ? { failureReason: String(b.failureReason) } : {}),
+        }
+      })
     },
   },
 }

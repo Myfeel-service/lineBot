@@ -16,6 +16,9 @@ export const ADMIN_AGENT_TOOL_LABELS = {
   list_auto_responses: '自動回應設定',
   get_current_alerts: '目前異常',
   get_setup_status: '設定進度',
+  get_recent_changes: '最近改了什麼',
+  get_tag_audience: '標籤人數',
+  get_broadcast_results: '推播成效',
 } as const satisfies Record<string, string>
 
 export type AdminAgentToolId = keyof typeof ADMIN_AGENT_TOOL_LABELS
