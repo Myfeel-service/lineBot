@@ -48,8 +48,15 @@ export default defineEventHandler(async (event) => {
   // 同一毫秒寫進來的兩筆也不會被跳過（用時間值當游標就會）。
   if (cursor) {
     const cursorSnap = await col.doc(cursor).get()
-    if (cursorSnap.exists && cursorSnap.get('workspaceId') === workspaceId)
-      q = q.startAfter(cursorSnap)
+    // ⛔ 游標失效時**不可以默默回第一頁**：畫面是「載入更多」，使用者會拿到同一批資料
+    //    再貼一次，而且以為那是更舊的紀錄。如實說一句，讓他重新整理。
+    if (!cursorSnap.exists || cursorSnap.get('workspaceId') !== workspaceId) {
+      throw createError({
+        statusCode: 410,
+        statusMessage: '這份清單的位置已經失效（紀錄可能已過期或換了官方帳號）。請重新整理再看一次。',
+      })
+    }
+    q = q.startAfter(cursorSnap)
   }
 
   let docs: FirebaseFirestore.QueryDocumentSnapshot[]
@@ -84,6 +91,7 @@ export default defineEventHandler(async (event) => {
       before: (data.before ?? null) as Record<string, unknown> | null,
       after: (data.after ?? null) as Record<string, unknown> | null,
       ...(data.targetId ? { targetId: String(data.targetId) } : {}),
+      lossy: data.lossy === true,
     })
     return {
       id: d.id,

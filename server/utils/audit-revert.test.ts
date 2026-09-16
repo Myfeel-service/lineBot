@@ -67,6 +67,37 @@ describe('能不能還原', () => {
     if (!plan.ok) expect(plan.reason).toContain('沒有辦法還原')
   })
 
+  it('🔴 紀錄被截斷過就不准還原（寫回去會少東西，人卻以為完整還原了）', () => {
+    const byFlag = planRevert({ id: 'a5', action: 'ai/settings.put', before: { sensitiveTopics: ['a'] }, after: {}, lossy: true })
+    expect(byFlag.ok).toBe(false)
+    if (!byFlag.ok) expect(byFlag.reason).toContain('截斷')
+
+    // 舊紀錄沒有旗標，只能認淨化留下的痕跡
+    const byMarker = planRevert({
+      id: 'a6',
+      action: 'ai/settings.put',
+      before: { shopUrl: 'https://…(截斷,原 900 字)' },
+      after: {},
+    })
+    expect(byMarker.ok).toBe(false)
+  })
+
+  it('🔴 子物件只比紀錄裡有寫到的那幾格（否則永遠說「被改過」、永遠不能還原）', async () => {
+    settings.handoffNotify = { enabled: true, lineUserIds: ['U1', 'U2'], slaRemindMinutes: 45 }
+    const msg = await applyRevert(
+      {
+        id: 'a7',
+        action: 'agent-op/ai-settings-handoff-sla',
+        before: { handoffNotify: { slaRemindMinutes: 30 } },
+        after: { handoffNotify: { slaRemindMinutes: 45 } },
+      },
+      ctx,
+    )
+    // 收件人名單沒被寫進去（setAiSettings 是深合併，只帶要改的那一格）
+    expect(setCalls[0]).toEqual({ handoffNotify: { slaRemindMinutes: 30 } })
+    expect(msg).toContain('改回')
+  })
+
   it('⛔ 白名單以外的設定欄位不還原（設定會長新欄位，漏擋一個就寫回沒想過的東西）', () => {
     const plan = planRevert({ id: 'a4', action: 'ai/settings.put', before: { systemPrompt: '舊的' }, after: { systemPrompt: '新的' } })
     expect(plan.ok).toBe(false)

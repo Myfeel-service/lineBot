@@ -102,11 +102,23 @@ export interface ScriptToggleImpact {
 
 export function previewScriptToggleImpact(
   scripts: ScriptForReachability[],
-  target: { id: string, enabled: boolean },
+  /**
+   * 要動的那條。`nodes`／`rootNodeId` 是**編輯中還沒存檔**的內容（選填）——
+   * ⛔ 沒有它的話，「把觸發詞從『退貨』放寬成『退』並同時啟用」會拿資料庫裡的舊關鍵字去算，
+   *    回報「沒有影響」，而這個確認框存在的唯一理由正是要抓這種看不見的蓋台。
+   */
+  target: { id: string, enabled: boolean, nodes?: ScriptForReachability['nodes'], rootNodeId?: string },
   ctx: { sensitiveTopics?: readonly string[] } = {},
 ): ScriptToggleImpact {
   const before = scripts
-  const after = scripts.map(s => (s.id === target.id ? { ...s, enabled: target.enabled } : s))
+  const after = scripts.map(s => (s.id === target.id
+    ? {
+        ...s,
+        enabled: target.enabled,
+        ...(target.nodes ? { nodes: target.nodes } : {}),
+        ...(target.rootNodeId ? { rootNodeId: target.rootNodeId } : {}),
+      }
+    : s))
 
   const issuesBefore = findUnreachableScripts(before, ctx)
   const issuesAfter = findUnreachableScripts(after, ctx)

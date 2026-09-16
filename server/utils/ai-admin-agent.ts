@@ -592,7 +592,15 @@ export async function runAdminAgentChat(params: {
         //    是這條路上唯一會真的傷到客人的攻擊——擋它要靠機制,不能只靠 prompt 拜託模型。
         if (op.freeTextFields?.length) {
           const picked = Object.fromEntries(op.freeTextFields.map(f => [f, rawArgs[f]]))
-          const issue = checkArgProvenance(picked, message, toolResults)
+          const history = params.history ?? []
+          const issue = checkArgProvenance(
+            picked,
+            // 使用者講過的話:這一輪 ＋ 先前輪次他自己打的
+            [message, ...history.filter(t => t.role === 'user').map(t => String(t.text ?? ''))],
+            // 不可信來源:這一輪查到的資料 ＋ **先前輪次助理覆述過的內容**
+            // ⛔ 少了後者的話,「上一輪查到被汙染的卡、這一輪說『好照做』」會整個繞過這道檢查
+            [...toolResults, ...history.filter(t => t.role === 'assistant').map(t => String(t.text ?? ''))],
+          )
           if (issue) throw new AdminOpUserError(issue.message)
         }
         let args = op.normalize(rawArgs)

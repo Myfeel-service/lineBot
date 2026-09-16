@@ -65,6 +65,18 @@ export default defineEventHandler(async (event) => {
     const db = getDb()
     await db.collection('workspaces').doc(wid).delete().catch(() => {})
     invalidateLineWorkspaceCredentialsCache()
+    // ⛔ 這是這支端點最破壞性的一條路（整份設定連 LINE 憑證一起消失），原本完全沒有紀錄。
+    //    文件都沒了，紀錄是唯一還說得出「本來有這個設定、是誰清掉的」的地方
+    //    ——跟刪流程那支同一個理由。
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'line-workspace.clear',
+      before: { existed: true },
+      after: null,
+      note: '清空整個 LINE 工作區設定（含連線資訊）',
+    })
     return { ok: true, id: wid, cleared: true }
   }
 
@@ -132,8 +144,14 @@ export default defineEventHandler(async (event) => {
     uid,
     actor: 'human',
     action: 'line-workspace.put',
-    after: Object.fromEntries(Object.keys(updates).map(k => [k, '（已更新）'])),
-    note: `更新了 ${Object.keys(updates).length} 項 LINE 連線設定`,
+    // ⛔ updatedAt 每次都會變，把它算成「有改動」的話，什麼都沒改的存檔也會記成「更新了 1 項」——
+    //    這一頁是回答「憑證是誰換的」的地方，多報一項就是在紀錄裡說謊。
+    after: Object.fromEntries(
+      Object.keys(updates)
+        .filter(k => k !== 'updatedAt')
+        .map(k => [k, (updates[k] as any)?.methodName === 'FieldValue.delete' ? '（已清除）' : '（已更新）']),
+    ),
+    note: `更新了 ${Object.keys(updates).filter(k => k !== 'updatedAt').length} 項 LINE 連線設定`,
   })
   if (boundBotUserId) await rememberChannelBinding(db, wid, boundBotUserId)
 

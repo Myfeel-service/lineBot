@@ -20,7 +20,9 @@
          ⛔ 不給一顆按下去什麼都不會發生的確認鈕（那會讓人以為自己改了什麼） -->
     <div v-if="state === 'idle'" class="aa-op__actions">
       <template v-if="pending.preview.noop">
-        <el-button size="small" @click="state = 'cancelled'">知道了</el-button>
+        <!-- ⛔ 也要通知外面把憑證清掉：不清的話這個「已經不用做」的提議，
+             會在下一句無關的話裡被當成【上一個提議】再塞回模型面前 -->
+        <el-button size="small" @click="dismiss">知道了</el-button>
       </template>
       <template v-else>
         <el-button size="small" @click="cancel">取消</el-button>
@@ -50,6 +52,8 @@ const props = defineProps<{ pending: AdminOpPending }>()
 const emit = defineEmits<{
   (e: 'done', payload: { ok: boolean, message: string, details?: string[] }): void
   (e: 'cancel'): void
+  /** 「不用做」的卡片被關掉：外面要清掉待確認狀態，但不必在對話裡多講一句 */
+  (e: 'dismiss'): void
 }>()
 
 const { apiFetch } = useWorkspace()
@@ -58,6 +62,11 @@ const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
 function cancel() {
   state.value = 'cancelled'
   emit('cancel')
+}
+
+function dismiss() {
+  state.value = 'cancelled'
+  emit('dismiss')
 }
 
 async function confirm() {

@@ -61,7 +61,9 @@ export default defineEventHandler(async (event) => {
     testInvocations: 1,
     // 提議了幾次(還沒做)。跟 confirm 端點記的「真的執行幾次」成對,
     // 兩者相減就看得出「它提了但沒人按確定」——那是它在亂提議的唯一訊號。
-    ...(res.pendingOp ? { agentProposed: 1 } : {}),
+    // ⛔ **修改同一個提議不算新提議**:使用者說「改成早上九點」時模型會重提一次,
+    //    照算的話調兩次再確認就變成「提議 3 次、確定 1 次」,那個數字會被正常使用灌爆。
+    ...(res.pendingOp && res.pendingOp.opId !== lastProposal?.opId ? { agentProposed: 1 } : {}),
   }).catch(e => console.error('[admin-agent] recordAiUsage error:', e))
 
   // 審計:誰、問了什麼、查了哪些工具、答了什麼(fire-and-forget,失敗不影響回答)

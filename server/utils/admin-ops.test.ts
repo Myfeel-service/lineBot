@@ -34,6 +34,14 @@ vi.mock('./audit-log', () => ({
 vi.mock('./script-health', () => ({
   invalidateScriptHealthCache: (wid: string) => { invalidated.push(wid) },
 }))
+// 送訊息熱路徑的 60 秒快取：不清的話「已下架」是假的，客人還會被那條流程接走
+const hotCacheCleared: string[] = []
+/** 答錯紀錄是否剛好撈滿上限（＝更早的看不到，講法必須不一樣） */
+let fullFeedbackPage = false
+vi.mock('./ai-scripts', () => ({
+  SCRIPTS_COLLECTION: 'aiScripts',
+  invalidateScriptsCache: (wid: string) => { hotCacheCleared.push(wid) },
+}))
 // 生成端：每次回不一樣的名字，好驗「同意的那份就是建出來的那份」
 let draftSeq = 0
 vi.mock('./ai-script-generate', () => ({
@@ -72,17 +80,31 @@ const updates: { id: string, patch: Record<string, unknown> }[] = []
 const extraCollections: Record<string, { id: string, data: Record<string, any> }[]> = { tags: [], broadcasts: [] }
 
 const db = {
-  collection: (name: string) => ({
-    where: () => ({
+  collection: (name: string) => {
+    // 鏈式 where/limit/get：實際程式用 .where('name','==',x).limit(10).get() 找同名的那幾筆
+    const chain: any = {
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => chain,
       get: async () => {
+        if (name === 'aiFeedbackEvents') {
+          // 撈滿 100 筆且裡面沒有 wrong_answer：這正是「零 ≠ 沒有」那個情境
+          const rows = fullFeedbackPage
+            ? Array.from({ length: 100 }, () => ({ type: 'draft_applied', createdAt: { toMillis: () => Date.now() } }))
+            : []
+          return { size: rows.length, docs: rows.map((r, i) => ({ id: `f${i}`, data: () => r })) }
+        }
         const rows = extraCollections[name] ?? scriptDocs
-        return { docs: rows.map(d => ({ id: d.id, data: () => d.data })) }
+        return { docs: rows.map(d => ({ id: d.id, data: () => ({ workspaceId: 'w1', ...d.data }) })) }
       },
-    }),
-    doc: (id: string) => ({
-      update: async (patch: Record<string, unknown>) => { updates.push({ id, patch }) },
-    }),
-  }),
+    }
+    return {
+      ...chain,
+      doc: (id: string) => ({
+        update: async (patch: Record<string, unknown>) => { updates.push({ id, patch }) },
+      }),
+    }
+  },
 } as any
 
 const ctx = { db, workspaceId: 'w1', uid: 'u1' }
@@ -91,6 +113,7 @@ beforeEach(() => {
   setCalls.length = 0
   auditLogs.length = 0
   invalidated.length = 0
+  hotCacheCleared.length = 0
   updates.length = 0
   scriptDocs.length = 0
   extraCollections.tags = []
@@ -202,7 +225,12 @@ describe('op：客人等太久的提醒時間', () => {
 
     expect(res.ok).toBe(true)
     expect(setCalls[0]).toEqual({ handoffNotify: { slaRemindMinutes: 15 } })
-    expect(auditLogs[0]).toMatchObject({ actor: 'agent', before: { slaRemindMinutes: 30 }, after: { slaRemindMinutes: 15 } })
+    // ⛔ 存成設定裡的真實層級，還原那支才看得懂是哪一項（扁平的 slaRemindMinutes 永遠還原不了）
+    expect(auditLogs[0]).toMatchObject({
+      actor: 'agent',
+      before: { handoffNotify: { slaRemindMinutes: 30 } },
+      after: { handoffNotify: { slaRemindMinutes: 15 } },
+    })
   })
 
   it('0＝不提醒，是合法的設定不是錯誤', () => {
@@ -298,6 +326,8 @@ describe('op：自動回應上架／下架', () => {
     expect(Object.keys(updates[0]!.patch).sort()).toEqual(['enabled', 'updatedAt'])
     expect(updates[0]!.patch.enabled).toBe(false)
     expect(invalidated).toEqual(['w1'])
+    // 🔴 熱路徑那層也要清：只清健康狀態的話，聊天室說「客人不會再走到它」是假的
+    expect(hotCacheCleared).toEqual(['w1'])
     expect(auditLogs[0]).toMatchObject({ actor: 'agent', before: { enabled: true }, after: { enabled: false } })
   })
 
@@ -369,6 +399,16 @@ describe('op：AI 直接回客人／只給草稿（D-80 老闆拍板 C 案）', 
 
     expect(preview.confirmLabel).toBe('確定改回只給草稿')
     expect(preview.warning).not.toContain('你不會先看到')
+  })
+
+  it('🔴 答錯紀錄被截斷時，零也不可以講成「沒有人標過」', async () => {
+    // 撈到上限＝更早的看不到；這一格是「要不要讓 AI 直接對所有客人說話」的判斷依據
+    fullFeedbackPage = true
+    const preview = await op.preview(ctx, op.normalize({ mode: 'auto' }))
+    const perf = preview.items.find(i => i.note === 'AI 最近的表現')!.label
+    expect(perf).toContain('只看得到最近 100 筆')
+    expect(perf).not.toContain('沒有人標過它答錯')
+    fullFeedbackPage = false
   })
 
   it('⚠️ AI 整個是關的時候要講出來（改了也不會有動作）', async () => {

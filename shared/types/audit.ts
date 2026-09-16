@@ -54,6 +54,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'ai/scripts.delete': '刪掉了一條自動回應',
   'members/role.put': '改了某位成員的權限',
   'line-workspace.put': '改了 LINE 連線設定',
+  'line-workspace.clear': '清空了整個 LINE 工作區設定',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */

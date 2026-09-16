@@ -37,9 +37,14 @@ export default defineEventHandler(async (event) => {
   if (!docs.some(d => d.id === scriptId))
     throw createError({ statusCode: 404, statusMessage: '找不到這條流程' })
 
+  // 編輯中、還沒存檔的內容（選填）：⛔沒有它就會拿資料庫裡的舊關鍵字去算影響，
+  // 而「放寬觸發詞＋同時啟用」正是最需要這個警告的情境
+  const draftNodes = Array.isArray(body?.nodes) ? body.nodes : undefined
+  const draftRoot = typeof body?.rootNodeId === 'string' ? body.rootNodeId : undefined
+
   const impact = previewScriptToggleImpact(
     toReachabilityScriptsWithDisabled(docs),
-    { id: scriptId, enabled: body.enabled },
+    { id: scriptId, enabled: body.enabled, nodes: draftNodes, rootNodeId: draftRoot },
     { sensitiveTopics: settings?.sensitiveTopics ?? [] },
   )
 

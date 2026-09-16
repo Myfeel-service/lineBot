@@ -24,6 +24,7 @@
             :pending="m.pending"
             @done="onOpDone"
             @cancel="onOpCancel"
+            @dismiss="lastPendingToken = ''"
           />
           <div v-if="m.tools?.length" class="aa-msg__tools">查了：{{ m.tools.map(toolLabel).join('、') }}</div>
         </div>

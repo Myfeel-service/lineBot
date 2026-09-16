@@ -33,6 +33,7 @@ export default defineEventHandler(async (event) => {
     before: (data.before ?? null) as Record<string, unknown> | null,
     after: (data.after ?? null) as Record<string, unknown> | null,
     ...(data.targetId ? { targetId: String(data.targetId) } : {}),
+    lossy: data.lossy === true,
   }
 
   const plan = planRevert(row)

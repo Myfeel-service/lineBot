@@ -33,18 +33,21 @@ export interface ArgProvenanceIssue {
 /**
  * 檢查自由文字參數的來源。
  *
+ * ⛔ **要連先前輪次一起看**：被汙染的內容可能在上一輪就被查出來、被助理覆述過，
+ *    這一輪一句「好，照你說的做」就沒有任何工具呼叫——只看本輪的話這道檢查會被整個跳過。
+ *
  * @param fields 要檢查的欄位（只查會被客人看到、或會變成設定內容的自由文字）
- * @param userMessage 使用者這一輪自己打的話
- * @param toolOutputs 這一輪查到的資料（工具結果原文）
+ * @param userSaid 使用者講過的話（這一輪 ＋ 先前輪次他自己打的）
+ * @param untrusted 查到的資料與助理覆述過的內容（這一輪的工具結果 ＋ 先前輪次的助理回覆）
  */
 export function checkArgProvenance(
   fields: Record<string, unknown>,
-  userMessage: string,
-  toolOutputs: readonly string[],
+  userSaid: string | readonly string[],
+  untrusted: readonly string[],
 ): ArgProvenanceIssue | null {
-  if (!toolOutputs.length) return null
-  const user = normalize(userMessage)
-  const haystack = toolOutputs.map(normalize)
+  if (!untrusted.length) return null
+  const user = normalize(Array.isArray(userSaid) ? userSaid.join(' ') : String(userSaid))
+  const haystack = untrusted.map(normalize)
 
   for (const [field, raw] of Object.entries(fields)) {
     const value = typeof raw === 'string' ? raw.trim() : ''

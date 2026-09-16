@@ -32,7 +32,7 @@ import { Timestamp } from 'firebase-admin/firestore'
 import { describeScriptSteps } from '~~/shared/script-plain-summary'
 import { writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
-import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
@@ -276,7 +276,16 @@ async function listScriptDocs(ctx: AdminOpCtx): Promise<Record<string, any>[]> {
  * 對不到就把現有名字列出來讓它反問，撞名就要求講得更清楚。
  */
 async function resolveScript(ctx: AdminOpCtx, name: string, docs?: Record<string, any>[]): Promise<ScriptRow> {
-  const raw = docs ?? await listScriptDocs(ctx)
+  // ⛔ 只是要「用名字找一條」時不要掃整個集合：單欄位等值查詢吃 Firestore 自動建的索引，
+  //    不用開新的複合索引，而讀取數從「全部流程」降到「同名的那幾筆」。
+  //    （2026-08-11 讀取費暴衝就是這種無上限掃描累積出來的。）
+  const raw = docs ?? await (async () => {
+    const snap = await ctx.db.collection(SCRIPTS_COLLECTION).where('name', '==', name.trim()).limit(10).get()
+    return snap.docs
+      .map(d => ({ id: d.id, ...(d.data() as Record<string, any>) } as Record<string, any>))
+      // 單欄位查詢跨得到別的工作區：這道過濾就是跨租戶的防線，⛔不可省
+      .filter(d => d.workspaceId === ctx.workspaceId)
+  })()
   const rows = raw.map(d => readScriptRow(String(d.id), d))
   const want = name.trim().toLowerCase()
   const hits = rows.filter(r => r.name.trim().toLowerCase() === want)
@@ -378,7 +387,11 @@ const scriptSetEnabled: AdminOpDef = {
       enabled: args.enabled,
       updatedAt: FieldValue.serverTimestamp(),
     })
-    // 健康狀態有 5 分鐘快取，不戳掉的話畫面會有一段時間顯示改之前的世界
+    // ⛔ 兩層快取都要清，缺一個就會說謊：
+    //  · scripts 快取（60 秒）在**送訊息的熱路徑**上——不清的話，聊天室說「客人不會再走到它」，
+    //    但接下來一分鐘客人照樣被那條流程接走（人在頁面上改的四支端點每一支都清了，這裡漏了）。
+    //  · 健康狀態快取（5 分鐘）只影響畫面。
+    invalidateScriptsCache(ctx.workspaceId)
     invalidateScriptHealthCache(ctx.workspaceId)
 
     await writeAuditLog({
@@ -464,8 +477,11 @@ const aiSettingsHandoffSla: AdminOpDef = {
       uid: ctx.uid,
       actor: 'agent',
       action: adminOpAuditAction('ai-settings-handoff-sla'),
-      before: { slaRemindMinutes: before },
-      after: { slaRemindMinutes: args.minutes },
+      // ⛔ 存成設定裡的真實層級（handoffNotify.slaRemindMinutes）：
+      //    存成扁平的 slaRemindMinutes 的話，還原那支看不懂它是哪一項設定，
+      //    結果是「永遠不能還原」外加畫面上秀出一個欄位代號給店家看。
+      before: { handoffNotify: { slaRemindMinutes: before } },
+      after: { handoffNotify: { slaRemindMinutes: args.minutes } },
     }, ctx.db)
 
     return {
@@ -604,9 +620,15 @@ async function recentAiPerformance(ctx: AdminOpCtx): Promise<string> {
     return `這個月 AI 被叫了 ${counts.invocations} 次、自己答完 ${counts.answered} 次（答錯標記這次查不到）`
   }
 
-  const wrongText = wrong === 0
-    ? '最近 7 天沒有人標過它答錯'
-    : `最近 7 天有${truncated ? '至少 ' : ' '}${wrong} 次被客服標「答錯」`
+  // ⛔ 截斷時**零也不能講成沒有**：撈到的 100 筆裡沒有，不代表更早的那些裡沒有。
+  //    這一格是「要不要讓 AI 直接對所有客人說話」的判斷依據，給一個假的全綠最要不得。
+  const wrongText = truncated
+    ? (wrong === 0
+        ? '最近的紀錄太多，我只看得到最近 100 筆，這些裡面沒有人標過答錯（更早的看不到）'
+        : `最近 100 筆紀錄裡，有至少 ${wrong} 次被客服標「答錯」`)
+    : (wrong === 0
+        ? '最近 7 天沒有人標過它答錯'
+        : `最近 7 天有 ${wrong} 次被客服標「答錯」`)
   return `這個月 AI 被叫了 ${counts.invocations} 次、自己答完 ${counts.answered} 次；${wrongText}`
 }
 
@@ -863,11 +885,13 @@ const broadcastDraftCreate: AdminOpDef = {
   async fingerprint(ctx, raw) {
     // 同名草稿已經存在 → 執行前擋下（避免重複建）
     const args = raw as unknown as BroadcastDraftArgs
+    // ⛔ 同上：只是要知道「有沒有同名的」，不要為此掃整個推播集合
     const snap = await ctx.db.collection('broadcasts')
-      .where('workspaceId', '==', ctx.workspaceId)
+      .where('name', '==', args.name)
+      .limit(10)
       .get()
       .catch(() => null)
-    const exists = !!snap?.docs.some(d => String((d.data() as any).name ?? '').trim() === args.name)
+    const exists = !!snap?.docs.some(d => (d.data() as any).workspaceId === ctx.workspaceId)
     return String(exists)
   },
 

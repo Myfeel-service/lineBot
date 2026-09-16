@@ -45,12 +45,20 @@ const scripts = [
 const updates: any[] = []
 
 function makeDb() {
+  // 鏈式 where/orderBy/limit：程式現在用 .where('name','==',x).limit(10) 找同名的那幾筆
+  const chain: any = {
+    where: () => chain,
+    orderBy: () => chain,
+    limit: () => chain,
+    get: async () => ({
+      size: scripts.length,
+      docs: scripts.map((r, i) => ({ id: `d${i}`, data: () => ({ workspaceId: 'w1', ...r }) })),
+    }),
+    count: () => ({ get: async () => ({ data: () => ({ count: scripts.length }) }) }),
+  }
   return {
     collection: () => ({
-      where: () => ({
-        get: async () => ({ docs: scripts.map((r, i) => ({ id: `d${i}`, data: () => r })) }),
-        count: () => ({ get: async () => ({ data: () => ({ count: scripts.length }) }) }),
-      }),
+      ...chain,
       doc: (id: string) => ({
         get: async () => ({ exists: false, data: () => undefined }),
         update: async (patch: unknown) => { updates.push({ id, patch }) },

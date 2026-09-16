@@ -19,7 +19,7 @@ import type { Capability } from '~~/shared/permissions'
 import { auditActionLabel } from '~~/shared/types/audit'
 import { writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
-import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
 
 /** 一筆稽核紀錄裡，還原用得到的部分 */
@@ -29,6 +29,35 @@ export interface AuditRecordForRevert {
   before?: Record<string, unknown> | null
   after?: Record<string, unknown> | null
   targetId?: string
+  /**
+   * 這筆紀錄存的時候有東西被遮罩／截斷／砍掉（`writeAuditLog` 標的）。
+   * ⛔ 有這個旗標就不准還原：寫回去會把 60 個敏感詞變成 50 個、把長字串變成
+   *    「…(截斷,原 N 字)」，而畫面還會跟人說「已經改回原本的值」。
+   */
+  lossy?: boolean
+}
+
+/** 舊紀錄沒有 lossy 旗標，只能認淨化留下的痕跡（遮罩與截斷標記） */
+function looksTruncated(v: unknown): boolean {
+  if (typeof v === 'string') return v === '••••' || v.includes('…(截斷,原')
+  if (Array.isArray(v)) return v.some(looksTruncated)
+  if (v && typeof v === 'object') return Object.values(v as Record<string, unknown>).some(looksTruncated)
+  return false
+}
+
+/**
+ * 現值是否仍與紀錄裡的「改之後」相符。
+ * ⛔ 子物件只比**紀錄裡有寫到的那幾格**：稽核存的是「這次動到的部分」
+ *   （例如只有 handoffNotify.slaRemindMinutes），拿它跟完整設定整包比一定不相等，
+ *   結果會變成「永遠說被改過、永遠不能還原」。
+ */
+function matchesRecorded(current: unknown, recorded: unknown): boolean {
+  if (recorded && typeof recorded === 'object' && !Array.isArray(recorded)) {
+    if (!current || typeof current !== 'object') return false
+    return Object.entries(recorded as Record<string, unknown>)
+      .every(([k, v]) => matchesRecorded((current as Record<string, unknown>)[k], v))
+  }
+  return JSON.stringify(current ?? null) === JSON.stringify(recorded ?? null)
 }
 
 export type RevertPlan =
@@ -56,6 +85,15 @@ const REVERTIBLE_SETTING_KEYS = new Set([
 /** 這筆能不能還原？不能的話回一句講得出原因的話（會直接顯示給人看） */
 export function planRevert(row: AuditRecordForRevert): RevertPlan {
   const label = auditActionLabel(row.action)
+
+  // ⛔ 被砍過的紀錄不能還原：寫回去會少東西，而人會以為完整還原了
+  if (row.lossy || looksTruncated(row.before)) {
+    return {
+      ok: false,
+      reason: '這筆紀錄存的時候有內容被截斷或遮罩（值太長、項目太多、或含憑證），'
+        + '還原會少東西，所以不給還原——請到對應的設定頁自己改回來。',
+    }
+  }
 
   if (row.action === 'agent-op/script-set-enabled') {
     if (!row.targetId)
@@ -106,6 +144,8 @@ export async function applyRevert(
 
     const target = row.before?.enabled === true
     await ref.update({ enabled: target, updatedAt: FieldValue.serverTimestamp() })
+    // ⛔ 送訊息熱路徑的 60 秒快取也要清，否則「還原了」之後客人還會被舊狀態接走一分鐘
+    invalidateScriptsCache(ctx.workspaceId)
     invalidateScriptHealthCache(ctx.workspaceId)
     await writeAuditLog({
       workspaceId: ctx.workspaceId,
@@ -125,7 +165,7 @@ export async function applyRevert(
   const after = row.after ?? {}
   const settings = await getAiSettings(ctx.workspaceId, ctx.db) as unknown as Record<string, unknown>
 
-  const changedSince = Object.keys(after).filter(k => JSON.stringify(settings[k] ?? null) !== JSON.stringify(after[k] ?? null))
+  const changedSince = Object.keys(after).filter(k => !matchesRecorded(settings[k], after[k]))
   if (changedSince.length) {
     throw createError({
       statusCode: 409,

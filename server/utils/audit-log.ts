@@ -41,20 +41,32 @@ export interface AuditLogInput {
   targetId?: string
 }
 
-/** 遞迴淨化稽核值:遮罩憑證欄位、截斷長字串、限制深度與陣列長度 */
-export function sanitizeAuditValue(value: unknown, keyHint = '', depth = 0): unknown {
-  if (SECRET_FIELD_RE.test(keyHint)) return '••••'
+/**
+ * 遞迴淨化稽核值:遮罩憑證欄位、截斷長字串、限制深度與陣列長度。
+ *
+ * `lossy` 是**選填的回報管道**:只要有任何一處被遮罩／截斷／砍掉,就會被標成 true。
+ * 為什麼需要它:2026-09-16 code review 抓到——「還原這一筆」會把這份淨化過的快照
+ * 寫回真實設定,於是 60 個敏感詞還原完只剩 50 個,而畫面還跟人說「已經改回原本的值」。
+ * ⛔ 有被砍過的紀錄就**不可以拿來還原**,這個旗標就是那道判斷的依據。
+ */
+export function sanitizeAuditValue(value: unknown, keyHint = '', depth = 0, lossy?: { hit: boolean }): unknown {
+  if (SECRET_FIELD_RE.test(keyHint)) { if (lossy) lossy.hit = true; return '••••' }
   if (value === null || value === undefined) return null
   if (typeof value === 'number' || typeof value === 'boolean') return value
-  if (typeof value === 'string')
-    return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…(截斷,原 ${value.length} 字)` : value
-  if (depth >= MAX_DEPTH) return '(層級過深,省略)'
-  if (Array.isArray(value))
-    return value.slice(0, MAX_ARRAY).map(v => sanitizeAuditValue(v, keyHint, depth + 1))
+  if (typeof value === 'string') {
+    if (value.length <= MAX_STRING) return value
+    if (lossy) lossy.hit = true
+    return `${value.slice(0, MAX_STRING)}…(截斷,原 ${value.length} 字)`
+  }
+  if (depth >= MAX_DEPTH) { if (lossy) lossy.hit = true; return '(層級過深,省略)' }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_ARRAY && lossy) lossy.hit = true
+    return value.slice(0, MAX_ARRAY).map(v => sanitizeAuditValue(v, keyHint, depth + 1, lossy))
+  }
   if (typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value as Record<string, unknown>))
-      out[k] = sanitizeAuditValue(v, k, depth + 1)
+      out[k] = sanitizeAuditValue(v, k, depth + 1, lossy)
     return out
   }
   return String(value)
@@ -88,13 +100,16 @@ export function diffChangedFields(
 /** 寫一筆稽核。內部吞錯(只 console.error),呼叫端可放心 await,不會拖垮業務寫入。 */
 export async function writeAuditLog(input: AuditLogInput, db: Firestore = getDb()): Promise<void> {
   try {
+    // 有任何一格被遮罩／截斷／砍掉就標記起來：那樣的紀錄看得懂，但**不能拿來還原**
+    const lossy = { hit: false }
     await db.collection(AUDIT_LOGS_COLLECTION).add({
       workspaceId: input.workspaceId,
       uid: input.uid,
       actor: input.actor,
       action: String(input.action).slice(0, 200),
-      before: sanitizeAuditValue(input.before ?? null),
-      after: sanitizeAuditValue(input.after ?? null),
+      before: sanitizeAuditValue(input.before ?? null, '', 0, lossy),
+      after: sanitizeAuditValue(input.after ?? null, '', 0, lossy),
+      ...(lossy.hit ? { lossy: true } : {}),
       ...(input.note ? { note: String(input.note).slice(0, 500) } : {}),
       ...(input.targetId ? { targetId: String(input.targetId).slice(0, 200) } : {}),
       createdAt: FieldValue.serverTimestamp(),

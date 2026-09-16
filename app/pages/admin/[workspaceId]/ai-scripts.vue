@@ -1912,7 +1912,12 @@ async function confirmToggleImpact(scriptId: string, enabled: boolean): Promise<
     newlyFreed: { detail: string }[]
   }
   try {
-    impact = await apiFetch('/api/ai/scripts/preview-impact', { method: 'POST', body: { scriptId, enabled } })
+    // ⛔ 要把**編輯中**的步驟一起送過去：只送開關的話，後端會拿資料庫裡的舊觸發詞去算，
+    //    「把觸發詞放寬又同時啟用」這種最該被警告的情況反而會回報「沒有影響」
+    impact = await apiFetch('/api/ai/scripts/preview-impact', {
+      method: 'POST',
+      body: { scriptId, enabled, nodes: form.value.nodes, rootNodeId: form.value.rootNodeId },
+    })
   }
   catch {
     return true

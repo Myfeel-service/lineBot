@@ -74,6 +74,21 @@ describe('上下架影響預覽', () => {
     expect(previewScriptToggleImpact(scripts, { id: 'a', enabled: false }).selfStillBlocked).toBeNull()
   })
 
+  it('🔴 用「編輯中還沒存檔」的觸發詞算：放寬觸發詞＋同時啟用，最需要這個警告', () => {
+    const scripts = [
+      script('a', '出貨查詢', ['出貨'], true),
+      script('b', '全部攔截', ['退貨'], false), // 資料庫裡還是舊的窄關鍵字
+    ]
+    // 使用者在編輯器裡把它放寬成「出」並同時啟用，還沒存檔
+    const broadened = [{ id: 'n1', type: 'trigger', keywords: ['出'], matchMode: 'keyword' } as any]
+
+    const stale = previewScriptToggleImpact(scripts, { id: 'b', enabled: true })
+    expect(stale.newlyBlocked).toEqual([]) // 拿舊內容算＝看不到任何影響（就是那個 bug）
+
+    const fresh = previewScriptToggleImpact(scripts, { id: 'b', enabled: true, nodes: broadened, rootNodeId: 'n1' })
+    expect(fresh.newlyBlocked.map(i => i.scriptName)).toEqual(['出貨查詢'])
+  })
+
   it('互不相干的流程：沒有影響就是沒有影響（⛔不要硬生出一句警告）', () => {
     const scripts = [
       script('a', '出貨查詢', ['出貨'], true),
