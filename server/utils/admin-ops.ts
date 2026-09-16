@@ -28,15 +28,25 @@ import {
   type AdminOpPreview,
   type AdminOpResult,
 } from '~~/shared/types/admin-ops'
+import { Timestamp } from 'firebase-admin/firestore'
+import { describeScriptSteps } from '~~/shared/script-plain-summary'
 import { writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
+import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
+import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
+import { generateScriptDraft } from './ai-script-generate'
 
 export interface AdminOpCtx {
   db: Firestore
   workspaceId: string
   uid: string
+  /**
+   * 呼叫者的 Authorization header：要走既有端點的 op 用（權限與驗證由那支端點自己把關，
+   * 口徑零第二份）。與 `alert-fix-ops` 同一招。
+   */
+  authHeader?: string
 }
 
 /**
@@ -57,6 +67,14 @@ export interface AdminOpDef {
   argsHint: string
   /** 收斂＋驗證：吐出正規化後的參數，或一句要使用者補充的話 */
   normalize: (raw: Record<string, unknown>) => Record<string, unknown>
+  /**
+   * 選填：提議前先把「要做的東西」準備好，**回傳的參數就是之後真的會執行的那一份**。
+   *
+   * 為什麼需要：AI 生出來的內容（例如一整條客服流程）每次生都不一樣。
+   * 如果執行時才重生，使用者按確定同意的，跟系統實際建出來的就是兩份東西——
+   * 那樣確認流等於沒有。所以生成只發生一次，結果跟著憑證走。
+   */
+  prepare?: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<Record<string, unknown>>
   /** 現況指紋：提議當下與按下確定前各算一次，不同就代表世界變了 */
   fingerprint: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<string>
   preview: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<AdminOpPreview>
@@ -538,6 +556,225 @@ const aiSettingsSensitiveTopic: AdminOpDef = {
   },
 }
 
+// ── op⑤：AI 直接回客人／只給草稿 ────────────────────────────────
+//
+// ⚠️ 這一格是整個產品裡一按下去影響最大的設定：改成自動之後，**所有**客人的訊息
+//    AI 會直接回，人不會先看到。2026-08-14 的紅線是「對客人說話，最後一顆按鈕永遠留給人」，
+//    而這裡的最後一顆按鈕仍然是人按的（提議 → 確認卡 → 人按確定），所以不牴觸。
+// ⭐ 2026-09-16 老闆拍板（`D-80` 選 C）：兩個方向都開放，但確認卡必須先秀出 AI 最近的表現，
+//    確認鈕字樣要把後果寫在按鈕上。⛔ 這是老闆拍的，工程不得自行擴大到別的設定。
+
+interface ReplyModeArgs { mode: 'auto' | 'draft' }
+
+/** AI 最近表現：給確認卡用的一句話（拿既有的月用量桶，⛔不另算一把尺） */
+async function recentAiPerformance(ctx: AdminOpCtx): Promise<string> {
+  const counts = await getCurrentMonthUsageCounts(ctx.workspaceId, ctx.db).catch(() => null)
+  if (!counts) return '這次查不到 AI 最近的表現（查不到不代表沒問題）'
+
+  // 最近 7 天被客服標「答錯」的次數：吃既有索引（workspaceId＋createdAt），
+  // 上限 100 筆；超過上限要說「至少」，⛔不可以報一個看起來很精確的假數字
+  const since = Timestamp.fromMillis(Date.now() - 7 * 86400_000)
+  let wrong = 0
+  let truncated = false
+  try {
+    const snap = await ctx.db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
+      .where('workspaceId', '==', ctx.workspaceId)
+      .orderBy('createdAt', 'desc')
+      .limit(100)
+      .get()
+    truncated = snap.size >= 100
+    for (const d of snap.docs) {
+      const data = d.data() as { type?: string, createdAt?: { toMillis?: () => number } }
+      if (data.type !== 'wrong_answer') continue
+      const ms = data.createdAt?.toMillis?.() ?? 0
+      if (ms >= since.toMillis()) wrong++
+    }
+  }
+  catch {
+    return `這個月 AI 被叫了 ${counts.invocations} 次、自己答完 ${counts.answered} 次（答錯標記這次查不到）`
+  }
+
+  const wrongText = wrong === 0
+    ? '最近 7 天沒有人標過它答錯'
+    : `最近 7 天有${truncated ? '至少 ' : ' '}${wrong} 次被客服標「答錯」`
+  return `這個月 AI 被叫了 ${counts.invocations} 次、自己答完 ${counts.answered} 次；${wrongText}`
+}
+
+const aiSettingsReplyMode: AdminOpDef = {
+  capability: 'ai.settings.write',
+  argsHint: '參數：{"mode":"auto"}＝AI 直接回客人；{"mode":"draft"}＝AI 只給客服建議草稿、客人收不到。'
+    + '⛔ 使用者沒講清楚要哪一種就先問，這一格改錯所有客人都會受影響。',
+
+  normalize(raw) {
+    const mode = String(raw?.mode ?? '').trim()
+    if (mode !== 'auto' && mode !== 'draft')
+      throw new AdminOpUserError('要問清楚是要「AI 直接回客人」還是「只給客服草稿、不回客人」。')
+    return { mode } satisfies ReplyModeArgs as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    return String(s.replyMode ?? 'draft')
+  },
+
+  async preview(ctx, raw) {
+    const args = raw as unknown as ReplyModeArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const before = String(s.replyMode ?? 'draft')
+    const say = (m: string) => (m === 'auto' ? 'AI 直接回客人' : 'AI 只給客服草稿（客人收不到）')
+    const base = { opId: 'ai-settings-reply-mode' as const }
+
+    if (before === args.mode)
+      return { ...base, summary: `現在就是「${say(before)}」，不用改。`, items: [], confirmLabel: '知道了', noop: true }
+
+    const perf = await recentAiPerformance(ctx)
+    return {
+      ...base,
+      summary: args.mode === 'auto'
+        ? '我會把 AI 改成**直接回客人**。這是影響最大的一個設定，先看一下它最近的表現再決定。'
+        : '我會把 AI 改回**只給草稿**：之後客人的訊息一律等真人回，AI 只在旁邊給建議。',
+      items: [
+        { label: say(before), note: '現在' },
+        { label: say(args.mode), note: '改成' },
+        { label: perf, note: 'AI 最近的表現' },
+        ...(s.enabled === false ? [{ label: 'AI 目前整個是關的', note: '改了這一格也不會有動作，要先把 AI 打開' }] : []),
+      ],
+      warning: args.mode === 'auto'
+        ? '⚠️ 按下去之後，客人傳來的訊息 AI 會直接回覆，你不會先看到——包括它答錯的那些。隨時可以再改回草稿。'
+        : '改回草稿之後，客人要等真人回覆；沒人看訊息的時段客人會等比較久。',
+      // 後果寫在按鈕上（老闆拍板 D-80 C 案的守門方式）
+      confirmLabel: args.mode === 'auto' ? '確定讓 AI 直接回客人' : '確定改回只給草稿',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as ReplyModeArgs
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const before = String(s.replyMode ?? 'draft')
+    if (before === args.mode)
+      return { ok: true, message: '本來就是這個模式，沒有動任何設定。' }
+
+    await setAiSettings(ctx.workspaceId, { replyMode: args.mode } as never, ctx.db)
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('ai-settings-reply-mode'),
+      before: { replyMode: before },
+      after: { replyMode: args.mode },
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: args.mode === 'auto'
+        ? '改好了：AI 現在會直接回覆客人。想收回來隨時跟我說「改回草稿」。'
+        : '改好了：AI 只會給客服草稿，不會再直接回客人。',
+    }
+  },
+}
+
+// ── op⑥：用一句話建一條客服流程 ─────────────────────────────────
+//
+// ⭐ 2026-09-16 老闆拍板（`D-58`② 選 A）。這是小幫手第一個「建立」類的能力。
+// ⛔ 建好一律**停用**：AI 生的流程會有錯（16 案實測出過占位符沒填、觸發詞打架），
+//    要人到流程頁看過才上架。這條不能為了「一句話就搞定」而省掉。
+
+interface CreateScriptArgs {
+  description: string
+  /** prepare 階段生好的草稿：**執行時原樣建立**，⛔不重生（重生＝跟他看過的不是同一份） */
+  draft?: { name: string, nodes: unknown[], rootNodeId: string }
+}
+
+const scriptCreateFromDescription: AdminOpDef = {
+  capability: 'scripts.write',
+  argsHint: '參數：{"description":"整句描述這條流程要做什麼"}。'
+    + '把使用者的原話盡量完整帶進去（要問客人什麼、依序問幾題、最後回什麼）；'
+    + '⛔ 描述太籠統（例如「建一個流程」）就先問清楚用途再提議。',
+
+  normalize(raw) {
+    const description = String(raw?.description ?? '').trim().slice(0, 500)
+    if (description.length < 6)
+      throw new AdminOpUserError('要先問清楚這條流程要做什麼：客人講什麼的時候啟動、要問他哪幾件事、最後回覆什麼。')
+    return { description } satisfies CreateScriptArgs as unknown as Record<string, unknown>
+  },
+
+  async prepare(ctx, raw) {
+    const args = raw as unknown as CreateScriptArgs
+    const settings = await getAiSettings(ctx.workspaceId, ctx.db).catch(() => null)
+    const draft = await generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] })
+    // 生成屬後台內部操作 → 記進後台自用桶（與 scripts/generate 端點同一個慣例）
+    recordAiUsage(ctx.workspaceId, {
+      testInputTokens: draft.inputTokens,
+      testOutputTokens: draft.outputTokens,
+      testInvocations: 1,
+    }, ctx.db).catch(e => console.error('[admin-ops] recordAiUsage error:', e))
+
+    return {
+      description: args.description,
+      draft: { name: draft.name, nodes: draft.nodes, rootNodeId: draft.rootNodeId },
+    } satisfies CreateScriptArgs as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx, raw) {
+    // 同名的流程在這段期間被別人建出來 → 執行前擋下（避免建出兩條一樣的）
+    const args = raw as unknown as CreateScriptArgs
+    const name = args.draft?.name ?? ''
+    const docs = await listScriptDocs(ctx)
+    return String(docs.some(d => String(d.name ?? '').trim() === name.trim()))
+  },
+
+  async preview(ctx, raw) {
+    const args = raw as unknown as CreateScriptArgs
+    const draft = args.draft
+    const base = { opId: 'script-create-from-description' as const }
+    if (!draft) throw new AdminOpUserError('這次沒有生出流程草稿，請再說一次要做什麼。')
+
+    const { steps, unreachable } = describeScriptSteps(draft.nodes as never, draft.rootNodeId)
+    return {
+      ...base,
+      summary: `我照你說的擬了一條「${draft.name}」。下面是客人實際會經歷的過程，看一下對不對：`,
+      items: [
+        ...steps.slice(0, 10).map((s, i) => ({ label: `${i + 1}. ${s}` })),
+        ...(steps.length > 10 ? [{ label: `…另外還有 ${steps.length - 10} 步`, note: '完整內容在流程頁看得到' }] : []),
+        ...(unreachable.length ? [{ label: `⚠️ 有 ${unreachable.length} 個步驟目前沒有人走得到`, note: '建好之後可以到流程頁調整' }] : []),
+      ],
+      // 「建好是關著的」是這個 op 最重要的一句話：AI 擬的東西一定要有人看過才對客人生效
+      warning: '建好之後是**關著**的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再上架。',
+      confirmLabel: '確定建立（先不上架）',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as CreateScriptArgs
+    const draft = args.draft
+    if (!draft) return { ok: false, message: '沒有可以建立的草稿，請再說一次要做什麼。' }
+
+    // 走既有的建立端點（轉發呼叫者憑證）：名稱／節點／方案權益的驗證全部沿用那一支，
+    // ⛔ agent 這邊一行驗證邏輯都不重寫
+    const res = await $fetch<{ id: string }>('/api/ai/scripts/create', {
+      method: 'POST',
+      query: { workspaceId: ctx.workspaceId },
+      headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      body: { name: draft.name, nodes: draft.nodes, rootNodeId: draft.rootNodeId, enabled: false },
+    })
+
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('script-create-from-description'),
+      after: { name: draft.name, enabled: false, stepCount: (draft.nodes ?? []).length },
+      note: `依描述建立「${draft.name}」（建好是停用的）`,
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: `「${draft.name}」建好了，目前是**停用**狀態。到「自動回應」頁看過內容、確認沒問題再把它打開。`,
+      details: [`流程代號：${res.id}`],
+    }
+  },
+}
+
 // ── 註冊表 ──────────────────────────────────────────────────────
 
 export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
@@ -545,6 +782,8 @@ export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
   'script-set-enabled': scriptSetEnabled,
   'ai-settings-handoff-sla': aiSettingsHandoffSla,
   'ai-settings-sensitive-topic': aiSettingsSensitiveTopic,
+  'ai-settings-reply-mode': aiSettingsReplyMode,
+  'script-create-from-description': scriptCreateFromDescription,
 }
 
 /** 端點／迴圈用：不認得的 op 一律擋下（⛔不做「最接近的那個」） */

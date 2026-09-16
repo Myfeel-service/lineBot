@@ -410,14 +410,17 @@ export async function runAdminAgentChat(params: {
     // 這裡只做「驗參數 → 看現況 → 產生確認卡」,**一個字都不寫進資料庫**。
     // 真正的執行在使用者按下確定後的第二個請求(/api/admin/agent/confirm)。
     if (data?.action === 'propose') {
-      const ctx = { db, workspaceId, uid }
+      const ctx = { db, workspaceId, uid, authHeader }
       try {
         const { opId, op } = getAdminOp(String(data?.op ?? '').trim())
         // 權限用呼叫者的角色比對既有 capability 表(⛔不在這裡另訂一套門檻)
         if (!can(role, op.capability))
           throw new AdminOpUserError(`這個帳號的權限不能做「${ADMIN_OP_LABELS[opId]}」,請改由管理員操作(你可以告訴他要改什麼)。`)
 
-        const args = op.normalize((data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {})
+        let args = op.normalize((data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {})
+        // 要先生內容的 op(例如「用一句話建一條流程」):**只生這一次**,結果跟著憑證走。
+        // ⛔ 執行時重生＝使用者按確定同意的,跟系統實際建出來的是兩份東西。
+        if (op.prepare) args = await op.prepare(ctx, args)
         // 現況指紋:按確定時會再算一次,中間被別人改過就不執行(拿舊世界的判斷去寫新世界＝覆蓋別人的修改)
         const guard = await op.fingerprint(ctx, args)
         const preview = await op.preview(ctx, args)

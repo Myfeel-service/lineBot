@@ -34,6 +34,32 @@ vi.mock('./audit-log', () => ({
 vi.mock('./script-health', () => ({
   invalidateScriptHealthCache: (wid: string) => { invalidated.push(wid) },
 }))
+// 生成端：每次回不一樣的名字，好驗「同意的那份就是建出來的那份」
+let draftSeq = 0
+vi.mock('./ai-script-generate', () => ({
+  generateScriptDraft: async (description: string) => ({
+    name: `退貨查詢 v${++draftSeq}`,
+    rootNodeId: 'n1',
+    nodes: [
+      { id: 'n1', type: 'trigger', keywords: ['退貨'], matchMode: 'keyword', priority: 1, next: 'n2' },
+      { id: 'n2', type: 'collect', question: '請給我訂單編號', fieldName: 'orderNo', expireMs: 600000, next: 'n3' },
+      { id: 'n3', type: 'reply', text: `收到，我們三天內回覆（${description.slice(0, 6)}）`, next: '' },
+    ],
+    inputTokens: 10,
+    outputTokens: 20,
+  }),
+}))
+vi.mock('./ai-usage', () => ({
+  recordAiUsage: async () => {},
+  getCurrentMonthUsageCounts: async () => ({ invocations: 120, answered: 98, billable: 110 }),
+}))
+
+/** 走既有端點的 op 用的 $fetch：記下被呼叫的內容 */
+const fetchCalls: any[] = []
+;(globalThis as any).$fetch = async (url: string, opts: any) => {
+  fetchCalls.push({ url, ...opts })
+  return { id: 'new-script-id' }
+}
 
 const { ADMIN_OPS, AdminOpUserError, getAdminOp } = await import('./admin-ops')
 
@@ -60,9 +86,13 @@ beforeEach(() => {
   invalidated.length = 0
   updates.length = 0
   scriptDocs.length = 0
+  fetchCalls.length = 0
+  draftSeq = 0
   settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' }
   settingsStore.handoffNotify = { enabled: true, lineUserIds: ['U1'], slaRemindMinutes: 30 }
   settingsStore.sensitiveTopics = ['退款']
+  settingsStore.replyMode = 'draft'
+  settingsStore.enabled = true
 })
 
 describe('操作模組表的不變量', () => {
@@ -309,5 +339,82 @@ describe('op：自動回應上架／下架', () => {
 
     scriptDocs[0]!.data.enabled = false // 別人剛剛在頁面上把它關掉了
     expect(await op.fingerprint(ctx, args)).not.toBe(before)
+  })
+})
+
+describe('op：AI 直接回客人／只給草稿（D-80 老闆拍板 C 案）', () => {
+  const op = ADMIN_OPS['ai-settings-reply-mode']
+
+  it('🔴 要改成「直接回客人」時，確認鈕上必須寫清楚後果，並秀出 AI 最近表現', async () => {
+    const preview = await op.preview(ctx, op.normalize({ mode: 'auto' }))
+
+    expect(preview.confirmLabel).toBe('確定讓 AI 直接回客人')
+    expect(preview.warning).toContain('你不會先看到')
+    // 拍板 C 案的守門：不給表現數字就等於叫人閉眼按
+    expect(preview.items.some(i => /被叫了 120 次/.test(i.label))).toBe(true)
+  })
+
+  it('改回草稿是往安全的方向：講法不同、鈕也不同', async () => {
+    settingsStore.replyMode = 'auto'
+    const preview = await op.preview(ctx, op.normalize({ mode: 'draft' }))
+
+    expect(preview.confirmLabel).toBe('確定改回只給草稿')
+    expect(preview.warning).not.toContain('你不會先看到')
+  })
+
+  it('⚠️ AI 整個是關的時候要講出來（改了也不會有動作）', async () => {
+    settingsStore.enabled = false
+    const preview = await op.preview(ctx, op.normalize({ mode: 'auto' }))
+    expect(preview.items.some(i => /AI 目前整個是關的/.test(i.label))).toBe(true)
+  })
+
+  it('執行只動這一格，並留下前後對照的稽核', async () => {
+    await op.execute(ctx, op.normalize({ mode: 'auto' }))
+
+    expect(setCalls[0]).toEqual({ replyMode: 'auto' })
+    expect(auditLogs[0]).toMatchObject({ actor: 'agent', before: { replyMode: 'draft' }, after: { replyMode: 'auto' } })
+  })
+
+  it('沒講要哪一種就不提議', () => {
+    expect(() => op.normalize({})).toThrow(AdminOpUserError)
+    expect(() => op.normalize({ mode: '自動' })).toThrow(AdminOpUserError)
+  })
+})
+
+describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () => {
+  const op = ADMIN_OPS['script-create-from-description']
+
+  it('預覽用白話講出客人會經歷什麼，⛔而且這時候還沒建任何東西', async () => {
+    const args = await op.prepare!(ctx, op.normalize({ description: '客人說退貨時，先問訂單編號再回覆處理時間' }))
+    const preview = await op.preview(ctx, args)
+
+    const labels = preview.items.map(i => i.label).join(' ')
+    expect(labels).toContain('客人打「退貨」的時候啟動')
+    expect(labels).toContain('請給我訂單編號')
+    expect(preview.warning).toContain('關著')
+    expect(fetchCalls).toHaveLength(0)
+  })
+
+  it('🔴 建出來的就是他看過的那一份（⛔執行時不重生）', async () => {
+    const args = await op.prepare!(ctx, op.normalize({ description: '退貨查詢流程' }))
+    const shownName = (args as any).draft.name
+    await op.execute(ctx, args)
+
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0].body.name).toBe(shownName) // 重生的話這裡會變成 v2
+  })
+
+  it('🔴 建好一律停用：AI 擬的東西要人看過才對客人生效', async () => {
+    const args = await op.prepare!(ctx, op.normalize({ description: '退貨查詢流程' }))
+    await op.execute(ctx, args)
+
+    expect(fetchCalls[0].body.enabled).toBe(false)
+    expect(fetchCalls[0].url).toBe('/api/ai/scripts/create') // 走既有端點，驗證不重寫
+    expect(auditLogs[0]).toMatchObject({ actor: 'agent', after: { enabled: false } })
+  })
+
+  it('描述太籠統就先問清楚，⛔不要生一個空殼流程出來', () => {
+    expect(() => op.normalize({ description: '建一個' })).toThrow(AdminOpUserError)
+    expect(() => op.normalize({})).toThrow(AdminOpUserError)
   })
 })

@@ -24,6 +24,8 @@ export const ADMIN_OP_LABELS = {
   'script-set-enabled': '上架或下架一條自動回應',
   'ai-settings-handoff-sla': '調整「客人等太久」的提醒時間',
   'ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
+  'ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',
+  'script-create-from-description': '用一句話建一條自動回應',
 } as const satisfies Record<string, string>
 
 export type AdminOpId = keyof typeof ADMIN_OP_LABELS
@@ -44,6 +46,16 @@ export const ADMIN_OP_RISK: Record<AdminOpId, 'low' | 'medium'> = {
   'ai-settings-handoff-sla': 'low',
   // 加字＝更容易轉給真人（往保守的方向動）；拿掉字才是放寬，所以預覽一定要分開講
   'ai-settings-sensitive-topic': 'medium',
+  /**
+   * ⚠️ 這一格是整個產品裡影響面最大的設定（改成自動＝所有客人的訊息 AI 直接回）。
+   * 2026-08-14 的紅線是「對客人說話，最後一顆按鈕永遠留給人」——這裡的最後一顆按鈕
+   * 仍然是人按的（提議 → 確認卡 → 人按確定），所以不牴觸；
+   * ⭐ 2026-09-16 老闆拍板（`D-80` 選 C）開放兩個方向，但確認卡要先秀 AI 最近表現、
+   * 確認鈕字樣要把後果寫在按鈕上。⛔ 這是老闆拍的，工程不得自行擴大到別的設定。
+   */
+  'ai-settings-reply-mode': 'medium',
+  // 建好一律停用，客人不會馬上走到；要人看過才上架
+  'script-create-from-description': 'medium',
 }
 
 /** 稽核動作代號：操作紀錄上看到的就是這個（與 audit 的白話對照成對） */

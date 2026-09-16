@@ -43,6 +43,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'agent-op/script-set-enabled': '上架或下架一條自動回應',
   'agent-op/ai-settings-handoff-sla': '改了「客人等太久」的提醒時間',
   'agent-op/ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
+  'agent-op/ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',
+  'agent-op/script-create-from-description': '用一句話建了一條自動回應（建好是停用的）',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */

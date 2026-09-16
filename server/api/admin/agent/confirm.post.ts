@@ -57,7 +57,8 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const ctx = { db, workspaceId, uid }
+    // 轉發呼叫者憑證：走既有端點的 op（例如建流程）由那支端點自己驗權限與內容
+    const ctx = { db, workspaceId, uid, authHeader: getHeader(event, 'authorization') }
     // 現況指紋：提議後到按下確定之間，別人可能剛改過同一個東西。
     // 拿舊世界的判斷去寫新世界＝安靜地覆蓋掉別人的修改。
     const guard = await op.fingerprint(ctx, payload.a)
