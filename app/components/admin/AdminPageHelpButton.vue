@@ -61,14 +61,16 @@
       </template>
     </el-dropdown>
 
-    <!-- 一次性提示：第一次進這一頁時讓這顆灰問號出個聲，點過或看過就永遠不再出現 -->
-    <span v-if="hinting" class="page-help-hint" role="status">這頁怎麼用？</span>
+    <!-- 一次性提示：第一次進這一頁時讓這顆灰問號出個聲，點過或看過就永遠不再出現。
+         自動導覽剛跑完的話換句話說——他已經看過內容了，這時要回答的是「下次去哪找」 -->
+    <span v-if="hinting" class="page-help-hint" role="status">{{ hintText }}</span>
   </span>
 </template>
 
 <script setup lang="ts">
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type { TutorialTopic } from '~/utils/tutorial-topics'
+import { decideAutoTour } from '~/utils/auto-tour-gate'
 
 /**
  * 頁首「這頁怎麼用」（2026-08-26 `D-33` P1-5）。
@@ -77,10 +79,12 @@ import type { TutorialTopic } from '~/utils/tutorial-topics'
  * 「右下角小幫手 → 教學分頁 → 挑主題」三層點擊，而且**完全不看你在哪一頁**
  * （`TutorialAgent` 整份檔案沒讀過當前路由）。現成資產沒被用起來，只差這顆按鈕。
  *
- * ⛔ 不自動跑（老闆 2026-08-26 拍板）：自動導覽會打斷正在做事的人，第二次進來就變騷擾。
- *    使用者點了才跑。
  * ⛔ 沒有可跑的教學就整顆不畫：`topics` 已依角色與功能旗標過濾（觀察者、關掉的功能不顯示
  *    其教學），所以按了保證跑得起來——不要出現按了沒反應的按鈕。
+ *
+ * 2026-09-16 老闆拍板**改成自動跑**：每個帳號第一次進到某一頁，就直接把那一頁的導覽
+ * 跑給他看（推翻 08-26「不自動跑」那條，當時的折衷是下面那句四秒的灰字提示）。
+ * 「看過了」記在帳號上不是記在瀏覽器上，見 `useTourSeen`。
  *
  * 2026-08-28 加上「第一次進這一頁」的一次性提示（老闆拍板）：這顆刻意做小做灰的問號
  * 完全被動，全站沒有任何機制指出它的存在——同一個後台裡會動的只有異常紅點，
@@ -103,8 +107,10 @@ const props = defineProps<{
   label?: string
 }>()
 
-const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide } = useTutorial()
+const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide, endTour, lastTopicId } = useTutorial()
 const { canOperate, canManageSettings } = useWorkspace()
+const { ensureLoaded: ensureTourSeen, hasSeen: tourSeen, markSeen: markTourSeen } = useTourSeen()
+const { loaded: setupLoaded, onboardingIncomplete } = useSetupStatus()
 
 /** 這一頁掛的劇本裡，這個角色真的跑得動的那幾條（同導覽：跑不動就整條不出現） */
 const availableGuides = computed(() =>
@@ -139,9 +145,125 @@ function startFirst() {
     start(first)
 }
 
+// ── 第一次進這一頁自動跑導覽 ──
+
+/** 等一下再開：剛換頁那一瞬間畫面還在長，馬上蓋上黑幕會高亮到還沒排好的東西 */
+const AUTO_TOUR_DELAY_MS = 900
+
+/**
+ * 自動導覽這件事現在走到哪。**提示氣泡要等它變成 `off` 才能放**——
+ * ⛔ 不設這一格的話：氣泡在 onMounted 當下就會放（那時還不知道要不要自動跑），
+ *    0.9 秒後導覽的黑幕蓋上來，這個一輩子只有一次的提示就在幕後亮完四秒沒人看到。
+ */
+const autoTourState = ref<'deciding' | 'pending' | 'off'>('deciding')
+/** 這一頁的導覽是自動跑起來的：結尾那句提示要換句話說 */
+const autoToured = ref(false)
+let autoTourTimer: number | undefined
+let unmounted = false
+
+/**
+ * ⛔ 在 setup 當下就讀起來，不能等到 onMounted：`?tour=` 是開通結尾指定的那一支導覽，
+ *    `TutorialAgent` 一掛載就會把它從網址上清掉。晚一步讀到的是空字串，結果就是
+ *    「他選的那支導覽」跟「這一頁的自動導覽」兩支互相蓋。
+ */
+const hasTourQuery = !!String(useRoute().query.tour || '').trim()
+
+/** 記在帳號上的鑰匙＝這一頁教哪幾支（`hintKey` 的瀏覽器版用同一組 id） */
+function tourKey() {
+  return props.topics.join('|')
+}
+
+/**
+ * 回傳「這件事處理完了，不用再等」。條件沒到齊就回 false，讓外面的 watch 再試一次。
+ * 判斷本身在 `utils/auto-tour-gate.ts`（純函式、有測試），這裡只負責餵狀態與排程。
+ */
+function tryAutoTour(seenReady: boolean): boolean {
+  const key = tourKey()
+  const decision = decideAutoTour({
+    seenReady,
+    setupLoaded: setupLoaded.value,
+    onboardingIncomplete: onboardingIncomplete.value,
+    hasTopics: available.value.length > 0,
+    tourOpen: tourOpen.value,
+    seen: !key || tourSeen(key),
+  })
+  if (decision === 'wait')
+    return false
+  if (decision === 'start') {
+    autoTourState.value = 'pending'
+    autoTourTimer = window.setTimeout(() => {
+      autoTourTimer = undefined
+      void startAutoTour()
+    }, AUTO_TOUR_DELAY_MS)
+  }
+  return true
+}
+
+async function startAutoTour() {
+  const topic = available.value[0]
+  if (unmounted || tourOpen.value || !topic) {
+    autoTourState.value = 'off'
+    return
+  }
+  autoToured.value = true
+  await startTopic(topic)
+  // ⛔ `startTopic` 會等目標元素出現（最多三秒）。這幾秒裡人可能已經換頁了——
+  //    不收掉的話，黑幕會蓋在一個完全不相干的畫面上、每一步都指不到東西。
+  if (unmounted) {
+    if (tourOpen.value)
+      endTour()
+    autoToured.value = false
+    autoTourState.value = 'off'
+    return
+  }
+  // ⛔ 沒真的開起來就不算數（例如步驟被前提全部刷掉）：這時不記，下次進來再試一次。
+  //    真的開起來的那一刻由下面的 watch 記帳，不在這裡記。
+  if (!tourOpen.value)
+    autoToured.value = false
+  autoTourState.value = 'off'
+}
+
+/**
+ * 記帳：這一頁的導覽真的開起來了就算看過。
+ * 掛在 `tourOpen` 而不是寫在 `startAutoTour` 裡，是因為**自己從問號點開的那一次也算**——
+ * 他已經看過了，下次進來不該再被自動帶一遍。
+ */
+watch(tourOpen, (open) => {
+  if (!open)
+    return
+  const id = lastTopicId.value
+  const key = tourKey()
+  if (key && id && props.topics.includes(id))
+    markTourSeen(key)
+})
+
+onMounted(() => {
+  if (props.label || hasTourQuery) {
+    autoTourState.value = 'off'
+    return
+  }
+  const seenReady = ref(false)
+  // 查不到就當「不知道」：`useTourSeen` 會退回本機那一份，最壞是在這台瀏覽器多帶一遍
+  void ensureTourSeen().finally(() => { seenReady.value = true })
+  if (tryAutoTour(seenReady.value)) {
+    if (autoTourState.value === 'deciding')
+      autoTourState.value = 'off'
+    return
+  }
+  const stop = watch([seenReady, setupLoaded, onboardingIncomplete, available, tourOpen], () => {
+    if (!tryAutoTour(seenReady.value))
+      return
+    if (autoTourState.value === 'deciding')
+      autoTourState.value = 'off'
+    stop()
+  })
+})
+
 // ── 第一次進這一頁的一次性提示 ──
 const HINT_MS = 4200
 const hinting = ref(false)
+/** 自動導覽剛跑完的話，他要的答案不是「這頁怎麼用」而是「下次去哪再看一遍」 */
+const hintText = computed(() => (autoToured.value ? '想再看一遍就按這裡' : '這頁怎麼用？'))
 /** 顯示計時器：離開這一頁要收掉，否則「已經看過」會在元件拆掉之後才被寫進去 */
 let hintTimer: number | undefined
 
@@ -168,6 +290,10 @@ onMounted(() => {
     // 回 false＝這件事還沒處理完，下面的 watch 會在導覽關掉後再試一次。
     if (tourOpen.value)
       return false
+    // 同一個理由，再往前一步：自動導覽還在盤算或還沒開起來時也要讓路，
+    // 否則這顆氣泡會在黑幕蓋上來的前 0.9 秒被放掉（見 autoTourState 那段）
+    if (autoTourState.value !== 'off')
+      return false
     try {
       if (localStorage.getItem(hintKey()))
         return true
@@ -191,9 +317,9 @@ onMounted(() => {
   }
   if (fire())
     return
-  // 兩件事都要等：角色／功能旗標是非同步載入的（載完才知道這一頁有沒有教學可跑），
-  // 而導覽開著時 fire() 會刻意讓路——所以也要盯著它關掉的那一刻補放。
-  const stop = watch([available, tourOpen], () => {
+  // 三件事都要等：角色／功能旗標是非同步載入的（載完才知道這一頁有沒有教學可跑），
+  // 而導覽開著、或自動導覽還沒收工時 fire() 會刻意讓路——所以也要盯著它們的那一刻補放。
+  const stop = watch([available, tourOpen, autoTourState], () => {
     if (fire())
       stop()
   })
@@ -208,6 +334,12 @@ onMounted(() => {
  * 只是漏了「顯示到一半就走人」這條路。
  */
 onBeforeUnmount(() => {
+  // 自動導覽同理，而且更要緊：排程還沒引爆就換頁的話，導覽會開在下一頁的畫面上
+  unmounted = true
+  if (autoTourTimer !== undefined) {
+    clearTimeout(autoTourTimer)
+    autoTourTimer = undefined
+  }
   if (hintTimer !== undefined) {
     clearTimeout(hintTimer)
     hintTimer = undefined
