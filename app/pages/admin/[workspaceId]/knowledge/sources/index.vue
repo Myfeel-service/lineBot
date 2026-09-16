@@ -294,7 +294,7 @@
           沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
           AI 建議的草稿要看內容，留在下方獨立區塊，不在這裡重複列一次。
         -->
-        <div v-if="todoItems.length || healthExpiredCount" class="src-todo" data-tour="kb-health">
+        <div v-if="todoItems.length || mutedItems.length" class="src-todo" data-tour="kb-health">
           <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
             <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
             <span class="src-todo__title">
@@ -315,14 +315,15 @@
               </el-button>
             </div>
 
-            <!-- 已過期停用＝功能正常運作的結果，不是待辦：灰階、排最後、不算進上方數字 -->
+            <!-- 「知道就好」的體檢結果：灰階、排最後、不算進上方數字（判準見 mutedItems） -->
             <button
-              v-if="healthExpiredCount"
+              v-for="m in mutedItems"
+              :key="m.id"
               type="button"
               class="src-todo__muted"
-              @click="openHealthList('expiredChunks')"
+              @click="openHealthList(m.id)"
             >
-              另有 {{ healthExpiredCount }} 條知識已過期自動停用（正常，不用處理）
+              {{ m.label }}
             </button>
             <p v-if="health.chunkScanTruncated" class="src-todo__foot">
               內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
@@ -687,16 +688,19 @@
                         :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。點一下可解除。`"
                         @click.stop="unlockChunk(c)"
                       ><el-icon><Lock /></el-icon></button>
-                      <span v-if="isShortChunk(c)" class="src-chunk-warn">內容過短</span>
+                      <span v-if="showShortNote(c)" class="src-chunk-note">內容較短</span>
                     </div>
                     <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
                     <span class="src-chunk-meta">
                       {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
                     </span>
                     <!-- 原本這句話只在滑鼠停留時出現:手機/平板完全看不到,而且沒說「多長才算夠」,
-                         補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。 -->
-                    <span v-if="isShortChunk(c)" class="src-chunk-warn-hint">
-                      目前 {{ shortChunkChars(c) }} 字（空白不算），補到 {{ SHORT_CHUNK_CONTENT_CHARS }} 字以上 AI 才找得到；用不到的話可以直接刪掉。
+                         補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。
+                         ⛔ 原本寫「補到 30 字以上 AI 才找得到」是**假的**:檢索只篩 workspaceId + status='indexed'
+                         (searchSimilarChunks),沒有任何字數條件——短卡照樣被撈出來、照樣拿去回答客人。
+                         照著那句話做的人會另外再建一張長版的講同一件事(兩張重複卡)。這裡只陳述事實、不催人動手。 -->
+                    <span v-if="showShortNote(c)" class="src-chunk-note-hint">
+                      目前 {{ shortChunkChars(c) }} 字（空白不算），少於 {{ SHORT_CHUNK_CONTENT_CHARS }} 字就會標出來。AI 一樣找得到、也照樣拿去回答，不用特地補長；只是切壞的殘片多半也很短，看一眼是不是就好。
                     </span>
                   </div>
                   <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
@@ -1680,6 +1684,17 @@ function isShortChunk(c: Pick<ChunkRow, 'content'>): boolean {
 }
 
 /**
+ * 這一條要不要標「內容較短」。
+ *
+ * ⛔ 停用的卡不標:它根本不參與回答,標了只會讓列表上的條數跟體檢、篩選按鈕對不起來
+ * (體檢與 `matchChunkFilter` 都排除停用)。本專案在這個標示上踩過一次
+ * 「兩邊說法不一致」——實測 4 條標記 vs 體檢說 2 條,就是漏了這個條件。
+ */
+function showShortNote(c: Pick<ChunkRow, 'content' | 'status'>): boolean {
+  return c.status !== 'disabled' && isShortChunk(c)
+}
+
+/**
  * 判定用的字數（不算空白），與 isShortChunkContent 同一把尺。
  * 上面 meta 行顯示的是含空白的原始長度，兩個數字會不一樣——所以提示裡要標明「空白不算」，
  * 否則會出現「35 字」卻說「還差 5 字」這種自相矛盾。
@@ -1701,8 +1716,9 @@ const chunkFilter = ref<ChunkFilterKey>('all')
 function matchChunkFilter(c: ChunkRow, key: ChunkFilterKey): boolean {
   if (key === 'failed') return c.status === 'failed'
   if (key === 'disabled') return c.status === 'disabled'
-  // 過短只看還在用的:停用的卡不影響答題,列進來只會讓「要修的有幾條」看起來比實際多
-  if (key === 'short') return c.status !== 'disabled' && isShortChunk(c)
+  // 較短只看還在用的:停用的卡不影響答題,列進來只會讓這個分類的數字看起來比實際多
+  // (跟逐條標示共用 showShortNote,兩邊才不會一個標 4 條、一個算 2 條)
+  if (key === 'short') return showShortNote(c)
   return true
 }
 
@@ -1711,7 +1727,7 @@ const chunkFilterTabs = computed(() => {
   const defs: Array<{ key: ChunkFilterKey, label: string }> = [
     { key: 'all', label: '全部' },
     { key: 'failed', label: 'AI 沒學起來' },
-    { key: 'short', label: '內容過短' },
+    { key: 'short', label: '內容較短' },
     { key: 'disabled', label: '已停用' },
   ]
   return defs
@@ -1723,7 +1739,7 @@ const visibleChunks = computed(() => chunks.value.filter(c => matchChunkFilter(c
 
 /**
  * 篩選中的那一類被清空時要自己退回「全部」。
- * 例:只剩一條「內容過短」,補完字之後那個分類歸零 → 按鈕列不再顯示它,
+ * 例:只剩一條「內容較短」,補完字之後那個分類歸零 → 按鈕列不再顯示它,
  * 但篩選還停在 short → 清單空白、也沒有任何按鈕可以點回去(看起來像知識全消失了)。
  */
 watch([chunks, chunkFilter], () => {
@@ -2212,10 +2228,29 @@ const healthSourceCount = computed(() =>
   + health.value.stalledSources.length
   + health.value.noProductSources.length)
 const healthChunkCount = computed(() =>
-  health.value.shortChunks.count + health.value.failedChunks.count + health.value.wrongAnswerChunks.count)
-// 「已過期停用」是有效期限功能正確運作的結果,不是待辦——算進待處理會讓數字永遠清不完。
-// 另列一行「僅供參考」,店家想看時看得到、但不催他處理。
-const healthExpiredCount = computed(() => health.value.expiredChunks.count)
+  health.value.failedChunks.count + health.value.wrongAnswerChunks.count)
+
+/**
+ * 「知道就好」的體檢結果：不算進待處理數字、不給行動按鈕，只列一行灰字。
+ *
+ * 判準＝**這件事有沒有讓客人得到錯的回答**。沒有的話就不該進「要處理的事」，
+ * 否則數字永遠清不完，久了連真的紅字（同步失敗、AI 答錯）也一起被跳過。
+ *
+ * - 已過期停用：有效期限功能正確運作的結果。
+ * - 內容較短：短卡**照樣被檢索到、照樣拿去回答**（檢索只篩 workspaceId + status，沒有字數條件），
+ *   所以它不是故障。但「免運門檻：單筆滿 1000 元」這種最好答的知識也才 13 字——
+ *   列成待辦會催人去停用或刪掉一條完全正常的知識。留一行讓想看的人看得到就好。
+ */
+const mutedItems = computed<Array<{ id: HealthCategory; label: string }>>(() => {
+  const out: Array<{ id: HealthCategory; label: string }> = []
+  if (health.value.expiredChunks.count) {
+    out.push({ id: 'expiredChunks', label: `另有 ${health.value.expiredChunks.count} 條知識已過期自動停用（正常，不用處理）` })
+  }
+  if (health.value.shortChunks.count) {
+    out.push({ id: 'shortChunks', label: `另有 ${health.value.shortChunks.count} 條知識內容較短（照樣找得到，想看再看）` })
+  }
+  return out
+})
 const healthIssueCount = computed(() => healthSourceCount.value + healthChunkCount.value)
 
 // ── 「要處理的事」單一清單 ────────────────────────────
@@ -2359,16 +2394,7 @@ const todoItems = computed<TodoItem[]>(() => {
       action: singleOrList(h.noProductSources, 'source', 'noProductSources'),
     })
   }
-  if (h.shortChunks.count) {
-    items.push({
-      id: 'shortChunks',
-      tone: 'warning',
-      title: `有 ${h.shortChunks.count} 條內容太短`,
-      why: '太短的內容 AI 找到了也答不出東西，還可能擋住其他有用的內容。',
-      cta: '查看',
-      action: singleOrList(h.shortChunks.count === 1 ? h.shortChunks.items : [], 'chunk', 'shortChunks'),
-    })
-  }
+  // ⛔「內容較短」刻意不在這裡：它不是待辦，見 mutedItems 的判準。
   // 別名候選原本只藏在「⋯」選單展開後的項目文字裡,⋯ 按鈕本身沒有徽章——
   // 等於一個看不見的異常。它會讓 AI 把同一台機器當成兩台,該進待辦。
   if (h.aliasCandidateCount > 0) {
@@ -2447,7 +2473,7 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「重新同步」,或改用內容固定的頁面當資料來源。' },
   noProductSources: { title: '文件未設產品名', hint: '這些內容較多的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
   failedChunks: { title: '知識學習失敗', hint: '這幾條 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
-  shortChunks: { title: '知識內容過短', hint: '內容太少的多半是切壞或抓壞的殘片,檢索命中也答不出東西。點開知識補內容或停用。' },
+  shortChunks: { title: '知識內容較短', hint: '這幾條不到 30 字(空白不算)。⚠️ 它們沒有壞掉——AI 一樣找得到、也照樣拿去回答,「客服電話」「免運門檻」這種本來就這麼短。列出來只是因為切壞或抓壞的殘片多半也很短:看一眼,是殘片就刪掉,是正常知識就放著不用管。' },
   expiredChunks: { title: '知識已過期停用', hint: '這幾條因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
   wrongAnswerChunks: { title: '被標記「AI 答錯了」', hint: '同事在對話上看到 AI 用這幾條答錯客人。點開改掉內容就會從這裡消失——系統看的是「標記之後這條有沒有被改過」,不需要另外按已處理。次數是近 30 天內被標記的次數。' },
 }
@@ -2490,7 +2516,10 @@ const healthListTruncatedNote = computed(() => {
   const group = health.value[cat]
   const notes: string[] = []
   if (group.count > group.items.length) {
-    notes.push(`共 ${group.count} 條,先列前 ${group.items.length} 條;處理完重新整理會再列出其餘的。`)
+    // 「知道就好」的兩類不講「處理完」——那是催促語氣,跟灰字那行「不用處理」互相打架
+    notes.push(cat === 'shortChunks' || cat === 'expiredChunks'
+      ? `共 ${group.count} 條,先列前 ${group.items.length} 條。`
+      : `共 ${group.count} 條,先列前 ${group.items.length} 條;處理完重新整理會再列出其餘的。`)
   }
   // 掃描達上限時計數本身就是低估的,不講清楚店家會以為「清完就沒事了」
   if (health.value.chunkScanTruncated) {

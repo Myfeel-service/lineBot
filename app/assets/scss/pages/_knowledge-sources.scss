@@ -263,22 +263,24 @@
 
   &:hover { color: var(--el-color-primary); }
 }
-.src-chunk-warn {
+/* 「內容較短」是提醒不是警告:短卡照樣被檢索、照樣拿去回答,沒有任何東西壞掉。
+   原本用 warning 黃(跟「同步失敗」同一個顏色語言)會讓人以為那條知識失效了。改中性灰。 */
+.src-chunk-note {
   font-size: 11px;
-  color: var(--el-color-warning);
-  background: var(--el-color-warning-light-9);
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
   padding: 1px 6px;
   border-radius: 4px;
   white-space: nowrap;
 }
 
-/* 過短的「怎麼辦」要看得見:原本只在 hover title,手機看不到、也沒說門檻是多少 */
-.src-chunk-warn-hint {
+/* 短卡的說明要看得見:原本只在 hover title,手機看不到、也沒說門檻是多少 */
+.src-chunk-note-hint {
   display: block;
   margin-top: 2px;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--el-color-warning-dark-2);
+  color: var(--el-text-color-secondary);
 }
 .src-chunk-preview {
   margin: 2px 0;
@@ -755,7 +757,8 @@
     color: var(--el-text-color-secondary);
   }
 
-  /* 「已過期自動停用」＝功能正常運作的結果，不是待辦：虛線、灰階、不催促 */
+  /* 「知道就好」的那幾行（已過期停用／內容較短）：虛線、灰階、不催促。
+     可以有多行——外層 __body 是 column flex + gap 6px，行距由它給。 */
   &__muted {
     padding: 6px 10px;
     border: 1px dashed var(--el-border-color);

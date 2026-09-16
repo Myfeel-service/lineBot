@@ -42,7 +42,7 @@ const FEEDBACK_SCAN_LIMIT = 100
  * 知識庫健康檢查列(P2-3):把 7/31 稽核靠工程師手動翻出來的問題變成常駐體檢。
  * 一次回六類警訊的計數+樣本,來源頁頂部顯示彙總、點了直接列出來修:
  *   來源層——同步失敗 / 偵測到變動未處理 / 多卡檔案未設產品名(無主卡事故源頭)
- *   卡片層——內容過短 / 索引失敗 / 已過期停用
+ *   卡片層——索引失敗 / 被標記答錯 ｜ 只是提醒(不催人處理)——內容較短 / 已過期停用
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
@@ -194,7 +194,8 @@ export default defineEventHandler(async (event) => {
       expiredCount++
       if (expiredItems.length < SAMPLE_LIMIT) expiredItems.push(item)
     }
-    // 過短只看啟用中的卡(停用的不影響答題);總覽卡另有合成流程不算。
+    // 較短只看啟用中的卡(停用的不影響答題);總覽卡另有合成流程不算。
+    // ⛔ 這是提醒不是待辦——短卡照樣被檢索、照樣拿去回答,判定理由見 SHORT_CHUNK_CONTENT_CHARS。
     // 判定用 shared 的共用函式,與來源頁逐卡警示同一把尺(不然兩邊數字會對不起來)
     else if (status !== 'disabled' && !c?.isOverview && isShortChunkContent(c?.content)) {
       shortCount++
