@@ -137,21 +137,32 @@ export default defineEventHandler(async (event) => {
   await ref.set(updates, { merge: true })
   invalidateLineWorkspaceCredentialsCache()
 
+  // 哪幾格的值**真的變了**（拿存檔前那份快照比對；清除算一種變動）
+  const changedKeys = Object.keys(updates).filter((k) => {
+    if (k === 'updatedAt') return false
+    const next = updates[k] as any
+    const prev = (previous as Record<string, unknown> | null)?.[k]
+    if (next?.methodName === 'FieldValue.delete') return prev !== undefined
+    return JSON.stringify(prev ?? null) !== JSON.stringify(next ?? null)
+  })
+
   // 操作紀錄：⛔只記「哪幾項被動過」，值本身由稽核層遮罩（憑證絕不可落進紀錄裡，
   // 那會讓稽核自己變成第二個外洩面）。換過鑰匙卻查不到是誰換的，是最不該有的空白。
-  await writeAuditLog({
+  // ⛔ 一格都沒變就整筆不寫：留一筆「更新了 0 項」只會把真正的變更淹掉。
+  if (changedKeys.length) await writeAuditLog({
     workspaceId,
     uid,
     actor: 'human',
     action: 'line-workspace.put',
-    // ⛔ updatedAt 每次都會變，把它算成「有改動」的話，什麼都沒改的存檔也會記成「更新了 1 項」——
-    //    這一頁是回答「憑證是誰換的」的地方，多報一項就是在紀錄裡說謊。
-    after: Object.fromEntries(
-      Object.keys(updates)
-        .filter(k => k !== 'updatedAt')
-        .map(k => [k, (updates[k] as any)?.methodName === 'FieldValue.delete' ? '（已清除）' : '（已更新）']),
-    ),
-    note: `更新了 ${Object.keys(updates).filter(k => k !== 'updatedAt').length} 項 LINE 連線設定`,
+    // ⛔ 只記「值真的變了」的那幾格。
+    //    排掉 updatedAt 還不夠：這一頁每次存檔都會把某些欄位原封不動一起送上來
+    //    （組織頁固定帶 defaultLiffId），照單全收的話，什麼都沒改按一下存檔
+    //    也會留一筆「更新了 1 項 LINE 連線設定」——而這一頁存在的理由
+    //    正是回答「憑證是誰換的」，多報一項就是在紀錄裡說謊。
+    after: Object.fromEntries(changedKeys.map(k =>
+      [k, (updates[k] as any)?.methodName === 'FieldValue.delete' ? '（已清除）' : '（已更新）'],
+    )),
+    note: `更新了 ${changedKeys.length} 項 LINE 連線設定`,
   })
   if (boundBotUserId) await rememberChannelBinding(db, wid, boundBotUserId)
 

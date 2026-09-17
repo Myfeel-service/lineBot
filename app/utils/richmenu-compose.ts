@@ -135,14 +135,18 @@ export async function composeRichMenuImage(opts: {
     ctx.fillText(p.label, p.cx, p.cy)
   }
 
-  // 由高到低試品質，第一個塞得進上限的就用它
+  // 由高到低試品質，第一個塞得進上限的就用它。
+  // ⛔ 不要先用 0.92 編一次當初始值：迴圈第一圈就是 0.92，等於整張圖白編一遍
+  //    （2500 寬的圖每編一次都是好幾 MB 的字串，而且卡在主執行緒上）。
   const maxBytes = opts.maxBytes ?? 500 * 1024
-  let last = canvas.toDataURL('image/jpeg', 0.92)
+  let last = ''
+  let bytes = 0
   for (const q of [0.92, 0.85, 0.75, 0.65, 0.55, 0.45]) {
     last = canvas.toDataURL('image/jpeg', q)
-    if (dataUrlBytes(last) <= maxBytes) break
+    bytes = dataUrlBytes(last)
+    if (bytes <= maxBytes) break
   }
-  return { dataUrl: last, bytes: dataUrlBytes(last) }
+  return { dataUrl: last, bytes }
 }
 
 /** data URL 解出來大概幾個位元組（base64 每 4 個字元 3 個位元組） */

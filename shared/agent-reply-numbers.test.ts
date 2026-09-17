@@ -55,6 +55,18 @@ describe('泡泡的數字有沒有出處', () => {
     expect(numbersWithoutSource('我會建一則名為「中秋節公休通知」的草稿，內容是 9/28 至 10/1 公休。', card)).toEqual([])
   })
 
+  it('🔴 中文數字寫的也要抓：「從三十分鐘調整為五分鐘」卡片上根本沒有 30', () => {
+    expect(numbersWithoutSource('我會將提醒時間從三十分鐘調整為五分鐘。', SLA_CARD)).toEqual([30])
+  })
+
+  it('⛔ 中文數字要帶單位才算，否則「一次只能處理一個」會被誤判', () => {
+    expect(numbersWithoutSource('我一次只能處理一個敏感詞的移除。', SLA_CARD)).toEqual([])
+  })
+
+  it('中文數字照著卡片講就放行', () => {
+    expect(numbersWithoutSource('我會把提醒時間從六十分鐘改成五分鐘。', SLA_CARD)).toEqual([])
+  })
+
   it('全形數字也算得出來', () => {
     expect(numbersWithoutSource('改成 ３０ 分鐘', SLA_CARD)).toEqual([30])
   })

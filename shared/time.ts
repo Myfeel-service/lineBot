@@ -31,6 +31,18 @@ export function taipeiDate(date: Date = new Date()): string {
   return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`
 }
 
+/**
+ * 台灣時區下的「YYYY-MM-DD HH:mm」——講給人看的時間點。
+ *
+ * ⛔ 需要這個的地方不要各自手寫 `new Date(ms + 8h).toISOString()`：
+ *    那串東西每抄一次就多一份 2026-08-07 時區 bug 的形狀，
+ *    以後要修得先把散落各處的抄本全部找出來。
+ */
+export function taipeiDateTime(ms: number): string {
+  const t = new Date(ms + TAIPEI_OFFSET_MS)
+  return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())} ${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}`
+}
+
 // ── 日曆運算（純 YYYY-MM-DD 字串運算，不涉時區）──────────────────────
 
 /** 取日期字串的「日」（1–31）。 */

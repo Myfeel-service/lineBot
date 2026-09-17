@@ -83,6 +83,16 @@ export interface AdminOpDef {
    *    （判斷在 `shared/agent-user-signal.ts`，與 `freeTextFields` 那道來源檢查同一個位置把關）。
    */
   needsUserNumber?: boolean
+  /**
+   * 這個操作「動的是哪一個東西」放在哪個參數（流程名字、要加的那個字…）。
+   *
+   * 用來分辨兩件事：使用者是在**改同一個提議**（「改成 30 分鐘」），
+   * 還是**換成另一件事**（提議加「退費」之後說「順便把客訴也加進去」）。
+   * ⛔ 只看參數有沒有變是不夠的——改時間也會讓參數變，結果每次修改都跳一句
+   *    「上一個提議還沒有被執行」，憑空講出一個並不存在的待辦（實測踩到）。
+   * 不填＝這個操作只改單一設定，沒有「動到哪一個」的概念。
+   */
+  targetField?: string
   /** 收斂＋驗證：吐出正規化後的參數，或一句要使用者補充的話 */
   normalize: (raw: Record<string, unknown>) => Record<string, unknown>
   /**
@@ -291,10 +301,19 @@ async function resolveScript(ctx: AdminOpCtx, name: string, docs?: Record<string
   //    不用開新的複合索引，而讀取數從「全部流程」降到「同名的那幾筆」。
   //    （2026-08-11 讀取費暴衝就是這種無上限掃描累積出來的。）
   const raw = docs ?? await (async () => {
-    const snap = await ctx.db.collection(SCRIPTS_COLLECTION).where('name', '==', name.trim()).limit(10).get()
+    const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
+      // ⛔ 工作區要進**查詢條件**，不可以只靠事後過濾：只查 name 的話會撈到別的租戶，
+      //    撞名的租戶多過 limit 就把自己這筆擠掉——症狀是提議時好好的
+      //    （那一步有帶整份清單），**按下確定才失敗**，而且回一句
+      //    「這個工作區還沒有任何自動回應可以上下架」的假話。
+      // ⚠️ 兩個都是等值條件，Firestore 用既有的單欄位索引就查得動，不必開新的複合索引。
+      .where('workspaceId', '==', ctx.workspaceId)
+      .where('name', '==', name.trim())
+      .limit(10)
+      .get()
     return snap.docs
       .map(d => ({ id: d.id, ...(d.data() as Record<string, any>) } as Record<string, any>))
-      // 單欄位查詢跨得到別的工作區：這道過濾就是跨租戶的防線，⛔不可省
+      // 保留這道：查詢已經擋掉了，這是第二層防線
       .filter(d => d.workspaceId === ctx.workspaceId)
   })()
   const rows = raw.map(d => readScriptRow(String(d.id), d))
@@ -315,6 +334,7 @@ async function resolveScript(ctx: AdminOpCtx, name: string, docs?: Record<string
 
 const scriptSetEnabled: AdminOpDef = {
   capability: 'scripts.write',
+  targetField: 'name',
   argsHint: '參數：{"name":"自動回應的名字","enabled":true|false}。'
     + 'name 必須是清單上**一字不差**的名字（先用 list_auto_responses 或 list_scripts 查，⛔不要自己拼）；'
     + 'enabled=true 是上架（開始生效）、false 是下架（停用）。',
@@ -511,6 +531,7 @@ interface SensitiveTopicArgs { action: 'add' | 'remove', word: string }
 
 const aiSettingsSensitiveTopic: AdminOpDef = {
   capability: 'ai.settings.write',
+  targetField: 'word',
   freeTextFields: ['word'],
   argsHint: '參數：{"action":"add"|"remove","word":"退款"}。'
     + 'add＝客人一提到這個字就直接轉真人（AI 不回答）；remove＝把這個字拿掉。'
@@ -617,15 +638,20 @@ async function recentAiPerformance(ctx: AdminOpCtx): Promise<string> {
   try {
     const snap = await ctx.db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
       .where('workspaceId', '==', ctx.workspaceId)
+      // ⛔ 七天這個條件要進**查詢**，不能只在記憶體裡濾：
+      //    只撈「最新 100 筆（所有類型）」的話，其他類型的回饋一多，
+      //    這 100 筆可能連七天都蓋不到——畫面卻會說「紀錄太多我只看得到 100 筆」，
+      //    而這一格正是「要不要讓 AI 直接回所有客人」的判斷依據，給假的最要不得。
+      //    ⚠️ 吃的是既有的 (workspaceId, createdAt) 索引，不必開新的。
+      .where('createdAt', '>=', since)
       .orderBy('createdAt', 'desc')
       .limit(100)
       .get()
+    // 現在「截斷」的意思才對得上：七天內的回饋多到 100 筆還裝不下
     truncated = snap.size >= 100
     for (const d of snap.docs) {
-      const data = d.data() as { type?: string, createdAt?: { toMillis?: () => number } }
-      if (data.type !== 'wrong_answer') continue
-      const ms = data.createdAt?.toMillis?.() ?? 0
-      if (ms >= since.toMillis()) wrong++
+      const data = d.data() as { type?: string }
+      if (data.type === 'wrong_answer') wrong++
     }
   }
   catch {
@@ -835,6 +861,7 @@ interface BroadcastDraftArgs {
 
 const broadcastDraftCreate: AdminOpDef = {
   capability: 'broadcast.write',
+  targetField: 'name',
   freeTextFields: ['name', 'text'],
   argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
     + '⛔ 只會建**草稿**，不會發送——發送一定要人到推播頁自己按。'
@@ -897,8 +924,11 @@ const broadcastDraftCreate: AdminOpDef = {
   async fingerprint(ctx, raw) {
     // 同名草稿已經存在 → 執行前擋下（避免重複建）
     const args = raw as unknown as BroadcastDraftArgs
-    // ⛔ 同上：只是要知道「有沒有同名的」，不要為此掃整個推播集合
+    // ⛔ 同上：只是要知道「有沒有同名的」，不要為此掃整個推播集合；
+    //    但工作區一定要進查詢條件，只查 name 會被別租戶的同名草稿擠掉，
+    //    防重複就變成看運氣（「中秋公告」這種名字跨租戶一定會撞）。
     const snap = await ctx.db.collection('broadcasts')
+      .where('workspaceId', '==', ctx.workspaceId)
       .where('name', '==', args.name)
       .limit(10)
       .get()

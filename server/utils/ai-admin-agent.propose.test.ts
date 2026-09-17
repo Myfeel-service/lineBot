@@ -43,11 +43,13 @@ const scripts = [
   { name: '出貨查詢', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', keywords: ['出貨'], matchMode: 'keyword' }] },
 ]
 const updates: any[] = []
+/** 每一次 .where() 的條件：用來釘住「用名字找東西時有沒有把工作區帶進查詢」 */
+const whereCalls: Array<[string, string, unknown]> = []
 
 function makeDb() {
   // 鏈式 where/orderBy/limit：程式現在用 .where('name','==',x).limit(10) 找同名的那幾筆
   const chain: any = {
-    where: () => chain,
+    where: (field: string, op: string, value: unknown) => { whereCalls.push([field, op, value]); return chain },
     orderBy: () => chain,
     limit: () => chain,
     get: async () => ({
@@ -76,6 +78,7 @@ beforeEach(() => {
   setCalls.length = 0
   auditLogs.length = 0
   updates.length = 0
+  whereCalls.length = 0
 })
 
 describe('提議一個操作', () => {
@@ -222,6 +225,21 @@ describe('提議一個操作', () => {
     expect(prompt).not.toContain('xxxxxxxxxx')
   })
 
+  it('🔴 用名字找流程時，工作區要進**查詢條件**（⛔不可以只靠事後過濾）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'script-set-enabled',
+      args: { name: '出貨查詢', enabled: false },
+    }))
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '把出貨查詢關掉' })
+
+    // 只查 name 的話會撈到別租戶的同名流程，撞名超過上限就把自己這筆擠掉——
+    // 症狀是提議看起來正常、**按下確定才失敗**，還回一句「這個工作區還沒有任何自動回應」
+    const byName = whereCalls.filter(([f]) => f === 'name')
+    expect(byName.length, '應該有用名字查一次').toBeGreaterThan(0)
+    expect(whereCalls.some(([f, op, v]) => f === 'workspaceId' && op === '==' && v === 'w1')).toBe(true)
+  })
+
   it('⛔ 工具層的寫入閘門沒被拆掉：代辦上線後，工具依然全部唯讀', () => {
     for (const [name, tool] of Object.entries(TOOLS))
       expect(tool.mutates, `${name} 變成寫入工具了——代辦要走操作模組表，不是把閘門拆掉`).toBe(false)
@@ -295,6 +313,20 @@ describe('當使用者的話不足以決定要動什麼', () => {
     expect(second).toContain('沒有講到任何時間或數字')
   })
 
+  it('🔴 前面隨口打過的數字不算數：那道閘門只看這一句', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
+
+    // 前一句的「第 3 條」跟他現在要設幾點完全無關，⛔不可以拿它當「他講過數字了」
+    const res = await ask('晚上太晚有人敲我 幫我設一下', {
+      history: [{ role: 'user', text: '把第 3 條關掉' }],
+    })
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(generateJson.mock.calls[1]?.[0]).toContain('沒有講到任何時間或數字')
+  })
+
   it('講了數字就照做（⛔別把正常需求一起擋掉）', async () => {
     generateJson.mockResolvedValueOnce(step({
       action: 'propose',
@@ -360,7 +392,26 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
     expect(res.reply).toContain('晚上 10 點')
   })
 
-  it('🔴 上一個提議還沒被執行 → 影響欄要講出來（「順便把 X 也加進去」會漏掉前一個）', async () => {
+  it('🔴 換成另一件事 → 影響欄要講出來（「順便把客訴也加進去」會漏掉前一個「退費」）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-sensitive-topic',
+      args: { action: 'add', word: '客訴' },
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(),
+      workspaceId: 'w1',
+      uid: 'u1',
+      role: 'admin',
+      message: '順便把客訴也加進去',
+      lastProposal: { opId: 'ai-settings-sensitive-topic', args: { action: 'add', word: '退費' } },
+    })
+
+    expect(res.pendingOp?.preview.warning).toContain('上一個提議還沒有被執行')
+  })
+
+  it('⛔ 只是改同一件事就不可以警告：「改成早上九點」不存在第二個待辦', async () => {
     generateJson.mockResolvedValueOnce(step({
       action: 'propose',
       op: 'ai-settings-service-hours',
@@ -376,6 +427,25 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
       lastProposal: { opId: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } },
     })
 
-    expect(res.pendingOp?.preview.warning).toContain('上一個提議還沒有被執行')
+    expect(res.pendingOp?.preview.warning ?? '').not.toContain('上一個提議還沒有被執行')
+  })
+
+  it('⛔ 同一條流程只是從下架改成上架，也還是同一件事', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'script-set-enabled',
+      args: { name: '出貨查詢', enabled: false },
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(),
+      workspaceId: 'w1',
+      uid: 'u1',
+      role: 'admin',
+      message: '還是關掉好了',
+      lastProposal: { opId: 'script-set-enabled', args: { name: '出貨查詢', enabled: true } },
+    })
+
+    expect(res.pendingOp?.preview.warning ?? '').not.toContain('上一個提議還沒有被執行')
   })
 })

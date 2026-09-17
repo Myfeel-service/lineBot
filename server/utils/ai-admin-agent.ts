@@ -28,7 +28,7 @@ import type { KpiResult } from '~~/shared/types/conversation-stats'
 import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
-import { addDays, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
+import { addDays, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
 import { can, type Capability } from '~~/shared/permissions'
 import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/types/audit'
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
@@ -353,9 +353,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         const after = (data.after ?? {}) as Record<string, unknown>
         const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
         return {
-          when: typeof ts?.toMillis === 'function'
-            ? new Date(ts.toMillis() + 8 * 3600_000).toISOString().replace('T', ' ').slice(0, 16)
-            : '(剛剛)',
+          when: typeof ts?.toMillis === 'function' ? taipeiDateTime(ts.toMillis()) : '(剛剛)',
           who: data.actor === 'agent' ? '小幫手代辦' : '成員操作',
           uid: String(data.uid ?? ''),
           what: AUDIT_ACTION_LABELS[String(data.action ?? '')] ?? String(data.action ?? ''),
@@ -456,9 +454,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
           sent: Number(b.sentCount ?? 0),
           failed: Number(b.failedCount ?? 0),
           skipped: Number(b.skippedCount ?? 0),
-          completedAt: typeof done?.toMillis === 'function'
-            ? new Date(done.toMillis() + 8 * 3600_000).toISOString().replace('T', ' ').slice(0, 16)
-            : null,
+          completedAt: typeof done?.toMillis === 'function' ? taipeiDateTime(done.toMillis()) : null,
           ...(b.failureReason ? { failureReason: String(b.failureReason) } : {}),
         }
       })
@@ -663,10 +659,16 @@ export async function runAdminAgentChat(params: {
           )
         }
 
-        // ⛔ 參數是時間／數量的操作,使用者從頭到尾沒講過任何數值就不准提議。
+        // ⛔ 參數是時間／數量的操作,使用者沒講過任何數值就不准提議。
         // 2026-09-16 實測:「晚上太晚有人敲我,幫我設一下」→ 直接提議 22:00–08:00,
         // 還順手把使用者沒抱怨的早上也提前兩小時。
-        if (op.needsUserNumber && !hasNumberSignal(userSaid)) {
+        //
+        // ⛔ **只看這一句**,除非正在接續一個已經成形的提議。
+        //    掃整段歷史的話,他前面隨便打過一個數字(「第 3 條」「VIP2」「用了幾則」)
+        //    就足以讓這道閘門失效——而那些數字跟他現在要設幾點完全無關。
+        //    接續時才看歷史:那時數值本來就是前幾句講的(「勿擾改成十一點」→「好」)。
+        const numberScope = lastProposal ? userSaid : [message]
+        if (op.needsUserNumber && !hasNumberSignal(numberScope)) {
           throw new AdminOpUserError(
             '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見值(例如 22:00–08:00)。'
             + '請先告訴他現在設定的是什麼,再問他要改成幾點(或幾分鐘)。',
@@ -700,7 +702,18 @@ export async function runAdminAgentChat(params: {
         // ⛔ 上一個提議**沒有被執行過**,而這一次不會連它一起做——這件事一定要講出來。
         // 2026-09-16 實測(`C-192`):提議加「退費」之後使用者說「順便把客訴也加進去」,
         // 結果只會加「客訴」,而「退費」那件事再也沒有人提過——使用者以為兩個都在隊列裡。
-        const supersede = lastProposal && JSON.stringify(lastProposal.args ?? {}) !== JSON.stringify(rawArgs)
+        // ⛔ 只有「換成另一件事」才警告,「改同一件事」不算。
+        //    以前只比參數有沒有變,結果「改成 30 分鐘」這種正常修改也會跳一句
+        //    「上一個提議還沒有被執行」,等於憑空講出一個並不存在的待辦。
+        //    判準改成看**動的是不是同一個東西**(哪一條流程、哪一個字);
+        //    沒有 targetField 的操作只改單一設定,參數怎麼變都只是在改同一件事。
+        const target = op.targetField
+        const switchedTarget = !!(
+          target && lastProposal
+          && String((lastProposal.args as any)?.[target] ?? '').trim()
+          !== String((rawArgs as any)?.[target] ?? '').trim()
+        )
+        const supersede = (lastProposal && (lastProposal.opId !== opId || switchedTarget))
           // ⚠️ 這一句是**原樣印在確認卡上**給店家看的，標點跟著畫面用全形
           ? '⚠️ 上一個提議還沒有被執行，這次只會做上面列的這一件事。'
           : ''

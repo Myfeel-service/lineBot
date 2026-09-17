@@ -82,6 +82,19 @@ describe('能不能還原', () => {
     expect(byMarker.ok).toBe(false)
   })
 
+  it('🔴 被截斷的是「改之後」也不准還原：⛔否則會給一顆永遠按不成功的鈕', () => {
+    // 判斷用 before、比對現值卻用 after。只看 before 的話這種舊紀錄會長出還原鈕，
+    // 按下去必定回「這段期間這些設定又被改過了」——而根本沒有人改過。
+    const plan = planRevert({
+      id: 'a7',
+      action: 'ai/settings.put',
+      before: { shopUrl: 'https://old.example.com' },
+      after: { shopUrl: 'https://…(截斷,原 900 字)' },
+    })
+    expect(plan.ok).toBe(false)
+    if (!plan.ok) expect(plan.reason).toContain('截斷')
+  })
+
   it('🔴 子物件只比紀錄裡有寫到的那幾格（否則永遠說「被改過」、永遠不能還原）', async () => {
     settings.handoffNotify = { enabled: true, lineUserIds: ['U1', 'U2'], slaRemindMinutes: 45 }
     const msg = await applyRevert(

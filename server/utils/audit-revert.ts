@@ -86,8 +86,11 @@ const REVERTIBLE_SETTING_KEYS = new Set([
 export function planRevert(row: AuditRecordForRevert): RevertPlan {
   const label = auditActionLabel(row.action)
 
-  // ⛔ 被砍過的紀錄不能還原：寫回去會少東西，而人會以為完整還原了
-  if (row.lossy || looksTruncated(row.before)) {
+  // ⛔ 被砍過的紀錄不能還原：寫回去會少東西，而人會以為完整還原了。
+  // ⛔ `after` 也要看：判斷用 before、比對現值卻用 after，那種「之前很短、之後被截斷」
+  //    的舊紀錄會**給出一顆永遠按不成功的還原鈕**——按下去回「這段期間這些設定又被改過了」，
+  //    而根本沒有人改過，使用者會跑去找一個不存在的併發修改。
+  if (row.lossy || looksTruncated(row.before) || looksTruncated(row.after)) {
     return {
       ok: false,
       reason: '這筆紀錄存的時候有內容被截斷或遮罩（值太長、項目太多、或含憑證），'

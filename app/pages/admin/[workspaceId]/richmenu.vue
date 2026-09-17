@@ -674,10 +674,18 @@ const genLabels = ref<string[]>([])
 const genBusy = ref(false)
 const genNote = ref('')
 
-// 換一張選單或換版型時，格子數會變 → 讓文字欄位跟著對齊，⛔不要留著上一張的字
+// 換版型時格子數會變 → 讓文字欄位跟著對齊
 watch(() => form.value.areas.length, (n) => {
   genLabels.value = Array.from({ length: n }, (_, i) => genLabels.value[i] ?? '')
 }, { immediate: true })
+
+// ⛔ 只看格子數不夠：換到**另一張格子數一樣的選單**時這個數字沒變，
+//    上一張的按鈕文字就會整批留著，然後被燒進新選單的圖裡。
+watch(selectedId, () => {
+  genLabels.value = Array.from({ length: form.value.areas.length }, () => '')
+  genTheme.value = ''
+  genNote.value = ''
+})
 
 async function onGenerateBackground() {
   if (genBusy.value) return

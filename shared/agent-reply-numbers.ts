@@ -56,14 +56,31 @@ function to24h(tod: string, n: number): number {
   return n
 }
 
+/**
+ * 中文數字＋單位（「三十**分鐘**」「五**分**」）。
+ *
+ * ⛔ 一定要帶單位才算：光認中文數字的話，「我**一**次只能處理**一**個」會被當成兩個數字，
+ *    整句好好的回覆就被判定成「有卡片上沒有的數字」而被換掉。
+ */
+// ⛔ 單位只收「會出現在設定值上」的那幾個。把「次」也算進去的話，
+//    「我**一次**只能處理一個」會被當成數字 1，好好的一句話就被換掉（實測踩到）。
+const CJK_NUM_WITH_UNIT = /([零一二兩三四五六七八九十百半]+)\s*個?\s*(?:分鐘|分|秒|小時|鐘頭|天|倍|成)/g
+
 /** 抓出一段文字裡所有「數字的出現」 */
 function tokenize(text: string): NumberToken[] {
   const tokens: NumberToken[] = []
   // ⛔ 先吃掉鐘點寫法再掃純數字，否則「晚上 11 點」的 11 會被算兩次
   //    （一次當鐘點、一次當裸數字），裸數字那次永遠對不上換算後的卡片。
-  const rest = String(text ?? '').replace(CLOCK_WITH_TOD, (_m, tod: string, num: string) => {
+  let rest = String(text ?? '').replace(CLOCK_WITH_TOD, (_m, tod: string, num: string) => {
     const n = cjkToNumber(num)
     if (n !== null) tokens.push({ candidates: [n, to24h(tod, n)] })
+    return ' '
+  })
+  // ⛔ 中文數字也要抓：只認阿拉伯數字的話，模型寫「從**三十**分鐘調整為五分鐘」
+  //    會一個字都不被攔，而卡片上寫的是 60——正是這支要防的那個症狀。
+  rest = rest.replace(CJK_NUM_WITH_UNIT, (_m, num: string) => {
+    const n = cjkToNumber(num)
+    if (n !== null) tokens.push({ candidates: [n] })
     return ' '
   })
   for (const m of rest.matchAll(/[0-9０-９]+/g)) {
