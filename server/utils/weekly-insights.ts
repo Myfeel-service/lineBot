@@ -2,10 +2,12 @@
  * 洞察週報——「本週顧客觀察」（D-25 第二階，CRM-EVAL-20260822 發想二）。
  *
  * 每週一搭在每日客服摘要**同一則** LINE 訊息裡（同節慶提醒的掛法，不另發一則），
- * 講三件店家聽得懂、而且立刻有下一步的觀察：
+ * 講店家聽得懂、而且立刻有下一步的觀察：
  *   1. 這週被貼最多的標籤（tagLogs 聚合）——「大家最近在問什麼」的代理指標
- *   2. 待處理的 AI 標籤建議數——收件匣的每週提醒（列表那顆章的補強，不是取代）
- *   3. 上月有來訊、最近兩週安靜下來的客人數——沉睡前的最後窗口
+ *   2. 上月有來訊、最近兩週安靜下來的客人數——沉睡前的最後窗口
+ *
+ * ⛔ 2026-09-17（`D-81`）移除「待處理的 AI 標籤建議數」那一行：摘要本文自 08-31
+ * （`D-43`①）起已經有同一個數字，週一那則等於把同一件事用兩個名字講兩次。
  *
  * 設計約束：
  * - **只講有資料的觀察**：全部為零就整段不出現（return null），不硬湊一段空話——
@@ -64,8 +66,6 @@ export interface WeeklyInsightInput {
   topTags: Array<{ name: string; count: number }>
   /** 本週被標成「沒互動」的人數與標籤名（0＝不講） */
   inactiveAdds: { count: number; name: string }
-  /** 待處理 AI 標籤建議的客人數 */
-  pendingSuggestUsers: number
   /** 上月有來訊、最近兩週安靜的客人數 */
   quietDown: number
   /** tagLogs 撞到取樣上限（要講明，否則「+1,000」會被當成精確值） */
@@ -81,26 +81,26 @@ export function formatWeeklyInsightLines(input: WeeklyInsightInput): string[] | 
 
   // ⛔ 指路一律用**側欄的名字**（「好友」「AI 設定」）——人是拿著訊息對照側欄找的，
   //    寫「好友頁」這種頁面別名會找不到（G-22③：同一頁曾有三個名字）
+  // ⛔ 不加「・」項目符號（2026-09-17 `D-81`）：摘要本體改版後整則都不用項目符號，
+  //    只有這一段還留著的話，同一顆泡泡裡會有兩套排版。
   if (input.topTags.length) {
     const parts = input.topTags.map(t => `「${t.name}」+${t.count} 位`).join('、')
-    lines.push(`・這週被貼最多的標籤：${parts}——後台「好友」頁可依標籤篩出名單`)
+    lines.push(`這週被貼最多的標籤：${parts}——後台「好友」頁可依標籤篩出名單`)
   }
   if (input.inactiveAdds.count > 0) {
-    lines.push(`・${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
+    lines.push(`${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
   }
-  if (input.pendingSuggestUsers > 0) {
-    // ⛔叫「貼標建議」不叫「AI 建議」（2026-08-28 拍板）：摘要本文同一則訊息裡有一行
-    // 「客人常問但 AI 答不好的主題 N 個」＝知識庫建議收件匣，兩者是**不同的東西**，
-    // 但原本都叫「AI 建議」又相鄰，讀的人會以為同一件事講兩次。
-    lines.push(`・${input.pendingSuggestUsers} 位客人的貼標建議還沒看——後台「好友」頁勾「只看有 AI 建議的」`)
-  }
+  // ⛔ 這裡**刻意沒有**「還沒看的貼標建議」那一行（2026-09-17 移除，`D-81`）：
+  // 08-31（`D-43`①）之後摘要本文已經有「N 位客人的標籤建議等你決定」，兩行同一個
+  // 查詢（userTagSuggestions.hasPending）、同一個去處、同一個操作，只有名字不一樣
+  // （標籤建議／貼標建議）——週一的那則訊息等於把同一件事講兩次。
   if (input.quietDown > 0) {
     // 文案跟資料窗口一字不差（14~28 天前，不是日曆上個月）＋這一行也要有下一步（G-22②④）
-    lines.push(`・最近一個月內有來訊、但兩週沒再出現的客人：${input.quietDown} 位——想提早喚醒，到「AI 設定」把「沒互動」天數調低，就能用標籤把他們撈出來發推播`)
+    lines.push(`最近一個月內有來訊、但兩週沒再出現的客人：${input.quietDown} 位——想提早喚醒，到「AI 設定」把「沒互動」天數調低，就能用標籤把他們撈出來發推播`)
   }
 
   if (!lines.length) return null
-  if (input.truncated) lines.push(`・（標籤統計為本週前 ${TAG_LOG_SCAN_LIMIT.toLocaleString('en-US')} 筆取樣）`)
+  if (input.truncated) lines.push(`（標籤統計為本週前 ${TAG_LOG_SCAN_LIMIT.toLocaleString('en-US')} 筆取樣）`)
   return [`📈 本週顧客觀察（${input.rangeText}）`, ...lines]
 }
 
@@ -121,7 +121,7 @@ export async function buildWeeklyInsights(
   taipeiToday: string,
 ): Promise<string[] | null> {
   const { startMs, endMs, rangeText } = weeklyWindow(taipeiToday)
-  const [logSnap, pendingSuggestUsers, quietDown] = await Promise.all([
+  const [logSnap, quietDown] = await Promise.all([
     db.collection('tagLogs')
       .where('workspaceId', '==', workspaceId)
       .where('action', '==', 'add')
@@ -130,13 +130,6 @@ export async function buildWeeklyInsights(
       .limit(TAG_LOG_SCAN_LIMIT)
       .select('tagId')
       .get(),
-    // count 聚合：不論命中幾筆都只計 1 次讀取。
-    // 「還沒看的建議」是**現在的狀態**不是週統計，刻意不套窗口——套了反而說謊
-    db.collection('userTagSuggestions')
-      .where('workspaceId', '==', workspaceId)
-      .where('hasPending', '==', true)
-      .count().get().then(s => s.data().count)
-      .catch(() => 0),
     // 「最近一個月內有來訊、但兩週沒再出現」：最後來訊落在 [週界-28天, 週界-14天) 的對話數。
     // 錨定週界＝同一週重算數字不漂。lastInboundMessageAt 是 08-19 起才有的欄位 →
     // 這個窗口要到 9 月初才開始有值，在那之前自然為 0＝這一條整週不出現（誠實的漸進）
@@ -178,7 +171,6 @@ export async function buildWeeklyInsights(
     rangeText,
     topTags,
     inactiveAdds,
-    pendingSuggestUsers,
     quietDown,
     truncated: logSnap.size >= TAG_LOG_SCAN_LIMIT,
   })

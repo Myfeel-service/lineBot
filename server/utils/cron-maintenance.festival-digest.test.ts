@@ -40,6 +40,11 @@ vi.mock('./line', () => ({ pushMessage }))
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
 
+// 摘要開頭「昨天的成績」走日結（2026-09-17 `D-81`）；這裡固定給一份，
+// 節慶提醒的接線才不會被昨天的數字干擾
+const { loadDayStats } = vi.hoisted(() => ({ loadDayStats: vi.fn() }))
+vi.mock('./conversation-stats-rollup', () => ({ loadDayStats }))
+
 import { dailyBacklogDigest } from './cron-maintenance'
 
 const WS = 'WS'
@@ -100,6 +105,8 @@ function makeDb(opts: Options = {}) {
       select: () => q, // 貼標建議那條查詢有帶 select（D-43①），假 db 缺這個方法整包 Promise.all 會炸
       limit: () => q,
       get: async () => ({ size: docs.length, docs, empty: !docs.length }),
+      // 待辦件數走 count 聚合（2026-09-17 改逐工作區查）
+      count: () => ({ get: async () => ({ data: () => ({ count: docs.length }) }) }),
     }
     return q
   }
@@ -112,14 +119,21 @@ function makeDb(opts: Options = {}) {
         workspaceScans++
         return query(workspaceIds.map(id => ({ id, data: () => ({}) })))
       }
+      if (name === 'users') {
+        return { doc: () => ({ get: async () => ({ data: () => ({ displayName: '某客人' }) }) }) }
+      }
       if (name === 'conversationSessions') {
-        const q: any = {
-          where: (_f: string, _op: string, value: string) =>
-            value === 'pending_human' ? query(sessionDocs) : query([]),
-          limit: () => q,
-          get: async () => ({ size: 0, docs: [], empty: true }),
+        // 逐工作區查：先 where('workspaceId')，再 where('status')。只有 WS 有人在等
+        const forWs = (ws: string) => {
+          const q: any = {
+            where: (_f: string, _op: string, value: string) =>
+              query(ws === WS && value === 'pending_human' ? sessionDocs : []),
+            limit: () => q,
+            get: async () => ({ size: 0, docs: [], empty: true }),
+          }
+          return q
         }
-        return q
+        return { where: (_f: string, _op: string, value: string) => forWs(String(value)) }
       }
       return query([])
     },
@@ -154,6 +168,15 @@ beforeEach(() => {
   pushMessage.mockResolvedValue({})
   getAiSettings.mockReset()
   getAiSettings.mockResolvedValue(settings())
+  loadDayStats.mockReset()
+  loadDayStats.mockImplementation(async (_db: any, _ws: string, keys: string[]) => ({
+    days: new Map(keys.map(k => [k, {
+      date: k, total: 8, bot: 0, ai: 8, human: 0, unhandled: 0, handoff: 0, closed: 8,
+      aiEscalated: 0, botEscalated: 0, closedHandled: 8, newFriends: 0,
+      unhandledSamples: [], handoffWaits: [],
+    }])),
+    liveDays: [], rollupDays: keys,
+  }))
 })
 
 afterEach(() => {
@@ -161,17 +184,18 @@ afterEach(() => {
 })
 
 describe('沒有其他待辦也照發（老闆拍板）', () => {
-  it('零積壓 + 中秋前 7 天 → 發一則「節慶行銷提醒」', async () => {
+  it('零積壓 + 中秋前 7 天 → 節慶那段接在昨天的成績後面', async () => {
     const { db, festState } = makeDb() // 沒有任何 pending
     const tally = await dailyBacklogDigest(db)
 
     expect(pushMessage).toHaveBeenCalledTimes(1)
     const text = sentText()
-    expect(text).toContain('🎉 節慶行銷提醒')
-    expect(text).toContain('再過 7 天就是中秋節（09/25）')
-    // ⛔ 不可以掛在「每日客服摘要」底下：商家會以為有客服待辦要處理
+    expect(text).toContain('🎉 再過 7 天就是中秋節（09/25）')
+    expect(text).toContain('昨天 8 場對話')
+    // ⛔ 不可以被讀成客服待辦：2026-09-17 改版後整則沒有待辦標題，
+    //    節慶自成一段（原本是掛在「📋 每日客服摘要」底下才要換標題）
     expect(text).not.toContain('每日客服摘要')
-    expect(text).not.toContain('請到後台')
+    expect(text).not.toContain('今天可以處理')
     expect(festState[WS]).toEqual({ 'midautumn-2026': 7 })
     expect(tally).toMatchObject({ workspacesNotified: 1, festivalReminders: 1 })
   })
@@ -192,26 +216,25 @@ describe('有待辦時搭在同一則訊息裡', () => {
 
     expect(pushMessage).toHaveBeenCalledTimes(1) // ⛔ 一則，不是兩則
     const text = sentText()
-    expect(text).toContain('📋 每日客服摘要')
-    expect(text).toContain('2 位客人在「等待真人」')
-    expect(text).toContain('請到後台「對話」頁處理。')
+    expect(text).toContain('現在有 2 位客人在等真人')
+    expect(text).toContain('→ 後台「對話」')
     expect(text).toContain('🎉 再過 7 天就是中秋節')
     // 空行隔開，否則會被讀成第三條客服待辦
-    expect(text).toContain('處理。\n\n🎉')
+    expect(text).toContain('「對話」\n\n🎉')
     expect(tally).toMatchObject({ workspacesNotified: 1, festivalReminders: 1 })
   })
 })
 
 describe('商家把節慶提醒關掉', () => {
-  it('只有節慶可講的日子 → 整則不發，也不吃掉當天名額', async () => {
+  it('摘要照發（2026-09-17 起每天都發），但整則不含節慶那段、也不記里程碑', async () => {
     getAiSettings.mockResolvedValue(settings({ festivalTips: false }))
-    const { db, backlogState, festState } = makeDb()
+    const { db, festState } = makeDb()
     const tally = await dailyBacklogDigest(db)
 
-    expect(pushMessage).not.toHaveBeenCalled()
-    expect(backlogState[WS]).toBeUndefined() // 名額沒被吃掉
-    expect(festState[WS]).toBeUndefined() // 也沒記里程碑
-    expect(tally).toMatchObject({ workspacesNotified: 0, festivalReminders: 0 })
+    expect(pushMessage).toHaveBeenCalledTimes(1)
+    expect(sentText()).not.toContain('中秋')
+    expect(festState[WS]).toBeUndefined() // 沒記里程碑
+    expect(tally).toMatchObject({ workspacesNotified: 1, festivalReminders: 0 })
   })
 
   it('有客服待辦時照發，但不含節慶那段', async () => {
@@ -220,7 +243,7 @@ describe('商家把節慶提醒關掉', () => {
     const tally = await dailyBacklogDigest(db)
 
     expect(pushMessage).toHaveBeenCalledTimes(1)
-    expect(sentText()).toContain('1 位客人在「等待真人」')
+    expect(sentText()).toContain('現在有 1 位客人在等真人')
     expect(sentText()).not.toContain('中秋')
     expect(festState[WS]).toBeUndefined()
     expect(tally).toMatchObject({ festivalReminders: 0 })
@@ -228,12 +251,13 @@ describe('商家把節慶提醒關掉', () => {
 })
 
 describe('里程碑記帳', () => {
-  it('這個里程碑講過了 → 不再講（同一節日不會天天喊）', async () => {
+  it('這個里程碑講過了 → 摘要照發但不再提這個節日（同一節日不會天天喊）', async () => {
     const { db } = makeDb({ festivalState: { [WS]: { 'midautumn-2026': 7 } } })
     const tally = await dailyBacklogDigest(db)
 
-    expect(pushMessage).not.toHaveBeenCalled()
-    expect(tally).toMatchObject({ workspacesNotified: 0, festivalReminders: 0 })
+    expect(pushMessage).toHaveBeenCalledTimes(1)
+    expect(sentText()).not.toContain('中秋')
+    expect(tally).toMatchObject({ workspacesNotified: 1, festivalReminders: 0 })
   })
 
   it('推播丟例外 → 不記里程碑，下一輪這個節日還講得到', async () => {
@@ -269,22 +293,26 @@ describe('里程碑記帳', () => {
 })
 
 describe('沒有節日的日子不要白花讀取', () => {
-  it('離節日還很遠 → 完全不掃 workspaces、不讀節慶進度', async () => {
+  it('離節日還很遠 → 不讀節慶進度（workspaces 因為每天都要發，本來就要掃）', async () => {
     vi.setSystemTime(NOW_NO_FESTIVAL)
-    const { db, workspaceScans } = makeDb({ pendingUserIds: ['U1'] })
+    const { db, festState, workspaceScans } = makeDb({ pendingUserIds: ['U1'] })
     const tally = await dailyBacklogDigest(db)
 
-    expect(workspaceScans()).toBe(0)
+    // 節慶進度那份 doc 沒被讀（讀了的話 festState 會被帶進流程並可能被寫回）
+    expect(festState).toEqual({})
+    expect(workspaceScans()).toBe(1) // 每天都發＝一輪只掃這一次，不是每個工作區各掃一次
     expect(pushMessage).toHaveBeenCalledTimes(1) // 客服摘要照發
     expect(sentText()).not.toContain('🎉')
     expect(tally).toMatchObject({ festivalReminders: 0 })
   })
 
-  it('離節日還很遠又沒有積壓 → 一則都不發', async () => {
+  it('離節日還很遠又沒有積壓 → 照發一行短版（2026-09-17 拍板選項 B）', async () => {
     vi.setSystemTime(NOW_NO_FESTIVAL)
     const { db } = makeDb()
     await dailyBacklogDigest(db)
 
-    expect(pushMessage).not.toHaveBeenCalled()
+    expect(pushMessage).toHaveBeenCalledTimes(1)
+    expect(sentText().split('\n')).toHaveLength(1)
+    expect(sentText()).toContain('沒有人在等')
   })
 })

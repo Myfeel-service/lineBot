@@ -1,5 +1,5 @@
 /**
- * 每日客服摘要的「一天一則」防重複測試（2026-08-07）。
+ * 每日客服摘要：一天一則的防重複（2026-08-07）＋ 2026-09-17 改版（`D-81`）。
  *
  * 原本的判重是「開頭讀一次整份 cronState、整批跑完才在最後寫回」，中間夾著設定讀取與
  * 推播——只要有第二個排程執行者（Cloud Scheduler 逾時重試、Lambda 併發、本機 dev 的
@@ -7,8 +7,10 @@
  *
  * 要守住的行為：
  *  - 今天已認領 → 不再發
- *  - 認領要排在「時段還沒到 / 沒東西講 / 通知關閉」的判斷之後（否則會白白吃掉當天名額）
+ *  - 認領要排在「時段還沒到 / 通知關閉 / 休假日」的判斷之後（否則會白白吃掉當天名額）
  *  - 推播丟例外 → 拆掉當天名額，下一輪重來
+ *  - **每天都發**（2026-09-17 拍板選項 B）：沒事的日子發一行短版
+ *  - **逐工作區查**：⛔原本七個查詢是「不分工作區撈全站前 200 筆」，別家的數字會算進來
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -47,12 +49,39 @@ vi.mock('./workspace-alerts', () => ({ collectWorkspaceAlerts, countRecentUnboun
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
 
+// 昨天的成績走日結（統計頁同一支算式）——這裡只驗「有沒有被放進訊息」，算式本身在
+// conversation-stats-rollup 自己的測試守
+const { loadDayStats } = vi.hoisted(() => ({ loadDayStats: vi.fn() }))
+vi.mock('./conversation-stats-rollup', () => ({ loadDayStats }))
+
 import { dailyBacklogDigest } from './cron-maintenance'
 
 const WS = 'WS'
 // 台北 2026-08-07 11:00（UTC 03:00）→ digestHour 10 已到、digestHour 12 還沒到
 const NOW = Date.UTC(2026, 7, 7, 3, 0, 0)
 const TODAY = '2026-08-07'
+const YESTERDAY = '2026-08-06'
+
+/** 昨天的日結：預設 8 場、AI 全包，讓「順利的一天」有數字可講 */
+function dayStats(over: Record<string, unknown> = {}) {
+  return {
+    date: YESTERDAY,
+    total: 8,
+    bot: 0,
+    ai: 8,
+    human: 0,
+    unhandled: 0,
+    handoff: 0,
+    closed: 8,
+    aiEscalated: 0,
+    botEscalated: 0,
+    closedHandled: 8,
+    newFriends: 2,
+    unhandledSamples: [],
+    handoffWaits: [],
+    ...over,
+  }
+}
 
 function applyPatch(data: Record<string, unknown>, patch: Record<string, unknown>) {
   for (const [k, v] of Object.entries(patch)) {
@@ -62,17 +91,19 @@ function applyPatch(data: Record<string, unknown>, patch: Record<string, unknown
 }
 
 /**
- * @param pendingUserIds 掛在「等待真人」的客人（讓摘要有東西可講）
+ * @param pendingUserIds 掛在「等待真人」的客人（每位都等了 90 分鐘）
  * @param initialState   cronState/backlog-digest 的起始內容（快照與即時資料都有）
  * @param liveOnlyState  **只有交易讀得到**的內容 —— 模擬「掃描之後、認領之前，
  *                       另一個執行者搶先寫入」。快照刻意看不到，跟現場一樣。
+ * @param counts         各類待辦的件數（走 count 聚合；`null`＝這一類查詢會掛掉）
+ * @param workspaces     這個 DB 裡有哪些工作區（每天都發＝對象是全部工作區）
  */
 function makeDb(
   pendingUserIds: string[],
   initialState: Record<string, string> = {},
   liveOnlyState: Record<string, string> = {},
-  /** 有貼標建議待審的客人數（D-43①）：一份 userTagSuggestions 文件＝一位客人 */
-  tagSuggestUsers = 0,
+  counts: Partial<Record<'knowledgeSources' | 'knowledgeChunks' | 'knowledgeSuggestions' | 'userTagSuggestions', number | null>> = {},
+  workspaces: string[] = [WS],
 ) {
   const snapshotState: Record<string, unknown> = { ...initialState }
   const state: Record<string, unknown> = { ...initialState, ...liveOnlyState }
@@ -87,50 +118,55 @@ function makeDb(
     },
   }
 
+  /** 只有 WS 這一家有等待真人的客人；別家問到的一律是空的（逐工作區查的重點） */
   const sessionDocs = pendingUserIds.map((uid, i) => ({
     id: `s${i}`,
     data: () => ({
       workspaceId: WS,
       userId: uid,
       status: 'pending_human',
-      handoffRequestedAt: { toMillis: () => NOW - 90 * 60_000 },
+      // 相對於「現在」，這樣改了假時鐘的案例（休假日、20:00 收摘要）也對得上
+      handoffRequestedAt: { toMillis: () => Date.now() - 90 * 60_000 },
     }),
   }))
 
-  const emptySnap = { size: 0, docs: [] as unknown[], empty: true }
-  const query = (docs: unknown[]) => {
+  /** 一個假查詢：where 一路串下去，get 給 docs，count 給件數（null＝這一類會掛） */
+  const query = (docs: unknown[], count: number | null = docs.length, ws = '') => {
     const q: any = {
-      where: () => q,
-      select: () => q, // 貼標建議那條查詢有帶 select——假 db 沒有這個方法的話整包 Promise.all 會炸
+      __ws: ws,
+      where: (field: string, _op: string, value: unknown) => {
+        if (field === 'workspaceId') return query(docs, count, String(value))
+        // 別家工作區一律查到空的
+        if (q.__ws && q.__ws !== WS) return query([], 0, q.__ws)
+        if (field === 'status' && value === 'human_handling') return query([], 0, q.__ws)
+        return query(docs, count, q.__ws)
+      },
+      select: () => q,
       limit: () => q,
       get: async () => ({ size: docs.length, docs, empty: !docs.length }),
+      count: () => ({
+        get: async () => {
+          if (count === null) throw new Error('missing index')
+          return { data: () => ({ count }) }
+        },
+      }),
     }
     return q
   }
 
-  const tagSuggestDocs = Array.from({ length: tagSuggestUsers }, (_, i) => ({
-    id: `u${i}`,
-    data: () => ({ workspaceId: WS, hasPending: true }),
-  }))
+  const wsDocs = workspaces.map(id => ({ id, data: () => ({ id }) }))
 
   const db = {
     collection(name: string) {
       if (name === 'cronState') return { doc: () => stateRef }
-      if (name === 'userTagSuggestions') return query(tagSuggestDocs)
-      if (name === 'conversationSessions') {
-        // 第一個查詢是 pending_human、第二個是 human_handling（本測試只餵前者）
-        let call = 0
-        const q: any = {
-          where: (_f: string, _op: string, value: string) => {
-            call++
-            return value === 'pending_human' ? query(sessionDocs) : query([])
-          },
-          limit: () => q,
-          get: async () => emptySnap,
-        }
-        return q
+      if (name === 'workspaces') return query(wsDocs, wsDocs.length)
+      if (name === 'users') {
+        return { doc: (id: string) => ({ get: async () => ({ data: () => ({ displayName: `客人${String(id).slice(0, 2)}` }) }) }) }
       }
-      return query([])
+      if (name === 'conversationSessions') return query(sessionDocs)
+      // ⛔ 不可以寫 `?? 0`：null 在這裡的意思是「這一類查詢會掛掉」，不是 0 件
+      if (name in counts) return query([], counts[name as keyof typeof counts] as number | null)
+      return query([], 0)
     },
     async runTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
       return fn({
@@ -156,6 +192,9 @@ function settings(digestHour = 10, extra: Record<string, unknown> = {}) {
   }
 }
 
+/** 第一個收件人收到的那則訊息 */
+const sentText = () => (pushMessage.mock.calls[0]![1] as any)[0].text as string
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
@@ -167,6 +206,12 @@ beforeEach(() => {
   collectWorkspaceAlerts.mockResolvedValue([])
   countRecentUnboundRenewals.mockReset()
   countRecentUnboundRenewals.mockResolvedValue(0)
+  loadDayStats.mockReset()
+  loadDayStats.mockImplementation(async (_db: any, _ws: string, keys: string[]) => ({
+    days: new Map(keys.map(k => [k, dayStats({ date: k })])),
+    liveDays: [],
+    rollupDays: keys,
+  }))
 })
 
 afterEach(() => {
@@ -179,9 +224,7 @@ describe('dailyBacklogDigest 一天一則', () => {
     const tally = await dailyBacklogDigest(db)
 
     expect(pushMessage).toHaveBeenCalledTimes(2) // 兩個收件人 × 一則
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('📋 每日客服摘要')
-    expect(text).toContain('2 位客人在「等待真人」')
+    expect(sentText()).toContain('現在有 2 位客人在等真人')
     expect(state[WS]).toBe(TODAY)
     expect(tally).toMatchObject({ workspacesNotified: 1 })
   })
@@ -227,15 +270,6 @@ describe('dailyBacklogDigest 一天一則', () => {
     expect(b.state[WS]).toBeUndefined()
   })
 
-  it('沒有任何待辦 → 不發（不是每天都要吵一次）', async () => {
-    const { db, state } = makeDb([])
-    const tally = await dailyBacklogDigest(db)
-
-    expect(pushMessage).not.toHaveBeenCalled()
-    expect(state[WS]).toBeUndefined()
-    expect(tally).toMatchObject({ workspacesNotified: 0 })
-  })
-
   it('推播丟例外 → 拆掉今天的名額，下一輪重來', async () => {
     pushMessage.mockImplementation(() => { throw new Error('憑證掛了') })
     const { db, state } = makeDb(['U1'])
@@ -256,37 +290,98 @@ describe('dailyBacklogDigest 一天一則', () => {
 })
 
 /**
- * 黃級異常搭便車（D-36①，2026-08-27 拍板）。
+ * 每天都發（2026-09-17 拍板選項 B）。
  *
- * 黃級異常只在後台顯示，「推播沒送出去」這種事商家幾天不開後台就永遠不知道——
- * 摘要要發的時候順路查一次、尾巴加一行。⛔刻意不讓黃級異常單獨觸發摘要：
- * 那要每輪對全租戶跑探針，成本形狀跟 08-11 讀取費暴衝同款。
+ * 原本「沒事就不發」：商家收不到訊息時分不出是「昨天很順」還是「通知壞掉了」，
+ * 而通知名單沒設好會讓轉真人提醒、摘要、紅色異常**全部靜音**。
  */
-describe('dailyBacklogDigest 貼標建議待審（D-43①）', () => {
-  it('有客人的標籤建議待審 → 摘要多一行、落點指到「好友」頁', async () => {
-    const { db } = makeDb(['U1'], {}, {}, 2)
-    await dailyBacklogDigest(db)
+describe('dailyBacklogDigest 順利的一天也要發', () => {
+  it('完全沒有待辦 → 照發，而且只有一行（含昨天的成績）', async () => {
+    const { db, state } = makeDb([])
+    const tally = await dailyBacklogDigest(db)
 
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('2 位客人的標籤建議等你決定')
-    expect(text).toContain('「好友」')
+    expect(tally).toMatchObject({ workspacesNotified: 1 })
+    expect(state[WS]).toBe(TODAY)
+    const lines = sentText().split('\n')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('昨天 8 場對話，AI 全部自己搞定，沒有人在等。')
+    expect(lines[0]).toContain('新朋友 +2 位。')
   })
 
-  it('只有貼標建議、沒有其他待辦 → 照發（68 條積壓就是「沒人講」欠的帳）', async () => {
-    const { db } = makeDb([], {}, {}, 3)
+  it('昨天的數字取日結（跟統計頁同一支算式），查的是昨天那一天', async () => {
+    const { db } = makeDb([])
     await dailyBacklogDigest(db)
 
-    expect(pushMessage).toHaveBeenCalled()
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('3 位客人的標籤建議等你決定')
+    expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, [YESTERDAY])
+  })
+
+  it('昨天的數字查不到 → 照實講，⛔不可以講成 0 場', async () => {
+    loadDayStats.mockRejectedValue(new Error('boom'))
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = sentText()
+    expect(text).toContain('昨天的數字這次查不到')
+    expect(text).not.toContain('昨天 0 場')
+  })
+
+  it('AI 沒有全包時，三個數字加起來等於總場數', async () => {
+    loadDayStats.mockResolvedValue({
+      // 10 場：AI 首接 8（其中 2 場後來轉真人）、真人首接 1、沒人回 1
+      days: new Map([[YESTERDAY, dayStats({ total: 10, ai: 8, aiEscalated: 2, human: 1, unhandled: 1, newFriends: 0 })]]),
+      liveDays: [], rollupDays: [YESTERDAY],
+    })
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('昨天 10 場對話，AI 自己搞定 6 場、你出手 3 場、1 場一整天沒人回')
+  })
+})
+
+/**
+ * 逐工作區查（2026-09-17 修）。
+ *
+ * ⛔ 原本七個來源查詢全是「不分工作區撈全站前 200 筆」：租戶一多就會有帳號的數字
+ * 被別家吃掉、甚至整家從摘要裡消失，而訊息照發、看起來完全正常。
+ */
+describe('dailyBacklogDigest 逐工作區查', () => {
+  it('別家的等待真人不會算到自己頭上', async () => {
+    const { db } = makeDb(['U1', 'U2'], {}, {}, {}, [WS, 'OTHER'])
+    const tally = await dailyBacklogDigest(db)
+
+    expect(tally).toMatchObject({ workspacesNotified: 2 })
+    const texts = pushMessage.mock.calls.map(c => (c[1] as any)[0].text as string)
+    const otherTexts = pushMessage.mock.calls.filter(c => c[2] === 'OTHER').map(c => (c[1] as any)[0].text as string)
+    expect(texts.some(t => t.includes('現在有 2 位客人在等真人'))).toBe(true)
+    expect(otherTexts).not.toHaveLength(0)
+    expect(otherTexts.every(t => !t.includes('在等真人'))).toBe(true)
+  })
+
+  it('某一類查不到（缺索引）→ 那一類講「查不到」，其他照常', async () => {
+    const { db } = makeDb([], {}, {}, { knowledgeSources: null })
+    await dailyBacklogDigest(db)
+
+    const text = sentText()
+    expect(text).toContain('這次查不到')
+    expect(text).toContain('昨天 8 場對話')
+  })
+})
+
+describe('dailyBacklogDigest 貼標建議待審（D-43①）', () => {
+  it('有客人的標籤建議待審 → 摘要多一行、落點指到「好友」頁', async () => {
+    const { db } = makeDb(['U1'], {}, {}, { userTagSuggestions: 2 })
+    await dailyBacklogDigest(db)
+
+    const text = sentText()
+    expect(text).toContain('2 位客人的標籤建議等你決定')
+    expect(text).toContain('「好友」')
   })
 
   it('沒有待審 → 不多這一行', async () => {
     const { db } = makeDb(['U1'])
     await dailyBacklogDigest(db)
 
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).not.toContain('標籤建議')
+    expect(sentText()).not.toContain('標籤建議')
   })
 })
 
@@ -301,9 +396,9 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     const { db } = makeDb(['U1'])
     await dailyBacklogDigest(db)
 
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    const text = sentText()
     expect(text).toContain('另有 2 件建議處理的事')
-    expect(text).toContain('最重要:有推播沒有送出去')
+    expect(text).toContain('最重要的是「有推播沒有送出去」')
     expect(text).not.toContain('永遠不會被啟動') // 只點名最重要那件,不把異常面板搬進 LINE
   })
 
@@ -313,9 +408,9 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     const { db } = makeDb(['U1'])
     await dailyBacklogDigest(db)
 
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    const text = sentText()
     expect(text).toContain('另有 2 件建議處理的事')
-    expect(text).toContain('最重要:下期不會自動扣款（卡沒綁成）')
+    expect(text).toContain('最重要的是「下期不會自動扣款（卡沒綁成）」')
   })
 
   it('綁卡查詢掛掉 → 當沒有,摘要與其他黃級照常（⛔不准拖垮摘要本體）', async () => {
@@ -324,19 +419,7 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     const { db } = makeDb(['U1'])
     await dailyBacklogDigest(db)
 
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('最重要:有推播沒有送出去')
-  })
-
-  it('只有黃級異常、沒有其他待辦 → 不發(只搭便車,不單獨觸發)', async () => {
-    collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastFailed', state: 'active' }])
-    const { db, state } = makeDb([])
-    const tally = await dailyBacklogDigest(db)
-
-    expect(pushMessage).not.toHaveBeenCalled()
-    expect(collectWorkspaceAlerts).not.toHaveBeenCalled() // 連探針都不跑(成本閘門)
-    expect(state[WS]).toBeUndefined()
-    expect(tally).toMatchObject({ workspacesNotified: 0 })
+    expect(sentText()).toContain('最重要的是「有推播沒有送出去」')
   })
 
   it('探針掛掉 → 摘要本體照發,只是沒有那一行', async () => {
@@ -345,8 +428,8 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     const tally = await dailyBacklogDigest(db)
 
     expect(tally).toMatchObject({ workspacesNotified: 1 })
-    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('📋 每日客服摘要')
+    const text = sentText()
+    expect(text).toContain('現在有 1 位客人在等真人')
     expect(text).not.toContain('建議處理的事')
   })
 })
@@ -400,5 +483,17 @@ describe('dailyBacklogDigest 休假日', () => {
     const { db } = makeDb(['U1'])
 
     expect(await dailyBacklogDigest(db)).toMatchObject({ workspacesNotified: 1 })
+  })
+
+  it('下班時段進來的客人不加紅點（天天紅字＝狼來了）', async () => {
+    // 週一 20:00 發、服務時間 09–18 → 90 分鐘前（18:30）轉真人的那位算下班時段
+    vi.setSystemTime(Date.UTC(2026, 7, 10, 12, 0, 0))
+    getAiSettings.mockResolvedValue(hours({}, 20))
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    const text = sentText()
+    expect(text).toContain('都是下班時段進來的')
+    expect(text).not.toContain('🔴')
   })
 })

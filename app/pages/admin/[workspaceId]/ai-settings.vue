@@ -328,8 +328,11 @@
                 />
               </el-select>
               <p class="ai-section-hint">
-                每天過了這個時間,把「等待真人的客人、卡在真人處理中的對話、知識庫要處理的事」
-                整理成一則訊息推播給上面的通知對象;沒事就不發。
+                每天過了這個時間,把<strong>昨天的成績</strong>(幾場對話、AI 自己搞定幾場、
+                有沒有客人一整天沒人回、新朋友幾位)、現在還在等真人的客人、
+                以及知識庫要處理的事,整理成<strong>一則</strong>訊息推播給上面的通知對象。
+                <strong>每天都會發</strong>——順利的日子就只有一行(「昨天 18 場對話,
+                AI 全部自己搞定,沒有人在等」),這樣你才分得出「昨天很順」和「通知壞掉了」。
                 <template v-if="form.serviceHours.enabled && form.serviceHours.weekendOff">
                   你設了週六日休息,<strong>假日整天不發</strong>,週末累積的事會併進上班日那一則。
                 </template>

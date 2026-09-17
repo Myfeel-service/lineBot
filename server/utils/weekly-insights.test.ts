@@ -61,7 +61,6 @@ describe('formatWeeklyInsightLines', () => {
     rangeText: '8/17–8/24',
     topTags: [],
     inactiveAdds: { count: 0, name: '' },
-    pendingSuggestUsers: 0,
     quietDown: 0,
     truncated: false,
   }
@@ -74,7 +73,6 @@ describe('formatWeeklyInsightLines', () => {
     const lines = formatWeeklyInsightLines({
       ...empty,
       topTags: [{ name: '送禮客群', count: 12 }, { name: 'VIP', count: 3 }],
-      pendingSuggestUsers: 5,
       quietDown: 23,
     })!
     expect(lines[0]).toBe('📈 本週顧客觀察（8/17–8/24）')
@@ -83,8 +81,9 @@ describe('formatWeeklyInsightLines', () => {
     expect(lines[1]).toContain('「好友」頁')
     // 「會員」已於 2026-08-23 全面退場（側欄／頁題／訊息一律「好友」）——別讓它從指路文案復活
     expect(lines.join('\n')).not.toContain('會員')
-    expect(lines.find(l => l.includes('貼標建議'))).toContain('「好友」頁')
-    expect(lines.find(l => l.includes('貼標建議'))).toContain('5 位')
+    // ⛔ 貼標建議那行 2026-09-17（D-81）移除：摘要本文已經有同一個數字，
+    //    週一那則原本等於把同一件事用兩個名字講兩次
+    expect(lines.find(l => l.includes('貼標建議'))).toBeUndefined()
     // 文案要跟資料窗口（14~28 天前）一字不差，不寫「上個月」；而且要有下一步（G-22②④）
     const quiet = lines.find(l => l.includes('兩週沒再出現'))!
     expect(quiet).toContain('23 位')
