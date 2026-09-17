@@ -53,6 +53,15 @@ export interface AdminAgentReply {
    * 真正的執行在使用者按下確定後的第二個請求（/api/admin/agent/confirm）。
    */
   pendingOp?: AdminOpPending
+  /**
+   * 使用者這句話是在**收回上一個提議**（「算了」「不用了」）。
+   *
+   * ⛔ 畫面要靠它把那張卡標成已取消：聊天訊息是累積的，卡片不會因為對話往下走就消失，
+   *    對話裡白紙黑字寫著取消、按鈕卻照樣有效，是這條路上最容易誤觸的一種。
+   * ⚠️ 這一格由模型判斷（「他是不是在取消」是語意問題，沒有機制判得出來）；
+   *    它不給的話就退回原本的行為，不會讓事情變更糟。
+   */
+  cancelPrevious?: boolean
   inputTokens: number
   outputTokens: number
 }
@@ -495,7 +504,7 @@ ${adminOpCatalogueForPrompt()}
 
 【每一步回傳 JSON,三選一】
 { "action": "tool", "tool": "工具名", "args": {} }
-{ "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"] }
+{ "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"], "cancelPrevious": true }
 { "action": "propose", "op": "操作id", "args": {}, "text": "一句話說明你打算做什麼" }
 
 【帶路（goto,選填）】回答若建議使用者去後台某頁操作,附上 goto 幫他帶路(最多 2 個)。
@@ -542,6 +551,11 @@ ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——
 有【上一個提議】而使用者這句是在**修改它**(例如「改成早上九點」「第二題改成問電話」「名字換一個」),
 就用**同一個操作 id** 重新提議,並帶上**修改後的完整參數**——⛔不要只帶被改動的那一格,
 也⛔不要把上一個提議當成已經做完的事。若他講的是另一件事,就照一般情況處理。
+
+⛔ **使用者收回上一個提議時(「算了」「不用了」「先不要」「取消」),
+回答裡要帶 "cancelPrevious": true**——那張確認卡還留在畫面上而且**還按得下去**,
+沒有這一格的話,他嘴上取消了、十分鐘內手滑捲上去按到,那件事照樣會發生。
+⛔ 只有在他真的是在收回上一個提議時才帶,他改主意換個做法(那是新提議)不算。
 
 ⛔ **【上一個提議】從來沒有被執行過**(沒有人按過確定)。所以:
 - ⛔不要說「已經幫你改好了」「幫你重新啟用」「已經加進去了」這類話——那件事還沒發生。
@@ -613,7 +627,7 @@ export async function runAdminAgentChat(params: {
       step === MAX_TOOL_STEPS ? '【注意】查詢次數已用完,請直接以現有工具結果回答("action":"answer")。' : '',
     ].filter(Boolean).join('\n\n')
 
-    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; goto?: unknown; op?: unknown }>(prompt, {
+    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; goto?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
       systemInstruction,
       temperature: 0,
       maxOutputTokens: 1200,
@@ -627,7 +641,15 @@ export async function runAdminAgentChat(params: {
       const text = String(data?.text ?? '').trim()
       // goto 走白名單解析:模型只挑 id,網址由 shared/agent-destinations 生——編不出來、最多挑錯頁
       const messages = resolveAgentDestinations(data?.goto, workspaceId)
-      return { reply: text || '(助理沒有給出回答,請換個問法再試一次)', toolCalls, messages, inputTokens, outputTokens }
+      return {
+        reply: text || '(助理沒有給出回答,請換個問法再試一次)',
+        toolCalls,
+        messages,
+        // 只有真的有一張卡在等的時候才傳:沒有提議可收回時這一格沒有意義
+        ...(lastProposal && data?.cancelPrevious === true ? { cancelPrevious: true } : {}),
+        inputTokens,
+        outputTokens,
+      }
     }
 
     // ── 提議一個操作(C-31 Phase 2)──────────────────────────────
@@ -755,6 +777,8 @@ export async function runAdminAgentChat(params: {
             preview,
             token,
             expiresInSec: Math.round(ADMIN_OP_TOKEN_TTL_MS / 1000),
+            // 「在改同一件事」＝上一張卡已經被這一張取代（supersede 是它的反面：換了另一件事）
+            ...(lastProposal && !supersede ? { replacesPrevious: true } : {}),
           },
           inputTokens,
           outputTokens,

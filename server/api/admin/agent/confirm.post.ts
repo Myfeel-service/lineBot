@@ -1,7 +1,7 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { can } from '~~/shared/permissions'
-import { ADMIN_OP_LABELS } from '~~/shared/types/admin-ops'
+import { ADMIN_OP_LABELS, adminOpAuditAction } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, getAdminOp } from '~~/server/utils/admin-ops'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
@@ -19,6 +19,40 @@ import { recordAiUsage } from '~~/server/utils/ai-usage'
  *
  * 執行成功會寫 `auditLogs`（`actor='agent'`）——那是「AI 動過手」唯一查得到的地方。
  */
+/**
+ * 這個設定在剛剛那幾分鐘內，是不是**這個人自己**動過的？
+ *
+ * 只在「指紋對不上」那條失敗路徑上查一次（很少發生），用既有的
+ * (workspaceId, createdAt) 索引撈最近幾筆，在記憶體裡比對動作與人。
+ * ⛔ 查不到就當成「不知道」走原本的說法——這一格只拿來把話講準，
+ *    絕不拿來放行任何寫入。
+ */
+async function recentlyChangedByMe(
+  db: ReturnType<typeof getDb>,
+  workspaceId: string,
+  uid: string,
+  action: string,
+  withinMs = 15 * 60 * 1000,
+): Promise<boolean> {
+  try {
+    const snap = await db.collection('auditLogs')
+      .where('workspaceId', '==', workspaceId)
+      .orderBy('createdAt', 'desc')
+      .limit(20)
+      .get()
+    const since = Date.now() - withinMs
+    return snap.docs.some((d) => {
+      const v = d.data() as { action?: string, uid?: string, createdAt?: { toMillis?: () => number } }
+      return v.action === action
+        && String(v.uid ?? '') === uid
+        && (v.createdAt?.toMillis?.() ?? 0) >= since
+    })
+  }
+  catch {
+    return false
+  }
+}
+
 export default defineEventHandler(async (event) => {
   // 端點這道只是最低消：真正的門檻是下面逐 op 比對 capability
   const { workspaceId, uid, role } = await requireWorkspaceAccess(event, 'viewer')
@@ -71,11 +105,17 @@ export default defineEventHandler(async (event) => {
       // 2026-09-16 實測連按兩次，看到的是「這段期間有人改過同一個設定」——
       // 而按的人什麼都沒改、也沒有別人在動，那句話只會讓他跑去查根本不存在的事。
       const already = await op.preview(ctx, payload.a).then(p => p.noop === true).catch(() => false)
+      // ⛔ 「有人改過」這句話在最常見的情況下是**錯的歸因**：聊天室的舊卡片一直留在上面
+      //    而且按得下去，人往上捲按到一張更早的卡時，動過那個設定的就是他自己、一分鐘前。
+      //    叫他去查一個不存在的併發修改，比不擋還糟。先看看是不是自己剛動的。
+      const mine = already ? false : await recentlyChangedByMe(db, workspaceId, uid, adminOpAuditAction(opId))
       throw createError({
         statusCode: 409,
         statusMessage: already
           ? '這個提議剛剛已經執行過了，所以我沒有再做一次——現在的設定就是你要的那樣。'
-          : '這段期間有人改過同一個設定，所以我沒有動手。請再問我一次，我會用最新的狀況重新確認。',
+          : mine
+            ? '你剛剛已經用另一個提議改過這個設定了，這一張是更早的，所以我沒有動手。要改成這張寫的樣子，再跟我說一次。'
+            : '這段期間有人改過同一個設定，所以我沒有動手。請再問我一次，我會用最新的狀況重新確認。',
       })
     }
 

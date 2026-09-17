@@ -22,6 +22,10 @@
             v-if="m.pending"
             :key="`op-${i}`"
             :pending="m.pending"
+            :superseded="m.pendingSuperseded === true"
+            :cancelled-by-user="m.pendingCancelled === true"
+            :stale="m.pending.token !== lastPendingToken"
+            :proposed-at="m.pendingAt"
             @done="onOpDone"
             @cancel="onOpCancel"
             @dismiss="lastPendingToken = ''"
@@ -65,6 +69,16 @@ interface Msg {
   cards?: AgentMsg[]
   /** 待確認的操作（C-31 Phase 2）：卡片自己負責執行，這裡只負責把結果接回對話 */
   pending?: AdminOpPending
+  /**
+   * 這張卡什麼時候出現的。
+   * ⛔ 訊息是累積的，舊卡片會一直留在上面而且**還按得下去**——不是最新的那張
+   *    要讓人看得出「這是幾分鐘前提的」，否則捲上去按到會以為是剛剛那件事。
+   */
+  pendingAt?: number
+  /** 已經被後面那張卡取代（同一個操作、同一個對象）→ 不給按 */
+  pendingSuperseded?: boolean
+  /** 使用者在對話裡收回了這個提議（「算了」「不用了」）→ 不給按 */
+  pendingCancelled?: boolean
 }
 
 const { apiFetch, workspaceId } = useWorkspace()
@@ -141,12 +155,31 @@ async function send(preset?: string) {
       toolCalls: string[]
       messages?: AgentMsg[]
       pendingOp?: AdminOpPending
+      cancelPrevious?: boolean
     }>('/api/admin/agent/chat', {
       method: 'POST',
       body: { message: text, history, ...(lastPendingToken.value ? { lastToken: lastPendingToken.value } : {}) },
     })
     if (stillHere()) {
-      msgs.value.push({ who: 'ai', text: res.reply, tools: res.toolCalls, cards: res.messages, pending: res.pendingOp })
+      // 這一輪之後，上面那張還按得下去的舊卡還算不算數？三種情況分開處理——
+      // ⛔ 不可以「只要有新提議就把舊的全灰掉」：「下架查詢訂單」與「下架更改地址」
+      //    是兩件不同的事，灰掉前者等於擋掉一個仍然成立的提議。
+      const prevToken = lastPendingToken.value
+      if (prevToken && (res.cancelPrevious || res.pendingOp?.replacesPrevious)) {
+        const prev = msgs.value.find(m => m.pending?.token === prevToken)
+        if (prev) {
+          if (res.cancelPrevious) prev.pendingCancelled = true
+          else prev.pendingSuperseded = true
+        }
+      }
+      msgs.value.push({
+        who: 'ai',
+        text: res.reply,
+        tools: res.toolCalls,
+        cards: res.messages,
+        pending: res.pendingOp,
+        ...(res.pendingOp ? { pendingAt: Date.now() } : {}),
+      })
       lastPendingToken.value = res.pendingOp?.token ?? ''
     }
   }

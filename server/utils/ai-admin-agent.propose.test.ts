@@ -392,6 +392,50 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
     expect(res.reply).toContain('晚上 10 點')
   })
 
+  it('🔴 改同一件事 → 要告訴畫面「上一張卡已經被取代」（舊卡還留在上面而且按得下去）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '23:00', end: '09:00' },
+    }))
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '改成晚上十一點到早上九點',
+      lastProposal: { opId: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } },
+    })
+    expect(res.pendingOp?.replacesPrevious).toBe(true)
+  })
+
+  it('⛔ 換成另一件事就不算取代：「下架 A」與「下架 B」是兩個都還成立的提議', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-sensitive-topic',
+      args: { action: 'add', word: '客訴' },
+    }))
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '順便把客訴也加進去',
+      lastProposal: { opId: 'ai-settings-sensitive-topic', args: { action: 'add', word: '退費' } },
+    })
+    expect(res.pendingOp?.replacesPrevious).toBeUndefined()
+  })
+
+  it('🔴 使用者說「不用了」→ 要告訴畫面把那張卡收掉（⛔否則嘴上取消、按鈕照樣有效）', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '好的，那我就不建立了。', cancelPrevious: true }))
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '算了不用了',
+      lastProposal: { opId: 'script-create-from-description', args: { description: '問滿意度' } },
+    })
+    expect(res.cancelPrevious).toBe(true)
+    expect(res.pendingOp).toBeUndefined()
+  })
+
+  it('⛔ 沒有提議在等的時候，這一格沒有意義就不要傳', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '好的。', cancelPrevious: true }))
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '算了',
+    })
+    expect(res.cancelPrevious).toBeUndefined()
+  })
+
   it('🔴 換成另一件事 → 影響欄要講出來（「順便把客訴也加進去」會漏掉前一個「退費」）', async () => {
     generateJson.mockResolvedValueOnce(step({
       action: 'propose',

@@ -2,7 +2,7 @@
   <div class="aa-op" :class="`is-${state}`">
     <div class="aa-op__head">
       <span class="aa-op__title">{{ pending.label }}</span>
-      <span class="aa-op__badge">還沒執行</span>
+      <span class="aa-op__badge" :class="{ 'is-retired': retired }">{{ badge }}</span>
     </div>
 
     <p class="aa-op__summary">{{ pending.preview.summary }}</p>
@@ -18,7 +18,13 @@
 
     <!-- 已經是這個狀態＝沒有事情要做：只給「知道了」。
          ⛔ 不給一顆按下去什麼都不會發生的確認鈕（那會讓人以為自己改了什麼） -->
-    <div v-if="state === 'idle'" class="aa-op__actions">
+    <!-- 已經不作數的卡：⛔不給按鈕，但也不要整張藏起來——
+         人要看得到自己當時提過什麼，藏掉等於把對話的一段歷史抹掉 -->
+    <p v-if="state === 'idle' && retired" class="aa-op__status">
+      {{ cancelledByUser ? '你在對話裡說不用了，這張就不做了。' : '這個提議已經被後面那一個取代，不會執行。' }}
+    </p>
+
+    <div v-else-if="state === 'idle'" class="aa-op__actions">
       <template v-if="pending.preview.noop">
         <!-- ⛔ 也要通知外面把憑證清掉：不清的話這個「已經不用做」的提議，
              會在下一句無關的話裡被當成【上一個提議】再塞回模型面前 -->
@@ -48,7 +54,17 @@
  */
 import type { AdminOpPending } from '~~/shared/types/admin-ops'
 
-const props = defineProps<{ pending: AdminOpPending }>()
+const props = withDefaults(defineProps<{
+  pending: AdminOpPending
+  /** 被後面那張卡取代（同一個操作、同一個對象） */
+  superseded?: boolean
+  /** 使用者在對話裡收回了這個提議（「算了」「不用了」） */
+  cancelledByUser?: boolean
+  /** 不是最新的那一張——還能按，但要讓人知道這不是剛剛的事 */
+  stale?: boolean
+  /** 這張卡什麼時候出現的（畫「幾分鐘前提的」用） */
+  proposedAt?: number
+}>(), { superseded: false, cancelledByUser: false, stale: false, proposedAt: undefined })
 const emit = defineEmits<{
   (e: 'done', payload: { ok: boolean, message: string, details?: string[] }): void
   (e: 'cancel'): void
@@ -58,6 +74,18 @@ const emit = defineEmits<{
 
 const { apiFetch } = useWorkspace()
 const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
+
+/** 這張卡還作不作數（被取代、或使用者已經收回） */
+const retired = computed(() => props.superseded || props.cancelledByUser)
+
+/** 標題旁那顆徽章：不是最新的那張要講出「這是幾分鐘前的事」 */
+const badge = computed(() => {
+  if (props.cancelledByUser) return '你已經說不用了'
+  if (props.superseded) return '已被下面那個取代'
+  if (!props.stale || !props.proposedAt) return '還沒執行'
+  const mins = Math.floor((Date.now() - props.proposedAt) / 60_000)
+  return mins < 1 ? '還沒執行（剛剛提的）' : `還沒執行（${mins} 分鐘前提的）`
+})
 
 function cancel() {
   state.value = 'cancelled'

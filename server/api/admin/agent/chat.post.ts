@@ -89,5 +89,7 @@ export default defineEventHandler(async (event) => {
     toolCalls: res.toolCalls.map(t => t.tool),
     messages: res.messages,
     ...(res.pendingOp ? { pendingOp: res.pendingOp } : {}),
+    // 使用者收回了上一個提議 → 畫面要把那張還留在上面、還按得下去的卡標成已取消
+    ...(res.cancelPrevious ? { cancelPrevious: true } : {}),
   }
 })

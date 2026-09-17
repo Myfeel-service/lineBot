@@ -1564,6 +1564,13 @@
     color: var(--el-color-warning);
     background: var(--el-color-warning-light-9);
     border: 1px solid var(--el-color-warning-light-7);
+
+    /* 已經不作數的卡（被取代／使用者收回）：退成灰的，不要再用警示色喊你注意 */
+    &.is-retired {
+      color: var(--el-text-color-secondary);
+      background: var(--el-fill-color-light);
+      border-color: var(--el-border-color);
+    }
   }
 
   &__summary {
