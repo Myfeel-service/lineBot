@@ -28,7 +28,7 @@ import type { KpiResult } from '~~/shared/types/conversation-stats'
 import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
-import { addDays, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
+import { addDays, dndSentence, serviceHoursSentence, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
 import { can, type Capability } from '~~/shared/permissions'
 import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/types/audit'
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
@@ -37,8 +37,9 @@ import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-de
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
-import { hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
+import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
 import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
+import { answerGroundingIssue } from '~~/shared/agent-answer-grounding'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
@@ -117,7 +118,12 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     },
   },
   get_ai_settings: {
-    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、轉真人通知、勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒」時用。',
+    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、轉真人通知、服務時間與勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒 / 勿擾幾點到幾點」時用。'
+      // ⛔ 2026-09-18 壓測踩到:原本回的是設定裡的 start/end(那是**服務時間**),
+      //    模型被問「勿擾時段幾點到幾點」就照字面唸成「勿擾 10:00–19:00」——正好把上班時間
+      //    講成不打擾的時間。現在兩句話都由後端算好,模型照抄就好。
+      + '⛔ serviceHours 只有兩句現成的話:serviceText＝有在服務的時間、dndText＝勿擾時段(服務時間以外那段)。'
+      + '**照抄那兩句**,⛔ 絕對不要自己把其中一句換算成另一句(換錯就是把上下班時間講反)。',
     requires: 'ai.read',
     mutates: false,
     async run(_db, workspaceId) {
@@ -136,9 +142,20 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
           recipientCount: (s.handoffNotify?.lineUserIds ?? []).length,
           slaRemindMinutes: s.handoffNotify?.slaRemindMinutes ?? 0,
         },
+        // ⛔ 不回裸的 start/end:那是**服務時間**的起訖,離開這裡就沒有人記得這件事。
+        //    只給兩句算好的話,「勿擾」與「服務」誰是誰在資料裡就已經寫死了。
         serviceHours: s.serviceHours?.enabled
-          ? { enabled: true, start: s.serviceHours.start, end: s.serviceHours.end, weekendOff: s.serviceHours.weekendOff }
-          : { enabled: false },
+          ? {
+              enabled: true,
+              serviceText: serviceHoursSentence(s.serviceHours) ?? '(設定不完整)',
+              dndText: dndSentence(s.serviceHours),
+              weekendOff: s.serviceHours.weekendOff === true,
+            }
+          : {
+              enabled: false,
+              serviceText: '沒有設定服務時間(全天都算服務中)',
+              dndText: dndSentence(null),
+            },
         monthlyTokenCap: s.quota?.monthlyTokenCap ?? null,
         disambiguationEnabled: s.disambiguation?.enabled !== false,
       }
@@ -155,7 +172,12 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + 'billableReplies＝計費與額度的單位「幾**則**」(＝答出 ＋ 反問問清楚,答不出轉真人不算);'
       + 'answered＝AI 自己答完幾**次**(品質指標,**不是**計費單位,比則數少);handoffs/disambiguations＝幾**次**。'
       + '⛔ 客人問「用了幾則 / 扣了幾則」一律回 billableReplies,不可回 answered。'
-      + '⛔ invocations 一律說「次」,不可說「則」。這裡只有「做了多少」,額度與剩餘要用 get_plan_quota。',
+      + '⛔ invocations 一律說「次」,不可說「則」。這裡只有「做了多少」,額度與剩餘要用 get_plan_quota。'
+      // ⛔ 2026-09-18 實測:問「那 token 用了多少」,它回「AI 被呼叫了 236 次」——
+      //    答的是另一件事,而且沒講 token 看不到。E-17 刻意不開放 token,但那件事只寫在程式註解裡,
+      //    模型看不到,於是它拿手上最接近的數字頂替。
+      + '⛔ **這裡沒有 token 數、也沒有成本金額**(那是平台的進貨價,只有超管看得到):'
+      + '被問到 token／成本時如實說這個看不到,⛔ 不可以改用「次」或「則」頂替——那是另一件事。',
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId, args) {
@@ -188,7 +210,14 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + '⛔ 講已用則數時**一定要照抄 usedWindow 那句話**(例如「本期(8/13~9/12)」或「這個月」)——'
       + '有上限的方案按續約日一期、無上限的看日曆月,兩者不是同一個區間,少講窗口就會跟畫面上的數字對不起來。'
       + 'unlimited=true 代表不限則數:只講已用、⛔ 不要講剩餘、百分比或「會被停掉」。'
-      + '⛔ 別拿 get_ai_usage 的月數字當「本期已用」,那是另一把尺。',
+      + '⛔ 別拿 get_ai_usage 的月數字當「本期已用」,那是另一把尺。'
+      // ⛔ 2026-09-18 壓測踩到:問「這個月 AI 花了我多少錢」,它回「已使用 110 則」就結束——
+      //    一句「錢我看不到」都沒有,而問的人會把那個數字當成花費。
+      // ⛔ 這段**不要寫成「先講 A 再講 B」的步驟**:2026-09-18 實測,劇本式的寫法會被整段照演——
+      //    它把「再給則數」套到了「token 用了多少」上面,回一句「AI 被呼叫了 236 次」,
+      //    連「token 我看不到」都沒講。規則要寫成界線,不要寫成台詞。
+      + '⛔ **這裡沒有金額**(月費、帳單、成本一概看不到):問錢時如實說金額看不到、請他到帳單頁看。'
+      + '⛔ 則數只有查過才可以講;⛔ 不可以拿則數當成「多少錢」的答案。',
     requires: 'usage.read',
     mutates: false,
     async run(db, workspaceId) {
@@ -479,16 +508,37 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
  *    問「那上個月呢」查成 2024 年 5 月,兩次都回一整排 0,看起來就像「你上禮拜沒有客人」。
  *    工具的預設值(昨天/本月)是後端算的所以正確,錯的是模型自己填的相對日期。
  */
-function buildSystemInstruction(now: Date): string {
+/**
+ * 提示裡給過模型的那幾個日期。
+ * ⛔ 回答的「數字有沒有出處」那道檢查也要吃同一份:2026-09 這種寫法裡的
+ *    2026 與 09 是**我們自己給它的**,不算它憑空編的。
+ */
+function promptDates(now: Date): { today: string, yesterday: string, weekAgo: string, thisMonth: string, lastMonthText: string } {
   const today = taipeiDate(now)
-  const yesterday = addDays(today, -1)
-  const weekAgo = addDays(today, -7)
   const thisMonth = today.slice(0, 7)
   const lastMonth = taipeiYyyyMm(new Date(Date.UTC(Number(thisMonth.slice(0, 4)), Number(thisMonth.slice(5, 7)) - 1, 1) - 86400_000))
-  const lastMonthText = `${lastMonth.slice(0, 4)}-${lastMonth.slice(4)}`
+  return {
+    today,
+    yesterday: addDays(today, -1),
+    weekAgo: addDays(today, -7),
+    thisMonth,
+    lastMonthText: `${lastMonth.slice(0, 4)}-${lastMonth.slice(4)}`,
+  }
+}
+
+function buildSystemInstruction(now: Date, workspaceName: string): string {
+  const { today, yesterday, weekAgo, thisMonth, lastMonthText } = promptDates(now)
 
   return `你是 LINE 官方帳號「後台小幫手」。你可以查資料回答,也可以**提議**下面清單裡的少數幾種設定調整——但你永遠不會自己動手:提議會變成一張確認卡,使用者按了確定,系統才真的去做。
 清單以外的修改(發推播、以官方帳號名義對客人說話、刪東西、改憑證、改成員、動錢)你一律做不到:如實說明並請他到對應頁面自己操作。
+
+【你現在看的是哪一個帳號】
+${workspaceName}。你查到的每一個數字都只屬於這個帳號。
+⛔ 使用者提到**別的帳號／別家／另一個官方帳號**(講名字或講「另一個」都算)時,
+如實說「我只看得到目前這個『${workspaceName}』,別的帳號要切過去才看得到」——
+⛔ **絕對不可以把這裡查到的數字冠上別家的名字**。2026-09-18 壓測踩到:問「splash 那個帳號這個月用量」,
+它照樣查了這一家,然後回「splash 帳號這個月的用量如下…」——資料沒有外洩,但那張帳完全貼錯人,
+而使用者會拿它去做決定。
 
 【今天的日期(台北時間)】
 今天是 ${today};昨天是 ${yesterday};七天前是 ${weekAgo}。
@@ -505,7 +555,7 @@ ${adminOpCatalogueForPrompt()}
 【每一步回傳 JSON,三選一】
 { "action": "tool", "tool": "工具名", "args": {} }
 { "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"], "cancelPrevious": true }
-{ "action": "propose", "op": "操作id", "args": {}, "text": "一句話說明你打算做什麼" }
+{ "action": "propose", "op": "操作id", "args": {}, "text": "一句話說明你打算做什麼", "answer": "他同一句話裡問的其他事,答案寫這裡" }
 
 【帶路（goto,選填）】回答若建議使用者去後台某頁操作,附上 goto 幫他帶路(最多 2 個)。
 只准用下列 id,不在清單裡的一律不要寫——你沒有能力發明網址:
@@ -546,6 +596,12 @@ ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——
 - 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
 - ⛔ **提議時那句話裡的數字,只能講你這次要改成的值**:「現在是多少」確認卡自己會顯示,
   你不必也不要去講——講錯的話畫面上會出現兩個對不起來的數字(系統會擋掉整句,改用卡片的主句)。
+- ⛔ **他同一句話裡問的問題,不可以因為你要提議就不回答**:把答案寫進 "answer" 那一格。
+  2026-09-18 壓測踩到:「這個月用了幾則?有沒有要處理的?順便把 AI 改成草稿模式」——
+  它兩件都查了,最後畫面上卻只剩一句「我會把 AI 改成只給草稿」,前面兩個問題的答案整包不見,
+  而那兩次查詢的錢已經花掉了。
+  ⛔ "answer" 只回答他問的事(數字照工具結果寫);**⛔不要在 "answer" 裡描述你要改什麼**——
+  那句話寫在 "text",而且要跟確認卡對得上。
 
 【接續上一個提議】
 有【上一個提議】而使用者這句是在**修改它**(例如「改成早上九點」「第二題改成問電話」「名字換一個」),
@@ -579,6 +635,46 @@ function summarizeArgs(args: Record<string, unknown>): string {
   return JSON.stringify(out)
 }
 
+/** 一句話最多看幾個字(超過的部分模型看不到——所以一定要講出來,見 `truncationNotice`) */
+export const MAX_MESSAGE_CHARS = 1000
+/** 一次工具結果最多塞幾個字進提示 */
+const MAX_TOOL_RESULT_CHARS = 4000
+
+/**
+ * 使用者打太長時要講的那句話。
+ *
+ * ⛔ **不能只在提示裡跟模型講**:被切掉的是**使用者自己剛打的字**,他有權知道少了什麼。
+ *    2026-09-18 壓測:貼 1,009 字進去(重點句在最後),系統從第 1,000 字砍斷,
+ *    模型照著半句話回答,而畫面上**沒有任何一個字**提到後面那段沒進來。
+ *    這個專案的老帳:「過濾掉東西要說得出丟了什麼」——這裡丟的還是使用者主動打的內容。
+ */
+export function truncationNotice(originalLength: number): string {
+  return `⚠️ 你這段有 ${originalLength} 個字，我只看得到前 ${MAX_MESSAGE_CHARS} 個字，後面的沒進來——重要的話請分段再講一次。`
+}
+
+/**
+ * 工具結果太長時,**切在整筆的邊界上並講出少了幾筆**。
+ *
+ * ⛔ 原本是 `JSON.stringify(result).slice(0, 4000)`:切出來是半截 JSON,而且**沒有任何記號**——
+ *    模型看到 17 條裡的前 12 條，會很自然地回答「你總共有 12 條」。
+ *    (今天 myfeel 只有 7 條流程、量不到 1,000 字所以碰不到;租戶一大就是「靜靜漏掉東西」。)
+ * ⛔ 用「往下減一筆」而不是硬切字串:半筆資料比沒有這筆更糟(名字都是斷的)。
+ */
+export function summarizeToolResult(result: unknown): string {
+  const json = JSON.stringify(result) ?? 'null'
+  if (json.length <= MAX_TOOL_RESULT_CHARS) return json
+
+  if (Array.isArray(result)) {
+    let kept = result.length
+    // 留 200 字給後面那句「還有幾筆沒給你」
+    while (kept > 0 && JSON.stringify(result.slice(0, kept)).length > MAX_TOOL_RESULT_CHARS - 200) kept--
+    const dropped = result.length - kept
+    return `${JSON.stringify(result.slice(0, kept))}\n⚠️ 這份清單太長,只放得下前 ${kept} 筆,**還有 ${dropped} 筆沒有給你**(總共 ${result.length} 筆)。`
+      + `回答時一定要講出「還有 ${dropped} 筆沒列出來」,⛔ 不可以說這就是全部,⛔ 也不可以拿 ${kept} 當總數。`
+  }
+  return `${json.slice(0, MAX_TOOL_RESULT_CHARS)}\n⚠️ 這筆資料太長,後面被切掉了一段,⛔ 不要把它當成完整內容(需要完整內容請使用者到對應頁面看)。`
+}
+
 /** 執行一輪查詢對話:回傳最終回答與工具呼叫紀錄(供 endpoint 審計+記帳) */
 export async function runAdminAgentChat(params: {
   db: Firestore
@@ -602,32 +698,58 @@ export async function runAdminAgentChat(params: {
   authHeader?: string
 }): Promise<AdminAgentReply> {
   const { db, workspaceId, role, uid, authHeader, lastProposal } = params
-  const message = String(params.message || '').trim().slice(0, 1000)
+  const fullMessage = String(params.message || '').trim()
+  const message = fullMessage.slice(0, MAX_MESSAGE_CHARS)
   if (!message) throw createError({ statusCode: 400, statusMessage: '請輸入想查詢的問題' })
+  // 被切掉的字是使用者自己打的 → 這件事由**程式**講出來,不靠模型記得(見 truncationNotice)
+  const cutNotice = fullMessage.length > MAX_MESSAGE_CHARS ? truncationNotice(fullMessage.length) : ''
+  const say = (reply: string) => (cutNotice ? `${cutNotice}\n\n${reply}` : reply)
 
   const recent = (params.history ?? []).slice(-6)
     .map(t => `${t.role === 'user' ? '使用者' : '助理'}:${String(t.text).trim().slice(0, 300)}`)
     .join('\n')
 
+  // 帳號名字要進提示:沒有它,使用者問「splash 那家的用量」時模型只能拿這一家的數字充數
+  // (2026-09-18 壓測實際發生)。查不到名字就退回一句中性的稱呼,⛔不要讓整輪失敗
+  // ——⛔ 連**同步**丟出來的錯也要接(`.catch()` 只接得到 promise:資料庫客戶端壞掉時
+  //    collection() 本身就會丟,那樣整個小幫手會因為「查不到名字」而全掛)。
+  const workspaceName = await (async () => {
+    try {
+      const snap = await db.collection('workspaces').doc(workspaceId).get()
+      return String((snap.data() as { name?: string } | undefined)?.name ?? '').trim()
+    }
+    catch { return '' }
+  })()
+
   // 這一輪的提示（含今天的日期）：⛔不可以搬回模組級常數，那樣日期會停在程式啟動那一刻
-  const systemInstruction = buildSystemInstruction(new Date())
+  const now = new Date()
+  const systemInstruction = buildSystemInstruction(now, workspaceName || '目前這個官方帳號')
+
+  // 回答裡的數字可以有的出處：查到的資料（下面會長出來）＋使用者自己講過的話＋我們給過它的日期
+  const userSaidTexts = [message, ...(params.history ?? []).filter(t => t.role === 'user').map(t => String(t.text ?? ''))]
+  const dateTexts = Object.values(promptDates(now))
 
   const toolCalls: AdminAgentToolCall[] = []
   const toolResults: string[] = []
   let inputTokens = 0
   let outputTokens = 0
+  /**
+   * 「沒查就講」的回答已經退回去過一次了嗎。
+   * ⛔ 只退一次:模型有可能每次都寫同一句話,無限退回就是無限燒錢。
+   */
+  let regrounded = false
 
   for (let step = 0; step <= MAX_TOOL_STEPS; step++) {
     const prompt = [
       recent ? `【先前對話】\n${recent}` : '',
       lastProposal ? `【上一個提議(還沒執行)】\n操作:${lastProposal.opId}\n參數:${summarizeArgs(lastProposal.args)}` : '',
-      `【使用者這句】\n${message}`,
+      `【使用者這句】${cutNotice ? `(⚠️ 他實際打了 ${fullMessage.length} 字,這裡只有前 ${MAX_MESSAGE_CHARS} 字,後面被系統切掉了——句子可能是斷的,⛔不確定他要什麼就先問,不要自己補完)` : ''}\n${message}`,
       toolResults.length ? `【工具結果】\n${toolResults.join('\n')}` : '',
       // 步數用盡:強制收斂成回答,避免無限查
       step === MAX_TOOL_STEPS ? '【注意】查詢次數已用完,請直接以現有工具結果回答("action":"answer")。' : '',
     ].filter(Boolean).join('\n\n')
 
-    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; goto?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
+    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
       systemInstruction,
       temperature: 0,
       maxOutputTokens: 1200,
@@ -639,10 +761,28 @@ export async function runAdminAgentChat(params: {
 
     if (data?.action === 'answer') {
       const text = String(data?.text ?? '').trim()
+
+      // ⛔ 沒查就講出來的東西要退回去查(數字憑空生、沒查異常卻說「沒有要處理的」)。
+      //    2026-09-18 壓測:問「這個月 AI 花了我多少錢」,它一個工具都沒呼叫就回
+      //    「總共回覆了 123 則、45 次轉真人」——兩個數字都是編的。
+      //    ⚠️ 步數已用完就不退(退了只會收到「查太多次」那句罐頭,比一個可疑的答案更沒用)。
+      if (!regrounded && step < MAX_TOOL_STEPS) {
+        const issue = answerGroundingIssue({
+          text,
+          sources: [...toolResults, ...userSaidTexts, ...dateTexts],
+          calledTools: toolCalls.map(t => t.tool),
+        })
+        if (issue) {
+          regrounded = true
+          toolResults.push(`上一次的回答被擋下 → ${issue}`)
+          continue
+        }
+      }
+
       // goto 走白名單解析:模型只挑 id,網址由 shared/agent-destinations 生——編不出來、最多挑錯頁
       const messages = resolveAgentDestinations(data?.goto, workspaceId)
       return {
-        reply: text || '(助理沒有給出回答,請換個問法再試一次)',
+        reply: say(text || '(助理沒有給出回答,請換個問法再試一次)'),
         toolCalls,
         messages,
         // 只有真的有一張卡在等的時候才傳:沒有提議可收回時這一格沒有意義
@@ -656,6 +796,22 @@ export async function runAdminAgentChat(params: {
     // 這裡只做「驗參數 → 看現況 → 產生確認卡」,**一個字都不寫進資料庫**。
     // 真正的執行在使用者按下確定後的第二個請求(/api/admin/agent/confirm)。
     if (data?.action === 'propose') {
+      // 提議時附帶的那段回答走**同一道**檢查（⛔而且要在準備操作之前:有些操作光是
+      // 產生預覽就要叫一次模型生草稿,退回去重來會白花一次錢）。
+      // 2026-09-18 壓測:它只查了用量,卻在提議旁邊補一句「目前沒有需要處理的異常狀況」。
+      if (!regrounded && step < MAX_TOOL_STEPS) {
+        const issue = answerGroundingIssue({
+          text: String(data?.answer ?? ''),
+          sources: [...toolResults, ...userSaidTexts, ...dateTexts],
+          calledTools: toolCalls.map(t => t.tool),
+        })
+        if (issue) {
+          regrounded = true
+          toolResults.push(`上一次的回答被擋下 → ${issue}（提議本身沒問題,查完再提一次就好）`)
+          continue
+        }
+      }
+
       const ctx = { db, workspaceId, uid, authHeader }
       try {
         const { opId, op } = getAdminOp(String(data?.op ?? '').trim())
@@ -739,8 +895,21 @@ export async function runAdminAgentChat(params: {
           // ⚠️ 這一句是**原樣印在確認卡上**給店家看的，標點跟著畫面用全形
           ? '⚠️ 上一個提議還沒有被執行，這次只會做上面列的這一件事。'
           : ''
-        const preview = supersede
-          ? { ...rawPreview, warning: [supersede, rawPreview.warning].filter(Boolean).join('\n') }
+
+        // 他只講了一個時間、卡片上卻兩端都變了 → **把這件事講出來**（2026-09-18 回歸實測：
+        // 上一張是「勿擾 23:00–09:00」，他只說「改成早上十點」，出來卻是「22:00–10:00」，
+        // 晚上那端他從頭到尾沒提過）。⛔ 刻意不擋：「整個往後一小時」這種說法本來就要動兩端，
+        // 擋了會變鬼打牆——但畫面一定要講，他才有機會喊停。
+        const extraClock = lastProposal && lastProposal.opId === opId
+          ? clockFieldsChangedBeyondUserWords(message, lastProposal.args, rawArgs)
+          : []
+        const extraWarn = extraClock.length
+          ? '⚠️ 你這次只提到一個時間，但上面的起訖兩端都變了——請對一下「現在」與「改成」那兩行，不是你要的就再跟我說一次。'
+          : ''
+
+        const extras = [supersede, extraWarn].filter(Boolean).join('\n')
+        const preview = extras
+          ? { ...rawPreview, warning: [extras, rawPreview.warning].filter(Boolean).join('\n') }
           : rawPreview
 
         // r＝模型原話的參數:接續修改時要餵回去的是它,不是收斂後的結果(收斂後餵不回 normalize)
@@ -760,6 +929,15 @@ export async function runAdminAgentChat(params: {
         if (strayNumbers.length)
           console.warn('[admin-agent] 泡泡出現卡片上沒有的數字,改用卡片主句:', opId, strayNumbers)
 
+        // 同一句話裡他還問了別的 → 答案跟著提議一起回去。
+        // ⛔ 沒有這一格的話,那些查詢的結果在這條路上會被整包丟掉(2026-09-18 壓測:
+        //    「用了幾則?有沒有要處理的?順便改成草稿模式」查了兩支工具,畫面上只剩一句提議)。
+        // ⛔ **不可以把 answer 併進去之後才做數字檢查**:那道檢查比對的是「這張卡上有沒有這個數字」,
+        //    而 answer 講的是查到的資料(則數、異常件數),本來就不會在卡片上——併著檢查等於
+        //    每次都判定不合格,然後把使用者問的答案連同提議那句話一起換成卡片主句。
+        const answer = String(data?.answer ?? '').trim()
+        const proposeLine = (preview.noop || strayNumbers.length || !text) ? preview.summary : text
+
         return {
           // ⛔ 「本來就是這樣」(noop)時一律用後端查出來的那句話,不採用模型寫的。
           // admin-ops.ts 開頭的紀律是「講的跟做的必須出自同一次查詢」,但那道紀律
@@ -767,7 +945,7 @@ export async function runAdminAgentChat(params: {
           // 泡泡卻說「我會將『新增備註』重新啟用」。noop 連確認鈕都沒有,
           // 畫面上只剩那句「我會…」,人只會以為它做了。
           // ⛔ 數字對不上時**整句換掉**,不要把數字挖掉改寫——被動過手腳的句子更難察覺。
-          reply: (preview.noop || strayNumbers.length || !text) ? preview.summary : text,
+          reply: say([answer, proposeLine].filter(Boolean).join('\n\n')),
           toolCalls,
           messages: [],
           pendingOp: {
@@ -793,7 +971,7 @@ export async function runAdminAgentChat(params: {
         }
         console.error('[admin-agent] propose failed:', e)
         return {
-          reply: '這件事我準備到一半出了狀況,沒有動到任何設定。請再說一次,或直接到對應頁面操作。',
+          reply: say('這件事我準備到一半出了狀況,沒有動到任何設定。請再說一次,或直接到對應頁面操作。'),
           toolCalls,
           messages: [],
           inputTokens,
@@ -812,7 +990,7 @@ export async function runAdminAgentChat(params: {
       //    實測踩到:使用者問「把所有客服流程都停掉」(合理需求、只是一次做不到),
       //    卻收到「這題我查不太到」,看起來就像功能壞了。
       return {
-        reply: '這句我沒整理出答案（不是查不到資料）。可以換個說法，或一次講一件事——例如「哪些客服流程沒啟用」「這個月 AI 用量」「把某某流程停掉」。',
+        reply: say('這句我沒整理出答案（不是查不到資料）。可以換個說法，或一次講一件事——例如「哪些客服流程沒啟用」「這個月 AI 用量」「把某某流程停掉」。'),
         toolCalls,
         messages: [],
         inputTokens,
@@ -838,12 +1016,13 @@ export async function runAdminAgentChat(params: {
     toolCalls.push({ tool: toolName, args })
     try {
       const result = await tool.run(db, workspaceId, args, { authHeader })
-      toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 4000)}`)
+      // ⛔ 太長時要切在整筆的邊界上、而且要講出少了幾筆（見 summarizeToolResult）
+      toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${summarizeToolResult(result)}`)
     }
     catch (e: any) {
       toolResults.push(`${toolName} → 查詢失敗:${String(e?.message ?? e).slice(0, 200)}`)
     }
   }
 
-  return { reply: '這題查的步驟太多了,換個更具體的問法試試?', toolCalls, messages: [], inputTokens, outputTokens }
+  return { reply: say('這題查的步驟太多了,換個更具體的問法試試?'), toolCalls, messages: [], inputTokens, outputTokens }
 }

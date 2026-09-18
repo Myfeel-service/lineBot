@@ -14,7 +14,7 @@
  */
 import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
-import { serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
+import { dndSentence, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
 import {
   previewScriptToggleImpact,
   toReachabilityScriptsWithDisabled,
@@ -122,12 +122,8 @@ function hhmm(raw: unknown, what: string): string {
   return `${String(h).padStart(2, '0')}:${m}`
 }
 
-/** 服務時間 → 勿擾時段的白話（兩者是補集，講給人聽時要一起講，免得對不上） */
-function dndSentence(sh: ServiceHoursLike): string {
-  if (!sh.enabled) return '目前沒有勿擾時段（任何時間找真人都會通知）'
-  const weekend = sh.weekendOff ? '，以及週六、週日整天' : ''
-  return `${sh.end}–${sh.start}${weekend}`
-}
+// 服務時間 → 勿擾時段的白話（兩者是補集）已搬到 `shared/time.ts` 的 `dndSentence`：
+// 讀取端（小幫手的 get_ai_settings）也要講同一句，兩邊各寫一份就是「講反」的溫床。
 
 function serviceSentence(sh: ServiceHoursLike): string {
   return serviceHoursSentence(sh) ?? '沒有設定（全天都算服務中）'

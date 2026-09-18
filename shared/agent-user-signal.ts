@@ -103,3 +103,42 @@ function stripVagueOne(s: string): string {
 export function hasNumberSignal(userTexts: readonly string[]): boolean {
   return userTexts.some(t => NUMBER_SIGNAL.test(stripVagueOne(t)))
 }
+
+/** 一個「幾點」的說法：「早上十點」「22:00」「晚上 11 點」都算一個 */
+const CLOCK_MENTION = new RegExp(
+  `[0-9０-９]{1,2}\\s*[:：]\\s*[0-9０-９]{2}`
+  + `|(?:${'早上|上午|中午|下午|晚上|晚間|夜間|凌晨|半夜|深夜'})?\\s*(?:[0-9０-９]+|[零一二兩三四五六七八九十]+)\\s*點`,
+  'g',
+)
+
+/** 看起來像 "HH:mm" 的值 */
+function isClockValue(v: unknown): boolean {
+  return /^\d{1,2}[:：]\d{2}$/.test(String(v ?? '').trim())
+}
+
+/**
+ * 接續修改一個提議時，**時間格被動到的數量有沒有超過使用者這句話講的時間數**。
+ *
+ * 2026-09-18 回歸實測踩到：上一個提議是「勿擾 23:00–09:00」，使用者只說
+ * 「剛剛那個**改成早上十點**」（一個時間），出來的卡片卻是「勿擾 **22:00**–10:00」——
+ * 晚上那端被一起改掉了，而他從頭到尾沒提過晚上。
+ *
+ * ⛔ **刻意不擋下來**：「整個時段往後一小時」這種說法，一個時間、兩端都要動是對的。
+ *    擋了會把合理的要求變成鬼打牆。這裡只回報「多動了哪幾格」，讓卡片自己講出來——
+ *    使用者看得到就有機會喊停，這比擋錯更實在。
+ *
+ * @returns 多動的那幾格欄位名；空陣列＝沒有多動（或這根本不是接續修改）
+ */
+export function clockFieldsChangedBeyondUserWords(
+  message: string,
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+): string[] {
+  if (!before || !after) return []
+  const changed = Object.keys(after).filter((k) => {
+    if (!isClockValue(after[k]) && !isClockValue(before[k])) return false
+    return String(before[k] ?? '').trim() !== String(after[k] ?? '').trim()
+  })
+  const mentions = (String(message ?? '').match(CLOCK_MENTION) ?? []).length
+  return changed.length > mentions ? changed : []
+}

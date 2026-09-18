@@ -493,3 +493,117 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
     expect(res.pendingOp?.preview.warning ?? '').not.toContain('上一個提議還沒有被執行')
   })
 })
+
+/**
+ * 2026-09-18 壓測抓到的：**一句話問三件事，只要其中一件是「動手」，另外兩件的答案就整包不見**。
+ *
+ * 實測：「這個月用了幾則？有沒有什麼要處理的？順便幫我把 AI 改成草稿模式」
+ * → 它查了 `get_plan_quota` 與 `get_current_alerts`（錢都花了），
+ *   畫面上卻只剩一句「我會把 AI 改成只給草稿」，前面兩個問題一個字都沒有回答。
+ */
+describe('提議的同時，同一句話裡的問題也要回答', () => {
+  it('answer 與提議那句話一起回，⛔查到的答案不再被丟掉', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+      text: '我會把服務時間改成下面這樣。',
+      // ⚠️ 這裡刻意不寫數字：數字要有出處是**另一道**檢查（見 shared/agent-answer-grounding），
+      //    這條測的是「答案有沒有被丟掉」。
+      answer: '這個月的用量我查過了，還在額度內。',
+    }))
+
+    const res = await run('admin')
+
+    expect(res.reply).toContain('還在額度內')
+    expect(res.reply).toContain('我會把服務時間改成下面這樣')
+    expect(res.pendingOp?.opId).toBe('ai-settings-service-hours')
+    expect(setCalls).toHaveLength(0)
+  })
+
+  /**
+   * ⛔ 兩段話要**分開**把關：卡片數字那道守門比對的是「這張卡上有沒有這個數字」，
+   *    而 answer 講的是查到的資料（則數、異常件數），本來就不在卡片上。
+   *    合在一起檢查的話，等於每次都判不合格，然後把使用者問的答案連同提議那句一起換掉——
+   *    修好一個洞、開一個新的。
+   */
+  it('提議那句話的數字對不上卡片 → 只換掉那一句，answer 要留著', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+      // 99:99 這種卡片上沒有的數字＝C-192 那個「泡泡跟卡片各講一套」
+      text: '我會把服務時間從 99:99 改掉。',
+      answer: '另外你問的用量我查過了，還在額度內。',
+    }))
+
+    const res = await run('admin')
+
+    expect(res.reply).toContain('還在額度內') // 查到的答案還在
+    expect(res.reply).not.toContain('99:99') // 對不上的那句被整句換掉
+    expect(res.reply).toContain(res.pendingOp!.preview.summary) // 換成卡片的主句
+  })
+
+  it('沒有 answer（單純叫它動手）→ 行為跟以前一模一樣', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'ai-settings-service-hours',
+      args: { mode: 'dnd', start: '22:00', end: '08:00' },
+      text: '我會把服務時間改成 08:00–22:00。',
+    }))
+    const res = await run('admin')
+    expect(res.reply).toBe('我會把服務時間改成 08:00–22:00。')
+  })
+})
+
+/**
+ * 2026-09-18 回歸實測：上一張卡是「勿擾 23:00–09:00」，使用者只說「改成早上十點」，
+ * 卡片卻變成「22:00–10:00」——晚上那端他從頭到尾沒提過。
+ * ⛔ 刻意不擋（「整段往後一小時」本來就要動兩端），但畫面一定要講出來。
+ */
+describe('只講一端卻兩端都改', () => {
+  const askFollowUp = (message: string, args: Record<string, unknown>) => {
+    generateJson.mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args }))
+    return runAdminAgentChat({
+      db: makeDb(),
+      workspaceId: 'w1',
+      uid: 'u1',
+      role: 'admin',
+      message,
+      lastProposal: { opId: 'ai-settings-service-hours', args: { mode: 'dnd', start: '23:00', end: '09:00' } },
+    })
+  }
+
+  it('🔴 多動的那一格要寫在卡片上', async () => {
+    const res = await askFollowUp('剛剛那個改成早上十點', { mode: 'dnd', start: '22:00', end: '10:00' })
+    expect(res.pendingOp?.preview.warning).toContain('起訖兩端都變了')
+  })
+
+  it('只改他講的那一格 → ⛔不要多嘴（每次都警告等於沒有警告）', async () => {
+    const res = await askFollowUp('剛剛那個改成早上十點', { mode: 'dnd', start: '23:00', end: '10:00' })
+    expect(res.pendingOp?.preview.warning ?? '').not.toContain('起訖兩端都變了')
+  })
+})
+
+/**
+ * 2026-09-18 壓測抓到的：問「勿擾時段是幾點到幾點」，它把設定裡的
+ * `start:10:00 / end:19:00`（那是**服務時間**）唸成「勿擾 10:00–19:00」——
+ * 正好把上班時間講成不會被打擾的時間。
+ */
+describe('get_ai_settings 的服務時間／勿擾時段', () => {
+  it('兩句話都由後端算好，⛔不給裸的 start/end 讓模型自己換算', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_settings', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '勿擾幾點到幾點?' })
+
+    const prompt = generateJson.mock.calls[1]![0] as string
+    // 假設值是「服務 09:00–18:00、週末休」→ 勿擾就是 18:00–09:00 加整個週末
+    expect(prompt).toContain('"serviceText":"週一至週五 09:00–18:00"')
+    expect(prompt).toContain('"dndText":"18:00–09:00，以及週六、週日整天"')
+    // ⛔ 裸的起訖不可以再出現：它離開這裡就沒有人記得那是「服務時間」的起訖
+    expect(prompt).not.toContain('"start":"09:00"')
+    expect(prompt).not.toContain('"end":"18:00"')
+  })
+})

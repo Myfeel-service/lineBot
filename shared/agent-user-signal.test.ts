@@ -7,7 +7,7 @@
  * 兩題在 prompt 裡都早就寫了「⛔不要自己補」，照樣中——所以改成機制。
  */
 import { describe, expect, it } from 'vitest'
-import { hasNumberSignal, isBareAssent } from './agent-user-signal'
+import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from './agent-user-signal'
 
 describe('只有同意、沒講要動哪一個', () => {
   it('🔴 實測踩到的那一句：「做」', () => {
@@ -65,5 +65,35 @@ describe('有沒有講到數值', () => {
 
   it('先前輪次他自己講過也算', () => {
     expect(hasNumberSignal(['晚上不要吵我', '11點到9點'])).toBe(true)
+  })
+})
+
+/**
+ * 2026-09-18 回歸實測：上一張卡是「勿擾 23:00–09:00」，使用者只說「剛剛那個改成早上十點」，
+ * 出來的卻是「勿擾 **22:00**–10:00」——晚上那端被一起改了，而他從頭到尾沒提過晚上。
+ */
+describe('接續修改時，動到的時間格比他講的多', () => {
+  const before = { mode: 'dnd', start: '23:00', end: '09:00' }
+
+  it('🔴 他只講一個時間，兩端卻都變了 → 回報多動的那幾格', () => {
+    const extra = clockFieldsChangedBeyondUserWords('剛剛那個改成早上十點', before, { mode: 'dnd', start: '22:00', end: '10:00' })
+    expect(extra).toEqual(['start', 'end'])
+  })
+
+  it('只改他講的那一格 → 沒有多動', () => {
+    expect(clockFieldsChangedBeyondUserWords('剛剛那個改成早上十點', before, { mode: 'dnd', start: '23:00', end: '10:00' })).toEqual([])
+  })
+
+  it('他講了兩個時間，兩端都變是對的', () => {
+    expect(clockFieldsChangedBeyondUserWords('改成晚上十點到早上八點', before, { mode: 'dnd', start: '22:00', end: '08:00' })).toEqual([])
+    expect(clockFieldsChangedBeyondUserWords('改成 22:00 到 08:00', before, { mode: 'dnd', start: '22:00', end: '08:00' })).toEqual([])
+  })
+
+  it('沒有上一張卡（不是接續修改）→ 不判', () => {
+    expect(clockFieldsChangedBeyondUserWords('改成早上十點', undefined, { start: '10:00' })).toEqual([])
+  })
+
+  it('動的不是時間格（例如週末休不休）→ 不判', () => {
+    expect(clockFieldsChangedBeyondUserWords('週末也要休息', before, { ...before, weekendOff: true })).toEqual([])
   })
 })

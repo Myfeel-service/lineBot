@@ -198,6 +198,21 @@ export function serviceHoursSentence(cfg: ServiceHoursLike | null | undefined): 
   return `${days} ${minutesToHhmm(start)}–${minutesToHhmm(end)}`
 }
 
+/**
+ * 勿擾時段講成一句人話：「19:00–10:00，以及週六、週日整天」。
+ *
+ * ⛔ **設定裡存的是「服務時間」，勿擾是它的補集**——兩者的起訖剛好顛倒。
+ *    2026-09-18 壓測踩到：小幫手被問「勿擾時段是幾點到幾點」，直接把設定裡的
+ *    `start:10:00 / end:19:00` 唸成「勿擾 10:00–19:00」，正好把上班時間講成不打擾的時間。
+ *    所以凡是要把這個設定講給人聽的地方，一律走這支與 `serviceHoursSentence`，
+ *    ⛔ 不要在各自的地方自己換算（提議那條路的註解早就寫過「換錯會把上下班時間顛倒」）。
+ */
+export function dndSentence(cfg: ServiceHoursLike | null | undefined): string {
+  if (!cfg?.enabled) return '目前沒有勿擾時段（任何時間找真人都會通知）'
+  const weekend = cfg.weekendOff ? '，以及週六、週日整天' : ''
+  return `${cfg.end}–${cfg.start}${weekend}`
+}
+
 /** 午夜起算的分鐘 → "HH:mm"（補零，和設定畫面顯示的一致）。 */
 function minutesToHhmm(total: number): string {
   return `${p2(Math.floor(total / 60))}:${p2(total % 60)}`

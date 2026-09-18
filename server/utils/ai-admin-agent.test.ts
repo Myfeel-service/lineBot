@@ -22,7 +22,7 @@ vi.mock('./gemini', () => ({ generateJson }))
 // Nitro 全域(測試環境沒有 Nuxt runtime)
 ;(globalThis as any).createError = (o: any) => Object.assign(new Error(o?.statusMessage || 'error'), o)
 
-import { runAdminAgentChat, TOOLS } from './ai-admin-agent'
+import { MAX_MESSAGE_CHARS, runAdminAgentChat, summarizeToolResult, TOOLS } from './ai-admin-agent'
 
 /** 每個測試都用 viewer:現有 8 個工具的門檻最高就是 ai.read(=viewer),行為與改版前一致 */
 // uid 是 C-31 Phase 2 加的(代辦提議的憑證要綁死是給誰的);查詢路徑用不到,給個固定值即可
@@ -322,5 +322,128 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok', goto: 'not-an-array' }))
     const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '嗨' })
     expect(res.messages).toEqual([])
+  })
+
+  // ── 2026-09-18 壓測抓到的三件事 ────────────────────────────────
+
+  /**
+   * 問「splash 那個帳號這個月用量」,它查了**這一家**,然後回「splash 帳號這個月的用量如下…」。
+   * 資料沒外洩(工具鎖死在 session 的 workspaceId),但那張帳貼到別人頭上,
+   * 而使用者會拿它去做決定。模型要有辦法講「我只看得到這一家」,就得先知道這一家叫什麼。
+   */
+  it('提示要講出「你現在看的是哪一個帳號」,並禁止把這家的數字冠上別家的名字', async () => {
+    const db = makeDb({ workspaces: { w1: { name: 'MYFEEL' } } })
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: 'splash 那家用量多少?' })
+    const instruction = (generateJson.mock.calls[0]![1] as any).systemInstruction as string
+    expect(instruction).toContain('MYFEEL')
+    expect(instruction).toContain('冠上別家的名字')
+  })
+
+  it('查不到帳號名字(或資料庫壞掉)→ 退回中性稱呼,⛔不讓整輪失敗', async () => {
+    const boom = { collection() { throw new Error('boom') } } as any
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    const res = await runAdminAgentChat({ db: boom, workspaceId: 'w1', ...asViewer, message: '嗨' })
+    expect(res.reply).toBe('ok')
+    expect((generateJson.mock.calls[0]![1] as any).systemInstruction).toContain('目前這個官方帳號')
+  })
+
+  /**
+   * 使用者貼一大段進來,超過的部分本來是**靜靜**被丟掉的:模型照著半句話回答,
+   * 畫面上一個字都沒提到後面那段沒進來。被切掉的是他自己剛打的字,他有權知道。
+   */
+  it('訊息太長:回覆要**當面講出**只看到前 1000 字,提示裡也要標註', async () => {
+    const long = `${'把查詢訂單這條下架。'.repeat(120)}但是先不要動，我只是問問。`
+    expect(long.length).toBeGreaterThan(MAX_MESSAGE_CHARS)
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '好的' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: long })
+
+    expect(res.reply).toContain(`只看得到前 ${MAX_MESSAGE_CHARS} 個字`)
+    expect(res.reply).toContain(String(long.length))
+    expect(res.reply).toContain('好的') // ⛔ 原本的回答不可以被蓋掉
+    expect(generateJson.mock.calls[0]![0] as string).toContain('後面被系統切掉了')
+  })
+
+  it('訊息沒超長 → 一個字都不加', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '好的' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '嗨' })
+    expect(res.reply).toBe('好的')
+    expect(generateJson.mock.calls[0]![0] as string).not.toContain('後面被系統切掉了')
+  })
+
+  /**
+   * 2026-09-18 壓測:問「這個月 AI 花了我多少錢」,它**一個工具都沒呼叫**,
+   * 直接回「總共回覆了 123 則、45 次轉真人」——兩個數字都是編的（真值 110）。
+   * 純函式綠不代表有被接上去，這幾條釘的是「迴圈真的會退回去重查」。
+   */
+  it('🔴 沒查就報數字 → 退回去查一次,最後給的是查到的真數字', async () => {
+    const ym = new Date().toISOString().slice(0, 7).replace('-', '')
+    const db = makeDb({ aiUsage: { [`w1_${ym}`]: { invocations: 236, answered: 98 } } })
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'answer', text: '這個月回了 123 則、轉真人 45 次。' }))
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_usage', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '這個月 AI 被呼叫 236 次。' }))
+
+    const res = await runAdminAgentChat({ db, workspaceId: 'w1', ...asViewer, message: '這個月花多少錢?' })
+
+    expect(res.reply).toBe('這個月 AI 被呼叫 236 次。')
+    expect(res.toolCalls.map(t => t.tool)).toEqual(['get_ai_usage'])
+    // 退回去的原因要讓模型看得到，它才知道要去查
+    expect(generateJson.mock.calls[1]![0] as string).toContain('回答被擋下')
+  })
+
+  it('🔴 沒查異常卻說「沒有要處理的」→ 同一道檢查擋下來', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'answer', text: '目前沒有需要處理的事。' }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '異常我還沒查，要不要我查一下？' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '有什麼要處理的嗎?' })
+    expect(res.reply).toContain('還沒查')
+    expect(generateJson.mock.calls[1]![0] as string).toContain('get_current_alerts')
+  })
+
+  it('⛔ 只退一次:模型硬要講同一句話時,不可以無限重來', async () => {
+    generateJson.mockResolvedValue(step({ action: 'answer', text: '這個月回了 123 則。' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '幾則?' })
+    expect(res.reply).toBe('這個月回了 123 則。')
+    expect(generateJson).toHaveBeenCalledTimes(2)
+  })
+
+  it('數字有出處就不要多跑一輪（⛔這道檢查不可以變成每次都退回）', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '你說的 30 分鐘我記下了。' }))
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '提醒改成 30 分鐘好不好' })
+    expect(generateJson).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 工具結果太長時的截斷。
+ * ⛔ 原本是 `JSON.stringify(x).slice(0, 4000)`：切出來是半截 JSON、**而且沒有任何記號**——
+ *    模型看到 17 條裡的前 12 條,會很自然地回答「你總共有 12 條」。
+ */
+describe('summarizeToolResult(清單太長時要說得出丟了什麼)', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => ({
+    name: `流程${i}`, keywords: '關鍵字'.repeat(20), note: '一段很長的說明'.repeat(10),
+  }))
+
+  it('放得下 → 原封不動', () => {
+    expect(summarizeToolResult([{ a: 1 }])).toBe('[{"a":1}]')
+  })
+
+  it('放不下 → 切在整筆的邊界,並講出還有幾筆沒給', () => {
+    const out = summarizeToolResult(rows(60))
+    const kept = (out.match(/"name":/g) ?? []).length
+    expect(kept).toBeGreaterThan(0)
+    expect(kept).toBeLessThan(60)
+    // 切點必須是完整的一筆:前半段仍然 parse 得動
+    expect(() => JSON.parse(out.split('\n')[0]!)).not.toThrow()
+    expect(JSON.parse(out.split('\n')[0]!)).toHaveLength(kept)
+    expect(out).toContain(`還有 ${60 - kept} 筆沒有給你`)
+    expect(out).toContain('總共 60 筆')
+    expect(out).toContain('不可以說這就是全部')
+  })
+
+  it('不是清單的大東西 → 也要講出被切掉了', () => {
+    const out = summarizeToolResult({ text: 'x'.repeat(9000) })
+    expect(out).toContain('後面被切掉了一段')
   })
 })
