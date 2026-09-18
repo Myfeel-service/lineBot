@@ -13,7 +13,7 @@
 
 import type { Component } from 'vue'
 import {
-  Box, ChatDotRound, ChatLineSquare, Connection, DataLine, EditPen, Files,
+  Box, ChatDotRound, ChatLineSquare, Connection, DataLine, Document, EditPen, Files,
   FolderOpened, Grid, Lightning, MagicStick, Monitor, OfficeBuilding, Operation,
   Pointer, Postcard, PriceTag, Promotion, Reading, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'
@@ -386,6 +386,31 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           'AI 答不上來、或客人指名要找真人時，對話會<strong>轉給真人</strong>。這裡設定要<strong>用 LINE 通知哪些客服</strong>——不設的話沒有人會知道有客人在等，很容易漏接。收通知的人要先加你的官方帳號好友。',
         placement: 'top',
       },
+      // ── 2026-09-18 `D-82` 第二批：這一頁 14 個區塊只教了 3 個，補兩塊
+      //    **會直接改變客人收到什麼**的（其餘的頁面上各自有說明，不逐塊教）。
+      {
+        target: '[data-tour="ais-hours"]',
+        title: '下班時間不要吵客服',
+        description:
+          '設了服務時間之後，<strong>非服務時間內不會推播通知客服</strong>（半夜不會被叫醒）。'
+          + '⚠️ 轉真人本身<strong>照常發生</strong>——客人還是會被接住、隔天上班在「對話」頁就看得到，'
+          + '只是當下不吵人。還可以設一句勿擾時段要回客人的話，例如「我們明天 9 點回覆您」。',
+        placement: 'right',
+      },
+      {
+        // 這一塊住在預設收合的「進階調校」裡：先幫他展開，否則整步變成「位置不在畫面上」。
+        // ⛔ 已經展開就不可以再點一次 toggle——那會把它收起來。
+        target: '[data-tour="ais-handback"]',
+        clickBefore: '[data-tour="ais-advanced"]',
+        clickBeforeUnless: '[data-tour="ais-handback"]',
+        title: '客服忘記交還時，機器人自己接回去',
+        description:
+          '我幫你展開了「<strong>進階調校</strong>」（更細的設定都收在這裡）。'
+          + '這一塊最值得看：客服按了「我接手」之後<strong>忘記交還</strong>的話，'
+          + '這位客人就再也不會被 AI 回答——設定<strong>閒置幾分鐘自動交還機器人</strong>可以避免。'
+          + '下面還能設「太久沒動靜就自動結束對話」。',
+        placement: 'right',
+      },
       {
         target: '[data-tour="ais-save"]',
         title: '儲存設定',
@@ -462,17 +487,25 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'ai-scripts',
     category: 'ai',
-    requiresSettings: true,
+    // ⛔ 是 operate 不是 settings（2026-09-18 `D-82`）：這一頁的編輯權限是 `scripts.write`＝
+    // **客服就能改**，教學卻鎖在管理員——客服進這一頁時，頁首那顆問號整顆不畫、自動導覽也不跑，
+    // 變成「能改的人看不到教學」。教學的權限一律跟著**頁面實際的權限**走，不要各訂一套。
+    // 三步指的（新增、AI 生成、範本）都在 `canEditScripts` 底下，客服畫面上都有。
+    requiresOperate: true,
     icon: Operation,
-    label: '建立客服流程',
-    blurb: '客服流程把多步驟的問答自動化（預約、報名…）。帶你開第一條。',
+    // ⛔ 名字要跟側欄同一個詞（2026-09-18 `D-82`）：這一頁側欄上叫「自動回應」，
+    // 教學卻叫「建立客服流程」——在教學清單裡用側欄看到的那四個字根本找不到這一支。
+    // 冒號後面才講教什麼（同「知識庫：建立與匯入」的寫法）。
+    label: '自動回應：建立第一條',
+    blurb: '客人說什麼、系統就自動回什麼。帶你從頭設一條，包含最容易做錯的那一格。',
     route: wid => `/admin/${wid}/ai-scripts`,
     steps: [
       {
         target: '[data-tour="scr-new"]',
-        title: '新增一條客服流程',
+        title: '新增一條自動回應',
         description:
-          '客服流程能把固定的接待步驟自動化，例如<strong>預約、報名、領優惠</strong>。點「<strong>新增</strong>」開一條新的。',
+          '客人說了某句話，系統就自動回一段——<strong>一句話回一件事</strong>（例：問營業時間）'
+          + '或<strong>多步驟的接待</strong>（例：預約、報名、領優惠）都在這裡設。點「<strong>新增</strong>」開一條。',
         placement: 'right',
       },
       {
@@ -488,6 +521,59 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '也可以挑一個<strong>範本</strong>，系統幫你把流程骨架建好再改。建立後記得把狀態切成「<strong>啟用</strong>」才會對客人生效。',
         placement: 'top',
+      },
+      // ── 以下是編輯器裡面（2026-09-18 `D-82` 拍板：導覽不可以停在門口）───────────
+      // ⛔ 這幾步**不可以**用 `requiresPresent` 擋：前提是在導航之後、`clickBefore` 之前
+      //    問的，那時編輯器還沒開，填了等於每次都被靜默刷掉（同 `startTopic` 裡那段註解）。
+      //    渲染條件細一層的那幾格改用 `targetFallback`。
+      {
+        target: '[data-tour="scr-trigger-mode"]',
+        // 手上已經開著一條在編輯就不要按「新增」把它切掉——那顆按鈕還會跳出「未儲存」確認框
+        clickBefore: '[data-tour="scr-new"]',
+        clickBeforeUnless: '[data-tour="scr-trigger-mode"]',
+        title: '先決定「什麼時候會啟動」',
+        description:
+          '三選一：<strong>關鍵字</strong>＝客人打的字裡有你設的詞才算；'
+          + '<strong>看意思</strong>＝客人換句話說也算（你填幾句範例，AI 判斷像不像）；'
+          + '<strong>客人加好友時</strong>＝一加好友就跑，不用他打任何字。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-match"]',
+        // 「怎麼比對」只有在「關鍵字」那一邊才渲染；選了「看意思」就退去指上面那排選擇
+        targetFallback: '[data-tour="scr-trigger-mode"]',
+        title: '最容易做錯的就是這一格',
+        description:
+          '選了關鍵字的話，這裡決定<strong>怎麼算命中</strong>。'
+          + '⛔ 其中「<strong>攔截所有文字訊息</strong>」要特別小心：開了之後客人不管打什麼都會走這一條，'
+          + '<strong>AI 客服和其他自動回應全部收不到訊息</strong>，而且畫面上不會有任何錯誤——'
+          + '除非你是刻意要暫停 AI，否則用「含任一關鍵字」。'
+          + '（選「看意思」時這一格會換成<strong>範例句</strong>，填 3～5 種不同說法就夠。）',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-test"]',
+        title: '不確定會不會中？先在這裡試',
+        description:
+          '打一句<strong>客人可能會說的話</strong>，下面立刻告訴你這條會不會被啟動。'
+          + '不用先上線、也不用拿真的客人試——<strong>設完先在這裡打兩句</strong>是最快確認自己沒設錯的方法。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-reply"]',
+        title: '然後，要回客人什麼',
+        description:
+          '這一格就是客人會收到的話。只要一句話就結束的設定，到這裡就完成了；'
+          + '要再問客人問題、收他的答案、依答案分流的話，往下有「<strong>還要多做一步…</strong>」可以加。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-save"]',
+        title: '按「建立」才算數',
+        description:
+          '編好按右上角<strong>建立客服流程</strong>才會存檔。存之前上面那條狀態列會先幫你檢查'
+          + '（有沒有接不起來的步驟、客人會不會卡在某一題出不來），<strong>看到綠色再存</strong>。',
+        placement: 'bottom-end',
       },
     ],
   },
@@ -518,7 +604,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'ai-usage',
     category: 'ai',
-    requiresSettings: true,
+    // ⛔ 不設權限條件（2026-09-18 `D-82`）：這一頁 2026-08-10 特意從管理員降到 `ai.read`
+    // ＝所有成員都看得到，理由是「第一線客服要看得到自己照顧的 AI 做得好不好」，
+    // 但教學的條件沒跟著降，客服與觀察者在這一頁連問號都沒有。計費欄位由 API 逐欄位擋，
+    // 不靠這裡。⛔ 要能操作才有意義的那一步（補知識）自己標 `requiresOperate`，不要整支鎖起來。
     icon: TrendCharts,
     label: '看 AI 用量與監控',
     blurb: '看 AI 幫你分擔多少、哪裡答不好要補知識。',
@@ -534,6 +623,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="usg-cases"]',
+        // 這一步叫人去按「補知識」——觀察者沒有寫知識庫的權限，按了是死路，所以他跳過這步
+        requiresOperate: true,
         title: '答不出來的就地補知識',
         description:
           '這裡列出<strong>客人問了但 AI 答不出來</strong>的案例。點某筆的「<strong>補知識</strong>」會直接跳到知識庫、幫你補一張對應的卡——這是持續把 AI 養好的關鍵動作。',
@@ -961,8 +1052,54 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="bc-new"]',
         title: '建一則推播',
         description:
-          '點「<strong>新增</strong>」：寫內容、選對象（可用標籤篩選名單），還能<strong>排程</strong>定時發送。',
+          '點「<strong>新增</strong>」開一則。接下來我帶你看<strong>發給誰、發什麼、什麼時候發</strong>這三件事。',
         placement: 'right',
+      },
+      // ── 以下是編輯器裡面（2026-09-18 `D-82` 拍板：導覽不可以停在門口）───────────
+      // ⛔ 同 `ai-scripts`：這幾步不能用 `requiresPresent`（那是在 clickBefore 之前問的，
+      //    那時編輯器還沒開，填了每次都被靜默刷掉）。
+      {
+        target: '[data-tour="bc-audience"]',
+        // 手上已經開著一則在編輯就不要按「新增」把它切掉
+        clickBefore: '[data-tour="bc-new"]',
+        clickBeforeUnless: '[data-tour="bc-audience"]',
+        title: '先決定發給誰',
+        description:
+          '<strong>全部好友</strong>最花額度；多數時候用<strong>依標籤篩選</strong>只發給其中一群人'
+          + '（例如只發給貼過「VIP」的）。⚠️ 選兩顆以上標籤是「<strong>或</strong>」——'
+          + '有其中任一顆的人都會收到，不是兩顆都要有。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="bc-content"]',
+        title: '再寫要發什麼',
+        description:
+          '可以只發一段文字，也可以發圖片、圖文訊息，或讓客人點了就<strong>觸發一個機器人模組</strong>。'
+          + '這一區跟你在機器人模組看到的是同一套編輯器。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="bc-schedule"]',
+        title: '現在發，還是約時間發',
+        description:
+          '選「<strong>排程發送</strong>」就約一個時間，到點自動送出。'
+          + '⚠️ <strong>發送對象是到那個時間點才計算</strong>——這段期間新加的好友、新貼的標籤都會算進去。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="bc-send"]',
+        title: '送出前會先讓你看人數',
+        description:
+          '按這顆不會立刻送出：系統會先算好<strong>預估發送人數</strong>、列幾筆名單給你看，'
+          + '<strong>你再按一次確認才真的發</strong>。⚠️ 發出去收不回來，人數跟你想的差太多就先取消。',
+        placement: 'bottom-end',
+      },
+      {
+        target: '',
+        title: '發完之後，回來看成效',
+        description:
+          '送出後回到這則推播，下面會多一段「<strong>成效報表</strong>」：送出去幾筆、幾筆失敗、'
+          + '<strong>哪些人沒收到</strong>（多半是對方封鎖了官方帳號，可以個別跟進），以及 LINE 提供的開封數。',
       },
     ],
   },
@@ -980,6 +1117,16 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '標籤用來分眾',
         description:
           '標籤是把好友<strong>分群</strong>的基礎——貼了標籤，之後<strong>推播</strong>就能只發給某群人、<strong>活動</strong>也能自動貼標歸類。點右上「<strong>新增標籤</strong>」建第一個。',
+        placement: 'bottom-end',
+      },
+      {
+        // 這個錨點 08 月就標好了，卻沒有任何一步用到（`D-82` 盤點掃出來的三個孤兒錨點之一）
+        target: '[data-tour="tag-templates"]',
+        title: '想不到要分哪些群？從範本挑',
+        description:
+          '不知道第一批該建哪些標籤的話，點「<strong>從範本建立</strong>」——'
+          + '裡面是常見的分法（例如買過／問過出貨／有興趣沒買），<strong>勾了就一次幫你建好</strong>，'
+          + '之後照樣能改名字和顏色。',
         placement: 'bottom-end',
       },
       {
@@ -1096,9 +1243,37 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '[data-tour="sp-new"]',
         title: '新增一筆',
-        description:
-          '點「<strong>新增</strong>」設好內容。只有切「<strong>啟用</strong>」的預存，才會出現在對話頁的選單。',
+        description: '點「<strong>新增</strong>」開一筆，我帶你看裡面要填什麼。',
         placement: 'right',
+      },
+      // ── 以下是編輯器裡面（2026-09-18 `D-82` 第二批）─────────────────────────
+      // ⛔ 同前：不能用 `requiresPresent`（在 clickBefore 之前問，那時編輯器還沒開）
+      {
+        target: '[data-tour="sp-action"]',
+        clickBefore: '[data-tour="sp-new"]',
+        clickBeforeUnless: '[data-tour="sp-action"]',
+        title: '這則預存要送出什麼',
+        description:
+          '客服在對話頁挑到這一則時會送出的東西：可以是<strong>一段文字</strong>、'
+          + '<strong>一個網址</strong>，也可以<strong>觸發一個機器人模組</strong>（整組訊息一次送出）。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="sp-tagging"]',
+        title: '順手貼標籤（這個開關會動到客人資料）',
+        description:
+          '開了之後，客服<strong>每送出一次這則回覆，就自動幫那位客人貼上你指定的標籤</strong>。'
+          + '例如「已寄出退貨單」這則預存貼上「退貨中」，之後就能把這批人整批撈出來追蹤。'
+          + '⚠️ 這件事發生在<strong>客人資料那邊</strong>、對話頁上看不出來，所以設之前先想好要貼哪一顆。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="sp-save"]',
+        title: '建立，並記得「啟用」',
+        description:
+          '按右上角<strong>建立預存</strong>存檔。⚠️ 只有狀態切成「<strong>啟用中</strong>」的預存'
+          + '才會出現在對話頁那個 📦 選單裡——停用的留在這裡可以繼續編輯，但客服挑不到。',
+        placement: 'bottom-end',
       },
     ],
   },
@@ -1147,6 +1322,54 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '用 Email 邀請',
         description:
           '點「<strong>邀請成員</strong>」輸入 Email——對方<strong>不用先註冊</strong>，等他建帳號首次登入就自動生效。',
+        placement: 'bottom-end',
+      },
+      {
+        // 2026-09-18 `D-82` 第二批：邀請完還有一件事沒人講，而漏了它的後果是「客人在等、沒人知道」
+        target: '[data-tour="mem-line"]',
+        title: '邀請完還有一件事：請他綁 LINE',
+        description:
+          '轉真人通知是<strong>用 LINE 推給客服本人</strong>的，所以每位要收通知的同事'
+          + '都得先把自己的 LINE 綁上來。看下面那欄「<strong>LINE 通知</strong>」：顯示'
+          + '<strong>未綁定</strong>的人按「綁定」，把跳出來的連結傳給他，他點開送出就完成。'
+          + '⚠️ 沒綁的人<strong>不會出現在「AI 設定 → 轉真人通知」的名單裡</strong>，也收不到任何通知。',
+        placement: 'bottom',
+      },
+    ],
+  },
+  /**
+   * 操作紀錄（2026-09-18 `D-82` 第三批）。
+   *
+   * 為什麼這頁也要有：它是全站第二個「連問號都沒有」的頁（另一個是訂閱與付款，那頁拍板不做）。
+   * 頁面自己的說明其實寫得好，缺的是**第一次進來時有人講一句它是幹什麼的**——
+   * 而現在每一頁第一次進去都會自動跑導覽，沒有導覽的頁就是唯一不說話的那幾頁。
+   * ⛔ 只給兩步：這頁是回頭查帳的地方，不是日常動線，教多了是噪音。
+   */
+  {
+    id: 'activity',
+    category: 'setup',
+    requiresSettings: true,
+    icon: Document,
+    label: '查「誰把什麼改成什麼」',
+    blurb: '設定被改壞了、或想確認小幫手做了什麼，來這裡看。',
+    route: wid => `/admin/${wid}/settings/activity`,
+    steps: [
+      {
+        target: '[data-tour="act-list"]',
+        title: '出事時先來這裡看最近動過什麼',
+        description:
+          '每一列是一次<strong>設定類的改動</strong>：誰、什麼時候、把什麼改成什麼。'
+          + '改錯了，右邊有「<strong>還原</strong>」可以直接改回去（還原不了的會告訴你原因）。'
+          + '⚠️ 這裡<strong>只記會改變系統行為的設定</strong>——日常回訊息、貼標籤不會記在這裡。',
+        placement: 'top',
+      },
+      {
+        target: '[data-tour="act-filter"]',
+        title: '分得出是人改的還是小幫手做的',
+        description:
+          '切「<strong>小幫手代辦</strong>」只看 AI 小幫手代你執行的那些'
+          + '（它做任何事之前都會先跳確認卡，按了確定才算數）。'
+          + '上面還會告訴你這個月它提議了幾次、你實際按確定幾次。',
         placement: 'bottom-end',
       },
     ],

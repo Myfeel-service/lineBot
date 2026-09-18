@@ -169,8 +169,17 @@
                   <span class="pg-meta text-muted">
                     （{{ relevantThresholdLabel(turn.result) }} {{ pct(relevantThreshold(turn.result)) }}）
                   </span>
+                  <!-- 「命中 N 條」以前沒人解釋（`D-39` 08-28 列、`D-82` 補）：這是這一行裡
+                       唯一看不懂又沒地方問的數字，而它正好回答「它到底有沒有資料可以答」。
+                       ⓘ 沿用全後台共用的 .admin-unit-info（跟「則」旁邊那顆同一種），不另創樣式。 -->
                   <span class="pg-meta text-muted">
                     · 命中 {{ turn.result.sources.length }} 條
+                    <el-tooltip
+                      placement="top"
+                      content="AI 從知識庫裡挑出這幾條最相關的知識，再據以回答。0 條＝知識庫裡沒有可用的資料，要回去補。按「展開詳情」看得到是哪幾條。"
+                    >
+                      <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                    </el-tooltip>
                   </span>
                   <el-button
                     v-if="turn.result.sources.length || turn.result.debugPrompt"
@@ -242,6 +251,7 @@
 </template>
 
 <script setup lang="ts">
+import { InfoFilled } from '@element-plus/icons-vue'
 import {
   HANDOFF_REASON_LABELS,
   type AiAnswerResult,

@@ -5,17 +5,18 @@
         field-label="設定"
         title="操作紀錄"
         caption="誰把什麼改成什麼，包含小幫手代你做的每一筆。出事時先來這裡看最近動過什麼。"
+        :help-topics="['activity']"
       />
     </template>
 
     <template #editor-body>
       <div class="solo-editor-body admin-panel-stack">
-        <div class="message-card ar-section-card">
+        <div class="message-card ar-section-card" data-tour="act-list">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">最近的操作</span>
             </div>
-            <el-radio-group v-model="actorFilter" size="small" @change="reload">
+            <el-radio-group v-model="actorFilter" size="small" data-tour="act-filter" @change="reload">
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="human">成員操作</el-radio-button>
               <el-radio-button value="agent">小幫手代辦</el-radio-button>

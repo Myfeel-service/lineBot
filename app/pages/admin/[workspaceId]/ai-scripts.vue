@@ -92,7 +92,7 @@
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="CopyDocument" @click="duplicateScript">複製一份</el-button>
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="Delete" type="danger" @click="deleteScript">刪除</el-button>
         <el-button @click="cancelEdit">{{ canEditScripts ? '取消' : '關閉' }}</el-button>
-        <el-button v-if="canEditScripts" type="primary" :loading="saving" @click="submitForm">
+        <el-button v-if="canEditScripts" type="primary" :loading="saving" data-tour="scr-save" @click="submitForm">
           {{ isCreating ? '建立客服流程' : '儲存變更' }}
         </el-button>
       </div>
@@ -246,7 +246,9 @@
 
                 <!-- Trigger -->
                 <template v-if="node.type === 'trigger'">
-                  <div class="admin-field-group">
+                  <!-- scr-trigger-mode：導覽用這一格當「編輯器已經開著」的判斷（每條流程都有觸發節點），
+                       開著就不要再幫他按一次「新增」把手上的東西切掉（見 tutorial-topics 的 clickBeforeUnless） -->
+                  <div class="admin-field-group" data-tour="scr-trigger-mode">
                     <AdminFieldLabel text="觸發方式" tight />
                     <el-radio-group
                       :model-value="triggerUiMode(node)"
@@ -274,7 +276,7 @@
                   </template>
 
                   <template v-else-if="triggerUiMode(node) === 'keyword'">
-                    <div class="admin-field-group">
+                    <div class="admin-field-group" data-tour="scr-match">
                       <AdminFieldLabel text="怎麼比對" tight />
                       <el-select :model-value="node.keywordMatch ?? 'any'" class="control-full" @change="node.keywordMatch = $event">
                         <el-option v-for="m in KEYWORD_MATCH_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
@@ -350,7 +352,7 @@
                     ＋ 設定防重複觸發（同一位客人隔多久才能再走一次）
                   </button>
 
-                  <div v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group">
+                  <div v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group" data-tour="scr-test">
                     <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條流程）" tight />
                     <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
                     <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
@@ -448,7 +450,7 @@
 
                 <!-- Reply -->
                 <template v-else-if="node.type === 'reply'">
-                  <div class="admin-field-group">
+                  <div class="admin-field-group" data-tour="scr-reply">
                     <AdminFieldLabel text="回覆文字（可插入收集到的欄位）" tight />
                     <el-input
                       v-model="node.text"

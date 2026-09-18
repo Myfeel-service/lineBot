@@ -67,9 +67,10 @@ const desc = computed(() => {
   const used = state.value.used.toLocaleString()
   const limit = state.value.limit?.toLocaleString() ?? ''
   if (state.value.state === 'over') {
-    return `本期 ${limit} 則已用完。自動回覆與客服流程仍正常運作，但需要 AI 回答的問題現在都會轉給真人客服。升級後立即恢復。`
+    // ⛔「自動回應」不是「自動回覆」：後者 2026-08-09 已下架併進前者，側欄上找不到那四個字（`D-82`）
+    return `本期 ${limit} 則已用完。自動回應與客服流程仍正常運作，但需要 AI 回答的問題現在都會轉給真人客服。升級後立即恢復。`
   }
-  return `本期已用 ${used} / ${limit} 則。用完後需要 AI 回答的問題會改為轉給真人客服（自動回覆與客服流程不受影響）。`
+  return `本期已用 ${used} / ${limit} 則。用完後需要 AI 回答的問題會改為轉給真人客服（自動回應與客服流程不受影響）。`
 })
 
 function dismiss() {

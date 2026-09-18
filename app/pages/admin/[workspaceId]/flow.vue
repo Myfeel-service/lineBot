@@ -178,12 +178,14 @@
 
     <!-- ── Editor Header ── -->
     <template #editor-header>
+      <!-- ⛔ caption 裡那個頁面叫「自動回應」，不是「自動回覆」——後者 2026-08-09 已下架併進前者，
+           側欄上找不到那四個字。第一次的人正是在這一刻要去找「那什麼時候會回」，指錯就走丟。 -->
       <AdminEditorHeaderTitle
         v-model="form.name"
         field-label="模組名稱"
         create-prefix="新增模組:"
         placeholder="請輸入模組名稱..."
-        :caption="`共 ${form.messages.length} 則回覆訊息；關鍵字觸發請到「自動回覆」設定`"
+        :caption="`共 ${form.messages.length} 則回覆訊息；關鍵字觸發請到「自動回應」設定`"
         :is-creating="isCreating"
       />
       <div v-if="selectedFlow || isCreating" class="flow-module-meta" data-tour="flow-type">

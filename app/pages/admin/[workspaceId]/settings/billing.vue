@@ -84,6 +84,14 @@
                   · 本期 {{ planView.currentPeriodStart }} ~ {{ planView.currentPeriodEnd }}
                 </template>
               </p>
+              <!-- 「用完會怎樣」以前只有快用完／已用完時才由頁頂橫幅講（`D-39` 08-28 列、`D-82` 補）：
+                   而這個數字最需要被理解的時刻是「還早、正在挑方案」的時候。⛔ 這一頁刻意不做導覽
+                   （`D-82` 拍板：這是看的頁不是操作的頁），就地一句把後果講完即可。
+                   ⚠️ 用字要跟 AdminQuotaBanner 一致，別讓同一件事有兩種說法。 -->
+              <p class="text-xs text-muted">
+                用完之後，<strong>需要 AI 回答的問題會改成轉給真人客服</strong>，自動回應與客服流程不受影響；
+                升級方案後立刻恢復。
+              </p>
             </div>
             <p v-else class="text-xs text-muted">客製額度,無固定則數上限。</p>
 

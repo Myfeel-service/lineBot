@@ -487,7 +487,7 @@
         </div>
 
         <!-- ── 服務時間 / 勿擾時段 ─────────────── -->
-        <div class="message-card ai-section-card">
+        <div class="message-card ai-section-card" data-tour="ais-hours">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">服務時間 / 勿擾時段</span>
@@ -598,7 +598,9 @@
         </div>
 
         <!-- ── 進階調校(預設收合)──────────────── -->
-        <button type="button" class="ai-advanced-toggle" @click="showAdvanced = !showAdvanced">
+        <!-- data-tour="ais-advanced"：導覽要教「真人閒置自動交還」得先幫他把這一段展開
+             （⛔ 已經展開就不可以再點一次——那會把它收起來，見 clickBeforeUnless） -->
+        <button type="button" class="ai-advanced-toggle" data-tour="ais-advanced" @click="showAdvanced = !showAdvanced">
           <span class="ai-advanced-toggle__arrow">{{ showAdvanced ? '▾' : '▸' }}</span>
           進階調校
           <span class="ai-advanced-toggle__sub">門檻、反問澄清、用量上限{{ isSuperAdmin ? '、模型' : '' }} — 一般情況用上方「回答風格」即可</span>
@@ -724,7 +726,7 @@
           </div>
 
           <!-- 真人接手 / 交還(進階:接手生命週期的細部行為)-->
-          <div class="message-card ai-section-card">
+          <div class="message-card ai-section-card" data-tour="ais-handback">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">真人接手 / 交還</span>

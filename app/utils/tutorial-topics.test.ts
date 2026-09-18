@@ -120,6 +120,45 @@ describe('客服對話導覽擴到右半邊（2026-08-28）', () => {
   })
 })
 
+/**
+ * 教學的權限條件必須跟**頁面實際的權限**對齊（2026-09-18 `D-82`）。
+ *
+ * 為什麼要守：這兩處漂掉時畫面上完全看不出來——頁首那顆「這頁怎麼用」在沒有可跑的教學時
+ * 是**整顆不畫**的（`AdminPageHelpButton` 的 v-if），自動導覽也一樣安靜地不跑。
+ * 症狀是「能改的人看不到教學」，而唯一會發現的人正是最不會回報的那群（第一線客服）。
+ *
+ * 兩邊都驗：能力表那一側改了（例如把腳本收回管理員），這裡也會紅，提醒回來重看教學條件。
+ */
+describe('教學的權限條件跟頁面對齊', () => {
+  const src = readFileSync(TOPICS_FILE, 'utf8')
+  const perms = readFileSync(join(APP_DIR, '../shared/permissions.ts'), 'utf8')
+
+  /** 切出單一主題的區塊（主題的 id 一律在第 4 格縮排，步驟裡的東西都比它深） */
+  function topicBlock(id: string): string {
+    const start = src.indexOf(`id: '${id}'`)
+    expect(start, `找不到教學主題 ${id}`).toBeGreaterThan(-1)
+    const next = src.indexOf('\n    id: ', start + 1)
+    return next === -1 ? src.slice(start) : src.slice(start, next)
+  }
+
+  it('自動回應：客服就能改這一頁，教學不可以鎖管理員', () => {
+    expect(perms, '能力表改了就回來重看這支教學的條件').toContain("'scripts.write': 'agent'")
+    const block = topicBlock('ai-scripts')
+    expect(block, '⛔ 鎖了管理員的話，客服進這頁連問號都不會出現')
+      .not.toMatch(/requiresSettings:\s*true/)
+    expect(block).toMatch(/requiresOperate:\s*true/)
+  })
+
+  it('AI 表現：所有成員都看得到這一頁，教學不可以設任何權限條件', () => {
+    expect(perms, '能力表改了就回來重看這支教學的條件').toContain("'ai.read': 'viewer'")
+    const block = topicBlock('ai-usage')
+    // ⛔ 主題層級不設條件；只有「補知識」那一步要能操作（觀察者按了是死路）
+    expect(block.slice(0, block.indexOf('steps:')))
+      .not.toMatch(/requiresSettings:\s*true|requiresOperate:\s*true/)
+    expect(block, '「補知識」那一步要標 requiresOperate').toMatch(/requiresOperate:\s*true/)
+  })
+})
+
 describe('教學文案的寫作規則', () => {
   const src = readFileSync(TOPICS_FILE, 'utf8')
 

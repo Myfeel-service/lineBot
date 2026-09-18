@@ -106,7 +106,7 @@
           <el-button v-if="canOperate" :loading="saving" @click="saveDraft">
             {{ selectedItem?.status === 'scheduled' ? '儲存變更' : '儲存草稿' }}
           </el-button>
-          <el-button v-if="canOperate" type="primary" :loading="validating" @click="openValidateDialog">
+          <el-button v-if="canOperate" type="primary" :loading="validating" data-tour="bc-send" @click="openValidateDialog">
             {{ headerSubmitLabel }}
           </el-button>
         </template>
@@ -133,7 +133,9 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <div class="admin-field-group">
+            <!-- bc-audience：導覽也用這一格判斷「編輯器已經開著」（每則推播都有受眾設定），
+                 開著就不要再幫他按一次「新增」把手上編到一半的推播切掉 -->
+            <div class="admin-field-group" data-tour="bc-audience">
               <AdminFieldLabel text="發送對象" tight />
               <el-radio-group v-model="form.audienceType" :disabled="isReadOnly">
                 <el-radio value="all">全部好友</el-radio>
@@ -172,6 +174,14 @@
             <!-- 匯入名單 -->
             <div v-if="form.audienceType === 'import'" class="admin-field-group">
               <AdminFieldLabel text="LINE User IDs（每行一筆）" tight />
+              <!-- 這串東西從哪來，畫面上以前一個字都沒講（`D-39` 08-28 列出、`D-82` 補）：
+                   沒人天生知道 U 開頭那 33 碼要去哪拿，而這一格又是三個選項裡最像「進階功能」的。
+                   ⛔ 一併指出多數人其實不需要它——否則新手會以為要先湊出一份名單才能發推播。 -->
+              <p class="text-xs text-muted">
+                每位客人在 LINE 都有一串 <b>U 開頭</b>的專屬編號。要拿某位客人的編號，到「<b>好友</b>」頁點開他、
+                按「<b>複製 ID</b>」。<b>多數情況用不到這一格</b>——想發給某一群人，用上面的「依標籤篩選」比較快；
+                這裡是給「別人交給你一份名單」的情況用的。
+              </p>
               <el-input
                 v-model="form.importText"
                 type="textarea"
@@ -190,7 +200,7 @@
         </div>
 
         <!-- ②  訊息內容（與圖文訊息區塊相同：動作類型 + 欄位） -->
-        <div class="message-card bc-section-card">
+        <div class="message-card bc-section-card" data-tour="bc-content">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">訊息內容</span>
@@ -203,19 +213,21 @@
               :disabled="isReadOnly"
               @update:model-value="onContentActionUpdate"
             />
+            <!-- ⛔ 這段以前把四個環境變數名（PUBLIC_BASE_URL…）與 /api/r 攤在店家面前（`D-82`）：
+                 店家看不懂、也不可能自己去設，讀完只會更怕。技術細節留在這裡給工程人員看就好，
+                 畫面只講「哪些數字算得到、哪些算不到、算不到要找誰」。
+                 （追蹤連結需要 PUBLIC_BASE_URL／舊名 LINE_IMAGEMAP_BASE_URL／CLICK_TRACKING_BASE_URL
+                 其中之一設好，客人點的網址才會經過我們的轉址再開啟。） -->
             <p class="bc-click-hint text-muted">
-              「開封數」是有多少人看到這則推播，數字由 LINE 官方統計提供。「追蹤連結點擊」只有在客人點的是我們系統轉出的追蹤連結（網址會經過
-              <code class="bc-click-hint__code">/api/r</code>
-              並開啟 https 網頁）時才會算，需要工程人員先設定好
-              <code class="bc-click-hint__code">PUBLIC_BASE_URL</code>（或舊名
-              <code class="bc-click-hint__code">LINE_IMAGEMAP_BASE_URL</code>／
-              <code class="bc-click-hint__code">CLICK_TRACKING_BASE_URL</code>）。純文字或按鈕回傳不會算進點擊數。
+              <b>開封數</b>＝有多少人看到這則推播，數字由 LINE 官方提供（不是即時的，通常會延遲）。
+              <b>連結點擊</b>只算得到「訊息裡的網址」被點的次數，而且這項要工程人員先設定過才會有數字——
+              還沒設定就只會看到開封數，不是壞掉。純文字、或按了之後回傳訊息的按鈕，都不會算進點擊。
             </p>
           </div>
         </div>
 
         <!-- ③  發送設定 -->
-        <div v-if="!isReadOnly" class="message-card bc-section-card">
+        <div v-if="!isReadOnly" class="message-card bc-section-card" data-tour="bc-schedule">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">發送設定</span>

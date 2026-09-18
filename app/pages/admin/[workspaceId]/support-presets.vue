@@ -57,7 +57,7 @@
           刪除
         </el-button>
         <el-button @click="cancelEdit">取消</el-button>
-        <el-button v-if="canOperate" type="primary" :loading="saving" @click="submitForm">
+        <el-button v-if="canOperate" type="primary" :loading="saving" data-tour="sp-save" @click="submitForm">
           {{ isCreating ? '建立預存' : '儲存變更' }}
         </el-button>
       </div>
@@ -85,7 +85,9 @@
           </div>
         </div>
 
-        <div class="message-card ar-section-card">
+        <!-- sp-action：導覽也用這一區判斷「編輯器已經開著」（每筆預存都有動作設定），
+             開著就不要再幫他按一次「新增」把手上編到一半的東西切掉 -->
+        <div class="message-card ar-section-card" data-tour="sp-action">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">動作設定</span>
@@ -118,7 +120,7 @@
                 uri-placeholder="https://..."
               />
             </div>
-            <div class="admin-field-group">
+            <div class="admin-field-group" data-tour="sp-tagging">
               <AdminFieldLabel text="啟用貼標" tight />
               <!-- 一句白話（D-33 P3）：這個開關的後果在別的地方（客人資料），畫面上看不到 -->
               <p class="text-xs text-muted">開啟後，客服每次送出這則預存回覆，系統就順手幫那位客人貼上你指定的標籤，之後可以用標籤把這批人撈出來推播。</p>
