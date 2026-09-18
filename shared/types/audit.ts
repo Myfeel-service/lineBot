@@ -86,20 +86,191 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   richMenuId: '圖文選單',
   endpoint: '收訊網址',
   nodes: '流程步驟',
+  autoTagSuggest: 'AI 自動貼標建議',
+  inactiveTag: '沉睡客人自動標籤',
+  // 巢狀在上面那些設定底下的欄位（展開之後才會被看到，2026-09-18 補）
+  slaRemindMinutes: '等太久的提醒時間（分鐘）',
+  lineUserIds: '通知對象',
+  displayNames: '通知對象的名稱',
+  mode: '通知時機',
+  digestHour: '每日摘要時間（點）',
+  festivalTips: '節慶行銷提醒',
+  weeklyInsights: '每週顧客觀察',
+  criticalAlertPush: '重大異常推播',
+  start: '服務時段起',
+  end: '服務時段迄',
+  weekendOff: '週末整天不打擾',
+  dndReply: '勿擾時段回給客人的話',
+  days: '幾天沒來訊算沉睡',
+  role: '權限',
 }
 
 export function auditFieldLabel(key: string): string {
   return AUDIT_FIELD_LABELS[key] ?? key
 }
 
-/** 稽核值 → 一行字（給列表用）。物件不展開，只說「有變」——展開會把表格撐爆 */
-export function auditValueText(v: unknown): string {
+/**
+ * 某些欄位的值本身是代號（`always`／`draft`…）。
+ *
+ * ⛔ 直接把代號秀給店家，跟秀欄位代號是同一個毛病：畫面上出現 `missed_only`，
+ *    看的人只知道「有東西變了」，不知道變成什麼。對不到的一樣原樣顯示。
+ */
+export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
+  mode: { always: '每次都通知', missed_only: '沒人接手才通知' },
+  replyMode: { auto: 'AI 直接回客人', draft: '只給草稿' },
+}
+
+/**
+ * 稽核值 → 一行字。`fieldKey` 有給的話會把代號換成白話（`always` → 每次都通知）。
+ *
+ * ⚠️ 物件到這裡只會得到「（一組設定）」——那是**最後的退路**，正常路徑請走
+ *    `auditChangeLines()`，它會展開到真的有變的那一格。
+ */
+export function auditValueText(v: unknown, fieldKey = ''): string {
   if (v === null || v === undefined) return '（空白）'
   if (typeof v === 'boolean') return v ? '開' : '關'
   if (typeof v === 'number') return String(v)
-  if (typeof v === 'string') return v.trim() === '' ? '（空白）' : v
+  if (typeof v === 'string') {
+    if (v.trim() === '') return '（空白）'
+    return AUDIT_VALUE_LABELS[fieldKey]?.[v] ?? v
+  }
   if (Array.isArray(v)) return `${v.length} 項`
   return '（一組設定）'
+}
+
+/** 畫面上的一行前後對照。`key` 是欄位路徑，只拿來當 v-for 的 key */
+export interface AuditChangeLine {
+  key: string
+  /** 「轉真人通知 › 等太久的提醒時間（分鐘）」 */
+  label: string
+  before: string
+  after: string
+}
+
+export interface AuditChangeSummary {
+  lines: AuditChangeLine[]
+  /**
+   * 超過上限、沒印出來的行數。
+   * ⛔ 一定要顯示：安靜地少講幾行，看的人會以為「這次就只改了這些」。
+   */
+  omitted: number
+}
+
+/** 一筆最多印幾行（一次改十幾格的情況存在，但表格不能被撐爆） */
+const MAX_CHANGE_LINES = 12
+/** 展開幾層。寫入端 sanitize 也是 4 層，超過的本來就存不進來 */
+const MAX_CHANGE_DEPTH = 4
+/** 清單型欄位最多逐項列出幾個差異，超過就只講數量 */
+const MAX_LIST_DIFF_ITEMS = 5
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
+/**
+ * 清單型欄位（敏感情境詞、通知對象…）：講出「多了誰、少了誰」。
+ *
+ * ⛔「19 項 → 20 項」等於沒講：看紀錄的人要知道的正是**哪一個字**被加進去，
+ *    因為那個字決定了客人講到它會不會直接被轉給真人。
+ * 回 null＝這不是可以逐項比對的清單，交回上層用一般方式顯示。
+ */
+function listChangeText(before: unknown, after: unknown): { before: string, after: string } | null {
+  if (!Array.isArray(before) || !Array.isArray(after)) return null
+  if (![...before, ...after].every(v => typeof v === 'string' || typeof v === 'number')) return null
+
+  const b = before.map(String)
+  const a = after.map(String)
+  const added = a.filter(v => !b.includes(v))
+  const removed = b.filter(v => !a.includes(v))
+  // 只是順序換了（內容沒變）：不要編一個「新增／移除」出來
+  if (!added.length && !removed.length) return null
+
+  // 太多項就只講數量：一行塞進 60 個詞沒有人看得完，反而把旁邊的行擠掉
+  if (added.length + removed.length > MAX_LIST_DIFF_ITEMS)
+    return { before: `${b.length} 項`, after: `${a.length} 項（新增 ${added.length}、移除 ${removed.length}）` }
+
+  const parts = [
+    added.length ? `新增「${added.join('、')}」` : '',
+    removed.length ? `移除「${removed.join('、')}」` : '',
+  ].filter(Boolean)
+  return { before: `${b.length} 項`, after: `${a.length} 項（${parts.join('；')}）` }
+}
+
+/**
+ * 前後對照展開成「人看得懂的幾行」。
+ *
+ * 為什麼要有這一支（2026-09-18）：稽核存的是**設定裡的真實層級**
+ * （`{ handoffNotify: { slaRemindMinutes: 37 } }`，這樣「還原」才知道要改回哪一格），
+ * 但畫面原本只走到第一層，於是整欄變成「轉真人通知：（一組設定） → （一組設定）」——
+ * 資料明明都在，卻一個字都沒講出來。這支往下走到**真的有變的那一格**再印。
+ *
+ * 紀律：
+ * - ⛔ 上一層整顆有變、但這一格前後相同的，不印（印了會把真正改動的那行淹掉）。
+ * - ⛔ 超過行數上限要 `continue` 繼續數，不可以 `break`——break 之後連「還有幾行」都說不出來。
+ * - ⛔ 展不出任何一行時退回第一層顯示，不可以留空：空白會被讀成「沒改到東西」。
+ */
+export function auditChangeLines(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+): AuditChangeSummary {
+  const lines: AuditChangeLine[] = []
+  let omitted = 0
+
+  const walk = (
+    b: Record<string, unknown> | null | undefined,
+    a: Record<string, unknown> | null | undefined,
+    path: string[],
+    labels: string[],
+  ): void => {
+    for (const k of new Set([...Object.keys(b ?? {}), ...Object.keys(a ?? {})])) {
+      const bv = b?.[k]
+      const av = a?.[k]
+      if (sameValue(bv, av)) continue
+
+      const nextPath = [...path, k]
+      const nextLabels = [...labels, auditFieldLabel(k)]
+
+      // 兩邊都是「物件或沒有」才往下走：物件被換成一個字串時往下走會把那個字串弄丟
+      const bObj = isPlainObject(bv)
+      const aObj = isPlainObject(av)
+      const bGone = bv === null || bv === undefined
+      const aGone = av === null || av === undefined
+      if ((bObj || bGone) && (aObj || aGone) && (bObj || aObj) && nextPath.length < MAX_CHANGE_DEPTH) {
+        walk(bObj ? bv : null, aObj ? av : null, nextPath, nextLabels)
+        continue
+      }
+
+      if (lines.length >= MAX_CHANGE_LINES) { omitted++; continue }
+
+      const list = listChangeText(bv, av)
+      lines.push({
+        key: nextPath.join('.'),
+        label: nextLabels.join(' › '),
+        before: list ? list.before : auditValueText(bv, k),
+        after: list ? list.after : auditValueText(av, k),
+      })
+    }
+  }
+
+  walk(before, after, [], [])
+
+  // 展不出東西的極少數情況（例如整份物件只有欄位順序不同）：退回第一層，至少看得出動過哪一項
+  if (!lines.length && !omitted) {
+    for (const k of new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])) {
+      lines.push({
+        key: k,
+        label: auditFieldLabel(k),
+        before: auditValueText(before?.[k], k),
+        after: auditValueText(after?.[k], k),
+      })
+    }
+  }
+
+  return { lines, omitted }
 }
 
 /** 一筆操作紀錄（API 回給畫面的形狀；憑證類欄位在寫入時就已遮罩） */

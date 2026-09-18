@@ -72,9 +72,13 @@
               </el-table-column>
               <el-table-column label="改動內容">
                 <template #default="{ row }">
-                  <div v-if="changes(row).length">
-                    <div v-for="c in changes(row)" :key="c.key" class="text-xs">
+                  <div v-if="changes(row).lines.length">
+                    <div v-for="c in changes(row).lines" :key="c.key" class="text-xs">
                       {{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b>
+                    </div>
+                    <!-- ⛔ 沒印完要講出來：少印幾行而不說，會被讀成「這次就只改了這些」 -->
+                    <div v-if="changes(row).omitted" class="text-xs text-muted">
+                      還有 {{ changes(row).omitted }} 項也一起改了，這裡沒列出來。
                     </div>
                   </div>
                   <span v-else class="text-xs text-muted">—</span>
@@ -116,8 +120,8 @@ import { ElMessageBox } from 'element-plus'
 import {
   AUDIT_ACTOR_LABELS,
   auditActionLabel,
-  auditFieldLabel,
-  auditValueText,
+  auditChangeLines,
+  type AuditChangeSummary,
   type AuditLogRow,
 } from '~~/shared/types/audit'
 
@@ -164,15 +168,21 @@ function formatTime(ms: number): string {
   return new Date(ms).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })
 }
 
-/** 前後對照：只列這次真的有變的欄位（後端寫入時就只存有變的） */
-function changes(row: AuditLogRow): { key: string, label: string, before: string, after: string }[] {
-  const keys = [...new Set([...Object.keys(row.before ?? {}), ...Object.keys(row.after ?? {})])]
-  return keys.map(k => ({
-    key: k,
-    label: auditFieldLabel(k),
-    before: auditValueText(row.before?.[k]),
-    after: auditValueText(row.after?.[k]),
-  }))
+/**
+ * 前後對照：展開到**真的有變的那一格**再印。
+ *
+ * ⚠️ 稽核存的是設定裡的真實層級（`handoffNotify.slaRemindMinutes`，「還原」才知道要改回哪一格），
+ *    所以只看第一層的話整欄會變成「轉真人通知：（一組設定） → （一組設定）」——
+ *    資料明明都在卻一個字都沒講出來（2026-09-18 老闆反映）。展開的規則寫在 `shared/types/audit.ts`。
+ * 算過就存起來：同一列在表格與還原確認框各要用一次，⛔不要每次重繪都重算。
+ */
+const changeCache = new Map<string, AuditChangeSummary>()
+function changes(row: AuditLogRow): AuditChangeSummary {
+  const hit = changeCache.get(row.id)
+  if (hit) return hit
+  const summary = auditChangeLines(row.before, row.after)
+  changeCache.set(row.id, summary)
+  return summary
 }
 
 async function load(cursor: string | null) {
@@ -205,9 +215,12 @@ async function load(cursor: string | null) {
  * ⛔ 後端會再驗一次「這段期間有沒有被改過」，前端這裡只是把話講清楚。
  */
 async function revert(row: AuditLogRow) {
-  const lines = changes(row).map(c => `${c.label}：${c.after} → ${c.before}`).join('\n')
+  const summary = changes(row)
+  // ⛔ 沒列完的也要講：按下去會一起被改回去，只給人看其中幾行等於沒問過
+  const omitted = summary.omitted ? `\n（另外還有 ${summary.omitted} 項也會一起改回去）` : ''
+  const lines = summary.lines.map(c => `${c.label}：${c.after} → ${c.before}`).join('\n')
   const go = await ElMessageBox.confirm(
-    `要把這筆改回去嗎？\n\n${lines || auditActionLabel(row.action)}`,
+    `要把這筆改回去嗎？\n\n${lines || auditActionLabel(row.action)}${omitted}`,
     '還原這一筆',
     { confirmButtonText: '確定還原', cancelButtonText: '取消', type: 'warning' },
   ).then(() => true).catch(() => false)

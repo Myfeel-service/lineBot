@@ -260,6 +260,14 @@ try {
   if (/成員操作|小幫手代辦/.test(table)) pass('每一列都標得出「人改的」還是「小幫手代的」')
   else fail(`看不到操作者類別，表格內容：${table.slice(0, 160)}`)
 
+  // 「改動內容」那一欄要真的講出改了什麼（2026-09-18 老闆反映）。
+  // ⛔ 這一關以前不存在，所以那一欄整欄都是「（一組設定） → （一組設定）」了好幾天，守門員照樣全綠。
+  //    稽核存的是設定裡的真實層級（`handoffNotify.slaRemindMinutes`），畫面要展開到那一格才算數。
+  const vagueRows = await page.$$eval('.el-table__body tr', rows =>
+    rows.map(r => r.innerText).filter(t => /（一組設定）\s*→\s*（一組設定）/.test(t)).length)
+  if (rowCount === 0 || vagueRows === 0) pass('「改動內容」講得出改了什麼，沒有整格「（一組設定）→（一組設定）」')
+  else fail(`有 ${vagueRows} 列的「改動內容」只說「（一組設定） → （一組設定）」＝等於沒講`)
+
   // 還原欄位（`C-186` 續）：每一列要嘛給得出「還原」鈕，要嘛說得出為什麼不能還原——
   // ⛔ 兩者都沒有＝把問題藏起來
   const revertCol = await page.$$eval('.el-table__body tr', rows =>
