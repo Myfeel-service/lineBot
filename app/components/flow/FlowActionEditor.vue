@@ -107,24 +107,17 @@
       </div>
       <div v-if="ensureTaggingState().enabled" class="admin-field-group">
         <AdminFieldLabel text="命中後加上標籤" tight />
-        <el-select
-          v-model="ensureTaggingState().addTagIds"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          placeholder="選擇要貼的標籤"
-          class="admin-w-full"
+        <!--
+          C-208：改用共用的 AdminTagPicker——它多了「＋ 新標籤」與空狀態出口。
+          以前這裡沒有標籤時就是一個空下拉、一個字都沒說，人只能放棄這張表單去別頁建。
+        -->
+        <AdminTagPicker
+          :model-value="ensureTaggingState().addTagIds"
+          :options="tagOptions"
+          :size="fieldSize"
           :disabled="!isTaggableAction"
-        >
-          <el-option
-            v-for="tag in tagOptions"
-            :key="tag.id"
-            :label="tag.name"
-            :value="tag.id"
-          >
-            <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-          </el-option>
-        </el-select>
+          @update:model-value="setTagIds"
+        />
       </div>
     </template>
   </div>
@@ -236,6 +229,10 @@ const insetButtonSize = computed(() =>
  */
 function insertToken(key: 'label' | 'text', token: string, range?: CaretRange | null) {
   props.action[key] = insertTokenAtCaret(props.action[key], token, range).text
+}
+
+function setTagIds(ids: string[]) {
+  ensureTaggingState().addTagIds = ids
 }
 
 function ensureTaggingState() {

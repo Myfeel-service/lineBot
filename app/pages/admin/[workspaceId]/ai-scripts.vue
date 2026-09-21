@@ -562,17 +562,13 @@
                 <template v-else-if="node.type === 'tag'">
                   <div class="admin-field-group">
                     <AdminFieldLabel text="替客人貼上標籤" tight />
-                    <el-select
+                    <!-- C-208：共用選標籤欄位（「＋ 新標籤」＋空狀態出口，不必離開這條還沒存的流程） -->
+                    <AdminTagPicker
                       :model-value="node.addTagIds"
-                      multiple
-                      filterable
-                      collapse-tags
-                      placeholder="選擇標籤（可多選）"
-                      class="scripts-tag-select"
-                      @change="node.addTagIds = $event"
-                    >
-                      <el-option v-for="t in tagOptions" :key="t.value" :label="t.label" :value="t.value" />
-                    </el-select>
+                      :options="tagList"
+                      placeholder="選擇標籤（可多選、可打字搜尋）"
+                      @update:model-value="(ids) => (node.addTagIds = ids)"
+                    />
                     <p class="scripts-section-hint">流程走到這裡就貼標，然後自動往下。</p>
                   </div>
                 </template>
@@ -745,6 +741,8 @@ const scriptTemplates = SCRIPT_TEMPLATES
 
 // 貼標節點用的工作區標籤清單
 const { tags: tagList, loadTags } = useAdminTagList()
+// C-208：一條流程可以有好幾個貼標節點，其中一個就地建了標籤，其他要跟著看得到
+useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 
 // 機器人模組步驟用的模組清單（只在真的有 module 步驟時才需要，但清單很小、一次抓完最簡單）
 const modulesLoading = ref(true)
@@ -758,7 +756,8 @@ async function loadModuleOptions() {
     .filter(m => m.value)
   modulesLoading.value = false
 }
-const tagOptions = computed(() => (tagList.value ?? []).map((t: any) => ({ value: String(t.id), label: String(t.name ?? t.id) })))
+// C-208：貼標節點改用共用的 AdminTagPicker（吃 {id,name,color} 原樣），
+// 原本那份 {value,label} 的轉換沒有別人用，一併移除。
 
 function defaultTriggerNode(nextId: string): ScriptTriggerNode {
   return { id: uuidv4(), type: 'trigger', matchMode: 'keyword', keywords: [], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: nextId }

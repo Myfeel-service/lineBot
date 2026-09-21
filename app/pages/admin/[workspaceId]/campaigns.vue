@@ -348,28 +348,17 @@
             <div v-if="tagsLoading" class="ar-modules-loading">
               <div class="spinner" />
             </div>
-            <div v-else-if="!allTags.length" class="ar-no-modules">
-              尚無標籤，請先前往「<NuxtLink :to="`/admin/${workspaceId}/tags`" class="ar-link">標籤管理</NuxtLink>」建立。
-            </div>
             <div v-else class="admin-field-group">
               <AdminFieldLabel text="選擇標籤（至少一個）" tight />
-              <el-select
-                v-model="form.tagIds"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                placeholder="選擇要貼的標籤"
-                class="admin-w-full"
-              >
-                <el-option
-                  v-for="tag in allTags"
-                  :key="tag.id"
-                  :label="tag.name"
-                  :value="tag.id"
-                >
-                  <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-                </el-option>
-              </el-select>
+              <!--
+                C-208：換成共用的選標籤欄位。原本「尚無標籤，請先前往標籤管理建立」那個分支
+                由元件自己處理（而且現在可以就地建，不必離開這張還沒存的活動表單）。
+              -->
+              <AdminTagPicker
+                :model-value="form.tagIds"
+                :options="allTags"
+                @update:model-value="(ids) => (form.tagIds = ids)"
+              />
             </div>
             <div v-if="modulesLoading" class="ar-modules-loading">
               <div class="spinner" />
@@ -417,6 +406,8 @@ const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
+// C-208：就地建了標籤就重載（這一頁的貼標欄與觸發動作欄吃同一份清單）
+useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 const { showToast } = useAdminToast()
 
 const modules = ref<any[]>([])

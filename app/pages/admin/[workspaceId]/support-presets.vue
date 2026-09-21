@@ -135,27 +135,17 @@
               <div v-if="tagsLoading" class="ar-modules-loading">
                 <div class="spinner" />
               </div>
-              <div v-else-if="!allTags.length" class="ar-no-modules">
-                尚無標籤，請先前往「<NuxtLink :to="`/admin/${workspaceId}/tags`" class="link">標籤管理</NuxtLink>」建立。
-              </div>
-              <el-select
+              <!--
+                C-208：換成共用的選標籤欄位。原本的「尚無標籤，請先前往標籤管理建立」由元件處理，
+                而且現在可以就地建一顆——這一頁的貼標是「客服每送一次就貼一次」，
+                真的會動到客人資料，不該為了建一顆標籤把人趕去別頁重來。
+              -->
+              <AdminTagPicker
                 v-else
-                v-model="form.tagging.addTagIds"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                placeholder="選擇要貼的標籤"
-                class="admin-w-full"
-              >
-                <el-option
-                  v-for="tag in allTags"
-                  :key="tag.id"
-                  :label="tag.name"
-                  :value="tag.id"
-                >
-                  <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-                </el-option>
-              </el-select>
+                :model-value="form.tagging.addTagIds"
+                :options="allTags"
+                @update:model-value="(ids) => (form.tagging.addTagIds = ids)"
+              />
             </div>
           </div>
         </div>
@@ -195,6 +185,8 @@ const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 const { showToast } = useAdminToast()
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
+// C-208：就地建了標籤就重載（貼標欄與動作設定欄吃同一份清單）
+useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 
 const defaultForm = () => ({
   name: '',

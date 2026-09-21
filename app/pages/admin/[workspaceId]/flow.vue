@@ -679,23 +679,13 @@
                   </div>
                   <div v-if="msg.tagging.enabled" class="ui-field admin-field-group">
                     <AdminFieldLabel text="命中後加上標籤" tight />
-                    <el-select
-                      v-model="msg.tagging.addTagIds"
-                      multiple
-                      collapse-tags
-                      collapse-tags-tooltip
-                      placeholder="選擇要貼的標籤"
-                      class="control-full"
-                    >
-                      <el-option
-                        v-for="tag in allTags"
-                        :key="tag.id"
-                        :value="tag.id"
-                        :label="tag.name"
-                      >
-                        <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-                      </el-option>
-                    </el-select>
+                    <!-- C-208：共用選標籤欄位（「＋ 新標籤」＋空狀態出口） -->
+                    <AdminTagPicker
+                      :model-value="msg.tagging.addTagIds"
+                      :options="allTags"
+                      size="small"
+                      @update:model-value="(ids) => (msg.tagging.addTagIds = ids)"
+                    />
                   </div>
                 </div>
 
@@ -1183,6 +1173,9 @@ const isCreating = ref(false)
 const FLOW_MESSAGE_LIMIT = 5
 const { showToast } = useAdminToast()
 const { tags: allTags, loadTags } = useAdminTagList()
+// C-208：這一頁同時掛很多個標籤下拉（每顆按鈕一個、用戶輸入卡一個），
+// 在其中一個就地建了標籤，其他幾個要跟著看得到，否則人會以為沒建成功。
+useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)

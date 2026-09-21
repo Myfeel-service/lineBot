@@ -327,6 +327,8 @@ const isCreating = ref(false)
 const creating = ref(false)
 const { showToast } = useAdminToast()
 const { tags: allTags, loadTags } = useAdminTagList()
+// C-208：某一格就地建了標籤，其他格的下拉要跟著看得到
+useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 const selectedMenu = computed(() => menus.value.find((menu) => menu.id === selectedId.value) ?? null)
 
 const sortedMenus = computed(() => {

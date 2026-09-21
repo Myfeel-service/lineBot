@@ -152,23 +152,22 @@
                 選兩顆以上是「或」：只要有其中一顆標籤的人都會收到，<b>不是</b>兩顆都要有。
                 想寄給「兩個條件都符合」的人，目前要先到「好友」頁篩出那批人。
               </p>
-              <el-select
-                v-model="form.tagIds"
-                multiple
-                collapse-tags
-                placeholder="選擇標籤"
+              <!--
+                C-208：共用選標籤欄位，但這一格 **allow-create = false**。
+                ⛔ 別在這裡放「＋ 新標籤」：這格是「拿標籤篩人」不是「貼標籤」，
+                當場建一顆全新的標籤身上沒有任何客人，等於挑到 0 個人、發給沒有人
+                （送出前的驗證會擋下來，但那時他已經寫完整則推播了）。
+                要多一群人可以發，正解是先去貼標，所以這裡只給出口與說明。
+              -->
+              <AdminTagPicker
+                :model-value="form.tagIds"
+                :options="allTags"
+                :allow-create="false"
                 :disabled="isReadOnly"
-                class="admin-w-full"
-              >
-                <el-option
-                  v-for="tag in allTags"
-                  :key="tag.id"
-                  :label="tag.name"
-                  :value="tag.id"
-                >
-                  <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-                </el-option>
-              </el-select>
+                placeholder="選擇標籤（可打字搜尋）"
+                empty-text="還沒有任何標籤，所以沒有辦法用標籤挑人。標籤要先建好、而且要貼在客人身上，這裡才挑得到——貼標可以在機器人模組的按鈕、活動連結或客服預存上設定。"
+                @update:model-value="(ids) => (form.tagIds = ids)"
+              />
             </div>
 
             <!-- 匯入名單 -->
@@ -455,6 +454,8 @@ const { canOperate, assertCanOperate } = useAdminOperateGuard()
 // ── 狀態 ────────────────────────────────────────────────────────────
 const flows = ref<{ id: string; name: string }[]>([])
 const { tags: allTags, loadTags: loadTagOptions } = useAdminTagList()
+// C-208：這一頁不給就地建標籤（受眾是拿標籤篩人），但別頁建了之後切回來要看得到
+useAdminTagRefresh().onAdminTagListChanged(() => loadTagOptions({ status: 'active' }))
 // 「只看草稿」篩選（D-43④）：list 端點本來就吃 ?status=，這裡只是把它接到畫面上
 const draftFilterOn = ref(false)
 const {

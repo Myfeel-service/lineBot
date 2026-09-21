@@ -100,25 +100,13 @@
           此動作類型目前不支援貼標。
         </div>
         <div v-if="taggingSnapshot().enabled" class="admin-field-group">
-          <el-select
+          <!-- C-208：共用選標籤欄位（多了「＋ 新標籤」與空狀態出口，不必離開這張表單） -->
+          <AdminTagPicker
             :model-value="taggingSnapshot().addTagIds"
-            class="admin-w-full control-full"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="選擇要貼的標籤"
+            :options="tagOptions"
             :disabled="disabled || !isTaggableAction"
             @update:model-value="onTaggingIdsChange"
-          >
-            <el-option
-              v-for="tag in tagOptions"
-              :key="tag.id"
-              :value="tag.id"
-              :label="tag.name"
-            >
-              <AdminTagOptionRow :label="tag.name" :color="tag.color" />
-            </el-option>
-          </el-select>
+          />
         </div>
       </template>
 

@@ -1,0 +1,82 @@
+/* ══════════════════════════════════════════════════════════════
+   共用的「選標籤」欄位（C-208）：下拉 ＋「＋ 新標籤」小視窗 ＋ 空狀態出口。
+
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   空狀態沿用 .ar-no-modules／.ar-link 那一套的語彙（淡底、細框、小字），
+   讓「還沒有東西，先去建」在後台各頁長得一樣。
+   ══════════════════════════════════════════════════════════════ */
+
+.tag-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  /* ⛔ 可壓縮的欄一律留 min-width: 0：這顆會被塞進按鈕卡、輪播欄這種窄格子裡，
+     沒有它的話長標籤名會把整排撐開（同 G-58／G-66 那兩次破版）。 */
+  min-width: 0;
+}
+
+.tag-picker__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed var(--el-border-color, #dcdfe6);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+}
+
+.tag-picker__empty-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--el-text-color-regular, #606266);
+}
+
+.tag-picker__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+
+  /* ⛔ wrap 要配 shrink 才會真的換行（C-178 踩過：只加 wrap 是假修） */
+  > * {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+}
+
+.tag-picker__actions {
+  display: flex;
+  justify-content: flex-start;
+
+  /* 「＋ 新標籤」是次要動作：貼齊下拉左緣、不要跟主要按鈕搶注意力 */
+  .el-button {
+    padding-left: 0;
+    padding-right: 0.4rem;
+  }
+}
+
+.tag-picker__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.tag-picker__hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary, #909399);
+}
+
+.tag-picker__hint--muted {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+}
+
+.tag-picker__error {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--el-color-danger, #f56c6c);
+}
