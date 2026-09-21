@@ -104,6 +104,12 @@ function eventLabel(
     return customerActionLabel({ type: 'button_dead', moduleId })
   }
   if (eventType === 'entered_module') {
+    /**
+     * 主動推送（加好友歡迎、活動推播、綁定回覆）走的是這一類。客人沒問、機器人也沒「進入」
+     * 任何東西，是我們自己送出去的，所以不套「進入：X」的句型——客服看到「進入：系統通知」
+     * 只會以為有個叫「系統通知」的模組被觸發了。
+     */
+    if (moduleType === 'system_notice') return '系統自動發送訊息'
     const label = moduleType ? MODULE_TYPE_LABELS[moduleType] : '模組'
     return `進入：${label}`
   }

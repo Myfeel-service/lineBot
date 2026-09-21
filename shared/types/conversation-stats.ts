@@ -158,13 +158,23 @@ export const SYSTEM_MODULE_IDS = {
   live_agent: 'sys_live_agent',
 } as const
 
-/** 工作區自行建立的流程可用類型（歡迎／真人僅限系統預設兩筆） */
-export const WORKSPACE_FLOW_MODULE_TYPES: readonly ModuleType[] = ['bot_flow', 'system_notice']
-
+/**
+ * ⛔ 工作區自建的模組一律是 bot_flow，**後台不再讓人選類型**（2026-09-21 拿掉）。
+ *
+ * 「這則算不算機器人回答客人」由**送出去的那條路**決定，不是模組自己的屬性：同一個模組，
+ * 加好友自動推給客人時是通知（不算回答）、客人打關鍵字叫出來時就是回答。後台讓人事先選，
+ * 在「主動推送」那幾條路上根本不會被讀到（那些路自己蓋 system_notice），
+ * 只在「客人先開口」那幾條路生效——而那正是不該選通知的情境。
+ * 正式站盤點：93 個模組只有 2 個被選成 system_notice，0 次真的改變過統計結果。
+ *
+ * system_notice 這個類型本身**沒有廢除**，它由 server/utils/handler.ts 的主動推送路徑
+ * （加好友歡迎、活動推播、綁定回覆）自己蓋章。口徑見 docs/CONVERSATION-STATS-DEFINITIONS.md。
+ */
 export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
   welcome: '歡迎模組',
   bot_flow: '機器人流程',
-  system_notice: '系統通知',
+  // 客服在對話上看到的是「發生了什麼」，不是統計分類名稱——「系統通知」會被讀成某種模組
+  system_notice: '系統自動發送',
   live_agent: '真人客服',
   ai: 'AI 客服',
 }

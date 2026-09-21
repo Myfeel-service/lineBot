@@ -61,12 +61,11 @@
             @dragstart.stop="onFlowDragStart($event, flow.id, regularFlowIndex(flow.id))"
             @dragend.stop="onFlowDragEnd"
           >⠿</span>
+          <!-- 自建模組不掛類型標籤：每一列都寫「機器人流程」等於沒有資訊，只是佔位置 -->
           <AdminSplitListItem
             class="flow-sidebar-row__item"
             :title="flow.name"
             :active="selectedId === flow.id"
-            :meta-text="moduleTypeLabel(flow.moduleType)"
-            chip-tone="neutral"
             @select="selectFlow(flow)"
           />
         </div>
@@ -145,8 +144,6 @@
                 class="flow-sidebar-row__item"
                 :title="flow.name"
                 :active="selectedId === flow.id"
-                :meta-text="moduleTypeLabel(flow.moduleType)"
-                chip-tone="neutral"
                 @select="selectFlow(flow)"
               />
             </div>
@@ -182,32 +179,24 @@
            側欄上找不到那四個字。第一次的人正是在這一刻要去找「那什麼時候會回」，指錯就走丟。 -->
       <AdminEditorHeaderTitle
         v-model="form.name"
+        data-tour="flow-name"
         field-label="模組名稱"
         create-prefix="新增模組:"
         placeholder="請輸入模組名稱..."
         :caption="`共 ${form.messages.length} 則回覆訊息；關鍵字觸發請到「自動回應」設定`"
         :is-creating="isCreating"
       />
-      <div v-if="selectedFlow || isCreating" class="flow-module-meta" data-tour="flow-type">
-        <!-- System modules: type is locked, show label only -->
-        <template v-if="isSystemFlow">
-          <el-tag type="warning" size="small" disable-transitions>系統模組</el-tag>
-          <el-tag size="small" disable-transitions>
-            {{ MODULE_TYPE_LABELS[form.moduleType] ?? '機器人流程' }}
-          </el-tag>
-        </template>
-        <!-- Regular modules (create or edit): labelled selector -->
-        <template v-else>
-          <span class="flow-module-meta__label">模組類型</span>
-          <el-select v-model="form.moduleType" size="small" style="width: 130px">
-            <el-option
-              v-for="t in WORKSPACE_FLOW_MODULE_TYPES"
-              :key="t"
-              :label="MODULE_TYPE_LABELS[t]"
-              :value="t"
-            />
-          </el-select>
-        </template>
+      <!--
+        ⛔ 只有系統模組才掛標籤（歡迎／真人客服）——自建模組沒有類型可言，別再加回來。
+        這裡原本有一顆「模組類型」下拉（機器人流程／系統通知），2026-09-21 拿掉：
+        「這則算不算機器人回答客人」是送出去的那條路的屬性，不是模組的屬性，
+        建模組的當下沒有人答得出來。理由寫在 shared/types/conversation-stats.ts。
+      -->
+      <div v-if="isSystemFlow" class="flow-module-meta" data-tour="flow-type">
+        <el-tag type="warning" size="small" disable-transitions>系統模組</el-tag>
+        <el-tag size="small" disable-transitions>
+          {{ moduleTypeLabel(selectedFlow?.moduleType) }}
+        </el-tag>
       </div>
       <div class="flex gap-1 admin-header-actions">
         <el-button @click="cancelEdit">取消</el-button>
@@ -1155,13 +1144,15 @@ import {
 } from '~~/shared/rich-message-editor-helpers'
 import {
   MODULE_TYPE_LABELS,
-  WORKSPACE_FLOW_MODULE_TYPES,
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-/** flow 物件多為動態型別（any），統一在此收斂 moduleType → 顯示標籤 */
+/**
+ * flow 物件多為動態型別（any），統一在此收斂 moduleType → 顯示標籤。
+ * 只用在**系統模組**（歡迎／真人客服）身上——自建模組沒有類型可顯示。
+ */
 function moduleTypeLabel(raw: unknown): string {
   return MODULE_TYPE_LABELS[raw as ModuleType] ?? '機器人流程'
 }
@@ -1281,10 +1272,10 @@ function resolveDraggedIndex(e: DragEvent, fallback: number | null) {
   return Number.isInteger(parsed) ? parsed : null
 }
 
+// moduleType 刻意不進 form：模組類型不再可選，也就沒有「未存的類型變更」這種東西
 const defaultForm = () => ({
   name: '',
   messages: [] as any[],
-  moduleType: 'bot_flow' as ModuleType,
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
@@ -1758,19 +1749,13 @@ async function onFolderRowDrop(folderId: string, targetFlowId: string) {
 }
 
 // ── Select / Create ───────────────────────────────────
-function normalizeWorkspaceModuleType(raw: ModuleType | undefined): ModuleType {
-  return raw === 'system_notice' ? 'system_notice' : 'bot_flow'
-}
-
 function selectFlow(flow: any, opts?: { skipDiscardConfirm?: boolean }) {
   if (!opts?.skipDiscardConfirm && !confirmLeaveIfDirty()) return
   isCreating.value = false
   selectedId.value = flow.id
-  const rawType = (flow.moduleType ?? 'bot_flow') as ModuleType
   form.value = {
     name: flow.name,
     messages: normalizeMessages(JSON.parse(JSON.stringify(flow.messages ?? []))),
-    moduleType: flow.isSystem ? rawType : normalizeWorkspaceModuleType(rawType),
   }
   void hydrateMediaDimensionsInForm()
   markClean()
@@ -2397,7 +2382,6 @@ async function submitForm() {
           name: form.value.name,
           messages: form.value.messages,
           isActive: true,
-          moduleType: form.value.moduleType,
         },
       })
       showToast('模組已建立', 'success')
@@ -2412,8 +2396,6 @@ async function submitForm() {
           name: form.value.name,
           messages: form.value.messages,
           isActive: true,
-          // Only allow moduleType change for non-system flows
-          ...(!isSystemFlow.value ? { moduleType: form.value.moduleType } : {}),
         },
       })
       showToast('模組已更新', 'success')
@@ -2471,10 +2453,7 @@ async function duplicateFlow() {
   const validationError = validateMessages(messages)
   if (validationError) return showToast(validationError, 'error')
 
-  const moduleType = isSystemFlow.value
-    ? 'bot_flow'
-    : normalizeWorkspaceModuleType(form.value.moduleType)
-
+  // 複製出來的永遠是一般自建模組（連系統模組複製出來的也是）——類型由後端決定，不用帶
   duplicating.value = true
   try {
     const res = await apiFetch<any>('/api/flow/create', {
@@ -2483,7 +2462,6 @@ async function duplicateFlow() {
         name: `${sourceName} (複製)`,
         messages,
         isActive: true,
-        moduleType,
       },
     })
     showToast('模組已複製', 'success')

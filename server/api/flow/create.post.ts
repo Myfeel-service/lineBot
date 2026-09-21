@@ -5,7 +5,7 @@ import {
   assertValidFlowName,
 } from '~~/server/utils/flow-validator'
 import { nextFlowSortOrder } from '~~/server/utils/flow-sort'
-import { WORKSPACE_FLOW_MODULE_TYPES, type ModuleType } from '~~/shared/types/conversation-stats'
+import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { assertPlanAllows } from '~~/server/utils/billing'
@@ -16,14 +16,10 @@ export default defineEventHandler(async (event) => {
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
   await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含流程自動化功能，請升級方案後再使用')
   const body = await readBody(event)
-  const { name, messages, isActive, moduleType } = body
+  const { name, messages, isActive } = body
 
   const validName = assertValidFlowName(name)
   assertValidFlowMessages(messages)
-
-  const resolvedModuleType: ModuleType = WORKSPACE_FLOW_MODULE_TYPES.includes(moduleType)
-    ? moduleType
-    : 'bot_flow'
 
   const existingRegular = await listDocs<Record<string, unknown>>('flows', (ref) =>
     ref.where('workspaceId', '==', workspaceId),
@@ -34,7 +30,8 @@ export default defineEventHandler(async (event) => {
     name: validName,
     messages,
     isActive: isActive ?? true,
-    moduleType: resolvedModuleType,
+    // 自建模組一律 bot_flow：body 帶什麼都不看（口徑見 shared/types/conversation-stats.ts）
+    moduleType: 'bot_flow' as ModuleType,
     isSystem: false,
     workspaceId,
     sortOrder: nextFlowSortOrder(existingRegular),

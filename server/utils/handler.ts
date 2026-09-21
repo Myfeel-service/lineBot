@@ -816,6 +816,23 @@ async function getFlowByModuleId(moduleId: string): Promise<FlowDoc | null> {
   return flow
 }
 
+/**
+ * 客人**先開口／先按按鈕**之後進入這個模組，會話要記成哪一種。
+ *
+ * ⛔ 自建模組一律 bot_flow，**不讀 flow.moduleType**。
+ * 「這則算不算機器人回答客人」是**送出去的那條路**的屬性，不是模組的屬性：同一個模組，
+ * 加好友自動推給客人時是通知、客人打關鍵字叫出來時就是回答。會走到這個函式的全都是
+ * 後者（關鍵字、按鈕、腳本推進、收集題的下一步），所以一律算機器人回答。
+ * 主動推送那幾條路不經過這裡，各自用 enterAs / 直接呼叫 enterModule 蓋 system_notice。
+ *
+ * 後台選類型的下拉已於 2026-09-21 拿掉；資料庫裡殘留 system_notice 的自建模組
+ * （當時盤點 myfeel 2 筆，0 次真的改變過統計）在這裡一併失效，所以不需要改資料。
+ * 系統模組（歡迎／真人客服）維持讀自己的類型——那兩筆的類型是系統給的，不是人選的。
+ */
+function customerInitiatedModuleType(flow: FlowDoc): ModuleType {
+  return flow.isSystem ? (flow.moduleType ?? 'bot_flow') : 'bot_flow'
+}
+
 
 /**
  * 預熱單一 workspace 的機器人自動化快取（腳本、AI 設定、
@@ -2505,7 +2522,7 @@ async function handleIncomingText(
             })
           }
           else {
-            enterModule(sessionId, lineUserId, flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+            enterModule(sessionId, lineUserId, customerInitiatedModuleType(flow), moduleId, wid).catch(e =>
               console.error('[session] enterModule error:', e),
             )
           }
@@ -2833,9 +2850,12 @@ async function replyWithFlowModule(params: {
   /** 找不到模組時的 log 前綴，寫清楚是誰要送的 */
   logContext: string
   /**
-   * 會話要記成哪種進入（預設 flow.moduleType ?? 'bot_flow'）。
+   * 會話要記成哪種進入（預設見 customerInitiatedModuleType：自建模組一律 bot_flow）。
    * 加好友歡迎腳本傳 'system_notice'：那是客人沒問就送的訊息，不可記 bot 首接
    * （與活動推播的 markClaimPushHandled 同一個口徑）。真人客服模組不受此參數影響。
+   *
+   * ⛔ 這個參數是「主動推送」唯一的表達方式——不要改回去讀模組上存的類型：
+   * 同一個模組推播時是通知、客人問到時是回答，答案只有呼叫端知道。
    */
   enterAs?: ModuleType
 }): Promise<boolean> {
@@ -2878,7 +2898,7 @@ async function replyWithFlowModule(params: {
     })
   }
   else {
-    enterModule(sessionId, lineUserId, params.enterAs ?? flow.moduleType ?? 'bot_flow', moduleId, wid).catch(e =>
+    enterModule(sessionId, lineUserId, params.enterAs ?? customerInitiatedModuleType(flow), moduleId, wid).catch(e =>
       console.error('[session] enterModule error:', e),
     )
   }
@@ -4240,7 +4260,7 @@ export async function handlePostbackEvent(
           })
         }
         else {
-          enterModule(sessionId, userId, flow.moduleType ?? 'bot_flow', moduleId, workspaceId).catch(e =>
+          enterModule(sessionId, userId, customerInitiatedModuleType(flow), moduleId, workspaceId).catch(e =>
             console.error('[session] enterModule error:', e),
           )
         }

@@ -130,15 +130,9 @@
   padding-top: 2px;
 }
 
-/* 一般模組的類型下拉前，補一個小標，讓人知道那顆下拉在選什麼 */
-.flow-module-meta__label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-/* flow 專屬：在「模組類型」設定與右側動作列之間加一條分隔線，
-   讓「設定」與「動作」一眼分兩組。用相鄰選擇器 → 只有 flow 有 .flow-module-meta，
-   不會外洩到其他編輯頁。 */
+/* flow 專屬：在系統模組的標籤與右側動作列之間加一條分隔線，讓「這是什麼」與「能做什麼」
+   一眼分兩組。用相鄰選擇器 → 只有 flow 有 .flow-module-meta，不會外洩到其他編輯頁。
+   自建模組沒有這一塊（2026-09-21 拿掉模組類型下拉），動作列就自己靠右，不會多一條線。 */
 .flow-module-meta + .admin-header-actions {
   border-left: 1px solid var(--border);
   padding-left: 0.75rem;

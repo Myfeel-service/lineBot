@@ -751,11 +751,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom',
       },
       {
-        target: '[data-tour="flow-type"]',
+        target: '[data-tour="flow-name"]',
         clickBefore: '[data-tour="flow-new"]',
-        title: '你自己加的兩種',
+        title: '你自己加的模組',
         description:
-          '我幫你按了「新增」進入。你能建的有兩種，在這裡選：<strong>機器人流程</strong>（一般自動回覆，最常用）、<strong>系統通知</strong>（公告型訊息）。先取個名再選類型。',
+          '我幫你按了「新增」進入。自己加的模組<strong>只有一種</strong>，不用選類型——先在這裡取個名字（只有你看得到，客人不會看到），接著往下加要回的訊息。',
         placement: 'bottom',
       },
       {

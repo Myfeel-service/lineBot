@@ -59,7 +59,7 @@ beforeEach(() => { vi.clearAllMocks() })
  * 假 Firestore：撐起 ensureUser（users）、saveConversationMessage（conversations/messages）、
  * 腳本／設定等集合的 where().get()
  */
-function makeDb(opts: { scripts?: any[] } = {}) {
+function makeDb(opts: { scripts?: any[]; flows?: Record<string, any> } = {}) {
   const writes: { path: string; data: any }[] = []
   const userDoc = {
     exists: true,
@@ -77,7 +77,12 @@ function makeDb(opts: { scripts?: any[] } = {}) {
         })),
       }),
       doc: (id?: string) => ({
-        get: vi.fn(async () => (col === 'users' ? userDoc : { exists: false, data: () => undefined })),
+        get: vi.fn(async () => {
+          if (col === 'users') return userDoc
+          const flow = col === 'flows' ? opts.flows?.[String(id)] : undefined
+          if (flow) return { exists: true, data: () => flow }
+          return { exists: false, data: () => undefined }
+        }),
         set: vi.fn(async (data: any) => { writes.push({ path: `${col}/${id}`, data }) }),
         update: vi.fn(async (data: any) => { writes.push({ path: `${col}/${id}`, data }) }),
         collection: (sub: string) => ({
@@ -267,5 +272,69 @@ describe('成員傳綁定碼 → 系統回覆完就要移出待處理', () => {
     expect(vi.mocked(enterModule)).not.toHaveBeenCalledWith(
       expect.anything(), expect.anything(), 'system_notice', expect.anything(), expect.anything(),
     )
+  })
+})
+
+/**
+ * 「這則算不算機器人回答客人」是**送出去的那條路**的屬性，不是模組的屬性。
+ * 後台曾經讓人在模組上先選（機器人流程／系統通知），2026-09-21 拿掉——
+ * 那個選擇在主動推送的路上根本不會被讀到，只在「客人先開口」的路上生效，而那正是不該選通知的情境。
+ *
+ * 這一組釘的是拿掉之後的行為：資料庫裡殘留 system_notice 的自建模組（盤點時 myfeel 有 2 筆）
+ * 被客人按出來時，必須記成機器人回答；系統模組則維持讀自己的類型。
+ */
+describe('客人按按鈕叫出模組 → 一律算機器人回答（不讀模組上存的類型）', () => {
+  const MODULE_ID = 'flow-legacy-notice'
+
+  function triggerModuleEvent(moduleId: string): any {
+    return {
+      type: 'postback',
+      timestamp: 1,
+      source: { type: 'user', userId: LINE_UID },
+      replyToken: 'reply-token',
+      postback: { data: `triggerModule=${moduleId}` },
+    }
+  }
+
+  function flowDoc(extra: Record<string, unknown>) {
+    return {
+      workspaceId: WS,
+      name: '活動說明',
+      isActive: true,
+      messages: [{ type: 'text', text: '活動到月底' }],
+      ...extra,
+    }
+  }
+
+  it('自建模組舊資料還是 system_notice → 仍記 bot_flow（客人問了、機器人回了就是回答）', async () => {
+    const { db } = makeDb({
+      flows: { [MODULE_ID]: flowDoc({ isSystem: false, moduleType: 'system_notice' }) },
+    })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(triggerModuleEvent(MODULE_ID), { workspaceId: WS })
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(replyMessage)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(enterModule)).toHaveBeenCalledWith(
+        'sess-1', LINE_UID, 'bot_flow', MODULE_ID, WS,
+      )
+    })
+  })
+
+  it('系統模組維持讀自己的類型：歡迎模組被按出來記 welcome，不被上面那條規則吃掉', async () => {
+    const SYS_ID = 'flow-sys-welcome-doc'
+    const { db } = makeDb({
+      flows: { [SYS_ID]: flowDoc({ isSystem: true, moduleType: 'welcome' }) },
+    })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(triggerModuleEvent(SYS_ID), { workspaceId: WS })
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(enterModule)).toHaveBeenCalledWith(
+        'sess-1', LINE_UID, 'welcome', SYS_ID, WS,
+      )
+    })
   })
 })

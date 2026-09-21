@@ -3,13 +3,10 @@ import {
   assertValidFlowName,
 } from '~~/server/utils/flow-validator'
 import { getDoc } from '~~/server/utils/firebase'
-import { WORKSPACE_FLOW_MODULE_TYPES, type ModuleType } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { assertPlanAllows } from '~~/server/utils/billing'
 import { planAllowsScripting } from '~~/shared/billing/plans'
-
-const VALID_MODULE_TYPES: ModuleType[] = ['welcome', 'bot_flow', 'system_notice', 'live_agent']
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
@@ -18,14 +15,16 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
-  const existing = await getDoc<{ isSystem?: boolean; moduleType?: ModuleType; workspaceId?: string }>('flows', id)
+  const existing = await getDoc<{ isSystem?: boolean; workspaceId?: string }>('flows', id)
   if (!existing) throw createError({ statusCode: 404, statusMessage: '找不到此模組' })
   if (existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: '找不到此模組' })
   }
 
   const body = await readBody(event)
-  const { name, messages, isActive, moduleType, folderId } = body
+  // moduleType 刻意不從 body 取：模組類型不再可改（2026-09-21 拿掉後台選單）。
+  // 舊版前端若還帶著這個欄位，這裡靜靜忽略即可——它本來就沒有正確的用法。
+  const { name, messages, isActive, folderId } = body
 
   const updates: Record<string, unknown> = {}
   if (name !== undefined) updates.name = assertValidFlowName(name)
@@ -38,26 +37,6 @@ export default defineEventHandler(async (event) => {
   if (folderId !== undefined && !existing.isSystem) {
     updates.folderId = folderId === null ? null : (typeof folderId === 'string' ? folderId : null)
   }
-  if (moduleType !== undefined && VALID_MODULE_TYPES.includes(moduleType)) {
-    if (existing.isSystem) {
-      if (
-        existing.moduleType !== undefined
-        && (moduleType as ModuleType) !== existing.moduleType
-      ) {
-        throw createError({ statusCode: 403, statusMessage: '系統模組不可變更模組類型' })
-      }
-    }
-    else {
-      if (!WORKSPACE_FLOW_MODULE_TYPES.includes(moduleType as ModuleType)) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: '一般模組僅可為機器人流程或系統通知',
-        })
-      }
-      updates.moduleType = moduleType as ModuleType
-    }
-  }
-
   await updateDoc('flows', id, updates)
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
