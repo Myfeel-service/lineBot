@@ -216,6 +216,72 @@ seen = await readField(TA, 'textarea')
 check('④ 人不在輸入框裡時 → 接在最後面（舊行為，⛔ 不可以因為 selectionStart 還在就插到中間）',
   seen.value === `${SAMPLE}${TOKEN}`, `「${seen.value}」`)
 
+// ── ⑦⑧ 長文案：插完畫面要停在游標那裡，而且這一筆要能復原 ──────────
+// 為什麼要長文案：輸入框只有 3 行高，文案短的時候整段都看得見，捲不捲根本量不出來。
+// ⛔ 但**不能超過欄位上限**：這一格文字底下掛了按鈕＝LINE 只收 160 字，`maxlength` 就是 160，
+//   超過的話瀏覽器會拒絕插入、程式退回自己改資料那條路，量到的就不是要驗的東西
+//   （第一版寫了 710 字的文案，⑧ 一直紅，真因就是這個）。用短行＋多換行撐出捲軸。
+const LONG = Array.from({ length: 20 }, (_, i) => `第 ${i + 1} 行`).join('\n')
+await resetField(TA, 'textarea', LONG)
+await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  el.scrollTop = 0
+  el.focus()
+  el.setSelectionRange(3, 3)   // 游標在第 1 行
+}, TA)
+const before = await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  return { scrollable: el.scrollHeight > el.clientHeight + 4, maxScroll: el.scrollHeight - el.clientHeight }
+}, TA)
+await pickVariable(TA)
+const scrolled = await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight, value: el.value }
+}, TA)
+// ⛔ 先確認這個框真的捲得動，否則「沒有捲到底」是假綠燈（框根本沒有捲軸）
+check('⑦ 插完畫面停在游標那一行，沒有自己跳到最底',
+  before.scrollable && scrolled.top < 12,
+  `捲到 ${Math.round(scrolled.top)}px（可捲範圍 0～${Math.round(scrolled.max)}px，框捲得動＝${before.scrollable}）`)
+
+// ⌘Z／Ctrl+Z：⛔ 不能用 `page.keyboard` 直接按——puppeteer 送出的按鍵**不帶編輯指令**，
+// 真實的 ⌘Z 是由瀏覽器翻譯成 `undo` 這個編輯指令才送進網頁的。實測用 `page.keyboard`
+// 按 Meta+Z／Control+Z 兩種都毫無反應，但同一個時間點 `queryCommandEnabled('undo')` 是 true、
+// 程式呼叫 undo 收得回來＝**那是守門員自己的假紅燈，不是功能壞掉**。所以照瀏覽器的做法送。
+const undoEnabled = await page.evaluate(() => document.queryCommandEnabled('undo'))
+// 復原是送到「焦點所在的那個框」，所以焦點不在 → 紅燈的意思完全不同，要分得出來
+const focusBeforeUndo = await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  const active = document.activeElement
+  return { onField: active === el, active: active ? `${active.tagName}.${String(active.className).slice(0, 30)}` : '(none)' }
+}, TA)
+const cdp = await page.createCDPSession()
+const undoKey = { key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: process.platform === 'darwin' ? 4 : 2 }
+await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...undoKey, commands: ['undo'] })
+await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...undoKey })
+await sleep(400)
+const undone = await readField(TA, 'textarea')
+await sleep(400)
+const stillUndone = await readField(TA, 'textarea')   // 等 Vue 有機會把值寫回來，確認不是曇花一現
+check(`⑧ ${process.platform === 'darwin' ? '⌘Z' : 'Ctrl+Z'} 收得回剛插進去的變數，而且沒有被畫面重新寫回去`,
+  undoEnabled && !undone.value.includes(TOKEN) && undone.value === LONG && stillUndone.value === LONG,
+  `復原鍵可用＝${undoEnabled}；焦點在輸入框＝${focusBeforeUndo.onField}（${focusBeforeUndo.active}）；復原後長度 ${undone.value.length}（原文 ${LONG.length}）、0.4 秒後 ${stillUndone.value.length}`)
+
+// ── ⑨ 欄位已經頂到字數上限：不可以變成「按了沒反應」 ──────────────
+// 這時瀏覽器會拒絕插入（`maxlength`），程式要退回自己改資料那條路把整串插進去
+// ——維持舊行為，超出的部分由紅字警告與存檔閘門擋（`H-27`），而不是默默什麼都沒發生。
+const FULL = '滿'.repeat(160)
+await resetField(TA, 'textarea', FULL)
+await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  el.focus()
+  el.setSelectionRange(3, 3)
+}, TA)
+await pickVariable(TA)
+seen = await readField(TA, 'textarea')
+check('⑨ 欄位已經滿 160 字時，按下去仍然插得進去（⛔ 不可以變成按了沒反應）',
+  seen.value.includes(TOKEN) && seen.value.startsWith(`滿滿滿${TOKEN}`),
+  `長度 ${seen.value.length}、開頭「${seen.value.slice(0, 20)}」`)
+
 // ── ⑤ 單行輸入框（按鈕文字）走的是另一個分支 ─────────────────────
 const INPUT_WRAP = '.flow-input-inset-wrap'
 const hasInput = await page.$(`${INPUT_WRAP} input`)
