@@ -82,7 +82,6 @@
             v-model="draft.name"
             maxlength="30"
             placeholder="例如 問過出貨進度"
-            @update:model-value="onNameInput"
           />
         </div>
 
@@ -98,14 +97,13 @@
           </el-select>
         </div>
 
-        <div class="admin-field-group">
-          <AdminFieldLabel text="英文代號（系統辨識用，建立後就不能改）" tight />
-          <el-input v-model="draft.code" placeholder="例如 asked_shipping" @input="codeTouched = true" />
-          <p class="tag-picker__hint">
-            已照名稱幫你填一組，客人看不到，要改就現在改。只能用英文小寫、數字、底線，開頭要是英文字母。
-          </p>
-        </div>
-
+        <!--
+          `D-83`③ 2026-09-21 老闆拍板：**就地建標籤時不要出現英文代號那一格**，由系統自己生。
+          ⛔ 規則本身沒有變（後端仍然只收 `^[a-z][a-z0-9_]*$`、建立後仍然不能改），
+             變的是不再要求他想一個自己永遠不會再看到的英文字串——那是這個流程最卡的一格。
+          ⛔ 因為他改不到了，撞號就**不可以**丟一句「請換一個」給他看：`submitCreate` 會自動換下一組再試。
+          ⚠️ 標籤管理那一頁的完整表單**維持原樣**（在那裡建標籤是刻意的動作，看得到代號是對的）。
+        -->
         <p class="tag-picker__hint tag-picker__hint--muted">
           顏色、要不要讓 AI 自己判斷這顆標籤，之後都可以到「標籤管理」慢慢設。
         </p>
@@ -205,49 +203,77 @@ function onSelectChange(value: unknown) {
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
-const codeTouched = ref(false)
-const draft = reactive({ name: '', category: 'custom' as string, code: '' })
+const draft = reactive({ name: '', category: 'custom' as string })
 
 function openCreate() {
   draft.name = ''
   draft.category = 'custom'
-  draft.code = ''
-  codeTouched.value = false
   createError.value = ''
   createOpen.value = true
 }
 
-/** 這個工作區已經用掉的代號（拿來去重，避免預填一組一定會撞 409 的值） */
+/** 這個工作區已經用掉的代號（拿來去重，避免生出一組一定會撞 409 的值） */
 const usedCodes = computed(() =>
   mergedOptions.value.map((tag) => tag.code ?? '').filter(Boolean),
 )
 
-/** 名稱還在打的時候一路跟著猜代號；⛔ 人一旦自己動過代號就不要再蓋掉他 */
-function onNameInput(value: string) {
-  if (codeTouched.value) return
-  draft.code = value.trim() ? suggestTagCode(value, usedCodes.value) : ''
-}
+const isConflict = (e: any) =>
+  e?.status === 409 || e?.statusCode === 409 || e?.response?.status === 409
 
 async function submitCreate() {
   const name = draft.name.trim()
-  const code = draft.code.trim()
-
   if (!name) {
     createError.value = '請先填顯示名稱。'
-    return
-  }
-  if (!isValidTagCode(code)) {
-    createError.value = '英文代號只能用英文小寫、數字、底線，而且開頭要是英文字母。'
     return
   }
 
   creating.value = true
   createError.value = ''
   try {
-    const created = await apiFetch<TagOption & { code: string }>('/api/tag/create', {
-      method: 'POST',
-      body: { code, name, category: draft.category, status: 'active' },
-    })
+    /**
+     * 代號由系統生（`D-83`③ 拍板）。
+     *
+     * ⛔ **撞號一定要自己換一組重試**：使用者已經看不到這一格，也就改不了它，
+     *    丟一句「換一個代號」給他等於叫他做一件畫面上做不到的事。
+     *    撞號在這裡是真的會發生的——`usedCodes` 只看得到**這一頁載到的**標籤，
+     *    別人同時建了一顆同名的、或清單還沒載完，都會撞。
+     * ⚠️ 只重試 3 次：再撞下去就不是巧合，是有別的問題，這時才講給他聽。
+     */
+    const taken = [...usedCodes.value]
+    let created: (TagOption & { code: string }) | null = null
+    let lastError: any = null
+
+    for (let attempt = 0; attempt < 3 && !created; attempt += 1) {
+      const code = suggestTagCode(name, taken)
+      if (!isValidTagCode(code)) {
+        // 走不到才對（`suggestTagCode` 有 13 條測試釘住「任何輸入都合法」），但不假設它永遠對
+        lastError = null
+        createError.value = '這個名稱產不出合法的代號，請換一個名稱。'
+        break
+      }
+      try {
+        created = await apiFetch<TagOption & { code: string }>('/api/tag/create', {
+          method: 'POST',
+          body: { code, name, category: draft.category, status: 'active' },
+        })
+      }
+      catch (e: any) {
+        lastError = e
+        if (!isConflict(e)) break
+        taken.push(code) // 這組被占走了，下一圈會自動換成 xxx_2、xxx_3…
+      }
+    }
+
+    if (!created) {
+      if (lastError) {
+        createError.value = isConflict(lastError)
+          // 後端 409 那句是英文的（Tag code "x" already exists…），不可以直接噴給店家看
+          ? '這個名稱一直跟現有的標籤撞在一起，請換一個名稱再試。'
+          : lastError?.data?.statusMessage || '建立失敗，請再試一次。'
+      }
+      return
+    }
+
     const option: TagOption = {
       id: created.id,
       name: created.name,
@@ -263,15 +289,6 @@ async function submitCreate() {
     bumpAdminTagList()
     showToast(`已建立「${option.name}」並選起來了`, 'success')
     createOpen.value = false
-  }
-  catch (e: any) {
-    // ⛔ 後端 409 那句是英文的（Tag code "x" already exists…），不可以直接噴給店家看
-    if (e?.status === 409 || e?.statusCode === 409 || e?.response?.status === 409) {
-      createError.value = `英文代號「${code}」已經有人用了，換一個（例如在後面加數字）。`
-    }
-    else {
-      createError.value = e?.data?.statusMessage || '建立失敗，請再試一次。'
-    }
   }
   finally {
     creating.value = false

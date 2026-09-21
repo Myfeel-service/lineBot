@@ -309,27 +309,25 @@ async function checkCampaigns() {
     if (!dialogShown) { fail('活動標籤：按了「＋ 新標籤」沒有任何東西打開（這正是 H-37 那顆問號的死法）'); return }
     pass('活動標籤：「＋ 新標籤」真的打開了小視窗')
 
-    // 打字 → 代號要自己長出來，而且必須是後端收得下的格式
+    /**
+     * `D-83`③ 拍板後：小視窗裡**不可以再出現英文代號那一格**（系統自己生）。
+     * ⛔ 這一關要驗「看不到」而不是「填對了」——留著那一格正是老闆說要拿掉的東西。
+     */
     const inputs = await page.$$('.el-dialog .el-input__inner')
-    if (inputs.length < 2) { fail('活動標籤：小視窗裡的欄位數不對'); return }
+    if (!inputs.length) { fail('活動標籤：小視窗裡沒有任何輸入格'); return }
     await inputs[0].click()
     await inputs[0].type('Zz Check Only')
     await sleep(700)
 
-    const code = await page.evaluate(() => {
+    const codeFieldShown = await page.evaluate(() => {
       const box = [...document.querySelectorAll('.el-dialog')].find(el => el.getBoundingClientRect().width > 0)
-      const labels = [...box.querySelectorAll('.admin-field-group')]
-      const codeGroup = labels.find(g => g.textContent.includes('英文代號'))
-      return codeGroup?.querySelector('input')?.value ?? ''
+      return [...box.querySelectorAll('.admin-field-group')].some(g => g.textContent.includes('英文代號'))
     })
-    if (!/^[a-z][a-z0-9_]*$/.test(code)) {
-      fail(`活動標籤：代號沒有自動填成合法的值（拿到「${code}」）＝人還是要自己想一個，而且填錯會被後端退件`)
-    }
-    else if (code !== 'zz_check_only') {
-      fail(`活動標籤：代號預填成「${code}」，預期 zz_check_only`)
+    if (codeFieldShown) {
+      fail('活動標籤：小視窗還在要人填「英文代號」——`D-83`③ 已拍板由系統自己生、不顯示')
     }
     else {
-      pass(`活動標籤：打完名字，代號自己填成「${code}」（合法、可改）`)
+      pass('活動標籤：小視窗只問名稱與分類，代號由系統自己生（D-83③）')
     }
 
     await page.keyboard.press('Escape')
@@ -460,7 +458,23 @@ async function checkModuleUsage() {
       return item.textContent.replace(/\s+/g, ' ').trim().slice(0, 20)
     })
     if (!picked) { fail('機器人模組：左邊清單點不到任何模組'); return }
-    await sleep(2500)
+    await sleep(1500)
+
+    /**
+     * ⛔ **等引用查完再量**：查詢中那一行也掛 `--muted`，量到它會被當成「沒有人用」，
+     * 於是斷言「有沒有講後果」就會誤報。實際踩過一次——同一份程式碼忽紅忽綠。
+     */
+    try {
+      await page.waitForFunction(
+        () => !document.body.innerText.includes('正在查有哪些地方用到它'),
+        { timeout: 30_000 },
+      )
+    }
+    catch {
+      fail('機器人模組：等了 30 秒「正在查有哪些地方用到它」還沒結束＝這一關這次沒驗到')
+      return
+    }
+    await sleep(500)
 
     const strip = await page.evaluate(() => {
       const el = [...document.querySelectorAll('.flow-usage-strip')].find(e => e.getBoundingClientRect().width > 0)
