@@ -32,7 +32,7 @@
             v-if="showVariableInset"
             :size="insetButtonSize"
             :options="variableOptions"
-            @pick="(token) => insertToken('label', String(token))"
+            @pick="(token, range) => insertToken('label', String(token), range)"
           />
         </div>
       </div>
@@ -85,7 +85,7 @@
             v-if="showVariableInset"
             :size="insetButtonSize"
             :options="variableOptions"
-            @pick="(token) => insertToken('text', String(token))"
+            @pick="(token, range) => insertToken('text', String(token), range)"
           />
         </div>
       </div>
@@ -131,6 +131,8 @@
 </template>
 
 <script setup lang="ts">
+import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+
 type ActionOption = {
   value: string
   label: string
@@ -228,9 +230,12 @@ const insetButtonSize = computed(() =>
   props.fieldSize === 'small' ? 'sm' : 'default',
 )
 
-function insertToken(key: 'label' | 'text', token: string) {
-  const current = typeof props.action[key] === 'string' ? props.action[key] : ''
-  props.action[key] = `${current}${token}`
+/**
+ * `range` 是按下 `{{...}}` 當下的游標位置（由 FlowVariableInset 記下來），
+ * 沒有值就退回舊行為接在最後面。規則與邊界都在 `insertTokenAtCaret`（有測試）。
+ */
+function insertToken(key: 'label' | 'text', token: string, range?: CaretRange | null) {
+  props.action[key] = insertTokenAtCaret(props.action[key], token, range).text
 }
 
 function ensureTaggingState() {

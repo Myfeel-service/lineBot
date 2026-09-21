@@ -319,7 +319,7 @@
                     />
                     <FlowVariableInset
                       :options="variableTokenOptions"
-                      @pick="(token) => insertVariableToken(msg, 'text', String(token))"
+                      @pick="(token, range) => insertVariableToken(msg, 'text', String(token), range)"
                     />
                   </div>
                   <!--
@@ -548,7 +548,7 @@
                       />
                       <FlowVariableInset
                         :options="variableTokenOptions"
-                        @pick="(token) => insertVariableToken(msg, 'text', String(token))"
+                        @pick="(token, range) => insertVariableToken(msg, 'text', String(token), range)"
                       />
                     </div>
                   </div>
@@ -631,7 +631,7 @@
                     />
                     <FlowVariableInset
                       :options="variableTokenOptions"
-                      @pick="(token) => insertVariableToken(msg, 'text', String(token))"
+                      @pick="(token, range) => insertVariableToken(msg, 'text', String(token), range)"
                     />
                   </div>
                 </div>
@@ -738,7 +738,7 @@
                       />
                       <FlowVariableInset
                         :options="variableTokenOptions"
-                        @pick="(token) => insertVariableToken(msg, 'altText', String(token))"
+                        @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
                       />
                     </div>
                   </div>
@@ -823,7 +823,7 @@
                           <FlowVariableInset
                             size="sm"
                             :options="variableTokenOptions"
-                            @pick="(token) => insertVariableToken(col, 'title', String(token))"
+                            @pick="(token, range) => insertVariableToken(col, 'title', String(token), range)"
                           />
                         </div>
                       </div>
@@ -835,7 +835,7 @@
                           <el-input v-model="col.text" type="textarea" :rows="2" placeholder="副標題或內容（最多 300 字）" maxlength="300" />
                           <FlowVariableInset
                             :options="variableTokenOptions"
-                            @pick="(token) => insertVariableToken(col, 'text', String(token))"
+                            @pick="(token, range) => insertVariableToken(col, 'text', String(token), range)"
                           />
                         </div>
                       </div>
@@ -960,7 +960,7 @@
                           <FlowVariableInset
                             size="sm"
                             :options="variableTokenOptions"
-                            @pick="(token) => insertVariableToken(col, 'title', String(token))"
+                            @pick="(token, range) => insertVariableToken(col, 'title', String(token), range)"
                           />
                         </div>
                       </div>
@@ -972,7 +972,7 @@
                           <el-input v-model="col.text" type="textarea" :rows="2" placeholder="內文（選填，最多 300 字）" maxlength="300" />
                           <FlowVariableInset
                             :options="variableTokenOptions"
-                            @pick="(token) => insertVariableToken(col, 'text', String(token))"
+                            @pick="(token, range) => insertVariableToken(col, 'text', String(token), range)"
                           />
                         </div>
                       </div>
@@ -1146,6 +1146,7 @@ import {
   MODULE_TYPE_LABELS,
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
+import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -1354,9 +1355,12 @@ const variableTokenOptions = computed(() => {
   }))
 })
 
-function insertVariableToken(target: Record<string, any>, key: string, token: string) {
-  const current = typeof target[key] === 'string' ? target[key] : ''
-  target[key] = `${current}${token}`
+/**
+ * `range` 是使用者按下 `{{...}}` 當下的游標位置（由 FlowVariableInset 記下來），
+ * 沒有值就退回舊行為接在最後面。規則與邊界都在 `insertTokenAtCaret`（有測試）。
+ */
+function insertVariableToken(target: Record<string, any>, key: string, token: string, range?: CaretRange | null) {
+  target[key] = insertTokenAtCaret(target[key], token, range).text
 }
 
 // 訊息類型可用性開關（共用於教學 agent，讓不可用功能的教學自動隱藏）
