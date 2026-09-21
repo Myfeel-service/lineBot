@@ -303,7 +303,11 @@ describe('當使用者的話不足以決定要動什麼', () => {
   it('🔴 一個數字都沒講就要改時間 → ⛔不可以自己填 22:00–08:00', async () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
-      .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
+      // ⛔ 這句刻意不帶數字：原本寫「現在是 09:00–18:00，你要改成幾點？」，但那是模型
+      //    **沒查就講出來的當前設定**，`answerGroundingIssue` 會（正確地）把它退回去查，
+      //    於是多出第三次呼叫、假資料用完 → 整支炸掉。這條測的是「沒講數字不可以自己填」，
+      //    不要在假資料裡塞無關的數字把另一道閘門一起引爆（那一道另外一條測，見下）。
+      .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
 
     const res = await ask('晚上太晚有人敲我 受不了 幫我設一下')
 
@@ -311,6 +315,29 @@ describe('當使用者的話不足以決定要動什麼', () => {
     expect(setCalls).toHaveLength(0)
     const second = generateJson.mock.calls[1]?.[0] as string
     expect(second).toContain('沒有講到任何時間或數字')
+  })
+
+  /**
+   * 兩道閘門的接力（2026-09-21 補）：`6e4b13b` 把接地檢查加進來時，這個組合讓上面那條
+   * 測試多跑一輪、假資料用完就整支 TypeError——而**測試紅掉就不會部署**，同一批推上去的
+   * 三件事全部卡住 33 小時沒人發現（見 `A-21`）。所以把這個接力單獨釘成一條：
+   * 它不是壞掉，是**本來就該這樣**，下次不要為了讓測試變綠去拆接地那道。
+   */
+  it('數值閘門叫它「先講現在是什麼」→ 它憑空講 → 接地閘門要把它退回去查', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
+      // ⛔ 現值確實是 09:00–18:00（見檔頭的 getAiSettings 假資料），但它**一支工具都沒查**
+      //    就寫出來了——猜對了也是猜的，下一個帳號就會猜錯。
+      .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
+
+    const res = await ask('晚上太晚有人敲我 受不了 幫我設一下')
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(setCalls).toHaveLength(0)
+    // 真的有第三次呼叫＝它被退回去了，而不是那句話就這樣出去給使用者
+    expect(generateJson).toHaveBeenCalledTimes(3)
+    expect(generateJson.mock.calls[2]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
   })
 
   it('🔴 前面隨口打過的數字不算數：那道閘門只看這一句', async () => {
