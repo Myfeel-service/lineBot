@@ -240,7 +240,10 @@ async function submitCreate() {
       code: created.code,
     }
     locallyCreated.value = [...locallyCreated.value, option]
-    emit('update:modelValue', [...props.modelValue, option.id])
+    // ⛔ 舊資料的 addTagIds 可能根本不存在（貼標節點是後來才加的欄位）。
+    //    型別上它是必填，但那只擋得住新寫的程式；這裡展開 undefined 會直接炸在使用者臉上，
+    //    而且是「他剛按下建立」的那一刻——標籤建好了、畫面卻爆掉，最難查。
+    emit('update:modelValue', [...(Array.isArray(props.modelValue) ? props.modelValue : []), option.id])
     emit('created', option)
     bumpAdminTagList()
     showToast(`已建立「${option.name}」並選起來了`, 'success')
