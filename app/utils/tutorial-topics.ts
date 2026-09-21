@@ -1037,77 +1037,6 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     ],
   },
   {
-    id: 'broadcasts',
-    category: 'growth',
-    requiresOperate: true,
-    icon: Promotion,
-    label: '發一則推播',
-    blurb: '主動群發訊息給好友。帶你認識怎麼發。',
-    route: wid => `/admin/${wid}/broadcasts`,
-    steps: [
-      {
-        target: '[data-tour="bc-title"]',
-        title: '推播是主動群發',
-        description:
-          '推播是<strong>主動群發</strong>訊息給好友——活動、公告都靠它。注意推播會耗用 LINE 的月推播額度。',
-        placement: 'right',
-      },
-      {
-        target: '[data-tour="bc-new"]',
-        title: '建一則推播',
-        description:
-          '點「<strong>新增</strong>」開一則。接下來我帶你看<strong>發給誰、發什麼、什麼時候發</strong>這三件事。',
-        placement: 'right',
-      },
-      // ── 以下是編輯器裡面（2026-09-18 `D-82` 拍板：導覽不可以停在門口）───────────
-      // ⛔ 同 `ai-scripts`：這幾步不能用 `requiresPresent`（那是在 clickBefore 之前問的，
-      //    那時編輯器還沒開，填了每次都被靜默刷掉）。
-      {
-        target: '[data-tour="bc-audience"]',
-        // 手上已經開著一則在編輯就不要按「新增」把它切掉
-        clickBefore: '[data-tour="bc-new"]',
-        clickBeforeUnless: '[data-tour="bc-audience"]',
-        title: '先決定發給誰',
-        description:
-          '<strong>全部好友</strong>最花額度；多數時候用<strong>依標籤篩選</strong>只發給其中一群人'
-          + '（例如只發給貼過「VIP」的）。⚠️ 選兩顆以上標籤是「<strong>或</strong>」——'
-          + '有其中任一顆的人都會收到，不是兩顆都要有。',
-        placement: 'right',
-      },
-      {
-        target: '[data-tour="bc-content"]',
-        title: '再寫要發什麼',
-        description:
-          '可以只發一段文字，也可以發圖片、圖文訊息，或讓客人點了就<strong>觸發一個機器人模組</strong>。'
-          + '這一區跟你在機器人模組看到的是同一套編輯器。',
-        placement: 'left',
-      },
-      {
-        target: '[data-tour="bc-schedule"]',
-        title: '現在發，還是約時間發',
-        description:
-          '選「<strong>排程發送</strong>」就約一個時間，到點自動送出。'
-          + '⚠️ <strong>發送對象是到那個時間點才計算</strong>——這段期間新加的好友、新貼的標籤都會算進去。',
-        placement: 'left',
-      },
-      {
-        target: '[data-tour="bc-send"]',
-        title: '送出前會先讓你看人數',
-        description:
-          '按這顆不會立刻送出：系統會先算好<strong>預估發送人數</strong>、列幾筆名單給你看，'
-          + '<strong>你再按一次確認才真的發</strong>。⚠️ 發出去收不回來，人數跟你想的差太多就先取消。',
-        placement: 'bottom-end',
-      },
-      {
-        target: '',
-        title: '發完之後，回來看成效',
-        description:
-          '送出後回到這則推播，下面會多一段「<strong>成效報表</strong>」：送出去幾筆、幾筆失敗、'
-          + '<strong>哪些人沒收到</strong>（多半是對方封鎖了官方帳號，可以個別跟進），以及 LINE 提供的開封數。',
-      },
-    ],
-  },
-  {
     id: 'tags',
     category: 'growth',
     requiresOperate: true,
@@ -1193,6 +1122,94 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '儲存後拿到活動網址',
         description:
           '按「<strong>建立活動</strong>」後，系統會給一條<strong>活動進入網址</strong>——把它貼到問卷完成頁、廣告按鈕或簡訊就能開始收名單。下方「<strong>行銷成效</strong>」還能看多少人綁定、貼標完成率',
+      },
+    ],
+  },
+  /**
+   * ⛔ **順序有意義**（`C-210`，2026-09-21）：這一區以前是
+   * 圖文選單 → **推播** → 標籤 → 活動 → 好友，
+   * 等於**先教怎麼發推播，而推播第三步就叫你用「還沒教過」的標籤**。
+   * 改成跟側欄同一個故事線：**名單（好友）→ 分群（標籤、活動）→ 只發給其中一群（推播）**。
+   * ⛔ 分類內的顯示順序就是這個陣列的順序（`useTutorial.ts` 的 `groupedTopics` 只做 filter），
+   *    別另外加 `order` 欄位——那會變成兩份順序，遲早對不起來。
+   */
+  {
+    id: 'broadcasts',
+    category: 'growth',
+    requiresOperate: true,
+    icon: Promotion,
+    label: '發一則推播',
+    blurb: '主動群發訊息給好友。帶你認識怎麼發。',
+    route: wid => `/admin/${wid}/broadcasts`,
+    steps: [
+      {
+        target: '[data-tour="bc-title"]',
+        title: '推播是主動群發',
+        description:
+          '推播是<strong>主動群發</strong>訊息給好友——活動、公告都靠它。注意推播會耗用 LINE 的月推播額度。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="bc-new"]',
+        title: '建一則推播',
+        description:
+          '點「<strong>新增</strong>」開一則。接下來我帶你看<strong>發給誰、發什麼、什麼時候發</strong>這三件事。',
+        placement: 'right',
+      },
+      // ── 以下是編輯器裡面（2026-09-18 `D-82` 拍板：導覽不可以停在門口）───────────
+      // ⛔ 同 `ai-scripts`：這幾步不能用 `requiresPresent`（那是在 clickBefore 之前問的，
+      //    那時編輯器還沒開，填了每次都被靜默刷掉）。
+      {
+        target: '[data-tour="bc-audience"]',
+        // 手上已經開著一則在編輯就不要按「新增」把它切掉
+        clickBefore: '[data-tour="bc-new"]',
+        clickBeforeUnless: '[data-tour="bc-audience"]',
+        title: '先決定發給誰',
+        description:
+          '<strong>全部好友</strong>最花額度；多數時候用<strong>依標籤篩選</strong>只發給其中一群人'
+          + '（例如只發給貼過「VIP」的）。⚠️ 選兩顆以上標籤是「<strong>或</strong>」——'
+          + '有其中任一顆的人都會收到，不是兩顆都要有。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="bc-content"]',
+        title: '再寫要發什麼',
+        /**
+         * ⛔ 這一步以前寫「可以發**圖片、圖文訊息**……這一區跟你在機器人模組看到的是
+         * **同一套編輯器**」——**兩句都不是真的**（`C-210` 修）：推播內容只有
+         * 文字／開網址／觸發模組三選一，而且用的是 `AdminAreaActionEditor`，
+         * 不是模組頁那套。照著找圖片按鈕的人會在畫面上找不到。
+         * 要發圖片的正解就是下面那句：把圖片放進模組，再讓推播觸發那個模組。
+         */
+        description:
+          '推播本身只能發<strong>一段文字</strong>、<strong>一個開網址的按鈕</strong>，'
+          + '或是<strong>觸發一個機器人模組</strong>。'
+          + '想發圖片、圖文訊息或多則訊息，就先到「機器人模組」做好，這裡選那個模組——'
+          + '客人收到的會是模組裡的完整內容。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="bc-schedule"]',
+        title: '現在發，還是約時間發',
+        description:
+          '選「<strong>排程發送</strong>」就約一個時間，到點自動送出。'
+          + '⚠️ <strong>發送對象是到那個時間點才計算</strong>——這段期間新加的好友、新貼的標籤都會算進去。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="bc-send"]',
+        title: '送出前會先讓你看人數',
+        description:
+          '按這顆不會立刻送出：系統會先算好<strong>預估發送人數</strong>、列幾筆名單給你看，'
+          + '<strong>你再按一次確認才真的發</strong>。⚠️ 發出去收不回來，人數跟你想的差太多就先取消。',
+        placement: 'bottom-end',
+      },
+      {
+        target: '',
+        title: '發完之後，回來看成效',
+        description:
+          '送出後回到這則推播，下面會多一段「<strong>成效報表</strong>」：送出去幾筆、幾筆失敗、'
+          + '<strong>哪些人沒收到</strong>（多半是對方封鎖了官方帳號，可以個別跟進），以及 LINE 提供的開封數。',
       },
     ],
   },

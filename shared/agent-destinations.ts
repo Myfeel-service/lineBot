@@ -17,9 +17,15 @@ interface AgentDestination {
   path: (workspaceId: string) => string
 }
 
+/**
+ * ⛔ **`label` 一律照側欄的名字寫**（`app/layouts/default.vue` 的 nav items）——
+ * 側欄名＝指路用的名字。小幫手說「去『活動』設定」而側欄寫「活動標籤」，
+ * 第一次用的人會在側欄上找不到那兩個字，以為是另一個功能（`C-210`，2026-09-21 對齊）。
+ * 同一件事在四個地方有四個名字，是這一輪 `D-83` 盤出來的具體缺口之一。
+ */
 export const AGENT_DESTINATIONS = {
   'conversations': {
-    label: '對話',
+    label: '客服對話',
     hint: '看客人訊息、真人回覆、送出 AI 草稿、接手／結案',
     path: wid => `/admin/${wid}/conversations`,
   },
@@ -29,7 +35,7 @@ export const AGENT_DESTINATIONS = {
     path: wid => `/admin/${wid}/ai-settings`,
   },
   'ai-scripts': {
-    label: '自動回應與客服流程',
+    label: '自動回應',
     hint: '關鍵字自動回應、多步驟收資料的客服流程、範本',
     path: wid => `/admin/${wid}/ai-scripts`,
   },
@@ -59,32 +65,41 @@ export const AGENT_DESTINATIONS = {
     path: wid => `/admin/${wid}/richmenu`,
   },
   'flow': {
-    label: '對話模組',
+    label: '機器人模組',
     hint: '按鈕選單、圖卡等客人會點到的模組',
     path: wid => `/admin/${wid}/flow`,
   },
   'campaigns': {
-    label: '活動',
+    label: '活動標籤',
     hint: '掃碼／連結活動、自動貼標、活動統計',
     path: wid => `/admin/${wid}/campaigns`,
   },
+  /**
+   * ⛔ 這一頁**以前不在白名單裡**（`C-210` 補），所以小幫手講得出「標籤是分眾的依據」，
+   * 卻沒有辦法把人帶到那一頁——而標籤正是模組貼標、推播挑名單共同的前提。
+   */
+  'tags': {
+    label: '標籤管理',
+    hint: '建立與管理好友標籤、AI 判斷條件、待審的貼標建議',
+    path: wid => `/admin/${wid}/tags`,
+  },
   'users': {
-    label: '好友名單',
+    label: '好友',
     hint: '官方帳號好友、客人標籤',
     path: wid => `/admin/${wid}/users`,
   },
   'support-presets': {
-    label: '客服預存回覆',
+    label: '客服預存',
     hint: '真人客服的罐頭回覆管理',
     path: wid => `/admin/${wid}/support-presets`,
   },
   'settings-organization': {
-    label: '組織與 LINE 設定',
+    label: '組織與 LINE',
     hint: 'LINE 憑證（Token／Secret／LIFF）、Webhook 與 LIFF 連線檢查',
     path: wid => `/admin/${wid}/settings/organization`,
   },
   'settings-billing': {
-    label: '方案與帳單',
+    label: '訂閱與付款',
     hint: '目前方案、AI 回覆額度、升級、發票',
     path: wid => `/admin/${wid}/settings/billing`,
   },

@@ -396,6 +396,12 @@ import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
 import { parseLineMessagesToUnifiedAction, unifiedActionToLineMessages } from '~~/shared/broadcast-content'
 import {
+  BROADCAST_AUDIENCE_HANDOFF_KEY,
+  handoffNoticeText,
+  isFreshHandoff,
+  parseHandoff,
+} from '~~/shared/broadcast-audience-handoff'
+import {
   localDateTimeInputToUtcIso,
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
@@ -1064,8 +1070,41 @@ function syncDuePollTimer() {
   }, 60_000)
 }
 
+/**
+ * C-210：從好友頁「推播給這 N 位」帶過來的名單。
+ *
+ * ⛔ **讀不到要講出來**：`sessionStorage` 在無痕視窗、擋了網站資料、或使用者自己
+ * 另開分頁貼網址時都可能是空的。安靜地開一張空白推播，會讓人以為系統記住了他選的 300 個人。
+ * ⛔ 讀完就清掉：不清的話重新整理會再套用一次，而那時他可能已經改成別的對象了。
+ */
+function applyAudienceHandoff() {
+  if (String(useRoute().query.from ?? '') !== 'users') return
+
+  let raw: string | null = null
+  try {
+    raw = sessionStorage.getItem(BROADCAST_AUDIENCE_HANDOFF_KEY)
+    sessionStorage.removeItem(BROADCAST_AUDIENCE_HANDOFF_KEY)
+  }
+  catch {
+    raw = null
+  }
+
+  const payload = parseHandoff(raw)
+  if (!isFreshHandoff(payload)) {
+    showToast('名單沒有帶過來（可能已經過期或這個瀏覽器擋了暫存），請回好友頁重新勾選', 'error')
+    return
+  }
+
+  openCreate()
+  form.value.audienceType = 'import'
+  form.value.importText = payload.userIds.join('\n')
+  markClean() // 這是系統幫他填的，還沒動到手——不要一進來就說「有未儲存的變更」
+  showToast(handoffNoticeText(payload), payload.dropped > 0 ? 'warning' : 'success')
+}
+
 onMounted(async () => {
   await loadData()
+  applyAudienceHandoff()
   syncDuePollTimer()
 })
 

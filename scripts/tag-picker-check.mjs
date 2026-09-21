@@ -59,7 +59,7 @@ console.log(`adminUserPrefs/${uid}：${prefsBefore.exists ? '原本有資料，�
  * 有時候量到 0、有時候量到 1，取決於導覽跑得多快。實測同一份程式碼連跑三次，兩紅一綠。
  * 這裡先蓋章讓導覽不要自己跑，跑完 `finally` 會把整份 prefs 原封還原。
  */
-const SILENCE_TOURS = ['campaigns', 'support-presets', 'broadcasts', 'tags', 'flow|msg-basic|msg-rich|msg-carousel|msg-quick|msg-userinput']
+const SILENCE_TOURS = ['campaigns', 'support-presets', 'broadcasts', 'tags', 'users', 'flow|msg-basic|msg-rich|msg-carousel|msg-quick|msg-userinput']
 await prefsRef.set({
   ...(prefsData ?? {}),
   seenTours: {
@@ -597,9 +597,83 @@ async function checkTagUsage() {
   }
 }
 
+// ── 關卡 7：好友頁「推播給這 N 位」要真的把名單帶過去（`C-210`）────────────
+async function checkBroadcastHandoff() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'users', 'tbody tr')
+
+    const before = await page.evaluate(() =>
+      [...document.querySelectorAll('.users-batch-bar')].filter(e => e.getBoundingClientRect().width > 0).length)
+    if (before !== 0) fail('好友頁：還沒勾選就出現批次列（對照組不成立）')
+    else pass('好友頁：沒勾人時沒有批次列（對照組成立）')
+
+    // 勾兩位
+    const checked = await page.evaluate(() => {
+      const boxes = [...document.querySelectorAll('tbody input[type="checkbox"]')]
+        .filter(e => e.getBoundingClientRect().width > 0)
+      boxes.slice(0, 2).forEach(b => b.click())
+      return Math.min(boxes.length, 2)
+    })
+    if (checked < 2) { fail('好友頁：勾不到兩位好友'); return }
+    await sleep(900)
+
+    const btn = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.users-batch-bar .el-button')]
+        .find(e => e.textContent.includes('推播給這'))
+      return b ? b.textContent.replace(/\s+/g, ' ').trim() : null
+    })
+    if (!btn) {
+      fail('好友頁：勾了人之後沒有「推播給這 N 位」＝推播頁那句「先到好友頁篩出那批人」仍然是死路')
+      return
+    }
+    pass(`好友頁：出現「${btn}」`)
+
+    await page.evaluate(() => {
+      [...document.querySelectorAll('.users-batch-bar .el-button')]
+        .find(e => e.textContent.includes('推播給這'))?.click()
+    })
+    await sleep(4000)
+
+    const landed = await page.evaluate(() => ({
+      path: location.pathname + location.search,
+      // 受眾有沒有自動選到「匯入名單」，名單有沒有填進去
+      importChecked: [...document.querySelectorAll('.el-radio')]
+        .some(e => e.textContent.includes('匯入名單') && e.className.includes('is-checked')),
+      textarea: document.querySelector('textarea')?.value ?? '',
+      toast: [...document.querySelectorAll('.admin-toast, [class*="toast"]')]
+        .map(e => e.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | '),
+    }))
+
+    if (!landed.path.includes('/broadcasts')) {
+      fail(`好友頁：按了之後沒有跳到推播頁（現在在 ${landed.path}）`)
+      return
+    }
+    pass('好友頁：按了之後跳到推播頁')
+
+    if (!landed.importChecked) fail('推播頁：受眾沒有自動選成「匯入名單」')
+    else pass('推播頁：受眾自動選成「匯入名單」')
+
+    const ids = landed.textarea.split('\n').map(s => s.trim()).filter(Boolean)
+    if (ids.length !== 2) {
+      fail(`推播頁：名單帶過來 ${ids.length} 筆，預期 2 筆`)
+    }
+    else if (!ids.every(id => id.startsWith('U'))) {
+      fail(`推播頁：帶過來的不是 LINE 編號（拿到 ${ids[0]}）＝送出去一定失敗`)
+    }
+    else {
+      pass(`推播頁：帶入 2 筆 LINE 編號（${ids[0].slice(0, 6)}…）`)
+    }
+    if (landed.toast) pass(`推播頁提示：「${landed.toast.slice(0, 40)}」`)
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
-  await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags'])
+  await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users'])
   console.log('\n── 活動標籤 ──────────────────────────────')
   await checkCampaigns()
   console.log('\n── 客服預存 ──────────────────────────────')
@@ -612,6 +686,8 @@ try {
   await checkModuleUsage()
   console.log('\n── 標籤「用在哪」（C-209）──────────────────')
   await checkTagUsage()
+  console.log('\n── 好友頁「推播給這 N 位」（C-210）─────────')
+  await checkBroadcastHandoff()
 }
 finally {
   await browser.close()

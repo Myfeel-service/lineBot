@@ -411,7 +411,9 @@
               <span>載入中…</span>
             </div>
             <div v-else-if="!tags.length" class="tags-empty">
-              <span>{{ total ? '無符合的標籤' : '尚無任何標籤，請點擊右上角「新增標籤」開始' }}</span>
+              <!-- C-210：按鈕上寫的是「新增」，這裡以前寫「新增標籤」——
+                   找不到那三個字的人會以為是別的按鈕。一律照按鈕上的字寫。 -->
+              <span>{{ total ? '無符合的標籤' : '尚無任何標籤，請點擊右上角「新增」開始' }}</span>
             </div>
             <div v-else class="table-wrap">
               <table class="tags-table">

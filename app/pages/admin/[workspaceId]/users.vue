@@ -55,6 +55,13 @@
           <span class="users-batch-info">已選 {{ selectedIds.length }} 位</span>
           <el-button v-if="canOperate" size="small" type="primary" @click="openBatchTag('add')">＋ 批次加標</el-button>
           <el-button v-if="canOperate" size="small" @click="openBatchTag('remove')">－ 批次移標</el-button>
+          <!--
+            C-210：推播頁寫著「想寄給『兩個條件都符合』的人，先到『好友』頁篩出那批人」，
+            但這裡以前沒有任何按鈕可以把那批人帶去推播＝照著那句話做會走到死路。
+          -->
+          <el-button v-if="canOperate" size="small" @click="broadcastToSelected">
+            ✉ 推播給這 {{ selectedIds.length }} 位
+          </el-button>
           <el-button size="small" text @click="selectedIds = []">取消選取</el-button>
         </div>
 
@@ -360,6 +367,10 @@
 <script setup lang="ts">
 import { InfoFilled, User } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
+import {
+  BROADCAST_AUDIENCE_HANDOFF_KEY,
+  type BroadcastAudienceHandoff,
+} from '~~/shared/broadcast-audience-handoff'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -604,6 +615,50 @@ async function loadData() {
 /** tag 增刪操作後只重抓 users，標籤不會變動，避免每次都重複拉 `/api/tag/list` */
 async function refreshUsersOnly() {
   await reloadUsers()
+}
+
+/**
+ * 「推播給這 N 位」（`C-210`）：把勾選的人帶去推播頁，受眾自動填成「匯入名單」。
+ *
+ * ⛔ **要送去 LINE 的是 `lineUserId`（U 開頭），不是 Firestore 的 doc id**
+ *    （doc id 是 `{workspaceId}_{lineUserId}`，直接丟給 LINE 會被判成無效 userId）。
+ * ⛔ **對不到 LINE 編號的要算出來並講出來**，不可以安靜地少帶幾位——
+ *    勾了 50 位只帶過去 48 位而不吭聲，那兩位會安靜地收不到訊息
+ *    （同 `feedback_filters_must_report_what_they_dropped`）。
+ * ⛔ 這裡**不建立任何草稿**：推播頁開的是一張還沒存檔的新推播，半途反悔不會留垃圾。
+ */
+function broadcastToSelected() {
+  if (!assertCanOperate()) return
+  if (!selectedIds.value.length) {
+    showToast('請先勾選至少一位好友', 'error')
+    return
+  }
+
+  const byId = new Map(users.value.map((u: any) => [String(u.id), String(u.lineUserId ?? '').trim()]))
+  const lineUserIds: string[] = []
+  let dropped = 0
+  for (const id of selectedIds.value) {
+    const lineUserId = byId.get(String(id))
+    if (lineUserId) lineUserIds.push(lineUserId)
+    else dropped += 1 // 換頁之後舊的勾選可能已經不在這一頁的資料裡
+  }
+
+  if (!lineUserIds.length) {
+    showToast('這些好友查不到 LINE 編號，沒辦法帶去推播（請重新整理後再試）', 'error')
+    return
+  }
+
+  const payload: BroadcastAudienceHandoff = { userIds: lineUserIds, dropped, ts: Date.now() }
+  try {
+    sessionStorage.setItem(BROADCAST_AUDIENCE_HANDOFF_KEY, JSON.stringify(payload))
+  }
+  catch {
+    // 無痕視窗／擋了網站資料時存不進去。⛔ 不要硬跳過去開一張空白推播（那會讓人
+    // 以為系統記住了他選的人），當場講清楚並留在原地。
+    showToast('這個瀏覽器不讓我暫存名單，請改用「依標籤篩選」發送', 'error')
+    return
+  }
+  navigateTo(`/admin/${workspaceId.value}/broadcasts?from=users`)
 }
 
 function openBatchTag(mode: 'add' | 'remove') {

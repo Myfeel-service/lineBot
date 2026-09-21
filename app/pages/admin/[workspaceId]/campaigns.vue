@@ -2,7 +2,9 @@
   <AdminSplitLayout :is-empty="!selectedCampaign && !isCreating">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
-      <span class="split-sidebar-title">活動貼標<AdminPageHelpButton :topics="['campaigns']" /></span>
+      <!-- C-210：頁標題跟側欄同名（側欄＝指路用的名字）。以前這裡叫「活動貼標」、側欄叫
+           「活動標籤」、小幫手叫「活動」、教學叫「活動貼標（名單分眾）」——同一件事四個名字。 -->
+      <span class="split-sidebar-title">活動標籤<AdminPageHelpButton :topics="['campaigns']" /></span>
       <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="cmp-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -40,7 +42,7 @@
     <template #editor-empty>
       <el-icon class="empty-icon"><Tickets /></el-icon>
       <h3>選擇一個活動開始編輯</h3>
-      <p>或點擊左側「新增」建立新的活動貼標設定</p>
+      <p>或點擊左側「新增」建立新的活動標籤設定</p>
       <div class="empty-actions">
         <el-button v-if="canOperate" type="primary" @click="openCreate">新增活動</el-button>
         <AdminPageHelpButton :topics="['campaigns']" label="第一次用？看一遍怎麼設" />

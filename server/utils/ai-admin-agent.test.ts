@@ -314,7 +314,8 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '通知怎麼設?' })
     expect(res.messages).toEqual([
       { kind: 'link', internal: true, label: '前往「AI 設定」', href: '/admin/w1/ai-settings' },
-      { kind: 'link', internal: true, label: '前往「對話」', href: '/admin/w1/conversations' },
+      // C-210：帶路卡的名字一律照側欄寫，這裡以前是「對話」、側欄是「客服對話」
+      { kind: 'link', internal: true, label: '前往「客服對話」', href: '/admin/w1/conversations' },
     ])
   })
 
