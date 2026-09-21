@@ -1,0 +1,110 @@
+/* ══════════════════════════════════════════════════════════════
+   「這個東西被誰用了」清單（C-209）——機器人模組的「會在這些時候發出」
+   與標籤停用前的確認框共用。
+
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   ══════════════════════════════════════════════════════════════ */
+
+.config-refs {
+  min-width: 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.config-refs__line {
+  margin: 0;
+}
+
+.config-refs__line--muted {
+  color: var(--el-text-color-secondary, #909399);
+}
+
+/* 「這次查不到」用琥珀不用紅：它不是壞掉，是這次沒問到——
+   但也絕不能是灰的，灰的會被當成「沒事」。 */
+.config-refs__line--warn {
+  color: #a16207;
+  background: #fefce8;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 0.4rem;
+}
+
+.config-refs__groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.config-refs__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  /* ⛔ 可壓縮的欄要留 min-width: 0，名字很長時才不會把整個編輯器撐開 */
+  min-width: 0;
+}
+
+.config-refs__kind {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.config-refs__hint {
+  color: var(--el-text-color-secondary, #909399);
+  white-space: nowrap;
+}
+
+.config-refs__names {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.config-refs__name {
+  display: inline-block;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  background: var(--el-fill-color-light, #f0f2f5);
+  color: var(--el-text-color-regular, #606266);
+}
+
+.config-refs__name--inactive {
+  opacity: 0.65;
+  font-style: normal;
+}
+
+/* 標籤頁「用在哪」視窗底下那句提醒 */
+.tags-refs-note {
+  margin: 0.7rem 0 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary, #909399);
+}
+
+/* 模組編輯器頂端那一條 */
+.flow-usage-strip {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+}
+
+.flow-usage-strip__title {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+}

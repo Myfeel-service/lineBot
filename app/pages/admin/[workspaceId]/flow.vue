@@ -183,9 +183,26 @@
         field-label="模組名稱"
         create-prefix="新增模組:"
         placeholder="請輸入模組名稱..."
-        :caption="`共 ${form.messages.length} 則回覆訊息；關鍵字觸發請到「自動回應」設定`"
+        :caption="`共 ${form.messages.length} 則回覆訊息`"
         :is-creating="isCreating"
       />
+      <!--
+        C-209：這裡原本只有一行灰字「關鍵字觸發請到「自動回應」設定」——
+        它只講了七條入口裡的一條，而且不能點。模組自己沒有「什麼時候發出」這個欄位，
+        那件事分散在七個別的頁面，所以這裡改成**反查**：真的去看有誰指向它。
+        ⛔ 0 個的時候是最重要的那一種（建好了、永遠不會被叫出來，畫面上零線索），
+        所以空狀態要講後果並給出口，不是留白。
+      -->
+      <div v-if="!isCreating && selectedId" class="flow-usage-strip" data-tour="flow-usage">
+        <p class="flow-usage-strip__title">這個模組會在這些時候發出</p>
+        <AdminConfigRefsList
+          :refs="moduleUsageRefs"
+          :failed-kinds="configRefs.failedKinds"
+          :workspace-id="workspaceId"
+          :loading="configRefsLoading"
+          empty-text="還沒有任何地方會叫出這個模組——現在存檔，客人也走不到它。到「自動回應」設一組關鍵字，或在圖文選單、活動上指過來。"
+        />
+      </div>
       <!--
         ⛔ 只有系統模組才掛標籤（歡迎／真人客服）——自建模組沒有類型可言，別再加回來。
         這裡原本有一顆「模組類型」下拉（機器人流程／系統通知），2026-09-21 拿掉：
@@ -1102,6 +1119,7 @@
 <script setup lang="ts">
 import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, MoreFilled, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config-references'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
   validateUnifiedAction,
@@ -1176,6 +1194,42 @@ const { tags: allTags, loadTags } = useAdminTagList()
 // C-208：這一頁同時掛很多個標籤下拉（每顆按鈕一個、用戶輸入卡一個），
 // 在其中一個就地建了標籤，其他幾個要跟著看得到，否則人會以為沒建成功。
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+
+/**
+ * C-209：「這個模組會在這些時候發出」。
+ *
+ * ⛔ **一趟掃完整個工作區，不是每選一個模組查一次**——後者等於每點一下就掃六個集合
+ * （這個專案為了讀取費才剛把 `offset()` 換成游標，別自己加回來）。
+ * 存檔之後帶 `fresh=1` 重算，否則剛加上去的引用最多要等 60 秒才看得到。
+ */
+const configRefs = ref<ConfigReferenceIndex>(emptyReferenceIndex())
+const configRefsLoading = ref(true)
+async function loadConfigRefs(fresh = false) {
+  configRefsLoading.value = true
+  try {
+    configRefs.value = await apiFetch<ConfigReferenceIndex>(
+      `/api/config-references${fresh ? '?fresh=1' : ''}`,
+    )
+  }
+  catch {
+    /**
+     * ⛔ 查不到就把六類全標成「查不到」，不可以留一份空的索引——
+     * 空索引在畫面上長得跟「沒有任何地方會叫出這個模組」一模一樣，
+     * 而那句話會讓人把正在服務客人的模組刪掉。
+     */
+    configRefs.value = {
+      modules: {},
+      tags: {},
+      failedKinds: ['script', 'richmenu', 'flow', 'campaign', 'broadcast', 'supportPreset'],
+    }
+  }
+  finally {
+    configRefsLoading.value = false
+  }
+}
+const moduleUsageRefs = computed(() =>
+  selectedId.value ? (configRefs.value.modules[selectedId.value] ?? []) : [],
+)
 
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)
@@ -1433,6 +1487,7 @@ onMounted(async () => {
     loadRichMessages(),
     loadTags({ status: 'active' }),
     loadFlowFolders(),
+    loadConfigRefs(),
   ])
 })
 
@@ -2399,6 +2454,9 @@ async function submitForm() {
       await loadFlows(true)
       markClean()
     }
+    // C-209：這次存檔可能改掉了「這個模組的按鈕指向誰」，帶 fresh 重算引用索引
+    // （不重算的話，剛加的按鈕最多要等 60 秒才出現在別的模組的「會在這些時候發出」裡）
+    loadConfigRefs(true)
   } catch (error: any) {
     showToast(error?.data?.statusMessage || '儲存失敗', 'error')
   } finally {

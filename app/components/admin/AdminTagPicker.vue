@@ -168,7 +168,22 @@ const locallyCreated = ref<TagOption[]>([])
 
 const mergedOptions = computed<TagOption[]>(() => {
   const seen = new Set(props.options.map((tag) => tag.id))
-  return [...props.options, ...locallyCreated.value.filter((tag) => !seen.has(tag.id))]
+  const merged = [...props.options, ...locallyCreated.value.filter((tag) => !seen.has(tag.id))]
+
+  /**
+   * C-209：**已經選起來、但不在清單裡的標籤也要給它一個名字**。
+   *
+   * 所有頁面都只載入「啟用中」的標籤，所以一顆標籤被停用（或被刪）之後，
+   * 存在設定裡的那個 id 就對不到任何選項——`el-select` 會把 **UUID 原封印在畫面上**，
+   * 看起來像資料壞掉，而且完全看不出那原本是什麼。
+   * ⛔ 不可以默默把它從選取中拿掉：那會在使用者**沒有按儲存**的情況下改掉他的設定。
+   */
+  const known = new Set(merged.map((tag) => tag.id))
+  const orphans = (Array.isArray(props.modelValue) ? props.modelValue : [])
+    .filter((id) => id && !known.has(id))
+    .map((id) => ({ id, name: '（已停用或已刪除的標籤）', color: '#9CA3AF' }))
+
+  return [...merged, ...orphans]
 })
 
 const showCreateButton = computed(() => props.allowCreate && canOperate.value)

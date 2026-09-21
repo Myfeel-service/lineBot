@@ -38,6 +38,7 @@
 @use "./components/customer-card";
 @use "./components/tag-suggestion-review";
 @use "./components/tag-picker";
+@use "./components/config-refs";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

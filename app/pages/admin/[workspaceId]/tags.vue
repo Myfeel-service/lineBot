@@ -424,6 +424,10 @@
                     <th>分類</th>
                     <th>狀態</th>
                     <th class="tags-table__th--count">好友數</th>
+                    <!-- C-209：⛔ 這一欄刻意只放「N 處」不放名字清單——
+                         這張表在 ≤440px 每一級都破過版（`G-66`），多一欄長文字會再破一次。
+                         名字在點開的視窗裡講。 -->
+                    <th class="tags-table__th--count">用在哪</th>
                     <th>建立時間</th>
                   </tr>
                 </thead>
@@ -487,6 +491,25 @@
                         @click.stop="goTaggedFriends(tag.id)"
                       >{{ formatMemberCount(tag.memberCount) }}</button>
                       <span v-else>{{ formatMemberCount(tag.memberCount) }}</span>
+                    </td>
+                    <!-- C-209：⛔ 三態，不可以把「這次查不到」印成「—」（那等於說沒有人用） -->
+                    <td class="td-count">
+                      <span v-if="configRefsLoading" class="text-muted">…</span>
+                      <button
+                        v-else-if="refsFor(tag.id).length"
+                        type="button"
+                        class="tags-count-link"
+                        :title="summarizeConfigRefs(refsFor(tag.id))"
+                        @click.stop="refsDialogTag = { id: tag.id, name: tag.name }"
+                      >{{ refsFor(tag.id).length }} 處</button>
+                      <button
+                        v-else-if="configRefs.failedKinds.length"
+                        type="button"
+                        class="tags-count-link"
+                        title="這次有幾類查不到，所以不敢說沒有人用。點開看哪幾類。"
+                        @click.stop="refsDialogTag = { id: tag.id, name: tag.name }"
+                      >查不到</button>
+                      <span v-else class="text-muted">—</span>
                     </td>
                     <td class="td-time">{{ formatZhDateOnly(tag.createdAt) }}</td>
                   </tr>
@@ -719,12 +742,36 @@
     @open-conversation="goConversation"
   />
 
+  <!-- C-209：「這顆標籤用在哪」——表格那一欄只放數字，名字在這裡講 -->
+  <el-dialog
+    :model-value="!!refsDialogTag"
+    :title="`「${refsDialogTag?.name ?? ''}」用在哪`"
+    width="520px"
+    append-to-body
+    @update:model-value="refsDialogTag = null"
+  >
+    <AdminConfigRefsList
+      :refs="refsDialogList"
+      :failed-kinds="configRefs.failedKinds"
+      :workspace-id="workspaceId"
+      empty-text="目前沒有任何設定會貼上這顆標籤、也沒有推播拿它挑人。停用它不會影響任何地方。"
+    />
+    <p class="tags-refs-note">
+      這裡列的是<strong>設定</strong>，不是客人。已經貼在客人身上的標籤不會因為停用而消失，
+      之前排定的推播也照舊會用到它。
+    </p>
+    <template #footer>
+      <el-button @click="refsDialogTag = null">關閉</el-button>
+    </template>
+  </el-dialog>
+
 </template>
 
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
 import { TAG_CATEGORY_OPTIONS, TAG_PRESET_COLORS, tagCategoryLabel } from '~~/shared/tag-admin'
+import { emptyReferenceIndex, summarizeConfigRefs, type ConfigReferenceIndex } from '~~/shared/config-references'
 import { TAG_TEMPLATES } from '~~/shared/tag-templates'
 import { discoveryState, discoveryTiming, type DiscoveryScanOutcome, type DiscoverySimilarTag, type TagDiscoveryDecision } from '~~/shared/tag-discovery'
 import { findSimilarNames, findSimilarPairs } from '~~/shared/tag-similarity'
@@ -774,6 +821,44 @@ const form = ref(defaultForm())
    09-04 線上 116 條積壓就是這樣攢出來的。 */
 const editOriginalAiMode = ref<TagAiMode>('off')
 const editOriginalCriteria = ref('')
+/** 打開編輯時的啟用狀態（`C-209`：由啟用改成停用時要先問「還有 N 個地方在用」） */
+const editOriginalStatus = ref<'active' | 'inactive'>('active')
+
+/**
+ * C-209：「這顆標籤用在哪」。
+ *
+ * ⛔ 一趟掃完整個工作區（六個集合），不是每顆標籤查一次——這一頁一次列 50 顆，
+ *    逐顆查就是 50 趟（08-11 讀取費暴衝就是這種形狀）。
+ */
+const configRefs = ref<ConfigReferenceIndex>(emptyReferenceIndex())
+const configRefsLoading = ref(true)
+const refsDialogTag = ref<{ id: string; name: string } | null>(null)
+
+async function loadConfigRefs(fresh = false) {
+  configRefsLoading.value = true
+  try {
+    configRefs.value = await apiFetch<ConfigReferenceIndex>(
+      `/api/config-references${fresh ? '?fresh=1' : ''}`,
+    )
+  }
+  catch {
+    /**
+     * ⛔ 失敗時要把六類全標成「查不到」，不可以留空索引。
+     * 空索引在畫面上長得跟「沒有人用」一模一樣，而那正是會讓人放心按下停用的那句話。
+     */
+    configRefs.value = {
+      modules: {},
+      tags: {},
+      failedKinds: ['script', 'richmenu', 'flow', 'campaign', 'broadcast', 'supportPreset'],
+    }
+  }
+  finally {
+    configRefsLoading.value = false
+  }
+}
+
+const refsFor = (tagId: string) => configRefs.value.tags[tagId] ?? []
+const refsDialogList = computed(() => refsDialogTag.value ? refsFor(refsDialogTag.value.id) : [])
 
 /**
  * 切到「讓 AI 判」而條件還是空的 → 把說明**預填**進去當底稿讓人改。
@@ -1408,6 +1493,8 @@ function openEdit(tag: any) {
    */
   editOriginalAiMode.value = (tag.aiMode === 'suggest' || tag.aiMode === 'auto' ? tag.aiMode : 'off') as TagAiMode
   editOriginalCriteria.value = String(tag.aiCriteria ?? '')
+  // C-209：停用前要問「還有 N 個地方在用」，得先記住打開時是不是啟用中的
+  editOriginalStatus.value = tag.status === 'inactive' ? 'inactive' : 'active'
   form.value = {
     id: tag.id,
     code: tag.code,
@@ -1435,6 +1522,39 @@ async function submitForm() {
   if (!assertCanOperate()) return
   const err = validateForm()
   if (err) return showToast(err, 'error')
+
+  /**
+   * C-209：從「啟用」改成「停用」之前，先講清楚還有誰在用。
+   *
+   * 為什麼要問：停用之後那顆標籤**不會出現在任何貼標下拉裡**，但用到它的模組、活動、
+   * 客服預存仍然存著它的 id——於是那些設定的下拉會變成一串看不懂的代碼，
+   * 而「客人按了按鈕會不會被貼標」這件事完全沒有變。
+   * ⛔ 查不到的時候也要問（措辭不同）：把「查不到」當成「沒有人用」放行，
+   *    正是會讓人把還在服務客人的東西停掉的那一步。
+   */
+  if (isEditing.value && editOriginalStatus.value === 'active' && form.value.status === 'inactive') {
+    const refs = refsFor(form.value.id)
+    const failed = configRefs.value.failedKinds.length
+    if (refs.length || failed) {
+      const body = refs.length
+        ? `「${form.value.name.trim()}」目前有 ${refs.length} 個地方在用：${summarizeConfigRefs(refs)}。\n\n`
+          + '停用之後，那些設定仍然會照舊執行（客人該被貼標還是會被貼），'
+          + '但這顆標籤不會再出現在任何貼標下拉裡，那幾個地方會變成看不懂的代碼。'
+        : '這次有幾類查不到，所以沒有辦法確定沒有人在用它。\n\n'
+          + '⛔ 查不到不等於沒有人用——建議先關掉重開這一頁，確認「用在哪」那一欄查得到了再停用。'
+      try {
+        await ElMessageBox.confirm(body, '確定要停用這顆標籤？', {
+          confirmButtonText: '仍要停用',
+          cancelButtonText: '先不要',
+          type: 'warning',
+        })
+      }
+      catch {
+        return // 使用者按了「先不要」
+      }
+    }
+  }
+
   saving.value = true
   /** 這次儲存要不要接著問「舊建議怎麼辦」（`C-178`）；null＝不用問 */
   let pendingAfterAuto: {
@@ -1484,6 +1604,8 @@ async function submitForm() {
     }
     dialogVisible.value = false
     await refreshTags()
+    // C-209：剛建的標籤還沒有人用、剛停用的那顆狀態變了，重算一次「用在哪」
+    void loadConfigRefs(true)
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '儲存失敗', 'error')
@@ -1594,6 +1716,7 @@ onMounted(() => {
 
   void reloadTags(true)
   void loadDiscovery()
+  void loadConfigRefs()
   // ⛔ 一次就好，不要跟著分頁／篩選重打：它是「全工作區的待審」，跟畫面上看哪幾顆無關
   void loadPendingCounts()
   // 重複檢查要比對**全部**標籤，不是畫面這一頁（`C-178`）

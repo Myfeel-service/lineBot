@@ -59,7 +59,7 @@ console.log(`adminUserPrefs/${uid}：${prefsBefore.exists ? '原本有資料，�
  * 有時候量到 0、有時候量到 1，取決於導覽跑得多快。實測同一份程式碼連跑三次，兩紅一綠。
  * 這裡先蓋章讓導覽不要自己跑，跑完 `finally` 會把整份 prefs 原封還原。
  */
-const SILENCE_TOURS = ['campaigns', 'support-presets', 'broadcasts']
+const SILENCE_TOURS = ['campaigns', 'support-presets', 'broadcasts', 'tags', 'flow|msg-basic|msg-rich|msg-carousel|msg-quick|msg-userinput']
 await prefsRef.set({
   ...(prefsData ?? {}),
   seenTours: {
@@ -195,7 +195,7 @@ async function warmup(paths) {
   }
 }
 
-async function gotoPage(page, path) {
+async function gotoPage(page, path, waitForSelector) {
   await page.goto(`${BASE}/admin/${WORKSPACE_ID}/${path}`, { waitUntil: 'networkidle2', timeout: 120_000 })
   // 等畫面真的長出東西再往下量；⛔ 逾時就明講「這次沒量到」，不要當成綠燈
   try {
@@ -203,6 +203,19 @@ async function gotoPage(page, path) {
   }
   catch {
     fail(`${path}：等了 60 秒畫面還是空的（dev server 可能還在編譯）＝這一頁這次沒驗到`)
+  }
+  /**
+   * ⛔ **側欄先渲染、主要內容後到**：只等「body 有字」會在表格出現之前就放行，
+   * 於是「表格沒有這一欄」這種結論其實只是量得太早（本輪實際誤報過一次）。
+   * 需要量表格／清單的關卡一定要多等一個自己的錨點。
+   */
+  if (waitForSelector) {
+    try {
+      await page.waitForSelector(waitForSelector, { timeout: 60_000, visible: true })
+    }
+    catch {
+      fail(`${path}：等了 60 秒還是沒看到 ${waitForSelector}＝這一頁這次沒驗到`)
+    }
   }
   await sleep(2000)
   await dismissOverlays(page)
@@ -403,9 +416,190 @@ async function checkEmptyState() {
   }
 }
 
+// ── 關卡 5：模組編輯器要講得出「這個模組會在這些時候發出」（`C-209`）────────
+async function checkModuleUsage() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'flow', '.split-list-item, .admin-split-list button')
+
+    const before = await page.evaluate(() =>
+      [...document.querySelectorAll('.flow-usage-strip')].filter(e => e.getBoundingClientRect().width > 0).length)
+    if (before !== 0) fail(`機器人模組：還沒選任何模組就有 ${before} 條「會在這些時候發出」（對照組不成立）`)
+    else pass('機器人模組：沒選模組時不會出現使用情形（對照組成立）')
+
+    // 左邊清單點第一個模組
+    const picked = await page.evaluate(() => {
+      const item = [...document.querySelectorAll('.split-list-item, [class*="split-list"] li, .admin-split-list button')]
+        .find(e => e.getBoundingClientRect().width > 0 && e.textContent.trim())
+      if (!item) return null
+      item.click()
+      return item.textContent.replace(/\s+/g, ' ').trim().slice(0, 20)
+    })
+    if (!picked) { fail('機器人模組：左邊清單點不到任何模組'); return }
+    await sleep(2500)
+
+    const strip = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.flow-usage-strip')].find(e => e.getBoundingClientRect().width > 0)
+      if (!el) return null
+      return {
+        title: el.querySelector('.flow-usage-strip__title')?.textContent?.trim() ?? '',
+        text: el.innerText.replace(/\s+/g, ' ').trim(),
+        groups: [...el.querySelectorAll('.config-refs__group')].length,
+        muted: !!el.querySelector('.config-refs__line--muted'),
+        warn: !!el.querySelector('.config-refs__line--warn'),
+      }
+    })
+    if (!strip) { fail(`機器人模組：選了「${picked}」之後看不到「會在這些時候發出」`); return }
+    pass(`機器人模組：選了「${picked}」，使用情形有出現`)
+
+    // ⛔ 三態：有引用／真的沒有／這次查不到，三者必須長得不一樣
+    if (strip.warn) {
+      pass('機器人模組：這次有幾類查不到，畫面有照實說（沒有假裝成「沒有人用」）')
+    }
+    else if (strip.groups > 0) {
+      pass(`機器人模組：列出了 ${strip.groups} 類入口`)
+    }
+    else if (strip.muted) {
+      if (!strip.text.includes('客人也走不到')) {
+        fail('機器人模組：沒有人用的時候只說了「沒有」，沒有講後果——那正是最該講清楚的一種')
+      }
+      else {
+        pass('機器人模組：沒有人用時有講後果（客人走不到）並給出口')
+      }
+    }
+    else {
+      fail('機器人模組：使用情形那一條是空的（三態都沒對上）')
+    }
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
+// ── 關卡 6：標籤頁要講得出「用在哪」，而且停用前會問（`C-209`）─────────────
+async function checkTagUsage() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'tags', 'tbody tr')
+
+    const header = await page.evaluate(() =>
+      [...document.querySelectorAll('th')].some(e => e.textContent.trim() === '用在哪'))
+    if (!header) { fail('標籤管理：表格沒有「用在哪」這一欄'); return }
+    pass('標籤管理：表格有「用在哪」欄')
+
+    // 等那一欄查完（載入中會顯示 …）
+    for (let i = 0; i < 20; i++) {
+      const loading = await page.evaluate(() =>
+        [...document.querySelectorAll('tbody td')].some(e => e.textContent.trim() === '…'))
+      if (!loading) break
+      await sleep(700)
+    }
+
+    const cells = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('tbody tr')]
+      return rows.slice(0, 40).map((tr) => {
+        const tds = [...tr.querySelectorAll('td')]
+        return {
+          name: tds[1]?.textContent?.trim() ?? '',
+          usage: tds[7]?.textContent?.trim() ?? '',
+        }
+      })
+    })
+    if (!cells.length) { fail('標籤管理：表格沒有任何列'); return }
+
+    const used = cells.filter(c => /\d+\s*處/.test(c.usage))
+    const unknown = cells.filter(c => c.usage === '查不到')
+    const none = cells.filter(c => c.usage === '—')
+    if (unknown.length) {
+      pass(`標籤管理：有 ${unknown.length} 顆標示「查不到」（⛔ 沒有假裝成「沒有人用」）`)
+    }
+    if (!used.length && !unknown.length) {
+      fail('標籤管理：40 顆標籤沒有任何一顆查得到用在哪——正式庫的活動與推播都在用標籤，這不合理')
+    }
+    else if (used.length) {
+      pass(`標籤管理：${used.length} 顆查得到用在哪（例如「${used[0].name}」＝${used[0].usage}）、${none.length} 顆真的沒人用`)
+    }
+
+    // 點開「N 處」要看得到名字
+    if (used.length) {
+      const opened = await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('tbody .tags-count-link')]
+          .find(e => /\d+\s*處/.test(e.textContent.trim()))
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!opened) { fail('標籤管理：「N 處」點不到'); return }
+      await sleep(1200)
+      const dialog = await page.evaluate(() => {
+        const el = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+        if (!el) return null
+        return {
+          title: el.querySelector('.el-dialog__title')?.textContent?.trim() ?? '',
+          groups: [...el.querySelectorAll('.config-refs__group')].length,
+          names: [...el.querySelectorAll('.config-refs__name')].map(e => e.textContent.trim()).slice(0, 3),
+        }
+      })
+      if (!dialog || !dialog.groups) {
+        fail('標籤管理：點開「N 處」之後沒有列出是哪些設定在用')
+      }
+      else {
+        pass(`標籤管理：點開看得到名字（${dialog.names.join('、')}）`)
+      }
+      await page.keyboard.press('Escape')
+      await sleep(500)
+    }
+
+    /**
+     * ⛔ **多一欄就要量一次窄螢幕**：這張表 2026-09-10（`G-66`）在 ≤440px
+     * 每一級都被裁過，根因是欄位的 `min-width` 把 `table-layout: auto` 的 min-content 撐開，
+     * 而省略號**不會**讓 min-content 變小。後台窄視窗的正解是**橫向捲動**不是裁掉，
+     * 所以這裡量的是「捲得到」而不是「沒有溢出」。
+     */
+    await page.setViewport({ width: 390, height: 900 })
+    await sleep(1200)
+    const narrow = await page.evaluate(() => {
+      const table = document.querySelector('tbody')?.closest('table')
+      if (!table) return null
+      // 往上找第一個真的會捲的祖先
+      let el = table.parentElement
+      while (el && el !== document.body) {
+        const style = getComputedStyle(el)
+        if (/(auto|scroll)/.test(style.overflowX)) {
+          return {
+            tableWidth: Math.round(table.getBoundingClientRect().width),
+            clientWidth: el.clientWidth,
+            scrollWidth: el.scrollWidth,
+            scrollable: el.scrollWidth > el.clientWidth + 1,
+            overflowX: style.overflowX,
+          }
+        }
+        el = el.parentElement
+      }
+      return { noScroller: true, tableWidth: Math.round(table.getBoundingClientRect().width) }
+    })
+    if (!narrow) {
+      fail('標籤管理：390px 下找不到表格')
+    }
+    else if (narrow.noScroller) {
+      fail(`標籤管理：390px 下表格寬 ${narrow.tableWidth}px，但沒有任何可以橫捲的祖先＝多出來的那一欄會被裁掉（G-66 同款）`)
+    }
+    else if (!narrow.scrollable) {
+      pass(`標籤管理：390px 下表格塞得進去（${narrow.tableWidth}px ≤ ${narrow.clientWidth}px）`)
+    }
+    else {
+      pass(`標籤管理：390px 下表格 ${narrow.scrollWidth}px 超出 ${narrow.clientWidth}px，但**捲得到**（overflow-x: ${narrow.overflowX}）＝沒有被裁掉`)
+    }
+    await page.setViewport({ width: 1440, height: 1000 })
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
-  await warmup(['campaigns', 'support-presets', 'broadcasts'])
+  await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags'])
   console.log('\n── 活動標籤 ──────────────────────────────')
   await checkCampaigns()
   console.log('\n── 客服預存 ──────────────────────────────')
@@ -414,6 +608,10 @@ try {
   await checkBroadcastAudience()
   console.log('\n── 一顆標籤都沒有的新帳號 ──────────────────')
   await checkEmptyState()
+  console.log('\n── 模組「會在這些時候發出」（C-209）────────')
+  await checkModuleUsage()
+  console.log('\n── 標籤「用在哪」（C-209）──────────────────')
+  await checkTagUsage()
 }
 finally {
   await browser.close()
