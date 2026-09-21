@@ -100,14 +100,38 @@ async function openLoggedInPage(opts = {}) {
    */
   page.on('dialog', async (d) => { await d.accept().catch(() => {}) })
 
-  if (opts.emptyTagList) {
-    // ⛔ 用攔截而不是真的去刪標籤：正式庫有 39 顆標籤，空狀態這條路平常永遠走不到，
-    //    但它正是新帳號第一天唯一會看到的東西。
+  /**
+   * 攔截：兩種用途都走這一個 handler（⛔ 掛兩個 `request` 監聽會互搶，第二個會拿到
+   * 「已經處理過」的請求而丟錯）。
+   * - `emptyTagList`：正式庫有 39 顆標籤，空狀態那條路平常永遠走不到，但它正是新帳號
+   *   第一天唯一會看到的東西。
+   * - `fakeWrites`：精靈會**真的建標籤／模組／活動／推播**。⛔ 絕不可以在正式庫建測試資料，
+   *   所以把那四支 POST 攔下來回假的成功／失敗——這樣才驗得到「建到一半失敗」那條路，
+   *   而那正是整個精靈最重要的一段。
+   */
+  if (opts.emptyTagList || opts.fakeWrites) {
     await page.setRequestInterception(true)
     page.on('request', (req) => {
-      if (req.url().includes('/api/tag/list')) {
+      const url = req.url()
+      if (opts.emptyTagList && url.includes('/api/tag/list')) {
         req.respond({ status: 200, contentType: 'application/json', body: '[]' })
         return
+      }
+      if (opts.fakeWrites && req.method() === 'POST') {
+        const fake = opts.fakeWrites(url)
+        if (fake) {
+          req.respond({
+            status: fake.status ?? 200,
+            contentType: 'application/json',
+            body: JSON.stringify(fake.body ?? {}),
+          })
+          return
+        }
+        // ⛔ 沒被指名的 POST 一律擋掉：漏一支就是在正式庫寫了東西
+        if (/\/api\/(tag|flow|campaigns|broadcast)\//.test(url)) {
+          req.respond({ status: 500, contentType: 'application/json', body: '{"statusMessage":"測試攔截：這支沒被指名"}' })
+          return
+        }
       }
       req.continue()
     })
@@ -671,6 +695,133 @@ async function checkBroadcastHandoff() {
   }
 }
 
+// ── 關卡 8：「一檔活動」精靈（`C-212`）⛔ 全程攔截寫入，正式庫不留任何東西 ──────
+async function runWizard(page, { failCampaign }) {
+  await gotoPage(page, 'campaigns')
+
+  const opened = await clickByText(page, 'button, .el-button', '用精靈建立')
+  if (!opened) { fail('活動標籤：找不到「用精靈建立」'); return null }
+  await sleep(1500)
+
+  const dialogOk = await page.evaluate(() => [...document.querySelectorAll('.el-dialog')]
+    .some(el => el.getBoundingClientRect().width > 0 && el.textContent.includes('用精靈建立一檔活動')))
+  if (!dialogOk) { fail('活動標籤：「用精靈建立」按了沒有東西打開'); return null }
+
+  // 填「這一檔叫什麼」；標籤名字應該自己跟著長出來
+  const nameInput = await page.$('.el-dialog .el-input__inner')
+  await nameInput.click()
+  await nameInput.type('ZZ 測試檔期')
+  await sleep(600)
+
+  const tagName = await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+    return [...box.querySelectorAll('input')].map(i => i.value).find(v => v.includes('問卷')) ?? ''
+  })
+  if (tagName !== '問卷 - ZZ 測試檔期') fail(`精靈：標籤名字沒有跟著活動名字長出來（拿到「${tagName}」）`)
+  else pass(`精靈：標籤名字自己填成「${tagName}」（跟正式庫既有的命名習慣一致）`)
+
+  // 填第一則訊息
+  const textarea = await page.$('.el-dialog textarea')
+  if (textarea) { await textarea.click(); await textarea.type('謝謝報名！') }
+  await sleep(400)
+
+  await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+    const btn = [...box.querySelectorAll('.el-button')].find(b => b.textContent.includes('建立這一檔'))
+    btn?.click()
+  })
+  await sleep(3500)
+
+  return await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+    if (!box) return null
+    return {
+      headline: box.querySelector('.cwz__headline')?.textContent?.trim() ?? '',
+      headlineOk: !!box.querySelector('.cwz__headline--ok'),
+      lines: [...box.querySelectorAll('.cwz__lines li')].map(e => e.textContent.trim()),
+      leftovers: [...box.querySelectorAll('.cwz__leftovers li')].map(e => e.textContent.trim()),
+      url: box.querySelector('.cwz__url code')?.textContent?.trim() ?? '',
+    }
+  })
+}
+
+async function checkCampaignWizardHappyPath() {
+  const { page, ctx } = await openLoggedInPage({
+    fakeWrites: (url) => {
+      if (url.includes('/api/tag/create')) return { body: { id: 'fake-tag', name: '問卷 - ZZ 測試檔期', code: 'zz' } }
+      if (url.includes('/api/flow/create')) return { body: { id: 'fake-flow' } }
+      if (url.includes('/api/campaigns/create')) return { body: { id: 'fake-campaign', publishedCtaUrl: 'https://example.test/c/zz' } }
+      if (url.includes('/api/broadcast/create')) return { body: { id: 'fake-bc' } }
+      return null
+    },
+  })
+  try {
+    const res = await runWizard(page, { failCampaign: false })
+    if (!res) return
+    if (!res.headlineOk) fail(`精靈（全部成功）：標題不是成功樣（「${res.headline}」）`)
+    else pass(`精靈（全部成功）：「${res.headline}」`)
+
+    const done = res.lines.filter(l => l.startsWith('✅')).length
+    if (done !== 4) fail(`精靈（全部成功）：只有 ${done} 步成功，預期 4 步（標籤／模組／活動／推播草稿）`)
+    else pass('精靈（全部成功）：四步都建好了（標籤、模組、活動、推播草稿）')
+
+    if (!res.url.includes('example.test')) fail('精靈（全部成功）：沒有把活動連結秀出來')
+    else pass('精靈（全部成功）：結果頁給了活動連結')
+    if (res.leftovers.length) fail('精靈（全部成功）：不應該出現「已經建好還留著」那一段')
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
+async function checkCampaignWizardPartialFailure() {
+  const { page, ctx } = await openLoggedInPage({
+    fakeWrites: (url) => {
+      if (url.includes('/api/tag/create')) return { body: { id: 'fake-tag', name: '問卷 - ZZ 測試檔期', code: 'zz' } }
+      if (url.includes('/api/flow/create')) return { body: { id: 'fake-flow' } }
+      // 活動這一步失敗＝前面兩樣已經真的建好了，這正是最危險的情況
+      if (url.includes('/api/campaigns/create')) return { status: 409, body: { statusMessage: '活動代碼已存在' } }
+      if (url.includes('/api/broadcast/create')) return { body: { id: 'fake-bc' } }
+      return null
+    },
+  })
+  try {
+    const res = await runWizard(page, { failCampaign: true })
+    if (!res) return
+    if (res.headlineOk) { fail('精靈（活動失敗）：標題還是成功樣'); return }
+
+    if (!res.headline.includes('不要整個重來')) {
+      fail(`精靈（活動失敗）：標題沒有叫人別重來（「${res.headline}」）——重跑一次會多出重複的標籤與模組`)
+    }
+    else {
+      pass(`精靈（活動失敗）：「${res.headline}」`)
+    }
+
+    if (res.leftovers.length !== 2) {
+      fail(`精靈（活動失敗）：只點名了 ${res.leftovers.length} 樣已經建好的東西，預期 2 樣（標籤＋模組）`)
+    }
+    else {
+      pass(`精靈（活動失敗）：點名了已經建好的 2 樣（${res.leftovers.join('／').slice(0, 40)}…）`)
+    }
+
+    if (!res.lines.join().includes('活動代碼已存在')) {
+      fail('精靈（活動失敗）：沒有把後端給的原因講出來')
+    }
+    else {
+      pass('精靈（活動失敗）：把後端的原因原話講出來了')
+    }
+    if (!res.lines.some(l => l.startsWith('⏭️'))) {
+      fail('精靈（活動失敗）：後面的推播草稿沒有標成「沒有執行」')
+    }
+    else {
+      pass('精靈（活動失敗）：後面那步標成「沒有執行」，沒有硬著頭皮往下做')
+    }
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
   await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users'])
@@ -688,6 +839,10 @@ try {
   await checkTagUsage()
   console.log('\n── 好友頁「推播給這 N 位」（C-210）─────────')
   await checkBroadcastHandoff()
+  console.log('\n── 「一檔活動」精靈：全部成功（C-212）──────')
+  await checkCampaignWizardHappyPath()
+  console.log('\n── 「一檔活動」精靈：活動那步失敗（C-212）──')
+  await checkCampaignWizardPartialFailure()
 }
 finally {
   await browser.close()

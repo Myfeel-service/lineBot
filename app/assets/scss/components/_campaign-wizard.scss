@@ -1,0 +1,128 @@
+/* ══════════════════════════════════════════════════════════════
+   「一檔活動」精靈（C-212）：一頁把標籤／第一則訊息／活動連結／推播草稿一次建好。
+
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   ══════════════════════════════════════════════════════════════ */
+
+.cwz {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.cwz__intro {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--el-text-color-regular, #606266);
+}
+
+.cwz__hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary, #909399);
+}
+
+/* 選項一律用 el-radio-group（⛔ 別手刻原生 radio，見 feedback_no_hand_rolled_form_inputs）；
+   當多行卡片時要覆寫 EP 的單行預設，否則長標籤會被壓成 0 寬直排 */
+.cwz__radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-bottom: 0.45rem;
+
+  .el-radio {
+    height: auto;
+    margin-right: 0;
+    white-space: normal;
+  }
+}
+
+.cwz__error {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--el-color-danger, #f56c6c);
+}
+
+.cwz__headline {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.65;
+}
+
+.cwz__headline--ok { color: var(--el-color-success, #67c23a); }
+/* ⛔ 這裡是紅的不是灰的：活動沒建成而前面幾樣建好了，是需要他動手的狀態 */
+.cwz__headline--bad { color: var(--el-color-danger, #f56c6c); }
+
+.cwz__lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--el-text-color-regular, #606266);
+}
+
+/* 「已經建好、但這一檔沒成」那一段——整個精靈最重要的一塊，所以給它實體的框 */
+.cwz__leftovers {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  background: #fefce8;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: #a16207;
+
+  ul {
+    margin: 0.35rem 0 0;
+    padding-left: 1.1rem;
+  }
+}
+
+.cwz__leftovers-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.cwz__url {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+}
+
+.cwz__url-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+}
+
+.cwz__url-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  /* ⛔ 網址很長，可壓縮的那一格要 min-width: 0，否則會把整個對話框撐開 */
+  min-width: 0;
+
+  code {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 0.74rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: 4px;
+    background: var(--el-fill-color, #f0f2f5);
+  }
+}

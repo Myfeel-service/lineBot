@@ -5,6 +5,8 @@
       <!-- C-210：頁標題跟側欄同名（側欄＝指路用的名字）。以前這裡叫「活動貼標」、側欄叫
            「活動標籤」、小幫手叫「活動」、教學叫「活動貼標（名單分眾）」——同一件事四個名字。 -->
       <span class="split-sidebar-title">活動標籤<AdminPageHelpButton :topics="['campaigns']" /></span>
+      <!-- C-212：⛔ 精靈**不取代**既有的「新增」——熟手照舊用那顆，精靈是給第一次的人用的 -->
+      <el-button v-if="canOperate" size="small" data-tour="cmp-wizard" @click="wizardVisible = true">用精靈建立</el-button>
       <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="cmp-new" @click="openCreate">新增</el-button>
     </template>
 
@@ -394,6 +396,17 @@
     </template>
   </AdminSplitLayout>
 
+  <!-- C-212：「一檔活動」精靈。⛔ LIFF 的判斷跟既有表單共用同一個 `saveBlockedReason`，
+       不要在精靈裡另寫一套（兩套判斷遲早一邊擋一邊放行）。 -->
+  <AdminCampaignWizard
+    v-model:visible="wizardVisible"
+    :tag-options="allTags"
+    :module-options="modules"
+    :liff-ready="!saveBlockedReason"
+    :liff-blocked-reason="saveBlockedReason"
+    @created="onWizardCreated"
+  />
+
 </template>
 
 <script setup lang="ts">
@@ -408,6 +421,8 @@ const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
+/** C-212：「一檔活動」精靈（清單重載與選取寫在下面 `loadCampaigns` 宣告之後） */
+const wizardVisible = ref(false)
 // C-208：就地建了標籤就重載（這一頁的貼標欄與觸發動作欄吃同一份清單）
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 const { showToast } = useAdminToast()
@@ -421,6 +436,18 @@ const {
   load: loadCampaigns,
   onScroll: onSidebarListScroll,
 } = useWorkspaceSidebarList<any>('/api/campaigns/list')
+
+/**
+ * C-212：精靈建好之後把清單重載、並選到剛建好的那一檔。
+ * ⛔ 選它是必要的：精靈的結果頁只給了網址，人關掉之後要能馬上看到完整設定
+ * （而且那一檔的「行銷成效」也在那裡）。
+ */
+async function onWizardCreated(campaignId: string) {
+  await loadCampaigns()
+  const created = campaigns.value.find((c: any) => c.id === campaignId)
+  if (created) selectCampaign(created, { skipDiscardConfirm: true })
+}
+
 const modulesLoading = ref(true)
 const saving = ref(false)
 const selectedId = ref<string | null>(null)
