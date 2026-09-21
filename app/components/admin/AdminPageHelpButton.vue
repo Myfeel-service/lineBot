@@ -25,9 +25,18 @@
       />
     </el-tooltip>
 
-    <!-- 多支教學：先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選） -->
-    <el-dropdown v-else trigger="click" placement="bottom-start" @visible-change="dismissHint()">
-      <el-tooltip content="這頁怎麼用" placement="top">
+    <!-- 多支教學：先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選）
+
+         ⛔ 提示氣泡要包在 el-dropdown **外面**，不可以夾在 el-dropdown 和按鈕中間。
+            el-dropdown 是拿「預設插槽的那個元素」當觸發器，而 el-tooltip 自己也是一層
+            popper——夾在中間的話 el-dropdown 綁到的是 tooltip 不是按鈕，點下去
+            `.el-dropdown__popper` 永遠停在 `display: none`：**按鈕看起來好好的、按了完全沒反應**。
+            2026-08-27 這顆問號上線起就這樣，到 2026-09-21 老闆回報才發現，
+            因為只有「多支教學」的兩頁（機器人模組、知識庫）走這條路，其餘頁面都是單支、走上面那條。
+    -->
+    <!-- 選單打開時把氣泡關掉：兩層浮層同時亮會疊在一起，而且選單本身已經把話說完了 -->
+    <el-tooltip v-else content="這頁怎麼用" placement="top" :disabled="menuOpen">
+      <el-dropdown trigger="click" placement="bottom-start" @visible-change="onMenuVisible">
         <el-button
           class="page-help-btn"
           :class="{ 'is-hinting': hinting }"
@@ -36,30 +45,30 @@
           :icon="QuestionFilled"
           aria-label="這頁怎麼用"
         />
-      </el-tooltip>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item
-            v-for="t in available"
-            :key="t.id"
-            @click="start(t)"
-          >
-            {{ t.label }}<span class="page-help-btn__steps">{{ stepCount(t) }} 步</span>
-          </el-dropdown-item>
-          <!-- 帶著做的劇本（D-40 補遺）：跟導覽不同——導覽讓你看一遍畫面，劇本陪你做完
-               並驗證，所以尾註不是步數是「陪你做」。放導覽後面＋分隔線：問號的主客群是
-               「回來查怎麼用」的人，從零開始的人多半從空狀態或小幫手清單進來 -->
-          <el-dropdown-item
-            v-for="g in availableGuides"
-            :key="g.id"
-            :divided="available.length > 0"
-            @click="startGuide(g.id)"
-          >
-            {{ g.title }}<span class="page-help-btn__steps">陪你做</span>
-          </el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item
+              v-for="t in available"
+              :key="t.id"
+              @click="start(t)"
+            >
+              {{ t.label }}<span class="page-help-btn__steps">{{ stepCount(t) }} 步</span>
+            </el-dropdown-item>
+            <!-- 帶著做的劇本（D-40 補遺）：跟導覽不同——導覽讓你看一遍畫面，劇本陪你做完
+                 並驗證，所以尾註不是步數是「陪你做」。放導覽後面＋分隔線：問號的主客群是
+                 「回來查怎麼用」的人，從零開始的人多半從空狀態或小幫手清單進來 -->
+            <el-dropdown-item
+              v-for="g in availableGuides"
+              :key="g.id"
+              :divided="available.length > 0"
+              @click="startGuide(g.id)"
+            >
+              {{ g.title }}<span class="page-help-btn__steps">陪你做</span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </el-tooltip>
 
     <!-- 一次性提示：第一次進這一頁時讓這顆灰問號出個聲，點過或看過就永遠不再出現。
          自動導覽剛跑完的話換句話說——他已經看過內容了，這時要回答的是「下次去哪找」 -->
@@ -124,6 +133,13 @@ const availableGuides = computed(() =>
 function startGuide(id: string) {
   dismissHint()
   openGuide(id)
+}
+
+/** 教學選單開著沒（只有多支教學那條路會用到）：開著時把 hover 氣泡讓開，兩層浮層別疊在一起 */
+const menuOpen = ref(false)
+function onMenuVisible(visible: boolean) {
+  menuOpen.value = visible
+  dismissHint()
 }
 
 /** 這個帳號現在真的跑得起來的那幾支，順序照傳進來的順序（不是註冊表順序） */

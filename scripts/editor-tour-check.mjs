@@ -212,6 +212,79 @@ async function readStep(page) {
   })
 }
 
+/**
+ * 真的用滑鼠按一下頁首那顆問號，確認**有東西打開**。
+ *
+ * 兩條路都算過關：一支教學的頁面直接開跑導覽（畫面上出現導覽卡片的標題），
+ * 多支教學的頁面先出一張選單（`.el-dropdown-menu` 量得到寬高）。
+ * 兩個都沒有＝使用者按了沒反應。
+ */
+async function pressHelpButton(page, label) {
+  // ① 導覽的黑幕還在的話，量到的「沒反應」會是黑幕擋的，不是按鈕壞的
+  for (let i = 0; i < 15; i++) {
+    const open = await page.evaluate(() => [...document.querySelectorAll('.ta-tour-title')]
+      .some(el => el.getBoundingClientRect().width > 0))
+    if (!open) break
+    await page.evaluate(() => { const b = [...document.querySelectorAll('.el-tour__footer .el-button')]; b[b.length - 1]?.click() })
+    await sleep(600)
+  }
+  // ② 導覽可能把一個**對話框**留著開（標籤管理的最後一步就是開標籤編輯器），
+  //    它的遮罩蓋住整個頁首。不先關掉的話會量成「按了沒反應」——那是遮罩擋的，不是按鈕壞的。
+  for (let i = 0; i < 3; i++) {
+    const dialog = await page.evaluate(() => [...document.querySelectorAll('.el-dialog, .el-drawer')]
+      .some(el => el.getBoundingClientRect().width > 0))
+    if (!dialog) break
+    await page.keyboard.press('Escape')
+    await sleep(700)
+  }
+  await sleep(600)
+
+  const box = await page.evaluate(() => {
+    const el = document.querySelector('.page-help-btn')
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
+    return {
+      x: r.x + r.width / 2,
+      y: r.y + r.height / 2,
+      // ⛔ 沒有這一格的話，「被別的東西蓋住」會被誤報成「按鈕壞了」——
+      //    兩者下一步完全不同，不可以混成同一句話
+      reachable: top ? (top === el || el.contains(top)) : false,
+      covering: top ? `${top.tagName.toLowerCase()}.${String(top.className).split(' ').slice(0, 2).join('.')}` : 'null',
+    }
+  })
+  if (!box) {
+    fail(`${label}：頁首沒有那顆問號＝使用者自己想再看一遍時找不到入口`)
+    return
+  }
+  if (!box.reachable) {
+    console.log(`   ⏭️ ${label}：問號被「${box.covering}」蓋住（導覽收尾留著的浮層關不掉）＝這次沒驗到，不是綠燈`)
+    return
+  }
+  await page.mouse.move(box.x, box.y)
+  await sleep(250)
+  await page.mouse.click(box.x, box.y)
+  await sleep(1800)
+
+  const opened = await page.evaluate(() => {
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
+    const menu = [...document.querySelectorAll('.el-dropdown-menu')].filter(vis)
+    const tour = [...document.querySelectorAll('.ta-tour-title')].filter(vis)
+    return {
+      menu: menu.length > 0,
+      menuItems: menu[0] ? menu[0].querySelectorAll('.el-dropdown-menu__item').length : 0,
+      tour: tour.length > 0,
+      tourTitle: tour[0]?.textContent?.trim() ?? '',
+    }
+  })
+  if (opened.menu)
+    pass(`${label}：按下問號 → 跳出教學選單（${opened.menuItems} 項）`)
+  else if (opened.tour)
+    pass(`${label}：按下問號 → 直接開跑導覽「${opened.tourTitle}」`)
+  else
+    fail(`${label}：按下問號**完全沒反應**（選單沒開、導覽也沒起來）＝使用者點了以為壞掉`)
+}
+
 /** 按卡片右下角那顆（「下一步」／最後一步的「結束」） */
 async function clickNext(page) {
   await page.evaluate(() => {
@@ -260,12 +333,16 @@ try {
         await clickNext(page)
       }
 
-      // 頁首那顆問號＝使用者自己想再看一遍的唯一入口（沒掛教學的頁是整顆不畫的，
-      // 操作紀錄這一輪之前正是那樣）。⛔ 用 ?tour= 開得起來不等於使用者找得到。
-      if (await page.$('.page-help-btn'))
-        pass(`${c.label}：頁首那顆「這頁怎麼用」在`)
-      else
-        fail(`${c.label}：頁首沒有那顆問號＝使用者自己想再看一遍時找不到入口`)
+      /**
+       * 頁首那顆問號＝使用者自己想再看一遍的唯一入口（沒掛教學的頁是整顆不畫的，
+       * 操作紀錄這一輪之前正是那樣）。⛔ 用 ?tour= 開得起來不等於使用者找得到。
+       *
+       * ⛔ 這裡**一定要真的按下去**，不可以只查「這顆在不在」。
+       *    2026-09-21：多支教學的那條路（機器人模組、知識庫）按了完全沒反應——
+       *    氣泡夾在 el-dropdown 和按鈕中間，選單的浮層從 2026-08-27 上線起就一直
+       *    停在 `display: none`。而這支守門員當時只查了「在不在」，所以三週半都是綠的。
+       */
+      await pressHelpButton(page, c.label)
 
       const total = seen[0]?.count?.split('/')?.[1]?.trim()
       if (String(total) === String(c.expectSteps))
@@ -359,6 +436,17 @@ try {
       if (!jargon) fail('推播：找不到成效說明那段（.bc-click-hint）')
       else if (leaked.length) fail(`推播：成效說明還把這些攤給店家看－－${leaked.join('、')}`)
       else pass('推播：成效說明已經沒有機器設定名了')
+
+      /**
+       * ④ 知識庫「你的資料」的問號。
+       * 這一頁沒有進上面的 CASES（它的導覽另外驗），但它跟機器人模組一樣掛了**多支**教學，
+       * 走的是同一條「先出選單讓人挑」的路——2026-09-21 那個「按了沒反應」的洞兩頁都中，
+       * 所以兩頁都要有人看著。
+       */
+      await page.goto(`${BASE}/admin/${WORKSPACE_ID}/knowledge/sources`, { waitUntil: 'networkidle2', timeout: 90_000 })
+      await page.waitForSelector('.page-help-btn', { timeout: 60_000 })
+      await sleep(2500)
+      await pressHelpButton(page, '知識庫「你的資料」')
     }
     catch (e) {
       fail(`就地說明加驗：${String(e).split('\n')[0]}`)
