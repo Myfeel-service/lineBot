@@ -211,9 +211,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // （2026-09-04 起這一段也有小標了，跟其他三段同一種退法）
         targetTooTallFallback: '.nav-group[data-tour="nav-group-daily"] .nav-section-label',
         title: '每天的工作都在這一段',
+        // ⛔ 這一段的那一頁叫「自動回應」：側欄上沒有「自動回覆」四個字（2026-08-09 已下架併進前者）
         description:
           '客人傳來的訊息在<strong>客服對話</strong>；客人在 LINE 看到的選單、'
-          + '以及自動回覆，也都在這一段設定。',
+          + '以及<strong>自動回應</strong>，也都在這一段設定。',
         placement: 'right',
       },
       {
@@ -735,7 +736,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'right',
       },
       {
-        target: '[data-tour="flow-type"]',
+        target: '[data-tour="flow-sys-badge"]',
         clickBefore: '[data-tour="flow-sys-welcome"]',
         title: '歡迎模組',
         description:
@@ -743,7 +744,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom',
       },
       {
-        target: '[data-tour="flow-type"]',
+        target: '[data-tour="flow-sys-badge"]',
         clickBefore: '[data-tour="flow-sys-live_agent"]',
         title: '真人客服',
         description:
@@ -768,8 +769,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '',
         title: '什麼時候會回？',
+        // ⛔ 側欄那一頁叫「自動回應」，不是「自動回覆」——後者 2026-08-09 已下架併進前者，
+        //    側欄上找不到那四個字。第一次的人正是在這一刻要去找「那什麼時候會回」，
+        //    指錯名字就直接走丟（同一個坑在 flow.vue 的 caption 也標過）。
         description:
-          '模組只管「<strong>回什麼</strong>」；「<strong>什麼時候回</strong>」要另外綁：到「<strong>自動回覆</strong>」用關鍵字指向這個模組（歡迎模組例外，加好友時自動發）。編好按右上「<strong>建立／儲存</strong>」就生效',
+          '模組只管「<strong>回什麼</strong>」；「<strong>什麼時候回</strong>」要另外綁：到側欄的「<strong>自動回應</strong>」用關鍵字指向這個模組（歡迎模組與真人客服例外，系統會在該發的時候自己發）。編好按右上「<strong>建立模組</strong>／<strong>儲存變更</strong>」就生效',
       },
     ],
   },

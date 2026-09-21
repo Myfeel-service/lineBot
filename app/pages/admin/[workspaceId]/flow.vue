@@ -192,7 +192,7 @@
         「這則算不算機器人回答客人」是送出去的那條路的屬性，不是模組的屬性，
         建模組的當下沒有人答得出來。理由寫在 shared/types/conversation-stats.ts。
       -->
-      <div v-if="isSystemFlow" class="flow-module-meta" data-tour="flow-type">
+      <div v-if="isSystemFlow" class="flow-module-meta" data-tour="flow-sys-badge">
         <el-tag type="warning" size="small" disable-transitions>系統模組</el-tag>
         <el-tag size="small" disable-transitions>
           {{ moduleTypeLabel(selectedFlow?.moduleType) }}

@@ -90,6 +90,25 @@ const CASES = [
     editorAnchor: '',
     conditional: ['[data-tour="act-list"]', '[data-tour="act-filter"]'],
   },
+  // ── 第四批（2026-09-21，`H-35`）────────────────────────────────────────
+  {
+    /**
+     * 這一支的重點：導覽要指的東西**有兩種不同的出現條件**，而且是這輪才變的。
+     *   ① `flow-sys-badge`（第 2、3 步）只有選到**系統模組**才在；選到自建模組時整塊不渲染。
+     *      2026-09-21 把「模組類型」下拉拿掉之前，這個錨點是每個模組都在的，
+     *      所以這兩步**從來沒被驗過「換成只有系統模組才在」之後還指不指得到**。
+     *   ② `flow-name`（第 4 步）是這輪新加的錨點，而且要 `clickBefore` 按了「新增」
+     *      把右半邊切成建立模式之後才有意義。
+     * 兩者都是「條件成立才在畫面上」，正是 `tutorial-topics.test.ts` 驗不到的那一類。
+     */
+    tourId: 'flow',
+    path: 'flow',
+    label: '機器人模組',
+    expectSteps: 6,
+    opensEditor: 4,
+    editorAnchor: '[data-tour="flow-name"]',
+    conditional: ['[data-tour="flow-messages"]', '[data-tour="flow-new"]'],
+  },
   {
     // 這一支的重點：最後一塊住在**預設收合**的「進階調校」裡，
     // 導覽要先幫他展開；沒展開的話那一步就是「位置不在畫面上」。

@@ -331,7 +331,7 @@ const firstContactSegs = computed(() => {
     // tab 刻意留空（不可點）：收件匣的「待處理」問的是「還需不需要人處理」，
     // 這裡的「沒人回」問的是「有沒有人回答過」——兩邊是不同的一群對話，
     // 接過去只會看到不一樣的數字。口徑見 docs/CONVERSATION-STATS-DEFINITIONS.md
-    { key: 'unhandled', label: '沒人回', value: k.unhandled, escalated: 0, cls: 'seg-unhandled', tab: '', help: '整場對話從頭到尾沒有機器人、AI 或真人回覆過（例如只收到系統通知）。這是回顧指標，跟收件匣的「待處理」不是同一群對話——那邊看的是現在還需要人處理的。' },
+    { key: 'unhandled', label: '沒人回', value: k.unhandled, escalated: 0, cls: 'seg-unhandled', tab: '', help: '整場對話從頭到尾沒有機器人、AI 或真人回覆過（例如只收到系統自動發送的訊息）。這是回顧指標，跟收件匣的「待處理」不是同一群對話——那邊看的是現在還需要人處理的。' },
   ]
 })
 const visibleSegs = computed(() => firstContactSegs.value.filter(s => s.value > 0))
