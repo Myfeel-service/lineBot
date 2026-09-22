@@ -545,6 +545,40 @@ async function checkModuleUsage() {
       fail(`機器人模組：那句話對不上三態（拿到「${strip.text}」）`)
     }
 
+    /**
+     * `C-227` 第三輪：工具列右邊那一叢要跟**名稱輸入框**同一條中線。
+     * 老闆第三次回報「還是有點沒對齊」，實機量出來是動作鈕比輸入框中線高 19px
+     * （header 是 `align-items: flex-start`，右叢貼著上面那行小灰 label），
+     * 而且狀態標籤(22px)與動作鈕(32px)自己也差 5px。
+     * ⛔ 這一關量的是**中線差**不是看截圖：差多少是可以算的，不要用「感覺」驗收。
+     */
+    const align = await page.evaluate(() => {
+      const cy = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const b = el.getBoundingClientRect()
+        return b.width > 0 ? b.y + b.height / 2 : null
+      }
+      return {
+        input: cy('.admin-title-input .el-input__wrapper'),
+        actions: cy('.admin-header-actions'),
+        meta: cy('.flow-module-meta'),
+      }
+    })
+    if (align.input == null || align.actions == null) {
+      fail('機器人模組：量不到工具列的名稱輸入框或動作鈕（選擇器失效？）')
+    }
+    else {
+      const d = Math.abs(align.actions - align.input)
+      if (d > 1.5) fail(`機器人模組：動作鈕沒跟名稱輸入框對齊，中線差 ${d.toFixed(1)}px`)
+      else pass(`機器人模組：動作鈕與名稱輸入框同一條中線（差 ${d.toFixed(1)}px）`)
+      if (align.meta != null) {
+        const dm = Math.abs(align.meta - align.actions)
+        if (dm > 1.5) fail(`機器人模組：狀態標籤沒跟動作鈕對齊，中線差 ${dm.toFixed(1)}px`)
+        else pass(`機器人模組：狀態標籤與動作鈕同一條中線（差 ${dm.toFixed(1)}px）`)
+      }
+    }
+
     // 點下去要開浮層，而且**不可以把版面推開**（那是老闆說醜的主因之一）
     const heightBefore = await page.evaluate(() =>
       Math.round(document.querySelector('.split-editor-header')?.getBoundingClientRect().height ?? 0))
@@ -566,6 +600,58 @@ async function checkModuleUsage() {
     else {
       pass(`機器人模組：展開不動版面（工具列仍是 ${after.headerHeight}px）`)
     }
+
+    /**
+     * `C-227` 第三輪：「還有 N 個」要**按得開**（老闆回報）。
+     * 只說不給看，等於告訴他有 41 個他管不到的東西——他要找的那一個很可能就在裡面。
+     * ⛔ 有對照組：先確認按之前真的有被截斷（名字數 < 該類總數），按了之後才算數。
+     */
+    const moreBefore = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.config-refs__more')]
+        .find(e => e.getBoundingClientRect().width > 0 && /還有/.test(e.textContent))
+      return el
+        ? { tag: el.tagName, text: el.textContent.trim(), names: [...document.querySelectorAll('.el-popper .config-refs__name')].filter(e => e.getBoundingClientRect().width > 0).length }
+        : null
+    })
+    if (!moreBefore) {
+      // 這個工作區這一類沒有超過 8 個就跳過——⛔ 不可以當成「通過」
+      console.log('  ⓘ 這次沒有任何一類超過 8 個，「還有 N 個」那一關跳過（不是綠燈）')
+    }
+    else if (moreBefore.tag !== 'BUTTON') {
+      fail(`機器人模組：「${moreBefore.text}」不是按鈕（是 ${moreBefore.tag}）——按不開等於白講`)
+    }
+    else {
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll('.config-refs__more')]
+          .find(e => e.getBoundingClientRect().width > 0 && /還有/.test(e.textContent))
+        el?.click()
+      })
+      await sleep(600)
+      const moreAfter = await page.evaluate(() => ({
+        names: [...document.querySelectorAll('.el-popper .config-refs__name')].filter(e => e.getBoundingClientRect().width > 0).length,
+        toggles: [...document.querySelectorAll('.config-refs__more')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim()),
+        headerHeight: Math.round(document.querySelector('.split-editor-header')?.getBoundingClientRect().height ?? 0),
+      }))
+      if (moreAfter.names <= moreBefore.names) {
+        fail(`機器人模組：按了「${moreBefore.text}」名字沒有變多（${moreBefore.names} → ${moreAfter.names}）`)
+      }
+      else {
+        pass(`機器人模組：「${moreBefore.text}」按得開（${moreBefore.names} → ${moreAfter.names} 個名字）`)
+      }
+      if (!moreAfter.toggles.some(t => t.includes('收起來'))) {
+        fail('機器人模組：攤開之後沒有「收起來」——只進不出')
+      }
+      else {
+        pass('機器人模組：攤開之後收得回去')
+      }
+      if (heightBefore && moreAfter.headerHeight > heightBefore + 2) {
+        fail(`機器人模組：攤開「還有 N 個」把工具列推高了（${heightBefore}px → ${moreAfter.headerHeight}px）`)
+      }
+      else {
+        pass('機器人模組：攤開「還有 N 個」也不動版面')
+      }
+    }
+
     await page.keyboard.press('Escape')
     await sleep(300)
   }
@@ -731,7 +817,20 @@ async function checkBroadcastHandoff() {
       [...document.querySelectorAll('.users-batch-bar .el-button')]
         .find(e => e.textContent.includes('推播給這'))?.click()
     })
-    await sleep(4000)
+    /**
+     * ⛔ **不要用固定秒數等推播頁**（2026-09-22 這一關紅過三次，查證是守門太急不是程式壞了：
+     *    手動走同一條路，受眾確實自動選成「匯入名單」、兩筆編號也確實填進去了，
+     *    只是推播頁冷啟動要六秒多，而這裡只睡四秒）。
+     *    改成等「名單真的填進去」這個錨點，最多等 25 秒。
+     * ⚠️ 等的東西就是等一下要驗的東西，看起來像自我實現，其實不是：
+     *    等不到照樣往下驗、照樣會紅，差別只是**壞掉時多花 25 秒**、**好的時候不再假紅**。
+     */
+    await page.waitForFunction(
+      () => location.pathname.includes('/broadcasts')
+        && (document.querySelector('textarea')?.value ?? '').includes('U'),
+      { timeout: 25_000 },
+    ).catch(() => {})
+    await sleep(600)
 
     const landed = await page.evaluate(() => ({
       path: location.pathname + location.search,

@@ -473,6 +473,30 @@ body.is-resizing-split {
   gap: 1rem;
 }
 
+/*
+ * 右上那一叢（狀態標籤＋取消／儲存變更）要跟「名稱輸入框」對齊，
+ * ⛔ 不是跟輸入框上面那行小灰字對齊。
+ *
+ * 2026-09-22 老闆第三次回報「還是有點沒對齊」，實機量出來的數字：
+ *   模組名稱 label 中線 27.7 ／ 名稱輸入框中線 55.3 ／ 動作鈕中線 36 ／ 狀態標籤中線 31
+ * header 是 `align-items: flex-start`，所以右叢整叢貼在最上面，跟那行 label 齊——
+ * 比輸入框中線高了 **19px**；而且標籤(22px)與按鈕(32px)自己也差 5px，兩排都沒對上。
+ *
+ * ⭐ 一條規則解兩個：往下讓開一個 label 的高度，再給右叢跟輸入框一樣的高度並置中，
+ *    於是右叢、標籤、按鈕三者自動共用輸入框那條中線。
+ * ⚠️ 數字都是各自的來源本人，不是手調的魔術數：
+ *    `0.8rem × 1.2` 就是 `.admin-field-label` 的 font-size × line-height（見 _forms.scss），
+ *    `--el-component-size-large` 就是 `size="large"` 輸入框的高度。label 改字級這裡會跟著對。
+ * ⚠️ `:has()` 是刻意的：`.split-editor-header` 有二十幾頁在用，只有「上面一行 label、
+ *    下面一個大輸入框」的那幾頁（AdminEditorHeaderTitle）需要讓位，其餘維持原樣。
+ */
+.split-editor-header:has(> .admin-flex-1 .admin-title-input) > :not(.admin-flex-1) {
+  margin-top: calc(0.8rem * 1.2);
+  min-height: var(--el-component-size-large, 40px);
+  display: flex;
+  align-items: center;
+}
+
 .split-editor-title {
   font-size: 1.1rem;
   font-weight: 700;

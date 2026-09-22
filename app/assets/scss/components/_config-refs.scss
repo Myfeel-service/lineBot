@@ -51,9 +51,21 @@
   }
 }
 
+/* 「還有 N 個」是按得開的（2026-09-22）：只說不給看，等於告訴他有 41 個他管不到的東西。
+   ⛔ 所以它**不可以**長得像一段灰字——要看得出可以按。 */
 .config-refs__more {
-  align-self: center;
-  color: var(--el-text-color-secondary, #909399);
+  margin-left: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--el-color-primary, #409eff);
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .config-refs__groups {
@@ -104,11 +116,14 @@
 .config-refs__name {
   display: inline;
   color: var(--el-text-color-regular, #606266);
+}
 
-  &:not(:last-child)::after {
-    content: '、';
-    color: var(--el-text-color-placeholder, #c0c4cc);
-  }
+/* ⛔ 「、」用**相鄰**選擇器擺在名字「前面」，不要用 `:not(:last-child)::after`：
+   後面接了「還有 N 個」那顆按鈕之後，最後一個名字就不再是 `:last-child`，
+   於是攤開時會變成「…猩猩仙人之握、收起來」——多一個沒有下一項的頓號。 */
+.config-refs__name + .config-refs__name::before {
+  content: '、';
+  color: var(--el-text-color-placeholder, #c0c4cc);
 }
 
 .config-refs__name--inactive {

@@ -52,10 +52,18 @@
                 :key="ref.kind + ref.id"
                 :class="['config-refs__name', { 'config-refs__name--inactive': ref.inactive }]"
               >{{ ref.label }}<template v-if="ref.inactive">（停用中）</template></span>
-              <!-- ⛔ 截斷要說出來被藏了幾個，不可以安靜少列 -->
-              <span v-if="group.hiddenCount" class="config-refs__more">
-                還有 {{ group.hiddenCount }} 個
-              </span>
+              <!--
+                ⛔ 截斷要說出來被藏了幾個，不可以安靜少列。
+                ⭐ 而且要**按得開**（2026-09-22 老闆回報）：「還有 41 個」只說不給看，
+                   等於告訴他有 41 個他管不到的東西——他要找的那一個很可能就在裡面。
+                   浮層本身有 `max-height` 會捲動，攤開不會把畫面撐爛。
+              -->
+              <button
+                v-if="group.hiddenCount || expandedKinds.has(group.kind)"
+                type="button"
+                class="config-refs__more"
+                @click="toggleKind(group.kind)"
+              >{{ group.hiddenCount ? `還有 ${group.hiddenCount} 個` : '收起來' }}</button>
             </div>
           </li>
         </ul>
@@ -107,8 +115,22 @@ const ORDER: ConfigRefKind[] = ['script', 'richmenu', 'flow', 'campaign', 'broad
 
 const expanded = ref(props.defaultExpanded)
 
-/** 展開後每一類最多列幾個名字；⛔ 超過的要講「還有 N 個」，不可以安靜少列 */
+/**
+ * 展開後每一類**預設**最多列幾個名字；⛔ 超過的要講「還有 N 個」，不可以安靜少列。
+ * 按下那句話會把該類全部攤開（`expandedKinds`）——一次只攤一類，
+ * 因為人是為了找某一個特定的東西才按的，不是為了看全部。
+ */
 const MAX_NAMES_PER_KIND = 8
+
+const expandedKinds = ref(new Set<ConfigRefKind>())
+
+function toggleKind(kind: ConfigRefKind) {
+  // ⛔ 用新的 Set 指派，不要在原 Set 上 add/delete：Vue 的 ref 對 Set 內部異動不會觸發更新
+  const next = new Set(expandedKinds.value)
+  if (next.has(kind)) next.delete(kind)
+  else next.add(kind)
+  expandedKinds.value = next
+}
 
 const summaryText = computed(() => summarizeConfigRefs(props.refs))
 
@@ -116,14 +138,15 @@ const groups = computed(() =>
   ORDER
     .map((kind) => {
       const items = props.refs.filter(ref => ref.kind === kind)
+      const showAll = expandedKinds.value.has(kind)
       return {
         kind,
         label: CONFIG_REF_KIND_LABEL[kind],
         hint: CONFIG_REF_KIND_HINT[kind],
         path: configRefPath(props.workspaceId, kind),
         items,
-        shown: items.slice(0, MAX_NAMES_PER_KIND),
-        hiddenCount: Math.max(0, items.length - MAX_NAMES_PER_KIND),
+        shown: showAll ? items : items.slice(0, MAX_NAMES_PER_KIND),
+        hiddenCount: showAll ? 0 : Math.max(0, items.length - MAX_NAMES_PER_KIND),
       }
     })
     .filter(group => group.items.length > 0),
