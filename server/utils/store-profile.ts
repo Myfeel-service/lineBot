@@ -47,6 +47,7 @@ export async function saveStoreProfile(
     fields: normalized.fields,
     siteUrl: normalized.siteUrl,
     ...(normalized.siteRead ? { siteRead: normalized.siteRead } : {}),
+    ...(normalized.refreshAskedAt ? { refreshAskedAt: normalized.refreshAskedAt } : {}),
     ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true })

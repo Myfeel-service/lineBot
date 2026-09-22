@@ -19,6 +19,15 @@
  */
 import { Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
+import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
+import { getStoreProfile, saveStoreProfile } from './store-profile'
+import { setStoreProfileField } from '~~/shared/types/store-profile'
+import {
+  collectLearnings,
+  formatProfileRefreshLines,
+  shouldAskProfileRefresh,
+  type FaqCandidate,
+} from '~~/shared/profile-refresh'
 
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
@@ -167,11 +176,70 @@ export async function buildWeeklyInsights(
     if (topTags.length < TOP_TAGS && m.name) topTags.push({ name: m.name, count: c.count })
   }
 
-  return formatWeeklyInsightLines({
+  const base = formatWeeklyInsightLines({
     rangeText,
     topTags,
     inactiveAdds,
     quietDown,
     truncated: logSnap.size >= TAG_LOG_SCAN_LIMIT,
   })
+
+  /**
+   * 每月一次的「輪廓更新」兩題（`D-85` / `C-226`）。
+   *
+   * ⛔ **併進這一段、不另發一則**（08-06 拍板「一則錢講完全部」）。
+   * ⛔ **查不到就當沒有**：這是加值，壞了不准拖垮週報本體——週報本身又不准拖垮每日摘要，
+   *    所以這裡自己 catch，不往外丟。
+   * ⚠️ 只在週報**本來就有東西可講**時才附上去。週報是 null 表示這週沒有觀察，
+   *    為了兩題輪廓問題硬生一整段標題，等於為了加值把「沒事就不發」那條規則破壞掉。
+   */
+  if (!base) return null
+  try {
+    const extra = await buildProfileRefreshLines(db, workspaceId, topTags)
+    return extra.length ? [...base, ...extra] : base
+  }
+  catch (e) {
+    console.warn('[weekly-insights] profile refresh failed:', workspaceId, e)
+    return base
+  }
+}
+
+/** 每月輪廓更新的那幾行＋順手把學到的東西以 `conversation` 身分寫進輪廓。 */
+async function buildProfileRefreshLines(
+  db: Firestore,
+  workspaceId: string,
+  topTags: Array<{ name: string, count: number }>,
+): Promise<string[]> {
+  const profile = await getStoreProfile(workspaceId, db)
+  const now = Date.now()
+  if (!shouldAskProfileRefresh(profile.refreshAskedAt ?? null, now)) return []
+
+  // 「客人問了什麼」最誠實的來源＝知識缺口建議（客人真的問了、AI 答不出來）
+  const snap = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('status', '==', 'pending')
+    .limit(20)
+    .get()
+  const faqCandidates: FaqCandidate[] = snap.docs.map((d) => {
+    const data = d.data() as { topic?: string, eventCount?: number, eventCountSampled?: boolean }
+    return {
+      topic: String(data.topic ?? '').slice(0, 20),
+      eventCount: Number(data.eventCount ?? 0),
+      ...(data.eventCountSampled ? { sampled: true } : {}),
+    }
+  })
+
+  const topTag = topTags.length ? { name: topTags[0]!.name, addedThisMonth: topTags[0]!.count } : null
+  const learnings = collectLearnings(profile, faqCandidates, topTag)
+  if (!learnings.length) return []
+
+  // ⛔ **一律以 `conversation` 身分寫**：商家在輪廓卡按確認才變成 `owner`。
+  //    靜默改掉他填的東西是最傷信任的事；`setStoreProfileField` 不會動 owner 的格子，
+  //    但這裡仍然只寫我們判定過「可以更新」的那幾格。
+  let next = profile
+  for (const l of learnings) next = setStoreProfileField(next, l.field, l.value, 'conversation', now)
+  next.refreshAskedAt = now
+  await saveStoreProfile(workspaceId, next, db)
+
+  return formatProfileRefreshLines(learnings)
 }

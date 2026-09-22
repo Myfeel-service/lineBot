@@ -120,6 +120,11 @@ export interface StoreProfileDoc {
   siteUrl: string
   /** 最後一次讀網站的結果；沒讀過就是 undefined */
   siteRead?: SiteReadResult
+  /**
+   * 上次在週報裡問「要不要更新輪廓」的時間（epoch ms，`C-226`）。
+   * ⛔ 一定要記：不記的話每週都會問同一件事，兩週後就被當成雜訊直接忽略。
+   */
+  refreshAskedAt?: number
   createdAt?: Timestamp | FieldValue
   updatedAt?: Timestamp | FieldValue
 }
@@ -317,6 +322,7 @@ export function normalizeStoreProfile(raw: unknown): StoreProfileDoc {
 
   out.siteUrl = normalizeSiteUrl(String(r.siteUrl ?? ''))
   if (r.siteRead && typeof r.siteRead === 'object') out.siteRead = normalizeSiteRead(r.siteRead)
+  if (typeof r.refreshAskedAt === 'number' && Number.isFinite(r.refreshAskedAt)) out.refreshAskedAt = r.refreshAskedAt
   return out
 }
 

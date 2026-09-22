@@ -52,6 +52,18 @@
                   {{ row.value || row.emptyText }}
                 </span>
                 <span :class="['store-profile__src', `is-${row.sourceKind}`]">{{ row.sourceText }}</span>
+                <!-- `C-226`：從對話學來的，還沒有人確認過。按了就變成「你說的」，
+                     之後不會再被自動更新。⛔ 不可以靜默把它當成他說的。 -->
+                <el-button
+                  v-if="canEdit && row.sourceKind === 'conversation' && row.value"
+                  link
+                  type="success"
+                  size="small"
+                  :loading="savingId === row.id"
+                  @click="confirmLearned(row.id)"
+                >
+                  對，就是這樣
+                </el-button>
                 <el-button v-if="canEdit" link type="primary" size="small" @click="startEdit(row.id)">
                   {{ row.value ? '改' : '補' }}
                 </el-button>
@@ -205,6 +217,32 @@ async function saveField(id: StoreProfileFieldId) {
     editingId.value = null
     draft.value = ''
     ElMessage.success(`「${storeProfileFieldDef(id)?.label ?? '這一項'}」已更新`)
+  }
+  catch (e: unknown) {
+    ElMessage.error((e as { data?: { statusMessage?: string } })?.data?.statusMessage || '存不起來，請再試一次')
+  }
+  finally {
+    savingId.value = null
+  }
+}
+
+/**
+ * 確認「從對話學來的」那一格（`C-226`）。
+ * ⭐ 按下去＝這一格從此是「你說的」，自動更新不會再動它——
+ *    這跟「改」是同一支端點，差別只在不用他重打一次字。
+ */
+async function confirmLearned(id: StoreProfileFieldId) {
+  const v = profile.value?.fields?.[id]?.value
+  if (!v) return
+  savingId.value = id
+  try {
+    const r = await apiFetch<{ profile: StoreProfileDoc, ready: boolean }>('/api/store-profile', {
+      method: 'POST',
+      body: { fields: { [id]: v } },
+    })
+    profile.value = r.profile
+    ready.value = r.ready
+    ElMessage.success('好，這一格之後不會再被自動更新')
   }
   catch (e: unknown) {
     ElMessage.error((e as { data?: { statusMessage?: string } })?.data?.statusMessage || '存不起來，請再試一次')
