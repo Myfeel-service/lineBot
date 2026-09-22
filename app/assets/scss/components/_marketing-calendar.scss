@@ -1,0 +1,104 @@
+// 行銷月曆卡（`D-85` / `C-224`）。沿用首頁既有的 .message-card / .ar-section-card 外殼，
+// 這裡只補「一檔＝一個區塊」的排版。⛔ 不用 :deep()：全域 partial 沒有 scope 可以穿。
+
+.mkt-cal {
+  // 底下那條 @container 要的：卡片寬度取決於側欄開不開，不是視窗寬度
+  container-type: inline-size;
+
+  &__item {
+    padding: 12px 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+
+    &:first-of-type { border-top: 0; }
+  }
+
+  // 兩週內的檔期要跳出來（左邊一條），但⛔ 不用整塊染色：
+  // 一季裡可能有三四個「快到了」，整塊染色會變成一面警告牆
+  &__item.is-soon {
+    border-left: 3px solid var(--el-color-primary);
+    padding-left: 10px;
+  }
+
+  &__head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  &__when {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__name {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--el-text-color-primary);
+  }
+
+  &__days {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+
+    &.is-soon {
+      color: var(--el-color-primary);
+      font-weight: 600;
+    }
+  }
+
+  &__label {
+    margin: 10px 0 2px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__reasons,
+  &__actions {
+    margin: 0;
+    padding-left: 1.2em;
+    display: grid;
+    gap: 2px;
+
+    li {
+      font-size: 13px;
+      line-height: 1.75;
+      color: var(--el-text-color-primary);
+    }
+  }
+
+  // 出處：看得到但不搶戲。⛔ 不可以縮到看不見——它是「這句話憑什麼」的證據
+  &__source {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  // 「這一檔還沒有你的數字」：語氣是說明不是警告，但要讀得清楚
+  &__nodata {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__cta {
+    margin-top: 10px;
+  }
+
+  &__muted {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  @container (max-width: 480px) {
+    &__days {
+      margin-left: 0;
+      flex-basis: 100%;
+    }
+  }
+}

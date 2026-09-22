@@ -170,6 +170,11 @@
           </div>
         </template>
 
+        <!-- 行銷月曆（`D-85` / `C-224`）：這一季有哪些檔期、每一檔該做什麼。
+             ⛔ 擺在趨勢**之前**：那是「發生過什麼」，這是「接下來要做什麼」，
+             後者才是人一早打開後台想知道的事。⛔ 不加側欄項目。 -->
+        <AdminMarketingCalendarCard :workspace-id="String(route.params.workspaceId)" />
+
         <!-- 趨勢：折線圖 ＋ 可展開明細表 ───────────────────────── -->
         <div class="message-card ar-section-card">
           <div class="message-card-header">

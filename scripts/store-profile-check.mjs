@@ -544,7 +544,76 @@ async function checkProfileOnlyRun() {
   finally { await ctx.close() }
 }
 
+/**
+ * 後台首頁的行銷月曆卡（`C-224`）。
+ * ⛔ 對照組＝「還沒有你的數字」那句話：MYFEEL 沒有輪廓，所以整張卡應該只有通用切角，
+ *    而且要**明講**這件事——講不出來就是在假裝這是為他算的。
+ */
+async function checkMarketingCalendar() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await page.goto(`${BASE}/admin/${WORKSPACE_ID}/conversation-stats`, { waitUntil: 'networkidle2', timeout: 90_000 })
+    await sleep(3000)
+    await page.reload({ waitUntil: 'networkidle2', timeout: 90_000 })
+    await sleep(3000)
+    await dismissOverlays(page)
+
+    let card = 0
+    for (let i = 0; i < 20 && card < 1; i++) {
+      card = await visible(page, '.mkt-cal')
+      if (card < 1) await sleep(700)
+    }
+    if (card !== 1) return fail(`行銷月曆卡沒有出現（量到 ${card} 個）`)
+    pass('行銷月曆卡出現在後台首頁')
+
+    // 等它落到終局分支（清單／空狀態／錯誤）
+    let settled = false
+    for (let i = 0; i < 20 && !settled; i++) {
+      settled = await page.evaluate(() =>
+        document.querySelectorAll('.mkt-cal__item, .mkt-cal .el-alert, .mkt-cal__muted').length > 0)
+      if (!settled) await sleep(700)
+    }
+    if (!settled) return fail('行銷月曆卡停在載入中')
+
+    const items = await visible(page, '.mkt-cal__item')
+    if (items === 0) {
+      console.log('  ⚠️ 未來 90 天沒有節日（照節日表這不該發生，但不算失敗）')
+      return
+    }
+    pass(`列出 ${items} 個檔期`)
+
+    // 每一檔都要有「做什麼」三件事
+    const badActions = await page.evaluate(() =>
+      [...document.querySelectorAll('.mkt-cal__item')]
+        .filter(el => el.querySelectorAll('.mkt-cal__actions li').length !== 3).length)
+    if (badActions) return fail(`有 ${badActions} 檔的「做什麼」不是三件事`)
+    pass('每一檔都有三件事可做')
+
+    // ⛔ 對照組：MYFEEL 沒有輪廓 → 必須看得到「還沒有你的數字」，⛔ 不可以憑空生出理由
+    const nodata = await visible(page, '.mkt-cal__nodata')
+    const reasons = await visible(page, '.mkt-cal__reasons')
+    if (reasons > 0) {
+      // 有理由的話，每一條都必須帶出處
+      const noSource = await page.evaluate(() =>
+        [...document.querySelectorAll('.mkt-cal__reasons li')].filter(li => !li.querySelector('.mkt-cal__source')).length)
+      if (noSource) return fail(`有 ${noSource} 條「為什麼」沒有出處`)
+      pass('每一條「為什麼」都帶得出出處')
+    }
+    if (!nodata && !reasons) return fail('既沒有理由也沒有「還沒有你的數字」——等於什麼都沒講')
+    pass(nodata ? `${nodata} 檔誠實講出「還沒有你的數字」` : '每一檔都有自己的理由')
+
+    // ⛔ 不承諾成效
+    const promised = await page.evaluate(() =>
+      /多賣|成長\s*\d|提升\s*\d|增加\s*\d成/.test(document.querySelector('.mkt-cal')?.textContent ?? ''))
+    if (promised) return fail('卡片上出現了我們算不出來的成效承諾')
+    pass('對照組：沒有出現成效承諾')
+  }
+  finally { await ctx.close() }
+}
+
 try {
+  console.log('\n── 後台首頁的行銷月曆（C-224）─────────────')
+  await checkMarketingCalendar()
   console.log('\n── 組織與 LINE 頁的輪廓卡（C-217）─────────')
   await checkProfileCardOnOrgPage()
   console.log('\n── 精靈的「認識你的店」（C-219）───────────')

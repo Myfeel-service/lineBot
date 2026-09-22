@@ -38,10 +38,12 @@
 @use "./components/customer-card";
 @use "./components/tag-suggestion-review";
 @use "./components/tag-picker";
+@use "./components/flow-picker";
 @use "./components/config-refs";
 @use "./components/campaign-wizard";
 @use "./components/follow-welcome";
 @use "./components/store-profile";
+@use "./components/marketing-calendar";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";
