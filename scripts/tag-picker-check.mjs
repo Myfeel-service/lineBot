@@ -495,6 +495,8 @@ async function checkModuleUsage() {
         title: el.querySelector('.flow-usage-strip__title')?.textContent?.trim() ?? '',
         text: el.innerText.replace(/\s+/g, ' ').trim(),
         groups: [...el.querySelectorAll('.config-refs__group')].length,
+        // `D-23` 之後預設收合：有人用時先給一句摘要，名字收在「看是哪些」後面
+        summary: el.querySelector('.config-refs__summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
         muted: !!el.querySelector('.config-refs__line--muted'),
         warn: !!el.querySelector('.config-refs__line--warn'),
       }
@@ -506,11 +508,35 @@ async function checkModuleUsage() {
     if (strip.warn) {
       pass('機器人模組：這次有幾類查不到，畫面有照實說（沒有假裝成「沒有人用」）')
     }
-    else if (strip.groups > 0) {
-      pass(`機器人模組：列出了 ${strip.groups} 類入口`)
+    else if (strip.summary) {
+      /**
+       * ⛔ 有人用時**預設不可以把名字全攤開**：「真人客服」被 50 個模組指到，
+       * 全攤開會變成一面看不懂的字牆（2026-09-22 老闆實際截圖回報）。
+       */
+      if (strip.groups > 0) {
+        fail('機器人模組：一打開就把引用的名字全攤開了——預設應該只給一句摘要，名字收在「看是哪些」後面')
+      }
+      else {
+        pass(`機器人模組：有人用時先給一句話（${strip.summary.slice(0, 40)}）`)
+        // 按「看是哪些」才展開名字——收合得起來也要展得開，不然等於把資訊藏掉
+        const opened = await page.evaluate(() => {
+          const btn = document.querySelector('.flow-usage-strip .config-refs__toggle')
+          if (!btn) return false
+          btn.click()
+          return true
+        })
+        if (!opened) { fail('機器人模組：摘要旁沒有「看是哪些」，名字就永遠看不到了') }
+        else {
+          await sleep(600)
+          const groups = await page.evaluate(() =>
+            [...document.querySelectorAll('.flow-usage-strip .config-refs__group')].length)
+          if (!groups) fail('機器人模組：按了「看是哪些」沒有展開任何東西')
+          else pass(`機器人模組：按「看是哪些」展得開（${groups} 類）`)
+        }
+      }
     }
     else if (strip.muted) {
-      if (!strip.text.includes('客人也走不到')) {
+      if (!strip.text.includes('客人現在走不到這裡')) {
         fail('機器人模組：沒有人用的時候只說了「沒有」，沒有講後果——那正是最該講清楚的一種')
       }
       else {

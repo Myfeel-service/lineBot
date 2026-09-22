@@ -194,13 +194,18 @@
         所以空狀態要講後果並給出口，不是留白。
       -->
       <div v-if="!isCreating && selectedId" class="flow-usage-strip" data-tour="flow-usage">
-        <p class="flow-usage-strip__title">這個模組會在這些時候發出</p>
+        <!--
+          ⛔ 標題從「這個模組會在這些時候發出」改成講**客人的動線**（2026-09-22 老闆
+          「我也看不太懂他想表達什麼」）。原本那句是站在模組的角度講的，
+          而使用者腦中的問題是「客人是從哪裡走進來的」。
+        -->
+        <p class="flow-usage-strip__title">客人會從哪裡走到這個模組</p>
         <AdminConfigRefsList
           :refs="moduleUsageRefs"
           :failed-kinds="configRefs.failedKinds"
           :workspace-id="workspaceId"
           :loading="configRefsLoading"
-          empty-text="還沒有任何地方會叫出這個模組——現在存檔，客人也走不到它。到「自動回應」設一組關鍵字，或在圖文選單、活動上指過來。"
+          empty-text="客人現在走不到這裡——沒有任何地方會叫出這個模組，存檔了也一樣。到「自動回應」設一組關鍵字（或用最上面那一列「客人加好友時」），也可以在圖文選單、活動上指過來。"
         />
       </div>
       <!--

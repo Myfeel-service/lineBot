@@ -30,7 +30,34 @@
   margin-bottom: 0.4rem;
 }
 
+/* 預設就只有這一句話——名字收在「看是哪些」後面（真人客服被 50 個模組指到，
+   全攤開會變成一面看不懂的字牆） */
+.config-refs__summary {
+  margin: 0;
+  color: var(--el-text-color-regular, #606266);
+}
+
+.config-refs__toggle {
+  margin-left: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: inherit;
+  color: var(--el-color-primary, #409eff);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.config-refs__more {
+  align-self: center;
+  color: var(--el-text-color-secondary, #909399);
+}
+
 .config-refs__groups {
+  margin-top: 0.4rem;
   list-style: none;
   margin: 0;
   padding: 0;

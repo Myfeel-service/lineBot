@@ -30,7 +30,7 @@ vi.stubGlobal('getQuery', () => currentQuery)
 vi.stubGlobal('createError', (o: { statusMessage?: string }) => Object.assign(new Error(o.statusMessage ?? 'e'), o))
 
 const { default: handler } = await import('./list.get')
-const { listDocs } = await import('~~/server/utils/firebase')
+const { listDocs, getDb } = await import('~~/server/utils/firebase')
 const { seedWorkspaceSystemModules } = await import('~~/server/utils/workspace-system-modules')
 
 /** 一個模組文件；`messages` 就是那個佔了 133 KB 的東西 */
@@ -74,9 +74,20 @@ function stubListDocs(rows = ALL) {
 }
 
 describe('模組清單（E-23）', () => {
+  /**
+   * picker 模式會為了「舊歡迎模組是不是空的」多讀一次那份文件（`D-23`）。
+   * 預設回「有內容」＝保守顯示；要測「空的會被藏」時在該案自己覆寫。
+   */
+  function stubWelcomeDoc(messages: unknown[] = [{ type: 'text' }]) {
+    vi.mocked(getDb).mockReturnValue({
+      collection: () => ({ doc: () => ({ get: async () => ({ data: () => ({ messages }) }) }) }),
+    } as never)
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
     currentQuery = {}
+    stubWelcomeDoc()
   })
 
   it('?fields=picker：回得了名稱與啟用狀態，但**不帶訊息內容**', async () => {
@@ -147,6 +158,19 @@ describe('模組清單（E-23）', () => {
     const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
     expect(ids).not.toContain(`${WS}_welcome`)
     expect(ids).toContain(`${WS}_live_agent`)
+  })
+
+  it('⛔ picker 模式也要藏（五個下拉都走 picker，不藏＝整個拿掉沒生效）', async () => {
+    stubListDocs([
+      flow(`${WS}_welcome`, { isSystem: true, moduleType: 'welcome', messages: [] }),
+      flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }),
+    ])
+    stubWelcomeDoc([]) // 那份舊文件是空的
+    currentQuery = { fields: 'picker' }
+
+    const res: any = await (handler as any)({} as never)
+    const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
+    expect(ids).not.toContain(`${WS}_welcome`)
   })
 
   it('⛔ 有內容的舊「歡迎模組」照舊列出來——藏起來就是讓人家的東西無聲消失', async () => {

@@ -78,12 +78,24 @@ export default defineEventHandler(async (event) => {
    *    「自動回應 → 客人加好友時」再處理。
    */
   const legacyWelcomeId = systemModuleId(workspaceId, 'welcome')
-  allFlows = allFlows.filter((f) => {
-    if (f.id !== legacyWelcomeId) return true
-    const messages = Array.isArray(f.messages) ? f.messages : []
-    // picker 模式沒帶 messages 欄位 → 拿不到內容時**保守顯示**，不要猜它是空的
-    return pickerOnly ? true : messages.length > 0
-  })
+  const legacyWelcome = allFlows.find(f => f.id === legacyWelcomeId)
+  if (legacyWelcome) {
+    /**
+     * ⛔ **picker 模式一定要另外問一次「它是不是空的」**。
+     *
+     * 第一版寫成「picker 拿不到 `messages` 就保守顯示」，結果是：模組清單那一頁藏起來了，
+     * 但**五個下拉（自動回應／推播／活動／圖文選單／客服預存）全都走 picker，所以全都還看得到**
+     * ——等於整個拿掉沒有生效（2026-09-22 老闆實際截圖回報）。
+     * 多這一次 `doc().get()` 只發生在「這個帳號還留著那份舊文件」時，一份文件、一次讀取。
+     */
+    let isEmpty = Array.isArray(legacyWelcome.messages) && legacyWelcome.messages.length === 0
+    if (pickerOnly) {
+      const snap = await getDb().collection('flows').doc(legacyWelcomeId).get().catch(() => null)
+      // ⛔ 讀不到就保守顯示：寧可讓它多出現一次，也不要把有內容的東西藏掉
+      isEmpty = snap ? ((snap.data()?.messages as unknown[] | undefined)?.length ?? 0) === 0 : false
+    }
+    if (isEmpty) allFlows = allFlows.filter(f => f.id !== legacyWelcomeId)
+  }
 
   const systemFlows = allFlows
     .filter(f => f.isSystem)

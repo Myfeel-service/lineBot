@@ -752,10 +752,12 @@
     append-to-body
     @update:model-value="refsDialogTag = null"
   >
+    <!-- ⛔ 這個視窗是「我想看名字」才點開的，所以直接展開，不要再叫他按一次 -->
     <AdminConfigRefsList
       :refs="refsDialogList"
       :failed-kinds="configRefs.failedKinds"
       :workspace-id="workspaceId"
+      default-expanded
       empty-text="目前沒有任何設定會貼上這顆標籤、也沒有推播拿它挑人。停用它不會影響任何地方。"
     />
     <p class="tags-refs-note">
