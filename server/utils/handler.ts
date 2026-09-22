@@ -27,6 +27,12 @@ import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX, LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
+import {
+  LINE_ACTION_LABEL_MAX,
+  LINE_CARD_ALT_TEXT_URI,
+  LINE_CARD_BODY_DEFAULT,
+  LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
+} from '~~/shared/line-card-copy'
 import { archiveConversationMedia } from './conversation-media'
 import { logHandoffEvent } from './ai-handoff-events'
 import { readInboundImage } from './media-describe'
@@ -872,15 +878,20 @@ function buildAutoReplyActionMessages(
 
   if (action.type === 'uri') {
     const targetUrl = renderWithAttributes(action.uri || '', attributes)
+    /*
+     * `C-228`：文案改吃 `shared/line-card-copy.ts` 的單一來源。
+     * ⛔ 原本這裡寫死「請點擊下方連結」，推播那邊寫死「請點擊下方按鈕開啟連結。」——
+     * 同一家店的客人在不同情境會收到兩種講法，而兩邊都不是店家寫的。
+     */
     return [{
       type: 'template',
-      altText: '開啟網址',
+      altText: LINE_CARD_ALT_TEXT_URI,
       template: {
         type: 'buttons',
-        text: '請點擊下方連結',
+        text: LINE_CARD_BODY_DEFAULT,
         actions: [{
           type: 'uri',
-          label: '開啟網址',
+          label: LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
           uri: targetUrl,
         }],
       },
@@ -2948,13 +2959,18 @@ async function sendScriptReply(
   // 連結按鈕獨立一則 buttons template：不塞進上面那則文字裡——buttons template 的 text
   // 只有 160 字上限，回覆文字稍長就會被 LINE 整則退掉。
   if (link?.url) {
+    /*
+     * `C-228`：本文改吃單一來源的預設句。
+     * ⭐ 按鈕文字**維持用店家自己寫的 `link.label`**——腳本的連結按鈕本來就有一格讓他填，
+     * 那是這幾條路裡唯一一開始就問過他的，不要拿預設值蓋掉。
+     */
     messages.push({
       type: 'template',
       altText: link.label,
       template: {
         type: 'buttons',
-        text: '請點擊下方連結',
-        actions: [{ type: 'uri', label: link.label.slice(0, 20), uri: link.url }],
+        text: LINE_CARD_BODY_DEFAULT,
+        actions: [{ type: 'uri', label: link.label.slice(0, LINE_ACTION_LABEL_MAX), uri: link.url }],
       },
     } as messagingApi.TemplateMessage)
   }

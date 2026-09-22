@@ -16,6 +16,17 @@ export interface UnifiedAction {
   text: string
   moduleId: string
   tagging: ActionTagging
+  /**
+   * `C-228`：「開啟網址」／「觸發機器人模組」時，卡片上那句話與按鈕上那幾個字。
+   * 空字串或未給＝店家沒寫，送出端套 `shared/line-card-copy.ts` 的預設。
+   * ⛔ 預設值不要寫在這裡，也不要在送出端各寫一份——那正是「同一件事兩套文案」的成因。
+   *
+   * ⚠️ **刻意是選填**：這個型別有好幾處是手寫物件字面值產生的（圖文訊息區塊、模組按鈕、
+   * 圖文選單、`flow-validator`），那些路徑根本沒有卡片文案可填。設成必填只會逼那幾處
+   * 補兩個永遠是空字串的欄位，換不到任何保護。`normalizeUnifiedAction()` 出來的一定有值。
+   */
+  cardText?: string
+  buttonLabel?: string
 }
 
 export const TRIGGER_MODULE_PREFIX = 'triggerModule='
@@ -182,6 +193,8 @@ export function normalizeUnifiedAction(input: any, fallbackSlot = 'A'): UnifiedA
     text: String(input?.text || ''),
     moduleId: String(input?.moduleId || ''),
     tagging: normalizeActionTagging(input?.tagging),
+    cardText: String(input?.cardText || ''),
+    buttonLabel: String(input?.buttonLabel || ''),
   }
 }
 

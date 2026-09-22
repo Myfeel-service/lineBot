@@ -1,4 +1,5 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
+import { LINE_CARD_BUTTON_LABEL_URI_DEFAULT } from '../line-card-copy'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Script types
@@ -123,8 +124,13 @@ export interface ScriptReplyNode {
   thenHandoff: boolean
 }
 
-/** 連結按鈕沒填文字時的預設（與自動回覆的「開啟網址」一致） */
-export const DEFAULT_REPLY_LINK_LABEL = '開啟網址'
+/**
+ * 連結按鈕沒填文字時的預設。
+ * `C-228`：改吃 `shared/line-card-copy.ts` 的單一來源——原本寫死「開啟網址」，
+ * ⛔「網址」是後台自用的詞，客人按鈕上不該出現。改這裡會同時改到三處：腳本送出端、
+ * 編輯器那一格的 placeholder、試跑模擬器。
+ */
+export const DEFAULT_REPLY_LINK_LABEL = LINE_CARD_BUTTON_LABEL_URI_DEFAULT
 
 /**
  * 取這條腳本的觸發來源。判定與比對散在四處（訊息比對、意圖路由、follow 事件、健康檢查、

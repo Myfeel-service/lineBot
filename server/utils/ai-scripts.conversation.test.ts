@@ -20,6 +20,7 @@ vi.mock('./tagging', () => ({ addTagsToUser }))
 
 import { startScript, advanceScript } from './ai-scripts'
 import type { ActiveScriptState, ScriptDoc, ScriptNode } from '~~/shared/types/ai-script'
+import { DEFAULT_REPLY_LINK_LABEL } from '~~/shared/types/ai-script'
 
 // ── 記憶體假 Firestore（只實作引擎用到的 get/update/set） ──────────────
 function deepMerge(target: any, src: any) {
@@ -340,7 +341,9 @@ describe('腳本引擎：回覆附連結按鈕（＝自動回覆的「開啟網�
     await startScript(s, UID, {}, db)
     const r = await advanceScript(activeScriptOf(store)!, 'A123', {}, UID, db)
     expect(r.replyText).toBe('幫您查到了')
-    expect(r.link).toEqual({ url: 'https://shop.example.com/o/A123', label: '開啟網址' })
+    // ⛔ 不寫死文字：這條要驗的是「沒填就用預設」，不是那句話現在長什麼樣
+    // （`C-228` 換過一次措辭，寫死的話每換一次就紅一次，而且會誘人把測試改成新的死值）
+    expect(r.link).toEqual({ url: 'https://shop.example.com/o/A123', label: DEFAULT_REPLY_LINK_LABEL })
   })
 
   it('沒設連結就不帶 link 欄位（呼叫端據此決定要不要多送一則）', async () => {
