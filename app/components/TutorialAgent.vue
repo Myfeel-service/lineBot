@@ -913,7 +913,9 @@ const agentLine = computed(() => {
   // ⛔指路不要寫顏色：原本寫「按上面綠色卡片」，同一天英雄卡就改成 danger 紅（ffc18f5）
   // 而這句沒跟著改，指路詞變成假的。改講按鈕上的字，之後再換色也不會再壞一次。
   if (onboardingIncomplete.value) {
-    const next = onboardingSteps.value.find(st => !st.done)
+    // ⛔ 跳過可跳過的步驟（`optional`）：輪廓沒做、LINE 也沒接的人，最急的是 LINE。
+    //    指到不急的那一步，等於把人帶去做一件現在做完也不會讓機器人活過來的事。
+    const next = onboardingSteps.value.find(st => !st.done && !st.optional)
     return `下一步：${next?.label || '完成開通'}。按上面那張卡片的「用聊天引導完成開通」，我帶你做完。`
   }
   // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況

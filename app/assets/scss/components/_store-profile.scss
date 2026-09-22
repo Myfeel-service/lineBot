@@ -1,0 +1,179 @@
+// 店家輪廓卡（`D-85` / `C-217`）。
+// 掛在「組織與 LINE」頁最上面，沿用該頁既有的 .message-card / .ar-section-card 外殼，
+// 這裡只補「一列＝欄位名／值／來源徽章／改」這個排版。
+// ⛔ 不用 :deep()：這是全域 partial，:deep() 在這裡沒有 scope 可以穿。
+
+.store-profile {
+  // ⚠️ 底下那條 `@container` 要的：卡片寬度取決於側欄開不開、而不是視窗寬度，
+  // 用 `@media` 會在「視窗很寬但側欄佔掉一半」時失準。自己當容器才量得準。
+  container-type: inline-size;
+
+  &__rows {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 0;
+    margin: 0;
+
+    dt,
+    dd {
+      margin: 0;
+      padding: 8px 0;
+      border-top: 1px solid var(--el-border-color-lighter);
+      min-width: 0;
+    }
+
+    dt {
+      color: var(--el-text-color-secondary);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    // 第一列不要頂著上面的標題再畫一條線
+    dt:first-of-type,
+    dt:first-of-type + dd {
+      border-top: 0;
+    }
+  }
+
+  &__val {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  &__text {
+    flex: 1 1 200px;
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+    word-break: break-word;
+
+    // 「還沒有」的字要看得出是說明不是內容，但仍要讀得清楚
+    // （⛔ 不用 .text-muted：那個對比度在 `D-75` 被抓過）
+    &.is-empty {
+      color: var(--el-text-color-secondary);
+      font-style: normal;
+    }
+  }
+
+  // 來源徽章：這一格是誰講的。三種顏色要分得開，AI 猜的一定要看得出來。
+  &__src {
+    flex: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.7;
+    padding: 0 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  &__src.is-owner {
+    background: var(--el-color-success-light-9);
+    color: var(--el-color-success-dark-2);
+  }
+
+  &__src.is-ai {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning-dark-2);
+  }
+
+  &__src.is-conversation {
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary-dark-2);
+  }
+
+  &__src.is-none {
+    background: var(--el-fill-color-light);
+    color: var(--el-text-color-secondary);
+  }
+
+  &__edit {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  &__input {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+
+  &__edit-actions {
+    flex: none;
+    display: flex;
+    gap: 8px;
+  }
+
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  &__empty-title {
+    margin: 0;
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  &__empty-body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--el-text-color-regular);
+    max-width: 46em;
+  }
+
+  &__foot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    p {
+      margin: 0;
+      font-size: 12.5px;
+      line-height: 1.8;
+      color: var(--el-text-color-secondary);
+    }
+  }
+
+  &__site {
+    word-break: break-all;
+  }
+
+  &__warn {
+    color: var(--el-color-warning-dark-2);
+    word-break: break-all;
+  }
+
+  &__muted {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  // 窄螢幕：欄位名改成堆在值上面（`G-66` 那張表在 ≤440px 破過版，同一個教訓）
+  @container (max-width: 520px) {
+    &__rows {
+      grid-template-columns: minmax(0, 1fr);
+
+      dt {
+        padding-bottom: 0;
+        border-top: 1px solid var(--el-border-color-lighter);
+      }
+
+      dd {
+        padding-top: 2px;
+        border-top: 0;
+      }
+
+      dt:first-of-type + dd {
+        border-top: 0;
+      }
+    }
+  }
+}

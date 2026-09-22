@@ -7,7 +7,7 @@
  */
 
 import type { Component } from 'vue'
-import { Iphone, Link, MagicStick, Operation, Reading } from '@element-plus/icons-vue'
+import { Iphone, Link, MagicStick, Operation, Reading, Shop } from '@element-plus/icons-vue'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
@@ -95,6 +95,20 @@ const CAPABILITIES: SetupCapability[] = [
     tourId: 'ai-scripts',
     // 腳本已收進「自動回應」的第二個分頁，側欄不再有獨立的 nav-ai-scripts 可以指
     navTarget: '[data-tour="nav-auto-response"]',
+  },
+  {
+    // 店家輪廓（`D-85` / `C-219`）：⛔ 選配項，缺它不擋上線也不拉低主進度。
+    // 但它缺著的時候，節慶提醒只講得出跨產業通用的一句話——所以 why 要講這件事，
+    // 不要寫成「建議填寫以獲得更好體驗」那種沒有後果的句子。
+    id: 'profileReady',
+    icon: Shop,
+    title: '讓 MiniMe 認識你的店',
+    why: '它現在只知道你的帳號名稱。補上之後，節慶提醒才講得出你的商品，AI 回客人的口氣也才像你。',
+    required: false,
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/organization`,
+    tourId: 'organization',
+    navTarget: '[data-tour="nav-organization"]',
   },
   {
     // 2026-08-07 自 lineConnected 拆出：多數新客戶第一天用不到 LIFF，
@@ -287,10 +301,21 @@ export function useSetupStatus() {
     && (statusMap.value.lineConnected === 'incomplete' || statusMap.value.firstMessageReceived === 'incomplete'),
   )
 
-  /** 開通範圍的兩個里程碑（小幫手英雄卡列「還缺哪幾步」用；跟 onboardingIncomplete 同一把尺） */
+  /**
+   * 開通範圍的里程碑（小幫手英雄卡列「還缺哪幾步」用）。順序＝精靈裡的順序。
+   *
+   * ⚠️ 2026-09-22 多列一項「認識你的店」（`D-85` / `C-219`）：精靈確實會帶他做這件事，
+   * 卡片上不列會變成「做了一件卡片上沒有的事」。
+   * ⛔ **但它不進 `onboardingIncomplete`**：那顆旗標決定「進後台要不要把人拉回精靈」，
+   *    而認識你的店是可以跳過的選配項——算進去的話，跳過的人每次進後台都被拉回一次，
+   *    那正是 2026-08-20 拆掉「跳過記憶」時要解決的同一種糾纏。
+   */
   const onboardingSteps = computed(() => ([
-    { id: 'lineConnected', label: '接上 LINE 官方帳號', done: statusMap.value.lineConnected === 'done' },
-    { id: 'firstMessageReceived', label: '收到第一則訊息（傳話測試）', done: statusMap.value.firstMessageReceived === 'done' },
+    // `optional`＝可以跳過的步驟。**「下一步要做什麼」不可以指到它**：
+    // 跳過輪廓、但 LINE 還沒接的人，最急的是 LINE；指去輪廓等於把人帶去做不急的事。
+    { id: 'profileReady', label: '讓 MiniMe 認識你的店', done: statusMap.value.profileReady === 'done', optional: true },
+    { id: 'lineConnected', label: '接上 LINE 官方帳號', done: statusMap.value.lineConnected === 'done', optional: false },
+    { id: 'firstMessageReceived', label: '收到第一則訊息（傳話測試）', done: statusMap.value.firstMessageReceived === 'done', optional: false },
   ]))
 
   /**

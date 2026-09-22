@@ -41,6 +41,7 @@
 @use "./components/config-refs";
 @use "./components/campaign-wizard";
 @use "./components/follow-welcome";
+@use "./components/store-profile";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

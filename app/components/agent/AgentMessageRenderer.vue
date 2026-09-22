@@ -204,6 +204,21 @@
       </li>
     </ul>
   </div>
+
+  <!-- 店家輪廓卡（`D-85`）：揭曉「我對你的店的認識」。猜的要看得出是猜的 -->
+  <div v-else-if="entry.msg.kind === 'store-profile'" class="agm-card agm-profile">
+    <div class="agm-card__label">MiniMe 認識的你</div>
+    <dl class="agm-profile__rows">
+      <template v-for="(row, i) in entry.msg.rows" :key="i">
+        <dt>{{ row.label }}</dt>
+        <dd>
+          <span :class="['agm-profile__val', { 'is-empty': !row.value }]">{{ row.value || row.hint }}</span>
+          <span :class="['agm-profile__src', `is-${row.source}`]">{{ row.sourceText }}</span>
+        </dd>
+      </template>
+    </dl>
+    <p v-if="entry.msg.siteNote" class="agm-profile__note">{{ entry.msg.siteNote }}</p>
+  </div>
 </template>
 
 <script setup lang="ts">

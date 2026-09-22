@@ -1801,31 +1801,35 @@ const LP_VOICES: { tile: string, who: string, title: string, text: string }[][] 
 // 這裡跳過操作細節、只留每一步的關鍵對白——⛔跳過的段落不准腦補成新句子。
 // ⚠️ 2026-09-07 跟上 01f8035 的改道（「鑰匙」→「連線資訊」、第二組與貼網址搬進官方帳號後台、
 //    收尾只留一個「小幫手」）：每一句仍是劇本原文，長句只裁段、不改字。
-type ObBeat = { role: 'agent' | 'user', html: string, progress?: 2 | 3 | 4 }
+// ⚠️ 2026-09-22 進度索引整批 +1（進度條多了「認識你的店」那一格）：對白沒動，只有格子編號位移。
+type ObBeat = { role: 'agent' | 'user', html: string, progress?: 3 | 4 | 5 }
 const OB_BEATS: ObBeat[] = [
   { role: 'agent', html: '歡迎回來，「山丘咖啡」！我們接著把剩下的設定做完，做過的我會直接跳過。' },
   { role: 'agent', html: '接下來，我們要讓你的 MiniMe 可以透過 LINE 幫你收發訊息，所以要先從 LINE 取得<b>兩組連線資訊</b>。<br>第一組叫做 <b>Channel Access Token</b>，用途很簡單：讓 MiniMe 可以用你的 LINE 官方帳號幫你傳訊息。' },
   { role: 'user', html: '我會拿，直接貼上' },
   { role: 'agent', html: '收到 ✓ 這組是「<b>山丘咖啡</b>」的連線資訊，我已經幫你存好了！' },
   { role: 'agent', html: '接下來是<b>第二組連線資訊：Channel Secret</b>。<br>它的用途很簡單，就是幫忙確認：收到的訊息真的來自 LINE，而不是其他地方假冒傳來的。' },
-  { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 2 },
+  { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 3 },
   { role: 'user', html: '都設好了，幫我檢查' },
   // 2026-09-11 跟著劇本去重（原本「連線成功了！…成功連上系統，可以正式使用 MiniMe 了」講兩次）
   { role: 'agent', html: '連線成功了 🎉 LINE 那邊跟 MiniMe 已經接上了。' },
-  { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 3 },
+  { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 4 },
   { role: 'agent', html: '收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。' },
-  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 4 },
+  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 5 },
 ]
 // ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_PROGRESS_LABELS，抄字不 import——
 //    import 會把整支 composable（含後端呼叫）拖進官網 bundle
-const OB_PROGRESS_LABELS = ['建立帳號', '取得連線資訊', '接收 LINE 訊息', '傳訊息測試', '完成']
+// ⚠️ 2026-09-22 跟著多一格「認識你的店」（`D-85` / `C-219`）。
+//    這支示範**從「歡迎回來」開始演**（＝續走模式），本來就跳過前面的格子——
+//    多一格只是讓灰著的格子從一格變兩格，對白一句都沒改。
+const OB_PROGRESS_LABELS = ['建立帳號', '認識你的店', '取得連線資訊', '接收 LINE 訊息', '傳訊息測試', '完成']
 /** SSR／無 JS／減少動態：停在「取得連線資訊」問句＋兩顆選項＝原本的靜態卡 */
 const obBeat = ref(2)
 const obTyping = ref(false)
 const obChatEl = ref<HTMLElement | null>(null)
 const obCardEl = ref<HTMLElement | null>(null)
-/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「取得連線資訊」＝1 */
-const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 1))
+/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「取得連線資訊」＝2（多一格之後 +1） */
+const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 2))
 // 開演的時機跟中軸綠線、成長曲線同一條線（.lp-cue → cueIo），這裡不再自己養一個觀察器
 let obTimers: ReturnType<typeof setTimeout>[] = []
 

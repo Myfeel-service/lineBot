@@ -106,6 +106,27 @@ export type AgentMsg =
   }
   /** 完成摘要卡 */
   | { kind: 'summary'; items: { label: string; done: boolean; note?: string }[] }
+  /**
+   * 店家輪廓卡（`D-85` / `C-219`）——接線成功那一刻揭曉「我對你的店的認識」。
+   *
+   * ⛔ 每一列都要帶 `source`：AI 猜的必須看得出是猜的。把猜的畫成確定的，
+   *    人就會以為我們真的查到了（競爭對手那一格最危險）。
+   * ⛔ 沒有值的列 `value` 是空字串、`hint` 講「為什麼還沒有」——
+   *    「還沒問」與「讀了網站沒提到」是兩句不同的話。
+   */
+  | {
+    kind: 'store-profile'
+    rows: {
+      label: string
+      value: string
+      /** 沒有值時要顯示的說明（有值時不用） */
+      hint?: string
+      source: 'owner' | 'ai' | 'conversation' | 'none'
+      sourceText: string
+    }[]
+    /** 讀網站的結果，一句話（讀完了／讀了一部分／讀不到） */
+    siteNote?: string
+  }
 
 export interface AgentChatEntry {
   /** 遞增流水號，當 v-for key */

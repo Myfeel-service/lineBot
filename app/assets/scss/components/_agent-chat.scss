@@ -708,6 +708,66 @@
   }
 }
 
+/* ── 店家輪廓卡（`D-85` / `C-219`）：揭曉「我對你的店的認識」 ──
+   來源徽章的三種顏色要分得開——AI 猜的看不出是猜的，就等於我們在說謊。 */
+.agm-profile {
+  &__rows {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    gap: 2px 10px;
+    margin: 4px 0 0;
+
+    dt,
+    dd {
+      margin: 0;
+      min-width: 0;
+      font-size: 12.5px;
+      line-height: 1.7;
+    }
+
+    dt { color: var(--el-text-color-secondary); }
+
+    dd {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+  }
+
+  &__val {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--el-text-color-primary);
+    word-break: break-word;
+
+    &.is-empty { color: var(--el-text-color-secondary); }
+  }
+
+  &__src {
+    flex: none;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.8;
+    padding: 0 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+
+    &.is-owner { background: var(--el-color-success-light-9); color: var(--el-color-success-dark-2); }
+    &.is-ai { background: var(--el-color-warning-light-9); color: var(--el-color-warning-dark-2); }
+    &.is-conversation { background: var(--el-color-primary-light-9); color: var(--el-color-primary-dark-2); }
+    &.is-none { background: var(--el-fill-color-light); color: var(--el-text-color-secondary); }
+  }
+
+  &__note {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+    word-break: break-word;
+  }
+}
+
 /* ── 輸入區（AgentAskDock） ── */
 .agd {
   border-top: 1px solid var(--el-border-color-lighter);

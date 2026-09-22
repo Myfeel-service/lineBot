@@ -15,6 +15,10 @@ export type SetupCapabilityId =
   | 'aiEnabled' // 已開啟 AI 自動回覆
   | 'knowledgeReady' // 知識庫已有內容
   | 'scriptReady' // 已啟用至少一支客服腳本
+  // MiniMe 認識這家店了沒（`D-85`）。⛔ 口徑是「精靈那五題裡商家**親自**答了三題以上」，
+  // 不是「有沒有這份文件」——AI 讀網站也會建出文件，用存在與否判定等於一題沒答也算認識。
+  // 選配項：缺它不擋上線，但它缺著的時候，節慶提醒只講得出通用句。
+  | 'profileReady'
   | 'firstMessageReceived' // 曾收到任一則客人傳來的訊息（開通引導的「見證時刻」；只做訊號，不進健康卡註冊表——它沒有側欄入口可指）
 
 /**
@@ -27,6 +31,7 @@ export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
   aiEnabled: '開啟 AI 自動回覆',
   knowledgeReady: '建立知識庫',
   scriptReady: '啟用一條客服流程',
+  profileReady: '讓 MiniMe 認識你的店',
   firstMessageReceived: '收到第一則客人訊息',
 }
 

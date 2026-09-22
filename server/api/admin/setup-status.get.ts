@@ -6,6 +6,8 @@ import { hasReceivedPeerMessage } from '~~/server/utils/conversation-peer-activi
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { checkLineWebhook } from '~~/server/utils/workspace-alerts'
+import { getStoreProfile } from '~~/server/utils/store-profile'
+import { isStoreProfileReady } from '~~/shared/types/store-profile'
 
 /**
  * GET /api/admin/setup-status?workspaceId=...
@@ -36,7 +38,7 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
   // lineConnected / liffReady 共用同一次文件讀取（兩個訊號、一次 read）
   const workspaceSnap = db.collection('workspaces').doc(wid).get()
 
-  const [lineConnected, liffReady, aiEnabled, knowledgeReady, scriptReady, firstMessageReceived] = await Promise.all([
+  const [lineConnected, liffReady, aiEnabled, knowledgeReady, scriptReady, profileReady, firstMessageReceived] = await Promise.all([
     // 已接 LINE。
     //
     // ── 2026-08-21 老闆拍板改口徑（`D-15`(b)）───────────────────────────────
@@ -88,6 +90,15 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
       const scripts = await loadActiveScripts(wid, db)
       return scripts.length > 0
     }),
+    // MiniMe 認識這家店了沒（`D-85`）。
+    // ⛔ 口徑不是「有沒有 storeProfiles 這份文件」——AI 讀網站也會建出文件，
+    //    用存在與否判定等於商家一題沒答也算認識，就緒度就會說謊（`D-23` 那次
+    //    `scriptReady` 七條全綠卻沒有一條是加好友，是同一種假綠燈）。
+    //    真正的口徑寫在 `isStoreProfileReady`：五題裡商家**親自**答了三題以上。
+    resolve(async () => {
+      const profile = await getStoreProfile(wid, db)
+      return isStoreProfileReady(profile)
+    }),
     // 曾收到客人訊息：lastPeerActivityAt 只在「客人真的傳了訊息」時寫入
     // （加好友的 customer_action 是 traceOnly，不會蓋這個欄位——加了好友沒開口不算）。
     // 口徑與開通引導的見證時刻共用 findLatestPeerActiveConversation，別在這裡各寫一份。
@@ -100,6 +111,7 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
     { id: 'aiEnabled', status: aiEnabled },
     { id: 'knowledgeReady', status: knowledgeReady },
     { id: 'scriptReady', status: scriptReady },
+    { id: 'profileReady', status: profileReady },
     { id: 'firstMessageReceived', status: firstMessageReceived },
   ]
 

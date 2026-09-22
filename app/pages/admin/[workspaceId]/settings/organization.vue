@@ -38,6 +38,10 @@
           </div>
         </div>
 
+        <!-- 店家輪廓（`D-85` / `C-217`）：擺在「組織與官方帳號」正下面，
+             因為它回答的是同一個問題——這個帳號是誰。⛔ 不加側欄項目。 -->
+        <AdminStoreProfileCard :workspace-id="workspaceId" :can-edit="canManageSettings" />
+
         <div v-if="planView" class="message-card ar-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -310,6 +314,7 @@ const {
   loadWorkspaceList,
   currentWorkspaceName,
   currentRole,
+  canManageSettings,
 } = useWorkspace()
 
 const currentWorkspaceRow = computed(() =>
