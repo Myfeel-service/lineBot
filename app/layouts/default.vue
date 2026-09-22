@@ -156,7 +156,7 @@
 import type { Component } from 'vue'
 import {
   Box, ChatDotRound, Connection, CreditCard, DataLine, Document, Grid, Lightning,
-  Monitor, OfficeBuilding, PriceTag, Promotion, Reading,
+  Monitor, OfficeBuilding, PieChart, PriceTag, Promotion, Reading,
   Setting, SwitchButton, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'
 
@@ -263,6 +263,12 @@ const crmNavItems = computed<NavItem[]>(() => {
     // ⛔ 叫「好友」不叫「會員」（2026-08-23 拍板）：LINE 後台自己就這樣叫，而「會員」
     // 會讓店家以為有註冊／等級。**側欄名＝指路用的名字**，週報等訊息都照它寫。
     { to: `/admin/${wid}/users`, icon: User, label: '好友' },
+    // 「好友統計」排在名單後面、標籤前面（`D-28`／`D-63` 第一、二題的建議答案）：
+    // 名字跟日常客服區第一項的「對話統計」對稱，一看就知道這區的入口在哪。
+    // ⛔ 不叫「客群分析」「標籤儀表板」：那是我們內部的講法，店家看不出它跟「好友」是一夥的。
+    // ⛔ 圖示不跟「對話統計」用同一顆（那顆是 DataLine）：側欄兩段各有一個「統計」，
+    //    圖示再一樣就只剩文字能分辨。
+    { to: `/admin/${wid}/friend-stats`, icon: PieChart, label: '好友統計' },
     { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
     { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
     { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },

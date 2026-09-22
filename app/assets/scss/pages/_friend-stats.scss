@@ -1,0 +1,123 @@
+// 好友統計（貼標分析）——`D-28` / `D-63` Phase 1。
+// 卡片外殼沿用全站既有的 .message-card / .ar-section-card / .card-section-stack，
+// 這裡只補這一頁自己的排版。
+// ⛔ 不用 :deep()：這是全域 partial，:deep() 在這裡沒有 scope 可以穿。
+
+.friend-stats {
+  // 「意圖 vs 事件」那兩欄要照**卡片**寬度換行，不是照視窗——側欄開不開會改變卡片寬度。
+  container-type: inline-size;
+
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  &__empty-title {
+    margin: 0;
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  &__empty-body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--el-text-color-regular);
+    max-width: 46em;
+  }
+
+  // 每張卡的主句：要比旁邊的說明重，但不到標題那麼重
+  &__lead {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--el-text-color-primary);
+    max-width: 52em;
+  }
+
+  // 註腳型的說明（口徑、分母、為什麼不列）。
+  // ⛔ 不用 .text-muted：那個對比度在 `D-75` 被抓過，這些句子恰恰是不能被略過的那些。
+  &__muted {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.8;
+    color: var(--el-text-color-secondary);
+    max-width: 52em;
+  }
+
+  &__summary p {
+    margin: 0 0 6px;
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--el-text-color-primary);
+    max-width: 52em;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  &__warn-list {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &__table {
+    width: 100%;
+  }
+
+  &__sub {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+
+  &__sub-title {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-regular);
+  }
+
+  &__sub-line {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.8;
+    word-break: break-word;
+  }
+
+  // 意圖 vs 事件：兩欄並排。
+  // ⭐ 並排是刻意的——`D-85` 那條「只有加起來等於母數的數字才能並排」在這裡成立：
+  //    兩邊相加就是全部的貼標筆數。
+  &__split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  &__split-col {
+    min-width: 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+  }
+
+  // 窄卡片：兩欄疊起來（`G-66` 那張表在 ≤440px 破過版，同一個教訓）
+  @container (max-width: 520px) {
+    &__split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

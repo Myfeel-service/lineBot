@@ -1,5 +1,20 @@
-import { getDb, listDocs } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+/**
+ * 客群分析報告的數字怎麼算（`D-28`／`D-63`）。
+ *
+ * ⚠️ **這支只算、不決定什麼時候算**。什麼時候算在 `server/utils/tag-report.ts`
+ *   （按需鈕＋1 小時冷卻＋存檔）。⛔ **不要再開一支「即時算」的端點**——
+ *   一趟約三四千次 Firestore 讀取，掛在會自動刷新的地方就是 08-11 讀取費暴衝重演。
+ *   （2026-09-23 把原本的 `GET /api/tag/insights` 收掉，就是為了不留那條沒有閘門的路。）
+ *
+ * **成本設計（`D-28` 的關鍵決定）**：`userTags` **只掃一趟**，人數／名單／排行／交集／
+ * 覆蓋率全部從同一批列在記憶體裡分派出去——⛔ 不要每張卡各查一次，那是同一份資料付三次錢。
+ *
+ * 索引：全部是單一等值條件（`workspaceId`）＋ 既有的 `(workspaceId, hasPending)`，
+ * ⛔ 不需要新的複合索引（2026-09-04 五支查詢已對正式庫實跑驗證）。
+ */
+
+import type { Firestore } from 'firebase-admin/firestore'
+import { listDocs } from '~~/server/utils/firebase'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
 import { PENDING_SCAN_LIMIT } from '~~/shared/tag-pending-review'
@@ -16,30 +31,10 @@ import {
   topTagIntersections,
   type UserTagRow,
 } from '~~/shared/tag-insights'
+import type { TagInsightsPayload } from '~~/shared/tag-report'
 import type { TagDoc, TagSuggestionEvent } from '~~/shared/types/tag-broadcast'
 
-/**
- * GET /api/tag/insights — 貼標分析的數字來源（`D-63`／`D-28`）
- *
- * **⛔ 這支只負責「算得對」，不負責「放在哪」**：獨立頁還是掛在好友頁頂部還沒拍板
- * （`D-63` 第一題），兩種版面吃的都是這一份 payload。
- *
- * **成本設計（`D-28` 的關鍵決定）**：`userTags` **只掃一趟**，人數／名單／排行／交集／
- * 覆蓋率全部從同一批列在記憶體裡分派出去——⛔ 不要每張卡各查一次，那是同一份資料付三次錢
- * （08-11 讀取費暴衝的形狀）。一次呼叫約等於「貼標筆數 ＋ 標籤數 ＋ 底帳筆數 ＋ 收件匣份數」
- * 的讀取量，MYFEEL 今天約三四千次。
- *
- * ⚠️ **還沒有「產生－存檔－沿用」那層**：`D-28` 拍板要按需鈕＋1 小時冷卻＋每份存檔
- * （沿用 `takeoverSummary` 模式），但那層要等版面拍板才知道包在哪裡，先不寫。
- * 在那之前**呼叫端不要放在會自動刷新的地方**。
- *
- * 索引：全部是單一等值條件（`workspaceId`）＋ 既有的 `(workspaceId, hasPending)`，
- * ⛔ 不需要新的複合索引。
- */
-export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
-  const db = getDb()
-
+export async function computeTagInsights(db: Firestore, workspaceId: string): Promise<TagInsightsPayload> {
   /**
    * ⛔ 每一段都各自 catch 並回報自己失不失敗，不要讓一段掛掉就整頁空白，
    * 也不要 catch 完回空值裝沒事——「查不到」跟「真的是零」在畫面上要講不同的話
@@ -125,7 +120,6 @@ export default defineEventHandler(async (event) => {
   }
 
   return {
-    /** ⛔ 畫面一定要讀這一段：哪幾塊算不出來、哪幾塊只算了一部分 */
     integrity: {
       failed,
       userTagsTruncated: scanTruncated,
@@ -144,13 +138,23 @@ export default defineEventHandler(async (event) => {
         .sort((a, b) => b.users - a.users),
     },
 
-    /** 卡 2：客人自己表現出來的興趣 */
-    customerExpressed: ranking.map(r => ({ ...decorate(r.tagId), users: r.users })),
+    /**
+     * 卡 2：客人身上最多的標籤。
+     *
+     * `isIntent` 的判斷依據跟 `splitEventVsIntent` 同一條（標籤自己有沒有開 AI 判斷），
+     * ⛔ 不要另外訂一套——兩處對「什麼算意圖」給不同答案，就是同一件事兩種說法。
+     */
+    customerExpressed: ranking.map((r) => {
+      const t = tags.find(x => x.id === r.tagId)
+      return {
+        ...decorate(r.tagId),
+        users: r.users,
+        isIntent: t?.aiMode === 'suggest' || t?.aiMode === 'auto',
+      }
+    }),
 
     /** 卡 2 附：兩兩交集 */
-    intersections: intersections.map(x => ({
-      a: decorate(x.a), b: decorate(x.b), users: x.users,
-    })),
+    intersections: intersections.map(x => ({ a: decorate(x.a), b: decorate(x.b), users: x.users })),
 
     /**
      * 卡 3：這些標籤在回答什麼。
@@ -174,5 +178,19 @@ export default defineEventHandler(async (event) => {
 
     /** 卡 6：AI 貼標的成績 */
     suggestions: aggregateSuggestionOutcomes(logRows),
+
+    /**
+     * 排行那幾顆標籤「在講什麼」——只給總結用，不畫在卡上。
+     * ⛔ 只帶排行內的那幾顆：全部標籤的說明塞進 prompt 會把成本與雜訊一起放大。
+     */
+    tagNotes: ranking.map((r) => {
+      const t = tags.find(x => x.id === r.tagId)
+      return {
+        tagId: r.tagId,
+        name: t?.name ?? '(已刪除的標籤)',
+        description: String(t?.description ?? ''),
+        aiCriteria: String(t?.aiCriteria ?? ''),
+      }
+    }).filter(n => n.description || n.aiCriteria),
   }
-})
+}
