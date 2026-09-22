@@ -457,8 +457,8 @@ async function checkModuleUsage() {
     await gotoPage(page, 'flow', '.split-list-item, .admin-split-list button')
 
     const before = await page.evaluate(() =>
-      [...document.querySelectorAll('.flow-usage-strip')].filter(e => e.getBoundingClientRect().width > 0).length)
-    if (before !== 0) fail(`機器人模組：還沒選任何模組就有 ${before} 條「會在這些時候發出」（對照組不成立）`)
+      [...document.querySelectorAll('.flow-usage-link')].filter(e => e.getBoundingClientRect().width > 0).length)
+    if (before !== 0) fail(`機器人模組：還沒選任何模組就有 ${before} 句「客人會從哪裡走到這裡」（對照組不成立）`)
     else pass('機器人模組：沒選模組時不會出現使用情形（對照組成立）')
 
     // 左邊清單點第一個模組
@@ -473,79 +473,101 @@ async function checkModuleUsage() {
     await sleep(1500)
 
     /**
-     * ⛔ **等引用查完再量**：查詢中那一行也掛 `--muted`，量到它會被當成「沒有人用」，
-     * 於是斷言「有沒有講後果」就會誤報。實際踩過一次——同一份程式碼忽紅忽綠。
+     * ⛔ **等引用查完再量**：載入中那句話會被當成「對不上三態」而誤報。
+     * ⛔ 等待條件要綁**狀態 class 不是文案**——第一版綁「正在查有哪些地方用到它」那句，
+     *    文案一改（`C-227` 改成「客人會從哪裡走到這裡」）守門就又量在載入中了。
+     *    同一種時序漏洞已經中過兩次。
      */
     try {
       await page.waitForFunction(
-        () => !document.body.innerText.includes('正在查有哪些地方用到它'),
+        () => !document.querySelector('.flow-usage-link--loading'),
         { timeout: 30_000 },
       )
     }
     catch {
-      fail('機器人模組：等了 30 秒「正在查有哪些地方用到它」還沒結束＝這一關這次沒驗到')
+      fail('機器人模組：等了 30 秒引用還沒查完＝這一關這次沒驗到')
       return
     }
     await sleep(500)
 
+    /**
+     * `C-227` 第二輪：它**不再是一塊面板**，而是接在「共 N 則回覆訊息」那行灰字後面的一句話，
+     * 細節走浮層。⛔ 這一關要順便釘住「工具列裡不可以再長出面板」。
+     */
     const strip = await page.evaluate(() => {
-      const el = [...document.querySelectorAll('.flow-usage-strip')].find(e => e.getBoundingClientRect().width > 0)
-      if (!el) return null
+      const link = [...document.querySelectorAll('.flow-usage-link')].find(e => e.getBoundingClientRect().width > 0)
+      if (!link) return null
+      const caption = link.closest('.admin-subtext')
       return {
-        title: el.querySelector('.flow-usage-strip__title')?.textContent?.trim() ?? '',
-        text: el.innerText.replace(/\s+/g, ' ').trim(),
-        groups: [...el.querySelectorAll('.config-refs__group')].length,
-        // `D-23` 之後預設收合：有人用時先給一句摘要，名字收在「看是哪些」後面
-        summary: el.querySelector('.config-refs__summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-        muted: !!el.querySelector('.config-refs__line--muted'),
-        warn: !!el.querySelector('.config-refs__line--warn'),
+        text: link.textContent.replace(/\s+/g, ' ').trim(),
+        none: link.className.includes('flow-usage-link--none'),
+        // ⛔ 必須長在 caption 那行灰字裡，不是自己一塊
+        inCaption: !!caption,
+        captionText: caption ? caption.innerText.replace(/\s+/g, ' ').trim() : '',
+        panels: [...document.querySelectorAll('.flow-usage-strip')].length,
+        /**
+         * ⛔ 要數「看得見的」：el-popover 的內容會先渲染進 DOM 只是藏著，
+         * 直接數 `.config-refs__group` 會把浮層裡那份算進來而誤報（本輪實際紅過一次）。
+         */
+        groupsBefore: [...document.querySelectorAll('.config-refs__group')]
+          .filter(e => e.getBoundingClientRect().width > 0).length,
       }
     })
-    if (!strip) { fail(`機器人模組：選了「${picked}」之後看不到「會在這些時候發出」`); return }
-    pass(`機器人模組：選了「${picked}」，使用情形有出現`)
+    if (!strip) { fail(`機器人模組：選了「${picked}」之後看不到「客人會從哪裡走到這裡」`); return }
+    pass(`機器人模組：選了「${picked}」，caption 後面出現「${strip.text}」`)
 
-    // ⛔ 三態：有引用／真的沒有／這次查不到，三者必須長得不一樣
-    if (strip.warn) {
-      pass('機器人模組：這次有幾類查不到，畫面有照實說（沒有假裝成「沒有人用」）')
+    if (strip.panels) fail('機器人模組：工具列裡又長出面板了（`.flow-usage-strip`）——那正是老闆兩次說「醜」的東西')
+    else pass('機器人模組：⛔ 工具列裡沒有面板，只是一句話')
+    if (!strip.inCaption) fail('機器人模組：那句話沒有接在「共 N 則回覆訊息」那行灰字裡')
+    else pass(`機器人模組：接在灰字那行（${strip.captionText.slice(0, 40)}）`)
+    if (strip.groupsBefore) fail('機器人模組：還沒點就把名字攤開了——那是上一版的字牆')
+    else pass('機器人模組：⛔ 沒點之前不攤開任何名字')
+
+    /**
+     * ⛔ 三態：有入口／真的沒有／這次查不到，三句話必須長得不一樣。
+     * 沒有入口那一種還要**變色**（琥珀）——它是唯一需要人動手的狀態。
+     */
+    if (strip.text.includes('查不到')) {
+      pass('機器人模組：這次查不到時照實說（沒有假裝成「沒有人用」）')
     }
-    else if (strip.summary) {
-      /**
-       * ⛔ 有人用時**預設不可以把名字全攤開**：「真人客服」被 50 個模組指到，
-       * 全攤開會變成一面看不懂的字牆（2026-09-22 老闆實際截圖回報）。
-       */
-      if (strip.groups > 0) {
-        fail('機器人模組：一打開就把引用的名字全攤開了——預設應該只給一句摘要，名字收在「看是哪些」後面')
+    else if (strip.none) {
+      if (!strip.text.includes('客人走不到這裡')) {
+        fail(`機器人模組：沒有入口時那句話沒講後果（拿到「${strip.text}」）`)
       }
       else {
-        pass(`機器人模組：有人用時先給一句話（${strip.summary.slice(0, 40)}）`)
-        // 按「看是哪些」才展開名字——收合得起來也要展得開，不然等於把資訊藏掉
-        const opened = await page.evaluate(() => {
-          const btn = document.querySelector('.flow-usage-strip .config-refs__toggle')
-          if (!btn) return false
-          btn.click()
-          return true
-        })
-        if (!opened) { fail('機器人模組：摘要旁沒有「看是哪些」，名字就永遠看不到了') }
-        else {
-          await sleep(600)
-          const groups = await page.evaluate(() =>
-            [...document.querySelectorAll('.flow-usage-strip .config-refs__group')].length)
-          if (!groups) fail('機器人模組：按了「看是哪些」沒有展開任何東西')
-          else pass(`機器人模組：按「看是哪些」展得開（${groups} 類）`)
-        }
+        pass(`機器人模組：沒有入口時講後果且變色（「${strip.text}」）`)
       }
     }
-    else if (strip.muted) {
-      if (!strip.text.includes('客人現在走不到這裡')) {
-        fail('機器人模組：沒有人用的時候只說了「沒有」，沒有講後果——那正是最該講清楚的一種')
-      }
-      else {
-        pass('機器人模組：沒有人用時有講後果（客人走不到）並給出口')
-      }
+    else if (/\d+\s*個地方/.test(strip.text)) {
+      pass(`機器人模組：有入口時一句話講完（「${strip.text}」）`)
     }
     else {
-      fail('機器人模組：使用情形那一條是空的（三態都沒對上）')
+      fail(`機器人模組：那句話對不上三態（拿到「${strip.text}」）`)
     }
+
+    // 點下去要開浮層，而且**不可以把版面推開**（那是老闆說醜的主因之一）
+    const heightBefore = await page.evaluate(() =>
+      Math.round(document.querySelector('.split-editor-header')?.getBoundingClientRect().height ?? 0))
+    await page.evaluate(() => {
+      const link = [...document.querySelectorAll('.flow-usage-link')].find(e => e.getBoundingClientRect().width > 0)
+      link?.click()
+    })
+    await sleep(900)
+    const after = await page.evaluate(() => ({
+      groups: [...document.querySelectorAll('.el-popper .config-refs__group')].filter(e => e.getBoundingClientRect().width > 0).length,
+      popperVisible: [...document.querySelectorAll('.flow-usage-popper')].some(e => e.getBoundingClientRect().width > 0),
+      headerHeight: Math.round(document.querySelector('.split-editor-header')?.getBoundingClientRect().height ?? 0),
+    }))
+    if (!after.popperVisible) fail('機器人模組：點了那句話沒有開出浮層')
+    else pass(`機器人模組：點了開出浮層（${after.groups} 類入口）`)
+    if (heightBefore && after.headerHeight > heightBefore + 2) {
+      fail(`機器人模組：展開把工具列推高了（${heightBefore}px → ${after.headerHeight}px）——那正是老闆說醜的原因`)
+    }
+    else {
+      pass(`機器人模組：展開不動版面（工具列仍是 ${after.headerHeight}px）`)
+    }
+    await page.keyboard.press('Escape')
+    await sleep(300)
   }
   finally {
     await ctx.close()

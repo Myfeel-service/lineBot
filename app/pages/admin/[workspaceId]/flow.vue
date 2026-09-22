@@ -185,29 +185,50 @@
         placeholder="請輸入模組名稱..."
         :caption="`共 ${form.messages.length} 則回覆訊息`"
         :is-creating="isCreating"
-      />
-      <!--
-        C-209：這裡原本只有一行灰字「關鍵字觸發請到「自動回應」設定」——
-        它只講了七條入口裡的一條，而且不能點。模組自己沒有「什麼時候發出」這個欄位，
-        那件事分散在七個別的頁面，所以這裡改成**反查**：真的去看有誰指向它。
-        ⛔ 0 個的時候是最重要的那一種（建好了、永遠不會被叫出來，畫面上零線索），
-        所以空狀態要講後果並給出口，不是留白。
-      -->
-      <div v-if="!isCreating && selectedId" class="flow-usage-strip" data-tour="flow-usage">
+      >
         <!--
-          ⛔ 標題從「這個模組會在這些時候發出」改成講**客人的動線**（2026-09-22 老闆
-          「我也看不太懂他想表達什麼」）。原本那句是站在模組的角度講的，
-          而使用者腦中的問題是「客人是從哪裡走進來的」。
+          C-209／C-227：「客人會從哪裡走到這個模組」。
+          ⛔ **它是一句補充說明，不是一塊面板**——第一版做成有框的灰色區塊擺在工具列裡，
+             跟「儲存變更」搶版面、展開還把整條推高（老闆兩次回報「還是很醜」）。
+             現在接在既有的「共 N 則回覆訊息」那行灰字後面，細節走浮層，**完全不動版面**。
+          ⛔ 0 個的時候是最重要的那一種（建好了、永遠不會被叫出來，畫面上零線索），
+             所以它要變色、要講後果，不是安靜地混在灰字裡。
         -->
-        <p class="flow-usage-strip__title">客人會從哪裡走到這個模組</p>
-        <AdminConfigRefsList
-          :refs="moduleUsageRefs"
-          :failed-kinds="configRefs.failedKinds"
-          :workspace-id="workspaceId"
-          :loading="configRefsLoading"
-          empty-text="客人現在走不到這裡——沒有任何地方會叫出這個模組，存檔了也一樣。到「自動回應」設一組關鍵字（或用最上面那一列「客人加好友時」），也可以在圖文選單、活動上指過來。"
-        />
-      </div>
+        <template #caption-extra>
+          <template v-if="!isCreating && selectedId">
+            <span class="flow-usage-sep">·</span>
+            <el-popover
+              placement="bottom-start"
+              :width="460"
+              trigger="click"
+              popper-class="flow-usage-popper"
+            >
+              <template #reference>
+                <button
+                  type="button"
+                  :class="[
+                    'flow-usage-link',
+                    { 'flow-usage-link--none': moduleUsageNone },
+                    // ⛔ 給守門員一個**穩定的**載入訊號：上一版用「正在查…」那句文案當等待條件，
+                    //    文案一改守門就量在載入中（同一種時序漏洞已經中過兩次）。
+                    { 'flow-usage-link--loading': configRefsLoading },
+                  ]"
+                  data-tour="flow-usage"
+                >{{ moduleUsageText }}</button>
+              </template>
+              <AdminConfigRefsList
+                :refs="moduleUsageRefs"
+                :failed-kinds="configRefs.failedKinds"
+                :workspace-id="workspaceId"
+                :loading="configRefsLoading"
+                default-expanded
+                :show-summary="false"
+                empty-text="沒有任何地方會叫出這個模組，存檔了也一樣。到「自動回應」設一組關鍵字（或用最上面那一列「客人加好友時」），也可以在圖文選單、活動上指過來。"
+              />
+            </el-popover>
+          </template>
+        </template>
+      </AdminEditorHeaderTitle>
       <!--
         ⛔ 只有系統模組才掛標籤（歡迎／真人客服）——自建模組沒有類型可言，別再加回來。
         這裡原本有一顆「模組類型」下拉（機器人流程／系統通知），2026-09-21 拿掉：
@@ -1235,6 +1256,21 @@ async function loadConfigRefs(fresh = false) {
 const moduleUsageRefs = computed(() =>
   selectedId.value ? (configRefs.value.modules[selectedId.value] ?? []) : [],
 )
+/** ⛔ 「這次查不到」不可以講成「沒有人用」——那句話會害人把還在服務客人的模組刪掉 */
+const moduleUsageUnknown = computed(() =>
+  configRefsLoading.value || configRefs.value.failedKinds.length > 0,
+)
+const moduleUsageNone = computed(() =>
+  !moduleUsageUnknown.value && moduleUsageRefs.value.length === 0,
+)
+/** 灰字那一行要接的那句話；點下去才展開細節（浮層，不動版面） */
+const moduleUsageText = computed(() => {
+  if (configRefsLoading.value) return '正在查客人從哪裡走進來…'
+  if (configRefs.value.failedKinds.length) return '⚠️ 這次查不到客人從哪裡走進來'
+  const n = moduleUsageRefs.value.length
+  if (!n) return '⚠️ 客人走不到這裡'
+  return `客人會從 ${n} 個地方走到這裡`
+})
 
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)

@@ -31,7 +31,7 @@
         名字是「我要去修改哪一個」時才需要，所以收在「看是哪些」後面。
       -->
       <template v-if="refs.length">
-        <p class="config-refs__summary">
+        <p v-if="showSummary" class="config-refs__summary">
           有 <strong>{{ refs.length }}</strong> 個地方會用到它：{{ summaryText }}。
           <button type="button" class="config-refs__toggle" @click="expanded = !expanded">
             {{ expanded ? '收起來' : '看是哪些' }}
@@ -40,11 +40,13 @@
 
         <ul v-if="expanded" class="config-refs__groups">
           <li v-for="group in groups" :key="group.kind" class="config-refs__group">
-            <NuxtLink :to="group.path" class="ar-link config-refs__kind">
-              {{ group.label }}
-            </NuxtLink>
-            <span class="config-refs__hint">（{{ group.hint }}）</span>
-            <span class="config-refs__names">
+            <div class="config-refs__group-head">
+              <NuxtLink :to="group.path" class="ar-link config-refs__kind">
+                {{ group.label }}
+              </NuxtLink>
+              <span class="config-refs__hint">{{ group.hint }}</span>
+            </div>
+            <div class="config-refs__names">
               <span
                 v-for="ref in group.shown"
                 :key="ref.kind + ref.id"
@@ -54,7 +56,7 @@
               <span v-if="group.hiddenCount" class="config-refs__more">
                 還有 {{ group.hiddenCount }} 個
               </span>
-            </span>
+            </div>
           </li>
         </ul>
       </template>
@@ -87,11 +89,17 @@ const props = withDefaults(defineProps<{
    *    再叫他按一次「看是哪些」等於白開一個視窗。
    */
   defaultExpanded?: boolean
+  /**
+   * 要不要印那句「有 N 個地方會用到它…」。
+   * ⛔ 放在浮層裡時給 `false`——**開浮層的那顆按鈕本身就是那句話**，再印一次是重複。
+   */
+  showSummary?: boolean
 }>(), {
   failedKinds: () => [],
   loading: false,
   emptyText: '目前沒有任何地方用到它。',
   defaultExpanded: false,
+  showSummary: true,
 })
 
 /** 顯示順序刻意固定：先講客人最常走到的那幾條路 */

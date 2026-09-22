@@ -66,13 +66,22 @@
   gap: 0.3rem;
 }
 
+/* 一類一段：第一行講「哪一種入口」，名字接在後面當一段文字 */
 .config-refs__group {
+  min-width: 0;
+  padding-bottom: 0.35rem;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
+  }
+}
+
+.config-refs__group-head {
+  margin: 0 0 0.15rem;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.3rem;
-  /* ⛔ 可壓縮的欄要留 min-width: 0，名字很長時才不會把整個編輯器撐開 */
-  min-width: 0;
+  gap: 0.4rem;
 }
 
 .config-refs__kind {
@@ -82,32 +91,28 @@
 
 .config-refs__hint {
   color: var(--el-text-color-secondary, #909399);
-  white-space: nowrap;
 }
 
 .config-refs__names {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
+  margin: 0;
   min-width: 0;
+  line-height: 1.75;
 }
 
+/* ⛔ 不要做成一顆一顆的灰色方塊：50 個並排會糊成一片，而且看起來像可點卻不能點。
+   改成用「、」分隔的一段文字——它本來就只是一份名單。 */
 .config-refs__name {
-  display: inline-block;
-  max-width: 18rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-  padding: 0.05rem 0.4rem;
-  border-radius: 4px;
-  background: var(--el-fill-color-light, #f0f2f5);
+  display: inline;
   color: var(--el-text-color-regular, #606266);
+
+  &:not(:last-child)::after {
+    content: '、';
+    color: var(--el-text-color-placeholder, #c0c4cc);
+  }
 }
 
 .config-refs__name--inactive {
-  opacity: 0.65;
-  font-style: normal;
+  color: var(--el-text-color-secondary, #909399);
 }
 
 /* 標籤頁「用在哪」視窗底下那句提醒 */
@@ -120,18 +125,44 @@
   color: var(--el-text-color-secondary, #909399);
 }
 
-/* 模組編輯器頂端那一條 */
-.flow-usage-strip {
-  margin: 0.35rem 0 0;
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 6px;
-  background: var(--el-fill-color-lighter, #f5f7fa);
+/* ══════════════════════════════════════════════════════════════
+   模組編輯器：「客人會從哪裡走到這裡」
+
+   ⛔ 這裡**沒有面板**。第一版做成有框的灰色區塊擺進工具列，跟「儲存變更」搶版面、
+      展開還把整條推高（老闆兩次回報「還是很醜」）。它就是接在
+      「共 N 則回覆訊息」後面的一句補充說明，細節走浮層、不動版面。
+   ══════════════════════════════════════════════════════════════ */
+
+.flow-usage-sep {
+  margin: 0 0.4rem;
+  color: var(--el-text-color-placeholder, #c0c4cc);
 }
 
-.flow-usage-strip__title {
-  margin: 0 0 0.3rem;
-  font-size: 0.78rem;
+.flow-usage-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* 跟著 caption 那行灰字的大小，不要自己變大 */
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--el-color-primary, #409eff);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* 沒有任何入口＝客人走不到，這一種要看得見（琥珀，不是紅：東西沒壞，是還沒接上） */
+.flow-usage-link--none {
+  color: #a16207;
   font-weight: 600;
-  color: var(--el-text-color-primary, #303133);
+}
+
+/* 浮層裡不要再有外框與底色（外面那層 popper 本來就有） */
+.flow-usage-popper {
+  .config-refs {
+    max-height: 18rem;
+    overflow-y: auto;
+  }
 }
