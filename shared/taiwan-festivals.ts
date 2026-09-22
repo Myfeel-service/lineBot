@@ -169,9 +169,15 @@ function monthDay(date: string): string {
  *   3 天前：講「現在就去排推播」（順手帶到自家功能）
  *   1 天前：講「最後確認」清單
  */
-export function festivalReminderText(r: FestivalReminder): string {
+/**
+ * @param angleOverride 客製化的切角（`C-223`）。給了就取代通用的 `angle`；
+ *   ⛔ 傳空字串或不傳＝照舊用通用句——**客製不出來時整段不可以消失**，
+ *   商家會以為這個節日系統漏掉了。
+ */
+export function festivalReminderText(r: FestivalReminder, angleOverride = ''): string {
   const when = dayPhrase(r.daysUntil)
-  const { name, angle, longWeekend } = r.festival
+  const { name, longWeekend } = r.festival
+  const angle = String(angleOverride ?? '').trim() || r.festival.angle
   switch (r.milestone) {
     case 7:
       return `${when}就是${name}（${monthDay(r.festival.date)}）。${angle}，建議這幾天先把檔期優惠、贈品和圖文素材準備好。`

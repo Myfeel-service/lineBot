@@ -46,6 +46,8 @@ import {
 import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
+import { getStoreProfile } from './store-profile'
+import { tailorFestivalAngle } from './festival-tailor'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { BOT_SESSION_MAX_IDLE_DAYS, HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
@@ -1247,6 +1249,23 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 純 Firestore 窄查詢,不打 LINE/LIFF 外部 API)。
     // ⛔刻意只搭已經要發的摘要,不讓黃級異常單獨觸發——單獨觸發得每輪對全租戶跑探針,
     // 成本形狀跟 08-11 讀取費暴衝同款。查掛了就當沒有,不准拖垮摘要本體。
+    /**
+     * 節慶提醒客製化（`C-223`＝`D-21` Phase 2）。
+     *
+     * ⛔ **只在里程碑 7 那天做**：那是「該推什麼」有意義的時刻（`festivalReminderText`
+     *    只有 7 天那一句用得到 `angle`）；3 天與 1 天講的是執行，客製了也放不進去，
+     *    算下來每個節日每個帳號只花一次 LLM。
+     * ⛔ **失敗一律回 `null` 退回通用句**：客製不出來時整段消失，商家會以為
+     *    這個節日系統漏掉了——那比沒客製糟得多。
+     */
+    let tailoredAngle = ''
+    if (festival && festival.milestone === 7) {
+      tailoredAngle = await getStoreProfile(ws, db)
+        .then(p => tailorFestivalAngle(ws, p, festival.festival, festival.daysUntil))
+        .then(v => v ?? '')
+        .catch(() => '')
+    }
+
     const digestWarnings = await collectWorkspaceAlerts(db, ws, { canSettings: false, canOperate: true })
       .then(async (items) => {
         const active = new Set(items.filter(a => a.state === 'active').map(a => a.id))
@@ -1277,7 +1296,7 @@ export async function dailyBacklogDigest(db: Firestore) {
         warnings: digestWarnings.length,
         topWarningLabel: digestWarnings.length ? ALERT_LABELS[digestWarnings[0]!] : '',
       },
-      festivalText: festival ? festivalReminderText(festival) : '',
+      festivalText: festival ? festivalReminderText(festival, tailoredAngle) : '',
       weeklyLines: insights ?? [],
       unknownNotes,
     })
