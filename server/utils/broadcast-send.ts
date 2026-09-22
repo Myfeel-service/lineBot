@@ -8,6 +8,7 @@ import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 import { parseTriggerModuleData } from '~~/shared/action-schema'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
+import { addTagsToUser } from './tagging'
 import { getWorkspacePlan } from './billing'
 import { planAllowsBroadcast, type BroadcastTier } from '~~/shared/billing/plans'
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
@@ -218,6 +219,48 @@ export async function executeBroadcastSend(
     }).catch((e) => {
       console.error('[broadcast/send] 發送結果 checkpoint 寫入失敗（訊息已送出）:', e)
     })
+
+    // ── 發完幫「真的收到的人」貼標（`C-213`，選填）────────────────────
+    //
+    // ⛔ **放在 checkpoint 之後**：狀態與人數此刻已經寫死，這一段再怎麼掛都不會讓推播
+    //    卡在「發送中」（08-13 那次卡死的教訓）。
+    // ⛔ **只貼給送成功的人**：失敗的多半是封鎖了官方帳號，貼上去是一句謊話。
+    // ⛔ **結果要寫回文件**，不可以只寫 log——貼失敗時畫面要講得出「訊息發出去了、
+    //    但記號沒貼完」，否則之後照那顆標籤挑名單會漏人而且查不出為什麼。
+    const completionTagIds = Array.isArray((data as any).completionTagIds)
+      ? ((data as any).completionTagIds as string[]).map(String).filter(Boolean)
+      : []
+    if (completionTagIds.length) {
+      const failedForTagging = new Set(failedIds)
+      const succeeded = recipients.filter(r => !failedForTagging.has(r.lineUserId))
+      let taggedCount = 0
+      let tagFailedCount = 0
+      // 分小批跑，不要一次丟幾百個 promise 出去（發送主線已經跑完，但這裡仍在同一個函式裡）
+      const CHUNK = 20
+      for (let i = 0; i < succeeded.length; i += CHUNK) {
+        const chunk = succeeded.slice(i, i + CHUNK)
+        const results = await Promise.allSettled(chunk.map(r =>
+          // ⛔ 走既有的 addTagsToUser，不要另寫一份寫入——那支還維護命中次數等欄位
+          addTagsToUser(r.docId, completionTagIds, 'system', `broadcast:${id}`, workspaceId),
+        ))
+        for (const res of results) {
+          if (res.status === 'fulfilled') taggedCount += 1
+          else tagFailedCount += 1
+        }
+      }
+      if (tagFailedCount) {
+        console.error(`[broadcast/send] 發完貼標有 ${tagFailedCount} 位失敗（訊息已送出）`)
+      }
+      await ref.update({
+        completionTagOutcome: {
+          taggedCount,
+          failedCount: tagFailedCount,
+          at: FieldValue.serverTimestamp(),
+        },
+      }).catch((e) => {
+        console.error('[broadcast/send] 貼標結果寫入失敗:', e)
+      })
+    }
 
     // ── 只記「沒收到的人」到 deliveries ───────────────────────────────
     // 成功者不逐筆記錄：受眾名單已存在 audienceSnapshot，成功＝名單減掉失敗名單，

@@ -38,7 +38,12 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 回傳 JSON(不要多餘文字):{ "name": string, "rootNodeId": string, "nodes": [...] }
 
 【可用的節點,只准用這 5 種】
-1. 觸發(起點,恰好一個):{ "id", "type": "trigger", "matchMode": "semantic", "keywords": ["核心詞×2~4"], "examples": ["客人會講的話×3~5句"], "priority": 50, "next": "下一個節點id" }
+1. 觸發(起點,恰好一個),兩種:
+   1a 客人「說了什麼」才啟動(預設):{ "id", "type": "trigger", "matchMode": "semantic", "keywords": ["核心詞×2~4"], "examples": ["客人會講的話×3~5句"], "priority": 50, "next": "下一個節點id" }
+   1b 客人「加好友」那一刻啟動:{ "id", "type": "trigger", "triggerEvent": "follow", "matchMode": "keyword", "keywords": [], "examples": [], "priority": 50, "next": "下一個節點id" }
+      ⛔ 只有當使用者的描述是「加好友時/加入好友/剛加我/新朋友/歡迎新客人」這一類**時機**時才用 1b。
+      ⛔ 用 1b 時 keywords 與 examples **一律留空陣列**——加好友這件事本身就是條件,沒有文字可比對;
+         硬填關鍵字會讓這條流程看起來像是要比對訊息,而它根本不看訊息。
 2. 收集(問一題並記住答案):{ "id", "type": "collect", "question": "問句", "fieldName": "英文snake_case代號", "format": "any|phone|email|number|alphanumeric|alphanumericSymbol", "reaskText": "格式不符時的重問話術(format非any才給)", "skipLabel": "跳過按鈕文字≤20字(選填)", "skipNext": "按跳過要走的節點id(與skipLabel成對)", "next": "..." }
 3. 快速回覆(給按鈕讓客人選,每顆按鈕走不同路):{ "id", "type": "quickReply", "question": "問句", "options": [{ "label": "按鈕文字≤20字", "next": "..." }] }
 4. 存進客人資料(把收集到的答案長期留存):{ "id", "type": "saveLead", "fieldMap": [{ "fromField": "collect的fieldName", "attrKey": "中文屬性名" }], "next": "..." }
@@ -50,7 +55,8 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
   改回:{ "error": "一句話說明為什麼做不到＋建議改用什麼" }
 - ⛔ error 裡的建議只能指向**系統真的有**的東西:圖文選單、加好友歡迎訊息、AI 設定裡的勿擾時段、
   AI 知識庫(常見問答讓 AI 自己回答)、或「把需求改成先收資料再轉真人的流程」。不要編造功能名稱。
-  例:想做「客人打招呼就出選單」→ 建議用圖文選單或加好友歡迎訊息;非上班時間自動回覆 → 勿擾時段。
+  例:想做「客人打招呼就出選單」→ 建議用圖文選單;非上班時間自動回覆 → 勿擾時段。
+  ⛔ **不要再把「加好友歡迎訊息」當成做不到的替代建議**——它就是上面的 1b,直接生出來。
 - ⛔ 但「查詢類」需求(查訂單、查物流、查維修進度)是標準**可做**流程:先收資料、最後轉真人由專人查,
   照常生成,不要回 error。
 - 描述裡附帶做不到的小動作(例:貼標籤)→ 略過那個動作、照常生成其餘流程,不要回 error。
@@ -85,7 +91,11 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 【範例二】
 輸入:活動報名:收姓名和電話,存進名單,最後跟客人說會再聯絡
-輸出:{"name":"活動報名","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":["報名","參加"],"examples":["我要報名","想參加活動","報名活動"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的~請問您的大名?","fieldName":"name","format":"any","next":"c2"},{"id":"c2","type":"collect","question":"請留下方便聯絡的電話 📞","fieldName":"phone","format":"phone","reaskText":"電話格式好像不太對,可以再確認一次嗎?","next":"s1"},{"id":"s1","type":"saveLead","fieldMap":[{"fromField":"name","attrKey":"姓名"},{"fromField":"phone","attrKey":"電話"}],"next":"r1"},{"id":"r1","type":"reply","text":"{{name}} 您好,已收到您的報名,我們會盡快與您聯繫 🙌","thenHandoff":false}]}`
+輸出:{"name":"活動報名","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":["報名","參加"],"examples":["我要報名","想參加活動","報名活動"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的~請問您的大名?","fieldName":"name","format":"any","next":"c2"},{"id":"c2","type":"collect","question":"請留下方便聯絡的電話 📞","fieldName":"phone","format":"phone","reaskText":"電話格式好像不太對,可以再確認一次嗎?","next":"s1"},{"id":"s1","type":"saveLead","fieldMap":[{"fromField":"name","attrKey":"姓名"},{"fromField":"phone","attrKey":"電話"}],"next":"r1"},{"id":"r1","type":"reply","text":"{{name}} 您好,已收到您的報名,我們會盡快與您聯繫 🙌","thenHandoff":false}]}
+
+【範例三:加好友那一刻(事件型觸發)】
+輸入:客人加好友的時候歡迎他,順便問他想看哪一類商品
+輸出:{"name":"加好友歡迎","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","triggerEvent":"follow","matchMode":"keyword","keywords":[],"examples":[],"priority":50,"next":"q1"},{"id":"q1","type":"quickReply","question":"{{displayName}} 您好,謝謝加入 🎉 想先看哪一類?","options":[{"label":"新品","next":"r1"},{"label":"優惠","next":"r1"}]},{"id":"r1","type":"reply","text":"好的!有任何問題都可以直接在這裡問我 🙂","thenHandoff":false}]}`
 
 interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown; error?: unknown }
 

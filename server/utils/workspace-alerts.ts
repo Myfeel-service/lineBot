@@ -8,7 +8,8 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark } from './ai-feedback-events'
 import { getQuotaAnswered } from './ai-usage'
-import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { SCRIPTS_COLLECTION, loadActiveScripts } from './ai-scripts'
+import { scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { checkScriptHealth } from './script-health'
 import { TAG_DISCOVERY_COLLECTION } from './tag-discovery'
@@ -735,6 +736,20 @@ export async function collectWorkspaceAlerts(
           const { unreachable } = await checkScriptHealth(db, wid, aiSettings.sensitiveTopics ?? [])
           if (!unreachable.length) return { active: false }
           return { active: true, count: unreachable.length, detail: unreachable[0]!.detail }
+        }),
+        /**
+         * `D-23`A：還沒有人歡迎新加好友的人。
+         *
+         * ⚠️ **只在開通完成之後才問**：還沒接上 LINE 的帳號連客人都進不來，
+         *    提醒他這個純粹是噪音（同 TutorialAgent 的節慶提醒那條規則）。
+         * ⛔ 判斷用「**啟用中的**加好友腳本」——設了但停用等於沒有人招呼，
+         *    這一點跟自動回應那一列的三態是同一把尺（`shared/follow-welcome.ts`）。
+         */
+        probe('followWelcomeMissing', async () => {
+          // ⛔ 參數順序是 (workspaceId, db)，不是 (db, workspaceId)
+          const scripts = await loadActiveScripts(wid, db)
+          const hasFollow = scripts.some(s => scriptTriggerEvent(s) === 'follow')
+          return hasFollow ? { active: false } : { active: true }
         }),
         probe('scriptDeadEnd', async () => {
           const aiSettings = await aiSettingsPromise!

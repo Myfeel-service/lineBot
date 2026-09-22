@@ -358,6 +358,23 @@ const ALERTS: AlertDefinition[] = [
     anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的黃色狀態列會講它為什麼輪不到、該調哪個設定。' },
   },
   {
+    /**
+     * `D-23`A：還沒有人歡迎新加好友的人。
+     *
+     * 為什麼要有這張卡：自動回應那一頁最上面那一列已經會講（`C-215`），
+     * 但**要打開那一頁才看得到**；這張是「不打開也會被提醒」。
+     * 加好友歡迎是**沒設定就完全沒有訊號**的那種——就緒度的「啟用一條客服流程」
+     * 只數有沒有腳本（MYFEEL 有 7 條、是綠的），沒有一條是加好友也照樣綠。
+     */
+    id: 'followWelcomeMissing',
+    icon: ChatDotRound,
+    impact: '客人掃 QR、搜尋 ID 或點活動連結加好友時，現在一句話都收不到。到「自動回應」最上面那一列設定，選一個做好的機器人模組、或直接打一段話都可以。（從活動連結來、而且那個活動自己有歡迎訊息的人不受影響。）',
+    cta: '去設加好友歡迎',
+    requires: 'operate',
+    route: wid => `/admin/${wid}/ai-scripts`,
+    anchor: { selector: '[data-tour="scr-follow-row"]', note: '清單最上面那一列就是「客人加好友時」，點它就能設。' },
+  },
+  {
     id: 'firstReplyBacklog',
     icon: ChatDotRound,
     impact: '這些對話到現在還沒有任何人回覆過。AI 草稿模式下尤其要看：AI 只擬好草稿等人送出，沒人處理＝客人一直收不到回覆。',

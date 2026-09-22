@@ -395,7 +395,19 @@ async function checkBroadcastAudience() {
     if (pickers < 1) { fail('推播：選了依標籤篩選卻沒有選標籤欄位'); return }
     pass('推播：受眾那一格用的是共用選標籤欄位')
 
-    const createBtns = await countCreateButtons(page)
+    /**
+     * ⛔ **只數「發送對象」那一格裡面的**，不要全頁數。
+     * `C-213` 之後這一頁有兩個選標籤欄位（受眾＝不給建、發完貼記號＝給建），
+     * 全頁數會把貼記號那顆算進來 → 這一關會永遠誤報。本輪實際紅過一次。
+     */
+    const createBtns = await page.evaluate(() => {
+      const group = [...document.querySelectorAll('.admin-field-group')]
+        .find(g => g.textContent.includes('選擇標籤（符合任一即納入）'))
+      if (!group) return -1
+      return [...group.querySelectorAll('.el-button')]
+        .filter(b => b.textContent.includes('新標籤') && b.getBoundingClientRect().width > 0).length
+    })
+    if (createBtns < 0) { fail('推播：找不到「發送對象」那一格'); return }
     if (createBtns !== 0) {
       fail(`推播受眾出現了 ${createBtns} 顆「＋ 新標籤」＝⛔ 這一格是「拿標籤篩人」，當場建一顆新標籤身上沒有客人，等於挑到 0 個人`)
     }
@@ -936,6 +948,89 @@ async function checkWelcomeModuleGone() {
   }
 }
 
+// ── 關卡 11：推播「發完幫收到的人貼記號」那一格（`C-213`）⛔ 不存檔不發送 ────
+async function checkBroadcastCompletionTag() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'broadcasts')
+    if (!await clickByText(page, 'button, .el-button', '新增')) { fail('推播：找不到「新增」鈕'); return }
+    await sleep(2000)
+
+    const found = await page.evaluate(() => {
+      const group = [...document.querySelectorAll('.admin-field-group')]
+        .find(g => g.textContent.includes('發完之後，幫收到的人貼一個記號'))
+      if (!group) return null
+      return {
+        hasPicker: !!group.querySelector('.tag-picker'),
+        hasCreate: [...group.querySelectorAll('.el-button')].some(b => b.textContent.includes('新標籤')),
+        saysOnlySuccess: group.textContent.includes('只會貼給真的收到的人'),
+      }
+    })
+    if (!found) { fail('推播：發送設定裡沒有「發完之後貼記號」那一格'); return }
+    pass('推播：有「發完之後，幫收到的人貼一個記號」那一格')
+
+    if (!found.hasPicker) fail('推播：那一格不是共用的選標籤欄位')
+    else pass('推播：那一格用的是共用選標籤欄位')
+
+    // ⛔ 跟「發送對象」刻意相反：這一格是貼上去，所以給得起「＋ 新標籤」
+    if (!found.hasCreate) fail('推播：貼記號那一格沒有「＋ 新標籤」——這格是貼標不是篩人，應該給')
+    else pass('推播：貼記號那一格有「＋ 新標籤」（與「發送對象」刻意相反）')
+
+    if (!found.saysOnlySuccess) fail('推播：沒有講「只會貼給真的收到的人」——不講的話會被當成全部都貼')
+    else pass('推播：有講「只會貼給真的收到的人」')
+    pass('推播：⛔ 全程沒有存檔、沒有發送')
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
+// ── 關卡 12：回覆文字插得到「客人的 LINE 名稱」（`D-23`D）──────────────────
+async function checkBuiltinVariable() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'ai-scripts', '.split-list')
+    // 挑一條既有流程（它們都有 reply 步驟），不新增、不存檔
+    const picked = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.split-list > *')].filter(e => e.getBoundingClientRect().width > 0)
+      const target = items.find(e => !e.textContent.includes('客人加好友時'))
+      if (!target) return false
+      target.click()
+      return true
+    })
+    if (!picked) { fail('自動回應：沒有既有流程可以點開'); return }
+    await sleep(2500)
+
+    const menu = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.el-button')]
+        .find(b => b.textContent.includes('插入變數') && b.getBoundingClientRect().width > 0)
+      if (!btn) return null
+      btn.click()
+      return true
+    })
+    if (!menu) {
+      fail('自動回應：回覆步驟旁沒有「插入變數」——沒有收集步驟的流程（例如加好友歡迎）就永遠教不到客人名字')
+      return
+    }
+    await sleep(900)
+    const items = await page.evaluate(() =>
+      [...document.querySelectorAll('.el-dropdown-menu__item')]
+        .filter(e => e.getBoundingClientRect().width > 0)
+        .map(e => e.textContent.replace(/\s+/g, ' ').trim()))
+    if (!items.some(t => t.includes('displayName'))) {
+      fail(`自動回應：插入變數選單裡沒有客人名字（看到：${items.join('／').slice(0, 60)}）`)
+    }
+    else {
+      pass(`自動回應：插入變數選單有客人的 LINE 名稱（${items.find(t => t.includes('displayName'))}）`)
+    }
+    await page.keyboard.press('Escape')
+    await sleep(300)
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
   await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users', 'ai-scripts'])
@@ -961,6 +1056,10 @@ try {
   await checkFollowWelcomeRow()
   console.log('\n── 空的「歡迎模組」已經拿掉（D-23）────────')
   await checkWelcomeModuleGone()
+  console.log('\n── 推播「發完貼記號」那一格（C-213）────────')
+  await checkBroadcastCompletionTag()
+  console.log('\n── 回覆文字插得到客人名字（D-23 D）────────')
+  await checkBuiltinVariable()
 }
 finally {
   await browser.close()

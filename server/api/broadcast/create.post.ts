@@ -48,6 +48,10 @@ export default defineEventHandler(async (event) => {
       estimatedCount: 0,
     },
     messages,
+    // `C-213`：發完幫收到的人貼的標籤（選填）
+    completionTagIds: Array.isArray(body.completionTagIds)
+      ? body.completionTagIds.map((t: unknown) => String(t ?? '').trim()).filter(Boolean)
+      : [],
     scheduleAt: null,
     startedAt: null,
     completedAt: null,

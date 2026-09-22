@@ -46,6 +46,13 @@ export default defineEventHandler(async (event) => {
   if (body.name !== undefined) updates.name = body.name
   if (body.audienceSource !== undefined) updates.audienceSource = body.audienceSource
   if (body.messages !== undefined) updates.messages = body.messages
+  // `C-213`：發完幫收到的人貼的標籤（選填）。⛔ 一律正規化成字串陣列，
+  // 壞掉的值進了資料庫，發送當下才會在貼標那一步炸——而那時訊息已經送出去了。
+  if (body.completionTagIds !== undefined) {
+    updates.completionTagIds = Array.isArray(body.completionTagIds)
+      ? body.completionTagIds.map((t: unknown) => String(t ?? '').trim()).filter(Boolean)
+      : []
+  }
 
   if (body.scheduleAt !== undefined) {
     if (body.scheduleAt === null) {

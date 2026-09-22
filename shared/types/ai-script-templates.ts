@@ -27,7 +27,18 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     rootNodeId: 't',
     nodes: [
       { id: 't', type: 'trigger', triggerEvent: 'follow', matchMode: 'keyword', keywords: [], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'r' },
-      { id: 'r', type: 'reply', text: '謝謝您加入好友 🎉 商品、運費、訂單的問題，直接在這裡打字問我就可以；想找真人服務的話，隨時輸入「找真人」。', thenHandoff: false },
+      /**
+       * `D-23`D（2026-09-22 拍板）：**範本自己示範怎麼帶客人的名字**。
+       *
+       * 為什麼要示範：帶名字的第一句話比通用句有感，但沒人示範就不會有人知道能這樣寫。
+       * ⚠️ **取不到名字時會變成空字串**（`renderWithAttributes` 對不認得的變數回 `''`），
+       *    所以句子要寫成**少了名字也讀得通**的形狀——這裡是「{{displayName}} 您好」，
+       *    取不到就變「 您好」，還是一句話。⛔ 不要寫成「嗨 {{displayName}}！」那種
+       *    少了名字會變成「嗨 ！」的寫法。
+       * ⛔ 08-22 那份評估說「取不到會把 `{{displayName}}` 原字送給客人」——**那是過期的**，
+       *    2026-09-22 讀 `handler.ts` 的 `renderWithAttributes` 確認回的是空字串。
+       */
+      { id: 'r', type: 'reply', text: '{{displayName}} 您好，謝謝加入好友 🎉 商品、運費、訂單的問題，直接在這裡打字問我就可以；想找真人服務的話，隨時輸入「找真人」。', thenHandoff: false },
     ],
   },
 

@@ -292,6 +292,28 @@ export interface BroadcastDoc {
   /** LINE messagingApi.Message[] 快照 */
   messages: any[]
   /**
+   * 發送成功後，要幫**真的收到的人**貼上的標籤（`C-213`，2026-09-22）。選填。
+   *
+   * 為什麼要有：推播發完以前不留任何記號，所以「上次收過製冰機通知的是哪些人」查不到——
+   * 標籤這條鏈是單向的（標籤 → 挑人 → 發出去 → 斷掉）。
+   *
+   * ⛔ **只貼給送成功的人**：失敗的（多半是封鎖了官方帳號）貼上去就是一句謊話。
+   * ⛔ **刻意做成選填、而且標籤由使用者自己挑**：自動幫每一則推播生一顆標籤的話，
+   *    16 則推播就會長出 16 顆，標籤頁會被灌爆（Omnichat 是自動生的，我們不跟）。
+   *    要「已收到某某推播」這種粒度，就在發送前用那個欄位就地建一顆。
+   */
+  completionTagIds?: string[]
+  /**
+   * 發完貼標的結果。⛔ 失敗要留下來，不可以只寫 log——
+   * 貼標失敗時畫面必須講得出「訊息發出去了，但記號沒貼完」，
+   * 否則使用者會以為那群人身上有記號，之後照著它挑名單就會漏人。
+   */
+  completionTagOutcome?: {
+    taggedCount: number
+    failedCount: number
+    at: Timestamp | FieldValue
+  } | null
+  /**
    * 發送 multicast 時帶入的 LINE customAggregationUnits[0]，
    * 用於 insight 查詢開封（uniqueImpression）與 LINE 官方網址點擊（uniqueClick）
    */

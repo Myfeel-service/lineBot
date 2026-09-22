@@ -477,22 +477,42 @@
                       :rows="3"
                       placeholder="例：已收到您的訂單，將盡快為您處理 🙇"
                     />
+                    <!--
+                      `D-23`D：⛔ 這顆選單以前 `v-if="collectFieldOptions.length"`——
+                      **沒有收集步驟就整顆不出現**，於是「客人的名字」這個最常用、
+                      而且不需要收集就有的變數，**沒有任何地方教得到**（加好友歡迎正是
+                      沒有收集步驟的那種）。現在內建變數永遠在，選單也就永遠在。
+                    -->
                     <el-dropdown
-                      v-if="collectFieldOptions.length"
                       size="small"
                       trigger="click"
                       class="scripts-var-insert"
                       @command="(f) => insertReplyVar(node, f)"
                     >
-                      <el-button size="small" plain>＋ 插入欄位變數 ▾</el-button>
+                      <el-button size="small" plain>＋ 插入變數 ▾</el-button>
                       <template #dropdown>
                         <el-dropdown-menu>
-                          <el-dropdown-item v-for="f in collectFieldOptions" :key="f.value" :command="f.value">
+                          <el-dropdown-item
+                            v-for="f in BUILTIN_SCRIPT_VARIABLES"
+                            :key="f.key"
+                            :command="f.key"
+                          >
+                            {{ varLabel(f.key) }}　{{ f.label }}
+                          </el-dropdown-item>
+                          <el-dropdown-item
+                            v-for="(f, i) in collectFieldOptions"
+                            :key="f.value"
+                            :command="f.value"
+                            :divided="i === 0"
+                          >
                             {{ varLabel(f.value) }}
                           </el-dropdown-item>
                         </el-dropdown-menu>
                       </template>
                     </el-dropdown>
+                    <p class="scripts-section-hint">
+                      {{ BUILTIN_VARIABLE_HINT }}
+                    </p>
                   </div>
                   <!-- 連結按鈕（＝自動回覆的「開啟網址」）。多數回覆用不到，沒設定時只留一顆鈕 -->
                   <div v-if="node.linkUrl !== undefined" class="admin-field-group">
@@ -718,7 +738,12 @@ import type { Component } from 'vue'
 import { ArrowRight, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Collection, Connection, CopyDocument, Delete, MagicStick, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { v4 as uuidv4 } from 'uuid'
-import { FOLLOW_WELCOME_LABEL, followWelcomeRow } from '~~/shared/follow-welcome'
+import {
+  BUILTIN_SCRIPT_VARIABLES,
+  BUILTIN_VARIABLE_HINT,
+  FOLLOW_WELCOME_LABEL,
+  followWelcomeRow,
+} from '~~/shared/follow-welcome'
 import type {
   BranchOp,
   CollectFormat,

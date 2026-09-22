@@ -102,6 +102,15 @@ export type WorkspaceAlertId =
   | 'scriptUnreachable'
   /** 有客服流程中間有「客人答不出來就卡死」的步驟，走進去出不來 */
   | 'scriptDeadEnd'
+  /**
+   * 還沒有人歡迎新加好友的人（`D-23`A，2026-09-22）。
+   *
+   * 為什麼要有：加好友歡迎是**沒設定就完全沒有訊號**的那種——就緒度清單的
+   * 「啟用一條客服流程」只數有沒有腳本（MYFEEL 有 7 條、是綠的），沒有一條是加好友也照樣綠。
+   * 自動回應頁那一列會講，但**要打開那一頁才看得到**；這顆是「不打開也會被提醒」。
+   * ⚠️ 只在**開通完成之後**才亮：還沒接上 LINE 的帳號連客人都進不來，提醒他這個是噪音。
+   */
+  | 'followWelcomeMissing'
 
 /**
  * 各項的白話標題（單一事實來源）。
@@ -144,6 +153,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
   tagDiscoverySuggestions: 'AI 從對話裡發現可以建的新標籤',
   tagSuggestionsPending: '有客人的標籤建議等你決定',
+  followWelcomeMissing: '新加好友的人不會收到任何訊息',
   aiDraftsWaiting: 'AI 擬好的回覆還沒送出',
   knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
   scriptUnreachable: '有客服流程永遠不會被啟動',
@@ -202,6 +212,9 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   knowledgeSuggestions: 'suggestion',
   tagDiscoverySuggestions: 'suggestion',
   tagSuggestionsPending: 'suggestion',
+  // ⛔ 是 suggestion 不是 warning：沒有東西壞掉，客人也還是能正常問問題——
+  //    少的是「第一句招呼」。放進「可以更好」那一組，不搶紅點的注意力。
+  followWelcomeMissing: 'suggestion',
   // 客人正在等回覆但還不到「壞掉」——草稿模式的常態工作訊號。可暫停提醒 7 天。
   // ⛔不進 DIGEST_WARNING_ALERTS：摘要本文已逐項講「沒人回」的對話（挑選規則②）。
   aiDraftsWaiting: 'warning',

@@ -240,6 +240,26 @@
                 <el-radio value="schedule">排程發送</el-radio>
               </el-radio-group>
             </div>
+            <!--
+              `C-213`：發完幫收到的人貼記號。
+              ⛔ 這一格的標籤是**貼上去**不是拿來篩人，所以給得起「＋ 新標籤」
+              （跟上面「發送對象」那一格刻意相反）。
+            -->
+            <div class="admin-field-group">
+              <AdminFieldLabel text="發完之後，幫收到的人貼一個記號（選填）" tight />
+              <AdminTagPicker
+                :model-value="form.completionTagIds"
+                :options="allTags"
+                :disabled="isReadOnly"
+                placeholder="不貼記號（可打字搜尋）"
+                @update:model-value="(ids) => (form.completionTagIds = ids)"
+              />
+              <p class="text-xs text-muted">
+                之後就查得到「上次收過這則的是哪些人」，也能拿它再發一次或排除他們。
+                ⛔ <strong>只會貼給真的收到的人</strong>——失敗的（多半是封鎖了官方帳號）不貼。
+                要「已收到某某推播」這種粒度，就在這裡按「＋ 新標籤」現建一顆。
+              </p>
+            </div>
             <div v-if="form.scheduleMode === 'schedule'" class="admin-field-group">
               <AdminFieldLabel text="排程時間" tight />
               <el-date-picker
@@ -272,6 +292,11 @@
             <p v-if="report.postSendError" class="bc-postsend-note">
               訊息已經送出去了，不必重發。只是送出後在整理紀錄時中斷，「每個人收到沒有」的逐筆明細可能不完整；下面的發送總數、成功、失敗數字仍然是準的。
             </p>
+            <!--
+              `C-213`：貼記號的結果。⛔ 失敗一定要講出來——不講的話，使用者會以為那群人
+              身上有記號，之後照著它挑名單就會漏人，而且完全查不出為什麼少了幾個。
+            -->
+            <p v-if="completionTagNote" class="bc-postsend-note">{{ completionTagNote }}</p>
             <div class="bc-stats-row">
               <div class="bc-stat-box">
                 <div class="bc-stat-label">發送總數</div>
@@ -519,6 +544,8 @@ const defaultForm = () => ({
   contentAction: normalizeUnifiedAction({ type: 'message', text: '' }, 'A') as UnifiedAction,
   scheduleMode: 'now' as 'now' | 'schedule',
   scheduleAt: '',
+  /** `C-213`：發完幫收到的人貼的記號（選填） */
+  completionTagIds: [] as string[],
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
@@ -626,6 +653,7 @@ function loadFormFromItem(item: any) {
     scheduleAt: item.scheduleAt
       ? formatDateForPicker(parseFirestoreDate(item.scheduleAt) ?? new Date())
       : '',
+    completionTagIds: Array.isArray(item.completionTagIds) ? item.completionTagIds : [],
   }
 }
 
@@ -663,11 +691,27 @@ function validateForm(options?: { requireScheduleTime?: boolean }): string | nul
   return null
 }
 
+/**
+ * `C-213`：發完貼記號的結果講成一句話。
+ * ⛔ 全部成功時**不出現**（每則推播都掛一句「記號都貼好了」是純噪音）；
+ * ⛔ 有失敗時一定要出現，而且要講清楚後果。
+ */
+const completionTagNote = computed(() => {
+  const outcome = (selectedItem.value as any)?.completionTagOutcome
+  if (!outcome) return ''
+  const failed = Number(outcome.failedCount ?? 0)
+  if (!failed) return ''
+  const tagged = Number(outcome.taggedCount ?? 0)
+  return `⚠️ 訊息都送出去了，但發完的記號有 ${failed} 位沒貼成功（成功 ${tagged} 位）。`
+    + '之後如果用這個記號挑名單，那幾位不會被挑到——需要的話到「好友」頁手動補貼。'
+})
+
 function buildSaveBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {
     name: form.value.name.trim(),
     audienceSource: buildAudienceSource(),
     messages: buildMessages(),
+    completionTagIds: form.value.completionTagIds,
   }
   const keepScheduled =
     !isCreating.value

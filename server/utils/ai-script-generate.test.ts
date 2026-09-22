@@ -11,7 +11,9 @@ vi.stubGlobal('createError', (o: any) => Object.assign(new Error(o?.statusMessag
 const { generateJson } = vi.hoisted(() => ({ generateJson: vi.fn() }))
 vi.mock('./gemini', () => ({ generateJson }))
 
+import { readFileSync } from 'node:fs'
 import { generateScriptDraft } from './ai-script-generate'
+import { validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptCollectNode } from '~~/shared/types/ai-script'
 
 /** 卡死版:問訂單編號(嚴格格式)沒有跳過出口,備援問句擺在下一步 */
@@ -136,5 +138,46 @@ describe('generateScriptDraft：觸發關鍵字後檢(泛用詞/單字/敏感詞
     generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退貨'])))
     const draft = await generateScriptDraft('客人要退貨')
     expect(triggerOf(draft).keywords).toEqual(['退款', '退貨'])
+  })
+})
+
+/**
+ * `D-23`B（2026-09-22 拍板）：AI 生成要認得「加好友」這種**事件型**觸發。
+ * 以前它不認得，跟它說「客人加好友時歡迎他」會生出一條關鍵字流程、或直接回「做不到」
+ * 並建議你去用「加好友歡迎訊息」——而那正是你剛剛要它做的事。
+ */
+describe('加好友觸發（事件型）', () => {
+  const FOLLOW_DRAFT = {
+    name: '加好友歡迎',
+    rootNodeId: 't',
+    nodes: [
+      { id: 't', type: 'trigger', triggerEvent: 'follow', matchMode: 'keyword', keywords: [], examples: [], priority: 50, next: 'r1' },
+      { id: 'r1', type: 'reply', text: '{{displayName}} 您好，謝謝加入 🎉', thenHandoff: false },
+    ],
+  }
+
+  /** ⛔ 不要借上面那個 describe 裡的區域 `triggerOf`（拿不到），自己取 */
+  const firstTrigger = (draft: { nodes: any[] }) => draft.nodes.find(n => n.type === 'trigger')
+
+  it('模型回事件型觸發 → 原樣留住，不會被關鍵字清洗搞壞', async () => {
+    generateJson.mockResolvedValueOnce(reply(FOLLOW_DRAFT))
+    const draft = await generateScriptDraft('客人加好友的時候歡迎他')
+    const trigger = firstTrigger(draft)
+    expect((trigger as any).triggerEvent).toBe('follow')
+    // ⛔ 加好友觸發沒有文字條件：keywords 留空是對的，不可以被補上東西
+    expect(trigger.keywords).toEqual([])
+  })
+
+  it('⛔ 生成出來的東西要通得過存檔驗證（不然按了建立才失敗）', async () => {
+    generateJson.mockResolvedValueOnce(reply(FOLLOW_DRAFT))
+    const draft = await generateScriptDraft('客人加好友的時候歡迎他')
+    expect(validateScriptDoc({ name: draft.name, nodes: draft.nodes, rootNodeId: draft.rootNodeId })).toBeNull()
+  })
+
+  it('⛔ 提示詞裡不可以再把「加好友歡迎訊息」當成做不到的替代建議', async () => {
+    // 那句話會讓模型在被要求做這件事時回 error，而它其實做得到
+    const src = readFileSync(new URL('./ai-script-generate.ts', import.meta.url), 'utf8')
+    expect(src).toContain('不要再把「加好友歡迎訊息」當成做不到的替代建議')
+    expect(src).toContain('"triggerEvent": "follow"')
   })
 })
