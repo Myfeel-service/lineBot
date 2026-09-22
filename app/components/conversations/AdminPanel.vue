@@ -224,13 +224,14 @@
         ⛔ 也刻意放在捲動區**外面**：放進清單裡會跟著捲走，一捲下去就等於沒講。
       -->
       <div v-if="unreadFilterOn && listHasMore" class="conv-list-notice conv-unread-scan">
-        <span>只看未讀：掃過已載入的 {{ unreadScannedCount }} 筆，更早的還沒載入</span>
-        <button
-          type="button"
-          class="conv-unread-scan__more"
-          :disabled="listLoading || listLoadingMore"
-          @click="scanMoreForUnread"
-        >{{ listLoadingMore ? '找找看…' : '再往下找' }}</button>
+        <!--
+          ⛔ 這裡只負責**警告**（你看到的不是全部），動作那一半交給清單盡頭那一區。
+          原本兩邊都有按鈕、也都印同一句回報，但「只看未讀」篩完常常只剩幾列，
+          兩塊之間只隔著那幾列＝同一段話在同一個畫面上講兩次，讀起來像壞掉。
+          「只找過最近 N 筆」比「掃過已載入的 N 筆」好懂：前者講我少看了什麼，
+          後者講系統在做什麼。後半句要**指路**，不然這句就只是個沒有出口的壞消息。
+        -->
+        <span>只看未讀：只找過最近 {{ unreadScannedCount }} 筆，更早的還沒找——捲到清單最底下可以繼續找</span>
       </div>
       <!--
         搜尋中（searchActive）一律走下面那份清單，即使名字一個都沒中：內容搜尋的結果與
@@ -386,10 +387,42 @@
             >⋯</button>
           </div>
         </template>
-        <div v-if="listLoadingMore" class="conv-list-load-more">
+        <!-- 「只看未讀」時不出這顆轉圈：那時盡頭那一區自己會把按鈕變成「往下找…」，
+             兩個一起出現等於同一件事講兩次，而且會把盡頭那一區往下推 -->
+        <div v-if="listLoadingMore && !unreadFilterOn" class="conv-list-load-more">
           <div class="spinner" />
           <span>載入更多…</span>
         </div>
+        <!--
+          ── 「只看未讀」清單的盡頭（2026-09-22 老闆：「切成只看未讀時會不知道還可以往下 load 出來」）──
+          上面那行釘住的提示回答的是「你看到的不是全部」，但**人是往下捲找東西的**：
+          篩完通常只剩零星幾列、撐不出捲軸，捲到底什麼都沒有＝看起來就是「只有這幾筆」，
+          而那行字還留在螢幕上方、視線根本不在那裡。所以盡頭這裡要再講一次，而且要可以按。
+          ⛔ 找完了也要講：不然人永遠不知道現在這個數字到底是不是全部（也就是＋為什麼消失）。
+          ⛔ 回報（unreadScanReport）兩個地方都印：按上面那顆的人看不到這裡，反之亦然，
+             而「按了清單卻完全沒變」正是這顆按鈕最容易被當成壞掉的時候。
+        -->
+        <!-- ⛔ 條件裡不可以有 `!listLoadingMore`：那樣一按下去整個區塊當場消失、
+             找完再冒出來，看起來像「按了之後那顆按鈕就不見了」。載入中要**留在原地**，
+             只把按鈕換成「往下找…」——按鈕自己講狀態，版面不要跳。 -->
+        <template v-if="unreadFilterOn && !searchActive">
+          <div v-if="listHasMore" class="conv-unread-end">
+            <!-- ⛔ 不要在這裡再寫一次「只找過最近 N 筆」：上面那行釘住的警告已經講了，
+                 清單短的時候兩塊只隔著幾列，同一句話會在同一屏出現兩次 -->
+            <span>更早的對話還沒翻過</span>
+            <span v-if="unreadScanReport" class="conv-unread-end__report">{{ unreadScanReport }}</span>
+            <button
+              type="button"
+              class="conv-unread-end__more"
+              :disabled="listLoading || listLoadingMore"
+              @click="scanMoreForUnread"
+            >{{ listLoadingMore ? '往下找…' : '繼續往下找' }}</button>
+          </div>
+          <div v-else-if="sidebarItems.length" class="conv-unread-end conv-unread-end--done">
+            <span>全部對話都找過了{{ unreadRowCount > 0 ? `，沒看過的就這 ${unreadRowCount} 筆` : '' }}</span>
+            <span v-if="unreadScanReport" class="conv-unread-end__report">{{ unreadScanReport }}</span>
+          </div>
+        </template>
         <!--
           ── 搜尋對話內容（H-30）──────────────────────────────────────
           名字命中列在上面，這一區是「誰講過這句話」。分成兩區而不是混成一份清單：
@@ -2210,6 +2243,12 @@ const followUpFilterOn = ref(false)
  *    所以這是畫面層的篩選（見 shared/conversation-unread.ts 的 keepUnreadRows）。
  */
 const unreadFilterOn = ref(false)
+
+/**
+ * 「繼續往下找」按完的回報（見 scanMoreForUnread）。
+ * 空字串＝這一輪還沒按過，畫面上就不出現這一句。
+ */
+const unreadScanReport = ref('')
 /** 待跟進數超過顯示上限時要在列表上明講，不要讓人以為看到的就是全部 */
 const followUpListTruncated = ref(false)
 // null＝這次讀不到（缺索引之類）：不顯示數字、tooltip 講明，⛔不可以拿 0 冒充（D-43④）
@@ -3615,15 +3654,31 @@ const UNREAD_SCAN_PAGES = 5
  * 而且沒有任何辦法讓它繼續找。
  */
 async function scanMoreForUnread() {
+  const foundAtStart = unreadRowsInViewCount.value
+  const loadedAtStart = unreadScannedCount.value
+  unreadScanReport.value = ''
   for (let i = 0; i < UNREAD_SCAN_PAGES; i++) {
-    if (!listHasMore.value) return
+    if (!listHasMore.value) break
     const foundBefore = unreadRowsInViewCount.value
     const loadedBefore = unreadScannedCount.value
     await loadMoreList()
     // 沒長就停：後端 hasMore 若一直為真（或這次載入失敗），不要在這裡空轉
-    if (unreadScannedCount.value <= loadedBefore) return
-    if (unreadRowsInViewCount.value > foundBefore) return
+    if (unreadScannedCount.value <= loadedBefore) break
+    if (unreadRowsInViewCount.value > foundBefore) break
   }
+  const scanned = unreadScannedCount.value - loadedAtStart
+  const found = unreadRowsInViewCount.value - foundAtStart
+  /**
+   * ⛔ 一列都沒多找到的時候**更**要講。
+   * 這顆按鈕最常見的結果就是「又翻了 30 筆、全是看過的」——那時畫面上的清單一列都不會變，
+   * 看起來和「按了沒反應」一模一樣，人只會再按一次、或當它壞掉。
+   * 這個 repo 為「做了事卻不吭聲」付過好幾次帳（見 buildBatchReport 那段）。
+   */
+  unreadScanReport.value = scanned <= 0
+    ? '沒有再翻出更早的對話了'
+    : found > 0
+      ? `又往下翻了 ${scanned} 筆，多找到 ${found} 筆沒看過的`
+      : `又往下翻了 ${scanned} 筆，都是看過的`
 }
 
 /**
@@ -3636,6 +3691,8 @@ async function maybeScanForUnread() {
 
 async function toggleUnreadFilter() {
   unreadFilterOn.value = !unreadFilterOn.value
+  // ⛔ 上一輪的回報要清掉：「又往下翻了 30 筆」留在畫面上，講的卻是關掉篩選前那次的事
+  unreadScanReport.value = ''
   await maybeScanForUnread()
 }
 

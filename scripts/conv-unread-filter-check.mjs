@@ -111,7 +111,19 @@ const snapshot = () => page.evaluate(() => {
     followUpBtn: pill.find(b => b.innerText.includes('待跟進'))?.innerText.trim() ?? null,
     markAllBtn: document.querySelector('.conv-mark-all-read')?.innerText.trim() ?? null,
     notice: document.querySelector('.conv-unread-scan span')?.innerText.trim() ?? null,
-    noticeBtn: document.querySelector('.conv-unread-scan__more')?.innerText.trim() ?? null,
+    /**
+     * ⛔ 2026-09-22 起釘在上面那行**只剩警告文字、沒有按鈕**（動作全搬到清單盡頭）：
+     * 「還有沒載完的頁」一律看 `notice` 這行字在不在，不可以再拿按鈕的存在當判斷——
+     * 那樣一改版就會變成「找不到按鈕＝以為載完了」的假綠燈。
+     */
+    noticeHasMore: !!document.querySelector('.conv-unread-scan'),
+    scanBtnStillThere: !!document.querySelector('.conv-unread-scan__more'),
+    /** 清單盡頭那一區（人往下捲會先撞到的地方）——⛔ 它必須長在捲動區裡面才跟得到底 */
+    endText: document.querySelector('.conv-unread-end')?.innerText.replace(/\n/g, ' ｜ ').trim() ?? null,
+    endBtn: document.querySelector('.conv-unread-end__more')?.innerText.trim() ?? null,
+    endInsideList: !!document.querySelector('.split-list .conv-unread-end'),
+    /** 「又往下翻了 N 筆，都是看過的」——沒有這句時，翻完清單沒變就像按了沒反應 */
+    scanReport: document.querySelector('.conv-unread-end__report')?.innerText.trim() ?? null,
     empty: document.querySelector('.split-sidebar-empty')?.innerText.replace(/\n/g, ' ｜ ') ?? null,
     /**
      * 已讀章只在「人真的在看」時才蓋（見 stampConversationRead）——headless 視窗沒有焦點的話
@@ -125,6 +137,10 @@ const snapshot = () => page.evaluate(() => {
       .filter(r => r.querySelector('.split-list-item__avatar-wrap.is-unread'))
       .map(r => r.innerText.replace(/\n/g, ' ｜ ').slice(0, 40)),
     readStamps: Object.keys(JSON.parse(localStorage.getItem(`admin-conv-lastRead:${location.pathname.split('/')[2]}`) || '{}')).length,
+    /** 載入失敗會走 toast（不是 pageerror），不印出來的話 ③ 會紅得莫名其妙 */
+    toast: [...document.querySelectorAll('.el-message')].map(e => e.innerText.trim()).filter(Boolean).join(' ｜ ') || null,
+    /** 正在看的是哪一列：③ 對不起來時要知道點開的是誰 */
+    activeRow: document.querySelector('.conv-list-row .split-list-item.is-active, .conv-list-row .split-list-item.active')?.innerText.replace(/\n/g, ' ｜ ').slice(0, 50) ?? null,
     // 破版量測：膠囊那一列有沒有橫向溢出、每顆膠囊有沒有超出側欄的內容框
     filterRowOverflow: sidebarRow ? sidebarRow.scrollWidth > sidebarRow.clientWidth + 1 : true,
     filterRowBox: box(sidebarRow),
@@ -160,7 +176,7 @@ if (!await clickUnreadFilter()) fail('按不到「只看未讀」')
 await sleep(2500) // 這一頁沒有未讀時會自己往下掃幾頁（scanMoreForUnread）
 const on = await snapshot()
 console.log(`\n② 篩選開著：清單 ${on.rows} 列、紅點 ${on.dots} 顆｜按鈕「${on.unreadBtn?.replace(/\n/g, '')}」`)
-console.log(`   掃描說明：${on.notice ?? '（沒有＝已經掃到底）'}${on.noticeBtn ? `［${on.noticeBtn}］` : ''}`)
+console.log(`   掃描說明：${on.notice ?? '（沒有＝已經掃到底）'}`)
 if (on.empty) console.log(`   空清單文案：${on.empty}`)
 const onShot = join(tmpdir(), `conv-unread-filter-on-${process.pid}.png`)
 await page.screenshot({ path: onShot, clip: { x: 240, y: 60, width: 520, height: 700 } })
@@ -175,7 +191,7 @@ if (before.dots > 0 && on.rows === 0 && !on.empty) fail('一列都沒留，卻�
 // 這個數字只掃得到已載入的那幾頁：往下捲會變大、按重整又縮回去。寫成裸數字時它在
 // 按鈕上長得像「我總共有幾筆沒看」，看兩次就沒人再相信它（見 unreadCountLabel）。
 {
-  const hasMore = Boolean(on.noticeBtn) // 有「再往下找」那顆＝下面還有沒載進來的頁
+  const hasMore = on.noticeHasMore // 那行警告還在＝下面還有沒載進來的頁（它只在 listHasMore 時出現）
   const btnText = (on.unreadBtn ?? '').replace(/\n/g, '')
   const hasNumber = /（\d/.test(btnText)
   const plus = btnText.includes('＋')
@@ -195,35 +211,93 @@ if (before.dots > 0 && on.rows === 0 && !on.empty) fail('一列都沒留，卻�
 // ── ③ 點開一列：正在看的那一列要留著 ───────────────────────────────
 if (on.rows > 0) {
   await page.click('.conv-list-row .split-list-item')
-  // 已讀章要等時間軸真的載回來才蓋得下去（見 loadTimeline → stampConversationRead）
-  await waitUntil(async () => (await snapshot()).readStamps > 0)
+  // 已讀章要等時間軸真的載回來才蓋得下去（見 loadTimeline → stampConversationRead）。
+  // ⛔ 逾時要**講出來**：正式站偶爾特別慢，靜靜地往下量就會得到一個看起來像「功能壞了」的紅燈
+  const stamped = await waitUntil(async () => (await snapshot()).readStamps > 0, 25_000)
+  if (!stamped) console.log('   ⚠️ 等了 25 秒還沒看到已讀章落地——下面那關若紅，先確認是不是正式站這次特別慢')
   await sleep(800) // 章落地到清單重繪還有一拍
   const opened = await snapshot()
   console.log(`\n③ 點開第一列後：清單 ${opened.rows} 列、紅點 ${opened.dots} 顆（選中 ${opened.active} 列）`)
   console.log(`   視窗有焦點：${opened.hasFocus}｜分頁狀態：${opened.visibility}｜已讀章 ${opened.readStamps} 位`)
+  console.log(`   點開的是：${opened.activeRow ?? '（沒有選中任何一列）'}${opened.toast ? `｜⚠️ 畫面上的提示：${opened.toast}` : ''}`)
   if (opened.rows < 1) fail('點開之後那一列自己從清單消失了＝正在看的對話在左邊找不到（keepUnreadRows 的例外沒生效）')
   if (opened.dots >= on.dots) fail('點開之後紅點沒少一顆＝已讀沒蓋上（和篩選無關，但這條路壞了篩選就會怪怪的）')
   if (opened.rows !== opened.dots + 1 && opened.rows !== opened.dots)
     fail(`點開後 ${opened.rows} 列／${opened.dots} 顆紅點——只該多留「正在看的那一列」`)
 }
 
-// ── ④「再往下找」真的有往下載 ──────────────────────────────────────
+// ── ④ 釘在上面那行只講「你看到的不是全部」，不再有按鈕（2026-09-22）──
+/**
+ * 原本這一關按的是那行字裡的「再往下找」。那顆按鈕已經**刻意拿掉**：
+ * 「只看未讀」篩完常常只剩幾列，上面那行和清單盡頭之間只隔著那幾列，
+ * 兩邊各放一顆按鈕、各印一次同樣的回報，同一段話在同一個畫面上講兩次。
+ * 現在上面只留警告＋指路，動作全在清單盡頭（下一關驗）。
+ */
 const beforeScan = await snapshot()
-if (beforeScan.noticeBtn) {
+console.log(`\n④ 上面那行：${beforeScan.notice ?? '（沒有＝已經掃到底）'}`)
+if (beforeScan.scanBtnStillThere) fail('上面那行又長出按鈕了＝和清單盡頭那顆重複，兩邊會各講一次同樣的話')
+if (beforeScan.notice && !beforeScan.notice.includes('捲到清單最底下'))
+  fail('那行字沒有指路（「捲到清單最底下可以繼續找」）＝它就只是個沒有出口的壞消息')
+
+// ── ④-c 清單的盡頭也要說得出「還沒找完」（2026-09-22）───────────────
+/**
+ * 老闆回報「切成只看未讀時會不知道還可以往下 load 出來」。
+ * 釘在清單**上方**那行救不了：人是往下捲找東西的，而篩完通常只剩零星幾列、
+ * 撐不出捲軸，捲到底什麼都沒有＝看起來就是「只有這幾筆」。
+ * ⛔ 所以這一區必須長在**捲動區裡面**（跟著捲到底才撞得到），而且要可以按。
+ */
+// ⛔ 先等上一段那次掃描整個跑完：`scanMoreForUnread` 一次最多翻 5 頁，④ 只等到
+//    「筆數變大」就往下走，那時它可能還在翻——量到的是載入中的樣子（第一版就這樣誤報）
+await waitUntil(async () => {
+  const s = await snapshot()
+  return !s.endBtn || s.endBtn === '繼續往下找'
+})
+const end = await snapshot()
+console.log(`\n④-c 清單盡頭：${end.endText ?? '（沒有這一區）'}｜按鈕「${end.endBtn ?? '無'}」`)
+if (end.noticeHasMore) {
+  if (!end.endBtn) fail('清單還沒載到底，捲到盡頭卻沒有「繼續往下找」＝人只會以為未讀就這幾筆')
+  if (!end.endInsideList) fail('盡頭那一區不在捲動清單裡面＝捲到底看不到它，等於沒做')
   const num = s => Number(String(s).match(/(\d+)/)?.[1] ?? 0)
-  await page.click('.conv-unread-scan__more')
-  // 掃過的筆數變多、或那行字整個不見了（掃到底）都算完成
+  const scannedBefore = num(end.notice)
+  await page.click('.conv-unread-end__more')
+  // 等它翻完（按鈕從「往下找…」變回來），不是只等筆數變大——中間那一刻量到的是載入中
   await waitUntil(async () => {
     const s = await snapshot()
-    return !s.notice || num(s.notice) > num(beforeScan.notice)
+    return (!s.notice || num(s.notice) > scannedBefore) && s.endBtn !== '往下找…'
   })
-  const afterScan = await snapshot()
-  console.log(`\n④「再往下找」：掃過 ${num(beforeScan.notice)} → ${num(afterScan.notice) || '（已到底）'} 筆`)
-  if (afterScan.notice && num(afterScan.notice) <= num(beforeScan.notice))
-    fail('按了「再往下找」掃過的筆數沒增加＝那顆按鈕沒接上 loadMoreList')
+  const afterEnd = await snapshot()
+  // ⛔ 載入中不可以讓這一區消失：一按就不見、找完再冒出來＝「按了那顆按鈕就沒了」
+  if (afterEnd.notice && !afterEnd.endText) fail('翻完之後盡頭那一區不見了（還沒載到底就不該消失）')
+  console.log(`   按下去：找過 ${scannedBefore} → ${num(afterEnd.notice) || '（已到底）'} 筆｜回報「${afterEnd.scanReport ?? '無'}」`)
+  if (afterEnd.notice && num(afterEnd.notice) <= scannedBefore)
+    fail('按了盡頭那顆「繼續往下找」，找過的筆數沒增加＝它沒接上 scanMoreForUnread')
+  if (!afterEnd.scanReport)
+    fail('按完沒有任何回報＝翻到的全是看過的那次，清單一列都不會變，跟「按了沒反應」長得一模一樣')
+  /**
+   * 截一張給人目檢。⛔ 不要用 `scrollTop = scrollHeight`：捲到底會觸發無限捲動再載一頁，
+   * 清單當場變長、位置被重算，拍到的還是清單頂端（第一版就這樣拍了張沒有盡頭的圖）。
+   * 直接把那一區捲進畫面最穩。
+   */
+  await page.evaluate(() => {
+    document.querySelector('.conv-unread-end')?.scrollIntoView({ block: 'center' })
+  })
+  await sleep(900)
+  const endShot = join(tmpdir(), `conv-unread-end-${process.pid}.png`)
+  await page.screenshot({ path: endShot, clip: { x: 240, y: 0, width: 300, height: 1000 } })
+  const endGeom = await page.evaluate(() => {
+    const el = document.querySelector('.conv-unread-end')
+    const list = document.querySelector('.split-list')
+    if (!el || !list) return null
+    const b = el.getBoundingClientRect()
+    const l = list.getBoundingClientRect()
+    return { width: Math.round(b.width), right: Math.round(b.right), listRight: Math.round(l.right), overflow: el.scrollWidth > el.clientWidth + 1 }
+  })
+  console.log(`   盡頭截圖：${endShot}｜寬 ${endGeom?.width}px（清單右緣 ${endGeom?.listRight}）`)
+  if (endGeom?.overflow) fail('盡頭那一區橫向溢出（側欄 overflow-x 是 hidden＝直接被裁掉，不會有捲軸）')
+  if (endGeom && endGeom.right > endGeom.listRight + 1) fail(`盡頭那一區右緣 ${endGeom.right} 超出清單 ${endGeom.listRight}`)
 }
 else {
-  console.log('\n④ 沒有「再往下找」＝清單已經全部載入（listHasMore=false），這輪驗不到')
+  console.log('   （清單已經全部載入，盡頭這一關這輪驗不到）')
 }
 
 // ── ④-b 切到背景時，分頁標題上的未讀數（2026-09-22）────────────────
@@ -305,6 +379,15 @@ const tabbed = await snapshot()
 console.log(`\n⑥ 切到「待真人」分頁（篩選仍開著）：清單 ${tabbed.rows} 列、紅點 ${tabbed.dots} 顆`)
 console.log(`   掃描說明：${tabbed.notice ?? '（沒有＝已經掃到底）'}`)
 if (tabbed.empty) console.log(`   空清單文案：${tabbed.empty}`)
+/**
+ * 載到底時盡頭要**改口**說「找完了」。沒這句的話，人永遠不知道現在看到的是不是全部
+ * ——那也正是篩選按鈕上的「＋」為什麼會消失（兩處是同一個判斷 listHasMore）。
+ */
+if (!tabbed.noticeHasMore && tabbed.rows > 0) {
+  console.log(`   清單盡頭：${tabbed.endText ?? '（沒有這一區）'}`)
+  if (!String(tabbed.endText ?? '').includes('全部對話都找過了'))
+    fail('已經載到底了，清單盡頭卻沒說「全部對話都找過了」＝人不知道現在這個數字就是全部')
+}
 if (tabbed.unreadOn !== true) fail('換分頁之後篩選自己關掉了（應該跟著走）')
 if (tabbed.rows !== tabbed.dots && tabbed.active === 0)
   fail(`會話分頁上 ${tabbed.rows} 列／${tabbed.dots} 顆紅點＝會話列的篩選沒套到`)

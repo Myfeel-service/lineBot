@@ -192,32 +192,65 @@
   }
 
   /**
-   * 「只看未讀」掃到哪為止那一行。它在捲動區**外面**（釘在搜尋列底下），
+   * 「只看未讀」只找到哪為止那一行。它在捲動區**外面**（釘在搜尋列底下），
    * 所以左右邊距要對齊上面的搜尋框（0.75rem），不是清單列的 0.25rem。
+   * 2026-09-22 起這裡**只剩警告文字**，按鈕與回報都搬到清單盡頭（見 .conv-unread-end）。
    */
   .conv-unread-scan {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.4rem;
     margin: 0.4rem 0.75rem 0;
     flex-shrink: 0;
   }
 
-  .conv-unread-scan__more {
-    border: 0;
-    background: none;
-    padding: 0;
+  /**
+   * ── 「只看未讀」清單的盡頭 ────────────────────────────────────
+   * 和上面那行釘住的提示分工：那行回答「你看到的不是全部」，這裡回答
+   * 「往下沒有了，但還可以再找」。⛔ 人是**往下捲**找東西的，盡頭什麼都沒有
+   * 就等於告訴他「只有這幾筆」（2026-09-22 老闆回報的正是這件事）。
+   * 在捲動區**裡面**（要跟著捲到底才出現），所以左右邊距對齊清單列的 0.25rem。
+   */
+  .conv-unread-end {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.35rem 0.25rem 0.75rem;
+    padding: 0.7rem 0.55rem 0.2rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
     font-size: 0.72rem;
-    font-weight: 700;
-    color: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-    white-space: nowrap;
+    line-height: 1.45;
+    text-align: center;
   }
 
-  .conv-unread-scan__more:disabled {
+  /* 找完了不是警告、也不需要動作，所以不給按鈕、字再淡一階 */
+  .conv-unread-end--done {
+    padding-bottom: 0.7rem;
+  }
+
+  .conv-unread-end__report {
+    color: var(--text-secondary);
+    font-weight: 700;
+  }
+
+  /* 這顆要看得出是「可以按的東西」——上面那顆是底線文字，那是釘住那行的語境；
+     清單盡頭沒有任何上下文，長得像文字就會被當成說明讀過去 */
+  .conv-unread-end__more {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--bg-surface);
+    padding: 0.35rem 0.85rem;
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .conv-unread-end__more:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+  }
+
+  .conv-unread-end__more:disabled {
     cursor: default;
     opacity: 0.6;
   }
