@@ -3,7 +3,14 @@ import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
+import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { generateBroadcastCopy } from '~~/server/utils/broadcast-copy-gen'
+import {
+  audienceNoticeText,
+  matchAudienceTags,
+  productKeywords,
+  type AudienceTagLike,
+} from '~~/shared/festival-audience'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { BROADCAST_DRAFT_VARIANTS, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
@@ -48,27 +55,48 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  // ── 受眾：挑名字跟這一檔對得上、而且真的有人的標籤 ──────────────
+  /**
+   * ── 受眾：這一檔要推的商品 × 誰想要那個商品（`C-235` 換掉的規則）──
+   *
+   * ⚠️ 原本是拿「送禮／禮盒／回購」這些字去比對標籤名。2026-09-23 拿 MYFEEL 正式資料
+   *   跑過：39 顆啟用中的標籤、**九個節日有八個一顆都挑不到**（店家的標籤是商品名與意圖，
+   *   不是場合字）。規則與理由都搬進 `shared/festival-audience.ts`，那裡有 20 條測試
+   *   釘著，⛔ 不要在這支端點裡再長出第二套判斷。
+   */
   let suggestedTagIds: string[] = []
+  let audienceNotice = ''
   try {
     const snap = await db.collection('tags')
       .where('workspaceId', '==', workspaceId)
       .where('status', '==', 'active')
       .limit(60)
       .get()
-    const rows = snap.docs.map(d => ({ id: d.id, name: String((d.data() as { name?: string }).name ?? '') }))
-    const matched = rows.filter(t =>
-      t.name.includes(festival.name)
-      || (/春節|中秋|除夕|聖誕|情人|母親節|父親節/.test(festival.name) && /送禮|禮盒|贈禮/.test(t.name))
-      || (/雙 ?11|購物節/.test(festival.name) && /回購|囤貨|揪團|優惠/.test(t.name)))
-    if (matched.length) {
-      const counts: Record<string, number> = await memberCountsForTagIds(db, workspaceId, matched.map(t => t.id))
-        .catch(() => ({} as Record<string, number>))
-      // ⛔ 人數 0 的不要選：挑了等於發給沒有人
-      suggestedTagIds = matched.filter(t => (counts[t.id] ?? 0) > 0).map(t => t.id).slice(0, 3)
-    }
+    const rows: AudienceTagLike[] = snap.docs.map((d) => {
+      const v = d.data() as { name?: string, aiMode?: string, code?: string }
+      return { id: d.id, name: String(v.name ?? ''), aiMode: v.aiMode }
+    })
+    // ⛔ 用 code 反查不要寫死 id：那顆是每個工作區各自建的
+    const excludeTagIds = snap.docs
+      .filter(d => (d.data() as { code?: string }).code === INACTIVE_TAG_CODE)
+      .map(d => d.id)
+
+    const counts: Record<string, number> = rows.length
+      ? await memberCountsForTagIds(db, workspaceId, rows.map(t => t.id)).catch(() => ({} as Record<string, number>))
+      : {}
+
+    const matched = matchAudienceTags(rows, counts, {
+      festivalName: festival.name,
+      products: productKeywords(String(profile.fields?.products?.value ?? '')),
+      excludeTagIds,
+    })
+    suggestedTagIds = matched.suggestions.map(s => s.tagId)
+    audienceNotice = audienceNoticeText(matched)
   }
-  catch { /* 挑不到就讓他自己挑，不是失敗 */ }
+  catch (e) {
+    // ⛔ 挑不到不是失敗（文案還是有用），但**不可以安靜**：讓他知道這一步沒跑成
+    console.warn('[marketing-draft] 受眾配對失敗：', workspaceId, e)
+    audienceNotice = '這次挑不出受眾（讀標籤時出錯），發送對象要你自己挑。'
+  }
 
   const payload: BroadcastDraftHandoff = {
     festivalId: festival.id,
@@ -76,6 +104,7 @@ export default defineEventHandler(async (event) => {
     suggestedName: `${festival.name}檔期`,
     variants: variants.slice(0, BROADCAST_DRAFT_VARIANTS),
     suggestedTagIds,
+    audienceNotice,
     basis: `照你的輪廓（${[profile.fields?.industry?.value, profile.fields?.products?.value].filter(Boolean).join('、')}）寫的`,
     ts: Date.now(),
   }

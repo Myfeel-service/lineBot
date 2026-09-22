@@ -41,6 +41,19 @@
           <el-link type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
         </el-alert>
 
+        <!--
+          `C-235`：認識了、但**主打商品那一格是空的**。
+          ⭐ 這一條是 2026-09-23 拿正式資料跑出來才發現要有的：`isStoreProfileReady` 只要求
+             答滿三題，而「主打商品」正好是下游全部都靠的那一格——節慶客製講不出商品、
+             受眾也配不出來，卻沒有任何地方會講。⛔ 不可以讓它安靜地不準。
+        -->
+        <el-alert v-else-if="!hasProducts" type="info" :closable="false" show-icon>
+          <template #title>補上「主打商品」，這幾檔會準很多</template>
+          你的輪廓裡還沒寫賣什麼，所以 MiniMe 不敢替你挑「這一檔該發給誰」，
+          節慶提醒也只能講通用的一句。
+          <el-link type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+        </el-alert>
+
         <article v-for="e in entries" :key="e.festivalId" :class="['mkt-cal__item', { 'is-soon': e.soon }]">
           <header class="mkt-cal__head">
             <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
@@ -97,6 +110,13 @@ const { apiFetch } = useWorkspaceApiFetch(() => props.workspaceId)
 const entries = ref<CalendarEntry[]>([])
 const headline = ref('')
 const ready = ref(false)
+/**
+ * 輪廓有沒有寫「主打商品」（`C-235`）。
+ * ⚠️ 跟 `ready` 是兩件事：`ready` 只要答滿三題就成立，但主打商品是下游全部都靠的那一格
+ *   （節慶客製、受眾配對），空的話這張卡只講得出通用建議卻不會有人知道。
+ * ⛔ 預設 `true`：讀不到時**不要**跳出「快去補商品」——那是在還不知道的情況下指責他。
+ */
+const hasProducts = ref(true)
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
@@ -105,10 +125,16 @@ async function reload() {
   loading.value = true
   loadError.value = ''
   try {
-    const r = await apiFetch<{ entries: CalendarEntry[], headline: string, ready: boolean }>('/api/marketing-calendar')
+    const r = await apiFetch<{
+      entries: CalendarEntry[]
+      headline: string
+      ready: boolean
+      hasProducts: boolean
+    }>('/api/marketing-calendar')
     entries.value = r.entries ?? []
     headline.value = r.headline ?? ''
     ready.value = r.ready === true
+    hasProducts.value = r.hasProducts === true
     loaded.value = true
   }
   catch (e: unknown) {

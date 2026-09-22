@@ -31,6 +31,15 @@ export interface BroadcastDraftHandoff {
   variants: string[]
   /** 建議的受眾標籤 id；空陣列＝沒有對得上的標籤，讓他自己挑 */
   suggestedTagIds: string[]
+  /**
+   * 受眾這件事要對他講的那一句（`C-235`）——**挑到了就講憑什麼，沒挑到就講找過了沒有**。
+   *
+   * ⛔ 這一欄不可以省成「選了 N 個標籤」：挑三顆卻說不出理由，人只能全盤接受或全盤不信；
+   *   而挑不到時只寫「要你自己挑」，他分不出「系統沒找」「找了沒有」
+   *   （[[feedback_filters_must_report_what_they_dropped]]）。
+   * ⚠️ 舊的交接單沒有這一欄，所以 `draftHandoffNoticeText` 要吃得下空字串。
+   */
+  audienceNotice?: string
   /** 給人看的一句：這幾版是照什麼寫的 */
   basis: string
   ts: number
@@ -64,10 +73,12 @@ export function parseDraftHandoff(raw: string | null): BroadcastDraftHandoff | n
  *    對客人說話的東西，最後一顆按鈕永遠是人。
  */
 export function draftHandoffNoticeText(p: BroadcastDraftHandoff): string {
-  const tail = p.suggestedTagIds.length
-    ? `，發送對象先幫你選了 ${p.suggestedTagIds.length} 個標籤`
-    : '，發送對象要你自己挑'
-  return `幫你擬了 ${p.variants.length} 版「${p.festivalName}」的文案${tail}。這是草稿，還沒有送出去。`
+  // `C-235`：受眾那句由 `festival-audience.ts` 算好帶過來（挑到了講憑什麼、沒挑到講為什麼）。
+  // ⚠️ 舊交接單沒有 `audienceNotice`，退回原本那句，⛔ 不要讓它變成空白。
+  const tail = p.audienceNotice
+    ? `。${p.audienceNotice}`
+    : (p.suggestedTagIds.length ? `，發送對象先幫你選了 ${p.suggestedTagIds.length} 個標籤` : '，發送對象要你自己挑')
+  return `幫你擬了 ${p.variants.length} 版「${p.festivalName}」的文案${tail}${tail.endsWith('。') ? '' : '。'}這是草稿，還沒有送出去。`
 }
 
 /** 讀不到時要講的那一句。⛔ 不可以安靜地開一張空白推播。 */

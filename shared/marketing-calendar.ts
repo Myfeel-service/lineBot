@@ -32,10 +32,13 @@ export interface CalendarFacts {
   /** 好友總數 */
   friendCount: number | null
   /**
-   * 跟這個檔期對得上的標籤：{ 標籤名, 人數 }。
-   * 例：旺季是送禮的店，「送禮客」那顆標籤有幾個人。
+   * 跟這個檔期對得上的標籤：{ 標籤名, 人數, 憑什麼算對得上 }。
+   *
+   * ⚠️ `why` 是 `C-235` 加的，由 `shared/festival-audience.ts` 算。**非加不可**：
+   *   「你有 206 位客人貼著『問卷 - AROMIC睡眠香氛機』」這句話，少了 why 會被讀成
+   *   「206 個人想買香氛機」，但那只是填過問卷的名冊（`D-28` 那條鐵律）。
    */
-  matchedTags: { name: string, memberCount: number }[]
+  matchedTags: { name: string, memberCount: number, why?: string }[]
   /** 去年同一個節日前後有沒有發過推播（發給幾人）。查不到＝null */
   lastYearBroadcast: { name: string, sentCount: number } | null
 }
@@ -96,7 +99,8 @@ export function buildReasons(
   for (const t of facts.matchedTags.slice(0, 2)) {
     if (t.memberCount <= 0) continue
     out.push({
-      text: `你有 ${t.memberCount} 位客人貼著「${t.name}」，這一檔可以直接發給他們`,
+      // ⛔ `why` 有就一定要講出來：沒有它，事件型標籤（問卷名冊）會被讀成「這些人想買」
+      text: `你有 ${t.memberCount} 位客人貼著「${t.name}」${t.why ? `——${t.why}` : ''}，這一檔可以直接發給他們`,
       source: '標籤管理的實際人數',
     })
   }

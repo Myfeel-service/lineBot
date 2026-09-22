@@ -3,6 +3,8 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
+import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
+import { matchAudienceTags, productKeywords, type AudienceTagLike } from '~~/shared/festival-audience'
 import {
   buildMarketingCalendar,
   calendarHeadline,
@@ -24,16 +26,17 @@ import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
  * ⚠️ 全部唯讀、全部單欄位等值查詢（免複合索引），每次呼叫約 3–4 次讀取。
  */
 
-/** 哪些標籤名看起來跟「這個節日」有關。⛔ 純字面比對，不猜、不打 LLM。 */
-function tagMatchesFestival(tagName: string, f: TaiwanFestival): boolean {
-  const n = tagName.toLowerCase()
-  if (n.includes(f.name.toLowerCase())) return true
-  // 送禮類節日 → 「送禮」「禮盒」相關的標籤
-  if (/春節|中秋|除夕|聖誕|情人|母親節|父親節/.test(f.name) && /送禮|禮盒|贈禮/.test(tagName)) return true
-  // 折扣類 → 「回購」「揪團」「囤貨」
-  if (/雙 ?11|購物節/.test(f.name) && /回購|囤貨|揪團|優惠/.test(tagName)) return true
-  return false
-}
+/**
+ * ⚠️ **2026-09-23（`C-235`）把這裡原本那支 `tagMatchesFestival` 整個拿掉了**。
+ *
+ * 它跟 `draft.post.ts` 裡那支是同一條規則的**兩份拷貝**，而且兩份都是錯的：
+ * 拿「送禮／禮盒／回購」去比對標籤名，在 MYFEEL 的 39 顆真標籤上**九個節日有八個一顆都挑不到**
+ * ——店家的標籤是商品名與意圖，不是場合字。
+ *
+ * ⛔ 現在兩處都吃 `shared/festival-audience.ts` 的 `matchAudienceTags`，
+ *   那裡有 20 條測試釘著。**不要在任何端點裡再長出第三份判斷**：
+ *   同一件事兩種答案，正是這個專案踩過最多次的形狀。
+ */
 
 /** 去年同一個節日前後 14 天內發過的推播（只取一筆，當「你去年做過」的證據）。 */
 async function findLastYearBroadcast(
@@ -76,14 +79,22 @@ export default defineEventHandler(async (event) => {
   const profile = await getStoreProfile(workspaceId, db)
 
   // ── 標籤與人數（一次撈完，逐檔在記憶體比對）──────────────────
-  let tags: { id: string, name: string }[] = []
+  let tags: AudienceTagLike[] = []
+  // ⛔ 用 code 反查不要寫死 id：「N 天沒互動」那顆是每個工作區各自建的
+  let excludeTagIds: string[] = []
   try {
     const snap = await db.collection('tags')
       .where('workspaceId', '==', workspaceId)
       .where('status', '==', 'active')
       .limit(60)
       .get()
-    tags = snap.docs.map(d => ({ id: d.id, name: String((d.data() as { name?: string }).name ?? '') }))
+    tags = snap.docs.map((d) => {
+      const v = d.data() as { name?: string, aiMode?: string }
+      return { id: d.id, name: String(v.name ?? ''), aiMode: v.aiMode }
+    })
+    excludeTagIds = snap.docs
+      .filter(d => (d.data() as { code?: string }).code === INACTIVE_TAG_CODE)
+      .map(d => d.id)
   }
   catch { /* 查不到＝這一類理由不出現 */ }
 
@@ -108,12 +119,16 @@ export default defineEventHandler(async (event) => {
     lastYear.set(e.festivalId, await findLastYearBroadcast(db, workspaceId, f))
   }
 
+  // 輪廓裡的主打商品＝配對的主軸（`C-235`）。每一檔都是同一批詞，先算一次。
+  const products = productKeywords(String(profile.fields?.products?.value ?? ''))
+
   const factsOf = (f: TaiwanFestival): CalendarFacts => ({
     friendCount,
-    matchedTags: tags
-      .filter(t => tagMatchesFestival(t.name, f))
-      .map(t => ({ name: t.name, memberCount: counts[t.id] ?? 0 }))
-      .filter(t => t.memberCount > 0),
+    matchedTags: matchAudienceTags(tags, counts, {
+      festivalName: f.name,
+      products,
+      excludeTagIds,
+    }).suggestions.map(s => ({ name: s.name, memberCount: s.users, why: s.reason })),
     lastYearBroadcast: lastYear.get(f.id) ?? null,
   })
 
@@ -122,6 +137,13 @@ export default defineEventHandler(async (event) => {
   return {
     today,
     ready,
+    /**
+     * ⭐ `C-235`：輪廓有沒有寫主打商品。**跟 `ready` 是兩件事**——
+     * `isStoreProfileReady` 只要求答滿三題，但主打商品是下游全部都靠的那一格
+     * （`tailorFestivalAngle` 沒有它就退回通用句、`matchAudienceTags` 沒有它就配不出受眾）。
+     * ⛔ 不回這一欄的話，這張卡會安靜地一直不準。
+     */
+    hasProducts: products.length > 0,
     headline: calendarHeadline(entries, ready),
     entries,
   }
