@@ -732,17 +732,15 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="flow-title"]',
         title: '模組是「要回什麼」的積木',
         description:
-          '一個模組 = 一組要回給客人的訊息。上面兩個是<strong>系統模組</strong>（一定在、不能刪），下面是你自己加的。接下來我一個一個帶你看',
+          '一個模組 = 一組要回給客人的訊息。最上面那個是<strong>系統模組</strong>（一定在、不能刪），下面是你自己加的。接下來我一個一個帶你看',
         placement: 'right',
       },
-      {
-        target: '[data-tour="flow-sys-badge"]',
-        clickBefore: '[data-tour="flow-sys-welcome"]',
-        title: '歡迎模組',
-        description:
-          '我幫你選到「<strong>歡迎模組</strong>」了。它在客人<strong>加好友的當下</strong>自動發第一組訊息——通常放品牌介紹、優惠或常見問答入口。系統內建，你只要編內容。',
-        placement: 'bottom',
-      },
+      /**
+       * ⛔ 這裡原本有一步「歡迎模組」，2026-09-21 拿掉（`D-23`）。
+       * 那一步說「它在客人加好友的當下自動發第一組訊息……你只要編內容」——**是假的**：
+       * 那顆系統模組在 `server/` 沒有任何執行路徑，照著編完等客人加好友什麼都不會發生。
+       * 加好友歡迎真正的家是「自動回應 → 客人加好友時」那一列，收尾那一步會指過去。
+       */
       {
         target: '[data-tour="flow-sys-badge"]',
         clickBefore: '[data-tour="flow-sys-live_agent"]',
@@ -772,8 +770,12 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // ⛔ 側欄那一頁叫「自動回應」，不是「自動回覆」——後者 2026-08-09 已下架併進前者，
         //    側欄上找不到那四個字。第一次的人正是在這一刻要去找「那什麼時候會回」，
         //    指錯名字就直接走丟（同一個坑在 flow.vue 的 caption 也標過）。
+        // ⛔ 2026-09-21（`D-23`）：舊文案寫「歡迎模組與真人客服例外，系統會自己發」——
+        //    歡迎模組那半是假的（沒有任何執行路徑），而且那顆已經拿掉了。
         description:
-          '模組只管「<strong>回什麼</strong>」；「<strong>什麼時候回</strong>」要另外綁：到側欄的「<strong>自動回應</strong>」用關鍵字指向這個模組（歡迎模組與真人客服例外，系統會在該發的時候自己發）。編好按右上「<strong>建立模組</strong>／<strong>儲存變更</strong>」就生效',
+          '模組只管「<strong>回什麼</strong>」；「<strong>什麼時候回</strong>」要另外綁，都在側欄的「<strong>自動回應</strong>」：'
+          + '用<strong>關鍵字</strong>指向這個模組，或用最上面那一列「<strong>客人加好友時</strong>」讓新朋友一加好友就收到。'
+          + '（「真人客服」是例外，轉真人時系統會自己發。）編好按右上「<strong>建立模組</strong>／<strong>儲存變更</strong>」就生效',
       },
     ],
   },

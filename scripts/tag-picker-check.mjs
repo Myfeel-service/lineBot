@@ -836,9 +836,109 @@ async function checkCampaignWizardPartialFailure() {
   }
 }
 
+// ── 關卡 9：「客人加好友時」那一列（`D-23`）⛔ 全程不存檔 ──────────────────
+async function checkFollowWelcomeRow() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'ai-scripts', '.split-list')
+
+    const row = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.split-list > *')]
+        .filter(e => e.getBoundingClientRect().width > 0)
+      const first = items[0]
+      if (!first) return null
+      return {
+        isFirst: first.textContent.includes('客人加好友時'),
+        text: first.innerText.replace(/\s+/g, ' ').trim(),
+        unsetStyle: first.className.includes('scripts-follow-row--unset'),
+        total: items.length,
+      }
+    })
+    if (!row) { fail('自動回應：清單是空的，量不到那一列'); return }
+    if (!row.isFirst) {
+      fail(`自動回應：「客人加好友時」不在清單第一列（第一列是「${row.text.slice(0, 20)}」）＝它還是沒有家`)
+      return
+    }
+    pass(`自動回應：第一列固定是「客人加好友時」（${row.text.slice(0, 46)}）`)
+
+    /**
+     * MYFEEL 正式資料現在是「一條加好友流程都沒有」，所以這一列應該是「還沒設定」，
+     * 而且要講出後果。⛔ 這一關是有真實資料當基準的，不是憑空斷言。
+     */
+    if (row.unsetStyle) {
+      if (!row.text.includes('不會收到任何訊息')) {
+        fail('自動回應：沒設定的時候只說「還沒設定」，沒有講後果——那正是最該講清楚的一句')
+      }
+      else {
+        pass('自動回應：沒設定時有講後果（加好友的人不會收到任何訊息）')
+      }
+
+      // 點它應該開出淺層設定小視窗（⛔ 不是丟他去空白的新增畫面）
+      await page.evaluate(() => {
+        const first = [...document.querySelectorAll('.split-list > *')].find(e => e.getBoundingClientRect().width > 0)
+        first?.click()
+      })
+      await sleep(1500)
+      const dialog = await page.evaluate(() => {
+        const el = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+        if (!el) return null
+        return {
+          title: el.querySelector('.el-dialog__title')?.textContent?.trim() ?? '',
+          hasModulePick: el.textContent.includes('送一個機器人模組'),
+          hasText: el.textContent.includes('直接打一段文字'),
+          hasLineNote: el.textContent.includes('LINE 官方帳號後台'),
+        }
+      })
+      if (!dialog) { fail('自動回應：點了那一列沒有任何東西打開'); return }
+      pass(`自動回應：點了開出「${dialog.title}」`)
+      if (!dialog.hasModulePick || !dialog.hasText) fail('自動回應：小視窗沒有給「選模組／打文字」兩種做法')
+      else pass('自動回應：小視窗給了兩種做法（選模組／打文字）')
+      if (!dialog.hasLineNote) fail('⛔ 小視窗沒有提醒去 LINE 後台關掉內建歡迎＝客人會連收兩則，而我們偵測不到')
+      else pass('自動回應：有提醒去 LINE 後台關掉內建的那則')
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      pass('自動回應：⛔ 全程沒有按「存起來並啟用」，正式庫沒有多出流程')
+    }
+    else {
+      pass(`自動回應：這個帳號已經設過了（${row.text.slice(0, 30)}）——沒設定那條路這次沒驗到`)
+    }
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
+// ── 關卡 10：空的「歡迎模組」不該再出現在模組清單（`D-23`）──────────────────
+async function checkWelcomeModuleGone() {
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    await gotoPage(page, 'flow', '.split-list-item, .admin-split-list button')
+    const names = await page.evaluate(() =>
+      [...document.querySelectorAll('.split-list > *')]
+        .filter(e => e.getBoundingClientRect().width > 0)
+        .map(e => e.textContent.replace(/\s+/g, ' ').trim().slice(0, 16)))
+    const hasWelcome = names.some(n => n.includes('歡迎模組'))
+    if (hasWelcome) {
+      fail('機器人模組：清單裡還看得到「歡迎模組」——它沒有執行路徑，留著只會讓人白編內容')
+    }
+    else {
+      pass('機器人模組：空的「歡迎模組」已經不在清單裡')
+    }
+    if (!names.some(n => n.includes('真人客服'))) {
+      fail('機器人模組：連「真人客服」也不見了＝藏過頭（那顆是真的有在用的）')
+    }
+    else {
+      pass('機器人模組：「真人客服」還在（只藏該藏的那一顆）')
+    }
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
-  await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users'])
+  await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users', 'ai-scripts'])
   console.log('\n── 活動標籤 ──────────────────────────────')
   await checkCampaigns()
   console.log('\n── 客服預存 ──────────────────────────────')
@@ -857,6 +957,10 @@ try {
   await checkCampaignWizardHappyPath()
   console.log('\n── 「一檔活動」精靈：活動那步失敗（C-212）──')
   await checkCampaignWizardPartialFailure()
+  console.log('\n── 「客人加好友時」那一列（D-23）──────────')
+  await checkFollowWelcomeRow()
+  console.log('\n── 空的「歡迎模組」已經拿掉（D-23）────────')
+  await checkWelcomeModuleGone()
 }
 finally {
   await browser.close()

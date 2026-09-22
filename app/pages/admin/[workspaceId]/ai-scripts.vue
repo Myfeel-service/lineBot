@@ -17,8 +17,27 @@
         <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="scr-list" @scroll.passive="onSidebarListScroll">
+        <!--
+          `D-23` 拍板：**「客人加好友時」永遠釘在最上面，沒設定也在。**
+          以前它藏在「新增 → 觸發方式的第三顆」，商家腦中的詞（歡迎訊息）跟我們的詞
+          （客服流程／觸發方式）對不上，結果 MYFEEL 7 條自動回應裡一條加好友的都沒有，
+          最近 90 天約 667 位掃 QR 加好友的人一句話都沒收到，而後台沒有任何地方會講。
+          ⛔ 不新增側欄項目（08-22 拍板），它本來就是一條自動回應。
+        -->
         <AdminSplitListItem
-          v-for="script in scripts"
+          :title="FOLLOW_WELCOME_LABEL"
+          :active="isFollowRowActive"
+          data-tour="scr-follow-row"
+          title-row-chip
+          :chip-text="followRow.chipText"
+          :chip-tone="followRow.chipTone"
+          :meta-text="followRow.meta"
+          :meta-truncate="false"
+          :class="['scripts-follow-row', { 'scripts-follow-row--unset': followRow.state === 'unset' }]"
+          @select="onFollowRowSelect"
+        />
+        <AdminSplitListItem
+          v-for="script in messageScripts"
           :key="script.id"
           :title="script.name || '(未命名流程)'"
           :active="selectedId === script.id"
@@ -685,6 +704,13 @@
       </div>
     </template>
   </AdminSplitLayout>
+
+  <!-- `D-23`：還沒設過「客人加好友時」時，點那一列開的淺層設定（選模組或打一段字） -->
+  <AdminFollowWelcomeSetup
+    v-model:visible="followSetupVisible"
+    :module-options="moduleOptions.map(m => ({ id: m.value, name: m.label }))"
+    @created="onFollowWelcomeCreated"
+  />
 </template>
 
 <script setup lang="ts">
@@ -692,6 +718,7 @@ import type { Component } from 'vue'
 import { ArrowRight, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Collection, Connection, CopyDocument, Delete, MagicStick, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { v4 as uuidv4 } from 'uuid'
+import { FOLLOW_WELCOME_LABEL, followWelcomeRow } from '~~/shared/follow-welcome'
 import type {
   BranchOp,
   CollectFormat,
@@ -1679,6 +1706,44 @@ function openCreate() {
   markClean()
   simReset()
   resetEditorDisclosure(form.value.nodes)
+}
+
+// ── `D-23`：「客人加好友時」那一列 ────────────────────────────────────
+/** 清單本體只列「客人說什麼」那種；加好友那條由上面釘住的那一列代表 */
+const messageScripts = computed(() =>
+  scripts.value.filter((s: any) => scriptTriggerEvent(s) !== 'follow'),
+)
+const followScript = computed<any | null>(() =>
+  scripts.value.find((s: any) => scriptTriggerEvent(s) === 'follow' && s.enabled !== false)
+  ?? scripts.value.find((s: any) => scriptTriggerEvent(s) === 'follow')
+  ?? null,
+)
+const followRow = computed(() =>
+  followWelcomeRow(scripts.value.map((s: any) => ({
+    enabled: s.enabled,
+    name: s.name,
+    triggerEvent: scriptTriggerEvent(s),
+  }))),
+)
+const isFollowRowActive = computed(() =>
+  Boolean(followScript.value && selectedId.value === followScript.value.id),
+)
+
+/** 已經設過就進既有編輯器（＝進階那一層）；還沒設過就開「選一個模組或打一段字」的小視窗 */
+const followSetupVisible = ref(false)
+function onFollowRowSelect() {
+  if (followScript.value) {
+    selectScript(followScript.value as ScriptRow)
+    return
+  }
+  if (!canEditScripts.value) return
+  followSetupVisible.value = true
+}
+
+async function onFollowWelcomeCreated(scriptId: string) {
+  await loadScripts()
+  const created = scripts.value.find((s: any) => s.id === scriptId)
+  if (created) selectScript(created as ScriptRow, { skipDiscardConfirm: true })
 }
 
 /**

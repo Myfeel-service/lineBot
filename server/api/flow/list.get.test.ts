@@ -123,4 +123,41 @@ describe('模組清單（E-23）', () => {
 
     expect(seedWorkspaceSystemModules).toHaveBeenCalledTimes(1)
   })
+
+  // ── `D-23`：歡迎模組 2026-09-21 起不再補建，空的舊資料也不再列出來 ──────────
+  it('⛔ 只缺「歡迎模組」不算缺 → 不可以再幫人補建一顆死模組', async () => {
+    stubListDocs([flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }), flow('flow-a')])
+    currentQuery = {}
+
+    await (handler as any)({} as never)
+
+    // 這一行紅掉＝又會每次列清單都補建一顆沒有任何執行路徑的歡迎模組
+    expect(seedWorkspaceSystemModules).not.toHaveBeenCalled()
+  })
+
+  it('空的舊「歡迎模組」不列出來（它沒有執行路徑，留著只會讓人白編內容）', async () => {
+    stubListDocs([
+      flow(`${WS}_welcome`, { isSystem: true, moduleType: 'welcome', messages: [] }),
+      flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }),
+      flow('flow-a'),
+    ])
+    currentQuery = {}
+
+    const res: any = await (handler as any)({} as never)
+    const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
+    expect(ids).not.toContain(`${WS}_welcome`)
+    expect(ids).toContain(`${WS}_live_agent`)
+  })
+
+  it('⛔ 有內容的舊「歡迎模組」照舊列出來——藏起來就是讓人家的東西無聲消失', async () => {
+    stubListDocs([
+      flow(`${WS}_welcome`, { isSystem: true, moduleType: 'welcome' }), // fixture 預設帶一則訊息
+      flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }),
+    ])
+    currentQuery = {}
+
+    const res: any = await (handler as any)({} as never)
+    const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
+    expect(ids).toContain(`${WS}_welcome`)
+  })
 })
