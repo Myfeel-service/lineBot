@@ -8,9 +8,11 @@
         <!-- 換電腦／清過快取／新同事第一次登入時整排全紅，沒這顆就只能一位一位點開才消得掉 -->
         <el-tooltip
           v-if="unreadRowCount > 0"
-          content="把這份清單上看得到的紅點一次清掉（只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響）"
+          content="把括號裡那幾顆紅點一次清掉＝目前已經載進來的全部（含釘選區收起來的那幾位）。只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響"
           placement="bottom"
         >
+          <!-- ⛔ 這個數字刻意**不**加「＋」（隔壁那顆篩選有）：它回答的是「按下去會清掉幾顆」，
+               範圍就是已載入的那些、是確定的。加了＋等於說「按下去不知道會清掉多少」，更可怕 -->
           <button
             type="button"
             class="conv-mark-all-read"
@@ -88,7 +90,7 @@
           <!-- 紅點看得到卻沒辦法只看那幾列：整排掃下來很容易漏掉中間那一顆（H-29）。
                五個分頁都給，因為紅點本來就五個分頁都會亮 -->
           <el-tooltip
-            :content="`未讀＝客人講過話、還沒有人看過那段對話（和列表上的紅點同一個口徑）。已讀記在你這台電腦，同事看過不影響你這邊。${unreadFilterOn ? `目前掃過已載入的 ${unreadScannedCount} 筆` : '只看得到已載入的那幾頁，往下捲會繼續掃'}`"
+            :content="unreadFilterTip"
             placement="bottom"
           >
             <button
@@ -99,7 +101,9 @@
               @click="toggleUnreadFilter"
             >
               <span class="conv-flag-filter__dot" aria-hidden="true" />
-              只看未讀{{ unreadRowCount > 0 ? `（${unreadRowCount}）` : '' }}
+              <!-- 「18＋」的＋不能省：這個數字只掃得到已載入的那幾頁，往下捲會變大、
+                   按重整又會縮回去，寫成裸數字就是個會自己亂跳的「總數」（見 unreadCountLabel） -->
+              只看未讀{{ unreadRowCount > 0 ? `（${unreadCountText}）` : '' }}
             </button>
           </el-tooltip>
           <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
@@ -1518,7 +1522,7 @@ import {
   type ConversationBatchResult,
 } from '~~/shared/conversation-batch'
 import { assigneeInitial, NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
-import { customerLastMessageMs, isConversationUnread, keepUnreadRows } from '~~/shared/conversation-unread'
+import { customerLastMessageMs, isConversationUnread, keepUnreadRows, unreadCountLabel } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
@@ -1845,13 +1849,35 @@ function isRowUnread(userId: string, customerLastMs: number): boolean {
   return isConversationUnread({ customerLastMs, lastMessageMs: 0 }, readMs)
 }
 
+/**
+ * 分頁標題的「底稿」＝沒有未讀數的那一版（頁面用 useHead 設的那串）。
+ *
+ * ⛔ 不可以只在 onMounted 讀一次：useHead 是在 DOM patch 之後才把 title 打上去，
+ *    onMounted 當下 `document.title` 還是空的，而空的底稿會讓下面那支整段 early return
+ *    ——寫了等於沒寫。2026-09-22 實機驗證就是這樣抓到的（頁面補上 useHead 之後
+ *    標題有了，未讀數卻還是掛不上去）。所以改成「要用的時候沒有就當場補抓」。
+ *    抓的時候把自己先前加的「（3＋）」前綴剝掉，免得底稿愈疊愈長。
+ */
+function baseDocumentTitle(): string {
+  if (!savedDocumentTitle.value && typeof document !== 'undefined' && document.title)
+    savedDocumentTitle.value = document.title.replace(/^（\d+＋?）/, '')
+  return savedDocumentTitle.value
+}
+
+/**
+ * 分頁切到背景時把未讀數掛上瀏覽器分頁標題。
+ *
+ * ⛔ 這裡一定要用帶「＋」的那個字串（unreadCountText）：這是**最容易被當成待辦總數**
+ *    的位置——人在別的網頁上瞄到「（18）MiniMe」，畫面上那行「更早的還沒載入」他根本
+ *    看不到，身邊沒有任何東西告訴他這只是「捲到哪為止那段裡的 18 筆」。
+ */
 function applyUnreadDocumentTitle() {
-  if (typeof document === 'undefined' || !savedDocumentTitle.value)
+  if (typeof document === 'undefined' || !baseDocumentTitle())
     return
   const n = unreadRowCount.value
   const backgrounded = document.visibilityState === 'hidden' || !pageHasFocus.value
   if (n > 0 && backgrounded)
-    document.title = `（${n}）${savedDocumentTitle.value}`
+    document.title = `（${unreadCountText.value}）${savedDocumentTitle.value}`
   else
     document.title = savedDocumentTitle.value
 }
@@ -2826,14 +2852,56 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
  * 一定要跟著分頁走：loadList 換到會話分頁時會把 conversations 清空，
  * 先前只數 conversations，結果停在「待處理」時標題那個數字永遠是 0。
  * 只數已載入的那幾頁——沒載到的列本來就還沒算進畫面上任何一個數字。
+ *
+ * ⛔ 數的是套釘選區**之前**那一份（`convRowsInView`，不是 `convSidebarItems`）。
+ *    「標記全部已讀」蓋的是所有已載入的列（見 markAllConversationsRead），數套過釘選區
+ *    的那份會在**釘選區收起來時少算**：按鈕寫「標記全部已讀（3）」、按下去其實清掉 5 顆，
+ *    收在裡面那 2 顆正好是特地釘起來的人，而且清掉的過程完全看不到。
+ *    這和 1740 行那段罵過的「按鈕上的數字和實際清掉的範圍對不起來」是同一種病。
+ *    2026-09-22 老闆回報時一起修掉。
  */
 const unreadRowCount = computed(() =>
   activeTab.value === 'all'
-    ? convSidebarItems.value.filter(c => isRowUnread(c.userId, convRowCustomerMs(c))).length
-    : sessionSidebarItems.value.filter(s => isRowUnread(s.userId, sessionRowCustomerMs(s))).length,
+    ? convRowsInView.value.filter(c => isRowUnread(c.userId, convRowCustomerMs(c))).length
+    : sessionRowsInView.value.filter(s => isRowUnread(s.userId, sessionRowCustomerMs(s))).length,
 )
 
-watch(unreadRowCount, () => {
+/**
+ * 括號裡的數字可不可以當總數看＝清單真的載到底了沒有。
+ *
+ * ⛔ 兩個旗標都要看：「只看待跟進」撞到顯示上限時是走 `followUpListTruncated`，
+ *    那時 `listHasMore` 是 false，但那份清單一樣少了東西——只看 hasMore 的話，
+ *    一份被截掉的清單會端出一個看起來很篤定的總數。
+ */
+const unreadCountComplete = computed(() => !listHasMore.value && !followUpListTruncated.value)
+
+/**
+ * 「只看未讀」按鈕與瀏覽器分頁標題上的數字：沒載完時是「18＋」。
+ * 為什麼是＋而不是裸數字、以及為什麼「標記全部已讀」刻意不用這個值，
+ * 寫在 shared/conversation-unread.ts 的 unreadCountLabel。
+ */
+const unreadCountText = computed(() => unreadCountLabel(unreadRowCount.value, unreadCountComplete.value))
+
+/**
+ * 「只看未讀」那顆按鈕的說明。回答三個會被誤會的點：未讀是什麼、已讀記在哪裡、
+ * 括號裡那個數字為什麼會動。
+ */
+const unreadFilterTip = computed(() => {
+  const scanned = unreadFilterOn.value
+    ? `目前掃過已載入的 ${unreadScannedCount.value} 筆`
+    : '只看得到已載入的那幾頁，往下捲會繼續掃'
+  // 載到底時不講＋（那時數字真的是總數，多講一句只會讓人懷疑它）
+  const plus = unreadCountComplete.value
+    ? ''
+    : '。數字後面的「＋」＝至少這麼多，往下捲還會再找到；按「重整」回到第一頁時它會變小，那不是紅點不見了'
+  return `未讀＝客人講過話、還沒有人看過那段對話（和列表上的紅點同一個口徑）。已讀記在你這台電腦，同事看過不影響你這邊。${scanned}${plus}`
+})
+
+/**
+ * ⛔ 盯的是帶＋的那個字串、不是 unreadRowCount：清單載到最後一頁時未讀數可能一個都沒變，
+ *    但「18＋」要變回「18」——只盯數字的話分頁標題會一直掛著那個已經不成立的＋。
+ */
+watch(unreadCountText, () => {
   applyUnreadDocumentTitle()
 })
 

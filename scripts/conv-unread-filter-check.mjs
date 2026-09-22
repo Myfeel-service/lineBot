@@ -74,6 +74,23 @@ await page.evaluate(async (s) => {
 const fail = msg => { console.error(`❌ ${msg}`); process.exitCode = 1 }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+/**
+ * 等到條件成立（或逾時）再往下量。
+ *
+ * ⛔ 跟正式站要資料的段落不可以用固定 sleep：同一支腳本連跑三次，清單有時 2 秒回來、
+ *    有時 6 秒，量太早就會喊「按鈕沒接上 loadMoreList」——可是下一段自己又看到資料到齊了。
+ *    一支會亂喊的守門員比沒有守門員更糟：真的紅的那次沒有人會停下來看。
+ *    （2026-09-22 就是這樣連紅兩次，程式其實是對的。）
+ */
+async function waitUntil(check, ms = 15_000, step = 500) {
+  const until = Date.now() + ms
+  for (;;) {
+    if (await check()) return true
+    if (Date.now() > until) return false
+    await sleep(step)
+  }
+}
+
 await page.bringToFront() // 沒有焦點的話已讀章不會落地（見 snapshot 的 hasFocus）
 await page.goto(`${BASE}/admin/${WORKSPACE_ID}/conversations`, { waitUntil: 'networkidle2', timeout: 90_000 })
 await page.waitForSelector('.conv-list-row', { timeout: 60_000 })
@@ -101,6 +118,8 @@ const snapshot = () => page.evaluate(() => {
      * 章只會記在待辦裡不會落地，③ 就會無辜地紅。所以要把它印出來，不然這支守門員自己會說謊。
      */
     hasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : null,
+    /** 同一個判斷還看 visibilityState（見 pageIsVisible）：headless 常常是 hidden，只印 hasFocus 會誤判 */
+    visibility: document.visibilityState,
     /** 還亮著紅點的是哪幾列（名字＋列上那個時間）——數字對不起來時要看得出是誰 */
     dotRows: [...document.querySelectorAll('.conv-list-row')]
       .filter(r => r.querySelector('.split-list-item__avatar-wrap.is-unread'))
@@ -152,13 +171,36 @@ if (before.dots > 0 && on.rows === before.rows && before.rows !== before.dots)
 if (on.rows !== on.dots) fail(`篩選開著時留下 ${on.rows} 列卻只有 ${on.dots} 顆紅點＝有已讀的列沒被篩掉`)
 if (before.dots > 0 && on.rows === 0 && !on.empty) fail('一列都沒留，卻連空清單說明都沒有＝畫面是一片空白')
 
+// ── ②-b 括號裡的數字：沒載完要帶「＋」（2026-09-22 老闆回報）──────────
+// 這個數字只掃得到已載入的那幾頁：往下捲會變大、按重整又縮回去。寫成裸數字時它在
+// 按鈕上長得像「我總共有幾筆沒看」，看兩次就沒人再相信它（見 unreadCountLabel）。
+{
+  const hasMore = Boolean(on.noticeBtn) // 有「再往下找」那顆＝下面還有沒載進來的頁
+  const btnText = (on.unreadBtn ?? '').replace(/\n/g, '')
+  const hasNumber = /（\d/.test(btnText)
+  const plus = btnText.includes('＋')
+  console.log(`\n②-b 數字寫法：按鈕「${btnText}」｜下面還有沒載完的頁：${hasMore}`)
+  if (!hasNumber) {
+    console.log('   （這輪按鈕上沒有數字＝一筆未讀都沒有，＋的規則這次驗不到）')
+  }
+  else {
+    if (hasMore && !plus) fail('清單還沒載到底，數字卻沒有「＋」＝又變回一個看起來像總數、卻會自己長大的裸數字')
+    if (!hasMore && plus) fail('清單已經載到底了還掛著「＋」＝這時它就是總數，＋只會讓人不敢相信它')
+  }
+  // ⛔「標記全部已讀」刻意不帶＋：它回答的是「按下去會清掉幾顆」，範圍是確定的
+  if ((on.markAllBtn ?? '').includes('＋'))
+    fail('「標記全部已讀」不該有＋：加了等於說「按下去不知道會清掉多少」，比沒加還可怕')
+}
+
 // ── ③ 點開一列：正在看的那一列要留著 ───────────────────────────────
 if (on.rows > 0) {
   await page.click('.conv-list-row .split-list-item')
-  await sleep(2500)
+  // 已讀章要等時間軸真的載回來才蓋得下去（見 loadTimeline → stampConversationRead）
+  await waitUntil(async () => (await snapshot()).readStamps > 0)
+  await sleep(800) // 章落地到清單重繪還有一拍
   const opened = await snapshot()
   console.log(`\n③ 點開第一列後：清單 ${opened.rows} 列、紅點 ${opened.dots} 顆（選中 ${opened.active} 列）`)
-  console.log(`   視窗有焦點：${opened.hasFocus}｜已讀章 ${opened.readStamps} 位`)
+  console.log(`   視窗有焦點：${opened.hasFocus}｜分頁狀態：${opened.visibility}｜已讀章 ${opened.readStamps} 位`)
   if (opened.rows < 1) fail('點開之後那一列自己從清單消失了＝正在看的對話在左邊找不到（keepUnreadRows 的例外沒生效）')
   if (opened.dots >= on.dots) fail('點開之後紅點沒少一顆＝已讀沒蓋上（和篩選無關，但這條路壞了篩選就會怪怪的）')
   if (opened.rows !== opened.dots + 1 && opened.rows !== opened.dots)
@@ -170,7 +212,11 @@ const beforeScan = await snapshot()
 if (beforeScan.noticeBtn) {
   const num = s => Number(String(s).match(/(\d+)/)?.[1] ?? 0)
   await page.click('.conv-unread-scan__more')
-  await sleep(4000)
+  // 掃過的筆數變多、或那行字整個不見了（掃到底）都算完成
+  await waitUntil(async () => {
+    const s = await snapshot()
+    return !s.notice || num(s.notice) > num(beforeScan.notice)
+  })
   const afterScan = await snapshot()
   console.log(`\n④「再往下找」：掃過 ${num(beforeScan.notice)} → ${num(afterScan.notice) || '（已到底）'} 筆`)
   if (afterScan.notice && num(afterScan.notice) <= num(beforeScan.notice))
@@ -180,6 +226,43 @@ else {
   console.log('\n④ 沒有「再往下找」＝清單已經全部載入（listHasMore=false），這輪驗不到')
 }
 
+// ── ④-b 切到背景時，分頁標題上的未讀數（2026-09-22）────────────────
+/**
+ * 那是最容易被當成待辦總數的位置：人在別的網頁上瞄到「（18）MiniMe」，畫面上那行
+ * 「更早的還沒載入」他根本看不到，所以那裡也得帶＋，而且要跟按鈕講同一個數字。
+ *
+ * ⛔ 位置有兩個限制，都踩過才知道：
+ *    · 要在 ③（點開一列蓋已讀）**之後**——這段會假造一次 blur，而已讀章只在
+ *      「人真的在看」時才落地（見 stampConversationRead），夾在前面會讓 ③ 無辜地紅。
+ *    · 要在 ⑦（標記全部已讀）**之前**——⑦ 會把未讀清光，擺在後面十次有八次
+ *      只會印一句「這輪沒有未讀，驗不到」，等於沒有這道關卡。
+ * ⛔ 這一頁先前根本沒有標題（沒有 useHead），整段掛未讀數的程式碼形同死碼，
+ *    所以這裡也驗「標題本身存不存在」，不要再讓它悄悄沒作用。
+ */
+const titleCheck = await page.evaluate(() => {
+  const foreground = document.title
+  window.dispatchEvent(new Event('blur'))
+  const background = document.title
+  window.dispatchEvent(new Event('focus')) // ⛔ 一定要還原，不然後面每一段跟已讀有關的都會紅
+  return {
+    foreground,
+    background,
+    unreadBtn: [...document.querySelectorAll('.conv-flag-filter')].find(b => b.innerText.includes('只看未讀'))?.innerText.trim().replace(/\n/g, '') ?? null,
+  }
+})
+console.log(`\n④-b 分頁標題：前景「${titleCheck.foreground}」→ 背景「${titleCheck.background}」｜按鈕「${titleCheck.unreadBtn}」`)
+if (!titleCheck.foreground) fail('這一頁的瀏覽器分頁標題是空的＝未讀數掛不上去（頁面少了 useHead，那段程式碼等於死碼）')
+const btnNum = String(titleCheck.unreadBtn ?? '').match(/（(\d+)(＋?)）/)
+if (!btnNum) {
+  console.log('   （按鈕上沒有數字＝這輪沒有未讀，標題的數字驗不到）')
+}
+else {
+  if (!titleCheck.background.includes(`（${btnNum[1]}${btnNum[2]}）`))
+    fail(`分頁標題「${titleCheck.background}」和按鈕的「（${btnNum[1]}${btnNum[2]}）」對不起來＝兩個地方各講一套`)
+  if (titleCheck.background === titleCheck.foreground)
+    fail('切到背景之後標題沒有變＝未讀數根本沒掛上分頁標題')
+}
+
 // ── ⑤ 關掉篩選：整份清單要回來 ────────────────────────────────────
 await clickUnreadFilter()
 await sleep(1500)
@@ -187,6 +270,28 @@ const off = await snapshot()
 console.log(`\n⑤ 篩選關掉：清單 ${off.rows} 列、紅點 ${off.dots} 顆`)
 if (off.unreadOn !== false) fail('再按一次沒有關掉')
 if (off.rows < before.rows) fail(`關掉之後只剩 ${off.rows} 列（原本 ${before.rows}）＝篩選把資料弄丟了，不只是遮起來`)
+
+// ── ⑤-b 收起釘選區：「標記全部已讀」的數字不可以跟著少（2026-09-22）──
+/**
+ * 「標記全部已讀」蓋的是**所有已載入的列**（見 markAllConversationsRead），不管釘選區
+ * 是開是收。所以按鈕上那個數字也必須數同一份——先前數的是套過釘選區的那份，
+ * 釘選區一收起來就變成「按鈕寫（3）、按下去清掉 5 顆」，而多清掉的那 2 顆
+ * 正好是特地釘起來的人，清掉的過程完全看不到。
+ */
+if (await page.$('.conv-list-group')) {
+  const openPinned = await snapshot()
+  await page.click('.conv-list-group')
+  await sleep(800)
+  const collapsed = await snapshot()
+  console.log(`\n⑤-b 收起釘選區：清單 ${openPinned.rows}→${collapsed.rows} 列｜「${openPinned.markAllBtn}」→「${collapsed.markAllBtn}」`)
+  if (openPinned.markAllBtn !== collapsed.markAllBtn)
+    fail(`收起釘選區之後「標記全部已讀」的數字變了（${openPinned.markAllBtn} → ${collapsed.markAllBtn}）＝按鈕寫的和它實際會清掉的對不起來，收在裡面那幾位會被靜靜清掉`)
+  await page.click('.conv-list-group') // 還原，後面幾段要看到完整清單
+  await sleep(600)
+}
+else {
+  console.log('\n⑤-b 這個帳號沒有釘選中的對話，「收起釘選區數字會不會少」這條驗不到')
+}
 
 // ── ⑥ 換到會話分頁：篩選要跟著過去（紅點五個分頁都會亮）─────────────
 await clickUnreadFilter()

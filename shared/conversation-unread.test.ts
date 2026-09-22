@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { customerLastMessageMs, isConversationUnread, keepUnreadRows } from './conversation-unread'
+import { customerLastMessageMs, isConversationUnread, keepUnreadRows, unreadCountLabel } from './conversation-unread'
 
 /** 客人 09:00 傳的那句 */
 const CUSTOMER_MS = 1_700_000_000_000
@@ -88,5 +88,25 @@ describe('「只看未讀」篩選（H-29）', () => {
     const original = [...rows]
     keepUnreadRows(rows, unread, () => false)
     expect(rows).toEqual(original)
+  })
+})
+
+describe('括號裡的未讀數字：「18」還是「18＋」（2026-09-22 老闆回報）', () => {
+  it('下面還有沒載進來的頁 → 帶＋，說的是「至少這麼多」', () => {
+    expect(unreadCountLabel(18, false)).toBe('18＋')
+  })
+
+  it('載到底了才拿掉＋——只有這時候它才真的是總數', () => {
+    expect(unreadCountLabel(18, true)).toBe('18')
+  })
+
+  it('往下捲之後 18＋ 變 23＋ 不算前後矛盾（裸數字才會變成一個會自己長大的「總數」）', () => {
+    expect(unreadCountLabel(18, false)).toBe('18＋')
+    expect(unreadCountLabel(23, false)).toBe('23＋')
+  })
+
+  it('一筆都還沒找到時照樣帶＋：0 要不要顯示由呼叫端決定，這裡不偷偷吞掉', () => {
+    expect(unreadCountLabel(0, false)).toBe('0＋')
+    expect(unreadCountLabel(0, true)).toBe('0')
   })
 })
