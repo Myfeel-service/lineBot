@@ -308,7 +308,7 @@ async function checkWizardProfileStep() {
 
     // ⚠️ **不可以只比對「認識你的店」四個字**：開場白與進度條上都有那幾個字，
     //    拿掉整段劇本這一關照樣會綠（破壞性驗證當場抓到）。改成比對只有這一段才講的話。
-    if (!await waitForBubble(page, '該推哪個商品')) return fail('建完帳號沒有接到「認識你的店」那一段')
+    if (!await waitForBubble(page, '我給的建議才會是你的店用得上的')) return fail('建完帳號沒有接到「認識你的店」那一段')
     pass('建完帳號直接接到「認識你的店」那一段')
 
     if (!await clickByText(page, '.agm-choices .el-button', '好，開始')) return fail('找不到「好，開始」')
@@ -504,7 +504,7 @@ async function checkProfileOnlyRun() {
     if (!await clickByText(page, '.agd__skip', '沒有網站')) return fail('網址那題跳不掉')
 
     // 五樣草稿
-    if (!await waitForBubble(page, '最常被跳過的')) return fail('沒有接到草稿那一段')
+    if (!await waitForBubble(page, '按「採用」才會生效')) return fail('沒有接到草稿那一段')
     pass('接到五樣草稿那一段')
 
     const firstDraft = await textOf(page, '.agm-draft__title')

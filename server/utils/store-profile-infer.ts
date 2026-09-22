@@ -19,10 +19,25 @@ import { getDb } from '~~/server/utils/firebase'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { generateJson } from '~~/server/utils/gemini'
 import { aiGuessableFields } from '~~/server/utils/store-profile-extract'
-import type { StoreProfileFieldId } from '~~/shared/types/store-profile'
+import { type StoreProfileFieldId } from '~~/shared/types/store-profile'
 
 /** 各類最多看幾筆。夠猜出輪廓就好，⛔ 不是越多越準，只是越貴。 */
 export const INFER_LIMITS = { chunks: 60, tags: 40, campaigns: 20 } as const
+
+/**
+ * **這條路不准猜的欄位**（⛔ 跟「讀網站」那條路不同，那條照舊可以猜）。
+ *
+ * ── 為什麼「產業與品類」在這裡是猜不到的 ──────────────────────
+ * 2026-09-23 拿 MYFEEL 實測三輪：它是**群眾集資平台**，但知識庫裡全是
+ * SHARP 咖啡機、除濕機的排障說明——那是平台上別人的商品。模型三次都答「家電電商」。
+ * 調了兩版 prompt 都沒用，第二版還一度讓它整份拒答。
+ *
+ * ⭐ **結論不是 prompt 不夠好，是資訊不在裡面**：知識庫從頭到尾沒有一句話講
+ * 「我們在做什麼生意」，那是客服文件的本質。⛔ 再調 prompt 是在榨取不存在的東西。
+ * 正解＝**這一格用問的**（精靈第一題本來就在問，三秒鐘、每次都對），
+ * 或由「讀網站」那條路補（官網實測答對：「群眾集資平台」）。
+ */
+export const INFER_FORBIDDEN_FIELDS: readonly StoreProfileFieldId[] = ['industry'] as const
 
 export interface InferSources {
   workspaceName: string
@@ -116,8 +131,13 @@ export async function collectInferSources(
   return out
 }
 
+/** 這條路真的要模型填的欄位＝可猜的扣掉「猜不到的」。 */
+export function inferrableFields() {
+  return aiGuessableFields().filter(f => !INFER_FORBIDDEN_FIELDS.includes(f.id))
+}
+
 export function buildInferPrompt(s: InferSources): string {
-  const fields = aiGuessableFields()
+  const fields = inferrableFields()
   const schema = fields.map(f => `  "${f.id}": "${f.aiHint}"`).join(',\n')
 
   const blocks: string[] = []
@@ -134,8 +154,13 @@ export function buildInferPrompt(s: InferSources): string {
     '1. 只根據下面的資料回答。**看不出來的就回空字串**，不要用產業常識補。',
     '2. 不要編造價格、品牌名稱或競爭對手。價格只能寫資料裡真的出現的數字。',
     '3. 「客人最常問的事」請從上面那份問題清單歸納成三件事，用頓號分開。',
-    '4. 每一格都用**繁體中文**，一句話以內，不要條列符號。',
-    '5. 回傳純 JSON，不要加說明文字。',
+    // ⚠️ 2026-09-23 實測後拿掉了「產業與品類」那一格（見 `INFER_FORBIDDEN_FIELDS`）：
+    //    調兩版 prompt 都沒救，因為那個資訊本來就不在知識庫裡。
+    // ⛔ 商品那一格要講清楚「在賣或在服務的」：MYFEEL 服務的家電不是它自己的品類，
+    //    但那些商品確實是客人會問的東西，值得留下。
+    '4. 商品那一格寫的是**他們在賣或在服務的商品**，不必分辨是不是他們自有品牌。',
+    '5. 每一格都用**繁體中文**，一句話以內，不要條列符號。',
+    '6. 回傳純 JSON，不要加說明文字。',
     '',
     '要填的欄位（值的意思寫在後面）：',
     '{',
@@ -170,7 +195,8 @@ export async function inferProfileFromExisting(
     thinkingBudget: 0,
   })
 
-  const allowed = new Set(aiGuessableFields().map(f => f.id))
+  // ⛔ 白名單同時擋掉「模型自己多填的產業」：prompt 沒問它不代表它不會填
+  const allowed = new Set(inferrableFields().map(f => f.id))
   const guesses: Partial<Record<StoreProfileFieldId, string>> = {}
   for (const [k, v] of Object.entries(data ?? {})) {
     if (!allowed.has(k as StoreProfileFieldId)) continue

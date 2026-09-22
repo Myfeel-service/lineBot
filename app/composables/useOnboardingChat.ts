@@ -307,20 +307,15 @@ export function useOnboardingChat() {
       await say(opts.intro)
     }
     else {
-      // ⚠️ 2026-09-22 老闆看示意頁後要求再修（第二版文案）。三個問題：
-      //   ① 「場面話」「都從這裡長出來」是**比喻**——這個專案的比喻早就全面退場
-      //      （「鑰匙」→「連線資訊」是同一條），讀者要先翻譯才懂。
-      //   ② 第二句一口氣講三件事、六十多字，第一次看的人會滑掉。
-      //   ③ 最重要的是**沒有給例子**：「你的建議」vs「通用建議」差在哪，
-      //      用一句真的會出現的話對照，比任何解釋都快。
-      // ⛔ 對照組刻意只寫**弱的那一邊**（「中秋節快到了」）：強的那一邊每家店都不一樣，
-      //    寫死一個商品就是在替他承諾我們還不知道的事。
+      // ⚠️ 2026-09-23 第三版（老闆：「這些廢話還是很多，只需要呈現使用者該知道的文字」）。
+      // ⛔ **這一則只留三件事**：要做什麼、要多久、一句為什麼。
+      //    第二版還在解釋「你的建議 vs 通用建議差在哪」並舉例——那是**我想講的**，
+      //    不是他這一刻需要知道的；他要的是決定要不要按下去。
+      // ⛔ 舉例、清單、後果全部收進 aside：想知道的人點開，其餘的人少讀四行。
       await say(
-        '接上 LINE 之前，先回答我五個問題，大約 <b>3 分鐘</b>。<br>'
-        + '知道你賣什麼、賣給誰之後，節慶前我會直接告訴你<b>該推哪個商品、推給哪一群人</b>；'
-        + '不知道的話，我只講得出「中秋節快到了」這種每一家店都適用的話。<br>'
-        + '加好友的第一句話怎麼寫、AI 用什麼口氣回客人，也都要靠這五題。',
-        { summary: '不做會怎樣？', html: '不做也能用，只是我對你的店一無所知：節慶提醒只有通用的一句、AI 回客人只能用範本的口氣、加好友的歡迎訊息要你自己從空白開始寫。這五題之後隨時可以從「組織與 LINE」頁補。' },
+        '先回答五個問題，大約 <b>3 分鐘</b>。<br>'
+        + '知道你賣什麼、賣給誰，我給的建議才會是你的店用得上的。',
+        { summary: '不做會怎樣？', html: '還是能用，只是節慶提醒和 AI 的口氣都只能用通用的。之後在「組織與 LINE」頁隨時可以補。' },
       )
     }
     const go = await askChoices([
@@ -328,7 +323,7 @@ export function useOnboardingChat() {
       { label: '先跳過', value: 'skip', escape: true },
     ])
     if (go === 'skip') {
-      await say('沒問題。右下角的小幫手會留一條「讓 MiniMe 認識你的店」，想做的時候點它就好。')
+      await say('好。想做的時候，右下角的小幫手留著這一條。')
       return 'skipped'
     }
 
@@ -368,7 +363,7 @@ export function useOnboardingChat() {
     }
 
     // 網址：可跳過。⛔ 跳過的人不要再被追問——沒有網站是很正常的事。
-    await say('五題答完 ✓ 最後給我一個<b>官網或商品頁的網址</b>，我自己去讀，你不用打字。<br>沒有網站的話跳過就好。')
+    await say('最後給我一個<b>官網或商品頁的網址</b>，我自己去讀。沒有就跳過。')
     const siteUrl = await askInput({
       inputType: 'text',
       placeholder: '例：shop.example.tw',
@@ -401,10 +396,11 @@ export function useOnboardingChat() {
         if (r.status === 'failed') {
           // ⛔ 讀不到要當場講：它是第一頁就撞到的錯（網址打錯、對方擋人），
           //    拖到最後才說等於讓他白等一段
-          await say(`${escapeHtml(r.error || '這個網址我讀不到')}——不影響接下來的步驟，之後可以在「組織與 LINE」頁換一個網址再試。`)
+          await say(`${escapeHtml(r.error || '這個網址我讀不到')}。之後在「組織與 LINE」頁可以換一個再試。`)
         }
         else {
-          await say('收到 ✓ 我去讀你的網站，大約一分鐘。<b>你不用等我</b>——我們先把 LINE 接起來，讀好了我一起給你看。')
+          // ⛔「不用等我」這件事要講：不講的話他會盯著等，而接下來那 7 分鐘本來就有事要做
+          await say('收到 ✓ 我去讀，<b>你不用等我</b>——先把 LINE 接起來，讀好了一起給你看。')
         }
       }
       catch (e: unknown) {
@@ -495,10 +491,8 @@ export function useOnboardingChat() {
     if (!drafts.length) return
 
     const adoptable = drafts.filter(d => d.kind === 'adopt').length
-    await say(
-      `那我把<b>第一天最常被跳過的 ${adoptable} 樣</b>先準備好。<br>`
-      + '全部都是<b>草稿</b>——你一樣一樣按「採用」才會生效。對客人說話的東西，最後一顆按鈕永遠是你。',
-    )
+    // ⛔「按採用才會生效」這句留著：不留的話他會以為東西已經對客人發出去了（08-14 紅線）
+    await say(`我照你講的準備了 <b>${adoptable} 樣</b>，按「採用」才會生效。`)
 
     const steps: DraftApplyStep[] = []
     for (const d of drafts) {
@@ -569,17 +563,17 @@ export function useOnboardingChat() {
    *    沒接 LINE 的後台是空殼。「先進後台」只給還沒拿到金鑰的人，而且要講後果。
    */
   async function stepConnectGate(): Promise<'go' | 'later'> {
-    await say('接下來把你的 MiniMe 接上 LINE，大約 <b>7 分鐘</b>——接好之後，客人傳的每一句話才進得來。')
+    await say('接下來把 MiniMe 接上 LINE，大約 <b>7 分鐘</b>。')
     const c = await askChoices([
       { label: '接上 LINE（約 7 分鐘）', value: 'go', primary: true },
       { label: '我還沒有連線資訊，先進後台', value: 'later', escape: true },
     ])
     if (c === 'go') return 'go'
 
+    // ⛔ 後果與回來的路都要留：沒接 LINE 的後台是空殼，不講他會以為已經好了
     await say(
-      '好。<b>先講清楚會怎樣</b>：LINE 接上之前，客人傳訊息我收不到、歡迎訊息也發不出去，'
-      + '後台看得到的東西幾乎都是空的。<br>'
-      + '右下角的小幫手會一直留著「接上 LINE」這一條，拿到連線資訊隨時回來，我從<b>取得連線資訊</b>那一步接著帶。',
+      'LINE 接上之前，<b>客人傳訊息我收不到</b>。<br>'
+      + '拿到連線資訊隨時回來，小幫手那裡留著這一條，我從<b>取得連線資訊</b>接著帶。',
     )
     await askChoices([{ label: '知道了，先進後台', value: 'ok', primary: true }])
     await navigateTo(onboardingLandingPath(wid.value))
@@ -629,10 +623,11 @@ export function useOnboardingChat() {
     if (!profile || filledFieldCount(profile) === 0) return
     revealedProfile = profile
 
+    // ⛔「猜的都標出來了」要留：把 AI 猜的畫成確定的，等於我們在說謊
     await say(
       profile.siteRead && profile.siteRead.pagesRead > 0
-        ? '順便——你的網站我讀完了。這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。'
-        : '這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。',
+        ? '你的網站我讀完了。這是我認識的你，<b>猜的都標出來了</b>，不對的直接改。'
+        : '這是我認識的你，<b>猜的都標出來了</b>，不對的直接改。',
     )
     showProfileCard(profile)
   }
