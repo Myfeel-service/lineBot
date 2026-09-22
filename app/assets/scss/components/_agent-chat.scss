@@ -768,6 +768,63 @@
   }
 }
 
+/* ── 一樣草稿（`D-85` / `C-221`）：按採用才寫出去 ── */
+.agm-draft {
+  &__head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  &__title {
+    font-weight: 700;
+    font-size: 13.5px;
+    color: var(--el-text-color-primary);
+  }
+
+  /* 「它會跑到哪裡去」是人最常問的事，不要縮成看不見 */
+  &__where {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+  }
+
+  /* 草稿內容照原樣換行（歡迎訊息有換行、標籤是一行一顆）——
+     ⛔ 用 pre 但一定要 pre-wrap，不然長句會橫向溢出對話框 */
+  &__body {
+    margin: 8px 0 6px;
+    padding: 8px 10px;
+    background: var(--el-fill-color-light);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--el-text-color-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+  }
+
+  &__note {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__state {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    font-weight: 600;
+
+    &.is-adopted { color: var(--el-color-success); }
+    &.is-declined { color: var(--el-text-color-secondary); }
+    &.is-failed { color: var(--el-color-warning-dark-2); }
+  }
+}
+
 /* ── 輸入區（AgentAskDock） ── */
 .agd {
   border-top: 1px solid var(--el-border-color-lighter);

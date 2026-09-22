@@ -85,6 +85,13 @@ const { showToast } = useAdminToast()
 const { ensureWorkspaceList, roleFor } = useWorkspace()
 
 const continueWid = computed(() => String(route.query.workspaceId || '').trim())
+/**
+ * `?focus=profile`＝只跑「認識你的店」那一段（`D-85` / `C-221`）。
+ * ⛔ 沒有它的話，組織頁那顆「讓 MiniMe 認識你的店」會把人帶進續走模式——
+ *    而續走只跑接線那四步，已經接好 LINE 的人會直接跳到成績單、五題一句都沒問。
+ * 沿用 `?focus=handoff` 那條「進頁帶意圖」的慣例。
+ */
+const focusParam = computed(() => String(route.query.focus || '').trim())
 const mode = ref<'chat' | 'locked'>('chat')
 
 const {
@@ -176,7 +183,7 @@ onMounted(async () => {
     mode.value = 'locked'
     return
   }
-  void start(continueWid.value)
+  void start(continueWid.value, focusParam.value)
 })
 
 onUnmounted(dispose)

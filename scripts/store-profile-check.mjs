@@ -67,7 +67,12 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
 /** 被攔下來的寫入請求（跑完印出來，證明真的一個都沒送出去） */
 const blocked = []
 
-async function openLoggedInPage({ fakeWrites } = {}) {
+/**
+ * @param {{fakeWrites?: (url:string)=>any, fakeReads?: (url:string)=>any}} [opts]
+ *   `fakeReads` 只在**需要假造既有資料**時用（例如正式庫刻意沒有輪廓，
+ *   但要驗「有輪廓的人看到什麼」）。⛔ 別拿它來蓋掉本來就該量到的東西。
+ */
+async function openLoggedInPage({ fakeWrites, fakeReads } = {}) {
   const ctx = await browser.createBrowserContext()
   const page = await ctx.newPage()
   await page.setViewport({ width: 1440, height: 1000 })
@@ -80,6 +85,11 @@ async function openLoggedInPage({ fakeWrites } = {}) {
     const url = req.url()
     const method = req.method()
     if (method === 'GET' || method === 'OPTIONS' || !url.includes('/api/')) {
+      const fake = method === 'GET' ? fakeReads?.(url) : null
+      if (fake) {
+        req.respond({ status: fake.status ?? 200, contentType: 'application/json', body: JSON.stringify(fake.body ?? {}) })
+        return
+      }
       req.continue()
       return
     }
@@ -349,11 +359,198 @@ async function checkWizardProfileStep() {
   finally { await ctx.close() }
 }
 
+/**
+ * 只做輪廓那一趟（`?focus=profile`）＋老店反推＋五樣草稿（`C-221`／`C-222`）。
+ *
+ * ⛔ 這一關同時是 `C-219` 那條**死路**的守門：組織頁的按鈕會帶著 `focus=profile` 過來，
+ *    少了它就會落進續走模式——已經接好 LINE 的帳號（MYFEEL 就是）會直接跳到成績單、
+ *    五題一句都沒問。
+ */
+async function checkProfileOnlyRun() {
+  /**
+   * ⚠️ 假資料要**有狀態**，不然驗不到真實順序：
+   * 存檔之前這個帳號是「還不認識」（才會提出反推），存檔之後才是「認識了」
+   * （揭曉與草稿那兩段才跑得到）。回一份固定的假資料會讓其中一段永遠跑不到。
+   */
+  let savedProfile = false
+  const filledProfile = {
+    siteUrl: 'https://example-shop.tw',
+    siteRead: { status: 'ok', pagesRead: 5, pagesFailed: [], at: 1 },
+    fields: {
+      industry: { value: '零售／電商（養生飲品）', source: 'owner', ownerEdited: true, updatedAt: 2 },
+      products: { value: '黑豆水、養生茶包、節慶禮盒', source: 'owner', ownerEdited: true, updatedAt: 2 },
+      customers: { value: '30–45 歲女性為主', source: 'owner', ownerEdited: true, updatedAt: 2 },
+      channel: { value: '網購為主', source: 'owner', ownerEdited: true, updatedAt: 2 },
+      season: { value: '年節送禮（春節、中秋）', source: 'owner', ownerEdited: true, updatedAt: 3 },
+      pain: { value: '不知道推播要推什麼', source: 'owner', ownerEdited: true, updatedAt: 3 },
+      tone: { value: '親切、講健康但不誇大', source: 'ai', updatedAt: 1 },
+    },
+  }
+  const { page, ctx } = await openLoggedInPage({
+    fakeWrites: (url) => {
+      if (url.includes('/api/store-profile/infer')) {
+        // ⛔ 真的打會花錢（LLM）而且會寫正式庫的 storeProfiles：攔成一份假的猜測
+        return {
+          body: {
+            ok: true,
+            note: '我看了知識庫 38 筆、12 顆標籤、8 個活動',
+            filled: ['industry', 'products', 'customers', 'channel'],
+            profile: {
+              siteUrl: 'https://example-shop.tw',
+              fields: {
+                industry: { value: '零售／電商（養生飲品）', source: 'ai', updatedAt: 1 },
+                products: { value: '黑豆水、養生茶包、節慶禮盒｜NT$180–1,280', source: 'ai', updatedAt: 1 },
+                customers: { value: '30–45 歲女性為主', source: 'ai', updatedAt: 1 },
+                channel: { value: '網購為主', source: 'ai', updatedAt: 1 },
+              },
+            },
+            ready: false,
+          },
+        }
+      }
+      if (url.endsWith('/api/store-profile') || url.includes('/api/store-profile?')) {
+        // 「按了都對」之後的存檔：要回**確認過的**輪廓（四格轉成 owner），
+        // ⛔ 回一份空的會讓下一步把五題全問一遍——那是假失敗，不是產品的問題。
+        //    第一版就是回空的，當場被「沒有問到旺季」抓出來。
+        savedProfile = true
+        return {
+          body: {
+            ok: true,
+            ready: false,
+            profile: {
+              siteUrl: filledProfile.siteUrl,
+              fields: {
+                industry: filledProfile.fields.industry,
+                products: filledProfile.fields.products,
+                customers: filledProfile.fields.customers,
+                channel: filledProfile.fields.channel,
+              },
+            },
+          },
+        }
+      }
+      if (url.includes('/api/ai/scripts/create')) return { body: { id: 'fake-script' } }
+      if (url.includes('/api/tag/create')) return { body: { id: 'fake-tag' } }
+      if (url.includes('/api/ai/settings')) return { body: { ok: true } }
+      return null
+    },
+    // 正式庫刻意沒有輪廓（全程零寫入），但揭曉與草稿那兩段要有輪廓才會跑——
+    // ⛔ 只假造這一支 GET，其他照樣打真的
+    fakeReads: (url) => {
+      if (url.endsWith('/api/store-profile') || url.includes('/api/store-profile?')) {
+        return savedProfile
+          ? { body: { ready: true, profile: filledProfile } }
+          : { body: { ready: false, profile: { fields: {}, siteUrl: '' } } }
+      }
+      return null
+    },
+  })
+  try {
+    await page.goto(`${BASE}/admin/onboarding?workspaceId=${WORKSPACE_ID}&focus=profile`, { waitUntil: 'networkidle2', timeout: 90_000 })
+    await sleep(2500)
+
+    /**
+     * 對照組：這條路**不可以**變成「歡迎回來 → 成績單」（那正是要修的死路）。
+     * ⚠️ **一定要等到有東西出現再判斷**：第一版是固定 sleep 之後量一次，
+     * 於是拿掉 `focus=profile` 做破壞性驗證時，對照組照樣綠（那時泡泡還沒畫出來）——
+     * 一個會在真的壞掉時說沒事的對照組，比沒有對照組還糟。
+     */
+    let sawProfileIntro = false
+    let sawResumeIntro = false
+    for (let i = 0; i < 40 && !sawProfileIntro && !sawResumeIntro; i++) {
+      const seen = await page.evaluate(() => {
+        const t = [...document.querySelectorAll('.agm-bubble')].map(e => e.textContent).join(' ')
+        return { profile: t.includes('只做一件事'), resume: t.includes('我們接著把剩下的設定做完') }
+      })
+      sawProfileIntro = seen.profile
+      sawResumeIntro = seen.resume
+      if (!sawProfileIntro && !sawResumeIntro) await sleep(400)
+    }
+    if (sawResumeIntro) return fail('focus=profile 落進了續走模式（死路沒修好）')
+    if (!sawProfileIntro) return fail('只做輪廓那一趟沒有開場')
+    pass('只做輪廓那一趟開場了（而且沒有落進續走模式）')
+
+    // 老店反推
+    if (!await waitForBubble(page, '我先從你帳號裡')) return fail('沒有提出「我先自己猜一份」')
+    if (!await clickByText(page, '.agm-choices .el-button', '好，你先猜')) return fail('按不到「好，你先猜」')
+    if (!await waitForBubble(page, '猜到')) return fail('反推沒有回報猜到幾項')
+    pass('老店反推：猜完並回報了看過哪些東西')
+
+    const rows = await visible(page, '.agm-profile__rows dt')
+    if (rows !== 9) return fail(`反推的輪廓卡列數不對：${rows}`)
+    const aiBadges = await visible(page, '.agm-profile__src.is-ai')
+    if (aiBadges < 4) return fail(`AI 推測的徽章只有 ${aiBadges} 個——猜的一定要看得出是猜的`)
+    pass(`反推的輪廓卡九列、其中 ${aiBadges} 格標成 AI 推測`)
+
+    if (!await clickByText(page, '.agm-choices .el-button', '都對，就是這樣')) return fail('按不到「都對」')
+
+    // 只補猜不到的兩題，而且編號要重排成 1/2、2/2
+    if (!await waitForBubble(page, '剩下這幾題我猜不到')) return fail('沒有接到「只補猜不到的那幾題」')
+    pass('確認之後只補猜不到的題目')
+    if (!await clickByText(page, '.agm-choices .el-button', '好，開始')) return fail('按不到「好，開始」')
+    if (!await waitForBubble(page, '生意最好的時候')) return fail('沒有問到旺季')
+    // 反推之後只剩「旺季＋最想解決」，兩題同屬一步 → 只有一步。
+    // ⛔ 這時不可以標「1 / 1」（雜訊，而且看起來像算錯），更不可以留著原本的「5 / 5」（會讓人以為漏問了）。
+    const stepNo = await textOf(page, '.agm-stepno')
+    if (stepNo.includes('5 / 5')) return fail('題號沒有重排，留著原本的 5 / 5')
+    if (stepNo.includes('1 / 1')) return fail('只剩一步還標「1 / 1」')
+    pass(`只剩一步時不標題號（量到「${stepNo || '（沒有題號）'}」）`)
+    if (!await clickByText(page, '.agm-choices .el-button', '年節送禮')) return fail('選不到旺季')
+    if (!await waitForBubble(page, '現在最想解決')) return fail('沒有問到最想解決')
+    if (!await clickByText(page, '.agm-choices .el-button', '不知道推播要推什麼')) return fail('選不到最想解決')
+
+    // 網址那題
+    if (!await waitForBubble(page, '網址')) return fail('沒有問到網址')
+    if (!await clickByText(page, '.agd__skip', '沒有網站')) return fail('網址那題跳不掉')
+
+    // 五樣草稿
+    if (!await waitForBubble(page, '最常被跳過的')) return fail('沒有接到草稿那一段')
+    pass('接到五樣草稿那一段')
+
+    const firstDraft = await textOf(page, '.agm-draft__title')
+    if (!firstDraft.includes('加好友歡迎訊息')) return fail(`第一樣不是歡迎訊息：${firstDraft}`)
+    const where = await textOf(page, '.agm-draft__where')
+    if (!where.includes('自動回應')) return fail(`草稿沒有講「東西會跑到哪裡」：${where}`)
+    pass(`第一樣草稿：${firstDraft}（→ ${where}）`)
+
+    // ⛔ 對照組：還沒按採用之前，卡片上不可以先畫出結果
+    const preState = await visible(page, '.agm-draft__state')
+    if (preState > 0) return fail('還沒決定就先畫了結果（等於替他做了決定）')
+    pass('對照組：還沒按採用之前卡片上沒有結果')
+
+    if (!await clickByText(page, '.agm-choices .el-button', '採用')) return fail('按不到「採用」')
+    await sleep(1200)
+    const adopted = await textOf(page, '.agm-draft__state')
+    if (!adopted.includes('已採用')) return fail(`採用之後沒有回報結果：${adopted}`)
+    pass('採用之後卡片上寫出了結果')
+
+    // 其餘幾樣：一路採用到底
+    for (let i = 0; i < 4; i++) {
+      const more = await clickByText(page, '.agm-choices .el-button', '採用', 6000)
+      if (!more) break
+      await sleep(900)
+    }
+
+    if (!await waitForBubble(page, '都幫你準備好了', 15_000)) {
+      const tail = await textOf(page, '.agm-bubble')
+      return fail(`草稿跑完沒有收尾：${tail.slice(-160)}`)
+    }
+    pass('草稿全部採用完，有收尾')
+
+    const endBtns = await textOf(page, '.agm-choices .el-button')
+    if (!endBtns.includes('回後台')) return fail(`收尾沒有給出路：${endBtns}`)
+    pass(`收尾給得出出路：${endBtns}`)
+  }
+  finally { await ctx.close() }
+}
+
 try {
   console.log('\n── 組織與 LINE 頁的輪廓卡（C-217）─────────')
   await checkProfileCardOnOrgPage()
   console.log('\n── 精靈的「認識你的店」（C-219）───────────')
   await checkWizardProfileStep()
+  console.log('\n── 只做輪廓＋老店反推＋五樣草稿（C-221／C-222）──')
+  await checkProfileOnlyRun()
 }
 finally {
   await browser.close()

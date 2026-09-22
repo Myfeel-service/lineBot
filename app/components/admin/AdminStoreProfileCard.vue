@@ -216,8 +216,10 @@ async function saveField(id: StoreProfileFieldId) {
 
 function goWizard() {
   // 回到同一支開通精靈：它已經有「做過的靜默跳過」的續走機制，
-  // ⛔ 不另外做一份只問五題的畫面（同一件事兩套劇本遲早會講不一樣的話）
-  void navigateTo(`/admin/onboarding?workspaceId=${props.workspaceId}`)
+  // ⛔ 不另外做一份只問五題的畫面（同一件事兩套劇本遲早會講不一樣的話）。
+  // ⛔ **`focus=profile` 不可以拿掉**：沒有它會落進續走模式，而續走只跑接線那四步——
+  //    已經接好 LINE 的人（老店就是）會看到「歡迎回來」然後直接跳到成績單，五題一句都沒問。
+  void navigateTo(`/admin/onboarding?workspaceId=${props.workspaceId}&focus=profile`)
 }
 
 onMounted(reload)

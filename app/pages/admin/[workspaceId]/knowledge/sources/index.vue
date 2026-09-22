@@ -1180,6 +1180,7 @@
     v-model="importOpen"
     :existing-sources="sources"
     :folders="folders"
+    :prefill-paste="importPrefill"
     @imported="onImported"
     @job-state="importJobState = $event"
   />
@@ -3370,6 +3371,8 @@ const importOpen = ref(false)
  * 匯入的等待畫面請使用者去做別的事,這裡就是他回來時的入口。
  */
 const importJobState = ref<'running' | 'ready' | 'none'>('none')
+/** `?import=1&url=…` 帶進來的網址：開通精靈的「把網站整理成知識卡」會這樣過來（`C-221`） */
+const importPrefill = ref('')
 function goImport() { importOpen.value = true }
 
 async function onImported(sourceId: string | null) {
@@ -3811,6 +3814,8 @@ onMounted(async () => {
 
   // 舊的 /knowledge/import 網址轉進來時帶 ?import=1:直接打開匯入彈窗
   if (String(route.query.import ?? '') === '1') {
+    // `&url=…`＝開通精靈把商家的官網帶過來（`C-221`）；填在貼上框裡讓既有偵測接手
+    importPrefill.value = String(route.query.url ?? '').trim().slice(0, 500)
     importOpen.value = true
     clearQuery()
   }

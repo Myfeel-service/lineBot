@@ -27,6 +27,16 @@ import {
   type StoreProfileDoc,
   type StoreProfileFieldId,
 } from '~~/shared/types/store-profile'
+import {
+  buildStoreDrafts,
+  canBuildDrafts,
+  summarizeDraftApply,
+  type DraftApplyStep,
+  type StoreDraft,
+} from '~~/shared/store-profile-drafts'
+import { buildFollowWelcomeScript } from '~~/shared/follow-welcome'
+import { suggestTagCode } from '~~/shared/tag-code-suggest'
+import { taipeiDate } from '~~/shared/time'
 
 /**
  * 進度條五格（2026-08-19 拍板重切）：舊版「接 LINE」一格塞四件事、佔整段八成時間，
@@ -283,16 +293,27 @@ export function useOnboardingChat() {
 
   /** 這一輪讀網站的工作 id；接線完成後揭曉那一刻要拿它去收結果 */
   let siteJobId = ''
+  /** 揭曉時拿到的輪廓——草稿那一段直接用它，⛔ 不要再打一次同一支查詢 */
+  let revealedProfile: StoreProfileDoc | null = null
 
-  async function stepStoreProfile(): Promise<'done' | 'skipped'> {
+  /**
+   * @param opts.skipFilled 已經有值的題目不要再問一次（老店反推之後只補猜不到的那幾題）
+   * @param opts.intro      開場白換一句（反推之後不必再講一次「讓我認識你的店」）
+   */
+  async function stepStoreProfile(opts: { skipFilled?: StoreProfileDoc, intro?: string } = {}): Promise<'done' | 'skipped'> {
     progress.value = ONBOARDING_STEP.profile
 
-    await say(
-      '接上 LINE 之前，先花 <b>3 分鐘</b>讓我認識你的店。<br>'
-      + '這一段會決定之後我給你的建議是「<b>你的</b>」還是一句通用的場面話——'
-      + '節慶前要提醒你什麼、歡迎訊息怎麼寫、AI 用什麼口氣回客人，都從這裡長出來。',
-      { summary: '不做會怎樣？', html: '不做也能用，只是我對你的店一無所知：節慶提醒只講得出「送禮需求會升溫」這種每一行都適用的話，講不出你的商品；AI 回客人的口氣也只能用通用範本。之後隨時可以從「組織與 LINE」頁補。' },
-    )
+    if (opts.intro) {
+      await say(opts.intro)
+    }
+    else {
+      await say(
+        '接上 LINE 之前，先花 <b>3 分鐘</b>讓我認識你的店。<br>'
+        + '這一段會決定之後我給你的建議是「<b>你的</b>」還是一句通用的場面話——'
+        + '節慶前要提醒你什麼、歡迎訊息怎麼寫、AI 用什麼口氣回客人，都從這裡長出來。',
+        { summary: '不做會怎樣？', html: '不做也能用，只是我對你的店一無所知：節慶提醒只講得出「送禮需求會升溫」這種每一行都適用的話，講不出你的商品；AI 回客人的口氣也只能用通用範本。之後隨時可以從「組織與 LINE」頁補。' },
+      )
+    }
     const go = await askChoices([
       { label: '好，開始', value: 'go', primary: true },
       { label: '先跳過', value: 'skip', escape: true },
@@ -303,12 +324,22 @@ export function useOnboardingChat() {
     }
 
     const answers: Partial<Record<StoreProfileFieldId, string>> = {}
-    const steps = storeProfileAskSteps()
+    // 已經有值的題目不再問（反推之後只補猜不到的那幾題）。
+    // ⛔ 過濾完要**重新編號**：留著原本的 1/5、4/5 會讓人以為系統漏問了。
+    const allSteps = storeProfileAskSteps()
+    const steps = (opts.skipFilled
+      ? allSteps
+          .map(s => ({ step: s.step, fields: s.fields.filter(f => !opts.skipFilled!.fields?.[f.id]?.value) }))
+          .filter(s => s.fields.length > 0)
+          .map((s, i) => ({ step: i + 1, fields: s.fields }))
+      : allSteps)
     for (const { step, fields } of steps) {
       for (let i = 0; i < fields.length; i++) {
         const def = fields[i]!
-        // 同一步有兩題時（「最後兩個快問快答」），只有第一題掛步驟編號
-        const prefix = i === 0 ? `<span class="agm-stepno">${step} / ${steps.length}</span>` : ''
+        // 同一步有兩題時（「最後兩個快問快答」），只有第一題掛步驟編號。
+        // ⛔ 只剩一步時不要標「1 / 1」：那是雜訊，而且看起來像系統算錯了
+        //    （老店反推之後只剩旺季與最想解決，正好就是這個情況）。
+        const prefix = i === 0 && steps.length > 1 ? `<span class="agm-stepno">${step} / ${steps.length}</span>` : ''
         const extra = i === 0 && fields.length > 1 ? '最後兩個快問快答。' : ''
         await say(`${prefix}${extra}${def.question}`)
         if (def.options?.length) {
@@ -379,6 +410,150 @@ export function useOnboardingChat() {
     return 'done'
   }
 
+  // ── 五樣草稿（`D-85` / `C-221`）────────────────────────────────
+  //
+  // ⛔ **全部走既有端點**（建腳本／存 AI 設定／建標籤），不另刻寫入路徑：
+  //    那些端點各自帶著自己的守門（例如「只准有一條啟用中的加好友流程」會回 409），
+  //    另刻一份等於把那些規則重寫一遍，遲早一邊擋一邊放行。
+  // ⛔ **一步失敗不中斷**：這幾樣彼此獨立（歡迎訊息沒建成，語氣照樣值得存），
+  //    跟「一檔活動」精靈那種「標籤沒建成就別建活動」的鏈式依賴不同。
+  //    但**失敗時一定要點名已經建好的東西**，否則人會重跑一次而多出重複的標籤。
+
+  /** 記下來、精靈結束時才帶他去的事（知識庫要人審卡，不能在對話裡做完） */
+  let knowledgeHandoffUrl = ''
+
+  async function applyOneDraft(d: StoreDraft, profile: StoreProfileDoc): Promise<DraftApplyStep> {
+    const label = d.title
+    try {
+      if (d.key === 'welcome') {
+        const { nodes, rootNodeId } = buildFollowWelcomeScript({ kind: 'text', text: d.body }, {
+          triggerId: crypto.randomUUID(),
+          replyId: crypto.randomUUID(),
+        })
+        await apiFetch('/api/ai/scripts/create', {
+          method: 'POST',
+          body: { name: '加好友歡迎', enabled: true, nodes, rootNodeId },
+        })
+        return { key: d.key, label, status: 'done' }
+      }
+      if (d.key === 'tone') {
+        await apiFetch('/api/ai/settings', { method: 'PUT', body: { systemPrompt: d.body } })
+        return { key: d.key, label, status: 'done' }
+      }
+      if (d.key === 'tags') {
+        // ⛔ 代號由系統自己生（`D-83`③ 拍板），而且**撞號要自動換下一組**——
+        //    畫面上沒有那一格，丟「請換一個代號」給他是做不到的事。
+        const taken: string[] = []
+        let built = 0
+        for (const t of d.tags ?? []) {
+          const code = suggestTagCode(t.name, taken)
+          taken.push(code)
+          await apiFetch('/api/tag/create', {
+            method: 'POST',
+            body: { code, name: t.name, category: 'custom', description: t.why },
+          })
+          built++
+        }
+        return built > 0
+          ? { key: d.key, label: `${label}（${built} 顆）`, status: 'done' }
+          : { key: d.key, label, status: 'skipped' }
+      }
+      if (d.key === 'knowledge') {
+        // ⛔ **不在這裡直接寫進知識庫**：卡片內容要人看過才算數。
+        //    這一步只把網址記下來，結束時給他一顆「去整理成知識卡」的按鈕。
+        knowledgeHandoffUrl = profile.siteUrl
+        return { key: d.key, label, status: 'done' }
+      }
+      return { key: d.key, label, status: 'skipped' }
+    }
+    catch (e: unknown) {
+      const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+        || (e as { statusMessage?: string })?.statusMessage
+        || '沒有成功'
+      return { key: d.key, label, status: 'failed', error: String(msg).slice(0, 120) }
+    }
+  }
+
+  async function stepStoreDrafts(profile: StoreProfileDoc) {
+    if (!canBuildDrafts(profile)) return
+    const shopName = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
+    const drafts = buildStoreDrafts({
+      shopName,
+      profile,
+      today: taipeiDate(),
+      pagesRead: profile.siteRead?.pagesRead ?? 0,
+    })
+    if (!drafts.length) return
+
+    const adoptable = drafts.filter(d => d.kind === 'adopt').length
+    await say(
+      `那我把<b>第一天最常被跳過的 ${adoptable} 樣</b>先準備好。<br>`
+      + '全部都是<b>草稿</b>——你一樣一樣按「採用」才會生效。對客人說話的東西，最後一顆按鈕永遠是你。',
+    )
+
+    const steps: DraftApplyStep[] = []
+    for (const d of drafts) {
+      const cardId = card({
+        kind: 'store-draft',
+        title: d.title,
+        where: d.where,
+        body: d.body,
+        ...(d.note ? { note: d.note } : {}),
+        variant: d.kind,
+      })
+      if (d.kind === 'info') continue
+
+      const c = await askChoices([
+        { label: '採用', value: 'yes', primary: true },
+        { label: '先不要', value: 'no', escape: true },
+      ])
+      if (c !== 'yes') {
+        steps.push({ key: d.key, label: d.title, status: 'declined' })
+        updateMsg(cardId, {
+          kind: 'store-draft',
+          title: d.title,
+          where: d.where,
+          body: d.body,
+          ...(d.note ? { note: d.note } : {}),
+          variant: d.kind,
+          state: 'declined',
+          stateText: '先不要。之後在「組織與 LINE」頁的輪廓卡還找得到。',
+        })
+        continue
+      }
+
+      busy.value = true
+      const r = await applyOneDraft(d, profile)
+      busy.value = false
+      steps.push(r)
+      updateMsg(cardId, {
+        kind: 'store-draft',
+        title: d.title,
+        where: d.where,
+        body: d.body,
+        ...(d.note ? { note: d.note } : {}),
+        variant: d.kind,
+        state: r.status === 'done' ? 'adopted' : 'failed',
+        stateText: r.status === 'done'
+          ? (d.key === 'knowledge' ? '好，結束前我給你一顆按鈕過去整理。' : `已採用 ✓ 存在「${d.where}」`)
+          : `沒有成功——${r.error}`,
+      })
+    }
+
+    if (!steps.length) return
+    const outcome = summarizeDraftApply(steps)
+    card({ kind: 'summary', items: steps.map(s => ({
+      label: s.label,
+      done: s.status === 'done',
+      note: s.status === 'done' ? undefined : s.status === 'declined' ? '你選了先不要' : s.status === 'failed' ? (s.error || '沒有成功') : '沒有執行',
+    })) })
+    // ⛔ 有東西沒成時**一定要點名已經建好的**：少了這一段，人會以為什麼都沒發生而重跑，
+    //    於是多出重複的標籤與重複的加好友腳本——而且他不會知道。
+    await say(outcome.leftovers.length
+      ? `${escapeHtml(outcome.headline)}<br>⛔ <b>不要整個重來</b>：${escapeHtml(outcome.leftovers.join('、'))}，重跑會多出重複的東西。沒成的那幾樣到後台單獨補就好。`
+      : escapeHtml(outcome.headline))
+  }
+
   /**
    * 輪廓答完之後的閘門。
    * ⛔ **不可以問開放題「要不要接 LINE」**：主要動作就是接 LINE，
@@ -443,9 +618,23 @@ export function useOnboardingChat() {
       return
     }
     if (!profile || filledFieldCount(profile) === 0) return
+    revealedProfile = profile
 
+    await say(
+      profile.siteRead && profile.siteRead.pagesRead > 0
+        ? '順便——你的網站我讀完了。這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。'
+        : '這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。',
+    )
+    showProfileCard(profile)
+  }
+
+  /**
+   * 畫一張輪廓卡。**反推與揭曉共用這一份**——
+   * ⛔ 兩個地方各畫一次，來源徽章的規則遲早會在其中一邊漏掉。
+   */
+  function showProfileCard(profile: StoreProfileDoc) {
     const rows = STORE_PROFILE_FIELDS.map((def) => {
-      const f = profile!.fields?.[def.id]
+      const f = profile.fields?.[def.id]
       return {
         label: def.label,
         value: f?.value ?? '',
@@ -454,18 +643,8 @@ export function useOnboardingChat() {
         sourceText: f?.value ? STORE_PROFILE_SOURCE_LABELS[f.source ?? 'ai'] : '還沒有',
       }
     })
-
     const readNote = profile.siteUrl ? describeSiteRead(profile.siteRead) : ''
-    await say(
-      profile.siteRead && profile.siteRead.pagesRead > 0
-        ? '順便——你的網站我讀完了。這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。'
-        : '這是我現在對你的店的認識：<b>猜的我都標出來了</b>，看到不對的之後在「組織與 LINE」頁改一下就好。',
-    )
-    card({
-      kind: 'store-profile',
-      rows,
-      ...(readNote ? { siteNote: readNote } : {}),
-    })
+    card({ kind: 'store-profile', rows, ...(readNote ? { siteNote: readNote } : {}) })
   }
 
   async function stepWelcomeBack(line: LineStatus, setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>) {
@@ -1576,9 +1755,11 @@ export function useOnboardingChat() {
     // 而這一刻畫面上馬上就有成績單與那排「接下來做什麼」的按鈕，不會出現沒出路的空窗。
     progress.value = ONBOARDING_STEP.done
 
-    // 揭曉「我對你的店的認識」（`C-219`）——⛔ 擺在成績單**之前**：
-    // 成績單是這一段的句點，句點後面再加內容，人已經在找離開的按鈕了。
+    // 揭曉「我對你的店的認識」（`C-219`）＋從它長出來的五樣草稿（`C-221`）
+    // ——⛔ 擺在成績單**之前**：成績單是這一段的句點，
+    // 句點後面再加內容，人已經在找離開的按鈕了。
     await revealStoreProfile()
+    if (revealedProfile) await stepStoreDrafts(revealedProfile)
 
     card({
       kind: 'summary',
@@ -1698,8 +1879,159 @@ export function useOnboardingChat() {
    * 逐步自我檢查、做過的靜默跳過；沒給 = 全新開通（建 org + workspace）。
    * 整段包在 runScript 裡：離頁 dispose 後劇本鏈就地停下（G-14），取消靜默收掉。
    */
-  async function start(continueWorkspaceId?: string) {
+  /**
+   * 只跑「認識你的店」那一段（`?focus=profile`）。
+   *
+   * ⛔ **這條路是補 `C-219` 留下的死路**：組織頁的空狀態按鈕會把人帶進精靈，
+   *    但續走模式只跑接線那四步——已經接好 LINE 的人（老店就是）會看到
+   *    「歡迎回來」然後直接跳到成績單，**五題一句都沒問**。指路指到死路。
+   */
+  async function runProfileOnly() {
+    progress.value = ONBOARDING_STEP.profile
+    const name = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
+    await say(`${name ? `「${escapeHtml(name)}」` : '這個帳號'}的設定我先不動，這一趟只做一件事：<b>讓我認識你的店</b>。`)
+
+    // 老店先猜一份（`C-222`）：已經用了一陣子的帳號，知識庫、標籤、活動名稱裡
+    // 其實寫滿了這家店在賣什麼。⛔ 再叫他從頭答五題，等於說「我認識你這麼久還是不認識你」。
+    const inferred = await offerInference()
+
+    const done = await stepStoreProfile(inferred
+      ? { skipFilled: inferred, intro: '剩下這幾題我猜不到，要你講。' }
+      : {})
+    if (done === 'skipped') {
+      await navigateTo(onboardingLandingPath(wid.value))
+      return
+    }
+    await revealStoreProfile()
+    if (revealedProfile) await stepStoreDrafts(revealedProfile)
+    await finishProfileOnly()
+  }
+
+  /**
+   * 老店反推（`C-222`）：從既有資料猜一份，讓他只確認差異。
+   * 回傳「確認過的輪廓」＝下一步要跳過哪幾題；猜不出來或他不要就回 null（走原本的五題）。
+   */
+  async function offerInference(): Promise<StoreProfileDoc | null> {
+    let current: StoreProfileDoc | null = null
+    try {
+      const r = await apiFetch<{ profile: StoreProfileDoc, ready: boolean }>('/api/store-profile')
+      current = r.profile
+      // 已經認識了就不用再猜（這條路是給「還不認識」的人走的）
+      if (r.ready) return null
+    }
+    catch {
+      return null
+    }
+
+    await say('在問你之前，我先從你帳號裡<b>已經有的東西</b>（知識庫、標籤、辦過的活動）自己猜一份——你只要看一遍、改錯的就好。')
+    const c = await askChoices([
+      { label: '好，你先猜', value: 'infer', primary: true },
+      { label: '不用，直接問我', value: 'ask' },
+    ])
+    if (c !== 'infer') return null
+
+    busy.value = true
+    let res: { ok: boolean, note?: string, filled?: string[], profile?: StoreProfileDoc } | null = null
+    try {
+      res = await apiFetch('/api/store-profile/infer', { method: 'POST', body: {} })
+    }
+    catch (e: unknown) {
+      const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+      await say(msg ? escapeHtml(msg) : '這次猜不出來，那我直接問你幾題。')
+      return null
+    }
+    finally {
+      busy.value = false
+    }
+
+    // ⛔ 資料不夠就誠實講，不要硬生一份憑空捏造的輪廓
+    if (!res?.ok || !res.profile || !(res.filled?.length)) {
+      await say(`${escapeHtml(res?.note || '你帳號裡的資料還不夠讓我猜')}，那我直接問你幾題。`)
+      return null
+    }
+
+    await say(`${escapeHtml(res.note || '')}，猜到 <b>${res.filled.length}</b> 項。<b>猜的我都標出來了</b>，看一遍：`)
+    showProfileCard(res.profile)
+
+    const ok = await askChoices([
+      { label: '都對，就是這樣', value: 'yes', primary: true },
+      { label: '有幾項不對，重問我', value: 'redo', escape: true },
+    ])
+    if (ok !== 'yes') {
+      await say('好，那我一題一題問，你回答的會蓋過我猜的。')
+      return null
+    }
+
+    /**
+     * ⭐ **他按了「都對」＝這幾格從此是「你說的」不是「AI 推測」**。
+     * 這不只是文案：`profileReady` 的口徑是「商家親自答了三題」，
+     * 不把確認過的轉成 owner 的話，老店走完這一趟仍然會被判成「還不認識」，
+     * 輪廓卡會繼續顯示空狀態——做完一件事卻看不到任何變化，是最傷信任的那種 bug。
+     */
+    const confirm: Record<string, string> = {}
+    for (const def of STORE_PROFILE_FIELDS) {
+      const v = res.profile.fields?.[def.id]
+      if (v?.value && v.source === 'ai') confirm[def.id] = v.value
+    }
+    if (Object.keys(confirm).length) {
+      busy.value = true
+      try {
+        const saved = await apiFetch<{ profile: StoreProfileDoc }>('/api/store-profile', {
+          method: 'POST',
+          body: { fields: confirm },
+        })
+        return saved.profile
+      }
+      catch {
+        await say('剛剛那幾格存起來的時候出了狀況，等一下的問題我會全部問一遍。')
+        return null
+      }
+      finally {
+        busy.value = false
+      }
+    }
+    return res.profile
+  }
+
+  /** 只做輪廓那一趟的收尾：⛔ 一定要給出路，不要停在一段沒有按鈕的對話上 */
+  async function finishProfileOnly() {
+    while (true) {
+      const options: AgentChoice[] = []
+      // ⛔ **primary 不可以隨狀態換人**（守門測試 `agent-choice-order`）：
+      //    主要動作在兩次之間跳來跳去，人會按到上一次那顆的位置。
+      //    採用了知識庫的人，主要動作就是去整理；沒採用的那一排就沒有主要動作
+      //    （「看看輪廓」與「回後台」本來就是平的，硬挑一顆染色是替他決定）。
+      if (knowledgeHandoffUrl) {
+        options.push({ label: '把網站整理成知識卡', value: 'kb', primary: true })
+      }
+      options.push(
+        { label: '看看我的輪廓', value: 'profile' },
+        { label: '回後台', value: 'back', escape: true },
+      )
+      const c = await askChoices(options)
+      if (c === 'kb') {
+        // ⛔ 不在對話裡直接寫進知識庫：卡片內容要人看過才算數。
+        //    帶他到匯入頁、網址已經填好，下一步由他按。
+        await navigateTo(`/admin/${wid.value}/knowledge/sources?import=1&url=${encodeURIComponent(knowledgeHandoffUrl)}`)
+        return
+      }
+      if (c === 'profile') {
+        await navigateTo(`/admin/${wid.value}/settings/organization`)
+        return
+      }
+      await navigateTo(onboardingLandingPath(wid.value))
+      return
+    }
+  }
+
+  async function start(continueWorkspaceId?: string, focus?: string) {
     await runScript(async () => {
+      if (continueWorkspaceId && focus === 'profile') {
+        wid.value = continueWorkspaceId
+        await loadWorkspaceList().catch(() => {})
+        await runProfileOnly()
+        return
+      }
       if (continueWorkspaceId) {
         wid.value = continueWorkspaceId
         busy.value = true

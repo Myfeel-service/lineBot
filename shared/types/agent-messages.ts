@@ -127,6 +127,24 @@ export type AgentMsg =
     /** 讀網站的結果，一句話（讀完了／讀了一部分／讀不到） */
     siteNote?: string
   }
+  /**
+   * 一樣「草稿」（`D-85` / `C-221`）——從店家輪廓長出來的東西，按了採用才會寫出去。
+   *
+   * ⛔ `where` 一定要有：人最常問的不是「這是什麼」而是「它會跑到哪裡去」。
+   * ⛔ `state` 是**採用之後**才填的，未決定時留空——先畫一個結果等於替他做了決定。
+   */
+  | {
+    kind: 'store-draft'
+    title: string
+    /** 採用後東西會出現在後台哪裡（指路一律用側欄的名字） */
+    where: string
+    body: string
+    note?: string
+    /** 這一樣要不要按採用；`info`＝沒有東西要寫，只是告訴他已經有了 */
+    variant: 'adopt' | 'info'
+    state?: 'adopted' | 'declined' | 'failed'
+    stateText?: string
+  }
 
 export interface AgentChatEntry {
   /** 遞增流水號，當 v-for key */

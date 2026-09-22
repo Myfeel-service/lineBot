@@ -219,6 +219,17 @@
     </dl>
     <p v-if="entry.msg.siteNote" class="agm-profile__note">{{ entry.msg.siteNote }}</p>
   </div>
+
+  <!-- 一樣草稿（`D-85`）：按採用才寫出去 -->
+  <div v-else-if="entry.msg.kind === 'store-draft'" class="agm-card agm-draft">
+    <div class="agm-draft__head">
+      <span class="agm-draft__title">{{ entry.msg.title }}</span>
+      <span class="agm-draft__where">→ {{ entry.msg.where }}</span>
+    </div>
+    <pre class="agm-draft__body">{{ entry.msg.body }}</pre>
+    <p v-if="entry.msg.note" class="agm-draft__note">{{ entry.msg.note }}</p>
+    <p v-if="entry.msg.state" :class="['agm-draft__state', `is-${entry.msg.state}`]">{{ entry.msg.stateText }}</p>
+  </div>
 </template>
 
 <script setup lang="ts">

@@ -1269,6 +1269,12 @@ const props = defineProps<{
    * 而人不會記得（`C-134`：MYFEEL 的說明書因此躺在未分類，店家去產品資料夾找說「沒有」）。
    */
   folders?: Array<{ id: string; name: string }>
+  /**
+   * 開窗時要先填進去的東西（`D-85` / `C-221`）：開通精靈那顆「把網站整理成知識卡」
+   * 會帶著商家的官網網址過來，⛔ 落在一個空白的貼上框等於叫他再打一次字。
+   * 填進去之後由既有的偵測流程接手（貼上框自己認得出網址／試算表／純文字）。
+   */
+  prefillPaste?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -2513,6 +2519,11 @@ watch(previewStillRunning, (on) => {
 // 使用者主動打開視窗＝他想看結果，不要讓他等下一次定時（45 秒在人站在畫面前時很長）
 watch(() => props.modelValue, (open) => {
   if (open && previewStillRunning.value) void recheckStoredJob()
+  // 帶著網址進來的（開通精靈的「把網站整理成知識卡」）先填好，省一次打字。
+  // ⛔ 只在乾淨的第一步填：接回預覽／結果頁時蓋掉他正在看的東西比空白還糟。
+  if (open && props.prefillPaste && step.value === 'input' && !pasteInput.value && !previewing.value) {
+    pasteInput.value = props.prefillPaste
+  }
   // 開窗自動聚焦（2026-09-03 UI 打磨）：第一個動作幾乎都是貼上，游標先放進框，
   // 開窗直接 ⌘V 就能貼。⛔只在乾淨的第一步聚焦：接回預覽/結果頁時搶焦點會把人拉錯地方
   if (open) {
