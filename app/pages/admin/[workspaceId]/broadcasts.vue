@@ -206,6 +206,24 @@
             </div>
           </div>
           <div class="card-section-stack">
+            <!-- `C-225`：從「接下來的檔期」擬過來的三版文案。
+                 ⛔ 只在這一趟出現（重新整理就沒了）——它是草稿的起點，不是一個常駐功能。
+                 ⛔ 一定要講「還沒有送出去」：對客人說話的東西，最後一顆按鈕永遠是人。 -->
+            <div v-if="draftVariants.length > 1" class="bc-draft-picker">
+              <p class="bc-draft-picker__lead">
+                MiniMe 擬了 {{ draftVariants.length }} 版，挑一版再改。{{ draftBasis }}，<b>還沒有送出去</b>。
+              </p>
+              <el-radio-group
+                :model-value="draftVariantIndex"
+                :disabled="isReadOnly"
+                @update:model-value="(v) => pickDraftVariant(Number(v))"
+              >
+                <el-radio v-for="(v, i) in draftVariants" :key="i" :value="i" class="bc-draft-picker__item">
+                  <span class="bc-draft-picker__text">{{ v }}</span>
+                </el-radio>
+              </el-radio-group>
+            </div>
+
             <AdminAreaActionEditor
               :model-value="form.contentAction"
               :module-options="flowOptions"
@@ -427,6 +445,13 @@ import {
   parseHandoff,
 } from '~~/shared/broadcast-audience-handoff'
 import {
+  BROADCAST_DRAFT_HANDOFF_KEY,
+  DRAFT_HANDOFF_MISSING_TEXT,
+  draftHandoffNoticeText,
+  isFreshDraftHandoff,
+  parseDraftHandoff,
+} from '~~/shared/broadcast-draft-handoff'
+import {
   localDateTimeInputToUtcIso,
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
@@ -483,10 +508,26 @@ const { workspaceId, apiFetch } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 // ── 狀態 ────────────────────────────────────────────────────────────
-const flows = ref<{ id: string; name: string }[]>([])
+const flows = ref<{ id: string; name: string; isActive?: boolean; messageCount?: number }[]>([])
 const { tags: allTags, loadTags: loadTagOptions } = useAdminTagList()
 // C-208：這一頁不給就地建標籤（受眾是拿標籤篩人），但別頁建了之後切回來要看得到
 useAdminTagRefresh().onAdminTagListChanged(() => loadTagOptions({ status: 'active' }))
+/**
+ * `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）。
+ * ⛔ 只重抓模組那一份，不要叫 `loadData()`：那會連推播清單一起重抓，
+ *    而使用者此刻多半正在編一則還沒存的推播。
+ */
+useAdminFlowRefresh().onAdminFlowListChanged(async () => {
+  const list = await apiFetch<any[]>('/api/flow/list?fields=picker').catch(() => null)
+  // ⛔ 抓失敗就維持原本那份：清空會讓已經選好的模組變成「（已刪除的模組）」，嚇到人
+  if (!list) return
+  flows.value = list.map((f: any) => ({
+    id: f.id,
+    name: f.name || f.id,
+    isActive: f.isActive,
+    messageCount: f.messageCount,
+  }))
+})
 // 「只看草稿」篩選（D-43④）：list 端點本來就吃 ?status=，這裡只是把它接到畫面上
 const draftFilterOn = ref(false)
 const {
@@ -552,8 +593,14 @@ const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
+// `D-86`：`isActive` / `messageCount` 要一路帶到下拉，它才標得出「還沒有內容／已停用」
 const flowOptions = computed(() =>
-  (flows.value ?? []).map((f) => ({ id: f.id, name: f.name || f.id })),
+  (flows.value ?? []).map((f) => ({
+    id: f.id,
+    name: f.name || f.id,
+    isActive: f.isActive,
+    messageCount: f.messageCount,
+  })),
 )
 
 function onContentActionUpdate(next: Record<string, unknown>) {
@@ -738,7 +785,12 @@ async function loadData() {
       // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與編號
       apiFetch<any[]>('/api/flow/list?fields=picker').catch(() => []),
     ])
-    flows.value = (flowList ?? []).map((f: any) => ({ id: f.id, name: f.name || f.id }))
+    flows.value = (flowList ?? []).map((f: any) => ({
+      id: f.id,
+      name: f.name || f.id,
+      isActive: f.isActive,
+      messageCount: f.messageCount,
+    }))
     if (!tagOk) showToast('載入標籤失敗', 'error')
     syncDuePollTimer()
   }
@@ -1146,9 +1198,62 @@ function applyAudienceHandoff() {
   showToast(handoffNoticeText(payload), payload.dropped > 0 ? 'warning' : 'success')
 }
 
+/**
+ * `C-225`：從後台首頁「接下來的檔期」→「為這一檔擬推播」帶過來的文案三版。
+ *
+ * ⛔ **只開草稿、不存檔**（`C-221` 同一條紅線：對客人說話的東西，最後一顆按鈕永遠是人）。
+ * ⛔ **讀不到要講出來**：跟名單那份同一個理由——安靜地開一張空白推播，
+ *    會讓人以為剛剛擬好的文案弄丟了。
+ */
+function applyDraftHandoff() {
+  if (String(useRoute().query.from ?? '') !== 'calendar') return
+
+  let raw: string | null = null
+  try {
+    raw = sessionStorage.getItem(BROADCAST_DRAFT_HANDOFF_KEY)
+    sessionStorage.removeItem(BROADCAST_DRAFT_HANDOFF_KEY)
+  }
+  catch {
+    raw = null
+  }
+
+  const payload = parseDraftHandoff(raw)
+  if (!isFreshDraftHandoff(payload)) {
+    showToast(DRAFT_HANDOFF_MISSING_TEXT, 'warning')
+    return
+  }
+
+  openCreate()
+  form.value.name = payload.suggestedName
+  // 預設帶第一版；其餘幾版擺在編輯器上面讓他換（換了只是改文字，還是草稿）
+  form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: payload.variants[0]! }, 'A')
+  if (payload.suggestedTagIds.length) {
+    form.value.audienceType = 'tags'
+    form.value.tagIds = [...payload.suggestedTagIds]
+  }
+  draftVariants.value = payload.variants
+  draftVariantIndex.value = 0
+  draftBasis.value = payload.basis
+  markClean() // 系統幫他填的，還沒動到手——不要一進來就說「有未儲存的變更」
+  showToast(draftHandoffNoticeText(payload), 'success')
+}
+
+/** 這一次帶過來的三版文案（空陣列＝不是從月曆進來的） */
+const draftVariants = ref<string[]>([])
+const draftVariantIndex = ref(0)
+const draftBasis = ref('')
+
+function pickDraftVariant(i: number) {
+  const v = draftVariants.value[i]
+  if (!v) return
+  draftVariantIndex.value = i
+  form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: v }, 'A')
+}
+
 onMounted(async () => {
   await loadData()
   applyAudienceHandoff()
+  applyDraftHandoff()
   syncDuePollTimer()
 })
 

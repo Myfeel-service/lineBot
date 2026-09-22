@@ -69,7 +69,16 @@
 
           <!-- ③ 一顆按鈕 -->
           <div class="mkt-cal__cta">
-            <el-button size="small" type="primary" plain @click="goBroadcast(e)">為這一檔擬推播</el-button>
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :loading="draftingId === e.festivalId"
+              :disabled="draftingId !== '' && draftingId !== e.festivalId"
+              @click="goBroadcast(e)"
+            >
+              {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
+            </el-button>
           </div>
         </article>
       </template>
@@ -79,6 +88,7 @@
 
 <script setup lang="ts">
 import type { CalendarEntry } from '~~/shared/marketing-calendar'
+import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 
 const props = defineProps<{ workspaceId: string }>()
 
@@ -125,9 +135,38 @@ function goProfile() {
   void navigateTo(`/admin/onboarding?workspaceId=${props.workspaceId}&focus=profile`)
 }
 
-function goBroadcast(e: CalendarEntry) {
-  // 帶著檔期名字去推播頁開草稿（`C-225` 會把文案也一起帶過去）
-  void navigateTo(`/admin/${props.workspaceId}/broadcasts?festival=${encodeURIComponent(e.festivalId)}`)
+const draftingId = ref('')
+
+/**
+ * 「為這一檔擬推播」（`C-225`）。
+ * ⛔ **這裡不建立任何東西**：端點只產文字，文案暫存在 sessionStorage，
+ *    由推播頁開一張**還沒存檔**的草稿——對客人說話的東西，最後一顆按鈕永遠是人。
+ */
+async function goBroadcast(e: CalendarEntry) {
+  if (draftingId.value) return // ⛔ 防連點：一次按兩下會打兩次 LLM
+  draftingId.value = e.festivalId
+  try {
+    const r = await apiFetch<BroadcastDraftHandoff>('/api/marketing-calendar/draft', {
+      method: 'POST',
+      body: { festivalId: e.festivalId },
+    })
+    try {
+      sessionStorage.setItem(BROADCAST_DRAFT_HANDOFF_KEY, JSON.stringify(r))
+    }
+    catch {
+      // ⛔ 存不進去就不要跳頁：跳過去會是一張空白推播，他會以為文案弄丟了
+      ElMessage.error('這個瀏覽器擋了暫存，文案帶不過去。請改用一般視窗再試一次。')
+      return
+    }
+    await navigateTo(`/admin/${props.workspaceId}/broadcasts?from=calendar`)
+  }
+  catch (err: unknown) {
+    const msg = (err as { data?: { statusMessage?: string } })?.data?.statusMessage
+    ElMessage.error(msg || '這次擬不出來，再按一次試試。')
+  }
+  finally {
+    draftingId.value = ''
+  }
 }
 
 onMounted(reload)

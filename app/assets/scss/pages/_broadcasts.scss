@@ -259,3 +259,47 @@
   line-height: 1.5;
   color: var(--text-primary);
 }
+
+/* ── 從「接下來的檔期」擬過來的三版文案（`D-85` / `C-225`）──
+   ⛔ 每一版要**整句看得到**：只顯示一行省略號的話，三版長得一模一樣、沒得挑。
+   ⛔ 用 el-radio-group 不手刻（房規：別手刻原生表單元件）。 */
+.bc-draft-picker {
+  padding: 10px 12px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+
+  &__lead {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
+  /* Element Plus 的 radio 預設是一行一顆並排；這裡要各自成段 */
+  .el-radio-group { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+
+  &__item {
+    display: flex;
+    align-items: flex-start;
+    height: auto;
+    margin-right: 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--el-bg-color);
+    white-space: normal;
+
+    /* ⚠️ Element Plus 的 label 預設 nowrap＋單行高度，文案會被裁掉。
+       ⛔ 這是**全域 partial**，不可以用 `:deep()`（那個只在 scoped style 裡有意義，
+          寫在這裡會變成一個誰也選不到的選擇器）——直接寫後代選擇器。 */
+    .el-radio__label { white-space: normal; line-height: 1.7; }
+  }
+
+  &__text {
+    display: block;
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--el-text-color-primary);
+    word-break: break-word;
+  }
+}
