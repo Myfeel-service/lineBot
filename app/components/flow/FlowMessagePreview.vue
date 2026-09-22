@@ -17,7 +17,19 @@
         <div v-for="(msg, i) in messages" :key="i" class="fmp-row">
           <!-- 文字（無按鈕＝純氣泡；有按鈕＝按鈕範本卡） -->
           <template v-if="msg.type === 'text'">
-            <div v-if="!hasButtons(msg)" class="fmp-bubble">{{ keptText(msg) }}</div>
+            <!--
+              ⛔ 純文字氣泡也要講被丟掉的那一段（`C-229` 補）。原本這裡只畫 `keptText`，
+              超過 5000 字的部分**在預覽裡無聲消失**——看起來一切正常，客人卻收到半截，
+              跟 `H-27` 當初那條「有按鈕時只收 160 字」是同一個病，只是躲在另一個分支。
+              ⚠️ 推播的純文字欄位沒有字數上限，所以這條路是真的走得到的。
+            -->
+            <template v-if="!hasButtons(msg)">
+              <div class="fmp-bubble">{{ keptText(msg) }}</div>
+              <div v-if="droppedText(msg)" class="fmp-bubble-cut">
+                <span class="fmp-card-cut-label">↓ 以下 {{ droppedText(msg).length }} 字送不出去（LINE 單則文字只收 {{ LINE_TEXT_MESSAGE_MAX }} 字）</span>
+                <p class="fmp-card-cut-text">{{ droppedText(msg) }}</p>
+              </div>
+            </template>
             <div v-else class="fmp-card">
               <p class="fmp-card-text">{{ keptText(msg) }}</p>
               <!-- 超過 160 字的部分：照樣顯示，但明講「送不出去」 -->
@@ -125,7 +137,7 @@
 import { ChatDotRound, Picture, Postcard, VideoCamera } from '@element-plus/icons-vue'
 import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
-import { measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
+import { LINE_TEXT_MESSAGE_MAX, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
 
 const props = defineProps<{ messages: any[]; richMessages?: any[]; oaName?: string }>()
 

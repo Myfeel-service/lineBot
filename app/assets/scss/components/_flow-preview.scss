@@ -159,6 +159,23 @@
  * 刻意「照樣顯示、但一眼看得出被切掉」：斜線底紋＋灰字＋刪除線，並在上方直說幾字送不出去。
  * ⛔ 不要改成整段隱藏——看不到就等於預覽繼續說謊，只是換一種說法。
  */
+/* 純文字氣泡被截掉的那一段（`C-229`）：沿用卡片那套斜線底＋紅虛線，
+   但自己是一塊獨立的方塊（氣泡有圓角，硬接在下面會對不齊）。 */
+.fmp-bubble-cut {
+  max-width: 85%;            /* 跟 .fmp-bubble 同寬，才會對齊在同一欄 */
+  margin-top: 0.25rem;
+  border: 1px dashed var(--el-color-danger, #f56c6c);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(245, 108, 108, 0.06),
+    rgba(245, 108, 108, 0.06) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
 .fmp-card-cut {
   border-top: 1px dashed var(--el-color-danger, #f56c6c);
   background: repeating-linear-gradient(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  lineMessagesToPreviewMessages,
   parseLineMessagesToUnifiedAction,
   unifiedActionToLineMessages,
 } from './broadcast-content'
@@ -153,5 +154,61 @@ describe('讀回編輯器：舊草稿不可以把系統代寫的話當成店家�
     }])
     expect(restored.cardText).toBe('我們的新官網上線了')
     expect(restored.buttonLabel).toBe('開啟網址')
+  })
+})
+
+/**
+ * `C-229`：右側預覽。這一組要釘的不是「畫面長怎樣」，而是**預覽跟送出同一份來源**——
+ * `H-27` 的教訓是預覽在說謊比沒有預覽更糟，所以預覽只能從「真正要送出的訊息」反推。
+ */
+describe('推播預覽：畫出來的必須就是要送出去的', () => {
+  it('⭐ 店家一個字都沒寫時，預覽要照樣顯示系統套進去的預設文案', () => {
+    const sent = unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'module', moduleId: 'm1' }, 'A'),
+    )
+    const preview = lineMessagesToPreviewMessages(sent)
+
+    // 這條才是重點：以前這句話只存在於送出端，畫面上一個字都看不到
+    expect(preview).toEqual([{
+      type: 'text',
+      text: LINE_CARD_BODY_DEFAULT,
+      buttons: [{ label: LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT }],
+    }])
+  })
+
+  it('預覽的每一個字都來自送出端（不是照表單另外算一次）', () => {
+    const action = normalizeUnifiedAction(
+      { type: 'uri', uri: 'https://example.com', cardText: '中秋禮盒開賣了', buttonLabel: '去逛逛' },
+      'A',
+    )
+    const sent = unifiedActionToLineMessages(action)
+    const preview = lineMessagesToPreviewMessages(sent)
+    const tpl = sent[0]!.template as { text: string; actions: { label: string }[] }
+
+    expect(preview[0]!.text).toBe(tpl.text)
+    expect((preview[0]!.buttons as { label: string }[])[0]!.label).toBe(tpl.actions[0]!.label)
+  })
+
+  it('純文字＝沒有按鈕的氣泡（⛔ 不可以冒出一顆客人不會看到的按鈕）', () => {
+    const preview = lineMessagesToPreviewMessages(unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'message', text: '今天公休' }, 'A'),
+    ))
+    expect(preview).toEqual([{ type: 'text', text: '今天公休' }])
+  })
+
+  it('沒填完（網址空白）就沒有訊息，預覽是空的', () => {
+    expect(lineMessagesToPreviewMessages(unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'uri', uri: '' }, 'A'),
+    ))).toEqual([])
+  })
+
+  it('⛔ 認不得的訊息型別不可以被靜靜吃掉（預覽少一則＝另一種說謊）', () => {
+    const weird = [{ type: 'flex', altText: '之後才有的型別' }] as Record<string, unknown>[]
+    expect(lineMessagesToPreviewMessages(weird)).toHaveLength(1)
+  })
+
+  it('壞掉的輸入不要炸掉整個編輯頁', () => {
+    expect(lineMessagesToPreviewMessages(null)).toEqual([])
+    expect(lineMessagesToPreviewMessages([null as unknown as Record<string, unknown>])).toEqual([])
   })
 })

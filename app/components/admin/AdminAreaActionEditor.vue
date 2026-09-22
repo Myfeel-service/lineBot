@@ -58,6 +58,47 @@
         </div>
       </template>
 
+      <!--
+        `C-228`②：卡片上那句話與按鈕上那幾個字。
+        ⛔ 只有「會組成一張按鈕卡片送出去」的地方才給這兩格（＝推播），所以由 `enableCardCopy`
+        開關控制。圖文選單用的是同一支元件，但客人是**直接點圖上的格子**，沒有卡片也沒有按鈕
+        文字——在那裡多出這兩格只會讓人填了一個永遠不會出現的東西。
+      -->
+      <template v-if="enableCardCopy && actionSendsCard">
+        <div class="admin-field-group">
+          <AdminFieldLabel text="卡片上要寫什麼（選填）" tight />
+          <el-input
+            :model-value="String(action?.cardText || '')"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 5 }"
+            :maxlength="LINE_BUTTONS_TEMPLATE_TEXT_MAX"
+            show-word-limit
+            :placeholder="LINE_CARD_BODY_DEFAULT"
+            :disabled="disabled"
+            @update:model-value="(v) => patchAction({ cardText: v })"
+          />
+          <!--
+            這一段是這兩格存在的全部理由：在 `C-228` 以前，這句話是系統替店家寫的，
+            而他從來不知道有這句話（`D-87`）。所以**第一件事是先講「客人收到的不是網址」**。
+          -->
+          <p class="text-xs text-muted">
+            客人收到的<b>不是</b>一串網址，而是一張卡片：上面一句話、下面一顆按鈕。
+            這一格就是那句話。不填的話會用灰字那句。
+          </p>
+        </div>
+        <div class="admin-field-group">
+          <AdminFieldLabel text="按鈕上要寫什麼（選填）" tight />
+          <el-input
+            :model-value="String(action?.buttonLabel || '')"
+            :maxlength="LINE_ACTION_LABEL_MAX"
+            show-word-limit
+            :placeholder="cardButtonPlaceholder"
+            :disabled="disabled"
+            @update:model-value="(v) => patchAction({ buttonLabel: v })"
+          />
+        </div>
+      </template>
+
       <template v-if="allowSwitch && action.type === 'switch'">
         <div class="admin-field-group">
           <AdminFieldLabel :text="switchLabel" tight />
@@ -110,6 +151,13 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
+import {
+  LINE_ACTION_LABEL_MAX,
+  LINE_CARD_BODY_DEFAULT,
+  LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT,
+  LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
+} from '~~/shared/line-card-copy'
+import { LINE_BUTTONS_TEMPLATE_TEXT_MAX } from '~~/shared/line-text-limits'
 
 type EditorOption = { id: string; name: string }
 type TagOption = { id: string; name: string; color?: string }
@@ -138,6 +186,12 @@ const props = withDefaults(defineProps<{
   switchLabel?: string
   switchPlaceholder?: string
   errorMessage?: string
+  /**
+   * `C-228`②：顯示「卡片上要寫什麼／按鈕上要寫什麼」兩格。
+   * ⛔ 預設關著：只有真的會把動作組成一張按鈕卡片送出去的地方（推播）才該開。
+   * 圖文選單是直接點圖上的格子，沒有卡片。
+   */
+  enableCardCopy?: boolean
   /** 唯讀（例如已發送推播僅檢視） */
   disabled?: boolean
 }>(), {
@@ -153,6 +207,7 @@ const props = withDefaults(defineProps<{
   switchLabel: '選擇目標圖文選單',
   switchPlaceholder: '請選擇要切換的選單...',
   errorMessage: '',
+  enableCardCopy: false,
   disabled: false,
 })
 
@@ -171,6 +226,23 @@ const isTaggableAction = computed(() =>
   && props.taggableActionTypes.includes(String(action.value?.type || '')),
 )
 
+/**
+ * `C-228`②：這個動作送出去時會不會變成一張按鈕卡片。
+ * 只有「開啟網址」與「觸發機器人模組」會——「傳送文字」是純文字氣泡（沒有卡片也沒有按鈕），
+ * 「切換選單」根本不送訊息。⛔ 在那兩種上面顯示這兩格，就是讓人填一個永遠不會出現的東西。
+ */
+const actionSendsCard = computed(() => {
+  const t = String(action.value?.type || '')
+  return t === 'uri' || t === 'module'
+})
+
+/** 按鈕的灰字提示要跟送出端的預設一致，否則畫面示範的是一顆客人不會看到的按鈕 */
+const cardButtonPlaceholder = computed(() =>
+  String(action.value?.type || '') === 'module'
+    ? LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT
+    : LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
+)
+
 function patchAction(partial: Partial<ActionShape>) {
   emit('update:modelValue', { ...props.modelValue, ...partial } as ActionShape)
 }
@@ -187,6 +259,12 @@ function taggingSnapshot(): { enabled: boolean; addTagIds: string[] } {
 function onTypeChange(nextType: string | number | boolean | Record<string, unknown> | unknown[]) {
   if (props.disabled) return
   const t = String(nextType || 'uri')
+  /*
+   * 換動作類型＝整格重來（既有行為：網址、文字、模組、貼標全清）。
+   * `C-228`②的兩格也一起清。⛔ 不要為它們開例外說「反正網址跟模組都是卡片、留著吧」——
+   * 同一個下拉，有些欄位會被清、有些不會，是最難預期的那種行為；而且換到「傳送文字」
+   * 或「切換選單」時本來就沒有卡片，留著等於留一個看不到也刪不掉的殘值。
+   */
   emit('update:modelValue', {
     ...props.modelValue,
     type: t,
@@ -194,6 +272,8 @@ function onTypeChange(nextType: string | number | boolean | Record<string, unkno
     text: '',
     moduleId: '',
     data: '',
+    cardText: '',
+    buttonLabel: '',
     tagging: { enabled: false, addTagIds: [] },
   } as ActionShape)
 }

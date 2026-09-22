@@ -2,6 +2,28 @@
    推播編輯（split 右側；覆寫 flow 的 message-card 寬度）
 ═══════════════════════════════════════════════════════════════ */
 
+/* 表單 ｜ 即時預覽 兩欄（`C-229`）。
+   ⛔ **預覽不自己開捲動區**：整個編輯區只有 `.split-editor-body` 在捲（見
+   layout/_split-layout.scss 的那條規則），多開一條會變成兩條捲軸互搶滑鼠。
+   推播一次只送一則訊息，預覽本來就矮，用 sticky 跟著捲就夠——不需要內捲。 */
+.bc-body-row {
+  display: flex;
+  align-items: flex-start;   /* ⛔ 不可 stretch：拉伸後 sticky 失效（黏在一個跟內容一樣高的框裡） */
+}
+
+.bc-editor-col {
+  flex: 1 1 auto;
+  min-width: 0;              /* 長網址不要把整欄撐爆 */
+}
+
+/* 捲表單時預覽留在視線內。⛔ 不設固定高度：高度一寫死，短內容下面就會拖一大片空白面板。 */
+.bc-preview {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100dvh;
+}
+
 /* 節慶行銷提醒（2026-08-28 拍板：不再只在 LINE）——側欄清單頂上的一行。
    ⛔不用警示色：這不是異常，紅橘是留給「壞掉」的。中性淡底＋一般字色，
    跟小幫手裡那張節慶卡同一族（components/_tutorial-agent.scss 的 .ta-festival）。 */

@@ -144,6 +144,44 @@ export function unifiedActionToLineMessages(action: UnifiedAction): Record<strin
 }
 
 /**
+ * `C-229`：把「真正要送出去的那幾則訊息」翻成右側預覽吃的形狀。
+ *
+ * ⭐ **刻意是從送出結果反推，不是照表單另外算一次**。推播的預覽只要有第二條路算，
+ * 遲早會跟送出端漂開，而那正是 `H-27` 的災情——**預覽在說謊比沒有預覽更糟**。
+ * 這樣接的話，預覽畫面上的每一個字都是 `unifiedActionToLineMessages` 已經定案的字，
+ * 包含系統套進去的預設文案；想讓預覽顯示別的東西，唯一的辦法是改送出端。
+ *
+ * ⚠️ 文字長度**不在這裡截**：預覽元件自己會用同一份 `measureLineText` 量，
+ * 並且把「送不出去的那一段」標出來給人看。在這裡先截掉就等於把超出的部分無聲丟掉。
+ */
+export function lineMessagesToPreviewMessages(
+  messages: Record<string, unknown>[] | null | undefined,
+): Record<string, unknown>[] {
+  if (!Array.isArray(messages)) return []
+  return messages.flatMap((msg) => {
+    if (!msg || typeof msg !== 'object') return []
+
+    if (msg.type === 'text') {
+      return [{ type: 'text', text: String((msg as { text?: unknown }).text ?? '') }]
+    }
+
+    const tpl = (msg as { template?: Record<string, unknown> }).template
+    if (msg.type === 'template' && tpl?.type === 'buttons') {
+      const actions = Array.isArray(tpl.actions) ? tpl.actions : []
+      return [{
+        type: 'text',
+        text: String(tpl.text ?? ''),
+        // 預覽只需要按鈕上的字；點下去做什麼（uri／postback）在預覽裡按不到，不必帶
+        buttons: actions.map((a: Record<string, unknown>) => ({ label: String(a?.label ?? '') })),
+      }]
+    }
+
+    // ⛔ 認不得的型別不要靜靜吃掉——原樣交給預覽，它會顯示型別名當佔位
+    return [msg]
+  })
+}
+
+/**
  * 卡片本文：店家自己寫的優先，沒寫就用預設，最後照按鈕範本的 160 字上限截斷。
  * ⛔ 截斷走 `truncateLineText`，不要自己 `.slice()`——預覽與送出必須切在同一格
  * （`H-27` 的教訓，見 `shared/line-text-limits.ts`）。

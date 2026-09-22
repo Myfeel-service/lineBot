@@ -79,6 +79,11 @@
         :is-creating="isCreating"
       />
       <div class="flex gap-1 admin-header-actions">
+        <!-- `C-229`：跟機器人模組頁同一顆、同樣的措辭；⛔ 唯讀（已發送）時也留著，
+             那時人正在回頭查「我那天到底發了什麼」，正是最需要看預覽的時候。 -->
+        <el-button size="small" @click="previewOpen = !previewOpen">
+          {{ previewOpen ? '隱藏預覽' : '顯示預覽' }}
+        </el-button>
         <!-- 已完成/取消 → 只看報表；失敗 → 多一個重發出口 -->
         <template v-if="isReadOnly">
           <el-button
@@ -115,7 +120,13 @@
 
     <!-- ── Editor Body（與其他編輯頁相同：可捲動 + padding + 區塊間距）── -->
     <template #editor-body>
-      <div class="ar-editor-body admin-panel-stack">
+      <!--
+        `C-229`：表單 ｜ 即時預覽 兩欄。
+        ⛔ 預覽**預設打開**（跟機器人模組那頁一樣）：推播是唯一「按下去就送給全部好友、
+        收不回來」的功能，最需要看的人正是還沒想到要去按「顯示預覽」的那個人。
+      -->
+      <div class="bc-body-row">
+      <div class="ar-editor-body admin-panel-stack bc-editor-col">
         <el-form label-position="top" class="admin-form-vertical bc-editor-form" @submit.prevent>
 
         <!-- ⓪  發送失敗原因（含看門狗收殮的卡死單「能否安全補發」判定） -->
@@ -227,9 +238,20 @@
             <AdminAreaActionEditor
               :model-value="form.contentAction"
               :module-options="flowOptions"
+              :enable-card-copy="true"
               :disabled="isReadOnly"
               @update:model-value="onContentActionUpdate"
             />
+            <!--
+              `C-229`：一次只送得出一則（`F-9`）。這件事以前畫面上一個字都沒有，
+              想發「圖＋文字＋按鈕」的人只會在這一頁一直找加第二則的地方、找不到。
+              ⛔ 不是警告色：這不是故障，是這個功能就長這樣，而且指得出正確的做法。
+            -->
+            <p class="bc-click-hint text-muted">
+              一則推播<b>只會送出一則訊息</b>。要一次送圖片、好幾段文字或多顆按鈕，
+              請先到「<NuxtLink :to="`/admin/${workspaceId}/flow`" class="link">機器人模組</NuxtLink>」把那一組訊息做好，
+              這裡再選「觸發機器人模組」。
+            </p>
             <!-- ⛔ 這段以前把四個環境變數名（PUBLIC_BASE_URL…）與 /api/r 攤在店家面前（`D-82`）：
                  店家看不懂、也不可能自己去設，讀完只會更怕。技術細節留在這裡給工程人員看就好，
                  畫面只講「哪些數字算得到、哪些算不到、算不到要找誰」。
@@ -380,6 +402,20 @@
 
         </el-form>
       </div>
+
+      <!--
+        `C-229`：即時預覽。吃的是 `unifiedActionToLineMessages` **真正要送出去的那一則**
+        （見 `lineMessagesToPreviewMessages`），不是照表單另外算一次——照表單另算的話，
+        系統套進去的預設文案在預覽裡看不到，等於換個地方繼續騙人。
+        ⛔ 已發送／已取消的推播也要看得到：那時人正在回頭查「我那天到底發了什麼」。
+      -->
+      <FlowMessagePreview
+        v-if="previewOpen"
+        class="bc-preview"
+        :messages="previewMessages"
+        :oa-name="currentWorkspaceName"
+      />
+      </div>
     </template>
   </AdminSplitLayout>
 
@@ -437,7 +473,11 @@ import { Plus, Promotion } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
-import { parseLineMessagesToUnifiedAction, unifiedActionToLineMessages } from '~~/shared/broadcast-content'
+import {
+  lineMessagesToPreviewMessages,
+  parseLineMessagesToUnifiedAction,
+  unifiedActionToLineMessages,
+} from '~~/shared/broadcast-content'
 import {
   BROADCAST_AUDIENCE_HANDOFF_KEY,
   handoffNoticeText,
@@ -504,7 +544,7 @@ function isNotFoundApiError(e: unknown): boolean {
   return o.statusCode === 404 || o.status === 404
 }
 
-const { workspaceId, apiFetch } = useWorkspace()
+const { workspaceId, apiFetch, currentWorkspaceName } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 // ── 狀態 ────────────────────────────────────────────────────────────
@@ -687,6 +727,21 @@ function buildAudienceSource() {
 function buildMessages(): Record<string, unknown>[] {
   return unifiedActionToLineMessages(form.value.contentAction)
 }
+
+/**
+ * `C-229`：右側預覽吃的內容。
+ * ⭐ 走的是 `buildMessages()`——**跟按下「發送」時送出去的完全是同一份**。
+ * ⛔ 不要改成照 `form.contentAction` 另外拼一份給預覽看：那樣系統套進去的預設文案
+ * （「點下面的按鈕看看」那句）就不會出現在預覽裡，等於換個地方繼續騙人。
+ */
+const previewMessages = computed(() => lineMessagesToPreviewMessages(buildMessages()))
+
+/**
+ * 預覽預設打開（與機器人模組頁一致）。
+ * ⛔ 不要預設收起來：推播是唯一「按下去就送給全部好友、收不回來」的功能，
+ * 最需要看到它的人，正是還沒想到要去按「顯示預覽」的那個人。
+ */
+const previewOpen = ref(true)
 
 function loadFormFromItem(item: any) {
   const src = item.audienceSource ?? {}
@@ -1238,6 +1293,33 @@ function applyDraftHandoff() {
   showToast(draftHandoffNoticeText(payload), 'success')
 }
 
+/**
+ * `D-28`：從「好友統計」的興趣排行按「發推播給這群」帶過來的標籤。
+ *
+ * ⚠️ **這一支讀網址參數，不是 `sessionStorage`**——跟上面兩支不一樣是刻意的：
+ *    那兩支要搬的是三百個 LINE 編號／三版文案（塞不進網址），這支只有一個標籤 id，
+ *    用網址參數換來「重新整理還在、連結貼得出去」。
+ * ⛔ **標籤對不上要講出來**：它可能在按下按鈕之後被停用或刪掉了，
+ *    安靜地開一張空白推播會讓人以為受眾已經選好了。
+ */
+function applyTagHandoff() {
+  const q = useRoute().query
+  if (String(q.from ?? '') !== 'friend-stats') return
+  const tagId = String(q.tagId ?? '').trim()
+  if (!tagId) return
+
+  openCreate()
+  const hit = allTags.value.find(t => t.id === tagId)
+  if (!hit) {
+    showToast('那顆標籤現在選不到了（可能剛被停用或刪掉），請自己挑發送對象', 'warning')
+    return
+  }
+  form.value.audienceType = 'tags'
+  form.value.tagIds = [tagId]
+  markClean() // 系統幫他填的，還沒動到手
+  showToast(`發送對象已選好「${hit.name}」。這是草稿，還沒有送出去。`, 'success')
+}
+
 /** 這一次帶過來的三版文案（空陣列＝不是從月曆進來的） */
 const draftVariants = ref<string[]>([])
 const draftVariantIndex = ref(0)
@@ -1254,6 +1336,7 @@ onMounted(async () => {
   await loadData()
   applyAudienceHandoff()
   applyDraftHandoff()
+  applyTagHandoff()
   syncDuePollTimer()
 })
 
