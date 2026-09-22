@@ -707,9 +707,17 @@
                     <AdminFieldLabel tight>
                       收到回覆後，觸發下一個模組 <span class="text-muted">(必填)</span>
                     </AdminFieldLabel>
-                    <el-select v-model="msg.moduleId" placeholder="選擇機器人模組" size="small" class="control-full">
-                      <el-option v-for="f in modulePickerOptions" :key="f.id" :value="f.id" :label="f.name" />
-                    </el-select>
+                    <!--
+                      `D-86`：用戶輸入卡的「下一個模組」也改用共用的選模組欄位。
+                      ⭐ 這一格特別需要「還沒有內容」的標示：這是**必填**的去向，
+                         選到一個空模組＝客人乖乖回答完之後什麼都沒收到。
+                    -->
+                    <AdminFlowPicker
+                      v-model="msg.moduleId"
+                      :options="modulePickerOptions"
+                      placeholder="選擇機器人模組（可打字搜尋）"
+                      size="small"
+                    />
                   </div>
                   <div class="ui-field admin-field-group">
                     <AdminFieldLabel text="收到回覆後是否貼標" tight />
@@ -1208,6 +1216,7 @@ const {
   load: loadFlows,
   onScroll: onSidebarListScroll,
   setRegularFlowsOrder,
+  ensureFlowVisible,
 } = useFlowWorkspaceList()
 const saving = ref(false)
 const duplicating = ref(false)
@@ -1216,10 +1225,16 @@ const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 const FLOW_MESSAGE_LIMIT = 5
 const { showToast } = useAdminToast()
+// `D-86`：網址帶 `?id=` 直接開那一個模組（見 `openFlowFromQuery`）
+const route = useRoute()
+const router = useRouter()
 const { tags: allTags, loadTags } = useAdminTagList()
 // C-208：這一頁同時掛很多個標籤下拉（每顆按鈕一個、用戶輸入卡一個），
 // 在其中一個就地建了標籤，其他幾個要跟著看得到，否則人會以為沒建成功。
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+// `D-86`：同理，這一頁的模組下拉也很多個（每顆按鈕、輪播每張卡各一），
+// 在其中一個就地建了模組，其他幾個要跟著看得到。
+useAdminFlowRefresh().onAdminFlowListChanged(() => void loadFlows(true))
 
 /**
  * C-209：「這個模組會在這些時候發出」。
@@ -1371,7 +1386,14 @@ const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
-const selectedFlow = computed(() => flows.value.find(f => f.id === selectedId.value) ?? null)
+/**
+ * ⛔ **要找 `allFlows` 不是 `flows`**：`flows` 是側欄**分頁後**看得見的那一段。
+ * 用它找的話，只要選到的模組不在目前那一頁，`selectedFlow` 就是 null，
+ * 而 `AdminSplitLayout` 的 `is-empty` 吃的正是它——**右邊會整個停在空狀態**，
+ * `selectedId` 明明已經設好了，畫面上卻什麼都沒發生。
+ * 平常點側欄不會踩到（點得到就一定在畫面上），`D-86` 的 `?id=` 深連結一路踩穿。
+ */
+const selectedFlow = computed(() => allFlows.value.find(f => f.id === selectedId.value) ?? null)
 const systemFlows = computed(() => flows.value.filter((f) => f.isSystem))
 const regularFlows = computed(() => flows.value.filter((f) => !f.isSystem))
 
@@ -1530,7 +1552,37 @@ onMounted(async () => {
     loadFlowFolders(),
     loadConfigRefs(),
   ])
+  openFlowFromQuery()
 })
+
+/**
+ * `D-86`：網址帶 `?id=` 就直接開那一個模組。
+ *
+ * **它解的問題**：這一頁以前完全不吃網址參數，所以任何「去看那個模組」的連結
+ * 都只能把人丟在清單上，剩下的自己找（正式庫有 71 個）。有了它，選模組的下拉才給得出
+ * 「編輯這個模組 ↗」，「客人會從哪裡走到這裡」那份名單也才點得進去。
+ *
+ * ⛔ **找不到一定要說**：id 對不到就是那個模組被刪了或不屬於這個帳號——
+ *    安靜地停在清單上，人會以為連結壞了或自己眼花，然後把時間花在找一個不存在的東西。
+ * ⚠️ 開完就把參數從網址拿掉：留著會跟後續的手動點選打架（重新整理又跳回這一個）。
+ */
+function openFlowFromQuery() {
+  const wanted = String(route.query.id ?? '').trim()
+  if (!wanted) return
+  /**
+   * ⛔ **要找 `allFlows` 不是 `flows`**：`flows` 是側欄**分頁後**看得見的那一段，
+   *    排在第一頁之後的模組用它找一定找不到，結果就是「連結點了什麼都沒發生」
+   *    ——而且會**誤報成「這個模組被刪掉了」**，比沒反應更糟。實機守門員抓到過一次。
+   */
+  const flow = allFlows.value.find(f => f.id === wanted)
+  if (flow) {
+    // 先讓它出現在側欄上，再選它——否則右邊開了、左邊卻沒有那一列
+    ensureFlowVisible(wanted)
+    selectFlow(flow, { skipDiscardConfirm: true })
+  }
+  else showToast('找不到這個模組，可能已經被刪掉了', 'error')
+  void router.replace({ query: { ...route.query, id: undefined } })
+}
 
 // ── Flow Folder CRUD ─────────────────────────────────
 async function loadFlowFolders() {

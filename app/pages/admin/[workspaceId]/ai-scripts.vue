@@ -633,12 +633,19 @@
                   <div class="admin-field-group">
                     <AdminFieldLabel text="要送出哪個模組" tight />
                     <div v-if="modulesLoading" class="text-xs text-muted">載入中…</div>
-                    <div v-else-if="!moduleOptions.length" class="scripts-section-hint">
-                      還沒有機器人模組。請先到「<NuxtLink :to="`/admin/${workspaceId}/flow`" class="link">機器人模組</NuxtLink>」建立一個。
-                    </div>
-                    <el-select v-else :model-value="node.moduleId" filterable placeholder="選擇模組" class="control-full" @change="node.moduleId = $event">
-                      <el-option v-for="m in moduleOptions" :key="m.value" :label="m.label" :value="m.value" />
-                    </el-select>
+                    <!--
+                      `D-86`：改用共用的 AdminFlowPicker。
+                      ⚠️ 原本手刻的「還沒有機器人模組→去那一頁建」那段一併拿掉——
+                         那顆元件自己的空狀態講得更完整，而且**當場就建得起來**，
+                         不必離開這張還沒存的腳本表單。
+                    -->
+                    <AdminFlowPicker
+                      v-else
+                      :model-value="node.moduleId"
+                      :options="moduleOptions"
+                      placeholder="選擇模組（可打字搜尋）"
+                      @update:model-value="node.moduleId = $event"
+                    />
                   </div>
                 </template>
 
@@ -728,7 +735,7 @@
   <!-- `D-23`：還沒設過「客人加好友時」時，點那一列開的淺層設定（選模組或打一段字） -->
   <AdminFollowWelcomeSetup
     v-model:visible="followSetupVisible"
-    :module-options="moduleOptions.map(m => ({ id: m.value, name: m.label }))"
+    :module-options="moduleOptions"
     @created="onFollowWelcomeCreated"
   />
 </template>
@@ -795,17 +802,29 @@ const scriptTemplates = SCRIPT_TEMPLATES
 const { tags: tagList, loadTags } = useAdminTagList()
 // C-208：一條流程可以有好幾個貼標節點，其中一個就地建了標籤，其他要跟著看得到
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+// `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）
+useAdminFlowRefresh().onAdminFlowListChanged(() => void loadModuleOptions())
 
 // 機器人模組步驟用的模組清單（只在真的有 module 步驟時才需要，但清單很小、一次抓完最簡單）
 const modulesLoading = ref(true)
-const moduleOptions = ref<Array<{ value: string; label: string }>>([])
+/**
+ * `D-86`：形狀從 `{value,label}` 改成跟全站一致的 `{id,name,…}`。
+ * ⚠️ 順便把 `isActive`／`messageCount` 帶進來——共用的 AdminFlowPicker 靠它們才標得出
+ * 「還沒有內容／已停用」。原本那份自己的轉換只有這一頁在用，留著就是同一件事兩種寫法。
+ */
+const moduleOptions = ref<Array<{ id: string; name: string; isActive?: boolean; messageCount?: number }>>([])
 async function loadModuleOptions() {
-  // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱與編號
+  // 只取選單要的欄位：整份模組清單是 133 KB（含每則訊息內容），這裡只用到名稱、編號與幾則
   const list = await apiFetch<Array<Record<string, any>>>('/api/flow/list?fields=picker').catch(() => [])
   // moduleId 就是 flows 的文件 id（見 getFlowByModuleId），所以直接用 m.id
   moduleOptions.value = (Array.isArray(list) ? list : [])
-    .map(m => ({ value: String(m.id ?? ''), label: String(m.name ?? m.id ?? '(未命名模組)') }))
-    .filter(m => m.value)
+    .map(m => ({
+      id: String(m.id ?? ''),
+      name: String(m.name ?? m.id ?? '(未命名模組)'),
+      isActive: m.isActive,
+      messageCount: m.messageCount,
+    }))
+    .filter(m => m.id)
   modulesLoading.value = false
 }
 // C-208：貼標節點改用共用的 AdminTagPicker（吃 {id,name,color} 原樣），
@@ -1129,7 +1148,7 @@ function nodeOptionLabel(n: ScriptNode): string {
 /** 模組 id → 顯示名稱（清單還沒載到就先顯示 id，不要顯示空白） */
 function moduleLabel(moduleId: string): string {
   if (!moduleId) return '未選擇'
-  return moduleOptions.value.find(m => m.value === moduleId)?.label ?? moduleId
+  return moduleOptions.value.find(m => m.id === moduleId)?.name ?? moduleId
 }
 
 /** 節點短名（給「下一步」摘要用） */

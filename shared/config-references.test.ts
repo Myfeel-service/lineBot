@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   addConfigRef,
   collectTagRefs,
+  configRefKindIsDeepLinkable,
+  configRefPath,
   summarizeConfigRefs,
   type ConfigRef,
 } from './config-references'
@@ -111,5 +113,40 @@ describe('summarizeConfigRefs', () => {
 
   it('⛔ 空清單回空字串，不在這裡硬寫一句話（兩個呼叫端的語氣不一樣）', () => {
     expect(summarizeConfigRefs([])).toBe('')
+  })
+})
+
+/**
+ * `D-86`：名字要點得進「那一筆」，不是只帶到那一頁。
+ *
+ * ⛔ 這一組真正在守的是**別把還沒做的頁面也加上 `?id=`**：帶一個那頁根本不看的參數，
+ *    人點過去還是落在 71 筆的清單上，卻會以為自己按錯了——那比不給連結更糟。
+ */
+describe('configRefPath — 深連結只給真的吃得到 ?id= 的頁面', () => {
+  const WS = 'ws-1'
+
+  it('機器人模組：帶 id 就直接開那一個', () => {
+    expect(configRefPath(WS, 'flow', 'mod-1')).toBe(`/admin/${WS}/flow?id=mod-1`)
+    expect(configRefKindIsDeepLinkable('flow')).toBe(true)
+  })
+
+  it('沒帶 id 時維持原樣（只連到那一頁）', () => {
+    expect(configRefPath(WS, 'flow')).toBe(`/admin/${WS}/flow`)
+  })
+
+  it('⛔ 還沒做 ?id= 的五頁，就算給了 id 也不可以掛上去', () => {
+    for (const kind of ['richmenu', 'script', 'campaign', 'broadcast', 'supportPreset'] as const) {
+      const path = configRefPath(WS, kind, 'some-id')
+      expect(path).not.toContain('?')
+      expect(configRefKindIsDeepLinkable(kind)).toBe(false)
+    }
+  })
+
+  it('id 有特殊字元時要編碼（uuid 不會，但別人貼進來的 id 會）', () => {
+    expect(configRefPath(WS, 'flow', 'a b&c')).toBe(`/admin/${WS}/flow?id=a%20b%26c`)
+  })
+
+  it('空字串 id 當成沒給（⛔ 不可以產出 `?id=` 這種半截網址）', () => {
+    expect(configRefPath(WS, 'flow', '')).toBe(`/admin/${WS}/flow`)
   })
 })

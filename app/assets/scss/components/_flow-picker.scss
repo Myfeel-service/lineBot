@@ -1,0 +1,107 @@
+/* ══════════════════════════════════════════════════════════════
+   共用的「選機器人模組」欄位（D-86）——AdminFlowPicker.vue
+
+   ⛔ 樣式放這裡不要放 .vue 的 <style>（見 memory feedback_scss_in_partials）。
+   ⚠️ 視覺刻意跟 .tag-picker 同一套：兩顆元件常常上下相鄰（模組按鈕就是
+      「選模組」＋「命中後加上標籤」），長得不一樣會很明顯。
+   ══════════════════════════════════════════════════════════════ */
+
+.flow-picker {
+  min-width: 0;
+}
+
+/* 一個模組都沒有時：講一句人話並給出口 ⛔ 不是留一個空下拉 */
+.flow-picker__empty {
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed var(--el-border-color, #dcdfe6);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+}
+
+.flow-picker__empty-text {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--el-text-color-regular, #606266);
+}
+
+.flow-picker__empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.flow-picker__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+
+/* 「編輯這個模組 ↗」跟旁邊的 text 按鈕對齊：EP 的 text button 有自己的行高 */
+.flow-picker__edit {
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+/* 下拉選項那一行：名字在左、狀態小標在右 */
+.flow-picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.flow-picker__option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-picker__flag {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  padding: 0 0.35rem;
+  border-radius: 4px;
+}
+
+/* 「還沒有內容」＝選了就等於什麼都不會發生，用琥珀（不是紅：東西沒壞，是還沒做完） */
+.flow-picker__flag--empty {
+  color: #a16207;
+  background: #fefce8;
+}
+
+.flow-picker__flag--inactive {
+  color: var(--el-text-color-secondary, #909399);
+  background: var(--el-fill-color, #f0f2f5);
+}
+
+/* 「已刪除」＝這個設定現在就是壞的，是三種裡唯一該用紅的 */
+.flow-picker__flag--gone {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+/* 選到會出事的模組時，欄位底下那句話。⛔ 不可以只靠下拉裡那個小標：
+   關起來之後畫面上只剩模組名字，什麼線索都沒有。 */
+.flow-picker__warn {
+  margin: 0.35rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: #a16207;
+}
+
+.flow-picker__form .admin-field-group + .admin-field-group {
+  margin-top: 0.85rem;
+}
+
+.flow-picker__error {
+  margin: 0.6rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--el-color-danger, #f56c6c);
+}

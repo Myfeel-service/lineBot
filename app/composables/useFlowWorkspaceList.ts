@@ -3,6 +3,13 @@ import { ADMIN_SIDEBAR_PAGE_SIZE } from '~~/app/composables/useAdminSidebarInfin
 export type FlowModulePickerOption = {
   id: string
   name: string
+  /**
+   * `D-86`：讓共用的 AdminFlowPicker 標得出「還沒有內容／已停用」。
+   * ⚠️ 這一頁載的是**完整**清單（側欄點一下就要直接編輯），所以直接數 `messages` 就好，
+   *    不像別頁要靠 `/api/flow/list?fields=picker` 回的 `messageCount`。
+   */
+  isActive?: boolean
+  messageCount?: number
 }
 
 /**
@@ -30,6 +37,10 @@ export function useFlowWorkspaceList() {
     allFlows.value.map(f => ({
       id: f.id,
       name: String(f.name || f.id),
+      isActive: (f as Record<string, unknown>).isActive as boolean | undefined,
+      messageCount: Array.isArray((f as Record<string, unknown>).messages)
+        ? ((f as Record<string, unknown>).messages as unknown[]).length
+        : undefined,
     })),
   )
 
@@ -94,6 +105,23 @@ export function useFlowWorkspaceList() {
     allFlows.value = [...systemFlowsAll.value, ...nextRegular]
   }
 
+  /**
+   * 讓某一個模組**出現在側欄上**（`D-86`：從 `?id=` 或別頁連過來時用）。
+   *
+   * ⛔ 側欄是分頁的（`visibleRegularCount`），排在第一頁之後的模組**根本沒有渲染出來**。
+   *    不做這一步，深連結就會變成「右邊編輯器開了，左邊卻找不到反白的那一列」，
+   *    人會以為自己開錯了東西。
+   * ⚠️ 系統模組永遠在最上面、不受分頁影響，所以只要處理自建的那一段。
+   */
+  function ensureFlowVisible(id: string) {
+    const index = regularFlowsAll.value.findIndex(f => f.id === id)
+    if (index < 0) return // 系統模組、或這份清單裡沒有——都不用動
+    if (index < visibleRegularCount.value) return
+    // 多補到整頁，免得剛好卡在邊界、再捲一格又要載入
+    const pages = Math.ceil((index + 1) / ADMIN_SIDEBAR_PAGE_SIZE)
+    visibleRegularCount.value = pages * ADMIN_SIDEBAR_PAGE_SIZE
+  }
+
   return {
     allFlows,
     flows,
@@ -106,5 +134,6 @@ export function useFlowWorkspaceList() {
     loadMore,
     onScroll,
     setRegularFlowsOrder,
+    ensureFlowVisible,
   }
 }

@@ -32,15 +32,20 @@
           <el-radio value="text">直接打一段文字</el-radio>
         </el-radio-group>
 
-        <el-select
+        <!--
+          `D-86`：共用的選模組欄位。
+          ⛔ 這裡 `allow-create=false`：這張表本來就有「直接打一段文字」那條路，
+             再放一顆「＋ 新模組」就是同一件事三條路。
+          ⭐ 但「還沒有內容」的標示在這裡特別要緊：加好友歡迎選到空模組，
+             結果就是新朋友一句話都沒收到，而那正是 `D-23` 查到的那幾百位。
+        -->
+        <AdminFlowPicker
           v-if="mode === 'module'"
           v-model="moduleId"
-          filterable
-          placeholder="選一個機器人模組"
-          class="admin-w-full"
-        >
-          <el-option v-for="m in moduleOptions" :key="m.id" :value="m.id" :label="m.name" />
-        </el-select>
+          :options="moduleOptions"
+          :allow-create="false"
+          placeholder="選一個機器人模組（可打字搜尋）"
+        />
         <el-input
           v-else
           v-model="text"

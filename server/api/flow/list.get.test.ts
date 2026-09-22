@@ -74,20 +74,17 @@ function stubListDocs(rows = ALL) {
 }
 
 describe('模組清單（E-23）', () => {
-  /**
-   * picker 模式會為了「舊歡迎模組是不是空的」多讀一次那份文件（`D-23`）。
-   * 預設回「有內容」＝保守顯示；要測「空的會被藏」時在該案自己覆寫。
-   */
-  function stubWelcomeDoc(messages: unknown[] = [{ type: 'text' }]) {
-    vi.mocked(getDb).mockReturnValue({
-      collection: () => ({ doc: () => ({ get: async () => ({ data: () => ({ messages }) }) }) }),
-    } as never)
-  }
-
   beforeEach(() => {
     vi.clearAllMocks()
     currentQuery = {}
-    stubWelcomeDoc()
+    /**
+     * `getDb` 只剩補建系統模組會用到。
+     * ⚠️ 這裡刻意給一個「呼叫 `doc()` 就炸」的假物件：`D-86` 起清單自己就答得出
+     * 「歡迎模組是不是空的」，⛔ 任何人再加回那趟額外讀取，測試會當場紅而不是安靜地多花一趟。
+     */
+    vi.mocked(getDb).mockReturnValue({
+      collection: () => ({ doc: () => { throw new Error('不該再為了歡迎模組多讀一次文件') } }),
+    } as never)
   })
 
   it('?fields=picker：回得了名稱與啟用狀態，但**不帶訊息內容**', async () => {
@@ -103,6 +100,40 @@ describe('模組清單（E-23）', () => {
     expect(list[0]!.isActive).toBe(true)
     // 這一行紅掉＝又把 133 KB 的訊息內容搬回前端了
     for (const item of list) expect(item.messages).toBeUndefined()
+  })
+
+  /**
+   * `D-86`：下拉要標得出「這個模組還沒有內容」。
+   * ⛔ 這一組的重點是「**數得出來、但內容不可以跟著回去**」——
+   *    只驗 `messageCount` 而不驗 `messages` 不見了，就會漏掉「為了數一數把 133 KB 搬回前端」。
+   */
+  it('?fields=picker：回得出「幾則訊息」，但內容還是不准跟著回去', async () => {
+    stubListDocs([
+      flow('flow-a'), // fixture 預設一則
+      flow('flow-空', { messages: [] }),
+      flow('flow-兩則', { messages: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }),
+      flow('flow-沒有這個欄位', { messages: undefined }),
+    ])
+    currentQuery = { fields: 'picker' }
+
+    const list = await (handler as any)({} as never) as Record<string, unknown>[]
+    const byId = Object.fromEntries(list.map(f => [f.id, f]))
+
+    expect(byId['flow-a']!.messageCount).toBe(1)
+    expect(byId['flow-空']!.messageCount).toBe(0)
+    expect(byId['flow-兩則']!.messageCount).toBe(2)
+    // 欄位根本不存在的舊資料也要有數字，⛔ 不可以是 undefined（下拉會判斷不出來而靜靜跳過）
+    expect(byId['flow-沒有這個欄位']!.messageCount).toBe(0)
+    for (const item of list) expect(item.messages).toBeUndefined()
+  })
+
+  it('沒帶參數時不加 messageCount（那頁吃的是 messages 本身，不要多長一個欄位出來）', async () => {
+    stubListDocs()
+
+    const list = await (handler as any)({} as never) as Record<string, unknown>[]
+
+    expect(list[0]!.messageCount).toBeUndefined()
+    expect(Array.isArray(list[0]!.messages)).toBe(true)
   })
 
   it('沒帶參數：照舊回整份（機器人模組那頁要吃 messages）', async () => {
@@ -165,12 +196,30 @@ describe('模組清單（E-23）', () => {
       flow(`${WS}_welcome`, { isSystem: true, moduleType: 'welcome', messages: [] }),
       flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }),
     ])
-    stubWelcomeDoc([]) // 那份舊文件是空的
     currentQuery = { fields: 'picker' }
 
     const res: any = await (handler as any)({} as never)
     const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
     expect(ids).not.toContain(`${WS}_welcome`)
+  })
+
+  /**
+   * ⛔ 對照組：picker 模式**不可以**為了判斷空不空再多讀一次那份文件。
+   * `D-86` 起 `messages` 有投影進來，直接判斷得出來；再多讀一次就是白花一趟往返，
+   * 而且會把「清單怎麼說」與「另外讀到什麼」變成兩本帳。
+   */
+  it('⛔ picker 模式不再為了歡迎模組多讀一次文件（清單裡就有答案）', async () => {
+    const doc = vi.fn()
+    vi.mocked(getDb).mockReturnValue({ collection: () => ({ doc }) } as never)
+    stubListDocs([
+      flow(`${WS}_welcome`, { isSystem: true, moduleType: 'welcome', messages: [] }),
+      flow(`${WS}_live_agent`, { isSystem: true, moduleType: 'live_agent' }),
+    ])
+    currentQuery = { fields: 'picker' }
+
+    await (handler as any)({} as never)
+
+    expect(doc).not.toHaveBeenCalled()
   })
 
   it('⛔ 有內容的舊「歡迎模組」照舊列出來——藏起來就是讓人家的東西無聲消失', async () => {

@@ -94,15 +94,18 @@
           show-word-limit
           placeholder="例如：謝謝你報名宜米製冰機的活動！開賣當天我們會第一時間通知你。"
         />
-        <el-select
+        <!--
+          `D-86`：共用的選模組欄位。
+          ⛔ 這裡 `allow-create=false`：精靈本來就有「幫我建一個新模組」那個選項（`newModule`），
+             再放一顆「＋ 新模組」就是同一件事兩條路，而且建出來的還會落在精靈外面。
+        -->
+        <AdminFlowPicker
           v-else-if="form.replyMode === 'existingModule'"
           v-model="form.existingModuleId"
-          filterable
-          placeholder="選一個機器人模組"
-          class="admin-w-full"
-        >
-          <el-option v-for="m in moduleOptions" :key="m.id" :value="m.id" :label="m.name" />
-        </el-select>
+          :options="moduleOptions"
+          :allow-create="false"
+          placeholder="選一個機器人模組（可打字搜尋）"
+        />
         <p v-if="form.replyMode === 'newModule'" class="cwz__hint">
           會建成一個機器人模組，之後在「機器人模組」那一頁還可以加圖片、按鈕。
         </p>

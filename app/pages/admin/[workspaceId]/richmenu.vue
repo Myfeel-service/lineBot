@@ -329,6 +329,12 @@ const { showToast } = useAdminToast()
 const { tags: allTags, loadTags } = useAdminTagList()
 // C-208：某一格就地建了標籤，其他格的下拉要跟著看得到
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+/**
+ * `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）。
+ * ⛔ 只重載模組那一份，不要順手叫 `loadMenus()`：那會把整份選單清單也重抓一次，
+ *    而使用者此刻多半正在編一張還沒存的選單。
+ */
+useAdminFlowRefresh().onAdminFlowListChanged(() => void reloadModules())
 const selectedMenu = computed(() => menus.value.find((menu) => menu.id === selectedId.value) ?? null)
 
 const sortedMenus = computed(() => {
@@ -525,6 +531,22 @@ function normalizeRichMenuImageContentType(mime: string): string {
 }
 
 // ── Fetch ─────────────────────────────────────────────────────
+/**
+ * 只重抓模組清單（`D-86` 就地建模組之後用）。
+ * ⛔ 失敗時**不要只是清空**：空清單會讓「按鈕指向的模組還在嗎」那個檢查全部誤判，
+ *    所以照 `loadMenus()` 的規矩一起把 `modulesLoadFailed` 立起來。
+ */
+async function reloadModules() {
+  try {
+    modules.value = (await apiFetch<any[]>('/api/flow/list?fields=picker')) ?? []
+    modulesLoadFailed.value = false
+  }
+  catch {
+    modules.value = []
+    modulesLoadFailed.value = true
+  }
+}
+
 async function loadMenus() {
   try {
     const [_, modulesData, tagOk] = await Promise.all([

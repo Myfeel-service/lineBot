@@ -187,6 +187,8 @@ const { showToast } = useAdminToast()
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
 // C-208：就地建了標籤就重載（貼標欄與動作設定欄吃同一份清單）
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+// `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）
+useAdminFlowRefresh().onAdminFlowListChanged(() => void loadModules())
 
 const defaultForm = () => ({
   name: '',

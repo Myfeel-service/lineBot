@@ -47,11 +47,23 @@
               <span class="config-refs__hint">{{ group.hint }}</span>
             </div>
             <div class="config-refs__names">
-              <span
-                v-for="ref in group.shown"
-                :key="ref.kind + ref.id"
-                :class="['config-refs__name', { 'config-refs__name--inactive': ref.inactive }]"
-              >{{ ref.label }}<template v-if="ref.inactive">（停用中）</template></span>
+              <!--
+                `D-86`：名字**點得進那一筆**的類別（目前只有機器人模組，見 `configRefPath`）
+                就做成連結；其餘維持純文字。
+                ⛔ 不要為了整齊把全部都做成連結——沒做 `?id=` 的頁面點過去只會落在清單上，
+                   那就退回老闆抱怨過的「看起來可點卻沒用」。
+              -->
+              <template v-for="ref in group.shown" :key="ref.kind + ref.id">
+                <NuxtLink
+                  v-if="group.deepLinkable"
+                  :to="configRefPath(props.workspaceId, ref.kind, ref.id)"
+                  :class="['config-refs__name', 'config-refs__name--link', { 'config-refs__name--inactive': ref.inactive }]"
+                >{{ ref.label }}<template v-if="ref.inactive">（停用中）</template></NuxtLink>
+                <span
+                  v-else
+                  :class="['config-refs__name', { 'config-refs__name--inactive': ref.inactive }]"
+                >{{ ref.label }}<template v-if="ref.inactive">（停用中）</template></span>
+              </template>
               <!--
                 ⛔ 截斷要說出來被藏了幾個，不可以安靜少列。
                 ⭐ 而且要**按得開**（2026-09-22 老闆回報）：「還有 41 個」只說不給看，
@@ -77,6 +89,7 @@ import { computed, ref } from 'vue'
 import {
   CONFIG_REF_KIND_HINT,
   CONFIG_REF_KIND_LABEL,
+  configRefKindIsDeepLinkable,
   configRefPath,
   summarizeConfigRefs,
   type ConfigRef,
@@ -144,6 +157,8 @@ const groups = computed(() =>
         label: CONFIG_REF_KIND_LABEL[kind],
         hint: CONFIG_REF_KIND_HINT[kind],
         path: configRefPath(props.workspaceId, kind),
+        // `D-86`：這一類的名字點得進「那一筆」嗎（目前只有機器人模組那頁吃 `?id=`）
+        deepLinkable: configRefKindIsDeepLinkable(kind),
         items,
         shown: showAll ? items : items.slice(0, MAX_NAMES_PER_KIND),
         hiddenCount: showAll ? 0 : Math.max(0, items.length - MAX_NAMES_PER_KIND),

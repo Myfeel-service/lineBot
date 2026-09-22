@@ -41,19 +41,17 @@
     <template v-if="action.type === moduleTypeValue">
       <div class="admin-field-group">
         <AdminFieldLabel :text="moduleTitle" tight />
-        <el-select
+        <!--
+          `D-86`：改用共用的 AdminFlowPicker——多了搜尋、「編輯這個模組 ↗」、「＋ 新模組」，
+          而且會把「還沒有內容／已停用／已經被刪掉」講出來。
+          以前這裡是裸的 el-select：71 個模組用捲的找、模組被刪掉會直接印出一串 uuid。
+        -->
+        <AdminFlowPicker
           v-model="action.moduleId"
+          :options="moduleOptions"
           :placeholder="modulePlaceholder"
           :size="fieldSize"
-          class="control-full"
-        >
-          <el-option
-            v-for="moduleOption in moduleOptions"
-            :key="moduleOption.id"
-            :value="moduleOption.id"
-            :label="moduleOption.name"
-          />
-        </el-select>
+        />
       </div>
     </template>
 
@@ -140,6 +138,9 @@ type VariableOption = {
 type ModuleOption = {
   id: string
   name: string
+  /** 下面兩個由 `/api/flow/list?fields=picker` 帶回來，讓下拉標得出「還沒有內容／已停用」 */
+  isActive?: boolean
+  messageCount?: number
 }
 
 type TagOption = {

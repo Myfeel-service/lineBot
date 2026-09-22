@@ -47,20 +47,14 @@
       <template v-if="action.type === 'module'">
         <div class="admin-field-group">
           <AdminFieldLabel :text="moduleLabel" tight />
-          <el-select
+          <!-- `D-86`：共用的選模組欄位（搜尋／編輯這個模組 ↗／＋ 新模組／標出還沒有內容） -->
+          <AdminFlowPicker
             :model-value="String(action?.moduleId || '')"
-            class="admin-w-full control-full"
+            :options="moduleOptions"
             :placeholder="modulePlaceholder"
             :disabled="disabled"
             @update:model-value="(v) => patchAction({ moduleId: v })"
-          >
-            <el-option
-              v-for="mod in moduleOptions"
-              :key="mod.id"
-              :value="mod.id"
-              :label="mod.name"
-            />
-          </el-select>
+          />
         </div>
       </template>
 

@@ -126,6 +126,17 @@
   color: var(--el-text-color-placeholder, #c0c4cc);
 }
 
+/* `D-86`：點得進「那一筆」的名字才做成連結（目前只有機器人模組）。
+   ⛔ 用主色是刻意的：老闆抱怨過的是「看起來可點卻不能點」，
+      解法是讓能點的看得出能點，不是把能點的也藏成灰字。 */
+.config-refs__name--link {
+  color: var(--el-color-primary, #409eff);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
 .config-refs__name--inactive {
   color: var(--el-text-color-secondary, #909399);
 }

@@ -109,12 +109,24 @@ async function openLoggedInPage(opts = {}) {
    *   所以把那四支 POST 攔下來回假的成功／失敗——這樣才驗得到「建到一半失敗」那條路，
    *   而那正是整個精靈最重要的一段。
    */
-  if (opts.emptyTagList || opts.fakeWrites) {
+  if (opts.emptyTagList || opts.fakeWrites || opts.flowPickerList) {
     await page.setRequestInterception(true)
     page.on('request', (req) => {
       const url = req.url()
       if (opts.emptyTagList && url.includes('/api/tag/list')) {
         req.respond({ status: 200, contentType: 'application/json', body: '[]' })
+        return
+      }
+      /**
+       * `D-86`：把**選單用的**模組清單換成指定的一份。
+       *
+       * 為什麼要假造：要驗的三種狀況（還沒有內容／已停用／已經被刪掉）在正式庫幾乎踩不到
+       * ——空模組只剩那顆已經被藏起來的舊「歡迎模組」，而「已刪除」得先真的刪掉一個。
+       * ⛔ **只攔 `fields=picker`**：機器人模組那一頁吃的是不帶參數的完整清單，
+       *    連它一起攔會把整頁的資料換掉，量到的東西就跟真的沒關係了。
+       */
+      if (opts.flowPickerList && url.includes('/api/flow/list') && url.includes('fields=picker')) {
+        req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(opts.flowPickerList) })
         return
       }
       if (opts.fakeWrites && req.method() === 'POST') {
@@ -1178,6 +1190,262 @@ async function checkBuiltinVariable() {
   }
 }
 
+// ── 關卡 13：選模組那一格（`D-86`）⛔ 全程不存檔、不按建立 ──────────────────
+/**
+ * 三件事：
+ *   ① 網址 `?id=` 直接開那一個模組（沒有它，任何「去看那個模組」的連結都只是把人丟在 71 筆的清單上）
+ *   ② 選模組的欄位換成共用的 AdminFlowPicker：打得出字、給得出「編輯這個模組 ↗」
+ *   ③ 三種「選了會出事」的狀況要講出來：還沒有內容／已停用／已經被刪掉
+ *
+ * ⚠️ ③ 用**假造的清單**驗（`flowPickerList`）：正式庫幾乎踩不到這三種，
+ *    而要踩到「已刪除」得先真的刪掉一個模組——⛔ 不可以為了驗守門去動正式資料。
+ */
+async function checkFlowPicker() {
+  // ── ① 深連結：先量對照組（不帶 id ＝ 停在空狀態），再量帶 id ──
+  {
+    const { page, ctx } = await openLoggedInPage()
+    try {
+      await gotoPage(page, 'flow', '.split-list-name')
+      const before = await page.evaluate(() => ({
+        editorOpen: !!document.querySelector('.admin-title-input .el-input__wrapper'),
+        firstName: document.querySelector('.split-list-name')?.textContent.trim() ?? '',
+        firstId: null,
+      }))
+      if (before.editorOpen) fail('模組頁：還沒點任何模組就已經開著編輯器（對照組不成立）')
+      else pass('模組頁：不帶 ?id= 時停在空狀態（對照組成立）')
+
+      /**
+       * 拿一個真的模組 id。
+       * ⚠️ **不要在頁面裡 `fetch('/api/flow/list')`**：那支要帶 idToken，
+       *    瀏覽器裸 fetch 會 401，量出來就變成「拿不到任何模組」——本輪實際紅過一次。
+       *    直接跟 Firestore 要（這支腳本本來就有唯讀連線）。
+       */
+      const target = await (async () => {
+        /**
+         * ⭐ 刻意挑**最舊的**那一個：側欄是 `createdAt` 新→舊、而且**分頁**載入，
+         *    所以最舊的幾乎一定不在第一頁。
+         *    這樣這一關才驗得到真正的坑——第一版在 `flows`（分頁後看得見的那一段）裡找，
+         *    排在後面的模組一律找不到，還會**誤報成「這個模組被刪掉了」**。
+         */
+        /**
+         * ⚠️ 用 `desc` 再從尾巴取，**不要寫 `asc`**：那是另一個方向、要另一個複合索引，
+         *    正式庫沒有（會直接 FAILED_PRECONDITION）。⛔ 不可以為了跑守門去加索引。
+         *    `desc` 這個方向 `/api/flow/list` 本來就在用，索引一定在。
+         */
+        const snap = await db.collection('flows')
+          .where('workspaceId', '==', WORKSPACE_ID)
+          .orderBy('createdAt', 'desc')
+          .get()
+        const usable = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(f => f.name && !f.isSystem && Array.isArray(f.messages) && f.messages.length > 0)
+        const hit = usable[usable.length - 1]
+        return hit ? { id: hit.id, name: String(hit.name) } : null
+      })()
+      if (!target) { fail('模組頁：拿不到任何模組（?id= 這一關這次沒驗到）'); return }
+
+      await page.goto(`${BASE}/admin/${WORKSPACE_ID}/flow?id=${encodeURIComponent(target.id)}`, { waitUntil: 'networkidle2', timeout: 120_000 })
+      await page.waitForFunction(
+        () => !!document.querySelector('.admin-title-input .el-input__wrapper input'),
+        { timeout: 40_000 },
+      ).catch(() => {})
+      await sleep(1200)
+      const after = await page.evaluate(() => ({
+        name: document.querySelector('.admin-title-input input')?.value ?? '',
+        url: location.search,
+      }))
+      if (after.name !== target.name) {
+        fail(`模組頁：?id= 沒有打開那一個（預期「${target.name}」，畫面上是「${after.name}」）`)
+      }
+      else {
+        pass(`模組頁：?id= 直接打開「${after.name}」`)
+      }
+      // ⛔ 開完要把參數收掉，否則之後手動點別的模組、一重新整理又跳回這一個
+      if (after.url.includes('id=')) fail(`模組頁：?id= 開完沒有從網址收掉（還是 ${after.url}）`)
+      else pass('模組頁：?id= 開完就從網址收掉了')
+
+      /**
+       * ⛔ **左邊也要看得到那一列**（`ensureFlowVisible`）。
+       * 側欄是分頁的，排在第一頁之後的模組根本沒有渲染出來——只驗「右邊開了」的話，
+       * 會放過「右邊開著某個東西、左邊完全找不到它」這種看起來像開錯的狀態。
+       * ⚠️ 這一關就是 `ensureFlowVisible` 的守門：拿掉它這裡會紅，
+       *    但上面那一關（標題對不對）不會紅——因為 `selectedFlow` 讀的是 `allFlows`。
+       */
+      const row = await page.evaluate((name) => {
+        const el = [...document.querySelectorAll('.split-list-name')]
+          .find(e => e.textContent.trim() === name && e.getBoundingClientRect().width > 0)
+        if (!el) return { visible: false, active: false }
+        return { visible: true, active: !!el.closest('.split-list-item')?.classList.contains('active') }
+      }, target.name)
+      if (!row.visible) fail(`模組頁：?id= 開了右邊，左邊側欄卻看不到「${target.name}」那一列`)
+      else if (!row.active) fail(`模組頁：側欄上的「${target.name}」沒有反白＝看不出現在在編哪一個`)
+      else pass(`模組頁：側欄也捲出「${target.name}」並反白`)
+    }
+    finally { await ctx.close() }
+  }
+
+  // ── ②③ 用假造的清單驗那顆共用元件 ──
+  const FAKE = [
+    { id: 'fake-ok', name: 'ZZ 測試-正常模組', isActive: true, messageCount: 2 },
+    { id: 'fake-empty', name: 'ZZ 測試-空模組', isActive: true, messageCount: 0 },
+    { id: 'fake-off', name: 'ZZ 測試-停用模組', isActive: false, messageCount: 1 },
+  ]
+  const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
+  try {
+    await gotoPage(page, 'support-presets', '.split-list-name')
+
+    const before = await page.evaluate(() =>
+      [...document.querySelectorAll('.flow-picker')].filter(e => e.getBoundingClientRect().width > 0).length)
+    if (before !== 0) fail('客服預存：還沒打開編輯器就看得到選模組欄位（對照組不成立）')
+    else pass('客服預存：還沒打開編輯器時沒有選模組欄位（對照組成立）')
+
+    // 打開一則預存 → 把動作切成「機器人模組」
+    const opened = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.split-list-name')].find(e => e.getBoundingClientRect().width > 0)
+      if (!el) return false
+      ;(el.closest('.split-list-item') ?? el).click()
+      return true
+    })
+    if (!opened) { fail('客服預存：清單上沒有東西可以點開'); return }
+    await sleep(2500)
+
+    // 動作類型下拉：選「機器人模組」
+    const switched = await page.evaluate(() => {
+      const labels = [...document.querySelectorAll('.admin-field-label')]
+      const field = labels.find(l => l.textContent.includes('動作類型'))?.parentElement
+      const input = field?.querySelector('.el-select input')
+      if (!input) return false
+      input.click()
+      return true
+    })
+    if (!switched) { fail('客服預存：找不到「動作類型」下拉'); return }
+    await sleep(700)
+    await page.evaluate(() => {
+      const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+        .find(e => e.textContent.trim().includes('機器人模組') && e.getBoundingClientRect().width > 0)
+      opt?.click()
+    })
+    await sleep(1200)
+
+    const picker = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.flow-picker')].find(e => e.getBoundingClientRect().width > 0)
+      if (!el) return null
+      return {
+        filterable: !!el.querySelector('.el-select input:not([readonly])'),
+        createBtn: [...el.querySelectorAll('.el-button')].some(b => b.textContent.includes('新模組')),
+      }
+    })
+    if (!picker) { fail('客服預存：切成「機器人模組」之後看不到共用的選模組欄位（.flow-picker）'); return }
+    pass('客服預存：切成「機器人模組」出現共用的選模組欄位')
+    if (!picker.filterable) fail('客服預存：選模組的下拉不能打字搜尋（71 個模組用捲的找不到）')
+    else pass('客服預存：選模組的下拉打得出字')
+    if (!picker.createBtn) fail('客服預存：選模組欄位沒有「＋ 新模組」＝模組不存在時還是死路')
+    else pass('客服預存：選模組欄位有「＋ 新模組」')
+
+    // 選「空模組」→ 要標「還沒有內容」且底下講後果
+    const pickFake = async (name) => {
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll('.flow-picker .el-select input')].find(e => e.getBoundingClientRect().width > 0)
+        el?.click()
+      })
+      await sleep(600)
+      const ok = await page.evaluate((n) => {
+        const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+          .find(e => e.textContent.includes(n) && e.getBoundingClientRect().width > 0)
+        if (!opt) return false
+        opt.click()
+        return true
+      }, name)
+      await sleep(900)
+      return ok
+    }
+
+    if (!await pickFake('ZZ 測試-空模組')) {
+      fail('客服預存：下拉裡找不到假造的空模組（攔截沒生效？這三關這次沒驗到）')
+    }
+    else {
+      const empty = await page.evaluate(() => {
+        const el = document.querySelector('.flow-picker')
+        return {
+          warn: el?.querySelector('.flow-picker__warn')?.textContent.trim() ?? '',
+          selected: el?.querySelector('.el-select input')?.value ?? '',
+        }
+      })
+      if (!empty.warn.includes('還沒有任何內容')) {
+        fail(`客服預存：選到空模組沒有講後果（拿到「${empty.warn}」）`)
+      }
+      else {
+        pass(`客服預存：選到空模組會講後果（「${empty.warn.slice(0, 26)}…」）`)
+      }
+    }
+
+    if (!await pickFake('ZZ 測試-停用模組')) {
+      fail('客服預存：下拉裡找不到假造的停用模組')
+    }
+    else {
+      const off = await page.evaluate(() =>
+        document.querySelector('.flow-picker__warn')?.textContent.trim() ?? '')
+      if (!off.includes('停用')) fail(`客服預存：選到停用的模組沒有講（拿到「${off}」）`)
+      else pass('客服預存：選到停用的模組會講')
+    }
+
+    // 「編輯這個模組 ↗」：要在、要開新分頁、要帶 ?id=
+    if (!await pickFake('ZZ 測試-正常模組')) {
+      fail('客服預存：下拉裡找不到假造的正常模組')
+    }
+    else {
+      const link = await page.evaluate(() => {
+        const a = document.querySelector('.flow-picker__edit')
+        return a ? { href: a.getAttribute('href'), target: a.getAttribute('target'), text: a.textContent.trim() } : null
+      })
+      if (!link) fail('客服預存：選了模組之後沒有「編輯這個模組 ↗」＝還是跳不過去')
+      else if (!link.href?.includes('id=fake-ok')) fail(`客服預存：「編輯這個模組」沒帶到那一筆（${link.href}）`)
+      // ⛔ 同分頁跳走＝把他填到一半的表單丟掉（這幾頁都掛了「還沒存喔」攔截）
+      else if (link.target !== '_blank') fail('客服預存：「編輯這個模組」不是開新分頁＝會丟掉他還沒存的東西')
+      else pass(`客服預存：「編輯這個模組 ↗」開新分頁且帶到那一筆（${link.href}）`)
+
+      const warn = await page.evaluate(() =>
+        document.querySelector('.flow-picker__warn')?.textContent.trim() ?? '')
+      if (warn) fail(`客服預存：選到正常模組卻還在警告（「${warn}」）——那樣警告就沒人看了`)
+      else pass('客服預存：選到正常模組時沒有多餘的警告')
+    }
+
+    // 「＋ 新模組」打得開，⛔ 只看不按建立（不在正式庫留東西）
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.flow-picker .el-button')].find(e => e.textContent.includes('新模組'))
+      b?.click()
+    })
+    await sleep(900)
+    const dialog = await page.evaluate(() => {
+      const d = [...document.querySelectorAll('.el-dialog')].find(e => e.getBoundingClientRect().width > 0)
+      if (!d) return null
+      return {
+        title: d.querySelector('.el-dialog__title')?.textContent.trim() ?? '',
+        fields: [...d.querySelectorAll('.admin-field-label')].map(e => e.textContent.replace(/\s+/g, ' ').trim()),
+      }
+    })
+    if (!dialog) fail('客服預存：「＋ 新模組」按了沒有東西打開')
+    else {
+      pass(`客服預存：「＋ 新模組」打得開（${dialog.title}）`)
+      /**
+       * ⛔ 一定要有「先回這段話」那一格：只問名字建出來的是**空模組**，
+       *    而空模組＝客人走到這裡什麼都收不到（`D-23` 那幾百位就是這樣沒收到的）。
+       *    後端 `assertValidFlowMessages` 也擋著，但錯誤要在他還看得到表單時就講。
+       */
+      if (!dialog.fields.some(f => f.includes('先回這段話'))) {
+        fail(`客服預存：新模組視窗沒有「先回這段話」那一格＝會生出空模組（欄位：${dialog.fields.join('／')}）`)
+      }
+      else {
+        pass('客服預存：新模組視窗要求先寫一句回覆＝生不出空模組')
+      }
+    }
+    await page.keyboard.press('Escape')
+    await sleep(400)
+  }
+  finally {
+    await ctx.close()
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
   await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users', 'ai-scripts'])
@@ -1201,6 +1469,8 @@ try {
   await checkCampaignWizardPartialFailure()
   console.log('\n── 「客人加好友時」那一列（D-23）──────────')
   await checkFollowWelcomeRow()
+  console.log('\n── 選模組那一格＋?id= 深連結（D-86）────────')
+  await checkFlowPicker()
   console.log('\n── 空的「歡迎模組」已經拿掉（D-23）────────')
   await checkWelcomeModuleGone()
   console.log('\n── 推播「發完貼記號」那一格（C-213）────────')

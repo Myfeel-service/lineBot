@@ -39,7 +39,24 @@ const PICKER_FIELDS = [
   'createdAt', // 排序（沒設 sortOrder 時沿用 createdAt 新→舊）
   'sortOrder', // 側欄拖拉排序
   'folderId', // 資料夾分組
+  /**
+   * `D-86`：下拉要標出「這個模組還沒有內容」（選了它＝客人按下去什麼都收不到，
+   * 正是空「歡迎模組」那場災情的形狀）。判斷只需要**幾則**，不需要內容。
+   *
+   * ⛔ **但一定要在回傳前把 `messages` 拿掉**（下面 `toPickerRow`），否則 133 KB 又回到前端，
+   *    這個模式就白做了——`list.get.test.ts` 有一條專門釘這件事。
+   * ⚠️ 為什麼不存一個 `messageCount` 欄位就好：那要對正式庫 71 份既有文件做一次回填，
+   *    而 `select()` 省的是**傳輸量不是讀取筆數**（Firestore 照樣一份算一次），
+   *    所以多投影這個欄位在帳單上是零差別，只是伺服器端多收一點位元組。
+   */
+  'messages',
 ] as const
+
+/** picker 模式回給前端的形狀：把 `messages` 換成一個數字 */
+function toPickerRow(flow: Record<string, unknown>) {
+  const { messages, ...rest } = flow
+  return { ...rest, messageCount: Array.isArray(messages) ? messages.length : 0 }
+}
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
@@ -81,21 +98,22 @@ export default defineEventHandler(async (event) => {
   const legacyWelcome = allFlows.find(f => f.id === legacyWelcomeId)
   if (legacyWelcome) {
     /**
-     * ⛔ **picker 模式一定要另外問一次「它是不是空的」**。
-     *
-     * 第一版寫成「picker 拿不到 `messages` 就保守顯示」，結果是：模組清單那一頁藏起來了，
-     * 但**五個下拉（自動回應／推播／活動／圖文選單／客服預存）全都走 picker，所以全都還看得到**
-     * ——等於整個拿掉沒有生效（2026-09-22 老闆實際截圖回報）。
-     * 多這一次 `doc().get()` 只發生在「這個帳號還留著那份舊文件」時，一份文件、一次讀取。
+     * ⚠️ **這裡以前要為 picker 模式多讀一次那份文件**，因為 picker 沒投影 `messages`，
+     *    只好「拿不到就保守顯示」——而那等於五個下拉全都還看得到它（2026-09-22 老闆截圖回報）。
+     *    `D-86` 起 picker 也投影 `messages`（為了標「還沒有內容」），
+     *    兩個模式都直接判斷得出來，那次額外的 `doc().get()` 就不需要了。
+     * ⛔ 判斷維持「**真的是空的才藏**」：有人編過內容的照舊顯示，
+     *    藏起來就是讓他的東西無聲消失。
      */
-    let isEmpty = Array.isArray(legacyWelcome.messages) && legacyWelcome.messages.length === 0
-    if (pickerOnly) {
-      const snap = await getDb().collection('flows').doc(legacyWelcomeId).get().catch(() => null)
-      // ⛔ 讀不到就保守顯示：寧可讓它多出現一次，也不要把有內容的東西藏掉
-      isEmpty = snap ? ((snap.data()?.messages as unknown[] | undefined)?.length ?? 0) === 0 : false
+    if (Array.isArray(legacyWelcome.messages) && legacyWelcome.messages.length === 0) {
+      allFlows = allFlows.filter(f => f.id !== legacyWelcomeId)
     }
-    if (isEmpty) allFlows = allFlows.filter(f => f.id !== legacyWelcomeId)
   }
+
+  // picker 模式：剝掉 triggers 之外還要把 messages 換成一個數字（⛔ 不可以連內容一起回去）
+  const shape = pickerOnly
+    ? (f: Record<string, unknown>) => toPickerRow(stripFlowTriggers(f))
+    : stripFlowTriggers
 
   const systemFlows = allFlows
     .filter(f => f.isSystem)
@@ -105,9 +123,9 @@ export default defineEventHandler(async (event) => {
       return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai)
         - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi)
     })
-    .map(stripFlowTriggers)
+    .map(shape)
 
-  const regularFlows = sortRegularFlows(allFlows.filter(f => !f.isSystem)).map(stripFlowTriggers)
+  const regularFlows = sortRegularFlows(allFlows.filter(f => !f.isSystem)).map(shape)
 
   if (!isPaginatedListQuery(query)) {
     return [...systemFlows, ...regularFlows]

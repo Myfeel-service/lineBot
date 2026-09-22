@@ -425,6 +425,8 @@ const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
 const wizardVisible = ref(false)
 // C-208：就地建了標籤就重載（這一頁的貼標欄與觸發動作欄吃同一份清單）
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
+// `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）
+useAdminFlowRefresh().onAdminFlowListChanged(() => void loadModules())
 const { showToast } = useAdminToast()
 
 const modules = ref<any[]>([])
