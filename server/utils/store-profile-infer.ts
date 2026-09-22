@@ -14,7 +14,7 @@
  * ③ **猜出來的一律標 `ai`**，而且商家改過的欄位不覆蓋（交給 `mergeAiGuesses`）。
  */
 
-import type { Firestore } from 'firebase-admin/firestore'
+import { FieldPath, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { generateJson } from '~~/server/utils/gemini'
@@ -57,9 +57,16 @@ export async function collectInferSources(
   }
 
   try {
-    // 單欄位 equality 查詢，免複合索引（沿用 setup-status 的做法）
+    // 單欄位 equality 查詢，免複合索引（沿用 setup-status 的做法）。
+    // ⚠️ **一定要 orderBy 文件 id**：沒有排序時 Firestore 每次回的那 60 筆可能不一樣，
+    // 於是同一個帳號重跑兩次，模型看到的是**兩份不同的資料**。
+    // 2026-09-22 端到端實測連跑兩次，商品清單完全不同；加了排序之後兩次一模一樣。
+    // 用 `__name__` 排序不需要複合索引（自動的單欄位索引就夠）。
+    // ⚠️ 只保證**送進模型的東西**一樣；`temperature: 0` 之下用字仍可能微幅不同
+    //    （實測「家電與電子產品電商」vs「家電選物店」），那是模型端的性質，這裡管不到。
     const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
+      .orderBy(FieldPath.documentId())
       .limit(INFER_LIMITS.chunks)
       .get()
     for (const d of snap.docs) {
@@ -79,6 +86,7 @@ export async function collectInferSources(
   try {
     const snap = await db.collection('tags')
       .where('workspaceId', '==', workspaceId)
+      .orderBy(FieldPath.documentId())
       .limit(INFER_LIMITS.tags)
       .get()
     for (const d of snap.docs) {
@@ -92,6 +100,7 @@ export async function collectInferSources(
   try {
     const snap = await db.collection('leadCampaigns')
       .where('workspaceId', '==', workspaceId)
+      .orderBy(FieldPath.documentId())
       .limit(INFER_LIMITS.campaigns)
       .get()
     for (const d of snap.docs) {

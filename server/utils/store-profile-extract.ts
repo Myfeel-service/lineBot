@@ -120,7 +120,9 @@ export function classifyFetchError(err: unknown): SiteReadFailReason {
   if (/回應 404/.test(msg) || /找不到/.test(msg)) return 'not_found'
   if (/回應 40[13]/.test(msg) || /robots/i.test(msg)) return 'blocked'
   if (/timeout|逾時|TimeoutError|太久/i.test(msg)) return 'timeout'
-  if (/不支援的內容類型/.test(msg)) return 'empty'
+  // ⛔ 這一條不可以併進 `empty`：貼了 PDF 網址的人會被告知「多半是動態網站，請改貼商品頁」——
+  //    下一步是錯的（PDF 直接上傳知識庫就好）。2026-09-22 端到端實測當場抓到。
+  if (/不支援的內容類型/.test(msg)) return 'not_html'
   if (/網址格式不正確|必須為 http/.test(msg)) return 'not_found'
   if (/抓取失敗|轉址次數/.test(msg)) return 'network'
   if (e?.statusCode === 502) return 'network'

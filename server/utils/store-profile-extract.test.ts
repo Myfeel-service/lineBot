@@ -98,8 +98,10 @@ describe('classifyFetchError', () => {
   it('404 當成網址打不開', () => {
     expect(classifyFetchError({ statusMessage: '網址回應 404：請確認連結公開可訪問' })).toBe('not_found')
   })
-  it('非 HTML 當成沒有可讀內容', () => {
-    expect(classifyFetchError({ statusMessage: '不支援的內容類型：application/pdf（請改用上傳檔案）' })).toBe('empty')
+  it('⛔ PDF 之類的非網頁要跟「動態網站」分開（兩者的下一步不同）', () => {
+    // 踩到會怎樣：貼了 PDF 網址的人被告知「多半是要跑程式才長得出內容的網站，請改貼商品頁」，
+    // 但正解是「PDF 直接上傳知識庫」。2026-09-22 端到端實測當場抓到。
+    expect(classifyFetchError({ statusMessage: '不支援的內容類型：application/pdf（請改用上傳檔案）' })).toBe('not_html')
   })
   it('抓取失敗當成連不上', () => {
     expect(classifyFetchError({ statusCode: 502, statusMessage: '網址抓取失敗：fetch failed' })).toBe('network')

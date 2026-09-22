@@ -3,6 +3,7 @@ import {
   describeMissing,
   describeSiteRead,
   emptyStoreProfile,
+  failReasonText,
   filledFieldCount,
   isStoreProfileReady,
   markStoreProfileMissing,
@@ -253,6 +254,14 @@ describe('講給人看的字', () => {
     expect(partial).toContain('一部分')
     expect(partial).toContain('1 頁讀不到')
     expect(describeSiteRead({ status: 'failed', pagesRead: 0, pagesFailed: [], reason: 'blocked', at: 1 })).toContain('擋住')
+  })
+
+  it('⛔「這不是網頁」與「動態網站」要講不同的下一步', () => {
+    const notHtml = failReasonText('not_html')
+    const empty = failReasonText('empty')
+    expect(notHtml).not.toBe(empty)
+    expect(notHtml, 'PDF 的解法是上傳知識庫，不是換網址').toContain('上傳')
+    expect(empty, '動態網站的解法是換一個網址').toContain('換一個')
   })
 
   it('⛔ 讀一半不可以跟全讀到講同一句話', () => {

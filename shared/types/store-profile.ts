@@ -85,6 +85,13 @@ export type SiteReadFailReason =
   | 'not_found' // 404 / 網址打錯
   | 'timeout' // 太久沒回應
   | 'empty' // 抓得到頁面但幾乎沒有文字（多半是要跑 JS 才長出來的網站）
+  /**
+   * 這個網址根本不是網頁（PDF、圖片…）。
+   * ⚠️ 2026-09-22 端到端實測抓到的：原本跟 `empty` 合成一種，於是貼了 PDF 網址的人
+   * 會被告知「多半是要跑程式才長得出內容的網站，請改貼商品頁」——**下一步是錯的**。
+   * ⛔ 兩種原因的解法不同（動態站要換網址；PDF 直接上傳知識庫就好），不可以合併。
+   */
+  | 'not_html'
   | 'too_large' // 超過抓取上限
   | 'network' // 連不上
   | 'unknown'
@@ -168,7 +175,15 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
     placeholder: '例：黑豆水、養生茶包、節慶禮盒',
     aiCanGuess: true,
     emptyHint: '還不知道你賣什麼',
-    aiHint: '主打商品（最多三樣）與價格帶。價格帶寫成「NT$180–1,280」這種區間；網站沒標價就不要編',
+    /**
+     * ⚠️ 2026-09-22 端到端實測（MYFEEL 官網）當場抓到的坑：那一頁是募資頁，
+     * 上面最大的數字是**募資總金額**，模型直接拿去當價格，抽出「NT$0–7,030,300」。
+     * 數字確實出現在頁面上，所以「不要編造價格」那條規則擋不住它——
+     * ⛔ 要明講「只有單一商品的售價才算價格」，並把不算價格的那幾種點名。
+     */
+    aiHint: '主打商品（最多三樣，用短的商品名，不要整串行銷標題）與價格帶。'
+      + '價格帶寫成「NT$180–1,280」這種區間，而且**只能用單一商品的售價**；'
+      + '⛔ 募資總金額、贊助人數、折扣百分比、運費、原價劃線價都不是價格帶，看不出單品售價就整個留空',
   },
   {
     id: 'customers',
@@ -337,7 +352,7 @@ function normalizeSiteRead(raw: unknown): SiteReadResult {
   }
 }
 
-const FAIL_REASONS: SiteReadFailReason[] = ['blocked', 'not_found', 'timeout', 'empty', 'too_large', 'network', 'unknown']
+const FAIL_REASONS: SiteReadFailReason[] = ['blocked', 'not_found', 'timeout', 'empty', 'not_html', 'too_large', 'network', 'unknown']
 
 function normalizeFailReason(v: unknown): SiteReadFailReason {
   return FAIL_REASONS.includes(v as SiteReadFailReason) ? v as SiteReadFailReason : 'unknown'
@@ -447,7 +462,8 @@ export function failReasonText(reason: SiteReadFailReason | undefined): string {
     case 'blocked': return '對方網站擋住了我們'
     case 'not_found': return '這個網址打不開'
     case 'timeout': return '太久沒有回應'
-    case 'empty': return '抓得到頁面但幾乎沒有文字，多半是要跑程式才長得出內容的網站'
+    case 'empty': return '抓得到頁面但幾乎沒有文字，多半是要跑程式才長得出內容的網站——換一個商品頁的網址通常就讀得到'
+    case 'not_html': return '這個網址不是網頁（例如 PDF 或圖片）。PDF 直接上傳到知識庫就好，不用貼網址'
     case 'too_large': return '頁面太大'
     case 'network': return '連不上這個網址'
     default: return '原因不明'
