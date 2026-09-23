@@ -19,6 +19,11 @@
  *   文案是「有點像，確定要另外開一顆嗎」而不是斷言，而且**永遠不擋**。
  *
  * ⛔ **不擋只提醒**：萬一這家店真的分開賣無線麥克風與錄音麥克風，硬擋就是幫倒忙。
+ *
+ * `C-239`（老闆 09-23 拿 MYFEEL 實測）補了兩件事：①名字比不到時看對方的**判斷條件**
+ *   （見 `SimilarNameCandidate.criteria`）；②呼叫端只拿**有開 AI 判斷**的標籤來比
+ *   （見 `shared/tag-discovery.ts` 的 `mergeSimilarTags`）——「客服 - 威技除濕機」是客人買了
+ *   之後點選單貼的售後紀錄，跟「在看除濕機」不是同一群人，卻因為都有「除濕機」被提去合併。
  */
 
 /**
@@ -63,6 +68,19 @@ export interface SimilarNameCandidate {
   /** 既有標籤的 id；提案彼此相比時沒有 id（標籤還不存在） */
   id?: string
   name: string
+  /**
+   * 這顆標籤的 AI 判斷條件（`aiCriteria`），**有傳才會拿來比**（`C-239`）。
+   *
+   * 為什麼要比條件：「在看電子鍋」對「在看料理鍋具」名字只共用一個「鍋」字，抓不到；
+   * 但料理鍋具的條件第一句就是「客人詢問電子鍋、電鍋或料理鍋具」——9 位客人裡 6 位早就
+   * 被貼上料理鍋具了。名字是人取的簡稱，條件才是這顆標籤真正涵蓋的範圍。
+   *
+   * ⛔ **只在掃描時傳（候選會送給 LLM 判官），讀取當下不傳**：條件是一整段話，
+   * 常帶「什麼不算」子句而點名鄰居（出貨進度的條件寫著「只問運費多少的不算」），
+   * 純字面比會把「問過運費」撞上「問過出貨進度」。有判官在後面把關才敢多挑；
+   * 讀取當下的字面補比沒有判官，多挑就是直接對人誤報。
+   */
+  criteria?: string
 }
 
 export interface SimilarNameHit {
@@ -76,6 +94,8 @@ export interface SimilarNameHit {
   shared: string
   /** 正規化後完全同名（最強訊號，文案要講「已經有同名的」而不是「有點像」） */
   exact: boolean
+  /** true＝共用的字是在對方的**判斷條件**裡找到的、不是名字（查問題時要分得出來） */
+  viaCriteria?: boolean
 }
 
 /** 用碼點算長度：標籤名可能有 emoji，`'🎤'.length` 是 2 會讓長度比較失準 */
@@ -156,7 +176,24 @@ export function findSimilarNames(
       if (generic.has(f)) continue
       best = f
     }
-    if (best) hits.push({ id: other.id, name: raw, shared: best, exact: false })
+
+    /**
+     * 名字比不到（或比到的很短）就看對方的判斷條件（`C-239`，見 SimilarNameCandidate.criteria）。
+     * 方向反過來：拿**我的**片段去對方的條件全文裡找——條件很長，切它的片段沒有意義。
+     * 口頭禪照樣不算（「在看」出現在條件裡不代表什麼）。
+     */
+    let viaCriteria = false
+    const crit = normalizeTagName(String(other.criteria ?? ''))
+    if (crit) {
+      for (const f of mine) {
+        if (charLen(f) <= charLen(best)) continue
+        if (generic.has(f)) continue
+        if (!crit.includes(f)) continue
+        best = f
+        viaCriteria = true
+      }
+    }
+    if (best) hits.push({ id: other.id, name: raw, shared: best, exact: false, ...(viaCriteria ? { viaCriteria: true } : {}) })
   }
 
   // 同名最前面；其次共用的字愈長愈像；再同分就照名字排（⛔ 否則每次重載順序會跳）

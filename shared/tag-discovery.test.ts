@@ -378,13 +378,14 @@ describe('細條上的時間：上次掃了沒、下次什麼時候', () => {
  * 以及掃描之後才建出來的標籤（同一批提案裡先按下去的那一條）。
  */
 describe('相似提醒：存起來的判決 ＋ 讀取當下再比一次', () => {
+  /** 讀取端 select 進來的形狀：名字＋aiMode（`C-239` 起字面補比只看有開 AI 判斷的） */
   const LIVE = [
-    { id: 't-mic', name: '在看收音麥克風' },
-    { id: 't-pot', name: '在看料理鍋具' },
-    { id: 't-coffee', name: '在看咖啡機' },
-    { id: 't-invoice', name: '問過發票' },
-    { id: 't-price', name: '問過價格優惠' },
-    { id: 't-ship', name: '問過出貨進度' },
+    { id: 't-mic', name: '在看收音麥克風', aiMode: 'auto' },
+    { id: 't-pot', name: '在看料理鍋具', aiMode: 'auto' },
+    { id: 't-coffee', name: '在看咖啡機', aiMode: 'suggest' },
+    { id: 't-invoice', name: '問過發票', aiMode: 'auto' },
+    { id: 't-price', name: '問過價格優惠', aiMode: 'auto' },
+    { id: 't-ship', name: '問過出貨進度', aiMode: 'auto' },
   ]
 
   it('判官確認過的照原樣留著，並帶著白話理由', () => {
@@ -441,5 +442,42 @@ describe('相似提醒：存起來的判決 ＋ 讀取當下再比一次', () =>
 
   it('沒有相似的就回空（不無中生有）', () => {
     expect(mergeSimilarTags('在看除濕機', [], LIVE)).toEqual([])
+  })
+
+  /**
+   * `C-239`（老闆 09-23 MYFEEL 實測）：「在看除濕機」被指去「客服 - 威技 16L 除濕機」——
+   * 那是客人買了之後點選單貼的售後紀錄（aiMode 關著），跟「還在看」的客人是兩群人，
+   * 14 位裡 0 位在那份名單裡。字面補比只拿有開 AI 判斷的標籤來比。
+   */
+  it('沒開 AI 判斷的標籤（問卷／活動／客服紀錄）不會被字面撈成「有點像」', () => {
+    const live = [
+      ...LIVE,
+      { id: 't-svc', name: '客服 - 威技 16L 抽取式除濕機', aiMode: 'off' },
+      { id: 't-svc2', name: '客服 - 海爾 18L 除濕機' }, // 缺欄位＝off
+    ]
+    expect(mergeSimilarTags('在看除濕機', [], live)).toEqual([])
+  })
+
+  it('判官確認過的照樣留著，即使那顆現在沒開 AI 判斷（判官說過是同一件事）', () => {
+    const live = [...LIVE, { id: 't-manual', name: '想買麥克風', aiMode: 'off' }]
+    const out = mergeSimilarTags('在看無線麥克風', [
+      { tagId: 't-manual', name: '想買麥克風', reason: '同一件事', confirmed: true },
+    ], live)
+    expect(out.map(o => o.tagId)).toEqual(['t-manual', 't-mic'])
+  })
+
+  /** `C-239`：判官判過 different 的，讀取時不能再用字面撈回來（否則判官白判、按鈕又長回來） */
+  it('判官看過但沒說是同一件事的標籤，不再用字面撈回來', () => {
+    const live = [...LIVE, { id: 't-earbuds', name: '在看 AI 錄音耳機', aiMode: 'auto' }]
+    const out = mergeSimilarTags('在看錄音麥克風', [
+      { tagId: 't-mic', name: '在看收音麥克風', reason: '兩顆都是麥克風', confirmed: true },
+    ], live, { judgedTagIds: ['t-mic', 't-earbuds'] })
+    expect(out.map(o => o.tagId)).toEqual(['t-mic'])
+  })
+
+  it('判官沒看過的（掃描之後才建的）照樣用字面補上', () => {
+    const live = [...LIVE, { id: 't-earbuds', name: '在看 AI 錄音耳機', aiMode: 'auto' }]
+    const out = mergeSimilarTags('在看錄音麥克風', [], live, { judgedTagIds: ['t-mic'] })
+    expect(out.map(o => o.tagId)).toEqual(['t-earbuds'])
   })
 })

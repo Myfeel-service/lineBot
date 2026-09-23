@@ -14,7 +14,7 @@ vi.mock('./user-display-names', () => ({ fetchUserDisplayNames: vi.fn(async () =
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { buildDiscoveryPrompt, scanTagDiscovery } from './tag-discovery'
-import { MIN_DISTINCT_USERS, discoveryScanOutcomeText } from '~~/shared/tag-discovery'
+import { MAX_PENDING_DISCOVERIES, MIN_DISTINCT_USERS, discoveryScanOutcomeText } from '~~/shared/tag-discovery'
 
 describe('AI 發現新標籤：prompt', () => {
   const digests = [
@@ -36,6 +36,19 @@ describe('AI 發現新標籤：prompt', () => {
 
   it('沒有排除名單時明講（無），不留空白讓模型自由發揮', () => {
     expect(buildDiscoveryPrompt(digests, [])).toContain('（無）')
+  })
+
+  /** `C-239`：排除名單只有名字時，模型看不出「在看料理鍋具」涵蓋電子鍋（它就提了「在看電子鍋」） */
+  it('有判斷條件的既有標籤，條件一起附在排除名單裡', () => {
+    const p = buildDiscoveryPrompt(digests, ['在看料理鍋具'], [
+      { name: '在看料理鍋具', criteria: '客人詢問電子鍋、電鍋或料理鍋具的功能。' },
+    ])
+    expect(p).toContain('「在看料理鍋具」＝客人詢問電子鍋、電鍋或料理鍋具的功能。')
+    expect(p).toContain('也算已存在、不要再提')
+  })
+
+  it('沒有帶條件的標籤就不多印那一行', () => {
+    expect(buildDiscoveryPrompt(digests, ['在看除濕機'])).not.toContain('也算已存在')
   })
 
   it('粒度紅線寫死在 prompt：品類不是型號', () => {
@@ -104,6 +117,8 @@ function fakeDb(opts: {
   sessions: Array<{ userId: string; texts: string[] }>
   /** 既有標籤名 */
   tagNames?: string[]
+  /** 既有標籤（要帶 aiMode／aiCriteria 時用這個；`C-239` 起相似檢查會看這兩欄） */
+  tags?: Array<{ id?: string; name: string; aiMode?: string; aiCriteria?: string }>
   /** tagDiscovery 現況 */
   discoveryDoc?: Record<string, unknown> | null
 }) {
@@ -122,7 +137,13 @@ function fakeDb(opts: {
       lastActivityAt: { toMillis: () => CLOSE_MS },
     }),
   }))
-  const tagDocs = (opts.tagNames ?? []).map(name => ({ data: () => ({ name }) }))
+  const tagDocs = [
+    ...(opts.tagNames ?? []).map((name, i) => ({ id: `tag-${i}`, data: () => ({ name }) })),
+    ...(opts.tags ?? []).map((t, i) => ({
+      id: t.id ?? `tagx-${i}`,
+      data: () => ({ name: t.name, aiMode: t.aiMode, aiCriteria: t.aiCriteria }),
+    })),
+  ]
   // 逐場抽訊息時是用 users 主鍵（lineUserFirestoreDocId）撈的 → 先以 userId 建索引，撈時比對後綴
   const textsByUserId = new Map(opts.sessions.map(s => [s.userId, s.texts]))
 
@@ -261,5 +282,141 @@ describe('掃描結果要寫進資料（沒提出東西時，這是唯一講得�
     expect(writes[0]!.pending).toHaveLength(1)
     expect(writes[0]!.pending[0]).toMatchObject({ name: '在看除濕機' })
     expect(writes[0]!.pending[0].id).toBeTruthy() // ⛔ id 是伺服器產的，模型只產內容
+  })
+})
+
+/**
+ * 舊提案補判（`C-239`）。
+ *
+ * ⛔ 畫面那行「下次自動掃描之後就會補上」先前是假話：掃描只把新提案接在舊的後面，
+ * `C-178` 之前提的那幾條永遠沒有 `similarChecked`。這組釘的是：掃描時真的補判、
+ * 補判靠判斷條件也抓得到、只拿有開 AI 判斷的標籤來比、判官沒跑成不能標成「查過了」、
+ * 收件匣滿了也要補並寫回去。
+ */
+describe('還沒做過重複檢查的舊提案，掃描時補判（C-239）', () => {
+  const OLD_PENDING = {
+    id: 'p-pot',
+    name: '在看電子鍋',
+    code: 'x',
+    category: 'interest',
+    criteria: '詢問電子鍋',
+    usage: '',
+    reason: '',
+    userDocIds: ['a', 'b', 'c', 'd'],
+    sampleNames: [],
+    proposedAtMs: 1,
+  }
+  /** 判官的 prompt 一定有這句任務描述；掃描主 prompt 沒有 */
+  const isJudgePrompt = (prompt: string) => prompt.includes('會不會貼到同一群客人')
+  const discoveryDoc = (pending: unknown[]) => ({ workspaceId: 'ws1', pending, dismissedNames: [], lastScanMs: 0 })
+
+  beforeEach(() => {
+    vi.mocked(getAiSettings).mockResolvedValue({ autoTagSuggest: { enabled: true } } as any)
+    vi.mocked(runWithLlmBudget).mockImplementation(async (_wid: any, fn: any) => ({
+      data: await fn(), inputTokens: 1, outputTokens: 1,
+    } as any))
+  })
+
+  it('靠判斷條件抓到重複、判官說 same → 舊提案補上 similarTo、看過的 id 與 similarChecked', async () => {
+    vi.mocked(generateJson).mockImplementation(async (prompt: string) => (
+      isJudgePrompt(prompt)
+        ? { results: [{ index: 0, verdict: 'same', reason: '料理鍋具本來就包含電子鍋' }] }
+        : { topics: [] }
+    ) as any)
+    const { db, writes } = fakeDb({
+      sessions: manySessions(6),
+      tags: [{ id: 't-pot', name: '在看料理鍋具', aiMode: 'auto', aiCriteria: '客人詢問電子鍋、電鍋或料理鍋具的功能。' }],
+      discoveryDoc: discoveryDoc([OLD_PENDING]),
+    })
+    await scanTagDiscovery(db)
+
+    const written = writes.find(w => Array.isArray(w.pending))!
+    expect(written.pending[0]).toMatchObject({
+      id: 'p-pot',
+      similarChecked: true,
+      similarJudgedTagIds: ['t-pot'],
+      similarTo: [{ tagId: 't-pot', name: '在看料理鍋具', confirmed: true, reason: '料理鍋具本來就包含電子鍋' }],
+    })
+  })
+
+  /** 「客服 - 品名」是買了之後點選單貼的售後紀錄，跟「在看」不是同一群人——連判官都不用問 */
+  it('沒開 AI 判斷的標籤不當候選：名字再像也不送判官，直接標成「查過了、沒有」', async () => {
+    const prompts: string[] = []
+    vi.mocked(generateJson).mockImplementation(async (prompt: string) => {
+      prompts.push(prompt)
+      return { topics: [] } as any
+    })
+    const { db, writes } = fakeDb({
+      sessions: manySessions(6),
+      tags: [
+        { id: 't-svc', name: '客服 - 威技 16L 抽取式除濕機', aiMode: 'off' },
+        { id: 't-svc2', name: '客服 - 海爾 18L 除濕機' }, // 缺欄位＝off
+      ],
+      discoveryDoc: discoveryDoc([{ ...OLD_PENDING, id: 'p-dh', name: '在看除濕機' }]),
+    })
+    await scanTagDiscovery(db)
+
+    expect(prompts.some(isJudgePrompt)).toBe(false)
+    const written = writes.find(w => Array.isArray(w.pending))!
+    expect(written.pending[0]).toMatchObject({ id: 'p-dh', similarChecked: true, similarTo: [], similarJudgedTagIds: [] })
+  })
+
+  /** ⛔ 判官爆掉不是「查過沒有」：不可以把 similarChecked 標成 true，下一輪要再試 */
+  it('判官這輪沒跑成 → 舊提案維持「沒查過」，不假裝查過', async () => {
+    vi.mocked(generateJson).mockImplementation(async (prompt: string) => {
+      if (isJudgePrompt(prompt)) throw new Error('quota')
+      return { topics: [] } as any
+    })
+    const { db, writes } = fakeDb({
+      sessions: manySessions(6),
+      tags: [{ id: 't-mic', name: '在看收音麥克風', aiMode: 'auto' }],
+      discoveryDoc: discoveryDoc([{ ...OLD_PENDING, id: 'p-mic', name: '在看無線麥克風' }]),
+    })
+    await scanTagDiscovery(db)
+
+    const written = writes.find(w => Array.isArray(w.pending))!
+    expect(written.pending[0].similarChecked).toBeUndefined()
+    expect(written.pending[0].similarTo).toBeUndefined()
+  })
+
+  it('已經查過的不再花一次判官', async () => {
+    const prompts: string[] = []
+    vi.mocked(generateJson).mockImplementation(async (prompt: string) => {
+      prompts.push(prompt)
+      return { topics: [] } as any
+    })
+    const { db } = fakeDb({
+      sessions: manySessions(6),
+      tags: [{ id: 't-mic', name: '在看收音麥克風', aiMode: 'auto' }],
+      discoveryDoc: discoveryDoc([{ ...OLD_PENDING, id: 'p-mic', name: '在看無線麥克風', similarChecked: true }]),
+    })
+    await scanTagDiscovery(db)
+    expect(prompts.some(isJudgePrompt)).toBe(false)
+  })
+
+  /** 收件匣滿了照樣要補判並寫回去——滿了更需要（六顆可能重複的「建立」按鈕） */
+  it('收件匣滿了也補判，結果要寫回去，而且不會真的掃', async () => {
+    vi.mocked(generateJson).mockImplementation(async (prompt: string) => (
+      isJudgePrompt(prompt)
+        ? { results: [{ index: 0, verdict: 'same', reason: '都是麥克風' }] }
+        : { topics: [] }
+    ) as any)
+    const full = Array.from({ length: MAX_PENDING_DISCOVERIES }, (_, i) => ({
+      ...OLD_PENDING,
+      id: `p${i}`,
+      name: i ? `主題${i}` : '在看無線麥克風',
+      similarChecked: i > 0,
+    }))
+    const { db, writes } = fakeDb({
+      sessions: manySessions(6),
+      tags: [{ id: 't-mic', name: '在看收音麥克風', aiMode: 'auto' }],
+      discoveryDoc: discoveryDoc(full),
+    })
+    await scanTagDiscovery(db)
+
+    const written = writes.find(w => Array.isArray(w.pending))!
+    expect(written.pending).toHaveLength(MAX_PENDING_DISCOVERIES)
+    expect(written.pending[0]).toMatchObject({ similarChecked: true, similarTo: [{ tagId: 't-mic', confirmed: true }] })
+    expect(written.lastScan).toBeUndefined() // 滿了就沒有真的掃
   })
 })

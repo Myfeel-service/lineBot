@@ -37,7 +37,8 @@ import {
   type TagDiscoveryProposal,
 } from '~~/shared/tag-discovery'
 import { findSimilarNames, genericFragments } from '~~/shared/tag-similarity'
-import { judgeSimilarTagNames, type JudgeNamePair } from './tag-similarity-judge'
+import { isAiJudgedTag } from '~~/shared/tag-admin'
+import { MAX_JUDGE_PAIRS, judgeSimilarTagNames, type JudgeNamePair } from './tag-similarity-judge'
 import { randomUUID } from 'node:crypto'
 
 export const TAG_DISCOVERY_COLLECTION = 'tagDiscovery'
@@ -61,7 +62,40 @@ interface SessionDigest {
   text: string
 }
 
-export function buildDiscoveryPrompt(digests: SessionDigest[], excludeNames: string[]): string {
+/** 相似檢查與排除名單用的既有標籤（整個工作區一次撈齊；`aiMode` 缺欄位＝off，全系統口徑） */
+interface ExistingTag {
+  id: string
+  name: string
+  aiCriteria: string
+  aiMode: string | null
+}
+
+/**
+ * 撈這個工作區全部標籤。
+ * ⛔ 一輪掃描只撈**一次**：排除名單、補判舊提案、新提案的相似檢查三處共用同一份
+ * （`project_firestore_read_cost_20260811`：整個工作區的標籤重讀一次就是白花一整批讀取數）。
+ */
+async function loadExistingTags(db: Firestore, workspaceId: string): Promise<ExistingTag[]> {
+  const snap = await db.collection('tags').where('workspaceId', '==', workspaceId).get()
+  return snap.docs
+    .map(d => ({
+      id: d.id,
+      name: String(d.data()?.name ?? ''),
+      aiCriteria: String(d.data()?.aiCriteria ?? ''),
+      aiMode: (d.data()?.aiMode ?? null) as string | null,
+    }))
+    .filter(t => !!t.name)
+}
+
+/** 排除名單裡附條件時，一條條件最多帶幾個字（只是提醒模型「這顆涵蓋什麼」，不用全文） */
+const COVERED_CRITERIA_MAX = 60
+
+export function buildDiscoveryPrompt(
+  digests: SessionDigest[],
+  excludeNames: string[],
+  /** 有 AI 判斷條件的既有標籤：讓模型看得到「料理鍋具」其實涵蓋電子鍋（`C-239`） */
+  covered: Array<{ name: string; criteria: string }> = [],
+): string {
   /**
    * ⛔ 每行要標**這場是第幾位客人**（`C-130` 第二個根因，2026-09-03 自我複審抓到）。
    *
@@ -77,6 +111,9 @@ export function buildDiscoveryPrompt(digests: SessionDigest[], excludeNames: str
   }).join('\n')
   const exclude = excludeNames.filter(Boolean).join('、') || '（無）'
   const maxIndex = Math.max(0, digests.length - 1)
+  const coveredLines = covered
+    .filter(c => c.name && c.criteria)
+    .map(c => `「${c.name}」＝${String(c.criteria).trim().slice(0, COVERED_CRITERIA_MAX)}`)
   return [
     '你是 LINE 官方帳號的顧客分眾顧問。下面是最近兩週多場客服對話中「客人說過的話」，'
     + '每行一場：`S編號（客人#編號）`——**同一個「客人#」就是同一位客人的不同場對話**。',
@@ -104,6 +141,14 @@ export function buildDiscoveryPrompt(digests: SessionDigest[], excludeNames: str
      */
     `- 場次編號只能用上面真的出現過的（S0 到 S${maxIndex}），不要寫沒出現過的數字。`,
     `- 這些名稱已存在或已被店家否決，不要再提（含同義換句話說）：${exclude}`,
+    /**
+     * 排除名單只有名字時，模型看不出「在看料理鍋具」涵蓋電子鍋（`C-239`：它提了「在看電子鍋」，
+     * 而料理鍋具的條件第一句就是「詢問電子鍋、電鍋…」）。把條件附上讓它看得到涵蓋範圍。
+     * ⛔ 這是提醒不是防線：程式端的相似檢查（`resolveSimilarTags`）才是真正擋重複的那道。
+     */
+    ...(coveredLines.length
+      ? [`- 下面這些既有標籤的判斷條件已經涵蓋的主題，也算已存在、不要再提：${coveredLines.join('；')}`]
+      : []),
     '- criteria 用「什麼算＋什麼不算」的寫法（80 字內）；usage 一句話講這顆標籤拿來做什麼；reason 一句話講為什麼現在建議（給店家看的白話）。',
     '- code 用英文小寫加底線（例：intent_dehumidifier）。',
     '- 沒有夠強的主題就回空陣列，不要為了湊數而提。',
@@ -151,18 +196,35 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
 
       // 間隔未到、而且沒有人按「立即掃描」→ 走人（每輪只花上面那 1 次讀取）
       if (!rescanPending && Date.now() - lastScanMs < DISCOVERY_INTERVAL_MS) continue
+
+      /**
+       * 先前提的、還沒做過重複檢查的舊提案，趁這輪補判（`C-239`）。
+       *
+       * ⛔ 畫面上那行「下次自動掃描之後就會補上」先前是**假話**：這裡原本只把新提案接在
+       * 舊的後面（`[...pending, ...result.proposals]`），舊的四條永遠 `similarChecked=undefined`，
+       * 那行字也永遠不會消失。補判放在「收件匣滿了」的檢查**之前**——滿了更需要補
+       * （六條全沒檢查過就是六顆可能重複的「建立」按鈕）。
+       */
+      const rejudged = await rejudgeUncheckedPending(db, workspaceId, pending)
+      const pendingNow = rejudged.pending
+
       // 收件匣滿了就不掃：提了也放不進去，白燒一次 LLM。老闆清掉之後下一輪自然會掃
-      if (pending.length >= MAX_PENDING_DISCOVERIES) {
-        // ⛔ 但手動要求要消掉：不清的話畫面會**永遠**顯示「已排進佇列，約 10 分鐘內會掃」
-        //   （discoveryTiming 判的就是 rescanRequestedMs > lastScanMs），而它其實永遠不會跑。
-        if (rescanPending) {
-          await docRef.set({ rescanRequestedMs: FieldValue.delete() }, { merge: true })
-            .catch(e => console.warn('[tag-discovery] clear rescan marker failed:', workspaceId, e))
+      if (pendingNow.length >= MAX_PENDING_DISCOVERIES) {
+        const patch = {
+          // 補判的結果要落地，不然下一輪又補一次（又花一次判官）
+          ...(rejudged.changed ? { pending: pendingNow } : {}),
+          // ⛔ 手動要求要消掉：不清的話畫面會**永遠**顯示「已排進佇列，約 10 分鐘內會掃」
+          //   （discoveryTiming 判的就是 rescanRequestedMs > lastScanMs），而它其實永遠不會跑。
+          ...(rescanPending ? { rescanRequestedMs: FieldValue.delete() } : {}),
+        }
+        if (Object.keys(patch).length) {
+          await docRef.set(patch, { merge: true })
+            .catch(e => console.warn('[tag-discovery] full-inbox bookkeeping failed:', workspaceId, e))
         }
         continue
       }
 
-      const result = await scanOneWorkspace(db, workspaceId, pending, dismissedNames)
+      const result = await scanOneWorkspace(db, workspaceId, pendingNow, dismissedNames, rejudged.existing)
       stats.scanned += 1
       stats.proposed += result.proposed
 
@@ -171,7 +233,7 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
 
       await docRef.set({
         workspaceId,
-        pending: [...pending, ...result.proposals],
+        pending: [...pendingNow, ...result.proposals],
         dismissedNames,
         lastScanMs: Date.now(),
         /**
@@ -217,11 +279,56 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
   return stats
 }
 
+/**
+ * 把還沒做過重複檢查的舊提案補判一次（`C-239`）。
+ *
+ * 回傳 `existing`＝這次為了補判撈起來的標籤清單（沒有要補的就 null），讓後面的掃描
+ * 沿用、不要再撈一次。`changed`＝有沒有真的改到任何一條（判官失敗＝沒改，下輪再試）。
+ */
+async function rejudgeUncheckedPending(
+  db: Firestore,
+  workspaceId: string,
+  pending: TagDiscoveryProposal[],
+): Promise<{ pending: TagDiscoveryProposal[]; existing: ExistingTag[] | null; changed: boolean }> {
+  const unchecked = pending.filter(p => p.similarChecked !== true)
+  if (!unchecked.length) return { pending, existing: null, changed: false }
+
+  const existing = await loadExistingTags(db, workspaceId)
+  const next = pending.slice()
+  let changed = false
+  // 一次最多判 MAX_PROPOSALS_PER_SCAN 條（同新提案的量）：判官一次吃的組數有上限，超過的會被補成 unsure
+  for (let start = 0; start < unchecked.length; start += MAX_PROPOSALS_PER_SCAN) {
+    const chunk = unchecked.slice(start, start + MAX_PROPOSALS_PER_SCAN)
+    const similar = await resolveSimilarTags(
+      db,
+      workspaceId,
+      chunk.map(p => ({ name: p.name, criteria: p.criteria })),
+      existing,
+    )
+    // 判官沒跑成 → 這幾條維持「沒查過」（⛔ 不可以標成查過，那是假的否定），下一輪再補
+    if (!similar.checked) continue
+    chunk.forEach((p, i) => {
+      const at = next.findIndex(q => q.id === p.id)
+      if (at < 0) return
+      next[at] = {
+        ...p,
+        similarTo: similar.similar[i] ?? [],
+        similarJudgedTagIds: similar.judged[i] ?? [],
+        similarChecked: true,
+      }
+      changed = true
+    })
+  }
+  return { pending: next, existing, changed }
+}
+
 async function scanOneWorkspace(
   db: Firestore,
   workspaceId: string,
   pending: TagDiscoveryProposal[],
   dismissedNames: string[],
+  /** 補判那步已經撈過的標籤清單（沿用，不重讀）；null＝自己撈 */
+  preloadedTags: ExistingTag[] | null = null,
 ): Promise<{ proposed: number; proposals: TagDiscoveryProposal[]; outcome: DiscoveryScanOutcome }> {
   /** 樣本就不夠的那種「沒有」：連 LLM 都不會打，講「AI 沒找到主題」是不實陳述 */
   const tooFewSessions = (sessionCount: number, userCount: number, truncated = false) => ({
@@ -320,30 +427,25 @@ async function scanOneWorkspace(
   const distinctUsers = new Set(digests.map(d => d.userDocId)).size
   if (distinctUsers < MIN_DISTINCT_USERS) return tooFewSessions(digests.length, distinctUsers, truncated)
 
-  // 排除名單＝所有既有標籤名（不分 aiMode——同名就是重複，不管誰在判）＋pending＋否決過的
-  const tagSnap = await db.collection('tags').where('workspaceId', '==', workspaceId).get()
+  /**
+   * 既有標籤只撈一次（補判舊提案那步撈過就沿用；`project_firestore_read_cost_20260811`）。
+   * 排除名單＝所有既有標籤名（不分 aiMode——同名就是重複，不管誰在判）＋pending＋否決過的；
+   * 相似檢查（`C-178`）另外要 id、判斷條件與 aiMode（見 resolveSimilarTags）——
+   * 「錄音麥克風」與「錄音耳機」光看名字分不出來，看條件就分得出來。
+   */
+  const existingTags = preloadedTags ?? await loadExistingTags(db, workspaceId)
   const takenNames = [
-    ...tagSnap.docs.map(d => String(d.data()?.name ?? '')),
+    ...existingTags.map(t => t.name),
     ...pending.map(p => p.name),
     ...dismissedNames,
   ].filter(Boolean)
 
-  /**
-   * 相似檢查（`C-178`）要用的既有標籤：id＋名字＋判斷條件。
-   *
-   * ⛔ 沿用上面**同一份**查詢結果，不要再打一次：這是整個工作區的標籤，
-   * 重讀一次就是白花一整批讀取數（`project_firestore_read_cost_20260811`）。
-   * 判斷條件也帶上——「錄音麥克風」與「錄音耳機」光看名字分不出來，看條件就分得出來。
-   */
-  const existingTags = tagSnap.docs
-    .map(d => ({
-      id: d.id,
-      name: String(d.data()?.name ?? ''),
-      aiCriteria: String(d.data()?.aiCriteria ?? ''),
-    }))
-    .filter(t => !!t.name)
+  // 有判斷條件的標籤把條件一起給模型看（`C-239`）：名字看不出「料理鍋具」涵蓋電子鍋
+  const covered = existingTags
+    .filter(t => isAiJudgedTag(t) && t.aiCriteria)
+    .map(t => ({ name: t.name, criteria: t.aiCriteria }))
 
-  const prompt = buildDiscoveryPrompt(digests, takenNames)
+  const prompt = buildDiscoveryPrompt(digests, takenNames, covered)
   const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
     generateJson<{ topics?: RawDiscoveryTopic[] }>(prompt, {
       // 跨兩百行摘要做歸納命名，比「從清單挑選」難一階 → 用 flash 不用 lite；一週一次，費用可忽略
@@ -441,6 +543,7 @@ async function scanOneWorkspace(
     id: randomUUID(), // ⛔ id 是伺服器產的，模型只產內容
     proposedAtMs: Date.now(),
     similarTo: similar.similar[i] ?? [],
+    similarJudgedTagIds: similar.judged[i] ?? [],
     similarChecked: similar.checked,
   }))
   return { proposed: proposals.length, proposals, outcome }
@@ -461,20 +564,32 @@ async function resolveSimilarTags(
   db: Firestore,
   workspaceId: string,
   proposals: Array<{ name: string; criteria: string }>,
-  existing: Array<{ id: string; name: string; aiCriteria: string }>,
-): Promise<{ similar: DiscoverySimilarTag[][]; checked: boolean }> {
+  existing: ExistingTag[],
+): Promise<{ similar: DiscoverySimilarTag[][]; judged: string[][]; checked: boolean }> {
   const empty = proposals.map(() => [] as DiscoverySimilarTag[])
+  const noneJudged = proposals.map(() => [] as string[])
   // 沒提案、或這個帳號還沒有標籤 → 沒有東西可以撞，這是「查過了、沒有」不是「沒查」
-  if (!proposals.length || !existing.length) return { similar: empty, checked: true }
+  if (!proposals.length || !existing.length) return { similar: empty, judged: noneJudged, checked: true }
 
+  /**
+   * 只拿**有開 AI 判斷**的標籤當候選（`C-239`）。
+   *
+   * 提案是「聊過 X 的客人」；只有同樣靠對話判的標籤才可能跟它是同一群人。問卷、活動、
+   * 「客服 - 品名」這類靠事件貼的紀錄，名字再像也是另一群人——MYFEEL 實測「在看除濕機」
+   * 被指去「客服 - 威技 16L 除濕機」（客人買了之後點選單才貼的售後名單），14 位裡 0 位在裡面。
+   * 口頭禪照樣用**全部**標籤名算：命名習慣是整家店的，不分誰在判。
+   */
+  const comparable = existing.filter(isAiJudgedTag)
   const generic = genericFragments(existing.map(t => t.name))
   const pairs: JudgeNamePair[] = []
   /** 第 i 組配對是「哪一條提案 × 哪一顆標籤」——判官只回 index，要靠這份對回來 */
   const owner: Array<{ proposalIndex: number; tag: { id: string; name: string } }> = []
 
+  // 判斷條件一起比（`C-239`）：「在看電子鍋」對「在看料理鍋具」名字比不到，條件比得到
+  const candidates = comparable.map(t => ({ id: t.id, name: t.name, criteria: t.aiCriteria }))
   proposals.forEach((p, proposalIndex) => {
-    for (const hit of findSimilarNames(p.name, existing, { generic })) {
-      const tag = existing.find(t => t.id === hit.id)
+    for (const hit of findSimilarNames(p.name, candidates, { generic })) {
+      const tag = comparable.find(t => t.id === hit.id)
       if (!tag) continue
       owner.push({ proposalIndex, tag: { id: tag.id, name: tag.name } })
       pairs.push({
@@ -486,10 +601,19 @@ async function resolveSimilarTags(
     }
   })
   // ⛔ 零組配對就**不呼叫**判官：別為了問一個空問題燒一次額度
-  if (!pairs.length) return { similar: empty, checked: true }
+  if (!pairs.length) return { similar: empty, judged: noneJudged, checked: true }
 
   const judged = await judgeSimilarTagNames(workspaceId, pairs)
-  if (!judged) return { similar: empty, checked: false }
+  if (!judged) return { similar: empty, judged: noneJudged, checked: false }
+
+  /**
+   * 判官**真的看過**的每一顆都記下來（不論判什麼），讀取當下的字面補比才知道哪些不用再撈
+   * （`C-239`）。⛔ 超過 MAX_JUDGE_PAIRS 被切掉的那幾組判官沒看到，不能算看過。
+   */
+  const seenIds = proposals.map(() => [] as string[])
+  owner.forEach((o, i) => {
+    if (i < MAX_JUDGE_PAIRS) seenIds[o.proposalIndex]!.push(o.tag.id)
+  })
 
   /**
    * 判官這次花的 token 單獨記一筆。
@@ -516,5 +640,5 @@ async function resolveSimilarTags(
       confirmed: true,
     })
   })
-  return { similar: empty, checked: true }
+  return { similar: empty, judged: seenIds, checked: true }
 }

@@ -31,8 +31,14 @@ export default defineEventHandler(async (event) => {
    * 就是白花讀取數（`project_firestore_read_cost_20260811`）。
    */
   const liveTags = pending.length
-    ? (await db.collection('tags').where('workspaceId', '==', workspaceId).select('name').get())
-        .docs.map(d => ({ id: d.id, name: String(d.data()?.name ?? '') })).filter(t => !!t.name)
+    ? (await db.collection('tags').where('workspaceId', '==', workspaceId).select('name', 'aiMode').get())
+        .docs.map(d => ({
+          id: d.id,
+          name: String(d.data()?.name ?? ''),
+          // 字面補比只拿有開 AI 判斷的標籤（`C-239`，見 mergeSimilarTags）；⛔ 不 select 進來會全被當成沒開
+          aiMode: (d.data()?.aiMode ?? null) as string | null,
+        }))
+        .filter(t => !!t.name)
     : []
   const generic = genericFragments(liveTags.map(t => t.name))
 
@@ -54,7 +60,7 @@ export default defineEventHandler(async (event) => {
       sampleNames: Array.isArray(p.sampleNames) ? p.sampleNames : [],
       proposedAtMs: p.proposedAtMs,
       /** 這條在重複哪幾顆既有標籤（存起來的判決＋現在再比一次，見 mergeSimilarTags） */
-      similarTo: mergeSimilarTags(p.name, p.similarTo, liveTags, { generic }),
+      similarTo: mergeSimilarTags(p.name, p.similarTo, liveTags, { generic, judgedTagIds: p.similarJudgedTagIds }),
       /**
        * ⛔ 三態：`false`＝掃描那輪判官沒跑成（額度用完／模型出錯），**不是**「查過沒有」。
        * 舊提案沒有這個欄位也算沒查過——那批是 `C-178` 之前產生的，當時根本沒有這個檢查。

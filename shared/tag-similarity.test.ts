@@ -110,6 +110,56 @@ describe('AI 提的新標籤 vs 既有標籤', () => {
   })
 })
 
+/**
+ * 名字比不到就看判斷條件（`C-239`）。
+ *
+ * 老闆 09-23 拿 MYFEEL 實測：AI 提「在看電子鍋」，系統一聲不響——但「在看料理鍋具」的條件
+ * 第一句就是「客人詢問電子鍋、電鍋或料理鍋具」，9 位客人裡 6 位早就被貼上料理鍋具。
+ * 名字只共用一個「鍋」字（低於兩字門檻），所以名字那層永遠抓不到。
+ */
+describe('名字比不到就看判斷條件（C-239）', () => {
+  const withCriteria = [
+    { id: 't-pot', name: '在看料理鍋具', criteria: '客人詢問電子鍋、電鍋或料理鍋具的功能、烹煮模式、食譜、材質。只問出貨或退貨的不算。' },
+    { id: 't-ship', name: '問過出貨進度', criteria: '客人詢問訂單什麼時候出貨、到貨、寄出。只問「怎麼下單」或運費多少的不算。' },
+    { id: 't-coffee', name: '在看咖啡機', criteria: '客人詢問咖啡機的沖煮方式、操作、機型差異或耗材。' },
+  ]
+
+  it('「在看電子鍋」靠料理鍋具的條件抓到，並標明是從條件比到的', () => {
+    const hits = findSimilarNames('在看電子鍋', withCriteria, { corpus: LIVE_NAMES })
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toMatchObject({ name: '在看料理鍋具', shared: '電子鍋', viaCriteria: true })
+  })
+
+  /** 讀取當下那層沒有判官，刻意不傳條件——這條釘「不傳就不比」，別讓它默默變成會比 */
+  it('沒傳條件就只比名字', () => {
+    const namesOnly = withCriteria.map(({ id, name }) => ({ id, name }))
+    expect(findSimilarNames('在看電子鍋', namesOnly, { corpus: LIVE_NAMES })).toEqual([])
+  })
+
+  /**
+   * 條件常帶「什麼不算」子句而點名鄰居——這一層本來就會撞到，由判官去判 different。
+   * 這條釘的是：它**會**被挑成候選（寧可多挑），而且理由看得出來是「運費」。
+   */
+  it('條件的「什麼不算」子句也會被挑成候選（交給判官分辨，不在這層猜）', () => {
+    const hits = findSimilarNames('問過運費', withCriteria, { corpus: LIVE_NAMES })
+    expect(hits.map(h => h.name)).toEqual(['問過出貨進度'])
+    expect(hits[0]).toMatchObject({ shared: '運費', viaCriteria: true })
+  })
+
+  it('名字比到的比條件比到的長 → 以名字為準、不標 viaCriteria', () => {
+    const hits = findSimilarNames('在看咖啡機耗材', withCriteria, { corpus: LIVE_NAMES })
+    expect(hits[0]?.name).toBe('在看咖啡機')
+    expect(hits[0]?.shared).toBe('在看咖啡機')
+    expect(hits[0]?.viaCriteria).toBeUndefined()
+  })
+
+  it('口頭禪出現在條件裡不算訊號', () => {
+    const only = [{ id: 't-x', name: '問過保固', criteria: '客人在看商品時問到保固' }]
+    // 「在看」是這家店的口頭禪（LIVE_NAMES 裡 6 顆），出現在條件裡不能算撞到
+    expect(findSimilarNames('在看除濕機', only, { corpus: LIVE_NAMES })).toEqual([])
+  })
+})
+
 describe('現有標籤兩兩對照（「檢查現有標籤」按鈕）', () => {
   it('同一組只報一次，不會 A-B 又 B-A', () => {
     const pairs = findSimilarPairs(asTags([...LIVE_NAMES, '在看無線麥克風']))

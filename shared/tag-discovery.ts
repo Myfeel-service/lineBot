@@ -24,6 +24,7 @@
 import type { TagCategory } from './types/tag-broadcast'
 import { daysBetween, taipeiDate } from './time'
 import { SIMILAR_MAX_HITS, findSimilarNames, normalizeTagName } from './tag-similarity'
+import { isAiJudgedTag } from './tag-admin'
 
 /** 收件匣上限：沒人清就先不加（同 userTagSuggestions 的精神，別變成沒人看的牆） */
 export const MAX_PENDING_DISCOVERIES = 6
@@ -134,6 +135,15 @@ export interface TagDiscoveryProposal {
    * 而那是一句**假的否定**。
    */
   similarChecked?: boolean
+  /**
+   * 判官這輪**看過**的既有標籤 id（不論判 same／different／unsure）（`C-239`）。
+   *
+   * 為什麼要存：讀取當下會再用字面補比一次（見 `mergeSimilarTags`），而字面層分不出
+   * 「錄音麥克風」與「AI 錄音耳機」——判官早就判過 different，讀取時卻又把它撈回來印成
+   * 「有點像」＋一顆「改貼到」按鈕，等於判官白判。讀取當下只補**判官沒看過的**
+   * （＝掃描之後才建出來的那些），這才是那層原本的用途。
+   */
+  similarJudgedTagIds?: string[]
 }
 
 /** 一條提案撞到的既有標籤 */
@@ -308,12 +318,15 @@ export { normalizeTagName }
 export function mergeSimilarTags(
   proposalName: string,
   stored: DiscoverySimilarTag[] | undefined,
-  liveTags: Array<{ id: string; name: string }>,
-  opts: { generic?: Set<string>; max?: number } = {},
+  /** `aiMode` 缺欄位＝off（全系統口徑）：讀取端要 select 它進來，不然全部會被當成沒開 */
+  liveTags: Array<{ id: string; name: string; aiMode?: string | null }>,
+  opts: { generic?: Set<string>; max?: number; judgedTagIds?: string[] } = {},
 ): DiscoverySimilarTag[] {
   const liveById = new Map(liveTags.map(t => [t.id, t.name]))
   const out: DiscoverySimilarTag[] = []
   const seen = new Set<string>()
+  /** 判官看過的（`C-239`）：不論判什麼，字面補比都不再撈——否則判 different 等於白判 */
+  const judged = new Set(opts.judgedTagIds ?? [])
 
   for (const s of Array.isArray(stored) ? stored : []) {
     const liveName = liveById.get(s?.tagId ?? '')
@@ -324,10 +337,21 @@ export function mergeSimilarTags(
     out.push({ tagId: s.tagId, name: liveName, reason: String(s.reason ?? ''), confirmed: s.confirmed !== false })
   }
 
-  for (const hit of findSimilarNames(proposalName, liveTags.map(t => ({ id: t.id, name: t.name })), {
+  /**
+   * 讀取當下的字面補比只拿**有開 AI 判斷、且判官沒看過**的標籤來比（`C-239`）。
+   *
+   * 提案是「聊過 X 的客人」，只有同樣靠對話判的標籤才可能跟它是同一群人；問卷、活動、
+   * 「客服 - 品名」這類靠事件貼的紀錄（MYFEEL 39 顆裡 22 顆），名字再像也是另一群人——
+   * 「在看除濕機」被指去「客服 - 威技 16L 除濕機」（買了之後點選單才貼的售後名單）合併，
+   * 14 位裡 0 位在那份名單裡。
+   * 口頭禪照樣用**全部**標籤名算（命名習慣是整家店的，不分誰在判）。
+   * ⛔ 這裡刻意**不傳 criteria**：沒有判官把關，見 `SimilarNameCandidate.criteria`。
+   */
+  const comparable = liveTags.filter(t => isAiJudgedTag(t) && !judged.has(t.id))
+  for (const hit of findSimilarNames(proposalName, comparable.map(t => ({ id: t.id, name: t.name })), {
     generic: opts.generic,
     corpus: liveTags.map(t => t.name),
-    max: liveTags.length,
+    max: comparable.length,
   })) {
     if (!hit.id || seen.has(hit.id)) continue
     seen.add(hit.id)

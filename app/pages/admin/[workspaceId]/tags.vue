@@ -76,15 +76,19 @@
             <p class="tags-desc-hint text-muted">
               從最近兩週的對話歸納出來的主題。按「建立」才會真的新增標籤，
               並幫聊過的那批客人貼上（記為 AI 貼的，隨時可拿掉）；按「忽略」之後不會再建議同一個主題。
+              重複檢查只跟有開 AI 判斷的標籤比；問卷、活動、客服這類紀錄不會被拿來合併。
             </p>
             <!--
               ⛔ 三態（`C-178`）：這一輪之前提的建議**沒有做過**重複檢查，而「沒查過」
                  跟「查過了、沒有重複」在畫面上長得一模一樣——沉默會被讀成「乾淨」。
                  講一次就好（每條各講一次是噪音），而且下次掃描後這行會自己消失。
+                 ⛔ `C-239` 之前「下次掃描會補上」是假話：掃描器只把新提案接在舊的後面、
+                 從不回頭補判舊的，這行永遠不會消失。現在掃描器會先補判舊提案再掃新的
+                 （`rejudgeUncheckedPending`），這句才是真的。
             -->
             <p v-if="discoveryUncheckedCount" class="tags-discovery-warn tags-discovery-warn--soft">
               其中 {{ discoveryUncheckedCount }} 條是「重複檢查」上線前提的，只比對過名字、沒有完整檢查過。
-              下次自動掃描之後就會補上。
+              下次掃描時會補上完整檢查——等自動的那一次，或按下面的「立即掃描一次」。
             </p>
             <div v-for="p in discoveryPending" :key="p.id" class="tags-discovery-row">
               <div class="tags-discovery-row__main">
