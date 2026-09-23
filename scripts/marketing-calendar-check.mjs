@@ -120,7 +120,28 @@ function calendar(over = {}) {
       }],
       actions: ['最後確認推播排了沒、庫存和出貨來不來得及'],
     }],
+    outcomes: [],
+    outcomeHeadline: '',
+    outcomeIntegrity: { truncated: false, failed: false },
     ...over,
+  }
+}
+
+/** `C-55`② 的回顧。`linked` 決定話講得多肯定。 */
+function outcome(linked) {
+  return {
+    festivalId: 'ghost-2026',
+    name: '中元節',
+    date: '2026-08-27',
+    broadcasts: [],
+    sentTotal: 3025,
+    clickTotal: 532,
+    clicksPer100: 17.6,
+    linked,
+    text: linked
+      ? '「中元節」發了 8 則推播，送到 3025 人，連結被點了 532 次（每 100 人收到被點 17.6 次）。'
+      : '「中元節」前後兩週你發了 8 則推播，送到 3025 人，連結被點了 532 次（每 100 人收到被點 17.6 次）。'
+        + '⚠️ 這幾則不一定是為了這一檔發的——是照日期抓的。以後用「為這一檔擬推播」建立的，才對得起來。',
   }
 }
 
@@ -168,6 +189,55 @@ const PAGE = `${BASE}/admin/${WORKSPACE_ID}/conversation-stats`
   if (!r.hit) fail(`關 4：不認識時沒講。畫面上是：${r.body.slice(0, 200)}`)
   else if (r.body.includes('補上「主打商品」')) fail('關 4：兩句同時出現了——還不認識的人不該被叫去補其中一格')
   else pass('關 4：還不認識時只講「不認識」，不疊第二句')
+  await ctx.close()
+}
+
+// ── 關 5：回顧畫得出來，而且口徑那句在（`C-55`②）──────────────
+{
+  const { ctx, page } = await openPage(reply(calendar({
+    outcomes: [outcome(false)],
+    outcomeHeadline: '最近 1 檔前後你發過什麼',
+  })))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['最近 1 檔前後你發過什麼'])
+  if (!r.hit) fail(`關 5：回顧沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const want = [
+      ['回顧內容', '送到 3025 人'],
+      // ⭐ 口徑紅線：次數不是人數，這句一定要在畫面上
+      ['次數不是人數', '數的是次數不是人數'],
+      // ⭐ 沒有綁定時的警語
+      ['照日期抓的警語', '照日期抓的'],
+    ]
+    const missing = want.filter(([, t]) => !r.body.includes(t))
+    if (missing.length) fail(`關 5：少了 ${missing.map(([k]) => k).join('、')}`)
+    else pass('關 5：回顧畫得出來，口徑與「照日期抓的」警語都在')
+  }
+  await ctx.close()
+}
+
+// ── 關 6 對照組：沒有回顧時整段不出現（⛔ 不要留一個空殼）──────
+{
+  const { ctx, page } = await openPage(reply(calendar()))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['中秋節'])
+  if (!r.hit) fail(`關 6：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else if (r.body.includes('數的是次數不是人數')) fail('關 6 對照組：沒有回顧卻還畫了回顧區')
+  else pass('關 6：沒有回顧時整段不出現（對照組成立）')
+  await ctx.close()
+}
+
+// ── 關 7：真的綁在那一檔上時，⛔ 不可以再掛「不一定是為了這一檔」──
+{
+  const { ctx, page } = await openPage(reply(calendar({
+    outcomes: [outcome(true)],
+    outcomeHeadline: '最近 1 檔的結果',
+  })))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['最近 1 檔的結果'])
+  if (!r.hit) fail(`關 7：綁定版的回顧沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else if (r.body.includes('照日期抓的')) fail('關 7：明明對得上，卻還在說「照日期抓的」——那會讓人白白不信任準的數字')
+  else pass('關 7：綁定版講得肯定，不掛多餘警語')
   await ctx.close()
 }
 

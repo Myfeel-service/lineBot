@@ -90,6 +90,31 @@
     margin-top: 10px;
   }
 
+  // 「上一檔的結果」（`C-55`② / `C-237`）。
+  // ⭐ 刻意跟下面的檔期卡分開一格底色：回顧講的是已經發生的事，跟「接下來要做什麼」
+  //    混在一起會被讀成又一個待辦。
+  &__review {
+    padding: 10px 14px 12px;
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+
+    // 這一區的第一個小標不要再往上推一段
+    .mkt-cal__label {
+      margin-top: 0;
+    }
+  }
+
+  &__review-line {
+    margin: 0 0 4px;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--el-text-color-primary);
+
+    &:last-of-type {
+      margin-bottom: 0;
+    }
+  }
+
   &__muted {
     font-size: 13px;
     color: var(--el-text-color-secondary);

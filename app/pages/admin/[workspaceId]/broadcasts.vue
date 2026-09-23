@@ -627,6 +627,12 @@ const defaultForm = () => ({
   scheduleAt: '',
   /** `C-213`：發完幫收到的人貼的記號（選填） */
   completionTagIds: [] as string[],
+  /**
+   * `C-237`：這則是為了哪一檔節慶發的。只有從行銷月曆「為這一檔擬推播」進來才有值。
+   * ⛔ 畫面上不給編輯：它是「這則推播的來歷」，不是使用者要填的東西。
+   *   有了它，檔期回顧才敢講「這一檔的成績」而不是「那段期間你發過什麼」。
+   */
+  festivalId: '',
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
@@ -756,6 +762,8 @@ function loadFormFromItem(item: any) {
       ? formatDateForPicker(parseFirestoreDate(item.scheduleAt) ?? new Date())
       : '',
     completionTagIds: Array.isArray(item.completionTagIds) ? item.completionTagIds : [],
+    // 編輯既有推播時要保留來歷，⛔ 存一次檔就把它洗掉的話，回顧會突然對不起來
+    festivalId: String((item as { festivalId?: string }).festivalId ?? ''),
   }
 }
 
@@ -814,6 +822,8 @@ function buildSaveBody(): Record<string, unknown> {
     audienceSource: buildAudienceSource(),
     messages: buildMessages(),
     completionTagIds: form.value.completionTagIds,
+    // ⛔ 空的就不要送：後端只在有值時才寫這個欄位
+    ...(form.value.festivalId ? { festivalId: form.value.festivalId } : {}),
   }
   const keepScheduled =
     !isCreating.value
@@ -1280,6 +1290,9 @@ function applyDraftHandoff() {
 
   openCreate()
   form.value.name = payload.suggestedName
+  // ⭐ `C-237`：記下這則是為了哪一檔發的。沒有它，之後的檔期回顧只能照日期猜，
+  //    而照日期猜會把不相干的商品檔期算成這一檔的成績。
+  form.value.festivalId = payload.festivalId
   // 預設帶第一版；其餘幾版擺在編輯器上面讓他換（換了只是改文字，還是草稿）
   form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: payload.variants[0]! }, 'A')
   if (payload.suggestedTagIds.length) {

@@ -52,6 +52,16 @@ export default defineEventHandler(async (event) => {
     completionTagIds: Array.isArray(body.completionTagIds)
       ? body.completionTagIds.map((t: unknown) => String(t ?? '').trim()).filter(Boolean)
       : [],
+    /**
+     * `C-237`：這則推播是為了哪一檔節慶發的（選填，只有從「為這一檔擬推播」建立的才有）。
+     *
+     * ⭐ **這一欄是「知道」與「猜」的分界線**：沒有它的話，檔期回顧只能照日期抓——
+     * 2026-09-23 實測，那樣會把八則商品檔期推播算成「中元節的成績」（`shared/festival-outcome.ts`）。
+     * ⛔ 存空字串沒有意義，沒有就不要寫這個欄位。
+     */
+    ...(typeof body.festivalId === 'string' && body.festivalId.trim()
+      ? { festivalId: body.festivalId.trim().slice(0, 64) }
+      : {}),
     scheduleAt: null,
     startedAt: null,
     completedAt: null,

@@ -54,6 +54,23 @@
           <el-link type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
         </el-alert>
 
+        <!--
+          `C-55`② / `C-237`：上一檔做得怎麼樣。
+          ⭐ 放在「接下來」**上面**：先看完上一檔的結果，下一檔的建議才讀得進去。
+          ⛔ 一檔都沒有就整段不出現（`outcomeHeadline` 回空字串）——不要留一個空殼。
+        -->
+        <section v-if="outcomeHeadline" class="mkt-cal__review">
+          <p class="mkt-cal__label">{{ outcomeHeadline }}</p>
+          <p v-for="o in outcomes" :key="o.festivalId" class="mkt-cal__review-line">{{ o.text }}</p>
+          <!-- ⛔ 口徑要寫在畫面上：這是「幾次」不是「幾個人」 -->
+          <p class="mkt-cal__nodata">
+            「被點幾次」數的是<b>次數</b>不是人數——推播是同一則發給所有人，我們看得到連結被點了幾下，
+            看不出是幾個人點的。
+          </p>
+          <p v-if="outcomeIntegrity.failed" class="mkt-cal__nodata">⚠️ 這次讀不到推播紀錄，上面的回顧不完整。</p>
+          <p v-else-if="outcomeIntegrity.truncated" class="mkt-cal__nodata">⚠️ 推播太多，只算了掃到的那一段。</p>
+        </section>
+
         <article v-for="e in entries" :key="e.festivalId" :class="['mkt-cal__item', { 'is-soon': e.soon }]">
           <header class="mkt-cal__head">
             <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
@@ -101,6 +118,7 @@
 
 <script setup lang="ts">
 import type { CalendarEntry } from '~~/shared/marketing-calendar'
+import type { FestivalOutcome } from '~~/shared/festival-outcome'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 
 const props = defineProps<{ workspaceId: string }>()
@@ -117,6 +135,11 @@ const ready = ref(false)
  * ⛔ 預設 `true`：讀不到時**不要**跳出「快去補商品」——那是在還不知道的情況下指責他。
  */
 const hasProducts = ref(true)
+
+/** 上一檔的結果（`C-55`②）。空陣列＝回看窗內沒有過去的節日，整段不出現。 */
+const outcomes = ref<FestivalOutcome[]>([])
+const outcomeHeadline = ref('')
+const outcomeIntegrity = ref<{ truncated: boolean, failed: boolean }>({ truncated: false, failed: false })
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
@@ -130,11 +153,17 @@ async function reload() {
       headline: string
       ready: boolean
       hasProducts: boolean
+      outcomes: FestivalOutcome[]
+      outcomeHeadline: string
+      outcomeIntegrity: { truncated: boolean, failed: boolean }
     }>('/api/marketing-calendar')
     entries.value = r.entries ?? []
     headline.value = r.headline ?? ''
     ready.value = r.ready === true
     hasProducts.value = r.hasProducts === true
+    outcomes.value = r.outcomes ?? []
+    outcomeHeadline.value = r.outcomeHeadline ?? ''
+    outcomeIntegrity.value = r.outcomeIntegrity ?? { truncated: false, failed: false }
     loaded.value = true
   }
   catch (e: unknown) {

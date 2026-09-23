@@ -5,6 +5,7 @@ import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { matchAudienceTags, productKeywords, type AudienceTagLike } from '~~/shared/festival-audience'
+import { buildFestivalOutcomes, outcomeHeadline, type BroadcastOutcome } from '~~/shared/festival-outcome'
 import {
   buildMarketingCalendar,
   calendarHeadline,
@@ -13,7 +14,7 @@ import {
 } from '~~/shared/marketing-calendar'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 import { taipeiDate } from '~~/shared/time'
-import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
+import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 
 /**
  * GET /api/marketing-calendar
@@ -38,37 +39,90 @@ import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
  *   同一件事兩種答案，正是這個專案踩過最多次的形狀。
  */
 
-/** 去年同一個節日前後 14 天內發過的推播（只取一筆，當「你去年做過」的證據）。 */
-async function findLastYearBroadcast(
+/** 掃描上限。撞到要回報，⛔ 不可以讓人把截斷後的數字當全部。 */
+const BROADCAST_SCAN_LIMIT = 300
+const CLICK_SCAN_LIMIT = 5000
+
+/**
+ * 把這個帳號送出過的推播**掃一趟**撈回來（含各自的點擊次數）。
+ *
+ * ⚠️ **2026-09-23（`C-237`）修掉這裡兩個靜默無效**，正式資料上驗出來的：
+ *   ① 原本查 `status == 'sent'`——但實際上的值是 **`completed`**（13 則）／`failed`／`cancelled`，
+ *      **一則 `sent` 都沒有**，所以這個查詢永遠回空。
+ *   ② 原本讀 `data.sentAt`——那個欄位**一則都沒有**，時間在 `completedAt`。
+ *   兩個加起來，月曆卡那條「去年這個時候你發過 X」從上線到現在**一次都沒出現過**。
+ *
+ * ⚠️ 原本是**每個節日各查一次**（8 檔 × 200 筆＝1,600 次讀取）。改成掃一趟給所有用途共用
+ *   （08-11 讀取費暴衝的教訓）。
+ */
+async function loadSentBroadcasts(
   db: Firestore,
   workspaceId: string,
-  f: TaiwanFestival,
-): Promise<{ name: string, sentCount: number } | null> {
+): Promise<{ list: BroadcastOutcome[], truncated: boolean, failed: boolean }> {
   try {
-    const [y, m, d] = f.date.split('-').map(Number) as [number, number, number]
-    const center = Date.UTC(y - 1, m - 1, d)
-    const from = new Date(center - 14 * 86_400_000)
-    const to = new Date(center + 14 * 86_400_000)
-    // 單欄位等值查詢＋記憶體過濾：⛔ 不加 orderBy(sentAt) 以免要複合索引
+    // 單欄位等值查詢：⛔ 不加 orderBy 以免要複合索引
     const snap = await db.collection('broadcasts')
       .where('workspaceId', '==', workspaceId)
-      .where('status', '==', 'sent')
-      .limit(200)
+      .select('name', 'sentCount', 'completedAt', 'status')
+      .limit(BROADCAST_SCAN_LIMIT + 1)
       .get()
-    for (const doc of snap.docs) {
-      const data = doc.data() as { name?: string, sentCount?: number, sentAt?: { toDate?: () => Date } }
-      const at = data.sentAt?.toDate?.()
-      if (!at || at < from || at > to) continue
-      const sentCount = Number(data.sentCount ?? 0)
-      if (sentCount <= 0) continue
-      return { name: String(data.name ?? '（沒有名稱）').slice(0, 40), sentCount }
+
+    const docs = snap.docs.slice(0, BROADCAST_SCAN_LIMIT)
+
+    // 點擊次數：同樣掃一趟，在記憶體裡按 campaignId 分組
+    // ⛔ 每筆的 userId 都是 null（multicast），所以這是「幾次」不是「幾個人」——
+    //    口徑寫在 `shared/festival-outcome.ts` 的檔頭。
+    const clicks: Record<string, number> = {}
+    try {
+      const clickSnap = await db.collection('broadcastClickLogs')
+        .where('workspaceId', '==', workspaceId)
+        .select('campaignId')
+        .limit(CLICK_SCAN_LIMIT)
+        .get()
+      for (const d of clickSnap.docs) {
+        const c = String((d.data() as { campaignId?: string }).campaignId ?? '')
+        if (c) clicks[c] = (clicks[c] ?? 0) + 1
+      }
     }
-    return null
+    catch { /* 點擊查不到＝點擊數當 0，但推播本身仍要列出來 */ }
+
+    const list: BroadcastOutcome[] = []
+    for (const doc of docs) {
+      const v = doc.data() as { name?: string, sentCount?: number, completedAt?: { toDate?: () => Date }, status?: string, festivalId?: string }
+      // ⛔ 只認真的送完的那些；`cancelled` 與還沒送的不算一檔
+      if (v.status !== 'completed' && v.status !== 'failed') continue
+      const at = v.completedAt?.toDate?.()
+      if (!at || Number.isNaN(at.getTime())) continue
+      list.push({
+        id: doc.id,
+        name: String(v.name ?? '（沒有名稱）').slice(0, 40),
+        atMs: at.getTime(),
+        sentCount: Number(v.sentCount ?? 0),
+        clickCount: clicks[doc.id] ?? 0,
+        // 有這一欄才敢講「這一檔的成績」；舊資料一律沒有，回顧那邊會退成「那段期間」
+        ...(v.festivalId ? { festivalId: String(v.festivalId) } : {}),
+      })
+    }
+    return { list, truncated: snap.size > BROADCAST_SCAN_LIMIT, failed: false }
   }
-  catch {
-    // ⛔ 查不到就回 null（＝這一條理由不出現），不可以編一個數字
-    return null
+  catch (e) {
+    // ⛔ 查不到就回空＋`failed`（＝這幾條理由不出現），不可以編一個數字
+    console.warn('[marketing-calendar] 推播掃描失敗：', workspaceId, e)
+    return { list: [], truncated: false, failed: true }
   }
+}
+
+/** 去年同一個節日前後 14 天內發過的推播（當「你去年做過」的證據）。 */
+function findLastYearBroadcast(
+  sent: readonly BroadcastOutcome[],
+  f: TaiwanFestival,
+): { name: string, sentCount: number } | null {
+  const [y, m, d] = f.date.split('-').map(Number) as [number, number, number]
+  if (!y || !m || !d) return null
+  const center = Date.UTC(y - 1, m - 1, d)
+  const half = 14 * 86_400_000
+  const hit = sent.find(b => b.sentCount > 0 && Math.abs(b.atMs - center) <= half)
+  return hit ? { name: hit.name, sentCount: hit.sentCount } : null
 }
 
 export default defineEventHandler(async (event) => {
@@ -111,12 +165,14 @@ export default defineEventHandler(async (event) => {
     .then(s => s.data().count)
     .catch(() => null)
 
-  // 先算出視窗內有哪幾個節日，才知道要為哪幾個查推播（⛔ 不要為 17 個節日都查）
+  // 推播掃一趟，給「去年做過」與「上一檔的結果」共用（⛔ 不要每個節日各查一次）
+  const sent = await loadSentBroadcasts(db, workspaceId)
+
   const skeleton = buildMarketingCalendar(today, profile, () => emptyCalendarFacts())
   const lastYear = new Map<string, { name: string, sentCount: number } | null>()
   for (const e of skeleton) {
     const f = { id: e.festivalId, date: e.date, name: e.name, angle: e.generalAngle } as TaiwanFestival
-    lastYear.set(e.festivalId, await findLastYearBroadcast(db, workspaceId, f))
+    lastYear.set(e.festivalId, findLastYearBroadcast(sent.list, f))
   }
 
   // 輪廓裡的主打商品＝配對的主軸（`C-235`）。每一檔都是同一批詞，先算一次。
@@ -134,6 +190,7 @@ export default defineEventHandler(async (event) => {
 
   const entries = buildMarketingCalendar(today, profile, factsOf)
   const ready = isStoreProfileReady(profile)
+  const outcomes = buildFestivalOutcomes(today, TAIWAN_FESTIVALS, sent.list)
   return {
     today,
     ready,
@@ -146,5 +203,15 @@ export default defineEventHandler(async (event) => {
     hasProducts: products.length > 0,
     headline: calendarHeadline(entries, ready),
     entries,
+
+    /**
+     * ⭐ `C-55`②（`C-237`）：**上一檔做得怎麼樣**。沒有回顧的建議，第三個月就沒人看了。
+     * ⛔ 口徑：`clickTotal` 是「連結被點幾次」不是「幾個人點」——multicast 的追蹤 token
+     *   裡沒有 userId，細節寫在 `shared/festival-outcome.ts` 檔頭。
+     */
+    outcomes,
+    outcomeHeadline: outcomeHeadline(outcomes),
+    /** ⛔ 掃到上限或查不到要講出來，不可以讓人把殘缺的回顧當全部 */
+    outcomeIntegrity: { truncated: sent.truncated, failed: sent.failed },
   }
 })
