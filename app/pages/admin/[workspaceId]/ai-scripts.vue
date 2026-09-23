@@ -897,7 +897,7 @@ function blankForm() {
 }
 
 const form = ref(blankForm())
-const { markClean, markDirty, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
   // 腳本節點流程可能編很久；F5 / 關分頁也要攔，避免整段遺失
   enableBeforeUnload: true,
@@ -2074,6 +2074,7 @@ onMounted(async () => {
     label: '自動回應',
     list: { loadUntilFound: findScriptUntilFound, listEl },
     select: item => selectScript(item, { skipDiscardConfirm: true }),
+    isBusy: () => hasUnsavedChanges.value,
   })
 })
 

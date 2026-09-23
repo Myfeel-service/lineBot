@@ -650,7 +650,7 @@ const defaultForm = () => ({
   festivalId: '',
 })
 const form = ref(defaultForm())
-const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
@@ -1373,6 +1373,7 @@ onMounted(async () => {
     label: '推播',
     list: { loadUntilFound: findBroadcastUntilFound, listEl },
     select: item => void selectItem(item, { skipDiscardConfirm: true }),
+    isBusy: () => hasUnsavedChanges.value,
   })
 })
 

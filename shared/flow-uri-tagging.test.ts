@@ -64,4 +64,54 @@ describe('countTaggedUriButtons', () => {
     loop.self = loop
     expect(() => countTaggedUriButtons([loop])).not.toThrow()
   })
+
+  /**
+   * `C-241`③：深度上限原本是 12，而**物件算一層、陣列也算一層**——
+   * 一層巢狀 Flex box 就吃掉 2，`messages[] → message → contents → bubble → body`
+   * 開場又先吃掉一批，於是只走得進大約 4 層 box。
+   * 真的長成這樣的卡片會被**數成 0 ＝ 該提醒的時候沒提醒**，比多提醒糟。
+   */
+  describe('巢狀很深的 Flex 版面（深度上限）', () => {
+    /** 照 LINE Flex 的真實形狀包：`{ type: 'box', contents: [ … ] }` 一層一層往裡塞 */
+    function nestBoxes(levels: number, innermost: unknown) {
+      let node: unknown = innermost
+      for (let i = 0; i < levels; i++) node = { type: 'box', layout: 'vertical', contents: [node] }
+      return [{ type: 'flex', contents: { type: 'bubble', body: node } }]
+    }
+
+    it('⛔ 包了 8 層 box 的按鈕還是要數到（修之前這裡會是 0）', () => {
+      expect(countTaggedUriButtons(nestBoxes(8, { type: 'button', action: taggedUri }))).toBe(1)
+    })
+
+    it('輪播裡再包 6 層也要數到', () => {
+      const messages = [{
+        type: 'flex',
+        contents: {
+          type: 'carousel',
+          contents: [
+            { type: 'bubble', body: nestBoxes(6, { type: 'button', action: taggedUri })[0] },
+            { type: 'bubble', body: nestBoxes(6, { type: 'button', action: taggedUri })[0] },
+          ],
+        },
+      }]
+      expect(countTaggedUriButtons(messages)).toBe(2)
+    })
+  })
+
+  /**
+   * `C-241`⑥：`enabled` 要跟**執行時**同一套判斷（`handler.ts` 是 `if (!action?.tagging?.enabled)`）。
+   * 嚴格 `=== true` 的話，這些值執行時會貼標、這裡卻數成 0 ＝ 真的受影響卻不提醒。
+   */
+  it('⛔ `enabled` 不是布林值時要跟執行時同一套判斷（真假值）', () => {
+    for (const enabled of [1, 'true', 'yes', {}]) {
+      expect(
+        countTaggedUriButtons([{ actions: [{ ...taggedUri, tagging: { enabled, addTagIds: ['t1'] } }] }]),
+        `enabled=${JSON.stringify(enabled)} 在執行時會貼標，這裡不可以數成 0`,
+      ).toBe(1)
+    }
+    // 反面：執行時不會貼標的那些，這裡也要是 0
+    for (const enabled of [0, '', null, undefined, false]) {
+      expect(countTaggedUriButtons([{ actions: [{ ...taggedUri, tagging: { enabled, addTagIds: ['t1'] } }] }])).toBe(0)
+    }
+  })
 })

@@ -13,14 +13,35 @@
  * 所以推播編輯器要在選到這種模組時講一句。這支只負責「數出來」，話怎麼講在元件那邊。
  */
 
-/** 一顆按鈕算不算「開了貼標的網址按鈕」 */
+/**
+ * 一顆按鈕算不算「開了貼標的網址按鈕」。
+ *
+ * ⛔ `enabled` 要用**真假值**判斷，不可以寫成 `enabled !== true`（`C-241`⑥）。
+ * 這支是在回答「送出去的時候會不會被影響」，所以判斷方式必須跟**執行時**那一支一致：
+ * `server/utils/handler.ts` 的 `extractTagIdsFromAction` 寫的是 `if (!action?.tagging?.enabled) return []`。
+ * 兩邊不一致的話，`enabled: 1` 或 `"true"` 這種舊資料／匯入資料**執行時會貼標、這裡卻數成 0**
+ * ＝那顆按鈕真的受影響，畫面上卻不提醒——正好是這支檔案要防的那件事。
+ * ⚠️ `config-references.ts` 用的是嚴格 `=== true`，那是**另一個問題**（「算不算用到這顆標籤」），
+ *    不要照抄過來。
+ */
 function isTaggedUriAction(node: Record<string, unknown>): boolean {
   if (String(node.type ?? '') !== 'uri') return false
   const tagging = node.tagging as { enabled?: unknown, addTagIds?: unknown } | undefined
   if (!tagging || typeof tagging !== 'object') return false
-  if (tagging.enabled !== true) return false
+  if (!tagging.enabled) return false
   return Array.isArray(tagging.addTagIds) && tagging.addTagIds.some(id => String(id ?? '').trim())
 }
+
+/**
+ * 走訪深度上限，純粹是防呆（防自我參照的資料把走訪變成無窮迴圈），⛔ 不是拿來省事的。
+ *
+ * ⚠️ **物件算一層、陣列也算一層**，所以這個數字要換算：一層巢狀 Flex box ≈ 吃掉 2，
+ * 而 `messages[] → message → contents → bubble → body` 開場就先吃掉 4～6（輪播再多 2）。
+ * 原本設 12 ＝ 只走得進大約 4 層巢狀 box，稍微複雜一點的卡片就會**數成 0**
+ * ——而數成 0 的後果是「該提醒的時候沒提醒」，比多提醒糟（`C-241`③）。
+ * 30 對應大約 12 層巢狀 box，遠超過任何看得下去的版面。
+ */
+const MAX_WALK_DEPTH = 30
 
 /**
  * 深走訪整份 `messages`，數出開了貼標的網址按鈕有幾顆。
@@ -30,8 +51,7 @@ function isTaggedUriAction(node: Record<string, unknown>): boolean {
 export function countTaggedUriButtons(messages: unknown): number {
   let count = 0
   const walk = (node: unknown, depth: number) => {
-    // 深度上限純粹是防呆（正常資料遠不到），⛔ 不是拿來省事的
-    if (!node || typeof node !== 'object' || depth > 12) return
+    if (!node || typeof node !== 'object' || depth > MAX_WALK_DEPTH) return
     if (Array.isArray(node)) {
       for (const child of node) walk(child, depth + 1)
       return

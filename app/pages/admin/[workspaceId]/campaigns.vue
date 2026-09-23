@@ -704,7 +704,7 @@ function goSetLiff() {
   void navigateTo(`/admin/${workspaceId.value}/settings/organization?focus=liff`)
 }
 
-const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 const campaignActionTypeOptions = [
@@ -849,6 +849,7 @@ onMounted(async () => {
     label: '活動',
     list: { loadUntilFound: findCampaignUntilFound, listEl },
     select: item => selectCampaign(item, { skipDiscardConfirm: true }),
+    isBusy: () => hasUnsavedChanges.value,
   })
 })
 

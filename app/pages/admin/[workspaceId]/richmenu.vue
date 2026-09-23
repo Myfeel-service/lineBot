@@ -337,7 +337,7 @@ const { apiFetch, currentWorkspaceName } = useWorkspace()
  */
 const rmViewMode = ref<'edit' | 'customer'>('edit')
 
-const { markClean, markDirty, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
@@ -620,6 +620,7 @@ onMounted(async () => {
     label: '圖文選單',
     list: { loadUntilFound: findMenuUntilFound, listEl },
     select: item => selectMenu(item, { skipDiscardConfirm: true }),
+    isBusy: () => hasUnsavedChanges.value,
   })
 })
 onBeforeUnmount(() => {

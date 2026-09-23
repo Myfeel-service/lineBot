@@ -209,7 +209,7 @@ const defaultForm = () => ({
   tagging: normalizeAutoReplyTagging(null),
 })
 const form = ref(defaultForm())
-const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
@@ -238,6 +238,7 @@ onMounted(async () => {
     label: '客服預存',
     list: { loadUntilFound: findPresetUntilFound, listEl },
     select: item => selectPreset(item, { skipDiscardConfirm: true }),
+    isBusy: () => hasUnsavedChanges.value,
   })
 })
 

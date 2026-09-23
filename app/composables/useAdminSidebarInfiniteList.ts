@@ -39,7 +39,15 @@ export function useAdminSidebarInfiniteList<T>(fetchPage: FetchPageFn<T>) {
   const page = ref(1)
   const listEl = ref<HTMLElement | null>(null)
 
-  /** 列表尚無捲軸時自動載入下一批（避免卡在僅顯示第一頁） */
+  /**
+   * 列表尚無捲軸時自動載入下一批（避免卡在僅顯示第一頁）。
+   *
+   * ⛔ **只能在 `load()` 的 `finally` 跑完之後呼叫**。以前它是在 `try` 裡面被呼叫的，
+   * 而那時 `loading` 還是 `true`——正好撞上下面第一行的守衛，**一進去就 return**，
+   * 所以從 `8b6802b` 上線到 `C-241` 為止它一次都沒有生效過（`C-241`②）。
+   * 後果正好跟它存在的目的相反：視窗短、清單沒有捲軸時卡在第一頁，
+   * 而沒有捲軸就沒有 `onScroll` 可以觸發下一頁，於是永遠停在那裡。
+   */
   async function prefetchIfListDoesNotScroll() {
     await nextTick()
     const el = listEl.value
@@ -69,9 +77,6 @@ export function useAdminSidebarInfiniteList<T>(fetchPage: FetchPageFn<T>) {
       )
       items.value = reset ? res.items : [...items.value, ...res.items]
       hasMore.value = res.hasMore
-      if (hasMore.value) {
-        await prefetchIfListDoesNotScroll()
-      }
     }
     catch {
       if (reset) items.value = []
@@ -81,6 +86,12 @@ export function useAdminSidebarInfiniteList<T>(fetchPage: FetchPageFn<T>) {
       loading.value = false
       loadingMore.value = false
     }
+
+    /**
+     * ⚠️ 只有整份重載那一次負責補，`loadMore()` 進來的不補：`prefetchIfListDoesNotScroll`
+     * 自己會遞迴（載一批 → 再看一次還有沒有捲軸），兩邊都補等於同一件事跑兩層。
+     */
+    if (reset && hasMore.value) await prefetchIfListDoesNotScroll()
   }
 
   async function loadMore() {

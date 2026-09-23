@@ -57,6 +57,15 @@ export function useAdminDeepLink() {
     }
     select: (item: T) => void
     idKey?: string
+    /**
+     * 「人已經在編沒存的東西了嗎」。
+     *
+     * ⛔ 為什麼需要它：五頁都用 `skipDiscardConfirm: true` 呼叫 `select`——那是刻意的，
+     * 剛進頁面不該為了開深連結去問「要放棄變更嗎」。但翻頁是**非同步**的，
+     * 這段期間人可能已經按了「新增」開始打字；等搜尋回來才 `select`，就會**不問一聲**
+     * 把他打的東西蓋掉（`select` 會覆寫 `form` 再 `markClean`，連確認都不會跳）。
+     */
+    isBusy?: () => boolean
   }) {
     const wanted = String(route.query.id ?? '').trim()
     if (!wanted) return
@@ -78,6 +87,16 @@ export function useAdminDeepLink() {
        *    參數先被收掉就變成「重新整理也沒用」，這條連結從網址列再也救不回來。
        *    另外兩種才收：它們已經有結論了（開起來了／確定沒有），留著只會跟手動點選打架。
        */
+      return
+    }
+
+    /**
+     * ⛔ 人在翻頁期間開始編東西了 → **不要蓋掉**，而且要講一句。
+     * ⚠️ `?id=` 刻意留著：這樣他存好（或取消）之後重新整理，那一筆還打得開；
+     *    收掉就等於「你剛剛點的那個連結沒了」。
+     */
+    if (opts.isBusy?.()) {
+      showToast(`你正在編還沒存的內容，先沒幫你跳到那個${opts.label}——存好或取消後重新整理就會打開`, 'warning')
       return
     }
 

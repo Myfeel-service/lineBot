@@ -84,16 +84,24 @@ const KINDS_WITH_DEEP_LINK: ReadonlySet<ConfigRefKind> = new Set<ConfigRefKind>(
   'supportPreset',
 ])
 
+/**
+ * 每一類對應後台的哪一頁（網址上那一段，也是 `app/pages/admin/[workspaceId]/` 底下的檔名）。
+ *
+ * ⚠️ 會匯出是因為 `config-references.test.ts` 要拿它去**把那一頁的原始碼讀出來**，
+ * 確認「宣告吃得到 `?id=` 的類別，那一頁真的有吃」。寫死在測試裡的話，改了這裡、
+ * 測試那份還指著舊檔名，守衛就會安靜地失效。
+ */
+export const CONFIG_REF_KIND_PAGE: Record<ConfigRefKind, string> = {
+  flow: 'flow',
+  richmenu: 'richmenu',
+  script: 'ai-scripts',
+  campaign: 'campaigns',
+  broadcast: 'broadcasts',
+  supportPreset: 'support-presets',
+}
+
 export function configRefPath(workspaceId: string, kind: ConfigRefKind, id?: string): string {
-  const page: Record<ConfigRefKind, string> = {
-    flow: 'flow',
-    richmenu: 'richmenu',
-    script: 'ai-scripts',
-    campaign: 'campaigns',
-    broadcast: 'broadcasts',
-    supportPreset: 'support-presets',
-  }
-  const base = `/admin/${workspaceId}/${page[kind]}`
+  const base = `/admin/${workspaceId}/${CONFIG_REF_KIND_PAGE[kind]}`
   return id && KINDS_WITH_DEEP_LINK.has(kind)
     ? `${base}?id=${encodeURIComponent(id)}`
     : base

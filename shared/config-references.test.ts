@@ -1,11 +1,15 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   addConfigRef,
   collectTagRefs,
+  CONFIG_REF_KIND_PAGE,
   configRefKindIsDeepLinkable,
   configRefPath,
   summarizeConfigRefs,
   type ConfigRef,
+  type ConfigRefKind,
 } from './config-references'
 import { encodeSwitchMenu, encodeTriggerMessage, encodeTriggerModule } from './action-schema'
 
@@ -134,16 +138,39 @@ describe('configRefPath — 深連結只給真的吃得到 ?id= 的頁面', () =
     expect(configRefPath(WS, 'flow')).toBe(`/admin/${WS}/flow`)
   })
 
-  /**
-   * `C-237`：六種全部做完了，所以六種都掛得上。
-   * ⛔ 這一條的意義**不是**「全部都要是 true」——是「這裡宣告的，那一頁就真的要吃得到」。
-   *    以後新增類別時，先把那一頁做出來再加進 `KINDS_WITH_DEEP_LINK`，
-   *    否則人點過去只會落在清單上，那就退回「看起來可點卻沒用」。
-   */
   it('五頁做完之後也掛得上（`C-237`）', () => {
     for (const kind of ['richmenu', 'script', 'campaign', 'broadcast', 'supportPreset'] as const) {
       expect(configRefKindIsDeepLinkable(kind)).toBe(true)
       expect(configRefPath(WS, kind, 'some-id')).toContain('?id=some-id')
+    }
+  })
+
+  /**
+   * ⛔ **這一條才是真的守衛**（`C-241`①）。
+   *
+   * `C-237` 之前那條釘的是「還沒做的頁面不可以掛參數」；六種全開之後它被改成
+   * 「這五種都是 true」——那只是**把 `KINDS_WITH_DEEP_LINK` 的內容再讀一遍**，
+   * 集合裡多塞一種、頁面沒做，它照樣綠。等於這條規則從此沒有人看著。
+   *
+   * 所以改成去**讀那一頁的原始碼**：宣告吃得到 `?id=` 的類別，那一頁必須真的有
+   * 接參數的程式碼（五頁走 `openFromQueryId`，機器人模組那頁走自己的 `openFlowFromQuery`）。
+   * ⚠️ 這是字串比對、擋不了「呼叫了但寫錯」——那一層由實機守門員
+   * （`scripts/tag-picker-check.mjs` 的 `checkOtherPagesDeepLink`）負責，兩層各管各的。
+   */
+  it('⛔ 宣告吃得到 `?id=` 的類別，那一頁必須真的有接參數的程式碼', () => {
+    const root = fileURLToPath(new URL('../', import.meta.url))
+    const kinds = Object.keys(CONFIG_REF_KIND_PAGE) as ConfigRefKind[]
+    // 對照組：真的有掃到東西，不是迴圈一圈都沒跑
+    expect(kinds.filter(configRefKindIsDeepLinkable).length).toBeGreaterThan(0)
+
+    for (const kind of kinds) {
+      if (!configRefKindIsDeepLinkable(kind)) continue
+      const file = `${root}app/pages/admin/[workspaceId]/${CONFIG_REF_KIND_PAGE[kind]}.vue`
+      const src = readFileSync(file, 'utf8')
+      expect(
+        /openFromQueryId|openFlowFromQuery/.test(src),
+        `${kind} 宣告在 KINDS_WITH_DEEP_LINK 裡，但 ${CONFIG_REF_KIND_PAGE[kind]}.vue 沒有接 ?id= 的程式碼`,
+      ).toBe(true)
     }
   })
 
