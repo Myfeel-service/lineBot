@@ -1,3 +1,5 @@
+import { findAcrossPages } from '~~/shared/find-across-pages'
+
 /**
  * 後台 split sidebar 無限捲動列表（初次載入一批，捲到底再載入下一批）
  */
@@ -94,6 +96,17 @@ export function useAdminSidebarInfiniteList<T>(fetchPage: FetchPageFn<T>) {
       void loadMore()
   }
 
+  /** 一直往下翻，直到找到那一筆為止（`C-237`）。邏輯本體在 `findAcrossPages`，那支有測試。 */
+  async function loadUntilFound(match: (item: T) => boolean, opts?: { maxPages?: number }) {
+    return findAcrossPages<T>({
+      peek: () => items.value,
+      match,
+      hasMore: () => hasMore.value,
+      loadMore,
+      maxPages: opts?.maxPages,
+    })
+  }
+
   return {
     items,
     loading,
@@ -103,5 +116,6 @@ export function useAdminSidebarInfiniteList<T>(fetchPage: FetchPageFn<T>) {
     load,
     loadMore,
     onScroll,
+    loadUntilFound,
   }
 }

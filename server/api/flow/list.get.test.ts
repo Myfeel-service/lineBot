@@ -133,7 +133,31 @@ describe('模組清單（E-23）', () => {
     const list = await (handler as any)({} as never) as Record<string, unknown>[]
 
     expect(list[0]!.messageCount).toBeUndefined()
+    expect(list[0]!.taggedUriButtons).toBeUndefined()
     expect(Array.isArray(list[0]!.messages)).toBe(true)
+  })
+
+  /**
+   * `C-238`：推播編輯器要靠這個數字，才講得出「這顆網址按鈕的貼標在推播裡不會生效」。
+   * ⛔ 一樣不可以把 `messages` 一起帶回去。
+   */
+  it('?fields=picker：數得出「開了貼標的網址按鈕」有幾顆', async () => {
+    const tagged = { type: 'uri', uri: 'https://a.com', tagging: { enabled: true, addTagIds: ['t1'] } }
+    stubListDocs([
+      flow('flow-有貼標網址', { messages: [{ type: 'text', actions: [tagged] }] }),
+      flow('flow-網址沒開貼標', { messages: [{ type: 'text', actions: [{ type: 'uri', uri: 'https://a.com' }] }] }),
+      flow('flow-模組按鈕有貼標', { messages: [{ actions: [{ type: 'module', moduleId: 'm', tagging: { enabled: true, addTagIds: ['t1'] } }] }] }),
+    ])
+    currentQuery = { fields: 'picker' }
+
+    const list = await (handler as any)({} as never) as Record<string, unknown>[]
+    const byId = Object.fromEntries(list.map(f => [f.id, f]))
+
+    expect(byId['flow-有貼標網址']!.taggedUriButtons).toBe(1)
+    expect(byId['flow-網址沒開貼標']!.taggedUriButtons).toBe(0)
+    // ⛔ 模組按鈕的貼標在推播裡是**有效**的，不可以一起算進來害它被誤警告
+    expect(byId['flow-模組按鈕有貼標']!.taggedUriButtons).toBe(0)
+    for (const item of list) expect(item.messages).toBeUndefined()
   })
 
   it('沒帶參數：照舊回整份（機器人模組那頁要吃 messages）', async () => {

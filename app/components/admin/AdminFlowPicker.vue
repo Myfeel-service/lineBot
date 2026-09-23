@@ -87,6 +87,13 @@
 
       <!-- ⛔ 三種「選了會出事」的狀況要講出來，不可以只是下拉裡一個小字 -->
       <p v-if="selectedWarning" class="flow-picker__warn">{{ selectedWarning }}</p>
+      <!--
+        `C-238`：**只有推播那一頁**會看到這一句。
+        同一個模組，客人從圖文選單按進去會貼標，被推播送出去就不會——
+        因為推播是一次把同一份訊息送給一群人，認不出是誰點的。
+        ⛔ 開關是開的、標籤就是沒貼、畫面上一個字都沒講，所以一定要在這裡講。
+      -->
+      <p v-if="broadcastUriTagNote" class="flow-picker__warn">{{ broadcastUriTagNote }}</p>
     </template>
 
     <el-dialog
@@ -136,7 +143,14 @@ import { computed, reactive, ref } from 'vue'
  * `messageCount` 由 `/api/flow/list?fields=picker` 帶回來（`D-86`）。
  * ⚠️ 呼叫端沒帶也不會壞——但那樣就**標不出「還沒有內容」**，等於少了一半價值。
  */
-type ModuleOption = { id: string; name: string; isActive?: boolean; messageCount?: number }
+type ModuleOption = {
+  id: string
+  name: string
+  isActive?: boolean
+  messageCount?: number
+  /** `C-238`：這個模組裡有幾顆「開了貼標的網址按鈕」（推播送出時那個貼標不會生效） */
+  taggedUriButtons?: number
+}
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -147,12 +161,19 @@ const props = withDefaults(defineProps<{
   allowCreate?: boolean
   /** 一個模組都沒有時要講的話；不給就用預設 */
   emptyText?: string
+  /**
+   * `C-238`：這一格長在哪裡。
+   * `broadcast` 時會多講一句「網址按鈕的貼標在推播裡不會生效」——
+   * ⛔ 其他地方**不可以**講這句：那些路徑貼標是**有效**的，講了等於叫人關掉能用的功能。
+   */
+  context?: 'default' | 'broadcast'
 }>(), {
   disabled: false,
   size: 'default',
   placeholder: '選擇機器人模組（可打字搜尋）',
   allowCreate: true,
   emptyText: '',
+  context: 'default',
 })
 
 const emit = defineEmits<{
@@ -221,6 +242,20 @@ const selectedWarning = computed(() => {
   if (row.isActive === false) return '這個模組目前是停用的，客人走到這裡不會收到東西。'
   if (row.messageCount === 0) return '這個模組還沒有任何內容，客人走到這裡會什麼都收不到。'
   return ''
+})
+
+/**
+ * `C-238`：推播選到「裡面有開了貼標的網址按鈕」的模組時要講的那句話。
+ *
+ * ⚠️ 用語刻意講**後果＋替代方案**，不只說「不支援」：
+ *    他開那個開關是為了「知道誰點了」，所以要告訴他哪一條路拿得到。
+ * ⛔ 只在推播講；⛔ 也不要因此把那個開關藏起來——它在別條路上是好的。
+ */
+const broadcastUriTagNote = computed(() => {
+  if (props.context !== 'broadcast') return ''
+  const n = selectedRow.value?.taggedUriButtons ?? 0
+  if (!n) return ''
+  return `提醒：這個模組裡有 ${n} 顆網址按鈕開了「啟用貼標」，但推播是一次寄給一群人、認不出是誰點的，所以那個貼標在推播裡不會生效（客人從圖文選單或別的模組按進去時才會）。想知道誰有興趣的話，改用「觸發模組」那種按鈕就記得到。`
 })
 
 const defaultEmptyText = computed(() =>

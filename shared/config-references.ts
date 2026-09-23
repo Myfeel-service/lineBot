@@ -68,10 +68,21 @@ export const CONFIG_REF_KIND_HINT: Record<ConfigRefKind, string> = {
  * 哪幾種頁面吃得到 `?id=`（＝連結按下去會**直接打開那一筆**，不是只把人丟在清單上）。
  *
  * ⛔ **沒做的頁面絕對不要先加進來**：帶一個那頁根本不看的參數，人點過去還是落在清單上，
- *    卻會以為自己按錯了。`D-86` 先做了機器人模組那一頁（`openFlowFromQuery`），
- *    其餘五頁維持只連到頁面——要加的時候，先讓那一頁真的吃 `?id=`，再改這裡。
+ *    卻會以為自己按錯了——那就退回老闆抱怨過的「看起來可點卻沒用」。
+ *    要加的時候，**先讓那一頁真的吃 `?id=`，再改這裡**。
+ *
+ * 2026-09-23（`C-237`）六種全開：
+ *   機器人模組走 `openFlowFromQuery`（那一頁一次載入完整清單）；
+ *   其餘五頁走 `useAdminDeepLink`（後端分頁，要一直往下翻到找到為止）。
  */
-const KINDS_WITH_DEEP_LINK: ReadonlySet<ConfigRefKind> = new Set<ConfigRefKind>(['flow'])
+const KINDS_WITH_DEEP_LINK: ReadonlySet<ConfigRefKind> = new Set<ConfigRefKind>([
+  'flow',
+  'richmenu',
+  'script',
+  'campaign',
+  'broadcast',
+  'supportPreset',
+])
 
 export function configRefPath(workspaceId: string, kind: ConfigRefKind, id?: string): string {
   const page: Record<ConfigRefKind, string> = {

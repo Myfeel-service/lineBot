@@ -188,7 +188,9 @@ const {
   listEl,
   load: loadPresets,
   onScroll: onSidebarListScroll,
+  loadUntilFound: findPresetUntilFound,
 } = useWorkspaceSidebarList<any>('/api/support-preset/list')
+const { openFromQueryId } = useAdminDeepLink()
 const modulesLoading = ref(true)
 const saving = ref(false)
 const selectedId = ref<string | null>(null)
@@ -226,10 +228,17 @@ async function loadModules() {
   modulesLoading.value = false
 }
 
-onMounted(() => {
-  loadPresets(true)
+onMounted(async () => {
+  const listed = loadPresets(true)
   loadModules()
   loadTags({ status: 'active' })
+  await listed
+  // `C-237`：網址帶 ?id= 就直接開那一筆預存
+  await openFromQueryId({
+    label: '客服預存',
+    list: { loadUntilFound: findPresetUntilFound },
+    select: item => selectPreset(item, { skipDiscardConfirm: true }),
+  })
 })
 
 function selectPreset(preset: any, opts?: { skipDiscardConfirm?: boolean }) {

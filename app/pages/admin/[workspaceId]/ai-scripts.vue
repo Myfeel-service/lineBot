@@ -815,7 +815,9 @@ const {
   listEl,
   load: loadScripts,
   onScroll: onSidebarListScroll,
+  loadUntilFound: findScriptUntilFound,
 } = useWorkspaceSidebarList<ScriptRow>('/api/ai/scripts/list')
+const { openFromQueryId } = useAdminDeepLink()
 
 const saving = ref(false)
 const selectedId = ref<string | null>(null)
@@ -2060,12 +2062,19 @@ function removeNode(id: string) {
 }
 
 // ── Load / Save / Delete ────────────────────────────────────────────
-onMounted(() => {
-  loadScripts(true)
+onMounted(async () => {
+  const listed = loadScripts(true)
   loadTags({ status: 'active' }).catch(() => {})
   // 自己有 try/catch、失敗會轉成 reachabilityState='failed'（狀態列會據此改口），不會 reject
   loadReachabilityContext()
   loadModuleOptions()
+  await listed
+  // `C-237`：網址帶 ?id= 就直接開那一條自動回應
+  await openFromQueryId({
+    label: '自動回應',
+    list: { loadUntilFound: findScriptUntilFound },
+    select: item => selectScript(item, { skipDiscardConfirm: true }),
+  })
 })
 
 /**

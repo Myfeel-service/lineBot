@@ -134,12 +134,25 @@ describe('configRefPath — 深連結只給真的吃得到 ?id= 的頁面', () =
     expect(configRefPath(WS, 'flow')).toBe(`/admin/${WS}/flow`)
   })
 
-  it('⛔ 還沒做 ?id= 的五頁，就算給了 id 也不可以掛上去', () => {
+  /**
+   * `C-237`：六種全部做完了，所以六種都掛得上。
+   * ⛔ 這一條的意義**不是**「全部都要是 true」——是「這裡宣告的，那一頁就真的要吃得到」。
+   *    以後新增類別時，先把那一頁做出來再加進 `KINDS_WITH_DEEP_LINK`，
+   *    否則人點過去只會落在清單上，那就退回「看起來可點卻沒用」。
+   */
+  it('五頁做完之後也掛得上（`C-237`）', () => {
     for (const kind of ['richmenu', 'script', 'campaign', 'broadcast', 'supportPreset'] as const) {
-      const path = configRefPath(WS, kind, 'some-id')
-      expect(path).not.toContain('?')
-      expect(configRefKindIsDeepLinkable(kind)).toBe(false)
+      expect(configRefKindIsDeepLinkable(kind)).toBe(true)
+      expect(configRefPath(WS, kind, 'some-id')).toContain('?id=some-id')
     }
+  })
+
+  it('每一類的路徑都對得上那一頁', () => {
+    expect(configRefPath(WS, 'richmenu', 'a')).toBe(`/admin/${WS}/richmenu?id=a`)
+    expect(configRefPath(WS, 'script', 'a')).toBe(`/admin/${WS}/ai-scripts?id=a`)
+    expect(configRefPath(WS, 'campaign', 'a')).toBe(`/admin/${WS}/campaigns?id=a`)
+    expect(configRefPath(WS, 'broadcast', 'a')).toBe(`/admin/${WS}/broadcasts?id=a`)
+    expect(configRefPath(WS, 'supportPreset', 'a')).toBe(`/admin/${WS}/support-presets?id=a`)
   })
 
   it('id 有特殊字元時要編碼（uuid 不會，但別人貼進來的 id 會）', () => {

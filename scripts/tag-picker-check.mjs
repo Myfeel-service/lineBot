@@ -1446,6 +1446,184 @@ async function checkFlowPicker() {
   }
 }
 
+// ── 關卡 14：另外五頁也吃 `?id=`（`C-237`）⛔ 只開頁面不存檔 ─────────────────
+/**
+ * ⚠️ 這五頁跟機器人模組那頁**不一樣**：它們是**後端分頁**的無限捲動，
+ *    要的那一筆很可能還沒載進來，所以 `useAdminDeepLink` 會一直往下翻到找到為止。
+ * ⛔ 一定要有「找不到」那一半：把「還沒翻完」講成「被刪掉了」，
+ *    人會去處理一個其實還在的東西。
+ */
+async function checkOtherPagesDeepLink() {
+  const PAGES = [
+    { path: 'richmenu', col: 'richmenus', label: '圖文選單' },
+    { path: 'broadcasts', col: 'broadcasts', label: '推播' },
+    { path: 'campaigns', col: 'leadCampaigns', label: '活動' },
+    { path: 'support-presets', col: 'supportPresets', label: '客服預存' },
+    { path: 'ai-scripts', col: 'scripts', label: '自動回應' },
+  ]
+  /**
+   * ⚠️ **六頁共用同一個瀏覽器分頁**：每一關各開一個 context 會把機器壓垮
+   * （本輪實測直接撞 90 秒導覽逾時）。這幾關彼此獨立、只是換網址，共用沒有副作用。
+   */
+  const { page, ctx } = await openLoggedInPage()
+  try {
+    for (const p of PAGES) {
+      const snap = await db.collection(p.col).where('workspaceId', '==', WORKSPACE_ID).get().catch(() => null)
+      if (!snap) { fail(`${p.label}：${p.col} 查不到＝這一關這次沒驗到`); continue }
+      /**
+       * ⭐ 取**最後一筆**：側欄一次只載 30 筆，取最後一筆才驗得到「翻到找得到」那段。
+       * ⚠️ 這裡沒有排序（省一個索引），所以只能說「不保證在第一頁」，不能說「一定不在」。
+       */
+      const rows = snap.docs.map(d => ({ id: d.id, name: String(d.data().name ?? '') })).filter(r => r.name)
+      const target = rows[rows.length - 1]
+      if (!target) { fail(`${p.label}：這個帳號沒有資料＝這一關這次沒驗到`); continue }
+
+      await gotoPage(page, p.path, '.split-list-name')
+      const before = await page.evaluate(() => !!document.querySelector('.admin-title-input .el-input__wrapper'))
+      if (before) { fail(`${p.label}：還沒帶 ?id= 就已經開著編輯器（對照組不成立）`); continue }
+
+      await page.goto(`${BASE}/admin/${WORKSPACE_ID}/${p.path}?id=${encodeURIComponent(target.id)}`, { waitUntil: 'networkidle2', timeout: 120_000 })
+      await page.waitForFunction(
+        name => document.querySelector('.admin-title-input input')?.value === name,
+        { timeout: 45_000 },
+        target.name,
+      ).catch(() => {})
+      const got = await page.evaluate(() => ({
+        name: document.querySelector('.admin-title-input input')?.value ?? '',
+        search: location.search,
+      }))
+      if (got.name !== target.name) fail(`${p.label}：?id= 沒有打開那一筆（預期「${target.name}」，畫面上是「${got.name}」）`)
+      else pass(`${p.label}：?id= 直接打開「${target.name}」`)
+      if (got.search.includes('id=')) fail(`${p.label}：?id= 開完沒有從網址收掉（還是 ${got.search}）`)
+      else pass(`${p.label}：?id= 開完就從網址收掉了`)
+    }
+
+    // ⛔ 找不到的那一半：必須講「可能已經被刪掉了」，⛔ 不可以安靜沒反應
+    await page.goto(`${BASE}/admin/${WORKSPACE_ID}/broadcasts?id=這個一定不存在`, { waitUntil: 'networkidle2', timeout: 120_000 })
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.admin-toast, [class*="toast"]')].some(e => e.textContent.trim()),
+      { timeout: 45_000 },
+    ).catch(() => {})
+    const toast = await page.evaluate(() =>
+      [...document.querySelectorAll('.admin-toast, [class*="toast"]')].map(e => e.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | '))
+    if (!toast) fail('推播：?id= 指到不存在的東西時**完全沒反應**——人會以為連結壞了')
+    else if (!toast.includes('刪掉')) fail(`推播：找不到時那句話沒講到可能被刪掉（拿到「${toast}」）`)
+    else pass(`推播：?id= 找不到時會講（「${toast.slice(0, 30)}」）`)
+  }
+  finally { await ctx.close() }
+}
+
+// ── 關卡 15：推播選到「網址按鈕開了貼標」的模組要示警（`C-238`）───────────────
+/**
+ * ⛔ 這一關的重點是**只有推播該講**：同一個模組在圖文選單那邊貼標是**有效**的，
+ *    在那裡也跳警告等於叫人關掉能用的功能。所以有正反兩半。
+ */
+async function checkBroadcastUriTagWarning() {
+  const FAKE = [
+    { id: 'fake-uritag', name: 'ZZ 測試-網址按鈕有貼標', isActive: true, messageCount: 1, taggedUriButtons: 2 },
+    { id: 'fake-plain', name: 'ZZ 測試-一般模組', isActive: true, messageCount: 1, taggedUriButtons: 0 },
+  ]
+  const pick = async (page, name) => {
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.flow-picker .el-select input')].find(e => e.getBoundingClientRect().width > 0)
+      el?.click()
+    })
+    await sleep(600)
+    const ok = await page.evaluate((n) => {
+      const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+        .find(e => e.textContent.includes(n) && e.getBoundingClientRect().width > 0)
+      if (!opt) return false
+      opt.click(); return true
+    }, name)
+    await sleep(800)
+    return ok
+  }
+  const toModuleAction = async (page) => {
+    await page.evaluate(() => {
+      const field = [...document.querySelectorAll('.admin-field-label')].find(l => l.textContent.includes('動作類型'))?.parentElement
+      field?.querySelector('.el-select input')?.click()
+    })
+    await sleep(700)
+    await page.evaluate(() => {
+      const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+        .find(e => e.textContent.trim().includes('機器人模組') && e.getBoundingClientRect().width > 0)
+      opt?.click()
+    })
+    await sleep(1200)
+  }
+  const warnOf = page => page.evaluate(() =>
+    [...document.querySelectorAll('.flow-picker__warn')].map(e => e.textContent.replace(/\s+/g, ' ').trim()).join(' | '))
+
+  // 正面：推播頁要講
+  {
+    const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
+    try {
+      await gotoPage(page, 'broadcasts', '.split-list-name')
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.el-button')].find(e => e.textContent.trim() === '新增' && e.getBoundingClientRect().width > 0)
+        b?.click()
+      })
+      await sleep(2500)
+      await toModuleAction(page)
+      if (!await pick(page, 'ZZ 測試-網址按鈕有貼標')) { fail('推播：下拉裡找不到假造的模組（攔截沒生效？這一關這次沒驗到）'); return }
+      const warn = await warnOf(page)
+      if (!warn.includes('不會生效')) fail(`推播：選到「網址按鈕開了貼標」的模組沒有示警（拿到「${warn}」）`)
+      else pass(`推播：選到「網址按鈕開了貼標」的模組會示警（「${warn.slice(0, 34)}…」）`)
+      // ⛔ 對照組：沒有那種按鈕的模組不可以也跳——否則警告會被當成雜訊
+      if (!await pick(page, 'ZZ 測試-一般模組')) fail('推播：下拉裡找不到假造的一般模組')
+      else {
+        const w2 = await warnOf(page)
+        if (w2.includes('不會生效')) fail(`推播：一般模組也跳了那句警告（「${w2.slice(0, 40)}」）——警告會變雜訊`)
+        else pass('推播：⛔ 一般模組不跳那句警告（對照組成立）')
+      }
+    }
+    finally { await ctx.close() }
+  }
+
+  // 反面：客服預存那一頁**不可以**講（那條路的貼標是有效的）
+  {
+    const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
+    try {
+      await gotoPage(page, 'support-presets', '.split-list-name')
+      const opened = await page.evaluate(() => {
+        const el = [...document.querySelectorAll('.split-list-name')].find(e => e.getBoundingClientRect().width > 0)
+        if (!el) return false
+        ;(el.closest('.split-list-item') ?? el).click(); return true
+      })
+      if (!opened) { fail('客服預存：清單上沒有東西可以點開'); return }
+      await sleep(2500)
+      await toModuleAction(page)
+      if (!await pick(page, 'ZZ 測試-網址按鈕有貼標')) { fail('客服預存：下拉裡找不到假造的模組'); return }
+      const warn = await warnOf(page)
+      if (warn.includes('不會生效')) {
+        fail(`客服預存：不該講的地方講了那句警告（「${warn.slice(0, 40)}」）——那條路的貼標是有效的`)
+      }
+      else {
+        pass('客服預存：⛔ 沒有亂跳「推播裡不會生效」那句（那條路是有效的）')
+      }
+    }
+    finally { await ctx.close() }
+  }
+}
+
+/**
+ * 跑一關，⛔ **一關爆掉不可以把整份帶走**。
+ *
+ * 2026-09-23 實測：機器上同時開著好幾個 dev server 時，`page.goto` 會撞到 90 秒逾時而**丟例外**，
+ * 於是整份守門當場中斷——後面十幾關一關都沒跑，而畫面上看起來只是「跑完了」。
+ * ⛔ 也**不可以**安靜跳過：沒驗到就是沒驗到，一律當紅的，
+ *    人才會知道「這一輪這一關沒有結論」，而不是以為它綠。
+ */
+async function runGate(title, fn) {
+  console.log(`\n${title}`)
+  try {
+    await fn()
+  }
+  catch (e) {
+    fail(`${title}：這一關中途爆掉，沒驗到（${String(e?.message ?? e).slice(0, 90)}）`)
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
   await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users', 'ai-scripts'])
@@ -1469,8 +1647,9 @@ try {
   await checkCampaignWizardPartialFailure()
   console.log('\n── 「客人加好友時」那一列（D-23）──────────')
   await checkFollowWelcomeRow()
-  console.log('\n── 選模組那一格＋?id= 深連結（D-86）────────')
-  await checkFlowPicker()
+  await runGate('── 選模組那一格＋?id= 深連結（D-86）────────', checkFlowPicker)
+  await runGate('── 另外五頁也吃 ?id=（C-237）──────────────', checkOtherPagesDeepLink)
+  await runGate('── 推播的「貼標不會生效」示警（C-238）──────', checkBroadcastUriTagWarning)
   console.log('\n── 空的「歡迎模組」已經拿掉（D-23）────────')
   await checkWelcomeModuleGone()
   console.log('\n── 推播「發完貼記號」那一格（C-213）────────')

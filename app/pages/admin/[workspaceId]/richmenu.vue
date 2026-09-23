@@ -358,7 +358,9 @@ const {
   listEl,
   load: loadMenusList,
   onScroll: onSidebarListScroll,
+  loadUntilFound: findMenuUntilFound,
 } = useWorkspaceSidebarList<any>('/api/richmenu/list')
+const { openFromQueryId } = useAdminDeepLink()
 const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 const creating = ref(false)
@@ -603,9 +605,15 @@ async function loadMenus() {
     showToast('載入圖文選單失敗', 'error')
   }
 }
-onMounted(() => {
-  loadMenus()
+onMounted(async () => {
+  await loadMenus()
   bindWindowListeners()
+  // `C-237`：網址帶 ?id= 就直接開那一張圖文選單
+  await openFromQueryId({
+    label: '圖文選單',
+    list: { loadUntilFound: findMenuUntilFound },
+    select: item => selectMenu(item, { skipDiscardConfirm: true }),
+  })
 })
 onBeforeUnmount(() => {
   unbindWindowListeners()

@@ -449,7 +449,9 @@ const {
   listEl,
   load: loadCampaigns,
   onScroll: onSidebarListScroll,
+  loadUntilFound: findCampaignUntilFound,
 } = useWorkspaceSidebarList<any>('/api/campaigns/list')
+const { openFromQueryId } = useAdminDeepLink()
 
 /**
  * C-212：精靈建好之後把清單重載、並選到剛建好的那一檔。
@@ -833,13 +835,21 @@ async function copyLiffExpectedUrl() {
 }
 
 onMounted(async () => {
-  loadCampaigns(true)
+  // ⚠️ `?id=` 要等清單真的載完才找得到，所以這一支要 await（其餘幾支維持不擋）
+  const listed = loadCampaigns(true)
   loadModules()
   loadTags({ status: 'active' })
   loadLeadErrors()
   // 先知道有沒有 LIFF ID，再去問 LINE 那顆登記對不對（後者要前者才知道要查誰）
   await loadWorkspaceEffectiveLiff()
   loadLiffChecks()
+  await listed
+  // `C-237`：網址帶 ?id= 就直接開那一檔活動
+  await openFromQueryId({
+    label: '活動',
+    list: { loadUntilFound: findCampaignUntilFound },
+    select: item => selectCampaign(item, { skipDiscardConfirm: true }),
+  })
 })
 
 // ── Select / Create ───────────────────────────────────────
