@@ -707,11 +707,35 @@
                 {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條流程）' }}
               </p>
               <template v-for="(m, i) in simLog" :key="i">
-                <div v-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
+                <!--
+                  `C-232`：送出整個模組這一步，以前只印一行「（送出機器人模組「X」的訊息）」。
+                  那是這條流程裡客人視覺上最重的一則，卻是唯一看不到的一則——現在把它真的畫出來。
+                  ⛔ 抓不到模組時由 `AdminActionPreview` 自己講，**不可以畫成空白**
+                     （那等於告訴他「這個模組是空的」）。
+                -->
+                <AdminActionPreview
+                  v-if="m.moduleId"
+                  class="scripts-sim-module"
+                  :action="{ type: 'module', moduleId: m.moduleId, text: '', uri: '' }"
+                  :module-options="moduleOptions"
+                  title=""
+                />
+                <div v-else-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
                 <div v-else class="scripts-sim-line" :class="`is-${m.who}`">
-                  <div class="scripts-sim-bubble">{{ m.text || '（空白訊息）' }}</div>
+                  <!-- ⛔ 純連結卡那一則沒有文字，不要畫出「（空白訊息）」——那是給真的漏填文字的人看的 -->
+                  <div v-if="!m.linkCard || m.text" class="scripts-sim-bubble">{{ m.text || '（空白訊息）' }}</div>
                   <div v-if="m.buttons?.length" class="scripts-sim-qr">
                     <button v-for="(b, bi) in m.buttons" :key="bi" type="button" @click="simSend(b)">{{ b || '（空白按鈕）' }}</button>
+                  </div>
+                  <!--
+                    `C-232`：回覆帶連結時**另外送一則按鈕卡**（引擎就是這樣送的，見 handler.ts）。
+                    以前只印一行字，看不出那是獨立的一則、也看不出卡片上那句話不是店家寫的。
+                    ⛔ 按鈕不可點：它在真的 LINE 裡是開網址，在試跑裡按下去什麼都不該發生。
+                  -->
+                  <div v-if="m.linkCard" class="scripts-sim-linkcard">
+                    <p class="scripts-sim-linkcard__text">{{ m.linkCard.text }}</p>
+                    <span class="scripts-sim-linkcard__btn">{{ m.linkCard.label }}</span>
+                    <span class="scripts-sim-linkcard__url">{{ m.linkCard.url }}</span>
                   </div>
                 </div>
               </template>
@@ -772,6 +796,7 @@ import type { ScriptForReachability } from '~~/shared/types/ai-script-reachabili
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 import { AUTO_REPLY_COOLDOWN_OPTIONS } from '~~/shared/auto-reply-rule'
+import { LINE_CARD_BODY_DEFAULT } from '~~/shared/line-card-copy'
 import { riskyTriggerKeywords } from '~~/shared/script-trigger-keywords'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -1344,7 +1369,15 @@ const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quic
 // ── 試跑對話：在後台假裝自己是客人，用「目前編輯中」的腳本即時模擬 ──────────
 // 直接重用後端執行時同一套純函式（renderScriptTemplate / extractCollectValue /
 // resolveBranchNext），行為與真的跑腳本一致；純預覽，不寫任何資料、無副作用。
-interface SimMsg { who: 'bot' | 'me' | 'sys'; text: string; buttons?: string[] }
+interface SimMsg {
+  who: 'bot' | 'me' | 'sys'
+  text: string
+  buttons?: string[]
+  /** `C-232`：這一步送出的是整個模組，內容由 `AdminActionPreview` 自己去抓來畫 */
+  moduleId?: string
+  /** `C-232`：回覆另外附的那一則連結按鈕卡（本文是系統帶的、按鈕文字是店家寫的） */
+  linkCard?: { text: string; label: string; url: string }
+}
 const showSim = ref(false)
 const simLog = ref<SimMsg[]>([])
 const simInput = ref('')
@@ -1404,7 +1437,23 @@ function simRun(startId: string) {
       simNodeId.value = node.id; simWaiting.value = 'quickReply'; return
     }
     if (node.type === 'module') {
-      simPush({ who: 'sys', text: `（送出機器人模組「${moduleLabel(node.moduleId)}」的訊息，流程結束）` })
+      /*
+       * `C-232`：這一步以前只印一行「（送出機器人模組「X」的訊息）」——
+       * 它是整條流程裡客人視覺上最重的一則（正式庫 71 個模組有 68 個含圖片／輪播／快速回覆），
+       * 卻是唯一看不到的一則。改成把那個模組真的抓回來畫（`moduleId` 交給樣板上的預覽元件）。
+       * ⛔ 保留一行說明：光有圖不講「流程到這裡結束」的話，看的人不知道後面還有沒有。
+       */
+      /*
+       * ⛔ **還沒選模組時不可以走預覽那條路**：`moduleId` 是空字串時樣板上的預覽不會渲染，
+       * 於是那一則掉回一般氣泡、畫成「（空白訊息）」——看起來像客人會收到一則空訊息，
+       * 但真正的問題是「這一步還沒設定完」。實機守門員第一次跑就是在這裡抓到的。
+       */
+      if (!node.moduleId) {
+        simPush({ who: 'sys', text: '（這一步還沒選要送哪一個機器人模組，客人什麼都收不到）' })
+        simDone.value = true; simWaiting.value = null; return
+      }
+      simPush({ who: 'bot', text: '', moduleId: node.moduleId })
+      simPush({ who: 'sys', text: `（以上是機器人模組「${moduleLabel(node.moduleId)}」的內容，流程結束）` })
       simDone.value = true; simWaiting.value = null; return
     }
     if (node.type === 'reply') {
@@ -1412,7 +1461,19 @@ function simRun(startId: string) {
       // 與引擎一致：有連結按鈕就多送一則帶按鈕的訊息（試跑要跟客人看到的一樣）
       const linkUrl = renderScriptTemplate(String(node.linkUrl ?? '').trim(), { collected: simCollected.value })
       if (linkUrl) {
-        simPush({ who: 'sys', text: `（另送一則連結按鈕：${String(node.linkLabel ?? '').trim() || DEFAULT_REPLY_LINK_LABEL} → ${linkUrl}）` })
+        /*
+         * `C-232`：以前只印一行字，看不出那是**獨立的一則**，也看不出卡片上那句話不是店家寫的。
+         * 畫成卡片，本文取送出端同一個常數（`handler.ts` 就是拿它當 buttons template 的 text）。
+         */
+        simPush({
+          who: 'bot',
+          text: '',
+          linkCard: {
+            text: LINE_CARD_BODY_DEFAULT,
+            label: String(node.linkLabel ?? '').trim() || DEFAULT_REPLY_LINK_LABEL,
+            url: linkUrl,
+          },
+        })
       }
       if (node.thenHandoff) simPush({ who: 'sys', text: '↳ 轉真人客服' })
       simDone.value = true; simWaiting.value = null; return

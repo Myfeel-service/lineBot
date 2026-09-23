@@ -119,6 +119,16 @@
                 uri-title="網址"
                 uri-placeholder="https://..."
               />
+              <!--
+                `C-230`：客人會看到什麼。
+                ⭐ 這一頁比推播還值得放：預存是真人客服**在跟客人聊天的當下直接點一下就送出**，
+                沒有草稿這道關卡可以擋，送錯收不回來。
+              -->
+              <AdminActionPreview
+                :action="form.action"
+                :module-options="modules"
+                empty-text="上面選好動作、填好內容之後，這裡會顯示客人在 LINE 裡看到的樣子。"
+              />
             </div>
             <div class="admin-field-group" data-tour="sp-tagging">
               <AdminFieldLabel text="啟用貼標" tight />

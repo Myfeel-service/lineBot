@@ -1,0 +1,130 @@
+/* ═══════════════════════════════════════════════════════════════
+   圖文選單「客人看到的樣子」（C-233）
+   ⛔ 這裡一個色塊都不疊——疊了它就變成第二張編輯畫布，這個功能就沒意義了。
+   配色沿用 components/_flow-preview.scss 那套 LINE 風，兩邊看起來要像同一個東西。
+═══════════════════════════════════════════════════════════════ */
+
+.rmc {
+  display: flex;
+  justify-content: center;
+}
+
+.rmc-frame {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+/* LINE 風聊天標題列（跟訊息預覽同一個綠） */
+.rmc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: #06c755;
+  color: #fff;
+}
+
+.rmc-avatar {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.24);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.rmc-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rmc-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rmc-sub {
+  font-size: 0.62rem;
+  opacity: 0.85;
+}
+
+/* 聊天區留白＝「選單佔掉下半部」那個感覺 */
+.rmc-chat {
+  min-height: 84px;
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  background: #8daccd;
+}
+
+.rmc-chat-note {
+  margin: 0;
+  text-align: center;
+  font-size: 0.64rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.rmc-menu {
+  position: relative;
+  width: 100%;
+  background: var(--bg-elevated);
+}
+
+.rmc-menu-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.rmc-menu-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* Chat Bar：客人真的會看到這幾個字 */
+.rmc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rmc-bar-caret {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.rmc-bar-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

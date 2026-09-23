@@ -159,8 +159,32 @@
                 />
               </div>
 
+              <!--
+                `C-233`：兩種看法切換。
+                ⛔ **不是拿掉編輯畫布**——那張是用來拖格子的（格子必須看得見），
+                   這張是用來看成品的（格子必須看不見）。兩件事，所以用切的不是用改的。
+              -->
+              <div v-if="form.previewUrl" class="rm-view-switch">
+                <el-radio-group v-model="rmViewMode" size="small">
+                  <el-radio-button value="edit">編輯區塊</el-radio-button>
+                  <el-radio-button value="customer">客人看到的樣子</el-radio-button>
+                </el-radio-group>
+                <span v-if="rmViewMode === 'edit'" class="text-xs text-muted">
+                  彩色格子是「按得到的範圍」，客人看不到它們
+                </span>
+              </div>
+
+              <AdminRichMenuCustomerView
+                v-if="form.previewUrl && rmViewMode === 'customer'"
+                :image-url="form.previewUrl"
+                :chat-bar-text="form.chatBarText"
+                :width="Number(form.width) || 2500"
+                :height="Number(form.height) || 843"
+                :oa-name="currentWorkspaceName"
+              />
+
               <AdminAreaEditorSection
-                v-if="form.previewUrl"
+                v-if="form.previewUrl && rmViewMode === 'edit'"
                 :areas="form.areas"
                 section-label="區塊預覽"
                 :flat="true"
@@ -184,7 +208,13 @@
                 @start-resize="startResize"
                 @clamp="clampAreaByIndex"
               />
-              <p v-else class="rm-preview-placeholder">
+              <!--
+                ⛔ 條件要看「有沒有圖」，**不可以寫成上面那塊的 `v-else`**：`C-233` 之後上面那塊
+                多了一個「現在看的是哪一面」的條件，寫 `v-else` 的話，圖明明上傳好了、
+                只是切到「客人看到的樣子」，下面就會冒出一句「上傳背景圖後…」在對他說謊。
+                （2026-09-23 截圖目檢當場抓到。）
+              -->
+              <p v-if="!form.previewUrl" class="rm-preview-placeholder">
                 可先選版型。上傳背景圖後，這裡會顯示可拖曳的區塊預覽。
               </p>
             </div>
@@ -298,7 +328,14 @@ import {
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, currentWorkspaceName } = useWorkspace()
+
+/**
+ * `C-233`：右欄看的是「編輯區塊」還是「客人看到的樣子」。
+ * ⛔ 預設停在 `edit`：這一頁的主要工作是拖格子與設定動作，
+ *    一進來就切到成品那一面，會讓人以為格子不見了。
+ */
+const rmViewMode = ref<'edit' | 'customer'>('edit')
 
 const { markClean, markDirty, confirmLeaveIfDirty } = useUnsavedChanges({
   getSnapshot: () => form.value,

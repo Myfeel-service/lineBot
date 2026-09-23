@@ -1,0 +1,57 @@
+/* ═══════════════════════════════════════════════════════════════
+   「客人會看到什麼」共用預覽（C-230／C-231／C-232）
+   客服預存、活動歡迎訊息、AI 腳本共用同一塊；手機框本身的樣式在
+   components/_flow-preview.scss，這裡只管外面那層說明與狀態列。
+═══════════════════════════════════════════════════════════════ */
+
+.aap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.aap__title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.aap__source {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.aap__note {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+}
+
+/* 「還沒選完」「正在抓」＝中性。⛔ 不用警示色：這不是壞掉 */
+.aap__note--quiet {
+  border: 1px dashed var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+/* 「抓不到」「模組是空的」＝真的要處理，但仍是提醒不是錯誤 */
+.aap__note--warn {
+  border: 1px solid var(--el-color-warning, #e6a23c);
+  background: color-mix(in srgb, var(--el-color-warning, #e6a23c) 8%, transparent);
+  color: var(--text-primary);
+}
+
+/* 共用預覽嵌在表單裡（不是 flow 那種整片側欄），所以把側欄專用的邊界與寬度拿掉 */
+.aap .fmp {
+  width: 100%;
+  max-width: 340px;
+  padding: 0;
+  border-left: 0;
+  background: transparent;
+}

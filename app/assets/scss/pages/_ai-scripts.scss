@@ -733,6 +733,52 @@
   }
 }
 
+/* 回覆另外附的那一則連結按鈕卡（`C-232`）。
+   ⛔ 長得要像「另外一則訊息」不是像氣泡底下的附註——引擎真的是分兩則送的，
+   畫成附註的話，看的人不會知道客人其實收到兩則。 */
+.scripts-sim-linkcard {
+  align-self: flex-start;
+  max-width: 88%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 14px;
+  border-bottom-left-radius: 4px;
+  background: var(--el-bg-color);
+}
+
+.scripts-sim-linkcard__text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+/* 按鈕在真的 LINE 裡是開網址；試跑裡按下去什麼都不該發生，所以不做成 <button> */
+.scripts-sim-linkcard__btn {
+  align-self: stretch;
+  text-align: center;
+  padding: 6px 12px;
+  border-top: 1px solid var(--el-border-color);
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.scripts-sim-linkcard__url {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* 送出整個模組那一步（`C-232`）：共用預覽嵌在對話流裡，靠左、跟氣泡對齊 */
+.scripts-sim-module {
+  align-self: flex-start;
+  max-width: 88%;
+}
+
 .scripts-sim-input {
   display: flex;
   gap: 8px;

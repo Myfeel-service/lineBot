@@ -388,6 +388,18 @@
                 uri-placeholder="https://..."
               />
               <p class="text-xs text-muted">可清空成「不觸發動作」；此時系統只會貼標，不會推送訊息或模組。</p>
+              <!--
+                `C-231`：客人加好友後看到的第一則。
+                ⭐ 值得放的理由是「第一印象只有一次機會」，而建活動的人以前從頭到尾看不到它長什麼樣。
+                ⛔ 選「不觸發動作」時整塊不渲染：那時本來就不會送訊息，放一塊空預覽只是噪音。
+              -->
+              <AdminActionPreview
+                v-if="form.action?.type && form.action.type !== 'none'"
+                :action="form.action"
+                :module-options="modules"
+                title="客人加好友後會看到什麼"
+                empty-text="上面選好動作、填好內容之後，這裡會顯示客人在 LINE 裡看到的樣子。"
+              />
             </div>
           </div>
         </div>

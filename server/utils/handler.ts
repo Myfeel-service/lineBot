@@ -29,10 +29,9 @@ import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } 
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX, LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
 import {
   LINE_ACTION_LABEL_MAX,
-  LINE_CARD_ALT_TEXT_URI,
   LINE_CARD_BODY_DEFAULT,
-  LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
 } from '~~/shared/line-card-copy'
+import { autoReplyActionToLineMessages } from '~~/shared/auto-reply-content'
 import { archiveConversationMedia } from './conversation-media'
 import { logHandoffEvent } from './ai-handoff-events'
 import { readInboundImage } from './media-describe'
@@ -865,40 +864,18 @@ export async function warmWorkspaceAutomationCaches(workspaceId: string): Promis
   ))
 }
 
+/*
+ * `C-228`／`C-230`：組裝本體搬到 `shared/auto-reply-content.ts`。
+ * ⛔ 這裡只剩「把變數填進去」這一層，不要再長回一份自己的文案——後台三頁
+ * （客服預存／活動／AI 腳本）的預覽吃的就是那支共用函式，兩邊各寫一份就會漂。
+ */
 function buildAutoReplyActionMessages(
   action: AutoReplyRuleShape['action'],
   attributes: Record<string, string>,
 ): messagingApi.Message[] {
-  if (action.type === 'message') {
-    return [{
-      type: 'text',
-      text: renderWithAttributes(action.text || '', attributes).slice(0, 5000),
-    } as messagingApi.TextMessage]
-  }
-
-  if (action.type === 'uri') {
-    const targetUrl = renderWithAttributes(action.uri || '', attributes)
-    /*
-     * `C-228`：文案改吃 `shared/line-card-copy.ts` 的單一來源。
-     * ⛔ 原本這裡寫死「請點擊下方連結」，推播那邊寫死「請點擊下方按鈕開啟連結。」——
-     * 同一家店的客人在不同情境會收到兩種講法，而兩邊都不是店家寫的。
-     */
-    return [{
-      type: 'template',
-      altText: LINE_CARD_ALT_TEXT_URI,
-      template: {
-        type: 'buttons',
-        text: LINE_CARD_BODY_DEFAULT,
-        actions: [{
-          type: 'uri',
-          label: LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
-          uri: targetUrl,
-        }],
-      },
-    } as messagingApi.TemplateMessage]
-  }
-
-  return []
+  return autoReplyActionToLineMessages(action, {
+    renderText: raw => renderWithAttributes(raw, attributes),
+  }) as messagingApi.Message[]
 }
 
 /**

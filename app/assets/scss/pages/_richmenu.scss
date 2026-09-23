@@ -137,6 +137,16 @@
 }
 
 /* 還沒上傳圖時右欄不留空洞：放同尺寸的虛線佔位＋下一步說明 */
+/* 「編輯區塊」／「客人看到的樣子」切換（C-233）。
+   旁邊那句說明只在編輯那一面出現——它解釋的是彩色格子，切到成品面就沒有格子可解釋了。 */
+.rm-view-switch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: var(--space-form-stack-gap);
+}
+
 .rm-preview-placeholder {
   margin: 0;
   display: flex;

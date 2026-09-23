@@ -106,6 +106,20 @@
           :allow-create="false"
           placeholder="選一個機器人模組（可打字搜尋）"
         />
+        <!--
+          `C-231`：精靈裡也看得到客人會收到什麼。
+          ⚠️ 選「用既有的模組」時，預覽會去把那個模組真的抓回來畫——⛔ 抓不到時
+             `AdminActionPreview` 自己會講「這不代表那個模組是空的」，
+             **不可以顯示空白**讓人以為挑到了一個空模組。
+          ⛔ 「先不回訊息」不渲染：那時本來就沒有訊息。
+        -->
+        <AdminActionPreview
+          v-if="wizardPreviewAction"
+          :action="wizardPreviewAction"
+          :module-options="moduleOptions"
+          title="客人加好友後會看到什麼"
+          empty-text="上面填好之後，這裡會顯示客人在 LINE 裡看到的樣子。"
+        />
         <p v-if="form.replyMode === 'newModule'" class="cwz__hint">
           會建成一個機器人模組，之後在「機器人模組」那一頁還可以加圖片、按鈕。
         </p>
@@ -180,6 +194,26 @@ const emit = defineEmits<{
 const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
 const { bumpAdminTagList } = useAdminTagRefresh()
+
+/**
+ * `C-231`：把精靈的三選一翻成預覽吃的動作形狀。
+ * - `newModule`＝等一下會拿這段文字去建一個模組，客人收到的就是這段文字 → 當成 `message`
+ * - `existingModule`＝客人收到的是那個模組的內容 → 當成 `module`（預覽會自己去抓回來）
+ * - `none`＝不送訊息 → 回 null，整塊不渲染
+ */
+const wizardPreviewAction = computed(() => {
+  if (form.replyMode === 'newModule') {
+    return form.newModuleText.trim()
+      ? { type: 'message', text: form.newModuleText, uri: '', moduleId: '' }
+      : null
+  }
+  if (form.replyMode === 'existingModule') {
+    return form.existingModuleId
+      ? { type: 'module', text: '', uri: '', moduleId: form.existingModuleId }
+      : null
+  }
+  return null
+})
 
 const tagMode = ref<'new' | 'existing'>('new')
 const form = reactive<CampaignWizardInput>({
