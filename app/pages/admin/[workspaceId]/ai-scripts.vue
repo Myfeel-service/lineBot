@@ -2072,7 +2072,7 @@ onMounted(async () => {
   // `C-237`：網址帶 ?id= 就直接開那一條自動回應
   await openFromQueryId({
     label: '自動回應',
-    list: { loadUntilFound: findScriptUntilFound },
+    list: { loadUntilFound: findScriptUntilFound, listEl },
     select: item => selectScript(item, { skipDiscardConfirm: true }),
   })
 })

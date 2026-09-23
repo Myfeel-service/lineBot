@@ -606,12 +606,19 @@ async function loadMenus() {
   }
 }
 onMounted(async () => {
-  await loadMenus()
+  /**
+   * ⛔ 綁定要在 `await` **前面**。放後面的話，清單還在載入時人就切走，
+   * `onBeforeUnmount` 會先跑完 `unbindWindowListeners()`（那時根本還沒綁），
+   * 接著被 await 擋住的這裡才把 `mousemove`／`mouseup` 掛上 window——
+   * **而且永遠不會被拿掉**，切幾次疊幾層，每一層都抓著一個已經死掉的頁面的狀態。
+   * 順帶：放後面的話，載入完成前框格也拖不動。
+   */
   bindWindowListeners()
+  await loadMenus()
   // `C-237`：網址帶 ?id= 就直接開那一張圖文選單
   await openFromQueryId({
     label: '圖文選單',
-    list: { loadUntilFound: findMenuUntilFound },
+    list: { loadUntilFound: findMenuUntilFound, listEl },
     select: item => selectMenu(item, { skipDiscardConfirm: true }),
   })
 })

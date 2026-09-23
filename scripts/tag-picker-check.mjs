@@ -90,7 +90,11 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
 async function openLoggedInPage(opts = {}) {
   const ctx = await browser.createBrowserContext()
   const page = await ctx.newPage()
-  await page.setViewport({ width: 1440, height: 1000 })
+  /**
+   * ⚠️ `viewport` 可以覆寫，是為了驗「側欄捲不捲得出那一列」：正常視窗下這個帳號的清單
+   * 一眼看得完，不捲也看得見——那樣量出來的綠是假的。壓矮視窗才逼得出真的捲動。
+   */
+  await page.setViewport(opts.viewport ?? { width: 1440, height: 1000 })
   page.on('pageerror', e => console.log('  [page error]', String(e).slice(0, 200)))
   /**
    * ⛔ **一定要接原生對話框**：這幾頁掛了「還沒存喔」的離開確認（`useUnsavedChanges`）。
@@ -1488,6 +1492,15 @@ async function checkOtherPagesDeepLink() {
         { timeout: 45_000 },
         target.name,
       ).catch(() => {})
+      /**
+       * ⚠️ 收網址走的是 `router.replace`，比「編輯器出現」晚**一點點**。
+       * 以前是編輯器一出現就瞬間讀一次 `location.search`，於是這一關會忽紅忽綠
+       * （實測同一份程式碼第一輪五頁全綠、第二輪客服預存那一頁紅）。改成等它。
+       */
+      await page.waitForFunction(
+        () => !new URLSearchParams(location.search).has('id'),
+        { timeout: 10_000 },
+      ).catch(() => {})
       const got = await page.evaluate(() => ({
         name: document.querySelector('.admin-title-input input')?.value ?? '',
         search: location.search,
@@ -1511,6 +1524,63 @@ async function checkOtherPagesDeepLink() {
     else pass(`推播：?id= 找不到時會講（「${toast.slice(0, 30)}」）`)
   }
   finally { await ctx.close() }
+
+  /**
+   * ⭐ 「**側欄要捲出那一列**」——`C-237` 規格裡的一條，上面那一圈驗不到。
+   *
+   * ⚠️ **為什麼要另外壓矮視窗**：1440×1000 之下，這個帳號的推播一頁就看得完，
+   *    那一列本來就在畫面上，`scrollTop` 永遠是 0——驗出來的綠是假的
+   *    （跟「翻頁那段在真後台一次都沒跑過」是同一種假綠燈）。
+   * ⛔ 清單如果矮到根本不需要捲，這一關要說「沒驗到」，不可以印綠的。
+   */
+  await runStep('推播：側欄捲出那一列', async () => {
+    /**
+     * ⭐ **這裡一定要照側欄的順序取最底下那一列**（`createdAt desc`，跟 `broadcast/list` 同一個查詢）。
+     * ⚠️ 上面那一圈用的是「未排序的最後一筆」——那個順序跟畫面無關：實測挑到的那則
+     *    在側欄排第 6／16，本來就在畫面上，於是共用函式照規矩「已經看得見就不動」，
+     *    而這一關卻把它判成紅的。**紅的是斷言，不是功能**。
+     */
+    const snap = await db.collection('broadcasts')
+      .where('workspaceId', '==', WORKSPACE_ID).orderBy('createdAt', 'desc').get().catch(() => null)
+    const rows = snap ? snap.docs.map(d => ({ id: d.id, name: String(d.data().name ?? '') })).filter(r => r.name) : []
+    const target = rows[rows.length - 1]
+    if (!target) { fail('側欄捲動：這個帳號沒有推播＝這一關這次沒驗到'); return }
+
+    const { page, ctx } = await openLoggedInPage({ viewport: { width: 1440, height: 620 } })
+    try {
+      await page.goto(`${BASE}/admin/${WORKSPACE_ID}/broadcasts?id=${encodeURIComponent(target.id)}`, { waitUntil: 'networkidle2', timeout: 120_000 })
+      await page.waitForFunction(
+        name => document.querySelector('.admin-title-input input')?.value === name,
+        { timeout: 45_000 },
+        target.name,
+      ).catch(() => {})
+      const m = await page.evaluate(() => {
+        const el = document.querySelector('.split-list')
+        const row = el?.querySelector('.split-list-item.active')
+        if (!el || !row) return { ok: false, reason: row ? '找不到側欄容器' : '側欄上沒有任何一列是選中的' }
+        const box = el.getBoundingClientRect()
+        const r = row.getBoundingClientRect()
+        // 那一列距離「清單內容最頂端」多遠——跟現在捲到哪裡無關，用來回答「它本來需不需要捲」
+        const offsetTop = r.top - box.top + el.scrollTop
+        return {
+          ok: true,
+          scrollable: el.scrollHeight > el.clientHeight + 1,
+          visible: r.top >= box.top - 1 && r.bottom <= box.bottom + 1,
+          scrollTop: Math.round(el.scrollTop),
+          // 不捲的話它會不會落在第一個畫面內？會的話這一關等於什麼都沒驗到
+          neededScroll: offsetTop + r.height > el.clientHeight,
+        }
+      })
+      if (!m.ok) { fail(`側欄捲動：${m.reason}＝這一關這次沒驗到`); return }
+      // ⛔ 下面兩個都是「沒驗到」而不是「過了」：不需要捲的情況下量到的綠是假的
+      if (!m.scrollable) { fail('側欄捲動：清單短到不需要捲（視窗壓得不夠矮／資料太少）＝這一關這次沒驗到'); return }
+      if (!m.neededScroll) { fail(`側欄捲動：「${target.name}」本來就落在第一個畫面裡、不捲也看得見＝這一關這次沒驗到`); return }
+      if (m.scrollTop === 0) fail(`側欄捲動：那一列要捲才看得到、但 scrollTop 還是 0——沒有被捲出來（「${target.name}」）`)
+      else if (!m.visible) fail(`側欄捲動：捲了（scrollTop=${m.scrollTop}）但那一列還是不在可視範圍裡（「${target.name}」）`)
+      else pass(`側欄捲動：那一列被捲出來了（scrollTop=${m.scrollTop}，「${target.name}」）`)
+    }
+    finally { await ctx.close() }
+  })
 }
 
 // ── 關卡 15：推播選到「網址按鈕開了貼標」的模組要示警（`C-238`）───────────────
@@ -1554,8 +1624,14 @@ async function checkBroadcastUriTagWarning() {
   const warnOf = page => page.evaluate(() =>
     [...document.querySelectorAll('.flow-picker__warn')].map(e => e.textContent.replace(/\s+/g, ' ').trim()).join(' | '))
 
+  /**
+   * ⛔ 正面與反面**各自獨立跑**。以前兩段是裸寫的區塊，裡面用 `return` 提早結束
+   * ——那個 `return` 離開的是**整個函式**，於是正面一失敗（攔截沒生效、下拉還沒 render…），
+   * 底下的反面對照組一行都沒跑、螢幕上一個字都沒印，人看到一個 ❌ 會以為對照組是過的。
+   * ⛔ 沒驗到就是沒驗到，不可以安靜跳過。
+   */
   // 正面：推播頁要講
-  {
+  await runStep('推播（正面）', async () => {
     const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
     try {
       await gotoPage(page, 'broadcasts', '.split-list-name')
@@ -1578,10 +1654,10 @@ async function checkBroadcastUriTagWarning() {
       }
     }
     finally { await ctx.close() }
-  }
+  })
 
   // 反面：客服預存那一頁**不可以**講（那條路的貼標是有效的）
-  {
+  await runStep('客服預存（反面對照組）', async () => {
     const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
     try {
       await gotoPage(page, 'support-presets', '.split-list-name')
@@ -1603,7 +1679,7 @@ async function checkBroadcastUriTagWarning() {
       }
     }
     finally { await ctx.close() }
-  }
+  })
 }
 
 /**
@@ -1624,38 +1700,49 @@ async function runGate(title, fn) {
   }
 }
 
+/**
+ * 同一關裡的**一段**（例如「正面」與「反面對照組」）。
+ *
+ * ⛔ 一段爆掉、或用 `return` 提早結束，都不可以把同一關的其他段帶走：
+ *    裸寫的區塊裡 `return` 離開的是整個函式，對照組會**安靜地一行都沒跑**，
+ *    而畫面上只看得到前一段的那個 ❌。
+ */
+async function runStep(label, fn) {
+  try {
+    await fn()
+  }
+  catch (e) {
+    fail(`${label}：這一段中途爆掉，沒驗到（${String(e?.message ?? e).slice(0, 90)}）`)
+  }
+}
+
 try {
   console.log('── 暖機（避免把「還在編譯」量成「元件壞了」）──')
   await warmup(['campaigns', 'support-presets', 'broadcasts', 'flow', 'tags', 'users', 'ai-scripts'])
-  console.log('\n── 活動標籤 ──────────────────────────────')
-  await checkCampaigns()
-  console.log('\n── 客服預存 ──────────────────────────────')
-  await checkSupportPresets()
-  console.log('\n── 推播受眾（刻意不給建立鈕）──────────────')
-  await checkBroadcastAudience()
-  console.log('\n── 一顆標籤都沒有的新帳號 ──────────────────')
-  await checkEmptyState()
-  console.log('\n── 模組「會在這些時候發出」（C-209）────────')
-  await checkModuleUsage()
-  console.log('\n── 標籤「用在哪」（C-209）──────────────────')
-  await checkTagUsage()
-  console.log('\n── 好友頁「推播給這 N 位」（C-210）─────────')
-  await checkBroadcastHandoff()
-  console.log('\n── 「一檔活動」精靈：全部成功（C-212）──────')
-  await checkCampaignWizardHappyPath()
-  console.log('\n── 「一檔活動」精靈：活動那步失敗（C-212）──')
-  await checkCampaignWizardPartialFailure()
-  console.log('\n── 「客人加好友時」那一列（D-23）──────────')
-  await checkFollowWelcomeRow()
-  await runGate('── 選模組那一格＋?id= 深連結（D-86）────────', checkFlowPicker)
-  await runGate('── 另外五頁也吃 ?id=（C-237）──────────────', checkOtherPagesDeepLink)
-  await runGate('── 推播的「貼標不會生效」示警（C-238）──────', checkBroadcastUriTagWarning)
-  console.log('\n── 空的「歡迎模組」已經拿掉（D-23）────────')
-  await checkWelcomeModuleGone()
-  console.log('\n── 推播「發完貼記號」那一格（C-213）────────')
-  await checkBroadcastCompletionTag()
-  console.log('\n── 回覆文字插得到客人名字（D-23 D）────────')
-  await checkBuiltinVariable()
+  /**
+   * ⛔ **每一關都要走 `runGate`**。以前只有最後加的三關包了，其餘十幾關是裸呼叫——
+   * 那就等於那個災情（`page.goto` 撞逾時丟例外 → 整份中斷、後面全沒跑、畫面上看起來像跑完了）
+   * 在十幾個地方原封不動地留著。改成一張表，新增關卡時只能往表裡加，加不出漏網的。
+   */
+  const GATES = [
+    ['── 活動標籤 ──────────────────────────────', checkCampaigns],
+    ['── 客服預存 ──────────────────────────────', checkSupportPresets],
+    ['── 推播受眾（刻意不給建立鈕）──────────────', checkBroadcastAudience],
+    ['── 一顆標籤都沒有的新帳號 ──────────────────', checkEmptyState],
+    ['── 模組「會在這些時候發出」（C-209）────────', checkModuleUsage],
+    ['── 標籤「用在哪」（C-209）──────────────────', checkTagUsage],
+    ['── 好友頁「推播給這 N 位」（C-210）─────────', checkBroadcastHandoff],
+    ['── 「一檔活動」精靈：全部成功（C-212）──────', checkCampaignWizardHappyPath],
+    ['── 「一檔活動」精靈：活動那步失敗（C-212）──', checkCampaignWizardPartialFailure],
+    ['── 「客人加好友時」那一列（D-23）──────────', checkFollowWelcomeRow],
+    ['── 選模組那一格＋?id= 深連結（D-86）────────', checkFlowPicker],
+    ['── 另外五頁也吃 ?id=（C-237）──────────────', checkOtherPagesDeepLink],
+    ['── 推播的「貼標不會生效」示警（C-238）──────', checkBroadcastUriTagWarning],
+    ['── 空的「歡迎模組」已經拿掉（D-23）────────', checkWelcomeModuleGone],
+    ['── 推播「發完貼記號」那一格（C-213）────────', checkBroadcastCompletionTag],
+    ['── 回覆文字插得到客人名字（D-23 D）────────', checkBuiltinVariable],
+  ]
+  for (const [title, fn] of GATES) await runGate(title, fn)
 }
 finally {
   await browser.close()

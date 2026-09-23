@@ -1371,7 +1371,7 @@ onMounted(async () => {
   // `C-237`：網址帶 ?id= 就直接開那一則（「這個東西誰在用」名單點得進來）
   await openFromQueryId({
     label: '推播',
-    list: { loadUntilFound: findBroadcastUntilFound },
+    list: { loadUntilFound: findBroadcastUntilFound, listEl },
     select: item => void selectItem(item, { skipDiscardConfirm: true }),
   })
 })

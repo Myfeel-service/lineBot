@@ -847,7 +847,7 @@ onMounted(async () => {
   // `C-237`：網址帶 ?id= 就直接開那一檔活動
   await openFromQueryId({
     label: '活動',
-    list: { loadUntilFound: findCampaignUntilFound },
+    list: { loadUntilFound: findCampaignUntilFound, listEl },
     select: item => selectCampaign(item, { skipDiscardConfirm: true }),
   })
 })

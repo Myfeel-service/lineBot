@@ -236,7 +236,7 @@ onMounted(async () => {
   // `C-237`：網址帶 ?id= 就直接開那一筆預存
   await openFromQueryId({
     label: '客服預存',
-    list: { loadUntilFound: findPresetUntilFound },
+    list: { loadUntilFound: findPresetUntilFound, listEl },
     select: item => selectPreset(item, { skipDiscardConfirm: true }),
   })
 })
