@@ -71,7 +71,7 @@
           <p v-else-if="outcomeIntegrity.truncated" class="mkt-cal__nodata">⚠️ 推播太多，只算了掃到的那一段。</p>
         </section>
 
-        <article v-for="e in entries" :key="e.festivalId" :class="['mkt-cal__item', { 'is-soon': e.soon }]">
+        <article v-for="e in visibleEntries" :key="e.festivalId" :class="['mkt-cal__item', { 'is-soon': e.soon }]">
           <header class="mkt-cal__head">
             <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
             <span class="mkt-cal__name">{{ e.name }}</span>
@@ -109,8 +109,39 @@
             >
               {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
             </el-button>
+            <!--
+              `C-236`：這一檔跟我無關。
+              ⛔ 這不是刪除：`festivalId` 含年份，明年那一檔會自己回來——按鈕的提示要講出來，
+                 不然會被當成永久刪掉而不敢按。
+            -->
+            <el-button size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
+              這次不做
+            </el-button>
           </div>
         </article>
+
+        <!--
+          收起來的那幾檔（`C-236` 鐵律①）。
+          ⛔ **一定要看得見、可以還原**：靜靜消失的話，他會以為系統漏掉那個節日。
+        -->
+        <div v-if="skippedEntries.length" class="mkt-cal__skipped">
+          <p class="mkt-cal__skipped-text">
+            {{ visibleEntries.length ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
+          </p>
+          <div class="mkt-cal__skipped-chips">
+            <el-button
+              v-for="s in skippedEntries"
+              :key="s.festivalId"
+              size="small"
+              text
+              type="primary"
+              :loading="skippingId === s.festivalId"
+              @click="restoreEntry(s)"
+            >
+              還原「{{ s.name }}」
+            </el-button>
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -119,6 +150,13 @@
 <script setup lang="ts">
 import type { CalendarEntry } from '~~/shared/marketing-calendar'
 import type { FestivalOutcome } from '~~/shared/festival-outcome'
+import {
+  allSkippedText,
+  skippedNoticeText,
+  skippedToastText,
+  splitBySkip,
+  restoredText,
+} from '~~/shared/marketing-skips'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 
 const props = defineProps<{ workspaceId: string }>()
@@ -140,6 +178,17 @@ const hasProducts = ref(true)
 const outcomes = ref<FestivalOutcome[]>([])
 const outcomeHeadline = ref('')
 const outcomeIntegrity = ref<{ truncated: boolean, failed: boolean }>({ truncated: false, failed: false })
+
+/**
+ * `C-236`：他自己收起來的那幾檔。
+ * ⛔ **在前端分堆、不在後端濾掉**：後端濾掉的話收起來的就還原不回來，那就變成靜靜消失了。
+ */
+const skippedIds = ref<string[]>([])
+const skippingId = ref('')
+const skipMap = computed<Record<string, number>>(() =>
+  Object.fromEntries(skippedIds.value.map(id => [id, 1])))
+const visibleEntries = computed(() => splitBySkip(entries.value, skipMap.value).visible)
+const skippedEntries = computed(() => splitBySkip(entries.value, skipMap.value).skipped)
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
@@ -156,6 +205,7 @@ async function reload() {
       outcomes: FestivalOutcome[]
       outcomeHeadline: string
       outcomeIntegrity: { truncated: boolean, failed: boolean }
+      skippedFestivalIds: string[]
     }>('/api/marketing-calendar')
     entries.value = r.entries ?? []
     headline.value = r.headline ?? ''
@@ -164,6 +214,7 @@ async function reload() {
     outcomes.value = r.outcomes ?? []
     outcomeHeadline.value = r.outcomeHeadline ?? ''
     outcomeIntegrity.value = r.outcomeIntegrity ?? { truncated: false, failed: false }
+    skippedIds.value = Array.isArray(r.skippedFestivalIds) ? r.skippedFestivalIds : []
     loaded.value = true
   }
   catch (e: unknown) {
@@ -197,6 +248,36 @@ const draftingId = ref('')
  * ⛔ **這裡不建立任何東西**：端點只產文字，文案暫存在 sessionStorage，
  *    由推播頁開一張**還沒存檔**的草稿——對客人說話的東西，最後一顆按鈕永遠是人。
  */
+/**
+ * `C-236`：收起來 / 放回來。
+ *
+ * ⛔ **失敗要講出來、而且畫面要退回去**：樂觀更新之後靜靜失敗的話，
+ *   他重新整理會發現那一檔又跑回來，而完全不知道發生過什麼。
+ */
+async function setSkip(e: { festivalId: string, name: string }, skip: boolean) {
+  if (skippingId.value) return
+  skippingId.value = e.festivalId
+  const before = [...skippedIds.value]
+  try {
+    const r = await apiFetch<{ skips: Record<string, number> }>('/api/marketing-calendar/skip', {
+      method: 'POST',
+      body: { festivalId: e.festivalId, skip },
+    })
+    skippedIds.value = Object.keys(r.skips ?? {})
+    ElMessage.success(skip ? skippedToastText(e.name) : restoredText(e.name))
+  }
+  catch (err: unknown) {
+    skippedIds.value = before
+    ElMessage.error((err as { data?: { statusMessage?: string } })?.data?.statusMessage || '這次沒改成功，請再試一次')
+  }
+  finally {
+    skippingId.value = ''
+  }
+}
+
+const skipEntry = (e: { festivalId: string, name: string }) => setSkip(e, true)
+const restoreEntry = (e: { festivalId: string, name: string }) => setSkip(e, false)
+
 async function goBroadcast(e: CalendarEntry) {
   if (draftingId.value) return // ⛔ 防連點：一次按兩下會打兩次 LLM
   draftingId.value = e.festivalId

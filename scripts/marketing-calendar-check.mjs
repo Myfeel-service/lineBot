@@ -123,7 +123,24 @@ function calendar(over = {}) {
     outcomes: [],
     outcomeHeadline: '',
     outcomeIntegrity: { truncated: false, failed: false },
+    skippedFestivalIds: [],
     ...over,
+  }
+}
+
+/** 多加一檔，才驗得到「收一檔、另一檔還在」 */
+function twoEntries() {
+  const base = calendar()
+  return {
+    ...base,
+    entries: [base.entries[0], {
+      ...base.entries[0],
+      festivalId: 'nationalday-2026',
+      date: '2026-10-10',
+      name: '國慶日',
+      inDays: 17,
+      soon: false,
+    }],
   }
 }
 
@@ -238,6 +255,46 @@ const PAGE = `${BASE}/admin/${WORKSPACE_ID}/conversation-stats`
   if (!r.hit) fail(`關 7：綁定版的回顧沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
   else if (r.body.includes('照日期抓的')) fail('關 7：明明對得上，卻還在說「照日期抓的」——那會讓人白白不信任準的數字')
   else pass('關 7：綁定版講得肯定，不掛多餘警語')
+  await ctx.close()
+}
+
+// ── 關 8：收起來的那一檔要從清單消失，但**要看得見、能還原**（`C-236`）──
+{
+  const two = twoEntries()
+  const { ctx, page } = await openPage(reply({ ...two, skippedFestivalIds: ['nationalday-2026'] }))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['你收起了'])
+  if (!r.hit) fail(`關 8：收起來的那一檔一聲不吭。畫面上是：${r.body.slice(0, 200)}`)
+  else if (!r.body.includes('還原「國慶日」')) fail('關 8：收起來了卻還原不回來——那就是靜靜消失')
+  else if (!r.body.includes('中秋節')) fail('關 8：收一檔卻把別檔也收掉了')
+  else pass('關 8：收起來的看得見、還原得回來，其他檔不受影響')
+  await ctx.close()
+}
+
+// ── 關 9 對照組：一檔都沒收時，那一列⛔不可以出現 ─────────────
+{
+  const { ctx, page } = await openPage(reply(twoEntries()))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['中秋節'])
+  if (!r.hit) fail(`關 9：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else if (r.body.includes('你收起了')) fail('關 9 對照組：一檔都沒收卻還畫了「你收起了」那一列')
+  else if (!r.body.includes('這次不做')) fail('關 9：每一檔都該有「這次不做」可以按')
+  else pass('關 9：沒收東西時那一列不出現（對照組成立）')
+  await ctx.close()
+}
+
+// ── 關 10：全部收光時要講「是你自己收的」，⛔ 不可以只剩一張空白卡 ──
+{
+  const two = twoEntries()
+  const { ctx, page } = await openPage(reply({
+    ...two,
+    skippedFestivalIds: ['midautumn-2026', 'nationalday-2026'],
+  }))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['都收起來了'])
+  if (!r.hit) fail(`關 10：全收光卻只剩空白。畫面上是：${r.body.slice(0, 200)}`)
+  else if (!r.body.includes('還原')) fail('關 10：全收光了卻沒有還原的出口＝死路')
+  else pass('關 10：全部收光時講得出「是你自己收的」並給出口')
   await ctx.close()
 }
 

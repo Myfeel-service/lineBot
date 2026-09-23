@@ -4,6 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
+import { getMarketingSkips } from '~~/server/utils/marketing-skips'
 import { matchAudienceTags, productKeywords, type AudienceTagLike } from '~~/shared/festival-audience'
 import { buildFestivalOutcomes, outcomeHeadline, type BroadcastOutcome } from '~~/shared/festival-outcome'
 import {
@@ -167,6 +168,8 @@ export default defineEventHandler(async (event) => {
 
   // 推播掃一趟，給「去年做過」與「上一檔的結果」共用（⛔ 不要每個節日各查一次）
   const sent = await loadSentBroadcasts(db, workspaceId)
+  // 他自己收起來的那幾檔（`C-236`）。查不到就當成沒收，⛔ 不要讓它擋住整張卡
+  const skips = await getMarketingSkips(db, workspaceId).catch(() => ({}))
 
   const skeleton = buildMarketingCalendar(today, profile, () => emptyCalendarFacts())
   const lastYear = new Map<string, { name: string, sentCount: number } | null>()
@@ -201,6 +204,12 @@ export default defineEventHandler(async (event) => {
      * ⛔ 不回這一欄的話，這張卡會安靜地一直不準。
      */
     hasProducts: products.length > 0,
+    /**
+     * `C-236`：他自己收起來的那幾檔。
+     * ⛔ **後端不過濾**，整份月曆照樣回去，由畫面決定收在哪一列——
+     *   後端濾掉的話「收起來的還原不回來」，那就變成靜靜消失了。
+     */
+    skippedFestivalIds: Object.keys(skips),
     headline: calendarHeadline(entries, ready),
     entries,
 

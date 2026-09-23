@@ -90,6 +90,27 @@
     margin-top: 10px;
   }
 
+  // 收起來的那幾檔（`C-236`）。
+  // ⛔ 語氣是「你自己收的」不是警告——但也不可以淡到看不見，那就等於消失了。
+  &__skipped {
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--el-border-color);
+  }
+
+  &__skipped-text {
+    margin: 0 0 4px;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__skipped-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
   // 「上一檔的結果」（`C-55`② / `C-240`）。
   // ⭐ 刻意跟下面的檔期卡分開一格底色：回顧講的是已經發生的事，跟「接下來要做什麼」
   //    混在一起會被讀成又一個待辦。
