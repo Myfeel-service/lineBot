@@ -46,7 +46,7 @@ const CLICK_SCAN_LIMIT = 5000
 /**
  * 把這個帳號送出過的推播**掃一趟**撈回來（含各自的點擊次數）。
  *
- * ⚠️ **2026-09-23（`C-237`）修掉這裡兩個靜默無效**，正式資料上驗出來的：
+ * ⚠️ **2026-09-23（`C-240`）修掉這裡兩個靜默無效**，正式資料上驗出來的：
  *   ① 原本查 `status == 'sent'`——但實際上的值是 **`completed`**（13 則）／`failed`／`cancelled`，
  *      **一則 `sent` 都沒有**，所以這個查詢永遠回空。
  *   ② 原本讀 `data.sentAt`——那個欄位**一則都沒有**，時間在 `completedAt`。
@@ -205,7 +205,7 @@ export default defineEventHandler(async (event) => {
     entries,
 
     /**
-     * ⭐ `C-55`②（`C-237`）：**上一檔做得怎麼樣**。沒有回顧的建議，第三個月就沒人看了。
+     * ⭐ `C-55`②（`C-240`）：**上一檔做得怎麼樣**。沒有回顧的建議，第三個月就沒人看了。
      * ⛔ 口徑：`clickTotal` 是「連結被點幾次」不是「幾個人點」——multicast 的追蹤 token
      *   裡沒有 userId，細節寫在 `shared/festival-outcome.ts` 檔頭。
      */

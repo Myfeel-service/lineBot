@@ -304,7 +304,7 @@ export interface BroadcastDoc {
    */
   completionTagIds?: string[]
   /**
-   * `C-237`：這則推播是為了哪一檔節慶發的（例：`midautumn-2026`）。
+   * `C-240`：這則推播是為了哪一檔節慶發的（例：`midautumn-2026`）。
    *
    * ⭐ **只有從「為這一檔擬推播」建立的才有**，⛔ 不要回頭猜舊資料補上去。
    *   這一欄是「知道」與「猜」的分界線：檔期回顧（`shared/festival-outcome.ts`）

@@ -235,11 +235,16 @@
               </el-radio-group>
             </div>
 
+            <!--
+              `C-238`：`flow-picker-context="broadcast"` 讓選模組那一格多講一句
+              「網址按鈕的貼標在推播裡不會生效」——⛔ 只有這一頁該講，別處那條路是有效的。
+            -->
             <AdminAreaActionEditor
               :model-value="form.contentAction"
               :module-options="flowOptions"
               :enable-card-copy="true"
               :disabled="isReadOnly"
+              flow-picker-context="broadcast"
               @update:model-value="onContentActionUpdate"
             />
             <!--
@@ -548,10 +553,18 @@ const { workspaceId, apiFetch, currentWorkspaceName } = useWorkspace()
 const { canOperate, assertCanOperate } = useAdminOperateGuard()
 
 // ── 狀態 ────────────────────────────────────────────────────────────
-const flows = ref<{ id: string; name: string; isActive?: boolean; messageCount?: number }[]>([])
+const flows = ref<{
+  id: string
+  name: string
+  isActive?: boolean
+  messageCount?: number
+  /** `C-238`：有幾顆「開了貼標的網址按鈕」——推播送出時那個貼標不會生效，要講出來 */
+  taggedUriButtons?: number
+}[]>([])
 const { tags: allTags, loadTags: loadTagOptions } = useAdminTagList()
 // C-208：這一頁不給就地建標籤（受眾是拿標籤篩人），但別頁建了之後切回來要看得到
 useAdminTagRefresh().onAdminTagListChanged(() => loadTagOptions({ status: 'active' }))
+const { openFromQueryId } = useAdminDeepLink()
 /**
  * `D-86`：別處就地建了模組，這一頁的下拉要跟著看得到（否則人會以為沒建成功）。
  * ⛔ 只重抓模組那一份，不要叫 `loadData()`：那會連推播清單一起重抓，
@@ -566,6 +579,7 @@ useAdminFlowRefresh().onAdminFlowListChanged(async () => {
     name: f.name || f.id,
     isActive: f.isActive,
     messageCount: f.messageCount,
+    taggedUriButtons: f.taggedUriButtons,
   }))
 })
 // 「只看草稿」篩選（D-43④）：list 端點本來就吃 ?status=，這裡只是把它接到畫面上
@@ -577,6 +591,7 @@ const {
   listEl,
   load: loadBroadcasts,
   onScroll: onSidebarListScroll,
+  loadUntilFound: findBroadcastUntilFound,
 } = useWorkspaceSidebarList<any>('/api/broadcast/list', () =>
   draftFilterOn.value ? { status: 'draft' } : {})
 
@@ -628,7 +643,7 @@ const defaultForm = () => ({
   /** `C-213`：發完幫收到的人貼的記號（選填） */
   completionTagIds: [] as string[],
   /**
-   * `C-237`：這則是為了哪一檔節慶發的。只有從行銷月曆「為這一檔擬推播」進來才有值。
+   * `C-240`：這則是為了哪一檔節慶發的。只有從行銷月曆「為這一檔擬推播」進來才有值。
    * ⛔ 畫面上不給編輯：它是「這則推播的來歷」，不是使用者要填的東西。
    *   有了它，檔期回顧才敢講「這一檔的成績」而不是「那段期間你發過什麼」。
    */
@@ -646,6 +661,7 @@ const flowOptions = computed(() =>
     name: f.name || f.id,
     isActive: f.isActive,
     messageCount: f.messageCount,
+    taggedUriButtons: f.taggedUriButtons,
   })),
 )
 
@@ -855,6 +871,7 @@ async function loadData() {
       name: f.name || f.id,
       isActive: f.isActive,
       messageCount: f.messageCount,
+      taggedUriButtons: f.taggedUriButtons,
     }))
     if (!tagOk) showToast('載入標籤失敗', 'error')
     syncDuePollTimer()
@@ -1290,7 +1307,7 @@ function applyDraftHandoff() {
 
   openCreate()
   form.value.name = payload.suggestedName
-  // ⭐ `C-237`：記下這則是為了哪一檔發的。沒有它，之後的檔期回顧只能照日期猜，
+  // ⭐ `C-240`：記下這則是為了哪一檔發的。沒有它，之後的檔期回顧只能照日期猜，
   //    而照日期猜會把不相干的商品檔期算成這一檔的成績。
   form.value.festivalId = payload.festivalId
   // 預設帶第一版；其餘幾版擺在編輯器上面讓他換（換了只是改文字，還是草稿）
@@ -1351,6 +1368,12 @@ onMounted(async () => {
   applyDraftHandoff()
   applyTagHandoff()
   syncDuePollTimer()
+  // `C-237`：網址帶 ?id= 就直接開那一則（「這個東西誰在用」名單點得進來）
+  await openFromQueryId({
+    label: '推播',
+    list: { loadUntilFound: findBroadcastUntilFound },
+    select: item => void selectItem(item, { skipDiscardConfirm: true }),
+  })
 })
 
 onUnmounted(() => {
