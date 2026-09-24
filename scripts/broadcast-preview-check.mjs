@@ -752,6 +752,20 @@ try {
         if (dh <= 2) pass(`⑩ 跟卡片等高（各 ${Math.round(card.height)}px）`)
         else fail('⑩ 沒有跟卡片等高', `卡片 ${Math.round(card.height)}px vs 它 ${Math.round(dock.height)}px，差 ${Math.round(dh)}px`
           + '——`align-items: stretch` 沒生效？')
+
+        /**
+         * ⭐ 「高度直接拉滿」（老闆指定）：手機外框要把那一欄的高度**吃滿**。
+         * ⛔ 只驗「等高」不夠——那一欄等高了，裡面的外框仍然可能只長到一半，
+         *    底下空一大塊白（`C-256` 當時就是這樣，肉眼才看得出來）。
+         */
+        const fb3 = wide.frameBox
+        if (!fb3) fail('⑩ 量不到手機外框')
+        else {
+          const dead = Math.round(dock.bottom - fb3.bottom)
+          if (dead <= 20) pass(`⑩ 外框把整欄的高度吃滿了（底下只剩 ${dead}px 內距）`)
+          else fail('⑩ 外框下面空了一塊', `${dead}px——聊天區沒有 `
+            + '`flex: 1` 的話，多出來的高度會變成白的')
+        }
       }
       await rmPage.setViewport(before)
       await sleep(400)

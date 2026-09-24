@@ -71,7 +71,14 @@
  * 一按下去，客人真的會收到的東西就畫在這裡。
  * ⛔ 結果不要另開面板掛在外面——客人是在**這個聊天室裡**收到訊息的。
  */
+/**
+ * ⭐ `flex: 1` 是「高度拉滿」那一下：外框多出來的高度全部給聊天區，
+ *    選單圖與 Chat Bar 維持原尺寸釘在底部——跟 LINE 一樣。
+ * ⛔ `min-height: 0` 不能拿掉：沒有它，內容多的時候這一塊會撐破外框，
+ *    捲軸跑到整頁上而不是留在聊天區裡。
+ */
 .rmc-chat {
+  flex: 1;
   min-height: 56px;
   display: grid;
   place-items: center;
@@ -84,9 +91,17 @@
   flex-direction: column;
   align-items: stretch;
   gap: 0.5rem;
-  /* 訊息多的模組會很長：給它捲軸，⛔ 不要把整個外框撐到天上去 */
-  max-height: 420px;
+  min-height: 0;
   overflow-y: auto;
+}
+
+/**
+ * 訊息**貼著底部**長（LINE 就是這樣：新的在下面、緊鄰輸入列）。
+ * ⛔ 用第一個小孩的 `margin-top: auto`，**不要用 `justify-content: flex-end`**——
+ *    那個寫法配上 `overflow-y: auto` 在部分瀏覽器會讓最上面那幾則捲不到。
+ */
+.rmc-chat.is-trying > :first-child {
+  margin-top: auto;
 }
 
 .rmc-chat-note {
@@ -315,12 +330,8 @@
   white-space: nowrap;
 }
 
-.rmc-tip {
-  margin: 0.5rem 0 0;
-  font-size: var(--fs-xs);
-  line-height: 1.6;
-  color: var(--text-muted);
-}
+/* ⛔ `C-257` 拿掉了外框底下那行「點圖上任何一格…」（`.rmc-tip`）：
+   卡片標題右邊已經寫了同一件事，而且它卡掉 28px 害「高度拉滿」看起來沒拉滿。 */
 
 /* ⛔ `C-256` 之前試按結果掛在外框**外面**（`.rmc-try`）——那是在講一件跟 LINE
    不一樣的事：客人是在聊天室裡收到訊息的。結果現在畫進 `.rmc-chat.is-trying`。 */

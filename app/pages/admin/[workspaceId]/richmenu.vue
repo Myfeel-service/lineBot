@@ -254,7 +254,7 @@
               <div class="card-header-main">
                 <span class="section-title">客人看到的樣子</span>
               </div>
-              <span class="text-xs text-muted">可以試按</span>
+              <span class="text-xs text-muted">點任何一格試按</span>
             </div>
             <div class="rm-customer-dock__body">
               <!--

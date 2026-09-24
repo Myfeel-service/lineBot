@@ -167,11 +167,30 @@
   gap: 0;
 }
 
-/* ⛔ 內容靠上、不要為了填滿高度把聊天室外框拉長：它是固定比例的，拉長就變形 */
+/**
+ * 外框**填滿整欄的高度**（2026-09-24 老闆：「高度可以直接拉滿嗎」）。
+ *
+ * ⭐ 拉滿的是**聊天區**，不是整張外框硬撐：選單那張圖有固定比例、Chat Bar 有固定高度，
+ *    撐它們會變形。多出來的高度全部給聊天區——這正好就是 LINE 的樣子
+ *    （選單釘在底部、訊息往上長）。
+ * ⛔ 每一層都要 `min-height: 0`：flex 子項的預設 `min-height: auto` 會讓它撐到內容的
+ *    高度而不是縮進容器，中間漏掉一層，捲軸就會跑到整頁上而不是聊天區裡。
+ */
 .rm-customer-dock__body {
-  padding: 1rem;
+  flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+}
+
+.rm-customer-dock__body > .rmc {
+  flex: 1;
+  min-height: 0;
+}
+
+.rm-customer-dock__body .rmc-frame {
+  flex: 1;
+  min-height: 0;
 }
 
 /* 畫布那一塊（`.rm-visual-split` 現在只剩它一個小孩，留著是為了不動它的間距節奏） */
