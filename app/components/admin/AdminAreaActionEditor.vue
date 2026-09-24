@@ -56,6 +56,16 @@
             :context="flowPickerContext"
             @update:model-value="(v) => patchAction({ moduleId: v })"
           />
+          <!--
+            `C-245`：推播選模組時，客人收到的是**模組裡的每一則訊息本身**——
+            送出端會把那張按鈕卡片整張換掉（`broadcast-send.ts`）。以前這裡照樣問
+            「卡片上要寫什麼／按鈕上要寫什麼」，店家寫的字**沒有任何客人收得到**。
+            ⛔ 只有推播這條路是這樣，所以綁 `enableCardCopy`（＝目前只有推播打開）。
+          -->
+          <p v-if="enableCardCopy" class="text-xs text-muted">
+            這則會<strong>直接送出這個模組裡的每一則訊息</strong>（最多 5 則），客人不需要點任何按鈕，
+            所以不用寫卡片文字。要改客人看到什麼，就去編輯這個模組。
+          </p>
         </div>
       </template>
 
@@ -155,7 +165,6 @@ import { computed, watch } from 'vue'
 import {
   LINE_ACTION_LABEL_MAX,
   LINE_CARD_BODY_DEFAULT,
-  LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT,
   LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
 } from '~~/shared/line-card-copy'
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX } from '~~/shared/line-text-limits'
@@ -242,20 +251,17 @@ const isTaggableAction = computed(() =>
 
 /**
  * `C-228`②：這個動作送出去時會不會變成一張按鈕卡片。
- * 只有「開啟網址」與「觸發機器人模組」會——「傳送文字」是純文字氣泡（沒有卡片也沒有按鈕），
- * 「切換選單」根本不送訊息。⛔ 在那兩種上面顯示這兩格，就是讓人填一個永遠不會出現的東西。
+ * 只有「開啟網址」會——「傳送文字」是純文字氣泡（沒有卡片也沒有按鈕），
+ * 「切換選單」根本不送訊息。⛔ 在那些上面顯示這兩格，就是讓人填一個永遠不會出現的東西。
+ *
+ * ⛔ **「觸發機器人模組」2026-09-24 拿掉了（`C-245`）**：推播的送出端會把那張卡整張換成
+ * 模組自己的訊息，所以那兩格填了**沒有任何客人收得到**——正是這兩格要消滅的那種東西，
+ * 只是換了個位置重演。⚠️ 已經存進草稿的卡片文字不用清：送出端本來就不看它。
  */
-const actionSendsCard = computed(() => {
-  const t = String(action.value?.type || '')
-  return t === 'uri' || t === 'module'
-})
+const actionSendsCard = computed(() => String(action.value?.type || '') === 'uri')
 
 /** 按鈕的灰字提示要跟送出端的預設一致，否則畫面示範的是一顆客人不會看到的按鈕 */
-const cardButtonPlaceholder = computed(() =>
-  String(action.value?.type || '') === 'module'
-    ? LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT
-    : LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
-)
+const cardButtonPlaceholder = computed(() => LINE_CARD_BUTTON_LABEL_URI_DEFAULT)
 
 function patchAction(partial: Partial<ActionShape>) {
   emit('update:modelValue', { ...props.modelValue, ...partial } as ActionShape)

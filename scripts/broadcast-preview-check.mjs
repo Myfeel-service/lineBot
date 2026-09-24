@@ -1,5 +1,11 @@
 /**
- * 推播預覽 ＋ 卡片文案兩格的實機守門員（2026-09-23，`C-228`②／`C-229`）。
+ * 推播預覽 ＋ 卡片文案兩格的實機守門員（2026-09-23，`C-228`②／`C-229`；
+ * 2026-09-24 `C-245`／`C-248` 翻修第④⑥關並加第⑪關）。
+ *
+ * ⚠️ **這支自己就是「假綠燈」的活教材**：第④關原本斷言「模組型的預覽要畫出
+ * 『點下面的按鈕看看＋開始』那張卡」，全綠了四個月——而那張卡**送出端會整張換掉**，
+ * 客人一次都沒收到過（正式庫 43 則推播裡 24 則中招）。綠燈會把錯的行為變成規格，
+ * 所以 `C-245` 改行為時，這一關跟單元測試是**一起**改的。
  *
  *   npm run dev -- --port 3318                                       # 另一個終端先跑起來
  *   CHECK_BASE_URL=http://localhost:3318 node --env-file=.env_myfeel scripts/broadcast-preview-check.mjs
@@ -12,8 +18,9 @@
  *
  * ⚠️ **連的是正式資料庫（myfeel），但全程不寫任何東西**：
  *    - 讀 `workspaceMembers` 找一個管理員登入（唯讀）
- *    - 瀏覽器只開「新增」表單並打字，⛔ **絕不按「儲存草稿」「驗證並發送」**
- *      （所以正式庫不會多出任何一則測試推播，也不會有任何客人收到訊息）
+ *    - 瀏覽器只開「新增」表單並打字，⛔ **絕不按「儲存草稿」「驗證並發送」「送出試發」**
+ *      （所以正式庫不會多出任何一則測試推播，也不會有任何客人收到訊息。
+ *      ⚠️ 試發那一關只驗「入口在、框打得開、三句話都在」，送出那一步由端點的單元測試釘）
  *    - 唯一可能被寫到的是 `adminUserPrefs/{uid}`（自動導覽的「看過了」），跑前抄下來、跑完原封還原
  *
  * ⛔ **內建對照組**：光斷言「有看到預覽」是假綠燈——選擇器寫成一個到處都在的東西也會綠。
@@ -79,10 +86,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
 
-async function openLoggedInPage(path) {
+async function openLoggedInPage(path, opts = {}) {
   const ctx = await browser.createBrowserContext()
   const page = await ctx.newPage()
   await page.setViewport({ width: 1600, height: 1100 })
+  /**
+   * `C-246`：某些關要看「詳情 API 回了某個欄位時畫面長怎樣」，而那個欄位要等到真的發一次
+   * 推播才會有（⛔ 這支腳本絕不發推播）。所以允許攔下那一支請求、換成我們自己組的回應。
+   * ⚠️ 組出來的東西要**對得上真實結構**（欄位從正式庫的那一筆讀出來再補上新欄位），
+   *    自己編一份長得不像的資料，測到的就只是一個我們自己想像的世界。
+   */
+  if (opts.interceptJson) {
+    await page.setRequestInterception(true)
+    page.on('request', (req) => {
+      const body = opts.interceptJson(req.url(), req.method())
+      if (body === undefined) return void req.continue()
+      req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    })
+  }
   page.on('pageerror', e => console.log('  [page error]', String(e).slice(0, 200)))
   /** ⛔ 一定要接原生對話框：這幾頁掛了「還沒存喔」，沒人回答會卡死整個 JS 執行緒直到 protocolTimeout */
   page.on('dialog', async d => { await d.accept().catch(() => {}) })
@@ -121,6 +142,17 @@ const probe = () => ({
   bubbleText: document.querySelector('.fmp-bubble')?.innerText?.trim() ?? '',
   buttons: [...document.querySelectorAll('.fmp-btn')].map(el => el.innerText.trim()),
   previewRaw: document.querySelector('.fmp')?.innerText ?? '',
+  /**
+   * `C-245`：模組型的預覽現在畫的是**模組自己的那幾則**，所以要數得出「畫了幾則」，
+   * 並且讀得到手機框**外面**那兩句（哪個模組、客人不用按按鈕）。
+   * ⚠️ 那兩句刻意在 `.fmp` 外面——`previewRaw` 只該是「客人在 LINE 裡看到的字」，
+   * 混進去的話「預覽裡不可以有『機器人模組』四個字」那條對照組會永遠紅。
+   */
+  rowCount: document.querySelectorAll('.fmp-row').length,
+  sourceNote: document.querySelector('.aap__source')?.innerText?.trim() ?? '',
+  readyNote: [...document.querySelectorAll('.bc-preview .aap__note')].map(el => el.innerText.trim()).join(' ｜ '),
+  emptyState: !!document.querySelector('.fmp-empty'),
+  testSendButton: [...document.querySelectorAll('.bc-testsend button')].map(el => el.innerText.trim()),
 })
 
 const hasCardCopyFields = seen =>
@@ -246,23 +278,54 @@ try {
   if (!gotModule) fail('④ 模組清單是空的，這一關驗不到')
   else console.log(`   （選到的模組：${gotModule}）`)
   await sleep(600)
+  /**
+   * ⛔ **這一關 2026-09-24（`C-245`）整個翻掉，因為它原本釘的是錯的東西**：
+   * 舊版斷言「預覽要畫出卡片『點下面的按鈕看看』＋按鈕『開始』」——而那張卡**送出端會整張
+   * 換成模組自己的訊息**，客人一次都沒收到過。全綠的守門員替一個不存在的畫面背了四個月的書。
+   * 新版釘的是：**畫出模組真正的內容**、而且**那張卡不可以再出現**。
+   */
+  await page.waitForFunction(
+    () => document.querySelectorAll('.fmp-row').length > 0 || !!document.querySelector('.aap__note--warn'),
+    { timeout: 20_000 },
+  ).catch(() => {})
   const modSeen = await page.evaluate(probe)
-  if (modSeen.buttons.includes('開始') && modSeen.cardText === '點下面的按鈕看看') {
-    pass('④ 模組卡的預設文案正確（本文同一句、按鈕「開始」）')
+
+  if (modSeen.rowCount > 0) pass(`④ 預覽畫出了模組真正的內容（${modSeen.rowCount} 則）`)
+  else fail('④ 選了模組但預覽沒有畫出任何訊息', `狀態列＝「${modSeen.readyNote}」。⚠️ 抓不到模組時本來就畫不出來，但那時必須有一句話講出來`)
+
+  /** ⭐ 整份的重點：那張沒人收到過的卡不可以再被畫出來 */
+  if (modSeen.cardText === '點下面的按鈕看看' || modSeen.buttons.includes('開始')) {
+    fail('④ 預覽又畫出那張「點下面的按鈕看看＋開始」的卡片', '送出端會把它整張換掉，客人永遠收不到這張卡')
   }
   else {
-    fail('④ 模組卡預設文案不對', `卡片本文＝「${modSeen.cardText}」、按鈕＝${JSON.stringify(modSeen.buttons)}`)
+    pass('④ 預覽沒有再畫那張客人收不到的卡片')
   }
-  /** ⭐ 這一關是整份的重點：`D-87` 挖出來的事就是這四個字跑到客人手機上 */
+
+  if (modSeen.sourceNote.includes(gotModule)) pass(`④ 講出了內容來自哪個模組（「${gotModule}」）`)
+  else fail('④ 沒有講出內容來自哪個模組', `量到的是「${modSeen.sourceNote}」`)
+
+  if (modSeen.readyNote.includes('不需要點任何按鈕')) {
+    pass('④ 講出了「客人會直接收到，不需要點任何按鈕」')
+  }
+  else {
+    fail('④ 沒有講出「客人不用按按鈕」', `量到的是「${modSeen.readyNote}」——這是推播跟別處最大的差別，不講的話等於預覽只對了一半`)
+  }
+
+  /** ⭐ 新對照組：預覽手機框裡仍然不可以有後台自用的詞（`D-87` 挖出來的那件事） */
   if (modSeen.previewRaw.includes('機器人模組')) {
-    fail('④ 預覽裡出現「機器人模組」四個字', '那是後台自用的詞，不可以送到客人眼前')
+    fail('④ 預覽手機框裡出現「機器人模組」四個字', '那是後台自用的詞，不可以送到客人眼前')
   }
   else {
-    pass('④ 預覽裡沒有「機器人模組」四個字')
+    pass('④ 預覽手機框裡沒有「機器人模組」四個字')
   }
-  /** 換類型要把上一輪打的字清掉，否則會留下一個看不到也刪不掉的殘值 */
-  if (modSeen.cardText === '中秋禮盒開賣了') fail('④ 換動作類型後，上一輪的卡片文案沒有被清掉')
-  else pass('④ 換動作類型後，上一輪打的卡片文案有被清掉')
+
+  /** ⭐ 新對照組（`C-245`）：模組型那兩格是死的，必須消失 */
+  if (hasCardCopyFields(modSeen)) {
+    fail('④ 對照組失敗：選了模組還看得到「卡片上要寫什麼／按鈕上要寫什麼」', '模組型送出端整張換掉，店家在那兩格寫的字沒有任何客人收得到')
+  }
+  else {
+    pass('④ 對照組：選了模組之後那兩格消失了')
+  }
 
   // ── ⑤ 對照組：「傳送文字」沒有卡片，那兩格必須消失 ──
   if (!await pickActionType(page, '傳送文字')) fail('找不到「傳送文字」這個選項')
@@ -281,11 +344,61 @@ try {
     fail('⑤ 純文字預覽不對', `氣泡＝「${msgSeen.bubbleText}」、按鈕＝${JSON.stringify(msgSeen.buttons)}`)
   }
 
-  // ── ⑥ 「只會送出一則訊息」那行提示 ───────────────
-  const oneMsgHint = await page.evaluate(() =>
-    document.querySelector('[data-tour="bc-content"]')?.innerText?.includes('只會送出一則訊息') ?? false)
-  if (oneMsgHint) pass('⑥ 畫面上講了「一則推播只會送出一則訊息」（F-9）')
-  else fail('⑥ 沒有講「只會送出一則訊息」', '想發圖＋文字的人會在這頁一直找加第二則的地方')
+  // ── ⑥ 「一次送得出幾則」那行提示 ───────────────
+  /**
+   * ⚠️ `C-245`：原本釘的是「一則推播只會送出一則訊息」——**那句話是錯的**。
+   * 選模組時送出端會把模組裡的每一則都送出去（上限 5 則），正式庫 24 則模組型推播
+   * 常態就是「圖文訊息＋一段文字」兩則。現在釘的是改過之後的講法。
+   */
+  const hintText = await page.evaluate(() =>
+    document.querySelector('[data-tour="bc-content"]')?.innerText ?? '')
+  if (hintText.includes('自己在這裡打的字') && hintText.includes('每一則都會直接送到客人手機上')) {
+    pass('⑥ 畫面上把「打的字只送一則、選模組會送出整組」講對了')
+  }
+  else {
+    fail('⑥ 沒有把「一次送得出幾則」講對', '想發圖＋文字的人會在這頁一直找加第二則的地方')
+  }
+  if (hintText.includes('一則推播只會送出一則訊息')) {
+    fail('⑥ 畫面上還留著「一則推播只會送出一則訊息」', '那句話是錯的：選模組時送得出最多 5 則')
+  }
+  else {
+    pass('⑥ 對照組：那句錯的話已經不在畫面上')
+  }
+
+  // ── ⑪ 試發一則給自己（`C-248`）──────────────────
+  //    ⚠️ 編號跳到 ⑪：⑦ 已經是「隱藏預覽」那一關了（同一份裡不要有兩個 ⑦）
+  /**
+   * ⛔ **這一關絕對不可以真的按「送出試發」**：那會真的推一則訊息到某個人的手機上。
+   * 只驗「入口在、框打得開、三句話都在」；送出那一步由端點的單元測試釘。
+   */
+  const testEntry = await page.evaluate(probe)
+  if (testEntry.testSendButton.some(t => t.includes('試發'))) {
+    pass('⑪ 「試發一則給自己看」的入口有出現在訊息內容那張卡裡')
+  }
+  else {
+    fail('⑪ 找不到試發的入口','沒有它，店家只能建一則真的推播來試打（正式庫已經有 15 則這種紀錄）')
+  }
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.bc-testsend button')].find(el => el.innerText.includes('試發'))
+    btn?.click()
+  })
+  await sleep(900)
+  const dialogText = await page.evaluate(() =>
+    document.querySelector('.bc-dialog-testsend')?.innerText ?? '')
+  const promises = [
+    ['真的會送到／內容一樣', dialogText.includes('完全一樣')],
+    ['不帶點擊追蹤', dialogText.includes('不帶點擊追蹤')],
+    ['只有好友收得到', dialogText.includes('好友')],
+  ]
+  for (const [what, ok] of promises) {
+    if (ok) pass(`⑪ 試發框講了：${what}`)
+    else fail(`⑪ 試發框沒講：${what}`,`量到的內容＝「${dialogText.slice(0, 120)}…」`)
+  }
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.bc-dialog-testsend button')].find(el => el.innerText.trim() === '關閉')
+    btn?.click()
+  })
+  await sleep(500)
 
   // ── ⑨ 超過 5000 字：被丟掉的那一段一定要講出來 ─────
   /**
@@ -349,6 +462,97 @@ try {
   else pass('⑦ 對照組：按「隱藏預覽」之後預覽真的不見了')
 
   await page.close()
+
+  // ══ ⑫⑬ 已發送的推播：回頭查「我那天到底發了什麼」（`C-246`）══════
+  /**
+   * 兩種情況要長得不一樣，而且**都不可以假裝自己知道**：
+   *   ⑫ 2026-09-24 以前送的 → 沒有留存，只能畫模組**現在**的樣子，且必須講明白
+   *   ⑬ 之後送的 → 畫當時存下來的那一份
+   * ⚠️ ⑬ 沒辦法靠「真的發一則」來驗（這支腳本絕不發推播），所以把正式庫那一筆讀出來、
+   *    補上 `sentContent` 再餵回頁面——結構來自真實資料，只有新欄位是我們加的。
+   */
+  console.log('\n── 已發送的推播：那天到底發了什麼（C-246）────────')
+  const sentSnap = await db.collection('broadcasts')
+    .where('workspaceId', '==', WORKSPACE_ID)
+    .where('status', '==', 'completed')
+    .get()
+  const moduleSent = sentSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .find((b) => {
+      const m = Array.isArray(b.messages) && b.messages.length === 1 ? b.messages[0] : null
+      const a = m?.template?.type === 'buttons' ? m.template.actions?.[0] : null
+      return typeof a?.data === 'string' && a.data.startsWith('triggerModule=')
+    })
+
+  if (!moduleSent) {
+    console.log('⚠️ 這個工作區沒有「已發送的模組型推播」，⑫⑬ 跳過（不算過也不算不過）')
+  }
+  else {
+    const sentModuleId = moduleSent.messages[0].template.actions[0].data.slice('triggerModule='.length).split('&')[0]
+    const flowSnap = await db.collection('flows').doc(sentModuleId).get()
+    const flowData = flowSnap.exists ? flowSnap.data() : null
+
+    // ⑫ 沒有留存的那一種
+    const oldPage = await openLoggedInPage(`/admin/${WORKSPACE_ID}/broadcasts?id=${moduleSent.id}`)
+    await oldPage.waitForSelector('[data-tour="bc-content"]', { timeout: 60_000 }).catch(() => {})
+    await sleep(2500)
+    const oldSeen = await oldPage.evaluate(probe)
+    if (oldSeen.readyNote.includes('沒有留存當時送出去的內容')) {
+      pass('⑫ 舊推播：講明白了「當時的內容沒有留存，這是模組現在的樣子」')
+    }
+    else {
+      fail('⑫ 舊推播沒講「這不是當時的內容」', `量到的是「${oldSeen.readyNote}」——拿現在的內容假裝是當時的，就是另一種說謊`)
+    }
+    if (oldSeen.testSendButton.length === 0) pass('⑫ 對照組：已發送的推播沒有試發入口（沒東西可試了）')
+    else fail('⑫ 已發送的推播居然還有試發入口', JSON.stringify(oldSeen.testSendButton))
+    await oldPage.close()
+
+    // ⑬ 有留存的那一種
+    if (!flowData?.messages?.length) {
+      console.log('⚠️ 那一則指向的模組查不到或是空的，⑬ 跳過')
+    }
+    else {
+      const patched = {
+        ...moduleSent,
+        audienceSnapshot: { filter: null, estimatedCount: moduleSent.audienceSnapshot?.estimatedCount ?? 0, resolvedUserIds: [] },
+        sentContent: {
+          kind: 'module',
+          moduleId: sentModuleId,
+          moduleName: String(flowData.name ?? ''),
+          messages: flowData.messages,
+          lineMessageCount: flowData.messages.length,
+        },
+      }
+      const newPage = await openLoggedInPage(`/admin/${WORKSPACE_ID}/broadcasts?id=${moduleSent.id}`, {
+        interceptJson: (url, method) =>
+          (method === 'GET' && url.includes(`/api/broadcast/${moduleSent.id}`) && !url.includes('/report'))
+            ? patched
+            : undefined,
+      })
+      await newPage.waitForSelector('[data-tour="bc-content"]', { timeout: 60_000 }).catch(() => {})
+      await sleep(2500)
+      const newSeen = await newPage.evaluate(probe)
+      if (newSeen.sourceNote.includes('當時真的送出去')) {
+        pass(`⑬ 有留存時，畫的是當時那一份（${newSeen.rowCount} 則、模組「${patched.sentContent.moduleName}」）`)
+      }
+      else {
+        fail('⑬ 有留存卻沒有畫出「當時真的送出去的那一份」', `量到的是「${newSeen.sourceNote}」`)
+      }
+      if (newSeen.rowCount !== flowData.messages.length) {
+        fail('⑬ 畫出來的則數跟留存的對不上', `留存 ${flowData.messages.length} 則、畫了 ${newSeen.rowCount} 則`)
+      }
+      else {
+        pass(`⑬ 則數對得上（${newSeen.rowCount} 則）`)
+      }
+      if (newSeen.readyNote.includes('沒有留存')) {
+        fail('⑬ 對照組失敗：已經有留存了還在講「沒有留存」')
+      }
+      else {
+        pass('⑬ 對照組：有留存時就不再講「沒有留存」')
+      }
+      await newPage.close()
+    }
+  }
 
   // ══ 圖文選單頁：同一支元件，但那兩格不該出現 ══════════════════
   console.log('\n── 圖文選單：同一支動作編輯器，但不該有那兩格 ────────')

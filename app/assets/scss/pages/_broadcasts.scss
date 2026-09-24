@@ -24,6 +24,61 @@
   max-height: 100dvh;
 }
 
+/* `C-245`：模組型／已送出這兩條路，預覽外面多一層（說明句 ＋ 手機框），
+   所以**面板的外觀要搬到外層那一層**，手機框在裡面撐滿。
+   ⛔ 不可以讓兩層都畫邊界與內距：那會變成框裡面又一個框。 */
+.bc-preview--panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 372px;
+  flex-shrink: 0;
+  min-height: 0;             /* 裡面的聊天區才捲得動（模組可以有 5 則，畫起來很高） */
+  padding: 1rem;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+}
+
+/* `C-248`：試發那一列（按鈕 ＋ 一句「這會真的送出去」）。
+   ⛔ 不用主色按鈕：主色留給「驗證並發送」，兩顆都搶眼就等於都不搶眼。 */
+.bc-testsend {
+  display: flex;
+  flex-wrap: wrap;       /* 窄視窗時說明文字換行，不要把按鈕擠沒（`C-178` 的教訓） */
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.bc-testsend .text-xs {
+  flex: 1 1 14rem;
+  min-width: 0;
+  line-height: 1.6;
+}
+
+.bc-testsend-select {
+  width: 100%;
+}
+
+.bc-testsend-done {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.bc-preview--panel .fmp {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border-left: 0;
+}
+
 /* 節慶行銷提醒（2026-08-28 拍板：不再只在 LINE）——側欄清單頂上的一行。
    ⛔不用警示色：這不是異常，紅橘是留給「壞掉」的。中性淡底＋一般字色，
    跟小幫手裡那張節慶卡同一族（components/_tutorial-agent.scss 的 .ta-festival）。 */

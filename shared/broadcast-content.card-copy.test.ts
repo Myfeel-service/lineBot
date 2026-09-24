@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractBroadcastTriggerModuleId,
   lineMessagesToPreviewMessages,
   parseLineMessagesToUnifiedAction,
   unifiedActionToLineMessages,
@@ -162,18 +163,49 @@ describe('讀回編輯器：舊草稿不可以把系統代寫的話當成店家�
  * `H-27` 的教訓是預覽在說謊比沒有預覽更糟，所以預覽只能從「真正要送出的訊息」反推。
  */
 describe('推播預覽：畫出來的必須就是要送出去的', () => {
-  it('⭐ 店家一個字都沒寫時，預覽要照樣顯示系統套進去的預設文案', () => {
+  /**
+   * `C-245`：**這一組原本釘的是錯的東西**。
+   *
+   * 舊測試斷言「模組型的預覽要畫出卡片『點下面的按鈕看看』＋按鈕『開始』」，而那張卡
+   * **送出端會整張換掉**（`extractBroadcastTriggerModuleId` 一認出來就改送模組自己的訊息）。
+   * 於是單元測試與 17 關實機守門員雙雙全綠，替一個**客人一次都沒收到過的畫面**背書——
+   * 正式庫 43 則推播裡 24 則中招。綠燈會把錯的行為變成規格，所以改行為一定要連測試一起改。
+   */
+  it('⭐ 模組型：送出端會整張換掉，所以「這則是不是模組型」要認得出來', () => {
     const sent = unifiedActionToLineMessages(
       normalizeUnifiedAction({ type: 'module', moduleId: 'm1' }, 'A'),
     )
-    const preview = lineMessagesToPreviewMessages(sent)
+    // 預覽端與送出端讀同一支：認出來＝去把那個模組的內容抓回來畫，不要畫這張卡
+    expect(extractBroadcastTriggerModuleId(sent)).toBe('m1')
+  })
 
-    // 這條才是重點：以前這句話只存在於送出端，畫面上一個字都看不到
-    expect(preview).toEqual([{
-      type: 'text',
-      text: LINE_CARD_BODY_DEFAULT,
-      buttons: [{ label: LINE_CARD_BUTTON_LABEL_MODULE_DEFAULT }],
-    }])
+  it('⛔ 純文字與開啟網址不可以被誤判成模組型（它們送出去的就是自己那一則）', () => {
+    expect(extractBroadcastTriggerModuleId(unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'message', text: '今天公休' }, 'A'),
+    ))).toBe('')
+    expect(extractBroadcastTriggerModuleId(unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'uri', uri: 'https://example.com' }, 'A'),
+    ))).toBe('')
+  })
+
+  it('⛔ 判斷條件要跟送出端一字不差：多一則、多一顆按鈕、不是 triggerModule 都不算', () => {
+    const modCard = unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'module', moduleId: 'm1' }, 'A'),
+    )
+    // 兩則（送出端只在「剛好一則」時才換）
+    expect(extractBroadcastTriggerModuleId([...modCard, { type: 'text', text: 'hi' }])).toBe('')
+    // 同一張卡但兩顆按鈕
+    const tpl = modCard[0]!.template as { actions: unknown[] }
+    expect(extractBroadcastTriggerModuleId([{
+      ...modCard[0],
+      template: { ...tpl, actions: [...tpl.actions, { type: 'postback', label: 'x', data: 'triggerModule=m2' }] },
+    }])).toBe('')
+    // postback 但不是觸發模組
+    expect(extractBroadcastTriggerModuleId([{
+      type: 'template',
+      template: { type: 'buttons', text: 'x', actions: [{ type: 'postback', label: 'x', data: 'switchMenu=m1' }] },
+    }])).toBe('')
+    expect(extractBroadcastTriggerModuleId(null)).toBe('')
   })
 
   it('預覽的每一個字都來自送出端（不是照表單另外算一次）', () => {

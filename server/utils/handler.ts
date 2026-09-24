@@ -1887,7 +1887,7 @@ export async function renderModuleToLineMessages(
     userId?: string
     attributes?: Record<string, string>
   },
-): Promise<{ flow: FlowDoc; lineMessages: messagingApi.Message[] } | null> {
+): Promise<{ flow: FlowDoc; lineMessages: messagingApi.Message[]; hydratedMessages: any[] } | null> {
   const wid = requireWorkspaceId(options.workspaceId, 'renderModuleToLineMessages')
   const flow = await getFlowByModuleId(moduleId)
   if (!flow) return null
@@ -1900,7 +1900,12 @@ export async function renderModuleToLineMessages(
     options.userId || '',
     channelSecret,
   )
-  return { flow, lineMessages }
+  /**
+   * `C-246`：連**編輯器格式的那一份**一起交出來（圖文訊息已塞進 `payload`）。
+   * 推播送出時要把它存起來當「那天到底發了什麼」的答案——後台的預覽元件讀的是這個格式，
+   * 存 LINE API 格式回頭只會看到一排畫不出來的型別名。
+   */
+  return { flow, lineMessages, hydratedMessages }
 }
 
 

@@ -5,7 +5,12 @@ import { wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
 import { multicastMessage } from './line'
 import { renderModuleToLineMessages } from './handler'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
-import { parseTriggerModuleData } from '~~/shared/action-schema'
+/**
+ * ⛔ 「這則推播會不會被換成模組內容」的判斷**不在這支檔案裡自己寫一份**（`C-245`）：
+ * 後台預覽要靠同一個判斷決定「要畫卡片還是畫模組內容」，兩邊各寫一份就會漂開，
+ * 而漂開的結果就是 `C-229` 那個畫了四個月、客人一次都沒收到的預覽。
+ */
+import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
 import { addTagsToUser } from './tagging'
@@ -14,19 +19,6 @@ import { planAllowsBroadcast, type BroadcastTier } from '~~/shared/billing/plans
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
 import { BROADCAST_ALL_RECIPIENTS_FAILED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
-
-function extractTriggerModuleId(messages: any[]): string {
-  if (!Array.isArray(messages) || messages.length !== 1) return ''
-  const first = messages[0] as Record<string, any>
-  if (!first || first.type !== 'template') return ''
-  const template = first.template as Record<string, any>
-  if (!template || template.type !== 'buttons') return ''
-  const actions = Array.isArray(template.actions) ? template.actions : []
-  if (actions.length !== 1) return ''
-  const action = actions[0] as Record<string, any>
-  if (!action || action.type !== 'postback' || typeof action.data !== 'string') return ''
-  return parseTriggerModuleData(action.data).moduleId
-}
 
 export type ExecuteBroadcastSendOptions = {
   /** manual：後台立即發送（僅 draft）；scheduler：Cron 到期排程 */
@@ -143,19 +135,19 @@ export async function executeBroadcastSend(
       throw new Error('Resolved audience is empty')
     }
 
-    // ── 寫入受眾快照（status 已在 claim 時改為 processing）────────────
-    const snapshotAt = FieldValue.serverTimestamp()
-    await ref.update({
-      totalCount: resolvedUserIds.length,
-      'audienceSnapshot.resolvedUserIds': resolvedUserIds,
-      'audienceSnapshot.estimatedCount': resolvedUserIds.length,
-      updatedAt: snapshotAt,
-    })
-
-    // ── 呼叫 LINE multicast API ──────────────────────────────────────
+    // ── 組出「真正要送出去的那幾則」──────────────────────────────────
     const clickOrigin = String(runtimeConfig.clickTrackingBaseUrl || '').trim().replace(/\/$/, '')
-    const triggerModuleId = extractTriggerModuleId(data.messages)
+    const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
     let outboundMessages = data.messages
+    /**
+     * `C-246`：把**真的送出去的那幾則**留下來。
+     *
+     * ⛔ 不留的話，「我那天到底發了什麼」永遠沒有答案：`broadcasts.messages` 存的是那張
+     * 會被換掉的卡片，真正的內容在 `flows` 裡而模組**隨時會被改、沒有版本**。
+     * ⚠️ 只有模組型才寫：非模組型的 `messages` 本身就是送出去的那一份，再存一份只會多一個
+     * 可能漂掉的拷貝。
+     */
+    let sentContent: Record<string, unknown> | null = null
     if (triggerModuleId) {
       const rendered = await renderModuleToLineMessages(triggerModuleId, {
         workspaceId,
@@ -165,7 +157,32 @@ export async function executeBroadcastSend(
         throw new Error(`Broadcast module not found or empty: ${triggerModuleId}`)
       }
       outboundMessages = rendered.lineMessages as any[]
+      sentContent = {
+        kind: 'module',
+        moduleId: triggerModuleId,
+        moduleName: String((rendered.flow as { name?: string })?.name || ''),
+        /**
+         * 存**編輯器格式**（圖文訊息已把當時的圖與熱區塞進 `payload`），因為後台的預覽元件
+         * 讀的就是這個格式；存 LINE API 格式的話，回頭看只會看到一堆畫不出來的型別名。
+         * ⛔ `undefined` 一定要先清掉——firebase-admin 沒開 `ignoreUndefinedProperties`，
+         * 帶著 `undefined` 寫入會整筆丟例外，而這時訊息可能已經送出去了。
+         */
+        messages: JSON.parse(JSON.stringify(rendered.hydratedMessages ?? [])),
+        lineMessageCount: rendered.lineMessages.length,
+      }
     }
+
+    // ── 寫入受眾快照（status 已在 claim 時改為 processing）────────────
+    const snapshotAt = FieldValue.serverTimestamp()
+    await ref.update({
+      totalCount: resolvedUserIds.length,
+      'audienceSnapshot.resolvedUserIds': resolvedUserIds,
+      'audienceSnapshot.estimatedCount': resolvedUserIds.length,
+      ...(sentContent ? { sentContent: { ...sentContent, at: snapshotAt } } : {}),
+      updatedAt: snapshotAt,
+    })
+
+    // ── 呼叫 LINE multicast API ──────────────────────────────────────
 
     const messagesForLine = clickOrigin.startsWith('http')
       ? wrapBroadcastMessagesForClickTracking(outboundMessages, id, clickOrigin)

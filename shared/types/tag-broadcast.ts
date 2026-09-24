@@ -292,6 +292,29 @@ export interface BroadcastDoc {
   /** LINE messagingApi.Message[] 快照 */
   messages: any[]
   /**
+   * `C-246`（2026-09-24）：**那天到底發了什麼**。
+   *
+   * ⛔ 為什麼 `messages` 不夠：選「觸發機器人模組」時，`messages` 存的是一張
+   * 「點下面的按鈕看看＋開始」的卡片，而送出端會在送出前**整張換成那個模組的訊息**
+   * （`server/utils/broadcast-send.ts`）。真正的內容在 `flows` 裡，而模組隨時會被編輯、
+   * 沒有版本——所以發完一個月後回頭看，後台畫得出來的是一張從沒送出去的卡。
+   *
+   * ⚠️ 只有模組型會寫（其他型的 `messages` 本身就是送出去的那一份）。
+   * ⚠️ 2026-09-24 以前送出的推播沒有這一欄，畫面上要照實講「當時的內容沒有留存」，
+   *    ⛔ 不可以拿模組現在的內容假裝是當時的。
+   * ⛔ 這一欄**不跟著清單 API 回**（一則好幾 KB），只在詳情 API 給。
+   */
+  sentContent?: {
+    kind: 'module'
+    moduleId: string
+    moduleName: string
+    /** 編輯器格式（圖文訊息的內容已塞進 `payload`），後台預覽元件直接看得懂 */
+    messages: any[]
+    /** 實際送給 LINE 的則數 */
+    lineMessageCount: number
+    at?: any
+  }
+  /**
    * 發送成功後，要幫**真的收到的人**貼上的標籤（`C-213`，2026-09-22）。選填。
    *
    * 為什麼要有：推播發完以前不留任何記號，所以「上次收過製冰機通知的是哪些人」查不到——

@@ -42,6 +42,13 @@
       <p v-if="moduleName" class="aap__source">
         送出的是機器人模組「<b>{{ moduleName }}</b>」的內容：
       </p>
+      <!--
+        `C-245`：讓呼叫端在「畫得出來了」這個狀態補一句自己的話。
+        ⛔ 存在的理由不是彈性，是**推播跟這三頁的事實不一樣**：客服預存／活動／腳本那三處，
+        客人是按了什麼才收到模組；推播是**直接送到手機上、不用按任何東西**，
+        而這件事只有推播那一頁講得出來。⛔ 不要為此另寫一支預覽元件。
+      -->
+      <slot name="ready-note" :count="previewMessages.length" />
       <FlowMessagePreview
         :messages="previewMessages"
         :rich-messages="richMessages"

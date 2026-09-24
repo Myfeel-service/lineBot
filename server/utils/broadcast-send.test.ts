@@ -17,6 +17,7 @@ vi.mock('./broadcast-click-track', () => ({
 }))
 
 import { executeBroadcastSend } from './broadcast-send'
+import { renderModuleToLineMessages } from './handler'
 import { getDb } from './firebase'
 import { multicastMessage } from './line'
 import { claimBroadcastForSend } from './broadcast-claim'
@@ -84,6 +85,8 @@ beforeEach(() => {
   mockGetDb.mockReset()
   mockMulticast.mockReset()
   mockClaim.mockReset()
+  // ⛔ 模組渲染也要重設：上一條的回傳值留著的話，下一條會在「沒選模組」的情境下拿到內容
+  vi.mocked(renderModuleToLineMessages).mockReset()
 })
 
 describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () => {
@@ -258,5 +261,107 @@ describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () 
     const final = lastStatusPatch(updates)!
     expect(final.lineAggregationUnit).toBeNull()
     expect(final.lineInsightAggregationApplied).toBe(false)
+  })
+})
+
+/**
+ * `C-245`／`C-246`：**送出去的到底是哪一份**。
+ *
+ * 這一組是整件事的地基：推播存的那張「觸發模組」卡片，送出前會被整張換成模組自己的訊息，
+ * 而後台的預覽在 2026-09-24 之前畫的是那張**沒人收到過的卡**。這裡釘住兩件事：
+ *   ① 換掉這件事真的會發生（拿掉替換 → 這組要當場紅）
+ *   ② 換完的那一份要存進推播紀錄，否則「我那天發了什麼」沒有答案
+ */
+describe('executeBroadcastSend — 模組型推播送的是模組的內容，而且要留存', () => {
+  /** 模組型推播存的就是這張卡（`unifiedActionToLineMessages` 產的形狀） */
+  const moduleCard = [{
+    type: 'template',
+    altText: '有一則訊息',
+    template: {
+      type: 'buttons',
+      text: '點下面的按鈕看看',
+      actions: [{ type: 'postback', label: '開始', data: 'triggerModule=mod_abc' }],
+    },
+  }]
+
+  function claimModuleBroadcast() {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: moduleCard,
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1'] },
+    } as any)
+  }
+
+  it('⭐ 客人收到的是模組裡那幾則，那張卡一個字都不會送出去', async () => {
+    claimModuleBroadcast()
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue({
+      flow: { name: '乾淨方MAX＿超早鳥倒數' },
+      lineMessages: [{ type: 'imagemap' }, { type: 'text', text: '倒數最後 3 天' }],
+      hydratedMessages: [{ type: 'richMessageRef', richMessageId: 'r1', payload: { heroImageUrl: 'https://x/y.png' } }, { type: 'text', text: '倒數最後 3 天' }],
+    } as any)
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    const sent = mockMulticast.mock.calls[0]![1] as any[]
+    expect(sent).toHaveLength(2)
+    expect(sent[0]).toMatchObject({ type: 'imagemap' })
+    // ⛔ 這一條是重點：那張卡不可以出現在送出去的東西裡
+    expect(JSON.stringify(sent)).not.toContain('點下面的按鈕看看')
+    expect(JSON.stringify(sent)).not.toContain('triggerModule')
+  })
+
+  it('⭐ 送出當下把「真的送出去的那一份」存進推播紀錄（編輯器格式，圖文訊息連內容一起）', async () => {
+    claimModuleBroadcast()
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue({
+      flow: { name: '乾淨方MAX＿超早鳥倒數' },
+      lineMessages: [{ type: 'imagemap' }, { type: 'text', text: '倒數最後 3 天' }],
+      hydratedMessages: [
+        { type: 'richMessageRef', richMessageId: 'r1', payload: { heroImageUrl: 'https://x/y.png', heroImageWidth: undefined } },
+        { type: 'text', text: '倒數最後 3 天' },
+      ],
+    } as any)
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    const { updates } = makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    const snapshotPatch = updates.find(u => 'sentContent' in u)!
+    expect(snapshotPatch).toBeDefined()
+    expect(snapshotPatch.sentContent).toMatchObject({
+      kind: 'module',
+      moduleId: 'mod_abc',
+      moduleName: '乾淨方MAX＿超早鳥倒數',
+      lineMessageCount: 2,
+    })
+    // ⛔ `undefined` 要被清掉：firebase-admin 沒開 ignoreUndefinedProperties，帶著它整筆寫入會炸
+    expect(JSON.stringify(snapshotPatch.sentContent)).not.toContain('undefined')
+    expect(snapshotPatch.sentContent.messages[0]).toMatchObject({
+      type: 'richMessageRef',
+      payload: { heroImageUrl: 'https://x/y.png' },
+    })
+  })
+
+  it('模組查不到／是空的 → 在送出之前就失敗，一則都不會送', async () => {
+    claimModuleBroadcast()
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue(null as any)
+    makeDb()
+
+    await expect(executeBroadcastSend('bc1')).rejects.toThrow()
+    expect(mockMulticast).not.toHaveBeenCalled()
+  })
+
+  it('⛔ 純文字推播不走這條路：照原樣送，也不寫留存（`messages` 本身就是送出去的那一份）', async () => {
+    claimReturns(['w1_U1'])
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    const { updates } = makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    expect(renderModuleToLineMessages).not.toHaveBeenCalled()
+    expect(mockMulticast.mock.calls[0]![1]).toEqual([{ type: 'text', text: 'hi' }])
+    expect(updates.find(u => 'sentContent' in u)).toBeUndefined()
   })
 })

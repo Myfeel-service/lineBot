@@ -144,6 +144,34 @@ export function unifiedActionToLineMessages(action: UnifiedAction): Record<strin
 }
 
 /**
+ * 這一則推播**會不會在送出當下被整份換成某個模組的內容**——回模組 id，不是的話回空字串。
+ *
+ * ⛔ **這支是單一事實來源，預覽端與送出端必須讀同一份**（`C-245`，2026-09-24）。
+ * 原本這段邏輯只活在 `server/utils/broadcast-send.ts` 裡，後台完全不知道它存在，
+ * 於是 `C-229` 的預覽照著 `unifiedActionToLineMessages()` 的輸出畫了一張
+ * 「點下面的按鈕看看＋開始」的卡片——而那張卡在送出前會被整張丟掉，
+ * **正式庫 43 則推播裡 24 則中招，沒有任何一位客人收過那張卡**。
+ * 預覽在說謊比沒有預覽更糟（`H-27`），而說謊的原因就是「兩邊各自判斷」。
+ *
+ * ⚠️ 判斷條件要跟送出端**一字不差**（只有一則、是按鈕範本、只有一顆按鈕、
+ * 那顆是 `triggerModule=` 的 postback）——放寬任何一條，預覽就會在某個邊角再次對不上。
+ */
+export function extractBroadcastTriggerModuleId(
+  messages: unknown[] | null | undefined,
+): string {
+  if (!Array.isArray(messages) || messages.length !== 1) return ''
+  const first = messages[0] as Record<string, unknown> | null
+  if (!first || typeof first !== 'object' || first.type !== 'template') return ''
+  const template = first.template as Record<string, unknown> | undefined
+  if (!template || template.type !== 'buttons') return ''
+  const actions = Array.isArray(template.actions) ? template.actions : []
+  if (actions.length !== 1) return ''
+  const action = actions[0] as Record<string, unknown> | null
+  if (!action || action.type !== 'postback' || typeof action.data !== 'string') return ''
+  return decodeTriggerModule(action.data)
+}
+
+/**
  * `C-229`：把「真正要送出去的那幾則訊息」翻成右側預覽吃的形狀。
  *
  * ⭐ **刻意是從送出結果反推，不是照表單另外算一次**。推播的預覽只要有第二條路算，

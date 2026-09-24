@@ -183,6 +183,13 @@ function flexAspect(msg: any): string {
 // richMessageRef 需要用 id 去清單查出實際內容；richMessage 本身即內容
 function resolved(msg: any): any {
   if (msg.type === 'richMessageRef') {
+    /*
+     * `C-246`：訊息自己帶著 `payload` 時**優先用它**。
+     * 推播送出時會把當時的圖文訊息連內容一起存進推播紀錄（送出端 hydrate 過的那一份），
+     * 回頭查「我那天發了什麼」畫的必須是**當時那張圖**；改用現在的清單去查，
+     * 圖被換過就會畫出一張從來沒送出去的圖，等於換個地方繼續說謊。
+     */
+    if (msg.payload && typeof msg.payload === 'object') return msg.payload
     return (props.richMessages || []).find((r: any) => r.id === msg.richMessageId) || null
   }
   return msg

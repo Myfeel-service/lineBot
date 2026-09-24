@@ -248,15 +248,29 @@
               @update:model-value="onContentActionUpdate"
             />
             <!--
-              `C-229`：一次只送得出一則（`F-9`）。這件事以前畫面上一個字都沒有，
-              想發「圖＋文字＋按鈕」的人只會在這一頁一直找加第二則的地方、找不到。
+              這件事以前畫面上一個字都沒有，想發「圖＋文字＋按鈕」的人只會在這一頁一直找、找不到。
               ⛔ 不是警告色：這不是故障，是這個功能就長這樣，而且指得出正確的做法。
+
+              ⚠️ `C-245`：**原本這句寫「一則推播只會送出一則訊息」，那是錯的**——選「觸發機器人
+              模組」時，送出端會把模組裡的每一則都直接送出去（上限 5 則），正式庫 24 則模組型推播
+              常態就是「圖文訊息＋一段文字」兩則。`F-9` 那條的結論（要多則就去建模組）沒有變。
             -->
             <p class="bc-click-hint text-muted">
-              一則推播<b>只會送出一則訊息</b>。要一次送圖片、好幾段文字或多顆按鈕，
+              自己在這裡打的字<b>只會送出一則</b>。要一次送圖片、好幾段文字或多顆按鈕，
               請先到「<NuxtLink :to="`/admin/${workspaceId}/flow`" class="link">機器人模組</NuxtLink>」把那一組訊息做好，
-              這裡再選「觸發機器人模組」。
+              這裡再選「觸發機器人模組」——<b>模組裡的每一則都會直接送到客人手機上</b>（最多 5 則）。
             </p>
+            <!--
+              `C-248`：先發一則給自己看。
+              ⛔ 放在「訊息內容」這張卡裡，不放在頁首那排按鈕旁邊——人要試的是**內容**，
+              而頁首那排的旁邊就是「驗證並發送」，兩顆長得太近會按錯，而按錯的那一顆收不回來。
+            -->
+            <div v-if="!isReadOnly && canOperate" class="bc-testsend">
+              <el-button size="small" @click="openTestSend">試發一則給自己看</el-button>
+              <span class="text-xs text-muted">
+                真的會送到那支手機。<b>不會</b>算進成效報表、<b>不會</b>貼記號、<b>不會</b>改變這則推播的狀態。
+              </span>
+            </div>
             <!-- ⛔ 這段以前把四個環境變數名（PUBLIC_BASE_URL…）與 /api/r 攤在店家面前（`D-82`）：
                  店家看不懂、也不可能自己去設，讀完只會更怕。技術細節留在這裡給工程人員看就好，
                  畫面只講「哪些數字算得到、哪些算不到、算不到要找誰」。
@@ -409,20 +423,115 @@
       </div>
 
       <!--
-        `C-229`：即時預覽。吃的是 `unifiedActionToLineMessages` **真正要送出去的那一則**
-        （見 `lineMessagesToPreviewMessages`），不是照表單另外算一次——照表單另算的話，
-        系統套進去的預設文案在預覽裡看不到，等於換個地方繼續騙人。
-        ⛔ 已發送／已取消的推播也要看得到：那時人正在回頭查「我那天到底發了什麼」。
+        即時預覽。⛔ 已發送／已取消的推播也要看得到：那時人正在回頭查「我那天到底發了什麼」。
+
+        `C-245`（2026-09-24）**修掉一個畫了四個月、客人一次都沒收到的預覽**：
+        選「觸發機器人模組」時，`unifiedActionToLineMessages()` 組出來的那張
+        「點下面的按鈕看看＋開始」卡片，**送出端會在送出前整張換成模組自己的那幾則訊息**
+        （`broadcast-send.ts`，2026-05-07 起）。所以這裡分三條路，判斷用的是**送出端同一支**
+        `extractBroadcastTriggerModuleId()`：
+          ① 已送出且有留存 → 畫**當時真的送出去的那一份**（`C-246` 的快照）
+          ② 模組型 → 用共用的 `AdminActionPreview` 把那個模組**真的抓回來畫**（三態它自己講）
+          ③ 純文字／開啟網址 → 原本就是對的，原封不動
+        ⛔ 不要為了推播另寫第二套預覽元件（`H-27`：預覽在說謊比沒有預覽更糟）。
       -->
-      <FlowMessagePreview
-        v-if="previewOpen"
-        class="bc-preview"
-        :messages="previewMessages"
-        :oa-name="currentWorkspaceName"
-      />
+      <template v-if="previewOpen">
+        <!-- ① 已送出，而且當時的內容有留存 -->
+        <div v-if="sentContentMessages.length" class="bc-preview bc-preview--panel">
+          <p class="aap__source">
+            這是<b>當時真的送出去</b>的 {{ sentContentMessages.length }} 則{{ sentContentModuleName ? `（機器人模組「${sentContentModuleName}」）` : '' }}：
+          </p>
+          <FlowMessagePreview :messages="sentContentMessages" :oa-name="currentWorkspaceName" />
+        </div>
+
+        <!-- ② 觸發機器人模組：去把那個模組真的抓回來畫 -->
+        <AdminActionPreview
+          v-else-if="previewModuleId"
+          class="bc-preview bc-preview--panel"
+          :action="{ type: 'module', moduleId: previewModuleId, text: '', uri: '' }"
+          :module-options="flowOptions"
+          title=""
+        >
+          <template #ready-note="{ count }">
+            <!-- ⛔ 這句只有推播講得出來：別處是客人按了才收到，推播是直接送到手機上 -->
+            <p v-if="isReadOnly" class="aap__note aap__note--warn">
+              這則推播<b>沒有留存當時送出去的內容</b>（2026-09-24 之前送出的都沒有），
+              上面畫的是那個模組<b>現在</b>的樣子，中間可能已經被改過。
+            </p>
+            <p v-else class="aap__note aap__note--quiet">
+              客人會<b>直接收到這 {{ count }} 則</b>，不需要點任何按鈕。
+            </p>
+          </template>
+        </AdminActionPreview>
+
+        <!-- ③ 純文字／開啟網址：送出端不會動它，原樣畫 -->
+        <FlowMessagePreview
+          v-else
+          class="bc-preview"
+          :messages="previewMessages"
+          :oa-name="currentWorkspaceName"
+        />
+      </template>
       </div>
     </template>
   </AdminSplitLayout>
+
+  <!--
+    `C-248`：試發一則給自己看。
+    ⛔ 三件事一定要寫在這個框裡（都是人在按下去前會想知道、按下去後才知道就太遲的）：
+    ①真的會送到 ②跟正式發送內容一樣 ③不會影響任何帳。
+  -->
+  <el-dialog v-model="testSendVisible" class="bc-dialog-testsend" title="試發一則給自己看" width="min(440px, 92vw)">
+    <div class="admin-field-stack">
+      <div class="admin-field-group">
+        <AdminFieldLabel text="要發給誰" tight />
+        <el-select
+          v-model="testSendUserId"
+          filterable
+          remote
+          allow-create
+          default-first-option
+          reserve-keyword
+          :remote-method="searchTestFriends"
+          :loading="testFriendsLoading"
+          placeholder="打名字搜尋好友，或直接貼上 U 開頭的編號"
+          class="bc-testsend-select"
+        >
+          <el-option
+            v-for="u in testFriends"
+            :key="u.lineUserId"
+            :label="u.displayName || u.lineUserId"
+            :value="u.lineUserId"
+          />
+        </el-select>
+        <p class="text-xs text-muted">
+          只有<b>已經加過這個官方帳號好友</b>的人收得到（LINE 的限制）。
+          找不到人的話，到「<NuxtLink :to="`/admin/${workspaceId}/users`" class="link">好友</NuxtLink>」頁點開他、按「複製 ID」貼進來。
+        </p>
+      </div>
+
+      <p class="tags-hint">
+        送出的內容跟正式發送<b>完全一樣</b>（選了機器人模組的話，送的就是模組裡那幾則）。
+        ⛔ 但試發<b>不帶點擊追蹤</b>，所以他點了連結不會算進這則推播的成效。
+      </p>
+      <p v-if="hasUnsavedChanges || isCreating" class="tags-hint">
+        有還沒儲存的變更——按下去會<b>先幫你存成草稿</b>，再用存好的那一份試發（才不會試到舊內容）。
+      </p>
+
+      <div v-if="testSendDone" class="bc-testsend-done">
+        已送出 {{ testSendDone.messageCount }} 則給
+        <b>{{ testSendDone.displayName || testSendDone.lineUserId }}</b>{{ testSendDone.moduleName ? `（機器人模組「${testSendDone.moduleName}」的內容）` : '' }}。
+        去手機上看一眼，沒問題再回來發。
+      </div>
+      <p v-if="testSendError" class="bc-dialog-footer__error">{{ testSendError }}</p>
+    </div>
+    <template #footer>
+      <div class="bc-dialog-footer__actions">
+        <el-button @click="testSendVisible = false">關閉</el-button>
+        <el-button type="primary" :loading="testSending" @click="submitTestSend">送出試發</el-button>
+      </div>
+    </template>
+  </el-dialog>
 
   <!-- 驗證 / 發送確認 Dialog -->
   <el-dialog v-model="validateDialogVisible" class="bc-dialog-validate" :title="validateDialogTitle" width="min(440px, 92vw)">
@@ -479,6 +588,7 @@ import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
 import {
+  extractBroadcastTriggerModuleId,
   lineMessagesToPreviewMessages,
   parseLineMessagesToUnifiedAction,
   unifiedActionToLineMessages,
@@ -751,12 +861,123 @@ function buildMessages(): Record<string, unknown>[] {
 }
 
 /**
- * `C-229`：右側預覽吃的內容。
- * ⭐ 走的是 `buildMessages()`——**跟按下「發送」時送出去的完全是同一份**。
+ * `C-229`：右側預覽吃的內容（**純文字／開啟網址**這兩條路）。
+ * ⭐ 走的是 `buildMessages()`——這兩型送出端不會動它，所以畫出來的就是客人收到的。
  * ⛔ 不要改成照 `form.contentAction` 另外拼一份給預覽看：那樣系統套進去的預設文案
  * （「點下面的按鈕看看」那句）就不會出現在預覽裡，等於換個地方繼續騙人。
  */
 const previewMessages = computed(() => lineMessagesToPreviewMessages(buildMessages()))
+
+/**
+ * `C-245`：這一則會不會在送出當下被整份換成某個模組的內容。
+ * ⭐ **用送出端同一支函式判斷**（`extractBroadcastTriggerModuleId`），不是看
+ * `form.contentAction.type`——後者是「店家選了什麼」，前者才是「送出去會發生什麼」。
+ * 兩者現在一致，但只要送出端哪天多一個條件，照表單判斷的那邊就會再次默默對不上。
+ */
+const previewModuleId = computed(() => extractBroadcastTriggerModuleId(buildMessages()))
+
+/**
+ * `C-246`：已送出的推播回頭看時，畫的是**當時真的送出去的那一份**（送出端存下來的）。
+ * ⚠️ 2026-09-24 之前送出的推播沒有這份資料，`sentContentMessages` 會是空陣列——
+ * 那時走模組那條路畫「現在的內容」，⛔ 但畫面上一定要講「這不是當時的」。
+ */
+/**
+ * ⚠️ 這一份**只從詳情 API 來，不從列表來**：留存的內容含圖文訊息的整份設定，
+ * 一則就好幾 KB。跟著列表一起回，等於每次開頁、每次背景刷新都把幾十則的內容全部搬一次
+ * （`docs/ADMIN-PERF-AUDIT-20260827.md` 已經為了同樣的事瘦過一次身）。
+ */
+const detailSentContent = ref<Record<string, any> | null>(null)
+const sentContent = computed(() => detailSentContent.value)
+const sentContentMessages = computed<any[]>(() => {
+  const msgs = sentContent.value?.messages
+  return Array.isArray(msgs) ? msgs : []
+})
+const sentContentModuleName = computed(() => String(sentContent.value?.moduleName ?? ''))
+
+// ── `C-248`：試發一則給自己看 ──────────────────────────────────────
+const testSendVisible = ref(false)
+const testSending = ref(false)
+const testSendError = ref('')
+const testSendDone = ref<{ messageCount: number; moduleName: string; lineUserId: string; displayName: string } | null>(null)
+const testSendUserId = ref('')
+const testFriends = ref<Array<{ lineUserId: string; displayName: string }>>([])
+const testFriendsLoading = ref(false)
+
+/** 記住上次試發給誰：⛔ 每次都要重找同一個人，等於每次都要再去好友頁複製一次 ID */
+const TEST_SEND_LS_KEY = computed(() => `bc-test-send-to:${workspaceId.value}`)
+
+async function searchTestFriends(keyword?: string) {
+  testFriendsLoading.value = true
+  try {
+    const params = new URLSearchParams({ limit: '20' })
+    const kw = String(keyword || '').trim()
+    if (kw) params.set('search', kw)
+    const res = await apiFetch<{ users?: Array<{ lineUserId?: string; displayName?: string }> }>(`/api/users/list?${params.toString()}`)
+    testFriends.value = (res?.users ?? [])
+      .map(u => ({ lineUserId: String(u.lineUserId || ''), displayName: String(u.displayName || '') }))
+      .filter(u => u.lineUserId)
+  }
+  catch {
+    // ⛔ 清單抓不到不等於不能試發：貼 ID 那條路還在，所以只是沒有候選，不報錯
+    testFriends.value = []
+  }
+  finally {
+    testFriendsLoading.value = false
+  }
+}
+
+function openTestSend() {
+  if (!assertCanOperate()) return
+  testSendError.value = ''
+  testSendDone.value = null
+  if (!testSendUserId.value) {
+    try { testSendUserId.value = localStorage.getItem(TEST_SEND_LS_KEY.value) || '' }
+    catch { /* 無痕視窗讀不到就算了，只是少一個方便 */ }
+  }
+  testSendVisible.value = true
+  void searchTestFriends()
+}
+
+async function submitTestSend() {
+  const to = testSendUserId.value.trim()
+  testSendError.value = ''
+  testSendDone.value = null
+  if (!to) {
+    testSendError.value = '請先選一位好友，或貼上 LINE User ID'
+    return
+  }
+  testSending.value = true
+  try {
+    /*
+     * ⛔ **一定要先存**：試發端點送的是**存在資料庫裡的那一份**。
+     * 不先存的話，改了內容卻試到舊的——那正是這一輪在修的那種謊。
+     */
+    if (isCreating.value || hasUnsavedChanges.value) {
+      const saved = await saveDraft()
+      if (!saved) {
+        testSendError.value = '草稿沒有存成功，所以沒有試發（不然試到的會是舊內容）'
+        return
+      }
+    }
+    if (!selectedId.value) {
+      testSendError.value = '找不到這則推播，請重新整理再試'
+      return
+    }
+    const res = await apiFetch<{ messageCount: number; moduleName: string; lineUserId: string; displayName: string }>(
+      `/api/broadcast/${selectedId.value}/test-send`,
+      { method: 'POST', body: { lineUserId: to } },
+    )
+    testSendDone.value = res
+    try { localStorage.setItem(TEST_SEND_LS_KEY.value, to) }
+    catch { /* 存不進去只是下次要重選 */ }
+  }
+  catch (e: any) {
+    testSendError.value = e?.data?.statusMessage || '試發失敗，請稍後再試'
+  }
+  finally {
+    testSending.value = false
+  }
+}
 
 /**
  * 預覽預設打開（與機器人模組頁一致）。
@@ -767,6 +988,12 @@ const previewOpen = ref(true)
 
 function loadFormFromItem(item: any) {
   const src = item.audienceSource ?? {}
+  /*
+   * `C-246`：把「當時真的送出去的那一份」收下來（只有詳情 API 有）。
+   * ⛔ 一定要**每次都覆寫**（沒有就設成 null）：不覆寫的話，看完一則有留存的推播、
+   * 再點一則沒留存的，右邊會繼續畫上一則的內容——而人完全不會知道那是舊的。
+   */
+  detailSentContent.value = item.sentContent ?? null
   form.value = {
     name: item.name ?? '',
     audienceType: src.type ?? 'all',
@@ -896,6 +1123,7 @@ function openCreate() {
   isCreating.value = true
   selectedId.value = null
   report.value = null
+  detailSentContent.value = null   // ⛔ 新建的當然沒有「當時送出去的內容」
   form.value = defaultForm()
   markClean()
 }
