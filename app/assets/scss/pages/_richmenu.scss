@@ -136,16 +136,48 @@
   margin-bottom: 0;
 }
 
-/* 還沒上傳圖時右欄不留空洞：放同尺寸的虛線佔位＋下一步說明 */
-/* 「編輯區塊」／「客人看到的樣子」切換（C-233）。
-   旁邊那句說明只在編輯那一面出現——它解釋的是彩色格子，切到成品面就沒有格子可解釋了。 */
-.rm-view-switch {
+/* 拖格子的畫布｜客人看到的樣子，並排（C-243；C-233 原本是切換鈕）。
+ *
+ * ⛔ **不要改回 grid ＋ container query 的固定斷點**：這一塊的可用寬度同時被
+ *    三件事決定（視窗寬、AdminShell 側欄、可拖曳的清單側欄），2026-09-24 實測
+ *    1280/1440/1600/1920/2560 五種視窗，卡片寬是 760/920/1080/1400/2040——
+ *    任何一個寫死的門檻都會在其中一台上猜錯。改用 flex 自己折行：
+ *    擠不下就自動變上下排，門檻＝兩個 flex-basis 加起來（≈676px）。
+ * ⭐ 畫布 `max-width: 860px`（見上面 .canvas-wrap）：grid 版在 2560px 下左軌吃到 1306，
+ *    畫布卻只長到 860，中間開了一個 446px 的洞。flex 不會——多的空間留在最後面。 */
+.rm-visual-split {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 0.5rem 0.75rem;
-  margin-bottom: var(--space-form-stack-gap);
+  align-items: flex-start;
+  gap: 1rem;
 }
+
+/* 拖格子那張：吃掉剩下的寬度（拖曳要夠大才抓得準），上限沿用 .canvas-wrap 的 860 */
+.rm-visual-split > .rm-section-card {
+  flex: 1 1 360px;
+  min-width: 0;
+  max-width: 860px;
+}
+
+/* 成品那張：`.rmc-frame` 自己鎖 320px，給再多也不會變寬，所以不讓它 grow */
+.rm-visual-split__customer {
+  flex: 0 1 300px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section-heading-gap);
+}
+
+/* ⛔ 不要置中：折成上下排時置中會讓成品框飄到中間，跟上面靠左的畫布對不齊 */
+.rm-visual-split__customer .rmc {
+  justify-content: flex-start;
+}
+
+.rm-visual-hint {
+  margin: 0;
+}
+
+/* 還沒上傳圖時右欄不留空洞：放同尺寸的虛線佔位＋下一步說明 */
 
 .rm-preview-placeholder {
   margin: 0;

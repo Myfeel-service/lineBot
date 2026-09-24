@@ -376,50 +376,109 @@ try {
     if (rmSeen.labels.some(t => t.includes('動作類型'))) pass('⑧ 對照組：圖文選單的動作編輯器確實開著')
     else fail('⑧ 對照組失敗：圖文選單的編輯器沒開起來，上面那關等於沒驗到')
 
-    // ── ⑩ `C-233`：切到「客人看到的樣子」──────────────
-    const hasSwitch = await rmPage.evaluate(() => !!document.querySelector('.rm-view-switch'))
-    if (!hasSwitch) {
-      console.log('⚠️ 這個選單沒有背景圖，⑩ 跳過（兩種看法的切換要有圖才出現）')
+    // ── ⑩ `C-233`＋`C-243`：編輯畫布與「客人看到的樣子」並排 ──────
+    const hasSplit = await rmPage.evaluate(() => !!document.querySelector('.rm-visual-split'))
+    if (!hasSplit) {
+      console.log('⚠️ 這個選單沒有背景圖，⑩ 跳過（兩張都要有圖才出現）')
     }
     else {
-      /** 對照組：預設停在「編輯區塊」＝看得到彩色格子、看不到成品框 */
-      const editFirst = await rmPage.evaluate(() => ({
-        canvas: !!document.querySelector('.canvas-area'),
-        customer: !!document.querySelector('.rmc-frame'),
-      }))
-      if (editFirst.canvas && !editFirst.customer) pass('⑩ 對照組：預設停在「編輯區塊」，看得到彩色格子')
-      else fail('⑩ 對照組失敗：預設不是編輯區塊', JSON.stringify(editFirst))
-
-      await rmPage.evaluate(() => {
-        const btn = [...document.querySelectorAll('.rm-view-switch .el-radio-button')]
-          .find(b => b.innerText.includes('客人看到的樣子'))
-        ;(btn?.querySelector('input') ?? btn)?.click()
+      const both = await rmPage.evaluate(() => {
+        const split = document.querySelector('.rm-visual-split')
+        const canvas = split?.querySelector('.canvas-wrap')
+        const frame = split?.querySelector('.rmc-frame')
+        const box = (el) => {
+          const b = el?.getBoundingClientRect()
+          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width } : null
+        }
+        return {
+          pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+          canvasAreas: document.querySelectorAll('.canvas-area').length,
+          frame: !!frame,
+          hasImg: !!document.querySelector('.rmc-menu-img'),
+          /** ⭐ 這一關是 C-233 的全部重點：成品那一張**一個彩色格子都不可以有** */
+          overlays: document.querySelectorAll('.rmc-frame .canvas-area').length,
+          barText: document.querySelector('.rmc-bar-text')?.innerText?.trim() ?? '',
+          /** 圖已經上傳了，卻還掛著「上傳背景圖後…」＝在對他說謊（截圖目檢抓到過） */
+          lyingPlaceholder: !!document.querySelector('.rm-preview-placeholder'),
+          /** ⛔ 切換鈕不可以復活：`C-243` 的整件事就是「不用按就兩張都看得到」 */
+          switchBack: !!document.querySelector('.rm-view-switch'),
+          canvasBox: box(canvas),
+          frameBox: box(frame),
+        }
       })
-      await sleep(600)
-      const customerView = await rmPage.evaluate(() => ({
-        frame: !!document.querySelector('.rmc-frame'),
-        /** ⭐ 這一關是 C-233 的全部重點：成品那一面**一個彩色格子都不可以有** */
-        overlays: document.querySelectorAll('.rmc-frame .canvas-area').length,
-        stillEditing: !!document.querySelector('.canvas-area'),
-        barText: document.querySelector('.rmc-bar-text')?.innerText?.trim() ?? '',
-        hasImg: !!document.querySelector('.rmc-menu-img'),
-        /** 圖已經上傳了，卻還掛著「上傳背景圖後…」＝在對他說謊（截圖目檢抓到的） */
-        lyingPlaceholder: !!document.querySelector('.rm-preview-placeholder'),
-      }))
-      if (customerView.frame && customerView.hasImg) pass('⑩ 切得到「客人看到的樣子」，圖有畫出來')
-      else fail('⑩ 切過去之後沒有畫出成品框或圖', JSON.stringify(customerView))
 
-      if (customerView.overlays === 0 && !customerView.stillEditing) {
-        pass('⑩ 成品那一面沒有任何彩色格子（店家終於看得到那張圖乾淨的樣子）')
+      if (both.canvasAreas > 0 && both.frame && both.hasImg) {
+        pass(`⑩ 編輯畫布（${both.canvasAreas} 個格子）與成品預覽同時在畫面上`)
       }
       else {
-        fail('⑩ 成品那一面還蓋著格子', `疊了 ${customerView.overlays} 塊、編輯畫布還在＝${customerView.stillEditing}`)
+        fail('⑩ 兩張沒有同時出現', JSON.stringify({ ...both, canvasBox: undefined, frameBox: undefined }))
       }
 
-      if (customerView.barText) pass(`⑩ Chat Bar 文字有畫出來（「${customerView.barText}」）`)
+      if (both.switchBack) fail('⑩ 「編輯區塊／客人看到的樣子」切換鈕又回來了', 'C-243 是要兩張同時看得到，不要退回一次一面')
+      else pass('⑩ 沒有切換鈕（不用按就兩張都在）')
+
+      if (both.overlays === 0) {
+        pass('⑩ 成品那一張沒有任何彩色格子（店家終於看得到那張圖乾淨的樣子）')
+      }
+      else {
+        fail('⑩ 成品那一張還蓋著格子', `疊了 ${both.overlays} 塊`)
+      }
+
+      /**
+       * ⭐ 真的量盒模型，不要只問「兩個元素都在嗎」：版面壞掉時（被壓成 0 寬、互相疊上去）
+       * 兩個節點照樣都在 DOM 裡，只看存在與否是假綠燈（記憶 `feedback_verify_new_code_actually_runs`）。
+       * ⚠️ 這一關**不斷言「一定並排」**：可用寬度同時被視窗寬與兩層側欄決定，窄的時候
+       *    本來就該自動折成上下排；並排留給下面那關去固定的寬視窗驗。
+       */
+      const geom = (m, label) => {
+        const cb = m.canvasBox
+        const fb = m.frameBox
+        if (!cb || !fb) return fail(`⑩ ${label}：量不到兩張的位置`, '畫布或成品框沒有 getBoundingClientRect')
+        if (cb.width < 260 || fb.width < 260) {
+          return fail(`⑩ ${label}：有一張被壓扁了`, `畫布 ${Math.round(cb.width)}px、成品框 ${Math.round(fb.width)}px`)
+        }
+        const overlapX = fb.left < cb.right - 1 && cb.left < fb.right - 1
+        const overlapY = fb.top < cb.bottom - 1 && cb.top < fb.bottom - 1
+        if (overlapX && overlapY) {
+          return fail(`⑩ ${label}：兩張疊在一起`, `畫布 ${JSON.stringify(cb)}、成品框 ${JSON.stringify(fb)}`)
+        }
+        const side = fb.left >= cb.right - 1
+        pass(`⑩ ${label}：${side ? '並排' : '上下排'}、沒有互疊（畫布 ${Math.round(cb.width)}px ｜ 成品框 ${Math.round(fb.width)}px）`)
+        return side
+      }
+      geom(both, `視窗 ${(await rmPage.viewport()).width}px`)
+      if (both.pageScrollX) fail('⑩ 整頁被撐出橫向捲軸', '並排不可以把版面撐破')
+      else pass('⑩ 沒有把整頁撐出橫向捲軸')
+
+      /**
+       * ⭐ `C-243` 的整件事就是「寬螢幕上兩張同時看得到」，所以要有一個**固定寬度**的關卡
+       *    來釘住它——不然折行門檻被人調大，上面那關會若無其事地報「上下排」然後放行。
+       */
+      const before = await rmPage.viewport()
+      await rmPage.setViewport({ width: 1920, height: 1100 })
+      await sleep(700)
+      const wide = await rmPage.evaluate(() => {
+        const box = (el) => {
+          const b = el?.getBoundingClientRect()
+          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width } : null
+        }
+        const split = document.querySelector('.rm-visual-split')
+        return {
+          canvasBox: box(split?.querySelector('.canvas-wrap')),
+          frameBox: box(document.querySelector('.rmc-frame')),
+          pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        }
+      })
+      if (geom(wide, '視窗 1920px') === true) pass('⑩ 寬螢幕上確實是並排（C-243 的重點）')
+      else fail('⑩ 寬螢幕上沒有並排', '1920px 下兩張還擠不下＝折行門檻設得太高')
+      if (wide.pageScrollX) fail('⑩ 1920px 下被撐出橫向捲軸')
+      await rmPage.setViewport(before)
+      await sleep(400)
+
+      if (both.barText) pass(`⑩ Chat Bar 文字有畫出來（「${both.barText}」）`)
       else fail('⑩ Chat Bar 文字沒畫出來', '客人真的會看到那幾個字，後台以前一處都沒畫過')
 
-      if (customerView.lyingPlaceholder) {
+      if (both.lyingPlaceholder) {
         fail('⑩ 圖已經上傳了，下面卻還寫著「上傳背景圖後…」', '那句話的條件不可以寫成上面那塊的 v-else')
       }
       else {

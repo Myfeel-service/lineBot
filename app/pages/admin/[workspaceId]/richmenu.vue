@@ -160,59 +160,59 @@
               </div>
 
               <!--
-                `C-233`：兩種看法切換。
-                ⛔ **不是拿掉編輯畫布**——那張是用來拖格子的（格子必須看得見），
-                   這張是用來看成品的（格子必須看不見）。兩件事，所以用切的不是用改的。
+                `C-233` 的兩面（拖格子的畫布／乾淨的成品圖），`C-243` 改成**並排**、切換鈕拿掉。
+                ⛔ **不要再改回一次只看得到一面**：拖格子的當下最需要確認的就是「成品現在長怎樣」
+                   （字被格子壓到沒？深色底吃掉文字沒？），逼人按一下才看得到，
+                   等於每調一次都要來回兩次。右欄本來就有這個寬度（成品框鎖在 320px）。
+                ⛔ 右邊那張**一個色塊都不要疊**——疊了它就變成第二張編輯畫布，
+                   這個功能就沒了（見 `AdminRichMenuCustomerView.vue` 檔頭）。
               -->
-              <div v-if="form.previewUrl" class="rm-view-switch">
-                <el-radio-group v-model="rmViewMode" size="small">
-                  <el-radio-button value="edit">編輯區塊</el-radio-button>
-                  <el-radio-button value="customer">客人看到的樣子</el-radio-button>
-                </el-radio-group>
-                <span v-if="rmViewMode === 'edit'" class="text-xs text-muted">
-                  彩色格子是「按得到的範圍」，客人看不到它們
-                </span>
+              <div v-if="form.previewUrl" class="rm-visual-split">
+                <AdminAreaEditorSection
+                  :areas="form.areas"
+                  section-label="編輯區塊"
+                  :flat="true"
+                  :show-canvas="true"
+                  :show-action-cards="false"
+                  :show-header="true"
+                  :show-add-button="false"
+                  :allow-remove="false"
+                  :show-bounds="false"
+                  :min-bounds-size="0"
+                  :base-width="Number(form.width) || 2500"
+                  :base-height="Number(form.height) || 843"
+                  :area-colors="areaColors"
+                  :drag-area-index="dragState?.areaIndex ?? null"
+                  :overlap-set="overlapSet"
+                  :guide-lines="guideLines"
+                  :canvas-style="richMenuCanvasStyle"
+                  :canvas-image-url="form.previewUrl || undefined"
+                  :set-canvas-ref="setRichMenuCanvasRef"
+                  @start-drag="startDrag"
+                  @start-resize="startResize"
+                  @clamp="clampAreaByIndex"
+                />
+
+                <div class="rm-visual-split__customer">
+                  <AdminPanelTitle tag="h3" tight>客人看到的樣子</AdminPanelTitle>
+                  <AdminRichMenuCustomerView
+                    :image-url="form.previewUrl"
+                    :chat-bar-text="form.chatBarText"
+                    :width="Number(form.width) || 2500"
+                    :height="Number(form.height) || 843"
+                    :oa-name="currentWorkspaceName"
+                  />
+                </div>
               </div>
 
-              <AdminRichMenuCustomerView
-                v-if="form.previewUrl && rmViewMode === 'customer'"
-                :image-url="form.previewUrl"
-                :chat-bar-text="form.chatBarText"
-                :width="Number(form.width) || 2500"
-                :height="Number(form.height) || 843"
-                :oa-name="currentWorkspaceName"
-              />
+              <p v-if="form.previewUrl" class="rm-visual-hint text-xs text-muted">
+                左邊的彩色格子是「按得到的範圍」，客人看不到它們；右邊那張才是客人真正會看到的。
+              </p>
 
-              <AdminAreaEditorSection
-                v-if="form.previewUrl && rmViewMode === 'edit'"
-                :areas="form.areas"
-                section-label="區塊預覽"
-                :flat="true"
-                :show-canvas="true"
-                :show-action-cards="false"
-                :show-header="true"
-                :show-add-button="false"
-                :allow-remove="false"
-                :show-bounds="false"
-                :min-bounds-size="0"
-                :base-width="Number(form.width) || 2500"
-                :base-height="Number(form.height) || 843"
-                :area-colors="areaColors"
-                :drag-area-index="dragState?.areaIndex ?? null"
-                :overlap-set="overlapSet"
-                :guide-lines="guideLines"
-                :canvas-style="richMenuCanvasStyle"
-                :canvas-image-url="form.previewUrl || undefined"
-                :set-canvas-ref="setRichMenuCanvasRef"
-                @start-drag="startDrag"
-                @start-resize="startResize"
-                @clamp="clampAreaByIndex"
-              />
               <!--
-                ⛔ 條件要看「有沒有圖」，**不可以寫成上面那塊的 `v-else`**：`C-233` 之後上面那塊
-                多了一個「現在看的是哪一面」的條件，寫 `v-else` 的話，圖明明上傳好了、
-                只是切到「客人看到的樣子」，下面就會冒出一句「上傳背景圖後…」在對他說謊。
-                （2026-09-23 截圖目檢當場抓到。）
+                ⛔ 條件要看「有沒有圖」，**不可以寫成上面那塊的 `v-else`**：上面那塊的條件
+                比「有沒有圖」多，寫 `v-else` 的話，圖明明上傳好了也會冒出一句
+                「上傳背景圖後…」在對他說謊。（2026-09-23 截圖目檢當場抓到過一次。）
               -->
               <p v-if="!form.previewUrl" class="rm-preview-placeholder">
                 可先選版型。上傳背景圖後，這裡會顯示可拖曳的區塊預覽。
@@ -329,13 +329,6 @@ import {
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { apiFetch, currentWorkspaceName } = useWorkspace()
-
-/**
- * `C-233`：右欄看的是「編輯區塊」還是「客人看到的樣子」。
- * ⛔ 預設停在 `edit`：這一頁的主要工作是拖格子與設定動作，
- *    一進來就切到成品那一面，會讓人以為格子不見了。
- */
-const rmViewMode = ref<'edit' | 'customer'>('edit')
 
 const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
