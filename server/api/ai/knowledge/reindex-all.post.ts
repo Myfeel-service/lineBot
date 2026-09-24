@@ -6,6 +6,7 @@ import {
   runIndexOnChunk,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /** 與 bulk-create 一致的保守併發 */
 const EMBED_CONCURRENCY = 5
@@ -25,7 +26,7 @@ const BATCH_LIMIT = 300
  * 冪等，可中斷重跑。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'knowledge.reindexAll')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.reindexAll')
   const body = await readBody(event).catch(() => ({}))
   const cursor = String(body?.cursor ?? '').trim()
 
@@ -78,6 +79,23 @@ export default defineEventHandler(async (event) => {
   const indexed = results.filter(r => r.status === 'indexed').length
   const failed = results.filter(r => r.status === 'failed').length
   const lastDoc = snap.docs[snap.docs.length - 1]
+
+  /*
+   * 稽核（`C-254`）。⚠️ 這支是**分批**的，呼叫端會帶著游標一直打——
+   * 每一批都記一筆會在紀錄裡洗出一長串。⭐ 只記**第一批**（沒有 cursor 的那次），
+   * 也就是「某人按下了重新學習整個知識庫」那一刻，後續批次是同一個動作的續集。
+   * ⛔ 但總數不能假裝知道：第一批還不知道全部有幾張，所以備註只講這一批。
+   */
+  if (!cursor) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'knowledge.reindexAll',
+      after: { itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed },
+      note: '讓整個知識庫重新學習一次（會分批跑完，這裡記的是第一批的數字）',
+    }, db)
+  }
 
   return {
     batch: snap.size,

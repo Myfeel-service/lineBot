@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '~~/server/utils/audit-log'
 
 /**
  * PUT /api/broadcast/:id
@@ -18,7 +19,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * Response: { id: string, ...updatedFields }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -66,5 +67,26 @@ export default defineEventHandler(async (event) => {
   }
 
   await ref.update(updates)
+
+  // 稽核（`C-254`）：只記摘要層的前後差異，沒有變就不寫（免得每次存檔都留一筆噪音）
+  const summarize = (d: Record<string, unknown>) => ({
+    ...auditSnapshot(d, { keep: ['name', 'status'], count: ['messages', 'completionTagIds'] }),
+    audienceSource: (d.audienceSource as { type?: string } | null)?.type ?? null,
+    scheduleAt: auditTimeText(d.scheduleAt),
+  })
+  const diff = diffChangedFields(summarize(current), summarize({ ...current, ...updates }))
+  if (diff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'broadcast.put',
+      targetId: id,
+      before: diff.before,
+      after: diff.after,
+      note: String(current.name ?? ''),
+    }, db)
+  }
+
   return { id, ...current, ...updates }
 })

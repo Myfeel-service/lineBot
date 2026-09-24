@@ -4,6 +4,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
 import { invoiceKeysFromConfig } from '~~/server/utils/invoice'
 import { verifyCarrierNum } from '~~/server/utils/verify-carrier'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { hasInvoiceProfile } from '~~/shared/types/organization'
 
 /**
@@ -15,7 +16,7 @@ import { hasInvoiceProfile } from '~~/shared/types/organization'
  * 全部欄位留空 = 清掉覆寫、回去沿用組織的預設值。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
   const profile = normalizeInvoiceProfile(await readBody(event))
 
   // 手機條碼要跟光貿查證「存不存在」——格式檢查驗不出來，而存錯的代價是那筆訂單的
@@ -31,6 +32,24 @@ export default defineEventHandler(async (event) => {
     // 「沒填」與「刻意填空」的差別，組織的預設值就再也回不來了。
     invoiceProfile: hasInvoiceProfile(profile) ? profile : FieldValue.delete(),
     updatedAt: FieldValue.serverTimestamp(),
+  })
+
+  /*
+   * 稽核（`C-254`）：抬頭／統編改錯，下一張發票就開錯，而發票開錯要走作廢重開。
+   * ⛔ 只記「抬頭與統編」，載具號碼那類個資不進紀錄。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'payment.invoiceProfile',
+    // ⛔ 只記抬頭與統編：載具號碼、捐贈碼、Email 是個資，稽核不該多存一份
+    after: hasInvoiceProfile(profile)
+      ? { title: String(profile.buyerName ?? ''), taxId: String(profile.buyerUBN ?? '') }
+      : {},
+    note: hasInvoiceProfile(profile)
+      ? '改了這個官方帳號專屬的發票抬頭'
+      : '清空了專屬抬頭，之後沿用組織的預設值',
   })
 
   return { ok: true, profile, inherited: !hasInvoiceProfile(profile) }

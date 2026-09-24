@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 import type { TagCategory, TagStatus } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -20,7 +21,7 @@ import type { TagCategory, TagStatus } from '~~/shared/types/tag-broadcast'
  * Response: { id: string, ...updatedFields }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -54,5 +55,25 @@ export default defineEventHandler(async (event) => {
   }
 
   await ref.update(updates)
+
+  // 稽核（`C-254`）。⭐ 最要緊的是 `aiMode`：從 `off` 改成 `auto` 等於放 AI 自己去貼這個標籤，
+  // 而客人名單一旦被貼髒，是靜靜髒掉、沒有人會發現的那種
+  const before = snap.data()!
+  const summarize = (d: Record<string, unknown>) =>
+    auditSnapshot(d, { keep: ['name', 'category', 'color', 'description', 'status', 'aiMode', 'aiCriteria'] })!
+  const diff = diffChangedFields(summarize(before), summarize({ ...before, ...updates }))
+  if (diff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tag.put',
+      targetId: id,
+      before: diff.before,
+      after: diff.after,
+      note: String(before.name ?? ''),
+    }, db)
+  }
+
   return { id, ...snap.data(), ...updates }
 })

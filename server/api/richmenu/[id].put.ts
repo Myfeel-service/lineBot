@@ -2,9 +2,10 @@ import type { messagingApi } from '@line/bot-sdk'
 import { validateUploadPayload } from '~~/server/utils/upload-validator'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
+import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const firestoreId = getRouterParam(event, 'id')
   if (!firestoreId) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
@@ -142,6 +143,33 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  /*
+   * 稽核（`C-254`）。⚠️ 這支每次存檔都會在 LINE 重建一張新選單，所以就算什麼都沒改，
+   * 客人手機上的那張也換掉了——因此**一律留一筆**，⛔ 不做「沒變就不記」。
+   * ⛔ 圖片網址不進前後對照：每次換圖都是一組新網址，印出來是兩行沒人看得懂的長字串，
+   *    會把真正改動的那幾行淹掉；換沒換圖寫在備註裡。
+   */
+  const summarize = (d: Record<string, unknown>) => ({
+    name: String(d.name ?? ''),
+    chatBarText: String(d.chatBarText ?? '選單'),
+    areasCount: Array.isArray(d.areas) ? (d.areas as unknown[]).length : 0,
+    isDefault: d.isDefault === true,
+  })
+  const diff = diffChangedFields(
+    summarize(oldDoc),
+    summarize({ name, chatBarText: chatBarText ?? '選單', areas, isDefault: setAsDefault ?? false }),
+  )
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'richmenu.put',
+    targetId: firestoreId,
+    before: diff.before,
+    after: diff.after,
+    note: `${String(oldDoc.name ?? '')}${imageBase64 ? '（同時換了底圖）' : ''}`,
+  })
 
   return { success: true, richMenuId: newRichMenuId, aliasId, imageUrl: finalImageUrl }
 })

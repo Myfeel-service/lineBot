@@ -2,6 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { reenrichWorkspaceChunks } from '~~/server/utils/ai-reenrich'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/knowledge/reenrich
@@ -17,9 +18,25 @@ import { reenrichWorkspaceChunks } from '~~/server/utils/ai-reenrich'
  */
 export default defineEventHandler(async (event) => {
   // 全工作區的知識維運操作，沿用與 reindex-all 相同的權限
-  const { workspaceId } = await requireCapability(event, 'knowledge.reindexAll')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.reindexAll')
   await assertMaintenanceBudget(workspaceId) // C-45：補問法整庫掃描是純維運花費，超額不開跑
   const body = await readBody(event).catch(() => ({}))
   const cursor = String(body?.cursor ?? '').trim()
-  return reenrichWorkspaceChunks(getDb(), workspaceId, cursor)
+  const db = getDb()
+  const result = await reenrichWorkspaceChunks(db, workspaceId, cursor)
+
+  // 稽核（`C-254`）：這支會**改到卡片內容**（補上客人問法）並花 LLM 的錢。
+  // ⭐ 跟 reindex-all 同一個道理，只記第一批＝「某人按下去」那一刻，續跑的批次不重複記
+  if (!cursor) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'knowledge.reenrich',
+      after: { itemsCount: result.batch, chunkIdsCount: result.enriched },
+      note: '幫沒有「客人問法」的卡補上問法（會分批跑完，這裡記的是第一批的數字）',
+    }, db)
+  }
+
+  return result
 })

@@ -24,6 +24,10 @@ const MAX_DEPTH = 4
 const MAX_ARRAY = 50
 
 export interface AuditLogInput {
+  /**
+   * 這筆屬於哪個官方帳號。**平台層動作（升降超管、改名單）沒有歸屬，一律傳空字串**，
+   * 並改用 `scope: 'platform'`——⛔ 不要為了讓它出現在某一頁而硬塞一個 workspaceId。
+   */
   workspaceId: string
   uid: string
   /** human=人在頁面/端點直接操作;agent=AI 小幫手代辦(Phase 2 起) */
@@ -39,6 +43,17 @@ export interface AuditLogInput {
    * 舊紀錄沒有這個欄位，所以只還原得了「整份設定型」的動作，畫面要如實說清楚。
    */
   targetId?: string
+  /**
+   * 組織層動作（建官方帳號、改組織發票抬頭、停用組織）動到的組織。
+   * 2026-09-24 補（`C-254`）：這類動作沒有單一 workspace，但仍要查得到是誰做的。
+   */
+  orgId?: string
+  /**
+   * `platform`＝平台自己做的事（超管調額度、作廢發票、升降超管），**不屬於任何租戶**。
+   * 這種紀錄不會出現在租戶的「操作紀錄」頁，只在超管的平台稽核頁看得到。
+   * ⛔ 不設這個欄位就等於宣告「這是租戶自己做的事」，不要亂標。
+   */
+  scope?: 'platform'
 }
 
 /**
@@ -97,12 +112,62 @@ export function diffChangedFields(
   return { before: changedBefore, after: changedAfter, changedKeys: Object.keys(changedAfter) }
 }
 
-/** 寫一筆稽核。內部吞錯(只 console.error),呼叫端可放心 await,不會拖垮業務寫入。 */
-export async function writeAuditLog(input: AuditLogInput, db: Firestore = getDb()): Promise<void> {
+/**
+ * 從一份文件挑出「紀錄裡看得懂的那幾格」（`C-254`，2026-09-24）。
+ *
+ * 為什麼不整份存：推播的 `messages`、模組的 `nodes` 動輒上千字，整包塞進來會被
+ * `sanitizeAuditValue` 截斷 → 那筆就被標成 `lossy` → **連還原都不給按**，
+ * 而畫面上還是只印得出「（一組設定）」。留幾格看得懂的反而比較有用。
+ *
+ * - `keep`：原樣帶走的欄位（沒有的欄位不會憑空生出來）
+ * - `count`：陣列欄位只記**幾則／幾個**，欄位名加 `Count`（`messages` → `messagesCount`）。
+ *   ⛔ 不是陣列就不寫，⛔ 也不要寫 0 充數——那會讓「沒有這個欄位」跟「真的是 0」分不出來。
+ */
+export function auditSnapshot(
+  doc: Record<string, unknown> | null | undefined,
+  opts: { keep?: readonly string[], count?: readonly string[] } = {},
+): Record<string, unknown> | null {
+  if (!doc) return null
+  const out: Record<string, unknown> = {}
+  for (const k of opts.keep ?? []) if (doc[k] !== undefined) out[k] = doc[k]
+  for (const k of opts.count ?? []) {
+    const v = doc[k]
+    if (Array.isArray(v)) out[`${k}Count`] = v.length
+  }
+  return out
+}
+
+/**
+ * 時間欄位 → 紀錄裡看得懂的一行字（`C-254`）。
+ *
+ * ⚠️ 同一個欄位在不同地方拿到的型別不一樣：Firestore 讀回來是 `Timestamp`、
+ * 剛要寫進去的是 `Date`、從 body 來的是字串。⛔ 直接丟給 `sanitizeAuditValue` 的話，
+ * `Timestamp`／`Date` 會被當成一般物件展開成 `{}`——畫面上就變成「（一組設定）」。
+ */
+export function auditTimeText(v: unknown): string | null {
+  if (v === null || v === undefined || v === '') return null
+  if (v instanceof Date) return v.toISOString()
+  const ms = (v as { toMillis?: () => number })?.toMillis?.()
+  if (typeof ms === 'number') return new Date(ms).toISOString()
+  return String(v)
+}
+
+/**
+ * 寫一筆稽核。內部吞錯(只 console.error),呼叫端可放心 await,不會拖垮業務寫入。
+ *
+ * ⛔ **`getDb()` 一定要在 try 裡面呼叫。** 原本寫成預設參數 `db: Firestore = getDb()`——
+ * 預設參數是**在進 try 之前**求值的，所以 `getDb()` 一失敗，例外就直接往上拋，
+ * 把呼叫它的那支業務端點一起打掛。那跟這支檔案開頭寫的「稽核是配菜不是閘門，
+ * 絕不擋業務寫入」正好相反：推播送出去了、卻因為稽核初始化失敗而回 500，
+ * 使用者會以為沒送成功、再按一次。
+ * （2026-09-24 `C-254` 補稽核時被 `test-send` 的單元測試抓到——那支測試沒有 mock `getDb`。）
+ */
+export async function writeAuditLog(input: AuditLogInput, db?: Firestore): Promise<void> {
   try {
+    const target = db ?? getDb()
     // 有任何一格被遮罩／截斷／砍掉就標記起來：那樣的紀錄看得懂，但**不能拿來還原**
     const lossy = { hit: false }
-    await db.collection(AUDIT_LOGS_COLLECTION).add({
+    await target.collection(AUDIT_LOGS_COLLECTION).add({
       workspaceId: input.workspaceId,
       uid: input.uid,
       actor: input.actor,
@@ -112,6 +177,8 @@ export async function writeAuditLog(input: AuditLogInput, db: Firestore = getDb(
       ...(lossy.hit ? { lossy: true } : {}),
       ...(input.note ? { note: String(input.note).slice(0, 500) } : {}),
       ...(input.targetId ? { targetId: String(input.targetId).slice(0, 200) } : {}),
+      ...(input.orgId ? { orgId: String(input.orgId).slice(0, 200) } : {}),
+      ...(input.scope ? { scope: input.scope } : {}),
       createdAt: FieldValue.serverTimestamp(),
     })
   }

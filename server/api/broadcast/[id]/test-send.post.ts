@@ -1,5 +1,6 @@
 import { getDoc } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { renderModuleToLineMessages } from '~~/server/utils/handler'
 import { pushMessage } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
@@ -27,7 +28,7 @@ const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/i
  * ⛔ **不寫進客服對話**：正式推播也不寫，試發要跟正式發送長得一樣。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -94,11 +95,28 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  const displayName = String((friend as { displayName?: string }).displayName || '')
+
+  /*
+   * 稽核（`C-254`）：試發**確實把訊息送進了一個真人的 LINE**，所以它是一次對外發送，要記。
+   * ⛔ 記在送出之後（送失敗就不該留下「發過了」的紀錄）。
+   * ⚠️ 只記收件者的顯示名稱與編號，⛔ 不記訊息內容（跟正式推播一致）。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'broadcast.testSend',
+    targetId: id,
+    after: { name: String(doc.name ?? ''), displayName, messagesCount: messages.length },
+    note: `試發給「${displayName || lineUserId}」${moduleName ? `（模組：${moduleName}）` : ''}`,
+  })
+
   return {
     ok: true,
     messageCount: messages.length,
     moduleName,
     lineUserId,
-    displayName: String((friend as { displayName?: string }).displayName || ''),
+    displayName,
   }
 })

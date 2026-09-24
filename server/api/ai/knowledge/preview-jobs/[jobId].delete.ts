@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { deleteJobStorage, KNOWLEDGE_PREVIEW_JOBS_COLLECTION, type PreviewJobDoc } from '~~/server/utils/ai-preview-jobs'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * DELETE /api/ai/knowledge/preview-jobs/:jobId — 取消匯入工作（C-46）。
@@ -12,7 +13,7 @@ import { deleteJobStorage, KNOWLEDGE_PREVIEW_JOBS_COLLECTION, type PreviewJobDoc
  * 冪等：已取消/不存在都回 ok。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const jobId = String(event.context.params?.jobId ?? '').trim()
   if (!jobId) throw createError({ statusCode: 400, statusMessage: '缺少 jobId' })
 
@@ -33,5 +34,19 @@ export default defineEventHandler(async (event) => {
   })
   // Storage（work.json / OCR 原檔）立即清，不等一小時後的排程
   await deleteJobStorage(workspaceId, jobId)
+
+  // 稽核（`C-254`）：取消會把上傳的原檔立刻清掉，救不回來——
+  // 「我明明傳上去了，檔案呢」的答案就在這一筆
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.previewJobDelete',
+    targetId: jobId,
+    // ⚠️ job 文件上沒有存來源名稱（那在 Storage 的 work.json 裡，而我們剛把它清掉了），
+    //    所以這裡只講得出「取消了一個匯入」——⛔ 不要編一個名字出來
+    note: '取消了一個匯入，上傳的原檔已經一起清掉',
+  }, db)
+
   return { ok: true, status: 'cancelled' }
 })

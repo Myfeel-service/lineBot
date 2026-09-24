@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/broadcast/:id/cancel
@@ -9,7 +10,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * Response: { success: true, id: string }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -33,5 +34,18 @@ export default defineEventHandler(async (event) => {
   }
 
   await ref.update({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() })
+
+  // 稽核（`C-254`）：取消一則排好的推播＝那一檔不會發出去了，要查得到是誰按的
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'broadcast.cancel',
+    targetId: id,
+    before: { status: String(status ?? '') },
+    after: { status: 'cancelled' },
+    note: String(data.name ?? ''),
+  }, db)
+
   return { success: true, id }
 })

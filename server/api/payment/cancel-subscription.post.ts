@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
+import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/payment/cancel-subscription
@@ -27,7 +28,7 @@ import { getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache } from '
  *    已經是 false,但卡還綁著,那正是客戶最想按這顆按鈕的時刻。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
 
   const db = getDb()
   const sub = await getWorkspaceSubscription(workspaceId, db)
@@ -47,5 +48,21 @@ export default defineEventHandler(async (event) => {
   invalidateWorkspaceSubscriptionCache(workspaceId)
 
   console.log('[payment] 已取消自動續訂', workspaceId, '本期至', sub.currentPeriodEnd)
+
+  /*
+   * 稽核（`C-254`）：取消續訂是**跟錢有關、而且期末才生效**的操作——
+   * 客戶到期後說「我沒有取消過」的時候，這一筆就是唯一的答案。
+   * ⛔ 卡號、Token 一律不進紀錄（`sanitizeAuditValue` 也會遮，但這裡本來就不該帶）。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'payment.cancelSubscription',
+    before: { planId: String(sub.planId ?? ''), autoRenew: true },
+    after: { autoRenew: false, activeUntil: auditTimeText(sub.currentPeriodEnd) },
+    note: '之後不會再自動扣款；本期的服務用到期末為止',
+  }, db)
+
   return { ok: true, activeUntil: sub.currentPeriodEnd }
 })

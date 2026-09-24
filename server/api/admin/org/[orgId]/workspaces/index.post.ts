@@ -4,6 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireOrgAdmin } from '~~/server/utils/workspace-auth'
 import { addSystemModulesToBatch } from '~~/server/utils/workspace-system-modules'
 import { defaultFreeSubscription } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { DEFAULT_MAX_WORKSPACES_PER_ORG, type OrganizationDoc } from '~~/shared/types/organization'
 
 /**
@@ -74,6 +75,22 @@ export default defineEventHandler(async (event) => {
   addSystemModulesToBatch(db, batch, workspaceId)
 
   await batch.commit()
+
+  /*
+   * 稽核（`C-254`）。⭐ 這一筆**直接寫進新帳號自己的紀錄**（有 workspaceId 可以掛），
+   * 所以新帳號的「操作紀錄」第一列就是「這個帳號是誰、什麼時候開的」——
+   * 那正是三個月後最想知道的一件事。同時掛 `orgId` 讓平台那邊也查得到。
+   */
+  await writeAuditLog({
+    workspaceId,
+    orgId,
+    uid,
+    actor: 'human',
+    action: 'org.workspaceCreate',
+    targetId: workspaceId,
+    after: { name, plan: 'free' },
+    note: `在組織底下開了新的官方帳號「${name}」`,
+  }, db)
 
   return { id: workspaceId, name }
 })

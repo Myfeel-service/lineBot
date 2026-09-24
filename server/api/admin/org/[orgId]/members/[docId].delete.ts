@@ -1,5 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { invalidateOrgMemberCache, requireActiveOrgAdmin } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { OrganizationDoc } from '~~/shared/types/organization'
 
 /**
@@ -23,7 +24,7 @@ export default defineEventHandler(async (event) => {
   const docId = event.context.params?.docId
   if (!orgId || !docId) throw createError({ statusCode: 400, statusMessage: 'orgId / docId is required' })
 
-  const { email: myEmail } = await requireActiveOrgAdmin(event, orgId)
+  const { email: myEmail, uid } = await requireActiveOrgAdmin(event, orgId)
 
   const db = getDb()
   const orgSnap = await db.collection('organizations').doc(orgId).get()
@@ -58,5 +59,17 @@ export default defineEventHandler(async (event) => {
   })
 
   invalidateOrgMemberCache(removed, orgId)
+
+  // 稽核（`C-254`）：被移掉的人會失去底下**所有**官方帳號的管理權，而且不會收到通知
+  await writeAuditLog({
+    workspaceId: '',
+    orgId,
+    uid,
+    actor: 'human',
+    action: 'org.memberRemove',
+    targetId: docId,
+    before: { email: removed, role: 'admin' },
+  }, db)
+
   return { ok: true, email: removed }
 })

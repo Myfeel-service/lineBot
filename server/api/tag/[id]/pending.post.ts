@@ -4,6 +4,7 @@ import { reviewSuggestions } from '~~/server/utils/tag-suggestion-review'
 import { PENDING_BULK_LIMIT, PENDING_ROWS_LIMIT, PENDING_SCAN_LIMIT, pickPendingForTag } from '~~/shared/tag-pending-review'
 import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
 import { fetchUserDisplayNames } from '~~/server/utils/user-display-names'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 /** 同時處理幾位（Firestore 是不同文件，衝突風險為零；控併發只是不想一次開 100 條連線） */
@@ -87,6 +88,26 @@ export default defineEventHandler(async (event) => {
       else if (r.outcome === 'not_found') notFound += 1
       else alreadyHandled += 1
     }
+  }
+
+  /*
+   * 稽核（`C-254`）。⚠️ 單獨幫一位客人貼標籤是日常操作、刻意不記，
+   * **但這一支不一樣**：它一次動幾十位，而且「忽略」是**永久**的——
+   * 那顆標籤對那幾位客人 AI 從此不再提。這種一按就回不去的事一定要留下紀錄。
+   * ⛔ 只記數量與動作，不記是哪幾位客人（那會把客人名單抄一份進稽核）。
+   */
+  if (processed > 0) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tag.pending',
+      targetId: tagId,
+      after: { name: String(tagSnap.data()?.name ?? ''), type: action === 'apply' ? '採用' : '永久忽略', itemsCount: processed },
+      note: action === 'apply'
+        ? `把「${String(tagSnap.data()?.name ?? '')}」貼給 ${processed} 位客人`
+        : `對 ${processed} 位客人永久忽略「${String(tagSnap.data()?.name ?? '')}」，AI 之後不會再提`,
+    }, db)
   }
 
   /**

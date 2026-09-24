@@ -2,6 +2,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
+import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
 
 /**
@@ -17,7 +18,7 @@ import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
  *     手動關掉的卡則尊重開關、維持停用。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -115,6 +116,26 @@ export default defineEventHandler(async (event) => {
 
   await ref.update(update)
   const after = (await ref.get()).data() as any
+
+  /*
+   * 稽核（`C-254`）：這支管的是「這張卡要不要給 AI 用」與「用到哪一天」。
+   * ⭐ 停用一張卡的症狀跟刪掉一模一樣（AI 就是不再拿它回答），所以一樣要留紀錄。
+   * ⚠️ `clearManualLock` 解鎖之後，下一輪同步會把這張卡**覆蓋回來源的版本**——
+   *    那是人手改過的內容會消失的那條路，⛔ 一定要寫進備註。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.settings',
+    targetId: chunkId,
+    before: { cardStatus: String(chunk.status ?? ''), activeUntil: auditTimeText(chunk.activeUntil) },
+    after: { cardStatus: String(after?.status ?? ''), activeUntil: auditTimeText(after?.activeUntil) },
+    note: hasClearLock
+      ? `${String(chunk.title ?? '')}：解除了手動編輯鎖，下一次同步會用來源的版本蓋回去`
+      : String(chunk.title ?? ''),
+  }, db)
+
   return {
     id: chunkId,
     status: String(after?.status ?? '') as KnowledgeChunkStatus,

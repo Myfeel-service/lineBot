@@ -61,6 +61,12 @@
           <el-icon class="nav-icon"><Avatar /></el-icon>
           <span>超級管理員</span>
         </NuxtLink>
+        <!-- `C-254`：平台自己做的事（調額度、作廢發票、停用組織、升降超管）只有這裡看得到——
+             它們沒有 workspaceId，租戶自己的「操作紀錄」頁查不到 -->
+        <NuxtLink to="/admin/super/activity" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/activity') }">
+          <el-icon class="nav-icon"><Document /></el-icon>
+          <span>全站操作紀錄</span>
+        </NuxtLink>
       </nav>
     </template>
 
@@ -86,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { Avatar, ChatDotRound, Coin, Message, OfficeBuilding, Setting, SwitchButton, Wallet, Warning } from '@element-plus/icons-vue'
+import { Avatar, ChatDotRound, Coin, Document, Message, OfficeBuilding, Setting, SwitchButton, Wallet, Warning } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const { user, logout } = useAuth()

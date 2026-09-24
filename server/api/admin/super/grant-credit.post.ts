@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 
 /**
@@ -64,5 +65,24 @@ export default defineEventHandler(async (event) => {
 
   invalidateWorkspaceSubscriptionCache(workspaceId)
   console.log('[payment] 開折抵', workspaceId, `${result.before} → ${result.after}`, `(${amount > 0 ? '+' : ''}${amount})`, reason)
+
+  /*
+   * 稽核（`C-254`）。⚠️ `billingCredits` 已經有一本專門的帳（誰給了多少、前後餘額），
+   * 這裡再記一筆是為了讓它出現在**同一條時間軸**上——出事時人是照時間找的，
+   * 不會知道要去翻哪一本專帳。⛔ 兩邊都寫，但真正的事實來源仍然是 `billingCredits`。
+   *
+   * ⭐ 這一筆刻意掛在**那個帳號自己的** workspaceId 上（不是平台層）：
+   *    「平台給了你一筆折抵」是客戶有權知道、也該看得到的事。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'super.grantCredit',
+    before: { amount: result.before },
+    after: { amount: result.after },
+    note: `平台${amount > 0 ? '給了' : '沖銷了'} NT$${Math.abs(amount).toLocaleString()} 可折抵下期扣款的餘額（原因：${reason}）`,
+  }, db)
+
   return { ok: true, ...result }
 })

@@ -1,5 +1,6 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * DELETE /api/admin/super/users/:uid/super-admin
@@ -32,6 +33,18 @@ export default defineEventHandler(async (event) => {
 
   // 同步移除可列舉索引(不存在則為 no-op)。
   await getDb().collection('superAdmins').doc(uid).delete()
+
+  // 稽核（`C-254`）：跟授予同等重要——「我的權限怎麼不見了」只有這一筆答得出來
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid: callerUid,
+    actor: 'human',
+    action: 'super.superAdminRevoke',
+    targetId: uid,
+    before: { email: user.email ?? '', superAdmin: true },
+    after: { superAdmin: false },
+  })
 
   return { uid, superAdmin: false }
 })

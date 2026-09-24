@@ -16,6 +16,7 @@ import {
   resolveHandoffsByQueries,
 } from '~~/server/utils/ai-knowledge-suggest'
 import { answerWithAi } from '~~/server/utils/ai-answer'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { KnowledgeSuggestionDoc } from '~~/shared/types/ai-knowledge'
 
 /** 試答驗證的時間上限：答題管線有自己的逾時，這裡是最後保險，超時回 null 不擋採用 */
@@ -35,7 +36,7 @@ const VERIFY_TIMEOUT_MS = 15_000
  * LLM 依規則留空的事實，沒補完存進去等於讓 AI 拿空格回答客人。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const id = String(getRouterParam(event, 'id') ?? '').trim()
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id required' })
 
@@ -159,6 +160,17 @@ export default defineEventHandler(async (event) => {
       if (timer) clearTimeout(timer)
     }
   }
+
+  // 稽核（`C-254`）：採用建議＝多一張卡（計費維度），而且會順手把監控頁的案例標成已處理
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.suggestionAccept',
+    targetId: chunkId,
+    after: { title: input.title, cardStatus: result.status },
+    note: `採用了 AI 的建議並建成一張卡${resolvedConversations ? `，順手把 ${resolvedConversations} 筆對話標成已處理` : ''}`,
+  }, db)
 
   return {
     chunkId,

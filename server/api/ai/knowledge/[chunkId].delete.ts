@@ -8,6 +8,7 @@ import {
   RECYCLE_RETENTION_DAYS,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * DELETE /api/ai/knowledge/:chunkId
@@ -19,7 +20,7 @@ import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils
  * 刪除確認框顯示的「底下 N 條」就會說謊）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
   const snap = await ref.get()
   if (!snap.exists) return { ok: true }
 
-  const existing = snap.data() as { workspaceId?: string; sourceId?: string | null; status?: string; deletedAt?: unknown }
+  const existing = snap.data() as { workspaceId?: string; sourceId?: string | null; status?: string; deletedAt?: unknown; title?: string }
   if (existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
   }
@@ -36,6 +37,18 @@ export default defineEventHandler(async (event) => {
 
   await ref.update(buildChunkSoftDeletePatch(existing.status))
   invalidateTagIndexCache(workspaceId)
+
+  // 稽核（`C-254`）：少一張卡＝AI 少會答一件事，而且症狀是「以前會答、現在不會了」，
+  // 沒有紀錄的話根本無從查起。⚠️ 這裡是軟刪除（30 天內救得回來），備註要講清楚
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.delete',
+    targetId: chunkId,
+    before: { title: String(existing.title ?? '') },
+    note: `${String(existing.title ?? '')}（進回收桶，${RECYCLE_RETENTION_DAYS} 天內還原得回來）`,
+  }, db)
 
   // 同步維護 source：manual 單張 → source 一起進回收桶；其他 → 重算 chunkCount
   if (existing.sourceId) {

@@ -55,11 +55,157 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'members/role.put': '改了某位成員的權限',
   'line-workspace.put': '改了 LINE 連線設定',
   'line-workspace.clear': '清空了整個 LINE 工作區設定',
+
+  /*
+   * ── 2026-09-24（`C-254`）補的那一大批 ────────────────────────────
+   * 在這之前，整個 `auditLogs` 從 2026-08-14 開張到 09-24 只有 6 筆——
+   * 160 支會寫入的端點只有 9 支會留紀錄，而這一頁卻宣稱它記了圖文選單。
+   * ⛔ 之後新增會改設定的端點，這裡要一起補一行（`audit.test.ts` 會掃 server 原始碼）。
+   */
+
+  // 推播：唯一「按下去就送出、收不回來」而且會花錢的功能，所以擺第一個補
+  'broadcast.create': '建了一則推播草稿',
+  'broadcast.put': '改了一則推播的內容',
+  'broadcast.send': '送出了一則推播',
+  'broadcast.schedule': '排定了推播的發送時間',
+  'broadcast.cancel': '取消了一則推播',
+  'broadcast.retry': '把發送失敗的推播重設回草稿',
+  'broadcast.testSend': '試發了一則推播給自己',
+
+  // 機器人模組：改了客人立刻收到不一樣的東西
+  'flow.create': '新增了一個機器人模組',
+  'flow.put': '改了一個機器人模組',
+  'flow.delete': '刪掉了一個機器人模組',
+  'flow.reorder': '調整了機器人模組的順序',
+  'flowFolder.create': '新增了模組資料夾',
+  'flowFolder.put': '改了模組資料夾',
+  'flowFolder.delete': '刪掉了模組資料夾',
+  'flowFolder.reorder': '調整了模組資料夾的順序',
+
+  // 圖文選單：09-24 之前只有「換預設」會記，其餘全部漏掉
+  'richmenu.create': '新增了一個圖文選單',
+  'richmenu.put': '改了一個圖文選單',
+  'richmenu.delete': '刪掉了一個圖文選單',
+  'richmenu.upload': '換了圖文選單的底圖',
+
+  // 圖文訊息（模組裡那種一張圖切成好幾格的訊息）
+  'richMessage.create': '新增了一則圖文訊息',
+  'richMessage.put': '改了一則圖文訊息',
+  'richMessage.delete': '刪掉了一則圖文訊息',
+
+  // 知識庫：刪一張卡 AI 就少會一件事，而在這之前查不到是誰刪的
+  'knowledge.create': '新增了一張知識卡',
+  'knowledge.bulkCreate': '一次新增了多張知識卡',
+  'knowledge.put': '改了一張知識卡',
+  'knowledge.delete': '刪掉了一張知識卡',
+  'knowledge.restore': '還原了一張刪掉的知識卡',
+  'knowledge.settings': '改了一張知識卡的設定',
+  'knowledge.reindex': '讓一張知識卡重新學習',
+  'knowledge.reindexAll': '讓整個知識庫重新學習',
+  // ⚠️ `knowledge/normalize` 刻意沒有紀錄：那支只是把整理結果**回給前端**，
+  //    一個字都沒有寫進資料庫，存不存由使用者按下一步才決定（存的時候走 create／put）。
+  'knowledge.reenrich': '幫知識卡補上「客人會怎麼問」',
+  'knowledge.productAliases': '改了商品的別名',
+  'knowledge.suggestionAccept': '採用了一則知識建議',
+  'knowledge.suggestionDismiss': '忽略了一則知識建議',
+  'knowledge.dupDismiss': '忽略了一組重複的知識卡',
+  'knowledge.previewJobDelete': '取消了一個匯入預覽',
+  'source.put': '改了一個知識來源',
+  'source.delete': '刪掉了一個知識來源（連同它的知識卡）',
+  'source.reindex': '讓一個知識來源重新學習',
+  'source.gsheetSync': '重新同步了 Google 試算表',
+  'source.resyncApply': '套用了知識來源的重新同步',
+  'source.migrateOrphans': '把沒有來源的知識卡歸了位',
+  'knowledgeFolder.create': '新增了知識庫資料夾',
+  'knowledgeFolder.put': '改了知識庫資料夾',
+  'knowledgeFolder.delete': '刪掉了知識庫資料夾',
+  'knowledgeFolder.reorder': '調整了知識庫資料夾的順序',
+
+  // 標籤（⚠️「貼標籤給某位客人」是日常操作，刻意不記；這裡記的是標籤本身被建改刪）
+  'tag.create': '新增了一個標籤',
+  'tag.put': '改了一個標籤',
+  'tag.delete': '刪掉了一個標籤',
+  'tag.pending': '處理了一個待確認的標籤',
+
+  // 客服常用語
+  'supportPreset.create': '新增了一則客服常用語',
+  'supportPreset.put': '改了一則客服常用語',
+  'supportPreset.delete': '刪掉了一則客服常用語',
+
+  // 加好友活動
+  'campaign.create': '新增了一個加好友活動',
+  'campaign.put': '改了一個加好友活動',
+  'campaign.delete': '刪掉了一個加好友活動',
+
+  // 店家輪廓：它的內容直接進 AI 的指令，改了等於換了 AI 的人設
+  'storeProfile.put': '改了「認識你的店」的內容',
+
+  // 成員與邀請（09-24 之前只有「改權限」會記）
+  'members.invite': '邀請了新成員',
+  'members.remove': '移除了一位成員',
+  'memberInvite.put': '改了一張邀請的權限',
+  'memberInvite.delete': '收回了一張邀請',
+  'member.lineBindCode': '產生了成員的 LINE 綁定碼',
+  'member.lineUnbind': '解除了成員的 LINE 綁定',
+
+  // 錢：取消續訂、換方案、作廢訂單
+  'payment.cancelSubscription': '取消了自動續訂',
+  'payment.schedulePlanChange': '預約了方案變更',
+  'payment.voidOrder': '作廢了一張訂單',
+  'payment.invoiceProfile': '改了發票抬頭資料',
+
+  // 組織層（組織管理員做的，不是平台做的）
+  'org.invoiceProfile': '改了組織的發票抬頭',
+  'org.memberAdd': '新增了組織管理員',
+  'org.memberRemove': '移除了組織管理員',
+  'org.workspaceCreate': '在組織底下建了一個官方帳號',
+
+  /*
+   * 平台自己做的事（超管）。⚠️ 這批的 `workspaceId` 是空的、`scope='platform'`，
+   * **不會出現在租戶的「操作紀錄」頁**，只在超管的平台稽核頁看得到——
+   * ⛔ 不要為了讓它現身而硬塞一個 workspaceId 進去。
+   */
+  'super.allowance': '平台調整了額度',
+  'super.grantCredit': '平台給了點數',
+  'super.leadPatch': '平台更新了名單的狀態',
+  'super.orgCreate': '平台建立了一個組織',
+  'super.orgPatch': '平台改了組織的資料',
+  'super.orgDisable': '平台停用或啟用了一個組織',
+  'super.orgMemberAdd': '平台新增了組織管理員',
+  'super.orgMemberRemove': '平台移除了組織管理員',
+  'super.recordRefund': '平台記錄了一筆退款',
+  'super.superAdminGrant': '平台把某人升成超級管理員',
+  'super.superAdminRevoke': '平台收回了某人的超級管理員',
+  'super.voidInvoice': '平台作廢了一張發票',
+  'super.workspaceCreate': '平台建立了一個官方帳號',
+  'super.workspacePatch': '平台改了官方帳號的設定',
+
+  /*
+   * 轉真人佇列。⚠️ **只記批次那一支**：
+   * · 單筆「標成處理完了」(`handoffs/resolve`) 是日常操作，跟單筆關閉對話同一級
+   *   （那支本來就沒記，只有 `conversations/sessions.batchClose` 有記），照既有分界走。
+   * · `conversations/cleanup` 是 Cloud Scheduler 每天跑的排程，沒有「誰做的」可以記——
+   *   稽核的 actor 只有 human／agent，⛔ 不要為了讓它現身而捏造一個操作者。
+   */
+  'handoff.resolveByQuery': '一次把問同一句話的「等真人」都標成處理完了',
 }
 
 /** 找不到對照時的退路：寧可顯示代號，也不要顯示空白（空白會讓人以為紀錄壞了） */
 export function auditActionLabel(action: string): string {
   return AUDIT_ACTION_LABELS[action] ?? action
+}
+
+/**
+ * 這筆是不是「平台（我們）」做的（`C-254`）。
+ *
+ * 為什麼需要：`super.grantCredit`／`super.workspacePatch` 這兩筆**刻意掛在客戶自己的
+ * workspaceId 上**——平台調了你的額度或方案，你有權在自己的操作紀錄裡看到。
+ * 但它們的 `actor` 仍然是 `human`，畫面若照舊標成「成員操作」，客戶會看到一個
+ * **他不認得的 Email 出現在自己團隊的操作紀錄裡**，第一反應是「我被入侵了」。
+ * ⛔ 所以這種列一定要標出來是平台做的。
+ */
+export function isPlatformAction(action: string): boolean {
+  return action.startsWith('super.')
 }
 
 /**
@@ -103,6 +249,63 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   dndReply: '勿擾時段回給客人的話',
   days: '幾天沒來訊算沉睡',
   role: '權限',
+  // `C-254`（2026-09-24）補的那一批動作會帶到的欄位。
+  // ⚠️ 陣列一律只記數量（`auditSnapshot` 的 `count`），所以這裡對的是 `xxxCount`。
+  name: '名稱',
+  title: '標題',
+  status: '狀態',
+  cardStatus: '這張卡的狀態',
+  question: '客人會問的問題',
+  answer: '卡片上的答案',
+  content: '內容',
+  text: '內容',
+  description: '說明',
+  url: '網址',
+  email: '對象',
+  displayName: '名稱',
+  reason: '原因',
+  note: '備註',
+  color: '顏色',
+  type: '類型',
+  aiMode: 'AI 判斷方式',
+  folderId: '所在資料夾',
+  sourceId: '知識來源',
+  refreshIntervalMinutes: '多久自動同步一次（分鐘）',
+  onChangeBehavior: '來源變動時怎麼處理',
+  productName: '商品名稱',
+  messagesCount: '訊息則數',
+  areasCount: '可按的格子數',
+  actionsCount: '可按的格子數',
+  altText: '收不到圖時顯示的文字',
+  isActive: '啟用中',
+  nodesCount: '流程步驟數',
+  itemsCount: '項目數',
+  columnsCount: '卡片數',
+  chunkIdsCount: '知識卡張數',
+  added: '新增',
+  updated: '更新',
+  deleted: '刪除',
+  completionTagIdsCount: '發完要貼的標籤數',
+  audienceSource: '發送對象',
+  scheduleAt: '預定發送時間',
+  activeUntil: '用到哪一天',
+  totalCount: '預計送出人數',
+  sentCount: '實際送達人數',
+  failedCount: '沒送成功的人數',
+  isDefault: '預設選單',
+  chatBarText: '選單列文字',
+  imageUrl: '圖片',
+  planId: '方案',
+  plan: '方案',
+  autoRenew: '自動續訂',
+  taxId: '統一編號',
+  amount: '金額',
+  orderId: '訂單編號',
+  invoiceNumber: '發票號碼',
+  disabled: '已停用',
+  superAdmin: '超級管理員',
+  organizationId: '所屬組織',
+  keywords: '觸發關鍵字',
 }
 
 export function auditFieldLabel(key: string): string {
@@ -118,6 +321,30 @@ export function auditFieldLabel(key: string): string {
 export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
   mode: { always: '每次都通知', missed_only: '沒人接手才通知' },
   replyMode: { auto: 'AI 直接回客人', draft: '只給草稿' },
+  // 推播狀態（`C-254`）：畫面上出現 `cancelled` 跟出現欄位代號是同一個毛病
+  status: {
+    draft: '草稿',
+    scheduled: '已排程',
+    processing: '發送中',
+    completed: '已送出',
+    failed: '發送失敗',
+    cancelled: '已取消',
+  },
+  /*
+   * 知識卡的狀態刻意**不叫 `status`**：推播也有 `status`，而兩邊都有 `failed`——
+   * 共用一張對照表的話，一張沒學成功的卡會被標成「發送失敗」。
+   * ⛔ 值的代號會撞字，所以欄位名要分開。
+   */
+  cardStatus: {
+    pending: '還在學',
+    indexed: '可用',
+    failed: '學習失敗',
+    disabled: '停用中',
+  },
+  role: { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '唯讀' },
+  // ⚠️ 紀錄裡只存受眾的**種類**，不存名單本身：一則推播的名單可能有上千個 userId，
+  //    整包存進來會被截成 50 個並把整筆標成 lossy（連還原都不給按），而且沒有人看得懂。
+  audienceSource: { all: '全部好友', tags: '依標籤挑', audience: '指定受眾', import: '匯入的名單' },
 }
 
 /**

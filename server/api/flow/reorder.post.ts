@@ -1,8 +1,9 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const body = await readBody(event)
   const orderedIds = body?.orderedIds
 
@@ -38,6 +39,16 @@ export default defineEventHandler(async (event) => {
     batch.update(db.collection('flows').doc(id), { sortOrder: index })
   })
   await batch.commit()
+
+  // 稽核（`C-254`）：排序只影響後台清單的順序，不改客人收到的東西，
+  // 所以只記「動了幾個」，⛔ 不把整串 id 塞進紀錄（那會變成沒人看得懂的一長串）
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'flow.reorder',
+    after: { itemsCount: ids.length },
+  }, db)
 
   return { success: true }
 })

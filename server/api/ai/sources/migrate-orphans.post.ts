@@ -4,6 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/sources/migrate-orphans
@@ -18,7 +19,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sourc
 const MAX_BATCH = 200
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'sources.write')
+  const { workspaceId, uid } = await requireCapability(event, 'sources.write')
 
   const db = getDb()
   const orphanSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
@@ -64,6 +65,19 @@ export default defineEventHandler(async (event) => {
   }
 
   await batch.commit()
+
+  // 稽核（`C-254`）。⚠️ `capped` 代表「這次只做了 200 張、還有沒做完的」——
+  // ⛔ 一定要寫進紀錄，不然事後看到「整理了 200 張」會以為整理完了
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'source.migrateOrphans',
+    after: { itemsCount: orphanSnap.size },
+    note: orphanSnap.size >= MAX_BATCH
+      ? `把 ${orphanSnap.size} 張沒有來源的卡歸了位；⚠️ 這是一批的上限，可能還有沒處理完的，要再跑一次`
+      : `把 ${orphanSnap.size} 張沒有來源的卡歸了位`,
+  }, db)
 
   return {
     migrated: orphanSnap.size,

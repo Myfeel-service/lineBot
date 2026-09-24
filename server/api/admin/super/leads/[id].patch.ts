@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { DEMO_LEAD_STATUSES, type DemoLeadStatus } from '~~/shared/types/demo-lead'
 
 /**
@@ -10,7 +11,7 @@ import { DEMO_LEAD_STATUSES, type DemoLeadStatus } from '~~/shared/types/demo-le
  * Body: { status?: DemoLeadStatus, note?: string }
  */
 export default defineEventHandler(async (event) => {
-  await requireSuperAdmin(event)
+  const { uid } = await requireSuperAdmin(event)
 
   const id = getRouterParam(event, 'id')
   if (!id) {
@@ -39,5 +40,18 @@ export default defineEventHandler(async (event) => {
   }
 
   await ref.update(patch)
+
+  // 稽核（`C-254`）：業務跟進狀態是內部資料，⛔ 名單上的個資（姓名、電話）不進紀錄
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid,
+    actor: 'human',
+    action: 'super.leadPatch',
+    targetId: id,
+    before: { status: String(snap.data()?.status ?? '') },
+    after: { status: String(patch.status ?? snap.data()?.status ?? '') },
+  }, db)
+
   return { ok: true }
 })

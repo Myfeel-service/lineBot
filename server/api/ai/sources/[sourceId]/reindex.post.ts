@@ -8,6 +8,7 @@ import {
   runIndexOnChunk,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /** 與 bulk-create / reindex-all 一致的保守併發 */
 const EMBED_CONCURRENCY = 5
@@ -23,7 +24,7 @@ const EMBED_CONCURRENCY = 5
  * 停用卡跳過（同 reindex-all：不偷偷重新啟用）。冪等，可重跑。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'sources.write')
+  const { workspaceId, uid } = await requireCapability(event, 'sources.write')
   const sourceId = String(getRouterParam(event, 'sourceId') ?? '').trim()
   if (!sourceId) throw createError({ statusCode: 400, statusMessage: 'sourceId required' })
 
@@ -73,11 +74,25 @@ export default defineEventHandler(async (event) => {
     await recordAiUsage(workspaceId, { buildEmbeddingTokens: batchEmbeddingTokens }, db)
   }
 
+  const indexed = results.filter(r => r.status === 'indexed').length
+  const failed = results.filter(r => r.status === 'failed').length
+
+  // 稽核（`C-254`）：會花 embedding 的錢，⛔ 失敗張數一定要一起記
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'source.reindex',
+    targetId: sourceId,
+    after: { name: String(source.data.name ?? ''), itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed },
+    note: `${String(source.data.name ?? '')}：重學 ${indexed} 張${failed ? `、失敗 ${failed} 張` : ''}`,
+  }, db)
+
   return {
     total: snap.size,
     skipped: snap.size - docs.length,
-    indexed: results.filter(r => r.status === 'indexed').length,
-    failed: results.filter(r => r.status === 'failed').length,
+    indexed,
+    failed,
     failures: results.filter(r => r.status === 'failed'),
   }
 })

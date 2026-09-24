@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { getDb } from '~~/server/utils/firebase'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
@@ -62,5 +63,24 @@ export default defineEventHandler(async (event) => {
   })
 
   console.log('[payment] 記人工退款', merchantOrderNo, `${result.before} → ${result.after}`, reason)
+
+  /*
+   * 稽核（`C-254`）。⚠️ `billingRefunds` 已經有一本專帳，這裡再記一筆是為了讓它
+   * 出現在同一條時間軸上（出事時人是照時間找的）。事實來源仍然是 `billingRefunds`。
+   * ⛔ 這支**不會真的退錢**（錢是人在 PAYUNi 後台退的），備註要照實講，
+   *    不然三個月後看到「記錄了一筆退款」會以為系統退過了。
+   */
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid,
+    actor: 'human',
+    action: 'super.recordRefund',
+    targetId: merchantOrderNo,
+    before: { amount: result.before },
+    after: { amount: result.after },
+    note: `記了一筆 NT$${amount.toLocaleString()} 的人工退款（原因：${reason}）。⚠️ 這只是記帳，實際退款要另外在金流後台操作`,
+  }, db)
+
   return { ok: true, ...result }
 })

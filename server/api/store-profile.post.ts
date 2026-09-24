@@ -1,6 +1,7 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getAiSettings, setAiSettings } from '~~/server/utils/ai-settings'
 import { getStoreProfile, saveStoreProfile, type StoreProfilePatch } from '~~/server/utils/store-profile'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   isStoreProfileReady,
   normalizeSiteUrl,
@@ -23,7 +24,7 @@ import {
  *    AI 猜的走 `mergeAiGuesses`，不從這支進來。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
   const body = await readBody(event).catch(() => ({})) as {
     fields?: StoreProfilePatch
     siteUrl?: string
@@ -34,6 +35,9 @@ export default defineEventHandler(async (event) => {
   const now = Date.now()
 
   let profile: StoreProfileDoc = await getStoreProfile(workspaceId)
+  // 稽核要用的「改之前」：⛔ 一定要在下面那個迴圈**改到它之前**先抄下來
+  const beforeFields = { ...(profile.fields ?? {}) }
+  const beforeSiteUrl = profile.siteUrl
 
   const patch = (body.fields ?? {}) as Record<string, unknown>
   const validIds = new Set<string>(STORE_PROFILE_FIELDS.map(f => f.id))
@@ -74,6 +78,37 @@ export default defineEventHandler(async (event) => {
     catch {
       // 這是加分項，失敗不該讓輪廓存不起來（輪廓本身上面已經存好了）
     }
+  }
+
+  /*
+   * 稽核（`C-254`）：這一份的內容**直接被組進 AI 的 systemPrompt**，
+   * 改了它等於換了 AI 的人設——它比大部分「設定」都更該留下紀錄。
+   * ⛔ 只記真的有變的那幾格，欄位名用畫面上的中文（`industry` 對店家沒有意義）。
+   */
+  const changedBefore: Record<string, unknown> = {}
+  const changedAfter: Record<string, unknown> = {}
+  const labelOf = (id: string) => STORE_PROFILE_FIELDS.find(f => f.id === id)?.label ?? id
+  for (const key of Object.keys(patch)) {
+    const b = String(beforeFields[key as StoreProfileFieldId]?.value ?? '')
+    const a = String(profile.fields?.[key as StoreProfileFieldId]?.value ?? '')
+    if (b === a) continue
+    changedBefore[labelOf(key)] = b
+    changedAfter[labelOf(key)] = a
+  }
+  if (profile.siteUrl !== beforeSiteUrl) {
+    changedBefore.url = beforeSiteUrl
+    changedAfter.url = profile.siteUrl
+  }
+  if (Object.keys(changedAfter).length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'storeProfile.put',
+      before: changedBefore,
+      after: changedAfter,
+      ...(filledShopUrl ? { note: '同時把商店網址填進了 AI 設定（原本是空的）' } : {}),
+    })
   }
 
   return { ok: true, profile, ready: isStoreProfileReady(profile), filledShopUrl }

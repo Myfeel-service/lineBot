@@ -2,13 +2,14 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/broadcast/:id/schedule
  * 確認排程（不發送）。僅允許 draft / scheduled 狀態。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -46,6 +47,18 @@ export default defineEventHandler(async (event) => {
   if (body.messages !== undefined) updates.messages = body.messages
 
   await ref.update(updates)
+
+  // 稽核（`C-254`）：排程＝「到那個時間就自動送出去」，跟按下送出一樣收不回來
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'broadcast.schedule',
+    targetId: id,
+    before: { status: String(current.status ?? ''), scheduleAt: auditTimeText(current.scheduleAt) },
+    after: { status: 'scheduled', scheduleAt: auditTimeText(scheduleAt) },
+    note: String(updates.name ?? current.name ?? ''),
+  }, db)
 
   return {
     success: true,

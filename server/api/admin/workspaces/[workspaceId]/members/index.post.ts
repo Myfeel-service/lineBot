@@ -2,6 +2,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { requireWorkspaceAccess, invalidateWorkspaceMemberCache } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
 import { getWorkspacePlan } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planLimitMessage } from '~~/shared/billing/plans'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
@@ -112,6 +113,17 @@ export default defineEventHandler(async (event) => {
     })
     invalidateWorkspaceMemberCache(targetUid, workspaceId)
 
+    // 稽核（`C-254`）：多一個人看得到客人的對話，這是權限邊界的變動
+    await writeAuditLog({
+      workspaceId,
+      uid: inviterUid,
+      actor: 'human',
+      action: 'members.invite',
+      targetId: targetUid,
+      after: { email: emailNorm, role },
+      note: `${emailNorm} 已經有帳號，直接加進來了`,
+    }, db)
+
     return { id: memberDocId, uid: targetUid, workspaceId, role, invitedEmail: emailNorm, pending: false }
   }
 
@@ -123,6 +135,18 @@ export default defineEventHandler(async (event) => {
     invitedBy: inviterUid,
     createdAt: FieldValue.serverTimestamp(),
   })
+
+  // 稽核（`C-254`）：對方還沒有帳號，所以現在只是一張邀請——
+  // ⛔ 備註要講清楚「還沒進來」，不然看紀錄的人會以為人已經在裡面了
+  await writeAuditLog({
+    workspaceId,
+    uid: inviterUid,
+    actor: 'human',
+    action: 'members.invite',
+    targetId: ref.id,
+    after: { email: emailNorm, role },
+    note: `${emailNorm} 還沒有帳號，先發了邀請；他註冊並登入後才會真的成為成員`,
+  }, db)
 
   return {
     id: ref.id,

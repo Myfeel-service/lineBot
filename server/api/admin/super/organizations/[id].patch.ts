@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin, invalidateOrgMemberCache } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
+import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 function normEmail(e: string | undefined | null): string {
   return String(e ?? '').trim().toLowerCase()
@@ -102,6 +103,29 @@ export default defineEventHandler(async (event) => {
     try {
       ownerEmailOut = (await auth.getUser(String(d.ownerId))).email ?? ''
     } catch { /* */ }
+  }
+
+  // 稽核（`C-254`）：`ownerEmail` 是帳務歸屬對象、`maxWorkspaces` 是濫用防護的閘門
+  const summarize = (x: Record<string, unknown>) => ({
+    name: String(x.name ?? ''),
+    email: normEmail(x.ownerEmail as string | undefined),
+    itemsCount: x.maxWorkspaces === null ? -1 : Number(x.maxWorkspaces ?? 0),
+  })
+  const orgDiff = diffChangedFields(summarize(prev), summarize(d))
+  if (orgDiff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId: '',
+      orgId: id,
+      scope: 'platform',
+      uid: callerUid,
+      actor: 'human',
+      action: 'super.orgPatch',
+      targetId: id,
+      before: orgDiff.before,
+      after: orgDiff.after,
+      // ⚠️ 上限用 -1 代表「不限」（紀錄裡不能有 null 跟 0 分不出來的格子）
+      ...(orgDiff.changedKeys.includes('itemsCount') ? { note: '官方帳號數量上限有變（-1 代表不限）' } : {}),
+    }, db)
   }
 
   return {

@@ -9,10 +9,11 @@ import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { assertPlanAllows } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
   await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含流程自動化功能，請升級方案後再使用')
   const body = await readBody(event)
@@ -40,6 +41,16 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  // 稽核（`C-254`）：模組是客人真的會收到的內容，建了什麼要查得到
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'flow.create',
+    targetId: id,
+    after: { name: validName, isActive: isActive ?? true, messagesCount: messages.length },
+  })
 
   return doc
 })

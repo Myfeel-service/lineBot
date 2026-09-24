@@ -2,6 +2,7 @@ import { executeBroadcastSend } from '~~/server/utils/broadcast-send'
 import { broadcastScheduleAtToDate } from '~~/server/utils/broadcast-schedule'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { getDoc } from '~~/server/utils/firebase'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -9,7 +10,7 @@ import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
  * 立即發送推播
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -35,7 +36,30 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    return await executeBroadcastSend(id, { source: 'manual' })
+    const result = await executeBroadcastSend(id, { source: 'manual' })
+
+    /*
+     * 稽核（`C-254`）：這是全站最該留下紀錄的一顆按鈕——訊息已經在客人手機裡，收不回來。
+     * ⛔ 寫在送出**之後**：先記再送的話，送失敗會留下一筆「送出了」的假紀錄。
+     * ⚠️ 送成功但記帳沒寫完（`postSendError`）也算送出去了，所以照記，把原因寫在備註裡。
+     */
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'broadcast.send',
+      targetId: id,
+      after: {
+        name: doc.name ?? '',
+        totalCount: result.totalCount,
+        sentCount: result.sentCount,
+        failedCount: result.failedCount,
+      },
+      note: `送給 ${result.sentCount} 人${result.failedCount ? `（${result.failedCount} 人沒送成功）` : ''}`
+        + (result.postSendError ? `；送出後記帳未完成：${result.postSendError}` : ''),
+    })
+
+    return result
   }
   catch (e: any) {
     const msg = String(e?.message ?? e)

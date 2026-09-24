@@ -27,6 +27,7 @@ import {
   type DiffAction,
   type DiffEntry,
 } from '~~/server/utils/ai-knowledge-resync'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/sources/:sourceId/resync-apply
@@ -43,7 +44,7 @@ import {
  * 套用後：清掉 outdatedAt 旗標、更新 source.lastFetchedAt / chunkCount。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'sources.write')
+  const { workspaceId, uid } = await requireCapability(event, 'sources.write')
   // 維運額度前置檢查（C-45）：套用會跑 embedding＋總覽 LLM
   await assertMaintenanceBudget(workspaceId)
   const sourceId = String(getRouterParam(event, 'sourceId') ?? '').trim()
@@ -227,6 +228,24 @@ export default defineEventHandler(async (event) => {
   if (errors.length === 0) {
     await clearSourceOutdated(db, sourceId)
   }
+
+  /*
+   * 稽核（`C-254`）。⛔ `errors` 一定要記：部分失敗的那幾張留在舊版而使用者以為全套用了，
+   * 正是這個專案一再付代價的「沉默地少做一件事」。
+   * ⚠️ `divergentKeeps` 是「卡片故意跟網頁不一樣」的張數——它會擋住指紋推進，
+   *    也是之後「為什麼一直說有變動」的答案。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'source.resyncApply',
+    targetId: sourceId,
+    after: { name: String(source.data.name ?? ''), added, updated, deleted, failedCount: errors.length },
+    note: `${String(source.data.name ?? '')}：新增 ${added}、覆蓋 ${updated}、刪除 ${deleted}、保留 ${kept}`
+      + (errors.length ? `；⚠️ 有 ${errors.length} 張沒套用成功，還停在舊版` : '')
+      + (divergentKeeps ? `；有 ${divergentKeeps} 張刻意保留成跟來源不一樣` : ''),
+  }, db)
 
   return {
     sourceId,

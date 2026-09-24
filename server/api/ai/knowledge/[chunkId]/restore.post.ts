@@ -10,6 +10,7 @@ import {
 } from '~~/server/utils/ai-knowledge-chunks'
 import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/knowledge/:chunkId/restore
@@ -19,7 +20,7 @@ import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/ser
  * 還原成 pending（向量已被清）時當場重建索引，不等 retry 排程。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -53,6 +54,20 @@ export default defineEventHandler(async (event) => {
   })
   invalidateTagIndexCache(workspaceId)
   invalidateKnowledgeChunkCount(workspaceId)
+
+  // 稽核（`C-254`）：還原＝知識量 +1，也是計費維度的變動。
+  // ⚠️ 還原**不等於重新上架**（刪之前是停用的，還原後仍是停用），備註要講清楚
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.restore',
+    targetId: chunkId,
+    after: { title: String(chunk.title ?? ''), cardStatus: restored },
+    note: restored === 'disabled'
+      ? `${String(chunk.title ?? '')}（救回來了，但它刪之前就是停用的，所以還是停用）`
+      : String(chunk.title ?? ''),
+  }, db)
 
   // 來源側：manual 連坐的一併還原；一般來源重算張數
   if (chunk.sourceId) {

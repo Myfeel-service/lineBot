@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceSubscription } from '~~/shared/billing/plans'
 import { applySuperSubscriptionEdit, SubscriptionEditError } from '~~/shared/billing/subscription-edit'
 
@@ -18,7 +19,7 @@ import { applySuperSubscriptionEdit, SubscriptionEditError } from '~~/shared/bil
  *   - 寫入後清 billing 快取，則數額度攔截即時生效
  */
 export default defineEventHandler(async (event) => {
-  await requireSuperAdmin(event)
+  const { uid } = await requireSuperAdmin(event)
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -57,5 +58,26 @@ export default defineEventHandler(async (event) => {
   invalidateWorkspaceSubscriptionCache(id)
 
   const after = await ref.get()
+
+  /*
+   * 稽核（`C-254`）。⭐ 這一筆掛在**那個帳號自己的** workspaceId 上：平台改了客戶的方案
+   * 或額度，客戶有權在自己的「操作紀錄」看到。
+   * ⛔ 訂閱整包不寫進紀錄——裡面有 `payuniCardToken`（遮罩後那筆會被標 lossy），
+   *    只記方案代號這一格。
+   */
+  const subAfter = after.data()?.subscription as { planId?: string } | undefined
+  await writeAuditLog({
+    workspaceId: id,
+    uid,
+    actor: 'human',
+    action: 'super.workspacePatch',
+    targetId: id,
+    after: {
+      name: String(after.data()?.name ?? ''),
+      ...('subscription' in body ? { planId: String(subAfter?.planId ?? '') } : {}),
+    },
+    note: 'subscription' in body ? '平台調整了這個帳號的方案／額度' : '平台改了這個帳號的設定',
+  }, db)
+
   return { id, ...after.data() }
 })

@@ -2,6 +2,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION, SUGGESTION_RESOLVED_TTL_DAYS } from '~~/server/utils/ai-knowledge-suggest'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { KnowledgeSuggestionDoc } from '~~/shared/types/ai-knowledge'
 
 /**
@@ -11,7 +12,7 @@ import type { KnowledgeSuggestionDoc } from '~~/shared/types/ai-knowledge'
  * 判斷基準就是這裡記下的 seenCountAtDismiss。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const id = String(getRouterParam(event, 'id') ?? '').trim()
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id required' })
 
@@ -37,6 +38,18 @@ export default defineEventHandler(async (event) => {
     expireAt: Timestamp.fromMillis(Date.now() + SUGGESTION_RESOLVED_TTL_DAYS * 24 * 3600_000),
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true })
+
+  // 稽核（`C-254`）：忽略掉的是「客人一直問、AI 答不出來」的缺口。
+  // ⚠️ 它不是永久消失（同主題事件數翻倍會重新浮出），備註要照實講，⛔ 不要寫成「永久忽略」
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.suggestionDismiss',
+    targetId: id,
+    before: { title: String(data.topic ?? ''), itemsCount: Number(data.eventCount ?? 0) },
+    note: `「${String(data.topic ?? '')}」先不處理（客人問到的次數再翻一倍的話還會再提醒一次）`,
+  }, db)
 
   return { ok: true }
 })

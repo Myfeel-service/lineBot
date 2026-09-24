@@ -1,5 +1,6 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { removeFromHandoffNotify } from '~~/server/utils/member-line-bind'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * DELETE /api/admin/workspaces/:workspaceId/members/:uid
@@ -29,6 +30,20 @@ export default defineEventHandler(async (event) => {
 
   // 人都移除了通知還一直推,名單上還會留一筆對不上任何成員的 Uxxx
   if (lineUserId) await removeFromHandoffNotify(workspaceId, lineUserId)
+
+  // 稽核（`C-254`）：把人踢出去是權限邊界的變動，⛔ 這種事沒有紀錄是不行的
+  await writeAuditLog({
+    workspaceId,
+    uid: callerUid,
+    actor: 'human',
+    action: 'members.remove',
+    targetId: targetUid,
+    before: {
+      email: String(snap.data()?.invitedEmail ?? ''),
+      role: String(snap.data()?.role ?? ''),
+    },
+    ...(lineUserId ? { note: '順手把他從轉真人的通知名單移掉了' } : {}),
+  }, db)
 
   return { ok: true, removed: targetUid }
 })

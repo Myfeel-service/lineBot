@@ -1,5 +1,6 @@
 import { FieldValue, type Timestamp } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { getDb } from '~~/server/utils/firebase'
 import { INVOICES_COLLECTION, invoiceKeysFromConfig } from '~~/server/utils/invoice'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
@@ -19,7 +20,7 @@ import type { InvoiceDoc } from '~~/shared/types/payment'
  * invoices / paymentOrders 皆為租戶內 top-level collection,super admin 已限本租戶,無跨租戶疑慮。
  */
 export default defineEventHandler(async (event) => {
-  await requireSuperAdmin(event)
+  const { uid } = await requireSuperAdmin(event)
 
   const body = await readBody(event)
   const merchantOrderNo = String(body?.merchantOrderNo || '').trim()
@@ -64,6 +65,18 @@ export default defineEventHandler(async (event) => {
   await db.collection(PAYMENT_ORDERS_COLLECTION).doc(merchantOrderNo)
     .update({ invoiceStatus: 'voided', updatedAt: FieldValue.serverTimestamp() })
     .catch(() => {})
+
+  // 稽核（`C-254`）：作廢是對國稅局的申報動作，作廢原因是財政部規定必填的東西，要留得下來
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid,
+    actor: 'human',
+    action: 'super.voidInvoice',
+    targetId: merchantOrderNo,
+    after: { invoiceNumber: String(inv.invoiceNumber), reason },
+    note: `作廢了發票 ${inv.invoiceNumber}（原因：${reason}）`,
+  }, db)
 
   return { ok: true, invoiceNumber: inv.invoiceNumber }
 })

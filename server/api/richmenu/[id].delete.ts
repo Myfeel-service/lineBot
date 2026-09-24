@@ -1,12 +1,13 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
-  const menu = await getDoc<{ richMenuId: string; aliasId?: string; workspaceId?: string }>('richmenus', id)
+  const menu = await getDoc<{ richMenuId: string; aliasId?: string; workspaceId?: string; name?: string; isDefault?: boolean; areas?: unknown[] }>('richmenus', id)
   if (!menu || menu.workspaceId !== workspaceId) throw createError({ statusCode: 404, statusMessage: 'Not found' })
 
   // 先刪除圖文選單別名（釋出 alias ID）
@@ -34,6 +35,22 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  // 稽核（`C-254`）。⚠️ `lineDeleted=false` 代表我們這邊清掉了、LINE 上那張還在，
+  // 這件事**一定要寫進紀錄**——否則之後「客人手機上怎麼還有一張」會完全查無源頭
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'richmenu.delete',
+    targetId: id,
+    before: {
+      name: String(menu.name ?? ''),
+      isDefault: menu.isDefault === true,
+      areasCount: Array.isArray(menu.areas) ? menu.areas.length : 0,
+    },
+    note: lineDeleted ? String(menu.name ?? '') : `${String(menu.name ?? '')}（⚠️ LINE 上那一張沒刪成功，可能還在客人手機上）`,
+  })
 
   return { success: true, lineDeleted }
 })

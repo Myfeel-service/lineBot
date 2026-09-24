@@ -1,4 +1,5 @@
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
 const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
@@ -9,7 +10,7 @@ const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
  * Body: { role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
   const inviteId = getRouterParam(event, 'inviteId')
   if (!inviteId) throw createError({ statusCode: 400, statusMessage: 'inviteId is required' })
 
@@ -28,5 +29,17 @@ export default defineEventHandler(async (event) => {
   }
 
   await ref.update({ role })
+
+  // 稽核（`C-254`）：邀請還沒被接受，但它決定對方一進來是什麼權限
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'memberInvite.put',
+    targetId: inviteId,
+    before: { email: String(snap.data()?.email ?? ''), role: String(snap.data()?.role ?? '') },
+    after: { role },
+  }, db)
+
   return { id: inviteId, role }
 })

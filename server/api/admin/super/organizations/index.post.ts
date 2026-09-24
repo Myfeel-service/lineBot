@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin, invalidateOrgMemberCache } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/admin/super/organizations
@@ -38,6 +39,18 @@ export default defineEventHandler(async (event) => {
   })
 
   invalidateOrgMemberCache(email, orgId)
+
+  // 稽核（`C-254`）：一個客戶的起點就是這一筆
+  await writeAuditLog({
+    workspaceId: '',
+    orgId,
+    scope: 'platform',
+    uid: callerUid,
+    actor: 'human',
+    action: 'super.orgCreate',
+    targetId: orgId,
+    after: { name: String(name).trim(), email },
+  }, db)
 
   return { id: orgId, name: String(name).trim(), ownerEmail: email }
 })

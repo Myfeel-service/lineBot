@@ -3,6 +3,7 @@ import { syncPublishedEntryUrlForCampaign } from '~~/server/utils/lead-campaign-
 import { normalizeCampaignScheduleInput, schedulePatchForUpdate } from '~~/server/utils/campaign-schedule'
 import { normalizeAutoReplyAction } from '~~/shared/auto-reply-rule'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 function normalizeCampaignAction(body: any): { action: ReturnType<typeof normalizeAutoReplyAction> | null; moduleId: string | null } {
   const hasActionType = Boolean(String(body?.action?.type ?? '').trim())
@@ -24,7 +25,7 @@ function validateCampaign(body: any): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const id = getRouterParam(event, 'id')!
   const body = await readBody(event)
   const error = validateCampaign(body)
@@ -68,6 +69,27 @@ export default defineEventHandler(async (event) => {
     publishedClaimId: snap.data()?.publishedClaimId ?? null,
     publishedCtaUrl: snap.data()?.publishedCtaUrl ?? null,
   })
+
+  // 稽核（`C-254`）：`isActive` 一關，那條活動連結就失效了，客人點進去會撲空
+  const summarize = (d: Record<string, unknown>) => ({
+    name: String(d.name ?? ''),
+    isActive: d.isActive !== false,
+    itemsCount: Array.isArray(d.tagIds) ? (d.tagIds as unknown[]).length : 0,
+    type: String((d.action as { type?: string } | null)?.type ?? ''),
+  })
+  const diff = diffChangedFields(summarize(snap.data()!), summarize(merged))
+  if (diff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'campaign.put',
+      targetId: id,
+      before: diff.before,
+      after: diff.after,
+      note: String(snap.data()?.name ?? ''),
+    }, db)
+  }
 
   return {
     id,

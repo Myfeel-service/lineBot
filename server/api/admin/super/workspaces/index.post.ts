@@ -4,6 +4,7 @@ import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
 import { addSystemModulesToBatch } from '~~/server/utils/workspace-system-modules'
 import { defaultFreeSubscription } from '~~/server/utils/billing'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   LINE_BOT_USER_ID_FIELD,
   channelConflictMessage,
@@ -16,7 +17,7 @@ import {
  * Body: { name, ownerEmail, channelAccessToken?, channelSecret?, defaultLiffId?, organizationId? }
  */
 export default defineEventHandler(async (event) => {
-  await requireSuperAdmin(event)
+  const { uid: callerUid } = await requireSuperAdmin(event)
 
   const body = await readBody(event)
   const { name, ownerEmail, channelAccessToken, channelSecret, defaultLiffId, organizationId } = body
@@ -78,6 +79,22 @@ export default defineEventHandler(async (event) => {
   addSystemModulesToBatch(db, batch, workspaceId)
 
   await batch.commit()
+
+  /*
+   * 稽核（`C-254`）：掛在新帳號自己身上，讓它的「操作紀錄」第一列就是
+   * 「這個帳號是誰、什麼時候開的」。
+   * ⛔ `channelAccessToken`／`channelSecret` 絕對不進紀錄（憑證類欄位連遮罩過的形式都不帶）。
+   */
+  await writeAuditLog({
+    workspaceId,
+    ...(organizationId ? { orgId: String(organizationId) } : {}),
+    uid: callerUid,
+    actor: 'human',
+    action: 'super.workspaceCreate',
+    targetId: workspaceId,
+    after: { name: String(name).trim(), email: ownerEmail.trim(), plan: 'free' },
+    note: '平台開通了這個官方帳號',
+  }, db)
 
   return { id: workspaceId, name: String(name).trim(), ownerUid, ownerEmail: ownerEmail.trim() }
 })

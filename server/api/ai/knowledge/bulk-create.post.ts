@@ -13,6 +13,7 @@ import {
   normalizeChunkInput,
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { KnowledgeChunkStatus, KnowledgeSourceType } from '~~/shared/types/ai-knowledge'
 
 const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
@@ -42,7 +43,7 @@ const MAX_BULK_CHUNKS = 150
  * 失敗的卡會是 status='failed'，可由排程任務或手動 reindex 救回。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   // 維運額度前置檢查（C-45）：讓使用者在開始前就看到「額度不足」，而不是建到一半死
   await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)
@@ -270,6 +271,28 @@ export default defineEventHandler(async (event) => {
   const failed = results.filter(r => r.status === 'failed').length
 
   invalidateKnowledgeChunkCount(workspaceId)
+
+  /*
+   * 稽核（`C-254`）：一次進來上百張卡，是知識庫單次變動最大的一條路，也是計費維度。
+   * ⛔ 三個數字都要記（成功／失敗／被蓋掉）——只記「匯入了 150 張」而不講失敗幾張，
+   *    就是這個專案一再踩到的「沉默地少給資料」。
+   * ⚠️ `replacedChunks` 是被蓋掉的舊卡：人事後問「舊的那份去哪了」，答案只在這裡。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.bulkCreate',
+    ...(sourceId ? { targetId: sourceId } : {}),
+    after: {
+      name: String(body?.source?.name ?? ''),
+      itemsCount: results.length,
+      chunkIdsCount: indexed,
+      failedCount: failed,
+    },
+    note: `匯入 ${results.length} 張，成功 ${indexed} 張${failed ? `、失敗 ${failed} 張` : ''}`
+      + (replaceSourceId ? `；蓋掉原本那一份，舊的 ${replacedChunks} 張進了回收桶` : ''),
+  }, db)
 
   return {
     sourceId,

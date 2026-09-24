@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, auditSnapshot } from '~~/server/utils/audit-log'
 import type { BroadcastDoc, BroadcastAudienceSource } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -76,5 +77,23 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
   await db.collection('broadcasts').doc(id).set(doc)
+
+  // 稽核（`C-254`）：推播是唯一「按下去就送給全部好友、收不回來」又會花錢的功能。
+  // ⛔ 只記摘要不記 messages／名單——整包塞進來會被截斷，那筆就再也看不懂。
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'broadcast.create',
+    targetId: id,
+    after: {
+      ...auditSnapshot(doc as unknown as Record<string, unknown>, {
+        keep: ['name', 'status'],
+        count: ['messages', 'completionTagIds'],
+      }),
+      audienceSource: audienceSource.type,
+    },
+  }, db)
+
   return { id, ...doc }
 })

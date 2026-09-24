@@ -5,9 +5,10 @@ import {
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const body = await readBody(event)
   const { name, layoutId, heroImageWidth, heroImageHeight, transparentBackground, altText, heroImageUrl, actions, isActive } = body
 
@@ -43,6 +44,20 @@ export default defineEventHandler(async (event) => {
     isActive: isActive ?? true,
     workspaceId,
     createdAt: FieldValue.serverTimestamp(),
+  })
+
+  // 稽核（`C-254`）：圖文訊息是模組裡客人會看到、會按的那張圖
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'richMessage.create',
+    targetId: id,
+    after: {
+      name: String(name).trim(),
+      isActive: isActive ?? true,
+      areasCount: normalizedActions.length,
+    },
   })
 
   return doc

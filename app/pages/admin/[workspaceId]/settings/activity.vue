@@ -24,10 +24,20 @@
           </div>
 
           <div class="card-section-stack">
-            <!-- 只記「設定類」的改動：講清楚範圍，免得有人以為這裡查得到所有操作 -->
+            <!--
+              講清楚範圍，免得有人以為這裡查得到所有操作。
+              ⛔ **這段話必須跟實際會寫紀錄的端點一致**：2026-09-24（`C-254`）之前這裡寫著
+              「圖文選單」，但實際上只有「換預設選單」會記，建／改／刪／換圖全部漏掉——
+              畫面宣稱記了一件沒有在記的事，比什麼都不寫更糟。新增／移除稽核時這段要一起改。
+            -->
             <p class="text-xs text-muted">
-              這裡記的是會改變系統行為的設定類操作（AI 設定、流程開關、圖文選單、一鍵修…）。
-              日常的回訊息、貼標籤不會記在這裡。
+              這裡記的是會改到設定、或會影響客人的操作：推播（含送出與試發）、機器人模組、
+              圖文選單與圖文訊息、客服流程、知識庫與資料來源、標籤、加好友活動、「認識你的店」、
+              成員與權限、方案與發票。
+            </p>
+            <p class="text-xs text-muted">
+              日常的回訊息、幫單一客人貼標籤不會記在這裡。標著「平台」的那幾列是我們（MiniMe）
+              對你的帳號做的調整，不是你團隊裡的人。
             </p>
 
             <!-- 小幫手提得準不準：提了幾次、你按了幾次確定。
@@ -58,10 +68,18 @@
               </el-table-column>
               <el-table-column label="誰" width="200">
                 <template #default="{ row }">
-                  <el-tag :type="row.actor === 'agent' ? 'warning' : 'info'" size="small" effect="light">
+                  <!--
+                    ⛔ 平台做的那幾列一定要標出來：它們的 actor 也是 human，照舊標「成員操作」
+                    的話，店家會看到一個**他不認得的 Email 出現在自己團隊的紀錄裡**，
+                    第一個念頭是「我被入侵了」。
+                  -->
+                  <el-tag v-if="isPlatformAction(row.action)" type="danger" size="small" effect="light">
+                    平台
+                  </el-tag>
+                  <el-tag v-else :type="row.actor === 'agent' ? 'warning' : 'info'" size="small" effect="light">
                     {{ actorLabel(row) }}
                   </el-tag>
-                  <div class="text-xs text-muted">{{ who(row) }}</div>
+                  <div class="text-xs text-muted">{{ isPlatformAction(row.action) ? 'MiniMe 團隊' : who(row) }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="做了什麼">
@@ -121,6 +139,7 @@ import {
   AUDIT_ACTOR_LABELS,
   auditActionLabel,
   auditChangeLines,
+  isPlatformAction,
   type AuditChangeSummary,
   type AuditLogRow,
 } from '~~/shared/types/audit'

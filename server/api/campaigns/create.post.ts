@@ -5,6 +5,7 @@ import { syncPublishedEntryUrlForCampaign } from '~~/server/utils/lead-campaign-
 import { normalizeCampaignScheduleInput } from '~~/server/utils/campaign-schedule'
 import { normalizeAutoReplyAction } from '~~/shared/auto-reply-rule'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 function normalizeCampaignAction(body: any): { action: ReturnType<typeof normalizeAutoReplyAction> | null; moduleId: string | null } {
   const hasActionType = Boolean(String(body?.action?.type ?? '').trim())
@@ -28,7 +29,7 @@ function validateCampaign(body: any): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const body = await readBody(event)
   const error = validateCampaign(body)
   if (error) throw createError({ statusCode: 400, statusMessage: error })
@@ -83,6 +84,21 @@ export default defineEventHandler(async (event) => {
     action: doc.action,
     redirectUrl: doc.redirectUrl as string | null,
   })
+
+  // 稽核（`C-254`）：活動一啟用就會發出可以加好友的連結，並自動幫加進來的人貼標籤
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'campaign.create',
+    targetId: id,
+    after: {
+      name: doc.name,
+      isActive: doc.isActive,
+      itemsCount: (doc.tagIds as string[]).length,
+    },
+    note: `活動代碼 ${campaignCode}`,
+  }, db)
 
   return { id, ...doc, publishedCtaUrl: urlRes.publishedCtaUrl ?? null }
 })

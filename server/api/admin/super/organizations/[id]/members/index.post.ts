@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireSuperAdmin, invalidateOrgMemberCache } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/admin/super/organizations/:id/members
@@ -37,5 +38,18 @@ export default defineEventHandler(async (event) => {
   })
 
   invalidateOrgMemberCache(email, orgId)
+
+  // 稽核（`C-254`）：平台幫客戶加了一位組織管理員＝那個人管得到底下每一個官方帳號
+  await writeAuditLog({
+    workspaceId: '',
+    orgId,
+    scope: 'platform',
+    uid: callerUid,
+    actor: 'human',
+    action: 'super.orgMemberAdd',
+    targetId: ref.id,
+    after: { email, role: 'admin' },
+  }, db)
+
   return { id: ref.id, email, role: 'admin' }
 })

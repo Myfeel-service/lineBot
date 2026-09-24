@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
+import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 import { BILLING_PLAN_ORDER, getBillingPlan, isCheckoutablePlan, type BillingPlanId } from '~~/shared/billing/plans'
 import { isDowngrade } from '~~/shared/billing/recurring'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
@@ -20,7 +21,7 @@ import type { WorkspaceDoc } from '~~/shared/types/organization'
  * 升級不走這裡：升級的人是想要**現在**就有更多額度,走 create-order 立即付款、立即生效。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
   const body = await readBody(event)
   const raw = body?.planId
   const target = raw == null || raw === '' ? null : String(raw) as BillingPlanId
@@ -65,6 +66,20 @@ export default defineEventHandler(async (event) => {
   })
   invalidateWorkspaceSubscriptionCache(workspaceId)
   console.log('[payment] 排程期末方案變更', workspaceId, sub.planId, '→', scheduled ?? '(取消排程)')
+
+  // 稽核（`C-254`）：這一筆決定**下一期要扣多少錢**，而且要到期末才看得出來
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'payment.schedulePlanChange',
+    before: { planId: String(sub.pendingPlanId ?? '') },
+    after: { planId: scheduled ?? '' },
+    note: scheduled
+      ? `期末（${auditTimeText(sub.currentPeriodEnd) ?? '本期到期時'}）改成「${getBillingPlan(scheduled).name}」，屆時照新方案扣款`
+      : '取消了原本預約的方案變更，下一期維持現在的方案',
+  }, db)
+
   return {
     ok: true,
     pendingPlanId: scheduled,

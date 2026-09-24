@@ -8,6 +8,7 @@ import {
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * PUT /api/ai/knowledge/:chunkId
@@ -18,7 +19,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sourc
  * 同步把 source.name 更新成新的 title，讓來源列表的顯示跟著走。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -60,6 +61,26 @@ export default defineEventHandler(async (event) => {
         }).catch(() => {})
       }
     }
+  }
+
+  /*
+   * 稽核（`C-254`）。⛔ 內容**不整份存**：一張卡可以到好幾千字，存進來會被截成 500 字
+   * 並把整筆標成 `lossy`；改了什麼用「標題 ＋ 內容有沒有動」表示，要看原文去知識庫看。
+   * ⚠️ `contentChanged` 會觸發重新學習，所以那件事本身也值得記一句。
+   */
+  if (contentChanged || titleChanged) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'knowledge.put',
+      targetId: chunkId,
+      before: { title: String(existing.title ?? '') },
+      after: { title: input.title },
+      note: contentChanged
+        ? `${input.title}：內容改過了，這張卡會重新學習一次`
+        : `${input.title}：只改了標題`,
+    }, db)
   }
 
   return {

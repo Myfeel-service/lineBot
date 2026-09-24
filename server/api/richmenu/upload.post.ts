@@ -1,7 +1,8 @@
 import { validateUploadPayload } from '~~/server/utils/upload-validator'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const body = await readBody(event)
   const { richMenuId, firestoreId, imageBase64, contentType } = body
 
@@ -50,6 +51,22 @@ export default defineEventHandler(async (event) => {
       aliasResult = { error: errMsg }
     }
   }
+
+  /*
+   * 稽核（`C-254`）：底圖就是客人真的會看到的那張圖，換了就是換了。
+   * ⚠️ 別名建立失敗（`aliasResult.error`）代表選單之間的切換會失效——
+   * 那是店家會拿來問「為什麼按了沒反應」的事，所以寫進備註，⛔ 不只記「換了圖」。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'richmenu.upload',
+    ...(firestoreId ? { targetId: String(firestoreId) } : {}),
+    note: aliasResult.error
+      ? `⚠️ 圖換好了，但選單切換用的別名沒建起來：${aliasResult.error}`
+      : '換了圖文選單的底圖',
+  })
 
   return { imageUrl, alias: aliasResult }
 })

@@ -4,13 +4,14 @@ import {
 } from '~~/shared/action-schema'
 import { getDoc } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
-  const existing = await getDoc<{ workspaceId?: string }>('richMessages', id)
+  const existing = await getDoc<Record<string, unknown> & { workspaceId?: string }>('richMessages', id)
   if (!existing || existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: 'Not found' })
   }
@@ -54,5 +55,23 @@ export default defineEventHandler(async (event) => {
   if (isActive !== undefined) updates.isActive = isActive
 
   await updateDoc('richMessages', id, updates)
+
+  // 稽核（`C-254`）：只比摘要層，沒有變就不寫
+  const summarize = (d: Record<string, unknown>) =>
+    auditSnapshot(d, { keep: ['name', 'isActive', 'altText'], count: ['actions'] })!
+  const diff = diffChangedFields(summarize(existing), summarize({ ...existing, ...updates }))
+  if (diff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'richMessage.put',
+      targetId: id,
+      before: diff.before,
+      after: diff.after,
+      note: String(existing.name ?? ''),
+    })
+  }
+
   return { id, ...updates }
 })

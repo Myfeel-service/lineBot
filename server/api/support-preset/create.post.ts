@@ -5,9 +5,10 @@ import {
   validateSupportPreset,
 } from '~~/shared/support-preset'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const rawBody = await readBody(event)
   const body = normalizeSupportPreset(rawBody)
   const errorMessage = validateSupportPreset(body)
@@ -27,6 +28,16 @@ export default defineEventHandler(async (event) => {
     workspaceId,
     createdAt: FieldValue.serverTimestamp(),
   })
+
+  // 稽核（`C-254`）：常用語是客服一按就送到客人眼前的東西
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'supportPreset.create',
+    targetId: id,
+    after: { name: body.name, isActive: body.isActive, type: body.action.type },
+  }, db)
 
   return {
     id,

@@ -6,16 +6,17 @@ import { getDoc } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { assertPlanAllows } from '~~/server/utils/billing'
+import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
   await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含流程自動化功能，請升級方案後再使用')
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
-  const existing = await getDoc<{ isSystem?: boolean; workspaceId?: string }>('flows', id)
+  const existing = await getDoc<Record<string, unknown> & { isSystem?: boolean; workspaceId?: string }>('flows', id)
   if (!existing) throw createError({ statusCode: 404, statusMessage: '找不到此模組' })
   if (existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: '找不到此模組' })
@@ -41,6 +42,24 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  // 稽核（`C-254`）：`isActive` 就是店家口中的「流程開關」——關掉的話客人按按鈕會沒反應。
+  // ⛔ 只比摘要層（訊息內容不整包存，會被截斷）；沒有變就不寫。
+  const summarize = (d: Record<string, unknown>) =>
+    auditSnapshot(d, { keep: ['name', 'isActive', 'folderId'], count: ['messages'] })!
+  const diff = diffChangedFields(summarize(existing), summarize({ ...existing, ...updates }))
+  if (diff.changedKeys.length) {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'flow.put',
+      targetId: id,
+      before: diff.before,
+      after: diff.after,
+      note: String(existing.name ?? ''),
+    })
+  }
 
   return { id, ...updates }
 })

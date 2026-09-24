@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { invalidateOrgMemberCache, requireActiveOrgAdmin } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/admin/org/:orgId/members — 新增組織管理員。Body: { email }
@@ -63,5 +64,22 @@ export default defineEventHandler(async (event) => {
   }
 
   invalidateOrgMemberCache(email, orgId)
+
+  /*
+   * 稽核（`C-254`）：組織管理員是**組織底下所有官方帳號的 admin**——
+   * 加一個人進來等於把整個組織的權限交出去，而且對方不會收到任何通知。
+   * ⚠️ 組織層動作沒有單一 workspace，所以掛 `orgId`、在平台稽核頁才看得到。
+   */
+  await writeAuditLog({
+    workspaceId: '',
+    orgId,
+    uid,
+    actor: 'human',
+    action: 'org.memberAdd',
+    targetId: docId,
+    after: { email, role: 'admin' },
+    note: `${email} 現在是組織管理員，底下每一個官方帳號他都管得到`,
+  }, db)
+
   return { docId, email, role: 'admin' }
 })

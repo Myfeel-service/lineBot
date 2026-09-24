@@ -10,6 +10,7 @@ import {
 } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/knowledge/create
@@ -27,7 +28,7 @@ import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/ser
  * 同步建立並索引：回傳時 status 已是 indexed（成功）或 failed（embed 出錯）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const rawBody = await readBody(event)
   const input = normalizeChunkInput(rawBody)
   const err = validateChunkInput(input)
@@ -89,6 +90,21 @@ export default defineEventHandler(async (event) => {
     sourceId,
   })
   invalidateKnowledgeChunkCount(workspaceId)
+
+  // 稽核（`C-254`）。⚠️ 知識卡張數是**計費維度**，所以「誰加了卡」也是一筆帳務線索
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'knowledge.create',
+    targetId: result.id,
+    after: {
+      title: input.title,
+      cardStatus: result.status,
+      ...(productName ? { productName } : {}),
+    },
+    ...(result.failureReason ? { note: `這張卡沒學成功：${result.failureReason}` } : {}),
+  }, db)
 
   return {
     id: result.id,

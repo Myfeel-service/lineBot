@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { TagDoc, TagCategory, TagStatus, TagAiMode } from '~~/shared/types/tag-broadcast'
 
 const VALID_CATEGORIES: TagCategory[] = ['member_status', 'interest', 'behavior', 'activity', 'custom']
@@ -73,5 +74,21 @@ export default defineEventHandler(async (event) => {
   }
 
   await db.collection('tags').doc(id).set(doc)
+
+  /*
+   * 稽核（`C-254`；`C-250` 的順手清單裡欠的就是這一條，併在這裡一次做完）。
+   * ⚠️ 記的是「標籤本身被建出來」，⛔ 不是「幫某位客人貼標籤」——後者是日常操作，
+   * 量太大而且不是設定，刻意不進操作紀錄（那一頁的說明也是這樣寫的）。
+   * ⭐ `aiMode` 特別要記：`auto` 代表 AI 會自己把這個標籤貼到客人身上。
+   */
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'tag.create',
+    targetId: id,
+    after: { name, category, status, aiMode, color },
+  }, db)
+
   return { id, ...doc }
 })

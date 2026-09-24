@@ -4,6 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { INVOICES_COLLECTION, invoiceKeysFromConfig } from '~~/server/utils/invoice'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
 import { issueAllowance } from '~~/server/utils/guangmao-invoice'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import { taipeiDate } from '~~/shared/time'
 import type { InvoiceDoc, InvoiceAllowanceRecord } from '~~/shared/types/payment'
 
@@ -17,7 +18,7 @@ import type { InvoiceDoc, InvoiceAllowanceRecord } from '~~/shared/types/payment
  *    不重算現行 profile(可能已飄移)。快照欄上線前的舊發票沒有 → 擋下請人工處理。
  */
 export default defineEventHandler(async (event) => {
-  await requireSuperAdmin(event)
+  const { uid } = await requireSuperAdmin(event)
 
   const body = await readBody(event)
   const merchantOrderNo = String(body?.merchantOrderNo || '').trim()
@@ -81,6 +82,22 @@ export default defineEventHandler(async (event) => {
   await db.collection(PAYMENT_ORDERS_COLLECTION).doc(merchantOrderNo)
     .update({ invoiceAllowanceTotal: priorAllowed + amount, updatedAt: FieldValue.serverTimestamp() })
     .catch(() => {})
+
+  /*
+   * 稽核（`C-254`）：折讓是**對國稅局的申報動作**，開出去就在那裡了。
+   * ⚠️ 平台層動作：`workspaceId` 留空、標 `scope='platform'`，在超管的平台稽核頁看得到。
+   * ⛔ 不要塞一個 workspaceId 讓它跑到租戶頁——那會變成客戶看得到我們的內部操作紀錄。
+   */
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid,
+    actor: 'human',
+    action: 'super.allowance',
+    targetId: merchantOrderNo,
+    after: { invoiceNumber: String(inv.invoiceNumber), amount, reason },
+    note: `對發票 ${inv.invoiceNumber} 開了 NT$${amount.toLocaleString()} 的折讓（原因：${reason}）`,
+  }, db)
 
   return { ok: true, allowanceNumber, remaining: remaining - amount }
 })

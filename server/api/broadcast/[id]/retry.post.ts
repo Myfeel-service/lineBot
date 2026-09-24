@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/broadcast/:id/retry
@@ -18,7 +19,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * Response: { success: true, id: string }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -96,6 +97,23 @@ export default defineEventHandler(async (event) => {
       updatedAt: FieldValue.serverTimestamp(),
     })
   })
+
+  // 稽核（`C-254`）：這一步會把上一輪的失敗名單與點擊紀錄清掉——資料真的不見了，
+  // 之後對不上數字時要查得到是誰重設的、原本送到哪裡
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: 'broadcast.retry',
+    targetId: id,
+    before: {
+      status: 'failed',
+      sentCount: Number(existing.sentCount ?? 0),
+      failedCount: Number(existing.failedCount ?? 0),
+    },
+    after: { status: 'draft' },
+    note: `${String(existing.name ?? '')}：上一輪的失敗名單與點擊紀錄已清除`,
+  }, db)
 
   return { success: true, id }
 })
