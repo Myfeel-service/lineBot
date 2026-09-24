@@ -1,7 +1,12 @@
 <template>
-  <aside class="fmp" aria-label="訊息預覽">
+  <aside class="fmp" :class="{ 'fmp--bare': bare }" aria-label="訊息預覽">
     <div class="fmp-frame">
-      <div class="fmp-chat-head">
+      <!--
+        `bare`：只畫泡泡，不要自己的聊天室外框（`C-256`）。
+        ⛔ 存在的理由不是彈性：圖文選單的試按是把訊息畫進**它自己那個聊天室**裡，
+           不 bare 的話會變成「聊天室裡面又有一個聊天室」，還多一條假的輸入列。
+      -->
+      <div v-if="!bare" class="fmp-chat-head">
         <span class="fmp-avatar">{{ oaInitial }}</span>
         <div class="fmp-chat-meta">
           <span class="fmp-chat-name">{{ oaName || '官方帳號' }}</span>
@@ -125,7 +130,7 @@
           <div v-else class="fmp-bubble fmp-bubble--muted">{{ msg.type }}</div>
         </div>
       </div>
-      <div class="fmp-inputbar" aria-hidden="true">
+      <div v-if="!bare" class="fmp-inputbar" aria-hidden="true">
         <span class="fmp-input-fake">Aa</span>
         <span class="fmp-input-send">➤</span>
       </div>
@@ -139,7 +144,13 @@ import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } 
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
 import { LINE_TEXT_MESSAGE_MAX, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
 
-const props = defineProps<{ messages: any[]; richMessages?: any[]; oaName?: string }>()
+const props = defineProps<{
+  messages: any[]
+  richMessages?: any[]
+  oaName?: string
+  /** 只畫泡泡：不要聊天室標題列、不要假的輸入列、不要外框（要嵌進別人的聊天室裡時用） */
+  bare?: boolean
+}>()
 
 const oaInitial = computed(() => (props.oaName || '官').trim().charAt(0).toUpperCase())
 

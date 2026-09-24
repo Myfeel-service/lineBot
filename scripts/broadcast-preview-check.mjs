@@ -626,8 +626,8 @@ try {
       const both = await rmPage.evaluate(() => {
         const split = document.querySelector('.rm-visual-split')
         const canvas = split?.querySelector('.canvas-wrap')
-        /** `C-255`：聊天室外框（`.rmc-frame`）拿回來了，而且要釘在最右邊 */
-        const frame = split?.querySelector('.rmc-frame')
+        /** `C-256`：成品整塊搬到「1. 選單設定」那張卡**外面**，變成右邊等高的一欄 */
+        const frame = document.querySelector('.rm-customer-dock .rmc-frame')
         const box = (el) => {
           const b = el?.getBoundingClientRect()
           return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height } : null
@@ -709,12 +709,19 @@ try {
       const wide = await rmPage.evaluate(() => {
         const box = (el) => {
           const b = el?.getBoundingClientRect()
-          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width } : null
+          // ⚠️ `height` 少一個就會讓「等高」那一關比出 NaN，而 NaN 的比較永遠是 false＝永遠紅
+          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height } : null
         }
         const split = document.querySelector('.rm-visual-split')
         return {
           canvasBox: box(split?.querySelector('.canvas-wrap')),
-          frameBox: box(document.querySelector('.rmc-frame')),
+          frameBox: box(document.querySelector('.rm-customer-dock .rmc-frame')),
+          /** `C-256`：等高比的是**這一欄**與「1. 選單設定」那張卡，不是兩張圖 */
+          dockBox: box(document.querySelector('.rm-customer-dock')),
+          cardBox: box(document.querySelector('.rm-config-card')),
+          stageBox: box(document.querySelector('.rm-stage')),
+          /** ⛔ 「在卡片外面」要用包含關係判斷，不能只看座標——座標在卡片右半邊也可能是在裡面 */
+          dockInsideCard: !!document.querySelector('.rm-config-card .rm-customer-dock'),
           splitBox: box(split),
           pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
         }
@@ -724,20 +731,27 @@ try {
       if (wide.pageScrollX) fail('⑩ 1920px 下被撐出橫向捲軸')
 
       /**
-       * ⭐ `C-255`（老闆：「示意的部分往右邊往外拉」）：成品那個手機外框要**貼齊最右緣**。
-       * ⛔ 不可以只斷言「兩個都在」——沒貼齊時兩個節點照樣都在 DOM 裡。
-       * ⚠️ `C-253` 曾經在這裡斷言「兩張等寬」，那是上一版的規則，已經被這條取代。
+       * ⭐ `C-256`（老闆：「在 1. 選單設定 的外面 右手邊 跟他等高」）：
+       *    ①「客人看到的樣子」要在那張卡**外面**（不是它的子孫）
+       *    ② 在卡片**右邊**
+       *    ③ 跟卡片**等高**
+       * ⛔ 不可以只斷言「兩個都在」——搬進卡片裡、或高度差一大截時，兩個節點照樣都在 DOM 裡。
+       * ⚠️ 這條取代了 `C-253` 的「兩張等寬」與 `C-255` 的「貼齊最右緣」。
        */
-      const cb2 = wide.canvasBox
-      const fb2 = wide.frameBox
-      if (!cb2 || !fb2 || !wide.splitBox) fail('⑩ 1920px 下量不到兩張的尺寸')
+      const dock = wide.dockBox
+      const card = wide.cardBox
+      if (!dock || !card) fail('⑩ 1920px 下量不到「客人看到的樣子」或「1. 選單設定」')
       else {
-        const gapRight = Math.round(wide.splitBox.right - fb2.right)
-        if (gapRight <= 2) pass(`⑩ 成品框貼齊最右緣（右邊留 ${gapRight}px）＝往右拉開，不跟畫布擠在一起`)
-        else fail('⑩ 成品框沒有貼齊最右緣', `右邊還空著 ${gapRight}px——`
-          + '`margin-left: auto` 沒生效的話它會黏在畫布旁邊')
-        if (cb2.width > fb2.width) pass(`⑩ 畫布比成品框寬（${Math.round(cb2.width)}px vs ${Math.round(fb2.width)}px）＝拖格子的那張要夠大`)
-        else fail('⑩ 畫布沒有比成品框寬', `${Math.round(cb2.width)}px vs ${Math.round(fb2.width)}px`)
+        if (wide.dockInsideCard) fail('⑩ 「客人看到的樣子」還在「1. 選單設定」卡片裡面', '老闆要的是放到卡片外面')
+        else pass('⑩ 「客人看到的樣子」在「1. 選單設定」卡片外面')
+
+        if (dock.left >= card.right - 1) pass(`⑩ 它在卡片右邊（卡片右緣 ${Math.round(card.right)}px、它左緣 ${Math.round(dock.left)}px）`)
+        else fail('⑩ 它沒有在卡片右邊', `卡片右緣 ${Math.round(card.right)}px、它左緣 ${Math.round(dock.left)}px`)
+
+        const dh = Math.abs(dock.height - card.height)
+        if (dh <= 2) pass(`⑩ 跟卡片等高（各 ${Math.round(card.height)}px）`)
+        else fail('⑩ 沒有跟卡片等高', `卡片 ${Math.round(card.height)}px vs 它 ${Math.round(dock.height)}px，差 ${Math.round(dh)}px`
+          + '——`align-items: stretch` 沒生效？')
       }
       await rmPage.setViewport(before)
       await sleep(400)
@@ -796,17 +810,24 @@ try {
       if (hotCount === 0) fail('⑫ 成品圖上一個試按熱區都沒有', '「點擊的功能」沒做出來')
       else pass(`⑫ 成品圖上有 ${hotCount} 個試按熱區`)
 
-      /** 對照組：還沒按之前不可以有結果面板，不然下面「按了有反應」是假綠燈 */
-      const tryBefore = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
+      /**
+       * 對照組：還沒按之前不可以有結果，不然下面「按了有反應」是假綠燈。
+       * ⚠️ `C-256` 起結果畫在**聊天室裡面**（`.rmc-chat.is-trying`），不再是外掛的面板。
+       */
+      const tryBefore = await rmPage.evaluate(() => !!document.querySelector('.rmc-chat.is-trying'))
       if (tryBefore) fail('⑫ 對照組失敗：還沒按就已經有試按結果了')
       else pass('⑫ 對照組：還沒按之前沒有試按結果')
 
-      /** 每一種動作該出現／⛔ 不該出現的字 */
+      /**
+       * 每一種動作該出現／⛔ 不該出現的字。
+       * ⚠️ `C-256` 把說法改成「聊天室不會多出任何訊息」——因為結果現在就畫在聊天室裡，
+       *    講「不會收到訊息」而聊天室裡卻有東西，會自相矛盾。
+       */
       const EXPECT = {
-        切換選單: { must: ['不會收到任何訊息'], never: ['直接收到這'] },
-        開啟網址: { must: ['直接被帶到這個網址', '不會收到任何訊息'], never: ['直接收到這'] },
-        傳送文字: { must: ['像自己打了這句話一樣送出'], never: ['不會收到任何訊息'] },
-        觸發機器人模組: { must: [], never: ['不會收到任何訊息', '直接被帶到這個網址'] },
+        切換選單: { must: ['聊天室不會多出任何訊息'], never: ['直接被帶到這個網址'] },
+        開啟網址: { must: ['直接被帶到這個網址', '聊天室不會多出任何訊息'], never: [] },
+        傳送文字: { must: ['這句話是'], never: ['聊天室不會多出任何訊息'] },
+        觸發機器人模組: { must: [], never: ['聊天室不會多出任何訊息', '直接被帶到這個網址'] },
       }
 
       let tried = 0
@@ -818,11 +839,13 @@ try {
         }, i)
         await sleep(900)
         const seen = await rmPage.evaluate(() => {
-          const box = document.querySelector('.rmc-try')
+          const box = document.querySelector('.rmc-chat.is-trying')
           return {
             open: !!box,
-            title: box?.querySelector('.rmc-try__title')?.innerText?.trim() ?? '',
+            title: box?.querySelector('.rmc-sys--head')?.innerText?.trim() ?? '',
             text: box?.innerText ?? '',
+            /** ⛔ 後台說明只能是系統提示，不可以長得像訊息泡泡（那幾句客人一句都收不到） */
+            sysCount: box?.querySelectorAll('.rmc-sys').length ?? 0,
           }
         })
         if (!seen.open) {
@@ -845,10 +868,12 @@ try {
          */
         if (label === '觸發機器人模組') {
           const three = await rmPage.evaluate(() => {
-            const box = document.querySelector('.rmc-try')
+            const box = document.querySelector('.rmc-chat.is-trying')
             return {
               bubbles: box?.querySelectorAll('.fmp-bubble, .fmp-card, .fmp-media, .fmp-carousel').length ?? 0,
               note: box?.querySelector('.aap__note')?.innerText?.trim() ?? '',
+              /** ⛔ 嵌進聊天室時只能畫泡泡：外框、標題列、假輸入列都不可以再出現一份 */
+              nestedFrame: box?.querySelectorAll('.fmp-chat-head, .fmp-inputbar').length ?? 0,
             }
           })
           /**
@@ -857,7 +882,7 @@ try {
            *    ⛔ 而且換掉之後一定要有那句「這是範例」，默默換掉等於宣稱我們知道他叫什麼。
            */
           const vars = await rmPage.evaluate(() => {
-            const box = document.querySelector('.rmc-try')
+            const box = document.querySelector('.rmc-chat.is-trying')
             return {
               raw: /\{\{\s*\w+\s*\}\}/.test(box?.innerText ?? ''),
               note: box?.querySelector('.aap__vars')?.innerText?.trim() ?? '',
@@ -871,6 +896,13 @@ try {
           }
           else if (vars.note) {
             pass(`⑫ 第 ${i + 1} 格：代入變數有講清楚（「${vars.note.slice(0, 22)}…」）`)
+          }
+
+          if (three.nestedFrame) {
+            fail(`⑫ 第 ${i + 1} 格：聊天室裡面又冒出一個聊天室`, `多了 ${three.nestedFrame} 個標題列／假輸入列——共用預覽要用 bare`)
+          }
+          else {
+            pass(`⑫ 第 ${i + 1} 格：泡泡直接畫在那個聊天室裡（沒有第二層外框）`)
           }
 
           if (three.bubbles > 0) pass(`⑫ 第 ${i + 1} 格：模組內容真的抓回來畫出來了（${three.bubbles} 則）`)
@@ -917,7 +949,7 @@ try {
 
       /** ⛔ 試按絕對不可以真的貼標籤：有貼標的格子一定要講「不會真的貼」 */
       const taggedNote = await rmPage.evaluate(() => {
-        const t = document.querySelector('.rmc-try')?.innerText ?? ''
+        const t = document.querySelector('.rmc-chat.is-trying')?.innerText ?? ''
         return { hasTag: t.includes('貼上標籤'), saysNotReal: t.includes('不會真的貼') }
       })
       if (taggedNote.hasTag && !taggedNote.saysNotReal) {
@@ -927,14 +959,38 @@ try {
         pass('⑫ 有貼標的格子講清楚了「試按不會真的貼」')
       }
 
+      /**
+       * ⭐ 「收起來」要**看得到**，不只是點得到。
+       * ⛔ 只斷言「點得到」是假綠燈：白字白底、寬度 0、被蓋住，都還是點得到。
+       */
+      const closeBtn = await rmPage.evaluate(() => {
+        const btn = [...document.querySelectorAll('.rmc-sys--head .el-button')]
+          .find(b => b.innerText.includes('收起來'))
+        if (!btn) return null
+        const r = btn.getBoundingClientRect()
+        const cs = getComputedStyle(btn)
+        return { w: Math.round(r.width), h: Math.round(r.height), color: cs.color, opacity: cs.opacity, vis: cs.visibility }
+      })
+      /** ⭐ 顏色也要驗：它躺在深色膠囊上，字必須是淺的。深灰壓深底＝點得到但看不到 */
+      const rgb = String(closeBtn?.color ?? '').match(/\d+/g)?.slice(0, 3).map(Number) ?? []
+      const light = rgb.length === 3 && rgb.every(v => v >= 180)
+      if (!closeBtn) fail('⑫ 找不到「收起來」')
+      else if (closeBtn.w < 24 || closeBtn.h < 8 || closeBtn.vis !== 'visible' || Number(closeBtn.opacity) < 0.5) {
+        fail('⑫ 「收起來」點得到但看不到', JSON.stringify(closeBtn))
+      }
+      else if (!light) {
+        fail('⑫ 「收起來」是深色字壓在深色膠囊上', `量到 ${closeBtn.color}——Element Plus 的 .is-link 權重比較高，要連 CSS 變數一起設`)
+      }
+      else pass(`⑫ 「收起來」看得到（${closeBtn.w}×${closeBtn.h}px、${closeBtn.color}）`)
+
       /** 收起來要真的收得起來（不然它會一直佔著版面） */
       await rmPage.evaluate(() => {
-        const btn = [...document.querySelectorAll('.rmc-try__head .el-button')]
+        const btn = [...document.querySelectorAll('.rmc-sys--head .el-button')]
           .find(b => b.innerText.includes('收起來'))
         btn?.click()
       })
       await sleep(400)
-      const closed = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
+      const closed = await rmPage.evaluate(() => !!document.querySelector('.rmc-chat.is-trying'))
       if (closed) fail('⑫ 按了「收起來」還在')
       else pass('⑫ 按「收起來」真的收得起來')
     }

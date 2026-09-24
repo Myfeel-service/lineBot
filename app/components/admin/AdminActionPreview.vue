@@ -53,6 +53,7 @@
         :messages="previewMessages"
         :rich-messages="richMessages"
         :oa-name="oaName"
+        :bare="bare"
       />
       <!--
         `C-255`：`{{displayName}}` 這類變數在送出時會換成那位客人的資料，
@@ -78,6 +79,8 @@ const props = withDefaults(defineProps<{
   moduleOptions?: Array<{ id: string; name: string }>
   title?: string
   emptyText?: string
+  /** 只畫泡泡：要嵌進呼叫端自己的聊天室外框時用（圖文選單的試按） */
+  bare?: boolean
 }>(), {
   moduleOptions: () => [],
   title: '客人會看到什麼',

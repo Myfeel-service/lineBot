@@ -68,6 +68,11 @@
 
     <template #editor-body>
       <el-form label-position="top" class="admin-form-vertical rm-editor-body" @submit.prevent>
+        <!--
+          「1. 選單設定」與右邊的「客人看到的樣子」是**並排的兩塊**，
+          `align-items: stretch` 讓右邊那塊跟卡片一樣高（老闆指定）。
+        -->
+        <div class="rm-stage">
         <div class="message-card rm-config-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -189,7 +194,7 @@
                    這個功能就沒了（見 `AdminRichMenuCustomerView.vue` 檔頭）。
               -->
               <div v-if="form.previewUrl" class="rm-visual-split">
-                <div class="rm-visual-split__edit">
+                <div class="rm-visual-edit">
                   <AdminAreaEditorSection
                     :areas="form.areas"
                     section-label="編輯區塊"
@@ -219,25 +224,6 @@
                     彩色格子是「按得到的範圍」，客人看不到它們。
                   </p>
                 </div>
-
-                <div class="rm-visual-split__customer">
-                  <AdminPanelTitle tag="h3" tight>客人看到的樣子（可以試按）</AdminPanelTitle>
-                  <!--
-                    ⛔ `areas` 要傳**表單裡這一份**（`form.areas`），不是存檔後的那一份：
-                       店家改了動作還沒存，試按就要照他現在設的講，不然他驗不到自己剛改的東西。
-                  -->
-                  <AdminRichMenuCustomerView
-                    :image-url="form.previewUrl"
-                    :chat-bar-text="form.chatBarText"
-                    :width="Number(form.width) || 2500"
-                    :height="Number(form.height) || 843"
-                    :oa-name="currentWorkspaceName"
-                    :areas="form.areas"
-                    :menu-options="menus"
-                    :module-options="modules"
-                    :tag-options="allTags"
-                  />
-                </div>
               </div>
 
               <!--
@@ -255,6 +241,39 @@
               </p>
             </div>
           </div>
+          </div>
+
+          <!--
+            客人看到的樣子：**在「1. 選單設定」那張卡外面、貼右邊、跟它等高**
+            （2026-09-24 老闆指定）。⛔ 不要再塞回卡片裡：它不是「選單設定」的一個欄位，
+            是那些設定的**結果**；放在外面才看得出「左邊在設定、右邊是成品」。
+            等高由 `.rm-stage` 的 `align-items: stretch` 負責。
+          -->
+          <aside v-if="form.previewUrl" class="message-card rm-customer-dock">
+            <div class="message-card-header">
+              <div class="card-header-main">
+                <span class="section-title">客人看到的樣子</span>
+              </div>
+              <span class="text-xs text-muted">可以試按</span>
+            </div>
+            <div class="rm-customer-dock__body">
+              <!--
+                ⛔ `areas` 要傳**表單裡這一份**（`form.areas`），不是存檔後的那一份：
+                   店家改了動作還沒存，試按就要照他現在設的講，不然他驗不到自己剛改的東西。
+              -->
+              <AdminRichMenuCustomerView
+                :image-url="form.previewUrl"
+                :chat-bar-text="form.chatBarText"
+                :width="Number(form.width) || 2500"
+                :height="Number(form.height) || 843"
+                :oa-name="currentWorkspaceName"
+                :areas="form.areas"
+                :menu-options="menus"
+                :module-options="modules"
+                :tag-options="allTags"
+              />
+            </div>
+          </aside>
         </div>
 
         <!-- Areas Editor (only visible if image uploaded) -->

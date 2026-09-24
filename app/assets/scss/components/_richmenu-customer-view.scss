@@ -66,14 +66,27 @@
   opacity: 0.85;
 }
 
-/* 聊天區留白＝「選單佔掉下半部」那個感覺。
-   ⛔ 這句話要短：它曾經寫兩行、吃掉整個預覽約四分之一的高度。 */
+/**
+ * 聊天區＝**試按的舞台**（`C-256`）。沒在試按時是留白＝「選單佔掉下半部」那個感覺；
+ * 一按下去，客人真的會收到的東西就畫在這裡。
+ * ⛔ 結果不要另開面板掛在外面——客人是在**這個聊天室裡**收到訊息的。
+ */
 .rmc-chat {
   min-height: 56px;
   display: grid;
   place-items: center;
   padding: 0.8rem;
   background: #8daccd;
+}
+
+.rmc-chat.is-trying {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  /* 訊息多的模組會很長：給它捲軸，⛔ 不要把整個外框撐到天上去 */
+  max-height: 420px;
+  overflow-y: auto;
 }
 
 .rmc-chat-note {
@@ -83,6 +96,125 @@
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/**
+ * 後台說明。⛔ **絕對不可以長得像訊息泡泡**：這幾句話客人一句都不會收到，
+ * 畫成泡泡就是在騙人（`D-96` 的形狀）。做成 LINE 那種置中的系統提示——
+ * 既看得出「這不是訊息」，又不會從聊天室的語境裡跳出去。
+ */
+.rmc-sys {
+  align-self: center;
+  max-width: 100%;
+  margin: 0;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  font-size: 0.64rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+}
+
+.rmc-sys--head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(0, 0, 0, 0.42);
+  font-weight: 600;
+}
+
+/**
+ * ⛔ 這顆「收起來」躺在**深色**膠囊上，一定要白字。
+ * ⚠️ 只寫 `color` 贏不過 Element Plus 的 `.el-button.is-link`（實測被壓成
+ *    `rgb(96,98,102)` 深灰壓深底＝點得到但看不到），所以連它的 CSS 變數一起設。
+ */
+.rmc-sys--head .el-button.is-link,
+.rmc-sys--head .el-button {
+  --el-button-text-color: rgba(255, 255, 255, 0.92);
+  --el-button-hover-text-color: #fff;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.64rem;
+  text-decoration: underline;
+}
+
+.rmc-sys--head .el-button.is-link:hover,
+.rmc-sys--head .el-button:hover {
+  color: #fff;
+}
+
+/* 「還沒填」「找不到」＝真的要處理。⛔ 仍然是系統提示的形狀，不是泡泡 */
+.rmc-sys--warn {
+  background: rgba(180, 83, 9, 0.85);
+}
+
+.rmc-sys--quiet {
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.rmc-sys--uri {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  border-radius: var(--radius-md);
+}
+
+.rmc-sys--uri code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.64rem;
+  color: #fff;
+}
+
+.rmc-sys--uri .el-button {
+  color: #fff;
+  font-size: 0.64rem;
+  text-decoration: underline;
+}
+
+/**
+ * 共用預覽（`AdminActionPreview`）嵌進聊天室時，它自己那兩行說明
+ * （「送出的是機器人模組…」「「王小明」是範例…」）本來是給**白底面板**用的灰字，
+ * 壓在藍色聊天背景上幾乎看不見。⛔ 它們是後台說明不是訊息，所以改成跟 `.rmc-sys`
+ * 同一個樣子——看得清楚，而且一眼就知道那不是客人會收到的東西。
+ */
+.rmc-chat .aap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rmc-chat .aap__source,
+.rmc-chat .aap__vars {
+  align-self: center;
+  max-width: 100%;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  font-size: 0.64rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+}
+
+.rmc-chat .aap__vars {
+  background: rgba(0, 0, 0, 0.24);
+}
+
+/* 客人自己說的那句話：⛔ 靠右、用 LINE 的綠——那句話是他說的，不是我們回的 */
+.rmc-said {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-md);
+  background: #06c755;
+  color: #fff;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* 那張圖，乾乾淨淨 */
@@ -190,74 +322,8 @@
   color: var(--text-muted);
 }
 
-/* ── 試按結果 ───────────────────────────────────────────── */
-.rmc-try {
-  margin-top: 0.5rem;
-  padding: 0.6rem 0.7rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-}
-
-.rmc-try__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.rmc-try__title {
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.rmc-try__line {
-  margin: 0;
-  font-size: var(--fs-xs);
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.rmc-try__line--warn {
-  color: var(--color-warning);
-}
-
-.rmc-try__line--quiet {
-  color: var(--text-muted);
-}
-
-.rmc-try__uri {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.rmc-try__uri code {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-
-/* 客人自己說的那句話：⛔ 靠右、用 LINE 的綠，跟「我們回的」在視覺上分開 */
-.rmc-try__said {
-  align-self: flex-end;
-  max-width: 85%;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-md);
-  background: #06c755;
-  color: #fff;
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+/* ⛔ `C-256` 之前試按結果掛在外框**外面**（`.rmc-try`）——那是在講一件跟 LINE
+   不一樣的事：客人是在聊天室裡收到訊息的。結果現在畫進 `.rmc-chat.is-trying`。 */
 
 /* 「現在看的是別張選單」的提示條：⛔ 這條不見的話，店家會對著另一張選單試按而不自知 */
 .rmc-switched {

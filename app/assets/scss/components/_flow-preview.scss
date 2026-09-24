@@ -35,6 +35,25 @@
   box-shadow: var(--shadow-md);   /* 手機預覽從面板上浮起 */
 }
 
+/**
+ * `bare`：只畫泡泡，嵌進**別人的**聊天室裡（`C-256` 的圖文選單試按）。
+ * ⛔ 外框、底色、內距全部退掉——留著就變成「聊天室裡面又有一個聊天室」。
+ *    底色由外面那個聊天室負責，這裡留透明。
+ */
+.fmp--bare .fmp-frame {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.fmp--bare .fmp-body {
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+
 /* LINE 風聊天標題列（品牌綠，像真的在跟這個官方帳號聊天） */
 .fmp-chat-head {
   flex-shrink: 0;

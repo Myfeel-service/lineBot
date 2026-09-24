@@ -136,15 +136,45 @@
   margin-bottom: 0;
 }
 
-/* 拖格子的畫布｜客人看到的樣子，並排（C-243；C-233 原本是切換鈕）。
+/**
+ * 「1. 選單設定」那張卡 ｜ 客人看到的樣子
+ * （2026-09-24 老闆：**在卡片外面、右手邊、跟他等高**）。
  *
- * ⛔ **不要改回 grid ＋ container query 的固定斷點**：這一塊的可用寬度同時被
- *    三件事決定（視窗寬、AdminShell 側欄、可拖曳的清單側欄），2026-09-24 實測
- *    1280/1440/1600/1920/2560 五種視窗，卡片寬是 760/920/1080/1400/2040——
- *    任何一個寫死的門檻都會在其中一台上猜錯。改用 flex 自己折行：
- *    擠不下就自動變上下排，門檻＝兩個 flex-basis 加起來（≈676px）。
- * ⭐ 畫布 `max-width: 860px`（見上面 .canvas-wrap）：grid 版在 2560px 下左軌吃到 1306，
- *    畫布卻只長到 860，中間開了一個 446px 的洞。flex 不會——多的空間留在最後面。 */
+ * ⭐ **等高靠 `align-items: stretch`**。那是 flex 的預設值，這裡仍然寫出來——
+ *    因為它**是需求本身**，不是順便得到的效果。⛔ 誰要改成 `flex-start` 之前先看這一行。
+ * ⛔ 右邊那塊**不是「選單設定」的一個欄位**，是那些設定的**結果**；
+ *    塞回卡片裡的話，「左邊在設定、右邊是成品」這件事就看不出來了。
+ * ⚠️ `520` 是折行門檻的一半：`520 + 320 + 16 = 856`，編輯區窄於這個就上下排。
+ *    ⛔ 改之前先量——`C-255` 踩過一次，兩個 basis 加起來只差 10px 就換了排法。
+ */
+.rm-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.rm-stage > .rm-config-card {
+  flex: 1 1 520px;
+  min-width: 0;
+}
+
+.rm-customer-dock {
+  flex: 0 1 320px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ⛔ 內容靠上、不要為了填滿高度把聊天室外框拉長：它是固定比例的，拉長就變形 */
+.rm-customer-dock__body {
+  padding: 1rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 畫布那一塊（`.rm-visual-split` 現在只剩它一個小孩，留著是為了不動它的間距節奏） */
 .rm-visual-split {
   display: flex;
   flex-wrap: wrap;
@@ -152,33 +182,10 @@
   gap: 1rem;
 }
 
-/**
- * 中間＝拖格子的畫布（吃掉剩下的寬度，拖曳要夠大才抓得準），
- * 右邊＝LINE 聊天室外框裡的成品，**釘在最右邊**（2026-09-24 老闆：往右邊往外拉）。
- *
- * ⛔ 兩張**不要等寬**（`C-253` 那版是等寬，`C-255` 改回來）：等寬會變成兩張一樣大的
- *    同一張圖擺在一起，看起來像拷貝；而且手機外框本來就該是手機的比例。
- * ⭐ `margin-left: auto` 是「往外拉」那一下：畫布長到 860 上限之後剩下的空白
- *    全部推到中間，外框就貼在卡片最右緣，兩件事在視覺上分得開。
- */
-.rm-visual-split__edit {
-  flex: 1 1 360px;
+.rm-visual-edit {
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 860px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-section-heading-gap);
-}
-
-/**
- * ⚠️ `300px` 不是隨便挑的：折行門檻＝兩個 `flex-basis` 加上 gap＝`360 + 300 + 16 = 676`，
- *    而 1600 視窗下這一塊的可用寬度實測是 **686px**。用 320 的話門檻變 696，
- *    1600 就會折成上下排——只差 10px。⛔ 改這兩個數字前先量一次。
- */
-.rm-visual-split__customer {
-  flex: 0 1 300px;
-  min-width: 260px;
-  margin-left: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-section-heading-gap);

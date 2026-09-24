@@ -46,9 +46,90 @@
         </div>
       </div>
 
-      <!-- 聊天區：刻意留白。圖文選單本來就佔掉聊天室下半部，這片空白就是那個感覺 -->
-      <div class="rmc-chat">
-        <p class="rmc-chat-note">選單會蓋住聊天室下半部</p>
+      <!--
+        聊天區＝**試按的舞台**（`C-256`，老闆：「點擊選單會有的反應 直接呈現在示意的對話框」）。
+        ⛔ 結果不要另開一塊面板掛在外面——客人是在**這個聊天室裡**收到訊息的，
+           畫在別的地方等於又在講一件跟 LINE 不一樣的事。
+        ⛔ 後台的說明一律走 `.rmc-sys`（置中灰色小字，像 LINE 的系統提示），
+           **不可以長得像訊息泡泡**：那幾句話客人一句都不會收到。
+      -->
+      <div class="rmc-chat" :class="{ 'is-trying': tryIndex !== null }">
+        <p v-if="tryIndex === null" class="rmc-chat-note">選單會蓋住聊天室下半部</p>
+
+        <template v-else>
+          <div class="rmc-sys rmc-sys--head">
+            <span>按了第 {{ tryIndex + 1 }} 格</span>
+            <el-button link size="small" @click="closeTry">收起來</el-button>
+          </div>
+
+          <!-- ① 沒設動作：這是真的會發生的事，要講 -->
+          <p v-if="!tryAction?.type" class="rmc-sys rmc-sys--warn">
+            這一格<b>還沒設定動作</b>，客人按下去不會有任何反應。
+          </p>
+
+          <!-- ② 切換選單：上面那張圖換掉，⛔ 聊天室裡一顆泡泡都不會多 -->
+          <template v-else-if="tryAction.type === 'switch' || tryAction.type === 'richmenuswitch'">
+            <p v-if="!switchTarget" class="rmc-sys rmc-sys--warn">
+              這一格要切到的選單<b>已經找不到了</b>，客人按下去不會有反應。請重新選一個目標選單。
+            </p>
+            <template v-else>
+              <p class="rmc-sys">
+                選單換成「<b>{{ switchTarget.name }}</b>」，下面那張就是換過去的樣子。
+                <b>聊天室不會多出任何訊息。</b>
+              </p>
+              <!-- ⛔ 三態：目標選單沒有圖時要講，不可以畫成一片空白 -->
+              <p v-if="!switchTarget.imageUrl" class="rmc-sys rmc-sys--warn">
+                不過「{{ switchTarget.name }}」<b>還沒有背景圖</b>，所以下面畫不出來。
+              </p>
+            </template>
+          </template>
+
+          <!-- ③ 開啟網址：⛔ 客人收不到訊息，一顆泡泡都不可以畫 -->
+          <template v-else-if="tryAction.type === 'uri'">
+            <p class="rmc-sys">
+              客人會<b>直接被帶到這個網址</b>，<b>聊天室不會多出任何訊息</b>。
+            </p>
+            <p v-if="!String(tryAction.uri || '').trim()" class="rmc-sys rmc-sys--warn">
+              但這一格<b>還沒填網址</b>，客人按下去不會有反應。
+            </p>
+            <div v-else class="rmc-sys rmc-sys--uri">
+              <code>{{ tryAction.uri }}</code>
+              <el-button link type="primary" size="small" @click="openUri(String(tryAction.uri))">
+                在新分頁打開
+              </el-button>
+            </div>
+          </template>
+
+          <!-- ④ 傳送文字：泡泡在**客人那一側**（那句話是他說的，不是我們回的） -->
+          <template v-else-if="tryAction.type === 'message'">
+            <p v-if="!String(tryAction.text || '').trim()" class="rmc-sys rmc-sys--warn">
+              這一格<b>還沒填文字</b>，客人按下去不會有反應。
+            </p>
+            <template v-else>
+              <div class="rmc-said">{{ tryAction.text }}</div>
+              <p class="rmc-sys rmc-sys--quiet">
+                這句話是<b>客人送出的</b>。之後有沒有人回他，要看你的「自動回應」與 AI 設定。
+              </p>
+            </template>
+          </template>
+
+          <!-- ⑤ 觸發機器人模組：唯一會讓客人收到訊息的一種，泡泡直接畫在這個聊天室裡 -->
+          <template v-else-if="tryAction.type === 'module'">
+            <AdminActionPreview
+              bare
+              :action="tryAction"
+              :module-options="moduleOptions"
+              title=""
+              empty-text="這一格還沒選模組，客人按下去不會有反應。"
+            />
+          </template>
+
+          <!-- 貼標：⛔ 一定要講「這裡不會真的貼」，不然店家會以為自己剛剛弄髒了名單 -->
+          <p v-if="tryTagNames.length" class="rmc-sys rmc-sys--quiet">
+            還會幫客人貼上標籤{{ tryTagNames.map(n => `「${n}」`).join('') }}。
+            <b>在這裡試按不會真的貼。</b>
+          </p>
+        </template>
       </div>
 
       <!--
@@ -90,87 +171,6 @@
     <p v-if="tryIndex === null" class="rmc-tip">
       點圖上任何一格，看客人按下去會發生什麼。
     </p>
-
-    <!-- ── 試按結果 ───────────────────────────────────────── -->
-    <div v-else class="rmc-try">
-      <div class="rmc-try__head">
-        <span class="rmc-try__title">按了第 {{ tryIndex + 1 }} 格</span>
-        <el-button link size="small" @click="closeTry">收起來</el-button>
-      </div>
-
-      <!-- ① 沒設動作：這是真的會發生的事，要講 -->
-      <p v-if="!tryAction?.type" class="rmc-try__line rmc-try__line--warn">
-        這一格<b>還沒設定動作</b>，客人按下去不會有任何反應。
-      </p>
-
-      <!-- ② 切換選單：換一張圖，⛔ 不畫任何訊息泡泡 -->
-      <template v-else-if="tryAction.type === 'switch' || tryAction.type === 'richmenuswitch'">
-        <p v-if="!switchTarget" class="rmc-try__line rmc-try__line--warn">
-          這一格要切到的選單<b>已經找不到了</b>，客人按下去不會有反應。請重新選一個目標選單。
-        </p>
-        <template v-else>
-          <p class="rmc-try__line">
-            選單換成「<b>{{ switchTarget.name }}</b>」，上面那張就是換過去的樣子。
-            <b>客人不會收到任何訊息。</b>
-          </p>
-          <!-- ⛔ 三態：目標選單沒有圖時要講，不可以畫成一片空白 -->
-          <p v-if="!switchTarget.imageUrl" class="rmc-try__line rmc-try__line--warn">
-            不過「{{ switchTarget.name }}」<b>還沒有背景圖</b>，所以上面畫不出來。
-          </p>
-        </template>
-      </template>
-
-      <!-- ③ 開啟網址：⛔ 客人收不到訊息，一顆泡泡都不可以畫 -->
-      <template v-else-if="tryAction.type === 'uri'">
-        <p class="rmc-try__line">
-          客人會<b>直接被帶到這個網址</b>，<b>不會收到任何訊息</b>。
-        </p>
-        <p v-if="!String(tryAction.uri || '').trim()" class="rmc-try__line rmc-try__line--warn">
-          但這一格<b>還沒填網址</b>，客人按下去不會有反應。
-        </p>
-        <div v-else class="rmc-try__uri">
-          <code>{{ tryAction.uri }}</code>
-          <el-button link type="primary" size="small" @click="openUri(String(tryAction.uri))">
-            在新分頁打開
-          </el-button>
-        </div>
-      </template>
-
-      <!-- ④ 傳送文字：泡泡在**客人那一側**（那句話是他說的，不是我們回的） -->
-      <template v-else-if="tryAction.type === 'message'">
-        <p class="rmc-try__line">客人會<b>像自己打了這句話一樣送出</b>：</p>
-        <p v-if="!String(tryAction.text || '').trim()" class="rmc-try__line rmc-try__line--warn">
-          但這一格<b>還沒填文字</b>，客人按下去不會有反應。
-        </p>
-        <div v-else class="rmc-try__said">{{ tryAction.text }}</div>
-        <p class="rmc-try__line rmc-try__line--quiet">
-          送出之後有沒有人回他，要看你的「自動回應」與 AI 設定，這裡看不出來。
-        </p>
-      </template>
-
-      <!-- ⑤ 觸發機器人模組：唯一會讓客人收到訊息的一種，交給共用預覽把模組真的抓回來畫 -->
-      <template v-else-if="tryAction.type === 'module'">
-        <AdminActionPreview
-          :action="tryAction"
-          :module-options="moduleOptions"
-          title=""
-          empty-text="這一格還沒選模組，客人按下去不會有反應。"
-        >
-          <template #ready-note="{ count }">
-            <p class="rmc-try__line">
-              客人會<b>直接收到這 {{ count }} 則</b>，不用再按任何東西。
-            </p>
-          </template>
-        </AdminActionPreview>
-      </template>
-
-      <!-- 貼標：⛔ 一定要講「這裡不會真的貼」，不然店家會以為自己剛剛弄髒了名單 -->
-      <p v-if="tryTagNames.length" class="rmc-try__line rmc-try__line--quiet">
-        按下去還會幫客人貼上標籤{{ tryTagNames.map(n => `「${n}」`).join('') }}。
-        <b>在這裡試按不會真的貼。</b>
-      </p>
-
-    </div>
   </div>
 </template>
 
