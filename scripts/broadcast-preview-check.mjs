@@ -437,14 +437,27 @@ try {
   const clipped = await page.evaluate(() => {
     const panel = document.querySelector('.bc-preview')
     const scroller = document.querySelector('.split-editor-body')
-    if (!panel || !scroller) return null
+    const frame = document.querySelector('.fmp-frame')
+    if (!panel || !scroller || !frame) return null
     const p = panel.getBoundingClientRect()
     const s = scroller.getBoundingClientRect()
-    return { over: Math.round(p.bottom - s.bottom), panelH: Math.round(p.height), viewH: Math.round(s.height) }
+    const f = frame.getBoundingClientRect()
+    return {
+      over: Math.round(p.bottom - s.bottom),
+      frameGap: Math.round(p.bottom - f.bottom),
+      panelH: Math.round(p.height), viewH: Math.round(s.height),
+    }
   })
-  if (!clipped) fail('⑨ 量不到預覽面板或編輯區，這一關驗不到')
-  else if (clipped.over <= 0) pass(`⑨ 預覽的下緣沒有被切出可視範圍（面板 ${clipped.panelH}px ≦ 可視 ${clipped.viewH}px）`)
-  else fail('⑨ 預覽的下緣被切在可視範圍外', `超出 ${clipped.over}px——手機框的輸入列那一條看不到；多半是 max-height 沒扣掉頁首`)
+  if (!clipped) fail('⑨ 量不到預覽面板／編輯區／手機框，這一關驗不到')
+  else {
+    /** ⭐ 兩邊都要：超出去＝框的結尾看不到；差太多＝老闆說的「底下那條縫」 */
+    if (Math.abs(clipped.over) <= 1) pass(`⑨ 預覽面板貼齊編輯區底（面板 ${clipped.panelH}px＝可視 ${clipped.viewH}px）`)
+    else if (clipped.over > 1) fail('⑨ 預覽的下緣被切在可視範圍外', `超出 ${clipped.over}px——手機框的輸入列那一條看不到；多半是高度沒扣掉頁首（122px）`)
+    else fail('⑨ 預覽面板底下留了一條縫', `離編輯區底還有 ${-clipped.over}px——老闆 2026-09-24 指名要「直接拉滿」`)
+
+    if (clipped.frameGap <= 1) pass('⑨ 手機框也貼齊面板底（底部不留內距）')
+    else fail('⑨ 手機框與面板底之間有縫', `${clipped.frameGap}px——底部的 padding 要收掉，左右與上面才維持 1rem`)
+  }
 
   if (longSeen.cutVisible && longSeen.cutLabel.includes('50 字送不出去')) {
     pass('⑨ 超過上限時，被丟掉的那 50 字有被標出來（⛔ 不再無聲消失）')
@@ -608,10 +621,11 @@ try {
       const both = await rmPage.evaluate(() => {
         const split = document.querySelector('.rm-visual-split')
         const canvas = split?.querySelector('.canvas-wrap')
-        const frame = split?.querySelector('.rmc-frame')
+        /** `C-253`：假的聊天室外框（`.rmc-frame`）拿掉了，成品那一張現在就是 `.rmc-menu` */
+        const frame = split?.querySelector('.rmc-menu')
         const box = (el) => {
           const b = el?.getBoundingClientRect()
-          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width } : null
+          return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height } : null
         }
         return {
           pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
@@ -619,7 +633,14 @@ try {
           frame: !!frame,
           hasImg: !!document.querySelector('.rmc-menu-img'),
           /** ⭐ 這一關是 C-233 的全部重點：成品那一張**一個彩色格子都不可以有** */
-          overlays: document.querySelectorAll('.rmc-frame .canvas-area').length,
+          overlays: document.querySelectorAll('.rmc .canvas-area').length,
+          /**
+           * ⭐ `C-253`：試按熱區可以有，但**必須完全透明**——
+           * 只要給它底色，這張圖就又變成第二張編輯畫布，`C-233` 的整個意義就沒了。
+           */
+          hotspots: document.querySelectorAll('.rmc-hot').length,
+          opaqueHotspots: [...document.querySelectorAll('.rmc-hot')]
+            .filter(e => getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
           barText: document.querySelector('.rmc-bar-text')?.innerText?.trim() ?? '',
           /** 圖已經上傳了，卻還掛著「上傳背景圖後…」＝在對他說謊（截圖目檢抓到過） */
           lyingPlaceholder: !!document.querySelector('.rm-preview-placeholder'),
@@ -640,11 +661,11 @@ try {
       if (both.switchBack) fail('⑩ 「編輯區塊／客人看到的樣子」切換鈕又回來了', 'C-243 是要兩張同時看得到，不要退回一次一面')
       else pass('⑩ 沒有切換鈕（不用按就兩張都在）')
 
-      if (both.overlays === 0) {
-        pass('⑩ 成品那一張沒有任何彩色格子（店家終於看得到那張圖乾淨的樣子）')
+      if (both.overlays === 0 && both.opaqueHotspots === 0) {
+        pass(`⑩ 成品那一張沒有任何色塊（${both.hotspots} 個試按熱區全是透明的）`)
       }
       else {
-        fail('⑩ 成品那一張還蓋著格子', `疊了 ${both.overlays} 塊`)
+        fail('⑩ 成品那一張蓋著色塊', `彩色格子 ${both.overlays} 塊、不透明的熱區 ${both.opaqueHotspots} 個——只要有底色它就又變成第二張編輯畫布`)
       }
 
       /**
@@ -688,13 +709,26 @@ try {
         const split = document.querySelector('.rm-visual-split')
         return {
           canvasBox: box(split?.querySelector('.canvas-wrap')),
-          frameBox: box(document.querySelector('.rmc-frame')),
+          frameBox: box(document.querySelector('.rmc-menu')),
           pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
         }
       })
       if (geom(wide, '視窗 1920px') === true) pass('⑩ 寬螢幕上確實是並排（C-243 的重點）')
       else fail('⑩ 寬螢幕上沒有並排', '1920px 下兩張還擠不下＝折行門檻設得太高')
       if (wide.pageScrollX) fail('⑩ 1920px 下被撐出橫向捲軸')
+
+      /**
+       * ⭐ `C-253`：老闆要的是「兩張同高」。⛔ 不可以只斷言「兩個都在」——
+       *    兩張一大一小照樣都在 DOM 裡（`C-253` 之前右邊就是個小手機框，小了一半）。
+       */
+      const cb2 = wide.canvasBox
+      const fb2 = wide.frameBox
+      if (!cb2 || !fb2) fail('⑩ 1920px 下量不到兩張的尺寸')
+      else {
+        const dw = Math.abs(cb2.width - fb2.width)
+        if (dw <= 2) pass(`⑩ 兩張等寬（各 ${Math.round(cb2.width)}px）＝同一個比例尺才比得出差別`)
+        else fail('⑩ 兩張不等寬', `畫布 ${Math.round(cb2.width)}px vs 成品 ${Math.round(fb2.width)}px，差 ${Math.round(dw)}px`)
+      }
       await rmPage.setViewport(before)
       await sleep(400)
 
@@ -707,6 +741,106 @@ try {
       else {
         pass('⑩ 沒有殘留那句「上傳背景圖後…」的假提示')
       }
+
+      /**
+       * ── ⑪ `C-253`：試按每一格，講的話要對得上**客人真正的經歷** ──────
+       *
+       * ⭐ 這一關的重點不是「有沒有跳出東西」，是**跳出來的話對不對**。
+       *    圖文選單四種動作只有「觸發模組」會讓客人收到訊息；另外三種都不會。
+       *    照著推播那套畫泡泡就是第二個 `D-96`（畫了四個月、客人一次都沒收到過）。
+       * ⛔ 試按**不可以真的貼標籤**——所以這一關全程不按儲存，而且腳本層面
+       *    本來就沒有任何寫入路徑。
+       */
+      /**
+       * 每一格設的是哪一種動作。⚠️ 一張卡裡有**好幾個** `el-select`（動作類型、目標模組／選單），
+       * 這裡要的是**第一個**＝動作類型；Element Plus 的顯示值在不同版本落在
+       * `__selected-item`／`__placeholder`／`input.value` 三處，所以三種都試。
+       */
+      const areaTypes = await rmPage.evaluate(() =>
+        [...document.querySelectorAll('.rm-area-card')].map((card) => {
+          const sel = card.querySelector('.el-select')
+          if (!sel) return ''
+          const node = sel.querySelector('.el-select__selected-item, .el-select__placeholder')
+          return (node?.textContent || sel.querySelector('input')?.value || '').trim()
+        }))
+
+      const hotCount = await rmPage.evaluate(() => document.querySelectorAll('.rmc-hot').length)
+      if (hotCount === 0) fail('⑪ 成品圖上一個試按熱區都沒有', '「點擊的功能」沒做出來')
+      else pass(`⑪ 成品圖上有 ${hotCount} 個試按熱區`)
+
+      /** 對照組：還沒按之前不可以有結果面板，不然下面「按了有反應」是假綠燈 */
+      const tryBefore = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
+      if (tryBefore) fail('⑪ 對照組失敗：還沒按就已經有試按結果了')
+      else pass('⑪ 對照組：還沒按之前沒有試按結果')
+
+      /** 每一種動作該出現／⛔ 不該出現的字 */
+      const EXPECT = {
+        切換選單: { must: ['不會收到任何訊息'], never: ['直接收到這'] },
+        開啟網址: { must: ['直接被帶到這個網址', '不會收到任何訊息'], never: ['直接收到這'] },
+        傳送文字: { must: ['像自己打了這句話一樣送出'], never: ['不會收到任何訊息'] },
+        觸發機器人模組: { must: [], never: ['不會收到任何訊息', '直接被帶到這個網址'] },
+      }
+
+      let tried = 0
+      for (let i = 0; i < hotCount; i++) {
+        const label = areaTypes[i] || ''
+        const rule = EXPECT[label]
+        await rmPage.evaluate((idx) => {
+          document.querySelectorAll('.rmc-hot')[idx]?.click()
+        }, i)
+        await sleep(900)
+        const seen = await rmPage.evaluate(() => {
+          const box = document.querySelector('.rmc-try')
+          return {
+            open: !!box,
+            title: box?.querySelector('.rmc-try__title')?.innerText?.trim() ?? '',
+            text: box?.innerText ?? '',
+          }
+        })
+        if (!seen.open) {
+          fail(`⑪ 按了第 ${i + 1} 格沒有任何反應`)
+          continue
+        }
+        if (!seen.title.includes(String(i + 1))) {
+          fail(`⑪ 按了第 ${i + 1} 格，標題卻寫「${seen.title}」`)
+        }
+        if (!rule) {
+          console.log(`   ⚠️ 第 ${i + 1} 格的動作類型讀成「${label || '(空)'}」，沒有對應規則，只驗到「有反應」`)
+          continue
+        }
+        tried++
+        const missing = rule.must.filter(s => !seen.text.includes(s))
+        const wrong = rule.never.filter(s => seen.text.includes(s))
+        if (missing.length) fail(`⑪ 第 ${i + 1} 格（${label}）少講了`, missing.join('／'))
+        if (wrong.length) {
+          fail(`⑪ 第 ${i + 1} 格（${label}）講了不該講的`, `${wrong.join('／')}——這就是 D-96 的形狀：預覽在講一件客人不會經歷的事`)
+        }
+        if (!missing.length && !wrong.length) pass(`⑪ 第 ${i + 1} 格（${label}）講的對得上客人真正的經歷`)
+      }
+      if (tried === 0) fail('⑪ 一格都沒驗到動作類型', '讀不到「動作類型」下拉的值，這一關等於沒驗')
+
+      /** ⛔ 試按絕對不可以真的貼標籤：有貼標的格子一定要講「不會真的貼」 */
+      const taggedNote = await rmPage.evaluate(() => {
+        const t = document.querySelector('.rmc-try')?.innerText ?? ''
+        return { hasTag: t.includes('貼上標籤'), saysNotReal: t.includes('不會真的貼') }
+      })
+      if (taggedNote.hasTag && !taggedNote.saysNotReal) {
+        fail('⑪ 講了會貼標籤，卻沒講「這裡試按不會真的貼」', '店家會以為自己剛剛弄髒了客人名單')
+      }
+      else if (taggedNote.hasTag) {
+        pass('⑪ 有貼標的格子講清楚了「試按不會真的貼」')
+      }
+
+      /** 收起來要真的收得起來（不然它會一直佔著版面） */
+      await rmPage.evaluate(() => {
+        const btn = [...document.querySelectorAll('.rmc-try__head .el-button')]
+          .find(b => b.innerText.includes('收起來'))
+        btn?.click()
+      })
+      await sleep(400)
+      const closed = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
+      if (closed) fail('⑪ 按了「收起來」還在')
+      else pass('⑪ 按「收起來」真的收得起來')
     }
   }
   await rmPage.close()
