@@ -291,6 +291,22 @@ describe('storeProfileForPrompt', () => {
     expect(text.indexOf('產業與品類')).toBeLessThan(text.indexOf('主打商品'))
     expect(text.indexOf('主打商品')).toBeLessThan(text.indexOf('主要客群'))
   })
+
+  /**
+   * `C-249`／`D-92`：**價格帶是唯一一格不進 prompt 的**。
+   * 它是整份輪廓最容易猜錯的一格（09-22 實測：募資頁的募資總額被當成價格），
+   * 而 AI 客服的安全規則本來就寫著價格只能講知識卡上的。
+   * ⛔ 對照組不可以省：只斷言「價格不在」的話，把整支函式改成回空字串也會綠。
+   */
+  it('⛔ 價格帶不進 prompt，但其他有值的欄位照進（對照組）', () => {
+    let p = answeredByOwner()
+    p = setStoreProfileField(p, 'priceRange', 'NT$180–1,280', 'ai', 1000)
+    const text = storeProfileForPrompt(p)
+    expect(text).not.toContain('價格帶')
+    expect(text).not.toContain('1,280')
+    expect(text).toContain('主打商品：黑豆水、養生茶包')
+    expect(text).toContain('產業與品類：零售／電商')
+  })
 })
 
 describe('filledFieldCount', () => {

@@ -17,6 +17,7 @@
  */
 
 import { generateText, runWithLlmBudget } from '~~/server/utils/gemini'
+import { splitProducts } from '~~/shared/store-profile-drafts'
 import { storeProfileForPrompt, type StoreProfileDoc } from '~~/shared/types/store-profile'
 import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
 
@@ -84,15 +85,17 @@ export function rejectTailoredAngle(text: string, profile: StoreProfileDoc): str
   return null
 }
 
-/** 把輪廓的「主打商品」拆成陣列（價格帶用 ｜ 隔開，只取前半） */
+/**
+ * 把輪廓的「主打商品」拆成陣列。
+ *
+ * ⛔ **拆法只有一份**（`shared/store-profile-drafts.ts` 的 `splitProducts`）。
+ * 這裡原本自己寫了第二份，只防了 `｜` 一種寫法、沒防千分位逗號——
+ * 而另一份連 `｜` 都沒防。同一條規則兩份拷貝、兩份各錯一半，正是 `C-235` 剛付過的學費。
+ * 這裡只多一條自己的規矩：**一個字的不算商品**（模型偶爾會吐出單字碎片）。
+ */
 export function splitProfileProducts(profile: StoreProfileDoc): string[] {
-  const raw = String(profile.fields?.products?.value ?? '')
-  const head = raw.split(/[｜|]/)[0] ?? ''
-  return head
-    .split(/[、,，/／]/)
-    .map(s => s.trim())
+  return splitProducts(String(profile.fields?.products?.value ?? ''))
     .filter(s => s.length >= 2)
-    .slice(0, 3)
 }
 
 export function buildTailorPrompt(profile: StoreProfileDoc, festival: TaiwanFestival, daysUntil: number): string {

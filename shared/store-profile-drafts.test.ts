@@ -8,6 +8,7 @@ import {
   canBuildDrafts,
   splitProducts,
   STORE_DRAFT_KIND,
+  stripPriceBand,
   summarizeDraftApply,
   type DraftApplyStep,
   type DraftContext,
@@ -45,6 +46,50 @@ describe('splitProducts', () => {
   it('空的回空陣列，不炸', () => {
     expect(splitProducts('')).toEqual([])
     expect(splitProducts(undefined as never)).toEqual([])
+  })
+
+  /**
+   * `C-249`／`D-92`：**千分位逗號不可以被當成商品的分隔符**。
+   * 壞掉的時候不會有人發現——商家在輪廓卡上看到的是完整的「NT$180–1,280」，
+   * 而下游拿到的是一個叫「節慶禮盒｜NT$180–1」的商品，還會被寫進 `systemPrompt`。
+   */
+  describe('價格帶不可以污染商品名（D-92）', () => {
+    const CASES: Array<[string, string]> = [
+      ['aiHint 教的寫法（全形豎線）', '黑豆水、養生茶包、節慶禮盒｜NT$180–1,280'],
+      ['半形豎線加空白', '黑豆水、養生茶包、節慶禮盒 | NT$0–7,030,300'],
+      ['括號包起來', '黑豆水、養生茶包、節慶禮盒（NT$180-1,280）'],
+      ['沒有分隔符，直接接 NT$', '黑豆水、養生茶包、節慶禮盒 NT$180–1,280'],
+      ['寫成「售價」', '黑豆水、養生茶包、節慶禮盒，售價 180–1,280'],
+      ['只有錢字號', '黑豆水、養生茶包、節慶禮盒｜$180~1,280'],
+    ]
+    for (const [name, raw] of CASES) {
+      it(name, () => {
+        expect(splitProducts(raw)).toEqual(['黑豆水', '養生茶包', '節慶禮盒'])
+      })
+    }
+
+    it('剝不掉的漏網之魚，也不會被千分位逗號切開', () => {
+      // 沒有任何價格記號、純數字區間——剝除攔不到，第二道（拿掉數字間的逗號）要接住
+      expect(splitProducts('黑豆水、養生茶包、節慶禮盒 180–1,280')).toEqual(
+        ['黑豆水', '養生茶包', '節慶禮盒 180–1280'],
+      )
+    })
+
+    /** ⛔ 對照組：商品名裡本來就有的 NT／數字不可以被砍掉，不然這道防守自己變成 bug */
+    it('對照組：商品名本身帶 NT 或數字時不會被誤砍', () => {
+      expect(splitProducts('NT 限定款、養生茶包 500ml、節慶禮盒')).toEqual(
+        ['NT 限定款', '養生茶包 500ml', '節慶禮盒'],
+      )
+    })
+  })
+})
+
+describe('stripPriceBand', () => {
+  it('沒有價格時原字串不動', () => {
+    expect(stripPriceBand('黑豆水、養生茶包')).toBe('黑豆水、養生茶包')
+  })
+  it('剝完不留孤兒分隔符', () => {
+    expect(stripPriceBand('黑豆水、養生茶包、｜NT$180–1,280')).toBe('黑豆水、養生茶包')
   })
 })
 
@@ -107,6 +152,30 @@ describe('AI 語氣', () => {
     const t = buildToneDraft(ctxOf({ profile: emptyStoreProfile() }))
     expect(t).toContain('你是這家店的客服助理')
     expect(t).not.toMatch(/，。|、。|。。/)
+  })
+
+  /**
+   * `C-249`／`D-92`：**這一段是整包覆蓋 `aiSettings.systemPrompt` 的**，
+   * 所以任何一個數字寫進來，AI 之後都會拿它當事實。
+   * ⛔ 價格是整份輪廓最容易猜錯的一格（09-22 實測抽出 NT$0–7,030,300），
+   *    而安全規則第 3 條本來就說價格只能來自知識卡。
+   */
+  it('⛔ 商家把價格打進商品那一格，也不會流進 systemPrompt（D-92）', () => {
+    const p = setStoreProfileField(
+      profileOf(), 'products', '黑豆水、養生茶包、節慶禮盒｜NT$180–1,280', 'ai', 1,
+    )
+    const t = buildToneDraft(ctxOf({ profile: p }))
+    expect(t).toContain('主要商品是黑豆水、養生茶包、節慶禮盒')
+    expect(t).not.toContain('NT$')
+    expect(t).not.toContain('1,280')
+    // ⛔ 切壞的殘骸也不可以在（這才是 D-92 真正抓到的形狀）
+    expect(t).not.toMatch(/節慶禮盒[｜|]/)
+    expect(t).not.toContain('180–1')
+  })
+
+  it('⛔ 價格帶那一格本身也不進 systemPrompt', () => {
+    const p = setStoreProfileField(profileOf(), 'priceRange', 'NT$180–1,280', 'ai', 1)
+    expect(buildToneDraft(ctxOf({ profile: p }))).not.toContain('1,280')
   })
 })
 

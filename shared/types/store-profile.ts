@@ -27,10 +27,17 @@ import type { FieldValue, Timestamp } from 'firebase-admin/firestore'
 //  Doc ID: workspaceId（與 aiSettings 同一種擺法：一個工作區一份）
 // ═══════════════════════════════════════════════════════════════════
 
-/** 輪廓的九個欄位。⛔ 加欄位要同時補 `STORE_PROFILE_FIELDS`，那張表是唯一來源。 */
+/**
+ * 輪廓的十個欄位。⛔ 加欄位要同時補 `STORE_PROFILE_FIELDS`，那張表是唯一來源。
+ *
+ * ⚠️ `priceRange` 是 2026-09-24（`C-249`／`D-92`）從 `products` 拆出來的：
+ *    原本一格同時裝「主打商品」與「價格帶」，而下游拆商品用逗號切，
+ *    **價格帶的千分位逗號正好是分隔符**，切壞的字串會以「商品名」的身分進 AI 設定。
+ */
 export type StoreProfileFieldId =
   | 'industry'
   | 'products'
+  | 'priceRange'
   | 'customers'
   | 'channel'
   | 'season'
@@ -174,20 +181,35 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
   },
   {
     id: 'products',
-    label: '主打商品與價格帶',
+    label: '主打商品',
     question: '主要賣什麼？講三樣最重要的就好，用頓號或逗號分開。',
     askStep: 2,
     placeholder: '例：黑豆水、養生茶包、節慶禮盒',
     aiCanGuess: true,
     emptyHint: '還不知道你賣什麼',
     /**
+     * ⛔ **這一格只裝商品名，價格帶在 `priceRange`**（`C-249` 拆開，原因見該格）。
+     * 合在一起時，下游用逗號拆商品，價格的千分位逗號會把最後一樣商品切成
+     * 「節慶禮盒｜NT$180–1」，而商家在卡片上看到的是完整的區間，看不出下游壞了。
+     */
+    aiHint: '主打商品（最多三樣，用短的商品名，不要整串行銷標題）。'
+      + '⛔ 這一格不要寫價格、不要寫促銷字眼，價格另有一格',
+  },
+  {
+    id: 'priceRange',
+    label: '價格帶',
+    /** ⛔ 精靈不問這一題：`D-90` 量出主線已經 16 個動作，這格 AI 猜得到、猜錯也改得動 */
+    question: null,
+    askStep: null,
+    aiCanGuess: true,
+    emptyHint: '還不知道你的價格帶',
+    /**
      * ⚠️ 2026-09-22 端到端實測（MYFEEL 官網）當場抓到的坑：那一頁是募資頁，
      * 上面最大的數字是**募資總金額**，模型直接拿去當價格，抽出「NT$0–7,030,300」。
      * 數字確實出現在頁面上，所以「不要編造價格」那條規則擋不住它——
      * ⛔ 要明講「只有單一商品的售價才算價格」，並把不算價格的那幾種點名。
      */
-    aiHint: '主打商品（最多三樣，用短的商品名，不要整串行銷標題）與價格帶。'
-      + '價格帶寫成「NT$180–1,280」這種區間，而且**只能用單一商品的售價**；'
+    aiHint: '價格帶，寫成「NT$180–1,280」這種區間，而且**只能用單一商品的售價**；'
       + '⛔ 募資總金額、贊助人數、折扣百分比、運費、原價劃線價都不是價格帶，看不出單品售價就整個留空',
   },
   {
@@ -499,6 +521,16 @@ export function isStoreProfileReady(profile: StoreProfileDoc | null | undefined)
 }
 
 /**
+ * ⛔ **不進任何 LLM prompt 的欄位**（`C-249`／`D-92`）。
+ *
+ * 價格帶是整份輪廓裡**最容易猜錯**的一格（09-22 實測：募資頁的募資總額被當成價格，
+ * 抽出 NT$0–7,030,300），而 AI 客服的安全規則第 3 條本來就寫著
+ * 「價格、成分、出貨天數這類數字，只能講知識卡上寫的」——那 prompt 裡本來就不該有價格。
+ * 留在輪廓卡上給**人**看、給人改；餵給模型只會多一個它會照著複述的假數字。
+ */
+const PROMPT_EXCLUDED_FIELDS: ReadonlySet<StoreProfileFieldId> = new Set(['priceRange'])
+
+/**
  * 給 LLM 的一段店家介紹（節慶建議、文案草稿、語氣生成共用同一份）。
  * ⛔ 只放有值的欄位：把「還沒有」也寫進 prompt，模型會拿它當事實編故事。
  * 回空字串＝這家店還沒有輪廓，呼叫端要走「通用句」那條路，不要送空 prompt。
@@ -507,6 +539,7 @@ export function storeProfileForPrompt(profile: StoreProfileDoc | null | undefine
   if (!profile) return ''
   const lines: string[] = []
   for (const def of STORE_PROFILE_FIELDS) {
+    if (PROMPT_EXCLUDED_FIELDS.has(def.id)) continue
     const f = profile.fields[def.id]
     if (!f?.value) continue
     lines.push(`- ${def.label}：${f.value}`)

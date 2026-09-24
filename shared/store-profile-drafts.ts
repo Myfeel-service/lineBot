@@ -77,9 +77,41 @@ function fieldValue(profile: StoreProfileDoc, id: StoreProfileFieldId): string {
   return String(profile.fields?.[id]?.value ?? '').trim()
 }
 
-/** 把「黑豆水、養生茶包、節慶禮盒」拆成陣列（全形或半形逗號、頓號都收） */
+/**
+ * 價格帶的起點。`｜`／`|` 是 `aiHint` 教模型用的分隔符，其餘幾種是它實際也會吐的寫法。
+ * ⚠️ 只要開頭是價格記號**而且後面接數字**才算，不然「NT 限定款」這種商品名會被砍掉。
+ */
+const PRICE_BAND_START = /[｜|]|[（(]?\s*(?:NT\s*[$＄]|[$＄]|NT\s*(?=\d)|價格帶?|價位|售價)\s*[:：]?\s*\d/
+
+/**
+ * 把價格帶從「主打商品」那一格剝掉（`C-249`／`D-92`）。
+ *
+ * `priceRange` 拆成獨立欄位之後，新資料的 `products` 裡本來就不該有價格——
+ * 但**商家自己打的字不受欄位約束**，而且模型偶爾還是會把價格塞回商品那一格。
+ * ⛔ 所以這道剝除不是過渡期措施，是常駐的防守。
+ */
+export function stripPriceBand(raw: string): string {
+  const s = String(raw ?? '')
+  const at = s.search(PRICE_BAND_START)
+  const head = at >= 0 ? s.slice(0, at) : s
+  // 剝完常留下一顆孤兒分隔符或半個括號（「…節慶禮盒、」「…節慶禮盒（」）
+  return head.trim().replace(/[、,，/／｜|（(\s]+$/, '')
+}
+
+/**
+ * 把「黑豆水、養生茶包、節慶禮盒」拆成陣列（全形或半形逗號、頓號都收）。
+ *
+ * ⛔ **兩道防守缺一不可**，因為它們擋的是不同的東西：
+ *   ① 先剝掉價格帶——擋「商品｜NT$180–1,280」這種帶分隔符的寫法。
+ *   ② 再把**夾在兩個數字中間的逗號**拿掉——擋剝不掉的漏網之魚。
+ *      `1,280` 那顆逗號是千分位，**從來不是商品的分隔符**，留著它就會把
+ *      「節慶禮盒｜NT$180–1,280」切成「…NT$180–1」和「280」，
+ *      而切壞的前半段會以**商品名**的身分寫進 `aiSettings.systemPrompt`
+ *      （`buildToneDraft` 是整包覆蓋），商家在輪廓卡上看到的卻是完整的區間。
+ */
 export function splitProducts(raw: string): string[] {
-  return String(raw ?? '')
+  return stripPriceBand(raw)
+    .replace(/(\d)[,，](\d)/g, '$1$2')
     .split(/[、,，/／]/)
     .map(s => s.trim())
     .filter(Boolean)
