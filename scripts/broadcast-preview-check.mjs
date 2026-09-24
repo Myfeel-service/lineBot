@@ -427,6 +427,25 @@ try {
     cutLabel: document.querySelector('.fmp-bubble-cut .fmp-card-cut-label')?.innerText?.trim() ?? '',
     keptLen: (document.querySelector('.fmp-bubble')?.innerText ?? '').length,
   }))
+  /**
+   * `C-251`：**框的下緣要真的看得到**。
+   * 原本 `.bc-preview` 是 `max-height: 100dvh`，但它上面還有後台頁首＋編輯器頁首（實測 122px），
+   * 所以面板永遠比「編輯區看得到的範圍」高一整個頁首——手機框的輸入列那一條被切在視窗外，
+   * 畫面上就是「底下好像還有一塊，卻看不到結尾」。
+   * ⭐ 借這一關量：此刻的文字有 5,050 字，預覽是整頁最高的時候，夾不住的話一定量得到。
+   */
+  const clipped = await page.evaluate(() => {
+    const panel = document.querySelector('.bc-preview')
+    const scroller = document.querySelector('.split-editor-body')
+    if (!panel || !scroller) return null
+    const p = panel.getBoundingClientRect()
+    const s = scroller.getBoundingClientRect()
+    return { over: Math.round(p.bottom - s.bottom), panelH: Math.round(p.height), viewH: Math.round(s.height) }
+  })
+  if (!clipped) fail('⑨ 量不到預覽面板或編輯區，這一關驗不到')
+  else if (clipped.over <= 0) pass(`⑨ 預覽的下緣沒有被切出可視範圍（面板 ${clipped.panelH}px ≦ 可視 ${clipped.viewH}px）`)
+  else fail('⑨ 預覽的下緣被切在可視範圍外', `超出 ${clipped.over}px——手機框的輸入列那一條看不到；多半是 max-height 沒扣掉頁首`)
+
   if (longSeen.cutVisible && longSeen.cutLabel.includes('50 字送不出去')) {
     pass('⑨ 超過上限時，被丟掉的那 50 字有被標出來（⛔ 不再無聲消失）')
   }
