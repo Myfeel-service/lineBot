@@ -455,8 +455,13 @@ try {
     else if (clipped.over > 1) fail('⑨ 預覽的下緣被切在可視範圍外', `超出 ${clipped.over}px——手機框的輸入列那一條看不到；多半是高度沒扣掉頁首（122px）`)
     else fail('⑨ 預覽面板底下留了一條縫', `離編輯區底還有 ${-clipped.over}px——老闆 2026-09-24 指名要「直接拉滿」`)
 
-    if (clipped.frameGap <= 1) pass('⑨ 手機框也貼齊面板底（底部不留內距）')
-    else fail('⑨ 手機框與面板底之間有縫', `${clipped.frameGap}px——底部的 padding 要收掉，左右與上面才維持 1rem`)
+    /**
+     * ⚠️ 老闆第三輪：「底下留點 padding」。所以框**不是**貼到面板底緣，
+     * 而是四周各留 1rem——「面板沒對齊容器底」（破版）跟「面板裡的留白」（設計）是兩件事，
+     * `C-251` 第二版把兩者混成一件、連內距一起收掉，框就整個頂到底太擠。
+     */
+    if (Math.abs(clipped.frameGap - 16) <= 1) pass(`⑨ 手機框在面板裡留了 ${clipped.frameGap}px 內距（與左右上一致）`)
+    else fail('⑨ 手機框底部的內距不是 16px', `量到 ${clipped.frameGap}px——0 代表整個頂到底（太擠），過大代表面板沒拉滿`)
   }
 
   if (longSeen.cutVisible && longSeen.cutLabel.includes('50 字送不出去')) {
