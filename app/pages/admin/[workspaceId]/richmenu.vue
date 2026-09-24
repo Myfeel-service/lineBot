@@ -71,14 +71,27 @@
         <div class="message-card rm-config-card">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">選單設定</span>
+              <!--
+                ⛔ 編號要**掛在卡片標題上**，不要只掛在其中一個欄位上。
+                原本是左欄第四個欄位叫「1. 上傳選單背景圖」、而下面整張卡叫「2. 區塊設定」——
+                編號從第 4 個欄位才開始，看起來像壞掉的清單。
+              -->
+              <span class="section-title">1. 選單設定</span>
             </div>
           </div>
           <div class="card-section-stack rm-config-grid">
             <!-- 左欄：要填的東西（欄位不被寬螢幕拉成滿版） -->
             <div class="rm-config-col rm-config-col--fields">
               <div class="admin-field-group" data-tour="rm-chatbar">
-                <AdminFieldLabel text="Chat Bar 文字" tight />
+                <!--
+                  「Chat Bar」是 LINE 官方的名字（房規：**外部必抄的術語保留原文＋白話註解**，
+                  不要自己改名，不然店家對照 LINE 官方文件時找不到）。
+                -->
+                <AdminFieldLabel
+                  text="Chat Bar 文字"
+                  hint="聊天室最下面那一條上面的字。客人按它就能把選單收起來。"
+                  tight
+                />
                 <el-input v-model="form.chatBarText" placeholder="選單" />
               </div>
 
@@ -99,7 +112,11 @@
               </div>
 
               <div class="admin-field-group" data-tour="rm-image">
-                <AdminFieldLabel :text="`1. 上傳選單背景圖 (${isCreating ? '必要' : '選填，若不上傳則自動沿用舊圖'})`" tight />
+                <AdminFieldLabel
+                  text="選單背景圖"
+                  :hint="isCreating ? '一定要傳一張，選單的長相就是這張圖。' : '不上傳就沿用原本那張。'"
+                  tight
+                />
                 <FlowUploadZone
                   v-model="form.previewUrl"
                   type="image"
@@ -111,8 +128,12 @@
 
                 <!-- 沒有設計稿的時候用這個湊一張。
                      ⛔ AI 只畫底圖，格子與字是照**真正的可點區域**疊上去的——
-                     整張交給 AI 畫的話，看得到的按鈕跟按得到的區域一定對不齊。 -->
-                <div class="rm-gen">
+                     整張交給 AI 畫的話，看得到的按鈕跟按得到的區域一定對不齊。
+
+                     ⛔ **2026-09-24 老闆說「先隱藏生圖功能」，所以整塊關著**（`SHOW_AI_BACKGROUND_GEN`）。
+                        程式刻意**不刪**：後端端點、輸入狀態、產生流程全部留著，
+                        要開回來只要把那個常數改成 `true`。 -->
+                <div v-if="SHOW_AI_BACKGROUND_GEN" class="rm-gen">
                   <div class="rm-gen__head">
                     <span class="rm-gen__title">沒有現成的圖？讓 AI 幫你做一張</span>
                     <span class="text-xs text-muted">AI 只畫背景，按鈕格子與文字由系統照實際可點區域疊上去，不會歪掉</span>
@@ -168,30 +189,36 @@
                    這個功能就沒了（見 `AdminRichMenuCustomerView.vue` 檔頭）。
               -->
               <div v-if="form.previewUrl" class="rm-visual-split">
-                <AdminAreaEditorSection
-                  :areas="form.areas"
-                  section-label="編輯區塊"
-                  :flat="true"
-                  :show-canvas="true"
-                  :show-action-cards="false"
-                  :show-header="true"
-                  :show-add-button="false"
-                  :allow-remove="false"
-                  :show-bounds="false"
-                  :min-bounds-size="0"
-                  :base-width="Number(form.width) || 2500"
-                  :base-height="Number(form.height) || 843"
-                  :area-colors="areaColors"
-                  :drag-area-index="dragState?.areaIndex ?? null"
-                  :overlap-set="overlapSet"
-                  :guide-lines="guideLines"
-                  :canvas-style="richMenuCanvasStyle"
-                  :canvas-image-url="form.previewUrl || undefined"
-                  :set-canvas-ref="setRichMenuCanvasRef"
-                  @start-drag="startDrag"
-                  @start-resize="startResize"
-                  @clamp="clampAreaByIndex"
-                />
+                <div class="rm-visual-split__edit">
+                  <AdminAreaEditorSection
+                    :areas="form.areas"
+                    section-label="編輯區塊"
+                    :flat="true"
+                    :show-canvas="true"
+                    :show-action-cards="false"
+                    :show-header="true"
+                    :show-add-button="false"
+                    :allow-remove="false"
+                    :show-bounds="false"
+                    :min-bounds-size="0"
+                    :base-width="Number(form.width) || 2500"
+                    :base-height="Number(form.height) || 843"
+                    :area-colors="areaColors"
+                    :drag-area-index="dragState?.areaIndex ?? null"
+                    :overlap-set="overlapSet"
+                    :guide-lines="guideLines"
+                    :canvas-style="richMenuCanvasStyle"
+                    :canvas-image-url="form.previewUrl || undefined"
+                    :set-canvas-ref="setRichMenuCanvasRef"
+                    @start-drag="startDrag"
+                    @start-resize="startResize"
+                    @clamp="clampAreaByIndex"
+                  />
+                  <!-- 說明貼在它解釋的那張圖底下，⛔ 不要放到兩張圖都看不到的最下面 -->
+                  <p class="rm-visual-hint text-xs text-muted">
+                    彩色格子是「按得到的範圍」，客人看不到它們。
+                  </p>
+                </div>
 
                 <div class="rm-visual-split__customer">
                   <AdminPanelTitle tag="h3" tight>客人看到的樣子</AdminPanelTitle>
@@ -205,9 +232,10 @@
                 </div>
               </div>
 
-              <p v-if="form.previewUrl" class="rm-visual-hint text-xs text-muted">
-                左邊的彩色格子是「按得到的範圍」，客人看不到它們；右邊那張才是客人真正會看到的。
-              </p>
+              <!--
+                ⛔ 這句只講「彩色格子是什麼」。原本後面還有一句「右邊那張才是客人真正會看到的」——
+                   右邊那張自己的標題就叫「客人看到的樣子」，再講一次是廢話。
+              -->
 
               <!--
                 ⛔ 條件要看「有沒有圖」，**不可以寫成上面那塊的 `v-else`**：上面那塊的條件
@@ -380,14 +408,15 @@ const sortedMenus = computed(() => {
 // ── Canvas drag / resize ──────────────────────────────────────
 const canvasRef = ref<HTMLElement | null>(null)
 
-const areaColors = [
-  'rgba(6,199,85,0.6)',
-  'rgba(59,130,246,0.6)',
-  'rgba(245,158,11,0.6)',
-  'rgba(239,68,68,0.6)',
-  'rgba(168,85,247,0.6)',
-  'rgba(236,72,153,0.6)',
-]
+/** 每一格的底色＝分辨「哪一塊是哪一格」，不是裝飾。⛔ 唯一來源在 `AREA_EDITOR_COLORS`（含原因） */
+const areaColors = AREA_EDITOR_COLORS as string[]
+
+/**
+ * 「讓 AI 幫你做一張背景圖」要不要出現。
+ * 2026-09-24 老闆：**先隱藏**。⛔ 相關程式全部留著（端點、狀態、`onGenerateBackground`），
+ * 要開回來改這一個常數就好——不要為了「清乾淨」把它刪掉，重寫一次比留著貴。
+ */
+const SHOW_AI_BACKGROUND_GEN = false
 
 const defaultForm = () => ({
   name: '',

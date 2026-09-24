@@ -42,22 +42,24 @@
   z-index: 0;
 }
 
+/**
+ * ⛔ **格子看得見要靠邊框，不要靠把圖蓋掉**：底色（`areaColors`）刻意只有 0.22，
+ *    所以邊框得夠實——白框 + 外圈半透明黑，深底淺底的圖上都看得到。
+ */
 .canvas-area {
   position: absolute;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid rgba(255, 255, 255, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   cursor: grab;
-  transition: border-color 0.15s;
+  transition: box-shadow 0.15s, border-color 0.15s;
   box-sizing: border-box;
 }
 
 .canvas-area:hover,
 .canvas-area.area-active {
   border-color: #fff;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 0 3px rgba(255, 255, 255, 0.55);
   z-index: 10;
 }
 
@@ -65,11 +67,28 @@
   cursor: grabbing;
 }
 
+/**
+ * 格子編號。
+ * ⛔ **不要置中**：原本是 flex 置中，編號正好壓在圖案中間（實測那張選單上，
+ *    「3」蓋在「商品資訊」四個字上）——既讀不出編號，又擋住店家要檢查的內容。
+ *    釘在左上角，而且要有自己的底色，不然淺底圖上白字會消失。
+ */
 .area-label {
-  font-size: 0.75rem;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.78);
+  font-size: 0.6875rem;
   font-weight: 700;
+  line-height: 1;
   color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
 

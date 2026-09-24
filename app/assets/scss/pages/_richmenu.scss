@@ -153,10 +153,13 @@
 }
 
 /* 拖格子那張：吃掉剩下的寬度（拖曳要夠大才抓得準），上限沿用 .canvas-wrap 的 860 */
-.rm-visual-split > .rm-section-card {
+.rm-visual-split__edit {
   flex: 1 1 360px;
   min-width: 0;
   max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section-heading-gap);
 }
 
 /* 成品那張：`.rmc-frame` 自己鎖 320px，給再多也不會變寬，所以不讓它 grow */
@@ -242,10 +245,19 @@
   font-weight: 600;
 }
 
+/**
+ * 「第 N 格要印什麼字」那幾格。
+ *
+ * ⛔ **`auto-fit` 搭 `minmax(0, …)` 等於永遠不換行**：最小寬度是 0，所以不管欄位多窄，
+ *    格子都塞得進同一列。原本五格擠在 340px 的左欄裡，每格約 55px，
+ *    placeholder「這一格上面要印什麼字」被截成「這一朸」＝畫面上直接破版。
+ *    要 `auto-fit` 真的會換行，最小值就必須是一個**真的寬度**。
+ * ⛔ 也**不要**用 `@media` 來救：原本下面掛了一條 `max-width: 720px`，
+ *    但它量的是**視窗**寬，而這裡窄的是**欄位**——視窗 1920 一樣破版，那條規則從來沒生效過。
+ */
 .rm-gen__labels {
   display: grid;
-  /* ⛔ 可壓縮欄位一律 minmax(0, 1fr)：用 1fr 的話 min-content 會把格子撐爆、整排溢出 */
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 8px;
 }
 
@@ -268,8 +280,5 @@
   flex-wrap: wrap;
 }
 
-@media (max-width: 720px) {
-  .rm-gen__labels {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+/* ⛔ 這裡原本有一條 `@media (max-width: 720px)` 想把那幾格收成一欄——
+   它量的是視窗寬、而窄的是欄位，所以從來沒生效過。換行現在由上面的 `minmax` 自己處理。 */

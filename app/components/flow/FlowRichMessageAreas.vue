@@ -81,14 +81,8 @@ const hasHeroImage = computed(() => {
 
 const { showToast } = useAdminToast()
 
-const areaColors = [
-  'rgba(6,199,85,0.6)',
-  'rgba(59,130,246,0.6)',
-  'rgba(245,158,11,0.6)',
-  'rgba(239,68,68,0.6)',
-  'rgba(168,85,247,0.6)',
-  'rgba(236,72,153,0.6)',
-]
+/** ⛔ 唯一來源在 `AREA_EDITOR_COLORS`（為什麼不能有紅色、為什麼不能再加深，都寫在那裡） */
+const areaColors = AREA_EDITOR_COLORS as string[]
 
 const customCanvasRef = ref<HTMLElement | null>(null)
 const customAreas = computed(() => props.msg.actions as RichMessageEditorAction[])
