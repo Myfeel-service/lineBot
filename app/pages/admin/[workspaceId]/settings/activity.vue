@@ -92,7 +92,13 @@
                 <template #default="{ row }">
                   <div v-if="changes(row).lines.length">
                     <div v-for="c in changes(row).lines" :key="c.key" class="text-xs">
-                      {{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b>
+                      <!--
+                        新增類不印「（空白） →」、刪除類不印「→ （空白）」：標題已經寫了
+                        「新增了…／刪掉了…」，再補一個空白箭頭只是把真正的值擠到旁邊。
+                      -->
+                      <template v-if="auditIsCreate(row.before)">{{ c.label }}：<b>{{ c.after }}</b></template>
+                      <template v-else-if="auditIsDelete(row.after)">{{ c.label }}：<b>{{ c.before }}</b></template>
+                      <template v-else>{{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b></template>
                     </div>
                     <!-- ⛔ 沒印完要講出來：少印幾行而不說，會被讀成「這次就只改了這些」 -->
                     <div v-if="changes(row).omitted" class="text-xs text-muted">
@@ -139,6 +145,8 @@ import {
   AUDIT_ACTOR_LABELS,
   auditActionLabel,
   auditChangeLines,
+  auditIsCreate,
+  auditIsDelete,
   isPlatformAction,
   type AuditChangeSummary,
   type AuditLogRow,

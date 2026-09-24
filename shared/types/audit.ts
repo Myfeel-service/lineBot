@@ -209,6 +209,22 @@ export function isPlatformAction(action: string): boolean {
 }
 
 /**
+ * 這一筆是不是「本來就沒有」（新增類）／「之後就沒有了」（刪除類）。
+ *
+ * 為什麼要有：`C-254` 之後多了三十幾種新增／刪除動作，而前後對照是照「值變成值」
+ * 的形狀印的，於是新增一個資料夾會印成「名稱：**（空白） → 週年慶**」——
+ * 那個「（空白） →」是廢話，標題已經寫著「新增了模組資料夾」。
+ * （2026-09-24 實走驗證時在真實紀錄上看到才發現，typecheck 與單元測試都看不出來。）
+ */
+export function auditIsCreate(before: Record<string, unknown> | null | undefined): boolean {
+  return !before || Object.keys(before).length === 0
+}
+
+export function auditIsDelete(after: Record<string, unknown> | null | undefined): boolean {
+  return !after || Object.keys(after).length === 0
+}
+
+/**
  * 設定欄位 → 白話名稱（盡力而為）。
  *
  * ⚠️ 這份**不可能完整**：紀錄裡的欄位是「這次剛好有變的那幾個」，隨設定長出來。

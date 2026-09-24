@@ -9,7 +9,15 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { AUDIT_ACTION_LABELS, auditActionLabel, auditChangeLines, auditValueText } from './audit'
+import {
+  AUDIT_ACTION_LABELS,
+  auditActionLabel,
+  auditChangeLines,
+  auditIsCreate,
+  auditIsDelete,
+  auditValueText,
+  isPlatformAction,
+} from './audit'
 
 const SERVER_DIR = fileURLToPath(new URL('../../server', import.meta.url))
 
@@ -162,5 +170,33 @@ describe('前後對照展開到真的有變的那一格', () => {
     expect(auditChangeLines(null, { inactiveTag: { days: 30 } }).lines).toEqual([
       { key: 'inactiveTag.days', label: '沉睡客人自動標籤 › 幾天沒來訊算沉睡', before: '（空白）', after: '30' },
     ])
+  })
+})
+
+/**
+ * 新增／刪除類的紀錄不要印「（空白） →」（`C-254`，2026-09-24 實走驗證時發現）。
+ *
+ * 那天真的建了一個資料夾再刪掉，畫面上印出「名稱：（空白） → 【驗證】…」——
+ * 標題已經寫著「新增了模組資料夾」，那個空白箭頭只是把真正的值擠到旁邊。
+ * ⚠️ typecheck 與單元測試都看不出這種事，是**跑過真資料**才看到的。
+ */
+describe('新增／刪除類不印空白箭頭', () => {
+  it('沒有 before ＝ 新增（畫面只印新的值）', () => {
+    expect(auditIsCreate(null)).toBe(true)
+    expect(auditIsCreate({})).toBe(true)
+    expect(auditIsCreate({ name: '週年慶' })).toBe(false)
+  })
+
+  it('沒有 after ＝ 刪除（畫面只印原本的值）', () => {
+    expect(auditIsDelete(null)).toBe(true)
+    expect(auditIsDelete({})).toBe(true)
+    expect(auditIsDelete({ name: '週年慶' })).toBe(false)
+  })
+
+  it('平台做的事認得出來（租戶頁要標「平台」，⛔ 不能混進「成員操作」）', () => {
+    expect(isPlatformAction('super.grantCredit')).toBe(true)
+    expect(isPlatformAction('super.workspacePatch')).toBe(true)
+    expect(isPlatformAction('flow.put')).toBe(false)
+    expect(isPlatformAction('agent-op/script-set-enabled')).toBe(false)
   })
 })
