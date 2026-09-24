@@ -152,28 +152,22 @@
   gap: 1rem;
 }
 
-/* 拖格子那張：吃掉剩下的寬度（拖曳要夠大才抓得準），上限沿用 .canvas-wrap 的 860 */
-.rm-visual-split__edit {
-  flex: 1 1 360px;
+/**
+ * 兩張**等寬**（`C-253`）：左邊拖格子、右邊成品，同一個比例尺才比得出差別。
+ *
+ * ⛔ 右邊原本是 `flex: 0 1 300px` 的手機外框＝比左邊小一大截，兩張根本對不起來。
+ *    現在兩邊同一組 `flex`，圖的比例又一樣，所以**高度自動一致**——
+ *    ⛔ 不要改成一邊 grow 一邊不 grow，那就又歪了。
+ * ⛔ 上限 860px 跟 `.canvas-wrap` 同一個數字，超寬螢幕才不會一張撐到底、一張停在 860。
+ */
+.rm-visual-split__edit,
+.rm-visual-split__customer {
+  flex: 1 1 300px;
   min-width: 0;
   max-width: 860px;
   display: flex;
   flex-direction: column;
   gap: var(--space-section-heading-gap);
-}
-
-/* 成品那張：`.rmc-frame` 自己鎖 320px，給再多也不會變寬，所以不讓它 grow */
-.rm-visual-split__customer {
-  flex: 0 1 300px;
-  min-width: 260px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-section-heading-gap);
-}
-
-/* ⛔ 不要置中：折成上下排時置中會讓成品框飄到中間，跟上面靠左的畫布對不齊 */
-.rm-visual-split__customer .rmc {
-  justify-content: flex-start;
 }
 
 .rm-visual-hint {

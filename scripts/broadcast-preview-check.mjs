@@ -748,7 +748,7 @@ try {
       }
 
       /**
-       * ── ⑪ `C-253`：試按每一格，講的話要對得上**客人真正的經歷** ──────
+       * ── ⑫ `C-253`：試按每一格，講的話要對得上**客人真正的經歷** ──────
        *
        * ⭐ 這一關的重點不是「有沒有跳出東西」，是**跳出來的話對不對**。
        *    圖文選單四種動作只有「觸發模組」會讓客人收到訊息；另外三種都不會。
@@ -757,26 +757,44 @@ try {
        *    本來就沒有任何寫入路徑。
        */
       /**
-       * 每一格設的是哪一種動作。⚠️ 一張卡裡有**好幾個** `el-select`（動作類型、目標模組／選單），
-       * 這裡要的是**第一個**＝動作類型；Element Plus 的顯示值在不同版本落在
-       * `__selected-item`／`__placeholder`／`input.value` 三處，所以三種都試。
+       * 每一格設的是哪一種動作。
+       *
+       * ⭐ **基準取自 Firestore 裡真正存的那一份**（唯讀），⛔ 不從畫面上的下拉刮——
+       *    刮下拉第一版就整排讀成空字串，而且就算刮到了，驗的也只是「畫面 vs 畫面」。
+       *    從存的那一份出發，這一關才真的在釘「預覽講的 vs 真的會送去 LINE 的」，
+       *    也就是 `D-96` 燒掉四個月的那個縫。
+       * ⚠️ 存進去的是 **LINE 形狀**（`postback`／`richmenuswitch`），不是編輯器形狀，
+       *    所以要照 `richmenu.vue` 存檔時的轉換反推回來。
        */
-      const areaTypes = await rmPage.evaluate(() =>
-        [...document.querySelectorAll('.rm-area-card')].map((card) => {
-          const sel = card.querySelector('.el-select')
-          if (!sel) return ''
-          const node = sel.querySelector('.el-select__selected-item, .el-select__placeholder')
-          return (node?.textContent || sel.querySelector('input')?.value || '').trim()
-        }))
+      const openedName = await rmPage.evaluate(() =>
+        document.querySelector('.split-editor-header input')?.value?.trim() ?? '')
+      const rmSnap = await db.collection('richmenus').where('workspaceId', '==', WORKSPACE_ID).get()
+      const openedDoc = rmSnap.docs.map(d => d.data()).find(d => String(d.name || '').trim() === openedName)
+      const areaTypes = (Array.isArray(openedDoc?.areas) ? openedDoc.areas : []).map((a) => {
+        const t = String(a?.action?.type || '')
+        const data = String(a?.action?.data || '')
+        if (t === 'richmenuswitch' || t === 'switch') return '切換選單'
+        if (t === 'uri') return '開啟網址'
+        if (t === 'message') return '傳送文字'
+        if (t === 'postback' && data.startsWith('triggerModule=')) return '觸發機器人模組'
+        if (t === 'postback' && data.startsWith('triggerMessage=')) return '傳送文字'
+        return ''
+      })
+      if (!openedDoc) {
+        fail('⑫ 在正式庫找不到剛剛打開的那張選單', `名稱讀成「${openedName}」——下面的動作類型全部驗不到`)
+      }
+      else {
+        console.log(`   （基準取自正式庫的「${openedName}」：${areaTypes.map((t, i) => `${i + 1}=${t || '?'}`).join('、')}）`)
+      }
 
       const hotCount = await rmPage.evaluate(() => document.querySelectorAll('.rmc-hot').length)
-      if (hotCount === 0) fail('⑪ 成品圖上一個試按熱區都沒有', '「點擊的功能」沒做出來')
-      else pass(`⑪ 成品圖上有 ${hotCount} 個試按熱區`)
+      if (hotCount === 0) fail('⑫ 成品圖上一個試按熱區都沒有', '「點擊的功能」沒做出來')
+      else pass(`⑫ 成品圖上有 ${hotCount} 個試按熱區`)
 
       /** 對照組：還沒按之前不可以有結果面板，不然下面「按了有反應」是假綠燈 */
       const tryBefore = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
-      if (tryBefore) fail('⑪ 對照組失敗：還沒按就已經有試按結果了')
-      else pass('⑪ 對照組：還沒按之前沒有試按結果')
+      if (tryBefore) fail('⑫ 對照組失敗：還沒按就已經有試按結果了')
+      else pass('⑫ 對照組：還沒按之前沒有試按結果')
 
       /** 每一種動作該出現／⛔ 不該出現的字 */
       const EXPECT = {
@@ -803,26 +821,72 @@ try {
           }
         })
         if (!seen.open) {
-          fail(`⑪ 按了第 ${i + 1} 格沒有任何反應`)
+          fail(`⑫ 按了第 ${i + 1} 格沒有任何反應`)
           continue
         }
         if (!seen.title.includes(String(i + 1))) {
-          fail(`⑪ 按了第 ${i + 1} 格，標題卻寫「${seen.title}」`)
+          fail(`⑫ 按了第 ${i + 1} 格，標題卻寫「${seen.title}」`)
         }
         if (!rule) {
           console.log(`   ⚠️ 第 ${i + 1} 格的動作類型讀成「${label || '(空)'}」，沒有對應規則，只驗到「有反應」`)
           continue
         }
         tried++
+        /**
+         * ⛔ 模組是四種裡**唯一**會讓客人收到訊息的，所以它必須是三態：
+         *    畫出來了／抓不到（要講「這不代表模組是空的」）／模組真的是空的（當場攔）。
+         *    畫成一片空白＝告訴店家「這個模組是空的」，那正是空歡迎模組害 667 人
+         *    一句話都沒收到的形狀（`D-23`）。
+         */
+        if (label === '觸發機器人模組') {
+          const three = await rmPage.evaluate(() => {
+            const box = document.querySelector('.rmc-try')
+            return {
+              bubbles: box?.querySelectorAll('.fmp-bubble, .fmp-card, .fmp-media, .fmp-carousel').length ?? 0,
+              note: box?.querySelector('.aap__note')?.innerText?.trim() ?? '',
+            }
+          })
+          if (three.bubbles > 0) pass(`⑫ 第 ${i + 1} 格：模組內容真的抓回來畫出來了（${three.bubbles} 則）`)
+          else if (three.note) pass(`⑫ 第 ${i + 1} 格：畫不出來時有講原因（「${three.note.slice(0, 24)}…」）`)
+          else fail(`⑫ 第 ${i + 1} 格：模組既沒畫出訊息也沒講原因`, '空白＝告訴店家那個模組是空的（D-23 的形狀）')
+        }
+
         const missing = rule.must.filter(s => !seen.text.includes(s))
         const wrong = rule.never.filter(s => seen.text.includes(s))
-        if (missing.length) fail(`⑪ 第 ${i + 1} 格（${label}）少講了`, missing.join('／'))
+        if (missing.length) fail(`⑫ 第 ${i + 1} 格（${label}）少講了`, missing.join('／'))
         if (wrong.length) {
-          fail(`⑪ 第 ${i + 1} 格（${label}）講了不該講的`, `${wrong.join('／')}——這就是 D-96 的形狀：預覽在講一件客人不會經歷的事`)
+          fail(`⑫ 第 ${i + 1} 格（${label}）講了不該講的`, `${wrong.join('／')}——這就是 D-96 的形狀：預覽在講一件客人不會經歷的事`)
         }
-        if (!missing.length && !wrong.length) pass(`⑪ 第 ${i + 1} 格（${label}）講的對得上客人真正的經歷`)
+        if (!missing.length && !wrong.length) pass(`⑫ 第 ${i + 1} 格（${label}）講的對得上客人真正的經歷`)
+
+        /**
+         * ⛔ **試完一定要切回來**。按到「切換選單」那一格之後，整張圖與所有熱區都換成
+         *    目標選單的了——不切回來，下一圈的「第 3 格」已經是**別張選單的第 3 格**，
+         *    而斷言還照著本張的動作類型比。第一版就是這樣紅的（`觸發機器人模組` 那三格
+         *    其實驗到的是另一張選單）。⭐ 這同時也是對「現在看的是哪一張」那條提示的檢查：
+         *    提示條不見的話，這裡就找不到回去的按鈕。
+         */
+        const switched = await rmPage.evaluate(() => {
+          const btn = [...document.querySelectorAll('.rmc-switched .el-button')]
+            .find(b => b.innerText.includes('回到原本'))
+          if (!btn) return false
+          btn.click()
+          return true
+        })
+        if (switched) {
+          await sleep(400)
+          if (label !== '切換選單') {
+            fail(`⑫ 第 ${i + 1} 格（${label}）不該切換選單，畫面卻切走了`)
+          }
+          else {
+            pass('⑫ 切換選單那一格真的把預覽換過去了，而且講清楚「現在看的是哪一張」、回得來')
+          }
+        }
+        else if (label === '切換選單') {
+          fail('⑫ 按了「切換選單」那一格，預覽沒有換過去', '換過去長什麼樣正是這一格最難憑空想像的事')
+        }
       }
-      if (tried === 0) fail('⑪ 一格都沒驗到動作類型', '讀不到「動作類型」下拉的值，這一關等於沒驗')
+      if (tried === 0) fail('⑫ 一格都沒驗到動作類型', '正式庫那一份讀不到 action.type，這一關等於沒驗')
 
       /** ⛔ 試按絕對不可以真的貼標籤：有貼標的格子一定要講「不會真的貼」 */
       const taggedNote = await rmPage.evaluate(() => {
@@ -830,10 +894,10 @@ try {
         return { hasTag: t.includes('貼上標籤'), saysNotReal: t.includes('不會真的貼') }
       })
       if (taggedNote.hasTag && !taggedNote.saysNotReal) {
-        fail('⑪ 講了會貼標籤，卻沒講「這裡試按不會真的貼」', '店家會以為自己剛剛弄髒了客人名單')
+        fail('⑫ 講了會貼標籤，卻沒講「這裡試按不會真的貼」', '店家會以為自己剛剛弄髒了客人名單')
       }
       else if (taggedNote.hasTag) {
-        pass('⑪ 有貼標的格子講清楚了「試按不會真的貼」')
+        pass('⑫ 有貼標的格子講清楚了「試按不會真的貼」')
       }
 
       /** 收起來要真的收得起來（不然它會一直佔著版面） */
@@ -844,8 +908,8 @@ try {
       })
       await sleep(400)
       const closed = await rmPage.evaluate(() => !!document.querySelector('.rmc-try'))
-      if (closed) fail('⑪ 按了「收起來」還在')
-      else pass('⑪ 按「收起來」真的收得起來')
+      if (closed) fail('⑫ 按了「收起來」還在')
+      else pass('⑫ 按「收起來」真的收得起來')
     }
   }
   await rmPage.close()

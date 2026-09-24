@@ -221,13 +221,20 @@
                 </div>
 
                 <div class="rm-visual-split__customer">
-                  <AdminPanelTitle tag="h3" tight>客人看到的樣子</AdminPanelTitle>
+                  <AdminPanelTitle tag="h3" tight>客人看到的樣子（可以試按）</AdminPanelTitle>
+                  <!--
+                    ⛔ `areas` 要傳**表單裡這一份**（`form.areas`），不是存檔後的那一份：
+                       店家改了動作還沒存，試按就要照他現在設的講，不然他驗不到自己剛改的東西。
+                  -->
                   <AdminRichMenuCustomerView
                     :image-url="form.previewUrl"
                     :chat-bar-text="form.chatBarText"
                     :width="Number(form.width) || 2500"
                     :height="Number(form.height) || 843"
-                    :oa-name="currentWorkspaceName"
+                    :areas="form.areas"
+                    :menu-options="menus"
+                    :module-options="modules"
+                    :tag-options="allTags"
                   />
                 </div>
               </div>

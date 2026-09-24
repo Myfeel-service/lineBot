@@ -1,88 +1,25 @@
 /* ═══════════════════════════════════════════════════════════════
-   圖文選單「客人看到的樣子」（C-233）
+   圖文選單「客人看到的樣子」＋試按（C-233 → C-243 → C-253）
    ⛔ 這裡一個色塊都不疊——疊了它就變成第二張編輯畫布，這個功能就沒意義了。
-   配色沿用 components/_flow-preview.scss 那套 LINE 風，兩邊看起來要像同一個東西。
+   ⛔ 也不要再套假的聊天室外框：C-253 拿掉了綠色帳號列與藍色聊天區，
+      它們是純裝飾卻吃掉約一半高度，害這張圖比旁邊的編輯畫布小一大截、
+      兩張對不起來。留下來的兩樣都是客人**真的會看到**的：那張圖，和 Chat Bar 的字。
 ═══════════════════════════════════════════════════════════════ */
 
 .rmc {
-  display: flex;
-  justify-content: center;
-}
-
-.rmc-frame {
-  width: 100%;
-  max-width: 320px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  overflow: hidden;
-  box-shadow: var(--shadow-md);
-}
-
-/* LINE 風聊天標題列（跟訊息預覽同一個綠） */
-.rmc-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.55rem 0.7rem;
-  background: #06c755;
-  color: #fff;
-}
-
-.rmc-avatar {
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.24);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.rmc-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.rmc-name {
-  font-size: 0.8rem;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rmc-sub {
-  font-size: 0.62rem;
-  opacity: 0.85;
-}
-
-/* 聊天區留白＝「選單佔掉下半部」那個感覺 */
-.rmc-chat {
-  min-height: 56px;
-  display: grid;
-  place-items: center;
-  padding: 0.8rem;
-  background: #8daccd;
-}
-
-.rmc-chat-note {
-  margin: 0;
-  text-align: center;
-  font-size: 0.64rem;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
-
+/* 那張圖：⛔ 比例與寬度要跟旁邊的編輯畫布（.canvas-wrap）一致，
+   兩張並排的意義就是「同一個比例尺下的前後對照」 */
 .rmc-menu {
   position: relative;
   width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--bg-elevated);
 }
 
@@ -104,6 +41,53 @@
   color: var(--text-secondary);
 }
 
+/* ── 試按熱區 ───────────────────────────────────────────────
+   ⛔ 平常**完全透明**。只要給它一點底色，這張圖就又變成編輯畫布了。 */
+.rmc-hot {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+.rmc-hot__no {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.78);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.rmc-hot:hover,
+.rmc-hot:focus-visible,
+.rmc-hot.is-on {
+  border-color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.rmc-hot:hover .rmc-hot__no,
+.rmc-hot:focus-visible .rmc-hot__no,
+.rmc-hot.is-on .rmc-hot__no {
+  opacity: 1;
+}
+
 /* Chat Bar：客人真的會看到這幾個字 */
 .rmc-bar {
   display: flex;
@@ -111,7 +95,9 @@
   justify-content: center;
   gap: 0.35rem;
   padding: 0.5rem;
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--bg-surface);
   font-size: 0.78rem;
   font-weight: 600;
@@ -127,4 +113,100 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rmc-tip {
+  margin: 0.5rem 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ── 試按結果 ───────────────────────────────────────────── */
+.rmc-try {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.rmc-try__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.rmc-try__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.rmc-try__line {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.rmc-try__line--warn {
+  color: var(--color-warning);
+}
+
+.rmc-try__line--quiet {
+  color: var(--text-muted);
+}
+
+.rmc-try__uri {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rmc-try__uri code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* 客人自己說的那句話：⛔ 靠右、用 LINE 的綠，跟「我們回的」在視覺上分開 */
+.rmc-try__said {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-md);
+  background: #06c755;
+  color: #fff;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 「現在看的是別張選單」的提示條：⛔ 這條不見的話，店家會對著另一張選單試按而不自知 */
+.rmc-switched {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* 有提示條時，圖的上緣不要再圓角一次 */
+.rmc-switched + .rmc-menu {
+  border-radius: 0;
 }
