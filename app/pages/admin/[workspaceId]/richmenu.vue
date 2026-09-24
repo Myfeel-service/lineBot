@@ -231,6 +231,7 @@
                     :chat-bar-text="form.chatBarText"
                     :width="Number(form.width) || 2500"
                     :height="Number(form.height) || 843"
+                    :oa-name="currentWorkspaceName"
                     :areas="form.areas"
                     :menu-options="menus"
                     :module-options="modules"

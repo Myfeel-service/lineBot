@@ -626,8 +626,8 @@ try {
       const both = await rmPage.evaluate(() => {
         const split = document.querySelector('.rm-visual-split')
         const canvas = split?.querySelector('.canvas-wrap')
-        /** `C-253`：假的聊天室外框（`.rmc-frame`）拿掉了，成品那一張現在就是 `.rmc-menu` */
-        const frame = split?.querySelector('.rmc-menu')
+        /** `C-255`：聊天室外框（`.rmc-frame`）拿回來了，而且要釘在最右邊 */
+        const frame = split?.querySelector('.rmc-frame')
         const box = (el) => {
           const b = el?.getBoundingClientRect()
           return b ? { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height } : null
@@ -714,7 +714,8 @@ try {
         const split = document.querySelector('.rm-visual-split')
         return {
           canvasBox: box(split?.querySelector('.canvas-wrap')),
-          frameBox: box(document.querySelector('.rmc-menu')),
+          frameBox: box(document.querySelector('.rmc-frame')),
+          splitBox: box(split),
           pageScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
         }
       })
@@ -723,16 +724,20 @@ try {
       if (wide.pageScrollX) fail('⑩ 1920px 下被撐出橫向捲軸')
 
       /**
-       * ⭐ `C-253`：老闆要的是「兩張同高」。⛔ 不可以只斷言「兩個都在」——
-       *    兩張一大一小照樣都在 DOM 裡（`C-253` 之前右邊就是個小手機框，小了一半）。
+       * ⭐ `C-255`（老闆：「示意的部分往右邊往外拉」）：成品那個手機外框要**貼齊最右緣**。
+       * ⛔ 不可以只斷言「兩個都在」——沒貼齊時兩個節點照樣都在 DOM 裡。
+       * ⚠️ `C-253` 曾經在這裡斷言「兩張等寬」，那是上一版的規則，已經被這條取代。
        */
       const cb2 = wide.canvasBox
       const fb2 = wide.frameBox
-      if (!cb2 || !fb2) fail('⑩ 1920px 下量不到兩張的尺寸')
+      if (!cb2 || !fb2 || !wide.splitBox) fail('⑩ 1920px 下量不到兩張的尺寸')
       else {
-        const dw = Math.abs(cb2.width - fb2.width)
-        if (dw <= 2) pass(`⑩ 兩張等寬（各 ${Math.round(cb2.width)}px）＝同一個比例尺才比得出差別`)
-        else fail('⑩ 兩張不等寬', `畫布 ${Math.round(cb2.width)}px vs 成品 ${Math.round(fb2.width)}px，差 ${Math.round(dw)}px`)
+        const gapRight = Math.round(wide.splitBox.right - fb2.right)
+        if (gapRight <= 2) pass(`⑩ 成品框貼齊最右緣（右邊留 ${gapRight}px）＝往右拉開，不跟畫布擠在一起`)
+        else fail('⑩ 成品框沒有貼齊最右緣', `右邊還空著 ${gapRight}px——`
+          + '`margin-left: auto` 沒生效的話它會黏在畫布旁邊')
+        if (cb2.width > fb2.width) pass(`⑩ 畫布比成品框寬（${Math.round(cb2.width)}px vs ${Math.round(fb2.width)}px）＝拖格子的那張要夠大`)
+        else fail('⑩ 畫布沒有比成品框寬', `${Math.round(cb2.width)}px vs ${Math.round(fb2.width)}px`)
       }
       await rmPage.setViewport(before)
       await sleep(400)
@@ -846,6 +851,28 @@ try {
               note: box?.querySelector('.aap__note')?.innerText?.trim() ?? '',
             }
           })
+          /**
+           * ⭐ `C-255`：`{{displayName}}` 這類變數**不可以原字印在預覽上**——
+           *    送出端會換成那位客人的名字，預覽照著印就是在講一件客人不會看到的事。
+           *    ⛔ 而且換掉之後一定要有那句「這是範例」，默默換掉等於宣稱我們知道他叫什麼。
+           */
+          const vars = await rmPage.evaluate(() => {
+            const box = document.querySelector('.rmc-try')
+            return {
+              raw: /\{\{\s*\w+\s*\}\}/.test(box?.innerText ?? ''),
+              note: box?.querySelector('.aap__vars')?.innerText?.trim() ?? '',
+              text: box?.innerText ?? '',
+            }
+          })
+          if (vars.raw) fail(`⑫ 第 ${i + 1} 格：預覽上原字印著 {{變數}}`, '客人在 LINE 上看到的是他自己的資料')
+          else pass(`⑫ 第 ${i + 1} 格：沒有原字印出來的 {{變數}}`)
+          if (vars.text.includes('王小明') && !vars.note.includes('範例')) {
+            fail(`⑫ 第 ${i + 1} 格：代入了範例名字卻沒講「這是範例」`, '店家會以為我們真的知道那位客人叫什麼')
+          }
+          else if (vars.note) {
+            pass(`⑫ 第 ${i + 1} 格：代入變數有講清楚（「${vars.note.slice(0, 22)}…」）`)
+          }
+
           if (three.bubbles > 0) pass(`⑫ 第 ${i + 1} 格：模組內容真的抓回來畫出來了（${three.bubbles} 則）`)
           else if (three.note) pass(`⑫ 第 ${i + 1} 格：畫不出來時有講原因（「${three.note.slice(0, 24)}…」）`)
           else fail(`⑫ 第 ${i + 1} 格：模組既沒畫出訊息也沒講原因`, '空白＝告訴店家那個模組是空的（D-23 的形狀）')

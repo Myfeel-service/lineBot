@@ -31,42 +31,64 @@
 <template>
   <div class="rmc">
     <!--
-      ⛔ 切過去之後一定要講「現在看的是哪一張」：切換選單會把整張圖與所有熱區換掉，
-         不講的話店家會對著**另一張選單**繼續試按，而畫面上一點線索都沒有。
-         （守門員第一版就是這樣被騙的：按了第 1 格之後，「第 3 格」已經是別張選單的第 3 格。）
+      聊天室外框（`C-253` 一度拿掉，2026-09-24 老闆要求拿回來＝`C-255`）。
+      ⛔ 它不是裝飾：**這一格在 LINE 上是長在聊天室裡的**，沒有外框就看不出
+         「選單會蓋住聊天室下半部」這件事，也看不出 Chat Bar 那一條在哪。
+      ⛔ 外框要釘在**最右邊**（版面規則在 `_richmenu.scss` 的 `.rm-visual-split__customer`），
+         跟中間那張拖格子的畫布拉開，兩件事才不會被看成同一張圖的兩份拷貝。
     -->
-    <div v-if="switchedMenu" class="rmc-switched">
-      <span>現在看的是「<b>{{ switchedMenu.name || '另一張選單' }}</b>」</span>
-      <el-button link type="primary" size="small" @click="backToOriginal">回到原本這張</el-button>
-    </div>
+    <div class="rmc-frame">
+      <div class="rmc-head">
+        <span class="rmc-avatar">{{ oaInitial }}</span>
+        <div class="rmc-meta">
+          <span class="rmc-name">{{ oaName || '官方帳號' }}</span>
+          <span class="rmc-sub">預覽・實際以 LINE 為準</span>
+        </div>
+      </div>
 
-    <!-- 那張圖，乾乾淨淨，照真實比例；熱區透明疊在上面 -->
-    <div class="rmc-menu" :style="{ aspectRatio: `${width} / ${height}` }">
-      <img v-if="shownImageUrl" :src="shownImageUrl" class="rmc-menu-img" alt="圖文選單背景圖">
-      <div v-else class="rmc-menu-empty">還沒有背景圖</div>
+      <!-- 聊天區：刻意留白。圖文選單本來就佔掉聊天室下半部，這片空白就是那個感覺 -->
+      <div class="rmc-chat">
+        <p class="rmc-chat-note">選單會蓋住聊天室下半部</p>
+      </div>
 
-      <button
-        v-for="(hot, i) in hotspots"
-        :key="`hot-${i}`"
-        type="button"
-        class="rmc-hot"
-        :class="{ 'is-on': tryIndex === i }"
-        :style="hot.style"
-        :title="`試按第 ${i + 1} 格`"
-        @click="onTry(i)"
-      >
-        <span class="rmc-hot__no">{{ i + 1 }}</span>
-      </button>
-    </div>
+      <!--
+        ⛔ 切過去之後一定要講「現在看的是哪一張」：切換選單會把整張圖與所有熱區換掉，
+           不講的話店家會對著**另一張選單**繼續試按，而畫面上一點線索都沒有。
+           （守門員第一版就是這樣被騙的：按了第 1 格之後，「第 3 格」已經是別張選單的第 3 格。）
+      -->
+      <div v-if="switchedMenu" class="rmc-switched">
+        <span>現在看的是「<b>{{ switchedMenu.name || '另一張選單' }}</b>」</span>
+        <el-button link type="primary" size="small" @click="backToOriginal">回到原本這張</el-button>
+      </div>
 
-    <!-- Chat Bar：客人真的會看到這幾個字，而後台以前一處都沒畫過 -->
-    <div class="rmc-bar">
-      <span class="rmc-bar-caret" aria-hidden="true">▾</span>
-      <span class="rmc-bar-text">{{ shownChatBarText || '選單' }}</span>
+      <!-- 那張圖，乾乾淨淨，照真實比例；熱區透明疊在上面 -->
+      <div class="rmc-menu" :style="{ aspectRatio: `${width} / ${height}` }">
+        <img v-if="shownImageUrl" :src="shownImageUrl" class="rmc-menu-img" alt="圖文選單背景圖">
+        <div v-else class="rmc-menu-empty">還沒有背景圖</div>
+
+        <button
+          v-for="(hot, i) in hotspots"
+          :key="`hot-${i}`"
+          type="button"
+          class="rmc-hot"
+          :class="{ 'is-on': tryIndex === i }"
+          :style="hot.style"
+          :title="`試按第 ${i + 1} 格`"
+          @click="onTry(i)"
+        >
+          <span class="rmc-hot__no">{{ i + 1 }}</span>
+        </button>
+      </div>
+
+      <!-- Chat Bar：客人真的會看到這幾個字，而後台以前一處都沒畫過 -->
+      <div class="rmc-bar">
+        <span class="rmc-bar-caret" aria-hidden="true">▾</span>
+        <span class="rmc-bar-text">{{ shownChatBarText || '選單' }}</span>
+      </div>
     </div>
 
     <p v-if="tryIndex === null" class="rmc-tip">
-      這張是客人看到的樣子。點圖上任何一格，看他按下去會發生什麼。
+      點圖上任何一格，看客人按下去會發生什麼。
     </p>
 
     <!-- ── 試按結果 ───────────────────────────────────────── -->
@@ -170,6 +192,7 @@ const props = withDefaults(defineProps<{
   chatBarText?: string
   width?: number
   height?: number
+  oaName?: string
   /** 正在編輯的這張選單的區塊（含 bounds 與 action） */
   areas?: any[]
   /** 其他圖文選單，「切換選單」試按時要拿它的圖與格子 */
@@ -182,6 +205,8 @@ const props = withDefaults(defineProps<{
   moduleOptions: () => [],
   tagOptions: () => [],
 })
+
+const oaInitial = computed(() => (props.oaName || '官').trim().charAt(0).toUpperCase())
 
 /** 比例壞掉時退回 LINE 的大版預設（2500×1686），⛔ 不要讓 aspect-ratio 變成 0 把整塊壓扁 */
 const baseWidth = computed(() => Number(props.width) || 2500)

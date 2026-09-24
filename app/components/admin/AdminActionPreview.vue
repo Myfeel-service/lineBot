@@ -54,6 +54,13 @@
         :rich-messages="richMessages"
         :oa-name="oaName"
       />
+      <!--
+        `C-255`：`{{displayName}}` 這類變數在送出時會換成那位客人的資料，
+        但預覽以前是原字印出來——畫面上寫著 `請問{{displayName}}想問…`，
+        客人在 LINE 上看到的卻是「請問王小明想問…」。
+        ⛔ 換掉之後**一定要講**，不然店家會以為我們真的知道那位客人叫什麼。
+      -->
+      <p v-if="variableNote" class="aap__vars">{{ variableNote }}</p>
     </template>
   </aside>
 </template>
@@ -62,6 +69,7 @@
 import { computed, ref, watch } from 'vue'
 import { autoReplyActionToLineMessages } from '~~/shared/auto-reply-content'
 import { lineMessagesToPreviewMessages } from '~~/shared/broadcast-content'
+import { previewVariableNote, renderPreviewVariablesDeep } from '~~/shared/preview-variables'
 
 const props = withDefaults(defineProps<{
   /** `AutoReplyAction` 形狀：{ type, text, uri, moduleId } */
@@ -135,12 +143,20 @@ watch(
  *   `type: 'text'` 只會取 `text`，**模組訊息上掛的按鈕會被整排吃掉**，
  *   預覽就少了客人真正會按的東西。
  */
-const previewMessages = computed(() => {
+const rawPreviewMessages = computed(() => {
   if (actionType.value === 'module') return moduleMessages.value ?? []
   return lineMessagesToPreviewMessages(
     autoReplyActionToLineMessages(props.action as any ?? { type: '', text: '', uri: '' }),
   )
 })
+
+/**
+ * `C-255`：把 `{{displayName}}` 這類變數換成範例值，**畫面才跟 LINE 上一樣**。
+ * ⛔ 換掉的東西由 `variableNote` 講出來（`previewVariableNote`），不可以默默換。
+ */
+const renderedPreview = computed(() => renderPreviewVariablesDeep(rawPreviewMessages.value))
+const previewMessages = computed(() => renderedPreview.value.value)
+const variableNote = computed(() => previewVariableNote(renderedPreview.value.keys))
 
 const richMessages = computed(() =>
   actionType.value === 'module' ? moduleRichMessages.value : [])

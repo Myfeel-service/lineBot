@@ -153,18 +153,32 @@
 }
 
 /**
- * 兩張**等寬**（`C-253`）：左邊拖格子、右邊成品，同一個比例尺才比得出差別。
+ * 中間＝拖格子的畫布（吃掉剩下的寬度，拖曳要夠大才抓得準），
+ * 右邊＝LINE 聊天室外框裡的成品，**釘在最右邊**（2026-09-24 老闆：往右邊往外拉）。
  *
- * ⛔ 右邊原本是 `flex: 0 1 300px` 的手機外框＝比左邊小一大截，兩張根本對不起來。
- *    現在兩邊同一組 `flex`，圖的比例又一樣，所以**高度自動一致**——
- *    ⛔ 不要改成一邊 grow 一邊不 grow，那就又歪了。
- * ⛔ 上限 860px 跟 `.canvas-wrap` 同一個數字，超寬螢幕才不會一張撐到底、一張停在 860。
+ * ⛔ 兩張**不要等寬**（`C-253` 那版是等寬，`C-255` 改回來）：等寬會變成兩張一樣大的
+ *    同一張圖擺在一起，看起來像拷貝；而且手機外框本來就該是手機的比例。
+ * ⭐ `margin-left: auto` 是「往外拉」那一下：畫布長到 860 上限之後剩下的空白
+ *    全部推到中間，外框就貼在卡片最右緣，兩件事在視覺上分得開。
  */
-.rm-visual-split__edit,
-.rm-visual-split__customer {
-  flex: 1 1 300px;
+.rm-visual-split__edit {
+  flex: 1 1 360px;
   min-width: 0;
   max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section-heading-gap);
+}
+
+/**
+ * ⚠️ `300px` 不是隨便挑的：折行門檻＝兩個 `flex-basis` 加上 gap＝`360 + 300 + 16 = 676`，
+ *    而 1600 視窗下這一塊的可用寬度實測是 **686px**。用 320 的話門檻變 696，
+ *    1600 就會折成上下排——只差 10px。⛔ 改這兩個數字前先量一次。
+ */
+.rm-visual-split__customer {
+  flex: 0 1 300px;
+  min-width: 260px;
+  margin-left: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-section-heading-gap);

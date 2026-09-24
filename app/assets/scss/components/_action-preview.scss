@@ -25,6 +25,14 @@
   color: var(--text-secondary);
 }
 
+/* `C-255`：「這裡的名字是範例」那一句。⛔ 代入了就要講，不可以默默換掉 */
+.aap__vars {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
 .aap__note {
   margin: 0;
   padding: 0.6rem 0.75rem;

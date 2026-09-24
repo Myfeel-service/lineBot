@@ -12,14 +12,84 @@
   min-width: 0;
 }
 
-/* 那張圖：⛔ 比例與寬度要跟旁邊的編輯畫布（.canvas-wrap）一致，
-   兩張並排的意義就是「同一個比例尺下的前後對照」 */
+/* LINE 聊天室外框。⛔ 不是裝飾：這張選單在 LINE 上就是長在聊天室裡的，
+   沒有外框就看不出「它會蓋住聊天室下半部」，也看不出 Chat Bar 那一條在哪。
+   配色沿用 components/_flow-preview.scss 那套，兩邊要像同一個東西。 */
+.rmc-frame {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+/* LINE 風聊天標題列（跟訊息預覽同一個綠） */
+.rmc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: #06c755;
+  color: #fff;
+}
+
+.rmc-avatar {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.24);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.rmc-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rmc-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rmc-sub {
+  font-size: 0.62rem;
+  opacity: 0.85;
+}
+
+/* 聊天區留白＝「選單佔掉下半部」那個感覺。
+   ⛔ 這句話要短：它曾經寫兩行、吃掉整個預覽約四分之一的高度。 */
+.rmc-chat {
+  min-height: 56px;
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  background: #8daccd;
+}
+
+.rmc-chat-note {
+  margin: 0;
+  text-align: center;
+  font-size: 0.64rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* 那張圖，乾乾淨淨 */
 .rmc-menu {
   position: relative;
   width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--bg-elevated);
 }
 
@@ -95,9 +165,7 @@
   justify-content: center;
   gap: 0.35rem;
   padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  border-top: 1px solid var(--border);
   background: var(--bg-surface);
   font-size: 0.78rem;
   font-weight: 600;
@@ -198,15 +266,8 @@
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.3rem 0.5rem;
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   font-size: var(--fs-xs);
   color: var(--text-secondary);
-}
-
-/* 有提示條時，圖的上緣不要再圓角一次 */
-.rmc-switched + .rmc-menu {
-  border-radius: 0;
 }
