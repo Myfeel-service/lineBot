@@ -18,6 +18,8 @@ const topics = readFileSync(`${APP_DIR}utils/tutorial-topics.ts`, 'utf8')
 // 2026-09-11：捲動那條不變量橫跨引擎與頁面（引擎記「這一輪的第一則」、頁面負責真的捲）
 const runner = readFileSync(`${APP_DIR}composables/useAgentScriptRunner.ts`, 'utf8')
 const page = readFileSync(`${APP_DIR}pages/admin/onboarding.vue`, 'utf8')
+/** 拿掉整行的 `//` 註解與 `/* … *\/` 區塊（交代歷史的註解常常引用那段壞掉的寫法） */
+const codeOnly = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map(l => l.replace(/^\s*\/\/.*$/, '')).join('\n')
 
 describe('等第一則訊息時不能走進死路', () => {
   it('「檢查好了，繼續等」之後仍留得住回排障的入口', () => {
@@ -170,6 +172,25 @@ describe('拿掉教學閘門之後不可以長回來', () => {
     const fn = fnBody('async function redoKeyFlow', 'async function verifyAndAdvise')
     expect(fn).toMatch(/label: '我會拿，直接貼新的', value: 'paste', primary: true/)
     expect(fn, '教學不可以再佔著主鈕').not.toMatch(/label: '教我一步步拿', value: 'walk', primary: true/)
+  })
+})
+
+describe('教學的每一格都真的說得出話（2026-09-26 實走抓到）', () => {
+  it('⛔ walkNodes 不可以把 say 塞進可選呼叫的參數裡', () => {
+    // 踩到會怎樣：`n.onFirstSaid?.(await say(...))`——可選呼叫在函式不存在時**連參數都不求值**，
+    // 於是沒掛 onFirstSaid 的節點（申請官方帳號、拿兩組連線資訊、回應設定……除了第一則全部）
+    // 泡泡一句都沒出來，只剩連結卡跟輪播。typecheck 綠、單元測試綠，從 09-10 起壞了兩週。
+    // ⚠️ 要先剝掉註解：修法旁邊的註解就引用了那行壞掉的寫法（第一版守門就是被自己的註解弄紅的）
+    const i = chat.indexOf('async function walkNodes')
+    const block = codeOnly(chat.slice(i, chat.indexOf('\n  }\n', i)))
+    expect(block).toMatch(/const saidId = await say\(/)
+    expect(block).not.toMatch(/\?\.\(\s*await /)
+  })
+
+  it('⛔ 整支劇本都不可以有「可選呼叫＋await 參數」這種寫法', () => {
+    // 同一個坑換個地方又會踩：參數裡有副作用的，一律先求值再呼叫
+    expect(codeOnly(chat)).not.toMatch(/\?\.\(\s*await /)
+    expect(codeOnly(runner)).not.toMatch(/\?\.\(\s*await /)
   })
 })
 

@@ -915,7 +915,12 @@ export function useOnboardingChat() {
       const isLast = i === nodes.length - 1
       // 單節點不標步數（「1/1」很傻）；多節點用小徽章標，別用粗體＋直線硬拼
       const stepno = nodes.length > 1 ? `<span class="agm-stepno">${i + 1} / ${nodes.length}</span>` : ''
-      n.onFirstSaid?.(await say(`${stepno}${n.html}`, n.aside))
+      // 🔴 2026-09-26 修（`C-250` 實走抓到）：原本寫成 `n.onFirstSaid?.(await say(...))`——
+      //    **可選呼叫在函式不存在時連參數都不求值**，所以沒掛 `onFirstSaid` 的節點（除了接線
+      //    教學第一則以外的全部）**泡泡從來沒出現過**，只剩連結卡跟輪播。09-10 起就是這樣。
+      //    ⛔ 先 say、再把 id 交出去，兩步不可以合成一行。
+      const saidId = await say(`${stepno}${n.html}`, n.aside)
+      n.onFirstSaid?.(saidId)
       // 連結卡模板會自己補「 ↗」，字樣裡不能再帶（會變雙箭頭）
       if (n.href)
         card({ kind: 'link', label: (n.hrefLabel || '打開連結').replace(/\s*↗\s*$/, ''), href: n.href })
