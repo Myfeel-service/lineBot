@@ -19,31 +19,8 @@
   color: var(--el-text-color-secondary);
 }
 
-.member-line-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-
-  .el-tag {
-    max-width: 130px;
-  }
-}
-
-.member-bind-target {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-}
-
-.member-bind-steps {
-  margin: 0;
-  padding-left: 20px;
-  font-size: 13px;
-  line-height: 1.9;
-  color: var(--el-text-color-regular);
-}
-
+// 綁定碼那一行（「設定 → LINE 通知」拿不到官方帳號 ID 時的退路，`AdminLineNotifySelfAdd`）。
+// 成員頁的 LINE 欄與綁定對話框 2026-09-27 搬到那一頁（`C-270`），其餘 `.member-bind-*` 一起拿掉。
 .member-bind-code {
   display: flex;
   align-items: center;
@@ -65,39 +42,3 @@
   }
 }
 
-.member-bind-expire {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
-}
-
-// 連結很長：字級調小、不加字距，才不會把複製鈕擠出卡片（碼本身仍維持大字好念）
-.member-bind-code--url code {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-.member-bind-fallback {
-  border-top: none;
-
-  .el-collapse-item__header,
-  .el-collapse-item__wrap {
-    border-bottom: none;
-    background: transparent;
-  }
-
-  .el-collapse-item__header {
-    height: 32px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .el-collapse-item__content {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-bottom: 4px;
-  }
-}

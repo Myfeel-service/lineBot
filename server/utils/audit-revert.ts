@@ -106,7 +106,10 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
     return { ok: true, capability: 'scripts.write', what: `把那條流程改回${row.before.enabled ? '啟用' : '停用'}` }
   }
 
-  const isSettings = row.action === 'ai/settings.put' || row.action.startsWith('agent-op/ai-settings-')
+  // `lineNotify.settings`（`C-270`）：「設定 → LINE 通知」存的是同一份 AI 設定的 handoffNotify 那幾格
+  const isSettings = row.action === 'ai/settings.put'
+    || row.action === 'lineNotify.settings'
+    || row.action.startsWith('agent-op/ai-settings-')
   if (isSettings) {
     const keys = Object.keys(row.before ?? {})
     if (!keys.length)
@@ -114,6 +117,13 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
     const bad = keys.filter(k => !REVERTIBLE_SETTING_KEYS.has(k))
     if (bad.length)
       return { ok: false, reason: `這筆動到的設定（${bad.join('、')}）目前不支援一鍵還原，請到 AI 設定頁改回來。` }
+    // 通知名單（誰會收到）不給一鍵還原（`C-270`）：舊紀錄裡的名單可能是從客人清單挑的人，
+    // 寫回去就把客人塞回名單；名單現在只收綁好的成員，要到「設定 → LINE 通知」改
+    const notifyBefore = (row.before as Record<string, any> | undefined)?.handoffNotify
+    if (notifyBefore && typeof notifyBefore === 'object'
+      && ['lineUserIds', 'displayNames', 'enabled'].some(k => k in notifyBefore)) {
+      return { ok: false, reason: '這筆動到「誰會收到 LINE 通知」，名單不給一鍵還原——請到「設定 → LINE 通知」直接開關那幾位。' }
+    }
     return { ok: true, capability: 'ai.settings.write', what: '把這幾項設定改回原本的值' }
   }
 

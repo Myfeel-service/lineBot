@@ -152,6 +152,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'member.lineUnbind': '解除了成員的 LINE 綁定',
   // 開帳「用手機測試」按了「是我」（`C-250`③）：綁上自己的 LINE、加進通知名單
   'member.lineBindSelf': '開通時用「是我」綁定了自己的 LINE，並加進通知名單',
+  // 「設定 → LINE 通知」（`C-270`）：誰會收到、什麼時候收
+  'lineNotify.receiving': '改了誰會收到 LINE 通知',
+  'lineNotify.settings': '改了 LINE 通知什麼時候傳',
 
   // 錢：取消續訂、換方案、作廢訂單
   'payment.cancelSubscription': '取消了自動續訂',
@@ -245,7 +248,8 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   systemPrompt: '給 AI 的說明',
   shopUrl: '商店網址',
   sensitiveTopics: '敏感情境詞',
-  handoffNotify: '轉真人通知',
+  // 2026-09-27 `C-270`：名單與時間搬到「設定 → LINE 通知」，名字跟著改（管的不只轉真人）
+  handoffNotify: 'LINE 通知',
   serviceHours: '勿擾時段',
   disambiguation: '反問設定',
   quota: '用量上限',
@@ -396,7 +400,7 @@ export function auditValueText(v: unknown, fieldKey = ''): string {
 /** 畫面上的一行前後對照。`key` 是欄位路徑，只拿來當 v-for 的 key */
 export interface AuditChangeLine {
   key: string
-  /** 「轉真人通知 › 等太久的提醒時間（分鐘）」 */
+  /** 「LINE 通知 › 等太久的提醒時間（分鐘）」 */
   label: string
   before: string
   after: string

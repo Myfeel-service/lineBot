@@ -13,7 +13,7 @@
 
 import type { Component } from 'vue'
 import {
-  Box, ChatDotRound, ChatLineSquare, Connection, DataLine, Document, EditPen, Files,
+  Bell, Box, ChatDotRound, ChatLineSquare, Connection, DataLine, Document, EditPen, Files,
   FolderOpened, Grid, Lightning, MagicStick, Monitor, OfficeBuilding, Operation,
   Pointer, Postcard, PriceTag, Promotion, Reading, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'
@@ -372,7 +372,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresSettings: true,
     icon: MagicStick,
     label: '開啟 AI 自動回覆',
-    blurb: '把 AI 客服打開、選好回覆模式與語氣、設好轉真人通知。',
+    blurb: '把 AI 客服打開、選好回覆模式與語氣。',
     route: wid => `/admin/${wid}/ai-settings`,
     steps: [
       {
@@ -389,13 +389,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           '在這裡設定 AI 的<strong>語氣與人設</strong>，讓它講話像你們品牌。可以直接套用預設風格，或自己微調。',
         placement: 'right',
       },
-      {
-        target: '[data-tour="ais-handoff"]',
-        title: '設定轉真人通知',
-        description:
-          'AI 答不上來、或客人指名要找真人時，對話會<strong>轉給真人</strong>。這裡設定要<strong>用 LINE 通知哪些客服</strong>——不設的話沒有人會知道有客人在等，很容易漏接。收通知的人要先加你的官方帳號好友。',
-        placement: 'top',
-      },
+      // （原本這裡有一步「設定轉真人通知」，2026-09-27 `C-270` 那一區搬到「設定 → LINE 通知」，
+      //   那一頁有自己的導覽 `line-notify`；這裡只剩一行指路，⛔ 不再花一步講它）
       // ── 2026-09-18 `D-82` 第二批：這一頁 14 個區塊只教了 3 個，補兩塊
       //    **會直接改變客人收到什麼**的（其餘的頁面上各自有說明，不逐塊教）。
       {
@@ -1357,15 +1352,48 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom-end',
       },
       {
-        // 2026-09-18 `D-82` 第二批：邀請完還有一件事沒人講，而漏了它的後果是「客人在等、沒人知道」
+        // 2026-09-18 `D-82` 第二批：邀請完還有一件事沒人講，而漏了它的後果是「客人在等、沒人知道」。
+        // 2026-09-27 `C-270`：綁 LINE 搬到「設定 → LINE 通知」，同事第一次登入也會被問一次
         target: '[data-tour="mem-line"]',
-        title: '邀請完還有一件事：請他綁 LINE',
+        title: '邀請完還有一件事：讓他的手機收得到通知',
         description:
-          '轉真人通知是<strong>用 LINE 推給客服本人</strong>的，所以每位要收通知的同事'
-          + '都得先把自己的 LINE 綁上來。看下面那欄「<strong>LINE 通知</strong>」：顯示'
-          + '<strong>未綁定</strong>的人按「綁定」，把跳出來的連結傳給他，他點開送出就完成。'
-          + '⚠️ 沒綁的人<strong>不會出現在「AI 設定 → 轉真人通知」的名單裡</strong>，也收不到任何通知。',
+          '客人要找真人、每天早上的摘要，是<strong>用 LINE 傳到同事自己的手機</strong>。'
+          + '同事第一次登入後台時會被問一次要不要收，<strong>用手機掃一下就好</strong>；'
+          + '他不會登入的話，到「<strong>設定 → LINE 通知</strong>」在他那一列按「改傳連結」，把連結傳給他。',
         placement: 'bottom',
+      },
+    ],
+  },
+  /**
+   * LINE 通知（2026-09-27 `C-270`／`D-103`）。
+   * 客服也進得來（第 3 題拍板：客服可以加／退自己），所以第一步不限角色；
+   * 「什麼時候通知」那一塊只有管理員看得到，第二步跟著限管理員。
+   */
+  {
+    id: 'line-notify',
+    category: 'setup',
+    icon: Bell,
+    label: '讓手機收到 LINE 通知',
+    blurb: '把自己的手機加進來，客人要找真人、每天早上的摘要都會傳到手機。',
+    route: wid => `/admin/${wid}/settings/line-notify`,
+    steps: [
+      {
+        target: '[data-tour="ln-who"]',
+        title: '誰會收到',
+        description:
+          '客人要找真人、每天早上的摘要，會用 LINE 傳到這裡每一列的手機。'
+          + '還沒加進來的，按「<strong>把我的手機加進來</strong>」<strong>用手機掃一下</strong>就好；'
+          + '變黃的那一列是收不到的人，原因寫在名字下面。',
+        placement: 'bottom',
+      },
+      {
+        target: '[data-tour="ln-when"]',
+        requiresSettings: true,
+        title: '什麼時候通知',
+        description:
+          '決定客人找真人時要<strong>馬上傳</strong>、還是<strong>等沒人接手才傳</strong>，以及每天幾點傳摘要。'
+          + '右邊那支手機就是實際會收到的樣子，改了就存。',
+        placement: 'top',
       },
     ],
   },

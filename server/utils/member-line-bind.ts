@@ -8,14 +8,20 @@
  * 流程：後台為某位成員產一次性綁定碼 → 該成員用自己的 LINE 傳「綁定 XXXXXX」給官方帳號
  * → webhook 認碼，把 lineUserId 寫回該成員。
  *
- * 附帶保證：碼是用 LINE 傳進來的，代表對方確實已加此官方帳號好友——不會出現「設定了
- * 卻永遠推不出去」的靜默失敗（LINE push 只能推給好友）。
+ * ⚠️ 2026-09-27 更正（`D-103` 待查證）：原本這裡寫「碼傳得進來＝對方確實已加好友」，這個前提
+ *    **沒有查證過**——LINE 允許還不是好友的人從「訊息已打好」的連結傳訊息進來也說不定。
+ *    所以現在：①讀不到他的 LINE 個人資料（LINE 只給已加好友的人）就在回覆裡附加好友連結；
+ *    ②每次推播的成敗都記下來（`line-notify-delivery.ts`），推不出去那一列會變黃、講原因。
+ *
+ * 綁好＝加進通知名單，並回一則「之後會收到什麼、第一則幾點」（`D-103`①②）。
  */
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { getUserProfile, replyMessage } from './line'
 import { resolveLineOaBasicId } from './line-oa-basic-id'
-import { AI_SETTINGS_COLLECTION, invalidateAiSettingsCache } from './ai-settings'
+import { AI_SETTINGS_COLLECTION, getAiSettings, invalidateAiSettingsCache } from './ai-settings'
+import { recordNotifyDelivery } from './line-notify-delivery'
+import { buildNotifyConfirmText, type NotifyConfirmResult } from '~~/shared/line-notify-messages'
 
 /** 去掉易混淆字元（0/O、1/I/L）的字母數字表 */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
@@ -48,6 +54,12 @@ export function buildBindDeepLink(basicId: string, code: string): string {
   const id = String(basicId || '').trim()
   if (!id) return ''
   return `https://line.me/R/oaMessage/${encodeURIComponent(id)}/?${encodeURIComponent(buildBindCodeMessage(code))}`
+}
+
+/** 加好友連結（綁定成功卻讀不到他的 LINE 資料時附在回覆裡）；拿不到 ID 回空字串 */
+export function buildAddFriendUrl(basicId: string): string {
+  const id = String(basicId || '').trim()
+  return id ? `https://line.me/R/ti/p/${encodeURIComponent(id)}` : ''
 }
 
 function randomCode(): string {
@@ -113,10 +125,15 @@ export async function tryConsumeMemberLineBindCode(params: {
   const code = parseMemberBindCode(params.text)
   if (!code) return false
 
-  const reply = async (text: string) => {
-    if (!params.replyToken) return
-    await replyMessage(params.replyToken, [{ type: 'text', text }], params.workspaceId)
-      .catch(e => console.error('[member-bind] reply failed:', e))
+  /** 回傳有沒有真的回出去（綁定成功那則要記成「送到了」，`C-270`⑥） */
+  const reply = async (text: string): Promise<boolean> => {
+    if (!params.replyToken) return false
+    return replyMessage(params.replyToken, [{ type: 'text', text }], params.workspaceId)
+      .then(() => true)
+      .catch((e) => {
+        console.error('[member-bind] reply failed:', e)
+        return false
+      })
   }
 
   try {
@@ -131,7 +148,8 @@ export async function tryConsumeMemberLineBindCode(params: {
       return true
     }
     if (Number(target.data().lineBindCodeExpiresAt ?? 0) < Date.now()) {
-      await reply('❌ 這組綁定碼已過期,請管理員到後台「成員管理」重新產生。')
+      // 2026-09-27 `C-270`：綁定搬到「設定 → LINE 通知」（自己掃 QR 或管理員「改傳連結」都在那一頁）
+      await reply('❌ 這組綁定碼已過期，請到後台「設定 → LINE 通知」重新產生一組。')
       return true
     }
 
@@ -140,7 +158,10 @@ export async function tryConsumeMemberLineBindCode(params: {
     const conflicts = snap.docs.filter(
       d => d.id !== target.id && String(d.data().lineUserId ?? '') === params.lineUserId,
     )
+    /** 他原本綁的那支（換手機）：跟「是我」那條同一個規矩，舊那支要從通知名單拿掉 */
+    const previous = String(target.data().lineUserId ?? '').trim()
 
+    // ⚠️ LINE 只給「已加好友」的人的個人資料；讀不到＝**可能**還不是好友（也可能一時讀不到）
     const profile = await getUserProfile(params.lineUserId, params.workspaceId).catch(() => null)
     const batch = db.batch()
     batch.update(target.ref, {
@@ -160,12 +181,33 @@ export async function tryConsumeMemberLineBindCode(params: {
       })
     }
     await batch.commit()
+    if (previous && previous !== params.lineUserId) await removeFromHandoffNotify(params.workspaceId, previous)
 
-    const who = String(target.data().invitedEmail ?? '').trim()
-    await reply(
-      `✅ 綁定成功${who ? `：${who}` : ''}\n`
-      + '之後把這個帳號加進「轉真人通知」名單,客人要找真人時就會通知到這裡。',
+    // `D-103`①：綁好＝加進通知名單（原本回覆還叫人自己去 AI 設定勾，兩頁各做一次）
+    const result: NotifyConfirmResult = await addToHandoffNotify(
+      params.workspaceId,
+      params.lineUserId,
+      profile?.displayName ?? '',
     )
+    // `D-103`②：當場告訴他之後會收到什麼、第一則幾點——原本綁完到第一則之間沒有任何回音
+    const [settings, basicId] = await Promise.all([
+      getAiSettings(params.workspaceId).catch(() => null),
+      profile ? Promise.resolve('') : resolveLineOaBasicId(params.workspaceId).catch(() => ''),
+    ])
+    const text = settings
+      ? buildNotifyConfirmText({
+          result,
+          cfg: settings.handoffNotify,
+          serviceHours: settings.serviceHours,
+          nowMs: Date.now(),
+          friendUnknown: !profile,
+          addFriendUrl: buildAddFriendUrl(basicId),
+        })
+      : '好了 ✓ 這支手機加進 LINE 通知了。到後台「設定 → LINE 通知」看得到之後會收到什麼。'
+    const replied = await reply(text)
+    // 綁定成功那則也算「送到了」：後台那一列才講得出「剛剛送達確認訊息」
+    if (replied && (result === 'added' || result === 'already'))
+      await recordNotifyDelivery(params.workspaceId, [{ lineUserId: params.lineUserId, ok: true, kind: 'confirm' }], db)
     return true
   }
   catch (e) {
@@ -201,21 +243,33 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
 export const HANDOFF_NOTIFY_MAX = 10
 
 /**
- * - `added`／`already`：在名單上、而且通知是開著的＝真的會收到
- * - `off`：在名單上，但通知被刻意關著（2026-09-26 code review 補：原本照樣回 added，
- *   精靈就承諾「早上的摘要會傳到這支手機」，而每日摘要看到 enabled=false 整個帳號跳過）
+ * - `added`／`already`：在名單上＝真的會收到
  * - `full`：名單滿了沒加；`failed`：寫不進去
+ *
+ * ⚠️ 2026-09-27 `D-103` 拍板拿掉「總開關」（名單有人＝開），所以 2026-09-26 補的 `off`
+ *    （「在名單上但通知被關著」）不會再出現：畫面上已經沒有能把它關成那樣的開關。
  */
-export type AddToNotifyResult = 'added' | 'already' | 'off' | 'full' | 'failed'
+export type AddToNotifyResult = NotifyConfirmResult
 
 /**
- * 把某個 lineUserId 加進 aiSettings.handoffNotify 名單（`C-250`③：開帳按「是我」的那支手機）。
+ * 名單上**真的在收**的人。總開關拿掉之後，只有舊資料會出現「名單有人但 enabled=false」——
+ * 那些人其實一則都沒收到（讀通知的每一處都先看 enabled），所以一律當成沒有人在收。
+ */
+export function effectiveNotifyIds(raw: { enabled?: unknown, lineUserIds?: unknown } | null | undefined): string[] {
+  if (raw?.enabled !== true || !Array.isArray(raw.lineUserIds)) return []
+  return raw.lineUserIds.map(v => String(v ?? '').trim()).filter(Boolean)
+}
+
+/**
+ * 把某個 lineUserId 加進 aiSettings.handoffNotify 名單。三個入口共用：開帳按「是我」、
+ * 綁定碼（成員自己掃 QR 或管理員傳連結）、「LINE 通知」頁把「收通知」打開。
  *
  * ⭐ 為什麼要有：綁定手機原本**不會**加進通知名單（綁定成功的回覆還叫他自己去加）——
  *    「客人要找你本人、早上的摘要會傳到這支手機」就只是一句沒人兌現的話。
- * ⚠️ 名單原本是空的才順手把通知打開：那是還沒設定過的新帳號；名單有人但關著＝他刻意關的，⛔ 不替他打開。
+ * ⚠️ 總開關拿掉之後（`D-103`）：加進來就一定打開。舊資料「名單有人但關著」＝那些人一則都沒收到，
+ *    這次寫入以**真的在收的人**（`effectiveNotifyIds`）為底，⛔ 不把他們一起默默打開。
  * ⛔ 滿了就回 `full`、不擠掉別人（畫面要照實講「名單滿了」）。
- * ⚠️ 只更新名單那兩三格（跟 removeFromHandoffNotify 同一個寫法）：⛔ 不走整份覆寫 AI 設定的那條路。
+ * ⚠️ 只更新名單那幾格：⛔ 不走整份覆寫 AI 設定的那條路。
  */
 export async function addToHandoffNotify(workspaceId: string, lineUserId: string, displayName: string): Promise<AddToNotifyResult> {
   const id = String(lineUserId || '').trim()
@@ -223,31 +277,32 @@ export async function addToHandoffNotify(workspaceId: string, lineUserId: string
   try {
     const db = getDb()
     const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
-    // ⚠️ 交易：兩位管理員同時按「是我」（或剛好有人在存 AI 設定）時，各讀一份再各寫 [...ids, 自己]
+    // ⚠️ 交易：兩位同時加（或剛好有人在存設定）時，各讀一份再各寫 [...ids, 自己]
     //    會把對方蓋掉、兩邊卻都拿到 added（code review 抓到）
     const result = await db.runTransaction(async (tx): Promise<AddToNotifyResult> => {
       const snap = await tx.get(ref)
       const raw = snap.exists ? snap.data()?.handoffNotify : undefined
-      const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
+      const ids = effectiveNotifyIds(raw)
       // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到
-      if (ids.some(v => v === id || v.endsWith(`_${id}`))) return raw?.enabled === true ? 'already' : 'off'
+      if (ids.some(v => v === id || v.endsWith(`_${id}`))) return 'already'
       if (ids.length >= HANDOFF_NOTIFY_MAX) return 'full'
-      const displayNames = { ...(raw?.displayNames ?? {}), ...(displayName ? { [id]: displayName.slice(0, 40) } : {}) }
-      const patch: Record<string, unknown> = {
-        'handoffNotify.lineUserIds': [...ids, id],
-        'handoffNotify.displayNames': displayNames,
-      }
-      // 名單原本是空的＝還沒設定過，順手打開；有人但關著＝他刻意關的，⛔ 不替他打開（回 off 讓畫面照實講）
-      const turnOn = ids.length === 0 && raw?.enabled !== true
-      if (turnOn) patch['handoffNotify.enabled'] = true
+      const nextIds = [...ids, id]
+      const prevNames: Record<string, string> = raw?.displayNames ?? {}
+      const displayNames: Record<string, string> = {}
+      for (const k of nextIds) if (prevNames[k]) displayNames[k] = prevNames[k]
+      if (displayName) displayNames[id] = displayName.slice(0, 40)
       if (snap.exists) {
-        tx.update(ref, patch)
+        tx.update(ref, {
+          'handoffNotify.lineUserIds': nextIds,
+          'handoffNotify.displayNames': displayNames,
+          'handoffNotify.enabled': true,
+        })
       }
       else {
         // 還沒有 AI 設定文件（新帳號）：只寫名單這一格，其餘由 normalizeAiSettings 讀的時候補預設
-        tx.set(ref, { workspaceId, handoffNotify: { enabled: true, lineUserIds: [id], displayNames } }, { merge: true })
+        tx.set(ref, { workspaceId, handoffNotify: { enabled: true, lineUserIds: nextIds, displayNames } }, { merge: true })
       }
-      return turnOn || raw?.enabled === true || !snap.exists ? 'added' : 'off'
+      return 'added'
     })
     invalidateAiSettingsCache(workspaceId)
     return result
@@ -301,6 +356,27 @@ export async function bindMemberLineUser(
   return true
 }
 
+export type NotifyReceivingResult =
+  | { ok: true, result: AddToNotifyResult | 'removed' }
+  | { ok: false, reason: 'not-member' | 'not-bound' }
+
+/**
+ * 「LINE 通知」頁那一列的「收通知」開關（`D-103`⑤）。綁定跟收不收是兩件事：
+ * 關掉＝從名單拿掉、LINE 還綁著（之後打開不用再掃一次）。
+ * 權限（只能動自己／管理員動別人）由端點判斷，這裡只做事。
+ */
+export async function setMemberNotifyReceiving(workspaceId: string, uid: string, on: boolean): Promise<NotifyReceivingResult> {
+  const snap = await getDb().collection('workspaceMembers').doc(memberDocId(uid, workspaceId)).get()
+  if (!snap.exists) return { ok: false, reason: 'not-member' }
+  const lineUserId = String(snap.data()?.lineUserId ?? '').trim()
+  if (!lineUserId) return { ok: false, reason: 'not-bound' }
+  if (!on) {
+    await removeFromHandoffNotify(workspaceId, lineUserId)
+    return { ok: true, result: 'removed' }
+  }
+  return { ok: true, result: await addToHandoffNotify(workspaceId, lineUserId, String(snap.data()?.lineDisplayName ?? '')) }
+}
+
 /** 從 aiSettings.handoffNotify 名單移掉某個 lineUserId（沒有就什麼都不做） */
 export async function removeFromHandoffNotify(workspaceId: string, lineUserId: string): Promise<void> {
   const id = String(lineUserId || '').trim()
@@ -308,21 +384,25 @@ export async function removeFromHandoffNotify(workspaceId: string, lineUserId: s
   try {
     const db = getDb()
     const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
-    const snap = await ref.get()
-    if (!snap.exists) return
-    const raw = snap.data()?.handoffNotify
-    const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
-    // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式,兩種都要比對得到
-    const hit = (v: string) => v === id || v.endsWith(`_${id}`)
-    if (!ids.some(hit)) return
+    // 交易：跟 addToHandoffNotify 同一份名單，同時一加一減時不可以互相蓋掉
+    const changed = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists) return false
+      const raw = snap.data()?.handoffNotify
+      const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
+      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式,兩種都要比對得到
+      const hit = (v: string) => v === id || v.endsWith(`_${id}`)
+      if (!ids.some(hit)) return false
 
-    const next = ids.filter(v => !hit(v))
-    const displayNames = { ...(raw?.displayNames ?? {}) }
-    for (const key of Object.keys(displayNames)) {
-      if (hit(key)) delete displayNames[key]
-    }
-    await ref.update({ 'handoffNotify.lineUserIds': next, 'handoffNotify.displayNames': displayNames })
-    invalidateAiSettingsCache(workspaceId)
+      const next = ids.filter(v => !hit(v))
+      const displayNames = { ...(raw?.displayNames ?? {}) }
+      for (const key of Object.keys(displayNames)) {
+        if (hit(key)) delete displayNames[key]
+      }
+      tx.update(ref, { 'handoffNotify.lineUserIds': next, 'handoffNotify.displayNames': displayNames })
+      return true
+    })
+    if (changed) invalidateAiSettingsCache(workspaceId)
   }
   catch (e) {
     console.error('[member-bind] remove from handoffNotify failed:', e)

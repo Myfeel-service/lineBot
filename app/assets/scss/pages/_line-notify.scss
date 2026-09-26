@@ -1,0 +1,466 @@
+// 「設定 → LINE 通知」頁＋首頁那張「要傳到你的手機嗎？」卡（`C-270`，照示意頁 artifact `DCNtvHLkws7NRiMmDXXqeZ`）
+// 顏色：綠＝會收到／好了（品牌綠）、黃＝收不到或沒人收（Element 的 warning 那組），⛔ 不用紅——沒有東西壞在客人那邊
+
+.ln-card__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ln-card__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+// 「現在沒有人會收到」／「還沒接上 LINE」
+.ln-banner {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning-dark-2);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+// ── 名單 ──
+.ln-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ln-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+
+  &:first-child {
+    border-top: 0;
+  }
+
+  &.is-flash {
+    animation: ln-flash 1.4s ease-out;
+  }
+}
+
+@keyframes ln-flash {
+  from { background: var(--brand-green-wash); }
+  to { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ln-row.is-flash { animation: none; }
+  .ln-qr__dot { animation: none; }
+}
+
+.ln-row__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+
+  &--initial {
+    display: grid;
+    place-items: center;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 700;
+  }
+}
+
+.ln-row__who {
+  min-width: 0;
+}
+
+.ln-row__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ln-row__role {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.ln-row__status {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+
+  &.is-ok {
+    color: var(--brand-green-text);
+    font-weight: 600;
+  }
+
+  &.is-warn {
+    color: var(--el-color-warning-dark-2);
+    font-weight: 600;
+  }
+}
+
+.ln-row__sub {
+  display: block;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.ln-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+// ── 掃 QR 那一塊（新頁與首頁卡共用） ──
+.ln-qr {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+}
+
+.ln-qr__loading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ln-qr__code {
+  width: 140px;
+  height: 140px;
+  padding: 6px;
+  border-radius: 10px;
+  background: #fff;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.ln-qr__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+
+  .member-bind-code {
+    align-self: stretch;
+  }
+}
+
+.ln-qr__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.ln-qr__text,
+.ln-qr__alt {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.ln-qr__alt {
+  font-size: 12px;
+}
+
+.ln-qr__link {
+  color: var(--brand-green-text);
+  font-weight: 700;
+}
+
+// 手機上看這頁：QR 自己掃不到自己，換成一顆直接打開 LINE 的鈕
+.ln-qr__mobile-open {
+  display: none;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
+.ln-qr__wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ln-qr__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand-green);
+  animation: ln-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ln-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+.ln-qr__cancel {
+  margin-top: 2px;
+  padding-left: 0;
+}
+
+.ln-qr__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+@media (max-width: 720px) {
+  .ln-qr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ln-qr__code,
+  .ln-qr__alt {
+    display: none;
+  }
+
+  .ln-qr__mobile-open {
+    display: inline-flex;
+  }
+
+  .ln-row {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .ln-row__actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+// 剛加好
+.ln-done {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--brand-green-wash);
+}
+
+.ln-done__title {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--brand-green-text);
+}
+
+.ln-done__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+// ── 什麼時候通知 ──
+.ln-when {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.ln-when__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+
+  .admin-field-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
+.ln-when__modes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.ln-when__mode,
+.ln-when__inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+
+  .el-radio {
+    margin-right: 0;
+  }
+}
+
+.ln-when__num {
+  width: 96px;
+}
+
+// ⚠️ Element 的 `.el-select { width: var(--el-select-width, 100%) }` 載入順序在後，
+//    單寫 `.ai-hour-select { width }` 會被蓋成整行寬，後面那句話就被擠到下一行
+.ln-when__inline .el-select {
+  flex: none;
+  width: 120px;
+}
+
+.ln-when__tail {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+// 手機預覽：畫的是手機螢幕上的 LINE，固定淺色（跟示意頁的信件同一條規矩）
+.ln-phone {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: #fff;
+  color: #1f2937;
+}
+
+.ln-phone__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ln-phone__oa {
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #06c755;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.ln-phone__tabs {
+  padding: 0 4px 8px;
+}
+
+.ln-phone__screen {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 240px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  background: #dfe6ee;
+}
+
+.ln-phone__when {
+  align-self: center;
+  padding: 0 8px;
+  border-radius: 99px;
+  background: rgb(255 255 255 / 60%);
+  font-size: 10px;
+  color: #475569;
+}
+
+.ln-phone__bubble {
+  max-width: 94%;
+  padding: 8px 10px;
+  border-radius: 4px 14px 14px 14px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+
+  &.is-me {
+    align-self: flex-end;
+    border-radius: 14px 4px 14px 14px;
+    background: #a8e67e;
+  }
+}
+
+@media (max-width: 900px) {
+  .ln-when {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+// ── 首頁那張卡（同事第一次登入） ──
+.ln-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--el-bg-color, #fff);
+}
+
+.ln-invite__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.ln-invite__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.ln-invite__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ln-invite.is-done {
+  border-color: transparent;
+  background: var(--brand-green-wash);
+
+  .ln-invite__title {
+    color: var(--brand-green-text);
+  }
+}

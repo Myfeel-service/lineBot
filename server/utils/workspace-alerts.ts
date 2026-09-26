@@ -26,6 +26,7 @@ import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
+import { bareLineUserId, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 
 /**
  * 工作區「目前異常」的訊號收集核心。
@@ -357,6 +358,9 @@ export async function collectWorkspaceAlerts(
   const aiSettingsPromise = canOperate
     ? getAiSettings(wid, db).catch(() => null)
     : null
+  // LINE 通知的送達紀錄（`C-270`）：兩顆通知提醒共用這一次讀取，用到才讀
+  let notifyDeliveryPromise: Promise<Record<string, NotifyRecipientDelivery>> | null = null
+  const getNotifyDelivery = () => (notifyDeliveryPromise ??= readNotifyDelivery(wid, db))
 
   const operateProbes: Array<Promise<WorkspaceAlertItem>> = canOperate
     ? [
@@ -656,16 +660,49 @@ export async function collectWorkspaceAlerts(
         probe('handoffNotifyMissing', async () => {
           const aiSettings = await aiSettingsPromise!
           if (!aiSettings) throw new Error('ai settings unavailable')
-          const cfg = aiSettings.handoffNotify
-          const off = !cfg?.enabled || !(cfg?.lineUserIds?.length)
-          if (!off) return { active: false }
+          const ids = aiSettings.handoffNotify?.enabled ? (aiSettings.handoffNotify.lineUserIds ?? []) : []
+          // `C-270`⑥：名單上的人**全部**送不到（封鎖、被退回）＝跟沒有人一樣。
+          // 原本只看名單是不是空的，兩個人都封鎖了這顆也不會亮——天天照樣「發」，一則都沒送到。
+          // 名單有人、而且至少一位收得到 → 沒事，連憑證都不用查（最常見的情況只花一次點讀）
+          let allDown = false
+          if (ids.length) {
+            const delivery = await getNotifyDelivery()
+            allDown = ids.every((id) => {
+              const s = recipientDeliveryState(delivery[bareLineUserId(wid, id)])
+              return s.state === 'blocked' || s.state === 'failing'
+            })
+            if (!allDown) return { active: false }
+          }
           // 這份名單擋的不只 AI 轉真人——每日摘要、額度、嚴重異常推播全部吃它，
           // 所以不看 AI 開關（D-36③ 2026-08-27 拍板放寬：純真人客服帳號沒名單
           // ＝整個通知系統靜音，之前這種帳號永遠不會被提醒去設）。
           // 還沒接上 LINE 的帳號不喊：那是開通期，歸開通帶管，重複喊只會淹掉開通引導。
           const creds = await getLineWorkspaceCredentials(wid).catch(() => null)
           if (!creds?.channelAccessToken) return { active: false }
-          return { active: true }
+          return allDown
+            ? { active: true, detail: '名單上的人都收不到（封鎖了官方帳號，或通知被 LINE 退回）' }
+            : { active: true }
+        }),
+        probe('lineNotifyUndeliverable', async () => {
+          const aiSettings = await aiSettingsPromise!
+          if (!aiSettings) throw new Error('ai settings unavailable')
+          const cfg = aiSettings.handoffNotify
+          const ids = cfg?.enabled ? (cfg.lineUserIds ?? []) : []
+          if (!ids.length) return { active: false }
+          const delivery = await getNotifyDelivery()
+          const bad = ids
+            .map(id => ({ id, s: recipientDeliveryState(delivery[bareLineUserId(wid, id)]) }))
+            .filter(x => x.s.state === 'blocked' || x.s.state === 'failing')
+          // 全部都收不到歸上一顆（「沒有人會收到」），⛔ 不兩顆一起喊同一件事
+          if (!bad.length || bad.length === ids.length) return { active: false }
+          const nameOf = (id: string) => String(cfg?.displayNames?.[id] ?? '').trim() || '名單上一位'
+          const first = bad[0]!
+          const detail = bad.length === 1
+            ? (first.s.state === 'blocked'
+                ? `${nameOf(first.id)}封鎖了官方帳號，這幾天的通知都沒送到`
+                : `${nameOf(first.id)}的通知被 LINE 退回：${first.s.state === 'failing' ? first.s.reason : ''}`)
+            : `${bad.map(b => nameOf(b.id)).join('、')}收不到`
+          return { active: true, count: bad.length, detail }
         }),
         probe('claimPushUnmarked', async () => {
           // 一次點讀（cronState 內每工作區一筆）。蓋章成功會自己清掉，所以有值就代表最近真的壞過。

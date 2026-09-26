@@ -22,6 +22,7 @@ import { scanInactiveTag } from '~~/server/utils/inactive-tag'
 import { scanTagSuggestions } from '~~/server/utils/ai-tag-suggest'
 import { scanTagDiscovery } from '~~/server/utils/tag-discovery'
 import { rollupConversationStats } from '~~/server/utils/conversation-stats-rollup'
+import { cleanupExpiredNotifyLinks } from '~~/server/utils/notify-links'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -100,6 +101,8 @@ export default defineEventHandler(async (event) => {
     // 台北時間 09–21 點外整支早退，每個帳號一小時才真的查一次。
     { name: 'alerts:critical-push', run: () => pushCriticalAlerts(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
+    // LINE 通知裡的短網址（`C-270`）：90 天前的清掉，每輪最多 500 筆；平常是一個空查詢
+    { name: 'notify:cleanup-links', run: () => cleanupExpiredNotifyLinks(db) },
     // 計費對帳 + **每期自動續扣**（會刷卡）。安全性靠三層,不靠呼叫頻率:
     //   ① `PAYUNI_PERIOD_ENABLED !== true` 或金鑰未設 → chargeDueRecurring 直接回 0,零副作用
     //   ② 每筆訂閱在 transaction 內 claim `lastChargeDate=今天` → 同一天最多扣一次

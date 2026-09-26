@@ -1,10 +1,10 @@
 /**
- * 加進通知名單（`C-250`③：開帳按了「是我」的那支手機）。
+ * 加進通知名單（`C-250`③：開帳按了「是我」的那支手機；`C-270`：綁定碼與「LINE 通知」頁也走這支）。
  *
  * ⭐ 為什麼要有：綁定手機原本不會加進名單——「客人要找你本人、早上的摘要會傳到這支手機」
- *    就只是一句沒人兌現的話。這裡守：加得進去、不擠掉別人、不替他打開他刻意關掉的通知，
- *    🔴 而且**關著的時候要說關著**（2026-09-26 code review：原本照樣回 added，精靈就承諾會收到）；
+ *    就只是一句沒人兌現的話。這裡守：加得進去、不擠掉別人、名單滿了照實講；
  *    寫入走交易（同時按不會掉人）；換手機綁定時舊那支從名單拿掉。
+ *    （2026-09-26 的「關著要說關著」`off` 隨總開關拿掉而退場，見下面那兩條的說明）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -76,19 +76,30 @@ describe('addToHandoffNotify', () => {
     expect(await addToHandoffNotify('w', 'U1', '')).toBe('added')
   })
 
-  it('🔴 名單有人但通知是關著的＝他刻意關的：加進名單、⛔ 不替他打開，而且回 off（⛔ 不可以回 added）', async () => {
-    store.doc = { handoffNotify: { enabled: false, lineUserIds: ['U9'] } }
-    expect(await addToHandoffNotify('w', 'U1', '')).toBe('off')
-    expect(store.writes[0].p['handoffNotify.lineUserIds']).toEqual(['U9', 'U1'])
-    expect(store.writes[0].p['handoffNotify.enabled']).toBeUndefined()
+  /*
+   * 2026-09-27 `D-103` 拍板拿掉「總開關」（名單有人＝開），這兩條從「回 off、不替他打開」改成下面的規則。
+   * 舊資料「名單有人但 enabled=false」＝那些人其實一則都沒收到（讀通知的每一處都先看 enabled），
+   * 所以以**真的在收的人**為底：加進來的人成為名單上唯一一位、通知打開。
+   * ⛔ 不可以把那幾位關著的人一起默默打開——他們從沒同意收，現在才開始收會嚇到人。
+   */
+  it('🔴 舊資料「名單有人但關著」：只加進自己、打開；⛔ 關著的那幾位不跟著被打開', async () => {
+    store.doc = { handoffNotify: { enabled: false, lineUserIds: ['U9'], displayNames: { U9: '舊的' } } }
+    expect(await addToHandoffNotify('w', 'U1', '小明')).toBe('added')
+    expect(store.writes[0].p['handoffNotify.lineUserIds']).toEqual(['U1'])
+    expect(store.writes[0].p['handoffNotify.enabled']).toBe(true)
+    expect(store.writes[0].p['handoffNotify.displayNames']).toEqual({ U1: '小明' })
   })
 
-  it('已經在名單上（含舊資料的 `workspace_U…` 形式）→ 不重複加；通知關著就回 off', async () => {
+  it('已經在名單上（含舊資料的 `workspace_U…` 形式）→ 不重複加', async () => {
     store.doc = { handoffNotify: { enabled: true, lineUserIds: ['w_U1'] } }
     expect(await addToHandoffNotify('w', 'U1', '')).toBe('already')
-    store.doc = { handoffNotify: { enabled: false, lineUserIds: ['U1'] } }
-    expect(await addToHandoffNotify('w', 'U1', '')).toBe('off')
     expect(store.writes).toHaveLength(0)
+  })
+
+  it('名單上的人的顯示名稱留著，拿掉的人的名字不殘留', async () => {
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U9'], displayNames: { U9: '阿華', Ugone: '走了的人' } } }
+    expect(await addToHandoffNotify('w', 'U1', '小明')).toBe('added')
+    expect(store.writes[0].p['handoffNotify.displayNames']).toEqual({ U9: '阿華', U1: '小明' })
   })
 
   it(`⛔ 滿了（${HANDOFF_NOTIFY_MAX} 位）→ 回 full、不擠掉別人`, async () => {

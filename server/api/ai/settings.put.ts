@@ -19,6 +19,14 @@ export default defineEventHandler(async (event) => {
     delete body.embeddingModel
   }
 
+  // LINE 通知名單不走這支（2026-09-27 `D-103` 第 2 題：名單只收綁好 LINE 的成員）。
+  // 名單只能經「設定 → LINE 通知」的端點與綁定流程進出；⛔ 這裡照收的話，舊分頁存一次
+  // AI 設定就會把剛綁好的人蓋掉，或塞進一個不是成員的 LINE 帳號（挑錯客人＝客人收到別的客人的訊息）。
+  if (body.handoffNotify && typeof body.handoffNotify === 'object') {
+    const { lineUserIds: _ids, displayNames: _names, enabled: _enabled, ...rest } = body.handoffNotify as Record<string, unknown>
+    body.handoffNotify = rest
+  }
+
   const before = await getAiSettings(workspaceId)
   const after = await setAiSettings(workspaceId, body)
 

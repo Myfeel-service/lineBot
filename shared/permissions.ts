@@ -43,6 +43,10 @@ export const CAPABILITIES = {
   // 2026-09-16：推播頁的端點本來就是 agent 級，但能力表一直沒有這一項——
   // 小幫手要掛「建推播草稿」時才發現門檻只存在於端點裡。⛔發送不在這裡（紅線，永遠留人按）。
   'broadcast.write': 'agent', // 建立／編輯推播**草稿**
+  // 2026-09-27 `D-103` 第 3 題拍板：客服可以把**自己的**手機加進 LINE 通知、自己退出
+  // （「設定 → LINE 通知」那一頁與首頁那張卡）。⛔ 只能動自己那一列；動別人、改「什麼時候通知」是 notify.manage。
+  // 觀察者不收：他不處理客人，找真人的通知對他沒有下一步。
+  'notify.self': 'agent',
 
   // ── 設定類（管理員 admin+）──────────────────────────────────
   'ai.settings.write': 'admin', // AI 設定儲存
@@ -53,6 +57,9 @@ export const CAPABILITIES = {
   'knowledge.reindexAll': 'admin', // 知識庫全量重建
   'members.manage': 'admin', // 成員 邀請/改角色/移除
   'line.manage': 'admin', // 組織與 LINE 憑證 讀取/儲存
+  // LINE 通知：改「什麼時候通知」、開關／解除別人、幫別人產綁定連結（`D-103`）。
+  // ⛔ 不綁 AI 設定的權限與 ai-feature：純真人客服的帳號一樣要收找真人與每日摘要。
+  'notify.manage': 'admin',
 } as const satisfies Record<string, WorkspaceMemberRole>
 
 export type Capability = keyof typeof CAPABILITIES

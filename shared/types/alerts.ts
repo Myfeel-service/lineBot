@@ -54,8 +54,16 @@ export type WorkspaceAlertId =
   | 'paymentPastDue'
   /** 發票開立失敗 */
   | 'invoiceFailed'
-  /** AI 答不出來會轉真人，但沒有人會被通知 */
+  /**
+   * LINE 通知沒有人收得到：名單是空的，或名單上的人**全部**送不到（2026-09-27 `C-270` 補後半）。
+   * 客人找真人、每日摘要、額度、出大事都吃這份名單，不只 AI 轉真人。
+   */
   | 'handoffNotifyMissing'
+  /**
+   * 名單上**有一部分人**收不到 LINE 通知：封鎖了官方帳號、或推播被 LINE 退回（`C-270`，2026-09-27）。
+   * 全部都收不到歸上一顆，⛔ 不兩顆一起亮。
+   */
+  | 'lineNotifyUndeliverable'
   /** 客人在等真人、或對話卡在「真人處理中」太久 */
   | 'humanBacklog'
   /** 「未首接」佇列有對話等超過 1 小時完全沒人回（草稿模式沒人審＝客人一句回覆都沒有） */
@@ -139,7 +147,9 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   // 對客戶顯示「開立中」不是「失敗」（2026-08-16 拍板;系統每日自動補開、客戶無事可做）;
   // 真實 failed 狀態超管在金流總覽看
   invoiceFailed: '有發票還在開立中',
-  handoffNotifyMissing: '沒有人會收到轉真人通知',
+  // 2026-09-27 `C-270`：名單改叫「LINE 通知」（頁面在「設定 → LINE 通知」），管的不只轉真人
+  handoffNotifyMissing: '沒有人會收到 LINE 通知',
+  lineNotifyUndeliverable: '有人收不到 LINE 通知',
   humanBacklog: '有客人在等真人回覆',
   firstReplyBacklog: '有客人的訊息一直沒人回',
   knowledgeIndexStuck: '有知識卡一直沒學完',
@@ -195,6 +205,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   quotaRunningOut: 'warning',
   paymentPastDue: 'critical',
   handoffNotifyMissing: 'warning',
+  // 同一份名單的「一部分」：其他人照樣收得到，客人的找真人仍然有人知道 → 跟上一顆同級
+  lineNotifyUndeliverable: 'warning',
   brokenModuleButton: 'critical',
   scriptDeadEnd: 'critical',
   scriptUnreachable: 'warning',

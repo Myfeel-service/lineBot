@@ -16,14 +16,22 @@ vi.mock('./line', () => ({ pushMessage }))
 const { getAiSettings } = vi.hoisted(() => ({ getAiSettings: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings }))
 
-const { getDb, convSet } = vi.hoisted(() => {
+/**
+ * `deliverySet`：每一位收件人送到了沒的紀錄（`C-270`，寫進 `lineNotifyDelivery`）。
+ * 跟其他寫入分開收：原本的斷言數的是「嘗試過／已發」那幾筆，不該被送達紀錄灌水；
+ * ⛔ 但送達紀錄本身要斷言有寫——`recordNotifyDelivery` 會吞自己的錯，沒寫跟有寫在畫面上長得一樣。
+ */
+const { getDb, convSet, deliverySet } = vi.hoisted(() => {
   const convSet = vi.fn(async (...args: any[]) => ({ args }))
+  const deliverySet = vi.fn(async (...args: any[]) => ({ args }))
   return {
     convSet,
+    deliverySet,
     getDb: vi.fn(() => ({
       collection: (name: string) => ({
         doc: (id: string) => ({
-          set: (patch: unknown, opts: unknown) => convSet(name, id, patch, opts),
+          set: (patch: unknown, opts: unknown) =>
+            name === 'lineNotifyDelivery' ? deliverySet(id, patch, opts) : convSet(name, id, patch, opts),
         }),
       }),
     })),
@@ -46,8 +54,24 @@ beforeEach(() => {
   // 這裡要還原,否則洩漏到後面的測試
   pushMessage.mockImplementation(async (...args: any[]) => ({ args }))
   convSet.mockClear()
+  deliverySet.mockClear()
   getAiSettings.mockReset()
 })
+
+/** 額度那兩支吃呼叫端給的 db：送達紀錄（`lineNotifyDelivery`）分開收，理由同上 */
+function makeAlertsDb(existing: Record<string, unknown> | undefined) {
+  const set = vi.fn(async (..._args: any[]) => ({}))
+  const recorded = vi.fn(async (..._args: any[]) => ({}))
+  const db = {
+    collection: (name: string) => ({
+      doc: (_id: string) => ({
+        get: async () => ({ data: () => existing }),
+        set: name === 'lineNotifyDelivery' ? recorded : set,
+      }),
+    }),
+  } as any
+  return { db, set, recorded }
+}
 
 // 節流 map 是模組層級的,每個測試用不同客人 id 避免互相吃掉
 
@@ -105,8 +129,10 @@ describe('notifyHandoffToStaff 模式分叉', () => {
     })
     expect(pushMessage).toHaveBeenCalledTimes(2)
     const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
-    expect(text).toContain('⏰ 提醒：真人客服請求尚未回應')
-    expect(text).toContain('已等待超過 30 分鐘')
+    // 2026-09-27 `C-270` 照示意頁改成一行：誰、等多久（第一則已經講過摘要與原話）
+    expect(text).toContain('⏰ 提醒：小強還在等真人（超過 30 分鐘）')
+    // 沒有對外網址（測試環境）→ 退回講去哪，⛔ 不放相對路徑
+    expect(text).toContain('請至後台「對話」頁回覆。')
   })
 })
 
@@ -197,19 +223,6 @@ describe('notifyOverdueHandoffBatch 逾時提醒合併', () => {
 })
 
 describe('maybeNotifyQuotaExhausted', () => {
-  function makeAlertsDb(existing: Record<string, unknown> | undefined) {
-    const set = vi.fn(async (..._args: any[]) => ({}))
-    const db = {
-      collection: (_: string) => ({
-        doc: (_id: string) => ({
-          get: async () => ({ data: () => existing }),
-          set,
-        }),
-      }),
-    } as any
-    return { db, set }
-  }
-
   it('每期只發一次:同 periodKey 已標記就不再推', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     const { db, set } = makeAlertsDb({ exhaustedPeriodKey: 'p_2026-08-01' })
@@ -273,19 +286,6 @@ describe('maybeNotifyQuotaExhausted', () => {
 })
 
 describe('maybeWarnQuotaThreshold(80% 預警)', () => {
-  function makeAlertsDb(existing: Record<string, unknown> | undefined) {
-    const set = vi.fn(async (..._args: any[]) => ({}))
-    const db = {
-      collection: (_: string) => ({
-        doc: (_id: string) => ({
-          get: async () => ({ data: () => existing }),
-          set,
-        }),
-      }),
-    } as any
-    return { db, set }
-  }
-
   it('低於 80% 直接返回,連設定都不讀(熱路徑零額外讀取)', async () => {
     await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.5, periodKey: 'p_2026-08-01', usageText: 'x', db: makeAlertsDb(undefined).db })
     expect(getAiSettings).not.toHaveBeenCalled()
@@ -314,9 +314,34 @@ describe('maybeWarnQuotaThreshold(80% 預警)', () => {
   it('推播全滅 → 不記「這期已警告」(C-89:記了這期就永遠沉默)', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     pushMessage.mockRejectedValue(new Error('blocked'))
-    const { db, set } = makeAlertsDb(undefined)
+    const { db, set, recorded } = makeAlertsDb(undefined)
     await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 'p_2026-08-01', usageText: 'x', db })
     expect(set).toHaveBeenCalledTimes(1)
     expect(set.mock.calls[0]![0]).not.toHaveProperty('periodKey')
+    // `C-270`⑥：被退回的那幾位要記下來（「LINE 通知」頁那一列才會變黃）
+    const patch = recorded.mock.calls[0]![0] as any
+    expect(Object.keys(patch.recipients)).toEqual(['Sa', 'Sb'])
+    expect(patch.recipients.Sa).toMatchObject({ failKind: 'blocked' })
+  })
+})
+
+describe('送到了沒要記下來（C-270⑥）', () => {
+  it('找真人通知：送成功的記 okAt、被 LINE 退回（封鎖）的記 blocked', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    pushMessage
+      .mockImplementationOnce(async () => ({ args: [] }))
+      .mockImplementationOnce(async () => { throw Object.assign(new Error('x'), { status: 400, body: '{"message":"The user has blocked the account"}' }) })
+    await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-deliv', customerName: '小明',
+      customerMessage: '我要找人', reason: 'user_request',
+    })
+    expect(deliverySet).toHaveBeenCalledTimes(1)
+    const [docId, patch, opts] = deliverySet.mock.calls[0]! as any[]
+    expect(docId).toBe('WS')
+    expect(opts).toEqual({ merge: true })
+    expect(patch.recipients.Sa).toMatchObject({ okKind: 'notify' })
+    expect(typeof patch.recipients.Sa.okAt).toBe('number')
+    expect(patch.recipients.Sb).toMatchObject({ failKind: 'blocked' })
+    expect(typeof patch.recipients.Sb.blockedAt).toBe('number')
   })
 })

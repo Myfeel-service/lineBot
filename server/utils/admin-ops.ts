@@ -483,10 +483,11 @@ const aiSettingsHandoffSla: AdminOpDef = {
         { label: say(before), note: '現在' },
         { label: say(args.minutes), note: '改成' },
       ],
-      // 通知本身沒開的話，改這個數字不會有任何效果——這種「改了也沒用」要當場講
-      warning: s.handoffNotify?.enabled === true
+      // 名單上沒有人的話，改這個數字不會有任何效果——這種「改了也沒用」要當場講
+      // （2026-09-27 `C-270`：總開關拿掉了，「有沒有人在收」＝名單有沒有人）
+      warning: s.handoffNotify?.enabled === true && (s.handoffNotify?.lineUserIds?.length ?? 0) > 0
         ? '這只影響你們這邊收到的提醒，客人不會收到任何東西。'
-        : '⚠️ 目前「轉真人通知」是關的，所以改了這個數字也不會有人被提醒——要先把通知打開。',
+        : '⚠️ 目前沒有人會收到 LINE 通知，所以改了這個數字也不會有人被提醒——要先到「設定 → LINE 通知」把手機加進來。',
       confirmLabel: '確定改提醒時間',
     }
   },

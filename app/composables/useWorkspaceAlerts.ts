@@ -294,13 +294,23 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'handoffNotifyMissing',
     icon: Bell,
-    // 這份名單擋的不只轉真人:每日摘要、額度、嚴重異常的 LINE 通知全部靠它(D-36③)
-    impact: '客人轉真人、每日摘要、額度與異常警報的 LINE 通知都要靠這份名單——現在沒有任何人會收到通知，客人可能等很久都沒人接手。',
-    cta: '去設定通知對象',
+    // 這份名單擋的不只轉真人:每日摘要、額度、嚴重異常的 LINE 通知全部靠它(D-36③)。
+    // 2026-09-27 `C-270`：落點從「AI 設定」搬到「設定 → LINE 通知」（沒開 AI 的帳號也進得去）
+    impact: '客人要找真人、每天早上的摘要、出大事的通知都傳不到任何人的手機——客人可能等很久都沒人接手。',
+    cta: '去加手機',
     requires: 'settings',
-    route: wid => `/admin/${wid}/ai-settings`,
-    anchor: { selector: '[data-tour="ais-handoff"]', note: '在這一區把「通知對象」加上至少一位，AI 轉真人時才有人會收到通知。' },
+    route: wid => `/admin/${wid}/settings/line-notify`,
+    anchor: { selector: '[data-tour="ln-who"]', note: '在這裡按「把我的手機加進來」，用手機掃一下就好。' },
     guideId: 'handoff-notify',
+  },
+  {
+    id: 'lineNotifyUndeliverable',
+    icon: Bell,
+    impact: '名單上有人封鎖了官方帳號、或通知被 LINE 退回，那幾位的手機收不到找真人與每天的摘要。',
+    cta: '去看是誰',
+    requires: 'settings',
+    route: wid => `/admin/${wid}/settings/line-notify`,
+    anchor: { selector: '[data-tour="ln-who"]', note: '變黃的那一列就是收不到的人，原因寫在名字下面。' },
   },
   {
     // 紅點：客人按下去真的什麼都收不到，屬於「正在影響客人」

@@ -31,7 +31,7 @@ export const AGENT_DESTINATIONS = {
   },
   'ai-settings': {
     label: 'AI 設定',
-    hint: 'AI 開關與回覆模式、信心門檻、轉真人通知對象、勿擾時段、商店網址',
+    hint: 'AI 開關與回覆模式、信心門檻、勿擾時段、商店網址',
     path: wid => `/admin/${wid}/ai-settings`,
   },
   'ai-scripts': {
@@ -92,6 +92,12 @@ export const AGENT_DESTINATIONS = {
     label: '客服預存',
     hint: '真人客服的罐頭回覆管理',
     path: wid => `/admin/${wid}/support-presets`,
+  },
+  // 2026-09-27 `C-270`：通知名單與時間從 AI 設定搬來這一頁
+  'settings-line-notify': {
+    label: 'LINE 通知',
+    hint: '誰的手機會收到客人找真人、每天早上的摘要與出大事的通知；把自己的手機加進來；什麼時候通知',
+    path: wid => `/admin/${wid}/settings/line-notify`,
   },
   'settings-organization': {
     label: '組織與 LINE',

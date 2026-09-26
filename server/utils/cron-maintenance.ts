@@ -28,14 +28,16 @@ import { getAiSettings } from './ai-settings'
 import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasQuotaExhaustedNotified } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
-import { pushMessage } from './line'
+import { pushToNotifyList } from './line-notify-delivery'
+import { adminHomePath, createNotifyLink } from './notify-links'
+import { buildCriticalAlertText } from '~~/shared/line-notify-messages'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { daysBetween, isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
 import { taipeiDateKey } from '~~/shared/taipei-day'
 import { loadDayStats } from './conversation-stats-rollup'
-import { buildDigestLines, taipeiDateLabel } from './daily-digest-message'
+import { buildDigestLines, digestPlaces, taipeiDateLabel } from './daily-digest-message'
 import type { DigestWaiting, DigestYesterday } from './daily-digest-message'
 import {
   TAIWAN_FESTIVALS,
@@ -1283,22 +1285,29 @@ export async function dailyBacklogDigest(db: Firestore) {
       })
 
     // 文案與排版全部在 daily-digest-message.ts（純函式，規則逐條有測試）
+    const digestWaiting = waiting ?? { count: 0, offHoursCount: 0, samples: [], truncated: false, staleHumanCount: 0 }
+    const digestTodo = {
+      outdatedSources: counts.outdatedSources ?? 0,
+      failedSources: counts.failedSources ?? 0,
+      expiredCards: counts.expiredCards ?? 0,
+      suggestions: counts.suggestions ?? 0,
+      tagSuggestUsers: counts.tagSuggestUsers ?? 0,
+      warnings: digestWarnings.length,
+      topWarningLabel: digestWarnings.length ? ALERT_LABELS[digestWarnings[0]!] : '',
+    }
+    // `D-103`⑦：有要去後台的事才產短網址（順利的一天那一行不放連結，免得每天白寫一筆）
+    const digestLink = digestPlaces({ waiting: digestWaiting, todo: digestTodo }).length
+      ? await createNotifyLink(ws, adminHomePath(ws), db).catch(() => undefined)
+      : undefined
     const lines = buildDigestLines({
       dateLabel: taipeiDateLabel(today),
       yesterday,
-      waiting: waiting ?? { count: 0, offHoursCount: 0, samples: [], truncated: false, staleHumanCount: 0 },
-      todo: {
-        outdatedSources: counts.outdatedSources ?? 0,
-        failedSources: counts.failedSources ?? 0,
-        expiredCards: counts.expiredCards ?? 0,
-        suggestions: counts.suggestions ?? 0,
-        tagSuggestUsers: counts.tagSuggestUsers ?? 0,
-        warnings: digestWarnings.length,
-        topWarningLabel: digestWarnings.length ? ALERT_LABELS[digestWarnings[0]!] : '',
-      },
+      waiting: digestWaiting,
+      todo: digestTodo,
       festivalText: festival ? festivalReminderText(festival, tailoredAngle) : '',
       weeklyLines: insights ?? [],
       unknownNotes,
+      link: digestLink,
     })
     // 連昨天的數字都查不到、又沒有任何事可講 → 整則不發，但名額已經認領掉了，
     // 所以要拆章讓下一輪重來（否則今天就再也沒有摘要）
@@ -1308,7 +1317,8 @@ export async function dailyBacklogDigest(db: Firestore) {
     }
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
     try {
-      const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], ws)))
+      // 每一位的成敗都記下來（`D-103`⑥）：天天「發」卻一則都沒送到的那一位，「LINE 通知」頁會變黃
+      const results = await pushToNotifyList(ws, cfg.lineUserIds, [msg], db)
       results.forEach((r, i) => {
         if (r.status === 'rejected') {
           // 最常見原因：該人員不是此官方帳號好友。名單全掛也不重試（設定問題，
@@ -1516,17 +1526,20 @@ export async function pushCriticalAlerts(db: Firestore) {
     }
 
     const shown = fresh.slice(0, CRITICAL_PUSH_MAX_LINES)
-    const lines = [
-      fresh.length === 1 ? '🔴 有 1 件事正在影響客人' : `🔴 有 ${fresh.length} 件事正在影響客人`,
-      ...shown.map(criticalAlertLine),
-    ]
-    if (fresh.length > shown.length) lines.push(`・還有 ${fresh.length - shown.length} 件，請到後台看`)
-    lines.push('請開後台，右下角的小幫手會告訴你每一件要怎麼處理。')
-
-    const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+    // 文案在 shared（「LINE 通知」頁的預覽吃同一支）；`D-103`⑦ 附打開後台首頁的短網址
+    const link = await createNotifyLink(wid, adminHomePath(wid), db).catch(() => undefined)
+    const msg: messagingApi.TextMessage = {
+      type: 'text',
+      text: buildCriticalAlertText({
+        count: fresh.length,
+        lines: shown.map(criticalAlertLine),
+        more: fresh.length - shown.length,
+        link,
+      }),
+    }
     let anyDelivered = false
     try {
-      const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], wid)))
+      const results = await pushToNotifyList(wid, cfg.lineUserIds, [msg], db)
       results.forEach((r, i) => {
         if (r.status === 'fulfilled') anyDelivered = true
         else console.warn('[critical-alert-push] push failed for', cfg.lineUserIds[i], (r.reason as Error)?.message ?? r.reason)

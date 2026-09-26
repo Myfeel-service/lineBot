@@ -1,15 +1,18 @@
 /**
  * Handoff 通知：AI / 腳本把對話轉真人時，用官方帳號推播提醒指定客服人員。
  *
- * 設定來源：aiSettings.handoffNotify（enabled + lineUserIds）。
- * 限制：收通知的人必須是此官方帳號的好友（LINE push 的先天限制），設定頁有註明。
+ * 設定來源：aiSettings.handoffNotify（enabled + lineUserIds），畫面在「設定 → LINE 通知」（`C-270`）。
+ * 限制：收通知的人必須是此官方帳號的好友（LINE push 的先天限制）；推不出去的那一位會記下來
+ * （`line-notify-delivery.ts`），那一頁那一列會變黃。文案在 `shared/line-notify-messages.ts`。
  * 同一位客人 10 分鐘內只通知一次（per-instance in-memory 節流；多實例下最壞情況
  * 是各實例各通知一次，可接受——通知漏發比重複發更糟）。
  */
 import type { messagingApi } from '@line/bot-sdk'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { pushMessage } from './line'
+import { pushToNotifyList } from './line-notify-delivery'
+import { conversationPath, conversationsListPath, createNotifyLink } from './notify-links'
 import { getAiSettings } from './ai-settings'
+import { buildHandoffNotifyText, buildOverdueBatchText } from '~~/shared/line-notify-messages'
 import { getDb } from './firebase'
 import { resolveAnsweredQuota } from './billing'
 import { isServiceHoursDnd } from '~~/shared/time'
@@ -87,42 +90,29 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
   const reasonLabel = params.reason
     ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
     : '客服流程轉真人'
-  const hasContext = Boolean(params.summary?.trim() || params.customerMessage.trim())
-  const lines = params.slaReminderMinutes
-    // missed_only 的首次通知帶完整內容（摘要/訊息由 remindOverdueHandoffs 從存檔補回）;
-    // always 模式的再提醒維持短版——完整內容第一則已經發過了。
-    ? (hasContext
-        ? [
-            `🙋 真人客服請求（已等超過 ${params.slaReminderMinutes} 分鐘沒人接手）`,
-            `客人：${params.customerName}`,
-            ...(params.summary?.trim() ? [`📋 摘要：${params.summary.trim()}`] : []),
-            ...(params.customerMessage.trim() ? [`訊息：${params.customerMessage.trim().slice(0, 200)}`] : []),
-            `原因：${reasonLabel}`,
-            '請至後台「對話」頁回覆。',
-          ]
-        : [
-            '⏰ 提醒：真人客服請求尚未回應',
-            `客人：${params.customerName}`,
-            `已等待超過 ${params.slaReminderMinutes} 分鐘`,
-            '請至後台「對話」頁回覆。',
-          ])
-    : [
-        '🙋 真人客服請求',
-        `客人：${params.customerName}`,
-        ...(params.summary?.trim() ? [`📋 摘要：${params.summary.trim()}`] : []),
-        ...(params.customerMessage.trim() ? [`訊息：${params.customerMessage.trim().slice(0, 200)}`] : []),
-        `原因：${reasonLabel}`,
-        '請至後台「對話」頁回覆。',
-      ]
-  const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+  // 文案在 shared（後台「LINE 通知」頁的預覽吃同一支）。missed_only 的首次通知帶完整內容
+  // （摘要/訊息由 remindOverdueHandoffs 從存檔補回）；always 模式的再提醒是短版一行。
+  // `D-103`⑦：附一條直接打開這位客人對話的短網址（沒有對外網址時退回「請至後台…」）
+  const link = await createNotifyLink(params.workspaceId, conversationPath(params.workspaceId, params.customerLineUserId))
+    .catch(() => undefined)
+  const msg: messagingApi.TextMessage = {
+    type: 'text',
+    text: buildHandoffNotifyText({
+      customerName: params.customerName,
+      customerMessage: params.customerMessage,
+      reasonLabel,
+      summary: params.summary,
+      slaReminderMinutes: params.slaReminderMinutes,
+      link,
+    }),
+  }
 
-  const results = await Promise.allSettled(
-    cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)),
-  )
+  // 每一位的成敗都記下來（`D-103`⑥）：封鎖／不是好友的那一位，「LINE 通知」頁那一列會變黃
+  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg])
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       // 最常見原因：該人員不是此官方帳號好友
-      console.warn('[handoff-notify] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
+      console.warn('[handoff-notify] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
     }
   })
   // 名單上全部推播失敗（例如都不是好友）仍算「已發」：那是設定問題，
@@ -152,13 +142,6 @@ export interface OverdueHandoffItem {
   waitedMs: number
   /** null = 非 AI 護欄觸發（例如腳本設定轉真人），或存檔內容已過期 */
   reason: HandoffReason | null
-}
-
-/** 「等了多久」的白話寫法：一小時內講分鐘，超過講小時（不寫「1.8 小時」這種要換算的數字） */
-function waitedText(waitedMs: number): string {
-  const minutes = Math.max(1, Math.round(waitedMs / 60_000))
-  if (minutes < 60) return `等 ${minutes} 分鐘`
-  return `等 ${Math.max(1, Math.round(minutes / 60))} 小時`
 }
 
 /**
@@ -191,20 +174,24 @@ export async function notifyOverdueHandoffBatch(params: {
   const listed = sorted.slice(0, OVERDUE_BATCH_LIST_MAX)
   const rest = sorted.length - listed.length
 
-  const lines = [
-    `🙋 ${sorted.length} 位客人在等真人客服（都已超過 ${params.slaReminderMinutes} 分鐘沒人接手）`,
-    ...listed.map((item) => {
-      const reasonLabel = item.reason ? (HANDOFF_REASON_LABELS[item.reason] ?? item.reason) : ''
-      return `・${item.customerName} — ${waitedText(item.waitedMs)}${reasonLabel ? `・${reasonLabel}` : ''}`
+  // 好幾位一起等 → 連結開到「對話」清單（不是其中某一位）
+  const link = await createNotifyLink(params.workspaceId, conversationsListPath(params.workspaceId)).catch(() => undefined)
+  const msg: messagingApi.TextMessage = {
+    type: 'text',
+    text: buildOverdueBatchText({
+      slaReminderMinutes: params.slaReminderMinutes,
+      total: sorted.length,
+      items: listed.map(item => ({
+        customerName: item.customerName,
+        waitedMs: item.waitedMs,
+        reasonLabel: item.reason ? (HANDOFF_REASON_LABELS[item.reason] ?? item.reason) : '',
+      })),
+      rest,
+      link,
     }),
-    ...(rest > 0 ? [`・另有 ${rest} 位客人在等（完整名單請看後台）`] : []),
-    '請至後台「對話」頁回覆。',
-  ]
-  const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
+  }
 
-  const results = await Promise.allSettled(
-    cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)),
-  )
+  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg])
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       console.warn('[handoff-notify] batch push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
@@ -255,10 +242,10 @@ export async function maybeWarnQuotaThreshold(params: {
     type: 'text',
     text: `⚠️ AI 用量預警\n${params.usageText}(約 ${Math.round(params.ratio * 100)}%)。\n額度用完後,客人訊息將全部轉真人或降級模型(依設定)。請留意用量或調整方案。`,
   }
-  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)))
+  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn('[quota-warn] push failed for', cfg.lineUserIds[i], r.reason?.message ?? r.reason)
+      console.warn('[quota-warn] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
     }
   })
   // 「這期已警告」只在至少送達一人時才記(C-89):每期一次的警報若在推播全滅的
@@ -301,7 +288,7 @@ export async function maybeNotifyQuotaExhausted(params: {
     type: 'text',
     text: `🚫 AI 額度已用完\n${params.usageText}。\n${consequence}\n要恢復請至後台調整方案,或等下期額度重置。`,
   }
-  const results = await Promise.allSettled(cfg.lineUserIds.map(uid => pushMessage(uid, [msg], params.workspaceId)))
+  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       console.warn('[quota-exhausted] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)

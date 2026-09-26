@@ -59,7 +59,8 @@
               </div>
               <div class="ai-check-item">
                 <span><el-icon :color="notifyReady ? 'var(--brand-green-text)' : 'var(--text-muted)'"><component :is="notifyReady ? CircleCheckFilled : CircleCheck" /></el-icon></span>
-                <span>設定轉真人通知(AI 答不了時才有人即時接手)</span>
+                <span>把手機加進 LINE 通知(AI 答不了時才有人即時接手)</span>
+                <NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="ai-status-link">去加手機 →</NuxtLink>
               </div>
               <div class="ai-check-item">
                 <span><el-icon><InfoFilled /></el-icon></span>
@@ -184,210 +185,21 @@
           </div>
         </div>
 
-        <!-- ── 轉真人通知 ─────────────────────── -->
+        <!-- ── LINE 通知（2026-09-27 `C-270`：整區搬到「設定 → LINE 通知」，這裡只留指路）──
+             ⛔ 不在這裡留一份可以改的名單：兩個地方都能改＝遲早對不上；而且這頁要開了 AI 才進得去，
+             純真人客服的帳號永遠改不到。 -->
         <div class="message-card ai-section-card" data-tour="ais-handoff">
           <div class="message-card-header">
             <div class="card-header-main">
-              <span class="section-title">轉真人通知</span>
+              <span class="section-title">LINE 通知</span>
             </div>
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              AI 或客服流程把對話轉給真人時,用官方帳號推播 LINE 訊息提醒以下客服人員。
-              收通知的人必須已加這個官方帳號為好友;同一位客人 10 分鐘內只通知一次。
+              AI 答不出來、客人要找真人時要傳到誰的手機、什麼時候傳，搬到
+              <NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`">「設定 → LINE 通知」</NuxtLink>
+              了。
             </p>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="啟用通知" tight />
-              <el-switch
-                v-model="form.handoffNotify.enabled"
-                active-text="啟用"
-                inactive-text="停用"
-              />
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="通知對象(最多 10 位)" tight />
-              <el-select
-                v-model="form.handoffNotify.lineUserIds"
-                multiple
-                filterable
-                remote
-                allow-create
-                :default-first-option="notifyQuery.length > 0"
-                :remote-method="searchNotifyUsers"
-                :loading="notifySearchLoading"
-                :multiple-limit="10"
-                :disabled="!form.handoffNotify.enabled"
-                placeholder="點一下挑選,或輸入暱稱搜尋…"
-                class="control-full"
-                @change="syncNotifyDisplayNames"
-                @visible-change="onNotifyDropdownVisible"
-              >
-                <el-option-group v-if="notifyMemberOptions.length" label="後台成員(已綁定 LINE)">
-                  <el-option
-                    v-for="opt in notifyMemberOptions"
-                    :key="opt.id"
-                    :value="opt.id"
-                    :label="opt.name"
-                  >
-                    <span class="ai-notify-option">
-                      <img
-                        v-if="opt.picture"
-                        :src="opt.picture"
-                        class="ai-notify-option-avatar"
-                        alt=""
-                      >
-                      <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
-                      <span class="ai-notify-option-name">{{ opt.name }}</span>
-                      <span class="ai-notify-option-id">{{ opt.sub }}</span>
-                    </span>
-                  </el-option>
-                </el-option-group>
-                <el-option-group :label="notifyQuery ? '搜尋結果(LINE 好友)' : 'LINE 好友(最近加入的)'">
-                  <el-option
-                    v-for="opt in notifyGuestOptions"
-                    :key="opt.id"
-                    :value="opt.id"
-                    :label="opt.name"
-                  >
-                    <span class="ai-notify-option">
-                      <img
-                        v-if="opt.picture"
-                        :src="opt.picture"
-                        class="ai-notify-option-avatar"
-                        alt=""
-                      >
-                      <span v-else class="ai-notify-option-avatar-placeholder"><el-icon><User /></el-icon></span>
-                      <span class="ai-notify-option-name">{{ opt.name }}</span>
-                      <span class="ai-notify-option-id">{{ opt.id }}</span>
-                    </span>
-                  </el-option>
-                </el-option-group>
-                <template #empty>
-                  <p class="ai-notify-empty">
-                    {{ notifySearchLoading
-                      ? '搜尋中…'
-                      : notifyQuery
-                        ? '找不到這個暱稱的好友'
-                        : '還沒有人加這個官方帳號為好友,可直接貼上 U 開頭的 LINE userId' }}
-                  </p>
-                </template>
-              </el-select>
-              <p class="ai-section-hint">
-                找不到人?到
-                <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/members`">設定 → 成員管理</NuxtLink>
-                <template v-else>「設定 → 成員管理」</template>
-                幫該成員「綁定 LINE」,這裡就會出現在最上面那組,顯示的是他的 Email 而不是陌生暱稱。
-                也可以直接從下面的 LINE 好友清單挑,或貼上 U 開頭的 LINE userId 後按 Enter。
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="通知時機" tight />
-              <el-radio-group
-                v-model="form.handoffNotify.mode"
-                :disabled="!form.handoffNotify.enabled"
-              >
-                <el-radio value="always">每次轉真人都通知</el-radio>
-                <el-radio value="missed_only">只通知沒人接手的</el-radio>
-              </el-radio-group>
-              <p class="ai-section-hint">
-                {{ form.handoffNotify.mode === 'missed_only'
-                  ? '客人轉真人的當下不推播;超過下面設定的分鐘數仍沒人回覆,才發一則通知(內含客人問題摘要)。適合客服平常就開著後台「對話」頁的團隊,可大幅減少官方帳號的訊息用量。'
-                  : '客人轉真人的當下就推播提醒。每一則通知都會計入官方帳號的月訊息額度。' }}
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel
-                :text="form.handoffNotify.mode === 'missed_only' ? '幾分鐘沒人接手才通知' : '超時再提醒(分鐘,0 = 關閉)'"
-                tight
-              />
-              <el-input-number
-                v-model="form.handoffNotify.slaRemindMinutes"
-                :min="form.handoffNotify.mode === 'missed_only' ? 5 : 0"
-                :max="1440"
-                :step="5"
-                :disabled="!form.handoffNotify.enabled"
-              />
-              <p class="ai-section-hint">
-                {{ form.handoffNotify.mode === 'missed_only'
-                  ? '轉真人後等這麼久仍無人回覆,就發出唯一的一則通知(每場會話一次)。'
-                  : '轉真人後超過此時間仍無人回覆,再推播提醒一次(每場會話只提醒一次)。' }}
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="每日摘要發送時間" tight />
-              <el-select
-                v-model="form.handoffNotify.digestHour"
-                :disabled="!form.handoffNotify.enabled"
-                class="ai-hour-select"
-              >
-                <el-option
-                  v-for="h in 24"
-                  :key="h - 1"
-                  :value="h - 1"
-                  :label="`${String(h - 1).padStart(2, '0')}:00`"
-                />
-              </el-select>
-              <p class="ai-section-hint">
-                每天過了這個時間,把<strong>昨天的成績</strong>(幾場對話、AI 自己搞定幾場、
-                有沒有客人一整天沒人回、新朋友幾位)、現在還在等真人的客人、
-                以及知識庫要處理的事,整理成<strong>一則</strong>訊息推播給上面的通知對象。
-                <strong>每天都會發</strong>——順利的日子就只有一行(「昨天 18 場對話,
-                AI 全部自己搞定,沒有人在等」),這樣你才分得出「昨天很順」和「通知壞掉了」。
-                <template v-if="form.serviceHours.enabled && form.serviceHours.weekendOff">
-                  你設了週六日休息,<strong>假日整天不發</strong>,週末累積的事會併進上班日那一則。
-                </template>
-                <template v-else>
-                  假日也想安靜,請到下面「服務時間 / 勿擾時段」開啟並勾「週六日整天休息」。
-                </template>
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="順便提醒節慶行銷" tight />
-              <el-switch
-                v-model="form.handoffNotify.festivalTips"
-                :disabled="!form.handoffNotify.enabled"
-                active-text="啟用"
-                inactive-text="停用"
-              />
-              <p class="ai-section-hint">
-                台灣節日的<strong>前 7 天、前 3 天、前一天</strong>,在上面那則摘要裡多加一段節日提醒與行銷建議
-                (例如「再過 7 天就是中秋節,禮盒與送禮的需求會明顯升溫」)。三次講的事不一樣:
-                七天前提醒備素材、三天前提醒去排推播、前一天是最後確認清單。
-                <strong>當天沒有其他待辦也會照發</strong>這一段,否則提醒就沒意義了。
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="每週一附「本週顧客觀察」" tight />
-              <el-switch
-                v-model="form.handoffNotify.weeklyInsights"
-                :disabled="!form.handoffNotify.enabled"
-                active-text="啟用"
-                inactive-text="停用"
-              />
-              <p class="ai-section-hint">
-                每週一在同一則摘要裡多一段：這週被貼最多的標籤、還沒看的 AI 標籤建議、
-                上個月有來訊但最近兩週安靜下來的客人數——都是看完就有下一步的觀察
-                (例如選著標籤發推播)。<strong>只講有資料的</strong>,這週沒東西就整段不出現,
-                不會硬湊一段空話。
-                收錄約 20 個真的會影響買氣的節日(中秋、春節、母親節、雙 11…),同一天最多講一個。
-              </p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="出大事時馬上通知" tight />
-              <el-switch
-                v-model="form.handoffNotify.criticalAlertPush"
-                :disabled="!form.handoffNotify.enabled"
-                active-text="啟用"
-                inactive-text="停用"
-              />
-              <p class="ai-section-hint">
-                <strong>正在影響客人</strong>的狀況(機器人收不到客人訊息、回覆則數用完 AI 停止回覆、
-                活動連結打不開…)不等每日摘要,當天就推一則給上面的通知對象。
-                同一件事<strong>一天最多講一次</strong>,多件事併成一則;
-                只在<strong>早上 9 點到晚上 9 點</strong>之間發(半夜叫醒你也修不了,隔天早上照樣會講)。
-                「建議處理」那一級不會用這個管道,免得真的出事時你已經不看了。
-              </p>
-            </div>
           </div>
         </div>
 
@@ -849,12 +661,10 @@
 </template>
 
 <script setup lang="ts">
-import { CircleCheck, CircleCheckFilled, InfoFilled, User } from '@element-plus/icons-vue'
+import { CircleCheck, CircleCheckFilled, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import {
   buildDefaultAiSettings,
-  DEFAULT_SLA_REMIND_MINUTES,
-  DEFAULT_DIGEST_HOUR,
   DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS,
   SUGGESTED_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
@@ -869,7 +679,7 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
-const { apiFetch, workspaceId, can, canManageSettings } = useWorkspace()
+const { apiFetch, workspaceId, can } = useWorkspace()
 const canEditSettings = computed(() => can('ai.settings.write'))
 const { showToast } = useAdminToast()
 const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
@@ -885,7 +695,8 @@ interface FormShape {
   replyMaxLen: number
   sensitiveTopics: string[]
   quota: { monthlyTokenCap: number; onExceed: AiSettingsDoc['quota']['onExceed'] }
-  handoffNotify: AiSettingsDoc['handoffNotify']
+  // ⛔ handoffNotify 不在這張表單裡（2026-09-27 `C-270` 搬到「設定 → LINE 通知」）：
+  //    存 AI 設定時整份送出，帶著一份舊的名單就會把別人剛加進來的手機蓋掉
   handbackIdleMinutes: number
   humanSessionMaxIdleHours: number
   disambiguation: AiSettingsDoc['disambiguation']
@@ -909,7 +720,6 @@ function defaultForm(): FormShape {
     replyMaxLen: d.replyMaxLen,
     sensitiveTopics: [...d.sensitiveTopics],
     quota: { ...d.quota },
-    handoffNotify: { ...d.handoffNotify, lineUserIds: [...d.handoffNotify.lineUserIds], displayNames: { ...d.handoffNotify.displayNames } },
     handbackIdleMinutes: d.handbackIdleMinutes,
     humanSessionMaxIdleHours: d.humanSessionMaxIdleHours,
     disambiguation: { ...d.disambiguation },
@@ -945,14 +755,6 @@ watch(() => form.value.disambiguation.top1Min, (v) => {
 })
 watch(() => form.value.disambiguation.top1Max, (v) => {
   if (v < form.value.disambiguation.top1Min) form.value.disambiguation.top1Min = v
-})
-
-// 「只通知沒人接手的」模式下,超時分鐘數是唯一的通知路徑,0(關閉)會變成完全靜音——
-// 切過去時把 0 拉回預設值,和後端 normalize 的守門一致,畫面顯示的就是會存進去的
-watch(() => form.value.handoffNotify.mode, (mode) => {
-  if (mode === 'missed_only' && form.value.handoffNotify.slaRemindMinutes < 5) {
-    form.value.handoffNotify.slaRemindMinutes = DEFAULT_SLA_REMIND_MINUTES
-  }
 })
 
 /**
@@ -1088,7 +890,8 @@ const autoCloseIdleOn = computed({
 })
 
 const kbReady = computed(() => (cardCount.value ?? 0) > 0)
-const notifyReady = computed(() => form.value.handoffNotify.enabled && form.value.handoffNotify.lineUserIds.length > 0)
+/** 名單上有沒有人在收（唯讀，從載入的設定讀；名單本身在「設定 → LINE 通知」改） */
+const notifyReady = ref(false)
 const showChecklist = computed(() => !form.value.enabled || !kbReady.value || !notifyReady.value)
 
 function formatTokens(n: number) {
@@ -1114,145 +917,6 @@ async function loadStatus() {
   }
 }
 
-// ── 通知對象選人器:下拉直接挑好友,也能用暱稱搜尋,免去手抄 LINE userId ──
-/** id 一律是純 LINE userId（Uxxx…）——存進設定後要直接餵給 LINE 推播，不能用 Firestore doc id */
-type NotifyUser = { id: string; displayName: string; pictureUrl: string }
-
-const notifySearchLoading = ref(false)
-const notifySearchResults = ref<NotifyUser[]>([])
-/** 沒打字時的預設清單(最近加入的好友)——下拉一點開就有人可選,不必先猜暱稱 */
-const notifyDefaultUsers = ref<NotifyUser[]>([])
-const notifyDefaultLoaded = ref(false)
-const notifyQuery = ref('')
-// userId → 暱稱/頭像(已儲存的 displayNames + 搜尋結果累積),讓已選 tag 顯示名字而不是 Uxxxx
-const knownUserNames = ref<Record<string, string>>({})
-const knownUserPictures = ref<Record<string, string>>({})
-
-/** 已綁定 LINE 的後台成員——名單就是自己人,顯示 Email 比顯示 LINE 暱稱好認 */
-type NotifyMember = { id: string; name: string; sub: string; picture: string }
-const notifyMembers = ref<NotifyMember[]>([])
-const notifyMembersLoaded = ref(false)
-
-const notifyMemberOptions = computed(() => notifyMembers.value)
-
-/** 沒綁定的 LINE 好友(搜尋／最近好友)+ 已選但不在成員名單裡的舊項目。
- *  成員已出現在上面那組,這裡要排除——同一個 value 出現兩次 el-select 會選錯 tag。 */
-const notifyGuestOptions = computed(() => {
-  const memberIds = new Set(notifyMembers.value.map(m => m.id))
-  const map = new Map<string, string>()
-  for (const uid of form.value.handoffNotify.lineUserIds) {
-    if (memberIds.has(uid)) continue
-    map.set(uid, knownUserNames.value[uid] || uid)
-  }
-  for (const u of (notifyQuery.value ? notifySearchResults.value : notifyDefaultUsers.value)) {
-    if (memberIds.has(u.id)) continue
-    map.set(u.id, u.displayName || u.id)
-  }
-  return [...map.entries()].map(([id, name]) => ({
-    id,
-    name,
-    picture: knownUserPictures.value[id] || '',
-  }))
-})
-
-/** 載入已綁定 LINE 的成員。頁面載入就抓一次,讓已存的收件人直接顯示 Email 而不是 Uxxx */
-async function ensureNotifyMembers() {
-  if (notifyMembersLoaded.value) return
-  notifyMembersLoaded.value = true
-  try {
-    const rows = await apiFetch<any[]>(`/api/admin/workspaces/${workspaceId.value}/members`)
-    notifyMembers.value = rows
-      .filter(r => !r.pendingInvite && !r.readOnly && String(r.lineUserId || '').trim())
-      .map((r) => {
-        const id = String(r.lineUserId).trim()
-        const email = String(r.invitedEmail || r.uid || '').trim()
-        const lineName = String(r.lineDisplayName || '').trim()
-        return {
-          id,
-          name: email || lineName || id,
-          sub: lineName ? `LINE：${lineName}` : id,
-          picture: String(r.linePictureUrl || '').trim(),
-        }
-      })
-    // 讓已選的 tag 也顯示 Email(成員優先於 LINE 暱稱)
-    for (const m of notifyMembers.value) {
-      knownUserNames.value[m.id] = m.name
-      if (m.picture) knownUserPictures.value[m.id] = m.picture
-    }
-  }
-  catch {
-    notifyMembersLoaded.value = false
-  }
-}
-
-async function fetchNotifyUsers(search: string): Promise<NotifyUser[]> {
-  const qs = search ? `search=${encodeURIComponent(search)}&limit=20` : 'limit=20'
-  const res = await apiFetch<{ users: (NotifyUser & { lineUserId?: string })[] }>(`/api/users/list?${qs}`)
-  // 取 lineUserId 而非 doc id：doc id 是 {workspaceId}_{lineUserId}，餵給 LINE 會被判無效、通知靜默失敗
-  const users = res.users.map(u => ({
-    id: String(u.lineUserId || '').trim(),
-    displayName: u.displayName,
-    pictureUrl: u.pictureUrl ?? '',
-  })).filter(u => u.id)
-  for (const u of users) {
-    if (u.displayName) knownUserNames.value[u.id] = u.displayName
-    if (u.pictureUrl) knownUserPictures.value[u.id] = u.pictureUrl
-  }
-  return users
-}
-
-/** 下拉展開時抓一次預設清單;失敗就放掉旗標,下次展開再試,不影響打字搜尋 */
-async function ensureNotifyDefaultUsers() {
-  if (notifyDefaultLoaded.value) return
-  notifyDefaultLoaded.value = true
-  notifySearchLoading.value = true
-  try {
-    notifyDefaultUsers.value = await fetchNotifyUsers('')
-  }
-  catch {
-    notifyDefaultLoaded.value = false
-  }
-  finally {
-    notifySearchLoading.value = false
-  }
-}
-
-function onNotifyDropdownVisible(visible: boolean) {
-  if (!visible) return
-  void ensureNotifyMembers()
-  void ensureNotifyDefaultUsers()
-}
-
-async function searchNotifyUsers(query: string) {
-  const q = query.trim()
-  notifyQuery.value = q
-  // 清空關鍵字時退回預設清單,而不是變成空白下拉
-  if (!q) {
-    notifySearchResults.value = []
-    await ensureNotifyDefaultUsers()
-    return
-  }
-  notifySearchLoading.value = true
-  try {
-    notifySearchResults.value = await fetchNotifyUsers(q)
-  }
-  catch {
-    notifySearchResults.value = []
-  }
-  finally {
-    notifySearchLoading.value = false
-  }
-}
-
-function syncNotifyDisplayNames() {
-  const names: Record<string, string> = {}
-  for (const uid of form.value.handoffNotify.lineUserIds) {
-    const name = knownUserNames.value[uid]
-    if (name) names[uid] = name
-  }
-  form.value.handoffNotify.displayNames = names
-}
-
 /** 把後端回傳的設定套進表單並標記乾淨。load 與 save 共用——save 後回填 normalize 結果，
  * 後端有任何修正（min/max 交換、clamp、剪 displayNames）畫面都會跟上,不會「設定自己跳掉」。 */
 function applySettings(data: AiSettingsDoc) {
@@ -1267,18 +931,6 @@ function applySettings(data: AiSettingsDoc) {
     replyMaxLen: data.replyMaxLen,
     sensitiveTopics: [...data.sensitiveTopics],
     quota: { ...data.quota },
-    handoffNotify: {
-      enabled: data.handoffNotify?.enabled === true,
-      lineUserIds: [...(data.handoffNotify?.lineUserIds ?? [])],
-      displayNames: { ...(data.handoffNotify?.displayNames ?? {}) },
-      mode: data.handoffNotify?.mode === 'missed_only' ? 'missed_only' : 'always',
-      slaRemindMinutes: Number(data.handoffNotify?.slaRemindMinutes ?? DEFAULT_SLA_REMIND_MINUTES),
-      digestHour: Number(data.handoffNotify?.digestHour ?? DEFAULT_DIGEST_HOUR),
-      // 舊工作區沒有這個欄位＝預設開（與後端 normalize 同一個口徑，別在這裡寫成 === true）
-      festivalTips: data.handoffNotify?.festivalTips !== false,
-      weeklyInsights: data.handoffNotify?.weeklyInsights !== false,
-      criticalAlertPush: data.handoffNotify?.criticalAlertPush !== false,
-    },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     humanSessionMaxIdleHours: Number(data.humanSessionMaxIdleHours ?? DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS),
     disambiguation: { ...data.disambiguation },
@@ -1288,10 +940,7 @@ function applySettings(data: AiSettingsDoc) {
     inactiveTag: { ...(data.inactiveTag ?? buildDefaultAiSettings().inactiveTag) },
     autoTagSuggest: { ...(data.autoTagSuggest ?? buildDefaultAiSettings().autoTagSuggest) },
   }
-  // 回填名稱快取,讓已選通知對象的 tag 顯示暱稱
-  for (const [uid, name] of Object.entries(data.handoffNotify?.displayNames ?? {})) {
-    if (name) knownUserNames.value[uid] = name
-  }
+  notifyReady.value = data.handoffNotify?.enabled === true && (data.handoffNotify?.lineUserIds?.length ?? 0) > 0
   lastLoadedDoc = data
   nextTick(() => markClean())
 }
@@ -1349,41 +998,18 @@ async function save() {
   }
 }
 
-// ── 小幫手帶路:?focus=handoff ──────────────────────────────
-// 小幫手「設定轉真人通知」劇本要人來這頁用完整選人器時,連結卡會帶這個參數;
-// 進頁自動聚光「轉真人通知」那一卡＋儲存鈕,人不用在長頁面裡自己找位置。
+// ── 舊連結：?focus=handoff ──────────────────────────────
+// 以前小幫手「設定轉真人通知」帶人來這頁聚光那一卡；那一區搬到「設定 → LINE 通知」之後（`C-270`），
+// 還拿著舊連結進來的人直接送過去，⛔ 不讓他在這頁找一個已經不在的區塊。
 const route = useRoute()
-const router = useRouter()
-const { startAdHocTour } = useTutorial()
-
-function maybeStartFocusTour() {
-  if (route.query.focus !== 'handoff')
-    return
-  // 參數用完即丟:重新整理或存檔後不要再跑一次導覽
-  router.replace({ query: { ...route.query, focus: undefined } })
-  void startAdHocTour([
-    {
-      target: '[data-tour="ais-handoff"]',
-      title: '設定轉真人通知',
-      description:
-        '就是這一區。先把「<strong>啟用通知</strong>」打開，再到「<strong>通知對象</strong>」點一下挑選、或輸入暱稱搜尋。收通知的人必須已加你的官方帳號好友。',
-      placement: 'top',
-    },
-    {
-      target: '[data-tour="ais-save"]',
-      title: '儲存設定',
-      description: '選好人之後按這裡才會生效。存好之後，右下角小幫手的提醒會自己熄掉。',
-      placement: 'bottom-end',
-    },
-  ])
-}
 
 onMounted(() => {
+  if (route.query.focus === 'handoff') {
+    void navigateTo(`/admin/${workspaceId.value}/settings/line-notify?add=me`, { replace: true })
+    return
+  }
   loadSettings()
   loadStatus()
   checkIsSuperAdmin().catch(() => {})
-  // 先抓成員綁定,已存的收件人才會直接顯示 Email,不用等使用者點開下拉
-  ensureNotifyMembers()
-  maybeStartFocusTour()
 })
 </script>

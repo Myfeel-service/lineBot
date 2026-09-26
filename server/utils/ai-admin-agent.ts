@@ -118,7 +118,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     },
   },
   get_ai_settings: {
-    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、轉真人通知、服務時間與勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒 / 勿擾幾點到幾點」時用。'
+    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、LINE 通知(幾位會收到、沒人接手幾分鐘提醒;名單在「設定 → LINE 通知」)、服務時間與勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒 / 勿擾幾點到幾點」時用。'
       // ⛔ 2026-09-18 壓測踩到:原本回的是設定裡的 start/end(那是**服務時間**),
       //    模型被問「勿擾時段幾點到幾點」就照字面唸成「勿擾 10:00–19:00」——正好把上班時間
       //    講成不打擾的時間。現在兩句話都由後端算好,模型照抄就好。
@@ -138,8 +138,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         shopUrl: s.shopUrl || '(未設定)',
         sensitiveTopicCount: (s.sensitiveTopics ?? []).length,
         handoffNotify: {
-          enabled: s.handoffNotify?.enabled === true,
-          recipientCount: (s.handoffNotify?.lineUserIds ?? []).length,
+          // 總開關拿掉之後（`C-270`）「開著」＝名單上真的有人在收
+          enabled: s.handoffNotify?.enabled === true && (s.handoffNotify?.lineUserIds ?? []).length > 0,
+          recipientCount: s.handoffNotify?.enabled === true ? (s.handoffNotify?.lineUserIds ?? []).length : 0,
           slaRemindMinutes: s.handoffNotify?.slaRemindMinutes ?? 0,
         },
         // ⛔ 不回裸的 start/end:那是**服務時間**的起訖,離開這裡就沒有人記得這件事。

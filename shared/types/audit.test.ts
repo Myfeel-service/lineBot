@@ -97,7 +97,8 @@ describe('前後對照展開到真的有變的那一格', () => {
     )
     expect(omitted).toBe(0)
     expect(lines).toEqual([
-      { key: 'handoffNotify.slaRemindMinutes', label: '轉真人通知 › 等太久的提醒時間（分鐘）', before: '30', after: '37' },
+      // 2026-09-27 `C-270`：這一組改叫「LINE 通知」（頁面搬到「設定 → LINE 通知」）
+      { key: 'handoffNotify.slaRemindMinutes', label: 'LINE 通知 › 等太久的提醒時間（分鐘）', before: '30', after: '37' },
     ])
   })
 

@@ -44,6 +44,8 @@
 
     <template #editor-body>
       <div class="solo-editor-body admin-panel-stack conv-stats-page">
+        <!-- 還沒把手機加進 LINE 通知的成員，第一次登入問一次（`C-270`／`D-103`⑧） -->
+        <AdminLineNotifyInviteCard />
         <div v-if="kpiLoading" class="tags-loading">
           <div class="spinner" />
           <span>載入中…</span>

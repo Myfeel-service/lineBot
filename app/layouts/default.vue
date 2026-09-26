@@ -82,14 +82,25 @@
             </NuxtLink>
           </div>
 
-          <!-- Settings section (owner/admin only) -->
-          <div v-if="canManageSettings" class="nav-group" data-tour="nav-group-settings">
+          <!-- Settings section：管理員看得到全部；客服只看得到「LINE 通知」（`C-270`，第 3 題拍板：客服可以加／退自己） -->
+          <div v-if="canManageSettings || can('notify.self')" class="nav-group" data-tour="nav-group-settings">
             <div class="nav-section-label">設定</div>
-            <NuxtLink :to="`/admin/${workspaceId}/settings/members`" class="nav-item" :class="{ active: route.path.includes('/settings/members') }">
+            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/members`" class="nav-item" :class="{ active: route.path.includes('/settings/members') }">
               <el-icon class="nav-icon"><UserFilled /></el-icon>
               <span>成員管理</span>
             </NuxtLink>
             <NuxtLink
+              :to="`/admin/${workspaceId}/settings/line-notify`"
+              class="nav-item"
+              data-tour="nav-line-notify"
+              :class="{ active: route.path.includes('/settings/line-notify') }"
+            >
+              <el-icon class="nav-icon"><Bell /></el-icon>
+              <span>LINE 通知</span>
+              <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/line-notify`" />
+            </NuxtLink>
+            <NuxtLink
+              v-if="canManageSettings"
               :to="`/admin/${workspaceId}/settings/organization`"
               class="nav-item"
               data-tour="nav-organization"
@@ -103,14 +114,14 @@
               <span>組織與 LINE</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/organization`" />
             </NuxtLink>
-            <NuxtLink :to="`/admin/${workspaceId}/settings/billing`" class="nav-item" :class="{ active: route.path.includes('/settings/billing') }">
+            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/billing`" class="nav-item" :class="{ active: route.path.includes('/settings/billing') }">
               <el-icon class="nav-icon"><CreditCard /></el-icon>
               <span>訂閱與付款</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/billing`" />
             </NuxtLink>
             <!-- 操作紀錄（C-31 Phase 2 地基）：誰把什麼改成什麼，含小幫手代辦的每一筆。
                  擺在「設定」段最後＝它是回頭查帳的地方，不是日常動線。 -->
-            <NuxtLink :to="`/admin/${workspaceId}/settings/activity`" class="nav-item" :class="{ active: route.path.includes('/settings/activity') }">
+            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/activity`" class="nav-item" :class="{ active: route.path.includes('/settings/activity') }">
               <el-icon class="nav-icon"><Document /></el-icon>
               <span>操作紀錄</span>
             </NuxtLink>
@@ -156,7 +167,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import {
-  Box, ChatDotRound, Connection, CreditCard, DataLine, Document, Grid, Lightning,
+  Bell, Box, ChatDotRound, Connection, CreditCard, DataLine, Document, Grid, Lightning,
   Monitor, OfficeBuilding, PieChart, PriceTag, Promotion, Reading,
   Setting, SwitchButton, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'

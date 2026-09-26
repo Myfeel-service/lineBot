@@ -1661,19 +1661,20 @@ export function useOnboardingChat() {
         }
         busy.value = true
         try {
-          const b = await apiFetch<{ notify: 'added' | 'already' | 'off' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
+          // 2026-09-27 `C-270`：總開關拿掉之後不會再回 `off`（加進名單＝一定在收）
+          const b = await apiFetch<{ notify: 'added' | 'already' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
             method: 'POST',
             body: { lineUserId: who, lookbackMs: lookback() },
           })
-          // ⛔ 只有通知真的開著才算（`off`＝在名單上但通知被刻意關著，⛔ 不承諾會收到）
+          // ⛔ 只有真的在名單上才算（滿了、寫不進去都不承諾會收到）
           phoneNotified = b.notify === 'added' || b.notify === 'already'
           notifyResult = b.notify
           phoneTestVia = r.via ?? 'follow'
           received = r
           if (b.notify === 'full')
-            await say('通知名單已經滿了（最多 10 位），這支手機這次沒有加進去——到「AI 設定 › 轉真人通知」調整。')
-          else if (b.notify === 'off')
-            await say('這支手機加進通知名單了，但<b>通知現在是關著的</b>——到「AI 設定 › 轉真人通知」打開，才會收到。')
+            await say('通知名單已經滿了（最多 10 位），這支手機這次沒有加進去——到「設定 › LINE 通知」關掉一位再加。')
+          else if (b.notify === 'failed')
+            await say('這支手機綁好了，但加進通知名單時出了錯——到「設定 › LINE 通知」再按一次「把我的手機加進來」。')
           break
         }
         catch (e: unknown) {

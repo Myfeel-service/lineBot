@@ -175,3 +175,57 @@ describe('handoffNotifyMissing 判定（D-36③ 放寬）', () => {
     expect(getLineWorkspaceCredentials).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * 送不到也要講（`C-270`⑥，2026-09-27）：原本只看名單是不是空的，名單上的人都封鎖了官方帳號，
+ * 小幫手也不會亮——天天照樣「發」，一則都沒送到。
+ */
+describe('LINE 通知送不到（C-270）', () => {
+  /** 空庫＋一份送達紀錄（`lineNotifyDelivery/{wid}`） */
+  function dbWithDelivery(recipients: Record<string, unknown>) {
+    const base = stubDb()
+    const plain = base.collection()
+    return {
+      collection: (name: string) => name === 'lineNotifyDelivery'
+        ? { doc: () => ({ get: async () => ({ exists: true, data: () => ({ recipients }) }) }) }
+        : plain,
+    } as any
+  }
+  async function run(ids: string[], recipients: Record<string, unknown>) {
+    getAiSettings.mockResolvedValue(baseSettings({
+      handoffNotify: { enabled: true, lineUserIds: ids, displayNames: { U1: '小明', U2: 'Tina' } },
+    }))
+    getLineWorkspaceCredentials.mockResolvedValue({ channelAccessToken: 'tok', channelSecret: '', defaultLiffId: '', lineBotUserId: '' })
+    const items = await collectWorkspaceAlerts(dbWithDelivery(recipients), 'WS', { canSettings: false, canOperate: true })
+    return {
+      missing: items.find(i => i.id === 'handoffNotifyMissing'),
+      partial: items.find(i => i.id === 'lineNotifyUndeliverable'),
+    }
+  }
+
+  it('🔴 名單上的人全部封鎖 → 算「沒有人會收到」（⛔ 不可以因為名單不是空的就說沒事）', async () => {
+    const { missing, partial } = await run(['U1', 'U2'], { U1: { blockedAt: 1 }, U2: { failAt: 5, okAt: 1, failReason: 'x' } })
+    expect(missing?.state).toBe('active')
+    expect(missing?.detail).toContain('都收不到')
+    expect(partial?.state).toBe('clear') // ⛔ 同一件事不兩顆一起亮
+  })
+
+  it('只有一部分收不到 → 另一顆「有人收不到」亮，而且講得出是誰、為什麼', async () => {
+    const { missing, partial } = await run(['U1', 'U2'], { U1: { okAt: 10 }, U2: { blockedAt: 5 } })
+    expect(missing?.state).toBe('clear')
+    expect(partial?.state).toBe('active')
+    expect(partial?.count).toBe(1)
+    expect(partial?.detail).toContain('Tina封鎖了官方帳號')
+  })
+
+  it('舊的失敗被新的成功蓋過 → 不算收不到', async () => {
+    const { partial } = await run(['U1', 'U2'], { U1: { okAt: 10 }, U2: { failAt: 5, okAt: 9 } })
+    expect(partial?.state).toBe('clear')
+  })
+
+  it('從來沒傳過（剛加進來）→ 不算收不到', async () => {
+    const { missing, partial } = await run(['U1'], {})
+    expect(missing?.state).toBe('clear')
+    expect(partial?.state).toBe('clear')
+  })
+})

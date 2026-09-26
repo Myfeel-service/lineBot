@@ -25,6 +25,8 @@ describe('can — role × capability matrix', () => {
     'scripts.write': 'agent',
     'playground.use': 'agent',
     'broadcast.write': 'agent',
+    // 2026-09-27 `D-103`：客服可以把自己的手機加進 LINE 通知／自己退出；動別人與改時間是管理員
+    'notify.self': 'agent',
     'ai.settings.write': 'admin',
     'usage.read': 'admin',
     // 2026-09-16（`C-31` Phase 2 地基）：操作紀錄。裡面看得到設定的前後值與是誰動的，
@@ -33,6 +35,7 @@ describe('can — role × capability matrix', () => {
     'knowledge.reindexAll': 'admin',
     'members.manage': 'admin',
     'line.manage': 'admin',
+    'notify.manage': 'admin',
   }
 
   it('CAPABILITIES 表與政策期望一致（有新增能力必須同步更新測試）', () => {

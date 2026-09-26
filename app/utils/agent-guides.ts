@@ -342,98 +342,25 @@ const liffSetupGuide: AgentGuideDef = {
   ],
 }
 
-// ── 轉真人通知 ──────────────────────────────────────────────────
-// 連結卡的 ?focus=handoff：AI 設定頁看到它會自動聚光「轉真人通知」那一卡＋儲存鈕
-// （ai-settings.vue 進頁處理）。純連結會落在頁面頂端，人還得自己在長頁面裡找。
+// ── LINE 通知沒有人收 ────────────────────────────────────────────
+// 2026-09-27 `C-270` 改寫：原本從「官方帳號好友清單」讓人挑一位存進名單——那份清單幾乎都是客人，
+// 挑錯一位＝那位客人收到別的客人的名字與原話（`C-269`），而且存檔是整份覆寫、會把名單洗成一個人。
+// 現在名單只收綁好 LINE 的成員（`D-103` 第 2 題），綁定要本人用手機掃 QR——小幫手代不了這一步，
+// 所以劇本只做「講清楚、帶到那一顆按鈕前面」：連結帶 ?add=me，進頁直接打開掃 QR 那一塊。
+// ⛔ 這支劇本不寫任何設定。
 
 const handoffNotifyGuide: AgentGuideDef = {
   id: 'handoff-notify',
-  title: '設定轉真人通知',
+  title: '把手機加進 LINE 通知',
   alertIds: ['handoffNotifyMissing'],
   steps: [
     {
-      id: 'pick-and-save',
+      id: 'go-add',
       async run(c) {
         const { r } = c
-        await r.say('現在 AI 接不住、或客人指名找真人時，<b>沒有人會收到通知</b>——客人可能等很久都沒人理。花一分鐘設定要通知誰。')
-        await r.say('從你官方帳號的好友裡選一位（收通知的人必須加了這個官方帳號好友），之後隨時能在「AI 設定」加更多人。')
-
-        r.busy.value = true
-        let options: { id: string, label: string, pictureUrl?: string }[] = []
-        try {
-          const res = await c.apiFetch<{ users: { lineUserId?: string, displayName?: string, pictureUrl?: string }[] }>('/api/users/list?limit=20')
-          options = (res.users || [])
-            .map(u => ({
-              id: String(u.lineUserId || '').trim(),
-              label: String(u.displayName || '').trim() || '（未提供暱稱）',
-              pictureUrl: String(u.pictureUrl || '').trim() || undefined,
-            }))
-            .filter(o => o.id)
-            .slice(0, 8)
-        }
-        catch { /* 抓不到走下面的空清單出口 */ }
-        finally {
-          r.busy.value = false
-        }
-
-        if (!options.length) {
-          c.state.exit = true
-          await r.say('目前抓不到好友清單（通常是還沒有人加這個官方帳號好友）。先用手機加自己的官方帳號好友再回來設，或到「AI 設定」用完整的選人器。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
-          return
-        }
-        if (options.length >= 8)
-          await r.say('下面列的是最近的好友。要通知的人不在裡面的話，按「先跳過」，到「AI 設定 → 轉真人通知」有完整的搜尋選人。')
-
-        const picked = await r.askPicker(options, true)
-        if (!picked) {
-          c.state.exit = true
-          await r.say('先跳過。提醒一下：通知沒設的話，客人要找真人時不會有人知道。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
-          return
-        }
-        const ok = await r.apiRetry(
-          () => c.apiFetch('/api/ai/settings', {
-            method: 'PUT',
-            body: {
-              handoffNotify: {
-                enabled: true,
-                lineUserIds: [picked.id],
-                displayNames: { [picked.id]: picked.label },
-              },
-            },
-          }),
-          { failText: '存檔失敗', skipLabel: '先跳過' },
-        )
-        if (ok === null) {
-          c.state.exit = true
-          return
-        }
-        c.state.pickedLabel = picked.label
-      },
-    },
-    {
-      id: 'verify',
-      guard: exited,
-      async run(c) {
-        const { r } = c
-        // 存檔成功不等於生效：跟後端把設定要回來驗一次（agent 只轉述真實訊號）
-        const cardId = r.card({ kind: 'status', state: 'pending', text: '確認設定有沒有生效…' })
-        try {
-          const s = await c.apiFetch<{ handoffNotify?: { enabled?: boolean, lineUserIds?: string[] } }>('/api/ai/settings')
-          if (s.handoffNotify?.enabled === true && (s.handoffNotify?.lineUserIds?.length ?? 0) > 0) {
-            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: '轉真人通知已設定' })
-            await r.say(`設好了 ✓ 之後有客人要找真人，「${escapeHtml(String(c.state.pickedLabel || ''))}」的 LINE 會跳通知。想加更多人，到「AI 設定 → 轉真人通知」。`)
-            return
-          }
-          r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '設定看起來還沒生效' })
-          await r.say('剛存的設定讀回來還是空的——請到「AI 設定 → 轉真人通知」看一眼。')
-          r.card({ kind: 'link', internal: true, label: '前往「AI 設定」', href: `/admin/${c.workspaceId}/ai-settings?focus=handoff` })
-        }
-        catch {
-          r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒確認成功（不代表沒設好）' })
-          await r.say('跟伺服器確認沒成功——<b>查不到不代表沒設好</b>，右下角的提醒若熄掉就是生效了。')
-        }
+        await r.say('現在客人要找真人時，<b>沒有人的手機會收到通知</b>——客人可能等很久都沒人理，每天早上的摘要也傳不到任何人。')
+        await r.say('用你自己的手機掃一下就加進來了，大概十秒。同事的手機，他第一次登入後台時也會被問一次。')
+        r.card({ kind: 'link', internal: true, label: '把我的手機加進來', href: `/admin/${c.workspaceId}/settings/line-notify?add=me` })
       },
     },
   ],

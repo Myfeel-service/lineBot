@@ -9,7 +9,7 @@
  *  - 查不到不可以當成 0
  */
 import { describe, it, expect } from 'vitest'
-import { buildDigestLines, joinZh, taipeiDateLabel, waitPhrase } from './daily-digest-message'
+import { buildDigestLines, digestPlaces, joinZh, taipeiDateLabel, waitPhrase } from './daily-digest-message'
 import type { DigestInput } from './daily-digest-message'
 
 const base: DigestInput = {
@@ -211,5 +211,33 @@ describe('查不到就要講（⛔不可以當成 0）', () => {
 
   it('昨天查不到但有節慶要講 → 照發（節慶那段本來就跟昨天無關）', () => {
     expect(buildDigestLines({ ...base, yesterday: null, festivalText: '明天就是中秋節！' })).not.toBeNull()
+  })
+})
+
+/**
+ * 指路帶連結（2026-09-27 `C-270`／`D-103`⑦）：原本只寫「→ 後台『對話』」，在手機上點不回去。
+ */
+describe('指路那一行帶連結', () => {
+  const busy: Partial<DigestInput> = {
+    waiting: { count: 2, offHoursCount: 0, samples: [{ name: '阿明', waitedMinutes: 25 }], truncated: false, staleHumanCount: 0 },
+  }
+  it('有連結 → 「👉 後台…」＋下一行網址', () => {
+    const lines = buildDigestLines({ ...base, ...busy, link: 'https://x.test/c/Ab3dE7x' })!
+    const i = lines.indexOf('👉 後台「對話」')
+    expect(i).toBeGreaterThan(-1)
+    expect(lines[i + 1]).toBe('https://x.test/c/Ab3dE7x')
+    expect(lines.join('\n')).not.toContain('→ 後台')
+  })
+  it('沒有連結（本機、PUBLIC_BASE_URL 沒設）→ 照舊只講去哪', () => {
+    expect(text(busy)).toContain('→ 後台「對話」')
+  })
+  it('⛔ 順利的一天那一行不加連結（沒有要去後台做的事）', () => {
+    const lines = buildDigestLines({ ...base, link: 'https://x.test/c/Ab3dE7x' })!
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).not.toContain('https://')
+  })
+  it('digestPlaces：沒有要去的地方就是空的（排程據此決定要不要產短網址）', () => {
+    expect(digestPlaces(base)).toEqual([])
+    expect(digestPlaces({ ...base, ...busy } as DigestInput)).toEqual(['「對話」'])
   })
 })
