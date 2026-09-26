@@ -125,6 +125,28 @@ describe('加好友歡迎訊息', () => {
     const t = buildWelcomeDraft(ctxOf({ shopName: '   ' }))
     expect(t).toContain('歡迎加入我們')
   })
+
+  // 🔴 `C-250`／`D-99`：「主要做」照型換；⛔ 不是賣東西的店不可以叫客人問出貨
+  it('賣東西的寫「主要賣」', () => {
+    expect(buildWelcomeDraft(ctxOf())).toContain('我們主要賣黑豆水')
+  })
+
+  it('⛔ 診所選了「實體＋網購」也不會被寫成「想問出貨」（`D-99` 漏網）', () => {
+    const t = buildWelcomeDraft(ctxOf({ profile: profileOf({ industry: '醫療／健康', products: '全口檢查、牙齒矯正', channel: '實體＋網購' }) }))
+    expect(t).toContain('我們主要做全口檢查')
+    expect(t).toContain('預約時段')
+    expect(t).not.toContain('出貨')
+  })
+
+  it('補習班問的是課程與報名，自己打產業別的走中性說法', () => {
+    const school = buildWelcomeDraft(ctxOf({ profile: profileOf({ industry: '教育／課程', products: '國中數學' }) }))
+    expect(school).toContain('我們主要開國中數學')
+    expect(school).toContain('報名')
+    expect(school).not.toContain('出貨')
+    const free = buildWelcomeDraft(ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室', products: '手工皂' }) }))
+    expect(free).toContain('我們主要提供手工皂')
+    expect(free).not.toContain('出貨')
+  })
 })
 
 describe('AI 語氣', () => {
@@ -150,8 +172,23 @@ describe('AI 語氣', () => {
 
   it('輪廓幾乎全空也生得出合法的一段（不會出現連續標點）', () => {
     const t = buildToneDraft(ctxOf({ profile: emptyStoreProfile() }))
-    expect(t).toContain('你是這家店的客服助理')
+    expect(t).toContain('你是山丘咖啡的客服助理')
     expect(t).not.toMatch(/，。|、。|。。/)
+    // 連店名都沒有時退成「這家店」
+    expect(buildToneDraft(ctxOf({ shopName: '', profile: emptyStoreProfile() }))).toContain('你是這家店的客服助理')
+  })
+
+  // `C-250`／`D-99`：產業別可以自己打（「都不是，我自己講」）——⛔ 不可以寫成「你是一家○○的客服助理」
+  it('⛔ 自己打的產業別不會把句子弄壞（改成條列，沒有「你是一家」）', () => {
+    const t = buildToneDraft(ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室' }) }))
+    expect(t).not.toContain('你是一家')
+    expect(t).toContain('店的類型：手工皂與香氛的工作室')
+  })
+
+  it('欄位名照型換（診所寫「主要服務」不寫「主打商品」）', () => {
+    const t = buildToneDraft(ctxOf({ profile: profileOf({ industry: '醫療／健康', products: '全口檢查、牙齒矯正' }) }))
+    expect(t).toContain('主要服務：全口檢查、牙齒矯正')
+    expect(t).not.toContain('主打商品')
   })
 
   /**
@@ -165,7 +202,7 @@ describe('AI 語氣', () => {
       profileOf(), 'products', '黑豆水、養生茶包、節慶禮盒｜NT$180–1,280', 'ai', 1,
     )
     const t = buildToneDraft(ctxOf({ profile: p }))
-    expect(t).toContain('主要商品是黑豆水、養生茶包、節慶禮盒')
+    expect(t).toContain('主打商品：黑豆水、養生茶包、節慶禮盒')
     expect(t).not.toContain('NT$')
     expect(t).not.toContain('1,280')
     // ⛔ 切壞的殘骸也不可以在（這才是 D-92 真正抓到的形狀）
@@ -209,6 +246,21 @@ describe('建議標籤', () => {
     const names = buildTagDrafts(ctxOf()).map(t => t.name)
     expect(new Set(names).size).toBe(names.length)
   })
+
+  // 🔴 `C-250`／`D-99`：標籤建了就留在帳號裡（代號改不了）——⛔ 診所不可以拿到「送禮客／問過出貨」
+  it('⛔ 不是賣東西的店拿到的是自己那一型的三顆', () => {
+    const clinic = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '醫療／健康' }) })).map(t => t.name)
+    expect(clinic).toEqual(['回訪客', '問過沒預約', '預約過'])
+    const school = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '教育／課程' }) })).map(t => t.name)
+    expect(school).toEqual(['續報家長', '問過沒報名', '問過時段'])
+    // 自己打的產業別＝中性型，⛔ 不猜成賣東西
+    const free = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室' }) })).map(t => t.name)
+    expect(free).toEqual(['回頭客', '問過沒成交', '問過細節'])
+    for (const names of [clinic, school, free]) {
+      expect(names).not.toContain('送禮客')
+      expect(names).not.toContain('問過出貨')
+    }
+  })
 })
 
 describe('行銷月曆', () => {
@@ -243,24 +295,35 @@ describe('行銷月曆', () => {
 })
 
 describe('buildStoreDrafts', () => {
-  it('沒讀到網站就不給「知識庫初稿」（給一張 0 張卡的卡片比不給還糟）', () => {
-    const keys = buildStoreDrafts(ctxOf()).map(d => d.key)
-    expect(keys).not.toContain('knowledge')
-    const withSite = buildStoreDrafts(ctxOf({ pagesRead: 5 })).map(d => d.key)
-    expect(withSite).toContain('knowledge')
+  /**
+   * ⛔ 2026-09-26（`C-250`）知識庫那一樣**讀到網站也先不給**：原本是一顆「採用」，按了什麼都不會建
+   *    （讀過的頁內文一小時後刪掉）＝假的決定。要等後端真的產生待看過的卡（`C-250` 第三批），
+   *    那時換成一張寫得出真實張數的說明卡。⛔ 在那之前不可以畫「整理成 N 張」。
+   */
+  it('⛔ 知識庫那一樣先不給（讀到網站也一樣，張數是假的就不畫）', () => {
+    expect(buildStoreDrafts(ctxOf()).map(d => d.key)).not.toContain('knowledge')
+    expect(buildStoreDrafts(ctxOf({ pagesRead: 5 })).map(d => d.key)).not.toContain('knowledge')
   })
 
-  it('月曆是「告訴你已經有了」，不是要你採用', () => {
-    const cal = buildStoreDrafts(ctxOf()).find(d => d.key === 'calendar')!
-    expect(cal.kind).toBe('info')
+  // v75：三個節日他這一刻一件也做不了、每天早上的摘要本來就會講——整張收掉，只留成績單一行
+  it('⛔ 行銷月曆那張不再出現（收進成績單一行）', () => {
+    expect(buildStoreDrafts(ctxOf()).map(d => d.key)).not.toContain('calendar')
     expect(STORE_DRAFT_KIND.calendar).toBe('info')
-    expect(cal.note).toContain('不用採用')
   })
 
-  it('歡迎訊息一定要講「去 LINE 後台關掉內建那則」，而且不可以說已經幫你關了', () => {
+  it('要按「採用」的剛好三樣：歡迎訊息、AI 語氣、標籤', () => {
+    expect(buildStoreDrafts(ctxOf()).map(d => d.key)).toEqual(['welcome', 'tone', 'tags'])
+  })
+
+  /**
+   * 🔴 `C-250`／`D-100`：原本叫他「採用之後記得去 LINE 後台把內建那則關掉」，而接 LINE 那一趟
+   *    站在那顆開關前面時卻寫「不用動」＝兩處教相反。改成**預告會在對的時間點講**；
+   *    ⛔ 仍然不可以說「已為你關閉」（LINE 沒開放介面讓我們讀那個開關）。
+   */
+  it('歡迎訊息預告「接上 LINE 那一步會提醒你關掉內建那則」，而且不可以說已經幫你關了', () => {
     const w = buildStoreDrafts(ctxOf()).find(d => d.key === 'welcome')!
     expect(w.note).toContain('關掉')
-    expect(w.note).toContain('讀不到那個開關')
+    expect(w.note).toContain('接上 LINE')
     expect(w.note).not.toContain('已為你關閉')
   })
 

@@ -254,4 +254,16 @@ export const ONBOARDING_CAROUSELS = {
     { src: '/onboarding/oam-response-settings-3.webp', caption: '再把「<b>Webhook</b>」<b>打開</b>——中間那個「加入好友的歡迎訊息」<b>不用動</b>' },
     { src: '/onboarding/oam-response-settings-4.webp', caption: '「聊天的回應方式」選「<b>手動聊天</b>」⛔ 別選「手動聊天＋自動回應訊息」' },
   ],
+  /**
+   * 同一支，給**已經有自己的加好友歡迎**的人（`C-250`／`D-100`）：第 3 格改叫他把 LINE 內建那則**關掉**。
+   * 🔴 只改第 3 格的字：打造那一趟採用歡迎訊息時的附註寫著「接上 LINE 那一步會提醒你關掉」，
+   *    ⛔ 這裡卻照舊寫「不用動」＝兩處教相反，照做的客人加好友會連收兩則。
+   * ⚠️ 沒有自己那則的人照舊用上面那支「不用動」：他關掉就一則都沒有了。
+   */
+  responseSettingsOwnWelcome: [
+    { src: '/onboarding/oam-response-settings-1.webp', caption: '左邊選「<b>回應設定</b>」' },
+    { src: '/onboarding/oam-response-settings-2.webp', caption: '把「<b>聊天</b>」<b>打開</b>（已經是綠的就不用動）' },
+    { src: '/onboarding/oam-response-settings-3.webp', caption: '再把「<b>Webhook</b>」<b>打開</b>，中間那個「加入好友的歡迎訊息」<b>關掉</b>——你已經有自己的歡迎訊息，不關客人會收到兩則' },
+    { src: '/onboarding/oam-response-settings-4.webp', caption: '「聊天的回應方式」選「<b>手動聊天</b>」⛔ 別選「手動聊天＋自動回應訊息」' },
+  ],
 } as const

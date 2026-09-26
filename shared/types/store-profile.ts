@@ -151,6 +151,14 @@ export interface StoreProfileFieldDef {
   askStep: number | null
   /** 有選項＝按鈕題；沒有＝打字題 */
   options?: readonly string[]
+  /**
+   * 按鈕題的出口「都不是，我自己講」按下去之後的追問與輸入提示（`D-89`，2026-09-24 拍板）。
+   * ⛔ 選項式問題**不可以只給選項**：列不完的人只能亂選一個，亂選的答案會一路長進 AI 的語氣裡。
+   * ⛔ 也不可以用「其他」當出口——它**存得下去**，然後被原樣插進草稿（「你是一家其他的客服助理」）。
+   *    按鈕題一律要有這兩格（守門測試會擋）。
+   */
+  freeAsk?: string
+  freePlaceholder?: string
   /** 打字題的輸入提示 */
   placeholder?: string
   /** AI 讀網站時可以推測這一項嗎 */
@@ -174,7 +182,11 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
     label: '產業與品類',
     question: '你的店主要是哪一種？',
     askStep: 1,
-    options: ['餐飲／飲料', '零售／電商', '美容／美業', '教育／課程', '服務／預約', '醫療／健康', '旅遊／住宿', '其他'],
+    // ⛔ 2026-09-26（`C-250`／`D-89`）「其他」拿掉：出口改成「都不是，我自己講」＋下面這句追問。
+    //    舊資料裡存著「其他」的照樣讀得回來（它落在中性型，見 `store-profile-biz.ts`）。
+    options: ['餐飲／飲料', '零售／電商', '美容／美業', '教育／課程', '服務／預約', '醫療／健康', '旅遊／住宿'],
+    freeAsk: '那你怎麼跟別人介紹你的店？一句話就好。',
+    freePlaceholder: '例：手工皂與香氛的工作室',
     aiCanGuess: true,
     emptyHint: '還不知道你是哪一行',
     aiHint: '這家店屬於哪一種產業或品類，用一個短詞（例：手搖飲、女裝電商、美髮沙龍）',
@@ -182,6 +194,8 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
   {
     id: 'products',
     label: '主打商品',
+    // ⚠️ 這是**賣東西那一型的預設問法**；精靈實際問的是 `storeBizWording(產業別).productsQuestion`
+    //    （牙醫診所被問「主要賣什麼」＝`D-99` 要修的病）
     question: '主要賣什麼？講三樣最重要的就好，用頓號或逗號分開。',
     askStep: 2,
     placeholder: '例：黑豆水、養生茶包、節慶禮盒',
@@ -218,6 +232,8 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
     question: '主要賣給誰？',
     askStep: 3,
     options: ['一般消費者', '公司行號', '兩種都有'],
+    freeAsk: '那你的客人多半是什麼樣的人？',
+    freePlaceholder: '例：附近的長照機構',
     aiCanGuess: true,
     emptyHint: '還不知道你的客人是誰',
     aiHint: '主要客群。網站若看得出年齡層或性別傾向就補一句，看不出來就只寫商家自己講的那句',
@@ -225,9 +241,12 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
   {
     id: 'channel',
     label: '銷售方式',
+    // ⚠️ 同 products：實際問法照型換（`storeBizWording().channelQuestion`）
     question: '客人通常怎麼買？',
     askStep: 4,
     options: ['實體店面', '網購為主', '預約制', '實體＋網購'],
+    freeAsk: '那客人都怎麼找到你、跟你買？',
+    freePlaceholder: '例：LINE 私訊下單、貨到付款',
     aiCanGuess: true,
     emptyHint: '還不知道客人怎麼跟你買',
     aiHint: '客人怎麼買：實體店面、網購、預約制或混合',
@@ -238,6 +257,8 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
     question: '生意最好的時候是？',
     askStep: 5,
     options: ['年節送禮（春節、中秋）', '夏天', '冬天', '開學／收假', '沒有明顯旺季'],
+    freeAsk: '那你的旺季大概什麼時候？',
+    freePlaceholder: '例：每年 3 月的展覽季',
     aiCanGuess: false,
     emptyHint: '還不知道你的旺季',
     aiHint: '',
@@ -248,6 +269,8 @@ export const STORE_PROFILE_FIELDS: readonly StoreProfileFieldDef[] = [
     question: '現在最想解決的是哪一件？',
     askStep: 5,
     options: ['加好友後沒人理', '客服回不完', '不知道推播要推什麼', '想知道客人是誰'],
+    freeAsk: '那你現在最想解決什麼？',
+    freePlaceholder: '例：老客人都不回頭',
     aiCanGuess: false,
     emptyHint: '還沒說最想解決什麼',
     aiHint: '',

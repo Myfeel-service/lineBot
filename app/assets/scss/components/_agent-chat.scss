@@ -766,6 +766,93 @@
     color: var(--el-text-color-secondary);
     word-break: break-word;
   }
+
+  /* ── 分組版（`D-93`／`D-91`，`C-250`）──────────────────────────
+     ⚠️ 要配 `width: 100%`：卡片在對話欄是收縮寬度，不撐開的話三欄會擠成一條。 */
+  &.is-grouped { width: 100%; max-width: 88%; }
+
+  &__group {
+    margin-top: 10px;
+
+    &:first-of-type { margin-top: 4px; }
+
+    /* AI 猜的那一組是唯一需要他動作的 → **整塊上底色**（面不是線；⛔ 不用紅：不是錯，只是還沒確認）。
+       ⚠️ 色塊外框跟上面那幾列等寬、內容用 padding 內縮；兩種色塊（琥珀與灰）同一套做法（09-24 定調）。 */
+    &.is-ai {
+      background: var(--el-color-warning-light-9);
+      border-radius: 10px;
+      padding: 8px 10px 10px;
+
+      .agm-profile__gh b { color: var(--el-color-warning-dark-2); }
+    }
+  }
+
+  &__gh {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    margin-bottom: 3px;
+
+    b { font-weight: 700; color: var(--el-text-color-regular); }
+    span { color: var(--el-text-color-secondary); }
+  }
+
+  /* 三欄：標籤／值／動作。⭐ 標籤欄與動作欄**固定寬**——每一組是各自的 grid，
+     用 auto 的話兩組的「值」會從不同的 x 開始（09-24 截圖抓到的）。
+     104px＝最長標籤「現在最想解決的事」8 字 × 12.5px；動作欄 34px 放得下「修改」「填寫」不換行。 */
+  &__grid {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr) 34px;
+    gap: 3px 10px;
+    align-items: baseline;
+
+    > .k { font-size: 12.5px; line-height: 1.7; color: var(--el-text-color-secondary); }
+
+    > .v {
+      min-width: 0;
+      font-size: 12.5px;
+      line-height: 1.7;
+      color: var(--el-text-color-primary);
+      word-break: break-word;
+
+      &.is-empty { color: var(--el-text-color-secondary); }
+    }
+  }
+
+  &__edit {
+    justify-self: end;
+    font-size: 11.5px;
+  }
+
+  &__rowedit {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+
+    .el-input { flex: 1 1 140px; min-width: 0; }
+  }
+
+  /* 還學不到的：收成一行；尺寸跟琥珀那塊對齊成同一套（等寬、同圓角、同內距） */
+  &__later {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+    background: var(--el-fill-color-light);
+    border-radius: 10px;
+    padding: 8px 10px 10px;
+  }
+
+  &__later-grid { margin-top: 8px; }
+}
+
+/* 窄到放不下時標籤自己一行（手機的對話欄約 290px，104＋34 就吃掉一半） */
+@media (max-width: 480px) {
+  .agm-profile__grid { grid-template-columns: minmax(0, 1fr) 34px; }
+  .agm-profile__grid > .k { grid-column: 1 / -1; }
 }
 
 /* ── 一樣草稿（`D-85` / `C-221`）：按採用才寫出去 ── */
@@ -823,7 +910,40 @@
     &.is-declined { color: var(--el-text-color-secondary); }
     &.is-failed { color: var(--el-color-warning-dark-2); }
   }
+
+  /* ⭐ `D-94`：一開始就是可以改的框（⛔ 不再是「唯讀 →（按改一下）→ 可編輯」兩段式） */
+  &__ta { margin: 8px 0 6px; }
+
+  /* 標籤：名字欄＋勾選 */
+  &__tags {
+    margin: 8px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__tag {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+
+    /* ⛔ 沒勾的**整列**褪掉：只讓小方框變化，一眼看不出哪幾顆不會建 */
+    &.is-off .agm-draft__tag-why { color: var(--el-text-color-placeholder); }
+  }
+
+  &__tag-name { flex: none; width: 120px; }
+
+  &__tag-why {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
 }
+
+/* 草稿卡要撐開到對話欄的寬度，不然文字框會縮成內容寬 */
+.agm-card.agm-draft { width: 100%; max-width: 88%; }
 
 /* ── 輸入區（AgentAskDock） ── */
 .agd {

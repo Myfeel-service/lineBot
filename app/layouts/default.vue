@@ -180,22 +180,35 @@ onMounted(async () => {
   void maybePopOnboarding()
 })
 
-// ── 開通沒做完就每次進後台都拉回開通對話（2026-08-19 拍板） ────
-// 「每次進入」＝每次整頁載入（重新整理、新分頁、隔天回來都會再跳）；
+// ── 開通沒做完就拉回開通對話（2026-08-19 拍板；⚠️ 2026-09-26 `C-250` 收窄成「接 LINE 接到一半」，見下面那支） ────
+// 原本「每次進入」＝每次整頁載入（重新整理、新分頁、隔天回來都會再跳）；
 // 同一次載入內只跳一次——按「之後再說」出來落在對話頁，不能又被抓回去無限循環。
 // 判定吃 useSetupStatus.onboardingIncomplete（接 LINE＋第一則訊息，admin 才會 true），
 // 做完就永遠安靜。⛔用 useState 不用 sessionStorage：F5 重整要重新提醒。
 const setup = useSetupStatus()
 const onboardingPopped = useState<Record<string, boolean>>('onb-auto-popped', () => ({}))
 
+/**
+ * 🔴 2026-09-26（`C-250`／`D-88` ②）**只拉回「接 LINE 接到一半就離開」的人，而且只拉一次**。
+ *    拆成「打造」「接 LINE」兩趟之後，打造完本來就是先進後台、接 LINE 是他自己決定的時機——
+ *    照 08-19 的規則「LINE 沒接就每次整頁載入都拉回」，等於每按一次 F5 就被抓去做一件他說了
+ *    「之後再說」的事。旗子在接 LINE 那一趟開始時立、走到成績單或按「之後再說」時收
+ *    （`app/utils/onboarding-line-flag.ts`）；這裡拉的同時收旗＝一次性。
+ * ⚠️ 沒被拉回的人不是被放生：頁頂紅帶、側欄紅點、右下角小幫手三處照樣都在，每一處都進得了接 LINE。
+ */
 async function maybePopOnboarding() {
   const wid = workspaceId.value
   if (!wid || onboardingPopped.value[wid])
     return
-  await setup.refresh().catch(() => {})
-  if (!setup.onboardingIncomplete.value)
+  if (!isLineFlowInProgress(wid))
     return
+  await setup.refresh().catch(() => {})
+  if (!setup.onboardingIncomplete.value) {
+    clearLineFlowInProgress(wid) // 其實已經接好了（例如在別的分頁接完）——旗子留著沒意義
+    return
+  }
   onboardingPopped.value = { ...onboardingPopped.value, [wid]: true }
+  clearLineFlowInProgress(wid)
   await navigateTo(`/admin/onboarding?workspaceId=${wid}`)
 }
 

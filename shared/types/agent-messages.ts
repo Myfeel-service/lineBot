@@ -104,8 +104,11 @@ export type AgentMsg =
     waitState: 'pending' | 'ok' | 'skipped'
     waitText: string
   }
-  /** 完成摘要卡 */
-  | { kind: 'summary'; items: { label: string; done: boolean; note?: string }[] }
+  /**
+   * 完成摘要卡。`title` 不給＝預設「開通結果」（接 LINE 那一趟）；
+   * 打造那一趟給「MiniMe 打造完成」（`C-250`，⛔ 不再叫「第 1 段完成」——老闆 09-25「第一段第二段不好理解」）。
+   */
+  | { kind: 'summary'; title?: string; items: { label: string; done: boolean; note?: string }[] }
   /**
    * 店家輪廓卡（`D-85` / `C-219`）——接線成功那一刻揭曉「我對你的店的認識」。
    *
@@ -117,6 +120,8 @@ export type AgentMsg =
   | {
     kind: 'store-profile'
     rows: {
+      /** 欄位 id——就地修改時要回報改的是哪一格（`editable` 的卡才需要） */
+      fieldId?: string
       label: string
       value: string
       /** 沒有值時要顯示的說明（有值時不用） */
@@ -126,6 +131,20 @@ export type AgentMsg =
     }[]
     /** 讀網站的結果，一句話（讀完了／讀了一部分／讀不到） */
     siteNote?: string
+    /**
+     * 分組呈現（`D-93`，2026-09-24 拍板）：你告訴我的／我猜的 N 項（琥珀色塊）／還學不到的 N 項（收合）。
+     * ⭐ 十列要他做的事完全不同（你說的＝不用管、AI 猜的＝要看、還學不到＝現在不用做），
+     *    畫成一樣重就等於叫他自己分類。分組之後**每列的來源徽章拿掉**（組名已經講了）。
+     */
+    grouped?: boolean
+    /** 「我猜的」那一組的出處（例：從你的網站 5 頁猜的）——⭐ 出處要跟主張長在一起 */
+    aiNote?: string
+    /**
+     * 就地修改（`D-91`）：每列一顆「修改」、還學不到的一顆「填寫」。
+     * ⛔ 揭曉那句話寫著「不對的直接改」時，卡片就**一定要改得動**（否則是一句假承諾）。
+     * 改完由頁面把 `profile-edit` 事件交給劇本，劇本存檔後整張卡重畫（那一格變成「你說的」）。
+     */
+    editable?: boolean
   }
   /**
    * 一樣「草稿」（`D-85` / `C-221`）——從店家輪廓長出來的東西，按了採用才會寫出去。
@@ -144,6 +163,16 @@ export type AgentMsg =
     variant: 'adopt' | 'info'
     state?: 'adopted' | 'declined' | 'failed'
     stateText?: string
+    /**
+     * 一開始就可以改（`D-94`，2026-09-24 拍板「給的時候就長這樣就好，不用再按什麼改一下」）：
+     * - `text`＝一段話，直接給文字框
+     * - `tags`＝三顆標籤，**名字欄＋勾選**（⛔ 不給大文字框：那等於請他把「名字——說明」的格式改壞）
+     * ⚠️ 決定完（有 `state`）就收回唯讀——留著可編輯的框會讓人以為還沒定案。
+     * 改的內容由頁面把 `draft-input` 事件交給劇本，按「採用」時用的是**他改過的那一版**。
+     */
+    editable?: 'text' | 'tags'
+    /** `editable === 'tags'` 時的三顆（`on`＝要不要建這一顆，預設全勾） */
+    tags?: { name: string; why: string; on: boolean }[]
   }
 
 export interface AgentChatEntry {

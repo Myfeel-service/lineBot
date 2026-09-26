@@ -33,10 +33,15 @@ import {
   summarizeDraftApply,
   type DraftApplyStep,
   type StoreDraft,
+  type StoreDraftKey,
 } from '~~/shared/store-profile-drafts'
-import { buildFollowWelcomeScript } from '~~/shared/follow-welcome'
+import { buildFollowWelcomeScript, followWelcomeRow } from '~~/shared/follow-welcome'
+import { type ScriptNode, scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { suggestTagCode } from '~~/shared/tag-code-suggest'
-import { taipeiDate } from '~~/shared/time'
+import { daysBetween, taipeiDate } from '~~/shared/time'
+import { storeBizWording, storeProfileLabelFor } from '~~/shared/store-profile-biz'
+import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
+import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboarding-line-flag'
 
 /**
  * 進度條五格（2026-08-19 拍板重切）：舊版「接 LINE」一格塞四件事、佔整段八成時間，
@@ -60,21 +65,47 @@ import { taipeiDate } from '~~/shared/time'
  * ⛔ 官網首頁的示範動畫有一份**抄過去的**同名陣列（`app/pages/index.vue` 的
  *    `OB_PROGRESS_LABELS`），改這裡要一起改，不然網站演五格、產品是六格。
  */
-export const ONBOARDING_PROGRESS_LABELS = ['建立帳號', '認識你的店', '取得連線資訊', '接收 LINE 訊息', '傳訊息測試', '完成'] as const
+/**
+ * 🔴 2026-09-26（`C-250`，示意頁 v80 定稿）**拆成兩趟，各自四格**：
+ *   - 「打造你的 MiniMe」：建立帳號 → 認識你的店 → 看看成果 → 完成打造（全在自己頁面裡、零外部依賴）
+ *   - 「接上 LINE，讓客人找得到你」：取得連線資訊 → 接收 LINE 訊息 → 用手機測試 → 上線完成
+ *     （要登入別人的後台、要手機——**他之後自己決定什麼時候做**，從紅帶／小幫手／組織頁進來）
+ * 為什麼：原本一條六格把「填我們自己的表」跟「串別人家的系統」畫成同一條路，走到第三格就撞上
+ * 要登入兩個別人的後台——前面的成功率被後面拖著走（`D-88`）。
+ * ⛔ **不寫「第 1 段／第 2 段」**（老闆 09-25：「第一段第二段不好理解」）：拆兩趟是我們內部的設計，
+ *    對他只有兩件各自獨立的事；講「第 1 段」等於暗示還有第 2 段在等他。
+ * ⛔ 官網首頁的示範動畫有一份抄過去的陣列（`app/pages/index.vue` 的 `OB_PROGRESS_LABELS`），
+ *    它演的是打造那一趟——改這裡要一起改。
+ * ⚠️ 第三格「傳訊息測試」→「用手機測試」（v79）：那一步現在是加好友（`D-101`），
+ *    頭頂寫傳訊息、卡片叫他加好友＝兩個地方講不同的事。
+ */
+export const ONBOARDING_BUILD_LABELS = ['建立帳號', '認識你的店', '看看成果', '完成打造'] as const
+export const ONBOARDING_LINE_LABELS = ['取得連線資訊', '接收 LINE 訊息', '用手機測試', '上線完成'] as const
+
+export type OnboardingFlow = 'build' | 'line'
+
+/** 兩趟各自的名字、要多久、四格——**同一份資料**（⛔ 三者分散的話，改一處就開始各說各話） */
+export const ONBOARDING_FLOWS: Record<OnboardingFlow, { name: string, time: string, labels: readonly string[] }> = {
+  build: { name: '打造你的 MiniMe', time: '約 5 分鐘 · 不用離開這一頁', labels: ONBOARDING_BUILD_LABELS },
+  line: { name: '接上 LINE，讓客人找得到你', time: '約 10–15 分鐘 · 要登入 LINE 官方帳號後台', labels: ONBOARDING_LINE_LABELS },
+}
 
 /** 進度條的格子索引（⛔ 別在劇本裡散落 magic number，加一格就要全檔重數一次） */
-export const ONBOARDING_STEP = {
-  create: 0,
-  profile: 1,
-  credentials: 2,
-  receive: 3,
-  testMessage: 4,
-  done: 5,
-} as const
+export const BUILD_STEP = { create: 0, profile: 1, reveal: 2, done: 3 } as const
+export const LINE_STEP = { credentials: 0, receive: 1, testMessage: 2, done: 3 } as const
 
-/** 開通流程所有出口一律落「對話」頁：新帳號統計全 0，空的對話清單比空報表誠實（2026-08-12 拍板 G-11） */
+/** 接 LINE 那一趟的出口落「對話」頁：新帳號統計全 0，空的對話清單比空報表誠實（2026-08-12 拍板 G-11） */
 export function onboardingLandingPath(workspaceId: string): string {
   return `/admin/${workspaceId}/conversations`
+}
+
+/**
+ * 打造那一趟的出口落「測試對話」（`D-88` 風險 D／`D-95`）。
+ * ⛔ 不落「客服對話」：那一頁的理由是「他剛傳的那句話就在裡面」，而打造這條路上他一句都還沒傳；
+ *    測試對話是唯一不接 LINE 也完整可用、而且第一個「哇」就發生在那裡的頁。
+ */
+export function onboardingBuiltLandingPath(workspaceId: string): string {
+  return `/admin/${workspaceId}/ai-playground`
 }
 
 interface LineStatus {
@@ -90,6 +121,9 @@ interface FirstMessageRes {
   messageType?: string
   at?: string
 }
+
+/** 按鈕題的出口「都不是，我自己講」的值（⛔ 不可以跟任何選項同名） */
+const FREE_ANSWER = '__free'
 
 const POLL_INTERVAL_MS = 4000
 /**
@@ -154,6 +188,9 @@ export function useOnboardingChat() {
     onSkip,
   } = runner
   const progress = ref(0)
+  /** 這一場是哪一趟（頁首的名字、要多久、四格都跟著它換） */
+  const flow = ref<OnboardingFlow>('build')
+  const flowInfo = computed(() => ONBOARDING_FLOWS[flow.value])
   /**
    * 「要加哪個帳號」查到的東西（見證卡的第①步要用）。
    * 快取住：傳話測試可以從成績單再進來一次，那時要的是同一份資料畫到新的卡上，不是再問一次 LINE。
@@ -195,7 +232,8 @@ export function useOnboardingChat() {
   const freeQuota = BILLING_PLANS.free.answeredQuota
 
   async function stepWelcomeFresh(): Promise<boolean> {
-    progress.value = ONBOARDING_STEP.create
+    flow.value = 'build'
+    progress.value = BUILD_STEP.create
     // 2026-09-02 三件事一起改：
     // ①開場兩則併一則——人還沒做任何事就要讀兩段
     // ②拿掉「大約 8 分鐘」——這段全文 2,100 多字，光讀就超過 6 分鐘，還沒算去 LINE 後台
@@ -207,12 +245,16 @@ export function useOnboardingChat() {
     // 全 repo 另一處「客服機器人」在 ai-answer.ts 的交接摘要 prompt＝內部指令，刻意不動）
     // 2026-09-10 再瘦一次（示意頁定版）：**四個步驟不用在這裡念一遍**——
     // 頁首的進度條就長在上面，同一組字寫兩次，第二次是雜訊。改成指過去（「照上面那條進度」），
-    // 開場從三行縮成兩行。⛔ 進度條的字（`ONBOARDING_PROGRESS_LABELS`）就成了唯一那份，
+    // 開場從三行縮成兩行。⛔ 進度條的字（`ONBOARDING_FLOWS`）就成了唯一那份，
     // 改它之前先確認這句話還指得過去。
     // ⚠️ 2026-09-22 跟著進度條多的那一格改字（`C-219`）：流程不再只有「接上 LINE」，
     //    開場說的事要跟上面那條進度對得起來——⛔ 進度條寫六格、開場只講接 LINE，
     //    就是 08-12 那條「教一套驗一套」的同型。
-    await say('嗨，我是小幫手 👋 我會照上面那條進度，先花三分鐘認識你的店，再一步一步陪你把 MiniMe 接上 LINE，不用懂程式也沒關係。<br>完成後，你就可以在 LINE 上跟你的 MiniMe 對話了 🎉')
+    // ⭐ 2026-09-26（`C-250`，示意頁 v80 定稿）：第一個畫面是**邀請**，不是流程簡報
+    //    （老闆 09-24：「就跟他說來建立專屬你的 MiniMe 之類的詞就好」）。
+    //    ⛔ 不再講「再陪你接上 LINE」：接 LINE 已經不是這一趟的事（打造完直接進後台，之後自己決定）。
+    //    只留進度條講不出來的那一句：**做完你當場就能問它問題**（那是他按下去的理由）。
+    await say('嗨，我是小幫手 👋<br>來建立<b>專屬你的 MiniMe</b>——做完你當場就能問它問題。')
     // 2026-09-07 老闆拍板**加回**出口鈕（推翻我 09-06「跟頁首『之後再說』去同一個地方就拿掉」）：
     // 同一個目的地≠同一個功能——頁首那顆藏在對話焦點之外、而且講不出「怎麼回來」；
     // 這顆按下去會補一句回來的路，那正是第一個畫面就決定不做的人最需要的資訊。
@@ -260,7 +302,7 @@ export function useOnboardingChat() {
         //    的第一句就是「接下來，把你的 MiniMe 跟你的 LINE 官方帳號連在一起」，
         //    後面直接接問句。兩則連著出現＝同一句話講兩次，中間還多一次打字停頓。
         //    09-06 補它的理由（「建好之後怎麼突然跳出 LINE 官方帳號」）由那則的前半句承接。
-        progress.value = ONBOARDING_STEP.profile
+        progress.value = BUILD_STEP.profile
         return true
       }
       catch (e: unknown) {
@@ -284,11 +326,10 @@ export function useOnboardingChat() {
 
   // ── 認識你的店（`D-85` / `C-219`）──────────────────────────────
   //
-  // 為什麼擺在這裡：建立帳號之後、取得連線資訊之前。
-  //   ① 這五題人人答得出來，而且**還沒撞到金鑰那道牆**——卡在金鑰的人原本是空手離開的，
-  //      現在至少留下一份輪廓，回來的理由多一個。
-  //   ② 答案存進工作區，就算 LINE 接不成也不會白做。
-  //   ③ 讀網站要一分鐘，正好塞進接 LINE 的等待時間，兩邊都不用乾等。
+  // 為什麼擺在這裡：打造那一趟的第 2 格，建立帳號之後（`C-250` 起接 LINE 另成一趟）。
+  //   ① 這五題人人答得出來，**不會撞到金鑰那道牆**——卡在金鑰的人原本是空手離開的。
+  //   ② 答案存進工作區，之後接不接 LINE 都不會白做。
+  //   ③ 讀網站要一分鐘：⚠️ 拆兩趟之後**不再躲在接 LINE 的等待裡**，揭曉那一步要講「正在讀」。
   // ⛔ 這一段**零 LLM**：只收答案。讀網站是另一支（背景 job），模型不參與問答。
 
   /** 這一輪讀網站的工作 id；接線完成後揭曉那一刻要拿它去收結果 */
@@ -301,7 +342,7 @@ export function useOnboardingChat() {
    * @param opts.intro      開場白換一句（反推之後不必再講一次「讓我認識你的店」）
    */
   async function stepStoreProfile(opts: { skipFilled?: StoreProfileDoc, intro?: string } = {}): Promise<'done' | 'skipped'> {
-    progress.value = ONBOARDING_STEP.profile
+    progress.value = BUILD_STEP.profile
 
     if (opts.intro) {
       await say(opts.intro)
@@ -345,17 +386,42 @@ export function useOnboardingChat() {
         //    （老店反推之後只剩旺季與最想解決，正好就是這個情況）。
         const prefix = i === 0 && steps.length > 1 ? `<span class="agm-stepno">${step} / ${steps.length}</span>` : ''
         const extra = i === 0 && fields.length > 1 ? '最後兩個快問快答。' : ''
-        await say(`${prefix}${extra}${def.question}`)
+        /**
+         * 🔴 2026-09-26（`C-250`／`D-99`）第 2、4 題的問法**照第 1 題的答案換**。
+         *    ⛔ 對牙醫診所問「主要賣什麼」、對補習班問「客人通常怎麼買」，他要嘛答不出來、
+         *    要嘛硬塞一個怪答案進去，而那個答案會一路長到 AI 的語氣裡。
+         * ⚠️ 產業別取「這一輪已經答的」，老店反推時取輪廓裡的（`skipFilled`）。
+         */
+        const industry = answers.industry ?? opts.skipFilled?.fields?.industry?.value ?? ''
+        const wording = storeBizWording(industry)
+        const question = def.id === 'products' ? wording.productsQuestion
+          : def.id === 'channel' ? wording.channelQuestion
+          : def.question
+        await say(`${prefix}${extra}${question}`)
         if (def.options?.length) {
           // ⛔ **一顆 primary 都不給**（守門測試 `agent-choice-order` 也會擋）：
           //    這幾題沒有「建議答案」——把某個選項染成主要動作，等於暗示那是對的，
           //    收上來的輪廓就會往那個選項偏。這跟「主要動作要醒目」不衝突：
           //    這一排根本沒有主要動作，只有互斥的事實。
-          const picked = await askChoices(def.options.map(o => ({ label: o, value: o })))
-          answers[def.id] = String(picked ?? '')
+          // ⭐ 最後那顆是**出口**（`D-89`）：選項列不完的人不該只能亂選一個；
+          //    ⛔ 也不該給「其他」——那個字存下去會被原樣插進草稿。
+          const picked = await askChoices([
+            ...def.options.map(o => ({ label: o, value: o })),
+            { label: '都不是，我自己講', value: FREE_ANSWER, escape: true },
+          ])
+          if (picked === FREE_ANSWER) {
+            await say(def.freeAsk ?? '那你自己講講看？一句話就好。')
+            const typed = await askInput({ inputType: 'text', placeholder: def.freePlaceholder ?? '', maxLength: STORE_PROFILE_VALUE_MAX })
+            if (typed == null) continue
+            answers[def.id] = typed
+          }
+          else {
+            answers[def.id] = String(picked ?? '')
+          }
         }
         else {
-          const typed = await askInput({ inputType: 'text', placeholder: def.placeholder ?? '', maxLength: STORE_PROFILE_VALUE_MAX })
+          const placeholder = def.id === 'products' ? wording.productsPlaceholder : (def.placeholder ?? '')
+          const typed = await askInput({ inputType: 'text', placeholder, maxLength: STORE_PROFILE_VALUE_MAX })
           if (typed == null) continue
           answers[def.id] = typed
         }
@@ -392,15 +458,17 @@ export function useOnboardingChat() {
           method: 'POST',
           body: { siteUrl },
         })
-        siteJobId = r.jobId
         if (r.status === 'failed') {
           // ⛔ 讀不到要當場講：它是第一頁就撞到的錯（網址打錯、對方擋人），
           //    拖到最後才說等於讓他白等一段
+          // ⚠️ 讀失敗的工作**不記 id**：揭曉那一刻不必再等它、也不必再講一次讀不到
           await say(`${escapeHtml(r.error || '這個網址我讀不到')}。之後在「組織與 LINE」頁可以換一個再試。`)
         }
         else {
-          // ⛔「不用等我」這件事要講：不講的話他會盯著等，而接下來那 7 分鐘本來就有事要做
-          await say('收到 ✓ 我去讀，<b>你不用等我</b>——先把 LINE 接起來，讀好了一起給你看。')
+          siteJobId = r.jobId
+          // ⚠️ `D-88` 拆兩趟之後這句**一定要跟著改**：讀網站不再躲在接 LINE 的等待時間裡，
+          //    下一步就是等它讀完。⛔ 不可以再說「先把 LINE 接起來」——那是上一版的順序。
+          await say('收到 ✓ 我現在就去讀，大概不用一分鐘。')
         }
       }
       catch (e: unknown) {
@@ -424,10 +492,26 @@ export function useOnboardingChat() {
   //    跟「一檔活動」精靈那種「標籤沒建成就別建活動」的鏈式依賴不同。
   //    但**失敗時一定要點名已經建好的東西**，否則人會重跑一次而多出重複的標籤。
 
-  /** 記下來、精靈結束時才帶他去的事（知識庫要人審卡，不能在對話裡做完） */
-  let knowledgeHandoffUrl = ''
+  /**
+   * 草稿卡上他改過的內容（`D-94`：草稿一開始就是可以改的框）。key＝那張卡的 entry id。
+   * ⚠️ 按「採用」時用的是**這一份**，不是範本原文——他改了卻寫出去原文，是最糟的那種假按鈕。
+   */
+  const draftEdits = new Map<number, { body?: string, tags?: { name: string, why: string, on: boolean }[] }>()
 
-  async function applyOneDraft(d: StoreDraft, profile: StoreProfileDoc): Promise<DraftApplyStep> {
+  /** 頁面轉交的「草稿框內容變了」 */
+  function onDraftInput(p: { entryId: number, body?: string, tags?: { name: string, why: string, on: boolean }[] }) {
+    const prev = draftEdits.get(p.entryId) ?? {}
+    draftEdits.set(p.entryId, {
+      ...prev,
+      ...(p.body != null ? { body: p.body } : {}),
+      ...(p.tags ? { tags: p.tags } : {}),
+    })
+  }
+
+  /** 這一趟真的建成了哪幾樣（成績單、痛點回扣句都要看它——⛔ 講「剛剛採用的」之前先確認真的有） */
+  const builtKeys = new Set<StoreDraftKey>()
+
+  async function applyOneDraft(d: StoreDraft): Promise<DraftApplyStep> {
     const label = d.title
     try {
       if (d.key === 'welcome') {
@@ -460,14 +544,8 @@ export function useOnboardingChat() {
           built++
         }
         return built > 0
-          ? { key: d.key, label: `${label}（${built} 顆）`, status: 'done' }
+          ? { key: d.key, label: `建議的分眾標籤 ${built} 顆`, status: 'done' }
           : { key: d.key, label, status: 'skipped' }
-      }
-      if (d.key === 'knowledge') {
-        // ⛔ **不在這裡直接寫進知識庫**：卡片內容要人看過才算數。
-        //    這一步只把網址記下來，結束時給他一顆「去整理成知識卡」的按鈕。
-        knowledgeHandoffUrl = profile.siteUrl
-        return { key: d.key, label, status: 'done' }
       }
       return { key: d.key, label, status: 'skipped' }
     }
@@ -479,7 +557,11 @@ export function useOnboardingChat() {
     }
   }
 
+  /** 草稿那一段的逐樣結果（成績單要列得出「哪幾樣」，⛔ 不是只寫數字） */
+  let draftSteps: DraftApplyStep[] = []
+
   async function stepStoreDrafts(profile: StoreProfileDoc) {
+    draftSteps = []
     if (!canBuildDrafts(profile)) return
     const shopName = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
     const drafts = buildStoreDrafts({
@@ -492,17 +574,27 @@ export function useOnboardingChat() {
 
     const adoptable = drafts.filter(d => d.kind === 'adopt').length
     // ⛔「按採用才會生效」這句留著：不留的話他會以為東西已經對客人發出去了（08-14 紅線）
+    // ⚠️ 數字吃 `adoptable`（真的要他決定的那幾樣）——說「準備了 4 樣」卻只有 3 樣要按，他會一直找第 4 顆
     await say(`我照你講的準備了 <b>${adoptable} 樣</b>，按「採用」才會生效。`)
 
-    const steps: DraftApplyStep[] = []
     for (const d of drafts) {
-      const cardId = card({
-        kind: 'store-draft',
+      /**
+       * ⭐ `D-94`：**一開始就是可以改的**（輸入框自己就是說明；少按一次「改一下」）。
+       * ⛔ 標籤不給大文字框：它是三顆名字（結構），開 textarea 等於請他把「名字——說明」的格式改壞。
+       */
+      const editable = d.kind !== 'adopt' ? undefined : d.key === 'tags' ? 'tags' as const : 'text' as const
+      const base = {
+        kind: 'store-draft' as const,
         title: d.title,
         where: d.where,
         body: d.body,
         ...(d.note ? { note: d.note } : {}),
         variant: d.kind,
+      }
+      const cardId = card({
+        ...base,
+        ...(editable ? { editable } : {}),
+        ...(d.key === 'tags' && d.tags ? { tags: d.tags.map(t => ({ ...t, on: true })) } : {}),
       })
       if (d.kind === 'info') continue
 
@@ -510,87 +602,81 @@ export function useOnboardingChat() {
         { label: '採用', value: 'yes', primary: true },
         { label: '先不要', value: 'no', escape: true },
       ])
-      if (c !== 'yes') {
-        steps.push({ key: d.key, label: d.title, status: 'declined' })
+
+      // 他最後決定的那一版（沒動過就是範本原文）
+      const edit = draftEdits.get(cardId)
+      const finalBody = (edit?.body ?? d.body).trim()
+      const finalTags = d.key === 'tags'
+        ? (edit?.tags ?? (d.tags ?? []).map(t => ({ ...t, on: true })))
+            .filter(t => t.on && t.name.trim())
+            .map(t => ({ name: t.name.trim(), why: t.why }))
+        : undefined
+      const shownBody = finalTags ? finalTags.map(t => `${t.name}——${t.why}`).join('\n') : finalBody
+
+      // 改到空的（字刪光、標籤全取消勾）＝這一樣不建，⛔ 不可以照樣送一個空的出去
+      const emptied = c === 'yes' && (finalTags ? finalTags.length === 0 : !finalBody)
+      if (c !== 'yes' || emptied) {
+        draftSteps.push({ key: d.key, label: d.title, status: 'declined' })
         updateMsg(cardId, {
-          kind: 'store-draft',
-          title: d.title,
-          where: d.where,
-          body: d.body,
-          ...(d.note ? { note: d.note } : {}),
-          variant: d.kind,
+          ...base,
           state: 'declined',
-          stateText: '先不要。之後在「組織與 LINE」頁的輪廓卡還找得到。',
+          // ⛔ `D-89` 修掉的假承諾：原本寫「之後在『組織與 LINE』頁的輪廓卡還找得到」，
+          //    但那張卡上根本沒有這幾樣。講一條**真的走得到**的路。
+          stateText: emptied
+            ? '內容是空的，這一樣先不建。'
+            : `先不要。這一樣現在不會建立，之後想要可以到「${d.where}」自己加。`,
         })
         continue
       }
 
       busy.value = true
-      const r = await applyOneDraft(d, profile)
+      const r = await applyOneDraft({ ...d, body: finalBody, ...(finalTags ? { tags: finalTags } : {}) })
       busy.value = false
-      steps.push(r)
+      draftSteps.push(r)
+      if (r.status === 'done') builtKeys.add(d.key)
+      // ⚠️ 決定完就把框收回唯讀（不帶 editable），內容換成**他最後決定的那一版**
       updateMsg(cardId, {
-        kind: 'store-draft',
-        title: d.title,
-        where: d.where,
-        body: d.body,
-        ...(d.note ? { note: d.note } : {}),
-        variant: d.kind,
+        ...base,
+        body: shownBody,
         state: r.status === 'done' ? 'adopted' : 'failed',
         stateText: r.status === 'done'
-          ? (d.key === 'knowledge' ? '好，結束前我給你一顆按鈕過去整理。' : `已採用 ✓ 存在「${d.where}」`)
+          ? `已採用 ✓ 存在「${d.where}」，之後隨時可以改`
           : `沒有成功——${r.error}`,
       })
     }
 
-    if (!steps.length) return
-    const outcome = summarizeDraftApply(steps)
-    card({ kind: 'summary', items: steps.map(s => ({
-      label: s.label,
-      done: s.status === 'done',
-      note: s.status === 'done' ? undefined : s.status === 'declined' ? '你選了先不要' : s.status === 'failed' ? (s.error || '沒有成功') : '沒有執行',
-    })) })
     // ⛔ 有東西沒成時**一定要點名已經建好的**：少了這一段，人會以為什麼都沒發生而重跑，
     //    於是多出重複的標籤與重複的加好友腳本——而且他不會知道。
-    await say(outcome.leftovers.length
-      ? `${escapeHtml(outcome.headline)}<br>⛔ <b>不要整個重來</b>：${escapeHtml(outcome.leftovers.join('、'))}，重跑會多出重複的東西。沒成的那幾樣到後台單獨補就好。`
-      : escapeHtml(outcome.headline))
+    // ⚠️ 全部順利時不另外講一句「都幫你準備好了」（v74：那句沒有新資訊，成績單會列）
+    const outcome = summarizeDraftApply(draftSteps)
+    if (outcome.leftovers.length) {
+      await say(`${escapeHtml(outcome.headline)}<br>⛔ <b>不要整個重來</b>：${escapeHtml(outcome.leftovers.join('、'))}，重跑會多出重複的東西。沒成的那幾樣到後台單獨補就好。`)
+    }
   }
 
-  /**
-   * 輪廓答完之後的閘門。
-   * ⛔ **不可以問開放題「要不要接 LINE」**：主要動作就是接 LINE，
-   *    沒接 LINE 的後台是空殼。「先進後台」只給還沒拿到金鑰的人，而且要講後果。
+  /*
+   * ⛔ 2026-09-26（`C-250`）`stepConnectGate()`（「接上 LINE（約 7 分鐘）／我還沒有連線資訊，先進後台」）整支移除：
+   *    老闆 09-25「是否打造 MiniMe 之後直接進後台，之後再讓他自己決定什麼時候要串接 LINE」。
+   *    打造完一律進後台；接 LINE 只剩後台的入口（紅帶／小幫手英雄卡／組織頁），走 `?workspaceId=` 那一趟。
+   *    ⚠️ 推翻 `D-88`「第一段結尾留『現在就接 LINE』當主要鈕」。
    */
-  async function stepConnectGate(): Promise<'go' | 'later'> {
-    await say('接下來把 MiniMe 接上 LINE，大約 <b>7 分鐘</b>。')
-    const c = await askChoices([
-      { label: '接上 LINE（約 7 分鐘）', value: 'go', primary: true },
-      { label: '我還沒有連線資訊，先進後台', value: 'later', escape: true },
-    ])
-    if (c === 'go') return 'go'
-
-    // ⛔ 後果與回來的路都要留：沒接 LINE 的後台是空殼，不講他會以為已經好了
-    await say(
-      'LINE 接上之前，<b>客人傳訊息我收不到</b>。<br>'
-      + '拿到連線資訊隨時回來，小幫手那裡留著這一條，我從<b>取得連線資訊</b>接著帶。',
-    )
-    await askChoices([{ label: '知道了，先進後台', value: 'ok', primary: true }])
-    await navigateTo(onboardingLandingPath(wid.value))
-    return 'later'
-  }
 
   /**
-   * 揭曉：接線成功那一刻，一次給出「我對你的店的認識」。
+   * 揭曉「我對你的店的認識」＋檢查點（`C-250`：從「接線成功那一刻」**搬到打造這一趟**）。
+   * ⭐ 原本答完五題什麼都拿不到，要等接完 LINE 才看得到——選「先進後台」的人永遠等不到。
    *
    * ⛔ 三件事不可以妥協：
    *   ① 讀網站還沒跑完就**等它一下**（有上限），別在他眼前畫一張少一半的卡；
-   *   ② 等不到也要照樣揭曉，並且**講出來還在讀**——空等比少一格糟；
-   *   ③ 猜的要標成猜的（卡片的 source 欄）。
+   *      ⚠️ 拆兩趟之後讀網站不再躲在接 LINE 的等待時間裡——所以要講「正在讀」、讓他看得到在等什麼；
+   *   ② 等不到也要照樣揭曉，並且**講出來還在讀**——空等比少一格糟（G-10 的教訓：不能有「等不到又沒有下一步」）；
+   *   ③ 猜的要看得出是猜的（卡片分組：「我猜的 N 項，幫我看一下對不對」）。
+   * ⭐ 檢查點（`D-91`）**擋在草稿前面**：草稿是照輪廓生的，先生完再讓他改，下面那幾樣就全是照舊資料做的。
    */
-  async function revealStoreProfile() {
-    // 讀網站的工作還在跑 → 收尾一下。人已經花了好幾分鐘接 LINE，通常早就跑完了。
+  async function revealStoreProfile(opts: { editable?: boolean } = {}) {
+    let stillReading = false
+    let statusId: number | null = null
     if (siteJobId) {
+      statusId = card({ kind: 'status', state: 'pending', text: '正在讀你的網站…通常不用一分鐘' })
       busy.value = true
       // ⛔ `pollUntil` 本身沒有上限（它是給「等客人傳訊息」用的，那件事可以等一整天）。
       //    這裡一定要自己封頂：讀網站卡住時，人會坐在一個沒有任何按鈕的畫面前面。
@@ -599,12 +685,13 @@ export function useOnboardingChat() {
         return p.status === 'running' ? null : p
       }, SITE_JOB_POLL_MS)
       try {
-        await Promise.race([
+        const done = await Promise.race([
           poll.promise,
           new Promise<null>(resolve => setTimeout(() => resolve(null), SITE_JOB_MAX_WAIT_MS)),
         ])
+        stillReading = !done
       }
-      catch { /* 等不到就照樣揭曉 */ }
+      catch { stillReading = true /* 等不到就照樣揭曉 */ }
       finally {
         poll.stop()
         busy.value = false
@@ -618,29 +705,42 @@ export function useOnboardingChat() {
     }
     catch {
       // ⛔ 查不到就不要畫卡：畫一張空的等於說「我什麼都不知道」，而那不是真的
+      if (statusId != null) updateMsg(statusId, { kind: 'status', state: 'skipped', text: '網站的結果這次拿不到，之後在「組織與 LINE」頁看得到' })
       return
+    }
+    if (statusId != null) {
+      const sr = profile?.siteRead
+      updateMsg(statusId, stillReading
+        ? { kind: 'status', state: 'skipped', text: '網站還在讀，先給你看已經知道的——讀完會補進「組織與 LINE」頁' }
+        : sr && sr.status !== 'failed'
+          ? { kind: 'status', state: 'ok', text: describeSiteRead(sr) }
+          : { kind: 'status', state: 'fail', text: describeSiteRead(sr) })
     }
     if (!profile || filledFieldCount(profile) === 0) return
     revealedProfile = profile
 
-    // ⛔「猜的都標出來了」要留：把 AI 猜的畫成確定的，等於我們在說謊
-    await say(
-      profile.siteRead && profile.siteRead.pagesRead > 0
-        ? '你的網站我讀完了。這是我認識的你，<b>猜的都標出來了</b>，不對的直接改。'
-        : '這是我認識的你，<b>猜的都標出來了</b>，不對的直接改。',
-    )
-    showProfileCard(profile)
+    // ⛔ 這裡原本還有「猜的都標出來了，不對的直接改」——`D-93` 分組之後由**組名**扛
+    //    （「我猜的 N 項，幫我看一下對不對」），按鈕上又寫著「修改」，同一個指示不講第二遍。
+    const siteOk = !stillReading && (profile.siteRead?.pagesRead ?? 0) > 0
+    await say(siteOk ? '你的網站我讀完了。這是我認識的你。' : '這是我認識的你。')
+    profileCardId = showProfileCard(profile, { grouped: true, editable: opts.editable !== false })
+    // ⛔ 按鈕上就寫著「都對了，繼續」，⛔ 不再多一句「有不對的就按旁邊的改，改完按繼續」
+    await askChoices([{ label: '都對了，繼續', value: 'ok', primary: true }])
+    profileCardId = null
   }
 
-  /**
-   * 畫一張輪廓卡。**反推與揭曉共用這一份**——
-   * ⛔ 兩個地方各畫一次，來源徽章的規則遲早會在其中一邊漏掉。
-   */
-  function showProfileCard(profile: StoreProfileDoc) {
+  /** 揭曉那張卡的 id——就地修改時要重畫的就是它（檢查點過了之後就不再接受修改事件） */
+  let profileCardId: number | null = null
+
+  /** 輪廓卡的一整則訊息（揭曉與就地修改後重畫共用；⛔ 兩處各組一份，欄位名照型換的規則遲早會漏一邊） */
+  function profileCardMsg(profile: StoreProfileDoc, opts: { grouped?: boolean, editable?: boolean } = {}) {
+    const industry = profile.fields?.industry?.value ?? ''
     const rows = STORE_PROFILE_FIELDS.map((def) => {
       const f = profile.fields?.[def.id]
       return {
-        label: def.label,
+        fieldId: def.id,
+        // 🔴 `D-99`：欄位名照型換（診所的卡上不寫「主打商品」「價格帶」）
+        label: storeProfileLabelFor(def.id, def.label, industry),
         value: f?.value ?? '',
         hint: f?.value ? undefined : describeMissing(def, f?.missing),
         source: (f?.value ? (f.source ?? 'ai') : 'none') as 'owner' | 'ai' | 'conversation' | 'none',
@@ -648,18 +748,62 @@ export function useOnboardingChat() {
       }
     })
     const readNote = profile.siteUrl ? describeSiteRead(profile.siteRead) : ''
-    card({ kind: 'store-profile', rows, ...(readNote ? { siteNote: readNote } : {}) })
+    const pages = profile.siteRead?.pagesRead ?? 0
+    return {
+      kind: 'store-profile' as const,
+      rows,
+      ...(opts.grouped
+        // ⭐ 分組版不畫卡尾那行「讀到 N 頁」：出處餵進「我猜的」組名（出處要跟主張長在一起）
+        ? { grouped: true, ...(pages > 0 ? { aiNote: `從你的網站 ${pages} 頁猜的` } : {}) }
+        : (readNote ? { siteNote: readNote } : {})),
+      ...(opts.editable ? { editable: true } : {}),
+    }
+  }
+
+  /**
+   * 畫一張輪廓卡。**反推與揭曉共用這一份**——
+   * ⛔ 兩個地方各畫一次，來源徽章的規則遲早會在其中一邊漏掉。
+   */
+  function showProfileCard(profile: StoreProfileDoc, opts: { grouped?: boolean, editable?: boolean } = {}): number {
+    return card(profileCardMsg(profile, opts))
+  }
+
+  /**
+   * 頁面轉交的「輪廓卡某一格存起來」（`D-91` 就地可改）。
+   * ⛔ 改完**來源要變成「你說的」**（伺服器那支一律標 owner）——他親手打的還標成「AI 推測」，
+   *    等於把他的話講成猜的；而且那一格會當場跳到「你告訴我的」那一組，看得見「這一格現在算你說的」。
+   * ⚠️ 存完一定要把輪廓換成**存回來的那一份**：下面的草稿是照 `revealedProfile` 生的。
+   */
+  async function onProfileEdit(p: { entryId: number, fieldId: string, value: string }) {
+    if (p.entryId !== profileCardId || !revealedProfile) return
+    if (!STORE_PROFILE_FIELDS.some(f => f.id === p.fieldId)) return
+    busy.value = true
+    try {
+      const r = await apiFetch<{ profile: StoreProfileDoc }>('/api/store-profile', {
+        method: 'POST',
+        body: { fields: { [p.fieldId]: p.value } },
+      })
+      revealedProfile = r.profile
+      updateMsg(p.entryId, profileCardMsg(r.profile, { grouped: true, editable: true }))
+    }
+    catch {
+      // ⛔ 存不進去要講：畫面上看起來改好了、其實沒存，是這個專案最常吃虧的形狀
+      await say('剛剛那一格沒存進去，再按一次「修改」試試；還是不行的話，之後在「組織與 LINE」頁也改得到。')
+    }
+    finally {
+      busy.value = false
+    }
   }
 
   async function stepWelcomeBack(line: LineStatus, setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>) {
     const name = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
-    await say(`歡迎回來${name ? `，「${escapeHtml(name)}」` : ''}！我們接著把剩下的設定做完，做過的我會直接跳過。`)
+    await say(`歡迎回來${name ? `，「${escapeHtml(name)}」` : ''}！我們接著把 LINE 接完，做過的我會直接跳過。`)
     if (!line.tokenConfigured || !line.secretConfigured)
-      progress.value = ONBOARDING_STEP.credentials
+      progress.value = LINE_STEP.credentials
     else if (setup.firstMessageReceived !== 'done')
-      progress.value = ONBOARDING_STEP.receive // 兩組連線資訊都在了 → 接收 LINE 訊息
+      progress.value = LINE_STEP.receive // 兩組連線資訊都在了 → 接收 LINE 訊息
     else
-      progress.value = ONBOARDING_STEP.testMessage // 都做完了停在傳話測試那格，「完成」由 stepDone 點亮
+      progress.value = LINE_STEP.testMessage // 都做完了停在用手機測試那格，「上線完成」由 stepDone 點亮
   }
 
   async function stepHasOA() {
@@ -671,8 +815,11 @@ export function useOnboardingChat() {
     // 只給不確定的人看。⛔ 主線行內連結歸零（主線動作＝連結卡、收合內＝行內），
     // 「列表是空的但同事說有」那段不能刪、只能收起來：自己登入看到空列表就再建一個新帳號，
     // 好友得從頭加，代價比走錯流程大得多。
+    // ⚠️ 2026-09-26（`C-250`）拿掉「接下來，」：這一趟現在是他**隔一陣子從後台紅帶／小幫手進來**的，
+    //    不是接在什麼後面。
+    progress.value = LINE_STEP.credentials
     await say(
-      '接下來，把你的 MiniMe 跟你的 <b>LINE 官方帳號</b>連在一起。<br><b>你已經有 LINE 官方帳號了嗎？</b>',
+      '把你的 MiniMe 跟你的 <b>LINE 官方帳號</b>連在一起。<br><b>你已經有 LINE 官方帳號了嗎？</b>',
       { summary: '不確定有沒有、或列表是空的？', html: '打開後台看一眼就知道（下面一步一步看）。<br><b>列表是空的，但同事說有？</b>帳號多半是老闆或前同事用<b>他的</b> LINE 申請的，你自己登入會看到空列表。先問一聲比較快——自己再建一個新的，好友要從頭加。' },
     )
     // 2026-09-02 補圖：這是最早的分岔、答錯整條路白走，原本一張圖都沒有。
@@ -1140,7 +1287,7 @@ export function useOnboardingChat() {
     webhookUrl: string,
     opts: { offerVerifyUpfront?: boolean } = {},
   ) {
-    progress.value = ONBOARDING_STEP.testMessage
+    progress.value = LINE_STEP.testMessage
     // ⛔ 2026-09-11 改寫（使用者：「這塊也是會讓人卡住的地方，大家到這裡會不知道要做什麼」）。
     //    原本那一句「拿手機加你的 LINE 官方帳號好友，隨便傳一句話給它」三個病全中：
     //    ① **動作換到另一台裝置**——前面每一步都在這個畫面上按鈕或去另一個分頁，這一步突然要拿
@@ -1361,7 +1508,7 @@ export function useOnboardingChat() {
     else {
       setWait('skipped', '略過測試——之後隨時可以加好友傳一句話試試')
     }
-    progress.value = ONBOARDING_STEP.testMessage
+    progress.value = LINE_STEP.testMessage
   }
 
   /**
@@ -1544,7 +1691,7 @@ export function useOnboardingChat() {
     opts: { preVerify?: boolean } = {},
   ) {
     if (setup.firstMessageReceived === 'done') {
-      progress.value = Math.max(progress.value, ONBOARDING_STEP.testMessage)
+      progress.value = Math.max(progress.value, LINE_STEP.testMessage)
       return
     }
     // ── 接線：Webhook ──
@@ -1557,7 +1704,7 @@ export function useOnboardingChat() {
       catch { /* 真的拿不到才退回瀏覽器網址 */ }
     }
     const webhookUrl = `${line.publicBaseUrl || window.location.origin}/webhook`
-    progress.value = Math.max(progress.value, ONBOARDING_STEP.receive) // 兩組連線資訊到手，進「接收 LINE 訊息」格
+    progress.value = Math.max(progress.value, LINE_STEP.receive) // 兩組連線資訊到手，進「接收 LINE 訊息」格
     let verified = false
 
     // 續走模式先靜默驗一次：之前就接好 Webhook 的人不用再被叫去貼一次網址。
@@ -1651,7 +1798,28 @@ export function useOnboardingChat() {
    */
   let connectFirstEntryId: number | null = null
 
+  /**
+   * 這個帳號有沒有一條**啟用中**的加好友歡迎（打造那一趟採用的、或自己在自動回應建的，`C-250`）。
+   * ⛔ 查不到就當沒有：講「不用動」最壞是客人收兩則，講「關掉」最壞是一則都收不到。
+   */
+  async function hasActiveFollowWelcome(): Promise<boolean> {
+    try {
+      const list = await apiFetch<Array<{ enabled?: boolean, name?: string, nodes?: ScriptNode[], rootNodeId?: string }>>('/api/ai/scripts/list')
+      if (!Array.isArray(list)) return false
+      return followWelcomeRow(list.map(s => ({
+        enabled: s.enabled,
+        triggerEvent: scriptTriggerEvent({ nodes: s.nodes ?? [], rootNodeId: s.rootNodeId ?? '' }),
+      }))).state === 'active'
+    }
+    catch {
+      return false
+    }
+  }
+
   async function teachConnect() {
+    // 🔴 `D-100`：「加入好友的歡迎訊息」那顆開關**照他有沒有自己的歡迎訊息換講法**——
+    //    這一刻他就站在那顆開關前面，是全流程唯一講這件事不用他記的時間點。
+    const ownWelcome = await hasActiveFollowWelcome()
     await walkNodes([
       {
         onFirstSaid: (id: number) => { connectFirstEntryId = id },
@@ -1679,12 +1847,14 @@ export function useOnboardingChat() {
         //    我們的連結落在「主頁」，那種情況左邊那排選單還沒展開。
         // 2026-09-11「兩件事」→「三件事」：補上「聊天」那顆開關（老闆實機截圖抓到我們沒教，
         // 關著的話 LINE 後台的「聊天」整頁是「功能目前關閉中」，而「聊天的回應方式」掛在它底下）
-        html: '<b>還在同一個後台</b>，這一頁要做<b>三件事</b>：把「聊天」和 Webhook 打開、把回應方式改成手動聊天。'
+        html: (ownWelcome
+          ? '<b>還在同一個後台</b>，這一頁要做<b>四件事</b>：把「聊天」和 Webhook 打開、關掉 LINE 內建的歡迎訊息、把回應方式改成手動聊天。'
+          : '<b>還在同一個後台</b>，這一頁要做<b>三件事</b>：把「聊天」和 Webhook 打開、把回應方式改成手動聊天。')
           + '<br>（如果左邊沒有那排選單，先點右上角的「<b>設定</b>」。）',
         aside: { summary: '為什麼要關掉自動回應？', html: 'LINE 內建的自動回應預設是開的，不關的話客人每句話都會收到<b>兩套回覆</b>——LINE 那句制式回覆，再加上 MiniMe 的回覆。' },
         href: 'https://manager.line.biz/',
         hrefLabel: '打開官方帳號後台 ↗',
-        carousel: ONBOARDING_CAROUSELS.responseSettings,
+        carousel: ownWelcome ? ONBOARDING_CAROUSELS.responseSettingsOwnWelcome : ONBOARDING_CAROUSELS.responseSettings,
       },
     ], '')
   }
@@ -1757,13 +1927,12 @@ export function useOnboardingChat() {
 
     // 到這裡才是真的走到最後一格（成績單即將畫出來）：頁首的出口從這一刻才收掉，
     // 而這一刻畫面上馬上就有成績單與那排「接下來做什麼」的按鈕，不會出現沒出路的空窗。
-    progress.value = ONBOARDING_STEP.done
+    progress.value = LINE_STEP.done
+    // 走到成績單＝這一趟接完了，「接到一半」的旗子收掉（之後進後台不會再被拉回來）
+    clearLineFlowInProgress(wid.value)
 
-    // 揭曉「我對你的店的認識」（`C-219`）＋從它長出來的五樣草稿（`C-221`）
-    // ——⛔ 擺在成績單**之前**：成績單是這一段的句點，
-    // 句點後面再加內容，人已經在找離開的按鈕了。
-    await revealStoreProfile()
-    if (revealedProfile) await stepStoreDrafts(revealedProfile)
+    // ⛔ 2026-09-26（`C-250`／`D-88`）**這裡不再揭曉輪廓、不再給草稿**：那兩樣已經搬到打造那一趟。
+    //    留在這裡的話，走完兩趟的人會看到同一張卡兩次、同幾樣草稿被問兩次（重複採用會多出重複的腳本與標籤）。
 
     card({
       kind: 'summary',
@@ -1856,6 +2025,73 @@ export function useOnboardingChat() {
     }
   }
 
+  // ── 打造這一趟的結尾（`C-250`，示意頁 v80）─────────────────────────
+
+  /** 最近一個還沒過的節日（「不知道推播要推什麼」那句回扣要講具體的下一個） */
+  function nextFestival(): { name: string, inDays: number } | null {
+    const today = taipeiDate()
+    let best: { name: string, inDays: number } | null = null
+    for (const f of TAIWAN_FESTIVALS) {
+      const d = daysBetween(today, f.date)
+      if (d < 0 || d > 90) continue
+      if (!best || d < best.inDays) best = { name: f.name, inDays: d }
+    }
+    return best
+  }
+
+  /**
+   * 「最想解決的是哪一件」的回扣句（`D-98` 救回來的那一題：它是唯一一題問「你的煩惱」的，
+   * 回扣一句他就知道這趟不是白填表）。
+   * 🔴 **每一句都要看「那樣東西這一趟真的建了沒」**（`D-100`）：歡迎訊息他可能按了先不要、
+   *    標籤可能沒採用——⛔ 對不上就**整句不講**，不要硬湊。
+   * ⚠️「客服回不完」那句要講的是「那些知識卡看過放進去」——打造這一趟現在還**不會產生知識卡**
+   *    （`C-250` 第三批才做），⛔ 在那之前不講，不然是指著一件不存在的東西。
+   */
+  function painPayoff(pain: string): string {
+    if (pain === '加好友後沒人理' && builtKeys.has('welcome'))
+      return '你說最想解決<b>加好友後沒人理</b>——剛剛採用的<b>歡迎訊息</b>就是在解決這件事，接上 LINE 之後客人一加就會收到。'
+    if (pain === '不知道推播要推什麼') {
+      const f = nextFestival()
+      if (f) return `你說最想解決<b>不知道推播要推什麼</b>——月曆排好了，最近是 <b>${f.inDays} 天後的${escapeHtml(f.name)}</b>。`
+    }
+    if (pain === '想知道客人是誰' && builtKeys.has('tags'))
+      return '你說最想<b>知道客人是誰</b>——剛剛那幾顆<b>分眾標籤</b>就是在做這件事，之後發推播挑人也是用它們。'
+    return ''
+  }
+
+  /**
+   * 成績單＋唯一一顆「進入後台」（`D-102`，老闆 09-25：「是否打造 MiniMe 之後直接進後台，
+   * 之後再讓他自己決定什麼時候要串接 LINE」）。
+   * ⛔ 結尾不再說「先進後台看看——測試對話那一頁可以直接問它一句」「這些在後台都改得到」：
+   *    進後台之後的導覽會講（老闆：「這句是否先不用，進去後馬上接 tour 了」）。
+   * ⚠️ 仍然要他按一下才走，⛔ 不自動跳：成績單是這一趟的成果，要讓他看得到才離開。
+   * ⚠️ 成績單只列「這一趟做成了什麼」——「知識卡等你看過」「接上 LINE：還沒」那兩行不放
+   *    （進後台兩秒後的導覽第 1、2 步就講，同一件事隔兩秒講兩次）。
+   */
+  async function stepBuildFinish(profileDone: boolean) {
+    progress.value = BUILD_STEP.done
+    const payoff = profileDone ? painPayoff(String(revealedProfile?.fields?.pain?.value ?? '').trim()) : ''
+    if (payoff) await say(payoff)
+    card({
+      kind: 'summary',
+      title: 'MiniMe 打造完成',
+      items: [
+        { label: 'MiniMe 認識你的店', done: profileDone, ...(profileDone ? {} : { note: '你先跳過了' }) },
+        // ⭐ 列出「哪幾樣」，⛔ 不要退回只寫數字（他要知道的是哪三樣）
+        ...draftSteps.map(s => ({
+          label: s.label,
+          done: s.status === 'done',
+          ...(s.status === 'done' ? {} : { note: s.status === 'declined' ? '你選了先不要' : s.status === 'failed' ? (s.error || '沒有成功') : '沒有執行' }),
+        })),
+        // ⚠️ 「接上 LINE 之後」不能拿掉：每日摘要只送通知名單裡的手機，名單要接上 LINE 才有（`D-100`）
+        { label: '行銷月曆：接上 LINE 之後，節日前會在早上的摘要提醒你', done: true },
+        { label: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆`, done: true, note: '不需綁卡' },
+      ],
+    })
+    await askChoices([{ label: '進入後台', value: 'go', primary: true }])
+    await navigateTo(`${onboardingBuiltLandingPath(wid.value)}?from=onboarding`)
+  }
+
   // ── 入口 ────────────────────────────────────────────────────
 
   interface MainFlowCtx {
@@ -1891,7 +2127,8 @@ export function useOnboardingChat() {
    *    「歡迎回來」然後直接跳到成績單，**五題一句都沒問**。指路指到死路。
    */
   async function runProfileOnly() {
-    progress.value = ONBOARDING_STEP.profile
+    flow.value = 'build'
+    progress.value = BUILD_STEP.profile
     const name = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
     await say(`${name ? `「${escapeHtml(name)}」` : '這個帳號'}的設定我先不動，這一趟只做一件事：<b>讓我認識你的店</b>。`)
 
@@ -1906,6 +2143,7 @@ export function useOnboardingChat() {
       await navigateTo(onboardingLandingPath(wid.value))
       return
     }
+    progress.value = BUILD_STEP.reveal
     await revealStoreProfile()
     if (revealedProfile) await stepStoreDrafts(revealedProfile)
     await finishProfileOnly()
@@ -1999,33 +2237,19 @@ export function useOnboardingChat() {
 
   /** 只做輪廓那一趟的收尾：⛔ 一定要給出路，不要停在一段沒有按鈕的對話上 */
   async function finishProfileOnly() {
-    while (true) {
-      const options: AgentChoice[] = []
-      // ⛔ **primary 不可以隨狀態換人**（守門測試 `agent-choice-order`）：
-      //    主要動作在兩次之間跳來跳去，人會按到上一次那顆的位置。
-      //    採用了知識庫的人，主要動作就是去整理；沒採用的那一排就沒有主要動作
-      //    （「看看輪廓」與「回後台」本來就是平的，硬挑一顆染色是替他決定）。
-      if (knowledgeHandoffUrl) {
-        options.push({ label: '把網站整理成知識卡', value: 'kb', primary: true })
-      }
-      options.push(
-        { label: '看看我的輪廓', value: 'profile' },
-        { label: '回後台', value: 'back', escape: true },
-      )
-      const c = await askChoices(options)
-      if (c === 'kb') {
-        // ⛔ 不在對話裡直接寫進知識庫：卡片內容要人看過才算數。
-        //    帶他到匯入頁、網址已經填好，下一步由他按。
-        await navigateTo(`/admin/${wid.value}/knowledge/sources?import=1&url=${encodeURIComponent(knowledgeHandoffUrl)}`)
-        return
-      }
-      if (c === 'profile') {
-        await navigateTo(`/admin/${wid.value}/settings/organization`)
-        return
-      }
-      await navigateTo(onboardingLandingPath(wid.value))
+    // ⛔ **primary 不可以隨狀態換人**（守門測試 `agent-choice-order`）；這一排本來就沒有主要動作
+    //    （「看看輪廓」與「回後台」是平的，硬挑一顆染色是替他決定）。
+    // ⚠️ 2026-09-26（`C-250`）「把網站整理成知識卡」那顆拿掉：它接的是已經移除的「知識庫初稿」採用
+    //    （按了什麼都不建、讀過的頁一小時後刪掉）。待看過的知識卡是 `C-250` 第三批的事。
+    const c = await askChoices([
+      { label: '看看我的輪廓', value: 'profile' },
+      { label: '回後台', value: 'back', escape: true },
+    ])
+    if (c === 'profile') {
+      await navigateTo(`/admin/${wid.value}/settings/organization`)
       return
     }
+    await navigateTo(onboardingLandingPath(wid.value))
   }
 
   async function start(continueWorkspaceId?: string, focus?: string) {
@@ -2036,8 +2260,17 @@ export function useOnboardingChat() {
         await runProfileOnly()
         return
       }
+      /**
+       * ── 接上 LINE 那一趟（`?workspaceId=`）──────────────────────────
+       * ⭐ `C-250`：這一趟現在**只從後台進來**（紅帶「接上 LINE」、小幫手英雄卡、組織頁），
+       *    是他自己決定的時機；打造那一趟不再接到這裡。
+       * ⚠️ 還沒拿過任何連線資訊的人先問「有沒有官方帳號」——以前這一問只在全新開通才有，
+       *    續走模式直接跳到拿第一組，第一次進來接 LINE 的人等於少了第一步。
+       */
       if (continueWorkspaceId) {
         wid.value = continueWorkspaceId
+        flow.value = 'line'
+        progress.value = LINE_STEP.credentials
         busy.value = true
         let line: LineStatus
         let setup: Partial<Record<SetupCapabilityId, SetupItemStatus>>
@@ -2052,32 +2285,38 @@ export function useOnboardingChat() {
           return
         }
         busy.value = false
-        await stepWelcomeBack(line, setup)
+        // 立旗＝「接到一半」：關分頁、斷線的人下次進後台會被拉回一次（`D-88` ②，見 onboarding-line-flag.ts）
+        markLineFlowInProgress(wid.value)
+        if (!line.tokenConfigured && !line.secretConfigured)
+          await stepHasOA()
+        else
+          await stepWelcomeBack(line, setup)
         await runSteps(MAIN_FLOW, { line, setup, preVerify: true })
         return
       }
 
+      /**
+       * ── 打造你的 MiniMe（全新開通）─────────────────────────────────
+       * 建帳號 → 五題 → 讀網站＋揭曉＋檢查點 → 草稿 → 成績單 → 進入後台（落在測試對話）。
+       * ⛔ 接 LINE 不在這一趟（`D-102`）；全程不離開這一頁、零外部依賴，結束時**手上真的有東西**。
+       */
       if (!(await stepWelcomeFresh()))
         return
       if (!(await stepCreate()))
         return
-      // 認識你的店（`C-219`）：⛔ 只在**全新開通**問。續走的人可能早就答過，
-      // 而「有沒有答過」的判定在 setup-status 的 profileReady，由小幫手那條待辦接手催。
-      await stepStoreProfile()
-      if (await stepConnectGate() === 'later')
-        return
-      await stepHasOA()
-      // 全新帳號：LINE 欄位一定是空的，不用先查
-      const line: LineStatus = { tokenConfigured: false, secretConfigured: false, liffConfigured: false, publicBaseUrl: '' }
-      // Webhook 網址需要 publicBaseUrl，補查一次（拿不到就用瀏覽器網址）
-      try {
-        const s = await fetchLineStatus()
-        line.publicBaseUrl = s.publicBaseUrl
+      const profileDone = await stepStoreProfile() === 'done'
+      if (profileDone) {
+        progress.value = BUILD_STEP.reveal
+        await revealStoreProfile()
+        if (revealedProfile) await stepStoreDrafts(revealedProfile)
       }
-      catch { /* 用 window.location.origin 兜底 */ }
-      const setup: Partial<Record<SetupCapabilityId, SetupItemStatus>> = {}
-      await runSteps(MAIN_FLOW, { line, setup })
+      await stepBuildFinish(profileDone)
     })
+  }
+
+  /** 頁首「之後再說」：接 LINE 那一趟是他自己選擇先走的，⛔ 下次進後台不要再把他拉回來 */
+  function markLeaving() {
+    if (flow.value === 'line' && wid.value) clearLineFlowInProgress(wid.value)
   }
 
   function dispose() {
@@ -2094,12 +2333,19 @@ export function useOnboardingChat() {
     /** 這一輪的第一則——頁面把它貼到頂，讓人從第一句開始讀（2026-09-11） */
     turnStartId,
     progress,
+    /** 這一場是哪一趟＋它的名字／要多久／四格（頁首整條都吃這一份） */
+    flow: readonly(flow),
+    flowInfo,
     /** 這一場對話作用中的 workspaceId（建立後才有值）；給頁面算「之後再說」的出口用 */
     activeWorkspaceId: readonly(wid),
     onChoice,
     onSubmit,
     onPick,
     onSkip,
+    /** 互動卡片的事件（輪廓卡就地修改、草稿框改內容）——頁面從 AgentMessageRenderer 轉交過來 */
+    onProfileEdit,
+    onDraftInput,
+    markLeaving,
     start,
     dispose,
   }

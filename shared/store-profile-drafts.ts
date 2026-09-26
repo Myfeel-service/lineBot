@@ -23,6 +23,7 @@ import {
 } from './types/store-profile'
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from './taiwan-festivals'
 import { daysBetween } from './time'
+import { storeBizTypeOf, storeBizWording, welcomeAskFor } from './store-profile-biz'
 
 // ── 哪幾樣 ─────────────────────────────────────────────────────
 
@@ -126,20 +127,20 @@ export function splitProducts(raw: string): string[] {
 export function buildWelcomeDraft(ctx: DraftContext): string {
   const shop = String(ctx.shopName ?? '').trim() || '我們'
   const products = splitProducts(fieldValue(ctx.profile, 'products'))
+  const industry = fieldValue(ctx.profile, 'industry')
   const channel = fieldValue(ctx.profile, 'channel')
+  // ⚠️ `C-250`／`D-99`：「主要做」照型換（賣／做／開／提供）
+  const verb = storeBizWording(industry).verb
 
   const what = products.length === 0
     ? ''
     : products.length === 1
-      ? `我們主要做${products[0]}。`
-      : `我們主要做${products.slice(0, 2).join('、')}${products.length > 2 ? '等' : ''}。`
+      ? `我們主要${verb}${products[0]}。`
+      : `我們主要${verb}${products.slice(0, 2).join('、')}${products.length > 2 ? '等' : ''}。`
 
-  // 「可以問什麼」照銷售方式換一句：預約制的人問的是時段，網購的人問的是出貨
-  const ask = channel.includes('預約')
-    ? '想預約時段、問服務內容，直接在這裡留言就好'
-    : channel.includes('實體') && !channel.includes('網購')
-      ? '想問營業時間、怎麼過來，直接在這裡留言就好'
-      : '想問商品、出貨或購買方式，直接在這裡留言就好'
+  // 「可以問什麼」照型換；賣東西的再照銷售方式換（預約制問時段、網購問出貨）。
+  // ⛔ 原本只看銷售方式——牙醫診所選了「實體＋網購」就會被寫成「想問商品、出貨」（`D-99` 漏網）
+  const ask = `${welcomeAskFor(industry, channel)}，直接在這裡留言就好`
 
   return `嗨，歡迎加入${shop} 👋\n${what}${ask}，我會盡快回你 😊`
 }
@@ -152,20 +153,26 @@ export function buildWelcomeDraft(ctx: DraftContext): string {
  *    這是「加一個功能結果把既有防線拆掉」最典型的形狀。
  */
 export function buildToneDraft(ctx: DraftContext): string {
+  const shop = String(ctx.shopName ?? '').trim()
   const industry = fieldValue(ctx.profile, 'industry')
   const tone = fieldValue(ctx.profile, 'tone')
   const customers = fieldValue(ctx.profile, 'customers')
   const products = splitProducts(fieldValue(ctx.profile, 'products'))
 
-  const who = [
-    industry ? `你是一家${industry}的客服助理` : '你是這家店的客服助理',
-    products.length ? `，主要商品是${products.join('、')}` : '',
-    customers ? `，客人多半是${customers}` : '',
-    '。',
-  ].join('')
+  /**
+   * ⛔ 2026-09-26（`C-250`／`D-99`）**不再寫成「你是一家○○的客服助理」**：產業別現在可以自己打
+   *    （「都不是，我自己講」），填「手工皂與香氛的工作室」就會變成「你是一家手工皂與香氛的工作室的客服助理」。
+   *    改成**條列**——這段字是給模型看的，結構化本來就比通順的句子好，而且填什麼都不會壞。
+   */
+  const lines = [
+    shop ? `你是${shop}的客服助理。` : '你是這家店的客服助理。',
+    ...(industry ? [`店的類型：${industry}`] : []),
+    ...(products.length ? [`${storeBizWording(industry).productsLabel}：${products.join('、')}`] : []),
+    ...(customers ? [`主要客群：${customers}`] : []),
+  ]
 
   return [
-    who,
+    ...lines,
     tone ? `說話的口氣：${tone}。` : '說話的口氣：親切、口語、不誇大。',
     '',
     '回覆原則（⛔ 這幾條不要刪）：',
@@ -192,6 +199,34 @@ export interface TagDraft {
 export function buildTagDrafts(ctx: DraftContext): TagDraft[] {
   const channel = fieldValue(ctx.profile, 'channel')
   const season = fieldValue(ctx.profile, 'season')
+
+  /**
+   * 🔴 2026-09-26（`C-250`／`D-99`）三顆標籤照型換。⛔ 原本固定是賣東西那一套——
+   *    牙醫診所拿到「送禮客」「問過出貨」，那是兩顆一輩子用不到的標籤，
+   *    而標籤是**建了就留在帳號裡**的東西（名字可改、代號改不了）。
+   */
+  const type = storeBizTypeOf(fieldValue(ctx.profile, 'industry'))
+  if (type === 'service') {
+    return [
+      { name: '回訪客', why: '來過第二次的人。要提醒定期回訪時挑這一顆。' },
+      { name: '問過沒預約', why: '問了但還沒約時間的人。有空檔時最值得回頭找的一群。' },
+      { name: '預約過', why: '約過一次的人。改時間或臨時有空檔時要優先通知他們。' },
+    ]
+  }
+  if (type === 'class') {
+    return [
+      { name: '續報家長', why: '續報第二期的人。下一期招生時先找他們。' },
+      { name: '問過沒報名', why: '問了但還沒報名的人。開課前最值得回頭找的一群。' },
+      { name: '問過時段', why: '在意上課時間的人。調課或加開時段時要優先通知。' },
+    ]
+  }
+  if (type === 'neutral') {
+    return [
+      { name: '回頭客', why: '來過第二次的人。要發新消息或老客優惠時挑這一顆。' },
+      { name: '問過沒成交', why: '問了但還沒下一步的人。有檔期時最值得回頭找的一群。' },
+      { name: '問過細節', why: '問過價格或時間的人。有變動時要優先通知他們。' },
+    ]
+  }
 
   const drafts: TagDraft[] = [
     { name: '回購客', why: '買過第二次的人。之後要發新品或老客優惠，挑這一顆。' },
@@ -263,8 +298,11 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     where: STORE_DRAFT_WHERE.welcome,
     kind: 'adopt',
     body: buildWelcomeDraft(ctx),
-    // ⚠️ LINE 沒有開放介面讓我們讀那個開關，所以只能講、⛔ 不可以寫成「已為你關閉」
-    note: '採用之後記得去 LINE 官方帳號後台把內建的那則歡迎訊息關掉，不然客人會連收兩則。我們讀不到那個開關，沒辦法幫你確認。',
+    // ⚠️ LINE 沒有開放介面讓我們讀那個開關，所以只能講、⛔ 不可以寫成「已為你關閉」。
+    // 🔴 2026-09-26（`C-250`／`D-100`）：原本叫他「採用之後記得去 LINE 後台把內建那則關掉」，
+    //    而接 LINE 那一趟站在那顆開關前面時卻寫「不用動」＝兩處教相反。
+    //    ⭐ 改成**在對的時間點講一次**：接 LINE 那一趟的回應設定照「有沒有採用」換圖說，這裡只預告。
+    note: '接上 LINE 那一步會提醒你關掉 LINE 內建的那則，客人才不會收到兩則。',
   })
 
   drafts.push({
@@ -273,7 +311,7 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     where: STORE_DRAFT_WHERE.tone,
     kind: 'adopt',
     body: buildToneDraft(ctx),
-    note: '這會取代原本那段通用的設定。裡面的安全規則（只照知識卡回答、不編造）都留著。',
+    note: '這會取代原本那段通用的設定。裡面的安全規則都留著。',
   })
 
   const tags = buildTagDrafts(ctx)
@@ -287,31 +325,14 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     tags,
   })
 
-  // ⛔ 沒讀到網站就不給這一樣
-  if ((ctx.pagesRead ?? 0) > 0) {
-    drafts.push({
-      key: 'knowledge',
-      title: STORE_DRAFT_TITLE.knowledge,
-      where: STORE_DRAFT_WHERE.knowledge,
-      kind: 'adopt',
-      body: `把我讀到的 ${ctx.pagesRead} 頁整理成知識卡，AI 才有東西可以回答客人。`,
-      note: '整理完會**先給你看過**再進知識庫——卡片內容要你確認，不是直接上線。',
-    })
-  }
-
-  const calendar = buildCalendarDraft(ctx)
-  drafts.push({
-    key: 'calendar',
-    title: STORE_DRAFT_TITLE.calendar,
-    where: STORE_DRAFT_WHERE.calendar,
-    kind: 'info',
-    body: calendar.length
-      ? calendar.map(c => `${c.date.slice(5).replace('-', '/')}（${c.inDays} 天後）${c.name}——${c.angle}`).join('\n')
-      : '未來 90 天內沒有重要節日。',
-    note: '這一樣不用採用——節日前 7、3、1 天，我本來就會在早上那則摘要裡提醒你。',
-    calendar,
-  })
-
+  /**
+   * ⛔ 2026-09-26（`C-250`）**知識庫那一樣先不給**：原本是一顆「採用」，按下去什麼都不會建立
+   *    （讀過的頁內文一小時後刪掉、沒有交給知識庫）＝一個假的決定。示意頁定稿的樣子是
+   *    「我讀了你網站 5 頁、整理成 12 張卡」的**說明卡**，但那要後端真的產生待看過的卡
+   *    （`C-250` 第三批）。⛔ 在那之前不可以畫一張「整理成 N 張」的卡——N 是假的。
+   * ⛔ 行銷月曆那張整張收掉（示意頁 v75）：三個節日他這一刻一件也做不了，
+   *    而每天早上的摘要本來就會講；只留成績單上一行。
+   */
   return drafts
 }
 

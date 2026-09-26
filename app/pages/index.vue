@@ -1205,6 +1205,11 @@
                        帶去登入牆），title 那句照搬——滑過去有字＝又一個「它是活的」證明 -->
                   <span class="onbc-exit" title="現在離開沒關係，下次回來我會從沒做完的地方接著帶">之後再說</span>
                 </header>
+                <!-- 同真頁面：這一趟的名字＋要多久長在進度條正上方（`C-250`） -->
+                <div class="onbc-stage">
+                  <span class="onbc-stage__name">{{ OB_STAGE.name }}</span>
+                  <span class="onbc-stage__time">{{ OB_STAGE.time }}</span>
+                </div>
                 <div class="onbc-progress" aria-hidden="true">
                   <div
                     v-for="(label, i) in OB_PROGRESS_LABELS"
@@ -1802,34 +1807,35 @@ const LP_VOICES: { tile: string, who: string, title: string, text: string }[][] 
 // ⚠️ 2026-09-07 跟上 01f8035 的改道（「鑰匙」→「連線資訊」、第二組與貼網址搬進官方帳號後台、
 //    收尾只留一個「小幫手」）：每一句仍是劇本原文，長句只裁段、不改字。
 // ⚠️ 2026-09-22 進度索引整批 +1（進度條多了「認識你的店」那一格）：對白沒動，只有格子編號位移。
-type ObBeat = { role: 'agent' | 'user', html: string, progress?: 3 | 4 | 5 }
+// ⚠️ 2026-09-26（`C-250`）精靈拆成「打造」「接上 LINE」兩趟、各四格：這支示範演的**正是接 LINE 那一趟**，
+//    所以改用那一趟的四格（`ONBOARDING_LINE_LABELS`），索引整批 −2；第一句跟著劇本改字。
+type ObBeat = { role: 'agent' | 'user', html: string, progress?: 1 | 2 | 3 }
 const OB_BEATS: ObBeat[] = [
-  { role: 'agent', html: '歡迎回來，「山丘咖啡」！我們接著把剩下的設定做完，做過的我會直接跳過。' },
+  { role: 'agent', html: '歡迎回來，「山丘咖啡」！我們接著把 LINE 接完，做過的我會直接跳過。' },
   { role: 'agent', html: '接下來，我們要讓你的 MiniMe 可以透過 LINE 幫你收發訊息，所以要先從 LINE 取得<b>兩組連線資訊</b>。<br>第一組叫做 <b>Channel Access Token</b>，用途很簡單：讓 MiniMe 可以用你的 LINE 官方帳號幫你傳訊息。' },
   { role: 'user', html: '我會拿，直接貼上' },
   { role: 'agent', html: '收到 ✓ 這組是「<b>山丘咖啡</b>」的連線資訊，我已經幫你存好了！' },
   { role: 'agent', html: '接下來是<b>第二組連線資訊：Channel Secret</b>。<br>它的用途很簡單，就是幫忙確認：收到的訊息真的來自 LINE，而不是其他地方假冒傳來的。' },
-  { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 3 },
+  { role: 'agent', html: '兩組連線資訊都完成了 ✓ 只剩最後一段——<b>都在你剛剛那個官方帳號後台裡</b>就能做完。', progress: 1 },
   { role: 'user', html: '都設好了，幫我檢查' },
   // 2026-09-11 跟著劇本去重（原本「連線成功了！…成功連上系統，可以正式使用 MiniMe 了」講兩次）
   { role: 'agent', html: '連線成功了 🎉 LINE 那邊跟 MiniMe 已經接上了。' },
-  { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 4 },
+  { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 2 },
   { role: 'agent', html: '收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。' },
-  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 5 },
+  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 3 },
 ]
-// ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_PROGRESS_LABELS，抄字不 import——
+// ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_LINE_LABELS（接 LINE 那一趟），抄字不 import——
 //    import 會把整支 composable（含後端呼叫）拖進官網 bundle
-// ⚠️ 2026-09-22 跟著多一格「認識你的店」（`D-85` / `C-219`）。
-//    這支示範**從「歡迎回來」開始演**（＝續走模式），本來就跳過前面的格子——
-//    多一格只是讓灰著的格子從一格變兩格，對白一句都沒改。
-const OB_PROGRESS_LABELS = ['建立帳號', '認識你的店', '取得連線資訊', '接收 LINE 訊息', '傳訊息測試', '完成']
+// ⚠️ 這支示範**從「歡迎回來」開始演**（＝接 LINE 那一趟的續走），名字與格子跟那一趟同一份。
+const OB_PROGRESS_LABELS = ['取得連線資訊', '接收 LINE 訊息', '用手機測試', '上線完成']
+const OB_STAGE = { name: '接上 LINE，讓客人找得到你', time: '約 10–15 分鐘 · 要登入 LINE 官方帳號後台' }
 /** SSR／無 JS／減少動態：停在「取得連線資訊」問句＋兩顆選項＝原本的靜態卡 */
 const obBeat = ref(2)
 const obTyping = ref(false)
 const obChatEl = ref<HTMLElement | null>(null)
 const obCardEl = ref<HTMLElement | null>(null)
-/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「取得連線資訊」＝2（多一格之後 +1） */
-const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 2))
+/** 進度＝已演到的拍點裡最後一個帶 progress 的值；開場停在「取得連線資訊」＝0（`C-250` 拆兩趟之後的索引） */
+const obProgress = computed(() => OB_BEATS.slice(0, obBeat.value).reduce<number>((p, b) => b.progress ?? p, 0))
 // 開演的時機跟中軸綠線、成長曲線同一條線（.lp-cue → cueIo），這裡不再自己養一個觀察器
 let obTimers: ReturnType<typeof setTimeout>[] = []
 

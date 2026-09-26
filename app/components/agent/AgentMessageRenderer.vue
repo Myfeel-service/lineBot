@@ -196,13 +196,83 @@
 
   <!-- 完成摘要卡 -->
   <div v-else-if="entry.msg.kind === 'summary'" class="agm-card agm-summary">
-    <div class="agm-card__label">開通結果</div>
+    <div class="agm-card__label">{{ entry.msg.title || '開通結果' }}</div>
     <ul>
       <li v-for="(it, i) in entry.msg.items" :key="i" :class="{ 'is-skipped': !it.done }">
         <span class="agm-summary__mark">{{ it.done ? '✓' : '–' }}</span>
         <span>{{ it.label }}<template v-if="it.note">（{{ it.note }}）</template></span>
       </li>
     </ul>
+  </div>
+
+  <!-- 店家輪廓卡・分組版（`D-93`／`D-91`，`C-250` 落地）：你告訴我的／我猜的 N 項／還學不到的 N 項，
+       每列就地可改。⛔ 分組之後每列的來源徽章拿掉——組名已經講了是誰說的。 -->
+  <div v-else-if="entry.msg.kind === 'store-profile' && entry.msg.grouped" class="agm-card agm-profile is-grouped">
+    <div class="agm-card__label">MiniMe 認識的你</div>
+    <template v-for="g in profileGroups" :key="g.key">
+      <div
+        v-if="g.key !== 'later' && g.rows.length"
+        :class="['agm-profile__group', { 'is-ai': g.key === 'ai' }]"
+      >
+        <div class="agm-profile__gh">
+          <!-- ⛔ 數量只掛在**要他動作**的那一組（「我猜的 3 項」的 3 才是「要看幾格」） -->
+          <!-- ⚠️ 空格要寫在插值裡：`<template>` 開頭的空白會被 Vue 的 whitespace condense 吃掉（實走量到「我猜的3 項」） -->
+          <b>{{ g.key === 'ai' ? `${g.title} ${g.rows.length} 項` : g.title }}</b>
+          <span v-if="g.note">{{ g.note }}</span>
+        </div>
+        <div class="agm-profile__grid">
+          <template v-for="row in g.rows" :key="row.fieldId || row.label">
+            <div class="k">{{ row.label }}</div>
+            <div class="v">
+              <div v-if="editingField === row.fieldId" class="agm-profile__rowedit">
+                <el-input v-model="editValue" size="small" :maxlength="300" @keyup.enter="saveProfileEdit(row.fieldId)" />
+                <el-button size="small" @click="editingField = null">取消</el-button>
+                <el-button size="small" type="primary" @click="saveProfileEdit(row.fieldId)">存起來</el-button>
+              </div>
+              <template v-else>{{ row.value }}</template>
+            </div>
+            <!-- ⛔ 按鈕上的字要是正式的功能動詞（「改」→「修改」，2026-09-24 老闆指名） -->
+            <el-button
+              v-if="entry.msg.editable && row.fieldId && editingField !== row.fieldId"
+              class="agm-profile__edit"
+              link
+              type="primary"
+              size="small"
+              @click="startProfileEdit(row.fieldId, row.value)"
+            >修改</el-button>
+            <span v-else class="agm-profile__edit" />
+          </template>
+        </div>
+      </div>
+    </template>
+    <!-- 還學不到的：收成一行，⛔ 不佔三列——空格的語意是「之後會長出來」不是「現在缺」 -->
+    <div v-if="laterRows.length" class="agm-profile__later">
+      還學不到的 <b>{{ laterRows.length }}</b> 項：{{ laterRows.map(r => r.label).join('、') }}
+      <!-- ⛔ 收合鈕跟列上的動作鈕**不可以同名**：兩顆都叫「填寫」的話，講「按填寫」會指到兩個地方 -->
+      <el-button link type="primary" size="small" @click="laterOpen = !laterOpen">{{ laterOpen ? '收合' : '展開' }}</el-button>
+      <div v-if="laterOpen" class="agm-profile__grid agm-profile__later-grid">
+        <template v-for="row in laterRows" :key="row.fieldId || row.label">
+          <div class="k">{{ row.label }}</div>
+          <div class="v is-empty">
+            <div v-if="editingField === row.fieldId" class="agm-profile__rowedit">
+              <el-input v-model="editValue" size="small" :maxlength="300" @keyup.enter="saveProfileEdit(row.fieldId)" />
+              <el-button size="small" @click="editingField = null">取消</el-button>
+              <el-button size="small" type="primary" @click="saveProfileEdit(row.fieldId)">存起來</el-button>
+            </div>
+            <template v-else>{{ row.hint || '還沒有' }}</template>
+          </div>
+          <el-button
+            v-if="entry.msg.editable && row.fieldId && editingField !== row.fieldId"
+            class="agm-profile__edit"
+            link
+            type="primary"
+            size="small"
+            @click="startProfileEdit(row.fieldId, '')"
+          >填寫</el-button>
+          <span v-else class="agm-profile__edit" />
+        </template>
+      </div>
+    </div>
   </div>
 
   <!-- 店家輪廓卡（`D-85`）：揭曉「我對你的店的認識」。猜的要看得出是猜的 -->
@@ -226,7 +296,29 @@
       <span class="agm-draft__title">{{ entry.msg.title }}</span>
       <span class="agm-draft__where">→ {{ entry.msg.where }}</span>
     </div>
-    <pre class="agm-draft__body">{{ entry.msg.body }}</pre>
+    <!-- ⭐ `D-94`：一開始就可以改（輸入框自己就是說明）。決定完（有 state）收回唯讀。 -->
+    <el-input
+      v-if="entry.msg.editable === 'text' && !entry.msg.state"
+      v-model="draftBody"
+      class="agm-draft__ta"
+      type="textarea"
+      :autosize="{ minRows: 3, maxRows: 12 }"
+      :maxlength="4000"
+      @input="emitDraft"
+    />
+    <!-- 標籤：名字欄＋勾選。⛔ 沒勾的**整列**變灰（只讓小方框變化，一眼看不出哪幾顆不會建） -->
+    <div v-else-if="entry.msg.editable === 'tags' && !entry.msg.state" class="agm-draft__tags">
+      <div
+        v-for="(t, i) in draftTags"
+        :key="i"
+        :class="['agm-draft__tag', { 'is-off': !t.on }]"
+      >
+        <el-checkbox v-model="t.on" @change="emitDraft" />
+        <el-input v-model="t.name" class="agm-draft__tag-name" size="small" :maxlength="20" :disabled="!t.on" @input="emitDraft" />
+        <span class="agm-draft__tag-why">{{ t.why }}</span>
+      </div>
+    </div>
+    <pre v-else class="agm-draft__body">{{ entry.msg.body }}</pre>
     <p v-if="entry.msg.note" class="agm-draft__note">{{ entry.msg.note }}</p>
     <p v-if="entry.msg.state" :class="['agm-draft__state', `is-${entry.msg.state}`]">{{ entry.msg.stateText }}</p>
   </div>
@@ -242,7 +334,61 @@ import type { AgentChatEntry } from '~~/shared/types/agent-messages'
 
 const props = defineProps<{ entry: AgentChatEntry }>()
 
+/**
+ * 互動卡片把「他改了什麼」往上交給頁面（`C-250`）。⚠️ 事件都是選配的——
+ * 後台查詢助理那兩處也用這個元件，它們不掛監聽也不會壞（那裡的卡不會是 editable）。
+ */
+const emit = defineEmits<{
+  /** 輪廓卡某一格存起來（值可以是空字串＝清空） */
+  (e: 'profile-edit', p: { entryId: number, fieldId: string, value: string }): void
+  /** 草稿框的內容變了（按「採用」時劇本用的是這一份） */
+  (e: 'draft-input', p: { entryId: number, body?: string, tags?: { name: string, why: string, on: boolean }[] }): void
+}>()
+
 const copied = ref(false)
+
+// ── 輪廓卡・分組（`D-93`）──────────────────────────────────────
+type ProfileRow = Extract<AgentChatEntry['msg'], { kind: 'store-profile' }>['rows'][number]
+const profileGroups = computed(() => {
+  const m = props.entry.msg
+  if (m.kind !== 'store-profile' || !m.grouped) return []
+  const withValue = m.rows.filter(r => r.value)
+  return [
+    { key: 'owner', title: '你告訴我的', note: '', rows: withValue.filter(r => r.source === 'owner') },
+    // ⭐ 出處跟主張長在一起：「從你的網站 5 頁猜的」掛在組名旁邊，⛔ 不掛在卡片最下面
+    { key: 'ai', title: '我猜的', note: `${m.aiNote ? `${m.aiNote}，` : ''}幫我看一下對不對`, rows: withValue.filter(r => r.source === 'ai') },
+    { key: 'conversation', title: '從你的對話學到的', note: '', rows: withValue.filter(r => r.source === 'conversation') },
+  ] as { key: string, title: string, note: string, rows: ProfileRow[] }[]
+})
+const laterRows = computed<ProfileRow[]>(() => {
+  const m = props.entry.msg
+  return m.kind === 'store-profile' && m.grouped ? m.rows.filter(r => !r.value) : []
+})
+/** 還學不到的那幾項預設收著；按了才攤開 */
+const laterOpen = ref(false)
+const editingField = ref<string | null>(null)
+const editValue = ref('')
+function startProfileEdit(fieldId: string, value: string) {
+  editingField.value = fieldId
+  editValue.value = value
+}
+function saveProfileEdit(fieldId: string | undefined) {
+  if (!fieldId) return
+  emit('profile-edit', { entryId: props.entry.id, fieldId, value: editValue.value.trim() })
+  editingField.value = null
+}
+
+// ── 草稿・一開始就可以改（`D-94`）────────────────────────────────
+const draftBody = ref(props.entry.msg.kind === 'store-draft' ? props.entry.msg.body : '')
+const draftTags = ref(props.entry.msg.kind === 'store-draft' && props.entry.msg.tags
+  ? props.entry.msg.tags.map(t => ({ ...t }))
+  : [])
+function emitDraft() {
+  if (props.entry.msg.kind !== 'store-draft') return
+  emit('draft-input', props.entry.msg.editable === 'tags'
+    ? { entryId: props.entry.id, tags: draftTags.value.map(t => ({ ...t })) }
+    : { entryId: props.entry.id, body: draftBody.value })
+}
 
 // ── 示意圖：載得起來才畫 ──────────────────────────────────────
 // 劇本會先把圖接上、截圖之後才補進 public/onboarding/。這段期間直接畫 <img> 會是一排破圖，

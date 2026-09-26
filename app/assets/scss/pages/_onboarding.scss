@@ -216,10 +216,22 @@
   &:hover { color: var(--text-primary); }
 }
 
+/* 這一趟的名字＋要多久（`C-250`）：長在進度條正上方，⛔ 不寫「第 1 段／第 2 段」 */
+.onbc-stage {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 16px 0;
+  font-size: 12px;
+
+  &__name { font-weight: 700; color: var(--text-secondary); }
+  &__time { margin-left: auto; color: var(--text-muted); text-align: right; }
+}
+
 .onbc-progress {
   display: flex;
   gap: 4px;
-  padding: 10px 16px 12px;
+  padding: 8px 16px 12px;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 

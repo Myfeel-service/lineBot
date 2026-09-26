@@ -29,16 +29,24 @@
              所以搬到這顆按鈕上。用原生 title 不用 el-tooltip：手機沒有 hover，而這句是
              錦上添花不是必要資訊，不值得為它多掛一層元件。 -->
         <NuxtLink
-          v-if="progress < ONBOARDING_PROGRESS_LABELS.length - 1"
+          v-if="progress < flowInfo.labels.length - 1"
           class="onbc-exit"
           :to="exitTo"
           title="現在離開沒關係，下次回來我會從沒做完的地方接著帶"
+          @click="markLeaving"
         >之後再說</NuxtLink>
       </header>
 
+      <!-- 這一趟的名字＋要多久（`C-250`）。⛔ 不寫「第 1 段／第 2 段」（老闆 09-25：「不好理解」）：
+           兩趟對他是兩件各自獨立的事——打造 MiniMe、之後自己決定何時接 LINE。
+           ⚠️ 名字要跟格子一起換：只換格子的字，人看不出自己在另一趟。 -->
+      <div class="onbc-stage">
+        <span class="onbc-stage__name">{{ flowInfo.name }}</span>
+        <span class="onbc-stage__time">{{ flowInfo.time }}</span>
+      </div>
       <div class="onbc-progress" aria-hidden="true">
         <div
-          v-for="(label, i) in ONBOARDING_PROGRESS_LABELS"
+          v-for="(label, i) in flowInfo.labels"
           :key="label"
           class="onbc-step"
           :class="{ 'is-done': i < progress, 'is-current': i === progress }"
@@ -46,7 +54,13 @@
       </div>
 
       <div ref="listEl" class="onbc-chat" aria-live="polite">
-        <AgentMessageRenderer v-for="e in entries" :key="e.id" :entry="e" />
+        <AgentMessageRenderer
+          v-for="e in entries"
+          :key="e.id"
+          :entry="e"
+          @profile-edit="onProfileEdit"
+          @draft-input="onDraftInput"
+        />
         <div v-if="typing" class="agm-msg agm-msg--agent">
           <div class="agm-bubble agm-typing"><i /><i /><i /></div>
         </div>
@@ -95,16 +109,18 @@ const focusParam = computed(() => String(route.query.focus || '').trim())
 const mode = ref<'chat' | 'locked'>('chat')
 
 const {
-  entries, ask, typing, busy, progress, activeWorkspaceId, scrollToId, turnStartId,
-  onChoice, onSubmit, onPick, onSkip,
+  entries, ask, typing, busy, progress, flow, flowInfo, activeWorkspaceId, scrollToId, turnStartId,
+  onChoice, onSubmit, onPick, onSkip, onProfileEdit, onDraftInput, markLeaving,
   start, dispose,
 } = useOnboardingChat()
 
 // 「之後再說」：帳號一旦建好（或續走模式），直接進那個帳號的後台，不繞回帳號選擇頁。
-// 出口一律走 onboardingLandingPath（對話頁）——新帳號統計全 0，空的對話清單比空報表誠實（G-11 同一拍板）
+// ⚠️ `C-250`：打造那一趟落「測試對話」（唯一不接 LINE 也完整可用的頁）、接 LINE 那一趟落「對話」頁
+//    （新帳號統計全 0，空的對話清單比空報表誠實，G-11）。
 const exitTo = computed(() => {
   const target = continueWid.value || activeWorkspaceId.value
-  return target ? onboardingLandingPath(target) : '/admin/workspaces'
+  if (!target) return '/admin/workspaces'
+  return flow.value === 'build' ? onboardingBuiltLandingPath(target) : onboardingLandingPath(target)
 })
 
 function goWorkspace() {
