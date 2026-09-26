@@ -24,7 +24,8 @@ export const ONBOARDING_EVENTS = {
   site_given: '最後那題網址給了沒',
   site_read: '讀網站的結果',
   profile_edit: '在輪廓卡上就地改了一格',
-  draft_decision: '一樣草稿的決定（採用／先不要／改到空的／沒成功）',
+  draft_decision: '一樣草稿的決定（採用／先不要／改到空的／沒成功；自己改過沒、換過幾次說法）',
+  draft_reword: '草稿按了「換個說法」（換成了沒）',
   site_cards_shown: '看到網站整理出來的卡',
   build_finish: '走到成績單',
   // ── 落地 ──

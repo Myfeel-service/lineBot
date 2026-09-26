@@ -304,6 +304,18 @@
       :maxlength="4000"
       @input="emitDraft"
     />
+    <!-- 「換個說法」（`D-89`）：按了才打模型，換出來的仍然是草稿、還是要按採用 -->
+    <div v-if="entry.msg.editable === 'text' && entry.msg.reword && !entry.msg.state" class="agm-draft__editbar">
+      <el-button
+        size="small"
+        :loading="entry.msg.reword.busy"
+        :disabled="entry.msg.reword.busy || entry.msg.reword.left <= 0"
+        @click="emitReword"
+      >
+        {{ entry.msg.reword.busy ? '想一下…' : '換個說法' }}
+      </el-button>
+      <span v-if="entry.msg.reword.note" class="agm-draft__rwnote">{{ entry.msg.reword.note }}</span>
+    </div>
     <!-- 標籤：名字欄＋勾選。⛔ 沒勾的**整列**變灰（只讓小方框變化，一眼看不出哪幾顆不會建） -->
     <div v-else-if="entry.msg.editable === 'tags' && !entry.msg.state" class="agm-draft__tags">
       <div
@@ -341,6 +353,8 @@ const emit = defineEmits<{
   (e: 'profile-edit', p: { entryId: number, fieldId: string, value: string }): void
   /** 草稿框的內容變了（按「採用」時劇本用的是這一份） */
   (e: 'draft-input', p: { entryId: number, body?: string, tags?: { name: string, why: string, on: boolean }[] }): void
+  /** 按了「換個說法」（帶著框裡現在那一版：新的要跟它不一樣） */
+  (e: 'draft-reword', p: { entryId: number, body: string }): void
 }>()
 
 const copied = ref(false)
@@ -387,6 +401,17 @@ function emitDraft() {
     ? { entryId: props.entry.id, tags: draftTags.value.map(t => ({ ...t })) }
     : { entryId: props.entry.id, body: draftBody.value })
 }
+function emitReword() {
+  if (props.entry.msg.kind !== 'store-draft') return
+  emit('draft-reword', { entryId: props.entry.id, body: draftBody.value })
+}
+/** 換成一次（`rev` 加一）＝框裡換成新的那一版（⚠️ 看 rev 不看 body，理由見型別註解） */
+watch(
+  () => props.entry.msg.kind === 'store-draft' ? props.entry.msg.reword?.rev ?? 0 : 0,
+  (rev, prev) => {
+    if (rev !== prev && props.entry.msg.kind === 'store-draft') draftBody.value = props.entry.msg.body
+  },
+)
 
 // ── 示意圖：載得起來才畫 ──────────────────────────────────────
 // 劇本會先把圖接上、截圖之後才補進 public/onboarding/。這段期間直接畫 <img> 會是一排破圖，

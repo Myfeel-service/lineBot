@@ -176,6 +176,14 @@ export type AgentMsg =
     editable?: 'text' | 'tags'
     /** `editable === 'tags'` 時的三顆（`on`＝要不要建這一顆，預設全勾） */
     tags?: { name: string; why: string; on: boolean }[]
+    /**
+     * 「換個說法」（`D-89` ②）：有這個欄位才長那顆鈕（只有歡迎訊息與語氣，`REWORDABLE_DRAFTS`）。
+     * - `rev`＝換過幾次；每換成一次加一，框裡的字就換成新的 `body`（⚠️ 靠它不靠 body 比對：
+     *   新的一版剛好跟舊 body 一樣時，框裡他打的字不會被換掉，採用的卻是新那一版）
+     * - `left`＝還能換幾次；0＝用完了，`note` 要講
+     * - `note`＝這次沒換成的原因／用完了（⛔ 不可以按了沒反應）
+     */
+    reword?: { busy?: boolean; rev: number; left: number; note?: string }
   }
 
 export interface AgentChatEntry {

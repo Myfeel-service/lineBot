@@ -9,7 +9,7 @@
  * - 每一步可跳過，但只作用當下這一輪（⛔跳過記憶已拆：它跟「沒做完每次都拉回」互相打架）。
  */
 
-import type { AgentChoice } from '~~/shared/types/agent-messages'
+import type { AgentChoice, AgentMsg } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
@@ -30,6 +30,8 @@ import {
 import {
   buildStoreDrafts,
   canBuildDrafts,
+  REWORD_MAX_PER_CARD,
+  REWORDABLE_DRAFTS,
   summarizeDraftApply,
   type DraftApplyStep,
   type StoreDraft,
@@ -536,6 +538,59 @@ export function useOnboardingChat() {
   /** 這一趟真的建成了哪幾樣（成績單、痛點回扣句都要看它——⛔ 講「剛剛採用的」之前先確認真的有） */
   const builtKeys = new Set<StoreDraftKey>()
 
+  /**
+   * 「換個說法」（`D-89` ②）每張卡的狀態。key＝那張卡的 entry id。
+   * ⛔ `decided`：他按了採用／先不要之後才回來的那一版**一律丟掉**——
+   *    否則慢回來的結果會把已經定案的卡洗回可編輯、而寫出去的是另一版。
+   */
+  const rewordCards = new Map<number, {
+    key: StoreDraftKey
+    base: Extract<AgentMsg, { kind: 'store-draft' }>
+    body: string
+    used: number
+    rev: number
+    busy: boolean
+    decided: boolean
+  }>()
+
+  /** 頁面轉交的「按了換個說法」 */
+  async function onDraftReword(p: { entryId: number, body: string }) {
+    const rc = rewordCards.get(p.entryId)
+    if (!rc || rc.decided || rc.busy || rc.used >= REWORD_MAX_PER_CARD) return
+    const render = (extra: { busy?: boolean, note?: string } = {}) => updateMsg(p.entryId, {
+      ...rc.base,
+      editable: 'text',
+      body: rc.body,
+      reword: { rev: rc.rev, left: REWORD_MAX_PER_CARD - rc.used, ...extra },
+    })
+    rc.busy = true
+    render({ busy: true })
+    try {
+      const r = await apiFetch<{ body: string }>('/api/store-profile/reword', {
+        method: 'POST',
+        body: { key: rc.key, current: p.body },
+      })
+      if (rc.decided || isDisposed()) return
+      rc.used++
+      rc.rev++
+      rc.body = r.body
+      // ⚠️ 按「採用」用的是這一份（同他自己改字的那條路）
+      draftEdits.set(p.entryId, { ...(draftEdits.get(p.entryId) ?? {}), body: r.body })
+      track('draft_reword', { key: rc.key, ok: true, n: rc.used })
+      // ⛔ 換好了不另外講一句（框裡的字換了就是結果）；**用完了才要講**，不可以變成按了沒反應
+      render(rc.used >= REWORD_MAX_PER_CARD ? { note: `已經換了 ${REWORD_MAX_PER_CARD} 次；框裡的字還是可以直接改。` } : {})
+    }
+    catch (e: unknown) {
+      if (rc.decided || isDisposed()) return
+      track('draft_reword', { key: rc.key, ok: false, n: rc.used })
+      const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+      render({ note: msg || '這次沒換成，框裡的字沒動——再按一次試試。' })
+    }
+    finally {
+      rc.busy = false
+    }
+  }
+
   async function applyOneDraft(d: StoreDraft): Promise<DraftApplyStep> {
     const label = d.title
     try {
@@ -616,17 +671,24 @@ export function useOnboardingChat() {
         ...(d.note ? { note: d.note } : {}),
         variant: d.kind,
       }
+      // ⭐ `D-89`：只有歡迎訊息與語氣給「換個說法」（⛔ 標籤不給，理由見 `REWORDABLE_DRAFTS`）
+      const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)
       const cardId = card({
         ...base,
         ...(editable ? { editable } : {}),
         ...(d.key === 'tags' && d.tags ? { tags: d.tags.map(t => ({ ...t, on: true })) } : {}),
+        ...(canReword ? { reword: { rev: 0, left: REWORD_MAX_PER_CARD } } : {}),
       })
+      if (canReword) rewordCards.set(cardId, { key: d.key, base, body: d.body, used: 0, rev: 0, busy: false, decided: false })
       if (d.kind === 'info') continue
 
       const c = await askChoices([
         { label: '採用', value: 'yes', primary: true },
         { label: '先不要', value: 'no', escape: true },
       ])
+      const rc = rewordCards.get(cardId)
+      if (rc) rc.decided = true
+      const reworded = rc?.used ?? 0
 
       // 他最後決定的那一版（沒動過就是範本原文）
       const edit = draftEdits.get(cardId)
@@ -637,15 +699,18 @@ export function useOnboardingChat() {
             .map(t => ({ name: t.name.trim(), why: t.why }))
         : undefined
       const shownBody = finalTags ? finalTags.map(t => `${t.name}——${t.why}`).join('\n') : finalBody
-      /** 他有沒有動過範本（`D-94` 要驗「一開始就能改」到底有沒有人改） */
+      /**
+       * 他有沒有親手動過（`D-94` 要驗「一開始就能改」到底有沒有人改）。
+       * ⚠️ 比的是**機器給的最後一版**（換過說法就是換出來那一版）：換說法不算他改的，那個另記 `reworded`
+       */
       const edited = finalTags
         ? finalTags.map(t => t.name).join('|') !== (d.tags ?? []).map(t => t.name.trim()).join('|')
-        : finalBody !== d.body.trim()
+        : finalBody !== (rc?.body ?? d.body).trim()
 
       // 改到空的（字刪光、標籤全取消勾）＝這一樣不建，⛔ 不可以照樣送一個空的出去
       const emptied = c === 'yes' && (finalTags ? finalTags.length === 0 : !finalBody)
       if (c !== 'yes' || emptied) {
-        track('draft_decision', { key: d.key, decision: emptied ? 'emptied' : 'declined', edited })
+        track('draft_decision', { key: d.key, decision: emptied ? 'emptied' : 'declined', edited, reworded })
         draftSteps.push({ key: d.key, label: d.title, status: 'declined' })
         updateMsg(cardId, {
           ...base,
@@ -663,7 +728,7 @@ export function useOnboardingChat() {
       const r = await applyOneDraft({ ...d, body: finalBody, ...(finalTags ? { tags: finalTags } : {}) })
       busy.value = false
       draftSteps.push(r)
-      track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited })
+      track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited, reworded })
       if (r.status === 'done') builtKeys.add(d.key)
       // ⚠️ 決定完就把框收回唯讀（不帶 editable），內容換成**他最後決定的那一版**
       updateMsg(cardId, {
@@ -2618,6 +2683,8 @@ export function useOnboardingChat() {
     /** 互動卡片的事件（輪廓卡就地修改、草稿框改內容）——頁面從 AgentMessageRenderer 轉交過來 */
     onProfileEdit,
     onDraftInput,
+    /** 草稿卡的「換個說法」（`D-89` ②） */
+    onDraftReword,
     markLeaving,
     start,
     dispose,

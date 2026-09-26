@@ -954,6 +954,21 @@
   /* ⭐ `D-94`：一開始就是可以改的框（⛔ 不再是「唯讀 →（按改一下）→ 可編輯」兩段式） */
   &__ta { margin: 8px 0 6px; }
 
+  /* 「換個說法」（`D-89`）：貼在框下面、附註上面（跟示意頁同一個位置） */
+  &__editbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 6px;
+  }
+
+  &__rwnote {
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+
   /* 標籤：名字欄＋勾選 */
   &__tags {
     margin: 8px 0 6px;

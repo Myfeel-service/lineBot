@@ -152,7 +152,29 @@ export function buildWelcomeDraft(ctx: DraftContext): string {
  *    這一格是整包覆蓋 `systemPrompt`，只寫語氣的話，等於把那些紅線刪掉。
  *    這是「加一個功能結果把既有防線拆掉」最典型的形狀。
  */
-export function buildToneDraft(ctx: DraftContext): string {
+/**
+ * 語氣草稿後半段的安全規則。
+ * ⛔ 「換個說法」（`D-89`）**只換開頭那一句和口氣那一行**，這一段一字不動——
+ *    讓模型連規則一起重寫＝我們自己把安全網拆了，而且他不會發現（那段字他不會逐字讀）。
+ */
+export const TONE_SAFETY_RULES = [
+  '回覆原則（⛔ 這幾條不要刪）：',
+  '1. 只能根據提供的「知識卡內容」回答；知識卡沒寫到的，不要自己編、也不要拿沾邊的內容硬湊。',
+  '   （需要轉真人時，系統會自動安排，你不必、也不要在回覆裡寫「我幫您轉接」之類的話。）',
+  '2. 回覆要簡短、口語、有禮貌；不要使用 markdown 或項目符號。',
+  '3. 價格、成分、出貨天數這類數字，只能講知識卡上寫的，不要估、不要四捨五入。',
+  '4. 涉及退費、法律糾紛、醫療診斷等，務必交給專人，不要自己給建議。',
+].join('\n')
+
+/** 「換個說法」換的那兩處（其餘的事實行與安全規則照範本） */
+export interface ToneVoice {
+  /** 開頭那一句（例：「你代表○○回覆客人。」） */
+  opener?: string
+  /** 口氣那一行冒號後面的字 */
+  voice?: string
+}
+
+export function buildToneDraft(ctx: DraftContext, voice: ToneVoice = {}): string {
   const shop = String(ctx.shopName ?? '').trim()
   const industry = fieldValue(ctx.profile, 'industry')
   const tone = fieldValue(ctx.profile, 'tone')
@@ -164,8 +186,10 @@ export function buildToneDraft(ctx: DraftContext): string {
    *    （「都不是，我自己講」），填「手工皂與香氛的工作室」就會變成「你是一家手工皂與香氛的工作室的客服助理」。
    *    改成**條列**——這段字是給模型看的，結構化本來就比通順的句子好，而且填什麼都不會壞。
    */
+  const opener = String(voice.opener ?? '').trim()
+  const voiceText = String(voice.voice ?? '').trim().replace(/[。.]+$/, '')
   const lines = [
-    shop ? `你是${shop}的客服助理。` : '你是這家店的客服助理。',
+    opener || (shop ? `你是${shop}的客服助理。` : '你是這家店的客服助理。'),
     ...(industry ? [`店的類型：${industry}`] : []),
     ...(products.length ? [`${storeBizWording(industry).productsLabel}：${products.join('、')}`] : []),
     ...(customers ? [`主要客群：${customers}`] : []),
@@ -173,16 +197,19 @@ export function buildToneDraft(ctx: DraftContext): string {
 
   return [
     ...lines,
-    tone ? `說話的口氣：${tone}。` : '說話的口氣：親切、口語、不誇大。',
+    voiceText ? `說話的口氣：${voiceText}。` : tone ? `說話的口氣：${tone}。` : '說話的口氣：親切、口語、不誇大。',
     '',
-    '回覆原則（⛔ 這幾條不要刪）：',
-    '1. 只能根據提供的「知識卡內容」回答；知識卡沒寫到的，不要自己編、也不要拿沾邊的內容硬湊。',
-    '   （需要轉真人時，系統會自動安排，你不必、也不要在回覆裡寫「我幫您轉接」之類的話。）',
-    '2. 回覆要簡短、口語、有禮貌；不要使用 markdown 或項目符號。',
-    '3. 價格、成分、出貨天數這類數字，只能講知識卡上寫的，不要估、不要四捨五入。',
-    '4. 涉及退費、法律糾紛、醫療診斷等，務必交給專人，不要自己給建議。',
+    TONE_SAFETY_RULES,
   ].join('\n')
 }
+
+/**
+ * 哪幾樣可以「換個說法」（`D-89`）：**只有會被客人看到／決定 AI 怎麼講話的那兩段**。
+ * ⛔ 標籤不給：三顆是照旺季與銷售方式挑的，換一版只會得到另外三顆同樣沒有根據的名字。
+ */
+export const REWORDABLE_DRAFTS: readonly StoreDraftKey[] = ['welcome', 'tone'] as const
+/** 一張草稿卡最多換幾次（⛔ 用完要明講，不可以按了沒反應） */
+export const REWORD_MAX_PER_CARD = 5
 
 export interface TagDraft {
   name: string

@@ -316,4 +316,19 @@ describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被�
     }
     expect(stripComments(page), '頁面要用 turnStartId 決定捲到哪').toContain('turnStartId.value')
   })
+
+  it('「換個說法」慢回來的那一版，⛔ 不可以蓋掉已經定案的卡（`D-89` ②）', () => {
+    // 踩到會怎樣：他按了「換個說法」又馬上按「採用」——採用寫出去的是舊的那一版，
+    // 幾秒後新的一版回來，把卡片洗回可編輯、框裡換成另一段字：畫面跟寫出去的不一樣。
+    const reword = fnBody('async function onDraftReword', 'async function applyOneDraft')
+    const afterAwait = reword.slice(reword.indexOf("apiFetch<{ body: string }>('/api/store-profile/reword'"))
+    expect(afterAwait, '成功那條要先看 decided').toMatch(/\)\s*\n\s*if \(rc\.decided \|\| isDisposed\(\)\) return/)
+    const catchBody = reword.slice(reword.indexOf('catch (e: unknown)'))
+    expect(catchBody, '失敗那條也要先看 decided').toMatch(/^catch \(e: unknown\) \{\s*\n\s*if \(rc\.decided \|\| isDisposed\(\)\) return/)
+    // 按下採用／先不要的那一刻就標定案（⛔ 不可以等寫完才標：寫出去要幾秒）
+    const drafts = fnBody('async function stepStoreDrafts', 'async function revealStoreProfile')
+    expect(drafts).toMatch(/const c = await askChoices\(\[[\s\S]*?\]\)\s*\n\s*const rc = rewordCards\.get\(cardId\)\s*\n\s*if \(rc\) rc\.decided = true/)
+    // ⛔ 標籤不給換：只有 REWORDABLE_DRAFTS 那兩樣、而且是一段話的框
+    expect(drafts).toContain("const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)")
+  })
 })
