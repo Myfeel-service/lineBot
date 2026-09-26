@@ -47,11 +47,18 @@ export async function countWorkspaceChunks(
   if (cached && cached.expiresAt > Date.now()) return cached.count
 
   const base = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).where('workspaceId', '==', wid)
-  const [allAgg, deletedAgg] = await Promise.all([
+  /**
+   * ⚠️ 「等你看過」（`draft`，`C-250`③）的卡**不算**：採用才算。開帳整理出來的卡是**提案**，
+   *    他還沒答應收——算進去的話，新帳號什麼都還沒點頭，額度就先被吃掉一截。
+   * ⚠️ 不會跟回收桶重複扣：軟刪除會把 status 改成 disabled，被刪的草稿不再是 draft；
+   *    而草稿的「刪掉」本來就是真刪。
+   */
+  const [allAgg, deletedAgg, draftAgg] = await Promise.all([
     base.count().get(),
     base.where('isDeleted', '==', true).count().get(),
+    base.where('status', '==', 'draft').count().get(),
   ])
-  const count = Math.max(0, allAgg.data().count - deletedAgg.data().count)
+  const count = Math.max(0, allAgg.data().count - deletedAgg.data().count - draftAgg.data().count)
   countCache.set(wid, { count, expiresAt: Date.now() + TTL_MS })
   return count
 }

@@ -9,7 +9,13 @@ export type EmbeddingVector = FirebaseFirestore.VectorValue
 //  一張知識卡：標題 + 內容 + 標籤 + 向量索引狀態
 // ═══════════════════════════════════════════════════════════════════
 
-export type KnowledgeChunkStatus = 'pending' | 'indexed' | 'failed' | 'disabled'
+/**
+ * ⚠️ `draft`＝**等你看過**（`C-250`③，2026-09-26）：開帳讀網站整理出來、店家還沒點頭的卡。
+ *    - 有向量（試答模式讀得到，`includeDrafts`），但 **LINE 對客人只用 `indexed`**——紅線不動
+ *    - ⛔ 不可以拿 `pending` 代替：`pending` 是「還在算向量」，排程 5 分鐘內會自動把它推成 `indexed`
+ *    - 不算額度（採用才算，`countWorkspaceChunks` 扣掉它）；刪掉＝真刪（不進回收桶）
+ */
+export type KnowledgeChunkStatus = 'pending' | 'indexed' | 'failed' | 'disabled' | 'draft'
 
 export interface KnowledgeChunkDoc {
   /**
@@ -599,6 +605,10 @@ export interface AiAnswerResult {
     chunkId: string
     title: string
     similarity: number
+    /** 這張是「等你看過」的卡（只有試答模式會出現，`C-250`③）——畫面要講明「這句還不會對客人講」 */
+    draft?: boolean
+    /** 出自哪一份資料（給「出自你網站的『○○』那一頁」用） */
+    sourceId?: string | null
   }>
   /** decision === 'handoff' 才有值 */
   handoffReason: HandoffReason | null
@@ -1006,6 +1016,7 @@ export const KNOWLEDGE_CHUNK_STATUS_LABELS: Record<KnowledgeChunkStatus, string>
   indexed: '可用',
   failed: '失敗',
   disabled: '已停用',
+  draft: '等你看過',
 }
 
 export const KNOWLEDGE_SOURCE_TYPE_LABELS: Record<KnowledgeSourceType, string> = {

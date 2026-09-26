@@ -22,17 +22,20 @@ import { getWorkspacePlan } from './billing'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 
 /**
- * 假 Firestore：只認得這裡用到的兩段查詢——
- * `where(workspaceId)` 的總數，以及再 `where(isDeleted==true)` 的墓碑數。
+ * 假 Firestore：只認得這裡用到的三段查詢——
+ * `where(workspaceId)` 的總數、再 `where(isDeleted==true)` 的墓碑數、再 `where(status==draft)` 的等你看過（`C-250`③）。
  */
-function makeDb(total: number, deleted: number) {
+function makeDb(total: number, deleted: number, drafts = 0) {
   let counted = 0
-  const q = (isDeletedFilter: boolean): any => ({
-    where: () => q(true),
-    count: () => ({ get: async () => { counted++; return { data: () => ({ count: isDeletedFilter ? deleted : total }) } } }),
+  const q = (filter: 'all' | 'isDeleted' | 'status'): any => ({
+    where: (field: string) => q(field === 'status' ? 'status' : 'isDeleted'),
+    count: () => ({ get: async () => {
+      counted++
+      return { data: () => ({ count: filter === 'isDeleted' ? deleted : filter === 'status' ? drafts : total }) }
+    } }),
   })
   return {
-    db: { collection: () => ({ where: () => q(false) }) } as any,
+    db: { collection: () => ({ where: () => q('all') }) } as any,
     aggregations: () => counted,
   }
 }
@@ -56,7 +59,12 @@ describe('數現有幾條', () => {
     const { db, aggregations } = makeDb(10, 0)
     await countWorkspaceChunks('ws1', db)
     await countWorkspaceChunks('ws1', db)
-    expect(aggregations()).toBe(2) // 一次呼叫 = 兩段聚合（總數 + 墓碑），第二次全走快取
+    expect(aggregations()).toBe(3) // 一次呼叫 = 三段聚合（總數 + 墓碑 + 等你看過），第二次全走快取
+  })
+
+  it('⭐ 等你看過的卡不算（`C-250`③：開帳整理出來的是提案，採用才算）', async () => {
+    const { db } = makeDb(62, 0, 12)
+    expect(await countWorkspaceChunks('ws1', db)).toBe(50)
   })
 })
 

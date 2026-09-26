@@ -90,6 +90,16 @@
                 <div v-if="turn.result.decision === 'answered'" class="pg-answer">
                   {{ turn.result.answer }}
                 </div>
+                <!-- 用到「等你看過」的卡（`C-250`③，示意頁 v80）：⛔ 不用綠（綠＝已經好了），用琥珀——
+                     跟輪廓卡「我猜的」同一個意思（還沒確認過）。⭐ 他自己撞到「它讀懂了我的網站」，
+                     看卡的動機就從「去做功課」變成「我要讓它這樣答」。紅線照舊：對客人只用點過頭的卡 -->
+                <div v-if="turn.result.decision === 'answered' && draftUse(turn.result)" class="pg-draft-note">
+                  <div class="pg-draft-note__t">{{ draftUse(turn.result) === 'all' ? '這句用的是還沒看過的卡' : '這句有用到還沒看過的卡' }}</div>
+                  <div class="pg-draft-note__d">
+                    <template v-if="draftPageName(turn.result)">出自你網站的「{{ draftPageName(turn.result) }}」。</template>在知識庫點頭之後，客人問才會這樣答。
+                  </div>
+                  <el-button size="small" type="primary" @click="goDrafts">去看這張卡 →</el-button>
+                </div>
                 <div v-else-if="turn.result.decision === 'disambiguate' && turn.result.disambiguation" class="pg-disambiguate">
                   <p class="pg-clarification">{{ turn.result.disambiguation.clarification }}</p>
                   <div class="pg-option-row">
@@ -326,6 +336,32 @@ function askPrice() {
   inputEl.value?.focus()
 }
 
+/** 「等你看過」的卡住在哪一頁（sourceId → 頁名）；只有要講「出自哪一頁」時才去查 */
+const draftPageNames = ref<Record<string, string>>({})
+let draftNamesLoaded = false
+async function loadDraftPageNames() {
+  if (draftNamesLoaded) return
+  draftNamesLoaded = true
+  try {
+    const r = await apiFetch<{ pages: Array<{ sourceId: string, name: string }> }>('/api/ai/knowledge/drafts')
+    draftPageNames.value = Object.fromEntries(r.pages.map(p => [p.sourceId, p.name]))
+  }
+  catch { /* 查不到就不講頁名，其他照講 */ }
+}
+/** 這一題的來源裡有沒有等你看過的卡：全部都是／有一部分／沒有 */
+function draftUse(r: AiResult): 'all' | 'some' | null {
+  const n = r.sources.filter(s => s.draft).length
+  if (!n) return null
+  return n === r.sources.length ? 'all' : 'some'
+}
+function draftPageName(r: AiResult): string {
+  const sid = r.sources.find(s => s.draft)?.sourceId
+  return sid ? draftPageNames.value[sid] ?? '' : ''
+}
+function goDrafts() {
+  void router.push(`/admin/${workspaceId.value}/knowledge/sources?drafts=1`)
+}
+
 type AiResult = AiAnswerResult & {
   debugPrompt?: string
   /** 有值代表這句在正式 LINE 會觸發腳本、不跑 AI */
@@ -430,6 +466,7 @@ async function send(text: string, opts: { skipDisambiguation?: boolean; isFollow
       },
     })
     history.value.push({ role: 'ai', result: res, expanded: false })
+    if (res.sources?.some(s => s.draft)) void loadDraftPageNames()
   }
   catch (err: any) {
     showToast(err?.statusMessage || err?.message || '請求失敗', 'error')

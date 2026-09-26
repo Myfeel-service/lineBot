@@ -53,7 +53,8 @@ export function buildChunkSoftDeletePatch(existingStatus?: unknown): Record<stri
  */
 export function resolveRestoredStatus(statusBeforeDelete: unknown, hasEmbedding: boolean): KnowledgeChunkStatus {
   const prev = String(statusBeforeDelete ?? '')
-  if (prev === 'disabled' || prev === 'failed') return prev
+  // ⛔ draft（等你看過）還原後仍是 draft：還原＝撤銷刪除，不等於點頭（`C-250`③）
+  if (prev === 'disabled' || prev === 'failed' || prev === 'draft') return prev
   if (prev === 'indexed') return hasEmbedding ? 'indexed' : 'pending'
   if (prev === 'pending') return 'pending'
   return hasEmbedding ? 'indexed' : 'pending'
@@ -137,11 +138,17 @@ interface CreateChunkParams extends ChunkInput {
    * 由呼叫端用回傳的 embeddingTokens 加總、整批記一次(避免打爆單一月用量文件)。
    */
   skipUsageRecording?: boolean
+  /**
+   * 建成「等你看過」的卡（`C-250`③：開帳讀網站整理出來的）。照樣算向量（試答讀得到），
+   * 但狀態停在 `draft`——⛔ 要等店家在知識庫點頭才會變 `indexed`、才對客人講話。
+   */
+  draft?: boolean
 }
 
 /**
  * 建立一張知識卡並嘗試索引。回傳最終狀態。
  * 流程：寫 pending → embed → 寫 indexed/failed。失敗不會 throw，會回 failed。
+ * （`draft` 的卡：寫 draft → embed → 仍是 draft；embed 失敗也仍是 draft，採用時再補算）
  */
 export async function createKnowledgeChunk(
   db: Firestore,
@@ -159,7 +166,8 @@ export async function createKnowledgeChunk(
     isOverview: params.isOverview === true,
     embedding: null,
     tokens: estimateTokens(params.content),
-    status: 'pending',
+    // ⛔ draft 不可以先寫 pending：pending 超過 5 分鐘會被排程撿去重算、寫成 indexed＝沒看過就上線
+    status: params.draft ? 'draft' : 'pending',
     isDeleted: false, // 見 buildChunkSoftDeletePatch：查詢層要靠這個欄位排除回收桶
     sourceId: params.sourceId ?? null,
     lastIndexedAt: null,
@@ -250,11 +258,13 @@ export async function updateKnowledgeChunk(
   // 內容更新不是重新啟用。這裡若寫 pending，下游 runIndexOnChunk 讀到的就不是
   // disabled，守門（停用卡不復活）會失效；被 retry 排程撿走也會直接復活。
   const wasDisabled = existing.status === 'disabled'
+  // ⛔ 等你看過的卡同理（`C-250`③）：在審卡時改了字＝還是沒點頭，⛔ 不可以落 pending 被排程推成 indexed
+  const wasDraft = existing.status === 'draft'
   await ref.update({
     ...baseUpdate,
     embedding: null,
     tokens: estimateTokens(params.content),
-    status: wasDisabled ? 'disabled' : 'pending',
+    status: wasDisabled ? 'disabled' : wasDraft ? 'draft' : 'pending',
     lastIndexedAt: null,
     failureReason: FieldValue.delete(),
   })
@@ -388,6 +398,13 @@ export async function runIndexOnChunk(
    * 重新啟用只有一條路：settings.post.ts 的「供 AI 使用」開關（不經過這裡）。
    */
   const wasDisabled = cd?.status === 'disabled'
+  /**
+   * ⛔ 同一種守門：等你看過（`draft`，`C-250`③）的卡算完向量**仍是 draft**。
+   *    點頭只有一條路（`drafts/[chunkId]/adopt`，不經過這裡改狀態），否則建卡、改字、重建索引
+   *    任何一條都會把「沒看過的卡」無聲寫成 indexed、直接對客人講話。
+   */
+  const wasDraft = cd?.status === 'draft'
+  const keptStatus: KnowledgeChunkStatus | null = wasDisabled ? 'disabled' : wasDraft ? 'draft' : null
   // 解析並前置產品名：卡標題自己有品名 → 逐卡認領（優先）；否則退回來源層 productName。沒有就維持原樣。
   let productName = ''
   try {
@@ -425,8 +442,8 @@ export async function runIndexOnChunk(
     await ref.update({
       embedding: FieldValue.vector(values),
       productName: productName || FieldValue.delete(),
-      // 停用卡：向量照樣更新（重新啟用時免重算、不會拿到舊向量），但狀態維持 disabled
-      status: (wasDisabled ? 'disabled' : 'indexed') satisfies KnowledgeChunkStatus,
+      // 停用卡：向量照樣更新（重新啟用時免重算、不會拿到舊向量），但狀態維持 disabled（draft 同理）
+      status: (keptStatus ?? 'indexed') satisfies KnowledgeChunkStatus,
       lastIndexedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       failureReason: FieldValue.delete(),
@@ -437,7 +454,7 @@ export async function runIndexOnChunk(
       // 建索引 embedding 屬「建置成本」，記到 buildEmbeddingTokens（不進客人對話成本）
       void recordAiUsage(workspaceId, { buildEmbeddingTokens: embeddingTokens }, db)
     }
-    return { id: chunkId, status: wasDisabled ? 'disabled' : 'indexed', embeddingTokens }
+    return { id: chunkId, status: keptStatus ?? 'indexed', embeddingTokens }
   }
   catch (err: any) {
     const reason = String(err?.statusMessage || err?.message || 'embed failed').slice(0, 300)
@@ -447,12 +464,13 @@ export async function runIndexOnChunk(
     await ref.update({
       // 停用卡 embed 失敗也不落 failed：落了就會進 retry 佇列，重試成功又寫回 indexed＝復活。
       // 向量可能因此過舊/為空——安全網在 settings.post.ts：啟用時 embedding 為空會擋下並指去「重新索引」。
-      status: (wasDisabled ? 'disabled' : 'failed') satisfies KnowledgeChunkStatus,
+      // draft 同理（落 failed 會被排程重試成 indexed）；它的安全網在採用那一步：沒向量就當場補算。
+      status: (keptStatus ?? 'failed') satisfies KnowledgeChunkStatus,
       failureReason: reason,
-      ...(wasDisabled || isBudgetBlock ? {} : { retryCount: FieldValue.increment(1) }),
+      ...(keptStatus || isBudgetBlock ? {} : { retryCount: FieldValue.increment(1) }),
       updatedAt: FieldValue.serverTimestamp(),
     }).catch(() => {})
-    return { id: chunkId, status: wasDisabled ? 'disabled' : 'failed', failureReason: reason, embeddingTokens: 0 }
+    return { id: chunkId, status: keptStatus ?? 'failed', failureReason: reason, embeddingTokens: 0 }
   }
 }
 
@@ -473,6 +491,8 @@ export interface SimilarChunk {
   isOverview: boolean
   /** 所屬產品的正規名稱（來源層設定、索引時寫入）；答題 context 用來標明卡片是哪個產品的 */
   productName?: string
+  /** 這張是「等你看過」的卡（只有試答模式會撈到，`C-250`③） */
+  draft?: boolean
 }
 
 /**
@@ -497,10 +517,15 @@ export async function searchSimilarChunks(
   workspaceId: string,
   queryEmbedding: number[],
   topK = 5,
+  /**
+   * ⛔ 預設、而且對客人**只能**是 `indexed`。`draft` 只給試答模式（`searchSimilarChunksWithDrafts`）。
+   * ⚠️ 同一支向量索引（workspaceId, status, embedding）就查得到，不必另開索引。
+   */
+  status: 'indexed' | 'draft' = 'indexed',
 ): Promise<SimilarChunk[]> {
   const baseRef = db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
-    .where('status', '==', 'indexed')
+    .where('status', '==', status)
 
   // findNearest 接受 number[] 或 VectorValue
   const vectorQuery = baseRef.findNearest({
@@ -529,8 +554,33 @@ export async function searchSimilarChunks(
         sourceId: data?.sourceId ?? null,
         isOverview: data?.isOverview === true,
         productName: String(data?.productName ?? '').trim() || undefined,
+        ...(status === 'draft' ? { draft: true } : {}),
       }
     })
+}
+
+/**
+ * 試答模式（`C-250`③）：可用的卡＋等你看過的卡一起找，照相似度合併取前 K。
+ * ⭐ 開帳讀完網站、卡還沒點頭的人問價格，第一個「哇」不該是一句拒答——
+ *    試答照實用那張卡答，畫面標明「這句用的是還沒看過的卡」、帶他去點頭。
+ * ⛔ **只有試答模式可以呼叫**（`answerWithAi` 以 `includeDrafts && isTest` 雙重把關）：
+ *    對客人講話的那條路用到沒看過的卡＝紅線。
+ */
+export async function searchSimilarChunksWithDrafts(
+  db: Firestore,
+  workspaceId: string,
+  queryEmbedding: number[],
+  topK = 5,
+): Promise<SimilarChunk[]> {
+  const [live, drafts] = await Promise.all([
+    searchSimilarChunks(db, workspaceId, queryEmbedding, topK, 'indexed'),
+    // 草稿查不到（例如沒有草稿、或索引問題）不可以拖垮正常的試答——退回只用可用的卡
+    searchSimilarChunks(db, workspaceId, queryEmbedding, topK, 'draft').catch((e) => {
+      console.warn('[ai-knowledge-chunks] 試答撈等你看過的卡失敗，只用可用的卡：', (e as Error)?.message)
+      return [] as SimilarChunk[]
+    }),
+  ])
+  return [...live, ...drafts].sort((a, b) => b.similarity - a.similarity).slice(0, topK)
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -261,6 +261,8 @@
          現在側欄回歸「搜尋+資料清單」,工作的事(異常+建議)放進來這裡——照使用者要做的事長。 -->
     <template #editor-empty>
       <div class="src-workbench">
+        <!-- 開帳讀網站整理出來、等你看過的卡（`C-250`③）：新帳號進知識庫第一件該做的事，排最上面 -->
+        <KnowledgeSiteDrafts :can-edit="canEditKb" @changed="loadSources(true)" />
         <div class="src-workbench__intro">
           <h3>這裡是 AI 回答客人的依據</h3>
           <p>
@@ -3718,11 +3720,12 @@ function typeLabel(t: string) {
 function statusLabel(s: string) {
   return s === 'ready' ? '可用' : s === 'fetching' ? '抓取中' : s === 'splitting' ? '整理中' : '失敗'
 }
+// ⚠️ `draft`（等你看過，`C-250`③）一定要有自己的字與顏色：落到最後那個「其他」會被畫成紅色「失敗」
 function chunkStatusLabel(s: string) {
-  return s === 'indexed' ? '可用' : s === 'pending' ? '處理中' : s === 'disabled' ? '已停用' : '失敗'
+  return s === 'indexed' ? '可用' : s === 'pending' ? '處理中' : s === 'disabled' ? '已停用' : s === 'draft' ? '等你看過' : '失敗'
 }
 function chunkStatusBadge(s: string) {
-  return s === 'indexed' ? 'badge-green' : s === 'pending' ? 'badge-yellow' : s === 'disabled' ? 'badge-gray' : 'badge-red'
+  return s === 'indexed' ? 'badge-green' : s === 'pending' ? 'badge-yellow' : s === 'disabled' ? 'badge-gray' : s === 'draft' ? 'badge-yellow' : 'badge-red'
 }
 function statusChipText(src: SourceSummary) {
   if (src.outdatedAtMs > 0) return '有變動'
@@ -3804,6 +3807,22 @@ onMounted(async () => {
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 150))
       const el = document.querySelector('.kb-suggest')
+      if (el) {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        break
+      }
+    }
+    return
+  }
+
+  // 「去看那幾張卡」帶 ?drafts=1（試答頁、小幫手、`C-250`③）：捲到「等你看過」那一區。
+  // 同上一段的理由與做法（元件自己載資料，等它掛出來；等不到就作罷）
+  if (String(route.query.drafts ?? '') === '1') {
+    clearQuery()
+    selectedId.value = null
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 150))
+      const el = document.querySelector('.kb-drafts')
       if (el) {
         el.scrollIntoView({ block: 'start', behavior: 'smooth' })
         break

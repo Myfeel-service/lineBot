@@ -131,8 +131,36 @@ describe('打造那一趟（`C-250`／`D-102`）', () => {
     const block = chat.slice(i, chat.indexOf('async function stepBuildFinish', i))
     expect(block).toContain("builtKeys.has('welcome')")
     expect(block).toContain("builtKeys.has('tags')")
-    // 「客服回不完」要指的知識卡這一趟還不會產生 → 先不講
-    expect(block).not.toContain('客服回不完')
+    // 「客服回不完」指的是網站整理出來的卡：真的有卡才講（`C-250`③）
+    expect(block).toContain("pain === '客服回不完' && siteCards.total > 0")
+  })
+})
+
+describe('網站讀到的頁 → 等你看過的卡（`C-250`③）', () => {
+  it('揭曉那一刻就在背景開始整理（⛔ 不在精靈裡讓他等）', () => {
+    const i = chat.indexOf('async function revealStoreProfile')
+    const block = chat.slice(i, chat.indexOf('let profileCardId', i))
+    expect(block).toContain('if (siteOk) startSiteCardsPush()')
+  })
+
+  it('草稿之後、成績單之前給他看一張他自己的卡；⛔ 不問採用（要在知識庫一張一張決定）', () => {
+    const create = buildFlow.indexOf('await stepStoreDrafts(')
+    const info = buildFlow.indexOf('await stepSiteCardsInfo(')
+    const finish = buildFlow.indexOf('await stepBuildFinish(')
+    expect(info).toBeGreaterThan(create)
+    expect(finish).toBeGreaterThan(info)
+    const i = chat.indexOf('async function stepSiteCardsInfo')
+    const block = chat.slice(i, chat.indexOf('\n  }\n', i))
+    expect(block).toContain("variant: 'info' as const")
+    expect(block).not.toContain('askChoices')
+    expect(block).toContain('一張長這樣')
+    // 等第一步整理完最多 20 秒（⛔ 不可以無上限地等）
+    expect(block).toMatch(/Promise\.race\(\[siteCardsFirstStep, new Promise\(r => setTimeout\(r, 20_000\)\)\]\)/)
+  })
+
+  it('離開精靈就停掉背景迴圈（伺服器那邊由知識庫頁與排程接手）', () => {
+    const i = chat.indexOf('function dispose()')
+    expect(chat.slice(i, i + 200)).toContain('siteCardsStopped = true')
   })
 })
 

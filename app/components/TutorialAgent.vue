@@ -127,6 +127,14 @@
             </button>
           </div>
 
+          <!-- 等你看過的知識卡（`C-250`③，示意頁 v80 的「知識卡」那一條）：⛔ 不是紅的——它不擋上線，
+               只是會讓 AI 答得更好；也不跟「接上 LINE」一起收（接好 LINE 不代表卡看過了）。 -->
+          <div v-if="draftCards > 0" class="ta-kbtodo">
+            <div class="ta-kbtodo__t">📖 看過知識卡，它才答得出細節</div>
+            <p class="ta-kbtodo__d">你網站整理出來的 <b>{{ draftCards }} 張卡</b>在等你看過。點頭進去之後，客人問<b>價格、細節</b>，它才答得出來。</p>
+            <button type="button" class="ta-kbtodo__go" @click="goDrafts">去「知識庫」看 →</button>
+          </div>
+
           <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急。
                紅橘語意差很多（客人正在受影響 vs 建議處理），分成兩組講，不共用一個標題 -->
           <template v-if="alerts.length">
@@ -1021,6 +1029,27 @@ function startBuiltTour() {
   void startAdHocTour(builtTour.value)
 }
 
+// ── 等你看過的知識卡（`C-250`③）──────────────────────────────
+const { apiFetch } = useWorkspace()
+const draftCards = ref(0)
+async function loadDraftCards() {
+  if (!workspaceId.value) {
+    draftCards.value = 0
+    return
+  }
+  try {
+    const r = await apiFetch<{ total: number }>('/api/ai/knowledge/drafts')
+    draftCards.value = r.total
+  }
+  catch { draftCards.value = 0 /* 查不到就不提（⛔ 不猜一個數字） */ }
+}
+function goDrafts() {
+  const wid = workspaceId.value
+  if (!wid) return
+  closePanel()
+  void router.push(`/admin/${wid}/knowledge/sources?drafts=1`)
+}
+
 // 複習教學分組的展開狀態；預設展開「開始設定」與「AI 客服」
 const expandedGroups = ref<Set<string>>(new Set(['setup', 'ai']))
 function toggleGroup(id: string) {
@@ -1335,9 +1364,10 @@ async function startLandingTour(kind: string) {
   const wid = workspaceId.value
   if (!wid) return
   await ensureWorkspaceList()
+  await loadDraftCards()
   if (kind === LANDING_FROM_BUILD) {
     const band = await waitForElement('[data-tour="onboarding-band"]', 1500)
-    const steps = landingTourSteps(readOnboardingBuilt(wid), { hasBand: !!band, bandAction: onboardingBand.value.action })
+    const steps = landingTourSteps(readOnboardingBuilt(wid), { hasBand: !!band, bandAction: onboardingBand.value.action, draftCards: draftCards.value })
     // ⭐ 走完把游標放進輸入框＝下一個動作就在手邊（第一個「哇」接在導覽後面，⛔ 不打開面板蓋住它）
     // ⚠️ el-input 會把 `data-tour` 直接掛在 textarea 本身（不在外層），所以錨點就是輸入框
     // ⚠️ 要晚一拍：el-tour 關掉時會把焦點還給開導覽前的那個元素，當下 focus 會被它蓋回去（實走抓到的）
@@ -1353,7 +1383,7 @@ async function startLandingTour(kind: string) {
   //    從 `capabilities` 找永遠是 undefined＝第 1 步永遠被拿掉（實走抓到的）
   const received = onboardingSteps.value.find(s => s.id === 'firstMessageReceived')?.done === true
   const hasRow = received && !!(await waitForElement('.conv-list-row .split-list-item', 4000))
-  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid) })
+  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value })
   await startAdHocTour(steps)
 }
 const { markSeen: markTourSeen } = useTourSeen()
@@ -1450,6 +1480,7 @@ watch(panelOpen, (open) => {
   if (open) {
     nextTick(() => panelEl.value?.focus())
     loadBuiltItems()
+    void loadDraftCards()
     // 昨日摘要在這一刻才查（見 refreshAll 的註解）。不 force：useDailyBrief 自己有
     // 10 分鐘節流與跨日重抓，開開關關不會重打，但隔天再打開會拿到新的日期
     void refreshBrief()

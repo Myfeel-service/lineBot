@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ONBOARDING_FLOWS } from '~/composables/useOnboardingChat'
 import {
   BUILT_PLACE,
+  KNOWLEDGE_NAV,
   LANDING_FROM_BUILD,
   LANDING_FROM_LINE,
   LINE_FLOW_MINUTES,
@@ -81,6 +82,17 @@ describe('打造完的落地 3 步（`D-102`）', () => {
     expect(strip + agent).not.toContain('用聊天引導完成開通')
   })
 
+  it('⭐ 網站整理出卡了：知識庫那一列也標亮、講得出幾張（`C-250`③）；什麼都沒採用但有卡，第 1 步照樣出現', () => {
+    const [first] = landingTourSteps([ALL[0]!], { hasBand: true, bandAction: '接上 LINE', draftCards: 12 })
+    expect(first!.mark).toContain(KNOWLEDGE_NAV)
+    expect(first!.description).toContain('等你看過的 <strong>12 張知識卡</strong>')
+    const onlyCards = landingTourSteps([], { hasBand: true, bandAction: '接上 LINE', draftCards: 3 })
+    expect(onlyCards[0]!.title).toBe('你剛剛做的，都在這幾頁')
+    // ⛔ 沒有卡就不提、也不標知識庫
+    expect(landingTourSteps([ALL[0]!], { hasBand: true, bandAction: '接上 LINE', draftCards: 0 })[0]!.mark).not.toContain(KNOWLEDGE_NAV)
+    expect(layout).toContain("tour: 'nav-knowledge'")
+  })
+
   it('要多久跟精靈頁首同一個數字', () => {
     expect(ONBOARDING_FLOWS.line.time).toContain(LINE_FLOW_MINUTES)
   })
@@ -110,6 +122,14 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
     expect(tried.target).toBe('[data-tour="ta-fab"]')
     expect(tried.description).not.toContain('測試對話')
     expect(notTried.description).toContain('測試對話')
+  })
+
+  it('還有卡沒看過：最後一步把它列成待辦（跟測試對話那件一起算件數）', () => {
+    const both = liveTourSteps({ received: true, triedPlayground: false, draftCards: 8 }).at(-1)!
+    expect(both.description).toContain('還差 2 件')
+    expect(both.description).toContain('看過那 8 張知識卡')
+    const none = liveTourSteps({ received: true, triedPlayground: true, draftCards: 0 }).at(-1)!
+    expect(none.description).not.toContain('還差')
   })
 
   it('⛔ 不承諾手機會收到通知／早上的摘要（他還不在通知名單裡，`C-250` 第三批才加）', () => {

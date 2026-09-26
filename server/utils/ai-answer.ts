@@ -20,7 +20,7 @@
  *   8. 否則 → answered，回傳 answer + sources
  */
 import { pinyin } from 'pinyin-pro'
-import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, type SimilarChunk } from './ai-knowledge-chunks'
+import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, searchSimilarChunksWithDrafts, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { contentSimilarity } from './ai-knowledge-resync'
 import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName } from './ai-product-alias'
@@ -126,6 +126,12 @@ export interface AnswerInput {
    * 目的：「用量 / 監控」的品質指標與額度只反映真實客服，管理員測試不灌水（比照 isFollowup 的 tokens-only）。
    */
   isTest?: boolean
+  /**
+   * 試答也讀「等你看過」的卡（`C-250`③，只給測試對話頁）。
+   * ⛔ **要跟 `isTest` 一起才生效**：對客人講話的那條路用到沒看過的卡＝紅線，
+   *    所以就算有人誤帶這個旗標，沒有 `isTest` 也照舊只讀可用的卡。
+   */
+  includeDrafts?: boolean
   /**
    * handler 已用 routeMessage（同一 prompt 家族）分類過時帶入：不再呼叫 classifyIntent，
    * 每則訊息省一次 flash-lite（延遲 ~0.5–1s + token）。
@@ -728,7 +734,7 @@ function handoff(reason: HandoffReason, sources: SimilarChunk[] = [], errorDetai
     answer: '',
     // 帶 top-1 similarity，方便 playground 看擦邊 case（沒有 sources 時為 0）
     confidence: sources[0]?.similarity ?? 0,
-    sources: sources.map(s => ({ chunkId: s.id, title: s.title, similarity: s.similarity })),
+    sources: sources.map(s => ({ chunkId: s.id, title: s.title, similarity: s.similarity, ...(s.draft ? { draft: true } : {}), sourceId: s.sourceId })),
     handoffReason: reason,
     ...(errorDetail ? { errorDetail } : {}),
   }
@@ -1734,7 +1740,17 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
 
   let embedTokenEstimate = estimateTokens(text)
 
-  let chunks = await searchSimilarChunks(db, workspaceId, queryVector, DEFAULT_TOP_K_CHUNKS)
+  /**
+   * 這一題用哪一種檢索（`C-250`③）。⛔ 五個檢索點一律走這一支，**不可以有任何一處直接呼叫**
+   * `searchSimilarChunks`——漏一處就是「試答讀得到草稿、但追問那一輪讀不到」這種各說各話。
+   * ⛔ `includeDrafts` 一定要配 `isTest`：對客人只用看過的卡。
+   */
+  const readDrafts = input.includeDrafts === true && input.isTest === true
+  const searchChunks = (v: number[], k: number) => readDrafts
+    ? searchSimilarChunksWithDrafts(db, workspaceId, v, k)
+    : searchSimilarChunks(db, workspaceId, v, k)
+
+  let chunks = await searchChunks(queryVector, DEFAULT_TOP_K_CHUNKS)
   let topSimilarity = chunks[0]?.similarity ?? 0
 
   // 反問 followup：query 是客人點的「選項卡片標題」，原始問題在 followupOf。
@@ -1750,7 +1766,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       const composite = `${text} ${followupOf}`
       const v = await embedQuery(composite)
       embedTokenEstimate += estimateTokens(composite)
-      const compositeChunks = await searchSimilarChunks(db, workspaceId, v, DEFAULT_TOP_K_CHUNKS)
+      const compositeChunks = await searchChunks(v, DEFAULT_TOP_K_CHUNKS)
       const seen = new Set(chunks.map(c => c.id))
       for (const c of compositeChunks) if (!seen.has(c.id)) { seen.add(c.id); chunks.push(c) }
       chunks.sort((a, b) => b.similarity - a.similarity)
@@ -1777,7 +1793,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         embedTokenEstimate += estimateTokens(itemQuery)
         // 多撈幾張再「規格/特色優先」重排：query 只有產品名、對面向沒偏好，
         // top-3 常全是保固/故障卡 → 比較沒材料。重排後仍每品項只取 2 張控 context。
-        const cs = await searchSimilarChunks(db, workspaceId, v, 6)
+        const cs = await searchChunks(v, 6)
         return preferSpecCards(cs.filter(c => c.similarity >= grounding)).slice(0, 2)
       }))
       const groundedCount = perItem.filter(arr => arr.length > 0).length
@@ -1815,7 +1831,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       const perSub = await Promise.all(subQuestions.map(async (sub) => {
         const v = await embedQuery(sub)
         embedTokenEstimate += estimateTokens(sub)
-        return searchSimilarChunks(db, workspaceId, v, 3)
+        return searchChunks(v, 3)
       }))
       for (const arr of perSub) for (const c of arr) if (!seen.has(c.id)) { seen.add(c.id); merged.push(c) }
       // 每子問題的 top-1（過地板分才算「有答案卡」；沒過表示該子問題真的沒資料，交給 prompt 的
@@ -1857,7 +1873,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     try {
       const ctxVector = await embedQuery(contextQuery)
       embedTokenEstimate += estimateTokens(contextQuery)
-      const ctxChunks = await searchSimilarChunks(db, workspaceId, ctxVector, DEFAULT_TOP_K_CHUNKS)
+      const ctxChunks = await searchChunks(ctxVector, DEFAULT_TOP_K_CHUNKS)
       const ctxTop = ctxChunks[0]?.similarity ?? 0
       if (ctxTop > topSimilarity || (replyingToClarification && ctxChunks.length)) {
         chunks = ctxChunks
@@ -2354,6 +2370,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     chunkId: c.id,
     title: c.title,
     similarity: c.similarity,
+    // 試答用到等你看過的卡時，畫面要講「這句還不會對客人講」＋出自哪一頁（`C-250`③）
+    ...(c.draft ? { draft: true } : {}),
+    sourceId: c.sourceId,
   }))
 
   if (!passesConfidence || !passesContent) {

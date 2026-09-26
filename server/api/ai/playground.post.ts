@@ -72,6 +72,8 @@ export default defineEventHandler(async (event) => {
     debug: true,
     // 測試呼叫：只記 token（真花了錢），不記次數/率、不消耗額度——用量監控頁的品質指標只反映真實客服。
     isTest: true,
+    // 試答也讀「等你看過」的卡（`C-250`③）：答得出來的話畫面會標明「這句還不會對客人講」
+    includeDrafts: true,
     skipDisambiguation: body?.skipDisambiguation === true,
     isFollowup: body?.isFollowup === true,
     // 反問前的原始問題（前端模擬客人點按鈕時帶上，與正式 LINE handler 同行為）

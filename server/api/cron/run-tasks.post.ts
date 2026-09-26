@@ -15,6 +15,7 @@ import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
 import { cleanupExpiredPreviewJobs, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
 import { advanceStalePreviewJobs } from '~~/server/utils/ai-preview-job-runner'
+import { advanceStaleStoreProfileJobs } from '~~/server/utils/store-profile-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { scanInactiveTag } from '~~/server/utils/inactive-tag'
@@ -55,6 +56,12 @@ export default defineEventHandler(async (event) => {
      * 一輪最多推 2 份、每份 15 秒預算，且**跳過使用者正在輪詢的那份**（不跟前端搶）。
      */
     { name: 'ai:advance-preview-jobs', run: () => advanceStalePreviewJobs(db) },
+    /**
+     * 開帳讀網站＋整理成「等你看過」的卡（`C-250`③）：精靈只盯 20 秒，之後沒人輪詢——
+     * 沒有這一項，讀到一半的網站永遠停在一半、卡也只在他剛好打開知識庫時才會整理。
+     * 一輪最多推 2 份，跳過前景剛動過的（跟上面那項同一個規矩）；順手清掉過期的工作。
+     */
+    { name: 'store-profile:advance-jobs', run: () => advanceStaleStoreProfileJobs(db) },
     // 取消上傳留下的孤兒檔（只在排程清，不塞進使用者請求路徑——列舉+逐檔刪會拖垮匯入端點）
     { name: 'ai:cleanup-orphan-uploads', run: () => cleanupOrphanUploads() },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },

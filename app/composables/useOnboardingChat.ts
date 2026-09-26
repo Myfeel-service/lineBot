@@ -725,6 +725,8 @@ export function useOnboardingChat() {
     // ⛔ 這裡原本還有「猜的都標出來了，不對的直接改」——`D-93` 分組之後由**組名**扛
     //    （「我猜的 N 項，幫我看一下對不對」），按鈕上又寫著「修改」，同一個指示不講第二遍。
     const siteOk = !stillReading && (profile.siteRead?.pagesRead ?? 0) > 0
+    // ⭐ 讀到的頁接著整理成「等你看過」的卡（`C-250`③）：他看輪廓、採用草稿的這一兩分鐘就在背景整理
+    if (siteOk) startSiteCardsPush()
     await say(siteOk ? '你的網站我讀完了。這是我認識的你。' : '這是我認識的你。')
     profileCardId = showProfileCard(profile, { grouped: true, editable: opts.editable !== false })
     // ⛔ 按鈕上就寫著「都對了，繼續」，⛔ 不再多一句「有不對的就按旁邊的改，改完按繼續」
@@ -734,6 +736,83 @@ export function useOnboardingChat() {
 
   /** 揭曉那張卡的 id——就地修改時要重畫的就是它（檢查點過了之後就不再接受修改事件） */
   let profileCardId: number | null = null
+
+  // ── 讀到的網站頁 → 等你看過的卡（`C-250`③）────────────────────────
+  //
+  // ⛔ 不在精靈裡讓他等（`D-90` 已嫌太長）：揭曉那一刻開始在背景推，他看輪廓、採用草稿的同時整理。
+  //    一步最多 2 頁、一步約 20 秒；推不完的由知識庫頁與排程接手（伺服器有租約，不會重複整理）。
+
+  /** 目前整理到哪（每推一步就重抓一次） */
+  const siteCards = {
+    total: 0,
+    stillWorking: false,
+    sample: null as null | { q: string, a: string },
+  }
+  let siteCardsRun: Promise<void> | null = null
+  /** 第一步做完（或確定沒東西可做）的那一刻；成績單前等它，最多等 20 秒 */
+  let siteCardsFirstStep: Promise<void> = Promise.resolve()
+  let siteCardsStopped = false
+
+  async function refreshSiteCards() {
+    const r = await apiFetch<{
+      total: number
+      pages: Array<{ cards: Array<{ title: string, content: string, questions: string[] }> }>
+      generating: { status: string } | null
+    }>('/api/ai/knowledge/drafts')
+    siteCards.total = r.total
+    siteCards.stillWorking = r.generating?.status === 'queued' || r.generating?.status === 'running'
+    const c = r.pages[0]?.cards[0]
+    siteCards.sample = c ? { q: c.questions[0] || c.title, a: c.content } : null
+  }
+
+  function startSiteCardsPush() {
+    if (siteCardsRun) return
+    let markFirst!: () => void
+    siteCardsFirstStep = new Promise<void>((resolve) => { markFirst = resolve })
+    siteCardsRun = (async () => {
+      try {
+        for (let i = 0; i < 6 && !siteCardsStopped; i++) {
+          const r = await apiFetch<{ cards: { status: string, error?: string } | null }>('/api/ai/knowledge/drafts/advance', { method: 'POST' }).catch(() => null)
+          await refreshSiteCards().catch(() => {})
+          markFirst()
+          const st = r?.cards?.status
+          // 做完／失敗／額度擋下／根本沒有要整理的 → 停（⛔ 不空轉燒請求）
+          if (!st || st === 'done' || st === 'failed' || r?.cards?.error) break
+        }
+      }
+      finally {
+        markFirst()
+      }
+    })()
+  }
+
+  /**
+   * 草稿之後、成績單之前：告訴他網站整理成了幾張卡、**給他看一張**（`C-250`③，示意頁 v80）。
+   * ⭐ 範例本身就是「知識卡是什麼」的定義（老闆兩輪看不懂那次，缺的是範例不是解釋）。
+   * ⛔ 這一樣**不用他決定**（`info`，同月曆那張的規矩）：要不要收是在知識庫一張一張決定的。
+   * ⛔ 沒讀到網站＝這一步整段不出現。
+   */
+  async function stepSiteCardsInfo(profile: StoreProfileDoc | null) {
+    if (!siteCardsRun) return
+    await Promise.race([siteCardsFirstStep, new Promise(r => setTimeout(r, 20_000))])
+    const pagesRead = profile?.siteRead?.pagesRead ?? 0
+    const base = { kind: 'store-draft' as const, title: '知識庫：幫你整理好了', where: '知識庫', variant: 'info' as const }
+    if (siteCards.total > 0 && siteCards.sample) {
+      card({
+        ...base,
+        body: `我讀了你網站 ${pagesRead} 頁，整理成 ${siteCards.total} 張卡${siteCards.stillWorking ? '（剩下的頁還在整理）' : ''}。一張長這樣：\n　問：${siteCards.sample.q}\n　卡片寫：${siteCards.sample.a}`,
+        note: '還沒進知識庫——在「知識庫」那一頁一張一張看過才算數。',
+      })
+    }
+    else if (siteCards.stillWorking) {
+      card({
+        ...base,
+        title: '知識庫：正在幫你整理',
+        body: `我讀了你網站 ${pagesRead} 頁，正在整理成知識卡。`,
+        note: '好了會在「知識庫」那一頁等你一張一張看過才算數。',
+      })
+    }
+  }
 
   /** 輪廓卡的一整則訊息（揭曉與就地修改後重畫共用；⛔ 兩處各組一份，欄位名照型換的規則遲早會漏一邊） */
   function profileCardMsg(profile: StoreProfileDoc, opts: { grouped?: boolean, editable?: boolean } = {}) {
@@ -2062,8 +2141,8 @@ export function useOnboardingChat() {
    * 回扣一句他就知道這趟不是白填表）。
    * 🔴 **每一句都要看「那樣東西這一趟真的建了沒」**（`D-100`）：歡迎訊息他可能按了先不要、
    *    標籤可能沒採用——⛔ 對不上就**整句不講**，不要硬湊。
-   * ⚠️「客服回不完」那句要講的是「那些知識卡看過放進去」——打造這一趟現在還**不會產生知識卡**
-   *    （`C-250` 第三批才做），⛔ 在那之前不講，不然是指著一件不存在的東西。
+   * ⚠️「客服回不完」那句要講的是「那些知識卡看過放進去」——**網站真的整理出卡了才講**
+   *    （`C-250`③；沒給網址、或整理不出卡＝指著一件不存在的東西）。
    */
   function painPayoff(pain: string): string {
     if (pain === '加好友後沒人理' && builtKeys.has('welcome'))
@@ -2074,6 +2153,9 @@ export function useOnboardingChat() {
     }
     if (pain === '想知道客人是誰' && builtKeys.has('tags'))
       return '你說最想<b>知道客人是誰</b>——剛剛那幾顆<b>分眾標籤</b>就是在做這件事，之後發推播挑人也是用它們。'
+    // `C-250`③：網站整理出卡了才講（⛔ 沒有卡就指著一件不存在的東西）
+    if (pain === '客服回不完' && siteCards.total > 0)
+      return '你說最想解決<b>客服回不完</b>——等你把知識卡看過放進去，那些重複的問題它就自己答了。'
     return ''
   }
 
@@ -2167,6 +2249,7 @@ export function useOnboardingChat() {
     progress.value = BUILD_STEP.reveal
     await revealStoreProfile()
     if (revealedProfile) await stepStoreDrafts(revealedProfile)
+    await stepSiteCardsInfo(revealedProfile)
     await finishProfileOnly()
   }
 
@@ -2330,6 +2413,7 @@ export function useOnboardingChat() {
         progress.value = BUILD_STEP.reveal
         await revealStoreProfile()
         if (revealedProfile) await stepStoreDrafts(revealedProfile)
+        await stepSiteCardsInfo(revealedProfile)
       }
       await stepBuildFinish(profileDone)
     })
@@ -2341,6 +2425,8 @@ export function useOnboardingChat() {
   }
 
   function dispose() {
+    // 背景整理卡的迴圈跟著收（伺服器那邊照舊會由知識庫頁與排程接手）
+    siteCardsStopped = true
     runner.dispose()
   }
 

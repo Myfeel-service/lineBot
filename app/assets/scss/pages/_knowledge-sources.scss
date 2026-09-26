@@ -504,6 +504,62 @@
   border-top: 1px solid var(--el-border-color-lighter);
 }
 
+/* ── 開帳讀網站整理出來、等你看過的卡（`C-250`③）────────────────────
+   綠邊淡底＝「整理好了、等你」（⛔ 不用紅：不是壞掉）；卡片是「客人問／卡片寫」兩段，
+   跟示意頁 v80 同一個形狀——範例本身就是「知識卡是什麼」的定義。 */
+.kb-drafts {
+  margin: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+
+  &__head {
+    padding: 12px 14px;
+    border: 1px solid var(--el-color-primary-light-7);
+    background: var(--el-color-primary-light-9);
+    border-radius: 10px;
+  }
+  &__title { font-weight: 700; color: var(--el-text-color-primary); }
+  &__sub { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--el-text-color-regular); b { color: var(--el-text-color-primary); } }
+  &__working { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; color: var(--el-text-color-secondary); }
+  &__spin {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--el-color-primary-light-5);
+    border-top-color: var(--el-color-primary);
+    border-radius: 50%;
+    animation: kb-drafts-spin 0.9s linear infinite;
+  }
+  &__warn { margin: 6px 0 0; font-size: 12px; color: var(--el-color-warning-dark-2); }
+  &__note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--el-text-color-secondary); }
+  &__pages { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.8; color: var(--el-text-color-regular); }
+
+  &__group { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 10px 12px; background: var(--el-bg-color); }
+  &__group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--el-text-color-regular); }
+
+  &__card {
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 9px;
+    padding: 9px 11px;
+    margin-bottom: 8px;
+    &.is-done { background: var(--el-fill-color-lighter); }
+  }
+  &__k { font-size: 11px; color: var(--el-text-color-placeholder); }
+  &__q { font-weight: 700; color: var(--el-text-color-primary); margin-bottom: 5px; }
+  &__a { line-height: 1.65; color: var(--el-text-color-regular); white-space: pre-wrap; }
+  &__bar { display: flex; gap: 6px; margin-top: 9px; }
+  &__state {
+    margin: 9px 0 0;
+    font-size: 12px;
+    font-weight: 700;
+    &.is-ok { color: var(--el-color-success); }
+    &.is-muted { color: var(--el-text-color-secondary); font-weight: 500; }
+    &.is-warn { color: var(--el-color-warning-dark-2); }
+  }
+}
+@keyframes kb-drafts-spin { to { transform: rotate(360deg); } }
+
 /* ── AI 建議補的知識（建議收件匣）：視覺對齊體檢 banner ─────────────── */
 .kb-suggest {
   margin: 10px 12px;

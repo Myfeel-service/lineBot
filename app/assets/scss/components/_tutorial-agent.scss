@@ -341,6 +341,26 @@
   }
 }
 
+/* 等你看過的知識卡那一條（`C-250`③）：⛔ 不是紅的（不擋上線，只是會讓 AI 答得更好） */
+.ta-kbtodo {
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+
+  &__t { font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); }
+  &__d { margin: 0.25rem 0 0.5rem; font-size: 0.78rem; line-height: 1.6; color: var(--text-secondary); }
+  &__go {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-line);
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+}
+
 /* 導覽步驟順手標亮的那幾列（`TutorialStep.mark`，例：落地導覽第 1 步的側欄）。
    ⚠️ 全域 partial：這個 class 由 TutorialAgent 直接掛在頁面元素上，不在元件裡。
    只改底色與外框、⛔ 不動版面（量位置之後才掛上去） */

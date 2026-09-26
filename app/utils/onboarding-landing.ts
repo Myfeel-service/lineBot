@@ -40,6 +40,9 @@ interface BuiltPlace {
  * 每一樣住在哪一頁。⛔ 只列**真的會建出東西**的那幾樣：知識庫初稿與月曆 `C-250` 起不再建
  * （待看過的知識卡是第三批），列進來就是指一頁什麼都沒有的地方。
  */
+/** 知識庫那一列（等你看過的卡住在那裡，`C-250`③） */
+export const KNOWLEDGE_NAV = '[data-tour="nav-knowledge"]'
+
 export const BUILT_PLACE: Partial<Record<StoreDraftKey, BuiltPlace>> = {
   welcome: { page: '自動回應', nav: '[data-tour="nav-auto-response"]', path: wid => `/admin/${wid}/ai-scripts`, short: '歡迎訊息', icon: '👋' },
   tone: { page: 'AI 設定', nav: '[data-tour="nav-ai-settings"]', path: wid => `/admin/${wid}/ai-settings`, short: 'AI 口氣', icon: '💬' },
@@ -105,17 +108,24 @@ export function hasTriedPlayground(wid: string): boolean {
  *
  * @param bandAction 紅帶那顆鈕上**現在**寫的字（⚠️ 這一步會叫出它的名字，兩邊要是同一份）
  */
-export function landingTourSteps(built: OnboardingBuiltItem[], opts: { hasBand: boolean, bandAction: string }): TutorialStep[] {
+export function landingTourSteps(
+  built: OnboardingBuiltItem[],
+  opts: { hasBand: boolean, bandAction: string, /** 等你看過的知識卡張數（`C-250`③；0＝沒有） */ draftCards?: number },
+): TutorialStep[] {
   const steps: TutorialStep[] = []
   const places = built.map(b => BUILT_PLACE[b.key]).filter((p): p is BuiltPlace => !!p)
-  if (places.length) {
+  const drafts = opts.draftCards ?? 0
+  if (places.length || drafts > 0) {
     steps.push({
       target: '[data-tour="nav-main"]',
       // 選單比側欄可視範圍高（短螢幕）時退去框整條側欄：標亮的那幾列仍然在洞裡
       targetTooTallFallback: '.sidebar-scroll',
-      mark: places.map(p => p.nav).join(', '),
+      mark: [...places.map(p => p.nav), ...(drafts > 0 ? [KNOWLEDGE_NAV] : [])].join(', '),
       title: '你剛剛做的，都在這幾頁',
-      description: `亮起來的這幾頁：${places.map(p => `<strong>${p.short}</strong>`).join('、')}。<strong>隨時都可以改</strong>。`,
+      description: `亮起來的這幾頁：${[
+        ...places.map(p => `<strong>${p.short}</strong>`),
+        ...(drafts > 0 ? [`等你看過的 <strong>${drafts} 張知識卡</strong>`] : []),
+      ].join('、')}。<strong>隨時都可以改</strong>。`,
       placement: 'right',
     })
   }
@@ -145,7 +155,7 @@ export function landingTourSteps(built: OnboardingBuiltItem[], opts: { hasBand: 
  * ⛔ 「你的手機也會同時收到通知」「每天早上的摘要會傳到你的手機」**這一批不講**：
  *    那要他的 LINE 在通知名單裡，而接 LINE 這一趟還不會把他加進去（`C-250` 第三批才做）。
  */
-export function liveTourSteps(opts: { received: boolean, triedPlayground: boolean }): TutorialStep[] {
+export function liveTourSteps(opts: { received: boolean, triedPlayground: boolean, /** 等你看過的知識卡張數（`C-250`③） */ draftCards?: number }): TutorialStep[] {
   const steps: TutorialStep[] = []
   if (opts.received) {
     steps.push({
@@ -171,12 +181,20 @@ export function liveTourSteps(opts: { received: boolean, triedPlayground: boolea
     target: '[data-tour="ta-fab"]',
     title: '接下來，小幫手會提醒你',
     // ⚠️ 照他**真的還沒做的事**講：打造完就進過測試對話的人，⛔ 不再叫他去問一題
-    description: opts.triedPlayground
-      ? '哪裡怪怪的、下一步做什麼，它會<strong>主動說</strong>。'
-      : '還差 1 件：去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人。',
+    description: liveTodoText(opts),
     placement: 'top-end',
   })
   return steps
+}
+
+/** 「上線之後」最後一步：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話） */
+function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number }): string {
+  const todo: string[] = []
+  if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 張知識卡</strong>，客人問價格、細節它才答得出來`)
+  if (!opts.triedPlayground) todo.push('去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人')
+  return todo.length
+    ? `還差 ${todo.length} 件：${todo.join('；')}。`
+    : '哪裡怪怪的、下一步做什麼，它會<strong>主動說</strong>。'
 }
 
 /** 「上線之後」會跑幾步（結尾那顆鈕寫的步數要跟導覽計數同一個數字） */
