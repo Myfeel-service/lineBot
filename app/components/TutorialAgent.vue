@@ -623,9 +623,12 @@ import IconRobot from '~/components/icons/IconRobot.vue'
 import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
+import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 const { user } = useAuth()
 const { workspaceId, ensureWorkspaceList, canOperate, canManageSettings } = useWorkspace()
+/** 開通步驟紀錄：這裡只記落地那兩支導覽走完或關掉（`C-250`③） */
+const { track: trackOnboarding } = useOnboardingEvents({ workspaceId: () => workspaceId.value, flow: () => 'other' })
 const router = useRouter()
 // 只給 ?tour= 深連結用（開通引導結尾送人進來時開跑那一支）。
 // ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
@@ -1207,7 +1210,8 @@ function goOnboardingChat() {
   if (!wid)
     return
   closePanel()
-  void router.push(`/admin/onboarding?workspaceId=${wid}`)
+  // `entry=hero`：開通步驟紀錄要知道他從哪個入口回來接 LINE（`C-250`③）
+  void router.push(`/admin/onboarding?workspaceId=${wid}&entry=hero`)
 }
 
 /** 缺項巡覽：用 tour 逐一高亮側欄上「還沒做完」的入口，每步附「帶我做這項」 */
@@ -1253,14 +1257,26 @@ const postTourNote = ref('')
  *    close 那一下 `endTour()` 已經把步驟清空了——兩種寫法都會讓這個設定永遠不生效。
  */
 let finishOverride: { steps: TutorialStep[], run: () => void } | null = null
+/**
+ * 落地導覽開跑中（開通步驟紀錄用）：走完幾步、還是中途關掉。
+ * ⚠️ 同 `finishOverride` 的坑：close 比 finish **先到**——close 那一下先記「停在第幾步」，
+ *    晚一拍還沒被 finish 認領才算「關掉」。
+ */
+let landingTrack: { kind: string, steps: TutorialStep[] } | null = null
 watch(activeSteps, (steps) => {
   if (finishOverride && steps.length && toRaw(steps) !== finishOverride.steps)
     finishOverride = null
+  if (landingTrack && steps.length && toRaw(steps) !== landingTrack.steps)
+    landingTrack = null
 })
 
 /** 導覽「完成」：閉環——重抓狀態、依結果回應、重開面板（回應顯示在「目前狀況」） */
 async function onTourFinish() {
   const finishedId = lastTopicId.value
+  if (landingTrack) {
+    trackOnboarding('landing_tour', { kind: landingTrack.kind, done: true, steps: landingTrack.steps.length })
+    landingTrack = null
+  }
   const override = finishOverride
   finishOverride = null
   clearDemo()
@@ -1292,6 +1308,15 @@ async function onTourFinish() {
 
 /** 導覽被中途關閉：尊重使用者離開，不打擾，只默默重抓狀態 */
 function onTourClose() {
+  const t = landingTrack
+  if (t) {
+    const at = tourStep.value + 1
+    setTimeout(() => {
+      if (landingTrack !== t) return // 被 finish 認領了＝走完
+      trackOnboarding('landing_tour', { kind: t.kind, done: false, at, steps: t.steps.length })
+      landingTrack = null
+    }, 0)
+  }
   clearDemo()
   endTour()
   void refresh({ force: true })
@@ -1375,6 +1400,7 @@ async function startLandingTour(kind: string) {
       steps,
       run: () => setTimeout(() => document.querySelector<HTMLElement>('[data-tour="pg-input"]')?.focus(), 150),
     }
+    landingTrack = { kind: 'build', steps }
     await startAdHocTour(steps)
     return
   }
@@ -1384,6 +1410,7 @@ async function startLandingTour(kind: string) {
   const received = onboardingSteps.value.find(s => s.id === 'firstMessageReceived')?.done === true
   const hasRow = received && !!(await waitForElement('.conv-list-row .split-list-item', 4000))
   const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value, phoneNotified: landingNotify })
+  landingTrack = { kind: 'line', steps }
   await startAdHocTour(steps)
 }
 const { markSeen: markTourSeen } = useTourSeen()

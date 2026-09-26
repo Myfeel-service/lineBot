@@ -293,6 +293,7 @@ import type { StoreProfileDoc } from '~~/shared/types/store-profile'
 import { storeBizWording } from '~~/shared/store-profile-biz'
 import { splitProducts } from '~~/shared/store-profile-drafts'
 import { LANDING_FROM_BUILD, markPlaygroundTried } from '~/utils/onboarding-landing'
+import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -314,6 +315,15 @@ const landingHint = ref(false)
 const priceAskText = ref('')
 const priceAskUsed = ref(false)
 const inputEl = ref<{ focus: () => void } | null>(null)
+/** 幫他填好的那一題（紀錄用：他是直接送出、還是改了自己的） */
+let prefilledQuestion = ''
+
+/**
+ * 開通步驟紀錄（`C-250`③）：⛔ **只記開帳那一趟的人**（剛打造完落地、或開通還沒做完），
+ * 其他人天天在這裡測題目，全記下來是雜訊。一次進頁最多記前 5 題，⛔ 不記題目原文。
+ */
+const { track: trackOnboarding } = useOnboardingEvents({ workspaceId: () => workspaceId.value, flow: () => 'other' })
+let onboardingSends = 0
 
 async function prefillFromProfile() {
   try {
@@ -323,6 +333,7 @@ async function prefillFromProfile() {
     const first = splitProducts(r.profile?.fields?.products?.value ?? '')[0]?.trim()
     if (!query.value) {
       query.value = w.tryQuestion
+      prefilledQuestion = w.tryQuestion
       landingHint.value = true
     }
     priceAskText.value = `${first || `你們的${w.noun}`}${w.priceAsk}`
@@ -467,6 +478,20 @@ async function send(text: string, opts: { skipDisambiguation?: boolean; isFollow
     })
     history.value.push({ role: 'ai', result: res, expanded: false })
     if (res.sources?.some(s => s.draft)) void loadDraftPageNames()
+    if ((fromOnboarding || onboardingIncomplete.value) && onboardingSends < 5) {
+      onboardingSends++
+      trackOnboarding('playground_sent', {
+        n: onboardingSends,
+        fromOnboarding,
+        // 幫他填的那題原封不動送出／按了「再問一題價格」／自己打的
+        source: prefilledQuestion && trimmed === prefilledQuestion ? 'prefilled'
+          : priceAskText.value && trimmed === priceAskText.value ? 'priceAsk'
+          : 'own',
+        decision: res.decision,
+        // ⭐ 答案用到「等你看過」的卡了沒（`all`＝整題都靠那批卡答的）
+        draft: draftUse(res) ?? 'none',
+      })
+    }
   }
   catch (err: any) {
     showToast(err?.statusMessage || err?.message || '請求失敗', 'error')

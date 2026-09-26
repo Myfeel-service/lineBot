@@ -210,7 +210,8 @@ async function maybePopOnboarding() {
   }
   onboardingPopped.value = { ...onboardingPopped.value, [wid]: true }
   clearLineFlowInProgress(wid)
-  await navigateTo(`/admin/onboarding?workspaceId=${wid}`)
+  // `entry=pullback`：開通步驟紀錄要分得出「被拉回來的」跟「自己回來的」（`C-250`③）
+  await navigateTo(`/admin/onboarding?workspaceId=${wid}&entry=pullback`)
 }
 
 // 同一次載入內切換到另一個沒做完的帳號，也要各提醒一次（各帳號各自記）

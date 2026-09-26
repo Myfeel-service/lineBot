@@ -87,8 +87,13 @@ interface DraftPage { sourceId: string, name: string, url: string, cards: DraftC
 interface Generating { status: string, pagesDone: number, pagesTotal: number, cards: number, trimmed: number, pagesFailed: { url: string, reason: string }[], error?: string }
 interface Overview { total: number, pages: DraftPage[], generating: Generating | null, quota: { used: number, limit: number | null, planName: string } | null }
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
+/**
+ * 開通步驟紀錄（`C-250`③）：這批卡是開帳讀網站生的，他怎麼處理它們＝`D-97`「一張張看」到底行不行得通。
+ * ⭐ `left`＝這一下之後還剩幾張沒看；`whole`＝整頁一起收（跟一張張看分開算）。
+ */
+const { track: trackOnboarding } = useOnboardingEvents({ workspaceId: () => workspaceId.value, flow: () => 'other' })
 
 const pages = ref<DraftPage[]>([])
 const total = ref(0)
@@ -153,7 +158,7 @@ async function pushUntilDone() {
   }
 }
 
-async function adopt(ids: string[]) {
+async function adopt(ids: string[], whole = false) {
   busyCard.value = ids.length === 1 ? ids[0]! : null
   try {
     const r = await apiFetch<{ adopted: string[], leftForQuota: string[], quota: Overview['quota'] }>('/api/ai/knowledge/drafts/adopt', {
@@ -166,6 +171,13 @@ async function adopt(ids: string[]) {
     if (r.quota) quota.value = r.quota
     if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 張，額度滿了，還有 ${r.leftForQuota.length} 張先留著`, 'warning')
     total.value = Math.max(0, total.value - r.adopted.length)
+    trackOnboarding('kb_draft_decision', {
+      decision: 'adopt',
+      whole,
+      n: r.adopted.length,
+      quotaBlocked: r.leftForQuota.length,
+      left: total.value,
+    })
     emit('changed')
   }
   catch (e: any) {
@@ -179,7 +191,7 @@ async function adopt(ids: string[]) {
 async function adoptPage(p: DraftPage) {
   busyPage.value = p.sourceId
   try {
-    await adopt(p.cards.filter(c => !decided[c.id]).map(c => c.id))
+    await adopt(p.cards.filter(c => !decided[c.id]).map(c => c.id), true)
   }
   finally {
     busyPage.value = null
@@ -192,6 +204,7 @@ async function dismiss(c: DraftCard) {
     await apiFetch('/api/ai/knowledge/drafts/dismiss', { method: 'POST', body: { chunkIds: [c.id] } })
     decided[c.id] = { tone: 'muted', text: '已刪掉，不會進知識庫' }
     total.value = Math.max(0, total.value - 1)
+    trackOnboarding('kb_draft_decision', { decision: 'dismiss', n: 1, left: total.value })
     emit('changed')
   }
   catch (e: any) {
@@ -226,6 +239,7 @@ async function saveEdit(c: DraftCard) {
     c.content = a
     c.questions = [q, ...c.questions.slice(1)]
     editing.value = null
+    trackOnboarding('kb_draft_decision', { decision: 'edit', n: 1, left: total.value })
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '沒有存成功，再試一次', 'error')

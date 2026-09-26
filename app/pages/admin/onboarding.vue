@@ -199,7 +199,8 @@ onMounted(async () => {
     mode.value = 'locked'
     return
   }
-  void start(continueWid.value, focusParam.value)
+  // `?entry=`：從哪個入口進來接 LINE（紅帶／小幫手／被拉回），只給開通步驟紀錄用
+  void start(continueWid.value, focusParam.value, String(route.query.entry || ''))
 })
 
 onUnmounted(dispose)

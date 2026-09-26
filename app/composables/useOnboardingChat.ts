@@ -43,6 +43,8 @@ import { storeBizWording, storeProfileLabelFor } from '~~/shared/store-profile-b
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboarding-line-flag'
 import { LANDING_FROM_BUILD, LANDING_FROM_LINE, liveTourStepCount, saveOnboardingBuilt } from '~/utils/onboarding-landing'
+import { lineFlowEntry } from '~~/shared/onboarding-events'
+import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 /**
  * 進度條五格（2026-08-19 拍板重切）：舊版「接 LINE」一格塞四件事、佔整段八成時間，
@@ -189,6 +191,11 @@ export function useOnboardingChat() {
   const flow = ref<OnboardingFlow>('build')
   const flowInfo = computed(() => ONBOARDING_FLOWS[flow.value])
   /**
+   * 開通步驟紀錄（`C-250`③，`D-100` C-1「升格為上線前提」）。
+   * ⛔ 只記行為不記內容：他打的答案、貼的連線資訊一個字都不進紀錄（事件表 `shared/onboarding-events.ts`）。
+   */
+  const { track, flush: flushEvents } = useOnboardingEvents({ workspaceId: () => wid.value, flow: () => flow.value })
+  /**
    * 「要加哪個帳號」查到的東西（見證卡的第①步要用）。
    * 快取住：傳話測試可以從成績單再進來一次，那時要的是同一份資料畫到新的卡上，不是再問一次 LINE。
    */
@@ -238,6 +245,7 @@ export function useOnboardingChat() {
   async function stepWelcomeFresh(): Promise<boolean> {
     flow.value = 'build'
     progress.value = BUILD_STEP.create
+    track('build_start', { mode: 'fresh' })
     // 2026-09-02 三件事一起改：
     // ①開場兩則併一則——人還沒做任何事就要讀兩段
     // ②拿掉「大約 8 分鐘」——這段全文 2,100 多字，光讀就超過 6 分鐘，還沒算去 LINE 後台
@@ -270,6 +278,7 @@ export function useOnboardingChat() {
       { label: '我晚點再弄', value: 'later', escape: true },
     ])
     if (c === 'later') {
+      track('build_later')
       await say('沒問題！想開始的時候，從「我想開始使用」進來就行。')
       await navigateTo('/admin/workspaces')
       return false
@@ -295,6 +304,7 @@ export function useOnboardingChat() {
           body: { workspaceName: name },
         })
         wid.value = res.workspaceId
+        track('workspace_created')
         // 剛建好的帳號還不在前端清單裡，auth middleware 靠那份清單認人——先重載，
         // 結束時導航才不會被自己的守衛擋下來
         await loadWorkspaceList().catch(() => {})
@@ -369,6 +379,7 @@ export function useOnboardingChat() {
       { label: '先跳過', value: 'skip', escape: true },
     ])
     if (go === 'skip') {
+      track('profile_skip')
       await say('好。想做的時候，右下角的小幫手留著這一條。')
       return 'skipped'
     }
@@ -383,6 +394,7 @@ export function useOnboardingChat() {
           .filter(s => s.fields.length > 0)
           .map((s, i) => ({ step: i + 1, fields: s.fields }))
       : allSteps)
+    track('profile_start', { steps: steps.length, inferred: !!opts.skipFilled })
     for (const { step, fields } of steps) {
       for (let i = 0; i < fields.length; i++) {
         const def = fields[i]!
@@ -420,9 +432,12 @@ export function useOnboardingChat() {
             const typed = await askInput({ inputType: 'text', placeholder: def.freePlaceholder ?? '', maxLength: STORE_PROFILE_VALUE_MAX })
             if (typed == null) continue
             answers[def.id] = typed
+            // ⛔ 只記「怎麼答的」不記答案（選項沒列到他的＝`free`，那是選項該補的訊號）
+            track('profile_answer', { field: def.id, mode: 'free' })
           }
           else {
             answers[def.id] = String(picked ?? '')
+            track('profile_answer', { field: def.id, mode: 'option' })
           }
         }
         else {
@@ -430,6 +445,7 @@ export function useOnboardingChat() {
           const typed = await askInput({ inputType: 'text', placeholder, maxLength: STORE_PROFILE_VALUE_MAX })
           if (typed == null) continue
           answers[def.id] = typed
+          track('profile_answer', { field: def.id, mode: 'typed' })
         }
       }
     }
@@ -444,6 +460,7 @@ export function useOnboardingChat() {
       skippable: true,
       skipLabel: '沒有網站',
     })
+    track('site_given', { given: !!siteUrl })
 
     // 先存答案（⛔ 在讀網站之前存：讀網站可能失敗，五題的答案不該跟著陪葬）
     busy.value = true
@@ -465,6 +482,7 @@ export function useOnboardingChat() {
           body: { siteUrl },
         })
         if (r.status === 'failed') {
+          track('site_read', { result: 'rejected' })
           // ⛔ 讀不到要當場講：它是第一頁就撞到的錯（網址打錯、對方擋人），
           //    拖到最後才說等於讓他白等一段
           // ⚠️ 讀失敗的工作**不記 id**：揭曉那一刻不必再等它、也不必再講一次讀不到
@@ -478,6 +496,7 @@ export function useOnboardingChat() {
         }
       }
       catch (e: unknown) {
+        track('site_read', { result: 'error' })
         const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage || ''
         await say(msg ? escapeHtml(msg) : '這個網址現在讀不到，之後可以在「組織與 LINE」頁再試一次。')
       }
@@ -618,10 +637,15 @@ export function useOnboardingChat() {
             .map(t => ({ name: t.name.trim(), why: t.why }))
         : undefined
       const shownBody = finalTags ? finalTags.map(t => `${t.name}——${t.why}`).join('\n') : finalBody
+      /** 他有沒有動過範本（`D-94` 要驗「一開始就能改」到底有沒有人改） */
+      const edited = finalTags
+        ? finalTags.map(t => t.name).join('|') !== (d.tags ?? []).map(t => t.name.trim()).join('|')
+        : finalBody !== d.body.trim()
 
       // 改到空的（字刪光、標籤全取消勾）＝這一樣不建，⛔ 不可以照樣送一個空的出去
       const emptied = c === 'yes' && (finalTags ? finalTags.length === 0 : !finalBody)
       if (c !== 'yes' || emptied) {
+        track('draft_decision', { key: d.key, decision: emptied ? 'emptied' : 'declined', edited })
         draftSteps.push({ key: d.key, label: d.title, status: 'declined' })
         updateMsg(cardId, {
           ...base,
@@ -639,6 +663,7 @@ export function useOnboardingChat() {
       const r = await applyOneDraft({ ...d, body: finalBody, ...(finalTags ? { tags: finalTags } : {}) })
       busy.value = false
       draftSteps.push(r)
+      track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited })
       if (r.status === 'done') builtKeys.add(d.key)
       // ⚠️ 決定完就把框收回唯讀（不帶 editable），內容換成**他最後決定的那一版**
       updateMsg(cardId, {
@@ -716,6 +741,11 @@ export function useOnboardingChat() {
     }
     if (statusId != null) {
       const sr = profile?.siteRead
+      // ⭐ `stillReading`＝20 秒等不到：這個數字高就是「讀網站太慢、揭曉畫了一張少一半的卡」
+      track('site_read', {
+        result: stillReading ? 'still_reading' : sr && sr.status !== 'failed' ? 'ok' : 'failed',
+        pages: sr?.pagesRead ?? 0,
+      })
       updateMsg(statusId, stillReading
         ? { kind: 'status', state: 'skipped', text: '網站還在讀，先給你看已經知道的——讀完會補進「組織與 LINE」頁' }
         : sr && sr.status !== 'failed'
@@ -799,6 +829,12 @@ export function useOnboardingChat() {
     if (!siteCardsRun) return
     await Promise.race([siteCardsFirstStep, new Promise(r => setTimeout(r, 20_000))])
     const pagesRead = profile?.siteRead?.pagesRead ?? 0
+    // ⚠️ 什麼卡都沒畫（整理不出卡）也要記：那是「讀到頁、卻一張卡都生不出來」的訊號
+    track('site_cards_shown', {
+      cards: siteCards.total,
+      stillWorking: siteCards.stillWorking,
+      shown: siteCards.total > 0 || siteCards.stillWorking,
+    })
     const base = { kind: 'store-draft' as const, title: '知識庫：幫你整理好了', where: '知識庫', variant: 'info' as const }
     if (siteCards.total > 0 && siteCards.sample) {
       card({
@@ -870,6 +906,8 @@ export function useOnboardingChat() {
       })
       revealedProfile = r.profile
       updateMsg(p.entryId, profileCardMsg(r.profile, { grouped: true, editable: true }))
+      // 哪一格最常被改＝AI 最常猜錯哪一格（`D-92` 四道防線要看的就是這個）
+      track('profile_edit', { field: p.fieldId })
     }
     catch {
       // ⛔ 存不進去要講：畫面上看起來改好了、其實沒存，是這個專案最常吃虧的形狀
@@ -916,6 +954,7 @@ export function useOnboardingChat() {
       { label: '有', value: 'yes', primary: true },
       { label: '還沒', value: 'no' },
     ])
+    track('has_oa', { answer: c === 'no' ? 'no' : 'yes' })
     if (c === 'no') {
       // 2026-09-06 拆兩步：原本一句話塞了**跨兩個地方的兩件事**（申請帳號／啟用 Messaging API）、
       // 一個連結、零張圖就把人丟出去——跟「貼網址／開開關」拆兩步是同一個理由。
@@ -1067,6 +1106,7 @@ export function useOnboardingChat() {
       { label: '教我一步步拿', value: 'walk', primary: true },
       { label: '我會拿，直接貼上', value: 'paste' },
     ])
+    track('token_mode', { mode: how === 'walk' ? 'walk' : 'paste' })
     let taught = how === 'walk'
     if (taught)
       await walkTokenNodes()
@@ -1312,6 +1352,8 @@ export function useOnboardingChat() {
         return false
       const check = await checkToken(v)
       if (check?.valid === false) {
+        // ⭐ 貼錯的次數：金鑰那道牆到底卡在「找不到」還是「貼錯」，看這個分得出來
+        track('key_saved', { key: 'token', ok: false, redo: !!opts.redo })
         await say('這組連線資訊 LINE 不認得 ⛔ 常見兩種原因：①複製時漏頭漏尾（要<b>整串</b>）②在 LINE 後台按過重發，舊的那把當場失效。回 Messaging API 分頁重新複製一次，再貼上來。')
         continue
       }
@@ -1322,6 +1364,7 @@ export function useOnboardingChat() {
       if (ok === null)
         continue
       line.tokenConfigured = true
+      track('key_saved', { key: 'token', ok: true, verified: check?.valid === true, redo: !!opts.redo })
       // 問不到（check 是 null，或 valid 是 null）就只說存好了——不假裝驗過
       if (check?.valid === true && check.displayName) {
         await say(opts.redo
@@ -1356,6 +1399,7 @@ export function useOnboardingChat() {
       )
       if (ok !== null) {
         line.secretConfigured = true
+        track('key_saved', { key: 'secret', ok: true, redo: !!opts.redo })
         // ⚠️ 第二組沒辦法當場驗真假，所以重貼時只能說「換好了」——⛔ 不要加「✓ 已確認」
         //    之類的字，那會變成又一次「說你設好了但其實沒有」
         if (opts.redo)
@@ -1419,6 +1463,9 @@ export function useOnboardingChat() {
     // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
     // ⚠️ 起點往前抓 2 分鐘：他常常在看教學的時候就先加好友了（⛔ 但不能太寬：伺服器最多只認一小時內）
     const since = Date.now() - 2 * 60 * 1000
+    /** 這一段等了多久（紀錄用：`D-101` 要驗「加好友＋按是我」比傳訊息快多少） */
+    const waitStartedAt = Date.now()
+    let notifyResult = ''
     /** 他按過「不是我」的那幾位 */
     const rejected: string[] = []
     let poll = pollNewFollower(since, rejected)
@@ -1439,6 +1486,8 @@ export function useOnboardingChat() {
       hintTimer = setTimeout(() => r({ kind: 'stalled' }), FIRST_MSG_HINT_MS)
     })
     let hintPending = true
+    /** 那張「照這五條檢查」真的出現過（⚠️ 不能拿 `hintPending` 代替：先按驗 Webhook 也會把它關掉） */
+    let stallShown = false
 
     // 90 秒才給排障選單，是為了不讓排障變成常態路徑（見 FIRST_MSG_HINT_MS 的註解）——
     // 但那個前提是「接線已經驗過是通的」。**自己按了「略過檢查，直接測試」的人多半就是
@@ -1535,6 +1584,7 @@ export function useOnboardingChat() {
             body: { lineUserId: who, since },
           })
           phoneNotified = b.notify === 'added' || b.notify === 'already'
+          notifyResult = b.notify
           phoneTestVia = r.via ?? 'follow'
           received = r
           if (b.notify === 'full')
@@ -1559,6 +1609,7 @@ export function useOnboardingChat() {
         hintPending = false
         if (!answer()) {
           settle({ type: 'cancelled' })
+          stallShown = true
           // ④ 是真實災情：第二把鑰匙貼錯時，訊息其實有送到、被我們自己丟掉，
           //    人在這裡乾等而三個原因沒有一個是他的病因。現在「幫我再驗一次」查得出來了
           // 2026-09-02 改格式不改內容：原本是 175 字、四個編號擠成一段的**段落**。
@@ -1632,6 +1683,15 @@ export function useOnboardingChat() {
     clearTimeout(hintTimer)
     if (isDisposed())
       return
+    // ⭐ `stalled`＝等到 90 秒排障那張卡跳出來了；`rejected`＝按過幾次「不是我」（安全閘真的有擋到人嗎）
+    track('phone_wait', {
+      outcome: received ? 'bound' : 'skipped',
+      waitedSec: Math.round((Date.now() - waitStartedAt) / 1000),
+      stalled: stallShown,
+      rejected: rejected.length,
+      via: received?.via ?? '',
+      notify: notifyResult,
+    })
 
     if (received) {
       /**
@@ -1776,6 +1836,8 @@ export function useOnboardingChat() {
   async function verifyAndAdvise(webhookUrl: string, line: LineStatus): Promise<'ok' | 'fail' | 'unknown'> {
     const cardId = card({ kind: 'status', state: 'pending', text: '正在問 LINE 收不收得到…' })
     const v = await verifyWebhook(webhookUrl)
+    // ⭐ 病因的分布＝接線教學哪一步最常沒做到（`nourl`＝沒按儲存、`inactive`＝開關沒開…）
+    track('webhook_check', { result: v?.cause ?? 'unreachable' })
     if (v?.cause === 'ok') {
       updateMsg(cardId, { kind: 'status', state: 'ok', text: '接上了，LINE 那邊確認收得到' })
       return 'ok'
@@ -1854,6 +1916,7 @@ export function useOnboardingChat() {
     if (opts.preVerify && line.tokenConfigured && line.secretConfigured) {
       const v = await verifyWebhook(webhookUrl)
       if (v?.cause === 'ok') {
+        track('webhook_check', { result: 'ok', pre: true })
         await say('Webhook 之前就接好了 ✓ 直接來測試。')
         verified = true
       }
@@ -1897,6 +1960,7 @@ export function useOnboardingChat() {
         continue
       }
       if (c === 'skip') {
+        track('webhook_check', { result: 'skipped' })
         // 2026-09-02：跳過的東西要說得出丟了什麼（跳過測試那顆本來就有寫，這顆漏了）。
         // 同一條流程兩顆跳過鈕、一顆講一顆不講，正是那條「沉默死亡」慣例要防的事。
         await say('好，先不檢查。<b>如果等一下沒收到訊息，多半就是這一步沒設好</b>——那時我會再帶你驗一次。')
@@ -2117,6 +2181,7 @@ export function useOnboardingChat() {
       : await apiFetch<{ conversations?: unknown[] }>('/api/conversations/list', { query: { limit: 1 } })
         .then(r => (r.conversations?.length ?? 0) > 0)
         .catch(() => false))
+    track('line_done', { connected: setup.lineConnected === 'done', received, notified: phoneNotified, rowVisible })
     await say(rowVisible
       ? '上線了 🎉 你手機剛剛那一下，已經進到「<b>客服對話</b>」了——去看一眼，之後客人的訊息也在那裡回。'
       : received
@@ -2265,6 +2330,12 @@ export function useOnboardingChat() {
     // ⭐ `C-250`②：建成的那幾樣記下來——落地導覽第 1 步、小幫手「開帳那一趟建了什麼」、
     //    「看看你剛剛做的東西」三處都吃這一份（⛔ 沒建成的不記：列了就得解釋「它其實沒建」）
     saveOnboardingBuilt(wid.value, draftSteps.filter(s => s.status === 'done').map(s => ({ key: s.key, label: s.label })))
+    track('build_finish', {
+      profileDone,
+      built: draftSteps.filter(s => s.status === 'done').length,
+      siteCards: siteCards.total,
+      payoff: !!payoff,
+    })
     await askChoices([{ label: '進入後台', value: 'go', primary: true }])
     await navigateTo(`${onboardingBuiltLandingPath(wid.value)}?from=${LANDING_FROM_BUILD}`)
   }
@@ -2306,6 +2377,7 @@ export function useOnboardingChat() {
   async function runProfileOnly() {
     flow.value = 'build'
     progress.value = BUILD_STEP.profile
+    track('build_start', { mode: 'profileOnly' })
     const name = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
     await say(`${name ? `「${escapeHtml(name)}」` : '這個帳號'}的設定我先不動，這一趟只做一件事：<b>讓我認識你的店</b>。`)
 
@@ -2415,6 +2487,12 @@ export function useOnboardingChat() {
 
   /** 只做輪廓那一趟的收尾：⛔ 一定要給出路，不要停在一段沒有按鈕的對話上 */
   async function finishProfileOnly() {
+    track('build_finish', {
+      mode: 'profileOnly',
+      profileDone: true,
+      built: draftSteps.filter(s => s.status === 'done').length,
+      siteCards: siteCards.total,
+    })
     // ⛔ **primary 不可以隨狀態換人**（守門測試 `agent-choice-order`）；這一排本來就沒有主要動作
     //    （「看看輪廓」與「回後台」是平的，硬挑一顆染色是替他決定）。
     // ⚠️ 2026-09-26（`C-250`）「把網站整理成知識卡」那顆拿掉：它接的是已經移除的「知識庫初稿」採用
@@ -2430,7 +2508,10 @@ export function useOnboardingChat() {
     await navigateTo(onboardingLandingPath(wid.value))
   }
 
-  async function start(continueWorkspaceId?: string, focus?: string) {
+  /**
+   * @param entry 接 LINE 那一趟從哪個入口進來（`?entry=`，紀錄用；不認得的一律算 `direct`）
+   */
+  async function start(continueWorkspaceId?: string, focus?: string, entry?: string) {
     await runScript(async () => {
       if (continueWorkspaceId && focus === 'profile') {
         wid.value = continueWorkspaceId
@@ -2463,6 +2544,13 @@ export function useOnboardingChat() {
           return
         }
         busy.value = false
+        // ⭐ `D-100` C-1：「第 2 段從哪個入口進來」＋他回來時已經做到哪（拆兩趟之後最想知道的一個數字）
+        track('line_start', {
+          entry: lineFlowEntry(entry),
+          token: line.tokenConfigured,
+          secret: line.secretConfigured,
+          received: setup.firstMessageReceived === 'done',
+        })
         // 立旗＝「接到一半」：關分頁、斷線的人下次進後台會被拉回一次（`D-88` ②，見 onboarding-line-flag.ts）
         markLineFlowInProgress(wid.value)
         if (!line.tokenConfigured && !line.secretConfigured)
@@ -2495,12 +2583,16 @@ export function useOnboardingChat() {
 
   /** 頁首「之後再說」：接 LINE 那一趟是他自己選擇先走的，⛔ 下次進後台不要再把他拉回來 */
   function markLeaving() {
+    // ⭐ 停在第幾格離開的（進度格的編號，兩趟各自一套）
+    track('wizard_leave', { step: progress.value })
+    flushEvents()
     if (flow.value === 'line' && wid.value) clearLineFlowInProgress(wid.value)
   }
 
   function dispose() {
     // 背景整理卡的迴圈跟著收（伺服器那邊照舊會由知識庫頁與排程接手）
     siteCardsStopped = true
+    flushEvents()
     runner.dispose()
   }
 

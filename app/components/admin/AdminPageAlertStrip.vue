@@ -143,7 +143,8 @@ const rows = computed(() => {
  */
 const showOnboardingBand = computed(() => setupLoaded.value && onboardingIncomplete.value)
 function goOnboarding() {
-  void navigateTo(`/admin/onboarding?workspaceId=${workspaceId.value}`)
+  // `entry=band`：開通步驟紀錄要知道他從哪個入口回來接 LINE（`C-250`③）
+  void navigateTo(`/admin/onboarding?workspaceId=${workspaceId.value}&entry=band`)
 }
 
 /**
