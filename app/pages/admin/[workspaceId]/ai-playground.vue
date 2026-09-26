@@ -11,8 +11,10 @@
 
     <template #editor-body>
       <div class="pg-body">
+        <!-- ⛔ 還沒接 LINE 的人不講（`C-250`②）：「打開之後 LINE 上才會真的自動回」這句對他是提早了——
+             他連 LINE 都還沒接，頁頂紅帶已經在講那件事；打造完落地第一眼這裡該只有「按送出」一件事 -->
         <el-alert
-          v-if="aiDisabled"
+          v-if="aiDisabled && !onboardingIncomplete"
           class="pg-disabled-alert"
           type="warning"
           show-icon
@@ -30,7 +32,12 @@
 
         <!-- ── 對話歷史 ─────────────────────── -->
         <div ref="historyEl" class="pg-chat" data-tour="pg-chat">
-          <div v-if="!history.length" class="pg-empty">
+          <!-- 打造完落地（`C-250`②，示意頁 v80）：題目照他的店型先填好，這裡只講一件事——按送出。
+               ⛔ 不再列通用的範例題（「退費要多久」）：他剛講完自己是哪一種店，給他一題別人的問題是倒退 -->
+          <div v-if="!history.length && landingHint" class="pg-landing-hint">
+            題目幫你填好了，<b>按「送出」看它怎麼回</b>。
+          </div>
+          <div v-else-if="!history.length" class="pg-empty">
             <div class="pg-empty-badge">💬</div>
             <h3 class="pg-empty-title">輸入問題，看 AI 會怎麼回</h3>
             <p class="pg-empty-desc">
@@ -192,6 +199,17 @@
                   </el-button>
                 </div>
 
+                <!-- 「再問它一題價格試試」（`C-250`②）：第一個「哇」之後的下一題——價格是知識卡才答得出來的題目，
+                     ⭐ 他自己撞到「這題還答不出來」比被告知有用（`D-98`）。只掛在最新那一則、按過就收掉 -->
+                <button
+                  v-if="idx === latestAiIdx && priceAskText && !priceAskUsed"
+                  type="button"
+                  class="pg-try-price"
+                  @click="askPrice"
+                >
+                  再問它一題價格試試
+                </button>
+
                 <div v-if="turn.expanded" class="pg-bubble-details">
                   <div v-if="turn.result.sources.length" class="pg-sources">
                     <div
@@ -218,8 +236,11 @@
 
         <!-- ── 輸入區 ──────────────────────── -->
         <div class="pg-composer" data-tour="pg-composer">
+          <!-- `data-tour="pg-input"`＝打造完落地導覽最後一步指的地方；走完導覽游標會放進來 -->
           <el-input
+            ref="inputEl"
             v-model="query"
+            data-tour="pg-input"
             type="textarea"
             :rows="2"
             :maxlength="500"
@@ -258,11 +279,52 @@ import {
   type AiSettingsDoc,
 } from '~~/shared/types/ai-knowledge'
 
+import type { StoreProfileDoc } from '~~/shared/types/store-profile'
+import { storeBizWording } from '~~/shared/store-profile-biz'
+import { splitProducts } from '~~/shared/store-profile-drafts'
+import { LANDING_FROM_BUILD, markPlaygroundTried } from '~/utils/onboarding-landing'
+
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
 const { apiFetch, workspaceId } = useWorkspace()
 const router = useRouter()
+const route = useRoute()
 const { showToast } = useAdminToast()
+const { onboardingIncomplete } = useSetupStatus()
+
+/**
+ * 打造完「進入後台」落在這一頁（`?from=onboarding`，`C-250`②）。
+ * ⚠️ **在 setup 就讀、存成常數**：小幫手掛載時會把 `from` 從網址拿掉（重新整理不重跑落地導覽），
+ *    寫成 computed 的話那一下這一頁的狀態就跟著消失。
+ */
+const fromOnboarding = route.query.from === LANDING_FROM_BUILD
+/** 題目是照他的店型幫他填好的（顯示虛線提示、不顯示通用範例題） */
+const landingHint = ref(false)
+/** 「再問它一題價格試試」要填進去的那一句（照型換：「牙齒矯正怎麼收費？」⛔ 不是「一瓶多少錢」） */
+const priceAskText = ref('')
+const priceAskUsed = ref(false)
+const inputEl = ref<{ focus: () => void } | null>(null)
+
+async function prefillFromProfile() {
+  try {
+    const r = await apiFetch<{ profile: StoreProfileDoc }>('/api/store-profile')
+    const w = storeBizWording(r.profile?.fields?.industry?.value ?? '')
+    // ⚠️ 用共用的 splitProducts 拆：商品名裡的價格千分位逗號會把字串切壞（`D-92`）
+    const first = splitProducts(r.profile?.fields?.products?.value ?? '')[0]?.trim()
+    if (!query.value) {
+      query.value = w.tryQuestion
+      landingHint.value = true
+    }
+    priceAskText.value = `${first || `你們的${w.noun}`}${w.priceAsk}`
+  }
+  catch { /* 拿不到輪廓就照舊的空狀態，⛔ 不猜一題 */ }
+}
+
+function askPrice() {
+  priceAskUsed.value = true
+  query.value = priceAskText.value
+  inputEl.value?.focus()
+}
 
 type AiResult = AiAnswerResult & {
   debugPrompt?: string
@@ -352,6 +414,8 @@ async function send(text: string, opts: { skipDisambiguation?: boolean; isFollow
   const lastAi = [...history.value].reverse().find((t): t is AiTurn => t.role === 'ai')
   const autoSkipDisambiguation = lastAi?.result.decision === 'disambiguate'
   history.value.push({ role: 'user', text: trimmed })
+  // 「上線之後」導覽的最後一步照這個決定要不要叫他來這裡問一題（`C-250`②）
+  markPlaygroundTried(workspaceId.value)
   await scrollToBottom()
   running.value = true
   try {
@@ -477,7 +541,8 @@ async function loadSettings() {
 onMounted(() => {
   loadSettings()
   // 監控頁「▶ 重演」帶 ?q= 過來：預填輸入框，讓使用者按送出重演該題
-  const q = String(useRoute().query.q ?? '').trim()
+  const q = String(route.query.q ?? '').trim()
   if (q) query.value = q
+  if (fromOnboarding) void prefillFromProfile()
 })
 </script>

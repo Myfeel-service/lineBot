@@ -1822,7 +1822,8 @@ const OB_BEATS: ObBeat[] = [
   { role: 'agent', html: '連線成功了 🎉 LINE 那邊跟 MiniMe 已經接上了。' },
   { role: 'agent', html: '來見證一下。拿手機<b>加你的 LINE 官方帳號好友</b>，隨便傳一句話給它——我在這裡等。', progress: 2 },
   { role: 'agent', html: '收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。' },
-  { role: 'agent', html: '接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。', progress: 3 },
+  // `C-250`②：跟著劇本換成「上線之後」那句（結尾不再推 7 步全站地圖）
+  { role: 'agent', html: '上線了 🎉 你手機剛剛那一下，已經進到「<b>客服對話</b>」了——去看一眼，之後客人的訊息也在那裡回。', progress: 3 },
 ]
 // ⛔ ＝useOnboardingChat.ts 的 ONBOARDING_LINE_LABELS（接 LINE 那一趟），抄字不 import——
 //    import 會把整支 composable（含後端呼叫）拖進官網 bundle

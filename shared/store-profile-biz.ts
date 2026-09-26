@@ -47,6 +47,11 @@ export interface StoreBizWording {
   productsLabel: string
   priceLabel: string
   channelLabel: string
+  /**
+   * 第 3 題（customers）的問法（`C-260`，2026-09-26 老闆「好」＝照建議的字）。
+   * ⛔ 第 2、4 題換了、第 3 題還問「主要賣給誰」＝換到一半，比完全不換更顯眼。
+   */
+  customersQuestion: string
   /** 第 4 題（channel）的問法 */
   channelQuestion: string
   /** 歡迎訊息裡「可以問什麼」那半句（賣東西的另外照銷售方式換，見 `welcomeAskFor`） */
@@ -65,6 +70,7 @@ export const STORE_BIZ_WORDING: Readonly<Record<StoreBizType, StoreBizWording>> 
     productsLabel: '主打商品',
     priceLabel: '價格帶',
     channelLabel: '銷售方式',
+    customersQuestion: '主要賣給誰？',
     channelQuestion: '客人通常怎麼買？',
     welcomeAsk: '想問商品、出貨或購買方式',
     tryQuestion: '你們有賣什麼？',
@@ -78,6 +84,7 @@ export const STORE_BIZ_WORDING: Readonly<Record<StoreBizType, StoreBizWording>> 
     productsLabel: '主要服務',
     priceLabel: '收費區間',
     channelLabel: '接觸方式',
+    customersQuestion: '主要服務誰？',
     channelQuestion: '客人通常怎麼找你？',
     welcomeAsk: '想預約時段、問服務內容',
     tryQuestion: '你們有做哪些服務？',
@@ -91,6 +98,7 @@ export const STORE_BIZ_WORDING: Readonly<Record<StoreBizType, StoreBizWording>> 
     productsLabel: '主要課程',
     priceLabel: '學費區間',
     channelLabel: '接觸方式',
+    customersQuestion: '主要學生是誰？',
     channelQuestion: '學生通常怎麼報名？',
     welcomeAsk: '想問課程、上課時段或怎麼報名',
     tryQuestion: '你們有開什麼課？',
@@ -104,6 +112,7 @@ export const STORE_BIZ_WORDING: Readonly<Record<StoreBizType, StoreBizWording>> 
     productsLabel: '主要項目',
     priceLabel: '價格帶',
     channelLabel: '接觸方式',
+    customersQuestion: '你的客人主要是誰？',
     channelQuestion: '客人通常怎麼找你？',
     welcomeAsk: '有什麼想問的',
     tryQuestion: '你們有提供什麼？',

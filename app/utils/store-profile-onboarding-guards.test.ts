@@ -209,11 +209,14 @@ describe('五題問答', () => {
     expect(block).toContain('def.freeAsk')
   })
 
-  it('⛔ 第 2、4 題的問法照型換（牙醫不會被問「主要賣什麼」）', () => {
+  it('⛔ 第 2、3、4 題的問法照型換（牙醫不會被問「主要賣什麼」「賣給誰」「怎麼買」）', () => {
     const i = chat.indexOf('async function stepStoreProfile')
     const block = chat.slice(i, chat.indexOf('// ── 五樣草稿', i))
     expect(block).toContain('wording.productsQuestion')
+    expect(block).toContain('wording.customersQuestion')
     expect(block).toContain('wording.channelQuestion')
+    // `C-260`：開場那句在第 1 題之前，還不知道型——不可以先講「賣」
+    expect(stripComments(block)).not.toContain('知道你賣什麼')
   })
 
   it('五題答完先存，再去讀網站', () => {

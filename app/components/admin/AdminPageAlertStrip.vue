@@ -3,19 +3,21 @@
     <!-- 開通帶（2026-08-27 老闆拍板「加碼」）：開通沒完成時原本整條消失＝每一頁只剩
          誤導的 0，唯一訊號躲在右下角紅點。改成顯示**單一條**開通帶——只有一條、
          不逐項列（與 08-26「開通期側欄不整排亮」同一把尺：一多就變裝飾）。 -->
-    <div v-if="showOnboardingBand" class="page-alert is-critical">
+    <!-- `data-tour="onboarding-band"`＝打造完落地導覽第 2 步指的就是這一條（`C-250`②） -->
+    <div v-if="showOnboardingBand" class="page-alert is-critical" data-tour="onboarding-band">
       <span class="page-alert__icon"><el-icon><Link /></el-icon></span>
       <div class="page-alert__main">
         <p class="page-alert__title">{{ onboardingBand.title }}</p>
         <p class="page-alert__detail">{{ onboardingBand.detail }}</p>
       </div>
+      <!-- ⚠️ 鈕上的字吃 `onboardingBand.action`：落地導覽會叫出這顆鈕的名字，兩邊要是同一份 -->
       <el-button
         class="page-alert__action"
         size="small"
         type="danger"
         @click="goOnboarding"
       >
-        帶我完成開通
+        {{ onboardingBand.action }}
       </el-button>
     </div>
     <!-- 一組＝「帶我看會亮同一個區塊」的那幾件（2026-08-28 拍板，規則在 utils/alert-strip-groups.ts）。

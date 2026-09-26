@@ -27,7 +27,8 @@
              （每天在用的／好友經營／AI 客服／設定），指單一列講不出這一段是幹什麼的。
              ⛔ 不能用 display:contents 包——那樣元素沒有盒子，el-tour 量不到位置＝按了沒高亮。
              .nav-group 自己也是 flex 直欄、gap 跟 .sidebar-nav 同值，所以列距與縮排跟包之前一樣。 -->
-        <nav class="sidebar-nav">
+        <!-- `nav-main`：落地導覽第 1 步框整個選單、再標亮他剛做的那幾列（`C-250`②；一步只挖得出一個洞） -->
+        <nav class="sidebar-nav" data-tour="nav-main">
           <!-- ⛔ 第一段的小標是 2026-09-04 補的，不要再拿掉：拉出「好友經營」之後，
                沒有小標的那一段會變成四段裡唯一沒標題的一段，看起來像漏做的。
                這一段的標題刻意講「多久用一次」不講主題——它裝的就是天天要開的那幾頁。 -->
@@ -282,7 +283,8 @@ const crmNavItems = computed<NavItem[]>(() => {
     // ⛔ 圖示不跟「對話統計」用同一顆（那顆是 DataLine）：側欄兩段各有一個「統計」，
     //    圖示再一樣就只剩文字能分辨。
     { to: `/admin/${wid}/friend-stats`, icon: PieChart, label: '好友統計' },
-    { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理' },
+    // `nav-tags`：打造完的落地導覽要把「分眾標籤」住的這一列標亮（`C-250`②）
+    { to: `/admin/${wid}/tags`, icon: PriceTag, label: '標籤管理', tour: 'nav-tags' },
     { to: `/admin/${wid}/campaigns`, icon: Tickets, label: '活動標籤' },
     { to: `/admin/${wid}/broadcasts`, icon: Promotion, label: '推播' },
   ]

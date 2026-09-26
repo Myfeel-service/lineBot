@@ -313,9 +313,11 @@ export function useSetupStatus() {
   const onboardingSteps = computed(() => ([
     // `optional`＝可以跳過的步驟。**「下一步要做什麼」不可以指到它**：
     // 跳過輪廓、但 LINE 還沒接的人，最急的是 LINE；指去輪廓等於把人帶去做不急的事。
-    { id: 'profileReady', label: '讓 MiniMe 認識你的店', done: statusMap.value.profileReady === 'done', optional: true },
+    // ⚠️ 2026-09-26（`C-250`②，示意頁 v80）：做完的講成「已經是這樣了」（「…認識你的店了」），
+    //    第三步跟接 LINE 那一趟的進度格同一個說法「用手機測試」（⛔ 不再叫「傳話測試」：兩處各叫一個名字）
+    { id: 'profileReady', label: statusMap.value.profileReady === 'done' ? 'MiniMe 認識你的店了' : '讓 MiniMe 認識你的店', done: statusMap.value.profileReady === 'done', optional: true },
     { id: 'lineConnected', label: '接上 LINE 官方帳號', done: statusMap.value.lineConnected === 'done', optional: false },
-    { id: 'firstMessageReceived', label: '收到第一則訊息（傳話測試）', done: statusMap.value.firstMessageReceived === 'done', optional: false },
+    { id: 'firstMessageReceived', label: '用手機測試', done: statusMap.value.firstMessageReceived === 'done', optional: false },
   ]))
 
   /**
@@ -334,6 +336,12 @@ export function useSetupStatus() {
           /** 側欄那顆點的 tooltip：短句就好，細節交給上面那條帶 */
           navTip: 'LINE 接上了，還差最後一步：用手機傳一句話測試',
           /**
+           * 紅帶那顆鈕、小幫手英雄卡那顆鈕的字（`C-250`②）。⚠️ **落地導覽第 2 步會叫出這顆鈕的名字**，
+           * 所以三處吃同一份——各寫一次，導覽講「按『接上 LINE』」而鈕上寫「帶我完成開通」就是假指路。
+           */
+          action: '用手機測試',
+          heroCta: '用手機測試 →',
+          /**
            * ⛔這一步刻意不圈任何欄位：要做的事是**拿手機傳一句話**，後台沒有那一格。
            * 圈「檢查連線」會變成叫人去按一顆做不到這件事的按鈕（測試連線驗的是 LINE 那邊
            * 填的網址收不收得到，不是「有客人傳過訊息」）。
@@ -344,6 +352,8 @@ export function useSetupStatus() {
           title: 'LINE 官方帳號還沒接上',
           detail: '客人現在傳訊息進不來，後台也不會有任何紀錄——各頁看到的 0 不是沒客人，是還沒接上。',
           navTip: 'LINE 官方帳號還沒接上：客人的訊息現在進不來',
+          action: '接上 LINE',
+          heroCta: '接上 LINE，讓客人找得到 →',
           /**
            * 「壞掉的就是這一格」（`C-95`，2026-08-28 老闆回饋）：接不上 LINE 就是這兩格沒填。
            *

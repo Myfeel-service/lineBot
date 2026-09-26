@@ -42,6 +42,7 @@ import { daysBetween, taipeiDate } from '~~/shared/time'
 import { storeBizWording, storeProfileLabelFor } from '~~/shared/store-profile-biz'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboarding-line-flag'
+import { LANDING_FROM_BUILD, LANDING_FROM_LINE, liveTourStepCount, saveOnboardingBuilt } from '~/utils/onboarding-landing'
 
 /**
  * 進度條五格（2026-08-19 拍板重切）：舊版「接 LINE」一格塞四件事、佔整段八成時間，
@@ -355,7 +356,8 @@ export function useOnboardingChat() {
       // ⛔ 舉例、清單、後果全部收進 aside：想知道的人點開，其餘的人少讀四行。
       await say(
         '先回答五個問題，大約 <b>3 分鐘</b>。<br>'
-        + '知道你賣什麼、賣給誰，我給的建議才會是你的店用得上的。',
+        // ⚠️ `C-260`：這一句在第 1 題之前，還不知道他是哪一型——⛔ 不寫「賣什麼、賣給誰」
+        + '知道你做什麼、客人是誰，我給的建議才會是你的店用得上的。',
         { summary: '不做會怎樣？', html: '還是能用，只是節慶提醒和 AI 的口氣都只能用通用的。之後在「組織與 LINE」頁隨時可以補。' },
       )
     }
@@ -395,6 +397,7 @@ export function useOnboardingChat() {
         const industry = answers.industry ?? opts.skipFilled?.fields?.industry?.value ?? ''
         const wording = storeBizWording(industry)
         const question = def.id === 'products' ? wording.productsQuestion
+          : def.id === 'customers' ? wording.customersQuestion
           : def.id === 'channel' ? wording.channelQuestion
           : def.question
         await say(`${prefix}${extra}${question}`)
@@ -1944,7 +1947,8 @@ export function useOnboardingChat() {
       items: [
         { label: 'LINE 官方帳號已接通', done: setup.lineConnected === 'done' },
         {
-          label: '收到第一則訊息',
+          // `C-250`②：跟進度格、小幫手英雄卡同一個說法（⛔ 不再一處叫「收到第一則訊息」、一處叫「用手機測試」）
+          label: '用手機測試',
           done: setup.firstMessageReceived === 'done',
           note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友傳一句話試試',
         },
@@ -1958,7 +1962,14 @@ export function useOnboardingChat() {
     // 連結尾指路也不要）——接下來要做什麼，由右下角小幫手的清單接手盯
     // 2026-09-02：這則與下一則「要不要認識後台」併成一則——成績單卡＋交棒＋推銷導覽
     // 三連發，剛做完一件事的人連讀三段。「點它隨時找得到我」與前半句重複，一併收掉。
-    await say('接通完成 🎉 接下來我會待在<b>右下角</b>——下一步要做什麼、哪裡怪怪的，我都會主動說。<br>要不要先花 <b>2 分鐘認識一下 MiniMe 後台</b>？我帶你逛一圈，知道東西都放在哪。')
+    // 🔴 2026-09-26（`C-250`②／`D-101`，示意頁 v80）結尾從「帶你認識後台（約 2 分鐘）」＝7 步全站地圖，
+    //    換成「上線之後」3 步：他打造完就進過後台了（地圖是重播），而 7 步前 4 步念的是側欄上本來就寫著的分組名。
+    //    ⭐ 真正新的只有一件：**他手機剛剛那一下已經進到「客服對話」了**——去看那一下。
+    //    7 步地圖留在小幫手「教學」清單，想看的人自己按。
+    const received = setup.firstMessageReceived === 'done'
+    await say(received
+      ? '上線了 🎉 你手機剛剛那一下，已經進到「<b>客服對話</b>」了——去看一眼，之後客人的訊息也在那裡回。'
+      : '上線了 🎉 還沒用手機測試也沒關係，之後加好友傳一句話試試就好。')
     // 2026-08-28 拍板（**翻掉 08-19「結尾連指路都不要」**）：當時擋的是「催人開 AI，
     // 但那時知識庫是空的、只會答不出來」——介紹後台地圖不踩那個雷。剛做完一件事、
     // 下一步是空白，是整段旅程裡唯一「介紹不會打斷任何事」的時機。
@@ -1983,7 +1994,9 @@ export function useOnboardingChat() {
       }
       else {
         options.push(
-          { label: '帶你認識後台（約 2 分鐘）', value: 'tour', primary: true },
+          // ⚠️ 步數照實講：沒用手機測試的人第 1 步（「你剛剛那一下」）會被拿掉，只剩 2 步
+          //    （⛔ 鈕上寫「3 步」、導覽卻從「1 / 2」開始＝按鈕與計數各講一個數字）
+          { label: received ? `去看看（${liveTourStepCount(true)} 步）` : `帶我看一下（${liveTourStepCount(false)} 步）`, value: 'tour', primary: true },
           // 2026-09-02 老闆拍板**翻掉 08-28**：那顆「去看剛剛那則對話／開始設定」拿掉了，
           // 第一次進來一定要看導覽。08-28 留它的理由是「唯一不看導覽直接進去的出口」，
           // 現在改成**由導覽自己把人送到那則對話**（OVERVIEW 最後一步），所以那顆的
@@ -2019,8 +2032,8 @@ export function useOnboardingChat() {
       }
       if (c === 'tour') {
         // 導覽本體要高亮側欄、小幫手這些**後台版型裡的真實元素**，開通頁是 layout:false 沒有它們。
-        // 所以先落地、帶 ?tour= 進去，由 TutorialAgent 掛載後接手開跑。
-        await navigateTo(`${onboardingLandingPath(wid.value)}?tour=${OVERVIEW_TOPIC_ID}`)
+        // 所以先落在「客服對話」、帶 ?from= 進去，由 TutorialAgent 掛載後接手開跑（`utils/onboarding-landing.ts`）。
+        await navigateTo(`${onboardingLandingPath(wid.value)}?from=${LANDING_FROM_LINE}`)
         return
       }
       // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；
@@ -2093,8 +2106,11 @@ export function useOnboardingChat() {
         { label: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆`, done: true, note: '不需綁卡' },
       ],
     })
+    // ⭐ `C-250`②：建成的那幾樣記下來——落地導覽第 1 步、小幫手「開帳那一趟建了什麼」、
+    //    「看看你剛剛做的東西」三處都吃這一份（⛔ 沒建成的不記：列了就得解釋「它其實沒建」）
+    saveOnboardingBuilt(wid.value, draftSteps.filter(s => s.status === 'done').map(s => ({ key: s.key, label: s.label })))
     await askChoices([{ label: '進入後台', value: 'go', primary: true }])
-    await navigateTo(`${onboardingBuiltLandingPath(wid.value)}?from=onboarding`)
+    await navigateTo(`${onboardingBuiltLandingPath(wid.value)}?from=${LANDING_FROM_BUILD}`)
   }
 
   // ── 入口 ────────────────────────────────────────────────────

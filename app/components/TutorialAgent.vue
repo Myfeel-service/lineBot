@@ -78,7 +78,8 @@
           <div v-if="onboardingIncomplete" class="ta-hero">
             <div class="ta-hero__head">
               <!-- 結論紅條開通期讓位（統一成一塊），後果句由標題扛 -->
-              <div class="ta-hero__title">開通還沒完成——機器人還不能上線</div>
+              <!-- `C-250`②（示意頁 v80）：講後果講他在乎的那一件——客人找不到他（⛔ 不講「機器人」這種我們的詞） -->
+              <div class="ta-hero__title">還沒上線——客人還找不到你的 MiniMe</div>
               <button type="button" class="ta-hero__refresh" :disabled="busy" @click="refreshAll(true)">
                 {{ busy ? '檢查中…' : '重新檢查' }}
               </button>
@@ -89,9 +90,10 @@
                 <span>{{ st.label }}</span>
               </div>
             </div>
+            <!-- ⚠️ 鈕上的字吃 `onboardingBand.heroCta`（紅帶那顆同一份來源，照「接上了沒」換） -->
             <button type="button" class="ta-hero__cta" @click="goOnboardingChat">
               <el-icon><ChatDotRound /></el-icon>
-              <span>用聊天引導完成開通 →</span>
+              <span>{{ onboardingBand.heroCta }}</span>
             </button>
           </div>
 
@@ -106,6 +108,23 @@
               <p v-if="postFixNote">{{ postFixNote }}</p>
               <p>{{ agentLine }}</p>
             </div>
+          </div>
+
+          <!-- 開帳那一趟建了什麼、在哪裡（`D-89` 第二輪，`C-250`②）：精靈說「之後隨時可以改」，
+               就要**給得出路**——知道在哪卻得自己去找，跟那句假承諾是同一種形狀。
+               ⚠️ 只列採用了的；開通做完（接上 LINE＋用手機測試過）就收起來，那時候面板要講營運。 -->
+          <div v-if="onboardingIncomplete && builtItems.length" class="ta-built">
+            <div class="ta-built__title">開帳那一趟幫你建的，都在這裡（隨時可以改）</div>
+            <button
+              v-for="b in builtItems"
+              :key="b.key"
+              type="button"
+              class="ta-built__row"
+              @click="goBuilt(b)"
+            >
+              <span>{{ BUILT_PLACE[b.key]?.icon }} {{ b.label }}</span>
+              <span class="ta-built__go">{{ BUILT_PLACE[b.key]?.page }} ›</span>
+            </button>
           </div>
 
           <!-- 目前異常：本來會動的東西壞了。排在設定待辦前面——「壞了」比「還沒做」急。
@@ -404,6 +423,24 @@
               <p>想學哪個功能？點一個主題，我直接在畫面上一步步帶你做。</p>
             </div>
           </div>
+          <!-- 「看看你剛剛做的東西」（`D-95`，`C-250`②）：排在所有教學前面——剛打造完的人這一刻想確認的是
+               「剛剛那幾樣建到哪去了」，全站地圖那 7 步對還沒接 LINE 的人一半是空的。⛔ 不自動跑，要他自己按。 -->
+          <button
+            v-if="builtTour.length"
+            type="button"
+            class="ta-option ta-option--sm ta-option--built"
+            @click="startBuiltTour"
+          >
+            <span class="ta-option__icon"><el-icon><Box /></el-icon></span>
+            <span class="ta-option__body">
+              <span class="ta-option__label">
+                看看你剛剛做的東西
+                <span class="ta-option__steps">{{ builtTour.length }} 步</span>
+              </span>
+              <span class="ta-option__blurb">開帳那一趟建的那幾樣，各在哪一頁</span>
+            </span>
+            <span class="ta-option__arrow">→</span>
+          </button>
           <div v-if="groupedTopics.length || walkthroughGuides.length" class="ta-review">
             <!-- 帶著做（D-40 補遺）：陪你做完並驗證的劇本。放最上面＝第一次用的人先看到；
                  跟下面「看一遍畫面」的導覽分開住，不然選單裡兩個都在教「怎麼放知識」分不出差別 -->
@@ -561,7 +598,19 @@ import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 import type { AgentGuideId } from '~/utils/agent-guides'
-import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
+import { Box, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
+import type { TutorialStep } from '~/utils/tutorial-topics'
+import {
+  BUILT_PLACE,
+  LANDING_FROM_BUILD,
+  LANDING_FROM_LINE,
+  type OnboardingBuiltItem,
+  builtTourSteps,
+  hasTriedPlayground,
+  landingTourSteps,
+  liveTourSteps,
+  readOnboardingBuilt,
+} from '~/utils/onboarding-landing'
 import IconRobot from '~/components/icons/IconRobot.vue'
 import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import { festivalHint } from '~/utils/festival-hint'
@@ -600,6 +649,7 @@ const {
   incompleteRequired,
   onboardingIncomplete,
   onboardingSteps,
+  onboardingBand,
   unknownCaps,
   requiredTotal,
   requiredDone,
@@ -916,7 +966,10 @@ const agentLine = computed(() => {
     // ⛔ 跳過可跳過的步驟（`optional`）：輪廓沒做、LINE 也沒接的人，最急的是 LINE。
     //    指到不急的那一步，等於把人帶去做一件現在做完也不會讓機器人活過來的事。
     const next = onboardingSteps.value.find(st => !st.done && !st.optional)
-    return `下一步：${next?.label || '完成開通'}。按上面那張卡片的「用聊天引導完成開通」，我帶你做完。`
+    // ⚠️ 鈕名吃同一份（`onboardingBand.heroCta`，`C-250`②）——鈕上的字換了、這句沒跟上就是假指路。
+    // 「準備好了」＝打造完直接進後台的人**不用現在做**（落地導覽第 2 步就是這樣講的，兩處同一個口徑）
+    const cta = onboardingBand.value.heroCta.replace(/\s*→$/, '')
+    return `下一步：${next?.label || '完成開通'}。準備好了按上面那張卡片的「${cta}」，我帶你做完。`
   }
   // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況
   if (incompleteRequired.value.length)
@@ -945,6 +998,27 @@ const agentLine = computed(() => {
 
 function onPick(topic: Parameters<typeof startTopic>[0]) {
   void startTopic(topic)
+}
+
+// ── 開帳那一趟建了什麼（`C-250`②）─────────────────────────────
+/** 這台瀏覽器記著的那份（精靈結尾寫進去，見 `utils/onboarding-landing.ts`） */
+const builtItems = ref<OnboardingBuiltItem[]>([])
+function loadBuiltItems() {
+  builtItems.value = workspaceId.value ? readOnboardingBuilt(workspaceId.value) : []
+}
+const builtTour = computed(() => builtTourSteps(builtItems.value))
+const { showToast } = useAdminToast()
+function goBuilt(b: OnboardingBuiltItem) {
+  const wid = workspaceId.value
+  const place = BUILT_PLACE[b.key]
+  if (!wid || !place) return
+  closePanel()
+  void router.push(place.path(wid))
+  showToast(`「${b.label}」就在這一頁，改完存檔就生效`, 'info')
+}
+/** 指的是側欄那幾列（恆常存在），⛔ 不先換頁——換了反而把他剛看的東西蓋掉 */
+function startBuiltTour() {
+  void startAdHocTour(builtTour.value)
 }
 
 // 複習教學分組的展開狀態；預設展開「開始設定」與「AI 客服」
@@ -1139,11 +1213,34 @@ function onStepAction(topicId?: string, guideId?: string) {
 
 const postTourNote = ref('')
 
+/**
+ * 某一支導覽走完要做的事，**取代**預設的「重開面板」（`C-250`②）。
+ * 打造完的落地導覽最後一步叫他按送出——這時候蓋一塊面板上去就是擋路（`D-102` 審查：
+ * 小幫手面板 322px 寬、貼右邊，正好蓋住剛出來的回答），所以改成把游標放進輸入框。
+ * ⚠️ 只認**開跑時那一份步驟**：別支導覽開跑（小幫手清單、頁首問號）就作廢，
+ *    否則下一支隨便哪個導覽走完都會被拿去做這件事。
+ * ⛔ **不可以在 `onTourClose` 裡作廢、也不可以在這裡比對 `activeSteps`**：el-tour 按「完成」時
+ *    是**先發 close、再發 finish**（`element-plus/es/components/tour/src/step.vue` 的 `onFinish`），
+ *    close 那一下 `endTour()` 已經把步驟清空了——兩種寫法都會讓這個設定永遠不生效。
+ */
+let finishOverride: { steps: TutorialStep[], run: () => void } | null = null
+watch(activeSteps, (steps) => {
+  if (finishOverride && steps.length && toRaw(steps) !== finishOverride.steps)
+    finishOverride = null
+})
+
 /** 導覽「完成」：閉環——重抓狀態、依結果回應、重開面板（回應顯示在「目前狀況」） */
 async function onTourFinish() {
   const finishedId = lastTopicId.value
+  const override = finishOverride
+  finishOverride = null
   clearDemo()
   endTour()
+  if (override) {
+    override.run()
+    void refresh({ force: true })
+    return
+  }
   panelTab.value = 'setup'
   // 一定要 force：使用者剛才就在改設定，這裡拿到舊快取就會誤報「還沒生效」
   await refresh({ force: true })
@@ -1229,7 +1326,52 @@ watch(criticalAlerts, (list) => {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+/**
+ * 開帳走完落地的兩支導覽（`C-250`②）：打造完「進入後台」→ 測試對話的落地 3 步；
+ * 接完 LINE「去看看」→ 客服對話的「上線之後」3 步。步驟內容在 `utils/onboarding-landing.ts` 組。
+ * ⚠️ 要等設定狀態載完才開跑：紅帶（第 2 步指的那一條）是看狀態才長出來的。
+ */
+async function startLandingTour(kind: string) {
+  const wid = workspaceId.value
+  if (!wid) return
+  await ensureWorkspaceList()
+  if (kind === LANDING_FROM_BUILD) {
+    const band = await waitForElement('[data-tour="onboarding-band"]', 1500)
+    const steps = landingTourSteps(readOnboardingBuilt(wid), { hasBand: !!band, bandAction: onboardingBand.value.action })
+    // ⭐ 走完把游標放進輸入框＝下一個動作就在手邊（第一個「哇」接在導覽後面，⛔ 不打開面板蓋住它）
+    // ⚠️ el-input 會把 `data-tour` 直接掛在 textarea 本身（不在外層），所以錨點就是輸入框
+    // ⚠️ 要晚一拍：el-tour 關掉時會把焦點還給開導覽前的那個元素，當下 focus 會被它蓋回去（實走抓到的）
+    finishOverride = {
+      steps,
+      run: () => setTimeout(() => document.querySelector<HTMLElement>('[data-tour="pg-input"]')?.focus(), 150),
+    }
+    await startAdHocTour(steps)
+    return
+  }
+  // 「上線之後」：第 1 步要他那一場對話已經列出來（清單是非同步載的，等一下）
+  // ⚠️ 「收到第一則訊息」不在能力註冊表（`capabilities`）裡，只在開通步驟那一份——
+  //    從 `capabilities` 找永遠是 undefined＝第 1 步永遠被拿掉（實走抓到的）
+  const received = onboardingSteps.value.find(s => s.id === 'firstMessageReceived')?.done === true
+  const hasRow = received && !!(await waitForElement('.conv-list-row .split-list-item', 4000))
+  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid) })
+  await startAdHocTour(steps)
+}
+const { markSeen: markTourSeen } = useTourSeen()
+
 onMounted(async () => {
+  // ⚠️ `?from=` 要在第一個 await 之前讀、立刻拿掉（重新整理不重跑）；測試對話頁自己在 setup 就讀過了
+  const landingFrom = String(route.query.from || '').trim()
+  const wantLanding = (landingFrom === LANDING_FROM_BUILD && route.path.endsWith('/ai-playground'))
+    || (landingFrom === LANDING_FROM_LINE && route.path.endsWith('/conversations'))
+  if (wantLanding) {
+    const { from: _from, ...restQuery } = route.query
+    void router.replace({ query: restQuery })
+    // 🔴 落地這一頁**當場**記成看過（`D-101` 問題 5：一路被導覽追著跑）——
+    //    ⛔ 不可以等落地導覽開跑之後才記：那一頁「第一次進來自動跑」的導覽 0.9 秒後就做決定，
+    //    接完 LINE 那一刻閘門剛打開，實走時收件匣 7 步就這樣搶先跑掉、落地那支反而沒跑。
+    //    key＝那一頁頁首問號的 topics（客服對話 `['conversations']`、測試對話 `['ai-playground']`）
+    markTourSeen(landingFrom === LANDING_FROM_LINE ? 'conversations' : 'ai-playground')
+  }
   // 開通引導結尾的「帶你認識後台」把人送進後台之後，由這裡接手開跑（開通頁是 layout:false，
   // 沒有側欄／小幫手這些要被高亮的元素，導覽只能在後台版型裡跑）。
   // ⛔ 開跑前先把 query 拿掉：留著的話重新整理會一直重跑同一支導覽。
@@ -1252,6 +1394,13 @@ onMounted(async () => {
     }
   }
   await refreshAll()
+  loadBuiltItems()
+  if (wantLanding) {
+    // ⛔ 「第一次來？我帶你一步步把設定做完」這顆氣泡跟落地導覽講相反的事（導覽說 LINE「不用現在做」），
+    //    而且就長在測試對話的送出鈕旁邊——落地的人直接當看過，⛔ 不再彈
+    dismissNudge()
+    await startLandingTour(landingFrom)
+  }
   // 只有「真的還有必要項沒做」且沒看過，才彈引導
   // ⛔ 導覽正在跑就不要彈（2026-08-28 code review 修）：開通完成後按「帶你認識後台」
   //    落地的那一刻，剛好同時滿足「必要項還沒做完」（新帳號的知識庫／AI 一定是空的）
@@ -1283,6 +1432,7 @@ watch(workspaceId, (next, prev) => {
   if (!next || next === prev)
     return
   alertNudge.value = ''
+  loadBuiltItems()
   resetAlerts()
   resetSetupStatus()
   resetBrief()
@@ -1299,6 +1449,7 @@ const panelEl = ref<HTMLElement | null>(null)
 watch(panelOpen, (open) => {
   if (open) {
     nextTick(() => panelEl.value?.focus())
+    loadBuiltItems()
     // 昨日摘要在這一刻才查（見 refreshAll 的註解）。不 force：useDailyBrief 自己有
     // 10 分鐘節流與跨日重抓，開開關關不會重打，但隔天再打開會拿到新的日期
     void refreshBrief()
@@ -1366,7 +1517,14 @@ function fitsInScrollParent(el: HTMLElement): boolean {
   return el.getBoundingClientRect().height <= window.innerHeight - 8
 }
 
+/** 導覽步驟順手標亮的那幾個元素（`TutorialStep.mark`）。換步、關掉、完成時一律收掉 */
+const TOUR_MARK_CLASS = 'ta-tour-mark'
+function clearTourMarks() {
+  document.querySelectorAll(`.${TOUR_MARK_CLASS}`).forEach(n => n.classList.remove(TOUR_MARK_CLASS))
+}
+
 async function focusActiveStep() {
+  clearTourMarks()
   if (!tourOpen.value) {
     liveTarget.value = null
     targetMissing.value = false
@@ -1417,6 +1575,9 @@ async function focusActiveStep() {
     return
   }
   await scrollAndSettle(el)
+  // ⚠️ 標亮要在量位置之後、交給 el-tour 之前：標亮只改底色與外框，不動版面
+  if (step?.mark)
+    document.querySelectorAll(step.mark).forEach(n => n.classList.add(TOUR_MARK_CLASS))
   // 同一個元素時，先清空再設定以確保觸發 el-tour 重算
   if (liveTarget.value === el) {
     liveTarget.value = null

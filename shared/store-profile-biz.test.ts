@@ -38,6 +38,7 @@ describe('店家的型（`D-99`／`C-250`）', () => {
     for (const t of ['service', 'class', 'neutral'] as const) {
       const w = STORE_BIZ_WORDING[t]
       expect(w.productsQuestion, t).not.toContain('賣')
+      expect(w.customersQuestion, t).not.toContain('賣')
       expect(w.channelQuestion, t).not.toContain('買')
       expect(w.tryQuestion, t).not.toContain('賣')
     }

@@ -43,6 +43,36 @@
   text-align: center;
 }
 
+// ─ 打造完落地的提示（`C-250`②）：題目已經填好，只講「按送出」這一件事 ─────
+// 虛線框＝「這裡等一下會出現東西」；跟空狀態一樣整塊置中（它也是 .pg-chat 唯一子元素）
+.pg-landing-hint {
+  margin: auto;
+  max-width: 440px;
+  padding: 16px 20px;
+  border: 1px dashed var(--el-color-primary-light-5);
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+
+  b { color: var(--text-primary); }
+}
+
+// 「再問它一題價格試試」：長在最新那則回答底下的一行文字鈕（⛔ 不做成主要按鈕：主要動作是「送出」）
+.pg-try-price {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--el-color-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .pg-empty-badge {
   width: 60px;
   height: 60px;
@@ -297,7 +327,15 @@
 .pg-composer {
   background: var(--el-bg-color);
   padding: 12px 16px;
+  // 🔴 右邊讓出小幫手圓鈕的位置（`C-250`②，`D-102` 審查）：圓鈕 58px、離右邊 1.5rem（手機 1rem），
+  //    實走量到它壓在輸入框右下角——打造完落地那一刻，這一格正是他要打字、要按送出的地方。
+  //    ⚠️ 數字跟 `_tutorial-agent.scss` 的 `.tutorial-agent`／`.ta-fab` 綁在一起，那邊改了這裡要跟著改。
+  padding-right: calc(1.5rem + 58px + 10px);
   border-top: 1px solid var(--el-border-color-lighter);
+
+  @media (max-width: 600px) {
+    padding-right: calc(1rem + 58px + 8px);
+  }
 }
 
 .pg-composer-actions {

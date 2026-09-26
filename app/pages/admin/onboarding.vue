@@ -5,7 +5,7 @@
       <div class="onb-head">
         <BrandLogo mark class="onb-mark" />
         <h1>請管理員完成開通</h1>
-        <p class="onb-sub">接 LINE 憑證與 AI 設定需要管理員權限。你可以先進後台看看，管理員可以從右下角小幫手的「用聊天引導完成開通」接著做。</p>
+        <p class="onb-sub">接 LINE 憑證與 AI 設定需要管理員權限。你可以先進後台看看，管理員可以從頁頂那條紅帶的「接上 LINE」接著做。</p>
       </div>
       <el-button type="primary" class="onb-primary-btn" @click="goWorkspace">先進後台看看</el-button>
       <div class="onb-foot">

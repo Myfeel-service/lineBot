@@ -88,11 +88,13 @@ describe('認識後台總覽導覽（2026-08-28）', () => {
     expect(src).toContain('id: OVERVIEW_TOPIC_ID')
   })
 
-  it('開通引導結尾吃同一個常數，不是各寫一次字串', () => {
-    // 兩邊各寫一次 'overview' 的話，改 id 只會改到一邊，按鈕就變成按了沒反應
-    expect(onboardingChat).toContain('OVERVIEW_TOPIC_ID')
-    expect(onboardingChat, '⛔別把 tour 的 id 寫死在網址字串裡')
-      .not.toMatch(/\?tour=overview/)
+  it('⛔ 接 LINE 那一趟的結尾不再開這支 7 步地圖（`C-250`②／`D-101`），改走「上線之後」3 步', () => {
+    // 為什麼：打造完他就進過後台了（地圖是重播），而 7 步前 4 步念的是側欄上本來就寫著的分組名。
+    // 7 步地圖留在小幫手「教學」清單，想看的人自己按。
+    expect(onboardingChat, '⛔別把 tour 的 id 寫死在網址字串裡').not.toMatch(/\?tour=overview/)
+    expect(onboardingChat).not.toMatch(/\?tour=\$\{OVERVIEW_TOPIC_ID\}/)
+    // 兩邊各寫一次字串的話，改值只會改到一邊，按鈕就變成按了沒反應
+    expect(onboardingChat).toContain('?from=${LANDING_FROM_LINE}')
   })
 
   it('總覽會帶到小幫手與頁首問號——這支導覽同時要解決「找不到教學入口」', () => {

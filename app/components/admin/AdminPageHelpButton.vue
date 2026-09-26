@@ -332,6 +332,23 @@ onMounted(() => {
     }, HINT_MS)
     return true
   }
+  // 🔴 反過來那一種（`C-250`② 實走抓到）：**氣泡先亮、導覽後開**——打造完的落地導覽要等設定狀態載完才開跑，
+  //    氣泡常常搶先亮起來，然後浮在導覽的黑幕上面跟它搶（截圖看得到）。
+  //    導覽一開就先收起來、⛔ 不記成看過（一輩子只有一次，不能被吃掉），導覽關掉再補放。
+  watch(tourOpen, (open) => {
+    if (!open || !hinting.value)
+      return
+    if (hintTimer !== undefined) {
+      clearTimeout(hintTimer)
+      hintTimer = undefined
+    }
+    dismissHint()
+    const again = watch(tourOpen, (o) => {
+      if (o) return
+      again()
+      fire()
+    })
+  })
   if (fire())
     return
   // 三件事都要等：角色／功能旗標是非同步載入的（載完才知道這一頁有沒有教學可跑），
