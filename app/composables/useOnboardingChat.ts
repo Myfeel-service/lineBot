@@ -851,16 +851,21 @@ export function useOnboardingChat() {
   let siteCardsFirstStep: Promise<void> = Promise.resolve()
   let siteCardsStopped = false
 
-  async function refreshSiteCards() {
+  /**
+   * @param withSample 要不要順便拿一張當範例（⚠️ 只有要畫那張說明卡時才讀全文；推整理的迴圈裡只數張數）
+   */
+  async function refreshSiteCards(withSample = false) {
     const r = await apiFetch<{
       total: number
-      pages: Array<{ cards: Array<{ title: string, content: string, questions: string[] }> }>
+      pages?: Array<{ cards: Array<{ title: string, content: string, questions: string[] }> }>
       generating: { status: string } | null
-    }>('/api/ai/knowledge/drafts')
+    }>(withSample ? '/api/ai/knowledge/drafts' : '/api/ai/knowledge/drafts?summary=1')
     siteCards.total = r.total
     siteCards.stillWorking = r.generating?.status === 'queued' || r.generating?.status === 'running'
-    const c = r.pages[0]?.cards[0]
-    siteCards.sample = c ? { q: c.questions[0] || c.title, a: c.content } : null
+    if (withSample) {
+      const c = r.pages?.[0]?.cards[0]
+      siteCards.sample = c ? { q: c.questions[0] || c.title, a: c.content } : null
+    }
   }
 
   function startSiteCardsPush() {
@@ -869,13 +874,15 @@ export function useOnboardingChat() {
     siteCardsFirstStep = new Promise<void>((resolve) => { markFirst = resolve })
     siteCardsRun = (async () => {
       try {
-        for (let i = 0; i < 6 && !siteCardsStopped; i++) {
+        for (let i = 0; i < 8 && !siteCardsStopped; i++) {
           const r = await apiFetch<{ cards: { status: string, error?: string } | null }>('/api/ai/knowledge/drafts/advance', { method: 'POST' }).catch(() => null)
           await refreshSiteCards().catch(() => {})
           markFirst()
           const st = r?.cards?.status
           // 做完／失敗／額度擋下／根本沒有要整理的 → 停（⛔ 不空轉燒請求）
           if (!st || st === 'done' || st === 'failed' || r?.cards?.error) break
+          // ⚠️ 別人正拿著租約（排程或知識庫頁在推）時 advance 會馬上回 running：等久一點再問（code review 抓到原本一圈接一圈）
+          await new Promise(res => setTimeout(res, st === 'running' ? 6000 : 800))
         }
       }
       finally {
@@ -893,6 +900,8 @@ export function useOnboardingChat() {
   async function stepSiteCardsInfo(profile: StoreProfileDoc | null) {
     if (!siteCardsRun) return
     await Promise.race([siteCardsFirstStep, new Promise(r => setTimeout(r, 20_000))])
+    // 要畫一張範例卡：這一刻才讀全文（⛔ 推整理的迴圈裡只數張數）
+    await refreshSiteCards(true).catch(() => {})
     const pagesRead = profile?.siteRead?.pagesRead ?? 0
     // ⚠️ 什麼卡都沒畫（整理不出卡）也要記：那是「讀到頁、卻一張卡都生不出來」的訊號
     track('site_cards_shown', {
@@ -1526,14 +1535,22 @@ export function useOnboardingChat() {
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
     // 加好友一到下一輪 race 就接走——「我在這裡等」必須是真的。
     // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
-    // ⚠️ 起點往前抓 2 分鐘：他常常在看教學的時候就先加好友了（⛔ 但不能太寬：伺服器最多只認一小時內）
-    const since = Date.now() - 2 * 60 * 1000
     /** 這一段等了多久（紀錄用：`D-101` 要驗「加好友＋按是我」比傳訊息快多少） */
     const waitStartedAt = Date.now()
+    /**
+     * 往回看多久：等待開始前 2 分鐘起算（他常常在看教學的時候就先加好友了；⛔ 伺服器最多只認一小時內）。
+     * 🔴 送**時間長度**不送電腦的時間（code review：電腦時鐘快 5 分鐘的人原本永遠等不到，見 `sinceFromLookback`）
+     */
+    const lookback = () => Date.now() - waitStartedAt + 2 * 60 * 1000
     let notifyResult = ''
     /** 他按過「不是我」的那幾位 */
     const rejected: string[] = []
-    let poll = pollNewFollower(since, rejected)
+    /**
+     * 按「是我」沒綁成的那一位＝**同一次**加好友／傳訊息先不再問，等他照指示重加或傳一句話（時間變新）再問。
+     * ⛔ 不可以放進 `rejected`：那會把他本人永遠排除（code review 抓到：錯誤訊息叫他重加，重加了卻永遠偵測不到）
+     */
+    const retryAfter = new Map<string, number>()
+    let poll = pollNewFollower(lookback, rejected, retryAfter)
 
     // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
     // 等於沒講。查不到就只少 QR 與代號那一塊，兩步照樣讀得懂（見證卡自己有 fallback）。
@@ -1632,7 +1649,7 @@ export function useOnboardingChat() {
           { label: '是我', value: 'yes', primary: true },
         ])
         const restart = () => {
-          poll = pollNewFollower(since, rejected)
+          poll = pollNewFollower(lookback, rejected, retryAfter)
           polled = poll.promise.then(x => ({ kind: 'received' as const, r: x }))
         }
         if (c !== 'yes') {
@@ -1644,23 +1661,26 @@ export function useOnboardingChat() {
         }
         busy.value = true
         try {
-          const b = await apiFetch<{ notify: 'added' | 'already' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
+          const b = await apiFetch<{ notify: 'added' | 'already' | 'off' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
             method: 'POST',
-            body: { lineUserId: who, since },
+            body: { lineUserId: who, lookbackMs: lookback() },
           })
+          // ⛔ 只有通知真的開著才算（`off`＝在名單上但通知被刻意關著，⛔ 不承諾會收到）
           phoneNotified = b.notify === 'added' || b.notify === 'already'
           notifyResult = b.notify
           phoneTestVia = r.via ?? 'follow'
           received = r
           if (b.notify === 'full')
             await say('通知名單已經滿了（最多 10 位），這支手機這次沒有加進去——到「AI 設定 › 轉真人通知」調整。')
+          else if (b.notify === 'off')
+            await say('這支手機加進通知名單了，但<b>通知現在是關著的</b>——到「AI 設定 › 轉真人通知」打開，才會收到。')
           break
         }
         catch (e: unknown) {
           // ⛔ 綁不上要講為什麼、下一步是什麼，然後繼續等（伺服器驗不過＝不是這段時間新進來的那一位）
           const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage || '剛剛沒有綁成功'
           await say(`${escapeHtml(msg)}。`)
-          rejected.push(who)
+          retryAfter.set(who, r.at ?? Date.now())
           setWait('pending', '等你加好友…')
           restart()
           continue
@@ -2157,12 +2177,16 @@ export function useOnboardingChat() {
    * 等他手機加好友：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退）。
    * `exclude`＝他按過「不是我」的那幾位（⛔ 不要一直問同一個人）。
    */
-  function pollNewFollower(sinceMs: number, exclude: string[]) {
+  function pollNewFollower(lookbackMs: () => number, exclude: string[], retryAfter: Map<string, number> = new Map()) {
     return pollUntil<NewFollowerRes>(async () => {
       const r = await apiFetch<NewFollowerRes>(
-        `/api/admin/onboarding/new-follower?since=${sinceMs}&exclude=${encodeURIComponent(exclude.join(','))}`,
+        `/api/admin/onboarding/new-follower?lookbackMs=${lookbackMs()}&exclude=${encodeURIComponent(exclude.join(','))}`,
       )
-      return r.found ? r : null
+      if (!r.found) return null
+      // 剛剛沒綁成的那一位：同一次事件先不再問，等出現**更新的**那一下（他照指示重加、或傳一句話）
+      const seenAt = r.lineUserId ? retryAfter.get(r.lineUserId) : undefined
+      if (seenAt != null && (r.at ?? 0) <= seenAt) return null
+      return r
     }, POLL_INTERVAL_MS)
   }
 

@@ -200,7 +200,13 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
 /** 通知名單最多幾位（跟 normalizeAiSettings 的 slice(0,10) 同一個數字；超過會被靜靜切掉，所以這裡先擋） */
 export const HANDOFF_NOTIFY_MAX = 10
 
-export type AddToNotifyResult = 'added' | 'already' | 'full' | 'failed'
+/**
+ * - `added`／`already`：在名單上、而且通知是開著的＝真的會收到
+ * - `off`：在名單上，但通知被刻意關著（2026-09-26 code review 補：原本照樣回 added，
+ *   精靈就承諾「早上的摘要會傳到這支手機」，而每日摘要看到 enabled=false 整個帳號跳過）
+ * - `full`：名單滿了沒加；`failed`：寫不進去
+ */
+export type AddToNotifyResult = 'added' | 'already' | 'off' | 'full' | 'failed'
 
 /**
  * 把某個 lineUserId 加進 aiSettings.handoffNotify 名單（`C-250`③：開帳按「是我」的那支手機）。
@@ -217,27 +223,34 @@ export async function addToHandoffNotify(workspaceId: string, lineUserId: string
   try {
     const db = getDb()
     const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
-    const snap = await ref.get()
-    const raw = snap.exists ? snap.data()?.handoffNotify : undefined
-    const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
-    // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到
-    if (ids.some(v => v === id || v.endsWith(`_${id}`))) return 'already'
-    if (ids.length >= HANDOFF_NOTIFY_MAX) return 'full'
-    const displayNames = { ...(raw?.displayNames ?? {}), ...(displayName ? { [id]: displayName.slice(0, 40) } : {}) }
-    const patch: Record<string, unknown> = {
-      'handoffNotify.lineUserIds': [...ids, id],
-      'handoffNotify.displayNames': displayNames,
-    }
-    if (ids.length === 0 && raw?.enabled !== true) patch['handoffNotify.enabled'] = true
-    if (snap.exists) {
-      await ref.update(patch)
-    }
-    else {
-      // 還沒有 AI 設定文件（新帳號）：只寫名單這一格，其餘由 normalizeAiSettings 讀的時候補預設
-      await ref.set({ workspaceId, handoffNotify: { enabled: true, lineUserIds: [id], displayNames } }, { merge: true })
-    }
+    // ⚠️ 交易：兩位管理員同時按「是我」（或剛好有人在存 AI 設定）時，各讀一份再各寫 [...ids, 自己]
+    //    會把對方蓋掉、兩邊卻都拿到 added（code review 抓到）
+    const result = await db.runTransaction(async (tx): Promise<AddToNotifyResult> => {
+      const snap = await tx.get(ref)
+      const raw = snap.exists ? snap.data()?.handoffNotify : undefined
+      const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
+      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到
+      if (ids.some(v => v === id || v.endsWith(`_${id}`))) return raw?.enabled === true ? 'already' : 'off'
+      if (ids.length >= HANDOFF_NOTIFY_MAX) return 'full'
+      const displayNames = { ...(raw?.displayNames ?? {}), ...(displayName ? { [id]: displayName.slice(0, 40) } : {}) }
+      const patch: Record<string, unknown> = {
+        'handoffNotify.lineUserIds': [...ids, id],
+        'handoffNotify.displayNames': displayNames,
+      }
+      // 名單原本是空的＝還沒設定過，順手打開；有人但關著＝他刻意關的，⛔ 不替他打開（回 off 讓畫面照實講）
+      const turnOn = ids.length === 0 && raw?.enabled !== true
+      if (turnOn) patch['handoffNotify.enabled'] = true
+      if (snap.exists) {
+        tx.update(ref, patch)
+      }
+      else {
+        // 還沒有 AI 設定文件（新帳號）：只寫名單這一格，其餘由 normalizeAiSettings 讀的時候補預設
+        tx.set(ref, { workspaceId, handoffNotify: { enabled: true, lineUserIds: [id], displayNames } }, { merge: true })
+      }
+      return turnOn || raw?.enabled === true || !snap.exists ? 'added' : 'off'
+    })
     invalidateAiSettingsCache(workspaceId)
-    return 'added'
+    return result
   }
   catch (e) {
     console.error('[member-bind] add to handoffNotify failed:', e)
@@ -258,6 +271,8 @@ export async function bindMemberLineUser(
   const ref = db.collection('workspaceMembers').doc(memberDocId(uid, workspaceId))
   const snap = await ref.get()
   if (!snap.exists) return false
+  /** 他原本綁的那支（換手機綁定時，舊那支要從通知名單拿掉——跟解除綁定同一條規矩，code review 抓到） */
+  const previous = String(snap.data()?.lineUserId ?? '').trim()
   const others = await db.collection('workspaceMembers')
     .where('workspaceId', '==', workspaceId)
     .where('lineUserId', '==', profile.lineUserId)
@@ -281,6 +296,8 @@ export async function bindMemberLineUser(
     })
   }
   await batch.commit()
+  // ⛔ 不拿掉的話，舊手機繼續收客人找真人的通知與每日摘要，卻已經不屬於任何一位成員
+  if (previous && previous !== profile.lineUserId) await removeFromHandoffNotify(workspaceId, previous)
   return true
 }
 

@@ -57,6 +57,14 @@ describe('歡迎訊息：這一版能不能用', () => {
   it('跟現在那一版幾乎一樣＝不算換了', () => {
     expect(rejectWelcomeReword(welcomeNow, ctxW)).toContain('幾乎一樣')
   })
+
+  it('店名本身有數字（85度C）：店名裡的數字不算，其他地方的數字照擋', () => {
+    const shop = '85度C'
+    const ctx = { shopName: shop, profile, current: '' }
+    expect(rejectWelcomeReword(`你好，謝謝加入${shop}！想問什麼直接在這裡留言就好。`, ctx)).toBeNull()
+    expect(rejectWelcomeReword(`你好，謝謝加入${shop}！24 小時內回你。`, ctx)).toContain('數字')
+    expect(rejectToneVoice({ opener: `你代表${shop}回覆客人。`, voice: '親切口語' }, { ...ctx, current: '' })).toBeNull()
+  })
 })
 
 describe('語氣：只換開頭與口氣兩處', () => {

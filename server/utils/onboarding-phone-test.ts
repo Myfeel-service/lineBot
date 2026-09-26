@@ -38,6 +38,28 @@ export function clampSince(raw: unknown, now = Date.now()): number {
 }
 
 /**
+ * 從「往回看多久」算起點（2026-09-26 code review 改）。
+ * 🔴 原本前端給的是**自己電腦的時間**，伺服器拿去跟**伺服器時間**比——電腦時鐘快 5 分鐘的人，
+ *    起點落在未來、被夾成伺服器的「現在」，剛加的好友永遠比它早＝**永遠等不到**。
+ *    改成前端給一段**時間長度**（兩邊的時鐘差不會影響長度），起點由伺服器自己的時間往回推。
+ */
+export function sinceFromLookback(raw: unknown, now = Date.now()): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return now - 5 * 60 * 1000
+  return now - Math.min(PHONE_TEST_WINDOW_MS, n)
+}
+
+/** 新的一份請求參數優先用 lookbackMs；舊的 since（epoch）只給還沒更新的分頁用 */
+export function phoneTestSince(q: { lookbackMs?: unknown, since?: unknown }, now = Date.now()): number {
+  return q.lookbackMs != null && q.lookbackMs !== '' ? sinceFromLookback(q.lookbackMs, now) : clampSince(q.since, now)
+}
+
+/** 這一位最近一次加好友的時間：第一次加＝createdAt；封鎖後重加＝lastFollowedAt（⛔ createdAt 不會變） */
+function followedAtOf(u: Record<string, unknown> | undefined): number {
+  return Math.max(ms(u?.createdAt), ms(u?.lastFollowedAt))
+}
+
+/**
  * 從 `since` 之後，最新的那一位：新加好友的、或（已經是好友的人）剛傳訊息的。
  * `exclude`＝他按過「不是我」的那幾位（⛔ 不要一直問同一個人）。
  */
@@ -50,14 +72,22 @@ export async function findNewFollower(
   const found: NewFollower[] = []
 
   // ① 新加好友：users 依建立時間倒序（既有索引 workspaceId + createdAt desc）
-  const users = await db.collection('users')
-    .where('workspaceId', '==', workspaceId)
-    .orderBy('createdAt', 'desc')
-    .limit(5)
-    .get()
-  for (const d of users.docs) {
+  // ①' 封鎖後重加：依 lastFollowedAt 倒序（2026-09-26 code review 補：重加時 createdAt 不會變，原本永遠不算）
+  //    ⚠️ 這一條要新索引（workspaceId + lastFollowedAt desc）；索引還沒部署時查詢會丟錯——⛔ 不擋第一次加好友那條
+  const [byCreated, byRefollow] = await Promise.all([
+    db.collection('users').where('workspaceId', '==', workspaceId).orderBy('createdAt', 'desc').limit(5).get(),
+    db.collection('users').where('workspaceId', '==', workspaceId).orderBy('lastFollowedAt', 'desc').limit(5).get()
+      .catch((e: unknown) => {
+        console.warn('[phone-test] 查「重新加好友」失敗（多半是索引還沒部署），只看第一次加好友：', (e as Error)?.message)
+        return null
+      }),
+  ])
+  const seen = new Set<string>()
+  for (const d of [...byCreated.docs, ...(byRefollow?.docs ?? [])]) {
+    if (seen.has(d.id)) continue
+    seen.add(d.id)
     const u = d.data()
-    const at = ms(u.createdAt)
+    const at = followedAtOf(u)
     const id = String(u.lineUserId ?? '')
     if (!id || at < sinceMs || exclude.has(id) || u.isBlocked === true) continue
     found.push({ lineUserId: id, displayName: String(u.displayName ?? ''), pictureUrl: String(u.pictureUrl ?? ''), via: 'follow', at })
@@ -96,7 +126,7 @@ export async function confirmPhoneFollower(
   const u = users.data()
   const convSnap = await db.collection('conversations').doc(lineUserFirestoreDocId(id, workspaceId)).get()
   const c = convSnap.data()
-  const followedAt = u?.workspaceId === workspaceId && u?.isBlocked !== true ? ms(u?.createdAt) : 0
+  const followedAt = u?.workspaceId === workspaceId && u?.isBlocked !== true ? followedAtOf(u) : 0
   const spokeAt = c?.workspaceId === workspaceId ? ms(c?.lastPeerActivityAt) : 0
   const via: NewFollower['via'] | null = followedAt >= sinceMs ? 'follow' : spokeAt >= sinceMs ? 'message' : null
   if (!via) return null

@@ -1,15 +1,17 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { listDrafts } from '~~/server/utils/knowledge-drafts'
+import { countDrafts, listDrafts } from '~~/server/utils/knowledge-drafts'
 
 /**
- * GET /api/ai/knowledge/drafts
+ * GET /api/ai/knowledge/drafts[?summary=1]
  *
  * 「等你看過」的知識卡，照「來自哪一頁」分組；加上整理進度與額度（`C-250`③）。
- * 知識庫頁的「等你看過」那一區、小幫手、落地導覽都讀這一支。
+ * 知識庫頁的「等你看過」那一區讀整份；小幫手、落地導覽、精靈只要張數＝帶 `summary=1`（只數張數，⛔ 不讀全文）。
  * 唯讀，viewer 就看得到（知識庫本來就開給 viewer 讀）。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const q = getQuery(event)
+  if (String(q.summary ?? '') === '1') return countDrafts(workspaceId, getDb())
   return listDrafts(workspaceId, getDb())
 })

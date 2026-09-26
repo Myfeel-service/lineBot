@@ -1041,7 +1041,8 @@ async function loadDraftCards() {
     return
   }
   try {
-    const r = await apiFetch<{ total: number }>('/api/ai/knowledge/drafts')
+    // `summary=1`：只要張數（⛔ 每次打開面板都讀全部卡片全文只為了一個數字，code review 抓到）
+    const r = await apiFetch<{ total: number }>('/api/ai/knowledge/drafts?summary=1')
     draftCards.value = r.total
   }
   catch { draftCards.value = 0 /* 查不到就不提（⛔ 不猜一個數字） */ }

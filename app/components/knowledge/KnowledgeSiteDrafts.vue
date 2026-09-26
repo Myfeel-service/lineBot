@@ -28,6 +28,10 @@
       <p v-if="generating?.pagesFailed?.length" class="kb-drafts__note">
         有 {{ generating.pagesFailed.length }} 頁整理不出卡：{{ generating.pagesFailed.map(p => pathOf(p.url)).join('、') }}
       </p>
+      <!-- 重跑「讓我認識你的店」：同一頁上次已經整理過，這次沒有再建一份（⛔ 跳過的要說得出幾頁） -->
+      <p v-if="generating?.skippedExisting" class="kb-drafts__note">
+        有 {{ generating.skippedExisting }} 頁上次開帳已經整理過，這次沒有再整理一份。
+      </p>
       <ul v-if="pages.length" class="kb-drafts__pages">
         <li v-for="p in pages" :key="p.sourceId">{{ p.name }} · {{ p.cards.length }} 張</li>
       </ul>
@@ -84,7 +88,7 @@ const emit = defineEmits<{ changed: [] }>()
 
 interface DraftCard { id: string, title: string, content: string, questions: string[], tags: string[] }
 interface DraftPage { sourceId: string, name: string, url: string, cards: DraftCard[] }
-interface Generating { status: string, pagesDone: number, pagesTotal: number, cards: number, trimmed: number, pagesFailed: { url: string, reason: string }[], error?: string }
+interface Generating { status: string, pagesDone: number, pagesTotal: number, cards: number, trimmed: number, pagesFailed: { url: string, reason: string }[], skippedExisting?: number, error?: string }
 interface Overview { total: number, pages: DraftPage[], generating: Generating | null, quota: { used: number, limit: number | null, planName: string } | null }
 
 const { apiFetch, workspaceId } = useWorkspace()
@@ -148,9 +152,11 @@ async function pushUntilDone() {
   pushing = true
   try {
     for (let i = 0; i < 12 && alive && stillWorking.value; i++) {
-      await apiFetch('/api/ai/knowledge/drafts/advance', { method: 'POST' }).catch(() => null)
+      const r = await apiFetch<{ cards: { status?: string } | null }>('/api/ai/knowledge/drafts/advance', { method: 'POST' }).catch(() => null)
       await load()
       if (generating.value?.error) break // 額度擋下：講出來、不再推
+      // ⚠️ 別人正拿著租約（精靈或排程在推）時 advance 會馬上回 running：等久一點再問，⛔ 不要一圈接一圈讀整份清單
+      await new Promise(res => setTimeout(res, r?.cards?.status === 'running' ? 6000 : 800))
     }
   }
   finally {

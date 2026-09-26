@@ -280,7 +280,14 @@ describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被�
     expect(step, '見證卡不見了').toContain("kind: 'witness'")
     expect(step, '收到要打勾（卡片收在打勾上）').toContain("setWait('ok'")
     expect(step, '加好友是自己飄進來的，要自己宣告新的一輪').toContain('startTurn()')
-    expect(step, '輪詢的是「這段時間新加好友的人」').toContain('pollNewFollower(since, rejected)')
+    expect(step, '輪詢的是「這段時間新加好友的人」').toContain('pollNewFollower(lookback, rejected, retryAfter)')
+    // 🔴 code review（2026-09-26）：送「往回看多久」不送電腦時間（電腦時鐘快的人原本永遠等不到）
+    expect(step, '按「是我」也送時間長度').toContain('lookbackMs: lookback()')
+    expect(fnBody('function pollNewFollower', 'async function stepDone'), '輪詢送時間長度').toContain('lookbackMs=${lookbackMs()}')
+    // 🔴 按「是我」沒綁成：⛔ 不可以把他本人放進「不是我」的名單（那會永遠偵測不到他）
+    const failBranch = step.slice(step.indexOf("|| '剛剛沒有綁成功'"), step.indexOf("|| '剛剛沒有綁成功'") + 300)
+    expect(failBranch, '沒綁成＝同一次事件先不再問').toContain('retryAfter.set(who')
+    expect(failBranch, '⛔ 沒綁成不可以當成「不是我」').not.toContain('rejected.push(who)')
     // 🔴 安全閘：⛔ 不可以「第一個進來的就當成他」——一定要問、一定要秀名字
     expect(step).toContain('是你嗎？')
     expect(step).toContain("{ label: '是我', value: 'yes', primary: true }")

@@ -38,9 +38,32 @@ export interface DraftsOverview {
   total: number
   pages: DraftPage[]
   /** 整理卡的工作還在不在、做到哪（知識庫頁要講得出「還在整理第 3／5 頁」與「有 N 張沒整理進來」） */
-  generating: (Omit<SiteCardsState, 'leaseUntil'>) | null
+  generating: (Omit<SiteCardsState, 'leaseUntil' | 'leaseId' | 'pending'>) | null
   /** 額度（全收會用掉幾張要在按下去之前看得到）；null＝方案讀不到 */
   quota: KnowledgeChunkQuotaStatus | null
+}
+
+/** 整理進度（對外那一份：⛔ 不帶租約與切好還沒建的卡——那是內部狀態，而且 pending 一次最多 15 張全文） */
+async function siteCardsProgress(workspaceId: string, db: Firestore): Promise<DraftsOverview['generating']> {
+  const jobId = await getSiteCardsJobId(workspaceId, db).catch(() => '')
+  if (!jobId) return null
+  const job = await loadStoreProfileJob(jobId, db).catch(() => null)
+  if (!job?.cards || job.workspaceId !== workspaceId) return null
+  const { leaseUntil: _l, leaseId: _i, pending: _p, ...rest } = job.cards
+  return rest
+}
+
+/**
+ * 只要張數與進度（小幫手面板、落地導覽用）：⛔ 不讀卡片全文。
+ * 2026-09-26 code review：小幫手每次打開面板都打整支 `listDrafts`（最多讀 200 張全文＋來源＋額度）只為了一個數字。
+ */
+export async function countDrafts(workspaceId: string, db: Firestore = getDb()): Promise<{ total: number, generating: DraftsOverview['generating'] }> {
+  const agg = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('status', '==', 'draft')
+    .count()
+    .get()
+  return { total: agg.data().count, generating: await siteCardsProgress(workspaceId, db) }
 }
 
 export async function listDrafts(workspaceId: string, db: Firestore = getDb()): Promise<DraftsOverview> {
@@ -79,20 +102,10 @@ export async function listDrafts(workspaceId: string, db: Firestore = getDb()): 
   const orphan = bySource.get('')
   if (orphan?.length) pages.push({ sourceId: '', name: '其他', url: '', cards: orphan })
 
-  let generating: DraftsOverview['generating'] = null
-  const jobId = await getSiteCardsJobId(workspaceId, db).catch(() => '')
-  if (jobId) {
-    const job = await loadStoreProfileJob(jobId, db).catch(() => null)
-    if (job?.cards && job.workspaceId === workspaceId) {
-      const { leaseUntil: _l, ...rest } = job.cards
-      generating = rest
-    }
-  }
-
   return {
     total: snap.size,
     pages,
-    generating,
+    generating: await siteCardsProgress(workspaceId, db),
     quota: await getKnowledgeChunkQuota(workspaceId, db).catch(() => null),
   }
 }

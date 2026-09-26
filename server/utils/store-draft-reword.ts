@@ -40,13 +40,24 @@ export interface RewordCtx {
  * 歡迎訊息這一版能不能用。回 `null`＝可以；回字串＝不能用的原因。
  * ⛔ 比推播文案更嚴：這是客人加好友看到的**第一句話**，任何一個我們不知道的數字都是風險。
  */
+/**
+ * 拿掉店名之後的字（數字檢查用）。
+ * ⚠️ 2026-09-26 code review：店名本身有數字（85度C、3Q脆皮雞排）的店，規則要求一定要有店名、
+ *    數字檢查又擋任何數字——每一版都過不了，按一次花一次錢、換到 5 次用完。店名裡的數字不是我們編的。
+ */
+function withoutShopName(s: string, shopName: string): string {
+  const shop = shopName.trim()
+  return shop ? s.split(shop).join('') : s
+}
+
 export function rejectWelcomeReword(text: string, ctx: RewordCtx): string | null {
   const s = String(text ?? '').trim()
-  const base = rejectBroadcastCopy(s, ctx.profile)
+  // 推播文案那套硬驗：價格那幾條也照「拿掉店名」看（「85度C」的「85」不是價格）
+  const base = rejectBroadcastCopy(withoutShopName(s, ctx.shopName), ctx.profile)
   if (base) return base
   if (/https?:\/\/|www\.|\.(?:com|tw|net|org|shop)\b/i.test(s)) return '出現了網址'
   // ⚠️ 營業時間、回覆時間、電話、價格——這一刻我們一樣都不知道
-  if (/[0-9０-９]/.test(s)) return '出現了數字（營業時間、電話、價格這類我們不知道）'
+  if (/[0-9０-９]/.test(withoutShopName(s, ctx.shopName))) return '出現了數字（營業時間、電話、價格這類我們不知道）'
   if (/優惠|免運|贈品|抽獎|送你|折價|禮券/.test(s)) return '出現了我們沒有的優惠'
   if (/保證|一定會|立刻回|馬上回|秒回/.test(s)) return '出現了我們做不到的承諾'
   if (/[*#`]|^\s*[-•]/m.test(s)) return '用了 markdown'
@@ -68,7 +79,7 @@ export function rejectToneVoice(v: ToneVoice, ctx: RewordCtx): string | null {
   if (opener.length > OPENER_MAX) return `開頭太長（${opener.length} 字）`
   if (voice.length > VOICE_MAX) return `口氣太長（${voice.length} 字）`
   if (/\n/.test(opener) || /\n/.test(voice)) return '換行了'
-  if (/[0-9０-９]/.test(opener + voice)) return '出現了數字'
+  if (/[0-9０-９]/.test(withoutShopName(opener, ctx.shopName) + voice)) return '出現了數字'
   const shop = ctx.shopName.trim()
   if (shop && !opener.includes(shop)) return '開頭沒有店名'
   if (/規則|原則|忽略|不用管|不必管|可以自己|自由發揮|編|猜|推測|估算|保證|承諾|markdown|項目符號|轉接/i.test(opener + voice)) {

@@ -17,7 +17,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { chunkSegment, SEGMENT_CHAR_LEN } from '~~/server/utils/ai-knowledge-chunker'
-import { createKnowledgeChunk } from '~~/server/utils/ai-knowledge-chunks'
+import { KNOWLEDGE_CHUNKS_COLLECTION, createKnowledgeChunk } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
@@ -222,6 +222,8 @@ export async function advanceStoreProfileJob(
       expiresAt: Timestamp.fromMillis(Date.now() + SITE_CARDS_JOB_TTL_MS),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true })
+    // ⛔ 他重跑了一次讀網站：上一份還沒整理完的那一份停掉（不然排程照樣把它做完＝同幾頁兩份卡，code review 抓到）
+    await supersedeSiteCardsJob(next.workspaceId, jobId, db)
     await setSiteCardsJobId(next.workspaceId, jobId, db)
   }
   catch (err) {
@@ -312,13 +314,39 @@ export interface SiteCardsState {
   pagesFailed: { url: string, reason: string }[]
   /** 正在推的那一次拿著的租約（epoch ms）；過期就當沒人在推 */
   leaseUntil?: number
+  /**
+   * 拿著租約的那一次是誰（2026-09-26 code review 補）。
+   * ⛔ 每次寫回進度都要先對這個：租約過期被別人接手之後，原本那一次慢慢寫完的結果不可以蓋掉接手那一次的進度。
+   */
+  leaseId?: string
+  /**
+   * 這一頁**切好、還沒建完**的卡（切卡跟建卡分兩步，2026-09-26 code review 補）。
+   * ⭐ 建到一半被砍（逾時、租約到期），下一步從這裡接著建——⛔ 不再切一次（再切＝再收一次錢、而且可能切出另一批）。
+   */
+  pending?: { page: number, sourceId: string, chunks: SiteCardDraft[], next: number } | null
+  /** 目前這一頁整理失敗過幾次（一時的模型錯誤先重試，滿 `SITE_CARDS_PAGE_MAX_TRIES` 次才記成整理不出卡） */
+  tries?: number
+  /** 同一頁之前開帳已經整理過（重跑「讓我認識你的店」），這次沒有再整理一份的頁數（⛔ 跳過的要說得出幾頁） */
+  skippedExisting?: number
+  /** 被後來那一次讀網站取代了（他重跑了一次），這一份不再整理 */
+  superseded?: boolean
   error?: string
 }
 
+/** 切好的一張卡（還沒建） */
+export interface SiteCardDraft { title: string, content: string, tags: string[], questions: string[] }
+
 /** 卡整理完之前，工作（含頁面內文）要留多久 */
 export const SITE_CARDS_JOB_TTL_MS = 24 * 60 * 60 * 1000
-/** 一步最多整理幾頁（並行；一頁一次切卡約 15–25 秒，兩頁並行仍在閘道逾時內） */
-export const SITE_CARDS_PAGES_PER_STEP = 2
+/**
+ * 一步的時間預算（2026-09-26 code review 改：原本一步固定並行切 2 頁、再逐張建卡，最壞超過 90 秒租約）。
+ * ⚠️ 預算是「開始下一件事之前」看的：切卡那一次呼叫本身就要 15–25 秒，超過預算就不再開始建卡、留給下一步。
+ * ⛔ 排程那一份要短：它跟收費對帳擠在同一支 `/api/cron/run-tasks` 請求裡。
+ */
+export const SITE_CARDS_STEP_BUDGET_MS = 25_000
+export const SITE_CARDS_STEP_BUDGET_MS_BACKGROUND = 12_000
+/** 一頁整理失敗幾次才放棄（Gemini 過載一分鐘不該讓那一頁永遠「整理不出卡」） */
+export const SITE_CARDS_PAGE_MAX_TRIES = 3
 /**
  * 開帳這一趟最多整理幾張（`D-97` ②「先到 50」＝免費方案的總額度）。
  * ⚠️ 同一個網址匯兩次可以是 11 張或 92 張（`D-97` 實測），張數不穩——所以要封頂，
@@ -337,6 +365,28 @@ export async function setSiteCardsJobId(workspaceId: string, jobId: string, db: 
 export async function getSiteCardsJobId(workspaceId: string, db: Firestore = getDb()): Promise<string> {
   const snap = await db.collection('storeProfiles').doc(workspaceId).get()
   return String(snap.data()?.siteCardsJobId ?? '')
+}
+
+/**
+ * 新的一份要接手時，把上一份還沒整理完的停掉（標 `superseded`，排程與前景都不會再推它）。
+ * ⚠️ 已經建好的卡照留（那是他可能已經在看的東西）；新的一份遇到同一頁會跳過（`hasEarlierSiteSource`）。
+ * ⛔ 失敗不擋讀網站本身：最壞是兩份都在推，同一頁仍然只會有一份（新那份會跳過舊那份整理過的頁）。
+ */
+export async function supersedeSiteCardsJob(workspaceId: string, newJobId: string, db: Firestore = getDb()) {
+  try {
+    const oldId = await getSiteCardsJobId(workspaceId, db)
+    if (!oldId || oldId === newJobId) return
+    const oldRef = jobRef(db, oldId)
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(oldRef)
+      const cards = (snap.data() as StoreProfileJobDoc | undefined)?.cards
+      if (!snap.exists || !cards || cards.status === 'done' || cards.status === 'failed') return
+      tx.update(oldRef, { 'cards.status': 'done', 'cards.superseded': true, 'cards.pending': null, updatedAt: FieldValue.serverTimestamp() })
+    })
+  }
+  catch (e) {
+    console.warn('[site-cards] 停掉上一份整理失敗：', (e as Error)?.message)
+  }
 }
 
 /**
@@ -366,135 +416,267 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex')
 }
 
+/** 這一頁的卡掛在哪一份資料底下（⭐ id 固定：同一份工作同一頁重做只會覆寫、不會多一份） */
+export function siteCardsSourceId(jobId: string, pageIndex: number): string {
+  return `onb_${jobId}_${pageIndex}`
+}
+
+/** 維運額度用完（`assertMaintenanceBudget` 丟的那一種 429；⚠️ Gemini 自己的 429 是一時過載，要重試不是停） */
+function isMaintenanceBudgetError(e: unknown): boolean {
+  const x = e as { statusCode?: number, statusMessage?: string, message?: string }
+  return Number(x?.statusCode) === 429 && /AI 整理用量|額度/.test(String(x?.statusMessage ?? x?.message ?? ''))
+}
+
+/** 下個月 1 號（台北）再過 3 天：額度擋下時，工作（含頁面內文）要留到額度回來之後 */
+function afterNextMonthStartMs(now = Date.now()): number {
+  const tp = new Date(now + 8 * 3600_000)
+  const firstNext = Date.UTC(tp.getUTCFullYear(), tp.getUTCMonth() + 1, 1) - 8 * 3600_000
+  return firstNext + 3 * 86_400_000
+}
+
+/** Firestore 不收 undefined：寫回之前把沒值的欄位拿掉（⚠️ 整個 `cards` 用 update 蓋掉，拿掉＝那一格清空，例如錯誤訊息） */
+function cleanCards(s: SiteCardsState): SiteCardsState {
+  return Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as SiteCardsState
+}
+
 /**
- * 推進一步：拿租約 → 整理最多 2 頁 → 寫成等你看過的卡 → 放租約。
- * 回傳推完之後的狀態（沒有要做的事就原樣回）。
- * ⛔ 拿不到租約（別人正在推）就直接回，**不可以兩邊同時整理同一頁**（同一頁切兩次＝收兩次錢、卡建兩份）。
+ * 同一頁之前開帳已經整理過一份（別的那一份工作建的、而且還在）＝這次跳過。
+ * ⚠️ 只用等值條件：Firestore 用單欄索引就查得到，不必開複合索引。查不到（出錯）就當沒有——最壞是多一份，
+ *    ⛔ 不可以因為查詢出錯就把整頁當成已經有了（那會靜靜少掉一頁）。
  */
-export async function advanceSiteCards(jobId: string, db: Firestore = getDb()): Promise<SiteCardsState | null> {
+async function hasEarlierSiteSource(db: Firestore, wid: string, url: string, ownSourceId: string): Promise<boolean> {
+  try {
+    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+      .where('workspaceId', '==', wid)
+      .where('origin', '==', 'onboarding-site')
+      .where('url', '==', url)
+      .limit(5)
+      .get()
+    return snap.docs.some(d => d.id !== ownSourceId && d.data().isDeleted !== true)
+  }
+  catch (e) {
+    console.warn('[site-cards] 查「這一頁之前整理過沒」失敗，照常整理：', (e as Error)?.message)
+    return false
+  }
+}
+
+/**
+ * 推進一步：拿租約 →（這一頁還沒切）切一頁 →（切好了）一張張建成等你看過的卡 → 時間到就寫回進度、放租約。
+ * 回傳推完之後的狀態（沒有要做的事就原樣回）。
+ *
+ * ⛔ 拿不到租約（別人正在推）就直接回，**不可以兩邊同時整理同一頁**（同一頁切兩次＝收兩次錢）。
+ * 🔴 2026-09-26 code review 改的四件事（原本一步並行切 2 頁再逐張建卡，最壞超過 90 秒租約，
+ *    過期被別人接手之後兩邊各建一份卡、先跑的最後還把後跑的進度蓋掉）：
+ *   ① **切卡跟建卡分兩步**：切好的先寫回（`pending`），建到一半被砍也從那裡接著建
+ *   ② **卡與資料的 id 固定**（`siteCardsSourceId`＋序號）：重做只會碰到同一張，⛔ 不會多一張；
+ *      已經在的卡不再寫（他可能已經點頭採用了，⛔ 不可以被洗回等你看過）
+ *   ③ **每次寫回都先對租約是不是自己的**，被接手了就不寫
+ *   ④ 一時的錯誤先重試（`SITE_CARDS_PAGE_MAX_TRIES`），⛔ 不再一次就記成「整理不出卡」
+ */
+export async function advanceSiteCards(
+  jobId: string,
+  db: Firestore = getDb(),
+  opts: { budgetMs?: number } = {},
+): Promise<SiteCardsState | null> {
   const ref = jobRef(db, jobId)
-  const now = Date.now()
+  const startedAt = Date.now()
+  const budgetMs = opts.budgetMs ?? SITE_CARDS_STEP_BUDGET_MS
+  const leaseId = randomUUID()
   const claimed = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref)
     if (!snap.exists) return null
     const job = snap.data() as StoreProfileJobDoc
     const cards = job.cards
     if (!cards || cards.status === 'done' || cards.status === 'failed') return { job, claimed: false }
-    if (cards.leaseUntil && cards.leaseUntil > now) return { job, claimed: false }
-    tx.update(ref, { 'cards.status': 'running', 'cards.leaseUntil': now + SITE_CARDS_LEASE_MS, updatedAt: FieldValue.serverTimestamp() })
+    if (cards.leaseUntil && cards.leaseUntil > startedAt) return { job, claimed: false }
+    tx.update(ref, {
+      'cards.status': 'running',
+      'cards.leaseUntil': startedAt + SITE_CARDS_LEASE_MS,
+      'cards.leaseId': leaseId,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
     return { job, claimed: true }
   })
   if (!claimed) return null
   const { job } = claimed
   if (!claimed.claimed) return job.cards ?? null
 
-  const state: SiteCardsState = { ...job.cards!, status: 'running', pagesFailed: [...(job.cards!.pagesFailed ?? [])] }
   const wid = job.workspaceId
-  const todo = job.pages.slice(state.pagesDone, state.pagesDone + SITE_CARDS_PAGES_PER_STEP)
+  const state: SiteCardsState = {
+    ...job.cards!,
+    status: 'running',
+    pagesFailed: [...(job.cards!.pagesFailed ?? [])],
+    pending: job.cards!.pending ?? null,
+    tries: job.cards!.tries ?? 0,
+    skippedExisting: job.cards!.skippedExisting ?? 0,
+    leaseId,
+  }
+  // ⚠️ 成功的一步要把上一次的錯誤清掉（原本 merge 寫回，錯誤那一格永遠留著）
+  delete state.error
+  let extraFields: Record<string, unknown> = {}
+
+  /** 寫回進度：⛔ 租約不是自己的就不寫（被接手了）。回傳寫成了沒。 */
+  const save = async (final: boolean): Promise<boolean> => {
+    const toSave = cleanCards({ ...state, leaseUntil: final ? 0 : Date.now() + SITE_CARDS_LEASE_MS, leaseId: final ? '' : leaseId })
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      const cur = (snap.data() as StoreProfileJobDoc | undefined)?.cards
+      if (!cur || cur.leaseId !== leaseId) return false
+      tx.update(ref, { cards: toSave, updatedAt: FieldValue.serverTimestamp(), ...(final ? extraFields : {}) })
+      return true
+    })
+  }
+
+  let inputTokens = 0
+  let outputTokens = 0
+  let embeddingTokens = 0
+  const timeLeft = () => Date.now() - startedAt < budgetMs
 
   try {
     // 維運額度用完就停在這裡：⛔ 不算失敗（下個月額度回來、或升級之後照樣推得動）
     await assertMaintenanceBudget(wid)
-    let room = Math.max(0, SITE_CARDS_MAX_TOTAL - state.cards)
-    const results = await runWithLlmBudget(wid, () => Promise.all(todo.map(async (page) => {
-      try {
-        const r = await chunkSegment(page.text.slice(0, SEGMENT_CHAR_LEN), `開帳時讀的網站頁面：${page.url}`)
-        return { page, ok: true as const, ...r }
-      }
-      catch (e) {
-        return { page, ok: false as const, reason: String((e as Error)?.message || '整理失敗').slice(0, 120) }
-      }
-    })))
-
-    let inputTokens = 0
-    let outputTokens = 0
-    let embeddingTokens = 0
-    for (const r of results) {
-      if (!r.ok) {
-        state.pagesFailed.push({ url: r.page.url, reason: r.reason })
-        continue
-      }
-      inputTokens += r.inputTokens
-      outputTokens += r.outputTokens
-      const perPage = r.chunks.slice(0, SITE_CARDS_MAX_PER_PAGE)
-      const keep = perPage.slice(0, room)
-      state.trimmed += r.chunks.length - keep.length
-      room -= keep.length
-      if (!keep.length) {
-        if (!r.chunks.length) state.pagesFailed.push({ url: r.page.url, reason: '這一頁整理不出可以回答客人的內容' })
-        continue
-      }
-      // 一頁一份資料（知識庫側欄看得到「首頁」「黑豆水」那幾份），卡掛在它底下
-      const sourceId = randomUUID()
-      const nowTs = FieldValue.serverTimestamp()
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set({
-        workspaceId: wid,
-        type: 'url',
-        name: sitePageLabel(r.page.url, keep[0]?.title),
-        url: r.page.url,
-        folderId: null,
-        filePath: '',
-        contentHash: sha256(r.page.text),
-        appliedContentHash: sha256(r.page.text),
-        etag: '',
-        lastModified: '',
-        refreshIntervalSec: 0,
-        // ⛔ 不排自動同步：這幾份是開帳讀的、他還沒點頭；同步偵測到變動會跑去問他一件他還沒答應要的事
-        refreshIntervalMinutes: 0,
-        onChangeBehavior: 'notify',
-        generateOverview: false,
-        lastFetchedAt: nowTs,
-        outdatedAt: null,
-        status: 'ready',
-        isDeleted: false,
-        chunkCount: keep.length,
-        /** 這份資料是開帳讀網站整理出來的（知識庫「等你看過」那一區靠它分組） */
-        origin: 'onboarding-site',
-        createdAt: nowTs,
-        updatedAt: nowTs,
-      })
-      for (const c of keep) {
-        const made = await createKnowledgeChunk(db, {
+    while (timeLeft() && (state.pending || state.pagesDone < state.pagesTotal)) {
+      if (!state.pending) {
+        const p = state.pagesDone
+        const page = job.pages[p]
+        const sourceId = siteCardsSourceId(jobId, p)
+        if (!page) { state.pagesDone = state.pagesTotal; break }
+        // 重跑「讓我認識你的店」＝同一頁之前整理過，⛔ 不再建第二份（跳過的照實記）
+        if (await hasEarlierSiteSource(db, wid, page.url, sourceId)) {
+          state.skippedExisting = (state.skippedExisting ?? 0) + 1
+          state.pagesDone++
+          state.tries = 0
+          continue
+        }
+        let r: Awaited<ReturnType<typeof chunkSegment>>
+        try {
+          r = await runWithLlmBudget(wid, () => chunkSegment(page.text.slice(0, SEGMENT_CHAR_LEN), `開帳時讀的網站頁面：${page.url}`))
+        }
+        catch (e) {
+          if (isMaintenanceBudgetError(e)) throw e
+          state.tries = (state.tries ?? 0) + 1
+          const reason = String((e as Error)?.message || '整理失敗').slice(0, 120)
+          if (state.tries >= SITE_CARDS_PAGE_MAX_TRIES) {
+            state.pagesFailed.push({ url: page.url, reason })
+            state.pagesDone++
+            state.tries = 0
+            continue
+          }
+          // 一時的錯誤：這一步先停，下一步再試同一頁（⛔ 不前進、不記成失敗）
+          console.warn(`[site-cards] ${jobId} 第 ${p + 1} 頁第 ${state.tries} 次沒整理成，下一步再試：`, reason)
+          break
+        }
+        inputTokens += r.inputTokens
+        outputTokens += r.outputTokens
+        state.tries = 0
+        const room = Math.max(0, SITE_CARDS_MAX_TOTAL - state.cards)
+        const keep = r.chunks.slice(0, SITE_CARDS_MAX_PER_PAGE).slice(0, room)
+        state.trimmed += r.chunks.length - keep.length
+        if (!keep.length) {
+          if (!r.chunks.length) state.pagesFailed.push({ url: page.url, reason: '這一頁整理不出可以回答客人的內容' })
+          state.pagesDone++
+          continue
+        }
+        // 一頁一份資料（知識庫側欄看得到「首頁」「黑豆水」那幾份），卡掛在它底下
+        const nowTs = FieldValue.serverTimestamp()
+        await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set({
           workspaceId: wid,
-          chunkId: randomUUID(),
-          title: c.title,
-          content: c.content,
-          tags: c.tags,
-          questions: c.questions,
-          sourceId,
-          skipUsageRecording: true,
-          draft: true,
+          type: 'url',
+          name: sitePageLabel(page.url, keep[0]?.title),
+          url: page.url,
+          folderId: null,
+          filePath: '',
+          contentHash: sha256(page.text),
+          appliedContentHash: sha256(page.text),
+          etag: '',
+          lastModified: '',
+          refreshIntervalSec: 0,
+          // ⛔ 不排自動同步：這幾份是開帳讀的、他還沒點頭；同步偵測到變動會跑去問他一件他還沒答應要的事
+          refreshIntervalMinutes: 0,
+          onChangeBehavior: 'notify',
+          generateOverview: false,
+          lastFetchedAt: nowTs,
+          outdatedAt: null,
+          status: 'ready',
+          isDeleted: false,
+          chunkCount: keep.length,
+          /** 這份資料是開帳讀網站整理出來的（知識庫「等你看過」那一區靠它分組） */
+          origin: 'onboarding-site',
+          createdAt: nowTs,
+          updatedAt: nowTs,
         })
-        embeddingTokens += made.embeddingTokens
-        state.cards++
+        state.pending = {
+          page: p,
+          sourceId,
+          chunks: keep.map(c => ({ title: c.title, content: c.content, tags: c.tags ?? [], questions: c.questions ?? [] })),
+          next: 0,
+        }
+        // ⭐ 切好就先寫回：接下來建卡要是被砍，下一步從這裡接著建、⛔ 不再切一次
+        if (!(await save(false))) return (await loadStoreProfileJob(jobId, db))?.cards ?? null
       }
+
+      // 建卡：從 pending.next 接著建
+      const pend = state.pending!
+      while (pend.next < pend.chunks.length && timeLeft()) {
+        const chunkId = `${pend.sourceId}_${pend.next}`
+        const c = pend.chunks[pend.next]!
+        // ⛔ 已經在的卡不再寫：他可能已經點頭採用了，重寫會把它洗回等你看過
+        const exists = (await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId).get()).exists
+        if (!exists) {
+          const made = await createKnowledgeChunk(db, {
+            workspaceId: wid,
+            chunkId,
+            title: c.title,
+            content: c.content,
+            tags: c.tags,
+            questions: c.questions,
+            sourceId: pend.sourceId,
+            skipUsageRecording: true,
+            draft: true,
+          })
+          embeddingTokens += made.embeddingTokens
+        }
+        state.cards++
+        pend.next++
+      }
+      if (pend.next < pend.chunks.length) break // 時間到，下一步接著建
+      state.pending = null
+      state.pagesDone++
     }
-    state.pagesDone += todo.length
-    // ⚠️ 花掉的錢照實入帳（`D-89`：開帳讀網站原本那一次 LLM 沒入帳，這裡不重蹈覆轍）
-    if (inputTokens || outputTokens) {
-      await recordAiUsage(wid, { inputTokens, outputTokens, importInputTokens: inputTokens, importOutputTokens: outputTokens }, db)
-    }
-    if (embeddingTokens) await recordAiUsage(wid, { buildEmbeddingTokens: embeddingTokens }, db)
-    state.status = state.pagesDone >= state.pagesTotal ? 'done' : 'queued'
+    state.status = !state.pending && state.pagesDone >= state.pagesTotal ? 'done' : 'queued'
   }
   catch (e) {
-    const code = Number((e as { statusCode?: number })?.statusCode)
-    // 429＝維運額度擋下：停在原地等（不算失敗、不前進）；其他錯誤＝這一步的頁算走過但記原因
-    if (code === 429) {
+    if (isMaintenanceBudgetError(e)) {
+      // 停在原地等（不算失敗、不前進）。⚠️ 工作原本 24 小時就刪——要「額度回來會接著整理」成立，就得留到下個月
       state.status = 'queued'
-      state.error = '這個月的整理額度用完了，下個月會接著整理'
+      state.error = `這個月的整理額度用完了，還有 ${Math.max(0, state.pagesTotal - state.pagesDone)} 頁沒整理；額度恢復後會自動接著整理`
+      extraFields = { expiresAt: Timestamp.fromMillis(Math.max(afterNextMonthStartMs(), Date.now() + SITE_CARDS_JOB_TTL_MS)) }
     }
     else {
-      for (const p of todo) state.pagesFailed.push({ url: p.url, reason: String((e as Error)?.message || '整理失敗').slice(0, 120) })
-      state.pagesDone += todo.length
-      state.status = state.pagesDone >= state.pagesTotal ? 'done' : 'queued'
+      // 其他沒料到的錯誤（寫入失敗之類）：這一頁算失敗一次，⛔ 不整個前進
+      state.tries = (state.tries ?? 0) + 1
+      state.status = 'queued'
+      console.error(`[site-cards] ${jobId} 這一步出錯：`, e)
+      if (state.tries >= SITE_CARDS_PAGE_MAX_TRIES && !state.pending) {
+        const page = job.pages[state.pagesDone]
+        if (page) state.pagesFailed.push({ url: page.url, reason: String((e as Error)?.message || '整理失敗').slice(0, 120) })
+        state.pagesDone++
+        state.tries = 0
+        state.status = state.pagesDone >= state.pagesTotal ? 'done' : 'queued'
+      }
     }
   }
 
-  const { leaseUntil: _lease, ...toSave } = state
-  await ref.set({ cards: { ...toSave, leaseUntil: 0 }, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+  // ⚠️ 花掉的錢照實入帳（`D-89`：開帳讀網站原本那一次 LLM 沒入帳，這裡不重蹈覆轍）
+  if (inputTokens || outputTokens) {
+    await recordAiUsage(wid, { inputTokens, outputTokens, importInputTokens: inputTokens, importOutputTokens: outputTokens }, db).catch(() => {})
+  }
+  if (embeddingTokens) await recordAiUsage(wid, { buildEmbeddingTokens: embeddingTokens }, db).catch(() => {})
+
+  const saved = await save(true)
   invalidateKnowledgeChunkCount(wid)
-  return { ...toSave, leaseUntil: 0 }
+  if (!saved) return (await loadStoreProfileJob(jobId, db))?.cards ?? null
+  return cleanCards({ ...state, leaseUntil: 0, leaseId: '' })
 }
 
 /**
@@ -526,7 +708,8 @@ export async function advanceStaleStoreProfileJobs(db: Firestore = getDb(), maxJ
         advancedRead++
       }
       else {
-        await advanceSiteCards(d.id, db)
+        // ⚠️ 排程用短的預算：這一支跟收費對帳擠同一支請求（code review 抓到原本沒有時間上限）
+        await advanceSiteCards(d.id, db, { budgetMs: SITE_CARDS_STEP_BUDGET_MS_BACKGROUND })
         advancedCards++
       }
     }

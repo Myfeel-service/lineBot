@@ -226,6 +226,8 @@ const AUTO_REPLY_REPEAT_WINDOW_MS = 15 * 60 * 1000
 // ── Type Definitions ──────────────────────────────────────────────
 
 interface FlowDoc {
+  /** 這個模組屬於哪個帳號（推播組訊息前要比對，`C-266`） */
+  workspaceId?: string
   trigger: string
   messages: messagingApi.Message[]
   isActive: boolean
@@ -365,6 +367,16 @@ export async function handleFollowEvent(
   try {
     const userData = await ensureUser(userId, preloadedProfile, wid)
     console.log('[webhook] follow ensureUser:', userId)
+    /**
+     * 記下「這一次加好友」的時間（2026-09-26，`C-265` code review）：封鎖後重加時 `createdAt` 不會變，
+     * 開帳「用手機測試」只看 createdAt 的話，早就加過又封鎖的老闆重加永遠不算。
+     * ⚠️ 只有真的 follow webhook 才記（有 replyToken）：活動登記的補套用不是加好友的那一刻。
+     */
+    if (opts?.replyToken) {
+      await getDb().collection('users').doc(lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, wid), wid))
+        .set({ lastFollowedAt: FieldValue.serverTimestamp() }, { merge: true })
+        .catch(e => console.warn('[webhook] 記 lastFollowedAt 失敗：', e))
+    }
     // Session creation and claim application are independent — run in parallel。
     // session 用 promise 傳下去（不先 await）：推播延遲不變，但推播後的「已回應」蓋章
     // 就能用同一場 session，不必再開一次交易去問「是哪一場」。
@@ -1891,6 +1903,15 @@ export async function renderModuleToLineMessages(
   const wid = requireWorkspaceId(options.workspaceId, 'renderModuleToLineMessages')
   const flow = await getFlowByModuleId(moduleId)
   if (!flow) return null
+  /**
+   * 🔴 2026-09-26（`C-266`，code review）：模組 id 來自推播按鈕的 postback，**店家自己填得到**——
+   *    不比對歸屬的話，填別的帳號的模組 id 就能把那一家的模組內容推出去（試發與正式發送都走這支）。
+   *    ⛔ 對不上就當模組不存在（呼叫端會講「模組已經不存在」，跟 `validate.post` 同一個判斷）。
+   */
+  if (flow.workspaceId !== wid) {
+    console.warn(`[renderModuleToLineMessages] 模組 ${moduleId} 不屬於 ${wid}（屬於 ${flow.workspaceId || '（沒有帳號）'}），當作不存在`)
+    return null
+  }
   const { channelSecret } = await getLineWorkspaceCredentials(wid)
   const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
   const lineMessages = buildLineMessages(

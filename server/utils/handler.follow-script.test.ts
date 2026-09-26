@@ -86,6 +86,9 @@ const REPLY_RESULT = { replyText: '歡迎！', thenHandoff: false, finished: tru
  * opts.withClaim = 這位客人有一張待套用的活動 claim（模組推播）。
  * opts.userScriptCooldowns = 冷卻交易讀到的 users.scriptCooldowns。
  */
+/** users 集合被寫了什麼（驗「加好友那一刻記時間」） */
+const userSets: any[] = []
+
 function makeDb(opts: { withClaim?: boolean; userScriptCooldowns?: Record<string, number> } = {}) {
   const claim = {
     lineUserId: LINE_UID,
@@ -143,7 +146,7 @@ function makeDb(opts: { withClaim?: boolean; userScriptCooldowns?: Record<string
         ...chainable([]),
         doc: vi.fn(() => ({
           get: vi.fn(async () => ({ exists: true, data: () => ({ displayName: '測試客人', userId: LINE_UID }) })),
-          set: vi.fn(async () => {}),
+          set: vi.fn(async (p: any) => { if (col === 'users') userSets.push(p) }),
           update: vi.fn(async () => {}),
         })),
       }
@@ -167,6 +170,23 @@ function makeDb(opts: { withClaim?: boolean; userScriptCooldowns?: Record<string
  * C-56 加好友歡迎腳本：follow 事件 → 找 triggerEvent='follow' 的腳本 → 用 replyToken 回覆。
  * 統計口徑與活動推播同一把尺：蓋 system_notice、不記 bot 首接。
  */
+describe('加好友那一刻記時間（`C-265`：封鎖後重加也要算「用手機測試」）', () => {
+  beforeEach(() => { vi.clearAllMocks(); userSets.length = 0 })
+
+  it('真的 follow（帶 replyToken）→ users 記 lastFollowedAt', async () => {
+    vi.mocked(getDb).mockReturnValue(makeDb())
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+    await handleFollowEvent(LINE_UID, undefined, WS, { replyToken: REPLY_TOKEN, requestOrigin: 'https://app.test' })
+    expect(userSets.some(p => p.lastFollowedAt)).toBe(true)
+  })
+
+  it('活動登記的補套用（沒帶 replyToken）＝不是加好友的那一刻，⛔ 不記', async () => {
+    vi.mocked(getDb).mockReturnValue(makeDb())
+    await handleFollowEvent(LINE_UID, undefined, WS)
+    expect(userSets.some(p => p.lastFollowedAt)).toBe(false)
+  })
+})
+
 describe('加好友歡迎腳本（runFollowWelcomeScript）', () => {
   beforeEach(() => { vi.clearAllMocks() })
 

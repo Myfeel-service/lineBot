@@ -1,11 +1,11 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
-import { clampSince, confirmPhoneFollower } from '~~/server/utils/onboarding-phone-test'
+import { confirmPhoneFollower, phoneTestSince } from '~~/server/utils/onboarding-phone-test'
 import { addToHandoffNotify, bindMemberLineUser } from '~~/server/utils/member-line-bind'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
- * POST /api/admin/onboarding/bind-self  body: { lineUserId, since }
+ * POST /api/admin/onboarding/bind-self  body: { lineUserId, lookbackMs }（往回看多久；舊分頁送的 since 仍收）
  *
  * 開帳「用手機測試」按了「是我」（`C-250`③）：
  *   ① 伺服器**再驗一次**這個人真的是這段時間內新加好友／剛傳訊息的（⛔ 不信任前端給的 id）
@@ -16,12 +16,12 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
-  const body = await readBody<{ lineUserId?: unknown, since?: unknown }>(event)
+  const body = await readBody<{ lineUserId?: unknown, lookbackMs?: unknown, since?: unknown }>(event)
   const lineUserId = String(body?.lineUserId ?? '').trim()
   if (!/^U[0-9a-f]{32}$/i.test(lineUserId)) throw createError({ statusCode: 400, statusMessage: '這不是一個 LINE 帳號' })
   const db = getDb()
 
-  const who = await confirmPhoneFollower(workspaceId, lineUserId, clampSince(body?.since), db)
+  const who = await confirmPhoneFollower(workspaceId, lineUserId, phoneTestSince(body ?? {}), db)
   if (!who) {
     // ⛔ 講得出為什麼、下一步是什麼（不是一句「失敗」）
     throw createError({ statusCode: 409, statusMessage: '這個 LINE 帳號不是剛剛加好友的那一位——再用手機加一次好友、或傳一句話試試' })
