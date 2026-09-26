@@ -48,11 +48,12 @@ describe('額度階梯（D-69 拍板①）', () => {
 })
 
 describe('功能閘門（D-69 拍板④）', () => {
-  it('腳本：免費與輕量沒有，入門起才有', () => {
-    expect(planAllowsScripting(BILLING_PLANS.free)).toBe(false)
-    expect(planAllowsScripting(BILLING_PLANS.lite)).toBe(false)
-    expect(planAllowsScripting(BILLING_PLANS.starter)).toBe(true)
-    expect(planAllowsScripting(BILLING_PLANS.growth)).toBe(true)
+  // 2026-09-26 老闆拍板「統一就都開放腳本功能」：開帳精靈的歡迎訊息是一條 follow 腳本，
+  // 免費／輕量擋掉的話精靈那一步就兌現不了（按採用＝403）
+  it('腳本：所有方案都開放（含免費、輕量）', () => {
+    for (const id of Object.keys(BILLING_PLANS) as (keyof typeof BILLING_PLANS)[]) {
+      expect(planAllowsScripting(BILLING_PLANS[id]), id).toBe(true)
+    }
   })
 
   it('群發：免費完全不能發；輕量可全體推播但不能分眾；成長才有分眾', () => {

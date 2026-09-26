@@ -38,9 +38,9 @@
         <el-table-column label="AI 知識量" min-width="82">
           <template #default="{ row }">{{ row.knowledgeChunks == null ? '不限' : `${row.knowledgeChunks.toLocaleString()} 條` }}</template>
         </el-table-column>
-        <el-table-column label="流程" width="54" align="center">
-          <template #default="{ row }"><span :class="row.scripting ? 'pu-yes' : 'pu-no'">{{ row.scripting ? '✓' : '—' }}</span></template>
-        </el-table-column>
+        <!-- ⛔ 2026-09-26「流程」欄拿掉：老闆拍板**所有方案都開放腳本／流程**（plans.ts `scripting` 全為 true），
+             那一欄只剩一整排 ✓＝沒有在比較任何東西；拿掉後也正好跟官網方案卡列的欄位一致。
+             ⚠️ 之後若重新分級，欄位要跟官網定價區**一起**加回來（上面「AI 知識量」那段同一條規矩）。 -->
         <el-table-column label="API" width="52" align="center">
           <template #default="{ row }"><span :class="row.api ? 'pu-yes' : 'pu-no'">{{ row.api ? '✓' : '—' }}</span></template>
         </el-table-column>

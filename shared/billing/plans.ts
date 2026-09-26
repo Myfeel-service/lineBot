@@ -70,7 +70,14 @@ export interface BillingPlan {
   reports: ReportTier
   /** 群發 / 分眾行銷等級。 */
   broadcast: BroadcastTier
-  /** 腳本 / 流程自動化。 */
+  /**
+   * 腳本 / 流程自動化。
+   * ⚠️ 2026-09-26 老闆拍板「**統一就都開放腳本功能**」：**所有方案都是 true**。
+   *    起因＝開帳精靈的「加好友歡迎訊息」存成一條 follow 腳本，免費／輕量按「採用」會被
+   *    `assertPlanAllows(planAllowsScripting)` 擋成 403——精靈承諾的東西兌現不了。
+   *    欄位與閘門留著（之後若要重新收費分級，只改這裡的值），⛔ 但不要只把免費改回 false
+   *    而不回頭看精靈：那一步會再次壞掉。
+   */
   scripting: boolean
   /** API 串接。 */
   api: boolean
@@ -140,7 +147,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     knowledgeChunks: 50,
     reports: 'basic',
     broadcast: 'none',
-    scripting: false,
+    scripting: true,
     api: false,
     custom: false,
   },
@@ -154,7 +161,7 @@ export const BILLING_PLANS: Record<BillingPlanId, BillingPlan> = {
     knowledgeChunks: 200,
     reports: 'basic',
     broadcast: 'basic',
-    scripting: false,
+    scripting: true,
     api: false,
     custom: false,
   },
