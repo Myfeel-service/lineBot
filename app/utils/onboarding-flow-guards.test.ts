@@ -273,18 +273,30 @@ describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被�
     expect(walk.match(/carousel:/g)?.length, '教學圖只留在第二步').toBe(1)
   })
 
-  it('見證時刻是一張兩步驟卡，收到訊息時打勾而不是把卡換掉', () => {
-    // 踩到會怎樣：①②寫在泡泡、①要用的 QR 在下一張卡、②的狀態在再下一張卡——
-    // 讀者得自己連線。而後端**只認真的訊息**（加好友寫的是 traceOnly 的 customer_action），
-    // 所以「加好友還不算」這句一定要在第②步旁邊。
+  it('見證時刻＝手機加好友、電腦按「是我」（`C-250`③，示意頁 v80）', () => {
+    // v76 叫他照打一串綁定碼——打代碼是這一步最難的地方。現在手機只做一件事（加好友），
+    // 加好友那一下就算測通；電腦上秀出他的 LINE 名稱，按「是我」才綁。
     const step = fnBody('async function stepFirstMessageWait', 'async function redoKeyFlow')
     expect(step, '見證卡不見了').toContain("kind: 'witness'")
-    expect(step, '收到訊息要打勾（不是把卡換成強調卡）').toContain("setWait('ok'")
-    expect(step, '強調卡要另外接在後面').toContain("kind: 'highlight'")
-    expect(step, '訊息是自己飄進來的，要自己宣告新的一輪').toContain('startTurn()')
-    // 卡住那張清單的第一條＝唯一一條跟設定無關、而且最可能的那條
-    expect(step, '卡住清單要有「只加了好友」那條').toContain('只加了好友')
+    expect(step, '收到要打勾（卡片收在打勾上）').toContain("setWait('ok'")
+    expect(step, '加好友是自己飄進來的，要自己宣告新的一輪').toContain('startTurn()')
+    expect(step, '輪詢的是「這段時間新加好友的人」').toContain('pollNewFollower(since, rejected)')
+    // 🔴 安全閘：⛔ 不可以「第一個進來的就當成他」——一定要問、一定要秀名字
+    expect(step).toContain('是你嗎？')
+    expect(step).toContain("{ label: '是我', value: 'yes', primary: true }")
+    expect(step).toContain("{ label: '不是我', value: 'no', escape: true }")
+    expect(step, '按了「是我」才綁').toContain("'/api/admin/onboarding/bind-self'")
+    expect(step, '不是我＝排除這一位、繼續等').toContain('rejected.push(who)')
+    // 卡住那張清單的第一條＝唯一一條跟設定無關、而且最可能的那條（加好友算數之後換成「早就是好友」）
+    expect(step, '卡住清單的第一條').toContain('早就是好友')
     expect(step, '清單是五條').toContain("summary: '照這五條檢查'")
+    expect(step, '⛔ 不再叫他「加好友還不算，要傳一句話」').not.toContain('加好友不算')
+  })
+
+  it('⛔ 「早上的摘要會傳到這支手機」只在真的加進通知名單時講', () => {
+    const done = fnBody('async function stepDone', 'function nextFestival')
+    expect(done).toContain("phoneNotified ? '你的手機收到了，早上的摘要也會傳到這支手機' : '用手機測試'")
+    expect(done).toContain("phoneNotified ? '&notify=1' : ''")
   })
 
   it('一輪的第一則要記下來（頁面靠它把第一句貼到頂）', () => {

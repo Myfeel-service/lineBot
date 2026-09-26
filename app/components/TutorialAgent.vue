@@ -1383,10 +1383,12 @@ async function startLandingTour(kind: string) {
   //    從 `capabilities` 找永遠是 undefined＝第 1 步永遠被拿掉（實走抓到的）
   const received = onboardingSteps.value.find(s => s.id === 'firstMessageReceived')?.done === true
   const hasRow = received && !!(await waitForElement('.conv-list-row .split-list-item', 4000))
-  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value })
+  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value, phoneNotified: landingNotify })
   await startAdHocTour(steps)
 }
 const { markSeen: markTourSeen } = useTourSeen()
+/** 落地那一刻網址上帶的「手機已加進通知名單」（讀到就從網址拿掉） */
+let landingNotify = false
 
 onMounted(async () => {
   // ⚠️ `?from=` 要在第一個 await 之前讀、立刻拿掉（重新整理不重跑）；測試對話頁自己在 setup 就讀過了
@@ -1394,7 +1396,9 @@ onMounted(async () => {
   const wantLanding = (landingFrom === LANDING_FROM_BUILD && route.path.endsWith('/ai-playground'))
     || (landingFrom === LANDING_FROM_LINE && route.path.endsWith('/conversations'))
   if (wantLanding) {
-    const { from: _from, ...restQuery } = route.query
+    // `notify=1`＝精靈裡按了「是我」、手機真的加進通知名單了（`C-250`③）
+    landingNotify = String(route.query.notify ?? '') === '1'
+    const { from: _from, notify: _notify, ...restQuery } = route.query
     void router.replace({ query: restQuery })
     // 🔴 落地這一頁**當場**記成看過（`D-101` 問題 5：一路被導覽追著跑）——
     //    ⛔ 不可以等落地導覽開跑之後才記：那一頁「第一次進來自動跑」的導覽 0.9 秒後就做決定，

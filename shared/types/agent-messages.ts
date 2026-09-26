@@ -101,6 +101,9 @@ export type AgentMsg =
     basicId?: string
     addFriendUrl?: string
     qrDataUrl?: string
+    /** 官方帳號在 LINE 上的名稱與頭像（`C-250`③：用他待會在手機上看到的樣子講「加哪一個」） */
+    oaName?: string
+    oaPictureUrl?: string
     waitState: 'pending' | 'ok' | 'skipped'
     waitText: string
   }

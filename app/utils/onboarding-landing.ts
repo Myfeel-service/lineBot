@@ -155,7 +155,14 @@ export function landingTourSteps(
  * ⛔ 「你的手機也會同時收到通知」「每天早上的摘要會傳到你的手機」**這一批不講**：
  *    那要他的 LINE 在通知名單裡，而接 LINE 這一趟還不會把他加進去（`C-250` 第三批才做）。
  */
-export function liveTourSteps(opts: { received: boolean, triedPlayground: boolean, /** 等你看過的知識卡張數（`C-250`③） */ draftCards?: number }): TutorialStep[] {
+export function liveTourSteps(opts: {
+  received: boolean
+  triedPlayground: boolean
+  /** 等你看過的知識卡張數（`C-250`③） */
+  draftCards?: number
+  /** 這支手機真的加進通知名單了（按了「是我」、名單沒滿）——⛔ 只有這個是真的才講「手機會收到通知」 */
+  phoneNotified?: boolean
+}): TutorialStep[] {
   const steps: TutorialStep[] = []
   if (opts.received) {
     steps.push({
@@ -174,7 +181,9 @@ export function liveTourSteps(opts: { received: boolean, triedPlayground: boolea
   steps.push({
     target: '[data-tour="conv-tabs"]',
     title: '先看「待真人」這一格',
-    description: 'AI 答不出來、客人說要找真人的，會排在這裡。',
+    description: opts.phoneNotified
+      ? 'AI 答不出來、客人說要找真人的，會排在這裡——<strong>你的手機也會同時收到通知</strong>。'
+      : 'AI 答不出來、客人說要找真人的，會排在這裡。',
     placement: 'right',
   })
   steps.push({
@@ -188,13 +197,13 @@ export function liveTourSteps(opts: { received: boolean, triedPlayground: boolea
 }
 
 /** 「上線之後」最後一步：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話） */
-function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number }): string {
+function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number, phoneNotified?: boolean }): string {
   const todo: string[] = []
   if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 張知識卡</strong>，客人問價格、細節它才答得出來`)
   if (!opts.triedPlayground) todo.push('去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人')
   return todo.length
     ? `還差 ${todo.length} 件：${todo.join('；')}。`
-    : '哪裡怪怪的、下一步做什麼，它會<strong>主動說</strong>。'
+    : `哪裡怪怪的、下一步做什麼，它會<strong>主動說</strong>。${opts.phoneNotified ? '每天早上的摘要也會傳到你的手機。' : ''}`
 }
 
 /** 「上線之後」會跑幾步（結尾那顆鈕寫的步數要跟導覽計數同一個數字） */

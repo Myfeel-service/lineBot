@@ -116,11 +116,17 @@ interface LineStatus {
   publicBaseUrl: string
 }
 
-interface FirstMessageRes {
-  received: boolean
-  text?: string
-  messageType?: string
-  at?: string
+/**
+ * 這段時間內新加好友（或早就是好友、剛傳訊息）的那一位（`C-250`③，`GET /api/admin/onboarding/new-follower`）。
+ * ⚠️ 取代原本只認「真的訊息」的 first-message：加好友那一下就算測通。
+ */
+interface NewFollowerRes {
+  found: boolean
+  lineUserId?: string
+  displayName?: string
+  pictureUrl?: string
+  via?: 'follow' | 'message'
+  at?: number
 }
 
 /** 按鈕題的出口「都不是，我自己講」的值（⛔ 不可以跟任何選項同名） */
@@ -145,16 +151,6 @@ const SITE_JOB_MAX_WAIT_MS = 20_000
 
 /** Webhook 驗不過、訊息又看不出病因時的通用建議（只寫這一份，之前三處各一版已經漂掉） */
 const WEBHOOK_COMMON_CAUSES = '最常見是網址還沒按「儲存」，或「回應設定」那頁的 <b>Webhook</b> 開關沒打開'
-
-/** 第一則訊息的型別 → 白話標籤；對不上的型別一律只說「收到」，不猜內容（寧可講少，不能講錯） */
-const FIRST_MSG_TYPE_LABELS: Record<string, string> = {
-  sticker: '貼圖',
-  image: '圖片',
-  video: '影片',
-  audio: '語音',
-  file: '檔案',
-  location: '位置',
-}
 
 export function useOnboardingChat() {
   // 這個精靈自己管 workspaceId：建立流程一開始還沒有、續走模式來自 ?workspaceId=，
@@ -196,7 +192,14 @@ export function useOnboardingChat() {
    * 「要加哪個帳號」查到的東西（見證卡的第①步要用）。
    * 快取住：傳話測試可以從成績單再進來一次，那時要的是同一份資料畫到新的卡上，不是再問一次 LINE。
    */
-  let oaInvite: { basicId: string, addFriendUrl: string, qrDataUrl?: string } | null = null
+  let oaInvite: { basicId: string, addFriendUrl: string, qrDataUrl?: string, displayName?: string, pictureUrl?: string } | null = null
+  /**
+   * 這一趟有沒有把他的手機加進通知名單（按了「是我」、而且名單沒滿，`C-250`③）。
+   * ⛔ 成績單與「上線之後」導覽**只有這個是真的才講**「早上的摘要、客人找真人會傳到這支手機」。
+   */
+  let phoneNotified = false
+  /** 這一趟見證到的是加好友還是傳訊息（成績單那一刻判斷他那一場在不在「客服對話」清單上） */
+  let phoneTestVia: 'follow' | 'message' | null = null
 
   // 「跳過記憶」已整組拆除（2026-08-20）：它跟「開通沒做完每次進後台都拉回」的拍板
   // 直接打架——系統一邊說你有事沒做完把人拉進來，一邊又用舊記憶把人快轉到完成頁。
@@ -1386,19 +1389,23 @@ export function useOnboardingChat() {
     //    ①②③ 的解法不是把字寫長，是把它們**拆成兩步、每一步旁邊放那一步要用的東西**（見證卡）。
     // ⛔ 這裡也不再說「連線成功了 🎉」：上一則就是那張 ✔「接上了，LINE 那邊確認收得到」，
     //    同一件事講兩次。🎉 併進這一句，慶祝與交棒一次講完。
-    await say('太好了 🎉 <b>最後一步</b>：拿起你的<b>手機</b>，照下面兩步做。')
+    // 🔴 `C-250`③（示意頁 v79）：一句話給**理由**——用你自己的手機當第一位客人
+    //    （v78 砍成「只剩最後一步。」砍過頭：第一次看的人卡在「為什麼要加我自己的帳號？」）
+    await say('最後一步：用<b>你自己的手機</b>當第一位客人，看看客人加你好友時會收到什麼。')
     /**
-     * 第②步的狀態（就是以前那張獨立的等待卡）。
+     * 等待的狀態（卡片上那一行）。
      * ⚠️ 用一個變數存著、每次重畫整張卡——`updateMsg` 是整則覆蓋，
      *    不這樣做的話「補上帳號代號」會把已經變成 ✓ 的狀態洗回 pending。
      */
-    let wait: { state: 'pending' | 'ok' | 'skipped', text: string } = { state: 'pending', text: '等你傳過來…' }
+    let wait: { state: 'pending' | 'ok' | 'skipped', text: string } = { state: 'pending', text: '等你加好友…' }
     const waitId = card({ kind: 'witness', waitState: wait.state, waitText: wait.text })
     const renderWitness = () => updateMsg(waitId, {
       kind: 'witness',
       basicId: oaInvite?.basicId,
       addFriendUrl: oaInvite?.addFriendUrl,
       qrDataUrl: oaInvite?.qrDataUrl,
+      oaName: oaInvite?.displayName,
+      oaPictureUrl: oaInvite?.pictureUrl,
       waitState: wait.state,
       waitText: wait.text,
     })
@@ -1408,9 +1415,13 @@ export function useOnboardingChat() {
     }
 
     // 輪詢整段等待只開這一支：排障選單開著、驗 Webhook 期間都照樣在聽，
-    // 訊息一到下一輪 race 就接走——「我在這裡等」必須是真的。
+    // 加好友一到下一輪 race 就接走——「我在這裡等」必須是真的。
     // （之前排障選單一開輪詢就全停，訊息真的來了還在對人喊「還沒等到」）
-    const poll = pollFirstMessage()
+    // ⚠️ 起點往前抓 2 分鐘：他常常在看教學的時候就先加好友了（⛔ 但不能太寬：伺服器最多只認一小時內）
+    const since = Date.now() - 2 * 60 * 1000
+    /** 他按過「不是我」的那幾位 */
+    const rejected: string[] = []
+    let poll = pollNewFollower(since, rejected)
 
     // 「加好友」要說得出**加哪一個**：剛開通的帳號零好友，只講一句「加你的官方帳號」
     // 等於沒講。查不到就只少 QR 與代號那一塊，兩步照樣讀得懂（見證卡自己有 fallback）。
@@ -1420,7 +1431,7 @@ export function useOnboardingChat() {
     // 輪詢也還沒開始——人已經照做傳了訊息，畫面卻毫無反應；請求一直不回來的話，
     // 輪詢根本不會開始。所以：先畫卡、先開始等，代號自己晚點補上來。
     void loadOaInvite().then(() => { if (!isDisposed()) renderWitness() }).catch(() => {})
-    const polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
+    let polled = poll.promise.then(r => ({ kind: 'received' as const, r }))
 
     // 等太久不能只讓人乾等——時間到主動講常見原因、給檢查的出口（只提醒一次，計時器記得清）
     let hintTimer: ReturnType<typeof setTimeout> | undefined
@@ -1460,7 +1471,8 @@ export function useOnboardingChat() {
     ]
     let askOptions = waitOptions
 
-    let received: FirstMessageRes | null = null
+    /** 按了「是我」、伺服器也驗過的那一位 */
+    let received: NewFollowerRes | null = null
     while (true) {
       // 使用者的回答另存一份：race 被計時器搶贏的那一刻人可能剛好按了按鈕，
       // 只看 race 結果會把人家剛說的話整個無視掉。
@@ -1472,7 +1484,7 @@ export function useOnboardingChat() {
       // 下一行的 isDisposed() 檢查會直接 break——別讓它變成 unhandled rejection
       void asked.then((r) => { answered = r }).catch(() => {})
 
-      const arms: Promise<{ kind: 'received', r: FirstMessageRes | null } | { kind: 'answered' } | { kind: 'stalled' }>[] = [
+      const arms: Promise<{ kind: 'received', r: NewFollowerRes | null } | { kind: 'answered' } | { kind: 'stalled' }>[] = [
         polled,
         asked.then(() => ({ kind: 'answered' as const }), () => ({ kind: 'answered' as const })),
       ]
@@ -1483,10 +1495,64 @@ export function useOnboardingChat() {
       if (isDisposed())
         break
 
-      if (winner.kind === 'received') {
+      if (winner.kind === 'received' && winner.r?.lineUserId) {
         settle({ type: 'cancelled' }) // 收掉待答按鈕
-        received = winner.r
-        break
+        const r = winner.r
+        const who = r.lineUserId!
+        setWait('ok', '收到了')
+        // 加好友是自己飄進來的、不是他按了什麼，所以要自己宣告新的一輪（畫面停在這一句）
+        startTurn()
+        /**
+         * 🔴 安全閘：秀頭像＋名字讓他認，⛔ 不自動當成他——等待期間剛好有**客人**加好友的話，
+         *    綁錯人＝客人收到我們的內部通知。
+         * ⭐ 「早上的摘要、客人找真人」對剛上線的人是沒見過的名詞 → 講**會發生在他身上的事**＋一個例子
+         *    （範例本身就是定義，示意頁 v79）。
+         */
+        const av = r.pictureUrl
+          ? `<img class="agm-who__av" src="${escapeHtml(r.pictureUrl)}" alt="">`
+          : '<span class="agm-who__av"></span>'
+        await say(`<span class="agm-who">${av}<b>${escapeHtml(r.displayName || '有一位')}</b></span> 剛剛${r.via === 'message' ? '傳了一句話' : '加了好友'}——是你嗎？`
+          + '<br>是的話，之後<b>有客人要找你本人</b>、還有<b>每天早上的摘要</b>（例如「昨天 5 位客人、2 件待處理」），都會用 LINE 傳到這支手機。')
+        const c = await askChoices([
+          { label: '不是我', value: 'no', escape: true },
+          { label: '是我', value: 'yes', primary: true },
+        ])
+        const restart = () => {
+          poll = pollNewFollower(since, rejected)
+          polled = poll.promise.then(x => ({ kind: 'received' as const, r: x }))
+        }
+        if (c !== 'yes') {
+          rejected.push(who)
+          setWait('pending', '等你加好友…')
+          await say('好，那不是你——我繼續等。')
+          restart()
+          continue
+        }
+        busy.value = true
+        try {
+          const b = await apiFetch<{ notify: 'added' | 'already' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
+            method: 'POST',
+            body: { lineUserId: who, since },
+          })
+          phoneNotified = b.notify === 'added' || b.notify === 'already'
+          phoneTestVia = r.via ?? 'follow'
+          received = r
+          if (b.notify === 'full')
+            await say('通知名單已經滿了（最多 10 位），這支手機這次沒有加進去——到「AI 設定 › 轉真人通知」調整。')
+          break
+        }
+        catch (e: unknown) {
+          // ⛔ 綁不上要講為什麼、下一步是什麼，然後繼續等（伺服器驗不過＝不是這段時間新進來的那一位）
+          const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage || '剛剛沒有綁成功'
+          await say(`${escapeHtml(msg)}。`)
+          rejected.push(who)
+          setWait('pending', '等你加好友…')
+          restart()
+          continue
+        }
+        finally {
+          busy.value = false
+        }
       }
 
       if (winner.kind === 'stalled') {
@@ -1501,15 +1567,15 @@ export function useOnboardingChat() {
           // 可以一條一條對著檢查。
           // ⚠️ 2026-09-11 不再寫「這四種…我**全部**幫你看一遍」：驗 Webhook 查不到第①條
           //    （只加好友沒傳訊息）也查不到第④條（加到別的帳號），原本那句本來就多講了。
-          await say('還沒等到訊息——最常見的是這五種。<b>第一條先自己看一眼</b>，設定那幾條按下面「幫我再驗一次」我幫你查。這段時間我也還在聽，訊息一進來就會告訴你。')
+          await say('還沒等到——最常見的是這五種。<b>第一條先自己看一眼</b>，設定那幾條按下面「幫我再驗一次」我幫你查。這段時間我也還在聽，一進來就會告訴你。')
           card({
             kind: 'help',
             summary: '照這五條檢查',
             steps: [
-              // ⛔ 2026-09-11 補上第一條：這是**唯一一條跟設定無關的**，而且最可能——
-              //    後端只認真的訊息（加好友寫的是 traceOnly 的 customer_action）。
+              // ⛔ 第一條仍然是**唯一跟設定無關、而且最可能**的那一條——只是換了內容（`C-250`③）：
+              //    加好友就算數之後，卡住的變成「早就是好友、加不了第二次」的人。
               //    ⚠️ 排在最前面：卡住的人不該先被送去重查四項其實沒壞的設定。
-              { text: '只加了好友，<b>還沒真的傳訊息</b>（加好友不算）' },
+              { text: '<b>早就是好友</b>的話，加好友不會再通知我們——<b>傳一句話給它</b>' },
               { text: '網址貼進「Webhook網址」了，但還沒按「<b>儲存</b>」' },
               { text: '「回應設定」那一頁的 <b>Webhook</b> 開關沒打開' },
               { text: '手機加好友加到別的帳號了' },
@@ -1545,7 +1611,7 @@ export function useOnboardingChat() {
         hintPending = false
         const res = await verifyAndAdvise(webhookUrl, line)
         if (res === 'ok')
-          await say('這條線是通的——再用手機傳一句話試試，我繼續等。')
+          await say('這條線是通的——再用手機加一次好友、或傳一句話，我繼續等。')
         askOptions = stallOptions
         continue
       }
@@ -1568,32 +1634,20 @@ export function useOnboardingChat() {
       return
 
     if (received) {
-      const at = received.at ? new Date(received.at) : null
-      const timeLabel = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : ''
-      const typeLabel = FIRST_MSG_TYPE_LABELS[received.messageType || '']
-      // 三分法：有原文引原文；認得的非文字型別講型別；其他（客人只點了選單、
-      // 原文被最近 10 則洗掉…）只說「收到」——這張卡是開通的情感高點，寧可講少，不能講錯
-      const title = received.messageType === 'text' && received.text
-        ? `「${received.text}」`
-        : typeLabel ? `（${typeLabel}訊息）` : '（收到你的訊息）'
-      // ⚠️ 見證卡**不換成強調卡**（2026-09-11 併卡後改的）：第②步要收在打勾上，
-      //    整張卡才有始有終——換掉的話那一步只剩「打你好就可以」，看起來像還沒做完。
-      //    引用原文那張強調卡改成接在它後面。
-      setWait('ok', '收到了')
-      // 訊息是自己飄進來的、不是使用者按了什麼，所以要自己宣告新的一輪，
-      // 畫面才會停在「收到第一則訊息」那張卡、而不是繼續釘在上一輪的第一句
-      startTurn()
-      card({
-        kind: 'highlight',
-        label: '收到第一則訊息',
-        title,
-        meta: timeLabel ? `${timeLabel} · 來自你的 LINE` : '來自你的 LINE',
-      })
-      await say('收到了！你的 MiniMe 正式活起來了 🎉 之後客人傳的每一句話，都會出現在 <b>MiniMe 後台</b>的「對話」頁。')
+      /**
+       * ⭐ 加好友那一條：有自己歡迎訊息的人，**他手機上剛剛收到的就是客人會收到的那一則**——
+       *    順手請他數一下幾則：兩則＝LINE 內建那則沒關（那個開關我們讀不到，只有他看得到）。
+       * ⛔ 傳訊息那一條不講這句：早就是好友的人不會再收到歡迎訊息，講了他會去找一則不存在的訊息。
+       * 🔴 v79：「應該只有一則」要講——只講「收到兩則的話」，他不知道自己該數到幾。
+       */
+      const countHint = received.via === 'follow' && await hasActiveFollowWelcome()
+        ? '<br>你手機剛收到的<b>歡迎訊息</b>，就是客人加好友會看到的那一則——<b>應該只有一則</b>。收到兩則的話，回官方帳號後台把「加入好友的歡迎訊息」關掉。'
+        : ''
+      await say(`好了 ✓ 你的 MiniMe 正式活起來了 🎉${countHint}`)
       setup.firstMessageReceived = 'done'
     }
     else {
-      setWait('skipped', '略過測試——之後隨時可以加好友傳一句話試試')
+      setWait('skipped', '略過測試——之後加好友試試就好')
     }
     progress.value = LINE_STEP.testMessage
   }
@@ -1959,22 +2013,27 @@ export function useOnboardingChat() {
     if (oaInvite)
       return
     try {
-      const r = await apiFetch<{ basicId: string, addFriendUrl: string, qrDataUrl: string }>(
+      const r = await apiFetch<{ basicId: string, addFriendUrl: string, qrDataUrl: string, displayName?: string, pictureUrl?: string }>(
         '/api/admin/onboarding/oa-invite',
       )
       if (r?.basicId)
-        oaInvite = { basicId: r.basicId, addFriendUrl: r.addFriendUrl, qrDataUrl: r.qrDataUrl }
+        oaInvite = { basicId: r.basicId, addFriendUrl: r.addFriendUrl, qrDataUrl: r.qrDataUrl, displayName: r.displayName, pictureUrl: r.pictureUrl }
     }
     catch {
       // 拿不到就算了：這是加分項，不該讓它擋住見證時刻
     }
   }
 
-  /** 等第一則訊息：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退） */
-  function pollFirstMessage() {
-    return pollUntil<FirstMessageRes>(async () => {
-      const r = await apiFetch<FirstMessageRes>('/api/admin/onboarding/first-message')
-      return r.received ? r : null
+  /**
+   * 等他手機加好友：runner 的換代輪詢（背景分頁不打、單次失敗不打斷、stop／dispose 即退）。
+   * `exclude`＝他按過「不是我」的那幾位（⛔ 不要一直問同一個人）。
+   */
+  function pollNewFollower(sinceMs: number, exclude: string[]) {
+    return pollUntil<NewFollowerRes>(async () => {
+      const r = await apiFetch<NewFollowerRes>(
+        `/api/admin/onboarding/new-follower?since=${sinceMs}&exclude=${encodeURIComponent(exclude.join(','))}`,
+      )
+      return r.found ? r : null
     }, POLL_INTERVAL_MS)
   }
 
@@ -2027,9 +2086,10 @@ export function useOnboardingChat() {
         { label: 'LINE 官方帳號已接通', done: setup.lineConnected === 'done' },
         {
           // `C-250`②：跟進度格、小幫手英雄卡同一個說法（⛔ 不再一處叫「收到第一則訊息」、一處叫「用手機測試」）
-          label: '用手機測試',
+          // `C-250`③：真的加進通知名單了才講「早上的摘要也會傳到這支手機」（示意頁 v80 併成一行）
+          label: setup.firstMessageReceived === 'done' && phoneNotified ? '你的手機收到了，早上的摘要也會傳到這支手機' : '用手機測試',
           done: setup.firstMessageReceived === 'done',
-          note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友傳一句話試試',
+          note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友試試',
         },
         // 方案／額度／綁卡從「剛取完名字」搬來這裡（2026-09-02）：那一刻他只想知道
         // 下一步，計費資訊會讓人停下來想「我是不是要付錢」；擺在成績單上才是他
@@ -2046,9 +2106,22 @@ export function useOnboardingChat() {
     //    ⭐ 真正新的只有一件：**他手機剛剛那一下已經進到「客服對話」了**——去看那一下。
     //    7 步地圖留在小幫手「教學」清單，想看的人自己按。
     const received = setup.firstMessageReceived === 'done'
-    await say(received
+    /**
+     * ⚠️ 他那一場**在不在「客服對話」清單上**（`C-250`③）：清單只列有訊息的對話（依 lastMessageAt 排）。
+     *    只加好友、而且沒有自己的歡迎訊息＝那一場一則訊息都沒有、清單上看不到——
+     *    這時候說「你手機剛剛那一下已經進到客服對話了」＋「去看看（3 步）」就是假的。
+     *    這一趟有見證到的就照見證的方式判斷；續走回來的人（沒見證）看清單上有沒有任何一場。
+     */
+    const rowVisible = received && (phoneTestVia
+      ? phoneTestVia === 'message' || await hasActiveFollowWelcome()
+      : await apiFetch<{ conversations?: unknown[] }>('/api/conversations/list', { query: { limit: 1 } })
+        .then(r => (r.conversations?.length ?? 0) > 0)
+        .catch(() => false))
+    await say(rowVisible
       ? '上線了 🎉 你手機剛剛那一下，已經進到「<b>客服對話</b>」了——去看一眼，之後客人的訊息也在那裡回。'
-      : '上線了 🎉 還沒用手機測試也沒關係，之後加好友傳一句話試試就好。')
+      : received
+        ? '上線了 🎉 你的手機收到了——之後客人的訊息都在「<b>客服對話</b>」回。'
+        : '上線了 🎉 還沒用手機測試也沒關係，之後加好友傳一句話試試就好。')
     // 2026-08-28 拍板（**翻掉 08-19「結尾連指路都不要」**）：當時擋的是「催人開 AI，
     // 但那時知識庫是空的、只會答不出來」——介紹後台地圖不踩那個雷。剛做完一件事、
     // 下一步是空白，是整段旅程裡唯一「介紹不會打斷任何事」的時機。
@@ -2075,7 +2148,7 @@ export function useOnboardingChat() {
         options.push(
           // ⚠️ 步數照實講：沒用手機測試的人第 1 步（「你剛剛那一下」）會被拿掉，只剩 2 步
           //    （⛔ 鈕上寫「3 步」、導覽卻從「1 / 2」開始＝按鈕與計數各講一個數字）
-          { label: received ? `去看看（${liveTourStepCount(true)} 步）` : `帶我看一下（${liveTourStepCount(false)} 步）`, value: 'tour', primary: true },
+          { label: rowVisible ? `去看看（${liveTourStepCount(true)} 步）` : `帶我看一下（${liveTourStepCount(false)} 步）`, value: 'tour', primary: true },
           // 2026-09-02 老闆拍板**翻掉 08-28**：那顆「去看剛剛那則對話／開始設定」拿掉了，
           // 第一次進來一定要看導覽。08-28 留它的理由是「唯一不看導覽直接進去的出口」，
           // 現在改成**由導覽自己把人送到那則對話**（OVERVIEW 最後一步），所以那顆的
@@ -2112,7 +2185,8 @@ export function useOnboardingChat() {
       if (c === 'tour') {
         // 導覽本體要高亮側欄、小幫手這些**後台版型裡的真實元素**，開通頁是 layout:false 沒有它們。
         // 所以先落在「客服對話」、帶 ?from= 進去，由 TutorialAgent 掛載後接手開跑（`utils/onboarding-landing.ts`）。
-        await navigateTo(`${onboardingLandingPath(wid.value)}?from=${LANDING_FROM_LINE}`)
+        // `notify=1`＝這支手機真的加進通知名單了：「上線之後」才講「你的手機也會同時收到通知」
+        await navigateTo(`${onboardingLandingPath(wid.value)}?from=${LANDING_FROM_LINE}${phoneNotified ? '&notify=1' : ''}`)
         return
       }
       // 落地在「對話」頁不落統計頁：新帳號 KPI 全 0，剛見證完第一則訊息就接冷場；

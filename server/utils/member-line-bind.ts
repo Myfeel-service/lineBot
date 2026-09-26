@@ -197,6 +197,93 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
   if (lineUserId) await removeFromHandoffNotify(workspaceId, lineUserId)
 }
 
+/** 通知名單最多幾位（跟 normalizeAiSettings 的 slice(0,10) 同一個數字；超過會被靜靜切掉，所以這裡先擋） */
+export const HANDOFF_NOTIFY_MAX = 10
+
+export type AddToNotifyResult = 'added' | 'already' | 'full' | 'failed'
+
+/**
+ * 把某個 lineUserId 加進 aiSettings.handoffNotify 名單（`C-250`③：開帳按「是我」的那支手機）。
+ *
+ * ⭐ 為什麼要有：綁定手機原本**不會**加進通知名單（綁定成功的回覆還叫他自己去加）——
+ *    「客人要找你本人、早上的摘要會傳到這支手機」就只是一句沒人兌現的話。
+ * ⚠️ 名單原本是空的才順手把通知打開：那是還沒設定過的新帳號；名單有人但關著＝他刻意關的，⛔ 不替他打開。
+ * ⛔ 滿了就回 `full`、不擠掉別人（畫面要照實講「名單滿了」）。
+ * ⚠️ 只更新名單那兩三格（跟 removeFromHandoffNotify 同一個寫法）：⛔ 不走整份覆寫 AI 設定的那條路。
+ */
+export async function addToHandoffNotify(workspaceId: string, lineUserId: string, displayName: string): Promise<AddToNotifyResult> {
+  const id = String(lineUserId || '').trim()
+  if (!id) return 'failed'
+  try {
+    const db = getDb()
+    const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
+    const snap = await ref.get()
+    const raw = snap.exists ? snap.data()?.handoffNotify : undefined
+    const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
+    // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到
+    if (ids.some(v => v === id || v.endsWith(`_${id}`))) return 'already'
+    if (ids.length >= HANDOFF_NOTIFY_MAX) return 'full'
+    const displayNames = { ...(raw?.displayNames ?? {}), ...(displayName ? { [id]: displayName.slice(0, 40) } : {}) }
+    const patch: Record<string, unknown> = {
+      'handoffNotify.lineUserIds': [...ids, id],
+      'handoffNotify.displayNames': displayNames,
+    }
+    if (ids.length === 0 && raw?.enabled !== true) patch['handoffNotify.enabled'] = true
+    if (snap.exists) {
+      await ref.update(patch)
+    }
+    else {
+      // 還沒有 AI 設定文件（新帳號）：只寫名單這一格，其餘由 normalizeAiSettings 讀的時候補預設
+      await ref.set({ workspaceId, handoffNotify: { enabled: true, lineUserIds: [id], displayNames } }, { merge: true })
+    }
+    invalidateAiSettingsCache(workspaceId)
+    return 'added'
+  }
+  catch (e) {
+    console.error('[member-bind] add to handoffNotify failed:', e)
+    return 'failed'
+  }
+}
+
+/**
+ * 把一個 LINE 帳號綁到某位成員身上（跟綁定碼那條路同一套：同一個 LINE 不能掛兩位成員）。
+ * 回傳有沒有真的綁上（沒有成員文件的人——組織管理員、超級管理員——綁不了，但通知名單照樣可以加）。
+ */
+export async function bindMemberLineUser(
+  workspaceId: string,
+  uid: string,
+  profile: { lineUserId: string, displayName: string, pictureUrl: string },
+): Promise<boolean> {
+  const db = getDb()
+  const ref = db.collection('workspaceMembers').doc(memberDocId(uid, workspaceId))
+  const snap = await ref.get()
+  if (!snap.exists) return false
+  const others = await db.collection('workspaceMembers')
+    .where('workspaceId', '==', workspaceId)
+    .where('lineUserId', '==', profile.lineUserId)
+    .get()
+  const batch = db.batch()
+  batch.update(ref, {
+    lineUserId: profile.lineUserId,
+    lineDisplayName: profile.displayName || null,
+    linePictureUrl: profile.pictureUrl || null,
+    lineBoundAt: FieldValue.serverTimestamp(),
+    lineBindCode: FieldValue.delete(),
+    lineBindCodeExpiresAt: FieldValue.delete(),
+  })
+  for (const d of others.docs) {
+    if (d.id === ref.id) continue
+    batch.update(d.ref, {
+      lineUserId: FieldValue.delete(),
+      lineDisplayName: FieldValue.delete(),
+      linePictureUrl: FieldValue.delete(),
+      lineBoundAt: FieldValue.delete(),
+    })
+  }
+  await batch.commit()
+  return true
+}
+
 /** 從 aiSettings.handoffNotify 名單移掉某個 lineUserId（沒有就什麼都不做） */
 export async function removeFromHandoffNotify(workspaceId: string, lineUserId: string): Promise<void> {
   const id = String(lineUserId || '').trim()

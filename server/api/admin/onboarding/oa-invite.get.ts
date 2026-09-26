@@ -1,5 +1,5 @@
 import QRCode from 'qrcode'
-import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
+import { resolveLineOaProfile } from '~~/server/utils/line-oa-basic-id'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 
 /**
@@ -30,6 +30,12 @@ interface OaInviteResponse {
    *    不划算；PNG data URL 用一般的 <img> 就好。
    */
   qrDataUrl: string
+  /**
+   * 官方帳號在 LINE 上的名稱與頭像（`C-250`③）：見證卡用「他待會在手機上看到的樣子」講加哪一個，
+   * ⛔ 不用 MiniMe 這邊的店名（兩邊可能不一樣）。查不到為空字串。
+   */
+  displayName: string
+  pictureUrl: string
 }
 
 /**
@@ -54,13 +60,13 @@ export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 
-  const basicId = await resolveLineOaBasicId(wid)
+  const { basicId, displayName, pictureUrl } = await resolveLineOaProfile(wid)
   if (!basicId)
-    return { basicId: '', addFriendUrl: '', qrDataUrl: '' }
+    return { basicId: '', addFriendUrl: '', qrDataUrl: '', displayName, pictureUrl }
 
   const cached = inviteCache.get(basicId)
   if (cached)
-    return { basicId, ...cached }
+    return { basicId, ...cached, displayName, pictureUrl }
 
   const addFriendUrl = `https://line.me/R/ti/p/${encodeURIComponent(basicId)}`
 
@@ -85,5 +91,5 @@ export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
     inviteCache.set(basicId, { addFriendUrl, qrDataUrl })
   }
 
-  return { basicId, addFriendUrl, qrDataUrl }
+  return { basicId, addFriendUrl, qrDataUrl, displayName, pictureUrl }
 })

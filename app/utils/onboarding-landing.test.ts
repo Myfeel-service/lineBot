@@ -132,10 +132,16 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
     expect(none.description).not.toContain('還差')
   })
 
-  it('⛔ 不承諾手機會收到通知／早上的摘要（他還不在通知名單裡，`C-250` 第三批才加）', () => {
-    const text = [true, false].flatMap(r => liveTourSteps({ received: r, triedPlayground: false })).map(s => s.description).join('\n')
+  it('⛔ 沒加進通知名單就不承諾手機會收到通知／早上的摘要', () => {
+    const text = [true, false].flatMap(r => liveTourSteps({ received: r, triedPlayground: true })).map(s => s.description).join('\n')
     expect(text).not.toContain('手機也會')
     expect(text).not.toContain('早上的摘要')
+  })
+
+  it('⭐ 按了「是我」、真的加進通知名單了（`C-250`③）：才講手機會收到通知與早上的摘要', () => {
+    const steps = liveTourSteps({ received: true, triedPlayground: true, phoneNotified: true })
+    expect(steps[1]!.description).toContain('你的手機也會同時收到通知')
+    expect(steps.at(-1)!.description).toContain('每天早上的摘要也會傳到你的手機')
   })
 
   it('精靈結尾不再開 7 步地圖，改帶 ?from= 落在客服對話', () => {
@@ -235,7 +241,7 @@ describe('開跑的時機（`TutorialAgent`）', () => {
   it('兩個 ?from= 值各自只在自己那一頁開跑，讀到就從網址拿掉（重新整理不重跑）', () => {
     expect(agent).toContain("landingFrom === LANDING_FROM_BUILD && route.path.endsWith('/ai-playground')")
     expect(agent).toContain("landingFrom === LANDING_FROM_LINE && route.path.endsWith('/conversations')")
-    expect(agent).toContain('const { from: _from, ...restQuery } = route.query')
+    expect(agent).toContain('const { from: _from, notify: _notify, ...restQuery } = route.query')
     expect(LANDING_FROM_BUILD).not.toBe(LANDING_FROM_LINE)
   })
 

@@ -150,6 +150,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'memberInvite.delete': '收回了一張邀請',
   'member.lineBindCode': '產生了成員的 LINE 綁定碼',
   'member.lineUnbind': '解除了成員的 LINE 綁定',
+  // 開帳「用手機測試」按了「是我」（`C-250`③）：綁上自己的 LINE、加進通知名單
+  'member.lineBindSelf': '開通時用「是我」綁定了自己的 LINE，並加進通知名單',
 
   // 錢：取消續訂、換方案、作廢訂單
   'payment.cancelSubscription': '取消了自動續訂',
@@ -301,6 +303,10 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   itemsCount: '項目數',
   columnsCount: '卡片數',
   chunkIdsCount: '知識卡張數',
+  lineDisplayName: 'LINE 名稱',
+  via: '怎麼認出來的',
+  memberBound: '綁到成員身上',
+  notify: '通知名單',
   adoptedCount: '採用的張數',
   leftForQuotaCount: '額度滿了沒收的張數',
   dismissedCount: '刪掉的張數',

@@ -520,6 +520,46 @@
   &--skipped { color: var(--el-text-color-secondary); }
 }
 
+/* 「誰」的小名牌（`C-250`③）：頭像＋名字（＋官方帳號的 ID）。見證卡上是官方帳號，
+   「○○ 剛剛加了好友——是你嗎？」那一句裡是剛加好友的那位（html 字串裡直接用這幾個 class）。 */
+.agm-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 3px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 999px;
+  background: var(--el-fill-color-lighter);
+  vertical-align: middle;
+
+  &__av {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--el-fill-color-dark);
+    object-fit: cover;
+    flex: none;
+  }
+  &__id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    user-select: all;
+  }
+}
+
+/* 見證卡一步版（`C-250`③，示意頁 v78→v80）：只講「掃 QR 加好友」這一件事，外框與內距落在整張卡上 */
+.agm-witness--single {
+  padding: 14px 16px;
+
+  /* 等待狀態自己一行：⛔ 跟上面「正在用手機看這一頁？」那個連結擠在同一行，會讀成同一件事 */
+  .agm-witness__wait {
+    display: flex;
+    width: fit-content;
+    margin-top: 8px;
+  }
+}
+
 /* 見證時刻的兩步驟卡（2026-09-11，取代舊的 .agm-invite ＋ 一張獨立的等待狀態卡）。
    ⭐ 每一步旁邊就是**那一步要用的東西**：①＝QR 與帳號代號、②＝現在的狀態。
    ⚠️ 這張卡自己畫外框（不套 .agm-card）：它是兩段式的，內距要落在每一段上。 */
