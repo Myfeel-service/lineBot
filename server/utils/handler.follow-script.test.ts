@@ -127,7 +127,7 @@ function makeDb(opts: { withClaim?: boolean; userScriptCooldowns?: Record<string
           doc: vi.fn(() => ({
             get: vi.fn(async () => ({
               exists: true,
-              data: () => ({ isActive: true, moduleType: 'bot_flow', messages: [{ type: 'text', text: 'hi' }], name: '歡迎模組' }),
+              data: () => ({ workspaceId: WS, isActive: true, moduleType: 'bot_flow', messages: [{ type: 'text', text: 'hi' }], name: '歡迎模組' }),
             })),
           })),
         }

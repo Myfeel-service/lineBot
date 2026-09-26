@@ -73,7 +73,12 @@ export default defineEventHandler(async (event) => {
    *
    * ⭐ 這一筆刻意掛在**那個帳號自己的** workspaceId 上（不是平台層）：
    *    「平台給了你一筆折抵」是客戶有權知道、也該看得到的事。
+   * 🔴 2026-09-26（`C-267`，code review 抓到、老闆拍板「客戶只看到補了多少」）：
+   *    ⛔ 客戶看得到的這一筆**不帶原因**——原因是超管打給自己人看的（例如「客戶抱怨太多先安撫」），
+   *    原本原文照印在客戶的操作紀錄頁。原因另記一筆平台層的（跟作廢、折讓、退款同一個做法）。
    */
+  const verb = amount > 0 ? '給了' : '沖銷了'
+  const money = `NT$${Math.abs(amount).toLocaleString()}`
   await writeAuditLog({
     workspaceId,
     uid,
@@ -81,7 +86,18 @@ export default defineEventHandler(async (event) => {
     action: 'super.grantCredit',
     before: { amount: result.before },
     after: { amount: result.after },
-    note: `平台${amount > 0 ? '給了' : '沖銷了'} NT$${Math.abs(amount).toLocaleString()} 可折抵下期扣款的餘額（原因：${reason}）`,
+    note: `平台${verb} ${money} 可折抵下期扣款的餘額`,
+  }, db)
+  await writeAuditLog({
+    workspaceId: '',
+    scope: 'platform',
+    uid,
+    actor: 'human',
+    action: 'super.grantCredit',
+    targetId: workspaceId,
+    before: { amount: result.before },
+    after: { amount: result.after, reason },
+    note: `給帳號 ${workspaceId} ${verb} ${money} 可折抵下期扣款的餘額（原因：${reason}）`,
   }, db)
 
   return { ok: true, ...result }

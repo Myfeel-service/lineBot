@@ -107,7 +107,7 @@ beforeEach(() => { vi.clearAllMocks() })
 describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
   it('按到模組：記模組名稱（LINE 的 postback 不帶按鈕文字，模組名是我們拿得到最接近的東西）', async () => {
     const { db, writes } = makeDb({
-      flowsById: { 'mod-live': { name: '真人客服', isActive: true, messages: [], moduleType: 'bot_flow' } },
+      flowsById: { 'mod-live': { workspaceId: 'ws-ca1', name: '真人客服', isActive: true, messages: [], moduleType: 'bot_flow' } },
     })
     vi.mocked(getDb).mockReturnValue(db as any)
 
@@ -121,7 +121,7 @@ describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
 
   it('那一行的時間用 LINE 事件時間：否則會排到自己的回覆後面（客人先按、我們才回）', async () => {
     const { db, writes } = makeDb({
-      flowsById: { 'mod-ts': { name: '常見問題', isActive: true, messages: [], moduleType: 'bot_flow' } },
+      flowsById: { 'mod-ts': { workspaceId: 'ws-ca2', name: '常見問題', isActive: true, messages: [], moduleType: 'bot_flow' } },
     })
     vi.mocked(getDb).mockReturnValue(db as any)
 
@@ -141,6 +141,22 @@ describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
     // 帶 moduleId＝後台改得到的那種壞法，話要講不一樣（沒有規則命中是另一句）
     expect(actions[0]!.data.text).toBe('客人點了按鈕，但指向的內容已失效（沒有回覆送出）')
     expect(actions[0]!.data.payload).toMatchObject({ actionType: 'button_dead', moduleId: 'mod-dead' })
+  })
+
+  it('🔴 按鈕指到別的帳號的模組＝當作失效，⛔ 不把那一家的內容回給客人（`C-268`）', async () => {
+    const { replyMessage } = await import('./line')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { db, writes } = makeDb({
+      flowsById: { 'mod-other': { workspaceId: 'ws-OTHER', name: '別家的模組', isActive: true, messages: [{ type: 'text', text: '別家的內容' }], moduleType: 'bot_flow' } },
+    })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(postbackEvent('triggerModule=mod-other'), { workspaceId: 'ws-ca-x' })
+
+    expect(JSON.stringify(vi.mocked(replyMessage).mock.calls)).not.toContain('別家的內容')
+    expect(actionWrites(writes)[0]?.data.payload).toMatchObject({ actionType: 'button_dead', moduleId: 'mod-other' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('不屬於 ws-ca-x'))
+    warn.mockRestore()
   })
 
   it('連規則都沒命中：講「沒有對應的回覆內容」（跟模組失效不是同一種壞法，修法不同）', async () => {
@@ -175,7 +191,7 @@ describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
    */
   it('紀錄不可蓋掉對話文件的 lastMessage／lastMessageAt（列表摘要與未讀都靠它）', async () => {
     const { db, writes } = makeDb({
-      flowsById: { 'mod-keep': { name: '查訂單', isActive: true, messages: [], moduleType: 'bot_flow' } },
+      flowsById: { 'mod-keep': { workspaceId: 'ws-ca5', name: '查訂單', isActive: true, messages: [], moduleType: 'bot_flow' } },
     })
     vi.mocked(getDb).mockReturnValue(db as any)
 

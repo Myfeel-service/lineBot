@@ -106,7 +106,7 @@ function makeDb(opts: { failMessageWrite?: boolean } = {}) {
           doc: vi.fn(() => ({
             get: vi.fn(async () => ({
               exists: true,
-              data: () => ({ isActive: true, moduleType: 'bot_flow', messages: [{ type: 'text', text: 'hi' }] }),
+              data: () => ({ workspaceId: WS, isActive: true, moduleType: 'bot_flow', messages: [{ type: 'text', text: 'hi' }] }),
             })),
           })),
         }

@@ -78,7 +78,8 @@ export async function findNewFollower(
     db.collection('users').where('workspaceId', '==', workspaceId).orderBy('createdAt', 'desc').limit(5).get(),
     db.collection('users').where('workspaceId', '==', workspaceId).orderBy('lastFollowedAt', 'desc').limit(5).get()
       .catch((e: unknown) => {
-        console.warn('[phone-test] 查「重新加好友」失敗（多半是索引還沒部署），只看第一次加好友：', (e as Error)?.message)
+        // ⚠️ error 不是 warn（記憶 reference_firestore_index_deploy：唯讀路徑吞掉索引錯誤＝一整類東西靜靜消失）
+        console.error('[phone-test] 查「重新加好友」失敗（多半是索引還沒建好）＝封鎖後重加的人這一次偵測不到，只看第一次加好友：', (e as Error)?.message)
         return null
       }),
   ])

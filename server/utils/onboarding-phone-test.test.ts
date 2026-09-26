@@ -73,8 +73,8 @@ describe('封鎖後重加好友也算（code review：重加時 createdAt 不會
     expect(await confirmPhoneFollower('w', 'Uboss', Date.now() - 60_000, db)).toMatchObject({ via: 'follow' })
   })
 
-  it('⚠️ 新索引還沒部署（查詢丟錯）：第一次加好友那條照常', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  it('⚠️ 新索引還沒部署（查詢丟錯）：第一次加好友那條照常，而且講得出什麼看不到了', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { db } = makeDb({ 'w_Unew': { workspaceId: 'w', lineUserId: 'Unew', createdAt: ts(NOW - 5000) } })
     const orig = db.collection
     db.collection = (name: string) => {
@@ -85,7 +85,7 @@ describe('封鎖後重加好友也算（code review：重加時 createdAt 不會
         : c.orderBy(f) }) }
     }
     expect(await findNewFollower('w', NOW - 60_000, new Set(), db)).toMatchObject({ lineUserId: 'Unew' })
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('索引'), expect.any(String))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('封鎖後重加的人這一次偵測不到'), expect.any(String))
     warn.mockRestore()
   })
 })

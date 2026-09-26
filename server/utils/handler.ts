@@ -661,7 +661,7 @@ async function applyPendingClaims(
           )
         : Promise.resolve(null),
       action.type === 'module' && action.moduleId
-        ? getFlowByModuleId(action.moduleId)
+        ? getFlowByModuleId(action.moduleId, claimWorkspaceId)
         : Promise.resolve(null),
     ])
     const userAttributes = buildAttributeContext(userData)
@@ -819,17 +819,29 @@ async function dispatchPostReplyActions(
   }
 }
 
-async function getFlowByModuleId(moduleId: string): Promise<FlowDoc | null> {
+/**
+ * 照模組 id 拿模組（只回啟用中的）。
+ * 🔴 2026-09-26（`C-266`／`C-268`，code review）：**一定要帶是哪個帳號**，模組不屬於它＝當作不存在。
+ *    模組 id 來自按鈕 postback、圖文選單、活動、腳本節點——那些都是店家自己填得到的；
+ *    不比對的話，填別家的模組 id，他自己的客人就會收到別家的模組內容（推播還會推給他全部好友）。
+ *    ⚠️ 加這道之前唯讀盤點過 myfeel：95 個模組**全部都有 workspaceId**、6,919 處引用**0 處對不上帳號**，
+ *       所以這道檢查不會讓任何現有的模組對客人失效。
+ */
+async function getFlowByModuleId(moduleId: string, workspaceId: string): Promise<FlowDoc | null> {
   const id = String(moduleId || '').trim()
   if (!id) return null
   const cacheKey = `flow:${id}`
-  const cached = getCached(flowDocCache, cacheKey)
-  if (cached !== undefined) return cached
-
-  const db = getDb()
-  const snap = await db.collection('flows').doc(id).get()
-  const flow = (snap.exists && snap.data()?.isActive) ? (snap.data() as FlowDoc) : null
-  setCache(flowDocCache, cacheKey, flow)
+  let flow = getCached(flowDocCache, cacheKey)
+  if (flow === undefined) {
+    const db = getDb()
+    const snap = await db.collection('flows').doc(id).get()
+    flow = (snap.exists && snap.data()?.isActive) ? (snap.data() as FlowDoc) : null
+    setCache(flowDocCache, cacheKey, flow)
+  }
+  if (flow && flow.workspaceId !== workspaceId) {
+    console.warn(`[flow] 模組 ${id} 不屬於 ${workspaceId}（屬於 ${flow.workspaceId || '（沒有帳號）'}），當作不存在`)
+    return null
+  }
   return flow
 }
 
@@ -870,7 +882,7 @@ export async function warmWorkspaceAutomationCaches(workspaceId: string): Promis
       .map(n => (n as { moduleId: string }).moduleId)),
   )].slice(0, 30)
   await Promise.all(moduleIds.map(id =>
-    getFlowByModuleId(id)
+    getFlowByModuleId(id, workspaceId)
       .then(f => (f ? hydrateRichMessageRefs(f.messages as any[]) : null))
       .catch(() => null),
   ))
@@ -927,7 +939,7 @@ export async function pushSupportPresetActionToUser(
   }
 
   if (action.type === 'module') {
-    const flow = await getFlowByModuleId(action.moduleId)
+    const flow = await getFlowByModuleId(action.moduleId, workspaceId)
     if (!flow) {
       throw createError({ statusCode: 400, statusMessage: '找不到或已停用的機器人模組' })
     }
@@ -1901,17 +1913,10 @@ export async function renderModuleToLineMessages(
   },
 ): Promise<{ flow: FlowDoc; lineMessages: messagingApi.Message[]; hydratedMessages: any[] } | null> {
   const wid = requireWorkspaceId(options.workspaceId, 'renderModuleToLineMessages')
-  const flow = await getFlowByModuleId(moduleId)
+  // 🔴 `C-266`：推播按鈕的模組 id 店家自己填得到——歸屬由 getFlowByModuleId 比對，對不上＝當模組不存在
+  //    （呼叫端會講「模組已經不存在」，跟 `validate.post` 同一個判斷）
+  const flow = await getFlowByModuleId(moduleId, wid)
   if (!flow) return null
-  /**
-   * 🔴 2026-09-26（`C-266`，code review）：模組 id 來自推播按鈕的 postback，**店家自己填得到**——
-   *    不比對歸屬的話，填別的帳號的模組 id 就能把那一家的模組內容推出去（試發與正式發送都走這支）。
-   *    ⛔ 對不上就當模組不存在（呼叫端會講「模組已經不存在」，跟 `validate.post` 同一個判斷）。
-   */
-  if (flow.workspaceId !== wid) {
-    console.warn(`[renderModuleToLineMessages] 模組 ${moduleId} 不屬於 ${wid}（屬於 ${flow.workspaceId || '（沒有帳號）'}），當作不存在`)
-    return null
-  }
   const { channelSecret } = await getLineWorkspaceCredentials(wid)
   const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
   const lineMessages = buildLineMessages(
@@ -2493,7 +2498,7 @@ async function handleIncomingText(
     // Run user write and flow fetch in parallel; both are independent
     const [, flow] = await Promise.all([
       db.collection('users').doc(fsUserDocId).update(updates),
-      getFlowByModuleId(moduleId),
+      getFlowByModuleId(moduleId, wid),
     ])
     invalidateUserDocCache(fsUserDocId)
 
@@ -2878,7 +2883,7 @@ async function replyWithFlowModule(params: {
   // 回覆組裝期間先顯示「輸入中…」，訊息送達時動畫自動消失（fire-and-forget）
   showLoadingAnimation(lineUserId, wid, 10).catch(() => {})
 
-  const { flow, hydrated } = await (params.preloaded ?? getFlowByModuleId(moduleId)
+  const { flow, hydrated } = await (params.preloaded ?? getFlowByModuleId(moduleId, wid)
     .then(async f => (f ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) } : { flow: null, hydrated: [] as any[] }))
     .catch((e) => {
       console.error(`[module] ${logContext} flow load failed:`, e)
@@ -3440,7 +3445,7 @@ async function deliverHandoffReply(params: {
     // 先前傳的是 SYSTEM_MODULE_IDS.live_agent（'sys_live_agent'）——那是模組種類代號、
     // 不是文件 id，永遠查不到 → 店家在後台「真人客服」設的文案從來沒送出去過，
     // 客人一律收到下面那句寫死的預設值。
-    const liveAgentFlow = await getFlowByModuleId(systemModuleId(workspaceId, 'live_agent')).catch(() => null)
+    const liveAgentFlow = await getFlowByModuleId(systemModuleId(workspaceId, 'live_agent'), workspaceId).catch(() => null)
     if (liveAgentFlow) {
       const hydrated = await hydrateRichMessageRefs(liveAgentFlow.messages as any[])
       handoffMessages = buildLineMessages(hydrated, userAttributes, requestOrigin, lineUserId, channelSecret)
@@ -4118,7 +4123,7 @@ export async function handlePostbackEvent(
   // - credentials, session, user (always needed)
   // - module trigger: fetch flow then immediately chain hydrateRichMessageRefs
   const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> = trigger.moduleId
-    ? getFlowByModuleId(trigger.moduleId).then(async (f) =>
+    ? getFlowByModuleId(trigger.moduleId, workspaceId).then(async (f) =>
         f
           ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) }
           : { flow: null, hydrated: [] },
@@ -4234,7 +4239,7 @@ export async function handlePostbackEvent(
       addTagsToUser(lineUserFirestoreDocId(userId, workspaceId), trigger.tagIds, 'system', `postback:${moduleId}`, workspaceId)
         .catch(e => console.error('[tagging] module postback tagging failed:', e))
     }
-    const flow = preloadedFlow ?? await getFlowByModuleId(moduleId)
+    const flow = preloadedFlow ?? await getFlowByModuleId(moduleId, workspaceId)
 
     // 客人按了什麼：postback 不會存成訊息，這一行是對話上唯一的痕跡。
     // 名稱用模組名（LINE 的 postback 事件不帶按鈕文字，我們拿得到的最接近的東西就是它）。
