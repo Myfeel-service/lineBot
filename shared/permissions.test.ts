@@ -18,13 +18,21 @@ describe('can — role × capability matrix', () => {
   // 期望門檻（與政策一致：內容維護 agent，設定類 admin，讀取 viewer）
   const EXPECTED: Record<Capability, WorkspaceMemberRole> = {
     'ai.read': 'viewer',
-    'members.read': 'viewer',
+    // 2026-09-29 `D-111`：成員列表收到管理員（唯一用到它的頁本來就只給管理員）
+    'members.read': 'admin',
     'knowledge.write': 'agent',
     'sources.write': 'agent',
     'folders.write': 'agent',
     'scripts.write': 'agent',
     'playground.use': 'agent',
     'broadcast.write': 'agent',
+    // 2026-09-29 `G-106`／`D-110`：補進表的營運類能力，門檻照現況都是客服
+    'broadcast.send': 'agent',
+    'conversations.reply': 'agent',
+    'customers.write': 'agent',
+    'tags.write': 'agent',
+    'presets.write': 'agent',
+    'marketing.write': 'agent',
     // 2026-09-27 `D-103`：客服可以把自己的手機加進 LINE 通知／自己退出；動別人與改時間是管理員
     'notify.self': 'agent',
     'ai.settings.write': 'admin',
@@ -35,6 +43,7 @@ describe('can — role × capability matrix', () => {
     'knowledge.reindexAll': 'admin',
     'members.manage': 'admin',
     'line.manage': 'admin',
+    'billing.manage': 'admin',
     'notify.manage': 'admin',
   }
 

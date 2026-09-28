@@ -32,7 +32,9 @@ export function hasMinRole(role: WorkspaceMemberRole, minRole: WorkspaceMemberRo
 export const CAPABILITIES = {
   // ── 讀取（所有內部成員 viewer+）─────────────────────────────
   'ai.read': 'viewer', // 知識庫/來源/資料夾列表、AI 設定讀取、AI 表現頁
-  'members.read': 'viewer', // 成員列表
+  // 成員列表（含每位成員的 LINE id、邀請人）。2026-09-29 `D-111` 拍板從 viewer 收到 admin：
+  // 唯一用到它的「成員管理」頁本來就只給管理員進，觀察者打 API 卻拿得到。
+  'members.read': 'admin',
 
   // ── 內容維護（客服 agent+）──────────────────────────────────
   'knowledge.write': 'agent', // 知識卡 新增/編輯/刪除/批量/單卡重建/預覽/正規化
@@ -43,6 +45,15 @@ export const CAPABILITIES = {
   // 2026-09-16：推播頁的端點本來就是 agent 級，但能力表一直沒有這一項——
   // 小幫手要掛「建推播草稿」時才發現門檻只存在於端點裡。⛔發送不在這裡（紅線，永遠留人按）。
   'broadcast.write': 'agent', // 建立／編輯推播**草稿**
+  // 2026-09-29 `G-106`：以下幾項是全站權限盤點時補的——這些功能的端點一直各自寫死 'agent'，
+  // 表裡卻沒有它們，前端也只能用 canOperate 猜。門檻照現況（`D-110` 拍板：客服照樣能發推播、
+  // 換圖文選單、刪使用中的東西），補進來是為了讓前後端讀同一份，不是改規則。
+  'broadcast.send': 'agent', // 正式發送／排程／取消／重發（⛔ 仍是「永遠留人按」的紅線，小幫手不代按）
+  'conversations.reply': 'agent', // 回覆客人、送客服預存、接手／交還／結束、釘選／待跟進、指派、標答錯
+  'customers.write': 'agent', // 幫客人貼標／拆標、客人備註、採用 AI 標籤建議、從 LINE 同步好友
+  'tags.write': 'agent', // 標籤 新增／編輯／停用、AI 發現的採用／合併／忽略
+  'presets.write': 'agent', // 客服預存 新增／編輯／刪除
+  'marketing.write': 'agent', // 機器人模組、活動、圖文選單、圖文訊息、行銷月曆
   // 2026-09-27 `D-103` 第 3 題拍板：客服可以把**自己的**手機加進 LINE 通知、自己退出
   // （「設定 → LINE 通知」那一頁與首頁那張卡）。⛔ 只能動自己那一列；動別人、改「什麼時候通知」是 notify.manage。
   // 觀察者不收：他不處理客人，找真人的通知對他沒有下一步。
@@ -57,6 +68,7 @@ export const CAPABILITIES = {
   'knowledge.reindexAll': 'admin', // 知識庫全量重建
   'members.manage': 'admin', // 成員 邀請/改角色/移除
   'line.manage': 'admin', // 組織與 LINE 憑證 讀取/儲存
+  'billing.manage': 'admin', // 訂閱、付款、發票（2026-09-29 `G-106` 補：`payment/*` 原本寫死 'admin'）
   // LINE 通知：改「什麼時候通知」、開關／解除別人、幫別人產綁定連結（`D-103`）。
   // ⛔ 不綁 AI 設定的權限與 ai-feature：純真人客服的帳號一樣要收找真人與每日摘要。
   'notify.manage': 'admin',
