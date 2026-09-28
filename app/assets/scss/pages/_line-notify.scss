@@ -12,7 +12,19 @@
   color: var(--text-muted);
 }
 
-// 「現在沒有人會收到」／「還沒接上 LINE」
+// 表格上面那一句「怎麼用」（`D-106`）
+.ln-howto {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-muted);
+
+  strong {
+    color: var(--text-primary);
+  }
+}
+
+// 「現在沒有人會收到」／「還沒接上 LINE」／「有 N 位收不到」
 .ln-banner {
   margin: 0;
   padding: 8px 12px;
@@ -22,30 +34,23 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.6;
-}
 
-// ── 名單 ──
-.ln-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
+  // 「名單上沒有你」：不是出錯，是說明——中性色，⛔ 不用黃（黃留給收不到）
+  &.is-info {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-weight: 400;
 
-.ln-row {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-
-  &:first-child {
-    border-top: 0;
+    strong {
+      color: var(--text-primary);
+    }
   }
+}
 
-  &.is-flash {
+// ── 名單（`D-106` 改成跟「成員管理」同一種 el-table） ──
+.ln-table {
+  .el-table__row.is-flash > td.el-table__cell {
     animation: ln-flash 1.4s ease-out;
   }
 }
@@ -56,13 +61,45 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ln-row.is-flash { animation: none; }
+  .ln-table .el-table__row.is-flash > td.el-table__cell { animation: none; }
   .ln-qr__dot { animation: none; }
 }
 
-.ln-row__avatar {
-  width: 36px;
-  height: 36px;
+.ln-table__email {
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ln-table__role {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.ln-table__muted {
+  color: var(--text-muted);
+}
+
+.ln-table__more {
+  padding: 4px;
+}
+
+// 「⋯」選單裡的「解除綁定」（選單掛在 body 底下，不能靠 .ln-table 往下找）
+.el-dropdown-menu__item.ln-menu-danger {
+  color: var(--el-color-danger);
+}
+
+.ln-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ln-avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
 
@@ -72,66 +109,73 @@
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 700;
   }
 }
 
-.ln-row__who {
-  min-width: 0;
-}
-
-.ln-row__name {
-  font-size: 14px;
-  font-weight: 700;
+.ln-line__name {
   color: var(--text-primary);
-  overflow-wrap: anywhere;
 }
 
-.ln-row__role {
-  margin-left: 6px;
-  padding: 0 5px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  vertical-align: 1px;
-  white-space: nowrap;
-}
-
-.ln-row__status {
-  margin-top: 2px;
-  font-size: 12px;
+// 「狀態」那一格：第一行結論（會收到／送不到／通知關著／還沒加進來），第二行細節
+.ln-status {
+  font-weight: 700;
   line-height: 1.55;
-  color: var(--text-muted);
   overflow-wrap: anywhere;
 
   &.is-ok {
     color: var(--brand-green-text);
-    font-weight: 600;
   }
 
   &.is-warn {
     color: var(--el-color-warning-dark-2);
-    font-weight: 600;
+  }
+
+  &.is-off {
+    color: var(--text-muted);
   }
 }
 
-.ln-row__sub {
+.ln-status__sub {
   display: block;
+  font-size: 12px;
   font-weight: 400;
   color: var(--text-muted);
 }
 
-.ln-row__actions {
+// 「傳連結給他」對話框
+.ln-link__steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--text-primary);
+}
+
+.ln-link__box {
   display: flex;
-  flex-wrap: wrap;
-  flex-shrink: 1;
-  min-width: 0;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.ln-link__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+  color: var(--text-primary);
+}
+
+.ln-link__note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 // ── 掃 QR 那一塊（新頁與首頁卡共用） ──
@@ -258,15 +302,6 @@
   .ln-qr__mobile-open {
     display: inline-flex;
   }
-
-  .ln-row {
-    grid-template-columns: 36px minmax(0, 1fr);
-  }
-
-  .ln-row__actions {
-    grid-column: 2;
-    justify-content: flex-start;
-  }
 }
 
 // 剛加好
@@ -305,10 +340,11 @@
 }
 
 // ── 什麼時候通知 ──
+// 表單寬度封頂、手機緊貼在右（`D-106`）：原本表單撐滿，寬螢幕上手機預覽離它半個畫面
 .ln-when {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 20px;
+  grid-template-columns: minmax(0, 520px) 300px;
+  gap: 32px;
   align-items: start;
 }
 
@@ -324,9 +360,17 @@
     align-items: flex-start;
     gap: 6px;
   }
+
+  // 勾選後的字不變綠：綠色在這頁只代表「會收到」
+  .el-radio__input.is-checked + .el-radio__label,
+  .el-checkbox__input.is-checked + .el-checkbox__label {
+    color: var(--text-primary);
+  }
 }
 
-.ln-when__modes {
+// ⚠️ 要夾 `.ln-when__form`：Element 的 `.el-radio-group { align-items: center }` 載入順序在後，
+//    單寫會被蓋成置中——兩行都有數字框時一樣寬看不出來，`D-106` 沒選的那行拿掉數字框後就跑位了
+.ln-when__form .ln-when__modes {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

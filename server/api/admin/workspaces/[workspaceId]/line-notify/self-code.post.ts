@@ -9,7 +9,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 手機相機掃 QR → LINE 打開官方帳號的聊天室、訊息已打好 → 按送出就綁好並加進通知名單。
  *
  * 客服起跳（第 3 題拍板：客服可以加自己）。⛔ 只能產自己的；幫別人產是
- * `members/:uid/line-bind-code`（管理員，「改傳連結」那顆）。
+ * `members/:uid/line-bind-code`（管理員，「傳連結給他」那顆）。
  * 沒有成員資格的人（組織管理員、超管）沒有成員文件可以綁 → 404，畫面上那顆鈕本來就不顯示。
  */
 export default defineEventHandler(async (event) => {

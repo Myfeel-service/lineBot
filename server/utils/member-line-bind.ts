@@ -149,7 +149,7 @@ export async function tryConsumeMemberLineBindCode(params: {
       return true
     }
     if (Number(target.data().lineBindCodeExpiresAt ?? 0) < Date.now()) {
-      // 2026-09-27 `C-270`：綁定搬到「設定 → LINE 通知」（自己掃 QR 或管理員「改傳連結」都在那一頁）
+      // 2026-09-27 `C-270`：綁定搬到「設定 → LINE 通知」（自己掃 QR 或管理員「傳連結給他」都在那一頁）
       await reply('❌ 這組綁定碼已過期，請到後台「設定 → LINE 通知」重新產生一組。')
       return true
     }

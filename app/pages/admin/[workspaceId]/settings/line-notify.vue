@@ -29,45 +29,68 @@
             <span v-if="receivingCount" class="ln-card__meta">{{ receivingCount }} 位會收到</span>
           </div>
           <div class="card-section-stack">
+            <!-- `D-106`：第一次進來只看到一排字跟開關、不知道從哪開始 → 一句話講怎麼用。
+                 「同事登入會被問」只在真的有同事還沒加時才講（⛔ 不在每一列再講一次） -->
+            <p class="ln-howto">
+              每個人用<strong>自己的手機</strong>加進來，綁好就會收到。<template v-if="hasUnboundOthers">還沒加進來的同事，下次登入後台會被問一次<template v-if="data.canManage">；想快一點，按他那一列的「<strong>傳連結給他</strong>」</template>。</template>
+            </p>
+            <!-- 登入的帳號不是這個官方帳號的成員（組織管理員、超管）：名單上沒有自己，⛔ 不可以讓他自己猜為什麼 -->
+            <p v-if="!data.selfIsMember" class="ln-banner is-info">
+              <strong>名單上沒有你</strong>：你現在登入的帳號不是這個官方帳號的成員，沒辦法把手機加進來。要收通知，請擁有者到「設定 → 成員管理」邀請你的 Email，登入後再回來這裡加。
+            </p>
             <p v-if="!data.lineConnected" class="ln-banner">
               還沒接上 LINE，通知傳不出去。先到「設定 → 組織與 LINE」接好，再回來把手機加進來。
             </p>
             <p v-else-if="!receivingCount && !adding" class="ln-banner">
               現在沒有人會收到。客人要找真人時，不會有人知道。
             </p>
+            <p v-else-if="undeliverableCount" class="ln-banner">
+              有 {{ undeliverableCount }} 位收不到通知，原因和怎麼辦寫在他那一列的「狀態」。
+            </p>
 
-            <ul class="ln-rows">
-              <li v-for="row in data.rows" :key="row.uid" class="ln-row" :class="{ 'is-flash': flashUid === row.uid }">
-                <img v-if="row.line?.pictureUrl" :src="row.line.pictureUrl" class="ln-row__avatar" alt="">
-                <span v-else class="ln-row__avatar ln-row__avatar--initial">{{ initialOf(row) }}</span>
-                <div class="ln-row__who">
-                  <div class="ln-row__name">
-                    {{ row.isSelf ? `你（${row.email || '我'}）` : (row.email || '（沒有 Email）') }}
-                    <span class="ln-row__role">{{ roleLabel(row.role) }}</span>
-                  </div>
-                  <div class="ln-row__status" :class="statusOf(row).cls">
-                    {{ statusOf(row).text }}
-                    <span v-if="statusOf(row).sub" class="ln-row__sub">{{ statusOf(row).sub }}</span>
-                  </div>
-                </div>
-                <div class="ln-row__actions">
-                  <!-- 綁好的：收通知開關（自己那一列、或管理員） -->
-                  <template v-if="row.line">
-                    <!-- 觀察者不收通知（`C-271`⑬）：舊資料裡已經在收的只給關、不給開 -->
-                    <el-switch
-                      v-if="(row.isSelf || data.canManage) && (row.role !== 'viewer' || row.receiving)"
-                      :model-value="row.receiving"
-                      :loading="savingUid === row.uid"
-                      active-text="收通知"
-                      @change="setReceiving(row, $event === true)"
-                    />
-                    <el-button v-if="row.isSelf && !adding" size="small" text @click="startAdd">換一支手機</el-button>
-                    <el-button v-else-if="!row.isSelf && data.canManage" size="small" text type="danger" @click="unbind(row)">解除綁定</el-button>
+            <!-- 跟「成員管理」同一種表格（老闆對一致性很敏感）：寬螢幕上名字跟開關不再隔半個畫面沒有欄可以對 -->
+            <el-table :data="tableRows" size="small" row-key="key" :row-class-name="rowClass" class="ln-table">
+              <el-table-column label="成員" min-width="220">
+                <template #default="{ row }">
+                  <template v-if="row.kind === 'member'">
+                    <span class="ln-table__email">{{ row.m.isSelf ? `你（${row.m.email || '我'}）` : (row.m.email || '（沒有 Email）') }}</span>
+                    <el-tag :type="roleTagType(row.m.role)" :effect="roleTagEffect(row.m.role)" size="small" class="ln-table__role">
+                      {{ roleLabel(row.m.role) }}
+                    </el-tag>
                   </template>
-                  <!-- 還沒綁的：自己＝掃 QR；別人＝管理員可以改傳連結 -->
-                  <template v-else>
+                  <span v-else class="ln-table__muted">（不是成員）</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="LINE" min-width="150">
+                <template #default="{ row }">
+                  <span v-if="row.line" class="ln-line">
+                    <img v-if="row.line.pictureUrl" :src="row.line.pictureUrl" class="ln-avatar" alt="">
+                    <span v-else class="ln-avatar ln-avatar--initial">{{ initialOf(row.line.displayName) }}</span>
+                    <span class="ln-line__name">{{ row.line.displayName }}</span>
+                  </span>
+                  <span v-else class="ln-table__muted">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="狀態" min-width="260">
+                <template #default="{ row }">
+                  <div class="ln-status" :class="row.status.cls">
+                    {{ row.status.text }}
+                    <span v-if="row.status.sub" class="ln-status__sub">{{ row.status.sub }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="收通知" width="160" align="right">
+                <template #default="{ row }">
+                  <template v-if="row.kind === 'member'">
+                    <!-- 綁好的：開關（自己那一列、或管理員）。觀察者不收通知（`C-271`⑬）：舊資料裡已經在收的只給關、不給開 -->
+                    <el-switch
+                      v-if="row.m.line && (row.m.isSelf || data.canManage) && (row.m.role !== 'viewer' || row.m.receiving)"
+                      :model-value="row.m.receiving"
+                      :loading="savingUid === row.m.uid"
+                      @change="setReceiving(row.m, $event === true)"
+                    />
                     <el-button
-                      v-if="row.isSelf && !adding"
+                      v-else-if="!row.m.line && row.m.isSelf && !adding"
                       type="primary"
                       size="small"
                       data-tour="ln-add"
@@ -77,33 +100,41 @@
                       把我的手機加進來
                     </el-button>
                     <el-button
-                      v-else-if="!row.isSelf && data.canManage"
+                      v-else-if="!row.m.line && !row.m.isSelf && data.canManage"
                       size="small"
                       plain
                       :disabled="!data.lineConnected"
-                      @click="sendLink(row)"
+                      :loading="linkLoadingUid === row.m.uid"
+                      @click="sendLink(row.m)"
                     >
-                      {{ copiedUid === row.uid ? '連結已複製' : '改傳連結' }}
+                      傳連結給他
                     </el-button>
                   </template>
-                </div>
-              </li>
-
-              <!-- 舊資料：名單上、卻不是任何一位成員的 LINE 帳號（名單現在只收綁好的成員，只能拿掉） -->
-              <li v-for="o in data.others" :key="o.lineUserId" class="ln-row">
-                <span class="ln-row__avatar ln-row__avatar--initial">?</span>
-                <div class="ln-row__who">
-                  <div class="ln-row__name">{{ o.displayName || `LINE 帳號 …${o.lineUserId.slice(-6)}` }}</div>
-                  <div class="ln-row__status is-warn">
-                    不是成員的 LINE 帳號
-                    <span class="ln-row__sub">名單只收綁好 LINE 的成員。這個帳號會一直收到客人的名字與訊息，確定是誰之前建議拿掉。</span>
-                  </div>
-                </div>
-                <div class="ln-row__actions">
-                  <el-button v-if="data.canManage" size="small" plain type="danger" @click="removeOther(o.lineUserId)">拿掉</el-button>
-                </div>
-              </li>
-            </ul>
+                  <!-- 舊資料：名單上、卻不是任何一位成員的 LINE 帳號（名單現在只收綁好的成員，只能拿掉） -->
+                  <el-button v-else-if="data.canManage" size="small" plain @click="removeOther(row.o.lineUserId)">拿掉</el-button>
+                </template>
+              </el-table-column>
+              <!-- 不常用、會讓人緊張的動作（解除綁定）收進「⋯」：原本紅字擠在開關旁邊，分不清哪個才是「不收」 -->
+              <el-table-column width="52" align="center">
+                <template #default="{ row }">
+                  <el-dropdown v-if="menuOf(row).length" trigger="click" placement="bottom-end" @command="onMenu(row, $event)">
+                    <el-button text size="small" :icon="MoreFilled" aria-label="更多" class="ln-table__more" />
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item
+                          v-for="it in menuOf(row)"
+                          :key="it.cmd"
+                          :command="it.cmd"
+                          :class="{ 'ln-menu-danger': it.danger }"
+                        >
+                          {{ it.label }}
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </template>
+              </el-table-column>
+            </el-table>
 
             <AdminLineNotifySelfAdd v-if="adding" @done="onAdded" @cancel="adding = false" />
 
@@ -129,7 +160,7 @@
             </div>
 
             <p v-if="!data.deliveryKnown" class="ln-card__note">
-              送到了沒的紀錄這次讀不到，上面每一列都先不講（不代表都送到了）。
+              送到了沒的紀錄這次讀不到，「狀態」只講在不在名單上（不代表都送到了）。
             </p>
           </div>
         </div>
@@ -147,38 +178,41 @@
               <div class="ln-when__form">
                 <div class="admin-field-group">
                   <AdminFieldLabel text="客人要找真人時" tight />
+                  <!-- `D-106`：沒選的那個選項不秀數字框（原本兩格都在、一格反灰，看起來像兩個都要填） -->
                   <el-radio-group v-model="timing.mode" class="ln-when__modes" @change="onModeChange">
                     <div class="ln-when__mode">
-                      <el-radio value="always">馬上通知，</el-radio>
-                      <!-- ⚠️ 上限要跟後端 normalize 一樣是 1440（`C-271`③）：寫小了，Element 一載入就把
-                           超過的舊設定夾小並寫回，存任何一格時一起存進去＝提醒時間被默默改短 -->
-                      <el-input-number
-                        v-model="slaAlways"
-                        :min="0"
-                        :max="SLA_MAX"
-                        :step="5"
-                        size="small"
-                        controls-position="right"
-                        :disabled="timing.mode !== 'always'"
-                        class="ln-when__num"
-                        @change="saveTiming"
-                      />
-                      <span class="ln-when__tail">分鐘還沒人回再提醒一次</span>
+                      <el-radio value="always">{{ timing.mode === 'always' ? '馬上通知，' : '馬上通知' }}</el-radio>
+                      <template v-if="timing.mode === 'always'">
+                        <!-- ⚠️ 上限要跟後端 normalize 一樣是 1440（`C-271`③）：寫小了，Element 一載入就把
+                             超過的舊設定夾小並寫回，存任何一格時一起存進去＝提醒時間被默默改短 -->
+                        <el-input-number
+                          v-model="slaAlways"
+                          :min="0"
+                          :max="SLA_MAX"
+                          :step="5"
+                          size="small"
+                          controls-position="right"
+                          class="ln-when__num"
+                          @change="saveTiming"
+                        />
+                        <span class="ln-when__tail">分鐘還沒人回再提醒一次</span>
+                      </template>
                     </div>
                     <div class="ln-when__mode">
-                      <el-radio value="missed_only">先不吵，等</el-radio>
-                      <el-input-number
-                        v-model="slaMissed"
-                        :min="5"
-                        :max="SLA_MAX"
-                        :step="5"
-                        size="small"
-                        controls-position="right"
-                        :disabled="timing.mode !== 'missed_only'"
-                        class="ln-when__num"
-                        @change="saveTiming"
-                      />
-                      <span class="ln-when__tail">分鐘沒人接手才通知</span>
+                      <el-radio value="missed_only">{{ timing.mode === 'missed_only' ? '先不吵，等' : '先不吵，等沒人接手才通知' }}</el-radio>
+                      <template v-if="timing.mode === 'missed_only'">
+                        <el-input-number
+                          v-model="slaMissed"
+                          :min="5"
+                          :max="SLA_MAX"
+                          :step="5"
+                          size="small"
+                          controls-position="right"
+                          class="ln-when__num"
+                          @change="saveTiming"
+                        />
+                        <span class="ln-when__tail">分鐘沒人接手才通知</span>
+                      </template>
                     </div>
                   </el-radio-group>
                   <p class="ai-section-hint">
@@ -228,6 +262,31 @@
           </div>
         </div>
       </div>
+
+      <!-- 「傳連結給他」（`D-106`）：原本按了只默默複製到剪貼簿，按的人不知道發生什麼事、下一步是什麼 -->
+      <el-dialog v-model="linkDialog.open" :title="`把連結傳給 ${linkDialog.email || '對方'}`" width="min(460px, 92vw)" append-to-body>
+        <ol class="ln-link__steps">
+          <template v-if="linkDialog.url">
+            <li>複製下面的連結，用 LINE（或任何方式）傳給他。</li>
+            <li>他用手機點開，訊息已經打好，按送出。</li>
+          </template>
+          <!-- 拿不到官方帳號 ID 就做不出「訊息已打好」的連結：退回傳那一句 -->
+          <template v-else>
+            <li>複製下面這一句，用 LINE 傳給他。</li>
+            <li>他在 LINE 打開官方帳號的聊天室，把這一句傳出去。</li>
+          </template>
+          <li v-if="data?.full">名單已經滿了（最多 10 位）：他綁好之後，要先關掉一位才收得到。</li>
+          <li v-else>他送出之後，這一列會自己變成「會收到」。</li>
+        </ol>
+        <div class="ln-link__box">
+          <code class="ln-link__text">{{ linkDialog.url || linkDialog.message }}</code>
+          <el-button type="primary" size="small" @click="copyLink">{{ linkDialog.copied ? '已複製' : '複製' }}</el-button>
+        </div>
+        <p class="ln-link__note">{{ hhmm(linkDialog.expiresAt) }} 前有效；過期了再按一次「傳連結給他」就好。</p>
+        <template #footer>
+          <el-button @click="linkDialog.open = false">關閉</el-button>
+        </template>
+      </el-dialog>
     </template>
   </AdminSplitLayout>
 </template>
@@ -243,6 +302,7 @@
  * - 右邊手機的內容跟真正送出的是**同一支函式**（`shared/line-notify-messages.ts`、`shared/daily-digest-message.ts`）
  */
 import { ElMessageBox } from 'element-plus'
+import { MoreFilled } from '@element-plus/icons-vue'
 import {
   buildCriticalAlertText,
   buildHandoffNotifyText,
@@ -271,8 +331,16 @@ interface Row {
   line: { userId: string, displayName: string, pictureUrl: string } | null
   receiving: boolean
   pendingCodeExpiresAt: number | null
+  /** 對方在首頁按過「先不用」：不會再被問 */
+  inviteDismissed: boolean
   delivery: RecipientState | null
 }
+interface Other { lineUserId: string, displayName: string, delivery: RecipientState }
+interface Status { text: string, sub?: string, cls: string }
+/** 表格的一列：成員，或名單上對不上任何成員的舊資料 */
+type TableRow =
+  | { key: string, kind: 'member', m: Row, line: Row['line'], status: Status }
+  | { key: string, kind: 'other', o: Other, line: { displayName: string, pictureUrl: string }, status: Status }
 interface Timing {
   mode: 'always' | 'missed_only'
   slaRemindMinutes: number
@@ -288,7 +356,7 @@ interface PageData {
   lineConnected: boolean
   full: boolean
   rows: Row[]
-  others: { lineUserId: string, displayName: string, delivery: RecipientState }[]
+  others: Other[]
   deliveryKnown: boolean
   timing: Timing
   serviceHours: { enabled: boolean, start: string, end: string, weekendOff: boolean }
@@ -307,7 +375,8 @@ const adding = ref(false)
 const justAdded = ref<{ name: string, receiving: boolean, full: boolean } | null>(null)
 const flashUid = ref('')
 const savingUid = ref('')
-const copiedUid = ref('')
+const linkLoadingUid = ref('')
+const linkDialog = reactive({ open: false, email: '', url: '', message: '', expiresAt: 0, copied: false })
 const previewTab = ref<'handoff' | 'digest' | 'crit'>('handoff')
 
 /** 分鐘數上限：跟後端 normalizeAiSettings 的夾值同一個數字（24 小時） */
@@ -322,8 +391,16 @@ const receivingCount = computed(() =>
 
 const ROLE_LABELS: Record<string, string> = { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '觀察者' }
 function roleLabel(role: string) { return ROLE_LABELS[role] ?? role }
-function initialOf(row: Row) {
-  return (row.line?.displayName || row.email || '?').trim().slice(0, 1).toUpperCase()
+// 角色標籤顏色跟「成員管理」「組織設定」同一套：擁有者實心、管理員黃、客服綠、觀察者灰
+function roleTagType(role: string) {
+  if (role === 'owner') return 'primary'
+  if (role === 'admin') return 'warning'
+  if (role === 'agent') return 'success'
+  return 'info'
+}
+function roleTagEffect(role: string) { return role === 'owner' ? 'dark' : 'light' }
+function initialOf(name: string) {
+  return (name || '?').trim().slice(0, 1).toUpperCase()
 }
 
 function hhmm(ms: number) {
@@ -339,41 +416,96 @@ function when(ms: number) {
   return sameDay ? hhmm(ms) : `${d.getMonth() + 1}/${d.getDate()} ${hhmm(ms)}`
 }
 
-/** 那一列名字下面那一行 */
-function statusOf(row: Row): { text: string, sub?: string, cls: string } {
-  const lineName = row.line?.displayName ? `LINE「${row.line.displayName}」` : 'LINE 已綁定'
+function monthDay(ms: number) {
+  const d = new Date(ms)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+/**
+ * 「狀態」那一格（`D-106`）：第一行只講結論——會收到／送不到／通知關著／還沒加進來；細節放第二行。
+ * ⛔ 沒有送達紀錄 ≠ 沒傳過：紀錄從 `C-270` 才開始記，已經收了好幾週的人原本被寫成「還沒傳過通知」，
+ *    看起來像壞了。沒有紀錄就只講「會收到」（他確實在名單上）。
+ */
+function statusOf(row: Row): Status {
   if (row.line && row.receiving) {
     const d = row.delivery
-    if (!data.value?.deliveryKnown || !d) return { text: lineName, cls: 'is-ok' }
+    if (!data.value?.deliveryKnown || !d) return { text: '會收到', cls: 'is-ok' }
     if (d.state === 'blocked') {
-      const since = new Date(d.since)
       const who = row.isSelf ? '這支手機' : '對方'
       // 推播被退回那一種，LINE 對「封鎖」與「還沒加好友」回同一句，分不出來就兩個都講（⛔ 不講死是封鎖）
       return d.via === 'unfollow'
         ? {
-            text: `送不到：${who}封鎖了官方帳號（${since.getMonth() + 1}/${since.getDate()} 起）`,
-            sub: `請${row.isSelf ? '在 LINE 上' : '對方在 LINE '}解除封鎖，下一則就會送到。`,
+            text: '送不到',
+            sub: `${who}封鎖了官方帳號（${monthDay(d.since)} 起）。請${row.isSelf ? '在 LINE 上' : '對方在 LINE '}解除封鎖，下一則就會送到。`,
             cls: 'is-warn',
           }
         : {
-            text: `送不到：${who}封鎖了官方帳號，或還沒加好友（${since.getMonth() + 1}/${since.getDate()} 起）`,
-            sub: `請${row.isSelf ? '' : '對方'}加官方帳號好友（或解除封鎖），下一則就會送到。`,
+            text: '送不到',
+            sub: `${who}封鎖了官方帳號，或還沒加好友（${monthDay(d.since)} 起）。請${row.isSelf ? '' : '對方'}加官方帳號好友（或解除封鎖），下一則就會送到。`,
             cls: 'is-warn',
           }
     }
-    if (d.state === 'failing') return { text: `上次沒送到（${when(d.at)}）：${d.reason}`, cls: 'is-warn' }
+    if (d.state === 'failing') return { text: '送不到', sub: `上次沒送到（${when(d.at)}）：${d.reason}`, cls: 'is-warn' }
     // 一時的：照講發生了什麼，但不變黃（下一則會再試，通常就過了）
-    if (d.state === 'glitch') return { text: `${lineName} · 上次沒送到（${when(d.at)}，${d.reason}），下一則會再試`, cls: '' }
+    if (d.state === 'glitch') return { text: '會收到', sub: `上次沒送到（${when(d.at)}，${d.reason}），下一則會再試`, cls: 'is-ok' }
     if (d.state === 'ok') {
       const t = when(d.at)
-      return { text: `${lineName} · ${d.kind === 'confirm' ? `${t}送達確認訊息` : `上次送達 ${t}`}`, cls: 'is-ok' }
+      const sub = d.kind === 'confirm'
+        ? (t === '剛剛' ? '剛剛送達確認訊息' : `${t} 送達確認訊息`)
+        : `上次送達 ${t}`
+      return { text: '會收到', sub, cls: 'is-ok' }
     }
-    return { text: `${lineName} · 還沒傳過通知`, cls: 'is-ok' }
+    return { text: '會收到', cls: 'is-ok' }
   }
-  if (row.line) return { text: `${lineName} · 通知關著`, cls: '' }
-  if (row.pendingCodeExpiresAt) return { text: `還沒加進來 · 等對方點連結（${hhmm(row.pendingCodeExpiresAt)} 前有效）`, cls: '' }
-  if (row.isSelf) return { text: data.value?.selfIsMember ? '還沒加進來' : '還沒加進來（你不是這個帳號的成員，不能綁手機）', cls: '' }
-  return { text: '還沒加進來 · 對方登入後台時會被問一次', cls: '' }
+  if (row.line) return { text: '通知關著', cls: 'is-off' }
+  if (row.pendingCodeExpiresAt) return { text: '還沒加進來', sub: `等對方點連結（${hhmm(row.pendingCodeExpiresAt)} 前有效）`, cls: 'is-off' }
+  // 「下次登入會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
+  if (!row.isSelf && row.inviteDismissed) return { text: '還沒加進來', sub: '對方在首頁按了「先不用」，不會再被問', cls: 'is-off' }
+  return { text: '還沒加進來', cls: 'is-off' }
+}
+
+function isUndeliverable(d: RecipientState | null) {
+  return d?.state === 'blocked' || d?.state === 'failing'
+}
+
+const tableRows = computed<TableRow[]>(() => {
+  if (!data.value) return []
+  const members: TableRow[] = data.value.rows.map(m => ({ key: m.uid, kind: 'member', m, line: m.line, status: statusOf(m) }))
+  const others: TableRow[] = data.value.others.map(o => ({
+    key: `other:${o.lineUserId}`,
+    kind: 'other',
+    o,
+    line: { displayName: o.displayName || `LINE 帳號 …${o.lineUserId.slice(-6)}`, pictureUrl: '' },
+    status: {
+      text: '不是成員的 LINE 帳號',
+      sub: '名單只收綁好 LINE 的成員。這個帳號會一直收到客人的名字與訊息，確定是誰之前建議拿掉。',
+      cls: 'is-warn',
+    },
+  }))
+  return [...members, ...others]
+})
+function rowClass({ row }: { row: TableRow }) {
+  return row.key === flashUid.value ? 'is-flash' : ''
+}
+/** 表格上面那一句的後半（同事登入會被問）只在真的有同事還沒加時講 */
+const hasUnboundOthers = computed(() => Boolean(data.value?.rows.some(r => !r.isSelf && !r.line)))
+/** 在名單上卻一直送不到的人數（一時的失敗不算） */
+const undeliverableCount = computed(() => {
+  if (!data.value?.deliveryKnown) return 0
+  return data.value.rows.filter(r => r.receiving && isUndeliverable(r.delivery)).length
+    + data.value.others.filter(o => isUndeliverable(o.delivery)).length
+})
+
+/** 「⋯」選單：不常用、或會讓人緊張的動作 */
+function menuOf(row: TableRow): { cmd: 'rebind' | 'unbind', label: string, danger?: boolean }[] {
+  if (row.kind !== 'member' || !row.m.line) return []
+  if (row.m.isSelf) return adding.value ? [] : [{ cmd: 'rebind', label: '換一支手機' }]
+  return data.value?.canManage ? [{ cmd: 'unbind', label: '解除綁定', danger: true }] : []
+}
+function onMenu(row: TableRow, cmd: string) {
+  if (row.kind !== 'member') return
+  if (cmd === 'rebind') startAdd()
+  else if (cmd === 'unbind') void unbind(row.m)
 }
 
 // ── 載入 ──
@@ -396,7 +528,7 @@ function applyTiming(t: Timing) {
   else slaAlways.value = t.slaRemindMinutes
 }
 
-/** 有人在等對方點「改傳連結」的連結時，每 15 秒重抓一次（那一列會自己轉綠） */
+/** 有人在等對方點「傳連結給他」的連結時，每 15 秒重抓一次（那一列會自己轉綠） */
 function syncPoll() {
   const waiting = data.value?.rows.some(r => r.pendingCodeExpiresAt && r.pendingCodeExpiresAt > Date.now())
   if (waiting && !pollTimer) pollTimer = setInterval(load, 15_000)
@@ -451,25 +583,30 @@ async function setReceiving(row: Row, on: boolean) {
 }
 
 async function sendLink(row: Row) {
+  linkLoadingUid.value = row.uid
   try {
     const res = await apiFetch<{ message: string, bindUrl: string, expiresAt: number }>(
       `/api/admin/workspaces/${workspaceId.value}/members/${row.uid}/line-bind-code`,
       { method: 'POST' },
     )
-    const text = res.bindUrl || res.message
-    try {
-      await navigator.clipboard.writeText(text)
-      copiedUid.value = row.uid
-      setTimeout(() => { if (copiedUid.value === row.uid) copiedUid.value = '' }, 2500)
-      showToast(`連結已複製，用 LINE 傳給對方；${hhmm(res.expiresAt)} 前點開按送出就好`, 'success')
-    }
-    catch {
-      await ElMessageBox.alert(text, '把這條連結傳給對方', { confirmButtonText: '好' })
-    }
+    Object.assign(linkDialog, { open: true, email: row.email, url: res.bindUrl, message: res.message, expiresAt: res.expiresAt, copied: false })
     await load()
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '產生連結失敗', 'error')
+  }
+  finally {
+    linkLoadingUid.value = ''
+  }
+}
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(linkDialog.url || linkDialog.message)
+    linkDialog.copied = true
+  }
+  catch {
+    // 剪貼簿被瀏覽器擋掉（沒有 https、權限）：字就在框裡，⛔ 不要假裝複製成功
+    showToast('複製不了，請選取上面框裡的字自己複製', 'warning')
   }
 }
 

@@ -71,6 +71,14 @@ describe('buildLineNotifyPageData', () => {
     expect(a2.pendingCodeExpiresAt).toBeNull()
   })
 
+  it('對方在首頁按過「先不用」要帶出來（名單上不可以再說「登入時會被問」）', async () => {
+    setup()
+    store.members[0] = { ...store.members[0], lineNotifyInviteDismissedAt: 123 }
+    const d = await buildLineNotifyPageData({ workspaceId: 'W', uid: 'owner1', canManage: true })
+    expect(d.rows.find(r => r.uid === 'agent1')!.inviteDismissed).toBe(true)
+    expect(d.rows.find(r => r.uid === 'owner1')!.inviteDismissed).toBe(false)
+  })
+
   it('觀察者沒綁就不列（他不處理客人、也不能自己加）', async () => {
     setup()
     const d = await buildLineNotifyPageData({ workspaceId: 'W', uid: 'agent1', canManage: false })

@@ -1359,7 +1359,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '客人要找真人、每天早上的摘要，是<strong>用 LINE 傳到同事自己的手機</strong>。'
           + '同事第一次登入後台時會被問一次要不要收，<strong>用手機掃一下就好</strong>；'
-          + '他不會登入的話，到「<strong>設定 → LINE 通知</strong>」在他那一列按「改傳連結」，把連結傳給他。',
+          + '他不會登入的話，到「<strong>設定 → LINE 通知</strong>」在他那一列按「傳連結給他」。',
         placement: 'bottom',
       },
     ],
@@ -1383,7 +1383,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '客人要找真人、每天早上的摘要，會用 LINE 傳到這裡每一列的手機。'
           + '還沒加進來的，按「<strong>把我的手機加進來</strong>」<strong>用手機掃一下</strong>就好；'
-          + '變黃的那一列是收不到的人，原因寫在名字下面。',
+          + '「狀態」變黃的是收不到的人，原因寫在同一格。',
         placement: 'bottom',
       },
       {

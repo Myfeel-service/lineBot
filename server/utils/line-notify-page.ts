@@ -35,8 +35,13 @@ export interface LineNotifyRow {
   isSelf: boolean
   line: { userId: string, displayName: string, pictureUrl: string } | null
   receiving: boolean
-  /** 有一組還沒用掉的綁定碼（「改傳連結」之後在等對方點）：到期時間 */
+  /** 有一組還沒用掉的綁定碼（「傳連結給他」之後在等對方點）：到期時間 */
   pendingCodeExpiresAt: number | null
+  /**
+   * 對方在首頁那張「要傳到你的手機嗎？」卡按過「先不用」（`D-106`）。
+   * 按過就不會再被問——名單上 ⛔ 不可以再寫「對方登入時會被問」。
+   */
+  inviteDismissed: boolean
   /** 在收的人才有：送到了沒 */
   delivery: RecipientState | null
 }
@@ -120,6 +125,7 @@ export async function buildLineNotifyPageData(input: {
         : null,
       receiving,
       pendingCodeExpiresAt: !lineUserId && m.lineBindCode && codeExp > now ? codeExp : null,
+      inviteDismissed: Number(m.lineNotifyInviteDismissedAt ?? 0) > 0,
       delivery: receiving ? recipientDeliveryState(delivery.d[normalizeLineUserId(lineUserId)]) : null,
     })
   }
