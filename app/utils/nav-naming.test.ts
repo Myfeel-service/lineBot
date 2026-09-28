@@ -58,6 +58,12 @@ const MUST_MATCH_SIDEBAR: Record<string, string> = {
   'ai-settings': 'AI 設定',
   'settings-organization': '組織與 LINE',
   'settings-billing': '訂閱與付款',
+  'settings-line-notify': 'LINE 通知',
+  // 2026-09-29（`D-109`）補進白名單的四頁
+  'friend-stats': '好友統計',
+  'ai-playground': '測試對話',
+  'settings-members': '成員管理',
+  'settings-activity': '操作紀錄',
 }
 
 describe('小幫手帶路的名字＝側欄的名字', () => {
@@ -86,6 +92,15 @@ describe('小幫手帶路的名字＝側欄的名字', () => {
       }
     }
     expect(mismatched).toEqual([])
+  })
+
+  it('⛔ 側欄上的每一頁都在帶路白名單裡（反方向也要比）', () => {
+    // 2026-09-29（`D-109`）：上面那關只比「白名單裡有的，名字要跟側欄一樣」，
+    // 從來沒問過「側欄有的，白名單有沒有」——於是測試對話、成員管理、操作紀錄、好友統計
+    // 四頁一直不在白名單裡，小幫手被問到這幾頁連帶路都做不到，這支測試照樣綠。
+    const covered = new Set(Object.values(MUST_MATCH_SIDEBAR))
+    const missing = [...sidebarLabels()].filter(l => !covered.has(l))
+    expect(missing, `這些側欄項目小幫手帶不了路：${missing.join('、')}`).toEqual([])
   })
 
   it('⛔ 標籤管理一定要在帶路白名單裡', () => {

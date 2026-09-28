@@ -88,6 +88,27 @@ export const AGENT_DESTINATIONS = {
     hint: '官方帳號好友、客人標籤',
     path: wid => `/admin/${wid}/users`,
   },
+  // ── 以下四頁 2026-09-29 才補進來（`D-109`）：以前問到這幾頁，小幫手連「去哪一頁」都指不出去 ──
+  'friend-stats': {
+    label: '好友統計',
+    hint: '客人在乎什麼（從標籤看）、誰還沒被貼到、AI 貼標準不準、該清掉的標籤',
+    path: wid => `/admin/${wid}/friend-stats`,
+  },
+  'ai-playground': {
+    label: '測試對話',
+    hint: '上線前先試問 AI 會怎麼答（不會送給客人）、看它用了哪幾張知識卡',
+    path: wid => `/admin/${wid}/ai-playground`,
+  },
+  'settings-members': {
+    label: '成員管理',
+    hint: '邀請同事、改角色、移除成員（管理員才進得去）',
+    path: wid => `/admin/${wid}/settings/members`,
+  },
+  'settings-activity': {
+    label: '操作紀錄',
+    hint: '誰在什麼時候把哪個設定改成什麼、還原、看小幫手代辦過什麼（管理員才進得去）',
+    path: wid => `/admin/${wid}/settings/activity`,
+  },
   'support-presets': {
     label: '客服預存',
     hint: '真人客服的罐頭回覆管理',

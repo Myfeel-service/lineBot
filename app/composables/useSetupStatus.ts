@@ -62,7 +62,9 @@ const CAPABILITIES: SetupCapability[] = [
     id: 'aiEnabled',
     icon: MagicStick,
     title: '開啟 AI 自動回覆',
-    why: '這個開關關著的話，就算建了知識庫、客服流程也都不會生效。',
+    // ⛔ 2026-09-29（`D-109`）：原本寫「就算建了知識庫、客服流程也都不會生效」——後半句是錯的，
+    //    自動回應不看這個開關（`handler.ts` 的 `runScriptStart` 不讀 enabled），關掉 AI 照樣在回客人。
+    why: '這個開關關著的話，AI 一句都不會回客人，知識庫建得再完整也用不上。（自動回應不受影響，照常運作。）',
     required: true,
     requires: 'settings',
     route: wid => `/admin/${wid}/ai-settings`,
