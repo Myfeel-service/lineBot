@@ -56,7 +56,10 @@ export default defineEventHandler(async (event) => {
   // 批次查詢標籤詳細資料
   const tagIds = [...new Set(sortedDocs.map((d) => d.data().tagId as string))]
   const tagSnaps = await Promise.all(tagIds.map((tagId) => db.collection('tags').doc(tagId).get()))
-  const tagMap = new Map(tagSnaps.filter((s) => s.exists).map((s) => [s.id, s.data()]))
+  // G-98：別家的標籤當作不存在（跟標籤已不存在同一種顯示）——名字、顏色不可以從這裡讀出去
+  const tagMap = new Map(tagSnaps
+    .filter((s) => s.exists && s.data()?.workspaceId === workspaceId)
+    .map((s) => [s.id, s.data()]))
 
   const tags = sortedDocs.map((d) => {
     const utData = d.data()

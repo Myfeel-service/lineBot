@@ -138,7 +138,9 @@
               <table class="users-table">
                 <thead>
                   <tr>
-                    <th class="users-table__th--check">
+                    <!-- `G-107`：勾了之後能做的（批次貼標／移標／推播）全是客服級，觀察者勾了只剩「取消選取」，
+                         整欄不出現。⛔ th 跟 td 要一起藏，只藏一邊整張表會錯位 -->
+                    <th v-if="canOperate" class="users-table__th--check">
                       <input
                         type="checkbox"
                         :checked="isAllSelected"
@@ -160,7 +162,7 @@
                 </thead>
                 <tbody>
                   <tr v-for="user in users" :key="user.id">
-                    <td>
+                    <td v-if="canOperate">
                       <input
                         type="checkbox"
                         :checked="selectedIds.includes(user.id)"

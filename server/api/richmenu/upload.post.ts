@@ -16,6 +16,24 @@ export default defineEventHandler(async (event) => {
     allowedCategories: ['image'],
   })
 
+  /*
+   * 🔴 反查歸屬（`G-93`），⛔ 一定要在傳到 LINE、存進 Storage **之前**：
+   * 以前 body 帶的 `firestoreId` 前後都不比對 workspaceId，A 家的人把它換成 B 家某張選單的 id，
+   * 就能把 B 家那張的圖換成自己的；B 下次沒重傳圖就按存檔，`[id].put.ts` 會抓這張圖發到 B 的 LINE。
+   * 同一組的 `setDefault.post.ts`、`[id].put.ts` 早就有比對（`E-16`），只有這支漏了。
+   *
+   * 連 `richMenuId` 也要對得上：唯一的呼叫端是「建立新選單」（`richmenu.vue` 先打 create、
+   * 再把 create 回來的 `richMenuId`＋`id` 原樣帶過來），兩者一定是同一張。改既有選單走的是
+   * `[id].put.ts`，它自己在 LINE 重建、自己傳圖，不經過這支——所以這個比對不會擋到正常編輯。
+   * ⛔ 不比對的話，自己家的 firestoreId 配上別的 richMenuId，會讓這張選單的紀錄指向一張不是它的圖。
+   */
+  if (firestoreId) {
+    const menu = await getDoc<{ workspaceId?: string, richMenuId?: string }>('richmenus', String(firestoreId))
+    if (!menu || menu.workspaceId !== workspaceId || menu.richMenuId !== richMenuId) {
+      throw createError({ statusCode: 404, statusMessage: 'Not found' })
+    }
+  }
+
   const lineImageType = normalizedContentType === 'image/jpeg' || normalizedContentType === 'image/jpg'
     ? 'image/jpeg' as const
     : 'image/png' as const

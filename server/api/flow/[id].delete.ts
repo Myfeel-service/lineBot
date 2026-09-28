@@ -1,4 +1,4 @@
-import { getDoc } from '~~/server/utils/firebase'
+import { deleteDoc, getDoc } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { writeAuditLog, auditSnapshot } from '~~/server/utils/audit-log'
@@ -9,14 +9,17 @@ export default defineEventHandler(async (event) => {
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 
   const flow = await getDoc<Record<string, unknown> & { isSystem?: boolean; workspaceId?: string }>('flows', id)
-  if (!flow) {
+  /**
+   * `D-110`：先確認「是不是你的」，再講「是不是系統模組」。
+   * ⛔ 順序反過來的話，拿別家工作區的系統模組 id 來打，會收到 403「系統模組不可刪除」
+   *    而不是 404——等於跟外人證實「這個 id 存在、而且是系統模組」。
+   *    別家的東西一律跟「不存在」長得一模一樣。
+   */
+  if (!flow || flow.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: 'Not found' })
   }
   if (flow.isSystem) {
     throw createError({ statusCode: 403, statusMessage: '系統模組不可刪除' })
-  }
-  if (flow.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 404, statusMessage: 'Not found' })
   }
 
   await deleteDoc('flows', id)

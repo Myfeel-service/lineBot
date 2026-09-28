@@ -111,6 +111,12 @@ async function reapStuckProcessingBroadcasts(
  * 查詢 status=scheduled 且 scheduleAt <= 現在 的推播並發送；
  * 順路收殮卡死在 processing 的單（看門狗）。
  * 由 POST /api/broadcast/trigger-scheduled 與應用內建 Cron 共用。
+ *
+ * 兩種叫法（`G-104`①）：
+ * - **不帶參數**＝排程器（Cron／trigger-scheduled，要密鑰），刻意處理全站
+ * - **帶 `{ workspaceId }`**＝後台登入者（`/api/broadcast/process-due`），只處理那一個帳號。
+ *   ⛔ 這條路的 workspaceId 是空的就擋：原本空字串會讓下面的 `if (workspaceId)` 過濾整個失效，
+ *   超管沒帶帳號打 process-due 就變成幫全站發推播。
  */
 export async function runDueScheduledBroadcasts(
   opts?: { workspaceId?: string },
@@ -118,6 +124,9 @@ export async function runDueScheduledBroadcasts(
   const db = getDb()
   const now = Timestamp.now()
   const workspaceId = String(opts?.workspaceId || '').trim()
+  if (opts && !workspaceId) {
+    throw new Error('runDueScheduledBroadcasts: 帶了 opts 就要有 workspaceId（全站只給不帶參數的排程器）')
+  }
 
   // 看門狗先跑：到期佇列空的時候（最常見）也要能收殮
   const reaped = await reapStuckProcessingBroadcasts(db, workspaceId).catch((e) => {

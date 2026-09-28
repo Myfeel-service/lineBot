@@ -699,8 +699,10 @@ async function addMember() {
 
 async function removeMember(row: MemberRow) {
   try {
+    // `G-96` 2026-09-29：伺服器會把他從這個組織底下**每一個**官方帳號移掉（含客服、觀察者身分與還沒接受的邀請），
+    // 原本這句寫「失去管理權限」但實際上各帳號的身分都還在；現在說法跟做法一致
     await ElMessageBox.confirm(
-      `移除後「${row.email}」將失去這個組織底下所有官方帳號的管理權限。`,
+      `移除後「${row.email}」會從這個組織底下所有官方帳號移除（客服、觀察者的身分也一起拿掉）。`,
       '移除組織管理員',
       { confirmButtonText: '確認移除', cancelButtonText: '取消', type: 'warning' },
     )
@@ -780,9 +782,10 @@ async function reloadAll(isRefresh = false) {
     await Promise.all([loadBilling(), loadMembers(), loadInvoiceProfile()])
   }
   catch (e: any) {
-    // 不是這個組織的管理員 → 沒必要停在一個空頁面上，送他回帳號選擇頁
+    // 不是這個組織的管理員／組織已停用 → 沒必要停在一個空頁面上，送他回帳號選擇頁。
+    // 講伺服器給的原因（`G-107`⑯）：原本一律寫「你不是此組織的管理員」，組織被停用的人看了會以為被踢掉
     if (e?.status === 403 || e?.statusCode === 403) {
-      showToast('你不是此組織的管理員', 'error')
+      showToast(e?.data?.statusMessage || '你不是此組織的管理員', 'error')
       await navigateTo('/admin/workspaces')
       return
     }

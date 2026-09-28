@@ -15,6 +15,8 @@ const { store, line, basic } = vi.hoisted(() => ({
     aiWrites: [] as any[],
     deliveryWrites: [] as any[],
     txFail: false,
+    /** 讀了幾次成員清單（試太多次時 ⛔ 連讀都不該讀） */
+    memberReads: 0,
   },
   line: { profile: null as any, replies: [] as string[] },
   basic: { id: '@demo' },
@@ -33,9 +35,10 @@ vi.mock('./firebase', () => {
         if (col === 'workspaceMembers') {
           return {
             where: () => ({
-              get: async () => ({
-                docs: store.members.map(m => ({ id: m.id, ref: { id: m.id }, data: () => m.data })),
-              }),
+              get: async () => {
+                store.memberReads++
+                return { docs: store.members.map(m => ({ id: m.id, ref: { id: m.id }, data: () => m.data })) }
+              },
             }),
           }
         }
@@ -70,7 +73,7 @@ vi.mock('./line', () => ({
 }))
 vi.mock('./line-oa-basic-id', () => ({ resolveLineOaBasicId: vi.fn(async () => basic.id) }))
 
-import { tryConsumeMemberLineBindCode } from './member-line-bind'
+import { memberBindAttemptLimiter, tryConsumeMemberLineBindCode } from './member-line-bind'
 
 const FUTURE = Date.now() + 5 * 60_000
 
@@ -81,8 +84,10 @@ beforeEach(() => {
   store.aiWrites = []
   store.deliveryWrites = []
   store.txFail = false
+  store.memberReads = 0
   line.profile = { displayName: '阿豪', pictureUrl: '' }
   line.replies = []
+  memberBindAttemptLimiter.reset()
 })
 
 const consume = () => tryConsumeMemberLineBindCode({ lineUserId: 'Unew', text: '綁定 A3F9K2', workspaceId: 'w', replyToken: 'rt' })
@@ -147,6 +152,21 @@ describe('綁定碼傳進來', () => {
     await consume()
     expect(store.memberUpdates).toHaveLength(0)
     expect(line.replies[0]).toContain('再傳一次')
+  })
+
+  it('🔴 同一個 LINE 帳號 10 分鐘內試超過 10 次 → 講要等多久，⛔ 連成員都不讀（`G-107`⑬）', async () => {
+    store.members = [{ id: 'u1_w', data: { lineBindCode: 'ZZZZZZ', lineBindCodeExpiresAt: FUTURE } }]
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (let i = 0; i < 10; i++) await consume()
+    expect(store.memberReads).toBe(10)
+    expect(line.replies.every(t => t.includes('綁定碼不正確'))).toBe(true)
+
+    await consume()
+    expect(store.memberReads).toBe(10)
+    expect(line.replies.at(-1)).toMatch(/試太多次了，請 \d+ 分鐘後再傳/)
+    // 別的 LINE 帳號不受影響（算的是「這個人」，⛔ 不是整個官方帳號）
+    await tryConsumeMemberLineBindCode({ lineUserId: 'Uother2', text: '綁定 A3F9K2', workspaceId: 'w', replyToken: 'rt' })
+    expect(store.memberReads).toBe(11)
   })
 
   it('碼過期 → 講去哪重產，⛔ 不綁、不加名單', async () => {

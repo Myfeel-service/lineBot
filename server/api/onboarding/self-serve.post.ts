@@ -23,9 +23,11 @@ import { defaultFreeSubscription } from '~~/server/utils/billing'
 const NAME_MAX = 40
 
 export default defineEventHandler(async (event) => {
+  // email 會被登記成組織的登記擁有者與組織管理員（orgMembers 是 email 認人）：requireAuth 只給
+  // 驗證過的信箱（`G-99`），⛔ 沒驗證過就不開——信箱不確定是他的，就不能用它登記權限
   const { uid, email } = await requireAuth(event)
   if (!email) {
-    throw createError({ statusCode: 400, statusMessage: '你的登入帳號沒有 Email，無法自助開通，請聯繫我們。' })
+    throw createError({ statusCode: 400, statusMessage: '你的登入帳號沒有驗證過的 Email，無法自助開通，請改用 Google 登入或聯繫我們。' })
   }
 
   const body = await readBody(event).catch(() => ({})) as Record<string, unknown>

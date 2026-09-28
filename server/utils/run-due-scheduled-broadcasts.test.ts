@@ -228,3 +228,29 @@ describe('看門狗：收殮卡死在 processing 的推播', () => {
     expect(mockSend).toHaveBeenCalledWith('due', { source: 'scheduler' })
   })
 })
+
+describe('只處理一個帳號的那條路（`G-104`①）', () => {
+  it('🔴 帶了 opts 但 workspaceId 是空的 → 擋下來，⛔ 不變成幫全站發推播', async () => {
+    makeDb([], [
+      { id: 'a', data: { workspaceId: 'w1', status: 'scheduled', scheduleAt: ts(1 * MIN) } },
+      { id: 'b', data: { workspaceId: 'w2', status: 'scheduled', scheduleAt: ts(1 * MIN) } },
+    ])
+    await expect(runDueScheduledBroadcasts({ workspaceId: '' })).rejects.toThrow(/workspaceId/)
+    await expect(runDueScheduledBroadcasts({ workspaceId: '  ' })).rejects.toThrow(/workspaceId/)
+    expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  it('帶了帳號 → 只發那一個帳號的；不帶參數（排程器）→ 照舊全站', async () => {
+    makeDb([], [
+      { id: 'a', data: { workspaceId: 'w1', status: 'scheduled', scheduleAt: ts(1 * MIN) } },
+      { id: 'b', data: { workspaceId: 'w2', status: 'scheduled', scheduleAt: ts(1 * MIN) } },
+    ])
+    mockSend.mockResolvedValue({ success: true, sentCount: 1 } as any)
+
+    expect((await runDueScheduledBroadcasts({ workspaceId: 'w1' })).triggered).toBe(1)
+    expect(mockSend.mock.calls.map(c => c[0])).toEqual(['a'])
+
+    mockSend.mockClear()
+    expect((await runDueScheduledBroadcasts()).triggered).toBe(2)
+  })
+})

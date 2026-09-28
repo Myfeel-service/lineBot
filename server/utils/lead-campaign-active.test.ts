@@ -24,9 +24,9 @@ describe('isCampaignLinkDisabled', () => {
     expect(isCampaignLinkDisabled({ name: '沒有 isActive 的舊活動' })).toBe(false)
   })
 
-  it('讀不到活動文件時放行——寧可放行也不要因為讀不到就關掉正在跑的活動', () => {
-    expect(isCampaignLinkDisabled(null)).toBe(false)
-    expect(isCampaignLinkDisabled(undefined)).toBe(false)
+  it('🔴 查不到活動文件＝活動已刪＝當成已結束（`G-108`：以前放行，刪掉停用中的活動連結會復活）', () => {
+    expect(isCampaignLinkDisabled(null)).toBe(true)
+    expect(isCampaignLinkDisabled(undefined)).toBe(true)
   })
 
   it('⛔ 字串 "false" 不算停用（避免把髒資料讀成關閉）', () => {

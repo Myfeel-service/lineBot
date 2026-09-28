@@ -306,6 +306,14 @@
   }
 }
 
+/* `G-107`：觀察者看到的那一顆——只是顯示目前的顏色，不能點，所以不放大、不給手指游標 */
+.tags-color-swatch--static {
+  display: inline-block;
+  cursor: default;
+
+  &:hover { transform: none; }
+}
+
 .tags-hint {
   font-size: 0.75rem;
   color: var(--text-muted);

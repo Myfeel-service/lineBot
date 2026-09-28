@@ -13,7 +13,7 @@ import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/
  * Response: { success: true, userId: string, tagId: string }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const userIdParam = getRouterParam(event, 'id')
   const tagId = getRouterParam(event, 'tagId')
@@ -42,6 +42,7 @@ export default defineEventHandler(async (event) => {
   const batch = db.batch()
   batch.delete(ref)
 
+  // G-107：記下是誰拆的——拆標會直接改變推播對象，事後卻查不到人
   const logDoc: TagLogDoc = {
     workspaceId,
     action: 'remove',
@@ -49,7 +50,7 @@ export default defineEventHandler(async (event) => {
     tagId,
     sourceType: 'manual',
     sourceRefId: null,
-    operatorId: null,
+    operatorId: uid,
     createdAt: FieldValue.serverTimestamp(),
   }
   batch.set(db.collection('tagLogs').doc(uuidv4()), logDoc)

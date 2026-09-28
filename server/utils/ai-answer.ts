@@ -121,7 +121,7 @@ export interface AnswerInput {
    */
   followupOf?: string
   /**
-   * 測試模式（playground「重演」/ 內部 /api/ai/answer）：只記 token（測試真的花了 Gemini 的錢），
+   * 測試模式（playground「重演」）：只記 token（測試真的花了 Gemini 的錢），
    * 但**不記** invocations/answered/handoffs/disambiguations、不進率、也不消耗/不受 quota 阻擋。
    * 目的：「用量 / 監控」的品質指標與額度只反映真實客服，管理員測試不灌水（比照 isFollowup 的 tokens-only）。
    */
@@ -1619,9 +1619,12 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         ? usage.answered / billing.quota!
         : tokenCap > 0 ? usage.tokens / tokenCap : 0
       const periodKey = hasCountQuota ? `p_${billing.periodStart}` : `t_${new Date().toISOString().slice(0, 7)}`
+      // ⛔ token 那條不報數字（`G-103`）：這則推給通知名單上的每個人（客服也在），token 是平台的進貨單位、
+      //    畫面上只有超管看得到用量。改講「接近／已達『AI 設定』裡的上限」——管理員知道去哪裡調就夠了。
+      //    ⚠️ 兩種說法要分開：預警那則後面會接「(約 85%)」，用完那則不接，同一句話兩邊都要讀得通。
       const usageText = hasCountQuota
         ? `本期 AI 回覆則數 ${usage.answered}/${billing.quota}`
-        : `本月 AI token 用量 ${usage.tokens.toLocaleString()}/${tokenCap.toLocaleString()}`
+        : `本月 AI 用量${ratio >= 1 ? '已達' : '已接近'}「AI 設定」裡的每月用量上限`
       if (ratio >= 1 && (action === 'handoff' || action === 'downgrade')) {
         void maybeNotifyQuotaExhausted({ workspaceId, periodKey, usageText, action, db })
           .catch(e => console.error('[quota-exhausted] failed:', e))

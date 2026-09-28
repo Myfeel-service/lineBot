@@ -9,8 +9,15 @@ import type { AudienceFilter } from '~~/shared/types/tag-broadcast'
  *  - joinedAfter / joinedBefore（基於 users.createdAt）
  *
  * Phase 2 可擴充：isBlocked、最近互動時間、行為事件等。
+ *
+ * ⛔ 一定要帶 workspaceId（`G-104`①）：下面每一段都是 `if (workspaceId)` 才加帳號過濾，
+ *    空字串進來就是**全站**名單（`/api/audience/estimate` 曾因超管沒帶帳號回全站人數）。
+ *    守門那邊已經改成沒帶就 400，這裡再擋一次，⛔ 不要靠呼叫端記得。
  */
-export async function resolveAudienceUserIds(filter: AudienceFilter, workspaceId?: string): Promise<string[]> {
+export async function resolveAudienceUserIds(filter: AudienceFilter, workspaceId: string): Promise<string[]> {
+  if (!String(workspaceId ?? '').trim()) {
+    throw new Error('resolveAudienceUserIds: workspaceId is required（不帶帳號會變成全站名單）')
+  }
   const db = getDb()
 
   // ── Step 1: 從 includeAny / includeAll 條件取候選 userIds ──────────
@@ -124,7 +131,7 @@ export async function resolveAudienceUserIds(filter: AudienceFilter, workspaceId
  * 估算受眾人數（不回傳完整名單，效能較快）
  * 目前直接呼叫 resolveAudienceUserIds，Phase 2 可改用 count() 優化。
  */
-export async function estimateAudienceCount(filter: AudienceFilter, workspaceId?: string): Promise<number> {
+export async function estimateAudienceCount(filter: AudienceFilter, workspaceId: string): Promise<number> {
   const ids = await resolveAudienceUserIds(filter, workspaceId)
   return ids.length
 }

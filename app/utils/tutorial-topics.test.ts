@@ -120,7 +120,15 @@ describe('客服對話導覽擴到右半邊（2026-08-28）', () => {
 
   it('只有能操作的角色才看得到那幾步（觀察者畫面上根本沒有那些按鈕）', () => {
     const operateSteps = [...convBlock.matchAll(/requiresOperate:\s*true/g)]
-    expect(operateSteps.length).toBeGreaterThanOrEqual(3)
+    expect(operateSteps.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('`G-107`：介紹「為什麼這樣答」的那一步也要能操作才看得到', () => {
+    // 那顆按鈕是 `canOperate && msg.aiTurnId` 才渲染（AdminPanel.vue）——觀察者畫面上沒有
+    const at = convBlock.indexOf('為什麼這樣答')
+    expect(at, '找不到介紹「為什麼這樣答」的那一步').toBeGreaterThan(-1)
+    const stepEnd = convBlock.indexOf('\n      },', at)
+    expect(convBlock.slice(at, stepEnd)).toMatch(/requiresOperate:\s*true/)
   })
 })
 

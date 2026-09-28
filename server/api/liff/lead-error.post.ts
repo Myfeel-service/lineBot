@@ -3,6 +3,18 @@ import { isLeadFailureReason, isLeadTimeoutStage } from '~~/shared/lead-page-fai
 import { resolveWorkspaceIdByLiffChannelId } from '~~/server/utils/liff-tenant-resolve'
 import { liffChannelIdFromLiffId } from '~~/server/utils/liff-token'
 import { recordLeadPageFailure } from '~~/server/utils/lead-page-failures'
+import { createRateLimiter, rateLimitClientIp } from '~~/server/utils/rate-limit'
+
+/**
+ * 同一個來源 10 分鐘最多記 30 次（`G-105`）。原本不限次數：不用登入、每打一次就是一筆寫入，
+ * 而且全部寫進同一份小時桶文件（單一文件寫入頻率本來就有上限）。
+ *
+ * 為什麼是 30：一位客人打開一次活動頁，失敗的那條路只會回報一次；30 是留給**同一個出口
+ * 位址後面的很多人**（公司 Wi-Fi、電信業者共用 IP）同時打不開的情況。
+ * ⚠️ 這個數字是「該去看設定了」的訊號（見 `lead-page-failures.ts` 檔頭），少記幾次不影響它亮不亮；
+ * ⛔ 但不能不限——那等於任何人都能免費幫別家灌紅燈、灌我們的寫入費。
+ */
+const leadErrorLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 30 })
 
 /**
  * POST /api/liff/lead-error — 活動頁把「客人這次打不開」回報回來。
@@ -18,6 +30,16 @@ import { recordLeadPageFailure } from '~~/server/utils/lead-page-failures'
  * 認不出租戶就什麼都不寫（回 202），⛔ 不落到 default 租戶：那會讓 A 家的災情記在 B 家頭上。
  */
 export default defineEventHandler(async (event) => {
+  // 節流放最前面：連「不認得的代碼」那行 log、反查租戶那次讀取都要算在裡面
+  const ip = rateLimitClientIp(event)
+  const rl = leadErrorLimiter.take(ip)
+  if (rl.limited) {
+    // ⛔ 丟掉的要說得出來，但同一個視窗只記第一次（不然猛打的人順便幫我們灌 log）
+    if (rl.firstRejection) console.warn('[liff/lead-error] rate limited, dropping reports from', ip.slice(0, 64))
+    setResponseStatus(event, 429)
+    return { ok: false as const, recorded: false as const }
+  }
+
   const body = await readBody(event).catch(() => null)
   const reason = (body as { reason?: unknown } | null)?.reason
 

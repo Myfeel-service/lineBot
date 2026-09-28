@@ -60,7 +60,7 @@
     <template #editor-empty>
       <el-icon class="empty-icon"><Promotion /></el-icon>
       <h3>選擇一則推播來查看或編輯</h3>
-      <p>或點擊左側「新增」建立新推播</p>
+      <p v-if="canOperate">或點擊左側「新增」建立新推播</p>
       <div class="empty-actions">
         <el-button v-if="canOperate" type="primary" @click="openCreate">新增推播</el-button>
         <!-- 空清單＝最不打擾的教學位（D-33 P2）：這裡本來就沒東西可看 -->
@@ -71,6 +71,7 @@
     <!-- ── Editor Header ── -->
     <template #editor-header>
       <AdminEditorHeaderTitle
+        v-if="canOperate"
         v-model="form.name"
         field-label="推播名稱"
         create-prefix="新增推播:"
@@ -78,14 +79,22 @@
         caption="為這則推播命名，方便後續管理"
         :is-creating="isCreating"
       />
+      <!-- `G-107`：觀察者存不了，名稱只給看（同知識庫頁資料名稱的做法） -->
+      <div v-else class="admin-flex-1">
+        <AdminFieldLabel text="推播名稱" tight />
+        <div class="admin-title-row">
+          <span class="split-editor-title">{{ form.name || '(未命名)' }}</span>
+        </div>
+      </div>
       <div class="flex gap-1 admin-header-actions">
         <!-- `C-229`：跟機器人模組頁同一顆、同樣的措辭；⛔ 唯讀（已發送）時也留著，
              那時人正在回頭查「我那天到底發了什麼」，正是最需要看預覽的時候。 -->
         <el-button size="small" @click="previewOpen = !previewOpen">
           {{ previewOpen ? '隱藏預覽' : '顯示預覽' }}
         </el-button>
-        <!-- 已完成/取消 → 只看報表；失敗 → 多一個重發出口 -->
-        <template v-if="isReadOnly">
+        <!-- 已完成/取消 → 只看報表；失敗 → 多一個重發出口。
+             `G-107`：觀察者看草稿／排程中的也走這一排（只有「關閉」），不給一顆什麼都不做的「取消」 -->
+        <template v-if="isLocked">
           <el-button
             v-if="canOperate && selectedItem?.status === 'failed'"
             type="warning"
@@ -148,7 +157,7 @@
                  開著就不要再幫他按一次「新增」把手上編到一半的推播切掉 -->
             <div class="admin-field-group" data-tour="bc-audience">
               <AdminFieldLabel text="發送對象" tight />
-              <el-radio-group v-model="form.audienceType" :disabled="isReadOnly">
+              <el-radio-group v-model="form.audienceType" :disabled="isLocked">
                 <el-radio value="all">全部好友</el-radio>
                 <el-radio value="tags">依標籤篩選</el-radio>
                 <el-radio value="import">匯入名單</el-radio>
@@ -174,7 +183,7 @@
                 :model-value="form.tagIds"
                 :options="allTags"
                 :allow-create="false"
-                :disabled="isReadOnly"
+                :disabled="isLocked"
                 placeholder="選擇標籤（可打字搜尋）"
                 empty-text="還沒有任何標籤，所以沒有辦法用標籤挑人。標籤要先建好、而且要貼在客人身上，這裡才挑得到——貼標可以在機器人模組的按鈕、活動連結或客服預存上設定。"
                 @update:model-value="(ids) => (form.tagIds = ids)"
@@ -197,7 +206,7 @@
                 type="textarea"
                 :rows="5"
                 placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                :disabled="isReadOnly"
+                :disabled="isLocked"
               />
               <span class="tags-hint">共 {{ importUserIds.length }} 筆</span>
             </div>
@@ -226,7 +235,7 @@
               </p>
               <el-radio-group
                 :model-value="draftVariantIndex"
-                :disabled="isReadOnly"
+                :disabled="isLocked"
                 @update:model-value="(v) => pickDraftVariant(Number(v))"
               >
                 <el-radio v-for="(v, i) in draftVariants" :key="i" :value="i" class="bc-draft-picker__item">
@@ -243,7 +252,7 @@
               :model-value="form.contentAction"
               :module-options="flowOptions"
               :enable-card-copy="true"
-              :disabled="isReadOnly"
+              :disabled="isLocked"
               flow-picker-context="broadcast"
               @update:model-value="onContentActionUpdate"
             />
@@ -294,7 +303,7 @@
           <div class="card-section-stack">
             <div class="admin-field-group">
               <AdminFieldLabel text="發送時間" tight />
-              <el-radio-group v-model="form.scheduleMode">
+              <el-radio-group v-model="form.scheduleMode" :disabled="isLocked">
                 <el-radio value="now">立即發送</el-radio>
                 <el-radio value="schedule">排程發送</el-radio>
               </el-radio-group>
@@ -309,7 +318,7 @@
               <AdminTagPicker
                 :model-value="form.completionTagIds"
                 :options="allTags"
-                :disabled="isReadOnly"
+                :disabled="isLocked"
                 placeholder="不貼記號（可打字搜尋）"
                 @update:model-value="(ids) => (form.completionTagIds = ids)"
               />
@@ -328,11 +337,12 @@
                 format="YYYY/MM/DD HH:mm"
                 value-format="YYYY-MM-DDTHH:mm:ss"
                 :disabled-date="disabledPastDate"
+                :disabled="isLocked"
               />
               <p v-if="selectedItem?.status === 'scheduled'" class="tags-hint">
-                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。可以「儲存變更」或「取消排程」。
+                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="canOperate">可以「儲存變更」或「取消排程」。</template>
               </p>
-              <p v-else class="tags-hint">
+              <p v-else-if="canOperate" class="tags-hint">
                 按下確認後不會馬上發，要到排程時間才送出；發送對象也是到那個時間點才計算。
               </p>
             </div>
@@ -761,7 +771,8 @@ const defaultForm = () => ({
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
-  getSnapshot: () => form.value,
+  // `G-107`：觀察者存不了，就沒有「未儲存的變更」——以前他動過一格，離開就被問「確定要放棄嗎」
+  getSnapshot: () => (canOperate.value ? form.value : null),
 })
 
 // `D-86`：`isActive` / `messageCount` 要一路帶到下拉，它才標得出「還沒有內容／已停用」
@@ -787,6 +798,13 @@ const isReadOnly = computed(() => {
   const s = selectedItem.value?.status
   return s === 'completed' || s === 'failed' || s === 'cancelled' || s === 'processing'
 })
+
+/**
+ * 欄位要不要鎖（`G-107`）：已經發出去的（`isReadOnly`）**或是這個人存不了**（觀察者）。
+ * ⛔ 跟 `isReadOnly` 分開：那一個講的是「這則推播的狀態」（決定要不要顯示報表、
+ *    「沒有留存當時的內容」那句話），觀察者看一則草稿時那些話都不成立。
+ */
+const isLocked = computed(() => isReadOnly.value || !canOperate.value)
 
 const importUserIds = computed(() =>
   form.value.importText.split('\n').map((l) => l.trim()).filter(Boolean),

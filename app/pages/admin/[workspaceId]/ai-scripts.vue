@@ -99,6 +99,7 @@
     <!-- ── Editor Header ── -->
     <template #editor-header>
       <AdminEditorHeaderTitle
+        v-if="canEditScripts"
         v-model="form.name"
         field-label="流程名稱"
         create-prefix="新增客服流程："
@@ -107,6 +108,13 @@
         :is-creating="isCreating"
         @enter="submitForm"
       />
+      <!-- `G-107`：存不了的人名稱只給看（同知識庫頁資料名稱的做法） -->
+      <div v-else class="admin-flex-1">
+        <AdminFieldLabel text="流程名稱" tight />
+        <div class="admin-title-row">
+          <span class="split-editor-title">{{ form.name || '(未命名)' }}</span>
+        </div>
+      </div>
       <div class="flex gap-2 admin-header-actions">
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="CopyDocument" @click="duplicateScript">複製一份</el-button>
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="Delete" type="danger" @click="deleteScript">刪除</el-button>
@@ -184,6 +192,12 @@
           </div>
         </div>
 
+        <!--
+          `G-107`：沒有 scripts.write 的人（觀察者）以前每一格都改得動、底下卻沒有儲存鈕，切走還會跳「未儲存」。
+          兩張編輯卡包進 el-form 用 disabled 當唯讀（同 AI 設定頁）；純動作的鈕（＋／✕／移除／插入變數）
+          另外用 v-if 拿掉。⛔ 最下面「試跑這條流程」刻意不包：那是純預覽、不存任何東西，觀察者也該能用。
+        -->
+        <el-form :disabled="!canEditScripts" class="admin-panel-stack" @submit.prevent>
         <!-- 啟用 + 優先度 -->
         <div class="message-card scripts-section-card">
           <div class="message-card-header">
@@ -251,7 +265,7 @@
                   </span>
                   <span v-if="nodeHeaderHint(node)" class="text-xs text-muted">{{ nodeHeaderHint(node) }}</span>
                   <el-button
-                    v-if="node.type !== 'trigger'"
+                    v-if="canEditScripts && node.type !== 'trigger'"
                     size="small"
                     type="danger"
                     plain
@@ -359,7 +373,7 @@
                       </el-select>
                       <span class="text-xs text-muted">內不再接</span>
                       <span />
-                      <el-button type="danger" plain class="scripts-branch-remove" title="取消防重複觸發" @click="clearCooldown(node)">✕</el-button>
+                      <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="取消防重複觸發" @click="clearCooldown(node)">✕</el-button>
                     </div>
                     <p class="scripts-section-hint">
                       {{ triggerUiMode(node) === 'follow'
@@ -367,17 +381,20 @@
                         : '同一位客人在這段時間內又打中觸發詞，也不會再走一次這條流程（會改由 AI 回答）。' }}
                     </p>
                   </div>
-                  <button v-else type="button" class="scripts-skip-add" @click="enableCooldown(node)">
+                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="enableCooldown(node)">
                     ＋ 設定防重複觸發（同一位客人隔多久才能再走一次）
                   </button>
 
-                  <div v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group" data-tour="scr-test">
+                  <!-- `G-107`：「測試觸發」只在瀏覽器裡比對、不存任何東西，觀察者也要能打字。
+                       外層 el-form 的 disabled 會一路傳下來，這裡用一層自己的 el-form 把它擋回來
+                       （admin 整區是 SPA、不走 SSR，巢狀 form 不會被 HTML 解析器吃掉；AreaEditorSection 也這樣巢）。 -->
+                  <el-form v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group" data-tour="scr-test" @submit.prevent>
                     <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條流程）" tight />
                     <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
                     <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
                       {{ triggerTestResult(node).state === 'hit' ? '✓ ' : triggerTestResult(node).state === 'maybe' ? '≈ ' : '✗ ' }}{{ triggerTestResult(node).text }}
                     </p>
-                  </div>
+                  </el-form>
                 </template>
 
                 <!-- Collect -->
@@ -444,7 +461,7 @@
                           <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
                         </el-option-group>
                       </el-select>
-                      <el-button type="danger" plain class="scripts-branch-remove" title="移除這條退路" @click="clearCollectSkip(node)">✕</el-button>
+                      <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除這條退路" @click="clearCollectSkip(node)">✕</el-button>
                     </div>
                     <p class="scripts-section-hint">
                       問這一題時會多這顆按鈕，點了就改走你指定的那一步。
@@ -452,7 +469,7 @@
                     </p>
                   </div>
                   <button
-                    v-else
+                    v-else-if="canEditScripts"
                     type="button"
                     class="scripts-skip-add"
                     :class="{ 'is-suggested': isStuckCollect(node) }"
@@ -484,6 +501,7 @@
                       沒有收集步驟的那種）。現在內建變數永遠在，選單也就永遠在。
                     -->
                     <el-dropdown
+                      v-if="canEditScripts"
                       size="small"
                       trigger="click"
                       class="scripts-var-insert"
@@ -522,11 +540,11 @@
                       <el-input v-model="node.linkUrl" placeholder="https://…（可用 {{ 欄位 }} 帶入答案）" class="scripts-branch-field" />
                       <span class="text-xs text-muted">按鈕字</span>
                       <el-input v-model="node.linkLabel" maxlength="20" :placeholder="DEFAULT_REPLY_LINK_LABEL" class="scripts-branch-field" />
-                      <el-button type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(node)">✕</el-button>
+                      <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(node)">✕</el-button>
                     </div>
                     <p class="scripts-section-hint">會在回覆文字下面多送一則帶按鈕的訊息。網址要以 https:// 開頭。</p>
                   </div>
-                  <button v-else type="button" class="scripts-skip-add" @click="node.linkUrl = ''">
+                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="node.linkUrl = ''">
                     ＋ 附一顆連結按鈕
                   </button>
 
@@ -561,9 +579,9 @@
                         <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
                       </el-option-group>
                     </el-select>
-                    <el-button type="danger" plain class="scripts-branch-remove" @click="removeBranchCase(node, ci)">✕</el-button>
+                    <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" @click="removeBranchCase(node, ci)">✕</el-button>
                   </div>
-                  <el-button size="small" plain @click="addBranchCase(node)">＋ 新增條件</el-button>
+                  <el-button v-if="canEditScripts" size="small" plain @click="addBranchCase(node)">＋ 新增條件</el-button>
                   <div class="admin-field-group">
                     <AdminFieldLabel text="其餘情況（都不符合時）→ 前往" tight />
                     <el-select :model-value="node.defaultNext" placeholder="前往…" @change="onTargetChange($event, node.defaultNext, (id) => node.defaultNext = id)">
@@ -592,9 +610,9 @@
                         <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
                       </el-option-group>
                     </el-select>
-                    <el-button type="danger" plain class="scripts-branch-remove" @click="removeQuickReplyOption(node, oi)">✕</el-button>
+                    <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" @click="removeQuickReplyOption(node, oi)">✕</el-button>
                   </div>
-                  <el-button size="small" plain @click="addQuickReplyOption(node)">＋ 新增選項</el-button>
+                  <el-button v-if="canEditScripts" size="small" plain @click="addQuickReplyOption(node)">＋ 新增選項</el-button>
                 </template>
 
                 <!-- Tag -->
@@ -622,9 +640,9 @@
                     </el-select>
                     <span class="text-xs text-muted">存成</span>
                     <el-input v-model="m.attrKey" placeholder="如 訂單編號" class="scripts-branch-field" />
-                    <el-button type="danger" plain class="scripts-branch-remove" @click="removeSaveLeadField(node, mi)">✕</el-button>
+                    <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" @click="removeSaveLeadField(node, mi)">✕</el-button>
                   </div>
-                  <el-button size="small" plain @click="addSaveLeadField(node)">＋ 新增欄位</el-button>
+                  <el-button v-if="canEditScripts" size="small" plain @click="addSaveLeadField(node)">＋ 新增欄位</el-button>
                 </template>
 
                 <!-- Module：送出某個機器人模組的訊息，然後結束 -->
@@ -657,12 +675,12 @@
             </div>
 
             <!-- 簡單模式的成長入口：點了才出現積木選單，加完第一塊就自動變成完整編輯器 -->
-            <button v-if="isSimpleMode && !showPalette" type="button" class="scripts-grow" @click="showPalette = true">
+            <button v-if="canEditScripts && isSimpleMode && !showPalette" type="button" class="scripts-grow" @click="showPalette = true">
               ＋ 還要多做一步…
               <small>問客人資料、給按鈕選、依答案分路、轉真人</small>
             </button>
 
-            <div v-if="!isSimpleMode || showPalette" class="scripts-add-palette">
+            <div v-if="canEditScripts && (!isSimpleMode || showPalette)" class="scripts-add-palette">
               <div v-for="grp in nodePalette" :key="grp.group" class="scripts-add-group">
                 <span class="scripts-add-group-title">{{ grp.group }}</span>
                 <div class="scripts-add-cards">
@@ -685,11 +703,12 @@
               </div>
             </div>
 
-            <p v-if="!isSimpleMode" class="scripts-section-hint">
+            <p v-if="!isSimpleMode && canEditScripts" class="scripts-section-hint">
               一般步驟會由上到下自動接下去；只有「依答案分路」和「快速回覆」要自己用「前往…」下拉，指定每條路各接到哪一步。
             </p>
           </div>
         </div>
+        </el-form>
 
         <!-- 試跑：假裝自己是客人打字，即時模擬這條腳本（純預覽，無副作用）。
              擺在最後——新建腳本時第一眼不該是一個沒東西可跑的模擬器。 -->
@@ -898,7 +917,8 @@ function blankForm() {
 
 const form = ref(blankForm())
 const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
-  getSnapshot: () => form.value,
+  // `G-107`：存不了的人就沒有「未儲存的變更」——切走、關分頁都不要問他
+  getSnapshot: () => (canEditScripts.value ? form.value : null),
   // 腳本節點流程可能編很久；F5 / 關分頁也要攔，避免整段遺失
   enableBeforeUnload: true,
 })

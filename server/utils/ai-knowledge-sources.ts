@@ -18,6 +18,9 @@ import type {
   KnowledgeSourceType,
 } from '~~/shared/types/ai-knowledge'
 import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
+// ⚠️ 這支會繞一圈 import 回本檔（folder-guard → ai-knowledge-folders → 本檔）。安全的前提是
+//    兩邊都只在函式裡用對方的東西、頂層不讀——動這三支檔案的頂層時要記得這個圈。
+import { resolveKnowledgeFolderId } from './ai-knowledge-folder-guard'
 
 export const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
 
@@ -475,7 +478,8 @@ export async function updateSourceSettings(
     update.name = input.name.trim().slice(0, 200)
   }
   if (input.folderId !== undefined) {
-    update.folderId = input.folderId ? String(input.folderId) : null
+    // G-98：搬進的資料夾要是這個帳號的；搬進不存在的資料夾，這份資料會從側欄整份消失（找不到丟 404）
+    update.folderId = await resolveKnowledgeFolderId(db, workspaceId, input.folderId)
   }
   if (typeof input.urlAutoApply === 'boolean') {
     update.urlAutoApply = input.urlAutoApply

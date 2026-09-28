@@ -17,6 +17,8 @@ import { getDb } from './firebase'
 import { getWorkspacePlan } from './billing'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { planLimitMessage } from '~~/shared/billing/plans'
+import { can } from '~~/shared/permissions'
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
 const TTL_MS = 60 * 1000
 
@@ -86,6 +88,20 @@ export async function getKnowledgeChunkQuota(
   if (!plan) return null // 訂閱讀取失敗 → 呼叫端 fail-open
   if (plan.knowledgeChunks == null) return { used: 0, limit: null, planName: plan.name }
   return { used: await countWorkspaceChunks(workspaceId, db), limit: plan.knowledgeChunks, planName: plan.name }
+}
+
+/**
+ * 回給畫面之前依角色拿掉方案名（`G-103`）：方案屬於計費資訊（`usage.read`＝管理員），
+ * 觀察者與客服不該從知識庫頁拿到。⛔ 張數與上限要留著——「全收會用掉幾張」是按下去之前
+ * 就該看得到的事，每個會按的人都需要。
+ */
+export function quotaForRole(
+  quota: KnowledgeChunkQuotaStatus | null,
+  role: WorkspaceMemberRole | null | undefined,
+): (Omit<KnowledgeChunkQuotaStatus, 'planName'> & { planName?: string }) | null {
+  if (!quota || can(role, 'usage.read')) return quota
+  const { planName: _planName, ...rest } = quota
+  return rest
 }
 
 /**

@@ -13,7 +13,7 @@
         還沒進知識庫——你一張一張看過才算數。
         <!-- ⛔ 會花到額度的數字要寫在**按下去之前看得到的地方**（知識卡張數是計費維度） -->
         <template v-if="quota && quota.limit != null && total">
-          <b>全收會用掉 {{ total }}／{{ quota.limit }} 張</b>（{{ quota.planName }}方案，現在用了 {{ quota.used }} 張），不要的刪掉就不佔。
+          <b>全收會用掉 {{ total }}／{{ quota.limit }} 張</b>（<template v-if="quota.planName">{{ quota.planName }}方案，</template>現在用了 {{ quota.used }} 張），不要的刪掉就不佔。
         </template>
       </p>
       <p v-if="stillWorking" class="kb-drafts__working">
@@ -89,7 +89,7 @@ const emit = defineEmits<{ changed: [] }>()
 interface DraftCard { id: string, title: string, content: string, questions: string[], tags: string[] }
 interface DraftPage { sourceId: string, name: string, url: string, cards: DraftCard[] }
 interface Generating { status: string, pagesDone: number, pagesTotal: number, cards: number, trimmed: number, pagesFailed: { url: string, reason: string }[], skippedExisting?: number, error?: string }
-interface Overview { total: number, pages: DraftPage[], generating: Generating | null, quota: { used: number, limit: number | null, planName: string } | null }
+interface Overview { total: number, pages: DraftPage[], generating: Generating | null, quota: { used: number, limit: number | null, planName?: string } | null }
 
 const { apiFetch, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()

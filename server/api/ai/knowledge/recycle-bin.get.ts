@@ -54,7 +54,10 @@ export default defineEventHandler(async (event) => {
       .catch(() => [])
     const nameById = new Map<string, string>()
     for (const s of snaps) {
-      if (s.exists) nameById.set(s.id, String((s.data() as any)?.name ?? ''))
+      // G-98：別家的來源當作不存在（同 knowledge/list.get），名稱不讀出去
+      if (s.exists && (s.data() as any)?.workspaceId === workspaceId) {
+        nameById.set(s.id, String((s.data() as any)?.name ?? ''))
+      }
     }
     for (const r of rows) {
       if (r.sourceId) r.sourceName = nameById.get(r.sourceId) || null

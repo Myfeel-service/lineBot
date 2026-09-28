@@ -1,4 +1,5 @@
 import { getDb } from './firebase'
+import { capMapSize } from './bounded-cache'
 import type { LineWorkspaceDoc } from '~~/shared/line-workspace'
 
 export type ResolvedLineCredentials = {
@@ -16,9 +17,33 @@ export type ResolvedLineCredentials = {
 
 const TTL_MS = 60 * 1000
 
+/**
+ * 快取上限（`G-105`）。⚠️ 公開端點 `/api/liff/config?workspaceId=亂編` 也會走到這裡，
+ * 查不到的 id 同樣會被快取（避免同一個亂編的值每次都讀庫）——沒有上限的話，
+ * 每換一個亂編的值就多一格，暖啟動的實例會一路長下去。真的帳號遠少於這個數。
+ */
+const CACHE_MAX_ENTRIES = 2000
+
 const cacheByWorkspace = new Map<string, ResolvedLineCredentials & { expiresAt: number }>()
 let workspaceCredentialListCache: Array<{ workspaceId: string; credentials: ResolvedLineCredentials }> | null = null
 let workspaceCredentialListExpiresAt = 0
+
+function setCachedCredentials(workspaceId: string, value: ResolvedLineCredentials & { expiresAt: number }) {
+  cacheByWorkspace.set(workspaceId, value)
+  capMapSize(cacheByWorkspace, CACHE_MAX_ENTRIES)
+}
+
+/**
+ * 看起來像不像一個帳號 id（純函式，`G-105`）。給**不用登入**的端點在讀庫之前先擋掉明顯亂編的值。
+ *
+ * 帳號 id 只有兩種來源：`uuidv4()`（所有建帳號的端點）與舊的 `'default'`
+ * （`DEFAULT_LINE_WORKSPACE_ID`）。⛔ 刻意放寬成「英數、底線、連字號，最長 64」而不是只認 uuid：
+ * 認錯一個真的帳號＝那家的活動頁讀不到設定，代價比多讀一次庫大得多。
+ * 擋掉的是含 `/`（Firestore 會當成子集合路徑）、空白、超長這些**一定不是**帳號 id 的值。
+ */
+export function isPlausibleWorkspaceId(id: string): boolean {
+  return /^[\w-]{1,64}$/.test(String(id || ''))
+}
 
 export function invalidateLineWorkspaceCredentialsCache() {
   cacheByWorkspace.clear()
@@ -70,7 +95,7 @@ export async function getLineWorkspaceCredentials(workspaceId: string): Promise<
     defaultLiffId: fromRequested.defaultLiffId || '',
     lineBotUserId: fromRequested.lineBotUserId || '',
   }
-  cacheByWorkspace.set(cacheKey, { ...resolved, expiresAt: now + TTL_MS })
+  setCachedCredentials(cacheKey, { ...resolved, expiresAt: now + TTL_MS })
   return resolved
 }
 
@@ -108,7 +133,7 @@ export async function findWorkspacesByLiffChannelId(
       defaultLiffId: String(d?.defaultLiffId ?? '').trim(),
       lineBotUserId: String(d?.lineBotUserId ?? '').trim(),
     }
-    cacheByWorkspace.set(doc.id, { ...credentials, expiresAt: now + TTL_MS })
+    setCachedCredentials(doc.id, { ...credentials, expiresAt: now + TTL_MS })
     return { workspaceId: doc.id, credentials }
   })
 }
@@ -138,7 +163,7 @@ export async function listWorkspaceLineCredentials(): Promise<Array<{ workspaceI
     //    有它但沒憑證的文件對 webhook 驗證沒有用，不該被算成「有設定」
     if (!credentials.channelAccessToken && !credentials.channelSecret && !credentials.defaultLiffId) continue
     rows.push({ workspaceId: doc.id, credentials })
-    cacheByWorkspace.set(doc.id, { ...credentials, expiresAt: now + TTL_MS })
+    setCachedCredentials(doc.id, { ...credentials, expiresAt: now + TTL_MS })
   }
 
   workspaceCredentialListCache = rows

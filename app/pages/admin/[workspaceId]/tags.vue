@@ -539,14 +539,18 @@
     </template>
   </AdminSplitLayout>
 
+  <!--
+    `G-107`：觀察者點一列也會開這個視窗——以前每一格都改得動、底下卻沒有儲存鈕。
+    現在整張表單用 el-form 的 disabled 當唯讀（同 AI 設定頁），只能按的東西（色票、提醒）不給。
+  -->
   <el-dialog
     v-model="dialogVisible"
-    :title="isEditing ? '編輯標籤' : '新增標籤'"
+    :title="isEditing ? (canOperate ? '編輯標籤' : '標籤內容') : '新增標籤'"
     width="min(600px, 94vw)"
     class="tags-dialog"
-    :close-on-click-modal="false"
+    :close-on-click-modal="!canOperate"
   >
-    <el-form label-position="top" @submit.prevent>
+    <el-form label-position="top" :disabled="!canOperate" @submit.prevent>
       <div class="admin-field-stack">
         <div class="admin-field-group">
           <AdminFieldLabel text="啟用狀態" tight />
@@ -558,7 +562,7 @@
             inactive-text="已停用"
             class="tags-status-switch"
           />
-          <span class="tags-hint">停用的標籤不會出現在貼標選單，但仍可在此編輯</span>
+          <span class="tags-hint">停用的標籤不會出現在貼標選單{{ canOperate ? '，但仍可在此編輯' : '' }}</span>
         </div>
 
         <div class="admin-field-group" data-tour="tag-code">
@@ -583,7 +587,7 @@
                所以它只有資格問一句，沒有資格替人做決定。
             ⛔ 撞到的那顆要能直接點開看：沒有出口的警告只會被當成雜訊跳過。
           -->
-          <p v-if="createSimilarTop" class="tags-similar-hint">
+          <p v-if="canOperate && createSimilarTop" class="tags-similar-hint">
             ⚠️
             <template v-if="createSimilarTop.exact">
               你已經有一顆叫「<strong>{{ createSimilarTop.name }}</strong>」的標籤了。
@@ -618,7 +622,7 @@
 
         <div class="admin-field-group">
           <AdminFieldLabel text="標籤顏色" tight />
-          <div class="tags-color-row">
+          <div v-if="canOperate" class="tags-color-row">
             <button
               v-for="c in TAG_PRESET_COLORS"
               :key="c"
@@ -628,6 +632,10 @@
               :style="{ '--swatch-bg': c }"
               @click="form.color = c"
             />
+          </div>
+          <!-- 觀察者：只看現在是哪個顏色（色票是原生按鈕，el-form 的 disabled 管不到） -->
+          <div v-else class="tags-color-row">
+            <span class="tags-color-swatch tags-color-swatch--static" :style="{ '--swatch-bg': form.color }" />
           </div>
         </div>
 
@@ -690,7 +698,7 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
+      <el-button @click="dialogVisible = false">{{ canOperate ? '取消' : '關閉' }}</el-button>
       <el-button v-if="canOperate" type="primary" :loading="saving" @click="submitForm">
         {{ isEditing ? '儲存變更' : '建立標籤' }}
       </el-button>

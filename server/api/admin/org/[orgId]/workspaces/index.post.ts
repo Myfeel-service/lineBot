@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireOrgAdmin } from '~~/server/utils/workspace-auth'
+import { requireActiveOrgAdmin } from '~~/server/utils/workspace-auth'
 import { addSystemModulesToBatch } from '~~/server/utils/workspace-system-modules'
 import { defaultFreeSubscription } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
@@ -19,19 +19,18 @@ export default defineEventHandler(async (event) => {
   const orgId = event.context.params?.orgId
   if (!orgId) throw createError({ statusCode: 400, statusMessage: 'orgId is required' })
 
-  const { uid, email, isSuperAdmin } = await requireOrgAdmin(event, orgId)
+  // 停用即擋收斂在 requireActiveOrgAdmin（`G-107`⑰）：原本這裡自己再寫一份停用檢查，判斷散兩處。
+  // ⚠️ 超管的行為因此變了一點：原本停用的組織連超管都開不了帳號，現在超管可以
+  //    （跟 requireActiveOrgAdmin「超管就是去處理被停用組織的人」同一個口徑）
+  const { uid, email, isSuperAdmin } = await requireActiveOrgAdmin(event, orgId)
   // super admin 可能沒有 orgMembers email；建立時以其 token email 記錄，無則留空
   const inviterEmail = email ?? null
 
   const db = getDb()
 
-  // 確認組織未停用
   const orgSnap = await db.collection('organizations').doc(orgId).get()
   if (!orgSnap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此組織' })
   const org = orgSnap.data() as OrganizationDoc
-  if (org.disabled === true) {
-    throw createError({ statusCode: 403, statusMessage: '此組織已停用' })
-  }
 
   // 數量上限（super admin 不受限；maxWorkspaces === null 表示特批不限）
   if (!isSuperAdmin && org.maxWorkspaces !== null) {

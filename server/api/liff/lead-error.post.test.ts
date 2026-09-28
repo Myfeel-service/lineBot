@@ -86,6 +86,27 @@ describe('POST /api/liff/lead-error', () => {
     }))
   })
 
+  it('⛔ 同一個來源 10 分鐘超過 30 次就不再寫（`G-105`）；偽造 X-Forwarded-For 最左邊繞不過，別的來源不受影響', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const from = (ip: string, spoof: string) =>
+      (handler as (e: unknown) => Promise<{ ok: boolean, recorded: boolean }>)({
+        node: { req: { headers: { 'x-forwarded-for': `${spoof}, ${ip}` }, socket: {} } },
+      })
+    body = { reason: 'load_timeout', liffId: '2007123456-AbCdEfGh' }
+    for (let i = 0; i < 30; i++)
+      await expect(from('198.51.100.7', `10.0.0.${i}`)).resolves.toEqual({ ok: true, recorded: true })
+    vi.mocked(recordLeadPageFailure).mockClear()
+
+    await expect(from('198.51.100.7', '10.9.9.9')).resolves.toEqual({ ok: false, recorded: false })
+    await expect(from('198.51.100.7', '10.9.9.8')).resolves.toEqual({ ok: false, recorded: false })
+    expect(recordLeadPageFailure).not.toHaveBeenCalled()
+    // 被擋的要留一行，但同一個視窗只留第一次
+    expect(warn.mock.calls.filter(c => String(c[0]).includes('rate limited'))).toHaveLength(1)
+
+    await expect(from('198.51.100.8', '10.0.0.1')).resolves.toEqual({ ok: true, recorded: true })
+    warn.mockRestore()
+  })
+
   it('寫入失敗不對外拋錯（客人不該因為回報失敗再看到一個錯誤）', async () => {
     vi.mocked(recordLeadPageFailure).mockRejectedValueOnce(new Error('firestore down'))
     body = { reason: 'claim_failed', liffId: '2007123456-AbCdEfGh' }

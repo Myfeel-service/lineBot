@@ -1,5 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore'
-import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
+import { requireSuperAdmin, invalidateWorkspaceOrgCache } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceSubscription } from '~~/shared/billing/plans'
@@ -56,6 +56,9 @@ export default defineEventHandler(async (event) => {
   }
   // 訂閱可能變更 → 清 billing 快取，讓則數額度攔截立即生效
   invalidateWorkspaceSubscriptionCache(id)
+  // 換組織 → 清「帳號 → 組織」快取（`G-104`③）：組織管理員的權限靠這個對應查，
+  // 不清的話**舊**組織的管理員在這台機器上還能再進 60 秒（其他實例等 TTL）
+  if ('organizationId' in body) invalidateWorkspaceOrgCache(id)
 
   const after = await ref.get()
 

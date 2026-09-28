@@ -40,7 +40,12 @@ import type { BrokenModuleRepointResult } from '~~/shared/types/alert-fix'
 const BATCH_LIMIT = 400
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  // `G-102`：門檻跟前端那顆「用聊天帶我修」對齊成客服（2026-08-28 拍板 operate 級）。
+  // ⛔ 放低之前逐筆對過：這支會寫的東西，客服在各自的頁面本來就改得動——
+  //   模組 isActive／messages＝`flow/[id].put`（agent）、客服流程 nodes＝`ai/scripts/[id].put`
+  //   （scripts.write＝agent）、活動 moduleId＝`campaigns/[id].put`（agent）；圖文選單這支不代改。
+  //   之後若要往這裡加一種寫入，先確認那種東西客服本來就能改，不然就把門檻拉回來。
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
   const body = await readBody(event).catch(() => ({}))
   const action = String(body?.action ?? '').trim()
   const db = getDb()

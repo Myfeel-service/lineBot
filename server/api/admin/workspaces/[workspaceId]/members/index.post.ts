@@ -1,9 +1,10 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { requireWorkspaceAccess, invalidateWorkspaceMemberCache } from '~~/server/utils/workspace-auth'
+import { requireCapability, invalidateWorkspaceMemberCache } from '~~/server/utils/workspace-auth'
 import { getFirebaseAuth } from '~~/server/utils/firebase'
 import { getWorkspacePlan } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planLimitMessage } from '~~/shared/billing/plans'
+import { WORKSPACE_INVITE_TTL_MS, isInviteExpired } from '~~/shared/workspace-invite'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
 const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
@@ -32,7 +33,7 @@ async function deleteWorkspaceInvitesForEmail(db: Firestore, workspaceId: string
  * Body: { email: string, role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { uid: inviterUid, workspaceId, isSuperAdmin } = await requireWorkspaceAccess(event, 'admin')
+  const { uid: inviterUid, workspaceId, isSuperAdmin } = await requireCapability(event, 'members.manage')
 
   const body = await readBody(event)
   const { email, role } = body
@@ -48,11 +49,12 @@ export default defineEventHandler(async (event) => {
   const pendingSnap = await db.collection('workspaceInvites')
     .where('workspaceId', '==', workspaceId)
     .where('email', '==', emailNorm)
-    .limit(1)
     .get()
-  if (!pendingSnap.empty) {
+  if (pendingSnap.docs.some(d => !isInviteExpired(d.data()))) {
     throw createError({ statusCode: 409, statusMessage: '此 Email 已有待處理的邀請' })
   }
+  // 只剩過期的（`G-107`⑥）＝這次就是「重新邀請」：舊的那張收掉，下面發一張新的，成員頁才不會同一個人列兩列
+  if (!pendingSnap.empty) await deleteWorkspaceInvitesForEmail(db, workspaceId, emailNorm)
 
   /**
    * 席次上限（`D-69` 拍板④）。2026-09-07 之前 `plan.seats` 只印在方案表上、後端零攔截。
@@ -63,15 +65,17 @@ export default defineEventHandler(async (event) => {
    *
    * ⚠️ 已接受的邀請不會重複計算：materializeWorkspaceInviteIfAny 是刪一筆邀請、
    * 建一筆成員，淨額 0。super admin 豁免（比照 org/workspaces 建立上限的既有慣例）。
+   * ⚠️ 過期的邀請不算（`G-107`⑥）：它已經進不來了，還佔著席次＝管理員得先去刪才邀得了新人。
+   *    所以邀請改成讀出來在記憶體數（一個帳號的邀請以個位數計），⛔ 不能用 count() 聚合。
    */
   if (!isSuperAdmin) {
     const plan = await getWorkspacePlan(workspaceId, db)
     if (plan?.seats != null) {
-      const [memberAgg, inviteAgg] = await Promise.all([
+      const [memberAgg, inviteSnap] = await Promise.all([
         db.collection('workspaceMembers').where('workspaceId', '==', workspaceId).count().get(),
-        db.collection('workspaceInvites').where('workspaceId', '==', workspaceId).count().get(),
+        db.collection('workspaceInvites').where('workspaceId', '==', workspaceId).get(),
       ])
-      const used = memberAgg.data().count + inviteAgg.data().count
+      const used = memberAgg.data().count + inviteSnap.docs.filter(d => !isInviteExpired(d.data())).length
       if (used >= plan.seats) {
         throw createError({
           statusCode: 403,
@@ -84,10 +88,15 @@ export default defineEventHandler(async (event) => {
   const workspaceSnap = await db.collection('workspaces').doc(workspaceId).get()
   const organizationId = workspaceSnap.data()?.organizationId ?? null
 
+  /*
+   * 已經有帳號的直接加成成員——**但只認信箱驗證過的帳號**（`G-99`）。
+   * 沒驗證過的帳號可能是別人先拿這個信箱註冊的：直接加的話，邀請就落到那個人手上。
+   * 那種情況改走邀請，等真的擁有這個信箱的人登入（守門那邊一樣只認驗證過的信箱）才轉正。
+   */
   let targetUid: string | null = null
   try {
     const userRecord = await getFirebaseAuth().getUserByEmail(emailNorm)
-    targetUid = userRecord.uid
+    targetUid = userRecord.emailVerified === true ? userRecord.uid : null
   } catch {
     targetUid = null
   }
@@ -134,6 +143,8 @@ export default defineEventHandler(async (event) => {
     role,
     invitedBy: inviterUid,
     createdAt: FieldValue.serverTimestamp(),
+    // 30 天沒人接受就過期（`G-107`⑥）；存毫秒數字，跟綁定碼的 lineBindCodeExpiresAt 同一種寫法
+    expiresAt: Date.now() + WORKSPACE_INVITE_TTL_MS,
   })
 
   // 稽核（`C-254`）：對方還沒有帳號，所以現在只是一張邀請——

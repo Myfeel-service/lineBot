@@ -30,6 +30,13 @@ export default defineEventHandler(async (event) => {
   const existing = user.customClaims ?? {}
   const { superAdmin: _, ...rest } = existing as any
   await auth.setCustomUserClaims(uid, rest)
+  /*
+   * 撤銷要**當下**生效（`G-104`②）：只改 claims 的話，他手上那張 ID token 到期前（最長 1 小時）
+   * 還帶著 superAdmin，照樣全站放行。撤掉 refresh token＋守門在超管那條路 `checkRevoked`
+   * （workspace-auth 的 verifyRequestToken）＝下一個請求就被擋，要重新登入才拿得到新的（沒有超管的）token。
+   * ⚠️ 副作用：他在所有裝置都會被登出一次。
+   */
+  await auth.revokeRefreshTokens(uid)
 
   // 同步移除可列舉索引(不存在則為 no-op)。
   await getDb().collection('superAdmins').doc(uid).delete()

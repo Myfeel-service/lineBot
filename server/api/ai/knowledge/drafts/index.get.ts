@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { countDrafts, listDrafts } from '~~/server/utils/knowledge-drafts'
+import { quotaForRole } from '~~/server/utils/ai-knowledge-quota'
 
 /**
  * GET /api/ai/knowledge/drafts[?summary=1]
@@ -10,8 +11,9 @@ import { countDrafts, listDrafts } from '~~/server/utils/knowledge-drafts'
  * 唯讀，viewer 就看得到（知識庫本來就開給 viewer 讀）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, role } = await requireWorkspaceAccess(event, 'viewer')
   const q = getQuery(event)
   if (String(q.summary ?? '') === '1') return countDrafts(workspaceId, getDb())
-  return listDrafts(workspaceId, getDb())
+  const r = await listDrafts(workspaceId, getDb())
+  return { ...r, quota: quotaForRole(r.quota, role) }
 })

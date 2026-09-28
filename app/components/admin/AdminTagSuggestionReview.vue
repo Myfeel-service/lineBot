@@ -18,7 +18,8 @@
            採用會真的貼上（下游是推播發給誰）、忽略是**永久**的（含自動貼也不會再貼）。
            先前這件事只在客人單頁一位一位按，兩顆鈕旁邊什麼都沒寫。
       -->
-      <p class="tag-review__hint">
+      <!-- `G-107`：觀察者沒有這兩顆鈕，講按下去的後果是在講他按不到的東西 -->
+      <p v-if="canOperate" class="tag-review__hint">
         <strong>採用</strong>＝真的把這顆標籤貼到那位客人身上（記「AI 貼的」，隨時可拿掉）。
         <strong>忽略</strong>＝這顆標籤對那位客人<strong>永遠不再建議</strong>，之後 AI 也不會自動貼。
       </p>
@@ -54,14 +55,13 @@
       </div>
 
       <template v-else>
-        <div class="tag-review__toolbar">
-          <!-- ⛔ 唯讀角色也要鎖：每一列都鎖了、只有全選沒鎖的話，
-               他勾得動「已選 34 位」卻一顆動作鈕都沒有（那幾顆藏在 canOperate 後面），
-               等於給了一個按了不會有結果的控制項 -->
+        <!-- ⛔ 唯讀角色勾選框整排不出現（`G-107`：原本是灰掉，政策是沒權限就藏）：
+             勾得動「已選 34 位」卻一顆動作鈕都沒有（那幾顆藏在 canOperate 後面），
+             等於給了一個按了不會有結果的控制項。⛔ 全選與每一列要一起藏，只藏一邊就是半套 -->
+        <div v-if="canOperate" class="tag-review__toolbar">
           <el-checkbox
             :model-value="allChecked"
             :indeterminate="someChecked"
-            :disabled="!canOperate"
             @change="toggleAll"
           >
             全選（{{ rows.length }} 位）
@@ -85,8 +85,8 @@
         <ul class="tag-review__list">
           <li v-for="row in rows" :key="row.userId" class="tag-review__row">
             <el-checkbox
+              v-if="canOperate"
               :model-value="selected.includes(row.userId)"
-              :disabled="!canOperate"
               @change="toggleOne(row.userId)"
             />
             <div class="tag-review__body">

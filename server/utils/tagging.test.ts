@@ -15,9 +15,15 @@ vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 
 import { getDb } from './firebase'
 import { addTagsToUser, countsAsCustomerHit, nextTagHit, TAG_HIT_COOLDOWN_MS } from './tagging'
+import { clearTagOwnerCache } from './workspace-tag-ids'
 
 const WS = 'ws1'
 const USER = 'ws1_U1'
+/** 預設的標籤主檔：測試裡用到的都是這一家的（`G-98` 之後貼標前會先比對歸屬） */
+const OWN_TAGS: Record<string, Record<string, unknown>> = {
+  t1: { workspaceId: WS, name: '標籤一' },
+  t2: { workspaceId: WS, name: '標籤二' },
+}
 
 describe('nextTagHit：冷卻窗內只更新時間、不加次數', () => {
   const NOW = 1_700_000_000_000
@@ -59,21 +65,33 @@ describe('nextTagHit：冷卻窗內只更新時間、不加次數', () => {
 
 /**
  * 迷你假 Firestore：userTags 的 get／batch.set，把寫入全部記下來供斷言。
+ * `tags` 是標籤主檔（getAll 讀的那一份），預設全是這一家的。
  */
-function fakeDb(existing: Record<string, Record<string, unknown> | undefined>) {
+function fakeDb(
+  existing: Record<string, Record<string, unknown> | undefined>,
+  tags: Record<string, Record<string, unknown> | undefined> = OWN_TAGS,
+) {
   const writes: Array<{ col: string, id: string, data: any, merge: boolean }> = []
   let committed = 0
-  const db: any = {
-    collection: (col: string) => ({
-      doc: (id: string = 'auto') => ({
-        __col: col,
-        __id: id,
-        get: async () => ({
-          exists: existing[id] != null,
-          data: () => existing[id],
-        }),
+  let tagReads = 0
+  const doc = (col: string, id: string = 'auto') => {
+    const store = col === 'tags' ? tags : existing
+    return {
+      __col: col,
+      __id: id,
+      get: async () => ({
+        id,
+        exists: store[id] != null,
+        data: () => store[id],
       }),
-    }),
+    }
+  }
+  const db: any = {
+    collection: (col: string) => ({ doc: (id?: string) => doc(col, id) }),
+    getAll: async (...refs: Array<ReturnType<typeof doc>>) => {
+      tagReads += refs.filter(r => r.__col === 'tags').length
+      return Promise.all(refs.map(r => r.get()))
+    },
     batch: () => ({
       set: (ref: { __col: string, __id: string }, data: any, opts?: { merge?: boolean }) => {
         writes.push({ col: ref.__col, id: ref.__id, data, merge: opts?.merge === true })
@@ -82,11 +100,14 @@ function fakeDb(existing: Record<string, Record<string, unknown> | undefined>) {
       commit: async () => { committed += 1 },
     }),
   }
-  return { db, writes, commits: () => committed }
+  return { db, writes, commits: () => committed, tagReads: () => tagReads }
 }
 
 describe('addTagsToUser：重複判到真的有寫出去（不是只算對）', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clearTagOwnerCache()
+  })
 
   it('新標籤 → 建 userTags，第一次就帶 hitCount 1', async () => {
     const { db, writes } = fakeDb({})
@@ -184,6 +205,79 @@ describe('addTagsToUser：重複判到真的有寫出去（不是只算對）', 
     expect(await addTagsToUser(USER, [], 'system', null, WS)).toEqual({ added: [], skipped: [], hits: [] })
     expect(await addTagsToUser('', ['t1'], 'system', null, WS)).toEqual({ added: [], skipped: [], hits: [] })
     expect(writes).toHaveLength(0)
+  })
+})
+
+/**
+ * `G-98`（2026-09-29 權限盤點）：tagIds 來自模組、圖文選單、腳本、客服預存——全是店家填得到的。
+ * 🔴 填別家的標籤 id，不可以在自家客人身上貼出一顆別家的標籤。
+ */
+describe('addTagsToUser：只貼這個帳號自己的標籤', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clearTagOwnerCache()
+  })
+
+  it('🔴 混了一顆別家的 → 自家的照貼，別家的一個字都不寫，而且回報丟了哪一顆', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { db, writes } = fakeDb({}, { ...OWN_TAGS, tOther: { workspaceId: 'ws2', name: '別家的' } })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    const r = await addTagsToUser(USER, ['t1', 'tOther'], 'system', 'postback:m1', WS)
+    expect(r.added).toEqual(['t1'])
+    expect(r.dropped).toEqual([{ tagId: 'tOther', reason: 'other_workspace' }])
+    expect(writes.some(w => w.data?.tagId === 'tOther')).toBe(false)
+    // ⛔ 丟了東西一定要留下痕跡（呼叫端多半不看回傳值），而且要說得出是哪一條路設錯的
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('postback:m1'), expect.stringContaining('tOther'))
+    warn.mockRestore()
+  })
+
+  it('🔴 全部都不是自家的（別家的／不存在）→ 不 commit，dropped 分得出兩種原因', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { db, writes, commits } = fakeDb({}, { tOther: { workspaceId: 'ws2' } })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    const r = await addTagsToUser(USER, ['tOther', 'tGone'], 'system', null, WS)
+    expect(r).toEqual({
+      added: [],
+      skipped: [],
+      hits: [],
+      dropped: [
+        { tagId: 'tOther', reason: 'other_workspace' },
+        { tagId: 'tGone', reason: 'not_found' },
+      ],
+    })
+    expect(writes).toHaveLength(0)
+    expect(commits()).toBe(0)
+    warn.mockRestore()
+  })
+
+  it('停用（軟刪除）的標籤照貼——既有行為本來就收，這一道只管歸屬', async () => {
+    const { db } = fakeDb({}, { tOff: { workspaceId: WS, status: 'inactive' } })
+    vi.mocked(getDb).mockReturnValue(db)
+    expect((await addTagsToUser(USER, ['tOff'], 'system', null, WS)).added).toEqual(['tOff'])
+  })
+
+  /**
+   * 熱路徑成本：推播完成貼標是每位收件人各呼叫一次，不快取的話發 5,000 人就多 5,000 次讀取。
+   */
+  it('歸屬有快取：同一顆標籤第二次貼不再讀標籤主檔', async () => {
+    const { db, tagReads } = fakeDb({})
+    vi.mocked(getDb).mockReturnValue(db)
+    await addTagsToUser(USER, ['t1'], 'system', null, WS)
+    await addTagsToUser('ws1_U2', ['t1'], 'system', null, WS)
+    expect(tagReads()).toBe(1)
+  })
+
+  it('🔴 快取不會讓別家借道：ws2 先讀過的標籤，ws1 來貼照樣擋', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { db } = fakeDb({}, { tB: { workspaceId: 'ws2' } })
+    vi.mocked(getDb).mockReturnValue(db)
+    expect((await addTagsToUser('ws2_U9', ['tB'], 'system', null, 'ws2')).added).toEqual(['tB'])
+    const r = await addTagsToUser(USER, ['tB'], 'system', null, WS)
+    expect(r.added).toEqual([])
+    expect(r.dropped).toEqual([{ tagId: 'tB', reason: 'other_workspace' }])
+    warn.mockRestore()
   })
 })
 

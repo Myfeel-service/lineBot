@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { DemoLeadDoc, DemoLeadSource } from '~~/shared/types/demo-lead'
 import { BILLING_PLANS, type BillingPlanId } from '~~/shared/billing/plans'
+import { createRateLimiter, rateLimitClientIp } from '~~/server/utils/rate-limit'
 
 /**
  * POST /api/leads —— 公開端點（不需登入）。
@@ -23,20 +24,13 @@ const DEDUP_WINDOW_MS = 5 * 60 * 1000
 
 // best-effort per-IP 節流：模組級 Map，僅在暖啟動的同一 Lambda 實例內有效。
 // 真正擋機器人的是 honeypot；這層只是再擋一手同 IP 連續猛送。
-const IP_HITS = new Map<string, number[]>()
+// ⚠️ 改用共用的 `rate-limit.ts`（`G-105`）：原本那份 key 沒上限、每個 key 的時間戳陣列也會被猛送養胖。
 const IP_WINDOW_MS = 10 * 60 * 1000
 const IP_MAX = 8
+const ipLimiter = createRateLimiter({ windowMs: IP_WINDOW_MS, max: IP_MAX })
 
 function trim(v: unknown, max: number): string {
   return typeof v === 'string' ? v.trim().slice(0, max) : ''
-}
-
-function tooManyFromIp(ip: string): boolean {
-  const now = Date.now()
-  const recent = (IP_HITS.get(ip) ?? []).filter(t => now - t < IP_WINDOW_MS)
-  recent.push(now)
-  IP_HITS.set(ip, recent)
-  return recent.length > IP_MAX
 }
 
 export default defineEventHandler(async (event) => {
@@ -72,8 +66,10 @@ export default defineEventHandler(async (event) => {
     = rawPlan && BILLING_PLANS[rawPlan as BillingPlanId] ? rawPlan : null
 
   // ④ per-IP 節流（best-effort）
-  const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown'
-  if (tooManyFromIp(ip)) {
+  // ⛔ 不用 `getRequestIP(event, { xForwardedFor: true })`：它取 X-Forwarded-For 最左邊那格，
+  //    那是客人自己能填的，每次換一個值就繞過了（`G-105`）。為什麼取最右邊見 `rateLimitClientIp`。
+  const ip = rateLimitClientIp(event)
+  if (ipLimiter.take(ip).limited) {
     throw createError({ statusCode: 429, statusMessage: '送出太頻繁了，請稍後再試' })
   }
 

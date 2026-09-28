@@ -1,4 +1,4 @@
-import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
+import { getLineWorkspaceCredentials, isPlausibleWorkspaceId } from '~~/server/utils/line-workspace-credentials'
 import { resolveLineOaBasicId } from '~~/server/utils/line-oa-basic-id'
 import { resolveWorkspaceIdByLiffChannelId } from '~~/server/utils/liff-tenant-resolve'
 
@@ -22,6 +22,12 @@ export default defineEventHandler(async (event) => {
 
   let resolvedWorkspaceId = ''
   let liffId = ''
+
+  // ⛔ 這支不用登入：明顯不是帳號 id 的值（含 `/`、空白、超長）直接當「認不出租戶」，
+  //    不讀庫也不進快取（`G-105`）。格式怎麼定的見 `isPlausibleWorkspaceId`。
+  if (workspaceId && !isPlausibleWorkspaceId(workspaceId)) {
+    return { liffId: '', lineOaBasicId: '' }
+  }
 
   if (workspaceId) {
     resolvedWorkspaceId = workspaceId

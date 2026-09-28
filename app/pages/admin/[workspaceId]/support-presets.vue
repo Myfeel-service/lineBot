@@ -37,13 +37,15 @@
 
     <template #editor-empty>
       <el-icon class="empty-icon"><Box /></el-icon>
-      <h3>選擇一筆預存開始編輯</h3>
-      <p>或點擊左側「新增」建立新的客服預存</p>
+      <!-- `G-107`：觀察者左邊沒有「新增」，不要叫他去點 -->
+      <h3>{{ canOperate ? '選擇一筆預存開始編輯' : '選擇一筆預存來查看' }}</h3>
+      <p v-if="canOperate">或點擊左側「新增」建立新的客服預存</p>
       <el-button v-if="canOperate" type="primary" @click="openCreate">新增預存</el-button>
     </template>
 
     <template #editor-header>
       <AdminEditorHeaderTitle
+        v-if="canOperate"
         v-model="form.name"
         field-label="預存名稱"
         create-prefix="新增預存:"
@@ -52,19 +54,31 @@
         :is-creating="isCreating"
         @enter="submitForm"
       />
-      <div class="flex gap-2 admin-header-actions">
-        <el-button v-if="canOperate && !isCreating && selectedPreset" :icon="Delete" type="danger" @click="deletePreset">
+      <!-- `G-107`：觀察者存不了，名稱只給看（同知識庫頁資料名稱的做法） -->
+      <div v-else class="admin-flex-1">
+        <AdminFieldLabel text="預存名稱" tight />
+        <div class="admin-title-row">
+          <span class="split-editor-title">{{ form.name || '(未命名)' }}</span>
+        </div>
+        <p class="text-sm text-muted admin-subtext">僅「啟用」的預存會出現在對話頁選單</p>
+      </div>
+      <div v-if="canOperate" class="flex gap-2 admin-header-actions">
+        <el-button v-if="!isCreating && selectedPreset" :icon="Delete" type="danger" @click="deletePreset">
           刪除
         </el-button>
         <el-button @click="cancelEdit">取消</el-button>
-        <el-button v-if="canOperate" type="primary" :loading="saving" data-tour="sp-save" @click="submitForm">
+        <el-button type="primary" :loading="saving" data-tour="sp-save" @click="submitForm">
           {{ isCreating ? '建立預存' : '儲存變更' }}
         </el-button>
       </div>
     </template>
 
     <template #editor-body>
-      <div class="ar-editor-body admin-panel-stack">
+      <!--
+        `G-107`：觀察者以前改得動每一格、卻沒有儲存鈕，切走還會跳「未儲存」。
+        整塊用 el-form 的 disabled 當唯讀（同 AI 設定頁），切走不問（見 getSnapshot）。
+      -->
+      <el-form :disabled="!canOperate" class="ar-editor-body admin-panel-stack" @submit.prevent>
         <div class="message-card ar-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -72,7 +86,7 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ar-section-hint">停用的預存不會出現在對話頁的「客服預存」選單，但仍可在此編輯。</p>
+            <p class="ar-section-hint">停用的預存不會出現在對話頁的「客服預存」選單{{ canOperate ? '，但仍可在此編輯' : '' }}。</p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用狀態" tight />
               <el-switch
@@ -159,7 +173,7 @@
             </div>
           </div>
         </div>
-      </div>
+      </el-form>
     </template>
   </AdminSplitLayout>
 
@@ -210,7 +224,8 @@ const defaultForm = () => ({
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
-  getSnapshot: () => form.value,
+  // `G-107`：觀察者存不了，就沒有「未儲存的變更」——切走時不要跳確認框
+  getSnapshot: () => (canOperate.value ? form.value : null),
 })
 
 const presetActionTypeOptions = [

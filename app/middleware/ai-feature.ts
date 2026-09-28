@@ -1,3 +1,4 @@
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import { CAPABILITIES, can, type Capability } from '~~/shared/permissions'
 
 /**
@@ -9,13 +10,27 @@ import { CAPABILITIES, can, type Capability } from '~~/shared/permissions'
  *   - 測試對話 → playground.use（agent+，會實際消耗 token）
  *   - AI 表現 → ai.read（viewer+；方案額度那張卡改由 API 逐欄位擋，admin+ 才拿得到）
  */
-function requiredCapability(path: string): Capability {
+export function requiredCapability(path: string): Capability {
   if (path.includes('/ai-playground')) return 'playground.use'
   return 'ai.read'
 }
 
 const DENIED_MESSAGE: Partial<Record<Capability, string>> = {
   'playground.use': '測試對話只開放給客服（含）以上成員',
+}
+
+/**
+ * 這個角色能不能待在這個 AI 頁；不能的話回要講給他聽的那句話，能就回 null。
+ *
+ * 抽出來是給 `auth.ts` 的背景重驗共用（`G-107` 第 21 條）：進頁時看的是上次存的帳號清單，
+ * 被降級的人在清單更新前照樣進得來。⛔ 要判就呼叫這支，不要在別處再抄一份頁面→能力的對照。
+ */
+export function aiFeatureDenial(path: string, role: WorkspaceMemberRole | null): string | null {
+  const capability = requiredCapability(path)
+  if (can(role, capability)) return null
+  // 不出聲地把人踢到別頁，他只會覺得「我明明點了 AI 設定，怎麼跑到對話去」。
+  return DENIED_MESSAGE[capability]
+    ?? `此頁面需要${CAPABILITIES[capability] === 'viewer' ? '工作區成員' : '更高'}權限`
 }
 
 export default defineNuxtRouteMiddleware(async (to) => {
@@ -32,13 +47,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const { loaded } = await ensureWorkspaceList()
   if (!loaded) return
 
-  const capability = requiredCapability(to.path)
-  const role = roleFor(wid)
-  if (!can(role, capability)) {
-    // 不出聲地把人踢到別頁，他只會覺得「我明明點了 AI 設定，怎麼跑到對話去」。
-    const message = DENIED_MESSAGE[capability]
-      ?? `此頁面需要${CAPABILITIES[capability] === 'viewer' ? '工作區成員' : '更高'}權限`
-    useAdminToast().showToast(message, 'error')
+  const denied = aiFeatureDenial(to.path, roleFor(wid))
+  if (denied) {
+    useAdminToast().showToast(denied, 'error')
     return navigateTo(`/admin/${wid}/conversations`, { replace: true })
   }
 })

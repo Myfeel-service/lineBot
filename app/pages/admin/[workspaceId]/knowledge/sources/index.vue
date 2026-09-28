@@ -147,7 +147,9 @@
           class="flow-sidebar-row"
           :class="{ 'flow-sidebar-row--dragging': draggedSourceId === src.id }"
         >
+          <!-- `G-102`：拖進資料夾＝`sources/[id]` PUT（sources.write），觀察者不給把手（同機器人模組頁） -->
           <span
+            v-if="canEditSources"
             class="drag-handle flow-sidebar-drag-handle"
             draggable="true"
             aria-label="拖曳搬移"
@@ -197,7 +199,9 @@
             @dragleave="onFolderDragLeave(folder.id)"
             @drop.prevent="onFolderDrop(folder.id)"
           >
+            <!-- `G-102`：資料夾排序＝`folders/reorder`（folders.write） -->
             <span
+              v-if="canEditFolders"
               class="drag-handle flow-sidebar-drag-handle src-folder-drag-handle"
               draggable="true"
               aria-label="拖曳排序資料夾"
@@ -224,6 +228,7 @@
               :class="{ 'flow-sidebar-row--dragging': draggedSourceId === src.id }"
             >
               <span
+                v-if="canEditSources"
                 class="drag-handle flow-sidebar-drag-handle"
                 draggable="true"
                 aria-label="拖曳搬移"
@@ -248,7 +253,7 @@
               v-if="!(sourcesByFolder[folder.id] ?? []).length"
               class="src-folder-empty"
             >
-              （資料夾為空；可從外面拖一筆過來）
+              （資料夾為空{{ canEditSources ? '；可從外面拖一筆過來' : '' }}）
             </div>
           </template>
         </template>
@@ -312,7 +317,7 @@
                 <span class="src-todo__item-title">{{ item.title }}</span>
                 <span class="src-todo__item-why">{{ item.why }}</span>
               </div>
-              <el-button size="small" plain :loading="item.loading" @click="item.action()">
+              <el-button v-if="item.action" size="small" plain :loading="item.loading" @click="item.action?.()">
                 {{ item.cta }}
               </el-button>
             </div>
@@ -442,7 +447,7 @@
           </template>
           <div>
             這幾條知識在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
-            想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。
+            <template v-if="canEditKb">想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。</template>
           </div>
         </el-alert>
 
@@ -509,10 +514,12 @@
             <div class="admin-field-group">
               <AdminFieldLabel text="產品名" tight />
               <KnowledgeProductNameField
+                v-if="canEditSources"
                 v-model="productNameForm"
                 placeholder="例：GPLUS 智慧除濕機 12L（留空 = 非單一產品）"
-                :disabled="!canEditSources"
               />
+              <!-- `G-107`：存不了的人只給看（原本是灰掉的輸入框）。空的＝上面那句說的「非單一產品」 -->
+              <p v-else class="src-readonly-value">{{ productNameForm || '未設定' }}</p>
             </div>
             <div v-if="canEditSources" class="src-settings-actions">
               <el-button
@@ -569,29 +576,28 @@
               </p>
             </div>
 
+            <!-- `G-107`：存不了的人（沒有 sources.write）三格都只給看——原本改得動、卻沒有儲存鈕。
+                 選項文字只寫一份（URL_INTERVAL_OPTIONS 等），給看的那一版照同一份查。 -->
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測頻率" tight />
-              <el-select v-model="settingsForm.refreshIntervalMinutes" class="control-full">
-                <el-option label="不自動偵測（要更新時我自己按）" :value="0" />
-                <el-option label="每小時" :value="60" />
-                <el-option label="每天" :value="1440" />
-                <el-option label="每週" :value="10080" />
-                <el-option label="每月" :value="43200" />
+              <el-select v-if="canEditSources" v-model="settingsForm.refreshIntervalMinutes" class="control-full">
+                <el-option v-for="o in URL_INTERVAL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
               </el-select>
+              <p v-else class="src-readonly-value">{{ optionLabel(URL_INTERVAL_OPTIONS, settingsForm.refreshIntervalMinutes) }}</p>
             </div>
             <div class="admin-field-group">
               <AdminFieldLabel text="偵測到變動時" tight />
-              <el-radio-group v-model="settingsForm.onChangeBehavior">
-                <el-radio value="notify">通知我（在資料頁掛 提示）</el-radio>
-                <el-radio value="log_only">只記錄不通知</el-radio>
+              <el-radio-group v-if="canEditSources" v-model="settingsForm.onChangeBehavior">
+                <el-radio v-for="o in ON_CHANGE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</el-radio>
               </el-radio-group>
+              <p v-else class="src-readonly-value">{{ optionLabel(ON_CHANGE_OPTIONS, settingsForm.onChangeBehavior) }}</p>
             </div>
             <div class="admin-field-group">
               <AdminFieldLabel text="小幅文字變動" tight />
-              <el-radio-group v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
-                <el-radio :value="true">自動更新（建議）</el-radio>
-                <el-radio :value="false">一律等我確認</el-radio>
+              <el-radio-group v-if="canEditSources" v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
+                <el-radio v-for="o in AUTO_APPLY_OPTIONS" :key="String(o.value)" :value="o.value">{{ o.label }}</el-radio>
               </el-radio-group>
+              <p v-else class="src-readonly-value">{{ optionLabel(AUTO_APPLY_OPTIONS, settingsForm.urlAutoApply) }}</p>
               <p class="src-section-hint">
                 只有「原有知識的文字被改動」才算小幅變動；新增、刪除知識或大幅改版一定會等你確認。
               </p>
@@ -623,14 +629,10 @@
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="同步頻率" tight />
-              <el-select v-model="settingsForm.refreshIntervalMinutes" class="control-full">
-                <el-option label="不自動同步（只手動）" :value="0" />
-                <el-option label="每 30 分鐘" :value="30" />
-                <el-option label="每小時" :value="60" />
-                <el-option label="每天" :value="1440" />
-                <el-option label="每週" :value="10080" />
-                <el-option label="每月" :value="43200" />
+              <el-select v-if="canEditSources" v-model="settingsForm.refreshIntervalMinutes" class="control-full">
+                <el-option v-for="o in GSHEET_INTERVAL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
               </el-select>
+              <p v-else class="src-readonly-value">{{ optionLabel(GSHEET_INTERVAL_OPTIONS, settingsForm.refreshIntervalMinutes) }}</p>
             </div>
             <div v-if="canEditSources" class="src-settings-actions">
               <el-button
@@ -684,12 +686,19 @@
                     <div class="src-chunk-main">
                       <span class="src-chunk-title">{{ c.title }}</span>
                       <button
-                        v-if="c.manuallyEditedAtMs > 0"
+                        v-if="c.manuallyEditedAtMs > 0 && canEditKb"
                         type="button"
                         class="src-chunk-lock"
                         :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。點一下可解除。`"
                         @click.stop="unlockChunk(c)"
                       ><el-icon><Lock /></el-icon></button>
+                      <!-- `G-102`：解鎖打的是 `knowledge/[id]/settings`（客服級）。觀察者留一顆**不能按**的鎖：
+                           它同時是「這條不吃表格更新」的標記，拿掉等於少講一件事 -->
+                      <span
+                        v-else-if="c.manuallyEditedAtMs > 0"
+                        class="src-chunk-lock src-chunk-lock--static"
+                        :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。`"
+                      ><el-icon><Lock /></el-icon></span>
                       <span v-if="showShortNote(c)" class="src-chunk-note">內容較短</span>
                     </div>
                     <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
@@ -706,6 +715,9 @@
                     </span>
                   </div>
                   <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
+                  <!-- `G-102`：同一個視窗，沒有 knowledge.write 時開的是唯讀版（見 chunkReadonly）——
+                       不給這顆的話，觀察者在清單上只看得到第一行，整條內容要繞去搜尋才看得到 -->
+                  <el-button v-else size="small" plain @click="openEditChunk(c)">查看</el-button>
                 </div>
               </div>
             </template>
@@ -740,7 +752,8 @@
           <span v-else-if="c.confidence === 'high'" class="src-alias-tag is-high">證據明確</span>
         </div>
         <p class="src-alias-reason">{{ c.reason }}</p>
-        <div class="src-alias-actions">
+        <!-- `G-102`：合併／不是／解除／手動合併都打 `product-aliases` POST（sources.write），觀察者只看候選 -->
+        <div v-if="canEditSources" class="src-alias-actions">
           <el-button type="primary" size="small" :loading="aliasSaving === c.key" @click="decideAlias(c, 'confirm')">
             是同一台，合併
           </el-button>
@@ -753,7 +766,7 @@
 
       <!-- 偵測靠「檔名並列／包含／幾乎同字」三種訊號,總有漏網的(完全不同的講法)——
            給手動出口,不然只能繞路把掛錯名的資料逐份改名 -->
-      <div v-if="aliasProductNames.length >= 2" class="src-alias-manual">
+      <div v-if="canEditSources && aliasProductNames.length >= 2" class="src-alias-manual">
         <p class="section-title">自己挑兩個合併</p>
         <p class="text-muted text-xs src-alias-manual__hint">
           上面沒列出來、但你知道是同一台的（例如完全不同的講法），在這裡手動指定。
@@ -797,7 +810,7 @@
         <p class="section-title">已確認的對照（{{ aliasPairs.length }}）</p>
         <div v-for="p in aliasPairs" :key="p.aliasKey" class="src-alias-row">
           <span>「{{ p.alias }}」→ 「{{ p.canonical }}」</span>
-          <el-button text size="small" :loading="aliasSaving === p.aliasKey" @click="undoAlias(p)">解除</el-button>
+          <el-button v-if="canEditSources" text size="small" :loading="aliasSaving === p.aliasKey" @click="undoAlias(p)">解除</el-button>
         </div>
       </div>
     </template>
@@ -1012,12 +1025,53 @@
   <!-- ── Chunk Edit Modal ───────────────────────────── -->
   <el-dialog
     v-model="chunkEditOpen"
-    :title="chunkEditMode === 'create' ? '新增知識(手寫一條知識)' : '編輯知識'"
+    :title="chunkReadonly ? '知識內容' : chunkEditMode === 'create' ? '新增知識(手寫一條知識)' : '編輯知識'"
     width="min(700px, 92vw)"
-    :close-on-click-modal="false"
+    :close-on-click-modal="chunkReadonly"
     destroy-on-close
   >
-    <div class="chunk-form">
+    <!--
+      `G-102`：沒有 knowledge.write 的人（觀察者）從搜尋結果、體檢、疑似重複的「看 A／B」點進來，
+      以前開的是**完整的編輯視窗**——儲存、刪除、AI 整理、重新學習全都按得下去、全都 403。
+      現在給一份只能看的：同樣的內容，不留任何輸入框與動作鈕。
+      ⛔ 不要改成「同一份表單灰掉」：灰掉的輸入框看起來像壞掉，而且政策是沒權限就藏。
+    -->
+    <div v-if="chunkReadonly" class="chunk-form">
+      <div class="chunk-status-row">
+        <span :class="['badge', chunkStatusBadge(chunkEditStatus)]">{{ chunkStatusLabel(chunkEditStatus) }}</span>
+        <span v-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
+      </div>
+      <div class="admin-field-group">
+        <AdminFieldLabel text="標題" tight />
+        <p class="src-readonly-value">{{ chunkForm.title }}</p>
+      </div>
+      <div class="admin-field-group">
+        <AdminFieldLabel text="內容" tight />
+        <p class="src-readonly-value src-readonly-value--multiline">{{ chunkForm.content }}</p>
+      </div>
+      <div v-if="chunkForm.questions?.length" class="admin-field-group">
+        <AdminFieldLabel text="客人可能怎麼問" tight />
+        <ul class="src-readonly-list">
+          <li v-for="(q, i) in chunkForm.questions" :key="i">{{ q }}</li>
+        </ul>
+      </div>
+      <div v-if="chunkShowUsage" class="admin-field-group">
+        <AdminFieldLabel text="供 AI 使用" tight />
+        <p class="src-readonly-value">
+          {{ chunkEnabled ? 'AI 會引用這一條回答客人' : 'AI 目前不會引用這一條' }}<template v-if="chunkActiveUntil">・有效至 {{ chunkActiveUntil }}</template>
+        </p>
+        <p v-if="chunkExpiredAtMs && !chunkEnabled" class="chunk-expired-note">
+          這一條已於 {{ ymdLabel(chunkExpiredAtMs) }} 到期自動停用。
+        </p>
+      </div>
+      <div v-if="chunkForm.tags.length" class="admin-field-group">
+        <AdminFieldLabel text="標籤" tight />
+        <div class="chunk-tag-row">
+          <el-tag v-for="t in chunkForm.tags" :key="t" class="chunk-tag">{{ t }}</el-tag>
+        </div>
+      </div>
+    </div>
+    <div v-else class="chunk-form">
       <!-- 索引狀態(編輯既有卡才有) -->
       <div v-if="chunkEditMode === 'edit'" class="chunk-status-row">
         <span :class="['badge', chunkStatusBadge(chunkEditStatus)]">{{ chunkStatusLabel(chunkEditStatus) }}</span>
@@ -1151,7 +1205,10 @@
       </template>
     </div>
     <template #footer>
-      <div class="chunk-footer">
+      <div v-if="chunkReadonly" class="chunk-footer chunk-footer--readonly">
+        <el-button @click="chunkEditOpen = false">關閉</el-button>
+      </div>
+      <div v-else class="chunk-footer">
         <el-button
           v-if="chunkEditMode === 'edit'"
           type="danger"
@@ -1264,8 +1321,8 @@
   >
     <p class="src-bin-hint">
       系統用「內容相似度＋AI 判斷」找出可能重複的組合，並附上理由。
-      <strong>不會自動合併或刪除</strong>——確認後用「整理產品名稱」合併、或把多的那條刪掉（會進回收桶，可還原）。
-      不是重複的按「忽略」，之後不會再報這一組。
+      <strong>不會自動合併或刪除</strong><template v-if="canEditSources">——確認後用「整理產品名稱」合併、或把多的那條刪掉（會進回收桶，可還原）。
+      不是重複的按「忽略」，之後不會再報這一組</template>。
     </p>
     <!--
       ⛔ 被系統刻意排除的組數要講出來（`C-156`）：不講的話，「這兩張明明很像卻沒被建議合併」
@@ -1289,15 +1346,16 @@
           </span>
           <span class="src-bin-row__snippet">{{ s.reason }}</span>
         </div>
+        <!-- `G-102`：去合併／忽略＝sources.write；「看 A／看 B」觀察者也能按，開的是唯讀視窗 -->
         <div class="src-dupe-actions">
-          <el-button v-if="s.kind === 'product_split'" size="small" type="primary" plain @click="dupGoMerge">
+          <el-button v-if="s.kind === 'product_split' && canEditSources" size="small" type="primary" plain @click="dupGoMerge">
             去合併產品名
           </el-button>
-          <template v-else>
+          <template v-else-if="s.kind !== 'product_split'">
             <el-button size="small" plain @click="dupOpenCard(s.a.id)">看 A</el-button>
             <el-button size="small" plain @click="dupOpenCard(s.b.id)">看 B</el-button>
           </template>
-          <el-button size="small" text :loading="dupDismissing === s.key" @click="dupDismiss(s)">忽略</el-button>
+          <el-button v-if="canEditSources" size="small" text :loading="dupDismissing === s.key" @click="dupDismiss(s)">忽略</el-button>
         </div>
       </div>
     </div>
@@ -1306,7 +1364,7 @@
         <span class="text-xs text-muted">
           {{ health.duplicates.scannedAtMs ? `上次掃描：${relativeTime(health.duplicates.scannedAtMs)}` : '尚未掃描' }}
         </span>
-        <el-button size="small" plain :loading="dupRescanning" @click="dupRescan">重新掃描</el-button>
+        <el-button v-if="canEditSources" size="small" plain :loading="dupRescanning" @click="dupRescan">重新掃描</el-button>
       </div>
     </template>
   </el-dialog>
@@ -1469,6 +1527,10 @@ const canEditKb = computed(() => can('knowledge.write'))
 const canEditSources = computed(() => can('sources.write'))
 const canEditFolders = computed(() => can('folders.write'))
 const canReindexAll = computed(() => can('knowledge.reindexAll'))
+// 待辦「AI 客服還沒開啟」要不要給「前往開啟」：AI 設定頁只有管理員存得了（`G-102`）
+const canEditAiSettings = computed(() => can('ai.settings.write'))
+/** 知識視窗只給看（`G-102`）：建卡入口本來就只給 canEditKb，所以唯讀一定是「看一張既有的」 */
+const chunkReadonly = computed(() => !canEditKb.value)
 const { showToast } = useAdminToast()
 
 const sources = ref<SourceSummary[]>([])
@@ -1753,6 +1815,40 @@ watch([chunks, chunkFilter], () => {
 function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
   const firstLine = c.content.split('\n').map(s => s.trim()).find(Boolean) ?? ''
   return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
+}
+
+/**
+ * 同步設定的選項文字。⛔ 只寫這一份：下拉／單選用它、給觀察者看的那一行也用它查（`G-107`），
+ * 兩邊各寫一份的話改了一邊，觀察者看到的就是舊說法。
+ */
+const URL_INTERVAL_OPTIONS = [
+  { label: '不自動偵測（要更新時我自己按）', value: 0 },
+  { label: '每小時', value: 60 },
+  { label: '每天', value: 1440 },
+  { label: '每週', value: 10080 },
+  { label: '每月', value: 43200 },
+]
+const GSHEET_INTERVAL_OPTIONS = [
+  { label: '不自動同步（只手動）', value: 0 },
+  { label: '每 30 分鐘', value: 30 },
+  { label: '每小時', value: 60 },
+  { label: '每天', value: 1440 },
+  { label: '每週', value: 10080 },
+  { label: '每月', value: 43200 },
+]
+const ON_CHANGE_OPTIONS = [
+  { label: '通知我（在資料頁掛 提示）', value: 'notify' as const },
+  { label: '只記錄不通知', value: 'log_only' as const },
+]
+const AUTO_APPLY_OPTIONS = [
+  { label: '自動更新（建議）', value: true },
+  { label: '一律等我確認', value: false },
+]
+/** 對不上任何選項（舊資料的自訂間隔）時照實講數字，⛔ 不要冒充成最接近的那一個 */
+function optionLabel<T>(options: { label: string, value: T }[], value: T): string {
+  const hit = options.find(o => o.value === value)
+  if (hit) return hit.label
+  return typeof value === 'number' ? `每 ${value} 分鐘` : String(value)
 }
 
 const emptySettingsForm = () => ({
@@ -2267,9 +2363,13 @@ interface TodoItem {
   tone: 'danger' | 'warning'
   title: string
   why: string
-  cta: string
+  /**
+   * 沒有 action＝這個人只能知道、不能處理（`G-102`）：那一列只留標題與 why，不畫按鈕。
+   * ⛔ 不要留一顆按了沒反應的鈕（「一鍵整理」以前對觀察者就是這樣靜靜吞掉）。
+   */
+  cta?: string
   loading?: boolean
-  action: () => void
+  action?: () => void
 }
 
 /**
@@ -2298,9 +2398,12 @@ const todoItems = computed<TodoItem[]>(() => {
       id: 'aiOff',
       tone: 'danger',
       title: 'AI 客服還沒開啟',
-      why: `${health.value.chunkScanTruncated ? '已經有至少' : '已經有'} ${liveChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`,
-      cta: '前往開啟',
-      action: () => navigateTo(`/admin/${workspaceId.value}/ai-settings`),
+      why: `${health.value.chunkScanTruncated ? '已經有至少' : '已經有'} ${liveChunkCount.value} 條知識，但 AI 目前不會回覆客人——這些內容還沒開始發揮作用。`
+        + (canEditAiSettings.value ? '' : '開關要請管理員到「AI 設定」打開。'),
+      // `G-102`：AI 設定頁客服、觀察者進得去卻存不了——給他「前往開啟」是一條走到底才發現開不了的路
+      ...(canEditAiSettings.value
+        ? { cta: '前往開啟', action: () => { void navigateTo(`/admin/${workspaceId.value}/ai-settings`) } }
+        : {}),
     })
   }
 
@@ -2406,8 +2509,8 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'warning',
       title: `有 ${h.aliasCandidateCount} 組產品名稱可能是同一台`,
       why: '同一台機器兩種叫法會被 AI 當成兩台——反問客人二選一、出貨時間並列成兩台。',
-      cta: '前往確認',
-      action: () => openAliasDialog(),
+      // `G-102`：進去唯一能做的是合併／不是（sources.write），觀察者只留這一列當作知道
+      ...(canEditSources.value ? { cta: '前往確認', action: () => { void openAliasDialog() } } : {}),
     })
   }
   if (orphanCount.value > 0) {
@@ -2416,9 +2519,10 @@ const todoItems = computed<TodoItem[]>(() => {
       tone: 'warning',
       title: `有 ${orphanCount.value} 條舊版內容還沒歸檔`,
       why: '這些是舊版本留下的、沒有歸在任何一份資料底下。整理一下就會出現在下面的清單裡。',
-      cta: '一鍵整理',
-      loading: migrating.value,
-      action: () => { if (canEditSources.value) void migrateOrphans() },
+      // `G-102`：以前觀察者看得到這顆、按了靜靜不做事（裡面有 if 擋掉）＝最糟的那種；改成不給
+      ...(canEditSources.value
+        ? { cta: '一鍵整理', loading: migrating.value, action: () => { void migrateOrphans() } }
+        : {}),
     })
   }
   return items
@@ -3765,6 +3869,8 @@ onMounted(async () => {
   const q = String(route.query.q ?? '').trim()
   if (q) {
     clearQuery()
+    // `G-102`：這條路的終點是建卡視窗（`knowledge/create` 客服級）；沒有 knowledge.write 的人不開
+    if (!canEditKb.value) return
     // 先查有沒有現成的（避免同一題從三個入口進來各建一條）；沒有才直接開新增視窗
     await startAddKnowledge(q)
     return
@@ -3833,9 +3939,12 @@ onMounted(async () => {
 
   // 舊的 /knowledge/import 網址轉進來時帶 ?import=1:直接打開匯入彈窗
   if (String(route.query.import ?? '') === '1') {
-    // `&url=…`＝開通精靈把商家的官網帶過來（`C-221`）；填在貼上框裡讓既有偵測接手
-    importPrefill.value = String(route.query.url ?? '').trim().slice(0, 500)
-    importOpen.value = true
+    // `G-107`：匯入的每一支端點都是客服級——觀察者帶著舊網址進來，只清掉網址、不開視窗
+    if (canEditKb.value) {
+      // `&url=…`＝開通精靈把商家的官網帶過來（`C-221`）；填在貼上框裡讓既有偵測接手
+      importPrefill.value = String(route.query.url ?? '').trim().slice(0, 500)
+      importOpen.value = true
+    }
     clearQuery()
   }
 })

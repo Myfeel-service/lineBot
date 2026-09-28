@@ -32,8 +32,11 @@ import { Timestamp } from 'firebase-admin/firestore'
 import { describeScriptSteps } from '~~/shared/script-plain-summary'
 import { writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
-import { invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
+import { findEnabledFollowScriptConflict, invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
+import { getWorkspacePlan } from './billing'
+import { planAllowsScripting } from '~~/shared/billing/plans'
+import { scriptTriggerEvent, type ScriptTriggerEvent } from '~~/shared/types/ai-script'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
 import { generateScriptDraft } from './ai-script-generate'
@@ -266,6 +269,8 @@ interface ScriptRow {
   enabled: boolean
   keywords: string[]
   matchMode: string
+  /** 「加好友時」還是「客人傳訊息時」啟動：上架前的防呆要看（判法跟存檔端點同一支） */
+  triggerEvent: ScriptTriggerEvent
 }
 
 function readScriptRow(id: string, data: Record<string, any>): ScriptRow {
@@ -277,7 +282,32 @@ function readScriptRow(id: string, data: Record<string, any>): ScriptRow {
     enabled: data.enabled === true,
     keywords: Array.isArray(trigger?.keywords) ? trigger.keywords.map(String) : [],
     matchMode: String(trigger?.matchMode ?? 'keyword'),
+    triggerEvent: scriptTriggerEvent({ nodes, rootNodeId: data.rootNodeId }),
   }
+}
+
+/**
+ * 上架前要過的兩道檢查（`G-100`）。人在頁面上存檔走 `ai/scripts/[scriptId].put.ts`
+ * 本來就有這兩道，小幫手這條路以前直接改 `enabled`、兩道都繞過了：
+ *  ① 方案閘門：方案不含腳本功能的帳號，靠小幫手就能把流程上架。
+ *  ② 「加好友時」的流程只能開一條：開出第二條，客人一加好友就連收兩份歡迎訊息。
+ * ⛔ 兩道都呼叫存檔端點用的**同一支函式**，不另寫一份判定（兩份就會漂）。
+ * 擋下來回一句白話理由，沒事回 null；只有「上架」要問這個——下架永遠放行。
+ */
+async function scriptEnableBlocker(ctx: AdminOpCtx, row: ScriptRow): Promise<string | null> {
+  // 讀不到方案（null）→ 放行：沿用 assertPlanAllows 的 fail-open，基礎設施出事不該把付費客戶鎖在門外
+  const plan = await getWorkspacePlan(ctx.workspaceId, ctx.db)
+  if (plan && !planAllowsScripting(plan))
+    return `這個帳號目前的方案不含自動回應流程（腳本）功能，所以沒辦法把「${row.name}」上架——要先升級方案。`
+  if (row.triggerEvent === 'follow') {
+    // 排除自己：這條本身是停用的，不會撞到自己；傳進去是跟存檔端點同一個呼叫法
+    const conflict = await findEnabledFollowScriptConflict(ctx.workspaceId, row.id, ctx.db)
+    if (conflict) {
+      return `已經有一條在客人加好友時啟動的流程「${conflict.name}」正在使用。`
+        + `兩條都開的話，客人一加好友會連收兩份訊息——要先把「${conflict.name}」下架，或直接改那一條。`
+    }
+  }
+  return null
 }
 
 /** 撈這個工作區全部的流程（含停用的——上下架預覽要拿它算影響） */
@@ -366,6 +396,14 @@ const scriptSetEnabled: AdminOpDef = {
       }
     }
 
+    // 做不到的事⛔不出確認卡：卡上寫「我會把它上架」、按下去才說不行，等於先講了一句假話。
+    // 理由原樣回給模型轉述（跟沒權限同一條路）；⛔也不要做成 noop 卡——confirm 那支
+    // 把 noop 解讀成「剛剛已經執行過了」，擋下來的提議會被講成做好了。
+    if (args.enabled) {
+      const blocked = await scriptEnableBlocker(ctx, row)
+      if (blocked) throw new AdminOpUserError(`${blocked}（請照實告訴他；他決定之前⛔不要改提議別的操作。）`)
+    }
+
     const trigger = row.keywords.length
       ? `客人打「${row.keywords.slice(0, 6).join('、')}」${row.keywords.length > 6 ? ' 等字' : ''}會走這條`
       : row.matchMode === 'anyText'
@@ -408,6 +446,13 @@ const scriptSetEnabled: AdminOpDef = {
     const row = await resolveScript(ctx, args.name)
     if (row.enabled === args.enabled)
       return { ok: true, message: `「${row.name}」本來就是${args.enabled ? '啟用中' : '停用'}，沒有動任何設定。` }
+
+    // 按確定之前再查一次：提議到按下去之間，可能有人開了另一條加好友流程、或方案到期降級了。
+    // （指紋只記這一條的開關，別條的變化它看不到，所以不能只靠指紋。）
+    if (args.enabled) {
+      const blocked = await scriptEnableBlocker(ctx, row)
+      if (blocked) return { ok: false, message: `${blocked}（沒有動任何設定。）` }
+    }
 
     // ⛔ 只動 enabled 這一格：整份覆寫會把別人剛編輯的步驟洗掉（這個 repo 出過事）
     await ctx.db.collection(SCRIPTS_COLLECTION).doc(row.id).update({
@@ -768,6 +813,11 @@ const scriptCreateFromDescription: AdminOpDef = {
 
   async prepare(ctx, raw) {
     const args = raw as unknown as CreateScriptArgs
+    // 方案閘門放在生成**之前**（`G-100`）：執行時轉呼叫的建立端點也會擋，但那時模型已經生完一份草稿——
+    // 不含腳本的方案就是白花一次生成，還讓他看一張建不出來的確認卡。讀不到方案沿用 fail-open。
+    const plan = await getWorkspacePlan(ctx.workspaceId, ctx.db)
+    if (plan && !planAllowsScripting(plan))
+      throw new AdminOpUserError('這個帳號目前的方案不含自動回應流程（腳本）功能，要先升級方案才能建。')
     const settings = await getAiSettings(ctx.workspaceId, ctx.db).catch(() => null)
     const draft = await generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] })
     // 生成屬後台內部操作 → 記進後台自用桶（與 scripts/generate 端點同一個慣例）

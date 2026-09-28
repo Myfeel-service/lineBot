@@ -13,6 +13,7 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { generateJson } from './gemini'
 import { getAiSettings } from './ai-settings'
+import { redactAiSettingsForRole } from './ai-settings-redact'
 // ⛔ 只取唯讀的三支（讀訂閱／組方案視圖／讀本期已用則數）——本檔的鐵律是不 import 會寫入的東西。
 import { getWorkspaceSubscription, buildPlanView } from './billing'
 import { getQuotaAnswered, getCurrentMonthUsageCounts, currentYyyyMm, monthlyBillable } from './ai-usage'
@@ -74,6 +75,11 @@ const MAX_TOOL_STEPS = 4
 interface ToolCtx {
   /** 呼叫者的 Authorization header:轉發給自家 API 的工具用,權限由該 API 自行把關 */
   authHeader?: string
+  /**
+   * 呼叫者的角色:同一支工具對不同角色要回不同欄位時用(`G-103`,例如 token 上限只給改得動的人)。
+   * 不填＝當成最低的觀察者,寧可少給。
+   */
+  role?: WorkspaceMemberRole
 }
 interface ToolDef {
   /** 給模型看的一行說明(白話,含何時該用) */
@@ -118,7 +124,12 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     },
   },
   get_ai_settings: {
-    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、LINE 通知(幾位會收到、沒人接手幾分鐘提醒;名單在「設定 → LINE 通知」)、服務時間與勿擾時段、商店網址、每月 token 上限。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒 / 勿擾幾點到幾點」時用。'
+    description: 'AI 自動回覆的目前設定摘要:開關、回覆模式(auto/draft)、信心門檻、LINE 通知(幾位會收到、沒人接手幾分鐘提醒;名單在「設定 → LINE 通知」)、服務時間與勿擾時段、商店網址。問「AI 開了嗎 / 現在什麼模式 / 通知設了沒 / 勿擾幾點到幾點」時用。'
+      // ⛔ 2026-09-29 `G-103`:這裡原本寫「每月 token 上限」、也回回覆長度,跟 get_ai_usage 的
+      //    「token 看不到」互相打架,而且觀察者問一句就拿得到。現在模型與回覆長度一律不回(平台管的),
+      //    monthlyTokenCap 只有管理員拿得到——它是店家自己設的保護,不是用量。
+      + '⛔ 這裡沒有 AI 模型、回覆長度、token 用量(那是平台管的):被問到就說看不到。'
+      + 'monthlyTokenCap 只有管理員查得到,是他們自己設的「每月用量上限」(0＝不限);欄位不在就是這個帳號看不到,⛔不可以講成沒有設。'
       // ⛔ 2026-09-18 壓測踩到:原本回的是設定裡的 start/end(那是**服務時間**),
       //    模型被問「勿擾時段幾點到幾點」就照字面唸成「勿擾 10:00–19:00」——正好把上班時間
       //    講成不打擾的時間。現在兩句話都由後端算好,模型照抄就好。
@@ -126,21 +137,23 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + '**照抄那兩句**,⛔ 絕對不要自己把其中一句換算成另一句(換錯就是把上下班時間講反)。',
     requires: 'ai.read',
     mutates: false,
-    async run(_db, workspaceId) {
-      const s = await getAiSettings(workspaceId)
+    async run(_db, workspaceId, _args, ctx) {
+      // 跟 GET /api/ai/settings 同一支拿欄位(口徑零第二份)。isSuperAdmin 一律 false:
+      // 聊天端點不帶這個身分,模型與回覆長度超管在設定頁看,不必經過小幫手。
+      const s = redactAiSettingsForRole(await getAiSettings(workspaceId), { role: ctx.role ?? 'viewer', isSuperAdmin: false })
       return {
         enabled: s.enabled,
         replyMode: s.replyMode,
         confidenceThreshold: s.confidenceThreshold,
         groundingThreshold: s.groundingThreshold,
-        replyMaxLen: s.replyMaxLen,
         systemPromptPreview: String(s.systemPrompt ?? '').slice(0, 200),
         shopUrl: s.shopUrl || '(未設定)',
         sensitiveTopicCount: (s.sensitiveTopics ?? []).length,
         handoffNotify: {
           // 總開關拿掉之後（`C-270`）「開著」＝名單上有人（舊資料「有人但關著」normalize 已收成空名單）
-          enabled: (s.handoffNotify?.lineUserIds ?? []).length > 0,
-          recipientCount: (s.handoffNotify?.lineUserIds ?? []).length,
+          // ⛔ 讀 recipientCount 不讀 lineUserIds:觀察者拿不到名單,讀名單長度會把「有 2 人在收」講成 0
+          enabled: (s.handoffNotify?.recipientCount ?? 0) > 0,
+          recipientCount: s.handoffNotify?.recipientCount ?? 0,
           slaRemindMinutes: s.handoffNotify?.slaRemindMinutes ?? 0,
         },
         // ⛔ 不回裸的 start/end:那是**服務時間**的起訖,離開這裡就沒有人記得這件事。
@@ -157,7 +170,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
               serviceText: '沒有設定服務時間(全天都算服務中)',
               dndText: dndSentence(null),
             },
-        monthlyTokenCap: s.quota?.monthlyTokenCap ?? null,
+        // 看不到就整格不出現(undefined 不進 JSON):⛔回 null 會被講成「沒有設上限」
+        monthlyTokenCap: s.quota?.monthlyTokenCap,
         disambiguationEnabled: s.disambiguation?.enabled !== false,
       }
     },
@@ -1016,7 +1030,7 @@ export async function runAdminAgentChat(params: {
     const args = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
     toolCalls.push({ tool: toolName, args })
     try {
-      const result = await tool.run(db, workspaceId, args, { authHeader })
+      const result = await tool.run(db, workspaceId, args, { authHeader, role })
       // ⛔ 太長時要切在整筆的邊界上、而且要講出少了幾筆（見 summarizeToolResult）
       toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${summarizeToolResult(result)}`)
     }

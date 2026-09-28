@@ -14,9 +14,13 @@ import { CAMPAIGN_INACTIVE_CODE, CAMPAIGN_INACTIVE_MESSAGE } from '~~/shared/lea
  * 停用就半途消失。界線是「還能不能用這個連結進來」。
  */
 export function isCampaignLinkDisabled(data: DocumentData | undefined | null): boolean {
-  // 查不到活動文件（已刪除、或多租戶化前的舊資料）→ 不擋。
-  // ⛔ 寧可放行也不要因為讀不到就把正在跑的活動關掉。
-  if (!data) return false
+  // 查不到活動文件＝活動已經被刪掉 → 當成已結束（2026-09-29 權限盤點時查到，`G-108`）。
+  // 以前是放行：結果刪掉啟用中的活動，外面的連結照樣綁定、照樣貼標，後台卻再也沒有那一筆關得掉；
+  // 刪掉**停用中**的活動更糟，本來點不開的連結會重新點得開。刪除比停用更重，連結沒道理反而活著。
+  // ⚠️ 當初放行是怕「多租戶化前的舊資料本來就沒有活動文件」。同日唯讀盤點 myfeel：7,018 筆 leadClaims
+  //    只有 2 個 campaignId 找不到活動，各 1 筆、最後活動在 5 月與 7 月＝早就刪掉的測試活動，沒有在跑的。
+  // ⛔ 「讀取失敗」跟「查不到」不一樣：讀取丟例外會往外拋（claim 回 5xx），不會被當成已結束。
+  if (!data) return true
   return data.isActive === false
 }
 

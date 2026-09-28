@@ -1,12 +1,21 @@
+import { getDb } from '~~/server/utils/firebase'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 
 /**
- * POST /api/richmenu/migrate-aliases
+ * POST /api/richmenu/migrate-aliases  body（或 query）: { workspaceId }
  * Uses raw fetch (not SDK) to expose LINE's actual error body.
+ *
+ * ⛔ 只給超管（`G-105`）：這是別名格式改版時的一次性維護端點，前端沒有任何地方呼叫它。
+ * 它會把那個帳號**每一張選單的別名先刪再重建**（中間那一刻客人按選單切換會失效），
+ * 原本客服級就能按＝任何客服都能隨手打斷整個帳號的選單切換。
+ * workspaceId 一定要明講，⛔ 不帶就回 400（超管沒有「自己的帳號」，見 `G-104`）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  await requireSuperAdmin(event)
+  const body = await readBody(event).catch(() => null) as { workspaceId?: unknown } | null
+  const workspaceId = String(body?.workspaceId || getQuery(event).workspaceId || '').trim()
+  if (!workspaceId) throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
   const { channelAccessToken: token } = await getLineWorkspaceCredentials(workspaceId)
 
   const db = getDb()

@@ -54,7 +54,10 @@ export default defineEventHandler(async (event) => {
     )
     for (const doc of sourceDocs) {
       if (!doc.exists) continue
-      const d = doc.data() as { name?: string; type?: string }
+      const d = doc.data() as { name?: string; type?: string; workspaceId?: string }
+      // G-98：卡上的 sourceId 指到別家的來源（修好 create 之前寫得進來）→ 當作來源不存在，
+      // 別家資料的名稱不可以從這裡讀出去
+      if (d?.workspaceId !== workspaceId) continue
       sourceMap.set(doc.id, { name: String(d?.name ?? ''), type: String(d?.type ?? '') })
     }
   }

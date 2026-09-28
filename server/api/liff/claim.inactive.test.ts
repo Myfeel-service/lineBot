@@ -98,10 +98,13 @@ describe('POST /api/liff/claim 遇到停用的活動', () => {
     expect(claimSet).toHaveBeenCalledTimes(1)
   })
 
-  it('查不到活動文件時放行（不因為讀不到就把連結關掉）', async () => {
+  it('🔴 活動已經刪掉（查不到活動文件）＝活動已結束：一樣 410、一個字都不寫（`G-108`）', async () => {
+    // 以前是放行：刪掉停用中的活動，本來點不開的連結會重新點得開，而且後台再也關不掉
     stubDb(null)
-    const res = await (handler as (e: unknown) => Promise<{ ok: boolean }>)({})
-    expect(res.ok).toBe(true)
-    expect(claimSet).toHaveBeenCalledTimes(1)
+    await expect((handler as (e: unknown) => Promise<unknown>)({})).rejects.toMatchObject({
+      statusCode: 410,
+      data: { code: 'campaign_inactive' },
+    })
+    expect(claimSet).not.toHaveBeenCalled()
   })
 })

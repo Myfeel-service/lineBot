@@ -1154,6 +1154,7 @@
 import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, MoreFilled, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config-references'
+import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
   validateUnifiedAction,
@@ -2566,22 +2567,42 @@ function onHeaderCommand(cmd: string | number | object) {
 async function deleteFlow() {
   if (!canOperate.value) return showToast('觀察者無法執行此操作', 'warning')
   if (!selectedId.value) return
+  const targetId = selectedId.value
+  const targetName = form.value.name
+  /**
+   * `D-110` ④：刪之前先講「誰在用它、刪掉什麼會壞」，沒人用才維持原本那句簡單確認。
+   *
+   * ⛔ 一定要帶 `fresh` 重查一次，不可以直接拿頁面載入時那份索引：那份可能是幾十分鐘前的，
+   *    這段時間別的分頁剛在圖文選單上指過來，確認框就會理直氣壯地說「沒有人用」。
+   *    （只有按下刪除才查，一次掃六個集合、約百來筆——跟「每選一個模組查一次」不是同一回事。）
+   * ⛔ 查不到的時候 `failedKinds` 會有值，確認框改講「沒辦法確定」，不會退回簡單確認。
+   */
+  await loadConfigRefs(true)
+  // 查的這段時間人換到別的模組了：不要拿舊的名字去問、也不要刪錯那一個
+  if (selectedId.value !== targetId) return
+  const copy = moduleDeleteConfirmCopy({
+    name: targetName,
+    refs: configRefs.value.modules[targetId] ?? [],
+    failedKinds: configRefs.value.failedKinds,
+  })
   try {
-    await ElMessageBox.confirm(`確定刪除「${form.value.name}」？`, '刪除確認', {
-      confirmButtonText: '刪除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(copy.message, '刪除確認', {
+      confirmButtonText: copy.confirmButtonText,
+      cancelButtonText: copy.cancelButtonText,
       confirmButtonClass: 'el-button--danger',
       type: 'warning',
     })
   }
   catch { return }
   try {
-    await apiFetch(`/api/flow/${selectedId.value}`, { method: 'DELETE' })
+    await apiFetch(`/api/flow/${targetId}`, { method: 'DELETE' })
     showToast('已刪除', 'success')
     selectedId.value = null
     form.value = defaultForm()
     markClean()
     await loadFlows(true)
+    // 被刪的這個模組自己的按鈕也算別人的入口，重算一次，其他模組的「客人會從 N 個地方走到這裡」才不會多算它
+    void loadConfigRefs(true)
   } catch {
     showToast('刪除失敗', 'error')
   }

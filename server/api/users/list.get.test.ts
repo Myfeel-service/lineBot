@@ -49,7 +49,12 @@ const USERS = Array.from({ length: 30 }, (_, i) => ({
  * ①`where('isBlocked','==',false)` 真的會篩 ②`select()` 真的會裁欄位
  * ③`indexMissing` 時查詢會丟 FAILED_PRECONDITION（模擬索引還沒建好）
  */
-function fakeDb(opts: { indexMissing?: boolean } = {}) {
+function fakeDb(opts: {
+  indexMissing?: boolean
+  /** userTags／tags 兩個集合回什麼（預設空的；`G-98` 標籤歸屬那組才用得到） */
+  userTags?: Array<{ userId: string, tagId: string }>
+  tags?: Record<string, Record<string, unknown>>
+} = {}) {
   const calls: { col: string, selected: string[], offset: number, limit: number, filtered: boolean }[] = []
 
   const collection = (col: string) => {
@@ -84,6 +89,14 @@ function fakeDb(opts: { indexMissing?: boolean } = {}) {
         },
       }),
       get: async () => {
+        if (col === 'userTags' && opts.userTags?.length) {
+          const docs = opts.userTags.map(ut => ({ id: `${ut.userId}_${ut.tagId}`, data: () => ut }))
+          return { docs, empty: false, size: docs.length }
+        }
+        if (col === 'tags' && opts.tags) {
+          const docs = Object.entries(opts.tags).map(([id, t]) => ({ id, data: () => t }))
+          return { docs, empty: docs.length === 0, size: docs.length }
+        }
         if (col === 'userTagSuggestions' || col === 'userTags' || col === 'tags')
           return { docs: [], empty: true, size: 0 }
         failIfIndexMissing()
@@ -186,6 +199,30 @@ describe('好友清單快路徑（E-26）', () => {
     expect(userQueries[0]!.limit).toBe(120)
     expect(res.users).toHaveLength(20)
     expect(res.users.map((u: any) => u.id)).not.toContain(`${WS}_U003`) // 掃描路徑也會篩封鎖
+  })
+
+  /**
+   * `G-98`（2026-09-29 權限盤點）：修好貼標之前，知道別家標籤 id 的人可以把它貼到自家客人身上，
+   * 好友頁再把那顆標籤的名字、顏色讀出來。🔴 別家的標籤＝當作不存在。
+   */
+  it('🔴 客人身上掛著別家的標籤 → 名字、顏色不顯示（跟標籤不存在一樣）', async () => {
+    const { db } = fakeDb({
+      userTags: [
+        { userId: `${WS}_U000`, tagId: 'mine' },
+        { userId: `${WS}_U000`, tagId: 'theirs' },
+      ],
+      tags: {
+        mine: { workspaceId: WS, name: 'VIP', color: '#f00', code: 'vip', category: 'custom' },
+        theirs: { workspaceId: 'ws2', name: '別家的機密分類', color: '#0f0', code: 'x', category: 'custom' },
+      },
+    })
+    vi.mocked(getDb).mockReturnValue(db)
+    currentQuery = { page: '1', limit: '20' }
+
+    const res = await (handler as any)({} as never)
+    const u0 = res.users.find((u: any) => u.id === `${WS}_U000`)
+    expect(u0.tags.map((t: any) => t.name)).toEqual(['VIP'])
+    expect(JSON.stringify(res)).not.toContain('別家的機密分類')
   })
 
   it('有搜尋時照舊走掃描路徑（掃描上限與 truncated 語意不能被順手改掉）', async () => {

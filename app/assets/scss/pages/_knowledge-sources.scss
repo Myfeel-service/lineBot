@@ -263,6 +263,13 @@
 
   &:hover { color: var(--el-color-primary); }
 }
+/* `G-102`：沒有權限解鎖的人看到的那顆鎖——只是標記，不能按，所以不給手指游標也不變色 */
+.src-chunk-lock--static {
+  display: inline-flex;
+  cursor: default;
+
+  &:hover { color: inherit; }
+}
 /* 「內容較短」是提醒不是警告:短卡照樣被檢索、照樣拿去回答,沒有任何東西壞掉。
    原本用 warning 黃(跟「同步失敗」同一個顏色語言)會讓人以為那條知識失效了。改中性灰。 */
 .src-chunk-note {
@@ -442,6 +449,37 @@
   width: 100%;
 }
 .chunk-footer-right { display: flex; gap: 8px; }
+/* 唯讀視窗只有一顆「關閉」：靠右，跟編輯視窗的「取消／儲存」同一個位置 */
+.chunk-footer--readonly { justify-content: flex-end; }
+
+/*
+ * `G-102`／`G-107`：存不了的人看到的「值」（知識內容、所屬產品、同步頻率……）。
+ * ⛔ 不用灰掉的輸入框代替：灰框看起來像壞掉或在等什麼，而且政策是沒權限就不給控制項。
+ * 淺底＋細框＝一眼看得出「這是一個欄位的值」，但不像能點。
+ */
+.src-readonly-value {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+/* 知識內容是一整段、會換行分點：保留原本的換行，太長就在框裡捲 */
+.src-readonly-value--multiline {
+  white-space: pre-wrap;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.src-readonly-list {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+}
 
 /* ── 知識卡搜尋（補卡前先確認「這題是不是已經有卡」） ─────────────── */
 .src-search {

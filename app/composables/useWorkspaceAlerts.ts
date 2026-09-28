@@ -324,6 +324,8 @@ const ALERTS: AlertDefinition[] = [
     // 都放在 operate 組（＝每個客服人員開後台都會把模組／選單／流程／活動四整批撈回來比對），
     // 前端卻把結果丟掉——白花的查詢。兩邊對齊之後這筆錢至少換得到東西。
     // ⛔四個落點頁都只要 auth（ai-scripts 另加 ai-feature），agent 進得去，不會帶去權限牆。
+    // ⛔「用聊天帶我修」打的 `/api/admin/broken-module-fix` 兩支也要是客服級——
+    //    `G-102` 就是這裡改了、那兩支還停在 admin，客服一按就失敗。改一邊要一起改。
     requires: 'operate',
     // 退路：問不出面向時（舊版後端沒回 scopes）沿用原本的落點
     route: wid => `/admin/${wid}/richmenu`,

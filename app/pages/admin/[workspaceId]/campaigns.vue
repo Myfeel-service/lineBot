@@ -426,6 +426,7 @@ import { Delete, Plus, Tickets } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
 import { LEAD_FAILURE_NOT_OWNER_NOTE, summarizeLeadFailures } from '~~/shared/lead-page-failure'
+import { campaignDeleteConfirmCopy } from '~~/shared/delete-impact'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 // canManageSettings：LIFF 登記狀態的檢查端點限管理員（客服查不到，見 liffVerdict）
@@ -977,10 +978,26 @@ async function submitForm() {
 async function deleteCampaign() {
   if (!assertCanOperate()) return
   if (!selectedId.value) return
+  /**
+   * `D-110` ④：刪之前先講刪掉會怎樣。話怎麼講全在 `campaignDeleteConfirmCopy`（純函式，有測試）。
+   *
+   * ⛔ 刪掉活動，**已經發出去的連結不會失效**（停用中的反而會重新點得開）——原因寫在那支函式上。
+   *    所以這裡講的是實情，並把人指去「停用」，⛔ 不要改成「連結會失效」這種假承諾。
+   * 用的都是這一頁本來就有的資料（存起來的啟用狀態、連結、成效那兩格），不另外查。
+   * ⚠️ 名字用**存起來的**：表單上的名字可能改到一半還沒存。
+   */
+  const saved = selectedCampaign.value
+  const copy = campaignDeleteConfirmCopy({
+    name: String(saved?.name ?? form.value.name),
+    hasPublishedLink: Boolean(String(saved?.publishedCtaUrl ?? '').trim()),
+    isActive: savedIsActive.value,
+    // 成效還在載入、或載入失敗 → null（不講數字，⛔ 也不講成 0 人）
+    boundCount: stats.value && !statsLoading.value ? stats.value.claimed + stats.value.applied : null,
+  })
   try {
-    await ElMessageBox.confirm(`確定刪除「${form.value.name}」？此操作無法復原。`, '刪除確認', {
-      confirmButtonText: '刪除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(copy.message, '刪除確認', {
+      confirmButtonText: copy.confirmButtonText,
+      cancelButtonText: copy.cancelButtonText,
       confirmButtonClass: 'el-button--danger',
       type: 'warning',
     })

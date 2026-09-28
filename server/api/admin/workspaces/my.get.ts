@@ -1,6 +1,8 @@
-import { getFirebaseAuth } from '~~/server/utils/firebase'
-import { isSuperAdmin } from '~~/server/utils/workspace-auth'
+import { isSuperAdmin, trustedEmail, verifyRequestToken } from '~~/server/utils/workspace-auth'
 import { getBillingPlan } from '~~/shared/billing/plans'
+import { ROLE_LEVEL } from '~~/shared/permissions'
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import { isInviteExpired } from '~~/shared/workspace-invite'
 
 /**
  * 帳號選單用的精簡方案標籤。只給 owner/admin 看（計費屬管理層資訊）；
@@ -21,16 +23,12 @@ function planTag(role: string, planId: unknown): { id: string; name: string } | 
  *   - Super admin：所有 workspace
  *   - 一般用戶：直接 workspace 成員 + 透過 org admin（email-based）取得的 workspace
  *   - 已停用組織的 workspace 對一般用戶隱藏
+ *
+ * ⚠️ 角色的算法必須跟 requireWorkspaceAccess 一模一樣，不然清單上寫的跟實際進得去的對不上。
  */
 export default defineEventHandler(async (event) => {
-  const header = getHeader(event, 'authorization') || ''
-  const match = /^Bearer\s+(.+)$/i.exec(header)
-  const token = match?.[1]?.trim()
-  if (!token) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
-
-  const decoded = await getFirebaseAuth().verifyIdToken(token).catch(() => {
-    throw createError({ statusCode: 401, statusMessage: 'Invalid or expired token' })
-  })
+  // 跟守門同一支：超管那條路會多驗「有沒有被撤銷」（`G-104`②）
+  const decoded = await verifyRequestToken(event)
 
   const db = getDb()
 
@@ -65,7 +63,9 @@ export default defineEventHandler(async (event) => {
 
   // ── 一般用戶 ─────────────────────────────────────────────────────
   const uid = decoded.uid
-  const email = decoded.email ?? ''
+  // 跟守門同一個口徑（`G-107`⑦、`G-99`）：原本這裡沒轉小寫，大小寫不同時清單跟實際權限對不上；
+  // 沒驗證過的信箱不認，組織管理員與 email 邀請就都不列
+  const email = trustedEmail(decoded) ?? ''
 
   // 並行取得：workspace 成員資格 + org 成員資格（email-based）
   const [membersSnap, orgMembersSnap] = await Promise.all([
@@ -110,6 +110,8 @@ export default defineEventHandler(async (event) => {
 
   const result: any[] = []
   const includedWorkspaceIds = new Set<string>()
+  /** 直接成員那幾列，組織管理員那段要拿來把角色往上拉（`G-101`①） */
+  const directRows = new Map<string, any>()
 
   // 直接 workspace 成員（過濾停用組織）
   for (const doc of membersSnap.docs) {
@@ -118,7 +120,7 @@ export default defineEventHandler(async (event) => {
     const orgId = wsDataMap[workspaceId]?.organizationId ?? data.organizationId ?? null
     if (orgId && orgMap[orgId]?.disabled) continue
 
-    result.push({
+    const row = {
       workspaceId,
       name: wsDataMap[workspaceId]?.name ?? workspaceId,
       role: data.role as string,
@@ -127,7 +129,9 @@ export default defineEventHandler(async (event) => {
       organizationDisabled: false,
       viaOrgAdmin: false,
       plan: planTag(data.role as string, wsDataMap[workspaceId]?.planId),
-    })
+    }
+    result.push(row)
+    directRows.set(workspaceId, row)
     includedWorkspaceIds.add(workspaceId)
   }
 
@@ -143,6 +147,17 @@ export default defineEventHandler(async (event) => {
       const orgId = activeAdminOrgIds[i]
       if (!orgId) return
       snap.docs.forEach(d => {
+        // 同時是直接成員：取兩者較高的（`G-101`①，跟 requireWorkspaceAccess 同一條規則）。
+        // 原本直接跳過，先被邀成客服、後來才升組織管理員的人，清單上永遠寫客服
+        const direct = directRows.get(d.id)
+        if (direct) {
+          if ((ROLE_LEVEL[direct.role as WorkspaceMemberRole] ?? 0) < ROLE_LEVEL.admin) {
+            direct.role = 'admin'
+            direct.viaOrgAdmin = true
+            direct.plan = planTag('admin', d.data().subscription?.planId)
+          }
+          return
+        }
         if (includedWorkspaceIds.has(d.id)) return
         result.push({
           workspaceId: d.id,
@@ -165,6 +180,8 @@ export default defineEventHandler(async (event) => {
     for (const doc of invSnap.docs) {
       const wid = doc.data().workspaceId as string
       if (includedWorkspaceIds.has(wid)) continue
+      // 過期的邀請進不去（守門不轉正，`G-107`⑥），⛔ 不列：列了他點進去只會被擋
+      if (isInviteExpired(doc.data())) continue
       const wSnap = await db.collection('workspaces').doc(wid).get()
       if (!wSnap.exists) continue
       const orgId = wSnap.data()?.organizationId ?? null

@@ -38,9 +38,21 @@ vi.mock('./script-health', () => ({
 const hotCacheCleared: string[] = []
 /** 答錯紀錄是否剛好撈滿上限（＝更早的看不到，講法必須不一樣） */
 let fullFeedbackPage = false
+/** 「另一條啟用中的加好友流程」：null＝沒有；記下被問了幾次，好驗執行前有沒有重查 */
+let followConflict: { id: string, name: string } | null = null
+const followConflictAsks: { wid: string, exclude?: string }[] = []
 vi.mock('./ai-scripts', () => ({
   SCRIPTS_COLLECTION: 'aiScripts',
   invalidateScriptsCache: (wid: string) => { hotCacheCleared.push(wid) },
+  findEnabledFollowScriptConflict: async (wid: string, exclude?: string) => {
+    followConflictAsks.push({ wid, exclude })
+    return followConflict
+  },
+}))
+// 方案：scripting=false 是免費／輕量方案；null＝讀取失敗（要 fail-open，跟 assertPlanAllows 一樣）
+let planStore: { scripting: boolean } | null = { scripting: true }
+vi.mock('./billing', () => ({
+  getWorkspacePlan: async () => planStore,
 }))
 // 生成端：每次回不一樣的名字，好驗「同意的那份就是建出來的那份」
 let draftSeq = 0
@@ -120,6 +132,9 @@ beforeEach(() => {
   extraCollections.broadcasts = []
   fetchCalls.length = 0
   draftSeq = 0
+  followConflict = null
+  followConflictAsks.length = 0
+  planStore = { scripting: true }
   settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' }
   settingsStore.handoffNotify = { enabled: true, lineUserIds: ['U1'], slaRemindMinutes: 30 }
   settingsStore.sensitiveTopics = ['退款']
@@ -293,14 +308,20 @@ describe('op：一提到就轉真人的字', () => {
 describe('op：自動回應上架／下架', () => {
   const op = ADMIN_OPS['script-set-enabled']
 
-  function seed(rows: { id: string, name: string, enabled: boolean, keywords?: string[] }[]) {
+  function seed(rows: { id: string, name: string, enabled: boolean, keywords?: string[], follow?: boolean }[]) {
     scriptDocs.push(...rows.map(r => ({
       id: r.id,
       data: {
         name: r.name,
         enabled: r.enabled,
         rootNodeId: 'n1',
-        nodes: [{ id: 'n1', type: 'trigger', keywords: r.keywords ?? ['出貨'], matchMode: 'keyword' }],
+        nodes: [{
+          id: 'n1',
+          type: 'trigger',
+          keywords: r.follow ? [] : (r.keywords ?? ['出貨']),
+          matchMode: 'keyword',
+          ...(r.follow ? { triggerEvent: 'follow' } : {}),
+        }],
       },
     })))
   }
@@ -369,6 +390,81 @@ describe('op：自動回應上架／下架', () => {
   it('沒說要開還是關就不提議（⛔不要自己補一個常見值）', () => {
     expect(() => op.normalize({ name: '出貨查詢' })).toThrow(AdminOpUserError)
     expect(() => op.normalize({ enabled: true })).toThrow(AdminOpUserError)
+  })
+
+  // ── G-100：頁面存檔那兩道檢查，小幫手這條路也要過 ──
+  it('🔴 方案不含腳本功能：上架⛔不出確認卡，理由講清楚；也不寫入', async () => {
+    planStore = { scripting: false }
+    seed([{ id: 'd1', name: '出貨查詢', enabled: false }])
+    const args = op.normalize({ name: '出貨查詢', enabled: true })
+
+    await expect(op.preview(ctx, args)).rejects.toThrow(AdminOpUserError)
+    await expect(op.preview(ctx, args)).rejects.toThrow(/方案不含/)
+    expect(updates).toHaveLength(0)
+  })
+
+  it('🔴 方案不含腳本功能：直接按確定（舊卡片、或提議後降級）也不上架', async () => {
+    planStore = { scripting: false }
+    seed([{ id: 'd1', name: '出貨查詢', enabled: false }])
+    const res = await op.execute(ctx, op.normalize({ name: '出貨查詢', enabled: true }))
+
+    expect(res.ok).toBe(false)
+    expect(res.message).toContain('方案不含')
+    expect(updates).toHaveLength(0)
+    expect(auditLogs).toHaveLength(0)
+    expect(hotCacheCleared).toHaveLength(0)
+  })
+
+  it('下架不看方案：降級後要能把流程關掉（⛔不能把人鎖在「開著關不掉」）', async () => {
+    planStore = { scripting: false }
+    seed([{ id: 'd1', name: '出貨查詢', enabled: true }])
+    const args = op.normalize({ name: '出貨查詢', enabled: false })
+
+    expect((await op.preview(ctx, args)).noop).toBeFalsy()
+    const res = await op.execute(ctx, args)
+    expect(res.ok).toBe(true)
+    expect(updates[0]!.patch.enabled).toBe(false)
+  })
+
+  it('讀不到方案（Firestore 出事）就放行，跟存檔端點的 fail-open 一致', async () => {
+    planStore = null
+    seed([{ id: 'd1', name: '出貨查詢', enabled: false }])
+    const res = await op.execute(ctx, op.normalize({ name: '出貨查詢', enabled: true }))
+    expect(res.ok).toBe(true)
+  })
+
+  it('🔴 已經有一條加好友流程開著：上架第二條要點名是哪一條，⛔不出確認卡', async () => {
+    followConflict = { id: 'd9', name: '歡迎新朋友' }
+    seed([{ id: 'd1', name: '加好友送券', enabled: false, follow: true }])
+    const args = op.normalize({ name: '加好友送券', enabled: true })
+
+    await expect(op.preview(ctx, args)).rejects.toThrow(/「歡迎新朋友」/)
+    // 呼叫法跟存檔端點一樣：排除自己
+    expect(followConflictAsks[0]).toEqual({ wid: 'w1', exclude: 'd1' })
+    expect(updates).toHaveLength(0)
+  })
+
+  it('🔴 提議之後才有人開了另一條加好友流程：按確定時要重查，⛔不上架', async () => {
+    seed([{ id: 'd1', name: '加好友送券', enabled: false, follow: true }])
+    const args = op.normalize({ name: '加好友送券', enabled: true })
+    await op.preview(ctx, args) // 提議當下沒有衝突，卡片正常出來
+
+    followConflict = { id: 'd9', name: '歡迎新朋友' } // 別人在頁面上把另一條開了
+    const res = await op.execute(ctx, args)
+
+    expect(res.ok).toBe(false)
+    expect(res.message).toContain('「歡迎新朋友」')
+    expect(updates).toHaveLength(0)
+    expect(auditLogs).toHaveLength(0)
+  })
+
+  it('一般（傳訊息觸發）的流程不查加好友衝突：多條並存本來就各接各的', async () => {
+    followConflict = { id: 'd9', name: '歡迎新朋友' }
+    seed([{ id: 'd1', name: '出貨查詢', enabled: false }])
+    const res = await op.execute(ctx, op.normalize({ name: '出貨查詢', enabled: true }))
+
+    expect(res.ok).toBe(true)
+    expect(followConflictAsks).toHaveLength(0)
   })
 
   it('現況指紋含「現在是開還是關」：別人改過之後，舊提議就對不上了', async () => {
@@ -465,6 +561,14 @@ describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () 
   it('描述太籠統就先問清楚，⛔不要生一個空殼流程出來', () => {
     expect(() => op.normalize({ description: '建一個' })).toThrow(AdminOpUserError)
     expect(() => op.normalize({})).toThrow(AdminOpUserError)
+  })
+
+  it('🔴 方案不含腳本功能：⛔連草稿都不生（生了也建不出來，白花一次模型）', async () => {
+    planStore = { scripting: false }
+    const args = op.normalize({ description: '客人說退貨時，先問訂單編號再回覆處理時間' })
+
+    await expect(op.prepare!(ctx, args)).rejects.toThrow(/方案不含/)
+    expect(draftSeq).toBe(0) // generateScriptDraft 一次都沒被叫
   })
 })
 

@@ -60,12 +60,14 @@
               <div class="ai-check-item">
                 <span><el-icon :color="notifyReady ? 'var(--brand-green-text)' : 'var(--text-muted)'"><component :is="notifyReady ? CircleCheckFilled : CircleCheck" /></el-icon></span>
                 <span>把手機加進 LINE 通知(AI 答不了時才有人即時接手)</span>
-                <NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="ai-status-link">去加手機 →</NuxtLink>
+                <!-- `G-107`：兩個落點頁都是客服以上才進得去（line-notify＝notify.self、測試對話＝playground.use），
+                     觀察者點下去只會被守門彈回來，連結不給 -->
+                <NuxtLink v-if="can('notify.self')" :to="`/admin/${workspaceId}/settings/line-notify`" class="ai-status-link">去加手機 →</NuxtLink>
               </div>
               <div class="ai-check-item">
                 <span><el-icon><InfoFilled /></el-icon></span>
                 <span>到「測試對話」試答幾題,確認 AI 答得對再上線;先用「草稿」模式跑一兩週更穩</span>
-                <NuxtLink :to="`/admin/${workspaceId}/ai-playground`" class="ai-status-link">去測試 →</NuxtLink>
+                <NuxtLink v-if="can('playground.use')" :to="`/admin/${workspaceId}/ai-playground`" class="ai-status-link">去測試 →</NuxtLink>
               </div>
             </div>
           </div>
@@ -148,12 +150,13 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ai-section-hint">給 AI 的指示:講話口吻、不能說什麼、要怎麼處理特殊狀況。不知道怎麼寫?先套下面的範本再改。</p>
-            <div class="ai-tone-row">
+            <p class="ai-section-hint">給 AI 的指示:講話口吻、不能說什麼、要怎麼處理特殊狀況。<template v-if="canEditSettings">不知道怎麼寫?先套下面的範本再改。</template></p>
+            <!-- `G-107`：套範本是純動作（不是在顯示目前的值），存不了的人整排不出現，不做灰掉 -->
+            <div v-if="canEditSettings" class="ai-tone-row">
               <span class="ai-tone-label">套用範本</span>
-              <el-button size="small" plain :disabled="!canEditSettings" @click="applyToneTemplate('friendly')">親切活潑</el-button>
-              <el-button size="small" plain :disabled="!canEditSettings" @click="applyToneTemplate('professional')">專業簡潔</el-button>
-              <el-button size="small" plain :disabled="!canEditSettings" @click="applyToneTemplate('warm')">溫暖體貼</el-button>
+              <el-button size="small" plain @click="applyToneTemplate('friendly')">親切活潑</el-button>
+              <el-button size="small" plain @click="applyToneTemplate('professional')">專業簡潔</el-button>
+              <el-button size="small" plain @click="applyToneTemplate('warm')">溫暖體貼</el-button>
             </div>
             <el-input
               v-model="form.systemPrompt"
@@ -197,7 +200,9 @@
           <div class="card-section-stack">
             <p class="ai-section-hint">
               AI 答不出來、客人要找真人時要傳到誰的手機、什麼時候傳，搬到
-              <NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`">「設定 → LINE 通知」</NuxtLink>
+              <!-- `G-107`：觀察者進不去那一頁（notify.self＝客服以上），只講在哪、不給連結 -->
+              <NuxtLink v-if="can('notify.self')" :to="`/admin/${workspaceId}/settings/line-notify`">「設定 → LINE 通知」</NuxtLink>
+              <template v-else>「設定 → LINE 通知」</template>
               了。
             </p>
           </div>
@@ -871,7 +876,7 @@ const statusBadgeClass = computed(() => {
 const quotaPct = computed(() => {
   // 已開通方案 → 進度以「則數」為準（token 上限不再生效）
   if (planView.value) return planState.value.limit != null ? planState.value.percent : null
-  const cap = form.value.quota.monthlyTokenCap
+  const cap = form.value.quota.monthlyTokenCap ?? 0 // 看不到上限的角色不畫進度（`G-103`）
   if (usageTokens.value === null || cap <= 0) return null
   return Math.min(100, Math.round((usageTokens.value / cap) * 100))
 })
@@ -917,20 +922,39 @@ async function loadStatus() {
   }
 }
 
+/**
+ * `GET`／`PUT /api/ai/settings` 回來的是**依角色遮過**的版本（`G-103`，`ai-settings-redact.ts`）：
+ *   - 回答模型、回覆長度：只有超管拿得到
+ *   - 每月 token 上限：只有 ai.settings.write（管理員）拿得到
+ *   - LINE 通知名單：只有 notify.self（客服以上）拿得到；人數 `recipientCount` 每個角色都有
+ * ⛔ 這幾格不在時**不要**當成 0／空名單解讀——那是「你看不到」，不是「沒有」。
+ */
+type AiSettingsResponse = Omit<AiSettingsDoc, 'answerModel' | 'replyMaxLen' | 'quota' | 'handoffNotify'> & {
+  answerModel?: AiSettingsDoc['answerModel']
+  replyMaxLen?: number
+  quota: Omit<AiSettingsDoc['quota'], 'monthlyTokenCap'> & { monthlyTokenCap?: number }
+  handoffNotify?: { recipientCount?: number, lineUserIds?: string[] }
+}
+
 /** 把後端回傳的設定套進表單並標記乾淨。load 與 save 共用——save 後回填 normalize 結果，
  * 後端有任何修正（min/max 交換、clamp、剪 displayNames）畫面都會跟上,不會「設定自己跳掉」。 */
-function applySettings(data: AiSettingsDoc) {
+function applySettings(data: AiSettingsResponse) {
+  const d = buildDefaultAiSettings()
   form.value = {
     enabled: data.enabled,
     replyMode: data.replyMode === 'draft' ? 'draft' : 'auto',
-    answerModel: data.answerModel,
+    // 超管以外拿不到這兩格：填預設只是讓表單型別完整——畫面只有超管那張卡會顯示它們，
+    // 管理員存檔時送上去也會被 PUT 丟掉、沿用現值（settings.put.ts），不會被預設值蓋掉
+    answerModel: data.answerModel ?? d.answerModel,
     confidenceThreshold: data.confidenceThreshold,
     groundingThreshold: data.groundingThreshold,
     systemPrompt: data.systemPrompt,
     shopUrl: data.shopUrl ?? '',
-    replyMaxLen: data.replyMaxLen,
+    replyMaxLen: data.replyMaxLen ?? d.replyMaxLen,
     sensitiveTopics: [...data.sensitiveTopics],
-    quota: { ...data.quota },
+    // 看不到上限的人（客服、觀察者）當 0＝「不顯示上限」：頁首那行 `> 0` 才顯示、用量進度條 `cap <= 0` 不畫；
+    // 能改的人（管理員）一定拿得到真值，所以這個 0 不會被存回去
+    quota: { ...data.quota, monthlyTokenCap: data.quota?.monthlyTokenCap ?? 0 },
     handbackIdleMinutes: Number(data.handbackIdleMinutes ?? 0),
     humanSessionMaxIdleHours: Number(data.humanSessionMaxIdleHours ?? DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS),
     disambiguation: { ...data.disambiguation },
@@ -940,18 +964,19 @@ function applySettings(data: AiSettingsDoc) {
     inactiveTag: { ...(data.inactiveTag ?? buildDefaultAiSettings().inactiveTag) },
     autoTagSuggest: { ...(data.autoTagSuggest ?? buildDefaultAiSettings().autoTagSuggest) },
   }
-  // 名單有人＝有人在收（舊資料「有人但關著」後端 normalize 已收成空名單，⛔ 這裡不再另判 enabled）
-  notifyReady.value = (data.handoffNotify?.lineUserIds?.length ?? 0) > 0
+  // 名單有人＝有人在收（舊資料「有人但關著」後端 normalize 已收成空名單，⛔ 這裡不再另判 enabled）。
+  // `G-103`：觀察者拿不到名單本身，改看每個角色都有的人數；舊版後端沒有人數時才退回數名單
+  notifyReady.value = (data.handoffNotify?.recipientCount ?? data.handoffNotify?.lineUserIds?.length ?? 0) > 0
   lastLoadedDoc = data
   nextTick(() => markClean())
 }
 
 /** 最後一次成功載入 / 儲存的伺服器版本；取消編輯時用它原地還原,不必重打 API */
-let lastLoadedDoc: AiSettingsDoc | null = null
+let lastLoadedDoc: AiSettingsResponse | null = null
 
 async function loadSettings() {
   try {
-    const data = await apiFetch<AiSettingsDoc>('/api/ai/settings')
+    const data = await apiFetch<AiSettingsResponse>('/api/ai/settings')
     applySettings(data)
     loadError.value = false
   }
@@ -987,7 +1012,7 @@ async function save() {
   }
   saving.value = true
   try {
-    const updated = await apiFetch<AiSettingsDoc>('/api/ai/settings', { method: 'PUT', body: form.value })
+    const updated = await apiFetch<AiSettingsResponse>('/api/ai/settings', { method: 'PUT', body: form.value })
     applySettings(updated)
     showToast('已儲存', 'success')
   }

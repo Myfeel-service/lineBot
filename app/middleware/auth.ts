@@ -1,6 +1,42 @@
+import type { RouteLocationNormalizedLoaded } from 'vue-router'
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import { aiFeatureDenial } from './ai-feature'
+import { settingsPageDenial } from './workspace-settings'
+import { notifyPageDenial } from './workspace-notify'
+
 // 這些是「不綁 workspace」的 admin 路徑，第二段不是 workspaceId
 // （org 也在內：/admin/org/[orgId] 是組織層頁面，orgId 不是 workspaceId）
 const NON_WORKSPACE_SEGMENTS = new Set(['workspaces', 'super', 'onboarding', 'org'])
+
+/**
+ * 這一頁掛了哪幾道「看角色」的門，用新的角色逐道再判一次（`G-107` 第 21 條，背景重驗用）。
+ * 回要講給他聽的那句話；都過就回 null。
+ *
+ * ⛔ 看的是頁面自己在 `definePageMeta` 宣告的 middleware，不是看網址猜：
+ *    `settings/line-notify` 網址也在 /settings/ 底下，但它掛的是 `workspace-notify`（客服就進得去），
+ *    照網址判會把客服誤踢出去。
+ */
+function routeRoleDenial(route: RouteLocationNormalizedLoaded, role: WorkspaceMemberRole): string | null {
+  const declared = route.meta.middleware
+  // 具名的才算（inline 函式型的 middleware 沒有名字可比）
+  const names: string[] = []
+  for (const m of Array.isArray(declared) ? declared : [declared]) {
+    if (typeof m === 'string') names.push(m)
+  }
+  if (names.includes('workspace-settings')) {
+    const denied = settingsPageDenial(route.path, role)
+    if (denied) return denied
+  }
+  if (names.includes('ai-feature')) {
+    const denied = aiFeatureDenial(route.path, role)
+    if (denied) return denied
+  }
+  if (names.includes('workspace-notify')) {
+    const denied = notifyPageDenial(role)
+    if (denied) return denied
+  }
+  return null
+}
 
 function workspaceIdFromAdminPath(path: string): string | undefined {
   const segments = path.split('/').filter(Boolean)
@@ -57,12 +93,30 @@ export default defineNuxtRouteMiddleware(async (to) => {
    *    那就照原本的流程等 API，不能拿舊答案把人擋在外面。
    */
   if (hydrateWorkspaceListFromCache() && roleFor(workspaceId)) {
+    const router = useRouter()
     // 背景重新驗證：真的被移除權限了還是要照原本的規則送回帳號選擇頁
     void loadWorkspaceList()
       .then(() => {
-        if (roleFor(workspaceId)) return
-        useAdminToast().showToast('你沒有這個官方帳號的權限，已回到帳號選擇頁', 'error')
-        void navigateTo('/admin/workspaces', { replace: true })
+        const role = roleFor(workspaceId)
+        if (!role) {
+          useAdminToast().showToast('你沒有這個官方帳號的權限，已回到帳號選擇頁', 'error')
+          void navigateTo('/admin/workspaces', { replace: true })
+          return
+        }
+        /**
+         * 帳號還在、但**角色掉了**（`G-107` 第 21 條）：管理員被降成客服，上次存的清單還寫著
+         * 管理員，設定頁的門（`workspace-settings`）就放他進來，按下去才 403。
+         * 用新清單照那一頁自己的門再判一次，判法直接呼叫那兩道門匯出的函式（⛔ 不在這裡抄一份）。
+         *
+         * ⛔ 只管「現在還停在這一頁」的情況：清單回來前他可能已經走了，那一趟導航有自己的一次重驗，
+         *    這裡再把他拉走就是亂跳。
+         */
+        const current = router.currentRoute.value
+        if (current.fullPath !== to.fullPath) return
+        const denied = routeRoleDenial(current, role)
+        if (!denied) return
+        useAdminToast().showToast(denied, 'error')
+        void navigateTo(`/admin/${workspaceId}/conversations`, { replace: true })
       })
       .catch(() => { /* 斷網／token 過期：不下判斷，交給頁面自己的錯誤處理 */ })
     return

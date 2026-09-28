@@ -293,24 +293,43 @@ export async function updateKnowledgeChunk(
  * 依 sourceId 快取，reindex-all 幾百張只讀 ~來源數 次。
  */
 const SOURCE_PRODUCT_TTL_MS = 60_000
-const sourceProductCache = new Map<string, { expiresAt: number; productName: string }>()
+/**
+ * ⚠️ key 仍是 sourceId（`invalidateSourceProductCache(sourceId)` 靠它清），
+ *    所以來源屬於哪一家要跟著存進去、每次讀都比對——不能只在寫快取前比一次。
+ */
+const sourceProductCache = new Map<string, { expiresAt: number; productName: string; workspaceId: string }>()
 
 export function invalidateSourceProductCache(sourceId?: string) {
   if (sourceId) sourceProductCache.delete(sourceId)
   else sourceProductCache.clear()
 }
 
-async function resolveSourceProductName(db: Firestore, sourceId: string | null): Promise<string> {
-  if (!sourceId) return ''
+/**
+ * G-98：卡上的 sourceId 指到別家的來源 → 當作沒有產品名。
+ * 不比對的話，建索引時會把別家來源的產品名抄進這一家的卡（還前置進 embedding）。
+ * 卡片自己沒有 workspaceId（理論上不會有）也一樣不給。
+ */
+export async function resolveSourceProductName(
+  db: Firestore,
+  sourceId: string | null,
+  workspaceId: string | null | undefined,
+): Promise<string> {
+  if (!sourceId || !workspaceId) return ''
   const cached = sourceProductCache.get(sourceId)
-  if (cached && cached.expiresAt > Date.now()) return cached.productName
+  if (cached && cached.expiresAt > Date.now()) return cached.workspaceId === workspaceId ? cached.productName : ''
   let productName = ''
+  let owner = ''
   try {
-    const snap = await db.collection('knowledgeSources').doc(sourceId).get()
-    productName = String((snap.data() as any)?.productName ?? '').trim()
+    const data = (await db.collection('knowledgeSources').doc(sourceId).get()).data() as any
+    productName = String(data?.productName ?? '').trim()
+    owner = String(data?.workspaceId ?? '')
   }
   catch { /* 讀不到來源就當沒有產品名，不影響索引 */ }
-  sourceProductCache.set(sourceId, { expiresAt: Date.now() + SOURCE_PRODUCT_TTL_MS, productName })
+  sourceProductCache.set(sourceId, { expiresAt: Date.now() + SOURCE_PRODUCT_TTL_MS, productName, workspaceId: owner })
+  if (owner !== workspaceId) {
+    if (owner) console.warn(`[knowledge] 卡片的來源 ${sourceId} 不屬於 ${workspaceId}，不繼承它的產品名`)
+    return ''
+  }
   return productName
 }
 
@@ -409,7 +428,7 @@ export async function runIndexOnChunk(
   let productName = ''
   try {
     if (cd) {
-      const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null)
+      const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null, cd?.workspaceId)
       const names = cd?.workspaceId ? await getWorkspaceProductNames(db, cd.workspaceId) : []
       productName = pickCardProduct(String(cd?.title ?? ''), names, sourceProduct)
       // 別名歸一：同一台機器的不同叫法收斂成正式名，之後建立的卡片一律用同一個字串，

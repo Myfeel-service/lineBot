@@ -38,7 +38,10 @@
         <el-alert v-if="!ready" type="info" :closable="false" show-icon>
           <template #title>下面只有通用的建議</template>
           MiniMe 還不認識你的店，所以講不出「你的哪個商品該搭這個節日」。
-          <el-link type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
+          <!-- `G-102`：開帳頁只有管理員進得去（客服、觀察者會看到「請管理員完成開通」），
+               不給一條走進去才被擋的路，直接講要找誰。 -->
+          <el-link v-if="canManageSettings" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
+          <template v-else>請管理員花 3 分鐘讓它認識。</template>
         </el-alert>
 
         <!--
@@ -51,7 +54,8 @@
           <template #title>補上「主打商品」，這幾檔會準很多</template>
           你的輪廓裡還沒寫賣什麼，所以 MiniMe 不敢替你挑「這一檔該發給誰」，
           節慶提醒也只能講通用的一句。
-          <el-link type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+          <el-link v-if="canManageSettings" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+          <template v-else>請管理員補上。</template>
         </el-alert>
 
         <!--
@@ -97,8 +101,8 @@
             <li v-for="(a, i) in e.actions" :key="i">{{ a }}</li>
           </ol>
 
-          <!-- ③ 一顆按鈕 -->
-          <div class="mkt-cal__cta">
+          <!-- ③ 一顆按鈕。`G-102`：擬推播、收起來兩支端點都是客服級，觀察者整列不出現 -->
+          <div v-if="canOperate" class="mkt-cal__cta">
             <el-button
               size="small"
               type="primary"
@@ -125,10 +129,11 @@
           ⛔ **一定要看得見、可以還原**：靜靜消失的話，他會以為系統漏掉那個節日。
         -->
         <div v-if="skippedEntries.length" class="mkt-cal__skipped">
+          <!-- `G-102`：觀察者沒有「還原」可按，全收起來時不用那句「按下面的還原」 -->
           <p class="mkt-cal__skipped-text">
-            {{ visibleEntries.length ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
+            {{ visibleEntries.length || !canOperate ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
           </p>
-          <div class="mkt-cal__skipped-chips">
+          <div v-if="canOperate" class="mkt-cal__skipped-chips">
             <el-button
               v-for="s in skippedEntries"
               :key="s.festivalId"
@@ -162,6 +167,9 @@ import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shar
 const props = defineProps<{ workspaceId: string }>()
 
 const { apiFetch } = useWorkspaceApiFetch(() => props.workspaceId)
+// `G-102`：擬推播／收起來＝客服級（`marketing-calendar/draft`、`skip` 都是 agent）；
+// 開帳頁（補輪廓）＝管理員級。
+const { canOperate, canManageSettings } = useWorkspace()
 
 const entries = ref<CalendarEntry[]>([])
 const headline = ref('')

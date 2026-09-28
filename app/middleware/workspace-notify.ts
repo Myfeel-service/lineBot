@@ -1,4 +1,13 @@
+import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import { can } from '~~/shared/permissions'
+
+/**
+ * 這個角色進不進得了 LINE 通知頁；進不了回要講的那句話，進得了回 null。
+ * 匯出給 `auth.ts` 的背景重驗用（`G-107` 第 21 條）：客服被降成觀察者時，停在這頁也要被請出去。
+ */
+export function notifyPageDenial(role: WorkspaceMemberRole | null): string | null {
+  return can(role, 'notify.self') ? null : '這一頁要客服以上的權限才能進入'
+}
 
 /**
  * 「設定 → LINE 通知」的門（`C-270`）：客服以上進得去（第 3 題拍板：客服可以加／退自己），
@@ -13,8 +22,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const { loaded } = await ensureWorkspaceList()
   if (!loaded) return
 
-  if (!can(roleFor(wid), 'notify.self')) {
-    useAdminToast().showToast('這一頁要客服以上的權限才能進入', 'error')
+  const denied = notifyPageDenial(roleFor(wid))
+  if (denied) {
+    useAdminToast().showToast(denied, 'error')
     return navigateTo(`/admin/${wid}/conversations`, { replace: true })
   }
 })

@@ -235,9 +235,13 @@
               這些對話裡，AI 當下連不上外部服務、沒能自動回答，客人已經照轉真人流程接手（有收到回覆、也排進待處理）。
               <strong>這個失敗不需要你處理</strong>——通常幾秒就自己恢復。你做得到的是去回覆這些被影響到的客人。
             </p>
-            <p v-else class="usage-hint">
+            <p v-else-if="canEditKb" class="usage-hint">
               AI 轉給真人的對話。預設只列「答不出來、補知識有救」的：點「補知識」直接到知識庫補一張對應卡；其他原因用下拉切換。
               同一題被問很多次的，AI 會先在知識庫的「建議收件匣」擬好草稿，<NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="admin-inline-link">去那裡採用更快 →</NuxtLink>
+            </p>
+            <!-- `G-102`：觀察者沒有「補知識」也不能採用草稿，不教他按不到的東西 -->
+            <p v-else class="usage-hint">
+              AI 轉給真人的對話。預設只列「答不出來、補知識有救」的，其他原因用下拉切換。
             </p>
             <!-- 篩選移到卡片內（不再擠在標題列）。分組與 hero 拆解行同一套語言：
                  上面學一次「答不出來／刻意設計要人接／客人指名」，這裡直接用，不再攤 12 個原始原因 -->
@@ -318,10 +322,12 @@
                   <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路。
                        AI 連不上服務:知識庫本來就沒缺卡,補一張只會多一張沒人用的卡（重演反而有用——
                        同一句話再問一次就知道服務恢復了沒,所以只擋補知識不擋重演）-->
-                  <el-button v-if="!noKnowledgeFix(row.handoffReason)" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
+                  <!-- `G-102`：補知識＝開建卡視窗（`knowledge/create` 是客服級）、已處理＝`handoffs/resolve`（agent），
+                       觀察者按了只會 403，直接不給 -->
+                  <el-button v-if="canEditKb && !noKnowledgeFix(row.handoffReason)" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
                   <el-button v-if="advancedOpen && row.handoffReason !== 'non_text_content'" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
                   <!-- 「已處理」只影響這份清單，不通知任何人——不講清楚的話沒人敢按 -->
-                  <el-tooltip v-if="!row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
+                  <el-tooltip v-if="canOperate && !row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
                     <el-button size="small" type="success" plain :loading="resolvingUserId === row.userId" @click="resolveHandoff(row.userId)">✓ 已處理</el-button>
                   </el-tooltip>
                 </div>
@@ -446,7 +452,8 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
-const { apiFetch, workspaceId } = useWorkspace()
+const { apiFetch, workspaceId, canOperate, can } = useWorkspace()
+const canEditKb = computed(() => can('knowledge.write'))
 // 開通沒完成時，主指標的空狀態要講真話（0 場不是沒客人，是訊息還進不來）
 const { onboardingIncomplete } = useSetupStatus()
 const router = useRouter()

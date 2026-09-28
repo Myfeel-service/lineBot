@@ -580,7 +580,7 @@ export interface AiAutoReplyConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  /api/ai/answer 回應契約
+//  answerWithAi 回應契約（原本的 /api/ai/answer 端點 2026-09-29 已刪，`G-107`）
 // ═══════════════════════════════════════════════════════════════════
 
 export interface DisambiguationPayload {

@@ -189,6 +189,8 @@ export default defineEventHandler(async (event) => {
       const chunk = allTagIds.slice(i, i + CHUNK)
       const snap = await db.collection('tags').where('__name__', 'in', chunk).get()
       snap.docs.forEach((d) => {
+        // G-98：別家的標籤當作不存在——修好貼標之前被貼上的別家標籤，名字、顏色不可以顯示出來
+        if (d.data().workspaceId !== workspaceId) return
         tagMap[d.id] = { id: d.id, ...d.data() }
       })
     }

@@ -54,7 +54,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'ai/scripts.delete': '刪掉了一條自動回應',
   'members/role.put': '改了某位成員的權限',
   'line-workspace.put': '改了 LINE 連線設定',
-  'line-workspace.clear': '清空了整個 LINE 工作區設定',
+  // 2026-09-29 `G-97`：以前是整份帳號設定一起刪（連方案、所屬組織），現在只清憑證
+  'line-workspace.clear': '清掉了本頁存的 LINE Token／Secret',
 
   /*
    * ── 2026-09-24（`C-254`）補的那一大批 ────────────────────────────
@@ -129,6 +130,10 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'tag.put': '改了一個標籤',
   'tag.delete': '刪掉了一個標籤',
   'tag.pending': '處理了一個待確認的標籤',
+  // 一次幫一大群人貼／拆標就要記（`G-107`）：一次最多 5000 人，拆標會直接改掉推播對象，
+  // 事後要查得到是誰做的。單人貼標仍照上面那條不記。
+  'userTags.batchAdd': '一次幫一群好友貼了標籤',
+  'userTags.batchRemove': '一次幫一群好友拆了標籤',
 
   // 客服常用語
   'supportPreset.create': '新增了一則客服常用語',
@@ -314,6 +319,13 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   adoptedCount: '採用的張數',
   leftForQuotaCount: '額度滿了沒收的張數',
   dismissedCount: '刪掉的張數',
+  // 批次貼標／拆標的摘要（`G-107`）
+  tagIdsCount: '標籤數',
+  usersCount: '好友人數',
+  addedCount: '新貼上的筆數',
+  skippedCount: '本來就有、略過的筆數',
+  removedCount: '拆掉的筆數',
+  notFoundCount: '本來就沒有的筆數',
   added: '新增',
   updated: '更新',
   deleted: '刪除',

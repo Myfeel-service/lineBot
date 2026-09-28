@@ -4,6 +4,7 @@ import {
 } from '~~/shared/support-preset'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
+import { assertWorkspaceTagIds } from '~~/server/utils/workspace-tag-ids'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
@@ -20,6 +21,8 @@ export default defineEventHandler(async (event) => {
   if (!existing.exists || existing.data()?.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: 'Not found' })
   }
+  // G-98：同 create——貼標只能選這個帳號自己的標籤
+  await assertWorkspaceTagIds(db, workspaceId, body.tagging.addTagIds, 'support-preset/[id].put')
 
   const moduleId = body.action.type === 'module' ? body.action.moduleId : ''
   const updates = {

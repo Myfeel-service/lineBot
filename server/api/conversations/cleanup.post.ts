@@ -1,5 +1,6 @@
 import { FieldPath, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
+import { safeSecretEqual } from '~~/server/utils/cron-auth'
 import { deleteConversationMediaObjects, isMediaMessageType } from '~~/server/utils/conversation-media'
 import { effectivePlanOf, getWorkspaceSubscription } from '~~/server/utils/billing'
 import { DEFAULT_BILLING_PLAN_ID } from '~~/shared/billing/plans'
@@ -63,7 +64,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const cronSecret = String(config.cronSecret || '').trim()
   const headerSecret = String(getHeader(event, 'x-cron-secret') || '').trim()
-  if (!cronSecret || headerSecret !== cronSecret) {
+  // 常數時間比對（`G-107`），同 cron-auth 的其他排程端點
+  if (!safeSecretEqual(headerSecret, cronSecret)) {
     throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 

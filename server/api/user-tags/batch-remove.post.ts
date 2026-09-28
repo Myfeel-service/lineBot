@@ -5,6 +5,8 @@ import type { TagLogDoc } from '~~/shared/types/tag-broadcast'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { recordManualRemovalAsDismissed } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { filterWorkspaceTagIds, tagNamesForAudit } from '~~/server/utils/workspace-tag-ids'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 
 const FIRESTORE_BATCH_LIMIT = 400
 
@@ -26,7 +28,7 @@ const FIRESTORE_BATCH_LIMIT = 400
  * }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
 
   const body = await readBody(event)
   const userIds: string[] = body?.userIds ?? []
@@ -71,6 +73,7 @@ export default defineEventHandler(async (event) => {
       batch.delete(ref)
       opsInBatch++
 
+      // G-107：記下是誰拆的——拆標會直接改變推播對象
       const logDoc: TagLogDoc = {
         workspaceId,
         action: 'remove',
@@ -78,7 +81,7 @@ export default defineEventHandler(async (event) => {
         tagId,
         sourceType: 'manual',
         sourceRefId: null,
-        operatorId: null,
+        operatorId: uid,
         createdAt: now,
       }
       batch.set(db.collection('tagLogs').doc(uuidv4()), logDoc)
@@ -95,9 +98,39 @@ export default defineEventHandler(async (event) => {
 
   // 同單筆移除：手動拆掉＝否決票，AI 有在判的標籤記進「永不再提」（防 auto 拉鋸戰）
   if (removed > 0) {
-    const fsUserDocIds = userIds.map(uid =>
-      lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(uid, workspaceId), workspaceId))
+    const fsUserDocIds = userIds.map(id =>
+      lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(id, workspaceId), workspaceId))
     await recordManualRemovalAsDismissed(db, workspaceId, fsUserDocIds, tagIds)
+
+    /*
+     * 稽核（`G-107`）：同 batch-add——拆標會直接改變推播對象，一次最多 5,000 人。
+     * ⚠️ 拆標**不過濾**標籤歸屬：要拆的是自家客人身上的貼標（文件 id 本身就帶帳號前綴、
+     *    上面也比對過 workspaceId），修 G-98 之前被貼上的別家標籤也要拆得掉。
+     *    這裡查標籤主檔只是為了在紀錄裡寫出名字；查不到就退回 id，⛔ 不讓查名字失敗擋掉回應。
+     */
+    let names: Record<string, string> = {}
+    try {
+      names = (await filterWorkspaceTagIds(db, workspaceId, tagIds, { context: 'user-tags/batch-remove 查標籤名' })).names
+    }
+    catch (e) {
+      console.warn('[batch-remove] 查標籤名失敗，紀錄改用 id:', String((e as Error)?.message ?? e).slice(0, 200))
+    }
+    const tagText = tagNamesForAudit(tagIds, names)
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'userTags.batchRemove',
+      after: {
+        name: tagText,
+        tagIdsCount: tagIds.length,
+        usersCount: userIds.length,
+        removedCount: removed,
+        notFoundCount: notFound,
+      },
+      note: `幫 ${userIds.length} 位好友拿掉${tagText}：拿掉 ${removed} 筆`
+        + `${notFound ? `，本來就沒有的 ${notFound} 筆略過` : ''}`,
+    }, db)
   }
 
   return { total: userIds.length * tagIds.length, removed, notFound }

@@ -15,8 +15,11 @@ import type { BrokenModuleFixState } from '~~/shared/types/alert-fix'
  * skipCache：這支只在有人開劇本修東西時被打，修完回頭驗證要看得到剛剛的結果。
  */
 export default defineEventHandler(async (event): Promise<BrokenModuleFixState> => {
-  // 與異常註冊表同一把尺：brokenModuleButton 是 settings 級（動的是選單／模組這類門面設定）
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  // 與異常註冊表同一把尺：brokenModuleButton 是 **operate** 級（2026-08-28 拍板，
+  // `useWorkspaceAlerts.ts` 的 `requires: 'operate'`）——客服看得到這顆「用聊天帶我修」。
+  // `G-102`：這裡原本還寫 'admin'（當時註解說它是 settings 級），前端改了、這支沒跟著動，
+  // 客服一按就「查詢壞掉的按鈕失敗」。代改的每一筆寫入客服在各自的頁面本來就改得動（見 POST 那支）。
+  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
   const scan = await scanModuleGraph(getDb(), workspaceId, { skipCache: true })
 
   const nameById = new Map(scan.modules.map(m => [m.id, m]))

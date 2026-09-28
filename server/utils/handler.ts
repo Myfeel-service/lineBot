@@ -750,7 +750,7 @@ async function applyPendingClaims(
 
     if (action.type === 'module' && flow) {
       try {
-        const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
+        const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], claimWorkspaceId)
         const lineMessages = buildLineMessages(
           hydratedMessages,
           userAttributes,
@@ -889,7 +889,7 @@ export async function warmWorkspaceAutomationCaches(workspaceId: string): Promis
   )].slice(0, 30)
   await Promise.all(moduleIds.map(id =>
     getFlowByModuleId(id, workspaceId)
-      .then(f => (f ? hydrateRichMessageRefs(f.messages as any[]) : null))
+      .then(f => (f ? hydrateRichMessageRefs(f.messages as any[], workspaceId) : null))
       .catch(() => null),
   ))
 }
@@ -949,7 +949,7 @@ export async function pushSupportPresetActionToUser(
     if (!flow) {
       throw createError({ statusCode: 400, statusMessage: '找不到或已停用的機器人模組' })
     }
-    const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
+    const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], workspaceId)
     const lineMessages = buildLineMessages(
       hydratedMessages,
       userAttributes,
@@ -1010,24 +1010,34 @@ function buildRichMessageSnapshot(item: any) {
   }
 }
 
-async function loadRichMessageSnapshot(id: string): Promise<any | null> {
+/**
+ * 照 id 拿圖文訊息的最新內容（模組裡的 richMessageRef 要換成它才送得出去）。
+ * 🔴 `G-98`（2026-09-29 權限盤點）：**一定要帶是哪個帳號**，圖文訊息不屬於它＝當作不存在。
+ *    id 是店家自己在模組裡填得到的；不比對的話，填別家的圖文訊息 id，自家客人就會收到別家的圖與按鈕。
+ *    跟 getFlowByModuleId（`C-266`）同一種做法：快取照 id 存「內容＋歸屬」，**每次讀都比對**——
+ *    只在寫快取前比一次的話，別家先讀過的那一份會從快取裡直接被借走。
+ */
+async function loadRichMessageSnapshot(id: string, workspaceId: string): Promise<any | null> {
   if (!id) return null
   const cacheKey = `richMessage:${id}`
-  const cached = getCached(richMessageCache, cacheKey)
-  if (cached !== undefined) return cached
-
-  const db = getDb()
-  const snap = await db.collection('richMessages').doc(id).get()
-  if (!snap.exists) {
-    setCache(richMessageCache, cacheKey, null)
+  let entry = getCached(richMessageCache, cacheKey) as { workspaceId: string, payload: any } | null | undefined
+  if (entry === undefined) {
+    const db = getDb()
+    const snap = await db.collection('richMessages').doc(id).get()
+    entry = snap.exists
+      ? { workspaceId: String(snap.data()?.workspaceId ?? ''), payload: buildRichMessageSnapshot(snap.data()) }
+      : null
+    setCache(richMessageCache, cacheKey, entry)
+  }
+  if (!entry) return null
+  if (entry.workspaceId !== workspaceId) {
+    console.warn(`[richMessage] 圖文訊息 ${id} 不屬於 ${workspaceId}（屬於 ${entry.workspaceId || '（沒有帳號）'}），當作不存在`)
     return null
   }
-  const payload = buildRichMessageSnapshot(snap.data())
-  setCache(richMessageCache, cacheKey, payload)
-  return payload
+  return entry.payload
 }
 
-async function hydrateRichMessageRefs(messages: any[]): Promise<any[]> {
+async function hydrateRichMessageRefs(messages: any[], workspaceId: string): Promise<any[]> {
   if (!Array.isArray(messages) || messages.length === 0) return []
   const hydrated = [...messages]
   const ids = Array.from(new Set(hydrated
@@ -1035,7 +1045,7 @@ async function hydrateRichMessageRefs(messages: any[]): Promise<any[]> {
     .map((msg: any) => String(msg.richMessageId))))
   if (ids.length === 0) return hydrated
 
-  const snapshots = await Promise.all(ids.map((id) => loadRichMessageSnapshot(id)))
+  const snapshots = await Promise.all(ids.map((id) => loadRichMessageSnapshot(id, workspaceId)))
   const snapshotMap = new Map<string, any | null>()
   ids.forEach((id, index) => snapshotMap.set(id, snapshots[index] ?? null))
 
@@ -1924,7 +1934,7 @@ export async function renderModuleToLineMessages(
   const flow = await getFlowByModuleId(moduleId, wid)
   if (!flow) return null
   const { channelSecret } = await getLineWorkspaceCredentials(wid)
-  const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
+  const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], wid)
   const lineMessages = buildLineMessages(
     hydratedMessages,
     options.attributes ?? {},
@@ -2518,7 +2528,7 @@ async function handleIncomingText(
       // Flow found: mark handled so the script/AI layer doesn't intercept the user's answer
       handledByInput = true
       if (replyToken) {
-        const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[])
+        const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], wid)
         const lineMessages = buildLineMessages(
           hydratedMessages,
           userAttributes,
@@ -2890,7 +2900,7 @@ async function replyWithFlowModule(params: {
   showLoadingAnimation(lineUserId, wid, 10).catch(() => {})
 
   const { flow, hydrated } = await (params.preloaded ?? getFlowByModuleId(moduleId, wid)
-    .then(async f => (f ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) } : { flow: null, hydrated: [] as any[] }))
+    .then(async f => (f ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[], wid) } : { flow: null, hydrated: [] as any[] }))
     .catch((e) => {
       console.error(`[module] ${logContext} flow load failed:`, e)
       return { flow: null, hydrated: [] as any[] }
@@ -3453,7 +3463,7 @@ async function deliverHandoffReply(params: {
     // 客人一律收到下面那句寫死的預設值。
     const liveAgentFlow = await getFlowByModuleId(systemModuleId(workspaceId, 'live_agent'), workspaceId).catch(() => null)
     if (liveAgentFlow) {
-      const hydrated = await hydrateRichMessageRefs(liveAgentFlow.messages as any[])
+      const hydrated = await hydrateRichMessageRefs(liveAgentFlow.messages as any[], workspaceId)
       handoffMessages = buildLineMessages(hydrated, userAttributes, requestOrigin, lineUserId, channelSecret)
     }
     if (handoffMessages.length === 0) {
@@ -4131,7 +4141,7 @@ export async function handlePostbackEvent(
   const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> = trigger.moduleId
     ? getFlowByModuleId(trigger.moduleId, workspaceId).then(async (f) =>
         f
-          ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[]) }
+          ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[], workspaceId) }
           : { flow: null, hydrated: [] },
       )
     : Promise.resolve({ flow: null, hydrated: [] })
@@ -4264,7 +4274,7 @@ export async function handlePostbackEvent(
         // Use preloaded hydrated messages (fetched in parallel with session/user above)
         const hydratedMessages = preloadedFlow
           ? preloadedHydrated
-          : await hydrateRichMessageRefs(flow.messages as any[])
+          : await hydrateRichMessageRefs(flow.messages as any[], workspaceId)
         const lineMessages = buildLineMessages(
           hydratedMessages,
           userAttributes,

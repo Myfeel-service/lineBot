@@ -22,6 +22,7 @@ vi.mock('~~/server/utils/line-webhook-remote', () => ({
   fetchLineWebhookEndpoint: vi.fn(),
   postLineWebhookTest: vi.fn(),
 }))
+vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/line-channel-binding', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~~/server/utils/line-channel-binding')>()),
   checkChannelBindingConflict: vi.fn(),
@@ -39,13 +40,17 @@ const { default: handler } = await import('./index.put')
 const { getDb } = await import('~~/server/utils/firebase')
 const { checkChannelBindingConflict, rememberChannelBinding } = await import('~~/server/utils/line-channel-binding')
 
-const setSpy = vi.fn(async () => {})
-function stubDb() {
+const { writeAuditLog } = await import('~~/server/utils/audit-log')
+
+const setSpy = vi.fn(async (..._args: unknown[]) => {})
+const deleteSpy = vi.fn(async () => {})
+function stubDb(existing: Record<string, unknown> | null = { name: '舊名字' }) {
   vi.mocked(getDb).mockReturnValue({
     collection: () => ({
       doc: () => ({
-        get: async () => ({ exists: true, data: () => ({ name: '舊名字' }) }),
+        get: async () => ({ exists: existing != null, data: () => existing }),
         set: setSpy,
+        delete: deleteSpy,
       }),
     }),
   } as never)
@@ -56,6 +61,7 @@ const call = () => (handler as unknown as (e: unknown) => Promise<unknown>)({})
 beforeEach(() => {
   vi.clearAllMocks()
   setSpy.mockClear()
+  deleteSpy.mockClear()
   stubDb()
   body = { channelAccessToken: 'a'.repeat(40) }
   vi.mocked(checkChannelBindingConflict).mockResolvedValue({ identity: { kind: 'unknown' }, conflicts: [] })
@@ -103,5 +109,59 @@ describe('PUT /api/admin/line-workspace', () => {
     await call()
     expect(checkChannelBindingConflict).not.toHaveBeenCalled()
     expect(setSpy).toHaveBeenCalledWith(expect.not.objectContaining({ lineBotUserId: expect.anything() }), { merge: true })
+  })
+})
+
+/**
+ * 「清除憑證」（`G-97`，2026-09-29 權限盤點）。
+ * 🔴 原本是刪掉整份帳號文件：方案掉回免費、組織管理員進不去、組織停用擋不到、發票抬頭消失。
+ *    按鈕文案寫的卻是「清掉本頁存的 Token／Secret」。
+ */
+describe('PUT /api/admin/line-workspace（clearWorkspace）', () => {
+  const FULL_DOC = {
+    name: '我的官方帳號',
+    channelAccessToken: 'tok',
+    channelSecret: 'sec',
+    lineBotUserId: 'Ubot1',
+    organizationId: 'org-1',
+    subscription: { planId: 'pro' },
+    invoiceProfile: { taxId: '12345678' },
+  }
+
+  it('🔴 只清 Token／Secret／頻道身分三格，⛔ 不刪整份文件（方案、組織、發票抬頭都要留著）', async () => {
+    stubDb(FULL_DOC)
+    body = { clearWorkspace: true }
+    await expect(call()).resolves.toMatchObject({ ok: true, cleared: true })
+
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(setSpy).toHaveBeenCalledTimes(1)
+    const [patch, opts] = setSpy.mock.calls[0]! as [Record<string, unknown>, unknown]
+    expect(opts).toEqual({ merge: true })
+    expect(patch).toMatchObject({ channelAccessToken: '__delete__', channelSecret: '__delete__', lineBotUserId: '__delete__' })
+    // 只動這三格（外加 updatedAt），別的欄位一個都不碰
+    expect(Object.keys(patch).sort()).toEqual(['channelAccessToken', 'channelSecret', 'lineBotUserId', 'updatedAt'])
+  })
+
+  it('照樣寫稽核，而且只記「哪幾格被清」，不記值', async () => {
+    stubDb(FULL_DOC)
+    body = { clearWorkspace: true }
+    await call()
+    const audit = vi.mocked(writeAuditLog).mock.calls[0]![0]
+    expect(audit).toMatchObject({ action: 'line-workspace.clear' })
+    expect(JSON.stringify(audit)).not.toContain('tok"')
+    expect(JSON.stringify(audit)).not.toContain('sec"')
+  })
+
+  it('本來就沒有存憑證 → 什麼都不寫（⛔ 不憑空生出一份只有 updatedAt 的文件），也不留空紀錄', async () => {
+    stubDb({ name: '只有名字', organizationId: 'org-1' })
+    body = { clearWorkspace: true }
+    await expect(call()).resolves.toMatchObject({ ok: true })
+    expect(setSpy).not.toHaveBeenCalled()
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(writeAuditLog).not.toHaveBeenCalled()
+
+    stubDb(null)
+    await call()
+    expect(setSpy).not.toHaveBeenCalled()
   })
 })

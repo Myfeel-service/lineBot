@@ -8,7 +8,8 @@ import {
   normalizeChunkInput,
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
-import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -36,6 +37,18 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
 
+  /**
+   * G-98：掛進既有 source 前先確認那份資料是這個帳號的。不驗的話，卡片列表與回收桶會
+   * 帶出別家來源的名稱，建索引時還會把別家來源的產品名抄進這張卡。
+   * 找不到一律 404（不分「不存在」與「別家的」），跟 bulk-create 的 replaceSourceId 同一句話術。
+   * 放在額度檢查之前：參照錯了的請求不該先吃一次額度計算。
+   */
+  if (input.sourceId && !(await getSource(db, input.sourceId, workspaceId))) {
+    throw createError({ statusCode: 404, statusMessage: '找不到要放進去的資料（可能已被刪除），請重新整理後再試' })
+  }
+  // G-98：資料夾同理（填了不存在的資料夾，這份資料會從側欄整份消失）。只有「自動建 source」那條路會用到
+  const folderId = input.sourceId ? null : await resolveKnowledgeFolderId(db, workspaceId, rawBody?.folderId)
+
   // 方案知識量守門（D-69 拍板④）。手寫卡也算一條——它就是 AI 記住的一件事。
   await assertKnowledgeChunkQuota(workspaceId, 1, db)
 
@@ -57,7 +70,7 @@ export default defineEventHandler(async (event) => {
       name: input.title.slice(0, 200),
       url: '',
       ...(productName ? { productName } : {}),
-      folderId: typeof rawBody?.folderId === 'string' ? rawBody.folderId : null,
+      folderId,
       filePath: '',
       contentHash: '',
       etag: '',

@@ -701,6 +701,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
           + '答得不對就在那裡標「這題 AI 答錯了」——<strong>標了會收進小幫手的待辦清單</strong>，之後補資料時就知道要補什麼。',
         placement: 'left',
+        // `G-107`：那顆「為什麼這樣答」是 `canOperate && msg.aiTurnId` 才渲染（AdminPanel.vue），
+        // 觀察者畫面上沒有，這一步不標的話等於跟他介紹一顆他沒有的按鈕
+        requiresOperate: true,
       },
       {
         target: '[data-tour="conv-reply"]',

@@ -5,6 +5,7 @@ import {
   getLineWorkspaceCredentials,
 } from '~~/server/utils/line-workspace-credentials'
 import { DEFAULT_LINE_WORKSPACE_ID } from '~~/shared/line-workspace'
+import { safeSecretEqual } from '~~/server/utils/cron-auth'
 
 /**
  * POST /api/admin/line-workspace/seed-from-env
@@ -16,7 +17,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const cronSecret = String(config.cronSecret || '').trim()
   const headerSecret = String(getHeader(event, 'x-cron-secret') || '').trim()
-  if (!cronSecret || headerSecret !== cronSecret) {
+  // 常數時間比對（`G-107`⑬）；沒設密鑰時 safeSecretEqual 一律回 false＝照舊擋
+  if (!safeSecretEqual(headerSecret, cronSecret)) {
     throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 

@@ -4,6 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
+import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
@@ -131,6 +132,12 @@ export default defineEventHandler(async (event) => {
     // 底下 createKnowledgeChunk → runIndexOnChunk 會即時繼承（embedding 前綴 + 卡片欄位）。
     const productName = String(body?.source?.productName ?? '').trim().slice(0, 60)
 
+    /**
+     * G-98：資料夾要是這個帳號的（填了不存在的，這份資料會從側欄整份消失）。
+     * ⛔ 一定要在下面「舊卡進回收桶」之前驗：驗到一半才 404，舊卡已經被搬走、新卡卻沒建。
+     */
+    const folderId = await resolveKnowledgeFolderId(db, workspaceId, body?.source?.folderId)
+
     // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
     if (replaceSourceId) {
       const existingSnap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(replaceSourceId).get()
@@ -167,7 +174,7 @@ export default defineEventHandler(async (event) => {
       type: sourceType === 'text' ? 'manual' : sourceType,
       name: String(body?.source?.name ?? '').trim(),
       url: sourceUrl,
-      folderId: typeof body?.source?.folderId === 'string' ? body.source.folderId : null,
+      folderId,
       filePath: '', // Phase 1b 不存原檔；要存到 Storage 可以擴
       contentHash: String(body?.source?.contentHash ?? '').trim(),
       // 這批卡就是從這一版內容切出來的 → 同時當成「重新同步」的比對基準。

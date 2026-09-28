@@ -1662,7 +1662,7 @@ export function useOnboardingChat() {
         busy.value = true
         try {
           // 2026-09-27 `C-270`：總開關拿掉之後不會再回 `off`（加進名單＝一定在收）
-          const b = await apiFetch<{ notify: 'added' | 'already' | 'full' | 'failed' }>('/api/admin/onboarding/bind-self', {
+          const b = await apiFetch<{ notify: 'added' | 'already' | 'full' | 'failed' | 'not-member' }>('/api/admin/onboarding/bind-self', {
             method: 'POST',
             body: { lineUserId: who, lookbackMs: lookback() },
           })
@@ -1675,6 +1675,9 @@ export function useOnboardingChat() {
             await say('通知名單已經滿了（最多 10 位），這支手機這次沒有加進去——到「設定 › LINE 通知」關掉一位再加。')
           else if (b.notify === 'failed')
             await say('這支手機綁好了，但加進通知名單時出了錯——到「設定 › LINE 通知」再按一次「把我的手機加進來」。')
+          // `G-107`：組織管理員／超管在這個帳號沒有成員身分，名單只收綁在成員身上的手機（`D-103`）
+          else if (b.notify === 'not-member')
+            await say('你還不是這個帳號的成員，所以這支手機沒有加進通知名單——要收通知，先到「設定 › 成員管理」把自己加進來。')
           break
         }
         catch (e: unknown) {

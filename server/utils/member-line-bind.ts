@@ -15,8 +15,10 @@
  *
  * 綁好＝加進通知名單，並回一則「之後會收到什麼、第一則幾點」（`D-103`①②）。
  */
+import { randomInt } from 'node:crypto'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
+import { createRateLimiter } from './rate-limit'
 import { getUserProfile, replyMessage } from './line'
 import { resolveLineOaBasicId } from './line-oa-basic-id'
 import { AI_SETTINGS_COLLECTION, getAiSettings, invalidateAiSettingsCache } from './ai-settings'
@@ -63,13 +65,26 @@ export function buildAddFriendUrl(basicId: string): string {
   return id ? `https://line.me/R/ti/p/${encodeURIComponent(id)}` : ''
 }
 
+/**
+ * ⚠️ 用 `crypto.randomInt`，⛔ 不用 `Math.random`（`G-107`⑬）：這組碼在有效期內誰拿到就能把自己的 LINE
+ * 綁成這位成員（之後客人的名字與原話會推到那支手機），`Math.random` 不是拿來產密碼的亂數。
+ */
 function randomCode(): string {
   let out = ''
   for (let i = 0; i < CODE_LENGTH; i++) {
-    out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]
+    out += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]
   }
   return out
 }
+
+/**
+ * 同一個 LINE 帳號在同一個官方帳號，10 分鐘內最多試 10 次綁定碼（`G-107`⑬）。
+ * 原本不限：碼只有 6 碼，一直猜不用任何權限，每猜一次還要把整個帳號的成員讀一遍。
+ * 為什麼 10 次／10 分鐘：跟碼的有效期一樣長；正常人一次就中，打錯字重傳幾次也碰不到。
+ * ⚠️ best-effort（單一執行個體內有效，見 `rate-limit.ts`）：6 碼 × 31 個字＝約 8.9 億種，
+ *    本來就猜不中，這道是讓「猛猜」連試都試不動、也不再白白吃讀取費。
+ */
+export const memberBindAttemptLimiter = createRateLimiter({ windowMs: MEMBER_BIND_CODE_TTL_MS, max: 10 })
 
 export function memberDocId(uid: string, workspaceId: string): string {
   return `${uid}_${workspaceId}`
@@ -135,6 +150,16 @@ export async function tryConsumeMemberLineBindCode(params: {
         console.error('[member-bind] reply failed:', e)
         return false
       })
+  }
+
+  // 試太多次：連成員都不讀，直接講要等多久（⛔ 不講「碼不對」——那會讓他以為再試一次就好）
+  const attempt = memberBindAttemptLimiter.take(`${params.workspaceId}:${params.lineUserId}`)
+  if (attempt.limited) {
+    if (attempt.firstRejection)
+      console.warn(`[member-bind] 綁定碼試太多次，先擋 ${params.lineUserId}@${params.workspaceId}`)
+    const minutes = Math.max(1, Math.ceil(attempt.retryAfterMs / 60_000))
+    await reply(`⚠️ 綁定碼試太多次了，請 ${minutes} 分鐘後再傳。`)
+    return true
   }
 
   try {

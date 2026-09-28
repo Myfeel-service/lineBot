@@ -31,7 +31,7 @@ import {
   type ScriptNode,
 } from '~~/shared/types/ai-script'
 import { writeAuditLog } from './audit-log'
-import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
 import {
   BROADCAST_FAILED_WINDOW_MS,
@@ -437,7 +437,11 @@ const scriptDisableAnyText: AlertFixOpDef = {
         note: `停用「${h.name}」（輸入任何內容的攔截）`,
       }, ctx.db)
     }
-    // 腳本健康的 5 分鐘快取要戳掉，驗證才看得到停用後的世界
+    // 兩層快取都要清（`G-107` #14，跟 admin-ops 上下架踩的是同一個坑）：
+    //  · 送訊息熱路徑的 60 秒腳本快取：不清的話下面那句「客人的訊息現在輪得到 AI 了」是假的，
+    //    接下來一分鐘客人照樣被這條攔截接走。
+    //  · 腳本健康的 5 分鐘快取：驗證才看得到停用後的世界。
+    invalidateScriptsCache(ctx.workspaceId)
     invalidateScriptHealthCache(ctx.workspaceId)
     return {
       ok: true,
@@ -524,6 +528,8 @@ const scriptAddSkipExit: AlertFixOpDef = {
       }, ctx.db)
       details.push(`「${r.name}」補了 ${r.stuck.length} 題`)
     }
+    // 同上兩層都清：只清健康快取的話，接下來一分鐘客人拿到的還是沒有跳過按鈕的舊流程
+    invalidateScriptsCache(ctx.workspaceId)
     invalidateScriptHealthCache(ctx.workspaceId)
     return {
       ok: true,

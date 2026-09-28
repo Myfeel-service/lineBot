@@ -6,6 +6,7 @@ import {
 } from '~~/shared/support-preset'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
+import { assertWorkspaceTagIds } from '~~/server/utils/workspace-tag-ids'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
@@ -19,6 +20,8 @@ export default defineEventHandler(async (event) => {
   const id = uuidv4()
   const moduleId = body.action.type === 'module' ? body.action.moduleId : ''
   const db = getDb()
+  // G-98：預存上設定的貼標只能是這個帳號自己的標籤（存的當下就擋，不要等客服按送出才靜靜少貼）
+  await assertWorkspaceTagIds(db, workspaceId, body.tagging.addTagIds, 'support-preset/create')
   await db.collection('supportPresets').doc(id).set({
     name: body.name,
     action: body.action,

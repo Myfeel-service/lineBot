@@ -1,5 +1,6 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { setAiSettings, getAiSettings } from '~~/server/utils/ai-settings'
+import { redactAiSettingsForRole } from '~~/server/utils/ai-settings-redact'
 import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 /**
@@ -7,7 +8,7 @@ import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
  * Body: AiSettingsDoc 的 partial（任何欄位可省略）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, isSuperAdmin } = await requireCapability(event, 'ai.settings.write')
+  const { workspaceId, uid, role, isSuperAdmin } = await requireCapability(event, 'ai.settings.write')
   const body = { ...((await readBody(event)) ?? {}) }
 
   // 成本槓桿收歸平台：模型與回覆長度直接決定 token 成本，而計費按「則」算、
@@ -44,5 +45,6 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  return after
+  // 回給畫面的跟 GET 同一套遮法（`G-103`）：存完整包回傳的話，管理員照樣拿得到回答模型與回覆長度
+  return redactAiSettingsForRole(after, { role, isSuperAdmin })
 })

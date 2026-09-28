@@ -2,6 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { enterModule, markHumanOwnership } from '~~/server/utils/conversation-session'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
 import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
  * POST /api/conversations/sessions/:sessionId/takeover
@@ -59,11 +60,24 @@ export default defineEventHandler(async (event) => {
    *    （例如同事 A 已在跟、B 手滑點了），靜靜把負責人換成 B 比沒有負責人更糟。
    * ⛔ 指派失敗不能讓接手失敗：接手（機器人閉嘴）是主要目的，
    *    負責人員只是分工標記，吞掉錯誤並留 log。
+   *
+   * 🔴 `H-41`（2026-09-29 權限盤點順手查到）：session 存的 userId 是**原始 LINE id**
+   *    （見 conversation-session.ts 開場那段），對話文件的 id 卻是「帳號 id + LINE id」。
+   *    原本直接拿 session.userId 當文件 id → 永遠讀不到、指派靜靜跳過，而錯誤又被上面那條規矩吞掉，
+   *    這個功能從上線那天起就沒生效過。組 id 的寫法跟其他對話端點一致（兩種格式都吃）；
+   *    讀到之後再比對帳號，⛔ 不可以替別家的對話掛負責人。
    */
   try {
-    const convRef = db.collection('conversations').doc(session.userId as string)
+    const convDocId = lineUserFirestoreDocId(
+      lineUserIdFromFirestoreDocId(String(session.userId ?? ''), workspaceId),
+      workspaceId,
+    )
+    const convRef = db.collection('conversations').doc(convDocId)
     const conv = await convRef.get()
-    if (conv.exists && !String(conv.data()?.assigneeUid ?? '').trim()) {
+    if (!conv.exists || conv.data()?.workspaceId !== workspaceId) {
+      console.warn('[takeover] 找不到這場會話的對話文件，沒有自動指派負責人員:', convDocId)
+    }
+    else if (!String(conv.data()?.assigneeUid ?? '').trim()) {
       await convRef.update({
         assigneeUid: uid,
         assigneeName: String(token.name || token.email || '').trim() || uid,

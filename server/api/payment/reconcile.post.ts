@@ -1,4 +1,5 @@
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
+import { safeSecretEqual } from '~~/server/utils/cron-auth'
 
 /**
  * POST /api/payment/reconcile — 計費對帳（由排程 / 手動觸發）。
@@ -13,7 +14,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const cronSecret = String(config.cronSecret || '').trim()
   const headerSecret = String(getHeader(event, 'x-cron-secret') || '').trim()
-  if (!cronSecret || headerSecret !== cronSecret) {
+  // 常數時間比對（`G-107`⑬）；沒設密鑰時 safeSecretEqual 一律回 false＝照舊擋
+  if (!safeSecretEqual(headerSecret, cronSecret)) {
     throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 

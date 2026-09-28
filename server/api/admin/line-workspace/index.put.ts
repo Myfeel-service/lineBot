@@ -20,7 +20,10 @@ type PutBody = {
   defaultLiffId?: string
   channelAccessToken?: string
   channelSecret?: string
-  /** 為 true 時刪除整份 workspaces/default。 */
+  /**
+   * 為 true 時清掉本頁存的 LINE 憑證（Token／Secret，連同跟著 Token 的頻道身分）。
+   * ⚠️ 名字是歷史包袱：以前真的會刪掉整份 workspaces 文件（見下方 `G-97`），前端還用這個名字呼叫。
+   */
   clearWorkspace?: boolean
   /** 為 true 時：儲存後自動呼叫 LINE 測試 Webhook；失敗僅回傳警告，不回滾憑證。 */
   verifyWebhookOnSave?: boolean
@@ -61,21 +64,45 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event) as PutBody
 
+  /**
+   * 「清除憑證」：**只清本頁存的那幾格**，不動文件的其他部分（`G-97`，2026-09-29 權限盤點）。
+   *
+   * 🔴 原本是 `workspaces/{wid}.delete()`——按鈕文案寫「清掉本頁存的 Token／Secret」，
+   *    實際卻把整份帳號文件刪掉，一起消失的有：
+   *    - 方案與訂閱（帳號掉回免費）
+   *    - 所屬組織 id（組織管理員從此進不去——他們的權限是靠這份文件上的組織 id 查出來的；
+   *      組織停用也擋不到這個帳號了）
+   *    - 發票抬頭
+   *    按鈕目前藏著（`organization.vue` 的 showClearStoredCredentials），但 API 一直開著。
+   *
+   * 清的三格跟「把 Token 存成空字串」那條路一致：Token、Secret，
+   * 加上跟著 Token 的頻道身分（lineBotUserId，留著會用一個對不到憑證的舊身分去擋別人綁同一個頻道）。
+   * ⛔ 文件不存在就什麼都不寫：`set(merge)` 會憑空生出一份只有 updatedAt 的文件。
+   */
   if (body?.clearWorkspace === true) {
     const db = getDb()
-    await db.collection('workspaces').doc(wid).delete().catch(() => {})
+    const ref = db.collection('workspaces').doc(wid)
+    const snap = await ref.get()
+    const previous = snap.exists ? snap.data() as Record<string, unknown> : null
+    const CREDENTIAL_FIELDS = ['channelAccessToken', 'channelSecret', 'lineBotUserId'] as const
+    const present = CREDENTIAL_FIELDS.filter(k => previous?.[k] !== undefined)
+    if (present.length) {
+      await ref.set({
+        ...Object.fromEntries(present.map(k => [k, FieldValue.delete()])),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+    }
     invalidateLineWorkspaceCredentialsCache()
-    // ⛔ 這是這支端點最破壞性的一條路（整份設定連 LINE 憑證一起消失），原本完全沒有紀錄。
-    //    文件都沒了，紀錄是唯一還說得出「本來有這個設定、是誰清掉的」的地方
-    //    ——跟刪流程那支同一個理由。
-    await writeAuditLog({
+    // 紀錄照舊要寫（清掉憑證＝這個帳號收不到訊息了，事後要查得到是誰清的）。
+    // ⛔ 只記「哪幾格被清」，值本身不進紀錄（跟下方 line-workspace.put 同一種寫法，畫面印出來也一樣）；
+    //    一格都沒有就不寫，免得留一筆「清掉了 0 項」
+    if (present.length) await writeAuditLog({
       workspaceId,
       uid,
       actor: 'human',
       action: 'line-workspace.clear',
-      before: { existed: true },
-      after: null,
-      note: '清空整個 LINE 工作區設定（含連線資訊）',
+      after: Object.fromEntries(present.map(k => [k, '（已清除）'])),
+      note: `清掉本頁存的 LINE 憑證（${present.length} 項）；方案、所屬組織、發票抬頭等其他設定不受影響`,
     })
     return { ok: true, id: wid, cleared: true }
   }

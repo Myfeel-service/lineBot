@@ -207,9 +207,16 @@ export function addConfigRef(
  * ⛔ 空清單回空字串，由呼叫端決定要說「還沒有任何地方會用到它」還是別的——
  *    在這裡硬寫一句話，兩個呼叫端就會被迫共用同一種語氣。
  */
+/**
+ * 講「誰用了它」時各類的先後：先講客人最常走到的那幾條路。
+ * 匯出是因為刪除確認框（`shared/delete-impact.ts`，`D-110`）也要照同一個順序講——
+ * 同一件事在浮層裡跟在確認框裡順序不同，人會以為是兩份不同的清單。
+ */
+export const CONFIG_REF_KIND_ORDER: readonly ConfigRefKind[] = ['script', 'richmenu', 'flow', 'campaign', 'broadcast', 'supportPreset']
+
 export function summarizeConfigRefs(refs: ConfigRef[]): string {
   if (!refs.length) return ''
-  const order: ConfigRefKind[] = ['script', 'richmenu', 'flow', 'campaign', 'broadcast', 'supportPreset']
+  const order = CONFIG_REF_KIND_ORDER
   const counts = new Map<ConfigRefKind, number>()
   for (const ref of refs) counts.set(ref.kind, (counts.get(ref.kind) ?? 0) + 1)
   return order

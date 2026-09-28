@@ -1,5 +1,6 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
+import { inviteExpiresAtMs, isInviteExpired } from '~~/shared/workspace-invite'
 
 function normEmail(e: string | undefined | null): string {
   return String(e ?? '').trim().toLowerCase()
@@ -8,9 +9,12 @@ function normEmail(e: string | undefined | null): string {
 /**
  * GET /api/admin/workspaces/:workspaceId/members
  * 列出 workspace 成員、待加入邀請，以及（若 workspace 有綁組織）組織層級的擁有者登記與組織管理員（僅顯示、不可在此頁變更）。
+ *
+ * 門檻 `members.read`＝管理員（`D-111` 2026-09-29 拍板）：原本觀察者就能打，拿得到每位成員的 LINE id 與邀請人，
+ * 而唯一用到它的「成員管理」頁本來就只給管理員進（其他頁要成員名單的走 `conversations/assignees`）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, uid: callerUid } = await requireCapability(event, 'members.read')
 
   const db = getDb()
   const auth = getFirebaseAuth()
@@ -26,14 +30,16 @@ export default defineEventHandler(async (event) => {
     wsRef.get(),
   ])
 
-  // lineBindCode 是一次性密碼:誰拿到就能把自己綁成這位成員。列表允許 viewer 讀,
-  // 所以只回「有沒有待輸入的碼」,碼本身僅在產碼那一次回給 admin。
+  // lineBindCode 是一次性密碼:誰拿到就能把自己綁成這位成員。列表不是只給產碼的那個人看
+  // （2026-09-29 起收到管理員，但每位管理員都看得到）,所以只回「有沒有待輸入的碼」,碼本身僅在產碼那一次回給 admin。
   const members = memberSnap.docs.map((d) => {
     const { lineBindCode, lineBindCodeExpiresAt, ...rest } = d.data() as Record<string, any>
     return {
       id: d.id,
       ...rest,
       hasPendingBindCode: Boolean(lineBindCode) && Number(lineBindCodeExpiresAt ?? 0) > Date.now(),
+      // 自己那一列不給改角色、不給移除（`G-101`②；伺服器也擋），畫面照這格藏起來
+      isSelf: Boolean(rest.uid) && rest.uid === callerUid,
     }
   }) as Record<string, any>[]
 
@@ -47,6 +53,9 @@ export default defineEventHandler(async (event) => {
     invitedEmail: d.data().email,
     invitedBy: d.data().invitedBy ?? null,
     createdAt: d.data().createdAt ?? null,
+    // 30 天沒人接受就過期（`G-107`⑥）：過期的不刪，列出來讓管理員決定重發或移除
+    expiresAt: inviteExpiresAtMs(d.data()),
+    expired: isInviteExpired(d.data()),
   }))
 
   const merged: any[] = [...members, ...pending]

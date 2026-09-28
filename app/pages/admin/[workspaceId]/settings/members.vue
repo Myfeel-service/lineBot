@@ -32,6 +32,10 @@
             <p v-if="pendingActionSummary" class="member-pending-note">
               ⏳ {{ pendingActionSummary }}——都在等對方動作；太久沒動靜，可以在下面那一列重新處理。
             </p>
+            <!-- 邀請 30 天沒人接受就過期（`G-107`⑥）：過期的不刪，對方已經進不來，要不要重發由管理員決定 -->
+            <p v-if="expiredInviteCount" class="member-pending-note">
+              {{ expiredInviteCount }} 份邀請已過期，對方已經進不來；要的話在下面那一列按「重新邀請」。
+            </p>
             <div v-if="loading" class="tags-loading">
               <div class="spinner" />
               <span>載入中…</span>
@@ -40,7 +44,8 @@
               <el-table-column label="Email / UID">
                 <template #default="{ row }">
                   <div>{{ row.invitedEmail || row.uid || '—' }}</div>
-                  <div v-if="row.pendingInvite" class="text-xs text-muted">待加入（尚未註冊 Firebase）</div>
+                  <div v-if="row.pendingInvite && row.expired" class="text-xs text-muted">邀請已過期（30 天沒接受）</div>
+                  <div v-else-if="row.pendingInvite" class="text-xs text-muted">待加入（尚未註冊 Firebase）</div>
                   <div v-else-if="row.readOnly && row.linkedSource === 'org_member'" class="text-xs text-muted">組織管理員（組織內全部官方帳號）</div>
                   <div v-else-if="row.readOnly && row.linkedSource === 'org_owner'" class="text-xs text-muted">組織擁有者（登記 Email）</div>
                   <div v-else-if="row.uid" class="text-xs text-muted">{{ row.uid }}</div>
@@ -53,9 +58,15 @@
               </el-table-column>
               <el-table-column v-if="canManageSettings" label="操作" width="160" align="right">
                 <template #default="{ row }">
-                  <template v-if="!row.readOnly && row.role !== 'owner'">
+                  <!-- 自己那一列不給改、不給移除（`G-101`②）：手滑把自己改成觀察者會立刻被踢出這頁。
+                       擁有者只有組織管理員／超管動得了（`G-96`），帳號管理員看不到這兩個鈕 -->
+                  <template v-if="!row.readOnly && !row.isSelf && (row.role !== 'owner' || canManageOwner)">
+                    <!-- 過期的邀請改角色沒有意義，換成「重新邀請」（同一個 Email、同一個角色再發一次） -->
+                    <el-button v-if="row.pendingInvite && row.expired" size="small" @click="reinvite(row)">重新邀請</el-button>
                     <el-select
-                      :model-value="row.role"
+                      v-else
+                      :model-value="row.role === 'owner' ? '' : row.role"
+                      :placeholder="row.role === 'owner' ? '改成…' : undefined"
                       size="small"
                       style="width: 90px; margin-right: 4px"
                       @change="(val: string) => changeRole(row, val)"
@@ -67,6 +78,7 @@
                     <el-button size="small" type="danger" plain @click="removeMember(row)">移除</el-button>
                   </template>
                   <span v-else-if="row.readOnly" class="text-xs text-muted">—</span>
+                  <span v-else-if="row.isSelf" class="text-xs text-muted">你自己</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -110,17 +122,30 @@ definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' }
 useHead({ title: useAdminTitle('成員管理') })
 
 const { showToast } = useAdminToast()
-const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
+const { workspaceId, apiFetch, canManageSettings, workspaceList, orgAdminOf } = useWorkspace()
+const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
 
 const loading = ref(false)
 const members = ref<any[]>([])
 
+/**
+ * 擁有者那一列的角色選單與移除鈕，只給組織管理員與超管（`G-96` 2026-09-29 拍板；伺服器也擋）。
+ * 帳號管理員動不了擁有者——跟原本一樣，只是原本連組織管理員也動不了，離職的擁有者只能到主控台手動刪。
+ */
+const canManageOwner = computed(() => {
+  if (isSuperAdmin.value) return true
+  const orgId = workspaceList.value.find(w => w.workspaceId === workspaceId.value)?.organizationId
+  return Boolean(orgId && orgAdminOf.value.some(o => o.id === orgId))
+})
+
 // 等對方動作的事（D-43④）：這頁不分頁、members 就是全量,直接從已載入的資料算。
 // （「綁定碼還沒傳送」2026-09-27 隨綁 LINE 一起搬到「設定 → LINE 通知」，那一列自己會講「等對方點連結」）
+// 過期的邀請不算「等對方」（`G-107`⑥）：對方已經進不來，下一步在管理員手上，另起一行講
 const pendingActionSummary = computed(() => {
-  const invites = members.value.filter(m => m.pendingInvite).length
+  const invites = members.value.filter(m => m.pendingInvite && !m.expired).length
   return invites ? `${invites} 份邀請還沒被接受` : ''
 })
+const expiredInviteCount = computed(() => members.value.filter(m => m.pendingInvite && m.expired).length)
 
 const showInvite = ref(false)
 const inviteEmail = ref('')
@@ -194,11 +219,27 @@ async function invite() {
   }
 }
 
+/** 過期的邀請再發一次：同一個 Email、同一個角色（伺服器收掉過期那張、發一張新的 30 天） */
+async function reinvite(row: any) {
+  try {
+    await apiFetch(`/api/admin/workspaces/${workspaceId.value}/members`, {
+      method: 'POST',
+      body: { email: row.invitedEmail, role: row.role },
+    })
+    showToast('已重新發出邀請', 'success')
+    await load()
+  } catch (e: any) {
+    showToast(e?.data?.statusMessage || '重新邀請失敗', 'error')
+  }
+}
+
 async function changeRole(row: any, role: string) {
   const ROLE_LABEL: Record<string, string> = { admin: '管理員', agent: '客服', viewer: '觀察者' }
   try {
     await ElMessageBox.confirm(
-      `確定將此成員的角色改為「${ROLE_LABEL[role] ?? role}」？`,
+      row.role === 'owner'
+        ? `確定把擁有者改為「${ROLE_LABEL[role] ?? role}」？他之後就不是這個帳號的擁有者了。`
+        : `確定將此成員的角色改為「${ROLE_LABEL[role] ?? role}」？`,
       '變更角色',
       { confirmButtonText: '變更', cancelButtonText: '取消', type: 'warning' },
     )
@@ -253,5 +294,8 @@ async function removeMember(row: any) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void checkIsSuperAdmin()
+})
 </script>

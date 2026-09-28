@@ -2,7 +2,9 @@
   <AdminSplitLayout :is-empty="!selectedMenu && !isCreating">
     <template #sidebar-header>
       <span class="split-sidebar-title" data-tour="rm-title">圖文選單<AdminPageHelpButton :topics="['richmenu']" /></span>
-      <el-button :icon="Plus" type="primary" size="small" data-tour="rm-new" @click="openCreate">新增</el-button>
+      <!-- `G-102`：這頁以前完全沒有角色判斷。新增／刪除／儲存／設預設／AI 底圖的端點全是客服級，
+           觀察者整頁只給看（同機器人模組頁的做法）。 -->
+      <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="rm-new" @click="openCreate">新增</el-button>
     </template>
 
     <template #sidebar-list>
@@ -11,7 +13,7 @@
       </div>
       <div v-else-if="!menus.length" class="split-sidebar-empty">
         <span>尚無圖文選單</span>
-        <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="rm-list" @scroll.passive="onSidebarListScroll">
         <!-- ⛔ 沒上線的以前是一片空白，看起來像「還沒弄好」而不是「存好了、客人看不到」。
@@ -38,16 +40,17 @@
 
     <template #editor-empty>
       <el-icon class="empty-icon"><Grid /></el-icon>
-      <h3>選擇一個圖文選單開始編輯</h3>
-      <p>或點擊左側「新增」建立新的圖文選單</p>
+      <h3>{{ canOperate ? '選擇一個圖文選單開始編輯' : '選擇一個圖文選單來查看' }}</h3>
+      <p v-if="canOperate">或點擊左側「新增」建立新的圖文選單</p>
       <div class="empty-actions">
-        <el-button type="primary" @click="openCreate">新增圖文選單</el-button>
+        <el-button v-if="canOperate" type="primary" @click="openCreate">新增圖文選單</el-button>
         <AdminPageHelpButton :topics="['richmenu']" label="第一次用？看一遍怎麼做" />
       </div>
     </template>
 
     <template #editor-header>
       <AdminEditorHeaderTitle
+        v-if="canOperate"
         v-model="form.name"
         field-label="選單名稱"
         create-prefix="新增圖文選單:"
@@ -55,7 +58,15 @@
         :caption="`版型：${form.layoutId} · 區塊 ${form.areas.length} 個`"
         :is-creating="isCreating"
       />
-      <div class="flex gap-1 admin-header-actions">
+      <!-- 觀察者：名稱只給看，不給一格改了存不了的輸入框（同知識庫頁資料名稱的做法） -->
+      <div v-else class="admin-flex-1">
+        <AdminFieldLabel text="選單名稱" tight />
+        <div class="admin-title-row">
+          <span class="split-editor-title">{{ form.name || '(未命名)' }}</span>
+        </div>
+        <p class="text-sm text-muted admin-subtext">區塊 {{ form.areas.length }} 個</p>
+      </div>
+      <div v-if="canOperate" class="flex gap-1 admin-header-actions">
         <el-button v-if="!isCreating && selectedMenu" :icon="Delete" type="danger" @click="deleteMenu">
           刪除
         </el-button>
@@ -97,13 +108,14 @@
                   hint="聊天室最下面那一條上面的字。客人按它就能把選單收起來。"
                   tight
                 />
-                <el-input v-model="form.chatBarText" placeholder="選單" />
+                <!-- 觀察者看得到值、改不了（同 AI 設定頁 el-form :disabled 的唯讀做法） -->
+                <el-input v-model="form.chatBarText" placeholder="選單" :disabled="!canOperate" />
               </div>
 
               <div class="admin-field-group">
                 <AdminFieldLabel text="啟用" tight />
                 <div class="admin-inline-control">
-                  <el-switch v-model="form.selected" />
+                  <el-switch v-model="form.selected" :disabled="!canOperate" />
                   <span class="text-xs text-muted">{{ form.selected ? '啟用中' : '停用中' }}</span>
                 </div>
               </div>
@@ -111,12 +123,13 @@
               <div class="admin-field-group" data-tour="rm-default">
                 <AdminFieldLabel text="設為預設選單" tight />
                 <div class="admin-inline-control">
-                  <el-switch v-model="form.setAsDefault" />
+                  <el-switch v-model="form.setAsDefault" :disabled="!canOperate" />
                   <span class="text-xs text-muted">{{ form.setAsDefault ? '新加入好友預設顯示此選單' : '不設為預設選單' }}</span>
                 </div>
               </div>
 
-              <div class="admin-field-group" data-tour="rm-image">
+              <!-- 換圖只有要存的人用得到；觀察者要看的那張圖就在右邊「客人看到的樣子」 -->
+              <div v-if="canOperate" class="admin-field-group" data-tour="rm-image">
                 <AdminFieldLabel
                   text="選單背景圖"
                   :hint="isCreating ? '一定要傳一張，選單的長相就是這張圖。' : '不上傳就沿用原本那張。'"
@@ -175,7 +188,8 @@
 
             <!-- 右欄：要看的東西（版型與預覽吃掉剩下的寬度） -->
             <div class="rm-config-col rm-config-col--visual">
-              <div class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
+              <!-- 點一個版型就會重排格子＝改動，觀察者不給（版型看下面那張圖就知道） -->
+              <div v-if="canOperate" class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
                 <AdminLayoutPresetPicker
                   flat
                   title="圖文樣式"
@@ -195,9 +209,10 @@
               -->
               <div v-if="form.previewUrl" class="rm-visual-split">
                 <div class="rm-visual-edit">
+                  <!-- 觀察者也看得到格子在哪（拖不動，見 startDrag／startResize） -->
                   <AdminAreaEditorSection
                     :areas="form.areas"
-                    section-label="編輯區塊"
+                    :section-label="canOperate ? '編輯區塊' : '區塊位置'"
                     :flat="true"
                     :show-canvas="true"
                     :show-action-cards="false"
@@ -236,7 +251,7 @@
                 比「有沒有圖」多，寫 `v-else` 的話，圖明明上傳好了也會冒出一句
                 「上傳背景圖後…」在對他說謊。（2026-09-23 截圖目檢當場抓到過一次。）
               -->
-              <p v-if="!form.previewUrl" class="rm-preview-placeholder">
+              <p v-if="canOperate && !form.previewUrl" class="rm-preview-placeholder">
                 可先選版型。上傳背景圖後，這裡會顯示可拖曳的區塊預覽。
               </p>
             </div>
@@ -310,9 +325,9 @@
               :show-canvas="false"
               :show-action-cards="true"
               :show-header="false"
-              :show-add-button="form.layoutId === 'custom'"
-              :allow-remove="form.layoutId === 'custom'"
-              :show-bounds="form.layoutId === 'custom'"
+              :show-add-button="canOperate && form.layoutId === 'custom'"
+              :allow-remove="canOperate && form.layoutId === 'custom'"
+              :show-bounds="canOperate && form.layoutId === 'custom'"
               :min-bounds-size="0"
               :base-width="Number(form.width) || 2500"
               :base-height="Number(form.height) || 843"
@@ -340,6 +355,7 @@
               <template #action-fields="{ area }">
                 <AdminAreaActionEditor
                   :model-value="area.action"
+                  :disabled="!canOperate"
                   :module-options="modules"
                   :tag-options="allTags"
                   :enable-tagging="true"
@@ -362,6 +378,7 @@
 <script setup lang="ts">
 import { Delete, Grid, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { richMenuDeleteConfirmCopy, richMenusSwitchingTo } from '~~/shared/delete-impact'
 import {
   IMAGE_MAX_BYTES,
 } from '~~/shared/upload-rules'
@@ -383,10 +400,11 @@ import {
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-const { apiFetch, currentWorkspaceName } = useWorkspace()
+const { apiFetch, currentWorkspaceName, canOperate } = useWorkspace()
 
 const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
-  getSnapshot: () => form.value,
+  // `G-102`：觀察者存不了，就沒有「未儲存的變更」可言——不要在他切走時跳確認框
+  getSnapshot: () => (canOperate.value ? form.value : null),
 })
 
 type LocalSelectedFile = {
@@ -407,6 +425,8 @@ const {
   load: loadMenusList,
   onScroll: onSidebarListScroll,
   loadUntilFound: findMenuUntilFound,
+  hasMore: menusHasMore,
+  loadMore: loadMoreMenus,
 } = useWorkspaceSidebarList<any>('/api/richmenu/list')
 const { openFromQueryId } = useAdminDeepLink()
 const selectedId = ref<string | null>(null)
@@ -932,13 +952,16 @@ function clampAllAreas() {
   clampAllAreasByEditor()
 }
 
+// `G-102`：觀察者看得到格子、拖不動——拖了也存不了，只會讓畫面跟線上那張對不起來
 function startDrag(e: MouseEvent, index: number) {
   e.preventDefault()
+  if (!canOperate.value) return
   startAreaDrag(e, index)
 }
 
 function startResize(e: MouseEvent, index: number, handle: string) {
   e.preventDefault()
+  if (!canOperate.value) return
   startAreaResize(e, index, handle)
 }
 
@@ -1152,10 +1175,22 @@ async function setAsDefault(menu: any) {
 async function deleteMenu() {
   if (!selectedId.value) return
   const menuName = form.value.name
+  const targetId = selectedId.value
+  // `D-110` ④：先講清楚刪了什麼會壞——是不是所有好友現在看到的那張、別張有沒有按鈕切到它。
+  // 清單是分頁載的，⛔ 沒載完就判「沒人切到它」會說謊，所以先把剩下的頁載完（選單通常只有幾張）。
+  for (let i = 0; i < 10 && menusHasMore.value; i++) await loadMoreMenus()
+  if (selectedId.value !== targetId) return
+  const target = menus.value.find(m => m.id === targetId)
+  const copy = richMenuDeleteConfirmCopy({
+    name: menuName,
+    isDefault: Boolean(target?.isDefault),
+    switchedFrom: target ? richMenusSwitchingTo(target, menus.value) : [],
+    listIncomplete: menusHasMore.value,
+  })
   try {
-    await ElMessageBox.confirm(`確定刪除「${menuName}」？此動作無法復原。`, '刪除確認', {
-      confirmButtonText: '刪除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(copy.message, '刪除確認', {
+      confirmButtonText: copy.confirmButtonText,
+      cancelButtonText: copy.cancelButtonText,
       confirmButtonClass: 'el-button--danger',
       type: 'warning',
     })

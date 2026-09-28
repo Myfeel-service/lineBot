@@ -13,7 +13,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 
 import { getDb } from './firebase'
-import { findWorkspacesByLiffChannelId, invalidateLineWorkspaceCredentialsCache } from './line-workspace-credentials'
+import {
+  findWorkspacesByLiffChannelId,
+  getLineWorkspaceCredentials,
+  invalidateLineWorkspaceCredentialsCache,
+  isPlausibleWorkspaceId,
+} from './line-workspace-credentials'
 
 interface FakeWorkspace { id: string, defaultLiffId: string }
 
@@ -92,5 +97,48 @@ describe('findWorkspacesByLiffChannelId', () => {
     expect(await findWorkspacesByLiffChannelId('12ab')).toEqual([])
     expect(await findWorkspacesByLiffChannelId('')).toEqual([])
     expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * `G-105`：`/api/liff/config?workspaceId=亂編` 不用登入，每個亂編的值都會讀一次庫、再塞進快取。
+ * 釘兩件事：①明顯不是帳號 id 的值在讀庫前就擋掉，⛔ 但真的帳號 id（uuid、舊的 'default'）一定要過；
+ * ②快取有上限，換值猛打不會讓記憶體一直長。
+ */
+describe('isPlausibleWorkspaceId', () => {
+  it('真的帳號 id 一定要過：uuid、舊的 default、Firestore 自動 id', () => {
+    expect(isPlausibleWorkspaceId('3f2b9c1e-8a4d-4f6b-9e21-7c5d0a1b2c3d')).toBe(true)
+    expect(isPlausibleWorkspaceId('default')).toBe(true)
+    expect(isPlausibleWorkspaceId('AbCdEfGhIjKlMnOpQrSt')).toBe(true)
+  })
+
+  it('明顯不是的擋掉：含 /、空白、超長、空字串', () => {
+    expect(isPlausibleWorkspaceId('a/b')).toBe(false)
+    expect(isPlausibleWorkspaceId('ws 1')).toBe(false)
+    expect(isPlausibleWorkspaceId('x'.repeat(65))).toBe(false)
+    expect(isPlausibleWorkspaceId('')).toBe(false)
+    expect(isPlausibleWorkspaceId('<script>')).toBe(false)
+  })
+})
+
+describe('getLineWorkspaceCredentials 快取上限', () => {
+  it('⛔ 換 2001 個不同的 id 猛打，最早那個會被擠出快取（＝快取沒有無上限成長）', async () => {
+    let reads = 0
+    vi.mocked(getDb).mockReturnValue({
+      collection: () => ({
+        doc: () => ({ get: async () => { reads++; return { exists: false, data: () => undefined } } }),
+      }),
+    } as any)
+
+    await getLineWorkspaceCredentials('first')
+    await getLineWorkspaceCredentials('first')
+    expect(reads).toBe(1) // 快取有作用
+
+    for (let i = 0; i < 2000; i++) await getLineWorkspaceCredentials(`junk-${i}`)
+    reads = 0
+    await getLineWorkspaceCredentials('first')
+    expect(reads).toBe(1) // 被擠掉了，要重讀
+    await getLineWorkspaceCredentials('junk-1999')
+    expect(reads).toBe(1) // 最近的還在
   })
 })

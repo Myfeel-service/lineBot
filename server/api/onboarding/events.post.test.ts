@@ -92,6 +92,31 @@ describe('POST /api/onboarding/events', () => {
     expect(f.written[0]).toMatchObject({ flow: 'other', props: { field: 'products' }, droppedProps: 1 })
   })
 
+  it('⛔ 同一個人 10 分鐘最多寫 300 筆（`G-105`）：超過的丟掉並回報數量，別人不受影響', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(auth.requireAuth).mockResolvedValue({ uid: 'u-flood' } as never)
+    const batch30 = { events: Array.from({ length: 30 }, () => ({ event: 'profile_answer' })) }
+    for (let i = 0; i < 9; i++) {
+      currentBody = batch30
+      await (handler as any)({})
+    }
+    // 第 10 批：剩 30 個名額，這批 29 個認得＋1 個不認得——不認得的不吃額度，所以還剩 1 個
+    currentBody = { events: [...batch30.events.slice(0, 27), { event: 'typo' }, { event: 'profile_answer' }, { event: 'profile_answer' }] }
+    await expect((handler as any)({})).resolves.toEqual({ written: 29, unknown: 1, tooMany: 0 })
+    currentBody = { events: [{ event: 'profile_answer' }, { event: 'profile_answer' }] }
+    await expect((handler as any)({})).resolves.toEqual({ written: 1, unknown: 0, tooMany: 0, limited: 1 })
+    currentBody = { events: [{ event: 'profile_answer' }] }
+    await expect((handler as any)({})).resolves.toEqual({ written: 0, unknown: 0, tooMany: 0, limited: 1 })
+    // 被擋的要留一行，但同一個視窗只留第一次
+    expect(warn.mock.calls.filter(c => String(c[0]).includes('超過 10 分鐘上限'))).toHaveLength(1)
+
+    vi.mocked(auth.requireAuth).mockResolvedValue({ uid: 'u-other' } as never)
+    currentBody = { events: [{ event: 'build_start' }] }
+    await expect((handler as any)({})).resolves.toEqual({ written: 1, unknown: 0, tooMany: 0 })
+    vi.mocked(auth.requireAuth).mockResolvedValue({ uid: 'u-auth' } as never)
+    warn.mockRestore()
+  })
+
   it('一個都沒收到就不 commit', async () => {
     currentBody = { events: [] }
     await (handler as any)({})

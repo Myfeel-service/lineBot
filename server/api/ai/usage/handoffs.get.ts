@@ -17,8 +17,9 @@ interface HandoffRow {
   /**
    * `llm_error` 時外部服務回了什麼（已去識別、截短）。前端只在超管開「顯示技術細節」時印，
    * 一般使用者看了也不能怎麼樣——但沒有它，事後連我們自己都查不出是哪一種失敗。
+   * ⛔ **只回給超管**（`G-103`）：畫面藏了、API 照樣回給觀察者，等於沒藏；那是外部服務的錯誤原文。
    */
-  errorDetail: string
+  errorDetail?: string
 }
 
 function tsToMs(raw: unknown): number {
@@ -41,7 +42,7 @@ function tsToMs(raw: unknown): number {
  *   清單見底時前端才有依據說「真的沒了」而不是「只載了 20 筆」。
  */
 export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; hasMore: boolean; nextBefore: number }> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, isSuperAdmin } = await requireWorkspaceAccess(event, 'viewer')
   const query = getQuery(event)
   const limit = Math.min(50, Math.max(1, Number(query.limit ?? 20)))
   // 白名單由共用標籤表導出(手抄第二份會漂移:新 reason 加了前端卻漏這裡,
@@ -119,7 +120,7 @@ export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; h
       })),
       updatedAtMs,
       resolved: resolvedAtMs > 0 && resolvedAtMs >= updatedAtMs,
-      errorDetail: String(meta.lastErrorDetail ?? ''),
+      ...(isSuperAdmin ? { errorDetail: String(meta.lastErrorDetail ?? '') } : {}),
     }
   })
 

@@ -1,4 +1,18 @@
+import { timingSafeEqual } from 'node:crypto'
 import type { H3Event } from 'h3'
+
+/**
+ * 密鑰比對一律走這支（`G-107`⑬）：常數時間，⛔ 不用 `!==`。
+ * `!==` 在第一個不同的字就停，理論上可以量回應時間一個字一個字猜出 CRON_SECRET。
+ * 長度不同直接回 false（`timingSafeEqual` 本身要求等長；洩漏的只有長度）。
+ * 任一邊是空字串也回 false：沒設密鑰不能變成「不帶密鑰就通過」。
+ */
+export function safeSecretEqual(provided: string, expected: string): boolean {
+  if (!provided || !expected) return false
+  const a = Buffer.from(provided, 'utf8')
+  const b = Buffer.from(expected, 'utf8')
+  return a.length === b.length && timingSafeEqual(a, b)
+}
 
 /**
  * 外部 Cron 端點共用的身分驗證（/api/warmup、/api/cron/run-tasks、
@@ -13,7 +27,7 @@ export function assertCronAuthorized(event: H3Event): void {
   const headerSecret = String(getHeader(event, 'x-cron-secret') || '').trim()
 
   if (cronSecret) {
-    if (headerSecret !== cronSecret) {
+    if (!safeSecretEqual(headerSecret, cronSecret)) {
       throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
     }
     return

@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { countsAsCustomerHit } from '~~/shared/tag-admin'
 import type { UserTagDoc, TagLogDoc, UserTagSourceType } from '~~/shared/types/tag-broadcast'
+import { filterWorkspaceTagIds, type DroppedTag } from './workspace-tag-ids'
 
 export interface TaggingResult {
   added: string[]
@@ -12,6 +13,12 @@ export interface TaggingResult {
    * ⊆ `skipped`；落在冷卻窗內的那些只更新時間、不進這裡。
    */
   hits: string[]
+  /**
+   * 不是這個帳號的標籤（`G-98`），一顆都沒貼。
+   * ⚠️ **只有真的丟了東西才會有這一格**：沒丟的時候回傳長得跟以前一模一樣，
+   *    既有呼叫端與測試的 `{ added, skipped, hits }` 比對不受影響。
+   */
+  dropped?: DroppedTag[]
 }
 
 /**
@@ -73,6 +80,12 @@ export function nextTagHit(
  * 傳的是 `manual`，那條不計次。後台手動貼標與批次貼標則根本不走這裡（各自寫入），
  * 所以「批次貼 500 人」也不會把次數灌爆。
  * 動這裡之前先確認這個前提還成立（`rg 'addTagsToUser\('`）。
+ *
+ * ⛔ **只貼這個帳號自己的標籤**（`G-98`）：tagIds 來自模組、圖文選單、腳本、活動、客服預存，
+ * 全是店家自己填得到的——填別家的 id，就會在自家客人身上貼出一顆別家的標籤。
+ * 過濾收在這裡而不是各呼叫端，是因為呼叫端有十幾個，漏一個就是漏。
+ * 歸屬走快取（見 workspace-tag-ids.ts）：熱路徑上每一次按鈕都多讀一次標籤太貴。
+ * 被丟掉的回在 `dropped`，並留 log；呼叫端多半不看回傳值，所以 log 是一定要留的那一份。
  */
 export async function addTagsToUser(
   /** Firestore users 主鍵：`${workspaceId}_${lineUserId}` */
@@ -85,6 +98,14 @@ export async function addTagsToUser(
   if (!userFirestoreDocId || !tagIds.length) return { added: [], skipped: [], hits: [] }
 
   const db = getDb()
+  const owned = await filterWorkspaceTagIds(db, workspaceId, tagIds, {
+    cache: true,
+    context: `addTagsToUser ${sourceRefId ?? sourceType}`,
+  })
+  const droppedPart = owned.dropped.length ? { dropped: owned.dropped } : {}
+  if (!owned.kept.length) return { added: [], skipped: [], hits: [], ...droppedPart }
+  tagIds = owned.kept
+
   const now = FieldValue.serverTimestamp()
   const nowMs = Date.now()
   const added: string[] = []
@@ -160,7 +181,7 @@ export async function addTagsToUser(
     await batch.commit()
   }
 
-  return { added, skipped, hits }
+  return { added, skipped, hits, ...droppedPart }
 }
 
 /**

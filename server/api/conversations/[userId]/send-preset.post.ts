@@ -32,8 +32,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: '找不到此使用者' })
   }
 
+  // G-98：跟隔壁 quick-reply-text 一樣比對帳號——知道別家預存的 id 不能拿來推給自家客人
+  // （連預存上的貼標也會照貼）；不是自家的一律當不存在回 404，不透露別家有這筆
   const presetSnap = await db.collection('supportPresets').doc(presetId).get()
-  if (!presetSnap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此預存' })
+  if (!presetSnap.exists || presetSnap.data()?.workspaceId !== workspaceId) {
+    throw createError({ statusCode: 404, statusMessage: '找不到此預存' })
+  }
 
   const preset = normalizeSupportPreset({ id: presetSnap.id, ...presetSnap.data() })
   if (!preset.isActive) {
