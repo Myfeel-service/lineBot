@@ -2,6 +2,7 @@ import { verifyLineWebhookSignature } from '../utils/line'
 import { listWorkspaceLineCredentials } from '../utils/line-workspace-credentials'
 import { handleMessageEvent, handlePostbackEvent, handleFollowEvent, handleUnfollowEvent, recordCustomerAction } from '../utils/handler'
 import { claimWebhookEvent } from '../utils/webhook-dedup'
+import { syncNotifyRecipientFollowState } from '../utils/line-notify-delivery'
 import type { webhook } from '@line/bot-sdk'
 
 function resolveRequestOrigin(event: Parameters<typeof getHeader>[0]): string {
@@ -113,6 +114,9 @@ export default defineEventHandler(async (event) => {
             replyToken: (e as webhook.FollowEvent).replyToken,
             requestOrigin,
           })
+          // LINE 通知名單上的人加好友＝收得到了（`C-271`②）：還沒加好友就綁定的人，第一則通知被退回記成
+          // 「封鎖或還沒加好友」，⛔ 只靠「原本是封鎖」那條清不掉，那一列會永遠黃著。不在名單上什麼都不寫。
+          await syncNotifyRecipientFollowState(matchedWorkspaceId, userId, false)
         }
       }
       else if (e.type === 'unfollow') {

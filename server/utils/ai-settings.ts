@@ -61,20 +61,11 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, n))
 }
 
-/**
- * 收斂成純 LINE userId。
- * users 的 Firestore doc id 是 {workspaceId}_{lineUserId}，若整串被存進通知名單，
- * pushMessage 會被 LINE 判成無效 userId 而靜默失敗——通知永遠不會到。
- * 純 LINE userId 不含底線，因此可安全地取最後一段來自我修正。
- */
-const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/i
+// 名單比對（純函式）住在 shared（`C-271`⑭），這裡轉出給既有的 import。
+// ⚠️ 用相對路徑：Nitro 自動匯入掃 server/utils 時解析不了 `~~` 的轉出（會警告 skip scanning）
+import { normalizeLineUserId } from '../../shared/line-notify-list'
 
-function normalizeLineUserId(value: unknown): string {
-  const s = String(value ?? '').trim()
-  if (!s.includes('_')) return s
-  const tail = s.slice(s.lastIndexOf('_') + 1)
-  return LINE_USER_ID_RE.test(tail) ? tail : s
-}
+export { normalizeLineUserId, notifyListHas } from '../../shared/line-notify-list'
 
 /**
  * 取得工作區設定。若 doc 不存在則回傳預設值（不寫入）。
@@ -131,8 +122,16 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       onExceed: quotaStrategy,
     },
     handoffNotify: (() => {
+      /*
+       * 2026-09-27 `C-270` 拿掉總開關（名單有人＝開）；`C-271`⑮ 把「舊資料怎麼讀」收在**這一處**：
+       * 存著 enabled=false 的舊名單＝那些人從來沒收到過（原本每個讀的地方都先看 enabled），
+       * 讀出來一律當成空名單，enabled 改成「名單有沒有人」推出來。
+       * 之後讀名單的地方只看 lineUserIds 就對，⛔ 不要再各自判 enabled。
+       * （寫入端 setAiSettings 不寫這三格；名單只經 member-line-bind 的交易寫。）
+       */
+      const listOn = raw?.handoffNotify?.enabled === true
       // 保留原字串是為了 displayNames 還查得到（舊前端可能以 doc id 當 key）
-      const rawIds: string[] = Array.isArray(raw?.handoffNotify?.lineUserIds)
+      const rawIds: string[] = listOn && Array.isArray(raw?.handoffNotify?.lineUserIds)
         ? raw.handoffNotify.lineUserIds.map((v: unknown) => String(v ?? '').trim()).filter(Boolean).slice(0, 10)
         : []
       const pairs = rawIds
@@ -155,7 +154,7 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       // missed_only 模式下超時提醒是唯一的通知路徑,設 0 等於整個靜音——強制回預設值
       if (mode === 'missed_only' && slaRemindMinutes === 0) slaRemindMinutes = DEFAULT_SLA_REMIND_MINUTES
       return {
-        enabled: raw?.handoffNotify?.enabled === true,
+        enabled: lineUserIds.length > 0,
         lineUserIds,
         displayNames,
         mode,
@@ -231,14 +230,36 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
 }
 
 /**
+ * 讀**不經快取**的設定（不動共用快取）。
+ * 快取是每台機器各一份、60 秒：拿它來「讀現值→合併→寫回」會把別台剛寫進去的東西蓋掉；
+ * 拿它來輪詢又會一直是舊的。⛔ 這支也不清快取——清了等於讓這台的送訊息熱路徑每次都重讀
+ * （`C-271`⑫：掃 QR 等待時每 2.5 秒問一次，原本每問一次就清一次）。
+ */
+export async function readAiSettingsFresh(workspaceId: string, db: Firestore = getDb()): Promise<AiSettingsDoc> {
+  const snap = await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).get()
+  const defaults = buildDefaultAiSettings()
+  // 跟 getAiSettings 同一個形狀（沒有文件＝出廠預設）
+  return snap.exists
+    ? normalizeAiSettings({ ...defaults, ...(snap.data() as Partial<AiSettingsDoc>) })
+    : { ...defaults, updatedAt: FieldValue.serverTimestamp() }
+}
+
+/**
  * 更新工作區設定。會 invalidate 快取。
+ *
+ * ⚠️ 2026-09-27 `C-271`① 兩處改法：
+ * - 現值改讀**不經快取**的那一份（原本讀這台機器 60 秒快取裡的舊設定，整份寫回）
+ * - ⛔ **LINE 通知名單三格（lineUserIds／displayNames／enabled）不從這裡寫**，而且改用 merge：
+ *   名單只經 `member-line-bind` 的交易進出（掃 QR 綁定是 webhook 在另一台機器寫的）。
+ *   原本整份 set，管理員剛好在另一台按「儲存 AI 設定」（或小幫手改提醒分鐘、操作紀錄「還原」），
+ *   就把剛綁好的人洗掉，而他手機已經收到「好了 ✓」。
  */
 export async function setAiSettings(
   workspaceId: string,
   partial: Partial<AiSettingsDoc>,
   db: Firestore = getDb(),
 ): Promise<AiSettingsDoc> {
-  const current = await getAiSettings(workspaceId, db)
+  const current = await readAiSettingsFresh(workspaceId, db)
   const merged = normalizeAiSettings({
     ...current,
     ...partial,
@@ -252,10 +273,12 @@ export async function setAiSettings(
     inactiveTag: { ...current.inactiveTag, ...(partial.inactiveTag ?? {}) },
     autoTagSuggest: { ...current.autoTagSuggest, ...(partial.autoTagSuggest ?? {}) },
   })
+  const { lineUserIds: _ids, displayNames: _names, enabled: _enabled, ...notifyTiming } = merged.handoffNotify
   await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).set({
     ...merged,
+    handoffNotify: notifyTiming,
     updatedAt: FieldValue.serverTimestamp(),
-  })
+  }, { merge: true })
   invalidateAiSettingsCache(workspaceId)
   return getAiSettings(workspaceId, db)
 }

@@ -14,6 +14,7 @@ const { store, line, basic } = vi.hoisted(() => ({
     memberUpdates: [] as { id: string, patch: any }[],
     aiWrites: [] as any[],
     deliveryWrites: [] as any[],
+    txFail: false,
   },
   line: { profile: null as any, replies: [] as string[] },
   basic: { id: '@demo' },
@@ -42,7 +43,7 @@ vi.mock('./firebase', () => {
           return { doc: () => ({ set: async (p: any) => { store.deliveryWrites.push(p) } }) }
         return { doc: () => aiRef }
       },
-      runTransaction: async (fn: (tx: any) => unknown) => fn({
+      runTransaction: async (fn: (tx: any) => unknown) => store.txFail ? Promise.reject(new Error('tx boom')) : fn({
         get: (r: any) => r.get(),
         update: (r: any, p: any) => r.update(p),
         set: (r: any, p: any) => r.set(p),
@@ -79,6 +80,7 @@ beforeEach(() => {
   store.memberUpdates = []
   store.aiWrites = []
   store.deliveryWrites = []
+  store.txFail = false
   line.profile = { displayName: '阿豪', pictureUrl: '' }
   line.replies = []
 })
@@ -128,6 +130,23 @@ describe('綁定碼傳進來', () => {
     expect(line.replies[0]).toContain('名單已經滿了')
     expect(line.replies[0]).not.toContain('之後會收到')
     expect(store.deliveryWrites).toHaveLength(0)
+  })
+
+  it('觀察者綁定碼 → 綁好 LINE 但 ⛔ 不加進名單，照實講（`C-271`⑬）', async () => {
+    store.members = [{ id: 'u1_w', data: { lineBindCode: 'A3F9K2', lineBindCodeExpiresAt: FUTURE, role: 'viewer' } }]
+    await consume()
+    expect(store.memberUpdates.some(u => u.patch.lineUserId === 'Unew')).toBe(true)
+    expect(store.aiWrites.some(w => w['handoffNotify.lineUserIds'])).toBe(false)
+    expect(line.replies[0]).toContain('觀察者不收 LINE 通知')
+  })
+
+  it('🔴 換手機時舊那支拿不掉 → ⛔ 不綁新的、講「再傳一次」（`C-271`⑥：原本先綁再拿、失敗不吭聲）', async () => {
+    store.ai = { handoffNotify: { enabled: true, lineUserIds: ['Uold'] } }
+    store.members = [{ id: 'u1_w', data: { lineBindCode: 'A3F9K2', lineBindCodeExpiresAt: FUTURE, lineUserId: 'Uold' } }]
+    store.txFail = true
+    await consume()
+    expect(store.memberUpdates).toHaveLength(0)
+    expect(line.replies[0]).toContain('再傳一次')
   })
 
   it('碼過期 → 講去哪重產，⛔ 不綁、不加名單', async () => {

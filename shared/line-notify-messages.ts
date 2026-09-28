@@ -12,6 +12,7 @@
  *   Safari／Chrome：後台是 Google 登入，LINE 內建瀏覽器登不進去。
  */
 import { isServiceDayOff, type ServiceHoursLike } from './time'
+import { waitPhrase } from './daily-digest-message'
 
 /** 「什麼時候通知」那幾格（跟 `AiSettingsDoc['handoffNotify']` 同名，只取文案要用的） */
 export interface NotifyTimingLike {
@@ -97,7 +98,10 @@ export function buildNotifyConfirmText(input: {
   else {
     out.push('好了 ✓ 這支手機之後會收到：')
     out.push(...notifyWhatYouGetLines(input.cfg, input.serviceHours))
-    if (input.serviceHours?.enabled) out.push('（下班時段不吵你，上班後再傳）')
+    // ⚠️ 只講找真人那一則（`C-271`⑩）：勿擾時段擋的是找真人的推播；每日摘要照設定的整點發（只跳休假日）、
+    //    出大事另有 9:00–21:00——原本寫「下班時段不吵你，上班後再傳」，摘要設在晚上 8 點的人每天都會被打臉。
+    //    也 ⛔ 不承諾「上班後再傳」：「每次都通知」模式下班時段那一則是直接不送的
+    if (input.serviceHours?.enabled) out.push('（客人找真人的通知，下班時段不傳）')
     out.push('', `${nextDigestPhrase(input.nowMs, input.cfg.digestHour, input.serviceHours)} 會收到第一則。`)
   }
   if (input.friendUnknown && input.addFriendUrl) {
@@ -150,13 +154,6 @@ export function buildHandoffNotifyText(p: HandoffNotifyTextInput): string {
   ].join('\n')
 }
 
-/** 「等 N 分鐘」的白話寫法：一小時內講分鐘，超過講小時（不寫「1.8 小時」這種要換算的數字） */
-export function waitedText(waitedMs: number): string {
-  const minutes = Math.max(1, Math.round(waitedMs / 60_000))
-  if (minutes < 60) return `等 ${minutes} 分鐘`
-  return `等 ${Math.max(1, Math.round(minutes / 60))} 小時`
-}
-
 /** 多位客人同時逾時 → 一則清單（見 `notifyOverdueHandoffBatch`） */
 export function buildOverdueBatchText(p: {
   slaReminderMinutes: number
@@ -167,7 +164,8 @@ export function buildOverdueBatchText(p: {
 }): string {
   return [
     `🙋 ${p.total} 位客人在等真人客服（都已超過 ${p.slaReminderMinutes} 分鐘沒人接手）`,
-    ...p.items.map(i => `・${i.customerName} — ${waitedText(i.waitedMs)}${i.reasonLabel ? `・${i.reasonLabel}` : ''}`),
+    // 「等 N 分鐘／小時」跟每日摘要同一支（`C-271`⑭：原本兩支各寫一份）
+    ...p.items.map(i => `・${i.customerName} — ${waitPhrase(i.waitedMs / 60_000)}${i.reasonLabel ? `・${i.reasonLabel}` : ''}`),
     ...(p.rest > 0 ? [`・另有 ${p.rest} 位客人在等（完整名單請看後台）`] : []),
     ...tail(p.link, '打開後台「對話」', REPLY_FALLBACK),
   ].join('\n')

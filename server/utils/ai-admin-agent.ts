@@ -138,9 +138,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         shopUrl: s.shopUrl || '(未設定)',
         sensitiveTopicCount: (s.sensitiveTopics ?? []).length,
         handoffNotify: {
-          // 總開關拿掉之後（`C-270`）「開著」＝名單上真的有人在收
-          enabled: s.handoffNotify?.enabled === true && (s.handoffNotify?.lineUserIds ?? []).length > 0,
-          recipientCount: s.handoffNotify?.enabled === true ? (s.handoffNotify?.lineUserIds ?? []).length : 0,
+          // 總開關拿掉之後（`C-270`）「開著」＝名單上有人（舊資料「有人但關著」normalize 已收成空名單）
+          enabled: (s.handoffNotify?.lineUserIds ?? []).length > 0,
+          recipientCount: (s.handoffNotify?.lineUserIds ?? []).length,
           slaRemindMinutes: s.handoffNotify?.slaRemindMinutes ?? 0,
         },
         // ⛔ 不回裸的 start/end:那是**服務時間**的起訖,離開這裡就沒有人記得這件事。

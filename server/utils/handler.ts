@@ -55,7 +55,7 @@ import { recordAiUsage } from './ai-usage'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
 import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
-import { markNotifyRecipientBlocked } from './line-notify-delivery'
+import { syncNotifyRecipientFollowState } from './line-notify-delivery'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
@@ -347,7 +347,8 @@ async function ensureUser(
   if (data.isBlocked) {
     await ref.update({ isBlocked: false, unblockedAt: FieldValue.serverTimestamp() })
     // 通知名單上的人解除封鎖（`C-270`）：「LINE 通知」頁那一列從黃轉回來
-    await syncNotifyRecipientBlocked(wid, lineUserId, false)
+    // （webhook 的 follow 事件也會清一次，這裡是不走 follow 的保險）
+    await syncNotifyRecipientFollowState(wid, lineUserId, false)
     // Don't cache blocked users — they're edge cases and we want fresh state next time
     return data
   }
@@ -791,27 +792,11 @@ export async function handleUnfollowEvent(
       await ref.update({ isBlocked: true, blockedAt: FieldValue.serverTimestamp() })
     }
     // 封鎖的是通知名單上的人（`C-270`）：當下就記，不必等下一則通知被退回才知道
-    await syncNotifyRecipientBlocked(workspaceId, lineUserIdFromFirestoreDocId(userId, workspaceId), true)
+    await syncNotifyRecipientFollowState(workspaceId, lineUserIdFromFirestoreDocId(userId, workspaceId), true)
     console.log('[webhook] unfollow/block marked:', userId)
   }
   catch (e) {
     console.error('[webhook] handleUnfollowEvent error:', e)
-  }
-}
-
-/**
- * 封鎖／解除封鎖的人如果在 LINE 通知名單上，記進送達紀錄（`line-notify-delivery.ts`）。
- * 名單讀的是有 60 秒快取的設定；不在名單上的客人（絕大多數）什麼都不寫。
- */
-async function syncNotifyRecipientBlocked(workspaceId: string, lineUserId: string, blocked: boolean): Promise<void> {
-  try {
-    const settings = await getAiSettings(workspaceId)
-    const ids = settings.handoffNotify?.lineUserIds ?? []
-    if (!ids.some(v => v === lineUserId || v.endsWith(`_${lineUserId}`))) return
-    await markNotifyRecipientBlocked(workspaceId, lineUserId, blocked)
-  }
-  catch (e) {
-    console.warn('[webhook] notify recipient block sync failed:', e)
   }
 }
 

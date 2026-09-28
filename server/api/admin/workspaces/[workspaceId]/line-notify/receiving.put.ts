@@ -22,7 +22,10 @@ export default defineEventHandler(async (event) => {
   if (legacyId) {
     if (!canManage) throw createError({ statusCode: 403, statusMessage: '要管理員才能動別人的通知' })
     if (on) throw createError({ statusCode: 400, statusMessage: '名單只收綁好 LINE 的成員，這個帳號只能拿掉' })
-    await removeFromHandoffNotify(workspaceId, legacyId)
+    const removed = await removeFromHandoffNotify(workspaceId, legacyId)
+    // ⛔ 失敗要照實講（`C-271`⑥）：這個帳號很可能是客人，還在名單上就會繼續收到別的客人的名字與原話
+    if (removed === 'failed') throw createError({ statusCode: 500, statusMessage: '拿不掉，請再試一次' })
+    if (removed === 'absent') return { ok: true, result: 'absent' }
     await writeAuditLog({
       workspaceId,
       uid: callerUid,
@@ -45,13 +48,19 @@ export default defineEventHandler(async (event) => {
   if (!r.ok) {
     throw createError({
       statusCode: 400,
-      statusMessage: r.reason === 'not-bound' ? '這位還沒綁 LINE，要先把手機加進來' : '找不到這位成員',
+      statusMessage: r.reason === 'not-bound'
+        ? '這位還沒綁 LINE，要先把手機加進來'
+        : r.reason === 'viewer'
+          ? '觀察者不收 LINE 通知；要收的話先到「成員管理」把角色改成客服'
+          : '找不到這位成員',
     })
   }
   if (r.result === 'full')
     throw createError({ statusCode: 409, statusMessage: '名單滿了（最多 10 位），先關掉一位再開' })
   if (r.result === 'failed')
     throw createError({ statusCode: 500, statusMessage: '存不進去，請再試一次' })
+  // 本來就在收／本來就不在名單上＝什麼都沒變，⛔ 不寫一筆假變更（`C-271`⑬：兩個分頁各按一次會多記一筆）
+  if (r.result === 'already' || r.result === 'absent') return { ok: true, result: r.result }
 
   await writeAuditLog({
     workspaceId,

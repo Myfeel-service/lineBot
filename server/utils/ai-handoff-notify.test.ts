@@ -318,10 +318,12 @@ describe('maybeWarnQuotaThreshold(80% 預警)', () => {
     await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 'p_2026-08-01', usageText: 'x', db })
     expect(set).toHaveBeenCalledTimes(1)
     expect(set.mock.calls[0]![0]).not.toHaveProperty('periodKey')
-    // `C-270`⑥：被退回的那幾位要記下來（「LINE 通知」頁那一列才會變黃）
+    // `C-270`⑥：每一位的結果都要記下來。這裡的錯誤不是 LINE 回的 HTTP 錯（連不上），
+    // 所以記成「一時的」（`C-271`⑦：⛔ 不可以跟封鎖一樣算收不到）
     const patch = recorded.mock.calls[0]![0] as any
     expect(Object.keys(patch.recipients)).toEqual(['Sa', 'Sb'])
-    expect(patch.recipients.Sa).toMatchObject({ failKind: 'blocked' })
+    expect(typeof patch.recipients.Sa.glitchAt).toBe('number')
+    expect(patch.recipients.Sa.failKind).toBeUndefined()
   })
 })
 

@@ -223,6 +223,17 @@ describe('LINE 通知送不到（C-270）', () => {
     expect(partial?.state).toBe('clear')
   })
 
+  it('🔴 LINE 一時出錯（全員都是 5xx／斷線）→ 兩顆都不亮（`C-271`⑦：原本亮「沒有人會收到」到隔天）', async () => {
+    const { missing, partial } = await run(['U1', 'U2'], { U1: { okAt: 1, glitchAt: 9 }, U2: { okAt: 1, glitchAt: 9 } })
+    expect(missing?.state).toBe('clear')
+    expect(partial?.state).toBe('clear')
+  })
+
+  it('推播被退回說「封鎖或還沒加好友」→ 兩個都講（⛔ 不講死是封鎖）', async () => {
+    const { partial } = await run(['U1', 'U2'], { U1: { okAt: 10 }, U2: { blockedAt: 5, blockedVia: 'push' } })
+    expect(partial?.detail).toContain('Tina封鎖了官方帳號或還沒加好友')
+  })
+
   it('從來沒傳過（剛加進來）→ 不算收不到', async () => {
     const { missing, partial } = await run(['U1'], {})
     expect(missing?.state).toBe('clear')

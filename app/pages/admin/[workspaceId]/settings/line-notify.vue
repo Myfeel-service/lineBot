@@ -53,8 +53,9 @@
                 <div class="ln-row__actions">
                   <!-- 綁好的：收通知開關（自己那一列、或管理員） -->
                   <template v-if="row.line">
+                    <!-- 觀察者不收通知（`C-271`⑬）：舊資料裡已經在收的只給關、不給開 -->
                     <el-switch
-                      v-if="row.isSelf || data.canManage"
+                      v-if="(row.isSelf || data.canManage) && (row.role !== 'viewer' || row.receiving)"
                       :model-value="row.receiving"
                       :loading="savingUid === row.uid"
                       active-text="收通知"
@@ -106,17 +107,21 @@
 
             <AdminLineNotifySelfAdd v-if="adding" @done="onAdded" @cancel="adding = false" />
 
-            <div v-if="justAdded" class="ln-done">
+            <div v-if="justAdded" class="ln-done" :class="{ 'is-warn': !justAdded.receiving }">
               <div>
                 <h4 class="ln-done__title">
                   {{ justAdded.receiving ? `好了，你的 LINE「${justAdded.name}」加進來了` : `綁好了，但這支手機還沒收通知` }}
                 </h4>
+                <!-- ⛔ 沒進名單的原因要照實講（`C-271`⑨）：原本一律說「名單滿了」，寫入失敗時把人帶去做沒用的事 -->
                 <p class="ln-done__text">
                   <template v-if="justAdded.receiving">
                     你的手機剛收到一則確認，寫著之後會收到什麼。{{ firstDigestPhrase }} 會收到第一則摘要。
                   </template>
-                  <template v-else>
+                  <template v-else-if="justAdded.full">
                     名單滿了（最多 10 位）。請管理員關掉一位，再把你那一列的「收通知」打開。
+                  </template>
+                  <template v-else>
+                    剛剛沒存進通知名單。把你那一列的「收通知」打開就好。
                   </template>
                 </p>
               </div>
@@ -145,10 +150,12 @@
                   <el-radio-group v-model="timing.mode" class="ln-when__modes" @change="onModeChange">
                     <div class="ln-when__mode">
                       <el-radio value="always">馬上通知，</el-radio>
+                      <!-- ⚠️ 上限要跟後端 normalize 一樣是 1440（`C-271`③）：寫小了，Element 一載入就把
+                           超過的舊設定夾小並寫回，存任何一格時一起存進去＝提醒時間被默默改短 -->
                       <el-input-number
                         v-model="slaAlways"
                         :min="0"
-                        :max="240"
+                        :max="SLA_MAX"
                         :step="5"
                         size="small"
                         controls-position="right"
@@ -163,7 +170,7 @@
                       <el-input-number
                         v-model="slaMissed"
                         :min="5"
-                        :max="240"
+                        :max="SLA_MAX"
                         :step="5"
                         size="small"
                         controls-position="right"
@@ -249,8 +256,10 @@ definePageMeta({ middleware: ['auth', 'workspace-notify'], layout: 'default' })
 useHead({ title: useAdminTitle('LINE 通知') })
 
 type RecipientState =
-  | { state: 'blocked', since: number }
+  | { state: 'blocked', since: number, via: 'unfollow' | 'push' }
   | { state: 'failing', at: number, reason: string }
+  /** 一時的失敗（LINE 5xx、送太快、斷線）：講一句「下一則會再試」，⛔ 不當成收不到（`C-271`⑦） */
+  | { state: 'glitch', at: number, reason: string }
   | { state: 'ok', at: number, kind: 'notify' | 'confirm' }
   | { state: 'never' }
 
@@ -295,12 +304,14 @@ const router = useRouter()
 const data = ref<PageData | null>(null)
 const loadError = ref(false)
 const adding = ref(false)
-const justAdded = ref<{ name: string, receiving: boolean } | null>(null)
+const justAdded = ref<{ name: string, receiving: boolean, full: boolean } | null>(null)
 const flashUid = ref('')
 const savingUid = ref('')
 const copiedUid = ref('')
 const previewTab = ref<'handoff' | 'digest' | 'crit'>('handoff')
 
+/** 分鐘數上限：跟後端 normalizeAiSettings 的夾值同一個數字（24 小時） */
+const SLA_MAX = 1440
 const timing = ref<Timing>({ mode: 'always', slaRemindMinutes: 30, digestHour: 9, festivalTips: true, weeklyInsights: true, criticalAlertPush: true })
 /** 兩個模式各記一個分鐘數：切模式時不會把另一邊的數字帶過去（missed_only 最少 5 分鐘） */
 const slaAlways = ref(30)
@@ -336,13 +347,23 @@ function statusOf(row: Row): { text: string, sub?: string, cls: string } {
     if (!data.value?.deliveryKnown || !d) return { text: lineName, cls: 'is-ok' }
     if (d.state === 'blocked') {
       const since = new Date(d.since)
-      return {
-        text: `送不到：${row.isSelf ? '這支手機' : '對方'}封鎖了官方帳號（${since.getMonth() + 1}/${since.getDate()} 起）`,
-        sub: `請${row.isSelf ? '在 LINE 上' : '對方在 LINE '}解除封鎖，下一則就會送到。`,
-        cls: 'is-warn',
-      }
+      const who = row.isSelf ? '這支手機' : '對方'
+      // 推播被退回那一種，LINE 對「封鎖」與「還沒加好友」回同一句，分不出來就兩個都講（⛔ 不講死是封鎖）
+      return d.via === 'unfollow'
+        ? {
+            text: `送不到：${who}封鎖了官方帳號（${since.getMonth() + 1}/${since.getDate()} 起）`,
+            sub: `請${row.isSelf ? '在 LINE 上' : '對方在 LINE '}解除封鎖，下一則就會送到。`,
+            cls: 'is-warn',
+          }
+        : {
+            text: `送不到：${who}封鎖了官方帳號，或還沒加好友（${since.getMonth() + 1}/${since.getDate()} 起）`,
+            sub: `請${row.isSelf ? '' : '對方'}加官方帳號好友（或解除封鎖），下一則就會送到。`,
+            cls: 'is-warn',
+          }
     }
     if (d.state === 'failing') return { text: `上次沒送到（${when(d.at)}）：${d.reason}`, cls: 'is-warn' }
+    // 一時的：照講發生了什麼，但不變黃（下一則會再試，通常就過了）
+    if (d.state === 'glitch') return { text: `${lineName} · 上次沒送到（${when(d.at)}，${d.reason}），下一則會再試`, cls: '' }
     if (d.state === 'ok') {
       const t = when(d.at)
       return { text: `${lineName} · ${d.kind === 'confirm' ? `${t}送達確認訊息` : `上次送達 ${t}`}`, cls: 'is-ok' }
@@ -395,7 +416,11 @@ async function onAdded(s: { lineDisplayName: string, message: string }) {
   adding.value = false
   await load()
   const self = data.value?.rows.find(r => r.isSelf)
-  justAdded.value = { name: s.lineDisplayName || self?.line?.displayName || '你', receiving: Boolean(self?.receiving) }
+  justAdded.value = {
+    name: s.lineDisplayName || self?.line?.displayName || '你',
+    receiving: Boolean(self?.receiving),
+    full: Boolean(data.value?.full),
+  }
   // 手機預覽先秀他剛收到的那一來一回；點任何一個分頁就換回範例
   if (justAdded.value.receiving) confirmSent.value = s.message
   if (self) flash(self.uid)

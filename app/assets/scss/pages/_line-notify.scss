@@ -295,6 +295,15 @@
   color: var(--text-muted);
 }
 
+// 綁好了卻沒進名單（名單滿／沒存進去）：⛔ 不可以用綠色報喜
+.ln-done.is-warn {
+  background: var(--el-color-warning-light-9);
+
+  .ln-done__title {
+    color: var(--el-color-warning-dark-2);
+  }
+}
+
 // ── 什麼時候通知 ──
 .ln-when {
   display: grid;
@@ -462,5 +471,15 @@
 
   .ln-invite__title {
     color: var(--brand-green-text);
+  }
+}
+
+// 綁好了卻沒進名單：黃，⛔ 不用綠色報喜
+.ln-invite.is-warn {
+  border-color: transparent;
+  background: var(--el-color-warning-light-9);
+
+  .ln-invite__title {
+    color: var(--el-color-warning-dark-2);
   }
 }

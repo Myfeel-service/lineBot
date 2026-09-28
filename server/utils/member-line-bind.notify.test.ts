@@ -13,6 +13,8 @@ const { store } = vi.hoisted(() => ({
     doc: null as any,
     writes: [] as any[],
     txUsed: false,
+    /** 讓交易丟例外（演「寫不進去」） */
+    txFail: false,
     members: {} as Record<string, any>,
   },
 }))
@@ -36,6 +38,7 @@ vi.mock('./firebase', () => {
           }
         : { doc: () => aiRef },
       runTransaction: async (fn: (tx: any) => unknown) => {
+        if (store.txFail) throw new Error('tx boom')
         store.txUsed = true
         return fn({
           get: (r: any) => r.get(),
@@ -51,13 +54,47 @@ vi.mock('./ai-settings', () => ({ AI_SETTINGS_COLLECTION: 'aiSettings', invalida
 vi.mock('./line', () => ({ getUserProfile: vi.fn(), replyMessage: vi.fn() }))
 vi.mock('./line-oa-basic-id', () => ({ resolveLineOaBasicId: vi.fn() }))
 
-import { addToHandoffNotify, bindMemberLineUser, HANDOFF_NOTIFY_MAX } from './member-line-bind'
+import { addToHandoffNotify, bindMemberLineUser, HANDOFF_NOTIFY_MAX, removeFromHandoffNotify, setMemberNotifyReceiving } from './member-line-bind'
 
 beforeEach(() => {
   store.doc = null
   store.writes = []
   store.txUsed = false
+  store.txFail = false
   store.members = {}
+})
+
+describe('removeFromHandoffNotify 要照實回報（`C-271`⑥）', () => {
+  it('拿掉了＝removed；本來就不在＝absent（什麼都沒寫）', async () => {
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U9', 'U8'] } }
+    expect(await removeFromHandoffNotify('w', 'U9')).toBe('removed')
+    expect(store.writes[0].p['handoffNotify.lineUserIds']).toEqual(['U8'])
+    store.writes = []
+    expect(await removeFromHandoffNotify('w', 'U7')).toBe('absent')
+    expect(store.writes).toHaveLength(0)
+  })
+  it('🔴 寫不進去＝failed（⛔ 原本吞掉錯誤回 void，端點照樣說「拿掉了」、寫操作紀錄）', async () => {
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U9'] } }
+    store.txFail = true
+    expect(await removeFromHandoffNotify('w', 'U9')).toBe('failed')
+  })
+})
+
+describe('setMemberNotifyReceiving：觀察者不收（`C-271`⑬）', () => {
+  it('⛔ 觀察者打不開；已經在收的照樣可以關', async () => {
+    store.members['u1_w'] = { lineUserId: 'U9', role: 'viewer', lineDisplayName: '觀' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U9'] } }
+    expect(await setMemberNotifyReceiving('w', 'u1', true)).toEqual({ ok: false, reason: 'viewer' })
+    expect(store.writes).toHaveLength(0)
+    expect(await setMemberNotifyReceiving('w', 'u1', false)).toEqual({ ok: true, result: 'removed' })
+  })
+  it('客服打開 → added；再按一次 → already（端點據此不寫假變更）', async () => {
+    store.members['u1_w'] = { lineUserId: 'U9', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: [] } }
+    expect(await setMemberNotifyReceiving('w', 'u1', true)).toEqual({ ok: true, result: 'added' })
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U9'] } }
+    expect(await setMemberNotifyReceiving('w', 'u1', true)).toEqual({ ok: true, result: 'already' })
+  })
 })
 
 describe('addToHandoffNotify', () => {
@@ -91,8 +128,10 @@ describe('addToHandoffNotify', () => {
   })
 
   it('已經在名單上（含舊資料的 `workspace_U…` 形式）→ 不重複加', async () => {
-    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['w_U1'] } }
-    expect(await addToHandoffNotify('w', 'U1', '')).toBe('already')
+    // 要用長得像真的 LINE 帳號的 id：舊資料 `w_U…` 的收斂只認 U＋32 位十六進位（`shared/line-notify-list`）
+    const real = `U${'1'.repeat(32)}`
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: [`w_${real}`] } }
+    expect(await addToHandoffNotify('w', real, '')).toBe('already')
     expect(store.writes).toHaveLength(0)
   })
 

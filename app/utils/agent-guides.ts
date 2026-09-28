@@ -349,18 +349,42 @@ const liffSetupGuide: AgentGuideDef = {
 // 所以劇本只做「講清楚、帶到那一顆按鈕前面」：連結帶 ?add=me，進頁直接打開掃 QR 那一塊。
 // ⛔ 這支劇本不寫任何設定。
 
+/**
+ * 這顆提醒有兩種亮法（`C-271`⑪）：①名單上沒有人 ②名單上有人，但**全部**送不到（封鎖、還沒加好友、一直被退回）。
+ * 兩種要做的事不一樣——⛔ 原本一律叫人去掃 QR，已經綁好的人點進去什麼都不會打開，也沒人告訴他要解除封鎖。
+ * 先問一次自己的狀態（只讀，2 次讀取）再決定講哪一套；問不到就退回講①（最常見）。
+ */
 const handoffNotifyGuide: AgentGuideDef = {
   id: 'handoff-notify',
-  title: '把手機加進 LINE 通知',
+  title: '讓手機收得到 LINE 通知',
   alertIds: ['handoffNotifyMissing'],
   steps: [
     {
       id: 'go-add',
       async run(c) {
         const { r } = c
+        const page = `/admin/${c.workspaceId}/settings/line-notify`
+        let s: { bound?: boolean, receiving?: boolean, receivingCount?: number } | null = null
+        try {
+          s = await c.apiFetch(`/api/admin/workspaces/${c.workspaceId}/line-notify/self-status`)
+        }
+        catch { /* 問不到就走最常見的那一種（名單上沒有人） */ }
+
+        if (s && (s.receivingCount ?? 0) > 0) {
+          await r.say('名單上有人，但<b>全部都收不到</b>——客人要找真人時，沒有人的手機會響。')
+          await r.say('最常見是封鎖了官方帳號、或還沒加好友。打開看是誰，原因寫在名字下面；請那幾位在 LINE 上加好友或解除封鎖，下一則就會送到。')
+          r.card({ kind: 'link', internal: true, label: '看是誰收不到', href: page })
+          return
+        }
         await r.say('現在客人要找真人時，<b>沒有人的手機會收到通知</b>——客人可能等很久都沒人理，每天早上的摘要也傳不到任何人。')
+        if (s?.bound) {
+          // 綁好了但沒在收（自己關掉、或當時名單滿了）：打開那一列的開關就好，⛔ 不用再掃一次
+          await r.say('你的 LINE 已經綁好了，只是通知關著。到你那一列把「收通知」打開就好。')
+          r.card({ kind: 'link', internal: true, label: '打開我的通知', href: page })
+          return
+        }
         await r.say('用你自己的手機掃一下就加進來了，大概十秒。同事的手機，他第一次登入後台時也會被問一次。')
-        r.card({ kind: 'link', internal: true, label: '把我的手機加進來', href: `/admin/${c.workspaceId}/settings/line-notify?add=me` })
+        r.card({ kind: 'link', internal: true, label: '把我的手機加進來', href: `${page}?add=me` })
       },
     },
   ],

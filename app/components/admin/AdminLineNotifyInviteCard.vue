@@ -1,9 +1,17 @@
 <template>
-  <div v-if="show" class="ln-invite" :class="{ 'is-done': phase === 'done' }" data-tour="ln-invite">
+  <div v-if="show" class="ln-invite" :class="{ 'is-done': phase === 'done', 'is-warn': phase === 'notAdded' }" data-tour="ln-invite">
     <template v-if="phase === 'done'">
       <h4 class="ln-invite__title">好了，你的 LINE「{{ doneName }}」加進來了</h4>
       <p class="ln-invite__text">
         手機剛收到一則確認。想關掉，到<NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="admin-inline-link">「設定 → LINE 通知」</NuxtLink>。
+      </p>
+    </template>
+    <!-- 綁好了卻沒進名單（`C-271`⑨）：⛔ 不可以照樣說「加進來了」，手機收到的是「沒有加進去」 -->
+    <template v-else-if="phase === 'notAdded'">
+      <h4 class="ln-invite__title">綁好了，但你的手機還沒收通知</h4>
+      <p class="ln-invite__text">
+        {{ notAddedFull ? '通知名單滿了（最多 10 位），請管理員關掉一位。' : '剛剛沒存進通知名單。' }}
+        到<NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="admin-inline-link">「設定 → LINE 通知」</NuxtLink>把你那一列的「收通知」打開就好。
       </p>
     </template>
     <template v-else>
@@ -32,14 +40,17 @@
 interface SelfStatus {
   isMember: boolean
   bound: boolean
+  receiving: boolean
+  full: boolean
   inviteDismissed: boolean
   lineConnected: boolean
 }
 
 const { apiFetch, workspaceId, can } = useWorkspace()
 const status = ref<SelfStatus | null>(null)
-const phase = ref<'ask' | 'scan' | 'done'>('ask')
+const phase = ref<'ask' | 'scan' | 'done' | 'notAdded'>('ask')
 const doneName = ref('')
+const notAddedFull = ref(false)
 const dismissed = ref(false)
 
 const show = computed(() => {
@@ -57,8 +68,18 @@ async function load() {
   catch { /* 問不到就不出現：這張卡是邀請，不是警報 */ }
 }
 
-function onDone(s: { lineDisplayName: string }) {
+/** 綁好之後再問一次「真的進名單了沒」，照實講（名單滿／寫入失敗時手機收到的是「沒有加進去」） */
+async function onDone(s: { lineDisplayName: string }) {
   doneName.value = s.lineDisplayName || '你'
+  try {
+    const now = await apiFetch<SelfStatus>(`/api/admin/workspaces/${workspaceId.value}/line-notify/self-status`)
+    if (!now.receiving) {
+      notAddedFull.value = now.full
+      phase.value = 'notAdded'
+      return
+    }
+  }
+  catch { /* 問不到就照綁定成功講——那一刻手機已經收到確認訊息，講錯的代價比沉默小 */ }
   phase.value = 'done'
 }
 

@@ -26,7 +26,8 @@ import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
-import { bareLineUserId, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
+import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
+import { normalizeLineUserId } from '~~/shared/line-notify-list'
 
 /**
  * 工作區「目前異常」的訊號收集核心。
@@ -660,17 +661,16 @@ export async function collectWorkspaceAlerts(
         probe('handoffNotifyMissing', async () => {
           const aiSettings = await aiSettingsPromise!
           if (!aiSettings) throw new Error('ai settings unavailable')
-          const ids = aiSettings.handoffNotify?.enabled ? (aiSettings.handoffNotify.lineUserIds ?? []) : []
-          // `C-270`⑥：名單上的人**全部**送不到（封鎖、被退回）＝跟沒有人一樣。
+          // normalizeAiSettings 已經把舊資料「名單有人但關著」收成空名單（`C-271`⑮），這裡只看名單
+          const ids = aiSettings.handoffNotify?.lineUserIds ?? []
+          // `C-270`⑥：名單上的人**全部**送不到（封鎖、一直被退回）＝跟沒有人一樣。
           // 原本只看名單是不是空的，兩個人都封鎖了這顆也不會亮——天天照樣「發」，一則都沒送到。
+          // ⛔ LINE 一時出錯（5xx、送太快、斷線）不算（`C-271`⑦：原本算，早上抖一下就亮到隔天）。
           // 名單有人、而且至少一位收得到 → 沒事，連憑證都不用查（最常見的情況只花一次點讀）
           let allDown = false
           if (ids.length) {
             const delivery = await getNotifyDelivery()
-            allDown = ids.every((id) => {
-              const s = recipientDeliveryState(delivery[bareLineUserId(wid, id)])
-              return s.state === 'blocked' || s.state === 'failing'
-            })
+            allDown = ids.every(id => isUndeliverable(recipientDeliveryState(delivery[normalizeLineUserId(id)])))
             if (!allDown) return { active: false }
           }
           // 這份名單擋的不只 AI 轉真人——每日摘要、額度、嚴重異常推播全部吃它，
@@ -680,27 +680,28 @@ export async function collectWorkspaceAlerts(
           const creds = await getLineWorkspaceCredentials(wid).catch(() => null)
           if (!creds?.channelAccessToken) return { active: false }
           return allDown
-            ? { active: true, detail: '名單上的人都收不到（封鎖了官方帳號，或通知被 LINE 退回）' }
+            ? { active: true, detail: '名單上的人都收不到（封鎖了官方帳號、還沒加好友，或通知一直被 LINE 退回）' }
             : { active: true }
         }),
         probe('lineNotifyUndeliverable', async () => {
           const aiSettings = await aiSettingsPromise!
           if (!aiSettings) throw new Error('ai settings unavailable')
           const cfg = aiSettings.handoffNotify
-          const ids = cfg?.enabled ? (cfg.lineUserIds ?? []) : []
+          const ids = cfg?.lineUserIds ?? []
           if (!ids.length) return { active: false }
           const delivery = await getNotifyDelivery()
           const bad = ids
-            .map(id => ({ id, s: recipientDeliveryState(delivery[bareLineUserId(wid, id)]) }))
-            .filter(x => x.s.state === 'blocked' || x.s.state === 'failing')
+            .map(id => ({ id, s: recipientDeliveryState(delivery[normalizeLineUserId(id)]) }))
+            .filter(x => isUndeliverable(x.s))
           // 全部都收不到歸上一顆（「沒有人會收到」），⛔ 不兩顆一起喊同一件事
           if (!bad.length || bad.length === ids.length) return { active: false }
           const nameOf = (id: string) => String(cfg?.displayNames?.[id] ?? '').trim() || '名單上一位'
           const first = bad[0]!
           const detail = bad.length === 1
             ? (first.s.state === 'blocked'
-                ? `${nameOf(first.id)}封鎖了官方帳號，這幾天的通知都沒送到`
-                : `${nameOf(first.id)}的通知被 LINE 退回：${first.s.state === 'failing' ? first.s.reason : ''}`)
+                // 推播被退回的那一種，LINE 對「封鎖」與「還沒加好友」回同一句，分不出來就兩個都講
+                ? `${nameOf(first.id)}${first.s.via === 'unfollow' ? '封鎖了官方帳號' : '封鎖了官方帳號或還沒加好友'}，這幾天的通知都沒送到`
+                : `${nameOf(first.id)}的通知一直被 LINE 退回：${first.s.state === 'failing' ? first.s.reason : ''}`)
             : `${bad.map(b => nameOf(b.id)).join('、')}收不到`
           return { active: true, count: bad.length, detail }
         }),

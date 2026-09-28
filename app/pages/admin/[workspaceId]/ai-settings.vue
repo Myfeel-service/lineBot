@@ -940,7 +940,8 @@ function applySettings(data: AiSettingsDoc) {
     inactiveTag: { ...(data.inactiveTag ?? buildDefaultAiSettings().inactiveTag) },
     autoTagSuggest: { ...(data.autoTagSuggest ?? buildDefaultAiSettings().autoTagSuggest) },
   }
-  notifyReady.value = data.handoffNotify?.enabled === true && (data.handoffNotify?.lineUserIds?.length ?? 0) > 0
+  // 名單有人＝有人在收（舊資料「有人但關著」後端 normalize 已收成空名單，⛔ 這裡不再另判 enabled）
+  notifyReady.value = (data.handoffNotify?.lineUserIds?.length ?? 0) > 0
   lastLoadedDoc = data
   nextTick(() => markClean())
 }

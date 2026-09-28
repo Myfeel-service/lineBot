@@ -20,6 +20,7 @@ import { getDb } from './firebase'
 import { getUserProfile, replyMessage } from './line'
 import { resolveLineOaBasicId } from './line-oa-basic-id'
 import { AI_SETTINGS_COLLECTION, getAiSettings, invalidateAiSettingsCache } from './ai-settings'
+import { normalizeLineUserId, notifyListHas } from '~~/shared/line-notify-list'
 import { recordNotifyDelivery } from './line-notify-delivery'
 import { buildNotifyConfirmText, type NotifyConfirmResult } from '~~/shared/line-notify-messages'
 
@@ -161,6 +162,14 @@ export async function tryConsumeMemberLineBindCode(params: {
     /** 他原本綁的那支（換手機）：跟「是我」那條同一個規矩，舊那支要從通知名單拿掉 */
     const previous = String(target.data().lineUserId ?? '').trim()
 
+    // 換手機：舊那支先從名單拿掉，拿不掉就不綁（`C-271`⑥：原本綁完才拿、失敗也不吭聲，
+    // 舊手機就繼續收通知卻已經不屬於任何成員；先拿再綁，失敗時他再傳一次就好）
+    if (previous && previous !== params.lineUserId
+      && await removeFromHandoffNotify(params.workspaceId, previous) === 'failed') {
+      await reply('⚠️ 綁定時發生錯誤,請稍後再傳一次。')
+      return true
+    }
+
     // ⚠️ LINE 只給「已加好友」的人的個人資料；讀不到＝**可能**還不是好友（也可能一時讀不到）
     const profile = await getUserProfile(params.lineUserId, params.workspaceId).catch(() => null)
     const batch = db.batch()
@@ -181,7 +190,12 @@ export async function tryConsumeMemberLineBindCode(params: {
       })
     }
     await batch.commit()
-    if (previous && previous !== params.lineUserId) await removeFromHandoffNotify(params.workspaceId, previous)
+
+    // 觀察者不收通知（他不處理客人；`C-271`⑬）：綁好 LINE，但不加進名單，照實講
+    if (target.data().role === 'viewer') {
+      await reply('綁好了。觀察者不收 LINE 通知；要收的話，請管理員把你的角色改成「客服」。')
+      return true
+    }
 
     // `D-103`①：綁好＝加進通知名單（原本回覆還叫人自己去 AI 設定勾，兩頁各做一次）
     const result: NotifyConfirmResult = await addToHandoffNotify(
@@ -228,6 +242,10 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此成員' })
 
   const lineUserId = String(snap.data()?.lineUserId ?? '').trim()
+  // 先從名單拿掉、拿掉了才解除綁定（`C-271`⑥）：反過來的話，名單拿不掉時成員文件已經沒有
+  // lineUserId，連重試都找不到要拿掉誰，那支手機就一直收下去
+  if (lineUserId && await removeFromHandoffNotify(workspaceId, lineUserId) === 'failed')
+    throw createError({ statusCode: 500, statusMessage: '通知名單改不進去，請再試一次' })
   await ref.update({
     lineUserId: FieldValue.delete(),
     lineDisplayName: FieldValue.delete(),
@@ -236,7 +254,6 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
     lineBindCode: FieldValue.delete(),
     lineBindCodeExpiresAt: FieldValue.delete(),
   })
-  if (lineUserId) await removeFromHandoffNotify(workspaceId, lineUserId)
 }
 
 /** 通知名單最多幾位（跟 normalizeAiSettings 的 slice(0,10) 同一個數字；超過會被靜靜切掉，所以這裡先擋） */
@@ -252,8 +269,9 @@ export const HANDOFF_NOTIFY_MAX = 10
 export type AddToNotifyResult = NotifyConfirmResult
 
 /**
- * 名單上**真的在收**的人。總開關拿掉之後，只有舊資料會出現「名單有人但 enabled=false」——
- * 那些人其實一則都沒收到（讀通知的每一處都先看 enabled），所以一律當成沒有人在收。
+ * 名單上**真的在收**的人——**只給原始文件用**（交易裡 `tx.get` 讀到的是沒經過 normalize 的那份）。
+ * 讀 `getAiSettings()` 的地方不用這支：normalizeAiSettings 已經把舊資料「名單有人但 enabled=false」
+ * 收成空名單（`C-271`⑮），只看 lineUserIds 就對。
  */
 export function effectiveNotifyIds(raw: { enabled?: unknown, lineUserIds?: unknown } | null | undefined): string[] {
   if (raw?.enabled !== true || !Array.isArray(raw.lineUserIds)) return []
@@ -283,8 +301,8 @@ export async function addToHandoffNotify(workspaceId: string, lineUserId: string
       const snap = await tx.get(ref)
       const raw = snap.exists ? snap.data()?.handoffNotify : undefined
       const ids = effectiveNotifyIds(raw)
-      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到
-      if (ids.some(v => v === id || v.endsWith(`_${id}`))) return 'already'
+      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到（比對一律走 notifyListHas）
+      if (notifyListHas(ids, id)) return 'already'
       if (ids.length >= HANDOFF_NOTIFY_MAX) return 'full'
       const nextIds = [...ids, id]
       const prevNames: Record<string, string> = raw?.displayNames ?? {}
@@ -328,6 +346,10 @@ export async function bindMemberLineUser(
   if (!snap.exists) return false
   /** 他原本綁的那支（換手機綁定時，舊那支要從通知名單拿掉——跟解除綁定同一條規矩，code review 抓到） */
   const previous = String(snap.data()?.lineUserId ?? '').trim()
+  // ⛔ 先拿掉舊那支、拿掉了才綁新的（`C-271`⑥）：綁完才拿、又失敗不吭聲的話，舊手機繼續收通知與每日摘要，
+  //    卻已經不屬於任何一位成員
+  if (previous && previous !== profile.lineUserId && await removeFromHandoffNotify(workspaceId, previous) === 'failed')
+    throw createError({ statusCode: 500, statusMessage: '通知名單改不進去，請再試一次' })
   const others = await db.collection('workspaceMembers')
     .where('workspaceId', '==', workspaceId)
     .where('lineUserId', '==', profile.lineUserId)
@@ -351,36 +373,41 @@ export async function bindMemberLineUser(
     })
   }
   await batch.commit()
-  // ⛔ 不拿掉的話，舊手機繼續收客人找真人的通知與每日摘要，卻已經不屬於任何一位成員
-  if (previous && previous !== profile.lineUserId) await removeFromHandoffNotify(workspaceId, previous)
   return true
 }
 
 export type NotifyReceivingResult =
-  | { ok: true, result: AddToNotifyResult | 'removed' }
-  | { ok: false, reason: 'not-member' | 'not-bound' }
+  | { ok: true, result: AddToNotifyResult | RemoveFromNotifyResult }
+  | { ok: false, reason: 'not-member' | 'not-bound' | 'viewer' }
 
 /**
  * 「LINE 通知」頁那一列的「收通知」開關（`D-103`⑤）。綁定跟收不收是兩件事：
  * 關掉＝從名單拿掉、LINE 還綁著（之後打開不用再掃一次）。
  * 權限（只能動自己／管理員動別人）由端點判斷，這裡只做事。
+ * ⛔ 觀察者打不開（`C-271`⑬）：他不處理客人，找真人的通知對他沒有下一步——而且那則有客人的名字與原話。
+ *    舊資料裡已經在收的觀察者照樣可以關掉。
  */
 export async function setMemberNotifyReceiving(workspaceId: string, uid: string, on: boolean): Promise<NotifyReceivingResult> {
   const snap = await getDb().collection('workspaceMembers').doc(memberDocId(uid, workspaceId)).get()
   if (!snap.exists) return { ok: false, reason: 'not-member' }
   const lineUserId = String(snap.data()?.lineUserId ?? '').trim()
   if (!lineUserId) return { ok: false, reason: 'not-bound' }
-  if (!on) {
-    await removeFromHandoffNotify(workspaceId, lineUserId)
-    return { ok: true, result: 'removed' }
-  }
+  if (!on) return { ok: true, result: await removeFromHandoffNotify(workspaceId, lineUserId) }
+  if (snap.data()?.role === 'viewer') return { ok: false, reason: 'viewer' }
   return { ok: true, result: await addToHandoffNotify(workspaceId, lineUserId, String(snap.data()?.lineDisplayName ?? '')) }
 }
 
-/** 從 aiSettings.handoffNotify 名單移掉某個 lineUserId（沒有就什麼都不做） */
-export async function removeFromHandoffNotify(workspaceId: string, lineUserId: string): Promise<void> {
-  const id = String(lineUserId || '').trim()
-  if (!id) return
+/**
+ * - `removed`：拿掉了；`absent`：本來就不在名單上（什麼都沒寫）
+ * - `failed`：寫不進去——⛔ 呼叫端一定要看（`C-271`⑥：原本吞掉錯誤回 void，
+ *   端點照樣回「拿掉了」、寫操作紀錄，那個人其實還在收別的客人的名字與原話）
+ */
+export type RemoveFromNotifyResult = 'removed' | 'absent' | 'failed'
+
+/** 從 aiSettings.handoffNotify 名單移掉某個 lineUserId */
+export async function removeFromHandoffNotify(workspaceId: string, lineUserId: string): Promise<RemoveFromNotifyResult> {
+  const id = normalizeLineUserId(lineUserId)
+  if (!id) return 'absent'
   try {
     const db = getDb()
     const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
@@ -390,8 +417,8 @@ export async function removeFromHandoffNotify(workspaceId: string, lineUserId: s
       if (!snap.exists) return false
       const raw = snap.data()?.handoffNotify
       const ids: string[] = Array.isArray(raw?.lineUserIds) ? raw.lineUserIds.map((v: unknown) => String(v ?? '')) : []
-      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式,兩種都要比對得到
-      const hit = (v: string) => v === id || v.endsWith(`_${id}`)
+      // 舊資料可能存成 `${workspaceId}_U…` 主鍵形式，兩種都要比對得到（同 notifyListHas 的口徑）
+      const hit = (v: string) => normalizeLineUserId(v) === id
       if (!ids.some(hit)) return false
 
       const next = ids.filter(v => !hit(v))
@@ -403,8 +430,10 @@ export async function removeFromHandoffNotify(workspaceId: string, lineUserId: s
       return true
     })
     if (changed) invalidateAiSettingsCache(workspaceId)
+    return changed ? 'removed' : 'absent'
   }
   catch (e) {
     console.error('[member-bind] remove from handoffNotify failed:', e)
+    return 'failed'
   }
 }

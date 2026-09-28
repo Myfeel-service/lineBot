@@ -64,9 +64,14 @@ describe('buildNotifyConfirmText：綁好之後回給手機的那一則', () => 
     expect(t).toContain('等超過 60 分鐘沒人接手時')
     expect(t).toContain('明天早上 10:00 會收到第一則。')
   })
-  it('有設服務時間 → 補一句下班時段不吵（⛔ 不承諾半夜也會傳）', () => {
-    const t = buildNotifyConfirmText({ result: 'added', cfg: cfg(), serviceHours: WEEKEND_OFF, nowMs: now })
-    expect(t).toContain('下班時段不吵你')
+  it('有設服務時間 → 只講「找真人的通知下班時段不傳」（`C-271`⑩：⛔ 不可以說整支手機下班都不吵——摘要照設定的整點發）', () => {
+    const t = buildNotifyConfirmText({ result: 'added', cfg: cfg({ digestHour: 20 }), serviceHours: WEEKEND_OFF, nowMs: now })
+    expect(t).toContain('（客人找真人的通知，下班時段不傳）')
+    expect(t).not.toContain('不吵你')
+    // ⛔ 也不承諾「上班後再傳」：「每次都通知」模式下班時段那一則是直接不送的
+    expect(t).not.toContain('上班後再傳')
+    const off = buildNotifyConfirmText({ result: 'added', cfg: cfg(), serviceHours: OFF, nowMs: now })
+    expect(off).not.toContain('下班時段')
   })
   it('🔴 名單滿了 → 照實講沒加進去，⛔ 不列「會收到什麼」', () => {
     const t = buildNotifyConfirmText({ result: 'full', cfg: cfg(), serviceHours: OFF, nowMs: now })

@@ -8,7 +8,7 @@
     <div v-else-if="state === 'error'" class="ln-qr__body">
       <p class="ln-qr__text">{{ errorText }}</p>
       <div class="ln-qr__actions">
-        <el-button size="small" type="primary" plain @click="issue">再試一次</el-button>
+        <el-button size="small" type="primary" plain @click="retry">再試一次</el-button>
         <el-button size="small" text @click="$emit('cancel')">先不用</el-button>
       </div>
     </div>
@@ -93,6 +93,16 @@ async function issue() {
     state.value = 'error'
     errorText.value = e?.data?.statusMessage || '準備不起來，請再試一次。'
   }
+}
+
+/**
+ * 「再試一次」：15 分鐘的等候從現在重新算（`C-271`⑤）。
+ * ⛔ 不重設的話，等滿 15 分鐘放棄之後，這顆鈕每按一次都在 2.5 秒後又判成「等太久」，永遠沒用。
+ */
+function retry() {
+  startedAtLocal = 0
+  stopped = false
+  void issue()
 }
 
 function schedule() {

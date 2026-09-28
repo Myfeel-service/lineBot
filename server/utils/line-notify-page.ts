@@ -4,12 +4,12 @@
  */
 import type { Firestore } from 'firebase-admin/firestore'
 import { getDb, getFirebaseAuth } from './firebase'
-import { AI_SETTINGS_COLLECTION, getAiSettings, invalidateAiSettingsCache, normalizeAiSettings } from './ai-settings'
-import { effectiveNotifyIds, HANDOFF_NOTIFY_MAX, memberDocId } from './member-line-bind'
-import { bareLineUserId, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery, type RecipientState } from './line-notify-delivery'
+import { readAiSettingsFresh } from './ai-settings'
+import { normalizeLineUserId, notifyListHas } from '~~/shared/line-notify-list'
+import { HANDOFF_NOTIFY_MAX, memberDocId } from './member-line-bind'
+import { readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery, type RecipientState } from './line-notify-delivery'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { notifyLinksEnabled } from './notify-links'
-import { buildDefaultAiSettings } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
@@ -26,17 +26,6 @@ export function pickNotifyTiming(h: AiSettingsDoc['handoffNotify']): NotifyTimin
     weeklyInsights: h.weeklyInsights,
     criticalAlertPush: h.criticalAlertPush,
   }
-}
-
-/**
- * 讀**不經快取**的設定：這一頁剛有人加進名單，下一次讀到的必須是新的。
- * ⚠️ 設定快取是每個執行個體各一份（60 秒），加名單的那一台清得掉自己的，清不到別台的。
- */
-export async function readFreshAiSettings(workspaceId: string, db: Firestore = getDb()): Promise<AiSettingsDoc> {
-  const snap = await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).get()
-  if (!snap.exists) return getAiSettings(workspaceId, db)
-  invalidateAiSettingsCache(workspaceId)
-  return normalizeAiSettings({ ...buildDefaultAiSettings(), ...(snap.data() as Partial<AiSettingsDoc>) })
 }
 
 export interface LineNotifyRow {
@@ -74,11 +63,6 @@ export interface LineNotifyPageData {
   linksEnabled: boolean
 }
 
-/** 名單上是否有這個 LINE 帳號（舊資料可能存成 `${workspaceId}_U…`） */
-function listHas(ids: string[], lineUserId: string): boolean {
-  return ids.some(v => v === lineUserId || v.endsWith(`_${lineUserId}`))
-}
-
 export async function buildLineNotifyPageData(input: {
   workspaceId: string
   uid: string
@@ -88,14 +72,16 @@ export async function buildLineNotifyPageData(input: {
   const db = input.db ?? getDb()
   const wid = input.workspaceId
   const [settings, memberSnap, delivery, creds] = await Promise.all([
-    readFreshAiSettings(wid, db),
+    // 不經快取（這一頁剛有人加進名單，下一次讀到的必須是新的），⛔ 也不清共用快取
+    readAiSettingsFresh(wid, db),
     db.collection('workspaceMembers').where('workspaceId', '==', wid).get(),
     readNotifyDelivery(wid, db)
       .then(d => ({ ok: true as const, d }))
       .catch(() => ({ ok: false as const, d: {} as Record<string, NotifyRecipientDelivery> })),
     getLineWorkspaceCredentials(wid).catch(() => null),
   ])
-  const ids = effectiveNotifyIds(settings.handoffNotify)
+  // normalizeAiSettings 已經把舊資料「名單有人但關著」收成空名單（`C-271`⑮），這裡只看名單
+  const ids = settings.handoffNotify.lineUserIds
 
   // 自己加入的擁有者（自助開帳）成員文件上沒有 invitedEmail，要去 Auth 查
   const members = memberSnap.docs.map(d => d.data() as Record<string, any>)
@@ -118,7 +104,7 @@ export async function buildLineNotifyPageData(input: {
     const uid = String(m.uid ?? '')
     if (!uid) continue
     const lineUserId = String(m.lineUserId ?? '').trim()
-    const receiving = Boolean(lineUserId) && listHas(ids, lineUserId)
+    const receiving = Boolean(lineUserId) && notifyListHas(ids, lineUserId)
     if (receiving) matched.add(lineUserId)
     const role = (m.role ?? 'viewer') as WorkspaceMemberRole
     // 觀察者不處理客人、也不能自己加（notify.self 是客服起跳）：沒綁的不列，綁了（舊資料）照列
@@ -134,7 +120,7 @@ export async function buildLineNotifyPageData(input: {
         : null,
       receiving,
       pendingCodeExpiresAt: !lineUserId && m.lineBindCode && codeExp > now ? codeExp : null,
-      delivery: receiving ? recipientDeliveryState(delivery.d[bareLineUserId(wid, lineUserId)]) : null,
+      delivery: receiving ? recipientDeliveryState(delivery.d[normalizeLineUserId(lineUserId)]) : null,
     })
   }
   // 自己排第一，其餘照角色（擁有者／管理員／客服）
@@ -142,7 +128,7 @@ export async function buildLineNotifyPageData(input: {
   rows.sort((a, b) => (a.isSelf === b.isSelf ? (ORDER[a.role] ?? 9) - (ORDER[b.role] ?? 9) : a.isSelf ? -1 : 1))
 
   const others = ids
-    .map(id => bareLineUserId(wid, id))
+    .map(id => normalizeLineUserId(id))
     .filter(id => !matched.has(id))
     .map(id => ({
       lineUserId: id,
@@ -175,17 +161,25 @@ export interface LineNotifySelfStatus {
   /** 首頁那張卡按過「先不用」 */
   inviteDismissed: boolean
   lineConnected: boolean
+  /** 名單滿了（最多 10 位）：綁好了卻沒進名單時，講得出是這個原因（`C-271`⑨） */
+  full: boolean
+  /** 名單上有幾位在收：小幫手分得出「沒有人在名單上」還是「名單上的人都收不到」（`C-271`⑪） */
+  receivingCount: number
   timing: NotifyTiming
   serviceHours: AiSettingsDoc['serviceHours']
 }
 
-/** 首頁那張卡、掃 QR 等待時每幾秒問一次：只讀自己的成員文件＋設定（2 次讀取） */
+/**
+ * 首頁那張卡、掃 QR 等待時每幾秒問一次：只讀自己的成員文件＋設定（2 次讀取）。
+ * ⛔ 讀設定不清共用快取（`C-271`⑫：原本每 2.5 秒清一次，這台送訊息的熱路徑就一直重讀 Firestore）。
+ */
 export async function buildLineNotifySelfStatus(workspaceId: string, uid: string, db: Firestore = getDb()): Promise<LineNotifySelfStatus> {
   const [memberSnap, settings, creds] = await Promise.all([
     db.collection('workspaceMembers').doc(memberDocId(uid, workspaceId)).get(),
-    readFreshAiSettings(workspaceId, db),
+    readAiSettingsFresh(workspaceId, db),
     getLineWorkspaceCredentials(workspaceId).catch(() => null),
   ])
+  const ids = settings.handoffNotify.lineUserIds
   const m = memberSnap.exists ? (memberSnap.data() as Record<string, any>) : null
   const lineUserId = String(m?.lineUserId ?? '').trim()
   const boundAt = m?.lineBoundAt?.toMillis?.() ?? 0
@@ -195,9 +189,11 @@ export async function buildLineNotifySelfStatus(workspaceId: string, uid: string
     lineDisplayName: String(m?.lineDisplayName ?? ''),
     linePictureUrl: String(m?.linePictureUrl ?? ''),
     boundAt: Number(boundAt) || 0,
-    receiving: Boolean(lineUserId) && listHas(effectiveNotifyIds(settings.handoffNotify), lineUserId),
+    receiving: Boolean(lineUserId) && notifyListHas(ids, lineUserId),
     inviteDismissed: Number(m?.lineNotifyInviteDismissedAt ?? 0) > 0,
     lineConnected: Boolean(creds?.channelAccessToken),
+    full: ids.length >= HANDOFF_NOTIFY_MAX,
+    receivingCount: ids.length,
     timing: pickNotifyTiming(settings.handoffNotify),
     serviceHours: settings.serviceHours,
   }

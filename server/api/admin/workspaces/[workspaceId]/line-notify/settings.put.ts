@@ -1,8 +1,8 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
-import { AI_SETTINGS_COLLECTION, invalidateAiSettingsCache, normalizeAiSettings } from '~~/server/utils/ai-settings'
-import { NOTIFY_TIMING_KEYS, pickNotifyTiming, readFreshAiSettings } from '~~/server/utils/line-notify-page'
+import { AI_SETTINGS_COLLECTION, invalidateAiSettingsCache, normalizeAiSettings, readAiSettingsFresh } from '~~/server/utils/ai-settings'
+import { NOTIFY_TIMING_KEYS, pickNotifyTiming } from '~~/server/utils/line-notify-page'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
   for (const k of NOTIFY_TIMING_KEYS) if (k in body) picked[k] = body[k]
 
   const db = getDb()
-  const current = await readFreshAiSettings(workspaceId, db)
+  const current = await readAiSettingsFresh(workspaceId, db)
   const merged = normalizeAiSettings({ ...current, handoffNotify: { ...current.handoffNotify, ...picked } })
   const before = pickNotifyTiming(current.handoffNotify)
   const after = pickNotifyTiming(merged.handoffNotify)

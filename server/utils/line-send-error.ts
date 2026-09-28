@@ -19,40 +19,47 @@ function asLineHttpError(e: unknown): { status: number, body: string } | null {
   return { status, body }
 }
 
-export function describeLineSendFailure(e: unknown): string | null {
+/**
+ * LINE 退件是哪一種（**單一事實來源**，2026-09-27 `C-271`⑭）。
+ * 對話頁的「發送失敗」說明（下面那支）與 LINE 通知的送達紀錄（`line-notify-delivery.ts`）都用這一份——
+ * ⛔ 兩邊各判一次，哪天 LINE 換了封鎖的字樣，同一個錯誤在兩頁會歸成不同類。
+ * 回 null＝不是 LINE 回的 HTTP 錯誤（斷線、頻道沒設定好這類）。
+ */
+export type LineSendFailureKind = 'blocked' | 'monthlyQuota' | 'rateLimited' | 'tooLong' | 'badRequest' | 'auth' | 'server' | 'other'
+
+export function lineSendFailureKind(e: unknown): LineSendFailureKind | null {
   const err = asLineHttpError(e)
   if (!err) return null
   const detail = err.body.toLowerCase()
-
-  // 封鎖／不是好友：LINE 用同一句話回這兩種情形，我們也一起講（客服要做的事一樣）
-  if (detail.includes('blocked') || detail.includes("hasn't added") || detail.includes('has not added')) {
-    return '這位客人已封鎖或還沒加入官方帳號，訊息送不出去。'
-  }
-
+  // 封鎖／不是好友：LINE 用同一句話回這兩種情形
+  if (detail.includes('blocked') || detail.includes("hasn't added") || detail.includes('has not added')) return 'blocked'
   if (err.status === 429) {
     // 429 有兩種：當月推播額度用完（要升方案）、短時間送太快（等一下就好）
-    if (detail.includes('monthly limit') || detail.includes('quota')) {
-      return '本月推播則數已用完（LINE 官方帳號方案的額度），要等下個月重算或升級方案才能再送。'
-    }
-    return '送太快被 LINE 暫時擋下來了，請過幾秒再送一次。'
+    return detail.includes('monthly limit') || detail.includes('quota') ? 'monthlyQuota' : 'rateLimited'
   }
-
   if (err.status === 400) {
-    if (detail.includes('5000') || detail.includes('max length') || detail.includes('length must be')) {
-      return '訊息太長，LINE 單則上限 5000 字，請拆成兩則送。'
-    }
-    return `LINE 不接受這則訊息的內容${extractLineMessage(err.body)}`
+    return detail.includes('5000') || detail.includes('max length') || detail.includes('length must be') ? 'tooLong' : 'badRequest'
   }
+  if (err.status === 401 || err.status === 403) return 'auth'
+  if (err.status >= 500) return 'server'
+  return 'other'
+}
 
-  if (err.status === 401 || err.status === 403) {
-    return 'LINE 頻道憑證失效或權限不足，請到 LINE 設定頁重新設定 Channel access token。'
+export function describeLineSendFailure(e: unknown): string | null {
+  const kind = lineSendFailureKind(e)
+  if (!kind) return null
+  const err = asLineHttpError(e)!
+  switch (kind) {
+    // 客服要做的事一樣，所以封鎖與不是好友一起講
+    case 'blocked': return '這位客人已封鎖或還沒加入官方帳號，訊息送不出去。'
+    case 'monthlyQuota': return '本月推播則數已用完（LINE 官方帳號方案的額度），要等下個月重算或升級方案才能再送。'
+    case 'rateLimited': return '送太快被 LINE 暫時擋下來了，請過幾秒再送一次。'
+    case 'tooLong': return '訊息太長，LINE 單則上限 5000 字，請拆成兩則送。'
+    case 'badRequest': return `LINE 不接受這則訊息的內容${extractLineMessage(err.body)}`
+    case 'auth': return 'LINE 頻道憑證失效或權限不足，請到 LINE 設定頁重新設定 Channel access token。'
+    case 'server': return 'LINE 伺服器暫時有問題，請稍後再送一次。'
+    default: return `發送失敗（LINE 回應 ${err.status}）${extractLineMessage(err.body)}`
   }
-
-  if (err.status >= 500) {
-    return 'LINE 伺服器暫時有問題，請稍後再送一次。'
-  }
-
-  return `發送失敗（LINE 回應 ${err.status}）${extractLineMessage(err.body)}`
 }
 
 /** 把 LINE 回的 { "message": "..." } 挑出來附在後面，供客服回報時貼給我們看 */
