@@ -14,6 +14,9 @@
  *    - 只讀 `workspaceMembers` 找一個管理員換 token（唯讀）
  *    - 瀏覽器端**所有非 GET 一律攔截擋掉**——⛔ `POST /api/tag/report` 真的送出去
  *      會在正式庫寫一份 `tagReports` 並燒一次 LLM，還會掃三四千筆
+ *      （關 2b 要看「等待中」那一段，所以那一關的 POST 是在瀏覽器這端**假造回應**，
+ *       一樣沒有離開這台機器；跑完會分開印「擋下」與「假造」各幾筆）
+ *    - 為了關 2c 多讀一次 `GET /api/admin/workspaces/my`（唯讀），只在瀏覽器端把角色改成觀察者
  *    - `GET /api/tag/report` 一律**假造**：這頁的六張卡要用各種極端資料驗，
  *      靠正式庫那一份驗不到「算不出覆蓋率」「沒有總結」這些分支
  *
@@ -68,14 +71,35 @@ const realTag = tagSnap.empty
   : { id: tagSnap.docs[0].id, name: String(tagSnap.docs[0].data().name ?? '') }
 console.log(realTag ? `關 7 會用真標籤：${realTag.name}` : '⚠️ 這個工作區沒有標籤，關 7 只驗得到「對不上」那條分支')
 
+/**
+ * 關 2c 要一份「這個人在這個帳號是觀察者」的帳號清單（`D-108`）。
+ * 拿真的 `/api/admin/workspaces/my`（唯讀）回來只改角色——⛔ 不整份手刻：
+ * 清單長什麼樣是別人在維護的，手刻的少一格，layout 可能在別的地方先炸掉，量到的就不是這一頁。
+ */
+function asViewer(node) {
+  if (Array.isArray(node)) return node.map(asViewer)
+  if (node && typeof node === 'object') {
+    const out = {}
+    for (const [k, v] of Object.entries(node)) out[k] = asViewer(v)
+    if (out.workspaceId === WORKSPACE_ID && 'role' in out) out.role = 'viewer'
+    return out
+  }
+  return node
+}
+const myRes = await fetch(`${BASE}/api/admin/workspaces/my`, { headers: { authorization: `Bearer ${signIn.idToken}` } })
+const viewerList = myRes.ok ? asViewer(await myRes.json()) : null
+if (!viewerList) console.log(`⚠️ 讀不到帳號清單（HTTP ${myRes.status}），關 2c 會直接記紅燈`)
+
 let failed = false
 const fail = msg => { failed = true; console.error(`❌ ${msg}`) }
 const pass = msg => console.log(`✅ ${msg}`)
 
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
 const blocked = []
+/** 假造回應的寫入（瀏覽器以為送出去了，其實在這裡就被接住）——跟 blocked 分開記，跑完一起印 */
+const faked = []
 
-async function openLoggedInPage({ fakeReads } = {}) {
+async function openLoggedInPage({ fakeReads, fakeWrites } = {}) {
   const ctx = await browser.createBrowserContext()
   const page = await ctx.newPage()
   await page.setViewport({ width: 1440, height: 1000 })
@@ -94,6 +118,15 @@ async function openLoggedInPage({ fakeReads } = {}) {
         return
       }
       req.continue()
+      return
+    }
+    // 指名要假造的寫入：在瀏覽器這一端就回應，⛔ 請求從頭到尾沒有離開這台機器
+    const fakeW = fakeWrites?.(url, method)
+    if (fakeW) {
+      faked.push(`${method} ${url}`)
+      const reply = () => req.respond({ status: fakeW.status ?? 200, contentType: 'application/json', body: JSON.stringify(fakeW.body ?? {}) })
+      if (fakeW.delayMs) setTimeout(reply, fakeW.delayMs)
+      else reply()
       return
     }
     // ⛔ 沒被指名的寫入一律擋成 500，而且記下來跑完印出證據
@@ -199,6 +232,8 @@ const WS = `${BASE}/admin/${WORKSPACE_ID}`
 
 // ═══════════════════════════════════════════════════════════════════
 //  關 2：還沒產生過 → 空狀態；⛔ 對照組＝此時六張卡一張都不該在
+//        `D-108` 起再釘三件：畫面上只有一顆「產生報告」、砍掉的兩段說明不可以長回來、
+//        管理員看不到觀察者那句（關 2c 的對照組）
 // ═══════════════════════════════════════════════════════════════════
 {
   const { ctx, page } = await openLoggedInPage({
@@ -210,10 +245,98 @@ const WS = `${BASE}/admin/${WORKSPACE_ID}`
   else {
     // ⛔ 對照組**不可以比對文字**：空狀態那段說明裡本來就寫著「客人自己表現出來的興趣、
     //    …AI 判得準不準」（第一版守門員就是這樣誤判成紅燈的）。改成數真的卡片元素。
-    const cards = await page.evaluate(() => document.querySelectorAll('.friend-stats .message-card').length)
-    if (cards !== 0) fail(`關 2 對照組：還沒有報告卻畫出了 ${cards} 張卡`)
-    else pass('關 2：還沒產生過只給空狀態，卡片數＝0（對照組成立）')
+    // ⚠️ `D-108` 起空狀態自己也是一張白卡（`.friend-stats__empty-card`），要排除它再數——
+    //    ⛔ 不可以把 0 改成 1 了事：那樣報告卡被畫出一張、空卡消失時也會是綠的。
+    const state = await page.evaluate(() => ({
+      reportCards: document.querySelectorAll('.friend-stats .message-card:not(.friend-stats__empty-card)').length,
+      emptyCards: document.querySelectorAll('.friend-stats .friend-stats__empty-card').length,
+      // ⚠️ 數「帶產生兩個字的」不數「字面等於產生報告的」：右上角那顆若以「重新產生」的名字跑回來也要抓得到
+      genButtons: [...document.querySelectorAll('button')].filter(b => /產生/.test(b.textContent ?? '')).length,
+      text: document.body?.innerText ?? '',
+    }))
+    // 回歸鎖：這兩句是 `D-108` 刻意砍掉的（一句重複標題下那句、一句是我們的成本考量）
+    const regrown = ['整理成六件事', '一小時內只算一次'].filter(t => state.text.includes(t))
+    if (state.reportCards !== 0) fail(`關 2 對照組：還沒有報告卻畫出了 ${state.reportCards} 張卡`)
+    else if (state.emptyCards !== 1) fail(`關 2：空狀態應該是一張白卡，找到 ${state.emptyCards} 張`)
+    else if (state.genButtons !== 1) fail(`關 2：「產生報告」有 ${state.genButtons} 顆，應該只有中間那 1 顆（右上角要等有報告才出現）`)
+    else if (regrown.length) fail(`關 2：砍掉的說明又長回來了：${regrown.join('、')}`)
+    else if (state.text.includes('要請客服或管理員來按')) fail('關 2：管理員看到了觀察者那句')
+    else pass('關 2：還沒產生過只給一張空白卡＋一顆「產生報告」，報告卡＝0（對照組成立）')
   }
+  await ctx.close()
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  關 2b：第一次產生，等的時候要講話（`D-108`）
+//        POST 在瀏覽器這端假造、晚 4 秒才回——⛔ 不會真的去算（那一趟會寫正式庫＋燒一次 LLM）
+// ═══════════════════════════════════════════════════════════════════
+{
+  const fresh = { generatedAtMs: Date.now(), generatedBy: '守門員', payload: payload(), summary: '- 假造的總結', summarySkip: null }
+  const { ctx, page } = await openLoggedInPage({
+    fakeReads: reportReply({ report: null, canRegenerate: true, cooldownRemainingMs: 0 }),
+    fakeWrites: (url, method) => (method === 'POST' && url.includes('/api/tag/report')
+      ? { delayMs: 4000, body: { report: fresh, canRegenerate: false, cooldownRemainingMs: 60 * 60_000 } }
+      : null),
+  })
+  await page.goto(`${WS}/friend-stats`, { waitUntil: 'domcontentloaded' })
+  const r0 = await waitForText(page, ['還沒有產生過報告'])
+  const countGenButtons = () => page.evaluate(() =>
+    [...document.querySelectorAll('button')].filter(b => /產生/.test(b.textContent ?? '')).length)
+  if (!r0.hit) fail(`關 2b：沒看到空狀態。畫面上是：${r0.body.slice(0, 200)}`)
+  // 對照組：還沒按之前，等待那句不可以在
+  else if (r0.body.includes('正在整理你的標籤')) fail('關 2b 對照組：還沒按就出現「正在整理你的標籤」')
+  else {
+    const clicked = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find(x => x.textContent?.trim() === '產生報告')
+      if (!b) return false
+      b.click()
+      return true
+    })
+    if (!clicked) fail('關 2b：找不到「產生報告」按鈕')
+    else {
+      const waiting = await waitForText(page, ['正在整理你的標籤'], 3000)
+      const buttonsWhileWaiting = await countGenButtons()
+      const done = await waitForText(page, ['客人自己表現出來的'], 15_000)
+      const after = await page.evaluate(() => ({
+        cards: document.querySelectorAll('.friend-stats .message-card:not(.friend-stats__empty-card)').length,
+        stillWaiting: (document.body?.innerText ?? '').includes('正在整理你的標籤'),
+        regen: [...document.querySelectorAll('button')].some(b => b.textContent?.includes('重新產生')),
+      }))
+      if (!waiting.hit) fail('關 2b：按下去之後沒有講「正在整理你的標籤」——只有按鈕在轉')
+      else if (buttonsWhileWaiting !== 0) fail(`關 2b：等待中畫面上還有 ${buttonsWhileWaiting} 顆「產生」按鈕，可以再按一次`)
+      else if (!done.hit) fail('關 2b：假造的報告回來了，但報告卡沒畫出來')
+      else if (after.stillWaiting) fail('關 2b：報告出來了，等待那句還掛著')
+      else if (after.cards !== 7) fail(`關 2b：報告卡 ${after.cards} 張，應該 7 張（總結＋六張卡）`)
+      else if (!after.regen) fail('關 2b：報告出來了，右上角沒有「重新產生」')
+      else pass('關 2b：按下去 →「正在整理你的標籤」（等待中沒有第二顆可按）→ 七張卡＋右上角「重新產生」')
+    }
+  }
+  await ctx.close()
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  關 2c：觀察者進來 → 講清楚要請誰按，而且沒有按鈕（後端會 403）
+//        對照組＝關 2：管理員有一顆按鈕、看不到這句
+// ═══════════════════════════════════════════════════════════════════
+if (!viewerList) fail('關 2c：讀不到帳號清單，沒辦法模擬觀察者')
+else {
+  let listServed = false
+  const { ctx, page } = await openLoggedInPage({
+    fakeReads: (url) => {
+      if (url.includes('/api/tag/report')) return { body: { report: null, canRegenerate: true, cooldownRemainingMs: 0 } }
+      if (url.includes('/api/admin/workspaces/my')) { listServed = true; return { body: viewerList } }
+      return null
+    },
+  })
+  await page.goto(`${WS}/friend-stats`, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['要請客服或管理員來按', '產生報告'])
+  const buttons = await page.evaluate(() =>
+    [...document.querySelectorAll('button')].filter(b => /產生/.test(b.textContent ?? '')).length)
+  // ⛔ 假清單沒被拿去用的話，這關量到的就不是觀察者
+  if (!listServed) fail('關 2c：頁面沒有來拿帳號清單，角色沒被換成觀察者，這關不算數')
+  else if (r.hit !== '要請客服或管理員來按') fail(`關 2c：觀察者沒看到「要請客服或管理員來按」。畫面上是：${r.body.slice(0, 200)}`)
+  else if (buttons !== 0) fail(`關 2c：觀察者畫面上有 ${buttons} 顆「產生」按鈕（按了只會被後端擋）`)
+  else pass('關 2c：觀察者看到「要請客服或管理員來按」，畫面上沒有按鈕')
   await ctx.close()
 }
 
@@ -406,6 +529,7 @@ for (const [skip, needle] of [['too_thin', '貼標資料還太少'], ['llm_faile
 // ═══════════════════════════════════════════════════════════════════
 console.log('')
 console.log(`被擋下的寫入請求：${blocked.length} 筆${blocked.length ? `（${[...new Set(blocked)].join('、')}）` : '＝全程沒有任何寫入送出去'}`)
+console.log(`在瀏覽器端假造回應的寫入：${faked.length} 筆${faked.length ? `（${[...new Set(faked)].join('、')}，都沒有離開這台機器）` : ''}`)
 await browser.close()
 if (failed) { console.error('\n有關卡沒過'); process.exit(1) }
 console.log('\n全部通過')

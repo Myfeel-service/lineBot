@@ -7,25 +7,55 @@
   // 「意圖 vs 事件」那兩欄要照**卡片**寬度換行，不是照視窗——側欄開不開會改變卡片寬度。
   container-type: inline-size;
 
+  // 還沒產生過／第一次產生等待中（`D-108`）：放進跟報告卡同一種白卡、置中，
+  // 排法照全站空畫面（`.split-empty-state`：置中、標題＋一顆主要動作）。
+  // 產生好之後報告卡就長在同一個位置。
+  &__empty-card {
+    min-height: 240px;
+    justify-content: center;
+  }
+
   &__empty {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px 24px;
+    text-align: center;
+  }
+
+  &__empty-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    background: var(--brand-green-wash);
+    color: var(--brand-green-text);
+  }
+
+  // 共用 .spinner 是 20px，放在空卡正中間太小，跟上面的圖示圈同一個量級
+  &__empty-spinner {
+    width: 28px;
+    height: 28px;
+    border-width: 3px;
   }
 
   &__empty-title {
     margin: 0;
     font-weight: 700;
     font-size: 15px;
+    color: var(--el-text-color-primary);
   }
 
   &__empty-body {
     margin: 0;
     font-size: 13px;
     line-height: 1.8;
-    color: var(--el-text-color-regular);
-    max-width: 46em;
+    color: var(--el-text-color-secondary);
+    max-width: 30em;
   }
 
   // 每張卡的主句：要比旁邊的說明重，但不到標題那麼重

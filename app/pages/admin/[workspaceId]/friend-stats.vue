@@ -21,8 +21,11 @@
           想看客人來了多少、誰接住的？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
         </template>
       </AdminSoloPageHeading>
-      <div class="admin-header-actions">
-        <span v-if="report" class="text-xs text-muted">{{ generatedText }}</span>
+      <!-- ⛔ 還沒有報告時這裡不放按鈕：中間的空狀態已經有一顆「產生報告」，
+           同一個畫面兩顆一樣的按鈕會被讀成兩件不同的事（`D-108`）。 -->
+      <div v-if="report" class="admin-header-actions">
+        <span class="text-xs text-muted">{{ generatedText }}</span>
+        <!-- 一小時冷卻的說明只放在這裡：要再按的時候才需要知道 -->
         <el-tooltip v-if="canOperate" :content="cooldownTip" :disabled="!cooldownTip" placement="top">
           <span>
             <el-button
@@ -33,7 +36,7 @@
               :disabled="!allowRegen"
               @click="generate"
             >
-              {{ report ? '重新產生' : '產生報告' }}
+              重新產生
             </el-button>
           </span>
         </el-tooltip>
@@ -53,18 +56,29 @@
           {{ loadError }}
         </el-alert>
 
-        <!-- 還沒產生過 -->
-        <div v-else-if="!report" class="friend-stats__empty">
-          <p class="friend-stats__empty-title">還沒有產生過報告</p>
-          <p class="friend-stats__empty-body">
-            這份報告會把你的標籤整理成六件事：還沒審的建議、客人自己表現出來的興趣、
-            標籤在回答什麼、有多少人一顆標籤都沒有、哪些標籤該清掉、AI 判得準不準。
-          </p>
-          <p class="friend-stats__empty-body text-muted">
-            算一次要掃過整個帳號的貼標紀錄，所以是按鈕觸發、一小時內只算一次。
-          </p>
-          <el-button v-if="canOperate" type="primary" :loading="generating" @click="generate">產生報告</el-button>
-          <p v-else class="text-muted">這要請有操作權限的人來按。</p>
+        <!-- 第一次產生、等待中：⛔ 不可以只有按鈕在轉——要掃三四千筆貼標紀錄＋一次 LLM，
+             只看到轉圈會以為當掉、再按一次（`D-108`）。
+             ⚠️ 刻意不寫秒數：沒在正式站量過，本機量到的數字不能當承諾。 -->
+        <div v-else-if="!report && generating" class="message-card ar-section-card friend-stats__empty-card">
+          <div class="friend-stats__empty" role="status">
+            <div class="spinner friend-stats__empty-spinner" />
+            <p class="friend-stats__empty-title">正在整理你的標籤⋯</p>
+            <p class="friend-stats__empty-body">要等一下子。好了會直接出現在這裡，不用重新整理。</p>
+          </div>
+        </div>
+
+        <!-- 還沒產生過：只留標題＋一顆按鈕（`D-108`）。
+             ⛔ 別把「這份報告有哪六件事」「為什麼要按按鈕、一小時只算一次」寫回來：
+             前者標題下那句已經講了、按下去就看得到；後者是我們的讀取費考量，
+             冷卻說明放在「重新產生」的提示裡，要再按的時候才看得到。 -->
+        <div v-else-if="!report" class="message-card ar-section-card friend-stats__empty-card">
+          <div class="friend-stats__empty">
+            <div class="friend-stats__empty-icon"><el-icon><PieChart /></el-icon></div>
+            <p class="friend-stats__empty-title">還沒有產生過報告</p>
+            <el-button v-if="canOperate" type="primary" @click="generate">產生報告</el-button>
+            <!-- 點名角色：「有操作權限的人」他在畫面上找不到是誰 -->
+            <p v-else class="friend-stats__empty-body">要請客服或管理員來按「產生報告」，產生好之後你就看得到。</p>
+          </div>
         </div>
 
         <template v-else>
@@ -298,7 +312,7 @@
 </template>
 
 <script setup lang="ts">
-import { Refresh } from '@element-plus/icons-vue'
+import { PieChart, Refresh } from '@element-plus/icons-vue'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import {
   cooldownText,
