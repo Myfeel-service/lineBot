@@ -19,7 +19,9 @@
         <span>載入中…</span>
       </div>
 
-      <div v-else class="solo-editor-body admin-panel-stack">
+      <!-- `ln-page`：寬螢幕封頂 1100px 置中（`D-107`，跟首頁「對話統計」一樣）——2000px 螢幕上名字跟開關、
+           表單跟手機預覽隔了大半個畫面 -->
+      <div v-else class="solo-editor-body admin-panel-stack ln-page">
         <!-- ── 誰會收到 ───────────────────────── -->
         <div class="message-card ln-card" data-tour="ln-who">
           <div class="message-card-header">
@@ -175,10 +177,22 @@
           </div>
           <div class="card-section-stack">
             <div class="ln-when">
+              <!-- `D-107`：三段各一塊，跟右邊手機的三個分頁一一對應；點哪一段、改哪一段，手機就換到那一則
+                   （原本改了摘要的設定，手機還停在「客人找真人」，要自己去點分頁） -->
               <div class="ln-when__form">
-                <div class="admin-field-group">
-                  <AdminFieldLabel text="客人要找真人時" tight />
-                  <!-- `D-106`：沒選的那個選項不秀數字框（原本兩格都在、一格反灰，看起來像兩個都要填） -->
+                <section
+                  class="admin-field-group ln-grp"
+                  :class="{ 'is-on': groupOn('handoff') }"
+                  data-grp="handoff"
+                  @click="followGroup('handoff')"
+                  @focusin="followGroup('handoff')"
+                >
+                  <div class="ln-grp__head">
+                    <AdminFieldLabel text="客人要找真人時" tag="span" tight />
+                    <span v-if="groupOn('handoff')" class="ln-grp__peek">右邊就是這一則</span>
+                  </div>
+                  <!-- `D-106`：沒選的那個選項不秀數字框（原本兩格都在、一格反灰，看起來像兩個都要填）
+                       `D-107`：每個選項下面一行講「適合誰」，沒選的那個也看得到，才比得出來 -->
                   <el-radio-group v-model="timing.mode" class="ln-when__modes" @change="onModeChange">
                     <div class="ln-when__mode">
                       <el-radio value="always">{{ timing.mode === 'always' ? '馬上通知，' : '馬上通知' }}</el-radio>
@@ -198,6 +212,10 @@
                         <span class="ln-when__tail">分鐘還沒人回再提醒一次</span>
                       </template>
                     </div>
+                    <!-- 「填 0」只跟有數字框的那一行有關：選了「馬上通知」才講 -->
+                    <p class="ln-when__hint">
+                      不常開後台的人用這個：客人一說要找真人，手機就響。{{ timing.mode === 'always' ? '填 0 就不再提醒。' : '' }}
+                    </p>
                     <div class="ln-when__mode">
                       <el-radio value="missed_only">{{ timing.mode === 'missed_only' ? '先不吵，等' : '先不吵，等沒人接手才通知' }}</el-radio>
                       <template v-if="timing.mode === 'missed_only'">
@@ -214,34 +232,55 @@
                         <span class="ln-when__tail">分鐘沒人接手才通知</span>
                       </template>
                     </div>
+                    <p class="ln-when__hint">客服整天開著後台的團隊用這個，省官方帳號的訊息額度。</p>
                   </el-radio-group>
-                  <p class="ai-section-hint">
-                    {{ timing.mode === 'missed_only'
-                      ? '客服整天開著後台的團隊用這個，省官方帳號的訊息額度。'
-                      : '填 0 就只傳當下那一則，不再提醒。' }}
-                  </p>
-                </div>
+                </section>
 
-                <div class="admin-field-group">
-                  <AdminFieldLabel text="每天早上的摘要" tight />
+                <section
+                  class="admin-field-group ln-grp"
+                  :class="{ 'is-on': groupOn('digest') }"
+                  data-grp="digest"
+                  @click="followGroup('digest')"
+                  @focusin="followGroup('digest')"
+                >
+                  <div class="ln-grp__head">
+                    <AdminFieldLabel text="每天早上的摘要" tag="span" tight />
+                    <span v-if="groupOn('digest')" class="ln-grp__peek">右邊就是這一則</span>
+                  </div>
                   <div class="ln-when__inline">
-                    <el-select v-model="timing.digestHour" size="small" class="ai-hour-select" @change="saveTiming">
+                    <span class="ln-when__tail">每天</span>
+                    <el-select v-model="timing.digestHour" size="small" class="ai-hour-select" aria-label="摘要時間" @change="saveTiming">
                       <el-option v-for="h in 24" :key="h - 1" :value="h - 1" :label="`${String(h - 1).padStart(2, '0')}:00`" />
                     </el-select>
-                    <span class="ln-when__tail">傳昨天的成績和今天要處理的事</span>
+                    <span class="ln-when__tail">傳：昨天的成績、今天要處理的事</span>
                   </div>
                   <p v-if="data.serviceHours.enabled && data.serviceHours.weekendOff" class="ai-section-hint">
                     週末不傳（「服務時間」設了週六日休息）
                   </p>
-                  <el-checkbox v-model="timing.festivalTips" @change="saveTiming">節日前 7／3／1 天，順便提醒行銷</el-checkbox>
-                  <el-checkbox v-model="timing.weeklyInsights" @change="saveTiming">週一附「本週顧客觀察」</el-checkbox>
-                </div>
+                  <!-- `D-107`：兩個勾選是附在摘要裡的一段，⛔ 不是另外傳一則（08-06 拍板「一則錢講完全部」），
+                       原本看起來像兩個獨立的通知。說明照送出端實際內容寫：festivalReminderText 三個里程碑、
+                       formatWeeklyInsightLines 全零就整段不出現 -->
+                  <p class="ln-grp__sub">摘要裡順便附（不另外傳一則）</p>
+                  <el-checkbox v-model="timing.festivalTips" @change="saveTiming">節日前的行銷提醒</el-checkbox>
+                  <p class="ln-when__hint">節日前 7／3／1 天各講一次：先備素材、再排推播、最後確認出貨與客服。</p>
+                  <el-checkbox v-model="timing.weeklyInsights" @change="saveTiming">週一的「本週顧客觀察」</el-checkbox>
+                  <p class="ln-when__hint">這週被貼最多的標籤、兩週沒再出現的客人有幾位；那週沒東西講就不附。</p>
+                </section>
 
-                <div class="admin-field-group">
-                  <AdminFieldLabel text="出大事時" tight />
+                <section
+                  class="admin-field-group ln-grp"
+                  :class="{ 'is-on': groupOn('crit') }"
+                  data-grp="crit"
+                  @click="followGroup('crit')"
+                  @focusin="followGroup('crit')"
+                >
+                  <div class="ln-grp__head">
+                    <AdminFieldLabel text="出大事時" tag="span" tight />
+                    <span v-if="groupOn('crit')" class="ln-grp__peek">右邊就是這一則</span>
+                  </div>
                   <el-checkbox v-model="timing.criticalAlertPush" @change="saveTiming">不等摘要，馬上通知</el-checkbox>
-                  <p class="ai-section-hint">機器人收不到客人訊息、回覆額度用完這類正在影響客人的事。只在 9:00–21:00 傳。</p>
-                </div>
+                  <p class="ln-when__hint">機器人收不到客人訊息、回覆額度用完這類正在影響客人的事。只在 9:00–21:00 傳。</p>
+                </section>
               </div>
 
               <div class="ln-phone" data-tour="ln-preview" aria-label="手機會收到的樣子">
@@ -311,6 +350,9 @@ import {
 } from '~~/shared/line-notify-messages'
 import { buildDigestLines, taipeiDateLabel } from '~~/shared/daily-digest-message'
 import { taipeiDateKey } from '~~/shared/taipei-day'
+import { addDays, daysBetween } from '~~/shared/time'
+import { TAIWAN_FESTIVALS, festivalReminderText, type TaiwanFestival } from '~~/shared/taiwan-festivals'
+import { formatWeeklyInsightLines } from '~~/shared/weekly-insight-lines'
 
 definePageMeta({ middleware: ['auth', 'workspace-notify'], layout: 'default' })
 useHead({ title: useAdminTitle('LINE 通知') })
@@ -377,7 +419,7 @@ const flashUid = ref('')
 const savingUid = ref('')
 const linkLoadingUid = ref('')
 const linkDialog = reactive({ open: false, email: '', url: '', message: '', expiresAt: 0, copied: false })
-const previewTab = ref<'handoff' | 'digest' | 'crit'>('handoff')
+const previewTab = ref<PreviewTab>('handoff')
 
 /** 分鐘數上限：跟後端 normalizeAiSettings 的夾值同一個數字（24 小時） */
 const SLA_MAX = 1440
@@ -561,6 +603,20 @@ async function onAdded(s: { lineDisplayName: string, message: string }) {
 const confirmSent = ref('')
 watch(previewTab, () => { confirmSent.value = '' })
 watch(justAdded, (v) => { if (!v) confirmSent.value = '' })
+
+type PreviewTab = 'handoff' | 'digest' | 'crit'
+/** 「什麼時候通知」那一段是不是右邊手機正在畫的那一則（剛加好、手機在秀確認時哪一段都不是） */
+function groupOn(tab: PreviewTab) {
+  return !confirmSent.value && previewTab.value === tab
+}
+/**
+ * 點哪一段、改哪一段，手機就換到那一則（`D-107`）。
+ * ⛔ 只換預覽、不收掉上面「好了，加進來了」那塊——那是另一件事（`justAdded` 另外管）。
+ */
+function followGroup(tab: PreviewTab) {
+  confirmSent.value = ''
+  previewTab.value = tab
+}
 function flash(uid: string) {
   flashUid.value = uid
   setTimeout(() => { if (flashUid.value === uid) flashUid.value = '' }, 1600)
@@ -673,6 +729,30 @@ const firstDigestPhrase = computed(() =>
 /** 開關關著（預設）就不放：預覽跟真正送出的一樣，退回「請至後台…」那一句 */
 const sampleLink = computed(() => data.value?.linksEnabled ? `https://${useRequestURL().host}/c/7Kq2abX` : undefined)
 
+/** 台北日期字串 → 「11/4」 */
+function md(day: string) {
+  return `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`
+}
+/**
+ * 摘要預覽的範例日：下一個「節日前 7 天、又是平日」的那一天——節日那一段才對得上真的句子。
+ * 節日表用完了就用明天、不放節日那一段。`lastWeekText`＝那一週的週一往前一週（週報的統計區間）。
+ */
+function digestSample(nowMs: number): { day: string, festival: TaiwanFestival | null, lastWeekText: string } {
+  const tomorrow = taipeiDateKey(new Date(nowMs + 86_400_000))
+  const weekday = (day: string) => new Date(`${day}T00:00:00Z`).getUTCDay()
+  let day = tomorrow
+  let festival: TaiwanFestival | null = null
+  for (const f of TAIWAN_FESTIVALS) {
+    const d = addDays(f.date, -7)
+    if (daysBetween(tomorrow, d) < 0 || weekday(d) === 0 || weekday(d) === 6) continue
+    day = d
+    festival = f
+    break
+  }
+  const monday = addDays(day, -((weekday(day) + 6) % 7))
+  return { day, festival, lastWeekText: `${md(addDays(monday, -7))}–${md(addDays(monday, -1))}` }
+}
+
 const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(() => {
   const t = currentTiming.value
   const link = sampleLink.value
@@ -704,18 +784,33 @@ const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(
     return out
   }
   if (previewTab.value === 'digest') {
-    const tomorrow = taipeiDateKey(new Date(Date.now() + 86_400_000))
+    const sample = digestSample(Date.now())
     const lines = buildDigestLines({
-      dateLabel: taipeiDateLabel(tomorrow),
+      dateLabel: taipeiDateLabel(sample.day),
       yesterday: { total: 18, selfServed: 14, humanServed: 3, unhandled: 1, unhandledNames: ['小美'], newFriends: 2 },
       waiting: { count: 2, offHoursCount: 0, samples: [{ name: '阿明', waitedMinutes: 25 }, { name: 'Lulu', waitedMinutes: 120 }], truncated: false, staleHumanCount: 0 },
       todo: { outdatedSources: 0, failedSources: 0, expiredCards: 0, suggestions: 3, tagSuggestUsers: 0, warnings: 0, topWarningLabel: '' },
-      festivalText: t.festivalTips ? '再過 7 天就是中秋節，禮盒與送禮的需求會明顯升溫。' : '',
+      // `D-107`：用送出端同一支句型（原本手寫一句「再過 7 天就是中秋節…升溫。」，跟真的送出去的不一樣）
+      festivalText: t.festivalTips && sample.festival
+        ? festivalReminderText({ festival: sample.festival, milestone: 7, daysUntil: 7 })
+        : '',
       weeklyLines: [],
       unknownNotes: [],
       link,
     }) ?? []
-    return [{ when: `範例 · 每天 ${String(t.digestHour).padStart(2, '0')}:00`, text: lines.join('\n') }]
+    const out = [{ when: `範例 · 每天 ${String(t.digestHour).padStart(2, '0')}:00`, text: lines.join('\n') }]
+    // 週報只在週一、而且接在同一則的最後；範例日不一定是週一，所以另畫一顆講清楚（原本傳空陣列＝勾了也看不到）
+    if (t.weeklyInsights) {
+      const weekly = formatWeeklyInsightLines({
+        rangeText: sample.lastWeekText,
+        topTags: [{ name: '禮盒', count: 12 }, { name: '送禮', count: 8 }],
+        inactiveAdds: { count: 0, name: '' },
+        quietDown: 5,
+        truncated: false,
+      })
+      if (weekly) out.push({ when: '週一的摘要，最後會多這一段', text: weekly.join('\n') })
+    }
+    return out
   }
   if (!t.criticalAlertPush)
     return [{ when: '這一類關著', text: '出大事時不會另外傳，隔天的摘要裡會寫。' }]

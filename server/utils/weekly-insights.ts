@@ -28,11 +28,14 @@ import {
   shouldAskProfileRefresh,
   type FaqCandidate,
 } from '~~/shared/profile-refresh'
+import { formatWeeklyInsightLines, WEEKLY_TAG_LOG_SCAN_LIMIT as TAG_LOG_SCAN_LIMIT } from '../../shared/weekly-insight-lines'
+
+// 純格式化搬到 shared（`C-273`：後台手機預覽要用同一支）；這裡轉出，舊的引用點不用改。
+// ⚠️ 用相對路徑轉出：`~~` 會讓 Nitro 自動匯入掃描出警告（`C-270` 踩過）
+export { formatWeeklyInsightLines, type WeeklyInsightInput } from '../../shared/weekly-insight-lines'
 
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
-/** 本週 tagLogs 取樣上限：超過就講明是取樣（批次貼標一次幾千筆的週會撞到） */
-const TAG_LOG_SCAN_LIMIT = 1000
 /** 「被貼最多」列前幾名 */
 const TOP_TAGS = 3
 
@@ -66,51 +69,6 @@ export function aggregateTagAdds(tagIds: string[]): Array<{ tagId: string; count
   return [...counts.entries()]
     .map(([tagId, count]) => ({ tagId, count }))
     .sort((a, b) => b.count - a.count)
-}
-
-export interface WeeklyInsightInput {
-  /** 「8/17–8/23」這種區間字樣 */
-  rangeText: string
-  /** 本週被貼最多的一般標籤（已排除系統的「沒互動」標） */
-  topTags: Array<{ name: string; count: number }>
-  /** 本週被標成「沒互動」的人數與標籤名（0＝不講） */
-  inactiveAdds: { count: number; name: string }
-  /** 上月有來訊、最近兩週安靜的客人數 */
-  quietDown: number
-  /** tagLogs 撞到取樣上限（要講明，否則「+1,000」會被當成精確值） */
-  truncated: boolean
-}
-
-/**
- * 純格式化（可測）：組出週報段落。**全部觀察都是零 → null**（整段不出現）。
- * 第一行是段落標題，呼叫端直接接在摘要後面（前面補一個空行隔開）。
- */
-export function formatWeeklyInsightLines(input: WeeklyInsightInput): string[] | null {
-  const lines: string[] = []
-
-  // ⛔ 指路一律用**側欄的名字**（「好友」「AI 設定」）——人是拿著訊息對照側欄找的，
-  //    寫「好友頁」這種頁面別名會找不到（G-22③：同一頁曾有三個名字）
-  // ⛔ 不加「・」項目符號（2026-09-17 `D-81`）：摘要本體改版後整則都不用項目符號，
-  //    只有這一段還留著的話，同一顆泡泡裡會有兩套排版。
-  if (input.topTags.length) {
-    const parts = input.topTags.map(t => `「${t.name}」+${t.count} 位`).join('、')
-    lines.push(`這週被貼最多的標籤：${parts}——後台「好友」頁可依標籤篩出名單`)
-  }
-  if (input.inactiveAdds.count > 0) {
-    lines.push(`${input.inactiveAdds.count} 位客人這週被標成「${input.inactiveAdds.name}」——想喚醒他們，發推播時選這個標籤`)
-  }
-  // ⛔ 這裡**刻意沒有**「還沒看的貼標建議」那一行（2026-09-17 移除，`D-81`）：
-  // 08-31（`D-43`①）之後摘要本文已經有「N 位客人的標籤建議等你決定」，兩行同一個
-  // 查詢（userTagSuggestions.hasPending）、同一個去處、同一個操作，只有名字不一樣
-  // （標籤建議／貼標建議）——週一的那則訊息等於把同一件事講兩次。
-  if (input.quietDown > 0) {
-    // 文案跟資料窗口一字不差（14~28 天前，不是日曆上個月）＋這一行也要有下一步（G-22②④）
-    lines.push(`最近一個月內有來訊、但兩週沒再出現的客人：${input.quietDown} 位——想提早喚醒，到「AI 設定」把「沒互動」天數調低，就能用標籤把他們撈出來發推播`)
-  }
-
-  if (!lines.length) return null
-  if (input.truncated) lines.push(`（標籤統計為本週前 ${TAG_LOG_SCAN_LIMIT.toLocaleString('en-US')} 筆取樣）`)
-  return [`📈 本週顧客觀察（${input.rangeText}）`, ...lines]
 }
 
 function taipeiMd(ms: number): string {

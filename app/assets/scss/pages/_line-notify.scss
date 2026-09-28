@@ -1,6 +1,14 @@
 // 「設定 → LINE 通知」頁＋首頁那張「要傳到你的手機嗎？」卡（`C-270`，照示意頁 artifact `DCNtvHLkws7NRiMmDXXqeZ`）
 // 顏色：綠＝會收到／好了（品牌綠）、黃＝收不到或沒人收（Element 的 warning 那組），⛔ 不用紅——沒有東西壞在客人那邊
 
+// 寬螢幕封頂 1100px 置中（`D-107`，前例＝首頁「對話統計」`.conv-stats-page`）。
+// ⚠️ width:100% 不能少：這層也是 flex 直向容器，只給 margin:auto 會縮成內容寬（`_ai-usage.scss` 踩過）
+.ln-page.solo-editor-body {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
 .ln-card__meta {
   font-size: 12px;
   color: var(--text-muted);
@@ -351,7 +359,7 @@
 .ln-when__form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px;
   min-width: 0;
 
   .admin-field-group {
@@ -359,6 +367,11 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
+  }
+
+  // Element 的勾選框預設 32px 高，下面再接一行說明會隔太開
+  .el-checkbox {
+    height: 26px;
   }
 
   // 勾選後的字不變綠：綠色在這頁只代表「會收到」
@@ -391,6 +404,59 @@
 
 .ln-when__num {
   width: 96px;
+}
+
+// ── 三段（`D-107`）：各一塊，跟右邊手機的三個分頁一一對應；正在畫的那一段加淡框 ──
+// ⛔ 不用綠色：綠色在這頁只代表「會收到」
+.ln-grp {
+  padding: 10px 12px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+
+  &:hover {
+    border-color: var(--border);
+  }
+
+  &.is-on {
+    border-color: var(--border);
+    background: var(--bg-elevated);
+  }
+}
+
+.ln-grp__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.ln-grp__peek {
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--el-bg-color, #fff);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+// 「摘要裡順便附（不另外傳一則）」
+.ln-grp__sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+// 每個選項下面那一行說明：對齊選項的**字**（Element 圓點／方框 14px＋間距 8px），不是對齊圓點
+.ln-when__hint {
+  margin: -4px 0 2px 22px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--el-text-color-secondary);
 }
 
 // ⚠️ Element 的 `.el-select { width: var(--el-select-width, 100%) }` 載入順序在後，
