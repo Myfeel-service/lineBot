@@ -58,6 +58,12 @@ export type AgentMsg =
   /** 連結卡。internal＝站內頁（走 NuxtLink 同分頁導航）；否則視為外部連結另開分頁 */
   | { kind: 'link'; label: string; href: string; internal?: boolean }
   /**
+   * 「帶我走一遍」卡（`D-109`）：按下去**直接開**一支導覽（tour）、一條劇本（guide），
+   * 或打開小幫手的「目前狀況」分頁（status，異常與一鍵修都在那裡）——不是換頁。
+   * `ref` 由 `shared/agent-teachings.ts` 的白名單決定（模型不生 id）；卡上的字由前端照教材名顯示。
+   */
+  | { kind: 'teach'; teach: 'tour' | 'guide' | 'status'; ref: string }
+  /**
    * 單張示意圖卡（節點式教學「一步一張圖」用；也吃循環動畫 webp）。
    * 檔案載不到就整張不顯示——不破圖，所以劇本可以先接圖、截圖之後補檔。
    */

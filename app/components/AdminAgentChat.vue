@@ -3,7 +3,7 @@
     <div ref="listEl" class="aa-chat__list">
       <!-- 開場白 + 能力邊界（C-31 Phase 2 起多了「幾件事可以代辦」，但一律先問再做） -->
       <div class="aa-msg aa-msg--ai">
-        <div class="aa-msg__bubble">想知道後台的什麼？我會查真實資料回答，不會亂編。<br><span class="aa-muted">（少數設定也可以我來改，例如服務時間、自動回應開關——我會先給你看改什麼，按了確定才動手）</span></div>
+        <div class="aa-msg__bubble">想知道後台的什麼？我會查真實資料回答，不會亂編。<br><span class="aa-muted">（問「怎麼做」我可以直接帶你走一遍；少數設定也可以我來改，例如服務時間、自動回應開關——我會先給你看改什麼，按了確定才動手）</span></div>
       </div>
 
       <template v-for="(m, i) in msgs" :key="i">
@@ -11,11 +11,19 @@
           <div class="aa-msg__bubble">{{ m.text }}</div>
           <!-- 回答附帶的帶路卡（站內連結，後端白名單生成）：與開通精靈共用同一個渲染層 -->
           <div v-if="m.cards?.length" class="aa-msg__cards">
-            <AgentMessageRenderer
-              v-for="(c, j) in m.cards"
-              :key="`${i}-${j}`"
-              :entry="{ id: j, role: 'agent', msg: c }"
-            />
+            <template v-for="(c, j) in m.cards" :key="`${i}-${j}`">
+              <!-- 「帶我走一遍」卡（`D-109`）：按下去直接開導覽／劇本，不換頁。
+                   只在這裡畫、不進共用的 AgentMessageRenderer——卡上的字要查教材名（導覽清單、劇本表），
+                   那兩份很大，開通精靈那邊用不到，不該為了這張卡跟著載進去。 -->
+              <button
+                v-if="c.kind === 'teach'"
+                v-show="teachLabel(c)"
+                type="button"
+                class="agm-card agm-link aa-teach"
+                @click="runTeach(c)"
+              >{{ teachLabel(c) }} →</button>
+              <AgentMessageRenderer v-else :entry="{ id: j, role: 'agent', msg: c }" />
+            </template>
           </div>
           <!-- 待確認的操作：此刻還沒有任何東西被改，要按了確定才會執行 -->
           <AgentOpConfirmCard
@@ -82,6 +90,40 @@ interface Msg {
 }
 
 const { apiFetch, workspaceId } = useWorkspace()
+const { topics, startTopicById, openGuide, openPanelTab } = useTutorial()
+
+type TeachCard = Extract<AgentMsg, { kind: 'teach' }>
+
+/**
+ * 卡上的字照教材名顯示（教材名只有一份：導覽＝tutorial-topics 的 label、劇本＝AGENT_GUIDES 的 title）。
+ * 回空字串＝這個角色跑不動或教材已經不在了 → 整張不畫（⛔ 不畫一張按了沒反應的卡）。
+ * 後端已經照角色篩過一次，這裡是第二道：topics 是依角色＋功能旗標過濾過的清單。
+ */
+function teachLabel(c: TeachCard): string {
+  if (c.teach === 'tour') {
+    const t = topics.value.find(t => t.id === c.ref)
+    return t ? `帶我走一遍：${t.label}` : ''
+  }
+  if (c.teach === 'guide') {
+    const g = (AGENT_GUIDES as Record<string, { title: string } | undefined>)[c.ref]
+    return g ? `陪我做：${g.title}` : ''
+  }
+  return '打開「目前狀況」（一鍵修好的按鈕在那裡）'
+}
+
+function runTeach(c: TeachCard) {
+  if (c.teach === 'tour') {
+    // 導覽會自己把面板收起來、換到那一頁再開跑；跑不起來就退回教學分頁讓他自己挑（⛔ 不要按了沒反應）
+    if (!startTopicById(c.ref))
+      openPanelTab('learn')
+    return
+  }
+  if (c.teach === 'guide') {
+    openGuide(c.ref)
+    return
+  }
+  openPanelTab('setup')
+}
 
 // 對話存在全域:切去「目前狀況」看一眼、或關掉面板再打開,問到一半的內容都還在。
 // 但換工作區一定要清掉——B 家的畫面上留著 A 家的查詢結果會直接誤導人。

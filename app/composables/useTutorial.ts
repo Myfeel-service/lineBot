@@ -41,6 +41,12 @@ export function useTutorial() {
    * 傳話：入口呼叫 openGuide()，TutorialAgent watch 到就接手開跑並清空這格。
    */
   const requestedGuideId = useState<string | null>('tutorial-requested-guide', () => null)
+  /**
+   * 待切換的面板分頁（`D-109`）：「問助理」回答裡那張「打開目前狀況」卡要把面板切到
+   * 「目前狀況」（異常與一鍵修都在那裡）。分頁狀態長在 TutorialAgent 元件內，
+   * 聊天元件搆不到，跟上面那格同一種傳話方式。
+   */
+  const requestedPanelTab = useState<'setup' | 'learn' | 'chat' | null>('tutorial-requested-tab', () => null)
 
   /**
    * 過濾步驟：功能旗標關掉的、以及**這個角色畫面上根本沒有那個元素**的，都跳過。
@@ -206,6 +212,12 @@ export function useTutorial() {
     openPanel()
   }
 
+  /** 從面板內的其他元件（小幫手聊天卡）切到某個分頁 */
+  function openPanelTab(tab: 'setup' | 'learn' | 'chat') {
+    requestedPanelTab.value = tab
+    openPanel()
+  }
+
   return {
     // state
     panelOpen,
@@ -216,6 +228,7 @@ export function useTutorial() {
     activeSteps,
     lastTopicId,
     requestedGuideId,
+    requestedPanelTab,
     // helpers
     stepCount,
     // actions
@@ -227,5 +240,6 @@ export function useTutorial() {
     startAdHocTour,
     endTour,
     openGuide,
+    openPanelTab,
   }
 }

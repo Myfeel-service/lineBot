@@ -830,6 +830,15 @@
   align-self: stretch;
 }
 
+// 「帶我走一遍」卡（`D-109`）：長得跟帶路卡一樣，但它是按鈕（開導覽／劇本，不換頁）——
+// 把瀏覽器給按鈕的字型與置中拿掉，才不會跟旁邊那張連結卡長得不一樣
+.aa-teach {
+  font-family: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 /* 暫停提醒（只出現在 warning 卡）：排在動作列最後、維持純文字淡色 */
 .ta-alert__snooze {
   margin-left: auto;

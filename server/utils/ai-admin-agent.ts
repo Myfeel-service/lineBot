@@ -35,6 +35,7 @@ import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
 import { getFirebaseAuth } from './firebase'
 import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
+import { agentTeachingCatalogueForPrompt, resolveAgentTeaching } from '~~/shared/agent-teachings'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
@@ -541,7 +542,7 @@ function promptDates(now: Date): { today: string, yesterday: string, weekAgo: st
   }
 }
 
-function buildSystemInstruction(now: Date, workspaceName: string): string {
+function buildSystemInstruction(now: Date, workspaceName: string, role: WorkspaceMemberRole): string {
   const { today, yesterday, weekAgo, thisMonth, lastMonthText } = promptDates(now)
 
   return `你是 LINE 官方帳號「後台小幫手」。你可以查資料回答,也可以**提議**下面清單裡的少數幾種設定調整——但你永遠不會自己動手:提議會變成一張確認卡,使用者按了確定,系統才真的去做。
@@ -569,12 +570,19 @@ ${adminOpCatalogueForPrompt()}
 
 【每一步回傳 JSON,三選一】
 { "action": "tool", "tool": "工具名", "args": {} }
-{ "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"], "cancelPrevious": true }
+{ "action": "answer", "text": "給使用者的回答", "goto": ["頁面id"], "teach": "教材id", "cancelPrevious": true }
 { "action": "propose", "op": "操作id", "args": {}, "text": "一句話說明你打算做什麼", "answer": "他同一句話裡問的其他事,答案寫這裡" }
 
 【帶路（goto,選填）】回答若建議使用者去後台某頁操作,附上 goto 幫他帶路(最多 2 個)。
 只准用下列 id,不在清單裡的一律不要寫——你沒有能力發明網址:
 ${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——${d.hint}`).join('\n')}
+
+【帶你走一遍（teach,選填，最多 1 個）】使用者問「怎麼做／怎麼設／教我／在哪裡改」時,
+用一兩句話回答重點,**再附上最合適的一支教材**:他按下去,系統會在真實畫面上一步步帶他做(或在這個面板裡陪他做完並檢查)。
+⛔ 比起一大段文字說明,附教材更有用——不要把教材裡的步驟整段抄進 text。
+⛔ 只准用下列 id(已照這位使用者的角色篩過,不在清單裡的他跑不動),找不到合適的就不要附:
+${agentTeachingCatalogueForPrompt(role)}
+問「現在有什麼要處理／哪裡壞了」而你查到有異常時,附 panel-status:那裡每一件都有修好的按鈕。
 
 【規則】
 - ⛔ **任何情況都只能輸出上面那三種 JSON 之一,話一律寫進 "text" 欄位**。
@@ -738,7 +746,7 @@ export async function runAdminAgentChat(params: {
 
   // 這一輪的提示（含今天的日期）：⛔不可以搬回模組級常數，那樣日期會停在程式啟動那一刻
   const now = new Date()
-  const systemInstruction = buildSystemInstruction(now, workspaceName || '目前這個官方帳號')
+  const systemInstruction = buildSystemInstruction(now, workspaceName || '目前這個官方帳號', role)
 
   // 回答裡的數字可以有的出處：查到的資料（下面會長出來）＋使用者自己講過的話＋我們給過它的日期
   const userSaidTexts = [message, ...(params.history ?? []).filter(t => t.role === 'user').map(t => String(t.text ?? ''))]
@@ -764,7 +772,7 @@ export async function runAdminAgentChat(params: {
       step === MAX_TOOL_STEPS ? '【注意】查詢次數已用完,請直接以現有工具結果回答("action":"answer")。' : '',
     ].filter(Boolean).join('\n\n')
 
-    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
+    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; teach?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
       systemInstruction,
       temperature: 0,
       maxOutputTokens: 1200,
@@ -795,7 +803,12 @@ export async function runAdminAgentChat(params: {
       }
 
       // goto 走白名單解析:模型只挑 id,網址由 shared/agent-destinations 生——編不出來、最多挑錯頁
-      const messages = resolveAgentDestinations(data?.goto, workspaceId)
+      // teach 同一招(`D-109`):教材 id 由 shared/agent-teachings 決定,⛔ 這裡再照角色篩一次
+      // (清單已經篩過,但模型可能照抄對話裡看過的 id)——跑不動的人拿到卡＝按了是死路
+      const messages = [
+        ...resolveAgentTeaching(data?.teach, role),
+        ...resolveAgentDestinations(data?.goto, workspaceId),
+      ]
       return {
         reply: say(text || '(助理沒有給出回答,請換個問法再試一次)'),
         toolCalls,

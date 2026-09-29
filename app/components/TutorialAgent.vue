@@ -644,6 +644,7 @@ const {
   activeSteps,
   lastTopicId,
   requestedGuideId,
+  requestedPanelTab,
   stepCount,
   openPanel,
   closePanel,
@@ -1126,6 +1127,14 @@ watch(requestedGuideId, (id) => {
   requestedGuideId.value = null
   if (id in AGENT_GUIDES)
     activeGuide.value = id as AgentGuideId
+})
+// 「問助理」回答裡那張「打開目前狀況」卡（`D-109`）：分頁狀態在這裡，聊天元件用這格共享狀態傳話
+watch(requestedPanelTab, (tab) => {
+  if (!tab)
+    return
+  requestedPanelTab.value = null
+  activeGuide.value = null
+  panelTab.value = tab
 })
 
 /** 頁尾那句話：講這個分頁的立場（誠實邊界／怎麼運作），不重複畫面上已經有的內容 */

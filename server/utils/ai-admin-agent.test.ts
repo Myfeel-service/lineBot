@@ -325,6 +325,34 @@ describe('runAdminAgentChat(查詢迴圈)', () => {
     expect(res.messages).toEqual([])
   })
 
+  // ── 「教我怎麼…」直接開教材（`D-109`）──────────────────────────
+  it('教材(teach):挑白名單上的 id → 一張「帶我走一遍」卡排在帶路卡前面', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: '我帶你走一遍', teach: 'tour-richmenu', goto: ['richmenu'] }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'agent', uid: 'u1', message: '圖文選單怎麼設?' })
+    expect(res.messages).toEqual([
+      { kind: 'teach', teach: 'tour', ref: 'richmenu' },
+      { kind: 'link', internal: true, label: '前往「圖文選單」', href: '/admin/w1/richmenu' },
+    ])
+  })
+
+  it('🔴 教材(teach):角色跑不動的不給卡、模型編的 id 丟掉（按了是死路比沒有卡更糟）', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'x', teach: 'tour-organization' }))
+    const viewer = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: 'LINE 怎麼接?' })
+    expect(viewer.messages).toEqual([])
+
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'x', teach: 'tour-made-up' }))
+    const made = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', role: 'owner', uid: 'u1', message: '教我' })
+    expect(made.messages).toEqual([])
+  })
+
+  it('給模型的教材清單照角色篩：觀察者的 prompt 裡沒有管理員那幾支', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'answer', text: 'ok' }))
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', ...asViewer, message: '教我' })
+    const sys = String((generateJson.mock.calls[0]![1] as { systemInstruction: string }).systemInstruction)
+    expect(sys).toContain('tour-conversations')
+    expect(sys).not.toContain('tour-organization')
+  })
+
   // ── 2026-09-18 壓測抓到的三件事 ────────────────────────────────
 
   /**
