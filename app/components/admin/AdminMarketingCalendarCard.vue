@@ -40,7 +40,7 @@
           MiniMe 還不認識你的店，所以講不出「你的哪個商品該搭這個節日」。
           <!-- `G-102`：開帳頁只有管理員進得去（客服、觀察者會看到「請管理員完成開通」），
                不給一條走進去才被擋的路，直接講要找誰。 -->
-          <el-link v-if="canManageSettings" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
+          <el-link v-if="can('line.manage')" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
           <template v-else>請管理員花 3 分鐘讓它認識。</template>
         </el-alert>
 
@@ -54,7 +54,7 @@
           <template #title>補上「主打商品」，這幾檔會準很多</template>
           你的輪廓裡還沒寫賣什麼，所以 MiniMe 不敢替你挑「這一檔該發給誰」，
           節慶提醒也只能講通用的一句。
-          <el-link v-if="canManageSettings" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+          <el-link v-if="can('line.manage')" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
           <template v-else>請管理員補上。</template>
         </el-alert>
 
@@ -101,9 +101,11 @@
             <li v-for="(a, i) in e.actions" :key="i">{{ a }}</li>
           </ol>
 
-          <!-- ③ 一顆按鈕。`G-102`：擬推播、收起來兩支端點都是客服級，觀察者整列不出現 -->
-          <div v-if="canOperate" class="mkt-cal__cta">
+          <!-- ③ 一顆按鈕。`G-102`：擬推播、收起來兩支端點都是客服級，觀察者整列不出現。
+               `G-109`：兩顆各照自己的端點擋（`draft`＝`broadcast.write`、`skip`＝`marketing.write`） -->
+          <div v-if="can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
             <el-button
+              v-if="can('broadcast.write')"
               size="small"
               type="primary"
               plain
@@ -118,7 +120,7 @@
               ⛔ 這不是刪除：`festivalId` 含年份，明年那一檔會自己回來——按鈕的提示要講出來，
                  不然會被當成永久刪掉而不敢按。
             -->
-            <el-button size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
+            <el-button v-if="can('marketing.write')" size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
               這次不做
             </el-button>
           </div>
@@ -131,9 +133,9 @@
         <div v-if="skippedEntries.length" class="mkt-cal__skipped">
           <!-- `G-102`：觀察者沒有「還原」可按，全收起來時不用那句「按下面的還原」 -->
           <p class="mkt-cal__skipped-text">
-            {{ visibleEntries.length || !canOperate ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
+            {{ visibleEntries.length || !can('marketing.write') ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
           </p>
-          <div v-if="canOperate" class="mkt-cal__skipped-chips">
+          <div v-if="can('marketing.write')" class="mkt-cal__skipped-chips">
             <el-button
               v-for="s in skippedEntries"
               :key="s.festivalId"
@@ -167,9 +169,10 @@ import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shar
 const props = defineProps<{ workspaceId: string }>()
 
 const { apiFetch } = useWorkspaceApiFetch(() => props.workspaceId)
-// `G-102`：擬推播／收起來＝客服級（`marketing-calendar/draft`、`skip` 都是 agent）；
-// 開帳頁（補輪廓）＝管理員級。
-const { canOperate, canManageSettings } = useWorkspace()
+// `G-102`／`G-109`：擬推播＝`marketing-calendar/draft` 的 `broadcast.write`；收起來／還原＝`skip` 的 `marketing.write`。
+// 開帳頁（補輪廓）的門是寫死「擁有者／管理員」的角色判斷（`pages/admin/onboarding.vue`），
+// 表裡沒有對應的一項，照開帳頁本業（接 LINE）用管理員級的 `line.manage` 對齊。
+const { can } = useWorkspace()
 
 const entries = ref<CalendarEntry[]>([])
 const headline = ref('')

@@ -83,13 +83,14 @@
           </div>
 
           <!-- Settings section：管理員看得到全部；客服只看得到「LINE 通知」（`C-270`，第 3 題拍板：客服可以加／退自己） -->
-          <div v-if="canManageSettings || can('notify.self')" class="nav-group" data-tour="nav-group-settings">
+          <div v-if="showSettingsGroup" class="nav-group" data-tour="nav-group-settings">
             <div class="nav-section-label">設定</div>
-            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/members`" class="nav-item" :class="{ active: route.path.includes('/settings/members') }">
+            <NuxtLink v-if="settingsNav.members" :to="`/admin/${workspaceId}/settings/members`" class="nav-item" :class="{ active: route.path.includes('/settings/members') }">
               <el-icon class="nav-icon"><UserFilled /></el-icon>
               <span>成員管理</span>
             </NuxtLink>
             <NuxtLink
+              v-if="settingsNav.lineNotify"
               :to="`/admin/${workspaceId}/settings/line-notify`"
               class="nav-item"
               data-tour="nav-line-notify"
@@ -100,7 +101,7 @@
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/line-notify`" />
             </NuxtLink>
             <NuxtLink
-              v-if="canManageSettings"
+              v-if="settingsNav.organization"
               :to="`/admin/${workspaceId}/settings/organization`"
               class="nav-item"
               data-tour="nav-organization"
@@ -114,14 +115,14 @@
               <span>組織與 LINE</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/organization`" />
             </NuxtLink>
-            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/billing`" class="nav-item" :class="{ active: route.path.includes('/settings/billing') }">
+            <NuxtLink v-if="settingsNav.billing" :to="`/admin/${workspaceId}/settings/billing`" class="nav-item" :class="{ active: route.path.includes('/settings/billing') }">
               <el-icon class="nav-icon"><CreditCard /></el-icon>
               <span>訂閱與付款</span>
               <AdminNavAlertDot :path="`/admin/${workspaceId}/settings/billing`" />
             </NuxtLink>
             <!-- 操作紀錄（C-31 Phase 2 地基）：誰把什麼改成什麼，含小幫手代辦的每一筆。
                  擺在「設定」段最後＝它是回頭查帳的地方，不是日常動線。 -->
-            <NuxtLink v-if="canManageSettings" :to="`/admin/${workspaceId}/settings/activity`" class="nav-item" :class="{ active: route.path.includes('/settings/activity') }">
+            <NuxtLink v-if="settingsNav.activity" :to="`/admin/${workspaceId}/settings/activity`" class="nav-item" :class="{ active: route.path.includes('/settings/activity') }">
               <el-icon class="nav-icon"><Document /></el-icon>
               <span>操作紀錄</span>
             </NuxtLink>
@@ -174,7 +175,7 @@ import {
 
 const route = useRoute()
 const { user, logout } = useAuth()
-const { workspaceId, currentRole, currentWorkspaceName, canManageSettings, isViewer, can, workspaceList, loadWorkspaceList } = useWorkspace()
+const { workspaceId, currentRole, currentWorkspaceName, isViewer, can, workspaceList, loadWorkspaceList } = useWorkspace()
 const { checkIsSuperAdmin, isSuperAdmin } = useSuperAdmin()
 
 const canSwitchWorkspace = computed(() => workspaceList.value.length > 1)
@@ -323,6 +324,17 @@ const aiNavItems = computed(() => {
   ]
   return items.filter(item => can(item.cap)).map(({ cap: _cap, ...rest }) => rest)
 })
+
+// 「設定」段逐項看**那一頁的端點**用的能力（`G-109`）：成員列表 members.read、LINE 通知 notify.self、
+// 組織與 LINE line.manage、訂閱與付款 billing.manage、操作紀錄 audit.read。段落標題只在底下至少有一項時出現。
+const settingsNav = computed(() => ({
+  members: can('members.read'),
+  lineNotify: can('notify.self'),
+  organization: can('line.manage'),
+  billing: can('billing.manage'),
+  activity: can('audit.read'),
+}))
+const showSettingsGroup = computed(() => Object.values(settingsNav.value).some(Boolean))
 </script>
 
 <style scoped>

@@ -4,7 +4,7 @@
       <span class="split-sidebar-title" data-tour="rm-title">圖文選單<AdminPageHelpButton :topics="['richmenu']" /></span>
       <!-- `G-102`：這頁以前完全沒有角色判斷。新增／刪除／儲存／設預設／AI 底圖的端點全是客服級，
            觀察者整頁只給看（同機器人模組頁的做法）。 -->
-      <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="rm-new" @click="openCreate">新增</el-button>
+      <el-button v-if="canEditMenus" :icon="Plus" type="primary" size="small" data-tour="rm-new" @click="openCreate">新增</el-button>
     </template>
 
     <template #sidebar-list>
@@ -13,7 +13,7 @@
       </div>
       <div v-else-if="!menus.length" class="split-sidebar-empty">
         <span>尚無圖文選單</span>
-        <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        <el-button v-if="canEditMenus" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="rm-list" @scroll.passive="onSidebarListScroll">
         <!-- ⛔ 沒上線的以前是一片空白，看起來像「還沒弄好」而不是「存好了、客人看不到」。
@@ -40,17 +40,17 @@
 
     <template #editor-empty>
       <el-icon class="empty-icon"><Grid /></el-icon>
-      <h3>{{ canOperate ? '選擇一個圖文選單開始編輯' : '選擇一個圖文選單來查看' }}</h3>
-      <p v-if="canOperate">或點擊左側「新增」建立新的圖文選單</p>
+      <h3>{{ canEditMenus ? '選擇一個圖文選單開始編輯' : '選擇一個圖文選單來查看' }}</h3>
+      <p v-if="canEditMenus">或點擊左側「新增」建立新的圖文選單</p>
       <div class="empty-actions">
-        <el-button v-if="canOperate" type="primary" @click="openCreate">新增圖文選單</el-button>
+        <el-button v-if="canEditMenus" type="primary" @click="openCreate">新增圖文選單</el-button>
         <AdminPageHelpButton :topics="['richmenu']" label="第一次用？看一遍怎麼做" />
       </div>
     </template>
 
     <template #editor-header>
       <AdminEditorHeaderTitle
-        v-if="canOperate"
+        v-if="canEditMenus"
         v-model="form.name"
         field-label="選單名稱"
         create-prefix="新增圖文選單:"
@@ -66,7 +66,7 @@
         </div>
         <p class="text-sm text-muted admin-subtext">區塊 {{ form.areas.length }} 個</p>
       </div>
-      <div v-if="canOperate" class="flex gap-1 admin-header-actions">
+      <div v-if="canEditMenus" class="flex gap-1 admin-header-actions">
         <!-- 「設為預設」（`D-109` 第 3 題）：建立時沒設預設的選單，確認框會叫人「之後再設為預設」，
              以前卻沒有任何一顆按鈕做得到（`setAsDefault()` 寫好了沒接上）。已經是預設的那張不給按。 -->
         <el-button
@@ -118,13 +118,13 @@
                   tight
                 />
                 <!-- 觀察者看得到值、改不了（同 AI 設定頁 el-form :disabled 的唯讀做法） -->
-                <el-input v-model="form.chatBarText" placeholder="選單" :disabled="!canOperate" />
+                <el-input v-model="form.chatBarText" placeholder="選單" :disabled="!canEditMenus" />
               </div>
 
               <div class="admin-field-group">
                 <AdminFieldLabel text="啟用" tight />
                 <div class="admin-inline-control">
-                  <el-switch v-model="form.selected" :disabled="!canOperate" />
+                  <el-switch v-model="form.selected" :disabled="!canEditMenus" />
                   <span class="text-xs text-muted">{{ form.selected ? '啟用中' : '停用中' }}</span>
                 </div>
               </div>
@@ -132,7 +132,7 @@
               <div class="admin-field-group" data-tour="rm-default">
                 <AdminFieldLabel text="設為預設選單" tight />
                 <div class="admin-inline-control">
-                  <el-switch v-model="form.setAsDefault" :disabled="!canOperate" />
+                  <el-switch v-model="form.setAsDefault" :disabled="!canEditMenus" />
                   <!-- ⛔ 2026-09-29（`D-109`）：原本寫「新加入好友預設顯示此選單」——把後果講小了，
                        設為預設是**所有好友**（沒另外指定選單的人）的選單立刻換成它，跟建立時那個確認框同一句 -->
                   <span class="text-xs text-muted">{{ form.setAsDefault ? '所有好友的選單都會換成這張' : '先存起來，客人看不到' }}</span>
@@ -140,7 +140,7 @@
               </div>
 
               <!-- 換圖只有要存的人用得到；觀察者要看的那張圖就在右邊「客人看到的樣子」 -->
-              <div v-if="canOperate" class="admin-field-group" data-tour="rm-image">
+              <div v-if="canEditMenus" class="admin-field-group" data-tour="rm-image">
                 <AdminFieldLabel
                   text="選單背景圖"
                   :hint="isCreating ? '一定要傳一張，選單的長相就是這張圖。' : '不上傳就沿用原本那張。'"
@@ -200,7 +200,7 @@
             <!-- 右欄：要看的東西（版型與預覽吃掉剩下的寬度） -->
             <div class="rm-config-col rm-config-col--visual">
               <!-- 點一個版型就會重排格子＝改動，觀察者不給（版型看下面那張圖就知道） -->
-              <div v-if="canOperate" class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
+              <div v-if="canEditMenus" class="rm-layout-in-card admin-field-group" data-tour="rm-layout">
                 <AdminLayoutPresetPicker
                   flat
                   title="圖文樣式"
@@ -223,7 +223,7 @@
                   <!-- 觀察者也看得到格子在哪（拖不動，見 startDrag／startResize） -->
                   <AdminAreaEditorSection
                     :areas="form.areas"
-                    :section-label="canOperate ? '編輯區塊' : '區塊位置'"
+                    :section-label="canEditMenus ? '編輯區塊' : '區塊位置'"
                     :flat="true"
                     :show-canvas="true"
                     :show-action-cards="false"
@@ -262,7 +262,7 @@
                 比「有沒有圖」多，寫 `v-else` 的話，圖明明上傳好了也會冒出一句
                 「上傳背景圖後…」在對他說謊。（2026-09-23 截圖目檢當場抓到過一次。）
               -->
-              <p v-if="canOperate && !form.previewUrl" class="rm-preview-placeholder">
+              <p v-if="canEditMenus && !form.previewUrl" class="rm-preview-placeholder">
                 可先選版型。上傳背景圖後，這裡會顯示可拖曳的區塊預覽。
               </p>
             </div>
@@ -336,9 +336,9 @@
               :show-canvas="false"
               :show-action-cards="true"
               :show-header="false"
-              :show-add-button="canOperate && form.layoutId === 'custom'"
-              :allow-remove="canOperate && form.layoutId === 'custom'"
-              :show-bounds="canOperate && form.layoutId === 'custom'"
+              :show-add-button="canEditMenus && form.layoutId === 'custom'"
+              :allow-remove="canEditMenus && form.layoutId === 'custom'"
+              :show-bounds="canEditMenus && form.layoutId === 'custom'"
               :min-bounds-size="0"
               :base-width="Number(form.width) || 2500"
               :base-height="Number(form.height) || 843"
@@ -366,7 +366,7 @@
               <template #action-fields="{ area }">
                 <AdminAreaActionEditor
                   :model-value="area.action"
-                  :disabled="!canOperate"
+                  :disabled="!canEditMenus"
                   :module-options="modules"
                   :tag-options="allTags"
                   :enable-tagging="true"
@@ -411,11 +411,13 @@ import {
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-const { apiFetch, currentWorkspaceName, canOperate } = useWorkspace()
+const { apiFetch, currentWorkspaceName, can } = useWorkspace()
+// `G-109`：這頁的寫入（新增／儲存／刪除／設為預設／上傳底圖／AI 底圖）端點全是 `marketing.write`
+const canEditMenus = computed(() => can('marketing.write'))
 
 const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   // `G-102`：觀察者存不了，就沒有「未儲存的變更」可言——不要在他切走時跳確認框
-  getSnapshot: () => (canOperate.value ? form.value : null),
+  getSnapshot: () => (canEditMenus.value ? form.value : null),
 })
 
 type LocalSelectedFile = {
@@ -966,13 +968,13 @@ function clampAllAreas() {
 // `G-102`：觀察者看得到格子、拖不動——拖了也存不了，只會讓畫面跟線上那張對不起來
 function startDrag(e: MouseEvent, index: number) {
   e.preventDefault()
-  if (!canOperate.value) return
+  if (!canEditMenus.value) return
   startAreaDrag(e, index)
 }
 
 function startResize(e: MouseEvent, index: number, handle: string) {
   e.preventDefault()
-  if (!canOperate.value) return
+  if (!canEditMenus.value) return
   startAreaResize(e, index, handle)
 }
 

@@ -48,7 +48,7 @@
         <div class="cust-card__section-hd">
           <span class="cust-card__section-title">標籤</span>
           <button
-            v-if="canOperate && !adding"
+            v-if="canEditCustomer && !adding"
             type="button"
             class="cust-card__add"
             @click="startAdd"
@@ -80,7 +80,7 @@
               :title="t.hit.title"
             >{{ t.hit.text }}</small>
             <button
-              v-if="canOperate"
+              v-if="canEditCustomer"
               type="button"
               class="tag-chip-remove"
               :title="`移除「${t.name}」`"
@@ -118,7 +118,7 @@
               @click="emit('open-conversation', s.sessionId)"
             >看這段對話 →</button>
           </div>
-          <div v-if="canOperate" class="cust-card__suggest-actions">
+          <div v-if="canEditCustomer" class="cust-card__suggest-actions">
             <el-button size="small" type="primary" :loading="acting === s.tagId" @click="actOnSuggestion(s.tagId, 'apply')">採用</el-button>
             <el-button size="small" :loading="acting === s.tagId" @click="actOnSuggestion(s.tagId, 'dismiss')">忽略</el-button>
           </div>
@@ -133,7 +133,7 @@
         <div class="cust-card__section-hd">
           <span class="cust-card__section-title">負責人員</span>
           <button
-            v-if="canOperate && !assigneeEditing"
+            v-if="canAssign && !assigneeEditing"
             type="button"
             class="cust-card__add"
             @click="startEditAssignee"
@@ -170,7 +170,7 @@
         <div class="cust-card__section-hd">
           <span class="cust-card__section-title">備註</span>
           <button
-            v-if="canOperate && !editingNote"
+            v-if="canEditCustomer && !editingNote"
             type="button"
             class="cust-card__add"
             @click="startEditNote"
@@ -299,7 +299,6 @@ const props = withDefaults(defineProps<{
   /** users 主鍵（`${workspaceId}_${lineUserId}`）；換人時自動重載 */
   userId: string
   apiFetch: <T>(url: string, opts?: any) => Promise<T>
-  canOperate?: boolean
   /** 好友頁要顯示「看完整對話 →」；對話頁本身不需要（人已經在那裡了） */
   showConversationLink?: boolean
   /**
@@ -336,6 +335,16 @@ const emit = defineEmits<{
 
 const { showToast } = useAdminToast()
 const { tags: allTags, loadTags } = useAdminTagList()
+
+/**
+ * `G-109`：按鈕顯隱照各自打的端點讀權限表，不再由宿主傳一顆「客服以上」的大開關進來——
+ * 這張卡的按鈕打到兩種能力，一顆布林講不清楚。
+ *   貼標／拆標、AI 建議採用／忽略、備註 → `/api/users/:id/{tags,tag-suggestions,note}`＝customers.write
+ *   負責人員 → `/api/conversations/:userId/assignee`＝conversations.reply
+ */
+const { can } = useWorkspace()
+const canEditCustomer = computed(() => can('customers.write'))
+const canAssign = computed(() => can('conversations.reply'))
 
 const detail = ref<CustomerDetail | null>(null)
 const loading = ref(false)

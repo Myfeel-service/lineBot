@@ -151,7 +151,7 @@ const emit = defineEmits<{
   'created': [TagOption]
 }>()
 
-const { apiFetch, workspaceId, canOperate } = useWorkspace()
+const { apiFetch, workspaceId, can } = useWorkspace()
 const { showToast } = useAdminToast()
 const { bumpAdminTagList } = useAdminTagRefresh()
 
@@ -184,7 +184,7 @@ const mergedOptions = computed<TagOption[]>(() => {
   return [...merged, ...orphans]
 })
 
-const showCreateButton = computed(() => props.allowCreate && canOperate.value)
+const showCreateButton = computed(() => props.allowCreate && can('tags.write'))
 
 const tagsPagePath = computed(() =>
   workspaceId.value ? `/admin/${workspaceId.value}/tags` : '',

@@ -2,7 +2,7 @@
   <AdminSplitLayout :is-empty="!selectedPreset && !isCreating">
     <template #sidebar-header>
       <span class="split-sidebar-title" data-tour="sp-title">客服預存<AdminPageHelpButton :topics="['support-presets']" /></span>
-      <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="sp-new" @click="openCreate">新增</el-button>
+      <el-button v-if="canEditPresets" :icon="Plus" type="primary" size="small" data-tour="sp-new" @click="openCreate">新增</el-button>
     </template>
 
     <template #sidebar-list>
@@ -12,7 +12,7 @@
       <div v-else-if="!presets.length" class="split-sidebar-empty">
         <span>尚無預存</span>
         <p class="text-xs text-muted">新增常用回覆或模組捷徑，於「對話」中一選即送</p>
-        <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        <el-button v-if="canEditPresets" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
@@ -38,14 +38,14 @@
     <template #editor-empty>
       <el-icon class="empty-icon"><Box /></el-icon>
       <!-- `G-107`：觀察者左邊沒有「新增」，不要叫他去點 -->
-      <h3>{{ canOperate ? '選擇一筆預存開始編輯' : '選擇一筆預存來查看' }}</h3>
-      <p v-if="canOperate">或點擊左側「新增」建立新的客服預存</p>
-      <el-button v-if="canOperate" type="primary" @click="openCreate">新增預存</el-button>
+      <h3>{{ canEditPresets ? '選擇一筆預存開始編輯' : '選擇一筆預存來查看' }}</h3>
+      <p v-if="canEditPresets">或點擊左側「新增」建立新的客服預存</p>
+      <el-button v-if="canEditPresets" type="primary" @click="openCreate">新增預存</el-button>
     </template>
 
     <template #editor-header>
       <AdminEditorHeaderTitle
-        v-if="canOperate"
+        v-if="canEditPresets"
         v-model="form.name"
         field-label="預存名稱"
         create-prefix="新增預存:"
@@ -62,7 +62,7 @@
         </div>
         <p class="text-sm text-muted admin-subtext">僅「啟用」的預存會出現在對話頁選單</p>
       </div>
-      <div v-if="canOperate" class="flex gap-2 admin-header-actions">
+      <div v-if="canEditPresets" class="flex gap-2 admin-header-actions">
         <el-button v-if="!isCreating && selectedPreset" :icon="Delete" type="danger" @click="deletePreset">
           刪除
         </el-button>
@@ -78,7 +78,7 @@
         `G-107`：觀察者以前改得動每一格、卻沒有儲存鈕，切走還會跳「未儲存」。
         整塊用 el-form 的 disabled 當唯讀（同 AI 設定頁），切走不問（見 getSnapshot）。
       -->
-      <el-form :disabled="!canOperate" class="ar-editor-body admin-panel-stack" @submit.prevent>
+      <el-form :disabled="!canEditPresets" class="ar-editor-body admin-panel-stack" @submit.prevent>
         <div class="message-card ar-section-card">
           <div class="message-card-header">
             <div class="card-header-main">
@@ -86,7 +86,7 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ar-section-hint">停用的預存不會出現在對話頁的「客服預存」選單{{ canOperate ? '，但仍可在此編輯' : '' }}。</p>
+            <p class="ar-section-hint">停用的預存不會出現在對話頁的「客服預存」選單{{ canEditPresets ? '，但仍可在此編輯' : '' }}。</p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用狀態" tight />
               <el-switch
@@ -192,7 +192,9 @@ import {
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { workspaceId, apiFetch } = useWorkspace()
-const { canOperate, assertCanOperate } = useAdminOperateGuard()
+const { can, assertCan } = useAdminOperateGuard()
+// `G-109`：這頁的新增／儲存／刪除都打 `/api/support-preset/*`＝presets.write
+const canEditPresets = computed(() => can('presets.write'))
 
 const modules = ref<any[]>([])
 const {
@@ -225,7 +227,7 @@ const defaultForm = () => ({
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   // `G-107`：觀察者存不了，就沒有「未儲存的變更」——切走時不要跳確認框
-  getSnapshot: () => (canOperate.value ? form.value : null),
+  getSnapshot: () => (canEditPresets.value ? form.value : null),
 })
 
 const presetActionTypeOptions = [
@@ -293,7 +295,7 @@ function cancelEdit() {
 }
 
 async function submitForm() {
-  if (!assertCanOperate()) return
+  if (!assertCan('presets.write')) return
   const payload: SupportPresetShape = normalizeSupportPreset({
     ...form.value,
     tagging: form.value.tagging,
@@ -333,7 +335,7 @@ async function submitForm() {
 }
 
 async function deletePreset() {
-  if (!assertCanOperate()) return
+  if (!assertCan('presets.write')) return
   if (!selectedId.value) return
   try {
     await ElMessageBox.confirm(`確定刪除「${form.value.name || '此預存'}」？`, '刪除確認', {

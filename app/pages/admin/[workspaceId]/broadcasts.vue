@@ -3,7 +3,7 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title" data-tour="bc-title">推播<AdminPageHelpButton :topics="['broadcasts']" /></span>
-      <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="bc-new" @click="openCreate">新增</el-button>
+      <el-button v-if="can('broadcast.write')" :icon="Plus" type="primary" size="small" data-tour="bc-new" @click="openCreate">新增</el-button>
     </template>
 
     <!-- ── Sidebar List ── -->
@@ -32,7 +32,7 @@
       </div>
       <div v-else-if="!broadcasts.length" class="split-sidebar-empty">
         <span>尚無推播</span>
-        <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        <el-button v-if="can('broadcast.write')" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="bc-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
@@ -60,9 +60,9 @@
     <template #editor-empty>
       <el-icon class="empty-icon"><Promotion /></el-icon>
       <h3>選擇一則推播來查看或編輯</h3>
-      <p v-if="canOperate">或點擊左側「新增」建立新推播</p>
+      <p v-if="can('broadcast.write')">或點擊左側「新增」建立新推播</p>
       <div class="empty-actions">
-        <el-button v-if="canOperate" type="primary" @click="openCreate">新增推播</el-button>
+        <el-button v-if="can('broadcast.write')" type="primary" @click="openCreate">新增推播</el-button>
         <!-- 空清單＝最不打擾的教學位（D-33 P2）：這裡本來就沒東西可看 -->
         <AdminPageHelpButton :topics="['broadcasts']" label="第一次用？看一遍怎麼發" />
       </div>
@@ -71,7 +71,7 @@
     <!-- ── Editor Header ── -->
     <template #editor-header>
       <AdminEditorHeaderTitle
-        v-if="canOperate"
+        v-if="can('broadcast.write')"
         v-model="form.name"
         field-label="推播名稱"
         create-prefix="新增推播:"
@@ -96,7 +96,7 @@
              `G-107`：觀察者看草稿／排程中的也走這一排（只有「關閉」），不給一顆什麼都不做的「取消」 -->
         <template v-if="isLocked">
           <el-button
-            v-if="canOperate && selectedItem?.status === 'failed'"
+            v-if="can('broadcast.send') && selectedItem?.status === 'failed'"
             type="warning"
             plain
             :loading="retrying"
@@ -109,7 +109,7 @@
         <!-- 可編輯 -->
         <template v-else>
           <el-button
-            v-if="canOperate && !isCreating && selectedItem && ['draft','scheduled'].includes(selectedItem.status)"
+            v-if="can('broadcast.send') && !isCreating && selectedItem && ['draft','scheduled'].includes(selectedItem.status)"
             type="danger"
             plain
             @click="cancelBroadcast"
@@ -117,10 +117,11 @@
             {{ selectedItem.status === 'scheduled' ? '取消排程' : '取消推播' }}
           </el-button>
           <el-button @click="cancelEdit">取消</el-button>
-          <el-button v-if="canOperate" :loading="saving" @click="saveDraft">
+          <el-button v-if="can('broadcast.write')" :loading="saving" @click="saveDraft">
             {{ selectedItem?.status === 'scheduled' ? '儲存變更' : '儲存草稿' }}
           </el-button>
-          <el-button v-if="canOperate" type="primary" :loading="validating" data-tour="bc-send" @click="openValidateDialog">
+          <!-- `G-109`：驗證本身是讀取，這顆按到底是 `send`／`schedule`，所以照 `broadcast.send` 擋 -->
+          <el-button v-if="can('broadcast.send')" type="primary" :loading="validating" data-tour="bc-send" @click="openValidateDialog">
             {{ headerSubmitLabel }}
           </el-button>
         </template>
@@ -274,7 +275,7 @@
               ⛔ 放在「訊息內容」這張卡裡，不放在頁首那排按鈕旁邊——人要試的是**內容**，
               而頁首那排的旁邊就是「驗證並發送」，兩顆長得太近會按錯，而按錯的那一顆收不回來。
             -->
-            <div v-if="!isReadOnly && canOperate" class="bc-testsend" data-tour="bc-testsend">
+            <div v-if="!isReadOnly && can('broadcast.write')" class="bc-testsend" data-tour="bc-testsend">
               <el-button size="small" @click="openTestSend">試發一則給自己看</el-button>
               <span class="text-xs text-muted">
                 真的會送到那支手機。<b>不會</b>算進成效報表、<b>不會</b>貼記號、<b>不會</b>改變這則推播的狀態。
@@ -340,9 +341,9 @@
                 :disabled="isLocked"
               />
               <p v-if="selectedItem?.status === 'scheduled'" class="tags-hint">
-                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="canOperate">可以「儲存變更」或「取消排程」。</template>
+                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="can('broadcast.write')">可以「儲存變更」或「取消排程」。</template>
               </p>
-              <p v-else-if="canOperate" class="tags-hint">
+              <p v-else-if="can('broadcast.send')" class="tags-hint">
                 按下確認後不會馬上發，要到排程時間才送出；發送對象也是到那個時間點才計算。
               </p>
             </div>
@@ -670,7 +671,8 @@ function isNotFoundApiError(e: unknown): boolean {
 }
 
 const { workspaceId, apiFetch, currentWorkspaceName } = useWorkspace()
-const { canOperate, assertCanOperate } = useAdminOperateGuard()
+// `G-109`：草稿（新增／儲存／試發）＝`broadcast.write`；真的送出去（發送／排程／取消／重發／到期處理）＝`broadcast.send`
+const { can, assertCan } = useAdminOperateGuard()
 
 // ── 狀態 ────────────────────────────────────────────────────────────
 const flows = ref<{
@@ -772,7 +774,7 @@ const defaultForm = () => ({
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   // `G-107`：觀察者存不了，就沒有「未儲存的變更」——以前他動過一格，離開就被問「確定要放棄嗎」
-  getSnapshot: () => (canOperate.value ? form.value : null),
+  getSnapshot: () => (can('broadcast.write') ? form.value : null),
 })
 
 // `D-86`：`isActive` / `messageCount` 要一路帶到下拉，它才標得出「還沒有內容／已停用」
@@ -804,7 +806,7 @@ const isReadOnly = computed(() => {
  * ⛔ 跟 `isReadOnly` 分開：那一個講的是「這則推播的狀態」（決定要不要顯示報表、
  *    「沒有留存當時的內容」那句話），觀察者看一則草稿時那些話都不成立。
  */
-const isLocked = computed(() => isReadOnly.value || !canOperate.value)
+const isLocked = computed(() => isReadOnly.value || !can('broadcast.write'))
 
 const importUserIds = computed(() =>
   form.value.importText.split('\n').map((l) => l.trim()).filter(Boolean),
@@ -945,7 +947,7 @@ async function searchTestFriends(keyword?: string) {
 }
 
 function openTestSend() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.write')) return
   testSendError.value = ''
   testSendDone.value = null
   if (!testSendUserId.value) {
@@ -1176,7 +1178,7 @@ async function cancelEdit() {
 }
 
 async function saveDraft(): Promise<boolean> {
-  if (!assertCanOperate()) return false
+  if (!assertCan('broadcast.write')) return false
   const err = validateForm({
     requireScheduleTime: form.value.scheduleMode === 'schedule',
   })
@@ -1290,7 +1292,7 @@ async function onConfirmDialogSubmit() {
 }
 
 async function confirmSchedule() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.send')) return
   const id = pendingBroadcastId.value
   const scheduleAtLocal = pendingScheduleAtLocal.value
 
@@ -1344,7 +1346,7 @@ async function confirmSchedule() {
 }
 
 async function confirmSendNow() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.send')) return
   const id = pendingBroadcastId.value || selectedId.value
   if (!id) {
     confirmDialogError.value = '推播 ID 遺失，請關閉視窗後重試'
@@ -1377,7 +1379,7 @@ async function confirmSendNow() {
 }
 
 async function cancelBroadcast() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.send')) return
   const isScheduled = selectedItem.value?.status === 'scheduled'
   const msg = isScheduled ? '確定要取消這則排程？' : '確定要取消這則推播？'
   if (!selectedId.value) return
@@ -1403,7 +1405,7 @@ async function cancelBroadcast() {
 
 /** 失敗的推播重設回草稿：本身不發任何訊息，重設後要再走一次「驗證並發送」 */
 async function retryBroadcast() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.send')) return
   if (!selectedId.value) return
   try {
     await ElMessageBox.confirm(
@@ -1449,7 +1451,7 @@ function needsDuePolling() {
 }
 
 async function processDueScheduledBroadcasts() {
-  if (!canOperate.value) return
+  if (!can('broadcast.send')) return
   if (!needsDuePolling()) return
   try {
     const res = await apiFetch<{

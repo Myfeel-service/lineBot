@@ -28,14 +28,16 @@ import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
  * 正要不夠用。在那之前推銷是賣空氣，在那之後才推就已經斷線了。
  *
  * 顯示規則：
- *   · 只給**按得下升級鈕的人**看（admin 以上）。客服 / 觀察者看到也沒辦法處理，純噪音。
+ *   · 只給**按得下升級鈕的人**看（`billing.manage`）。客服 / 觀察者看到也沒辦法處理，純噪音。
+ *     方案資料另看 `usage.read`（`/api/ai/usage/plan-summary` 的門檻）——兩個都是 admin，
+ *     分開寫是為了各自跟著自己那支端點走（`G-109`）。
  *   · `near`（≥80%）→ 警告，可關閉（關閉只對「這個帳號的這一期」有效，下一期會再出現）。
  *   · `over`（100%）→ **不可關閉**。那不是提醒，那是 AI 已經停止回覆的服務中斷。
  *   · 客製 / 內部方案（無額度上限）→ 永遠不顯示。
  *   · 帳單頁本身不顯示（升級按鈕就在那頁上，再掛一條橫幅只是噪音）。
  */
 const route = useRoute()
-const { workspaceId, canManageSettings } = useWorkspace()
+const { workspaceId, can } = useWorkspace()
 const { plan, state, load } = usePlanSummary()
 
 const upgradeOpen = ref(false)
@@ -49,7 +51,7 @@ const dismissKey = computed(() =>
 const onBillingPage = computed(() => route.path.includes('/settings/billing'))
 
 const show = computed(() => {
-  if (!canManageSettings.value || onBillingPage.value) return false
+  if (!can('billing.manage') || onBillingPage.value) return false
   if (!plan.value || plan.value.answeredQuota == null) return false // 客製 / 內部方案：無上限
   if (state.value.state === 'over') return true // 服務已中斷 → 一律顯示，不理會關閉
   return state.value.state === 'near' && !dismissed.value
@@ -89,7 +91,7 @@ const loadedFor = ref('')
 
 /**
  * ⚠️ **不能用 onMounted 判斷權限。**
- * canManageSettings 是從 workspaceList 導出的，而那份清單是由 layout 的 onMounted 去載的——
+ * 權限（can()）是從 workspaceList 導出的，而那份清單是由 layout 的 onMounted 去載的——
  * Vue 的子元件 onMounted **早於**父層 layout 的 onMounted，所以這裡在掛載當下看到的
  * 永遠是「還沒有權限」，然後就直接 return、永遠不載入，整個橫幅形同不存在。
  * 改成 watch：等權限真的出現時才打 API（只打一次）。
@@ -100,8 +102,8 @@ const loadedFor = ref('')
  * `usePlanSummary` 的帳號戳記對不上（那道戳記是為了不把 A 家的方案顯示在 B 家），
  * 於是這條橫幅整條消失——B 家額度已經 100%、AI 停止回覆了卻沒有任何提示。
  */
-watch([canManageSettings, workspaceId], async ([can, wid], [, prevWid]) => {
-  if (!can) return // 沒有計費權限的人不必打這支（plan-summary 需要 admin，打了只會拿到 403）
+watch([() => can('usage.read'), workspaceId], async ([allowed, wid], [, prevWid]) => {
+  if (!allowed) return // 沒有計費權限的人不必打這支（plan-summary 要 usage.read，打了只會拿到 403）
   if (wid !== prevWid) loadedFor.value = '' // 換帳號＝要重新問一次
   if (!wid || loadedFor.value === wid) return
   loadedFor.value = wid

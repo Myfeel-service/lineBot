@@ -22,7 +22,7 @@
         <!-- 一次處理好幾筆的入口。平常不出現勾選框：那一欄會吃掉名字與訊息預覽的寬度
              （239px 的側欄，手機更明顯），所以做成可切換的模式 -->
         <el-button
-          v-if="canOperate"
+          v-if="canReply"
           size="small"
           :type="selectionMode ? 'primary' : undefined"
           :plain="selectionMode"
@@ -325,12 +325,12 @@
               :meta-strong="s.lastDirection === 'incoming' && !!s.lastMessage"
               :meta-truncate="true"
               :chip-text="formatTime(s.lastActivityAt)"
-              :context-menu-enabled="canOperate"
+              :context-menu-enabled="canReply"
               @select="selectSession(s)"
               @contextmenu="openConvContextMenu($event, s)"
             />
             <button
-              v-if="canOperate"
+              v-if="canReply"
               type="button"
               class="conv-list-row__more"
               title="釘選 / 待跟進"
@@ -372,13 +372,13 @@
               :meta-truncate="true"
               :chip-text="formatTime(c.lastMessageAt)"
               chip-tone="neutral"
-              :context-menu-enabled="canOperate"
+              :context-menu-enabled="canReply"
               @select="selectUser(c)"
               @contextmenu="openConvContextMenu($event, c)"
             />
             <!-- 右鍵是隱藏功能,沒人會自己發現:滑過就露出同一份選單的入口 -->
             <button
-              v-if="canOperate"
+              v-if="canReply"
               type="button"
               class="conv-list-row__more"
               title="釘選 / 待跟進"
@@ -534,7 +534,7 @@
           先前狀態徽章和三顆動作按鈕混在同一排、視覺重量又接近，眼睛分不出哪個是現況哪個能按。
         -->
         <div
-          v-if="sessionToolbarMeta || (selectedUserId && canOperate)"
+          v-if="sessionToolbarMeta || (selectedUserId && canReply)"
           class="conv-header-row conv-header-row--session"
         >
           <!--
@@ -563,7 +563,7 @@
                對話照樣要指派得了人。
           -->
           <el-dropdown
-            v-if="selectedUserId && canOperate"
+            v-if="selectedUserId && canReply"
             trigger="click"
             placement="bottom-start"
             class="conv-assignee"
@@ -620,7 +620,7 @@
               </el-button>
             </el-tooltip>
             <el-tooltip
-              v-if="canOperate && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
+              v-if="canReply && (sessionToolbarMeta.status === 'pending_human' || sessionToolbarMeta.status === 'human_handling')"
               content="交還後，機器人與 AI 會恢復自動回覆這位客人"
               placement="top"
             >
@@ -634,7 +634,7 @@
               </el-button>
             </el-tooltip>
             <el-button
-              v-if="canOperate && sessionToolbarMeta.status !== 'closed'"
+              v-if="canReply && sessionToolbarMeta.status !== 'closed'"
               size="small"
               plain
               :loading="closingSession"
@@ -679,7 +679,7 @@
         >{{ showAllEvents ? '收起系統紀錄' : `顯示系統紀錄（${hiddenEventCount}）` }}</button>
       </div>
       <ConversationsAiContextBanner
-        v-if="canOperate"
+        v-if="canReply"
         ref="aiContextBanner"
         :user-id="selectedUserId"
         :refresh-key="aiContextRefreshKey"
@@ -694,17 +694,17 @@
         ref="messagesEl"
         class="conv-messages"
         data-tour="conv-messages"
-        :class="{ 'is-drop-target': canOperate && isDraggingImage }"
+        :class="{ 'is-drop-target': canReply && isDraggingImage }"
         @scroll.passive="onMessagesScroll"
         @load.capture="onMessagesContentGrew"
         @error.capture="onMessagesContentGrew"
         @loadedmetadata.capture="onMessagesContentGrew"
-        @dragenter.prevent="canOperate && onDragEnter($event)"
+        @dragenter.prevent="canReply && onDragEnter($event)"
         @dragover.prevent
         @dragleave="onDragLeave"
-        @drop.prevent="canOperate && onDropFile($event)"
+        @drop.prevent="canReply && onDropFile($event)"
       >
-        <div v-if="canOperate && isDraggingImage" class="conv-drop-hint">
+        <div v-if="canReply && isDraggingImage" class="conv-drop-hint">
           放開就把圖片帶進來，送出前還可以先看一眼
         </div>
         <div v-if="msgLoading" class="split-sidebar-loading">
@@ -1058,7 +1058,7 @@
                   meta 是貼在泡泡右側的窄欄、與泡泡共用寬度上限，多一列會把它撐成三層高
                   （比泡泡還高）、六個字也會把泡泡擠窄。同 conv-send-failed-row 的理由。
                 -->
-                <div v-if="canOperate && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
+                <div v-if="canReply && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
                   <button
                     type="button"
                     class="conv-bubble-why"
@@ -1139,7 +1139,7 @@
         客人封鎖後推播一定被 LINE 退件。不先講的話，客服會認真打完一長串才看到「發送失敗」，
         而且不會知道是自己這邊沒問題——所以擋在回覆區上面，不是等送出才說。
       -->
-      <div v-if="canOperate && selectedUser?.isBlocked" class="conv-blocked-notice">
+      <div v-if="canReply && selectedUser?.isBlocked" class="conv-blocked-notice">
         <span class="conv-blocked-notice__icon" aria-hidden="true">🚫</span>
         <span>這位客人已封鎖官方帳號，訊息送不出去。要聯絡他請改用其他管道。</span>
       </div>
@@ -1150,7 +1150,7 @@
         但那只擋得住 primary 按鈕——picker 裡任何非 primary 的動作鈕都會漏出來，
         點了才跳「觀察者無法執行此操作」。權限要在 markup 決定，不是靠按鈕顏色。
       -->
-      <div v-if="canOperate" class="conv-input-tools">
+      <div v-if="canReply" class="conv-input-tools">
         <div class="conv-picker-actions" data-tour="conv-presets">
           <el-dropdown trigger="click" placement="top-start" @command="onQuickSendCommand">
             <button
@@ -1343,7 +1343,7 @@
              說明改掛在四顆圖示各自的 title 上（滑上去才講）。 -->
       </div>
 
-      <div v-if="canOperate" class="conv-input-row" data-tour="conv-reply">
+      <div v-if="canReply" class="conv-input-row" data-tour="conv-reply">
         <el-input
           ref="inputRef"
           v-model="inputText"
@@ -1373,7 +1373,6 @@
           <AdminCustomerCard
             :user-id="selectedUserId"
             :api-fetch="apiFetch"
-            :can-operate="canOperate"
             :fallback-name="selectedUser?.displayName"
             :fallback-picture="selectedUser?.pictureUrl"
             :show-last-activity="false"
@@ -1571,7 +1570,7 @@ const props = defineProps<{
 }>()
 
 const { apiFetch } = props
-const { assertCanOperate } = useAdminOperateGuard()
+const { can, assertCan } = useAdminOperateGuard()
 
 const route = useRoute()
 const workspaceId = computed(() => String(route.params.workspaceId || ''))
@@ -2303,10 +2302,13 @@ const aiContextBanner = ref<{ refreshSummary: () => Promise<void> } | null>(null
  * 原本是 super admin only 的階段性開關，但那讓兩顆按鈕對客戶等於不存在——
  * 尤其「答錯了」是唯一能讓人告訴系統「AI 這題答錯」的地方，沒有它就只收得到
  * 「AI 自己說答不出來」那一半訊號。
- * 用 canOperate（agent 以上，不含觀察者）對齊按鈕實際需要的權限：
- * 補知識 = knowledge.write（agent）、答錯標記 = ai-feedback 端點（agent）。
+ *
+ * `G-109`：這一頁的寫入（回覆、客服預存、貼圖／媒體、接手／交還／結束、釘選／待跟進、勾選批次、
+ * 指派、AI 脈絡卡與「為什麼這樣答」、答錯標記）打的端點全是 conversations.reply，所以共用一顆。
+ * 補知識／去修這張卡只是開新分頁到知識庫頁，那邊的儲存（knowledge.write）由那一頁自己擋。
+ * 右側客人卡的貼標／備註是 customers.write，卡片自己讀。
  */
-const { canOperate } = useWorkspace()
+const canReply = computed(() => can('conversations.reply'))
 // 開通沒完成時，空清單要講真話（見 sidebarEmpty）——只讀狀態，不在這裡發查詢
 const { onboardingIncomplete } = useSetupStatus()
 
@@ -2999,7 +3001,7 @@ const sessionStateTone = computed<{ type: 'danger' | 'warning' | 'info'; muted: 
  * 已經是待真人 / 真人處理中的話，該顯示的是反向的「交還機器人」。
  */
 const canTakeOverSession = computed(() => {
-  if (!canOperate.value) return false
+  if (!canReply.value) return false
   const st = sessionToolbarMeta.value?.status
   return st === 'open' || st === 'bot_handling'
 })
@@ -3264,7 +3266,7 @@ const contextMenuItems = computed<AdminContextMenuItem[]>(() => {
 
 function openContextMenuAt(x: number, y: number, target: ConvItem | SessionItem) {
   // 觀察者不開自訂選單（SplitListItem 也不會擋掉原生選單）：無權限一律隱藏，不給按了才說不行
-  if (!canOperate.value) return
+  if (!canReply.value) return
   contextMenuTarget.value = target
   contextMenuPos.value = { x, y }
   contextMenuVisible.value = true
@@ -3340,7 +3342,7 @@ function applyLocalAssignee(userId: string, assignee: ConversationAssignee) {
 
 async function setAssignee(uid: string) {
   const userId = selectedUserId.value
-  if (!userId || !assertCanOperate()) return
+  if (!userId || !assertCan('conversations.reply')) return
   if (uid === currentAssignee.value.uid) return
 
   const previous = currentAssignee.value
@@ -3375,7 +3377,7 @@ function applyLocalFlags(userId: string, flags: Partial<{ pinned: boolean, follo
 
 async function onContextMenuSelect(key: string) {
   const target = contextMenuTarget.value
-  if (!target || !assertCanOperate()) return
+  if (!target || !assertCan('conversations.reply')) return
 
   const isPin = key === 'pin'
   const next = isPin ? !target.pinned : !target.followUp
@@ -3505,7 +3507,7 @@ function clearSelection() {
 }
 
 function toggleSelectionMode() {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   selectionMode.value = !selectionMode.value
   clearSelection()
   batchReport.value = null
@@ -3547,7 +3549,7 @@ function buildBatchReport(
 }
 
 async function batchCloseSelected() {
-  if (!assertCanOperate() || batchRunning.value) return
+  if (!assertCan('conversations.reply') || batchRunning.value) return
   const rows = selectedRows.value.filter(r => r.sessionId)
   if (!rows.length) return
 
@@ -3596,7 +3598,7 @@ async function batchCloseSelected() {
 }
 
 async function batchSetFollowUp(next: boolean) {
-  if (!assertCanOperate() || batchRunning.value) return
+  if (!assertCan('conversations.reply') || batchRunning.value) return
   const rows = [...selectedRows.value]
   if (!rows.length) return
 
@@ -4179,7 +4181,7 @@ function openQuickReplySource() {
 }
 
 async function sendQuickReply() {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   const id = pendingQuickReplyId.value
   if (!id || !selectedUserId.value || !selectedUser.value) return
   sending.value = true
@@ -4209,7 +4211,7 @@ async function sendQuickReply() {
  * 代換規則得和真的送出同一套，否則客服會把 {{displayName}} 原封不動送出去。
  */
 async function fillQuickReply() {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   const item = pendingQuickReplyItem.value
   if (!item || !selectedUserId.value) return
   quickReplyFilling.value = true
@@ -4616,7 +4618,7 @@ function onInputEnter(evt: Event | KeyboardEvent) {
  * 比「彈個 toast、字已經不見了」誠實得多。
  */
 async function send() {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   const userId = selectedUserId.value
   if (!userId) return
   const text = inputText.value.trim()
@@ -4661,7 +4663,7 @@ async function deliverPendingOutgoing(localId: string) {
 }
 
 function retryPendingOutgoing(localId: string) {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   void deliverPendingOutgoing(localId)
 }
 
@@ -4733,7 +4735,7 @@ async function reloadAfterOutgoing() {
 async function takeOverSelectedSession() {
   const sid = selectedSessionId.value || allTabActiveSession.value?.sessionId
   if (!sid || !canTakeOverSession.value) return
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   takingOverSession.value = true
   try {
     await apiFetch(`/api/conversations/sessions/${sid}/takeover`, {
@@ -4764,7 +4766,7 @@ async function handBackSelectedSession() {
   const st = sessionToolbarMeta.value?.status
   if (!sid || (st !== 'pending_human' && st !== 'human_handling'))
     return
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   handingBackSession.value = true
   try {
     await apiFetch(`/api/conversations/sessions/${sid}/handback`, {
@@ -4988,7 +4990,7 @@ function onQuickSendCommand(command: string | number | object) {
  * 送圖給客人收不回來，貼錯一張的代價比多按一次「送出」高太多。
  */
 async function acceptDroppedImage(file: File) {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   if (!selectedUserId.value) {
     showToast('請先選擇一位使用者', 'error')
     return
@@ -5043,7 +5045,7 @@ function onDropFile(evt: DragEvent) {
 }
 
 async function sendQuickMedia() {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   if (!selectedUserId.value || !canSendQuickMedia.value) return
   const body: Record<string, any> = {
     type: quickSendType.value,
@@ -5282,7 +5284,7 @@ function appendEmoji(emoji: string) {
 }
 
 async function sendSticker(packageId: string, sid: string) {
-  if (!assertCanOperate()) return
+  if (!assertCan('conversations.reply')) return
   if (!selectedUserId.value) {
     showToast('請先選擇一位使用者', 'error')
     return

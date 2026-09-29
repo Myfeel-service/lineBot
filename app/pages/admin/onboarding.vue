@@ -92,6 +92,8 @@
  * - 無參數＝全新開通（聊天中建 org + workspace，建完不導走、同一場對話接 LINE）
  * - ?workspaceId=＝續走（健康卡「用聊天引導完成開通」進來），做過的步驟靜默跳過
  */
+import { can } from '~~/shared/permissions'
+
 definePageMeta({ middleware: 'auth', layout: false })
 useHead({ title: '開通引導 — 小幫手' })
 
@@ -196,7 +198,8 @@ onMounted(async () => {
     showToast('你沒有這個官方帳號的權限，已回到帳號選擇頁', 'error')
     return navigateTo('/admin/workspaces', { replace: true })
   }
-  if (role !== 'owner' && role !== 'admin') {
+  // 續走的主線是接 LINE（`/api/admin/line-workspace` 讀／存都是 line.manage），看同一個能力（`G-109`）
+  if (!can(role, 'line.manage')) {
     mode.value = 'locked'
     return
   }

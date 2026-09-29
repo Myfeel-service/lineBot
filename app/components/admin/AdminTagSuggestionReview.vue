@@ -19,7 +19,7 @@
            先前這件事只在客人單頁一位一位按，兩顆鈕旁邊什麼都沒寫。
       -->
       <!-- `G-107`：觀察者沒有這兩顆鈕，講按下去的後果是在講他按不到的東西 -->
-      <p v-if="canOperate" class="tag-review__hint">
+      <p v-if="canReview" class="tag-review__hint">
         <strong>採用</strong>＝真的把這顆標籤貼到那位客人身上（記「AI 貼的」，隨時可拿掉）。
         <strong>忽略</strong>＝這顆標籤對那位客人<strong>永遠不再建議</strong>，之後 AI 也不會自動貼。
       </p>
@@ -56,9 +56,9 @@
 
       <template v-else>
         <!-- ⛔ 唯讀角色勾選框整排不出現（`G-107`：原本是灰掉，政策是沒權限就藏）：
-             勾得動「已選 34 位」卻一顆動作鈕都沒有（那幾顆藏在 canOperate 後面），
+             勾得動「已選 34 位」卻一顆動作鈕都沒有（那幾顆藏在 canReview 後面），
              等於給了一個按了不會有結果的控制項。⛔ 全選與每一列要一起藏，只藏一邊就是半套 -->
-        <div v-if="canOperate" class="tag-review__toolbar">
+        <div v-if="canReview" class="tag-review__toolbar">
           <el-checkbox
             :model-value="allChecked"
             :indeterminate="someChecked"
@@ -85,7 +85,7 @@
         <ul class="tag-review__list">
           <li v-for="row in rows" :key="row.userId" class="tag-review__row">
             <el-checkbox
-              v-if="canOperate"
+              v-if="canReview"
               :model-value="selected.includes(row.userId)"
               @change="toggleOne(row.userId)"
             />
@@ -116,7 +116,7 @@
       <!-- ⛔ 這一排永遠要在：抽屜沒有標題列（沒有那顆 ✕），只靠點外面關掉的話，
            看不到操作鈕的人（唯讀角色、清單是空的）會找不到出口 -->
       <div class="tag-review__actions">
-        <template v-if="canOperate && rows.length">
+        <template v-if="canReview && rows.length">
           <el-button
             type="primary"
             :loading="acting === 'apply'"
@@ -151,7 +151,6 @@ const props = defineProps<{
   visible: boolean
   /** null＝還沒選標籤（抽屜不會開） */
   tag: { id: string, name: string, color?: string, aiMode?: string } | null
-  canOperate: boolean
   apiFetch: <T>(url: string, opts?: any) => Promise<T>
 }>()
 
@@ -168,6 +167,12 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useAdminToast()
+/**
+ * `G-109`：採用／忽略打的是 `POST /api/tag/:id/pending`＝customers.write（貼到客人身上，
+ * 不是改標籤本身），直接讀權限表；以前是宿主傳一顆「客服以上」的大開關進來。
+ */
+const { can } = useWorkspace()
+const canReview = computed(() => can('customers.write'))
 
 const rows = ref<PendingReviewRow[]>([])
 const selected = ref<string[]>([])
@@ -240,7 +245,7 @@ watch(() => [props.visible, props.tag?.id], ([open]) => {
 })
 
 async function submit(action: 'apply' | 'dismiss') {
-  if (!props.canOperate || !props.tag || !selected.value.length) return
+  if (!canReview.value || !props.tag || !selected.value.length) return
   const n = selected.value.length
   const name = props.tag.name
   try {

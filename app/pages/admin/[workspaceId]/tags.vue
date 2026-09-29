@@ -9,8 +9,8 @@
       />
       <div class="flex gap-1 admin-header-actions">
         <!-- 範本＝AI 判斷型標籤的起手式：名稱、判斷條件都寫好，一鍵建立改幾個字就能用（D-27③） -->
-        <el-button v-if="canOperate" size="small" data-tour="tag-templates" @click="openTemplates">從範本建立</el-button>
-        <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="tag-new" @click="openCreate">新增</el-button>
+        <el-button v-if="canEditTags" size="small" data-tour="tag-templates" @click="openTemplates">從範本建立</el-button>
+        <el-button v-if="canEditTags" :icon="Plus" type="primary" size="small" data-tour="tag-new" @click="openCreate">新增</el-button>
       </div>
     </template>
 
@@ -130,7 +130,7 @@
                   </template>
                 </p>
               </div>
-              <div v-if="canOperate" class="tags-discovery-row__actions">
+              <div v-if="canEditTags" class="tags-discovery-row__actions">
                 <!--
                   ⛔ 撞到重複時「建立」就不該是主鈕：主鈕是人眼睛會先落到的地方，
                      把它留給「再開一顆」等於用版面推著人做出正要避免的事。
@@ -193,7 +193,7 @@
           </span>
           <!-- ⛔ 開關關著時不給這顆按鈕：按了也不會掃，那是假的操作 -->
           <el-button
-            v-if="canOperate && discoveryEnabled"
+            v-if="canEditTags && discoveryEnabled"
             size="small"
             :loading="rescanning"
             @click="requestRescan"
@@ -271,7 +271,7 @@
                 <!-- ⛔ 文案是「取消忽略」不是「還原建議」：建議本身回不來（沒存名單），
                      真正發生的是「這個主題重新有資格被提」 -->
                 <el-button
-                  v-if="canOperate && canUndoDismiss(h)"
+                  v-if="canEditTags && canUndoDismiss(h)"
                   size="small"
                   :loading="undoingDismiss === h.id"
                   :disabled="!!undoingDismiss"
@@ -283,7 +283,7 @@
                   併錯了就再也叫不回來。知識庫的產品名合併早就有「解除」，這裡跟上。
                 -->
                 <el-button
-                  v-if="canOperate && canUnmerge(h)"
+                  v-if="canEditTags && canUnmerge(h)"
                   size="small"
                   :loading="unmerging === h.id"
                   :disabled="!!unmerging"
@@ -545,12 +545,12 @@
   -->
   <el-dialog
     v-model="dialogVisible"
-    :title="isEditing ? (canOperate ? '編輯標籤' : '標籤內容') : '新增標籤'"
+    :title="isEditing ? (canEditTags ? '編輯標籤' : '標籤內容') : '新增標籤'"
     width="min(600px, 94vw)"
     class="tags-dialog"
-    :close-on-click-modal="!canOperate"
+    :close-on-click-modal="!canEditTags"
   >
-    <el-form label-position="top" :disabled="!canOperate" @submit.prevent>
+    <el-form label-position="top" :disabled="!canEditTags" @submit.prevent>
       <div class="admin-field-stack">
         <div class="admin-field-group">
           <AdminFieldLabel text="啟用狀態" tight />
@@ -562,7 +562,7 @@
             inactive-text="已停用"
             class="tags-status-switch"
           />
-          <span class="tags-hint">停用的標籤不會出現在貼標選單{{ canOperate ? '，但仍可在此編輯' : '' }}</span>
+          <span class="tags-hint">停用的標籤不會出現在貼標選單{{ canEditTags ? '，但仍可在此編輯' : '' }}</span>
         </div>
 
         <div class="admin-field-group" data-tour="tag-code">
@@ -587,7 +587,7 @@
                所以它只有資格問一句，沒有資格替人做決定。
             ⛔ 撞到的那顆要能直接點開看：沒有出口的警告只會被當成雜訊跳過。
           -->
-          <p v-if="canOperate && createSimilarTop" class="tags-similar-hint">
+          <p v-if="canEditTags && createSimilarTop" class="tags-similar-hint">
             ⚠️
             <template v-if="createSimilarTop.exact">
               你已經有一顆叫「<strong>{{ createSimilarTop.name }}</strong>」的標籤了。
@@ -622,7 +622,7 @@
 
         <div class="admin-field-group">
           <AdminFieldLabel text="標籤顏色" tight />
-          <div v-if="canOperate" class="tags-color-row">
+          <div v-if="canEditTags" class="tags-color-row">
             <button
               v-for="c in TAG_PRESET_COLORS"
               :key="c"
@@ -698,8 +698,8 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="dialogVisible = false">{{ canOperate ? '取消' : '關閉' }}</el-button>
-      <el-button v-if="canOperate" type="primary" :loading="saving" @click="submitForm">
+      <el-button @click="dialogVisible = false">{{ canEditTags ? '取消' : '關閉' }}</el-button>
+      <el-button v-if="canEditTags" type="primary" :loading="saving" @click="submitForm">
         {{ isEditing ? '儲存變更' : '建立標籤' }}
       </el-button>
     </template>
@@ -735,7 +735,7 @@
     <template #footer>
       <el-button @click="templateDialogVisible = false">關閉</el-button>
       <el-button
-        v-if="canOperate"
+        v-if="canEditTags"
         type="primary"
         :loading="creatingTemplates"
         :disabled="!selectedTemplateCodes.length"
@@ -750,7 +750,6 @@
   <AdminTagSuggestionReview
     v-model:visible="reviewVisible"
     :tag="reviewTag"
-    :can-operate="canOperate"
     :api-fetch="apiFetch"
     @changed="onPendingReviewChanged"
     @open-conversation="goConversation"
@@ -806,7 +805,13 @@ const AI_MODE_OPTIONS: Array<{ value: TagAiMode; title: string; desc: string }> 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 const { workspaceId, apiFetch } = useWorkspace()
-const { canOperate, assertCanOperate } = useAdminOperateGuard()
+const { can, assertCan } = useAdminOperateGuard()
+/**
+ * `G-109`：這頁的新增／編輯／範本／AI 發現（採用、合併、忽略、取消忽略、解除合併、立即掃描）
+ * 都打 `/api/tag/create`、`/api/tag/:id`、`/api/tag/discovery`＝tags.write。
+ * 「等你決定」的採用／忽略是貼到客人身上（customers.write），在抽屜與 offerApplyPendingAfterAuto 那邊各自讀。
+ */
+const canEditTags = computed(() => can('tags.write'))
 const { tags, loading, total, segments, page, pageSize, loadTags } = useAdminTagList()
 const { showToast } = useAdminToast()
 
@@ -948,7 +953,7 @@ function openTemplates() {
 }
 
 async function createFromTemplates() {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   if (!selectedTemplateCodes.value.length) return
   creatingTemplates.value = true
   let created = 0
@@ -1022,7 +1027,7 @@ function isSegmentActive(value: string): boolean {
 const rescanning = ref(false)
 
 async function requestRescan() {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   rescanning.value = true
   try {
     const res = await apiFetch<{ queued: boolean, reason?: string }>('/api/tag/discovery', {
@@ -1150,7 +1155,7 @@ const unmerging = ref('')
  * 是兩個不同的後悔，而前者會改到客人資料。混成一個動作，想要後者的人會連帶失去已經貼好的標籤。
  */
 async function unmergeDecision(h: TagDiscoveryDecision) {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   const full = `連標籤一起拿掉（${h.taggedCount ?? 0} 位）`
   const keep = '標籤留著，只讓 AI 可以再提'
   let action: 'unmerge' | 'unblock'
@@ -1269,7 +1274,7 @@ async function loadDiscovery() {
  * 而如果聊過的客人已經散掉、或超出兩週窗口，它就不會回來。講白比講好聽重要。
  */
 async function undoDismiss(h: TagDiscoveryDecision) {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   undoingDismiss.value = h.id
   try {
     await apiFetch('/api/tag/discovery', {
@@ -1292,7 +1297,7 @@ async function actOnDiscovery(
   action: 'adopt' | 'dismiss' | 'merge',
   target?: DiscoverySimilarTag,
 ) {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   if (action === 'merge' && !target) return
   discoveryActing.value = p.id
   discoveryActingKind.value = action === 'merge' ? target!.tagId : action
@@ -1535,7 +1540,7 @@ function validateForm(): string | null {
 }
 
 async function submitForm() {
-  if (!assertCanOperate()) return
+  if (!assertCan('tags.write')) return
   const err = validateForm()
   if (err) return showToast(err, 'error')
 
@@ -1652,6 +1657,8 @@ async function submitForm() {
  * 看得到是哪幾位、還能逐位取消勾選。所以文案末尾把人指過去。
  */
 async function offerApplyPendingAfterAuto(ctx: { tagId: string; tagName: string; criteriaChanged: boolean }) {
+  // `G-109`：存標籤是 tags.write，這裡問的「一起貼上」打的是 `POST /api/tag/:id/pending`＝customers.write
+  if (!can('customers.write')) return
   const count = pendingCountFor(ctx.tagId)
   if (!count) return
 

@@ -182,7 +182,7 @@ const emit = defineEmits<{
   'created': [ModuleOption]
 }>()
 
-const { apiFetch, workspaceId, canOperate } = useWorkspace()
+const { apiFetch, workspaceId, can } = useWorkspace()
 const { showToast } = useAdminToast()
 const { bumpAdminFlowList } = useAdminFlowRefresh()
 
@@ -221,7 +221,8 @@ const mergedOptions = computed<Row[]>(() => {
 
 const selectedRow = computed(() => mergedOptions.value.find(m => m.id === props.modelValue) ?? null)
 
-const showCreateButton = computed(() => props.allowCreate && canOperate.value)
+// `G-109`：就地建模組打的是 `flow/create`（`marketing.write`）
+const showCreateButton = computed(() => props.allowCreate && can('marketing.write'))
 const showActions = computed(() => showCreateButton.value || !!editHref.value)
 
 const flowPagePath = computed(() =>

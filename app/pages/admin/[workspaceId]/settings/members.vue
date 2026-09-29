@@ -8,7 +8,7 @@
         :help-topics="['members']"
       />
       <div class="flex gap-2 admin-header-actions">
-        <el-button v-if="canManageSettings" type="primary" data-tour="mem-invite" @click="openInvite">邀請成員</el-button>
+        <el-button v-if="can('members.manage')" type="primary" data-tour="mem-invite" @click="openInvite">邀請成員</el-button>
       </div>
     </template>
 
@@ -56,7 +56,7 @@
                   <el-tag :type="roleTagType(row.role)" :effect="roleTagEffect(row.role)" size="small">{{ roleLabel(row.role) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column v-if="canManageSettings" label="操作" width="160" align="right">
+              <el-table-column v-if="can('members.manage')" label="操作" width="160" align="right">
                 <template #default="{ row }">
                   <!-- 自己那一列不給改、不給移除（`G-101`②）：手滑把自己改成觀察者會立刻被踢出這頁。
                        擁有者只有組織管理員／超管動得了（`G-96`），帳號管理員看不到這兩個鈕 -->
@@ -122,7 +122,7 @@ definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' }
 useHead({ title: useAdminTitle('成員管理') })
 
 const { showToast } = useAdminToast()
-const { workspaceId, apiFetch, canManageSettings, workspaceList, orgAdminOf } = useWorkspace()
+const { workspaceId, apiFetch, can, workspaceList, orgAdminOf } = useWorkspace()
 const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
 
 const loading = ref(false)

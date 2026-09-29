@@ -5,9 +5,11 @@
       <!-- C-210：頁標題跟側欄同名（側欄＝指路用的名字）。以前這裡叫「活動貼標」、側欄叫
            「活動標籤」、小幫手叫「活動」、教學叫「活動貼標（名單分眾）」——同一件事四個名字。 -->
       <span class="split-sidebar-title">活動標籤<AdminPageHelpButton :topics="['campaigns']" /></span>
-      <!-- C-212：⛔ 精靈**不取代**既有的「新增」——熟手照舊用那顆，精靈是給第一次的人用的 -->
-      <el-button v-if="canOperate" size="small" data-tour="cmp-wizard" @click="wizardVisible = true">用精靈建立</el-button>
-      <el-button v-if="canOperate" :icon="Plus" type="primary" size="small" data-tour="cmp-new" @click="openCreate">新增</el-button>
+      <!-- C-212：⛔ 精靈**不取代**既有的「新增」——熟手照舊用那顆，精靈是給第一次的人用的。
+           `G-109`：精靈一定會打的是 `campaigns/create`（`marketing.write`），所以照它擋；
+           順手建的標籤（`tags.write`）、推播草稿（`broadcast.write`）是選填的步驟。 -->
+      <el-button v-if="can('marketing.write')" size="small" data-tour="cmp-wizard" @click="wizardVisible = true">用精靈建立</el-button>
+      <el-button v-if="can('marketing.write')" :icon="Plus" type="primary" size="small" data-tour="cmp-new" @click="openCreate">新增</el-button>
     </template>
 
     <!-- ── Sidebar List ── -->
@@ -18,7 +20,7 @@
       <div v-else-if="!campaigns.length" class="split-sidebar-empty">
         <span>尚無活動</span>
         <p class="text-xs text-muted">建立問券活動，讓加好友即自動貼標</p>
-        <el-button v-if="canOperate" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        <el-button v-if="can('marketing.write')" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="cmp-list" @scroll.passive="onSidebarListScroll">
         <AdminSplitListItem
@@ -46,7 +48,7 @@
       <h3>選擇一個活動開始編輯</h3>
       <p>或點擊左側「新增」建立新的活動標籤設定</p>
       <div class="empty-actions">
-        <el-button v-if="canOperate" type="primary" @click="openCreate">新增活動</el-button>
+        <el-button v-if="can('marketing.write')" type="primary" @click="openCreate">新增活動</el-button>
         <AdminPageHelpButton :topics="['campaigns']" label="第一次用？看一遍怎麼設" />
       </div>
     </template>
@@ -63,7 +65,7 @@
         @enter="submitForm"
       />
       <div class="flex gap-2 admin-header-actions">
-        <el-button v-if="canOperate && !isCreating && selectedCampaign" :icon="Delete" type="danger" @click="deleteCampaign">
+        <el-button v-if="can('marketing.write') && !isCreating && selectedCampaign" :icon="Delete" type="danger" @click="deleteCampaign">
           刪除
         </el-button>
         <el-button @click="cancelEdit">取消</el-button>
@@ -75,7 +77,7 @@
           span 是給 tooltip 掛的：按鈕 disabled 之後自己不會發出滑鼠事件。
         -->
         <el-tooltip
-          v-if="canOperate"
+          v-if="can('marketing.write')"
           :disabled="!saveBlockedReason"
           :content="saveBlockedReason"
           placement="bottom-end"
@@ -429,9 +431,12 @@ import { LEAD_FAILURE_NOT_OWNER_NOTE, summarizeLeadFailures } from '~~/shared/le
 import { campaignDeleteConfirmCopy } from '~~/shared/delete-impact'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-// canManageSettings：LIFF 登記狀態的檢查端點限管理員（客服查不到，見 liffVerdict）
-const { workspaceId, apiFetch, canManageSettings } = useWorkspace()
-const { canOperate, assertCanOperate } = useAdminOperateGuard()
+// `G-109`：活動的新增／儲存／刪除端點是 `marketing.write`；
+// canManageLiff：LIFF 登記狀態的檢查（`admin/liff-endpoint-check`）與就地存 LIFF（`admin/line-workspace`）
+// 都是 `line.manage`＝管理員，客服查不到（見 liffVerdict）
+const { workspaceId, apiFetch } = useWorkspace()
+const { can, assertCan } = useAdminOperateGuard()
+const canManageLiff = computed(() => can('line.manage'))
 
 const { tags: allTags, loading: tagsLoading, loadTags } = useAdminTagList()
 /** C-212：「一檔活動」精靈（清單重載與選取寫在下面 `loadCampaigns` 宣告之後） */
@@ -592,7 +597,7 @@ const liffVerdict = computed<LiffVerdict>(() => {
   if (!liffConfigLoaded.value) return 'checking'
   if (liffLoadFailed.value) return 'unreadable'
   if (!hasUsableLiff.value) return 'missing'
-  if (!canManageSettings.value) return 'unverified'
+  if (!canManageLiff.value) return 'unverified'
   if (liffChecking.value) return 'checking'
   if (liffCheckFailed.value) return 'unreadable'
   const hit = campaignLiffCheck.value
@@ -628,7 +633,7 @@ const liffBanner = computed<{
         tone: liveNow.value ? 'critical' : 'warning',
         title: '還沒設定活動頁（LIFF），這個活動做不出可用的連結',
         detail: '客人點活動連結會打不開，綁定與貼標都不會發生。設定只要做一次，之後所有活動共用。',
-        setup: canManageSettings.value ? 'fill' : 'none',
+        setup: canManageLiff.value ? 'fill' : 'none',
       }
     case 'broken':
       return {
@@ -636,14 +641,14 @@ const liffBanner = computed<{
         tone: 'critical',
         title: '客人點活動連結會打不開',
         detail: `${LIFF_BROKEN_DETAIL[campaignLiffCheck.value?.reason ?? 'wrong_page']}把下面那串網址貼回 LINE 的 Endpoint URL。`,
-        setup: canManageSettings.value ? 'recheck' : 'none',
+        setup: canManageLiff.value ? 'recheck' : 'none',
       }
     case 'mismatch':
       return {
         tone: liveNow.value ? 'critical' : 'warning',
         title: 'LINE 上登記的是別的網址',
         detail: `登記的是 ${campaignLiffCheck.value?.endpoint || '（查不到）'}。客人登入會多繞一圈，那個網址一停用，活動連結就整個打不開。`,
-        setup: canManageSettings.value ? 'recheck' : 'none',
+        setup: canManageLiff.value ? 'recheck' : 'none',
       }
     case 'unreadable':
       return {
@@ -750,7 +755,7 @@ async function loadWorkspaceEffectiveLiff() {
  * 端點限管理員：客服角色會收 403，這時走 `unverified`——**不是**當成沒問題。
  */
 async function loadLiffChecks(opts?: { force?: boolean }) {
-  if (!canManageSettings.value) {
+  if (!canManageLiff.value) {
     // 不會去問，就不要一直卡在「查詢中」（verdict 會走 unverified）
     liffChecking.value = false
     return
@@ -801,9 +806,9 @@ async function loadLeadErrors() {
  * 而填到一半的表單在跳走時就被丟掉了——設定完還要自己找回來、重填一次。
  */
 async function saveInlineLiff() {
-  // 存 LINE 憑證是管理員的權限（端點也是 admin）。⛔ 不可以用 canOperate 當守衛：
+  // 存 LINE 憑證是管理員的權限（端點是 `line.manage`）。⛔ 不可以用客服級的 `marketing.write` 當守衛：
   // 客服按下去只會收到 403，看起來像壞掉而不是「你沒有這個權限」。
-  if (!canManageSettings.value) return showToast('這一格要管理員才能改，請找帳號管理員設定', 'warning')
+  if (!canManageLiff.value) return showToast('這一格要管理員才能改，請找帳號管理員設定', 'warning')
   const id = inlineLiffId.value.trim()
   if (!LIFF_ID_RE.test(id)) {
     return showToast('這串看起來不像 LIFF ID。它長得像 2007123456-AbCdEfGh', 'error')
@@ -908,7 +913,7 @@ function cancelEdit() {
 
 // ── Save / Delete ─────────────────────────────────────────
 async function submitForm() {
-  if (!assertCanOperate()) return
+  if (!assertCan('marketing.write')) return
   if (!form.value.name.trim()) return showToast('請輸入活動名稱', 'error')
   // ⛔ 與畫面上的橫幅共用同一個判斷（`saveBlockedReason`／`hasUsableLiff`）。
   //    原本橫幅看「活動自己的 LIFF 或帳號預設」、存檔只看「帳號預設」，於是舊資料裡
@@ -976,7 +981,7 @@ async function submitForm() {
 }
 
 async function deleteCampaign() {
-  if (!assertCanOperate()) return
+  if (!assertCan('marketing.write')) return
   if (!selectedId.value) return
   /**
    * `D-110` ④：刪之前先講刪掉會怎樣。話怎麼講全在 `campaignDeleteConfirmCopy`（純函式，有測試）。

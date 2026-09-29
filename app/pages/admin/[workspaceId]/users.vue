@@ -13,7 +13,7 @@
         :help-topics="['users']"
       />
       <div class="flex gap-1 admin-header-actions">
-        <el-button v-if="canOperate" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">
+        <el-button v-if="canTagCustomers" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">
           從 LINE 同步好友
         </el-button>
         <!--
@@ -53,13 +53,13 @@
       <div class="solo-editor-body admin-panel-stack">
         <div v-if="selectedIds.length" class="users-batch-bar">
           <span class="users-batch-info">已選 {{ selectedIds.length }} 位</span>
-          <el-button v-if="canOperate" size="small" type="primary" @click="openBatchTag('add')">＋ 批次加標</el-button>
-          <el-button v-if="canOperate" size="small" @click="openBatchTag('remove')">－ 批次移標</el-button>
+          <el-button v-if="canTagCustomers" size="small" type="primary" @click="openBatchTag('add')">＋ 批次加標</el-button>
+          <el-button v-if="canTagCustomers" size="small" @click="openBatchTag('remove')">－ 批次移標</el-button>
           <!--
             C-210：推播頁寫著「想寄給『兩個條件都符合』的人，先到『好友』頁篩出那批人」，
             但這裡以前沒有任何按鈕可以把那批人帶去推播＝照著那句話做會走到死路。
           -->
-          <el-button v-if="canOperate" size="small" @click="broadcastToSelected">
+          <el-button v-if="can('broadcast.write')" size="small" @click="broadcastToSelected">
             ✉ 推播給這 {{ selectedIds.length }} 位
           </el-button>
           <el-button size="small" text @click="selectedIds = []">取消選取</el-button>
@@ -140,7 +140,7 @@
                   <tr>
                     <!-- `G-107`：勾了之後能做的（批次貼標／移標／推播）全是客服級，觀察者勾了只剩「取消選取」，
                          整欄不出現。⛔ th 跟 td 要一起藏，只藏一邊整張表會錯位 -->
-                    <th v-if="canOperate" class="users-table__th--check">
+                    <th v-if="canSelectForBatch" class="users-table__th--check">
                       <input
                         type="checkbox"
                         :checked="isAllSelected"
@@ -162,7 +162,7 @@
                 </thead>
                 <tbody>
                   <tr v-for="user in users" :key="user.id">
-                    <td v-if="canOperate">
+                    <td v-if="canSelectForBatch">
                       <input
                         type="checkbox"
                         :checked="selectedIds.includes(user.id)"
@@ -210,7 +210,7 @@
                           </span>
                         </template>
                         <!-- ⛔ 空的時候不要留白：留白看不出「可以按這裡加」 -->
-                        <span v-else class="user-tags-cell__empty">{{ canOperate ? '＋ 加標籤' : '—' }}</span>
+                        <span v-else class="user-tags-cell__empty">{{ canTagCustomers ? '＋ 加標籤' : '—' }}</span>
                       </div>
                     </td>
                     <td class="td-time">{{ formatZhDateOnly(user.createdAt) }}</td>
@@ -219,7 +219,7 @@
                            每一列被撐成 77px（單行 44px），兩顆的左緣還差 12px -->
                       <div class="td-actions">
                         <el-button size="small" @click="openUserDetail(user)">查看</el-button>
-                        <el-button v-if="canOperate" size="small" @click="openUserTagDialog(user)">改標籤</el-button>
+                        <el-button v-if="canTagCustomers" size="small" @click="openUserTagDialog(user)">改標籤</el-button>
                       </div>
                     </td>
                   </tr>
@@ -269,7 +269,7 @@
     <template #footer>
       <el-button @click="batchDialogVisible = false">取消</el-button>
       <el-button
-        v-if="canOperate"
+        v-if="canTagCustomers"
         type="primary"
         :loading="batchSaving"
         :disabled="!batchTagIds.length"
@@ -296,7 +296,7 @@
             :color="tag.color"
           >
             {{ tag.name }}
-            <button v-if="canOperate" type="button" class="tag-chip-remove" @click="removeUserTag(dialogUser.id, tag.id)">✕</button>
+            <button v-if="canTagCustomers" type="button" class="tag-chip-remove" @click="removeUserTag(dialogUser.id, tag.id)">✕</button>
           </AdminTagTintChip>
         </div>
         <span v-else class="text-muted text-sm">尚無標籤</span>
@@ -321,7 +321,7 @@
             </el-option>
           </el-select>
           <el-button
-            v-if="canOperate"
+            v-if="canTagCustomers"
             type="primary"
             :loading="userTagSaving"
             :disabled="!addTagIds.length"
@@ -354,7 +354,6 @@
       <AdminCustomerCard
         :user-id="detailUser.id"
         :api-fetch="apiFetch"
-        :can-operate="canOperate"
         :fallback-name="detailUser.displayName"
         :fallback-picture="detailUser.pictureUrl"
         show-conversation-link
@@ -380,7 +379,16 @@ const { workspaceId, apiFetch } = useWorkspace()
 // 開通沒完成時，空清單要講真話（不是還沒有人加好友，是加了也進不來）
 const { onboardingIncomplete } = useSetupStatus()
 const route = useRoute()
-const { canOperate, assertCanOperate } = useAdminOperateGuard()
+const { can, assertCan } = useAdminOperateGuard()
+/**
+ * `G-109`：照每顆按鈕打的端點讀權限表。
+ *   從 LINE 同步、批次加標／移標、單人加標／拆標 → `/api/users/sync-from-line`、`/api/user-tags/batch-*`、
+ *   `/api/users/:id/tags`＝customers.write
+ *   推播給勾選的人 → 推播頁開一張草稿，存下去打 `/api/broadcast/create`＝broadcast.write
+ * 勾選欄是給上面兩種批次動作用的：任一種做得了才出現。
+ */
+const canTagCustomers = computed(() => can('customers.write'))
+const canSelectForBatch = computed(() => canTagCustomers.value || can('broadcast.write'))
 
 const {
   users,
@@ -425,14 +433,14 @@ const MAX_ROW_TAGS = 3
  *    有標籤的話唯讀角色仍可以點——被「＋N」收起來的那幾顆總要有地方看得到。
  */
 function canTagCellOpen(user: any): boolean {
-  return canOperate.value || (user?.tags?.length ?? 0) > 0
+  return canTagCustomers.value || (user?.tags?.length ?? 0) > 0
 }
 
 /** 滑上去看完整的標籤（列上只顯示前幾顆，被收起來的那些要有地方看得到） */
 function rowTagsTitle(user: any): string {
   const names = (user?.tags ?? []).map((t: any) => t.name).filter(Boolean)
-  if (!names.length) return canOperate.value ? '還沒有標籤，點一下可以加' : '還沒有標籤'
-  return canOperate.value ? `${names.join('、')}（點一下可以改）` : names.join('、')
+  if (!names.length) return canTagCustomers.value ? '還沒有標籤，點一下可以加' : '還沒有標籤'
+  return canTagCustomers.value ? `${names.join('、')}（點一下可以改）` : names.join('、')
 }
 
 /**
@@ -549,7 +557,7 @@ function toggleSelectAll() {
 }
 
 async function syncFromLine() {
-  if (!assertCanOperate()) return
+  if (!assertCan('customers.write')) return
   if (syncingLine.value) return
   syncingLine.value = true
   syncProgress.value = '同步中…'
@@ -630,7 +638,7 @@ async function refreshUsersOnly() {
  * ⛔ 這裡**不建立任何草稿**：推播頁開的是一張還沒存檔的新推播，半途反悔不會留垃圾。
  */
 function broadcastToSelected() {
-  if (!assertCanOperate()) return
+  if (!assertCan('broadcast.write')) return
   if (!selectedIds.value.length) {
     showToast('請先勾選至少一位好友', 'error')
     return
@@ -670,7 +678,7 @@ function openBatchTag(mode: 'add' | 'remove') {
 }
 
 async function submitBatch() {
-  if (!assertCanOperate()) return
+  if (!assertCan('customers.write')) return
   if (!selectedIds.value.length) {
     showToast('請先勾選至少一位好友', 'error')
     return
@@ -711,7 +719,7 @@ function openUserTagDialog(user: any) {
 }
 
 async function addUserTags() {
-  if (!assertCanOperate()) return
+  if (!assertCan('customers.write')) return
   if (!dialogUser.value) return
   if (!addTagIds.value.length) {
     showToast('請至少選擇一個標籤', 'error')
@@ -739,7 +747,7 @@ async function addUserTags() {
 }
 
 async function removeUserTag(userId: string, tagId: string) {
-  if (!assertCanOperate()) return
+  if (!assertCan('customers.write')) return
   try {
     await apiFetch(`/api/users/${userId}/tags/${tagId}`, { method: 'DELETE' })
     showToast('標籤已移除', 'success')

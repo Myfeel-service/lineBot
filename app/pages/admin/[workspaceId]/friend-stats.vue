@@ -27,7 +27,7 @@
       <div v-if="report" class="admin-header-actions" data-tour="fs-regenerate">
         <span class="text-xs text-muted">{{ generatedText }}</span>
         <!-- 一小時冷卻的說明只放在這裡：要再按的時候才需要知道 -->
-        <el-tooltip v-if="canOperate" :content="cooldownTip" :disabled="!cooldownTip" placement="top">
+        <el-tooltip v-if="can('tags.write')" :content="cooldownTip" :disabled="!cooldownTip" placement="top">
           <span>
             <el-button
               size="small"
@@ -76,7 +76,7 @@
           <div class="friend-stats__empty">
             <div class="friend-stats__empty-icon"><el-icon><PieChart /></el-icon></div>
             <p class="friend-stats__empty-title">還沒有產生過報告</p>
-            <el-button v-if="canOperate" type="primary" @click="generate">產生報告</el-button>
+            <el-button v-if="can('tags.write')" type="primary" @click="generate">產生報告</el-button>
             <!-- 點名角色：「有操作權限的人」他在畫面上找不到是誰 -->
             <p v-else class="friend-stats__empty-body">要請客服或管理員來按「產生報告」，產生好之後你就看得到。</p>
           </div>
@@ -161,7 +161,7 @@
                   <el-table-column prop="users" label="幾位客人" width="100" align="right" />
                   <el-table-column label="" width="130" align="right">
                     <template #default="{ row }">
-                      <el-button v-if="canOperate" link type="primary" size="small" @click="broadcastTo(row)">
+                      <el-button v-if="can('broadcast.write')" link type="primary" size="small" @click="broadcastTo(row)">
                         發推播給這群
                       </el-button>
                     </template>
@@ -326,7 +326,9 @@ definePageMeta({ middleware: 'auth', layout: 'default' })
 useHead({ title: useAdminTitle('好友統計') })
 
 const { showToast } = useAdminToast()
-const { apiFetch, workspaceId, canOperate } = useWorkspace()
+// `G-109`：產生報告＝`POST /api/tag/report`（tags.write）；「發推播給這群」是去推播頁開一張草稿，
+// 存下去打 `/api/broadcast/create`（broadcast.write）
+const { apiFetch, workspaceId, can } = useWorkspace()
 
 const report = ref<TagReportDoc | null>(null)
 const allowRegen = ref(false)

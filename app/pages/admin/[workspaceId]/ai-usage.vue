@@ -322,12 +322,12 @@
                   <!-- 傳圖案例:客人原句是「[圖片]」,補知識會拿它當卡片標題、重演會拿它去問 AI,兩個都是死路。
                        AI 連不上服務:知識庫本來就沒缺卡,補一張只會多一張沒人用的卡（重演反而有用——
                        同一句話再問一次就知道服務恢復了沒,所以只擋補知識不擋重演）-->
-                  <!-- `G-102`：補知識＝開建卡視窗（`knowledge/create` 是客服級）、已處理＝`handoffs/resolve`（agent），
+                  <!-- `G-102`：補知識＝開建卡視窗（`knowledge/create` 是客服級）、已處理＝`handoffs/resolve`（knowledge.write，`G-109`），
                        觀察者按了只會 403，直接不給 -->
                   <el-button v-if="canEditKb && !noKnowledgeFix(row.handoffReason)" :icon="Upload" size="small" type="primary" plain @click="goAddKnowledge(row.lastQuery)">補知識</el-button>
                   <el-button v-if="advancedOpen && row.handoffReason !== 'non_text_content'" size="small" plain @click="goPlayground(row.lastQuery)">▶ 重演</el-button>
                   <!-- 「已處理」只影響這份清單，不通知任何人——不講清楚的話沒人敢按 -->
-                  <el-tooltip v-if="canOperate && !row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
+                  <el-tooltip v-if="can('knowledge.write') && !row.resolved" placement="top" content="標記處理完成、從這份清單移除。只影響這裡，不會通知任何人。">
                     <el-button size="small" type="success" plain :loading="resolvingUserId === row.userId" @click="resolveHandoff(row.userId)">✓ 已處理</el-button>
                   </el-tooltip>
                 </div>
@@ -452,7 +452,7 @@ import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
-const { apiFetch, workspaceId, canOperate, can } = useWorkspace()
+const { apiFetch, workspaceId, can } = useWorkspace()
 const canEditKb = computed(() => can('knowledge.write'))
 // 開通沒完成時，主指標的空狀態要講真話（0 場不是沒客人，是訊息還進不來）
 const { onboardingIncomplete } = useSetupStatus()

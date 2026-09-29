@@ -1,5 +1,5 @@
 <template>
-  <div class="split-layout" :class="{ 'split-layout--solo': solo, 'split-layout--readonly': !canOperate }">
+  <div class="split-layout" :class="{ 'split-layout--solo': solo, 'split-layout--readonly': isViewer }">
     <!-- ── Left Sidebar ─────────────────────────────── -->
     <aside v-if="!solo" class="split-sidebar" :style="{ width: sidebarWidth + 'px' }">
       <div class="split-sidebar-header">
@@ -47,7 +47,9 @@
 </template>
 
 <script setup lang="ts">
-const { canOperate } = useWorkspace()
+// 唯讀樣式是「觀察者模式」這個身分的外觀（跟頂端那條觀察者提示同一件事），不是某個功能的權限——
+// 所以看角色本身，不走 can()（`G-109`）。哪一顆按鈕能不能按，由各頁照那顆按鈕的能力決定。
+const { isViewer } = useWorkspace()
 
 const props = defineProps({
   /** 隱藏左側欄，右側編輯區全寬（標籤／好友等列表頁與 split-editor 視覺一致） */

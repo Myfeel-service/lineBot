@@ -3,7 +3,7 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title" data-tour="flow-title">機器人模組<AdminPageHelpButton :topics="['flow', 'msg-basic', 'msg-rich', 'msg-carousel', 'msg-quick', 'msg-userinput']" /></span>
-      <AdminOperateGate>
+      <AdminOperateGate capability="marketing.write">
         <div class="flex gap-1">
           <el-tooltip content="新增資料夾" placement="bottom" :show-after="300">
             <el-button :icon="FolderAdd" size="small" plain @click="createFlowFolderPrompt" />
@@ -22,7 +22,7 @@
       </div>
       <div v-else-if="!flows.length" class="split-sidebar-empty">
         <span>尚無模組</span>
-        <AdminOperateGate>
+        <AdminOperateGate capability="marketing.write">
           <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
         </AdminOperateGate>
       </div>
@@ -54,7 +54,7 @@
           @drop="onFlowListDrop($event, regularFlowIndex(flow.id))"
         >
           <span
-            v-if="canOperate"
+            v-if="can('marketing.write')"
             class="drag-handle flow-sidebar-drag-handle"
             draggable="true"
             aria-label="拖曳搬移 / 排序"
@@ -97,7 +97,7 @@
             @drop.prevent="onFlowFolderDrop(folder.id)"
           >
             <span
-              v-if="canOperate"
+              v-if="can('marketing.write')"
               class="drag-handle flow-sidebar-drag-handle src-folder-drag-handle"
               draggable="true"
               aria-label="拖曳排序資料夾"
@@ -110,7 +110,7 @@
               <el-icon><Folder /></el-icon> {{ folder.name }}
               <span class="src-folder-count">（{{ flowCountByFolder[folder.id] ?? 0 }}）</span>
             </span>
-            <AdminOperateGate>
+            <AdminOperateGate capability="marketing.write">
               <span class="src-folder-actions">
                 <el-tooltip content="編輯資料夾" placement="top" :show-after="300">
                   <button class="src-folder-icon-btn" @click.stop="openFlowFolderEdit(folder)"><el-icon><EditPen /></el-icon></button>
@@ -133,7 +133,7 @@
               @drop.prevent="onFolderRowDrop(folder.id, flow.id)"
             >
               <span
-                v-if="canOperate"
+                v-if="can('marketing.write')"
                 class="drag-handle flow-sidebar-drag-handle"
                 draggable="true"
                 aria-label="拖曳搬移"
@@ -168,7 +168,7 @@
       <el-icon class="empty-icon"><Connection /></el-icon>
       <h3>選擇一個模組開始編輯</h3>
       <p>或點擊左側「新增」建立一個全新的回覆模組</p>
-      <AdminOperateGate>
+      <AdminOperateGate capability="marketing.write">
         <el-button type="primary" @click="openCreate">新增模組</el-button>
       </AdminOperateGate>
     </template>
@@ -243,12 +243,12 @@
       </div>
       <div class="flex gap-1 admin-header-actions">
         <el-button @click="cancelEdit">取消</el-button>
-        <AdminOperateGate>
+        <AdminOperateGate capability="marketing.write">
           <el-button type="primary" :loading="saving" @click="submitForm">
             {{ isCreating ? '建立模組' : '儲存變更' }}
           </el-button>
         </AdminOperateGate>
-        <AdminOperateGate>
+        <AdminOperateGate capability="marketing.write">
           <el-dropdown
             v-if="!isCreating && selectedFlow"
             trigger="click"
@@ -1203,7 +1203,8 @@ function moduleTypeLabel(raw: unknown): string {
 
 const { apiFetch, workspaceId, currentWorkspaceName } = useWorkspace()
 const previewOpen = ref(true)
-const { canOperate, guardOperate } = useAdminOperateGuard()
+// `G-109`：這頁的寫入（模組、資料夾、排序、系統模組初始化）端點全是 `marketing.write`
+const { can, assertCan, guardCan } = useAdminOperateGuard()
 
 // ── State ─────────────────────────────────────────────
 const richMessages = ref<any[]>([])
@@ -1822,7 +1823,7 @@ function onFlowListDragLeave() {
 
 async function onFlowListDrop(e: DragEvent, dropIndex: number) {
   e.preventDefault()
-  if (!canOperate.value) return
+  if (!can('marketing.write')) return
   if (flowListDragIndex.value === null) return
 
   const fromIndex = resolveDraggedIndex(e, flowListDragIndex.value)
@@ -1887,7 +1888,7 @@ function onFolderRowDragLeave(flowId: string) {
 async function onFolderRowDrop(folderId: string, targetFlowId: string) {
   const movedId = draggedFlowId.value
   folderRowDragOverId.value = null
-  if (!canOperate.value) return
+  if (!can('marketing.write')) return
   if (!movedId || movedId === targetFlowId) return
   if (draggedFlowFolderId() !== folderId) return
   draggedFlowId.value = null
@@ -1940,7 +1941,7 @@ async function seedSystemModules() {
 }
 
 function openCreate() {
-  guardOperate(() => {
+  guardCan('marketing.write', () => {
     if (!confirmLeaveIfDirty()) return
     isCreating.value = true
     selectedId.value = null
@@ -2073,7 +2074,7 @@ function applyFlowDemo(type: string | null) {
   if ((isCreating.value || selectedFlow.value) && !confirmLeaveIfDirty())
     return
   // 重設成空白示範草稿並放一張卡（含操作權限把關；沒權限則不動作）
-  guardOperate(() => {
+  guardCan('marketing.write', () => {
     isCreating.value = true
     selectedId.value = null
     form.value = defaultForm()
@@ -2505,10 +2506,7 @@ function onQrDrop(e: DragEvent, msgIndex: number, dropIndex: number) {
 
 // ── Save / Delete ─────────────────────────────────────
 async function submitForm() {
-  if (!canOperate.value) {
-    showToast('觀察者無法執行此操作', 'warning')
-    return
-  }
+  if (!assertCan('marketing.write')) return
   if (!form.value.name) return showToast('請輸入模組名稱', 'error')
   if (!form.value.messages.length) return showToast('請至少新增一則回覆訊息', 'error')
   if (form.value.messages.length > FLOW_MESSAGE_LIMIT) {
@@ -2565,7 +2563,7 @@ function onHeaderCommand(cmd: string | number | object) {
 }
 
 async function deleteFlow() {
-  if (!canOperate.value) return showToast('觀察者無法執行此操作', 'warning')
+  if (!assertCan('marketing.write')) return
   if (!selectedId.value) return
   const targetId = selectedId.value
   const targetName = form.value.name
@@ -2609,7 +2607,7 @@ async function deleteFlow() {
 }
 
 async function duplicateFlow() {
-  if (!canOperate.value) return showToast('觀察者無法執行此操作', 'warning')
+  if (!assertCan('marketing.write')) return
   const sourceName = form.value.name.trim()
   if (!sourceName) return showToast('請輸入模組名稱', 'error')
 
