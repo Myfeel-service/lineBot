@@ -81,7 +81,8 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ai-section-hint">關掉之後 AI 不接任何訊息;規則／客服流程不受影響。</p>
+            <!-- ⛔「規則」2026-08-09 就下架併進自動回應了，這裡只剩一種東西不受影響 -->
+            <p class="ai-section-hint">關掉之後 AI 不接任何訊息;自動回應不受影響,照常運作。</p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用 AI 自動回覆" tight />
               <el-switch
@@ -143,7 +144,9 @@
         </div>
 
         <!-- ── 系統提示 ──────────────────────── -->
-        <div class="message-card ai-section-card">
+        <!-- `ais-tone`（`D-109`）：導覽以前把「語氣與人設」講在上一張「多有把握才開口」那張卡上，
+             真正改語氣的是這一張，現在自己一步 -->
+        <div class="message-card ai-section-card" data-tour="ais-tone">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">語氣與禁則</span>
@@ -681,6 +684,7 @@ import {
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { serviceHoursSentence, taipeiYyyyMm } from '~~/shared/time'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { AI_TONE_TEMPLATES, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -803,23 +807,9 @@ const PRESET_CARDS: Array<{ key: PresetName; title: string; desc: string }> = [
 ]
 
 // ── 語氣範本:解決「空白 textarea 不知道寫什麼」 ──────────
-const TONE_TEMPLATES = {
-  friendly: `你是品牌的線上客服,語氣親切、活潑、有溫度,像朋友一樣聊天,可以適度使用表情符號。
-回答要簡短好讀,先講重點再補充細節。
-只根據知識庫內容回答;不確定的事不要猜,直接說會請真人客服協助。
-不主動承諾退費、賠償或時程;涉及個資只引導客人到官方管道處理。`,
-  professional: `你是品牌的線上客服,語氣專業、有禮、精準,不使用表情符號。
-回答控制在三句話內,先給結論,必要時條列步驟。
-只根據知識庫內容回答;沒有依據時不要推測,直接轉真人客服。
-不代表公司做出任何承諾(退費、賠償、時程);涉及帳號或個資一律轉真人。`,
-  warm: `你是品牌的線上客服,語氣溫暖、有同理心,先回應客人的感受再處理問題。
-遇到抱怨或不滿,先道歉並表達理解,再說明能協助的部分。
-只根據知識庫內容回答;答不出來就坦白說明並轉真人客服。
-不做退費、賠償等承諾;敏感或情緒激動的情況盡快轉真人。`,
-} as const
-
-async function applyToneTemplate(name: keyof typeof TONE_TEMPLATES) {
-  const next = TONE_TEMPLATES[name]
+// 範本本體在 shared（`D-109`）：小幫手「幫我換成專業一點的語氣」吃同一份，⛔ 不在這裡另抄一份
+async function applyToneTemplate(name: AiToneTemplateKey) {
+  const next = AI_TONE_TEMPLATES[name].text
   const current = form.value.systemPrompt.trim()
   if (current && current !== next) {
     try {

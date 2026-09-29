@@ -10,7 +10,9 @@
           <el-button :icon="Upload" size="small" type="primary" plain data-tour="kb-import" @click="goImport">加入知識</el-button>
         </el-tooltip>
         <el-dropdown v-if="canEditKb || canEditSources || canEditFolders" trigger="click">
-          <el-button size="small" plain>⋯</el-button>
+          <!-- `kb-more`（`D-109`）：「新增資料夾」住在這個選單裡，導覽指這顆（指選單裡那一項的話，
+               選單沒打開時聚光燈會框在一塊看不見的地方——Element Plus 的選單項目收著也在 DOM 裡） -->
+          <el-button size="small" plain data-tour="kb-more">⋯</el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <!-- 選單/按鈕用正式的功能動詞;白話留給說明文字(老闆 8/05:按鈕寫成口語句太過頭) -->

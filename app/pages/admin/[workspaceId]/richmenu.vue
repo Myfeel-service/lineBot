@@ -67,6 +67,15 @@
         <p class="text-sm text-muted admin-subtext">區塊 {{ form.areas.length }} 個</p>
       </div>
       <div v-if="canOperate" class="flex gap-1 admin-header-actions">
+        <!-- 「設為預設」（`D-109` 第 3 題）：建立時沒設預設的選單，確認框會叫人「之後再設為預設」，
+             以前卻沒有任何一顆按鈕做得到（`setAsDefault()` 寫好了沒接上）。已經是預設的那張不給按。 -->
+        <el-button
+          v-if="!isCreating && selectedMenu && !selectedMenu.isDefault"
+          data-tour="rm-set-default"
+          @click="confirmSetAsDefault(selectedMenu)"
+        >
+          設為預設（上線）
+        </el-button>
         <el-button v-if="!isCreating && selectedMenu" :icon="Delete" type="danger" @click="deleteMenu">
           刪除
         </el-button>
@@ -124,7 +133,9 @@
                 <AdminFieldLabel text="設為預設選單" tight />
                 <div class="admin-inline-control">
                   <el-switch v-model="form.setAsDefault" :disabled="!canOperate" />
-                  <span class="text-xs text-muted">{{ form.setAsDefault ? '新加入好友預設顯示此選單' : '不設為預設選單' }}</span>
+                  <!-- ⛔ 2026-09-29（`D-109`）：原本寫「新加入好友預設顯示此選單」——把後果講小了，
+                       設為預設是**所有好友**（沒另外指定選單的人）的選單立刻換成它，跟建立時那個確認框同一句 -->
+                  <span class="text-xs text-muted">{{ form.setAsDefault ? '所有好友的選單都會換成這張' : '先存起來，客人看不到' }}</span>
                 </div>
               </div>
 
@@ -1164,12 +1175,31 @@ async function setAsDefault(menu: any) {
       method: 'POST',
       body: { richMenuId: menu.richMenuId, firestoreId: menu.id },
     })
-    showToast('已設為預設選單', 'success')
+    showToast('已設為預設，客人現在看得到了', 'success')
     await loadMenusList(true)
   }
-  catch {
-    showToast('設定失敗', 'error')
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '設定失敗，請再試一次', 'error')
   }
+}
+
+/**
+ * 按「設為預設（上線）」：先講後果（所有好友的選單立刻換掉）再動手。
+ * ⛔ 有還沒存的改動時要講清楚上線的是**存好的那一版**——設預設走的是 LINE 上已經建好的那張，
+ *    畫面上剛改的圖或區塊不會跟著上去；不講的話他會以為上線的是眼前這一版。
+ */
+async function confirmSetAsDefault(menu: any) {
+  const copy = richMenuSetDefaultConfirmCopy({ name: menu.name, hasUnsavedChanges: hasUnsavedChanges.value })
+  try {
+    await ElMessageBox.confirm(copy.message, copy.title, {
+      confirmButtonText: copy.confirmButtonText,
+      cancelButtonText: copy.cancelButtonText,
+      type: copy.type,
+      dangerouslyUseHTMLString: false,
+    })
+  }
+  catch { return }
+  await setAsDefault(menu)
 }
 
 async function deleteMenu() {

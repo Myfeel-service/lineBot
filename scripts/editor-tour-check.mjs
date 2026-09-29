@@ -36,9 +36,12 @@ const CASES = [
     tourId: 'ai-scripts',
     path: 'ai-scripts',
     label: '自動回應',
-    expectSteps: 8,
-    opensEditor: 4,
+    // 2026-09-29（`D-109`）：8→9，第 4 步多了「最上面這一列：客人加好友時」
+    // （排第 2 步時清單常常還沒載完就指不到——那一列要等清單載完才畫）
+    expectSteps: 9,
+    opensEditor: 5,
     editorAnchor: '[data-tour="scr-trigger-mode"]',
+    checkAt: [{ step: 4, sel: '[data-tour="scr-follow-row"]' }],
     // 有渲染條件、最可能在跑到時不在畫面上的那幾格
     conditional: ['[data-tour="scr-match"]', '[data-tour="scr-test"]', '[data-tour="scr-reply"]', '[data-tour="scr-save"]'],
   },
@@ -46,10 +49,12 @@ const CASES = [
     tourId: 'broadcasts',
     path: 'broadcasts',
     label: '推播',
-    expectSteps: 7,
+    // 2026-09-29（`D-109`）：7→8，多了「先發一則給自己看」
+    expectSteps: 8,
     opensEditor: 3,
     editorAnchor: '[data-tour="bc-audience"]',
-    conditional: ['[data-tour="bc-content"]', '[data-tour="bc-schedule"]', '[data-tour="bc-send"]'],
+    checkAt: [{ step: 5, sel: '[data-tour="bc-testsend"]' }],
+    conditional: ['[data-tour="bc-content"]', '[data-tour="bc-testsend"]', '[data-tour="bc-schedule"]', '[data-tour="bc-send"]'],
   },
   // ── 第二批（2026-09-18）──────────────────────────────────────────────
   {
@@ -104,9 +109,12 @@ const CASES = [
     tourId: 'flow',
     path: 'flow',
     label: '機器人模組',
+    // 2026-09-29（`D-109`）：`D-23` 拿掉歡迎模組後其實是 5 步（這裡一直寫 6 沒人發現），
+    // 再加「這個模組會從哪裡被叫出來」＝6 步；它只在打開一個已存在的模組時才畫，所以排第 3 步
     expectSteps: 6,
     opensEditor: 4,
     editorAnchor: '[data-tour="flow-name"]',
+    checkAt: [{ step: 3, sel: '[data-tour="flow-usage"]' }],
     conditional: ['[data-tour="flow-messages"]', '[data-tour="flow-new"]'],
   },
   {
@@ -115,12 +123,129 @@ const CASES = [
     tourId: 'ai-settings',
     path: 'ai-settings',
     label: 'AI 設定',
+    // 2026-09-29（`D-109`）：`C-270` 搬走通知那一步之後是 5 步，加「AI 講話的口吻與禁則」＝6 步
     expectSteps: 6,
     opensEditor: 5,
     editorAnchor: '[data-tour="ais-handback"]',
+    checkAt: [{ step: 3, sel: '[data-tour="ais-tone"]' }],
+    titlesAt: { 2: 'AI 多有把握才開口', 3: 'AI 講話的口吻與禁則' },
     conditional: ['[data-tour="ais-hours"]', '[data-tour="ais-handback"]'],
   },
+  // ── 第五批（2026-09-29，`D-109`：全站教學盤點）─────────────────────────
+  {
+    // 新的一支：兩個 clickBefore（打開積木選單、打開試跑）都要真的打開東西
+    tourId: 'ai-scripts-flow',
+    path: 'ai-scripts',
+    label: '自動回應：多步驟接待',
+    expectSteps: 5,
+    opensEditor: 0,
+    editorAnchor: '',
+    checkAt: [{ step: 2, sel: '[data-tour="scr-palette"]' }, { step: 4, sel: '[data-tour="scr-sim-panel"]' }],
+    conditional: ['[data-tour="scr-save"]'],
+  },
+  {
+    // 順序是這一輪改的：以前先教「測試」再教「儲存」，沒存時測試鈕是鎖的
+    tourId: 'organization',
+    path: 'settings/organization',
+    label: '組織與 LINE',
+    expectSteps: 9,
+    opensEditor: 0,
+    editorAnchor: '',
+    checkAt: [{ step: 7, sel: '[data-tour="org-oam-autoreply"]' }],
+    titlesAt: { 8: '先儲存', 9: '再測試有沒有通' },
+    conditional: [],
+  },
+  {
+    // 工作台那三塊都是「有東西才出現」，步數跟這個帳號的資料有關 → 只給範圍
+    // ⛔「原始資料改了」那步指的同步設定，只有清單第一份是網址／試算表才有（既有的限制，這輪沒改）
+    tourId: 'knowledge-manage',
+    path: 'knowledge/sources',
+    label: '知識庫：整理與更新',
+    minSteps: 4,
+    maxSteps: 7,
+    opensEditor: 0,
+    editorAnchor: '',
+    allowMissing: ['原始資料改了，知識會自動跟上'],
+    conditional: ['[data-tour="kb-more"]'],
+  },
+  {
+    // 「指派給一位同事」是這輪加的，只有客服以上畫得出來（登入的是管理員）
+    tourId: 'conversations',
+    path: 'conversations',
+    label: '客服對話',
+    expectSteps: 8,
+    opensEditor: 3,
+    editorAnchor: '[data-tour="conv-header"]',
+    checkAt: [{ step: 4, sel: '[data-tour="conv-assignee"]' }],
+    conditional: [],
+  },
+  {
+    tourId: 'ai-playground',
+    path: 'ai-playground',
+    label: '測試對話',
+    expectSteps: 3,
+    opensEditor: 0,
+    editorAnchor: '',
+    titlesAt: { 3: '怎麼看它答得穩不穩' },
+    conditional: [],
+  },
+  {
+    // 以前整頁沒有導覽也沒有問號；還沒產生過報告只有 1 步，有報告的是 3 步
+    tourId: 'friend-stats',
+    path: 'friend-stats',
+    label: '好友統計',
+    minSteps: 1,
+    maxSteps: 3,
+    opensEditor: 0,
+    editorAnchor: '',
+    conditional: [],
+  },
+  {
+    // 「傳連結給他」只在有同事還沒加進來時才畫
+    tourId: 'line-notify',
+    path: 'settings/line-notify',
+    label: 'LINE 通知',
+    minSteps: 2,
+    maxSteps: 3,
+    opensEditor: 0,
+    editorAnchor: '',
+    conditional: [],
+  },
+  {
+    tourId: 'conversation-stats',
+    path: 'conversation-stats',
+    label: '對話統計',
+    expectSteps: 2,
+    opensEditor: 0,
+    editorAnchor: '',
+    conditional: [],
+  },
+  {
+    tourId: 'campaigns',
+    path: 'campaigns',
+    label: '活動標籤',
+    expectSteps: 4,
+    opensEditor: 2,
+    editorAnchor: '[data-tour="cmp-tagsection"]',
+    conditional: [],
+  },
+  {
+    tourId: 'richmenu',
+    path: 'richmenu',
+    label: '圖文選單',
+    expectSteps: 7,
+    opensEditor: 2,
+    editorAnchor: '[data-tour="rm-chatbar"]',
+    conditional: [],
+  },
 ]
+
+/**
+ * `CHECK_ONLY=friend-stats,flow`：只跑這幾支（除錯用；有設就跳過後面那幾段加驗）。
+ * `CHECK_SHOT_DIR=/某個資料夾`：按問號沒反應時存一張截圖，看得到當下畫面上到底是什麼。
+ */
+const ONLY = (process.env.CHECK_ONLY ?? '').split(',').map(s => s.trim()).filter(Boolean)
+const SHOT_DIR = process.env.CHECK_SHOT_DIR ?? ''
 
 const {
   FIREBASE_PROJECT_ID: projectId,
@@ -263,10 +388,12 @@ async function pressHelpButton(page, label) {
   }
   await page.mouse.move(box.x, box.y)
   await sleep(250)
+  const clickedAt = Date.now()
   await page.mouse.click(box.x, box.y)
-  await sleep(1800)
 
-  const opened = await page.evaluate(() => {
+  // ⛔ 不用固定 sleep：以前固定等 1.8 秒，好友統計那支要 4.5 秒才出來，被報成「完全沒反應」——
+  //    其實是**慢**（兩件事下一步不一樣）。改成輪詢到 5 秒，出來了再看花了多久。
+  const read = () => page.evaluate(() => {
     const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
     const menu = [...document.querySelectorAll('.el-dropdown-menu')].filter(vis)
     const tour = [...document.querySelectorAll('.ta-tour-title')].filter(vis)
@@ -277,12 +404,24 @@ async function pressHelpButton(page, label) {
       tourTitle: tour[0]?.textContent?.trim() ?? '',
     }
   })
+  let opened = await read()
+  while (!opened.menu && !opened.tour && Date.now() - clickedAt < 5000) {
+    await sleep(200)
+    opened = await read()
+  }
+  const took = Date.now() - clickedAt
+  // 按了超過 2 秒才有東西＝使用者已經覺得壞掉、再按一次了
+  const slow = took > 2000 ? `（⚠️ 花了 ${(took / 1000).toFixed(1)} 秒才出來）` : ''
+  if ((opened.menu || opened.tour) && slow)
+    fail(`${label}：按下問號要等太久才有反應${slow}`)
   if (opened.menu)
     pass(`${label}：按下問號 → 跳出教學選單（${opened.menuItems} 項）`)
   else if (opened.tour)
     pass(`${label}：按下問號 → 直接開跑導覽「${opened.tourTitle}」`)
   else
-    fail(`${label}：按下問號**完全沒反應**（選單沒開、導覽也沒起來）＝使用者點了以為壞掉`)
+    fail(`${label}：按下問號**完全沒反應**（等了 5 秒，選單沒開、導覽也沒起來）＝使用者點了以為壞掉`)
+  if (!opened.menu && !opened.tour && SHOT_DIR)
+    await page.screenshot({ path: `${SHOT_DIR}/help-no-reaction-${label.replace(/[^\w一-龥]+/g, '_')}.png` })
 }
 
 /** 按卡片右下角那顆（「下一步」／最後一步的「結束」） */
@@ -295,7 +434,7 @@ async function clickNext(page) {
 }
 
 try {
-  for (const c of CASES) {
+  for (const c of CASES.filter(x => !ONLY.length || ONLY.includes(x.tourId))) {
     console.log(`── ${c.label}（${c.tourId}）──────────────────`)
     const { page, ctx } = await openLoggedInPage()
     try {
@@ -306,15 +445,40 @@ try {
       await page.waitForSelector('.ta-tour-title', { visible: true, timeout: 30_000 })
 
       const seen = []
-      for (let i = 1; i <= c.expectSteps + 2; i++) {
+      // 步數跟資料有關的（`minSteps`/`maxSteps`）照卡片上寫的「共幾步」走到底
+      const cap = c.expectSteps ?? c.maxSteps
+      for (let i = 1; i <= cap + 2; i++) {
         const step = await readStep(page)
         if (!step) break
         seen.push(step)
         const where = step.count || `${i}`
-        if (step.missing)
+        if (SHOT_DIR && ONLY.length)
+          await page.screenshot({ path: `${SHOT_DIR}/${c.tourId}-step${i}.png` })
+        // 只有一步的導覽卡片不顯示「1 / 1」（TutorialAgent：activeSteps.length > 1 才畫）＝總數就是 1
+        const shown = step.count ? Number(String(step.count).split('/')[1]?.trim() || 0) : 1
+        if (step.missing && (c.allowMissing ?? []).includes(step.title))
+          console.log(`   ⏭️ ${where}　${step.title}（這個帳號的資料讓它指不到東西，已知限制，這次沒驗到）`)
+        else if (step.missing)
           fail(`${c.label} 第 ${where} 步「${step.title}」→ 指不到東西（畫面上跳出「位置不在畫面上」）`)
         else
           console.log(`   ${where}　${step.title}`)
+
+        // 標題照預期（順序是這一輪改的那幾支：例如組織與 LINE 要先儲存再測試）
+        const wantTitle = c.titlesAt?.[i]
+        if (wantTitle && step.title !== wantTitle)
+          fail(`${c.label} 第 ${i} 步應該是「${wantTitle}」，實際是「${step.title}」`)
+
+        // 這一步要指的東西真的在畫面上、有實際大小（clickBefore 有沒有真的打開它）
+        for (const chk of (c.checkAt ?? []).filter(x => x.step === i)) {
+          const box = await page.evaluate((sel) => {
+            const el = document.querySelector(sel)
+            if (!el) return null
+            const r = el.getBoundingClientRect()
+            return { w: Math.round(r.width), h: Math.round(r.height) }
+          }, chk.sel)
+          if (box && box.w > 0 && box.h > 0) pass(`${c.label}：第 ${i} 步 ${chk.sel} 在畫面上（${box.w}×${box.h}）`)
+          else fail(`${c.label}：第 ${i} 步 ${chk.sel} 不在畫面上`)
+        }
 
         // clickBefore 該把編輯器（或收合區）打開的那一步：查那個錨點在不在、有沒有實際大小
         if (c.opensEditor && i === c.opensEditor) {
@@ -329,7 +493,8 @@ try {
           else
             fail(`${c.label}：第 ${where} 步沒把編輯器打開（${c.editorAnchor} 不在畫面上）＝導覽還是停在門口`)
         }
-        if (i >= c.expectSteps) break
+        // ⛔ 用 ||：讀不到總數時 shown 是 0，用 ?? 會變成「走一步就停」
+        if (i >= (c.expectSteps || shown || cap)) break
         await clickNext(page)
       }
 
@@ -344,11 +509,22 @@ try {
        */
       await pressHelpButton(page, c.label)
 
-      const total = seen[0]?.count?.split('/')?.[1]?.trim()
-      if (String(total) === String(c.expectSteps))
-        pass(`${c.label}：導覽共 ${total} 步（跟預期一樣）`)
-      else
-        fail(`${c.label}：導覽共 ${total} 步，預期 ${c.expectSteps} 步`)
+      const total = seen[0]?.count ? seen[0].count.split('/')[1]?.trim() : (seen.length ? '1' : undefined)
+      if (c.expectSteps) {
+        if (String(total) === String(c.expectSteps))
+          pass(`${c.label}：導覽共 ${total} 步（跟預期一樣）`)
+        else
+          fail(`${c.label}：導覽共 ${total} 步，預期 ${c.expectSteps} 步`)
+      }
+      else if (Number(total) >= c.minSteps && Number(total) <= c.maxSteps) {
+        pass(`${c.label}：導覽共 ${total} 步（這一支跟資料有關，在 ${c.minSteps}～${c.maxSteps} 步之間）`)
+      }
+      else {
+        fail(`${c.label}：導覽共 ${total} 步，應該在 ${c.minSteps}～${c.maxSteps} 步之間`)
+      }
+      // 走完的步數要等於卡片上寫的總數（沒走完＝中途卡住）
+      if (total && seen.length !== Number(total))
+        fail(`${c.label}：卡片說共 ${total} 步，實際只走到 ${seen.length} 步`)
 
       // 有渲染條件的那幾格，跑完整支之後逐一確認真的在畫面上
       for (const sel of c.conditional) {
@@ -369,7 +545,7 @@ try {
   // ── 加驗：這一輪補的就地說明，真的出現在畫面上了嗎 ─────────────────────────
   // 導覽是「帶你看一遍」，就地說明是「你自己看的時候讀得到」——後者沒出現的話，
   // 沒跑導覽的人（＝絕大多數回訪的人）等於什麼都沒補到。
-  {
+  if (!ONLY.length) {
     console.log('── 加驗：就地說明 ──────────────────')
     const { page, ctx } = await openLoggedInPage()
     try {
@@ -462,7 +638,7 @@ try {
   // 再點一次就等於當著他的面收起來，然後那一步指向一個剛被自己藏掉的東西。
   // 這正是 `clickBeforeUnless` 要擋的事，但它只有在「先展開」的情況下才會被執行到——
   // 上面那輪（預設收合）跑得再綠也驗不到這一條。
-  {
+  if (!ONLY.length) {
     console.log('── 加驗：使用者自己先展開過「進階調校」──────────────────')
     const { page, ctx } = await openLoggedInPage()
     try {
@@ -492,6 +668,71 @@ try {
     }
     catch (e) {
       fail(`加驗：${String(e).split('\n')[0]}`)
+    }
+    finally {
+      await ctx.close()
+    }
+    console.log('')
+  }
+
+  // ── 加驗：圖文選單「設為預設（上線）」（2026-09-29 `D-109` 第 3 題）───────────
+  // 建立時沒設預設的選單，確認框叫人「之後再設為預設」，以前卻沒有任何一顆按鈕做得到。
+  // ⛔ 只看按鈕在不在、按了會不會先跳確認框——**不按確定**（那會換掉正式帳號所有好友的選單）
+  if (!ONLY.length || ONLY.includes('richmenu')) {
+    console.log('── 加驗：圖文選單「設為預設（上線）」──────────────────')
+    const { page, ctx } = await openLoggedInPage()
+    page.on('dialog', d => d.dismiss())
+    try {
+      await page.goto(`${BASE}/admin/${WORKSPACE_ID}/richmenu`, { waitUntil: 'networkidle2', timeout: 90_000 })
+      await page.waitForSelector('[data-tour="rm-list"]', { timeout: 60_000 })
+      await sleep(1200)
+      // 自動導覽可能蓋著：收掉
+      for (let i = 0; i < 10 && await page.$('.ta-tour-title'); i++) await clickNext(page)
+      const rowsInfo = await page.evaluate(() => [...document.querySelectorAll('[data-tour="rm-list"] .split-list-item')]
+        .map((el, i) => ({ i, text: el.textContent?.replace(/\s+/g, ' ').trim() ?? '' })))
+      const notDefault = rowsInfo.find(r => r.text.includes('客人看不到'))
+      const isDefault = rowsInfo.find(r => r.text.includes('預設'))
+      if (!notDefault) {
+        console.log('   ⏭️ 這個帳號沒有「客人看不到」的選單＝那顆按鈕本來就不該出現，這次沒驗到')
+      }
+      else {
+        await page.evaluate((i) => document.querySelectorAll('[data-tour="rm-list"] .split-list-item')[i]?.click(), notDefault.i)
+        await sleep(1500)
+        const btn = await page.$('[data-tour="rm-set-default"]')
+        if (!btn) {
+          fail('圖文選單：打開一張「客人看不到」的選單，上面沒有「設為預設（上線）」')
+        }
+        else {
+          pass('圖文選單：打開「客人看不到」的選單，上面有「設為預設（上線）」')
+          await btn.click()
+          await sleep(900)
+          const box = await page.evaluate(() => {
+            const m = document.querySelector('.el-message-box')
+            return m ? m.textContent?.replace(/\s+/g, ' ').trim() ?? '' : ''
+          })
+          if (box.includes('所有好友') && box.includes('設為預設並上線'))
+            pass('圖文選單：按下去先跳確認框，講清楚所有好友會立刻換（這裡不按確定）')
+          else
+            fail(`圖文選單：按下去沒有先講後果。讀到的是：「${box.slice(0, 120)}」`)
+          // 取消，不上線
+          await page.evaluate(() => {
+            const btns = [...document.querySelectorAll('.el-message-box__btns .el-button')]
+            btns.find(b => b.textContent?.includes('再檢查一下'))?.click()
+          })
+          await sleep(600)
+        }
+      }
+      if (isDefault) {
+        await page.evaluate((i) => document.querySelectorAll('[data-tour="rm-list"] .split-list-item')[i]?.click(), isDefault.i)
+        await sleep(1500)
+        if (await page.$('[data-tour="rm-set-default"]'))
+          fail('圖文選單：已經是預設的那張也出現「設為預設（上線）」')
+        else
+          pass('圖文選單：已經是預設的那張不出現那顆按鈕')
+      }
+    }
+    catch (e) {
+      fail(`圖文選單加驗：${String(e).split('\n')[0]}`)
     }
     finally {
       await ctx.close()

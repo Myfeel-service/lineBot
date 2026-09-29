@@ -16,6 +16,7 @@
         field-label="統計"
         title="好友統計"
         caption="這些標籤在告訴你什麼——客人在乎什麼、誰還沒被貼到、AI 判得準不準。"
+        :help-topics="['friend-stats']"
       >
         <template #caption>
           想看客人來了多少、誰接住的？<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">看對話統計 →</NuxtLink>
@@ -23,7 +24,7 @@
       </AdminSoloPageHeading>
       <!-- ⛔ 還沒有報告時這裡不放按鈕：中間的空狀態已經有一顆「產生報告」，
            同一個畫面兩顆一樣的按鈕會被讀成兩件不同的事（`D-108`）。 -->
-      <div v-if="report" class="admin-header-actions">
+      <div v-if="report" class="admin-header-actions" data-tour="fs-regenerate">
         <span class="text-xs text-muted">{{ generatedText }}</span>
         <!-- 一小時冷卻的說明只放在這裡：要再按的時候才需要知道 -->
         <el-tooltip v-if="canOperate" :content="cooldownTip" :disabled="!cooldownTip" placement="top">
@@ -71,7 +72,7 @@
              ⛔ 別把「這份報告有哪六件事」「為什麼要按按鈕、一小時只算一次」寫回來：
              前者標題下那句已經講了、按下去就看得到；後者是我們的讀取費考量，
              冷卻說明放在「重新產生」的提示裡，要再按的時候才看得到。 -->
-        <div v-else-if="!report" class="message-card ar-section-card friend-stats__empty-card">
+        <div v-else-if="!report" class="message-card ar-section-card friend-stats__empty-card" data-tour="fs-empty">
           <div class="friend-stats__empty">
             <div class="friend-stats__empty-icon"><el-icon><PieChart /></el-icon></div>
             <p class="friend-stats__empty-title">還沒有產生過報告</p>
@@ -133,7 +134,7 @@
           </div>
 
           <!-- ── 卡 2：客人自己表現出來的興趣 ───────────────────── -->
-          <div class="message-card ar-section-card">
+          <div class="message-card ar-section-card" data-tour="fs-expressed">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">客人自己表現出來的</span>
@@ -211,7 +212,7 @@
           </div>
 
           <!-- ── 卡 4：覆蓋率 ──────────────────────────────────── -->
-          <div class="message-card ar-section-card">
+          <div class="message-card ar-section-card" data-tour="fs-coverage">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">有多少人被貼到</span>

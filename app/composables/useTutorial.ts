@@ -98,6 +98,29 @@ export function useTutorial() {
     if (!wid) return
     // 角色／功能旗標先過（純判斷，不需要 DOM）
     const roleSteps = visibleSteps(topic.steps)
+  /**
+   * 等一個「前提」出現：平常等 1.5 秒；**畫面上還有東西在轉圈**（資料還在載）就再多等，最多 4 秒。
+   *
+   * ⛔ 為什麼不直接拉長到 4 秒（2026-09-29 `D-109` 實走踩到）：客服對話清單在正式資料上要載 1.5 秒以上，
+   *    後面 6 步的前提是「清單裡有一筆」——開跑時還沒載完，那 6 步就被**靜默刷掉**，導覽只剩 2 步。
+   *    但真的沒有東西的帳號（還沒產生過報告的好友統計）不該每次都乾等 4 秒才出現導覽——
+   *    按問號的人會以為按了沒反應。所以只有「還在載」的時候才多等。
+   */
+  async function waitForPrecondition(sel: string): Promise<boolean> {
+    if (await waitForElement(sel, 1500))
+      return true
+    const loading = () => [...document.querySelectorAll<HTMLElement>('.spinner')].some(el => el.offsetParent !== null)
+    const start = performance.now()
+    while (performance.now() - start < 2500) {
+      if (document.querySelector(sel))
+        return true
+      if (!loading())
+        return false
+      await new Promise(r => setTimeout(r, 100))
+    }
+    return !!document.querySelector(sel)
+  }
+
     if (!roleSteps.length) return
 
     lastTopicId.value = topic.id
@@ -125,13 +148,12 @@ export function useTutorial() {
     // 「帶你認識後台」最後一步（從開通頁開，對話清單根本還沒存在，100% 被刷掉）。
     // ⛔ 而且不能只用一次性 querySelector：對話清單是非同步載入的，剛換頁那一瞬間
     //    一定還是空的。所以改成**短暫等它出現**（1.5 秒），等不到才算真的沒有。
-    const present = new Map<string, boolean>()
-    for (const step of roleSteps) {
-      const sel = step.requiresPresent
-      if (!sel || present.has(sel))
-        continue
-      present.set(sel, !!(await waitForElement(sel, 1500)))
-    }
+    // ⛔ 幾個前提要**同時**等，不可以一個接一個等（2026-09-29 `D-109` 實走踩到）：
+    //    好友統計那支四步全是「有東西才出現」，還沒產生過報告時有三個不在——一個一個等就是
+    //    4.5 秒後導覽才出現，按問號的人以為按了沒反應。同時等：平常最久 1.5 秒（還在載入才多等，見 waitForPrecondition）。
+    const sels = [...new Set(roleSteps.map(s => s.requiresPresent).filter((s): s is string => !!s))]
+    const found = await Promise.all(sels.map(waitForPrecondition))
+    const present = new Map(sels.map((sel, i) => [sel, found[i]!]))
     const steps = roleSteps.filter(s => stepPreconditionMet(s, sel => present.get(sel) ?? false))
     if (!steps.length) return
     activeSteps.value = steps

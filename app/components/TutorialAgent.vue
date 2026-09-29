@@ -1622,6 +1622,11 @@ async function focusActiveStep() {
   }
   const selector = step?.target
   // 空 target ＝ 置中說明卡（不高亮）；否則輪詢等元素出現（示範卡可能要時間渲染）
+  // ⛔ 要點的東西可能還沒畫出來（2026-09-29 `D-109` 實走踩到）：機器人模組第 2 步要先點「真人客服」，
+  //    但清單還在載——點了空氣，那一步講的是真人客服、畫面上卻什麼都沒選，後面兩步跟著全錯。
+  //    先等它出現（最多 3 秒）再決定點不點；「已經開著就不要點」那條判斷照舊在下面。
+  if (step?.clickBefore && !(step.clickBeforeUnless && document.querySelector(step.clickBeforeUnless)))
+    await waitForElement(step.clickBefore, 3000)
   let el = selector ? await waitForElement(selector, 2000) : null
   // ⛔ 兩個退路（2026-08-28 code review 修）——都只在「同一件事的上層」之間退，
   //    不是拿來隨便找個東西指（理由寫在 utils/tutorial-topics.ts 的兩個欄位上）：

@@ -107,6 +107,7 @@
                       plain
                       :disabled="!data.lineConnected"
                       :loading="linkLoadingUid === row.m.uid"
+                      data-tour="ln-send-link"
                       @click="sendLink(row.m)"
                     >
                       傳連結給他

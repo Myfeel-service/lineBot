@@ -274,7 +274,7 @@
               ⛔ 放在「訊息內容」這張卡裡，不放在頁首那排按鈕旁邊——人要試的是**內容**，
               而頁首那排的旁邊就是「驗證並發送」，兩顆長得太近會按錯，而按錯的那一顆收不回來。
             -->
-            <div v-if="!isReadOnly && canOperate" class="bc-testsend">
+            <div v-if="!isReadOnly && canOperate" class="bc-testsend" data-tour="bc-testsend">
               <el-button size="small" @click="openTestSend">試發一則給自己看</el-button>
               <span class="text-xs text-muted">
                 真的會送到那支手機。<b>不會</b>算進成效報表、<b>不會</b>貼記號、<b>不會</b>改變這則推播的狀態。

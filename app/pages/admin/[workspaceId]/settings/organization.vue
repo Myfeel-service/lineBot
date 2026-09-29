@@ -252,7 +252,7 @@
             </div>
 
             <p class="ls-subgroup">內建自動回應（記得關）</p>
-            <div class="admin-field-group">
+            <div class="admin-field-group" data-tour="org-oam-autoreply">
               <div class="afh-row">
                 <AdminFieldLabel text="LINE 內建的「自動回應訊息」要關掉" tight />
                 <AdminFieldHelp id="oamAutoReply" />

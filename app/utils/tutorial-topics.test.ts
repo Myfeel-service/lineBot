@@ -183,6 +183,57 @@ describe('教學文案的寫作規則', () => {
       .toEqual([])
   })
 
+  /**
+   * 導覽說明裡用「」框起來的字，畫面上要找得到（2026-09-29 `D-109`）。
+   *
+   * 為什麼要有：那一輪盤點出 20 處「導覽講的跟畫面不一樣」，其中一大類就是按鈕名、選項名對不上——
+   * 「攔截所有文字訊息」（下拉選單上叫「客人輸入任何內容」）、「匯出報表存成 Excel」（按鈕叫「匯出 CSV」）、
+   * 「新增標籤」（按鈕只寫「新增」）。照著導覽的字去找，找不到。
+   * 上面那支錨點測試只驗「指的位置在不在」，驗不到「講的字對不對」。
+   *
+   * ⚠️ 只能抓「字不存在」這一型；「字在、但講的後果不對」（例如總開關那句）還是要人讀。
+   */
+  it('說明裡「」框起來的按鈕／選項名，畫面上找得到（找不到的要嘛改字、要嘛登記成例句）', () => {
+    // 字串字面值才算（註解裡的「」是寫給工程師看的）
+    const code = src.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n')
+    const text = [...code.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map(m => m[1]).join('').replace(/<[^>]+>/g, '')
+    const phrases = [...new Set([...text.matchAll(/「([^「」]{1,30})」/g)].map(m => m[1]!))]
+
+    const labels = [...src.matchAll(/^\s*label:\s*'([^']+)'/gm)].map(m => m[1]!)
+    const files: string[] = []
+    const walkAll = (dir: string) => {
+      for (const e of readdirSync(dir)) {
+        const f = join(dir, e)
+        if (statSync(f).isDirectory()) walkAll(f)
+        else if (/\.(vue|ts)$/.test(e) && !e.endsWith('.test.ts') && f !== TOPICS_FILE) files.push(f)
+      }
+    }
+    walkAll(APP_DIR)
+    walkAll(join(APP_DIR, '../shared'))
+    const corpus = files.map(f => readFileSync(f, 'utf8')).join('\n')
+
+    /** 不是畫面上的字：舉例、要客人收到的話、講一個觀念。⛔ 按鈕名、選項名不可以放進來 */
+    const NOT_UI = new Set([
+      '我們明天 9 點回覆您', // 勿擾回覆的例句
+      '已為您轉接專人，請稍候', // 真人客服模組的例句
+      '已寄出退貨單', '退貨中', // 客服預存的例子
+      '什麼時候會啟動', '什麼時候回', // 講觀念，不是一顆按鈕
+    ])
+    const onScreen = (p: string) =>
+      corpus.includes(p)
+      // 「建立模組／儲存變更」＝同一顆按鈕的兩種字樣
+      || (p.includes('／') && p.split('／').every(part => corpus.includes(part.trim())))
+      // 指的是另一支教學（教學清單上的名字）
+      || labels.some(l => l === p || l.startsWith(p))
+
+    // 對照組：網撈不到東西的話，下面那關會空轉通過
+    expect(phrases.length).toBeGreaterThan(50)
+    expect(phrases).toContain('客人輸入任何內容')
+
+    const missing = phrases.filter(p => !NOT_UI.has(p) && !onScreen(p))
+    expect(missing, `導覽講了這幾個字，畫面上找不到（照著導覽去找會走丟）：\n${missing.join('\n')}`).toEqual([])
+  })
+
   it('blurb 不手寫「共 N 步」——畫面會自己算', () => {
     const offenders = [...src.matchAll(/^\s*blurb:\s*'([^']*)'/gm)]
       .map(m => m[1]!)

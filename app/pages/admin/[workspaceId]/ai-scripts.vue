@@ -11,11 +11,9 @@
       <div v-if="loading && !scripts.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
-      <div v-else-if="!scripts.length" class="split-sidebar-empty">
-        <span>尚無客服流程</span>
-        <p class="text-xs text-muted">建一條情境流程，把多步驟客服變成自動流程</p>
-        <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
-      </div>
+      <!-- ⛔ 2026-09-29（`D-109`）：以前一條都沒有時整塊換成「尚無客服流程」，那一列「客人加好友時」
+           跟著消失——違反下面 `D-23` 的「沒設定也在」，而最需要看到它的正是剛開的帳號。
+           現在清單永遠畫，空的說明接在那一列下面。 -->
       <div v-else ref="listEl" class="split-list" data-tour="scr-list" @scroll.passive="onSidebarListScroll">
         <!--
           `D-23` 拍板：**「客人加好友時」永遠釘在最上面，沒設定也在。**
@@ -36,6 +34,11 @@
           :class="['scripts-follow-row', { 'scripts-follow-row--unset': followRow.state === 'unset' }]"
           @select="onFollowRowSelect"
         />
+        <div v-if="!messageScripts.length" class="split-sidebar-empty">
+          <span>還沒有別的自動回應</span>
+          <p class="text-xs text-muted">建一條：客人說了某句話，就自動回一段，或一步步問他資料</p>
+          <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+        </div>
         <AdminSplitListItem
           v-for="script in messageScripts"
           :key="script.id"
@@ -675,12 +678,13 @@
             </div>
 
             <!-- 簡單模式的成長入口：點了才出現積木選單，加完第一塊就自動變成完整編輯器 -->
-            <button v-if="canEditScripts && isSimpleMode && !showPalette" type="button" class="scripts-grow" @click="showPalette = true">
+            <!-- `scr-grow`／`scr-palette`／`scr-sim*`：「多步驟接待」那支導覽用（`D-109`） -->
+            <button v-if="canEditScripts && isSimpleMode && !showPalette" type="button" class="scripts-grow" data-tour="scr-grow" @click="showPalette = true">
               ＋ 還要多做一步…
               <small>問客人資料、給按鈕選、依答案分路、轉真人</small>
             </button>
 
-            <div v-if="canEditScripts && (!isSimpleMode || showPalette)" class="scripts-add-palette">
+            <div v-if="canEditScripts && (!isSimpleMode || showPalette)" class="scripts-add-palette" data-tour="scr-palette">
               <div v-for="grp in nodePalette" :key="grp.group" class="scripts-add-group">
                 <span class="scripts-add-group-title">{{ grp.group }}</span>
                 <div class="scripts-add-cards">
@@ -712,15 +716,15 @@
 
         <!-- 試跑：假裝自己是客人打字，即時模擬這條腳本（純預覽，無副作用）。
              擺在最後——新建腳本時第一眼不該是一個沒東西可跑的模擬器。 -->
-        <div class="message-card scripts-section-card scripts-sim-card">
-          <div class="message-card-header scripts-sim-head" role="button" tabindex="0" @click="showSim = !showSim" @keydown.enter="showSim = !showSim">
+        <div class="message-card scripts-section-card scripts-sim-card" data-tour="scr-sim">
+          <div class="message-card-header scripts-sim-head" data-tour="scr-sim-head" role="button" tabindex="0" @click="showSim = !showSim" @keydown.enter="showSim = !showSim">
             <div class="card-header-main">
               <span class="section-title">試跑這條流程</span>
               <span class="text-xs text-muted">假裝客人打字，看機器人怎麼回（純預覽，不會真的發送）</span>
             </div>
             <el-icon class="scripts-sim-caret" :class="{ 'is-open': showSim }"><ArrowRight /></el-icon>
           </div>
-          <div v-if="showSim" class="card-section-stack scripts-sim-panel">
+          <div v-if="showSim" class="card-section-stack scripts-sim-panel" data-tour="scr-sim-panel">
             <div class="scripts-sim-chat">
               <p v-if="!simLog.length" class="scripts-sim-empty">
                 {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條流程）' }}
