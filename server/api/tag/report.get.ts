@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getTagReport } from '~~/server/utils/tag-report'
 import { canRegenerate, cooldownRemainingMs } from '~~/shared/tag-report'
 
@@ -13,7 +13,7 @@ import { canRegenerate, cooldownRemainingMs } from '~~/shared/tag-report'
  * 讀取權限跟這區其他頁一致：`viewer` 看得到（按鈕另依角色隱藏）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const report = await getTagReport(getDb(), workspaceId)
   const now = Date.now()
 

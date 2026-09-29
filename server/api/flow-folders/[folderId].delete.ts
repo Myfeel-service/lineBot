@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { deleteFlowFolderCascade } from '~~/server/utils/flow-folders'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -8,7 +8,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 刪資料夾不會刪底下 flows，只把它們的 folderId 改成 null（變未分類）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const folderId = String(getRouterParam(event, 'folderId') ?? '').trim()
   if (!folderId) throw createError({ statusCode: 400, statusMessage: 'folderId required' })
 

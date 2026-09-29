@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 
@@ -10,7 +10,7 @@ import { isStoreProfileReady } from '~~/shared/types/store-profile'
  * 前端自己再算一次就會有兩份會慢慢飄的判斷。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const profile = await getStoreProfile(workspaceId)
   return { profile, ready: isStoreProfileReady(profile) }
 })

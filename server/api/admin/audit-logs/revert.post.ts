@@ -23,9 +23,9 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到這筆紀錄' })
 
   const data = snap.data() as Record<string, unknown>
-  // 跨租戶防線：紀錄必須屬於這個工作區
+  // 跨租戶防線：紀錄必須屬於這個工作區；別人的跟「不存在」長得一樣（回 403 等於證實它存在）
   if (data.workspaceId !== workspaceId)
-    throw createError({ statusCode: 403, statusMessage: '這筆紀錄不屬於這個官方帳號' })
+    throw createError({ statusCode: 404, statusMessage: '找不到這筆紀錄' })
 
   const row: AuditRecordForRevert = {
     id,

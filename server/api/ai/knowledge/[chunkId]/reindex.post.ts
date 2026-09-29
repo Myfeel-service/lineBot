@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { buildEmbeddingText, KNOWLEDGE_CHUNKS_COLLECTION, runIndexOnChunk } from '~~/server/utils/ai-knowledge-chunks'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -9,7 +9,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 手動觸發單張卡重新算 embedding。供「索引失敗」狀態下使用者點重試。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   const data = snap.data() as { workspaceId?: string; title?: string; content?: string; questions?: unknown }
   if (data.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   }
   const content = String(data.content ?? '').trim()
   if (!content) throw createError({ statusCode: 400, statusMessage: 'chunk has no content' })

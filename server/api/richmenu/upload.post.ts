@@ -2,7 +2,7 @@ import { validateUploadPayload } from '~~/server/utils/upload-validator'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const body = await readBody(event)
   const { richMenuId, firestoreId, imageBase64, contentType } = body
 

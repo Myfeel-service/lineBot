@@ -19,7 +19,7 @@ const CONV_ID = `${WS}_${LINE_UID}`
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 
 let currentQuery: Record<string, unknown> = {}

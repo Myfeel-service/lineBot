@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import { mergeSimilarTags, type TagDiscoveryDoc } from '~~/shared/tag-discovery'
@@ -14,7 +14,7 @@ import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
  * 單文件直讀，零掃描零新索引。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const db = getDb()
 
   const [settings, snap] = await Promise.all([

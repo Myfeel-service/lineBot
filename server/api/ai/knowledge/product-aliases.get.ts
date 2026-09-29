@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { canonicalProductName, detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
@@ -11,7 +11,7 @@ import { canonicalProductName, detectAliasCandidates, getProductAliases } from '
  * 候選只用手上的資料判斷（來源檔名、既有產品名），不呼叫 LLM，所以很快也不花錢。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const db = getDb()
 
   const [srcSnap, indexNames, aliasMap] = await Promise.all([

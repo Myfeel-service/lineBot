@@ -4,7 +4,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
 import { hasReceivedPeerMessage } from '~~/server/utils/conversation-peer-activity'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { checkLineWebhook } from '~~/server/utils/workspace-alerts'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
@@ -28,7 +28,7 @@ async function resolve(check: () => Promise<boolean>): Promise<SetupItemStatus> 
 }
 
 export default defineEventHandler(async (event): Promise<SetupStatusResponse> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const wid = String(workspaceId || '').trim()
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })

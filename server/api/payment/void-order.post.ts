@@ -1,5 +1,5 @@
 import { voidPendingOrder } from '~~/server/utils/payment'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -10,7 +10,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 需 admin。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'billing.manage')
   const body = await readBody(event)
   const merchantOrderNo = String(body?.merchantOrderNo || '').trim()
   if (!merchantOrderNo) {
@@ -18,8 +18,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const r = await voidPendingOrder(merchantOrderNo, workspaceId)
-  if (r === 'not_found') throw createError({ statusCode: 404, statusMessage: '找不到此訂單' })
-  if (r === 'forbidden') throw createError({ statusCode: 403, statusMessage: '無權操作此訂單' })
+  // 別的帳號的訂單跟「不存在」長得一樣（回 403 等於證實這個訂單編號存在）
+  if (r === 'not_found' || r === 'forbidden') throw createError({ statusCode: 404, statusMessage: '找不到此訂單' })
   if (r === 'not_pending') throw createError({ statusCode: 409, statusMessage: '此訂單已非待付款狀態' })
 
   // 稽核（`C-254`）：訂單狀態的變動要對得起帳——⛔ 這種事不留紀錄，對帳時只能猜

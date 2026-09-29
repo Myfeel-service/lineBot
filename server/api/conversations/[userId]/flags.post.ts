@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { MAX_PINNED_CONVERSATIONS, readConversationFlags } from '~~/shared/conversation-flags'
 
@@ -12,7 +12,7 @@ import { MAX_PINNED_CONVERSATIONS, readConversationFlags } from '~~/shared/conve
  * 只影響列表排序與顯示，**不動會話狀態、不進統計** —— 原因見 ~~/shared/conversation-flags.ts。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'conversations.reply')
 
   const userId = String(getRouterParam(event, 'userId') ?? '').trim()
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })

@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   KNOWLEDGE_CHUNKS_COLLECTION,
   normalizeChunkInput,
@@ -19,7 +19,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 同步把 source.name 更新成新的 title，讓來源列表的顯示跟著走。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   const existing = snap.data() as { workspaceId?: string; content?: string; sourceId?: string | null; title?: string }
   if (existing.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   }
 
   const contentChanged = (existing.content ?? '') !== input.content

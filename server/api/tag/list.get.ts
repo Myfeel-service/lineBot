@@ -1,7 +1,7 @@
 import { getDb, listDocs } from '~~/server/utils/firebase'
 import { parseAdminListPagination, paginateArray } from '~~/server/utils/admin-pagination'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import type { TagDoc } from '~~/shared/types/tag-broadcast'
 import { isAiJudgedTag, tagSegmentCounts } from '~~/shared/tag-admin'
 
@@ -48,7 +48,7 @@ function filterTags(
  * 有 page/limit：Response: { items: TagRow[], total, page, limit }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
   const statusFilter = query.status as string | undefined

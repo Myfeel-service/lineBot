@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
 import { PENDING_SCAN_LIMIT } from '~~/shared/tag-pending-review'
 
@@ -30,7 +30,7 @@ const SCAN_LIMIT = PENDING_SCAN_LIMIT
  * 索引：(workspaceId, hasPending) 已存在（好友頁「只看有 AI 建議的」在用）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const db = getDb()
 
   // 多讀一份用來判斷「還有沒有更多」——回傳的統計仍只用前 SCAN_LIMIT 份

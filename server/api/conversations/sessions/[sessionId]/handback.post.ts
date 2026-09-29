@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { handBackSessionToBot } from '~~/server/utils/conversation-session'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * POST /api/conversations/sessions/:sessionId/handback
@@ -9,7 +9,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * 與「結束會話」不同：session 維持進行中，只是 handler 換回 bot。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
 
   const sessionId = getRouterParam(event, 'sessionId')
   if (!sessionId) throw createError({ statusCode: 400, statusMessage: 'sessionId required' })

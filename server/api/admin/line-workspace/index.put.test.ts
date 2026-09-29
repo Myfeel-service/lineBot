@@ -13,7 +13,7 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'wsB' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: 'wsB' })),
 }))
 vi.mock('~~/server/utils/line-workspace-credentials', () => ({
   invalidateLineWorkspaceCredentialsCache: vi.fn(),

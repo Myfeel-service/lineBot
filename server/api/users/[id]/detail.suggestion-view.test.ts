@@ -16,7 +16,7 @@ vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getRouterParam', () => '')
 vi.stubGlobal('createError', (opts: { statusMessage?: string }) => new Error(opts.statusMessage ?? 'error'))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
-vi.mock('~~/server/utils/workspace-auth', () => ({ requireWorkspaceAccess: vi.fn() }))
+vi.mock('~~/server/utils/workspace-auth', () => ({ requireCapability: vi.fn() }))
 
 const { toPendingSuggestionView } = await import('./detail.get')
 

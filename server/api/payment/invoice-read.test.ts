@@ -19,7 +19,7 @@ const KEYS = {
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'ws1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: 'ws1' })),
 }))
 vi.mock('~~/server/utils/guangmao-invoice', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~~/server/utils/guangmao-invoice')>()),
@@ -79,9 +79,9 @@ beforeEach(() => {
 })
 
 describe('發票明細', () => {
-  it('🔴 別的官方帳號的發票看不到（文件 id ＝ 訂單編號，猜得到）', async () => {
+  it('🔴 別的官方帳號的發票看不到，而且跟「不存在」長得一樣（文件 id ＝ 訂單編號，猜得到）', async () => {
     makeDb(invoiceDoc({ workspaceId: 'ws-other' }))
-    await expect(detailHandler({} as never)).rejects.toMatchObject({ statusCode: 403 })
+    await expect(detailHandler({} as never)).rejects.toMatchObject({ statusCode: 404, statusMessage: '查無發票明細' })
   })
 
   it('沒帶訂單編號回 400', async () => {
@@ -138,9 +138,9 @@ describe('發票明細', () => {
 })
 
 describe('證明聯 PDF', () => {
-  it('🔴 別的官方帳號的發票下載不到', async () => {
+  it('🔴 別的官方帳號的發票下載不到，而且跟「不存在」長得一樣', async () => {
     makeDb(invoiceDoc({ workspaceId: 'ws-other' }))
-    await expect(fileHandler({} as never)).rejects.toMatchObject({ statusCode: 403 })
+    await expect(fileHandler({} as never)).rejects.toMatchObject({ statusCode: 404, statusMessage: '查無發票' })
     expect(mockFileUrl).not.toHaveBeenCalled()
   })
 

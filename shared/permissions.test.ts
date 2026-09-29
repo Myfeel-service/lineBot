@@ -18,6 +18,9 @@ describe('can — role × capability matrix', () => {
   // 期望門檻（與政策一致：內容維護 agent，設定類 admin，讀取 viewer）
   const EXPECTED: Record<Capability, WorkspaceMemberRole> = {
     'ai.read': 'viewer',
+    // 2026-09-29 `G-106`：營運資料讀取與小幫手（門檻照現況）
+    'workspace.read': 'viewer',
+    'assistant.use': 'viewer',
     // 2026-09-29 `D-111`：成員列表收到管理員（唯一用到它的頁本來就只給管理員）
     'members.read': 'admin',
     'knowledge.write': 'agent',

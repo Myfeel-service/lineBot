@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { deleteJobStorage, KNOWLEDGE_PREVIEW_JOBS_COLLECTION, type PreviewJobDoc } from '~~/server/utils/ai-preview-jobs'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -13,7 +13,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 冪等：已取消/不存在都回 ok。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const jobId = String(event.context.params?.jobId ?? '').trim()
   if (!jobId) throw createError({ statusCode: 400, statusMessage: '缺少 jobId' })
 
@@ -23,7 +23,8 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) return { ok: true }
 
   const job = snap.data() as PreviewJobDoc
-  if (job.workspaceId !== workspaceId) throw createError({ statusCode: 403, statusMessage: '無權存取' })
+  // 別家的匯入工作＝當作不存在、回跟上面一樣的東西（`G-106`）：回 404 就洩漏了「別家有這一份」
+  if (job.workspaceId !== workspaceId) return { ok: true }
   // 已完成的不取消（結果可能已被匯入流程使用）；已取消冪等
   if (job.status === 'done') return { ok: true, status: 'done' }
 

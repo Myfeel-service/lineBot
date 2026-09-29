@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const WHO = { lineUserId: `U${'a'.repeat(32)}`, displayName: '阿豪', pictureUrl: '', via: 'follow' as const }
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: () => ({}) }))
-vi.mock('~~/server/utils/workspace-auth', () => ({ requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'w1', uid: 'u1' })) }))
+vi.mock('~~/server/utils/workspace-auth', () => ({ requireCapability: vi.fn(async () => ({ workspaceId: 'w1', uid: 'u1' })) }))
 vi.mock('~~/server/utils/onboarding-phone-test', () => ({
   confirmPhoneFollower: vi.fn(async () => WHO),
   phoneTestSince: vi.fn(() => 0),

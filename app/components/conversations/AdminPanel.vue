@@ -567,6 +567,7 @@
             trigger="click"
             placement="bottom-start"
             class="conv-assignee"
+            data-tour="conv-assignee"
             :disabled="assigneeSaving"
             @command="setAssignee"
             @visible-change="onAssigneeMenuToggle"
@@ -3283,7 +3284,7 @@ function openContextMenuFromButton(ev: MouseEvent, target: ConvItem | SessionIte
 /** 同一位客人可能同時出現在 conversations 與 sessions 兩份清單，兩邊都要跟著更新 */
 /* ── 負責人員（G-27 功能缺口②）─────────────────────────────── */
 
-interface AssignableMember { uid: string, name: string, email: string, role: string }
+interface AssignableMember { uid: string, name: string }
 
 const assignableMembers = ref<AssignableMember[]>([])
 const assigneeLoading = ref(false)

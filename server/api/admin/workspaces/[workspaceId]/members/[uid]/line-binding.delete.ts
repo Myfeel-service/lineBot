@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { unbindMemberLine } from '~~/server/utils/member-line-bind'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -7,7 +7,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 解除成員的 LINE 綁定，並把該 LINE 帳號從轉真人通知名單移除。需 admin 以上角色。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid: callerUid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid: callerUid } = await requireCapability(event, 'notify.manage')
 
   const uid = event.context.params?.uid
   if (!uid) throw createError({ statusCode: 400, statusMessage: 'uid is required' })

@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
@@ -12,7 +12,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
  * 案例會自動回到未處理狀態（resolvedAt < updatedAt）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const userId = String(body?.userId ?? '').trim()
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })

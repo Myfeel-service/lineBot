@@ -1,13 +1,13 @@
 import { getDb } from '~~/server/utils/firebase'
 import { queryCollectionPage } from '~~/server/utils/paginated-collection-list'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/support-preset/list
  * Query: page, limit（有帶則回傳 { items, total, page, limit, hasMore }）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
   const db = getDb()
 

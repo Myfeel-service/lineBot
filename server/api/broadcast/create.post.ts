@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot } from '~~/server/utils/audit-log'
 import type { BroadcastDoc, BroadcastAudienceSource } from '~~/shared/types/tag-broadcast'
 
@@ -20,7 +20,7 @@ import type { BroadcastDoc, BroadcastAudienceSource } from '~~/shared/types/tag-
  * Response: BroadcastDoc & { id: string }
  */
 export default defineEventHandler(async (event) => {
-  const { uid, workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { uid, workspaceId } = await requireCapability(event, 'broadcast.write')
 
   const body = await readBody(event)
   const { name, audienceSource, messages } = body

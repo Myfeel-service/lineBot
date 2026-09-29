@@ -3,10 +3,10 @@
  *
  * 行銷向指標（不含連結產生次數、不含「尚未兌換」pending）。
  */
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const campaignId = getRouterParam(event, 'id')!
   const db = getDb()
 

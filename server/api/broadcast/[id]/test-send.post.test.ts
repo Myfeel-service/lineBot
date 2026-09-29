@@ -16,7 +16,7 @@ const FRIEND = 'U0123456789abcdef0123456789abcdef'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDoc: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 vi.mock('~~/server/utils/handler', () => ({ renderModuleToLineMessages: vi.fn() }))
 vi.mock('~~/server/utils/line', () => ({ pushMessage: vi.fn() }))

@@ -1,6 +1,6 @@
 import { resolveAudienceUserIds } from '~~/server/utils/audience'
 import type { AudienceFilter } from '~~/shared/types/tag-broadcast'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * POST /api/audience/estimate
@@ -19,7 +19,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const body = await readBody(event)
   const filter: AudienceFilter = body?.filter
 

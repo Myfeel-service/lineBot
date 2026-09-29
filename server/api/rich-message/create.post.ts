@@ -4,11 +4,11 @@ import {
   normalizeUnifiedActions,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const body = await readBody(event)
   const { name, layoutId, heroImageWidth, heroImageHeight, transparentBackground, altText, heroImageUrl, actions, isActive } = body
 

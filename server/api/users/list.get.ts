@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 const CHUNK = 30
@@ -75,7 +75,7 @@ function matchesSearch(user: UserBase, searchRaw: string): boolean {
  *   pendingSuggestionTotal - 全工作區還有幾位客人的 AI 建議等人決定（**不吃畫面篩選**，見下方註解）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
   const tagIdsParam = query.tagIds as string | undefined

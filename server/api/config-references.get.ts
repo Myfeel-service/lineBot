@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { scanConfigReferences } from '~~/server/utils/config-references'
 
 /**
@@ -16,7 +16,7 @@ import { scanConfigReferences } from '~~/server/utils/config-references'
  *    （前者可以放心停用，後者停用下去可能把正在服務客人的東西弄壞）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const fresh = String(getQuery(event).fresh ?? '') === '1'
   return await scanConfigReferences(getDb(), workspaceId, { skipCache: fresh })
 })

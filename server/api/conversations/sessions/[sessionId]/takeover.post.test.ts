@@ -13,7 +13,7 @@ const LINE_UID = 'U0000000000000000000000000000001'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1', token: { name: '客服小美' } })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1', token: { name: '客服小美' } })),
 }))
 vi.mock('~~/server/utils/conversation-session', () => ({
   enterModule: vi.fn(async () => {}),

@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { readConversationFlags } from '~~/shared/conversation-flags'
 import {
@@ -26,7 +26,7 @@ import {
 const FIRESTORE_BATCH_LIMIT = 400
 
 export default defineEventHandler(async (event): Promise<ConversationBatchResult> => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'conversations.reply')
 
   const body = await readBody(event)
   const raw: unknown[] = Array.isArray(body?.userIds) ? body.userIds : []

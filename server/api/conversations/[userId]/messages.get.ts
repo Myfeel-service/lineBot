@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { ConversationEventType, ConversationStatus, ModuleType } from '~~/shared/types/conversation-stats'
 import { MODULE_TYPE_LABELS, STATUS_LABELS } from '~~/shared/types/conversation-stats'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveMessageSender } from '~~/shared/message-sender'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
@@ -331,7 +331,7 @@ async function loadBroadcastItems(
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const routeUserId = getRouterParam(event, 'userId')
   if (!routeUserId) throw createError({ statusCode: 400, statusMessage: 'userId required' })

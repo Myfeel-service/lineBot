@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { canonicalProductName, dedupeProductNames, getProductAliases } from '~~/server/utils/ai-product-alias'
 
@@ -18,7 +18,7 @@ import { canonicalProductName, dedupeProductNames, getProductAliases } from '~~/
  * 又會排在下拉裡等人選回去。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const db = getDb()
 
   const [names, aliasMap] = await Promise.all([

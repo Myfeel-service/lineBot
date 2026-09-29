@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { isMediaMessageType, resolveConversationMediaUrl } from '~~/server/utils/conversation-media'
 
@@ -17,7 +17,7 @@ import { isMediaMessageType, resolveConversationMediaUrl } from '~~/server/utils
  *   too_large  → 超過單檔上限，不做存檔
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const userId = getRouterParam(event, 'userId')
   const messageDocId = getRouterParam(event, 'messageId')

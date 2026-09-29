@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import type { LineWorkspaceDoc } from '~~/shared/line-workspace'
 
@@ -16,7 +16,7 @@ function secretSuffix(value: unknown): { configured: boolean; suffix: string | n
  * 回傳目前 workspaces/default 狀態（不含完整 secret／token）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
   const wid = String(workspaceId || '').trim()
   if (!wid) throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 

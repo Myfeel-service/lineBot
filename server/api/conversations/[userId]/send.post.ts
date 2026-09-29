@@ -3,7 +3,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { pushMessage } from '~~/server/utils/line'
 import { saveConversationMessage } from '~~/server/utils/handler'
 import { onHumanOutgoingMessage } from '~~/server/utils/conversation-session'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { describeLineSendFailure } from '~~/server/utils/line-send-error'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
@@ -29,7 +29,7 @@ async function pushToCustomer(
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireCapability(event, 'conversations.reply')
 
   // 對話上「真人」標籤的 tooltip 要講出是哪位同事回的。收件匣是全團隊共用的，
   // 只寫「真人」等於還要再問一次「誰回的？」。取不到名字就退到 email，都沒有就留空。

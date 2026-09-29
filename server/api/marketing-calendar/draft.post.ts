@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
@@ -26,7 +26,7 @@ import { BROADCAST_DRAFT_VARIANTS, type BroadcastDraftHandoff } from '~~/shared/
  * ⛔ **沒有輪廓就不要擬**：沒有商品資訊寫出來的是空話，不如叫他先花三分鐘。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'broadcast.write')
   await assertMaintenanceBudget(workspaceId)
 
   const body = await readBody(event).catch(() => ({})) as { festivalId?: string }

@@ -1,6 +1,6 @@
 import { findLatestPeerActiveConversation } from '~~/server/utils/conversation-peer-activity'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
 
 /**
@@ -26,7 +26,7 @@ interface FirstMessageResponse {
 }
 
 export default defineEventHandler(async (event): Promise<FirstMessageResponse> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const wid = String(workspaceId || '').trim()
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })

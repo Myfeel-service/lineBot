@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { adoptDrafts } from '~~/server/utils/knowledge-drafts'
 import { quotaForRole } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
@@ -11,7 +11,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 回傳沒收到的那幾張，畫面要講出來（`C-250`③）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, role } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid, role } = await requireCapability(event, 'knowledge.write')
   const body = await readBody<{ chunkIds?: unknown }>(event)
   const ids = Array.isArray(body?.chunkIds) ? body.chunkIds.map(String) : []
   if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要採用哪幾張？' })

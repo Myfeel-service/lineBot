@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { TrendBucket, TrendGranularity } from '~~/shared/types/conversation-stats'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { shiftToTaipei, taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 import { loadDayStats, mergeDays, taipeiDayKeysBetween } from '~~/server/utils/conversation-stats-rollup'
 
@@ -23,7 +23,7 @@ function bucketKey(date: Date, granularity: TrendGranularity): string {
 }
 
 export default defineEventHandler(async (event): Promise<{ buckets: TrendBucket[] }> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
   const granularity: TrendGranularity =
     query.granularity === 'week' || query.granularity === 'month'

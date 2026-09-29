@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import {
   MAX_PINNED_CONVERSATIONS,
@@ -122,7 +122,7 @@ async function queryFlaggedDocs(
  * Response: { conversations, total, page, limit, hasMore, truncated }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
   const searchRaw = String(query.search || '').trim().toLowerCase()

@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
 import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 
@@ -28,7 +28,7 @@ import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
  *    已經是 false,但卡還綁著,那正是客戶最想按這顆按鈕的時刻。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'billing.manage')
 
   const db = getDb()
   const sub = await getWorkspaceSubscription(workspaceId, db)

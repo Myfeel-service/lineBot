@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { addTagsToUser, removeTagsFromUser } from '~~/server/utils/tagging'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import {
@@ -40,7 +40,7 @@ import type { TagDoc } from '~~/shared/types/tag-broadcast'
  *    否則同一個主題會長出兩顆同名標籤。
  */
 export default defineEventHandler(async (event) => {
-  const { uid, workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  const { uid, workspaceId, token } = await requireCapability(event, 'tags.write')
 
   const body = await readBody(event)
   const action = String(body?.action ?? '')

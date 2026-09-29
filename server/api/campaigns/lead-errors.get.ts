@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { readLeadPageFailures } from '~~/server/utils/lead-page-failures'
 
 /** 預設看近 7 天：比這更久的數字對「現在要不要去修」沒有幫助 */
@@ -15,7 +15,7 @@ const MAX_DAYS = 30
  * 權限比照 `/api/campaigns/list`（viewer 可讀）：看得到活動的人才需要知道活動壞了。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const rawDays = Number(getQuery(event).days ?? DEFAULT_DAYS)
   const days = Number.isFinite(rawDays) ? Math.min(Math.max(Math.trunc(rawDays), 1), MAX_DAYS) : DEFAULT_DAYS

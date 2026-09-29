@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 import type { TagCategory, TagStatus } from '~~/shared/types/tag-broadcast'
 
@@ -21,7 +21,7 @@ import type { TagCategory, TagStatus } from '~~/shared/types/tag-broadcast'
  * Response: { id: string, ...updatedFields }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'tags.write')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })

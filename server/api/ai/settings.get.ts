@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { redactAiSettingsForRole } from '~~/server/utils/ai-settings-redact'
 
@@ -11,6 +11,6 @@ import { redactAiSettingsForRole } from '~~/server/utils/ai-settings-redact'
  *    ⚠️ 管理員存檔的來回不受影響：少掉的三格 PUT 對非超管本來就丟掉、沿用現值（深合併）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, role, isSuperAdmin } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, role, isSuperAdmin } = await requireCapability(event, 'ai.read')
   return redactAiSettingsForRole(await getAiSettings(workspaceId), { role, isSuperAdmin })
 })

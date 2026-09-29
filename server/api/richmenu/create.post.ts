@@ -1,12 +1,12 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import type { messagingApi } from '@line/bot-sdk'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const body = await readBody(event)
   const { name, size, areas, chatBarText, selected, setAsDefault } = body
 

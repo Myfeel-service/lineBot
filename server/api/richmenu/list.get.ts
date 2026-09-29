@@ -1,6 +1,6 @@
 import { listDocs } from '~~/server/utils/firebase'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 function sortRichMenus<T extends { isDefault?: boolean }>(menus: T[]): T[] {
   return [...menus].sort((a, b) => {
@@ -15,7 +15,7 @@ function sortRichMenus<T extends { isDefault?: boolean }>(menus: T[]): T[] {
  * Query: page, limit（有帶則回傳 { items, total, page, limit, hasMore }）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
 
   const menus = await listDocs<Record<string, unknown> & { isDefault?: boolean }>('richmenus', ref =>

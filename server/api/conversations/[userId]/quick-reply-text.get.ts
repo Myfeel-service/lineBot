@@ -2,7 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { normalizeSupportPreset } from '~~/shared/support-preset'
 import { normalizeAutoReplyRule } from '~~/shared/auto-reply-rule'
 import { renderTextForUser } from '~~/server/utils/handler'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/conversations/[userId]/quick-reply-text?presetId=xxx
@@ -13,7 +13,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * 沒有純文字可改，回 text: null，前端只給「直接送出」。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
 
   const userId = getRouterParam(event, 'userId')
   if (!userId) throw createError({ statusCode: 400, statusMessage: 'userId required' })

@@ -17,7 +17,7 @@ const UID = 'admin1'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: UID })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: UID })),
 }))
 vi.mock('firebase-admin/firestore', () => ({
   FieldValue: {

@@ -13,7 +13,7 @@ const WS = 'ws1'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn(), getDoc: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 vi.mock('~~/server/utils/audience', () => ({ resolveAudienceUserIds: vi.fn(async () => []) }))
 

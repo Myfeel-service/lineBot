@@ -1,7 +1,7 @@
 import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import { getDb } from '~~/server/utils/firebase'
 import { collectWorkspaceAlerts } from '~~/server/utils/workspace-alerts'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/admin/alerts?workspaceId=...
@@ -12,7 +12,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * 這裡只做單一工作區的角色判定。
  */
 export default defineEventHandler(async (event): Promise<WorkspaceAlertsResponse> => {
-  const { workspaceId, role } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, role } = await requireCapability(event, 'workspace.read')
   const wid = String(workspaceId || '').trim()
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })

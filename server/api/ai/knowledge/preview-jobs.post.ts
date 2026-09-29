@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { findSourceByContentHash } from '~~/server/utils/ai-knowledge-sources'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb, getStorage } from '~~/server/utils/firebase'
@@ -41,7 +41,7 @@ import type { ChunkInput } from '~~/server/utils/ai-knowledge-chunks'
  * 回 { jobId, status, phase }。前端拿 jobId 去輪詢 GET /preview-jobs/[jobId]。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   // 維運額度前置檢查（C-45）：超額就別建工作，讓人第一時間看到原因
   await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)

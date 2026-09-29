@@ -1,11 +1,11 @@
 import type { messagingApi } from '@line/bot-sdk'
 import { validateUploadPayload } from '~~/server/utils/upload-validator'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const firestoreId = getRouterParam(event, 'id')
   if (!firestoreId) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 

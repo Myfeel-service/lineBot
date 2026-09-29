@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import type { AiConversationMeta } from '~~/shared/types/ai-knowledge'
@@ -42,7 +42,7 @@ function tsToMs(raw: unknown): number {
  *   清單見底時前端才有依據說「真的沒了」而不是「只載了 20 筆」。
  */
 export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; hasMore: boolean; nextBefore: number }> => {
-  const { workspaceId, isSuperAdmin } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, isSuperAdmin } = await requireCapability(event, 'ai.read')
   const query = getQuery(event)
   const limit = Math.min(50, Math.max(1, Number(query.limit ?? 20)))
   // 白名單由共用標籤表導出(手抄第二份會漂移:新 reason 加了前端卻漏這裡,

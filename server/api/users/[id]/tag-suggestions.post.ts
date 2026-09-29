@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { reviewSuggestions } from '~~/server/utils/tag-suggestion-review'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
@@ -16,7 +16,7 @@ import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/
  * 標籤頁的「一次審一整顆」走的是同一支，這裡只負責把結果翻成 HTTP 狀態碼。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'customers.write')
 
   const userIdParam = getRouterParam(event, 'id')
   if (!userIdParam) throw createError({ statusCode: 400, statusMessage: 'userId is required' })

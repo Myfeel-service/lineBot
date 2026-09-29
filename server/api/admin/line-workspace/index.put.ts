@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   invalidateLineWorkspaceCredentialsCache,
@@ -58,7 +58,7 @@ function normalizeWebhookUrl(raw: string): string {
  * 傳空字串表示刪除該欄位（改由環境變數補齊）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'line.manage')
   const wid = String(workspaceId || '').trim()
   if (!wid) throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 

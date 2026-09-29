@@ -15,7 +15,7 @@ const CONV_ID = `${WS}_${LINE_UID}`
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 
 // h3 / nitro 的 auto-import 在 vitest 裡沒有，補最小可用版本（要在 import 端點之前）

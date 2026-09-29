@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { channelConflictDetail, checkLineChannelConflict } from '~~/server/utils/workspace-alerts'
 
 /**
@@ -17,7 +17,7 @@ import { channelConflictDetail, checkLineChannelConflict } from '~~/server/utils
  */
 export default defineEventHandler(async (event) => {
   // 與異常註冊表同一把尺：lineChannelConflict 是 settings 級
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
   const c = await checkLineChannelConflict(getDb(), workspaceId)
   if (c.kind === 'conflict')
     return { state: 'active' as const, detail: channelConflictDetail(c.names) }

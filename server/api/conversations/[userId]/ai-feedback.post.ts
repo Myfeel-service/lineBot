@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { logAiFeedbackEvent, type AiFeedbackType } from '~~/server/utils/ai-feedback-events'
 import { AI_TURNS_COLLECTION } from '~~/server/utils/ai-turns'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -33,7 +33,7 @@ function tsToMs(raw: unknown): number {
  * 所以這條路徑仍保留 409 樂觀鎖。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
   const userId = String(getRouterParam(event, 'userId') ?? '').trim()
   const body = await readBody(event)
   const type = String(body?.type ?? '') as AiFeedbackType
@@ -64,7 +64,7 @@ export default defineEventHandler(async (event) => {
     }
     const turn = turnSnap.data() as AiTurnDoc
     if (turn.workspaceId !== workspaceId) {
-      throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+      throw createError({ statusCode: 404, statusMessage: '找不到這一次 AI 回合' })
     }
     await logAiFeedbackEvent(db, {
       workspaceId,

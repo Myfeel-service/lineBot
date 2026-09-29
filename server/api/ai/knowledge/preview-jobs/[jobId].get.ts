@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { advancePreviewJob } from '~~/server/utils/ai-preview-job-runner'
 
@@ -14,7 +14,7 @@ import { advancePreviewJob } from '~~/server/utils/ai-preview-job-runner'
  * ⛔ 不要在這裡再長出任何推進邏輯：兩個呼叫端一旦分歧，就會回到「同一批 OCR 收兩次錢」。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const jobId = String(event.context.params?.jobId ?? '').trim()
   if (!jobId) throw createError({ statusCode: 400, statusMessage: '缺少 jobId' })
 
@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: '找不到這個匯入工作（可能已過期）' })
   }
   if (outcome.status === 'forbidden') {
-    throw createError({ statusCode: 403, statusMessage: '無權存取' })
+    throw createError({ statusCode: 404, statusMessage: '找不到這個匯入工作（可能已過期）' })
   }
   if (outcome.status === 'done') {
     return { status: 'done' as const, ...outcome.result }

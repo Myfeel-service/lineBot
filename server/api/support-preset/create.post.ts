@@ -4,12 +4,12 @@ import {
   normalizeSupportPreset,
   validateSupportPreset,
 } from '~~/shared/support-preset'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { assertWorkspaceTagIds } from '~~/server/utils/workspace-tag-ids'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'presets.write')
   const rawBody = await readBody(event)
   const body = normalizeSupportPreset(rawBody)
   const errorMessage = validateSupportPreset(body)

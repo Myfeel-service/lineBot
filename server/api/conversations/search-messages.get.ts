@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   messageSearchMatches,
@@ -56,7 +56,7 @@ type SearchRow = {
  * 少了這個分型，三種情況在畫面上都長成「無符合結果」，而那是說謊。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const keyword = normalizeMessageSearchText(String(getQuery(event).q ?? ''))
   const db = getDb()

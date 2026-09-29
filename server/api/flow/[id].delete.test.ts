@@ -12,7 +12,7 @@ const WS = 'ws1'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDoc: vi.fn(), deleteDoc: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: 'u1', role: 'agent' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'u1', role: 'agent' })),
 }))
 vi.mock('~~/server/utils/broken-module-refs', () => ({ invalidateBrokenModuleRefsCache: vi.fn() }))
 vi.mock('~~/server/utils/audit-log', () => ({

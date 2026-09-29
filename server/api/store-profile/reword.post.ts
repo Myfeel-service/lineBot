@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
@@ -18,7 +18,7 @@ const MAX_CURRENT = 4000
 const REWORD_PER_MINUTE = 8
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'ai.settings.write')
   await assertMaintenanceBudget(workspaceId)
 
   const body = await readBody(event).catch(() => ({})) as { key?: unknown, current?: unknown }

@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { closeConversationSession } from '~~/server/utils/conversation-session'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   CONVERSATION_BATCH_LIMIT,
@@ -32,7 +32,7 @@ import {
 const CLOSE_CONCURRENCY = 6
 
 export default defineEventHandler(async (event): Promise<ConversationBatchResult> => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'conversations.reply')
 
   const body = await readBody(event)
   const raw: unknown[] = Array.isArray(body?.sessionIds) ? body.sessionIds : []

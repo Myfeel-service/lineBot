@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { enterModule, markHumanOwnership } from '~~/server/utils/conversation-session'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
@@ -18,7 +18,7 @@ import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/
  * （onHumanOutgoingMessage）才記，否則「多久回應客人」會被按鈕點擊時間灌水。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, token } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid, token } = await requireCapability(event, 'conversations.reply')
 
   const sessionId = getRouterParam(event, 'sessionId')
   if (!sessionId) throw createError({ statusCode: 400, statusMessage: 'sessionId required' })

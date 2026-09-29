@@ -1,6 +1,6 @@
 import { executeBroadcastSend } from '~~/server/utils/broadcast-send'
 import { broadcastScheduleAtToDate } from '~~/server/utils/broadcast-schedule'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDoc } from '~~/server/utils/firebase'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
@@ -10,7 +10,7 @@ import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
  * 立即發送推播
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'broadcast.send')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })

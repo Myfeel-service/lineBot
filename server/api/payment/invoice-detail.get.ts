@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { loadInvoiceDetail } from '~~/server/utils/invoice-detail'
 
 /**
@@ -18,14 +18,14 @@ import { loadInvoiceDetail } from '~~/server/utils/invoice-detail'
  * invoices doc 與付款訂單一對一（doc id = merchantOrderNo）,並以 workspaceId 驗歸屬。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'billing.manage')
   const no = String(getQuery(event).order || '').trim()
   if (!no) throw createError({ statusCode: 400, statusMessage: '缺少訂單編號' })
 
   const brand = String(useRuntimeConfig(event).public?.brandName || '').trim()
   const { workspaceId: owner, detail } = await loadInvoiceDetail(no, brand)
 
-  // 只能看自己帳號的發票
-  if (owner !== workspaceId) throw createError({ statusCode: 403, statusMessage: '無權限查看此發票' })
+  // 只能看自己帳號的發票；別人的跟「不存在」長得一樣（回 403 等於證實這個訂單編號存在）
+  if (owner !== workspaceId) throw createError({ statusCode: 404, statusMessage: '查無發票明細' })
   return detail
 })

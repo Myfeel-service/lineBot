@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import {
   type LineWebhookTestResult,
@@ -36,7 +36,7 @@ export type LineWebhookVerifyResponse = {
  * Body: { compareUrl?: string, runTest?: boolean } — compareUrl 通常為管理後台推算的 `…/webhook`；runTest 預設 true
  */
 export default defineEventHandler(async (event): Promise<LineWebhookVerifyResponse> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
 
   const body = await readBody(event).catch(() => ({})) as Record<string, unknown>
   const compareUrl = normalizeWebhookCompareUrl(String(body?.compareUrl ?? ''))

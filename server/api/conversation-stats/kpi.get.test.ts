@@ -18,7 +18,7 @@ const NOW = new Date('2026-08-31T05:00:00Z') // 台北 13:00
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, role: 'owner' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, role: 'owner' })),
 }))
 vi.mock('~~/server/utils/ai-settings', () => ({
   getAiSettings: vi.fn(async () => ({ handoffNotify: { slaRemindMinutes: 30 }, serviceHours: undefined })),

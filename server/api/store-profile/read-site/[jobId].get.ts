@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { advanceStoreProfileJob, loadStoreProfileJob, toProgress } from '~~/server/utils/store-profile-jobs'
 
 /**
@@ -9,7 +9,7 @@ import { advanceStoreProfileJob, loadStoreProfileJob, toProgress } from '~~/serv
  *    少了這一關，別的租戶猜到 id 就讀得到人家的網站內容。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'ai.settings.write')
   const jobId = String(getRouterParam(event, 'jobId') ?? '').trim()
   if (!jobId) throw createError({ statusCode: 400, statusMessage: 'jobId is required' })
 

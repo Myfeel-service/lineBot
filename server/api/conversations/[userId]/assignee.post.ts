@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
 
@@ -17,7 +17,7 @@ import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-a
 const ASSIGNABLE_ROLES = new Set(['owner', 'admin', 'agent'])
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
 
   const userIdParam = getRouterParam(event, 'userId')
   if (!userIdParam) throw createError({ statusCode: 400, statusMessage: 'userId is required' })

@@ -2,7 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { syncPublishedEntryUrlForCampaign } from '~~/server/utils/lead-campaign-published-url'
 import { normalizeCampaignScheduleInput, schedulePatchForUpdate } from '~~/server/utils/campaign-schedule'
 import { normalizeAutoReplyAction } from '~~/shared/auto-reply-rule'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
 
 function normalizeCampaignAction(body: any): { action: ReturnType<typeof normalizeAutoReplyAction> | null; moduleId: string | null } {
@@ -25,7 +25,7 @@ function validateCampaign(body: any): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const id = getRouterParam(event, 'id')!
   const body = await readBody(event)
   const error = validateCampaign(body)

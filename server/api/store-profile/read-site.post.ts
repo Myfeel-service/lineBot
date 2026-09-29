@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { cleanupExpiredStoreProfileJobs, createStoreProfileJob } from '~~/server/utils/store-profile-jobs'
@@ -14,7 +14,7 @@ import { normalizeSiteUrl } from '~~/shared/types/store-profile'
  * 不要讓人輪詢半天才知道。其餘的頁由 GET /api/store-profile/read-site/[jobId] 一頁一頁推。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'ai.settings.write')
   // 維運額度前置檢查：超額就不要開工作，讓人第一時間看到原因（沿用知識庫匯入的做法）
   await assertMaintenanceBudget(workspaceId)
 

@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
@@ -18,7 +18,7 @@ import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
  *     手動關掉的卡則尊重開關、維持停用。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   const chunk = snap.data() as any
   if (chunk.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   }
 
   // 回收桶的卡不接受開關/期限操作：它的 status 是 disabled 沒錯，但那是「已刪除」不是「停用」。

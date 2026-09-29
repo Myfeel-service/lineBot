@@ -17,7 +17,7 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: UID })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: UID })),
 }))
 vi.mock('~~/server/utils/ai-tag-suggest', () => ({
   prunePendingForAppliedTags: vi.fn(async () => {}),

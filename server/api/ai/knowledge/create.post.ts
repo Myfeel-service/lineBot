@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   addWorkspaceProductName,
   createKnowledgeChunk,
@@ -33,7 +33,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 同步建立並索引：回傳時 status 已是 indexed（成功）或 failed（embed 出錯）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const rawBody = await readBody(event)
   const input = normalizeChunkInput(rawBody)
   const err = validateChunkInput(input)

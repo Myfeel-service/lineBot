@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 const { ctx } = vi.hoisted(() => ({ ctx: { role: 'viewer' as string } }))
 
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'w1', role: ctx.role })),
+  requireCapability: vi.fn(async () => ({ workspaceId: 'w1', role: ctx.role })),
 }))
 vi.mock('~~/server/utils/firebase', () => ({
   getDoc: vi.fn(async () => ({

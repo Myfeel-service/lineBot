@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
@@ -10,7 +10,7 @@ const VALID_ROLES: WorkspaceMemberRole[] = ['admin', 'agent', 'viewer']
  * Body: { role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'members.manage')
   const inviteId = getRouterParam(event, 'inviteId')
   if (!inviteId) throw createError({ statusCode: 400, statusMessage: 'inviteId is required' })
 
@@ -23,9 +23,9 @@ export default defineEventHandler(async (event) => {
   const db = getDb()
   const ref = db.collection('workspaceInvites').doc(inviteId)
   const snap = await ref.get()
-  if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到此邀請' })
-  if (snap.data()?.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'Forbidden' })
+  // 別的帳號的邀請跟「不存在」長得一樣（回 403 等於證實這個編號存在）
+  if (!snap.exists || snap.data()?.workspaceId !== workspaceId) {
+    throw createError({ statusCode: 404, statusMessage: '找不到此邀請' })
   }
 
   await ref.update({ role })

@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { getAiSettings } from '~~/server/utils/ai-settings'
@@ -9,7 +9,7 @@ import { isServiceHoursDnd } from '~~/shared/time'
 import { loadDayStats, mergeDays, taipeiDayKeysBetween } from '~~/server/utils/conversation-stats-rollup'
 
 export default defineEventHandler(async (event): Promise<KpiResult> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
   const db = getDb()
 

@@ -16,7 +16,7 @@ const OTHER_WS = 'ws2'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: 'admin1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'admin1' })),
 }))
 vi.mock('~~/server/utils/conversation-session', () => ({
   closeConversationSession: vi.fn(async () => {}),

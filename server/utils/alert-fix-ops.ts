@@ -21,7 +21,7 @@
  */
 import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
-import type { WorkspaceMemberRole } from '~~/shared/types/organization'
+import type { Capability } from '~~/shared/permissions'
 import type { AlertFixExecuteResult, AlertFixOpId, AlertFixPreview } from '~~/shared/types/alert-fix'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
 import {
@@ -56,8 +56,12 @@ export interface AlertFixCtx {
 export interface AlertFixOpDef {
   /** 這個 op 修的是哪顆異常（前端註冊表 fixOpId 的反向；測試釘住一致） */
   alertId: WorkspaceAlertId
-  /** 執行門檻：與異常註冊表同一把尺（operate=agent、settings=admin） */
-  minRole: Extract<WorkspaceMemberRole, 'agent' | 'admin'>
+  /**
+   * 執行門檻（`G-106`）：掛能力表，⛔不在這裡另外訂一套角色。
+   * 選「這個 op 寫的那種東西」原本的能力；轉發給既有端點的 op，要跟那支端點用同一個
+   * （不然預覽過得了、執行時被那支端點擋下）。等級仍對齊異常註冊表（operate=agent、settings=admin）。
+   */
+  capability: Capability
   preview: (ctx: AlertFixCtx) => Promise<AlertFixPreview>
   execute: (ctx: AlertFixCtx) => Promise<AlertFixExecuteResult>
 }
@@ -123,7 +127,7 @@ async function diagnoseWebhookFix(ctx: AlertFixCtx): Promise<
 
 const lineWebhookSetUrl: AlertFixOpDef = {
   alertId: 'lineWebhookUrlMismatch',
-  minRole: 'admin',
+  capability: 'line.manage',
   async preview(ctx) {
     const d = await diagnoseWebhookFix(ctx)
     const base = { opId: 'line-webhook-set-url' as const, alertId: this.alertId }
@@ -194,7 +198,8 @@ async function listFailedSources(ctx: AlertFixCtx): Promise<FailedSourceRow[]> {
 
 const knowledgeRefetchSources: AlertFixOpDef = {
   alertId: 'knowledgeSyncFailed',
-  minRole: 'agent',
+  // 轉發 `ai/sources/:id/resync-jobs`、`gsheet-sync`，兩支都是 sources.write
+  capability: 'sources.write',
   async preview(ctx) {
     const failed = await listFailedSources(ctx)
     const base = { opId: 'knowledge-refetch-sources' as const, alertId: this.alertId }
@@ -379,7 +384,7 @@ async function reindexExecute(
 
 const knowledgeRetryIndex: AlertFixOpDef = {
   alertId: 'knowledgeIndexFailed',
-  minRole: 'agent',
+  capability: 'knowledge.write',
   async preview(ctx) {
     return reindexPreview('knowledge-retry-index', this.alertId, await listFailedChunks(ctx), '學習失敗')
   },
@@ -390,7 +395,7 @@ const knowledgeRetryIndex: AlertFixOpDef = {
 
 const knowledgeRetryIndexStuck: AlertFixOpDef = {
   alertId: 'knowledgeIndexStuck',
-  minRole: 'agent',
+  capability: 'knowledge.write',
   async preview(ctx) {
     return reindexPreview('knowledge-retry-index-stuck', this.alertId, await listStuckChunks(ctx), '卡住沒學完')
   },
@@ -403,7 +408,7 @@ const knowledgeRetryIndexStuck: AlertFixOpDef = {
 
 const scriptDisableAnyText: AlertFixOpDef = {
   alertId: 'anyTextBlocking',
-  minRole: 'agent',
+  capability: 'scripts.write',
   async preview(ctx) {
     const hits = await findAnyTextBlockingScripts(ctx.db, ctx.workspaceId)
     const base = { opId: 'script-disable-anytext' as const, alertId: this.alertId }
@@ -487,7 +492,7 @@ async function listStuckScripts(ctx: AlertFixCtx): Promise<StuckScriptRow[]> {
 
 const scriptAddSkipExit: AlertFixOpDef = {
   alertId: 'scriptDeadEnd',
-  minRole: 'agent',
+  capability: 'scripts.write',
   async preview(ctx) {
     const rows = await listStuckScripts(ctx)
     const base = { opId: 'script-add-skip-exit' as const, alertId: this.alertId }
@@ -560,7 +565,8 @@ async function listRecentFailedBroadcasts(ctx: AlertFixCtx): Promise<{ id: strin
 
 const broadcastResetFailed: AlertFixOpDef = {
   alertId: 'broadcastFailed',
-  minRole: 'agent',
+  // 轉發 `broadcast/:id/retry`（broadcast.send：重發流程的一環；這裡只重設回草稿、不代按發送）
+  capability: 'broadcast.send',
   async preview(ctx) {
     const failed = await listRecentFailedBroadcasts(ctx)
     const base = { opId: 'broadcast-reset-failed' as const, alertId: this.alertId }

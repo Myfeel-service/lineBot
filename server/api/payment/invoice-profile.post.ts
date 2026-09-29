@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { normalizeInvoiceProfile } from '~~/server/utils/invoice-profile'
 import { invoiceKeysFromConfig } from '~~/server/utils/invoice'
 import { verifyCarrierNum } from '~~/server/utils/verify-carrier'
@@ -16,7 +16,7 @@ import { hasInvoiceProfile } from '~~/shared/types/organization'
  * 全部欄位留空 = 清掉覆寫、回去沿用組織的預設值。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'billing.manage')
   const profile = normalizeInvoiceProfile(await readBody(event))
 
   // 手機條碼要跟光貿查證「存不存在」——格式檢查驗不出來，而存錯的代價是那筆訂單的

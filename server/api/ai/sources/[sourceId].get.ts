@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { docToSourceSummary, getSource, listChunksBySource } from '~~/server/utils/ai-knowledge-sources'
 
 /**
@@ -7,7 +7,7 @@ import { docToSourceSummary, getSource, listChunksBySource } from '~~/server/uti
  * 回傳 source summary + 旗下所有 chunk（給 source detail panel 用）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const sourceId = String(getRouterParam(event, 'sourceId') ?? '').trim()
   if (!sourceId) throw createError({ statusCode: 400, statusMessage: 'sourceId required' })
 

@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getAlertFixOp } from '~~/server/utils/alert-fix-ops'
 
 /**
@@ -13,7 +13,7 @@ import { getAlertFixOp } from '~~/server/utils/alert-fix-ops'
 export default defineEventHandler(async (event) => {
   const body = await readBody(event).catch(() => ({}))
   const { op } = getAlertFixOp(String(body?.opId ?? '').trim())
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, op.minRole)
+  const { workspaceId, uid } = await requireCapability(event, op.capability)
   return op.execute({
     db: getDb(),
     workspaceId,

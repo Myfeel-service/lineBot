@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { AI_TURNS_COLLECTION } from '~~/server/utils/ai-turns'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
@@ -15,7 +15,7 @@ import type { AiTurnDoc } from '~~/shared/types/ai-knowledge'
  * 形狀一致是刻意的——後台兩處共用同一個脈絡元件，兩邊講的話才不會不一樣。
  */
 export default defineEventHandler(async (event): Promise<AiContextPayload> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
   const userIdRaw = String(getRouterParam(event, 'userId') ?? '').trim()
   const turnId = String(getRouterParam(event, 'turnId') ?? '').trim()
   if (!userIdRaw) throw createError({ statusCode: 400, statusMessage: 'userId required' })
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event): Promise<AiContextPayload> => {
   const turn = snap.data() as AiTurnDoc
   // 子集合不會自己帶租戶邊界：turn 上存了 workspaceId 就要比對，否則換個網址就能讀別家的脈絡
   if (turn.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: '找不到這一次 AI 回合' })
   }
 
   const ids = Array.isArray(turn.sourceChunkIds) ? turn.sourceChunkIds.slice(0, 5) : []

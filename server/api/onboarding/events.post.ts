@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireAuth, requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireAuth, requireCapability } from '~~/server/utils/workspace-auth'
 import { isOnboardingEvent, sanitizeEventProps } from '~~/shared/onboarding-events'
 import { createRateLimiter } from '~~/server/utils/rate-limit'
 
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{ sessionId?: unknown, flow?: unknown, workspaceId?: unknown, events?: unknown }>(event)
   const claimed = typeof body?.workspaceId === 'string' ? body.workspaceId.trim() : ''
   // ⚠️ 有帶帳號就記**驗過的那一個**（守衛自己從 body 解析），⛔ 不直接信 body 上的字串
-  const ctx = claimed ? await requireWorkspaceAccess(event, 'viewer') : await requireAuth(event)
+  const ctx = claimed ? await requireCapability(event, 'workspace.read') : await requireAuth(event)
   const uid = ctx.uid
   const workspaceId = claimed ? ((ctx as { workspaceId?: string }).workspaceId || claimed) : ''
 

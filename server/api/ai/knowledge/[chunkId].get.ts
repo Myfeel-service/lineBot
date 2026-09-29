@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 
 /**
@@ -8,7 +8,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks
  * (例:測試對話頁點「編輯」→ 來源頁自動選取該來源並開啟編輯視窗)。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   const data = snap.data() as any
   if (data?.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   }
 
   return {

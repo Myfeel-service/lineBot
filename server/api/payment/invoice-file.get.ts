@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { INVOICES_COLLECTION, invoiceKeysFromConfig } from '~~/server/utils/invoice'
 import { getInvoiceFileUrl } from '~~/server/utils/guangmao-invoice'
 import type { InvoiceDoc } from '~~/shared/types/payment'
@@ -15,7 +15,7 @@ import type { InvoiceDoc } from '~~/shared/types/payment'
  *   · 存入載具的發票要中獎後才能下載
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'billing.manage')
   const no = String(getQuery(event).order || '').trim()
   if (!no) throw createError({ statusCode: 400, statusMessage: '缺少訂單編號' })
 
@@ -27,8 +27,8 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '查無發票' })
   const inv = snap.data() as InvoiceDoc
 
-  // 只能拿自己帳號的發票
-  if (inv.workspaceId !== workspaceId) throw createError({ statusCode: 403, statusMessage: '無權限查看此發票' })
+  // 只能拿自己帳號的發票；別人的跟「不存在」長得一樣（回 403 等於證實這個訂單編號存在）
+  if (inv.workspaceId !== workspaceId) throw createError({ statusCode: 404, statusMessage: '查無發票' })
   if (!inv.ok || !inv.invoiceNumber) throw createError({ statusCode: 404, statusMessage: '此訂單的發票尚未開立成功' })
   // 作廢的發票沒有報帳用途,證明聯只會被誤用
   if (inv.voided) throw createError({ statusCode: 400, statusMessage: '此發票已作廢,無法下載證明聯' })

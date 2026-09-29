@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { discoverSitePages } from '~~/server/utils/ai-site-discovery'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 
@@ -26,7 +26,7 @@ function urlKey(url: string): string {
  * 沒有這個標記,第二次跑同一個站會靜默生出整組重複來源與重複卡(反問選項會出現兩個一樣的)。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const url = String(body?.url ?? '').trim()
   if (!/^https?:\/\//i.test(url)) {

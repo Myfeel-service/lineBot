@@ -1,5 +1,5 @@
 import type { Firestore } from 'firebase-admin/firestore'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
@@ -127,7 +127,7 @@ function findLastYearBroadcast(
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const db = getDb()
   const today = taipeiDate()
 

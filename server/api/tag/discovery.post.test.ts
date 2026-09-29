@@ -23,7 +23,7 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ uid: UID, workspaceId: WS, token: { email: EMAIL } })),
+  requireCapability: vi.fn(async () => ({ uid: UID, workspaceId: WS, token: { email: EMAIL } })),
 }))
 vi.mock('~~/server/utils/tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn() }))
 vi.mock('uuid', () => ({ v4: () => 'new-tag-id' }))

@@ -1,5 +1,5 @@
 import { runDueScheduledBroadcasts } from '~~/server/utils/run-due-scheduled-broadcasts'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * POST /api/broadcast/process-due
@@ -8,6 +8,6 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * 推播列表頁會每分鐘自動呼叫，作為 Amplify 無長駐 Cron 時的備援。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'broadcast.send')
   return await runDueScheduledBroadcasts({ workspaceId })
 })

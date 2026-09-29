@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchUserDisplayNames } from '~~/server/utils/user-display-names'
 import { PENDING_ROWS_LIMIT, PENDING_SCAN_LIMIT, pickPendingForTag } from '~~/shared/tag-pending-review'
 
@@ -18,7 +18,7 @@ import { PENDING_ROWS_LIMIT, PENDING_SCAN_LIMIT, pickPendingForTag } from '~~/sh
  *    見 `D-42` 的註記；現在 64 份文件，先不為它多維護一個欄位。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const tagId = getRouterParam(event, 'id')
   if (!tagId) throw createError({ statusCode: 400, statusMessage: 'tagId is required' })
 

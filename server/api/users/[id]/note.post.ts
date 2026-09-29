@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { isEmptyCustomerNote, normalizeCustomerNote } from '~~/shared/customer-note'
 
@@ -18,7 +18,7 @@ import { isEmptyCustomerNote, normalizeCustomerNote } from '~~/shared/customer-n
  *    留著的話「誰在什麼時候寫的」會變成一筆指向空內容的假紀錄。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireCapability(event, 'customers.write')
 
   const userIdParam = getRouterParam(event, 'id')
   if (!userIdParam) throw createError({ statusCode: 400, statusMessage: 'userId is required' })

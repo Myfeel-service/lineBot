@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import type { DocumentReference } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { SCRIPTS_COLLECTION, invalidateScriptsCache } from '~~/server/utils/ai-scripts'
 import { invalidateScriptHealthCache } from '~~/server/utils/script-health'
@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
   //   模組 isActive／messages＝`flow/[id].put`（agent）、客服流程 nodes＝`ai/scripts/[id].put`
   //   （scripts.write＝agent）、活動 moduleId＝`campaigns/[id].put`（agent）；圖文選單這支不代改。
   //   之後若要往這裡加一種寫入，先確認那種東西客服本來就能改，不然就把門檻拉回來。
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const body = await readBody(event).catch(() => ({}))
   const action = String(body?.action ?? '').trim()
   const db = getDb()

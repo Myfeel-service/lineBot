@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
   const snap = await ref.get()
   if (!snap.exists) throw createError({ statusCode: 404, statusMessage: 'script not found' })
   if ((snap.data() as { workspaceId?: string })?.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: 'script not found' })
   }
 
   // 一個帳號只能有一條啟用中的「加好友時」腳本（排除自己——改自己那條當然可以存）

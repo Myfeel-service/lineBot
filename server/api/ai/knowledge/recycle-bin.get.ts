@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 
@@ -23,7 +23,7 @@ export interface RecycleBinRow {
  * 不需要 != null 的不等式（需要 workspaceId+deletedAt 複合索引）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const db = getDb()
 
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)

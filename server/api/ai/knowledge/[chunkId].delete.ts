@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   buildChunkSoftDeletePatch,
   invalidateTagIndexCache,
@@ -20,7 +20,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 刪除確認框顯示的「底下 N 條」就會說謊）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -30,8 +30,10 @@ export default defineEventHandler(async (event) => {
   if (!snap.exists) return { ok: true }
 
   const existing = snap.data() as { workspaceId?: string; sourceId?: string | null; status?: string; deletedAt?: unknown; title?: string }
+  // 別家的卡＝當作不存在，跟上面那行回一樣的東西（`G-106`）：回 404 的話，「200 還是 404」
+  // 就洩漏了「別家有這張卡」。刪除本來就是冪等的，什麼都沒動、回 ok 不會騙到人。
   if (existing.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    return { ok: true }
   }
   if (existing.deletedAt != null) return { ok: true } // 已在回收桶，冪等
 

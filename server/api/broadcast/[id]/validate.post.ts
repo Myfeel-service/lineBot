@@ -1,5 +1,5 @@
 import { getDb, getDoc } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { resolveAudienceUserIds } from '~~/server/utils/audience'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
@@ -17,7 +17,7 @@ import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast
  * }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })

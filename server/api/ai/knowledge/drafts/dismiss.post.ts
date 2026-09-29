@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { dismissDrafts } from '~~/server/utils/knowledge-drafts'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -10,7 +10,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * ⛔ 只刪得到 `draft`：已經採用的卡走原本的刪除（回收桶，30 天內救得回來）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const body = await readBody<{ chunkIds?: unknown }>(event)
   const ids = Array.isArray(body?.chunkIds) ? body.chunkIds.map(String) : []
   if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要刪哪幾張？' })

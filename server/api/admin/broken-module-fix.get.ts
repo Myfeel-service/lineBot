@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { scanModuleGraph } from '~~/server/utils/broken-module-refs'
 import type { BrokenModuleFixState } from '~~/shared/types/alert-fix'
 
@@ -19,7 +19,7 @@ export default defineEventHandler(async (event): Promise<BrokenModuleFixState> =
   // `useWorkspaceAlerts.ts` 的 `requires: 'operate'`）——客服看得到這顆「用聊天帶我修」。
   // `G-102`：這裡原本還寫 'admin'（當時註解說它是 settings 級），前端改了、這支沒跟著動，
   // 客服一按就「查詢壞掉的按鈕失敗」。代改的每一筆寫入客服在各自的頁面本來就改得動（見 POST 那支）。
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'marketing.write')
   const scan = await scanModuleGraph(getDb(), workspaceId, { skipCache: true })
 
   const nameById = new Map(scan.modules.map(m => [m.id, m]))

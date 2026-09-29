@@ -15,7 +15,7 @@ const WS = 'ws1'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn(), listDocs: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, role: 'owner' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, role: 'owner' })),
 }))
 vi.mock('~~/server/utils/workspace-system-modules', async () => {
   const actual = await vi.importActual<typeof import('~~/server/utils/workspace-system-modules')>(

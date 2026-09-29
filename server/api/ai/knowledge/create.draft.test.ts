@@ -17,6 +17,7 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
   requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1' })),
 }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
   addWorkspaceProductName: vi.fn(async () => {}),

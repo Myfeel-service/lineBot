@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { UserTagDoc, TagLogDoc } from '~~/shared/types/tag-broadcast'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { prunePendingForAppliedTags } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { filterWorkspaceTagIds, tagNamesForAudit } from '~~/server/utils/workspace-tag-ids'
@@ -29,7 +29,7 @@ const FIRESTORE_BATCH_LIMIT = 400
  * }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'customers.write')
 
   const body = await readBody(event)
   const userIds: string[] = body?.userIds ?? []

@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { advanceSiteCards, getSiteCardsJobId } from '~~/server/utils/store-profile-jobs'
 
 /**
@@ -11,7 +11,7 @@ import { advanceSiteCards, getSiteCardsJobId } from '~~/server/utils/store-profi
  * ⚠️ 會花 LLM 的錢（切卡），所以要能改知識庫的人（agent 以上）才叫得動。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const db = getDb()
   const jobId = await getSiteCardsJobId(workspaceId, db)
   if (!jobId) return { cards: null }

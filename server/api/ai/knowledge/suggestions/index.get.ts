@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION, getGapScanState } from '~~/server/utils/ai-knowledge-suggest'
 import type { KnowledgeSuggestionDoc, KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 
@@ -31,7 +31,7 @@ function tsToMs(raw: unknown): number {
  * scan 給 UI 顯示「上次掃描時間」與「已排入重新掃描」。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const db = getDb()
 
   // 等值查詢（workspaceId + status）走自動索引；排序量小放記憶體做，免建複合索引

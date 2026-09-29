@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { collectLiffEndpointChecks } from '~~/server/utils/liff-endpoint-remote'
 import type { LiffEndpointCheckItem } from '~~/server/utils/liff-endpoint-remote'
 import { leadEndpointUrl } from '~~/shared/liff-lead-path'
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event): Promise<{
   expectedUrl: string
   checks: LiffEndpointCheckItem[]
 }> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
   const wid = String(workspaceId || '').trim()
   if (!wid) throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 

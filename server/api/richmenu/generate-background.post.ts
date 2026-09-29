@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateImage, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { getDb } from '~~/server/utils/firebase'
@@ -19,7 +19,7 @@ import { getDb } from '~~/server/utils/firebase'
  */
 export default defineEventHandler(async (event) => {
   // 與其他圖文選單端點同一道門檻
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'marketing.write')
 
   const body = await readBody(event)
   const theme = String(body?.theme ?? '').trim().slice(0, 120)

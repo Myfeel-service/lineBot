@@ -1,5 +1,5 @@
 import { getDoc } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * 讀一個模組的完整內容（`C-230`／`C-231`／`C-232`）。
@@ -14,7 +14,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  * ⛔ 別的工作區的模組一律回 404，**不是 403**——回 403 等於告訴對方「這個編號存在」。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
 

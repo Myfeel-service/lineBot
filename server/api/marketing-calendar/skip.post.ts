@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { setMarketingSkip } from '~~/server/utils/marketing-skips'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 
@@ -13,7 +13,7 @@ import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
  * ⛔ 認不得的 `festivalId` 一律擋下來：不然打錯字會在資料庫裡留下永遠清不掉的殘渣。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'marketing.write')
 
   const body = await readBody(event).catch(() => ({})) as { festivalId?: string, skip?: boolean }
   const festivalId = String(body?.festivalId ?? '').trim()

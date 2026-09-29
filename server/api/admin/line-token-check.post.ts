@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchLineBotInfo } from '~~/server/utils/line-webhook-remote'
 import { getDb } from '~~/server/utils/firebase'
 import { channelConflictMessage, findOtherWorkspacesOnChannel } from '~~/server/utils/line-channel-binding'
@@ -26,7 +26,7 @@ export type LineTokenCheckResponse = {
  * ⚠️ token 只用來打 LINE，不寫 log、不回傳（回傳的只有帳號名稱）。
  */
 export default defineEventHandler(async (event): Promise<LineTokenCheckResponse> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
 
   const body = await readBody(event).catch(() => ({})) as Record<string, unknown>
   const token = String(body?.channelAccessToken ?? '').trim()

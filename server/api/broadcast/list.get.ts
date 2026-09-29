@@ -1,6 +1,6 @@
 import { listDocs } from '~~/server/utils/firebase'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -9,7 +9,7 @@ import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
  * Query: page, limit（有帶則回傳 { items, total, page, limit, hasMore }）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
   const statusFilter = query.status as string | undefined

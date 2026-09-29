@@ -13,8 +13,9 @@ export default defineEventHandler(async (event) => {
   const ref = db.collection(SCRIPTS_COLLECTION).doc(scriptId)
   const snap = await ref.get()
   if (!snap.exists) return { ok: true }
+  // 別家的流程＝當作不存在、回跟上一行一樣的東西（`G-106`）：回 404 就洩漏了「別家有這條」
   if ((snap.data() as { workspaceId?: string })?.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    return { ok: true }
   }
   const removed = snap.data() as { name?: string, enabled?: boolean, nodes?: unknown[] }
   await ref.delete()

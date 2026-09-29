@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { MANUAL_SCAN_MIN_GAP_MS, requestGapScan } from '~~/server/utils/ai-knowledge-suggest'
 
 /**
@@ -12,7 +12,7 @@ import { MANUAL_SCAN_MIN_GAP_MS, requestGapScan } from '~~/server/utils/ai-knowl
  * 而這些成本不受回覆則數額度攔阻——沒有地板的話連點就是成本槓桿。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const queued = await requestGapScan(getDb(), workspaceId)
   return {
     queued,

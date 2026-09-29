@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { renameFlowFolder } from '~~/server/utils/flow-folders'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -8,7 +8,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * Body: { name }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   const folderId = String(getRouterParam(event, 'folderId') ?? '').trim()
   if (!folderId) throw createError({ statusCode: 400, statusMessage: 'folderId required' })
 

@@ -22,7 +22,7 @@ const updateDoc = vi.fn(async () => {})
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('createError', (o: { statusCode?: number, statusMessage?: string }) => Object.assign(new Error(o.statusMessage ?? 'error'), o))
-vi.stubGlobal('requireWorkspaceAccess', vi.fn(async () => ({ workspaceId: 'wsA', uid: 'u1' })))
+vi.stubGlobal('requireCapability', vi.fn(async () => ({ workspaceId: 'wsA', uid: 'u1' })))
 vi.stubGlobal('readBody', async () => body)
 vi.stubGlobal('getDoc', vi.fn(async (_c: string, id: string) => menus[id] ?? null))
 vi.stubGlobal('updateDoc', updateDoc)

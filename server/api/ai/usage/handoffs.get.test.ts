@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
-vi.mock('~~/server/utils/workspace-auth', () => ({ requireWorkspaceAccess: vi.fn() }))
+vi.mock('~~/server/utils/workspace-auth', () => ({ requireCapability: vi.fn() }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -15,7 +15,7 @@ vi.stubGlobal('getQuery', () => ({}))
 
 const { default: handler } = await import('./handoffs.get')
 const { getDb } = await import('~~/server/utils/firebase')
-const { requireWorkspaceAccess } = await import('~~/server/utils/workspace-auth')
+const { requireCapability } = await import('~~/server/utils/workspace-auth')
 
 const ts = (ms: number) => ({ toMillis: () => ms })
 
@@ -42,7 +42,7 @@ beforeEach(() => {
 describe('GET /api/ai/usage/handoffs', () => {
   it('🔴 不是超管：列照給，失敗原因原文整格不出現', async () => {
     for (const role of ['viewer', 'agent', 'admin', 'owner'] as const) {
-      vi.mocked(requireWorkspaceAccess).mockResolvedValueOnce({ workspaceId: 'w1', role, isSuperAdmin: false } as never)
+      vi.mocked(requireCapability).mockResolvedValueOnce({ workspaceId: 'w1', role, isSuperAdmin: false } as never)
       const res = await (handler as any)({})
       expect(res.rows, role).toHaveLength(1)
       expect(res.rows[0].lastQuery).toBe('運費多少')
@@ -52,7 +52,7 @@ describe('GET /api/ai/usage/handoffs', () => {
   })
 
   it('超管：照給（沒有它，事後連我們自己都查不出是哪一種失敗）', async () => {
-    vi.mocked(requireWorkspaceAccess).mockResolvedValueOnce({ workspaceId: 'w1', role: 'owner', isSuperAdmin: true } as never)
+    vi.mocked(requireCapability).mockResolvedValueOnce({ workspaceId: 'w1', role: 'owner', isSuperAdmin: true } as never)
     const res = await (handler as any)({})
     expect(res.rows[0].errorDetail).toBe('429 RESOURCE_EXHAUSTED quota project 1234')
   })

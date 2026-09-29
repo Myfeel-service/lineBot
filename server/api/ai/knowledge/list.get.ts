@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { queryCollectionPage } from '~~/server/utils/paginated-collection-list'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 
@@ -15,7 +15,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sourc
  * 需要向量請走 vector search API（Phase 2）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const query = getQuery(event)
   const status = String(query.status ?? '').trim()
   const tag = String(query.tag ?? '').trim()

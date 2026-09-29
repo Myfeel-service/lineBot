@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { hasInvoiceProfile, resolveInvoiceProfile, type InvoiceProfile, type OrganizationDoc, type WorkspaceDoc } from '~~/shared/types/organization'
 
 /**
@@ -13,7 +13,7 @@ import { hasInvoiceProfile, resolveInvoiceProfile, type InvoiceProfile, type Org
  * 這樣使用者才不會以為「沒填 = 不會開發票」，而在每個 OA 各填一次統編。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'billing.manage')
   const db = getDb()
 
   const wsSnap = await db.collection('workspaces').doc(workspaceId).get()

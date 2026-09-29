@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { confirmPhoneFollower, phoneTestSince } from '~~/server/utils/onboarding-phone-test'
 import { addToHandoffNotify, bindMemberLineUser, type AddToNotifyResult } from '~~/server/utils/member-line-bind'
 import { writeAuditLog } from '~~/server/utils/audit-log'
@@ -15,7 +15,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  *   ④ 這一下算「收到第一則」（加好友原本不算）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'notify.manage')
   const body = await readBody<{ lineUserId?: unknown, lookbackMs?: unknown, since?: unknown }>(event)
   const lineUserId = String(body?.lineUserId ?? '').trim()
   if (!/^U[0-9a-f]{32}$/i.test(lineUserId)) throw createError({ statusCode: 400, statusMessage: '這不是一個 LINE 帳號' })

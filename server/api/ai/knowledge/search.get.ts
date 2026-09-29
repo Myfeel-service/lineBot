@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
 
@@ -23,7 +23,7 @@ export interface KnowledgeSearchRow {
  * 在記憶體比對（體檢端點同一做法，量級已驗證可行）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const q = String(getQuery(event).q ?? '').trim().toLowerCase()
   if (!q) return { items: [], truncated: false }
 

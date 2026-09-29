@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { deleteAiFeedbackEvent, type AiFeedbackType } from '~~/server/utils/ai-feedback-events'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 
@@ -18,7 +18,7 @@ const VALID_TYPES = new Set<AiFeedbackType>(['wrong_answer', 'draft_applied'])
  * 即使客人期間又問了新問題，舊那筆也該可以撤回——這裡的識別是「刪哪一筆」，不是「跟現況比對」。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
   const userId = String(getRouterParam(event, 'userId') ?? '').trim()
   const query = getQuery(event)
   const type = String(query.type ?? 'wrong_answer') as AiFeedbackType

@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
   requireAuth: vi.fn(async () => ({ uid: 'u-auth' })),
-  requireWorkspaceAccess: vi.fn(async () => ({ uid: 'u-ws', workspaceId: 'ws-verified' })),
+  requireCapability: vi.fn(async () => ({ uid: 'u-ws', workspaceId: 'ws-verified' })),
 }))
 vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__ts__' },
@@ -42,7 +42,7 @@ beforeEach(() => {
   f = fakeDb()
   vi.mocked(getDb).mockReturnValue(f.db as never)
   vi.mocked(auth.requireAuth).mockClear()
-  vi.mocked(auth.requireWorkspaceAccess).mockClear()
+  vi.mocked(auth.requireCapability).mockClear()
 })
 
 describe('POST /api/onboarding/events', () => {
@@ -50,7 +50,7 @@ describe('POST /api/onboarding/events', () => {
     currentBody = { sessionId: 's1', flow: 'build', events: [{ event: 'build_start', props: { mode: 'fresh' }, at: 123 }] }
     const r = await (handler as any)({})
     expect(auth.requireAuth).toHaveBeenCalledTimes(1)
-    expect(auth.requireWorkspaceAccess).not.toHaveBeenCalled()
+    expect(auth.requireCapability).not.toHaveBeenCalled()
     expect(r).toEqual({ written: 1, unknown: 0, tooMany: 0 })
     expect(f.written[0]).toMatchObject({ workspaceId: null, uid: 'u-auth', sessionId: 's1', flow: 'build', event: 'build_start', props: { mode: 'fresh' }, clientAt: 123, at: '__ts__' })
   })
@@ -58,12 +58,13 @@ describe('POST /api/onboarding/events', () => {
   it('帶了帳號：驗得過才收，記的是守衛驗過的那一個', async () => {
     currentBody = { sessionId: 's2', flow: 'line', workspaceId: 'ws-claimed', events: [{ event: 'line_start', props: { entry: 'band' } }] }
     await (handler as any)({})
-    expect(auth.requireWorkspaceAccess).toHaveBeenCalledTimes(1)
+    expect(auth.requireCapability).toHaveBeenCalledTimes(1)
+    expect(auth.requireCapability).toHaveBeenCalledWith(expect.anything(), 'workspace.read')
     expect(f.written[0]).toMatchObject({ workspaceId: 'ws-verified', uid: 'u-ws', flow: 'line' })
   })
 
   it('守衛擋下＝整批不寫', async () => {
-    vi.mocked(auth.requireWorkspaceAccess).mockRejectedValueOnce(Object.assign(new Error('forbidden'), { statusCode: 403 }))
+    vi.mocked(auth.requireCapability).mockRejectedValueOnce(Object.assign(new Error('forbidden'), { statusCode: 403 }))
     currentBody = { workspaceId: 'someone-else', events: [{ event: 'line_start' }] }
     await expect((handler as any)({})).rejects.toThrow('forbidden')
     expect(f.written).toHaveLength(0)

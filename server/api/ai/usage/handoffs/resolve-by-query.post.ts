@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { resolveHandoffsByQueries } from '~~/server/utils/ai-knowledge-suggest'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -11,7 +11,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 使用者不用再回監控頁逐筆按。比對用 aiMeta.lastQuery 全等（同一句才敢自動銷案）。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const query = String(body?.query ?? '').trim()
   if (!query) throw createError({ statusCode: 400, statusMessage: 'query required' })

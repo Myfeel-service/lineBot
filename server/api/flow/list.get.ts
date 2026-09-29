@@ -7,7 +7,7 @@ import {
   isPaginatedListQuery,
 } from '~~/server/utils/paginated-collection-list'
 import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 function stripFlowTriggers(flow: Record<string, unknown>) {
   const { triggers, trigger, ...rest } = flow
@@ -68,7 +68,7 @@ function toPickerRow(flow: Record<string, unknown>) {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
   const pickerOnly = String(query.fields ?? '') === 'picker'
 

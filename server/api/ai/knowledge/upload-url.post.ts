@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getStorage } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /** 允許直傳的知識庫檔案副檔名（與 preview-jobs 的 file 分支一致：PDF / Excel）。 */
 const ALLOWED_EXT = new Set(['pdf', 'xlsx', 'xls'])
@@ -16,7 +16,7 @@ const ALLOWED_EXT = new Set(['pdf', 'xlsx', 'xls'])
  * 回 { uploadId, storagePath, uploadUrl }。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const fileName = String(body?.fileName ?? '').trim()
   const contentType = String(body?.contentType ?? '').trim().toLowerCase()

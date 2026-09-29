@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { issueMemberLineBindCode } from '~~/server/utils/member-line-bind'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -9,7 +9,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * Response: { code, expiresAt, message }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid: callerUid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid: callerUid } = await requireCapability(event, 'notify.manage')
 
   const uid = event.context.params?.uid
   if (!uid) throw createError({ statusCode: 400, statusMessage: 'uid is required' })

@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
 import { getAiSettings } from '~~/server/utils/ai-settings'
@@ -30,7 +30,7 @@ function tsToMs(raw: unknown): number {
  * sources 會 hydrate 為知識卡標題（不回傳內容，避免 payload 過大）。
  */
 export default defineEventHandler(async (event): Promise<AiContextResponse> => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
   const userIdRaw = String(getRouterParam(event, 'userId') ?? '').trim()
   if (!userIdRaw) throw createError({ statusCode: 400, statusMessage: 'userId required' })
 
@@ -69,9 +69,7 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     aiMeta?: AiConversationMeta
     takeoverSummary?: TakeoverSummaryDoc
   }
-  if (data.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
-  }
+  if (data.workspaceId !== workspaceId) return empty
   // 接手摘要與 aiMeta 無關：AI 從沒跑過的對話（純機器人／純真人）一樣要看得到摘要
   const takeoverSummary = String(data.takeoverSummary?.text ?? '')
   const takeoverSummaryAtMs = Number(data.takeoverSummary?.generatedAtMs ?? 0)

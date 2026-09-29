@@ -2,7 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { normalizeSupportPreset } from '~~/shared/support-preset'
 import { pushSupportPresetActionToUser } from '~~/server/utils/handler'
 import { describeLineSendFailure } from '~~/server/utils/line-send-error'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 function resolveRequestOrigin(event: Parameters<typeof getHeader>[0]): string {
   const protoRaw = String(getHeader(event, 'x-forwarded-proto') || 'https')
@@ -15,7 +15,7 @@ function resolveRequestOrigin(event: Parameters<typeof getHeader>[0]): string {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireCapability(event, 'conversations.reply')
   // 借的是模組／規則的內容，但按送出的是真人 → 對話上標「真人」並記下是哪位同事
   const operatorName = String(token.name || token.email || '').trim()
 

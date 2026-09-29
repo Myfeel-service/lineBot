@@ -1,9 +1,9 @@
 import { getDb } from '~~/server/utils/firebase'
 import { closeConversationSession } from '~~/server/utils/conversation-session'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'conversations.reply')
 
   const sessionId = getRouterParam(event, 'sessionId')
   if (!sessionId) throw createError({ statusCode: 400, statusMessage: 'sessionId required' })

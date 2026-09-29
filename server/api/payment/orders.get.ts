@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { PAYMENT_ORDERS_COLLECTION } from '~~/server/utils/payment'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -10,7 +10,7 @@ import type { PaymentOrderDoc } from '~~/shared/types/payment'
  * (見 firestore.indexes.json;index 未部署時會丟錯,billing 頁 catch 後顯示空表)。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'billing.manage')
   const db = getDb()
   const toMs = (t: unknown) => (t && typeof (t as Timestamp).toMillis === 'function' ? (t as Timestamp).toMillis() : null)
   try {

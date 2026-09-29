@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { listSources } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 
@@ -11,7 +11,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks
  *   - orphanCount: sourceId === null 的舊版手寫卡片數（給 UI 顯示「整理舊資料」橫幅用）
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const db = getDb()
 
   const [listed, orphanSnap] = await Promise.all([

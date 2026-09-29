@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { findNewFollower, phoneTestSince } from '~~/server/utils/onboarding-phone-test'
 
 /**
@@ -12,7 +12,7 @@ import { findNewFollower, phoneTestSince } from '~~/server/utils/onboarding-phon
  * ⛔ 最多往回看一小時（`clampSince`）：放寬就等於任何舊好友都能被認成管理員。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'line.manage')
   const q = getQuery(event)
   const since = phoneTestSince(q)
   const exclude = new Set(String(q.exclude ?? '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 20))

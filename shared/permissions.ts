@@ -32,6 +32,12 @@ export function hasMinRole(role: WorkspaceMemberRole, minRole: WorkspaceMemberRo
 export const CAPABILITIES = {
   // ── 讀取（所有內部成員 viewer+）─────────────────────────────
   'ai.read': 'viewer', // 知識庫/來源/資料夾列表、AI 設定讀取、AI 表現頁
+  // 2026-09-29 `G-106`：營運資料的讀取（對話、好友、標籤、推播、模組、活動、圖文選單、統計…）。
+  // 以前各端點寫死 'viewer'，表裡沒有這一項，所以「觀察者能看到哪」只能一支支翻端點才答得出來。
+  'workspace.read': 'viewer',
+  // 小幫手（後台右下角那個可以問、也可以代辦的助理）。會花模型的錢，但 `D-111` 拍板維持開給觀察者：
+  // 它是觀察者問「這頁怎麼看」的入口；代辦的每一件另有自己的能力門檻（`admin-ops` 的 capability）。
+  'assistant.use': 'viewer',
   // 成員列表（含每位成員的 LINE id、邀請人）。2026-09-29 `D-111` 拍板從 viewer 收到 admin：
   // 唯一用到它的「成員管理」頁本來就只給管理員進，觀察者打 API 卻拿得到。
   'members.read': 'admin',

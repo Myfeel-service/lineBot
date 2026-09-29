@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { BILLING_PLAN_ORDER, getBillingPlan, isCheckoutablePlan } from '~~/shared/billing/plans'
 import { checkoutProductName } from '~~/shared/billing/product-name'
 import type { BillingPlanId } from '~~/shared/billing/plans'
@@ -18,7 +18,7 @@ import { dayOfDate, taipeiDate } from '~~/shared/time'
  * 需 admin(帳號管理員 / 組織管理員 / super admin)。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, token } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid, token } = await requireCapability(event, 'billing.manage')
   const body = await readBody(event)
   const planId = String(body?.planId || '') as BillingPlanId
 

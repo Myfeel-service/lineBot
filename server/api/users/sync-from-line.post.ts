@@ -2,7 +2,7 @@ import type { DocumentSnapshot } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { fetchAllFollowerUserIds, getUserProfile } from '~~/server/utils/line'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * POST /api/users/sync-from-line
@@ -18,7 +18,7 @@ import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
  *   lineFollowerTotal, offset, processed, remaining, listTruncated, profileFailures
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'customers.write')
 
   try {
     const body = (await readBody(event).catch(() => ({}))) as {

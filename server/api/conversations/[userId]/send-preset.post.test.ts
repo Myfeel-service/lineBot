@@ -11,7 +11,7 @@ const WS = 'ws1'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, token: { name: '客服小美' } })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, token: { name: '客服小美' } })),
 }))
 vi.mock('~~/server/utils/handler', () => ({ pushSupportPresetActionToUser: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/line-send-error', () => ({ describeLineSendFailure: () => null }))

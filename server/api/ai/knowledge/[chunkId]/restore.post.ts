@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   buildEmbeddingText,
   invalidateTagIndexCache,
@@ -20,7 +20,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 還原成 pending（向量已被清）時當場重建索引，不等 retry 排程。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const chunkId = String(getRouterParam(event, 'chunkId') ?? '').trim()
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
 
   const chunk = snap.data() as any
   if (chunk.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 403, statusMessage: 'workspace mismatch' })
+    throw createError({ statusCode: 404, statusMessage: '找不到這張卡（可能已超過保留期被清除）' })
   }
   if (chunk.deletedAt == null) return { id: chunkId, status: String(chunk.status ?? 'pending') } // 不在回收桶，冪等
 

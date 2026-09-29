@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getServiceAccountEmail, parseGoogleSheetUrl, probeGoogleSheetAccess } from '~~/server/utils/google-sheets'
 import { classifyGsheetProbeError } from '~~/shared/gsheet-probe-status'
 
@@ -20,7 +20,7 @@ import { classifyGsheetProbeError } from '~~/shared/gsheet-probe-status'
  *    每按一次「再測一次」都會重跑一遍）。改用 probeGoogleSheetAccess：同一套判定、只讀前 20 列。
  */
 export default defineEventHandler(async (event) => {
-  await requireWorkspaceAccess(event, 'agent')
+  await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const url = String(body?.url ?? '').trim()
 

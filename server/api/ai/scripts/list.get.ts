@@ -1,12 +1,12 @@
 import { getDb } from '~~/server/utils/firebase'
 import { queryCollectionPage } from '~~/server/utils/paginated-collection-list'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { SCRIPTS_COLLECTION } from '~~/server/utils/ai-scripts'
 import { stripTriggerEmbeddings } from '~~/server/utils/ai-script-validation'
 import type { ScriptNode } from '~~/shared/types/ai-script'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const query = getQuery(event)
   const db = getDb()
   return queryCollectionPage(

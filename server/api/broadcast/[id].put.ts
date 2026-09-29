@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '~~/server/utils/audit-log'
 
 /**
@@ -19,7 +19,7 @@ import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '
  * Response: { id: string, ...updatedFields }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'broadcast.write')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })

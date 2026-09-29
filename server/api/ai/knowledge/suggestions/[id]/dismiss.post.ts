@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION, SUGGESTION_RESOLVED_TTL_DAYS } from '~~/server/utils/ai-knowledge-suggest'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { KnowledgeSuggestionDoc } from '~~/shared/types/ai-knowledge'
@@ -12,7 +12,7 @@ import type { KnowledgeSuggestionDoc } from '~~/shared/types/ai-knowledge'
  * 判斷基準就是這裡記下的 seenCountAtDismiss。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const id = String(getRouterParam(event, 'id') ?? '').trim()
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id required' })
 

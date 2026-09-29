@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { TagDoc, TagCategory, TagStatus, TagAiMode } from '~~/shared/types/tag-broadcast'
 
@@ -22,7 +22,7 @@ const VALID_CATEGORIES: TagCategory[] = ['member_status', 'interest', 'behavior'
  * Response: TagDoc & { id: string }
  */
 export default defineEventHandler(async (event) => {
-  const { uid, workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { uid, workspaceId } = await requireCapability(event, 'tags.write')
 
   const body = await readBody(event)
   const { code, name, category, color = '#6B7280', description = '', status: statusInput } = body

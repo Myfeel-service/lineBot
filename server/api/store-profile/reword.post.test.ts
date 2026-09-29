@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const SHOP = '山丘牙醫診所'
 vi.mock('~~/server/utils/workspace-auth', () => ({
   requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'ws1', uid: 'u1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: 'ws1', uid: 'u1' })),
 }))
 vi.mock('~~/server/utils/ai-usage', () => ({
   assertMaintenanceBudget: vi.fn(async () => {}),

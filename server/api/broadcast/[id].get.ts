@@ -1,5 +1,5 @@
 import { getDoc } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 import { can } from '~~/shared/permissions'
 
@@ -16,7 +16,7 @@ import { can } from '~~/shared/permissions'
  * 預設會省略 resolvedUserIds，避免單次回應過大。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, role } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, role } = await requireCapability(event, 'workspace.read')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })

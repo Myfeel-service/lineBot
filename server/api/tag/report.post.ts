@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateTagReport, getTagReport } from '~~/server/utils/tag-report'
 import { canRegenerate, cooldownRemainingMs, cooldownText } from '~~/shared/tag-report'
 
@@ -12,7 +12,7 @@ import { canRegenerate, cooldownRemainingMs, cooldownText } from '~~/shared/tag-
  *  ② **`agent` 以上才按得動**（`D-28` 第三題的建議答案）：viewer 看得到報告、按不動產生。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, token } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, token } = await requireCapability(event, 'tags.write')
   const db = getDb()
 
   const prev = await getTagReport(db, workspaceId)

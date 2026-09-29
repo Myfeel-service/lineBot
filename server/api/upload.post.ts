@@ -5,10 +5,10 @@ import {
   getUploadFolder,
   validateUploadPayload,
 } from '~~/server/utils/upload-validator'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'marketing.write')
 
   const body = await readBody(event)
   const base64Input = body?.fileBase64

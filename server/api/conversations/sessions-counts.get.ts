@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { countOpenQueueSessions } from '~~/server/utils/conversation-queue'
 
 const STATUSES: ConversationStatus[] = [
@@ -12,7 +12,7 @@ const STATUSES: ConversationStatus[] = [
 ]
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const db = getDb()
 
   /**

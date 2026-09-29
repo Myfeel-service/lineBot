@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import type { TagLogDoc } from '~~/shared/types/tag-broadcast'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { recordManualRemovalAsDismissed } from '~~/server/utils/ai-tag-suggest'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 
@@ -13,7 +13,7 @@ import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/
  * Response: { success: true, userId: string, tagId: string }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'customers.write')
 
   const userIdParam = getRouterParam(event, 'id')
   const tagId = getRouterParam(event, 'tagId')

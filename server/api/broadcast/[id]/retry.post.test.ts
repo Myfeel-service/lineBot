@@ -19,7 +19,7 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)

@@ -1,6 +1,6 @@
 import QRCode from 'qrcode'
 import { resolveLineOaProfile } from '~~/server/utils/line-oa-basic-id'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/admin/onboarding/oa-invite?workspaceId=...
@@ -55,7 +55,7 @@ const INVITE_CACHE_MAX = 500
 export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
   // 開通引導只有 owner/admin 走得到（agent/viewer 會落在 locked 版面），但這支只讀不寫，
   // 門檻與同資料夾的 first-message 一致
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const wid = String(workspaceId || '').trim()
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })

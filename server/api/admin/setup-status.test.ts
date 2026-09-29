@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: 'ws1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: 'ws1' })),
 }))
 vi.mock('~~/server/utils/workspace-alerts', () => ({ checkLineWebhook: vi.fn() }))
 vi.mock('~~/server/utils/ai-settings', () => ({ getAiSettings: vi.fn(async () => ({ enabled: false })) }))

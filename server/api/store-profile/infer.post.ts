@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile, saveStoreProfile } from '~~/server/utils/store-profile'
@@ -16,7 +16,7 @@ import { isStoreProfileReady, mergeAiGuesses } from '~~/shared/types/store-profi
  * 要先改成分步 job，不然又是一支會 504 的端點。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId } = await requireCapability(event, 'ai.settings.write')
   await assertMaintenanceBudget(workspaceId)
 
   const db = getDb()

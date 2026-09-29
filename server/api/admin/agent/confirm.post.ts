@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { can } from '~~/shared/permissions'
 import { ADMIN_OP_LABELS, adminOpAuditAction } from '~~/shared/types/admin-ops'
@@ -55,7 +55,7 @@ async function recentlyChangedByMe(
 
 export default defineEventHandler(async (event) => {
   // 端點這道只是最低消：真正的門檻是下面逐 op 比對 capability
-  const { workspaceId, uid, role } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, uid, role } = await requireCapability(event, 'assistant.use')
 
   const { limited, retryAfterMs } = hitAgentRateLimit(`${workspaceId}:${uid}:confirm`)
   if (limited) {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
@@ -44,7 +44,7 @@ const MAX_BULK_CHUNKS = 150
  * 失敗的卡會是 status='failed'，可由排程任務或手動 reindex 救回。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   // 維運額度前置檢查（C-45）：讓使用者在開始前就看到「額度不足」，而不是建到一半死
   await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)

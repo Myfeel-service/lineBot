@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   createKnowledgeChunk,
   normalizeChunkInput,
@@ -36,7 +36,7 @@ const VERIFY_TIMEOUT_MS = 15_000
  * LLM 依規則留空的事實，沒補完存進去等於讓 AI 拿空格回答客人。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const id = String(getRouterParam(event, 'id') ?? '').trim()
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id required' })
 

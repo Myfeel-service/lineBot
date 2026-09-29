@@ -10,7 +10,7 @@ const WS = 'ws1'
 
 vi.mock('firebase-admin/firestore', () => ({ FieldValue: { serverTimestamp: () => '__ts__' } }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireWorkspaceAccess: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1' })),
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'staff-1' })),
 }))
 vi.mock('~~/server/utils/audit-log', () => ({
   writeAuditLog: vi.fn(async () => {}),

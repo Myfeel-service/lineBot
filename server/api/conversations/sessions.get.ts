@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { ConversationStatus, InitialHandler } from '~~/shared/types/conversation-stats'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { isOpenQueueSession } from '~~/server/utils/conversation-queue'
 import { type ConversationManualFlags, readConversationFlags } from '~~/shared/conversation-flags'
 import { NO_ASSIGNEE, readConversationAssignee, type ConversationAssignee } from '~~/shared/conversation-assignee'
@@ -142,7 +142,7 @@ function toMillis(raw: any): number {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'workspace.read')
   const query = getQuery(event)
   const db = getDb()
 

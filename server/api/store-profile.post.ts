@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getAiSettings, setAiSettings } from '~~/server/utils/ai-settings'
 import { getStoreProfile, saveStoreProfile, type StoreProfilePatch } from '~~/server/utils/store-profile'
 import { writeAuditLog } from '~~/server/utils/audit-log'
@@ -24,7 +24,7 @@ import {
  *    AI 猜的走 `mergeAiGuesses`，不從這支進來。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'ai.settings.write')
   const body = await readBody(event).catch(() => ({})) as {
     fields?: StoreProfilePatch
     siteUrl?: string

@@ -1,5 +1,5 @@
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { reviewSuggestions } from '~~/server/utils/tag-suggestion-review'
 import { PENDING_BULK_LIMIT, PENDING_ROWS_LIMIT, PENDING_SCAN_LIMIT, pickPendingForTag } from '~~/shared/tag-pending-review'
 import { aggregatePendingByTag } from '~~/shared/tag-suggestion-stats'
@@ -23,7 +23,7 @@ const CONCURRENCY = 8
  * 因為 `dismissedTagIds` 在候選階段就被排除）。畫面上一定要講，別讓人以為只是清掉待辦。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'customers.write')
   const tagId = getRouterParam(event, 'id')
   if (!tagId) throw createError({ statusCode: 400, statusMessage: 'tagId is required' })
 

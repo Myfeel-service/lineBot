@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { runAdminAgentChat, type AdminAgentTurn } from '~~/server/utils/ai-admin-agent'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
@@ -12,7 +12,7 @@ import { FieldValue } from 'firebase-admin/firestore'
  * 鐵律落點:workspaceId/權限來自 session、每次互動寫審計紀錄、token 記入用量。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, role } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId, uid, role } = await requireCapability(event, 'assistant.use')
   const body = await readBody(event)
 
   const history: AdminAgentTurn[] = Array.isArray(body?.history)

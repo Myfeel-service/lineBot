@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
 import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
 import { BILLING_PLAN_ORDER, getBillingPlan, isCheckoutablePlan, type BillingPlanId } from '~~/shared/billing/plans'
@@ -21,7 +21,7 @@ import type { WorkspaceDoc } from '~~/shared/types/organization'
  * 升級不走這裡：升級的人是想要**現在**就有更多額度,走 create-order 立即付款、立即生效。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'admin')
+  const { workspaceId, uid } = await requireCapability(event, 'billing.manage')
   const body = await readBody(event)
   const raw = body?.planId
   const target = raw == null || raw === '' ? null : String(raw) as BillingPlanId

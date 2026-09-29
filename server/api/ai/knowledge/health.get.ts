@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
   AI_FEEDBACK_EVENTS_COLLECTION,
   aggregateWrongAnswerMarks,
@@ -45,7 +45,7 @@ const FEEDBACK_SCAN_LIMIT = 100
  *   卡片層——索引失敗 / 被標記答錯 ｜ 只是提醒(不催人處理)——內容較短 / 已過期停用
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'viewer')
+  const { workspaceId } = await requireCapability(event, 'ai.read')
   const db = getDb()
 
   const feedbackCutoff = Timestamp.fromMillis(Date.now() - FEEDBACK_WINDOW_DAYS * 86_400_000)

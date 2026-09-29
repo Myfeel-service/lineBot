@@ -1,4 +1,4 @@
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { normalizeChunkWithLlm } from '~~/server/utils/ai-knowledge-chunker'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 
@@ -15,7 +15,7 @@ import { recordAiUsage } from '~~/server/utils/ai-usage'
  * Token 用量會計入 aiUsage。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId } = await requireCapability(event, 'knowledge.write')
   const body = await readBody(event)
   const title = String(body?.title ?? '').trim()
   const content = String(body?.content ?? '').trim()

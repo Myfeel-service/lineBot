@@ -1,5 +1,5 @@
 import { getDoc } from '~~/server/utils/firebase'
-import { requireWorkspaceAccess } from '~~/server/utils/workspace-auth'
+import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { renderModuleToLineMessages } from '~~/server/utils/handler'
 import { pushMessage } from '~~/server/utils/line'
@@ -28,7 +28,7 @@ const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/i
  * ⛔ **不寫進客服對話**：正式推播也不寫，試發要跟正式發送長得一樣。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireWorkspaceAccess(event, 'agent')
+  const { workspaceId, uid } = await requireCapability(event, 'broadcast.write')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
