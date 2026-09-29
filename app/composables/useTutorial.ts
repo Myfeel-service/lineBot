@@ -92,12 +92,6 @@ export function useTutorial() {
     panelOpen.value = !panelOpen.value
   }
 
-  /** 選了某個主題：導航到該頁 → 等元素出現 → 過濾前提 → 開 tour */
-  async function startTopic(topic: TutorialTopic) {
-    const wid = workspaceId.value
-    if (!wid) return
-    // 角色／功能旗標先過（純判斷，不需要 DOM）
-    const roleSteps = visibleSteps(topic.steps)
   /**
    * 等一個「前提」出現：平常等 1.5 秒；**畫面上還有東西在轉圈**（資料還在載）就再多等，最多 4 秒。
    *
@@ -121,6 +115,12 @@ export function useTutorial() {
     return !!document.querySelector(sel)
   }
 
+  /** 選了某個主題：導航到該頁 → 等元素出現 → 過濾前提 → 開 tour */
+  async function startTopic(topic: TutorialTopic) {
+    const wid = workspaceId.value
+    if (!wid) return
+    // 角色／功能旗標先過（純判斷，不需要 DOM）
+    const roleSteps = visibleSteps(topic.steps)
     if (!roleSteps.length) return
 
     lastTopicId.value = topic.id
