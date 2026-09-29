@@ -37,7 +37,8 @@ import { getFirebaseAuth } from './firebase'
 import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
 import { agentTeachingCatalogueForPrompt, resolveAgentTeaching } from '~~/shared/agent-teachings'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
-import { AdminOpUserError, adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
+import { adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
+import { AdminOpUserError } from './admin-op-def'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
 import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
 import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
@@ -874,7 +875,8 @@ export async function runAdminAgentChat(params: {
         //    就足以讓這道閘門失效——而那些數字跟他現在要設幾點完全無關。
         //    接續時才看歷史:那時數值本來就是前幾句講的(「勿擾改成十一點」→「好」)。
         const numberScope = lastProposal ? userSaid : [message]
-        if (op.needsUserNumber && !hasNumberSignal(numberScope)) {
+        // `numberOptional`（`D-109`）：「不要自動交還了」這種關掉的要求本來就沒有數字，⛔ 不可以因此擋成「關不掉」
+        if (op.needsUserNumber && !op.numberOptional?.(rawArgs) && !hasNumberSignal(numberScope)) {
           throw new AdminOpUserError(
             '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見值(例如 22:00–08:00)。'
             + '請先告訴他現在設定的是什麼,再問他要改成幾點(或幾分鐘)。',

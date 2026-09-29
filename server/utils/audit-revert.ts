@@ -80,6 +80,11 @@ const REVERTIBLE_SETTING_KEYS = new Set([
   'shopUrl',
   'disambiguation',
   'imageAnswer',
+  // 2026-09-29（`D-109`）：小幫手第二批會改的兩格（單純的數字，寫回去不會連帶別的東西）。
+  // ⛔ 語氣範本改的 systemPrompt **刻意不加**：它是這張白名單測試裡的反例（整段指示最長四千字、
+  //    紀錄常被截斷），要改回去請到 AI 設定頁
+  'handbackIdleMinutes',
+  'humanSessionMaxIdleHours',
 ])
 
 /** 這筆能不能還原？不能的話回一句講得出原因的話（會直接顯示給人看） */
@@ -126,6 +131,11 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
     }
     return { ok: true, capability: 'ai.settings.write', what: '把這幾項設定改回原本的值' }
   }
+
+  // 小幫手改自動回應的內容（`D-109`）：紀錄只記了改的那一格（關鍵字／回覆字），沒存整份流程，
+  // 寫回去要整份送回——⛔ 不給一鍵還原，講清楚去哪裡改（不要落到下面那句「它不是改一個值」，那句是錯的歸因）
+  if (row.action === 'agent-op/script-update-keyword' || row.action === 'agent-op/script-update-reply')
+    return { ok: false, reason: '這筆改的是自動回應的內容，紀錄裡只有改之前的那一格，沒辦法一鍵還原——請到「自動回應」頁照「改之前」那一欄改回來。' }
 
   // 重試學習、重新抓資料這類：做了就是做了，沒有「還原」這回事
   return { ok: false, reason: `「${label}」這種動作沒有辦法還原（它不是把某個值改成另一個值）。` }

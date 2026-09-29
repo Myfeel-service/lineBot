@@ -354,8 +354,10 @@ async function loadDraftPageNames() {
   if (draftNamesLoaded) return
   draftNamesLoaded = true
   try {
-    const r = await apiFetch<{ pages: Array<{ sourceId: string, name: string }> }>('/api/ai/knowledge/drafts')
-    draftPageNames.value = Object.fromEntries(r.pages.map(p => [p.sourceId, p.name]))
+    const r = await apiFetch<{ pages: Array<{ sourceId: string, name: string, url?: string }> }>('/api/ai/knowledge/drafts')
+    // ⛔ 只收網站來的那幾頁（`D-109`）：請小幫手補的待審卡建在手寫資料底下、沒有網址，
+    //    收進來的話畫面會說「出自你網站的『有沒有停車位』」——那張根本不是從網站來的
+    draftPageNames.value = Object.fromEntries(r.pages.filter(p => !!p.url).map(p => [p.sourceId, p.name]))
   }
   catch { /* 查不到就不講頁名，其他照講 */ }
 }

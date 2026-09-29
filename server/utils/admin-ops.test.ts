@@ -82,7 +82,8 @@ const fetchCalls: any[] = []
   return { id: 'new-script-id' }
 }
 
-const { ADMIN_OPS, AdminOpUserError, getAdminOp } = await import('./admin-ops')
+const { ADMIN_OPS, getAdminOp } = await import('./admin-ops')
+const { AdminOpUserError } = await import('./admin-op-def')
 
 // ── 假的 Firestore：只夠這兩個 op 用（流程清單 + 單一文件 update）────
 const scriptDocs: { id: string, data: Record<string, any> }[] = []

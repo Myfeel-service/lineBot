@@ -363,6 +363,24 @@ describe('當使用者的話不足以決定要動什麼', () => {
     const res = await ask('把勿擾改成晚上十一點到早上九點')
     expect(res.pendingOp?.opId).toBe('ai-settings-service-hours')
   })
+
+  it('「關掉」不用講數字（numberOptional，`D-109`）：{off:true} 放行、有數值的參數照樣擋', async () => {
+    // 「不要自動交還了」一個數字都不會有——擋下來就變成「關不掉」
+    generateJson.mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { off: true } }))
+    const off = await ask('不要自動交還了')
+    expect(off.pendingOp?.opId).toBe('ai-settings-handback-idle')
+    expect(generateJson).toHaveBeenCalledTimes(1) // 沒有被數值閘門退回去
+    expect(setCalls).toHaveLength(0)
+
+    // ⛔ 放行只限「關掉」：模型自己填一個 30 分鐘，照樣要擋
+    generateJson.mockReset()
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { minutes: 30 } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '你要設幾分鐘？' }))
+    const guessed = await ask('幫我設一下自動交還')
+    expect(guessed.pendingOp).toBeUndefined()
+    expect(generateJson.mock.calls[1]?.[0]).toContain('沒有講到任何時間或數字')
+  })
 })
 
 describe('泡泡那句話不可以跟確認卡打架', () => {

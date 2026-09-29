@@ -27,6 +27,15 @@ export const ADMIN_OP_LABELS = {
   'ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',
   'script-create-from-description': '用一句話建一條自動回應',
   'broadcast-draft-create': '建一則推播草稿（不發送）',
+  // ── 第二批（2026-09-29 `D-109`，實作在 server/utils/admin-ops-content.ts）──
+  'ai-settings-enabled': '打開或關掉 AI 自動回覆',
+  'ai-settings-handback-idle': '調整「客服忘了交還時自動交還」的時間',
+  'ai-settings-auto-close': '調整「真人接手太久沒動靜就自動結束」',
+  'ai-settings-tone-template': '把 AI 的語氣換成現成範本',
+  'tag-create': '建一個標籤',
+  'knowledge-draft-create': '補一張知識卡（放進「等你看過」，不直接上線）',
+  'script-update-keyword': '增減一條自動回應的關鍵字',
+  'script-update-reply': '改一條自動回應回給客人的話',
 } as const satisfies Record<string, string>
 
 export type AdminOpId = keyof typeof ADMIN_OP_LABELS
@@ -59,6 +68,21 @@ export const ADMIN_OP_RISK: Record<AdminOpId, 'low' | 'medium'> = {
   'script-create-from-description': 'medium',
   // 草稿不會送出去，客人那一側零影響；⛔發送是紅線，永遠不掛進這張表
   'broadcast-draft-create': 'low',
+  // ── 第二批（`D-109`）──
+  // 打開＝AI 開始接客人的訊息，跟「直接回／只給草稿」同一級（確認卡照樣講清楚打開之後是哪一種）
+  'ai-settings-enabled': 'medium',
+  // 兩格都會改變「客人接下來由誰回」
+  'ai-settings-handback-idle': 'medium',
+  'ai-settings-auto-close': 'medium',
+  // 換掉的是 AI 對客人講話的口吻與禁則
+  'ai-settings-tone-template': 'medium',
+  // 建好是空的、不貼在任何人身上
+  'tag-create': 'low',
+  // 只放進「等你看過」：客人收不到，要人按採用才上線
+  'knowledge-draft-create': 'low',
+  // 改了立刻影響打中這條的客人收到什麼
+  'script-update-keyword': 'medium',
+  'script-update-reply': 'medium',
 }
 
 /** 稽核動作代號：操作紀錄上看到的就是這個（與 audit 的白話對照成對） */

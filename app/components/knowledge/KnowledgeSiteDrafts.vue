@@ -7,10 +7,13 @@
     <div class="kb-drafts__head">
       <div class="kb-drafts__title">
         <template v-if="stillWorking && !total">正在整理你網站讀到的頁面…</template>
-        <template v-else>開帳讀你網站那 {{ pagesCount }} 頁，整理成 {{ total }} 張卡了</template>
+        <template v-else-if="siteTotal || stillWorking">開帳讀你網站那 {{ pagesCount }} 頁，整理成 {{ siteTotal }} 張卡了</template>
+        <!-- 只有請小幫手補的卡（`D-109`）：⛔ 不可以講成「讀你網站那 1 頁」——那一張不是從網站來的 -->
+        <template v-else>有 {{ total }} 張卡等你看過</template>
       </div>
       <p class="kb-drafts__sub">
         還沒進知識庫——你一張一張看過才算數。
+        <template v-if="manualCount && (siteTotal || stillWorking)">另外 {{ manualCount }} 張是請小幫手補的，也在下面。</template>
         <!-- ⛔ 會花到額度的數字要寫在**按下去之前看得到的地方**（知識卡張數是計費維度） -->
         <template v-if="quota && quota.limit != null && total">
           <b>全收會用掉 {{ total }}／{{ quota.limit }} 張</b>（<template v-if="quota.planName">{{ quota.planName }}方案，</template>現在用了 {{ quota.used }} 張），不要的刪掉就不佔。
@@ -39,14 +42,16 @@
 
     <div v-for="p in pages" :key="p.sourceId" class="kb-drafts__group">
       <div class="kb-drafts__group-head">
-        <span>來自「<b>{{ p.name }}</b>」那一頁 · <b>{{ p.cards.length }}</b> 張卡</span>
+        <span v-if="p.url">來自「<b>{{ p.name }}</b>」那一頁 · <b>{{ p.cards.length }}</b> 張卡</span>
+        <span v-else>請小幫手補的「<b>{{ p.name }}</b>」 · <b>{{ p.cards.length }}</b> 張卡</span>
+        <!-- 只有一張的那一組不給「全部採用」：跟卡上那顆「採用」是同一件事，兩顆會被讀成兩件事 -->
         <el-button
-          v-if="canEdit && p.cards.some(c => !decided[c.id])"
+          v-if="canEdit && p.cards.some(c => !decided[c.id]) && (p.url || p.cards.length > 1)"
           size="small"
           plain
           :loading="busyPage === p.sourceId"
           @click="adoptPage(p)"
-        >這一頁全部採用</el-button>
+        >{{ p.url ? '這一頁全部採用' : '全部採用' }}</el-button>
       </div>
       <div
         v-for="c in p.cards"
@@ -112,7 +117,21 @@ const editQ = ref('')
 const editA = ref('')
 
 const stillWorking = computed(() => generating.value?.status === 'queued' || generating.value?.status === 'running')
-const pagesCount = computed(() => generating.value?.pagesTotal || pages.value.length)
+/**
+ * 從網站來的 vs 請小幫手補的（`D-109`）：後者建在手寫資料底下、沒有網址。
+ * ⛔ 標題「讀你網站那 N 頁、整理成 M 張」只能數前者——混在一起算，小幫手補的一張卡會被講成「讀你網站那 1 頁」。
+ */
+const manualCount = computed(() => pages.value
+  .filter(p => !p.url)
+  .reduce((n, p) => n + p.cards.filter(c => !decided[c.id]).length, 0))
+const siteTotal = computed(() => Math.max(0, total.value - manualCount.value))
+/**
+ * 這張是不是開帳讀網站來的。⛔ 開通步驟紀錄只記這一種：那筆數字在量「一張張看」行不行得通（`D-97`），
+ * 請小幫手補的卡混進去就不是在量開帳了。（一次按的卡都來自同一組，看第一張就夠。）
+ */
+const siteCardIds = computed(() => new Set(pages.value.filter(p => !!p.url).flatMap(p => p.cards.map(c => c.id))))
+const isSiteCard = (id: string | undefined) => !!id && siteCardIds.value.has(id)
+const pagesCount = computed(() => generating.value?.pagesTotal || pages.value.filter(p => !!p.url).length)
 const visible = computed(() => total.value > 0 || stillWorking.value || Object.keys(decided).length > 0)
 
 function pathOf(url: string) {
@@ -177,7 +196,7 @@ async function adopt(ids: string[], whole = false) {
     if (r.quota) quota.value = r.quota
     if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 張，額度滿了，還有 ${r.leftForQuota.length} 張先留著`, 'warning')
     total.value = Math.max(0, total.value - r.adopted.length)
-    trackOnboarding('kb_draft_decision', {
+    if (isSiteCard(ids[0])) trackOnboarding('kb_draft_decision', {
       decision: 'adopt',
       whole,
       n: r.adopted.length,
@@ -210,7 +229,7 @@ async function dismiss(c: DraftCard) {
     await apiFetch('/api/ai/knowledge/drafts/dismiss', { method: 'POST', body: { chunkIds: [c.id] } })
     decided[c.id] = { tone: 'muted', text: '已刪掉，不會進知識庫' }
     total.value = Math.max(0, total.value - 1)
-    trackOnboarding('kb_draft_decision', { decision: 'dismiss', n: 1, left: total.value })
+    if (isSiteCard(c.id)) trackOnboarding('kb_draft_decision', { decision: 'dismiss', n: 1, left: total.value })
     emit('changed')
   }
   catch (e: any) {
@@ -245,7 +264,7 @@ async function saveEdit(c: DraftCard) {
     c.content = a
     c.questions = [q, ...c.questions.slice(1)]
     editing.value = null
-    trackOnboarding('kb_draft_decision', { decision: 'edit', n: 1, left: total.value })
+    if (isSiteCard(c.id)) trackOnboarding('kb_draft_decision', { decision: 'edit', n: 1, left: total.value })
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '沒有存成功，再試一次', 'error')
