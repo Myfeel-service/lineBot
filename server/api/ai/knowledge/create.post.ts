@@ -15,7 +15,11 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/knowledge/create
- * Body: { title, content, tags[], questions[], sourceId?, productName? }
+ * Body: { title, content, tags[], questions[], sourceId?, productName?, draft? }
+ *
+ * `draft: true`（`D-109`，小幫手「補一張知識卡」用）：建成「等你看過」的卡——照樣算向量（試答讀得到），
+ * 但**不對客人講話**，要店家在知識庫按「採用」才上線（`adoptDrafts`）。
+ * 額度照「等你看過」那套規則：**採用時才算**，所以這條路先不檢查額度（採用那一支會擋）。
  *
  * 行為：
  *   - 若 body.sourceId 有值：把這張卡掛到該既有 source 底下（用於「在某 source 內手動補一張」）
@@ -49,8 +53,12 @@ export default defineEventHandler(async (event) => {
   // G-98：資料夾同理（填了不存在的資料夾，這份資料會從側欄整份消失）。只有「自動建 source」那條路會用到
   const folderId = input.sourceId ? null : await resolveKnowledgeFolderId(db, workspaceId, rawBody?.folderId)
 
+  // ⛔ 只認 true：其他任何值都當一般建卡（建出去就上線）——寧可多擋一次額度，也不可以讓一張卡意外變成待審後被忽略
+  const asDraft = rawBody?.draft === true
+
   // 方案知識量守門（D-69 拍板④）。手寫卡也算一條——它就是 AI 記住的一件事。
-  await assertKnowledgeChunkQuota(workspaceId, 1, db)
+  // 待審卡例外：沒點頭之前不算額度，採用時由 adoptDrafts「收到滿為止」擋（`C-250`③ 同一套）
+  if (!asDraft) await assertKnowledgeChunkQuota(workspaceId, 1, db)
 
   // 若沒指定 sourceId → 自動建一個 type='manual' 的 source
   let sourceId = input.sourceId
@@ -101,6 +109,7 @@ export default defineEventHandler(async (event) => {
     tags: input.tags,
     questions: input.questions,
     sourceId,
+    draft: asDraft,
   })
   invalidateKnowledgeChunkCount(workspaceId)
 
@@ -116,7 +125,9 @@ export default defineEventHandler(async (event) => {
       cardStatus: result.status,
       ...(productName ? { productName } : {}),
     },
-    ...(result.failureReason ? { note: `這張卡沒學成功：${result.failureReason}` } : {}),
+    ...(result.failureReason
+      ? { note: `這張卡沒學成功：${result.failureReason}` }
+      : asDraft ? { note: '放進「等你看過」，還沒對客人上線' } : {}),
   }, db)
 
   return {
