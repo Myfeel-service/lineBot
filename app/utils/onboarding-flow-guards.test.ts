@@ -239,7 +239,14 @@ describe('第一次一定要看導覽（2026-09-02 拍板）', () => {
     expect(check, '找不到前提判斷').toBeGreaterThan(-1)
     expect(check, '前提判斷不可以早於導航').toBeGreaterThan(push)
     // ⛔ 也不能退回一次性 querySelector：對話清單是非同步載入的，剛換頁一定還是空的
-    expect(fn, '前提要「短暫等它出現」不是問一次就算').toMatch(/waitForElement\(sel/)
+    // （2026-09-29 `D-109`：「等它出現」抽成 waitForPrecondition——幾個前提同時等、畫面還在轉圈才多等；
+    //   這一關跟著看兩件事：startTopic 有用它、它裡面真的在輪詢等元素出現）
+    expect(fn, '前提要「短暫等它出現」不是問一次就算').toMatch(/waitForPrecondition/)
+    const waiter = stripComments(tutorial.slice(
+      tutorial.indexOf('async function waitForPrecondition('),
+      tutorial.indexOf('async function startTopic('),
+    ))
+    expect(waiter, '等前提的那一支要真的輪詢等元素出現').toMatch(/waitForElement\(sel/)
   })
 })
 
