@@ -31,7 +31,20 @@ function guideIds(): string[] {
   return [...block.matchAll(/^ {2}'([^']+)': /gm)].map(m => m[1]!)
 }
 
-const entries = Object.entries(AGENT_TEACHINGS) as [string, { kind: string, ref: string, minRole?: string }][]
+const entries = Object.entries(AGENT_TEACHINGS) as [string, { kind: string, ref: string, requires?: string }][]
+
+/** 導覽主題層級的 `requires`（主題那一層是 4 格縮排，步驟裡的比它深）；沒填回 undefined */
+function topicRequires(): Map<string, string | undefined> {
+  const src = read('app/utils/tutorial-topics.ts')
+  const body = src.slice(src.indexOf('export const TUTORIAL_TOPICS'))
+  const out = new Map<string, string | undefined>()
+  const starts = [...body.matchAll(/^ {4}id: (?:'([^']+)'|OVERVIEW_TOPIC_ID),/gm)]
+  starts.forEach((m, i) => {
+    const block = body.slice(m.index, starts[i + 1]?.index ?? body.length)
+    out.set(m[1] ?? 'overview', block.match(/^ {4}requires: '([^']+)'/m)?.[1])
+  })
+  return out
+}
 
 describe('小幫手「帶我走一遍」白名單', () => {
   it('讀檔的網撈得到東西（對照組：正規表示式失效時，下面每一關都會空轉通過）', () => {
@@ -57,6 +70,16 @@ describe('小幫手「帶我走一遍」白名單', () => {
     const refs = new Set(entries.map(([, t]) => t.ref))
     const missing = [...tourIds(), ...guideIds()].filter(id => !refs.has(id))
     expect(missing, `這些教材問助理叫不出來：${missing.join('、')}`).toEqual([])
+  })
+
+  it('`G-109`：導覽卡的門檻＝那支導覽主題的 `requires`（主題有設的話），不另訂一套', () => {
+    const topics = topicRequires()
+    expect(topics.size).toBeGreaterThan(20) // 對照組：切塊失效的話下面會空跑
+    expect(topics.get('organization')).toBe('line.manage')
+    const bad = entries
+      .filter(([, t]) => t.kind === 'tour' && topics.get(t.ref) !== undefined && topics.get(t.ref) !== t.requires)
+      .map(([id, t]) => `${id}：卡片 ${t.requires ?? '（沒填）'}、導覽 ${topics.get(t.ref)}`)
+    expect(bad, '卡片給了、導覽卻不給跑（或反過來）＝按下去是死路').toEqual([])
   })
 
   it('不認得的 id 一律丟掉（模型編不出卡片）', () => {

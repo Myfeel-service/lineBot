@@ -9,6 +9,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import type { Ref } from 'vue'
+import { can } from '~~/shared/permissions'
+import type { Capability } from '~~/shared/permissions'
 import { ALERT_LABELS, ALERT_SEVERITY } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId, WorkspaceAlertItem } from '~~/shared/types/alerts'
 
@@ -29,8 +31,7 @@ g.computed = computed
 g.useWorkspace = () => ({
   workspaceId,
   getBearer: async () => 'token',
-  canManageSettings: ref(true),
-  canOperate: ref(true),
+  can: () => true, // 擁有者：每一項能力都有
 })
 g.$fetch = fetchSpy
 // 「同一瞬間只查一次」的機制（E-28 抽出去的那支）在 app 裡是自動匯入，測試要自己接上；
@@ -123,8 +124,7 @@ describe('側欄狀態點：什麼該畫、什麼不該畫', () => {
     g.useWorkspace = () => ({
       workspaceId,
       getBearer: async () => 'token',
-      canManageSettings: ref(false), // 客服
-      canOperate: ref(true),
+      can: (cap: Capability) => can('agent', cap), // 客服（照權限表換算，`G-109`）
     })
     const a = await load([{ id: 'quotaExceeded', state: 'active' }])
     expect(a.navAlerts.value['/admin/w1/settings/billing']).toBeUndefined()
@@ -132,9 +132,34 @@ describe('側欄狀態點：什麼該畫、什麼不該畫', () => {
     g.useWorkspace = () => ({
       workspaceId,
       getBearer: async () => 'token',
-      canManageSettings: ref(true),
-      canOperate: ref(true),
+      can: () => true,
     })
+  })
+
+  /**
+   * `G-109`：從兩顆大開關換成讀權限表時，每顆異常的受眾不能跟著變。
+   * 後端 `alerts.get` 還是用自己那兩組（管理員組／客服組）決定查哪幾顆探針——
+   * 前端要顯示的若落在後端沒查的那一組，那顆就永遠是 unknown。
+   */
+  it('每顆異常的門檻跟後端探針同一級：管理員級＝只有管理員看得到、客服級＝客服就看得到', async () => {
+    const { CAPABILITIES } = await import('~~/shared/permissions')
+    const all = useWorkspaceAlerts().alerts.value
+    expect(all.length).toBeGreaterThan(30)
+    const byRole = (role: 'viewer' | 'agent' | 'admin') => {
+      g.useWorkspace = () => ({ workspaceId, getBearer: async () => 'token', can: (cap: Capability) => can(role, cap) })
+      const ids = useWorkspaceAlerts().alerts.value.map(x => x.id)
+      g.useWorkspace = () => ({ workspaceId, getBearer: async () => 'token', can: () => true })
+      return ids
+    }
+    // 觀察者不處理任何事：一顆都不給（改版前也是）
+    expect(byRole('viewer')).toEqual([])
+    const agentIds = new Set(byRole('agent'))
+    expect(byRole('admin')).toEqual(all.map(x => x.id))
+    for (const def of all)
+      expect(agentIds.has(def.id), `${def.id}（${def.requires}）`).toBe(CAPABILITIES[def.requires] === 'agent')
+    // 帳單、LINE 連接這幾顆一直只給管理員
+    for (const id of ['quotaExceeded', 'paymentPastDue', 'lineWebhookBroken', 'handoffNotifyMissing'] as const)
+      expect(agentIds.has(id), id).toBe(false)
   })
 
   it('頁面級提醒條與側欄的點吃同一個展開：點亮在哪頁，那頁就列得出同一批事＋完整深連結', async () => {

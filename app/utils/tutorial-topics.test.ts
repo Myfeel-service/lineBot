@@ -118,17 +118,22 @@ describe('客服對話導覽擴到右半邊（2026-08-28）', () => {
     expect(convBlock).toMatch(/clickBefore:\s*'\.conv-list-row \.split-list-item'/)
   })
 
-  it('只有能操作的角色才看得到那幾步（觀察者畫面上根本沒有那些按鈕）', () => {
-    const operateSteps = [...convBlock.matchAll(/requiresOperate:\s*true/g)]
-    expect(operateSteps.length).toBeGreaterThanOrEqual(4)
+  it('只有能回覆客人的角色才看得到那幾步（觀察者畫面上根本沒有那些按鈕）', () => {
+    // `G-109`：右半邊那幾顆（指派、接手、為什麼這樣答、回覆框、預存）在 AdminPanel 都掛 `canReply`
+    const replySteps = [...convBlock.matchAll(/requires:\s*'conversations\.reply'/g)]
+    expect(replySteps.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('`G-107`：介紹「為什麼這樣答」的那一步也要能操作才看得到', () => {
-    // 那顆按鈕是 `canOperate && msg.aiTurnId` 才渲染（AdminPanel.vue）——觀察者畫面上沒有
+  it('`G-107`：介紹「為什麼這樣答」的那一步也要能回覆才看得到', () => {
+    // 那顆按鈕是 `canReply && msg.aiTurnId` 才渲染（AdminPanel.vue）——觀察者畫面上沒有。
+    // 兩邊一起驗：頁面那一側換了條件，這裡也要跟著回來重看
+    const panel = readFileSync(join(APP_DIR, 'components/conversations/AdminPanel.vue'), 'utf8')
+    expect(panel).toContain('v-if="canReply && msg.aiTurnId"')
+    expect(panel).toMatch(/const canReply = computed\(\(\) => can\('conversations\.reply'\)\)/)
     const at = convBlock.indexOf('為什麼這樣答')
     expect(at, '找不到介紹「為什麼這樣答」的那一步').toBeGreaterThan(-1)
     const stepEnd = convBlock.indexOf('\n      },', at)
-    expect(convBlock.slice(at, stepEnd)).toMatch(/requiresOperate:\s*true/)
+    expect(convBlock.slice(at, stepEnd)).toMatch(/requires:\s*'conversations\.reply'/)
   })
 })
 
@@ -156,18 +161,18 @@ describe('教學的權限條件跟頁面對齊', () => {
   it('自動回應：客服就能改這一頁，教學不可以鎖管理員', () => {
     expect(perms, '能力表改了就回來重看這支教學的條件').toContain("'scripts.write': 'agent'")
     const block = topicBlock('ai-scripts')
-    expect(block, '⛔ 鎖了管理員的話，客服進這頁連問號都不會出現')
-      .not.toMatch(/requiresSettings:\s*true/)
-    expect(block).toMatch(/requiresOperate:\s*true/)
+    // `G-109`：主題條件＝頁面上 `canEditScripts` 用的同一項能力，不是另訂一個門檻
+    expect(block.slice(0, block.indexOf('steps:')), '⛔ 換成別的能力（例如管理員級的），客服進這頁連問號都不會出現')
+      .toMatch(/^\s*requires:\s*'scripts\.write'/m)
   })
 
   it('AI 表現：所有成員都看得到這一頁，教學不可以設任何權限條件', () => {
     expect(perms, '能力表改了就回來重看這支教學的條件').toContain("'ai.read': 'viewer'")
     const block = topicBlock('ai-usage')
-    // ⛔ 主題層級不設條件；只有「補知識」那一步要能操作（觀察者按了是死路）
+    // ⛔ 主題層級不設條件；只有「補知識」那一步要能寫知識庫（觀察者按了是死路）
     expect(block.slice(0, block.indexOf('steps:')))
-      .not.toMatch(/requiresSettings:\s*true|requiresOperate:\s*true/)
-    expect(block, '「補知識」那一步要標 requiresOperate').toMatch(/requiresOperate:\s*true/)
+      .not.toMatch(/^\s*requires:/m)
+    expect(block, '「補知識」那一步要標 requires: \'knowledge.write\'').toMatch(/requires:\s*'knowledge\.write'/)
   })
 })
 

@@ -12,6 +12,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import type { Ref } from 'vue'
+import { can } from '~~/shared/permissions'
+import type { Capability } from '~~/shared/permissions'
 import type { SetupStatusResponse } from '~~/shared/types/setup'
 
 // ── Nuxt 自動匯入的替身（要在 import 受測模組之前就位）────────────────
@@ -54,8 +56,7 @@ g.computed = computed
 g.useWorkspace = () => ({
   workspaceId,
   getBearer: async () => 'token',
-  canManageSettings: ref(true),
-  canOperate: ref(true),
+  can: () => true, // 擁有者：每一項能力都有
 })
 g.$fetch = fetchSpy
 // 「同一瞬間只查一次」的機制（E-28）在 app 裡是自動匯入，測試要自己接上
@@ -122,6 +123,34 @@ describe('useSetupStatus：這份體檢結果是「誰的」', () => {
 
     expect(setup.loaded.value).toBe(false)
     expect(setup.onboardingIncomplete.value).toBe(false)
+  })
+})
+
+/**
+ * 誰看得到哪幾項（`G-109`：從「客服以上／管理員以上」兩顆大開關換成讀權限表）。
+ * 釘住換表前的受眾：客服只有「建立知識庫」、觀察者一項都沒有、開通只拉管理員。
+ */
+describe('useSetupStatus：每個角色看得到的項目', () => {
+  it.each([
+    ['viewer', []],
+    ['agent', ['knowledgeReady']],
+    ['admin', ['lineConnected', 'aiEnabled', 'knowledgeReady', 'scriptReady', 'profileReady', 'liffReady']],
+  ] as const)('%s', async (role, expected) => {
+    g.useWorkspace = () => ({ workspaceId, getBearer: async () => 'token', can: (cap: Capability) => can(role, cap) })
+    try {
+      const setup = useSetupStatus()
+      // 全新帳號一項都查不到＝每一項都是 unknown，unknownCaps 就是這個角色看得到的全部
+      workspaceId.value = 'brand-new'
+      await setup.refresh()
+      expect(setup.unknownCaps.value.map(c => c.id)).toEqual(expected)
+      // 開通（接 LINE）只拉管理員：客服、觀察者進後台不可以被拉去精靈
+      workspaceId.value = 'kevin-test'
+      await setup.refresh()
+      expect(setup.onboardingIncomplete.value).toBe(role === 'admin')
+    }
+    finally {
+      g.useWorkspace = () => ({ workspaceId, getBearer: async () => 'token', can: () => true })
+    }
   })
 })
 

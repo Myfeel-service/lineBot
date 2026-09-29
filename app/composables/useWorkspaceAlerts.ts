@@ -14,6 +14,7 @@ import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Od
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AlertFixOpId } from '~~/shared/types/alert-fix'
+import type { Capability } from '~~/shared/permissions'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
 // 嚴重度（ALERT_SEVERITY）與「這是系統這邊的狀況」（SYSTEM_OWNED_ALERTS）都定義在
@@ -28,8 +29,15 @@ export interface AlertDefinition {
   impact: string
   /** 按鈕上的動作字樣 */
   cta: string
-  /** 處理此項所需角色（對齊後端）：settings=admin、operate=agent 以上 */
-  requires: 'settings' | 'operate'
+  /**
+   * 誰看得到這一顆＝處理它要的那項能力（`G-109`：對齊 `route` 那一頁／`fixOpId`、劇本打的端點，
+   * 讀 `shared/permissions.ts` 同一張表）。沒有的人不顯示、也不算進紅點。
+   *
+   * ⚠️ 後端 `alerts.get` 決定「查哪幾顆」用的還是自己那兩組旗標（管理員組／客服組，
+   *    見 `server/utils/workspace-alerts.ts` 的 `CollectAlertsOptions`）：管理員級的能力要放管理員組的探針、客服級的放客服組，
+   *    不然會變成「前端要顯示、後端沒查」＝永遠 unknown。
+   */
+  requires: Capability
   /** 去哪裡修 */
   route: (workspaceId: string) => string
   /**
@@ -104,7 +112,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Link,
     impact: 'LINE 沒有把客人的訊息送進系統——機器人、AI、真人對話全都收不到，客人傳什麼都不會有回應。',
     cta: '去檢查 LINE 連接',
-    requires: 'settings',
+    // 「組織與 LINE」那一頁的進入與儲存；一鍵修 `line-webhook-set-url` 同一項
+    requires: 'line.manage',
     // ?verify=webhook：進頁直接捲到「檢查連線」並實跑一次測試——
     // 使用者在卡片上已經按過一次「去檢查」，到頁面不該再自己找一遍要修什麼
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
@@ -126,7 +135,7 @@ const ALERTS: AlertDefinition[] = [
     // 詳細怎麼修交給 anchor 的 note 與「用聊天帶我修」劇本。
     impact: '訊息目前可能還進得來，但那個網址一停用，所有客人訊息會無聲斷掉、不會有任何預警。多半是換網域前的舊網址，趁還沒斷把 LINE 後台換成正式網址。',
     cta: '去檢查 LINE 連接',
-    requires: 'settings',
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
     anchor: { selector: '[data-tour="org-verify"]', note: '在這裡按「測試連線」，狀態卡會列出 LINE 現在填的網址；把 LINE 後台換成本頁給的正式網址。' },
     guideId: 'line-webhook',
@@ -140,7 +149,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Link,
     impact: '客人傳的訊息只會進到其中一邊，另一邊一則都收不到——而且兩邊的檢查看起來都正常，不會有任何錯誤訊息。要決定這個官方帳號留在哪一邊，另一邊把 LINE 連接清掉。',
     cta: '去檢查 LINE 連接',
-    requires: 'settings',
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization?verify=webhook`,
     anchor: { selector: '[data-tour="org-verify"]', note: '先決定這個官方帳號要留在哪一邊；要留這邊的話，把另一邊的 LINE 連接清掉，再回這裡按「測試連線」確認。' },
     // 修法本質＝做決定＋動憑證（紅線，動手留人）→ 對話式帶決策與指路（C-87）
@@ -154,7 +163,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Promotion,
     impact: '你有活動在跑，但還沒設定活動頁（LIFF）——客人在外面點活動連結會打不開，貼標與綁定都不會發生。設定只要一次，之後所有活動共用。',
     cta: '去設定活動頁',
-    requires: 'settings',
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization?focus=liff`,
     anchor: { selector: '[data-tour="org-liff"]', note: '在這裡把 LIFF ID 填進來就好；不知道去哪拿，按旁邊的「教我怎麼設」。' },
     guideId: 'liff-setup',
@@ -166,7 +175,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Promotion,
     impact: '客人點活動連結會被帶去別的網站或看到錯誤頁，貼標與綁定完全不會發生。多半是 LINE Developers 那邊登記的 Endpoint URL 填錯或沒更新。',
     cta: '去檢查 LIFF 設定',
-    requires: 'settings',
+    requires: 'line.manage',
     // ?verify=liff：進頁直接捲到 LIFF 區塊並重新檢查一次（跳過快取）
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
     anchor: { selector: '[data-tour="org-liff"]', note: '這一區會列出 LINE 上的登記狀態；到 LINE Developers 把該 LIFF 的 Endpoint URL 換成本區給的「活動 LIFF 頁」網址，再按「重新檢查」。' },
@@ -179,7 +188,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Promotion,
     impact: '客人點活動連結登入時會在兩個網址之間繞，有時卡在載入中；那個舊網址一停用，活動連結會整個打不開。多半是換網域前的舊網址沒改到。',
     cta: '去檢查 LIFF 設定',
-    requires: 'settings',
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization?verify=liff`,
     anchor: { selector: '[data-tour="org-liff"]', note: '到 LINE Developers 把該 LIFF 的 Endpoint URL 換成本區給的「活動 LIFF 頁」網址，改完回來按「重新檢查」。' },
     guideId: 'liff-endpoint',
@@ -189,7 +198,8 @@ const ALERTS: AlertDefinition[] = [
     icon: ChatDotRound,
     impact: '有一條設定的觸發是「客人輸入任何內容」，會先接走所有訊息，客人問什麼都只會拿到那一套回應，AI 等於沒開。',
     cta: '去看這條設定',
-    requires: 'operate',
+    // 改這條（或一鍵停用 `script-disable-anytext`）都是 `scripts.write`
+    requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
     anchor: { selector: '[data-tour="scr-list"]', note: '觸發方式寫「客人輸入任何內容」的那條就在這份清單裡，點開把觸發改成關鍵字或範例句。' },
     // 一鍵＝停用那條（可回復）；想保留內容改觸發的走頁面（popup 會講清楚兩條路）
@@ -203,7 +213,8 @@ const ALERTS: AlertDefinition[] = [
     // 所以這句才敢把「客人有收到回覆、也排進待處理」講出來——改行為前不要改回去。
     impact: '這些客人問的時候 AI 剛好連不上服務，沒能自動回答，已照轉真人流程接手（客人有收到回覆、也排進待處理）。通常會自己恢復；若一整天都在發生請聯絡我們。',
     cta: '看是哪些對話',
-    requires: 'operate',
+    // 落點頁（AI 表現）誰都進得去，但要做的事是接手回那幾位客人＝`conversations.reply`
+    requires: 'conversations.reply',
     // 帶 ?reason= 讓監控頁自動套用「AI 服務暫時失敗」篩選並捲到案例清單
     // （不帶的話落在頁頂、使用者得自己想起去下拉選原因）。
     // 一併帶 includeResolved:這個警示是看「近 24 小時發生過幾次」、不看有沒有被標處理,
@@ -218,7 +229,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Reading,
     impact: '這些資料的內容沒有更新進 AI，客人問到相關問題會得到過時或空的答案。',
     cta: '去修這些資料',
-    requires: 'operate',
+    // 重新抓（一鍵 `knowledge-refetch-sources`、劇本 knowledge-sync）都是來源的 `sources.write`
+    requires: 'sources.write',
     // ?health= 直接開對應的問題清單:使用者在這裡已經按過一次「去修」,
     // 到頁面後不該再自己找一遍同一件事
     route: wid => `/admin/${wid}/knowledge/sources?health=failedSources`,
@@ -233,7 +245,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Reading,
     impact: '這些網址每次抓到的內容都不一樣，系統已無法替你盯改版——官網改了也不會提醒。建議改用內容固定的頁面當資料來源。',
     cta: '去看這些網址',
-    requires: 'operate',
+    // 要做的是換掉資料來源＝`sources.write`
+    requires: 'sources.write',
     route: wid => `/admin/${wid}/knowledge/sources?health=stalledSources`,
     anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著這些網址，建議換成內容固定的頁面當來源。' },
   },
@@ -242,7 +255,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Reading,
     impact: '這些知識存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
     cta: '去看這些知識',
-    requires: 'operate',
+    // 一鍵 `knowledge-retry-index` 是 `knowledge.write`
+    requires: 'knowledge.write',
     route: wid => `/admin/${wid}/knowledge/sources?health=failedChunks`,
     anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著 AI 讀不到的知識，照各筆的按鈕處理。' },
     fixOpId: 'knowledge-retry-index',
@@ -254,7 +268,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Reading,
     impact: '同事在對話上看到 AI 用這些內容答錯客人，而它們到現在都還沒被修改過——同樣的問題會繼續答錯。',
     cta: '去修這些知識',
-    requires: 'operate',
+    // 改知識卡內容＝`knowledge.write`
+    requires: 'knowledge.write',
     route: wid => `/admin/${wid}/knowledge/sources?health=wrongAnswerChunks`,
     anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著被標答錯、又還沒改過的知識，點進去修內容。' },
   },
@@ -263,7 +278,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Odometer,
     impact: 'AI 已經停止回覆，現在客人的訊息會直接轉給真人處理。',
     cta: '去升級方案',
-    requires: 'settings',
+    // 落點「訂閱與付款」那一頁的進入門檻＝`billing.manage`（下面幾顆帳單類同一項）
+    requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     // 2026-08-28 全異常巡檢抓到：這顆（連同下面三顆帳單類）在帳單頁上**一顆按鈕都沒有**——
     // 提醒帶只會出現在異常自己那一頁，而沒有 anchor、深連結又沒帶 query 時，
@@ -277,7 +293,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Odometer,
     impact: '用完之後 AI 會停止回覆，客人的訊息只能等真人接手。趁還沒停先升級方案，就不會中斷。',
     cta: '去看用量與方案',
-    requires: 'settings',
+    requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     anchor: { selector: '[data-tour="bill-quota"]', note: '這一區是本期用量；趁還沒停，按這張卡右上角的「升級 / 續訂」換更大的方案。' },
   },
@@ -286,7 +302,7 @@ const ALERTS: AlertDefinition[] = [
     icon: CreditCard,
     impact: '服務目前照常，但一直扣不到款會被降回免費方案、AI 停止回覆。請更新付款方式，或改用手動付款。',
     cta: '去處理付款',
-    requires: 'settings',
+    requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     // 扣款失敗那張黃卡本來就只在 past_due 時出現＝這顆亮著時它一定在，圈得到、也指得到
     anchor: { selector: '[data-tour="bill-past-due"]', note: '這張卡會寫金流回報的失敗原因；卡片過期或額度不足的話，用卡片裡的「換一張卡付款」換一張。' },
@@ -298,7 +314,9 @@ const ALERTS: AlertDefinition[] = [
     // 2026-09-27 `C-270`：落點從「AI 設定」搬到「設定 → LINE 通知」（沒開 AI 的帳號也進得去）
     impact: '客人要找真人、每天早上的摘要、出大事的通知都傳不到任何人的手機——客人可能等很久都沒人接手。',
     cta: '去加手機',
-    requires: 'settings',
+    // 名單一個人都沒有＝要有人管這份名單（`notify.manage`）。⚠️ 客服自己加手機只要 `notify.self`，
+    // 但這顆一直只給管理員看，這次重構不改受眾
+    requires: 'notify.manage',
     route: wid => `/admin/${wid}/settings/line-notify`,
     anchor: { selector: '[data-tour="ln-who"]', note: '在這裡按「把我的手機加進來」，用手機掃一下就好。' },
     guideId: 'handoff-notify',
@@ -308,7 +326,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Bell,
     impact: '名單上有人封鎖了官方帳號、或通知被 LINE 退回，那幾位的手機收不到找真人與每天的摘要。',
     cta: '去看是誰',
-    requires: 'settings',
+    // 收不到的是名單上的**別人**，處理別人那一列＝`notify.manage`
+    requires: 'notify.manage',
     route: wid => `/admin/${wid}/settings/line-notify`,
     anchor: { selector: '[data-tour="ln-who"]', note: '變黃的那一列就是收不到的人，原因寫在名字下面。' },
   },
@@ -326,7 +345,8 @@ const ALERTS: AlertDefinition[] = [
     // ⛔四個落點頁都只要 auth（ai-scripts 另加 ai-feature），agent 進得去，不會帶去權限牆。
     // ⛔「用聊天帶我修」打的 `/api/admin/broken-module-fix` 兩支也要是客服級——
     //    `G-102` 就是這裡改了、那兩支還停在 admin，客服一按就失敗。改一邊要一起改。
-    requires: 'operate',
+    // `G-109`：那兩支是 `marketing.write`，這裡直接讀同一項
+    requires: 'marketing.write',
     // 退路：問不出面向時（舊版後端沒回 scopes）沿用原本的落點
     route: wid => `/admin/${wid}/richmenu`,
     // 2026-08-26：這顆一顆管四種設定，以前一律指到圖文選單——壞在活動的人被帶去
@@ -351,7 +371,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Guide,
     impact: '中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。',
     cta: '去修這條流程',
-    requires: 'operate',
+    // 改流程（或一鍵 `script-add-skip-exit`）＝`scripts.write`；下面兩顆自動回應類同一項
+    requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
     anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的紅色狀態列會直接指出是哪一題、旁邊就有補退路的按鈕。' },
     // 一鍵＝補「我沒有這項資料」跳過出口（與 AI 生成端同一套確定性補法）；
@@ -365,7 +386,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Guide,
     impact: '這條流程啟用著，但客人講什麼都輪不到它——觸發詞沒填，或是會先被自動回覆規則、敏感情境轉真人、另一條觸發詞更寬的流程接走。換一組更明確的觸發詞，或調整擋在前面的那個設定。',
     cta: '去看這條流程',
-    requires: 'operate',
+    requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
     anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的黃色狀態列會講它為什麼輪不到、該調哪個設定。' },
   },
@@ -382,7 +403,7 @@ const ALERTS: AlertDefinition[] = [
     icon: ChatDotRound,
     impact: '客人掃 QR、搜尋 ID 或點活動連結加好友時，現在一句話都收不到。到「自動回應」最上面那一列設定，選一個做好的機器人模組、或直接打一段話都可以。（從活動連結來、而且那個活動自己有歡迎訊息的人不受影響。）',
     cta: '去設加好友歡迎',
-    requires: 'operate',
+    requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
     anchor: { selector: '[data-tour="scr-follow-row"]', note: '清單最上面那一列就是「客人加好友時」，點它就能設。' },
   },
@@ -391,7 +412,8 @@ const ALERTS: AlertDefinition[] = [
     icon: ChatDotRound,
     impact: '這些對話到現在還沒有任何人回覆過。AI 草稿模式下尤其要看：AI 只擬好草稿等人送出，沒人處理＝客人一直收不到回覆。',
     cta: '去看未回覆的對話',
-    requires: 'operate',
+    // 要做的是回覆客人＝`conversations.reply`（下面幾顆對話類同一項）
+    requires: 'conversations.reply',
     // 與側欄「未首接」同一份佇列口徑，直接落在該分頁
     route: wid => `/admin/${wid}/conversations?tab=open`,
     anchor: { selector: '[data-tour="conv-tabs"]', note: '按「待處理」分頁，就只會看到還沒有人回過的客人，點進去回覆。' },
@@ -406,7 +428,7 @@ const ALERTS: AlertDefinition[] = [
     icon: ChatDotRound,
     impact: '草稿模式下 AI 只擬稿、不會自己發話：這些對話的客人到現在一句回覆都沒收到。點進對話，AI 擬好的草稿一鍵填入回覆框就能送出。',
     cta: '去審草稿',
-    requires: 'operate',
+    requires: 'conversations.reply',
     route: wid => `/admin/${wid}/conversations?tab=open`,
     anchor: { selector: '[data-tour="conv-tabs"]', note: '按「待處理」分頁逐場點開，AI 的草稿在右側「填入回覆框」，看過沒問題就送出。' },
   },
@@ -415,7 +437,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Service,
     impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停（久到沒動靜的才會由系統自動收尾）。',
     cta: '去看對話',
-    requires: 'operate',
+    requires: 'conversations.reply',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
     route: wid => `/admin/${wid}/conversations?tab=pending_human`,
     anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人、「真人處理」是接了還沒收尾的——處理完按「交回機器人」或「結束對話」。' },
@@ -426,7 +448,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Reading,
     impact: '這些知識卡等了超過一小時還沒學完，AI 目前讀不到它們——客人問到相關問題會答不出來。若一直卡著，請聯絡我們。',
     cta: '去看這些知識',
-    requires: 'operate',
+    // 一鍵 `knowledge-retry-index-stuck` 是 `knowledge.write`
+    requires: 'knowledge.write',
     route: wid => `/admin/${wid}/knowledge/sources`,
     // 雖在 SYSTEM_OWNED（卡住的根因在系統端），但「再排一次學習」是安全冪等的自救動作
     // ——有 fixOpId 時 UI 不再講「不用你操作」（那句話在有按鈕可按之後就不是真的了）
@@ -437,7 +460,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Refresh,
     impact: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
     cta: '去重新同步',
-    requires: 'operate',
+    // 重新同步來源＝`sources.write`
+    requires: 'sources.write',
     route: wid => `/admin/${wid}/knowledge/sources`,
     anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」的「前往比對」會逐份對照新舊內容。' },
   },
@@ -447,7 +471,7 @@ const ALERTS: AlertDefinition[] = [
     icon: Service,
     impact: '客人已經收到活動推播，但系統沒記下「已回應」，這些對話會出現在待處理清單上，其實不用處理。清單暫時會偏多，客人沒有受影響。',
     cta: '去看待處理清單',
-    requires: 'operate',
+    requires: 'conversations.reply',
     route: wid => `/admin/${wid}/conversations?tab=open`,
   },
   {
@@ -455,7 +479,7 @@ const ALERTS: AlertDefinition[] = [
     icon: CreditCard,
     impact: '這期的錢付成功了，但自動扣款的卡片沒有綁定成功——下期不會自動扣款，方案會被降回免費、AI 停止回覆。請重新設定付款方式，或聯絡我們處理。',
     cta: '去處理付款方式',
-    requires: 'settings',
+    requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     // 2026-08-28 老闆拍板補出路：這顆亮著＝沒有生效中的委託，而帳單頁的續訂列與
     // 「更新付款方式」都掛在「有委託」之下＝**當下整排都不存在**，使用者讀完紅字
@@ -470,7 +494,7 @@ const ALERTS: AlertDefinition[] = [
     // 驚動他只會製造「系統壞了」的觀感。⛔真實狀態不動——超管金流總覽有紅色「發票未開成」計數。
     impact: '款項已收到，電子發票正由系統自動開立，完成後會顯示在付款紀錄並寄送通知。若需要我們處理（例如統編設定），會主動聯繫你。',
     cta: '去看付款紀錄',
-    requires: 'settings',
+    requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
   },
   {
@@ -478,7 +502,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Promotion,
     impact: '這批推播發送失敗，名單上的客人沒有收到訊息。進去看失敗原因，處理後可以重新發送。',
     cta: '去看推播',
-    requires: 'operate',
+    // 一鍵 `broadcast-reset-failed`（走重發端點）是 `broadcast.send`
+    requires: 'broadcast.send',
     route: wid => `/admin/${wid}/broadcasts`,
     anchor: { selector: '[data-tour="bc-list"]', note: '失敗的那批就在這份清單（看狀態章），點開看失敗原因，可以「重設為草稿再發一次」。' },
     // 一鍵＝重設回草稿（走既有 retry 端點，刻意不代發——發送留人＝群發紅線的正確形狀）
@@ -489,7 +514,8 @@ const ALERTS: AlertDefinition[] = [
     icon: AlarmClock,
     impact: '排定的發送時間已經過了，推播卻還沒送出去——排程可能卡住了。若一直沒動，請聯絡我們。',
     cta: '去看排程',
-    requires: 'operate',
+    // 排程／取消屬於發送那一邊＝`broadcast.send`
+    requires: 'broadcast.send',
     route: wid => `/admin/${wid}/broadcasts`,
     anchor: { selector: '[data-tour="bc-list"]', note: '逾時的排程就在這份清單裡，點開看它排定的時間；一直沒動請聯絡我們。' },
   },
@@ -499,7 +525,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Tools,
     impact: '背景的自動維護（轉真人提醒、逾時自動交回、資料更新偵測）已停擺超過一小時。這是系統端的問題，通常不用你操作；若持續一整天，請聯絡我們。',
     cta: '去看連接狀態',
-    requires: 'settings',
+    // 落點是「組織與 LINE」那一頁（進頁 `line.manage`）
+    requires: 'line.manage',
 
     route: wid => `/admin/${wid}/settings/organization`,
   },
@@ -512,7 +539,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Tools,
     impact: 'AI 讀對話的背景掃描（貼標建議、發現新標籤）連續失敗中，所以不會有新的標籤建議出現。這是系統端的問題，不用你操作，請聯絡我們處理。',
     cta: '去看標籤',
-    requires: 'operate',
+    // 系統端的事、沒有動作可做；受眾跟下面那顆「AI 發現的標籤」同一群（`tags.write`）
+    requires: 'tags.write',
     route: wid => `/admin/${wid}/tags`,
   },
   {
@@ -524,7 +552,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Opportunity,
     impact: 'AI 讀最近的對話，發現有些主題很多客人在聊、但你還沒有對應的標籤。判斷條件我都擬好了，你按「建立」才會新增，而且會順手把聊過的那批客人標起來。',
     cta: '去看建議',
-    requires: 'operate',
+    // AI 發現的標籤：採用／合併／忽略都是 `tags.write`
+    requires: 'tags.write',
     route: wid => `/admin/${wid}/tags`,
   },
   {
@@ -538,7 +567,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Opportunity,
     impact: 'AI 讀完對話後建議幫這些客人貼上標籤，每一條都附了理由和出處對話。採用或忽略都可以，放著不管 AI 就學不到你的標準。',
     cta: '去看建議',
-    requires: 'operate',
+    // 幫客人採用 AI 標籤建議＝`customers.write`
+    requires: 'customers.write',
     // ?suggested=1 是好友頁現成的深連結（C-108）：落地就篩好「有 AI 建議的客人」
     route: wid => `/admin/${wid}/users?suggested=1`,
   },
@@ -548,7 +578,8 @@ const ALERTS: AlertDefinition[] = [
     icon: Opportunity,
     impact: '這些是客人問過、但 AI 沒答好的主題。草稿我都擬好了，採用之後 AI 下次就答得出來。',
     cta: '去看建議',
-    requires: 'operate',
+    // 建議收件匣的採用鈕是 `knowledge.write`（KnowledgeSuggestions 的 canEdit）
+    requires: 'knowledge.write',
     // ?suggest=1：落地自動捲到建議收件匣（D-43 缺口①——原本落在頁頂，收件匣在待辦下方要自己捲）
     route: wid => `/admin/${wid}/knowledge/sources?suggest=1`,
   },
@@ -582,7 +613,7 @@ const POLL_INTERVAL_MS = 10 * 60_000
 const SNOOZE_MS = 7 * 24 * 3600_000
 
 export function useWorkspaceAlerts() {
-  const { workspaceId, getBearer, canManageSettings, canOperate } = useWorkspace()
+  const { workspaceId, getBearer, can } = useWorkspace()
 
   // 全域共享，FAB 與面板共用同一份狀態
   const alertMap = useState<Record<string, WorkspaceAlertItem>>('workspace-alerts-map', () => ({}))
@@ -726,7 +757,7 @@ export function useWorkspaceAlerts() {
   /** 只保留「這個帳號有權限去處理」的項目——沒權限的不顯示、也不算進紅點 */
   const visibleAlerts = computed<ResolvedAlert[]>(() =>
     ALERTS
-      .filter(a => (a.requires === 'settings' ? canManageSettings.value : canOperate.value))
+      .filter(a => can(a.requires))
       .map((a) => {
         const item = alertMap.value[a.id]
         const scopes = item?.scopes

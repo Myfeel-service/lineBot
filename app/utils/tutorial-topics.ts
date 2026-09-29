@@ -12,6 +12,7 @@
  */
 
 import type { Component } from 'vue'
+import type { Capability } from '~~/shared/permissions'
 import {
   Bell, Box, ChatDotRound, ChatLineSquare, Connection, DataLine, Document, EditPen, Files,
   FolderOpened, Grid, Lightning, MagicStick, Monitor, OfficeBuilding, Operation, PieChart,
@@ -93,12 +94,13 @@ export interface TutorialStep {
   /** 此步驟依賴的功能旗標（關閉時整步跳過），對應 useFlowFeatures 的開關 */
   requiresFeature?: string
   /**
-   * 這一步要指的東西只有「能操作的人」（agent 以上）畫面上才有——觀察者根本沒有那顆按鈕，
+   * 這一步要指的東西只有「有這項能力的人」畫面上才有——沒有的人根本沒有那顆按鈕，
    * 不跳過的話他會看到一句「這一步要指的位置目前不在畫面上」。
+   *
+   * `G-109`：填那顆按鈕在頁面上 `v-if="can('…')"` 用的**同一項**能力（＝它打的端點用的），
+   * 錨點出現的條件跟這一步出現的條件才會是同一件事。⛔ 不要照「客服以上／管理員以上」去猜。
    */
-  requiresOperate?: boolean
-  /** 同上，但限 owner/admin（例：側欄的「設定」那一段） */
-  requiresSettings?: boolean
+  requires?: Capability
 }
 
 export interface TutorialTopic {
@@ -111,10 +113,12 @@ export interface TutorialTopic {
   category: TutorialCategoryId
   /** 導覽開跑前要導航到的路由（吃 workspaceId） */
   route?: (workspaceId: string) => string
-  /** 需要 owner/admin（設定類：組織、成員、AI 設定、腳本）才顯示 */
-  requiresSettings?: boolean
-  /** 需要操作權限（agent 以上，排除觀察者）的建立/編輯類教學才顯示 */
-  requiresOperate?: boolean
+  /**
+   * 有這項能力才顯示整支教學（`G-109`）：填這支教學要人去按的那顆主按鈕用的能力
+   * （例：「建立好友標籤」＝標籤頁「新增」鈕的 `tags.write`）。不填＝誰進得了那一頁都看得到。
+   * 教學的權限一律跟著**頁面實際的權限**走，不要各訂一套（`D-82`）。
+   */
+  requires?: Capability
   /** 依賴的功能旗標（關閉時整個教學隱藏），對應 useFlowFeatures 的開關 */
   requiresFeature?: string
   steps: TutorialStep[]
@@ -257,7 +261,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '邀請同事、LINE 的連線狀態、方案與付款都在這裡。設定好之後，平常不太需要進來。',
         placement: 'right',
-        requiresSettings: true,
+        // `G-109`：這一段客服其實也看得到（只剩「LINE 通知」一列，`notify.self`），但這句講的
+        // 邀請同事、LINE 連線、方案付款全是管理員的事——照說明講的東西挑，「組織與 LINE」那一列的 `line.manage`
+        requires: 'line.manage',
       },
       {
         target: '[data-tour="ta-fab"]',
@@ -305,7 +311,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     icon: OfficeBuilding,
     label: '設定組織與 LINE',
     blurb: '把 LINE 官方帳號接上系統。過程中可以隨時點「結束」離開。',
-    requiresSettings: true,
+    // 這一頁的進入門檻（`workspace-settings` 中介層）與儲存都是 `line.manage`
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization`,
     steps: [
       {
@@ -384,7 +391,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'ai-settings',
     category: 'ai',
-    requiresSettings: true,
+    // 儲存鈕與整張表單都是 `canEditSettings`＝`ai.settings.write`
+    requires: 'ai.settings.write',
     icon: MagicStick,
     label: '開啟 AI 自動回覆',
     blurb: '把 AI 客服打開、選好回覆模式與語氣。',
@@ -457,7 +465,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'knowledge',
     category: 'ai',
-    requiresOperate: true,
+    // 第一步指的「加入知識」是 `canEditKb`＝`knowledge.write` 才畫
+    requires: 'knowledge.write',
     icon: Reading,
     label: '知識庫：建立與匯入',
     blurb: '把資料交給 AI 整理，三步就好。',
@@ -476,7 +485,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'knowledge-manage',
     category: 'ai',
-    requiresOperate: true,
+    // 教的是改知識、採用等你看過的卡（`knowledge.write`）；「⋯」選單與同步設定的
+    // `folders.write`／`sources.write` 目前同一級，各步不另標
+    requires: 'knowledge.write',
     icon: FolderOpened,
     label: '知識庫：整理與更新',
     blurb: '匯入之後，怎麼分類、微調、讓知識自動保持最新。',
@@ -555,11 +566,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'ai-scripts',
     category: 'ai',
-    // ⛔ 是 operate 不是 settings（2026-09-18 `D-82`）：這一頁的編輯權限是 `scripts.write`＝
-    // **客服就能改**，教學卻鎖在管理員——客服進這一頁時，頁首那顆問號整顆不畫、自動導覽也不跑，
+    // ⛔ 跟著頁面的 `scripts.write`，不是管理員（2026-09-18 `D-82`）：這一頁的編輯權限＝
+    // **客服就能改**，教學卻曾經鎖在管理員——客服進這一頁時，頁首那顆問號整顆不畫、自動導覽也不跑，
     // 變成「能改的人看不到教學」。教學的權限一律跟著**頁面實際的權限**走，不要各訂一套。
-    // 三步指的（新增、AI 生成、範本）都在 `canEditScripts` 底下，客服畫面上都有。
-    requiresOperate: true,
+    // 三步指的（新增、AI 生成、範本）都在 `canEditScripts`＝`can('scripts.write')` 底下。
+    requires: 'scripts.write',
     icon: Operation,
     // ⛔ 名字要跟側欄同一個詞（2026-09-18 `D-82`）：這一頁側欄上叫「自動回應」，
     // 教學卻叫「建立客服流程」——在教學清單裡用側欄看到的那四個字根本找不到這一支。
@@ -677,7 +688,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'ai-scripts-flow',
     category: 'ai',
-    requiresOperate: true,
+    // 「還要多做一步…」與積木選單都是 `canEditScripts`＝`scripts.write` 才畫（同上一支）
+    requires: 'scripts.write',
     icon: Operation,
     label: '自動回應：多步驟接待',
     blurb: '問客人資料、答不出來的退路、依答案分流、試跑整條——預約、報名、退貨都靠這些。',
@@ -739,6 +751,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     icon: Monitor,
     label: '試一下 AI 怎麼回答',
     blurb: '上線前先試答幾題，確認 AI 答得對。',
+    // 這一頁的進入門檻（`ai-feature` 中介層）是 `playground.use`：觀察者進不去，
+    // 教學清單就不該列給他（`G-109`：沒權限一律藏，不是點了才被踢回對話頁）
+    requires: 'playground.use',
     route: wid => `/admin/${wid}/ai-playground`,
     steps: [
       {
@@ -777,7 +792,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     // ⛔ 不設權限條件（2026-09-18 `D-82`）：這一頁 2026-08-10 特意從管理員降到 `ai.read`
     // ＝所有成員都看得到，理由是「第一線客服要看得到自己照顧的 AI 做得好不好」，
     // 但教學的條件沒跟著降，客服與觀察者在這一頁連問號都沒有。計費欄位由 API 逐欄位擋，
-    // 不靠這裡。⛔ 要能操作才有意義的那一步（補知識）自己標 `requiresOperate`，不要整支鎖起來。
+    // 不靠這裡。⛔ 要能寫知識庫才有意義的那一步（補知識）自己標 `requires`，不要整支鎖起來。
     icon: TrendCharts,
     label: '看 AI 用量與監控',
     blurb: '看 AI 幫你分擔多少、哪裡答不好要補知識。',
@@ -794,8 +809,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="usg-cases"]',
-        // 這一步叫人去按「補知識」——觀察者沒有寫知識庫的權限，按了是死路，所以他跳過這步
-        requiresOperate: true,
+        // 這一步叫人去按「補知識」——觀察者沒有寫知識庫的權限，按了是死路，所以他跳過這步。
+        // 那顆「補知識」與它的說明都是 `canEditKb`＝`knowledge.write` 才畫（ai-usage.vue）
+        requires: 'knowledge.write',
         title: '答不出來的就地補知識',
         description:
           // ⛔ 2026-09-29（`D-109`）：「補知識」是**開新分頁**到知識庫（帶著客人原本那句話），不是跳走——這一頁會留著
@@ -853,12 +869,13 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         // 2026-09-29（`D-109`）：以前只說「看得到負責人」，沒講可以指派——多人一起顧的時候，
-        // 兩個人同時回同一位客人就是這樣發生的。⛔ 那顆只有客服以上畫得出來（`canOperate`），
-        // 所以自己一步、標 requiresOperate，不要塞進上一步的說明（觀察者會被介紹一顆他沒有的按鈕）。
+        // 兩個人同時回同一位客人就是這樣發生的。⛔ 那顆是 `selectedUserId && canReply` 才畫
+        // （AdminPanel.vue，`canReply`＝`can('conversations.reply')`），所以自己一步、標 requires，
+        // 不要塞進上一步的說明（觀察者會被介紹一顆他沒有的按鈕）。
         target: '[data-tour="conv-assignee"]',
         targetFallback: '[data-tour="conv-header"]',
         requiresPresent: '.conv-list-row .split-list-item',
-        requiresOperate: true,
+        requires: 'conversations.reply',
         title: '指派給一位同事',
         description:
           '點這裡可以把這位客人<strong>指派給某位同事</strong>（或自己）。多人一起顧的時候，大家一看就知道已經有人在跟，'
@@ -876,7 +893,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           '<strong>我接手</strong>＝這位客人先由你回，機器人與 AI 會暫停自動回覆，不會跟你搶話；'
           + '談完按<strong>交還機器人</strong>讓它繼續顧，或按<strong>結束會話</strong>把這一場結掉。',
         placement: 'bottom',
-        requiresOperate: true,
+        // 這排裡的每一顆都掛在 `canReply`（`canTakeOverSession` 等）底下
+        requires: 'conversations.reply',
       },
       {
         target: '[data-tour="conv-messages"]',
@@ -887,9 +905,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           // ⛔ 2026-09-29（`D-109`）：原本寫「標了會收進小幫手的待辦清單」——畫面上講的是知識庫的「建議收件匣」
           + '答得不對就在那裡標「這題 AI 答錯了」——同一類被標到兩次，<strong>知識庫的建議收件匣就會擬好一張卡</strong>讓你審，補資料時就知道要補什麼。',
         placement: 'left',
-        // `G-107`：那顆「為什麼這樣答」是 `canOperate && msg.aiTurnId` 才渲染（AdminPanel.vue），
-        // 觀察者畫面上沒有，這一步不標的話等於跟他介紹一顆他沒有的按鈕
-        requiresOperate: true,
+        // `G-107`：那顆「為什麼這樣答」是 `canReply && msg.aiTurnId` 才渲染（AdminPanel.vue，
+        // `canReply`＝`can('conversations.reply')`），觀察者畫面上沒有，這一步不標的話等於跟他介紹一顆他沒有的按鈕
+        requires: 'conversations.reply',
       },
       {
         target: '[data-tour="conv-reply"]',
@@ -898,7 +916,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           'Enter 送出、Shift + Enter 換行。你送出的訊息會即時進到客人的 LINE。',
         placement: 'top',
-        requiresOperate: true,
+        // 回覆框是 `v-if="canReply"`
+        requires: 'conversations.reply',
       },
       {
         target: '[data-tour="conv-presets"]',
@@ -908,14 +927,17 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           '📦 是<strong>客服預存</strong>：挑一則就能直接送出，也可以先填進回覆框改幾個字再送。'
           + '要新增或修改預存內容，去側欄的「客服預存」。',
         placement: 'top',
-        requiresOperate: true,
+        // 📦 那排在 `v-if="canReply"` 的工具列裡（送預存打的也是回覆端點）
+        requires: 'conversations.reply',
       },
     ],
   },
   {
     id: 'flow',
     category: 'bot',
-    requiresOperate: true,
+    // 「新增」鈕在 `<AdminOperateGate capability="marketing.write">` 裡（flow.vue）；
+    // 下面幾支訊息類型的教學都在同一個編輯器裡，同一項能力
+    requires: 'marketing.write',
     icon: Connection,
     label: '認識機器人模組',
     blurb: '一種一種帶你看：每介紹一個就先幫你選到它的實際畫面。',
@@ -988,7 +1010,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'msg-basic',
     category: 'bot',
-    requiresOperate: true,
+    requires: 'marketing.write',
     icon: ChatLineSquare,
     label: '基本訊息（文字/圖片/影片）',
     blurb: '最常用的三種訊息，一顆一顆按給你看、知識也開出來。',
@@ -1023,7 +1045,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'msg-rich',
     category: 'bot',
-    requiresOperate: true,
+    requires: 'marketing.write',
     icon: Postcard,
     label: '圖文訊息怎麼填',
     blurb: '一張大圖切成多個可點區塊。打開一條帶你填。',
@@ -1058,7 +1080,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'msg-carousel',
     category: 'bot',
-    requiresOperate: true,
+    requires: 'marketing.write',
     icon: Files,
     label: '輪播訊息怎麼填',
     blurb: '多條知識左右滑。打開一張帶你填。',
@@ -1101,7 +1123,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'msg-quick',
     category: 'bot',
-    requiresOperate: true,
+    requires: 'marketing.write',
     icon: Pointer,
     label: '快速回覆怎麼填',
     blurb: '訊息下方一排建議按鈕。打開一張帶你填。',
@@ -1143,7 +1165,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'msg-userinput',
     category: 'bot',
-    requiresOperate: true,
+    requires: 'marketing.write',
     requiresFeature: 'userInput',
     icon: EditPen,
     label: '用戶輸入卡怎麼填',
@@ -1188,7 +1210,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'richmenu',
     category: 'growth',
-    requiresOperate: true,
+    // 「新增」鈕是 `canEditMenus`＝`can('marketing.write')`（richmenu.vue）
+    requires: 'marketing.write',
     icon: Grid,
     label: '建立圖文選單',
     blurb: '聊天室下方的圖片選單。直接進新增畫面、一個欄位一個欄位教你填。',
@@ -1256,7 +1279,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'tags',
     category: 'growth',
-    requiresOperate: true,
+    // 「新增」「從範本建立」都是 `canEditTags`＝`can('tags.write')`（tags.vue）
+    requires: 'tags.write',
     icon: PriceTag,
     label: '建立好友標籤',
     blurb: '標籤把好友分群，之後推播、活動都能鎖定分眾。帶你建第一個。',
@@ -1309,7 +1333,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'campaigns',
     category: 'growth',
-    requiresOperate: true,
+    // 「新增」鈕是 `v-if="can('marketing.write')"`（campaigns.vue）
+    requires: 'marketing.write',
     icon: Tickets,
     // ⛔ 名字跟側欄同一個詞（`D-109`；同 `ai-scripts` 那支的理由）：側欄叫「活動標籤」
     label: '活動標籤：用一條連結收名單',
@@ -1358,7 +1383,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'broadcasts',
     category: 'growth',
-    requiresOperate: true,
+    // 「新增」鈕是 `v-if="can('broadcast.write')"`（broadcasts.vue）；正式發送那一步另標 `broadcast.send`
+    requires: 'broadcast.write',
     icon: Promotion,
     label: '發一則推播',
     blurb: '主動群發訊息給好友。帶你認識怎麼發。',
@@ -1429,6 +1455,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="bc-send"]',
+        // 這顆是 `v-if="can('broadcast.send')"`，跟上面建草稿的 `broadcast.write` 是兩項能力（`G-109`）
+        requires: 'broadcast.send',
         title: '送出前會先讓你看人數',
         description:
           '按這顆不會立刻送出：系統會先算好<strong>預估發送人數</strong>、列幾筆名單給你看，'
@@ -1447,7 +1475,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'users',
     category: 'growth',
-    requiresOperate: true,
+    // 「從 LINE 同步好友」與批次貼標是 `canTagCustomers`＝`can('customers.write')`（users.vue）
+    requires: 'customers.write',
     icon: User,
     label: '管理好友與貼標',
     blurb: '看好友名單、依標籤篩選、批次貼標。',
@@ -1532,7 +1561,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'support-presets',
     category: 'growth',
-    requiresOperate: true,
+    // 「新增」鈕是 `canEditPresets`＝`can('presets.write')`（support-presets.vue）
+    requires: 'presets.write',
     icon: Box,
     label: '建立客服預存',
     blurb: '常用回覆存起來，對話時一選即送。',
@@ -1619,7 +1649,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     icon: UserFilled,
     label: '邀請團隊成員',
     blurb: '把同事加進來、分配角色權限。',
-    requiresSettings: true,
+    // 教的是「邀請成員」那顆＝`v-if="can('members.manage')"`（進這一頁本身是 `members.read`，同為管理員）
+    requires: 'members.manage',
     route: wid => `/admin/${wid}/settings/members`,
     steps: [
       {
@@ -1660,6 +1691,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     icon: Bell,
     label: '讓手機收到 LINE 通知',
     blurb: '把自己的手機加進來，客人要找真人、每天早上的摘要都會傳到手機。',
+    // 這一頁的進入門檻（`workspace-notify` 中介層）是 `notify.self`：觀察者進不去，也不收通知（`G-109`）
+    requires: 'notify.self',
     route: wid => `/admin/${wid}/settings/line-notify`,
     steps: [
       {
@@ -1674,9 +1707,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         // 2026-09-29（`D-109`）：同事不常登入後台時，管理員只能靠這一顆幫他加——以前只有成員管理那支導覽順口提過。
         // 那顆只在「有同事還沒加」而且看的人是管理員時才畫，沒有就整步跳過（這支沒有 clickBefore，前提在導航後問得到）。
+        // 「是管理員」那半＝`data.canManage`，後端照 `can(role, 'notify.manage')` 算的（line-notify/index.get.ts）
         target: '[data-tour="ln-send-link"]',
         requiresPresent: '[data-tour="ln-send-link"]',
-        requiresSettings: true,
+        requires: 'notify.manage',
         title: '同事不登入後台？傳連結給他',
         description:
           '還沒加進來的同事那一列有「<strong>傳連結給他</strong>」：按了會給你一條連結，用 LINE 或任何方式傳給他，'
@@ -1685,7 +1719,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="ln-when"]',
-        requiresSettings: true,
+        // 這一塊是 `v-if="data.canManage"`＝`notify.manage`（同上一步）
+        requires: 'notify.manage',
         title: '什麼時候通知',
         description:
           '決定客人找真人時要<strong>馬上傳</strong>、還是<strong>等沒人接手才傳</strong>，以及每天幾點傳摘要。'
@@ -1705,7 +1740,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
   {
     id: 'activity',
     category: 'setup',
-    requiresSettings: true,
+    // 這一頁的進入門檻（`workspace-settings` 中介層）＝`audit.read`
+    requires: 'audit.read',
     icon: Document,
     label: '查「誰把什麼改成什麼」',
     blurb: '設定被改壞了、或想確認小幫手做了什麼，來這裡看。',

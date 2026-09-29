@@ -117,7 +117,7 @@ const props = defineProps<{
 }>()
 
 const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide, endTour, lastTopicId } = useTutorial()
-const { canOperate, canManageSettings } = useWorkspace()
+const { can } = useWorkspace()
 const { ensureLoaded: ensureTourSeen, hasSeen: tourSeen, markSeen: markTourSeen } = useTourSeen()
 const { loaded: setupLoaded, failed: setupFailed, onboardingIncomplete } = useSetupStatus()
 
@@ -126,7 +126,7 @@ const availableGuides = computed(() =>
   (props.guides ?? [])
     .map(id => WALKTHROUGH_GUIDES.find(g => g.id === id))
     .filter((g): g is (typeof WALKTHROUGH_GUIDES)[number] => Boolean(g))
-    .filter(g => (g.requires === 'settings' ? canManageSettings.value : canOperate.value))
+    .filter(g => can(g.requires))
     .map(g => ({ id: g.id, title: AGENT_GUIDES[g.id].title })),
 )
 

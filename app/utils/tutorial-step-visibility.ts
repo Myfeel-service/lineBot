@@ -1,3 +1,4 @@
+import type { Capability } from '~~/shared/permissions'
 import type { TutorialStep } from './tutorial-topics'
 
 /**
@@ -7,18 +8,18 @@ import type { TutorialStep } from './tutorial-topics'
  * 對觀察者根本不渲染。不擋的話他會連續看到好幾句「這一步要指的位置目前不在畫面上」，
  * 看起來像教學壞掉。
  *
+ * `G-109`：以前問的是「客服以上／管理員以上」兩顆大開關，現在問 `requires` 那一項能力——
+ * 跟那顆按鈕在頁面上的 `v-if="can('…')"` 讀同一張表，門檻調了兩邊一起動。
+ * 主題層級（`TutorialTopic.requires`）也走這支，形狀一樣。
+ *
  * ⛔ 型別是 `import type`，執行期不會把 tutorial-topics 拉進來——那支相依 Element Plus
  *    的圖示元件，在 node 測試環境載不動（同 tutorial-topics.test.ts 檔頭的理由）。
  */
 export function stepAllowedForRole(
-  step: Pick<TutorialStep, 'requiresOperate' | 'requiresSettings'>,
-  role: { canOperate: boolean, canManageSettings: boolean },
+  step: Pick<TutorialStep, 'requires'>,
+  role: { can: (capability: Capability) => boolean },
 ): boolean {
-  if (step.requiresOperate && !role.canOperate)
-    return false
-  if (step.requiresSettings && !role.canManageSettings)
-    return false
-  return true
+  return !step.requires || role.can(step.requires)
 }
 
 /**

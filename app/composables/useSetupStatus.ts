@@ -9,6 +9,7 @@
 import type { Component } from 'vue'
 import { Iphone, Link, MagicStick, Operation, Reading, Shop } from '@element-plus/icons-vue'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
+import type { Capability } from '~~/shared/permissions'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
 export interface SetupCapability {
@@ -20,8 +21,11 @@ export interface SetupCapability {
   why: string
   /** 必要能力（會算進「還差幾項」與按鈕上的紅點） */
   required: boolean
-  /** 設定此項所需角色（對齊後端 write API）：settings=admin、operate=agent 以上 */
-  requires: 'settings' | 'operate'
+  /**
+   * 誰看得到這一項＝去做這件事要的那項能力（`G-109`：對齊它帶人去的那一頁／修好它打的端點，
+   * 讀 `shared/permissions.ts` 同一張表）。沒有的人不顯示、也不算進進度與紅點。
+   */
+  requires: Capability
   /** 沒做完時，前往設定的頁面 */
   route: (workspaceId: string) => string
   /** 若有對應的逐步導覽，填教學主題 id（對應 useTutorial 的 topic） */
@@ -53,7 +57,8 @@ const CAPABILITIES: SetupCapability[] = [
     title: '接上 LINE 官方帳號',
     why: '這是一切的前提。沒接好，機器人就收不到、也回不了訊息。',
     required: true,
-    requires: 'settings',
+    // 「組織與 LINE」那一頁的進入與儲存
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization`,
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
@@ -66,7 +71,8 @@ const CAPABILITIES: SetupCapability[] = [
     //    自動回應不看這個開關（`handler.ts` 的 `runScriptStart` 不讀 enabled），關掉 AI 照樣在回客人。
     why: '這個開關關著的話，AI 一句都不會回客人，知識庫建得再完整也用不上。（自動回應不受影響，照常運作。）',
     required: true,
-    requires: 'settings',
+    // 總開關在 AI 設定頁，儲存是 `ai.settings.write`
+    requires: 'ai.settings.write',
     route: wid => `/admin/${wid}/ai-settings`,
     tourId: 'ai-settings',
     navTarget: '[data-tour="nav-ai-settings"]',
@@ -77,7 +83,8 @@ const CAPABILITIES: SetupCapability[] = [
     title: '建立知識庫',
     why: 'AI 靠它來回答客人的問題。空的話，能回的內容會很有限。',
     required: false,
-    requires: 'operate',
+    // 「加入知識」＝`knowledge.write`（劇本 knowledge-first 同一項）
+    requires: 'knowledge.write',
     route: wid => `/admin/${wid}/knowledge/sources`,
     tourId: 'knowledge',
     // 這一項的「帶我做」走劇本（D-40）：放知識是有真訊號可驗的任務——放好了沒有、
@@ -92,7 +99,10 @@ const CAPABILITIES: SetupCapability[] = [
     title: '啟用一條客服流程',
     why: '用來處理固定流程，例如預約、報名、領取優惠。沒有也能運作。',
     required: false,
-    requires: 'settings',
+    // ⚠️ `G-109`：照舊只給管理員（改版前是 'settings'，這次是純重構、不改誰看得到）。
+    //    但這一頁實際的寫入是 `scripts.write`＝**客服就能做**，教學那支 `ai-scripts` 早在 `D-82`
+    //    就放寬了，只有這一項沒跟上。要不要改成 `scripts.write` 是另一個決定，⛔ 別在重構裡順手改。
+    requires: 'ai.settings.write',
     route: wid => `/admin/${wid}/ai-scripts`,
     tourId: 'ai-scripts',
     // 腳本已收進「自動回應」的第二個分頁，側欄不再有獨立的 nav-ai-scripts 可以指
@@ -107,7 +117,8 @@ const CAPABILITIES: SetupCapability[] = [
     title: '讓 MiniMe 認識你的店',
     why: '它現在只知道你的帳號名稱。補上之後，節慶提醒才講得出你的商品，AI 回客人的口氣也才像你。',
     required: false,
-    requires: 'settings',
+    // 輪廓卡的儲存（`store-profile.post`）是 `ai.settings.write`；卡片放在組織頁（進頁 `line.manage`，同為管理員）
+    requires: 'ai.settings.write',
     route: wid => `/admin/${wid}/settings/organization`,
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
@@ -122,7 +133,8 @@ const CAPABILITIES: SetupCapability[] = [
     // 只有 lead.vue 活動頁，綁定就發生在那一頁上）。2026-08-23 改名掃描時抓到並改掉。
     why: '客人點開活動頁（登記活動、綁定資料）會用到。要辦活動前再補就行。',
     required: false,
-    requires: 'settings',
+    // LIFF ID 填在「組織與 LINE」那一頁
+    requires: 'line.manage',
     route: wid => `/admin/${wid}/settings/organization`,
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
@@ -141,7 +153,7 @@ const CAPABILITIES: SetupCapability[] = [
 const REFRESH_TTL_MS = 60_000
 
 export function useSetupStatus() {
-  const { workspaceId, getBearer, canManageSettings, canOperate } = useWorkspace()
+  const { workspaceId, getBearer, can } = useWorkspace()
 
   // 全域共享，FAB 與面板共用同一份狀態
   const rawStatusMap = useState<Record<string, SetupItemStatus>>('setup-status-map', () => ({}))
@@ -260,9 +272,7 @@ export function useSetupStatus() {
 
   /** 只保留「這個帳號有權限去做」的能力——沒權限的不顯示、也不算進進度與紅點 */
   const visibleCapabilities = computed(() =>
-    capabilities.value.filter(c =>
-      c.requires === 'settings' ? canManageSettings.value : canOperate.value,
-    ),
+    capabilities.value.filter(c => can(c.requires)),
   )
 
   /** 這個帳號有沒有任何「可動手」的設定項（沒有就整個健康卡都不顯示，例如觀察者） */
@@ -296,9 +306,10 @@ export function useSetupStatus() {
    * ⛔別把 aiEnabled 算進來：開 AI 已移出開通（2026-08-19），算進來的話做完開通
    * 按鈕永遠不消失、人還會一直被拉回一個「已經沒事可做」的對話。
    * unknown 不算未完成（查不到 ≠ 沒做），沒管理權限的人（開通要 admin）一律 false。
+   * `G-109`：「開通要 admin」＝接 LINE 那一頁的 `line.manage`（跟上面 lineConnected 那一項同一把尺）。
    */
   const onboardingIncomplete = computed(() =>
-    canManageSettings.value
+    can('line.manage')
     && loaded.value
     && (statusMap.value.lineConnected === 'incomplete' || statusMap.value.firstMessageReceived === 'incomplete'),
   )

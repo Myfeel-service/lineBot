@@ -16,7 +16,7 @@ import { stepAllowedForRole, stepPreconditionMet } from '~/utils/tutorial-step-v
 
 export function useTutorial() {
   const router = useRouter()
-  const { workspaceId, canManageSettings, canOperate } = useWorkspace()
+  const { workspaceId, can } = useWorkspace()
   const { setDemo } = useFlowDemo()
   const flowFeatures = useFlowFeatures()
 
@@ -54,27 +54,18 @@ export function useTutorial() {
    *    看到好幾句「這一步要指的位置目前不在畫面上」，像是教學壞了。
    */
   const visibleSteps = (steps: TutorialStep[]) => steps.filter(s =>
-    featureOn(s.requiresFeature)
-    && stepAllowedForRole(s, {
-      canOperate: canOperate.value,
-      canManageSettings: canManageSettings.value,
-    }),
+    featureOn(s.requiresFeature) && stepAllowedForRole(s, { can }),
   )
 
   /** 這個主題實際會跑幾步（扣掉被功能旗標關掉的）。畫面用它標步數，不要手寫 */
   const stepCount = (topic: TutorialTopic) => visibleSteps(topic.steps).length
 
-  /** 依角色＋功能旗標過濾出可見主題：沒權限／沒開的功能就不顯示其教學 */
+  /**
+   * 依能力＋功能旗標過濾出可見主題：沒權限／沒開的功能就不顯示其教學。
+   * `G-109`：主題的 `requires` 跟步驟同一個形狀，同一支判斷。
+   */
   const topics = computed(() =>
-    TUTORIAL_TOPICS.filter((t) => {
-      if (!featureOn(t.requiresFeature))
-        return false
-      if (t.requiresSettings)
-        return canManageSettings.value
-      if (t.requiresOperate)
-        return canOperate.value
-      return true
-    }),
+    TUTORIAL_TOPICS.filter(t => featureOn(t.requiresFeature) && stepAllowedForRole(t, { can })),
   )
 
   /** 依分類分組（已過濾角色、按 CATEGORY_META 順序、空組不顯示） */

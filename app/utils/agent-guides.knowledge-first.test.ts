@@ -203,12 +203,13 @@ describe('knowledge-first 掛在開通清單上', () => {
 
   it('「帶著做」清單裡的每一條都真的存在，且 knowledge-first 在裡面（否則做完一次就叫不出來）', async () => {
     const { WALKTHROUGH_GUIDES, AGENT_GUIDES: ALL } = await import('./agent-guides')
+    const { CAPABILITIES } = await import('~~/shared/permissions')
     expect(WALKTHROUGH_GUIDES.length).toBeGreaterThan(0)
     for (const g of WALKTHROUGH_GUIDES) {
       expect(ALL[g.id], `WALKTHROUGH_GUIDES 指到不存在的劇本：${g.id}`).toBeTruthy()
       expect(g.blurb.trim()).not.toBe('')
-      // 角色尺只有這兩種（跟 SetupCapability.requires 同一把）
-      expect(['operate', 'settings']).toContain(g.requires)
+      // 門檻是權限表裡的一項能力（`G-109`，跟 SetupCapability.requires 同一把尺）
+      expect(Object.keys(CAPABILITIES)).toContain(g.requires)
     }
     expect(WALKTHROUGH_GUIDES.some(g => g.id === 'knowledge-first')).toBe(true)
   })

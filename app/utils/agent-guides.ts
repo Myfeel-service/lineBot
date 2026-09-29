@@ -14,6 +14,7 @@ import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
 import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { WorkspaceAlertId } from '~~/shared/types/alerts'
 import type { BrokenModuleFixState, BrokenModuleRefRow, BrokenModuleRepointResult } from '~~/shared/types/alert-fix'
+import type { Capability } from '~~/shared/permissions'
 import { ONBOARDING_SHOTS } from '~/utils/onboarding-shots'
 import { kbVerifyOutcome } from '~/utils/kb-verify-outcome'
 import type { AgentScriptRunner, AgentScriptStep } from '~/composables/useAgentScriptRunner'
@@ -57,12 +58,16 @@ export interface WalkthroughGuideEntry {
   id: AgentGuideId
   /** 一句白話：這條會陪你做完什麼 */
   blurb: string
-  /** 誰跑得動（對齊該任務實際需要的角色，跟 SetupCapability.requires 同一把尺） */
-  requires: 'operate' | 'settings'
+  /**
+   * 誰跑得動：這條劇本要人做的那件事打的端點用的能力（`G-109`，跟 SetupCapability.requires 同一把尺）。
+   * 跑不動的人整條不出現——不要出現按了才說沒權限的按鈕。
+   */
+  requires: Capability
 }
 
 export const WALKTHROUGH_GUIDES: WalkthroughGuideEntry[] = [
-  { id: 'knowledge-first', blurb: '陪你放進第一份資料，並確認 AI 真的答得出來。', requires: 'operate' },
+  // 要做的事是匯入知識（`knowledge.write`）；收尾的試問打 `playground.use`，目前同為客服級
+  { id: 'knowledge-first', blurb: '陪你放進第一份資料，並確認 AI 真的答得出來。', requires: 'knowledge.write' },
 ]
 
 // ── LIFF Endpoint ───────────────────────────────────────────────

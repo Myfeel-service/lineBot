@@ -178,25 +178,11 @@ export const useWorkspace = () => {
   }
 
   // ── Role check helpers ─────────────────────────────────────────
-  // canManageSettings：成員、LINE 憑證等 workspace 設定
-  // canOperate：客服營運（對話、模組、推播等）— 不含觀察者
-  // canWrite：同 canManageSettings（保留舊名稱相容）
-
-  const canManageSettings = computed(() => {
-    const r = currentRole.value
-    return r === 'owner' || r === 'admin'
-  })
-
-  const canOperate = computed(() => {
-    const r = currentRole.value
-    return r === 'owner' || r === 'admin' || r === 'agent'
-  })
+  // ⛔ `G-109`：「客服以上／管理員以上」那幾顆大開關已經拿掉（名單見 `utils/capability-usage.test.ts`）——
+  //    某個功能誰能用一律問 `can('<那顆按鈕打的端點用的能力>')`，跟後端讀同一張表。
+  //    `isViewer` 留著只給「你是誰」的外觀用（觀察者提示條、唯讀樣式），不拿來決定功能。
 
   const isViewer = computed(() => currentRole.value === 'viewer')
-
-  const canWrite = canManageSettings
-
-  const isOwner = computed(() => currentRole.value === 'owner')
 
   // 能力判斷：讀 ~~/shared/permissions.ts 的 CAPABILITIES，與後端 requireCapability 同一份表。
   // 用法：can('scripts.write')、can('ai.settings.write') …
@@ -208,11 +194,7 @@ export const useWorkspace = () => {
     currentWorkspaceName,
     workspaceList,
     orgAdminOf,
-    canManageSettings,
-    canOperate,
     isViewer,
-    canWrite,
-    isOwner,
     can,
     getBearer,
     apiFetch,

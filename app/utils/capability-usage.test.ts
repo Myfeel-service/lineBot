@@ -16,31 +16,11 @@ import { describe, expect, it } from 'vitest'
 
 const ROOT = join(__dirname, '..', '..')
 
-/** 大開關的名字（出現在這些檔以外就紅） */
-const ROLE_LEVEL_HELPERS = /\b(canOperate|canManageSettings|canWrite|hasMinRole)\b/
-
-/** 定義它們的地方（還留著給下面那批沒換完的檔用） */
-const DEFINITIONS = new Set([
-  'app/composables/useWorkspace.ts',
-])
-
 /**
- * 還沒換的（`G-109` 第二步）：導覽、小幫手面板、就緒度與提醒條這一串互相依賴，
- * 而另一個工作階段（`D-109`）正在改其中幾支，等它 commit 完一起換。⛔ 只能刪、不能加。
+ * 大開關的名字：app/ 裡任何地方出現就紅（含註解與測試——名字留著就有人照抄）。
+ * `G-109` 第二步之後 `useWorkspace` 已經不提供這幾顆，沒有例外清單。
  */
-const PENDING_SECOND_STEP = new Set([
-  'app/components/TutorialAgent.vue',
-  'app/composables/useTutorial.ts',
-  'app/components/admin/AdminPageHelpButton.vue',
-  'app/utils/tutorial-step-visibility.ts',
-  'app/utils/tutorial-step-visibility.test.ts',
-  'app/utils/tutorial-topics.ts',
-  'app/utils/tutorial-topics.test.ts',
-  'app/composables/useSetupStatus.ts',
-  'app/composables/useSetupStatus.test.ts',
-  'app/composables/useWorkspaceAlerts.ts',
-  'app/composables/useWorkspaceAlerts.test.ts',
-])
+const ROLE_LEVEL_HELPERS = /\b(canOperate|canManageSettings|canWrite|hasMinRole)\b/
 
 function listSourceFiles(dir: string): string[] {
   const out: string[] = []
@@ -60,16 +40,16 @@ describe('前端按鈕顯隱讀權限表（G-109）', () => {
     expect(files.length).toBeGreaterThan(100)
   })
 
-  it('大開關只剩定義處與還沒換的那批', () => {
+  it('app/ 裡沒有任何一處用大開關', () => {
     const offenders = files
       .filter(f => ROLE_LEVEL_HELPERS.test(f.src))
       .map(f => f.rel)
-      .filter(rel => !DEFINITIONS.has(rel) && !PENDING_SECOND_STEP.has(rel))
     expect(offenders, '改成 can(\'<那顆按鈕打的端點用的能力>\')').toEqual([])
   })
 
-  it('還沒換的清單不留死項：已經換完的要從清單拿掉（清單只能變短）', () => {
-    const stillUsing = new Set(files.filter(f => ROLE_LEVEL_HELPERS.test(f.src)).map(f => f.rel))
-    expect([...PENDING_SECOND_STEP].filter(rel => !stillUsing.has(rel))).toEqual([])
+  it('對照組：網子抓得到（⛔ 正規表示式寫壞的話上面那關會空跑成綠燈）', () => {
+    expect(ROLE_LEVEL_HELPERS.test('const { canOperate } = useWorkspace()')).toBe(true)
+    expect(ROLE_LEVEL_HELPERS.test('if (hasMinRole(role, \'admin\'))')).toBe(true)
+    expect(ROLE_LEVEL_HELPERS.test('can(\'conversations.reply\')')).toBe(false)
   })
 })

@@ -626,7 +626,7 @@ import { taipeiDate } from '~~/shared/time'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 const { user } = useAuth()
-const { workspaceId, ensureWorkspaceList, canOperate, canManageSettings } = useWorkspace()
+const { workspaceId, ensureWorkspaceList, can } = useWorkspace()
 /** 開通步驟紀錄：這裡只記落地那兩支導覽走完或關掉（`C-250`③） */
 const { track: trackOnboarding } = useOnboardingEvents({ workspaceId: () => workspaceId.value, flow: () => 'other' })
 const router = useRouter()
@@ -1116,7 +1116,7 @@ const activeGuide = ref<AgentGuideId | null>(null)
  */
 const walkthroughGuides = computed(() =>
   WALKTHROUGH_GUIDES
-    .filter(g => (g.requires === 'settings' ? canManageSettings.value : canOperate.value))
+    .filter(g => can(g.requires))
     .map(g => ({ ...g, title: AGENT_GUIDES[g.id].title })),
 )
 
