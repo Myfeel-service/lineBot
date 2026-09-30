@@ -36,7 +36,7 @@ import { scriptTriggerEvent, type ScriptTriggerEvent } from '~~/shared/types/ai-
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
 import { generateScriptDraft } from './ai-script-generate'
-import { AdminOpUserError, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
+import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import {
   aiSettingsAutoClose,
   aiSettingsEnabled,
@@ -258,44 +258,10 @@ async function listScriptDocs(ctx: AdminOpCtx): Promise<Record<string, any>[]> {
   return snap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, any>) }))
 }
 
-/**
- * 名字 → 流程。⛔ 模型不生 ID，也⛔不猜「最接近的那一條」：
- * 對不到就把現有名字列出來讓它反問，撞名就要求講得更清楚。
- */
+/** 名字 → 流程（查找與「找不到／撞名」的講法在 `admin-op-def` 的 `resolveScriptDoc`，改關鍵字那幾支共用同一份） */
 async function resolveScript(ctx: AdminOpCtx, name: string, docs?: Record<string, any>[]): Promise<ScriptRow> {
-  // ⛔ 只是要「用名字找一條」時不要掃整個集合：單欄位等值查詢吃 Firestore 自動建的索引，
-  //    不用開新的複合索引，而讀取數從「全部流程」降到「同名的那幾筆」。
-  //    （2026-08-11 讀取費暴衝就是這種無上限掃描累積出來的。）
-  const raw = docs ?? await (async () => {
-    const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
-      // ⛔ 工作區要進**查詢條件**，不可以只靠事後過濾：只查 name 的話會撈到別的租戶，
-      //    撞名的租戶多過 limit 就把自己這筆擠掉——症狀是提議時好好的
-      //    （那一步有帶整份清單），**按下確定才失敗**，而且回一句
-      //    「這個工作區還沒有任何自動回應可以上下架」的假話。
-      // ⚠️ 兩個都是等值條件，Firestore 用既有的單欄位索引就查得動，不必開新的複合索引。
-      .where('workspaceId', '==', ctx.workspaceId)
-      .where('name', '==', name.trim())
-      .limit(10)
-      .get()
-    return snap.docs
-      .map(d => ({ id: d.id, ...(d.data() as Record<string, any>) } as Record<string, any>))
-      // 保留這道：查詢已經擋掉了，這是第二層防線
-      .filter(d => d.workspaceId === ctx.workspaceId)
-  })()
-  const rows = raw.map(d => readScriptRow(String(d.id), d))
-  const want = name.trim().toLowerCase()
-  const hits = rows.filter(r => r.name.trim().toLowerCase() === want)
-
-  if (hits.length === 1) return hits[0]!
-  if (hits.length > 1)
-    throw new AdminOpUserError(`有 ${hits.length} 條自動回應都叫「${name}」，我沒辦法確定是哪一條——請他到自動回應頁改掉其中一個名字，或直接在頁面上操作。`)
-
-  const names = rows.map(r => `「${r.name}」`).slice(0, 8).join('、')
-  throw new AdminOpUserError(
-    rows.length
-      ? `找不到叫「${name}」的自動回應。目前有：${names}${rows.length > 8 ? ` 等 ${rows.length} 條` : ''}。請確認是哪一條。`
-      : '這個工作區還沒有任何自動回應可以上下架。',
-  )
+  const d = await resolveScriptDoc(ctx, name, docs)
+  return readScriptRow(String(d.id), d)
 }
 
 const scriptSetEnabled: AdminOpDef = {
@@ -821,6 +787,8 @@ const scriptCreateFromDescription: AdminOpDef = {
       uid: ctx.uid,
       actor: 'agent',
       action: adminOpAuditAction('script-create-from-description'),
+      // 建立端點自己那筆在代辦境域裡不寫（agent-op-context.ts），「建的是哪一條」要記在這一筆
+      targetId: res.id,
       after: { name: draft.name, enabled: false, stepCount: (draft.nodes ?? []).length },
       note: `依描述建立「${draft.name}」（建好是停用的）`,
     }, ctx.db)
@@ -962,6 +930,8 @@ const broadcastDraftCreate: AdminOpDef = {
       uid: ctx.uid,
       actor: 'agent',
       action: adminOpAuditAction('broadcast-draft-create'),
+      // 同上：建立端點那筆不寫了，草稿是哪一則記在這裡
+      targetId: res.id,
       after: { name: args.name, audience: args.tagName ?? '全部好友' },
       note: `建立推播草稿「${args.name}」（未發送）`,
     }, ctx.db)

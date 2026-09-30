@@ -4,6 +4,7 @@ import { can } from '~~/shared/permissions'
 import { ADMIN_OP_LABELS, adminOpAuditAction } from '~~/shared/types/admin-ops'
 import { getAdminOp } from '~~/server/utils/admin-ops'
 import { AdminOpUserError } from '~~/server/utils/admin-op-def'
+import { runAsAgentOp } from '~~/server/utils/agent-op-context'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
@@ -120,7 +121,8 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const result = await op.execute(ctx, payload.a)
+    // 圈進代辦境域：execute 轉呼叫的端點不再各自多寫一筆「人做的」紀錄（見 agent-op-context.ts）
+    const result = await runAsAgentOp(opId, () => op.execute(ctx, payload.a))
     // 真的做成幾次（與 chat 端點的「提議幾次」成對，用來看它提得準不準）
     if (result.ok) {
       recordAiUsage(workspaceId, { agentExecuted: 1 }, db)

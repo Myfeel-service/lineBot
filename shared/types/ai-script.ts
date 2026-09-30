@@ -290,6 +290,12 @@ export function isHumanRequestText(text: string): boolean {
 export const DEFAULT_SCRIPT_PRIORITY = 50
 export const DEFAULT_COLLECT_EXPIRE_MS = 10 * 60 * 1000 // 10 分鐘沒回就放棄
 export const MAX_SCRIPT_NODES = 20
+/**
+ * 關鍵字觸發最多幾個詞：存檔時超過的**直接截掉**（`normalizeScriptInput`）。
+ * ⛔ 要加詞的一方（小幫手 `script-update-keyword`）必須先問這個上限——
+ *    不然第 21 個詞送出去被截掉，畫面還說「加好了」（2026-09-30 code review）。
+ */
+export const MAX_TRIGGER_KEYWORDS = 20
 /** semantic 觸發每個步驟最多幾句範例 */
 export const MAX_TRIGGER_EXAMPLES = 10
 /** 快速回覆每個步驟最多幾個選項（LINE Quick Reply 上限 13，這裡留保守值） */

@@ -7,6 +7,7 @@ import {
   DEFAULT_SCRIPT_PRIORITY,
   MAX_QUICK_REPLY_OPTIONS,
   MAX_TRIGGER_EXAMPLES,
+  MAX_TRIGGER_KEYWORDS,
   type BranchOp,
   type CollectFormat,
   type TriggerKeywordMatch,
@@ -90,7 +91,7 @@ function normalizeNode(raw: any): ScriptNode | null {
       matchMode,
       keywordMatch: TRIGGER_KEYWORD_MATCHES.includes(raw?.keywordMatch) ? raw.keywordMatch : 'any',
       keywords: Array.isArray(raw?.keywords)
-        ? raw.keywords.map((k: unknown) => String(k).trim()).filter(Boolean).slice(0, 20)
+        ? raw.keywords.map((k: unknown) => String(k).trim()).filter(Boolean).slice(0, MAX_TRIGGER_KEYWORDS)
         : [],
       priority: clampInt(raw?.priority, 1, 100, DEFAULT_SCRIPT_PRIORITY),
       next: String(raw?.next ?? '').trim(),

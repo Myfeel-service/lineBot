@@ -83,6 +83,27 @@ describe('writeAuditLog(寫入)', () => {
     expect(payload.createdAt).toEqual({ __op: 'ts' })
   })
 
+  /**
+   * 2026-09-30 code review：小幫手建標籤／補知識卡／改自動回應都是轉呼叫既有端點，
+   * 端點寫一筆「人做的」、代辦又寫一筆「小幫手做的」＝同一件事兩筆，一筆還掛在人頭上。
+   */
+  it('小幫手代辦執行期間：端點的「人做的」那筆不寫、代辦自己那筆照寫；境域外一切照舊', async () => {
+    const { runAsAgentOp } = await import('./agent-op-context')
+    const add = vi.fn().mockResolvedValue({})
+    const db = { collection: vi.fn(() => ({ add })) } as any
+
+    await runAsAgentOp('tag-create', async () => {
+      // 中間隔一層非同步（端點裡有 await Firestore）：境域要一路跟進去
+      await Promise.resolve()
+      await writeAuditLog({ workspaceId: 'w1', uid: 'u1', actor: 'human', action: 'tag.create' }, db)
+      await writeAuditLog({ workspaceId: 'w1', uid: 'u1', actor: 'agent', action: 'agent-op/tag-create' }, db)
+    })
+    expect(add.mock.calls.map(c => c[0].action)).toEqual(['agent-op/tag-create'])
+
+    await writeAuditLog({ workspaceId: 'w1', uid: 'u1', actor: 'human', action: 'tag.create' }, db)
+    expect(add.mock.calls.map(c => c[0].action)).toEqual(['agent-op/tag-create', 'tag.create'])
+  })
+
   it('db 掛掉 → 吞錯不 throw(稽核是配菜不是閘門)', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const db = { collection: () => { throw new Error('boom') } } as any

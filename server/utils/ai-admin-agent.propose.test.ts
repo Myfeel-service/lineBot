@@ -52,6 +52,7 @@ function makeDb() {
     where: (field: string, op: string, value: unknown) => { whereCalls.push([field, op, value]); return chain },
     orderBy: () => chain,
     limit: () => chain,
+    select: () => chain,
     get: async () => ({
       size: scripts.length,
       docs: scripts.map((r, i) => ({ id: `d${i}`, data: () => ({ workspaceId: 'w1', ...r }) })),

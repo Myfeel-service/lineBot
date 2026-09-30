@@ -14,6 +14,7 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
+import { currentAgentOpId } from './agent-op-context'
 
 export const AUDIT_LOGS_COLLECTION = 'auditLogs'
 
@@ -163,6 +164,9 @@ export function auditTimeText(v: unknown): string | null {
  * （2026-09-24 `C-254` 補稽核時被 `test-send` 的單元測試抓到——那支測試沒有 mock `getDb`。）
  */
 export async function writeAuditLog(input: AuditLogInput, db?: Firestore): Promise<void> {
+  // 小幫手代辦轉呼叫的端點：那支端點的「人做的」紀錄不寫，由代辦自己寫一筆 actor='agent'
+  // （否則同一件事兩筆，一筆還掛在人頭上）。為什麼不能用旗標判斷見 agent-op-context.ts
+  if (input.actor === 'human' && currentAgentOpId()) return
   try {
     const target = db ?? getDb()
     // 有任何一格被遮罩／截斷／砍掉就標記起來：那樣的紀錄看得懂，但**不能拿來還原**

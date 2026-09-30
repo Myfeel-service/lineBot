@@ -1,15 +1,17 @@
 /**
- * 小幫手代辦（`C-31` Phase 2）的共用型別與錯誤類別。
+ * 小幫手代辦（`C-31` Phase 2）的共用型別、錯誤類別，與兩批操作都要用的查找。
  *
  * 為什麼從 `admin-ops.ts` 拆出來（2026-09-29 `D-109`）：第二批操作放在 `admin-ops-content.ts`，
  * 它要用 `AdminOpUserError`，而 `admin-ops.ts` 的註冊表又要 import 它——兩支互相 import，
  * 只要哪天有人先載入 `admin-ops-content`，註冊表就會拿到還沒初始化的東西（ESM 循環相依）。
- * 放在一支誰都不 import 的小檔裡，兩邊都從這裡拿，就沒有循環。
- * `admin-ops.ts` 照樣 re-export 這幾個名字，既有的 import 路徑都不用改。
+ * 放在一支**不 import 那兩支**的小檔裡，兩邊都從這裡拿，就沒有循環。
+ * ⛔ `admin-ops.ts` **不** re-export 這裡的名字（server/utils 的匯出會被 Nitro 自動匯入，
+ *    同一個名字從兩支檔案匯出，dev 一啟動就警告重複）——要用的人一律從 `./admin-op-def` import。
  */
 import type { Firestore } from 'firebase-admin/firestore'
 import type { Capability } from '~~/shared/permissions'
 import type { AdminOpPreview, AdminOpResult } from '~~/shared/types/admin-ops'
+import { SCRIPTS_COLLECTION } from './ai-scripts'
 
 export interface AdminOpCtx {
   db: Firestore
@@ -89,4 +91,66 @@ export interface AdminOpDef {
   fingerprint: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<string>
   preview: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<AdminOpPreview>
   execute: (ctx: AdminOpCtx, args: Record<string, unknown>) => Promise<AdminOpResult>
+}
+
+/**
+ * 名字 → 一條自動回應（原始文件，含 `id`）。上下架（`admin-ops`）與改關鍵字／回覆字
+ * （`admin-ops-content`）共用這一支——以前兩邊各寫一份，找不到時一邊列清單、一邊叫模型去查，
+ * 撞名的判法也各一套（2026-09-30 code review）。
+ *
+ * ⛔ 模型不生 ID，也⛔不猜「最接近的那一條」：對不到就讓它反問，撞名就要求講得更清楚。
+ * `docs`：呼叫端已經撈過整份清單時傳進來（上下架預覽要拿它算影響）——有清單才列得出現有的名字。
+ */
+export async function resolveScriptDoc(
+  ctx: AdminOpCtx,
+  name: string,
+  docs?: Record<string, any>[],
+): Promise<Record<string, any>> {
+  // ⛔ 只是要「用名字找一條」時不要掃整個集合：單欄位等值查詢吃 Firestore 自動建的索引，
+  //    不用開新的複合索引，而讀取數從「全部流程」降到「同名的那幾筆」。
+  //    （2026-08-11 讀取費暴衝就是這種無上限掃描累積出來的。）
+  const raw = docs ?? await (async () => {
+    const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
+      // ⛔ 工作區要進**查詢條件**，不可以只靠事後過濾：只查 name 的話會撈到別的租戶，
+      //    撞名的租戶多過 limit 就把自己這筆擠掉——症狀是提議時好好的
+      //    （那一步有帶整份清單），**按下確定才失敗**。
+      // ⚠️ 兩個都是等值條件，Firestore 用既有的單欄位索引就查得動，不必開新的複合索引。
+      .where('workspaceId', '==', ctx.workspaceId)
+      .where('name', '==', name.trim())
+      .limit(10)
+      .get()
+    return snap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, any>) } as Record<string, any>))
+  })()
+  // 保留這道：查詢已經擋掉了，這是第二層防線（傳進來的清單也一樣要過）
+  const mine = raw.filter(d => d.workspaceId === ctx.workspaceId)
+  const want = name.trim().toLowerCase()
+  const hits = mine.filter(d => String(d.name ?? '').trim().toLowerCase() === want)
+
+  if (hits.length === 1) return hits[0]!
+  if (hits.length > 1)
+    throw new AdminOpUserError(`有 ${hits.length} 條自動回應都叫「${name}」，我沒辦法確定是哪一條——請他到自動回應頁改掉其中一個名字，或直接在頁面上改。`)
+
+  // 對不到：把現有的名字列出來讓它反問。只用名字查的那條路（提議時先算的指紋就是這條）要另外撈一次清單——
+  // ⛔ 以前這裡直接講「這個工作區還沒有任何自動回應」：查不到**同名的**不等於一條都沒有，那句是假話，
+  //    模型也就拿不到清單可以反問。只拿名字、只在失敗時才多這一次查詢。
+  const pool = docs ? mine : await listScriptNames(ctx)
+  if (!pool.length)
+    throw new AdminOpUserError('這個帳號還沒有任何自動回應。')
+  const names = pool.map(d => `「${String(d.name || '(未命名流程)')}」`).slice(0, 8).join('、')
+  const more = pool.length >= SCRIPT_NAME_LIST_LIMIT && !docs ? ` 等 ${SCRIPT_NAME_LIST_LIMIT} 條以上` : ` 等 ${pool.length} 條`
+  throw new AdminOpUserError(`找不到叫「${name}」的自動回應。目前有：${names}${pool.length > 8 ? more : ''}。請確認是哪一條（⛔ 不要猜最接近的）。`)
+}
+
+const SCRIPT_NAME_LIST_LIMIT = 50
+
+/** 這個帳號的自動回應名字（只拿 name：流程文件裡有範例句向量，整份撈回來很肥） */
+async function listScriptNames(ctx: AdminOpCtx): Promise<Record<string, any>[]> {
+  const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
+    .where('workspaceId', '==', ctx.workspaceId)
+    .select('name', 'workspaceId')
+    .limit(SCRIPT_NAME_LIST_LIMIT)
+    .get()
+  return snap.docs
+    .map(d => d.data() as Record<string, any>)
+    .filter(d => d.workspaceId === ctx.workspaceId)
 }

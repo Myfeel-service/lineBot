@@ -99,6 +99,7 @@ const db = {
       where: () => chain,
       orderBy: () => chain,
       limit: () => chain,
+      select: () => chain,
       get: async () => {
         if (name === 'aiFeedbackEvents') {
           // 撈滿 100 筆且裡面沒有 wrong_answer：這正是「零 ≠ 沒有」那個情境

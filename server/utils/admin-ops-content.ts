@@ -21,15 +21,18 @@ import { AI_TONE_TEMPLATES, isAiToneTemplateKey, type AiToneTemplateKey } from '
 import { suggestTagCode, isValidTagCode } from '~~/shared/tag-code-suggest'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import {
+  DEFAULT_GROUNDING_SIMILARITY_THRESHOLD,
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
-import { scriptTriggerEvent } from '~~/shared/types/ai-script'
+import { MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
 // ⛔ 從 admin-op-def 拿、不從 admin-ops 拿：admin-ops 的註冊表 import 這支，反過來就是循環相依
-import { AdminOpUserError, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
+import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import { getAiSettings, setAiSettings } from './ai-settings'
 import { writeAuditLog } from './audit-log'
-import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { KNOWLEDGE_CHUNKS_COLLECTION, searchSimilarChunksWithDrafts } from './ai-knowledge-chunks'
+import { embedQuery, estimateTokens } from './gemini'
+import { recordAiUsage } from './ai-usage'
 import { getWorkspacePlan } from './billing'
 
 /** 轉呼叫既有端點：權限與驗證由那一支自己把關（呼叫者憑證原樣帶過去） */
@@ -467,6 +470,8 @@ export const tagCreate: AdminOpDef = {
     if (!created)
       return { ok: false, message: `標籤沒有建成功${lastError ? `：${lastError}` : '（代號一直撞到現有的標籤）'}。沒有動任何資料，可以到標籤管理自己建。` }
 
+    // 確認卡上把代號寫成「建好就不能改」：真的建出來的跟卡上不一樣時，⛔ 不可以安靜帶過
+    const codeChanged = !!args.code && code !== args.code
     await writeAuditLog({
       workspaceId: ctx.workspaceId,
       uid: ctx.uid,
@@ -474,10 +479,17 @@ export const tagCreate: AdminOpDef = {
       action: adminOpAuditAction('tag-create'),
       targetId: created.id,
       after: { name: args.name, code },
-      note: `建立標籤「${args.name}」`,
+      note: codeChanged
+        ? `建立標籤「${args.name}」（確認卡上的代號 ${args.code} 剛好被別的標籤用走，改用 ${code}）`
+        : `建立標籤「${args.name}」`,
     }, ctx.db)
 
-    return { ok: true, message: `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。` }
+    return {
+      ok: true,
+      message: codeChanged
+        ? `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。⚠️ 英文代號改成了「${code}」：確認卡上的「${args.code}」剛好在這段時間被別的標籤用走了。`
+        : `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。`,
+    }
   },
 }
 
@@ -491,8 +503,65 @@ interface KnowledgeDraftArgs {
   question: string
   answer: string
   title?: string
-  /** prepare 查到的相近卡（只給確認卡看；⚠️ 關鍵字比對，不保證找得全） */
+  /** prepare 查到的相近卡（只給確認卡看）：客人這樣問時 AI 會拿去回答的卡 */
   similar?: string[]
+  /**
+   * 相近的卡有沒有**真的查過**。⛔ 查不成（算向量失敗）跟「查了、沒有」是兩件事：
+   * 前者確認卡要講「這次沒查成」，不可以安靜地當成沒有重複。
+   */
+  similarChecked?: boolean
+}
+
+/**
+ * 客人這樣問時，AI 會拿哪幾張卡來回答（含「等你看過」的）——就是「會不會重複」要看的那幾張。
+ *
+ * ⛔ 不用 `/api/ai/knowledge/search`：那支是**整串字**的子字串比對，拿客人一整句問題去查
+ *    （「請問你們有沒有停車位可以停」），現成的「停車資訊」永遠比不到（2026-09-30 code review）。
+ *    改用答題同一套的向量搜尋、同一個「夠像才拿來答」門檻（`groundingThreshold`）。
+ */
+async function findSimilarCards(ctx: AdminOpCtx, question: string): Promise<{ titles: string[], checked: boolean }> {
+  try {
+    const [vector, settings] = await Promise.all([
+      embedQuery(question),
+      getAiSettings(ctx.workspaceId, ctx.db).catch(() => null),
+    ])
+    // 後台自用那一桶（同小幫手聊天的 test*）：不算進「回答客人」的成本
+    recordAiUsage(ctx.workspaceId, { testEmbeddingTokens: estimateTokens(question) }, ctx.db)
+      .catch(e => console.error('[admin-ops] recordAiUsage error:', e))
+    const floor = Number(settings?.groundingThreshold ?? DEFAULT_GROUNDING_SIMILARITY_THRESHOLD)
+    const hits = await searchSimilarChunksWithDrafts(ctx.db, ctx.workspaceId, vector, 3)
+    return {
+      titles: hits.filter(h => h.similarity >= floor).map(h => h.title.trim()).filter(Boolean),
+      checked: true,
+    }
+  }
+  catch (e) {
+    // 查不到就照實講「沒查成」，不擋補知識這件事
+    console.warn('[admin-ops] knowledge-draft 查相近的卡失敗：', (e as Error)?.message)
+    return { titles: [], checked: false }
+  }
+}
+
+/**
+ * 知識庫裡是不是已經有**一模一樣**的一張（標題、內容、那句問法都一樣，不在回收桶）。
+ *
+ * 兩個用途：①確認碼的指紋——建好之後它會從 false 變 true，同一張確認碼再送一次就擋得下來
+ * （以前指紋寫死 'new'，十分鐘內送幾次就建幾張）；②提議當下就已經有了＝不用再放一次。
+ * ⚠️ 兩個等值條件，吃單欄位索引就查得動（同 `resolveScriptDoc`）。
+ */
+async function identicalCardExists(ctx: AdminOpCtx, args: KnowledgeDraftArgs): Promise<boolean> {
+  const snap = await ctx.db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', ctx.workspaceId)
+    .where('title', '==', args.title ?? args.question)
+    .limit(20)
+    .get()
+  return snap.docs.some((d) => {
+    const c = d.data() as { workspaceId?: string, content?: string, questions?: unknown[], deletedAt?: unknown }
+    return c.workspaceId === ctx.workspaceId
+      && c.deletedAt == null
+      && String(c.content ?? '') === args.answer
+      && (c.questions ?? []).map(String).includes(args.question)
+  })
 }
 
 export const knowledgeDraftCreate: AdminOpDef = {
@@ -517,30 +586,35 @@ export const knowledgeDraftCreate: AdminOpDef = {
 
   async prepare(ctx, raw) {
     const args = raw as unknown as KnowledgeDraftArgs
-    let similar: string[] = []
-    try {
-      // 跟知識庫頁「補知識前先查重」同一支（P1-1）：有現成的就先講，改既有的比新建一條重複的好
-      const res = await callApi<{ items?: { title: string }[] }>(ctx, `/api/ai/knowledge/search?q=${encodeURIComponent(args.question.slice(0, 60))}`, { method: 'GET' })
-      similar = (res.items ?? []).slice(0, 3).map(i => String(i.title ?? '')).filter(Boolean)
-    }
-    catch { similar = [] } // 查不到就當沒有，不擋補知識這件事
-    return { ...args, similar } satisfies KnowledgeDraftArgs as unknown as Record<string, unknown>
+    // 有現成的就先講：改既有的比新建一條重複的好
+    const { titles, checked } = await findSimilarCards(ctx, args.question)
+    return { ...args, similar: titles, similarChecked: checked } satisfies KnowledgeDraftArgs as unknown as Record<string, unknown>
   },
 
-  async fingerprint() {
-    // 新建的東西沒有「現值」可以比；同一題重複放進去的話，「等你看過」裡看得到兩張，刪掉一張就好
-    return 'new'
+  async fingerprint(ctx, raw) {
+    // 建好之後會從 false 變 true：確認端點靠「指紋變了」擋下同一張確認碼的第二次（見 identicalCardExists）
+    return String(await identicalCardExists(ctx, raw as unknown as KnowledgeDraftArgs))
   },
 
-  async preview(_ctx, raw) {
+  async preview(ctx, raw) {
     const args = raw as unknown as KnowledgeDraftArgs
+    const base = { opId: 'knowledge-draft-create' as const }
+    // ⚠️ 這個 noop 也是確認端點判斷「這張剛剛已經執行過了」的依據——一定要跟指紋講同一件事
+    if (await identicalCardExists(ctx, args))
+      return { ...base, summary: '知識庫裡已經有一張一模一樣的卡了（同一句問法、同樣的回答），不用再放一次。', items: [], confirmLabel: '知道了', noop: true }
+
+    const similarItem = args.similar?.length
+      ? [{ label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 客人這樣問時，AI 現在會拿這幾張卡來回答——採用前先看一下會不會重複' }]
+      : args.similarChecked === false
+        ? [{ label: '這次沒查成', note: '⚠️ 沒辦法先確認知識庫裡有沒有講同一件事的卡，採用前自己看一下' }]
+        : []
     return {
-      opId: 'knowledge-draft-create',
+      ...base,
       summary: '我會把這張知識卡放進知識庫的「等你看過」：',
       items: [
         { label: args.question, note: '客人會這樣問' },
         { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容' },
-        ...(args.similar?.length ? [{ label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 知識庫裡可能已經有相近的卡，採用前先看一下會不會重複' }] : []),
+        ...similarItem,
       ],
       warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用時才算知識卡額度）。測試對話裡可以先試問看看。',
       confirmLabel: '確定放進「等你看過」',
@@ -549,9 +623,9 @@ export const knowledgeDraftCreate: AdminOpDef = {
 
   async execute(ctx, raw) {
     const args = raw as unknown as KnowledgeDraftArgs
-    let res: { id: string, status?: string }
+    let res: { id: string, status?: string, failureReason?: string }
     try {
-      res = await callApi<{ id: string, status?: string }>(ctx, '/api/ai/knowledge/create', {
+      res = await callApi<{ id: string, status?: string, failureReason?: string }>(ctx, '/api/ai/knowledge/create', {
         method: 'POST',
         body: { title: args.title, content: args.answer, questions: [args.question], tags: [], draft: true },
       })
@@ -561,8 +635,22 @@ export const knowledgeDraftCreate: AdminOpDef = {
     }
     // ⛔ 端點若沒吃到 draft（例如舊版），卡片會直接上線——那跟確認卡講的完全相反，要照實講
     if (res.status && res.status !== 'draft') {
+      // 卡片確實建出來了：這一筆也要記（建卡端點自己那筆在代辦境域裡不寫，漏了這裡就完全查不到）
+      await writeAuditLog({
+        workspaceId: ctx.workspaceId,
+        uid: ctx.uid,
+        actor: 'agent',
+        action: adminOpAuditAction('knowledge-draft-create'),
+        targetId: res.id,
+        after: { title: args.title, status: res.status },
+        note: `補一張知識卡「${args.title}」——⚠️ 沒有放進「等你看過」，直接上線了`,
+      }, ctx.db)
       return { ok: false, message: '⚠️ 卡片建好了，但**沒有**放進「等你看過」，而是直接上線了。請到知識庫把它停用或刪掉。' }
     }
+
+    // 卡建好了、但搜尋用的向量沒算成（例如 Gemini 一時 429）：沒有向量的卡**誰都搜不到**，
+    // 確認卡上那句「測試對話裡可以先試問」這時是假的——要照實講。採用時會再算一次（`adoptDrafts`）。
+    const failure = String(res.failureReason ?? '').trim()
 
     await writeAuditLog({
       workspaceId: ctx.workspaceId,
@@ -571,9 +659,18 @@ export const knowledgeDraftCreate: AdminOpDef = {
       action: adminOpAuditAction('knowledge-draft-create'),
       targetId: res.id,
       after: { title: args.title, status: 'draft' },
-      note: `補一張知識卡「${args.title}」（放在「等你看過」，還沒上線）`,
+      note: failure
+        ? `補一張知識卡「${args.title}」（放在「等你看過」，還沒上線；這次沒學成功：${failure}）`
+        : `補一張知識卡「${args.title}」（放在「等你看過」，還沒上線）`,
     }, ctx.db)
 
+    if (failure) {
+      return {
+        ok: true,
+        message: `放好了：「${args.title}」在知識庫的「等你看過」。⚠️ 但這張卡這次沒學成功（${failure}），`
+          + '所以**測試對話暫時問不到它**；按「採用」時系統會再學一次，採用之後才會拿來回答客人。',
+      }
+    }
     return { ok: true, message: `放好了：「${args.title}」在知識庫的「等你看過」，按「採用」之後才會拿來回答客人。` }
   },
 }
@@ -593,20 +690,9 @@ interface ScriptDocRow {
   nodes: Record<string, any>[]
 }
 
+/** 查找與「找不到／撞名」的講法跟上下架同一支（`resolveScriptDoc`），這裡只把要送回 PUT 的幾格挑出來 */
 async function findScriptByName(ctx: AdminOpCtx, name: string): Promise<ScriptDocRow> {
-  const snap = await ctx.db.collection(SCRIPTS_COLLECTION)
-    .where('workspaceId', '==', ctx.workspaceId)
-    .where('name', '==', name.trim())
-    .limit(10)
-    .get()
-  const hits = snap.docs
-    .map(d => ({ id: d.id, ...(d.data() as Record<string, any>) } as Record<string, any>))
-    .filter(d => d.workspaceId === ctx.workspaceId)
-  if (hits.length > 1)
-    throw new AdminOpUserError(`有 ${hits.length} 條自動回應都叫「${name}」，我沒辦法確定是哪一條——請他到自動回應頁改掉其中一個名字，或直接在頁面上改。`)
-  if (!hits.length)
-    throw new AdminOpUserError(`找不到叫「${name}」的自動回應。先用 list_auto_responses 查清單，照上面的名字一字不差再提議（⛔ 不要猜最接近的）。`)
-  const d = hits[0]!
+  const d = await resolveScriptDoc(ctx, name)
   return {
     id: String(d.id),
     name: String(d.name ?? ''),
@@ -687,6 +773,9 @@ export const scriptUpdateKeyword: AdminOpDef = {
       return { ...base, summary: `「${row.name}」沒有「${args.keyword}」這個關鍵字，沒有東西要拿掉。`, items: [], confirmLabel: '知道了', noop: true }
     if (args.action === 'remove' && list.length === 1)
       throw new AdminOpUserError(`「${args.keyword}」是「${row.name}」唯一的關鍵字，拿掉之後這條永遠不會啟動——要停用的話請他叫我「下架」。`)
+    // ⛔ 存檔端點超過上限會**直接截掉**最後面的（新加的就排在最後）——不先擋，卡上寫「加好了」、客人打那個詞卻永遠走不到
+    if (args.action === 'add' && list.length >= MAX_TRIGGER_KEYWORDS)
+      throw new AdminOpUserError(`「${row.name}」已經有 ${list.length} 個關鍵字，一條最多 ${MAX_TRIGGER_KEYWORDS} 個，加不進去了——要先拿掉一個（可以叫我拿掉），或到自動回應頁另開一條。（請照實告訴他。）`)
 
     const after = args.action === 'add' ? [...list, args.keyword] : list.filter(k => k.trim().toLowerCase() !== args.keyword.toLowerCase())
     return {
@@ -719,6 +808,9 @@ export const scriptUpdateKeyword: AdminOpDef = {
       : list.filter(k => k.trim().toLowerCase() !== args.keyword.toLowerCase())
     if (after.length === list.length && after.every((k, i) => k === list[i]))
       return { ok: true, message: '本來就是這樣，沒有動任何設定。' }
+    // 提議到按下去之間有人在頁面上加滿了：照送的話新詞會被存檔端點截掉（見 preview 那一道）
+    if (after.length > MAX_TRIGGER_KEYWORDS)
+      return { ok: false, message: `「${row.name}」現在已經有 ${list.length} 個關鍵字（上限 ${MAX_TRIGGER_KEYWORDS} 個），「${args.keyword}」加不進去，沒有動任何設定。要先拿掉一個再加。` }
 
     const nodes = row.nodes.map(n => (n === trig ? { ...n, keywords: after } : n))
     try {
