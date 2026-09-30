@@ -332,8 +332,16 @@ export interface WorkspaceAuthContext {
   /**
    * 呼叫者是這個帳號所屬組織的管理員（不管他是不是直接成員、直接角色多高）。
    * 組織管理員至少是 admin（`G-101`①），而且只有他們跟超管能改／移除擁有者（`G-96`）。
+   * ⛔ **只有呼叫時帶 `{ withOrgAdmin: true }` 才保證是真的**：直接角色已經是管理員／擁有者時，
+   *    沒要求就不查組織（每支 API 都多一次查詢太貴），那時這一格一律是 false——寧可「以為不是」
+   *    （動不了擁有者），也不會「以為是」。要拿它做判斷的端點一定要帶。
    */
   isOrgAdmin: boolean
+}
+
+export interface WorkspaceAccessOptions {
+  /** 這支端點要用 `isOrgAdmin` 做判斷（成員改角色／移除：能不能動擁有者，`G-96`） */
+  withOrgAdmin?: boolean
 }
 
 /**
@@ -349,6 +357,7 @@ export interface WorkspaceAuthContext {
 export async function requireWorkspaceAccess(
   event: H3Event,
   minRole: WorkspaceMemberRole = 'viewer',
+  opts: WorkspaceAccessOptions = {},
 ): Promise<WorkspaceAuthContext> {
   const token = await verifyRequestToken(event)
   const uid = token.uid
@@ -385,11 +394,14 @@ export async function requireWorkspaceAccess(
    * 組織管理員對組織內每個帳號都**至少**是 admin（`G-101`①）。
    * 原本只在「不是直接成員」時才查，同時是直接成員的人拿到的是比較低的那個：
    * 先被邀成客服、後來才升組織管理員，在那個帳號就永遠是客服；帳號管理員也能靠
-   * 「邀請一位組織管理員當觀察者」把他降級。所以一律查，角色取兩者較高的。
-   * ⚠️ 直接成員已經是 admin／owner 也要查：`isOrgAdmin` 本身是權限（`G-96`：只有組織管理員與超管
-   *    能改、能移除擁有者），不能因為角色不會更高就不查。getOrgMember 有 15 秒快取。
+   * 「邀請一位組織管理員當觀察者」把他降級。所以直接角色還不到管理員就一定查，角色取兩者較高的。
+   * 直接角色已經是 admin／owner 時，組織身分不會讓角色更高——只剩 `isOrgAdmin` 這一格有用
+   * （`G-96`：只有組織管理員與超管能改、能移除擁有者），所以**只有要用它的端點才查**（`withOrgAdmin`）。
+   * 以前一律查＝每一支 API（含輪詢）對管理員都多一次 orgMembers 查詢（2026-09-30 code review）。
+   * getOrgMember 有 15 秒快取。
    */
-  if (orgId && email) {
+  const roleMayRise = !role || (ROLE_LEVEL[role] ?? 0) < ROLE_LEVEL.admin
+  if (orgId && email && (roleMayRise || opts.withOrgAdmin === true)) {
     const orgRole = await getOrgMember(email, orgId)
     if (orgRole === 'admin') {
       isOrgAdmin = true
@@ -436,6 +448,7 @@ const ROLE_DENIED_MESSAGE: Record<WorkspaceMemberRole, string> = {
 export async function requireCapability(
   event: H3Event,
   capability: Capability,
+  opts: WorkspaceAccessOptions = {},
 ): Promise<WorkspaceAuthContext> {
-  return requireWorkspaceAccess(event, CAPABILITIES[capability])
+  return requireWorkspaceAccess(event, CAPABILITIES[capability], opts)
 }

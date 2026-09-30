@@ -13,6 +13,8 @@ const { store, auth } = vi.hoisted(() => ({
     workspaces: {} as Record<string, Record<string, unknown>>,
     orgs: {} as Record<string, Record<string, unknown>>,
     orgMembers: [] as { id: string, data: Record<string, unknown> }[],
+    /** orgMembers 被查了幾次（直接管理員的每一支 API 不該多這一次） */
+    orgQueries: 0,
     invites: [] as { id: string, data: Record<string, unknown> }[],
   },
   auth: {
@@ -47,7 +49,7 @@ vi.mock('./firebase', () => {
       if (name === 'workspaceMembers') return { doc: (id: string) => docRef(() => store.members, id) }
       if (name === 'workspaces') return { doc: (id: string) => docRef(() => store.workspaces, id) }
       if (name === 'organizations') return { doc: (id: string) => docRef(() => store.orgs, id) }
-      if (name === 'orgMembers') return query(() => store.orgMembers)
+      if (name === 'orgMembers') return query(() => { store.orgQueries++; return store.orgMembers })
       if (name === 'workspaceInvites') return query(() => store.invites)
       throw new Error(`unexpected collection ${name}`)
     },
@@ -91,6 +93,7 @@ beforeEach(async () => {
   store.workspaces = { w1: { organizationId: 'orgA' } }
   store.orgs = { orgA: { disabled: false }, orgB: { disabled: false } }
   store.orgMembers = [{ id: 'om1', data: { orgId: 'orgA', email: 'boss@x.tw', role: 'admin' } }]
+  store.orgQueries = 0
   store.invites = []
   auth.decoded = null
   auth.revoked = false
@@ -168,16 +171,49 @@ describe('組織管理員同時是直接成員：取較高的（`G-101`①）', 
     expect(ctx).toMatchObject({ role: 'admin', isOrgAdmin: true })
   })
 
-  it('直接成員已經是擁有者 → 不會被組織管理員身分往下拉；isOrgAdmin 照實標（`G-96` 靠它判斷能不能動擁有者）', async () => {
+  it('直接成員已經是擁有者 → 不會被組織管理員身分往下拉；要 isOrgAdmin 的端點照實拿到（`G-96` 靠它判斷能不能動擁有者）', async () => {
     store.members['u1_w1'] = { role: 'owner' }
     user({ email: 'boss@x.tw', email_verified: true })
-    expect(await mod.requireWorkspaceAccess(ev({ workspaceId: 'w1' }))).toMatchObject({ role: 'owner', isOrgAdmin: true })
+    expect(await mod.requireWorkspaceAccess(ev({ workspaceId: 'w1' }), 'viewer', { withOrgAdmin: true }))
+      .toMatchObject({ role: 'owner', isOrgAdmin: true })
+    expect(await mod.requireCapability(ev({ workspaceId: 'w1' }), 'members.manage', { withOrgAdmin: true }))
+      .toMatchObject({ role: 'owner', isOrgAdmin: true })
   })
 
   it('不是組織管理員的直接管理員 → isOrgAdmin=false', async () => {
     store.members['u1_w1'] = { role: 'admin' }
     user({ email: 'someone@x.tw', email_verified: true })
-    expect(await mod.requireWorkspaceAccess(ev({ workspaceId: 'w1' }))).toMatchObject({ role: 'admin', isOrgAdmin: false })
+    expect(await mod.requireWorkspaceAccess(ev({ workspaceId: 'w1' }), 'viewer', { withOrgAdmin: true }))
+      .toMatchObject({ role: 'admin', isOrgAdmin: false })
+  })
+
+  it('⭐ 直接管理員／擁有者的一般 API 不多查組織（2026-09-30 code review：以前每一支都多一次）；isOrgAdmin 保守回 false', async () => {
+    store.members['u1_w1'] = { role: 'owner' }
+    user({ email: 'boss@x.tw', email_verified: true })
+    expect(await mod.requireCapability(ev({ workspaceId: 'w1' }), 'ai.read')).toMatchObject({ role: 'owner', isOrgAdmin: false })
+    expect(store.orgQueries).toBe(0)
+  })
+
+  it('直接角色還不到管理員 → 照樣查（組織管理員要能把他拉高，`G-101`①不能因為省查詢就退回去）', async () => {
+    store.members['u1_w1'] = { role: 'agent' }
+    user({ email: 'boss@x.tw', email_verified: true })
+    expect(await mod.requireCapability(ev({ workspaceId: 'w1' }), 'ai.read')).toMatchObject({ role: 'admin', isOrgAdmin: true })
+    expect(store.orgQueries).toBe(1)
+  })
+
+  it('⛔ 用 isOrgAdmin 做判斷的端點一定要帶 withOrgAdmin（沒帶＝直接管理員那條路永遠拿到 false）', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const root = fileURLToPath(new URL('../api', import.meta.url))
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+      const p = join(dir, n)
+      return statSync(p).isDirectory() ? walk(p) : (p.endsWith('.ts') && !p.includes('.test.') ? [p] : [])
+    })
+    const users = walk(root).filter(f => /\bisOrgAdmin\b/.test(readFileSync(f, 'utf8')))
+    expect(users.length).toBeGreaterThan(0) // 那兩支成員端點——一支都找不到＝這條規則在空轉
+    const missing = users.filter(f => !/withOrgAdmin:\s*true/.test(readFileSync(f, 'utf8')))
+    expect(missing).toEqual([])
   })
 })
 

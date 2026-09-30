@@ -42,7 +42,8 @@ function checkRoleChange(docs: MemberDoc[], memberDocId: string, role: Workspace
  * Body: { role: 'admin' | 'agent' | 'viewer' }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid, isSuperAdmin, isOrgAdmin } = await requireCapability(event, 'members.manage')
+  // withOrgAdmin：要靠 isOrgAdmin 判斷能不能動擁有者，沒帶的話直接管理員那條路不會去查組織身分
+  const { workspaceId, uid, isSuperAdmin, isOrgAdmin } = await requireCapability(event, 'members.manage', { withOrgAdmin: true })
   const canTouchOwner = isOrgAdmin || isSuperAdmin
 
   const targetUid = event.context.params?.uid

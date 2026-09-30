@@ -141,9 +141,9 @@ describe('PUT 改角色', () => {
     expect(store.updates).toHaveLength(0)
   })
 
-  it('門檻讀權限表 members.manage（`G-106`）', async () => {
+  it('門檻讀權限表 members.manage（`G-106`）；要拿 isOrgAdmin 判斷擁有者，所以帶 withOrgAdmin', async () => {
     await put('ag', 'agent')
-    expect(requireCapability).toHaveBeenCalledWith(expect.anything(), 'members.manage')
+    expect(requireCapability).toHaveBeenCalledWith(expect.anything(), 'members.manage', { withOrgAdmin: true })
   })
 
   it('🔴 帳號管理員改不了擁有者（`G-96`），訊息 ⛔ 不再叫人去不存在的「轉移所有權」', async () => {

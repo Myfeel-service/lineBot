@@ -34,7 +34,8 @@ function checkRemoval(docs: MemberDoc[], memberDocId: string, canTouchOwner: boo
  *      剩 A、B 兩人互刪同時發生時，「先數再刪」兩邊都會通過）
  */
 export default defineEventHandler(async (event) => {
-  const { uid: callerUid, workspaceId, isSuperAdmin, isOrgAdmin } = await requireCapability(event, 'members.manage')
+  // withOrgAdmin：同 [uid].put.ts（要靠 isOrgAdmin 判斷能不能動擁有者）
+  const { uid: callerUid, workspaceId, isSuperAdmin, isOrgAdmin } = await requireCapability(event, 'members.manage', { withOrgAdmin: true })
   const canTouchOwner = isOrgAdmin || isSuperAdmin
 
   const targetUid = event.context.params?.uid
