@@ -34,3 +34,7 @@ tag-review-drawer*.png
 # scripts/ 底下的產圖腳本是 Python，跑過就會留一包 bytecode（純衍生物、跟平台版本綁死）
 __pycache__/
 *.pyc
+
+# Claude Code 的個人放行清單：每按一次「永遠允許」就長一條，而且會留下放行很寬的指令（`E-34`，2026-09-30 移出版控）。
+# 團隊共用的設定寫在 .claude/settings.json（照樣進版控）
+.claude/settings.local.json
