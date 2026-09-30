@@ -347,13 +347,21 @@
   }
 }
 
-// ── 什麼時候通知 ──
-// 表單寬度封頂、手機緊貼在右（`D-106`）：原本表單撐滿，寬螢幕上手機預覽離它半個畫面
-.ln-when {
-  display: grid;
-  grid-template-columns: minmax(0, 520px) 300px;
-  gap: 32px;
-  align-items: start;
+// ── 什麼時候通知 ｜ 手機會收到這樣的訊息 ──
+// 手機預覽在卡片**外面**、貼右邊、跟它等高（2026-09-30 老闆：「像圖文選單一樣」，前例＝`_richmenu.scss` 的 `.rm-stage`）。
+// ⭐ 等高靠 `align-items: stretch`：flex 的預設值，照樣寫出來——它是需求本身，⛔ 改成 flex-start 之前先看這一行。
+// ⚠️ `520 + 320 + 16 = 856`＝折行門檻：放得下兩張才並排，窄於這個就上下排；下面的 `@container` 要跟著同一個數字。
+.ln-stage {
+  container-type: inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.ln-stage > .ln-when-card {
+  flex: 1 1 520px;
+  min-width: 0;
 }
 
 .ln-when__form {
@@ -471,22 +479,12 @@
   color: var(--text-primary);
 }
 
-// 手機預覽：畫的是手機螢幕上的 LINE，固定淺色（跟示意頁的信件同一條規矩）
-.ln-phone {
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 22px;
-  background: #fff;
-  color: #1f2937;
-}
-
-.ln-phone__top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 6px 8px;
-  font-size: 12px;
-  font-weight: 700;
+// 手機預覽：自己一張卡（外框、標題列跟左邊那張同一套 `.message-card`）
+// ⚠️ 要夾 `.ln-stage >`：共用的 `.split-editor-body .message-card { flex-shrink: 0 }` 權重比單一 class 高，
+//    單寫會被改成不縮——390px 手機上這張卡就撐出畫面外。
+.ln-stage > .ln-phone {
+  flex: 0 1 320px;
+  min-width: 0;
 }
 
 .ln-phone__oa {
@@ -496,20 +494,46 @@
   color: #fff;
   font-size: 10px;
   font-weight: 900;
+  line-height: 1.5;
+}
+
+.ln-phone__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 1rem;
 }
 
 .ln-phone__tabs {
-  padding: 0 4px 8px;
+  flex: none;
 }
 
+// 聊天區：畫的是手機螢幕上的 LINE，固定淺色（跟示意頁的信件同一條規矩）
+// ⭐ 高度拉滿到跟左邊那張一樣高，多出來的都給聊天區（跟圖文選單的聊天區同一招）。
+// ⛔ `flex-basis: 0`＋`min-height: 0` 兩個都不能少：少一個，內容長的那一則（摘要＋週報）就會把這張卡撐得比左邊高，
+//    左邊跟著被拉長、底下空一截，而且每換一個分頁左邊那張就跳一次高度。內容放不下就在聊天區裡捲。
 .ln-phone__screen {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 240px;
   padding: 10px 8px;
   border-radius: 14px;
   background: #dfe6ee;
+  color: #1f2937;
+}
+
+// 上下排的時候（窄）沒有左邊那張可以對齊：照內容長，⛔ 不要留一個 0 高的聊天區
+@container (max-width: 855px) {
+  .ln-phone__screen {
+    flex: none;
+    min-height: 240px;
+    overflow-y: visible;
+  }
 }
 
 .ln-phone__when {
@@ -535,12 +559,6 @@
     align-self: flex-end;
     border-radius: 14px 4px 14px 14px;
     background: #a8e67e;
-  }
-}
-
-@media (max-width: 900px) {
-  .ln-when {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

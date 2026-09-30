@@ -168,16 +168,19 @@
           </div>
         </div>
 
-        <!-- ── 什麼時候通知（管理員；客服看不到這一塊，無權限一律隱藏） ── -->
-        <div v-if="data.canManage" class="message-card ln-card" data-tour="ln-when">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">什麼時候通知</span>
+        <!-- ── 什麼時候通知（管理員；客服看不到這一塊，無權限一律隱藏） ──
+             手機預覽在「什麼時候通知」那張卡**外面**、貼右邊、跟它等高（2026-09-30 老闆：「像圖文選單一樣」，
+             前例＝圖文選單的「客人看到的樣子」）。⛔ 不要再塞回卡片裡：它不是設定的一格，是那些設定的**結果**。
+             導覽錨點 `ln-when` 掛在外面這一層：那一步講的是「右邊那支手機」，框要把手機一起框進去 -->
+        <div v-if="data.canManage" class="ln-stage" data-tour="ln-when">
+          <div class="message-card ln-card ln-when-card">
+            <div class="message-card-header">
+              <div class="card-header-main">
+                <span class="section-title">什麼時候通知</span>
+              </div>
+              <span class="ln-card__meta">上面每個人收到的都一樣</span>
             </div>
-            <span class="ln-card__meta">上面每個人收到的都一樣</span>
-          </div>
-          <div class="card-section-stack">
-            <div class="ln-when">
+            <div class="card-section-stack">
               <!-- `D-107`：三段各一塊，跟右邊手機的三個分頁一一對應；點哪一段、改哪一段，手機就換到那一則
                    （原本改了摘要的設定，手機還停在「客人找真人」，要自己去點分頁） -->
               <div class="ln-when__form">
@@ -283,23 +286,30 @@
                   <p class="ln-when__hint">機器人收不到客人訊息、回覆額度用完這類正在影響客人的事。只在 9:00–21:00 傳。</p>
                 </section>
               </div>
-
-              <div class="ln-phone" data-tour="ln-preview" aria-label="手機會收到的樣子">
-                <div class="ln-phone__top"><span class="ln-phone__oa">LINE</span>手機會收到這樣的訊息</div>
-                <el-radio-group v-model="previewTab" size="small" class="ln-phone__tabs">
-                  <el-radio-button value="handoff">客人找真人</el-radio-button>
-                  <el-radio-button value="digest">早上的摘要</el-radio-button>
-                  <el-radio-button value="crit">出大事</el-radio-button>
-                </el-radio-group>
-                <div class="ln-phone__screen">
-                  <template v-for="(b, i) in previewBubbles" :key="i">
-                    <span v-if="b.when" class="ln-phone__when">{{ b.when }}</span>
-                    <div class="ln-phone__bubble" :class="{ 'is-me': b.me }">{{ b.text }}</div>
-                  </template>
-                </div>
-              </div>
             </div>
           </div>
+
+          <aside class="message-card ln-phone" data-tour="ln-preview" aria-label="手機會收到的樣子">
+            <div class="message-card-header">
+              <div class="card-header-main">
+                <span class="section-title">手機會收到這樣的訊息</span>
+              </div>
+              <span class="ln-phone__oa">LINE</span>
+            </div>
+            <div class="ln-phone__body">
+              <el-radio-group v-model="previewTab" size="small" class="ln-phone__tabs">
+                <el-radio-button value="handoff">客人找真人</el-radio-button>
+                <el-radio-button value="digest">早上的摘要</el-radio-button>
+                <el-radio-button value="crit">出大事</el-radio-button>
+              </el-radio-group>
+              <div class="ln-phone__screen">
+                <template v-for="(b, i) in previewBubbles" :key="i">
+                  <span v-if="b.when" class="ln-phone__when">{{ b.when }}</span>
+                  <div class="ln-phone__bubble" :class="{ 'is-me': b.me }">{{ b.text }}</div>
+                </template>
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
 
