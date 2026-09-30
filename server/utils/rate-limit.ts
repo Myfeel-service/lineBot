@@ -89,11 +89,22 @@ export function createRateLimiter(opts: { windowMs: number, max: number, maxKeys
  * 沒有這個標頭（本機 dev、直連）回空字串，呼叫端改用連線位址。
  */
 export function clientIpFromForwardedFor(xff: string | null | undefined): string {
-  const hops = String(xff || '')
+  const hops = forwardedForHops(xff)
+  return hops[hops.length - 1] ?? ''
+}
+
+/**
+ * `X-Forwarded-For` 拆成一格一格（去空白、丟空格）。
+ *
+ * 另外給 `/api/warmup` 回報**格數**用（2026-09-30 code review）：上面那個「CloudFront 之後沒有
+ * 別的代理」的前提線上還沒驗過。子保溫是從 Lambda 走公開網址打回來的、自己沒帶這個標頭——
+ * 走到那裡看到 1 格＝前提成立；2 格以上＝Amplify 內部又接了一跳，節流 key 會變成大家共用。
+ */
+export function forwardedForHops(xff: string | null | undefined): string[] {
+  return String(xff || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
-  return hops[hops.length - 1] ?? ''
 }
 
 /** 節流用的來源位址：`X-Forwarded-For` 最右邊 → 連線位址 → `'unknown'`（⛔ 永遠不回空字串，免得所有人共用一個空 key 還看不出來） */

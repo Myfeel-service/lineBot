@@ -1,6 +1,7 @@
 import { listWorkspaceLineCredentials } from '~~/server/utils/line-workspace-credentials'
 import { warmWorkspaceAutomationCaches } from '~~/server/utils/handler'
 import { assertCronAuthorized } from '~~/server/utils/cron-auth'
+import { forwardedForHops } from '~~/server/utils/rate-limit'
 import { getDb } from '~~/server/utils/firebase'
 import { LEAD_PATH } from '~~/shared/liff-lead-path'
 
@@ -56,7 +57,7 @@ export default defineEventHandler(async (event) => {
       // 一筆最小讀取,保持 Firestore gRPC 連線不閒置
       getDb().collection('workspaces').limit(1).get().catch(() => null),
     ])
-    return { child: true, pagesWarmed, ms: Date.now() - startedAt }
+    return { child: true, pagesWarmed, xffHops: xffHopCount(event), ms: Date.now() - startedAt }
   }
 
   // ── 母保溫:完整快取預熱 + 頁面渲染 + 併發子保溫,全部並行 ─────────────
@@ -65,14 +66,15 @@ export default defineEventHandler(async (event) => {
   const cronSecret = String(config.cronSecret || '').trim()
   // 子保溫必須走「公開網址」才會經過負載平衡打到別台實例(內部 $fetch 只會留在本機)。
   // 未設 PUBLIC_BASE_URL 或密鑰時略過(等同舊行為,單台保溫)。
-  const childTasks: Promise<boolean>[] = publicBase && cronSecret
+  // 子請求回報它看到的 X-Forwarded-For 格數（null＝這台沒暖成）
+  const childTasks: Promise<number | null>[] = publicBase && cronSecret
     ? Array.from({ length: WARM_CHILDREN }, () =>
-        $fetch(`${publicBase}/api/warmup?depth=1`, {
+        $fetch<{ xffHops?: number }>(`${publicBase}/api/warmup?depth=1`, {
           headers: { 'x-cron-secret': cronSecret },
           timeout: 15_000,
-        }).then(() => true).catch((e) => {
+        }).then(r => Number(r?.xffHops ?? 0)).catch((e) => {
           console.warn('[warmup] child warm failed:', e?.message || e)
-          return false
+          return null
         }),
       )
     : []
@@ -93,8 +95,18 @@ export default defineEventHandler(async (event) => {
   return {
     warmed: results,
     pagesWarmed,
-    childrenWarmed: children.filter(Boolean).length,
+    childrenWarmed: children.filter(h => h !== null).length,
     childrenTotal: childTasks.length,
+    // 走公開網址回來的子請求各看到幾格 X-Forwarded-For：全部是 1＝節流取最右邊那格是對的（見 rate-limit.ts）
+    childXffHops: children.filter((h): h is number => h !== null),
     ms: Date.now() - startedAt,
   }
 })
+
+/**
+ * 這個請求帶了幾格 X-Forwarded-For（⛔ 只回格數、不回位址）。
+ * 子保溫自己不帶這個標頭，所以它看到幾格＝公開網址到這台機器之間加了幾格。
+ */
+function xffHopCount(event: Parameters<typeof getHeader>[0]): number {
+  return forwardedForHops(getHeader(event, 'x-forwarded-for')).length
+}

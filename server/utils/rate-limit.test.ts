@@ -8,7 +8,7 @@
  * 4. 取 IP 取的是 `X-Forwarded-For` **最右邊**那格——最左邊是客人自己能填的。
  */
 import { describe, expect, it } from 'vitest'
-import { clientIpFromForwardedFor, createRateLimiter, rateLimitClientIp } from './rate-limit'
+import { clientIpFromForwardedFor, createRateLimiter, forwardedForHops, rateLimitClientIp } from './rate-limit'
 
 describe('createRateLimiter', () => {
   it('上限以內都給，超過才擋，並說出還要等多久', () => {
@@ -70,6 +70,13 @@ describe('clientIpFromForwardedFor', () => {
     expect(clientIpFromForwardedFor('')).toBe('')
     expect(clientIpFromForwardedFor(undefined)).toBe('')
     expect(clientIpFromForwardedFor(' , ')).toBe('')
+  })
+
+  it('格數（給 /api/warmup 驗「CloudFront 之後有沒有再多一跳」）：空格不算', () => {
+    expect(forwardedForHops('203.0.113.9')).toHaveLength(1)
+    expect(forwardedForHops('1.1.1.1, 203.0.113.9')).toHaveLength(2)
+    expect(forwardedForHops(' , ')).toHaveLength(0)
+    expect(forwardedForHops(undefined)).toHaveLength(0)
   })
 })
 
