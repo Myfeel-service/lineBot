@@ -87,3 +87,11 @@ export function can(role: WorkspaceMemberRole | null | undefined, capability: Ca
   if (!role) return false
   return hasMinRole(role, CAPABILITIES[capability])
 }
+
+/**
+ * 補店家輪廓（`D-85`）要過兩道門：**進得了那一頁**（開帳精靈 `?focus=profile` 與組織頁都看 `line.manage`）、
+ * **存得了**（`store-profile.post`＝`ai.settings.write`）。
+ * ⛔ 帶人去補輪廓的地方（行銷月曆卡、就緒度「讓 MiniMe 認識你的店」）一律問這一份——
+ *    以前一邊只看頁、一邊只看存檔，兩項門檻哪天分開，就會一邊給死路、一邊藏錯（2026-09-30 code review）。
+ */
+export const STORE_PROFILE_EDIT_CAPABILITIES = ['line.manage', 'ai.settings.write'] as const satisfies readonly Capability[]

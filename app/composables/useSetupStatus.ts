@@ -9,7 +9,7 @@
 import type { Component } from 'vue'
 import { Iphone, Link, MagicStick, Operation, Reading, Shop } from '@element-plus/icons-vue'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
-import type { Capability } from '~~/shared/permissions'
+import { STORE_PROFILE_EDIT_CAPABILITIES, type Capability } from '~~/shared/permissions'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
 export interface SetupCapability {
@@ -24,8 +24,9 @@ export interface SetupCapability {
   /**
    * 誰看得到這一項＝去做這件事要的那項能力（`G-109`：對齊它帶人去的那一頁／修好它打的端點，
    * 讀 `shared/permissions.ts` 同一張表）。沒有的人不顯示、也不算進進度與紅點。
+   * 給一串＝**每一項都要有**（例如進頁與存檔各看一項的店家輪廓）。
    */
-  requires: Capability
+  requires: Capability | readonly Capability[]
   /** 沒做完時，前往設定的頁面 */
   route: (workspaceId: string) => string
   /** 若有對應的逐步導覽，填教學主題 id（對應 useTutorial 的 topic） */
@@ -117,8 +118,9 @@ const CAPABILITIES: SetupCapability[] = [
     title: '讓 MiniMe 認識你的店',
     why: '它現在只知道你的帳號名稱。補上之後，節慶提醒才講得出你的商品，AI 回客人的口氣也才像你。',
     required: false,
-    // 輪廓卡的儲存（`store-profile.post`）是 `ai.settings.write`；卡片放在組織頁（進頁 `line.manage`，同為管理員）
-    requires: 'ai.settings.write',
+    // 進得了組織頁（`line.manage`）＋存得了輪廓（`store-profile.post`＝`ai.settings.write`）；
+    // 行銷月曆卡的「去補輪廓」問同一份（2026-09-30 code review：兩處原本各看一半）
+    requires: STORE_PROFILE_EDIT_CAPABILITIES,
     route: wid => `/admin/${wid}/settings/organization`,
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
@@ -272,7 +274,7 @@ export function useSetupStatus() {
 
   /** 只保留「這個帳號有權限去做」的能力——沒權限的不顯示、也不算進進度與紅點 */
   const visibleCapabilities = computed(() =>
-    capabilities.value.filter(c => can(c.requires)),
+    capabilities.value.filter(c => (typeof c.requires === 'string' ? [c.requires] : c.requires).every(r => can(r))),
   )
 
   /** 這個帳號有沒有任何「可動手」的設定項（沒有就整個健康卡都不顯示，例如觀察者） */

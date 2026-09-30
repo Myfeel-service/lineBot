@@ -40,7 +40,7 @@
           MiniMe 還不認識你的店，所以講不出「你的哪個商品該搭這個節日」。
           <!-- `G-102`：開帳頁只有管理員進得去（客服、觀察者會看到「請管理員完成開通」），
                不給一條走進去才被擋的路，直接講要找誰。 -->
-          <el-link v-if="can('line.manage')" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
+          <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
           <template v-else>請管理員花 3 分鐘讓它認識。</template>
         </el-alert>
 
@@ -54,7 +54,7 @@
           <template #title>補上「主打商品」，這幾檔會準很多</template>
           你的輪廓裡還沒寫賣什麼，所以 MiniMe 不敢替你挑「這一檔該發給誰」，
           節慶提醒也只能講通用的一句。
-          <el-link v-if="can('line.manage')" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+          <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
           <template v-else>請管理員補上。</template>
         </el-alert>
 
@@ -165,14 +165,15 @@ import {
   restoredText,
 } from '~~/shared/marketing-skips'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
+import { STORE_PROFILE_EDIT_CAPABILITIES } from '~~/shared/permissions'
 
 const props = defineProps<{ workspaceId: string }>()
 
 const { apiFetch } = useWorkspaceApiFetch(() => props.workspaceId)
 // `G-102`／`G-109`：擬推播＝`marketing-calendar/draft` 的 `broadcast.write`；收起來／還原＝`skip` 的 `marketing.write`。
-// 開帳頁（補輪廓）的門是寫死「擁有者／管理員」的角色判斷（`pages/admin/onboarding.vue`），
-// 表裡沒有對應的一項，照開帳頁本業（接 LINE）用管理員級的 `line.manage` 對齊。
+// 補輪廓要進得了開帳頁、也存得了輪廓：兩道門都在 `STORE_PROFILE_EDIT_CAPABILITIES`，跟就緒度那一項問同一份
 const { can } = useWorkspace()
+const canEditProfile = computed(() => STORE_PROFILE_EDIT_CAPABILITIES.every(c => can(c)))
 
 const entries = ref<CalendarEntry[]>([])
 const headline = ref('')
