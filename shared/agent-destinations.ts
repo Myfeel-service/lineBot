@@ -8,6 +8,9 @@
  * 加目的地＝在這裡加一筆；path 一定要對應真實存在的頁面路由。
  */
 import type { AgentMsg } from './types/agent-messages'
+import type { WorkspaceMemberRole } from './types/organization'
+import type { Capability } from './permissions'
+import { can } from './permissions'
 
 interface AgentDestination {
   /** 給人看的頁面名（卡片文字） */
@@ -15,6 +18,14 @@ interface AgentDestination {
   /** 給模型看的一句話：這頁能做什麼、什麼問題該指過來 */
   hint: string
   path: (workspaceId: string) => string
+  /**
+   * 進得了這一頁要有的能力＝那一頁**進頁守門**看的那一項（`app/middleware/` 的
+   * `ai-feature`／`workspace-settings`／`workspace-notify`）。不填＝所有成員都進得去。
+   * ⛔ 進不去的人不給連結：點了才被「這一頁只有管理員能進入」踢回對話頁＝死路
+   *    （同 `agent-teachings` 的 `requires`；2026-09-30 code review 抓到這張表漏了）。
+   * 對不對得上由 `app/utils/agent-destinations-access.test.ts` 拿三支守門函式逐角色比對。
+   */
+  requires?: Capability
 }
 
 /**
@@ -98,16 +109,19 @@ export const AGENT_DESTINATIONS = {
     label: '測試對話',
     hint: '上線前先試問 AI 會怎麼答（不會送給客人）、看它用了哪幾張知識卡',
     path: wid => `/admin/${wid}/ai-playground`,
+    requires: 'playground.use',
   },
   'settings-members': {
     label: '成員管理',
     hint: '邀請同事、改角色、移除成員（管理員才進得去）',
     path: wid => `/admin/${wid}/settings/members`,
+    requires: 'members.read',
   },
   'settings-activity': {
     label: '操作紀錄',
     hint: '誰在什麼時候把哪個設定改成什麼、還原、看小幫手代辦過什麼（管理員才進得去）',
     path: wid => `/admin/${wid}/settings/activity`,
+    requires: 'audit.read',
   },
   'support-presets': {
     label: '客服預存',
@@ -119,26 +133,43 @@ export const AGENT_DESTINATIONS = {
     label: 'LINE 通知',
     hint: '誰的手機會收到客人找真人、每天早上的摘要與出大事的通知；把自己的手機加進來；什麼時候通知',
     path: wid => `/admin/${wid}/settings/line-notify`,
+    requires: 'notify.self',
   },
   'settings-organization': {
     label: '組織與 LINE',
     hint: 'LINE 憑證（Token／Secret／LIFF）、Webhook 與 LIFF 連線檢查',
     path: wid => `/admin/${wid}/settings/organization`,
+    requires: 'line.manage',
   },
   'settings-billing': {
     label: '訂閱與付款',
     hint: '目前方案、AI 回覆額度、升級、發票',
     path: wid => `/admin/${wid}/settings/billing`,
+    requires: 'billing.manage',
   },
 } as const satisfies Record<string, AgentDestination>
 
 export type AgentDestinationId = keyof typeof AGENT_DESTINATIONS
 
+/** 這個角色進不進得了這個目的地（`requires` 沒填＝所有成員都進得去） */
+function reachable(d: AgentDestination, role: WorkspaceMemberRole | null): boolean {
+  return !!role && (!d.requires || can(role, d.requires))
+}
+
+/** 給 prompt 用的清單：只列這個角色進得去的（⛔ 列了進不去的，模型就會指一條點了是死路的連結） */
+export function agentDestinationCatalogueForPrompt(role: WorkspaceMemberRole | null): string {
+  return (Object.entries(AGENT_DESTINATIONS) as [AgentDestinationId, AgentDestination][])
+    .filter(([, d]) => reachable(d, role))
+    .map(([id, d]) => `- ${id}: ${d.label}——${d.hint}`)
+    .join('\n')
+}
+
 /**
  * 把模型吐的 goto 陣列換成可渲染的站內連結卡：
- * 白名單過濾（不認得的 id 丟棄）、去重、最多 2 張——模型編不出網址，最多挑錯頁。
+ * 白名單過濾（不認得的 id 丟棄）、角色過濾（進不去的丟棄）、去重、最多 2 張——模型編不出網址，最多挑錯頁。
+ * ⛔ 角色要在這裡再篩一次：清單已經篩過，但模型可能照抄對話裡看過的 id。
  */
-export function resolveAgentDestinations(ids: unknown, workspaceId: string): AgentMsg[] {
+export function resolveAgentDestinations(ids: unknown, workspaceId: string, role: WorkspaceMemberRole | null): AgentMsg[] {
   if (!Array.isArray(ids))
     return []
   const seen = new Set<string>()
@@ -148,7 +179,9 @@ export function resolveAgentDestinations(ids: unknown, workspaceId: string): Age
     if (!Object.prototype.hasOwnProperty.call(AGENT_DESTINATIONS, id) || seen.has(id))
       continue
     seen.add(id)
-    const d = AGENT_DESTINATIONS[id as AgentDestinationId]
+    const d: AgentDestination = AGENT_DESTINATIONS[id as AgentDestinationId]
+    if (!reachable(d, role))
+      continue
     out.push({ kind: 'link', internal: true, label: `前往「${d.label}」`, href: d.path(workspaceId) })
     if (out.length >= 2)
       break

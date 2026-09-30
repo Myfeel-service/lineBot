@@ -34,7 +34,7 @@ import { can, type Capability } from '~~/shared/permissions'
 import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/types/audit'
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
 import { getFirebaseAuth } from './firebase'
-import { AGENT_DESTINATIONS, resolveAgentDestinations } from '~~/shared/agent-destinations'
+import { agentDestinationCatalogueForPrompt, resolveAgentDestinations } from '~~/shared/agent-destinations'
 import { agentTeachingCatalogueForPrompt, resolveAgentTeaching } from '~~/shared/agent-teachings'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
@@ -575,8 +575,8 @@ ${adminOpCatalogueForPrompt()}
 { "action": "propose", "op": "操作id", "args": {}, "text": "一句話說明你打算做什麼", "answer": "他同一句話裡問的其他事,答案寫這裡" }
 
 【帶路（goto,選填）】回答若建議使用者去後台某頁操作,附上 goto 幫他帶路(最多 2 個)。
-只准用下列 id,不在清單裡的一律不要寫——你沒有能力發明網址:
-${Object.entries(AGENT_DESTINATIONS).map(([id, d]) => `- ${id}: ${d.label}——${d.hint}`).join('\n')}
+只准用下列 id(已照這位使用者的角色篩過,不在清單裡的他進不去),不在清單裡的一律不要寫——你沒有能力發明網址:
+${agentDestinationCatalogueForPrompt(role)}
 
 【帶你走一遍（teach,選填，最多 1 個）】使用者問「怎麼做／怎麼設／教我／在哪裡改」時,
 用一兩句話回答重點,**再附上最合適的一支教材**:他按下去,系統會在真實畫面上一步步帶他做(或在這個面板裡陪他做完並檢查)。
@@ -808,7 +808,7 @@ export async function runAdminAgentChat(params: {
       // (清單已經篩過,但模型可能照抄對話裡看過的 id)——跑不動的人拿到卡＝按了是死路
       const messages = [
         ...resolveAgentTeaching(data?.teach, role),
-        ...resolveAgentDestinations(data?.goto, workspaceId),
+        ...resolveAgentDestinations(data?.goto, workspaceId, role),
       ]
       return {
         reply: say(text || '(助理沒有給出回答,請換個問法再試一次)'),
