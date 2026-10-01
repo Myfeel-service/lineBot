@@ -66,7 +66,8 @@ const props = withDefaults(defineProps<{
   proposedAt?: number
 }>(), { superseded: false, cancelledByUser: false, stale: false, proposedAt: undefined })
 const emit = defineEmits<{
-  (e: 'done', payload: { ok: boolean, message: string, details?: string[] }): void
+  /** `targetId`＝動到的是哪一筆（`D-112`：聊天那邊拿它把那一列亮起來／給「前往查看」） */
+  (e: 'done', payload: { ok: boolean, message: string, details?: string[], targetId?: string }): void
   (e: 'cancel'): void
   /** 「不用做」的卡片被關掉：外面要清掉待確認狀態，但不必在對話裡多講一句 */
   (e: 'dismiss'): void
@@ -101,7 +102,7 @@ async function confirm() {
   if (state.value !== 'idle') return
   state.value = 'running'
   try {
-    const res = await apiFetch<{ ok: boolean, message: string, details?: string[] }>('/api/admin/agent/confirm', {
+    const res = await apiFetch<{ ok: boolean, message: string, details?: string[], targetId?: string }>('/api/admin/agent/confirm', {
       method: 'POST',
       body: { token: props.pending.token },
     })

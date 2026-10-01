@@ -351,7 +351,7 @@ const scriptSetEnabled: AdminOpDef = {
     const args = raw as unknown as ScriptEnabledArgs
     const row = await resolveScript(ctx, args.name)
     if (row.enabled === args.enabled)
-      return { ok: true, message: `「${row.name}」本來就是${args.enabled ? '啟用中' : '停用'}，沒有動任何設定。` }
+      return { ok: true, message: `「${row.name}」本來就是${args.enabled ? '啟用中' : '停用'}，沒有動任何設定。`, targetId: row.id }
 
     // 按確定之前再查一次：提議到按下去之間，可能有人開了另一條加好友流程、或方案到期降級了。
     // （指紋只記這一條的開關，別條的變化它看不到，所以不能只靠指紋。）
@@ -388,6 +388,7 @@ const scriptSetEnabled: AdminOpDef = {
       message: args.enabled
         ? `「${row.name}」已經上架，開始生效了。`
         : `「${row.name}」已經下架，客人不會再走到它（內容都還在）。`,
+      targetId: row.id,
     }
   },
 }
@@ -797,6 +798,7 @@ const scriptCreateFromDescription: AdminOpDef = {
       ok: true,
       message: `「${draft.name}」建好了，目前是**停用**狀態。到「自動回應」頁看過內容、確認沒問題再把它打開。`,
       details: [`流程代號：${res.id}`],
+      targetId: res.id,
     }
   },
 }
@@ -940,6 +942,7 @@ const broadcastDraftCreate: AdminOpDef = {
       ok: true,
       message: `草稿「${args.name}」建好了，**還沒有發送**。到推播頁確認內容與對象，要發的時候自己按發送。`,
       details: [`推播代號：${res.id}`],
+      targetId: res.id,
     }
   },
 }

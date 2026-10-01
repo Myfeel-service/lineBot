@@ -8,6 +8,8 @@
         :help-topics="['tags']"
       />
       <div class="flex gap-1 admin-header-actions">
+        <!-- `D-112`：「用一句話建立」放在「新增」旁邊（這一頁的標頭夠寬，跟另外兩顆排在一起） -->
+        <AgentAskButton page="tags" />
         <!-- 範本＝AI 判斷型標籤的起手式：名稱、判斷條件都寫好，一鍵建立改幾個字就能用（D-27③） -->
         <el-button v-if="canEditTags" size="small" data-tour="tag-templates" @click="openTemplates">從範本建立</el-button>
         <el-button v-if="canEditTags" :icon="Plus" type="primary" size="small" data-tour="tag-new" @click="openCreate">新增</el-button>
@@ -442,6 +444,7 @@
                     v-for="tag in tags"
                     :key="tag.id"
                     class="tags-table__row--clickable"
+                    :data-agent-target="tag.id"
                     tabindex="0"
                     @click="openEdit(tag)"
                     @keydown.enter="openEdit(tag)"
@@ -1490,6 +1493,27 @@ async function refreshTags() {
 async function onPageChange(nextPage: number) {
   await loadTags(tagListQuery(nextPage))
 }
+
+// ── 小幫手建好標籤（`D-112` 第 4 件）：重讀這一頁、那一列亮一下 ─────────────
+// 剛建好：照他現在的篩選與頁碼重讀（⛔ 不幫他清篩選、不跳頁）；看不到就回 missing，聊天給「前往查看」。
+// 按了「前往查看」：他明確要看了 → 清掉篩選回第一頁（清單照建立時間新的在前，剛建的就在最上面）。
+useAgentOpRefresh('tags', async (evt, { mode }) => {
+  if (mode === 'arrived') return (await flashAgentTarget(evt.targetId, 8000)) ? 'shown' : 'missing'
+  // 清單一回來就亮；重複檢查用的整份名單放背景讀（同 refreshTags 的兩件事，只是不讓第二件拖住第一件——
+  // 清單要連每顆的好友數一起算，正式資料上實測會慢到十幾秒）
+  if (mode === 'fresh') {
+    await reloadTags()
+    void loadAllTagNames()
+  }
+  if (await flashAgentTarget(evt.targetId, mode === 'fresh' ? 3000 : 500)) return 'shown'
+  if (mode !== 'reveal') return 'missing'
+  filterStatus.value = ''
+  filterCategory.value = ''
+  filterAiMode.value = ''
+  searchText.value = ''
+  await reloadTags(true)
+  return (await flashAgentTarget(evt.targetId)) ? 'shown' : 'missing'
+})
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch([filterStatus, filterCategory, filterAiMode], () => {

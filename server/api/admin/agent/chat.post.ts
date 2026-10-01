@@ -6,6 +6,7 @@ import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { getDb } from '~~/server/utils/firebase'
 import { FieldValue } from 'firebase-admin/firestore'
+import { normalizeAgentAskSource, normalizeAgentPromptPage } from '~~/shared/agent-entry'
 
 /**
  * Admin 查詢副駕(P1,唯讀)。viewer 以上都能問——它只查登入者本來就看得到的資料。
@@ -79,6 +80,10 @@ export default defineEventHandler(async (event) => {
     reply: res.reply.slice(0, 2000),
     // 提議了什麼(還沒執行)。真的做了會另外進 auditLogs,兩者分開才看得出「提了幾次、成了幾次」
     ...(res.pendingOp ? { proposedOp: res.pendingOp.opId } : {}),
+    // 從哪個入口叫出來、在哪一頁（`D-112`）：量「用一句話建立」「交給小幫手」這幾個入口到底有沒有人按。
+    // ⛔ 照表收斂，不原樣存前端送來的字
+    source: normalizeAgentAskSource(body?.source),
+    page: normalizeAgentPromptPage(body?.page),
     createdAt: FieldValue.serverTimestamp(),
   }).catch(e => console.error('[admin-agent] audit log error:', e))
 

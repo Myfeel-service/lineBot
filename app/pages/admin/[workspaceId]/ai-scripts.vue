@@ -8,6 +8,8 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- `D-112`：「用一句話建立」接在「新增」正下方（標頭 240px 塞不下第三顆） -->
+      <AgentAskButton page="ai-scripts" row />
       <div v-if="loading && !scripts.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -32,6 +34,7 @@
           :meta-text="followRow.meta"
           :meta-truncate="false"
           :class="['scripts-follow-row', { 'scripts-follow-row--unset': followRow.state === 'unset' }]"
+          :data-agent-target="followScript?.id"
           @select="onFollowRowSelect"
         />
         <div v-if="!messageScripts.length" class="split-sidebar-empty">
@@ -50,6 +53,7 @@
           :chip-tone="script.enabled ? 'success' : 'neutral'"
           :meta-text="triggerSummary(script)"
           :meta-truncate="true"
+          :data-agent-target="script.id"
           @select="selectScript(script)"
         />
         <div v-if="loadingMore" class="admin-sidebar-load-more">
@@ -2084,6 +2088,27 @@ function removeNode(id: string) {
   }
   nodes.splice(idx, 1)
 }
+
+// ── 小幫手改完（`D-112` 第 4 件）：清單重讀、那一列亮一下 ─────────────────
+// ⛔ 正開著的就是那一條、又有沒存的修改：不重讀（會蓋掉他打到一半的東西），回 dirty 讓聊天照實講
+useAgentOpRefresh('ai-scripts', async (evt, { mode }) => {
+  const id = evt.targetId
+  if (!id) return 'missing'
+  // 從別頁「前往查看」過來：`?id=` 深連結會自己翻頁打開它，這裡只等那一列出現
+  if (mode === 'arrived') return (await flashAgentTarget(id, 8000)) ? 'shown' : 'missing'
+  if (mode === 'fresh') await loadScripts(true)
+  // 不在已載入的那幾頁：往下翻到找到為止（同 `?id=` 深連結那一招）
+  if (!scripts.value.some(s => s.id === id))
+    await findScriptUntilFound(s => s.id === id).catch(() => null)
+  const row = scripts.value.find(s => s.id === id)
+  if (!row) return 'missing'
+  const isOpen = selectedId.value === id
+  if (isOpen && hasUnsavedChanges.value) return 'dirty'
+  // 正開著的就是它 → 換成新的內容；他按了「前往查看」→ 打開它（⛔ 手上有別條沒存的就只亮、不切）
+  if (isOpen || (mode === 'reveal' && !hasUnsavedChanges.value))
+    selectScript(row, { skipDiscardConfirm: true })
+  return (await flashAgentTarget(id)) ? 'shown' : 'missing'
+})
 
 // ── Load / Save / Delete ────────────────────────────────────────────
 onMounted(async () => {

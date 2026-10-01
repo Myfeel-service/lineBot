@@ -8,6 +8,9 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- `D-112`：「用一句話擬草稿」接在「新增」正下方（標頭 240px 塞不下第三顆）。
+           ⛔ 只建草稿，發送照舊要他自己按（紅線） -->
+      <AgentAskButton page="broadcasts" label="用一句話擬草稿" row />
       <!-- 節慶行銷提醒（2026-08-28 拍板）：人真的要動手排推播時就在這一頁——
            「中秋節快到了」最該出現的地方。文案跟 LINE 每日摘要那段同一支函式產
            （utils/festival-hint.ts），窗外整條不渲染。⛔不用警示色：這不是異常。 -->
@@ -46,6 +49,7 @@
           :chip-tone="broadcastTone(bc.status)"
           :meta-text="bcMetaText(bc)"
           meta-truncate
+          :data-agent-target="bc.id"
           @select="selectItem(bc)"
         />
 
@@ -1609,6 +1613,24 @@ function pickDraftVariant(i: number) {
   draftVariantIndex.value = i
   form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: v }, 'A')
 }
+
+// ── 小幫手擬好草稿（`D-112` 第 4 件）：清單與「有 N 則草稿」重讀、那一則亮一下 ─────────
+// ⛔ 剛擬好時不打開它：他可能正在編另一則還沒存的推播（按了「前往查看」才打開）
+useAgentOpRefresh('broadcasts', async (evt, { mode }) => {
+  const id = evt.targetId
+  if (!id) return 'missing'
+  // 從別頁「前往查看」過來：`?id=` 深連結會自己翻頁打開它，這裡只等那一列出現
+  if (mode === 'arrived') return (await flashAgentTarget(id, 8000)) ? 'shown' : 'missing'
+  // 「有 N 則草稿」那一行掛在清單載完的那一刻自己重讀（見 loadDraftTotal 下面那個 watch）
+  if (mode === 'fresh') await loadBroadcasts(true)
+  if (!broadcasts.value.some(b => b.id === id))
+    await findBroadcastUntilFound(b => b.id === id).catch(() => null)
+  const row = broadcasts.value.find(b => b.id === id)
+  if (!row) return 'missing'
+  if (mode === 'reveal' && !isCreating.value && !hasUnsavedChanges.value)
+    await selectItem(row, { skipDiscardConfirm: true })
+  return (await flashAgentTarget(id)) ? 'shown' : 'missing'
+})
 
 onMounted(async () => {
   await loadData()

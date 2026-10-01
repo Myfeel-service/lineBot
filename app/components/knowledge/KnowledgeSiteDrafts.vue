@@ -58,6 +58,7 @@
         :key="c.id"
         class="kb-drafts__card"
         :class="{ 'is-done': decided[c.id] }"
+        :data-agent-target="c.id"
       >
         <div class="kb-drafts__k">客人問</div>
         <div v-if="editing !== c.id" class="kb-drafts__q">{{ c.questions[0] || c.title }}</div>
@@ -162,6 +163,13 @@ async function load() {
   catch { /* 讀不到就不畫；知識庫其他部分照常 */ }
 }
 let pagesSnapshot = new Map<string, DraftPage>()
+
+// 小幫手補了一張卡（`D-112` 第 4 件）：重讀、把那一張亮一下。
+// ⚠️ 這一區是 `v-if="visible"`：原本一張都沒有時，要等重讀完才長得出來，所以亮之前先等它
+useAgentOpRefresh('knowledge', async (evt, { mode }) => {
+  if (mode === 'fresh') await load()
+  return (await flashAgentTarget(evt.targetId, mode === 'arrived' ? 8000 : 3000)) ? 'shown' : 'missing'
+})
 
 /** 整理還沒做完：一步一步推，推完一步就重抓（整理好的卡先出現） */
 let pushing = false

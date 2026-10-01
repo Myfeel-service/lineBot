@@ -214,6 +214,8 @@ describe('建標籤', () => {
     }
     const res = await ops.tagCreate.execute(ctx, { name: 'VIP', code: 'vip' })
     expect(res.ok).toBe(true)
+    // 畫面靠它把新建的那一列亮起來（`D-112`）
+    expect(res.targetId).toBe('new-tag')
     const codes = fetchCalls.filter(c => c.url === '/api/tag/create').map(c => c.body.code)
     expect(codes).toEqual(['vip', 'vip_2'])
     expect(auditLogs[0]).toMatchObject({ actor: 'agent', targetId: 'new-tag', after: { code: 'vip_2' } })
@@ -296,6 +298,7 @@ describe('補一張知識卡（只放進「等你看過」）', () => {
     fetchImpl = () => ({ id: 'c1', status: 'draft', failureReason: 'Gemini 429（請求太多）' })
     const res = await ops.knowledgeDraftCreate.execute(ctx, { question: 'q?', answer: 'a!', title: 'q?' })
     expect(res.ok).toBe(true)
+    expect(res.targetId).toBe('c1')
     expect(res.message).toContain('測試對話暫時問不到它')
     expect(res.message).toContain('Gemini 429')
     expect(auditLogs[0].note).toContain('沒學成功')
@@ -332,7 +335,8 @@ describe('改自動回應的關鍵字／回覆字', () => {
     scriptDocs = [baseScript()]
     const { args, preview } = await propose(ops.scriptUpdateKeyword, { name: '營業時間', action: 'add', keyword: '開到幾點' })
     expect(preview.confirmLabel).toBe('確定加關鍵字')
-    await ops.scriptUpdateKeyword.execute(ctx, args)
+    const res = await ops.scriptUpdateKeyword.execute(ctx, args)
+    expect(res.targetId).toBe('s1')
 
     const put = fetchCalls.find(c => c.method === 'PUT')!
     expect(put.url).toBe('/api/ai/scripts/s1')
@@ -406,7 +410,8 @@ describe('改自動回應的關鍵字／回覆字', () => {
   it('改回覆字：只有一段回覆才改，PUT 只換那一段文字', async () => {
     scriptDocs = [baseScript()]
     const { args } = await propose(ops.scriptUpdateReply, { name: '營業時間', text: '每天 11:00–20:00' })
-    await ops.scriptUpdateReply.execute(ctx, args)
+    const res = await ops.scriptUpdateReply.execute(ctx, args)
+    expect(res.targetId).toBe('s1')
     const put = fetchCalls.find(c => c.method === 'PUT')!
     expect(put.body.nodes[1].text).toBe('每天 11:00–20:00')
     expect(put.body.nodes[0]).toEqual(baseScript().data.nodes[0])

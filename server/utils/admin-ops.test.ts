@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, adminOpAuditAction } from '~~/shared/types/admin-ops'
 import { AUDIT_ACTION_LABELS } from '~~/shared/types/audit'
 import { CAPABILITIES } from '~~/shared/permissions'
+import { ADMIN_OP_CAPABILITY } from '~~/shared/agent-entry'
 
 const settingsStore: Record<string, any> = {
   serviceHours: { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' },
@@ -164,6 +165,13 @@ describe('操作模組表的不變量', () => {
 
   it('不認得的操作代號一律擋下，並講出做得到哪些（⛔不做最接近的那個）', () => {
     expect(() => getAdminOp('delete-everything')).toThrow(AdminOpUserError)
+  })
+
+  it('畫面篩建議用的門檻影本（`D-112`）跟每一筆 op 的門檻一字不差', () => {
+    // 不一樣的話：觀察者看得到一排按了只會被拒絕的建議，或該看到的人看不到
+    for (const [id, op] of Object.entries(ADMIN_OPS))
+      expect(ADMIN_OP_CAPABILITY[id as keyof typeof ADMIN_OP_CAPABILITY], `${id} 的門檻影本對不上`).toBe(op.capability)
+    expect(Object.keys(ADMIN_OP_CAPABILITY).sort()).toEqual(Object.keys(ADMIN_OPS).sort())
   })
 })
 
@@ -345,6 +353,8 @@ describe('op：自動回應上架／下架', () => {
     const res = await op.execute(ctx, op.normalize({ name: '出貨查詢', enabled: false }))
 
     expect(res.ok).toBe(true)
+    // 畫面靠它把那一列亮起來、或帶「前往查看」打開它（`D-112`）
+    expect(res.targetId).toBe('d1')
     expect(updates).toHaveLength(1)
     expect(Object.keys(updates[0]!.patch).sort()).toEqual(['enabled', 'updatedAt'])
     expect(updates[0]!.patch.enabled).toBe(false)
@@ -611,6 +621,7 @@ describe('op：建一則推播草稿（⛔只建草稿，發送永遠留人按�
     // ⛔ 發送是紅線：整條路上不可以出現任何 send/schedule
     expect(fetchCalls.some(c => /send|schedule/.test(c.url))).toBe(false)
     expect(res.message).toContain('還沒有發送')
+    expect(res.targetId).toBeTruthy()
   })
 
   it('試算失敗不擋建立，但也不可以假裝算得出來', async () => {

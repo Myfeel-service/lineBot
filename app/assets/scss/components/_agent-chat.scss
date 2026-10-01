@@ -1236,3 +1236,27 @@
     &:hover { background: rgb(255 255 255 / 30%); }
   }
 }
+
+/* ── 頁面上的「用一句話建立」（`D-112`，AgentAskButton）────────────────
+   淡綠底＋綠字：跟旁邊實心綠的「新增」分得開（那顆是主按鈕、照舊），
+   又看得出是同一家的動作。⛔ 不用星星圖示當主角：使用者研究裡沒有人把它聯想到「AI 幫你做」，
+   按鈕上一定要有字。 */
+.agent-ask-btn.el-button {
+  --el-button-bg-color: var(--brand-green-wash);
+  --el-button-border-color: var(--el-color-primary-light-7);
+  --el-button-text-color: var(--brand-green-text);
+  --el-button-hover-bg-color: var(--brand-green-wash);
+  --el-button-hover-border-color: var(--el-color-primary);
+  --el-button-hover-text-color: var(--brand-green-text);
+  --el-button-active-bg-color: var(--brand-green-wash);
+  --el-button-active-border-color: var(--el-color-primary);
+
+  font-weight: 600;
+}
+
+/* 側欄那一種：自己佔一排，接在標頭下面（240px 的標頭塞不下第三顆） */
+.agent-ask-row {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}

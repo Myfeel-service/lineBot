@@ -1,9 +1,11 @@
 <template>
   <div class="aa-chat">
     <div ref="listEl" class="aa-chat__list">
-      <!-- 開場白 + 能力邊界（C-31 Phase 2 起多了「幾件事可以代辦」，但一律先問再做） -->
+      <!-- 開場白（`D-112`，示意頁 v2）：先講它會**做**事，再講一律先問。
+           ⛔ 以前「做」只寫在一行灰色括號裡，四個建議又全是查詢，大家想不起來可以叫它做。
+           能做哪些事不在這裡列——輸入框上方的建議就是這一頁的清單，再列一次是同一件事講兩遍。 -->
       <div class="aa-msg aa-msg--ai">
-        <div class="aa-msg__bubble">想知道後台的什麼？我會查真實資料回答，不會亂編。<br><span class="aa-muted">（問「怎麼做」我可以直接帶你走一遍；少數設定也可以我來改，例如服務時間、自動回應開關——我會先給你看改什麼，按了確定才動手）</span></div>
+        <div class="aa-msg__bubble">我可以幫你查，也可以直接幫你改。要改什麼，我會先給你看，按了確定才動手。</div>
       </div>
 
       <template v-for="(m, i) in msgs" :key="i">
@@ -34,10 +36,18 @@
             :cancelled-by-user="m.pendingCancelled === true"
             :stale="m.pending.token !== lastPendingToken"
             :proposed-at="m.pendingAt"
-            @done="onOpDone"
+            @done="(r) => onOpDone(r, m.pending?.opId)"
             @cancel="onOpCancel"
             @dismiss="lastPendingToken = ''"
           />
+          <!-- 改完「前往查看」（`D-112`）：他在別頁叫它做的、或這一頁找不到那一列時才給。
+               ⛔ 不自動跳頁：他可能正在這一頁做別的事 -->
+          <button
+            v-if="m.view"
+            type="button"
+            class="agm-card agm-link aa-view"
+            @click="goView(m.view)"
+          >前往「{{ AGENT_OP_PAGE_LABEL[m.view.page] }}」查看 →</button>
           <div v-if="m.tools?.length" class="aa-msg__tools">查了：{{ m.tools.map(toolLabel).join('、') }}</div>
         </div>
       </template>
@@ -47,16 +57,53 @@
       </div>
     </div>
 
-    <!-- 建議問題:還沒開始聊才顯示,一鍵就懂能問什麼 -->
-    <div v-if="!msgs.length && !loading" class="aa-chat__starters">
-      <button v-for="s in starters" :key="s" type="button" @click="send(s)">{{ s }}</button>
+    <!--
+      建議（`D-112`，示意頁 v2 的 ③）：**跟著頁面換、一直在輸入框上方**——以前四句固定的查詢、對話一開始就消失。
+      綠的是「直接幫你做」：按了只放進輸入框，⛔ 不直接送（「運費」「80 元」是範例不是他的規則）；
+      白的是「幫你查」：沒有副作用，按了就送。聊過之後縮成一排（可橫捲），把高度還給對話。
+    -->
+    <div class="aa-chat__pills" :class="{ 'is-compact': msgs.length > 0 }">
+      <div class="aa-chat__pills-head">
+        <span>{{ prompts.label ? `在「${prompts.label}」可以叫我` : '可以叫我做的事' }}</span>
+        <button
+          v-if="catalogueCount"
+          type="button"
+          class="aa-chat__all-toggle"
+          :aria-expanded="showAll"
+          @click="showAll = !showAll"
+        >{{ showAll ? '收合' : `全部 ${catalogueCount} 件` }}</button>
+      </div>
+      <ul v-if="showAll" class="aa-chat__all">
+        <li v-for="g in catalogue" :key="g.page"><b>{{ g.label }}</b>：{{ g.ops.join('、') }}</li>
+      </ul>
+      <div class="aa-chat__chips">
+        <button
+          v-for="d in prompts.dos"
+          :key="d.say"
+          type="button"
+          class="aa-chip aa-chip--do"
+          :disabled="loading"
+          @click="fillSuggestion(d.say)"
+        >{{ d.say }}</button>
+        <button
+          v-for="a in prompts.asks"
+          :key="a"
+          type="button"
+          class="aa-chip"
+          :disabled="loading"
+          @click="send(a, 'suggestion')"
+        >{{ a }}</button>
+      </div>
     </div>
 
     <div class="aa-chat__input">
       <el-input
+        ref="inputEl"
         v-model="input"
-        placeholder="例：哪些客服流程沒啟用？"
+        :placeholder="prompts.placeholder"
         :disabled="loading"
+        class="aa-chat__field"
+        :class="{ 'is-turn': glow }"
         @keyup.enter="send()"
       />
       <el-button type="primary" :loading="loading" :disabled="!input.trim() && !loading" @click="send()">送出</el-button>
@@ -65,10 +112,20 @@
 </template>
 
 <script setup lang="ts">
-/** Admin 查詢副駕(P1)的聊天面板:唯讀問答,掛在教學小幫手的「問助理」分頁。 */
+/** 小幫手的「問／交辦」分頁：用講的查後台、也用講的叫它改（改之前一律先給確認卡）。 */
 import { ADMIN_AGENT_TOOL_LABELS } from '~~/shared/types/admin-agent'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
-import type { AdminOpPending } from '~~/shared/types/admin-ops'
+import type { AdminOpId, AdminOpPending } from '~~/shared/types/admin-ops'
+import {
+  ADMIN_OP_TARGET,
+  AGENT_OP_PAGE_LABEL,
+  type AgentAskSource,
+  agentOpCatalogue,
+  agentOpViewPath,
+  agentPromptPageFromPath,
+  agentPromptsFor,
+} from '~~/shared/agent-entry'
+import type { AgentOpDoneEvent } from '~/composables/useAgentOpRefresh'
 
 interface Msg {
   who: 'me' | 'ai'
@@ -87,10 +144,15 @@ interface Msg {
   pendingSuperseded?: boolean
   /** 使用者在對話裡收回了這個提議（「算了」「不用了」）→ 不給按 */
   pendingCancelled?: boolean
+  /** 代辦做完、那一列不在眼前：給一顆「前往查看」（`D-112`） */
+  view?: AgentOpDoneEvent
 }
 
-const { apiFetch, workspaceId } = useWorkspace()
-const { topics, startTopicById, openGuide, openPanelTab } = useTutorial()
+const { apiFetch, workspaceId, can } = useWorkspace()
+const { topics, startTopicById, openGuide, openPanelTab, requestedAgentAsk } = useTutorial()
+const route = useRoute()
+const { bumpAdminTagList } = useAdminTagRefresh()
+const { showToast } = useAdminToast()
 
 type TeachCard = Extract<AgentMsg, { kind: 'teach' }>
 
@@ -147,12 +209,101 @@ const loading = ref(false)
 const lastPendingToken = ref('')
 const listEl = ref<HTMLElement | null>(null)
 
-const starters = [
-  '現在有什麼要處理的？',
-  '這個月 AI 用量如何?',
-  '哪些客服流程還沒啟用？',
-  '知識庫有沒有匯入失敗？',
-]
+// ── 這一頁的建議（`D-112`）────────────────────────────────────────
+/** 他現在在哪一頁：建議、輸入框的範例字、記錄來源都看這個 */
+const page = computed(() => agentPromptPageFromPath(route.path))
+/** 已照權限篩過：觀察者一個「做」都不會看到（按了只會被拒絕的建議比沒有更糟） */
+const prompts = computed(() => agentPromptsFor(page.value, can))
+const catalogue = computed(() => agentOpCatalogue(can))
+const catalogueCount = computed(() => catalogue.value.reduce((n, g) => n + g.ops.length, 0))
+const showAll = ref(false)
+
+/**
+ * 這一句是從哪個入口來的。按了「做」的建議或頁面上的「用一句話建立」之後才打字送出，
+ * 也算那個入口（他只是把範例改成自己的）；把建議的字整個清掉＝重新開始，算自己打字。
+ * ⚠️ 「用一句話建立」進來時輸入框本來就是空的，所以那一種不因為空而清掉。
+ */
+const pendingSource = ref<AgentAskSource | null>(null)
+watch(input, (v) => {
+  if (!v.trim() && pendingSource.value === 'suggestion')
+    pendingSource.value = null
+})
+
+const inputEl = ref<{ focus: () => void, input?: HTMLInputElement } | null>(null)
+/** 輸入框亮三下（同 AgentAskDock 的 `is-turn`）：從頁面按鈕進來時告訴他「在這裡講」 */
+const glow = ref(false)
+
+function focusInput() {
+  glow.value = false
+  // 面板打開時會先把焦點放在面板本體（esc 才關得掉），這裡晚一拍再搶回輸入框
+  nextTick(() => setTimeout(() => {
+    inputEl.value?.focus()
+    const el = inputEl.value?.input
+    if (el) el.setSelectionRange(el.value.length, el.value.length)
+    glow.value = true
+  }, 80))
+}
+
+/** 「做」的建議：放進輸入框，等他改成自己的再送（⛔ 不直接送） */
+function fillSuggestion(text: string) {
+  input.value = text
+  pendingSource.value = 'suggestion'
+  focusInput()
+}
+
+// 頁面上的「用一句話建立」、目前狀況卡片的「交給小幫手」留在共享狀態的那句話。
+// ⚠️ immediate：面板可能是被這個請求打開的，聊天元件掛上的時候請求早就在那裡了
+watch(requestedAgentAsk, (req) => {
+  if (!req) return
+  requestedAgentAsk.value = null
+  if (req.send && req.text) {
+    void send(req.text, req.source)
+    return
+  }
+  input.value = req.text ?? ''
+  pendingSource.value = req.source
+  focusInput()
+}, { immediate: true })
+
+// ── 改完：頁面跟著變（`D-112` 第 4 件）────────────────────────────
+const pendingView = useAgentOpPendingView()
+
+/**
+ * 通知那一頁重讀並把改到的那一塊亮起來；那一頁不在眼前（或找不到那一列）就給「前往查看」。
+ * 他手上有沒存的修改時頁面不會重讀——那時要照實講：畫面上還是舊的，直接存會把剛改的改回去。
+ */
+async function showResult(opId: AdminOpId, targetId: string | undefined, msg: Msg) {
+  const t = ADMIN_OP_TARGET[opId]
+  if (!t) return
+  const evt: AgentOpDoneEvent = { opId, page: t.page, section: t.section, targetId, at: Date.now() }
+  // 新建的標籤：別頁的標籤下拉也要看得到（`C-208` 的全站訊號）
+  if (opId === 'tag-create') bumpAdminTagList()
+  const shown = await dispatchAgentOpDone(evt)
+  if (shown === 'shown') {
+    msg.text += '\n（畫面上亮起來的就是）'
+    return
+  }
+  if (shown === 'dirty') {
+    msg.text += `\n⚠️ 你這一頁還有沒存的修改，所以畫面上還是舊的。直接按儲存會把我剛改的改回去——要保留的話先按「取消」。`
+    return
+  }
+  // 不在這一頁（absent），或這一頁現在看不到它（被篩選掉、在別一區）→「前往查看」
+  msg.view = evt
+}
+
+async function goView(evt: AgentOpDoneEvent) {
+  const wid = workspaceId.value
+  if (!wid) return
+  // ⛔ 已經在那一頁：換到同一個網址不會重新掛載（`?id=` 那些不會再跑），直接叫那一頁把它拿出來
+  if (page.value === evt.page) {
+    const r = await dispatchAgentOpDone(evt, 'reveal')
+    if (r === 'dirty') showToast('你正在編還沒存的內容，先沒幫你切過去——存好或取消後再按一次', 'warning')
+    else if (r === 'missing') showToast('這一頁找不到它，可能已經被刪掉了', 'warning')
+    if (r !== 'absent') return
+  }
+  pendingView.value = { ...evt, at: Date.now() }
+  void navigateTo(agentOpViewPath(evt.page, wid, evt.targetId))
+}
 
 // 工具顯示名收 shared 單一來源:之前這裡手寫第二份,08-06 加 get_conversation_stats
 // 就漏了標籤(UI 直接秀英文工具名)——兩份表遲早漂移的實證
@@ -165,10 +316,16 @@ function scrollToBottom() {
 }
 
 /** 代辦執行完：結果進對話（成功失敗都講，⛔不要只在卡片上留一個小勾） */
-function onOpDone(res: { ok: boolean, message: string, details?: string[] }) {
+async function onOpDone(res: { ok: boolean, message: string, details?: string[], targetId?: string }, opId?: AdminOpId) {
   lastPendingToken.value = '' // 這件事已經結束了，別再當成「上一個提議」帶回去
   const detail = res.details?.length ? `\n${res.details.join('\n')}` : ''
   msgs.value.push({ who: 'ai', text: `${res.message}${detail}` })
+  scrollToBottom()
+  // 沒做成就沒有東西可以看（⛔ 不亮一個沒變的東西）
+  if (!res.ok || !opId) return
+  // ⚠️ 改的是陣列裡那一份（響應式的），不是剛剛推進去的那個字面物件
+  const msg = msgs.value[msgs.value.length - 1]!
+  await showResult(opId, res.targetId, msg)
   scrollToBottom()
 }
 
@@ -178,13 +335,19 @@ function onOpCancel() {
   scrollToBottom()
 }
 
-async function send(preset?: string) {
+/**
+ * @param preset 直接送的那句話（「查」的建議、卡片上的「交給小幫手」）；不給＝送輸入框裡的字
+ * @param source 從哪個入口來（`D-112` 量入口用）；不給＝看輸入框裡的字是怎麼來的
+ */
+async function send(preset?: string, source?: AgentAskSource) {
   const text = String(preset ?? input.value).trim()
   if (!text || loading.value) return
   // 查詢期間可能被切到別的工作區。回來時對不上就整個丟掉——
   // 把 A 家的查詢結果貼進 B 家的對話,是會讓人照著錯資料做決定的那種錯
   const askedFor = workspaceId.value || ''
   const stillHere = () => (workspaceId.value || '') === askedFor
+  const from: AgentAskSource = source ?? (preset ? 'suggestion' : pendingSource.value ?? 'typed')
+  pendingSource.value = null
   input.value = ''
   msgs.value.push({ who: 'me', text })
   loading.value = true
@@ -200,7 +363,14 @@ async function send(preset?: string) {
       cancelPrevious?: boolean
     }>('/api/admin/agent/chat', {
       method: 'POST',
-      body: { message: text, history, ...(lastPendingToken.value ? { lastToken: lastPendingToken.value } : {}) },
+      body: {
+        message: text,
+        history,
+        ...(lastPendingToken.value ? { lastToken: lastPendingToken.value } : {}),
+        // 只拿來記錄（後端照表收斂），⛔ 不影響它怎麼回答
+        source: from,
+        page: page.value,
+      },
     })
     if (stillHere()) {
       // 這一輪之後，上面那張還按得下去的舊卡還算不算數？三種情況分開處理——

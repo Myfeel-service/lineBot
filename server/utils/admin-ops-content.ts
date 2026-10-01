@@ -489,6 +489,7 @@ export const tagCreate: AdminOpDef = {
       message: codeChanged
         ? `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。⚠️ 英文代號改成了「${code}」：確認卡上的「${args.code}」剛好在這段時間被別的標籤用走了。`
         : `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。`,
+      targetId: created.id,
     }
   },
 }
@@ -669,9 +670,10 @@ export const knowledgeDraftCreate: AdminOpDef = {
         ok: true,
         message: `放好了：「${args.title}」在知識庫的「等你看過」。⚠️ 但這張卡這次沒學成功（${failure}），`
           + '所以**測試對話暫時問不到它**；按「採用」時系統會再學一次，採用之後才會拿來回答客人。',
+        targetId: res.id,
       }
     }
-    return { ok: true, message: `放好了：「${args.title}」在知識庫的「等你看過」，按「採用」之後才會拿來回答客人。` }
+    return { ok: true, message: `放好了：「${args.title}」在知識庫的「等你看過」，按「採用」之後才會拿來回答客人。`, targetId: res.id }
   },
 }
 
@@ -836,6 +838,7 @@ export const scriptUpdateKeyword: AdminOpDef = {
       message: args.action === 'add'
         ? `改好了：「${row.name}」多了關鍵字「${args.keyword}」。`
         : `改好了：「${row.name}」拿掉了關鍵字「${args.keyword}」。`,
+      targetId: row.id,
     }
   },
 }
@@ -920,6 +923,6 @@ export const scriptUpdateReply: AdminOpDef = {
       note: `改了「${row.name}」回給客人的話`,
     }, ctx.db)
 
-    return { ok: true, message: `改好了：「${row.name}」現在會回新的那段話。` }
+    return { ok: true, message: `改好了：「${row.name}」現在會回新的那段話。`, targetId: row.id }
   },
 }

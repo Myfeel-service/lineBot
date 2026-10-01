@@ -45,7 +45,8 @@
           <div class="ta-tabs" role="tablist">
             <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">目前狀況</button>
             <button type="button" role="tab" :aria-selected="panelTab === 'learn'" :class="{ 'is-active': panelTab === 'learn' }" @click="panelTab = 'learn'">教學</button>
-            <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問助理</button>
+            <!-- `D-112`（2026-10-01 拍板）：「問助理」→「問／交辦」——名字本身就講它會做事，不只會回答 -->
+            <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問／交辦</button>
           </div>
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
         </header>
@@ -61,7 +62,7 @@
           @done="refreshAll(true)"
         />
 
-        <!-- 問助理:用講的查後台(唯讀)。用 v-show 不用 v-if——切去看「目前狀況」再切回來，
+        <!-- 問／交辦：用講的查後台、也用講的叫它改。用 v-show 不用 v-if——切去看「目前狀況」再切回來，
              對話與捲動位置要還在，不然問到一半去對照狀態就等於重問一次 -->
         <AdminAgentChat v-show="!activeGuide && panelTab === 'chat'" class="ta-panel__chat" />
 
@@ -321,7 +322,14 @@
           <div v-if="festival && !onboardingIncomplete" class="ta-festival">
             <div class="ta-festival__head">🎉 {{ festival.name }}快到了</div>
             <p class="ta-festival__text">{{ festival.text }}</p>
-            <button type="button" class="ta-festival__cta" @click="goBroadcasts">去排推播 →</button>
+            <!-- `D-112` 第 1 件：系統先發現該做的事，卡片一按就叫它開工（Shopify／Zendesk／Square 的主要做法）。
+                 它會先問要發什麼、建的只是草稿；發送照舊要他自己到推播頁按（紅線）。
+                 沒有建推播權限的人只看到原本那條路。 -->
+            <div v-if="can(ADMIN_OP_CAPABILITY[AGENT_FESTIVAL_ASK.op])" class="ta-alert__actions">
+              <button type="button" class="ta-alert__act ta-alert__act--primary" @click="askFestival">交給小幫手擬草稿</button>
+              <button type="button" class="ta-alert__act ta-alert__act--ghost" @click="goBroadcasts">去推播頁</button>
+            </div>
+            <button v-else type="button" class="ta-festival__cta" @click="goBroadcasts">去排推播 →</button>
           </div>
 
           <!-- 載入骨架 -->
@@ -366,37 +374,67 @@
                  跟加分項拆成兩塊——同重量的卡混排讀不出「先做哪個」（2026-08-07） -->
             <div v-if="todosForList.length" class="ta-todos">
               <div class="ta-todos__head ta-todos__head--required">先做這 {{ todosForList.length }} 件，機器人才會動</div>
-              <button
-                v-for="(cap, i) in todosForList"
-                :key="cap.id"
-                class="ta-todo ta-todo--required"
-                @click="onFix(cap)"
-              >
-                <span class="ta-todo__step">{{ i + 1 }}</span>
-                <span class="ta-todo__main">
-                  <span class="ta-todo__title">{{ cap.title }}</span>
-                  <span class="ta-todo__why">{{ cap.why }}</span>
-                  <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
-                </span>
-              </button>
+              <!-- `D-112` 第 1 件：小幫手做得到的那幾項多一顆「交給小幫手」。
+                   ⛔ 按鈕不能包按鈕，所以有那顆的卡改成 div 包兩顆真按鈕（同異常卡的做法） -->
+              <template v-for="(cap, i) in todosForList" :key="cap.id">
+                <div v-if="todoAsk(cap)" class="ta-todo ta-todo--required ta-todo--split">
+                  <button type="button" class="ta-todo__hit" @click="onFix(cap)">
+                    <span class="ta-todo__step">{{ i + 1 }}</span>
+                    <span class="ta-todo__main">
+                      <span class="ta-todo__title">{{ cap.title }}</span>
+                      <span class="ta-todo__why">{{ cap.why }}</span>
+                      <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                    </span>
+                  </button>
+                  <div class="ta-alert__actions ta-todo__actions">
+                    <button type="button" class="ta-alert__act ta-alert__act--primary" @click="askTodo(cap)">交給小幫手</button>
+                  </div>
+                </div>
+                <button
+                  v-else
+                  class="ta-todo ta-todo--required"
+                  @click="onFix(cap)"
+                >
+                  <span class="ta-todo__step">{{ i + 1 }}</span>
+                  <span class="ta-todo__main">
+                    <span class="ta-todo__title">{{ cap.title }}</span>
+                    <span class="ta-todo__why">{{ cap.why }}</span>
+                    <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                  </span>
+                </button>
+              </template>
             </div>
 
             <!-- 加分項：定位由分組標題講一次，卡上不再各掛「必要/加分」小標籤 -->
             <div v-if="incompleteOptional.length" class="ta-todos">
               <div class="ta-todos__head">加分項（做了 AI 更好用，不做也能上線）</div>
-              <button
-                v-for="cap in incompleteOptional"
-                :key="cap.id"
-                class="ta-todo"
-                @click="onFix(cap)"
-              >
-                <span class="ta-todo__icon"><el-icon><component :is="cap.icon" /></el-icon></span>
-                <span class="ta-todo__main">
-                  <span class="ta-todo__title">{{ cap.title }}</span>
-                  <span class="ta-todo__why">{{ cap.why }}</span>
-                  <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
-                </span>
-              </button>
+              <template v-for="cap in incompleteOptional" :key="cap.id">
+                <div v-if="todoAsk(cap)" class="ta-todo ta-todo--split">
+                  <button type="button" class="ta-todo__hit" @click="onFix(cap)">
+                    <span class="ta-todo__icon"><el-icon><component :is="cap.icon" /></el-icon></span>
+                    <span class="ta-todo__main">
+                      <span class="ta-todo__title">{{ cap.title }}</span>
+                      <span class="ta-todo__why">{{ cap.why }}</span>
+                      <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                    </span>
+                  </button>
+                  <div class="ta-alert__actions ta-todo__actions">
+                    <button type="button" class="ta-alert__act ta-alert__act--primary" @click="askTodo(cap)">交給小幫手</button>
+                  </div>
+                </div>
+                <button
+                  v-else
+                  class="ta-todo"
+                  @click="onFix(cap)"
+                >
+                  <span class="ta-todo__icon"><el-icon><component :is="cap.icon" /></el-icon></span>
+                  <span class="ta-todo__main">
+                    <span class="ta-todo__title">{{ cap.title }}</span>
+                    <span class="ta-todo__why">{{ cap.why }}</span>
+                    <span class="ta-todo__cta">{{ cap.guideId || cap.tourId ? '帶我做 →' : '前往設定 →' }}</span>
+                  </span>
+                </button>
+              </template>
             </div>
 
             <!-- 缺項巡覽：次要出口，擺清單後面——跟主 CTA 並排會互搶 -->
@@ -623,6 +661,7 @@ import IconRobot from '~/components/icons/IconRobot.vue'
 import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
+import { ADMIN_OP_CAPABILITY, AGENT_FESTIVAL_ASK, AGENT_SETUP_ASKS } from '~~/shared/agent-entry'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 const { user } = useAuth()
@@ -634,7 +673,7 @@ const router = useRouter()
 // ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
 const route = useRoute()
 
-/** 面板分頁:目前狀況(異常+待辦+日報)/ 教學(主題庫)/ 問助理(admin 查詢副駕 P1) */
+/** 面板分頁:目前狀況(異常+待辦+日報)/ 教學(主題庫)/ 問／交辦(用講的查、用講的叫它改) */
 const panelTab = ref<'setup' | 'learn' | 'chat'>('setup')
 const {
   panelOpen,
@@ -653,6 +692,7 @@ const {
   startTopicById,
   startAdHocTour,
   endTour,
+  askAgent,
 } = useTutorial()
 const {
   capabilities,
@@ -778,6 +818,24 @@ const festival = computed(() => festivalHint(taipeiDate()))
 function goBroadcasts() {
   closePanel()
   void navigateTo(`/admin/${workspaceId.value}/broadcasts`)
+}
+
+/**
+ * 「交給小幫手」（`D-112` 第 1 件）：切到「問／交辦」並替他講那一句（直接送出）。
+ * 句子在 shared/agent-entry（測試釘住對得上真的代辦）；權限照那件代辦本身的門檻。
+ */
+function askFestival() {
+  const f = festival.value
+  if (!f) return
+  askAgent({ text: AGENT_FESTIVAL_ASK.text(f.name), send: true, source: 'status-card' })
+}
+function todoAsk(cap: ResolvedCapability) {
+  const a = AGENT_SETUP_ASKS[cap.id]
+  return a && can(ADMIN_OP_CAPABILITY[a.op]) ? a : null
+}
+function askTodo(cap: ResolvedCapability) {
+  const a = todoAsk(cap)
+  if (a) askAgent({ text: a.text, send: true, source: 'status-card' })
 }
 /**
  * 「第一句話誰回的」的互斥分項：**只有加起來等於總場數的東西可以並排**。
@@ -1128,7 +1186,8 @@ watch(requestedGuideId, (id) => {
   if (id in AGENT_GUIDES)
     activeGuide.value = id as AgentGuideId
 })
-// 「問助理」回答裡那張「打開目前狀況」卡（`D-109`）：分頁狀態在這裡，聊天元件用這格共享狀態傳話
+// 「問／交辦」回答裡那張「打開目前狀況」卡（`D-109`）、卡片與頁面上的「交給小幫手」（`D-112`）：
+// 分頁狀態在這裡，別的元件用這格共享狀態傳話
 watch(requestedPanelTab, (tab) => {
   if (!tab)
     return

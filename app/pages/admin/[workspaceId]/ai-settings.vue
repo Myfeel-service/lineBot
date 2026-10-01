@@ -74,7 +74,8 @@
         </div>
 
         <!-- ── 總開關 ─────────────────────────── -->
-        <div class="message-card ai-section-card" data-tour="ais-toggle">
+        <!-- `data-agent-target`（`D-112`）：小幫手改完這一塊會亮一下（對照 shared/agent-entry 的 ADMIN_OP_TARGET） -->
+        <div class="message-card ai-section-card" data-tour="ais-toggle" data-agent-target="ai-toggle">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">總開關</span>
@@ -146,7 +147,7 @@
         <!-- ── 系統提示 ──────────────────────── -->
         <!-- `ais-tone`（`D-109`）：導覽以前把「語氣與人設」講在上一張「多有把握才開口」那張卡上，
              真正改語氣的是這一張，現在自己一步 -->
-        <div class="message-card ai-section-card" data-tour="ais-tone">
+        <div class="message-card ai-section-card" data-tour="ais-tone" data-agent-target="tone">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">語氣與禁則</span>
@@ -307,7 +308,7 @@
         </div>
 
         <!-- ── 服務時間 / 勿擾時段 ─────────────── -->
-        <div class="message-card ai-section-card" data-tour="ais-hours">
+        <div class="message-card ai-section-card" data-tour="ais-hours" data-agent-target="service-hours">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">服務時間 / 勿擾時段</span>
@@ -384,7 +385,7 @@
         </div>
 
         <!-- ── 敏感詞 ─────────────────────────── -->
-        <div class="message-card ai-section-card">
+        <div class="message-card ai-section-card" data-agent-target="sensitive-topics">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">敏感詞</span>
@@ -546,7 +547,7 @@
           </div>
 
           <!-- 真人接手 / 交還(進階:接手生命週期的細部行為)-->
-          <div class="message-card ai-section-card" data-tour="ais-handback">
+          <div class="message-card ai-section-card" data-tour="ais-handback" data-agent-target="handback">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">真人接手 / 交還</span>
@@ -1018,6 +1019,19 @@ async function save() {
 // 以前小幫手「設定轉真人通知」帶人來這頁聚光那一卡；那一區搬到「設定 → LINE 通知」之後（`C-270`），
 // 還拿著舊連結進來的人直接送過去，⛔ 不讓他在這頁找一個已經不在的區塊。
 const route = useRoute()
+
+// ── 小幫手改完（`D-112` 第 4 件）：重讀設定、改到的那一塊亮一下 ──────────────
+// 🔴 這一頁是「整份表單一起存」：畫面停在舊值時他順手按一下儲存，就把小幫手剛改的改回去，
+//    而且兩邊都不會有人講一聲。所以沒有沒存的修改就重讀；有的話⛔不重讀（會蓋掉他打到一半的東西），
+//    回 dirty 讓聊天照實講「直接存會改回去」。
+useAgentOpRefresh('ai-settings', async (evt, { mode }) => {
+  if (mode === 'fresh' && dirty.value) return 'dirty'
+  if (mode !== 'arrived' && !dirty.value) await loadSettings()
+  // 「真人接手／交還」收在「進階調校」裡：先展開才看得到
+  if (evt.section === 'handback') showAdvanced.value = true
+  await nextTick()
+  return (await flashAgentTarget(evt.section, mode === 'arrived' ? 8000 : 3000)) ? 'shown' : 'missing'
+})
 
 onMounted(() => {
   if (route.query.focus === 'handoff') {

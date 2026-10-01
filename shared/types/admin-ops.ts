@@ -124,6 +124,12 @@ export interface AdminOpResult {
   /** 白話結果：做了什麼、沒做成的話為什麼 */
   message: string
   details?: string[]
+  /**
+   * 動到的是清單裡的哪一筆（自動回應、推播、標籤、知識卡的 id）。
+   * 畫面拿它把那一列亮起來、或帶「前往查看」去打開它（`D-112`）；改設定的代辦不填
+   * （那幾件改的是哪一塊，`shared/agent-entry.ts` 的 `ADMIN_OP_TARGET` 已經寫死）。
+   */
+  targetId?: string
 }
 
 /**

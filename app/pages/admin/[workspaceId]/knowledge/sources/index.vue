@@ -40,6 +40,9 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
+      <!-- `D-112`：「用一句話建立」接在「加入知識」正下方（標頭 240px 塞不下第三顆）。
+           建的卡放進「等你看過」，要他按採用才上線 -->
+      <AgentAskButton page="knowledge" row />
       <!-- 常駐提醒(老闆 8/05 要求):有事要處理時側欄一直顯示這一行,不只在選著資料時。
            點了回工作台;兩邊都是空的才不顯示——沒事可提醒。 -->
       <button
@@ -2553,6 +2556,16 @@ function backToWorkbench() {
   selectedId.value = null
   chunks.value = []
 }
+
+// ── 小幫手補了一張卡（`D-112` 第 4 件）────────────────────────────
+// 卡放在「等你看過」，那一區只在**沒選任何資料**時出現（它自己會重讀並亮那張，見 KnowledgeSiteDrafts）。
+// 這裡只管「他正開著某份資料」：剛補好時不硬切走（他可能正在看那份），回 missing 讓聊天給「前往查看」；
+// 按了才回工作台。
+useAgentOpRefresh('knowledge', async (evt, { mode }) => {
+  if (mode !== 'reveal' || !selectedId.value) return 'missing'
+  backToWorkbench()
+  return (await flashAgentTarget(evt.targetId, 8000)) ? 'shown' : 'missing'
+})
 
 /**
  * 體檢節流:loadSources 有十幾個呼叫點(建資料夾、改名、刪資料、搬卡…),每次都掃

@@ -292,15 +292,15 @@ try {
   await page.evaluate(() => document.querySelector('.ta-fab')?.click())
   await page.waitForSelector('.ta-panel', { timeout: 30_000 })
   await sleep(800)
-  // 切到「問助理」分頁（分頁列＝.ta-tabs 裡的三顆 role=tab）
+  // 切到「問／交辦」分頁（分頁列＝.ta-tabs 裡的三顆 role=tab；`D-112` 前叫「問助理」）
   await page.waitForSelector('.ta-tabs [role="tab"]', { timeout: 30_000 })
   const switched = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('問助理'))
+    const btn = [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('問／交辦'))
     if (!btn) return false
     btn.click()
     return true
   })
-  if (!switched) fail('找不到「問助理」分頁')
+  if (!switched) fail('找不到「問／交辦」分頁')
   await sleep(800)
 
   await page.waitForSelector('.aa-chat input', { timeout: 30_000 })

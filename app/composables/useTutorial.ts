@@ -13,6 +13,20 @@
 import type { TutorialCategoryGroup, TutorialStep, TutorialTopic } from '~/utils/tutorial-topics'
 import { CATEGORY_META, TUTORIAL_TOPICS } from '~/utils/tutorial-topics'
 import { stepAllowedForRole, stepPreconditionMet } from '~/utils/tutorial-step-visibility'
+import type { AgentAskSource } from '~~/shared/agent-entry'
+
+/**
+ * 帶著一句話打開「問／交辦」（`D-112`）。
+ * - `send: true`：直接送出（「目前狀況」卡片上的「交給小幫手」——那句話是我們替他講的，內容不含他的規則）
+ * - `send: false`：只打開、把字放進輸入框（或留空）、游標放進去，等他自己講（頁面上的「用一句話建立」）
+ */
+export interface AgentAskRequest {
+  text?: string
+  send: boolean
+  source: AgentAskSource
+  /** 同一句話連按兩次也要接得到（watch 比的是整個物件） */
+  nonce: number
+}
 
 export function useTutorial() {
   const router = useRouter()
@@ -47,6 +61,11 @@ export function useTutorial() {
    * 聊天元件搆不到，跟上面那格同一種傳話方式。
    */
   const requestedPanelTab = useState<'setup' | 'learn' | 'chat' | null>('tutorial-requested-tab', () => null)
+  /**
+   * 待送進「問／交辦」的那句話（`D-112`）。跟上面兩格同一種傳話方式：面板可能還沒打開、
+   * 聊天元件還沒掛上，所以留在這格，聊天元件掛上（或已經掛著）時接手並清空。
+   */
+  const requestedAgentAsk = useState<AgentAskRequest | null>('tutorial-requested-agent-ask', () => null)
 
   /**
    * 過濾步驟：功能旗標關掉的、以及**這個角色畫面上根本沒有那個元素**的，都跳過。
@@ -209,6 +228,12 @@ export function useTutorial() {
     openPanel()
   }
 
+  /** 打開「問／交辦」並帶一句話（頁面上的「用一句話建立」、目前狀況卡片的「交給小幫手」） */
+  function askAgent(req: Omit<AgentAskRequest, 'nonce'>) {
+    requestedAgentAsk.value = { ...req, nonce: Date.now() + Math.random() }
+    openPanelTab('chat')
+  }
+
   return {
     // state
     panelOpen,
@@ -220,6 +245,7 @@ export function useTutorial() {
     lastTopicId,
     requestedGuideId,
     requestedPanelTab,
+    requestedAgentAsk,
     // helpers
     stepCount,
     // actions
@@ -232,5 +258,6 @@ export function useTutorial() {
     endTour,
     openGuide,
     openPanelTab,
+    askAgent,
   }
 }

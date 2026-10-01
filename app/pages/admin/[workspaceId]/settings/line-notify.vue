@@ -173,7 +173,8 @@
              前例＝圖文選單的「客人看到的樣子」）。⛔ 不要再塞回卡片裡：它不是設定的一格，是那些設定的**結果**。
              導覽錨點 `ln-when` 掛在外面這一層：那一步講的是「右邊那支手機」，框要把手機一起框進去 -->
         <div v-if="data.canManage" class="ln-stage" data-tour="ln-when">
-          <div class="message-card ln-card ln-when-card">
+          <!-- `data-agent-target`（`D-112`）：小幫手改完「等幾分鐘提醒」會亮這一張 -->
+          <div class="message-card ln-card ln-when-card" data-agent-target="handoff-sla">
             <div class="message-card-header">
               <div class="card-header-main">
                 <span class="section-title">什麼時候通知</span>
@@ -829,6 +830,13 @@ const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(
     when: '範例 · 週四 14:20',
     text: buildCriticalAlertText({ count: 1, lines: ['・機器人收不到客人訊息'], more: 0, link }),
   }]
+})
+
+// ── 小幫手改了「等幾分鐘提醒」（`D-112` 第 4 件）：重讀、那一張亮一下 ──────────
+// 這一頁改了就存、沒有「沒存的修改」，直接重讀不會蓋掉任何東西
+useAgentOpRefresh('line-notify', async (evt, { mode }) => {
+  if (mode !== 'arrived') await load()
+  return (await flashAgentTarget(evt.section, mode === 'arrived' ? 8000 : 3000)) ? 'shown' : 'missing'
 })
 
 onMounted(async () => {
