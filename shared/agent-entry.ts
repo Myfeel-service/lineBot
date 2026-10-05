@@ -282,10 +282,11 @@ export const AGENT_FESTIVAL_ASK = {
  * - `suggestion`：按了輸入框上方的建議
  * - `page-button`：頁面上的「用一句話建立」
  * - `status-card`：「目前狀況」卡片上的「交給小幫手」
+ * - `sidebar`：左側欄「切換帳號」下面那一格「跟小幫手說要做什麼…」（`D-113`，2026-10-06 拍板）
  *
  * 別家都沒有公開入口別的使用數字（`D-112` 報告第七節），只能自己量——記在 `adminAgentLogs`。
  */
-export const AGENT_ASK_SOURCES = ['typed', 'suggestion', 'page-button', 'status-card'] as const
+export const AGENT_ASK_SOURCES = ['typed', 'suggestion', 'page-button', 'status-card', 'sidebar'] as const
 export type AgentAskSource = typeof AGENT_ASK_SOURCES[number]
 
 /** 端點收到的值不在表上就當成自己打字（⛔ 不原樣存外面送來的任意字串） */

@@ -175,6 +175,8 @@ describe('卡片上的「交給小幫手」', () => {
 describe('記錄來源', () => {
   it('不在表上的值一律當成自己打字／沒有頁（⛔ 不原樣存外面送來的字）', () => {
     expect(normalizeAgentAskSource('page-button')).toBe('page-button')
+    // `D-113`：左側欄那一格另記一個來源，上線兩週後跟其他入口一起比（`C-284`）
+    expect(normalizeAgentAskSource('sidebar')).toBe('sidebar')
     expect(normalizeAgentAskSource('<script>')).toBe('typed')
     expect(normalizeAgentAskSource(undefined)).toBe('typed')
     expect(normalizeAgentPromptPage('tags')).toBe('tags')

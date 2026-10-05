@@ -55,6 +55,12 @@ describe('小幫手只有一頁（D-114）', () => {
     expect(template(chat)).not.toMatch(/role="tab"/)
   })
 
+  it('左側欄那一格「跟小幫手說要做什麼…」（`D-113`）：每頁都在、按了只打開對話、⛔ 不替他送話、記成 sidebar', () => {
+    const layout = readFileSync(`${APP_DIR}layouts/default.vue`, 'utf8')
+    expect(template(layout)).toContain('跟小幫手說要做什麼…')
+    expect(template(layout)).toContain('askAgent({ send: false, source: \'sidebar\' })')
+  })
+
   it('每一頁的「？」都有「看全部教學」（全部教學唯一的常駐入口）', () => {
     expect(template(help)).toContain('看全部教學')
     // ⛔ 只有一支教學時直接開跑的那條捷徑拿掉了，否則那些頁面就找不到全部教學

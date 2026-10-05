@@ -21,6 +21,20 @@
               <span class="ws-sidebar-switch__arrow">→</span>
             </NuxtLink>
           </div>
+          <!-- 「跟小幫手說要做什麼…」（`D-113`，2026-10-06 老闆拍板）：右下角那顆只有機器人圖示、沒有字，
+               紅點講的又是狀況，不知道它能幫忙改設定的人不會去按。這一格每一頁都在、上面寫著字；
+               按了就是同一個小幫手的對話、游標在輸入框（⛔ 不替他送任何一句話）。
+               「小幫手」誰都能用（觀察者也能查），所以只看 `assistant.use`。 -->
+          <button
+            v-if="can('assistant.use')"
+            type="button"
+            class="ws-sidebar-ask"
+            data-tour="sidebar-ask"
+            @click="askAgent({ send: false, source: 'sidebar' })"
+          >
+            <span class="ws-sidebar-ask__icon"><el-icon><IconRobot /></el-icon></span>
+            <span class="ws-sidebar-ask__text">跟小幫手說要做什麼…</span>
+          </button>
         </div>
 
         <!-- 四段各自包一層 .nav-group：「認識後台」總覽導覽要能一次高亮整段
@@ -172,10 +186,12 @@ import {
   Monitor, OfficeBuilding, PieChart, PriceTag, Promotion, Reading,
   Setting, SwitchButton, Tickets, TrendCharts, User, UserFilled,
 } from '@element-plus/icons-vue'
+import IconRobot from '~/components/icons/IconRobot.vue'
 
 const route = useRoute()
 const { user, logout } = useAuth()
 const { workspaceId, currentRole, currentWorkspaceName, isViewer, can, workspaceList, loadWorkspaceList } = useWorkspace()
+const { askAgent } = useTutorial()
 const { checkIsSuperAdmin, isSuperAdmin } = useSuperAdmin()
 
 const canSwitchWorkspace = computed(() => workspaceList.value.length > 1)

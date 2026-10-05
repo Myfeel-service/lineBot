@@ -321,3 +321,51 @@
 .ws-sidebar-switch:hover .ws-sidebar-switch__arrow {
   transform: translateX(2px);
 }
+
+/* 「跟小幫手說要做什麼…」（`D-113`，示意頁 v10）：長得像一個輸入框——它就是「在這裡講」的那一格。
+   跟上面的切換帳號卡同尺寸、同圓角，但用品牌淺綠底＋綠色機器人，一眼分得出「這是小幫手」不是另一個帳號動作。 */
+.ws-sidebar-ask {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: var(--radius-md);
+  background: var(--brand-green-wash);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast, 0.15s ease),
+    box-shadow var(--t-fast, 0.15s ease);
+
+  &:hover {
+    border-color: var(--color-line);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+.ws-sidebar-ask__icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--color-line);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+
+.ws-sidebar-ask__text {
+  min-width: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

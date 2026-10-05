@@ -16,6 +16,7 @@
  *   ⑧ 版面：側欄那一排與標籤頁標頭沒折行、聊過之後建議縮成一排
  *   ⑨ `D-114` 一頁：沒有分頁、高度固定（展開狀況／15 件／全部教學都一樣高）、狀況展開時輸入框還在、
  *      紅的時候打開就自動展開、紅線收進 15 件清單、每頁「？」的「看全部教學」真的打開全部教學
+ *   ⑩ `D-113` 左側欄「跟小幫手說要做什麼…」：落地的對話統計頁也在、按了游標在輸入框、送出記成 sidebar
  *
  * ⚠️ 寫入範圍：**零寫入**。所有 POST/PUT/PATCH/DELETE 都在瀏覽器層攔下——
  *    小幫手的聊天與確認兩支換成假回應（否則會呼叫模型、會真的改設定），其餘一律擋下並列出來；
@@ -671,6 +672,38 @@ try {
   if ((await pillsHead()) === '可以這樣跟我說') pass('沒有專屬建議的頁（客服對話）：標題不硬講頁名')
   else fail(`客服對話頁的建議標題是「${await pillsHead()}」`)
   state.fakeSetup = false
+
+  // ═══ ⑨½ 左側欄那一格「跟小幫手說要做什麼…」（`D-113`）：登入後落地的對話統計頁也在、按了游標在輸入框、記成 sidebar ═══
+  await go('/conversation-stats', '.ws-sidebar-ask')
+  const side = await page.evaluate(() => {
+    const b = document.querySelector('.ws-sidebar-ask')
+    const sw = document.querySelector('.ws-sidebar-switch')?.getBoundingClientRect()
+    const r = b?.getBoundingClientRect()
+    return b && r ? {
+      text: b.textContent.trim(),
+      oneLine: r.height < 48,
+      clipped: b.querySelector('.ws-sidebar-ask__text').scrollWidth > b.querySelector('.ws-sidebar-ask__text').clientWidth + 1,
+      belowSwitch: sw ? r.top >= sw.bottom : null,
+      sameWidth: sw ? Math.abs(r.width - sw.width) <= 1 : null,
+    } : null
+  })
+  if (side?.text === '跟小幫手說要做什麼…' && side.oneLine && !side.clipped && side.belowSwitch !== false && side.sameWidth !== false)
+    pass('對話統計頁的左側欄有「跟小幫手說要做什麼…」：一行、字沒被切、在切換帳號下面、跟它一樣寬')
+  else fail(`左側欄那一格：${JSON.stringify(side)}`)
+  await shot('06b-sidebar-ask')
+  await page.evaluate(() => document.querySelector('.ws-sidebar-ask')?.click())
+  if (await waitUntil(chatVisible, 8000)) pass('按了：小幫手打開、看得到對話（狀況收著）')
+  else fail(`按了之後對話沒露出來（面板開著：${await page.evaluate(() => !!document.querySelector('.ta-panel'))}）`)
+  if (await waitUntil(() => page.evaluate(() => document.activeElement === document.querySelector('.aa-chat__field input')), 3000)) pass('游標已經在輸入框')
+  else fail('按了之後游標沒有在輸入框')
+  if ((await inputValue()) === '') pass('輸入框是空的（⛔ 不替他講話）')
+  else fail(`按了之後輸入框有字：「${await inputValue()}」`)
+  n0 = state.chatBodies.length
+  await sendTyped('現在有什麼要處理的')
+  body = await lastChatBody(n0)
+  if (body?.source === 'sidebar') pass('從左側欄進來打字送出：記成「sidebar」（兩週後跟其他入口比用量）')
+  else fail(`左側欄進來那句：source=${body?.source}`)
+  await shot('06c-sidebar-ask-open')
 
   // ═══ ⑩ 觀察者：一個「做」都看不到 ═══════════════════════════════════════
   state.fakeViewer = true
