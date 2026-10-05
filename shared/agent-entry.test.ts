@@ -18,6 +18,7 @@ import {
   AGENT_SETUP_ASKS,
   AGENT_OP_PAGE_LABEL,
   AGENT_PAGE_PROMPTS,
+  AGENT_OP_EXAMPLES,
   agentOpCatalogue,
   agentOpViewPath,
   agentPromptPageFromPath,
@@ -86,10 +87,34 @@ describe('權限', () => {
     expect(agentPromptsFor('ai-settings', can).dos).toEqual([])
   })
 
-  it('「全部 N 件」管理員看得到全部 15 件，每件只出現一次', () => {
-    const all = agentOpCatalogue(asRole('owner')).flatMap(g => g.ops)
+  it('「我會做的 N 件」管理員看得到全部 15 件，每件只出現一次', () => {
+    const all = agentOpCatalogue(asRole('owner')).flatMap(g => g.items)
     expect(all.length).toBe(Object.keys(ADMIN_OP_LABELS).length)
-    expect(new Set(all).size).toBe(all.length)
+    expect(new Set(all.map(i => i.op)).size).toBe(all.length)
+  })
+
+  // `D-115`（2026-10-05）：清單從「功能名詞攤開」改成「先選一類、再點一句」
+  it('每件代辦剛好一句範例（新增代辦忘了寫範例＝清單上少一件、紅）', () => {
+    expect(Object.keys(AGENT_OP_EXAMPLES).sort()).toEqual(Object.keys(ADMIN_OP_LABELS).sort())
+  })
+
+  it('範例句：⛔ 不重複（兩件講同一句＝點了分不出要哪一件）、30 字以內（好掃，別家準則：短句勝過一整面說明）', () => {
+    const says = Object.values(AGENT_OP_EXAMPLES)
+    expect(new Set(says).size).toBe(says.length)
+    for (const s of says) {
+      expect(s.trim().length, s).toBeGreaterThan(0)
+      expect(s.length, s).toBeLessThanOrEqual(30)
+    }
+  })
+
+  it('分類照側欄由上到下、同一類的句子都住在那一頁（點分類看到的就是那一頁的事）', () => {
+    const groups = agentOpCatalogue(asRole('owner'))
+    expect(groups.map(g => g.label)).toEqual(['自動回應', '標籤管理', '推播', '知識庫', 'AI 設定', 'LINE 通知'])
+    for (const g of groups) {
+      for (const it of g.items) expect(ADMIN_OP_TARGET[it.op].page, it.say).toBe(g.page)
+    }
+    // 客服（agent）沒有 AI 設定的權限：那一類整顆不出現（⛔ 不出一顆點進去全是會被拒絕的句子）
+    expect(agentOpCatalogue(asRole('agent')).map(g => g.page)).not.toContain('ai-settings')
   })
 
   it('門檻影本涵蓋每一件代辦', () => {

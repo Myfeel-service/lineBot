@@ -1,7 +1,8 @@
 <template>
   <div class="aa-chat">
-    <!-- 上面的「目前狀況」展開時只藏這一塊（`D-114`）：建議與輸入框一直都在，任何時候都能直接打字 -->
-    <div v-show="!props.listHidden" ref="listEl" class="aa-chat__list">
+    <!-- 上面的「目前狀況」展開時只藏這一塊（`D-114`）：建議與輸入框一直都在，任何時候都能直接打字。
+         「我會做的 N 件」打開時也讓位給那份清單（`D-115`），對話與捲動位置都還在 -->
+    <div v-show="!props.listHidden && !showAll" ref="listEl" class="aa-chat__list">
       <!-- 開場白（`D-112`，示意頁 v2）：先講它會**做**事，再講一律先問。
            ⛔ 以前「做」只寫在一行灰色括號裡，四個建議又全是查詢，大家想不起來可以叫它做。
            能做哪些事不在這裡列——輸入框上方的建議就是這一頁的清單，再列一次是同一件事講兩遍。 -->
@@ -63,7 +64,42 @@
       綠的是「直接幫你做」：按了只放進輸入框，⛔ 不直接送（「運費」「80 元」是範例不是他的規則）；
       白的是「幫你查」：沒有副作用，按了就送。聊過之後縮成一排（可橫捲），把高度還給對話。
     -->
-    <div class="aa-chat__pills" :class="{ 'is-compact': msgs.length > 0 }">
+    <!--
+      「我會做的 N 件」（`D-115`，2026-10-05 老闆照示意頁 v8 拍板）：先選一類、再點一句。
+      以前是六組功能名詞一口氣攤開（字一堆、又不能點）；別家（Microsoft 365 Copilot 的範例庫）是分類＋可以直接點的句子。
+      佔的是對話那一塊（面板高度不變），輸入框一直在。點一句＝放進輸入框讓他改（⛔ 不送出，同頁面建議）。
+    -->
+    <div v-if="showAll" class="aa-cat">
+      <div class="aa-cat__head">
+        <span>我會做的 {{ catalogueCount }} 件</span>
+        <button type="button" class="aa-chat__all-toggle" @click="showAll = false">收合</button>
+      </div>
+      <!-- 篩選膠囊（⛔ 不用 role="tab"：小幫手已經沒有分頁了，這只是一排篩選） -->
+      <div class="aa-cat__tabs">
+        <button
+          v-for="g in catalogue"
+          :key="g.page"
+          type="button"
+          class="aa-cat__tab"
+          :class="{ 'is-on': g.page === catPage }"
+          :aria-pressed="g.page === catPage"
+          @click="catPage = g.page"
+        >{{ g.label }}<span class="aa-cat__n">{{ g.items.length }}</span></button>
+      </div>
+      <div class="aa-cat__list">
+        <button
+          v-for="it in catItems"
+          :key="it.op"
+          type="button"
+          class="aa-cat__item"
+          @click="pickExample(it.say)"
+        >{{ it.say }}</button>
+      </div>
+      <!-- 以前是面板頁尾一直佔著的那一行（`D-114` 第 3 題）：叫它做這幾件時它本來就會照實說、請他到那一頁按 -->
+      <p class="aa-cat__self">要你自己按：{{ AGENT_SELF_ONLY }}</p>
+    </div>
+
+    <div v-show="!showAll" class="aa-chat__pills" :class="{ 'is-compact': msgs.length > 0 }">
       <!-- `D-114`：標題不說「做的事」——下面有查也有做；「全部 N 件」沒講是什麼，改成「我會做的 N 件」 -->
       <div class="aa-chat__pills-head">
         <span>{{ prompts.label ? `在「${prompts.label}」可以這樣跟我說` : '可以這樣跟我說' }}</span>
@@ -72,15 +108,9 @@
           type="button"
           class="aa-chat__all-toggle"
           :aria-expanded="showAll"
-          @click="showAll = !showAll"
-        >{{ showAll ? '收合' : `我會做的 ${catalogueCount} 件` }}</button>
+          @click="openOpsList"
+        >{{ `我會做的 ${catalogueCount} 件` }}</button>
       </div>
-      <!-- ⚠️ 清單的樣子（先選一類、再點一句）等老闆看過示意頁 v8 才改（`D-115`）；這輪只把紅線收進來 -->
-      <ul v-if="showAll" class="aa-chat__all">
-        <li v-for="g in catalogue" :key="g.page"><b>{{ g.label }}</b>：{{ g.ops.join('、') }}</li>
-        <!-- 以前是面板頁尾一直佔著的那一行（`D-114` 第 3 題）：叫它做這幾件時它本來就會照實說、請他到那一頁按 -->
-        <li class="aa-chat__all-self"><b>這些要你自己按</b>：{{ AGENT_SELF_ONLY }}</li>
-      </ul>
       <div class="aa-chat__chips">
         <button
           v-for="d in prompts.dos"
@@ -126,6 +156,7 @@ import {
   AGENT_OP_PAGE_LABEL,
   AGENT_SELF_ONLY,
   type AgentAskSource,
+  type AgentOpPage,
   agentOpCatalogue,
   agentOpViewPath,
   agentPromptPageFromPath,
@@ -228,8 +259,25 @@ const page = computed(() => agentPromptPageFromPath(route.path))
 /** 已照權限篩過：觀察者一個「做」都不會看到（按了只會被拒絕的建議比沒有更糟） */
 const prompts = computed(() => agentPromptsFor(page.value, can))
 const catalogue = computed(() => agentOpCatalogue(can))
-const catalogueCount = computed(() => catalogue.value.reduce((n, g) => n + g.ops.length, 0))
+const catalogueCount = computed(() => catalogue.value.reduce((n, g) => n + g.items.length, 0))
 const showAll = ref(false)
+/** 「我會做的 N 件」選中的那一類 */
+const catPage = ref<AgentOpPage | null>(null)
+const catItems = computed(() => (catalogue.value.find(g => g.page === catPage.value) ?? catalogue.value[0])?.items ?? [])
+
+/** 打開清單：先停在他正在看的那一頁那一類（那一頁沒有就第一類），把上面展開的狀況收起來 */
+function openOpsList() {
+  const here = catalogue.value.find(g => g.page === page.value)
+  catPage.value = (here ?? catalogue.value[0])?.page ?? null
+  showAll.value = true
+  emit('engage')
+}
+
+/** 點一句範例：收起清單、放進輸入框讓他改（⛔ 不送出——同頁面上「做」的建議） */
+function pickExample(say: string) {
+  showAll.value = false
+  fillSuggestion(say)
+}
 
 /**
  * 這一句是從哪個入口來的。按了「做」的建議或頁面上的「用一句話建立」之後才打字送出，

@@ -14,7 +14,7 @@
  *    `capability` 由測試釘成同一份）：觀察者看到一排他按了只會被拒絕的建議，比沒有更糟。
  */
 import type { Capability } from './permissions'
-import { ADMIN_OP_LABELS, type AdminOpId } from './types/admin-ops'
+import type { AdminOpId } from './types/admin-ops'
 
 /** 代辦改完的結果住在哪一頁（側欄上的那一頁） */
 export type AgentOpPage = 'ai-scripts' | 'broadcasts' | 'tags' | 'knowledge' | 'ai-settings' | 'line-notify'
@@ -208,18 +208,53 @@ export function agentPromptsFor(page: AgentPromptPage | null, can: (cap: Capabil
  */
 export const AGENT_SELF_ONLY = '發推播、回客人、刪東西、改 LINE 連線與成員'
 
-/** 「我會做的 N 件」：照頁分組、照權限篩（頁的順序＝側欄由上到下） */
-export function agentOpCatalogue(can: (cap: Capability) => boolean): { page: AgentOpPage, label: string, ops: string[] }[] {
+/**
+ * 「我會做的 N 件」清單上，每件代辦各一句範例（`D-115`，2026-10-05 老闆：「字一堆，參考一般正常怎麼做」）。
+ *
+ * 為什麼是範例句不是功能名：以前清單印的是 `ADMIN_OP_LABELS`（「調整「客服忘了交還時自動交還」的時間」這種），
+ * 六組攤開一整面、又不能點。別家（Microsoft 365 Copilot 的範例庫）是先選一類、再列可以直接點的句子——
+ * 範例本身就是說明，按了放進輸入框讓他改成自己的。
+ * ⛔ 跟頁面建議同一條紀律：按了**只放進輸入框、不送出**（「運費」「退款」是範例不是他的規則）。
+ * ⚠️ 物件的順序＝同一類裡列出來的順序（最常用的排前面）；每件代辦剛好一句（測試釘住）。
+ */
+export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
+  'script-create-from-description': '有人問「運費」，就回「滿千免運」',
+  'script-set-enabled': '把「查詢訂單」先下架',
+  'script-update-keyword': '「營業時間」多加一個關鍵字「今天有開嗎」',
+  'script-update-reply': '把「退換貨」的回覆改成「先填表單」',
+  'tag-create': '建一個標籤「想買禮盒」',
+  'broadcast-draft-create': '擬一則週年慶推播草稿，只發給「VIP」標籤的人',
+  'knowledge-draft-create': '補一張知識卡：客人問「可以刷卡嗎」，就回「可以」',
+  'ai-settings-service-hours': '服務時間改成平日 9 點到 6 點，週末休息',
+  'ai-settings-sensitive-topic': '客人提到「退款」就轉真人',
+  'ai-settings-reply-mode': 'AI 先只給草稿，不要直接回客人',
+  'ai-settings-enabled': '先把 AI 自動回覆關掉',
+  'ai-settings-handback-idle': '客服接手後 30 分鐘沒回，就交還給機器人',
+  'ai-settings-auto-close': '真人接手的對話兩天沒動靜就結束',
+  'ai-settings-tone-template': 'AI 的語氣換成親切一點的範本',
+  'ai-settings-handoff-sla': '客人等超過 15 分鐘沒人回就提醒',
+}
+
+export interface AgentOpCatalogueGroup {
+  page: AgentOpPage
+  /** 分類膠囊上的字（＝側欄頁名） */
+  label: string
+  /** 這一類每件代辦一句範例 */
+  items: { op: AdminOpId, say: string }[]
+}
+
+/** 「我會做的 N 件」：照頁分組、照權限篩（頁的順序＝側欄由上到下；組內照 `AGENT_OP_EXAMPLES` 的順序） */
+export function agentOpCatalogue(can: (cap: Capability) => boolean): AgentOpCatalogueGroup[] {
   const order: AgentOpPage[] = ['ai-scripts', 'tags', 'broadcasts', 'knowledge', 'ai-settings', 'line-notify']
   return order
     .map(page => ({
       page,
       label: AGENT_OP_PAGE_LABEL[page],
-      ops: (Object.keys(ADMIN_OP_TARGET) as AdminOpId[])
-        .filter(id => ADMIN_OP_TARGET[id].page === page && can(ADMIN_OP_CAPABILITY[id]))
-        .map(id => ADMIN_OP_LABELS[id]),
+      items: (Object.keys(AGENT_OP_EXAMPLES) as AdminOpId[])
+        .filter(op => ADMIN_OP_TARGET[op].page === page && can(ADMIN_OP_CAPABILITY[op]))
+        .map(op => ({ op, say: AGENT_OP_EXAMPLES[op] })),
     }))
-    .filter(g => g.ops.length > 0)
+    .filter(g => g.items.length > 0)
 }
 
 // ── 「目前狀況」卡片上的「交給小幫手」（`D-112` 第 1 件）──────────────

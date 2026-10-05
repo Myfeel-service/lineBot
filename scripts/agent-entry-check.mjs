@@ -526,18 +526,44 @@ try {
   const listHidden = await page.evaluate(() => document.querySelector('.aa-chat__list')?.offsetParent === null)
   await shot('04b-status-expanded')
   await showChat()
-  await page.evaluate(() => document.querySelector('.aa-chat__all-toggle')?.click())
+  // 「我會做的 15 件」（`D-115`）：先選一類、再點一句；佔對話那一塊、輸入框照樣在
+  await page.evaluate(() => document.querySelector('.aa-chat__pills .aa-chat__all-toggle')?.click())
+  await waitUntil(() => page.evaluate(() => !!document.querySelector('.aa-cat')), 3000)
   await sleep(300)
   const hAll = await panelHeight()
-  const selfLine = await page.evaluate(() => document.querySelector('.aa-chat__all-self')?.textContent?.trim() ?? '')
+  const cat = await page.evaluate(() => ({
+    on: document.querySelector('.aa-cat__tab.is-on')?.textContent?.trim() ?? '',
+    tabs: [...document.querySelectorAll('.aa-cat__tab')].map(t => t.textContent.trim()),
+    items: [...document.querySelectorAll('.aa-cat__item')].map(t => t.textContent.trim()),
+    self: document.querySelector('.aa-cat__self')?.textContent?.trim() ?? '',
+    pills: document.querySelector('.aa-chat__pills')?.offsetParent !== null,
+    list: document.querySelector('.aa-chat__list')?.offsetParent !== null,
+  }))
+  const catInput = await inputShown()
   await shot('04c-all15')
-  await page.evaluate(() => document.querySelector('.aa-chat__all-toggle')?.click())
   if (hChat > 0 && hChat === hStatus && hChat === hAll) pass(`高度固定：對話、展開狀況、打開「我會做的 15 件」都是 ${hChat}px`)
   else fail(`高度會跳：對話 ${hChat}／展開狀況 ${hStatus}／15 件 ${hAll}`)
   if (statusInput && listHidden) pass('狀況展開時：對話紀錄讓位、輸入框還在（任何時候都能直接打字）')
   else fail(`狀況展開時：輸入框看得到 ${statusInput}、對話紀錄藏起來 ${listHidden}`)
-  if (selfLine.startsWith('這些要你自己按') && selfLine.includes('發推播')) pass(`紅線收進清單最後一行：「${selfLine}」`)
-  else fail(`清單最後一行是「${selfLine}」`)
+  if (cat.on.startsWith('AI 設定') && cat.items.length === 7) pass(`清單一打開停在正在看的那一頁（${cat.on}）：${cat.items.length} 句`)
+  else fail(`清單打開停在「${cat.on}」、${cat.items.length} 句：${JSON.stringify(cat.tabs)}`)
+  if (catInput && !cat.pills && !cat.list) pass('清單佔的是對話那一塊：建議那排讓位、輸入框還在')
+  else fail(`清單打開時：輸入框 ${catInput}／建議那排 ${cat.pills}／對話紀錄 ${cat.list}`)
+  if (cat.self.startsWith('要你自己按') && cat.self.includes('發推播')) pass(`紅線在清單最下面：「${cat.self}」`)
+  else fail(`清單最下面是「${cat.self}」`)
+  // 換一類：句子跟著換
+  await page.evaluate(() => [...document.querySelectorAll('.aa-cat__tab')].find(t => t.textContent.includes('自動回應'))?.click())
+  await sleep(200)
+  const scriptsItems = await page.evaluate(() => [...document.querySelectorAll('.aa-cat__item')].map(t => t.textContent.trim()))
+  if (scriptsItems.length === 4 && scriptsItems[0] === EXPECT['ai-scripts'].firstDo) pass(`按「自動回應」：換成那一類的 4 句（第一句「${scriptsItems[0]}」）`)
+  else fail(`按「自動回應」之後的句子：${JSON.stringify(scriptsItems)}`)
+  // 點一句：放進輸入框、⛔ 不送出、清單收起來
+  n0 = state.chatBodies.length
+  await page.evaluate(() => document.querySelector('.aa-cat__item')?.click())
+  await sleep(500)
+  const afterPick = { value: await inputValue(), catOpen: await page.evaluate(() => !!document.querySelector('.aa-cat')), sent: state.chatBodies.length - n0 }
+  if (afterPick.value === scriptsItems[0] && !afterPick.catOpen && afterPick.sent === 0) pass('點一句：放進輸入框讓你改、⛔沒有送出、清單收起來回到對話')
+  else fail(`點一句之後：${JSON.stringify(afterPick)}`)
 
   // ═══ ⑥ 標籤管理：標頭那顆＋建好標籤亮那一列 ════════════════════════════════
   await go('/tags', '.tags-table tbody tr')

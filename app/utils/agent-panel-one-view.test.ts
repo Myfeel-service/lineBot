@@ -31,9 +31,10 @@ describe('小幫手只有一頁（D-114）', () => {
   })
 
   it('⛔ 狀況展開時只藏對話紀錄、不藏輸入框（任何時候都能直接打字）', () => {
-    expect(template(chat)).toMatch(/v-show="!props\.listHidden"[^>]*class="aa-chat__list"/)
+    expect(template(chat)).toMatch(/v-show="!props\.listHidden[^"]*"[^>]*class="aa-chat__list"/)
+    // 輸入框那一塊本身不帶任何 v-show／v-if（狀況展開、「我會做的 N 件」打開時都要在）
     const input = template(chat).slice(template(chat).indexOf('class="aa-chat__input"') - 200)
-    expect(input).not.toContain('listHidden')
+    expect(input).not.toMatch(/listHidden|showAll/)
   })
 
   it('頁尾那行紅線收進「我會做的 N 件」（`D-114` 第 3 題），頁尾不再一直佔著', () => {
@@ -42,6 +43,16 @@ describe('小幫手只有一頁（D-114）', () => {
     expect(template(chat)).toContain('{{ AGENT_SELF_ONLY }}')
     expect(AGENT_SELF_ONLY).toBe('發推播、回客人、刪東西、改 LINE 連線與成員')
     expect(template(chat)).toContain('`我會做的 ${catalogueCount} 件`')
+  })
+
+  it('「我會做的 N 件」＝先選一類、再點一句（`D-115`）；點一句只放進輸入框、⛔ 不送出', () => {
+    expect(template(chat)).toContain('class="aa-cat__tabs"')
+    expect(template(chat)).toContain('@click="pickExample(it.say)"')
+    const pick = chat.slice(chat.indexOf('function pickExample'), chat.indexOf('function pickExample') + 200)
+    expect(pick).toContain('fillSuggestion(say)')
+    expect(pick).not.toMatch(/\bsend\(/)
+    // ⛔ 分類那排不能用 role="tab"：小幫手已經沒有分頁了（守門員量的是整個面板裡有沒有分頁）
+    expect(template(chat)).not.toMatch(/role="tab"/)
   })
 
   it('每一頁的「？」都有「看全部教學」（全部教學唯一的常駐入口）', () => {
