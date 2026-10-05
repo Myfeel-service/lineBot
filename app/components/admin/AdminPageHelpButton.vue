@@ -12,20 +12,12 @@
 
   <!-- 問號版：包一層才放得下「第一次進這一頁」的一次性提示，也給總覽導覽一個錨點 -->
   <span v-else-if="available.length || availableGuides.length" class="page-help" data-tour="page-help">
-    <!-- 只有一支教學、也沒有劇本：一顆問號直接開跑 -->
-    <el-tooltip v-if="available.length === 1 && !availableGuides.length" content="這頁怎麼用" placement="top">
-      <el-button
-        class="page-help-btn"
-        :class="{ 'is-hinting': hinting }"
-        text
-        size="small"
-        :icon="QuestionFilled"
-        aria-label="這頁怎麼用"
-        @click="startFirst()"
-      />
-    </el-tooltip>
+    <!-- 一律先出選單（`D-114`，2026-10-05）：最下面那一行「看全部教學」是全部教學唯一的常駐入口
+         （小幫手的「教學」分頁拿掉了）。⚠️ 代價是只有一支教學的頁面要多按一下——第一次進來本來就會自動跑，
+         會來按問號的是「回來再看一次」的人，多一下換「每一頁的問號長得一樣、都找得到全部」。
+         以前：只有一支教學、也沒有劇本時一顆問號直接開跑。
 
-    <!-- 多支教學：先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選）
+         多支教學時先讓人挑（機器人模組有六支，直接開第一支等於幫使用者亂選）
 
          ⛔ 提示氣泡要包在 el-dropdown **外面**，不可以夾在 el-dropdown 和按鈕中間。
             el-dropdown 是拿「預設插槽的那個元素」當觸發器，而 el-tooltip 自己也是一層
@@ -35,7 +27,7 @@
             因為只有「多支教學」的兩頁（機器人模組、知識庫）走這條路，其餘頁面都是單支、走上面那條。
     -->
     <!-- 選單打開時把氣泡關掉：兩層浮層同時亮會疊在一起，而且選單本身已經把話說完了 -->
-    <el-tooltip v-else content="這頁怎麼用" placement="top" :disabled="menuOpen">
+    <el-tooltip content="這頁怎麼用" placement="top" :disabled="menuOpen">
       <el-dropdown trigger="click" placement="bottom-start" @visible-change="onMenuVisible">
         <el-button
           class="page-help-btn"
@@ -64,6 +56,9 @@
               @click="startGuide(g.id)"
             >
               {{ g.title }}<span class="page-help-btn__steps">陪你做</span>
+            </el-dropdown-item>
+            <el-dropdown-item divided class="page-help-btn__all" @click="openAll()">
+              看全部教學 →
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -116,7 +111,13 @@ const props = defineProps<{
   label?: string
 }>()
 
-const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide, endTour, lastTopicId } = useTutorial()
+const { topics: visibleTopics, stepCount, startTopic, tourOpen, openGuide, openCatalogue, endTour, lastTopicId } = useTutorial()
+
+/** 全部教學（`D-114`：原本小幫手的「教學」分頁）——打開小幫手、停在全部教學 */
+function openAll() {
+  dismissHint()
+  openCatalogue()
+}
 const { can } = useWorkspace()
 const { ensureLoaded: ensureTourSeen, hasSeen: tourSeen, markSeen: markTourSeen } = useTourSeen()
 const { loaded: setupLoaded, failed: setupFailed, onboardingIncomplete } = useSetupStatus()

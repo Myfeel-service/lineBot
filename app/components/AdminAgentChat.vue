@@ -1,6 +1,7 @@
 <template>
   <div class="aa-chat">
-    <div ref="listEl" class="aa-chat__list">
+    <!-- 上面的「目前狀況」展開時只藏這一塊（`D-114`）：建議與輸入框一直都在，任何時候都能直接打字 -->
+    <div v-show="!props.listHidden" ref="listEl" class="aa-chat__list">
       <!-- 開場白（`D-112`，示意頁 v2）：先講它會**做**事，再講一律先問。
            ⛔ 以前「做」只寫在一行灰色括號裡，四個建議又全是查詢，大家想不起來可以叫它做。
            能做哪些事不在這裡列——輸入框上方的建議就是這一頁的清單，再列一次是同一件事講兩遍。 -->
@@ -63,18 +64,22 @@
       白的是「幫你查」：沒有副作用，按了就送。聊過之後縮成一排（可橫捲），把高度還給對話。
     -->
     <div class="aa-chat__pills" :class="{ 'is-compact': msgs.length > 0 }">
+      <!-- `D-114`：標題不說「做的事」——下面有查也有做；「全部 N 件」沒講是什麼，改成「我會做的 N 件」 -->
       <div class="aa-chat__pills-head">
-        <span>{{ prompts.label ? `在「${prompts.label}」可以叫我` : '可以叫我做的事' }}</span>
+        <span>{{ prompts.label ? `在「${prompts.label}」可以這樣跟我說` : '可以這樣跟我說' }}</span>
         <button
           v-if="catalogueCount"
           type="button"
           class="aa-chat__all-toggle"
           :aria-expanded="showAll"
           @click="showAll = !showAll"
-        >{{ showAll ? '收合' : `全部 ${catalogueCount} 件` }}</button>
+        >{{ showAll ? '收合' : `我會做的 ${catalogueCount} 件` }}</button>
       </div>
+      <!-- ⚠️ 清單的樣子（先選一類、再點一句）等老闆看過示意頁 v8 才改（`D-115`）；這輪只把紅線收進來 -->
       <ul v-if="showAll" class="aa-chat__all">
         <li v-for="g in catalogue" :key="g.page"><b>{{ g.label }}</b>：{{ g.ops.join('、') }}</li>
+        <!-- 以前是面板頁尾一直佔著的那一行（`D-114` 第 3 題）：叫它做這幾件時它本來就會照實說、請他到那一頁按 -->
+        <li class="aa-chat__all-self"><b>這些要你自己按</b>：{{ AGENT_SELF_ONLY }}</li>
       </ul>
       <div class="aa-chat__chips">
         <button
@@ -112,13 +117,14 @@
 </template>
 
 <script setup lang="ts">
-/** 小幫手的「問／交辦」分頁：用講的查後台、也用講的叫它改（改之前一律先給確認卡）。 */
+/** 小幫手的對話（`D-114` 前是「問／交辦」分頁，現在一直在狀況條下面）：用講的查後台、也用講的叫它改（改之前一律先給確認卡）。 */
 import { ADMIN_AGENT_TOOL_LABELS } from '~~/shared/types/admin-agent'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
 import type { AdminOpId, AdminOpPending } from '~~/shared/types/admin-ops'
 import {
   ADMIN_OP_TARGET,
   AGENT_OP_PAGE_LABEL,
+  AGENT_SELF_ONLY,
   type AgentAskSource,
   agentOpCatalogue,
   agentOpViewPath,
@@ -148,8 +154,15 @@ interface Msg {
   view?: AgentOpDoneEvent
 }
 
+const props = defineProps<{
+  /** 上面的「目前狀況」展開著（`D-114`）：只藏對話紀錄，建議與輸入框照常 */
+  listHidden?: boolean
+}>()
+/** 他開始講話了（送出、按了建議）：小幫手把展開的狀況收起來，把位子還給對話 */
+const emit = defineEmits<{ engage: [] }>()
+
 const { apiFetch, workspaceId, can } = useWorkspace()
-const { topics, startTopicById, openGuide, openPanelTab, requestedAgentAsk } = useTutorial()
+const { topics, startTopicById, openGuide, openPanelView, openCatalogue, requestedAgentAsk } = useTutorial()
 const route = useRoute()
 const { bumpAdminTagList } = useAdminTagRefresh()
 const { showToast } = useAdminToast()
@@ -170,21 +183,21 @@ function teachLabel(c: TeachCard): string {
     const g = (AGENT_GUIDES as Record<string, { title: string } | undefined>)[c.ref]
     return g ? `陪我做：${g.title}` : ''
   }
-  return '打開「目前狀況」（一鍵修好的按鈕在那裡）'
+  return '展開上面的「目前狀況」（一鍵修好的按鈕在那裡）'
 }
 
 function runTeach(c: TeachCard) {
   if (c.teach === 'tour') {
-    // 導覽會自己把面板收起來、換到那一頁再開跑；跑不起來就退回教學分頁讓他自己挑（⛔ 不要按了沒反應）
+    // 導覽會自己把面板收起來、換到那一頁再開跑；跑不起來就退回全部教學讓他自己挑（⛔ 不要按了沒反應）
     if (!startTopicById(c.ref))
-      openPanelTab('learn')
+      openCatalogue()
     return
   }
   if (c.teach === 'guide') {
     openGuide(c.ref)
     return
   }
-  openPanelTab('setup')
+  openPanelView('status')
 }
 
 // 對話存在全域:切去「目前狀況」看一眼、或關掉面板再打開,問到一半的內容都還在。
@@ -233,21 +246,27 @@ const inputEl = ref<{ focus: () => void, input?: HTMLInputElement } | null>(null
 /** 輸入框亮三下（同 AgentAskDock 的 `is-turn`）：從頁面按鈕進來時告訴他「在這裡講」 */
 const glow = ref(false)
 
-function focusInput() {
-  glow.value = false
+/**
+ * @param withGlow 亮三下＝「在這裡講」的提示（從頁面按鈕、建議進來時）；
+ *   單純打開面板（`D-114` 打開就能打字）只放游標、⛔ 不亮——每次打開都閃就成了裝飾
+ */
+function focusInput(withGlow = true) {
+  if (withGlow) glow.value = false
   // 面板打開時會先把焦點放在面板本體（esc 才關得掉），這裡晚一拍再搶回輸入框
   nextTick(() => setTimeout(() => {
     inputEl.value?.focus()
     const el = inputEl.value?.input
     if (el) el.setSelectionRange(el.value.length, el.value.length)
-    glow.value = true
+    if (withGlow) glow.value = true
   }, 80))
 }
+defineExpose({ focusInput })
 
 /** 「做」的建議：放進輸入框，等他改成自己的再送（⛔ 不直接送） */
 function fillSuggestion(text: string) {
   input.value = text
   pendingSource.value = 'suggestion'
+  emit('engage')
   focusInput()
 }
 
@@ -342,6 +361,7 @@ function onOpCancel() {
 async function send(preset?: string, source?: AgentAskSource) {
   const text = String(preset ?? input.value).trim()
   if (!text || loading.value) return
+  emit('engage')
   // 查詢期間可能被切到別的工作區。回來時對不上就整個丟掉——
   // 把 A 家的查詢結果貼進 B 家的對話,是會讓人照著錯資料做決定的那種錯
   const askedFor = workspaceId.value || ''

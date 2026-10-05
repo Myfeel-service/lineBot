@@ -22,7 +22,7 @@ export type AgentTeachKind = 'tour' | 'guide' | 'status'
 
 interface AgentTeaching {
   kind: AgentTeachKind
-  /** tour＝tutorial-topics 的 id；guide＝agent-guides 的 id；status＝固定 'setup'（打開「目前狀況」分頁） */
+  /** tour＝tutorial-topics 的 id；guide＝agent-guides 的 id；status＝固定 'setup'（展開小幫手最上面那一條「目前狀況」，`D-114` 前是分頁） */
   ref: string
   /** 給模型看的一句話：什麼問題該給這一支 */
   hint: string
@@ -76,7 +76,7 @@ export const AGENT_TEACHINGS = {
   'guide-line-channel': { kind: 'guide', ref: 'line-channel', hint: '同一個官方帳號同時接在別的系統上', requires: 'line.manage' },
   'guide-liff-setup': { kind: 'guide', ref: 'liff-setup', hint: '第一次設定活動頁（LIFF），要辦活動收名單時', requires: 'line.manage' },
   'guide-liff-endpoint': { kind: 'guide', ref: 'liff-endpoint', hint: '活動連結打不開、客人綁定失敗', requires: 'line.manage' },
-  // ── 目前狀況：異常清單＋一鍵修好的按鈕都在這個分頁 ─────────────────
+  // ── 目前狀況：異常清單＋一鍵修好的按鈕都在這裡（小幫手最上面那一條，展開就看得到）──
   'panel-status': { kind: 'status', ref: 'setup', hint: '現在有什麼要處理、哪裡壞了——那裡每一件都附「帶我修好」或一鍵修的按鈕' },
 } as const satisfies Record<string, AgentTeaching>
 

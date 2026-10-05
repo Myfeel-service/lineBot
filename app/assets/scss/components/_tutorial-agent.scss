@@ -96,7 +96,11 @@
 
 /* ── 聊天面板 ──────────────────────────────────────────────── */
 .ta-panel {
-  width: 384px; /* 三分頁 + 異常/摘要收件匣後 340 太擠 */
+  width: 384px; /* 異常/摘要收件匣後 340 太擠 */
+  /* 固定高度（`D-114`，2026-10-05 老闆：「對話框統一高度，目前切換會改變高度」）：
+     展開狀況、打開全部教學、聊天變長，外框都不動，裡面各自捲。
+     視窗太矮時讓位：扣掉右下角那顆按鈕＋間距＋上緣留白（約 8.5rem） */
+  height: min(580px, calc(100vh - 8.5rem));
   /* 上限由容器（.tutorial-agent 的 --ta-dock-maxw）決定：搬到畫面中間時要跟著縮 */
   max-width: 100%;
   background: var(--bg-surface);
@@ -110,7 +114,7 @@
   /* 被拖到剩餘空間不夠的位置時，整個面板的高度上限＝錨邊到對邊還剩多少
      （--ta-dock-panelh 由 useAgentDock 算）。⛔上限要套在面板本體、不要套在內容區：
      套內容區就得自己估「標頭＋頁尾佔幾 px」，估錯就溢出視窗（實測差 18px）。
-     內容區交給下面的 flex 收縮，外框高度讓瀏覽器自己算。 */
+     內容區交給下面的 flex 收縮。 */
   max-height: var(--ta-dock-panelh, none);
 
   /* 開面板時焦點是程式移進來的（Esc 才接得到），不要因此畫一圈外框 */
@@ -148,26 +152,13 @@
   font-size: 1.25rem;
 }
 
-.ta-panel__head-meta {
+/* ⛔ 名字不准折行（2026-10-01 `D-112` 實測：當時標頭還有三個分頁，390px 手機上「小幫手」被擠成直排三行）。
+   `D-114` 分頁拿掉後標頭只剩名字，這條留著當保險。「剛剛檢查過」搬進展開後的狀況最上面那一行 */
+.ta-panel__name {
   flex: 1;
   min-width: 0;
-}
-
-/* ⛔ 名字與狀態都不准折行（2026-10-01 `D-112` 實測）：分頁改名「問／交辦」多了一個字之後，
-   390px 手機上左邊只剩 26px，「小幫手」被擠成直排三行。寧可切成「小…」也不要直排；
-   手機寬度另外把頭像收掉把位子讓出來（見檔尾 600px 那段） */
-.ta-panel__name {
   font-weight: 700;
   font-size: 0.95rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 資料新鮮度（「剛剛檢查過」…）：取代裝飾性的「線上」假狀態 */
-.ta-panel__status {
-  font-size: 0.75rem;
-  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,7 +177,7 @@
   &:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
 }
 
-/* 內容區：自身上限 60vh；面板被 --ta-dock-panelh 收窄時，靠 flex 再往下縮。
+/* 內容區（展開的狀況、全部教學）：面板高度固定（`D-114`），這塊吃掉剩下的高度、自己捲。
    ⛔ `min-height: 0` 不能拿掉——flex item 預設 min-height:auto 會擋住收縮，
       面板就會被內容從內部撐破、超出視窗（這是拖到畫面中央才看得到的那個 bug）。 */
 .ta-panel__body {
@@ -194,11 +185,16 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 60vh;
   overflow-y: auto;
   background: var(--bg-elevated);
+}
+
+/* 劇本（AgentGuidePanel）跑在面板裡時同樣吃掉剩下的高度（它自己的 60vh 上限是給別處用的） */
+.ta-panel .agp {
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 /* agent 訊息泡泡 */
@@ -347,6 +343,24 @@
     font-size: 0.75rem;
     font-weight: 600;
   }
+
+  /* 「帶我看一遍」（`D-114`：原本在「教學」分頁）：次要動作，長得像 .ta-gaptour 那顆外框鈕 */
+  &__tour {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    align-self: flex-start;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--brand-green-text);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover { border-color: var(--border-active); }
+  }
 }
 
 /* 等你看過的知識卡那一條（`C-250`③）：⛔ 不是紅的（不擋上線，只是會讓 AI 答得更好） */
@@ -408,18 +422,6 @@
   color: var(--text-secondary);
 }
 
-.ta-progress__refresh {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.75rem;
-  text-decoration: underline;
-  padding: 0;
-
-  &:hover:not(:disabled) { color: var(--text-primary); }
-  &:disabled { cursor: default; opacity: 0.6; }
-}
 
 /* ── 缺項巡覽按鈕（次要：outline，讓待辦卡當主角） ─────────── */
 .ta-gaptour {
@@ -573,32 +575,7 @@
   padding: 14px 16px;
   color: #fff;
 
-  &__head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  &__title {
-    font-size: 14.5px;
-    font-weight: 700;
-  }
-
-  &__refresh {
-    flex: none;
-    border: 0;
-    background: none;
-    color: rgb(255 255 255 / 85%);
-    font-size: 12px;
-    text-decoration: underline;
-    cursor: pointer;
-    padding: 0;
-
-    &:disabled { opacity: 0.6; cursor: default; }
-  }
-
+  /* `D-114`：標題「還沒上線——…」搬到最上面那一條、「重新檢查」搬到狀況最上面那一行，卡上只留步驟與按鈕 */
   &__steps {
     display: flex;
     flex-direction: column;
@@ -648,44 +625,136 @@
   }
 }
 
-.ta-verdict {
+/* `D-114`（2026-10-05）：以前是狀況分頁最上面的結論列，現在就是面板最上面那一條——
+   收起來時也看得到「有沒有事」，按了往下展開完整狀況。顏色語意不變（沿用 .ls-status）。 */
+.ta-strip {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-md);
+  width: 100%;
+  padding: 0.6rem 1rem 0.6rem calc(1rem - 3px);
+  border: 0;
   border-left: 3px solid var(--border);
+  border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
+  font: inherit;
   font-size: 0.875rem;
   font-weight: 700;
+  line-height: 1.45;
   color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
 
   &.is-danger {
     background: var(--el-color-danger-light-9);
     border-left-color: var(--el-color-danger);
-    .ta-verdict__icon { color: var(--el-color-danger); }
+    .ta-strip__icon { color: var(--el-color-danger); }
   }
   &.is-warning {
     background: var(--el-color-warning-light-9);
     border-left-color: var(--el-color-warning);
-    .ta-verdict__icon { color: var(--el-color-warning); }
+    .ta-strip__icon { color: var(--el-color-warning); }
   }
   /* 「還不能上線」直接用 is-danger：還沒上線本身就是大問題（2026-08-07 拍板）。
      ⛔ 曾用品牌綠當「進度」講（is-progress）——新帳號打開整片綠像沒事。 */
   &.is-ok {
     background: var(--el-color-success-light-9);
     border-left-color: var(--el-color-success);
-    .ta-verdict__icon { color: var(--el-color-success); }
+    .ta-strip__icon { color: var(--el-color-success); }
   }
   &.is-muted {
     color: var(--text-secondary);
-    .ta-verdict__icon { color: var(--text-muted); }
+    .ta-strip__icon { color: var(--text-muted); }
+  }
+
+  &__icon {
+    font-size: 1.05rem;
+    flex-shrink: 0;
+  }
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__sub {
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+
+  &__toggle {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-secondary);
   }
 }
 
-.ta-verdict__icon {
-  font-size: 1.05rem;
-  flex-shrink: 0;
+/* 狀況展開後最上面那一行：多新的資訊＋全面板唯一一顆「重新檢查」（以前分散在標頭、英雄卡、進度條） */
+.ta-fresh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+
+  &__btn {
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--brand-green-text);
+    cursor: pointer;
+
+    &:hover:not(:disabled) { text-decoration: underline; }
+    &:disabled { cursor: default; opacity: 0.6; }
+  }
+}
+
+/* 導覽走完／修好了的那一句（以前講在開場白泡泡裡） */
+.ta-note {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--brand-green-wash);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* 全部教學（原本的「教學」分頁）：從頁首「？」最下面那一行進來，所以頂端要有回去的路 */
+.ta-catalogue {
+  &__head { display: flex; }
+
+  &__back {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.8125rem;
+    color: var(--brand-green-text);
+    cursor: pointer;
+
+    &:hover { text-decoration: underline; }
+  }
+
+  &__title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  &__hint {
+    margin: -0.5rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+  }
 }
 
 /* ── 目前異常（本來會動的東西壞了） ────────────────────────── */
@@ -1532,43 +1601,19 @@
   }
 }
 
-/* ── 面板分頁(設定進度 / 問助理) ── */
-.ta-tabs {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: auto;
-  margin-right: 0.4rem;
-  background: var(--el-fill-color);
-  border-radius: 100px;
-  padding: 2px;
-
-  button {
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--el-text-color-secondary);
-    padding: 3px 10px;
-    border-radius: 100px;
-    white-space: nowrap;
-
-    &.is-active {
-      background: var(--el-bg-color);
-      color: var(--el-text-color-primary);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-  }
-}
-
-/* ── 問助理(查詢副駕)聊天面板 ── */
+/* ── 對話（`D-114` 前是「問／交辦」分頁，現在一直在狀況條下面）── */
 .ta-panel__chat {
   display: flex;
   flex-direction: column;
-  /* 同 .ta-panel__body：min-height 0 才收縮得動（見那邊的註解） */
-  flex: 0 1 auto;
+  /* 同 .ta-panel__body：min-height 0 才收縮得動（見那邊的註解）。高度固定之後由它吃掉剩下的高度 */
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 60vh;
+}
+
+/* 狀況展開時對話紀錄藏起來、只剩建議＋輸入框：這時讓上面的狀況吃高度，這塊只佔自己那幾行
+   （⛔ 不加這條的話它照樣 flex:1，輸入框底下會多一大塊空白） */
+.ta-panel__chat.is-input-only {
+  flex: none;
 }
 
 .aa-chat {
@@ -1578,7 +1623,8 @@
 
   &__list {
     flex: 1;
-    min-height: 180px;
+    /* 面板高度固定之後（`D-114`）由外框決定高度；以前的 180px 保底是為了「內容撐高度」那時候 */
+    min-height: 0;
     overflow-y: auto;
     padding: 0.85rem;
     display: flex;
@@ -1629,6 +1675,14 @@
     color: var(--el-text-color-regular);
 
     b { color: var(--el-text-color-primary); }
+  }
+
+  /* 清單最後一行「這些要你自己按」（`D-114`：以前是頁尾一直佔著的那一行）：不是它會做的事，不給圓點、隔一條虛線 */
+  &__all-self {
+    list-style: none;
+    margin: 4px 0 0 -1.5em;
+    padding-top: 4px;
+    border-top: 1px dashed var(--el-border-color);
   }
 
   &__chips {
@@ -1696,6 +1750,12 @@
     border-color: var(--el-color-primary-light-7);
     background: var(--brand-green-wash);
     color: var(--el-text-color-primary);
+
+    /* 一支筆＝「按了放進輸入框讓你改」（`D-114`）：以前綠白兩種長得幾乎一樣、一個放進輸入框一個直接送，分不出來 */
+    &::before {
+      content: '✎ ';
+      color: var(--brand-green-text);
+    }
   }
 }
 
@@ -1879,7 +1939,6 @@
 @media (max-width: 600px) {
   .tutorial-agent { right: 1rem; bottom: 1rem; }
 
-  /* 手機寬度：頭像是裝飾，讓位給「小幫手」與資料新鮮度（不讓就只剩 26px，見 .ta-panel__name） */
+  /* 手機寬度：標頭左右收一點。⚠️ 以前還要把頭像收掉讓位給三個分頁（`D-112`），`D-114` 分頁拿掉後不用了 */
   .ta-panel__head { padding: 0.875rem 0.75rem; }
-  .ta-panel__avatar { display: none; }
 }

@@ -429,7 +429,14 @@ describe('就緒度', () => {
   })
 
   it('小幫手的「下一步」不會指到可跳過的步驟', () => {
+    // `D-114`（2026-10-05）：以前英雄卡下面那句開場白「下一步：…」要自己跳過 optional（`!st.done && !st.optional`）；
+    // 開場白拿掉之後，唯一指路的是英雄卡那顆鈕——它只看「LINE 接上了沒」，所以永遠不會指到「認識你的店」。
     const tutorialAgent = readFileSync(`${APP_DIR}components/TutorialAgent.vue`, 'utf8')
-    expect(tutorialAgent).toContain('!st.done && !st.optional')
+    expect(tutorialAgent, '英雄卡那顆鈕的字要吃 onboardingBand.heroCta').toContain('{{ onboardingBand.heroCta }}')
+    const i = setupStatus.indexOf('const onboardingBand')
+    const block = setupStatus.slice(i, i + 3000)
+    expect(block.slice(0, 120)).toContain('statusMap.value.lineConnected === \'done\'')
+    const ctas = [...block.matchAll(/heroCta: '([^']+)'/g)].map(m => m[1])
+    expect(ctas).toEqual(['用手機測試 →', '接上 LINE，讓客人找得到 →'])
   })
 })

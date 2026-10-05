@@ -202,7 +202,13 @@ export function agentPromptsFor(page: AgentPromptPage | null, can: (cap: Capabil
   return { ...base, dos: base.dos.filter(d => can(ADMIN_OP_CAPABILITY[d.op])).slice(0, 3) }
 }
 
-/** 「全部 N 件」：照頁分組、照權限篩（頁的順序＝側欄由上到下） */
+/**
+ * 它永遠不做、要他自己到那一頁按的那幾類（08-14 拍板的紅線，`server/utils/ai-admin-agent.ts` 的指示同一份範圍）。
+ * 以前是小幫手頁尾一直佔著的一行；`D-114`（2026-10-05）收進「我會做的 N 件」清單的最後一行。
+ */
+export const AGENT_SELF_ONLY = '發推播、回客人、刪東西、改 LINE 連線與成員'
+
+/** 「我會做的 N 件」：照頁分組、照權限篩（頁的順序＝側欄由上到下） */
 export function agentOpCatalogue(can: (cap: Capability) => boolean): { page: AgentOpPage, label: string, ops: string[] }[] {
   const order: AgentOpPage[] = ['ai-scripts', 'tags', 'broadcasts', 'knowledge', 'ai-settings', 'line-notify']
   return order

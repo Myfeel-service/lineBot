@@ -33,21 +33,13 @@
         tabindex="-1"
         @keydown.esc="closePanel"
       >
-        <!-- 標頭也是拖曳把手（面板開著時要能搬）。裡面的分頁與關閉鈕照常點——
-             onDragStart 會把「從按鈕上按下去」的手勢讓掉 -->
+        <!-- 標頭也是拖曳把手（面板開著時要能搬）。關閉鈕照常點——
+             onDragStart 會把「從按鈕上按下去」的手勢讓掉。
+             `D-114`（2026-10-05 拍板）：三個分頁拿掉、合成一頁。以前「問／交辦」排第三格、打開先停在「目前狀況」，
+             紅點講的又都是狀況，大家把它當警報、想不到能叫它做事。 -->
         <header class="ta-panel__head" @pointerdown="onDragStart">
           <div class="ta-panel__avatar"><el-icon><IconRobot /></el-icon></div>
-          <div class="ta-panel__head-meta">
-            <div class="ta-panel__name">小幫手</div>
-            <!-- 資料新鮮度取代裝飾性的「線上」：使用者真正想知道的是「這是多新的資訊」 -->
-            <div class="ta-panel__status">{{ headerFreshness }}</div>
-          </div>
-          <div class="ta-tabs" role="tablist">
-            <button type="button" role="tab" :aria-selected="panelTab === 'setup'" :class="{ 'is-active': panelTab === 'setup' }" @click="panelTab = 'setup'">目前狀況</button>
-            <button type="button" role="tab" :aria-selected="panelTab === 'learn'" :class="{ 'is-active': panelTab === 'learn' }" @click="panelTab = 'learn'">教學</button>
-            <!-- `D-112`（2026-10-01 拍板）：「問助理」→「問／交辦」——名字本身就講它會做事，不只會回答 -->
-            <button type="button" role="tab" :aria-selected="panelTab === 'chat'" :class="{ 'is-active': panelTab === 'chat' }" @click="panelTab = 'chat'">問／交辦</button>
-          </div>
+          <div class="ta-panel__name">小幫手</div>
           <button class="ta-panel__close" aria-label="關閉" @click="closePanel"><el-icon><Close /></el-icon></button>
         </header>
 
@@ -62,29 +54,129 @@
           @done="refreshAll(true)"
         />
 
-        <!-- 問／交辦：用講的查後台、也用講的叫它改。用 v-show 不用 v-if——切去看「目前狀況」再切回來，
-             對話與捲動位置要還在，不然問到一半去對照狀態就等於重問一次 -->
-        <AdminAgentChat v-show="!activeGuide && panelTab === 'chat'" class="ta-panel__chat" />
+        <!-- 全部教學（`D-114`：原本的「教學」分頁）：頁首「？」最下面那一行、`?tour=` 跑不起來時才會來 -->
+        <div v-if="!activeGuide && view === 'catalogue'" class="ta-panel__body ta-catalogue">
+          <div class="ta-catalogue__head">
+            <button type="button" class="ta-catalogue__back" @click="view = 'main'">← 回到小幫手</button>
+          </div>
+          <div class="ta-catalogue__title">全部教學</div>
+          <p class="ta-catalogue__hint">點一個，我在畫面上一步步帶你做。</p>
+          <!-- 「看看你剛剛做的東西」（`D-95`，`C-250`②）：排在所有教學前面——剛打造完的人這一刻想確認的是
+               「剛剛那幾樣建到哪去了」，全站地圖那 7 步對還沒接 LINE 的人一半是空的。⛔ 不自動跑，要他自己按。 -->
+          <button
+            v-if="builtTour.length"
+            type="button"
+            class="ta-option ta-option--sm ta-option--built"
+            @click="startBuiltTour"
+          >
+            <span class="ta-option__icon"><el-icon><Box /></el-icon></span>
+            <span class="ta-option__body">
+              <span class="ta-option__label">
+                看看你剛剛做的東西
+                <span class="ta-option__steps">{{ builtTour.length }} 步</span>
+              </span>
+              <span class="ta-option__blurb">開帳那一趟建的那幾樣，各在哪一頁</span>
+            </span>
+            <span class="ta-option__arrow">→</span>
+          </button>
+          <div v-if="groupedTopics.length || walkthroughGuides.length" class="ta-review">
+            <!-- 帶著做（D-40 補遺）：陪你做完並驗證的劇本。放最上面＝第一次用的人先看到；
+                 跟下面「看一遍畫面」的導覽分開住，不然選單裡兩個都在教「怎麼放知識」分不出差別 -->
+            <div v-if="walkthroughGuides.length" class="ta-review-group">
+              <button
+                class="ta-review-group__head"
+                :aria-expanded="expandedGroups.has('walkthrough')"
+                @click="toggleGroup('walkthrough')"
+              >
+                <span class="ta-review-group__title">帶著做（做完會幫你驗證）</span>
+                <span class="ta-review-group__count">{{ walkthroughGuides.length }}</span>
+                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has('walkthrough') }">▾</span>
+              </button>
+              <div v-if="expandedGroups.has('walkthrough')" class="ta-review-group__body">
+                <button
+                  v-for="g in walkthroughGuides"
+                  :key="g.id"
+                  class="ta-option ta-option--sm"
+                  @click="activeGuide = g.id"
+                >
+                  <span class="ta-option__icon"><el-icon><ChatDotRound /></el-icon></span>
+                  <span class="ta-option__body">
+                    <span class="ta-option__label">{{ g.title }}</span>
+                    <span class="ta-option__blurb">{{ g.blurb }}</span>
+                  </span>
+                  <span class="ta-option__arrow">→</span>
+                </button>
+              </div>
+            </div>
 
-        <div v-show="!activeGuide && panelTab === 'setup'" class="ta-panel__body">
-          <!-- 結論先行：先一句話講「有沒有事」，明細在下面（沿用 .ls-status 的視覺語言） -->
-          <div v-if="verdict" class="ta-verdict" :class="`is-${verdict.tone}`">
-            <el-icon class="ta-verdict__icon"><component :is="verdict.icon" /></el-icon>
-            <span>{{ verdict.text }}</span>
+            <div v-for="g in groupedTopics" :key="g.id" class="ta-review-group">
+              <button
+                class="ta-review-group__head"
+                :aria-expanded="expandedGroups.has(g.id)"
+                @click="toggleGroup(g.id)"
+              >
+                <span class="ta-review-group__title">{{ g.label }}</span>
+                <span class="ta-review-group__count">{{ g.topics.length }}</span>
+                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has(g.id) }">▾</span>
+              </button>
+              <div v-if="expandedGroups.has(g.id)" class="ta-review-group__body">
+                <button
+                  v-for="topic in g.topics"
+                  :key="topic.id"
+                  class="ta-option ta-option--sm"
+                  @click="onPick(topic)"
+                >
+                  <span class="ta-option__icon"><el-icon><component :is="topic.icon" /></el-icon></span>
+                  <span class="ta-option__body">
+                    <span class="ta-option__label">
+                      {{ topic.label }}
+                      <!-- 步數自動算：功能旗標關掉某步時會跟著少，不會跟文案漂移 -->
+                      <span class="ta-option__steps">{{ stepCount(topic) }} 步</span>
+                    </span>
+                    <span class="ta-option__blurb">{{ topic.blurb }}</span>
+                  </span>
+                  <span class="ta-option__arrow">→</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else-if="!walkthroughGuides.length" class="ta-options__empty">目前沒有可用的教學主題。</p>
+        </div>
+
+        <!-- 「目前狀況」收成最上面這一條（`D-114`）：一句結論加顏色，按了往下展開完整內容。
+             有紅色的事，打開時自動展開（`autoStatus`）——「壞了的事先講」不因為合成一頁就往後擠。 -->
+        <button
+          v-if="!activeGuide && view === 'main'"
+          type="button"
+          class="ta-strip"
+          :class="`is-${strip.tone}`"
+          :aria-expanded="statusOpen"
+          aria-controls="ta-status"
+          @click="toggleStatus"
+        >
+          <el-icon class="ta-strip__icon"><component :is="strip.icon" /></el-icon>
+          <span class="ta-strip__text">{{ strip.text }}<span v-if="strip.sub" class="ta-strip__sub">{{ strip.sub }}</span></span>
+          <span class="ta-strip__toggle">{{ statusOpen ? '收起' : '展開' }}<el-icon><component :is="statusOpen ? ArrowUp : ArrowDown" /></el-icon></span>
+        </button>
+
+        <div v-show="!activeGuide && view === 'main' && statusOpen" id="ta-status" class="ta-panel__body">
+          <!-- 資料新鮮度（以前在標頭）：使用者真正想知道的是「這是多新的資訊」，＋全面板唯一一顆「重新檢查」 -->
+          <div class="ta-fresh">
+            <span>{{ headerFreshness }}</span>
+            <button type="button" class="ta-fresh__btn" :disabled="busy" @click="refreshAll(true)">
+              {{ busy ? '檢查中…' : '重新檢查' }}
+            </button>
           </div>
 
+          <!-- 導覽走完／異常修好的閉環回應：一個 agent 一個聲音，講在狀況最上面（有這兩句時打開會自動展開） -->
+          <p v-if="postTourNote" class="ta-note" aria-live="polite">{{ postTourNote }}</p>
+          <p v-if="postFixNote" class="ta-note" aria-live="polite">{{ postFixNote }}</p>
+
           <!-- 開通英雄卡（2026-08-20 拍板）：開通沒完成＝新帳號最大的問題，
-               放結論正下方、全面板最顯眼的設計——列出還缺哪幾步＋一顆大 CTA。
-               有它的時候，下面的待辦清單不再重複列「接上 LINE」（英雄卡代言） -->
+               全面板最顯眼的設計——列出還缺哪幾步＋一顆大 CTA。
+               有它的時候，下面的待辦清單不再重複列「接上 LINE」（英雄卡代言）。
+               `D-114`：標題「還沒上線——…」由最上面那一條扛（同一句話不講兩遍），這裡只留步驟與按鈕 -->
           <div v-if="onboardingIncomplete" class="ta-hero">
-            <div class="ta-hero__head">
-              <!-- 結論紅條開通期讓位（統一成一塊），後果句由標題扛 -->
-              <!-- `C-250`②（示意頁 v80）：講後果講他在乎的那一件——客人找不到他（⛔ 不講「機器人」這種我們的詞） -->
-              <div class="ta-hero__title">還沒上線——客人還找不到你的 MiniMe</div>
-              <button type="button" class="ta-hero__refresh" :disabled="busy" @click="refreshAll(true)">
-                {{ busy ? '檢查中…' : '重新檢查' }}
-              </button>
-            </div>
             <div class="ta-hero__steps">
               <div v-for="st in onboardingSteps" :key="st.id" class="ta-hero__step" :class="{ 'is-done': st.done }">
                 <span class="ta-hero__mark">{{ st.done ? '✓' : '○' }}</span>
@@ -98,18 +190,8 @@
             </button>
           </div>
 
-          <!-- agent 訊息泡泡：依真實設定狀態講白話文。導覽完成／異常修復的閉環回應
-               也在這裡講——一個 agent 一個聲音，三個區塊各自代言只會像三個人在說話 -->
-          <div class="ta-msg">
-            <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
-            <div class="ta-msg__bubble" aria-live="polite">
-              <!-- 不帶名字：displayName 常是組織名（例：Myfeel），拿來當人名打招呼很怪（D-20 ⑤） -->
-              <p>嗨 👋</p>
-              <p v-if="postTourNote">{{ postTourNote }}</p>
-              <p v-if="postFixNote">{{ postFixNote }}</p>
-              <p>{{ agentLine }}</p>
-            </div>
-          </div>
+          <!-- ⛔ 以前這裡有一顆「嗨 👋＋整段開場白」的泡泡（`agentLine`）：`D-114` 合成一頁後，
+               它講的「有幾件事、還差幾項」最上面那一條已經講了，下面的卡片又各講一次＝同一件事講三遍，拿掉。 -->
 
           <!-- 開帳那一趟建了什麼、在哪裡（`D-89` 第二輪，`C-250`②）：精靈說「之後隨時可以改」，
                就要**給得出路**——知道在哪卻得自己去找，跟那句假承諾是同一種形狀。
@@ -125,6 +207,11 @@
             >
               <span>{{ BUILT_PLACE[b.key]?.icon }} {{ b.label }}</span>
               <span class="ta-built__go">{{ BUILT_PLACE[b.key]?.page }} ›</span>
+            </button>
+            <!-- `D-114`：原本只在「教學」分頁，分頁拿掉後放在它講的那幾樣旁邊（全部教學裡也還有） -->
+            <button v-if="builtTour.length" type="button" class="ta-built__tour" @click="startBuiltTour">
+              <el-icon><View /></el-icon>
+              <span>帶我看一遍（{{ builtTour.length }} 步）</span>
             </button>
           </div>
 
@@ -360,9 +447,7 @@
                   必要設定 {{ requiredDone }}/{{ requiredTotal }}
                   <template v-if="allRequiredDone"> ・可以上線了</template>
                 </span>
-                <button class="ta-progress__refresh" :disabled="busy" @click="refreshAll(true)">
-                  {{ busy ? '檢查中…' : '重新檢查' }}
-                </button>
+                <!-- 「重新檢查」搬到狀況最上面那一行（`D-114`：一頁裡只留一顆） -->
               </div>
               <!-- 定位說明在下面加分項區塊的標題講，這裡只報數，同一句話不講兩遍 -->
               <div v-if="optionalTotal" class="ta-progress__optional">
@@ -460,101 +545,22 @@
           </template>
         </div>
 
-        <!-- 教學：想學才來翻的參考庫（pull）。和「目前狀況」的異常/待辦（push）分開住，
-             不緊急的內容不佔狀況版面 -->
-        <div v-show="!activeGuide && panelTab === 'learn'" class="ta-panel__body">
-          <div class="ta-msg">
-            <div class="ta-msg__avatar"><el-icon><IconRobot /></el-icon></div>
-            <div class="ta-msg__bubble">
-              <p>想學哪個功能？點一個主題，我直接在畫面上一步步帶你做。</p>
-            </div>
-          </div>
-          <!-- 「看看你剛剛做的東西」（`D-95`，`C-250`②）：排在所有教學前面——剛打造完的人這一刻想確認的是
-               「剛剛那幾樣建到哪去了」，全站地圖那 7 步對還沒接 LINE 的人一半是空的。⛔ 不自動跑，要他自己按。 -->
-          <button
-            v-if="builtTour.length"
-            type="button"
-            class="ta-option ta-option--sm ta-option--built"
-            @click="startBuiltTour"
-          >
-            <span class="ta-option__icon"><el-icon><Box /></el-icon></span>
-            <span class="ta-option__body">
-              <span class="ta-option__label">
-                看看你剛剛做的東西
-                <span class="ta-option__steps">{{ builtTour.length }} 步</span>
-              </span>
-              <span class="ta-option__blurb">開帳那一趟建的那幾樣，各在哪一頁</span>
-            </span>
-            <span class="ta-option__arrow">→</span>
-          </button>
-          <div v-if="groupedTopics.length || walkthroughGuides.length" class="ta-review">
-            <!-- 帶著做（D-40 補遺）：陪你做完並驗證的劇本。放最上面＝第一次用的人先看到；
-                 跟下面「看一遍畫面」的導覽分開住，不然選單裡兩個都在教「怎麼放知識」分不出差別 -->
-            <div v-if="walkthroughGuides.length" class="ta-review-group">
-              <button
-                class="ta-review-group__head"
-                :aria-expanded="expandedGroups.has('walkthrough')"
-                @click="toggleGroup('walkthrough')"
-              >
-                <span class="ta-review-group__title">帶著做（做完會幫你驗證）</span>
-                <span class="ta-review-group__count">{{ walkthroughGuides.length }}</span>
-                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has('walkthrough') }">▾</span>
-              </button>
-              <div v-if="expandedGroups.has('walkthrough')" class="ta-review-group__body">
-                <button
-                  v-for="g in walkthroughGuides"
-                  :key="g.id"
-                  class="ta-option ta-option--sm"
-                  @click="activeGuide = g.id"
-                >
-                  <span class="ta-option__icon"><el-icon><ChatDotRound /></el-icon></span>
-                  <span class="ta-option__body">
-                    <span class="ta-option__label">{{ g.title }}</span>
-                    <span class="ta-option__blurb">{{ g.blurb }}</span>
-                  </span>
-                  <span class="ta-option__arrow">→</span>
-                </button>
-              </div>
-            </div>
+        <!-- 對話：一直在狀況條下面（`D-114`）。用 v-show 不用 v-if——看一眼狀況或全部教學再回來，
+             對話與捲動位置要還在，不然問到一半去對照狀態就等於重問一次。
+             狀況展開時只藏對話紀錄、⛔ 不藏輸入框：任何時候都能直接打字，這正是合成一頁的理由。 -->
+        <AdminAgentChat
+          v-show="!activeGuide && view === 'main'"
+          ref="chatRef"
+          class="ta-panel__chat"
+          :class="{ 'is-input-only': statusOpen }"
+          :list-hidden="statusOpen"
+          @engage="onChatEngage"
+        />
 
-            <div v-for="g in groupedTopics" :key="g.id" class="ta-review-group">
-              <button
-                class="ta-review-group__head"
-                :aria-expanded="expandedGroups.has(g.id)"
-                @click="toggleGroup(g.id)"
-              >
-                <span class="ta-review-group__title">{{ g.label }}</span>
-                <span class="ta-review-group__count">{{ g.topics.length }}</span>
-                <span class="ta-review-group__chev" :class="{ open: expandedGroups.has(g.id) }">▾</span>
-              </button>
-              <div v-if="expandedGroups.has(g.id)" class="ta-review-group__body">
-                <button
-                  v-for="topic in g.topics"
-                  :key="topic.id"
-                  class="ta-option ta-option--sm"
-                  @click="onPick(topic)"
-                >
-                  <span class="ta-option__icon"><el-icon><component :is="topic.icon" /></el-icon></span>
-                  <span class="ta-option__body">
-                    <span class="ta-option__label">
-                      {{ topic.label }}
-                      <!-- 步數自動算：功能旗標關掉某步時會跟著少，不會跟文案漂移 -->
-                      <span class="ta-option__steps">{{ stepCount(topic) }} 步</span>
-                    </span>
-                    <span class="ta-option__blurb">{{ topic.blurb }}</span>
-                  </span>
-                  <span class="ta-option__arrow">→</span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <p v-else-if="!walkthroughGuides.length" class="ta-options__empty">目前沒有可用的教學主題。</p>
-        </div>
-
-        <!-- 頁尾：一句話講這個分頁的立場，＋搬過位置的人要有回原位的退路。
-             四個分頁本來各寫一個 <footer>，收成一個——同一條列印四份，改文案時漏一份就漂了 -->
-        <footer class="ta-panel__foot">
-          <span>{{ footNote }}</span>
+        <!-- 頁尾只剩兩種時候要講話：劇本跑著（講它怎麼運作）、面板被搬過（回原位的退路）。
+             ⛔ 以前「問／交辦」那行紅線（發推播、回客人…一律要你自己按）收進「我會做的 15 件」了（`D-114` 第 3 題） -->
+        <footer v-if="activeGuide || moved" class="ta-panel__foot">
+          <span>{{ activeGuide ? GUIDE_FOOT_NOTE : '' }}</span>
           <button v-if="moved" type="button" class="ta-panel__foot-reset" @click="resetPos">移回右下角</button>
         </footer>
       </section>
@@ -644,7 +650,7 @@ import type { Component } from 'vue'
 import type { ResolvedCapability } from '~/composables/useSetupStatus'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
 import type { AgentGuideId } from '~/utils/agent-guides'
-import { Box, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Box, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Close, Loading, QuestionFilled, View, WarningFilled } from '@element-plus/icons-vue'
 import type { TutorialStep } from '~/utils/tutorial-topics'
 import {
   BUILT_PLACE,
@@ -673,8 +679,13 @@ const router = useRouter()
 // ⛔ 教學清單本身刻意不看當前路由：那件事由每頁頁首的「？」負責，不要長出第二套入口邏輯。
 const route = useRoute()
 
-/** 面板分頁:目前狀況(異常+待辦+日報)/ 教學(主題庫)/ 問／交辦(用講的查、用講的叫它改) */
-const panelTab = ref<'setup' | 'learn' | 'chat'>('setup')
+/**
+ * 面板只有一頁（`D-114`，2026-10-05 拍板，以前是「目前狀況／教學／問／交辦」三個分頁）：
+ * 最上面一條「目前狀況」（`statusOpen` 決定展不展開）＋下面一直是對話。
+ * `catalogue`＝全部教學（原本的「教學」分頁），只從頁首「？」最下面那一行、`?tour=` 的退路進來。
+ */
+const view = ref<'main' | 'catalogue'>('main')
+const statusOpen = ref(false)
 const {
   panelOpen,
   tourOpen,
@@ -683,7 +694,7 @@ const {
   activeSteps,
   lastTopicId,
   requestedGuideId,
-  requestedPanelTab,
+  requestedPanelView,
   stepCount,
   openPanel,
   closePanel,
@@ -693,6 +704,7 @@ const {
   startAdHocTour,
   endTour,
   askAgent,
+  openPanelView,
 } = useTutorial()
 const {
   capabilities,
@@ -903,24 +915,8 @@ function formatAvg(n: number): string {
   return n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
 }
 
-/** 開場白用的一句話日報 */
-const briefLine = computed(() => {
-  const b = brief.value
-  if (!b)
-    return ''
-  if (!b.yesterday.total) {
-    return b.yesterday.newFriends > 0
-      ? `昨天沒有客人對話，但有 ${b.yesterday.newFriends} 位新朋友加了好友。`
-      : '昨天沒有客人對話。'
-  }
-  // 「其中」不可省：轉真人與 AI 先回是重疊的，並列講會被聽成兩類相加（同摘要卡的坑）
-  const parts = [`昨天有 ${b.yesterday.total} 場客人對話，其中 ${b.yesterday.autoFirst} 場是 AI／機器人先回`]
-  if (b.yesterday.handoffs)
-    parts.push(`後來有 ${b.yesterday.handoffs} 場轉給真人`)
-  if (b.yesterday.newFriends > 0)
-    parts.push(`另外有 ${b.yesterday.newFriends} 位新朋友加了好友`)
-  return `${parts.join('、')}。`
-})
+/** 開通沒完成時最上面那一條講的話（`C-250`②，示意頁 v80：講後果講他在乎的那一件——客人找不到他，⛔ 不講「機器人」這種我們的詞） */
+const NOT_LIVE_TITLE = '還沒上線——客人還找不到你的 MiniMe'
 
 /**
  * 「還不能上線」的後果句：依缺的是哪個根結講——LINE 沒接＝訊息完全進不來、
@@ -1005,66 +1001,60 @@ const alertGroups = computed(() => [
   { key: 'notice', label: '供你參考（不用處理）', items: noticeAlerts.value },
 ].filter(g => g.items.length))
 
-/** agent 開場白：完全依真實狀態講白話文。順序＝先講壞了的，再講還沒做的，最後才是日報 */
-const agentLine = computed(() => {
-  if (!loaded.value && !alertsLoaded.value)
-    return '我先幫你看一下目前的狀況…'
-  // 紅點同時數「壞著的」與「必要設定沒做」，開場白也要兩件都講，數字才對得上
-  const setupTail = incompleteRequired.value.length
-    ? `另外，必要設定還差 ${incompleteRequired.value.length} 項沒完成。`
-    : ''
-  if (criticalAlerts.value.length)
-    return `先講重要的：有 ${criticalAlerts.value.length} 個地方現在不正常，客人會受影響。點下面就能去處理。${setupTail}`
-  if (activeAlerts.value.length) {
-    // D-43③：原本只有「紅黃全清空」那個分支才提建議＝實務上永遠不提。
-    // 黃級分支順一句就好；紅級分支刻意不加——先講重要的，不稀釋。
-    const suggestTail = suggestionBadgeCount.value
-      ? `有空的話，下面「可以更好」還有 ${suggestionBadgeCount.value} 個建議。`
-      : ''
-    return `有 ${activeAlerts.value.length} 件事建議處理一下，客人暫時不會有感，但別放太久。${setupTail}${suggestTail}`
+/**
+ * 最上面那一條（`D-114`）：結論沿用 `verdict`（紅點、頭條同一套口徑），收起來時也看得到。
+ * - 開通沒完成＝英雄卡的標題搬上來（開通期 verdict 回 null，見上面）
+ * - 一切正常時補一小段：知識庫還空著要點名（AI 開著卻答不出來，⛔ 不能只講「一切正常」——
+ *   以前這句在開場白裡講，開場白拿掉後搬到這裡）→ 有「可以更好」的建議 → 昨天幾場對話
+ */
+const strip = computed<{ tone: string, icon: Component, text: string, sub: string }>(() => {
+  const v = verdict.value
+  if (v) {
+    if (v.tone !== 'ok')
+      return { ...v, sub: '' }
+    let sub = ''
+    if (hasItems.value && capabilities.value.find(c => c.id === 'knowledgeReady')?.status === 'incomplete')
+      sub = '・知識庫還是空的'
+    else if (suggestionBadgeCount.value)
+      sub = `・${suggestionBadgeCount.value} 個可以更好的建議`
+    else if (briefY.value)
+      sub = `・昨天 ${briefY.value.total} 場對話`
+    return { ...v, sub }
   }
-  if (!loaded.value)
-    return '我先幫你看一下目前的設定狀況…'
-  // 沒有可動手的設定項（例如觀察者）：不談設定，給日報或導向教學/問答
-  if (!hasItems.value)
-    return briefLine.value || '想了解後台狀況可以直接問我，想學功能就切到「教學」。'
-  // 開通期泡泡只講「下一步」：結論已經由上面的英雄卡標題扛（開通期 verdict 回 null、
-  // 沒有結論列），再複述一次＝兩個聲音講同一件事。
-  // ⛔指路不要寫顏色：原本寫「按上面綠色卡片」，同一天英雄卡就改成 danger 紅（ffc18f5）
-  // 而這句沒跟著改，指路詞變成假的。改講按鈕上的字，之後再換色也不會再壞一次。
-  if (onboardingIncomplete.value) {
-    // ⛔ 跳過可跳過的步驟（`optional`）：輪廓沒做、LINE 也沒接的人，最急的是 LINE。
-    //    指到不急的那一步，等於把人帶去做一件現在做完也不會讓機器人活過來的事。
-    const next = onboardingSteps.value.find(st => !st.done && !st.optional)
-    // ⚠️ 鈕名吃同一份（`onboardingBand.heroCta`，`C-250`②）——鈕上的字換了、這句沒跟上就是假指路。
-    // 「準備好了」＝打造完直接進後台的人**不用現在做**（落地導覽第 2 步就是這樣講的，兩處同一個口徑）
-    const cta = onboardingBand.value.heroCta.replace(/\s*→$/, '')
-    return `下一步：${next?.label || '完成開通'}。準備好了按上面那張卡片的「${cta}」，我帶你做完。`
-  }
-  // 先講後果再講差幾項：「還差 2 項」聽起來像快好了，「客人得不到回應」才是實況
-  if (incompleteRequired.value.length)
-    return `我看過你的帳號了。現在${notLiveConsequence.value}——還差 ${incompleteRequired.value.length} 項必要設定才能上線。從第 1 步開始，我一步步帶你做。`
-  if (!allRequiredDone.value) {
-    const n = unknownCaps.value.filter(c => c.required).length
-    return `有 ${n} 項必要設定我這次查不到狀態，先點「重新檢查」確認一下。`
-  }
-  if (incompleteAll.value.length) {
-    // AI 開著 + 知識庫全空＝客人問什麼 AI 都答不出來，這不是普通的「想做再做」，
-    // 要點名講清楚後果（仍不擋「可以上線」——擋不擋是拍板過的加分項定位）
-    if (capabilities.value.find(c => c.id === 'knowledgeReady')?.status === 'incomplete')
-      return `必要設定都完成了。不過知識庫還是空的——客人問的問題 AI 幾乎都答不出來、只能轉給真人，建議先把知識庫建起來再上線。`
-    return `必要設定都完成了，可以上線囉！還有 ${incompleteAll.value.length} 個加分項，想做再做。`
-  }
-  // 沒有壞的、沒有缺的：日報 + 機會（讓 AI 更聰明的建議）
-  const suggestTail = suggestionBadgeCount.value
-    ? `另外我整理了 ${suggestionBadgeCount.value} 個能讓 AI 答得更好的建議，看看下面的「可以更好」。`
-    : ''
-  if (briefLine.value)
-    return `一切正常。${briefLine.value}${suggestTail}`
-  if (suggestTail)
-    return `一切正常。${suggestTail}`
-  return '你的設定都完成了。上線前建議先試答幾題確認 AI 答得穩，之後有任何不熟的地方隨時點我。'
+  if (loaded.value && onboardingIncomplete.value)
+    return { tone: 'danger', icon: CircleCloseFilled, text: NOT_LIVE_TITLE, sub: '' }
+  return { tone: 'muted', icon: Loading, text: '我先幫你看一下目前的狀況…', sub: '' }
 })
+
+/**
+ * 什麼時候自動展開：紅的（正在影響客人、還不能上線）＋導覽走完／修好了有話要講。
+ * ⛔ 只在他還沒自己動過之前才自動——資料晚一點回來、背景重查冒出新紅燈時，
+ *    他可能正在打字，這時把對話收掉換成狀況＝搶走他手上的事。
+ */
+let statusTouched = false
+function autoStatus() {
+  if (statusTouched)
+    return
+  statusOpen.value = strip.value.tone === 'danger' || Boolean(postTourNote.value || postFixNote.value)
+}
+function toggleStatus() {
+  statusTouched = true
+  statusOpen.value = !statusOpen.value
+}
+/** 他開始講話了（送出、按了建議）：狀況收起來，把位子還給對話 */
+function onChatEngage() {
+  statusTouched = true
+  statusOpen.value = false
+}
+watch(() => strip.value.tone, () => {
+  if (panelOpen.value)
+    autoStatus()
+})
+
+/** 劇本跑著時頁尾那一句：講它怎麼運作（以前每個分頁各一句，分頁拿掉後只剩這一句） */
+const GUIDE_FOOT_NOTE = '跟著做就好——每一步完成，我都會真的檢查有沒有生效。'
+
+const chatRef = ref<{ focusInput: (glow?: boolean) => void } | null>(null)
 
 function onPick(topic: Parameters<typeof startTopic>[0]) {
   void startTopic(topic)
@@ -1186,28 +1176,21 @@ watch(requestedGuideId, (id) => {
   if (id in AGENT_GUIDES)
     activeGuide.value = id as AgentGuideId
 })
-// 「問／交辦」回答裡那張「打開目前狀況」卡（`D-109`）、卡片與頁面上的「交給小幫手」（`D-112`）：
-// 分頁狀態在這裡，別的元件用這格共享狀態傳話
-watch(requestedPanelTab, (tab) => {
-  if (!tab)
+// 聊天回答裡那張「打開目前狀況」卡（`D-109`）、卡片與頁面上的「交給小幫手」（`D-112`）、
+// 頁首「？」的「看全部教學」（`D-114`）：面板狀態在這裡，別的元件用這格共享狀態傳話。
+// ⚠️ 跟下面的 watch(panelOpen) 誰先跑都要對：這裡一律記成「他指定過了」，那邊就不會再自動蓋掉
+watch(requestedPanelView, (v) => {
+  if (!v)
     return
-  requestedPanelTab.value = null
+  requestedPanelView.value = null
   activeGuide.value = null
-  panelTab.value = tab
-})
-
-/** 頁尾那句話：講這個分頁的立場（誠實邊界／怎麼運作），不重複畫面上已經有的內容 */
-const footNote = computed(() => {
-  if (activeGuide.value)
-    return '跟著做就好——每一步完成，我都會真的檢查有沒有生效。'
-  if (panelTab.value === 'setup')
-    return '我只看你帳號真實的狀態，不會給你假資訊。'
-  if (panelTab.value === 'learn')
-    return '每個教學都會在實際畫面上一步步帶你操作。'
-  // ⛔ 2026-09-29（`D-109`）：原本寫「目前只能查詢，不能修改」——09-16 開放代辦時沒改到，
-  //    跟同一個畫面上的開場白「少數設定也可以我來改」講反。這一行改講它**永遠不做**的那幾件
-  //    （08-14 拍板的紅線），不重講開場白已經說過的「先給你看、按了確定才動手」。
-  return '發推播、回客人、刪東西、改 LINE 連線與成員，一律要你自己到那一頁按。'
+  statusTouched = true
+  if (v === 'catalogue') {
+    view.value = 'catalogue'
+    return
+  }
+  view.value = 'main'
+  statusOpen.value = v === 'status'
 })
 
 function openGuide(alert: ResolvedAlert) {
@@ -1215,10 +1198,13 @@ function openGuide(alert: ResolvedAlert) {
     return
   activeGuide.value = alert.guideId
 }
-// 關面板順手收掉跑到一半的劇本：下次打開回到「目前狀況」，不殘留舊對話
+// 關面板順手收掉跑到一半的劇本與全部教學：下次打開回到那一頁，不殘留舊畫面
 watch(panelOpen, (open) => {
-  if (!open)
-    activeGuide.value = null
+  if (open)
+    return
+  activeGuide.value = null
+  view.value = 'main'
+  statusTouched = false
 })
 
 /**
@@ -1358,14 +1344,16 @@ async function onTourFinish() {
     void refresh({ force: true })
     return
   }
-  panelTab.value = 'setup'
+  // 回應講在「目前狀況」最上面：下面設好 postTourNote 之後打開面板，`autoStatus` 會把狀況展開
+  view.value = 'main'
   // 一定要 force：使用者剛才就在改設定，這裡拿到舊快取就會誤報「還沒生效」
   await refresh({ force: true })
   const cap = finishedId ? capabilities.value.find(c => c.tourId === finishedId) : null
   // 2026-08-28 拍板：**每一支**導覽跑完都要講「還能再看、去哪看」。
   // 在這之前只有掛了 tourId 的那 4 支會回話，其餘 18 支按完最後一步畫面一個字都不多說，
   // 而且全站沒有任何地方提過教學可以重開——正是老闆點名的缺口。
-  const reopen = '想再看一次？每頁頁首的「？」，或這裡的「教學」分頁隨時都在。'
+  // `D-114`：「教學」分頁拿掉了，全部教學改從「？」最下面那一行進
+  const reopen = '想再看一次？每頁標題旁的「？」隨時都在，最下面還有「看全部教學」。'
   if (cap) {
     const verdict = cap.status === 'done'
       ? `「${cap.title}」完成了，太好了！`
@@ -1431,8 +1419,7 @@ function alertNudgeKey(signature: string) {
 }
 function onAlertNudgeClick() {
   alertNudge.value = ''
-  panelTab.value = 'setup'
-  openPanel()
+  openPanelView('status')
 }
 
 watch(criticalAlerts, (list) => {
@@ -1520,11 +1507,9 @@ onMounted(async () => {
     await ensureWorkspaceList()
     // ⛔ 認不得的值／這個角色一步都跑不起來時要**有出路**（同一輪 review 修）：
     //    網址上那段已經被清掉了，重新整理救不回來，所以不能就這樣沉默結束。
-    //    退回「打開教學分頁」——讓人自己挑一支，這是唯一不會變成「按了沒反應」的收場。
-    if (!startTopicById(wantTour)) {
-      panelTab.value = 'learn'
-      openPanel()
-    }
+    //    退回「打開全部教學」——讓人自己挑一支，這是唯一不會變成「按了沒反應」的收場。
+    if (!startTopicById(wantTour))
+      openPanelView('catalogue')
   }
   await refreshAll()
   loadBuiltItems()
@@ -1581,7 +1566,14 @@ const panelEl = ref<HTMLElement | null>(null)
 // 每次打開面板都重新體檢（有待驗證的修復就 force 並回報結果）；關閉時清掉一次性回應
 watch(panelOpen, (open) => {
   if (open) {
-    nextTick(() => panelEl.value?.focus())
+    autoStatus()
+    nextTick(() => {
+      panelEl.value?.focus()
+      // 狀況收著＝打開就能直接打字（`D-114`）。⚠️ 晚一拍、不亮框：亮框是留給「用一句話建立」那種
+      // 「在這裡講」的提示；而且面板剛打開時焦點先在面板本體（Esc 才關得掉），要等它就位再搶回輸入框
+      if (!statusOpen.value && view.value === 'main' && !activeGuide.value)
+        chatRef.value?.focusInput(false)
+    })
     loadBuiltItems()
     void loadDraftCards()
     // 昨日摘要在這一刻才查（見 refreshAll 的註解）。不 force：useDailyBrief 自己有
@@ -1593,6 +1585,11 @@ watch(panelOpen, (open) => {
     postTourNote.value = ''
     postFixNote.value = ''
   }
+})
+// 「修好了沒」是打開之後才查完的（verifyLastFix）：有話要講就展開，讓那一句看得到
+watch([postTourNote, postFixNote], () => {
+  if (panelOpen.value)
+    autoStatus()
 })
 
 /**

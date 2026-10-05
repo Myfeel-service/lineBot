@@ -164,8 +164,15 @@ try {
   const hasBtn = await first.page.$('.page-help-btn')
   if (hasBtn) pass('頁首的問號還在（想再看一遍按得到）')
   else fail('頁首的問號不見了')
+  // `D-114`（2026-10-05）起問號一律先出選單（最後一行「看全部教學」），點第一項才開跑
   await first.page.click('.page-help-btn')
   try {
+    await first.page.waitForFunction(() => [...document.querySelectorAll('.el-dropdown-menu__item')].some(i => i.getBoundingClientRect().width > 0), { timeout: 8000 })
+    const items = await first.page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(i => i.getBoundingClientRect().width > 0).map(i => i.textContent?.trim() ?? ''))
+    if (items.at(-1)?.includes('看全部教學')) pass(`問號先出選單：${items.join('｜')}`)
+    else fail(`問號選單最後一行不是「看全部教學」：${items.join('｜')}`)
+    await first.page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')]
+      .find(i => i.getBoundingClientRect().width > 0 && !i.textContent?.includes('看全部教學'))?.click())
     await first.page.waitForSelector('.ta-tour-title', { visible: true, timeout: 8000 })
     pass('按問號照樣開得起來')
   }

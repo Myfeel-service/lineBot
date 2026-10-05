@@ -292,15 +292,15 @@ try {
   await page.evaluate(() => document.querySelector('.ta-fab')?.click())
   await page.waitForSelector('.ta-panel', { timeout: 30_000 })
   await sleep(800)
-  // 切到「問／交辦」分頁（分頁列＝.ta-tabs 裡的三顆 role=tab；`D-112` 前叫「問助理」）
-  await page.waitForSelector('.ta-tabs [role="tab"]', { timeout: 30_000 })
-  const switched = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('問／交辦'))
-    if (!btn) return false
-    btn.click()
+  // 露出對話（`D-114` 起沒有分頁：最上面那一條「目前狀況」紅的時候會自己展開，展開時對話紀錄讓位——收起來才看得到）
+  await page.waitForSelector('.ta-strip', { timeout: 30_000 })
+  const collapsed = await page.evaluate(() => {
+    const strip = document.querySelector('.ta-strip')
+    if (!strip) return false
+    if (strip.getAttribute('aria-expanded') === 'true') strip.click()
     return true
   })
-  if (!switched) fail('找不到「問／交辦」分頁')
+  if (!collapsed) fail('找不到小幫手最上面那一條「目前狀況」')
   await sleep(800)
 
   await page.waitForSelector('.aa-chat input', { timeout: 30_000 })
@@ -322,7 +322,9 @@ try {
   else fail(`卡片沒有前後對照：${card.slice(0, 200)}`)
 
   // 疊層：卡片要完整在小幫手面板裡、按鈕點得到
-  const clickable = await page.$eval('.aa-op__actions .el-button--primary', (el) => {
+  // ⚠️ `D-114` 起面板高度固定：卡片比對話區高時要靠「平滑捲到底」露出確定鈕——卡片一出現的那一瞬間
+  //    還在捲（第一輪就這樣量到「被建議膠囊蓋住」）。等它捲完再量，3 秒內點不到才是真的被蓋住。
+  const measure = () => page.$eval('.aa-op__actions .el-button--primary', (el) => {
     const r = el.getBoundingClientRect()
     const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
     return {
@@ -332,8 +334,14 @@ try {
       blocker: top ? `${top.tagName}.${String(top.className).split(' ')[0]}` : '(空)',
     }
   })
-  if (clickable.visible && clickable.hit) pass('確認鈕沒有被面板或別的東西蓋住（點得到）')
-  else fail(`確認鈕被蓋住或量不到：${JSON.stringify(clickable)}`)
+  const clickStart = Date.now()
+  let clickable = await measure()
+  while (!(clickable.visible && clickable.hit) && Date.now() - clickStart < 3000) {
+    await sleep(150)
+    clickable = await measure()
+  }
+  if (clickable.visible && clickable.hit) pass(`確認鈕沒有被面板或別的東西蓋住（點得到，捲到底花 ${Date.now() - clickStart}ms）`)
+  else fail(`確認鈕被蓋住或量不到（等了 3 秒）：${JSON.stringify(clickable)}`)
 
   // 取消：要明說沒有改到東西
   await page.evaluate(() => {
@@ -432,13 +440,19 @@ try {
     await page.goto(`${BASE}/admin/${WORKSPACE_ID}/ai-scripts`, { waitUntil: 'networkidle2', timeout: 90_000 })
     await sleep(2500)
     await dismissTour()
-    const selected = await page.evaluate((name) => {
+    // ⛔ 不靠固定等待：正式資料的清單有時 2.5 秒還沒載完（2026-10-05 第二輪就這樣假紅，第一輪同一關是綠的）
+    const pick = () => page.evaluate((name) => {
       const el = [...document.querySelectorAll('li, .scripts-list-item, [class*="list-item"]')]
         .find(i => i.textContent?.includes(name))
       if (!el) return false
       el.click()
       return true
     }, target.name)
+    let selected = await pick()
+    for (let i = 0; !selected && i < 40; i++) {
+      await sleep(500)
+      selected = await pick()
+    }
     if (!selected) {
       fail(`清單上點不到「${target.name}」`)
     }

@@ -56,13 +56,15 @@ export function useTutorial() {
    */
   const requestedGuideId = useState<string | null>('tutorial-requested-guide', () => null)
   /**
-   * 待切換的面板分頁（`D-109`）：「問助理」回答裡那張「打開目前狀況」卡要把面板切到
-   * 「目前狀況」（異常與一鍵修都在那裡）。分頁狀態長在 TutorialAgent 元件內，
-   * 聊天元件搆不到，跟上面那格同一種傳話方式。
+   * 面板打開時要停在哪（`D-114`，2026-10-05 三個分頁合成一頁之後）：
+   * - `status`：把最上面那一條「目前狀況」展開（聊天回答裡那張「打開目前狀況」卡、異常小氣泡——一鍵修都在那裡）
+   * - `chat`：狀況收起來、看得到對話（「用一句話建立」「交給小幫手」）
+   * - `catalogue`：全部教學（頁首「？」最下面那一行；`?tour=` 跑不起來時的退路）
+   * 面板狀態長在 TutorialAgent 元件內，別的元件搆不到，跟上面那格同一種傳話方式。
    */
-  const requestedPanelTab = useState<'setup' | 'learn' | 'chat' | null>('tutorial-requested-tab', () => null)
+  const requestedPanelView = useState<'status' | 'chat' | 'catalogue' | null>('tutorial-requested-view', () => null)
   /**
-   * 待送進「問／交辦」的那句話（`D-112`）。跟上面兩格同一種傳話方式：面板可能還沒打開、
+   * 待送進對話的那句話（`D-112`）。跟上面兩格同一種傳話方式：面板可能還沒打開、
    * 聊天元件還沒掛上，所以留在這格，聊天元件掛上（或已經掛著）時接手並清空。
    */
   const requestedAgentAsk = useState<AgentAskRequest | null>('tutorial-requested-agent-ask', () => null)
@@ -186,7 +188,7 @@ export function useTutorial() {
     // ⛔ 查 topics（已依角色與功能旗標過濾）不是 TUTORIAL_TOPICS（2026-08-28 code review 修）：
     //    `?tour=` 是使用者可以自己在網址列打的，用未過濾的清單找得到，等於把客服或觀察者
     //    送進他沒權限的設定頁、然後每一步都指不到東西——那正是 stepAllowedForRole 要防的事，
-    //    在這一層又漏了回來。查不到就回 false，呼叫端已經有退路（退回教學分頁讓人自己挑）。
+    //    在這一層又漏了回來。查不到就回 false，呼叫端已經有退路（打開「全部教學」讓人自己挑）。
     const topic = topics.value.find(t => t.id === id)
     if (!topic)
       return false
@@ -222,16 +224,21 @@ export function useTutorial() {
     openPanel()
   }
 
-  /** 從面板內的其他元件（小幫手聊天卡）切到某個分頁 */
-  function openPanelTab(tab: 'setup' | 'learn' | 'chat') {
-    requestedPanelTab.value = tab
+  /** 打開面板並停在某個畫面（見 `requestedPanelView`） */
+  function openPanelView(view: 'status' | 'chat' | 'catalogue') {
+    requestedPanelView.value = view
     openPanel()
   }
 
-  /** 打開「問／交辦」並帶一句話（頁面上的「用一句話建立」、目前狀況卡片的「交給小幫手」） */
+  /** 全部教學（頁首「？」最下面那一行） */
+  function openCatalogue() {
+    openPanelView('catalogue')
+  }
+
+  /** 打開對話並帶一句話（頁面上的「用一句話建立」、目前狀況卡片的「交給小幫手」） */
   function askAgent(req: Omit<AgentAskRequest, 'nonce'>) {
     requestedAgentAsk.value = { ...req, nonce: Date.now() + Math.random() }
-    openPanelTab('chat')
+    openPanelView('chat')
   }
 
   return {
@@ -244,7 +251,7 @@ export function useTutorial() {
     activeSteps,
     lastTopicId,
     requestedGuideId,
-    requestedPanelTab,
+    requestedPanelView,
     requestedAgentAsk,
     // helpers
     stepCount,
@@ -257,7 +264,8 @@ export function useTutorial() {
     startAdHocTour,
     endTour,
     openGuide,
-    openPanelTab,
+    openPanelView,
+    openCatalogue,
     askAgent,
   }
 }

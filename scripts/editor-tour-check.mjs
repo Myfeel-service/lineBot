@@ -414,14 +414,31 @@ async function pressHelpButton(page, label) {
   const slow = took > 2000 ? `（⚠️ 花了 ${(took / 1000).toFixed(1)} 秒才出來）` : ''
   if ((opened.menu || opened.tour) && slow)
     fail(`${label}：按下問號要等太久才有反應${slow}`)
-  if (opened.menu)
-    pass(`${label}：按下問號 → 跳出教學選單（${opened.menuItems} 項）`)
+  // `D-114`（2026-10-05）起一律先出選單，最下面一行「看全部教學」（小幫手的「教學」分頁拿掉了）
+  const hasAll = opened.menu && await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu')]
+    .filter(m => m.getBoundingClientRect().width > 0)
+    .some(m => [...m.querySelectorAll('.el-dropdown-menu__item')].at(-1)?.textContent?.includes('看全部教學')))
+  if (opened.menu && hasAll)
+    pass(`${label}：按下問號 → 跳出教學選單（${opened.menuItems} 項，最後一行「看全部教學」）`)
+  else if (opened.menu)
+    fail(`${label}：選單最後一行不是「看全部教學」＝這一頁找不到全部教學`)
   else if (opened.tour)
     pass(`${label}：按下問號 → 直接開跑導覽「${opened.tourTitle}」`)
   else
     fail(`${label}：按下問號**完全沒反應**（等了 5 秒，選單沒開、導覽也沒起來）＝使用者點了以為壞掉`)
   if (!opened.menu && !opened.tour && SHOT_DIR)
     await page.screenshot({ path: `${SHOT_DIR}/help-no-reaction-${label.replace(/[^\w一-龥]+/g, '_')}.png` })
+}
+
+/**
+ * 按頁首問號開這一頁的第一支導覽。`D-114`（2026-10-05）起問號一律先出選單（最後一行是「看全部教學」），
+ * 所以要再點選單第一項——以前只有一支教學的頁面是按了直接開跑。
+ */
+async function openFirstHelpTopic(page) {
+  await page.click('.page-help-btn')
+  await page.waitForFunction(() => [...document.querySelectorAll('.el-dropdown-menu__item')].some(i => i.getBoundingClientRect().width > 0), { timeout: 8000 })
+  await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')]
+    .find(i => i.getBoundingClientRect().width > 0 && !i.textContent?.includes('看全部教學'))?.click())
 }
 
 /** 按卡片右下角那顆（「下一步」／最後一步的「結束」） */
@@ -655,7 +672,7 @@ try {
       if (!(await page.$('[data-tour="ais-handback"]')))
         throw new Error('手動展開沒生效，這一關的前提不成立')
 
-      await page.click('.page-help-btn')
+      await openFirstHelpTopic(page)
       await page.waitForSelector('.ta-tour-title', { visible: true, timeout: 30_000 })
       // 走到第 5 步（那一步才會碰 clickBefore）
       for (let i = 1; i < 5; i++) await clickNext(page)

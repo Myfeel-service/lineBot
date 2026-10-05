@@ -1,7 +1,7 @@
 <template>
   <!-- 頁面上的「用一句話建立」（`D-112` 第 2 件，示意頁 v2 的 ②）：放在「新增」旁邊——
        「什麼時候該叫小幫手」的答案就是「要建東西的這一刻」，按鈕自己講出來。
-       按了只打開「問／交辦」、游標放進輸入框，⛔ 不替他送任何一句話（內容要他自己講）。
+       按了只打開小幫手的對話、游標放進輸入框，⛔ 不替他送任何一句話（內容要他自己講）。
        這一頁小幫手一件都做不了的人（權限不夠）整顆不出現。 -->
   <div v-if="visible && row" class="agent-ask-row">
     <el-button size="small" class="agent-ask-btn" :icon="ChatDotRound" @click="open">{{ label }}</el-button>

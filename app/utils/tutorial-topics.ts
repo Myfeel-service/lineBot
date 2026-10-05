@@ -269,7 +269,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="ta-fab"]',
         title: '有問題，先看右下角的小幫手',
         description:
-          '哪裡壞了、下一步要做什麼，它會<strong>主動說</strong>。點開還能找到所有教學，也可以直接問它問題。',
+          // `D-114`（2026-10-05）：小幫手的「教學」分頁拿掉了，全部教學改從頁首問號進（下一步講）
+          '哪裡壞了、下一步要做什麼，它會<strong>主動說</strong>。點開就能直接問它，也能叫它幫你改設定。',
         placement: 'left',
       },
       {
@@ -281,7 +282,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '幾乎每一頁標題旁都有「這頁怎麼用」',
         description:
           '點了就在<strong>真實畫面</strong>上一步步帶你操作。這支導覽也一樣——'
-          + '之後想再看，從這裡或右下角小幫手的「教學」分頁都找得到。',
+          + '之後想再看，按這顆問號就找得到，最下面還有「看全部教學」。',
         placement: 'bottom',
       },
       {

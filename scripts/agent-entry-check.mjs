@@ -6,14 +6,16 @@
  *   （要截圖就加 CHECK_SHOT_DIR=<資料夾>）
  *
  * 驗的是「按下去真的會發生」的那幾件——單元測試只驗得到對照表，驗不到：
- *   ① 頁面上的「用一句話建立」按了，小幫手真的開在「問／交辦」、游標在輸入框、範例字是這一頁的
+ *   ① 頁面上的「用一句話建立」按了，小幫手真的開在對話（狀況收著）、游標在輸入框、範例字是這一頁的
  *   ② 建議真的跟著頁面換；「做」的建議只放進輸入框、⛔不送出；「查」的按了就送
  *   ③ 送出去的請求帶著「從哪個入口來」（量入口用）
  *   ④ 按了確定之後，那一頁真的重讀、那一列真的亮了；不在那一頁時給「前往查看」，按了真的帶過去並打開
  *   ⑤ AI 設定頁有沒存的修改時⛔不重讀，而且聊天照實講「直接存會改回去」
  *   ⑥ 「目前狀況」待辦卡上的「交給小幫手」按了，替他講的那句話真的送出去
  *   ⑦ 觀察者看不到任何「做」的建議與按鈕
- *   ⑧ 版面：分頁改名後標頭沒擠爆、側欄那一排與標籤頁標頭沒折行、聊過之後建議縮成一排
+ *   ⑧ 版面：側欄那一排與標籤頁標頭沒折行、聊過之後建議縮成一排
+ *   ⑨ `D-114` 一頁：沒有分頁、高度固定（展開狀況／15 件／全部教學都一樣高）、狀況展開時輸入框還在、
+ *      紅的時候打開就自動展開、紅線收進 15 件清單、每頁「？」的「看全部教學」真的打開全部教學
  *
  * ⚠️ 寫入範圍：**零寫入**。所有 POST/PUT/PATCH/DELETE 都在瀏覽器層攔下——
  *    小幫手的聊天與確認兩支換成假回應（否則會呼叫模型、會真的改設定），其餘一律擋下並列出來；
@@ -283,11 +285,25 @@ async function openPanel() {
   if (!open) await page.evaluate(() => document.querySelector('.ta-fab')?.click())
   if (!await waitUntil(() => page.evaluate(() => !!document.querySelector('.ta-panel')), 10_000)) throw new Error('小幫手面板沒打開')
 }
-async function chatTab() {
-  await page.evaluate(() => [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('問／交辦'))?.click())
-  await waitUntil(() => page.evaluate(() => !!document.querySelector('.aa-chat__pills')), 5000)
+// `D-114`（2026-10-05）：小幫手沒有分頁了——最上面一條「目前狀況」（按了展開）＋下面一直是對話
+const statusExpanded = () => page.evaluate(() => document.querySelector('.ta-strip')?.getAttribute('aria-expanded') === 'true')
+/** 對話紀錄看得到（狀況收著）＝以前的「在問／交辦分頁」 */
+const chatVisible = () => page.evaluate(() => {
+  const list = document.querySelector('.aa-chat__list')
+  return !!list && list.offsetParent !== null && document.querySelector('.ta-strip')?.getAttribute('aria-expanded') === 'false'
+})
+async function showChat() {
+  if (await statusExpanded()) await page.evaluate(() => document.querySelector('.ta-strip')?.click())
+  await waitUntil(chatVisible, 5000)
 }
-const activeTab = () => page.evaluate(() => document.querySelector('.ta-tabs [role="tab"].is-active')?.textContent?.trim() ?? '')
+async function expandStatus() {
+  if (!await statusExpanded()) await page.evaluate(() => document.querySelector('.ta-strip')?.click())
+  await waitUntil(() => page.evaluate(() => document.querySelector('#ta-status')?.offsetParent !== null), 5000)
+}
+// ⚠️ 量 offsetHeight 不量 getBoundingClientRect：面板打開有縮放動畫（ta-pop），動畫跑到一半量到的是縮小的樣子
+//    （第一輪就是這樣報「全部教學 557px、回來 577px」的假紅——外框其實一直是 580）
+const panelHeight = () => page.evaluate(() => document.querySelector('.ta-panel')?.offsetHeight ?? 0)
+const inputShown = () => page.evaluate(() => document.querySelector('.aa-chat__field input')?.offsetParent !== null)
 const pillsHead = () => page.evaluate(() => document.querySelector('.aa-chat__pills-head span')?.textContent?.trim() ?? '')
 const inputValue = () => page.evaluate(() => document.querySelector('.aa-chat__field input')?.value ?? '')
 const placeholder = () => page.evaluate(() => document.querySelector('.aa-chat__field input')?.getAttribute('placeholder') ?? '')
@@ -336,14 +352,14 @@ try {
 
   await page.evaluate(() => document.querySelector('.agent-ask-row .agent-ask-btn')?.click())
   await waitUntil(() => page.evaluate(() => !!document.querySelector('.aa-chat__pills')), 8000)
-  if ((await activeTab()) === '問／交辦') pass('按了直接打開「問／交辦」（不用再點分頁）')
-  else fail(`按了之後在「${await activeTab()}」分頁`)
+  if (await chatVisible()) pass('按了直接看得到對話（狀況收著，沒有分頁要切）')
+  else fail(`按了之後對話沒露出來（狀況展開：${await statusExpanded()}）`)
   const focused = await waitUntil(() => page.evaluate(() => document.activeElement === document.querySelector('.aa-chat__field input')), 3000)
   if (focused) pass('游標已經在輸入框裡')
   else fail('游標沒有在輸入框（面板搶走了焦點）')
   if ((await placeholder()) === EXPECT['ai-scripts'].placeholder) pass('輸入框範例字是這一頁的')
   else fail(`輸入框範例字是「${await placeholder()}」`)
-  if ((await pillsHead()) === '在「自動回應」可以叫我') pass('建議標題講得出在哪一頁')
+  if ((await pillsHead()) === '在「自動回應」可以這樣跟我說') pass('建議標題講得出在哪一頁')
   else fail(`建議標題是「${await pillsHead()}」`)
   const chips = await page.evaluate(() => ({
     dos: [...document.querySelectorAll('.aa-chip--do')].map(b => b.textContent.trim()),
@@ -355,8 +371,15 @@ try {
   else fail(`「做」的建議是：${JSON.stringify(chips.dos)}`)
   if (chips.asks.includes(EXPECT['ai-scripts'].ask)) pass('「幫你查」是這一頁的事')
   else fail(`「查」的建議是：${JSON.stringify(chips.asks)}`)
-  if (chips.all === '全部 15 件') pass('管理員看得到「全部 15 件」')
-  else fail(`「全部 N 件」顯示成「${chips.all}」`)
+  if (chips.all === '我會做的 15 件') pass('管理員看得到「我會做的 15 件」')
+  else fail(`「我會做的 N 件」顯示成「${chips.all}」`)
+  // 綠的前面那支筆（`D-114`）是 ::before，textContent 讀不到——直接量偽元素
+  const pen = await page.evaluate(() => {
+    const d = document.querySelector('.aa-chip--do')
+    return d ? getComputedStyle(d, '::before').content : ''
+  })
+  if (pen.includes('✎')) pass('「做」的建議前面有一支筆（按了是放進輸入框讓你改）')
+  else fail(`「做」的建議前面是：${pen}`)
   if (chips.opener.startsWith('我可以幫你查，也可以直接幫你改')) pass('開場白先講會做事')
   else fail(`開場白是「${chips.opener}」`)
   await shot('01-scripts-pills')
@@ -397,7 +420,7 @@ try {
 
   // ═══ ② 換到推播：建議跟著換、聊過之後縮成一排、頁面按鈕記成 page-button ═══════════
   await navTo('/broadcasts', '.split-list-item')
-  if (await waitUntil(async () => (await pillsHead()) === '在「推播」可以叫我', 5000)) pass('換頁之後，建議標題跟著換成「推播」')
+  if (await waitUntil(async () => (await pillsHead()) === '在「推播」可以這樣跟我說', 5000)) pass('換頁之後，建議標題跟著換成「推播」')
   else fail(`換到推播之後建議標題是「${await pillsHead()}」`)
   if ((await placeholder()) === EXPECT.broadcasts.placeholder) pass('輸入框範例字跟著換')
   else fail(`推播頁的範例字是「${await placeholder()}」`)
@@ -483,21 +506,38 @@ try {
   await page.evaluate(() => document.querySelector('.el-message-box__btns .el-button--primary')?.click())
   await sleep(600)
 
-  // ═══ ⑤ 版面：分頁改名後標頭沒擠爆 ════════════════════════════════════════
+  // ═══ ⑤ 一頁（`D-114`）：沒有分頁、高度固定、狀況展開時輸入框還在、紅線收進清單 ═════════
   const head = await page.evaluate(() => {
-    const tabs = [...document.querySelectorAll('.ta-tabs [role="tab"]')]
-    const close = document.querySelector('.ta-panel__close')?.getBoundingClientRect()
-    const tabsBox = document.querySelector('.ta-tabs')?.getBoundingClientRect()
     const name = document.querySelector('.ta-panel__name')
     return {
-      tops: new Set(tabs.map(t => Math.round(t.getBoundingClientRect().top))).size,
-      overlap: close && tabsBox ? tabsBox.right > close.left + 1 : null,
-      clipped: tabs.some(t => t.scrollWidth > t.clientWidth + 1),
+      tabs: document.querySelectorAll('.ta-panel [role="tab"]').length,
+      strip: !!document.querySelector('.ta-panel .ta-strip'),
+      foot: !!document.querySelector('.ta-panel__foot'),
       nameOk: name ? name.scrollWidth <= name.clientWidth + 1 && name.getBoundingClientRect().height < parseFloat(getComputedStyle(name).fontSize) * 2 : false,
     }
   })
-  if (head.tops === 1 && head.overlap === false && !head.clipped && head.nameOk) pass('面板標頭：「小幫手」一行、三個分頁一排、沒壓到關閉鈕、字沒被切')
-  else fail(`面板標頭：${JSON.stringify(head)}`)
+  if (head.tabs === 0 && head.strip && !head.foot && head.nameOk) pass('面板：沒有分頁、最上面是狀況那一條、頁尾那行不見了、「小幫手」一行')
+  else fail(`面板：${JSON.stringify(head)}`)
+
+  const hChat = await panelHeight()
+  await expandStatus()
+  const hStatus = await panelHeight()
+  const statusInput = await inputShown()
+  const listHidden = await page.evaluate(() => document.querySelector('.aa-chat__list')?.offsetParent === null)
+  await shot('04b-status-expanded')
+  await showChat()
+  await page.evaluate(() => document.querySelector('.aa-chat__all-toggle')?.click())
+  await sleep(300)
+  const hAll = await panelHeight()
+  const selfLine = await page.evaluate(() => document.querySelector('.aa-chat__all-self')?.textContent?.trim() ?? '')
+  await shot('04c-all15')
+  await page.evaluate(() => document.querySelector('.aa-chat__all-toggle')?.click())
+  if (hChat > 0 && hChat === hStatus && hChat === hAll) pass(`高度固定：對話、展開狀況、打開「我會做的 15 件」都是 ${hChat}px`)
+  else fail(`高度會跳：對話 ${hChat}／展開狀況 ${hStatus}／15 件 ${hAll}`)
+  if (statusInput && listHidden) pass('狀況展開時：對話紀錄讓位、輸入框還在（任何時候都能直接打字）')
+  else fail(`狀況展開時：輸入框看得到 ${statusInput}、對話紀錄藏起來 ${listHidden}`)
+  if (selfLine.startsWith('這些要你自己按') && selfLine.includes('發推播')) pass(`紅線收進清單最後一行：「${selfLine}」`)
+  else fail(`清單最後一行是「${selfLine}」`)
 
   // ═══ ⑥ 標籤管理：標頭那顆＋建好標籤亮那一列 ════════════════════════════════
   await go('/tags', '.tags-table tbody tr')
@@ -529,7 +569,7 @@ try {
   await waitUntil(() => page.evaluate(() => !!document.querySelector('[data-agent-target="agent-check-card"]')), 20_000)
   await page.evaluate(() => document.querySelector('.agent-ask-row .agent-ask-btn')?.click())
   await waitUntil(() => page.evaluate(() => !!document.querySelector('.aa-chat__pills')), 8000)
-  if ((await pillsHead()) === '在「知識庫」可以叫我') pass('知識庫頁：建議標題是「知識庫」')
+  if ((await pillsHead()) === '在「知識庫」可以這樣跟我說') pass('知識庫頁：建議標題是「知識庫」')
   else fail(`知識庫頁的建議標題是「${await pillsHead()}」`)
   await resetFlashes()
   state.nextChat = { reply: '我打算這樣做。', toolCalls: [], messages: [], pendingOp: pendingOf('knowledge-draft-create', '補一張知識卡', 'fake-entry-6') }
@@ -547,8 +587,8 @@ try {
   // ═══ ⑧ LINE 通知：等幾分鐘提醒那一張亮了 ═══════════════════════════════
   await go('/settings/line-notify', '[data-agent-target="handoff-sla"]')
   await openPanel()
-  await chatTab()
-  if ((await pillsHead()) === '在「LINE 通知」可以叫我') pass('LINE 通知頁：建議標題是「LINE 通知」')
+  await showChat()
+  if ((await pillsHead()) === '在「LINE 通知」可以這樣跟我說') pass('LINE 通知頁：建議標題是「LINE 通知」')
   else fail(`LINE 通知頁的建議標題是「${await pillsHead()}」`)
   await resetFlashes()
   state.nextChat = { reply: '我打算這樣做。', toolCalls: [], messages: [], pendingOp: pendingOf('ai-settings-handoff-sla', '調整「客人等太久」的提醒時間', 'fake-entry-7') }
@@ -563,8 +603,11 @@ try {
   // ═══ ⑨ 目前狀況的待辦卡：「交給小幫手」替他講那句話 ═════════════════════════
   state.fakeSetup = true
   await go('/conversations', '.ta-fab')
+  // 換頁是整頁載入：面板關著。必要設定沒做＝紅的，打開就要自己展開（`D-114`「壞了的事先講」）
   await openPanel()
-  await page.evaluate(() => [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('目前狀況'))?.click())
+  if (await waitUntil(statusExpanded, 15_000)) pass('有必要設定沒做（紅的）：一打開就自動展開狀況')
+  else fail(`紅的時候打開沒有自動展開（最上面那一條：${await page.evaluate(() => document.querySelector('.ta-strip')?.textContent?.trim())}）`)
+  await expandStatus()
   const hasTodo = await waitUntil(() => page.evaluate(() => [...document.querySelectorAll('.ta-todo--split .ta-alert__act--primary')].some(b => b.textContent.includes('交給小幫手'))), 15_000)
   if (hasTodo) pass(`待辦卡上有「交給小幫手」：${await page.evaluate(() => [...document.querySelectorAll('.ta-todo--split .ta-todo__title')].map(t => t.textContent.trim()).join('、'))}`)
   else fail('「目前狀況」的待辦卡上沒有「交給小幫手」')
@@ -585,7 +628,7 @@ try {
     body = await lastChatBody(n0)
     if (/^幫我擬一則「.+」的推播草稿$/.test(body?.message ?? '') && body?.source === 'status-card') pass(`按了：替他講「${body.message}」，記成「目前狀況卡片」`)
     else fail(`按了節慶卡送出的是：${JSON.stringify(body)}`)
-    await page.evaluate(() => [...document.querySelectorAll('.ta-tabs [role="tab"]')].find(b => b.textContent?.includes('目前狀況'))?.click())
+    await expandStatus()
     await waitUntil(() => page.evaluate(() => !!document.querySelector('.ta-todo--split')), 8000)
   }
 
@@ -597,9 +640,9 @@ try {
   body = await lastChatBody(n0)
   if (body?.message === '幫我打開 AI 自動回覆' && body?.source === 'status-card') pass('按了「交給小幫手」：替他講「幫我打開 AI 自動回覆」，記成「目前狀況卡片」')
   else fail(`按了「交給小幫手」送出的是：${JSON.stringify(body)}`)
-  if ((await activeTab()) === '問／交辦') pass('而且面板切到了「問／交辦」')
-  else fail(`按了之後面板在「${await activeTab()}」`)
-  if ((await pillsHead()) === '可以叫我做的事') pass('沒有專屬建議的頁（客服對話）：標題不硬講頁名')
+  if (await waitUntil(chatVisible, 5000)) pass('而且狀況收起來、對話露出來了（看得到它在回什麼）')
+  else fail('按了「交給小幫手」之後，對話沒露出來')
+  if ((await pillsHead()) === '可以這樣跟我說') pass('沒有專屬建議的頁（客服對話）：標題不硬講頁名')
   else fail(`客服對話頁的建議標題是「${await pillsHead()}」`)
   state.fakeSetup = false
 
@@ -610,44 +653,73 @@ try {
   if (!await page.evaluate(() => !!document.querySelector('.agent-ask-row'))) pass('觀察者：自動回應頁沒有「用一句話建立」')
   else fail('觀察者看得到「用一句話建立」')
   await openPanel()
-  await chatTab()
+  await showChat()
   const viewer = await page.evaluate(() => ({
     dos: document.querySelectorAll('.aa-chip--do').length,
     asks: document.querySelectorAll('.aa-chip:not(.aa-chip--do)').length,
     all: !!document.querySelector('.aa-chat__all-toggle'),
   }))
-  if (viewer.dos === 0 && viewer.asks > 0 && !viewer.all) pass('觀察者：只看得到「查」的建議，沒有「做」、沒有「全部 N 件」')
+  if (viewer.dos === 0 && viewer.asks > 0 && !viewer.all) pass('觀察者：只看得到「查」的建議，沒有「做」、沒有「我會做的 N 件」')
   else fail(`觀察者看到的建議：${JSON.stringify(viewer)}`)
   state.fakeViewer = false
+
+  // ═══ ⑩½ 每頁的「？」：最下面那一行「看全部教學」真的打開全部教學（`D-114`：「教學」分頁拿掉了） ═══
+  // 自動回應頁只有一支教學——以前這種頁的問號按了直接開跑、沒有選單，現在一律先出選單
+  await go('/ai-scripts', '.page-help-btn')
+  await page.evaluate(() => document.querySelector('.page-help-btn')?.click())
+  const menu = await waitUntil(() => page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].some(i => i.offsetParent !== null && i.textContent.includes('看全部教學'))), 5000)
+  const items = await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(i => i.offsetParent !== null).map(i => i.textContent.trim()))
+  if (menu) pass(`自動回應頁的「？」先出選單：${items.join('｜')}`)
+  else fail(`按了「？」沒有出現「看全部教學」：${JSON.stringify(items)}（導覽開了：${await page.evaluate(() => !!document.querySelector('.el-tour'))}）`)
+  // 選單第一項＝這一頁的導覽，按了照樣開跑（以前這頁是按問號直接開跑；「記成看過」那支 POST 會被上面攔下＝零寫入）
+  await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(i => i.offsetParent !== null && !i.textContent.includes('看全部教學'))?.click())
+  const tourTitle = await waitUntil(() => page.evaluate(() => [...document.querySelectorAll('.ta-tour-title')].some(t => t.getBoundingClientRect().width > 0)), 10_000)
+  if (tourTitle) pass(`按選單第一項：這一頁的導覽開跑了（「${await page.evaluate(() => [...document.querySelectorAll('.ta-tour-title')].find(t => t.getBoundingClientRect().width > 0)?.textContent?.trim())}」）`)
+  else fail('按選單第一項，導覽沒有開跑')
+  // 關掉導覽（右上角的叉），再從問號進全部教學
+  for (let i = 0; i < 5 && await page.evaluate(() => [...document.querySelectorAll('.ta-tour-title')].some(t => t.getBoundingClientRect().width > 0)); i++) {
+    await page.evaluate(() => document.querySelector('.el-tour__closebtn')?.click())
+    await sleep(500)
+  }
+  await page.evaluate(() => document.querySelector('.page-help-btn')?.click())
+  await waitUntil(() => page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].some(i => i.offsetParent !== null && i.textContent.includes('看全部教學'))), 5000)
+  await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(i => i.offsetParent !== null && i.textContent.includes('看全部教學'))?.click())
+  if (await waitUntil(() => page.evaluate(() => document.querySelector('.ta-catalogue__title')?.textContent?.trim() === '全部教學'), 8000)) pass('按「看全部教學」：小幫手打開、停在全部教學')
+  else fail('按了「看全部教學」，小幫手沒有停在全部教學')
+  const hCat = await panelHeight()
+  await shot('08-catalogue')
+  await page.evaluate(() => document.querySelector('.ta-catalogue__back')?.click())
+  if (await waitUntil(() => page.evaluate(() => !!document.querySelector('.ta-strip') && !document.querySelector('.ta-catalogue')), 5000)) pass('「← 回到小幫手」回到狀況＋對話那一頁')
+  else fail('按「← 回到小幫手」沒有回去')
+  if (hCat === await panelHeight()) pass(`全部教學跟對話一樣高（${hCat}px）`)
+  else fail(`全部教學 ${hCat}px，回來之後 ${await panelHeight()}px`)
 
   // ═══ ⑪ 390px：面板標頭與建議沒有擠爆（後台本身沒有手機版，但小幫手面板在手機上照樣會被打開） ═══
   await page.setViewport({ width: 390, height: 844 })
   await go('/ai-settings', '[data-agent-target="service-hours"]')
   await openPanel()
-  await chatTab()
+  await showChat()
   await sleep(500)
   const narrow = await page.evaluate(() => {
     const panel = document.querySelector('.ta-panel')?.getBoundingClientRect()
-    const tabs = [...document.querySelectorAll('.ta-tabs [role="tab"]')]
-    const close = document.querySelector('.ta-panel__close')?.getBoundingClientRect()
-    const tabsBox = document.querySelector('.ta-tabs')?.getBoundingClientRect()
     const pills = document.querySelector('.aa-chat__pills')
     const chips = [...document.querySelectorAll('.aa-chip')]
     const name = document.querySelector('.ta-panel__name')
+    const strip = document.querySelector('.ta-strip')
     return {
       panelW: Math.round(panel?.width ?? 0),
-      // 2026-10-01 第一輪實測：「小幫手」被擠成直排三行（分頁改名多了一個字）
+      // 2026-10-01 第一輪實測：「小幫手」被擠成直排三行（當時標頭還有三個分頁）
       nameOneLine: name ? name.getBoundingClientRect().height < parseFloat(getComputedStyle(name).fontSize) * 2 : false,
       nameFull: name ? name.scrollWidth <= name.clientWidth + 1 : false,
-      inViewport: panel ? panel.left >= 0 && panel.right <= window.innerWidth : false,
-      tabsOneRow: new Set(tabs.map(t => Math.round(t.getBoundingClientRect().top))).size === 1,
-      tabsOverlapClose: close && tabsBox ? tabsBox.right > close.left + 1 : null,
+      // 高度固定之後，矮螢幕要靠「視窗高度扣掉按鈕」讓位，整片都要在畫面裡
+      inViewport: panel ? panel.left >= 0 && panel.right <= window.innerWidth && panel.top >= 0 : false,
+      stripFits: strip ? strip.scrollWidth <= strip.clientWidth + 1 : false,
       pillsOverflow: pills ? pills.scrollWidth > pills.clientWidth + 1 : null,
       chipOut: chips.some(c => c.getBoundingClientRect().right > (pills?.getBoundingClientRect().right ?? 0) + 1),
     }
   })
-  if (narrow.inViewport && narrow.tabsOneRow && narrow.tabsOverlapClose === false && !narrow.pillsOverflow && !narrow.chipOut && narrow.nameOneLine && narrow.nameFull)
-    pass(`390px：面板 ${narrow.panelW}px 整片在畫面裡、「小幫手」一行沒被切、分頁一排沒壓到關閉鈕、建議沒有撐出去`)
+  if (narrow.inViewport && narrow.stripFits && !narrow.pillsOverflow && !narrow.chipOut && narrow.nameOneLine && narrow.nameFull)
+    pass(`390px：面板 ${narrow.panelW}px 整片在畫面裡、「小幫手」一行沒被切、狀況那一條沒撐出去、建議沒有撐出去`)
   else fail(`390px：${JSON.stringify(narrow)}`)
   await shot('07-narrow')
 }
