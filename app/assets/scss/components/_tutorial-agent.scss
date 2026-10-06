@@ -1651,16 +1651,23 @@
     color: var(--el-text-color-secondary);
   }
 
+  /* 「我會做的 N 件 ﹀」／「收起 ︿」：跟最上面那一條的「展開 ﹀／收起 ︿」（`.ta-strip__toggle`）同一種長相——
+     灰色小字＋箭頭、同字級同字重（2026-10-06 老闆要兩處一樣；以前這顆是綠字、沒箭頭、叫「收合」） */
   &__all-toggle {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     padding: 0;
     border: none;
     background: none;
     font: inherit;
-    color: var(--brand-green-text);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-secondary);
     cursor: pointer;
 
-    &:hover { text-decoration: underline; }
+    &:hover { color: var(--text-primary); }
   }
 
   &__chips {

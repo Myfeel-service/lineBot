@@ -527,6 +527,15 @@ try {
   const listHidden = await page.evaluate(() => document.querySelector('.aa-chat__list')?.offsetParent === null)
   await shot('04b-status-expanded')
   await showChat()
+  // 兩處「打開／收起」同一種長相（老闆 10-06）：量真的畫出來的字色、字級、字重，不只看 class
+  const toggleLook = sel => page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return null
+    const cs = getComputedStyle(el)
+    return { text: el.textContent.trim(), color: cs.color, size: cs.fontSize, weight: cs.fontWeight, arrow: !!el.querySelector('svg') }
+  }, sel)
+  const stripTog = await toggleLook('.ta-strip__toggle')
+  const pillsTog = await toggleLook('.aa-chat__pills .aa-chat__all-toggle')
   // 「我會做的 15 件」（`D-115`）：先選一類、再點一句；佔對話那一塊、輸入框照樣在
   await page.evaluate(() => document.querySelector('.aa-chat__pills .aa-chat__all-toggle')?.click())
   await waitUntil(() => page.evaluate(() => !!document.querySelector('.aa-cat')), 3000)
@@ -541,6 +550,11 @@ try {
     list: document.querySelector('.aa-chat__list')?.offsetParent !== null,
   }))
   const catInput = await inputShown()
+  const catTog = await toggleLook('.aa-cat__head .aa-chat__all-toggle')
+  const same = (a, b) => a && b && a.color === b.color && a.size === b.size && a.weight === b.weight && a.arrow && b.arrow
+  if (same(stripTog, pillsTog) && same(stripTog, catTog) && stripTog.text === '展開' && pillsTog.text === '我會做的 15 件' && catTog.text === '收起')
+    pass(`兩處打開／收起長得一樣（${stripTog.color}、${stripTog.size}、都有箭頭）：「展開」「我會做的 15 件」→ 打開後「收起」`)
+  else fail(`打開／收起的長相不一致：${JSON.stringify({ stripTog, pillsTog, catTog })}`)
   await shot('04c-all15')
   if (hChat > 0 && hChat === hStatus && hChat === hAll) pass(`高度固定：對話、展開狀況、打開「我會做的 15 件」都是 ${hChat}px`)
   else fail(`高度會跳：對話 ${hChat}／展開狀況 ${hStatus}／15 件 ${hAll}`)

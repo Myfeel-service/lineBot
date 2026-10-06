@@ -72,7 +72,9 @@
     <div v-if="showAll" class="aa-cat">
       <div class="aa-cat__head">
         <span>我會做的 {{ catalogueCount }} 件</span>
-        <button type="button" class="aa-chat__all-toggle" @click="showAll = false">收合</button>
+        <!-- 打開／收起跟上面「目前狀況」那一條同一種長相、同一組字（2026-10-06 老闆：「建議處理跟可以這樣說的收合是否用類似的方式做」）：
+             灰色小字＋箭頭，收著朝下、打開後一律「收起 ︿」（⛔ 不再一個叫「收起」一個叫「收合」） -->
+        <button type="button" class="aa-chat__all-toggle" aria-expanded="true" @click="showAll = false">收起<el-icon><ArrowUp /></el-icon></button>
       </div>
       <!-- 篩選膠囊（⛔ 不用 role="tab"：小幫手已經沒有分頁了，這只是一排篩選） -->
       <div class="aa-cat__tabs">
@@ -109,7 +111,7 @@
           class="aa-chat__all-toggle"
           :aria-expanded="showAll"
           @click="openOpsList"
-        >{{ `我會做的 ${catalogueCount} 件` }}</button>
+        >我會做的 {{ catalogueCount }} 件<el-icon><ArrowDown /></el-icon></button>
       </div>
       <div class="aa-chat__chips">
         <button
@@ -148,6 +150,7 @@
 
 <script setup lang="ts">
 /** 小幫手的對話（`D-114` 前是「問／交辦」分頁，現在一直在狀況條下面）：用講的查後台、也用講的叫它改（改之前一律先給確認卡）。 */
+import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { ADMIN_AGENT_TOOL_LABELS } from '~~/shared/types/admin-agent'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
 import type { AdminOpId, AdminOpPending } from '~~/shared/types/admin-ops'

@@ -42,7 +42,7 @@ describe('小幫手只有一頁（D-114）', () => {
     expect(template(agent)).toMatch(/<footer v-if="activeGuide \|\| moved"/)
     expect(template(chat)).toContain('{{ AGENT_SELF_ONLY }}')
     expect(AGENT_SELF_ONLY).toBe('發推播、回客人、刪東西、改 LINE 連線與成員')
-    expect(template(chat)).toContain('`我會做的 ${catalogueCount} 件`')
+    expect(template(chat)).toContain('我會做的 {{ catalogueCount }} 件')
   })
 
   it('「我會做的 N 件」＝先選一類、再點一句（`D-115`）；點一句只放進輸入框、⛔ 不送出', () => {
@@ -53,6 +53,21 @@ describe('小幫手只有一頁（D-114）', () => {
     expect(pick).not.toMatch(/\bsend\(/)
     // ⛔ 分類那排不能用 role="tab"：小幫手已經沒有分頁了（守門員量的是整個面板裡有沒有分頁）
     expect(template(chat)).not.toMatch(/role="tab"/)
+  })
+
+  it('兩處「打開／收起」同一種長相、同一組字（老闆 10-06：「建議處理跟可以這樣說的收合是否用類似的方式做」）', () => {
+    // 字：收著朝下的箭頭、打開後一律「收起」——⛔ 不可以一個叫「收起」一個叫「收合」
+    expect(template(agent)).toContain('statusOpen ? \'收起\' : \'展開\'')
+    expect(template(agent)).toMatch(/statusOpen \? ArrowUp : ArrowDown/)
+    expect(template(chat)).toMatch(/收起<el-icon><ArrowUp \/><\/el-icon>/)
+    expect(template(chat)).toMatch(/我會做的 \{\{ catalogueCount \}\} 件<el-icon><ArrowDown \/><\/el-icon>/)
+    expect(template(chat)).not.toContain('收合')
+    // 長相：字級、字重、顏色兩邊同一組值
+    const block = (sel: string) => { const at = scss.indexOf(sel); return scss.slice(at, scss.indexOf('}', at)) }
+    for (const rule of ['font-size: 0.75rem', 'font-weight: 400', 'color: var(--text-secondary)']) {
+      expect(block('&__toggle {'), rule).toContain(rule)
+      expect(block('&__all-toggle {'), rule).toContain(rule)
+    }
   })
 
   it('左側欄那一格「跟小幫手說要做什麼…」（`D-113`）：每頁都在、按了只打開對話、⛔ 不替他送話、記成 sidebar', () => {
