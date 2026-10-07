@@ -88,7 +88,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
 
     await expect(
       readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' }),
-    ).resolves.toEqual({ description: '', question: '', state: 'unavailable' })
+    ).resolves.toEqual({ description: '', questions: [], state: 'unavailable' })
   })
 
   it('存檔讀不到（過期/剛好被清掉）也只是安靜跳過', async () => {
@@ -97,7 +97,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
 
     await expect(
       readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' }),
-    ).resolves.toEqual({ description: '', question: '', state: 'unavailable' })
+    ).resolves.toEqual({ description: '', questions: [], state: 'unavailable' })
     expect(vi.mocked(generateParts)).not.toHaveBeenCalled()
   })
 
@@ -151,42 +151,42 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
     expect(opts?.model).toBe('gemini-2.5-flash-lite')
   })
 
-  it('沒開看圖作答時不要問句：那個欄位一產出就會有人拿去回客人', async () => {
+  it('沒開「客人傳的照片」時不要問句：那個欄位一產出就會出現在客人畫面上', async () => {
     mockStorage()
     mockGemini('破掉的白色馬克杯')
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
-    expect(r.question).toBe('')
+    expect(r.questions).toEqual([])
     // 沒開作答時不該要求 JSON（多出來的格式限制只會增加失敗機會）
     expect(vi.mocked(generateParts).mock.calls[0]![1]?.responseMimeType).toBeUndefined()
   })
 })
 
-describe('看圖作答（工作區開了 imageAnswer 才會走）', () => {
+describe('客人傳的照片（工作區開了 imageAnswer 才會走）', () => {
   beforeEach(() => {
     vi.mocked(getAiSettings).mockResolvedValue({
       enabled: true, replyMode: 'auto', imageAnswer: { enabled: true },
     } as any)
   })
 
-  it('讀得出客人想問什麼 → 描述給客服、問句給答題流程', async () => {
+  it('讀得出客人可能想問什麼 → 描述給客服、最多兩句問句給客人當按鈕', async () => {
     mockStorage()
-    mockGemini(JSON.stringify({ description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎' }))
+    mockGemini(JSON.stringify({ description: '破掉的白色馬克杯', questions: ['破掉可以換貨嗎？', '多久會寄新的？'] }))
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
-    expect(r).toEqual({ description: '破掉的白色馬克杯', question: '杯子破掉可以換貨嗎', state: 'ok' })
+    expect(r).toEqual({ description: '破掉的白色馬克杯', questions: ['破掉可以換貨嗎？', '多久會寄新的？'], state: 'ok' })
   })
 
-  it('看不出想問什麼（自拍/風景）→ 問句留空，讓流程退回引導語而不是硬掰', async () => {
+  it('看不出想問什麼（自拍/風景）→ 空陣列，問句照發但不硬掰選項', async () => {
     mockStorage()
-    mockGemini(JSON.stringify({ description: '在海邊的自拍照', question: '' }))
+    mockGemini(JSON.stringify({ description: '在海邊的自拍照', questions: [] }))
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
     expect(r.description).toBe('在海邊的自拍照')
-    expect(r.question).toBe('')
+    expect(r.questions).toEqual([])
     // 「AI 說看不出來」跟「AI 交回來的格式壞掉」都是沒有問句，但一個是正常出口、
     // 一個是要修的 bug——分不出來就只能靠人翻對話發現（正式站上就是這樣壞了三週）
     expect(r.state).toBe('noQuestion')
@@ -198,32 +198,51 @@ describe('看圖作答（工作區開了 imageAnswer 才會走）', () => {
   // 但那兩格其實都填對了。指定 responseMimeType 也擋不住，所以要在讀的這一端容忍。
   it('模型在合法 JSON 後面多吐殘句：取第一份完整的就好，不能把填對的兩格一起丟掉', async () => {
     mockStorage()
-    mockGemini(`${JSON.stringify({ description: '飛利浦鍋具特價 NT$6,990', question: '這款電子鍋有什麼優惠' })}\n現省多少錢？"}`)
+    mockGemini(`${JSON.stringify({ description: '飛利浦鍋具特價 NT$6,990', questions: ['這款有什麼優惠？'] })}\n現省多少錢？"}`)
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
     expect(r.description).toBe('飛利浦鍋具特價 NT$6,990')
-    expect(r.question).toBe('這款電子鍋有什麼優惠')
+    expect(r.questions).toEqual(['這款有什麼優惠？'])
     expect(r.state).toBe('ok')
   })
 
-  it('JSON 壞掉時至少保住描述給客服，但絕不拿壞掉的內容去回客人', async () => {
+  it('JSON 壞掉時至少保住描述給客服，但絕不把壞掉的內容放到客人畫面上', async () => {
     mockStorage()
     mockGemini('這不是 JSON，是模型隨口講的一句話')
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
     expect(r.description).toBe('這不是 JSON，是模型隨口講的一句話')
-    expect(r.question).toBe('')
+    expect(r.questions).toEqual([])
     expect(r.state).toBe('malformed')
   })
 
-  it('問句過長會截斷：它是要拿去做向量檢索的查詢句，太長會稀釋重點', async () => {
+  it('超過按鈕字數（20 字）的整句丟掉、不截成半句：LINE 會把超長的整則回覆退件', async () => {
     mockStorage()
-    mockGemini(JSON.stringify({ description: '收據', question: '請問一下'.repeat(20) }))
+    mockGemini(JSON.stringify({ description: '收據', questions: ['請問一下'.repeat(6), '收據可以補開嗎？'] }))
 
     const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
-    expect(r.question.length).toBeLessThanOrEqual(41)
+    expect(r.questions).toEqual(['收據可以補開嗎？'])
+  })
+
+  it('最多兩句、重複的只留一句（後面還要留一顆「找真人」）', async () => {
+    mockStorage()
+    mockGemini(JSON.stringify({ description: '收據', questions: ['可以補開嗎？', '可以補開嗎？', '要多久？', '寄到哪？'] }))
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.questions).toEqual(['可以補開嗎？', '要多久？'])
+  })
+
+  it('模型照舊格式回單一 question 也收', async () => {
+    mockStorage()
+    mockGemini(JSON.stringify({ description: '破掉的杯子', question: '可以換貨嗎？' }))
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.questions).toEqual(['可以換貨嗎？'])
+    expect(r.state).toBe('ok')
   })
 })

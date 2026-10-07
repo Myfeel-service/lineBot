@@ -53,7 +53,7 @@ vi.mock('./ai-scripts', () => ({
   advanceScript: vi.fn(), loadActiveScripts: vi.fn(async () => []), startScript: vi.fn(),
 }))
 vi.mock('./conversation-media', () => ({ archiveConversationMedia: vi.fn(async () => ({ ok: false })) }))
-vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', question: '' })) }))
+vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', questions: [] })) }))
 
 import { handleMessageEvent, handlePostbackEvent } from './handler'
 import { getDb } from './firebase'

@@ -267,7 +267,8 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   serviceHours: '勿擾時段',
   disambiguation: '反問設定',
   quota: '用量上限',
-  imageAnswer: '看圖回答',
+  // 2026-10-07 `C-207`：不再看圖直接回答，名字跟設定頁那一段一致
+  imageAnswer: '客人傳的照片',
   richMenuId: '圖文選單',
   endpoint: '收訊網址',
   nodes: '流程步驟',

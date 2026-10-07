@@ -223,11 +223,11 @@
           <div class="card-section-stack">
             <p class="ai-section-hint">
               AI 一律會<strong>讀圖寫一句說明給客服看</strong>(顯示在「對話」頁的照片下方);
-              這顆開關只決定客人收到什麼——停用時回客人「我目前只能閱讀文字」,
-              啟用後 AI 會看圖推測客人想問什麼再回答,答不出來一樣轉真人。
+              這顆開關只決定客人收到什麼——停用時回客人「我目前只能閱讀文字」;
+              啟用後,客人有打字就照他打的回答,AI 會參考照片內容;只傳照片沒說話時,問他想了解什麼,並附上 AI 猜的選項。
             </p>
             <div class="admin-field-group">
-              <AdminFieldLabel text="讓 AI 看圖直接回答客人" tight />
+              <AdminFieldLabel text="讓 AI 參考照片回覆客人" tight />
               <el-switch
                 v-model="form.imageAnswer.enabled"
                 :disabled="!form.enabled"
