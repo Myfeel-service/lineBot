@@ -227,6 +227,34 @@ describe('客人傳的照片（工作區開了 imageAnswer 才會走）', () => 
     expect(r.questions).toEqual(['收據可以補開嗎？'])
   })
 
+  it('模型回的不是文字（物件、數字）→ 不收：不然按鈕上會出現「[object Object]」', async () => {
+    mockStorage()
+    mockGemini(JSON.stringify({ description: '收據', questions: [{ q: '可以換貨嗎？' }, 42, '收據可以補開嗎？'] }))
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.questions).toEqual(['收據可以補開嗎？'])
+  })
+
+  it('給了問句但全被濾掉 → 記成 questionsDropped，跟「AI 說看不出來」分開（原因在我們這邊）', async () => {
+    mockStorage()
+    mockGemini(JSON.stringify({ description: '收據', questions: ['請問一下'.repeat(6), { q: '可以換貨嗎？' }] }))
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.questions).toEqual([])
+    expect(r.state).toBe('questionsDropped')
+  })
+
+  it('questions 給成一個字串而不是陣列也收', async () => {
+    mockStorage()
+    mockGemini(JSON.stringify({ description: '破掉的杯子', questions: '可以換貨嗎？' }))
+
+    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    expect(r.questions).toEqual(['可以換貨嗎？'])
+  })
+
   it('最多兩句、重複的只留一句（後面還要留一顆「找真人」）', async () => {
     mockStorage()
     mockGemini(JSON.stringify({ description: '收據', questions: ['可以補開嗎？', '可以補開嗎？', '要多久？', '寄到哪？'] }))

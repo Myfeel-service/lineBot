@@ -2037,7 +2037,7 @@ export async function handleMessageEvent(
     ensureUser(userId, undefined, workspaceId).catch(e => console.error('[ensureUser] Error:', e))
 
     // 「客人傳的照片」開關（aiSettings.imageAnswer）開著時，圖片不再一進來就回「我只能閱讀文字」，
-    // 改成先看客人自己有沒有講要問什麼，沒講才問他一句（見 askAboutImageUnlessCustomerTypes）。
+    // 改成先看客人自己有沒有講要問什麼，沒講才問他一句（見 decideImageRole／askAboutImageUnlessCustomerActs）。
     // 此時**引導語不能先發**：一則進來的訊息只有一個 replyToken，被引導語用掉就沒有權杖可以發問句了。
     // 真人接手中（suppress）、草稿模式一律不啟動：機器人插話比不回更糟，草稿模式不對客人說話。
     const imageReplyOn = event.message.type === 'image'
@@ -2061,17 +2061,13 @@ export async function handleMessageEvent(
     if (event.message.type === 'image') {
       const imageAtMs = lineEventTimestampMs ?? Date.now()
       const convDocId = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, workspaceId), workspaceId)
-      // 客人剛用文字問完、這張是附上的佐證（「請問此訂單約何時出貨？」＋訂單截圖）→ 不另外回，
-      // 他那句話自己會被回答。要在存檔／讀圖之前就判斷：判斷完才知道要不要亮「輸入中…」。
-      const typedJustBefore = willReplyImage
-        ? await customerJustTypedBefore(convDocId, imageAtMs).catch((e) => {
-          console.error('[image-ask] typed-before check error:', e)
-          return false
-        })
-        : false
-      const mayAsk = willReplyImage && !typedJustBefore && Boolean(event.replyToken)
+      // 這張圖要不要由它負責問（見 decideImageRole）。要在存檔／讀圖之前就決定：
+      // 決定了才知道要不要亮「輸入中…」——不會開口的那幾張亮了，就是讓客人等一個不會來的回覆。
+      const role = willReplyImage && event.replyToken
+        ? await decideImageRole(convDocId, imageAtMs)
+        : null
       // 接下來會沉默十幾秒（讀圖＋等客人打字），先讓客人看到「輸入中…」才不像已讀不回
-      if (mayAsk) showLoadingAnimation(userId, workspaceId, 20).catch(() => {})
+      if (role === 'leader') showLoadingAnimation(userId, workspaceId, 20).catch(() => {})
 
       const lineMessageId = String((event.message as { id?: string }).id || '')
       const archived = await archiveConversationMedia({ workspaceId, lineMessageId, messageType: 'image' })
@@ -2099,16 +2095,19 @@ export async function handleMessageEvent(
         })
       }
 
-      if (mayAsk) {
-        await askAboutImageUnlessCustomerTypes({
-          workspaceId,
-          lineUserId: userId,
-          convDocId,
-          sessionId,
-          replyToken: event.replyToken!,
-          imageAtMs,
-          questions,
-        })
+      if (role) {
+        const outcome: ImageReplyOutcome = role === 'leader'
+          ? await askAboutImageUnlessCustomerActs({
+            workspaceId,
+            lineUserId: userId,
+            convDocId,
+            sessionId,
+            replyToken: event.replyToken!,
+            imageAtMs,
+            questions,
+          })
+          : role
+        await recordImageReplyOutcome(convDocId, savedMessageId, outcome)
       }
     }
   }
@@ -2118,10 +2117,13 @@ export async function handleMessageEvent(
 // 舊做法是讀圖猜一個問題、直接叫 AI 回答。正式站 8/5～10/7 傳圖 252 次，九成客人前後兩分鐘內
 // 自己就打了字，猜的問題對得上的不到三成——AI 在客人打字的同時搶答一個他沒問的事，
 // 一次傳 7 張照片的客人 18 秒內收到 9 則回覆。現在改成：
-//   ① 客人剛用文字問完才附圖 → 不另外回（customerJustTypedBefore）
-//   ② 先傳圖 → 等到圖片進來後約 15 秒，期間客人打了字就不出聲，照他打的那句回答
-//   ③ 都沒打字 → 用這張圖的回覆權杖問一句，附猜的選項按鈕＋「找真人」；客人點了＝他自己問的
-//   ④ 一次傳好幾張只問一次（claimImageAsk）
+//   ① 客人剛用文字問完才附圖 → 不另外回（scanAroundImage 的 typedBefore）
+//   ② 先傳圖 → 等到圖片進來後約 15 秒，期間客人打了字或按了按鈕就不出聲，照他那一動回應
+//   ③ 都沒動作 → 用這張圖的回覆權杖問一句，附猜的選項按鈕＋「找真人」；客人點了＝他自己問的
+//   ④ 一次傳好幾張：只有一張負責等和問，其他張直接結束（decideImageRole）
+//   ⑤ 問過、客人還沒回應之前，再傳照片不重問
+// 每張圖最後怎麼處理的記在那則訊息的 `imageReplyOutcome` 上——不開口的理由有六種，
+// 只留 log 的話「為什麼這張圖沒人理」只能靠翻主機日誌猜。
 // 報告：docs/IMAGE-REPLY-CONFIRM-EVAL-20261007.md
 
 /** 「客人剛用文字問過」往前看多久 */
@@ -2132,68 +2134,140 @@ const IMAGE_TYPED_BEFORE_WINDOW_MS = 2 * 60 * 1000
  */
 const IMAGE_ASK_WAIT_MS = 15 * 1000
 const IMAGE_ASK_POLL_MS = 2500
-/** 同一位客人多久內只問一次：一次傳好幾張是並行處理的，各自等完都會想問 */
-const IMAGE_ASK_DEDUPE_MS = 2 * 60 * 1000
+/** 問過之後、客人還沒回應（沒打字也沒按按鈕）的這段時間內，再傳照片不重問 */
+const IMAGE_ASK_HOLD_MS = 10 * 60 * 1000
+/**
+ * 負責等的那張最多佔位多久。正常 15 秒＋讀圖就讓出來；超過這個時間還佔著，
+ * 多半是那台主機中途被砍，不讓它把之後的照片永遠擋住。
+ */
+const IMAGE_ASK_LEADER_STALE_MS = 45 * 1000
+/** 同一批照片：負責問的那張往前多久內的其他照片，猜的選項可以拿來用 */
+const IMAGE_BATCH_WINDOW_MS = 60 * 1000
 const IMAGE_ASK_TEXT = '收到您的照片了 📷 請問想了解什麼呢？'
 
-type ConversationMessageLite = { direction?: string; messageType?: string; timestamp?: { toMillis?: () => number } }
+/** 不負責問的三種情況（直接當成這張圖的處理結果記下來） */
+type ImageRole = 'leader' | 'typedBefore' | 'alreadyAsked' | 'batchFollower'
+type ImageReplyOutcome = Exclude<ImageRole, 'leader'> | 'asked' | 'customerActed' | 'suppressed' | 'replyFailed'
+
+type ConversationMessageLite = {
+  direction?: string
+  messageType?: string
+  timestamp?: { toMillis?: () => number }
+  mediaQuestions?: unknown
+}
+
+function toMillisOrZero(value: unknown): number {
+  return (value as { toMillis?: () => number } | null | undefined)?.toMillis?.() ?? 0
+}
+
+/** 客人自己做了一件會被回應的事：打字（含點快速回覆），或按了圖文選單／訊息上的按鈕 */
+function isCustomerMove(m: ConversationMessageLite): boolean {
+  return m.direction === 'incoming' && (m.messageType === 'text' || isCustomerActionMessage(m.messageType))
+}
 
 /**
- * 圖片進來之前，客人最後一個動作是不是「自己打了一句話」（2 分鐘內）。
+ * 看這張圖前後的對話，一次查完三件事：
+ *   - `typedBefore`：圖片進來前，客人最後一個動作是「自己打了一句話」（2 分鐘內）。
+ *     中間機器人如果已經回過話，這張圖就算新的一輪（例如 AI 請他提供訂單編號、他回一張截圖），
+ *     不能因為兩分鐘內打過字就整個不出聲——那會變成已讀不回。同一批的其他圖片跳過、再往前看。
+ *   - `actedAfter`：圖片進來後客人有沒有打字或按按鈕。
+ *   - `batchQuestions`：同一批其他照片讀出來的猜測選項。
  *
- * 中間機器人如果已經回過話，這張圖就算新的一輪（例如 AI 請他提供訂單編號、他回一張截圖），
- * 要走「等他說／問他」，不能因為兩分鐘內打過字就整個不出聲——那會變成已讀不回。
- * 一次傳好幾張時，同一批的其他圖片跳過、再往前看。
+ * ⛔ 前後要在同一次查詢、而且等待期間每一輪都重查：字和圖幾乎同時送出時兩邊是並行處理的，
+ * 字的 LINE 時間比圖早、卻可能比圖片這邊第一次查詢更晚才存進來——只往後看的話，
+ * 那句字永遠看不到，機器人就會在 AI 的答案旁邊再問一句（`C-207` 自己要修的那種兩則回覆）。
  */
-async function customerJustTypedBefore(convDocId: string, imageAtMs: number): Promise<boolean> {
+async function scanAroundImage(convDocId: string, imageAtMs: number): Promise<{
+  typedBefore: boolean
+  actedAfter: boolean
+  batchQuestions: string[]
+}> {
+  // 由舊到新、從圖片前 2 分鐘開始：圖片之前的那幾則一定排在前面，不會被後面一大批照片擠出上限
   const snap = await getDb().collection('conversations').doc(convDocId).collection('messages')
     .where('timestamp', '>=', Timestamp.fromMillis(imageAtMs - IMAGE_TYPED_BEFORE_WINDOW_MS))
-    .orderBy('timestamp', 'desc')
-    .limit(20)
+    .orderBy('timestamp', 'asc')
+    .limit(60)
     .get()
-  for (const d of snap.docs) {
-    const m = d.data() as ConversationMessageLite
-    const ts = m.timestamp?.toMillis?.() ?? 0
-    if (ts >= imageAtMs) continue // 這張圖自己、或之後才進來的
-    if (isCustomerActionMessage(m.messageType)) continue // 「客人點了…」不是客人說的話
-    if (m.direction === 'outgoing') return false
-    if (m.direction === 'incoming' && m.messageType === 'text') return true
+  const all = snap.docs.map(d => d.data() as ConversationMessageLite)
+  const before = all.filter(m => toMillisOrZero(m.timestamp) < imageAtMs)
+  const after = all.filter(m => toMillisOrZero(m.timestamp) > imageAtMs)
+
+  let typedBefore = false
+  let lastReplyBeforeMs = 0
+  for (let i = before.length - 1; i >= 0; i--) {
+    const m = before[i]!
+    if (m.direction === 'outgoing') {
+      lastReplyBeforeMs = toMillisOrZero(m.timestamp)
+      break
+    }
+    if (m.direction === 'incoming' && m.messageType === 'text') {
+      typedBefore = true
+      break
+    }
+    // 其他照片／貼圖／「客人點了…」紀錄：不是客人說的話，再往前看
   }
-  return false
+
+  const batchFrom = Math.max(imageAtMs - IMAGE_BATCH_WINDOW_MS, lastReplyBeforeMs)
+  const batchQuestions = all
+    .filter(m => m.direction === 'incoming' && m.messageType === 'image'
+      && toMillisOrZero(m.timestamp) >= batchFrom && Array.isArray(m.mediaQuestions))
+    .flatMap(m => (m.mediaQuestions as unknown[]).filter((q): q is string => typeof q === 'string'))
+
+  return { typedBefore, actedAfter: after.some(isCustomerMove), batchQuestions }
 }
 
-/** 圖片進來之後，客人有沒有打字（快速回覆按鈕送出的也算，那就是文字） */
-async function customerTypedAfter(convDocId: string, imageAtMs: number): Promise<boolean> {
+/** 某個時間點之後，客人有沒有打字或按按鈕 */
+async function customerMovedSince(convDocId: string, sinceMs: number): Promise<boolean> {
   const snap = await getDb().collection('conversations').doc(convDocId).collection('messages')
-    .where('timestamp', '>', Timestamp.fromMillis(imageAtMs))
+    .where('timestamp', '>', Timestamp.fromMillis(sinceMs))
     .orderBy('timestamp', 'asc')
-    .limit(20)
+    .limit(30)
     .get()
-  return snap.docs.some((d) => {
-    const m = d.data() as ConversationMessageLite
-    return m.direction === 'incoming' && m.messageType === 'text'
-  })
+  return snap.docs.some(d => isCustomerMove(d.data() as ConversationMessageLite))
 }
 
 /**
- * 同一位客人 2 分鐘內只問一次。用交易而不是記憶體：同一批照片可能分在不同的 webhook、
- * 落到不同台主機，記憶體裡的節流表擋不住（7 張照片問 7 次正是這次要修的事）。
+ * 這張圖由誰負責問：
+ *   - `typedBefore`：客人剛用文字問完、這張是佐證 → 不另外回
+ *   - `alreadyAsked`：10 分鐘內問過、客人到現在都還沒回應 → 不重問（他可能正在補照片）
+ *   - `batchFollower`：同一批已經有一張在等了 → 直接結束，不亮「輸入中…」、不佔著連線
+ *   - `leader`：由這張負責等 15 秒、沒動靜就問
+ *
+ * 誰當 leader 用交易搶（對話文件上的 `imageAskWaitingAt`）：同一批照片可能分在不同的 webhook、
+ * 落到不同台主機，記憶體裡的節流表擋不住。
+ * 判斷過程出錯一律當 leader：寧可多問一句，也不要讓只傳照片的客人等不到任何回應。
  */
-async function claimImageAsk(convDocId: string): Promise<boolean> {
-  const db = getDb()
-  const ref = db.collection('conversations').doc(convDocId)
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref)
-    const lastMs = (snap.get('lastImageAskAt') as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
-    if (Date.now() - lastMs < IMAGE_ASK_DEDUPE_MS) return false
-    tx.set(ref, { lastImageAskAt: Timestamp.now() }, { merge: true })
-    return true
-  })
+async function decideImageRole(convDocId: string, imageAtMs: number): Promise<ImageRole> {
+  try {
+    const scan = await scanAroundImage(convDocId, imageAtMs)
+    if (scan.typedBefore) return 'typedBefore'
+
+    const db = getDb()
+    const ref = db.collection('conversations').doc(convDocId)
+    const convSnap = await ref.get()
+    const lastAskMs = toMillisOrZero(convSnap.get('lastImageAskAt'))
+    if (lastAskMs && Date.now() - lastAskMs < IMAGE_ASK_HOLD_MS && !(await customerMovedSince(convDocId, lastAskMs))) {
+      return 'alreadyAsked'
+    }
+
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      const waitingMs = toMillisOrZero(snap.get('imageAskWaitingAt'))
+      if (waitingMs && Date.now() - waitingMs < IMAGE_ASK_LEADER_STALE_MS) return 'batchFollower' as const
+      tx.set(ref, { imageAskWaitingAt: Timestamp.now() }, { merge: true })
+      return 'leader' as const
+    })
+  }
+  catch (e) {
+    console.error('[image-ask] decide role error:', e)
+    return 'leader'
+  }
 }
 
-/** 問句：猜的選項（最多兩個，讀圖那一步已確保塞得進按鈕）＋「找真人」 */
-function buildImageAskMessage(questions: string[]): messagingApi.TextMessage {
-  const items: messagingApi.QuickReplyItem[] = questions.map(q => ({
+/** 問句：猜的選項（自己這張優先、再補同一批其他張的，去重後最多兩個）＋「找真人」 */
+function buildImageAskMessage(ownQuestions: string[], batchQuestions: string[]): messagingApi.TextMessage {
+  const picked = [...new Set([...ownQuestions, ...batchQuestions])].slice(0, 2)
+  const items: messagingApi.QuickReplyItem[] = picked.map(q => ({
     type: 'action',
     action: { type: 'message', label: q, text: q },
   }))
@@ -2202,7 +2276,7 @@ function buildImageAskMessage(questions: string[]): messagingApi.TextMessage {
   return { type: 'text', text: IMAGE_ASK_TEXT, quickReply: { items } }
 }
 
-async function askAboutImageUnlessCustomerTypes(params: {
+async function askAboutImageUnlessCustomerActs(params: {
   workspaceId: string
   lineUserId: string
   convDocId: string
@@ -2210,35 +2284,72 @@ async function askAboutImageUnlessCustomerTypes(params: {
   replyToken: string
   imageAtMs: number
   questions: string[]
-}): Promise<void> {
+}): Promise<ImageReplyOutcome> {
   const { workspaceId, lineUserId, convDocId, sessionId, replyToken, imageAtMs, questions } = params
+  const ref = getDb().collection('conversations').doc(convDocId)
   try {
+    let batchQuestions: string[] = []
     const deadline = imageAtMs + IMAGE_ASK_WAIT_MS
     for (;;) {
-      if (await customerTypedAfter(convDocId, imageAtMs)) return
+      // 某一輪查詢出錯就當這輪沒看到、繼續等：不能因為一次讀取失敗，讓只傳照片的客人等不到回應
+      const scan = await scanAroundImage(convDocId, imageAtMs).catch((e) => {
+        console.warn('[image-ask] scan error:', e instanceof Error ? e.message : e)
+        return null
+      })
+      if (scan) {
+        if (scan.typedBefore || scan.actedAfter) return 'customerActed'
+        batchQuestions = scan.batchQuestions
+      }
       const left = deadline - Date.now()
       if (left <= 0) break
       await new Promise(resolve => setTimeout(resolve, Math.min(IMAGE_ASK_POLL_MS, left)))
     }
     // 等的這十幾秒內真人可能已經接手
-    if (await shouldSuppressInboundBotAutomationForSession(sessionId)) return
-    if (!(await claimImageAsk(convDocId))) return
+    if (await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false)) return 'suppressed'
 
-    const msg = buildImageAskMessage(questions)
-    await replyMessage(replyToken, [msg], workspaceId)
-    // 標「系統」：問句是內建文字，後台沒有模組可以改（同「我目前只能閱讀文字」那句引導語）
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
-      sender: 'system',
-      senderName: '客人傳照片時的提問',
-    }).catch(e => console.error('[image-ask] save outgoing error:', e))
-    // 機器人真的回了一句 → 記機器人首接（記 bot_flow 不記 ai，理由同引導語：這不是 AI 作答）
-    enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId).catch(e =>
-      console.error('[image-ask] enterModule error:', e),
-    )
+    const msg = buildImageAskMessage(questions, batchQuestions)
+    try {
+      await replyMessage(replyToken, [msg], workspaceId)
+    }
+    catch (e) {
+      // 送不出去就不記「問過了」：否則他接下來 10 分鐘再傳照片都會被當成已經問過
+      console.error('[image-ask] reply failed:', e)
+      return 'replyFailed'
+    }
+    // 三件都要等完才結束：回覆送出後 webhook 就回應 LINE、主機隨即凍結，沒等完的寫入會掉——
+    // 後台會看不到這句問句，這場對話也會一直掛在「未首接」
+    await Promise.all([
+      ref.set({ lastImageAskAt: Timestamp.now() }, { merge: true })
+        .catch(e => console.error('[image-ask] mark asked error:', e)),
+      // 標「系統」：問句是內建文字，後台沒有模組可以改（同「我目前只能閱讀文字」那句引導語）
+      saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+        sender: 'system',
+        senderName: '客人傳照片時的提問',
+      }).catch(e => console.error('[image-ask] save outgoing error:', e)),
+      // 機器人真的回了一句 → 記機器人首接（記 bot_flow 不記 ai，理由同引導語：這不是 AI 作答）
+      enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId)
+        .catch(e => console.error('[image-ask] enterModule error:', e)),
+    ])
+    return 'asked'
   }
-  catch (e) {
-    console.error('[image-ask] failed:', e)
+  finally {
+    // 不管問了沒，都把「正在等」的位子讓出來，否則下一批照片會以為還有人在等
+    await ref.set({ imageAskWaitingAt: null }, { merge: true })
+      .catch(e => console.error('[image-ask] release waiting error:', e))
   }
+}
+
+/** 把這張圖最後怎麼處理的記在那則訊息上（客服看不到，給事後查「這張圖為什麼沒人理」用） */
+async function recordImageReplyOutcome(
+  convDocId: string,
+  messageIdPromise: Promise<string>,
+  outcome: ImageReplyOutcome,
+): Promise<void> {
+  const messageId = await messageIdPromise
+  if (!messageId) return
+  await getDb().collection('conversations').doc(convDocId).collection('messages').doc(messageId)
+    .set({ imageReplyOutcome: outcome }, { merge: true })
+    .catch(e => console.error('[image-ask] record outcome error:', e))
 }
 
 /**
@@ -2277,9 +2388,12 @@ async function describeAndAttachImage(params: {
   // 客人的問句會少了猜的按鈕。這種失敗在 2026-09-10 之前只進主機日誌（我們沒在看），
   // 正式站上連壞三週沒人知道，最後是靠對話裡漏出來的原文才被發現。
   const messagePatch: Record<string, unknown> = { mediaDescription: description }
-  if (state === 'ok' || state === 'noQuestion' || state === 'malformed') {
+  if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed') {
     messagePatch.mediaReadState = state
   }
+  // 猜的選項也存在這一則上：一次傳好幾張時只有一張負責問，它要拿得到其他張讀出來的選項
+  // （負責問的那張可能剛好讀圖失敗，其他張明明猜得出來）
+  if (questions.length) messagePatch.mediaQuestions = questions
   /**
    * 圖片的 AI 描述也要搜得到（「找那張有收據的圖」）。
    *
@@ -3632,19 +3746,25 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string, work
 
   // 組裝最近對話（最舊在前）；排除剛存進去的本次訊息，最多帶 6 則
   let history: AiChatTurn[] = (historySnap?.docs ?? [])
-    .map(d => d.data() as { direction?: string; text?: string; messageType?: string; mediaDescription?: string })
+    .map(d => d.data() as {
+      direction?: string; text?: string; messageType?: string; mediaDescription?: string; mediaReadState?: string
+    })
     // 客人動作紀錄（「客人點了…」）不是客人說的話：塞進 history 會被 LLM 當成客人的原句
     // 引用、也會影響產品鎖的判斷（見 shared/customer-action.ts）
     .filter(m => !isCustomerActionMessage(m.messageType))
     .reverse()
     .map((m) => {
       // 圖片在訊息上只存「[圖片]」三個字。客人先傳訂單截圖再問「出貨時間？」，AI 只看到這三個字
-      // 就不知道是哪個商品，只能反問或猜（`C-207`）。讀圖寫的那句說明補進來；
-      // 讀圖還沒寫完（客人圖跟字幾乎同時送出）就維持「[圖片]」。
-      const description = imageAware && m.messageType === 'image' ? String(m.mediaDescription || '').trim() : ''
+      // 就不知道是哪個商品，只能反問或猜（`C-207`）。讀圖寫的那句說明補進來，字面上標明是 AI 讀的、
+      // 不是客人講的。截圖上的商品名會被產品鎖用上——這正是要的（知道他在問哪一台）。
+      // 不補的兩種：讀圖還沒寫完（客人圖跟字幾乎同時送出）→ 維持「[圖片]」；
+      // 讀圖格式壞掉（malformed）→ 那句「說明」其實是模型吐的原文殘段，不能當成對話內容給 AI。
+      const description = imageAware && m.messageType === 'image' && m.mediaReadState !== 'malformed'
+        ? String(m.mediaDescription || '').trim()
+        : ''
       return {
         role: m.direction === 'incoming' ? 'user' as const : 'bot' as const,
-        text: description ? `[圖片：${description}]` : String(m.text || '').trim(),
+        text: description ? `[客人傳了一張圖片，AI 讀到：${description}]` : String(m.text || '').trim(),
       }
     })
     .filter(t => t.text)

@@ -82,9 +82,11 @@ function clampOneLine(raw: unknown, max: number): string {
  *   - `malformed`：AI 其實讀懂了，只是交回來的格式壞掉 → 客人少了猜的按鈕，這是要修的 bug。
  *     2026-09-10 之前它只寫進 console，正式站上壞了兩週沒有人知道，
  *     是老闆自己看到對話截圖才發現的。
+ *   - `questionsDropped`：AI 有給問句，但全被我們濾掉（超過按鈕字數、不是文字、格式不對）
+ *     → 客人少了猜的按鈕，跟 `noQuestion` 看起來一樣、原因卻在我們這邊，要分開記才查得到。
  *   - `unavailable`：根本沒讀（AI 沒開／圖太小／下載失敗／逾時）。
  */
-export type InboundImageReadState = 'ok' | 'noQuestion' | 'malformed' | 'answerOff' | 'unavailable'
+export type InboundImageReadState = 'ok' | 'noQuestion' | 'questionsDropped' | 'malformed' | 'answerOff' | 'unavailable'
 
 /** 讀圖的產物。`questions` 只有工作區開了「客人傳的照片」、而且 AI 判斷得出來時才有值 */
 export interface InboundImageReading {
@@ -101,18 +103,24 @@ const EMPTY_READING: InboundImageReading = { description: '', questions: [], sta
 /**
  * 把模型給的問句整理成按鈕用的樣子：壓成一行、去重、超過按鈕字數的整句丟掉、最多兩句。
  * 舊格式（單一 `question` 字串）也收，模型偶爾會照舊格式回。
+ * 回傳 `offered`＝模型原本給了幾句，用來分辨「AI 說看不出來」和「給了但被我們濾光」。
  */
-function cleanQuestions(raw: unknown, legacy: unknown): string[] {
-  const list = Array.isArray(raw) ? raw : (typeof legacy === 'string' ? [legacy] : [])
+function cleanQuestions(raw: unknown, legacy: unknown): { questions: string[]; offered: number } {
+  const list: unknown[] = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string' ? [raw] : (typeof legacy === 'string' ? [legacy] : [])
+  const offered = list.filter(item => !(typeof item === 'string' && !item.trim())).length
   const out: string[] = []
   for (const item of list) {
-    const q = String(item ?? '').replace(/\s+/g, ' ').trim()
+    // 只收文字：模型偶爾回物件，String() 之後是「[object Object]」，長度還剛好塞得進按鈕
+    if (typeof item !== 'string') continue
+    const q = item.replace(/\s+/g, ' ').trim()
     // 用 .length（UTF-16）數：emoji 會被算成兩個字，只會比 LINE 的算法更嚴、不會超過上限被退件
     if (!q || q.length > MAX_QUESTION_CHARS || out.includes(q)) continue
     out.push(q)
     if (out.length >= MAX_QUESTIONS) break
   }
-  return out
+  return { questions: out, offered }
 }
 
 /**
@@ -200,11 +208,14 @@ export async function readInboundImage(opts: {
       console.warn('[media-describe] JSON parse failed, falling back to description only')
       return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), questions: [], state: 'malformed' }
     }
-    const questions = cleanQuestions(parsed.questions, parsed.question)
+    const { questions, offered } = cleanQuestions(parsed.questions, parsed.question)
+    if (!questions.length && offered) {
+      console.warn('[media-describe] all offered questions dropped:', JSON.stringify(parsed.questions ?? parsed.question).slice(0, 200))
+    }
     return {
       description: clampOneLine(parsed.description, MAX_DESCRIPTION_CHARS),
       questions,
-      state: questions.length ? 'ok' : 'noQuestion',
+      state: questions.length ? 'ok' : (offered ? 'questionsDropped' : 'noQuestion'),
     }
   }
   catch (err) {
