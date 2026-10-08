@@ -47,7 +47,7 @@ export const AGENT_DESTINATIONS = {
   },
   'ai-scripts': {
     label: '自動回應',
-    hint: '關鍵字自動回應、多步驟收資料的客服流程、範本',
+    hint: '關鍵字自動回應、多步驟收資料的自動回應、範本',
     path: wid => `/admin/${wid}/ai-scripts`,
   },
   'knowledge-sources': {

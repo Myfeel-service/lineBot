@@ -323,6 +323,65 @@ async function probe(id: WorkspaceAlertId, fn: () => Promise<ProbeResult>): Prom
   }
 }
 
+interface HumanQueue {
+  /** 要求找真人之後等超過門檻還沒人接的 */
+  waiting: number
+  /** 上面那批裡最久等了幾小時 */
+  oldestH: number
+  /** 同事接手後超過門檻沒動、也沒收尾的 */
+  stale: number
+}
+
+/**
+ * 等真人與接手沒結束的兩個數字（`humanBacklog`／`humanStale` 共用）。
+ * 先用 count 聚合探一下（每 1000 筆算一次讀取）。多數工作區這兩個數字是 0，
+ * 就不必為了算等待時數把整批 session 文件撈回來——這套 probe 是會被輪詢的。
+ */
+async function readHumanQueue(db: Firestore, wid: string): Promise<HumanQueue> {
+  const sessions = db.collection('conversationSessions').where('workspaceId', '==', wid)
+  const [pendingCount, humanCount] = await Promise.all([
+    sessions.where('status', '==', 'pending_human').count().get(),
+    sessions.where('status', '==', 'human_handling').count().get(),
+  ])
+  if (!pendingCount.data().count && !humanCount.data().count)
+    return { waiting: 0, oldestH: 0, stale: 0 }
+
+  const [pendingSnap, humanSnap] = await Promise.all([
+    pendingCount.data().count
+      ? sessions.where('status', '==', 'pending_human')
+          .select('handoffRequestedAt', 'lastActivityAt')
+          .limit(SESSION_SCAN_LIMIT)
+          .get()
+      : null,
+    humanCount.data().count
+      ? sessions.where('status', '==', 'human_handling')
+          .select('humanLastRepliedAt', 'lastActivityAt')
+          .limit(SESSION_SCAN_LIMIT)
+          .get()
+      : null,
+  ])
+  const now = Date.now()
+  let waiting = 0
+  let oldestH = 0
+  for (const d of pendingSnap?.docs ?? []) {
+    const s = d.data() as Record<string, unknown>
+    const sinceMs = tsToMs(s.handoffRequestedAt) || tsToMs(s.lastActivityAt)
+    if (!sinceMs) continue
+    const h = (now - sinceMs) / 3600_000
+    if (h >= PENDING_WAIT_ALERT_HOURS) {
+      waiting++
+      oldestH = Math.max(oldestH, h)
+    }
+  }
+  // 「接手後沒結束」沿用 cron 每日提醒的同一個門檻，兩邊數字才對得起來
+  const stale = (humanSnap?.docs ?? []).filter((d) => {
+    const s = d.data() as Record<string, unknown>
+    const lastMs = tsToMs(s.humanLastRepliedAt) || tsToMs(s.lastActivityAt)
+    return lastMs > 0 && now - lastMs >= HUMAN_STALE_HOURS * 3600_000
+  }).length
+  return { waiting, oldestH, stale }
+}
+
 function tsToMs(raw: unknown): number {
   if (!raw) return 0
   const v = raw as Timestamp & { seconds?: number, _seconds?: number }
@@ -362,6 +421,9 @@ export async function collectWorkspaceAlerts(
   // LINE 通知的送達紀錄（`C-270`）：兩顆通知提醒共用這一次讀取，用到才讀
   let notifyDeliveryPromise: Promise<Record<string, NotifyRecipientDelivery>> | null = null
   const getNotifyDelivery = () => (notifyDeliveryPromise ??= readNotifyDelivery(wid, db))
+  // 等真人／接手沒結束（`D-116`）：兩顆共用這一次查詢，用到才讀；讀失敗兩顆都是 unknown
+  let humanQueuePromise: Promise<HumanQueue> | null = null
+  const getHumanQueue = () => (humanQueuePromise ??= readHumanQueue(db, wid))
 
   const operateProbes: Array<Promise<WorkspaceAlertItem>> = canOperate
     ? [
@@ -520,56 +582,16 @@ export async function collectWorkspaceAlerts(
               : `${prefix}${times.length} 次，${ago}；偶發，客人已轉真人接手`,
           }
         }),
+        // `D-116`（2026-10-08）：「客人在等」與「接手後沒結束」拆成兩顆——查詢只做一次，兩顆各取一半
         probe('humanBacklog', async () => {
-          const sessions = db.collection('conversationSessions').where('workspaceId', '==', wid)
-          // 先用 count 聚合探一下（每 1000 筆算一次讀取）。多數工作區這兩個數字是 0，
-          // 就不必為了算等待時數把整批 session 文件撈回來——這套 probe 是會被輪詢的。
-          const [pendingCount, humanCount] = await Promise.all([
-            sessions.where('status', '==', 'pending_human').count().get(),
-            sessions.where('status', '==', 'human_handling').count().get(),
-          ])
-          if (!pendingCount.data().count && !humanCount.data().count)
-            return { active: false }
-
-          const [pendingSnap, humanSnap] = await Promise.all([
-            pendingCount.data().count
-              ? sessions.where('status', '==', 'pending_human')
-                  .select('handoffRequestedAt', 'lastActivityAt')
-                  .limit(SESSION_SCAN_LIMIT)
-                  .get()
-              : null,
-            humanCount.data().count
-              ? sessions.where('status', '==', 'human_handling')
-                  .select('humanLastRepliedAt', 'lastActivityAt')
-                  .limit(SESSION_SCAN_LIMIT)
-                  .get()
-              : null,
-          ])
-          const now = Date.now()
-          let waiting = 0
-          let oldestH = 0
-          for (const d of pendingSnap?.docs ?? []) {
-            const s = d.data() as Record<string, unknown>
-            const sinceMs = tsToMs(s.handoffRequestedAt) || tsToMs(s.lastActivityAt)
-            if (!sinceMs) continue
-            const h = (now - sinceMs) / 3600_000
-            if (h >= PENDING_WAIT_ALERT_HOURS) {
-              waiting++
-              oldestH = Math.max(oldestH, h)
-            }
-          }
-          // 「卡在真人處理中」沿用 cron 每日提醒的同一個門檻，兩邊數字才對得起來
-          const stale = (humanSnap?.docs ?? []).filter((d) => {
-            const s = d.data() as Record<string, unknown>
-            const lastMs = tsToMs(s.humanLastRepliedAt) || tsToMs(s.lastActivityAt)
-            return lastMs > 0 && now - lastMs >= HUMAN_STALE_HOURS * 3600_000
-          }).length
-
-          if (!waiting && !stale) return { active: false }
-          const parts: string[] = []
-          if (waiting) parts.push(`${waiting} 位客人在等（最久 ${humanizeHours(oldestH)}）`)
-          if (stale) parts.push(`${stale} 條卡在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時`)
-          return { active: true, count: waiting + stale, detail: parts.join('、') }
+          const r = await getHumanQueue()
+          if (!r.waiting) return { active: false }
+          return { active: true, count: r.waiting, detail: `${r.waiting} 位客人在等（最久 ${humanizeHours(r.oldestH)}）` }
+        }),
+        probe('humanStale', async () => {
+          const r = await getHumanQueue()
+          if (!r.stale) return { active: false }
+          return { active: true, count: r.stale, detail: `${r.stale} 場接手後超過 ${HUMAN_STALE_HOURS} 小時沒動` }
         }),
         probe('firstReplyBacklog', async () => {
           // 「未首接」佇列的口徑完全沿用側欄（countOpenQueueSessions / isOpenQueueSession），

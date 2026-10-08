@@ -7,7 +7,7 @@
  * 兩題在 prompt 裡都早就寫了「⛔不要自己補」，照樣中——所以改成機制。
  */
 import { describe, expect, it } from 'vitest'
-import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from './agent-user-signal'
+import { broadcastAudienceIssue, broadcastTextIssue, clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent, userAuthoredTextIssue } from './agent-user-signal'
 
 describe('只有同意、沒講要動哪一個', () => {
   it('🔴 實測踩到的那一句：「做」', () => {
@@ -95,5 +95,65 @@ describe('接續修改時，動到的時間格比他講的多', () => {
 
   it('動的不是時間格（例如週末休不休）→ 不判', () => {
     expect(clockFieldsChangedBeyondUserWords('週末也要休息', before, { ...before, weekendOff: true })).toEqual([])
+  })
+})
+
+/**
+ * 推播草稿：客人會看到的字、發給誰，都要是使用者講過的（`D-116`，2026-10-08 實測）。
+ * ① 節慶卡「幫我擬一則「國慶日」的推播草稿」→ 它自己寫「國慶日快樂！」、沒問就發全部 9,076 人
+ * ② 「中秋節快到了，幫我弄個活動」→ 這句指令被原封不動當成推播內容
+ */
+describe('推播草稿的內容是不是他講的', () => {
+  it('🔴 實測那一句：只講了節日，內容「國慶日快樂！」是它自己寫的 → 擋，叫它去問', () => {
+    const issue = broadcastTextIssue('國慶日快樂！', ['幫我擬一則「國慶日」的推播草稿'])
+    expect(issue).toContain('不是使用者講的')
+    expect(issue).toContain('要跟客人說什麼')
+  })
+
+  it('🔴 實測那一句：把他對小幫手下的指令當成內容 → 擋（就算每個字都是他講的）', () => {
+    const said = ['中秋節快到了，幫我弄個活動']
+    expect(broadcastTextIssue('中秋節快到了，幫我弄個活動', said)).toContain('指令')
+  })
+
+  it('照他講的話寫（潤飾一下標點、加日期格式）→ 放行', () => {
+    const said = ['連假 10/10–10/12 照常出貨，全館 9 折。發給全部']
+    expect(broadcastTextIssue('連假 10/10–10/12 照常出貨，全館 9 折！', said)).toBeNull()
+  })
+
+  it('內容是前幾句講的也算（他先回答「要說什麼」，下一句才講發給誰）', () => {
+    const said = ['幫我擬國慶日的推播', '連假照常出貨，全館九折', '發給全部好友']
+    expect(broadcastTextIssue('連假照常出貨，全館九折', said)).toBeNull()
+  })
+
+  it('⛔ 他講了一點、它加了一大段促銷詞 → 擋', () => {
+    const said = ['連假照常出貨']
+    expect(broadcastTextIssue('連假照常出貨！把握機會，全館滿千再送精美好禮，數量有限送完為止', said)).not.toBeNull()
+  })
+})
+
+describe('知識卡答案／回覆字是不是他講的（userAuthoredTextIssue）', () => {
+  it('🔴 佔位句「請提供正確的運費資訊。」不是他講的 → 擋', () => {
+    expect(userAuthoredTextIssue('請提供正確的運費資訊。', ['有客人問運費，AI 回的價格是錯的'], '要回答的內容', '正確答案')).toContain('不可以用「請提供…」')
+  })
+
+  it('他講的答案（哪怕只有兩個字）→ 放行', () => {
+    expect(userAuthoredTextIssue('不行', ['新增一個常見問題：可以寄到國外嗎？不行'], '要回答的內容', '正確答案')).toBeNull()
+  })
+})
+
+describe('推播草稿發給誰是不是他講的', () => {
+  it('🔴 沒講對象 → 擋：⛔ 不可以自己選全部好友', () => {
+    const issue = broadcastAudienceIssue(undefined, ['幫我擬一則國慶日的推播', '連假照常出貨'])
+    expect(issue).toContain('還沒講要發給誰')
+  })
+
+  it('講了「全部／所有人／大家」→ 放行', () => {
+    for (const s of ['發給全部', '所有好友都發', '發給大家', '全體會員'])
+      expect(broadcastAudienceIssue(undefined, [s]), s).toBeNull()
+  })
+
+  it('標籤要是他講過的名字；它自己挑的 → 擋', () => {
+    expect(broadcastAudienceIssue('VIP', ['只發給 VIP'])).toBeNull()
+    expect(broadcastAudienceIssue('VIP', ['發給老客人'])).toContain('沒有講過「VIP」')
   })
 })

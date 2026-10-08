@@ -30,7 +30,7 @@ export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
   liffReady: '設定 LIFF（活動頁入口）',
   aiEnabled: '開啟 AI 自動回覆',
   knowledgeReady: '建立知識庫',
-  scriptReady: '啟用一條客服流程',
+  scriptReady: '啟用一條自動回應',
   profileReady: '讓 MiniMe 認識你的店',
   firstMessageReceived: '收到第一則客人訊息',
 }

@@ -135,13 +135,18 @@ describe('提議一個操作', () => {
   it('參數缺一半：把「要問什麼」回給模型，⛔不自己補一個常見值', async () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { start: '22:00', end: '08:00' } }))
+      // `D-116`：反問講到服務時間之前要先查過現在的設定——沒查就問會被退回去一次
       .mockResolvedValueOnce(step({ action: 'answer', text: '請問你說的是服務時間還是勿擾時段？' }))
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_settings', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '現在沒有設服務時間。請問你說的是服務時間還是勿擾時段？' }))
 
     const res = await run('admin')
 
     expect(res.pendingOp).toBeUndefined()
     expect(setCalls).toHaveLength(0)
     expect(generateJson.mock.calls[1]?.[0]).toContain('服務時間')
+    expect(generateJson.mock.calls[2]?.[0]).toContain('沒有查過 get_ai_settings')
+    expect(res.reply).toContain('現在沒有設服務時間')
   })
 
   it('找不到那條自動回應：回饋清單讓它反問，⛔不挑最接近的', async () => {
@@ -498,7 +503,10 @@ describe('泡泡那句話不可以跟確認卡打架', () => {
       lastProposal: { opId: 'ai-settings-sensitive-topic', args: { action: 'add', word: '退費' } },
     })
 
-    expect(res.pendingOp?.preview.warning).toContain('上一個提議還沒有被執行')
+    // `D-116`：點名是哪一張（以前寫「上一個提議還沒有被執行」，店家不知道「上一個」是哪張）
+    expect(res.pendingOp?.preview.warning).toContain('上面那張（退費）還沒按確定')
+    // ⚠️ 符號由卡片自己加，句子裡不可以再有一顆（以前畫面上是兩顆）
+    expect(res.pendingOp?.preview.warning).not.toMatch(/^⚠️/m)
   })
 
   it('⛔ 只是改同一件事就不可以警告：「改成早上九點」不存在第二個待辦', async () => {
@@ -651,5 +659,121 @@ describe('get_ai_settings 的服務時間／勿擾時段', () => {
     // ⛔ 裸的起訖不可以再出現：它離開這裡就沒有人記得那是「服務時間」的起訖
     expect(prompt).not.toContain('"start":"09:00"')
     expect(prompt).not.toContain('"end":"18:00"')
+  })
+})
+
+/**
+ * `D-116`（2026-10-08）：沒受過訓練的店家實測——節慶卡按「交給小幫手擬草稿」，
+ * 它自己寫了「國慶日快樂！」、沒問就選全部好友 9,076 人，卡上還印出「⛔ 只是草稿，**不會發出去**」。
+ */
+describe('推播草稿：內容與對象要是他講的', () => {
+  it('🔴 實測那一句：只講了節日 → 不出確認卡，回去問要說什麼、發給誰', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'broadcast-draft-create', args: { name: '國慶日推播', text: '國慶日快樂！' } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '要跟客人說什麼？發給全部好友還是某個標籤？' }))
+
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '幫我擬一則「國慶日」的推播草稿' })
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(generateJson.mock.calls[1]?.[0]).toContain('不是使用者講的')
+  })
+
+  it('講了內容也講了對象 → 給卡；卡上的字是純文字（⛔ 沒有 ⛔、星號、兩顆 ⚠️）', async () => {
+    generateJson.mockResolvedValueOnce(step({
+      action: 'propose',
+      op: 'broadcast-draft-create',
+      args: { name: '國慶日', text: '連假 10/10–10/12 照常出貨，全館 9 折' },
+      text: '好，我先建成草稿。',
+    }))
+
+    const res = await runAdminAgentChat({
+      db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin',
+      message: '發給全部',
+      history: [
+        { role: 'user', text: '幫我擬一則國慶日的推播草稿' },
+        { role: 'assistant', text: '要跟客人說什麼？發給誰？' },
+        { role: 'user', text: '連假 10/10–10/12 照常出貨，全館 9 折' },
+      ],
+    })
+
+    const p = res.pendingOp?.preview
+    expect(p?.items[0]?.label).toBe('連假 10/10–10/12 照常出貨，全館 9 折')
+    const all = JSON.stringify(p)
+    expect(all).not.toMatch(/⛔|\*\*/)
+    expect(p?.warning ?? '').not.toMatch(/^⚠️/m)
+  })
+})
+
+describe('知識卡的答案要是他講的（D-116 第三輪）', () => {
+  it('🔴 實測那一張：「AI 回的運費是錯的」→ 答案寫「請提供正確的運費資訊。」 → 不出卡，回去問正確的答案', async () => {
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'knowledge-draft-create', args: { question: '運費', answer: '請提供正確的運費資訊。' } }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '正確的運費是多少？' }))
+
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '有客人問運費，AI 回的價格是錯的，要怎麼改' })
+
+    expect(res.pendingOp).toBeUndefined()
+    expect(generateJson.mock.calls[1]?.[0]).toContain('要回答的內容不是使用者講的')
+  })
+})
+
+describe('畫面上的字（D-116）', () => {
+  it('泡泡：粗體與 ⛔ 拿掉、清單符號換成「・」、統一用「你」——⛔ 但「」裡客人會看到的原文一個字都不動', async () => {
+    const { plainReply } = await import('./ai-admin-agent')
+    const out = plainReply('建議**您**這樣做：\n* 第一件\n- 第二件\n我會把回覆改成「感謝您的耐心」。⛔ 不會發出去')
+    expect(out).toBe('建議你這樣做：\n・第一件\n・第二件\n我會把回覆改成「感謝您的耐心」。不會發出去')
+  })
+
+  it('🔴 括號裡的英文代號拿掉（第三輪實測：「親切活潑 (friendly)」）', async () => {
+    const { plainReply } = await import('./ai-admin-agent')
+    expect(plainReply('・親切活潑 (friendly)\n・專業簡潔（professional）\n我可以幫你（script-set-enabled）'))
+      .toBe('・親切活潑\n・專業簡潔\n我可以幫你')
+    // 一般英文不動
+    expect(plainReply('LINE (官方帳號) 收得到')).toBe('LINE (官方帳號) 收得到')
+  })
+
+  // 2026-10-08 實測：模型偶爾吐出不是 JSON 的東西，錯誤原文「Gemini JSON parse failed…」直接出現在泡泡裡
+  const parseError = () => Object.assign(new Error('x'), { statusCode: 502, statusMessage: 'Gemini JSON parse failed: 取不到完整 JSON。Raw: action answer' })
+
+  it('🔴 模型格式壞掉一次 → 同一步重來，店家看到的是正常回答', async () => {
+    generateJson
+      .mockRejectedValueOnce(parseError())
+      .mockResolvedValueOnce(step({ action: 'answer', text: '昨天沒有推播紀錄。' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '客人說沒收到推播' })
+    expect(res.reply).toBe('昨天沒有推播紀錄。')
+    // ⛔ 原封不動重送沒有用（溫度 0 會吐一模一樣的東西）：重來那一次的提示要講出上一次錯在哪
+    expect(generateJson.mock.calls[1]?.[0]).toContain('不是 JSON')
+  })
+
+  it('同一輪兩支工具都要異常總覽 → 只查一次（實測三支工具、查兩次，等了 44 秒）', async () => {
+    let alertCalls = 0
+    ;(globalThis as any).$fetch = async (url: string) => {
+      if (url === '/api/admin/alerts') alertCalls++
+      return { items: [] }
+    }
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_current_alerts', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_mistakes', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '目前沒有異常。' }))
+
+    await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: 'AI 回得好不好？' })
+    expect(alertCalls).toBe(1)
+  })
+
+  it('🔴 再壞一次、或連不上服務 → 講一句人話，⛔ 錯誤原文不可以出現在泡泡裡', async () => {
+    generateJson.mockRejectedValueOnce(parseError()).mockRejectedValueOnce(parseError())
+    const a = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '客人說沒收到推播' })
+    expect(a.reply).not.toMatch(/Gemini|JSON|Raw/)
+    expect(a.reply).toContain('換個說法')
+
+    generateJson.mockRejectedValueOnce(new Error('fetch failed'))
+    const b = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '客人說沒收到推播' })
+    expect(b.reply).toContain('什麼都沒有改')
+  })
+
+  it('確認卡：警告每一行開頭的 ⚠️ 拿掉（卡片自己會加一顆）', async () => {
+    const { cardTextOf } = await import('./ai-admin-agent')
+    const out = cardTextOf({ summary: '我會**關掉**', items: [{ label: '⛔ 不可逆', note: '**注意**' }], warning: '⚠️ 第一行\n⚠️ 第二行' })
+    expect(out).toEqual({ summary: '我會關掉', items: [{ label: '不可逆', note: '注意' }], warning: '第一行\n第二行' })
   })
 })

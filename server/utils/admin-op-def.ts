@@ -68,6 +68,15 @@ export interface AdminOpDef {
    */
   numberOptional?: (raw: Record<string, unknown>) => boolean
   /**
+   * 選填：檢查參數是不是**使用者自己講過的**（`D-116`，2026-10-08）。不合格就丟 `AdminOpUserError`，
+   * 訊息回給模型、讓它照著去問。
+   *
+   * 為什麼要有：`freeTextFields` 只擋「從查到的資料照抄」，擋不住「模型自己寫」——
+   * 推播草稿實測自己寫了「國慶日快樂！」、沒問就選全部好友 9,076 人。
+   * @param userSaid 使用者講過的話（這一輪＋先前輪次他自己打的；⛔不含助理的話）
+   */
+  checkUserWords?: (raw: Record<string, unknown>, userSaid: readonly string[]) => void
+  /**
    * 這個操作「動的是哪一個東西」放在哪個參數（流程名字、要加的那個字…）。
    *
    * 用來分辨兩件事：使用者是在**改同一個提議**（「改成 30 分鐘」），

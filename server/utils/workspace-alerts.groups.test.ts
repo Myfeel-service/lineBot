@@ -115,6 +115,62 @@ describe('collectWorkspaceAlerts 權限分組（要跟前端註冊表的 require
   })
 })
 
+/**
+ * `D-116`（2026-10-08）：以前「客人在等」與「同事接手後沒結束」併成一顆、標題用「有客人在等真人回覆」。
+ * MYFEEL 實測 95 筆全是後者，小幫手照標題推論「客人說沒人回＝因為 95 位客人在等」。拆成兩顆各講各的。
+ */
+describe('等真人拆兩顆：humanBacklog（客人在等）與 humanStale（接手後沒結束）', () => {
+  /** 對話場次的假庫：⛔ where 要回新的查詢物件（兩個條件會並行查，共用一個會互相蓋掉） */
+  function sessionsDb(pendingHoursAgo: number[], humanHoursAgo: number[]) {
+    const now = Date.now()
+    const ts = (h: number) => ({ toMillis: () => now - h * 3600_000 })
+    const rowsFor = (name: string, f: Record<string, unknown>) => {
+      if (name !== 'conversationSessions') return []
+      if (f.status === 'pending_human') return pendingHoursAgo.map(h => ({ handoffRequestedAt: ts(h) }))
+      if (f.status === 'human_handling') return humanHoursAgo.map(h => ({ humanLastRepliedAt: ts(h) }))
+      return []
+    }
+    const query = (name: string, f: Record<string, unknown>): any => ({
+      where: (field: string, _op: string, v: unknown) => query(name, { ...f, [field]: v }),
+      select: () => query(name, f),
+      limit: () => query(name, f),
+      orderBy: () => query(name, f),
+      count: () => ({ get: async () => ({ data: () => ({ count: rowsFor(name, f).length }) }) }),
+      get: async () => {
+        const rows = rowsFor(name, f)
+        return { size: rows.length, empty: !rows.length, docs: rows.map((r, i) => ({ id: `s${i}`, data: () => r })) }
+      },
+      doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }),
+    })
+    return { collection: (name: string) => query(name, {}) } as any
+  }
+
+  async function run(pending: number[], human: number[]) {
+    getAiSettings.mockResolvedValue(baseSettings())
+    getLineWorkspaceCredentials.mockResolvedValue({ channelAccessToken: 'tok', channelSecret: '', defaultLiffId: '', lineBotUserId: '' })
+    const items = await collectWorkspaceAlerts(sessionsDb(pending, human), 'WS', { canSettings: false, canOperate: true })
+    return { waiting: items.find(i => i.id === 'humanBacklog'), stale: items.find(i => i.id === 'humanStale') }
+  }
+
+  it('🔴 實測那種：只有接手後沒結束的 → 只亮 humanStale，⛔ 不講成客人在等', async () => {
+    const { waiting, stale } = await run([], [20, 30, 13])
+    expect(waiting?.state).toBe('clear')
+    expect(stale).toMatchObject({ state: 'active', count: 3 })
+  })
+
+  it('客人要求找真人等超過門檻 → 只亮 humanBacklog；剛轉過來的不算', async () => {
+    const { waiting, stale } = await run([3, 0.2], [])
+    expect(waiting).toMatchObject({ state: 'active', count: 1 })
+    expect(stale?.state).toBe('clear')
+  })
+
+  it('兩種都有 → 各算各的，數字不相加', async () => {
+    const { waiting, stale } = await run([5], [14, 2])
+    expect(waiting?.count).toBe(1)
+    expect(stale?.count).toBe(1)
+  })
+})
+
 describe('草稿模式的佇列彙總（D-43②）：aiDraftsWaiting 與 firstReplyBacklog 互斥', () => {
   async function run(settings: Record<string, unknown>, queueCount: number) {
     getAiSettings.mockResolvedValue(settings)

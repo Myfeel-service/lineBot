@@ -104,6 +104,85 @@ export function hasNumberSignal(userTexts: readonly string[]): boolean {
   return userTexts.some(t => NUMBER_SIGNAL.test(stripVagueOne(t)))
 }
 
+// ── 推播草稿：客人會看到的字、發給誰，都要是使用者講過的（`D-116`，2026-10-08）──────────
+
+/**
+ * 像是在對小幫手下指令的字——這種句子是給「它」的，不是給客人看的。
+ * ⛔ 實測：「中秋節快到了，幫我弄個活動」被原封不動當成推播內容，準備發給 9,076 人。
+ */
+const INSTRUCTION_TO_AGENT = /(幫我|幫忙|請你|你幫|擬一則|擬個|擬一個|寫一則|弄個|弄一個|推播|草稿|發一則)/
+
+/** 兩個字一組（去掉空白標點後）：拿來量「這段字有多少出自他講過的話」 */
+function bigrams(s: string): string[] {
+  const t = squash(s)
+  const out: string[] = []
+  for (let i = 0; i < t.length - 1; i++) out.push(t.slice(i, i + 2))
+  return out
+}
+
+/**
+ * 至少要有幾成的字出自使用者講過的話：七成。
+ * 模型常把他的話潤飾一下（加個句號、換個語序），那是好事；整句自己寫才是要擋的。
+ */
+const OWN_WORDS_MIN_SHARE = 0.7
+
+/**
+ * 推播內容是不是使用者講的。
+ *
+ * 要防的兩件事（2026-10-08 實測）：
+ * ① 節慶卡送出「幫我擬一則「國慶日」的推播草稿」→ 它自己寫了「國慶日快樂！」，一個字都沒問。
+ * ② 「中秋節快到了，幫我弄個活動」→ 這句**指令**被當成客人會看到的內容。
+ * ⛔ prompt 裡早就寫著「內容要照使用者說的寫」，照樣中，所以改成機制（同 `hasNumberSignal`）。
+ *
+ * @returns 要回給模型的話（它會照著去問）；沒問題回 null
+ */
+export function broadcastTextIssue(text: string, userTexts: readonly string[]): string | null {
+  const body = String(text ?? '').trim()
+  if (INSTRUCTION_TO_AGENT.test(body)) {
+    return `「${body.slice(0, 30)}」是使用者對你下的指令，不是要給客人看的字。`
+      + '⛔ 不可以把它當成推播內容，也不可以自己寫一段。請先問他：要跟客人說什麼（例如優惠內容、出貨時間）、要發給全部好友還是某個標籤的人。'
+  }
+  return userAuthoredTextIssue(body, userTexts, '這段推播內容', '要跟客人說什麼（例如優惠內容、出貨時間）、要發給全部好友還是某個標籤的人')
+}
+
+/**
+ * 一段會被客人看到（或 AI 照著回答）的字，是不是使用者講的（推播、知識卡的答案、自動回應的回覆字共用）。
+ *
+ * ⛔ 2026-10-08 第三輪實測：「AI 回的運費是錯的」→ 它直接提議一張知識卡，答案寫「請提供正確的運費資訊。」——
+ *    拿一句佔位的話當成要教 AI 的內容。跟推播草稿自己編「國慶日快樂！」是同一件事。
+ * @param what 這段字是什麼（「要回答的內容」），會出現在回給模型的話裡
+ * @param ask 要回去問他什麼
+ */
+export function userAuthoredTextIssue(text: string, userTexts: readonly string[], what: string, ask: string): string | null {
+  const grams = bigrams(text)
+  if (!grams.length) return null
+  const user = squash(userTexts.join(' '))
+  const own = grams.filter(g => user.includes(g)).length / grams.length
+  if (own >= OWN_WORDS_MIN_SHARE) return null
+  return `${what}不是使用者講的（是你自己寫的）。⛔ 這段字一律照他講的話，不可以自己編，也不可以用「請提供…」這種句子先佔位。`
+    + `請先問他：${ask}；他講了再提議。`
+}
+
+/** 「發給全部」的講法 */
+const ALL_AUDIENCE = /(全部|所有|全體|每個人|每位|每一位|大家|全員|all|everyone)/
+
+/**
+ * 發給誰，是不是使用者講過的。⛔ 沒講就選「全部好友」＝替他決定把訊息發給幾千個人。
+ * @param tagName 這次要發的標籤；沒有＝全部好友
+ */
+export function broadcastAudienceIssue(tagName: string | undefined, userTexts: readonly string[]): string | null {
+  const user = squash(userTexts.join(' '))
+  const tag = squash(String(tagName ?? ''))
+  if (tag) {
+    return user.includes(tag)
+      ? null
+      : `使用者沒有講過「${tagName}」這個標籤。⛔ 不可以替他挑對象：請問他要發給全部好友，還是哪一個標籤的人。`
+  }
+  if (ALL_AUDIENCE.test(user)) return null
+  return '使用者還沒講要發給誰。⛔ 不可以自己選「全部好友」。'
+    + '請問他要發給全部好友，還是某個標籤的人（可以先用 get_tag_audience 查各有幾人告訴他）。'
+}
+
 /** 一個「幾點」的說法：「早上十點」「22:00」「晚上 11 點」都算一個 */
 const CLOCK_MENTION = new RegExp(
   `[0-9０-９]{1,2}\\s*[:：]\\s*[0-9０-９]{2}`

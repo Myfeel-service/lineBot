@@ -341,7 +341,10 @@ describe('op：自動回應上架／下架', () => {
     const args = op.normalize({ name: '出貨查詢', enabled: false })
     const preview = await op.preview(ctx, args)
 
-    expect(preview.summary).toContain('下架')
+    // `D-116`：跟頁面上的開關同一組字（啟用／停用），⛔ 不講上架下架
+    expect(preview.summary).toContain('停用')
+    expect(preview.summary).not.toMatch(/上架|下架/)
+    expect(preview.confirmLabel).toBe('確定停用')
     expect(preview.items[1]?.label).toContain('出貨')
     expect(preview.warning).toContain('收不到')
     expect(updates).toHaveLength(0)
@@ -548,7 +551,8 @@ describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () 
     const labels = preview.items.map(i => i.label).join(' ')
     expect(labels).toContain('客人打「退貨」的時候啟動')
     expect(labels).toContain('請給我訂單編號')
-    expect(preview.warning).toContain('關著')
+    expect(preview.warning).toContain('停用')
+    expect(preview.confirmLabel).toBe('確定建立（先不啟用）')
     expect(fetchCalls).toHaveLength(0)
   })
 

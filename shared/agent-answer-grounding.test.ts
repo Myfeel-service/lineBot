@@ -67,4 +67,31 @@ describe('answerGroundingIssue（沒查就講的回答要退回去）', () => {
   it('空回答不判（那條路有自己的罐頭句）', () => {
     expect(ok({ text: '   ', sources: [], calledTools: [] })).toBe(true)
   })
+
+  // `D-116`（2026-10-08 實測）：數字那道擋不到文字——它沒查就說「AI 的語氣目前設定為『專業簡潔』」（其實是自己寫的指示），
+  // 「晚上不要吵我」沒查就問「勿擾要幾點到幾點」（其實本來就設好了）
+  it('🔴 沒查設定就講 AI 設定的現況 → 擋下來，叫它先查', () => {
+    const issue = answerGroundingIssue({ text: 'AI 的語氣目前設定為「專業簡潔」，要換嗎？', sources: [], calledTools: [] })
+    expect(issue).toContain('get_ai_settings')
+  })
+
+  it('🔴 沒查設定就反問「勿擾要幾點到幾點」→ 也要擋（先講現在是多少）', () => {
+    expect(answerGroundingIssue({ text: '請問您希望勿擾時段從幾點到幾點呢？', sources: [], calledTools: [] })).toContain('get_ai_settings')
+  })
+
+  it('查過設定再講 → 放行', () => {
+    expect(ok({ text: '已經是這樣了：服務時間以外就是勿擾時段，你不會被吵。', sources: [], calledTools: ['get_ai_settings'] })).toBe(true)
+  })
+
+  it('🔴 把服務時間講成 AI 的上班時間 → 擋（兩輪實測都中：「目前 AI 自動回覆的服務時間設定為…」）', () => {
+    const say = (text: string) => answerGroundingIssue({ text, sources: [], calledTools: ['get_ai_settings'] })
+    expect(say('目前 AI 自動回覆的服務時間設定為平日白天，週末是勿擾時段')).toContain('不是 AI 的上班時間')
+    expect(say('勿擾時段 AI 不會回客人')).toContain('不是 AI 的上班時間')
+    // 對的講法不擋
+    expect(say('服務時間以外是勿擾時段，AI 在服務時間以外照常回答。')).toBeNull()
+  })
+
+  it('⛔ 講對話統計的「等太久」不算設定話題（收了會一直白查一次）', () => {
+    expect(ok({ text: '昨天有客人等太久才有人回，要不要去看看？', sources: [], calledTools: ['get_conversation_stats'] })).toBe(true)
+  })
 })

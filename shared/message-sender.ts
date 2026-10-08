@@ -26,7 +26,7 @@ export const MESSAGE_SENDER_LABELS: Record<MessageSender, string> = {
 export const MESSAGE_SENDER_HINTS: Record<MessageSender, string> = {
   human: '客服人員手動回覆的。',
   ai: 'AI 客服自動回覆的，內容是 AI 依知識庫當場生成，不是固定文案。',
-  bot: '機器人模組／自動回覆規則送出的固定內容，要改文案去該模組或規則改。',
+  bot: '機器人模組／自動回應送出的固定內容，要改文案去該模組或那條自動回應改。',
   system: '系統內建的自動訊息（例如「已收到您的訊息」、勿擾時段回覆）。後台沒有對應的模組可改。',
 }
 

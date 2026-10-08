@@ -89,7 +89,7 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
 
   const reasonLabel = params.reason
     ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
-    : '客服流程轉真人'
+    : '自動回應轉真人'
   // 文案在 shared（後台「LINE 通知」頁的預覽吃同一支）。missed_only 的首次通知帶完整內容
   // （摘要/訊息由 remindOverdueHandoffs 從存檔補回）；always 模式的再提醒是短版一行。
   // `D-103`⑦：附一條直接打開這位客人對話的短網址（沒有對外網址時退回「請至後台…」）

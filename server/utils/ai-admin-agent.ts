@@ -21,7 +21,7 @@ import { derivePlanState } from '~~/shared/billing/plan-state'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
-import { ALERT_LABELS } from '~~/shared/types/alerts'
+import { ALERT_LABELS, severityOf, type AlertSeverity } from '~~/shared/types/alerts'
 import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import { SETUP_LABELS } from '~~/shared/types/setup'
 import type { SetupStatusResponse } from '~~/shared/types/setup'
@@ -44,6 +44,9 @@ import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from
 import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
 import { answerGroundingIssue } from '~~/shared/agent-answer-grounding'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
+import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
+import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
+import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
 export interface AdminAgentToolCall { tool: string; args: Record<string, unknown> }
@@ -82,6 +85,26 @@ interface ToolCtx {
    * 不填＝當成最低的觀察者,寧可少給。
    */
   role?: WorkspaceMemberRole
+  /**
+   * 工具可以順手放進回答的卡片(`D-116`:找到某位客人 →「打開他的對話」)。
+   * ⛔ 網址由工具用查到的資料組,模型碰不到(模型不生 ID)。
+   */
+  cards?: AgentMsg[]
+  /**
+   * 這一輪已經查過的異常總覽(`D-116`):兩支工具都要它時只查一次。
+   * 實測「客人最近都在問什麼」查了三支工具、異常總覽打了兩次,等了 44 秒。
+   */
+  alertsMemo?: { p?: Promise<WorkspaceAlertsResponse> }
+}
+
+/** 異常總覽(轉發呼叫者憑證,跟面板同一份);同一輪只查一次 */
+function fetchAlerts(workspaceId: string, ctx: ToolCtx): Promise<WorkspaceAlertsResponse> {
+  const load = () => $fetch<WorkspaceAlertsResponse>('/api/admin/alerts', {
+    query: { workspaceId },
+    headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+  })
+  if (!ctx.alertsMemo) return load()
+  return (ctx.alertsMemo.p ??= load())
 }
 interface ToolDef {
   /** 給模型看的一行說明(白話,含何時該用) */
@@ -101,24 +124,84 @@ interface ToolDef {
   run: (db: Firestore, workspaceId: string, args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>
 }
 
+/** 「給 AI 的指示」現在是哪一個範本;都不是＝自己寫的(⛔ 不可以講成某個範本) */
+function toneOf(systemPrompt: string): string {
+  const cur = systemPrompt.trim()
+  if (!cur) return '還沒有寫給 AI 的指示'
+  const hit = Object.values(AI_TONE_TEMPLATES).find(t => t.text.trim() === cur)
+  return hit ? `「${hit.label}」範本` : `自己寫的指示(不是範本,開頭是「${cur.split('\n')[0]!.slice(0, 30)}」)`
+}
+
+/** Firestore Timestamp 經過 JSON 之後的樣子({_seconds}／{seconds}),或還沒序列化的 */
+function jsonTsToMs(v: unknown): number {
+  const t = v as { toMillis?: () => number, _seconds?: number, seconds?: number } | null
+  if (!t) return 0
+  if (typeof t.toMillis === 'function') return t.toMillis()
+  const sec = t._seconds ?? t.seconds
+  return typeof sec === 'number' ? sec * 1000 : 0
+}
+
+/**
+ * 會讓「客人傳訊息沒人回」的異常(`D-116`)。⛔ 只有這幾種。
+ *
+ * 為什麼要寫在資料裡:提示裡講了兩次「同事接手沒結束、加好友沒歡迎訊息都不是原因」,
+ * 第三輪實測照樣把「資料沒重新學」「95 場接手沒結束(表示客人可能還在等)」「歡迎訊息」列成原因——
+ * 散文規則擋不住,每一件異常旁邊直接標「會／不會」。
+ */
+const NO_REPLY_CAUSES = new Set<string>([
+  'lineWebhookBroken', // LINE 沒把訊息送進來:什麼都不會回
+  'lineChannelConflict', // 訊息只進其中一邊
+  'quotaExceeded', // AI 停了,要等真人
+  'humanBacklog', // 轉真人後沒人接
+  'firstReplyBacklog', // 一直沒人回
+  'aiDraftsWaiting', // 草稿模式擬好沒人送出
+  'llmError', // AI 連不上,改轉真人(真人不在就沒人回)
+])
+
+/** 面板「目前狀況」的分組名(講幾件時照這個分:實測它說「兩項建議」卻列了四件——另外兩件是「可以更好」) */
+const ALERT_GROUP_TEXT: Record<AlertSeverity, string> = {
+  critical: '現在影響客人',
+  warning: '建議處理',
+  suggestion: '可以更好',
+}
+
+/** 轉真人原因的白話補充(標籤本身照 AI 表現頁那一份,這裡只補「這是什麼意思」) */
+const HANDOFF_REASON_MEANING: Partial<Record<string, string>> = {
+  no_grounding: '知識庫裡找不到可以回答的資料',
+  product_mismatch: '那個產品的資料裡沒有這一題',
+  order_status: '客人要查自己的訂單,AI 查不到訂單',
+  low_confidence: 'AI 不確定自己的答案對不對',
+  user_request: '客人自己說要找真人',
+  sensitive_topic: '客人提到設定好「一提到就轉真人」的字',
+  commercial_inquiry: '業務合作、大量採購這類要人談的事',
+  non_text_content: '客人傳了圖片或檔案',
+}
+
 // key 綁 shared/types/admin-agent 的 AdminAgentToolId:加工具沒同步 UI 標籤=編譯失敗
 // (export 給測試驗閘門與不變量;Phase 2 的模組表也會從這裡長出來)
 export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
+  // `D-116`（2026-10-08）：以前還有一支 list_auto_responses 查同一批東西，畫面上「查了：」並排兩個名字
+  // （客服流程清單、自動回應設定），使用者以為是兩樣東西——併成這一支，名字跟側欄同名
   list_scripts: {
-    description: '列出所有客服流程:名稱、啟用狀態、觸發方式與關鍵字、啟動/完成統計。問「有哪些客服流程 / 哪些沒啟用 / 完成率」時用。',
+    description: '列出所有自動回應（側欄「自動回應」那一頁的每一條）:名稱、啟用或停用、什麼時候啟動(客人說了關鍵字／加好友時)、'
+      + '關鍵字與比對方式、幾個步驟、啟動／走完次數。問「有哪些自動回應 / 哪些沒啟用 / 打某個字會回什麼 / 完成率」時用。'
+      + '⛔ 頁面上的開關叫「啟用／停用」,講的時候照這兩個字。',
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId) {
       const snap = await db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get()
       return snap.docs.map((d) => {
         const s = d.data() as any
-        const trig = (s.nodes ?? []).find((n: any) => n.type === 'trigger')
+        const nodes = Array.isArray(s.nodes) ? s.nodes : []
+        const trig = nodes.find((n: any) => n?.id === s.rootNodeId) ?? nodes.find((n: any) => n?.type === 'trigger')
         return {
           name: s.name,
           enabled: s.enabled === true,
+          startsWhen: s.triggerEvent === 'follow' ? '客人加好友時' : '客人傳訊息時',
           matchMode: trig?.matchMode ?? 'keyword',
-          keywords: trig?.keywords ?? [],
-          nodeCount: (s.nodes ?? []).length,
+          keywords: (trig?.keywords ?? []).join('、'),
+          keywordMatch: trig?.keywordMatch ?? 'any',
+          stepCount: nodes.length,
           starts: s.stats?.starts ?? 0,
           completions: s.stats?.completions ?? 0,
         }
@@ -136,7 +219,14 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       //    模型被問「勿擾時段幾點到幾點」就照字面唸成「勿擾 10:00–19:00」——正好把上班時間
       //    講成不打擾的時間。現在兩句話都由後端算好,模型照抄就好。
       + '⛔ serviceHours 只有兩句現成的話:serviceText＝有在服務的時間、dndText＝勿擾時段(服務時間以外那段)。'
-      + '**照抄那兩句**,⛔ 絕對不要自己把其中一句換算成另一句(換錯就是把上下班時間講反)。',
+      + '**照抄那兩句**,⛔ 絕對不要自己把其中一句換算成另一句(換錯就是把上下班時間講反)。'
+      // ⛔ 2026-10-08 `D-116` 實測:它說「AI 自動回覆的服務時間」,確認卡卻寫「AI 照常回答」——
+      //    照泡泡理解,店家會以為週末 AI 不回。
+      + '⛔ 服務時間**只管「客人要找真人時會不會通知你們」**:勿擾時段內客人先收到一句稍後回覆、你們不會被吵;'
+      + 'AI 全天照常回答。⛔ 不可以說成「AI 自動回覆的服務時間」或「勿擾時段 AI 不回」。'
+      + 'tone＝AI 現在用哪一種語氣:三個現成範本之一,或「自己寫的指示」(⛔ 不是範本就不要講成範本)。'
+      + 'handbackIdleMinutes＝客服接手後幾分鐘沒回就自動交還機器人(0＝不交還);'
+      + 'autoCloseHours＝真人接手的對話幾小時沒動靜就自動結束(0＝不自動結束)。',
     requires: 'ai.read',
     mutates: false,
     async run(_db, workspaceId, _args, ctx) {
@@ -175,6 +265,11 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         // 看不到就整格不出現(undefined 不進 JSON):⛔回 null 會被講成「沒有設上限」
         monthlyTokenCap: s.quota?.monthlyTokenCap,
         disambiguationEnabled: s.disambiguation?.enabled !== false,
+        // `D-116`:以前沒有這一格,問「AI 太冷淡」它就自己編「目前是專業簡潔」(其實是自己寫的指示)
+        tone: toneOf(String(s.systemPrompt ?? '')),
+        // 「先講現在是多少再問要改成多少」:這兩件也是小幫手改得動的,現值要查得到
+        handbackIdleMinutes: Number(s.handbackIdleMinutes ?? 0),
+        autoCloseHours: Number(s.humanSessionMaxIdleHours ?? 0),
       }
     },
   },
@@ -331,48 +426,38 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       }
     },
   },
-  list_auto_responses: {
-    description: '列出自動回應設定(客人說什麼→系統怎麼回):名稱、觸發詞、比對方式、啟用狀態、幾個步驟。問「有哪些自動回應 / 有沒有攔截全部的設定 / 打某個關鍵字會回什麼」時用。',
-    requires: 'ai.read',
-    mutates: false,
-    async run(db, workspaceId) {
-      const snap = await db.collection(SCRIPTS_COLLECTION).where('workspaceId', '==', workspaceId).get()
-      return snap.docs.map((d) => {
-        const s = d.data() as any
-        const nodes = Array.isArray(s.nodes) ? s.nodes : []
-        const trigger = nodes.find((n: any) => n?.id === s.rootNodeId)
-        return {
-          name: s.name,
-          keywords: (trigger?.keywords ?? []).join('、'),
-          matchMode: trigger?.matchMode ?? 'keyword',
-          keywordMatch: trigger?.keywordMatch ?? 'any',
-          isActive: s.enabled === true,
-          stepCount: nodes.length,
-        }
-      })
-    },
-  },
   get_current_alerts: {
-    description: '目前異常與建議總覽(和右下角小幫手同一份):現在影響客人的問題、建議處理的事、可以更好的建議。問「現在有什麼要處理 / 有沒有異常 / 系統正常嗎」時用。',
+    description: '目前異常與建議總覽(和右下角小幫手同一份):現在影響客人的問題、建議處理的事、可以更好的建議。問「現在有什麼要處理 / 有沒有異常 / 系統正常嗎」時用。'
+      + '有發生的每一件都標了 causesNoReply(會不會讓客人傳訊息沒人回):'
+      + '⛔ 客人反映「沒人回」時,只能拿 causesNoReply＝會 的當原因;一件都沒有就說這些系統面的原因都排除了,再問是哪一位客人。',
     mutates: false, // requires 不填:轉發呼叫者憑證,由 alerts 端點自行把關(含 canOperate/canSettings 過濾)
     async run(_db, workspaceId, _args, ctx) {
       // 轉發呼叫者的憑證打自家 API:與小幫手面板同一份資料、同一套權限過濾,
       // 不在這裡另寫第二份查詢(兩份口徑遲早漂移)
-      const res = await $fetch<WorkspaceAlertsResponse>('/api/admin/alerts', {
-        query: { workspaceId },
-        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
-      })
+      const res = await fetchAlerts(workspaceId, ctx)
       const STATE: Record<string, string> = { active: '有這個狀況', clear: '正常', unknown: '這次查不到(不代表沒問題)' }
+      // 有任何一件在發生 → 回答附「展開上面的目前狀況」(每一件的修法按鈕在那裡)。
+      // `D-116` 實測:它查到四件事,卻叫人去一個不存在的「異常與建議」頁、卡片沒附——不靠模型記得附
+      if (ctx.cards && res.items.some(i => i.state === 'active'))
+        ctx.cards.push({ kind: 'teach', teach: 'status', ref: 'setup' })
       return res.items.map(i => ({
         item: ALERT_LABELS[i.id] ?? i.id,
         state: STATE[i.state] ?? i.state,
         count: i.count,
         detail: i.detail,
+        // 只在有發生時標:面板上分在哪一組(跟「目前狀況」同一套分組)、會不會讓客人傳訊息沒人回(`D-116`,見 NO_REPLY_CAUSES)
+        ...(i.state === 'active'
+          ? {
+              group: ALERT_GROUP_TEXT[severityOf(i)],
+              causesNoReply: NO_REPLY_CAUSES.has(i.id) ? '會' : '不會(客人照樣收得到回覆)',
+            }
+          : {}),
       }))
     },
   },
   get_setup_status: {
-    description: '設定就緒度:接 LINE、開 AI、知識庫、客服流程哪些做完哪些還沒。問「設定好了嗎 / 還差什麼才能上線」時用。',
+    description: '設定就緒度:接 LINE、開 AI、知識庫、自動回應哪些做完哪些還沒;每一項附 gotoId＝在哪一頁做(帶路時照抄進 goto)。'
+      + '問「設定好了嗎 / 還差什麼才能上線」時用。',
     mutates: false, // requires 不填:轉發呼叫者憑證,由 setup-status 端點自行把關
     async run(_db, workspaceId, _args, ctx) {
       const res = await $fetch<SetupStatusResponse>('/api/admin/setup-status', {
@@ -380,7 +465,21 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
       })
       const STATUS: Record<string, string> = { done: '已完成', incomplete: '還沒做', unknown: '這次查不到' }
-      return res.items.map(i => ({ item: SETUP_LABELS[i.id] ?? i.id, status: STATUS[i.status] ?? i.status }))
+      // 在哪一頁做（`D-116`：「認識你的店」它帶到 AI 設定，其實在組織頁）——值是帶路清單的 id，goto 照抄
+      const WHERE: Partial<Record<string, string>> = {
+        lineConnected: 'settings-organization',
+        liffReady: 'settings-organization',
+        profileReady: 'settings-organization',
+        aiEnabled: 'ai-settings',
+        knowledgeReady: 'knowledge-sources',
+        scriptReady: 'ai-scripts',
+        firstMessageReceived: 'conversations',
+      }
+      return res.items.map(i => ({
+        item: SETUP_LABELS[i.id] ?? i.id,
+        status: STATUS[i.status] ?? i.status,
+        ...(WHERE[i.id] ? { gotoId: WHERE[i.id] } : {}),
+      }))
     },
   },
   get_recent_changes: {
@@ -390,7 +489,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + 'args 可帶 {"limit":10}(最多 20)與 {"actor":"human"|"agent"}(只看人改的／只看小幫手代的)。'
       + '問「昨天誰改了設定 / 小幫手最近做了什麼 / 這個設定是誰動的」時用。'
       + '⛔ 這裡只記**會改變系統行為的設定類操作**(AI 設定、流程、圖文選單、成員權限、一鍵修…),'
-      + '日常回訊息與貼標籤不在裡面——查不到不等於沒發生過,要如實這樣講。',
+      + '日常回訊息與貼標籤不在裡面——查不到不等於沒發生過,要如實這樣講。'
+      // `D-116`:「幫我改回去」它只會反問改回什麼——不知道那一頁本來就有還原鈕
+      + '⛔ 你不能幫人「改回去」:操作紀錄頁每一筆旁邊有「還原」,被要求改回去時請他到那一頁按那一筆(附 tour-activity)。',
     requires: 'audit.read',
     mutates: false,
     async run(db, workspaceId, args) {
@@ -477,6 +578,133 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       }
     },
   },
+  // ── `D-116`（2026-10-08）三支新查法：沒受過訓練的店家最常問、以前答不出來的三種 ──
+  find_customer_conversations: {
+    description: '照客人的名字(LINE 上的顯示名稱)找他的對話:找到幾位、各自最近一次傳訊息是什麼時候、最後一則是客人講的還是我們回的。'
+      + 'args 帶 {"name":"名字裡的字"}。問到**某一位客人**(「王小姐說沒人理她」「那個叫 Amy 的」)時用。'
+      + '⛔ 不可以拿全店的統計回答某一位客人的事。「王小姐」這種稱呼只用「王」去找。'
+      + '這裡看不到對話內容;找到的人系統會自動附上「打開他的對話」的按鈕,⛔ 你不用也不要自己寫網址。'
+      + '找到不只一位時把名單列出來問是哪一位;一位都沒有就如實說,並請他到「客服對話」頁用搜尋找。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由對話清單端點自行把關
+    async run(_db, workspaceId, args, ctx) {
+      const raw = String(args?.name ?? '').trim()
+      // 稱呼不是名字的一部分:「王小姐」的顯示名稱多半是「王xx」或「Amy 王」
+      const name = raw.replace(/(小姐|先生|太太|女士|老闆娘|老闆|同學|姊姊|姐姐|哥哥)$/u, '').trim().slice(0, 20)
+      if (!name) return { found: 0, reason: '沒有給名字:先問使用者是哪一位客人' }
+      const res = await $fetch<{ conversations?: Array<Record<string, unknown>>, truncated?: boolean }>('/api/conversations/list', {
+        query: { workspaceId, search: name, limit: 10 },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      })
+      const rows = res.conversations ?? []
+      const shown = rows.slice(0, 5)
+      // 找到的人附「打開對話」:最多 3 張,多了就是要他先挑(卡片一排五張等於沒挑)
+      if (ctx.cards && shown.length && shown.length <= 3) {
+        for (const r of shown) {
+          const userId = String(r.userId ?? '')
+          if (!userId) continue
+          ctx.cards.push({
+            kind: 'link',
+            internal: true,
+            label: `打開「${String(r.displayName ?? '這位客人')}」的對話`,
+            href: `/admin/${workspaceId}/conversations?userId=${encodeURIComponent(userId)}`,
+          })
+        }
+      }
+      return {
+        searched: name,
+        found: rows.length,
+        customers: shown.map((r) => {
+          const lastMs = jsonTsToMs(r.lastMessageAt)
+          const customerMs = jsonTsToMs(r.customerLastAt)
+          return {
+            name: String(r.displayName ?? ''),
+            lastMessageAt: lastMs ? taipeiDateTime(lastMs) : '(查不到時間)',
+            ...(customerMs ? { customerLastAt: taipeiDateTime(customerMs) } : {}),
+            // ⚠️ AI 秒回也算「我們回了」:這一格只能講「最後一句是誰」,不能講成「有真人回過」
+            lastFrom: r.lastDirection === 'incoming' ? '客人(最後一句是他講的,還沒有人回)' : '我們(AI、機器人或同事)',
+            ...(r.isBlocked ? { blocked: '已封鎖官方帳號' } : {}),
+          }
+        }),
+        ...(rows.length > shown.length ? { more: `另外還有 ${rows.length - shown.length} 位名字裡也有「${name}」,沒列出來` } : {}),
+        ...(res.truncated ? { warning: '符合的人太多,只查了前面一部分' } : {}),
+      }
+    },
+  },
+  get_handoff_reasons: {
+    description: '為什麼轉真人:某個月轉真人幾次、每一種原因各幾次(知識庫找不到答案、客人自己要找真人、要查訂單…)。'
+      + 'args 可帶 {"month":"YYYY-MM"},不帶＝本月。問「為什麼一直轉真人 / AI 為什麼答不出來 / 怎麼讓 AI 多回一點」時用。'
+      + '⛔ 只講查到的原因與次數;⛔ 不要只回「轉了幾次」而不講原因。',
+    mutates: false, // requires 不填:轉發呼叫者憑證,由 AI 表現頁那支端點把關
+    async run(_db, workspaceId, args, ctx) {
+      const raw = String(args?.month ?? '').trim()
+      const period = /^\d{4}-\d{2}$/.test(raw) ? raw.replace('-', '') : taipeiYyyyMm(new Date())
+      // 跟 AI 表現頁同一支:原因的分類與次數只有一份
+      const s = await $fetch<{ handoffs?: number, handoffReasonCounts?: Record<string, number> }>('/api/ai/usage/summary', {
+        query: { workspaceId, period },
+        headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
+      })
+      const reasons = Object.entries(s.handoffReasonCounts ?? {})
+        .filter(([, n]) => Number(n) > 0)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .map(([k, n]) => ({
+          reason: (HANDOFF_REASON_LABELS as Record<string, string>)[k] ?? k,
+          ...(HANDOFF_REASON_MEANING[k] ? { meaning: HANDOFF_REASON_MEANING[k] } : {}),
+          times: Number(n),
+        }))
+      return {
+        month: `${period.slice(0, 4)}-${period.slice(4)}`,
+        handoffs: Number(s.handoffs ?? 0),
+        reasons,
+        ...(reasons.length ? {} : { note: '這個月沒有記到轉真人的原因' }),
+      }
+    },
+  },
+  get_ai_mistakes: {
+    description: 'AI 有沒有答錯、哪些沒答好:同事在對話上標過「AI 答錯了」、到現在還沒修的內容有幾筆;'
+      + '客人問過但 AI 沒答好的主題(知識庫的建議收件匣)有幾個、是哪些主題;'
+      + '以及可能讓 AI 答錯的資料狀況(possibleCauses:資料內容變了還沒重新學、抓不到內容…)。'
+      + '問「AI 有沒有亂回 / 答得好不好 / 某個答案錯了」時用。'
+      + '⛔ 問「答得好不好」一定**也要**查 get_handoff_reasons(答不出來轉真人的次數與原因才是主要的訊號),兩支一起回答。'
+      + '⛔ 這裡沒有「答對率」,不要自己算一個百分比;⛔ 不要拿用量次數回答「答得好不好」。'
+      + '⛔ 收件匣是空的≠AI 都答得出來,不可以這樣講。',
+    requires: 'ai.read',
+    mutates: false,
+    async run(db, workspaceId, _args, ctx) {
+      const [alerts, suggestions] = await Promise.all([
+        // 「標過答錯還沒修」的判法只有異常那一份(卡片改過才算修好),⛔ 不在這裡另寫
+        fetchAlerts(workspaceId, ctx).catch(() => null),
+        db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+          .where('workspaceId', '==', workspaceId)
+          .where('status', '==', 'pending')
+          .limit(20)
+          .get()
+          .then(snap => snap.docs.map(d => d.data() as { topic?: string, eventCount?: number }))
+          .catch(() => null),
+      ])
+      const wrong = alerts?.items.find(i => i.id === 'knowledgeWrongAnswers')
+      // 「價格講錯了」最常見的原因不是 AI 亂編,是資料改了 AI 還在用舊的(`D-116` 實測:運費那題它沒連到這裡)
+      const CAUSES = ['knowledgeOutdated', 'knowledgeSyncFailed', 'knowledgeIndexFailed', 'knowledgeIndexStuck'] as const
+      const causes = (alerts?.items ?? [])
+        .filter(i => (CAUSES as readonly string[]).includes(i.id) && i.state === 'active')
+        .map(i => ({ what: ALERT_LABELS[i.id] ?? i.id, count: i.count ?? 0, ...(i.detail ? { detail: i.detail } : {}) }))
+      return {
+        markedWrongUnfixed: !wrong
+          ? '這個帳號查不到(權限不夠或這次沒查到)'
+          : wrong.state === 'active' ? { count: wrong.count ?? 0, example: wrong.detail ?? '' } : 0,
+        unansweredTopics: suggestions === null
+          ? '這次查不到'
+          : suggestions.length
+            ? suggestions
+                .sort((a, b) => Number(b.eventCount ?? 0) - Number(a.eventCount ?? 0))
+                .slice(0, 5)
+                .map(t => ({ topic: String(t.topic ?? ''), timesAsked: Number(t.eventCount ?? 0) }))
+            // ⛔ 空的不等於 AI 都答得出來:收件匣只收已經整理成主題、還沒處理的
+            : '收件匣目前沒有待看的主題(不代表 AI 都答得出來,答不出來的次數看 get_handoff_reasons)',
+        ...(suggestions && suggestions.length > 5 ? { moreTopics: suggestions.length - 5 } : {}),
+        possibleCauses: alerts === null ? '這次查不到' : causes,
+      }
+    },
+  },
   get_broadcast_results: {
     description: '最近的推播與成效:名稱、狀態(草稿/已排程/發送中/已完成/失敗)、發給幾人、成功幾人、失敗幾人、什麼時候發的。'
       + 'args 可帶 {"limit":5}(最多 10)。問「上次推播發給幾個人 / 有沒有推播失敗 / 排程中的推播」時用。'
@@ -530,13 +758,15 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
  * ⛔ 回答的「數字有沒有出處」那道檢查也要吃同一份:2026-09 這種寫法裡的
  *    2026 與 09 是**我們自己給它的**,不算它憑空編的。
  */
-function promptDates(now: Date): { today: string, yesterday: string, weekAgo: string, thisMonth: string, lastMonthText: string } {
+function promptDates(now: Date): { today: string, yesterday: string, yesterdayLastWeek: string, weekAgo: string, thisMonth: string, lastMonthText: string } {
   const today = taipeiDate(now)
   const thisMonth = today.slice(0, 7)
   const lastMonth = taipeiYyyyMm(new Date(Date.UTC(Number(thisMonth.slice(0, 4)), Number(thisMonth.slice(5, 7)) - 1, 1) - 86400_000))
   return {
     today,
     yesterday: addDays(today, -1),
+    // `D-116` 實測:問「昨天…跟上禮拜比呢」,它拿「七天前」(今天往回 7 天)跟昨天比,週三對到週四
+    yesterdayLastWeek: addDays(today, -8),
     weekAgo: addDays(today, -7),
     thisMonth,
     lastMonthText: `${lastMonth.slice(0, 4)}-${lastMonth.slice(4)}`,
@@ -544,10 +774,23 @@ function promptDates(now: Date): { today: string, yesterday: string, weekAgo: st
 }
 
 function buildSystemInstruction(now: Date, workspaceName: string, role: WorkspaceMemberRole): string {
-  const { today, yesterday, weekAgo, thisMonth, lastMonthText } = promptDates(now)
+  const { today, yesterday, yesterdayLastWeek, weekAgo, thisMonth, lastMonthText } = promptDates(now)
 
   return `你是 LINE 官方帳號「後台小幫手」。你可以查資料回答,也可以**提議**下面清單裡的少數幾種設定調整——但你永遠不會自己動手:提議會變成一張確認卡,使用者按了確定,系統才真的去做。
 清單以外的修改(發推播、以官方帳號名義對客人說話、刪東西、改憑證、改成員、動錢)你一律做不到:如實說明並請他到對應頁面自己操作。
+⛔ 做不到的時候**不可以只說做不到**:店家講的常常是目的(「跟客人說今天公休」「客人問價錢幫我回」),
+清單裡有做得到的替代就要講出來讓他選——擬一則推播草稿讓他自己按發送、補一張知識卡讓 AI 被問到時照著答、建一條自動回應。
+⛔ 清單裡沒有、你也幫不上的事,⛔ 不要問「需要我協助嗎」——那句話聽起來像你做得到;直接講在哪一頁做(附 goto)。
+
+【你住在哪裡(這個後台的樣子,講到時照這裡的名字)】
+- 你是後台右下角「小幫手」面板裡的對話。面板最上面那一條叫「目前狀況」,按了會展開,每一件異常與建議都在那裡、旁邊有修的按鈕。
+  ⛔ 後台**沒有**叫「異常與建議」「異常中心」「通知中心」的頁面;要他去看異常,附 teach 的 panel-status。
+- 右下角圓鈕上的紅色數字＝正在影響客人的異常＋還沒做完的必要設定。「建議處理」「可以更好」**不算**在紅色數字裡(只有一顆灰點)。面板打開時那顆數字會收起來。
+- 每一頁標題旁的「？」可以叫出那一頁的教學,最下面有「看全部教學」。
+- 「操作紀錄」頁每一筆旁邊有「還原」。你自己不能還原。
+- 側欄的名字:客服對話、機器人模組、圖文選單、客服預存、自動回應、好友、好友統計、標籤管理、活動標籤、推播、AI 表現、知識庫、測試對話、AI 設定。
+  ⛔ 一條一條「客人說了什麼就自動回什麼」的設定叫「自動回應」,開關叫「啟用／停用」——不叫客服流程、腳本、上架下架。
+- 稱呼使用者一律用「你」,不用「您」(面板其他地方都是「你」)。
 
 【你現在看的是哪一個帳號】
 ${workspaceName}。你查到的每一個數字都只屬於這個帳號。
@@ -558,7 +801,7 @@ ${workspaceName}。你查到的每一個數字都只屬於這個帳號。
 而使用者會拿它去做決定。
 
 【今天的日期(台北時間)】
-今天是 ${today};昨天是 ${yesterday};七天前是 ${weekAgo}。
+今天是 ${today};昨天是 ${yesterday};七天前是 ${weekAgo};昨天的上禮拜同一天是 ${yesterdayLastWeek}(要拿昨天跟上禮拜比就查這一天)。
 本月是 ${thisMonth},上個月是 ${lastMonthText}。
 ⛔ 使用者講「上禮拜」「上個月」「最近三天」時,**一律照這裡的日期算**,絕不用你自己記得的日期——
 算錯的話你會查到一個空的區間,然後很有自信地回「那段時間沒有資料」。
@@ -603,6 +846,27 @@ ${agentTeachingCatalogueForPrompt(role)}
 - 與這個後台無關的問題(閒聊、時事、寫程式…)請簡短說明你只負責這個後台的事。
 - 同一個工具同樣參數不要重複查。
 
+【沒受過訓練的店家會這樣問(2026-10-08 實測過,以下是界線)】
+- 問「有沒有正常運作／機器人有在動嗎」:⛔ 不可以只列一串異常而不回答有沒有在動——有沒有在動看的是 LINE 收不收得到訊息、AI 開沒開。
+- 店家講「生意」「業績」「營業額」:你看不到錢,只看得到 LINE 上的對話——⛔ 不可以不講一聲就把對話場數當成生意。
+- 問「跟上禮拜比／跟平常比」:兩邊都查同樣長度的區間,講出多了還是少了;⛔ 不可以只把另一段的數字列出來讓他自己比。
+- 問「好不好／為什麼」(AI 答得好不好、為什麼一直轉真人):⛔ 不可以只回用量次數。用 get_ai_mistakes、get_handoff_reasons。
+- 客人反映「傳訊息沒人回」:會讓客人傳訊息沒人回的**只有這幾種**——LINE 收不到訊息(get_current_alerts 的「機器人收不到客人訊息」)、
+  AI 沒開或額度用完、轉真人之後沒人接(「有客人在等真人回覆」)、草稿模式擬好沒人送出。先確認這幾件、講出哪幾件是正常的,再問是哪一位客人。
+  ⛔ 其他設定(「認識你的店」、加好友歡迎訊息、同事接手沒按結束)都**不是**這件事的原因,不可以列成原因。
+- 問到**某一位客人**(講名字、稱呼):用 find_customer_conversations 找;⛔ 不可以拿全店的統計回答某一位客人的事。
+- AI 答錯／價格講錯:看 get_current_alerts 有沒有「資料內容變了還沒重新學」「有資料抓不到內容」這類——那常常就是原因;
+  也可以提議補一張知識卡(他要講正確的內容),補完請他到「測試對話」問一次確認。
+- 講到 AI 設定的**現況**(語氣、回覆模式、服務時間／勿擾、提醒幾分鐘、自動交還、自動結束)之前,這一輪一定要查過 get_ai_settings;
+  反問「要改成幾點／幾分鐘」之前也是——先講現在是多少。⛔ 已經是他要的樣子,就直接說「已經是這樣了」,不要再問一次。
+- 被要求「改回去」:你不能還原,請他到「操作紀錄」頁按那一筆的「還原」(附 tour-activity)。
+- 問「客人最近都在問什麼」:先講你看不到全部的對話內容;能講的是轉真人的原因(get_handoff_reasons)、
+  AI 沒答好的主題(get_ai_mistakes)、目前狀況裡「AI 從對話裡發現可以建的新標籤」。⛔ 不可以只回「沒有答錯紀錄」就結束。
+- 要 AI 回答某件事(價錢、規格、能不能寄國外…):那是**知識卡**的事(AI 照卡片回答),提議補一張知識卡;
+  ⛔ 自動回應是「客人說了關鍵字就回一段固定的字」,AI 不會參與,不要說成「讓 AI 用自動回應回答」。
+- ⛔ 操作與範本的英文代號(friendly、professional、script-set-enabled…)是給你看的,不可以出現在回話裡;講中文名稱。
+- 問「設定好了沒／幫我把該設定的設定好」:必要設定、加分項、目前狀況裡的建議都要看;每一項帶路到 get_setup_status 給的那一頁(gotoId 照抄進 goto)。
+
 【提議修改的規矩】
 - 參數裡的名稱一律**照抄工具結果上的原字**(例如流程名字),⛔不要自己拼、不要猜最接近的那一條;不確定就先查清單、或直接反問使用者。
 - 使用者話裡缺的資訊(要改哪一條、開還是關、幾點到幾點)⛔不要自己補一個常見值——問清楚再提議。
@@ -611,11 +875,11 @@ ${agentTeachingCatalogueForPrompt(role)}
   ⛔不可以憑印象給一個數字。
 - ⛔ **他只抱怨一邊,就不要動另一邊**:講「晚上太晚」是在講結束時間,
   ⛔不要連開始時間一起往前挪——那會讓他更早被打擾,而他根本沒要求。
-- ⛔ **一次只能提議一個操作**,而且**每一種操作都適用**(客服流程、敏感詞都一樣):
+- ⛔ **一次只能提議一個操作**,而且**每一種操作都適用**(自動回應、敏感詞都一樣):
   遇到「全部」「都」這種批次要求,先把**現在有哪些**列出來,再問他先從哪一個開始。
   ⛔不可以因為做不到整批就不回答;⛔更不可以從前幾句話裡挑一個出來當成他要的那個。
-- ⛔ **使用者說「刪掉」「砍掉」「移除」某條流程時,不可以自作主張改成提議下架**:
-  先講你不能刪,再問他要不要改成下架——⛔不要直接給一張下架的確認卡。
+- ⛔ **使用者說「刪掉」「砍掉」「移除」某條自動回應時,不可以自作主張改成提議停用**:
+  先講你不能刪,再問他要不要改成停用——⛔不要直接給一張停用的確認卡。
 - 【提議失敗】會告訴你哪裡不對,照它說的去反問或改正,同一個提議最多再試一次。
 - 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
 - ⛔ **提議時那句話裡的數字,只能講你這次要改成的值**:「現在是多少」確認卡自己會顯示,
@@ -699,6 +963,63 @@ export function summarizeToolResult(result: unknown): string {
   return `${json.slice(0, MAX_TOOL_RESULT_CHARS)}\n⚠️ 這筆資料太長,後面被切掉了一段,⛔ 不要把它當成完整內容(需要完整內容請使用者到對應頁面看)。`
 }
 
+// ── 畫面上的字(`D-116`,2026-10-08)──────────────────────────────────
+// 泡泡與確認卡都是**純文字**(不吃 markdown):實測卡上印出「⛔ 只是草稿，**不會發出去**」——
+// 紅色禁止符號像出錯、星號原樣印出;警告句開頭兩顆 ⚠️(卡片加一顆、句子裡又一顆)。
+// ⛔ 後端的句子很多是寫給模型看的同一份(粗體、⛔ 是在對模型強調),所以在「送上畫面」這一關統一收,
+//    不靠每一支 op 記得不要寫。
+
+/** 拿掉 markdown 粗體與 ⛔(兩者在畫面上都是雜訊) */
+function stripMarks(s: string): string {
+  return String(s ?? '')
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/⛔\s*/g, '')
+}
+
+/** 「」『』外面的「您」換成「你」:引號裡是客人會看到的原文(回覆字、知識卡),⛔ 一個字都不能動 */
+function youOutsideQuotes(s: string): string {
+  let depth = 0
+  let out = ''
+  for (const ch of s) {
+    if (ch === '「' || ch === '『') depth++
+    else if ((ch === '」' || ch === '』') && depth > 0) depth--
+    out += depth === 0 && ch === '您' ? '你' : ch
+  }
+  return out
+}
+
+/**
+ * 括號裡的英文代號(範本、操作、工具):那是給模型看的,店家看到「親切活潑 (friendly)」只會多一個看不懂的字。
+ * `D-116` 第三輪:提示裡寫了「不可以出現在回話裡」照樣出現 → 收在送上畫面這一關。
+ */
+let internalIdRe: RegExp | null = null
+function internalIds(): RegExp {
+  if (internalIdRe) return internalIdRe
+  const ids = [...Object.keys(AI_TONE_TEMPLATES), ...Object.keys(ADMIN_OP_LABELS), ...Object.keys(TOOLS)]
+    .sort((a, b) => b.length - a.length)
+    .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  internalIdRe = new RegExp(`[ \\t]*[（(]\\s*(?:${ids.join('|')})\\s*[)）]`, 'g')
+  return internalIdRe
+}
+
+/**
+ * 小幫手泡泡裡的一段話:粗體與 ⛔ 拿掉、清單符號換成「・」、括號裡的英文代號拿掉、統一用「你」(面板其他地方都是「你」)。
+ */
+export function plainReply(text: string): string {
+  return youOutsideQuotes(stripMarks(text).replace(/^[ \t]*[*\-•][ \t]+/gm, '・').replace(internalIds(), ''))
+}
+
+/** 確認卡上的字:粗體與 ⛔ 拿掉;警告每一行開頭的 ⚠️ 拿掉(卡片自己會在最前面加一顆) */
+export function cardTextOf<T extends { summary: string, items: { label: string, note?: string }[], warning?: string }>(p: T): T {
+  return {
+    ...p,
+    summary: stripMarks(p.summary),
+    items: p.items.map(i => ({ ...i, label: stripMarks(i.label), ...(i.note !== undefined ? { note: stripMarks(i.note) } : {}) })),
+    ...(p.warning !== undefined ? { warning: stripMarks(p.warning).replace(/^[ \t]*⚠️\s*/gm, '') } : {}),
+  }
+}
+
 /** 執行一輪查詢對話:回傳最終回答與工具呼叫紀錄(供 endpoint 審計+記帳) */
 export async function runAdminAgentChat(params: {
   db: Firestore
@@ -727,7 +1048,7 @@ export async function runAdminAgentChat(params: {
   if (!message) throw createError({ statusCode: 400, statusMessage: '請輸入想查詢的問題' })
   // 被切掉的字是使用者自己打的 → 這件事由**程式**講出來,不靠模型記得(見 truncationNotice)
   const cutNotice = fullMessage.length > MAX_MESSAGE_CHARS ? truncationNotice(fullMessage.length) : ''
-  const say = (reply: string) => (cutNotice ? `${cutNotice}\n\n${reply}` : reply)
+  const say = (reply: string) => plainReply(cutNotice ? `${cutNotice}\n\n${reply}` : reply)
 
   const recent = (params.history ?? []).slice(-6)
     .map(t => `${t.role === 'user' ? '使用者' : '助理'}:${String(t.text).trim().slice(0, 300)}`)
@@ -755,6 +1076,10 @@ export async function runAdminAgentChat(params: {
 
   const toolCalls: AdminAgentToolCall[] = []
   const toolResults: string[] = []
+  /** 工具順手給的卡片(找到某位客人 →「打開他的對話」),跟著回答一起送出 */
+  const toolCards: AgentMsg[] = []
+  /** 這一輪的異常總覽只查一次(見 ToolCtx.alertsMemo) */
+  const alertsMemo: { p?: Promise<WorkspaceAlertsResponse> } = {}
   let inputTokens = 0
   let outputTokens = 0
   /**
@@ -762,6 +1087,8 @@ export async function runAdminAgentChat(params: {
    * ⛔ 只退一次:模型有可能每次都寫同一句話,無限退回就是無限燒錢。
    */
   let regrounded = false
+  /** 模型吐出壞掉的格式時已經重來過一次了嗎(只重來一次) */
+  let formatRetried = false
 
   for (let step = 0; step <= MAX_TOOL_STEPS; step++) {
     const prompt = [
@@ -773,13 +1100,42 @@ export async function runAdminAgentChat(params: {
       step === MAX_TOOL_STEPS ? '【注意】查詢次數已用完,請直接以現有工具結果回答("action":"answer")。' : '',
     ].filter(Boolean).join('\n\n')
 
-    const { data, inputTokens: i, outputTokens: o } = await generateJson<{ action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; teach?: unknown; op?: unknown; cancelPrevious?: unknown }>(prompt, {
-      systemInstruction,
-      temperature: 0,
-      maxOutputTokens: 1200,
-      model: 'gemini-2.5-flash',
-      thinkingBudget: 0,
-    })
+    type Step = { action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; teach?: unknown; op?: unknown; cancelPrevious?: unknown }
+    let generated: { data: Step | null, inputTokens: number, outputTokens: number }
+    try {
+      generated = await generateJson<Step>(prompt, {
+        systemInstruction,
+        temperature: 0,
+        maxOutputTokens: 1200,
+        model: 'gemini-2.5-flash',
+        thinkingBudget: 0,
+      })
+    }
+    catch (e: any) {
+      // ⛔ 2026-10-08 `D-116` 實測:模型偶爾吐出不是 JSON 的東西,以前整段錯誤原文
+      //    「Gemini JSON parse failed: 取不到完整 JSON。Raw: …」直接出現在店家的泡泡裡。
+      //    格式壞掉是偶發的 → 同一步重來一次;再壞、或是連不上服務,就講一句人話(⛔ 不吐原文)。
+      const parseFailed = /JSON parse failed/.test(String(e?.statusMessage ?? e?.message ?? ''))
+      if (parseFailed && !formatRetried) {
+        formatRetried = true
+        // ⛔ 原封不動重送沒有用:溫度 0,同一份提示會吐出同一段純文字(第四輪實測兩次都一樣)。
+        //    把「上一次錯在哪」放進提示,這一次的提示才不一樣
+        toolResults.push('上一次你的輸出不是 JSON(直接寫了純文字)。⛔ 這一次一定要輸出 {"action":"answer","text":"…"} 這種 JSON,要講的話寫在 text 裡。')
+        step--
+        continue
+      }
+      console.warn('[admin-agent] generateJson failed:', String(e?.statusMessage ?? e?.message ?? e).slice(0, 200))
+      return {
+        reply: say(parseFailed
+          ? '這句我沒整理出答案（資料是查得到的）。可以換個說法，或一次講一件事再問一次。'
+          : '這次連不上 AI 服務，我什麼都沒有改。稍等一下再問一次。'),
+        toolCalls,
+        messages: [],
+        inputTokens,
+        outputTokens,
+      }
+    }
+    const { data, inputTokens: i, outputTokens: o } = generated
     inputTokens += i
     outputTokens += o
 
@@ -806,10 +1162,18 @@ export async function runAdminAgentChat(params: {
       // goto 走白名單解析:模型只挑 id,網址由 shared/agent-destinations 生——編不出來、最多挑錯頁
       // teach 同一招(`D-109`):教材 id 由 shared/agent-teachings 決定,⛔ 這裡再照角色篩一次
       // (清單已經篩過,但模型可能照抄對話裡看過的 id)——跑不動的人拿到卡＝按了是死路
+      // 工具附的卡和模型挑的卡可能是同一張(例如兩邊都附了「展開目前狀況」):同一張只留一張
+      const seenCards = new Set<string>()
       const messages = [
+        ...toolCards,
         ...resolveAgentTeaching(data?.teach, role),
         ...resolveAgentDestinations(data?.goto, workspaceId, role),
-      ]
+      ].filter((m) => {
+        const key = JSON.stringify(m)
+        if (seenCards.has(key)) return false
+        seenCards.add(key)
+        return true
+      })
       return {
         reply: say(text || '(助理沒有給出回答,請換個問法再試一次)'),
         toolCalls,
@@ -899,6 +1263,10 @@ export async function runAdminAgentChat(params: {
           )
           if (issue) throw new AdminOpUserError(issue.message)
         }
+
+        // 內容與對象要出自他講過的話(`D-116`:推播草稿自己寫「國慶日快樂！」、沒問就發全部 9,076 人)。
+        // ⚠️ 排在上一道後面:照抄資料的那種要講「這段是資料裡來的」,比「不是你講的」更準
+        op.checkUserWords?.(rawArgs, userSaid)
         let args = op.normalize(rawArgs)
         // 要先生內容的 op(例如「用一句話建一條流程」):**只生這一次**,結果跟著憑證走。
         // ⛔ 執行時重生＝使用者按確定同意的,跟系統實際建出來的是兩份東西。
@@ -921,10 +1289,16 @@ export async function runAdminAgentChat(params: {
           && String((lastProposal.args as any)?.[target] ?? '').trim()
           !== String((rawArgs as any)?.[target] ?? '').trim()
         )
-        const supersede = (lastProposal && (lastProposal.opId !== opId || switchedTarget))
-          // ⚠️ 這一句是**原樣印在確認卡上**給店家看的，標點跟著畫面用全形
-          ? '⚠️ 上一個提議還沒有被執行，這次只會做上面列的這一件事。'
+        // ⚠️ 這一句是**原樣印在確認卡上**給店家看的，標點跟著畫面用全形；⚠️ 符號由卡片自己加(以前這裡又加一顆＝兩顆)
+        // `D-116`:以前寫「上一個提議還沒有被執行」——抽象,店家不知道「上一個」是哪一張。直接點名
+        const lastLabel = lastProposal && Object.prototype.hasOwnProperty.call(ADMIN_OP_LABELS, lastProposal.opId)
+          ? ADMIN_OP_LABELS[lastProposal.opId as keyof typeof ADMIN_OP_LABELS]
           : ''
+        const supersede = !(lastProposal && (lastProposal.opId !== opId || switchedTarget))
+          ? ''
+          : switchedTarget
+            ? `上面那張（${String((lastProposal.args as any)?.[target!] ?? '').trim() || '另一條'}）還沒按確定，按這張不會連它一起做。`
+            : `上面那張「${lastLabel || '另一件事'}」還沒按確定，按這張不會連它一起做。`
 
         // 他只講了一個時間、卡片上卻兩端都變了 → **把這件事講出來**（2026-09-18 回歸實測：
         // 上一張是「勿擾 23:00–09:00」，他只說「改成早上十點」，出來卻是「22:00–10:00」，
@@ -934,13 +1308,13 @@ export async function runAdminAgentChat(params: {
           ? clockFieldsChangedBeyondUserWords(message, lastProposal.args, rawArgs)
           : []
         const extraWarn = extraClock.length
-          ? '⚠️ 你這次只提到一個時間，但上面的起訖兩端都變了——請對一下「現在」與「改成」那兩行，不是你要的就再跟我說一次。'
+          ? '你這次只提到一個時間，但上面的起訖兩端都變了——請對一下「現在」與「改成」那兩行，不是你要的就再跟我說一次。'
           : ''
 
         const extras = [supersede, extraWarn].filter(Boolean).join('\n')
-        const preview = extras
+        const preview = cardTextOf(extras
           ? { ...rawPreview, warning: [extras, rawPreview.warning].filter(Boolean).join('\n') }
-          : rawPreview
+          : rawPreview)
 
         // r＝模型原話的參數:接續修改時要餵回去的是它,不是收斂後的結果(收斂後餵不回 normalize)
         const token = issueAdminOpToken({ w: workspaceId, u: uid, op: opId, a: args, r: rawArgs, g: guard })
@@ -1020,7 +1394,7 @@ export async function runAdminAgentChat(params: {
       //    實測踩到:使用者問「把所有客服流程都停掉」(合理需求、只是一次做不到),
       //    卻收到「這題我查不太到」,看起來就像功能壞了。
       return {
-        reply: say('這句我沒整理出答案（不是查不到資料）。可以換個說法，或一次講一件事——例如「哪些客服流程沒啟用」「這個月 AI 用量」「把某某流程停掉」。'),
+        reply: say('這句我沒整理出答案（資料是查得到的）。可以換個說法，或一次講一件事——例如「哪幾條自動回應停用中」「這個月 AI 用量」「把某某自動回應停用」。'),
         toolCalls,
         messages: [],
         inputTokens,
@@ -1045,7 +1419,7 @@ export async function runAdminAgentChat(params: {
     const args = (data?.args && typeof data.args === 'object') ? data.args as Record<string, unknown> : {}
     toolCalls.push({ tool: toolName, args })
     try {
-      const result = await tool.run(db, workspaceId, args, { authHeader, role })
+      const result = await tool.run(db, workspaceId, args, { authHeader, role, cards: toolCards, alertsMemo })
       // ⛔ 太長時要切在整筆的邊界上、而且要講出少了幾筆（見 summarizeToolResult）
       toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${summarizeToolResult(result)}`)
     }

@@ -592,7 +592,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="scr-ai-gen"]',
         title: '用一句話讓 AI 幫你搭',
         description:
-          '不想從空白開始？在這裡<strong>用一句話描述流程</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 就會幫你搭好整條流程草稿。<strong>生成後會先進編輯器讓你檢查</strong>，按「建立客服流程」才會存檔。',
+          '不想從空白開始？在這裡<strong>用一句話描述流程</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 就會幫你搭好整條流程草稿。<strong>生成後會先進編輯器讓你檢查</strong>，按「建立自動回應」才會存檔。',
         placement: 'top',
       },
       {
@@ -670,7 +670,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="scr-save"]',
         title: '按「建立」才算數',
         description:
-          '編好按右上角<strong>建立客服流程</strong>才會存檔。存之前上面那條狀態列會先幫你檢查'
+          '編好按右上角<strong>建立自動回應</strong>才會存檔。存之前上面那條狀態列會先幫你檢查'
           + '（有沒有接不起來的步驟、客人會不會卡在某一題出不來），<strong>看到綠色再存</strong>。'
           + '要問客人問題、依答案分流的話，教學清單裡還有一支「<strong>自動回應：多步驟接待</strong>」。',
         placement: 'bottom-end',

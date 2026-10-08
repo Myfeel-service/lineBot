@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { adminOpAuditAction } from '~~/shared/types/admin-ops'
 import { AI_TONE_TEMPLATES, isAiToneTemplateKey, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
 import { suggestTagCode, isValidTagCode } from '~~/shared/tag-code-suggest'
+import { userAuthoredTextIssue } from '~~/shared/agent-user-signal'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import {
   DEFAULT_GROUNDING_SIMILARITY_THRESHOLD,
@@ -575,6 +576,11 @@ export const knowledgeDraftCreate: AdminOpDef = {
     // 2026-09-29 實走：模型的提議句寫成「當客人問到停車位時，AI 會回答…」——講得像馬上就會答，
     // 確認卡講的卻是「還不會」。那句話會跟確認卡並排出現，兩句講反比沒講更糟
     + '⛔ 提議那句話**不可以**說「AI 會回答…」「客人問就會…」——它還不會，要說「我會先放進等你看過，你採用之後才會拿來回答」。',
+  // 上面那句 argsHint 寫了照樣中（`D-116` 第三輪：答案寫「請提供正確的運費資訊。」）→ 機制擋
+  checkUserWords(raw, userSaid) {
+    const issue = userAuthoredTextIssue(String(raw?.answer ?? ''), userSaid, '要回答的內容', '這一題正確的答案是什麼（例如運費多少、怎麼算）')
+    if (issue) throw new AdminOpUserError(issue)
+  },
 
   normalize(raw) {
     const question = String(raw?.question ?? '').trim().slice(0, 200)
@@ -736,7 +742,7 @@ export const scriptUpdateKeyword: AdminOpDef = {
   targetField: 'name',
   freeTextFields: ['keyword'],
   argsHint: '參數：{"name":"自動回應的名字","action":"add"|"remove","keyword":"要加或拿掉的那個詞"}。'
-    + 'name 要照 list_auto_responses 清單一字不差；⛔ 一次只動一個詞。'
+    + 'name 要照 list_scripts 清單一字不差；⛔ 一次只動一個詞。'
     + '只適用「用關鍵字啟動」的那種；看意思判斷的、加好友時啟動的要請他到自動回應頁改。',
 
   normalize(raw) {
@@ -788,7 +794,7 @@ export const scriptUpdateKeyword: AdminOpDef = {
       items: [
         { label: list.join('、'), note: '現在的關鍵字' },
         { label: after.join('、'), note: '改成' },
-        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要上架才會' }]),
+        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
       ],
       warning: args.action === 'add'
         ? (args.keyword.length <= 1
@@ -851,6 +857,11 @@ export const scriptUpdateReply: AdminOpDef = {
   freeTextFields: ['text'],
   argsHint: '參數：{"name":"自動回應的名字","text":"新的回覆內容（整段）"}。name 要照清單一字不差。'
     + '⛔ text 要照他講的寫，不要自己加促銷詞或表情符號。只適用「只有一段回覆」的那種；多步驟的請他到自動回應頁改。',
+  // 客人會看到的字（`D-116`）：同知識卡、推播草稿那一道
+  checkUserWords(raw, userSaid) {
+    const issue = userAuthoredTextIssue(String(raw?.text ?? ''), userSaid, '新的回覆內容', '要改成回客人什麼')
+    if (issue) throw new AdminOpUserError(issue)
+  },
 
   normalize(raw) {
     const name = String(raw?.name ?? '').trim().slice(0, 100)
@@ -888,7 +899,7 @@ export const scriptUpdateReply: AdminOpDef = {
       items: [
         { label: before || '（空的）', note: '現在' },
         { label: args.text, note: '改成' },
-        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要上架才會' }]),
+        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
       ],
       warning: '客人下次打中這條，收到的就是新的這段話。',
       confirmLabel: '確定改回覆內容',

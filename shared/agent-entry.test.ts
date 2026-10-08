@@ -19,6 +19,7 @@ import {
   AGENT_OP_PAGE_LABEL,
   AGENT_PAGE_PROMPTS,
   AGENT_OP_EXAMPLES,
+  AGENT_NUMBERLESS_SAY,
   agentOpCatalogue,
   agentOpViewPath,
   agentPromptPageFromPath,
@@ -182,5 +183,34 @@ describe('記錄來源', () => {
     expect(normalizeAgentPromptPage('tags')).toBe('tags')
     expect(normalizeAgentPromptPage('constructor')).toBeNull()
     expect(normalizeAgentPromptPage(null)).toBeNull()
+  })
+})
+
+/** `D-116`（2026-10-08 老闆拍板）：沒受過訓練的店家實測撞到的兩件事 */
+describe('建議與範例句的字（D-116）', () => {
+  /** 畫面上會出現的所有建議字：每頁的做／查／範例字、沒有專屬頁的那一組、「我會做的 N 件」 */
+  const allSaid = () => [
+    ...Object.values(AGENT_PAGE_PROMPTS).flatMap(p => [p.placeholder, ...p.dos.map(d => d.say), ...p.asks]),
+    AGENT_FALLBACK_PROMPTS.placeholder,
+    ...AGENT_FALLBACK_PROMPTS.dos.map(d => d.say),
+    ...AGENT_FALLBACK_PROMPTS.asks,
+    ...Object.values(AGENT_OP_EXAMPLES),
+  ]
+
+  it('🔴 改時間／分鐘的那幾件，點了會進輸入框的句子⛔不帶數字（以前「服務時間改成平日 9 點到 6 點」照送就改到真的設定）', () => {
+    const numberless = new Set(Object.keys(AGENT_NUMBERLESS_SAY) as AdminOpId[])
+    const clickable = [
+      ...Object.values(AGENT_PAGE_PROMPTS).flatMap(p => p.dos),
+      ...AGENT_FALLBACK_PROMPTS.dos,
+      ...(Object.entries(AGENT_OP_EXAMPLES) as [AdminOpId, string][]).map(([op, say]) => ({ op, say })),
+    ].filter(d => numberless.has(d.op))
+    expect(clickable.length).toBeGreaterThan(0)
+    for (const d of clickable)
+      expect(d.say, `${d.op}：「${d.say}」帶了數字`).not.toMatch(/[0-9０-９]|[一二兩三四五六七八九十半]\s*(點|分|小時|天)/)
+  })
+
+  it('🔴 跟側欄同一套字：叫「自動回應」、開關叫「啟用／停用」，⛔ 不出現「客服流程」「上架」「下架」', () => {
+    for (const s of allSaid())
+      expect(s, s).not.toMatch(/客服流程|腳本|上架|下架/)
   })
 })

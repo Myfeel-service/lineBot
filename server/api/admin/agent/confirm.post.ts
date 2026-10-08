@@ -8,6 +8,7 @@ import { runAsAgentOp } from '~~/server/utils/agent-op-context'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { plainReply } from '~~/server/utils/ai-admin-agent'
 
 /**
  * POST /api/admin/agent/confirm —— 小幫手代辦的**唯一執行入口**（`C-31` Phase 2）。
@@ -128,12 +129,19 @@ export default defineEventHandler(async (event) => {
       recordAiUsage(workspaceId, { agentExecuted: 1 }, db)
         .catch(e => console.error('[admin-agent/confirm] recordAiUsage error:', e))
     }
-    return { opId, label: ADMIN_OP_LABELS[opId], ...result }
+    // 結果那句話會原樣進聊天泡泡（純文字）：粗體與 ⛔ 跟提議時同一套收法（`D-116`）
+    return {
+      opId,
+      label: ADMIN_OP_LABELS[opId],
+      ...result,
+      message: plainReply(result.message),
+      ...(result.details ? { details: result.details.map(plainReply) } : {}),
+    }
   }
   catch (e: any) {
     // 參數／目標類的問題（例如那條流程剛好被刪了）：講白話，不吐 stack
     if (e instanceof AdminOpUserError)
-      throw createError({ statusCode: 400, statusMessage: e.message })
+      throw createError({ statusCode: 400, statusMessage: plainReply(e.message) })
     if (e?.statusCode) throw e
     console.error('[admin-agent/confirm] execute failed:', payload.op, e)
     throw createError({

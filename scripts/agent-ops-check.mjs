@@ -103,8 +103,9 @@ const FAKE_PENDING_BUILD = {
       { label: '4. 問客人：「沒問題！請提供當時下單的 Email，我們會協助查詢您的訂單。」並把回答記下來' },
       { label: '5. 回覆客人：「已收到您的退貨申請資料，我們將在三個工作天內回覆您處理進度，謝謝您的耐心等候 🙇」' },
     ],
-    warning: '建好之後是**關著**的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再上架。',
-    confirmLabel: '確定建立（先不上架）',
+    // 照後端現在真的回的字（`D-116`：純文字、啟用／停用）
+    warning: '建好之後是停用的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再啟用。',
+    confirmLabel: '確定建立（先不啟用）',
   },
 }
 /** 下一次聊天要回哪一張卡（測試中途換） */
@@ -394,9 +395,9 @@ try {
   const shownSteps = [1, 2, 3, 4, 5].filter(n => buildCard.includes(`${n}. `))
   if (shownSteps.length === 5) pass('建流程的卡片五個步驟都印得出來（不是被截掉一半）')
   else fail(`步驟沒有全部出現，只看到 ${shownSteps.join('、')}：${buildCard.slice(0, 200)}`)
-  if (/關著/.test(buildCard)) pass('卡片講明建好之後是關著的')
-  else fail('卡片沒有講「建好是關著的」——那是這個操作最重要的一句話')
-  if (/確定建立（先不上架）/.test(buildCard)) pass('確認鈕字樣把「先不上架」寫在按鈕上')
+  if (/建好之後是停用的/.test(buildCard)) pass('卡片講明建好之後是停用的')
+  else fail('卡片沒有講「建好是停用的」——那是這個操作最重要的一句話')
+  if (/確定建立（先不啟用）/.test(buildCard)) pass('確認鈕字樣把「先不啟用」寫在按鈕上')
   else fail(`確認鈕字樣不對：${buildCard.slice(-80)}`)
 
   // 手機寬度：長清單最容易在這裡撐破

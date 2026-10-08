@@ -417,9 +417,9 @@ const scriptDisableAnyText: AlertFixOpDef = {
     return {
       ...base,
       state: 'fixable',
-      summary: `我會停用下面這 ${hits.length} 條「客人輸入任何內容」就攔截的設定。停用之後客人的訊息才輪得到 AI 與其他設定；隨時可以到客服流程頁再開回來。`,
+      summary: `我會停用下面這 ${hits.length} 條「客人輸入任何內容」就攔截的設定。停用之後客人的訊息才輪得到 AI 與其他設定；隨時可以到「自動回應」頁再開回來。`,
       items: hits.map(h => ({ label: h.name, note: '會停用（不會刪除，內容都留著）' })),
-      warning: '這條設定原本回覆的內容，停用後客人就不會再收到。想保留它的話，改成關鍵字觸發就不會攔到全部訊息——那要到客服流程頁改。',
+      warning: '這條設定原本回覆的內容，停用後客人就不會再收到。想保留它的話，改成關鍵字觸發就不會攔到全部訊息——那要到「自動回應」頁改。',
       confirmLabel: '確定停用',
     }
   },
@@ -450,7 +450,7 @@ const scriptDisableAnyText: AlertFixOpDef = {
     invalidateScriptHealthCache(ctx.workspaceId)
     return {
       ok: true,
-      message: `已停用${hits.map(h => `「${h.name}」`).join('、')}。客人的訊息現在輪得到 AI 了；想改成關鍵字觸發再開回來，到客服流程頁處理。`,
+      message: `已停用${hits.map(h => `「${h.name}」`).join('、')}。客人的訊息現在輪得到 AI 了；想改成關鍵字觸發再開回來，到「自動回應」頁處理。`,
     }
   },
 }
@@ -508,7 +508,7 @@ const scriptAddSkipExit: AlertFixOpDef = {
       summary: `我會幫下面這 ${items.length} 題補一顆跳過按鈕。這幾題問的是客人手上可能根本沒有的資料，沒有退路的話答不出來的客人會被同一題無限重問。`,
       items,
       // 按鈕字樣客人看得到：popup 原文展示、由人看過才執行（08-27 拍板的守門方式）
-      warning: `按鈕上的字「${DEFAULT_SKIP_EXIT_LABEL}」客人看得到；想改字樣、或想讓跳過的人改走別條路（例如轉真人），之後到客服流程編輯器調整。`,
+      warning: `按鈕上的字「${DEFAULT_SKIP_EXIT_LABEL}」客人看得到；想改字樣、或想讓跳過的人改走別條路（例如轉真人），之後到「自動回應」頁那一條調整。`,
       confirmLabel: '確定加上跳過按鈕',
     }
   },
@@ -538,7 +538,7 @@ const scriptAddSkipExit: AlertFixOpDef = {
     invalidateScriptHealthCache(ctx.workspaceId)
     return {
       ok: true,
-      message: '跳過按鈕都加好了，客人答不出來也走得下去。想調整字樣或改走別條路，到客服流程編輯器那一題就能改。',
+      message: '跳過按鈕都加好了，客人答不出來也走得下去。想調整字樣或改走別條路，到「自動回應」頁那一條的那一題就能改。',
       details,
     }
   },

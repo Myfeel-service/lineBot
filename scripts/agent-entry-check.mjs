@@ -96,7 +96,7 @@ const listOf = res => (Array.isArray(res) ? res : res?.items ?? res?.tags ?? [])
 
 // ── 對照表（跟 shared/agent-entry.ts 講同一件事；改那邊這裡要跟著改） ──
 const EXPECT = {
-  'ai-scripts': { label: '自動回應', placeholder: '例：把「退換貨」回覆改成「先填表單」', firstDo: '有人問「運費」，就回「滿千免運」', ask: '哪幾條自動回應還沒上架？', dos: 3 },
+  'ai-scripts': { label: '自動回應', placeholder: '例：把「退換貨」回覆改成「先填表單」', firstDo: '有人問「運費」，就回「滿千免運」', ask: '哪幾條自動回應停用中？', dos: 3 },
   'broadcasts': { label: '推播', placeholder: '例：擬一則母親節草稿，發給全部好友' },
   'line-notify': { label: 'LINE 通知' },
 }
@@ -392,8 +392,8 @@ try {
   if ((await inputValue()) === EXPECT['ai-scripts'].firstDo && state.chatBodies.length === n0) pass('按「做」的建議：字放進輸入框、⛔沒有送出去')
   else fail(`按了「做」的建議：輸入框是「${await inputValue()}」、送出了 ${state.chatBodies.length - n0} 次`)
 
-  // 送出：帶「從建議來」與頁面；回一張下架的確認卡
-  state.nextChat = { reply: '我打算這樣做。', toolCalls: [], messages: [], pendingOp: pendingOf('script-set-enabled', '上架或下架一條自動回應', 'fake-entry-1') }
+  // 送出：帶「從建議來」與頁面；回一張停用的確認卡
+  state.nextChat = { reply: '我打算這樣做。', toolCalls: [], messages: [], pendingOp: pendingOf('script-set-enabled', '啟用或停用一條自動回應', 'fake-entry-1') }
   n0 = state.chatBodies.length
   await page.evaluate(() => [...document.querySelectorAll('.aa-chat__input button')].find(b => /送出/.test(b.textContent ?? ''))?.click())
   let body = await lastChatBody(n0)
@@ -401,7 +401,7 @@ try {
   else fail(`送出的請求：source=${body?.source} page=${body?.page}`)
 
   await resetFlashes()
-  let g0 = await confirmWith({ ok: true, opId: 'script-set-enabled', label: '上架或下架一條自動回應', message: `「${script.name}」已經下架（守門員假回應）。`, targetId: script.id })
+  let g0 = await confirmWith({ ok: true, opId: 'script-set-enabled', label: '啟用或停用一條自動回應', message: `「${script.name}」已經停用（守門員假回應）。`, targetId: script.id })
   // ⚠️ 等的是正式資料重讀完（記憶 reference_headless_admin_harness_traps 第 5 條：短等待一定忽紅忽綠）
   if (await waitUntil(() => flashed(script.id), 25_000)) pass(`按了確定：「${script.name}」那一列亮了`)
   else fail('按了確定之後，那一列沒有亮')

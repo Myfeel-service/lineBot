@@ -120,16 +120,32 @@ export interface AgentPagePrompts {
 
 export type AgentPromptPage = AgentOpPage
 
+/**
+ * 參數是時間／分鐘的那幾件，範例句**不帶數字**（`D-116`，2026-10-08 老闆拍板）。
+ *
+ * 為什麼：以前綠色範例寫「服務時間改成平日 9 點到 6 點，週末休息」，看起來像系統建議的值——
+ * 照送出去就是一張改他**真的**服務時間的確認卡（MYFEEL 實測 10–19 → 9–18）。
+ * 不帶數字送出後，小幫手會先查現在是幾點、再問要改成幾點（數字要他自己講，`needsUserNumber` 擋著）。
+ * ⛔ 這幾件以後加範例也不可以帶數字（測試釘住）。
+ */
+export const AGENT_NUMBERLESS_SAY = {
+  'ai-settings-service-hours': '改服務時間',
+  'ai-settings-handoff-sla': '改「客人等太久」的提醒時間',
+  'ai-settings-handback-idle': '改客服接手後自動交還的時間',
+  'ai-settings-auto-close': '改真人對話自動結束的時間',
+} as const satisfies Partial<Record<AdminOpId, string>>
+
 export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
   'ai-scripts': {
     label: '自動回應',
     placeholder: '例：把「退換貨」回覆改成「先填表單」',
     dos: [
       { op: 'script-create-from-description', say: '有人問「運費」，就回「滿千免運」' },
-      { op: 'script-set-enabled', say: '把「查詢訂單」先下架' },
+      // `D-116`：頁面上的開關叫「啟用／停用」，⛔ 不講上架下架
+      { op: 'script-set-enabled', say: '把「查詢訂單」先停用' },
       { op: 'script-update-keyword', say: '「營業時間」多加一個關鍵字「今天有開嗎」' },
     ],
-    asks: ['哪幾條自動回應還沒上架？'],
+    asks: ['哪幾條自動回應停用中？'],
   },
   'broadcasts': {
     label: '推播',
@@ -159,7 +175,7 @@ export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
     label: 'AI 設定',
     placeholder: '例：AI 的語氣換成親切一點的範本',
     dos: [
-      { op: 'ai-settings-service-hours', say: '服務時間改成平日 9 點到 6 點，週末休息' },
+      { op: 'ai-settings-service-hours', say: AGENT_NUMBERLESS_SAY['ai-settings-service-hours'] },
       { op: 'ai-settings-sensitive-topic', say: '客人提到「退款」就轉真人' },
       { op: 'ai-settings-reply-mode', say: 'AI 先只給草稿，不要直接回客人' },
     ],
@@ -169,7 +185,7 @@ export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
     label: 'LINE 通知',
     placeholder: '例：改成等 30 分鐘還沒人回才提醒',
     dos: [
-      { op: 'ai-settings-handoff-sla', say: '客人等超過 15 分鐘沒人回就提醒' },
+      { op: 'ai-settings-handoff-sla', say: AGENT_NUMBERLESS_SAY['ai-settings-handoff-sla'] },
     ],
     asks: ['現在有幾個人會收到 LINE 通知？'],
   },
@@ -178,11 +194,13 @@ export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
 /** 沒有專屬建議的頁（客服對話、好友、統計…） */
 export const AGENT_FALLBACK_PROMPTS: AgentPagePrompts = {
   label: null,
-  placeholder: '例：哪些客服流程還沒啟用？',
+  // `D-116`：以前寫「客服流程」，側欄叫「自動回應」——第一眼就兩個名字
+  placeholder: '例：哪幾條自動回應停用中？',
   dos: [
-    { op: 'ai-settings-service-hours', say: '服務時間改成平日 9 點到 6 點，週末休息' },
+    { op: 'ai-settings-service-hours', say: AGENT_NUMBERLESS_SAY['ai-settings-service-hours'] },
   ],
-  asks: ['現在有什麼要處理的？', '這個月 AI 用量如何？'],
+  // 「為什麼轉真人」是 `D-116` 新學會的查法（以前只答得出次數）——放在這裡讓人知道問得到
+  asks: ['現在有什麼要處理的？', '這個月為什麼會轉真人？'],
 }
 
 /** 網址 → 這是哪一頁（`/admin/{wid}/…`）；不是有專屬建議的頁回 null */
@@ -219,20 +237,20 @@ export const AGENT_SELF_ONLY = '發推播、回客人、刪東西、改 LINE 連
  */
 export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
   'script-create-from-description': '有人問「運費」，就回「滿千免運」',
-  'script-set-enabled': '把「查詢訂單」先下架',
+  'script-set-enabled': '把「查詢訂單」先停用',
   'script-update-keyword': '「營業時間」多加一個關鍵字「今天有開嗎」',
   'script-update-reply': '把「退換貨」的回覆改成「先填表單」',
   'tag-create': '建一個標籤「想買禮盒」',
   'broadcast-draft-create': '擬一則週年慶推播草稿，只發給「VIP」標籤的人',
   'knowledge-draft-create': '補一張知識卡：客人問「可以刷卡嗎」，就回「可以」',
-  'ai-settings-service-hours': '服務時間改成平日 9 點到 6 點，週末休息',
+  'ai-settings-service-hours': AGENT_NUMBERLESS_SAY['ai-settings-service-hours'],
   'ai-settings-sensitive-topic': '客人提到「退款」就轉真人',
   'ai-settings-reply-mode': 'AI 先只給草稿，不要直接回客人',
   'ai-settings-enabled': '先把 AI 自動回覆關掉',
-  'ai-settings-handback-idle': '客服接手後 30 分鐘沒回，就交還給機器人',
-  'ai-settings-auto-close': '真人接手的對話兩天沒動靜就結束',
+  'ai-settings-handback-idle': AGENT_NUMBERLESS_SAY['ai-settings-handback-idle'],
+  'ai-settings-auto-close': AGENT_NUMBERLESS_SAY['ai-settings-auto-close'],
   'ai-settings-tone-template': 'AI 的語氣換成親切一點的範本',
-  'ai-settings-handoff-sla': '客人等超過 15 分鐘沒人回就提醒',
+  'ai-settings-handoff-sla': AGENT_NUMBERLESS_SAY['ai-settings-handoff-sla'],
 }
 
 export interface AgentOpCatalogueGroup {

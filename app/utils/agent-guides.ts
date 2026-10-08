@@ -1003,7 +1003,7 @@ async function repointBrokenGroup(
     return
   }
   const parts: string[] = []
-  if (done.scripts) parts.push(`${done.scripts} 條客服流程`)
+  if (done.scripts) parts.push(`${done.scripts} 條自動回應`)
   if (done.campaigns) parts.push(`${done.campaigns} 個活動`)
   if (done.flows) parts.push(`${done.flows} 個模組的圖文訊息`)
   r.updateMsg(cardId, {

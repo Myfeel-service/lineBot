@@ -55,7 +55,7 @@
       </template>
 
       <div v-if="loading" class="aa-msg aa-msg--ai">
-        <div class="aa-msg__bubble aa-muted">查詢中…</div>
+        <div class="aa-msg__bubble aa-muted">{{ loadingText }}</div>
       </div>
     </div>
 
@@ -249,6 +249,14 @@ watchEffect(() => {
 const input = ref('')
 const loading = ref(false)
 /**
+ * 等待時那一句（`D-116`）：以前一律「查詢中…」，最長等過 17 秒、連在準備改設定的確認卡也寫查詢中。
+ * 叫它做事的入口（「做」的建議、頁面按鈕、卡片上的交給小幫手）寫「準備中」；超過 6 秒補一句，免得以為卡住了。
+ */
+const loadingDo = ref(false)
+const loadingSlow = ref(false)
+let slowTimer: ReturnType<typeof setTimeout> | null = null
+const loadingText = computed(() => `${loadingDo.value ? '準備中…' : '查詢中…'}${loadingSlow.value ? '這題要翻比較多資料，再等一下' : ''}`)
+/**
  * 上一個還沒執行的提議憑證：下一句話帶回後端，讓「第二題改成問電話」這種接續要求接得住。
  * ⛔ 帶的是憑證本身（後端會驗簽章），不是我們自己描述上次提議了什麼。
  * 按了確定或取消之後就清掉——那件事已經結束了，再帶回去只會誤導它。
@@ -422,6 +430,11 @@ async function send(preset?: string, source?: AgentAskSource) {
   input.value = ''
   msgs.value.push({ who: 'me', text })
   loading.value = true
+  // 「查」的建議是 preset 直接送；「做」的建議是放進輸入框再送（沒有 preset、來源是 suggestion）
+  loadingDo.value = from === 'page-button' || from === 'status-card' || (!preset && from === 'suggestion')
+  loadingSlow.value = false
+  if (slowTimer) clearTimeout(slowTimer)
+  slowTimer = setTimeout(() => { loadingSlow.value = true }, 6000)
   scrollToBottom()
   try {
     // 帶最近 6 則當上下文,追問(「那上個月呢?」)才接得住
@@ -472,9 +485,12 @@ async function send(preset?: string, source?: AgentAskSource) {
   }
   finally {
     loading.value = false
+    if (slowTimer) clearTimeout(slowTimer)
+    slowTimer = null
     scrollToBottom()
   }
 }
+onBeforeUnmount(() => { if (slowTimer) clearTimeout(slowTimer) })
 </script>
 
 <!-- 樣式在 app/assets/scss/components/_tutorial-agent.scss(與教學小幫手同一份 partial) -->

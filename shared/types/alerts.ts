@@ -64,8 +64,16 @@ export type WorkspaceAlertId =
    * 全部都收不到歸上一顆，⛔ 不兩顆一起亮。
    */
   | 'lineNotifyUndeliverable'
-  /** 客人在等真人、或對話卡在「真人處理中」太久 */
+  /** 客人要求找真人之後，等太久還沒有人接手 */
   | 'humanBacklog'
+  /**
+   * 同事接手之後太久沒動、也沒按「交回機器人／結束對話」（`D-116`，2026-10-08 從上一顆拆出來）。
+   *
+   * 為什麼要拆：以前兩種狀況併成一個數字、標題用「有客人在等真人回覆」——MYFEEL 實測 95 筆全是這一種，
+   * 小幫手照標題推論「客人說沒人回＝因為 95 位客人在等」，錯得理直氣壯。
+   * 這一種多半是同事回完忘了收尾，客人不一定在等。
+   */
+  | 'humanStale'
   /** 「未首接」佇列有對話等超過 1 小時完全沒人回（草稿模式沒人審＝客人一句回覆都沒有） */
   | 'firstReplyBacklog'
   /** 知識卡卡在 pending 超過 1 小時沒學完（重試放生或排程沒跑），AI 檢索不到 */
@@ -106,9 +114,9 @@ export type WorkspaceAlertId =
    * 兩顆講的是同一份佇列、同一時間只會亮一顆。
    */
   | 'aiDraftsWaiting'
-  /** 有啟用中的客服流程永遠輪不到（沒填觸發詞、或被規則／敏感情境／別條腳本先接走） */
+  /** 有啟用中的自動回應永遠輪不到（沒填觸發詞、或被規則／敏感情境／別條先接走） */
   | 'scriptUnreachable'
-  /** 有客服流程中間有「客人答不出來就卡死」的步驟，走進去出不來 */
+  /** 有自動回應中間有「客人答不出來就卡死」的步驟，走進去出不來 */
   | 'scriptDeadEnd'
   /**
    * 還沒有人歡迎新加好友的人（`D-23`A，2026-09-22）。
@@ -136,7 +144,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   knowledgeDetectStalled: '有網址的自動偵測失效',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',
-  anyTextBlocking: 'AI 被自動回覆規則擋住了',
+  anyTextBlocking: 'AI 被一條自動回應擋住了',
   llmError: 'AI 服務近 24 小時失敗過',
   quotaExceeded: '本期回覆則數用完了',
   quotaRunningOut: '回覆則數快用完了',
@@ -151,6 +159,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   handoffNotifyMissing: '沒有人會收到 LINE 通知',
   lineNotifyUndeliverable: '有人收不到 LINE 通知',
   humanBacklog: '有客人在等真人回覆',
+  humanStale: '有對話接手後沒按結束',
   firstReplyBacklog: '有客人的訊息一直沒人回',
   knowledgeIndexStuck: '有知識卡一直沒學完',
   renewalNotBound: '下期不會自動扣款（卡沒綁成）',
@@ -166,8 +175,9 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   followWelcomeMissing: '新加好友的人不會收到任何訊息',
   aiDraftsWaiting: 'AI 擬好的回覆還沒送出',
   knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
-  scriptUnreachable: '有客服流程永遠不會被啟動',
-  scriptDeadEnd: '有客服流程客人走不完',
+  // `D-116`（2026-10-08）：跟側欄同名「自動回應」——以前這兩句叫「客服流程」，側欄改名後兩邊又分開了
+  scriptUnreachable: '有自動回應永遠不會被啟動',
+  scriptDeadEnd: '有自動回應客人走不完',
 }
 
 /**
@@ -212,6 +222,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   scriptUnreachable: 'warning',
   firstReplyBacklog: 'warning',
   humanBacklog: 'warning',
+  // 跟上一顆同一級（以前就是同一顆）：客人不一定在等，但 AI 在這段時間不會插手
+  humanStale: 'warning',
   knowledgeIndexStuck: 'warning',
   knowledgeOutdated: 'warning',
   claimPushUnmarked: 'warning',
@@ -311,14 +323,14 @@ export type WorkspaceAlertScope = 'richmenu' | 'flow' | 'script' | 'campaign'
  *
  * 2026-08-27 code review 抓到：後端 detail 用「選單／模組／客服腳本／活動」、
  * 修復劇本用「圖文選單／機器人模組／客服流程／活動」——同一個 `sourceKind` 兩套詞，
- * 而且是在同一個畫面上下相鄰兩句話裡。統一取這一份（跟側欄與 ALERT_LABELS 同一套詞：
- * 側欄寫「機器人模組」「圖文選單」、ALERT_LABELS 寫「客服流程」）。
+ * 而且是在同一個畫面上下相鄰兩句話裡。統一取這一份（跟側欄同一套詞：
+ * 「機器人模組」「圖文選單」「自動回應」——`D-116` 起 ALERT_LABELS 也改叫自動回應）。
  * ⛔加第五種面向時只改這裡，不要在任何地方再寫第二份對照表。
  */
 export const ALERT_SCOPE_LABELS: Record<WorkspaceAlertScope, string> = {
   richmenu: '圖文選單',
   flow: '機器人模組',
-  script: '客服流程',
+  script: '自動回應',
   campaign: '活動',
 }
 

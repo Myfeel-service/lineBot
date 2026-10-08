@@ -180,3 +180,126 @@ describe('查詢：推播成效', () => {
     expect(tool.description).toContain('沒有開封率與點擊率')
   })
 })
+
+// ── `D-116`（2026-10-08）：沒受過訓練的店家實測問不到的三種 ＋ 語氣現況 ──────────
+
+describe('查詢：AI 設定摘要（D-116 補的現況）', () => {
+  it('🔴 語氣：自己寫的指示要講成「自己寫的」，⛔ 不可以像以前那樣被講成某個範本', async () => {
+    const res = await TOOLS.get_ai_settings.run(makeDb({}), 'w1', {}, { role: 'admin' }) as any
+    expect(res.tone).toContain('自己寫的指示')
+    expect(res.tone).toContain('你是客服')
+  })
+
+  it('自動交還／自動結束的現值查得到（先講現在是多少才能問要改成多少）', async () => {
+    const res = await TOOLS.get_ai_settings.run(makeDb({}), 'w1', {}, { role: 'admin' }) as any
+    expect(res).toHaveProperty('handbackIdleMinutes')
+    expect(res).toHaveProperty('autoCloseHours')
+  })
+
+  it('🔴 說明要講清楚服務時間只管找真人，AI 全天照回（實測它講成「AI 自動回覆的服務時間」）', () => {
+    expect(TOOLS.get_ai_settings.description).toContain('AI 全天照常回答')
+  })
+})
+
+describe('查詢：目前異常（D-116 補的兩格）', () => {
+  it('🔴 每一件標「會不會讓客人沒人回」與面板分組；有發生就附「展開目前狀況」', async () => {
+    ;(globalThis as any).$fetch = async () => ({
+      items: [
+        { id: 'humanStale', state: 'active', count: 95 },
+        { id: 'humanBacklog', state: 'active', count: 1 },
+        { id: 'followWelcomeMissing', state: 'active' },
+        { id: 'lineWebhookBroken', state: 'clear' },
+      ],
+    })
+    const cards: any[] = []
+    const rows = await TOOLS.get_current_alerts.run(makeDb({}), 'w1', {}, { cards }) as any[]
+    const by = (label: string) => rows.find(r => r.item === label)
+
+    // 實測：它把「95 場接手沒結束」講成「客人可能還在等」→ 資料上直接標不會
+    expect(by('有對話接手後沒按結束')).toMatchObject({ group: '建議處理', causesNoReply: '不會(客人照樣收得到回覆)' })
+    expect(by('有客人在等真人回覆')?.causesNoReply).toBe('會')
+    expect(by('新加好友的人不會收到任何訊息')).toMatchObject({ group: '可以更好', causesNoReply: '不會(客人照樣收得到回覆)' })
+    // 沒發生的不標（標了等於多講一件不存在的事）
+    expect(by('機器人收不到客人訊息')).not.toHaveProperty('causesNoReply')
+    expect(cards).toEqual([{ kind: 'teach', teach: 'status', ref: 'setup' }])
+  })
+})
+
+describe('查詢：照名字找客人的對話', () => {
+  const tool = TOOLS.find_customer_conversations
+  const conv = (userId: string, displayName: string, lastDirection: string) =>
+    ({ userId, displayName, lastDirection, lastMessageAt: { _seconds: Date.UTC(2026, 9, 7, 7, 20) / 1000 }, customerLastAt: null })
+
+  it('「王小姐」只用「王」去找；找到 1～3 位就附「打開他的對話」，網址由工具組（⛔ 模型不生 ID）', async () => {
+    let query: any
+    ;(globalThis as any).$fetch = async (_url: string, opts: any) => {
+      query = opts.query
+      return { conversations: [conv('U1', '王○○', 'incoming')] }
+    }
+    const cards: any[] = []
+    const res = await tool.run(makeDb({}), 'w1', { name: '王小姐' }, { cards }) as any
+
+    expect(query.search).toBe('王')
+    expect(res.found).toBe(1)
+    expect(res.customers[0]).toMatchObject({ name: '王○○', lastMessageAt: '2026-10-07 15:20' })
+    expect(res.customers[0].lastFrom).toContain('還沒有人回')
+    expect(cards).toEqual([{ kind: 'link', internal: true, label: '打開「王○○」的對話', href: '/admin/w1/conversations?userId=U1' }])
+    // 對話內容不給模型（客人個資、也容易被對話裡的字帶著走）
+    expect(JSON.stringify(res)).not.toContain('lastMessage"')
+  })
+
+  it('找到太多位就不附卡片，名單列出來讓它問是哪一位', async () => {
+    ;(globalThis as any).$fetch = async () => ({ conversations: ['A', 'B', 'C', 'D', 'E', 'F'].map(n => conv(`U${n}`, `王${n}`, 'outgoing')) })
+    const cards: any[] = []
+    const res = await tool.run(makeDb({}), 'w1', { name: '王' }, { cards }) as any
+
+    expect(cards).toEqual([])
+    expect(res.customers).toHaveLength(5)
+    expect(res.more).toContain('另外還有 1 位')
+  })
+
+  it('沒給名字 → 不去查，叫它先問是哪一位', async () => {
+    const res = await tool.run(makeDb({}), 'w1', { name: '小姐' }, {}) as any
+    expect(res.found).toBe(0)
+    expect(res.reason).toContain('先問')
+  })
+})
+
+describe('查詢：轉真人的原因', () => {
+  it('🔴 實測 10 月那份：原因照次數排、標籤跟 AI 表現頁同一份，並補一句白話', async () => {
+    let query: any
+    ;(globalThis as any).$fetch = async (_url: string, opts: any) => {
+      query = opts.query
+      return { handoffs: 78, handoffReasonCounts: { user_request: 8, no_grounding: 39, order_status: 12, product_mismatch: 17, llm_error: 1, sensitive_topic: 1 } }
+    }
+    const res = await TOOLS.get_handoff_reasons.run(makeDb({}), 'w1', { month: '2026-10' }, {}) as any
+
+    expect(query.period).toBe('202610')
+    expect(res.handoffs).toBe(78)
+    expect(res.reasons.map((r: any) => r.times)).toEqual([39, 17, 12, 8, 1, 1])
+    expect(res.reasons[0]).toMatchObject({ reason: '知識庫無依據', meaning: '知識庫裡找不到可以回答的資料' })
+  })
+
+  it('這個月沒有原因 → 照實講，⛔ 不回一個空清單就算了', async () => {
+    ;(globalThis as any).$fetch = async () => ({ handoffs: 0, handoffReasonCounts: {} })
+    const res = await TOOLS.get_handoff_reasons.run(makeDb({}), 'w1', {}, {}) as any
+    expect(res.note).toContain('沒有記到')
+  })
+})
+
+describe('查詢：AI 答錯與沒答好', () => {
+  it('標過答錯還沒修的筆數＋客人問過 AI 沒答好的主題（照被問的次數排）', async () => {
+    ;(globalThis as any).$fetch = async () => ({ items: [{ id: 'knowledgeWrongAnswers', state: 'active', count: 2, detail: '例如「運費」' }] })
+    const db = makeDb({ knowledgeSuggestions: [{ topic: '可以寄國外嗎', eventCount: 3 }, { topic: '有停車位嗎', eventCount: 9 }] })
+    const res = await TOOLS.get_ai_mistakes.run(db, 'w1', {}, {}) as any
+
+    expect(res.markedWrongUnfixed).toEqual({ count: 2, example: '例如「運費」' })
+    expect(res.unansweredTopics.map((t: any) => t.topic)).toEqual(['有停車位嗎', '可以寄國外嗎'])
+  })
+
+  it('⛔ 查不到不可以講成「沒有」：異常那支失敗＝說查不到', async () => {
+    ;(globalThis as any).$fetch = async () => { throw new Error('boom') }
+    const res = await TOOLS.get_ai_mistakes.run(makeDb({}), 'w1', {}, {}) as any
+    expect(res.markedWrongUnfixed).toContain('查不到')
+  })
+})

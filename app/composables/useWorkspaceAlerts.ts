@@ -370,11 +370,11 @@ const ALERTS: AlertDefinition[] = [
     id: 'scriptDeadEnd',
     icon: Guide,
     impact: '中間有一題問的是客人可能根本沒有的資料（訂單編號、序號…），又沒給「我沒有」的退路。答不出來的客人會被一直重問同一題，走不到後面任何一步。',
-    cta: '去修這條流程',
+    cta: '去修這條自動回應',
     // 改流程（或一鍵 `script-add-skip-exit`）＝`scripts.write`；下面兩顆自動回應類同一項
     requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
-    anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的紅色狀態列會直接指出是哪一題、旁邊就有補退路的按鈕。' },
+    anchor: { selector: '[data-tour="scr-list"]', note: '點開那一條，上方的紅色狀態列會直接指出是哪一題、旁邊就有補退路的按鈕。' },
     // 一鍵＝補「我沒有這項資料」跳過出口（與 AI 生成端同一套確定性補法）；
     // 按鈕字樣客人看得到，popup 會原文展示、人看過才執行（08-27 拍板的守門方式）
     fixOpId: 'script-add-skip-exit',
@@ -384,11 +384,12 @@ const ALERTS: AlertDefinition[] = [
     // 沒有人正在被卡住，但你以為在跑的東西其實一次都沒跑過。
     id: 'scriptUnreachable',
     icon: Guide,
-    impact: '這條流程啟用著，但客人講什麼都輪不到它——觸發詞沒填，或是會先被自動回覆規則、敏感情境轉真人、另一條觸發詞更寬的流程接走。換一組更明確的觸發詞，或調整擋在前面的那個設定。',
-    cta: '去看這條流程',
+    // ⛔ 「自動回覆規則」那一種擋法 08-09 隨規則整個下架就不存在了，不再列
+    impact: '這條自動回應啟用著，但客人講什麼都輪不到它——觸發詞沒填，或是會先被敏感情境轉真人、另一條觸發詞更寬的自動回應接走。換一組更明確的觸發詞，或調整擋在前面的那個設定。',
+    cta: '去看這條自動回應',
     requires: 'scripts.write',
     route: wid => `/admin/${wid}/ai-scripts`,
-    anchor: { selector: '[data-tour="scr-list"]', note: '點開那條流程，上方的黃色狀態列會講它為什麼輪不到、該調哪個設定。' },
+    anchor: { selector: '[data-tour="scr-list"]', note: '點開那一條，上方的黃色狀態列會講它為什麼輪不到、該調哪個設定。' },
   },
   {
     /**
@@ -435,12 +436,22 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'humanBacklog',
     icon: Service,
-    impact: '等待中的對話 AI 不會插手。處理完記得按「交回機器人」或「結束對話」，否則 AI 會一直被暫停（久到沒動靜的才會由系統自動收尾）。',
+    impact: '這些客人要求找真人之後，到現在還沒有人接手。等待中 AI 不會插手，客人只能等你們回。',
     cta: '去看對話',
     requires: 'conversations.reply',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
     route: wid => `/admin/${wid}/conversations?tab=pending_human`,
-    anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人、「真人處理」是接了還沒收尾的——處理完按「交回機器人」或「結束對話」。' },
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人：點開接手回覆，處理完按「交回機器人」或「結束對話」。' },
+  },
+  {
+    // `D-116`（2026-10-08）從上一顆拆出來：多半是同事回完忘了收尾，客人不一定在等——⛔ 不講成「客人在等」
+    id: 'humanStale',
+    icon: Service,
+    impact: '同事接手後很久沒動，也沒按「交回機器人」或「結束對話」。這段時間 AI 不會插手，客人再傳訊息只會等真人回。久到沒動靜的會由系統自動收尾。',
+    cta: '去看對話',
+    requires: 'conversations.reply',
+    route: wid => `/admin/${wid}/conversations?tab=human_handling`,
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '「真人處理」是接了還沒收尾的：處理完按「交回機器人」或「結束對話」。' },
   },
   {
     // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑

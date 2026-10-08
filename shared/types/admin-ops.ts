@@ -21,7 +21,7 @@
 /** op id → 人看得懂的動作名（給模型的說明、確認卡標題、操作紀錄同源） */
 export const ADMIN_OP_LABELS = {
   'ai-settings-service-hours': '調整服務時間／勿擾時段',
-  'script-set-enabled': '上架或下架一條自動回應',
+  'script-set-enabled': '啟用或停用一條自動回應',
   'ai-settings-handoff-sla': '調整「客人等太久」的提醒時間',
   'ai-settings-sensitive-topic': '增減「一提到就轉真人」的字',
   'ai-settings-reply-mode': '切換 AI 直接回客人／只給草稿',

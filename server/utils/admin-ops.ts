@@ -26,6 +26,7 @@ import {
 } from '~~/shared/types/admin-ops'
 import { Timestamp } from 'firebase-admin/firestore'
 import { describeScriptSteps } from '~~/shared/script-plain-summary'
+import { broadcastAudienceIssue, broadcastTextIssue } from '~~/shared/agent-user-signal'
 import { writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
 import { findEnabledFollowScriptConflict, invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
@@ -238,13 +239,13 @@ async function scriptEnableBlocker(ctx: AdminOpCtx, row: ScriptRow): Promise<str
   // 讀不到方案（null）→ 放行：沿用 assertPlanAllows 的 fail-open，基礎設施出事不該把付費客戶鎖在門外
   const plan = await getWorkspacePlan(ctx.workspaceId, ctx.db)
   if (plan && !planAllowsScripting(plan))
-    return `這個帳號目前的方案不含自動回應流程（腳本）功能，所以沒辦法把「${row.name}」上架——要先升級方案。`
+    return `這個帳號目前的方案不含多步驟自動回應的功能，所以沒辦法把「${row.name}」啟用——要先升級方案。`
   if (row.triggerEvent === 'follow') {
     // 排除自己：這條本身是停用的，不會撞到自己；傳進去是跟存檔端點同一個呼叫法
     const conflict = await findEnabledFollowScriptConflict(ctx.workspaceId, row.id, ctx.db)
     if (conflict) {
-      return `已經有一條在客人加好友時啟動的流程「${conflict.name}」正在使用。`
-        + `兩條都開的話，客人一加好友會連收兩份訊息——要先把「${conflict.name}」下架，或直接改那一條。`
+      return `已經有一條在客人加好友時啟動的自動回應「${conflict.name}」正在使用。`
+        + `兩條都開的話，客人一加好友會連收兩份訊息——要先把「${conflict.name}」停用，或直接改那一條。`
     }
   }
   return null
@@ -268,8 +269,8 @@ const scriptSetEnabled: AdminOpDef = {
   capability: 'scripts.write',
   targetField: 'name',
   argsHint: '參數：{"name":"自動回應的名字","enabled":true|false}。'
-    + 'name 必須是清單上**一字不差**的名字（先用 list_auto_responses 或 list_scripts 查，⛔不要自己拼）；'
-    + 'enabled=true 是上架（開始生效）、false 是下架（停用）。',
+    + 'name 必須是清單上**一字不差**的名字（先用 list_scripts 查，⛔不要自己拼）；'
+    + 'enabled=true 是啟用（開始生效）、false 是停用。使用者說「上架／下架」也是指這件事，⛔ 回話照頁面講「啟用／停用」。',
 
   normalize(raw) {
     const name = String(raw?.name ?? '').trim().slice(0, 100)
@@ -336,14 +337,15 @@ const scriptSetEnabled: AdminOpDef = {
 
     return {
       ...base,
+      // `D-116`：頁面上的開關叫「啟用／停用」，以前這裡講「上架／下架」——同一個開關兩種講法
       summary: args.enabled
-        ? `我會把「${row.name}」上架，之後它就會開始接客人的訊息。`
-        : `我會把「${row.name}」下架，它就不再接客人的訊息（內容都留著，隨時可以再開回來）。`,
+        ? `我會把「${row.name}」啟用，之後它就會開始接客人的訊息。`
+        : `我會把「${row.name}」停用，它就不再接客人的訊息（內容都留著，隨時可以再開回來）。`,
       items,
       warning: args.enabled
-        ? '上架之後，打中這些字的客人會走這條流程，AI 不會再回答那幾句話。'
-        : '下架之後，這條原本回覆的內容客人就收不到了；那些訊息會改由 AI 或其他設定接手。',
-      confirmLabel: args.enabled ? '確定上架' : '確定下架',
+        ? '啟用之後，打中這些字的客人會走這條，AI 不會再回答那幾句話。'
+        : '停用之後，這條原本回覆的內容客人就收不到了；那些訊息會改由 AI 或其他設定接手。',
+      confirmLabel: args.enabled ? '確定啟用' : '確定停用',
     }
   },
 
@@ -380,14 +382,14 @@ const scriptSetEnabled: AdminOpDef = {
       targetId: row.id,
       before: { enabled: row.enabled },
       after: { enabled: args.enabled },
-      note: `「${row.name}」${args.enabled ? '上架' : '下架'}`,
+      note: `「${row.name}」${args.enabled ? '啟用' : '停用'}`,
     }, ctx.db)
 
     return {
       ok: true,
       message: args.enabled
-        ? `「${row.name}」已經上架，開始生效了。`
-        : `「${row.name}」已經下架，客人不會再走到它（內容都還在）。`,
+        ? `「${row.name}」已經啟用，開始生效了。`
+        : `「${row.name}」已經停用，客人不會再走到它（內容都還在）。`,
       targetId: row.id,
     }
   },
@@ -764,8 +766,8 @@ const scriptCreateFromDescription: AdminOpDef = {
         ...(unreachable.length ? [{ label: `⚠️ 有 ${unreachable.length} 個步驟目前沒有人走得到`, note: '建好之後可以到流程頁調整' }] : []),
       ],
       // 「建好是關著的」是這個 op 最重要的一句話：AI 擬的東西一定要有人看過才對客人生效
-      warning: '建好之後是**關著**的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再上架。',
-      confirmLabel: '確定建立（先不上架）',
+      warning: '建好之後是停用的，客人還不會走到它。你到「自動回應」頁看過、覺得沒問題再啟用。',
+      confirmLabel: '確定建立（先不啟用）',
     }
   },
 
@@ -796,7 +798,7 @@ const scriptCreateFromDescription: AdminOpDef = {
 
     return {
       ok: true,
-      message: `「${draft.name}」建好了，目前是**停用**狀態。到「自動回應」頁看過內容、確認沒問題再把它打開。`,
+      message: `「${draft.name}」建好了，目前是停用狀態。到「自動回應」頁看過內容、確認沒問題再把它啟用。`,
       details: [`流程代號：${res.id}`],
       targetId: res.id,
     }
@@ -822,7 +824,16 @@ const broadcastDraftCreate: AdminOpDef = {
   freeTextFields: ['name', 'text'],
   argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
     + '⛔ 只會建**草稿**，不會發送——發送一定要人到推播頁自己按。'
-    + '⛔ 內容要照使用者說的寫，不要自己加促銷詞或表情符號。',
+    + '⛔ 內容要照使用者說的寫，不要自己加促銷詞或表情符號。'
+    // `D-116`：這兩條現在有機制擋（checkUserWords），寫在這裡是讓它一開始就先問、不要白提議一次
+    + '⛔ 使用者還沒講「要跟客人說什麼」或「發給誰（全部好友或哪個標籤）」就先問，問到了再提議——'
+    + '「幫我擬一則國慶日的推播」這種話只有節日，沒有內容也沒有對象。',
+  // 客人會看到的字、發給誰，都要出自使用者講過的話（判法在 shared/agent-user-signal.ts）
+  checkUserWords(raw, userSaid) {
+    const issue = broadcastTextIssue(String(raw?.text ?? ''), userSaid)
+      ?? broadcastAudienceIssue(String(raw?.tagName ?? '').trim() || undefined, userSaid)
+    if (issue) throw new AdminOpUserError(issue)
+  },
 
   normalize(raw) {
     const name = String(raw?.name ?? '').trim().slice(0, 60)
@@ -898,17 +909,18 @@ const broadcastDraftCreate: AdminOpDef = {
     const args = raw as unknown as BroadcastDraftArgs
     return {
       opId: 'broadcast-draft-create',
-      summary: `我會建一則推播草稿「${args.name}」。⛔ 只是草稿，**不會發出去**。`,
+      // `D-116`：以前這句是「⛔ 只是草稿，**不會發出去**」——卡片不吃 markdown，紅色禁止符號像出錯、星號原樣印出
+      summary: `我會建一則推播草稿「${args.name}」，只是草稿，不會發出去。`,
       items: [
         { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容' },
         {
           label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
-          note: args.estimated === null
+          note: args.estimated == null
             ? '這次算不出大概幾個人（不影響建立）'
-            : `目前大約 ${args.estimated} 人${args.tagName ? '' : '（全部好友）'}`,
+            : `約 ${args.estimated.toLocaleString('en-US')} 人`,
         },
       ],
-      warning: '要不要真的發、什麼時候發，都要你到推播頁自己按——我不會幫你送出去。發送當下人數會重新計算。',
+      warning: '要不要發、什麼時候發，都要你到推播頁自己按，我不會幫你送出去。發送當下人數會重新計算。',
       confirmLabel: '確定建草稿',
     }
   },
@@ -940,7 +952,7 @@ const broadcastDraftCreate: AdminOpDef = {
 
     return {
       ok: true,
-      message: `草稿「${args.name}」建好了，**還沒有發送**。到推播頁確認內容與對象，要發的時候自己按發送。`,
+      message: `草稿「${args.name}」建好了，還沒有發送。到推播頁確認內容與對象，要發的時候自己按發送。`,
       details: [`推播代號：${res.id}`],
       targetId: res.id,
     }

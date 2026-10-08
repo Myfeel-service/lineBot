@@ -97,7 +97,7 @@ const CAPABILITIES: SetupCapability[] = [
   {
     id: 'scriptReady',
     icon: Operation,
-    title: '啟用一條客服流程',
+    title: '啟用一條自動回應',
     why: '用來處理固定流程，例如預約、報名、領取優惠。沒有也能運作。',
     required: false,
     // ⚠️ `G-109`：照舊只給管理員（改版前是 'settings'，這次是純重構、不改誰看得到）。

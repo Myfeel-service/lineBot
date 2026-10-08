@@ -317,7 +317,7 @@
           </div>
           <div class="card-section-stack">
             <p class="ai-section-hint">
-              設定服務時間後,非服務時間內不論客服流程或 AI 要轉真人,都<strong>不推播通知客服</strong>(不半夜吵人),改回客人一則「勿擾訊息」。
+              設定服務時間後,非服務時間內不論自動回應或 AI 要轉真人,都<strong>不推播通知客服</strong>(不半夜吵人),改回客人一則「勿擾訊息」。
               轉真人本身照常發生——客服上班回來在「對話」頁就能接手。時間以台灣時區為準。
             </p>
             <p class="ai-section-hint">

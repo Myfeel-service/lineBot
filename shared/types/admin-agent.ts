@@ -7,18 +7,22 @@
  * 就漏了標籤(UI 會直接顯示英文工具名)——這正是兩份表遲早漂移的實證。
  */
 export const ADMIN_AGENT_TOOL_LABELS = {
-  list_scripts: '客服流程清單',
+  // `D-116`（2026-10-08）：跟側欄同名；以前另有一支 list_auto_responses 查同一批東西，「查了：」並排兩個名字
+  list_scripts: '自動回應清單',
   get_ai_settings: 'AI 設定',
   get_ai_usage: 'AI 用量',
   get_plan_quota: '方案與額度',
   get_conversation_stats: '對話統計',
   get_knowledge_status: '知識庫',
-  list_auto_responses: '自動回應設定',
   get_current_alerts: '目前異常',
   get_setup_status: '設定進度',
   get_recent_changes: '最近改了什麼',
   get_tag_audience: '標籤人數',
   get_broadcast_results: '推播成效',
+  // `D-116` 三支新查法
+  find_customer_conversations: '客人的對話',
+  get_handoff_reasons: '轉真人的原因',
+  get_ai_mistakes: 'AI 答錯與沒答好',
 } as const satisfies Record<string, string>
 
 export type AdminAgentToolId = keyof typeof ADMIN_AGENT_TOOL_LABELS

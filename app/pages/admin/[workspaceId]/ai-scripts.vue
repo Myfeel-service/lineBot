@@ -65,7 +65,7 @@
     <!-- ── Empty State ── -->
     <template #editor-empty>
       <el-icon class="empty-icon"><Operation /></el-icon>
-      <h3>選擇一條客服流程開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
+      <h3>選擇一條自動回應開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
       <template v-if="canEditScripts">
         <div class="scripts-ai-generate" data-tour="scr-ai-gen">
           <span class="scripts-ai-generate-label">
@@ -80,7 +80,7 @@
             @keydown.enter.exact.prevent="generateFromAi"
           />
           <div class="scripts-ai-generate-actions">
-            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立客服流程」才會存檔</span>
+            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立自動回應」才會存檔</span>
             <el-button type="primary" :loading="aiGenerating" :disabled="!aiGenDesc.trim()" @click="generateFromAi">
               {{ aiGenerating ? 'AI 生成中…' : 'AI 生成草稿' }}
             </el-button>
@@ -109,7 +109,7 @@
         v-if="canEditScripts"
         v-model="form.name"
         field-label="流程名稱"
-        create-prefix="新增客服流程："
+        create-prefix="新增自動回應："
         placeholder="例：訂單查詢、退換貨流程"
         caption="為這條情境流程取個名"
         :is-creating="isCreating"
@@ -127,7 +127,7 @@
         <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="Delete" type="danger" @click="deleteScript">刪除</el-button>
         <el-button @click="cancelEdit">{{ canEditScripts ? '取消' : '關閉' }}</el-button>
         <el-button v-if="canEditScripts" type="primary" :loading="saving" data-tour="scr-save" @click="submitForm">
-          {{ isCreating ? '建立客服流程' : '儲存變更' }}
+          {{ isCreating ? '建立自動回應' : '儲存變更' }}
         </el-button>
       </div>
     </template>
@@ -328,7 +328,7 @@
                         :closable="false"
                         show-icon
                         title="這條啟用後，會攔截「所有」文字訊息"
-                        description="客人不管打什麼都會走進這條流程，AI 客服和其他客服流程都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
+                        description="客人不管打什麼都會走進這條流程，AI 客服和其他自動回應都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
                       />
                     </div>
                     <div v-if="node.keywordMatch !== 'anyText'" class="admin-field-group">
@@ -1130,7 +1130,7 @@ const flowWarnings = computed<FlowWarning[]>(() => {
   }
   for (const issue of reachabilityIssues.value) {
     // 被「另一條腳本」蓋住時，講「自動回覆排在前面」會把人指去翻錯的地方
-    const why = issue.reason === 'otherScript' ? '' : '（安全層排在客服流程前面）'
+    const why = issue.reason === 'otherScript' ? '' : '（安全層排在自動回應前面）'
     out.push({ key: `reach:${issue.reason}`, text: `${issue.detail}${why}` })
   }
   if (reachabilityState.value === 'failed') {
@@ -1901,7 +1901,7 @@ function duplicateScript() {
   markDirty()
   simReset()
   resetEditorDisclosure(form.value.nodes)
-  showToast('已複製成草稿，改完按「建立客服流程」才會存檔。複本先停用，避免和原本那條搶同一組觸發詞', 'success')
+  showToast('已複製成草稿，改完按「建立自動回應」才會存檔。複本先停用，避免和原本那條搶同一組觸發詞', 'success')
 }
 
 // ── AI 一句話生成草稿 ────────────────────────────────────────────────
@@ -1932,7 +1932,7 @@ async function generateFromAi() {
     simReset()
     resetEditorDisclosure(form.value.nodes)
     aiGenDesc.value = ''
-    showToast('草稿已生成——看看上面的流程圖、試跑一次，調整後按「建立客服流程」', 'success')
+    showToast('草稿已生成——看看上面的流程圖、試跑一次，調整後按「建立自動回應」', 'success')
   }
   catch (err: any) {
     showToast(err?.statusMessage || err?.data?.statusMessage || err?.message || 'AI 生成失敗,換個說法再試一次', 'error')
@@ -2193,7 +2193,7 @@ async function submitForm() {
     }
     if (isCreating.value) {
       const res = await apiFetch<{ id: string }>('/api/ai/scripts/create', { method: 'POST', body: payload })
-      showToast('客服流程已建立', 'success')
+      showToast('自動回應已建立', 'success')
       await loadScripts(true)
       const fresh = scripts.value.find(s => s.id === res.id)
       if (fresh) selectScript(fresh, { skipDiscardConfirm: true })
@@ -2217,7 +2217,7 @@ async function submitForm() {
 async function deleteScript() {
   if (!selectedId.value) return
   try {
-    await ElMessageBox.confirm(`確定刪除「${form.value.name}」這條客服流程？`, '刪除確認', {
+    await ElMessageBox.confirm(`確定刪除「${form.value.name}」這條自動回應？`, '刪除確認', {
       confirmButtonText: '刪除',
       cancelButtonText: '取消',
       confirmButtonClass: 'el-button--danger',
