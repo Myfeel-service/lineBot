@@ -125,5 +125,37 @@ describe('發送前確認：模組送不出東西就要當場講', () => {
 
     expect(mockGetDoc).not.toHaveBeenCalled()
     expect(res.valid).toBe(true)
+    expect(res.warnings).toEqual([])
+  })
+})
+
+/**
+ * `D-118`：推播一次送給所有人，`{{displayName}}` 送出去一律是空白。
+ * ⛔ 不擋（valid 照樣 true），但確認框一定要講——9/29 起 7 則推播都中招，預覽卻一直說會換成名字。
+ */
+describe('發送前確認：用了客人名字要提醒', () => {
+  it('模組型：掃的是模組內容（送出去的那一份），不是那張會被換掉的卡', async () => {
+    makeDb(broadcastDoc(moduleCard))
+    mockGetDoc.mockResolvedValue({
+      workspaceId: WS,
+      name: '水都會-超早鳥倒數',
+      isActive: true,
+      messages: [{ type: 'text', text: '{{displayName}} ⏰ 最後提醒！你的 $1,000 還沒用' }],
+    } as any)
+
+    const res = await (handler as any)({})
+
+    expect(res.valid).toBe(true)
+    expect(res.warnings).toHaveLength(1)
+    expect(res.warnings[0]).toContain('空白')
+  })
+
+  it('純文字推播：掃推播本身', async () => {
+    makeDb(broadcastDoc([{ type: 'text', text: '嗨 {{displayName}}，今天公休' }]))
+
+    const res = await (handler as any)({})
+
+    expect(res.valid).toBe(true)
+    expect(res.warnings).toHaveLength(1)
   })
 })

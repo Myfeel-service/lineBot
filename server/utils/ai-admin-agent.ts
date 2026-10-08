@@ -31,7 +31,7 @@ import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
 import { addDays, dndSentence, serviceHoursSentence, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
 import { can, type Capability } from '~~/shared/permissions'
-import { AUDIT_ACTION_LABELS, auditFieldLabel, auditValueText } from '~~/shared/types/audit'
+import { AUDIT_ACTION_LABELS, AUDIT_ACTOR_LABELS, auditFieldLabel, auditValueText, type AuditActor } from '~~/shared/types/audit'
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
 import { getFirebaseAuth } from './firebase'
 import { agentDestinationCatalogueForPrompt, resolveAgentDestinations } from '~~/shared/agent-destinations'
@@ -510,7 +510,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
         return {
           when: typeof ts?.toMillis === 'function' ? taipeiDateTime(ts.toMillis()) : '(剛剛)',
-          who: data.actor === 'agent' ? '小幫手代辦' : '成員操作',
+          // 排程到點送出是系統做的（`D-117`），⛔ 不要講成「成員操作」
+          who: AUDIT_ACTOR_LABELS[(data.actor as AuditActor)] ?? AUDIT_ACTOR_LABELS.human,
           uid: String(data.uid ?? ''),
           what: AUDIT_ACTION_LABELS[String(data.action ?? '')] ?? String(data.action ?? ''),
           // 前後值只講有變的那幾格；物件不展開（展開會把回答塞爆）

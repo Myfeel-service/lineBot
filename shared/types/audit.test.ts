@@ -11,11 +11,17 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   AUDIT_ACTION_LABELS,
+  AUDIT_ACTOR_LABELS,
   auditActionLabel,
   auditChangeLines,
+  auditDetailLines,
   auditIsCreate,
   auditIsDelete,
+  auditRowChanges,
+  auditTarget,
+  auditTimeLabel,
   auditValueText,
+  auditVisibleNote,
   isPlatformAction,
 } from './audit'
 
@@ -199,5 +205,81 @@ describe('新增／刪除類不印空白箭頭', () => {
     expect(isPlatformAction('super.workspacePatch')).toBe(true)
     expect(isPlatformAction('flow.put')).toBe(false)
     expect(isPlatformAction('agent-op/script-set-enabled')).toBe(false)
+  })
+})
+
+/**
+ * `D-117`（2026-10-08）：老闆截圖那三列——建草稿→試發→排程——用的是正式庫的真實紀錄形狀。
+ * 原本畫面寫「試發了一則推播給自己」（其實是挑的任何好友）、兩個「名稱」分不出推播與收件人、
+ * 排程時間印成 `2026-10-05T13:00:00.000Z`（台灣是晚上 9 點）。
+ */
+describe('操作紀錄：推播那幾列一列講完', () => {
+  const testSendOld = {
+    action: 'broadcast.testSend',
+    before: null,
+    after: { name: '水多會-超早鳥倒數', displayName: 'Jordan', messagesCount: 2 },
+    note: '試發給「Jordan」（模組：水都會-超早鳥倒數）',
+  }
+  const schedule = {
+    action: 'broadcast.schedule',
+    before: { status: 'draft', scheduleAt: null },
+    after: { status: 'scheduled', scheduleAt: '2026-10-05T13:00:00.000Z' },
+    note: '水多會-超早鳥倒數',
+  }
+  const create = {
+    action: 'broadcast.create',
+    before: null,
+    after: { name: '水多會-超早鳥倒數', status: 'draft', messagesCount: 1, completionTagIdsCount: 0, audienceSource: 'tags' },
+  }
+
+  it('世界時間換成台灣時間（存的格式不動，只換顯示）', () => {
+    expect(auditTimeLabel('2026-10-05T13:00:00.000Z')).toBe('2026/10/5（一）21:00')
+    expect(auditValueText('2026-10-05T13:00:00.000Z', 'scheduleAt')).toBe('2026/10/5（一）21:00')
+    // 跨日：UTC 16:30 是台灣隔天 00:30
+    expect(auditTimeLabel('2026-12-31T16:30:00Z')).toBe('2027/1/1（五）00:30')
+    // 不是時間的字串照舊
+    expect(auditValueText('2026-10-05 水都會')).toBe('2026-10-05 水都會')
+  })
+
+  it('推播名字進標題：after.name、只寫在備註的、「名字：…」的備註都認得', () => {
+    expect(auditTarget(testSendOld)?.name).toBe('水多會-超早鳥倒數')
+    expect(auditTarget(schedule)?.name).toBe('水多會-超早鳥倒數')
+    expect(auditTarget({ action: 'broadcast.retry', before: { status: 'failed' }, after: { status: 'draft' }, note: '週年慶：上一輪的失敗名單與點擊紀錄已清除' })?.name).toBe('週年慶')
+    // ⛔ 送出的備註是「送給 461 人」，不是名字
+    expect(auditTarget({ action: 'broadcast.send', before: null, after: { sentCount: 461 }, note: '送給 461 人' })).toBeNull()
+    expect(auditTarget({ action: 'flow.put', before: null, after: { name: 'x' } })).toBeNull()
+  })
+
+  it('試發：講送給誰、送幾則、內容是哪個模組（舊紀錄的模組名從備註撈）', () => {
+    expect(auditDetailLines(testSendOld)).toEqual(['送 2 則給 LINE 好友「Jordan」', '內容是模組「水都會-超早鳥倒數」'])
+    expect(auditDetailLines({ ...testSendOld, after: { name: 'x', recipientName: 'Jordan', messagesCount: 2, moduleName: 'M' }, note: '' }))
+      .toEqual(['送 2 則給 LINE 好友「Jordan」', '內容是模組「M」'])
+    // 細節欄都講了，標題下面不再重複備註
+    expect(auditVisibleNote(testSendOld)).toBe('')
+    expect(auditActionLabel('broadcast.testSend')).not.toContain('自己')
+  })
+
+  it('排程：講幾點送出（台灣時間），備註就是名字所以不再印', () => {
+    expect(auditDetailLines(schedule)).toEqual(['2026/10/5（一）21:00 送出'])
+    expect(auditVisibleNote(schedule)).toBe('')
+  })
+
+  it('排程到點送出：系統做的，講送到幾人；失敗講原因', () => {
+    expect(AUDIT_ACTOR_LABELS.system).toBeTruthy()
+    expect(auditDetailLines({ action: 'broadcast.scheduledSend', before: null, after: { name: 'x', status: 'completed', sentCount: 461, failedCount: 0 } }))
+      .toEqual(['送到 461 人，全部送到'])
+    expect(auditDetailLines({ action: 'broadcast.scheduledSend', before: null, after: { name: 'x', status: 'failed' }, note: '發送對象算出來是 0 人' }))
+      .toEqual(['沒送出去：發送對象算出來是 0 人'])
+  })
+
+  it('建草稿：名字已經在標題，細節不再印「名稱」；改名是真的改動，照印', () => {
+    expect(auditRowChanges(create).lines.map(l => l.key)).not.toContain('name')
+    expect(auditRowChanges(create).lines.length).toBeGreaterThan(0)
+    const rename = { action: 'broadcast.put', before: { name: '舊名' }, after: { name: '新名' }, note: '舊名' }
+    expect(auditRowChanges(rename).lines.map(l => l.key)).toContain('name')
+  })
+
+  it('觀察者全站同一個詞（以前這裡寫「唯讀」）', () => {
+    expect(auditValueText('viewer', 'role')).toBe('觀察者')
   })
 })

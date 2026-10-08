@@ -108,8 +108,14 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'broadcast.testSend',
     targetId: id,
-    after: { name: String(doc.name ?? ''), displayName, messagesCount: messages.length },
-    note: `試發給「${displayName || lineUserId}」${moduleName ? `（模組：${moduleName}）` : ''}`,
+    // `D-117`：收件人用 `recipientName`（舊紀錄叫 `displayName`，畫面上跟推播名稱都翻成「名稱」，分不出誰是誰）
+    after: {
+      name: String(doc.name ?? ''),
+      recipientName: displayName || lineUserId,
+      messagesCount: messages.length,
+      ...(moduleName ? { moduleName } : {}),
+    },
+    note: `試發給 LINE 好友「${displayName || lineUserId}」${moduleName ? `（模組：${moduleName}）` : ''}`,
   })
 
   return {

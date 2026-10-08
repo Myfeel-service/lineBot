@@ -6,10 +6,12 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 vi.mock('./broadcast-send', () => ({ executeBroadcastSend: vi.fn() }))
+vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 
 import { runDueScheduledBroadcasts } from './run-due-scheduled-broadcasts'
 import { getDb } from './firebase'
 import { executeBroadcastSend } from './broadcast-send'
+import { writeAuditLog } from './audit-log'
 import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED } from '~~/shared/broadcast-failure'
 
 const mockGetDb = vi.mocked(getDb)
@@ -252,5 +254,51 @@ describe('只處理一個帳號的那條路（`G-104`①）', () => {
 
     mockSend.mockClear()
     expect((await runDueScheduledBroadcasts()).triggered).toBe(2)
+  })
+})
+
+/**
+ * `D-117` 拍板 1：排程到點送出也記一筆操作紀錄。以前紀錄停在「排定了推播」就斷了，
+ * 看的人不知道後來有沒有送、送了幾人。
+ */
+describe('排程到點送出留一筆操作紀錄', () => {
+  const mockAudit = vi.mocked(writeAuditLog)
+  const due = (id: string) => ({ id, data: { workspaceId: 'w1', name: '水多會-超早鳥倒數', status: 'scheduled', scheduleAt: ts(MIN) } })
+
+  it('送成功：系統做的（不掛在任何人頭上），寫送到幾人', async () => {
+    makeDb([], [due('b1')])
+    mockSend.mockResolvedValueOnce({ success: true, campaignId: 'b1', totalCount: 461, sentCount: 461, failedCount: 0, postSendError: null })
+
+    await runDueScheduledBroadcasts()
+
+    expect(mockAudit).toHaveBeenCalledTimes(1)
+    expect(mockAudit.mock.calls[0]![0]).toMatchObject({
+      workspaceId: 'w1',
+      uid: '',
+      actor: 'system',
+      action: 'broadcast.scheduledSend',
+      targetId: 'b1',
+      after: { name: '水多會-超早鳥倒數', status: 'completed', sentCount: 461, failedCount: 0 },
+    })
+  })
+
+  it('送失敗：也要留一筆，寫看得懂的原因（不然紀錄停在「排定了」，看的人以為送了）', async () => {
+    makeDb([], [due('b2')])
+    mockSend.mockRejectedValueOnce(new Error('Resolved audience is empty'))
+
+    await runDueScheduledBroadcasts()
+
+    expect(mockAudit).toHaveBeenCalledTimes(1)
+    expect(mockAudit.mock.calls[0]![0]).toMatchObject({ actor: 'system', after: { status: 'failed' } })
+    expect(String(mockAudit.mock.calls[0]![0].note)).toContain('0 人')
+  })
+
+  it('⛔ 認領輸了（另一台排程器先拿走）不記「沒送出去」：那則可能正由別人送著', async () => {
+    makeDb([], [due('b3')])
+    mockSend.mockRejectedValueOnce(new Error('Cannot send broadcast with status: processing'))
+
+    await runDueScheduledBroadcasts()
+
+    expect(mockAudit).not.toHaveBeenCalled()
   })
 })

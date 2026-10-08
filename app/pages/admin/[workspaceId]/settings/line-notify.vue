@@ -34,10 +34,15 @@
             <!-- `D-106`：第一次進來只看到一排字跟開關、不知道從哪開始 → 一句話講怎麼用。
                  「同事登入會被問」只在真的有同事還沒加時才講（⛔ 不在每一列再講一次） -->
             <p class="ln-howto">
-              每個人用<strong>自己的手機</strong>加進來，綁好就會收到。<template v-if="hasUnboundOthers">還沒加進來的同事，下次登入後台會被問一次<template v-if="data.canManage">；想快一點，按他那一列的「<strong>傳連結給他</strong>」</template>。</template>
+              每個人用<strong>自己的手機</strong>加進來。<template v-if="hasUnboundOthers">還沒加的同事下次登入會被問<template v-if="data.canManage">；急的話按「<strong>傳連結給他</strong>」</template>。</template>
             </p>
-            <!-- 登入的帳號不是這個官方帳號的成員（組織管理員、超管）：名單上沒有自己，⛔ 不可以讓他自己猜為什麼 -->
-            <p v-if="!data.selfIsMember" class="ln-banner is-info">
+            <!-- 登入的帳號不是這個官方帳號的成員：名單上沒有自己，⛔ 不可以讓他自己猜為什麼。
+                 `D-117`：平台管理員本來就不該加進名單，叫他「請擁有者邀請你」是錯的建議 → 只留一行小字；
+                 組織管理員才是真的「要收就請擁有者邀請」 -->
+            <p v-if="!data.selfIsMember && isSuperAdmin" class="ln-card__note">
+              你用平台管理員帳號在看，名單只列這個官方帳號的成員。
+            </p>
+            <p v-else-if="!data.selfIsMember" class="ln-banner is-info">
               <strong>名單上沒有你</strong>：你現在登入的帳號不是這個官方帳號的成員，沒辦法把手機加進來。要收通知，請擁有者到「設定 → 成員管理」邀請你的 Email，登入後再回來這裡加。
             </p>
             <p v-if="!data.lineConnected" class="ln-banner">
@@ -47,7 +52,7 @@
               現在沒有人會收到。客人要找真人時，不會有人知道。
             </p>
             <p v-else-if="undeliverableCount" class="ln-banner">
-              有 {{ undeliverableCount }} 位收不到通知，原因和怎麼辦寫在他那一列的「狀態」。
+              有 {{ undeliverableCount }} 位收不到通知，原因和怎麼辦寫在他那一列的 LINE 名字下面。
             </p>
 
             <!-- 跟「成員管理」同一種表格（老闆對一致性很敏感）：寬螢幕上名字跟開關不再隔半個畫面沒有欄可以對 -->
@@ -63,21 +68,21 @@
                   <span v-else class="ln-table__muted">（不是成員）</span>
                 </template>
               </el-table-column>
-              <el-table-column label="LINE" min-width="150">
+              <!-- `D-117`：「LINE」「狀態」併成一格。原本沒加進來的人一列講三次（LINE「—」、狀態「還沒加進來」、按鈕「傳連結給他」），
+                   加進來的人「會收到」又跟右邊開關重複。有加的：名字＋下面一行（上次送達／收不到的原因）；沒加的：只講一次 -->
+              <el-table-column label="LINE 手機" min-width="300">
                 <template #default="{ row }">
-                  <span v-if="row.line" class="ln-line">
-                    <img v-if="row.line.pictureUrl" :src="row.line.pictureUrl" class="ln-avatar" alt="">
-                    <span v-else class="ln-avatar ln-avatar--initial">{{ initialOf(row.line.displayName) }}</span>
-                    <span class="ln-line__name">{{ row.line.displayName }}</span>
-                  </span>
-                  <span v-else class="ln-table__muted">—</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="狀態" min-width="260">
-                <template #default="{ row }">
-                  <div class="ln-status" :class="row.status.cls">
-                    {{ row.status.text }}
-                    <span v-if="row.status.sub" class="ln-status__sub">{{ row.status.sub }}</span>
+                  <div v-if="row.line" class="ln-phone-cell">
+                    <span class="ln-line">
+                      <img v-if="row.line.pictureUrl" :src="row.line.pictureUrl" class="ln-avatar" alt="">
+                      <span v-else class="ln-avatar ln-avatar--initial">{{ initialOf(row.line.displayName) }}</span>
+                      <span class="ln-line__name">{{ row.line.displayName }}</span>
+                    </span>
+                    <span v-if="lineSub(row)" class="ln-phone-cell__sub" :class="row.status.cls">{{ lineSub(row) }}</span>
+                  </div>
+                  <div v-else class="ln-phone-cell">
+                    <span class="ln-table__muted">{{ row.status.text }}</span>
+                    <span v-if="row.status.sub" class="ln-phone-cell__sub">{{ row.status.sub }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -327,7 +332,7 @@
             <li>他在 LINE 打開官方帳號的聊天室，把這一句傳出去。</li>
           </template>
           <li v-if="data?.full">名單已經滿了（最多 10 位）：他綁好之後，要先關掉一位才收得到。</li>
-          <li v-else>他送出之後，這一列會自己變成「會收到」。</li>
+          <li v-else>他送出之後，這一列會自己出現他的 LINE 名字。</li>
         </ol>
         <div class="ln-link__box">
           <code class="ln-link__text">{{ linkDialog.url || linkDialog.message }}</code>
@@ -420,6 +425,8 @@ interface PageData {
 
 const { apiFetch, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
+// 名單上沒有自己時，平台管理員跟組織管理員要講的話不一樣（`D-117`）
+const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
 const route = useRoute()
 const router = useRouter()
 
@@ -516,6 +523,19 @@ function statusOf(row: Row): Status {
   // 「下次登入會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
   if (!row.isSelf && row.inviteDismissed) return { text: '還沒加進來', sub: '對方在首頁按了「先不用」，不會再被問', cls: 'is-off' }
   return { text: '還沒加進來', cls: 'is-off' }
+}
+
+/**
+ * 「LINE 手機」那一格名字下面那一行（`D-117`，「LINE」「狀態」併成一格之後）：
+ * - 收得到：只講上次送達（「會收到」三個字右邊開關已經講了，⛔ 不再寫一次）
+ * - 收不到：結論＋原因，變黃
+ * - 綁了但沒在收：「通知關著」（看的人沒有開關可按時，這是唯一講這件事的地方）
+ */
+function lineSub(row: TableRow): string {
+  const s = row.status
+  if (s.cls === 'is-warn') return s.sub ? `${s.text}：${s.sub}` : s.text
+  if (s.cls === 'is-off') return s.text
+  return s.sub ?? ''
 }
 
 function isUndeliverable(d: RecipientState | null) {
@@ -840,7 +860,8 @@ useAgentOpRefresh('line-notify', async (evt, { mode }) => {
 })
 
 onMounted(async () => {
-  await load()
+  // 一起等：先畫出來再改口，平台管理員會先閃一下「請擁有者邀請你」
+  await Promise.all([load(), checkIsSuperAdmin().catch(() => false)])
   // 小幫手「現在沒有人會收到」帶路時帶 ?add=me：直接打開掃 QR 那一塊（參數用完即丟）
   if (route.query.add === 'me') {
     router.replace({ query: { ...route.query, add: undefined } })

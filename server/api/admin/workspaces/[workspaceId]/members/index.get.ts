@@ -79,7 +79,11 @@ export default defineEventHandler(async (event) => {
     }
     if (row.uid) {
       const ue = uidToEmail[row.uid]
-      if (ue) emailSeen.add(ue)
+      if (ue) {
+        emailSeen.add(ue)
+        // 自助開帳的擁有者成員文件上沒有 invitedEmail：畫面原本只好印 uid 當名字（`D-117`）
+        row.email = ue
+      }
     }
   }
 

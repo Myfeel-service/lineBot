@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_SAMPLE_DISPLAY_NAME,
+  broadcastVariableNote,
+  broadcastVariableWarning,
+  findSendVariables,
   previewVariableNote,
+  renderBroadcastVariablesDeep,
   renderPreviewVariablesDeep,
   renderPreviewVariablesInText,
 } from './preview-variables'
@@ -82,5 +86,37 @@ describe('previewVariableNote', () => {
 
   it('自訂屬性也講', () => {
     expect(previewVariableNote(['displayName', 'city'])).toContain('（city）')
+  })
+})
+
+/**
+ * `D-118`：推播一次送給所有人，送出端拿不到客人資料，名字變數一律是空白。
+ * ⛔ 預覽不可以畫「王小明」、不可以說「客人看到的是他自己的名字」。
+ * （跟送出端逐字一樣的那條釘在 `server/utils/handler.render-text.test.ts`）
+ */
+describe('推播的預覽：名字一律是空白', () => {
+  it('換成空白並回報換了什麼，不碰網址欄位、不就地改', () => {
+    const input = [{ type: 'text', text: '{{displayName}} ，還記得我們', uri: 'https://x.tw/{{displayName}}' }]
+    const r = renderBroadcastVariablesDeep(input)
+    expect(r.value[0]!.text).toBe(' ，還記得我們')
+    expect(r.value[0]!.uri).toBe('https://x.tw/{{displayName}}')
+    expect(r.keys).toEqual(['displayName'])
+    expect(input[0]!.text).toBe('{{displayName}} ，還記得我們')
+  })
+
+  it('說明講的是「空白」，⛔ 不出現範例名字', () => {
+    const s = broadcastVariableNote(['displayName'])
+    expect(s).toContain('空白')
+    expect(s).toContain('所有人')
+    expect(s).not.toContain(PREVIEW_SAMPLE_DISPLAY_NAME)
+    expect(broadcastVariableNote([])).toBe('')
+  })
+
+  it('發送前的提醒：每一格都掃（連網址），沒有就不提醒', () => {
+    expect(findSendVariables([{ altText: '{{displayName}} 你關注的', actions: [{ uri: 'https://x/{{code}}' }] }]))
+      .toEqual(['displayName', 'code'])
+    expect(findSendVariables([{ type: 'text', text: '今天公休' }])).toEqual([])
+    expect(broadcastVariableWarning(['displayName'])).toContain('空白')
+    expect(broadcastVariableWarning([])).toBe('')
   })
 })

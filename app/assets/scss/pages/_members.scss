@@ -1,4 +1,17 @@
-// 成員管理：LINE 綁定相關
+// 成員管理
+
+// 寬螢幕封頂 1100px 置中，跟「設定 → LINE 通知」（`.ln-page`）一樣（`D-117`：原本角色欄在 1650px 外）。
+// ⚠️ width:100% 不能少：這層也是 flex 直向容器，只給 margin:auto 會縮成內容寬
+.mem-page.solo-editor-body {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.mem-card__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 .member-line-note {
   margin: 0 0 4px;
@@ -7,16 +20,35 @@
   color: var(--el-text-color-secondary);
 }
 
-/* 等對方動作的彙總（D-43④）。⛔不用警示色：沒有東西壞掉,是「在等對方」 */
-.member-pending-note {
-  margin: 0 0 4px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md, 10px);
-  background: var(--bg-elevated, #f9fafb);
-  border: 1px solid var(--border, rgb(0 0 0 / 8%));
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
+// 跟「LINE 通知」名單的 Email 同一個樣子（`.ln-table__email`）：兩頁是同一群人
+.mem-email {
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+// 角色那一格固定一個高度：只有色標的列（擁有者、自己）原本比有下拉的列矮一截，整張表高低不齊
+.mem-role {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+// 最右欄：「複製登入連結／重新邀請」＋「⋯」，一律靠右對齊
+.mem-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.mem-more {
+  padding: 4px;
+}
+
+// 「⋯」選單裡的移除／收回（選單掛在 body 底下，不能靠表格往下找）
+.el-dropdown-menu__item.mem-menu-danger {
+  color: var(--el-color-danger);
 }
 
 // 綁定碼那一行（「設定 → LINE 通知」拿不到官方帳號 ID 時的退路，`AdminLineNotifySelfAdd`）。

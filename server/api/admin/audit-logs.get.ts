@@ -98,11 +98,13 @@ export default defineEventHandler(async (event) => {
       revertible: plan.ok,
       ...(plan.ok ? {} : { revertReason: plan.reason }),
       action: String(data.action ?? ''),
-      actor: data.actor === 'agent' ? 'agent' : 'human',
+      actor: data.actor === 'agent' || data.actor === 'system' ? data.actor : 'human',
       uid: String(data.uid ?? ''),
       before: (data.before ?? null) as Record<string, unknown> | null,
       after: (data.after ?? null) as Record<string, unknown> | null,
       ...(data.note ? { note: String(data.note) } : {}),
+      // 畫面拿它做「點推播名字打開那一則」（`D-117`）
+      ...(data.targetId ? { targetId: String(data.targetId) } : {}),
       // serverTimestamp 寫入後、伺服器蓋章前讀到會是 null——如實回 null，
       // ⛔不要拿現在的時間補上去（那會讓紀錄的時間軸說謊）
       createdAt: typeof ts?.toMillis === 'function' ? ts.toMillis() : null,

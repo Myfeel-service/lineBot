@@ -456,7 +456,8 @@
           <p class="aap__source">
             這是<b>當時真的送出去</b>的 {{ sentContentMessages.length }} 則{{ sentContentModuleName ? `（機器人模組「${sentContentModuleName}」）` : '' }}：
           </p>
-          <FlowMessagePreview :messages="sentContentMessages" :oa-name="currentWorkspaceName" />
+          <p v-if="sentContentVarNote" class="aap__note aap__note--warn">{{ sentContentVarNote }}</p>
+          <FlowMessagePreview :messages="sentContentPreview.value" :oa-name="currentWorkspaceName" />
         </div>
 
         <!-- ② 觸發機器人模組：去把那個模組真的抓回來畫 -->
@@ -466,6 +467,7 @@
           :action="{ type: 'module', moduleId: previewModuleId, text: '', uri: '' }"
           :module-options="flowOptions"
           title=""
+          broadcast
         >
           <template #ready-note="{ count }">
             <!-- ⛔ 這句只有推播講得出來：別處是客人按了才收到，推播是直接送到手機上 -->
@@ -480,10 +482,16 @@
         </AdminActionPreview>
 
         <!-- ③ 純文字／開啟網址：送出端不會動它，原樣畫 -->
+        <!-- `D-118`：用了名字變數時要多講一句，改用跟①同一種面板（手機上面一句、下面手機）；
+             ⛔ 句子直接接在手機旁邊會變成預覽區的第二欄，把手機擠到中間 -->
+        <div v-else-if="textPreviewVarNote" class="bc-preview bc-preview--panel">
+          <p class="aap__note aap__note--warn">{{ textPreviewVarNote }}</p>
+          <FlowMessagePreview :messages="textPreview.value" :oa-name="currentWorkspaceName" />
+        </div>
         <FlowMessagePreview
           v-else
           class="bc-preview"
-          :messages="previewMessages"
+          :messages="textPreview.value"
           :oa-name="currentWorkspaceName"
         />
       </template>
@@ -561,6 +569,12 @@
         </ul>
       </div>
       <div v-else class="bc-validate-ok">
+        <!-- `D-118`：擋不擋由他決定（不擋），但按下去之前一定要知道名字那格會是空白 -->
+        <div v-if="validateResult.warnings?.length" class="admin-alert admin-alert--warn">
+          <ul>
+            <li v-for="w in validateResult.warnings" :key="w">{{ w }}</li>
+          </ul>
+        </div>
         <p v-if="dialogIsSchedule && pendingScheduleAtLocal" class="tags-hint">
           將排程於 {{ formatScheduleLabel(pendingScheduleAtLocal) }} 自動發送（不會立即送出）。
         </p>
@@ -626,6 +640,7 @@ import {
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { broadcastVariableNote, renderBroadcastVariablesDeep } from '~~/shared/preview-variables'
 import { taipeiDate } from '~~/shared/time'
 import { festivalHint } from '~/utils/festival-hint'
 
@@ -917,6 +932,16 @@ const sentContentMessages = computed<any[]>(() => {
   return Array.isArray(msgs) ? msgs : []
 })
 const sentContentModuleName = computed(() => String(sentContent.value?.moduleName ?? ''))
+
+/**
+ * `D-118`：推播是一次送給所有人，送出端拿不到客人資料，`{{displayName}}` 一律送成空白。
+ * 三條預覽路都要畫成客人實際看到的樣子（空白）並講出來——⛔ 原本純文字／已送出那兩條原字印出
+ * `{{displayName}}`、模組那條畫成「王小明」，三條都不是客人收到的樣子。
+ */
+const sentContentPreview = computed(() => renderBroadcastVariablesDeep(sentContentMessages.value))
+const sentContentVarNote = computed(() => broadcastVariableNote(sentContentPreview.value.keys))
+const textPreview = computed(() => renderBroadcastVariablesDeep(previewMessages.value))
+const textPreviewVarNote = computed(() => broadcastVariableNote(textPreview.value.keys))
 
 // ── `C-248`：試發一則給自己看 ──────────────────────────────────────
 const testSendVisible = ref(false)

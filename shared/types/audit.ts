@@ -11,12 +11,19 @@
  *    `shared/types/audit.test.ts` 會掃 server 原始碼，漏了直接紅。
  */
 
-/** 誰動的手：人自己在頁面上按的，還是小幫手代辦的 */
-export type AuditActor = 'human' | 'agent'
+/**
+ * 誰動的手：人自己在頁面上按的、小幫手代辦的，還是**到了時間系統自己做的**。
+ *
+ * `system`（2026-10-08 `D-117` 拍板 1）：排程推播到點自動送出。以前這一步不留紀錄，
+ * 紀錄停在「排定了」就斷了，看的人不知道後來有沒有送、送了幾人。
+ * ⛔ 它的 `uid` 是空的——不要為了填滿而掛在「按排程的那個人」頭上，送出的那一刻他不在場。
+ */
+export type AuditActor = 'human' | 'agent' | 'system'
 
 export const AUDIT_ACTOR_LABELS: Record<AuditActor, string> = {
   human: '成員操作',
   agent: '小幫手代辦',
+  system: '系統排程',
 }
 
 /**
@@ -74,13 +81,17 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
    */
 
   // 推播：唯一「按下去就送出、收不回來」而且會花錢的功能，所以擺第一個補
-  'broadcast.create': '建了一則推播草稿',
-  'broadcast.put': '改了一則推播的內容',
-  'broadcast.send': '送出了一則推播',
-  'broadcast.schedule': '排定了推播的發送時間',
-  'broadcast.cancel': '取消了一則推播',
-  'broadcast.retry': '把發送失敗的推播重設回草稿',
-  'broadcast.testSend': '試發了一則推播給自己',
+  // ⚠️ `D-117` 起操作紀錄頁會在這幾句後面接「推播名字」（`auditTarget`），所以句尾要接得上名字
+  'broadcast.create': '建了推播草稿',
+  'broadcast.put': '改了推播',
+  'broadcast.send': '送出了推播',
+  'broadcast.schedule': '排定了推播',
+  'broadcast.cancel': '取消了推播',
+  'broadcast.retry': '重設了發送失敗的推播',
+  // ⛔ 不寫「給自己」（`D-117`）：試發的對象是對話框裡挑的**任何一位好友**，可能是客人
+  'broadcast.testSend': '試發了推播',
+  // `D-117` 拍板 1：排程時間到、系統自動送出（actor＝system，沒有操作者）
+  'broadcast.scheduledSend': '排程時間到，送出了推播',
 
   // 機器人模組：改了客人立刻收到不一樣的東西
   'flow.create': '新增了一個機器人模組',
@@ -395,10 +406,30 @@ export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
     failed: '學習失敗',
     disabled: '停用中',
   },
-  role: { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '唯讀' },
+  // ⚠️ 跟成員管理、LINE 通知同一組字（`D-117`：這裡以前把觀察者寫成「唯讀」）
+  role: { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '觀察者' },
   // ⚠️ 紀錄裡只存受眾的**種類**，不存名單本身：一則推播的名單可能有上千個 userId，
   //    整包存進來會被截成 50 個並把整筆標成 lossy（連還原都不給按），而且沒有人看得懂。
   audienceSource: { all: '全部好友', tags: '依標籤挑', audience: '指定受眾', import: '匯入的名單' },
+}
+
+/**
+ * 寫入端把時間存成世界時間的機器格式（`server/utils/audit-log.ts` 的 `auditTimeText`，
+ * 例：`2026-10-05T13:00:00.000Z`）。存的格式不動（還原要拿它寫回去），⛔ 只在顯示時換。
+ * `D-117`：畫面原本原樣印出來，13:00Z 其實是台灣晚上 9 點，看的人會以為排錯時間。
+ */
+const ISO_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/
+const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
+const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六']
+
+/** `2026-10-05T13:00:00.000Z` → `2026/10/5（一）21:00`（台灣時間；台灣沒有日光節約，固定 +8） */
+export function auditTimeLabel(iso: string): string {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return iso
+  const t = new Date(ms + TAIPEI_OFFSET_MS)
+  const hh = String(t.getUTCHours()).padStart(2, '0')
+  const mm = String(t.getUTCMinutes()).padStart(2, '0')
+  return `${t.getUTCFullYear()}/${t.getUTCMonth() + 1}/${t.getUTCDate()}（${WEEKDAY_ZH[t.getUTCDay()]}）${hh}:${mm}`
 }
 
 /**
@@ -413,6 +444,7 @@ export function auditValueText(v: unknown, fieldKey = ''): string {
   if (typeof v === 'number') return String(v)
   if (typeof v === 'string') {
     if (v.trim() === '') return '（空白）'
+    if (ISO_TIME_RE.test(v)) return auditTimeLabel(v)
     return AUDIT_VALUE_LABELS[fieldKey]?.[v] ?? v
   }
   if (Array.isArray(v)) return `${v.length} 項`
@@ -554,6 +586,106 @@ export function auditChangeLines(
   return { lines, omitted }
 }
 
+type AuditRowLike = Pick<AuditLogRow, 'action' | 'before' | 'after' | 'note'>
+
+/**
+ * 「做了什麼」後面接的那個名字（`D-117`）：推播的名字放進標題、點了打開那一則。
+ *
+ * 為什麼要有：原本標題只寫「排定了推播的發送時間」，是**哪一則**要去右欄第一行或灰字備註找，
+ * 同一則推播連著三列（建草稿→試發→排程）時更是看不出它們講的是同一件事。
+ * 目前只做推播——它是唯一「按下去就送出去、收不回來」的東西。
+ *
+ * ⚠️ 舊紀錄各支寫法不同，名字放的地方不一樣：多半在 `after.name`；改內容／排程／取消
+ *    只把名字寫在備註；重設回草稿的備註是「名字：上一輪的失敗名單…」。
+ * ⛔ 找不到就回 null，不要拿備註整句充當名字（`broadcast.send` 的備註是「送給 461 人」）。
+ */
+const BROADCAST_NOTE_IS_NAME = new Set(['broadcast.put', 'broadcast.schedule', 'broadcast.cancel'])
+
+export interface AuditTarget {
+  kind: 'broadcast'
+  name: string
+}
+
+export function auditTarget(row: AuditRowLike): AuditTarget | null {
+  if (!row.action.startsWith('broadcast.')) return null
+  const fromFields = [row.after?.name, row.before?.name].find(v => typeof v === 'string' && v.trim() !== '')
+  let name = typeof fromFields === 'string' ? fromFields.trim() : ''
+  const note = String(row.note ?? '').trim()
+  if (!name && BROADCAST_NOTE_IS_NAME.has(row.action)) name = note
+  if (!name && row.action === 'broadcast.retry') name = note.split('：')[0]?.trim() ?? ''
+  return name ? { kind: 'broadcast', name } : null
+}
+
+/**
+ * 這幾種動作的「細節」照事情本身講，不走「欄位：值 → 值」的前後對照（`D-117`）。
+ *
+ * - 試發：什麼都沒改，原本卻在「改動內容」列出「名稱：推播名／名稱：收件人」兩個一樣叫「名稱」的欄位，
+ *   分不出哪個是推播、哪個是人。
+ * - 排程：原本印「預定發送時間：（空白） → 2026-10-05T13:00:00.000Z」。
+ * - 排程送出：系統做的，要講送到幾人。
+ */
+const AUDIT_DETAIL_FORMATTERS: Record<string, (row: AuditRowLike) => string[]> = {
+  'broadcast.testSend': (row) => {
+    const a = row.after ?? {}
+    // 舊紀錄（2026-10-08 以前）收件人放在 `displayName`、模組名只在備註「試發給「X」（模組：Y）」裡
+    const who = String(a.recipientName ?? a.displayName ?? '').trim()
+    const mod = String(a.moduleName ?? '').trim() || (String(row.note ?? '').match(/（模組：(.+)）$/)?.[1] ?? '')
+    const n = Number(a.messagesCount)
+    return [
+      `送${Number.isFinite(n) && n > 0 ? ` ${n} 則` : ''}給 LINE 好友「${who || '（沒記到名字）'}」`,
+      ...(mod ? [`內容是模組「${mod}」`] : []),
+    ]
+  },
+  'broadcast.schedule': (row) => {
+    const at = row.after?.scheduleAt
+    const was = row.before?.scheduleAt
+    if (typeof at !== 'string' || !at) return ['排進了排程（沒記到時間）']
+    return [
+      `${auditValueText(at)} 送出`,
+      ...(typeof was === 'string' && was && was !== at ? [`原本排在 ${auditValueText(was)}`] : []),
+    ]
+  },
+  'broadcast.scheduledSend': (row) => {
+    const a = row.after ?? {}
+    if (a.status === 'failed') return [`沒送出去：${String(row.note ?? '').trim() || '原因沒記到'}`]
+    const sent = Number(a.sentCount ?? 0)
+    const failed = Number(a.failedCount ?? 0)
+    return [`送到 ${sent} 人${failed ? `，${failed} 人沒送成功` : '，全部送到'}`]
+  },
+}
+
+/** 有專屬講法的動作回那幾行；沒有就回 null，畫面照舊走 `auditChangeLines` */
+export function auditDetailLines(row: AuditRowLike): string[] | null {
+  const f = AUDIT_DETAIL_FORMATTERS[row.action]
+  return f ? f(row) : null
+}
+
+/**
+ * 前後對照，但拿掉已經寫進標題的名字（`D-117`）。
+ * ⛔ 只拿掉「新增／試發／送出」這種名字是**身分**的那一行；改名（`before` 也有 `name`）是真的改動，照印。
+ */
+export function auditRowChanges(row: AuditRowLike): AuditChangeSummary {
+  const summary = auditChangeLines(row.before, row.after)
+  if (!auditTarget(row) || (row.before && 'name' in row.before)) return summary
+  return { ...summary, lines: summary.lines.filter(l => l.key !== 'name') }
+}
+
+/**
+ * 標題下面那行灰字：已經寫進標題或細節的就不再講一次（「廢話＝跟畫面上已經有的字重複」）。
+ * - 有專屬細節的動作：備註講的事細節欄都講了
+ * - 備註就是名字（改內容／排程／取消）：標題已經有了
+ * - 「名字：…」：只留冒號後面那半
+ */
+export function auditVisibleNote(row: AuditRowLike): string {
+  const note = String(row.note ?? '').trim()
+  if (!note || AUDIT_DETAIL_FORMATTERS[row.action]) return ''
+  const target = auditTarget(row)
+  if (!target) return note
+  if (note === target.name) return ''
+  if (note.startsWith(`${target.name}：`)) return note.slice(target.name.length + 1)
+  return note
+}
+
 /** 一筆操作紀錄（API 回給畫面的形狀；憑證類欄位在寫入時就已遮罩） */
 export interface AuditLogRow {
   id: string
@@ -568,6 +700,8 @@ export interface AuditLogRow {
   after: Record<string, unknown> | null
   /** 補充說明（有些動作沒有前後值，只有一句「動了幾筆」） */
   note?: string
+  /** 動到的那份文件 id（推播…）。舊紀錄可能沒有；畫面拿它做「點了打開那一則」 */
+  targetId?: string
   /** 發生時間（毫秒）。⛔可能是 null：serverTimestamp 寫入後到讀取前有極短的空窗 */
   createdAt: number | null
   /** 這一筆能不能一鍵還原（後端算，⛔前端不要自己判斷） */

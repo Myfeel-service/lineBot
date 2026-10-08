@@ -60,7 +60,7 @@ export default defineEventHandler(async (event) => {
       //    那套邏輯綁在租戶情境上。平台頁只讀，⛔ 不給一顆按下去行為不明的按鈕。
       revertible: false,
       action: String(data.action ?? ''),
-      actor: data.actor === 'agent' ? 'agent' : 'human',
+      actor: data.actor === 'agent' || data.actor === 'system' ? data.actor : 'human',
       uid: String(data.uid ?? ''),
       before: (data.before ?? null) as Record<string, unknown> | null,
       after: (data.after ?? null) as Record<string, unknown> | null,

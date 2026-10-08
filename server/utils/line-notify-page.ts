@@ -6,6 +6,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { getDb, getFirebaseAuth } from './firebase'
 import { readAiSettingsFresh } from './ai-settings'
 import { normalizeLineUserId, notifyListHas } from '~~/shared/line-notify-list'
+import { compareMembersForList } from '~~/shared/member-order'
 import { HANDOFF_NOTIFY_MAX, memberDocId } from './member-line-bind'
 import { readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery, type RecipientState } from './line-notify-delivery'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
@@ -129,9 +130,8 @@ export async function buildLineNotifyPageData(input: {
       delivery: receiving ? recipientDeliveryState(delivery.d[normalizeLineUserId(lineUserId)]) : null,
     })
   }
-  // 自己排第一，其餘照角色（擁有者／管理員／客服）
-  const ORDER: Record<string, number> = { owner: 0, admin: 1, agent: 2, viewer: 3 }
-  rows.sort((a, b) => (a.isSelf === b.isSelf ? (ORDER[a.role] ?? 9) - (ORDER[b.role] ?? 9) : a.isSelf ? -1 : 1))
+  // 自己排第一，其餘照角色、同角色照 Email——跟「成員管理」同一個順序（`D-117`）
+  rows.sort(compareMembersForList)
 
   const others = ids
     .map(id => normalizeLineUserId(id))

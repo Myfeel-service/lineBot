@@ -2,6 +2,7 @@ import { getDb, getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { resolveAudienceUserIds } from '~~/server/utils/audience'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
+import { broadcastVariableWarning, findSendVariables } from '~~/shared/preview-variables'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -48,8 +49,16 @@ export default defineEventHandler(async (event) => {
    * ⚠️ 判斷「是不是模組型」用**送出端同一支函式**，不要照 `messages[0].type` 自己看。
    */
   const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
+  /**
+   * `D-118`：推播是一次送給所有人，`{{displayName}}` 這類變數送出去一律是空白。
+   * ⛔ 不擋（句子寫成少了名字也通的話照樣能送），但按下去之前一定要講——9/29 起 7 則推播、
+   *    約 8,400 人次收到開頭空一格的句子，因為預覽一直說「會換成名字」。
+   * 掃的是**送出去的那一份**：模組型掃模組內容，其他掃推播本身。
+   */
+  let sendVariables: string[] = findSendVariables(triggerModuleId ? [] : data.messages)
   if (triggerModuleId) {
     const flow = await getDoc<Record<string, unknown>>('flows', triggerModuleId)
+    if (flow && flow.workspaceId === workspaceId) sendVariables = findSendVariables(flow.messages)
     const flowName = String(flow?.name || '').trim()
     if (!flow || flow.workspaceId !== workspaceId) {
       errors.push('這則推播要送出的機器人模組已經不存在了（可能被刪掉），現在發出去會整則失敗。請改選一個還在的模組。')
@@ -110,9 +119,13 @@ export default defineEventHandler(async (event) => {
     errors.push('受眾人數為 0，無法發送')
   }
 
+  const warnings: string[] = sendVariables.length ? [broadcastVariableWarning(sendVariables)] : []
+
   return {
     valid: errors.length === 0,
     errors,
+    /** 不擋發送、但要在確認框講的事（`D-118`） */
+    warnings,
     estimatedCount: resolvedUserIds.length,
     previewUserIds: resolvedUserIds.slice(0, 5),
   }

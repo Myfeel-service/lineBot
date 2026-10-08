@@ -97,11 +97,34 @@
   color: var(--el-color-danger);
 }
 
+// 「LINE 手機」那一格（`D-117`：原本「LINE」「狀態」兩格併成一格）：名字＋下面一行
+.ln-phone-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ln-phone-cell__sub {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+
+  // 收不到：黃（跟上面那條「有 N 位收不到」同一組色），⛔ 不用紅
+  &.is-warn {
+    color: var(--el-color-warning-dark-2);
+    font-weight: 600;
+  }
+}
+
+// ⚠️ 不再 nowrap：欄寬併過之後夠放，長名字（「君翰（アーサー) Arthur Lin」）原本會被切成「Arthur..」
 .ln-line {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .ln-avatar {
@@ -124,32 +147,7 @@
 
 .ln-line__name {
   color: var(--text-primary);
-}
-
-// 「狀態」那一格：第一行結論（會收到／送不到／通知關著／還沒加進來），第二行細節
-.ln-status {
-  font-weight: 700;
-  line-height: 1.55;
   overflow-wrap: anywhere;
-
-  &.is-ok {
-    color: var(--brand-green-text);
-  }
-
-  &.is-warn {
-    color: var(--el-color-warning-dark-2);
-  }
-
-  &.is-off {
-    color: var(--text-muted);
-  }
-}
-
-.ln-status__sub {
-  display: block;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-muted);
 }
 
 // 「傳連結給他」對話框

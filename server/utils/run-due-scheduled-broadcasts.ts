@@ -2,7 +2,14 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { executeBroadcastSend } from './broadcast-send'
 import { getDb } from './firebase'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
-import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED } from '~~/shared/broadcast-failure'
+import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
+/**
+ * 排程到點送出也記一筆操作紀錄（`D-117` 拍板 1，2026-10-08）。
+ * 以前紀錄停在「排定了推播」就斷了：看的人不知道後來到底有沒有送、送了幾人。
+ * ⚠️ actor＝system、uid 空字串：送出那一刻沒有人在按，⛔ 不掛在「排程的那個人」頭上。
+ * ⚠️ `writeAuditLog` 自己吞錯，記不進去也不影響送出結果。
+ */
+import { writeAuditLog } from './audit-log'
 
 export type DueScheduledBroadcastResult = {
   id: string
@@ -25,6 +32,9 @@ export type RunDueScheduledBroadcastsResponse = {
  * 10 分鐘是「絕不誤殺活單」的保守值。
  */
 const STUCK_PROCESSING_MS = 10 * 60_000
+
+/** `claimBroadcastForSend` 認領不到時丟的錯：這一輪根本沒輪到它送（`broadcast-claim.ts`） */
+const CLAIM_NOT_OURS_RE = /^(Cannot send broadcast with status|Broadcast not found|Broadcast scheduleAt is in the future|Scheduled broadcast missing scheduleAt)/
 
 /**
  * 看門狗：把卡死在 processing 的推播收殮成 failed，讓它重新有出口。
@@ -173,15 +183,45 @@ export async function runDueScheduledBroadcasts(
 
     triggered++
     const id = doc.id
+    const docWorkspaceId = String(doc.data().workspaceId || '')
+    const name = String(doc.data().name ?? '')
     try {
       const result = await executeBroadcastSend(id, { source: 'scheduler' })
       results.push({ id, success: result.success })
       console.log(`[broadcast-scheduler] ✓ ${id} sentCount=${result.sentCount}`)
+      await writeAuditLog({
+        workspaceId: docWorkspaceId,
+        uid: '',
+        actor: 'system',
+        action: 'broadcast.scheduledSend',
+        targetId: id,
+        after: {
+          name,
+          status: 'completed',
+          totalCount: result.totalCount,
+          sentCount: result.sentCount,
+          failedCount: result.failedCount,
+        },
+        ...(result.postSendError ? { note: `送出後記帳未完成：${result.postSendError}` } : {}),
+      })
     }
     catch (e: unknown) {
       const error = String(e instanceof Error ? e.message : e)
       results.push({ id, success: false, error })
       console.error(`[broadcast-scheduler] ✗ ${id}`, error)
+      // ⛔ 認領輸了（另一台排程器先拿走、剛被取消）不是「沒送出去」：那則可能正由別人送著，
+      //    記一筆失敗會跟隨後那筆「送到 461 人」打架
+      if (CLAIM_NOT_OURS_RE.test(error)) continue
+      // 沒送出去也要留一筆：不然紀錄停在「排定了」，看的人會以為送了
+      await writeAuditLog({
+        workspaceId: docWorkspaceId,
+        uid: '',
+        actor: 'system',
+        action: 'broadcast.scheduledSend',
+        targetId: id,
+        after: { name, status: 'failed' },
+        note: humanizeBroadcastSendFailure(error),
+      })
     }
   }
 

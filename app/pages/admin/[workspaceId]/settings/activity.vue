@@ -31,7 +31,7 @@
               畫面宣稱記了一件沒有在記的事，比什麼都不寫更糟。新增／移除稽核時這段要一起改。
             -->
             <p class="text-xs text-muted">
-              這裡記的是會改到設定、或會影響客人的操作：推播（含送出與試發）、機器人模組、
+              這裡記的是會改到設定、或會影響客人的操作：推播（含送出、試發與排程到點送出）、機器人模組、
               圖文選單與圖文訊息、自動回應、知識庫與資料來源、標籤、加好友活動、「認識你的店」、
               成員與權限、方案與發票。
             </p>
@@ -76,21 +76,35 @@
                   <el-tag v-if="isPlatformAction(row.action)" type="danger" size="small" effect="light">
                     平台
                   </el-tag>
-                  <el-tag v-else :type="row.actor === 'agent' ? 'warning' : 'info'" size="small" effect="light">
+                  <!-- `D-117`：成員自己按的不掛色標（每一列都一樣＝等於沒講），只標小幫手與系統排程 -->
+                  <el-tag v-else-if="row.actor !== 'human'" :type="row.actor === 'agent' ? 'warning' : 'info'" size="small" effect="light">
                     {{ actorLabel(row) }}
                   </el-tag>
-                  <div class="text-xs text-muted">{{ isPlatformAction(row.action) ? 'MiniMe 團隊' : who(row) }}</div>
+                  <div v-if="isPlatformAction(row.action)" class="text-xs text-muted">MiniMe 團隊</div>
+                  <div v-else-if="row.actor === 'human'" class="text-xs">{{ who(row) }}</div>
+                  <div v-else-if="row.actor === 'agent'" class="text-xs text-muted">{{ who(row) }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="做了什麼">
                 <template #default="{ row }">
-                  <div>{{ auditActionLabel(row.action) }}</div>
-                  <div v-if="row.note" class="text-xs text-muted">{{ row.note }}</div>
+                  <!-- `D-117`：是哪一則推播直接寫進標題、點了打開那一則（原本要去右欄第一行找） -->
+                  <div>
+                    {{ auditActionLabel(row.action) }}<template v-if="targetName(row)">「<NuxtLink
+                      v-if="row.targetId"
+                      :to="{ path: `/admin/${workspaceId}/broadcasts`, query: { id: row.targetId } }"
+                      class="link"
+                    >{{ targetName(row) }}</NuxtLink><template v-else>{{ targetName(row) }}</template>」</template>
+                  </div>
+                  <div v-if="auditVisibleNote(row)" class="text-xs text-muted">{{ auditVisibleNote(row) }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="改動內容">
+              <el-table-column label="細節">
                 <template #default="{ row }">
-                  <div v-if="changes(row).lines.length">
+                  <!-- 試發／排程／排程送出：照事情本身講（送給誰、幾點送），不走「欄位：值 → 值」 -->
+                  <div v-if="auditDetailLines(row)">
+                    <div v-for="(line, i) in auditDetailLines(row)" :key="i" class="text-xs">{{ line }}</div>
+                  </div>
+                  <div v-else-if="changes(row).lines.length">
                     <div v-for="c in changes(row).lines" :key="c.key" class="text-xs">
                       <!--
                         新增類不印「（空白） →」、刪除類不印「→ （空白）」：標題已經寫了
@@ -144,9 +158,12 @@ import { ElMessageBox } from 'element-plus'
 import {
   AUDIT_ACTOR_LABELS,
   auditActionLabel,
-  auditChangeLines,
+  auditDetailLines,
   auditIsCreate,
   auditIsDelete,
+  auditRowChanges,
+  auditTarget,
+  auditVisibleNote,
   isPlatformAction,
   type AuditChangeSummary,
   type AuditLogRow,
@@ -155,7 +172,7 @@ import {
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 useHead({ title: useAdminTitle('操作紀錄') })
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, workspaceId } = useWorkspace()
 
 interface AgentStats { proposed: number, executed: number, notConfirmed: number }
 interface ListRes {
@@ -191,6 +208,11 @@ function who(row: AuditLogRow): string {
   return uidEmails.value[row.uid] || row.uid || '（查不到操作者）'
 }
 
+/** 標題後面接的推播名字（`D-117`）；不是推播或找不到名字回空字串 */
+function targetName(row: AuditLogRow): string {
+  return auditTarget(row)?.name ?? ''
+}
+
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })
 }
@@ -207,7 +229,8 @@ const changeCache = new Map<string, AuditChangeSummary>()
 function changes(row: AuditLogRow): AuditChangeSummary {
   const hit = changeCache.get(row.id)
   if (hit) return hit
-  const summary = auditChangeLines(row.before, row.after)
+  // 已經寫進標題的推播名字不再印一次（改名那種真的改動照印，見 `auditRowChanges`）
+  const summary = auditRowChanges(row)
   changeCache.set(row.id, summary)
   return summary
 }

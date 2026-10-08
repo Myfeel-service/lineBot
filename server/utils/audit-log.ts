@@ -15,6 +15,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { currentAgentOpId } from './agent-op-context'
+import type { AuditActor } from '~~/shared/types/audit'
 
 export const AUDIT_LOGS_COLLECTION = 'auditLogs'
 
@@ -31,8 +32,11 @@ export interface AuditLogInput {
    */
   workspaceId: string
   uid: string
-  /** human=人在頁面/端點直接操作;agent=AI 小幫手代辦(Phase 2 起) */
-  actor: 'human' | 'agent'
+  /**
+   * human=人在頁面/端點直接操作;agent=AI 小幫手代辦(Phase 2 起);
+   * system=到了時間系統自己做的（排程推播到點送出，`D-117`）——uid 傳空字串，⛔ 不掛在任何人頭上
+   */
+  actor: AuditActor
   /** 動作代號,慣例用端點路徑,如 'ai/settings.put'、'richmenu/setDefault' */
   action: string
   before?: Record<string, unknown> | null

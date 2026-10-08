@@ -77,3 +77,22 @@ describe('renderTextForUser', () => {
     expect(renderTextForUser('{{displayName}} 您好', null)).toBe(' 您好')
   })
 })
+
+/**
+ * `D-118`：推播的預覽（`renderBroadcastVariablesDeep`）要跟送出端換成**一樣的字**。
+ * 推播走群發、沒有任何客人的資料＝送出端等於 `renderTextForUser(值, null)`。
+ * ⛔ 兩邊的變數規則（只認英文開頭的名字）一旦漂開，預覽又會開始說謊。
+ */
+describe('推播預覽跟送出端換成一樣的字', () => {
+  it.each([
+    '{{displayName}} ，還記得我們問過你「每天的水，都怎麼喝？」嗎？',
+    '{{ displayName }} ⏰ 最後提醒！你的 $1,000 還沒用',
+    '嗨 {{nickname}}、{{city_2}}！',
+    '中文變數名送出端不換：{{名字}}',
+    '數字開頭也不換：{{1abc}}',
+    '沒有變數的句子',
+  ])('%s', async (text) => {
+    const { renderBroadcastVariablesDeep } = await import('~~/shared/preview-variables')
+    expect(renderBroadcastVariablesDeep(text).value).toBe(renderTextForUser(text, null))
+  })
+})

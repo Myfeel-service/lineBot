@@ -1665,7 +1665,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="mem-invite"]',
         title: '用 Email 邀請',
         description:
-          '點「<strong>邀請成員</strong>」輸入 Email——對方<strong>不用先註冊</strong>，等他建帳號首次登入就自動生效。',
+          '點「<strong>邀請成員</strong>」輸入他的 Google 信箱——對方<strong>不用先註冊</strong>，用那個信箱第一次登入就自動生效。'
+          // `D-117`：系統不會寄邀請信（`G-3`），不講的話管理員會以為對方收到通知了
+          + '⚠️ 系統<strong>不會寄信</strong>給他：邀請完在他那一列按「<strong>複製登入連結</strong>」傳給他。',
         placement: 'bottom-end',
       },
       {
@@ -1702,7 +1704,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '客人要找真人、每天早上的摘要，會用 LINE 傳到這裡每一列的手機。'
           + '還沒加進來的，按「<strong>把我的手機加進來</strong>」<strong>用手機掃一下</strong>就好；'
-          + '「狀態」變黃的是收不到的人，原因寫在同一格。',
+          // `D-117`：「狀態」那一欄併進「LINE 手機」，收不到的原因寫在名字下面那一行
+          + '收不到的人，LINE 名字下面那一行會變黃、寫原因。',
         placement: 'bottom',
       },
       {
@@ -1715,7 +1718,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '同事不登入後台？傳連結給他',
         description:
           '還沒加進來的同事那一列有「<strong>傳連結給他</strong>」：按了會給你一條連結，用 LINE 或任何方式傳給他，'
-          + '<strong>他用手機點開、按送出</strong>就加進來了，不用登入後台，這一列會自己變成「會收到」。連結有期限，過期再按一次就好。',
+          + '<strong>他用手機點開、按送出</strong>就加進來了，不用登入後台，這一列會自己出現他的 LINE 名字。連結有期限，過期再按一次就好。',
         placement: 'left',
       },
       {

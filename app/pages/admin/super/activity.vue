@@ -182,6 +182,8 @@ function actorLabel(row: PlatformAuditRow): string {
 }
 
 function who(row: PlatformAuditRow): string {
+  // 排程到點自動做的（`D-117`）：本來就沒有操作者，⛔ 不要寫成「查不到」讓人以為紀錄壞了
+  if (row.actor === 'system') return '到點自動執行'
   // 換不到 Email 就顯示 uid：查不到「是誰」也要看得出「是同一個人」
   return uidEmails.value[row.uid] || row.uid || '（查不到操作者）'
 }
