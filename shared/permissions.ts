@@ -78,6 +78,10 @@ export const CAPABILITIES = {
   // LINE 通知：改「什麼時候通知」、開關／解除別人、幫別人產綁定連結（`D-103`）。
   // ⛔ 不綁 AI 設定的權限與 ai-feature：純真人客服的帳號一樣要收找真人與每日摘要。
   'notify.manage': 'admin',
+  // 試發推播的「常找來看稿的人」名單（`D-119` ⑥，2026-10-09）：試發只能發給名單上的人，
+  // 這份名單由管理員加一次就一直在。放 admin 的理由：名單擋的是「挑錯人＝把還沒定稿的內容發給客人」，
+  // 加人那一下還是要在全部好友裡找名字，交給少數人做、而且進操作紀錄。
+  'broadcast.testList': 'admin',
 } as const satisfies Record<string, WorkspaceMemberRole>
 
 export type Capability = keyof typeof CAPABILITIES

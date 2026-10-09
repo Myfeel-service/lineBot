@@ -69,8 +69,108 @@
   line-height: 1.6;
 }
 
-.bc-testsend-select {
+/* `D-119` ⑥：試發框的收件人名單（自己／同事／常找來看稿的人，打勾） */
+.bc-testsend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+.bc-testsend-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.bc-testsend-group__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ⚠️ Element 的 el-checkbox 固定 32px 高、不換行：名字＋Email 一長就溢出去。
+   夾父層才蓋得過 Element 的樣式（載入順序在後） */
+.bc-testsend-list .el-checkbox {
+  height: auto;
+  min-height: 30px;
+  margin-right: 0;
+  white-space: normal;
+}
+
+.bc-testsend-who {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bc-testsend-avatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+
+  &--initial {
+    display: grid;
+    place-items: center;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+}
+
+.bc-testsend-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 常找來看稿的人：勾選＋右邊「拿掉」 */
+.bc-testsend-saved {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.bc-testsend-remove {
+  flex: none;
+}
+
+.bc-dialog-testsend .bc-testsend-add {
   width: 100%;
+  margin-top: 0.5rem;
+}
+
+/* 自己還沒加手機：就地加 */
+.bc-testsend-bind {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.bc-testsend-bind__text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* 有人沒送到：黃字（跟 LINE 通知「送不到」同一組色），⛔ 不用紅——不是系統壞了 */
+.bc-testsend-failed {
+  margin: 0.25rem 0 0;
+  color: var(--el-color-warning-dark-2);
+  font-weight: 600;
 }
 
 .bc-testsend-done {

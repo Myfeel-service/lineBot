@@ -29,7 +29,19 @@ import { buildNotifyConfirmText, type NotifyConfirmResult } from '~~/shared/line
 /** 去掉易混淆字元（0/O、1/I/L）的字母數字表 */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const CODE_LENGTH = 6
+/** 自己掃 QR：人就坐在電腦前，10 分鐘夠了 */
 export const MEMBER_BIND_CODE_TTL_MS = 10 * 60 * 1000
+/**
+ * 管理員「傳連結給他」：24 小時（`D-119` 拍板 A，2026-10-09）。
+ * 為什麼：連結是丟到同事 LINE 裡，他常常幾小時後才點——10 分鐘的版本上線以來只被用過一次
+ * （9/28 給 jo.chen），他到今天都沒綁上。
+ * ⚠️ 代價：連結被轉傳的話，24 小時內別人點得到。緩解＝用一次就失效（綁好就刪碼）、
+ *    綁好那一列秀出 LINE 名字與頭像、產碼與綁定都進操作紀錄。
+ */
+export const MEMBER_BIND_LINK_TTL_MS = 24 * 60 * 60 * 1000
+
+/** 這組碼是誰產的：決定有效多久、過期時回覆叫他找誰 */
+export type MemberBindCodeIssuer = 'self' | 'admin'
 
 /**
  * 綁定訊息格式：`綁定 A3F9K2`（也接受 bind / 全形冒號 / 沒空格）。
@@ -92,10 +104,12 @@ export function memberDocId(uid: string, workspaceId: string): string {
 
 /**
  * 為成員產生（或重發）一次性綁定碼。舊碼直接被覆蓋，同一位成員永遠只有一組有效碼。
+ * `by`：自己掃 QR（10 分鐘）還是管理員「傳連結給他」（24 小時，`D-119`）。
  */
 export async function issueMemberLineBindCode(
   workspaceId: string,
   uid: string,
+  by: MemberBindCodeIssuer = 'self',
 ): Promise<{ code: string; expiresAt: number; message: string; bindUrl: string }> {
   const db = getDb()
   const ref = db.collection('workspaceMembers').doc(memberDocId(uid, workspaceId))
@@ -114,9 +128,10 @@ export async function issueMemberLineBindCode(
   let code = randomCode()
   for (let i = 0; i < 20 && taken.has(code); i++) code = randomCode()
 
-  const expiresAt = Date.now() + MEMBER_BIND_CODE_TTL_MS
+  const issuedAt = Date.now()
+  const expiresAt = issuedAt + (by === 'admin' ? MEMBER_BIND_LINK_TTL_MS : MEMBER_BIND_CODE_TTL_MS)
   const [, basicId] = await Promise.all([
-    ref.update({ lineBindCode: code, lineBindCodeExpiresAt: expiresAt }),
+    ref.update({ lineBindCode: code, lineBindCodeExpiresAt: expiresAt, lineBindCodeBy: by, lineBindCodeIssuedAt: issuedAt }),
     resolveLineOaBasicId(workspaceId).catch(() => ''),
   ])
 
@@ -174,8 +189,11 @@ export async function tryConsumeMemberLineBindCode(params: {
       return true
     }
     if (Number(target.data().lineBindCodeExpiresAt ?? 0) < Date.now()) {
-      // 2026-09-27 `C-270`：綁定搬到「設定 → LINE 通知」（自己掃 QR 或管理員「傳連結給他」都在那一頁）
-      await reply('❌ 這組綁定碼已過期，請到後台「設定 → LINE 通知」重新產生一組。')
+      // `D-119`：管理員傳的連結是給「不常進後台的人」用的，⛔ 不可以叫他自己去後台重新產生——
+      //   那是他去不了的地方。照誰產的碼講下一步找誰。
+      await reply(target.data().lineBindCodeBy === 'admin'
+        ? '❌ 這個連結已經過期了。請管理員到後台「設定 → LINE 通知」在你那一列再按一次「傳連結給他」，把新的連結傳給你。'
+        : '❌ 這組綁定碼已過期，請到後台「設定 → LINE 通知」重新產生一組。')
       return true
     }
 
@@ -205,6 +223,8 @@ export async function tryConsumeMemberLineBindCode(params: {
       lineBoundAt: FieldValue.serverTimestamp(),
       lineBindCode: FieldValue.delete(),
       lineBindCodeExpiresAt: FieldValue.delete(),
+      lineBindCodeBy: FieldValue.delete(),
+      lineBindCodeIssuedAt: FieldValue.delete(),
     })
     for (const c of conflicts) {
       batch.update(c.ref, {
@@ -278,6 +298,8 @@ export async function unbindMemberLine(workspaceId: string, uid: string): Promis
     lineBoundAt: FieldValue.delete(),
     lineBindCode: FieldValue.delete(),
     lineBindCodeExpiresAt: FieldValue.delete(),
+    lineBindCodeBy: FieldValue.delete(),
+    lineBindCodeIssuedAt: FieldValue.delete(),
   })
 }
 
@@ -387,6 +409,8 @@ export async function bindMemberLineUser(
     lineBoundAt: FieldValue.serverTimestamp(),
     lineBindCode: FieldValue.delete(),
     lineBindCodeExpiresAt: FieldValue.delete(),
+    lineBindCodeBy: FieldValue.delete(),
+    lineBindCodeIssuedAt: FieldValue.delete(),
   })
   for (const d of others.docs) {
     if (d.id === ref.id) continue

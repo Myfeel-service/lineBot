@@ -1442,7 +1442,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="bc-testsend"]',
         title: '先發一則給自己看',
         description:
-          '寫好之後按「<strong>試發一則給自己看</strong>」，會真的送到你挑的那支手機——在手機上看過字、圖、按鈕都對了再發。'
+          // `D-119` ⑥：收件人改成名單打勾（自己、綁好手機的同事、常找來看稿的人），不再在全部好友裡搜名字
+          '寫好之後按「<strong>試發一則給自己看</strong>」，勾你自己、同事或常找來看稿的人，會真的送到他們的手機——在手機上看過字、圖、按鈕都對了再發。'
           + '試發<strong>不會</strong>算進成效、<strong>不會</strong>貼記號、也<strong>不會</strong>改變這則推播的狀態。',
         placement: 'left',
       },

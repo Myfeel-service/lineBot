@@ -20,6 +20,8 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
 }))
 vi.mock('~~/server/utils/handler', () => ({ renderModuleToLineMessages: vi.fn() }))
 vi.mock('~~/server/utils/line', () => ({ pushMessage: vi.fn() }))
+// `D-119` ⑥：只能發給試發名單上的人。名單怎麼算在 broadcast-test-recipients 那支測，這裡只給結果
+vi.mock('~~/server/utils/broadcast-test-recipients', () => ({ allowedTestRecipientIds: vi.fn() }))
 
 let body: Record<string, unknown> = {}
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -33,9 +35,14 @@ const { default: handler } = await import('./test-send.post')
 const { getDoc } = await import('~~/server/utils/firebase')
 const { renderModuleToLineMessages } = await import('~~/server/utils/handler')
 const { pushMessage } = await import('~~/server/utils/line')
+const { allowedTestRecipientIds } = await import('~~/server/utils/broadcast-test-recipients')
 const mockGetDoc = vi.mocked(getDoc)
 const mockRender = vi.mocked(renderModuleToLineMessages)
 const mockPush = vi.mocked(pushMessage)
+const mockAllowed = vi.mocked(allowedTestRecipientIds)
+/** 名單上的第二位（看稿的同事）、名單外的一位（客人） */
+const COLLEAGUE = 'U1111111111abcdef0123456789abcdef'
+const STRANGER = 'U2222222222abcdef0123456789abcdef'
 
 const moduleCard = [{
   type: 'template',
@@ -61,6 +68,8 @@ beforeEach(() => {
   mockGetDoc.mockReset()
   mockRender.mockReset()
   mockPush.mockReset()
+  mockAllowed.mockReset()
+  mockAllowed.mockResolvedValue(new Set([FRIEND, COLLEAGUE]))
 })
 
 describe('試發一則：送的是正式發送會送的那一份', () => {
@@ -79,7 +88,7 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
     expect(to).toBe(FRIEND)
     expect(ws).toBe(WS)
     expect(JSON.stringify(messages)).not.toContain('點下面的按鈕看看')
-    expect(res).toMatchObject({ ok: true, messageCount: 2, moduleName: '開賣通知', displayName: '吉米' })
+    expect(res).toMatchObject({ ok: true, messageCount: 2, moduleName: '開賣通知', sent: [{ lineUserId: FRIEND, displayName: '吉米', ok: true }] })
   })
 
   it('純文字：照原樣送（送出端也不會動它）', async () => {
@@ -92,11 +101,11 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
     expect(res.messageCount).toBe(1)
   })
 
-  it('⛔ 貼錯 ID → 講清楚去哪裡拿，不要讓 LINE 回一個看不懂的 400', async () => {
+  it('⛔ 不是 LINE 帳號的編號 → 擋下來，不要讓 LINE 回一個看不懂的 400', async () => {
     docsReturn({ workspaceId: WS, messages: [{ type: 'text', text: 'hi' }] }, { displayName: '吉米' })
     body = { lineUserId: 'Uf0d' }
 
-    await expect((handler as any)({})).rejects.toThrow(/複製 ID/)
+    await expect((handler as any)({})).rejects.toThrow(/不是 LINE 帳號/)
     expect(mockPush).not.toHaveBeenCalled()
   })
 
@@ -129,5 +138,62 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
     }))
 
     await expect((handler as any)({})).rejects.toThrow(/封鎖/)
+  })
+})
+
+/**
+ * `D-119` ⑥（2026-10-09 老闆「照改」）：只能發給試發名單上的人，一次可以好幾位。
+ * 為什麼：原本在九千多位好友裡搜名字，叫 Alice 的有 5 位，挑錯就是把還沒定稿的內容發給客人；
+ * 但又不能只限自己——正式庫裡被拿來試打的推播，大多是一次發給幾位看稿的同事。
+ */
+describe('試發只能發給名單上的人，一次可以好幾位', () => {
+  /** 每位好友各自的資料（null＝不是好友了） */
+  function friendsAre(map: Record<string, Record<string, any> | null>) {
+    mockGetDoc.mockImplementation(async (collection: string, id: string) => {
+      if (collection === 'broadcasts') return { workspaceId: WS, name: '水多會-超早鳥倒數', messages: [{ type: 'text', text: 'hi' }] } as any
+      if (collection === 'users') return (Object.entries(map).find(([k]) => id.endsWith(k))?.[1] ?? null) as any
+      return null as any
+    })
+  }
+
+  it('⛔ 名單外的人（例如挑錯的同名客人）→ 403，而且一個都不送', async () => {
+    friendsAre({ [FRIEND]: { displayName: '江' }, [STRANGER]: { displayName: 'Alice' } })
+    body = { lineUserIds: [FRIEND, STRANGER] }
+
+    await expect((handler as any)({})).rejects.toMatchObject({ statusCode: 403 })
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it('⭐ 一次好幾位：一位封鎖了，其他照送，回傳講得出誰沒送到', async () => {
+    friendsAre({ [FRIEND]: { displayName: '江' }, [COLLEAGUE]: { displayName: '游瑞茹' } })
+    mockPush.mockImplementation(async (to: string) => {
+      if (to === COLLEAGUE) throw Object.assign(new Error('boom'), { originalError: { response: { data: { message: 'blocked' } } } })
+      return {} as Awaited<ReturnType<typeof pushMessage>>
+    })
+    body = { lineUserIds: [FRIEND, COLLEAGUE] }
+
+    const res = await (handler as any)({})
+
+    expect(mockPush).toHaveBeenCalledTimes(2)
+    expect(res.sent).toEqual([
+      { lineUserId: FRIEND, displayName: '江', ok: true },
+      expect.objectContaining({ lineUserId: COLLEAGUE, displayName: '游瑞茹', ok: false, error: expect.stringContaining('封鎖') }),
+    ])
+  })
+
+  it('一位都沒送到 → 整個算失敗，講出每一位的原因', async () => {
+    friendsAre({ [FRIEND]: null, [COLLEAGUE]: { displayName: '游瑞茹' } })
+    mockPush.mockRejectedValue(new Error('boom'))
+    body = { lineUserIds: [FRIEND, COLLEAGUE] }
+
+    await expect((handler as any)({})).rejects.toThrow(/一位都沒送到.*不是這個官方帳號的好友.*游瑞茹/)
+  })
+
+  it('一個都沒勾 → 講要勾人，不要送', async () => {
+    friendsAre({ [FRIEND]: { displayName: '江' } })
+    body = { lineUserIds: [] }
+
+    await expect((handler as any)({})).rejects.toThrow(/至少勾一位/)
+    expect(mockPush).not.toHaveBeenCalled()
   })
 })

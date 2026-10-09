@@ -92,7 +92,7 @@
   padding: 4px;
 }
 
-// 「⋯」選單裡的「解除綁定」（選單掛在 body 底下，不能靠 .ln-table 往下找）
+// 「⋯」選單裡的「移除這支手機」（選單掛在 body 底下，不能靠 .ln-table 往下找）
 .el-dropdown-menu__item.ln-menu-danger {
   color: var(--el-color-danger);
 }

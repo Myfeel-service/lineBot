@@ -5,10 +5,21 @@ import { renderModuleToLineMessages } from '~~/server/utils/handler'
 import { pushMessage } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
+import { allowedTestRecipientIds } from '~~/server/utils/broadcast-test-recipients'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /** LINE 的 userId 一律是 U ＋ 32 位十六進位 */
 const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/i
+/** 一次最多發幾位：看稿的人通常 1–5 位（正式庫實測），上限只是擋手滑 */
+const MAX_TEST_RECIPIENTS = 10
+
+interface TestSendResult {
+  lineUserId: string
+  displayName: string
+  ok: boolean
+  /** 沒送到的原因（人看得懂的一句話） */
+  error?: string
+}
 
 /**
  * POST /api/broadcast/:id/test-send —— 先發一則給自己看（`C-248`）。
@@ -38,26 +49,42 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Broadcast not found' })
   }
 
-  const body = await readBody<{ lineUserId?: string }>(event)
-  const lineUserId = String(body?.lineUserId || '').trim()
-  if (!LINE_USER_ID_RE.test(lineUserId)) {
+  /*
+   * `D-119` ⑥（2026-10-09）：一次可以勾好幾位，但**只能發給試發名單上的人**——
+   * 自己綁好的手機、綁好的同事、常找來看稿的人。⛔ 名單一律由伺服器算，不信任前端傳來的。
+   * （舊的單一 `lineUserId` 照收，一樣要在名單上）
+   */
+  const body = await readBody<{ lineUserIds?: unknown, lineUserId?: unknown }>(event)
+  const requested = [
+    ...(Array.isArray(body?.lineUserIds) ? body.lineUserIds : []),
+    ...(body?.lineUserId ? [body.lineUserId] : []),
+  ].map(v => String(v ?? '').trim())
+  const lineUserIds = [...new Set(requested)]
+  if (!lineUserIds.length) {
+    throw createError({ statusCode: 400, statusMessage: '請至少勾一位要收試發的人。' })
+  }
+  if (lineUserIds.length > MAX_TEST_RECIPIENTS) {
+    throw createError({ statusCode: 400, statusMessage: `一次最多試發給 ${MAX_TEST_RECIPIENTS} 位。` })
+  }
+  if (lineUserIds.some(v => !LINE_USER_ID_RE.test(v))) {
+    throw createError({ statusCode: 400, statusMessage: '收件人裡有一個不是 LINE 帳號，請重新打開試發再勾一次。' })
+  }
+  const allowed = await allowedTestRecipientIds(workspaceId, uid)
+  if (lineUserIds.some(v => !allowed.has(v))) {
     throw createError({
-      statusCode: 400,
-      statusMessage: '這不是一個 LINE 的使用者編號（要以大寫 U 開頭、後面 32 個字）。到「好友」頁點開一位好友、按「複製 ID」就拿得到。',
+      statusCode: 403,
+      statusMessage: '試發只能發給名單上的人：你自己、綁好手機的同事、常找來看稿的人。要發給別人，先把他加進「常找來看稿的人」。',
     })
   }
 
   /*
-   * ⛔ 先確認他是不是這個官方帳號的好友：不是的話 LINE 會回一個看不懂的 400，
-   * 而店家只會看到「發送失敗」三個字，完全不知道是 ID 貼錯還是系統壞了。
+   * ⛔ 先確認每一位都還是這個官方帳號的好友：不是的話 LINE 會回一個看不懂的 400，
+   * 而店家只會看到「發送失敗」三個字。名單上的人也可能後來封鎖或刪了好友。
    */
-  const friend = await getDoc<Record<string, unknown>>('users', lineUserFirestoreDocId(lineUserId, workspaceId))
-  if (!friend) {
-    throw createError({
-      statusCode: 404,
-      statusMessage: '這個編號不是這個官方帳號的好友（LINE 只讓我們發訊息給已加好友的人）。請確認 ID 是從這個帳號的「好友」頁複製的。',
-    })
-  }
+  const friends = await Promise.all(lineUserIds.map(async id => ({
+    lineUserId: id,
+    friend: await getDoc<Record<string, unknown>>('users', lineUserFirestoreDocId(id, workspaceId)),
+  })))
 
   if (!doc.messages?.length) {
     throw createError({ statusCode: 400, statusMessage: '這則推播還沒有訊息內容，先把內容填好再試發。' })
@@ -82,47 +109,64 @@ export default defineEventHandler(async (event) => {
     moduleName = String((rendered.flow as { name?: string })?.name || '')
   }
 
-  try {
-    await pushMessage(lineUserId, messages as never, workspaceId)
+  // 一位一位送：誰送到、誰沒送到要分得開（⛔ 一位失敗不可以讓其他人也算失敗）
+  const sent: TestSendResult[] = []
+  for (const { lineUserId, friend } of friends) {
+    const displayName = String((friend as { displayName?: string } | null)?.displayName || '')
+    if (!friend) {
+      sent.push({ lineUserId, displayName, ok: false, error: '已經不是這個官方帳號的好友' })
+      continue
+    }
+    try {
+      await pushMessage(lineUserId, messages as never, workspaceId)
+      sent.push({ lineUserId, displayName, ok: true })
+    }
+    catch (e: unknown) {
+      const detail = (e as { originalError?: { response?: { data?: { message?: string } } }; message?: string })
+      const reason = detail?.originalError?.response?.data?.message || detail?.message || ''
+      console.error('[broadcast/test-send] push failed:', reason || e)
+      sent.push({ lineUserId, displayName, ok: false, error: `LINE 沒有收下${reason ? `（${reason}）` : ''}，常見原因是對方封鎖了官方帳號` })
+    }
   }
-  catch (e: unknown) {
-    const detail = (e as { originalError?: { response?: { data?: { message?: string } } }; message?: string })
-    const reason = detail?.originalError?.response?.data?.message || detail?.message || ''
-    console.error('[broadcast/test-send] push failed:', reason || e)
+
+  const delivered = sent.filter(s => s.ok)
+  if (!delivered.length) {
+    const only = sent.length === 1 ? sent[0] : null
     throw createError({
-      statusCode: 502,
-      statusMessage: `LINE 沒有收下這則試發訊息${reason ? `（${reason}）` : ''}。常見原因是對方封鎖了官方帳號。`,
+      statusCode: only && only.error === '已經不是這個官方帳號的好友' ? 404 : 502,
+      statusMessage: only
+        ? `沒送到「${only.displayName || only.lineUserId}」：${only.error}。`
+        : `一位都沒送到：${sent.map(s => `${s.displayName || s.lineUserId}（${s.error}）`).join('、')}。`,
     })
   }
 
-  const displayName = String((friend as { displayName?: string }).displayName || '')
-
   /*
-   * 稽核（`C-254`）：試發**確實把訊息送進了一個真人的 LINE**，所以它是一次對外發送，要記。
-   * ⛔ 記在送出之後（送失敗就不該留下「發過了」的紀錄）。
-   * ⚠️ 只記收件者的顯示名稱與編號，⛔ 不記訊息內容（跟正式推播一致）。
+   * 稽核（`C-254`）：試發**確實把訊息送進了真人的 LINE**，所以它是一次對外發送，要記。
+   * ⛔ 記在送出之後、只記送到的人（送失敗就不該留下「發過了」的紀錄）。
+   * ⚠️ 只記收件者的顯示名稱，⛔ 不記訊息內容（跟正式推播一致）。
+   * `D-119`：一次可以好幾位，名字串成一行字存（⛔ 不存陣列：陣列在紀錄裡只會剩「幾項」）。
    */
+  const names = delivered.map(s => s.displayName || s.lineUserId)
   await writeAuditLog({
     workspaceId,
     uid,
     actor: 'human',
     action: 'broadcast.testSend',
     targetId: id,
-    // `D-117`：收件人用 `recipientName`（舊紀錄叫 `displayName`，畫面上跟推播名稱都翻成「名稱」，分不出誰是誰）
     after: {
       name: String(doc.name ?? ''),
-      recipientName: displayName || lineUserId,
+      recipientNames: names.join('、'),
+      recipientCount: names.length,
       messagesCount: messages.length,
       ...(moduleName ? { moduleName } : {}),
     },
-    note: `試發給 LINE 好友「${displayName || lineUserId}」${moduleName ? `（模組：${moduleName}）` : ''}`,
+    note: `試發給 ${names.join('、')}${moduleName ? `（模組：${moduleName}）` : ''}`,
   })
 
   return {
     ok: true,
     messageCount: messages.length,
     moduleName,
-    lineUserId,
-    displayName,
+    sent,
   }
 })

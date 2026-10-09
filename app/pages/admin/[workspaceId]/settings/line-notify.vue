@@ -34,7 +34,7 @@
             <!-- `D-106`：第一次進來只看到一排字跟開關、不知道從哪開始 → 一句話講怎麼用。
                  「同事登入會被問」只在真的有同事還沒加時才講（⛔ 不在每一列再講一次） -->
             <p class="ln-howto">
-              每個人用<strong>自己的手機</strong>加進來。<template v-if="hasUnboundOthers">還沒加的同事下次登入會被問<template v-if="data.canManage">；急的話按「<strong>傳連結給他</strong>」</template>。</template>
+              每個人用<strong>自己的手機</strong>加進來。<template v-if="hasUnboundOthers">還沒加的同事打開首頁會被問<template v-if="data.canManage">；急的話按「<strong>傳連結給他</strong>」</template>。</template>
             </p>
             <!-- 登入的帳號不是這個官方帳號的成員：名單上沒有自己，⛔ 不可以讓他自己猜為什麼。
                  `D-117`：平台管理員本來就不該加進名單，叫他「請擁有者邀請你」是錯的建議 → 只留一行小字；
@@ -122,7 +122,7 @@
                   <el-button v-else-if="data.canManage" size="small" plain @click="removeOther(row.o.lineUserId)">拿掉</el-button>
                 </template>
               </el-table-column>
-              <!-- 不常用、會讓人緊張的動作（解除綁定）收進「⋯」：原本紅字擠在開關旁邊，分不清哪個才是「不收」 -->
+              <!-- 不常用、會讓人緊張的動作（移除這支手機）收進「⋯」：原本紅字擠在開關旁邊，分不清哪個才是「不收」 -->
               <el-table-column width="52" align="center">
                 <template #default="{ row }">
                   <el-dropdown v-if="menuOf(row).length" trigger="click" placement="bottom-end" @command="onMenu(row, $event)">
@@ -338,7 +338,7 @@
           <code class="ln-link__text">{{ linkDialog.url || linkDialog.message }}</code>
           <el-button type="primary" size="small" @click="copyLink">{{ linkDialog.copied ? '已複製' : '複製' }}</el-button>
         </div>
-        <p class="ln-link__note">{{ hhmm(linkDialog.expiresAt) }} 前有效；過期了再按一次「傳連結給他」就好。</p>
+        <p class="ln-link__note">{{ untilText(linkDialog.expiresAt) }} 前有效；過期了再按一次「傳連結給他」就好。</p>
         <template #footer>
           <el-button @click="linkDialog.open = false">關閉</el-button>
         </template>
@@ -390,8 +390,12 @@ interface Row {
   line: { userId: string, displayName: string, pictureUrl: string } | null
   receiving: boolean
   pendingCodeExpiresAt: number | null
+  /** 那組碼什麼時候產的（只在剛產的 15 分鐘內頻繁重抓） */
+  pendingCodeIssuedAt: number | null
   /** 對方在首頁按過「先不用」：不會再被問 */
   inviteDismissed: boolean
+  /** 首頁那張邀請第一次出現在他眼前的時間；null＝還沒看過（`D-119` 拍板 B） */
+  inviteSeenAt: number | null
   delivery: RecipientState | null
 }
 interface Other { lineUserId: string, displayName: string, delivery: RecipientState }
@@ -483,6 +487,19 @@ function monthDay(ms: number) {
 }
 
 /**
+ * 「幾點前有效」：今天只寫時間、明天寫「明天」、再後面寫日期（`D-119`）。
+ * ⛔ 連結改 24 小時之後，只寫「16:25 前有效」會被讀成今天下午。
+ */
+function untilText(ms: number) {
+  const d = new Date(ms)
+  const today = new Date()
+  if (d.toDateString() === today.toDateString()) return hhmm(ms)
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
+  if (d.toDateString() === tomorrow.toDateString()) return `明天 ${hhmm(ms)}`
+  return `${monthDay(ms)} ${hhmm(ms)}`
+}
+
+/**
  * 「狀態」那一格（`D-106`）：第一行只講結論——會收到／送不到／通知關著／還沒加進來；細節放第二行。
  * ⛔ 沒有送達紀錄 ≠ 沒傳過：紀錄從 `C-270` 才開始記，已經收了好幾週的人原本被寫成「還沒傳過通知」，
  *    看起來像壞了。沒有紀錄就只講「會收到」（他確實在名單上）。
@@ -519,9 +536,12 @@ function statusOf(row: Row): Status {
     return { text: '會收到', cls: 'is-ok' }
   }
   if (row.line) return { text: '通知關著', cls: 'is-off' }
-  if (row.pendingCodeExpiresAt) return { text: '還沒加進來', sub: `等對方點連結（${hhmm(row.pendingCodeExpiresAt)} 前有效）`, cls: 'is-off' }
-  // 「下次登入會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
+  if (row.pendingCodeExpiresAt) return { text: '還沒加進來', sub: `等對方點連結（${untilText(row.pendingCodeExpiresAt)} 前有效）`, cls: 'is-off' }
+  // 「打開首頁會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
   if (!row.isSelf && row.inviteDismissed) return { text: '還沒加進來', sub: '對方在首頁按了「先不用」，不會再被問', cls: 'is-off' }
+  // `D-119` 拍板 B：分得出「看過邀請還沒加」跟「根本沒看過」——前者要提醒他，後者是他沒打開首頁
+  if (!row.isSelf && row.inviteSeenAt) return { text: '還沒加進來', sub: `首頁問過他（${monthDay(row.inviteSeenAt)} 看到），還沒加`, cls: 'is-off' }
+  if (!row.isSelf) return { text: '還沒加進來', sub: '還沒看過首頁的邀請', cls: 'is-off' }
   return { text: '還沒加進來', cls: 'is-off' }
 }
 
@@ -574,7 +594,8 @@ const undeliverableCount = computed(() => {
 function menuOf(row: TableRow): { cmd: 'rebind' | 'unbind', label: string, danger?: boolean }[] {
   if (row.kind !== 'member' || !row.m.line) return []
   if (row.m.isSelf) return adding.value ? [] : [{ cmd: 'rebind', label: '換一支手機' }]
-  return data.value?.canManage ? [{ cmd: 'unbind', label: '解除綁定', danger: true }] : []
+  // `D-119`：這頁只用「加進來／移除」兩個詞（原本「加進來／綁好／解除綁定」混用，「綁定」在別頁又指活動、信用卡）
+  return data.value?.canManage ? [{ cmd: 'unbind', label: '移除這支手機', danger: true }] : []
 }
 function onMenu(row: TableRow, cmd: string) {
   if (row.kind !== 'member') return
@@ -602,9 +623,16 @@ function applyTiming(t: Timing) {
   else slaAlways.value = t.slaRemindMinutes
 }
 
-/** 有人在等對方點「傳連結給他」的連結時，每 15 秒重抓一次（那一列會自己轉綠） */
+/**
+ * 有人在等對方點「傳連結給他」的連結時，每 15 秒重抓一次（那一列會自己轉綠）。
+ * ⚠️ 只在碼剛產的 15 分鐘內（`D-119`）：連結改 24 小時之後，頁面開著就整天每 15 秒讀一次資料庫；
+ *    過了那段，對方晚點才點的話，重新整理就看得到。舊碼沒有產生時間的，照原本 10 分鐘的規矩判斷。
+ */
+const POLL_WINDOW_MS = 15 * 60_000
 function syncPoll() {
-  const waiting = data.value?.rows.some(r => r.pendingCodeExpiresAt && r.pendingCodeExpiresAt > Date.now())
+  const now = Date.now()
+  const waiting = data.value?.rows.some(r => r.pendingCodeExpiresAt && r.pendingCodeExpiresAt > now
+    && (r.pendingCodeIssuedAt ? now - r.pendingCodeIssuedAt < POLL_WINDOW_MS : r.pendingCodeExpiresAt - now <= POLL_WINDOW_MS))
   if (waiting && !pollTimer) pollTimer = setInterval(load, 15_000)
   if (!waiting && pollTimer) {
     clearInterval(pollTimer)
@@ -701,19 +729,20 @@ async function copyLink() {
 async function unbind(row: Row) {
   try {
     await ElMessageBox.confirm(
-      '解除之後，這位成員的手機不會再收到任何 LINE 通知；要再收，得重新把手機加進來。',
-      '解除 LINE 綁定',
-      { confirmButtonText: '解除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger', type: 'warning' },
+      `移除之後，${row.email || '這位成員'} 的手機不會再收到任何 LINE 通知；要再收，得重新把手機加進來。`
+      + '（只想暫停的話，把「收通知」關掉就好，手機不用重加。）',
+      '移除這支手機',
+      { confirmButtonText: '移除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger', type: 'warning' },
     )
   }
   catch { return }
   try {
     await apiFetch(`/api/admin/workspaces/${workspaceId.value}/members/${row.uid}/line-binding`, { method: 'DELETE' })
-    showToast('已解除綁定', 'success')
+    showToast('已移除這支手機', 'success')
     await load()
   }
   catch (e: any) {
-    showToast(e?.data?.statusMessage || '解除失敗', 'error')
+    showToast(e?.data?.statusMessage || '移除失敗', 'error')
   }
 }
 

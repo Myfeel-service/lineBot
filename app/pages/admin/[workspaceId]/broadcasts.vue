@@ -504,33 +504,100 @@
     ⛔ 三件事一定要寫在這個框裡（都是人在按下去前會想知道、按下去後才知道就太遲的）：
     ①真的會送到 ②跟正式發送內容一樣 ③不會影響任何帳。
   -->
-  <el-dialog v-model="testSendVisible" class="bc-dialog-testsend" title="試發一則給自己看" width="min(440px, 92vw)">
+  <!--
+    `D-119` ⑥（2026-10-09 老闆「照改」）：收件人改成一份固定名單打勾，⛔ 不再在九千多位好友裡搜名字
+    （叫 Alice 的有 5 位，挑錯就是把還沒定稿的內容發給客人）。也 ⛔ 不只限自己：正式庫裡被拿來試打的
+    推播，36 人次有 29 次是發給不在後台的看稿同事，4 則一次發 3–5 人。
+  -->
+  <el-dialog v-model="testSendVisible" class="bc-dialog-testsend" title="試發一則給自己看" width="min(480px, 92vw)">
     <div class="admin-field-stack">
       <div class="admin-field-group">
-        <AdminFieldLabel text="要發給誰" tight />
-        <el-select
-          v-model="testSendUserId"
-          filterable
-          remote
-          allow-create
-          default-first-option
-          reserve-keyword
-          :remote-method="searchTestFriends"
-          :loading="testFriendsLoading"
-          placeholder="打名字搜尋好友，或直接貼上 U 開頭的編號"
-          class="bc-testsend-select"
-        >
-          <el-option
-            v-for="u in testFriends"
-            :key="u.lineUserId"
-            :label="u.displayName || u.lineUserId"
-            :value="u.lineUserId"
-          />
-        </el-select>
-        <p class="text-xs text-muted">
-          只有<b>已經加過這個官方帳號好友</b>的人收得到（LINE 的限制）。
-          找不到人的話，到「<NuxtLink :to="`/admin/${workspaceId}/users`" class="link">好友</NuxtLink>」頁點開他、按「複製 ID」貼進來。
-        </p>
+        <AdminFieldLabel text="要發給誰（可以勾好幾位）" tight />
+        <div v-if="testListLoading" class="tags-loading">
+          <div class="spinner" />
+          <span>載入中…</span>
+        </div>
+        <p v-else-if="testListError" class="bc-dialog-footer__error">{{ testListError }}</p>
+        <template v-else-if="testList">
+          <!-- 自己還沒把手機加進來：就地加（加一次，之後直接勾自己） -->
+          <div v-if="!testList.self && testList.selfIsMember" class="bc-testsend-bind">
+            <template v-if="!testBinding">
+              <p class="bc-testsend-bind__text">你的手機還沒加進來。加一次，之後試發直接勾自己就好。</p>
+              <el-button size="small" type="primary" plain @click="testBinding = true">把我的手機加進來</el-button>
+              <!-- ⚠️ 綁好＝也加進通知名單（`D-103` 的規則）：先講，不要讓他之後被通知嚇到 -->
+              <p class="text-xs text-muted">加進來之後也會收到「客人要找真人」的通知，不想收可以到「設定 → LINE 通知」關掉。</p>
+            </template>
+            <AdminLineNotifySelfAdd v-else @done="onTestSelfBound" @cancel="testBinding = false" />
+          </div>
+
+          <el-checkbox-group v-model="testSendIds" class="bc-testsend-list">
+            <div v-if="testList.self" class="bc-testsend-group">
+              <p class="bc-testsend-group__title">你自己</p>
+              <el-checkbox :value="testList.self.lineUserId" class="bc-testsend-row">
+                <span class="bc-testsend-who">
+                  <img v-if="testList.self.pictureUrl" :src="testList.self.pictureUrl" class="bc-testsend-avatar" alt="">
+                  <span v-else class="bc-testsend-avatar bc-testsend-avatar--initial">{{ initialOf(testList.self.displayName) }}</span>
+                  {{ testList.self.displayName || '你的手機' }}
+                </span>
+              </el-checkbox>
+            </div>
+
+            <div v-if="testList.members.length" class="bc-testsend-group">
+              <p class="bc-testsend-group__title">同事</p>
+              <el-checkbox v-for="m in testList.members" :key="m.lineUserId" :value="m.lineUserId" class="bc-testsend-row">
+                <span class="bc-testsend-who">
+                  <img v-if="m.pictureUrl" :src="m.pictureUrl" class="bc-testsend-avatar" alt="">
+                  <span v-else class="bc-testsend-avatar bc-testsend-avatar--initial">{{ initialOf(m.displayName) }}</span>
+                  {{ m.displayName || m.email }}
+                  <span v-if="m.email && m.displayName" class="bc-testsend-sub">{{ m.email }}</span>
+                </span>
+              </el-checkbox>
+            </div>
+
+            <div class="bc-testsend-group">
+              <p class="bc-testsend-group__title">常找來看稿的人</p>
+              <div v-for="s in testList.saved" :key="s.lineUserId" class="bc-testsend-saved">
+                <!-- 封鎖了／不是好友了：照樣列出來（⛔ 不安靜地拿掉），不給勾、講原因 -->
+                <el-checkbox :value="s.lineUserId" :disabled="Boolean(s.unreachable)" class="bc-testsend-row">
+                  <span class="bc-testsend-who">
+                    <img v-if="s.pictureUrl" :src="s.pictureUrl" class="bc-testsend-avatar" alt="">
+                    <span v-else class="bc-testsend-avatar bc-testsend-avatar--initial">{{ initialOf(s.displayName) }}</span>
+                    {{ s.displayName || '（沒有名字）' }}
+                    <span v-if="s.unreachable" class="bc-testsend-sub">{{ s.unreachable === 'blocked' ? '封鎖了官方帳號，收不到' : '已經不是好友，收不到' }}</span>
+                  </span>
+                </el-checkbox>
+                <el-button v-if="can('broadcast.testList')" text size="small" class="bc-testsend-remove" @click="removeTestRecipient(s)">拿掉</el-button>
+              </div>
+              <p v-if="!testList.saved.length" class="text-xs text-muted">
+                還沒有。主管、要看稿的同事不在後台的話，<template v-if="can('broadcast.testList')">從下面加一次就一直在。</template><template v-else>請管理員在這裡加一次。</template>
+              </p>
+            </div>
+          </el-checkbox-group>
+
+          <!-- 加人：管理員才看得到（`broadcast.testList`）。這是唯一還要在全部好友裡找名字的地方，所以秀頭像與加好友日期分同名 -->
+          <el-select
+            v-if="can('broadcast.testList')"
+            v-model="testAddPick"
+            filterable
+            remote
+            :remote-method="searchTestFriends"
+            :loading="testFriendsLoading"
+            :loading-text="'找好友中…'"
+            :no-data-text="'打名字找好友'"
+            placeholder="＋ 加一位常找來看稿的人（打名字找好友）"
+            class="bc-testsend-add"
+            @change="addTestRecipient"
+          >
+            <el-option v-for="u in testFriends" :key="u.lineUserId" :label="u.displayName || u.lineUserId" :value="u.lineUserId">
+              <span class="bc-testsend-who">
+                <img v-if="u.pictureUrl" :src="u.pictureUrl" class="bc-testsend-avatar" alt="">
+                <span v-else class="bc-testsend-avatar bc-testsend-avatar--initial">{{ initialOf(u.displayName) }}</span>
+                {{ u.displayName || u.lineUserId }}
+                <span v-if="u.joined" class="bc-testsend-sub">{{ u.joined }} 加好友</span>
+              </span>
+            </el-option>
+          </el-select>
+        </template>
       </div>
 
       <p class="tags-hint">
@@ -542,9 +609,13 @@
       </p>
 
       <div v-if="testSendDone" class="bc-testsend-done">
-        已送出 {{ testSendDone.messageCount }} 則給
-        <b>{{ testSendDone.displayName || testSendDone.lineUserId }}</b>{{ testSendDone.moduleName ? `（機器人模組「${testSendDone.moduleName}」的內容）` : '' }}。
+        每人送了 {{ testSendDone.messageCount }} 則給
+        <b>{{ testSendOkNames }}</b>{{ testSendDone.moduleName ? `（機器人模組「${testSendDone.moduleName}」的內容）` : '' }}。
         去手機上看一眼，沒問題再回來發。
+        <!-- ⛔ 有人沒送到要講出是誰、為什麼（一位失敗不可以被「已送出」蓋過去） -->
+        <p v-for="s in testSendFailed" :key="s.lineUserId" class="bc-testsend-failed">
+          沒送到「{{ s.displayName || s.lineUserId }}」：{{ s.error }}
+        </p>
       </div>
       <p v-if="testSendError" class="bc-dialog-footer__error">{{ testSendError }}</p>
     </div>
@@ -943,31 +1014,111 @@ const sentContentVarNote = computed(() => broadcastVariableNote(sentContentPrevi
 const textPreview = computed(() => renderBroadcastVariablesDeep(previewMessages.value))
 const textPreviewVarNote = computed(() => broadcastVariableNote(textPreview.value.keys))
 
-// ── `C-248`：試發一則給自己看 ──────────────────────────────────────
+// ── `C-248`：試發一則給自己看（`D-119` ⑥：收件人改成固定名單打勾）──────────────────
+interface TestRecipient { lineUserId: string; displayName: string; pictureUrl: string; email?: string; unreachable?: 'blocked' | 'gone' }
+interface TestRecipientList { selfIsMember: boolean; self: TestRecipient | null; members: TestRecipient[]; saved: TestRecipient[] }
+interface TestSendResult { lineUserId: string; displayName: string; ok: boolean; error?: string }
+
 const testSendVisible = ref(false)
 const testSending = ref(false)
 const testSendError = ref('')
-const testSendDone = ref<{ messageCount: number; moduleName: string; lineUserId: string; displayName: string } | null>(null)
-const testSendUserId = ref('')
-const testFriends = ref<Array<{ lineUserId: string; displayName: string }>>([])
+const testSendDone = ref<{ messageCount: number; moduleName: string; sent: TestSendResult[] } | null>(null)
+const testSendOkNames = computed(() =>
+  (testSendDone.value?.sent ?? []).filter(s => s.ok).map(s => s.displayName || s.lineUserId).join('、'))
+const testSendFailed = computed(() => (testSendDone.value?.sent ?? []).filter(s => !s.ok))
+
+const testList = ref<TestRecipientList | null>(null)
+const testListLoading = ref(false)
+const testListError = ref('')
+/** 勾了誰 */
+const testSendIds = ref<string[]>([])
+/** 正在就地把自己的手機加進來（掃 QR） */
+const testBinding = ref(false)
+/** 「加一位常找來看稿的人」選單 */
+const testAddPick = ref('')
+const testFriends = ref<Array<{ lineUserId: string; displayName: string; pictureUrl: string; joined: string }>>([])
 const testFriendsLoading = ref(false)
 
-/** 記住上次試發給誰：⛔ 每次都要重找同一個人，等於每次都要再去好友頁複製一次 ID */
-const TEST_SEND_LS_KEY = computed(() => `bc-test-send-to:${workspaceId.value}`)
+/**
+ * 記住上次勾了誰（`D-119` 起是一組人，鍵換新的：舊鍵存的是單一 ID，⛔ 不沿用）。
+ * ⚠️ 讀回來要先跟名單交集：上次勾的人可能被拿掉了，⛔ 不可以帶著名單外的人送出去（伺服器也會擋）。
+ */
+const TEST_SEND_LS_KEY = computed(() => `bc-test-send-to-v2:${workspaceId.value}`)
 
+function initialOf(name: string) {
+  return (name || '?').trim().slice(0, 1).toUpperCase()
+}
+
+/** 名單上勾得了的人（封鎖了、不是好友了的不算） */
+function sendableIds(list: TestRecipientList): string[] {
+  return [
+    ...(list.self ? [list.self.lineUserId] : []),
+    ...list.members.map(m => m.lineUserId),
+    ...list.saved.filter(s => !s.unreachable).map(s => s.lineUserId),
+  ]
+}
+
+async function loadTestList(opts: { keepPicked?: boolean } = {}) {
+  testListLoading.value = !testList.value
+  testListError.value = ''
+  try {
+    const list = await apiFetch<TestRecipientList>('/api/broadcast/test-recipients')
+    testList.value = list
+    const ok = new Set(sendableIds(list))
+    if (opts.keepPicked) {
+      testSendIds.value = testSendIds.value.filter(id => ok.has(id))
+      return
+    }
+    let remembered: string[] = []
+    try { remembered = JSON.parse(localStorage.getItem(TEST_SEND_LS_KEY.value) || '[]') }
+    catch { /* 無痕視窗讀不到就算了，只是少一個方便 */ }
+    const picked = (Array.isArray(remembered) ? remembered : []).map(String).filter(id => ok.has(id))
+    // 沒記到就預設勾自己（按鈕寫的就是「給自己看」）
+    testSendIds.value = picked.length ? picked : (list.self ? [list.self.lineUserId] : [])
+  }
+  catch (e: any) {
+    testListError.value = e?.data?.statusMessage || '讀不到試發名單，請關掉再打開一次'
+  }
+  finally {
+    testListLoading.value = false
+  }
+}
+
+/** 就地把自己的手機加進來之後：重抓名單、把自己勾起來 */
+async function onTestSelfBound() {
+  testBinding.value = false
+  await loadTestList({ keepPicked: true })
+  const self = testList.value?.self
+  if (self && !testSendIds.value.includes(self.lineUserId)) testSendIds.value = [self.lineUserId, ...testSendIds.value]
+}
+
+/** 加人用的找好友（只有管理員看得到那個選單）：打了字才找，⛔ 不先把全部好友列出來 */
 async function searchTestFriends(keyword?: string) {
+  const kw = String(keyword || '').trim()
+  if (!kw) { testFriends.value = []; return }
   testFriendsLoading.value = true
   try {
-    const params = new URLSearchParams({ limit: '20' })
-    const kw = String(keyword || '').trim()
-    if (kw) params.set('search', kw)
-    const res = await apiFetch<{ users?: Array<{ lineUserId?: string; displayName?: string }> }>(`/api/users/list?${params.toString()}`)
+    const params = new URLSearchParams({ limit: '20', search: kw })
+    const res = await apiFetch<{ users?: Array<{ lineUserId?: string; displayName?: string; pictureUrl?: string; createdAt?: unknown }> }>(`/api/users/list?${params.toString()}`)
+    const listed = new Set(testList.value ? [
+      ...(testList.value.self ? [testList.value.self.lineUserId] : []),
+      ...testList.value.members.map(m => m.lineUserId),
+      ...testList.value.saved.map(s => s.lineUserId),
+    ] : [])
     testFriends.value = (res?.users ?? [])
-      .map(u => ({ lineUserId: String(u.lineUserId || ''), displayName: String(u.displayName || '') }))
-      .filter(u => u.lineUserId)
+      .map((u) => {
+        const d = parseFirestoreDate(u.createdAt)
+        return {
+          lineUserId: String(u.lineUserId || ''),
+          displayName: String(u.displayName || ''),
+          pictureUrl: String(u.pictureUrl || ''),
+          // 同名的人靠「哪天加好友」分（叫 Alice 的有 5 位）
+          joined: d ? `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}` : '',
+        }
+      })
+      .filter(u => u.lineUserId && !listed.has(u.lineUserId))
   }
   catch {
-    // ⛔ 清單抓不到不等於不能試發：貼 ID 那條路還在，所以只是沒有候選，不報錯
     testFriends.value = []
   }
   finally {
@@ -975,24 +1126,49 @@ async function searchTestFriends(keyword?: string) {
   }
 }
 
+async function addTestRecipient(lineUserId: string) {
+  testAddPick.value = ''
+  if (!lineUserId) return
+  try {
+    const res = await apiFetch<{ displayName: string }>('/api/broadcast/test-recipients', { method: 'POST', body: { lineUserId } })
+    await loadTestList({ keepPicked: true })
+    // 剛加的那位通常就是這次要發的人：直接勾起來
+    if (!testSendIds.value.includes(lineUserId)) testSendIds.value = [...testSendIds.value, lineUserId]
+    showToast(`已把「${res.displayName || '這位'}」加進常找來看稿的人`, 'success')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '加不進去，請再試一次', 'error')
+  }
+}
+
+async function removeTestRecipient(s: TestRecipient) {
+  try {
+    await apiFetch(`/api/broadcast/test-recipients/${encodeURIComponent(s.lineUserId)}`, { method: 'DELETE' })
+    await loadTestList({ keepPicked: true })
+    showToast(`已從常找來看稿的人拿掉「${s.displayName || '這位'}」`, 'success')
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '拿不掉，請再試一次', 'error')
+  }
+}
+
 function openTestSend() {
   if (!assertCan('broadcast.write')) return
   testSendError.value = ''
   testSendDone.value = null
-  if (!testSendUserId.value) {
-    try { testSendUserId.value = localStorage.getItem(TEST_SEND_LS_KEY.value) || '' }
-    catch { /* 無痕視窗讀不到就算了，只是少一個方便 */ }
-  }
+  testBinding.value = false
   testSendVisible.value = true
-  void searchTestFriends()
+  void loadTestList()
 }
 
 async function submitTestSend() {
-  const to = testSendUserId.value.trim()
+  const to = [...testSendIds.value]
   testSendError.value = ''
   testSendDone.value = null
-  if (!to) {
-    testSendError.value = '請先選一位好友，或貼上 LINE User ID'
+  if (!to.length) {
+    testSendError.value = testList.value?.self || testList.value?.members.length || testList.value?.saved.length
+      ? '請至少勾一位'
+      : '名單上還沒有人：先把你的手機加進來，或請管理員加常找來看稿的人'
     return
   }
   testSending.value = true
@@ -1012,13 +1188,13 @@ async function submitTestSend() {
       testSendError.value = '找不到這則推播，請重新整理再試'
       return
     }
-    const res = await apiFetch<{ messageCount: number; moduleName: string; lineUserId: string; displayName: string }>(
+    const res = await apiFetch<{ messageCount: number; moduleName: string; sent: TestSendResult[] }>(
       `/api/broadcast/${selectedId.value}/test-send`,
-      { method: 'POST', body: { lineUserId: to } },
+      { method: 'POST', body: { lineUserIds: to } },
     )
     testSendDone.value = res
-    try { localStorage.setItem(TEST_SEND_LS_KEY.value, to) }
-    catch { /* 存不進去只是下次要重選 */ }
+    try { localStorage.setItem(TEST_SEND_LS_KEY.value, JSON.stringify(to)) }
+    catch { /* 存不進去只是下次要重勾 */ }
   }
   catch (e: any) {
     testSendError.value = e?.data?.statusMessage || '試發失敗，請稍後再試'

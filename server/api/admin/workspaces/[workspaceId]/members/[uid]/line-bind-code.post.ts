@@ -14,7 +14,8 @@ export default defineEventHandler(async (event) => {
   const uid = event.context.params?.uid
   if (!uid) throw createError({ statusCode: 400, statusMessage: 'uid is required' })
 
-  const result = await issueMemberLineBindCode(workspaceId, uid)
+  // 管理員傳給同事的連結：24 小時有效（`D-119`），同事常常幾小時後才點
+  const result = await issueMemberLineBindCode(workspaceId, uid, 'admin')
 
   /*
    * 稽核（`C-254`）：這組碼在有效期內，**誰拿到就能把自己的 LINE 綁成這位成員**
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'member.lineBindCode',
     targetId: uid,
-    note: '產生了一組一次性的 LINE 綁定碼（碼本身不留在紀錄裡）',
+    note: '產生了一組一次性的 LINE 綁定連結，24 小時內有效（碼本身不留在紀錄裡）',
   })
 
   return result

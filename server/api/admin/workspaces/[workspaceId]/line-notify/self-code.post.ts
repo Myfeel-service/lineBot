@@ -14,7 +14,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'notify.self')
-  const result = await issueMemberLineBindCode(workspaceId, uid)
+  const result = await issueMemberLineBindCode(workspaceId, uid, 'self')
 
   // 拿不到官方帳號 ID（bindUrl 空的）就沒有 QR：畫面退回「在聊天室傳這行字」
   let qrDataUrl = ''

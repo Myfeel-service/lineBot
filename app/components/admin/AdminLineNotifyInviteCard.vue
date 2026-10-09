@@ -83,6 +83,19 @@ async function onDone(s: { lineDisplayName: string }) {
   phase.value = 'done'
 }
 
+/**
+ * 卡片真的出現在他眼前時記一下（`D-119` 拍板 B）：「設定 → LINE 通知」那一列才講得出
+ * 他是「看過邀請還沒加」還是「根本沒看過」。⛔ 只在狀態問到、確定要顯示的那一刻記，
+ * 「還不知道」不算看過；一次掛載只記一次。
+ */
+let seenRecorded = false
+watch(show, (visible) => {
+  if (!visible || seenRecorded || phase.value !== 'ask') return
+  seenRecorded = true
+  apiFetch(`/api/admin/workspaces/${workspaceId.value}/line-notify/invite-seen`, { method: 'POST' })
+    .catch(() => { /* 記不起來只是那一列少一句，不影響他加手機 */ })
+})
+
 async function dismiss() {
   dismissed.value = true
   try {

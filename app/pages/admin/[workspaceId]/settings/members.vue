@@ -67,7 +67,7 @@
               </el-table-column>
               <!-- 自己那一列不給改、不給移除（`G-101`②）：手滑把自己改成觀察者會立刻被踢出這頁。
                    擁有者只有組織管理員／超管動得了（`G-96`），帳號管理員看不到。
-                   「移除」收進「⋯」（`D-117` 拍板 2，跟 LINE 通知頁的「解除綁定」一樣）：原本紅鈕每列攤開，擁有者那列也有 -->
+                   「移除」收進「⋯」（`D-117` 拍板 2，跟 LINE 通知頁的「移除這支手機」一樣）：原本紅鈕每列攤開，擁有者那列也有 -->
               <el-table-column v-if="can('members.manage')" width="190" align="right">
                 <template #default="{ row }">
                   <div class="mem-actions">

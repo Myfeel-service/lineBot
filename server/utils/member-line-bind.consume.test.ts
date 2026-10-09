@@ -176,4 +176,15 @@ describe('綁定碼傳進來', () => {
     expect(store.aiWrites).toHaveLength(0)
     expect(store.memberUpdates).toHaveLength(0)
   })
+
+  /**
+   * `D-119`：管理員「傳連結給他」是給不常進後台的人用的——過期時 ⛔ 不可以叫他自己去後台重新產生
+   * （那是他去不了的地方），要叫他找管理員再傳一次。自己掃的照舊。
+   */
+  it('管理員傳的連結過期 → 叫他找管理員再傳一次，不叫他自己去後台', async () => {
+    store.members = [{ id: 'u1_w', data: { lineBindCode: 'A3F9K2', lineBindCodeExpiresAt: Date.now() - 1, lineBindCodeBy: 'admin' } }]
+    await consume()
+    expect(line.replies[0]).toMatch(/過期.*請管理員.*再按一次「傳連結給他」/)
+    expect(line.replies[0]).not.toContain('重新產生一組')
+  })
 })

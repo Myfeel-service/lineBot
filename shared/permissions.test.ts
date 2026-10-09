@@ -48,6 +48,8 @@ describe('can — role × capability matrix', () => {
     'line.manage': 'admin',
     'billing.manage': 'admin',
     'notify.manage': 'admin',
+    // 2026-10-09 `D-119` ⑥：試發的「常找來看稿的人」名單由管理員加一次，其他人只打勾
+    'broadcast.testList': 'admin',
   }
 
   it('CAPABILITIES 表與政策期望一致（有新增能力必須同步更新測試）', () => {

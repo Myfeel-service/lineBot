@@ -38,6 +38,13 @@ export interface LineNotifyRow {
   receiving: boolean
   /** 有一組還沒用掉的綁定碼（「傳連結給他」之後在等對方點）：到期時間 */
   pendingCodeExpiresAt: number | null
+  /** 那組碼什麼時候產的：畫面只在剛產的 15 分鐘內頻繁重抓（連結改 24 小時之後不能整天每 15 秒抓一次） */
+  pendingCodeIssuedAt: number | null
+  /**
+   * 首頁那張「要傳到你的手機嗎？」第一次出現在他眼前的時間（`D-119` 拍板 B）。
+   * null＝還沒看過——那一列才講得出「看過邀請還沒加」還是「根本沒看過」。
+   */
+  inviteSeenAt: number | null
   /**
    * 對方在首頁那張「要傳到你的手機嗎？」卡按過「先不用」（`D-106`）。
    * 按過就不會再被問——名單上 ⛔ 不可以再寫「對方登入時會被問」。
@@ -126,6 +133,8 @@ export async function buildLineNotifyPageData(input: {
         : null,
       receiving,
       pendingCodeExpiresAt: !lineUserId && m.lineBindCode && codeExp > now ? codeExp : null,
+      pendingCodeIssuedAt: !lineUserId && m.lineBindCode && codeExp > now ? (Number(m.lineBindCodeIssuedAt ?? 0) || null) : null,
+      inviteSeenAt: Number(m.lineNotifyInviteFirstSeenAt ?? 0) || null,
       inviteDismissed: Number(m.lineNotifyInviteDismissedAt ?? 0) > 0,
       delivery: receiving ? recipientDeliveryState(delivery.d[normalizeLineUserId(lineUserId)]) : null,
     })

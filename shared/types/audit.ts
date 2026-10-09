@@ -92,6 +92,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'broadcast.testSend': '試發了推播',
   // `D-117` 拍板 1：排程時間到、系統自動送出（actor＝system，沒有操作者）
   'broadcast.scheduledSend': '排程時間到，送出了推播',
+  // `D-119` ⑥：試發只能發給名單上的人，名單加了誰、拿掉誰要查得到
+  'broadcast.testRecipientAdd': '把一位好友加進「常找來看稿的人」',
+  'broadcast.testRecipientRemove': '從「常找來看稿的人」拿掉一位',
 
   // 機器人模組：改了客人立刻收到不一樣的東西
   'flow.create': '新增了一個機器人模組',
@@ -174,7 +177,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'memberInvite.put': '改了一張邀請的權限',
   'memberInvite.delete': '收回了一張邀請',
   'member.lineBindCode': '產生了成員的 LINE 綁定碼',
-  'member.lineUnbind': '解除了成員的 LINE 綁定',
+  // `D-119`：跟「設定 → LINE 通知」那顆「移除這支手機」同一個講法
+  'member.lineUnbind': '移除了成員的手機（不再收 LINE 通知）',
   // 開帳「用手機測試」按了「是我」（`C-250`③）：綁上自己的 LINE、加進通知名單
   'member.lineBindSelf': '開通時用「是我」綁定了自己的 LINE，並加進通知名單',
   // 「設定 → LINE 通知」（`C-270`）：誰會收到、什麼時候收
@@ -627,12 +631,18 @@ export function auditTarget(row: AuditRowLike): AuditTarget | null {
 const AUDIT_DETAIL_FORMATTERS: Record<string, (row: AuditRowLike) => string[]> = {
   'broadcast.testSend': (row) => {
     const a = row.after ?? {}
-    // 舊紀錄（2026-10-08 以前）收件人放在 `displayName`、模組名只在備註「試發給「X」（模組：Y）」裡
-    const who = String(a.recipientName ?? a.displayName ?? '').trim()
+    // `D-119` ⑥ 起一次可以好幾位：`recipientNames`（「江、游瑞茹」）＋`recipientCount`。
+    // 更舊的紀錄收件人放在 `recipientName`／`displayName`、模組名只在備註「…（模組：Y）」裡
+    const many = String(a.recipientNames ?? '').trim()
+    const count = Number(a.recipientCount)
+    const who = many || String(a.recipientName ?? a.displayName ?? '').trim()
     const mod = String(a.moduleName ?? '').trim() || (String(row.note ?? '').match(/（模組：(.+)）$/)?.[1] ?? '')
     const n = Number(a.messagesCount)
+    const each = Number.isFinite(n) && n > 0 ? ` ${n} 則` : ''
     return [
-      `送${Number.isFinite(n) && n > 0 ? ` ${n} 則` : ''}給 LINE 好友「${who || '（沒記到名字）'}」`,
+      many && Number.isFinite(count) && count > 1
+        ? `每人送${each}，共 ${count} 位：${many}`
+        : `送${each}給 LINE 好友「${who || '（沒記到名字）'}」`,
       ...(mod ? [`內容是模組「${mod}」`] : []),
     ]
   },

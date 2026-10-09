@@ -174,6 +174,13 @@ export interface WorkspaceMemberDoc {
   lineBindCode?: string | null
   /** 綁定碼到期時間（epoch ms） */
   lineBindCodeExpiresAt?: number | null
+  /** 這組碼誰產的：自己掃 QR（10 分鐘）／管理員「傳連結給他」（24 小時）（`D-119`） */
+  lineBindCodeBy?: 'self' | 'admin' | null
+  /** 這組碼什麼時候產的（epoch ms）：後台只在剛產的那 15 分鐘頻繁重抓，之後靠手動重新整理 */
+  lineBindCodeIssuedAt?: number | null
+  /** 首頁「要傳到你的手機嗎？」卡片第一次／最近一次出現在他眼前（epoch ms，`D-119` 拍板 B） */
+  lineNotifyInviteFirstSeenAt?: number | null
+  lineNotifyInviteLastSeenAt?: number | null
 }
 
 // ═══════════════════════════════════════════════════════════════════

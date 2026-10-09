@@ -36,4 +36,21 @@ describe('issueMemberLineBindCode 的碼', () => {
     expect(writes.at(-1)).toMatchObject({ lineBindCode: code })
     spy.mockRestore()
   })
+
+  /**
+   * `D-119` 拍板 A（2026-10-09）：管理員「傳連結給他」改 24 小時——同事常常幾小時後才點，
+   * 10 分鐘的版本上線以來只用過一次、那位到今天都沒綁上。自己掃 QR 的人就在電腦前，維持 10 分鐘。
+   * 記下是誰產的，過期回覆才知道叫他找誰。
+   */
+  it('自己掃的 10 分鐘、管理員傳的 24 小時，並記下是誰產的', async () => {
+    const t0 = Date.now()
+    const self = await issueMemberLineBindCode('w', 'u1', 'self')
+    expect(self.expiresAt - t0).toBeGreaterThanOrEqual(10 * 60_000 - 1000)
+    expect(self.expiresAt - t0).toBeLessThanOrEqual(10 * 60_000 + 1000)
+    expect(writes.at(-1)).toMatchObject({ lineBindCodeBy: 'self' })
+
+    const admin = await issueMemberLineBindCode('w', 'u1', 'admin')
+    expect(admin.expiresAt - t0).toBeGreaterThanOrEqual(24 * 3600_000 - 1000)
+    expect(writes.at(-1)).toMatchObject({ lineBindCodeBy: 'admin', lineBindCodeIssuedAt: expect.any(Number) })
+  })
 })
