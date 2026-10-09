@@ -4,6 +4,7 @@ import { getDb } from './firebase'
 import { wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
 import { multicastMessage } from './line'
 import { renderModuleToLineMessages } from './handler'
+import { renderBroadcastMessagesForSend } from './render-attributes'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 /**
  * ⛔ 「這則推播會不會被換成模組內容」的判斷**不在這支檔案裡自己寫一份**（`C-245`）：
@@ -39,6 +40,12 @@ export async function executeBroadcastSend(
   failedCount: number
   /** 訊息已送出、但發送後記帳未寫完時的說明（非發送失敗，呼叫端不該報「發送失敗」） */
   postSendError: string | null
+  /**
+   * LINE 收下了、但回報**每一位都沒送到**：推播本身會被標成 `failed`（`BROADCAST_ALL_RECIPIENTS_FAILED`）。
+   * ⛔ 呼叫端寫操作紀錄要看這一格——`success` 在這種情況仍是 true（「有呼叫成功」），
+   *    只看它的話紀錄會寫「送出了」，跟推播本身的「失敗」講反（2026-10-10 審查抓到）。
+   */
+  allFailed: boolean
 }> {
   const source = options.source ?? 'manual'
   const runtimeConfig = useRuntimeConfig()
@@ -138,7 +145,8 @@ export async function executeBroadcastSend(
     // ── 組出「真正要送出去的那幾則」──────────────────────────────────
     const clickOrigin = String(runtimeConfig.clickTrackingBaseUrl || '').trim().replace(/\/$/, '')
     const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
-    let outboundMessages = data.messages
+    // 純文字／開網址：變數換成空白再送（發模組那條路下面會整份換掉，規則相同）
+    let outboundMessages = renderBroadcastMessagesForSend(data.messages)
     /**
      * `C-246`：把**真的送出去的那幾則**留下來。
      *
@@ -343,6 +351,7 @@ export async function executeBroadcastSend(
       sentCount: lineOutcome.successCount,
       failedCount: lineOutcome.failedCount,
       postSendError,
+      allFailed: lineOutcome.allFailed,
     }
   }
   catch (e) {
@@ -366,6 +375,7 @@ export async function executeBroadcastSend(
         sentCount: lineOutcome.successCount,
         failedCount: lineOutcome.failedCount,
         postSendError,
+        allFailed: lineOutcome.allFailed,
       }
     }
 

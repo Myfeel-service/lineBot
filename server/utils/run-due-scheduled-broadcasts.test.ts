@@ -267,7 +267,7 @@ describe('排程到點送出留一筆操作紀錄', () => {
 
   it('送成功：系統做的（不掛在任何人頭上），寫送到幾人', async () => {
     makeDb([], [due('b1')])
-    mockSend.mockResolvedValueOnce({ success: true, campaignId: 'b1', totalCount: 461, sentCount: 461, failedCount: 0, postSendError: null })
+    mockSend.mockResolvedValueOnce({ success: true, campaignId: 'b1', totalCount: 461, sentCount: 461, failedCount: 0, postSendError: null, allFailed: false })
 
     await runDueScheduledBroadcasts()
 
@@ -291,6 +291,16 @@ describe('排程到點送出留一筆操作紀錄', () => {
     expect(mockAudit).toHaveBeenCalledTimes(1)
     expect(mockAudit.mock.calls[0]![0]).toMatchObject({ actor: 'system', after: { status: 'failed' } })
     expect(String(mockAudit.mock.calls[0]![0].note)).toContain('0 人')
+  })
+
+  it('🔴 LINE 收下了但每一位都沒送到（推播本身標 failed）→ 紀錄也寫「沒送出去」並帶原因，⛔ 不寫成功', async () => {
+    makeDb([], [due('b4')])
+    mockSend.mockResolvedValueOnce({ success: true, campaignId: 'b4', totalCount: 3, sentCount: 0, failedCount: 3, postSendError: null, allFailed: true })
+
+    await runDueScheduledBroadcasts()
+
+    expect(mockAudit.mock.calls[0]![0]).toMatchObject({ actor: 'system', after: { status: 'failed', sentCount: 0, failedCount: 3 } })
+    expect(String(mockAudit.mock.calls[0]![0].note)).toContain('每一位都沒收到')
   })
 
   it('⛔ 認領輸了（另一台排程器先拿走）不記「沒送出去」：那則可能正由別人送著', async () => {

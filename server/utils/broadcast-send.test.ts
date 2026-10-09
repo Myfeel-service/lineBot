@@ -180,6 +180,8 @@ describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () 
 
     const res = await executeBroadcastSend('bc1')
     expect(res.sentCount).toBe(0)
+    // 呼叫端（排程、手動發送）寫操作紀錄要看這一格，⛔ 只看 success 會寫成「送出了」
+    expect(res.allFailed).toBe(true)
 
     const final = lastStatusPatch(updates)!
     expect(final.status).toBe('failed')
@@ -363,5 +365,26 @@ describe('executeBroadcastSend — 模組型推播送的是模組的內容，而
     expect(renderModuleToLineMessages).not.toHaveBeenCalled()
     expect(mockMulticast.mock.calls[0]![1]).toEqual([{ type: 'text', text: 'hi' }])
     expect(updates.find(u => 'sentContent' in u)).toBeUndefined()
+  })
+
+  it('⛔ 純文字／開網址推播裡的 {{displayName}} 送出前換成空白（以前原字送出，預覽卻說是空白）', async () => {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: [
+        { type: 'text', text: '嗨 {{displayName}}，今天公休' },
+        { type: 'template', altText: 'x', template: { type: 'buttons', text: '{{ displayName }}看這裡', actions: [{ type: 'uri', label: '開', uri: 'https://x.tw/?n={{displayName}}' }] } },
+      ],
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1'] },
+    } as any)
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    const sent = JSON.stringify(mockMulticast.mock.calls[0]![1])
+    expect(sent).not.toContain('{{')
+    expect(sent).toContain('嗨 ，今天公休')
+    expect(sent).toContain('https://x.tw/?n=')
   })
 })

@@ -18,10 +18,13 @@ const store = vi.hoisted(() => ({
   saved: null as Record<string, unknown> | null,
   users: {} as Record<string, Record<string, unknown>>,
   savedWrites: [] as Record<string, unknown>[],
+  /** 查了幾次登入系統、讀了幾筆好友資料（試發每按一次都會跑，要盯成本） */
+  authLookups: 0,
+  userReads: 0,
 }))
 
 vi.mock('./firebase', () => ({
-  getFirebaseAuth: () => ({ getUsers: async () => ({ users: [{ uid: 'uOwner', email: 'kevin@x.tw' }] }) }),
+  getFirebaseAuth: () => ({ getUsers: async () => { store.authLookups++; return { users: [{ uid: 'uOwner', email: 'kevin@x.tw' }] } } }),
   getDb: () => {
     const savedRef = {
       get: async () => ({ exists: Boolean(store.saved), data: () => store.saved }),
@@ -30,7 +33,7 @@ vi.mock('./firebase', () => ({
       collection: (name: string) => ({
         where: () => ({ get: async () => ({ docs: store.members.map(m => ({ data: () => m })) }) }),
         doc: (id: string) => (name === 'users'
-          ? { get: async () => ({ exists: Boolean(store.users[id]), data: () => store.users[id] }) }
+          ? { get: async () => { store.userReads++; return { exists: Boolean(store.users[id]), data: () => store.users[id] } } }
           : savedRef),
       }),
       runTransaction: async (fn: (tx: unknown) => unknown) => fn({
@@ -55,6 +58,8 @@ beforeEach(() => {
   store.saved = { lineUserIds: [U_RUIRU, U_BLOCKED, U_GONE, U_ARTHUR], names: { [U_GONE]: '依萱' } }
   store.users = {}
   store.savedWrites = []
+  store.authLookups = 0
+  store.userReads = 0
   friend(U_RUIRU, { displayName: '游瑞茹' })
   friend(U_BLOCKED, { displayName: 'Alice', isBlocked: true })
   friend(U_ARTHUR, { displayName: 'Arthur' })
@@ -75,11 +80,19 @@ describe('試發名單長什麼樣', () => {
     expect(list.saved.find(s => s.lineUserId === U_GONE)).toMatchObject({ unreachable: 'gone', displayName: '依萱' })
   })
 
-  it('⛔ 發得出去的只有收得到的人；還沒綁手機的自己不在裡面', async () => {
-    expect([...await allowedTestRecipientIds(WS, 'uOwner')].sort()).toEqual([U_SELF, U_ARTHUR, U_RUIRU].sort())
+  it('⛔ 名單外的人不在裡面；還沒綁手機的同事不在裡面', async () => {
+    const ids = await allowedTestRecipientIds(WS, 'uOwner')
+    expect(ids.has('U99999999999999999999999999999999')).toBe(false)
+    expect([...ids].sort()).toEqual([U_SELF, U_ARTHUR, U_RUIRU, U_BLOCKED, U_GONE].sort())
     const jordan = await allowedTestRecipientIds(WS, 'uJordan')
     expect(jordan.has(U_SELF)).toBe(true) // 擁有者對 Jordan 來說是「同事」
     expect((await buildTestRecipients(WS, 'uJordan')).self).toBeNull()
+  })
+
+  it('🔴 審查抓到：算「誰在名單上」不查登入系統、不逐一讀好友資料（封鎖了／不是好友了由試發端點逐人講）', async () => {
+    await allowedTestRecipientIds(WS, 'uOwner')
+    expect(store.authLookups).toBe(0)
+    expect(store.userReads).toBe(0)
   })
 
   it('平台管理員（不是成員）：沒有自己那一格，同事與看稿的人照列', async () => {

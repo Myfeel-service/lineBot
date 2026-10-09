@@ -101,6 +101,14 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
     expect(res.messageCount).toBe(1)
   })
 
+  it('⛔ 純文字裡的 {{displayName}}：跟正式發送一樣換成空白（⛔ 不換成收件人「吉米」、⛔ 也不原字送出）', async () => {
+    docsReturn({ workspaceId: WS, messages: [{ type: 'text', text: '嗨 {{displayName}}，今天公休' }] }, { displayName: '吉米' })
+
+    await (handler as any)({})
+
+    expect(mockPush.mock.calls[0]![1]).toEqual([{ type: 'text', text: '嗨 ，今天公休' }])
+  })
+
   it('⛔ 不是 LINE 帳號的編號 → 擋下來，不要讓 LINE 回一個看不懂的 400', async () => {
     docsReturn({ workspaceId: WS, messages: [{ type: 'text', text: 'hi' }] }, { displayName: '吉米' })
     body = { lineUserId: 'Uf0d' }
@@ -179,6 +187,17 @@ describe('試發只能發給名單上的人，一次可以好幾位', () => {
       { lineUserId: FRIEND, displayName: '江', ok: true },
       expect.objectContaining({ lineUserId: COLLEAGUE, displayName: '游瑞茹', ok: false, error: expect.stringContaining('封鎖') }),
     ])
+  })
+
+  it('名單上的人封鎖了官方帳號（好友資料記著）→ 不送他、逐人講原因，其他照送', async () => {
+    friendsAre({ [FRIEND]: { displayName: '江' }, [COLLEAGUE]: { displayName: 'Alice', isBlocked: true } })
+    body = { lineUserIds: [FRIEND, COLLEAGUE] }
+
+    const res = await (handler as any)({})
+
+    expect(mockPush).toHaveBeenCalledTimes(1)
+    expect(mockPush.mock.calls[0]![0]).toBe(FRIEND)
+    expect(res.sent[1]).toMatchObject({ lineUserId: COLLEAGUE, ok: false, error: expect.stringContaining('封鎖') })
   })
 
   it('一位都沒送到 → 整個算失敗，講出每一位的原因', async () => {

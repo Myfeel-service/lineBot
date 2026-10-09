@@ -255,7 +255,11 @@ try {
 
   // ── ④ 換成「觸發機器人模組」：客人眼前不可以有「機器人模組」 ──
   if (!await pickActionType(page, '觸發機器人模組')) fail('找不到「觸發機器人模組」這個選項')
-  await sleep(600)
+  /**
+   * ⛔ 不可以固定 sleep：選模組那一格要等 `/api/flow/list` 從正式庫回來才長出下拉（MYFEEL 有 85 個模組），
+   *    2026-10-10 跑一次就在這裡假紅（量到的是「還沒載完」的空狀態）。等到下拉真的出現，等不到照樣紅。
+   */
+  await page.waitForFunction(() => !!document.querySelector('.flow-picker .el-select'), { timeout: 20_000 }).catch(() => {})
   /**
    * ⛔ **一定要真的選一個模組**：沒選的話 `unifiedActionToLineMessages` 回空陣列、
    * 預覽本來就該是空的——那是正確行為，不是壞掉。第三次跑就是漏了這一步紅在這裡。
@@ -382,13 +386,23 @@ try {
     const btn = [...document.querySelectorAll('.bc-testsend button')].find(el => el.innerText.includes('試發'))
     btn?.click()
   })
-  await sleep(900)
+  // 名單要等 `/api/broadcast/test-recipients` 從正式庫回來（⛔ 固定 sleep 量到的是「載入中…」，2026-10-10 假紅過）；
+  // 等到分組出現或講出讀不到，等不到照樣往下量、照樣紅
+  await page.waitForFunction(() => {
+    const t = document.querySelector('.bc-dialog-testsend')?.innerText ?? ''
+    return t.includes('常找來看稿的人') || t.includes('讀不到試發名單')
+  }, { timeout: 20_000 }).catch(() => {})
   const dialogText = await page.evaluate(() =>
     document.querySelector('.bc-dialog-testsend')?.innerText ?? '')
   const promises = [
     ['真的會送到／內容一樣', dialogText.includes('完全一樣')],
     ['不帶點擊追蹤', dialogText.includes('不帶點擊追蹤')],
-    ['只有好友收得到', dialogText.includes('好友')],
+    /*
+     * `D-119` ⑥（`C-291`）改版後不再寫「只有好友收得到」：收件人改成固定名單打勾（自己／同事／常找來看稿的人），
+     * 收不到的人（封鎖了、不是好友了）照樣列出來、不給勾、旁邊寫原因——這件事由名單本身講。
+     * ⛔ 2026-10-10 審查抓到這一格還在找舊句子；改成驗新的承諾，⛔ 不是把舊句子塞回畫面。
+     */
+    ['只能發給名單上的人（分組列出）', dialogText.includes('要發給誰') && dialogText.includes('常找來看稿的人')],
   ]
   for (const [what, ok] of promises) {
     if (ok) pass(`⑪ 試發框講了：${what}`)

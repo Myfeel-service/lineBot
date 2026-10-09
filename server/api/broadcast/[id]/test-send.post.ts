@@ -2,6 +2,7 @@ import { getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { renderModuleToLineMessages } from '~~/server/utils/handler'
+import { renderBroadcastMessagesForSend } from '~~/server/utils/render-attributes'
 import { pushMessage } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -95,7 +96,8 @@ export default defineEventHandler(async (event) => {
 
   // ── 組出「正式發送時會送出去的那幾則」──────────────────────────────
   const triggerModuleId = extractBroadcastTriggerModuleId(doc.messages)
-  let messages = doc.messages as Record<string, unknown>[]
+  // 變數換成空白，跟正式發送同一支（⛔ 試發收到原字 {{displayName}}、正式發送卻是空白，就白試了）
+  let messages = renderBroadcastMessagesForSend(doc.messages as Record<string, unknown>[])
   let moduleName = ''
   if (triggerModuleId) {
     const rendered = await renderModuleToLineMessages(triggerModuleId, { workspaceId, requestOrigin })
@@ -115,6 +117,11 @@ export default defineEventHandler(async (event) => {
     const displayName = String((friend as { displayName?: string } | null)?.displayName || '')
     if (!friend) {
       sent.push({ lineUserId, displayName, ok: false, error: '已經不是這個官方帳號的好友' })
+      continue
+    }
+    // 名單只管「誰在名單上」（`allowedTestRecipientIds`），封鎖了的在這裡講、不送（試發框也不給勾）
+    if ((friend as { isBlocked?: boolean }).isBlocked === true) {
+      sent.push({ lineUserId, displayName, ok: false, error: '對方封鎖了官方帳號，收不到' })
       continue
     }
     try {

@@ -2,7 +2,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { executeBroadcastSend } from './broadcast-send'
 import { getDb } from './firebase'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
-import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
+import { BROADCAST_ALL_RECIPIENTS_FAILED, BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 /**
  * 排程到點送出也記一筆操作紀錄（`D-117` 拍板 1，2026-10-08）。
  * 以前紀錄停在「排定了推播」就斷了：看的人不知道後來到底有沒有送、送了幾人。
@@ -189,6 +189,7 @@ export async function runDueScheduledBroadcasts(
       const result = await executeBroadcastSend(id, { source: 'scheduler' })
       results.push({ id, success: result.success })
       console.log(`[broadcast-scheduler] ✓ ${id} sentCount=${result.sentCount}`)
+      // ⛔ 每一位都沒送到時，推播本身是 `failed`——紀錄要跟它講同一件事、帶上原因（2026-10-10 審查抓到）
       await writeAuditLog({
         workspaceId: docWorkspaceId,
         uid: '',
@@ -197,12 +198,14 @@ export async function runDueScheduledBroadcasts(
         targetId: id,
         after: {
           name,
-          status: 'completed',
+          status: result.allFailed ? 'failed' : 'completed',
           totalCount: result.totalCount,
           sentCount: result.sentCount,
           failedCount: result.failedCount,
         },
-        ...(result.postSendError ? { note: `送出後記帳未完成：${result.postSendError}` } : {}),
+        ...(result.allFailed
+          ? { note: BROADCAST_ALL_RECIPIENTS_FAILED }
+          : result.postSendError ? { note: `送出後記帳未完成：${result.postSendError}` } : {}),
       })
     }
     catch (e: unknown) {

@@ -61,6 +61,7 @@ import { isServiceHoursDnd, serviceHoursSentence, type ServiceHoursLike } from '
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
+import { renderWithAttributes } from './render-attributes'
 import {
   lineUserFirestoreDocId,
   lineUserIdFromFirestoreDocId,
@@ -279,13 +280,6 @@ function sanitizeForFirestore(value: any): any {
     return result
   }
   return undefined
-}
-
-function renderWithAttributes(value: string, attributes: Record<string, string>): string {
-  if (!value || !value.includes('{{')) return value
-  return value.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (_, key: string) => {
-    return attributes[key] ?? ''
-  })
 }
 
 function buildAttributeContext(userData: UserDoc | null): Record<string, string> {

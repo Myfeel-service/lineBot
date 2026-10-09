@@ -488,7 +488,7 @@
           </template>
         </AdminActionPreview>
 
-        <!-- ③ 純文字／開啟網址：送出端不會動它，原樣畫 -->
+        <!-- ③ 純文字／開啟網址：送出端只把 {{變數}} 換成空白（`render-attributes.ts`），預覽照同一條畫 -->
         <!-- `D-118`：用了名字變數時要多講一句，改用跟①同一種面板（手機上面一句、下面手機）；
              ⛔ 句子直接接在手機旁邊會變成預覽區的第二欄，把手機擠到中間 -->
         <div v-else-if="textPreviewVarNote" class="bc-preview bc-preview--panel">
@@ -981,7 +981,8 @@ function buildMessages(): Record<string, unknown>[] {
 
 /**
  * `C-229`：右側預覽吃的內容（**純文字／開啟網址**這兩條路）。
- * ⭐ 走的是 `buildMessages()`——這兩型送出端不會動它，所以畫出來的就是客人收到的。
+ * ⭐ 走的是 `buildMessages()`——這兩型送出端只會把 {{變數}} 換成空白（`server/utils/render-attributes.ts`），
+ *    下面 `textPreview` 照同一條規則畫，所以畫出來的就是客人收到的。
  * ⛔ 不要改成照 `form.contentAction` 另外拼一份給預覽看：那樣系統套進去的預設文案
  * （「點下面的按鈕看看」那句）就不會出現在預覽裡，等於換個地方繼續騙人。
  */

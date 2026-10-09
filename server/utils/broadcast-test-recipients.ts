@@ -120,14 +120,27 @@ export async function buildTestRecipients(workspaceId: string, uid: string, db: 
   }
 }
 
-/** 試發端點用：這個人按下去，名單上有誰（⛔ 一律從資料庫算，不信任前端傳來的名單） */
-export async function allowedTestRecipientIds(workspaceId: string, uid: string, db: Firestore = getDb()): Promise<Set<string>> {
-  const list = await buildTestRecipients(workspaceId, uid, db)
-  return new Set([
-    ...(list.self ? [list.self.lineUserId] : []),
-    ...list.members.map(m => m.lineUserId),
-    ...list.saved.filter(s => !s.unreachable).map(s => s.lineUserId),
+/**
+ * 試發端點用：名單上有誰（⛔ 一律從資料庫算，不信任前端傳來的名單）。
+ *
+ * ⚠️ 只讀兩份就夠（成員、常找來看稿的人），⛔ 不要拿畫面那份 `buildTestRecipients` 來算：
+ *    那份為了顯示要去登入系統查 email、每一位常找來看稿的人各讀一次好友資料——每按一次試發
+ *    多一次登入系統查詢、多最多 20 筆讀取，而試發端點本來就會對**這次勾的人**讀好友資料，
+ *    還在不在、有沒有封鎖在那裡講（2026-10-10 審查抓到）。
+ * `uid` 沒用到：名單上有誰跟誰按下去無關（自己也是成員之一），留著是為了呼叫端不必改。
+ */
+export async function allowedTestRecipientIds(workspaceId: string, _uid: string, db: Firestore = getDb()): Promise<Set<string>> {
+  const [memberSnap, savedSnap] = await Promise.all([
+    db.collection('workspaceMembers').where('workspaceId', '==', workspaceId).get(),
+    db.collection(TEST_RECIPIENTS_COLLECTION).doc(workspaceId).get(),
   ])
+  const ids = new Set<string>()
+  for (const d of memberSnap.docs) {
+    const id = normalizeLineUserId(String((d.data() as Record<string, unknown>).lineUserId ?? ''))
+    if (id) ids.add(id)
+  }
+  for (const id of savedIdsOf(savedSnap.exists ? (savedSnap.data() as SavedDoc) : undefined)) ids.add(id)
+  return ids
 }
 
 export type AddTestRecipientResult = 'added' | 'already' | 'full' | 'not-friend'

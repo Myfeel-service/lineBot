@@ -79,8 +79,9 @@ export function renderPreviewVariablesDeep<T>(input: T): PreviewVariableResult<T
  * ⛔ 不可以寫「客人看到的是他自己的名字」——9/29 起 7 則推播、約 8,400 人次收到的是
  * 「 ，還記得我們問過你…」這種開頭空一格的句子，而預覽一直說會換成名字。
  *
- * ⚠️ 換的規則要跟送出端**同一條**：只認英文開頭的變數名（`server/utils/handler.ts` 的
- *    `renderWithAttributes`）。中文變數名送出端不換、原字送出，這裡也不換。
+ * ⚠️ 換的規則要跟送出端**同一條**：只認英文開頭的變數名（`server/utils/render-attributes.ts` 的
+ *    `renderWithAttributes`；推播送出前走同檔的 `renderBroadcastMessagesForSend`）。
+ *    中文變數名送出端不換、原字送出，這裡也不換。`render-attributes.test.ts` 釘兩邊一致。
  */
 const SEND_VAR_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g
 

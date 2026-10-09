@@ -3,6 +3,7 @@ import { broadcastScheduleAtToDate } from '~~/server/utils/broadcast-schedule'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDoc } from '~~/server/utils/firebase'
 import { writeAuditLog } from '~~/server/utils/audit-log'
+import { BROADCAST_ALL_RECIPIENTS_FAILED } from '~~/shared/broadcast-failure'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -51,12 +52,16 @@ export default defineEventHandler(async (event) => {
       targetId: id,
       after: {
         name: doc.name ?? '',
+        // 每一位都沒送到＝推播本身是 failed，紀錄要講同一件事（同排程那支，2026-10-10 審查）
+        ...(result.allFailed ? { status: 'failed' } : {}),
         totalCount: result.totalCount,
         sentCount: result.sentCount,
         failedCount: result.failedCount,
       },
-      note: `送給 ${result.sentCount} 人${result.failedCount ? `（${result.failedCount} 人沒送成功）` : ''}`
-        + (result.postSendError ? `；送出後記帳未完成：${result.postSendError}` : ''),
+      note: result.allFailed
+        ? `沒送出去：${BROADCAST_ALL_RECIPIENTS_FAILED}`
+        : `送給 ${result.sentCount} 人${result.failedCount ? `（${result.failedCount} 人沒送成功）` : ''}`
+          + (result.postSendError ? `；送出後記帳未完成：${result.postSendError}` : ''),
     })
 
     return result
