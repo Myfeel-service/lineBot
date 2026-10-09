@@ -41,12 +41,15 @@ vi.mock('./ai-settings', () => ({
 const { TOOLS } = await import('./ai-admin-agent')
 
 /** 假 Firestore：認得 collection 名稱，支援 where/orderBy/limit 鏈 */
-function makeDb(data: Record<string, any[]>) {
+/** `counts`：count() 要回的總數（不給＝跟讀回來的筆數一樣），用來演「總數比讀回來的多」 */
+function makeDb(data: Record<string, any[]>, counts: Record<string, number> = {}) {
   const chain = (name: string) => {
     const api: any = {
       where: () => api,
       orderBy: () => api,
       limit: () => api,
+      select: () => api,
+      count: () => ({ get: async () => ({ data: () => ({ count: counts[name] ?? (data[name] ?? []).length }) }) }),
       get: async () => ({ docs: (data[name] ?? []).map((d: any, i: number) => ({ id: d.id ?? `d${i}`, data: () => d })) }),
     }
     return api
@@ -258,6 +261,16 @@ describe('查詢：照名字找客人的對話', () => {
     expect(res.more).toContain('另外還有 1 位')
   })
 
+  it('🔴 審查抓到：總共幾位看端點的 total，⛔ 不數這一頁（姓王的 30 位不可以講成 10 位）', async () => {
+    ;(globalThis as any).$fetch = async () => ({
+      conversations: ['A', 'B', 'C', 'D', 'E'].map(n => conv(`U${n}`, `王${n}`, 'outgoing')),
+      total: 30,
+    })
+    const res = await tool.run(makeDb({}), 'w1', { name: '王' }, { cards: [] }) as any
+    expect(res.found).toBe(30)
+    expect(res.more).toContain('另外還有 25 位')
+  })
+
   it('沒給名字 → 不去查，叫它先問是哪一位', async () => {
     const res = await tool.run(makeDb({}), 'w1', { name: '小姐' }, {}) as any
     expect(res.found).toBe(0)
@@ -301,5 +314,23 @@ describe('查詢：AI 答錯與沒答好', () => {
     ;(globalThis as any).$fetch = async () => { throw new Error('boom') }
     const res = await TOOLS.get_ai_mistakes.run(makeDb({}), 'w1', {}, {}) as any
     expect(res.markedWrongUnfixed).toContain('查不到')
+  })
+
+  it('🔴 審查抓到：「還有幾個」用總數算（60 個主題不可以講成還有 15 個）', async () => {
+    ;(globalThis as any).$fetch = async () => ({ items: [] })
+    const many = Array.from({ length: 60 }, (_, i) => ({ topic: `主題${i}`, eventCount: i }))
+    const res = await TOOLS.get_ai_mistakes.run(makeDb({ knowledgeSuggestions: many }), 'w1', {}, {}) as any
+    // 讀回 60 個全比過：前 5 名是問最多次的那幾個
+    expect(res.unansweredTopics.map((t: any) => t.topic)).toEqual(['主題59', '主題58', '主題57', '主題56', '主題55'])
+    expect(res.moreTopics).toBe(55)
+    expect(res.topicsNote).toBeUndefined()
+  })
+
+  it('總數比讀回來的多（超過讀取上限）→ 照實講只比了一部分', async () => {
+    ;(globalThis as any).$fetch = async () => ({ items: [] })
+    const db = makeDb({ knowledgeSuggestions: [{ topic: 'A', eventCount: 3 }] }, { knowledgeSuggestions: 250 })
+    const res = await TOOLS.get_ai_mistakes.run(db, 'w1', {}, {}) as any
+    expect(res.moreTopics).toBe(245)
+    expect(res.topicsNote).toContain('共 250 個')
   })
 })

@@ -344,7 +344,7 @@ export const aiSettingsToneTemplate: AdminOpDef = {
       ...base,
       summary: `我會把「給 AI 的指示」換成「${tpl.label}」範本。`,
       items: [
-        { label: currentIsTemplate ? `「${currentIsTemplate.label}」範本` : promptHead(current), note: '現在' },
+        { label: currentIsTemplate ? `「${currentIsTemplate.label}」範本` : promptHead(current), note: '現在', ...(currentIsTemplate ? {} : { verbatim: true }) },
         { label: promptHead(tpl.text), note: `改成「${tpl.label}」` },
       ],
       // 自己寫過的內容會整段不見——這件事要在按下去之前講
@@ -436,7 +436,7 @@ export const tagCreate: AdminOpDef = {
       opId: 'tag-create',
       summary: `我會建一個叫「${args.name}」的標籤。`,
       items: [
-        { label: args.name, note: '顯示名稱（客人看不到）' },
+        { label: args.name, note: '顯示名稱（客人看不到）', verbatim: true },
         { label: args.code ?? '', note: '英文代號（系統自動取，建好就不能改）' },
       ],
       warning: '建好之後是空的，不會自動貼到任何人身上——要在對話、好友頁或自動回應裡貼，或到標籤管理打開「讓 AI 判斷」。',
@@ -619,8 +619,8 @@ export const knowledgeDraftCreate: AdminOpDef = {
       ...base,
       summary: '我會把這張知識卡放進知識庫的「等你看過」：',
       items: [
-        { label: args.question, note: '客人會這樣問' },
-        { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容' },
+        { label: args.question, note: '客人會這樣問', verbatim: true },
+        { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容', verbatim: true },
         ...similarItem,
       ],
       warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用時才算知識卡額度）。測試對話裡可以先試問看看。',
@@ -792,8 +792,8 @@ export const scriptUpdateKeyword: AdminOpDef = {
         ? `我會在「${row.name}」加上關鍵字「${args.keyword}」。`
         : `我會把「${args.keyword}」從「${row.name}」的關鍵字拿掉。`,
       items: [
-        { label: list.join('、'), note: '現在的關鍵字' },
-        { label: after.join('、'), note: '改成' },
+        { label: list.join('、'), note: '現在的關鍵字', verbatim: true },
+        { label: after.join('、'), note: '改成', verbatim: true },
         ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
       ],
       warning: args.action === 'add'
@@ -897,8 +897,8 @@ export const scriptUpdateReply: AdminOpDef = {
       ...base,
       summary: `我會把「${row.name}」回給客人的話改成下面這段。`,
       items: [
-        { label: before || '（空的）', note: '現在' },
-        { label: args.text, note: '改成' },
+        { label: before || '（空的）', note: '現在', ...(before ? { verbatim: true } : {}) },
+        { label: args.text, note: '改成', verbatim: true },
         ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
       ],
       warning: '客人下次打中這條，收到的就是新的這段話。',

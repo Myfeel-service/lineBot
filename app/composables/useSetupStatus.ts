@@ -8,7 +8,7 @@
 
 import type { Component } from 'vue'
 import { Iphone, Link, MagicStick, Operation, Reading, Shop } from '@element-plus/icons-vue'
-import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
+import { setupPagePath, type SetupCapabilityId, type SetupItemStatus, type SetupStatusResponse } from '~~/shared/types/setup'
 import { STORE_PROFILE_EDIT_CAPABILITIES, type Capability } from '~~/shared/permissions'
 import type { AgentGuideId } from '~/utils/agent-guides'
 
@@ -27,7 +27,7 @@ export interface SetupCapability {
    * 給一串＝**每一項都要有**（例如進頁與存檔各看一項的店家輪廓）。
    */
   requires: Capability | readonly Capability[]
-  /** 沒做完時，前往設定的頁面 */
+  /** 沒做完時，前往設定的頁面（⛔ 一律走 `setupPagePath`：小幫手帶路吃同一份，`shared/types/setup.ts`） */
   route: (workspaceId: string) => string
   /** 若有對應的逐步導覽，填教學主題 id（對應 useTutorial 的 topic） */
   tourId?: string
@@ -60,7 +60,7 @@ const CAPABILITIES: SetupCapability[] = [
     required: true,
     // 「組織與 LINE」那一頁的進入與儲存
     requires: 'line.manage',
-    route: wid => `/admin/${wid}/settings/organization`,
+    route: wid => setupPagePath('lineConnected', wid),
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
   },
@@ -74,7 +74,7 @@ const CAPABILITIES: SetupCapability[] = [
     required: true,
     // 總開關在 AI 設定頁，儲存是 `ai.settings.write`
     requires: 'ai.settings.write',
-    route: wid => `/admin/${wid}/ai-settings`,
+    route: wid => setupPagePath('aiEnabled', wid),
     tourId: 'ai-settings',
     navTarget: '[data-tour="nav-ai-settings"]',
   },
@@ -86,7 +86,7 @@ const CAPABILITIES: SetupCapability[] = [
     required: false,
     // 「加入知識」＝`knowledge.write`（劇本 knowledge-first 同一項）
     requires: 'knowledge.write',
-    route: wid => `/admin/${wid}/knowledge/sources`,
+    route: wid => setupPagePath('knowledgeReady', wid),
     tourId: 'knowledge',
     // 這一項的「帶我做」走劇本（D-40）：放知識是有真訊號可驗的任務——放好了沒有、
     // AI 學會了沒有、總開關開了沒有，三件事都查得到，導覽一件也收不了尾。
@@ -104,7 +104,7 @@ const CAPABILITIES: SetupCapability[] = [
     //    但這一頁實際的寫入是 `scripts.write`＝**客服就能做**，教學那支 `ai-scripts` 早在 `D-82`
     //    就放寬了，只有這一項沒跟上。要不要改成 `scripts.write` 是另一個決定，⛔ 別在重構裡順手改。
     requires: 'ai.settings.write',
-    route: wid => `/admin/${wid}/ai-scripts`,
+    route: wid => setupPagePath('scriptReady', wid),
     tourId: 'ai-scripts',
     // 腳本已收進「自動回應」的第二個分頁，側欄不再有獨立的 nav-ai-scripts 可以指
     navTarget: '[data-tour="nav-auto-response"]',
@@ -121,7 +121,7 @@ const CAPABILITIES: SetupCapability[] = [
     // 進得了組織頁（`line.manage`）＋存得了輪廓（`store-profile.post`＝`ai.settings.write`）；
     // 行銷月曆卡的「去補輪廓」問同一份（2026-09-30 code review：兩處原本各看一半）
     requires: STORE_PROFILE_EDIT_CAPABILITIES,
-    route: wid => `/admin/${wid}/settings/organization`,
+    route: wid => setupPagePath('profileReady', wid),
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
   },
@@ -137,7 +137,7 @@ const CAPABILITIES: SetupCapability[] = [
     required: false,
     // LIFF ID 填在「組織與 LINE」那一頁
     requires: 'line.manage',
-    route: wid => `/admin/${wid}/settings/organization`,
+    route: wid => setupPagePath('liffReady', wid),
     tourId: 'organization',
     navTarget: '[data-tour="nav-organization"]',
   },

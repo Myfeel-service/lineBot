@@ -23,7 +23,8 @@ import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { ALERT_LABELS, severityOf, type AlertSeverity } from '~~/shared/types/alerts'
 import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
-import { SETUP_LABELS } from '~~/shared/types/setup'
+import { SETUP_LABELS, SETUP_PAGE } from '~~/shared/types/setup'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
 import type { SetupStatusResponse } from '~~/shared/types/setup'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
@@ -45,7 +46,7 @@ import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
 import { answerGroundingIssue } from '~~/shared/agent-answer-grounding'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
-import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
+import { DEFAULT_SYSTEM_PROMPT, HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 
 export interface AdminAgentTurn { role: 'user' | 'assistant'; text: string }
@@ -124,21 +125,25 @@ interface ToolDef {
   run: (db: Firestore, workspaceId: string, args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>
 }
 
-/** 「給 AI 的指示」現在是哪一個範本;都不是＝自己寫的(⛔ 不可以講成某個範本) */
-function toneOf(systemPrompt: string): string {
+/**
+ * 「給 AI 的指示」現在是哪一個範本;都不是＝自己寫的(⛔ 不可以講成某個範本)。
+ * ⛔ 從沒改過的帳號,讀設定時會補上系統預設那一段(`normalize`),它**不是**店家自己寫的——
+ *    以前這裡把它講成「自己寫的指示」,新店家問「AI 太冷淡」就被告知「你寫了自訂指示」(2026-10-10 審查抓到)。
+ */
+export function toneOf(systemPrompt: string): string {
   const cur = systemPrompt.trim()
   if (!cur) return '還沒有寫給 AI 的指示'
+  if (cur === DEFAULT_SYSTEM_PROMPT.trim()) return '系統預設的指示(還沒改過,也不是三個語氣範本之一)'
   const hit = Object.values(AI_TONE_TEMPLATES).find(t => t.text.trim() === cur)
   return hit ? `「${hit.label}」範本` : `自己寫的指示(不是範本,開頭是「${cur.split('\n')[0]!.slice(0, 30)}」)`
 }
 
-/** Firestore Timestamp 經過 JSON 之後的樣子({_seconds}／{seconds}),或還沒序列化的 */
+/**
+ * Firestore Timestamp(經過 JSON 之後的 {_seconds}／{seconds},或還沒序列化的)→ 毫秒;讀不出來＝0。
+ * ⛔ 走全站共用那支 `parseFirestoreDate`,不在這裡另寫一份(2026-10-10 審查:原本自己重寫了一份)。
+ */
 function jsonTsToMs(v: unknown): number {
-  const t = v as { toMillis?: () => number, _seconds?: number, seconds?: number } | null
-  if (!t) return 0
-  if (typeof t.toMillis === 'function') return t.toMillis()
-  const sec = t._seconds ?? t.seconds
-  return typeof sec === 'number' ? sec * 1000 : 0
+  return parseFirestoreDate(v)?.getTime() ?? 0
 }
 
 /**
@@ -465,20 +470,12 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
       })
       const STATUS: Record<string, string> = { done: '已完成', incomplete: '還沒做', unknown: '這次查不到' }
-      // 在哪一頁做（`D-116`：「認識你的店」它帶到 AI 設定，其實在組織頁）——值是帶路清單的 id，goto 照抄
-      const WHERE: Partial<Record<string, string>> = {
-        lineConnected: 'settings-organization',
-        liffReady: 'settings-organization',
-        profileReady: 'settings-organization',
-        aiEnabled: 'ai-settings',
-        knowledgeReady: 'knowledge-sources',
-        scriptReady: 'ai-scripts',
-        firstMessageReceived: 'conversations',
-      }
+      // 在哪一頁做——值是帶路清單的 id，goto 照抄。⛔ 跟健康卡「前往設定」同一份（`SETUP_PAGE`），不在這裡另抄
+      const where = SETUP_PAGE as Partial<Record<string, string>>
       return res.items.map(i => ({
         item: SETUP_LABELS[i.id] ?? i.id,
         status: STATUS[i.status] ?? i.status,
-        ...(WHERE[i.id] ? { gotoId: WHERE[i.id] } : {}),
+        ...(where[i.id] ? { gotoId: where[i.id] } : {}),
       }))
     },
   },
@@ -592,12 +589,14 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       // 稱呼不是名字的一部分:「王小姐」的顯示名稱多半是「王xx」或「Amy 王」
       const name = raw.replace(/(小姐|先生|太太|女士|老闆娘|老闆|同學|姊姊|姐姐|哥哥)$/u, '').trim().slice(0, 20)
       if (!name) return { found: 0, reason: '沒有給名字:先問使用者是哪一位客人' }
-      const res = await $fetch<{ conversations?: Array<Record<string, unknown>>, truncated?: boolean }>('/api/conversations/list', {
-        query: { workspaceId, search: name, limit: 10 },
+      // 只要前 5 位來列;**總共幾位**看端點的 total(⛔ 不可以數這一頁:姓王的有 30 位,數這一頁會講成 10 位、另外 5 位)
+      const res = await $fetch<{ conversations?: Array<Record<string, unknown>>, total?: number, truncated?: boolean }>('/api/conversations/list', {
+        query: { workspaceId, search: name, limit: 5 },
         headers: ctx.authHeader ? { authorization: ctx.authHeader } : undefined,
       })
       const rows = res.conversations ?? []
       const shown = rows.slice(0, 5)
+      const found = typeof res.total === 'number' ? Math.max(res.total, rows.length) : rows.length
       // 找到的人附「打開對話」:最多 3 張,多了就是要他先挑(卡片一排五張等於沒挑)
       if (ctx.cards && shown.length && shown.length <= 3) {
         for (const r of shown) {
@@ -613,7 +612,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       }
       return {
         searched: name,
-        found: rows.length,
+        found,
         customers: shown.map((r) => {
           const lastMs = jsonTsToMs(r.lastMessageAt)
           const customerMs = jsonTsToMs(r.customerLastAt)
@@ -626,8 +625,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
             ...(r.isBlocked ? { blocked: '已封鎖官方帳號' } : {}),
           }
         }),
-        ...(rows.length > shown.length ? { more: `另外還有 ${rows.length - shown.length} 位名字裡也有「${name}」,沒列出來` } : {}),
-        ...(res.truncated ? { warning: '符合的人太多,只查了前面一部分' } : {}),
+        ...(found > shown.length ? { more: `另外還有 ${found - shown.length} 位名字裡也有「${name}」,沒列出來` } : {}),
+        ...(res.truncated ? { warning: `符合的人太多,只查了前面一部分(實際不只 ${found} 位)` } : {}),
       }
     },
   },
@@ -671,17 +670,28 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId, _args, ctx) {
-      const [alerts, suggestions] = await Promise.all([
+      /*
+       * 「問最多次的主題」要從**全部待看的**裡挑(2026-10-10 審查抓到):以前沒排序就只拿 20 筆再排,
+       * 有 60 個主題時前 5 名是從隨便 20 個裡挑的、「還有幾個」也算成 15。
+       * ⚠️ 不加 orderBy:那要一條新的複合索引(得另外部署);改成只投影兩個欄位讀回來在記憶體排,
+       *    總數另用 count()(兩個等值條件走自動索引,幾乎不花錢)。超過讀取上限就照實講「只看了前一部分」。
+       */
+      const SUGGESTION_SCAN_LIMIT = 200
+      const pending = db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+        .where('workspaceId', '==', workspaceId)
+        .where('status', '==', 'pending')
+      const [alerts, suggestions, pendingTotal] = await Promise.all([
         // 「標過答錯還沒修」的判法只有異常那一份(卡片改過才算修好),⛔ 不在這裡另寫
         fetchAlerts(workspaceId, ctx).catch(() => null),
-        db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
-          .where('workspaceId', '==', workspaceId)
-          .where('status', '==', 'pending')
-          .limit(20)
+        pending
+          .select('topic', 'eventCount')
+          .limit(SUGGESTION_SCAN_LIMIT)
           .get()
           .then(snap => snap.docs.map(d => d.data() as { topic?: string, eventCount?: number }))
           .catch(() => null),
+        pending.count().get().then(a => a.data().count).catch(() => null),
       ])
+      const topicTotal = suggestions === null ? 0 : Math.max(pendingTotal ?? 0, suggestions.length)
       const wrong = alerts?.items.find(i => i.id === 'knowledgeWrongAnswers')
       // 「價格講錯了」最常見的原因不是 AI 亂編,是資料改了 AI 還在用舊的(`D-116` 實測:運費那題它沒連到這裡)
       const CAUSES = ['knowledgeOutdated', 'knowledgeSyncFailed', 'knowledgeIndexFailed', 'knowledgeIndexStuck'] as const
@@ -701,7 +711,10 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
                 .map(t => ({ topic: String(t.topic ?? ''), timesAsked: Number(t.eventCount ?? 0) }))
             // ⛔ 空的不等於 AI 都答得出來:收件匣只收已經整理成主題、還沒處理的
             : '收件匣目前沒有待看的主題(不代表 AI 都答得出來,答不出來的次數看 get_handoff_reasons)',
-        ...(suggestions && suggestions.length > 5 ? { moreTopics: suggestions.length - 5 } : {}),
+        ...(topicTotal > 5 ? { moreTopics: topicTotal - 5 } : {}),
+        ...(suggestions && topicTotal > suggestions.length
+          ? { topicsNote: `待看的主題共 ${topicTotal} 個,這次只比了其中 ${suggestions.length} 個,問最多次的可能不在上面` }
+          : {}),
         possibleCauses: alerts === null ? '這次查不到' : causes,
       }
     },
@@ -983,17 +996,33 @@ function stripMarks(s: string): string {
     .replace(/⛔\s*/g, '')
 }
 
-/** 「」『』外面的「您」換成「你」:引號裡是客人會看到的原文(回覆字、知識卡),⛔ 一個字都不能動 */
-function youOutsideQuotes(s: string): string {
+/**
+ * 只對「」『』**外面**的字套 `fn`:引號裡是客人會看到的原文(推播內容、回覆字、知識卡),⛔ 一個字都不能動。
+ * ⚠️ 以前只有「您→你」看引號,拿掉 `**`、⛔ 是整句照拿,客人會看到的 `**限時**` 在卡片上就變成「限時」(2026-10-10 審查)。
+ */
+function mapOutsideQuotes(s: string, fn: (part: string) => string): string {
   let depth = 0
+  let buf = ''
   let out = ''
-  for (const ch of s) {
+  for (const ch of String(s ?? '')) {
+    if (depth === 0) {
+      if (ch === '「' || ch === '『') {
+        out += fn(buf) + ch
+        buf = ''
+        depth = 1
+      }
+      else buf += ch
+      continue
+    }
     if (ch === '「' || ch === '『') depth++
-    else if ((ch === '」' || ch === '』') && depth > 0) depth--
-    out += depth === 0 && ch === '您' ? '你' : ch
+    else if (ch === '」' || ch === '』') depth--
+    out += ch
   }
-  return out
+  return out + fn(buf)
 }
+
+const youOutsideQuotes = (s: string) => mapOutsideQuotes(s, p => p.replace(/您/g, '你'))
+const stripMarksOutsideQuotes = (s: string) => mapOutsideQuotes(s, stripMarks)
 
 /**
  * 括號裡的英文代號(範本、操作、工具):那是給模型看的,店家看到「親切活潑 (friendly)」只會多一個看不懂的字。
@@ -1013,16 +1042,23 @@ function internalIds(): RegExp {
  * 小幫手泡泡裡的一段話:粗體與 ⛔ 拿掉、清單符號換成「・」、括號裡的英文代號拿掉、統一用「你」(面板其他地方都是「你」)。
  */
 export function plainReply(text: string): string {
-  return youOutsideQuotes(stripMarks(text).replace(/^[ \t]*[*\-•][ \t]+/gm, '・').replace(internalIds(), ''))
+  return youOutsideQuotes(stripMarksOutsideQuotes(text).replace(/^[ \t]*[*\-•][ \t]+/gm, '・').replace(internalIds(), ''))
 }
 
-/** 確認卡上的字:粗體與 ⛔ 拿掉;警告每一行開頭的 ⚠️ 拿掉(卡片自己會在最前面加一顆) */
-export function cardTextOf<T extends { summary: string, items: { label: string, note?: string }[], warning?: string }>(p: T): T {
+/**
+ * 確認卡上的字:粗體與 ⛔ 拿掉;警告每一行開頭的 ⚠️ 拿掉(卡片自己會在最前面加一顆)。
+ * ⛔ 「」裡的字、標了 `verbatim` 的那一格(使用者給的原文)一個字都不動——卡片要講的正是「客人會看到什麼」。
+ */
+export function cardTextOf<T extends { summary: string, items: { label: string, note?: string, verbatim?: boolean }[], warning?: string }>(p: T): T {
   return {
     ...p,
-    summary: stripMarks(p.summary),
-    items: p.items.map(i => ({ ...i, label: stripMarks(i.label), ...(i.note !== undefined ? { note: stripMarks(i.note) } : {}) })),
-    ...(p.warning !== undefined ? { warning: stripMarks(p.warning).replace(/^[ \t]*⚠️\s*/gm, '') } : {}),
+    summary: stripMarksOutsideQuotes(p.summary),
+    items: p.items.map(i => ({
+      ...i,
+      label: i.verbatim ? i.label : stripMarksOutsideQuotes(i.label),
+      ...(i.note !== undefined ? { note: stripMarksOutsideQuotes(i.note) } : {}),
+    })),
+    ...(p.warning !== undefined ? { warning: stripMarksOutsideQuotes(p.warning).replace(/^[ \t]*⚠️\s*/gm, '') } : {}),
   }
 }
 
@@ -1118,6 +1154,10 @@ export async function runAdminAgentChat(params: {
       })
     }
     catch (e: any) {
+      // ⛔ 本月 AI 用量到上限(`assertMaintenanceBudget` 的 429)要照原樣往外丟:那句話講得出「下月自動恢復」,
+      //    被下面那句「稍等一下再問一次」蓋掉的話,店家會一直重試到下個月,每次還被記成一次正常回答(2026-10-10 審查抓到)。
+      //    Gemini 自己出錯是 502／500,不會撞到這條。
+      if (e?.statusCode === 429) throw e
       // ⛔ 2026-10-08 `D-116` 實測:模型偶爾吐出不是 JSON 的東西,以前整段錯誤原文
       //    「Gemini JSON parse failed: 取不到完整 JSON。Raw: …」直接出現在店家的泡泡裡。
       //    格式壞掉是偶發的 → 同一步重來一次;再壞、或是連不上服務,就講一句人話(⛔ 不吐原文)。

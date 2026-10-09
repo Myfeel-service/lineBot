@@ -771,9 +771,50 @@ describe('畫面上的字（D-116）', () => {
     expect(b.reply).toContain('什麼都沒有改')
   })
 
+  it('⛔ 從沒改過的帳號（系統預設那段）講「系統預設」，⛔ 不是「自己寫的指示」', async () => {
+    const { toneOf } = await import('./ai-admin-agent')
+    const { DEFAULT_SYSTEM_PROMPT } = await import('~~/shared/types/ai-knowledge')
+    const { AI_TONE_TEMPLATES } = await import('~~/shared/ai-tone-templates')
+    expect(toneOf(DEFAULT_SYSTEM_PROMPT)).toContain('系統預設')
+    expect(toneOf(DEFAULT_SYSTEM_PROMPT)).not.toContain('自己寫')
+    expect(toneOf(AI_TONE_TEMPLATES.professional.text)).toBe('「專業簡潔」範本')
+    expect(toneOf('你是阿明，講話很隨興')).toContain('自己寫的指示')
+  })
+
+  it('⛔ 本月 AI 用量到上限（429）→ 照原樣往外丟，⛔ 不可以變成「稍等一下再問」（會讓人重試到下個月）', async () => {
+    const budget = Object.assign(new Error('x'), { statusCode: 429, statusMessage: '本月 AI 整理用量已達安全上限（…）。…下月自動恢復' })
+    generateJson.mockRejectedValueOnce(budget)
+    await expect(runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '嗨' }))
+      .rejects.toMatchObject({ statusCode: 429 })
+  })
+
   it('確認卡：警告每一行開頭的 ⚠️ 拿掉（卡片自己會加一顆）', async () => {
     const { cardTextOf } = await import('./ai-admin-agent')
     const out = cardTextOf({ summary: '我會**關掉**', items: [{ label: '⛔ 不可逆', note: '**注意**' }], warning: '⚠️ 第一行\n⚠️ 第二行' })
     expect(out).toEqual({ summary: '我會關掉', items: [{ label: '不可逆', note: '注意' }], warning: '第一行\n第二行' })
+  })
+
+  it('🔴 審查抓到：使用者給的原文（推播內容）在卡片上一個字都不動，「」裡的字也不動', async () => {
+    const { cardTextOf, plainReply } = await import('./ai-admin-agent')
+    const raw = '**限時**優惠⛔售完為止，您好'
+    const out = cardTextOf({
+      summary: '我會建一則推播草稿「**週年慶**」',
+      items: [{ label: raw, note: '客人會看到的內容', verbatim: true }, { label: '**全部好友**' }],
+    })
+    expect(out.items[0]!.label).toBe(raw)
+    expect(out.summary).toBe('我會建一則推播草稿「**週年慶**」')
+    // 不是原文的格子照舊清掉
+    expect(out.items[1]!.label).toBe('全部好友')
+    // 泡泡：引號外的照舊清、引號裡的原文不動
+    expect(plainReply('我會**建**草稿「**限時**優惠，您好」，您確認一下'))
+      .toBe('我會建草稿「**限時**優惠，您好」，你確認一下')
+  })
+
+  it('真的推播草稿卡：客人會看到的那一格是原文', async () => {
+    const { ADMIN_OPS } = await import('./admin-ops')
+    const def = (ADMIN_OPS as any)['broadcast-draft-create']
+    const preview = await def.preview({ db: {}, workspaceId: 'w1' }, { name: '週年慶', text: '**限時**優惠⛔售完為止，您好' })
+    const item = preview.items.find((i: any) => i.note === '客人會看到的內容')
+    expect(item).toMatchObject({ label: '**限時**優惠⛔售完為止，您好', verbatim: true })
   })
 })

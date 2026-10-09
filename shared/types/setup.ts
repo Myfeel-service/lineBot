@@ -3,8 +3,9 @@
  *
  * 後端 GET /api/admin/setup-status 依「真實資料訊號」判定每個能力是否完成，
  * 前端據此渲染健康摘要與「你哪裡沒做完」。能力的白話文文案、頁面路由、對應導覽
- * 放在前端的能力註冊表（app/composables/useSetupStatus.ts），這裡只共用 id 與狀態。
+ * 放在前端的能力註冊表（app/composables/useSetupStatus.ts），這裡只共用 id、狀態、標題與「在哪一頁做」。
  */
+import { AGENT_DESTINATIONS, type AgentDestinationId } from '../agent-destinations'
 
 export type SetupCapabilityId =
   // 已接上 LINE 官方帳號。2026-08-21 拍板（`D-15`(b)）改口徑：不再是「憑證欄位有值」，
@@ -33,6 +34,27 @@ export const SETUP_LABELS: Record<SetupCapabilityId, string> = {
   scriptReady: '啟用一條自動回應',
   profileReady: '讓 MiniMe 認識你的店',
   firstMessageReceived: '收到第一則客人訊息',
+}
+
+/**
+ * 每一項要到**哪一頁**做（單一事實來源，2026-10-10 審查抓到兩份）：
+ * 前端能力註冊表的「前往設定」（`useSetupStatus`）與小幫手 `get_setup_status` 的帶路共用。
+ * 值是小幫手帶路清單的 id，路徑也從那份拿（`setupPagePath`）——頁面搬家只改一處。
+ * ⛔ 以前兩邊各寫一份：`D-85`／`C-270` 搬過頁，只改到一邊的話小幫手會一直把人帶去舊頁。
+ */
+export const SETUP_PAGE: Record<SetupCapabilityId, AgentDestinationId> = {
+  lineConnected: 'settings-organization',
+  liffReady: 'settings-organization',
+  // `D-116`：「認識你的店」它曾帶到 AI 設定，其實在組織頁
+  profileReady: 'settings-organization',
+  aiEnabled: 'ai-settings',
+  knowledgeReady: 'knowledge-sources',
+  scriptReady: 'ai-scripts',
+  firstMessageReceived: 'conversations',
+}
+
+export function setupPagePath(id: SetupCapabilityId, workspaceId: string): string {
+  return AGENT_DESTINATIONS[SETUP_PAGE[id]].path(workspaceId)
 }
 
 /** done=已完成；incomplete=還沒做；unknown=這次查詢失敗，狀態未知（不要當成沒做） */

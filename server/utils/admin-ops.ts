@@ -831,7 +831,7 @@ const broadcastDraftCreate: AdminOpDef = {
   // 客人會看到的字、發給誰，都要出自使用者講過的話（判法在 shared/agent-user-signal.ts）
   checkUserWords(raw, userSaid) {
     const issue = broadcastTextIssue(String(raw?.text ?? ''), userSaid)
-      ?? broadcastAudienceIssue(String(raw?.tagName ?? '').trim() || undefined, userSaid)
+      ?? broadcastAudienceIssue(String(raw?.tagName ?? '').trim() || undefined, userSaid, String(raw?.text ?? ''))
     if (issue) throw new AdminOpUserError(issue)
   },
 
@@ -912,7 +912,7 @@ const broadcastDraftCreate: AdminOpDef = {
       // `D-116`：以前這句是「⛔ 只是草稿，**不會發出去**」——卡片不吃 markdown，紅色禁止符號像出錯、星號原樣印出
       summary: `我會建一則推播草稿「${args.name}」，只是草稿，不會發出去。`,
       items: [
-        { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容' },
+        { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容', verbatim: true },
         {
           label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
           note: args.estimated == null

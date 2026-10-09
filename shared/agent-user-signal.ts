@@ -107,10 +107,14 @@ export function hasNumberSignal(userTexts: readonly string[]): boolean {
 // ── 推播草稿：客人會看到的字、發給誰，都要是使用者講過的（`D-116`，2026-10-08）──────────
 
 /**
- * 像是在對小幫手下指令的字——這種句子是給「它」的，不是給客人看的。
+ * 像是在對小幫手下指令的說法——這種句子是給「它」的，不是給客人看的。
  * ⛔ 實測：「中秋節快到了，幫我弄個活動」被原封不動當成推播內容，準備發給 9,076 人。
+ *
+ * ⚠️ 要比對「叫它做事」的**說法**，⛔ 不是單一個字（2026-10-10 審查抓到）：原本只要出現「推播」「幫忙」「幫我」
+ *    就擋，店家口述「感謝大家幫忙，本週推播限定滿千送百」永遠建不成草稿——小幫手照抄、被擋、再照抄、再被擋。
+ * ⚠️ 「幫我／幫忙」後面不收「發」：客人看的字很常寫「幫忙轉發」；叫它發推播的講法由後半段（發一則推播）接。
  */
-const INSTRUCTION_TO_AGENT = /(幫我|幫忙|請你|你幫|擬一則|擬個|擬一個|寫一則|弄個|弄一個|推播|草稿|發一則)/
+const INSTRUCTION_TO_AGENT = /(幫我|幫忙|請你|你幫|麻煩你?)(擬|寫|弄|做|建|想)|(擬|寫|弄|發|做|建)(一則|一個|一篇|個|則)(推播|草稿|活動|文案)/
 
 /** 兩個字一組（去掉空白標點後）：拿來量「這段字有多少出自他講過的話」 */
 function bigrams(s: string): string[] {
@@ -138,7 +142,7 @@ const OWN_WORDS_MIN_SHARE = 0.7
  */
 export function broadcastTextIssue(text: string, userTexts: readonly string[]): string | null {
   const body = String(text ?? '').trim()
-  if (INSTRUCTION_TO_AGENT.test(body)) {
+  if (INSTRUCTION_TO_AGENT.test(squash(body))) {
     return `「${body.slice(0, 30)}」是使用者對你下的指令，不是要給客人看的字。`
       + '⛔ 不可以把它當成推播內容，也不可以自己寫一段。請先問他：要跟客人說什麼（例如優惠內容、出貨時間）、要發給全部好友還是某個標籤的人。'
   }
@@ -163,14 +167,27 @@ export function userAuthoredTextIssue(text: string, userTexts: readonly string[]
     + `請先問他：${ask}；他講了再提議。`
 }
 
-/** 「發給全部」的講法 */
-const ALL_AUDIENCE = /(全部|所有|全體|每個人|每位|每一位|大家|全員|all|everyone)/
+/**
+ * 「發給全部」的講法——要是**講對象**的說法，⛔ 不是單一個字（2026-10-10 審查抓到）：
+ * 原本「全部／所有／大家」出現在哪都算，於是「擬一則推播：大家好！週年慶所有商品八折」（沒講發給誰）
+ * 因為內容裡有「大家」「所有」就放行、預設發給全部好友＝這條要擋的正是這種。英文的 all 還會中 small、mall。
+ */
+const ALL_AUDIENCE = new RegExp([
+  // 發給大家、傳給所有人、通知全部
+  '(發|傳|送|推|寄|通知)(給|到)?(全部|所有|全體|每一?個|每一?位|大家|全員)',
+  // 所有好友、全部客人、全體會員、每位客人
+  '(全部|所有|全體|每一?個|每一?位)的?(好友|客人|顧客|會員|人|粉絲|聯絡人)',
+].join('|'))
+/** 他被問「發給全部還是某個標籤」時只回一兩個字（「全部」「大家」「全部吧」） */
+const ALL_AUDIENCE_SHORT_REPLY = /^(全部|所有|全體|大家|全員|都發|全發|都要)/
+const ALL_AUDIENCE_EN = /\b(everyone|all\s+(friends|followers|users|customers))\b/i
 
 /**
  * 發給誰，是不是使用者講過的。⛔ 沒講就選「全部好友」＝替他決定把訊息發給幾千個人。
  * @param tagName 這次要發的標籤；沒有＝全部好友
+ * @param body 這則推播的內容：判斷前先從他的話裡扣掉（內容裡的「大家好」不是在講對象）
  */
-export function broadcastAudienceIssue(tagName: string | undefined, userTexts: readonly string[]): string | null {
+export function broadcastAudienceIssue(tagName: string | undefined, userTexts: readonly string[], body = ''): string | null {
   const user = squash(userTexts.join(' '))
   const tag = squash(String(tagName ?? ''))
   if (tag) {
@@ -178,7 +195,14 @@ export function broadcastAudienceIssue(tagName: string | undefined, userTexts: r
       ? null
       : `使用者沒有講過「${tagName}」這個標籤。⛔ 不可以替他挑對象：請問他要發給全部好友，還是哪一個標籤的人。`
   }
-  if (ALL_AUDIENCE.test(user)) return null
+  const b = squash(body)
+  const saidAll = userTexts.some((t) => {
+    const s = b.length >= 4 ? squash(t).split(b).join('｜') : squash(t)
+    if (ALL_AUDIENCE.test(s)) return true
+    if (s.length <= 6 && ALL_AUDIENCE_SHORT_REPLY.test(s)) return true
+    return ALL_AUDIENCE_EN.test(b.length >= 4 ? String(t).split(String(body).trim()).join(' | ') : String(t))
+  })
+  if (saidAll) return null
   return '使用者還沒講要發給誰。⛔ 不可以自己選「全部好友」。'
     + '請問他要發給全部好友，還是某個標籤的人（可以先用 get_tag_audience 查各有幾人告訴他）。'
 }

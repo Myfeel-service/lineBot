@@ -129,6 +129,17 @@ describe('推播草稿的內容是不是他講的', () => {
     const said = ['連假照常出貨']
     expect(broadcastTextIssue('連假照常出貨！把握機會，全館滿千再送精美好禮，數量有限送完為止', said)).not.toBeNull()
   })
+
+  it('🔴 審查抓到：他口述的內容剛好有「幫忙」「推播」→ 照樣放行（以前怎麼重試都建不成）', () => {
+    const said = ['內容寫：感謝大家幫忙，本週推播限定滿千送百，發給全部好友']
+    expect(broadcastTextIssue('感謝大家幫忙，本週推播限定滿千送百', said)).toBeNull()
+    expect(broadcastTextIssue('請大家幫忙轉發給朋友', ['內容：請大家幫忙轉發給朋友'])).toBeNull()
+  })
+
+  it('對小幫手下指令的說法照樣擋（中間有空白也一樣）', () => {
+    for (const s of ['幫我擬一則國慶日的推播', '中秋節快到了，幫我弄個活動', '發一則推播給大家', '幫 我 寫 一則'])
+      expect(broadcastTextIssue(s, [s]), s).toContain('指令')
+  })
 })
 
 describe('知識卡答案／回覆字是不是他講的（userAuthoredTextIssue）', () => {
@@ -148,8 +159,26 @@ describe('推播草稿發給誰是不是他講的', () => {
   })
 
   it('講了「全部／所有人／大家」→ 放行', () => {
-    for (const s of ['發給全部', '所有好友都發', '發給大家', '全體會員'])
+    for (const s of ['發給全部', '所有好友都發', '發給大家', '全體會員', '所有人', 'send to everyone'])
       expect(broadcastAudienceIssue(undefined, [s]), s).toBeNull()
+  })
+
+  it('被問「發給全部還是某個標籤」只回一兩個字 → 放行', () => {
+    for (const s of ['全部', '大家', '全部吧', '都發'])
+      expect(broadcastAudienceIssue(undefined, ['幫我擬推播：連假照常出貨', s]), s).toBeNull()
+  })
+
+  it('🔴 審查抓到：「大家」「所有」只出現在推播內容裡、沒講發給誰 → 擋（以前預設發給全部好友）', () => {
+    const said = ['幫我擬一則推播：大家好！週年慶所有商品八折']
+    expect(broadcastAudienceIssue(undefined, said, '大家好！週年慶所有商品八折')).toContain('還沒講要發給誰')
+    // 沒把內容傳進來也一樣擋：「大家好」「所有商品」不是講對象的說法
+    expect(broadcastAudienceIssue(undefined, said)).toContain('還沒講要發給誰')
+    // 內容裡有「所有會員享八折」：扣掉內容之後就沒有講對象了
+    expect(broadcastAudienceIssue(undefined, ['擬推播：所有會員享八折'], '所有會員享八折')).toContain('還沒講要發給誰')
+  })
+
+  it('⛔ 英文單字裡的 all（small、mall、call）不算', () => {
+    expect(broadcastAudienceIssue(undefined, ['新品上市 small size 現貨，mall 也有'])).toContain('還沒講要發給誰')
   })
 
   it('標籤要是他講過的名字；它自己挑的 → 擋', () => {
