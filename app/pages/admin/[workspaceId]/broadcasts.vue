@@ -129,23 +129,13 @@
             {{ headerSubmitLabel }}
           </el-button>
         </template>
-        <!-- 複製成一則新草稿：跟機器人模組頁同一顆「⋯」。
+        <!-- 複製成一則新草稿（全站同一顆「⋯」）。
              ⛔ 已發送的也要給：最常見的用法正是「上次那則改一下再發一次」 -->
-        <el-dropdown
+        <AdminMoreMenu
           v-if="can('broadcast.write') && !isCreating && selectedItem"
-          trigger="click"
-          placement="bottom-end"
+          :items="[{ command: 'duplicate', label: '複製', icon: CopyDocument, disabled: duplicating }]"
           @command="onHeaderCommand"
-        >
-          <el-button class="admin-more-btn" :icon="MoreFilled" aria-label="更多動作" />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="duplicate" :disabled="duplicating" :icon="CopyDocument">
-                複製
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        />
       </div>
     </template>
 
@@ -700,7 +690,8 @@
 </template>
 
 <script setup lang="ts">
-import { CopyDocument, MoreFilled, Plus, Promotion } from '@element-plus/icons-vue'
+import { CopyDocument, Plus, Promotion } from '@element-plus/icons-vue'
+import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
@@ -1455,13 +1446,7 @@ function onHeaderCommand(cmd: string | number | object) {
 async function duplicateBroadcast() {
   if (!assertCan('broadcast.write') || !selectedId.value) return
   if (hasUnsavedChanges.value) {
-    try {
-      await ElMessageBox.confirm('這則有還沒儲存的修改。要先儲存，再把存好的這一份複製一則嗎？', '先儲存再複製', {
-        confirmButtonText: '儲存並複製',
-        cancelButtonText: '取消',
-      })
-    }
-    catch { return }
+    if (!(await confirmSaveBeforeCopy())) return
     if (!(await saveDraft())) return
   }
   const sourceId = selectedId.value

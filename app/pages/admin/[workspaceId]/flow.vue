@@ -251,30 +251,14 @@
           </el-button>
         </AdminOperateGate>
         <AdminOperateGate capability="marketing.write">
-          <el-dropdown
+          <AdminMoreMenu
             v-if="!isCreating && selectedFlow"
-            trigger="click"
-            placement="bottom-end"
+            :items="[
+              { command: 'duplicate', label: '複製', icon: CopyDocument, disabled: duplicating },
+              { command: 'delete', label: '刪除', icon: Delete, danger: true, show: !isSystemFlow },
+            ]"
             @command="onHeaderCommand"
-          >
-            <el-button class="admin-more-btn" :icon="MoreFilled" aria-label="更多動作" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="duplicate" :disabled="duplicating" :icon="CopyDocument">
-                  複製
-                </el-dropdown-item>
-                <el-dropdown-item
-                  v-if="!isSystemFlow"
-                  command="delete"
-                  divided
-                  :icon="Delete"
-                  class="admin-more-item--danger"
-                >
-                  刪除
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          />
         </AdminOperateGate>
       </div>
     </template>
@@ -1153,7 +1137,8 @@
 
 
 <script setup lang="ts">
-import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, MoreFilled, Plus } from '@element-plus/icons-vue'
+import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, Plus } from '@element-plus/icons-vue'
+import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
 import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config-references'
 import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
@@ -1386,7 +1371,7 @@ const defaultForm = () => ({
   messages: [] as any[],
 })
 const form = ref(defaultForm())
-const { markClean, confirmLeaveIfDirty } = useUnsavedChanges({
+const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
   getSnapshot: () => form.value,
 })
 
@@ -2610,6 +2595,12 @@ async function deleteFlow() {
 
 async function duplicateFlow() {
   if (!assertCan('marketing.write')) return
+  // 有沒存的修改：先存再複製（存失敗會留在「有修改」的狀態，就不複製）——全站同一條規則
+  if (hasUnsavedChanges.value) {
+    if (!(await confirmSaveBeforeCopy())) return
+    await submitForm()
+    if (hasUnsavedChanges.value) return
+  }
   const sourceName = form.value.name.trim()
   if (!sourceName) return showToast('請輸入模組名稱', 'error')
 
@@ -2637,12 +2628,19 @@ async function duplicateFlow() {
       },
     })
     showToast('模組已複製', 'success')
+    /**
+     * 重載會把側欄分頁縮回第一頁；這中間只要有任何東西量了一次版面（例如「⋯」選單收起來），
+     * 捲動位置就會被夾到那份較短清單的底部——實走量過一次跳了 387px。記下來、排好後放回去，
+     * 新的那列才會出現在人剛剛看的那一格（它排在原模組正上方）。
+     * ⚠️ 2026-10-09 早上一度以為「不會被夾」把這段拿掉，實走在選單改成共用元件後就紅了——時機決定的事不要賭。
+     */
+    const keepScrollTop = listEl.value?.scrollTop ?? 0
     await loadFlows(true)
     // ⛔ 找 `allFlows` 不是 `flows`：重載會把側欄分頁縮回第一頁，原模組排在那之後的話新的那列還沒渲染出來
     const newFlow = allFlows.value.find(f => f.id === res.id)
     if (newFlow) {
       selectFlow(newFlow, { skipDiscardConfirm: true })
-      await revealFlowRow(newFlow)
+      await revealFlowRow(newFlow, keepScrollTop)
     }
   } catch (error: any) {
     showToast(error?.data?.statusMessage || '複製失敗', 'error')
@@ -2656,7 +2654,7 @@ async function duplicateFlow() {
  * ⚠️ 原模組是從連結（`?id=`）直接打開的話，它的資料夾可能收著、那一列根本沒畫出來——
  *    不做這一步，複製品就「建好了卻找不到」。
  */
-async function revealFlowRow(flow: any) {
+async function revealFlowRow(flow: any, scrollTop: number) {
   ensureFlowVisible(flow.id)
   const folderId = flow.folderId
   if (folderId && !flowExpandedFolders.value.has(folderId)) {
@@ -2664,7 +2662,10 @@ async function revealFlowRow(flow: any) {
     saveFlowFolderExpandedState()
   }
   await nextTick()
-  listEl.value?.querySelector(`[data-flow-id="${flow.id}"]`)?.scrollIntoView({ block: 'nearest' })
+  const el = listEl.value
+  if (!el) return
+  el.scrollTop = scrollTop
+  el.querySelector(`[data-flow-id="${flow.id}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
 function normalizeMessages(messages: any[]) {

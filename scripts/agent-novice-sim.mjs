@@ -52,6 +52,11 @@ const CASES = [
   { id: 'C7', turns: ['把那個關掉'], watch: '反問是哪一個；⛔ 自己挑' },
   { id: 'C8', turns: ['我們週末也有開喔'], watch: '⛔ 講成「AI 自動回覆的服務時間」（服務時間只管找真人）' },
   { id: 'C9', turns: ['新增一個常見問題：可以寄到國外嗎？不行'], watch: '確認卡：知識卡放進「等你看過」，答案就是「不行」' },
+  // ── 做一個差不多的（`C-294`，2026-10-09：模組／推播／自動回應有「⋯ → 複製」，小幫手不能代做）
+  { id: 'D1', turns: ['上次那則推播想改一下再發一次，可以直接複製嗎？'], watch: '講「⋯ → 複製」、會變成草稿、附 goto 推播；⛔ 說沒有複製／叫他從新增重做' },
+  { id: 'D2', turns: ['幫我把機器人模組裡的「客服 - 常見問答」複製一份，我要給新商品用'], watch: '講自己不能代做、教他「⋯ → 複製」、附 goto 機器人模組；⛔ 給一張別的確認卡、說「已複製」' },
+  { id: 'D3', turns: ['圖文選單可以複製一份嗎？'], watch: '照實說圖文選單沒有複製；⛔ 編出「⋯ → 複製」' },
+  { id: 'D4', turns: ['我複製了一條自動回應，客人打關鍵字卻沒反應'], watch: '複本先停用，要打開它改成啟用（觸發詞跟原本一樣要先改）；⛔ 只叫他查關鍵字' },
 ]
 
 const { FIREBASE_PROJECT_ID: projectId, FIREBASE_CLIENT_EMAIL: clientEmail, FIREBASE_PRIVATE_KEY: privateKey, FIREBASE_API_KEY: apiKey } = process.env

@@ -63,13 +63,16 @@
         <p class="text-sm text-muted admin-subtext">僅「啟用」的預存會出現在對話頁選單</p>
       </div>
       <div v-if="canEditPresets" class="flex gap-2 admin-header-actions">
-        <el-button v-if="!isCreating && selectedPreset" :icon="Delete" type="danger" @click="deletePreset">
-          刪除
-        </el-button>
         <el-button @click="cancelEdit">取消</el-button>
         <el-button type="primary" :loading="saving" data-tour="sp-save" @click="submitForm">
           {{ isCreating ? '建立預存' : '儲存變更' }}
         </el-button>
+        <!-- 刪除收在「⋯」（全站同一顆）。客服預存不給複製：一筆只有一個動作，重建比複製再改還快 -->
+        <AdminMoreMenu
+          v-if="!isCreating && selectedPreset"
+          :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true }]"
+          @command="(cmd) => cmd === 'delete' && deletePreset()"
+        />
       </div>
     </template>
 

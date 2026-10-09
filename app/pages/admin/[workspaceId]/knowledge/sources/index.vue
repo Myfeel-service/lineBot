@@ -393,9 +393,11 @@
         >
           立即同步
         </el-button>
-        <el-button :icon="Delete" type="danger" plain :loading="deleting" @click="deleteSource">
-          刪除
-        </el-button>
+        <!-- 刪除收在「⋯」（全站同一顆）。知識來源不給複製：同一份內容學兩次，AI 會被重複的卡片搞混 -->
+        <AdminMoreMenu
+          :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true, disabled: deleting }]"
+          @command="(cmd) => cmd === 'delete' && deleteSource()"
+        />
       </div>
     </template>
 

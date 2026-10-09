@@ -65,9 +65,6 @@
         @enter="submitForm"
       />
       <div class="flex gap-2 admin-header-actions">
-        <el-button v-if="can('marketing.write') && !isCreating && selectedCampaign" :icon="Delete" type="danger" @click="deleteCampaign">
-          刪除
-        </el-button>
         <el-button @click="cancelEdit">取消</el-button>
         <!--
           ⛔ 按下去會拿到假結果才擋（房規）：沒有 LIFF＝存了也產不出連結，這種要擋。
@@ -93,6 +90,12 @@
             </el-button>
           </span>
         </el-tooltip>
+        <!-- 刪除收在「⋯」（全站同一顆）。活動不給複製：13 個活動沒有一組是照抄的，見 docs/COPY-RULES-AND-INVENTORY-20261009.md -->
+        <AdminMoreMenu
+          v-if="can('marketing.write') && !isCreating && selectedCampaign"
+          :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true }]"
+          @command="(cmd) => cmd === 'delete' && deleteCampaign()"
+        />
       </div>
     </template>
 

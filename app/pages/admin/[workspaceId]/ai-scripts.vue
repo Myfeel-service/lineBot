@@ -123,12 +123,21 @@
         </div>
       </div>
       <div class="flex gap-2 admin-header-actions">
-        <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="CopyDocument" @click="duplicateScript">複製一份</el-button>
-        <el-button v-if="canEditScripts && !isCreating && selectedScript" :icon="Delete" type="danger" @click="deleteScript">刪除</el-button>
         <el-button @click="cancelEdit">{{ canEditScripts ? '取消' : '關閉' }}</el-button>
         <el-button v-if="canEditScripts" type="primary" :loading="saving" data-tour="scr-save" @click="submitForm">
           {{ isCreating ? '建立自動回應' : '儲存變更' }}
         </el-button>
+        <!-- 複製／刪除收在「⋯」（全站同一顆）。
+             ⛔「客人加好友時」那條不給複製：一個帳號只能有一條在用，而清單只釘一列（啟用的優先），
+                停用的複本畫面上任何地方都看不到＝建好了卻找不到。 -->
+        <AdminMoreMenu
+          v-if="canEditScripts && !isCreating && selectedScript"
+          :items="[
+            { command: 'duplicate', label: '複製', icon: CopyDocument, disabled: duplicating, show: !selectedIsFollowScript },
+            { command: 'delete', label: '刪除', icon: Delete, danger: true },
+          ]"
+          @command="onHeaderCommand"
+        />
       </div>
     </template>
 
@@ -795,6 +804,7 @@
 import type { Component } from 'vue'
 import { ArrowRight, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Collection, Connection, CopyDocument, Delete, MagicStick, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { v4 as uuidv4 } from 'uuid'
 import {
   BUILTIN_SCRIPT_VARIABLES,
@@ -847,6 +857,7 @@ const {
 const { openFromQueryId } = useAdminDeepLink()
 
 const saving = ref(false)
+const duplicating = ref(false)
 const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 
@@ -1881,27 +1892,64 @@ async function onFollowWelcomeCreated(scriptId: string) {
   if (created) selectScript(created as ScriptRow, { skipDiscardConfirm: true })
 }
 
+// 右上「⋯」選單：複製 / 刪除
+function onHeaderCommand(cmd: string) {
+  if (cmd === 'duplicate') void duplicateScript()
+  else if (cmd === 'delete') void deleteScript()
+}
+
+/** 「客人加好友時」那條（不給複製，理由見模板上的註解） */
+const selectedIsFollowScript = computed(() =>
+  Boolean(selectedScript.value && scriptTriggerEvent(selectedScript.value) === 'follow'),
+)
+
 /**
- * 複製一份：近似的腳本（「更改地址」「新增備註」常常只有最後一題不同）不用整條重刻。
- * 複本預設停用——兩條啟用中、觸發詞又一樣的腳本會互相蓋台，剛複製完就踩這個坑很冤。
+ * 複製：近似的自動回應（「更改地址」「新增備註」常常只有最後一題不同）不用整條重刻。
+ *
+ * 跟機器人模組、推播同一套規則（`C-294`，`docs/COPY-RULES-AND-INVENTORY-20261009.md`）：
+ * 按下去就存好一份「原名 (複製)」、排在清單最上面並打開它；有沒存的修改先問要不要存。
+ * ⛔ 複本一定先**停用**：觸發詞跟原本那條一模一樣，兩條都啟用會互相蓋台，剛複製完就踩這個坑很冤。
+ * （2026-10-09 以前是「複製成還沒存的草稿、按建立才存」，跟另外兩頁不一樣，改成同一套。）
  * 節點 id 沿用即可：只要在單一腳本內唯一，跨文件重複沒有影響。
  */
-function duplicateScript() {
-  const src = selectedScript.value
-  if (!src || !confirmLeaveIfDirty()) return
-  isCreating.value = true
-  selectedId.value = null
-  form.value = {
-    name: `${src.name || '未命名流程'} 複本`,
-    enabled: false,
-    priority: src.priority || DEFAULT_SCRIPT_PRIORITY,
-    rootNodeId: src.rootNodeId,
-    nodes: deepCloneNodes(src.nodes),
+async function duplicateScript() {
+  if (!canEditScripts.value || !selectedId.value) return
+  if (hasUnsavedChanges.value) {
+    if (!(await confirmSaveBeforeCopy())) return
+    await submitForm()
+    // 存失敗、或在「會影響其他流程」那一步按了先不要，都還是有修改＝不複製
+    if (hasUnsavedChanges.value) return
   }
-  markDirty()
-  simReset()
-  resetEditorDisclosure(form.value.nodes)
-  showToast('已複製成草稿，改完按「建立自動回應」才會存檔。複本先停用，避免和原本那條搶同一組觸發詞', 'success')
+  const src = scripts.value.find(s => s.id === selectedId.value)
+  if (!src) return
+  duplicating.value = true
+  try {
+    const res = await apiFetch<{ id: string }>('/api/ai/scripts/create', {
+      method: 'POST',
+      body: {
+        name: `${src.name || '未命名流程'} (複製)`,
+        enabled: false,
+        priority: src.priority || DEFAULT_SCRIPT_PRIORITY,
+        rootNodeId: src.rootNodeId,
+        nodes: deepCloneNodes(src.nodes),
+      },
+    })
+    showToast('已複製。複本先停用（觸發詞跟原本那條一樣），改好再啟用', 'success')
+    await loadScripts(true)
+    const fresh = scripts.value.find(s => s.id === res.id)
+    if (fresh) {
+      selectScript(fresh, { skipDiscardConfirm: true })
+      // 新的排在清單最上面；人可能正捲在下面看一條舊的，捲回去讓他看得到反白的那一列
+      await nextTick()
+      listEl.value?.querySelector(`[data-agent-target="${res.id}"]`)?.scrollIntoView({ block: 'nearest' })
+    }
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || err?.statusMessage || '複製失敗', 'error')
+  }
+  finally {
+    duplicating.value = false
+  }
 }
 
 // ── AI 一句話生成草稿 ────────────────────────────────────────────────

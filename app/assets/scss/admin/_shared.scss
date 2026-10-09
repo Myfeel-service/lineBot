@@ -84,10 +84,14 @@ div.admin-header-actions {
   }
 }
 
-/* 右上「⋯」更多動作鈕（機器人模組、推播共用）：純圖示、方正、與次要動作同一套安靜外框 */
-.admin-more-btn {
-  padding-left: 0.55rem;
-  padding-right: 0.55rem;
+/* 右上「⋯」更多動作鈕（`AdminMoreMenu`，各編輯頁共用）：純圖示、正方形、與次要動作同一套安靜外框。
+   ⛔ 一定要掛 `.el-button`：Element 的 `.el-button { padding: 8px 15px }` 比這份樣式表晚載入、權重一樣，
+      只寫 `.admin-more-btn` 會被它蓋掉（`E-36`：寫了好幾週的「方形」其實一直是左右各 15px 的長方形）。
+   寬度跟按鈕高度同一個變數，換尺寸也還是正方形。 */
+.el-button.admin-more-btn {
+  width: var(--el-component-size, 32px);
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* ⋯ 選單裡的「刪除」＝危險項，紅字；hover 淡紅底提示（選單被 teleport 到 body，

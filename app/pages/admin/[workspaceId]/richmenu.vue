@@ -76,13 +76,16 @@
         >
           設為預設（上線）
         </el-button>
-        <el-button v-if="!isCreating && selectedMenu" :icon="Delete" type="danger" @click="deleteMenu">
-          刪除
-        </el-button>
         <el-button @click="cancelEdit">取消</el-button>
         <el-button type="primary" :loading="creating" data-tour="rm-save" @click="submitForm">
           {{ isCreating ? '建立圖文選單' : '儲存變更' }}
         </el-button>
+        <!-- 刪除收在「⋯」（全站同一顆）。圖文選單不給複製：成對的那兩張是互相切換的分頁、不是照抄，見 docs/COPY-RULES-AND-INVENTORY-20261009.md -->
+        <AdminMoreMenu
+          v-if="!isCreating && selectedMenu"
+          :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true }]"
+          @command="(cmd) => cmd === 'delete' && deleteMenu()"
+        />
       </div>
     </template>
 
