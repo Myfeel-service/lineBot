@@ -4,7 +4,8 @@ import {
   assertValidFlowMessages,
   assertValidFlowName,
 } from '~~/server/utils/flow-validator'
-import { nextFlowSortOrder } from '~~/server/utils/flow-sort'
+import { nextFlowSortOrder, planFlowInsertAbove } from '~~/server/utils/flow-sort'
+import { createDoc, getDb, listDocs } from '~~/server/utils/firebase'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
@@ -26,6 +27,29 @@ export default defineEventHandler(async (event) => {
     ref.where('workspaceId', '==', workspaceId),
   ).then((rows) => rows.filter((f) => !f.isSystem))
 
+  /**
+   * `insertBeforeId`（複製模組用）：新模組放在這個模組正上方、跟它同一個資料夾。
+   * 以前複製出來的一律排在整份清單最上面、不在任何資料夾，模組一多就要捲到頂再一路拖回去。
+   * ⚠️ 只在這個工作區的自建模組裡找（`existingRegular`）——系統模組、別家的、剛被刪掉的
+   *    都找不到，照舊排最上面；前端複製完會捲到新模組那一列，排到哪裡人都看得到。
+   */
+  const insertBeforeId = typeof body?.insertBeforeId === 'string' ? body.insertBeforeId : ''
+  const anchor = insertBeforeId ? existingRegular.find(f => f.id === insertBeforeId) : undefined
+  const placement = anchor ? planFlowInsertAbove(existingRegular, anchor.id) : null
+  const folderId = typeof anchor?.folderId === 'string' && anchor.folderId ? anchor.folderId : null
+
+  if (placement?.updates.length) {
+    // 先挪別人、再建新的：挪到一半失敗頂多是排序亂一點，不會多出一份「建好了卻回報失敗」的模組
+    const db = getDb()
+    for (let i = 0; i < placement.updates.length; i += 400) {
+      const batch = db.batch()
+      for (const u of placement.updates.slice(i, i + 400)) {
+        batch.update(db.collection('flows').doc(u.id), { sortOrder: u.sortOrder })
+      }
+      await batch.commit()
+    }
+  }
+
   const id = uuidv4()
   const doc = await createDoc('flows', id, {
     name: validName,
@@ -35,7 +59,8 @@ export default defineEventHandler(async (event) => {
     moduleType: 'bot_flow' as ModuleType,
     isSystem: false,
     workspaceId,
-    sortOrder: nextFlowSortOrder(existingRegular),
+    sortOrder: placement ? placement.sortOrder : nextFlowSortOrder(existingRegular),
+    ...(folderId ? { folderId } : {}),
     createdAt: FieldValue.serverTimestamp(),
   })
 
@@ -49,7 +74,7 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'flow.create',
     targetId: id,
-    after: { name: validName, isActive: isActive ?? true, messagesCount: messages.length },
+    after: { name: validName, isActive: isActive ?? true, messagesCount: messages.length, ...(folderId ? { folderId } : {}) },
   })
 
   return doc

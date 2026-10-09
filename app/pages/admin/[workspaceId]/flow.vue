@@ -43,6 +43,7 @@
         <div
           v-for="flow in uncategorizedFlows"
           :key="flow.id"
+          :data-flow-id="flow.id"
           class="flow-sidebar-row"
           :class="{
             'flow-sidebar-row--dragging': flowListDragIndex === regularFlowIndex(flow.id),
@@ -122,6 +123,7 @@
             <div
               v-for="flow in flowsByFolder[folder.id] ?? []"
               :key="flow.id"
+              :data-flow-id="flow.id"
               class="flow-sidebar-row src-row--in-folder"
               :class="{
                 'flow-sidebar-row--dragging': draggedFlowId === flow.id,
@@ -2621,6 +2623,8 @@ async function duplicateFlow() {
   if (validationError) return showToast(validationError, 'error')
 
   // 複製出來的永遠是一般自建模組（連系統模組複製出來的也是）——類型由後端決定，不用帶
+  // 放在原模組正上方、同一個資料夾（後端照 insertBeforeId 排）；系統模組不在自建清單裡，照舊排最上面
+  const insertBeforeId = isSystemFlow.value ? undefined : selectedId.value ?? undefined
   duplicating.value = true
   try {
     const res = await apiFetch<any>('/api/flow/create', {
@@ -2629,17 +2633,38 @@ async function duplicateFlow() {
         name: `${sourceName} (複製)`,
         messages,
         isActive: true,
+        insertBeforeId,
       },
     })
     showToast('模組已複製', 'success')
     await loadFlows(true)
-    const newFlow = flows.value.find(f => f.id === res.id) ?? flows.value[0]
-    if (newFlow) selectFlow(newFlow, { skipDiscardConfirm: true })
+    // ⛔ 找 `allFlows` 不是 `flows`：重載會把側欄分頁縮回第一頁，原模組排在那之後的話新的那列還沒渲染出來
+    const newFlow = allFlows.value.find(f => f.id === res.id)
+    if (newFlow) {
+      selectFlow(newFlow, { skipDiscardConfirm: true })
+      await revealFlowRow(newFlow)
+    }
   } catch (error: any) {
     showToast(error?.data?.statusMessage || '複製失敗', 'error')
   } finally {
     duplicating.value = false
   }
+}
+
+/**
+ * 讓側欄看得到這一列（複製完用）：分頁還沒載到的補載、所在資料夾收著的打開，捲到看得見為止。
+ * ⚠️ 原模組是從連結（`?id=`）直接打開的話，它的資料夾可能收著、那一列根本沒畫出來——
+ *    不做這一步，複製品就「建好了卻找不到」。
+ */
+async function revealFlowRow(flow: any) {
+  ensureFlowVisible(flow.id)
+  const folderId = flow.folderId
+  if (folderId && !flowExpandedFolders.value.has(folderId)) {
+    flowExpandedFolders.value = new Set([...flowExpandedFolders.value, folderId])
+    saveFlowFolderExpandedState()
+  }
+  await nextTick()
+  listEl.value?.querySelector(`[data-flow-id="${flow.id}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
 function normalizeMessages(messages: any[]) {
