@@ -42,14 +42,7 @@
   gap: 4px;
 }
 
-.mem-more {
-  padding: 4px;
-}
-
-// 「⋯」選單裡的移除／收回（選單掛在 body 底下，不能靠表格往下找）
-.el-dropdown-menu__item.mem-menu-danger {
-  color: var(--el-color-danger);
-}
+// 每一列最右邊的「⋯」與裡面紅字的移除／收回：共用 `AdminMoreMenu variant="row"`（樣式在 admin/_shared.scss）
 
 // 綁定碼那一行（「設定 → LINE 通知」拿不到官方帳號 ID 時的退路，`AdminLineNotifySelfAdd`）。
 // 成員頁的 LINE 欄與綁定對話框 2026-09-27 搬到那一頁（`C-270`），其餘 `.member-bind-*` 一起拿掉。

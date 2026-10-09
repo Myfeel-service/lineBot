@@ -125,21 +125,12 @@
               <!-- 不常用、會讓人緊張的動作（移除這支手機）收進「⋯」：原本紅字擠在開關旁邊，分不清哪個才是「不收」 -->
               <el-table-column width="52" align="center">
                 <template #default="{ row }">
-                  <el-dropdown v-if="menuOf(row).length" trigger="click" placement="bottom-end" @command="onMenu(row, $event)">
-                    <el-button text size="small" :icon="MoreFilled" aria-label="更多" class="ln-table__more" />
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item
-                          v-for="it in menuOf(row)"
-                          :key="it.cmd"
-                          :command="it.cmd"
-                          :class="{ 'ln-menu-danger': it.danger }"
-                        >
-                          {{ it.label }}
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                  <!-- 共用的「⋯」（表格列款式），同成員管理 -->
+                  <AdminMoreMenu
+                    variant="row"
+                    :items="menuOf(row).map(it => ({ command: it.cmd, label: it.label, danger: it.danger }))"
+                    @command="(cmd) => onMenu(row, cmd)"
+                  />
                 </template>
               </el-table-column>
             </el-table>
@@ -358,7 +349,6 @@
  * - 右邊手機的內容跟真正送出的是**同一支函式**（`shared/line-notify-messages.ts`、`shared/daily-digest-message.ts`）
  */
 import { ElMessageBox } from 'element-plus'
-import { MoreFilled } from '@element-plus/icons-vue'
 import {
   buildCriticalAlertText,
   buildHandoffNotifyText,
@@ -539,9 +529,15 @@ function statusOf(row: Row): Status {
   if (row.pendingCodeExpiresAt) return { text: '還沒加進來', sub: `等對方點連結（${untilText(row.pendingCodeExpiresAt)} 前有效）`, cls: 'is-off' }
   // 「打開首頁會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
   if (!row.isSelf && row.inviteDismissed) return { text: '還沒加進來', sub: '對方在首頁按了「先不用」，不會再被問', cls: 'is-off' }
-  // `D-119` 拍板 B：分得出「看過邀請還沒加」跟「根本沒看過」——前者要提醒他，後者是他沒打開首頁
+  // LINE 還沒接好的帳號，首頁那張邀請卡根本不會出現——⛔ 不可以講成「他還沒看」
+  if (!row.isSelf && !data.value?.lineConnected) return { text: '還沒加進來', sub: '官方帳號還沒接好，首頁還不會問他', cls: 'is-off' }
+  // `D-119` 拍板 B：看過邀請還沒加的要講出來（該提醒他了）
   if (!row.isSelf && row.inviteSeenAt) return { text: '還沒加進來', sub: `首頁問過他（${monthDay(row.inviteSeenAt)} 看到），還沒加`, cls: 'is-off' }
-  if (!row.isSelf) return { text: '還沒加進來', sub: '還沒看過首頁的邀請', cls: 'is-off' }
+  /**
+   * ⛔ 沒有「看過」的紀錄 ≠ 沒看過（2026-10-10 審查抓到，跟上面送達紀錄是同一個坑）：
+   *    這個紀錄是 `C-291` 上線才開始記的，之前就看過好幾週的同事一上線就會被寫成「還沒看過」。
+   *    分不出來就不講，表格上面那句「打開首頁會被問」已經講了他會怎麼被邀請。
+   */
   return { text: '還沒加進來', cls: 'is-off' }
 }
 

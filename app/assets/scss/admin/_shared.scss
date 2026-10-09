@@ -94,8 +94,13 @@ div.admin-header-actions {
   padding-right: 0;
 }
 
-/* ⋯ 選單裡的「刪除」＝危險項，紅字；hover 淡紅底提示（選單被 teleport 到 body，
-   所以這條放全域 partial 才吃得到） */
+/* 表格每一列最右邊的「⋯」（`AdminMoreMenu variant="row"`：成員、LINE 通知）：純文字小按鈕、不要外框 */
+.el-button.admin-more-btn--row {
+  padding: 4px;
+}
+
+/* ⋯ 選單裡的「刪除／移除」＝危險項，紅字；hover 淡紅底提示（選單被 teleport 到 body，
+   所以這條放全域 partial 才吃得到）。編輯頁與表格列共用這一條，⛔ 各頁不要再各寫一份 */
 .admin-more-item--danger {
   color: var(--el-color-danger);
 

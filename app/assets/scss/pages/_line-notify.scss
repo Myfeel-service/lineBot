@@ -88,14 +88,7 @@
   color: var(--text-muted);
 }
 
-.ln-table__more {
-  padding: 4px;
-}
-
-// 「⋯」選單裡的「移除這支手機」（選單掛在 body 底下，不能靠 .ln-table 往下找）
-.el-dropdown-menu__item.ln-menu-danger {
-  color: var(--el-color-danger);
-}
+// 每一列最右邊的「⋯」與裡面紅字的「移除這支手機」：共用 `AdminMoreMenu variant="row"`（樣式在 admin/_shared.scss）
 
 // 「LINE 手機」那一格（`D-117`：原本「LINE」「狀態」兩格併成一格）：名字＋下面一行
 .ln-phone-cell {

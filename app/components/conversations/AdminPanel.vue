@@ -6018,6 +6018,19 @@ onMounted(() => {
   applyUnreadDocumentTitle()
 })
 
+/**
+ * 人已經在這一頁、又從頁內連結帶 `?userId=` 過來（小幫手「打開「X」的對話」那張卡最常見——
+ * 客人的事多半就是在客服對話頁問的）：Nuxt 不會重新掛載這一頁，只靠上面 onMounted 讀一次的話，
+ * 網址變了、畫面卻什麼都沒選＝看起來像卡片壞掉（2026-10-10 審查抓到）。
+ */
+watch(
+  () => [String(route.query.userId || ''), String(route.query.sessionId || '')] as const,
+  ([userId, sessionId], [prevUserId, prevSessionId]) => {
+    if (!userId || (userId === prevUserId && sessionId === prevSessionId)) return
+    void selectUserById(userId, sessionId ? { sessionId } : undefined)
+  },
+)
+
 onUnmounted(() => {
   if (listPollTimer) {
     clearInterval(listPollTimer)

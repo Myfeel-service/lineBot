@@ -75,22 +75,12 @@
                     <el-button v-if="row.pendingInvite && row.expired && canTouch(row)" size="small" @click="reinvite(row)">重新邀請</el-button>
                     <!-- `D-117` 拍板 3：邀請信做好之前先頂著——不給這顆，對方根本不知道要去哪裡登入 -->
                     <el-button v-else-if="row.pendingInvite && canTouch(row)" size="small" @click="copyLoginLink(row)">複製登入連結</el-button>
-                    <el-dropdown v-if="menuOf(row).length" trigger="click" placement="bottom-end" @command="onMenu(row, $event)">
-                      <el-button text size="small" :icon="MoreFilled" aria-label="更多" class="mem-more" />
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item
-                            v-for="it in menuOf(row)"
-                            :key="it.cmd"
-                            :command="it.cmd"
-                            :divided="it.divided"
-                            :class="{ 'mem-menu-danger': it.danger }"
-                          >
-                            {{ it.label }}
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
+                    <!-- 共用的「⋯」（表格列款式）：危險項紅字、排最後、上面一條分隔線由元件統一處理 -->
+                    <AdminMoreMenu
+                      variant="row"
+                      :items="menuOf(row).map(it => ({ command: it.cmd, label: it.label, danger: it.danger }))"
+                      @command="(cmd) => onMenu(row, cmd)"
+                    />
                   </div>
                 </template>
               </el-table-column>
@@ -132,7 +122,6 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
-import { MoreFilled } from '@element-plus/icons-vue'
 import { compareMembersForList } from '~~/shared/member-order'
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 useHead({ title: useAdminTitle('成員管理') })
@@ -197,7 +186,8 @@ function roleEditable(row: any): boolean {
   return can('members.manage') && canTouch(row) && row.role !== 'owner' && !(row.pendingInvite && row.expired)
 }
 
-type MenuItem = { cmd: string, label: string, danger?: boolean, divided?: boolean }
+/** 危險項（移除、收回）排最後、上面一條分隔線由 `AdminMoreMenu` 統一處理，這裡只標 danger */
+type MenuItem = { cmd: string, label: string, danger?: boolean }
 /** 「⋯」：不常用、或會讓人緊張的動作（移除／收回邀請；擁有者的換角色） */
 function menuOf(row: any): MenuItem[] {
   if (!can('members.manage') || !canTouch(row)) return []
@@ -207,7 +197,7 @@ function menuOf(row: any): MenuItem[] {
       { cmd: 'role:admin', label: '改成管理員' },
       { cmd: 'role:agent', label: '改成客服' },
       { cmd: 'role:viewer', label: '改成觀察者' },
-      { cmd: 'remove', label: '移除這位成員', danger: true, divided: true },
+      { cmd: 'remove', label: '移除這位成員', danger: true },
     ]
   }
   return [{ cmd: 'remove', label: '移除這位成員', danger: true }]

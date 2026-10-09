@@ -23,10 +23,23 @@ function vueFiles(dir: string): string[] {
 const files = vueFiles(APP).map(p => ({ path: relative(APP, p), src: readFileSync(p, 'utf8') }))
 
 describe('編輯頁的「⋯」只有一份', () => {
-  it('⛔ 不可以在頁面裡自己拼一顆「⋯」（`admin-more-btn` 只准出現在共用元件）', () => {
+  it('⛔ 不可以在頁面裡自己拼一顆「⋯」（`admin-more-btn`、`MoreFilled` 圖示只准出現在共用元件）', () => {
+    // 2026-10-10 審查：成員管理、LINE 通知的表格列各拼了一份 el-dropdown＋MoreFilled，紅字樣式有三份
     const offenders = files
-      .filter(f => f.path !== 'components/admin/MoreMenu.vue' && f.src.includes('admin-more-btn'))
+      .filter(f => f.path !== 'components/admin/MoreMenu.vue')
+      .filter(f => f.src.includes('admin-more-btn') || f.src.includes(':icon="MoreFilled"'))
       .map(f => f.path)
+    expect(offenders).toEqual([])
+  })
+
+  it('⛔ 危險項的紅字樣式只有一份（`.admin-more-item--danger`）', () => {
+    const scss = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
+      const p = join(dir, name)
+      return statSync(p).isDirectory() ? scss(p) : (p.endsWith('.scss') ? [p] : [])
+    })
+    const offenders = scss(join(APP, 'assets', 'scss'))
+      .filter(p => /\.el-dropdown-menu__item\.[a-z-]*danger/.test(readFileSync(p, 'utf8')))
+      .map(p => relative(APP, p))
     expect(offenders).toEqual([])
   })
 
