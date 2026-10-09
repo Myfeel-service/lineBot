@@ -129,6 +129,23 @@
             {{ headerSubmitLabel }}
           </el-button>
         </template>
+        <!-- 複製成一則新草稿：跟機器人模組頁同一顆「⋯」。
+             ⛔ 已發送的也要給：最常見的用法正是「上次那則改一下再發一次」 -->
+        <el-dropdown
+          v-if="can('broadcast.write') && !isCreating && selectedItem"
+          trigger="click"
+          placement="bottom-end"
+          @command="onHeaderCommand"
+        >
+          <el-button class="admin-more-btn" :icon="MoreFilled" aria-label="更多動作" />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="duplicate" :disabled="duplicating" :icon="CopyDocument">
+                複製
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </template>
 
@@ -683,7 +700,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Promotion } from '@element-plus/icons-vue'
+import { CopyDocument, MoreFilled, Plus, Promotion } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
@@ -827,6 +844,7 @@ function toggleDraftFilter() {
   void loadBroadcasts()
 }
 const saving = ref(false)
+const duplicating = ref(false)
 const validating = ref(false)
 const sending = ref(false)
 const retrying = ref(false)
@@ -1419,6 +1437,49 @@ async function saveDraft(): Promise<boolean> {
   }
   finally {
     saving.value = false
+  }
+}
+
+// 右上「⋯」選單：目前只有複製
+function onHeaderCommand(cmd: string | number | object) {
+  if (cmd === 'duplicate') void duplicateBroadcast()
+}
+
+/**
+ * 把這一則複製成一則新草稿（帶什麼、不帶什麼見 `server/api/broadcast/[id]/duplicate.post.ts`）。
+ *
+ * ⛔ 跟機器人模組頁不同，**不拿編輯器裡的內容去建**：推播的編輯器只認得一則文字／一張按鈕卡，
+ *    舊推播存了好幾則的話從畫面重組會默默只剩第一則。所以由後端照存好的那一份原樣複製，
+ *    畫面上有沒存的修改就先問他要不要存——否則複製出來的會是他沒看到的舊版。
+ */
+async function duplicateBroadcast() {
+  if (!assertCan('broadcast.write') || !selectedId.value) return
+  if (hasUnsavedChanges.value) {
+    try {
+      await ElMessageBox.confirm('這則有還沒儲存的修改。要先儲存，再把存好的這一份複製一則嗎？', '先儲存再複製', {
+        confirmButtonText: '儲存並複製',
+        cancelButtonText: '取消',
+      })
+    }
+    catch { return }
+    if (!(await saveDraft())) return
+  }
+  const sourceId = selectedId.value
+  duplicating.value = true
+  try {
+    const created = await apiFetch<any>(`/api/broadcast/${sourceId}/duplicate`, { method: 'POST' })
+    showToast('已複製成一則新草稿', 'success')
+    await loadData()
+    await selectItem(created, { skipDiscardConfirm: true })
+    // 新的排在清單最上面；人可能正捲在下面看一則舊的，捲回去讓他看得到反白的那一列
+    await nextTick()
+    listEl.value?.querySelector(`[data-agent-target="${created.id}"]`)?.scrollIntoView({ block: 'nearest' })
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '複製失敗', 'error')
+  }
+  finally {
+    duplicating.value = false
   }
 }
 

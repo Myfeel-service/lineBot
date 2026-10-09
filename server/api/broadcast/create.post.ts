@@ -1,9 +1,9 @@
 import { v4 as uuidv4 } from 'uuid'
-import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot } from '~~/server/utils/audit-log'
-import type { BroadcastDoc, BroadcastAudienceSource } from '~~/shared/types/tag-broadcast'
+import { newBroadcastDraftDoc } from '~~/server/utils/broadcast-draft'
+import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
  * POST /api/broadcast/create
@@ -35,19 +35,12 @@ export default defineEventHandler(async (event) => {
   }
 
   const id = uuidv4()
-  const now = FieldValue.serverTimestamp()
 
-  const doc: BroadcastDoc = {
+  const doc: BroadcastDoc = newBroadcastDraftDoc({
     workspaceId,
+    uid,
     name,
-    status: 'draft',
-    channel: 'line',
     audienceSource,
-    audienceSnapshot: {
-      filter: null,
-      resolvedUserIds: [],
-      estimatedCount: 0,
-    },
     messages,
     // `C-213`：發完幫收到的人貼的標籤（選填）
     completionTagIds: Array.isArray(body.completionTagIds)
@@ -60,20 +53,10 @@ export default defineEventHandler(async (event) => {
      * 2026-09-23 實測，那樣會把八則商品檔期推播算成「中元節的成績」（`shared/festival-outcome.ts`）。
      * ⛔ 存空字串沒有意義，沒有就不要寫這個欄位。
      */
-    ...(typeof body.festivalId === 'string' && body.festivalId.trim()
-      ? { festivalId: body.festivalId.trim().slice(0, 64) }
-      : {}),
-    scheduleAt: null,
-    startedAt: null,
-    completedAt: null,
-    totalCount: 0,
-    sentCount: 0,
-    failedCount: 0,
-    skippedCount: 0,
-    createdBy: uid,
-    createdAt: now,
-    updatedAt: now,
-  }
+    festivalId: typeof body.festivalId === 'string' && body.festivalId.trim()
+      ? body.festivalId.trim().slice(0, 64)
+      : undefined,
+  })
 
   const db = getDb()
   await db.collection('broadcasts').doc(id).set(doc)

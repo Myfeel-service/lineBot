@@ -84,6 +84,24 @@ div.admin-header-actions {
   }
 }
 
+/* 右上「⋯」更多動作鈕（機器人模組、推播共用）：純圖示、方正、與次要動作同一套安靜外框 */
+.admin-more-btn {
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+}
+
+/* ⋯ 選單裡的「刪除」＝危險項，紅字；hover 淡紅底提示（選單被 teleport 到 body，
+   所以這條放全域 partial 才吃得到） */
+.admin-more-item--danger {
+  color: var(--el-color-danger);
+
+  &:not(.is-disabled):hover,
+  &:not(.is-disabled):focus {
+    color: var(--el-color-danger);
+    background: var(--el-color-danger-light-9, #fef0f0);
+  }
+}
+
 .admin-badge-xs {
   font-size: 0.6rem;
 }

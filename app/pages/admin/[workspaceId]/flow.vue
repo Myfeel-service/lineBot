@@ -257,7 +257,7 @@
             placement="bottom-end"
             @command="onHeaderCommand"
           >
-            <el-button class="flow-more-btn" :icon="MoreFilled" aria-label="更多動作" />
+            <el-button class="admin-more-btn" :icon="MoreFilled" aria-label="更多動作" />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="duplicate" :disabled="duplicating" :icon="CopyDocument">
@@ -268,7 +268,7 @@
                   command="delete"
                   divided
                   :icon="Delete"
-                  class="flow-more-item--danger"
+                  class="admin-more-item--danger"
                 >
                   刪除
                 </el-dropdown-item>

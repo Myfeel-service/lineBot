@@ -83,6 +83,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // 推播：唯一「按下去就送出、收不回來」而且會花錢的功能，所以擺第一個補
   // ⚠️ `D-117` 起操作紀錄頁會在這幾句後面接「推播名字」（`auditTarget`），所以句尾要接得上名字
   'broadcast.create': '建了推播草稿',
+  // 名字接在後面的是**複製出來的那一則**（「…(複製)」）；從哪一則複製的記在 note，細節欄講出來
+  'broadcast.duplicate': '複製出一則推播草稿',
   'broadcast.put': '改了推播',
   'broadcast.send': '送出了推播',
   'broadcast.schedule': '排定了推播',
@@ -654,6 +656,11 @@ const AUDIT_DETAIL_FORMATTERS: Record<string, (row: AuditRowLike) => string[]> =
       `${auditValueText(at)} 送出`,
       ...(typeof was === 'string' && was && was !== at ? [`原本排在 ${auditValueText(was)}`] : []),
     ]
+  },
+  // 標題已經是複製出來的那一則；這裡講從哪一則來（⛔ 不印 `copiedFromId` 那串編號）
+  'broadcast.duplicate': (row) => {
+    const from = String(row.note ?? '').trim()
+    return [from ? `從「${from}」複製` : '從另一則推播複製（沒記到是哪一則）']
   },
   'broadcast.scheduledSend': (row) => {
     const a = row.after ?? {}

@@ -279,6 +279,18 @@ describe('操作紀錄：推播那幾列一列講完', () => {
     expect(auditRowChanges(rename).lines.map(l => l.key)).toContain('name')
   })
 
+  it('複製推播（`C-293`）：標題是複製出來的那則，細節講從哪一則來，⛔ 不印那串編號', () => {
+    const dup = {
+      action: 'broadcast.duplicate',
+      before: null,
+      after: { name: '中秋快樂 (複製)', copiedFromId: 'f3a1c2d4-uuid', audienceSource: 'tags' },
+      note: '中秋快樂',
+    }
+    expect(auditTarget(dup)?.name).toBe('中秋快樂 (複製)')
+    expect(auditDetailLines(dup)).toEqual(['從「中秋快樂」複製'])
+    expect(auditVisibleNote(dup)).toBe('')
+  })
+
   it('觀察者全站同一個詞（以前這裡寫「唯讀」）', () => {
     expect(auditValueText('viewer', 'role')).toBe('觀察者')
   })
