@@ -703,6 +703,25 @@
   }
 }
 
+/*
+ * 知識空間那一行（`C-296`）：平常是一行灰字（按之前就看得到剩幾條、但不搶第一步的戲）；
+ * 滿了／有幾條沒收進去才換成琥珀色——顏色只留給「這件事會讓你少東西」的時候。
+ */
+.kb-quota-line {
+  /* 上下都留：結果頁下面緊接「試問一題」那顆按鈕，只留上方的話兩者會貼在一起 */
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+
+  &.is-full {
+    color: #b45309; /* 與 .kb-preview-summary__warn 同一個琥珀 */
+  }
+  a {
+    color: var(--el-color-primary);
+  }
+}
+
 /* 判別結果:左色條標示「會不會自動更新」——這是四種方式唯一真正的差別 */
 .kb-detected {
   margin-top: 12px;

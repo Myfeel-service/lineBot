@@ -94,6 +94,16 @@
         </template>
       </div>
 
+      <!-- 知識空間（`C-296`）：放之前就看得到剩幾條；滿了要在這裡就講，不是等整理完、按匯入才擋 -->
+      <p v-if="quota && quota.limit != null" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
+        <template v-if="roomLeft === 0">
+          知識空間滿了（{{ quota.used }}／{{ quota.limit }} 條）：新的資料整理完會放不進去，先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+        </template>
+        <template v-else>
+          知識空間：已用 {{ quota.used }}／{{ quota.limit }} 條，還能放 {{ roomLeft }} 條
+        </template>
+      </p>
+
       <!-- 判別結果:先講「這是什麼」,再講唯一真正要知道的差異(會不會自動更新) -->
       <div v-if="detected" class="kb-detected" :class="`kb-detected--${detected.syncTone}`">
         <p class="kb-detected__head">
@@ -774,13 +784,22 @@
           其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字（價格、期限最容易看錯）——
           <span class="kb-preview-summary__warn-cta">只看這幾條 →</span>
         </button>
+        <!-- 放不下時收到滿為止（`C-296`）：按之前就講會收幾條、幾條不收，按鈕跟著改口 -->
+        <p v-if="overQuotaBy > 0" class="kb-preview-summary__warn">
+          <template v-if="fitChunkCount > 0">
+            知識空間只剩 {{ roomLeft }} 條：這次會先收前 {{ fitChunkCount }} 條，其餘 {{ overQuotaBy }} 條先不收——刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就放得下。
+          </template>
+          <template v-else>
+            知識空間滿了，這 {{ overQuotaBy }} 條放不進去——先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+          </template>
+        </p>
         <div class="kb-preview-summary__actions">
           <!-- 重做清單跑到一半時擋住匯入:按下去會把「即將被取代的那一份」寫進知識庫。
                勾了總表時按鈕要把它算進去(見 importTotalLabel):按鈕說 20、結果頁說 21 是 `D-41` P0② -->
           <el-button
             type="primary"
             :loading="importing"
-            :disabled="includedCount === 0 || previewing"
+            :disabled="includedCount === 0 || previewing || fitChunkCount === 0"
             @click="runImport"
           >
             {{ importing ? '匯入並學習中⋯' : importButtonLabel }}
@@ -1158,6 +1177,11 @@
       <p v-if="result.replacedChunks" class="kb-section-hint">
         這份資料原本的 <strong>{{ result.replacedChunks }}</strong> 條知識已換成上面這批；
         舊的移到<strong>回收桶</strong>，30 天內都救得回來。
+      </p>
+
+      <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
+      <p v-if="quotaSkipped > 0" class="kb-quota-line is-full">
+        還有 <strong>{{ quotaSkipped }}</strong> 條因為知識空間不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，再傳一次這份、選「更新這一份」就能補齊。
       </p>
 
       <!--
@@ -2145,12 +2169,52 @@ const importTotalLabel = computed(() =>
 )
 
 /**
+ * 知識空間（`C-296`）：放之前就看得到剩幾條；放不下時**先收前 N 條**、講清楚其餘幾條沒收。
+ * 以前是等完、看完、按下匯入才整批 403——42 條一條都拿不到，訊息還叫新帳號「刪掉不需要的」。
+ * ⚠️ 伺服器照樣把關（assertKnowledgeChunkQuota），這裡只是讓人在按之前就知道；
+ *    讀不到用量（訂閱讀取失敗）就整行不顯示，不猜。
+ */
+interface KbQuota { used: number, limit: number | null, planName?: string }
+const quota = ref<KbQuota | null>(null)
+async function loadQuota() {
+  try {
+    quota.value = (await apiFetch<{ quota: KbQuota | null }>('/api/ai/knowledge/quota')).quota
+  }
+  catch {
+    quota.value = null
+  }
+}
+/** 這次還放得下幾條；null＝不限或讀不到。「更新這一份」的舊卡會進回收桶，空間要算回來 */
+const roomLeft = computed<number | null>(() => {
+  const q = quota.value
+  if (!q || q.limit == null) return null
+  return Math.max(0, q.limit - q.used + (replaceTarget.value?.chunkCount ?? 0))
+})
+/** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表） */
+const fitChunkCount = computed(() =>
+  roomLeft.value == null ? includedCount.value : Math.min(includedCount.value, roomLeft.value))
+const overviewFits = computed(() =>
+  overviewWillImport.value && (roomLeft.value == null || roomLeft.value > fitChunkCount.value))
+/** 這次因為空間不夠、不會收進去的條數（含總表） */
+const overQuotaBy = computed(() =>
+  (includedCount.value - fitChunkCount.value) + (overviewWillImport.value && !overviewFits.value ? 1 : 0))
+/** 匯入完要講「還有幾條沒收」用：按下去那一刻的數字（之後勾選再變也不影響結果頁） */
+const quotaSkipped = ref(0)
+/** 只有看得到方案的人（管理員，`G-103`）才給「看方案」那條路 */
+const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceId.value}/settings/billing` : ''))
+
+/**
  * 主按鈕的字。選了覆蓋目標時**按鈕本身就要改口**（`C-135`）——
  * 「匯入」跟「蓋掉既有那一份」是兩件事，按鈕說一樣的話等於沒有告知。
+ * 放不下時也要改口（`C-296`）：按鈕說 42 條、實際只收 12 條，就是「按鈕與結果對不上」。
  */
-const importButtonLabel = computed(() =>
-  replaceTarget.value ? `更新既有資料（${importTotalLabel.value}）` : `直接匯入 ${importTotalLabel.value}`,
-)
+const importButtonLabel = computed(() => {
+  if (overQuotaBy.value > 0) {
+    if (fitChunkCount.value === 0) return '空間已經滿了'
+    return replaceTarget.value ? `更新既有資料（先收前 ${fitChunkCount.value} 條）` : `先收前 ${fitChunkCount.value} 條`
+  }
+  return replaceTarget.value ? `更新既有資料（${importTotalLabel.value}）` : `直接匯入 ${importTotalLabel.value}`
+})
 
 /** 選定要覆蓋的既有資料；名稱同步過去，免得更新完列表上出現兩個不同名字指同一份東西 */
 function chooseReplaceTarget(m: { id: string; name: string; chunkCount: number }) {
@@ -2467,7 +2531,11 @@ async function resumeStoredJob() {
   }
 }
 
-onMounted(() => { void resumeStoredJob() })
+onMounted(() => {
+  void resumeStoredJob()
+  // 掛上來時就已經是開著的（`?import=1` 直接開窗）不會觸發下面那個 watch，空間要在這裡先讀
+  if (props.modelValue) void loadQuota()
+})
 
 
 /** 逾時/失敗的訊息（留在畫面上，不用會自己消失的 toast） */
@@ -2537,6 +2605,7 @@ watch(previewStillRunning, (on) => {
 // 使用者主動打開視窗＝他想看結果，不要讓他等下一次定時（45 秒在人站在畫面前時很長）
 watch(() => props.modelValue, (open) => {
   if (open && previewStillRunning.value) void recheckStoredJob()
+  if (open) void loadQuota()
   // 帶著網址進來的（開通精靈的「把網站整理成知識卡」）先填好，省一次打字。
   // ⛔ 只在乾淨的第一步填：接回預覽／結果頁時蓋掉他正在看的東西比空白還糟。
   if (open && props.prefillPaste && step.value === 'input' && !pasteInput.value && !previewing.value) {
@@ -2974,17 +3043,22 @@ async function retryAllFailed() {
 }
 
 async function runImport() {
-  // 與畫面上的 includedCount 共用同一份判斷（見 willImportChunks 的說明）
+  // 與畫面上的 includedCount 共用同一份判斷（見 willImportChunks 的說明）；
+  // 放不下時只送前 fitChunkCount 條（`C-296`：收到滿為止，不再整批被擋）
   const selected = willImportChunks.value
+    .slice(0, fitChunkCount.value)
     .map(c => ({ title: c.title.trim(), content: c.content.trim(), tags: c.tags, questions: c.questions ?? [] }))
 
-  if (!selected.length) return showToast('請至少選擇一條', 'error')
+  if (!selected.length) {
+    return showToast(overQuotaBy.value > 0 ? '知識空間已經滿了：先刪掉用不到的知識，或升級方案' : '請至少選擇一條', 'error')
+  }
   if (selected.length > 150) return showToast('單次最多匯入 150 條，請先取消勾選一些', 'error')
 
   importing.value = true
+  const skippedNow = overQuotaBy.value
   try {
     const ov = overviewCard.value
-    const overviewPayload = ov && ov.included && ov.title.trim() && ov.content.trim()
+    const overviewPayload = ov && overviewFits.value
       ? { title: ov.title.trim(), content: ov.content.trim(), tags: ov.tags, questions: ov.questions ?? [] }
       : null
 
@@ -3008,8 +3082,10 @@ async function runImport() {
       },
     })
     result.value = res
+    quotaSkipped.value = skippedNow
     clearJobMarker() // 卡已經進庫了,這份整理工作到此為止
     invalidateProductNames() // 這份資料的產品名已經進後端清單,下次填欄位要挑得到
+    void loadQuota() // 「繼續匯入」下一份時，剩幾條要是新的數字
     // 一律停在結果頁（D-40）。以前全成功是「跳 toast 就關窗」——那是使用者最想問
     // 「然後呢」的一刻，卻是整段流程唯一沉默的地方；而正確答案常常是「AI 還關著，
     // 客人聽不到」。⛔別把交棒卡改成 toast：toast 3.5 秒就消失，這張卡上有要按的按鈕。
@@ -3065,6 +3141,7 @@ function resetAll() {
   // 換一份就全部歸位：守門旗標若留著，接下來每一份都不再檢查重複（`C-134`）
   folderAutoPicked.value = false
   replaceTarget.value = null
+  quotaSkipped.value = 0
   duplicateHit.value = null
   ignoreDuplicateOnce.value = false
   sitePages.value = []

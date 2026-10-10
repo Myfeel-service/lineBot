@@ -14,7 +14,9 @@
  *    - 瀏覽器裡**所有不是 GET 的 /api 請求一律攔下回假的 200**，⛔ 一個都不會送到伺服器
  *      （所以就算哪裡自己觸發了上傳／整理，也不會建出任何東西）；跑完列出攔了哪些
  *    - 導覽「看過了」也攔下來回假的（不寫 `adminUserPrefs`，不必還原）
- *    - ⛔ 不按「先看 AI 整理的結果」：只驗選檔、判別、錯誤訊息
+ *    - 第一段不按「先看 AI 整理的結果」：只驗選檔、判別、錯誤訊息
+ *    - 第二段（空間不夠時收到滿為止，`C-296`②）會按到底，但上傳、建整理工作、輪詢、匯入
+ *      **全部在瀏覽器裡回假的**——沒有一支送到伺服器，也不花 AI 的錢
  */
 import { deflateRawSync } from 'node:zlib'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -98,19 +100,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
 const blockedWrites = []
 const pageErrors = []
-try {
+const json = body => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+
+/**
+ * 開一個已登入、匯入視窗打開的頁面。
+ * fake(req)：要假造的請求回傳 { status, contentType, body }；回 undefined 照原規則走
+ * （GET 照常打到本機伺服器＝唯讀正式庫；不是 GET 的 /api 一律攔下、記一筆、回假的 200）。
+ */
+async function openImportDialog(fake = () => undefined) {
   const page = await browser.newPage()
   await page.setViewport({ width: 1440, height: 1000 })
   await page.setRequestInterception(true)
   page.on('request', (req) => {
     const url = req.url()
-    if (url.includes('/api/admin/tour-seen') && req.method() === 'GET') {
-      return void req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ seen: TOUR_IDS }) })
-    }
+    const faked = fake(req)
+    if (faked) return void req.respond(faked)
+    if (url.includes('/api/admin/tour-seen') && req.method() === 'GET') return void req.respond(json({ seen: TOUR_IDS }))
     // ⛔ 正式庫零寫入：/api 底下不是 GET 的一律不送出
     if (url.includes('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method())) {
       blockedWrites.push(`${req.method()} ${new URL(url).pathname}`)
-      return void req.respond({ status: 200, contentType: 'application/json', body: '{}' })
+      return void req.respond(json({}))
     }
     req.continue()
   })
@@ -143,6 +152,22 @@ try {
   const deadline = Date.now() + 90_000
   while (Date.now() < deadline && !(await page.$('.kb-drop'))) await sleep(500)
   if (!(await page.$('.kb-drop'))) throw new Error('匯入視窗沒有打開（找不到 .kb-drop）')
+  return page
+}
+
+/** 等某個條件成立（輪詢，⛔ 不用固定 sleep 等資料） */
+async function waitFor(page, fn, arg, ms = 30_000) {
+  const end = Date.now() + ms
+  while (Date.now() < end) {
+    if (await page.evaluate(fn, arg).catch(() => false)) return true
+    await sleep(300)
+  }
+  return false
+}
+
+try {
+  // ── 第一段：收哪些檔、選了之後講對是什麼 ─────────────────────────────
+  const page = await openImportDialog()
   pass('匯入視窗打得開')
 
   const accept = await page.$eval('.kb-file-input', el => el.getAttribute('accept') ?? '')
@@ -198,6 +223,63 @@ try {
     else fail(`選「${files[key][0]}」沒有講怎麼辦，或被收進去了`, `toasts=${toasts.join('｜')} empty=${stillEmpty}`)
     await sleep(3800) // toast 3.5 秒消失，下一關才不會讀到上一則
   }
+  await page.close()
+
+  // ── 第二段：空間不夠時收到滿為止（`C-296`②）──────────────────────────
+  // 上傳、建整理工作、輪詢、匯入全部在瀏覽器裡回假的：正式庫零寫入，也不花 AI 的錢。
+  // 情境：免費方案已用 38／50 條，這份整理出 14 條 → 應該先收前 12 條、講 2 條沒收。
+  const JOB = 'job-fake-quota'
+  const fourteen = Array.from({ length: 14 }, (_, i) => ({ title: `第 ${i + 1} 條`, content: `內容 ${i + 1}`, tags: [], questions: [] }))
+  let bulkBody = null
+  const quotaPage = await openImportDialog((req) => {
+    const url = req.url()
+    const m = req.method()
+    if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 38, limit: 50, planName: '免費' } })
+    if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u1', storagePath: `preview-uploads/${WORKSPACE_ID}/u1.docx`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/u1.docx?sig=fake' })
+    // 跨網域上傳：瀏覽器會先問一次（OPTIONS），回應沒帶 CORS 標頭的話 PUT 會被瀏覽器自己擋掉
+    if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) {
+      return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+    }
+    if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'chunk' })
+    if (url.includes(`/api/ai/knowledge/preview-jobs/${JOB}`) && m === 'GET') {
+      return json({ status: 'done', sourceName: '退換貨政策.docx', sourceUrl: '', sourceType: 'file', rawLength: 900, truncated: false, meta: {}, ocrUsed: false, chunks: fourteen, overviewCard: null, existingMatches: [], warnings: [], suggestedProductName: '', contentHash: 'fake' })
+    }
+    if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+      bulkBody = JSON.parse(req.postData() || '{}')
+      const n = bulkBody.chunks?.length ?? 0
+      return json({ sourceId: 'fake-src', total: n, indexed: n, failed: 0, items: [] })
+    }
+    return undefined
+  })
+  const firstLine = await quotaPage.$eval('.kb-quota-line', el => el.innerText).catch(() => '')
+  if (firstLine.includes('已用 38／50 條，還能放 12 條')) pass(`第一步就看得到空間：「${firstLine.trim()}」`)
+  else fail('第一步沒講知識空間', firstLine)
+
+  await (await quotaPage.$('.kb-file-input')).uploadFile(pathOf.docx)
+  await sleep(500)
+  await quotaPage.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+  const previewShown = await waitFor(quotaPage, () => document.querySelector('.kb-preview-summary')?.innerText.includes('14'))
+  if (!previewShown) {
+    const onScreen = await quotaPage.$eval('.el-dialog__body', el => el.innerText.slice(0, 400)).catch(() => '（讀不到視窗）')
+    throw new Error(`假的整理結果沒有出現在預覽頁；畫面上是：${onScreen.replace(/\n/g, ' ／ ')}`)
+  }
+  // SHOT_DIR=… 會存畫面（文字對了但破版，斷言看不出來）
+  if (process.env.SHOT_DIR) await (await quotaPage.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-quota-preview.png') })
+  const summary = await quotaPage.$eval('.kb-preview-summary', el => el.innerText)
+  const btn = await quotaPage.$eval('.kb-preview-summary__actions .el-button--primary', el => el.innerText.trim())
+  if (summary.includes('先收前 12 條，其餘 2 條先不收') && btn === '先收前 12 條') pass(`放不下時按之前就講：按鈕「${btn}」、說明「…先收前 12 條，其餘 2 條先不收…」`)
+  else fail('預覽頁沒講放不下／按鈕沒改口', `btn=${btn}\n     ${summary.replace(/\n/g, ' ／ ')}`)
+
+  await quotaPage.evaluate(() => document.querySelector('.kb-preview-summary__actions .el-button--primary')?.click())
+  await waitFor(quotaPage, () => !!document.querySelector('.kb-result-summary'))
+  const sent = bulkBody?.chunks?.length
+  if (sent === 12) pass('真的只送出 12 條（收到滿為止，不再整批被擋）')
+  else fail('送出的條數不對', `送了 ${sent}`)
+  if (process.env.SHOT_DIR) await (await quotaPage.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-quota-result.png') })
+  const resultLine = await quotaPage.$$eval('.kb-quota-line', els => els.map(e => e.innerText).join(' ／ '))
+  if (resultLine.includes('還有 2 條因為知識空間不夠沒收進去')) pass('結果頁講出還有 2 條沒收、怎麼補')
+  else fail('結果頁沒講沒收進去的條數', resultLine)
+  await quotaPage.close()
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))
@@ -208,8 +290,8 @@ finally {
 
 if (pageErrors.length) fail(`頁面有 ${pageErrors.length} 個執行期錯誤`, pageErrors.join('\n     '))
 else pass('全程零執行期錯誤')
-// 只選檔不按整理：知識庫那邊連「拿上傳網址」都不該發生；有攔到就代表某處自己觸發了上傳／整理。
-// 「導覽看過了」那支是頁面自己會送的（跟匯入無關），一樣攔下、只列出來不算失敗。
+// 第一段只選檔不按整理、第二段的上傳／整理／匯入全部回假的：知識庫那邊不該有任何一支走到預設攔截；
+// 有攔到就代表某處自己觸發了沒假造到的寫入。「導覽看過了」那支是頁面自己會送的（跟匯入無關），只列出來不算失敗。
 const kbWrites = blockedWrites.filter(w => w.includes('/api/ai/'))
 const otherWrites = blockedWrites.filter(w => !w.includes('/api/ai/'))
 if (kbWrites.length) fail('知識庫有不該發生的寫入請求（已攔下、沒有送到伺服器）', kbWrites.join('\n     '))

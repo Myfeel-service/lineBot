@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
+import { countSourceChunks, invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
@@ -68,7 +68,14 @@ export default defineEventHandler(async (event) => {
   }
   // 方案知識量前置檢查（D-69 拍板④）：同 assertMaintenanceBudget 的用意——
   // 在開始 embedding 之前就講清楚「不夠」，而不是建到一半才死。
-  await assertKnowledgeChunkQuota(workspaceId, rawChunks.length)
+  // 兩個以前沒算對的地方（`C-296`）：
+  //  ① 總表也是一條、也算額度——以前沒算，剛好滿的時候會超收 1 條；
+  //  ② 「更新這一份」的舊卡等一下就進回收桶、不再算額度——以前照算，換一份新版說明書
+  //     會被自己的舊卡擋下來（新版 40 條＋舊版 40 條＞上限）。外帳號的 id 數出來是 0，不會被拿來灌額度。
+  const overviewAdding = body?.overviewCard?.title && body?.overviewCard?.content ? 1 : 0
+  const replacingId = String(body?.replaceSourceId ?? '').trim().slice(0, 64)
+  const freed = replacingId ? await countSourceChunks(getDb(), workspaceId, replacingId) : 0
+  await assertKnowledgeChunkQuota(workspaceId, rawChunks.length + overviewAdding - freed)
 
   const inputs = rawChunks.map(normalizeChunkInput)
   for (const input of inputs) {
