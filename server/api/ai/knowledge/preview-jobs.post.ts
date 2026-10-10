@@ -7,14 +7,17 @@ import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { getDb, getStorage } from '~~/server/utils/firebase'
 import {
   extractionQualityWarnings,
+  extractOfficeText,
   extractPdfText,
   extractUrlText,
   extractXlsxCards,
   extractXlsxText,
+  IMAGE_MIME_BY_EXT,
   isProbablyScannedPdf,
   MAX_OCR_PAGES,
   MAX_RAW_TEXT_LEN,
 } from '~~/server/utils/ai-source-extractors'
+import { fileExtension, KNOWLEDGE_FILE_MAX_BYTES, knowledgeFileKind, unsupportedFileHint } from '~~/shared/knowledge-file-types'
 import { parseGoogleSheetUrl, readGoogleSheetAsCards, sheetHealthWarnings } from '~~/server/utils/google-sheets'
 import { getPdfPageCount } from '~~/server/utils/pdf-split'
 import {
@@ -95,7 +98,10 @@ export default defineEventHandler(async (event) => {
     work.truncated = sheet.stats.truncatedByCap
     work.meta = { rows: sheet.stats.rowCount, sheet: sheet.sheetTitle }
     work.chunks = sheet.cards.map(c => cardToChunk(c))
-    work.warnings = sheetHealthWarnings(sheet.cards, sheet.stats, sheet.mergeCount)
+    work.warnings = [
+      ...sheetHealthWarnings(sheet.cards, sheet.stats, sheet.mergeCount),
+      ...skippedSheetsWarning(sheet.skippedSheets),
+    ]
     // 一列一卡不走 LLM 切卡，但卡片沒有 questions（客人問法）→ 進 enrich 逐批補
     // （只補不改；gsheet 不做總覽卡，enrich 完直接 finalize）
     work.phase = work.chunks.length ? 'enrich' : 'finalize'
@@ -108,7 +114,7 @@ export default defineEventHandler(async (event) => {
     // 舊路徑：相容小檔的 fileBase64 直傳。
     const buffer = await readUploadedFileBuffer(body, workspaceId)
     if (buffer.length === 0) throw createError({ statusCode: 400, statusMessage: '檔案內容為空' })
-    if (buffer.length > 10 * 1024 * 1024) throw createError({ statusCode: 400, statusMessage: '檔案超過 10MB 上限' })
+    if (buffer.length > KNOWLEDGE_FILE_MAX_BYTES) throw createError({ statusCode: 400, statusMessage: '檔案超過 10MB 上限' })
 
     /**
      * 檔案的指紋算**原始 bytes**，不是抽出來的文字：
@@ -122,11 +128,14 @@ export default defineEventHandler(async (event) => {
 
     work.sourceName = fileName
     work.sourceType = 'file'
-    const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
-    const isPdf = contentType.includes('pdf') || ext === 'pdf'
-    const isXlsx = contentType.includes('spreadsheet') || contentType.includes('excel') || ext === 'xlsx' || ext === 'xls'
+    const ext = fileExtension(fileName)
+    // 收哪些檔與前端、簽名網址共用 shared/knowledge-file-types（`C-296`）。
+    // 沒有副檔名、只有瀏覽器給的型別的舊情況（PDF／Excel）照舊認得。
+    const kind = knowledgeFileKind(fileName)
+      ?? (contentType.includes('pdf') ? 'pdf' : (contentType.includes('spreadsheet') || contentType.includes('excel')) ? 'xlsx' : null)
+    if (!kind) throw createError({ statusCode: 400, statusMessage: unsupportedFileHint(fileName) })
 
-    if (isPdf) {
+    if (kind === 'pdf') {
       const extracted = await extractPdfText(buffer)
       if (isProbablyScannedPdf(extracted, buffer.length)) {
         // 掃描檔：沒有文字層 → 走 OCR 切頁批處理（逐輪推進）。原檔存 Storage 供各批切頁。
@@ -157,23 +166,48 @@ export default defineEventHandler(async (event) => {
         setChunkingFromExtracted(work, extracted)
       }
     }
-    else if (isXlsx) {
-      const xlsx = extractXlsxCards(buffer)
+    else if (kind === 'xlsx' || kind === 'csv') {
+      const xlsx = extractXlsxCards(buffer, kind)
       if (xlsx) {
         // 乾淨表格 → 一列一卡，不走 LLM 切卡；先進 enrich 逐批補 questions（只補不改），
         // 補完由狀態機決定要不要接 overview（wantOverview 且 ≥2 張）。
         work.truncated = xlsx.stats.truncatedByCap
-        work.meta = { rows: xlsx.stats.rowCount, sheets: xlsx.sheetCount }
+        work.meta = { rows: xlsx.stats.rowCount, sheets: xlsx.sheetCount, ...(xlsx.encoding ? { encoding: xlsx.encoding } : {}) }
         work.chunks = xlsx.cards.map(c => cardToChunk(c))
-        work.warnings = sheetHealthWarnings(xlsx.cards, xlsx.stats, xlsx.mergeCount)
+        work.warnings = [
+          ...sheetHealthWarnings(xlsx.cards, xlsx.stats, xlsx.mergeCount),
+          ...skippedSheetsWarning(xlsx.skippedSheets),
+        ]
         work.phase = 'enrich'
       }
       else {
-        setChunkingFromExtracted(work, extractXlsxText(buffer))
+        setChunkingFromExtracted(work, extractXlsxText(buffer, kind))
       }
     }
+    else if (kind === 'image') {
+      // 照片（價目表、菜單、DM）：跟掃描 PDF 走同一條認字的路，只是一次一張。
+      // 認字要十幾秒，⛔ 不在這個請求裡做（建工作端點本來就逼近閘道逾時）——交給輪詢推進。
+      const mime = IMAGE_MIME_BY_EXT[ext] ?? (contentType.startsWith('image/') ? contentType : 'image/jpeg')
+      sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'jpg', mime)
+      work.meta = { image: 1 }
+      work.ocrMime = mime
+      work.ocrPageTotal = 1
+      work.ocrPageCursor = 0
+      work.phase = 'ocr'
+    }
     else {
-      throw createError({ statusCode: 400, statusMessage: `不支援的檔案類型：${ext || contentType}` })
+      // Word／簡報／文字檔：抽出純文字，接下來跟 PDF 文字層同一條路
+      const extracted = extractOfficeText(buffer, kind)
+      if (kind === 'pptx') {
+        const slides = Number(extracted.meta.slides ?? 0)
+        if (!extracted.text.trim()) {
+          throw createError({ statusCode: 422, statusMessage: `這份簡報讀不到任何文字（${slides} 張投影片看起來都是圖片）；請把重點那幾張存成圖片（JPG／PNG）再傳，系統會認圖上的字` })
+        }
+        if (slides >= 3 && extracted.rawLength / slides < 30) {
+          work.warnings.push(`這份簡報讀到的字很少（${slides} 張投影片共 ${extracted.rawLength} 字），圖片上的字讀不到；重點寫在圖片上的話，請把那幾張存成圖片另外傳上來。`)
+        }
+      }
+      setChunkingFromExtracted(work, extracted)
     }
   }
   else if (type === 'url') {
@@ -252,7 +286,7 @@ async function readUploadedFileBuffer(
     // 先看 metadata 再下載（C-49A）：簽名網址已有大小上限，這裡是第二道——
     // 超大檔要在「下載進記憶體之前」擋下，OOM 炸掉的話連刪檔的機會都沒有
     const [meta] = await file.getMetadata()
-    if (Number(meta.size ?? 0) > 10 * 1024 * 1024) {
+    if (Number(meta.size ?? 0) > KNOWLEDGE_FILE_MAX_BYTES) {
       await file.delete().catch(() => {})
       throw createError({ statusCode: 400, statusMessage: '檔案超過 10MB 上限' })
     }
@@ -263,6 +297,13 @@ async function readUploadedFileBuffer(
   const base64 = String(body?.fileBase64 ?? '').trim()
   if (!base64) throw createError({ statusCode: 400, statusMessage: '請提供 storagePath 或 fileBase64' })
   return Buffer.from(base64, 'base64')
+}
+
+/** 沒讀的分頁要講出來（`C-296`）：每頁都讀之後只剩說明頁會跳過，但跳過什麼仍要說得出來 */
+function skippedSheetsWarning(skipped: string[]): string[] {
+  const names = skipped.filter(Boolean)
+  if (!names.length) return []
+  return [`沒有讀 ${names.map(n => `「${n}」`).join('、')} 分頁（看起來是使用說明）；那頁其實是資料的話，請把分頁改個名字再匯入一次`]
 }
 
 /** SheetCard / xlsx card → ChunkInput（一列一卡沒有 questions） */

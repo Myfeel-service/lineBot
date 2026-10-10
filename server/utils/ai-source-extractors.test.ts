@@ -112,6 +112,17 @@ describe('extractXlsxCards — 說明分頁 / 合併儲存格', () => {
     expect(res!.cards.map(c => c.title)).toEqual(['退款多久?', '運費多少?'])
   })
 
+  it('FAQ 頁＋自己加的「價目表」兩頁都讀（C-296），跳過的說明頁要回報', () => {
+    const buf = makeXlsx([
+      { name: 'FAQ', rows: faqRows },
+      { name: '價目表', rows: [['品名', '價格'], ['W1 REGEN 改', '12,900']] },
+      { name: '使用說明', rows: guideRows },
+    ])
+    const res = extractXlsxCards(buf)!
+    expect(res.cards.map(c => c.title)).toEqual(['退款多久?', '運費多少?', 'W1 REGEN 改'])
+    expect(res.skippedSheets).toEqual(['使用說明'])
+  })
+
   it('整本只有說明類名稱的分頁 → 照讀(不讓使用者面對空結果)', () => {
     const buf = makeXlsx([{ name: '使用說明', rows: faqRows }])
     const res = extractXlsxCards(buf)
@@ -182,5 +193,23 @@ describe('extractXlsxText — 說明分頁', () => {
     const res = extractXlsxText(buf)
     expect(res.text).toContain('產品介紹')
     expect(res.text).not.toContain('範本使用說明')
+  })
+})
+
+describe('CSV（C-296）', () => {
+  // 「品名,價格,客服電話\nW1 REGEN 改,"12,900",0912345678」的 Big5 bytes（iconv 產生）——台灣購物平台匯出常見的編碼
+  const big5Csv = Buffer.from('ab7ea6572cbbf9aee62cabc8aa41b971b8dc0a573120524547454e20a7ef2c2231322c393030222c303931323334353637380a', 'hex')
+
+  it('Big5 的 CSV 讀得懂、一列一條，電話前面的 0 不會掉、帶千分位的價格不會被拆開', () => {
+    const res = extractXlsxCards(big5Csv, 'csv')!
+    expect(res.encoding).toBe('big5')
+    expect(res.cards).toEqual([{ title: 'W1 REGEN 改', content: '價格：12,900\n客服電話：0912345678', tags: [] }])
+  })
+
+  it('UTF-8 的 CSV、最上面有一行標題：欄位名稱用下一列', () => {
+    const csv = Buffer.from('2026 秋季價目表,,\n品名,容量,價格\nW1 mini,6L,"8,990"\n', 'utf8')
+    const res = extractXlsxCards(csv, 'csv')!
+    expect(res.cards).toEqual([{ title: 'W1 mini', content: '容量：6L\n價格：8,990', tags: [] }])
+    expect(res.stats.titleRows).toEqual(['2026 秋季價目表'])
   })
 })

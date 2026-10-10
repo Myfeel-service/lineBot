@@ -12,12 +12,17 @@ vi.mock('./pdf-split', () => ({
 }))
 vi.mock('./ai-source-extractors', async (importActual) => {
   const actual = await importActual<typeof import('./ai-source-extractors')>()
-  return { ...actual, ocrPdfWithGemini: vi.fn() }
+  return { ...actual, ocrPdfWithGemini: vi.fn(), ocrImageWithGemini: vi.fn() }
 })
 
 import { advanceWork, CHUNK_PARALLEL, makeWork, progressFor, workToPreviewResult } from './ai-preview-jobs'
 import { chunkSegment, ENRICH_BATCH_SIZE, enrichCardBatch, summarizeAsOverviewCard } from './ai-knowledge-chunker'
-import { ocrPdfWithGemini } from './ai-source-extractors'
+import { ocrImageWithGemini, ocrPdfWithGemini } from './ai-source-extractors'
+import { splitPdfPageRange } from './pdf-split'
+
+// 認字失敗會丟 Nuxt 全域 createError；測試環境沒有，補一個最小版
+vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: string }) =>
+  Object.assign(new Error(opts.statusMessage ?? 'error'), opts))
 
 const mockChunk = vi.mocked(chunkSegment)
 const mockOverview = vi.mocked(summarizeAsOverviewCard)
@@ -239,6 +244,32 @@ describe('advanceWork — ocr 階段（切頁批處理）', () => {
     expect(work.segments.length).toBeGreaterThan(0)
     expect(work.usage).toEqual({ inputTokens: 3, outputTokens: 3 })
     expect(mockOcr).toHaveBeenCalledTimes(3)
+  })
+
+  it('照片（C-296）：一步認完整張、交給 AI 整理，⛔ 不可以拿去 PDF 切頁', async () => {
+    vi.mocked(ocrImageWithGemini).mockResolvedValueOnce({ text: '拿鐵 中杯 60', rawLength: 9, meta: {}, inputTokens: 2, outputTokens: 3 })
+    vi.mocked(splitPdfPageRange).mockClear()
+    const work = makeWork({ type: 'file', generateOverview: false })
+    work.phase = 'ocr'
+    work.ocrPageTotal = 1
+    work.ocrMime = 'image/heic'
+    expect(progressFor(work).label).toBe('認照片上的字')
+
+    await advanceWork(work, { getSourceBuffer: async () => Buffer.from('heic') })
+    expect(vi.mocked(ocrImageWithGemini)).toHaveBeenCalledWith(Buffer.from('heic'), 'image/heic')
+    expect(splitPdfPageRange).not.toHaveBeenCalled()
+    expect(work.phase).toBe('chunk')
+    expect(work.ocrText).toBe('拿鐵 中杯 60')
+  })
+
+  it('照片上一個字都認不出來 → 講「照片」的原因與怎麼辦（不是「這份 PDF」）', async () => {
+    vi.mocked(ocrImageWithGemini).mockResolvedValueOnce({ text: '', rawLength: 0, meta: {}, inputTokens: 1, outputTokens: 0 })
+    const work = makeWork({ type: 'file', generateOverview: false })
+    work.phase = 'ocr'
+    work.ocrPageTotal = 1
+    work.ocrMime = 'image/jpeg'
+    await expect(advanceWork(work, { getSourceBuffer: async () => Buffer.from('jpg') }))
+      .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('這張照片讀不到任何文字') })
   })
 })
 

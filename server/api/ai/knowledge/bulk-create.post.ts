@@ -122,6 +122,8 @@ export default defineEventHandler(async (event) => {
         gsheetId: ref.spreadsheetId,
         gsheetGid: ref.gid,
         gsheetAutoApply: body?.source?.autoApply !== false,
+        // 這批卡是照「每個非說明頁都讀」整理的（`C-296`）；同步要用同一套，見 gsheet-sync
+        gsheetTabRule: 'all',
       }
     }
 

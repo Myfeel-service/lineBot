@@ -84,12 +84,12 @@
             <input
               ref="fileInputEl"
               type="file"
-              accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              :accept="KNOWLEDGE_FILE_ACCEPT"
               class="kb-file-input"
               @change="onFileChosen"
             >
             <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">選擇檔案</el-button>
-            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : 'PDF / Excel，也可以直接拖進框裡（單檔 10MB 內）' }}</span>
+            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : `${KNOWLEDGE_FILE_LABEL}都可以，也可以直接拖進框裡（單檔 10MB 內）` }}</span>
           </div>
         </template>
       </div>
@@ -400,9 +400,9 @@
           「我已經有檔案了」那條（2026-09-13 四版新增）。跟「下載範本自己填」的分工是
           **手邊有沒有現成檔案**：有就走這條，沒有才去下載範本做一份——所以兩條的小註一樣
           （都是上傳一次就固定），差別寫在各自的第一行。
-          ⛔ 收不了的那一行不可以拿掉：`ACCEPTED_EXT_RE` 只認 pdf／xlsx／xls，而**購物平台匯出的
-             多半是 .csv**（`D-51` 還沒拍板要不要收）。不寫的話，遇到的人會以為是自己檔案壞了
-             ——擋下來的東西一定要說出擋的是什麼。
+          ⛔ 收不了的那一行不可以拿掉：收哪些看 `shared/knowledge-file-types.ts`（`C-296` 起多收
+             Word／PPT／CSV／文字檔／照片），剩下收不了的是舊版 Office、蘋果格式、錄音影片。
+             不寫的話，遇到的人會以為是自己檔案壞了——擋下來的東西一定要說出擋的是什麼。
           ⚠️ 兩顆標籤刻意都是三個字（收得了／收不了）：長度不一樣的話，右邊句子的起點會差一截，
              同一個面板裡兩行讀起來就歪了。
         -->
@@ -416,14 +416,14 @@
           </p>
           <p class="kb-start__ptxt kb-start__ptxt--lbl">
             <span class="kb-start__lbl kb-start__lbl--ok">收得了</span>
-            <span>PDF 與 Excel（.xlsx／.xls）。<strong>用拍的、掃的 PDF 也行</strong>，會由 AI 認字——請核對數字與價格有沒有看錯。</span>
+            <span>{{ KNOWLEDGE_FILE_LABEL }}。<strong>手機拍的價目表、菜單、DM 也行</strong>，會由 AI 認字——請核對數字與價格有沒有看錯。</span>
           </p>
           <p class="kb-start__ptxt kb-start__ptxt--lbl">
             <span class="kb-start__lbl kb-start__lbl--no">收不了</span>
-            <span>購物平台匯出的 .csv 目前不收，請先用 Excel 另存成 .xlsx 再上傳。</span>
+            <span>舊版的 .doc／.ppt 請先另存成新版；蘋果 Pages／Keynote 請先輸出成 PDF；錄音和影片目前還不收。</span>
           </p>
           <p class="kb-start__ptxt kb-start__ptxt--dim">
-            Excel 是一列一條知識，PDF 由 AI 判斷怎麼分段；兩種都是上傳一次就固定，之後改了要重新上傳。
+            表格（Excel、CSV）是一列一條知識，其他由 AI 判斷怎麼分段；都是上傳一次就固定，之後改了要重新上傳。
           </p>
         </div>
         <div v-else-if="startOpen === 'excel'" class="kb-start__panel">
@@ -858,7 +858,7 @@
         class="kb-ocr-alert"
       >
         <template #title>
-          這份 PDF 是掃描檔，文字由 AI 辨識
+          {{ ocrFromPhoto ? '這張照片上的字由 AI 辨識' : '這份 PDF 是掃描檔，文字由 AI 辨識' }}
         </template>
         <div class="text-xs">辨識可能有錯漏（尤其數字、價格、電話），請逐條確認內容正確再匯入。</div>
       </el-alert>
@@ -1248,6 +1248,14 @@
 import { ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { canReplaceSource, detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import {
+  KNOWLEDGE_FILE_ACCEPT,
+  KNOWLEDGE_FILE_KIND_LABEL,
+  KNOWLEDGE_FILE_LABEL,
+  KNOWLEDGE_FILE_MAX_BYTES,
+  knowledgeFileKind,
+  unsupportedFileHint,
+} from '~~/shared/knowledge-file-types'
 import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 // 圖檔路徑的單一來源（同開通引導與修復劇本共用那份註冊表）
@@ -1345,15 +1353,23 @@ const mode = computed<ImportMode>(() => detectImportKind(pasteInput.value, !!sel
  */
 const detected = computed(() => {
   if (selectedFile.value) {
-    const excel = /\.(xlsx|xls)$/i.test(fileName.value)
+    const kind = knowledgeFileKind(fileName.value) ?? 'pdf'
+    const autoSync = '想「改了自動更新」請改用 Google 試算表。'
+    const hintByKind: Record<typeof kind, string> = {
+      xlsx: `一列變成一條知識：欄位名稱在哪一列會自己找，第一欄當標題（例：商品名稱），其餘欄位當內容。每個分頁都會讀（使用說明頁除外）。${autoSync}`,
+      csv: `一列變成一條知識：欄位名稱在哪一列會自己找，第一欄當標題（例：商品名稱），其餘欄位當內容。購物平台匯出的 Big5 編碼也讀得懂。${autoSync}`,
+      pdf: `由 AI 判斷怎麼分段。用拍的、掃的檔案會由 AI 認字，請核對數字與價格有沒有看錯。${autoSync}`,
+      docx: `由 AI 判斷怎麼分段；文件裡的表格會照欄位讀，不會攤成一串字。${autoSync}`,
+      pptx: '每一張投影片上的文字都會讀；圖片上的字讀不到——重點寫在圖上的話，那幾張另外存成圖片傳上來。',
+      text: 'AI 會讀完內容、自己判斷怎麼切成一條條知識。之後要改就直接編輯那一條。',
+      image: '由 AI 認照片上的字（價目表、菜單、DM 都可以），請核對數字與價格有沒有看錯。一張照片會整理成一份資料。',
+    }
     return {
-      label: excel ? 'Excel 表格' : '檔案',
+      label: KNOWLEDGE_FILE_KIND_LABEL[kind],
       sync: '上傳一次就固定，之後改了要重新上傳',
       syncTone: 'static' as const,
       hintLabel: '怎麼變成知識？',
-      hint: excel
-        ? '一列變成一條知識：第一欄當標題（例：商品名稱），其餘欄位當內容，第一列請放欄位名稱。想「改了自動更新」請改用 Google 試算表。'
-        : '由 AI 判斷怎麼分段。用拍的、掃的檔案會由 AI 認字，請核對數字與價格有沒有看錯。想「改了自動更新」請改用 Google 試算表。',
+      hint: hintByKind[kind],
     }
   }
   if (!pasteInput.value.trim()) return null
@@ -1444,9 +1460,7 @@ watch([pasteInput, mode], () => {
   textInput.value = mode.value === 'text' ? pasteInput.value : ''
 })
 
-const ACCEPTED_EXT_RE = /\.(pdf|xlsx|xls)$/i
-
-/** 檔案共用入口:選檔與拖放都走這裡,上限與型別檢查只有一份 */
+/** 檔案共用入口:選檔與拖放都走這裡,上限與型別檢查只有一份（收哪些看 shared/knowledge-file-types） */
 function acceptFile(file: File | undefined | null): boolean {
   if (!file) return false
   // 畫面上的欄位鎖住了,但拖放不經過那些欄位——這一層才是真的守門（`D-41` 死路⑪）
@@ -1454,11 +1468,12 @@ function acceptFile(file: File | undefined | null): boolean {
     showToast('正在整理目前這一份，要換的話請先按「取消」', 'warning')
     return false
   }
-  if (!ACCEPTED_EXT_RE.test(file.name)) {
-    showToast('只支援 PDF 與 Excel（.xlsx / .xls）', 'error')
+  if (!knowledgeFileKind(file.name)) {
+    // 收不了要當場講怎麼辦（舊版 .doc → 另存 .docx），不是只說「不支援」
+    showToast(unsupportedFileHint(file.name), 'error')
     return false
   }
-  if (file.size > 10 * 1024 * 1024) {
+  if (file.size > KNOWLEDGE_FILE_MAX_BYTES) {
     showToast('檔案超過 10MB 上限', 'error')
     return false
   }
@@ -1619,6 +1634,7 @@ const previewProgressText = computed(() => {
 })
 const truncated = ref(false)
 const ocrUsed = ref(false) // 掃描檔 PDF 由 AI 辨識文字 → 預覽時提醒逐張確認
+const ocrFromPhoto = ref(false) // 認字的是照片（`C-296`）：同一句提醒，主詞換成「這張照片」
 const healthWarnings = ref<string[]>([]) // 表格資料的匯入前健檢警告（提醒不擋匯入）
 const chunks = ref<Array<{ included: boolean; title: string; content: string; tags: string[]; questions: string[] }>>([])
 const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>>([])
@@ -2299,6 +2315,8 @@ interface PreviewResult {
   sourceUrl: string
   truncated: boolean
   ocrUsed?: boolean
+  /** 抽取資訊；照片認字時帶 image: 1（提醒文字要說「照片」不是「掃描檔」） */
+  meta?: Record<string, string | number>
   existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>
   /** 表格資料的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
@@ -2553,6 +2571,7 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode) {
   overviewSuggestDismissed.value = false
   truncated.value = res.truncated
   ocrUsed.value = res.ocrUsed === true
+  ocrFromPhoto.value = res.ocrUsed === true && Number(res.meta?.image ?? 0) === 1
   healthWarnings.value = res.warnings ?? []
   chunks.value = res.chunks.map(c => ({
     included: true,
@@ -3032,6 +3051,7 @@ function resetAll() {
   existingMatches.value = []
   truncated.value = false
   ocrUsed.value = false
+  ocrFromPhoto.value = false
   healthWarnings.value = []
   result.value = null
   previewStillRunning.value = false

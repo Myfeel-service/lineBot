@@ -24,7 +24,7 @@ import {
   splitSegmentInHalf,
   summarizeAsOverviewCard,
 } from './ai-knowledge-chunker'
-import { ocrPdfWithGemini, MAX_RAW_TEXT_LEN } from './ai-source-extractors'
+import { ocrImageWithGemini, ocrPdfWithGemini, MAX_RAW_TEXT_LEN } from './ai-source-extractors'
 import { splitPdfPageRange } from './pdf-split'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
@@ -106,6 +106,8 @@ export interface WorkState {
   ocrPageTotal: number
   ocrPageCursor: number
   ocrText: string
+  /** 認字的對象是照片（`C-296`）：有值＝原檔是這種圖片，一次認一整張；沒值＝掃描 PDF 照頁切 */
+  ocrMime?: string
   // 整理進度
   segments: string[]
   segmentCursor: number
@@ -239,10 +241,14 @@ async function advanceOcr(
   }
   const buffer = await deps.getSourceBuffer()
   const start = work.ocrPageCursor
-  const count = Math.min(OCR_PAGE_BATCH, Math.max(0, work.ocrPageTotal - start))
+  const isImage = !!work.ocrMime?.startsWith('image/')
+  const count = isImage
+    ? Math.max(0, work.ocrPageTotal - start) // 照片就一張，一步認完
+    : Math.min(OCR_PAGE_BATCH, Math.max(0, work.ocrPageTotal - start))
   if (count > 0) {
-    const sub = await splitPdfPageRange(buffer, start, count)
-    const ocr = await ocrPdfWithGemini(sub)
+    const ocr = isImage
+      ? await ocrImageWithGemini(buffer, work.ocrMime!)
+      : await ocrPdfWithGemini(await splitPdfPageRange(buffer, start, count))
     if (ocr.text.trim()) work.ocrText += (work.ocrText ? '\n' : '') + ocr.text
     work.usage.inputTokens += ocr.inputTokens
     work.usage.outputTokens += ocr.outputTokens
@@ -256,7 +262,9 @@ async function advanceOcr(
     if (!work.ocrText.trim()) {
       throw createError({
         statusCode: 422,
-        statusMessage: '這份 PDF 讀不到任何文字（可能是純圖片且畫質不足，或內容不是文字）；請改貼文字或換一份更清晰的檔案',
+        statusMessage: isImage
+          ? '這張照片讀不到任何文字（可能太模糊、太暗，或圖上沒有字）；請拍清楚一點再傳，或直接把文字貼進來'
+          : '這份 PDF 讀不到任何文字（可能是純圖片且畫質不足，或內容不是文字）；請改貼文字或換一份更清晰的檔案',
       })
     }
     const capped = work.ocrText.slice(0, MAX_RAW_TEXT_LEN)
@@ -444,7 +452,11 @@ export async function flushJobUsage(workspaceId: string, work: WorkState): Promi
 export function progressFor(work: WorkState): { done: number; total: number; label: string } {
   switch (work.phase) {
     case 'ocr':
-      return { done: work.ocrPageCursor, total: Math.max(1, work.ocrPageTotal), label: '辨識掃描檔' }
+      return {
+        done: work.ocrPageCursor,
+        total: Math.max(1, work.ocrPageTotal),
+        label: work.ocrMime?.startsWith('image/') ? '認照片上的字' : '辨識掃描檔',
+      }
     case 'chunk':
       return { done: work.segmentCursor, total: Math.max(1, work.segments.length), label: '整理' }
     case 'enrich':

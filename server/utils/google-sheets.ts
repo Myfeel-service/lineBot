@@ -37,6 +37,8 @@ export interface ReadSheetResult {
   mergeCount: number
   /** 匯入健檢統計（列數、被略過/合併/沒答案等），給 sheetHealthWarnings 用 */
   stats: SheetImportStats
+  /** 沒讀的分頁（使用說明頁等）；預覽要講「跳過了哪幾頁」 */
+  skippedSheets: string[]
 }
 
 // ── 服務帳號 token（JWT client 內部自動快取/續期，建一次重用） ──────────
@@ -182,18 +184,31 @@ export function isInstructionSheetName(name: string): boolean {
 }
 
 /**
- * 決定要讀哪些分頁的「名稱」（Excel 上傳與 Google Sheet 共用同一套規則，確保兩邊結果一致）：
- * 1. 名稱含 FAQ / 常見問 的分頁 → 只讀這些（官方範本的資料頁叫「FAQ」）。
- * 2. 否則 → 全部「非說明」分頁（跳過使用說明 / 教學頁）。
- * 3. 保底：整份都是說明類名稱時，全讀（寧可多匯，也不要讓使用者面對空結果）。
+ * 決定要讀哪些分頁的「名稱」（Excel／CSV 上傳與 Google Sheet 共用同一套規則，確保兩邊結果一致）：
+ * 1. 全部「非說明」分頁（跳過使用說明 / 教學頁）。
+ * 2. 保底：整份都是說明類名稱時，全讀（寧可多匯，也不要讓使用者面對空結果）。
+ *
+ * faqPriority（舊規則）：名稱含 FAQ / 常見問 的分頁存在時只讀那幾頁。
+ * 2026-10-10 起拿掉（`C-296`，老闆拍板「每個分頁都讀」）：照範本建好 FAQ 頁、
+ * 自己再加一頁「價目表」的人，那一頁會整頁沒讀而且沒有人講。
+ * ⛔ 但**已經在同步的舊試算表**要繼續用舊規則（呼叫端看來源有沒有 `gsheetTabRule`）——
+ *    改規則的當下，下一輪同步就會把別頁的列整批變成新卡，店家什麼都沒做。
  *
  * 註：Google Sheet 若連結帶 #gid= 指定分頁，由呼叫端優先處理（尊重使用者指定），不走這裡。
  */
-export function selectDataSheetNames(names: string[]): string[] {
-  const faq = names.filter(n => /faq|常見問/i.test(String(n ?? '')))
-  if (faq.length) return faq
+export function selectDataSheetNames(names: string[], opts: { faqPriority?: boolean } = {}): string[] {
+  if (opts.faqPriority) {
+    const faq = names.filter(n => /faq|常見問/i.test(String(n ?? '')))
+    if (faq.length) return faq
+  }
   const nonInstruction = names.filter(n => !isInstructionSheetName(String(n ?? '')))
   return nonInstruction.length ? nonInstruction : names
+}
+
+/** 讀了哪些分頁、跳過哪些說明頁（給預覽講「跳過了哪幾頁」） */
+export function skippedSheetNames(all: string[], read: string[]): string[] {
+  const set = new Set(read)
+  return all.filter(n => !set.has(n))
 }
 
 /** 一個分頁 meta → { title, 正規化並過濾後的合併範圍 } */
@@ -215,22 +230,26 @@ export type SheetsApiFn = <T>(path: string) => Promise<T>
 /**
  * 挑要讀哪些分頁（回傳標題 + 各分頁的合併範圍）：
  * - 連結有 #gid= 且對得上 → 只讀那頁（尊重使用者指定，即使是說明頁也照讀）。
- * - 否則走 selectDataSheetNames（FAQ 頁優先，否則全部非說明頁）——與 Excel 上傳同規則。
+ * - 否則走 selectDataSheetNames（全部非說明頁；舊來源帶 faqPriority）——與 Excel 上傳同規則。
+ * 回傳的 allTitles 給呼叫端算「跳過了哪幾頁」。
  */
 async function selectSheetsToRead(
   spreadsheetId: string,
   gid: string | null,
   api: SheetsApiFn = sheetsApi,
-): Promise<Array<{ title: string; merges: MergeRange[] }>> {
+  opts: { faqPriority?: boolean } = {},
+): Promise<{ targets: Array<{ title: string; merges: MergeRange[] }>, allTitles: string[] }> {
   const meta = await api<SheetMeta>(
     `${encodeURIComponent(spreadsheetId)}?fields=${encodeURIComponent('sheets(properties(sheetId,title),merges)')}`,
   )
   const sheets = meta.sheets ?? []
   if (!sheets.length) throw createError({ statusCode: 422, statusMessage: '這份試算表沒有任何分頁' })
+  const allTitles = sheets.map(s => s.properties?.title ?? '')
 
   if (gid != null) {
     const hit = sheets.find(s => String(s.properties?.sheetId) === gid)
-    if (hit) return [toSheetTarget(hit)]
+    // 指定了某一頁＝他自己選的，其他頁本來就不在範圍內，不算「跳過」
+    if (hit) return { targets: [toSheetTarget(hit)], allTitles: [hit.properties?.title ?? ''] }
     // ⛔指定的分頁不見了（被刪除重建 gid 就會變）→ 直接失敗，不退回名稱猜測。
     // 退回猜測的下場：改讀到「使用說明」頁 → 說明文字變知識卡、原 FAQ 卡整批被判
     // 「表上已不存在」刪光——靜默讀錯頁比讀不到危險得多。
@@ -239,9 +258,9 @@ async function selectSheetsToRead(
       statusMessage: '原本指定的分頁已不存在（分頁被刪除重建時，連結裡的 gid 會變）。請確認試算表分頁，重新貼一次正確的分頁連結。',
     })
   }
-  const pick = new Set(selectDataSheetNames(sheets.map(s => s.properties?.title ?? '')))
+  const pick = new Set(selectDataSheetNames(allTitles, opts))
   const selected = sheets.filter(s => pick.has(s.properties?.title ?? ''))
-  return (selected.length ? selected : sheets).map(toSheetTarget)
+  return { targets: (selected.length ? selected : sheets).map(toSheetTarget), allTitles }
 }
 
 /**
@@ -285,22 +304,21 @@ interface ValuesResponse {
 
 /**
  * 讀取一份 Google Sheet 並轉成知識卡。
- * 依 selectSheetsToRead 決定讀哪些分頁（gid 指定→單頁；否則 FAQ 頁優先、再退全部非說明頁），
- * 每個分頁各自「第一列表頭、第一欄標題」跑 rowsToCards，跨分頁彙總——與 Excel 上傳一致。
+ * 依 selectSheetsToRead 決定讀哪些分頁（gid 指定→單頁；否則全部非說明頁，舊來源 FAQ 頁優先），
+ * 每個分頁各自跑 rowsToCards（欄位名稱那列自己找），跨分頁彙總——與 Excel 上傳一致。
+ * opts.faqPriority：已經在同步的舊試算表（來源沒有 gsheetTabRule）要帶 true，見 selectDataSheetNames。
  */
 export async function readGoogleSheetAsCards(
   ref: ParsedSheetRef,
   api: SheetsApiFn = sheetsApi,
+  opts: { faqPriority?: boolean } = {},
 ): Promise<ReadSheetResult> {
-  const targets = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api)
+  const { targets, allTitles } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api, opts)
 
   const cards: SheetCard[] = []
   const titles: string[] = []
   let mergeCount = 0
-  const agg: SheetImportStats = {
-    rowCount: 0, skippedNoTitle: 0, mergedRows: 0, truncatedByCap: false,
-    duplicateTitles: [], blankAnswerTitles: [],
-  }
+  const agg = emptySheetStats()
 
   for (const t of targets) {
     if (cards.length >= GSHEET_MAX_ROWS) { agg.truncatedByCap = true; break }
@@ -312,17 +330,12 @@ export async function readGoogleSheetAsCards(
       (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
       t.merges,
     )
-    const { cards: sheetCards, stats } = rowsToCards(rows)
+    const { cards: sheetCards, stats } = rowsToCards(rows, { merges: t.merges })
     if (!sheetCards.length) continue
 
     titles.push(t.title)
     mergeCount += countVerticalMerges(t.merges)
-    agg.rowCount += stats.rowCount
-    agg.skippedNoTitle += stats.skippedNoTitle
-    agg.mergedRows += stats.mergedRows
-    agg.truncatedByCap ||= stats.truncatedByCap
-    agg.duplicateTitles.push(...stats.duplicateTitles)
-    agg.blankAnswerTitles.push(...stats.blankAnswerTitles)
+    mergeSheetStats(agg, stats)
     for (const c of sheetCards) {
       if (cards.length >= GSHEET_MAX_ROWS) { agg.truncatedByCap = true; break }
       cards.push(c)
@@ -338,7 +351,28 @@ export async function readGoogleSheetAsCards(
     sheetTitle: titles.join('、') || targets[0]?.title || 'Sheet1',
     mergeCount,
     stats: agg,
+    skippedSheets: skippedSheetNames(allTitles, targets.map(t => t.title)),
   }
+}
+
+/** 空的健檢統計（各分頁加總的起點）；欄位一多就容易漏一個，集中一處 */
+export function emptySheetStats(): SheetImportStats {
+  return {
+    rowCount: 0, skippedNoTitle: 0, mergedRows: 0, truncatedByCap: false,
+    duplicateTitles: [], blankAnswerTitles: [], titleRows: [], continuedRows: 0,
+  }
+}
+
+/** 把一個分頁的健檢統計加進總數（Google Sheet 與 Excel 共用） */
+export function mergeSheetStats(agg: SheetImportStats, s: SheetImportStats): void {
+  agg.rowCount += s.rowCount
+  agg.skippedNoTitle += s.skippedNoTitle
+  agg.mergedRows += s.mergedRows
+  agg.truncatedByCap ||= s.truncatedByCap
+  agg.duplicateTitles.push(...s.duplicateTitles)
+  agg.blankAnswerTitles.push(...s.blankAnswerTitles)
+  agg.titleRows.push(...(s.titleRows ?? []))
+  agg.continuedRows += s.continuedRows ?? 0
 }
 
 /**
@@ -357,7 +391,7 @@ export async function probeGoogleSheetAccess(
   ref: ParsedSheetRef,
   api: SheetsApiFn = sheetsApi,
 ): Promise<{ sheetTitle: string; hasData: boolean }> {
-  const targets = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api)
+  const { targets } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api)
   const first = targets[0]
   if (!first) throw createError({ statusCode: 422, statusMessage: '這份試算表沒有任何分頁' })
   const data = await api<ValuesResponse>(
@@ -368,7 +402,7 @@ export async function probeGoogleSheetAccess(
     first.merges,
   )
   // 用同一支 rowsToCards 判「有沒有資料」：表頭列 + 至少一列資料才算
-  const { stats } = rowsToCards(rows)
+  const { stats } = rowsToCards(rows, { merges: first.merges })
   return { sheetTitle: first.title, hasData: stats.rowCount > 0 }
 }
 
@@ -377,24 +411,67 @@ export function normTitle(s: string): string {
   return String(s ?? '').replace(/\s+/g, '').toLowerCase()
 }
 
+/** 表格最上面最多跳過幾列「標題列」（例：「2026 秋季價目表」＋「單位：新台幣」） */
+const MAX_TITLE_ROWS = 3
+
+const filledCount = (r: string[]) => r.filter(c => String(c ?? '').trim()).length
+
 /**
- * 一份「表格」（rows[0] = 表頭，其餘為資料）→ 一疊知識卡 + 匯入健檢統計。
- * Google Sheet 與上傳的 Excel 乾淨表格共用同一套一列一卡邏輯，確保兩邊結果一致。
+ * 找欄位名稱在哪一列（`C-296`）。以前一律當第 1 列——最上面有一行表格標題時，
+ * 「2026 秋季價目表」被當成欄位名稱，後面每一條都少了「容量」「價格」這幾個字，
+ * 還多出一張叫「品名」的怪卡。
+ *
+ * 一列只有一格有字，而且符合下列其一，才當成標題列跳過：
+ *  ① 那一格橫向合併了兩欄以上（置中大標題的標準做法）；
+ *  ② 下一列有三格以上有字（三欄以上的表，欄位名稱只填一格不合常理）。
+ * ⛔ 兩欄表（問題／答案）而且沒合併的，**不跳**：表頭寫成「問題」＋空白的人很多，
+ *    跳了反而把第一筆資料當成欄位名稱，把原本好好的表讀壞。
+ * 回傳的 titles 一定要講給使用者聽（見 sheetHealthWarnings）——跳過的東西要說得出來。
+ */
+function locateHeaderRow(
+  rows: Array<{ cells: string[], index: number }>,
+  merges: MergeRange[],
+): { headerAt: number, titles: string[] } {
+  const titles: string[] = []
+  let h = 0
+  while (h < rows.length - 2 && titles.length < MAX_TITLE_ROWS) {
+    const cur = rows[h]!
+    if (filledCount(cur.cells) !== 1) break
+    const col = cur.cells.findIndex(c => String(c ?? '').trim())
+    const mergedAcross = merges.some(m =>
+      m.startRow <= cur.index && cur.index < m.endRow
+      && m.startCol <= col && col < m.endCol
+      && m.endCol - m.startCol >= 2)
+    if (!mergedAcross && filledCount(rows[h + 1]!.cells) < 3) break
+    titles.push(String(cur.cells[col] ?? '').trim())
+    h++
+  }
+  return { headerAt: h, titles }
+}
+
+/**
+ * 一份「表格」→ 一疊知識卡 + 匯入健檢統計。
+ * Google Sheet 與上傳的 Excel／CSV 共用同一套一列一卡邏輯，確保兩邊結果一致。
  * - 過濾整列皆空的列；有效資料列不足 2（表頭 + 至少一列）時回空。
- * - 第一欄（標題）空白的列會被略過（記 skippedNoTitle）。
+ * - 欄位名稱那一列自己找（最上面的表格標題會跳過，見 locateHeaderRow）。
+ * - 第一欄空白的列＝上一列的延續（同一個商品的第二行規格），併進上一張卡（記 continuedRows）。
+ *   以前是整列略過。一開頭就空白、上面沒有列可接的，照舊略過（記 skippedNoTitle）。
  * - 同標題（含直向合併標題欄造成的重複）併成同一張卡，避免以標題為 key 的同步吃掉重複卡而漏答案（記 mergedRows）。
  * - 套用 GSHEET_MAX_ROWS 上限。
+ * merges：這個分頁的合併儲存格（判斷置中大標題用；座標要跟 rawRows 的列號對齊）。
  */
-export function rowsToCards(rawRows: string[][]): { cards: SheetCard[]; stats: SheetImportStats } {
-  const rows = (rawRows ?? []).filter(r => Array.isArray(r) && r.some(c => String(c ?? '').trim()))
-  const emptyStats: SheetImportStats = {
-    rowCount: 0, skippedNoTitle: 0, mergedRows: 0, truncatedByCap: false,
-    duplicateTitles: [], blankAnswerTitles: [],
-  }
-  if (rows.length < 2) return { cards: [], stats: emptyStats }
+export function rowsToCards(
+  rawRows: string[][],
+  opts: { merges?: MergeRange[] } = {},
+): { cards: SheetCard[]; stats: SheetImportStats } {
+  const indexed = (rawRows ?? [])
+    .map((cells, index) => ({ cells: Array.isArray(cells) ? cells : [], index }))
+    .filter(r => r.cells.some(c => String(c ?? '').trim()))
+  if (indexed.length < 2) return { cards: [], stats: emptySheetStats() }
 
-  const headers = rows[0]!.map(h => String(h ?? '').trim())
-  const dataRows = rows.slice(1)
+  const { headerAt, titles: titleRows } = locateHeaderRow(indexed, opts.merges ?? [])
+  const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
+  const dataRows = indexed.slice(headerAt + 1).map(r => r.cells)
 
   const cards: SheetCard[] = []
   const byKey = new Map<string, SheetCard>()
@@ -402,21 +479,37 @@ export function rowsToCards(rawRows: string[][]): { cards: SheetCard[]; stats: S
   const dupKeys = new Set<string>()
   let skippedNoTitle = 0
   let mergedRows = 0
+  let continuedRows = 0
   let truncatedByCap = false
+  let lastTitle = ''
 
-  for (const row of dataRows) {
+  for (const raw of dataRows) {
+    let row = raw
+    let continued = false
+    if (!String(row[0] ?? '').trim() && lastTitle) {
+      // 第一欄空白＝接著上一列講（例：W1 的第二行規格只寫在後面幾欄）。
+      // ⛔ 開頭第一列就空白、上面沒有可以接的：照舊略過並計數（sheetHealthWarnings 會講），
+      //    拿後面某一格硬當標題只會生出「標題叫 12L」的怪卡。
+      row = [lastTitle, ...row.slice(1)]
+      continued = true
+    }
     const parsed = rowToCardParsed(headers, row)
-    if (!parsed) { skippedNoTitle++; continue } // 第一欄空白 → 沒標題，略過
+    if (!parsed) { skippedNoTitle++; continue }
     const { card, hasAnswer } = parsed
+    lastTitle = card.title
     const key = normTitle(card.title)
     if (hasAnswer) answered.add(key)
 
     const existing = byKey.get(key)
     if (existing) {
-      // 同標題（直向合併的標題欄、或商家重複填）→ 併入同一張卡，不另建重複卡。
+      // 同標題（直向合併的標題欄、第一欄空白的延續列、或商家重複填）→ 併入同一張卡，不另建重複卡。
       // title 是同步比對 key，重複卡本來就會被同步收斂而漏掉答案；合併才不會漏。
-      mergedRows++
-      dupKeys.add(key)
+      // 延續列是商家本來就這樣排的，不算「重複」，不進重複提醒。
+      if (continued) continuedRows++
+      else {
+        mergedRows++
+        dupKeys.add(key)
+      }
       const add = card.content.trim()
       if (hasAnswer && add && !existing.content.includes(add)) {
         existing.content = `${existing.content}\n${add}`.slice(0, CARD_CONTENT_MAX)
@@ -438,6 +531,8 @@ export function rowsToCards(rawRows: string[][]): { cards: SheetCard[]; stats: S
     // 沒答案 = 這張卡的所有來源列都沒填答案（比 content === title 精準：避免答案剛好等於問題的誤判，
     // 也不受標題 > 200 字截斷影響）
     blankAnswerTitles: cards.filter(c => !answered.has(normTitle(c.title))).map(c => c.title),
+    titleRows,
+    continuedRows,
   }
   return { cards, stats }
 }
@@ -497,6 +592,10 @@ export interface SheetImportStats {
   duplicateTitles: string[]
   /** 答案欄空白（以標題暫代內容）的卡標題，給健檢列舉 */
   blankAnswerTitles: string[]
+  /** 欄位名稱上面被當成「表格標題」跳過的列（例：「2026 秋季價目表」）；要講給使用者聽 */
+  titleRows: string[]
+  /** 第一欄空白、當成上一列延續併進去的列數 */
+  continuedRows: number
 }
 
 /** 健檢訊息裡列舉標題時最多列幾個（其餘用「等 N 列」帶過，避免訊息爆長） */
@@ -534,6 +633,14 @@ export function sheetHealthWarnings(cards: SheetCard[], stats: SheetImportStats,
 
   if (stats.skippedNoTitle > 0) {
     warnings.push(`有 ${stats.skippedNoTitle} 列因第一欄（標題）空白被略過、未匯入；請確認是否漏填標題`)
+  }
+
+  // 自己找欄位名稱、自己接延續列（`C-296`）：猜的一定要講出來，猜錯他才有機會發現
+  if (stats.titleRows?.length) {
+    warnings.push(`表格最上面的${listTitles(stats.titleRows)}看起來是表格標題，欄位名稱改用下面那一列；不對的話請把欄位名稱移到第 1 列`)
+  }
+  if (stats.continuedRows > 0) {
+    warnings.push(`有 ${stats.continuedRows} 列第一欄空白，已當成上一列的延續、併進同一條（例：同一個商品的第二行規格）`)
   }
 
   if (mergeCount > 0) {

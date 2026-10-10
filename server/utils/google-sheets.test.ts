@@ -74,12 +74,13 @@ describe('rowToCard', () => {
 })
 
 describe('selectDataSheetNames / isInstructionSheetName', () => {
-  it('有 FAQ 分頁 → 只選 FAQ 頁（跳過使用說明/工作表1）', () => {
-    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'])).toEqual(['FAQ'])
+  it('每個非說明頁都讀（C-296）：範本的 FAQ 頁＋自己加的「工作表1」兩頁都要讀', () => {
+    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'])).toEqual(['FAQ', '工作表1'])
   })
 
-  it('多個 FAQ / 常見問 分頁 → 全選', () => {
-    expect(selectDataSheetNames(['FAQ', '常見問題', '使用說明'])).toEqual(['FAQ', '常見問題'])
+  it('舊來源（faqPriority）維持原規則：有 FAQ 分頁 → 只選 FAQ 頁，⛔ 不可以替已經在同步的表換規則', () => {
+    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'], { faqPriority: true })).toEqual(['FAQ'])
+    expect(selectDataSheetNames(['FAQ', '常見問題', '使用說明'], { faqPriority: true })).toEqual(['FAQ', '常見問題'])
   })
 
   it('沒 FAQ 分頁 → 全部「非說明」分頁（xlsx 與 gsheet 一致，不再只挑一個）', () => {
@@ -172,7 +173,7 @@ describe('rowsToCards', () => {
     expect(stats.duplicateTitles).toEqual(['退款流程'])
   })
 
-  it('第一欄空白的列被略過並計入 skippedNoTitle（不含在 cards）', () => {
+  it('第一欄空白、而且上面沒有列可以接 → 照舊略過並計入 skippedNoTitle', () => {
     const { cards, stats } = rowsToCards([
       ['問題', '答案'],
       ['', '孤兒內容'], // 沒標題
@@ -181,6 +182,49 @@ describe('rowsToCards', () => {
     expect(cards.map(c => c.title)).toEqual(['運費'])
     expect(stats.skippedNoTitle).toBe(1)
     expect(stats.rowCount).toBe(2)
+  })
+
+  it('第一欄空白的列＝上一列的延續：併進同一條、記 continuedRows，⛔ 不算「重複的問題」', () => {
+    const { cards, stats } = rowsToCards([
+      ['品名', '規格', '值'],
+      ['W1 REGEN 改', '容量', '12L'],
+      ['', '重量', '8kg'],
+      ['W1 mini', '容量', '6L'],
+    ])
+    expect(cards.map(c => c.title)).toEqual(['W1 REGEN 改', 'W1 mini'])
+    expect(cards[0]!.content).toBe('規格：容量\n值：12L\n規格：重量\n值：8kg')
+    expect(stats.continuedRows).toBe(1)
+    expect(stats.skippedNoTitle).toBe(0)
+    expect(stats.duplicateTitles).toEqual([])
+  })
+
+  it('最上面一行表格標題（下一列三欄以上）→ 跳過，欄位名稱用下一列；跳過的標題要記下來講', () => {
+    const { cards, stats } = rowsToCards([
+      ['2026 秋季價目表', '', ''],
+      ['品名', '容量', '價格'],
+      ['W1 REGEN 改', '12L', '12,900'],
+    ])
+    expect(cards).toEqual([{ title: 'W1 REGEN 改', content: '容量：12L\n價格：12,900', tags: [] }])
+    expect(stats.titleRows).toEqual(['2026 秋季價目表'])
+  })
+
+  it('兩欄表的標題列：有橫向合併才跳；沒合併、只填一格表頭的「問題＋空白」⛔ 不可以跳', () => {
+    // 沒合併：第一列就是表頭（「常見問題」＋空白），兩列資料都在
+    const plain = rowsToCards([
+      ['常見問題'],
+      ['營業時間', '9:00–18:00'],
+      ['運費', '滿千免運'],
+    ])
+    expect(plain.cards.map(c => c.title)).toEqual(['營業時間', '運費'])
+    expect(plain.stats.titleRows).toEqual([])
+    // 第一列橫向合併兩欄＝置中大標題：跳過，欄位名稱用「問題｜答案」那一列
+    const merged = rowsToCards([
+      ['常見問題'],
+      ['問題', '答案'],
+      ['營業時間', '9:00–18:00'],
+    ], { merges: [{ startRow: 0, endRow: 1, startCol: 0, endCol: 2 }] })
+    expect(merged.stats.titleRows).toEqual(['常見問題'])
+    expect(merged.cards).toEqual([{ title: '營業時間', content: '9:00–18:00', tags: [] }])
   })
 
   it('沒答案的卡進 blankAnswerTitles；答案剛好等於問題不算沒答案（修 content===title 誤判）', () => {
@@ -202,7 +246,17 @@ describe('sheetHealthWarnings', () => {
     truncatedByCap: false,
     duplicateTitles: [],
     blankAnswerTitles: [],
+    titleRows: [],
+    continuedRows: 0,
     ...over,
+  })
+
+  it('跳過的表格標題、接到上一列的延續列都要講出來（C-296：猜的要說）', () => {
+    const w = sheetHealthWarnings([card('W1')], stats({ rowCount: 3, titleRows: ['2026 秋季價目表'], continuedRows: 2 }))
+    expect(w).toEqual([
+      '表格最上面的「2026 秋季價目表」看起來是表格標題，欄位名稱改用下面那一列；不對的話請把欄位名稱移到第 1 列',
+      '有 2 列第一欄空白，已當成上一列的延續、併進同一條（例：同一個商品的第二行規格）',
+    ])
   })
 
   it('乾淨的表 → 沒有警告', () => {

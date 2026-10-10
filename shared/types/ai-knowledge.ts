@@ -116,6 +116,12 @@ export interface KnowledgeSourceDoc {
    * false 時退回與 url 一樣的「標記 outdated 等人工確認」行為。
    */
   gsheetAutoApply?: boolean
+  /**
+   * type === 'gsheet' 專用：讀哪些分頁（`C-296`）。'all'＝每個非說明頁都讀（2026-10-10 起新建的來源）。
+   * 沒有這一欄＝舊來源，同步時維持「有 FAQ／常見問 分頁就只讀那幾頁」——
+   * ⛔ 不可以替舊來源換規則：下一輪同步就會把別頁的列整批變成新卡，店家什麼都沒做。
+   */
+  gsheetTabRule?: 'all'
   /** 內容 hash，網址同步時用來判斷是否需要重新切卡（＝「最後一次觀測到的網頁指紋」） */
   contentHash: string
   /**
