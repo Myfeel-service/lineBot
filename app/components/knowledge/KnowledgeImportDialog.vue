@@ -1193,6 +1193,11 @@
         舊的移到<strong>回收桶</strong>，30 天內都救得回來。
       </p>
 
+      <!-- 原檔沒留成要講（`C-296`③）：不講的話，之後找「下載原檔」才發現沒有，還以為是系統壞了 -->
+      <p v-if="result.originalKept === false" class="kb-quota-line is-full">
+        這份的原檔這次沒有留下來（整理結果放太久，暫存已經清掉）；知識照常可以用。要能「下載原檔」，請再傳一次這份、選「更新這一份」。
+      </p>
+
       <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
       <p v-if="quotaSkipped > 0" class="kb-quota-line is-full">
         還有 <strong>{{ quotaSkipped }}</strong> 條因為知識空間不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，再傳一次這份、選「更新這一份」就能補齊。
@@ -1552,19 +1557,28 @@ function leaveFileBatch() {
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
 /** 這一批跑完：有建出東西就讓關窗時刷新清單；視窗已經關了就當場刷新並講一句（同整站匯入） */
-function onFileBatchFinished(summary: { sources: number, cards: number, quotaShort: number }) {
+function onFileBatchFinished(summary: { sources: number, cards: number, quotaShort: number, failed: number, conflicts: number }) {
   void loadQuota()
-  if (!summary.sources) {
-    if (!props.modelValue) leaveFileBatch()
+  // 視窗已經關了（中途按 ✕ 停下）：清單沒機會給人看，**做了什麼、沒做成什麼**都要在這一句講完
+  if (!props.modelValue) {
+    const notDone = [
+      summary.quotaShort ? `${summary.quotaShort} 條因為空間不夠沒收` : '',
+      summary.failed ? `${summary.failed} 份沒有匯入` : '',
+      summary.conflicts ? `${summary.conflicts} 份跟現有資料同名、沒有匯入` : '',
+    ].filter(Boolean).join('、')
+    if (summary.sources) emit('imported', null)
+    showToast(
+      summary.sources
+        ? `已匯入 ${summary.sources} 份檔案（${summary.cards} 條）${notDone ? `；${notDone}` : ''}`
+        : `這一批沒有匯入任何一份${notDone ? `（${notDone}）` : ''}`,
+      summary.sources && !notDone ? 'success' : 'warning',
+    )
+    resetAll()
     return
   }
+  if (!summary.sources) return
   result.value = { sourceId: null, total: summary.cards, indexed: summary.cards, failed: 0, items: [] }
   invalidateProductNames()
-  if (!props.modelValue) {
-    emit('imported', null)
-    showToast(`已匯入 ${summary.sources} 份檔案（${summary.cards} 條）${summary.quotaShort ? `，另有 ${summary.quotaShort} 條因為空間不夠沒收` : ''}`, 'success')
-    resetAll()
-  }
 }
 
 function onFileChosen(e: Event) {
@@ -2948,6 +2962,8 @@ const result = ref<{
   items: Array<{ id: string; title: string; status: string; failureReason?: string }>
   /** 「更新既有資料」時被移進回收桶的舊卡張數（`C-135`）；0 = 這次是新建一份 */
   replacedChunks?: number
+  /** 檔案來源：原檔有沒有留下來（`C-296`③）；false 要在結果頁講，null／沒有＝不是檔案 */
+  originalKept?: boolean | null
 } | null>(null)
 
 const failedItems = computed(() =>

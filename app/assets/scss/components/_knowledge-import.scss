@@ -379,6 +379,21 @@
   text-align: center;
 }
 
+/* 同名等他決定的那一列：一句話＋兩顆按鈕，窄的時候按鈕換行不擠掉那句話 */
+.kb-file-batch__conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+
+  .el-button + .el-button {
+    margin-left: 0;
+  }
+}
+
 .kb-chunk-list {
   display: flex;
   flex-direction: column;

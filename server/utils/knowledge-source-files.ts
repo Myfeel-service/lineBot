@@ -80,11 +80,13 @@ export async function signedOriginalFileUrl(
     throw createError({ statusCode: 404, statusMessage: '找不到這份資料的原檔' })
   }
   const safeAscii = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '')
+  // RFC 5987：encodeURIComponent 不跳脫 ' ( ) *，這幾個在 filename* 裡也要跳脫
+  const rfc5987 = encodeURIComponent(fileName).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
   const [url] = await getStorage().bucket().file(filePath).getSignedUrl({
     version: 'v4',
     action: 'read',
     expires: Date.now() + 5 * 60 * 1000,
-    responseDisposition: `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    responseDisposition: `attachment; filename="${safeAscii}"; filename*=UTF-8''${rfc5987}`,
   })
   return url
 }

@@ -391,6 +391,74 @@ try {
   if (!actionLabels.some(t => t.includes('重試'))) pass(`跑完沒東西可重試 → 不留「重試 0 份」的灰按鈕（剩：${actionLabels.join('／')}）`)
   else fail('跑完還留著重試按鈕', actionLabels.join('／'))
   await batchPage.close()
+
+  // ── 第五段：一次好幾份裡有一份跟現有資料同名 → 等他決定、「換掉舊的」走更新那一份 ──
+  // ⛔ 以前一次好幾份會默默多建一份同名的（2026-10-10 審查）；單份那條路會問，這裡也要問
+  {
+    const names = {}
+    let seq = 0
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 0, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const id = `job-dup-${++seq}`
+        names[id] = JSON.parse(req.postData() || '{}').fileName
+        return json({ jobId: id, status: 'processing', phase: 'chunk' })
+      }
+      const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/(job-dup-\d+)/)
+      if (pj && m === 'GET') {
+        const name = names[pj[1]]
+        const existingMatches = name === '退換貨政策.docx' ? [{ id: 'old-src-1', name, chunkCount: 3, updatedAtMs: 0, type: 'file' }] : []
+        return json({ status: 'done', sourceName: name, chunks: [{ title: `${name} 一`, content: '內容', tags: [], questions: [] }], warnings: [], existingMatches, truncated: name === '商品匯出.csv', contentHash: 'h' })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push({ name: b.source?.name, replace: b.replaceSourceId ?? null })
+        return json({ sourceId: 's', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
+    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+    await waitFor(pg, () => document.querySelector('.kb-site-summary')?.innerText.includes('已建立'), null, 60_000)
+    const before = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
+    const dupRow = before.find(t => t.includes('退換貨政策.docx')) ?? ''
+    const csvRow = before.find(t => t.includes('商品匯出.csv')) ?? ''
+    if (dupRow.includes('等你決定') && dupRow.includes('換掉舊的') && !bulks.some(b => b.name === '退換貨政策.docx')) pass('同名那份先擱著等決定（沒有默默多建一份）')
+    else fail('同名那份沒有停下來問', dupRow)
+    if (csvRow.includes('原文超過 10 萬字已截斷')) pass('單份路會講的「原文被截斷」一次好幾份也講')
+    else fail('一次好幾份沒講截斷', csvRow)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('換掉舊的'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
+    const replaced = bulks.find(b => b.name === '退換貨政策.docx')
+    if (replaced?.replace === 'old-src-1') pass('按「換掉舊的」→ 走「更新這一份」（帶舊資料的 id，不用重新整理）')
+    else fail('換掉舊的沒有帶舊資料', JSON.stringify(bulks))
+    await pg.close()
+  }
+
+  // ── 第六段：空間已經滿了 → ⛔ 一份都不上傳、不整理（不花 AI 的錢），每份講原因 ──
+  {
+    const uploads = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 50, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url')) { uploads.push(url); return json({ uploadId: 'u', storagePath: 'x', uploadUrl: 'https://storage.googleapis.com/fake-bucket/x' }) }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
+    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+    await waitFor(pg, () => document.querySelector('.kb-site-summary')?.innerText.includes('已建立'), null, 30_000)
+    const rowsFull = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
+    if (!uploads.length && rowsFull.every(t => t.includes('知識空間滿了，這份沒有整理'))) pass('空間滿了 → 一份都沒上傳、沒整理，每份講原因與怎麼辦')
+    else fail('空間滿了還在上傳／沒講原因', `uploads=${uploads.length}\n     ${rowsFull.join('\n     ')}`)
+    await pg.close()
+  }
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))

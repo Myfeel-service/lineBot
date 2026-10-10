@@ -83,6 +83,38 @@ describe('extractDocxText', () => {
     expect(text.split('\n').filter(Boolean)).toEqual(['項目：保固；說明：零件：主機；保固：1 年 零件：濾網；保固：不保固'])
   })
 
+  it('合併儲存格照格線排：橫向合併不讓後面的格往左移、直向合併的下半格補上一列的值', () => {
+    const tc = (t: string, pr = '') => `<w:tc>${pr ? `<w:tcPr>${pr}</w:tcPr>` : ''}${p(t)}</w:tc>`
+    const table = '<w:tbl>'
+      + `<w:tr>${tc('品名')}${tc('容量')}${tc('價格')}</w:tr>`
+      // 「W1 套組」橫跨品名＋容量兩欄：⛔ 以前 12,900 會被標成「容量」
+      + `<w:tr>${tc('W1 套組', '<w:gridSpan w:val="2"/>')}${tc('12,900')}</w:tr>`
+      + `<w:tr>${tc('W1 mini', '<w:vMerge w:val="restart"/>')}${tc('6L')}${tc('8,990')}</w:tr>`
+      + `<w:tr>${tc('', '<w:vMerge/>')}${tc('8L')}${tc('9,990')}</w:tr>`
+      + '</w:tbl>'
+    const { text } = extractDocxText(makeZip({ 'word/document.xml': W(table) }))
+    expect(text.split('\n').filter(Boolean)).toEqual([
+      '品名：W1 套組；價格：12,900',
+      '品名：W1 mini；容量：6L；價格：8,990',
+      '品名：W1 mini；容量：8L；價格：9,990',
+    ])
+  })
+
+  it('文字方塊只讀一次（替代內容 mc:Fallback 不讀），也不黏在旁邊那段正文上', () => {
+    const box = (t: string) => `<w:txbxContent>${p(t)}</w:txbxContent>`
+    const para = `<w:p><w:r><mc:AlternateContent><mc:Choice>${box('限時優惠 8 折')}</mc:Choice><mc:Fallback>${box('限時優惠 8 折')}</mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>正文</w:t></w:r></w:p>`
+    expect(extractDocxText(makeZip({ 'word/document.xml': W(para) })).text).toBe('正文\n限時優惠 8 折')
+  })
+
+  it('有密碼的 Office 檔（不是 zip、是舊式外殼）→ 講可能有密碼，不只叫人另存', () => {
+    const ole = Buffer.from('d0cf11e0a1b11ae1000000000000', 'hex')
+    expect(() => extractDocxText(ole)).toThrow(/可能有密碼保護/)
+  })
+
+  it('壞掉的字元實體（超出 Unicode 範圍）照原樣留著，⛔ 不可以讓整份丟錯', () => {
+    expect(extractDocxText(makeZip({ 'word/document.xml': W(p('A&#x110000;B')) })).text).toBe('A&#x110000;B')
+  })
+
   it('修訂模式刪掉的字不讀（<w:delText>），插入的照讀', () => {
     const xml = W('<w:p><w:del><w:r><w:delText>舊價格 9,990</w:delText></w:r></w:del><w:ins><w:r><w:t>新價格 8,990</w:t></w:r></w:ins></w:p>')
     expect(extractDocxText(makeZip({ 'word/document.xml': xml })).text).toBe('新價格 8,990')
@@ -110,7 +142,7 @@ describe('extractPptxText', () => {
     })
     const { text, meta } = extractPptxText(buf)
     expect(text).toBe(['## 第 1 張投影片', '封面', 'W1 REGEN 改', '', '## 第 2 張投影片', '第二張：保固一年'].join('\n'))
-    expect(meta).toEqual({ slides: 3, slidesWithText: 2 })
+    expect(meta).toEqual({ slides: 3, slidesWithText: 2, slidesUnreadable: 0 })
   })
 
   it('讀不到順序清單就照檔名數字排（slide2 在 slide10 前面），不少讀投影片', () => {
@@ -138,6 +170,14 @@ describe('decodeTextBuffer', () => {
     const big5 = Buffer.from('ab7ea6572cbbf9aee60ab971b8dc2c30393132333435363738', 'hex')
     expect(decodeTextBuffer(big5)).toEqual({ text: '品名,價格\n電話,0912345678', encoding: 'big5' })
   })
+  it('⛔ 大部分是 UTF-8、只有一個壞位元組 → 還是 UTF-8（不可以整份改用 Big5 讀成亂碼）', () => {
+    const mostly = Buffer.concat([Buffer.from('品名,價格\n耶加雪菲,450\n', 'utf8'), Buffer.from([0xFF]), Buffer.from('曼特寧,420\n', 'utf8')])
+    const r = decodeTextBuffer(mostly)
+    expect(r.encoding).toBe('utf-8')
+    expect(r.text).toContain('耶加雪菲')
+    expect(r.text).toContain('曼特寧')
+  })
+
   it('UTF-8（有沒有 BOM 都行）與 UTF-16 都讀得出來', () => {
     expect(decodeTextBuffer(Buffer.from('﻿保固一年', 'utf8'))).toEqual({ text: '保固一年', encoding: 'utf-8' })
     expect(decodeTextBuffer(Buffer.from('保固一年', 'utf8')).encoding).toBe('utf-8')

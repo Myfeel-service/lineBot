@@ -1,5 +1,5 @@
 import type { Firestore } from 'firebase-admin/firestore'
-import { FieldValue } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
@@ -9,6 +9,7 @@ import {
   findExistingSources,
   flushJobUsage,
   JOB_LEASE_MS,
+  JOB_TTL_MS,
   KNOWLEDGE_PREVIEW_JOBS_COLLECTION,
   loadSourceFile,
   loadWork,
@@ -223,6 +224,9 @@ export async function advancePreviewJob(
         leaseUntil: 0,
         transientErrors: 0,
         updatedAt: FieldValue.serverTimestamp(),
+        // 做完那一刻起再給一小時（`C-296`③）：以前是「建立後一小時」——長檔整理 40 分鐘、
+        // 人看預覽看 20 分鐘再按匯入，工作（連同要留下來的原檔）就已經被清掉了，原檔悄悄沒留成
+        expiresAt: Timestamp.fromMillis(Date.now() + JOB_TTL_MS),
       })
       return { status: 'done', result: workToPreviewResult(work) }
     }

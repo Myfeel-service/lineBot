@@ -123,6 +123,18 @@ describe('extractXlsxCards — 說明分頁 / 合併儲存格', () => {
     expect(res.skippedSheets).toEqual(['使用說明'])
   })
 
+  it('不同分頁同一個名稱併成一張、只有一欄的分頁回報沒收進來（⛔ 不默默少一頁）', () => {
+    const buf = makeXlsx([
+      { name: '價目表', rows: [['品名', '價格'], ['W1', '12,900']] },
+      { name: '規格', rows: [['品名', '容量'], ['W1', '12L']] },
+      { name: '注意事項', rows: [['請勿冷凍'], ['開封後冷藏']] },
+    ])
+    const res = extractXlsxCards(buf)!
+    expect(res.cards).toEqual([{ title: 'W1', content: '12,900\n12L', tags: [] }])
+    expect(res.stats.duplicateTitles).toEqual(['W1'])
+    expect(res.emptySheets).toEqual(['注意事項'])
+  })
+
   it('整本只有說明類名稱的分頁 → 照讀(不讓使用者面對空結果)', () => {
     const buf = makeXlsx([{ name: '使用說明', rows: faqRows }])
     const res = extractXlsxCards(buf)

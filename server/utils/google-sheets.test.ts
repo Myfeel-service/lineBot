@@ -208,23 +208,60 @@ describe('rowsToCards', () => {
     expect(stats.titleRows).toEqual(['2026 秋季價目表'])
   })
 
-  it('兩欄表的標題列：有橫向合併才跳；沒合併、只填一格表頭的「問題＋空白」⛔ 不可以跳', () => {
-    // 沒合併：第一列就是表頭（「常見問題」＋空白），兩列資料都在
-    const plain = rowsToCards([
-      ['常見問題'],
-      ['營業時間', '9:00–18:00'],
-      ['運費', '滿千免運'],
+  it('⛔ 兩欄表一律不跳標題列：第一題不可以被當成欄位名稱吃掉（2026-10-10 審查實測）', () => {
+    // 大標題下面直接就是資料：以前（合併就跳）會把「退貨多久?」當欄位名稱、第一題整題不見
+    const r = rowsToCards([
+      ['常見問題 Q&A'],
+      ['退貨多久?', '7 天內'],
+      ['運費?', '80 元'],
     ])
-    expect(plain.cards.map(c => c.title)).toEqual(['營業時間', '運費'])
-    expect(plain.stats.titleRows).toEqual([])
-    // 第一列橫向合併兩欄＝置中大標題：跳過，欄位名稱用「問題｜答案」那一列
-    const merged = rowsToCards([
-      ['常見問題'],
-      ['問題', '答案'],
-      ['營業時間', '9:00–18:00'],
-    ], { merges: [{ startRow: 0, endRow: 1, startCol: 0, endCol: 2 }] })
-    expect(merged.stats.titleRows).toEqual(['常見問題'])
-    expect(merged.cards).toEqual([{ title: '營業時間', content: '9:00–18:00', tags: [] }])
+    expect(r.cards.map(c => c.title)).toEqual(['退貨多久?', '運費?'])
+    expect(r.stats.titleRows).toEqual([])
+  })
+
+  it('兩行標題（標題＋單位）都跳過，欄位名稱用第 3 列', () => {
+    const r = rowsToCards([
+      ['2026 秋季價目表'],
+      ['單位：新台幣'],
+      ['品名', '容量', '價格'],
+      ['W1 mini', '6L', '8,990'],
+    ])
+    expect(r.stats.titleRows).toEqual(['2026 秋季價目表', '單位：新台幣'])
+    expect(r.cards).toEqual([{ title: 'W1 mini', content: '容量：6L\n價格：8,990', tags: [] }])
+  })
+
+  it('⛔ 下一列像資料（有問號、有數字）就不跳：只填一格的「問題」表頭底下的第一題不可以被吃掉', () => {
+    const r = rowsToCards([
+      ['問題'],
+      ['退貨?', '7天內', '需發票'],
+      ['運費?', '80元', '滿千免運'],
+    ])
+    expect(r.stats.titleRows).toEqual([])
+    expect(r.cards.map(c => c.title)).toEqual(['退貨?', '運費?'])
+  })
+
+  it('延續列只加「還沒有的那幾行」：⛔「價格：12」不可以因為上面有「價格：12,900」就被丟掉', () => {
+    const r = rowsToCards([
+      ['品名', '說明', '價格'],
+      ['W1', '主機', '12,900'],
+      ['', '', '12'],
+    ])
+    expect(r.cards[0]!.content).toBe('說明：主機\n價格：12,900\n價格：12')
+  })
+
+  it('舊來源（legacy）一模一樣照舊讀：第 1 列當欄位名稱、第一欄空白略過、短列只取第二欄', () => {
+    const rows = [
+      ['2026 秋季價目表', '', ''],
+      ['品名', '容量', '價格'],
+      ['W1', '12L', '12,900'],
+      ['', '重量', '8kg'],
+    ]
+    const r = rowsToCards(rows, { legacy: true })
+    // 跟改版前同一個結果（含那張叫「品名」的怪卡）——舊來源的同步不可以因為改版而改寫知識
+    expect(r.cards.map(c => c.title)).toEqual(['品名', 'W1'])
+    expect(r.stats.skippedNoTitle).toBe(1)
+    expect(r.stats.titleRows).toEqual([])
+    expect(r.stats.continuedRows).toBe(0)
   })
 
   it('沒答案的卡進 blankAnswerTitles；答案剛好等於問題不算沒答案（修 content===title 誤判）', () => {
@@ -362,6 +399,29 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
     const emptyish: FakeSheet = { sheetId: 1, title: '商品', values: [['只有表頭']] }
     await expect(readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([emptyish])))
       .rejects.toMatchObject({ statusCode: 422 })
+  })
+
+  it('⛔ 不同分頁同一個標題併成一張（以前建兩張同名卡，同步時一頁蓋掉另一頁）、列進重複提醒', async () => {
+    const price: FakeSheet = { sheetId: 1, title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
+    const spec: FakeSheet = { sheetId: 2, title: '規格', values: [['品名', '容量'], ['W1', '12L']] }
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([price, spec]))
+    expect(res.cards).toEqual([{ title: 'W1', content: '12,900\n12L', tags: [] }])
+    expect(res.stats.duplicateTitles).toEqual(['W1'])
+  })
+
+  it('有讀但一條都沒整理出來的分頁要回報（那頁的內容沒收進來）', async () => {
+    // 只有欄位名稱、還沒填資料的分頁
+    const notes: FakeSheet = { sheetId: 2, title: '新品（還沒填）', values: [['品名', '價格']] }
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, notes]))
+    expect(res.emptySheets).toEqual(['新品（還沒填）'])
+  })
+
+  it('舊來源（legacy）照舊：有 FAQ 頁就只讀它（不會突然多讀別頁）', async () => {
+    const price: FakeSheet = { sheetId: 3, title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
+    const legacy = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]), { legacy: true })
+    expect(legacy.cards.map(c => c.title)).toEqual(['退款多久?', '運費?'])
+    const fresh = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]))
+    expect(fresh.cards.map(c => c.title)).toEqual(['退款多久?', '運費?', 'W1'])
   })
 })
 

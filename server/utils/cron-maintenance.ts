@@ -1418,10 +1418,10 @@ export async function purgeRecycledKnowledge(db: Firestore) {
       // 逐筆刪並照實計數——「deleted 恆等於 scanned」的假回報是健檢明列的反模式
       // 留著的原檔一起清（`C-296`③）：資料刪了原檔還在，就是一份沒人看得到也刪不掉的客戶檔案。
       // 刪之前先讀：之後任何一步出事都不會把「已經刪掉」誤報成失敗
-      const src = col === KNOWLEDGE_SOURCES_COLLECTION ? (d.data() as { workspaceId?: string, filePath?: string } | undefined) : null
+      const src = col === KNOWLEDGE_SOURCES_COLLECTION ? (d.data() as { workspaceId?: string, filePath?: string, type?: string } | undefined) : null
       try {
         await d.ref.delete()
-        if (src?.filePath && src.workspaceId) await deleteSourceFiles(src.workspaceId, d.id)
+        if ((src?.filePath || src?.type === 'file') && src.workspaceId) await deleteSourceFiles(src.workspaceId, d.id)
         purged++
       }
       catch (e) {

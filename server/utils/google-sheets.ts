@@ -39,6 +39,8 @@ export interface ReadSheetResult {
   stats: SheetImportStats
   /** 沒讀的分頁（使用說明頁等）；預覽要講「跳過了哪幾頁」 */
   skippedSheets: string[]
+  /** 有讀、但一條都沒整理出來的分頁（只有一欄、只有欄位名稱）；那頁的內容沒收進來，要講 */
+  emptySheets: string[]
 }
 
 // ── 服務帳號 token（JWT client 內部自動快取/續期，建一次重用） ──────────
@@ -306,22 +308,25 @@ interface ValuesResponse {
  * 讀取一份 Google Sheet 並轉成知識卡。
  * 依 selectSheetsToRead 決定讀哪些分頁（gid 指定→單頁；否則全部非說明頁，舊來源 FAQ 頁優先），
  * 每個分頁各自跑 rowsToCards（欄位名稱那列自己找），跨分頁彙總——與 Excel 上傳一致。
- * opts.faqPriority：已經在同步的舊試算表（來源沒有 gsheetTabRule）要帶 true，見 selectDataSheetNames。
+ * opts.legacy：已經在同步的舊試算表（來源沒有 gsheetTabRule）要帶 true——分頁照舊（FAQ 頁優先）、
+ * 每一列也照舊讀（見 rowsToCards）。只有「不同分頁同標題要併成一張」這條對舊來源也生效：
+ * 那是同步會互相蓋掉內容的錯，不是讀法偏好。
  */
 export async function readGoogleSheetAsCards(
   ref: ParsedSheetRef,
   api: SheetsApiFn = sheetsApi,
-  opts: { faqPriority?: boolean } = {},
+  opts: { legacy?: boolean } = {},
 ): Promise<ReadSheetResult> {
-  const { targets, allTitles } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api, opts)
+  const legacy = opts.legacy === true
+  const { targets, allTitles } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api, { faqPriority: legacy })
 
-  const cards: SheetCard[] = []
+  const collector = createCardCollector()
   const titles: string[] = []
+  const emptySheets: string[] = []
   let mergeCount = 0
-  const agg = emptySheetStats()
 
   for (const t of targets) {
-    if (cards.length >= GSHEET_MAX_ROWS) { agg.truncatedByCap = true; break }
+    if (collector.full()) { collector.stats.truncatedByCap = true; break }
     // 整個分頁（靠 range = 分頁名，A:Z 之外也讀）
     const data = await api<ValuesResponse>(
       `${encodeURIComponent(ref.spreadsheetId)}/values/${encodeURIComponent(t.title)}?majorDimension=ROWS`,
@@ -330,28 +335,57 @@ export async function readGoogleSheetAsCards(
       (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
       t.merges,
     )
-    const { cards: sheetCards, stats } = rowsToCards(rows, { merges: t.merges })
-    if (!sheetCards.length) continue
+    const { cards: sheetCards, stats } = rowsToCards(rows, { legacy })
+    if (!sheetCards.length) { emptySheets.push(t.title); continue }
 
     titles.push(t.title)
     mergeCount += countVerticalMerges(t.merges)
-    mergeSheetStats(agg, stats)
-    for (const c of sheetCards) {
-      if (cards.length >= GSHEET_MAX_ROWS) { agg.truncatedByCap = true; break }
-      cards.push(c)
-    }
+    collector.addSheet(sheetCards, stats)
   }
 
-  if (!agg.rowCount) {
+  if (!collector.stats.rowCount) {
     throw createError({ statusCode: 422, statusMessage: '這份試算表沒有足夠資料（需要表頭列 + 至少一列資料）' })
   }
 
   return {
-    cards,
+    cards: collector.cards,
     sheetTitle: titles.join('、') || targets[0]?.title || 'Sheet1',
     mergeCount,
-    stats: agg,
+    stats: collector.stats,
     skippedSheets: skippedSheetNames(allTitles, targets.map(t => t.title)),
+    emptySheets,
+  }
+}
+
+/**
+ * 把各分頁的卡收成一疊（Google Sheet 與 Excel 共用）。
+ * ⛔ **不同分頁同一個標題要併成一張**（2026-10-10 審查實測）：價目表與規格表都有「W1」時，
+ *    匯入會建兩張同名卡，而同步是照標題配對——第一次同步就拿其中一頁的內容蓋掉另一頁那張，
+ *    哪一張被蓋看順序，店家完全看不出來。照同一頁內的規矩併起來，並列進「重複的標題」提醒。
+ */
+export function createCardCollector() {
+  const cards: SheetCard[] = []
+  const byKey = new Map<string, SheetCard>()
+  const stats = emptySheetStats()
+  return {
+    cards,
+    stats,
+    full: () => cards.length >= GSHEET_MAX_ROWS,
+    addSheet(sheetCards: SheetCard[], sheetStats: SheetImportStats) {
+      mergeSheetStats(stats, sheetStats)
+      for (const c of sheetCards) {
+        const key = normTitle(c.title)
+        const existing = byKey.get(key)
+        if (existing) {
+          existing.content = appendNewLines(existing.content, c.content)
+          if (!stats.duplicateTitles.includes(existing.title)) stats.duplicateTitles.push(existing.title)
+          continue
+        }
+        if (cards.length >= GSHEET_MAX_ROWS) { stats.truncatedByCap = true; break }
+        byKey.set(key, c)
+        cards.push(c)
+      }
+    },
   }
 }
 
@@ -387,23 +421,29 @@ export function mergeSheetStats(agg: SheetImportStats, s: SheetImportStats): voi
  */
 const PROBE_ROWS = 20
 
+/** 探測最多看幾個分頁有沒有資料（每頁一次 API 往返；匯入時才全部讀） */
+const PROBE_MAX_SHEETS = 3
+
 export async function probeGoogleSheetAccess(
   ref: ParsedSheetRef,
   api: SheetsApiFn = sheetsApi,
-): Promise<{ sheetTitle: string; hasData: boolean }> {
+): Promise<{ sheetTitle: string; sheetTitles: string[]; hasData: boolean }> {
   const { targets } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api)
-  const first = targets[0]
-  if (!first) throw createError({ statusCode: 422, statusMessage: '這份試算表沒有任何分頁' })
-  const data = await api<ValuesResponse>(
-    `${encodeURIComponent(ref.spreadsheetId)}/values/${encodeURIComponent(`${first.title}!A1:Z${PROBE_ROWS}`)}?majorDimension=ROWS`,
-  )
-  const rows = expandVerticalMerges(
-    (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
-    first.merges,
-  )
-  // 用同一支 rowsToCards 判「有沒有資料」：表頭列 + 至少一列資料才算
-  const { stats } = rowsToCards(rows, { merges: first.merges })
-  return { sheetTitle: first.title, hasData: stats.rowCount > 0 }
+  if (!targets.length) throw createError({ statusCode: 422, statusMessage: '這份試算表沒有任何分頁' })
+  const sheetTitles = targets.map(t => t.title)
+  // 匯入會讀每一個非說明頁（`C-296`）：第一頁是空白封面不代表整份沒資料，往後再看兩頁
+  for (const t of targets.slice(0, PROBE_MAX_SHEETS)) {
+    const data = await api<ValuesResponse>(
+      `${encodeURIComponent(ref.spreadsheetId)}/values/${encodeURIComponent(`${t.title}!A1:Z${PROBE_ROWS}`)}?majorDimension=ROWS`,
+    )
+    const rows = expandVerticalMerges(
+      (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
+      t.merges,
+    )
+    // 用同一支 rowsToCards 判「有沒有資料」：表頭列 + 至少一列資料才算
+    if (rowsToCards(rows).stats.rowCount > 0) return { sheetTitle: t.title, sheetTitles, hasData: true }
+  }
+  return { sheetTitle: targets[0]!.title, sheetTitles, hasData: false }
 }
 
 /** 標題正規化當比對 key（去空白、轉小寫）；gsheet 同步、匯入健檢、合併重複列共用這一份。 */
@@ -416,37 +456,53 @@ const MAX_TITLE_ROWS = 3
 
 const filledCount = (r: string[]) => r.filter(c => String(c ?? '').trim()).length
 
+/** 「看起來像欄位名稱」：每格都短、沒有數字、沒有問號（資料列常帶價格、容量、「退貨多久?」） */
+function looksLikeHeaderRow(cells: string[]): boolean {
+  return cells
+    .map(c => String(c ?? '').trim())
+    .filter(Boolean)
+    .every(c => c.length <= 12 && !/\d/.test(c) && !/[?？]/.test(c))
+}
+
 /**
  * 找欄位名稱在哪一列（`C-296`）。以前一律當第 1 列——最上面有一行表格標題時，
  * 「2026 秋季價目表」被當成欄位名稱，後面每一條都少了「容量」「價格」這幾個字，
  * 還多出一張叫「品名」的怪卡。
  *
- * 一列只有一格有字，而且符合下列其一，才當成標題列跳過：
- *  ① 那一格橫向合併了兩欄以上（置中大標題的標準做法）；
- *  ② 下一列有三格以上有字（三欄以上的表，欄位名稱只填一格不合常理）。
- * ⛔ 兩欄表（問題／答案）而且沒合併的，**不跳**：表頭寫成「問題」＋空白的人很多，
- *    跳了反而把第一筆資料當成欄位名稱，把原本好好的表讀壞。
- * 回傳的 titles 一定要講給使用者聽（見 sheetHealthWarnings）——跳過的東西要說得出來。
+ * 只在**三欄以上的表**才找：最上面連續幾列（最多 3 列）都只有一格有字，而且緊接著那一列
+ * 三格以上有字、看起來像欄位名稱（見 looksLikeHeaderRow），才把上面那幾列當標題跳過。
+ * ⛔ 兩欄表（問題／答案）**一律不跳**：兩欄表的內容就是第二欄、欄位名稱根本用不到，
+ *    跳了只會冒險把第一筆資料當成欄位名稱吃掉（2026-10-10 審查實測：合併的「常見問題 Q&A」
+ *    標題下面直接接資料，第一題整題不見）。
+ * ⛔ 下一列像資料（有數字、有問號）就不跳：「問題」只填一格、下面直接是「退貨?｜7天內｜需發票」的表，
+ *    跳了會吃掉第一筆。寧可沿用舊行為（少幾個欄位名稱），也不要少一筆資料。
+ * 回傳的 titles／header 一定要講給使用者聽（見 sheetHealthWarnings）——猜的要說出來。
  */
 function locateHeaderRow(
   rows: Array<{ cells: string[], index: number }>,
-  merges: MergeRange[],
 ): { headerAt: number, titles: string[] } {
-  const titles: string[] = []
+  const none = { headerAt: 0, titles: [] as string[] }
+  const widest = rows.reduce((m, r) => Math.max(m, filledCount(r.cells)), 0)
+  if (widest < 3) return none
   let h = 0
-  while (h < rows.length - 2 && titles.length < MAX_TITLE_ROWS) {
-    const cur = rows[h]!
-    if (filledCount(cur.cells) !== 1) break
-    const col = cur.cells.findIndex(c => String(c ?? '').trim())
-    const mergedAcross = merges.some(m =>
-      m.startRow <= cur.index && cur.index < m.endRow
-      && m.startCol <= col && col < m.endCol
-      && m.endCol - m.startCol >= 2)
-    if (!mergedAcross && filledCount(rows[h + 1]!.cells) < 3) break
-    titles.push(String(cur.cells[col] ?? '').trim())
-    h++
+  while (h < MAX_TITLE_ROWS && h < rows.length - 1 && filledCount(rows[h]!.cells) === 1) h++
+  if (h === 0 || h >= rows.length - 1) return none
+  const header = rows[h]!.cells
+  if (filledCount(header) < 3 || !looksLikeHeaderRow(header)) return none
+  return {
+    headerAt: h,
+    titles: rows.slice(0, h).map(r => String(r.cells.find(c => String(c ?? '').trim()) ?? '').trim()),
   }
-  return { headerAt: h, titles }
+}
+
+/**
+ * 併進同一張卡時只加「還沒有的那幾行」。
+ * ⛔ 不可以用整段 `includes` 判斷：延續列「價格：12」會因為上面有「價格：12,900」被當成重複丟掉。
+ */
+function appendNewLines(existing: string, add: string): string {
+  const have = new Set(existing.split('\n').map(l => l.trim()))
+  const fresh = add.split('\n').map(l => l.trim()).filter(l => l && !have.has(l))
+  return fresh.length ? `${existing}\n${fresh.join('\n')}`.slice(0, CARD_CONTENT_MAX) : existing
 }
 
 /**
@@ -458,18 +514,23 @@ function locateHeaderRow(
  *   以前是整列略過。一開頭就空白、上面沒有列可接的，照舊略過（記 skippedNoTitle）。
  * - 同標題（含直向合併標題欄造成的重複）併成同一張卡，避免以標題為 key 的同步吃掉重複卡而漏答案（記 mergedRows）。
  * - 套用 GSHEET_MAX_ROWS 上限。
- * merges：這個分頁的合併儲存格（判斷置中大標題用；座標要跟 rawRows 的列號對齊）。
+ *
+ * opts.legacy＝**2026-10-10 以前就在同步的 Google 試算表**（來源沒有 gsheetTabRule）：
+ * 欄位名稱一律第 1 列、第一欄空白照舊略過、合併照舊整段比對、短列照舊只取第二欄——**跟以前一模一樣**。
+ * ⛔ 不可以替舊來源換讀法：同步會拿新讀法的結果去比舊卡，店家什麼都沒做，下一個小時知識就被改寫
+ *    （2026-10-10 審查實測：舊表一行標題＋資料，第一題會被當成欄位名稱、同步時被刪掉）。
  */
 export function rowsToCards(
   rawRows: string[][],
-  opts: { merges?: MergeRange[] } = {},
+  opts: { legacy?: boolean } = {},
 ): { cards: SheetCard[]; stats: SheetImportStats } {
+  const legacy = opts.legacy === true
   const indexed = (rawRows ?? [])
     .map((cells, index) => ({ cells: Array.isArray(cells) ? cells : [], index }))
     .filter(r => r.cells.some(c => String(c ?? '').trim()))
   if (indexed.length < 2) return { cards: [], stats: emptySheetStats() }
 
-  const { headerAt, titles: titleRows } = locateHeaderRow(indexed, opts.merges ?? [])
+  const { headerAt, titles: titleRows } = legacy ? { headerAt: 0, titles: [] as string[] } : locateHeaderRow(indexed)
   const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
   const dataRows = indexed.slice(headerAt + 1).map(r => r.cells)
 
@@ -486,14 +547,14 @@ export function rowsToCards(
   for (const raw of dataRows) {
     let row = raw
     let continued = false
-    if (!String(row[0] ?? '').trim() && lastTitle) {
+    if (!legacy && !String(row[0] ?? '').trim() && lastTitle) {
       // 第一欄空白＝接著上一列講（例：W1 的第二行規格只寫在後面幾欄）。
       // ⛔ 開頭第一列就空白、上面沒有可以接的：照舊略過並計數（sheetHealthWarnings 會講），
       //    拿後面某一格硬當標題只會生出「標題叫 12L」的怪卡。
       row = [lastTitle, ...row.slice(1)]
       continued = true
     }
-    const parsed = rowToCardParsed(headers, row)
+    const parsed = rowToCardParsed(headers, row, legacy)
     if (!parsed) { skippedNoTitle++; continue }
     const { card, hasAnswer } = parsed
     lastTitle = card.title
@@ -511,8 +572,13 @@ export function rowsToCards(
         dupKeys.add(key)
       }
       const add = card.content.trim()
-      if (hasAnswer && add && !existing.content.includes(add)) {
-        existing.content = `${existing.content}\n${add}`.slice(0, CARD_CONTENT_MAX)
+      if (hasAnswer && add) {
+        if (legacy) {
+          if (!existing.content.includes(add)) existing.content = `${existing.content}\n${add}`.slice(0, CARD_CONTENT_MAX)
+        }
+        else {
+          existing.content = appendNewLines(existing.content, add)
+        }
       }
       continue
     }
@@ -542,13 +608,15 @@ export function rowsToCards(
  * - 兩欄表（問/答 FAQ）：content = 第二欄整段。
  * - 多欄表：content = 其餘各欄「表頭：值」逐行列出（空值欄略過）。
  * - 答案欄全空時 content 以標題暫代（validateChunkInput 要求 content 非空），並標記 hasAnswer=false。
+ * legacy（舊來源的讀法）：**這一列**只有兩格時也只取第二欄。新讀法只看表頭有幾欄——
+ * Google 試算表會把列尾的空格剪掉，三欄表的「W1｜12L」那一列以前會變成只剩「12L」、少了「容量」。
  */
-function rowToCardParsed(headers: string[], row: string[]): { card: SheetCard; hasAnswer: boolean } | null {
+function rowToCardParsed(headers: string[], row: string[], legacy = true): { card: SheetCard; hasAnswer: boolean } | null {
   const title = String(row[0] ?? '').trim()
   if (!title) return null
 
   let content: string
-  if (headers.length <= 2 || row.length <= 2) {
+  if (headers.length <= 2 || (legacy && row.length <= 2)) {
     content = String(row[1] ?? '').trim()
   }
   else {

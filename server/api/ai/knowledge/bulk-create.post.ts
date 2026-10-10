@@ -117,7 +117,7 @@ export default defineEventHandler(async (event) => {
   // 整批卡變成 7/31 稽核反覆咬人的「無主卡」——客人指名問另一台時被拿去混答，
   // 而且不屬於任何來源、無法整批管理。手寫單卡（create.post.ts）早就這樣做了，比照辦理。
   let sourceId: string | null = null
-  let keepFilePromise: Promise<void> | null = null
+  let keepFilePromise: Promise<boolean> | null = null
   const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
   if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet' || sourceType === 'text') {
     sourceId = importId ? idFor('source') : uuidv4()
@@ -295,8 +295,9 @@ export default defineEventHandler(async (event) => {
   const indexed = results.filter(r => r.status === 'indexed').length
   const failed = results.filter(r => r.status === 'failed').length
 
-  // 原檔那一段（跟建卡同時跑的）在回應前收尾；它自己吞錯，不會讓匯入失敗
-  if (keepFilePromise) await keepFilePromise
+  // 原檔那一段（跟建卡同時跑的）在回應前收尾；它自己吞錯，不會讓匯入失敗。
+  // 有沒有留成要回給畫面講——⛔ 沒留成卻什麼都不說，之後找「下載原檔」才發現沒有
+  const originalKept = keepFilePromise ? await keepFilePromise : null
 
   invalidateKnowledgeChunkCount(workspaceId)
 
@@ -329,6 +330,8 @@ export default defineEventHandler(async (event) => {
     failed,
     /** 「更新既有資料」時被移進回收桶的舊卡張數；結果頁要講出來（人有權知道舊的去哪了） */
     replacedChunks: replaceSourceId ? replacedChunks : 0,
+    /** 檔案來源：原檔有沒有留下來（`C-296`③）；不是檔案來源是 null */
+    originalKept,
     items: results,
   }
 })
@@ -346,7 +349,7 @@ async function keepImportedOriginal(
   jobId: string,
   rawFileName: string,
   replacing: boolean,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const job = (await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).get()).data() as
       { workspaceId?: string, sourceFile?: string | null } | undefined
@@ -373,12 +376,15 @@ async function keepImportedOriginal(
         fileSize: kept.fileSize,
         fileContentType: kept.fileContentType,
       })
+      return true
     }
-    else if (replacing) {
-      await deleteSourceFiles(workspaceId, sourceId)
-    }
+    if (replacing) await deleteSourceFiles(workspaceId, sourceId)
+    return false
   }
   catch (e) {
     console.warn(`[bulk-create] 原檔留存失敗（不擋匯入）${sourceId}:`, (e as Error)?.message)
+    // 檔可能已經存進雲端、只是資料沒記上路徑：清掉，免得留下一份沒人指得到的孤兒檔
+    await deleteSourceFiles(workspaceId, sourceId)
+    return false
   }
 }

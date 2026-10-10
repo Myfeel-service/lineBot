@@ -36,17 +36,19 @@ export default defineEventHandler(async (event) => {
   try {
     const res = await probeGoogleSheetAccess(ref)
     // 讀得到但沒資料也是「還不能匯入」，要當成一種狀態講清楚（不是綠燈）
+    // 匯入會讀每一個非說明頁（`C-296`），講的時候要講全部，不是只講第一頁
+    const tabs = res.sheetTitles.map(t => `「${t}」`).join('、')
     if (!res.hasData) {
       return {
         status: 'no_data' as const,
-        message: `讀得到這份試算表，但「${res.sheetTitle}」分頁的前 20 列沒有資料（需要表頭列 ＋ 至少一列資料）。`,
+        message: `讀得到這份試算表，但${res.sheetTitles.length > 1 ? `${tabs}這幾個分頁` : `${tabs}分頁`}的前 20 列都沒有資料（需要表頭列 ＋ 至少一列資料）。`,
       }
     }
     // ⛔ 不報總列數：只讀了前 20 列，算不出全表有幾列（報一個算錯的數字比不報更糟）
     return {
       status: 'ok' as const,
       sheetTitle: res.sheetTitle,
-      message: `讀得到了（會讀「${res.sheetTitle}」分頁）`,
+      message: `讀得到了（會讀${tabs}${res.sheetTitles.length > 1 ? ` ${res.sheetTitles.length} 個分頁` : '分頁'}）`,
     }
   }
   catch (err: any) {

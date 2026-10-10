@@ -28,6 +28,28 @@ interface ZipEntry {
   localHeaderOffset: number
 }
 
+/** 舊版 Office 二進位檔（.doc/.ppt）與「有密碼的新版 Office 檔」都是這種外殼開頭 */
+function isOleContainer(buf: Buffer): boolean {
+  return buf.length >= 8 && buf.readUInt32BE(0) === 0xD0CF11E0 && buf.readUInt32BE(4) === 0xA1B11AE1
+}
+
+/** 不是 zip 的時候，講得出是哪一種（有密碼 vs 舊版檔），不要一律叫人另存 */
+function notZipReason(buf: Buffer, kind: 'docx' | 'pptx'): string {
+  if (isOleContainer(buf)) return `可能有密碼保護，或其實是舊版 ${kind === 'docx' ? '.doc' : '.ppt'}——有密碼的話請先移除密碼`
+  return `檔案格式不對，可能是舊版 ${kind === 'docx' ? '.doc' : '.ppt'} 或檔案損毀`
+}
+
+/**
+ * 一份檔案解壓後總共最多讀多少（簡報有幾百張投影片時逐張解壓）。
+ * 10MB 的檔正常解開幾十 MB；超過這個量多半是壓縮炸彈，讀下去會在 Lambda 上逾時。
+ */
+const MAX_TOTAL_INFLATED_BYTES = 120 * 1024 * 1024
+
+/** 「替代內容」（mc:Fallback）是給舊版 Office 看的同一份內容；兩份都讀，文字方塊的字會出現兩次 */
+function stripFallbacks(xml: string): string {
+  return xml.replace(/<mc:Fallback\b[\s\S]*?<\/mc:Fallback>/g, '')
+}
+
 function badZip(kind: 'docx' | 'pptx', why: string): never {
   const label = kind === 'docx' ? 'Word' : 'PowerPoint'
   const resave = kind === 'docx' ? '在 Word 另存成 .docx' : '在 PowerPoint 另存成 .pptx'
@@ -95,7 +117,8 @@ export function decodeXmlEntities(s: string): string {
   return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, code: string) => {
     if (code[0] === '#') {
       const n = code[1] === 'x' || code[1] === 'X' ? Number.parseInt(code.slice(2), 16) : Number.parseInt(code.slice(1), 10)
-      return Number.isFinite(n) && n > 0 ? String.fromCodePoint(n) : m
+      // 超過 Unicode 範圍的（壞檔才會有）照原樣留著；⛔ 不能交給 fromCodePoint，它會丟 RangeError 變成 500
+      return Number.isFinite(n) && n > 0 && n <= 0x10FFFF ? String.fromCodePoint(n) : m
     }
     return ENTITY[code] ?? m
   })
@@ -166,11 +189,29 @@ function docxParagraphText(p: string): string {
 function docxTableText(tbl: string): string {
   // 只拿「這一層」的列與格；格子裡若又有表格，交給 docxBodyText 遞迴攤平成一格文字，
   // ⛔ 不可以直接全文找 <w:tr>——內層表格的列會被當成外層的列，欄位整個錯位
+  //
+  // 合併儲存格要照「格線」排（2026-10-10 審查實測）：
+  //  · 橫向合併（gridSpan＝N）佔 N 欄——不補空格的話後面每一格都往左移一欄，
+  //    「12,900」會被標成「容量」而不是「價格」；
+  //  · 直向合併的下半格（vMerge 沒有 restart）是空的——照上一列同一欄的值補上，
+  //    「品名」被合併的那幾列才不會少了名字。
   const rows: string[][] = []
+  let prev: string[] = []
   for (const r of childBlocks(innerOf(tbl, 'w:tbl'), 'w:tr')) {
-    const cells = childBlocks(innerOf(r, 'w:tr'), 'w:tc')
-      .map(c => docxBodyText(innerOf(c, 'w:tc')).replace(/\n+/g, ' ').trim())
-    if (cells.some(Boolean)) rows.push(cells)
+    const grid: string[] = []
+    for (const c of childBlocks(innerOf(r, 'w:tr'), 'w:tc')) {
+      const inner = innerOf(c, 'w:tc')
+      // 只看這一格自己的屬性（在第一個段落／內層表格之前），內層表格的屬性不算
+      const ownPr = inner.slice(0, inner.search(/<w:(p|tbl)(?=[\s>/])/) >= 0 ? inner.search(/<w:(p|tbl)(?=[\s>/])/) : undefined)
+      const span = Math.max(1, Math.min(50, Number(ownPr.match(/<w:gridSpan\s+w:val="(\d+)"/)?.[1] ?? 1)))
+      const vMerge = ownPr.match(/<w:vMerge(?:\s+w:val="(\w+)")?\s*\/?>/)
+      const continues = !!vMerge && vMerge[1] !== 'restart'
+      const text = continues ? (prev[grid.length] ?? '') : docxBodyText(inner).replace(/\n+/g, ' ').trim()
+      grid.push(text)
+      for (let k = 1; k < span; k++) grid.push('')
+    }
+    prev = grid
+    if (grid.some(Boolean)) rows.push(grid)
   }
   return tableRowsToText(rows)
 }
@@ -201,8 +242,17 @@ function docxBodyText(xml: string): string {
   let cursor = 0
   const pushParagraphs = (seg: string) => {
     for (const p of childBlocks(seg, 'w:p')) {
-      const line = docxParagraphText(p)
+      // 文字方塊（`w:txbxContent`）長在段落裡面：先拿出來另外當段落讀，
+      // 否則它的字會黏在旁邊那段正文上（「限時優惠 8 折正文」）
+      const boxes = topLevelBlocks(p, 'w:txbxContent')
+      let outer = p
+      for (const b of [...boxes].reverse()) outer = outer.slice(0, b.start) + outer.slice(b.end)
+      const line = docxParagraphText(outer)
       if (line) parts.push(line)
+      for (const b of boxes) {
+        const boxText = docxBodyText(innerOf(p.slice(b.start, b.end), 'w:txbxContent'))
+        if (boxText) parts.push(boxText)
+      }
     }
   }
   for (const t of topLevelBlocks(xml, 'w:tbl')) {
@@ -217,15 +267,16 @@ function docxBodyText(xml: string): string {
 
 export function extractDocxText(buf: Buffer): { text: string, meta: Record<string, string | number> } {
   const entries = readZipDirectory(buf)
-  if (!entries) badZip('docx', '檔案格式不對，可能是舊版 .doc 或檔案損毀')
+  if (!entries) badZip('docx', notZipReason(buf, 'docx'))
   const doc = entries.find(e => e.name === 'word/document.xml')
   if (!doc) badZip('docx', '找不到文件內容')
   let xml: string
   try {
-    xml = readZipEntry(buf, doc).toString('utf8')
+    xml = stripFallbacks(readZipEntry(buf, doc).toString('utf8'))
   }
   catch (e) {
-    const why = (e as Error).message === 'encrypted' ? '有密碼保護' : (e as Error).message === 'too-large' ? '內容大到不正常' : '檔案損毀'
+    const msg = (e as Error).message
+    const why = msg === 'encrypted' ? '有密碼保護' : (msg === 'too-large' || /maxOutputLength|buffer/i.test(msg)) ? '內容大到不正常' : '檔案損毀'
     badZip('docx', why)
   }
   const body = xml.slice(Math.max(0, xml.indexOf('<w:body')), xml.lastIndexOf('</w:body>') > 0 ? xml.lastIndexOf('</w:body>') : undefined)
@@ -280,27 +331,34 @@ function pptxSlideText(xml: string): string {
 
 export function extractPptxText(buf: Buffer): { text: string, meta: Record<string, string | number> } {
   const entries = readZipDirectory(buf)
-  if (!entries) badZip('pptx', '檔案格式不對，可能是舊版 .ppt 或檔案損毀')
+  if (!entries) badZip('pptx', notZipReason(buf, 'pptx'))
   const byName = new Map(entries.map(e => [e.name, e]))
   const order = pptxSlideOrder(buf, entries)
   if (!order.length) badZip('pptx', '找不到任何投影片')
   const out: string[] = []
   let withText = 0
+  // 讀不出來的投影片要數出來講（單張壞掉不擋整份，但⛔不可以默默少幾張）
+  let unreadable = 0
+  let inflated = 0
   order.forEach((name, i) => {
+    const entry = byName.get(name)!
+    if (inflated + entry.uncompressedSize > MAX_TOTAL_INFLATED_BYTES) { unreadable++; return }
     let xml = ''
     try {
-      xml = readZipEntry(buf, byName.get(name)!).toString('utf8')
+      xml = stripFallbacks(readZipEntry(buf, entry).toString('utf8'))
+      inflated += xml.length
     }
     catch (e) {
       if ((e as Error).message === 'encrypted') badZip('pptx', '有密碼保護')
-      return // 單張壞掉不擋整份
+      unreadable++
+      return
     }
     const text = pptxSlideText(xml)
     if (!text) return
     withText++
     out.push(`## 第 ${i + 1} 張投影片`, text, '')
   })
-  return { text: out.join('\n').trim(), meta: { slides: order.length, slidesWithText: withText } }
+  return { text: out.join('\n').trim(), meta: { slides: order.length, slidesWithText: withText, slidesUnreadable: unreadable } }
 }
 
 // ── 純文字檔（.txt／.md／.csv）的編碼判斷 ────────────────────────────
@@ -326,6 +384,11 @@ export function decodeTextBuffer(buf: Buffer): { text: string, encoding: TextEnc
     return { text: new TextDecoder('utf-8', { fatal: true }).decode(buf), encoding: 'utf-8' }
   }
   catch {
+    // 大部分是 UTF-8、只有零星一兩個壞位元組（複製貼上帶進來的）→ 還是 UTF-8，壞的那幾個字換掉就好。
+    // ⛔ 不可以因為一個壞位元組就整份改用 Big5 讀：那會把整份正確的字讀成亂碼
+    const lenient = new TextDecoder('utf-8').decode(buf)
+    const bad = (lenient.match(/�/g) ?? []).length
+    if (bad <= Math.max(1, lenient.length / 1000)) return { text: lenient, encoding: 'utf-8' }
     return { text: new TextDecoder('big5').decode(buf), encoding: 'big5' }
   }
 }

@@ -22,6 +22,7 @@ import { parseGoogleSheetUrl, readGoogleSheetAsCards, sheetHealthWarnings } from
 import { getPdfPageCount } from '~~/server/utils/pdf-split'
 import {
   cleanupExpiredPreviewJobs,
+  deleteJobStorage,
   JOB_TTL_MS,
   KNOWLEDGE_PREVIEW_JOBS_COLLECTION,
   makeWork,
@@ -100,7 +101,7 @@ export default defineEventHandler(async (event) => {
     work.chunks = sheet.cards.map(c => cardToChunk(c))
     work.warnings = [
       ...sheetHealthWarnings(sheet.cards, sheet.stats, sheet.mergeCount),
-      ...skippedSheetsWarning(sheet.skippedSheets),
+      ...sheetCoverageWarnings(sheet.skippedSheets, sheet.emptySheets),
     ]
     // 一列一卡不走 LLM 切卡，但卡片沒有 questions（客人問法）→ 進 enrich 逐批補
     // （只補不改；gsheet 不做總覽卡，enrich 完直接 finalize）
@@ -134,6 +135,8 @@ export default defineEventHandler(async (event) => {
     const kind = knowledgeFileKind(fileName)
       ?? (contentType.includes('pdf') ? 'pdf' : (contentType.includes('spreadsheet') || contentType.includes('excel')) ? 'xlsx' : null)
     if (!kind) throw createError({ statusCode: 400, statusMessage: unsupportedFileHint(fileName) })
+    // 沒有副檔名、靠瀏覽器型別認出來的：存原檔時補上副檔名，下載下來才打得開
+    const storeExt = ext || (kind === 'pdf' ? 'pdf' : kind === 'xlsx' ? 'xlsx' : 'bin')
 
     if (kind === 'pdf') {
       const extracted = await extractPdfText(buffer)
@@ -176,7 +179,9 @@ export default defineEventHandler(async (event) => {
         work.chunks = xlsx.cards.map(c => cardToChunk(c))
         work.warnings = [
           ...sheetHealthWarnings(xlsx.cards, xlsx.stats, xlsx.mergeCount),
-          ...skippedSheetsWarning(xlsx.skippedSheets),
+          ...sheetCoverageWarnings(xlsx.skippedSheets, xlsx.emptySheets),
+          // 猜的要說出來：Big5 是自動認的，萬一猜錯（其實是簡體或日文）他才知道去哪裡改
+          ...(xlsx.encoding === 'big5' ? ['這份 CSV 是 Big5 編碼（舊版 Excel 常見），已自動轉成正確的字；如果下面的內容是亂碼，請在 Excel 另存成「CSV UTF-8」再傳一次'] : []),
         ]
         work.phase = 'enrich'
       }
@@ -206,6 +211,10 @@ export default defineEventHandler(async (event) => {
         if (slides >= 3 && extracted.rawLength / slides < 30) {
           work.warnings.push(`這份簡報讀到的字很少（${slides} 張投影片共 ${extracted.rawLength} 字），圖片上的字讀不到；重點寫在圖片上的話，請把那幾張存成圖片另外傳上來。`)
         }
+        const unreadable = Number(extracted.meta.slidesUnreadable ?? 0)
+        if (unreadable > 0) {
+          work.warnings.push(`有 ${unreadable} 張投影片讀不出來（可能損毀或內容大到不正常），那幾張沒有收進來；請在 PowerPoint 另存一次再傳。`)
+        }
       }
       setChunkingFromExtracted(work, extracted)
     }
@@ -217,7 +226,7 @@ export default defineEventHandler(async (event) => {
      *    都不會建工作，這時已經存進去的檔就沒有任何清理程式找得到（清理是照工作找的）。
      * 掃描 PDF／照片在上面為了認字已經存過，不重存。
      */
-    if (!sourceFile) sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'bin', storedContentType(ext, contentType))
+    if (!sourceFile) sourceFile = await saveSourceFile(workspaceId, jobId, buffer, storeExt, storedContentType(storeExt, contentType))
   }
   else if (type === 'url') {
     const url = String(body?.url ?? '').trim()
@@ -250,8 +259,6 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '請指定 type: file / url / text / gsheet' })
   }
 
-  await saveWork(workspaceId, jobId, work)
-
   const now = FieldValue.serverTimestamp()
   const jobDoc: PreviewJobDoc & Record<string, unknown> = {
     workspaceId,
@@ -269,7 +276,15 @@ export default defineEventHandler(async (event) => {
     updatedAt: now,
     expiresAt: Timestamp.fromMillis(Date.now() + JOB_TTL_MS),
   }
-  await getDb().collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).set(jobDoc)
+  try {
+    await saveWork(workspaceId, jobId, work)
+    await getDb().collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).set(jobDoc)
+  }
+  catch (err) {
+    // 清理程式是照工作文件找暫存的：文件沒寫成，剛存的原檔與 work.json 就永遠沒人清得到
+    await deleteJobStorage(workspaceId, jobId)
+    throw err
+  }
 
   return { jobId, status: 'processing' as const, phase: work.phase }
 })
@@ -313,11 +328,17 @@ function storedContentType(ext: string, browserType: string): string {
   return KNOWLEDGE_FILE_MIME_BY_EXT[ext] ?? (browserType || 'application/octet-stream')
 }
 
-/** 沒讀的分頁要講出來（`C-296`）：每頁都讀之後只剩說明頁會跳過，但跳過什麼仍要說得出來 */
-function skippedSheetsWarning(skipped: string[]): string[] {
-  const names = skipped.filter(Boolean)
-  if (!names.length) return []
-  return [`沒有讀 ${names.map(n => `「${n}」`).join('、')} 分頁（看起來是使用說明）；那頁其實是資料的話，請把分頁改個名字再匯入一次`]
+/**
+ * 沒收進來的分頁要講出來（`C-296`）：
+ *  · skipped＝看起來是使用說明、沒讀；
+ *  · empty＝讀了但一條都沒整理出來（只有一欄、只有欄位名稱）——那頁的內容沒進知識庫。
+ */
+function sheetCoverageWarnings(skipped: string[], empty: string[] = []): string[] {
+  const q = (names: string[]) => names.filter(Boolean).map(n => `「${n}」`).join('、')
+  const out: string[] = []
+  if (skipped.filter(Boolean).length) out.push(`沒有讀${q(skipped)}分頁（看起來是使用說明）；那頁其實是資料的話，請把分頁改個名字再匯入一次`)
+  if (empty.filter(Boolean).length) out.push(`${q(empty)}分頁沒有整理出任何一條（只有一欄、或只有欄位名稱），那頁的內容沒有收進來；要收的話請整理成「名稱｜內容」兩欄以上的表格`)
+  return out
 }
 
 /** SheetCard / xlsx card → ChunkInput（一列一卡沒有 questions） */

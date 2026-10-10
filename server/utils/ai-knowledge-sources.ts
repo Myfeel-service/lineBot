@@ -438,7 +438,8 @@ export async function deleteSourceWithChunks(
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
   await tail.commit()
-  if (source.data.filePath) await deleteSourceFiles(workspaceId, sourceId)
+  // 檔案來源一律照資料夾清（便宜）：路徑沒記上的情況（留存寫到一半失敗）檔案一樣可能在那裡
+  if (source.data.type === 'file' || source.data.filePath) await deleteSourceFiles(workspaceId, sourceId)
   invalidateTagIndexCache(workspaceId)
   invalidateCatalogSourceCache(workspaceId)
 
