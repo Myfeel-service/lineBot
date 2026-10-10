@@ -85,11 +85,12 @@
               ref="fileInputEl"
               type="file"
               :accept="KNOWLEDGE_FILE_ACCEPT"
+              multiple
               class="kb-file-input"
               @change="onFileChosen"
             >
             <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">選擇檔案</el-button>
-            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : `${KNOWLEDGE_FILE_LABEL}都可以，也可以直接拖進框裡（單檔 10MB 內）` }}</span>
+            <span class="text-xs text-muted">{{ previewing ? '正在整理這一份，先不能換——要換請按上面的「取消」' : `${KNOWLEDGE_FILE_LABEL}都可以，一次可以選好幾份、也可以直接拖進框裡（單檔 10MB 內）` }}</span>
           </div>
         </template>
       </div>
@@ -422,7 +423,7 @@
             <el-button size="small" plain :disabled="previewing" @click="fileInputEl?.click()">
               選擇檔案
             </el-button>
-            <span class="text-xs text-muted">（或直接拖進上面的框）</span>
+            <span class="text-xs text-muted">（或直接拖進上面的框，一次可以好幾份）</span>
           </p>
           <p class="kb-start__ptxt kb-start__ptxt--lbl">
             <span class="kb-start__lbl kb-start__lbl--ok">收得了</span>
@@ -747,6 +748,19 @@
         </el-button>
       </div>
     </div>
+
+    <!-- ── Step 1.5:一次好幾份檔案（`C-296`④）— 一份一列、各自跑、不逐條預覽 ── -->
+    <KnowledgeFileBatch
+      v-if="step === 'fileBatch'"
+      ref="fileBatchRef"
+      :files="batchFiles"
+      :folders="folders"
+      :quota="quota"
+      @back="leaveFileBatch"
+      @close="close"
+      @running="batchRunning = $event"
+      @finished="onFileBatchFinished"
+    />
 
     <!-- ── Step 2:預覽 + 編輯 ─────────────────────────── -->
     <div v-if="step === 'preview'">
@@ -1342,7 +1356,7 @@ const {
 } = useProductNames()
 
 type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
-type Step = 'input' | 'sitePages' | 'preview' | 'result'
+type Step = 'input' | 'sitePages' | 'fileBatch' | 'preview' | 'result'
 
 const step = ref<Step>('input')
 /**
@@ -1509,17 +1523,61 @@ function acceptFile(file: File | undefined | null): boolean {
   return true
 }
 
+/**
+ * 一次好幾份（`C-296`④）：兩份以上就換到逐份清單那一步（KnowledgeFileBatch），
+ * 只有一份照舊走有預覽的那條路。⛔ 以前多拖的只取第一份、其餘默默丟掉——
+ * 收不了的現在也進清單、標原因，不會少一份沒人知道。
+ */
+const batchFiles = ref<File[]>([])
+const batchRunning = ref(false)
+const fileBatchRef = ref<{ abort: () => void, isRunning: () => boolean } | null>(null)
+function acceptFiles(list: FileList | File[] | null | undefined): boolean {
+  const files = Array.from(list ?? [])
+  if (files.length >= 2) {
+    if (previewing.value) {
+      showToast('正在整理目前這一份，要換的話請先按「取消」', 'warning')
+      return false
+    }
+    clearFile()
+    pasteInput.value = ''
+    batchFiles.value = files
+    step.value = 'fileBatch'
+    return true
+  }
+  return acceptFile(files[0])
+}
+function leaveFileBatch() {
+  batchFiles.value = []
+  step.value = 'input'
+  if (fileInputEl.value) fileInputEl.value.value = ''
+}
+/** 這一批跑完：有建出東西就讓關窗時刷新清單；視窗已經關了就當場刷新並講一句（同整站匯入） */
+function onFileBatchFinished(summary: { sources: number, cards: number, quotaShort: number }) {
+  void loadQuota()
+  if (!summary.sources) {
+    if (!props.modelValue) leaveFileBatch()
+    return
+  }
+  result.value = { sourceId: null, total: summary.cards, indexed: summary.cards, failed: 0, items: [] }
+  invalidateProductNames()
+  if (!props.modelValue) {
+    emit('imported', null)
+    showToast(`已匯入 ${summary.sources} 份檔案（${summary.cards} 條）${summary.quotaShort ? `，另有 ${summary.quotaShort} 條因為空間不夠沒收` : ''}`, 'success')
+    resetAll()
+  }
+}
+
 function onFileChosen(e: Event) {
   const target = e.target as HTMLInputElement
-  if (!acceptFile(target.files?.[0])) target.value = ''
+  if (!acceptFiles(target.files)) target.value = ''
 }
 
 const dragOver = ref(false)
 function onDrop(e: DragEvent) {
   dragOver.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (file) {
-    acceptFile(file)
+  const files = e.dataTransfer?.files
+  if (files?.length) {
+    acceptFiles(files)
     return
   }
   if (previewing.value) return // 同 acceptFile：整理中不接受換內容
@@ -3144,6 +3202,8 @@ function resetAll() {
   folderAutoPicked.value = false
   replaceTarget.value = null
   quotaSkipped.value = 0
+  batchFiles.value = []
+  batchRunning.value = false
   duplicateHit.value = null
   ignoreDuplicateOnce.value = false
   sitePages.value = []
@@ -3178,6 +3238,19 @@ function close() {
  * ⛔ 不可以擋著不讓關：他可能真的要走。要做的是「講清楚再放人」，並在收工時補一句交代。
  */
 async function onBeforeClose(done: () => void) {
+  // 一次好幾份還在跑（`C-296`④）：同整站匯入，講清楚再放人，不擋
+  if (batchRunning.value) {
+    try {
+      await ElMessageBox.confirm(
+        '已經匯好的會保留在知識庫；正在整理的那幾份會跑完、也會匯入；還沒開始的不會匯入。',
+        '要停止匯入嗎？',
+        { confirmButtonText: '停止', cancelButtonText: '繼續整理', type: 'warning' },
+      )
+    }
+    catch {
+      return
+    }
+  }
   if (siteImporting.value) {
     const built = sitePages.value.filter(p => p.status === 'done')
     const cards = built.reduce((sum, p) => sum + p.cards, 0)
@@ -3210,6 +3283,11 @@ function onDialogClose() {
   // 否則正在跑的那幾頁寫完後會把狀態寫回已清空的 ref。
   if (siteImporting.value) {
     siteAborted.value = true
+    return
+  }
+  // 一次好幾份還在跑：叫它收工，收尾（刷新清單、講一句）由 onFileBatchFinished 負責
+  if (batchRunning.value) {
+    fileBatchRef.value?.abort()
     return
   }
   if (result.value) {

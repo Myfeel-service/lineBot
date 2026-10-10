@@ -85,6 +85,7 @@ const files = {
   heic: ['價目表.HEIC', Buffer.from('not-really-heic')],
   doc: ['舊說明書.doc', Buffer.from('old binary')],
   pages: ['報價單.pages', Buffer.from('apple')],
+  pdf: ['保固說明.pdf', Buffer.from('%PDF-1.4 fake')],
 }
 const pathOf = {}
 for (const [k, [name, buf]] of Object.entries(files)) {
@@ -328,6 +329,68 @@ try {
   if (fileUrlCalls.length === 1 && fileUrlCalls[0] === patchedId) pass('按「下載原檔」→ 跟伺服器要這一份的下載網址（一次、對的那一份）')
   else fail('下載原檔沒有要到對的網址', JSON.stringify(fileUrlCalls))
   await listPage.close()
+
+  // ── 第四段：一次好幾份（`C-296`④）────────────────────────────────────
+  // 已用 38／50（剩 12）；Word 整理出 5 條、CSV 4 條、PDF 6 條＝15 條 → 總共只能收 12、3 條沒收；
+  // 舊版 .doc 要列在清單上講原因（⛔ 以前多拖的檔默默只取第一份）。上傳到匯入全部回假的。
+  const chunksFor = { '退換貨政策.docx': 5, '商品匯出.csv': 4, '保固說明.pdf': 6 }
+  const jobName = {}
+  let jobSeq = 0
+  const bulkCalls = []
+  const batchPage = await openImportDialog((req) => {
+    const url = req.url()
+    const m = req.method()
+    if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 38, limit: 50, planName: '免費' } })
+    if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') {
+      const name = JSON.parse(req.postData() || '{}').fileName
+      return json({ uploadId: `u-${name}`, storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: `https://storage.googleapis.com/fake-bucket/${encodeURIComponent(name)}?sig=fake` })
+    }
+    if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) {
+      return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+    }
+    if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+      const id = `job-batch-${++jobSeq}`
+      jobName[id] = JSON.parse(req.postData() || '{}').fileName
+      return json({ jobId: id, status: 'processing', phase: 'chunk' })
+    }
+    const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/(job-batch-\d+)/)
+    if (pj && m === 'GET') {
+      const n = chunksFor[jobName[pj[1]]] ?? 1
+      return json({ status: 'done', sourceName: jobName[pj[1]], chunks: Array.from({ length: n }, (_, i) => ({ title: `${jobName[pj[1]]} 第 ${i + 1} 條`, content: '內容', tags: [], questions: [] })), warnings: [], suggestedProductName: '', contentHash: 'h' })
+    }
+    if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+      const b = JSON.parse(req.postData() || '{}')
+      bulkCalls.push({ name: b.source?.name, fileName: b.source?.fileName, n: b.chunks?.length ?? 0, importId: b.importId })
+      return json({ sourceId: `src-${bulkCalls.length}`, total: b.chunks.length, indexed: b.chunks.length, failed: 0, items: [] })
+    }
+    return undefined
+  })
+  await (await batchPage.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv, pathOf.doc, pathOf.pdf)
+  const listed = await waitFor(batchPage, () => document.querySelectorAll('.kb-site-row').length === 4)
+  const rowsText = await batchPage.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
+  const docRow = rowsText.find(t => t.includes('舊說明書.doc')) ?? ''
+  if (listed && docRow.includes('不收') && docRow.includes('另存新檔')) pass(`選 4 份 → 換到逐份清單；收不了的那份留在清單上講原因：「${docRow}」`)
+  else fail('一次好幾份的清單不對', rowsText.join('\n     '))
+  const startLabel = await batchPage.$eval('.kb-import-actions .el-button--primary', el => el.innerText.trim())
+  if (startLabel === '整理並匯入這 3 份') pass(`主按鈕只算收得下的：「${startLabel}」`)
+  else fail('主按鈕的份數不對', startLabel)
+
+  await batchPage.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+  const batchDone = await waitFor(batchPage, () => document.querySelector('.kb-site-summary')?.innerText.includes('已建立'), null, 60_000)
+  if (!batchDone) throw new Error('一次好幾份沒有跑完（找不到結論列）')
+  if (process.env.SHOT_DIR) await (await batchPage.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-file-batch.png') })
+  const sentTotal = bulkCalls.reduce((s, c) => s + c.n, 0)
+  const summaryText = await batchPage.$eval('.kb-site-summary', el => el.innerText.replace(/\s+/g, ' '))
+  if (bulkCalls.length === 3 && sentTotal === 12) pass(`三份各自匯入、合計只送 12 條（剛好填滿空間）：${bulkCalls.map(c => `${c.name} ${c.n} 條`).join('、')}`)
+  else fail('一次好幾份送出的條數不對', JSON.stringify(bulkCalls))
+  if (bulkCalls.every(c => c.fileName === c.name && c.importId?.startsWith('job-batch-'))) pass('每一份都帶原檔名與自己的整理工作（原檔留存、逾時重按不重複建）')
+  else fail('一次好幾份的匯入參數不對', JSON.stringify(bulkCalls))
+  if (summaryText.includes('已建立 3 份資料、共 12 條知識') && summaryText.includes('另有 3 條因為知識空間不夠沒收進去')) pass(`結論列講清楚收了多少、幾條沒收：「${summaryText.trim().slice(0, 80)}…」`)
+  else fail('一次好幾份的結論列不對', summaryText)
+  const actionLabels = await batchPage.$$eval('.kb-import-actions .el-button', els => els.map(e => e.innerText.trim()))
+  if (!actionLabels.some(t => t.includes('重試'))) pass(`跑完沒東西可重試 → 不留「重試 0 份」的灰按鈕（剩：${actionLabels.join('／')}）`)
+  else fail('跑完還留著重試按鈕', actionLabels.join('／'))
+  await batchPage.close()
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))

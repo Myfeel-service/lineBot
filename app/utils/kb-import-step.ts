@@ -8,7 +8,7 @@
  *    正常路是 給資料 → 看整理結果 → 完成，整站路是 給網址 → 選頁面 → 完成。
  *    兩條路都是三步；先寫「共 3 步」後來變「共 2 步」比不寫還糟。
  */
-export type KbImportStep = 'input' | 'sitePages' | 'preview' | 'result'
+export type KbImportStep = 'input' | 'sitePages' | 'fileBatch' | 'preview' | 'result'
 
 export interface KbImportProgress {
   index: number
@@ -22,8 +22,9 @@ export function kbImportStepProgress(step: KbImportStep, opts: { siteFinished?: 
     case 'input':
       return { index: 1, total: TOTAL }
     case 'sitePages':
-      // 整站匯入的結論列跟頁面清單長在同一個畫面上：匯完了就是第 3 步（完成），
-      // 還沒匯就是第 2 步（挑要匯哪幾頁）
+    case 'fileBatch':
+      // 整站匯入／一次好幾份（`C-296`④）的結論列都跟清單長在同一個畫面上：
+      // 匯完了就是第 3 步（完成），還沒匯就是第 2 步
       return { index: opts.siteFinished ? 3 : 2, total: TOTAL }
     case 'preview':
       return { index: 2, total: TOTAL }

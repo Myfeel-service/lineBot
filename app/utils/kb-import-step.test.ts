@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { kbImportStepProgress } from './kb-import-step'
 import type { KbImportStep } from './kb-import-step'
 
-const ALL: KbImportStep[] = ['input', 'sitePages', 'preview', 'result']
+const ALL: KbImportStep[] = ['input', 'sitePages', 'fileBatch', 'preview', 'result']
 
 describe('kbImportStepProgress', () => {
   it('⛔總數永遠是 3，兩條路都不會讓它跳動', () => {

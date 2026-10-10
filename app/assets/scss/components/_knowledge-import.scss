@@ -361,6 +361,24 @@
   }
 }
 
+/*
+ * 一次好幾份（`C-296`④）：每一列最左邊的檔案種類小標。版面整個借整站匯入的 .kb-site-*
+ * （同一種「一份一列、各自跑」的清單，長得一樣才看得出是同一件事），只多這一顆。
+ * 固定寬度：種類字數不同（PDF／Word／照片）時，右邊檔名的起點才會對齊。
+ */
+.kb-file-batch__kind {
+  flex: none;
+  width: 3.6em;
+  margin-top: 1px;
+  padding: 1px 0;
+  border-radius: 4px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
 .kb-chunk-list {
   display: flex;
   flex-direction: column;
