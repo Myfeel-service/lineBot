@@ -21,6 +21,7 @@ import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
 // ⚠️ 這支會繞一圈 import 回本檔（folder-guard → ai-knowledge-folders → 本檔）。安全的前提是
 //    兩邊都只在函式裡用對方的東西、頂層不讀——動這三支檔案的頂層時要記得這個圈。
 import { resolveKnowledgeFolderId } from './ai-knowledge-folder-guard'
+import { deleteSourceFiles } from './knowledge-source-files'
 
 export const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
 
@@ -106,6 +107,11 @@ export interface SourceSummary {
    * >0 代表商家改了表格但那幾張卡不會跟——要在來源頁常駐講出來，不能只有小鎖 icon。
    */
   manualKeptCount: number
+  /**
+   * type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的、或留存失敗）。
+   * ⛔ 不回 Storage 路徑：下載一律走 file-url 端點發短效網址。
+   */
+  originalFile: { name: string, size: number } | null
 }
 
 function tsToMs(raw: unknown): number {
@@ -139,6 +145,9 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
     detectStalledAtMs: tsToMs(raw.detectStalledAt),
     manualKeptCount: Number((raw as Record<string, unknown>).manualKeptCount ?? 0),
+    originalFile: raw.filePath
+      ? { name: String(raw.fileName || raw.name || ''), size: Number(raw.fileSize ?? 0) }
+      : null,
   }
 }
 
@@ -400,7 +409,8 @@ export async function recycleSourceChunks(
 
 /**
  * 刪除 source 與底下所有 chunk。給「整批退場」用。
- * 注意：不刪 file storage（filePath），那是另一個生命週期。
+ * 留著的原檔（`C-296`③）一起刪：資料刪了、原檔還躺在雲端，就是一份沒有人看得到、
+ * 也沒有人刪得掉的客戶檔案（隱私權政策承諾過「可要求刪除」）。
  */
 export async function deleteSourceWithChunks(
   db: Firestore,
@@ -428,6 +438,7 @@ export async function deleteSourceWithChunks(
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
   await tail.commit()
+  if (source.data.filePath) await deleteSourceFiles(workspaceId, sourceId)
   invalidateTagIndexCache(workspaceId)
   invalidateCatalogSourceCache(workspaceId)
 

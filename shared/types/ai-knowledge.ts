@@ -102,8 +102,15 @@ export interface KnowledgeSourceDoc {
   name: string
   /** type === 'url' / 'gsheet' 時填（gsheet 存使用者貼的原始連結，供顯示/重抓） */
   url: string
-  /** type === 'file' 時填，指向 Storage path */
+  /**
+   * type === 'file' 時填，指向 Storage path（`knowledge-files/{ws}/{sourceId}/original.{ext}`）。
+   * 2026-10-10（`C-296`③）以前匯入的都是 ''——原檔當時讀完就刪了，那些資料沒有原檔可以下載。
+   */
   filePath: string
+  /** 原檔的檔名（下載時存成這個名字）與大小；沒有原檔時不存在 */
+  fileName?: string
+  fileSize?: number
+  fileContentType?: string
   /**
    * type === 'gsheet' 專用：解析後的試算表 id 與分頁 gid（gid 為 null = 第一個分頁）。
    * 比對用 id，不靠 url 字串（url 可能帶不同 query/hash）。

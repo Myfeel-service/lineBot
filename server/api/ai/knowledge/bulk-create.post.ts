@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
-import { FieldValue } from 'firebase-admin/firestore'
+import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
+import { KNOWLEDGE_PREVIEW_JOBS_COLLECTION, loadSourceFile } from '~~/server/utils/ai-preview-jobs'
+import { deleteSourceFiles, keepOriginalFile } from '~~/server/utils/knowledge-source-files'
+import { fileExtension, KNOWLEDGE_FILE_MIME_BY_EXT } from '~~/shared/knowledge-file-types'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { countSourceChunks, invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
@@ -114,6 +117,7 @@ export default defineEventHandler(async (event) => {
   // 整批卡變成 7/31 稽核反覆咬人的「無主卡」——客人指名問另一台時被拿去混答，
   // 而且不屬於任何來源、無法整批管理。手寫單卡（create.post.ts）早就這樣做了，比照辦理。
   let sourceId: string | null = null
+  let keepFilePromise: Promise<void> | null = null
   const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
   if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet' || sourceType === 'text') {
     sourceId = importId ? idFor('source') : uuidv4()
@@ -184,7 +188,8 @@ export default defineEventHandler(async (event) => {
       name: String(body?.source?.name ?? '').trim(),
       url: sourceUrl,
       folderId,
-      filePath: '', // Phase 1b 不存原檔；要存到 Storage 可以擴
+      // 先寫空的；檔案來源的原檔由 keepImportedOriginal 複製好再補上（`C-296`③，失敗就維持空的）
+      filePath: '',
       contentHash: String(body?.source?.contentHash ?? '').trim(),
       // 這批卡就是從這一版內容切出來的 → 同時當成「重新同步」的比對基準。
       // 沒有基準的來源（舊資料、貼上文字）第一次重新同步仍會照跑重切＋比對。
@@ -227,6 +232,10 @@ export default defineEventHandler(async (event) => {
     if (overviewInput) invalidateCatalogSourceCache(workspaceId)
     // 產品索引自動維護（只增不刪）；建卡前先併入，讓 pickCardProduct 這批就吃得到
     if (productName) await addWorkspaceProductName(db, workspaceId, productName)
+    // 原檔留著（`C-296`③）：跟下面建卡**同時**進行——這個請求本來就逼近閘道逾時，不能再串一段上去
+    if (sourceType === 'file' && importId) {
+      keepFilePromise = keepImportedOriginal(db, workspaceId, sourceId, importId, String(body?.source?.fileName ?? ''), !!replaceSourceId)
+    }
   }
 
   // ── 批次建立 chunks（含 embedding），用 concurrency 控速 ──────────
@@ -286,6 +295,9 @@ export default defineEventHandler(async (event) => {
   const indexed = results.filter(r => r.status === 'indexed').length
   const failed = results.filter(r => r.status === 'failed').length
 
+  // 原檔那一段（跟建卡同時跑的）在回應前收尾；它自己吞錯，不會讓匯入失敗
+  if (keepFilePromise) await keepFilePromise
+
   invalidateKnowledgeChunkCount(workspaceId)
 
   /*
@@ -320,3 +332,53 @@ export default defineEventHandler(async (event) => {
     items: results,
   }
 })
+
+/**
+ * 把整理工作留著的原檔複製成這份資料的原檔（`C-296`③）。⛔ 永遠不丟錯：卡片才是主角。
+ * 工作要是**這個帳號的**、而且真的存了原檔才做——importId 是前端帶的，不能拿別家的工作來複製。
+ * 「更新這一份」卻留存失敗時，把舊版的原檔一起清掉：寧可沒有「下載原檔」，
+ * 也不要讓人下載到一份跟現在的知識對不上的舊版。
+ */
+async function keepImportedOriginal(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+  jobId: string,
+  rawFileName: string,
+  replacing: boolean,
+): Promise<void> {
+  try {
+    const job = (await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).get()).data() as
+      { workspaceId?: string, sourceFile?: string | null } | undefined
+    const jobFile = job?.workspaceId === workspaceId ? String(job?.sourceFile ?? '') : ''
+    const ext = fileExtension(jobFile) || 'bin'
+    // 檔名只拿來當「下載時存成什麼名字」，不碰路徑；斜線與控制字元換掉
+    let fileName = rawFileName.trim().replace(/[\\/\u0000-\u001F]/g, '_').slice(0, 200) || '原檔'
+    // 資料名稱被改成「W1 使用說明書」這種沒副檔名的，下載下來會是一個打不開的檔
+    if (fileExtension(fileName) !== ext) fileName = `${fileName}.${ext}`
+    const kept = jobFile
+      ? await keepOriginalFile({
+          workspaceId,
+          sourceId,
+          readBytes: () => loadSourceFile(workspaceId, jobId, jobFile),
+          ext,
+          fileName,
+          contentType: KNOWLEDGE_FILE_MIME_BY_EXT[ext] ?? 'application/octet-stream',
+        })
+      : null
+    if (kept) {
+      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+        filePath: kept.filePath,
+        fileName: kept.fileName,
+        fileSize: kept.fileSize,
+        fileContentType: kept.fileContentType,
+      })
+    }
+    else if (replacing) {
+      await deleteSourceFiles(workspaceId, sourceId)
+    }
+  }
+  catch (e) {
+    console.warn(`[bulk-create] 原檔留存失敗（不擋匯入）${sourceId}:`, (e as Error)?.message)
+  }
+}

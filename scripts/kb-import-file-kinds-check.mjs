@@ -107,13 +107,14 @@ const json = body => ({ status: 200, contentType: 'application/json', body: JSON
  * fake(req)：要假造的請求回傳 { status, contentType, body }；回 undefined 照原規則走
  * （GET 照常打到本機伺服器＝唯讀正式庫；不是 GET 的 /api 一律攔下、記一筆、回假的 200）。
  */
-async function openImportDialog(fake = () => undefined) {
+async function openImportDialog(fake = () => undefined, opts = {}) {
+  const { path = '/knowledge/sources?import=1', waitSel = '.kb-drop' } = opts
   const page = await browser.newPage()
   await page.setViewport({ width: 1440, height: 1000 })
   await page.setRequestInterception(true)
-  page.on('request', (req) => {
+  page.on('request', async (req) => {
     const url = req.url()
-    const faked = fake(req)
+    const faked = await fake(req)
     if (faked) return void req.respond(faked)
     if (url.includes('/api/admin/tour-seen') && req.method() === 'GET') return void req.respond(json({ seen: TOUR_IDS }))
     // ⛔ 正式庫零寫入：/api 底下不是 GET 的一律不送出
@@ -147,11 +148,11 @@ async function openImportDialog(fake = () => undefined) {
     })
   }, session)
 
-  await page.goto(`${BASE}/admin/${WORKSPACE_ID}/knowledge/sources?import=1`, { waitUntil: 'networkidle2', timeout: 180_000 })
-  // dev 首次編譯慢：輪詢等視窗出現，⛔ 不用固定 sleep
+  await page.goto(`${BASE}/admin/${WORKSPACE_ID}${path}`, { waitUntil: 'networkidle2', timeout: 180_000 })
+  // dev 首次編譯慢：輪詢等畫面出現，⛔ 不用固定 sleep
   const deadline = Date.now() + 90_000
-  while (Date.now() < deadline && !(await page.$('.kb-drop'))) await sleep(500)
-  if (!(await page.$('.kb-drop'))) throw new Error('匯入視窗沒有打開（找不到 .kb-drop）')
+  while (Date.now() < deadline && !(await page.$(waitSel))) await sleep(500)
+  if (!(await page.$(waitSel))) throw new Error(`畫面沒有出現（找不到 ${waitSel}）`)
   return page
 }
 
@@ -280,6 +281,53 @@ try {
   if (resultLine.includes('還有 2 條因為知識空間不夠沒收進去')) pass('結果頁講出還有 2 條沒收、怎麼補')
   else fail('結果頁沒講沒收進去的條數', resultLine)
   await quotaPage.close()
+
+  // ── 第三段：資料頁的「下載原檔」（`C-296`③）──────────────────────────
+  // 正式庫裡還沒有任何一份留了原檔（這次才開始留），所以資料清單照實向伺服器拿（唯讀），
+  // 只在瀏覽器裡替第一份資料補上「有原檔」；下載網址與下載本身也回假的。
+  let patchedId = ''
+  let patchedName = ''
+  const fileUrlCalls = []
+  const listPage = await openImportDialog(async (req) => {
+    const url = req.url()
+    if (url.includes('/api/ai/sources/list') && req.method() === 'GET') {
+      const real = await (await fetch(url, { headers: req.headers() })).json()
+      const items = Array.isArray(real.items) ? real.items : []
+      const target = items.find(s => s.type === 'file') ?? items[0]
+      if (target) {
+        target.type = 'file'
+        target.originalFile = { name: 'W1 使用說明書.pdf', size: 1_843_200 }
+        patchedId = target.id
+        patchedName = target.name
+      }
+      return json(real)
+    }
+    const m = url.match(/\/api\/ai\/sources\/([^/]+)\/file-url/)
+    if (m) {
+      fileUrlCalls.push(decodeURIComponent(m[1]))
+      return json({ url: 'https://storage.googleapis.com/fake-download/original.pdf', fileName: 'W1 使用說明書.pdf' })
+    }
+    if (url.startsWith('https://storage.googleapis.com/fake-download/')) {
+      return { status: 200, contentType: 'application/pdf', body: '%PDF-1.4 fake', headers: { 'Content-Disposition': 'attachment; filename="original.pdf"' } }
+    }
+    return undefined
+  }, { path: '/knowledge/sources', waitSel: '.split-list, .src-list, aside' })
+  if (!patchedId) throw new Error('資料清單是空的，沒有可以驗「下載原檔」的資料')
+  await waitFor(listPage, name => [...document.querySelectorAll('aside *, .split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === name), patchedName)
+  await listPage.evaluate((name) => {
+    const el = [...document.querySelectorAll('aside *, .split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === name)
+    el?.click()
+  }, patchedName)
+  const shown = await waitFor(listPage, () => [...document.querySelectorAll('.src-header-caption .el-button')].some(b => b.innerText.includes('下載原檔')))
+  const caption = await listPage.$eval('.src-header-caption', el => el.innerText).catch(() => '')
+  if (shown && caption.includes('W1 使用說明書.pdf（1.8 MB）')) pass(`資料頁標出原檔與大小並給「下載原檔」：「${caption.replace(/\s+/g, ' ').trim()}」`)
+  else fail('資料頁沒出現原檔／下載鈕', caption)
+  await listPage.evaluate(() => [...document.querySelectorAll('.src-header-caption .el-button')].find(b => b.innerText.includes('下載原檔'))?.click())
+  await waitFor(listPage, () => true, null, 1500)
+  await sleep(1200)
+  if (fileUrlCalls.length === 1 && fileUrlCalls[0] === patchedId) pass('按「下載原檔」→ 跟伺服器要這一份的下載網址（一次、對的那一份）')
+  else fail('下載原檔沒有要到對的網址', JSON.stringify(fileUrlCalls))
+  await listPage.close()
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))

@@ -27,6 +27,7 @@ vi.mock('./line', () => ({ pushMessage: vi.fn() }))
 vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOverdueHandoffBatch: vi.fn() }))
 vi.mock('./conversation-session', () => ({ closeConversationSession: vi.fn(), handBackSessionToBot: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
+vi.mock('./knowledge-source-files', () => ({ deleteSourceFiles: vi.fn(async () => {}) }))
 
 import { expireKnowledgeCards } from './cron-maintenance'
 
@@ -95,6 +96,9 @@ describe('purgeRecycledKnowledge（回收桶到期清運）', () => {
         limit: () => q,
         get: async () => ({
           docs: ids.map(id => ({
+            id,
+            // 真的 Firestore 文件一定有 data()；來源那份帶原檔路徑，驗「原檔跟著清」
+            data: () => (col === 'knowledgeSources' ? { workspaceId: 'ws1', filePath: `knowledge-files/ws1/${id}/original.pdf` } : {}),
             ref: {
               delete: async () => {
                 if (failIds.has(id)) throw new Error('permission denied')
@@ -116,6 +120,9 @@ describe('purgeRecycledKnowledge（回收桶到期清運）', () => {
     expect(r.purged).toBe(2) // a + s1；b 失敗不計
     expect(r.failed).toBe(1)
     expect(deleted).toEqual(['knowledgeChunks/a', 'knowledgeSources/s1'])
+    // 來源留著的原檔跟著清（C-296③），卡片那邊沒有原檔、不呼叫
+    const { deleteSourceFiles } = await import('./knowledge-source-files')
+    expect(vi.mocked(deleteSourceFiles).mock.calls).toEqual([['ws1', 's1']])
   })
 })
 

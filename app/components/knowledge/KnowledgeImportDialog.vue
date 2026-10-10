@@ -3072,6 +3072,8 @@ async function runImport() {
           productName: sourceMeta.value.productName.trim(),
           contentHash: sourceMeta.value.contentHash,
           folderId: sourceMeta.value.folderId,
+          // 原檔留著時「下載原檔」存成這個名字（`C-296`③）；接回背景整理時沒有檔名就退用資料名稱
+          ...(sourceMeta.value.type === 'file' ? { fileName: fileName.value || sourceMeta.value.name } : {}),
         },
         // 「更新既有那一份」（`C-135`）：舊卡進回收桶、來源留著，不再多生一份同名資料
         ...(replaceTarget.value ? { replaceSourceId: replaceTarget.value.id } : {}),

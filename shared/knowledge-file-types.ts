@@ -26,6 +26,28 @@ export const KNOWLEDGE_FILE_KIND_BY_EXT: Record<string, KnowledgeFileKind> = {
   heif: 'image',
 }
 
+/**
+ * 存原檔時用的型別（`C-296`③）。瀏覽器給的 `file.type` 常常是空的（.md、.heic、部分 Windows 的 .csv），
+ * 空著存進去，之後「下載原檔」會變成一個瀏覽器不知道怎麼開的檔案。
+ */
+export const KNOWLEDGE_FILE_MIME_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  csv: 'text/csv',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+}
+
 /** `<input type="file" accept>` 用（副檔名就夠；手機選照片時 HEIC 也要在清單裡） */
 export const KNOWLEDGE_FILE_ACCEPT = Object.keys(KNOWLEDGE_FILE_KIND_BY_EXT).map(e => `.${e}`).join(',')
 

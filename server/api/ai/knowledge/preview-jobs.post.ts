@@ -17,7 +17,7 @@ import {
   MAX_OCR_PAGES,
   MAX_RAW_TEXT_LEN,
 } from '~~/server/utils/ai-source-extractors'
-import { fileExtension, KNOWLEDGE_FILE_MAX_BYTES, knowledgeFileKind, unsupportedFileHint } from '~~/shared/knowledge-file-types'
+import { fileExtension, KNOWLEDGE_FILE_MAX_BYTES, KNOWLEDGE_FILE_MIME_BY_EXT, knowledgeFileKind, unsupportedFileHint } from '~~/shared/knowledge-file-types'
 import { parseGoogleSheetUrl, readGoogleSheetAsCards, sheetHealthWarnings } from '~~/server/utils/google-sheets'
 import { getPdfPageCount } from '~~/server/utils/pdf-split'
 import {
@@ -156,7 +156,7 @@ export default defineEventHandler(async (event) => {
             statusMessage: `這份 PDF 是掃描檔（無文字層、共 ${pages} 頁），AI 辨識目前支援 ${MAX_OCR_PAGES} 頁以內；請拆分檔案或改貼文字`,
           })
         }
-        sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'pdf', contentType || 'application/pdf')
+        sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'pdf', storedContentType(ext || 'pdf', contentType))
         work.meta = { ...extracted.meta, pages }
         work.ocrPageTotal = pages
         work.ocrPageCursor = 0
@@ -209,6 +209,15 @@ export default defineEventHandler(async (event) => {
       }
       setChunkingFromExtracted(work, extracted)
     }
+
+    /**
+     * 原檔留著（`C-296`③）：每一種檔案都存一份在這個整理工作底下，真的匯入時
+     * bulk-create 再複製成這份資料的原檔；沒人匯入就跟著工作過期一起清掉。
+     * ⛔ 一定排在抽取**成功之後**：前面任何一步丟錯（壞檔、加密、掃描超過頁數）
+     *    都不會建工作，這時已經存進去的檔就沒有任何清理程式找得到（清理是照工作找的）。
+     * 掃描 PDF／照片在上面為了認字已經存過，不重存。
+     */
+    if (!sourceFile) sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'bin', storedContentType(ext, contentType))
   }
   else if (type === 'url') {
     const url = String(body?.url ?? '').trim()
@@ -297,6 +306,11 @@ async function readUploadedFileBuffer(
   const base64 = String(body?.fileBase64 ?? '').trim()
   if (!base64) throw createError({ statusCode: 400, statusMessage: '請提供 storagePath 或 fileBase64' })
   return Buffer.from(base64, 'base64')
+}
+
+/** 存原檔用的型別：副檔名認得就用標準型別（瀏覽器給的常常是空的），認不得才用瀏覽器給的 */
+function storedContentType(ext: string, browserType: string): string {
+  return KNOWLEDGE_FILE_MIME_BY_EXT[ext] ?? (browserType || 'application/octet-stream')
 }
 
 /** 沒讀的分頁要講出來（`C-296`）：每頁都讀之後只剩說明頁會跳過，但跳過什麼仍要說得出來 */

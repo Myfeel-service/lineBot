@@ -367,6 +367,11 @@
         </div>
         <p class="text-sm text-muted admin-subtext src-header-caption">
           {{ typeEmoji(selectedSource?.type) }}<template v-if="selectedSource?.url"> · <a :href="selectedSource.url" target="_blank" rel="noopener">{{ selectedSource.url }}</a></template>
+          <!-- 原檔留著（`C-296`③）：檔案來源以前讀完就刪，這裡什麼都點不開 -->
+          <template v-if="selectedSource?.originalFile">
+            · {{ selectedSource.originalFile.name }}（{{ formatFileSize(selectedSource.originalFile.size) }}）
+            <el-button link type="primary" size="small" :loading="downloadingOriginal" @click="downloadOriginal">下載原檔</el-button>
+          </template>
         </p>
       </div>
       <div v-if="canEditSources" class="flex gap-1 admin-header-actions">
@@ -1463,6 +1468,8 @@ interface SourceSummary {
   detectStalledAtMs: number
   /** type='gsheet'：手動編輯鎖住、與表格內容分歧的張數（>0 要常駐提示） */
   manualKeptCount: number
+  /** type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的檔案當時讀完就刪了） */
+  originalFile?: { name: string, size: number } | null
 }
 
 interface ChunkRow {
@@ -3829,6 +3836,33 @@ function commitChunkTag() {
 }
 function removeChunkTag(t: string) {
   chunkForm.value.tags = chunkForm.value.tags.filter(x => x !== t)
+}
+
+// ─── 原檔下載（`C-296`③）───────────────────────────────
+const downloadingOriginal = ref(false)
+/** 跟伺服器要一個 5 分鐘有效的下載網址再開；網址帶「存成附件」，瀏覽器會直接下載不會換頁 */
+async function downloadOriginal() {
+  const id = selectedSource.value?.id
+  if (!id) return
+  downloadingOriginal.value = true
+  try {
+    const { url } = await apiFetch<{ url: string }>(`/api/ai/sources/${encodeURIComponent(id)}/file-url`)
+    const a = document.createElement('a')
+    a.href = url
+    a.rel = 'noopener'
+    a.click()
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || err?.statusMessage || '下載失敗，請再試一次', 'error')
+  }
+  finally {
+    downloadingOriginal.value = false
+  }
+}
+function formatFileSize(bytes: number) {
+  if (!bytes) return '大小未知'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 // ─── Display helpers ───────────────────────────────────

@@ -79,12 +79,15 @@ describe('POST /api/ai/knowledge/preview-jobs — 新檔案種類', () => {
     const work = savedWork()
     expect(work.sourceName).toBe('退換貨政策.docx')
     expect(work.segments.join('\n')).toContain('項目：退貨；期限：7 天')
+    // 原檔留著（C-296③）：存一份在工作底下，型別用標準的（瀏覽器沒給也一樣）
+    expect(vi.mocked(saveSourceFile).mock.calls[0]!.slice(3)).toEqual(['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
   })
 
-  it('簡報整份讀不到字（都是圖片）→ 當場講要怎麼辦，⛔ 不要建一份 0 條的工作', async () => {
+  it('簡報整份讀不到字（都是圖片）→ 當場講要怎麼辦，⛔ 不要建一份 0 條的工作，也不留原檔（沒有工作就沒人清得掉）', async () => {
     upload('型錄.pptx', makeZip({ 'ppt/slides/slide1.xml': '<p:sld><p:pic/></p:sld>' }))
     await expect(call()).rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('存成圖片') })
     expect(saveWork).not.toHaveBeenCalled()
+    expect(saveSourceFile).not.toHaveBeenCalled()
   })
 
   it('CSV（Big5）：一列一條、不走 AI 切卡（enrich 階段補客人問法）', async () => {
