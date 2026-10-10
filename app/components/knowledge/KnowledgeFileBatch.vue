@@ -337,8 +337,7 @@ async function run() {
           '/api/ai/knowledge/upload-url',
           { method: 'POST', body: { fileName: file.name, contentType: file.type } },
         )
-        // 直打簽名網址（絕對網址）→ 用 $fetch，不要用會加 workspace／auth 標頭的 apiFetch
-        await $fetch(up.uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } })
+        await putFileToSignedUrl(up.uploadUrl, file)
         r.stage = '整理中'
         const created = await apiFetch<{ jobId?: string; duplicate?: { id: string; name: string } }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',

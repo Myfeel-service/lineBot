@@ -2777,12 +2777,8 @@ async function runPreview() {
         '/api/ai/knowledge/upload-url',
         { method: 'POST', body: { fileName: file.name, contentType: file.type } },
       )
-      // 直打 GCS signed URL（絕對網址）→ 用 $fetch，不要用會加 workspace/auth 標頭的 apiFetch。
-      await $fetch(up.uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      })
+      // 直打簽名網址；失敗時講人話，不把一長串網址丟到畫面上（見 utils/knowledge-upload）
+      await putFileToSignedUrl(up.uploadUrl, file)
       // 上傳可能跑好幾秒:期間按了取消就到此為止,不要再去建一份沒人要的整理工作。
       // （下面的 reset 只是把「上傳檔案」的進度數字清掉，之後才進輪詢階段）
       if (previewCancelled) return
