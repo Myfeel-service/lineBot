@@ -17,7 +17,8 @@ import {
   MAX_OCR_PAGES,
   MAX_RAW_TEXT_LEN,
 } from '~~/server/utils/ai-source-extractors'
-import { fileExtension, KNOWLEDGE_FILE_MAX_BYTES, KNOWLEDGE_FILE_MIME_BY_EXT, knowledgeFileKind, unsupportedFileHint } from '~~/shared/knowledge-file-types'
+import { decodeTextBuffer } from '~~/server/utils/office-extractors'
+import { KNOWLEDGE_FILE_MAX_BYTES, resolveKnowledgeFile, unsupportedFileHint } from '~~/shared/knowledge-file-types'
 import { parseGoogleSheetUrl, readGoogleSheetAsCards, sheetHealthWarnings } from '~~/server/utils/google-sheets'
 import { getPdfPageCount } from '~~/server/utils/pdf-split'
 import {
@@ -96,7 +97,9 @@ export default defineEventHandler(async (event) => {
     work.sourceName = `Google Sheet（${sheet.sheetTitle}）`
     work.sourceUrl = url
     work.sourceType = 'gsheet'
-    work.truncated = sheet.stats.truncatedByCap
+    // ⛔ 不把「超過 150 列」記成 truncated：畫面看到 truncated 會講「原文超過 10 萬字已截斷」，
+    //    跟旁邊那句正確的「只會匯入前 150 列」互相矛盾。列數上限由 sheetHealthWarnings 講。
+    work.truncated = false
     work.meta = { rows: sheet.stats.rowCount, sheet: sheet.sheetTitle }
     work.chunks = sheet.cards.map(c => cardToChunk(c))
     work.warnings = [
@@ -129,104 +132,124 @@ export default defineEventHandler(async (event) => {
 
     work.sourceName = fileName
     work.sourceType = 'file'
-    const ext = fileExtension(fileName)
     // 收哪些檔與前端、簽名網址共用 shared/knowledge-file-types（`C-296`）。
-    // 沒有副檔名、只有瀏覽器給的型別的舊情況（PDF／Excel）照舊認得。
-    const kind = knowledgeFileKind(fileName)
-      ?? (contentType.includes('pdf') ? 'pdf' : (contentType.includes('spreadsheet') || contentType.includes('excel')) ? 'xlsx' : null)
-    if (!kind) throw createError({ statusCode: 400, statusMessage: unsupportedFileHint(fileName) })
-    // 沒有副檔名、靠瀏覽器型別認出來的：存原檔時補上副檔名，下載下來才打得開
-    const storeExt = ext || (kind === 'pdf' ? 'pdf' : kind === 'xlsx' ? 'xlsx' : 'bin')
+    // 有副檔名只看副檔名；沒有副檔名才看瀏覽器給的型別、而且要一模一樣（見 resolveKnowledgeFile）。
+    const resolved = resolveKnowledgeFile(fileName, contentType)
+    if (!resolved) throw createError({ statusCode: 400, statusMessage: unsupportedFileHint(fileName) })
+    // 存原檔用的副檔名與型別一律從我們自己的表來：⛔ 不用瀏覽器給的（那是前端自己填的字串），
+    // 沒有副檔名、靠型別認出來的也補上副檔名，下載下來才打得開
+    const { kind, ext: storeExt, mime: storeMime } = resolved
 
-    if (kind === 'pdf') {
-      const extracted = await extractPdfText(buffer)
-      if (isProbablyScannedPdf(extracted, buffer.length)) {
-        // 掃描檔：沒有文字層 → 走 OCR 切頁批處理（逐輪推進）。原檔存 Storage 供各批切頁。
-        // 頁數讀不到要有第二意見（C-49B）：unpdf 對非標準 PDF 常回不出 totalPages，
-        // 原本直接當 1 頁 → 40 頁說明書只辨識第一頁、顯示「整理好了，2 條」——
-        // 使用者以為內容就這麼少，後面 39 頁的保固規格全沒進知識庫。
-        let pages = Number(extracted.meta.pages ?? 0)
-        if (pages <= 0) {
-          pages = await getPdfPageCount(buffer).catch(() => 0)
+    // 純文字類（.txt／.md／.csv）的編碼在這裡自己判一次：文字檔、CSV 一列一卡、CSV 退回 AI 整理
+    // 三條路的抽取結果帶的編碼資訊不一樣多，警告要三條路講同一套話，就從同一個來源拿
+    const decoded = kind === 'text' || kind === 'csv'
+      ? await readingFile(fileName, () => decodeTextBuffer(buffer))
+      : null
+
+    try {
+      if (kind === 'pdf') {
+        const extracted = await readingFile(fileName, () => extractPdfText(buffer))
+        if (isProbablyScannedPdf(extracted, buffer.length)) {
+          // 掃描檔：沒有文字層 → 走 OCR 切頁批處理（逐輪推進）。原檔存 Storage 供各批切頁。
+          // 頁數讀不到要有第二意見（C-49B）：unpdf 對非標準 PDF 常回不出 totalPages，
+          // 原本直接當 1 頁 → 40 頁說明書只辨識第一頁、顯示「整理好了，2 條」——
+          // 使用者以為內容就這麼少，後面 39 頁的保固規格全沒進知識庫。
+          let pages = Number(extracted.meta.pages ?? 0)
+          if (pages <= 0) {
+            pages = await getPdfPageCount(buffer).catch(() => 0)
+          }
+          if (pages <= 0) {
+            // 兩邊都讀不到＝檔案結構特殊，猜 1 頁是靜默丟內容——老實報錯讓人換路
+            throw createError({ statusCode: 422, statusMessage: '無法判讀這份 PDF 的頁數（檔案格式特殊），AI 辨識無法保證完整；請改貼文字或換一份檔案' })
+          }
+          if (pages > MAX_OCR_PAGES) {
+            throw createError({
+              statusCode: 400,
+              statusMessage: `這份 PDF 是掃描檔（無文字層、共 ${pages} 頁），AI 辨識目前支援 ${MAX_OCR_PAGES} 頁以內；請拆分檔案或改貼文字`,
+            })
+          }
+          sourceFile = await saveSourceFile(workspaceId, jobId, buffer, storeExt, storeMime)
+          work.meta = { ...extracted.meta, pages }
+          work.ocrPageTotal = pages
+          work.ocrPageCursor = 0
+          work.phase = 'ocr'
         }
-        if (pages <= 0) {
-          // 兩邊都讀不到＝檔案結構特殊，猜 1 頁是靜默丟內容——老實報錯讓人換路
-          throw createError({ statusCode: 422, statusMessage: '無法判讀這份 PDF 的頁數（檔案格式特殊），AI 辨識無法保證完整；請改貼文字或換一份檔案' })
+        else {
+          setChunkingFromExtracted(work, extracted)
         }
-        if (pages > MAX_OCR_PAGES) {
-          throw createError({
-            statusCode: 400,
-            statusMessage: `這份 PDF 是掃描檔（無文字層、共 ${pages} 頁），AI 辨識目前支援 ${MAX_OCR_PAGES} 頁以內；請拆分檔案或改貼文字`,
-          })
+      }
+      else if (kind === 'xlsx' || kind === 'csv') {
+        const xlsx = await readingFile(fileName, () => extractXlsxCards(buffer, kind))
+        if (xlsx) {
+          // 乾淨表格 → 一列一卡，不走 LLM 切卡；先進 enrich 逐批補 questions（只補不改），
+          // 補完由狀態機決定要不要接 overview（wantOverview 且 ≥2 張）。
+          // ⛔ 不把「超過 150 列」記成 truncated：畫面看到 truncated 會講「原文超過 10 萬字已截斷」，
+          //    跟 sheetHealthWarnings 那句正確的「只會匯入前 150 列」互相矛盾（一列一卡沒有字數上限）
+          work.truncated = false
+          work.meta = { rows: xlsx.stats.rowCount, sheets: xlsx.sheetCount, ...(xlsx.encoding ? { encoding: xlsx.encoding } : {}) }
+          work.chunks = xlsx.cards.map(c => cardToChunk(c))
+          work.warnings = [
+            ...sheetHealthWarnings(xlsx.cards, xlsx.stats, xlsx.mergeCount),
+            ...sheetCoverageWarnings(xlsx.skippedSheets, xlsx.emptySheets),
+          ]
+          work.phase = 'enrich'
         }
-        sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'pdf', storedContentType(ext || 'pdf', contentType))
-        work.meta = { ...extracted.meta, pages }
-        work.ocrPageTotal = pages
+        else {
+          setChunkingFromExtracted(work, await readingFile(fileName, () => extractXlsxText(buffer, kind)))
+        }
+      }
+      else if (kind === 'image') {
+        // 照片（價目表、菜單、DM）：跟掃描 PDF 走同一條認字的路，只是一次一張。
+        // 認字要十幾秒，⛔ 不在這個請求裡做（建工作端點本來就逼近閘道逾時）——交給輪詢推進。
+        const mime = IMAGE_MIME_BY_EXT[storeExt] ?? storeMime
+        sourceFile = await saveSourceFile(workspaceId, jobId, buffer, storeExt, mime)
+        work.meta = { image: 1 }
+        work.ocrMime = mime
+        work.ocrPageTotal = 1
         work.ocrPageCursor = 0
         work.phase = 'ocr'
       }
       else {
+        // Word／簡報／文字檔：抽出純文字，接下來跟 PDF 文字層同一條路
+        const extracted = await readingFile(fileName, () => extractOfficeText(buffer, kind))
+        if (kind === 'pptx') {
+          const slides = Number(extracted.meta.slides ?? 0)
+          const unreadable = Number(extracted.meta.slidesUnreadable ?? 0)
+          if (!extracted.text.trim()) {
+            throw createError({ statusCode: 422, statusMessage: emptySlidesMessage(slides, unreadable) })
+          }
+          // 字少不少用「讀得出來的」張數算：讀不出來的那幾張下面另外講，不能算成「圖片上的字」
+          const readable = slides - unreadable
+          if (readable >= 3 && extracted.rawLength / readable < 30) {
+            work.warnings.push(`這份簡報讀到的字很少（${readable} 張投影片共 ${extracted.rawLength} 字），圖片上的字讀不到；重點寫在圖片上的話，請把那幾張存成圖片另外傳上來。`)
+          }
+          if (unreadable > 0) {
+            work.warnings.push(`有 ${unreadable} 張投影片讀不出來（可能損毀或內容大到不正常），那幾張沒有收進來；請在 PowerPoint 另存一次再傳。`)
+          }
+        }
         setChunkingFromExtracted(work, extracted)
       }
-    }
-    else if (kind === 'xlsx' || kind === 'csv') {
-      const xlsx = extractXlsxCards(buffer, kind)
-      if (xlsx) {
-        // 乾淨表格 → 一列一卡，不走 LLM 切卡；先進 enrich 逐批補 questions（只補不改），
-        // 補完由狀態機決定要不要接 overview（wantOverview 且 ≥2 張）。
-        work.truncated = xlsx.stats.truncatedByCap
-        work.meta = { rows: xlsx.stats.rowCount, sheets: xlsx.sheetCount, ...(xlsx.encoding ? { encoding: xlsx.encoding } : {}) }
-        work.chunks = xlsx.cards.map(c => cardToChunk(c))
-        work.warnings = [
-          ...sheetHealthWarnings(xlsx.cards, xlsx.stats, xlsx.mergeCount),
-          ...sheetCoverageWarnings(xlsx.skippedSheets, xlsx.emptySheets),
-          // 猜的要說出來：Big5 是自動認的，萬一猜錯（其實是簡體或日文）他才知道去哪裡改
-          ...(xlsx.encoding === 'big5' ? ['這份 CSV 是 Big5 編碼（舊版 Excel 常見），已自動轉成正確的字；如果下面的內容是亂碼，請在 Excel 另存成「CSV UTF-8」再傳一次'] : []),
-        ]
-        work.phase = 'enrich'
-      }
-      else {
-        setChunkingFromExtracted(work, extractXlsxText(buffer, kind))
-      }
-    }
-    else if (kind === 'image') {
-      // 照片（價目表、菜單、DM）：跟掃描 PDF 走同一條認字的路，只是一次一張。
-      // 認字要十幾秒，⛔ 不在這個請求裡做（建工作端點本來就逼近閘道逾時）——交給輪詢推進。
-      const mime = IMAGE_MIME_BY_EXT[ext] ?? (contentType.startsWith('image/') ? contentType : 'image/jpeg')
-      sourceFile = await saveSourceFile(workspaceId, jobId, buffer, ext || 'jpg', mime)
-      work.meta = { image: 1 }
-      work.ocrMime = mime
-      work.ocrPageTotal = 1
-      work.ocrPageCursor = 0
-      work.phase = 'ocr'
-    }
-    else {
-      // Word／簡報／文字檔：抽出純文字，接下來跟 PDF 文字層同一條路
-      const extracted = extractOfficeText(buffer, kind)
-      if (kind === 'pptx') {
-        const slides = Number(extracted.meta.slides ?? 0)
-        if (!extracted.text.trim()) {
-          throw createError({ statusCode: 422, statusMessage: `這份簡報讀不到任何文字（${slides} 張投影片看起來都是圖片）；請把重點那幾張存成圖片（JPG／PNG）再傳，系統會認圖上的字` })
-        }
-        if (slides >= 3 && extracted.rawLength / slides < 30) {
-          work.warnings.push(`這份簡報讀到的字很少（${slides} 張投影片共 ${extracted.rawLength} 字），圖片上的字讀不到；重點寫在圖片上的話，請把那幾張存成圖片另外傳上來。`)
-        }
-        const unreadable = Number(extracted.meta.slidesUnreadable ?? 0)
-        if (unreadable > 0) {
-          work.warnings.push(`有 ${unreadable} 張投影片讀不出來（可能損毀或內容大到不正常），那幾張沒有收進來；請在 PowerPoint 另存一次再傳。`)
-        }
-      }
-      setChunkingFromExtracted(work, extracted)
-    }
 
-    /**
-     * 原檔留著（`C-296`③）：每一種檔案都存一份在這個整理工作底下，真的匯入時
-     * bulk-create 再複製成這份資料的原檔；沒人匯入就跟著工作過期一起清掉。
-     * ⛔ 一定排在抽取**成功之後**：前面任何一步丟錯（壞檔、加密、掃描超過頁數）
-     *    都不會建工作，這時已經存進去的檔就沒有任何清理程式找得到（清理是照工作找的）。
-     * 掃描 PDF／照片在上面為了認字已經存過，不重存。
-     */
-    if (!sourceFile) sourceFile = await saveSourceFile(workspaceId, jobId, buffer, storeExt, storedContentType(storeExt, contentType))
+      if (decoded) {
+        work.meta = { ...work.meta, encoding: decoded.encoding }
+        work.warnings.push(...textEncodingWarnings(kind === 'csv' ? 'csv' : 'text', decoded))
+      }
+
+      /**
+       * 原檔留著（`C-296`③）：每一種檔案都存一份在這個整理工作底下，真的匯入時
+       * bulk-create 再複製成這份資料的原檔；沒人匯入就跟著工作過期一起清掉。
+       * ⛔ 一定排在抽取**成功之後**：前面任何一步丟錯（壞檔、加密、掃描超過頁數）
+       *    都不會建工作，這時已經存進去的檔就沒有任何清理程式找得到（清理是照工作找的）。
+       * 掃描 PDF／照片在上面為了認字已經存過，不重存。
+       */
+      if (!sourceFile) sourceFile = await saveSourceFile(workspaceId, jobId, buffer, storeExt, storeMime)
+    }
+    catch (err) {
+      // 認字那兩條路（掃描 PDF／照片）在上面就存過原檔：之後任何一步丟錯都不會建工作文件，
+      // 而清理程式是照工作文件找暫存的——這裡不刪就永遠沒人刪得到
+      if (sourceFile) await deleteJobStorage(workspaceId, jobId)
+      throw err
+    }
   }
   else if (type === 'url') {
     const url = String(body?.url ?? '').trim()
@@ -323,9 +346,69 @@ async function readUploadedFileBuffer(
   return Buffer.from(base64, 'base64')
 }
 
-/** 存原檔用的型別：副檔名認得就用標準型別（瀏覽器給的常常是空的），認不得才用瀏覽器給的 */
-function storedContentType(ext: string, browserType: string): string {
-  return KNOWLEDGE_FILE_MIME_BY_EXT[ext] ?? (browserType || 'application/octet-stream')
+/** 抽取器丟出「不是我們自己講好的錯」時，店家看到的那一句 */
+const FILE_UNREADABLE_MESSAGE = '讀不出這份檔案的內容，可能檔案壞了；請用原本的軟體另存一份再試'
+
+/**
+ * 包住每一次抽取：有 `statusCode` 的錯（加密、壞 zip、PDF 頁數讀不到…）是講好的話，原樣往上丟；
+ * 其餘（RangeError、解壓到一半壞掉、第三方套件的純 Error）一律換成 422 加一句人話。
+ * ⛔ 不攔的話會變成沒有訊息的 500：店家只看到「匯入失敗」，不知道是檔案的問題、也不知道怎麼辦。
+ * 真正的原因記一行 log 給我們查。
+ */
+async function readingFile<T>(fileName: string, read: () => T | Promise<T>): Promise<T> {
+  try {
+    return await read()
+  }
+  catch (e) {
+    if (typeof (e as { statusCode?: unknown } | null)?.statusCode === 'number') throw e
+    const err = e as { name?: string, message?: string } | null
+    console.warn(`[preview-jobs] 讀不出檔案內容（回 422）「${fileName}」：${err?.name ?? 'Error'}: ${String(err?.message ?? e).split('\n')[0]}`)
+    throw createError({ statusCode: 422, statusMessage: FILE_UNREADABLE_MESSAGE })
+  }
+}
+
+/**
+ * 整份簡報一個字都沒讀到時要講對原因：
+ * 「投影片都是圖片」（叫他存成圖片傳）跟「投影片讀不出來＝檔案壞了」（叫他另存一份）是兩件事，
+ * 以前一律說「看起來都是圖片」，壞檔的人照著存圖片也救不回來。
+ */
+function emptySlidesMessage(slides: number, unreadable: number): string {
+  if (slides > 0 && unreadable >= slides) {
+    return `這份簡報的 ${slides} 張投影片都讀不出來，檔案可能壞了；請用 PowerPoint 打開後另存一份再傳`
+  }
+  if (unreadable > 0) {
+    return `這份簡報讀不到任何文字：${slides - unreadable} 張投影片看起來是圖片、${unreadable} 張讀不出來（檔案可能壞了）；請用 PowerPoint 另存一份再傳，重點在圖片上的話，把那幾張存成圖片（JPG／PNG）再傳`
+  }
+  return `這份簡報讀不到任何文字（${slides} 張投影片看起來都是圖片）；請把重點那幾張存成圖片（JPG／PNG）再傳，系統會認圖上的字`
+}
+
+/** 讀不出來的字超過幾個才講：短檔 1 個就講，長檔 3 個以上才講（見 textEncodingWarnings） */
+const UNREADABLE_SHORT_FILE_CHARS = 2000
+
+/**
+ * 純文字類檔案（.txt／.md／.csv）的編碼要講出來（`C-296`）——三條路（文字檔、CSV 一列一卡、
+ * CSV 退回 AI 整理）講同一套話，以前 Big5 只有 CSV 一列一卡那條會講：
+ *  · Big5 是自動認的：猜的要說，萬一其實是簡體或日文，他才知道去哪裡改；
+ *  · 讀不出來的字（變成 �）要講幾個：價格、品名少一兩個字，不講的話要等客人問到才會發現。
+ *    門檻：2000 字以下的檔 1 個就講（短檔裡一個壞字很可能就是品名或價格）；
+ *    更長的檔 3 個以上才講（大檔裡零星一個壞位元組多半是複製貼上帶進來的，每次都提醒只會變成噪音）。
+ * ⚠️ `unreadableChars` 由 decodeTextBuffer 數（「�」＋Big5 裡台灣用不到的字）；這裡只決定「講不講」。
+ */
+function textEncodingWarnings(
+  kind: 'text' | 'csv',
+  decoded: { text: string, encoding: string, unreadableChars: number },
+): string[] {
+  const out: string[] = []
+  if (decoded.encoding === 'big5') {
+    out.push(kind === 'csv'
+      ? '這份 CSV 是 Big5 編碼（舊版 Excel 常見），已自動轉成正確的字；如果整理出來的內容是亂碼，請在 Excel 另存成「CSV UTF-8」再傳一次'
+      : '這份文字檔是 Big5 編碼（舊版 Windows 常見），已自動轉成正確的字；如果整理出來的內容是亂碼，請用記事本另存成 UTF-8 再傳一次')
+  }
+  const bad = decoded.unreadableChars
+  if (bad >= (decoded.text.length < UNREADABLE_SHORT_FILE_CHARS ? 1 : 3)) {
+    out.push(`有 ${bad} 個字讀不出來（變成 �），檔案可能不是 UTF-8 或 Big5 編碼；請用記事本或 Excel 另存成 UTF-8 再匯入一次`)
+  }
+  return out
 }
 
 /**
@@ -358,5 +441,10 @@ function setChunkingFromExtracted(
   work.truncated = extracted.rawLength > extracted.text.length
   work.meta = extracted.meta
   work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text, extracted.truncatedBySize === true))
+  // Word／簡報格式複雜到讀到一半就停（標籤、表格多到不正常，見 office-extractors 的讀取額度）：
+  // 讀出來的字沒撞到 10 萬字的話，畫面不會講「已截斷」——⛔ 不另外講，他會以為整份都進來了
+  if (Number(extracted.meta.textTruncated ?? 0) === 1 && !work.truncated) {
+    work.warnings.push('這份檔案的格式複雜到不正常，只讀了前面一部分；後面的內容可能沒收進來，請用原本的軟體另存一份（或匯出成 PDF）再傳')
+  }
   primeChunking(work, extracted.text)
 }

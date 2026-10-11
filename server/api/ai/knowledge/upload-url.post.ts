@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getStorage } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { fileExtension, KNOWLEDGE_FILE_KIND_BY_EXT, unsupportedFileHint } from '~~/shared/knowledge-file-types'
+import { resolveKnowledgeFile, unsupportedFileHint } from '~~/shared/knowledge-file-types'
 
 /**
  * POST /api/ai/knowledge/upload-url
@@ -20,18 +20,15 @@ export default defineEventHandler(async (event) => {
   const contentType = String(body?.contentType ?? '').trim().toLowerCase()
   if (!fileName) throw createError({ statusCode: 400, statusMessage: '請提供 fileName' })
 
-  // 收哪些檔與 preview-jobs、前端選檔共用 shared/knowledge-file-types（`C-296`）
-  const ext = fileExtension(fileName)
-  const known = ext in KNOWLEDGE_FILE_KIND_BY_EXT
-  // 沒有副檔名、但瀏覽器說得出型別的舊情況（PDF／Excel）照舊收
-  const looksPdf = contentType.includes('pdf')
-  const looksXlsx = contentType.includes('spreadsheet') || contentType.includes('excel')
-  if (!known && !looksPdf && !looksXlsx) {
+  // 收哪些檔與 preview-jobs、前端選檔共用 shared/knowledge-file-types（`C-296`）。
+  // 有副檔名只看副檔名；沒有副檔名才看型別、而且要一模一樣（見 resolveKnowledgeFile 的說明）
+  const resolved = resolveKnowledgeFile(fileName, contentType)
+  if (!resolved) {
     throw createError({ statusCode: 400, statusMessage: unsupportedFileHint(fileName) })
   }
 
   const uploadId = uuidv4()
-  const safeExt = known ? ext : (looksPdf ? 'pdf' : 'xlsx')
+  const safeExt = resolved.ext
   // 固定在本 workspace 的 preview-uploads/ 底下；preview-jobs 下載時會用這個前綴做隔離檢查。
   const storagePath = `preview-uploads/${workspaceId}/${uploadId}.${safeExt}`
 

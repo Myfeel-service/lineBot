@@ -6,10 +6,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   countVerticalMerges,
+  createCardCollector,
   expandVerticalMerges,
   GSHEET_MAX_ROWS,
   isInstructionSheetName,
   parseGoogleSheetUrl,
+  probeGoogleSheetAccess,
   readGoogleSheetAsCards,
   rowsToCards,
   rowToCard,
@@ -44,55 +46,78 @@ describe('parseGoogleSheetUrl', () => {
 
 describe('rowToCard', () => {
   const headers = ['商品', '價格', '庫存', '備註']
+  // 這幾條新舊讀法結果一樣，兩種都跑
+  for (const legacy of [true, false]) {
+    describe(legacy ? '舊讀法' : '新讀法', () => {
+      it('多欄表：標題=第一欄，內容=其餘欄表頭:值', () => {
+        const card = rowToCard(headers, ['除濕機', '3990', '5', '附發票'], { legacy })
+        expect(card).toEqual({
+          title: '除濕機',
+          content: '價格：3990\n庫存：5\n備註：附發票',
+          tags: [],
+        })
+      })
 
-  it('多欄表：標題=第一欄，內容=其餘欄表頭:值', () => {
-    const card = rowToCard(headers, ['除濕機', '3990', '5', '附發票'])
-    expect(card).toEqual({
-      title: '除濕機',
-      content: '價格：3990\n庫存：5\n備註：附發票',
-      tags: [],
+      it('多欄表：空值欄略過', () => {
+        const card = rowToCard(headers, ['除濕機', '3990', '', ''], { legacy })
+        expect(card?.content).toBe('價格：3990')
+      })
+
+      it('兩欄表（FAQ）：內容=第二欄整段', () => {
+        const card = rowToCard(['問題', '答案'], ['運費多少', '滿千免運，未滿 80 元'], { legacy })
+        expect(card).toEqual({ title: '運費多少', content: '滿千免運，未滿 80 元', tags: [] })
+      })
+
+      it('第一欄空白 → 跳過該列（回 null）', () => {
+        expect(rowToCard(headers, ['', '3990', '5', ''], { legacy })).toBeNull()
+      })
+
+      it('單欄 / 無其他內容 → 用標題自身當內容', () => {
+        expect(rowToCard(['商品'], ['除濕機'], { legacy })?.content).toBe('除濕機')
+      })
     })
-  })
+  }
 
-  it('多欄表：空值欄略過', () => {
-    const card = rowToCard(headers, ['除濕機', '3990', '', ''])
-    expect(card?.content).toBe('價格：3990')
-  })
-
-  it('兩欄表（FAQ）：內容=第二欄整段', () => {
-    const card = rowToCard(['問題', '答案'], ['運費多少', '滿千免運，未滿 80 元'])
-    expect(card).toEqual({ title: '運費多少', content: '滿千免運，未滿 80 元', tags: [] })
-  })
-
-  it('第一欄空白 → 跳過該列（回 null）', () => {
-    expect(rowToCard(headers, ['', '3990', '5', ''])).toBeNull()
-  })
-
-  it('單欄 / 無其他內容 → 用標題自身當內容', () => {
-    expect(rowToCard(['商品'], ['除濕機'])?.content).toBe('除濕機')
+  it('列尾被剪掉的短列（Google 會剪）：舊讀法只取第二欄，新讀法照欄位名稱帶「容量」', () => {
+    expect(rowToCard(['品名', '容量', '價格'], ['W1', '12L'], { legacy: true })?.content).toBe('12L')
+    expect(rowToCard(['品名', '容量', '價格'], ['W1', '12L'], { legacy: false })?.content).toBe('容量：12L')
   })
 })
 
 describe('selectDataSheetNames / isInstructionSheetName', () => {
+  const fresh = { legacy: false }
   it('每個非說明頁都讀（C-296）：範本的 FAQ 頁＋自己加的「工作表1」兩頁都要讀', () => {
-    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'])).toEqual(['FAQ', '工作表1'])
+    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'], fresh)).toEqual(['FAQ', '工作表1'])
   })
 
-  it('舊來源（faqPriority）維持原規則：有 FAQ 分頁 → 只選 FAQ 頁，⛔ 不可以替已經在同步的表換規則', () => {
-    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'], { faqPriority: true })).toEqual(['FAQ'])
-    expect(selectDataSheetNames(['FAQ', '常見問題', '使用說明'], { faqPriority: true })).toEqual(['FAQ', '常見問題'])
+  it('舊來源（legacy）維持原規則：有 FAQ 分頁 → 只選 FAQ 頁，⛔ 不可以替已經在同步的表換規則', () => {
+    expect(selectDataSheetNames(['使用說明', 'FAQ', '工作表1'], { legacy: true })).toEqual(['FAQ'])
+    expect(selectDataSheetNames(['FAQ', '常見問題', '使用說明'], { legacy: true })).toEqual(['FAQ', '常見問題'])
   })
 
   it('沒 FAQ 分頁 → 全部「非說明」分頁（xlsx 與 gsheet 一致，不再只挑一個）', () => {
-    expect(selectDataSheetNames(['使用說明', '商品資料', '報價'])).toEqual(['商品資料', '報價'])
+    expect(selectDataSheetNames(['使用說明', '商品資料', '報價'], fresh)).toEqual(['商品資料', '報價'])
   })
 
   it('整份都是說明類名稱 → 保底全讀', () => {
-    expect(selectDataSheetNames(['使用說明', '填寫教學'])).toEqual(['使用說明', '填寫教學'])
+    expect(selectDataSheetNames(['使用說明', '填寫教學'], fresh)).toEqual(['使用說明', '填寫教學'])
   })
 
   it('資料分頁名含「說明」不會被誤跳（商品說明照選）', () => {
-    expect(selectDataSheetNames(['使用說明', '商品說明'])).toEqual(['商品說明'])
+    expect(selectDataSheetNames(['使用說明', '商品說明'], fresh)).toEqual(['商品說明'])
+  })
+
+  it('Numbers 的「輸出摘要」不讀（各語言的名稱都認得）；保底全讀時也不讀它', () => {
+    expect(selectDataSheetNames(['輸出摘要', '價目表', '常見問題'], fresh)).toEqual(['價目表', '常見問題'])
+    expect(selectDataSheetNames(['Export Summary', 'Sheet 1'], fresh)).toEqual(['Sheet 1'])
+    expect(selectDataSheetNames(['导出摘要', '書き出しの概要', '價目表'], fresh)).toEqual(['價目表'])
+    expect(selectDataSheetNames(['輸出摘要', '使用說明'], fresh)).toEqual(['使用說明'])
+    // 名稱要完全一樣才算：店家自己的「輸出摘要表」照讀
+    expect(selectDataSheetNames(['輸出摘要表', '價目表'], fresh)).toEqual(['輸出摘要表', '價目表'])
+  })
+
+  it('舊來源照舊：不認輸出摘要（跟改版前選出來的一模一樣）', () => {
+    expect(selectDataSheetNames(['輸出摘要', '價目表'], { legacy: true })).toEqual(['輸出摘要', '價目表'])
   })
 
   it('isInstructionSheetName 認得常見說明類名稱', () => {
@@ -262,6 +287,16 @@ describe('rowsToCards', () => {
     expect(r.stats.skippedNoTitle).toBe(1)
     expect(r.stats.titleRows).toEqual([])
     expect(r.stats.continuedRows).toBe(0)
+  })
+
+  it('新讀法：同一頁先出現沒答案的那列、後面那列才有答案 → 直接換成答案，不留一行只有名稱的「W1」', () => {
+    const r = rowsToCards([
+      ['品名', '保固', '備註'],
+      ['W1'],
+      ['W1', '一年', '含運'],
+    ])
+    expect(r.cards).toEqual([{ title: 'W1', content: '保固：一年\n備註：含運', tags: [] }])
+    expect(r.stats.blankAnswerTitles).toEqual([])
   })
 
   it('沒答案的卡進 blankAnswerTitles；答案剛好等於問題不算沒答案（修 content===title 誤判）', () => {
@@ -443,6 +478,12 @@ describe('selectSheetsToRead gid 守門（經 readGoogleSheetAsCards）', () => 
     expect(r.cards.length).toBe(1)
   })
 
+  it('gid 對不上（分頁被刪除重建）→ 直接 422，不退回名稱猜測讀到別頁（舊讀法同）', async () => {
+    const api = makeApi([{ sheetId: 456, title: '使用說明' }], [['問題', '答案'], ['x', 'y']])
+    await expect(readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api, { legacy: true }))
+      .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('分頁已不存在') })
+  })
+
   it('gid 對不上（分頁被刪除重建）→ 直接 422，不退回名稱猜測讀到別頁', async () => {
     // 沒守門的話會掉進名稱規則、把「使用說明」頁讀成知識 → 原 FAQ 卡整批被判「已不存在」刪光。
     // 退路頁給真實資料列：守門若被拿掉，這裡會「成功」讀出卡而不是丟錯——
@@ -453,5 +494,286 @@ describe('selectSheetsToRead gid 守門（經 readGoogleSheetAsCards）', () => 
     )
     await expect(readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api))
       .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('分頁已不存在') })
+  })
+})
+
+// ── 2026-10-11 審查修正 ─────────────────────────────────────────────
+
+/** 假的 Sheets API：metadata 給分頁清單，values 照分頁名回（範圍「頁名!A1:Z20」也認得） */
+type Tab = { title: string, values: string[][], merges?: unknown[] }
+function tabsApi(tabs: Tab[], calls: string[] = []): SheetsApiFn {
+  return (async (path: string) => {
+    if (path.includes('?fields=')) {
+      return { sheets: tabs.map((t, i) => ({ properties: { sheetId: i + 1, title: t.title }, merges: t.merges })) }
+    }
+    const title = decodeURIComponent(path.split('/values/')[1]!.split('?')[0]!).split('!')[0]!
+    calls.push(title)
+    return { values: tabs.find(t => t.title === title)?.values ?? [] }
+  }) as SheetsApiFn
+}
+const ref = { spreadsheetId: 's', gid: null }
+
+describe('欄位名稱認不出來也不掉資料（finding 2）', () => {
+  it('「2026 售價」這種帶年份的欄位名稱認得出來（以前有數字就不認，價格整欄不見）', () => {
+    const r = rowsToCards([
+      ['2026 秋季價目表'], // Google 會把列尾空格剪掉：標題列只剩一格
+      ['品名', '容量', '2026 售價'],
+      ['W1', '12L', '12,900'],
+    ])
+    expect(r.cards).toEqual([{ title: 'W1', content: '容量：12L\n2026 售價：12,900', tags: [] }])
+    expect(r.stats.titleRows).toEqual(['2026 秋季價目表'])
+  })
+
+  it('比較長的英文欄位名稱（Product Name (English)）也認得', () => {
+    const r = rowsToCards([
+      ['Price list'],
+      ['Product Name (English)', 'Capacity', 'Price'],
+      ['W1', '12L', '12900'],
+    ])
+    expect(r.cards).toEqual([{ title: 'W1', content: 'Capacity：12L\nPrice：12900', tags: [] }])
+  })
+
+  it('⛔ 真的認不出欄位名稱時，一列有幾欄看整張表最寬那列：只剩一格的標題列不可以讓後面的欄位整欄消失', () => {
+    // 「Q1 售價」有年份以外的數字 → 不認成欄位名稱，退回拿第 1 列當欄位名稱（只有一格）
+    const r = rowsToCards([
+      ['2026 秋季價目表'],
+      ['品名', '容量', 'Q1 售價'],
+      ['W1', '12L', '12,900'],
+    ])
+    const w1 = r.cards.find(c => c.title === 'W1')!
+    expect(w1.content).toBe('12L\n12,900') // 以前（兩欄模式）只剩「12L」，價格不見
+    expect(r.stats.titleRows).toEqual([])
+  })
+
+  it('⛔ 第一筆資料帶型號數字（W1 mini｜小台｜白色）不可以被當成欄位名稱吃掉', () => {
+    const r = rowsToCards([
+      ['新品'],
+      ['W1 mini', '小台', '白色'],
+      ['W2', '大台', '黑色'],
+    ])
+    expect(r.cards.map(c => c.title)).toContain('W1 mini')
+    expect(r.stats.titleRows).toEqual([])
+  })
+
+  it('流水號那欄的欄位名稱只寫一個「#」也認得（2026-10-11 拿本機真的試算表比對抓到：整列不認、多一張叫「#」的卡）', () => {
+    const r = rowsToCards([
+      ['維修服務 / 價目一覽'],
+      ['#', '品牌', '型號 / 尺寸', '保固'],
+      ['1', 'Apple', 'iPhone 15 / 15 Plus', '一年'],
+      ['2', 'Sony', 'WH-1000XM5', '兩年'],
+    ])
+    expect(r.cards.map(c => c.title)).toEqual(['1', '2'])
+    expect(r.cards[0]!.content).toBe('品牌：Apple\n型號 / 尺寸：iPhone 15 / 15 Plus\n保固：一年')
+    expect(r.stats.titleRows).toEqual(['維修服務 / 價目一覽'])
+  })
+
+  it('⛔ 第一筆資料是一句話（有逗號）也不當欄位名稱', () => {
+    const r = rowsToCards([
+      ['常見問題'],
+      ['退貨', '收到七天內可退，需附發票', '偏遠地區另計'],
+      ['運費', '滿千免運', ''],
+    ])
+    expect(r.cards.map(c => c.title)).toEqual(['退貨', '運費'])
+  })
+})
+
+describe('跨分頁合併看有沒有答案（finding 3）', () => {
+  const blankThenAnswered = () => {
+    const a = rowsToCards([['品名', '容量', '價格'], ['W1'], ['W2', '20L', '19,900']])
+    const b = rowsToCards([['品名', '保固', '備註'], ['W1', '一年', '含運'], ['W3', '兩年', '']])
+    return { a, b }
+  }
+
+  it('先遇到沒答案的那頁、後面那頁才有答案 → 內容換成答案（不留一行「W1」），也不再報「沒答案」', () => {
+    const { a, b } = blankThenAnswered()
+    const c = createCardCollector({ legacy: false })
+    c.addSheet(a.cards, a.stats, '價目表')
+    c.addSheet(b.cards, b.stats, '規格表')
+    expect(c.cards.find(x => x.title === 'W1')!.content).toBe('保固：一年\n備註：含運')
+    expect(c.stats.blankAnswerTitles).toEqual([])
+    expect(c.stats.duplicateTitles).toEqual(['W1'])
+  })
+
+  it('順序反過來（先有答案、後面那頁沒答案）→ 不會在後面多接一行「W1」', () => {
+    const { a, b } = blankThenAnswered()
+    const c = createCardCollector({ legacy: false })
+    c.addSheet(b.cards, b.stats, '規格表')
+    c.addSheet(a.cards, a.stats, '價目表')
+    expect(c.cards.find(x => x.title === 'W1')!.content).toBe('保固：一年\n備註：含運')
+    expect(c.stats.blankAnswerTitles).toEqual([])
+  })
+
+  it('兩頁都沒答案 → 還是報沒答案（只報一次）', () => {
+    const a = rowsToCards([['品名', '容量', '價格'], ['W1'], ['W2', '20L', '19,900']])
+    const b = rowsToCards([['品名', '保固', '備註'], ['W1'], ['W3', '兩年', '']])
+    const c = createCardCollector({ legacy: false })
+    c.addSheet(a.cards, a.stats)
+    c.addSheet(b.cards, b.stats)
+    expect(c.stats.blankAnswerTitles).toEqual(['W1'])
+    expect(c.cards.find(x => x.title === 'W1')!.content).toBe('W1')
+  })
+
+  it('⛔ 舊讀法照舊：不跨頁合併（W1 兩張，跟改版前一樣，同步只認第一張）', async () => {
+    const tabs = [
+      { title: '價目表', values: [['品名', '價格'], ['W1', '12,900'], ['W2', '15,900']] },
+      { title: '規格表', values: [['品名', '容量'], ['W1', '12L'], ['W3', '20L']] },
+    ]
+    const legacy = await readGoogleSheetAsCards(ref, tabsApi(tabs), { legacy: true })
+    expect(legacy.cards).toEqual([
+      { title: 'W1', content: '12,900', tags: [] },
+      { title: 'W2', content: '15,900', tags: [] },
+      { title: 'W1', content: '12L', tags: [] },
+      { title: 'W3', content: '20L', tags: [] },
+    ])
+    expect(legacy.stats.duplicateTitles).toEqual([])
+    const fresh = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    expect(fresh.cards.find(c => c.title === 'W1')!.content).toBe('12,900\n12L')
+  })
+})
+
+describe('收滿 150 條之後同名的照樣併（finding 4）', () => {
+  const many = (n: number, prefix = 'Q') => [['問題', '答案'], ...Array.from({ length: n }, (_, i) => [`${prefix}${i}`, `A${i}`])]
+
+  it('跨分頁：滿了之後新的名稱不收，同名的還是併進去；沒收的條數講得出來', () => {
+    const c = createCardCollector({ legacy: false })
+    const s1 = rowsToCards(many(GSHEET_MAX_ROWS))
+    c.addSheet(s1.cards, s1.stats)
+    const s2 = rowsToCards([['問題', '答案'], ['NEW', 'x'], ['Q1', '第二頁補充']])
+    c.addSheet(s2.cards, s2.stats)
+    expect(c.cards).toHaveLength(GSHEET_MAX_ROWS)
+    expect(c.cards.find(x => x.title === 'Q1')!.content).toBe('A1\n第二頁補充')
+    expect(c.stats.truncatedByCap).toBe(true)
+    expect(c.stats.droppedByCap).toBe(1)
+    expect(sheetHealthWarnings(c.cards, c.stats).some(w => w.includes('後面還有 1 條沒收進來'))).toBe(true)
+  })
+
+  it('滿了之後後面的分頁只有同名的列 → 不算超過上限（以前一滿就報、而且後面那頁的內容沒了）', () => {
+    const c = createCardCollector({ legacy: false })
+    const s1 = rowsToCards(many(GSHEET_MAX_ROWS))
+    c.addSheet(s1.cards, s1.stats)
+    const s2 = rowsToCards([['問題', '答案'], ['Q3', '補充']])
+    c.addSheet(s2.cards, s2.stats)
+    expect(c.stats.truncatedByCap).toBe(false)
+    expect(c.cards.find(x => x.title === 'Q3')!.content).toBe('A3\n補充')
+  })
+
+  it('同一頁：滿了之後同名的列照樣併；沒收進來那一項的延續列不可以接到上一個收進來的項目', () => {
+    const rows = [
+      ['品名', '容量', '價格'],
+      ...Array.from({ length: GSHEET_MAX_ROWS }, (_, i) => [`W${i}`, `${i}L`, '']),
+      ['NEW', '1L', '100'],
+      ['', '濾網', '50'], // NEW 的延續列：NEW 沒收，這列也不收（⛔ 不可以接到 W149）
+      ['W0', '', '999'],
+    ]
+    const r = rowsToCards(rows)
+    expect(r.cards).toHaveLength(GSHEET_MAX_ROWS)
+    expect(r.cards[0]!.content).toBe('容量：0L\n價格：999')
+    expect(r.cards[GSHEET_MAX_ROWS - 1]!.content).toBe(`容量：${GSHEET_MAX_ROWS - 1}L`)
+    expect(r.stats.truncatedByCap).toBe(true)
+    expect(r.stats.cappedOut).toEqual(['new'])
+  })
+
+  it('Google 試算表：滿了也照樣讀後面的分頁，把同名的列併進來', async () => {
+    const tabs = [
+      { title: 'A', values: many(GSHEET_MAX_ROWS) },
+      { title: 'B', values: [['問題', '答案'], ['Q0', 'B 頁的補充'], ['另一題', 'y']] },
+    ]
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    expect(res.cards.find(c => c.title === 'Q0')!.content).toBe('A0\nB 頁的補充')
+    expect(res.stats.droppedByCap).toBe(1)
+  })
+})
+
+describe('空白分頁不提醒（finding 5）', () => {
+  it('整頁空白的「Sheet2」不列進「沒整理出來」；有字卻整理不出來的封面才列', async () => {
+    const tabs = [
+      { title: '封面', values: [['2026 型錄']] },
+      { title: 'Sheet2', values: [] },
+      { title: '空白列', values: [[], ['', '  ']] },
+      { title: '價目表', values: [['品名', '價格'], ['W1', '100']] },
+    ]
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    expect(res.emptySheets).toEqual(['封面'])
+  })
+})
+
+describe('Numbers 的輸出摘要（finding 8）', () => {
+  const summary: Tab = {
+    title: '輸出摘要',
+    values: [['此文件從 Numbers 輸出。已將每個表格轉換為不同的 Excel 工作表。'], [], ['Numbers 工作表名稱', 'Numbers 表格名稱', 'Excel 工作表名稱'], ['價目表', '表格 1', '價目表']],
+  }
+  const price: Tab = { title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
+
+  it('新讀法：不讀、不算「看起來是使用說明」，改成講「Numbers 自動加的」', async () => {
+    const res = await readGoogleSheetAsCards(ref, tabsApi([summary, price]))
+    expect(res.cards.map(c => c.title)).toEqual(['W1'])
+    expect(res.skippedSheets).toEqual([])
+    expect(res.stats.exportSummarySheets).toEqual(['輸出摘要'])
+    expect(sheetHealthWarnings(res.cards, res.stats)).toContain('略過「輸出摘要」分頁（Numbers 輸出時自動加的說明頁，不是資料）')
+  })
+
+  it('舊讀法照舊（改版前會讀它，就照讀，不改變已在同步的表）', async () => {
+    const res = await readGoogleSheetAsCards(ref, tabsApi([summary, price]), { legacy: true })
+    expect(res.cards.map(c => c.title)).toContain('價目表')
+    expect(res.stats.exportSummarySheets).toBeUndefined()
+  })
+})
+
+describe('延續列講出第幾列併到哪一項（finding 9）', () => {
+  it('一列：講列號（試算表上真正的列號，前面的空白列也算）、用第一欄的欄位名稱', async () => {
+    const tabs = [{ title: '價目表', values: [[], ['品名', '容量', '價格'], ['W1', '12L', '12,900'], ['W2', '20L', '19,900'], ['', '濾網（2 入）', '990']] }]
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    expect(res.cards.find(c => c.title === 'W2')!.content).toBe('容量：20L\n價格：19,900\n容量：濾網（2 入）\n價格：990')
+    expect(sheetHealthWarnings(res.cards, res.stats)).toContain('第 5 列沒有「品名」，已併到上一項「W2」；不對的話請補上再匯入一次')
+  })
+
+  it('好幾列：最多列 3 個例子、後面用「等」，總數照實講', () => {
+    const r = rowsToCards([
+      ['品名', '容量', '價格'],
+      ['W1', '12L', '1'], ['', 'a', '2'], ['', 'b', '3'],
+      ['W2', '20L', '4'], ['', 'c', '5'], ['', 'd', '6'],
+    ])
+    expect(sheetHealthWarnings(r.cards, r.stats)).toContain(
+      '有 4 列沒有「品名」，已各自併到上一項：第 3 列併到「W1」、第 4 列併到「W1」、第 6 列併到「W2」等；不對的話請補上再匯入一次',
+    )
+  })
+
+  it('收了好幾個分頁時，列號前面帶分頁名稱（不然對不到是哪一頁的第幾列）', async () => {
+    const tabs = [
+      { title: '常見問題', values: [['問題', '答案'], ['退貨?', '7 天內']] },
+      { title: '價目表', values: [['品名', '容量', '價格'], ['W1', '12L', '1'], ['', '濾網', '2']] },
+    ]
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    expect(sheetHealthWarnings(res.cards, res.stats)).toContain('「價目表」第 3 列沒有「品名」，已併到上一項「W1」；不對的話請補上再匯入一次')
+  })
+
+  it('欄位名稱認不出來時不硬套名稱，講「第一欄是空的」', () => {
+    const r = rowsToCards([['價目表'], ['W1', '12L', '1'], ['', '濾網', '2']])
+    expect(sheetHealthWarnings(r.cards, r.stats)).toContain('第 3 列第一欄是空的，已併到上一項「W1」；不對的話請補上再匯入一次')
+  })
+})
+
+describe('probeGoogleSheetAccess（finding 6）', () => {
+  const empty = (title: string): Tab => ({ title, values: [['封面']] })
+  const faq: Tab = { title: 'FAQ', values: [['問題', '答案'], ['退貨?', '7 天內']] }
+
+  it('複製範本、FAQ 頁排在好幾頁封面後面 → 先看 FAQ 頁，亮綠燈', async () => {
+    const calls: string[] = []
+    const res = await probeGoogleSheetAccess(ref, tabsApi([empty('封面'), empty('目錄'), empty('品牌故事'), empty('聯絡我們'), faq], calls))
+    expect(res).toMatchObject({ hasData: true, sheetTitle: 'FAQ', checkedTitles: ['FAQ'] })
+    expect(calls).toEqual(['FAQ'])
+  })
+
+  it('有上限：最多看 5 頁，回報真的看過哪幾頁（講「沒資料」只能講這幾頁）', async () => {
+    const tabs = ['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(empty)
+    const res = await probeGoogleSheetAccess(ref, tabsApi(tabs))
+    expect(res.hasData).toBe(false)
+    expect(res.checkedTitles).toEqual(['A', 'B', 'C', 'D', 'E'])
+    expect(res.sheetTitles).toHaveLength(7)
+  })
+
+  it('Numbers 的輸出摘要不算一頁（不看、也不列進會讀的分頁）', async () => {
+    const res = await probeGoogleSheetAccess(ref, tabsApi([{ title: '輸出摘要', values: [['此文件從 Numbers 輸出']] }, faq]))
+    expect(res.sheetTitles).toEqual(['FAQ'])
   })
 })

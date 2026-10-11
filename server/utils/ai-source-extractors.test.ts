@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as XLSX from 'xlsx'
+import { makeZip } from './test-helpers/make-zip'
 import { extractXlsxCards, extractXlsxText, isProbablyScannedPdf, resolveInternalUrl } from './ai-source-extractors'
+import { sheetHealthWarnings } from './google-sheets'
+
+// 讀壞檔時會丟 Nuxt 全域的 createError；unit 測試環境沒有，補一個最小版
+;(globalThis as unknown as { createError?: unknown }).createError ??= (opts: { statusCode?: number; statusMessage?: string }) =>
+  Object.assign(new Error(opts?.statusMessage ?? 'error'), opts)
 
 function extracted(rawLength: number, pages: number) {
   return { text: 'x'.repeat(Math.min(rawLength, 100)), rawLength, meta: { pages } }
@@ -223,5 +231,122 @@ describe('CSV（C-296）', () => {
     const res = extractXlsxCards(csv, 'csv')!
     expect(res.cards).toEqual([{ title: 'W1 mini', content: '容量：6L\n價格：8,990', tags: [] }])
     expect(res.stats.titleRows).toEqual(['2026 秋季價目表'])
+  })
+})
+
+// ── 2026-10-11 審查修正 ─────────────────────────────────────────────
+
+describe('Apple Numbers 輸出的 Excel（照本機 Numbers 實際輸出的樣子組，finding 8／9）', () => {
+  // 實檔長這樣：第一頁「輸出摘要」是 Numbers 自己加的說明；價目表的表格從第 2 列開始（!ref A2:D7）
+  const numbersBook = () => makeXlsx([
+    {
+      name: '輸出摘要',
+      rows: [
+        ['此文件從 Numbers 輸出。已將每個表格轉換為不同的 Excel 工作表。', '', ''],
+        ['', '', ''],
+        ['Numbers 工作表名稱', 'Numbers 表格名稱', 'Excel 工作表名稱'],
+        ['價目表', '', ''],
+        ['', '表格 1', '價目表'],
+      ],
+    },
+    {
+      name: '價目表',
+      rows: [
+        ['2026 秋季價目表', '', '', ''],
+        ['品名', '容量', '價格', '客服電話'],
+        ['W1 REGEN 改', '12L', '12900', '0912345678'],
+        ['W1 mini', '6L', '8990', '0912345678'],
+        ['', '濾網（2 入）', '990', ''], // 沒填品名的那一列：併到上一項，要講第幾列
+      ],
+      origin: 'A2',
+      ref: 'A2:D6',
+    },
+    { name: '常見問題', rows: [['問題', '答案'], ['可以退貨嗎？', '收到 7 天內可退']] },
+  ])
+
+  it('輸出摘要不變成卡、不被講成「使用說明」，改講 Numbers 自動加的', () => {
+    const res = extractXlsxCards(numbersBook())!
+    expect(res.cards.map(c => c.title)).toEqual(['W1 REGEN 改', 'W1 mini', '可以退貨嗎？'])
+    expect(res.skippedSheets).toEqual([])
+    expect(res.stats.exportSummarySheets).toEqual(['輸出摘要'])
+    expect(sheetHealthWarnings(res.cards, res.stats)).toContain('略過「輸出摘要」分頁（Numbers 輸出時自動加的說明頁，不是資料）')
+  })
+
+  it('沒填品名的那一列講得出是試算表上的第幾列、併到哪一項（表格從第 2 列開始也對得上）', () => {
+    const res = extractXlsxCards(numbersBook())!
+    expect(res.cards.find(c => c.title === 'W1 mini')!.content).toContain('容量：濾網（2 入）\n價格：990')
+    expect(sheetHealthWarnings(res.cards, res.stats)).toContain('「價目表」第 6 列沒有「品名」，已併到上一項「W1 mini」；不對的話請補上再匯入一次')
+  })
+
+  it('散文那條（extractXlsxText）同樣不讀輸出摘要', () => {
+    expect(extractXlsxText(numbersBook()).text).not.toContain('此文件從 Numbers 輸出')
+  })
+})
+
+describe('讀不出來的檔：畫面講人話、技術細節只進 log 一行（finding 11）', () => {
+  afterEach(() => vi.restoreAllMocks())
+  const broken = Buffer.concat([Buffer.from('504b0304', 'hex'), Buffer.alloc(200, 7)])
+
+  it('錯誤訊息不帶解析器的英文原文；先試表格、再走散文那條，檔案只讀一次、log 只記一行', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // 跟 preview-jobs 同順序：表格那條回 null，接著同一個 buffer 走散文那條
+    expect(extractXlsxCards(broken)).toBeNull()
+    let caught: { statusCode?: number, statusMessage?: string } | null = null
+    try { extractXlsxText(broken) }
+    catch (e) { caught = e as never }
+    expect(caught).toMatchObject({ statusCode: 422, statusMessage: '讀不出這份試算表，可能檔案壞了或有密碼；請用 Excel 另存一份再試' })
+    expect(caught!.statusMessage).not.toContain('Unsupported') // 解析器的英文原文不上畫面
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0]).toHaveLength(1) // 一行字串，不是整個 Error 物件（會印整段 stack）
+    expect(String(warn.mock.calls[0]![0])).toContain('Unsupported ZIP encryption')
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('交棒只給同一個 buffer 用一次：再呼叫一次就重新讀（不會一直拿到舊結果）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(extractXlsxCards(broken)).toBeNull()
+    expect(() => extractXlsxText(broken)).toThrow()
+    expect(() => extractXlsxText(broken)).toThrow()
+    expect(warn).toHaveBeenCalledTimes(2)
+  })
+
+  it('不是表格（單欄清單）→ 表格那條回 null，散文那條拿到同一份內容', () => {
+    const csv = Buffer.from('開封後請冷藏\n七天內食用完畢\n', 'utf8')
+    expect(extractXlsxCards(csv, 'csv')).toBeNull()
+    expect(extractXlsxText(csv, 'csv').text).toContain('七天內食用完畢')
+  })
+})
+
+describe('壞掉、大到不正常的 xlsx：不卡死、不撐爆記憶體（2026-10-11 破檔測試）', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // 擋住它的有兩道，各自都擋得住（2026-10-11 逐一拿掉驗過）：交給 SheetJS 之前自己先解一次（壞的項目當場丟錯）、
+  // 和 use_zlib（SheetJS 改用 Node 的 zlib 解壓）。⚠️ 這條要是卡住不動＝兩道都被拿掉了
+  it('會讓 SheetJS 自己的解壓無限迴圈的壞檔 → 很快丟 422', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 真的 Numbers 匯出檔（假資料），只改了 sharedStrings 那個項目檔頭的「檔名長度」一個欄位——
+    // SheetJS 內建的純 JS 解壓讀到這裡會一直轉，整個請求卡到逾時（破檔測試實測卡 20 分鐘）
+    const broken = readFileSync(fileURLToPath(new URL('./test-helpers/fixtures/sheetjs-zip-hang.xlsx', import.meta.url)))
+    const t0 = Date.now()
+    expect(extractXlsxCards(broken)).toBeNull()
+    expect(() => extractXlsxText(broken)).toThrow(expect.objectContaining({ statusCode: 422 }))
+    expect(Date.now() - t0).toBeLessThan(3000)
+  })
+
+  it('解開之後超過 250MB → 422 講「大到不正常」、怎麼辦，⛔ 不交給 SheetJS 硬解（換成 zlib 之後它解壓沒有上限）', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const bomb = makeZip({ '[Content_Types].xml': '<Types/>', 'xl/worksheets/sheet1.xml': '<worksheet/>' }, 8, { declaredSize: 300 * 1024 * 1024 })
+    expect(() => extractXlsxText(bomb)).toThrow(expect.objectContaining({
+      statusCode: 422,
+      statusMessage: expect.stringContaining('大到不正常'),
+    }))
+  })
+
+  it('正常的 xlsx 照常讀（先自己解一次量大小，不影響內容）', () => {
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['品名', '價格'], ['W1', '12,900']]), '價目表')
+    const buf = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
+    expect(extractXlsxCards(buf)!.cards.map(c => c.title)).toEqual(['W1'])
   })
 })

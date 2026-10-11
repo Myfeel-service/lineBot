@@ -37,8 +37,20 @@ export default defineEventHandler(async (event) => {
     const res = await probeGoogleSheetAccess(ref)
     // 讀得到但沒資料也是「還不能匯入」，要當成一種狀態講清楚（不是綠燈）
     // 匯入會讀每一個非說明頁（`C-296`），講的時候要講全部，不是只講第一頁
-    const tabs = res.sheetTitles.map(t => `「${t}」`).join('、')
+    const quote = (titles: string[]) => titles.map(t => `「${t}」`).join('、')
+    const tabs = quote(res.sheetTitles)
     if (!res.hasData) {
+      const unchecked = res.sheetTitles.length - res.checkedTitles.length
+      // ⛔ 只能講真的看過的那幾頁（2026-10-11 審查）：以前只看前 3 頁、卻說「這幾個分頁都沒有資料」
+      //    把每一頁都點名——資料其實在第 5 頁的人會以為整份表都讀不到。
+      //    還有沒看的頁＝我們不知道，不是「沒資料」：照實說，叫他直接整理看看。
+      if (unchecked > 0) {
+        return {
+          status: 'unknown' as const,
+          message: `讀得到這份試算表。先看了${quote(res.checkedTitles)}這 ${res.checkedTitles.length} 個分頁，前 20 列都沒有資料；`
+            + `另外 ${unchecked} 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。`,
+        }
+      }
       return {
         status: 'no_data' as const,
         message: `讀得到這份試算表，但${res.sheetTitles.length > 1 ? `${tabs}這幾個分頁` : `${tabs}分頁`}的前 20 列都沒有資料（需要表頭列 ＋ 至少一列資料）。`,

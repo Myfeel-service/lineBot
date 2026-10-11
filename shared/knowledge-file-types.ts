@@ -66,6 +66,38 @@ export function knowledgeFileKind(name: string): KnowledgeFileKind | null {
   return KNOWLEDGE_FILE_KIND_BY_EXT[fileExtension(name)] ?? null
 }
 
+/** 標準型別 → 副檔名（同一個型別有兩個副檔名時取表上第一個：image/jpeg → jpg） */
+const KNOWLEDGE_FILE_EXT_BY_MIME: Record<string, string> = Object.entries(KNOWLEDGE_FILE_MIME_BY_EXT)
+  .reduce<Record<string, string>>((acc, [ext, mime]) => (acc[mime] ? acc : { ...acc, [mime]: ext }), {})
+
+export interface ResolvedKnowledgeFile {
+  kind: KnowledgeFileKind
+  /** 存檔用的副檔名（一律從我們自己的表來） */
+  ext: string
+  /** 存檔用的型別（一律從我們自己的表來，⛔ 不用瀏覽器給的） */
+  mime: string
+}
+
+/**
+ * 伺服器端判斷「這是哪一種檔」（簽名上傳網址、建整理工作兩處共用）。
+ *
+ * ⛔ 有副檔名就**只看副檔名**：以前副檔名認不得時會退去看瀏覽器給的型別、而且是「包含」比對，
+ *    `x.html` 配上 `text/html; excel` 就被當成 Excel 收進來，原檔還用 `text/html` 存進我們的雲端。
+ *    型別是前端自己填的，不能拿來推翻副檔名。
+ * 沒有副檔名才看型別，而且要**整個一模一樣**（去掉 `; charset=…` 這種參數後），不做包含比對。
+ */
+export function resolveKnowledgeFile(name: string, contentType = ''): ResolvedKnowledgeFile | null {
+  const ext = fileExtension(name)
+  if (ext) {
+    const kind = KNOWLEDGE_FILE_KIND_BY_EXT[ext]
+    return kind ? { kind, ext, mime: KNOWLEDGE_FILE_MIME_BY_EXT[ext] ?? 'application/octet-stream' } : null
+  }
+  const mime = (String(contentType ?? '').split(';')[0] ?? '').trim().toLowerCase()
+  const byMime = KNOWLEDGE_FILE_EXT_BY_MIME[mime]
+  const kind = byMime ? KNOWLEDGE_FILE_KIND_BY_EXT[byMime] : undefined
+  return byMime && kind ? { kind, ext: byMime, mime: KNOWLEDGE_FILE_MIME_BY_EXT[byMime]! } : null
+}
+
 /** 每種檔案在畫面上叫什麼（偵測結果那一行） */
 export const KNOWLEDGE_FILE_KIND_LABEL: Record<KnowledgeFileKind, string> = {
   pdf: 'PDF',
