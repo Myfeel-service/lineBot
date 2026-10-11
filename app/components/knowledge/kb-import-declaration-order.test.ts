@@ -18,20 +18,22 @@ import { describe, expect, it } from 'vitest'
  * 規則只針對**真正會炸**的那一種：
  *  · `watch` 的**第一個參數**（來源）在註冊當下就會求值一次 → 它（以及它透過 computed
  *    間接讀到的東西）必須全部宣告在前面。
- *  · `watch` 的**回呼內容**不算（回呼是變動時才跑），惰性 `computed` 自己也不算
+ *  · 帶 `immediate: true` 的 watch，**回呼**也在註冊當下跑一次 → 回呼裡讀寫到的也要排在前面
+ *    （2026-10-11 審查補：一次好幾份那支元件的 watch 帶 immediate、回呼會寫 finished，
+ *    今天排對了，但沒有測試守著）。
+ *  · 其餘 `watch` 的**回呼內容**不算（回呼是變動時才跑），惰性 `computed` 自己也不算
  *    （模板渲染時才求值，那時 setup 早就跑完了）——這兩種誤報如果一起擋，
  *    會逼人把整支檔案重排，反而沒人願意維護這條規則。
  */
 
-const SRC = readFileSync(
-  fileURLToPath(new URL('./KnowledgeImportDialog.vue', import.meta.url)),
-  'utf8',
-)
+/** 要守的元件：匯入視窗本身，加上它在同一個畫面裡掛著的逐份清單 */
+const FILES = ['./KnowledgeImportDialog.vue', './KnowledgeFileBatch.vue']
 
 /** `<script setup>` 的內容與逐行陣列 */
-function scriptLines(): string[] {
-  const m = SRC.match(/<script setup[^>]*>([\s\S]*)<\/script>/)
-  return (m?.[1] ?? SRC).split('\n')
+function scriptLines(file: string): string[] {
+  const src = readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')
+  const m = src.match(/<script setup[^>]*>([\s\S]*)<\/script>/)
+  return (m?.[1] ?? src).split('\n')
 }
 
 /** `const X = ref(/computed(/shallowRef(/useState(` → 行索引 */
@@ -47,12 +49,16 @@ function declarations(lines: string[]): Map<string, number> {
 /** 從某行開始，取到括號平衡為止的文字（用來抓一個 computed 的 body 或一個 watch 的呼叫） */
 function balancedFrom(lines: string[], start: number): string {
   let depth = 0
+  let opened = false
   const out: string[] = []
   for (let j = start; j < lines.length; j++) {
     const ln = lines[j]!
     out.push(ln)
     depth += (ln.match(/\(/g)?.length ?? 0) - (ln.match(/\)/g)?.length ?? 0)
-    if (depth <= 0 && ln.includes('(')) break
+    if (depth > 0) opened = true
+    // ⚠️ 收尾那一行（`}, { immediate: true })`）本身沒有左括號：以前只在「有左括號的那一行」才判斷停不停，
+    //    多行的 watch 會一路吃到下一個宣告，把不相干的 computed 也算成來源（2026-10-11 擴到第二支元件時踩到）
+    if (depth <= 0 && (opened || ln.includes('('))) break
   }
   return out.join('\n')
 }
@@ -74,16 +80,17 @@ function watchSource(call: string): string {
 const references = (expr: string, name: string) =>
   new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`).test(expr)
 
-describe('KnowledgeImportDialog 的宣告順序', () => {
-  it('watch 的來源（含它透過 computed 讀到的東西）都宣告在前面', () => {
-    const lines = scriptLines()
+describe.each(FILES)('%s 的宣告順序', (file) => {
+  it('watch 的來源（含它透過 computed 讀到的東西、immediate 的回呼）都宣告在前面', () => {
+    const lines = scriptLines(file)
     const decl = declarations(lines)
     const problems: string[] = []
 
     lines.forEach((ln, i) => {
       if (!/^\s*watch(Effect)?\(/.test(ln)) return
       const call = balancedFrom(lines, i)
-      const source = /^\s*watchEffect\(/.test(ln) ? call : watchSource(call)
+      // immediate：回呼在註冊當下就跑，整個呼叫都算「當下求值」
+      const source = /^\s*watchEffect\(/.test(ln) || /immediate:\s*true/.test(call) ? call : watchSource(call)
 
       // 來源直接引用的 ref/computed，加上它們（一層）透過 computed 間接引用的
       const seen = new Set<string>()

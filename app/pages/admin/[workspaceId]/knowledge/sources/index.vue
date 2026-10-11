@@ -70,10 +70,10 @@
       >
         <el-icon
           class="src-workbench-link__icon"
-          :class="{ 'is-loading': importJobState === 'running' }"
-        ><Loading v-if="importJobState === 'running'" /><Check v-else /></el-icon>
+          :class="{ 'is-loading': importJobState !== 'ready' }"
+        ><Loading v-if="importJobState !== 'ready'" /><Check v-else /></el-icon>
         <span class="src-workbench-link__text">
-          {{ importJobState === 'running' ? '一份資料整理中…' : '整理好了，看結果' }}
+          {{ importJobState === 'ready' ? '整理好了，看結果' : importJobState === 'batch' ? '匯入中，還沒跑完…' : '一份資料整理中…' }}
         </span>
         <span class="src-workbench-link__arrow">→</span>
       </button>
@@ -460,6 +460,23 @@
           <div>
             這幾條知識在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
             <template v-if="canEditKb">想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。</template>
+          </div>
+        </el-alert>
+
+        <!-- gsheet 空間滿了沒收的列（`C-296`）：表格加了一列、AI 卻答不出來，原因只在這裡——
+             ⛔ 不講就是「沉默地少收」；同步只是暫停新增，空間空出來會自己補，所以要講「不用重匯」 -->
+        <el-alert
+          v-if="selectedSource.type === 'gsheet' && (selectedSource.quotaSkippedCount ?? 0) > 0"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="src-outdated-alert"
+        >
+          <template #title>
+            表格上有 {{ selectedSource.quotaSkippedCount }} 列還沒收進知識庫
+          </template>
+          <div>
+            知識空間已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，下一次同步（每小時一次，或按「立即同步」）會自動補上，不用重新匯入。
           </div>
         </el-alert>
 
@@ -1468,6 +1485,8 @@ interface SourceSummary {
   detectStalledAtMs: number
   /** type='gsheet'：手動編輯鎖住、與表格內容分歧的張數（>0 要常駐提示） */
   manualKeptCount: number
+  /** type='gsheet'：知識空間滿了、同步時沒新增的列數（>0 要常駐提示，`C-296`） */
+  quotaSkippedCount?: number
   /** type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的檔案當時讀完就刪了） */
   originalFile?: { name: string, size: number } | null
 }
@@ -3314,6 +3333,8 @@ interface GsheetSyncRes {
   kept: number
   pendingDeletes?: number
   manualKept?: number
+  /** 知識空間滿了沒新增的列數（`C-296`） */
+  quotaSkipped?: number
 }
 
 async function syncGsheetNow() {
@@ -3347,19 +3368,27 @@ async function syncGsheetNow() {
     // 同步成功也可能剛清掉失敗標記 → 一定要 force 重跑體檢。
     // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
     await loadSources(true)
+    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了同步卻什麼都沒發生
+    const quotaTail = res.quotaSkipped ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後會自動補上）` : ''
     if (res.outcome === 'unchanged') {
-      showToast('已是最新，無變動', 'success')
+      showToast(quotaTail ? `表格沒有變動${quotaTail}` : '已是最新，無變動', quotaTail ? 'warning' : 'success')
     }
-    else if (res.manualKept) {
+    else if (res.manualKept || quotaTail) {
       // 被手動編輯鎖住的分歧要講出來——不講的話，商家改了表格卻永遠不生效、也不知道為什麼
-      showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；另有 ${res.manualKept} 條知識未跟表格更新（點鎖頭可解除）`, 'warning')
+      showToast(
+        `同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`
+        + (res.manualKept ? `；另有 ${res.manualKept} 條知識未跟表格更新（點鎖頭可解除）` : '')
+        + quotaTail,
+        'warning',
+      )
     }
     else {
       showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`, 'success')
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '同步失敗', 'error')
+    // 中文原因在 data.statusMessage（err.statusMessage 是 HTTP 狀態那一行，HTTP/2 下是空的）
+    showToast(err?.data?.statusMessage || err?.statusMessage || '同步失敗', 'error')
   }
   finally {
     gsheetSyncing.value = false
@@ -3500,7 +3529,7 @@ const importOpen = ref(false)
  * 匯入視窗關著時,側欄要看得到「還在整理／整理好了」。
  * 匯入的等待畫面請使用者去做別的事,這裡就是他回來時的入口。
  */
-const importJobState = ref<'running' | 'ready' | 'none'>('none')
+const importJobState = ref<'running' | 'batch' | 'ready' | 'none'>('none')
 /** `?import=1&url=…` 帶進來的網址：開通精靈的「把網站整理成知識卡」會這樣過來（`C-221`） */
 const importPrefill = ref('')
 function goImport() { importOpen.value = true }

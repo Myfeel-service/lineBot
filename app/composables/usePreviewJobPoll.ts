@@ -43,12 +43,20 @@ export function usePreviewJobPoll() {
     progress.value = null
   }
 
-  /** 輪詢到 done / error；使用者取消時丟出 PREVIEW_JOB_CANCELLED */
-  async function poll<T>(jobId: string): Promise<T> {
+  /**
+   * 輪詢到 done / error；使用者取消時丟出 PREVIEW_JOB_CANCELLED。
+   *
+   * `isStale`：呼叫端自己判斷「這一輪是不是已經被取代」。`cancelled` 是整支 composable 共用一個，
+   * 下一輪開頭的 reset() 會把它清掉——取消後馬上重按一次，舊那一輪就「被復活」繼續輪詢，
+   * 拿到「工作已取消」還會把紅字和清記號蓋到新那一輪上（2026-10-11 審查實測）。
+   * 每一輪各帶自己的判斷就不會互相干擾。
+   */
+  async function poll<T>(jobId: string, opts: { isStale?: () => boolean } = {}): Promise<T> {
     const deadline = Date.now() + DEADLINE_MS
+    const stopped = () => cancelled || opts.isStale?.() === true
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, INTERVAL_MS))
-      if (cancelled) throw new Error(PREVIEW_JOB_CANCELLED)
+      if (stopped()) throw new Error(PREVIEW_JOB_CANCELLED)
       let res: any
       try {
         res = await apiFetch<any>(`/api/ai/knowledge/preview-jobs/${encodeURIComponent(jobId)}`)
@@ -60,7 +68,7 @@ export function usePreviewJobPoll() {
       }
       // await 前後都要檢查：使用者常在最慢的那一步按取消，只檢查前面的話
       // 這個 done 回應仍會把他帶進後續流程
-      if (cancelled) throw new Error(PREVIEW_JOB_CANCELLED)
+      if (stopped()) throw new Error(PREVIEW_JOB_CANCELLED)
       if (res.status === 'done') return res as T
       if (res.status === 'error') throw new Error(res.error || '處理失敗')
       progress.value = res.progress ?? null

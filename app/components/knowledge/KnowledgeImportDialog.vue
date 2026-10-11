@@ -19,7 +19,9 @@
     <template #header="{ titleId, titleClass }">
       <span :id="titleId" :class="titleClass" class="kb-import-title">
         加入知識
-        <span class="page-help">
+        <!-- 這段導覽教的是「給資料 → 看整理結果」；一次好幾份的清單與結果頁上它要指的東西都不在，
+             按下去只會指著空氣（2026-10-11 審查），這兩個畫面就不放問號 -->
+        <span v-if="step !== 'fileBatch' && step !== 'result'" class="page-help">
           <el-tooltip content="在畫面上帶我走一遍" placement="bottom">
             <el-button
               class="page-help-btn"
@@ -1145,16 +1147,18 @@
         </div>
       </div>
 
-      <!-- 逐條檢查展開時,底部再放一次主動作(捲到最後不必再捲回去) -->
+      <!-- 逐條檢查展開時,底部再放一次主動作(捲到最後不必再捲回去)。
+           ⛔ 字與能不能按都要跟上面那顆一模一樣：以前這顆不看空間、也不看「重新整理中」——
+              按鈕說 42 條、實際只收 12 條；重做清單跑到一半按下去，跑完還會把人從結果頁拉回預覽 -->
       <div v-show="chunkListOpen" class="kb-import-actions">
         <el-button @click="chunkListOpen = false">收起</el-button>
         <el-button
           type="primary"
           :loading="importing"
-          :disabled="includedCount === 0"
+          :disabled="includedCount === 0 || previewing || fitChunkCount === 0"
           @click="runImport"
         >
-          {{ importing ? '匯入並學習中⋯' : (replaceTarget ? importButtonLabel : `確認匯入 ${importTotalLabel}`) }}
+          {{ importing ? '匯入並學習中⋯' : importButtonLabel }}
         </el-button>
       </div>
     </div>
@@ -1194,13 +1198,15 @@
       </p>
 
       <!-- 原檔沒留成要講（`C-296`③）：不講的話，之後找「下載原檔」才發現沒有，還以為是系統壞了 -->
+      <!-- ⛔ 不猜原因：沒留成的路不只一條（放太久暫存被清、存檔那一下失敗），講錯原因比不講還誤導 -->
       <p v-if="result.originalKept === false" class="kb-quota-line is-full">
-        這份的原檔這次沒有留下來（整理結果放太久，暫存已經清掉）；知識照常可以用。要能「下載原檔」，請再傳一次這份、選「更新這一份」。
+        這份的原檔這次沒有留下來；知識照常可以用。要能「下載原檔」，請再傳一次這份、選「更新這一份」。
       </p>
 
       <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
+      <!-- 補齊的路照來源講：試算表每小時自己同步，空間一空出來就會補上，不用他動手（叫他「再傳一次」是錯的） -->
       <p v-if="quotaSkipped > 0" class="kb-quota-line is-full">
-        還有 <strong>{{ quotaSkipped }}</strong> 條因為知識空間不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，再傳一次這份、選「更新這一份」就能補齊。
+        還有 <strong>{{ quotaSkipped }}</strong> 條因為知識空間不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，{{ quotaRefillHint }}
       </p>
 
       <!--
@@ -1306,6 +1312,8 @@ import { ONBOARDING_SHOTS as SHOTS } from '~/utils/onboarding-shots'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
 import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
+import { batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
+import { EMPTY_FILE_HINT } from '~/utils/knowledge-upload'
 
 const props = defineProps<{
   modelValue: boolean
@@ -1335,7 +1343,7 @@ const emit = defineEmits<{
    * 這份匯入工作現在的狀態,讓父層在視窗關著時也能顯示「還在整理／整理好了」。
    * 沒有這個訊號的話,關掉視窗去做別的事的人回來只會看到一片乾淨畫面(見 resumeStoredJob 的說明)。
    */
-  'job-state': [state: 'running' | 'ready' | 'none']
+  'job-state': [state: 'running' | 'batch' | 'ready' | 'none']
 }>()
 
 
@@ -1349,7 +1357,9 @@ const { startAdHocTour } = useTutorial()
  *    再點一次只會讓聚光燈去指一個蓋住的東西。
  */
 function startDialogTour() {
-  void startAdHocTour(KB_IMPORT_DIALOG_STEPS.map(step => ({ ...step, clickBefore: undefined })))
+  // 預覽頁上第一步的投放框已經不在了：沒寫 requiresPresent 的那幾步一律補「錨點在才走」，
+  // 不然聚光燈打在空氣上（只改這次臨時跑的副本，⛔ 不動導覽主題本身——動它＝全員重跑一次）
+  void startAdHocTour(KB_IMPORT_DIALOG_STEPS.map(s => ({ ...s, clickBefore: undefined, requiresPresent: s.requiresPresent ?? s.target })))
 }
 const { showToast } = useAdminToast()
 // 產品名候選(與「所屬產品」欄位共用同一份快取):整站匯入結束要分辨哪些名字是這批新增的
@@ -1520,6 +1530,11 @@ function acceptFile(file: File | undefined | null): boolean {
     showToast('檔案超過 10MB 上限', 'error')
     return false
   }
+  if (file.size === 0) {
+    // 空檔當場講：以前照樣上傳、等伺服器回「內容為空」，白等一輪
+    showToast(EMPTY_FILE_HINT, 'error')
+    return false
+  }
   selectedFile.value = file
   fileName.value = file.name
   fileSizeKb.value = Math.round(file.size / 1024)
@@ -1535,13 +1550,23 @@ function acceptFile(file: File | undefined | null): boolean {
  */
 const batchFiles = ref<File[]>([])
 const batchRunning = ref(false)
-const fileBatchRef = ref<{ abort: () => void, isRunning: () => boolean } | null>(null)
+const fileBatchRef = ref<{ abort: () => void, isRunning: () => boolean, snapshot: () => FileBatchSnapshot } | null>(null)
 function acceptFiles(list: FileList | File[] | null | undefined): boolean {
   const files = Array.from(list ?? [])
   if (files.length >= 2) {
     if (previewing.value) {
       showToast('正在整理目前這一份，要換的話請先按「取消」', 'warning')
       return false
+    }
+    // 放了好幾份、但收得了的只有一份：那一份照常走有預覽的單份路（設計就是「一份＝先看再匯」），
+    // 收不了的那幾份在這裡講原因——⛔ 不可以默默少掉（2026-10-11 審查：以前這種會走沒有預覽的批次路）
+    const reasons = batchRejectReasons(files)
+    const usable = files.filter((_, i) => !reasons[i])
+    if (usable.length === 1) {
+      const others = files.map((f, i) => ({ name: f.name, reason: reasons[i] })).filter(o => o.reason)
+      if (!acceptFile(usable[0])) return false
+      showToast(`另外 ${others.length} 份收不了：${others.slice(0, 2).map(o => `「${o.name}」${o.reason}`).join('；')}${others.length > 2 ? '⋯' : ''}`, 'warning')
+      return true
     }
     clearFile()
     pasteInput.value = ''
@@ -1552,19 +1577,35 @@ function acceptFiles(list: FileList | File[] | null | undefined): boolean {
   return acceptFile(files[0])
 }
 function leaveFileBatch() {
+  // 這一批有建出東西：清單現在就刷新、結果不留到下一份——留著的話，之後在第一步做的單份預覽
+  // 一關窗就會被當成「匯入完成」整個清掉（2026-10-11 審查實測：付了錢的預覽與記號都沒了）
+  if (result.value) {
+    emit('imported', null)
+    result.value = null
+  }
   batchFiles.value = []
   step.value = 'input'
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
+/**
+ * 視窗是不是「看得到」。⚠️ 不能直接看 modelValue：el-dialog 先發 close、等關閉動畫跑完才發
+ * update:modelValue(false)，中間約 0.3 秒 modelValue 還是 true——一批剛好在這時跑完，
+ * 會被當成「視窗開著」而不講結論、也不刷新清單（2026-10-11 審查）
+ */
+const dialogShown = ref(props.modelValue)
+watch(() => props.modelValue, (v) => { dialogShown.value = v })
+
 /** 這一批跑完：有建出東西就讓關窗時刷新清單；視窗已經關了就當場刷新並講一句（同整站匯入） */
-function onFileBatchFinished(summary: { sources: number, cards: number, quotaShort: number, failed: number, conflicts: number }) {
+function onFileBatchFinished(summary: FileBatchSummary) {
   void loadQuota()
   // 視窗已經關了（中途按 ✕ 停下）：清單沒機會給人看，**做了什麼、沒做成什麼**都要在這一句講完
-  if (!props.modelValue) {
+  // （還沒開始就停下的也要講：以前只說「已匯入 2 份」，另外 8 份去哪了沒人知道）
+  if (!dialogShown.value) {
     const notDone = [
       summary.quotaShort ? `${summary.quotaShort} 條因為空間不夠沒收` : '',
       summary.failed ? `${summary.failed} 份沒有匯入` : '',
       summary.conflicts ? `${summary.conflicts} 份跟現有資料同名、沒有匯入` : '',
+      summary.notStarted ? `${summary.notStarted} 份還沒開始就停下了` : '',
     ].filter(Boolean).join('、')
     if (summary.sources) emit('imported', null)
     showToast(
@@ -1585,6 +1626,42 @@ function onFileChosen(e: Event) {
   const target = e.target as HTMLInputElement
   if (!acceptFiles(target.files)) target.value = ''
 }
+
+/**
+ * 視窗開著時，檔案掉在「不收檔案的地方」不可以讓瀏覽器整頁打開它。
+ * 第一步那個投放區自己收（它先 prevent、事件再冒泡上來，這裡看到 defaultPrevented 就不管）；
+ * 其餘畫面——一次好幾份的清單、預覽、結果頁、視窗外的遮罩——以前全都沒擋：
+ * 一批跑到一半再拖一份進清單，整頁就換成那個檔案，這一批跑到哪、匯了什麼全看不到（2026-10-11 審查實測）。
+ */
+function isFileDrag(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+}
+function guardStrayDragOver(e: DragEvent) {
+  if (isFileDrag(e)) e.preventDefault()
+}
+function guardStrayDrop(e: DragEvent) {
+  if (!isFileDrag(e) || e.defaultPrevented) return
+  e.preventDefault()
+  showToast(
+    step.value === 'fileBatch'
+      ? '這一批已經在清單上了；要再加檔案，請按「上一步」回去再放'
+      : '要換一份資料，請先回到第一步再放進框裡',
+    'warning',
+  )
+}
+function setStrayDropGuard(on: boolean) {
+  if (!import.meta.client) return // 伺服器端算畫面時沒有 window
+  if (on) {
+    window.addEventListener('dragover', guardStrayDragOver)
+    window.addEventListener('drop', guardStrayDrop)
+  }
+  else {
+    window.removeEventListener('dragover', guardStrayDragOver)
+    window.removeEventListener('drop', guardStrayDrop)
+  }
+}
+watch(() => props.modelValue, setStrayDropGuard, { immediate: true })
+onBeforeUnmount(() => setStrayDropGuard(false))
 
 const dragOver = ref(false)
 function onDrop(e: DragEvent) {
@@ -1813,6 +1890,19 @@ const siteFrom = ref<'sitemap' | 'links'>('sitemap')
 const siteTruncated = ref(false)
 const siteImporting = ref(false)
 const siteAborted = ref(false) // 使用者中途關窗 → worker 收工
+
+/**
+ * 一次好幾份／整站匯入跑到一半時離開頁面（重新整理、關分頁、站內換頁）先問一聲。
+ * 關窗不擋（關窗只是不看，正在跑的會跑完）；但整頁離開＝還在路上的上傳與整理全斷，
+ * 那幾份就沒匯進去、也沒人交代。
+ * ⚠️ 排在 siteImporting 宣告之後：watch 註冊當下就會讀一次來源（這個檔案吃過三次同一顆雷）
+ */
+const { markDirty: markImportBusy, markClean: markImportIdle } = useUnsavedChanges({
+  getSnapshot: () => null,
+  message: '匯入還沒跑完：現在離開，正在整理和還沒開始的檔案都不會匯入（已經匯好的會保留）。確定要離開嗎？',
+  enableBeforeUnload: true,
+})
+watch([batchRunning, siteImporting], ([a, b]) => { if (a || b) markImportBusy(); else markImportIdle() })
 const siteFinished = ref(false) // 至少跑完一輪批次匯入
 const siteBatchTotal = ref(0)
 const siteDoneCount = ref(0)
@@ -2086,6 +2176,9 @@ async function runSiteImport() {
       const page = targets[cursor++]!
       page.status = 'processing'
       page.error = ''
+      // 這一頁自己的工作編號。⛔ 不可以借用 lastPreviewJobId：兩個 worker 同時跑，
+      // 一頁逾時去停「最後一個」工作，停到的常常是另一個 worker 正在跑的那一頁（2026-10-11 審查）
+      let jobId = ''
       try {
         const created = await apiFetch<{ jobId?: string; duplicate?: DuplicateHit }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',
@@ -2107,8 +2200,8 @@ async function runSiteImport() {
           continue
         }
         if (!created.jobId) throw new Error('建立整理工作失敗')
-        lastPreviewJobId.value = created.jobId // 逾時要停掉它（見下面的 catch）
-        const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
+        jobId = created.jobId // 逾時要停掉它（見下面的 catch）
+        const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(jobId)
         if (!res.chunks.length) throw new Error('沒有切出知識(頁面可能沒有實質內容)')
         const bulk = await apiFetch<{ total: number; indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
@@ -2156,8 +2249,8 @@ async function runSiteImport() {
          */
         if (err?.code === PREVIEW_JOB_DEADLINE) {
           page.error = '整理太久，這一頁跳過了（沒有匯入，可重新勾選再試）'
-          if (lastPreviewJobId.value) {
-            apiFetch(`/api/ai/knowledge/preview-jobs/${lastPreviewJobId.value}`, { method: 'DELETE' }).catch(() => {})
+          if (jobId) {
+            apiFetch(`/api/ai/knowledge/preview-jobs/${jobId}`, { method: 'DELETE' }).catch(() => {})
           }
         }
         else {
@@ -2272,6 +2365,15 @@ const overQuotaBy = computed(() =>
   (includedCount.value - fitChunkCount.value) + (overviewWillImport.value && !overviewFits.value ? 1 : 0))
 /** 匯入完要講「還有幾條沒收」用：按下去那一刻的數字（之後勾選再變也不影響結果頁） */
 const quotaSkipped = ref(0)
+/** 沒收的那幾條怎麼補：照這一份是什麼來源講（結果頁那一句的後半） */
+const quotaRefillHint = computed(() => {
+  switch (sourceMeta.value.type) {
+    case 'gsheet': return '表格每小時同步一次時會自動補上，不用重新匯入。'
+    case 'url': return '再貼一次這個網址、選「更新這一份」就能補齊。'
+    case 'text': return '再貼一次這段文字、選「更新這一份」就能補齊。'
+    default: return '再傳一次這份、選「更新這一份」就能補齊。'
+  }
+})
 /** 只有看得到方案的人（管理員，`G-103`）才給「看方案」那條路 */
 const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceId.value}/settings/billing` : ''))
 
@@ -2480,15 +2582,19 @@ const { progress: jobProgress, poll: pollPreviewJob, reset: resetJobPoll, cancel
  * 回來才接著跑——文案要照這個事實寫,不能承諾「回來就好了」。
  */
 const JOB_MARKER_TTL_MS = 55 * 60 * 1000
-interface JobMarker { jobId: string, startedAtMs: number, mode: ImportMode }
+/**
+ * fileName：接回來的時候「目前選的檔案」可能已經是另一份了（或根本沒選），
+ * 下載原檔的檔名要跟著這份工作走，不是跟著畫面上的欄位（審查實測：存成「B.docx.pdf」）
+ */
+interface JobMarker { jobId: string, startedAtMs: number, mode: ImportMode, fileName?: string }
 
 function jobMarkerKey(): string {
   return `kb-import-job:${workspaceId.value ?? ''}`
 }
 
-function saveJobMarker(jobId: string, m: ImportMode) {
+function saveJobMarker(jobId: string, m: ImportMode, file = '') {
   try {
-    localStorage.setItem(jobMarkerKey(), JSON.stringify({ jobId, startedAtMs: Date.now(), mode: m } satisfies JobMarker))
+    localStorage.setItem(jobMarkerKey(), JSON.stringify({ jobId, startedAtMs: Date.now(), mode: m, fileName: file } satisfies JobMarker))
   }
   catch { /* 無痕模式等寫不進去:接不回來而已,不影響這一輪匯入 */ }
 }
@@ -2533,7 +2639,10 @@ function readJobMarker(): JobMarker | null {
  */
 const previewStillRunning = ref(false)
 
-const jobState = computed<'running' | 'ready' | 'none'>(() => {
+const jobState = computed<'running' | 'batch' | 'ready' | 'none'>(() => {
+  // 一次好幾份／整站匯入跑到一半關窗：正在跑的那幾份還會跑完、匯入，結果要等它們跑完才講。
+  // 這段時間側欄要看得到「還在匯入」，不然關窗的人只看到一片安靜，又回頭重放一次
+  if (batchRunning.value || siteImporting.value) return 'batch'
   if (previewing.value) return 'running'
   // 畫面等太久先不等了、但排程還在推它（`D-50` 簡化 3）——這時側欄一定要照樣顯示
   // 「一份資料整理中」,否則使用者關掉視窗就只剩一片安靜,又變成「系統把我的東西弄丟了」
@@ -2556,14 +2665,16 @@ function backToInput() {
 async function resumeStoredJob() {
   const marker = readJobMarker()
   if (!marker) return
+  const run = ++previewRun
+  const stale = () => run !== previewRun
   previewing.value = true
   previewError.value = ''
   previewStillRunning.value = false
-  previewCancelled = false
   resetJobPoll()
   try {
     lastPreviewJobId.value = marker.jobId
-    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(marker.jobId)
+    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(marker.jobId, { isStale: stale })
+    if (stale()) return
     // 這段可能跑好幾分鐘,期間使用者早就去做別的事了(挑整站頁面、跑批次匯入、開始另一份整理)。
     // 這時把畫面切到預覽等於半路搶走他正在做的事——記號留著,下次進來再接。
     if (siteImporting.value || step.value !== 'input') return
@@ -2572,10 +2683,11 @@ async function resumeStoredJob() {
       return
     }
     applyPreviewResult(res, marker.mode)
+    fileName.value = marker.fileName ?? ''
     step.value = 'preview'
   }
   catch (err: any) {
-    if (previewCancelled) return // 使用者自己按了取消
+    if (stale()) return // 使用者自己按了取消，或已經開始另一輪
     // 等太久:伺服器那份工作還活著,記號留著下次進來再接。這次不出聲——
     // 使用者只是打開了知識庫,沒有要求任何事,不該迎面丟一個錯誤給他。
     // ⚠️ 但**一定要立起「還在跑」的旗標**（2026-09-03 code review 抓到）:不立的話
@@ -2598,8 +2710,10 @@ async function resumeStoredJob() {
     clearJobMarker()
   }
   finally {
-    previewing.value = false
-    resetJobPoll()
+    if (!stale()) {
+      previewing.value = false
+      resetJobPoll()
+    }
   }
 }
 
@@ -2633,8 +2747,10 @@ async function recheckStoredJob() {
     previewStillRunning.value = false
     return
   }
-  // 使用者已經在做別的事（挑整站頁面、跑批次、開始另一份整理）→ 這輪不打擾，下次再看
+  // 使用者已經在做別的事（挑整站頁面、跑批次、開始另一份整理）→ 這輪不打擾，下次再看。
+  // ⚠️ 已經選了另一份檔案、或貼了東西也算（審查實測：舊那份做完會把畫面換掉，新選的檔案默默不見）
   if (previewing.value || siteImporting.value || step.value !== 'input') return
+  if (selectedFile.value || pasteInput.value.trim()) return
   try {
     const res = await apiFetch<PreviewResult & { status: 'done' | 'processing' | 'error', error?: string }>(
       `/api/ai/knowledge/preview-jobs/${encodeURIComponent(marker.jobId)}`,
@@ -2653,6 +2769,7 @@ async function recheckStoredJob() {
       return
     }
     applyPreviewResult(res, marker.mode)
+    fileName.value = marker.fileName ?? ''
     step.value = 'preview'
   }
   catch (err: any) {
@@ -2696,8 +2813,14 @@ onBeforeUnmount(() => {
   if (recheckTimer) clearInterval(recheckTimer)
 })
 
-/** 使用者主動取消：用來區分「取消」與「真的失敗」，取消不該顯示錯誤 */
-let previewCancelled = false
+/**
+ * 這一輪整理的編號：按取消、或開始新的一輪都會往上加，舊那一輪之後回來的結果與錯誤一律丟掉
+ * （取消不該顯示錯誤，被取代的那一輪也不該碰畫面）。
+ * ⛔ 以前是一個「取消了沒」的旗標，下一輪開頭清成 false，舊那一輪就跟著復活
+ * （2026-10-11 審查實測：上傳中按取消、換一份馬上再按——舊檔多建一份要付錢的整理工作，
+ * 誰晚到誰蓋掉預覽；輪詢中取消後 1 秒內重按，舊那一輪拿到「已取消」反過來報紅字、清掉新那一份的記號）。
+ */
+let previewRun = 0
 
 /**
  * 把整理結果攤進預覽畫面。第一次整理與「接回上次那份」共用同一份,
@@ -2754,10 +2877,11 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode) {
 }
 
 async function runPreview() {
+  const run = ++previewRun
+  const stale = () => run !== previewRun
   previewing.value = true
   previewError.value = ''
   previewStillRunning.value = false
-  previewCancelled = false
   resetJobPoll()
   try {
     // backgroundAdvance：只有這條路（單筆匯入）的結果有人會回來收——記號落在 localStorage、
@@ -2781,7 +2905,7 @@ async function runPreview() {
       await putFileToSignedUrl(up.uploadUrl, file)
       // 上傳可能跑好幾秒:期間按了取消就到此為止,不要再去建一份沒人要的整理工作。
       // （下面的 reset 只是把「上傳檔案」的進度數字清掉，之後才進輪詢階段）
-      if (previewCancelled) return
+      if (stale()) return
       resetJobPoll()
       body.fileName = file.name
       body.contentType = file.type
@@ -2808,8 +2932,12 @@ async function runPreview() {
       '/api/ai/knowledge/preview-jobs',
       { method: 'POST', body },
     )
-    // 上傳大檔那段可能跑好幾秒,期間按了取消就別再往下建工作(否則會留下一份沒人要的記號)
-    if (previewCancelled) return
+    // 建工作那一下也可能跑好幾秒：期間按了取消，伺服器那份已經建好、而且帶著 backgroundAdvance
+    // （排程會付錢把它做完）——取消那一刻還不知道它的編號、停不掉，這裡補停
+    if (stale()) {
+      if (created.jobId) apiFetch(`/api/ai/knowledge/preview-jobs/${created.jobId}`, { method: 'DELETE' }).catch(() => {})
+      return
+    }
 
     /**
      * 這份東西已經匯過了（`C-134`）：後端在**花錢整理之前**就擋下來，這裡只負責給兩條路。
@@ -2828,11 +2956,11 @@ async function runPreview() {
     ignoreDuplicateOnce.value = false // 用掉了就歸位，下一份重新守門
     lastPreviewJobId.value = created.jobId // 取消端點與 bulk-create 冪等鍵（C-46）都要用
     // 記號要在開始等之前就落地:最需要接回來的正是「等很久所以跑去做別的事」那一種
-    saveJobMarker(created.jobId, mode.value)
-    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId)
+    saveJobMarker(created.jobId, mode.value, mode.value === 'file' ? fileName.value : '')
+    const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId, { isStale: stale })
 
-    // 輪詢回來之後也要再確認一次:取消旗標是在 await 期間被設起來的
-    if (previewCancelled) return
+    // 輪詢回來之後也要再確認一次:取消是在 await 期間按的
+    if (stale()) return
 
     if (!res.chunks.length) {
       clearJobMarker()
@@ -2844,7 +2972,7 @@ async function runPreview() {
     step.value = 'preview'
   }
   catch (err: any) {
-    if (previewCancelled) return // 使用者自己按取消,不是錯誤(記號已在 cancelPreview 清掉)
+    if (stale()) return // 使用者自己按取消（記號已在 cancelPreview 清掉）、或已經開始另一輪：都不是錯誤
     // 等太久 ≠ 失敗:逾時的時候伺服器那份工作還活著(而且 2026-09-03 起維護排程會繼續推它),
     // 記號留著讓人下次進來接著看;真的失敗(伺服器已標 error)才清掉——留著只會在下次進頁面時
     // 再報一次同一個錯。
@@ -2861,14 +2989,17 @@ async function runPreview() {
       ).slice(0, 300)
   }
   finally {
-    previewing.value = false
-    resetJobPoll()
+    // 被取代的那一輪不碰畫面：previewing 已經由取消或新那一輪接手了
+    if (!stale()) {
+      previewing.value = false
+      resetJobPoll()
+    }
   }
 }
 
 /** 取消整理:輪詢停掉、畫面回到可操作狀態（composable 早就有 cancel，只是這個視窗沒接） */
 function cancelPreview() {
-  previewCancelled = true
+  previewRun++ // 正在跑的那一輪（整理或接回）從這一刻起作廢
   cancelJobPoll()
   previewing.value = false
   // ⚠️ 這裡**不可以**接著 resetJobPoll():reset 會把剛設好的取消旗標清成 false,
@@ -3172,7 +3303,9 @@ async function runImport() {
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || err?.message || '匯入失敗', 'error')
+    // ⚠️ 中文的原因在 data.statusMessage：err.statusMessage 是 HTTP 狀態那一行（HTTP/2 下是空的），
+    //    只看它的話空間不夠、舊的那份已經被刪掉這些 403／404 會變成一串「[POST] …: 403」（審查實測）
+    showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '匯入失敗', 'error')
   }
   finally {
     importing.value = false
@@ -3180,7 +3313,13 @@ async function runImport() {
 }
 
 function resetAll() {
-  clearJobMarker()
+  // 背景還在整理的那一份（畫面等太久、交給排程推的單份）不是這一輪的東西：一次好幾份／整站跑完收工時
+  // 一起清掉的話，它做完沒人接、側欄的「整理中」也跟著消失（2026-10-11 審查）。
+  // 它的那句「完成後這裡會自動顯示結果」也要留著；其餘的錯誤字跟著這一輪清掉
+  if (!previewStillRunning.value) {
+    clearJobMarker()
+    previewError.value = ''
+  }
   step.value = 'input'
   pasteInput.value = '' // mode 由這個與 selectedFile 衍生，不再是可寫的狀態
   fileName.value = ''
@@ -3202,7 +3341,6 @@ function resetAll() {
   ocrFromPhoto.value = false
   healthWarnings.value = []
   result.value = null
-  previewStillRunning.value = false
   metaOpen.value = false
   // ⚠️ 探測狀態要一起清（2026-09-03 code review 抓到）：只清輸入不清這兩個的話，
   //    再貼同一個試算表連結時 watcher 會因為「這個網址測過了」直接 return，
@@ -3250,13 +3388,23 @@ function close() {
  * ⛔ 不可以擋著不讓關：他可能真的要走。要做的是「講清楚再放人」，並在收工時補一句交代。
  */
 async function onBeforeClose(done: () => void) {
-  // 一次好幾份還在跑（`C-296`④）：同整站匯入，講清楚再放人，不擋
-  if (batchRunning.value) {
+  // 一次好幾份（`C-296`④）：同整站匯入，講清楚再放人，不擋。數字照實講——
+  // 「正在跑的會跑完」與「還沒開始的不會匯入」是兩件事；同名、等他決定的那幾份關掉就不匯入了，也要講
+  const batch = step.value === 'fileBatch' ? fileBatchRef.value?.snapshot() : undefined
+  if (batch && (batchRunning.value || batch.conflicts)) {
+    const conflictLine = batch.conflicts ? `跟現有資料同名、等你決定的 ${batch.conflicts} 份不會匯入（整理好的結果會丟掉）。` : ''
     try {
       await ElMessageBox.confirm(
-        '已經匯好的會保留在知識庫；正在整理的那幾份會跑完、也會匯入；還沒開始的不會匯入。',
-        '要停止匯入嗎？',
-        { confirmButtonText: '停止', cancelButtonText: '繼續整理', type: 'warning' },
+        batchRunning.value
+          ? `已經匯好的 ${batch.done} 份會保留在知識庫。`
+            + (batch.processing ? `正在整理的 ${batch.processing} 份會跑完、也會匯入。` : '')
+            + (batch.queued ? `還沒開始的 ${batch.queued} 份不會匯入。` : '')
+            + conflictLine
+          : conflictLine,
+        batchRunning.value ? '要停止匯入嗎？' : '還有檔案在等你決定',
+        batchRunning.value
+          ? { confirmButtonText: '停止', cancelButtonText: '繼續整理', type: 'warning' }
+          : { confirmButtonText: '關掉，不匯入', cancelButtonText: '回去決定', type: 'warning' },
       )
     }
     catch {
@@ -3290,6 +3438,7 @@ async function onBeforeClose(done: () => void) {
 }
 
 function onDialogClose() {
+  dialogShown.value = false // 見 dialogShown：關閉動畫跑完之前就要算「看不到了」
   // 整站批次還在跑時關窗(ESC / X):通知 worker 收工,收尾由 runSiteImport 負責
   // (它會 emit imported 讓列表帶出已建立的資料,再 resetAll)——這裡不能先 reset,
   // 否則正在跑的那幾頁寫完後會把狀態寫回已清空的 ref。
@@ -3300,6 +3449,14 @@ function onDialogClose() {
   // 一次好幾份還在跑：叫它收工，收尾（刷新清單、講一句）由 onFileBatchFinished 負責
   if (batchRunning.value) {
     fileBatchRef.value?.abort()
+    return
+  }
+  // 一次好幾份已經跑過（不論成敗）：關窗＝這一批收工。⛔ 不留到下次——以前成功過的會清、
+  // 一份都沒成的卻留著，下次打開還是那張跑完的舊清單（2026-10-11 審查：同樣關窗兩種結果）。
+  // 沒按過「整理並匯入」的照「關窗保留輸入」的規矩留著
+  if (step.value === 'fileBatch' && fileBatchRef.value?.snapshot().started) {
+    if (result.value) emit('imported', null)
+    resetAll()
     return
   }
   if (result.value) {

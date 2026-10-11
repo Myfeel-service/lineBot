@@ -17,6 +17,7 @@
  *    - 第一段不按「先看 AI 整理的結果」：只驗選檔、判別、錯誤訊息
  *    - 第二段（空間不夠時收到滿為止，`C-296`②）會按到底，但上傳、建整理工作、輪詢、匯入
  *      **全部在瀏覽器裡回假的**——沒有一支送到伺服器，也不花 AI 的錢
+ *    - 之後各段（一次好幾份、同名、空間滿、重試、504、取消後重來）同一套：全部回假的
  */
 import { deflateRawSync } from 'node:zlib'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -433,6 +434,20 @@ try {
     else fail('同名那份沒有停下來問', dupRow)
     if (csvRow.includes('原文超過 10 萬字已截斷')) pass('單份路會講的「原文被截斷」一次好幾份也講')
     else fail('一次好幾份沒講截斷', csvRow)
+    // 還有沒決定的就按「上一步」／✕：⛔ 不可以默默丟掉付過錢的整理結果（2026-10-11 審查）
+    for (const [label, click] of [
+      ['上一步', () => [...document.querySelectorAll('.kb-import-actions .el-button')].find(b => b.innerText.includes('上一步'))?.click()],
+      ['✕', () => document.querySelector('.kb-import-dialog .el-dialog__headerbtn')?.click()],
+    ]) {
+      await pg.evaluate(click)
+      const asked = await waitFor(pg, () => document.querySelector('.el-message-box')?.innerText.includes('等你決定'), null, 5000)
+      await pg.evaluate(() => [...document.querySelectorAll('.el-message-box .el-button')].find(b => b.innerText.includes('回去決定'))?.click())
+      await waitFor(pg, () => !document.querySelector('.el-message-box') || getComputedStyle(document.querySelector('.el-overlay-message-box') ?? document.body).display === 'none', null, 3000)
+      await sleep(400)
+      const stillThere = await pg.$$eval('.kb-site-row', els => els.some(e => e.innerText.includes('退換貨政策.docx') && e.innerText.includes('等你決定')))
+      if (asked && stillThere) pass(`還有同名沒決定就按「${label}」→ 先問一聲，選「回去決定」清單原封不動`)
+      else fail(`按「${label}」沒有先問、或清單不見了`, `asked=${asked} stillThere=${stillThere}`)
+    }
     await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('換掉舊的'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
     const replaced = bulks.find(b => b.name === '退換貨政策.docx')
@@ -441,7 +456,8 @@ try {
     await pg.close()
   }
 
-  // ── 第六段：空間已經滿了 → ⛔ 一份都不上傳、不整理（不花 AI 的錢），每份講原因 ──
+  // ── 第六段：空間已經滿了 → ⛔ 一份都不上傳、不整理（不花 AI 的錢）；按之前就講、按鈕按不下去 ──
+  // （2026-10-11 前是「按下去每一份各自失敗」——結果一樣沒花錢，但按了才知道、重試也是馬上又失敗）
   {
     const uploads = []
     const pg = await openImportDialog((req) => {
@@ -452,11 +468,163 @@ try {
     })
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
     await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+    const line = await pg.$eval('.kb-quota-line', el => el.innerText).catch(() => '')
+    const disabled = await pg.$eval('.kb-import-actions .el-button--primary', el => el.disabled || el.classList.contains('is-disabled')).catch(() => null)
     await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
-    await waitFor(pg, () => document.querySelector('.kb-site-summary')?.innerText.includes('已建立'), null, 30_000)
-    const rowsFull = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
-    if (!uploads.length && rowsFull.every(t => t.includes('知識空間滿了，這份沒有整理'))) pass('空間滿了 → 一份都沒上傳、沒整理，每份講原因與怎麼辦')
-    else fail('空間滿了還在上傳／沒講原因', `uploads=${uploads.length}\n     ${rowsFull.join('\n     ')}`)
+    await sleep(800)
+    if (line.includes('知識空間滿了') && disabled === true && !uploads.length) pass(`空間滿了 → 清單上方先講（「${line.trim().slice(0, 40)}…」）、按鈕按不下去、一份都沒上傳`)
+    else fail('空間滿了沒有先講／還能按／還在上傳', `line=${line} disabled=${disabled} uploads=${uploads.length}`)
+    await pg.close()
+  }
+
+  // ── 第七段：匯入那一下出錯 → 重試直接拿整理好的結果匯（⛔ 不再上傳、不再付一次 AI 的錢）；
+  //            閘道逾時（504）不等於沒做 → 同一個 importId 自動再送一次；清單上亂丟檔案不會整頁跳走 ──
+  {
+    const uploadsBy = {}
+    const jobsBy = {}
+    const bulks = []
+    const names = {}
+    let seq = 0
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 0, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') {
+        const name = JSON.parse(req.postData() || '{}').fileName
+        uploadsBy[name] = (uploadsBy[name] ?? 0) + 1
+        return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: `https://storage.googleapis.com/fake-bucket/${encodeURIComponent(name)}?sig=fake` })
+      }
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const name = JSON.parse(req.postData() || '{}').fileName
+        const id = `job-retry-${++seq}`
+        names[id] = name
+        jobsBy[name] = (jobsBy[name] ?? 0) + 1
+        return json({ jobId: id, status: 'processing', phase: 'chunk' })
+      }
+      const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/(job-retry-\d+)/)
+      if (pj && m === 'GET') return json({ status: 'done', sourceName: names[pj[1]], chunks: [{ title: `${names[pj[1]]} 一`, content: '內容', tags: [], questions: [] }], warnings: [], existingMatches: [], contentHash: 'h' })
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push({ name: b.source?.name, importId: b.importId })
+        const tries = bulks.filter(x => x.name === b.source?.name).length
+        if (b.source?.name === '退換貨政策.docx' && tries === 1) return { status: 500, contentType: 'application/json', body: JSON.stringify({ statusCode: 500, statusMessage: '資料庫暫時忙碌，請再試一次' }) }
+        if (b.source?.name === '商品匯出.csv' && tries === 1) return { status: 504, contentType: 'text/plain', body: 'gateway timeout' }
+        return json({ sourceId: 's', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
+    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+
+    // 檔案掉在清單上：瀏覽器的預設動作（整頁打開那個檔）要被擋下，而且講該怎麼加
+    const stray = await pg.evaluate(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['x'], '再一份.pdf', { type: 'application/pdf' }))
+      const target = document.querySelector('.kb-site-list')
+      const over = new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true })
+      target.dispatchEvent(over)
+      const drop = new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })
+      target.dispatchEvent(drop)
+      return { over: over.defaultPrevented, drop: drop.defaultPrevented }
+    })
+    const strayToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('上一步')), null, 3000)
+    if (stray.over && stray.drop && strayToast) pass('一次好幾份的清單上再丟檔案 → 不會整頁打開那個檔，並講「按上一步回去再放」')
+    else fail('清單上丟檔案沒有擋下來', JSON.stringify({ ...stray, strayToast }))
+
+    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-site-summary'), null, 60_000)
+    const csvBulks = bulks.filter(b => b.name === '商品匯出.csv')
+    if (csvBulks.length === 2 && csvBulks[0].importId === csvBulks[1].importId) pass('匯入遇到 504 → 用同一個 importId 自動再送一次（伺服器認得是同一批，不會多建一份）')
+    else fail('504 沒有自動重送／重送換了 importId', JSON.stringify(csvBulks))
+    const docRow1 = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
+    if (docRow1.includes('資料庫暫時忙碌')) pass('匯入失敗講伺服器給的原因（不是一串「[POST] …: 500」）')
+    else fail('匯入失敗的原因不對', docRow1)
+
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-import-actions .el-button--primary')].find(b => b.innerText.includes('重試'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
+    const docBulks = bulks.filter(b => b.name === '退換貨政策.docx')
+    if (uploadsBy['退換貨政策.docx'] === 1 && jobsBy['退換貨政策.docx'] === 1 && docBulks.length === 2 && docBulks[0].importId === docBulks[1].importId) {
+      pass('整理好才失敗的那份按「重試」→ 直接拿整理好的結果匯（上傳 1 次、整理 1 次、匯入 2 次同一個 importId）')
+    }
+    else fail('重試又重新上傳／重新整理了', JSON.stringify({ uploads: uploadsBy, jobs: jobsBy, docBulks }))
+    await pg.close()
+  }
+
+  // ── 第八段：放了兩份、收得了的只有一份 → 那一份走有預覽的單份路，收不了的那份當場講 ──
+  {
+    const pg = await openImportDialog()
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.doc)
+    await sleep(800)
+    const fileShown = await pg.$eval('.kb-drop__filename', el => el.innerText).catch(() => '')
+    const listShown = !!(await pg.$('.kb-site-row'))
+    const toasts = await pg.$$eval('.toast', els => els.map(e => e.innerText))
+    if (fileShown === '退換貨政策.docx' && !listShown && toasts.some(t => t.includes('另外 1 份收不了') && t.includes('舊說明書.doc'))) {
+      pass(`兩份裡只有一份收得了 → 走單份路（先預覽），收不了的那份當場講：「${toasts.find(t => t.includes('收不了'))}」`)
+    }
+    else fail('一份收得了、一份收不了的情況不對', `file=${fileShown} list=${listShown} toasts=${toasts.join('｜')}`)
+    // 第一步的投放區照樣收檔（視窗層的「別讓瀏覽器打開檔案」不可以把它也擋掉）
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-drop__file button')].find(b => b.innerText.includes('換一個'))?.click())
+    await sleep(300)
+    await pg.evaluate(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['品名,價格\nW1,100\n'], '拖進來的.csv', { type: 'text/csv' }))
+      document.querySelector('.kb-drop')?.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+    })
+    const dropped = await waitFor(pg, () => document.querySelector('.kb-drop__filename')?.innerText === '拖進來的.csv', null, 3000)
+    if (dropped) pass('第一步的投放區照樣收拖進來的檔')
+    else fail('第一步的投放區收不到拖進來的檔了')
+    await pg.close()
+  }
+
+  // ── 第九段：上傳中按取消、換一份馬上再按 → 舊那一輪不可以復活（不多建工作、不蓋掉新那一份的預覽）──
+  {
+    const jobsFor = []
+    let slowPut = true
+    const pg = await openImportDialog(async (req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 0, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') {
+        const name = JSON.parse(req.postData() || '{}').fileName
+        return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: `https://storage.googleapis.com/fake-bucket/${encodeURIComponent(name)}?sig=fake` })
+      }
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) {
+        // 第一份（舊的那一輪）的上傳故意拖 2.5 秒：取消按在上傳途中
+        if (m === 'PUT' && slowPut && url.includes(encodeURIComponent('退換貨政策.docx'))) { slowPut = false; await sleep(2500) }
+        return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+      }
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const name = JSON.parse(req.postData() || '{}').fileName
+        jobsFor.push(name)
+        return json({ jobId: `job-race-${jobsFor.length}`, status: 'processing', phase: 'chunk' })
+      }
+      const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/job-race-(\d+)/)
+      if (pj && m === 'GET') {
+        const name = jobsFor[Number(pj[1]) - 1]
+        return json({ status: 'done', sourceName: name, sourceType: 'file', chunks: [{ title: `${name} 的內容`, content: '內容', tags: [], questions: [] }], warnings: [], existingMatches: [], contentHash: 'h' })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-waiting'), null, 5000)
+    await pg.evaluate(() => document.querySelector('.kb-waiting .el-button')?.click())
+    await sleep(300)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-drop__file button')].find(b => b.innerText.includes('換一個'))?.click())
+    await sleep(300)
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.csv)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
+    await sleep(3500) // 等舊那一輪的慢上傳回來：它要是復活，會在這段時間多建一份工作、把預覽換掉
+    // 預覽摘要那一行寫著「名稱：…」：被舊那一輪蓋掉的話會變成退換貨政策.docx
+    const summaryNow = await pg.$eval('.kb-preview-summary', el => el.innerText).catch(() => '')
+    if (jobsFor.length === 1 && jobsFor[0] === '商品匯出.csv' && summaryNow.includes('商品匯出.csv') && !summaryNow.includes('退換貨政策')) {
+      pass('上傳中取消、換一份馬上再按 → 舊那一輪沒有復活（只建了新那一份的工作，預覽沒被換掉）')
+    }
+    else fail('取消後舊那一輪復活了', `jobs=${JSON.stringify(jobsFor)} summary=${summaryNow.replace(/\s+/g, ' ').slice(0, 160)}`)
     await pg.close()
   }
 }

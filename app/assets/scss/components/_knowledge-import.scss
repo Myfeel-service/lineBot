@@ -379,6 +379,15 @@
   text-align: center;
 }
 
+/* 交代「做了什麼」（換掉了哪一份、跳過了哪一份）：不是提醒，用一般的灰字，跟 ⚠︎ 那幾行分得出來 */
+.kb-file-batch__info {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+  white-space: normal;
+}
+
 /* 同名等他決定的那一列：一句話＋兩顆按鈕，窄的時候按鈕換行不擠掉那句話 */
 .kb-file-batch__conflict {
   display: flex;
