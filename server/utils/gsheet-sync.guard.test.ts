@@ -38,6 +38,11 @@ vi.mock('./ai-knowledge-chunker', () => ({
 }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
 vi.mock('./ai-overview', () => ({ regenerateOverviewCard: vi.fn(async () => {}) }))
+// 額度另有 gsheet-sync.quota.test.ts；這裡一律當不限張數，不讓守門測試碰到帳單
+vi.mock('./ai-knowledge-quota', () => ({
+  getKnowledgeChunkQuota: vi.fn(async () => ({ used: 0, limit: null, planName: '企業' })),
+  invalidateKnowledgeChunkCount: vi.fn(),
+}))
 
 const { listChunksBySource } = vi.hoisted(() => ({ listChunksBySource: vi.fn() }))
 vi.mock('./ai-knowledge-sources', () => ({

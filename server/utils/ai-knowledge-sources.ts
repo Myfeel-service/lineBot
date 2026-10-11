@@ -108,6 +108,11 @@ export interface SourceSummary {
    */
   manualKeptCount: number
   /**
+   * type='gsheet'：上次同步時「表格上有、但知識空間滿了沒新增」的列數（`C-296`）。
+   * >0 也要在來源頁常駐講：店家在表格加了一列、AI 卻答不出來，原因只在這裡。
+   */
+  quotaSkippedCount: number
+  /**
    * type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的、或留存失敗）。
    * ⛔ 不回 Storage 路徑：下載一律走 file-url 端點發短效網址。
    */
@@ -145,6 +150,7 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
     detectStalledAtMs: tsToMs(raw.detectStalledAt),
     manualKeptCount: Number((raw as Record<string, unknown>).manualKeptCount ?? 0),
+    quotaSkippedCount: Number((raw as Record<string, unknown>).quotaSkippedCount ?? 0),
     originalFile: raw.filePath
       ? { name: String(raw.fileName || raw.name || ''), size: Number(raw.fileSize ?? 0) }
       : null,
@@ -337,6 +343,30 @@ export async function countSourceChunks(
     base.where('isDeleted', '==', true).count().get(),
   ])
   return Math.max(0, allAgg.data().count - deletedAgg.data().count)
+}
+
+/**
+ * 這個來源底下「有算進方案額度」的卡有幾張——跟 `countWorkspaceChunks`（ai-knowledge-quota）
+ * **同一把尺**：不含回收桶、⛔ 也不含「等你看過」的草稿（`draft`）。
+ *
+ * 給「蓋掉這一份會騰出多少空間」用（bulk-create 的「更新這一份」）。拿 countSourceChunks（含草稿）
+ * 去扣的話，草稿本來就沒算過額度，卻被當成騰出來的空間——舊的那份有 30 張草稿，就能多塞 30 張。
+ * 軟刪除會把 status 改成 disabled，所以「在回收桶的草稿」不會被扣兩次（同 countWorkspaceChunks）。
+ */
+export async function countSourceQuotaChunks(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+): Promise<number> {
+  const base = db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('sourceId', '==', sourceId)
+  const [allAgg, deletedAgg, draftAgg] = await Promise.all([
+    base.count().get(),
+    base.where('isDeleted', '==', true).count().get(),
+    base.where('status', '==', 'draft').count().get(),
+  ])
+  return Math.max(0, allAgg.data().count - deletedAgg.data().count - draftAgg.data().count)
 }
 
 /**

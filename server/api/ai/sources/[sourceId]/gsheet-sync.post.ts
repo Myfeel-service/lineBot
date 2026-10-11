@@ -51,9 +51,17 @@ export default defineEventHandler(async (event) => {
       actor: 'human',
       action: 'source.gsheetSync',
       targetId: sourceId,
-      after: { name: String(source.data.name ?? ''), added: r.added, updated: r.updated, deleted: r.deleted },
+      after: {
+        name: String(source.data.name ?? ''),
+        added: r.added,
+        updated: r.updated,
+        deleted: r.deleted,
+        ...(r.quotaSkipped ? { quotaSkipped: r.quotaSkipped } : {}),
+      },
       note: `${String(source.data.name ?? '')}：新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted}`
         + (r.manualKept ? `；有 ${r.manualKept} 張因為被人工改過所以沒跟著表格更新` : '')
+        // 額度滿了沒新增的列（`C-296` 審查）：跟 manualKept 一樣是「表上有、知識庫沒有」，⛔ 不可以省略
+        + (r.quotaSkipped ? `；有 ${r.quotaSkipped} 列因為知識量額度滿了沒有新增` : '')
         + (body?.allowMassDeletion === true ? '；這次是使用者確認過才放行的大量刪除' : ''),
     }, db)
   }

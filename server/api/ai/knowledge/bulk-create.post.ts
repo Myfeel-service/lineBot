@@ -1,12 +1,17 @@
 import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
-import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { KNOWLEDGE_PREVIEW_JOBS_COLLECTION, loadSourceFile } from '~~/server/utils/ai-preview-jobs'
 import { deleteSourceFiles, keepOriginalFile } from '~~/server/utils/knowledge-source-files'
 import { fileExtension, KNOWLEDGE_FILE_MIME_BY_EXT } from '~~/shared/knowledge-file-types'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { countSourceChunks, invalidateCatalogSourceCache, recycleSourceChunks } from '~~/server/utils/ai-knowledge-sources'
+import {
+  countSourceChunks,
+  countSourceQuotaChunks,
+  invalidateCatalogSourceCache,
+  recycleSourceChunks,
+} from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
@@ -14,6 +19,7 @@ import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
   addWorkspaceProductName,
   createKnowledgeChunk,
+  KNOWLEDGE_CHUNKS_COLLECTION,
   normalizeChunkInput,
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
@@ -30,11 +36,63 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   manual: '手打文字',
 }
 
+/** 會建（或更新）一份資料的匯入種類；其餘的卡不掛在任何資料底下 */
+const SOURCE_WRITING_TYPES = new Set(['file', 'url', 'gsheet', 'text'])
+
 /** 同時跑幾張卡的 embedding。Gemini 免費層 RPM 15、付費層 1000+，5 算保守 */
 const EMBED_CONCURRENCY = 5
 
 // 分段切卡（大型目錄）單次可產出超過 50 張；150 張 × ~300ms embed / 併發 5 ≈ 9 秒，仍在請求時限內
 const MAX_BULK_CHUNKS = 150
+
+/**
+ * 前端帶來、會拿去當 Firestore 文件 id（importId 還會拿去組暫存檔路徑）的字串只收英數字、`-`、`_`。
+ * uuid、Firestore 自動 id、我們自己的雜湊都長這樣。
+ * ⛔ 含 `/` 的 id 會被 Firestore 當成路徑、`__x__` 是保留字——`doc()` 直接丟例外，變成沒有訊息的 500。
+ */
+const SAFE_ID_RE = /^[\w-]{1,64}$/
+
+function bodyId(raw: unknown, label: string): string {
+  if (raw === undefined || raw === null) return ''
+  const id = String(raw).trim()
+  if (!id) return ''
+  if (!SAFE_ID_RE.test(id) || /^__.*__$/.test(id)) {
+    throw createError({ statusCode: 400, statusMessage: `${label}不對，請重新整理頁面後再試一次` })
+  }
+  return id
+}
+
+/** 一筆匯入做完時記在那份資料上的結果（`importDone`）：同一筆重送時原樣回給前端 */
+interface ImportDone {
+  /** 整包請求的指紋：內容不一樣就不是「重送」，照一般匯入處理 */
+  bodyHash: string
+  total: number
+  indexed: number
+  failed: number
+  replacedChunks: number
+  originalKept: boolean | null
+}
+
+interface ExistingSource {
+  workspaceId?: string
+  type?: string
+  name?: string
+  isDeleted?: boolean
+  deletedAt?: unknown
+  filePath?: string
+  /** 最後一次把卡寫進這份資料的匯入（`importId`）；手動匯入沒帶就是 null */
+  importId?: string | null
+  /** 那筆匯入收進回收桶的舊卡張數（重送時沿用，不重收一次） */
+  importReplaced?: number
+  importDone?: ImportDone | null
+  /** 留著的原檔是哪一筆匯入留的 */
+  fileImportId?: string
+}
+
+/** 在回收桶的資料（手打文字的最後一張卡被刪掉時，來源會一起進回收桶） */
+function isRecycled(s: ExistingSource | undefined): boolean {
+  return s?.isDeleted === true || s?.deletedAt != null
+}
 
 /**
  * POST /api/ai/knowledge/bulk-create
@@ -48,19 +106,31 @@ const MAX_BULK_CHUNKS = 150
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
-  // 維運額度前置檢查（C-45）：讓使用者在開始前就看到「額度不足」，而不是建到一半死
-  await assertMaintenanceBudget(workspaceId)
   const body = await readBody(event)
 
   /**
    * importId（C-46 冪等鍵，前端帶預覽 jobId）：150 張卡 × embedding 會超過閘道 30 秒——
-   * Lambda 其實建完了，前端卻收到逾時、使用者再按一次。有 importId 時 source 與每張卡
-   * 的 id 都決定性導出：重按覆寫同一批 doc，不會留下「說有 150 條實際 30 條」的殭屍來源
-   * ＋第二批重複卡＋二次 embedding 費。
+   * Lambda 其實建完了，前端卻收到逾時、使用者再按一次（批次匯入會自動重送一次）。
+   * 有 importId 時 source 與每張卡的 id 都決定性導出：重送覆寫同一批 doc，不會留下
+   * 「說有 150 條實際 30 條」的殭屍來源＋第二批重複卡。
+   * 做完時把結果記在那份資料上（`importDone`）：同一包重送直接回上一次的結果，
+   * ⛔ 不重建卡、不重算額度、不重新留原檔——見下面「重送」那一段。
    */
-  const importId = String(body?.importId ?? '').trim().slice(0, 64)
+  const importId = bodyId(body?.importId, '這次匯入的編號')
   const idFor = (suffix: string) =>
     createHash('sha256').update(`bulk:${workspaceId}:${importId}:${suffix}`).digest('hex').slice(0, 32)
+
+  /**
+   * `replaceSourceId`（`C-135`）：把這批卡**蓋回既有那一份資料**，而不是新建一份。
+   *
+   * 為什麼要有：同名警告原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
+   * （2026-09-04 在 MYFEEL 看到同一本說明書並存三份的實況）。人真正想做的事是
+   * 「這份我重傳了、用新的蓋掉舊的」，那就得有一條路真的做得到。
+   *
+   * 舊卡走**軟刪除**（進回收桶 30 天）不是真刪：蓋錯了要救得回來，
+   * 而且來源本身留著＝資料夾、產品名、同步設定、卡片以外的設定都不會被洗掉。
+   */
+  const replaceSourceId = bodyId(body?.replaceSourceId, '要更新的那份資料編號')
 
   const rawChunks = Array.isArray(body?.chunks) ? body.chunks : []
   if (!rawChunks.length) {
@@ -69,16 +139,6 @@ export default defineEventHandler(async (event) => {
   if (rawChunks.length > MAX_BULK_CHUNKS) {
     throw createError({ statusCode: 400, statusMessage: `單次最多匯入 ${MAX_BULK_CHUNKS} 張卡` })
   }
-  // 方案知識量前置檢查（D-69 拍板④）：同 assertMaintenanceBudget 的用意——
-  // 在開始 embedding 之前就講清楚「不夠」，而不是建到一半才死。
-  // 兩個以前沒算對的地方（`C-296`）：
-  //  ① 總表也是一條、也算額度——以前沒算，剛好滿的時候會超收 1 條；
-  //  ② 「更新這一份」的舊卡等一下就進回收桶、不再算額度——以前照算，換一份新版說明書
-  //     會被自己的舊卡擋下來（新版 40 條＋舊版 40 條＞上限）。外帳號的 id 數出來是 0，不會被拿來灌額度。
-  const overviewAdding = body?.overviewCard?.title && body?.overviewCard?.content ? 1 : 0
-  const replacingId = String(body?.replaceSourceId ?? '').trim().slice(0, 64)
-  const freed = replacingId ? await countSourceChunks(getDb(), workspaceId, replacingId) : 0
-  await assertKnowledgeChunkQuota(workspaceId, rawChunks.length + overviewAdding - freed)
 
   const inputs = rawChunks.map(normalizeChunkInput)
   for (const input of inputs) {
@@ -98,29 +158,108 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
 
-  /**
-   * `replaceSourceId`（`C-135`）：把這批卡**蓋回既有那一份資料**，而不是新建一份。
-   *
-   * 為什麼要有：同名警告原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
-   * （2026-09-04 在 MYFEEL 看到同一本說明書並存三份的實況）。人真正想做的事是
-   * 「這份我重傳了、用新的蓋掉舊的」，那就得有一條路真的做得到。
-   *
-   * 舊卡走**軟刪除**（進回收桶 30 天）不是真刪：蓋錯了要救得回來，
-   * 而且來源本身留著＝資料夾、產品名、同步設定、卡片以外的設定都不會被洗掉。
-   */
-  const replaceSourceId = String(body?.replaceSourceId ?? '').trim().slice(0, 64)
-  let replacedChunks = 0
-
-  // ── 建 knowledgeSource ────────────────────────
   // text 也建（type='manual'，C-47）：原本 text 不建 source → sourceId 恆 null、
   // 使用者確認過的「所屬產品」從未寫入任何地方（畫面有欄位、系統還花一次 LLM 預填＝白花），
   // 整批卡變成 7/31 稽核反覆咬人的「無主卡」——客人指名問另一台時被拿去混答，
   // 而且不屬於任何來源、無法整批管理。手寫單卡（create.post.ts）早就這樣做了，比照辦理。
+  const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
+  const writesSource = SOURCE_WRITING_TYPES.has(sourceType)
+  /**
+   * ⛔ 要「更新既有那一份」，這次匯入就一定要是會寫資料的那幾種。
+   * 以前沒擋：帶 replaceSourceId、source 卻缺或寫成 manual，額度照「會騰出舊卡」扣掉，
+   * 實際上卻不會收任何舊卡（下面那段根本不跑）、新卡照建——每送一次就多塞一份舊卡數量的卡。
+   */
+  if (replaceSourceId && !writesSource) {
+    throw createError({ statusCode: 400, statusMessage: '要更新既有那一份資料，這次匯入要是檔案、網址、Google 試算表或貼上的文字；請重新整理後再試' })
+  }
+
+  // 這批卡要掛在哪一份資料底下：更新既有＝那一份；有 importId＝決定性 id（重送落在同一份）
+  const targetSourceId = writesSource ? (replaceSourceId || (importId ? idFor('source') : '')) : ''
+  const targetSnap = targetSourceId
+    ? await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(targetSourceId).get()
+    : null
+  const target = targetSnap?.exists ? targetSnap.data() as ExistingSource : undefined
+  const targetMine = !!target && target.workspaceId === workspaceId
+  // 這筆匯入自己會建的卡（決定性 id）；重送時拿來數「會被原地覆寫的」與重組回應
+  const ownChunkIds = importId
+    ? [...inputs.map((_: unknown, i: number) => idFor(`chunk:${i}`)), ...(overviewInput ? [idFor('overview')] : [])]
+    : []
+
+  /**
+   * ── 重送（逾時後同一包再送一次）──────────────────────────
+   * 前端在 502／504／408／斷線時會用**同一包**再送一次：第一次可能其實做完了、只是閘道先逾時。
+   * 這時直接回第一次的結果（形狀一樣，多一個 `alreadyImported: true`），⛔ 什麼都不重做：
+   *  · 重建卡＝第二次 embedding 費，「更新這一份」還會把剛建好的新卡當舊卡收進回收桶；
+   *  · 重算額度＝剛好收到滿的那一批，重送一定被自己剛建好的卡擋成「知識量不夠」，畫面說失敗、其實成功了；
+   *  · 重新留原檔＝暫存那份可能已經清掉，複製失敗就會走「清掉舊原檔」把剛留好的原檔刪了。
+   * 擺在額度與維運額度檢查**之前**：第一次已經過了這兩關，剛建的卡與剛記的用量不該讓重送反過來被擋。
+   */
+  const bodyHash = importId ? createHash('sha256').update(JSON.stringify(body ?? null)).digest('hex').slice(0, 32) : ''
+  const done = importId && targetMine && target?.importId === importId ? target.importDone : null
+  if (done && done.bodyHash === bodyHash) {
+    return replayImport(db, workspaceId, targetSourceId, done, ownChunkIds)
+  }
+
+  // 維運額度前置檢查（C-45）：讓使用者在開始前就看到「額度不足」，而不是建到一半死
+  await assertMaintenanceBudget(workspaceId)
+
+  // ── 「更新既有那一份」的守門：一定要在算額度、收舊卡**之前**驗 ─────────
+  if (replaceSourceId) {
+    // 跨租戶保護：找不到或不是自己的，寧可報錯也不要默默改成「新建一份」——
+    // 使用者按的是「更新」，結果多出一份重複，正是這條路要修掉的病。
+    // ⛔ 在回收桶的也一樣：照蓋下去會把那份資料從回收桶整份救回來（payload 帶 isDeleted:false），人按的是「更新」不是「還原」
+    if (!targetMine || isRecycled(target)) {
+      throw createError({ statusCode: 404, statusMessage: '找不到要更新的資料（可能已被刪除），請重新整理後再試' })
+    }
+    /**
+     * ⛔ 型別不同不准覆蓋（`C-139`）。
+     * 同名警告列的是「名字相同」的所有資料，不分種類——上傳**檔案**時若按到一份
+     * **Google 試算表**的「更新這一份」，下面的 merge 會把 type 改成 file、url 清空，
+     * 但 `gsheetId` / `gsheetGid` 還留著：那份資料變成雜種，**自動同步從此不再跑**
+     * （型別已經不是 gsheet），而畫面上完全看不出來。
+     * 前端也會擋（不給按鈕），但前端擋不算擋——真正的守門在這裡。
+     */
+    const existingType = String(target?.type ?? '')
+    const incomingType = sourceType === 'text' ? 'manual' : sourceType
+    if (existingType && existingType !== incomingType) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: `「${String(target?.name ?? '這份資料')}」是${SOURCE_TYPE_LABEL[existingType] ?? '另一種'}來源，不能用${SOURCE_TYPE_LABEL[incomingType] ?? '這一種'}覆蓋它；請改名字另外建一份`,
+      })
+    }
+  }
+
+  /**
+   * 同一筆匯入的**重跑**：上一次已經寫過這份資料、卻沒有記下「做完了」（還在做、做到一半斷了，
+   * 或這次送來的內容跟上一次不一樣）。新建的那種：決定性 id 的資料已經在了；
+   * 更新既有的那種：資料上記的是這筆匯入（舊卡在寫這個記號之前就收完了）。
+   */
+  const resuming = !!importId && targetMine && (replaceSourceId ? target?.importId === importId : true)
+  const ownSnaps = resuming ? await db.getAll(...ownChunkIds.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id))) : []
+
+  /**
+   * 方案知識量前置檢查（D-69 拍板④）：同 assertMaintenanceBudget 的用意——
+   * 在開始 embedding 之前就講清楚「不夠」，而不是建到一半才死。
+   *  ① 總表也是一條、也算額度（`C-296`）；
+   *  ② 等一下就不再算額度的卡要扣掉——「更新這一份」的舊卡會進回收桶；同一筆匯入重跑時，
+   *     自己上一次建好的卡會被原地覆寫（決定性 id），不會變兩張。
+   * ⛔ 扣多少要跟額度**同一把尺**（countWorkspaceChunks：不含回收桶、不含草稿）：草稿本來就沒算過額度，
+   *    把它當成騰出來的空間，舊的那份有幾張草稿就能多塞幾張。
+   * ⛔ 重跑只數**這筆匯入自己的卡**，不數整份資料：資料底下可能還有手寫加進去的卡，那些不會被覆寫。
+   */
+  const overviewAdding = overviewInput ? 1 : 0
+  const freed = resuming
+    ? ownSnaps.filter(s => countsTowardQuota(s, workspaceId)).length
+    : replaceSourceId ? await countSourceQuotaChunks(db, workspaceId, replaceSourceId) : 0
+  await assertKnowledgeChunkQuota(workspaceId, inputs.length + overviewAdding - freed)
+
+  let replacedChunks = 0
+
+  // ── 建 knowledgeSource ────────────────────────
   let sourceId: string | null = null
   let keepFilePromise: Promise<boolean> | null = null
-  const sourceType = String(body?.source?.type ?? '').trim() as KnowledgeSourceType | 'text'
-  if (sourceType === 'file' || sourceType === 'url' || sourceType === 'gsheet' || sourceType === 'text') {
-    sourceId = importId ? idFor('source') : uuidv4()
+  if (writesSource) {
+    sourceId = targetSourceId || uuidv4()
     const now = FieldValue.serverTimestamp()
     const sourceUrl = String(body?.source?.url ?? '').trim()
 
@@ -152,33 +291,14 @@ export default defineEventHandler(async (event) => {
     const folderId = await resolveKnowledgeFolderId(db, workspaceId, body?.source?.folderId)
 
     // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
-    if (replaceSourceId) {
-      const existingSnap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(replaceSourceId).get()
-      const existing = existingSnap.data() as { workspaceId?: string; type?: string } | undefined
-      // 跨租戶保護：找不到或不是自己的，寧可報錯也不要默默改成「新建一份」——
-      // 使用者按的是「更新」，結果多出一份重複，正是這條路要修掉的病
-      if (!existingSnap.exists || existing?.workspaceId !== workspaceId) {
-        throw createError({ statusCode: 404, statusMessage: '找不到要更新的資料（可能已被刪除），請重新整理後再試' })
-      }
-      /**
-       * ⛔ 型別不同不准覆蓋（`C-139`）。
-       * 同名警告列的是「名字相同」的所有資料，不分種類——上傳**檔案**時若按到一份
-       * **Google 試算表**的「更新這一份」，下面的 merge 會把 type 改成 file、url 清空，
-       * 但 `gsheetId` / `gsheetGid` 還留著：那份資料變成雜種，**自動同步從此不再跑**
-       * （型別已經不是 gsheet），而畫面上完全看不出來。
-       * 前端也會擋（不給按鈕），但前端擋不算擋——真正的守門在這裡。
-       */
-      const existingType = String(existing?.type ?? '')
-      const incomingType = sourceType === 'text' ? 'manual' : sourceType
-      if (existingType && existingType !== incomingType) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: `「${String((existing as any)?.name ?? '這份資料')}」是${SOURCE_TYPE_LABEL[existingType] ?? '另一種'}來源，不能用${SOURCE_TYPE_LABEL[incomingType] ?? '這一種'}覆蓋它；請改名字另外建一份`,
-        })
-      }
-      sourceId = replaceSourceId
+    if (replaceSourceId && !resuming) {
       // 舊卡進回收桶（30 天內救得回來）；批次與「已在回收桶不重蓋」的規矩收在 utils 裡
       replacedChunks = await recycleSourceChunks(db, workspaceId, sourceId)
+    }
+    else if (resuming) {
+      // 重跑：舊卡上一次就收完了（收完才寫下這筆匯入的記號）。⛔ 不再收一次——
+      // 這時候「還活著的卡」是這筆匯入自己剛建好的新卡，收進去回收桶會多出一批假的「被蓋掉的舊卡」
+      replacedChunks = Number(target?.importReplaced ?? 0)
     }
 
     const sourcePayload: Record<string, unknown> = {
@@ -207,11 +327,16 @@ export default defineEventHandler(async (event) => {
       status: 'ready',
       isDeleted: false, // listSources 查詢層過濾用
       chunkCount: inputs.length + (overviewInput ? 1 : 0),
+      // 重送用的記號（見上面「重送」）：做完才補 importDone；沒帶 importId 的匯入一律清掉上一筆的記號，
+      // ⛔ 不清的話，那份資料的卡已經換過了，上一筆匯入晚到的重送卻還會拿到「做完了」
+      importId: importId || null,
+      importReplaced: replacedChunks,
+      importDone: null,
       createdAt: now,
       updatedAt: now,
     }
 
-    if (replaceSourceId) {
+    if (replaceSourceId || resuming) {
       /**
        * 更新既有資料＝**只蓋這次真的重傳的東西**，其餘一律留著。
        * ⛔不可以整包覆蓋：那會把使用者在這份資料上做過的設定洗掉——所屬資料夾
@@ -222,6 +347,8 @@ export default defineEventHandler(async (event) => {
       delete sourcePayload.refreshIntervalMinutes
       delete sourcePayload.onChangeBehavior
       if (typeof body?.source?.folderId !== 'string') delete sourcePayload.folderId
+      // 重跑：上一次可能已經把原檔留好了。⛔ 不重置成空的——重置了，那份原檔就變成沒人指得到的孤兒
+      if (resuming) delete sourcePayload.filePath
       // 產品名沒帶＝不改（`...(productName ? …)` 本來就不會塞進去，這裡只是把話講明）
       await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set(sourcePayload, { merge: true })
     }
@@ -234,7 +361,11 @@ export default defineEventHandler(async (event) => {
     if (productName) await addWorkspaceProductName(db, workspaceId, productName)
     // 原檔留著（`C-296`③）：跟下面建卡**同時**進行——這個請求本來就逼近閘道逾時，不能再串一段上去
     if (sourceType === 'file' && importId) {
-      keepFilePromise = keepImportedOriginal(db, workspaceId, sourceId, importId, String(body?.source?.fileName ?? ''), !!replaceSourceId)
+      keepFilePromise = resuming && target?.filePath && target?.fileImportId === importId
+        // 這筆匯入上一次就留好了：⛔ 不再複製。整理工作那份暫存可能已經清掉，複製失敗會走
+        // 「清掉舊原檔」那條路，把剛留好的這一份刪掉
+        ? Promise.resolve(true)
+        : keepImportedOriginal(db, workspaceId, sourceId, importId, String(body?.source?.fileName ?? ''), !!replaceSourceId)
     }
   }
 
@@ -282,22 +413,26 @@ export default defineEventHandler(async (event) => {
     await recordAiUsage(workspaceId, { buildEmbeddingTokens: totalEmbeddingTokens })
   }
 
-  // chunkCount 回寫實數（建 source 時寫的是「預計」數）：中途死掉重跑後這裡會補正，
-  // 不再留下「說有 150 條、實際 30 條」的殭屍來源
-  if (sourceId) {
-    const { countSourceChunks } = await import('~~/server/utils/ai-knowledge-sources')
-    const actual = await countSourceChunks(db, workspaceId, sourceId)
-    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
-      .update({ chunkCount: actual, updatedAt: FieldValue.serverTimestamp() })
-      .catch(() => {})
-  }
-
   const indexed = results.filter(r => r.status === 'indexed').length
   const failed = results.filter(r => r.status === 'failed').length
 
   // 原檔那一段（跟建卡同時跑的）在回應前收尾；它自己吞錯，不會讓匯入失敗。
   // 有沒有留成要回給畫面講——⛔ 沒留成卻什麼都不說，之後找「下載原檔」才發現沒有
   const originalKept = keepFilePromise ? await keepFilePromise : null
+
+  // chunkCount 回寫實數（建 source 時寫的是「預計」數）：中途死掉重跑後這裡會補正，
+  // 不再留下「說有 150 條、實際 30 條」的殭屍來源。
+  // 同一筆寫入記下「這筆匯入做完了」（importDone）：之後同一包重送就直接回這份結果。
+  // 寫不成不擋匯入——重送會走「重跑」那條路（覆寫同一批卡），只是多花一次 embedding。
+  if (sourceId) {
+    const actual = await countSourceChunks(db, workspaceId, sourceId)
+    const importDone: ImportDone | null = importId
+      ? { bodyHash, total: results.length, indexed, failed, replacedChunks, originalKept }
+      : null
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+      .update({ chunkCount: actual, updatedAt: FieldValue.serverTimestamp(), ...(importDone ? { importDone } : {}) })
+      .catch(e => console.warn(`[bulk-create] ${sourceId} 張數／匯入記號沒寫成（重送會整批重跑）:`, (e as Error)?.message))
+  }
 
   invalidateKnowledgeChunkCount(workspaceId)
 
@@ -306,6 +441,7 @@ export default defineEventHandler(async (event) => {
    * ⛔ 三個數字都要記（成功／失敗／被蓋掉）——只記「匯入了 150 張」而不講失敗幾張，
    *    就是這個專案一再踩到的「沉默地少給資料」。
    * ⚠️ `replacedChunks` 是被蓋掉的舊卡：人事後問「舊的那份去哪了」，答案只在這裡。
+   * ⚠️ 重跑要講出來：同一份資料兩筆「匯入 150 張」的紀錄，看的人會以為匯了兩次、有 300 張。
    */
   await writeAuditLog({
     workspaceId,
@@ -320,7 +456,8 @@ export default defineEventHandler(async (event) => {
       failedCount: failed,
     },
     note: `匯入 ${results.length} 張，成功 ${indexed} 張${failed ? `、失敗 ${failed} 張` : ''}`
-      + (replaceSourceId ? `；蓋掉原本那一份，舊的 ${replacedChunks} 張進了回收桶` : ''),
+      + (replaceSourceId ? `；蓋掉原本那一份，舊的 ${replacedChunks} 張進了回收桶` : '')
+      + (resuming ? '；這是同一筆匯入再送一次（上一次逾時或中斷），卡片原地覆寫，沒有多出一份' : ''),
   }, db)
 
   return {
@@ -333,8 +470,55 @@ export default defineEventHandler(async (event) => {
     /** 檔案來源：原檔有沒有留下來（`C-296`③）；不是檔案來源是 null */
     originalKept,
     items: results,
+    /** true＝同一包重送、上一次就做完了，這次什麼都沒重做（見「重送」那一段） */
+    alreadyImported: false,
   }
 })
+
+/** 跟 countWorkspaceChunks 同一把尺：在、是這個帳號的、不在回收桶、不是草稿 */
+function countsTowardQuota(snap: DocumentSnapshot, workspaceId: string): boolean {
+  if (!snap.exists) return false
+  const d = snap.data() as { workspaceId?: string, isDeleted?: boolean, status?: string } | undefined
+  return d?.workspaceId === workspaceId && d?.isDeleted !== true && d?.status !== 'draft'
+}
+
+/**
+ * 同一包重送、上一次就做完了：回上一次的結果。
+ * 張數照上一次記下的（跟第一次回給畫面的一樣）；每張卡的狀態讀現在的（只多花這幾張的讀取，
+ * 而且只有重送才會走到——失敗的卡被排程救回來的話，這裡看到的是救回來之後的樣子）。
+ */
+async function replayImport(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+  done: ImportDone,
+  chunkIds: string[],
+) {
+  const snaps = chunkIds.length
+    ? await db.getAll(...chunkIds.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id)))
+    : []
+  const items = snaps
+    .filter(s => s.exists && (s.data() as { workspaceId?: string } | undefined)?.workspaceId === workspaceId)
+    .map((s) => {
+      const d = s.data() as { title?: string, status?: KnowledgeChunkStatus, failureReason?: string }
+      return {
+        id: s.id,
+        status: (d.status ?? 'pending') as KnowledgeChunkStatus,
+        title: String(d.title ?? ''),
+        ...(d.failureReason ? { failureReason: String(d.failureReason) } : {}),
+      }
+    })
+  return {
+    sourceId,
+    total: done.total,
+    indexed: done.indexed,
+    failed: done.failed,
+    replacedChunks: done.replacedChunks,
+    originalKept: done.originalKept,
+    items,
+    alreadyImported: true,
+  }
+}
 
 /**
  * 把整理工作留著的原檔複製成這份資料的原檔（`C-296`③）。⛔ 永遠不丟錯：卡片才是主角。
@@ -375,6 +559,8 @@ async function keepImportedOriginal(
         fileName: kept.fileName,
         fileSize: kept.fileSize,
         fileContentType: kept.fileContentType,
+        // 記下是哪一筆匯入留的：同一筆重跑時看到這個就不再複製（見呼叫端）
+        fileImportId: jobId,
       })
       return true
     }

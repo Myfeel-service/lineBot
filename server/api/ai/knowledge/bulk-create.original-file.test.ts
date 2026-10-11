@@ -23,6 +23,7 @@ vi.mock('~~/server/utils/ai-knowledge-quota', () => ({
 }))
 vi.mock('~~/server/utils/ai-knowledge-sources', () => ({
   countSourceChunks: vi.fn(async () => 0),
+  countSourceQuotaChunks: vi.fn(async () => 0),
   recycleSourceChunks: vi.fn(async () => 3),
   invalidateCatalogSourceCache: vi.fn(),
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
@@ -30,6 +31,7 @@ vi.mock('~~/server/utils/ai-knowledge-sources', () => ({
 vi.mock('~~/server/utils/ai-knowledge-folder-guard', () => ({ resolveKnowledgeFolderId: vi.fn(async () => null) }))
 vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
+  KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks',
   addWorkspaceProductName: vi.fn(),
   createKnowledgeChunk: vi.fn(async (_db: unknown, o: { chunkId: string }) => ({ id: o.chunkId, status: 'indexed', embeddingTokens: 1 })),
   normalizeChunkInput: (raw: any) => ({ title: String(raw?.title ?? ''), content: String(raw?.content ?? ''), tags: [], questions: [], sourceId: null, isOverview: false }),
@@ -44,21 +46,28 @@ vi.mock('~~/server/utils/knowledge-source-files', () => ({
   deleteSourceFiles: vi.fn(async () => {}),
 }))
 
-/** 假 Firestore：工作文件從 JOBS 讀，來源的寫入記在 writes */
+/** 假 Firestore：工作文件從 JOBS 讀、既有來源從 SOURCES 讀，來源的寫入記在 writes */
 const JOBS: Record<string, Record<string, unknown>> = {
   jobMine: { workspaceId: WS, sourceFile: 'source.docx' },
   jobTheirs: { workspaceId: 'ws2', sourceFile: 'source.docx' },
   jobNoFile: { workspaceId: WS, sourceFile: null },
 }
+const SOURCES: Record<string, Record<string, unknown>> = {
+  srcOld: { workspaceId: WS, type: 'file', name: 'W1 使用說明書' },
+}
 const writes: Array<{ col: string, id: string, op: string, data: any }> = []
 const db: any = {
   collection: (col: string) => ({
-    doc: (id: string) => ({
-      get: async () => ({ exists: col !== 'knowledgePreviewJobs' || !!JOBS[id], data: () => (col === 'knowledgePreviewJobs' ? JOBS[id] : { workspaceId: WS, type: 'file' }) }),
-      set: async (data: any) => { writes.push({ col, id, op: 'set', data }) },
-      update: async (data: any) => { writes.push({ col, id, op: 'update', data }) },
-    }),
+    doc: (id: string) => {
+      const docs = col === 'knowledgePreviewJobs' ? JOBS : col === 'knowledgeSources' ? SOURCES : {}
+      return {
+        get: async () => ({ id, exists: !!docs[id], data: () => docs[id] }),
+        set: async (data: any) => { writes.push({ col, id, op: 'set', data }) },
+        update: async (data: any) => { writes.push({ col, id, op: 'update', data }) },
+      }
+    },
   }),
+  getAll: async (...refs: any[]) => refs.map(() => ({ exists: false, data: () => undefined })),
 }
 vi.mock('~~/server/utils/firebase', () => ({ getDb: () => db }))
 
@@ -89,7 +98,8 @@ describe('bulk-create 留原檔', () => {
     body = importBody('jobMine')
     await expect(call()).resolves.toMatchObject({ indexed: 1 })
     expect(vi.mocked(keepOriginalFile).mock.calls[0]![0]).toMatchObject({ workspaceId: WS, ext: 'docx', fileName: 'W1 使用說明書.docx' })
-    expect(fileUpdate()?.data).toMatchObject({ fileName: 'W1 使用說明書.docx', fileSize: 10 })
+    // 記下是哪一筆匯入留的：同一筆重送時看到它就不再複製（見 bulk-create.retry.test）
+    expect(fileUpdate()?.data).toMatchObject({ fileName: 'W1 使用說明書.docx', fileSize: 10, fileImportId: 'jobMine' })
     expect(fileUpdate()?.data.filePath).toMatch(new RegExp(`^knowledge-files/${WS}/`))
   })
 

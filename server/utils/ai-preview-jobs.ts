@@ -635,9 +635,19 @@ export async function findExistingSources(
     const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .where('name', '==', sourceName)
-      .limit(5)
+      // 多撈幾筆：回收桶的在下面濾掉，濾完還要湊得到 5 筆
+      .limit(10)
       .get()
-    return snap.docs.map((d) => {
+    /**
+     * ⛔ 回收桶裡的不算「已經有一份」（同 findSourceByContentHash）：列出來的話，批次匯入會問
+     *    「要不要更新這一份」，按下去等於把回收桶那份整份救回來——人按的是「更新」，不是「還原」。
+     *    墓碑有兩種寫法（新的 isDeleted:true、舊的只有 deletedAt），兩個都要看。
+     */
+    const live = snap.docs.filter((d) => {
+      const data = d.data() as { isDeleted?: boolean, deletedAt?: unknown } | undefined
+      return data?.isDeleted !== true && data?.deletedAt == null
+    })
+    return live.slice(0, 5).map((d) => {
       const data = d.data() as any
       const ts = data?.updatedAt
       const sec = ts?._seconds ?? ts?.seconds
@@ -790,33 +800,74 @@ export async function cleanupExpiredPreviewJobs(
 }
 
 /**
+ * 孤兒上傳檔掃到哪裡了（物件名稱，下一輪從這裡接著掃）。null＝從頭開始。
+ * 只活在這個執行體裡：冷啟動就從頭掃——見 cleanupOrphanUploads 為什麼這樣也追得上。
+ */
+let orphanSweepCursor: string | null = null
+
+/**
  * 清 preview-uploads/ 的孤兒上傳檔（C-49E）：使用者選了檔、上傳到一半按取消
  * （最常見的操作）那顆檔永遠沒人刪——唯一的刪除點在 preview-jobs 端點被呼叫到時。
  * 超過 24 小時的一律清（正常流程上傳後幾秒內就被消費掉）。
  *
  * ⛔**只給排程呼叫,不要塞進使用者請求**:列舉 + 逐檔刪除最壞是一次 list 加數百次
  * 往返,掛在「建立匯入工作」那種本來就逼近閘道逾時的端點上會讓它直接超時。
- * 每輪限量刪，剩下的下一輪繼續（10 分鐘一輪，追得上任何正常累積速度）。
+ *
+ * 分頁掃，每輪有上限（掃幾個、刪幾個、花多久），剩下的下一輪繼續（10 分鐘一輪）。
+ * ⛔ 以前只看「照名稱排前 300 個」：前面那段被還沒滿 24 小時的檔（或刪不掉的檔）佔滿時，
+ *    排在後面的孤兒**永遠輪不到**——名稱是 `{workspaceId}/{uuid}`，哪家排前面是固定的。
+ * 現在每輪從上一輪停下的地方接著掃、掃到底再從頭來，所以每個檔遲早都會被看到；
+ * 冷啟動丟了游標就從頭掃，而開頭那段會越掃越短（過期的都刪了，留下的只有不到 24 小時的），
+ * 一輪掃得完的量（預設 5000）遠大於一天正常累積的孤兒數。
  */
 export async function cleanupOrphanUploads(
   maxDeletes = 50,
-): Promise<{ scanned: number; purged: number }> {
+  opts: { pageSize?: number; maxScan?: number; timeBudgetMs?: number } = {},
+): Promise<{ scanned: number; purged: number; failed: number; reachedEnd: boolean }> {
+  const pageSize = opts.pageSize ?? 500
+  const maxScan = opts.maxScan ?? 5000
+  const deadline = Date.now() + (opts.timeBudgetMs ?? 20_000)
+  const cutoff = Date.now() - 24 * 3600_000
   let purged = 0
   let scanned = 0
+  let failed = 0
+  let reachedEnd = false
+  // 最後一個「看過」的檔名；下一輪從它開始（startOffset 含它本身，重看一次無妨：刪掉的已經不在了）
+  let lastSeen = ''
   try {
-    const [files] = await getStorage().bucket().getFiles({ prefix: 'preview-uploads/', maxResults: 300 })
-    scanned = files.length
-    const cutoff = Date.now() - 24 * 3600_000
-    for (const f of files) {
-      if (purged >= maxDeletes) break
-      const createdMs = Date.parse(String(f.metadata?.timeCreated ?? '')) || 0
-      if (createdMs && createdMs < cutoff) {
-        await f.delete().then(() => { purged++ }).catch(() => {})
+    const bucket = getStorage().bucket()
+    const startOffset = orphanSweepCursor
+    let pageToken: string | undefined
+    let stopped = false
+    while (!stopped) {
+      const [files, nextQuery] = await bucket.getFiles({
+        prefix: 'preview-uploads/',
+        maxResults: pageSize,
+        autoPaginate: false,
+        ...(startOffset ? { startOffset } : {}),
+        ...(pageToken ? { pageToken } : {}),
+      })
+      for (const f of files) {
+        if (purged >= maxDeletes) { stopped = true; break }
+        scanned++
+        lastSeen = f.name
+        const createdMs = Date.parse(String(f.metadata?.timeCreated ?? '')) || 0
+        if (createdMs && createdMs < cutoff) {
+          // 刪不掉的不算進刪除上限（不然幾個刪不掉的檔就能讓每一輪都白跑）；照實計數
+          await f.delete().then(() => { purged++ }).catch(() => { failed++ })
+        }
       }
+      if (stopped) break
+      pageToken = (nextQuery as { pageToken?: string } | null | undefined)?.pageToken
+      if (!pageToken) { reachedEnd = true; break }
+      if (scanned >= maxScan || Date.now() > deadline) break
     }
+    // 掃到底＝下一輪從頭來（開頭那段可能有剛滿 24 小時的）；沒掃完＝從停下的地方接著掃
+    orphanSweepCursor = reachedEnd ? null : (lastSeen || orphanSweepCursor)
   }
   catch (e) {
     console.warn('[cleanup-orphan-uploads] sweep failed:', e)
   }
-  return { scanned, purged }
+  if (failed) console.warn(`[cleanup-orphan-uploads] ${failed} 個過期上傳檔刪不掉（下一輪再試）`)
+  return { scanned, purged, failed, reachedEnd }
 }

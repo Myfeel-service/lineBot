@@ -111,9 +111,9 @@ export function quotaForRole(
  * （見 ai-knowledge-chunks.ts 的 isBudgetBlock），但「知識量滿了」不是下個月會自己好的事，
  * 排程拿它當暫時性錯誤重試只會白跑。
  *
- * ⚠️ 已知取捨：匯入逾時後**重按**會被自己的額度擋到——重按其實是覆寫同一批 doc
- * （決定性 chunkId）、不會真的增加張數，但這裡只看「現有 + 這批」。訊息把實際數字
- * 都印出來，客人看得懂發生什麼事；要根治得先把 importId 記到卡上才數得準。
+ * 這裡只看「現有 + 這批」：會原地覆寫、不增加張數的那幾張要由呼叫端先扣掉。
+ * （匯入逾時後同一包重送：`bulk-create` 2026-10-11 起認得出來，直接回上一次的結果、不走到這裡；
+ *  同一筆重跑則只算這筆匯入自己的卡——見那支的「重送」一段。）
  */
 export async function assertKnowledgeChunkQuota(
   workspaceId: string,

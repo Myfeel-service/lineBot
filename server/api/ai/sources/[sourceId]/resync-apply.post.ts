@@ -9,7 +9,9 @@ import {
   countSourceChunks,
   getSource,
   KNOWLEDGE_SOURCES_COLLECTION,
+  listChunksBySource,
 } from '~~/server/utils/ai-knowledge-sources'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import {
   buildChunkSoftDeletePatch,
   createKnowledgeChunk,
@@ -23,7 +25,6 @@ import { regenerateOverviewCard } from '~~/server/utils/ai-overview'
 import {
   countDivergentKeeps,
   loadDiffExemptIds,
-  loadOldChunksForDiff,
   type DiffAction,
   type DiffEntry,
 } from '~~/server/utils/ai-knowledge-resync'
@@ -71,9 +72,35 @@ export default defineEventHandler(async (event) => {
 
   // entries 整包由 client 提供:任何引用舊卡的動作（覆寫 / 刪除 / questions 回填）都必須
   // 先驗證該卡確實屬於本 workspace + 本 source,否則帶任意 chunkId 就能跨租戶刪改。
-  const ownedChunkIds = new Set(
-    (await loadOldChunksForDiff(db, workspaceId, sourceId)).map(c => c.id),
-  )
+  // 直接讀 listChunksBySource（loadOldChunksForDiff 包的就是它、一樣排除總覽卡）：
+  // 下面算額度還要知道哪幾張是草稿，同一次讀取一起拿，不多讀一輪
+  const sourceChunks = (await listChunksBySource(db, workspaceId, sourceId)).filter(c => !c.isOverview)
+  const ownedChunkIds = new Set(sourceChunks.map(c => c.id))
+  const draftChunkIds = new Set(sourceChunks.filter(c => c.status === 'draft').map(c => c.id))
+
+  /**
+   * 方案知識量（`C-296` 審查）：套用前先算這次**淨增加**幾張，超過剩下的空間就整次不套用（403）。
+   * 為什麼要有：匯入時空間不夠可以只收前幾條（批次匯入「收到滿為止」），可是之後按「重新同步」，
+   * 沒收的那幾條會變成「新增」——以前這裡照建不誤，等於繞過方案上限。
+   *  · 新增算 +1；同一次套用重按（applyId 一樣）時，上一次已經建好的那張是原地覆寫，不算；
+   *  · 刪除算 −1（進回收桶就不算額度了）；⛔ 草稿除外——草稿本來就沒算額度，刪了也騰不出空間
+   *    （開帳讀網站建的那幾份網址資料底下都是草稿）；
+   *  · 覆蓋／保留不改張數。內容不合格、等一下會被略過的新增不算。
+   * 擋整次而不是建到滿為止：這裡是人一張張勾過的決定，默默只套一半比直接講「不夠」更糟。
+   */
+  let netAdding = 0
+  for (const entry of entries) {
+    const action = decisions[entry.id]
+    if (action === 'add_new' && entry.newChunk) {
+      if (validateChunkInput(normalizeChunkInput(entry.newChunk))) continue
+      if (applyId && ownedChunkIds.has(deterministicChunkId(entry.id))) continue
+      netAdding++
+    }
+    else if (action === 'delete_old' && entry.oldChunk && ownedChunkIds.has(entry.oldChunk.id) && !draftChunkIds.has(entry.oldChunk.id)) {
+      netAdding--
+    }
+  }
+  await assertKnowledgeChunkQuota(workspaceId, netAdding, db)
 
   let added = 0
   let updated = 0
@@ -228,6 +255,8 @@ export default defineEventHandler(async (event) => {
   if (errors.length === 0) {
     await clearSourceOutdated(db, sourceId)
   }
+  // 張數變了：額度的 60 秒快取要立刻作廢，不然接下來一分鐘內的匯入看到的還是套用前的張數
+  if (added || deleted) invalidateKnowledgeChunkCount(workspaceId)
 
   /*
    * 稽核（`C-254`）。⛔ `errors` 一定要記：部分失敗的那幾張留在舊版而使用者以為全套用了，
