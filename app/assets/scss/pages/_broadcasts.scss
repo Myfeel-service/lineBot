@@ -278,6 +278,10 @@
   border-radius: var(--radius-md);
   padding: 0.75rem;
   text-align: center;
+  // 標籤萬一換行，數字照樣貼底，跟旁邊幾格的數字對在同一條線（`C-301` 改標籤時量到過錯開 17px）
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .bc-stat-label {

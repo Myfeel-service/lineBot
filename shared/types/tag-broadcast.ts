@@ -1,4 +1,5 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
+import type { StoredLineStats } from '../broadcast-line-stats'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Collection: tags
@@ -355,6 +356,17 @@ export interface BroadcastDoc {
    * false 時無法以 Insight 查開封數（可能曾 400 改為無彙總重試）。
    */
   lineInsightAggregationApplied?: boolean | null
+  /**
+   * `D-121`：發完第 1／3／7 天由排程存下來的 LINE 官方統計（打開的人、點連結的人）。
+   * LINE 用現在的查法只查得到約一個月內的推播，首頁檔期卡與成效頁都讀這一份（`shared/broadcast-line-stats.ts`）。
+   * 重設再發一次時清掉。
+   */
+  lineStats?: StoredLineStats | null
+  /**
+   * `C-301`：發送時的點擊紀錄版本（`broadcast-click-track.ts` 的 `CLICK_TRACKING_VERSION`）。
+   * 沒有這一欄＝圖片上的連結（圖文訊息）當時還不會記點擊，次數只算到文字按鈕。
+   */
+  clickTrackingVersion?: number
   /**
    * 訊息已送出、但發送後的記帳（deliveries／最終統計）未寫完時的原因。
    * status 仍照 LINE 實際送達結果寫；此欄位供報表提示紀錄可能不完整。

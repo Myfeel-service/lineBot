@@ -391,13 +391,18 @@
                 <div class="bc-stat-label">失敗</div>
                 <div class="bc-stat-value">{{ report.failedCount }}</div>
               </div>
-              <div class="bc-stat-box">
-                <div class="bc-stat-label">開封數（LINE）</div>
+              <!--
+                `C-301`：後兩格改成 LINE 官方統計的**人數**。以前最後一格是我們自己記的「追蹤連結點擊」——
+                它只數得出次數、而且圖片上的連結從來沒記過：「小滑手_開賣」這格寫 0，下面 LINE 卻寫 443 人點過。
+              -->
+              <!-- 「LINE 官方統計」寫在下面兩個比例的標題；格子裡的字要一行放得下，數字才會跟旁邊幾格對齊 -->
+              <div class="bc-stat-box" title="LINE 官方統計">
+                <div class="bc-stat-label">打開的人</div>
                 <div class="bc-stat-value">{{ formatNullableStat(report.lineUniqueImpression) }}</div>
               </div>
-              <div class="bc-stat-box">
-                <div class="bc-stat-label">追蹤連結點擊</div>
-                <div class="bc-stat-value">{{ report.linkClickCount ?? report.clickCount }}</div>
+              <div class="bc-stat-box" title="LINE 官方統計">
+                <div class="bc-stat-label">點連結的人</div>
+                <div class="bc-stat-value">{{ formatNullableStat(report.lineUniqueClick) }}</div>
               </div>
             </div>
             <div v-if="report.failedRecipients?.length" class="admin-field-group">
@@ -414,28 +419,37 @@
             </div>
             <div class="admin-field-stack">
               <div class="admin-field-group">
-                <AdminFieldLabel text="開封率（LINE 官方統計，非即時、通常會延遲）" tight />
+                <AdminFieldLabel text="打開的比例（LINE 官方統計，通常發完幾個小時後才有）" tight />
                 <span class="bc-ctr-value">{{ formatPercentRate(report.openRate) }}</span>
               </div>
+              <!-- 點連結的人 ÷ 送到的人，兩邊都是人數。⛔ 以前的「追蹤連結點擊率」拿點擊次數去除人數，單位對不上 -->
               <div class="admin-field-group">
-                <AdminFieldLabel text="追蹤連結點擊率" tight />
-                <span class="bc-ctr-value">{{ (report.ctr * 100).toFixed(2) }}%</span>
+                <AdminFieldLabel text="點連結的比例（LINE 官方統計）" tight />
+                <span class="bc-ctr-value">{{ formatPercentRate(report.lineClickRate) }}</span>
               </div>
-              <div v-if="report.lineUniqueClick != null" class="admin-field-group">
-                <AdminFieldLabel text="LINE 官方統計：點過訊息內網址的人數" tight />
-                <span class="bc-ctr-value">{{ report.lineUniqueClick }}</span>
+              <div class="admin-field-group">
+                <AdminFieldLabel text="連結被點的次數（同一個人點兩次算兩次）" tight />
+                <span class="bc-ctr-value">{{ formatNullableStat(report.linkClickCount ?? report.clickCount) }}</span>
+                <p v-if="(report.clickTrackingVersion ?? 1) < 2" class="bc-insight-warn text-muted">
+                  這則發送時，圖片上的連結還不會記錄點擊，這個次數只算到文字按鈕；看成效以上面 LINE 的「點連結的人」為準。
+                </p>
               </div>
-              <p v-if="report.lineInsightError === 'LINE_AGGREGATION_SKIPPED'" class="bc-insight-warn text-muted">
-                這則推播在發送時沒有帶到 LINE 的統計標記（多半是 LINE 當下不接受，系統只好改用一般方式送出），所以這裡查不到開封數。可以再發一則新推播試試；這則的開封數請改到 LINE 官方帳號管理後台（LINE Official Account Manager）查看。
+              <p v-if="report.lineStatsStoredAt" class="bc-insight-warn text-muted">
+                LINE 的數字是 {{ formatStoredDate(report.lineStatsStoredAt) }} 存下來的（發完超過一個月，LINE 就查不到了，所以發完後會自己存一份）。
               </p>
-              <p v-else-if="report.lineInsightError" class="bc-insight-warn text-muted">
-                LINE 統計：{{ report.lineInsightError }}（剛發送完通常要等幾個小時才會有數字；請稍後再按「重新整理」）
+              <p v-else-if="report.lineInsightError === 'LINE_AGGREGATION_SKIPPED'" class="bc-insight-warn text-muted">
+                這則推播在發送時沒有帶到 LINE 的統計標記（多半是 LINE 當下不接受，系統只好改用一般方式送出），所以這裡查不到打開與點連結的人數。可以再發一則新推播試試；這則的數字請改到 LINE 官方帳號管理後台（LINE Official Account Manager）查看。
+              </p>
+              <p v-else-if="report.lineInsightError" class="bc-insight-warn text-muted" :title="String(report.lineInsightError)">
+                {{ report.lineStatsExpired
+                  ? '這則發完超過一個月，LINE 已經查不到打開與點連結的人數。'
+                  : 'LINE 的數字暫時查不到（剛發完通常要等幾個小時），請稍後再按「重新整理」。' }}
               </p>
               <p
-                v-else-if="report.lineUniqueImpression == null && report.lineInsightAggregationApplied !== false"
+                v-else-if="(report.lineUniqueImpression == null || report.lineUniqueClick == null) && report.lineInsightAggregationApplied !== false"
                 class="bc-insight-warn text-muted"
               >
-                開封數顯示「—」：LINE 官方統計通常不是即時的；而且如果實際看過的人太少，LINE 基於隱私會直接不給數字（跟聊天室看到的「已讀」不一定同步）。
+                顯示「—」：LINE 的數字通常不是即時的；而且人數少於 20 時，LINE 基於隱私不給數字（跟聊天室看到的「已讀」不一定同步）。
               </p>
             </div>
           </div>
@@ -720,7 +734,7 @@ import {
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
 import { broadcastVariableNote, renderBroadcastVariablesDeep } from '~~/shared/preview-variables'
-import { taipeiDate } from '~~/shared/time'
+import { taipeiDate, taipeiDateTime } from '~~/shared/time'
 import { festivalHint } from '~/utils/festival-hint'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
@@ -951,7 +965,14 @@ function broadcastTone(s: string): 'success' | 'neutral' | 'warning' | 'error' {
 
 function formatNullableStat(n: number | null | undefined): string {
   if (n == null) return '—'
+  // ⛔ 不加千分位：同一排的「發送總數」「成功」是原樣數字，一排兩種寫法會被看出來
   return String(n)
+}
+
+/** 存下 LINE 數字的那一天（台灣時間 M/D） */
+function formatStoredDate(ms: number): string {
+  const d = taipeiDateTime(ms).slice(5, 10)
+  return `${Number(d.slice(0, 2))}/${Number(d.slice(3, 5))}`
 }
 
 function formatPercentRate(rate: number | null | undefined): string {

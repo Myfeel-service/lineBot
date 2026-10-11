@@ -23,6 +23,7 @@ import { scanTagSuggestions } from '~~/server/utils/ai-tag-suggest'
 import { scanTagDiscovery } from '~~/server/utils/tag-discovery'
 import { rollupConversationStats } from '~~/server/utils/conversation-stats-rollup'
 import { cleanupExpiredNotifyLinks } from '~~/server/utils/notify-links'
+import { snapshotBroadcastLineStats } from '~~/server/utils/broadcast-line-stats'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -103,6 +104,9 @@ export default defineEventHandler(async (event) => {
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
     // LINE 通知裡的短網址（`C-270`）：90 天前的清掉，每輪最多 500 筆；平常是一個空查詢
     { name: 'notify:cleanup-links', run: () => cleanupExpiredNotifyLinks(db) },
+    // 推播發完第 1／3／7 天把 LINE 的「打開的人、點連結的人」存進推播那一筆（`D-121`②）：
+    // LINE 只查得到約一個月內的，首頁檔期卡要回看 90 天。一輪最多問 LINE 6 次，平常是一個空查詢
+    { name: 'broadcast:snapshot-line-stats', run: () => snapshotBroadcastLineStats(db) },
     // 計費對帳 + **每期自動續扣**（會刷卡）。安全性靠三層,不靠呼叫頻率:
     //   ① `PAYUNI_PERIOD_ENABLED !== true` 或金鑰未設 → chargeDueRecurring 直接回 0,零副作用
     //   ② 每筆訂閱在 transaction 內 claim `lastChargeDate=今天` → 同一天最多扣一次

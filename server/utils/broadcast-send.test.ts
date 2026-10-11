@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('useRuntimeConfig', () => ({ clickTrackingBaseUrl: '' }))
 
 vi.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: () => '__ts__' },
+  FieldValue: { serverTimestamp: () => '__ts__', delete: () => '__delete__' },
   Timestamp: { now: () => ({ toMillis: () => 0 }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))

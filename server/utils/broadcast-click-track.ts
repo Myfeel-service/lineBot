@@ -1,5 +1,5 @@
 /**
- * 推播發送前：將 LINE template 內的 URI action 改為先經 /api/r/:token 再 302 到原網址，
+ * 推播發送前：將訊息裡的 URI action（按鈕範本、輪播、Flex 卡、imagemap）改為先經 /api/r/:token 再 302 到原網址，
  * 以便寫入 broadcastClickLogs（multicast 同一則訊息，故 deliveryId / userId 留空，僅做活動層級統計）。
  *
  * ⚠️ token 沒有簽章，`/api/r/:token` 轉址前改成「拿推播本身比對目標網址」（`G-95`，理由寫在那支檔頭）；
@@ -9,6 +9,20 @@
 function isHttpsUrl(s: string): boolean {
   return /^https:\/\//i.test(s.trim())
 }
+
+/**
+ * 推播發送時會在 `broadcasts/{id}.clickTrackingVersion` 記下這個版本（`C-301`）。
+ * 2＝圖片上的連結（圖文訊息發出去的 imagemap 與單張 Flex 卡）也認得；沒有這一欄的舊推播，
+ * 點擊次數只算到文字按鈕、按鈕範本與輪播卡。
+ */
+export const CLICK_TRACKING_VERSION = 2
+
+/**
+ * LINE 對網址長度的上限（按鈕範本、Flex、imagemap 的連結都是 1000 字）。
+ * ⛔ 包成追蹤連結後超過就**不包**：超過的話 LINE 會把整則推播退回，客人一則都收不到——
+ * 少記一個連結的點擊，遠比整批送不出去便宜。
+ */
+const LINE_URI_MAX = 1000
 
 function alreadyTrackingUrl(uri: string, origin: string): boolean {
   const base = origin.replace(/\/$/, '')
@@ -28,23 +42,48 @@ function wrapOneUri(
     [campaignId, '', '', linkKey, u].join('|'),
     'utf-8',
   ).toString('base64url')
-  return `${base}/api/r/${token}`
+  const wrapped = `${base}/api/r/${token}`
+  return wrapped.length > LINE_URI_MAX ? uri : wrapped
 }
 
-type UriAction = { type?: string; uri?: string }
+/**
+ * 一個「會被換成追蹤連結」的網址位置：放在哪個物件的哪一格。
+ * 大多數版型放在 `action.uri`；imagemap 的連結放在 `action.linkUri`（`C-301`）。
+ */
+type UriSlot = { holder: Record<string, unknown>; field: 'uri' | 'linkUri' }
+
+type Visit = (slot: UriSlot, linkKey: string) => void
+
+function visitUriAction(raw: unknown, linkKey: string, visit: Visit): void {
+  const a = raw as Record<string, unknown> | null | undefined
+  if (a?.type === 'uri' && typeof a.uri === 'string') visit({ holder: a, field: 'uri' }, linkKey)
+}
 
 function visitActionsArray(
   actions: unknown[] | undefined,
   keyPrefix: string,
-  visit: (action: UriAction, linkKey: string) => void,
+  visit: Visit,
 ): void {
   if (!Array.isArray(actions)) return
-  actions.forEach((raw, i) => {
-    const a = raw as UriAction
-    if (a?.type === 'uri' && typeof a.uri === 'string') {
-      visit(a, `${keyPrefix}_${i}`)
-    }
-  })
+  actions.forEach((raw, i) => visitUriAction(raw, `${keyPrefix}_${i}`, visit))
+}
+
+/**
+ * 單張 Flex 卡（`C-301`）：圖文訊息走 Flex 時就是這個形狀——body 裡一張圖，
+ * 上面疊幾個透明的點擊區（`handler.ts` 的 `buildRichMessageFlexMessage`），連結掛在那些區塊上。
+ * hero／footer 也一起看：別的版型做成單張卡時會用到。
+ */
+function visitBubble(bubble: Record<string, unknown> | null | undefined, keyPrefix: string, visit: Visit): void {
+  if (!bubble || typeof bubble !== 'object') return
+  visitUriAction((bubble.hero as { action?: unknown } | undefined)?.action, `${keyPrefix}_hero`, visit)
+  const bodyContents = (bubble.body as { contents?: unknown[] } | undefined)?.contents
+  if (Array.isArray(bodyContents)) {
+    bodyContents.forEach((raw, i) => visitUriAction((raw as { action?: unknown } | null)?.action, `${keyPrefix}_body_${i}`, visit))
+  }
+  const footerContents = (bubble.footer as { contents?: unknown[] } | undefined)?.contents
+  if (Array.isArray(footerContents)) {
+    footerContents.forEach((raw, i) => visitUriAction((raw as { action?: unknown } | null)?.action, `${keyPrefix}_btn_${i}`, visit))
+  }
 }
 
 /**
@@ -56,10 +95,10 @@ function visitActionsArray(
  */
 function forEachTrackableUriAction(
   messages: unknown[],
-  visit: (action: UriAction, linkKey: string) => void,
+  visit: Visit,
 ): void {
   if (!Array.isArray(messages)) return
-  for (const msg of messages as Record<string, unknown>[]) {
+  ;(messages as Record<string, unknown>[]).forEach((msg, mi) => {
     // ── Template messages ──
     if (msg?.type === 'template' && msg.template && typeof msg.template === 'object') {
       const tpl = msg.template as Record<string, unknown>
@@ -75,40 +114,43 @@ function forEachTrackableUriAction(
       }
       else if (t === 'image_carousel' && Array.isArray(tpl.columns)) {
         tpl.columns.forEach((col: Record<string, unknown>, ci: number) => {
-          const act = col?.action as UriAction | undefined
-          if (act?.type === 'uri' && typeof act.uri === 'string') {
-            visit(act, `imgcar_${ci}`)
-          }
+          visitUriAction(col?.action, `imgcar_${ci}`, visit)
         })
       }
     }
 
-    // ── Flex Image Carousel（hero image action）──
+    // ── Flex ──
     else if (msg?.type === 'flex') {
       const contents = msg.contents as Record<string, unknown> | undefined
+      // 輪播（hero 圖與 footer 按鈕）。⛔ linkKey 不可以改：已經記下的點擊是用這組名字分的
       if (contents?.type === 'carousel' && Array.isArray(contents.contents)) {
         (contents.contents as Record<string, unknown>[]).forEach((bubble, bi) => {
-          const hero = bubble?.hero as { type?: string; action?: UriAction } | undefined
-          if (hero?.action?.type === 'uri' && typeof hero.action.uri === 'string') {
-            visit(hero.action, `flexcar_${bi}`)
-          }
+          visitUriAction((bubble?.hero as { action?: unknown } | undefined)?.action, `flexcar_${bi}`, visit)
           const footerContents = (bubble?.footer as { contents?: unknown[] } | undefined)?.contents
           if (Array.isArray(footerContents)) {
             footerContents.forEach((raw, fi) => {
-              const btn = raw as { action?: UriAction }
-              if (btn?.action?.type === 'uri' && typeof btn.action.uri === 'string') {
-                visit(btn.action, `flexcar_${bi}_btn_${fi}`)
-              }
+              visitUriAction((raw as { action?: unknown } | null)?.action, `flexcar_${bi}_btn_${fi}`, visit)
             })
           }
         })
       }
+      // 單張卡（`C-301`）：圖文訊息走 Flex 的那種
+      else if (contents?.type === 'bubble') {
+        visitBubble(contents, `m${mi}_flex`, visit)
+      }
     }
-  }
+
+    // ── Imagemap（`C-301`）：圖文訊息勾了「保留 PNG 透明」時發出去的就是這個，連結在 linkUri ──
+    else if (msg?.type === 'imagemap' && Array.isArray(msg.actions)) {
+      (msg.actions as Record<string, unknown>[]).forEach((a, ai) => {
+        if (a?.type === 'uri' && typeof a.linkUri === 'string') visit({ holder: a, field: 'linkUri' }, `m${mi}_imagemap_${ai}`)
+      })
+    }
+  })
 }
 
 /**
- * 回傳新物件（深拷貝自 messages），僅替換可辨識的 template URI。
+ * 回傳新物件（深拷貝自 messages），只替換認得的那幾種網址位置。
  */
 export function wrapBroadcastMessagesForClickTracking(
   messages: unknown[],
@@ -119,8 +161,8 @@ export function wrapBroadcastMessagesForClickTracking(
   if (!origin.startsWith('http')) return messages
 
   const cloned = JSON.parse(JSON.stringify(messages)) as Record<string, unknown>[]
-  forEachTrackableUriAction(cloned, (action, linkKey) => {
-    action.uri = wrapOneUri(action.uri!, campaignId, linkKey, origin)
+  forEachTrackableUriAction(cloned, ({ holder, field }, linkKey) => {
+    holder[field] = wrapOneUri(String(holder[field]), campaignId, linkKey, origin)
   })
   return cloned
 }
@@ -134,8 +176,8 @@ export function wrapBroadcastMessagesForClickTracking(
  */
 export function collectClickTrackableUris(messages: unknown): Set<string> {
   const uris = new Set<string>()
-  forEachTrackableUriAction(Array.isArray(messages) ? messages : [], (action) => {
-    const u = String(action.uri || '').trim()
+  forEachTrackableUriAction(Array.isArray(messages) ? messages : [], ({ holder, field }) => {
+    const u = String(holder[field] || '').trim()
     if (isHttpsUrl(u)) uris.add(u)
   })
   return uris

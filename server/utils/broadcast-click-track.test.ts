@@ -77,6 +77,95 @@ describe('包裝與驗證走同一條', () => {
   })
 })
 
+/**
+ * `C-301`（2026-10-11）：圖文訊息上的連結以前**從來沒包**——發出去是 imagemap（連結在 `linkUri`）
+ * 或單張 Flex 卡（連結掛在疊在圖上的透明區塊），兩種都不在上面那幾種版型裡。
+ * 正式資料：9/29 起 6 則推播的連結全在圖片上，我們記到 0 次，LINE 記到「小滑手_開賣」443 人點過。
+ * 形狀照 `handler.ts` 的 `buildRichMessageLineMessage`／`buildRichMessageFlexMessage` 抄。
+ */
+const RICH_IMAGEMAP = {
+  type: 'imagemap',
+  baseUrl: 'https://app.example.com/api/line-imagemap-img/tok',
+  altText: '小滑手開賣',
+  baseSize: { width: 1040, height: 1040 },
+  actions: [
+    { type: 'uri', linkUri: 'https://myfeel.design/TP6O9', area: { x: 0, y: 0, width: 1040, height: 700 } },
+    { type: 'message', text: '我想問', area: { x: 0, y: 700, width: 1040, height: 340 } },
+  ],
+}
+const RICH_FLEX_BUBBLE = {
+  type: 'flex',
+  altText: '電淨艙開賣',
+  contents: {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      position: 'relative',
+      paddingAll: '0px',
+      contents: [
+        { type: 'image', url: 'https://img.example.com/hero.png', size: 'full', aspectRatio: '1:1' },
+        { type: 'box', layout: 'vertical', position: 'absolute', offsetTop: '0%', offsetStart: '0%', width: '100%', height: '60%',
+          action: { type: 'uri', label: ' ', uri: 'https://myfeel.design/FI0uQ' }, contents: [{ type: 'filler', flex: 1 }] },
+        { type: 'box', layout: 'vertical', position: 'absolute', offsetTop: '60%', offsetStart: '0%', width: '100%', height: '40%',
+          action: { type: 'postback', label: ' ', data: 'x' }, contents: [{ type: 'filler', flex: 1 }] },
+      ],
+    },
+  },
+}
+
+describe('`C-301` 圖片上的連結也要記得到', () => {
+  it('⭐ imagemap：linkUri 被包起來，驗證端認得；圖片網址、點擊區不動', () => {
+    const [w] = wrapBroadcastMessagesForClickTracking([RICH_IMAGEMAP], 'camp1', ORIGIN) as typeof RICH_IMAGEMAP[]
+    expect(String(w!.actions[0]!.linkUri).startsWith(`${ORIGIN}/api/r/`)).toBe(true)
+    expect(targetsInWrapped([w])).toEqual(['https://myfeel.design/TP6O9'])
+    expect(collectClickTrackableUris([RICH_IMAGEMAP]).has('https://myfeel.design/TP6O9')).toBe(true)
+    // ⛔ 只能改連結那一格：底圖網址被包的話 LINE 會拿不到圖
+    expect(w!.baseUrl).toBe(RICH_IMAGEMAP.baseUrl)
+    expect(w!.actions[0]!.area).toEqual(RICH_IMAGEMAP.actions[0]!.area)
+    expect(w!.actions[1]).toEqual(RICH_IMAGEMAP.actions[1])
+  })
+
+  it('⭐ 單張 Flex 卡：疊在圖上的連結被包起來，驗證端認得；底圖不動', () => {
+    const [w] = wrapBroadcastMessagesForClickTracking([RICH_FLEX_BUBBLE], 'camp1', ORIGIN) as any[]
+    expect(targetsInWrapped([w])).toEqual(['https://myfeel.design/FI0uQ'])
+    expect(collectClickTrackableUris([RICH_FLEX_BUBBLE]).has('https://myfeel.design/FI0uQ')).toBe(true)
+    expect(w.contents.body.contents[0].url).toBe('https://img.example.com/hero.png')
+    expect(w.contents.body.contents[2]).toEqual(RICH_FLEX_BUBBLE.contents.body.contents[2])
+  })
+
+  it('除了被包的那幾格，整份訊息一個字都不變（LINE 會因為多一格少一格把整則退回）', () => {
+    const before = [RICH_IMAGEMAP, RICH_FLEX_BUBBLE, ...EVERY_KIND]
+    const after = wrapBroadcastMessagesForClickTracking(before, 'camp1', ORIGIN)
+    const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (_k, v) =>
+      typeof v === 'string' && (v.startsWith('https://') || v.startsWith(' https://')) ? 'URL' : v))
+    expect(strip(after)).toEqual(strip(before))
+    // 原本的物件不被改到
+    expect(RICH_IMAGEMAP.actions[0]!.linkUri).toBe('https://myfeel.design/TP6O9')
+  })
+
+  it('⛔ 舊版型的 linkKey 不變（已經記下的點擊是用這組名字分的）', () => {
+    const keys: string[] = []
+    const wrapped = wrapBroadcastMessagesForClickTracking(EVERY_KIND, 'camp1', ORIGIN)
+    JSON.stringify(wrapped, (_k, v) => {
+      if (typeof v === 'string' && v.startsWith(`${ORIGIN}/api/r/`))
+        keys.push(Buffer.from(v.slice(`${ORIGIN}/api/r/`.length), 'base64url').toString('utf-8').split('|')[3]!)
+      return v
+    })
+    expect(keys).toEqual(['tpl_buttons_0', 'tpl_confirm_0', 'car_0_0', 'car_1_0', 'imgcar_0', 'flexcar_0', 'flexcar_0_btn_0'])
+  })
+
+  it('⛔ 包完超過 LINE 的 1000 字上限就不包（不然整則推播會被 LINE 退回）', () => {
+    const long = `https://shop.example.com/p?${'q'.repeat(800)}`
+    const msg = { ...RICH_IMAGEMAP, actions: [{ type: 'uri', linkUri: long, area: { x: 0, y: 0, width: 10, height: 10 } }] }
+    const [w] = wrapBroadcastMessagesForClickTracking([msg], 'camp1', ORIGIN) as any[]
+    expect(w.actions[0].linkUri).toBe(long)
+    const short = { ...RICH_IMAGEMAP }
+    const [w2] = wrapBroadcastMessagesForClickTracking([short], 'camp1', ORIGIN) as any[]
+    expect(w2.actions[0].linkUri.length).toBeLessThanOrEqual(1000)
+  })
+})
+
 describe('clickTargetInBroadcast', () => {
   it('非模組型：網址在 messages 裡 → 認；不在 → 不認', () => {
     const doc = { messages: EVERY_KIND }

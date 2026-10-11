@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
-import { wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
+import { CLICK_TRACKING_VERSION, wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
 import { multicastMessage } from './line'
 import { renderModuleToLineMessages } from './handler'
 import { renderBroadcastMessagesForSend } from './render-attributes'
@@ -187,6 +187,13 @@ export async function executeBroadcastSend(
       'audienceSnapshot.resolvedUserIds': resolvedUserIds,
       'audienceSnapshot.estimatedCount': resolvedUserIds.length,
       ...(sentContent ? { sentContent: { ...sentContent, at: snapshotAt } } : {}),
+      /**
+       * `C-301`：這一次發送的點擊紀錄認不認得圖片上的連結。成效頁靠它決定要不要講
+       * 「這則發送時，圖片上的連結還不會記錄點擊」——舊推播的次數只算到文字按鈕。
+       */
+      ...(clickOrigin.startsWith('http') ? { clickTrackingVersion: CLICK_TRACKING_VERSION } : {}),
+      // `D-121`：重設後再發一次是新的一輪，上一輪存下來的 LINE 人數不可以留著冒充這一輪
+      lineStats: FieldValue.delete(),
       updatedAt: snapshotAt,
     })
 

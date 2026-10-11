@@ -3,6 +3,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchBroadcastLineInsight } from '~~/server/utils/broadcast-line-insight'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
+import { LINE_STATS_MAX_AGE_DAYS, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
 
 /** 「沒收到的人」最多列這麼多位，避免大量失敗時一次抓爆 */
 const FAILED_LIST_LIMIT = 100
@@ -120,8 +121,25 @@ export default defineEventHandler(async (event) => {
           ))
     : { lineUniqueImpression: null as number | null, lineUniqueClick: null as number | null }
 
-  const openRate = line.lineUniqueImpression != null && data.sentCount > 0
-    ? line.lineUniqueImpression / data.sentCount
+  /**
+   * `D-121`／`C-301`：現場問不到 LINE（發完超過約一個月、或 LINE 一時回錯誤）時，
+   * 改用排程存下來的那一份（`broadcast:snapshot-line-stats`）。⛔ 兩份都沒有才講查不到。
+   */
+  const stored = parseStoredLineStats(data.lineStats)
+  const storedAt = Number(data.lineStats?.fetchedAt) || null
+  const liveHasNumbers = line.lineUniqueImpression != null || line.lineUniqueClick != null
+  const useStored = !liveHasNumbers && stored != null && !stored.unavailable
+    && (stored.opened != null || stored.clicked != null)
+  const uniqueImpression = useStored ? stored!.opened : line.lineUniqueImpression
+  const uniqueClick = useStored ? stored!.clicked : line.lineUniqueClick
+  const completedMs = completedAt?.getTime() ?? null
+
+  const openRate = uniqueImpression != null && data.sentCount > 0
+    ? uniqueImpression / data.sentCount
+    : null
+  // 點連結的人 ÷ 送到的人：兩邊都是人數，比例才成立（⛔ 不用我們的點擊「次數」去除人數）
+  const clickRate = uniqueClick != null && data.sentCount > 0
+    ? uniqueClick / data.sentCount
     : null
 
   return {
@@ -139,10 +157,18 @@ export default defineEventHandler(async (event) => {
     /** 自架連結 CTR */
     ctr: Math.round(linkCtr * 10000) / 10000,
     /** LINE 開封人數（uniqueImpression），聚合非即時、小樣本可能為 null */
-    lineUniqueImpression: line.lineUniqueImpression,
+    lineUniqueImpression: uniqueImpression,
     /** LINE 官方統計之訊息內網址點擊人數（與 linkClickCount 分開） */
-    lineUniqueClick: line.lineUniqueClick,
-    lineInsightError: line.lineInsightError,
+    lineUniqueClick: uniqueClick,
+    /** 用的是存下來的那一份時，存下來的時間（毫秒）；現場查到的是 null */
+    lineStatsStoredAt: useStored ? storedAt : null,
+    /** 點連結的人 ÷ 送到的人（LINE 官方統計） */
+    lineClickRate: clickRate != null ? Math.round(clickRate * 10000) / 10000 : null,
+    /** 發完超過約一個月（LINE 用現在的查法已經查不到）；畫面據此換一句說明 */
+    lineStatsExpired: completedMs != null && Date.now() - completedMs > LINE_STATS_MAX_AGE_DAYS * 86_400_000,
+    lineInsightError: useStored ? undefined : line.lineInsightError,
+    /** `C-301`：發送時的點擊紀錄版本。< 2＝圖片上的連結當時還不會記點擊 */
+    clickTrackingVersion: Number(data.clickTrackingVersion) || 1,
     /** 訊息已送出但發送後記帳未寫完（沒收到的名單可能不全，成功／失敗數仍有效） */
     postSendError: data.postSendError ?? null,
     /** 沒收到的人（最多 FAILED_LIST_LIMIT 位），可直接跟進 */
