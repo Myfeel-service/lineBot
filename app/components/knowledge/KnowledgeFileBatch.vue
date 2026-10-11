@@ -45,6 +45,8 @@
             <span>知識庫裡已經有一份「{{ r.pending.existing.name }}」（{{ r.pending.existing.chunkCount }} 條）</span>
             <el-button size="small" type="primary" plain :disabled="busy" @click="decide(r, 'replace')">換掉舊的</el-button>
             <el-button size="small" :disabled="busy" @click="decide(r, 'new')">另外建一份</el-button>
+            <!-- 鎖住要講為什麼（2026-10-11 真的寫入測試踩到：另一份還在整理時按了沒反應，看起來像壞掉） -->
+            <span v-if="running" class="text-xs text-muted">這一批跑完就能選</span>
           </div>
           <div v-if="r.quotaShort" class="kb-site-warnings">
             ⚠︎ 知識空間不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（空出空間後再放一次這份、選「換掉舊的」就能補齊）

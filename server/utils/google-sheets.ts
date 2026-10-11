@@ -504,6 +504,7 @@ export function mergeSheetStats(agg: SheetImportStats, s: SheetImportStats): voi
   agg.blankAnswerTitles.push(...s.blankAnswerTitles)
   agg.titleRows.push(...(s.titleRows ?? []))
   agg.continuedRows += s.continuedRows ?? 0
+  if (s.serialColumns?.length) (agg.serialColumns ??= []).push(...s.serialColumns)
 }
 
 /**
@@ -690,7 +691,15 @@ export function rowsToCards(
 
   const { headerAt, titles: titleRows } = legacy ? { headerAt: 0, titles: [] as string[] } : locateHeaderRow(indexed)
   const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
-  const dataRows = indexed.slice(headerAt + 1)
+  let dataRows = indexed.slice(headerAt + 1)
+  // 第一欄是 1、2、3… 流水號（新讀法才看）：拿它當名稱的話每一條都叫「1」「2」，而且**不同分頁的「1」會被當成同一項併在一起**
+  // （2026-10-11 拿本機真的試算表比對：66 條裡 30 條名稱是數字，「1」那條混了兩張不相干的表）。改用下一欄當名稱（見 retitleSerialRows）
+  const serialColumns: string[] = []
+  const retitled = legacy ? null : retitleSerialRows(dataRows)
+  if (retitled) {
+    serialColumns.push(headers[0] ?? '')
+    dataRows = retitled
+  }
   // ⚠️ 用 reduce 不用 Math.max(...)：10 萬列展開成參數會爆堆疊
   const mode: RowReadMode = legacy
     ? { legacy: true }
@@ -780,10 +789,47 @@ export function rowsToCards(
     blankAnswerTitles: cards.filter(c => !answered.has(normTitle(c.title))).map(c => c.title),
     titleRows,
     continuedRows,
-    // 新讀法才有的兩格；舊讀法的統計維持改版前的樣子
-    ...(legacy ? {} : { continuedExamples, cappedOut: [...cappedOut] }),
+    // 新讀法才有的幾格；舊讀法的統計維持改版前的樣子
+    ...(legacy ? {} : { continuedExamples, cappedOut: [...cappedOut], ...(serialColumns.length ? { serialColumns } : {}) }),
   }
   return { cards, stats }
+}
+
+const SERIAL_CELL = /^\d{1,4}\.?$/
+const hasLetter = (s: string) => /\p{L}/u.test(s)
+
+/**
+ * 第一欄是流水號（1、2、3…）的表，改用第二欄當名稱；不是就回 null（照舊）。
+ *
+ * 怎麼認：第一欄有字的格子八成以上是 1～4 位整數（表格底下夾幾列「註：…」也認得）、至少 3 個、從 1 開始往下不倒退、
+ * 八成以上是一格加 1——貨號（1001、1002…）不從 1 開始，不會被當成流水號；第二欄六成以上是字（換了也沒比較好就不換）。
+ * 怎麼換：⛔ 只換名稱、不刪任何一欄（第二欄照樣留在內容裡），不會少資料。
+ *  - 第二欄每一列都不一樣 → 直接用它（「耶加雪菲」）；
+ *  - 第二欄有重複（同一個平台好幾列）→ 用「序號. 名稱」（「4. 蝦皮購物」）。2026-10-11 本機真實檔實測：直接用會把
+ *    不同列併成一條（11 條變 4 條），流水號本來就是用來分開它們的。
+ *  - 那一列第二欄沒有字 → 留流水號。第一欄不是數字的列（註記）不動。
+ */
+function retitleSerialRows<T extends { cells: string[] }>(rows: T[]): T[] | null {
+  const first = rows.map(r => String(r.cells[0] ?? '').trim())
+  const isSerial = first.map(v => SERIAL_CELL.test(v))
+  const filled = first.filter(Boolean).length
+  const nums = first.filter((_, i) => isSerial[i]).map(v => Number.parseInt(v, 10))
+  if (nums.length < 3 || nums.length / filled < 0.8 || nums[0] !== 1) return null
+  let plusOne = 0
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i]! < nums[i - 1]!) return null
+    if (nums[i] === nums[i - 1]! + 1) plusOne++
+  }
+  if (plusOne / (nums.length - 1) < 0.8) return null
+  const names = rows.filter((_, i) => isSerial[i]).map(r => String(r.cells[1] ?? '').trim()).filter(hasLetter)
+  if (names.length / nums.length < 0.6) return null
+  const unique = new Set(names.map(normTitle)).size === names.length
+  return rows.map((r, i) => {
+    const name = String(r.cells[1] ?? '').trim()
+    if (!isSerial[i] || !hasLetter(name)) return r
+    const title = unique ? name : `${Number.parseInt(first[i]!, 10)}. ${name}`
+    return { ...r, cells: [title, ...r.cells.slice(1)] }
+  })
 }
 
 /**
@@ -884,6 +930,8 @@ export interface SheetImportStats {
   exportSummarySheets?: string[]
   /** 收了幾個分頁（大於 1 時，列號要帶分頁名稱才對得上） */
   sheetsRead?: number
+  /** 第一欄是流水號、改用下一欄當名稱的那幾頁，記那一欄的欄位名稱（沒有就空字串）；要講給使用者聽 */
+  serialColumns?: string[]
 }
 
 /** 健檢訊息裡列舉標題時最多列幾個（其餘用「等 N 列」帶過，避免訊息爆長） */
@@ -952,6 +1000,11 @@ export function sheetHealthWarnings(cards: SheetCard[], stats: SheetImportStats,
   }
   if (stats.continuedRows > 0) {
     warnings.push(continuedRowsWarning(stats))
+  }
+  // 流水號那欄沒收（`C-296`）：猜的要講，猜錯（那欄其實有意義）他才知道去哪裡改
+  if (stats.serialColumns?.length) {
+    const named = stats.serialColumns.find(Boolean)
+    warnings.push(`第一欄${named ? `「${named}」` : ''}是流水號（1、2、3…），改用下一欄當每一條的名稱（下一欄有重複的，名稱前面加序號）；不對的話請把名稱放在第一欄`)
   }
   if (stats.exportSummarySheets?.length) {
     warnings.push(`略過${stats.exportSummarySheets.map(n => `「${n}」`).join('、')}分頁（Numbers 輸出時自動加的說明頁，不是資料）`)

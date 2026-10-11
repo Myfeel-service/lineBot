@@ -561,10 +561,49 @@ describe('欄位名稱認不出來也不掉資料（finding 2）', () => {
       ['#', '品牌', '型號 / 尺寸', '保固'],
       ['1', 'Apple', 'iPhone 15 / 15 Plus', '一年'],
       ['2', 'Sony', 'WH-1000XM5', '兩年'],
+      ['3', 'Dyson', 'V15', '兩年'],
     ])
-    expect(r.cards.map(c => c.title)).toEqual(['1', '2'])
-    expect(r.cards[0]!.content).toBe('品牌：Apple\n型號 / 尺寸：iPhone 15 / 15 Plus\n保固：一年')
     expect(r.stats.titleRows).toEqual(['維修服務 / 價目一覽'])
+    expect(r.cards[0]).toMatchObject({ title: 'Apple', content: '品牌：Apple\n型號 / 尺寸：iPhone 15 / 15 Plus\n保固：一年' })
+  })
+})
+
+describe('第一欄是流水號（1、2、3…）→ 改用下一欄當名稱（2026-10-11）', () => {
+  const table = (rows: string[][]) => rowsToCards([['#', '品名', '價格'], ...rows])
+
+  it('名稱用第二欄（內容照樣留著，不少一欄），而且要講出來', () => {
+    const r = table([['1', '耶加雪菲', '450'], ['2', '曼特寧', '420'], ['3', '藝伎', '980']])
+    expect(r.cards.map(c => c.title)).toEqual(['耶加雪菲', '曼特寧', '藝伎'])
+    expect(r.cards[0]!.content).toBe('品名：耶加雪菲\n價格：450')
+    expect(r.stats.serialColumns).toEqual(['#'])
+    expect(sheetHealthWarnings(r.cards, r.stats).join('')).toContain('第一欄「#」是流水號')
+  })
+
+  it('⛔ 第二欄有重複（同一個平台好幾列）不可以拿來直接當名稱——會把不同列併成一條：改用「序號. 名稱」', () => {
+    const r = rowsToCards([['項次', '平台', '網址'], ['1', '蝦皮購物', 'a.example'], ['2', '官網', 'b.example'], ['3', '蝦皮購物', 'c.example']])
+    expect(r.cards.map(c => c.title)).toEqual(['1. 蝦皮購物', '2. 官網', '3. 蝦皮購物'])
+    expect(r.stats.mergedRows).toBe(0)
+  })
+
+  it('表格底下夾一列「註」也認得出流水號；那一列照舊（不丟）', () => {
+    const r = table([['1', '耶加雪菲', '450'], ['2', '曼特寧', '420'], ['3', '藝伎', '980'], ['4', '肯亞', '520'], ['註：價格含稅', '', '']])
+    expect(r.cards.map(c => c.title)).toEqual(['耶加雪菲', '曼特寧', '藝伎', '肯亞', '註：價格含稅'])
+  })
+
+  it('⛔ 貨號（1001、1002…）不是流水號：照舊拿來當名稱', () => {
+    const r = table([['1001', '耶加雪菲', '450'], ['1002', '曼特寧', '420'], ['1003', '藝伎', '980']])
+    expect(r.cards.map(c => c.title)).toEqual(['1001', '1002', '1003'])
+    expect(r.stats.serialColumns).toBeUndefined()
+  })
+
+  it('⛔ 下一欄也是數字（換了也沒比較好）就不換；不到 3 列也不猜', () => {
+    expect(rowsToCards([['#', '價格', '數量'], ['1', '450', '2'], ['2', '420', '1'], ['3', '980', '5']]).cards.map(c => c.title)).toEqual(['1', '2', '3'])
+    expect(table([['1', '耶加雪菲', '450'], ['2', '曼特寧', '420']]).cards.map(c => c.title)).toEqual(['1', '2'])
+  })
+
+  it('⛔ 舊的 Google 試算表來源照舊讀（同步不能因為改讀法就改寫知識）', () => {
+    const r = rowsToCards([['#', '品名', '價格'], ['1', '耶加雪菲', '450'], ['2', '曼特寧', '420'], ['3', '藝伎', '980']], { legacy: true })
+    expect(r.cards.map(c => c.title)).toEqual(['1', '2', '3'])
   })
 
   it('⛔ 第一筆資料是一句話（有逗號）也不當欄位名稱', () => {

@@ -318,6 +318,18 @@ describe('讀不出來的檔：畫面講人話、技術細節只進 log 一行�
   })
 })
 
+describe('好幾個分頁都用 1、2、3 流水號（2026-10-11 本機真實試算表抓到）', () => {
+  it('⛔ 不同分頁的「1」不可以被當成同一項併在一起：改用下一欄當名稱', () => {
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['#', '品名', '價格'], ['1', '耶加雪菲', '450'], ['2', '曼特寧', '420'], ['3', '藝伎', '980']]), '咖啡豆')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['#', '器材', '保固'], ['1', '手沖壺', '1 年'], ['2', '磨豆機', '2 年'], ['3', '濾杯', '無']]), '器材')
+    const r = extractXlsxCards(Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })))!
+    expect(r.cards.map(c => c.title)).toEqual(['耶加雪菲', '曼特寧', '藝伎', '手沖壺', '磨豆機', '濾杯'])
+    expect(r.cards.find(c => c.title === '耶加雪菲')!.content).toBe('品名：耶加雪菲\n價格：450')
+    expect(sheetHealthWarnings(r.cards, r.stats, r.mergeCount).join('')).toContain('是流水號')
+  })
+})
+
 describe('壞掉、大到不正常的 xlsx：不卡死、不撐爆記憶體（2026-10-11 破檔測試）', () => {
   afterEach(() => vi.restoreAllMocks())
 
