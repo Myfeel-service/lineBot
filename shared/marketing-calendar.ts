@@ -16,7 +16,7 @@
  */
 
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from './taiwan-festivals'
-import { daysBetween } from './time'
+import { daysBetween, taipeiDateTime } from './time'
 import {
   storeProfileFieldDef,
   type StoreProfileDoc,
@@ -39,8 +39,50 @@ export interface CalendarFacts {
    *   「206 個人想買香氛機」，但那只是填過問卷的名冊（`D-28` 那條鐵律）。
    */
   matchedTags: { name: string, memberCount: number, why?: string }[]
-  /** 去年同一個節日前後有沒有發過推播（發給幾人）。查不到＝null */
-  lastYearBroadcast: { name: string, sentCount: number } | null
+  /**
+   * 去年同一檔**為它發過**的推播（`D-121`：歸屬規則跟回顧同一條，⛔ 不再照日期猜）。
+   * `clicked`＝LINE 官方統計的點連結人數，拿不到是 null。查不到這則推播＝null
+   */
+  lastYearBroadcast: { name: string, sentCount: number, clicked?: number | null } | null
+}
+
+/**
+ * 已經為這一檔建好的推播（`D-121`：已排程的那一檔直接講排在哪天，不會再擬一次）。
+ * `atMs`：排程的就是排程時間、發完的就是發完時間、草稿是 null。
+ */
+export interface PlannedBroadcast {
+  id: string
+  name: string
+  status: 'draft' | 'scheduled' | 'processing' | 'completed' | 'failed'
+  atMs: number | null
+}
+
+const PLANNED_ORDER: Record<PlannedBroadcast['status'], number> = {
+  scheduled: 0,
+  processing: 1,
+  completed: 2,
+  draft: 3,
+  failed: 4,
+}
+
+/** 好幾則時挑最該講的那一則：排好的 → 發送中 → 發完的 → 草稿 → 失敗的。 */
+export function pickPlanned(list: readonly PlannedBroadcast[]): PlannedBroadcast | null {
+  if (!list.length) return null
+  return [...list].sort((a, b) =>
+    PLANNED_ORDER[a.status] - PLANNED_ORDER[b.status] || (a.atMs ?? Infinity) - (b.atMs ?? Infinity))[0]!
+}
+
+/** 那則推播現在的狀態，一小段話（「已排程 11/09 20:00」）。時間一律台灣時間。 */
+export function plannedStatusText(p: PlannedBroadcast): string {
+  const md = (ms: number) => taipeiDateTime(ms).slice(5, 10).replace('-', '/')
+  const mdhm = (ms: number) => taipeiDateTime(ms).slice(5).replace('-', '/')
+  switch (p.status) {
+    case 'scheduled': return p.atMs != null ? `已排程 ${mdhm(p.atMs)}` : '已排程'
+    case 'processing': return '發送中'
+    case 'completed': return p.atMs != null ? `已發送 ${md(p.atMs)}` : '已發送'
+    case 'failed': return '發送失敗'
+    default: return '草稿，還沒排程'
+  }
 }
 
 export function emptyCalendarFacts(): CalendarFacts {
@@ -62,8 +104,13 @@ export interface CalendarEntry {
    * ⛔ 畫面上要講出來，不可以假裝這是為他算的。
    */
   reasons: { text: string, source: string }[]
-  /** 「做什麼」：三件具體的事 */
+  /**
+   * 「做什麼」：**只留跟時間有關的**（`D-121`③）——3 天內的「最後確認」、兩週內連假的「客服值班」。
+   * 常常是空陣列，畫面就不出那一段。
+   */
   actions: string[]
+  /** 已經為這一檔建好的推播（`D-121`）。空陣列＝還沒有 */
+  planned: PlannedBroadcast[]
 }
 
 /** 這家店的旺季答案跟這個節日對不對得上。 */
@@ -105,10 +152,12 @@ export function buildReasons(
     })
   }
 
-  if (facts.lastYearBroadcast && facts.lastYearBroadcast.sentCount > 0) {
+  const ly = facts.lastYearBroadcast
+  if (ly && ly.sentCount > 0) {
+    const clicked = ly.clicked != null ? `，${ly.clicked.toLocaleString('en-US')} 人點連結` : ''
     out.push({
-      text: `去年這個時候你發過「${facts.lastYearBroadcast.name}」，送到 ${facts.lastYearBroadcast.sentCount} 人`,
-      source: '推播紀錄',
+      text: `去年這一檔你發過「${ly.name}」，送到 ${ly.sentCount.toLocaleString('en-US')} 人${clicked}`,
+      source: ly.clicked != null ? '推播紀錄＋LINE 官方統計' : '推播紀錄',
     })
   }
 
@@ -120,20 +169,23 @@ export function buildReasons(
   return out
 }
 
-/** 組出一檔的「做什麼」三件事。⛔ 不承諾成效。 */
+/**
+ * 組出一檔的「做什麼」。⛔ 不承諾成效。
+ *
+ * `D-121`③（2026-10-11 拍板）：**只留跟時間有關的那一句**。原本固定三件事，量出來五檔裡
+ * 「想好出貨時間」「當天顧客服」每檔都一樣，第一件「把文案與圖片準備好」又跟
+ * 「為這一檔擬推播」那顆按鈕是同一件事——五檔重複五次＝沒人讀。
+ * 節日前 7／3／1 天的 LINE 提醒（`C-223`）本來就會講該做什麼。
+ */
 export function buildActions(profile: StoreProfileDoc | null | undefined, f: TaiwanFestival, inDays: number): string[] {
   const channel = String(profile?.fields?.channel?.value ?? '')
   const out: string[] = []
-
-  if (inDays > 14) out.push('先決定這一檔要推什麼、用什麼理由')
-  else if (inDays > 3) out.push('把推播文案與圖片準備好，排進排程')
-  else out.push('最後確認推播排了沒、庫存和出貨來不來得及')
-
-  out.push(channel.includes('預約')
-    ? '想好這一檔的時段怎麼開，別讓客人約不到'
-    : '想好這一檔的出貨時間，寫進訊息裡')
-
-  out.push(f.longWeekend ? '連假期間客服值班先排好' : '當天安排人顧線上客服')
+  if (inDays <= 3) {
+    out.push(channel.includes('預約')
+      ? '最後確認推播排了沒、這幾天的時段開好了沒'
+      : '最後確認推播排了沒、庫存和出貨來不來得及')
+  }
+  if (f.longWeekend && inDays <= CALENDAR_SOON_DAYS) out.push('連假期間客服值班先排好')
   return out
 }
 
@@ -143,6 +195,7 @@ export function buildMarketingCalendar(
   profile: StoreProfileDoc | null | undefined,
   factsOf: (f: TaiwanFestival) => CalendarFacts,
   windowDays = CALENDAR_WINDOW_DAYS,
+  plannedOf: (f: TaiwanFestival) => PlannedBroadcast[] = () => [],
 ): CalendarEntry[] {
   const out: CalendarEntry[] = []
   for (const f of TAIWAN_FESTIVALS) {
@@ -158,18 +211,21 @@ export function buildMarketingCalendar(
       generalAngle: f.angle,
       reasons: buildReasons(profile, f, facts),
       actions: buildActions(profile, f, inDays),
+      planned: plannedOf(f),
     })
   }
   return out
 }
 
-/** 月曆最上面那一句。⛔ 沒有輪廓時要講出來，不要假裝這是為他算的。 */
-export function calendarHeadline(entries: CalendarEntry[], hasProfile: boolean): string {
-  if (!entries.length) return `未來 ${CALENDAR_WINDOW_DAYS} 天沒有重要節日，可以專心顧日常。`
-  const soon = entries.filter(e => e.soon).length
-  const base = `未來 ${CALENDAR_WINDOW_DAYS} 天有 ${entries.length} 個檔期${soon ? `，其中 ${soon} 個兩週內就到` : ''}。`
-  // ⛔ 沒有輪廓＝下面那幾張卡只有通用切角，這件事一定要講
-  return hasProfile ? base : `${base}MiniMe 還不認識你的店，所以下面只有通用的建議。`
+/**
+ * 卡片標題旁那一小段。
+ *
+ * `D-121`：原本這裡寫「未來 90 天有 5 個檔期，其中 1 個兩週內就到。MiniMe 還不認識你的店，所以下面只有通用的建議。」
+ * ——檔期數就是下面那幾列、快到的那一檔本來就攤開；「還不認識你的店」卡片裡的提示列也講了。
+ * 同一句在標題列、藍框、每一檔各講一次（「通用」出現 7 次）。⛔ 這裡只講範圍，提示一律交給卡片裡那一列。
+ */
+export function calendarHeadline(): string {
+  return `未來 ${CALENDAR_WINDOW_DAYS} 天`
 }
 
 /** 這一檔有沒有「為什麼是你」。畫面用它決定要不要顯示那一段。 */

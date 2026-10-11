@@ -1,14 +1,16 @@
 <!--
   行銷月曆卡（`D-85` / `C-224`）：未來 90 天有哪些檔期、每一檔該做什麼。
+  2026-10-11 `D-121` 改版（示意頁 artifact `6boYgvH3V2h26Gy1Tzcx5e` v1）：
+  快到的那一檔攤開、其他一行一檔；「還不認識你的店」只講一次；回顧收成最下面一行、改看 LINE 的人數。
 
   掛在後台首頁（＝客服對話統計頁）。⛔ 不加側欄項目——它不是一個功能，
   是「這一季要做什麼」的提醒，跟首頁的其他數字住在一起才看得到。
 
   ⛔ 三件事不可以妥協：
-    ① **「為什麼是你」每一條都要有出處**，湊不出來就整段不出現，
-       並明講「這一檔還沒有你的數字」——⛔ 不可以編一句「這檔通常表現不錯」。
+    ① **「為什麼是你」每一條都要有出處**，湊不出來就整段不出現——⛔ 不可以編一句「這檔通常表現不錯」。
     ② **不承諾成效**：不出現「可以多賣三成」這種我們算不出來的話。
     ③ **還不認識這家店時要講**，不要讓通用建議看起來像為他算的。
+  ⛔ 同一句話只講一次（`D-121` 量過：改版前「通用」出現 7 次、同一段警語 3 次）。
 -->
 <template>
   <div class="message-card ar-section-card mkt-cal" data-tour="home-marketing-calendar">
@@ -29,124 +31,151 @@
 
       <div v-else-if="loading && !loaded" class="mkt-cal__muted">正在整理接下來的檔期…</div>
 
-      <div v-else-if="!entries.length" class="mkt-cal__muted">
-        未來 90 天沒有重要節日，可以專心顧日常。
-      </div>
-
       <template v-else>
-        <!-- 還不認識這家店：整張卡只有通用建議，這件事要先講 -->
-        <el-alert v-if="!ready" type="info" :closable="false" show-icon>
-          <template #title>下面只有通用的建議</template>
-          MiniMe 還不認識你的店，所以講不出「你的哪個商品該搭這個節日」。
-          <!-- `G-102`：開帳頁只有管理員進得去（客服、觀察者會看到「請管理員完成開通」），
-               不給一條走進去才被擋的路，直接講要找誰。 -->
-          <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
-          <template v-else>請管理員花 3 分鐘讓它認識。</template>
-        </el-alert>
+        <div v-if="!entries.length" class="mkt-cal__muted">
+          未來 90 天沒有重要節日，可以專心顧日常。
+        </div>
 
-        <!--
-          `C-235`：認識了、但**主打商品那一格是空的**。
-          ⭐ 這一條是 2026-09-23 拿正式資料跑出來才發現要有的：`isStoreProfileReady` 只要求
-             答滿三題，而「主打商品」正好是下游全部都靠的那一格——節慶客製講不出商品、
-             受眾也配不出來，卻沒有任何地方會講。⛔ 不可以讓它安靜地不準。
-        -->
-        <el-alert v-else-if="!hasProducts" type="info" :closable="false" show-icon>
-          <template #title>補上「主打商品」，這幾檔會準很多</template>
-          你的輪廓裡還沒寫賣什麼，所以 MiniMe 不敢替你挑「這一檔該發給誰」，
-          節慶提醒也只能講通用的一句。
-          <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
-          <template v-else>請管理員補上。</template>
-        </el-alert>
+        <template v-else>
+          <!-- 還不認識這家店：整張卡只有通用建議，這件事只在這裡講一次 -->
+          <el-alert v-if="!ready" type="info" :closable="false" show-icon class="mkt-cal__strip">
+            <template #title>
+              MiniMe 還不認識你的店，下面是通用建議。
+              <!-- `G-102`：開帳頁只有管理員進得去，不給一條走進去才被擋的路，直接講要找誰 -->
+              <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">花 3 分鐘讓它認識 →</el-link>
+              <template v-else>請管理員花 3 分鐘讓它認識。</template>
+            </template>
+          </el-alert>
 
-        <!--
-          `C-55`② / `C-240`：上一檔做得怎麼樣。
-          ⭐ 放在「接下來」**上面**：先看完上一檔的結果，下一檔的建議才讀得進去。
-          ⛔ 一檔都沒有就整段不出現（`outcomeHeadline` 回空字串）——不要留一個空殼。
-        -->
-        <section v-if="outcomeHeadline" class="mkt-cal__review">
-          <p class="mkt-cal__label">{{ outcomeHeadline }}</p>
-          <p v-for="o in outcomes" :key="o.festivalId" class="mkt-cal__review-line">{{ o.text }}</p>
-          <!-- ⛔ 口徑要寫在畫面上：這是「幾次」不是「幾個人」 -->
-          <p class="mkt-cal__nodata">
-            「被點幾次」數的是<b>次數</b>不是人數——推播是同一則發給所有人，我們看得到連結被點了幾下，
-            看不出是幾個人點的。
-          </p>
-          <p v-if="outcomeIntegrity.failed" class="mkt-cal__nodata">⚠️ 這次讀不到推播紀錄，上面的回顧不完整。</p>
-          <p v-else-if="outcomeIntegrity.truncated" class="mkt-cal__nodata">⚠️ 推播太多，只算了掃到的那一段。</p>
-        </section>
+          <!--
+            `C-235`：認識了、但**主打商品那一格是空的**——節慶客製講不出商品、受眾也配不出來，
+            ⛔ 不可以讓它安靜地不準。
+          -->
+          <el-alert v-else-if="!hasProducts" type="info" :closable="false" show-icon class="mkt-cal__strip">
+            <template #title>
+              補上「主打商品」，這幾檔會準很多。
+              <el-link v-if="canEditProfile" type="primary" :underline="false" @click="goProfile">去補主打商品 →</el-link>
+              <template v-else>請管理員補上。</template>
+            </template>
+          </el-alert>
 
-        <article v-for="e in visibleEntries" :key="e.festivalId" :class="['mkt-cal__item', { 'is-soon': e.soon }]">
-          <header class="mkt-cal__head">
-            <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
-            <span class="mkt-cal__name">{{ e.name }}</span>
-            <span :class="['mkt-cal__days', { 'is-soon': e.soon }]">{{ daysText(e.inDays) }}</span>
-          </header>
-
-          <!-- ① 為什麼——每一條都帶出處。湊不出來就整段不出現 -->
-          <template v-if="e.reasons.length">
-            <p class="mkt-cal__label">為什麼是你</p>
-            <ul class="mkt-cal__reasons">
-              <li v-for="(r, i) in e.reasons" :key="i">
-                {{ r.text }}<span class="mkt-cal__source">（{{ r.source }}）</span>
-              </li>
-            </ul>
-          </template>
-          <p v-else class="mkt-cal__nodata">
-            這一檔還沒有你的數字，先給你通用的切角：{{ e.generalAngle }}
-          </p>
-
-          <!-- ② 做什麼 -->
-          <p class="mkt-cal__label">做什麼</p>
-          <ol class="mkt-cal__actions">
-            <li v-for="(a, i) in e.actions" :key="i">{{ a }}</li>
-          </ol>
-
-          <!-- ③ 一顆按鈕。`G-102`：擬推播、收起來兩支端點都是客服級，觀察者整列不出現。
-               `G-109`：兩顆各照自己的端點擋（`draft`＝`broadcast.write`、`skip`＝`marketing.write`） -->
-          <div v-if="can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
-            <el-button
-              v-if="can('broadcast.write')"
-              size="small"
-              type="primary"
-              plain
-              :loading="draftingId === e.festivalId"
-              :disabled="draftingId !== '' && draftingId !== e.festivalId"
-              @click="goBroadcast(e)"
+          <div v-if="visibleEntries.length" class="mkt-cal__list">
+            <article
+              v-for="e in visibleEntries"
+              :key="e.festivalId"
+              :class="['mkt-cal__row', { 'is-open': openId === e.festivalId }]"
             >
-              {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
-            </el-button>
-            <!--
-              `C-236`：這一檔跟我無關。
-              ⛔ 這不是刪除：`festivalId` 含年份，明年那一檔會自己回來——按鈕的提示要講出來，
-                 不然會被當成永久刪掉而不敢按。
-            -->
-            <el-button v-if="can('marketing.write')" size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
-              這次不做
-            </el-button>
+              <button
+                type="button"
+                class="mkt-cal__row-head"
+                :aria-expanded="openId === e.festivalId"
+                @click="toggle(e.festivalId)"
+              >
+                <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
+                <span class="mkt-cal__name">{{ e.name }}</span>
+                <span class="mkt-cal__angle">
+                  <template v-if="openId !== e.festivalId">
+                    <template v-if="plannedOf(e)">
+                      <span :class="['mkt-cal__chip', chipTone(e)]">{{ chipText(e) }}</span>「{{ plannedOf(e)?.name }}」
+                    </template>
+                    <template v-else>{{ e.generalAngle }}</template>
+                  </template>
+                </span>
+                <span :class="['mkt-cal__days', { 'is-soon': e.soon }]">{{ daysText(e.inDays) }}</span>
+                <span class="mkt-cal__chev" aria-hidden="true">{{ openId === e.festivalId ? '︿' : '﹀' }}</span>
+              </button>
+
+              <div v-if="openId === e.festivalId" class="mkt-cal__body">
+                <p class="mkt-cal__angle-full">{{ e.generalAngle }}</p>
+
+                <!-- ① 為什麼——每一條都帶出處。湊不出來就整段不出現 -->
+                <template v-if="e.reasons.length">
+                  <p class="mkt-cal__label">為什麼是你</p>
+                  <ul class="mkt-cal__list-items mkt-cal__reasons">
+                    <li v-for="(r, i) in e.reasons" :key="i">
+                      {{ r.text }}<span class="mkt-cal__source">（{{ r.source }}）</span>
+                    </li>
+                  </ul>
+                </template>
+
+                <!-- ② 做什麼：只留跟時間有關的（`D-121`③），常常沒有 -->
+                <template v-if="e.actions.length">
+                  <p class="mkt-cal__label">做什麼</p>
+                  <ul class="mkt-cal__list-items mkt-cal__actions">
+                    <li v-for="(a, i) in e.actions" :key="i">{{ a }}</li>
+                  </ul>
+                </template>
+
+                <!-- 已經為這一檔建好推播：直接講排在哪天，⛔ 不再給「為這一檔擬推播」（會擬出第二份） -->
+                <p v-if="plannedOf(e)" class="mkt-cal__planned">
+                  <span :class="['mkt-cal__chip', chipTone(e)]">{{ chipText(e) }}</span>「{{ plannedOf(e)?.name }}」<template v-if="e.planned.length > 1">（這一檔共 {{ e.planned.length }} 則）</template>
+                </p>
+
+                <!--
+                  ③ 按鈕。`G-102`／`G-109`：兩顆各照自己的端點擋（`draft`＝`broadcast.write`、`skip`＝`marketing.write`）。
+                  `C-236`「這次不做」⛔ 不是刪除：`festivalId` 含年份，明年那一檔會自己回來。
+                -->
+                <div v-if="plannedOf(e)" class="mkt-cal__cta">
+                  <el-button size="small" type="primary" plain @click="goViewBroadcast(plannedOf(e)?.id ?? '')">查看推播</el-button>
+                </div>
+                <div v-else-if="can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
+                  <el-button
+                    v-if="can('broadcast.write')"
+                    size="small"
+                    type="primary"
+                    plain
+                    :loading="draftingId === e.festivalId"
+                    :disabled="draftingId !== '' && draftingId !== e.festivalId"
+                    @click="goBroadcast(e)"
+                  >
+                    {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
+                  </el-button>
+                  <el-button v-if="can('marketing.write')" size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
+                    這次不做
+                  </el-button>
+                </div>
+              </div>
+            </article>
           </div>
-        </article>
+
+          <!--
+            收起來的那幾檔（`C-236` 鐵律①）。
+            ⛔ **一定要看得見、可以還原**：靜靜消失的話，他會以為系統漏掉那個節日。
+          -->
+          <div v-if="skippedEntries.length" class="mkt-cal__skipped">
+            <!-- `G-102`：觀察者沒有「還原」可按，全收起來時不用那句「按下面的還原」 -->
+            <p class="mkt-cal__skipped-text">
+              {{ visibleEntries.length || !can('marketing.write') ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
+            </p>
+            <div v-if="can('marketing.write')" class="mkt-cal__skipped-chips">
+              <el-button
+                v-for="s in skippedEntries"
+                :key="s.festivalId"
+                size="small"
+                text
+                type="primary"
+                :loading="skippingId === s.festivalId"
+                @click="restoreEntry(s)"
+              >
+                還原「{{ s.name }}」
+              </el-button>
+            </div>
+          </div>
+        </template>
 
         <!--
-          收起來的那幾檔（`C-236` 鐵律①）。
-          ⛔ **一定要看得見、可以還原**：靜靜消失的話，他會以為系統漏掉那個節日。
+          `C-55`② / `C-240` / `D-121`：上一檔做得怎麼樣，收在最下面一行。
+          只算為節日發的推播、成效是 LINE 的人數（規則在 `shared/festival-outcome.ts`）。
+          ⛔ 回看窗內一檔都沒有就整段不出現——不要留一個空殼。
         -->
-        <div v-if="skippedEntries.length" class="mkt-cal__skipped">
-          <!-- `G-102`：觀察者沒有「還原」可按，全收起來時不用那句「按下面的還原」 -->
-          <p class="mkt-cal__skipped-text">
-            {{ visibleEntries.length || !can('marketing.write') ? skippedNoticeText(skippedEntries) : allSkippedText(skippedEntries) }}
-          </p>
-          <div v-if="can('marketing.write')" class="mkt-cal__skipped-chips">
-            <el-button
-              v-for="s in skippedEntries"
-              :key="s.festivalId"
-              size="small"
-              text
-              type="primary"
-              :loading="skippingId === s.festivalId"
-              @click="restoreEntry(s)"
-            >
-              還原「{{ s.name }}」
-            </el-button>
+        <div v-if="outcomeLines.length" class="mkt-cal__past">
+          <span class="mkt-cal__past-label">{{ outcomeLabel }}</span>
+          <div class="mkt-cal__past-lines">
+            <p v-for="(l, i) in outcomeLines" :key="i">
+              {{ l.before }}<template v-if="l.broadcast">「<button type="button" class="mkt-cal__link" @click="goViewBroadcast(l.broadcast.id)">{{ l.broadcast.name }}</button>」</template>{{ l.after }}
+            </p>
+            <p v-if="outcomeIntegrity.failed" class="mkt-cal__muted">⚠️ 這次讀不到推播紀錄，上面的回顧不完整。</p>
+            <p v-else-if="outcomeIntegrity.truncated" class="mkt-cal__muted">⚠️ 推播太多，只算了掃到的那一段。</p>
           </div>
         </div>
       </template>
@@ -155,8 +184,9 @@
 </template>
 
 <script setup lang="ts">
-import type { CalendarEntry } from '~~/shared/marketing-calendar'
-import type { FestivalOutcome } from '~~/shared/festival-outcome'
+import type { CalendarEntry, PlannedBroadcast } from '~~/shared/marketing-calendar'
+import { pickPlanned, plannedStatusText } from '~~/shared/marketing-calendar'
+import type { OutcomeLine } from '~~/shared/festival-outcome'
 import {
   allSkippedText,
   skippedNoticeText,
@@ -180,15 +210,14 @@ const headline = ref('')
 const ready = ref(false)
 /**
  * 輪廓有沒有寫「主打商品」（`C-235`）。
- * ⚠️ 跟 `ready` 是兩件事：`ready` 只要答滿三題就成立，但主打商品是下游全部都靠的那一格
- *   （節慶客製、受眾配對），空的話這張卡只講得出通用建議卻不會有人知道。
+ * ⚠️ 跟 `ready` 是兩件事：`ready` 只要答滿三題就成立，但主打商品是下游全部都靠的那一格。
  * ⛔ 預設 `true`：讀不到時**不要**跳出「快去補商品」——那是在還不知道的情況下指責他。
  */
 const hasProducts = ref(true)
 
-/** 上一檔的結果（`C-55`②）。空陣列＝回看窗內沒有過去的節日，整段不出現。 */
-const outcomes = ref<FestivalOutcome[]>([])
-const outcomeHeadline = ref('')
+/** 上一檔的結果（`C-55`② / `D-121`）。空陣列＝回看窗內沒有過去的節日，整段不出現。 */
+const outcomeLabel = ref('')
+const outcomeLines = ref<OutcomeLine[]>([])
 const outcomeIntegrity = ref<{ truncated: boolean, failed: boolean }>({ truncated: false, failed: false })
 
 /**
@@ -205,6 +234,34 @@ const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
 
+/**
+ * 哪一檔攤開（`D-121`）。他還沒動過＝最近的那一檔；按過就照他的（可以全部收起來）。
+ * ⚠️ 用 `undefined` 當「還沒動過」，⛔ 不要用 null——null 是「他把它收起來了」。
+ */
+const openChoice = ref<string | null | undefined>(undefined)
+const openId = computed(() => openChoice.value === undefined
+  ? (visibleEntries.value[0]?.festivalId ?? null)
+  : openChoice.value)
+function toggle(id: string) {
+  openChoice.value = openId.value === id ? null : id
+}
+
+function plannedOf(e: CalendarEntry): PlannedBroadcast | null {
+  return pickPlanned(e.planned ?? [])
+}
+function chipText(e: CalendarEntry) {
+  const p = plannedOf(e)
+  if (!p) return ''
+  const t = plannedStatusText(p)
+  return p.status === 'scheduled' || p.status === 'completed' ? `✓ ${t}` : t
+}
+function chipTone(e: CalendarEntry) {
+  const status = plannedOf(e)?.status
+  if (status === 'failed') return 'is-bad'
+  if (status === 'draft') return 'is-draft'
+  return 'is-ok'
+}
+
 async function reload() {
   loading.value = true
   loadError.value = ''
@@ -214,17 +271,17 @@ async function reload() {
       headline: string
       ready: boolean
       hasProducts: boolean
-      outcomes: FestivalOutcome[]
-      outcomeHeadline: string
+      outcomeLabel: string
+      outcomeLines: OutcomeLine[]
       outcomeIntegrity: { truncated: boolean, failed: boolean }
       skippedFestivalIds: string[]
     }>('/api/marketing-calendar')
-    entries.value = r.entries ?? []
+    entries.value = (r.entries ?? []).map(e => ({ ...e, planned: Array.isArray(e.planned) ? e.planned : [] }))
     headline.value = r.headline ?? ''
     ready.value = r.ready === true
     hasProducts.value = r.hasProducts === true
-    outcomes.value = r.outcomes ?? []
-    outcomeHeadline.value = r.outcomeHeadline ?? ''
+    outcomeLabel.value = r.outcomeLabel ?? ''
+    outcomeLines.value = Array.isArray(r.outcomeLines) ? r.outcomeLines : []
     outcomeIntegrity.value = r.outcomeIntegrity ?? { truncated: false, failed: false }
     skippedIds.value = Array.isArray(r.skippedFestivalIds) ? r.skippedFestivalIds : []
     loaded.value = true
@@ -253,13 +310,14 @@ function goProfile() {
   void navigateTo(`/admin/onboarding?workspaceId=${props.workspaceId}&focus=profile`)
 }
 
+function goViewBroadcast(id: string) {
+  if (!id) return
+  // 推播頁吃 `?id=` 直接打開那一則（`C-237`）
+  void navigateTo(`/admin/${props.workspaceId}/broadcasts?id=${encodeURIComponent(id)}`)
+}
+
 const draftingId = ref('')
 
-/**
- * 「為這一檔擬推播」（`C-225`）。
- * ⛔ **這裡不建立任何東西**：端點只產文字，文案暫存在 sessionStorage，
- *    由推播頁開一張**還沒存檔**的草稿——對客人說話的東西，最後一顆按鈕永遠是人。
- */
 /**
  * `C-236`：收起來 / 放回來。
  *
@@ -290,6 +348,11 @@ async function setSkip(e: { festivalId: string, name: string }, skip: boolean) {
 const skipEntry = (e: { festivalId: string, name: string }) => setSkip(e, true)
 const restoreEntry = (e: { festivalId: string, name: string }) => setSkip(e, false)
 
+/**
+ * 「為這一檔擬推播」（`C-225`）。
+ * ⛔ **這裡不建立任何東西**：端點只產文字，文案暫存在 sessionStorage，
+ *    由推播頁開一張**還沒存檔**的草稿——對客人說話的東西，最後一顆按鈕永遠是人。
+ */
 async function goBroadcast(e: CalendarEntry) {
   if (draftingId.value) return // ⛔ 防連點：一次按兩下會打兩次 LLM
   draftingId.value = e.festivalId

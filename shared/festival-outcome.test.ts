@@ -1,160 +1,145 @@
 import { describe, expect, it } from 'vitest'
 import {
-  broadcastBelongsTo,
+  broadcastFestivalMatch,
+  broadcastResultText,
   buildFestivalOutcomes,
   buildOneOutcome,
+  festivalNameKeywords,
+  findLastYearFestivalBroadcast,
   OUTCOME_MAX,
-  OUTCOME_WINDOW_DAYS,
-  outcomeHeadline,
+  outcomeLineText,
+  outcomeSummary,
   type BroadcastOutcome,
 } from './festival-outcome'
+import { TAIWAN_FESTIVALS } from './taiwan-festivals'
 
 const DAY = 86_400_000
-const ms = (d: string) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))
+/** 台灣時間那天的晚上 9 點（推播多半那時候發） */
+const at = (d: string) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10), 13)
 
-/** 數字抄自 MYFEEL 正式資料（2026-09-23 唯讀盤點） */
 function bc(over: Partial<BroadcastOutcome> = {}): BroadcastOutcome {
-  return { id: 'b1', name: '乾淨方MAX開賣', atMs: ms('2026-08-25'), sentCount: 846, clickCount: 184, ...over }
+  return { id: 'b1', name: '小滑手_開賣', atMs: at('2026-09-29'), sentCount: 2187, line: { opened: 785, clicked: 443 }, ...over }
 }
 
 const GHOST = { id: 'ghost-2026', name: '中元節', date: '2026-08-27' }
 const MIDAUTUMN = { id: 'midautumn-2026', name: '中秋節', date: '2026-09-25' }
+const NATIONAL = { id: 'nationalday-2026', name: '國慶日', date: '2026-10-10' }
+const NOW = at('2026-10-11')
 
-describe('broadcastBelongsTo', () => {
-  it('前後兩週內算這一檔', () => {
-    expect(broadcastBelongsTo(bc({ atMs: ms('2026-08-27') }), GHOST.date)).toBe(true)
-    expect(broadcastBelongsTo(bc({ atMs: ms('2026-08-27') - OUTCOME_WINDOW_DAYS * DAY }), GHOST.date)).toBe(true)
+/**
+ * 2026-10-11 唯讀盤點 MYFEEL 正式資料（`D-121`）：8/1 以後送出的 14 則全是商品上市推播，
+ * 沒有一則從「為這一檔擬推播」建立，名稱裡也沒有任何節日名。
+ */
+const MYFEEL_REAL: BroadcastOutcome[] = [
+  ['AROMIC上市', '2026-08-13', 204], ['KIESLECT預熱', '2026-08-19', 460], ['KIESLECT正式上市', '2026-08-20', 472],
+  ['AROMIC超早鳥倒數', '2026-08-30', 199], ['乾淨方MAX開賣', '2026-09-01', 846], ['乾淨方MAX超早鳥倒數', '2026-09-04', 1],
+  ['乾淨方MAX超早鳥倒數測試', '2026-09-04', 1], ['乾淨方MAX超早鳥倒數', '2026-09-06', 842], ['電淨艙_開賣', '2026-09-29', 1613],
+  ['小滑手_開賣', '2026-09-29', 2187], ['水都會_開賣', '2026-10-01', 464], ['電淨艙_超早鳥倒數', '2026-10-04', 1592],
+  ['小滑手_超早鳥倒數', '2026-10-04', 2165], ['水多會-超早鳥倒數', '2026-10-05', 461],
+].map(([name, d, sent], i) => ({ id: `r${i}`, name: String(name), atMs: at(String(d)), sentCount: Number(sent) }))
+
+describe('broadcastFestivalMatch（`D-121`①：只算為這一檔發的）', () => {
+  it('從「為這一檔擬推播」建立的＝linked', () => {
+    expect(broadcastFestivalMatch(bc({ festivalId: MIDAUTUMN.id }), MIDAUTUMN)).toBe('linked')
   })
 
-  it('窗外的不算', () => {
-    expect(broadcastBelongsTo(bc({ atMs: ms('2026-08-27') - 15 * DAY }), GHOST.date)).toBe(false)
+  it('⛔ 綁在別檔的不會被這一檔撿走（就算名稱有這一檔的字）', () => {
+    expect(broadcastFestivalMatch(bc({ name: '中秋禮盒', festivalId: NATIONAL.id }), MIDAUTUMN)).toBeNull()
+  })
+
+  it('名稱裡有節日名、時間在節日前 30 天到後 7 天內＝named', () => {
+    expect(broadcastFestivalMatch(bc({ name: '中秋禮盒早鳥', atMs: at('2026-09-10') }), MIDAUTUMN)).toBe('named')
+    expect(broadcastFestivalMatch(bc({ name: '雙十連假出遊', atMs: at('2026-10-05') }), NATIONAL)).toBe('named')
+  })
+
+  it('⛔ 名稱對上但時間差太遠（去年的、或兩個月前的）不算', () => {
+    expect(broadcastFestivalMatch(bc({ name: '中秋禮盒', atMs: at('2025-10-01') }), MIDAUTUMN)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '中秋禮盒', atMs: at('2026-07-20') }), MIDAUTUMN)).toBeNull()
+  })
+
+  it('⭐ 真資料：中秋與國慶前後那 6 則商品推播，兩檔都不算（以前被兩檔各算一次）', () => {
+    for (const f of [GHOST, MIDAUTUMN, NATIONAL]) {
+      expect(MYFEEL_REAL.filter(b => broadcastFestivalMatch(b, f) !== null), f.name).toEqual([])
+    }
+  })
+
+  it('「雙 11」不管有沒有空白都認得', () => {
+    const d11 = { id: 'double11-2026', name: '雙 11 購物節', date: '2026-11-11' }
+    expect(broadcastFestivalMatch(bc({ name: '雙11早鳥', atMs: at('2026-11-01') }), d11)).toBe('named')
+    expect(broadcastFestivalMatch(bc({ name: '雙 11 早鳥', atMs: at('2026-11-01') }), d11)).toBe('named')
   })
 
   it('時間壞掉的不猜，一律不算', () => {
-    expect(broadcastBelongsTo(bc({ atMs: Number.NaN }), GHOST.date)).toBe(false)
-    expect(broadcastBelongsTo(bc(), 'not-a-date')).toBe(false)
+    expect(broadcastFestivalMatch(bc({ name: '中秋', atMs: Number.NaN }), MIDAUTUMN)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '中秋' }), { ...MIDAUTUMN, date: 'not-a-date' })).toBeNull()
+  })
+})
+
+describe('festivalNameKeywords', () => {
+  it('節日表裡每一個節日都有認得的字（新增節日時別忘了這張表）', () => {
+    for (const f of TAIWAN_FESTIVALS) expect(festivalNameKeywords(f.name).length, f.name).toBeGreaterThan(0)
+  })
+
+  it('⛔ 不收會撞到別檔或平常就會用的字', () => {
+    const all = TAIWAN_FESTIVALS.flatMap(f => festivalNameKeywords(f.name))
+    for (const bad of ['新年', '媽媽', '情人', '節']) expect(all).not.toContain(bad)
   })
 })
 
 describe('buildOneOutcome', () => {
-  it('講得出發了什麼、送到幾人、被點幾次', () => {
-    const o = buildOneOutcome(GHOST, [bc()], null)
-    expect(o.sentTotal).toBe(846)
-    expect(o.clickTotal).toBe(184)
-    expect(o.text).toContain('乾淨方MAX開賣')
-    expect(o.text).toContain('846 人')
-    expect(o.text).toContain('184 次')
-  })
-
-  it('⛔ 口徑紅線：點擊一律講「次」，不准出現「點擊率」「幾成的人點了」', () => {
-    const o = buildOneOutcome(GHOST, [bc()], null)
-    expect(o.text).toContain('被點了 184 次')
-    expect(o.text).toContain('每 100 人收到被點')
-    for (const bad of ['點擊率', 'CTR', '成的人', '% 的人']) {
-      expect(o.text).not.toContain(bad)
-    }
-  })
-
-  it('每 100 人被點幾次算得對（184/846）', () => {
-    expect(buildOneOutcome(GHOST, [bc()], null).clicksPer100).toBe(21.7)
-  })
-
-  it('⛔ 沒發推播要講「你沒發」，不可以整檔消失', () => {
-    const o = buildOneOutcome(GHOST, [], null)
-    expect(o.text).toContain('你沒有發推播')
-    expect(o.clicksPer100).toBeNull()
-  })
-
-  it('⛔ 建了沒送出去的要講出來（排程失敗那種）', () => {
-    const o = buildOneOutcome(GHOST, [bc({ sentCount: 0, clickCount: 0 })], null)
-    expect(o.broadcasts).toEqual([])
-    expect(o.text).toContain('1 則建了但一個人都沒送出去')
-  })
-
-  it('有送出、也有送 0 人的，兩件事都要講', () => {
-    const o = buildOneOutcome(GHOST, [bc(), bc({ id: 'b2', sentCount: 0, clickCount: 0 })], null)
-    expect(o.sentTotal).toBe(846)
-    expect(o.text).toContain('另有 1 則建了沒送出去')
-  })
-
-  it('⚠️ 一次都沒被點時要講「可能本來就沒放連結」，不要讓人以為推播失敗', () => {
-    const o = buildOneOutcome(GHOST, [bc({ clickCount: 0 })], null)
-    expect(o.text).toContain('一次都沒有被點')
-    expect(o.text).toContain('沒有放連結')
-  })
-
-  it('多則推播會合起來算', () => {
-    const o = buildOneOutcome(GHOST, [bc(), bc({ id: 'b2', name: '第二則', sentCount: 154, clickCount: 46 })], null)
-    expect(o.sentTotal).toBe(1000)
-    expect(o.clickTotal).toBe(230)
-    expect(o.text).toContain('發了 2 則推播')
-  })
-})
-
-describe('跟上一檔比（⛔ 兩邊都要「真的綁在那一檔上」才比）', () => {
-  // 綁定版：兩邊都帶 festivalId
-  const prevLinked = buildOneOutcome(GHOST, [bc({ festivalId: GHOST.id })], null) // 21.7 次／百人
-  const atMidAutumn = (over: Partial<BroadcastOutcome>) =>
-    bc({ atMs: ms('2026-09-25'), festivalId: MIDAUTUMN.id, ...over })
-
-  it('比得出來就講差多少', () => {
-    const better = buildOneOutcome(MIDAUTUMN, [atMidAutumn({ sentCount: 100, clickCount: 30 })], prevLinked)
-    expect(better.text).toContain('比「中元節」那一檔多 8.3 次／百人')
-    const worse = buildOneOutcome(MIDAUTUMN, [atMidAutumn({ sentCount: 100, clickCount: 10 })], prevLinked)
-    expect(worse.text).toContain('少 11.7 次／百人')
-  })
-
-  it('⛔ 這一檔沒資料就不比（不要生出「成長 100%」）', () => {
-    expect(buildOneOutcome(MIDAUTUMN, [], prevLinked).text).not.toContain('比「中元節」')
-  })
-
-  it('⛔ 上一檔沒資料也不比', () => {
-    const o = buildOneOutcome(MIDAUTUMN, [atMidAutumn({ sentCount: 100, clickCount: 30 })], null)
-    expect(o.text).toContain('送到 100 人') // 先確認這一檔真的有量到，否則下面那條是假綠燈
-    expect(o.text).not.toContain('比「')
-  })
-
-  // ⚠️ 2026-09-23 真資料抓到的：中元節前後兩週有 8 則推播、3,025 人，
-  //    但那 8 則全是乾淨方MAX／AROMIC／KIESLECT 的商品檔期，跟中元節無關。
-  it('⛔ 只是日期相近的兩批，不可以拿來比「哪一檔做得好」', () => {
-    const prevGuessed = buildOneOutcome(GHOST, [bc()], null) // 沒有 festivalId
-    expect(prevGuessed.linked).toBe(false)
-    const now = buildOneOutcome(MIDAUTUMN, [bc({ atMs: ms('2026-09-25'), sentCount: 100, clickCount: 30 })], prevGuessed)
-    expect(now.text).not.toContain('比「')
-  })
-})
-
-describe('⭐ 知道 vs 猜：真資料上會把八則商品推播算成「中元節檔期」', () => {
-  it('⛔ 沒有綁定時，話要講成「那段期間」而且要講出是照日期抓的', () => {
-    const o = buildOneOutcome(GHOST, [bc(), bc({ id: 'b2', name: 'AROMIC上市', sentCount: 204, clickCount: 53 })], null)
-    expect(o.linked).toBe(false)
-    expect(o.text).toContain('前後兩週')
-    expect(o.text).toContain('不一定是為了這一檔發的')
-    expect(o.text).toContain('照日期抓的')
-    // ⛔ 不可以講成「這一檔」的成績
-    expect(o.text).not.toContain('「中元節」發了')
-  })
-
-  it('有綁定時就講得肯定，而且不再加那句警語', () => {
-    const o = buildOneOutcome(GHOST, [bc({ festivalId: GHOST.id })], null)
-    expect(o.linked).toBe(true)
-    expect(o.text).toContain('「中元節」發了')
-    expect(o.text).not.toContain('不一定是為了這一檔')
-  })
-
-  it('⭐ 有綁定的就只算綁定的，⛔ 不把日期相近的混進來灌大數字', () => {
-    const o = buildOneOutcome(GHOST, [
-      bc({ id: 'real', name: '中元節推播', sentCount: 100, clickCount: 20, festivalId: GHOST.id }),
-      bc({ id: 'noise', name: '乾淨方MAX開賣', sentCount: 846, clickCount: 184 }),
-    ], null)
-    expect(o.sentTotal).toBe(100)
+  it('只發給 1～2 人的當試發，不算成效但要記下來', () => {
+    const o = buildOneOutcome(MIDAUTUMN, [
+      bc({ id: 'real', name: '中秋禮盒', atMs: at('2026-09-20'), festivalId: MIDAUTUMN.id }),
+      bc({ id: 'test', name: '中秋禮盒測試', atMs: at('2026-09-19'), sentCount: 1, festivalId: MIDAUTUMN.id }),
+    ])
     expect(o.broadcasts.map(b => b.id)).toEqual(['real'])
+    expect(o.testSends).toBe(1)
   })
 
-  it('⛔ 綁在別檔的推播不會被這一檔撿走', () => {
-    const o = buildOneOutcome(GHOST, [bc({ festivalId: 'midautumn-2026' })], null)
-    expect(o.sentTotal).toBe(0)
-    expect(o.text).toContain('你沒有發推播')
+  it('建了但沒送出去的要記下來', () => {
+    const o = buildOneOutcome(MIDAUTUMN, [bc({ sentCount: 0, festivalId: MIDAUTUMN.id })])
+    expect(o.broadcasts).toEqual([])
+    expect(o.zeroSent).toBe(1)
+  })
+
+  it('由近到遠排', () => {
+    const o = buildOneOutcome(MIDAUTUMN, [
+      bc({ id: 'early', atMs: at('2026-09-10'), festivalId: MIDAUTUMN.id }),
+      bc({ id: 'late', atMs: at('2026-09-22'), festivalId: MIDAUTUMN.id }),
+    ])
+    expect(o.broadcasts.map(b => b.id)).toEqual(['late', 'early'])
+  })
+})
+
+describe('broadcastResultText（`D-121`②：LINE 的人數，⛔ 拿不到不寫 0）', () => {
+  it('兩個數字都有：送幾人、幾人打開、幾人點連結', () => {
+    expect(broadcastResultText(bc(), NOW)).toBe('送 2,187 人，785 人打開，443 人點連結（LINE 官方統計）')
+  })
+
+  it('⛔ 口徑紅線：一律是「人」，不出現「次」「點擊率」「每 100 人」', () => {
+    const t = broadcastResultText(bc(), NOW)
+    for (const bad of ['次', '點擊率', 'CTR', '每 100 人']) expect(t).not.toContain(bad)
+  })
+
+  it('人太少 LINE 不給（隱私）：講原因', () => {
+    expect(broadcastResultText(bc({ line: { opened: null, clicked: null } }), NOW)).toContain('人太少，LINE 不提供數字')
+    // 真資料：水多會-超早鳥倒數 74 人打開、點連結的 LINE 不給
+    const t = broadcastResultText(bc({ line: { opened: 74, clicked: null } }), NOW)
+    expect(t).toContain('74 人打開')
+    expect(t).toContain('點連結的人太少')
+    expect(t).not.toContain(' 0 人')
+  })
+
+  it('剛發完還沒存到：講「隔天才有」', () => {
+    expect(broadcastResultText(bc({ atMs: NOW - DAY / 2, line: null }), NOW)).toContain('發完隔天才有')
+  })
+
+  it('發得太早、LINE 已經查不到：照實講', () => {
+    expect(broadcastResultText(bc({ atMs: NOW - 40 * DAY, line: null }), NOW)).toContain('LINE 已經查不到')
+  })
+
+  it('發送時沒帶統計標記：照實講', () => {
+    expect(broadcastResultText(bc({ line: { opened: null, clicked: null, unavailable: true } }), NOW)).toContain('沒帶到 LINE 的統計標記')
   })
 })
 
@@ -163,36 +148,14 @@ describe('buildFestivalOutcomes', () => {
     { id: 'dragon-2026', name: '端午節', date: '2026-06-19' },
     GHOST,
     MIDAUTUMN,
-    { id: 'nationalday-2026', name: '國慶日', date: '2026-10-10' },
+    NATIONAL,
+    { id: 'doubleninth-2026', name: '重陽節', date: '2026-10-18' },
   ]
 
-  it('只看過去的、而且在回看窗內', () => {
-    const out = buildFestivalOutcomes('2026-09-26', FESTIVALS, [bc()])
-    const ids = out.map(o => o.festivalId)
-    expect(ids).toContain('midautumn-2026')
-    expect(ids).toContain('ghost-2026')
-    expect(ids).not.toContain('nationalday-2026') // 還沒到
-    expect(ids).not.toContain('dragon-2026') // 超過 90 天
-  })
-
-  it('由近到遠，最多三檔', () => {
-    const many = Array.from({ length: 6 }, (_, i) => ({
-      id: `f${i}`, name: `節${i}`, date: `2026-0${7 + Math.floor(i / 3)}-${String(1 + (i % 3) * 10).padStart(2, '0')}`,
-    }))
-    const out = buildFestivalOutcomes('2026-09-26', many, [])
+  it('只看過去的、在回看窗內的，由近到遠、最多三檔', () => {
+    const out = buildFestivalOutcomes('2026-10-11', FESTIVALS, [])
+    expect(out.map(o => o.festivalId)).toEqual(['nationalday-2026', 'midautumn-2026', 'ghost-2026'])
     expect(out.length).toBeLessThanOrEqual(OUTCOME_MAX)
-    expect(out[0]!.date > out[1]!.date).toBe(true)
-  })
-
-  it('⭐ 比較基準只取「真的綁定且有送出」的那一檔，空檔期不會把基準洗掉', () => {
-    // 中元節有送、中秋節沒送、國慶（假設已過）有送 → 國慶要跟中元比
-    const festivals = [GHOST, MIDAUTUMN, { id: 'x-2026', name: '國慶日', date: '2026-10-10' }]
-    const out = buildFestivalOutcomes('2026-10-20', festivals, [
-      bc({ atMs: ms('2026-08-27'), festivalId: GHOST.id }),
-      bc({ id: 'b3', name: '國慶推播', atMs: ms('2026-10-10'), sentCount: 100, clickCount: 30, festivalId: 'x-2026' }),
-    ])
-    const nat = out.find(o => o.festivalId === 'x-2026')!
-    expect(nat.text).toContain('比「中元節」')
   })
 
   it('日期壞掉不會炸', () => {
@@ -201,25 +164,84 @@ describe('buildFestivalOutcomes', () => {
   })
 })
 
-describe('outcomeHeadline', () => {
-  it('⛔ 一檔都沒有就整段不出現', () => {
-    expect(outcomeHeadline([])).toBe('')
+describe('outcomeSummary（卡片最下面那一行）', () => {
+  const three = (list: BroadcastOutcome[]) => buildFestivalOutcomes('2026-10-11', [GHOST, MIDAUTUMN, NATIONAL], list)
+  const texts = (list: BroadcastOutcome[]) => outcomeSummary(three(list), NOW).lines.map(outcomeLineText)
+
+  it('⭐ 真資料（今天的 MYFEEL）：一行講完三檔都沒有為節日發，並講從這裡擬的才看得到成效', () => {
+    const s = outcomeSummary(three(MYFEEL_REAL), NOW)
+    expect(s.label).toBe('最近 3 檔')
+    expect(s.lines.map(outcomeLineText)).toEqual([
+      '中元節、中秋節、國慶日都沒有為節日發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。',
+    ])
   })
 
-  it('全都沒發時講的是另一句', () => {
-    const out = buildFestivalOutcomes('2026-09-26', [GHOST, MIDAUTUMN], [])
-    expect(outcomeHeadline(out)).toContain('都沒有發推播')
+  it('⛔ 以前那三句警語與「次數不是人數」都不會再出現', () => {
+    const all = texts(MYFEEL_REAL).join()
+    for (const bad of ['照日期抓', '不一定是為了這一檔', '沒有放連結', '次數']) expect(all).not.toContain(bad)
   })
 
-  it('有綁定的才敢講「結果」', () => {
-    const out = buildFestivalOutcomes('2026-09-26', [GHOST, MIDAUTUMN], [bc({ festivalId: GHOST.id })])
-    expect(outcomeHeadline(out)).toContain('的結果')
+  it('有為節日發的：一則一行，名字是連結，不跨推播加總人數', () => {
+    const s = outcomeSummary(three([
+      bc({ id: 'n1', name: '國慶連假早鳥', atMs: at('2026-10-05'), sentCount: 2140, line: { opened: 612, clicked: 198 }, festivalId: NATIONAL.id }),
+      bc({ id: 'n2', name: '國慶最後一天', atMs: at('2026-10-09'), sentCount: 2100, line: { opened: 500, clicked: 120 }, festivalId: NATIONAL.id }),
+    ]), NOW)
+    expect(s.lines[0]).toMatchObject({ before: '國慶日', broadcast: { id: 'n2', name: '國慶最後一天' } })
+    expect(s.lines[1]).toMatchObject({ before: '國慶日', broadcast: { id: 'n1', name: '國慶連假早鳥' } })
+    expect(outcomeLineText(s.lines[1]!)).toBe('國慶日「國慶連假早鳥」送 2,140 人，612 人打開，198 人點連結（LINE 官方統計）')
+    // ⛔ 不出現加總（4,240 人／1,112 人打開）
+    const all = s.lines.map(outcomeLineText).join()
+    expect(all).not.toContain('4,240')
+    expect(all).not.toContain('1,112')
+    // 沒發的那兩檔併成一行，⛔ 不再補「從這裡擬的…」（他已經在用了）
+    expect(outcomeLineText(s.lines[2]!)).toBe('中元節、中秋節沒有為節日發的推播。')
   })
 
-  it('⛔ 全靠日期猜的時候，標題也不可以講成「結果」', () => {
-    const out = buildFestivalOutcomes('2026-09-26', [GHOST, MIDAUTUMN], [bc()])
-    const h = outcomeHeadline(out)
-    expect(h).toContain('前後你發過什麼')
-    expect(h).not.toContain('的結果')
+  it('同一檔超過兩則：列兩則，其他講「另外 N 則」', () => {
+    const list = [5, 6, 7].map(d => bc({ id: `n${d}`, name: `國慶${d}`, atMs: at(`2026-10-0${d}`), festivalId: NATIONAL.id }))
+    const t = texts(list)
+    expect(t.filter(x => x.startsWith('國慶日「'))).toHaveLength(2)
+    expect(t.join()).toContain('另外還有 1 則')
+  })
+
+  it('試發與沒送出去的要講出來（⛔ 不靜靜吃掉）', () => {
+    const t = texts([
+      bc({ id: 'z', name: '國慶早鳥', atMs: at('2026-10-05'), sentCount: 0, festivalId: NATIONAL.id }),
+      bc({ id: 't', name: '國慶早鳥測試', atMs: at('2026-10-04'), sentCount: 1, festivalId: NATIONAL.id }),
+    ])
+    expect(t[0]).toBe('國慶日有 1 則建了但一個人都沒送出去，去推播頁看看卡在哪；1 則只發給 1～2 人（試發），沒算進來。')
+  })
+
+  it('只有一檔在回看窗內時，標題叫「上一檔」', () => {
+    const s = outcomeSummary(buildFestivalOutcomes('2026-10-11', [NATIONAL], []), NOW)
+    expect(s.label).toBe('上一檔')
+    expect(outcomeLineText(s.lines[0]!)).toBe('國慶日沒有為節日發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。')
+  })
+
+  it('⛔ 一檔都沒有（回看窗內沒有過去的節日）就整段不出現', () => {
+    expect(outcomeSummary([], NOW)).toEqual({ label: '', lines: [] })
+  })
+})
+
+describe('findLastYearFestivalBroadcast（去年這一檔為它發的）', () => {
+  const festivals = [
+    { id: 'midautumn-2026', name: '中秋節', date: '2026-09-25' },
+    { id: 'midautumn-2027', name: '中秋節', date: '2027-09-15' },
+  ]
+
+  it('照歸屬規則找去年那一檔，好幾則取送最多人的', () => {
+    const hit = findLastYearFestivalBroadcast(festivals[1]!, festivals, [
+      bc({ id: 'a', name: '中秋禮盒', atMs: at('2026-09-15'), sentCount: 400 }),
+      bc({ id: 'b', festivalId: 'midautumn-2026', atMs: at('2026-09-20'), sentCount: 900 }),
+    ])
+    expect(hit?.id).toBe('b')
+  })
+
+  it('⛔ 去年這時候的商品推播不算（以前照日期猜，會講成「去年這個時候你發過小滑手_開賣」）', () => {
+    expect(findLastYearFestivalBroadcast(festivals[1]!, festivals, MYFEEL_REAL)).toBeNull()
+  })
+
+  it('節日表沒有去年那一檔就回 null', () => {
+    expect(findLastYearFestivalBroadcast(festivals[0]!, festivals, [bc({ festivalId: 'x' })])).toBeNull()
   })
 })

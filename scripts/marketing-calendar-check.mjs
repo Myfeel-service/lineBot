@@ -58,7 +58,8 @@ const blocked = []
 async function openPage(fakeReads) {
   const ctx = await browser.createBrowserContext()
   const page = await ctx.newPage()
-  await page.setViewport({ width: 1440, height: 1200 })
+  // 要驗窄版（卡片 < 520px 時切角掉到第二行）：CHECK_VIEWPORT_W=760
+  await page.setViewport({ width: Number(process.env.CHECK_VIEWPORT_W) || 1440, height: 1200 })
   page.on('pageerror', e => console.log('  [page error]', String(e).slice(0, 200)))
   page.on('dialog', async d => { await d.accept().catch(() => {}) })
   await page.setRequestInterception(true)
@@ -119,14 +120,44 @@ function calendar(over = {}) {
         source: '標籤管理的實際人數',
       }],
       actions: ['最後確認推播排了沒、庫存和出貨來不來得及'],
+      planned: [],
     }],
     outcomes: [],
-    outcomeHeadline: '',
+    outcomeLabel: '',
+    outcomeLines: [],
     outcomeIntegrity: { truncated: false, failed: false },
     skippedFestivalIds: [],
     ...over,
   }
 }
+
+/**
+ * `D-121`：照 2026-10-11 截圖那一刻的 MYFEEL 畫出來的樣子（還不認識這家店、5 檔、最近 3 檔都沒有為節日發推播）。
+ * 字數、對齊、「只講一次」都拿這一份量。
+ */
+function myfeelToday(over = {}) {
+  const e = (festivalId, date, name, inDays, generalAngle, extra = {}) => ({
+    festivalId, date, name, inDays, soon: inDays <= 14, generalAngle, reasons: [], actions: [], planned: [], ...extra,
+  })
+  return calendar({
+    ready: false,
+    hasProducts: false,
+    headline: '未來 90 天',
+    entries: [
+      e('doubleninth-2026', '2026-10-18', '重陽節', 7, '敬老送禮與長輩用的東西會被找'),
+      e('halloween-2026', '2026-10-31', '萬聖節', 20, '應景裝飾、變裝與打卡活動最容易帶氣氛'),
+      e('double11-2026', '2026-11-11', '雙 11 購物節', 31, '全年最大的線上折扣檔期，客人會比價比得特別兇'),
+      e('christmas-2026', '2026-12-25', '聖誕節', 75, '交換禮物與聚餐的檔期，送禮客群最捨得花'),
+      e('newyear-2027', '2027-01-01', '元旦（跨年）', 82, '跨年聚會與「新年新目標」的話題最好切入'),
+    ],
+    outcomeLabel: '最近 3 檔',
+    outcomeLines: [{ before: '', after: '中元節、中秋節、國慶日都沒有為節日發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。' }],
+    ...over,
+  })
+}
+
+/** 讀卡片的文字（⛔ 不讀整頁：首頁別的卡也有字） */
+const cardText = page => page.evaluate(() => document.querySelector('.mkt-cal')?.innerText ?? '')
 
 /** 多加一檔，才驗得到「收一檔、另一檔還在」 */
 function twoEntries() {
@@ -144,22 +175,11 @@ function twoEntries() {
   }
 }
 
-/** `C-55`② 的回顧。`linked` 決定話講得多肯定。 */
-function outcome(linked) {
-  return {
-    festivalId: 'ghost-2026',
-    name: '中元節',
-    date: '2026-08-27',
-    broadcasts: [],
-    sentTotal: 3025,
-    clickTotal: 532,
-    clicksPer100: 17.6,
-    linked,
-    text: linked
-      ? '「中元節」發了 8 則推播，送到 3025 人，連結被點了 532 次（每 100 人收到被點 17.6 次）。'
-      : '「中元節」前後兩週你發了 8 則推播，送到 3025 人，連結被點了 532 次（每 100 人收到被點 17.6 次）。'
-        + '⚠️ 這幾則不一定是為了這一檔發的——是照日期抓的。以後用「為這一檔擬推播」建立的，才對得起來。',
-  }
+/** `D-121` 的回顧：為節日發的那一則，一行、名字是連結、LINE 的人數 */
+const SENT_LINE = {
+  before: '國慶日',
+  broadcast: { id: 'bc-national', name: '國慶連假早鳥' },
+  after: '送 2,140 人，612 人打開，198 人點連結（LINE 官方統計）',
 }
 
 const reply = body => url => (url.includes('/api/marketing-calendar') ? body : null)
@@ -209,52 +229,120 @@ const PAGE = `${BASE}/admin/${WORKSPACE_ID}/conversation-stats`
   await ctx.close()
 }
 
-// ── 關 5：回顧畫得出來，而且口徑那句在（`C-55`②）──────────────
+// ── 關 5：為節日發過推播時，最下面一行講 LINE 的人數，名字點得進那一則（`D-121`②）──
 {
-  const { ctx, page } = await openPage(reply(calendar({
-    outcomes: [outcome(false)],
-    outcomeHeadline: '最近 1 檔前後你發過什麼',
-  })))
+  const { ctx, page } = await openPage(reply(calendar({ outcomeLabel: '上一檔', outcomeLines: [SENT_LINE] })))
   await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
-  const r = await waitForText(page, ['最近 1 檔前後你發過什麼'])
+  const r = await waitForText(page, ['612 人打開'])
   if (!r.hit) fail(`關 5：回顧沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
   else {
-    const want = [
-      ['回顧內容', '送到 3025 人'],
-      // ⭐ 口徑紅線：次數不是人數，這句一定要在畫面上
-      ['次數不是人數', '數的是次數不是人數'],
-      // ⭐ 沒有綁定時的警語
-      ['照日期抓的警語', '照日期抓的'],
-    ]
-    const missing = want.filter(([, t]) => !r.body.includes(t))
-    if (missing.length) fail(`關 5：少了 ${missing.map(([k]) => k).join('、')}`)
-    else pass('關 5：回顧畫得出來，口徑與「照日期抓的」警語都在')
+    const t = await cardText(page)
+    const link = await page.evaluate(() => [...document.querySelectorAll('.mkt-cal__past .mkt-cal__link')].map(b => b.textContent))
+    if (!t.includes('上一檔') || !t.includes('198 人點連結')) fail('關 5：標題或點連結的人數沒畫出來')
+    else if (link.join() !== '國慶連假早鳥') fail(`關 5：推播名字不是連結（量到 ${JSON.stringify(link)}）`)
+    // ⛔ 舊版那段「次數不是人數」口徑說明已經不需要（LINE 給的就是人數），長回來就是重複
+    else if (/次數不是人數|照日期抓|沒有放連結/.test(t)) fail('關 5：舊版的警語又長回來了')
+    else pass('關 5：回顧是 LINE 的人數、一行、名字點得進那一則，舊警語都沒了')
   }
   await ctx.close()
 }
 
-// ── 關 6 對照組：沒有回顧時整段不出現（⛔ 不要留一個空殼）──────
+// ── 關 6 對照組：回看窗內沒有過去的節日時整段不出現（⛔ 不要留一個空殼）──
 {
   const { ctx, page } = await openPage(reply(calendar()))
   await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
   const r = await waitForText(page, ['中秋節'])
   if (!r.hit) fail(`關 6：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
-  else if (r.body.includes('數的是次數不是人數')) fail('關 6 對照組：沒有回顧卻還畫了回顧區')
+  else if (await page.$('.mkt-cal__past')) fail('關 6 對照組：沒有回顧卻還畫了回顧那一行')
   else pass('關 6：沒有回顧時整段不出現（對照組成立）')
   await ctx.close()
 }
 
-// ── 關 7：真的綁在那一檔上時，⛔ 不可以再掛「不一定是為了這一檔」──
+// ── 關 7：今天的 MYFEEL——「還不認識你的店」只講一次、回顧一行講完、整張卡字數鎖住（`D-121`）──
 {
-  const { ctx, page } = await openPage(reply(calendar({
-    outcomes: [outcome(true)],
-    outcomeHeadline: '最近 1 檔的結果',
-  })))
+  const { ctx, page } = await openPage(reply(myfeelToday()))
   await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
-  const r = await waitForText(page, ['最近 1 檔的結果'])
-  if (!r.hit) fail(`關 7：綁定版的回顧沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
-  else if (r.body.includes('照日期抓的')) fail('關 7：明明對得上，卻還在說「照日期抓的」——那會讓人白白不信任準的數字')
-  else pass('關 7：綁定版講得肯定，不掛多餘警語')
+  const r = await waitForText(page, ['都沒有為節日發的推播'])
+  if (!r.hit) fail(`關 7：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const t = await cardText(page)
+    const count = (re) => (t.match(re) ?? []).length
+    const chars = [...t.replace(/\s/g, '')].length
+    // ⭐ 回歸鎖釘在量出來的現值（改版前約 1,030 字）。⛔ 不要為了保險放寬——留了空間下次就會被填滿
+    const CHAR_CAP = 272
+    if (count(/還不認識你的店/g) !== 1) fail(`關 7：「還不認識你的店」講了 ${count(/還不認識你的店/g)} 次，要剛好一次`)
+    else if (count(/通用/g) > 1) fail(`關 7：「通用」出現 ${count(/通用/g)} 次（改版前是 7 次）`)
+    else if (!t.includes('最近 3 檔')) fail('關 7：回顧那一行的標題不見了')
+    else if (chars > CHAR_CAP) fail(`關 7：整張卡 ${chars} 字，超過鎖住的 ${CHAR_CAP} 字——又長回來了`)
+    else pass(`關 7：只講一次、回顧一行講完，整張卡 ${chars} 字（鎖 ${CHAR_CAP}）`)
+    // 要看樣子時：SHOT_DIR=<資料夾> 會把這張卡截下來（跟示意頁並排比）
+    if (process.env.SHOT_DIR) await (await page.$('.mkt-cal'))?.screenshot({ path: `${process.env.SHOT_DIR}/mkt-cal-today.png` })
+  }
+  await ctx.close()
+}
+
+// ── 關 11：最近那一檔攤開、其他一行一檔；點別的一檔就換它攤開（`D-121`）──
+{
+  const { ctx, page } = await openPage(reply(myfeelToday()))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['萬聖節'])
+  const openState = () => page.evaluate(() => [...document.querySelectorAll('.mkt-cal__row')].map(el => el.classList.contains('is-open')))
+  if (!r.hit) fail(`關 11：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const before = await openState()
+    if (JSON.stringify(before) !== JSON.stringify([true, false, false, false, false])) fail(`關 11：預設應該只有第一檔攤開，量到 ${JSON.stringify(before)}`)
+    else {
+      await page.evaluate(() => document.querySelectorAll('.mkt-cal__row-head')[1]?.click())
+      await new Promise(r2 => setTimeout(r2, 300))
+      const after = await openState()
+      const btn = await page.evaluate(() => document.querySelectorAll('.mkt-cal__row')[1]?.innerText.includes('為這一檔擬推播'))
+      if (JSON.stringify(after) !== JSON.stringify([false, true, false, false, false])) fail(`關 11：點第二檔後量到 ${JSON.stringify(after)}`)
+      else if (!btn) fail('關 11：攤開的那一檔沒有「為這一檔擬推播」')
+      else pass('關 11：最近那一檔攤開；點第二檔就換它攤開、按鈕跟著它')
+    }
+  }
+  await ctx.close()
+}
+
+// ── 關 12：對齊——攤開的那一列跟其他列，日期、節日名都切在同一條線（`D-121`）──
+{
+  const { ctx, page } = await openPage(reply(myfeelToday()))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['萬聖節'])
+  if (!r.hit) fail(`關 12：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const xs = await page.evaluate(() => ({
+      when: [...document.querySelectorAll('.mkt-cal__when')].map(el => Math.round(el.getBoundingClientRect().left)),
+      name: [...document.querySelectorAll('.mkt-cal__name')].map(el => Math.round(el.getBoundingClientRect().left)),
+      body: Math.round(document.querySelector('.mkt-cal__angle-full')?.getBoundingClientRect().left ?? -1),
+    }))
+    const one = arr => new Set(arr).size === 1
+    if (!one(xs.when)) fail(`關 12：日期沒對齊 ${JSON.stringify(xs.when)}`)
+    else if (!one(xs.name)) fail(`關 12：節日名沒對齊 ${JSON.stringify(xs.name)}`)
+    else if (xs.body !== xs.name[0]) fail(`關 12：攤開的內容沒跟節日名對齊（內容 ${xs.body}、名字 ${xs.name[0]}）`)
+    else pass(`關 12：日期 x=${xs.when[0]}、節日名 x=${xs.name[0]}，所有列同一條線；攤開的內容跟名字對齊`)
+  }
+  await ctx.close()
+}
+
+// ── 關 13：已經為這一檔排好推播——收起來那列講排在哪天；攤開只給「查看推播」，⛔ 不給再擬一份 ──
+{
+  const sched = Date.UTC(2026, 10, 9, 12) // 台灣 11/09 20:00
+  const data = myfeelToday()
+  data.entries[0].planned = [{ id: 'bc-ninth', name: '重陽敬老早鳥', status: 'scheduled', atMs: sched }]
+  data.entries[2].planned = [{ id: 'bc-d11', name: '雙 11 早鳥', status: 'scheduled', atMs: sched }]
+  const { ctx, page } = await openPage(reply(data))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['雙 11 早鳥'])
+  if (!r.hit) fail(`關 13：已排程那一檔沒講出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const rows = await page.evaluate(() => [...document.querySelectorAll('.mkt-cal__row')].map(el => el.innerText))
+    if (!rows[2]?.includes('✓ 已排程 11/09 20:00')) fail(`關 13：收起來那列沒講排在哪天：${rows[2]}`)
+    else if (!rows[0]?.includes('查看推播')) fail('關 13：攤開的那一檔排好了卻沒有「查看推播」')
+    else if (rows[0]?.includes('為這一檔擬推播') || rows[0]?.includes('這次不做')) fail('關 13：排好了還給「為這一檔擬推播／這次不做」——會擬出第二份')
+    else pass('關 13：排好的那一檔講得出排在哪天、只給「查看推播」')
+    if (process.env.SHOT_DIR) await (await page.$('.mkt-cal'))?.screenshot({ path: `${process.env.SHOT_DIR}/mkt-cal-planned.png` })
+  }
   await ctx.close()
 }
 

@@ -6,12 +6,19 @@ import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { getMarketingSkips } from '~~/server/utils/marketing-skips'
 import { matchAudienceTags, productKeywords, type AudienceTagLike } from '~~/shared/festival-audience'
-import { buildFestivalOutcomes, outcomeHeadline, type BroadcastOutcome } from '~~/shared/festival-outcome'
+import {
+  broadcastFestivalMatch,
+  buildFestivalOutcomes,
+  findLastYearFestivalBroadcast,
+  outcomeSummary,
+  type BroadcastOutcome,
+} from '~~/shared/festival-outcome'
+import { parseStoredLineStats } from '~~/shared/broadcast-line-stats'
 import {
   buildMarketingCalendar,
   calendarHeadline,
-  emptyCalendarFacts,
   type CalendarFacts,
+  type PlannedBroadcast,
 } from '~~/shared/marketing-calendar'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 import { taipeiDate } from '~~/shared/time'
@@ -42,88 +49,76 @@ import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festival
 
 /** 掃描上限。撞到要回報，⛔ 不可以讓人把截斷後的數字當全部。 */
 const BROADCAST_SCAN_LIMIT = 300
-const CLICK_SCAN_LIMIT = 5000
+
+/** 還沒送完、可以算「已經為這一檔準備好」的狀態 */
+const PLANNED_STATUSES = new Set(['draft', 'scheduled', 'processing', 'completed', 'failed'])
+
+function toMs(v: unknown): number | null {
+  const d = (v as { toDate?: () => Date } | null | undefined)?.toDate?.()
+  const ms = d?.getTime()
+  return typeof ms === 'number' && Number.isFinite(ms) ? ms : null
+}
 
 /**
- * 把這個帳號送出過的推播**掃一趟**撈回來（含各自的點擊次數）。
+ * 把這個帳號的推播**掃一趟**撈回來，給「上一檔的回顧」「去年這一檔」「這一檔已經排了」三個用途共用
+ * （08-11 讀取費暴衝的教訓：⛔ 不要每個節日各查一次）。
  *
- * ⚠️ **2026-09-23（`C-240`）修掉這裡兩個靜默無效**，正式資料上驗出來的：
- *   ① 原本查 `status == 'sent'`——但實際上的值是 **`completed`**（13 則）／`failed`／`cancelled`，
- *      **一則 `sent` 都沒有**，所以這個查詢永遠回空。
- *   ② 原本讀 `data.sentAt`——那個欄位**一則都沒有**，時間在 `completedAt`。
- *   兩個加起來，月曆卡那條「去年這個時候你發過 X」從上線到現在**一次都沒出現過**。
- *
- * ⚠️ 原本是**每個節日各查一次**（8 檔 × 200 筆＝1,600 次讀取）。改成掃一趟給所有用途共用
- *   （08-11 讀取費暴衝的教訓）。
+ * ⚠️ **2026-09-23（`C-240`）修過兩個靜默無效**：狀態值是 `completed` 不是 `sent`、時間在 `completedAt` 不在 `sentAt`。
+ * ⭐ **2026-10-11（`D-121`）不再掃點擊紀錄**：成效改讀推播那一筆上存好的 LINE 人數（`lineStats`），
+ *   我們自己的點擊紀錄只數得出次數、而且 `C-301` 以前漏掉所有圖片上的連結。
  */
-async function loadSentBroadcasts(
+async function loadBroadcasts(
   db: Firestore,
   workspaceId: string,
-): Promise<{ list: BroadcastOutcome[], truncated: boolean, failed: boolean }> {
+): Promise<{ sent: BroadcastOutcome[], planned: (PlannedBroadcast & { festivalId?: string, matchAtMs: number | null })[], truncated: boolean, failed: boolean }> {
   try {
     // 單欄位等值查詢：⛔ 不加 orderBy 以免要複合索引
     const snap = await db.collection('broadcasts')
       .where('workspaceId', '==', workspaceId)
-      .select('name', 'sentCount', 'completedAt', 'status')
+      .select('name', 'sentCount', 'completedAt', 'scheduleAt', 'createdAt', 'status', 'festivalId', 'lineStats')
       .limit(BROADCAST_SCAN_LIMIT + 1)
       .get()
 
-    const docs = snap.docs.slice(0, BROADCAST_SCAN_LIMIT)
+    const sent: BroadcastOutcome[] = []
+    const planned: (PlannedBroadcast & { festivalId?: string, matchAtMs: number | null })[] = []
+    for (const doc of snap.docs.slice(0, BROADCAST_SCAN_LIMIT)) {
+      const v = doc.data() as Record<string, unknown>
+      const status = String(v.status ?? '')
+      const name = String(v.name ?? '（沒有名稱）').slice(0, 40)
+      const festivalId = v.festivalId ? String(v.festivalId) : undefined
+      const completedAt = toMs(v.completedAt)
+      const scheduleAt = toMs(v.scheduleAt)
 
-    // 點擊次數：同樣掃一趟，在記憶體裡按 campaignId 分組
-    // ⛔ 每筆的 userId 都是 null（multicast），所以這是「幾次」不是「幾個人」——
-    //    口徑寫在 `shared/festival-outcome.ts` 的檔頭。
-    const clicks: Record<string, number> = {}
-    try {
-      const clickSnap = await db.collection('broadcastClickLogs')
-        .where('workspaceId', '==', workspaceId)
-        .select('campaignId')
-        .limit(CLICK_SCAN_LIMIT)
-        .get()
-      for (const d of clickSnap.docs) {
-        const c = String((d.data() as { campaignId?: string }).campaignId ?? '')
-        if (c) clicks[c] = (clicks[c] ?? 0) + 1
+      // ⛔ 只認真的送完的那些；`cancelled` 與還沒送的不算成效
+      if ((status === 'completed' || status === 'failed') && completedAt != null) {
+        sent.push({
+          id: doc.id,
+          name,
+          atMs: completedAt,
+          sentCount: Number(v.sentCount ?? 0),
+          ...(festivalId ? { festivalId } : {}),
+          line: parseStoredLineStats(v.lineStats),
+        })
+      }
+      if (PLANNED_STATUSES.has(status)) {
+        planned.push({
+          id: doc.id,
+          name,
+          status: status as PlannedBroadcast['status'],
+          atMs: status === 'scheduled' ? scheduleAt : (status === 'completed' || status === 'failed') ? completedAt : null,
+          ...(festivalId ? { festivalId } : {}),
+          // 名稱對節日時拿來比日期的時間：排程的看排程時間、發完的看發完時間、草稿看建立時間
+          matchAtMs: scheduleAt ?? completedAt ?? toMs(v.createdAt),
+        })
       }
     }
-    catch { /* 點擊查不到＝點擊數當 0，但推播本身仍要列出來 */ }
-
-    const list: BroadcastOutcome[] = []
-    for (const doc of docs) {
-      const v = doc.data() as { name?: string, sentCount?: number, completedAt?: { toDate?: () => Date }, status?: string, festivalId?: string }
-      // ⛔ 只認真的送完的那些；`cancelled` 與還沒送的不算一檔
-      if (v.status !== 'completed' && v.status !== 'failed') continue
-      const at = v.completedAt?.toDate?.()
-      if (!at || Number.isNaN(at.getTime())) continue
-      list.push({
-        id: doc.id,
-        name: String(v.name ?? '（沒有名稱）').slice(0, 40),
-        atMs: at.getTime(),
-        sentCount: Number(v.sentCount ?? 0),
-        clickCount: clicks[doc.id] ?? 0,
-        // 有這一欄才敢講「這一檔的成績」；舊資料一律沒有，回顧那邊會退成「那段期間」
-        ...(v.festivalId ? { festivalId: String(v.festivalId) } : {}),
-      })
-    }
-    return { list, truncated: snap.size > BROADCAST_SCAN_LIMIT, failed: false }
+    return { sent, planned, truncated: snap.size > BROADCAST_SCAN_LIMIT, failed: false }
   }
   catch (e) {
     // ⛔ 查不到就回空＋`failed`（＝這幾條理由不出現），不可以編一個數字
     console.warn('[marketing-calendar] 推播掃描失敗：', workspaceId, e)
-    return { list: [], truncated: false, failed: true }
+    return { sent: [], planned: [], truncated: false, failed: true }
   }
-}
-
-/** 去年同一個節日前後 14 天內發過的推播（當「你去年做過」的證據）。 */
-function findLastYearBroadcast(
-  sent: readonly BroadcastOutcome[],
-  f: TaiwanFestival,
-): { name: string, sentCount: number } | null {
-  const [y, m, d] = f.date.split('-').map(Number) as [number, number, number]
-  if (!y || !m || !d) return null
-  const center = Date.UTC(y - 1, m - 1, d)
-  const half = 14 * 86_400_000
-  const hit = sent.find(b => b.sentCount > 0 && Math.abs(b.atMs - center) <= half)
-  return hit ? { name: hit.name, sentCount: hit.sentCount } : null
 }
 
 export default defineEventHandler(async (event) => {
@@ -166,34 +161,37 @@ export default defineEventHandler(async (event) => {
     .then(s => s.data().count)
     .catch(() => null)
 
-  // 推播掃一趟，給「去年做過」與「上一檔的結果」共用（⛔ 不要每個節日各查一次）
-  const sent = await loadSentBroadcasts(db, workspaceId)
+  // 推播掃一趟，給「去年這一檔」「上一檔的回顧」「這一檔已經排了」共用（⛔ 不要每個節日各查一次）
+  const bc = await loadBroadcasts(db, workspaceId)
   // 他自己收起來的那幾檔（`C-236`）。查不到就當成沒收，⛔ 不要讓它擋住整張卡
   const skips = await getMarketingSkips(db, workspaceId).catch(() => ({}))
-
-  const skeleton = buildMarketingCalendar(today, profile, () => emptyCalendarFacts())
-  const lastYear = new Map<string, { name: string, sentCount: number } | null>()
-  for (const e of skeleton) {
-    const f = { id: e.festivalId, date: e.date, name: e.name, angle: e.generalAngle } as TaiwanFestival
-    lastYear.set(e.festivalId, findLastYearBroadcast(sent.list, f))
-  }
 
   // 輪廓裡的主打商品＝配對的主軸（`C-235`）。每一檔都是同一批詞，先算一次。
   const products = productKeywords(String(profile.fields?.products?.value ?? ''))
 
-  const factsOf = (f: TaiwanFestival): CalendarFacts => ({
-    friendCount,
-    matchedTags: matchAudienceTags(tags, counts, {
-      festivalName: f.name,
-      products,
-      excludeTagIds,
-    }).suggestions.map(s => ({ name: s.name, memberCount: s.users, why: s.reason })),
-    lastYearBroadcast: lastYear.get(f.id) ?? null,
-  })
+  const factsOf = (f: TaiwanFestival): CalendarFacts => {
+    // `D-121`：去年這一檔「為它發的」推播，跟回顧同一條歸屬規則（⛔ 不再照日期猜）
+    const ly = findLastYearFestivalBroadcast(f, TAIWAN_FESTIVALS, bc.sent)
+    return {
+      friendCount,
+      matchedTags: matchAudienceTags(tags, counts, {
+        festivalName: f.name,
+        products,
+        excludeTagIds,
+      }).suggestions.map(s => ({ name: s.name, memberCount: s.users, why: s.reason })),
+      lastYearBroadcast: ly ? { name: ly.name, sentCount: ly.sentCount, clicked: ly.line?.clicked ?? null } : null,
+    }
+  }
 
-  const entries = buildMarketingCalendar(today, profile, factsOf)
+  // `D-121`：已經為這一檔建好的推播（從這裡擬的，或名稱裡有節日名的），卡片直接講排在哪天
+  const plannedOf = (f: TaiwanFestival): PlannedBroadcast[] => bc.planned
+    .filter(p => broadcastFestivalMatch({ name: p.name, atMs: p.matchAtMs, festivalId: p.festivalId }, f) !== null)
+    .map(({ id, name, status, atMs }) => ({ id, name, status, atMs }))
+
+  const entries = buildMarketingCalendar(today, profile, factsOf, undefined, plannedOf)
   const ready = isStoreProfileReady(profile)
-  const outcomes = buildFestivalOutcomes(today, TAIWAN_FESTIVALS, sent.list)
+  const outcomes = buildFestivalOutcomes(today, TAIWAN_FESTIVALS, bc.sent)
+  const summary = outcomeSummary(outcomes, Date.now())
   return {
     today,
     ready,
@@ -210,17 +208,17 @@ export default defineEventHandler(async (event) => {
      *   後端濾掉的話「收起來的還原不回來」，那就變成靜靜消失了。
      */
     skippedFestivalIds: Object.keys(skips),
-    headline: calendarHeadline(entries, ready),
+    headline: calendarHeadline(),
     entries,
 
     /**
-     * ⭐ `C-55`②（`C-240`）：**上一檔做得怎麼樣**。沒有回顧的建議，第三個月就沒人看了。
-     * ⛔ 口徑：`clickTotal` 是「連結被點幾次」不是「幾個人點」——multicast 的追蹤 token
-     *   裡沒有 userId，細節寫在 `shared/festival-outcome.ts` 檔頭。
+     * ⭐ `C-55`②（`C-240`，2026-10-11 `D-121` 改版）：**上一檔做得怎麼樣**，收在卡片最下面一行。
+     * 只算為節日發的推播、成效是 LINE 的人數；規則寫在 `shared/festival-outcome.ts` 檔頭。
      */
     outcomes,
-    outcomeHeadline: outcomeHeadline(outcomes),
+    outcomeLabel: summary.label,
+    outcomeLines: summary.lines,
     /** ⛔ 掃到上限或查不到要講出來，不可以讓人把殘缺的回顧當全部 */
-    outcomeIntegrity: { truncated: sent.truncated, failed: sent.failed },
+    outcomeIntegrity: { truncated: bc.truncated, failed: bc.failed },
   }
 })

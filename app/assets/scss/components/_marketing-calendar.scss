@@ -1,29 +1,67 @@
-// 行銷月曆卡（`D-85` / `C-224`）。沿用首頁既有的 .message-card / .ar-section-card 外殼，
-// 這裡只補「一檔＝一個區塊」的排版。⛔ 不用 :deep()：全域 partial 沒有 scope 可以穿。
+// 行銷月曆卡（`D-85` / `C-224`；2026-10-11 `D-121` 改版）。沿用首頁既有的 .message-card / .ar-section-card 外殼，
+// 這裡只補「一檔一行、快到的那一檔攤開」的排版。⛔ 不用 :deep()：全域 partial 沒有 scope 可以穿。
+//
+// ⭐ 對齊：每一列（含攤開的那一列）都用同一組欄寬與同一個左內距，日期、節日名在所有列都切在同一條線上。
+//   改版前快到的那一檔多一條左邊線並往右推 10px，日期跟下面幾檔對不齊。
+// ⭐ 攤開的那一列用淡底色當一塊（面比線好認：滑到中間那一行也知道自己在哪一檔），外框跟其他列等寬。
 
 .mkt-cal {
   // 底下那條 @container 要的：卡片寬度取決於側欄開不開，不是視窗寬度
   container-type: inline-size;
+  --mkt-col-when: 42px;
+  --mkt-col-name: 108px;
+  --mkt-col-days: 64px;
+  --mkt-col-chev: 12px;
+  --mkt-gap: 10px;
+  --mkt-pad-x: 12px;
 
-  &__item {
-    padding: 12px 0;
+  // 「還不認識你的店」「補上主打商品」：細的一行提示
+  &__strip .el-alert__title {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  &__list {
+    display: grid;
+  }
+
+  &__row {
     border-top: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
 
-    &:first-of-type { border-top: 0; }
+    &:first-child { border-top-color: transparent; }
+
+    &.is-open {
+      background: var(--el-color-primary-light-9);
+      border-top-color: transparent;
+    }
+
+    // 攤開那一塊的下一列不要再畫一條線貼著色塊
+    &.is-open + .mkt-cal__row { border-top-color: transparent; }
   }
 
-  // 兩週內的檔期要跳出來（左邊一條），但⛔ 不用整塊染色：
-  // 一季裡可能有三四個「快到了」，整塊染色會變成一面警告牆
-  &__item.is-soon {
-    border-left: 3px solid var(--el-color-primary);
-    padding-left: 10px;
-  }
-
-  &__head {
-    display: flex;
+  // 整列是一顆按鈕（點了攤開／收起），長得像一列文字
+  &__row-head {
+    width: 100%;
+    display: grid;
+    grid-template-columns: var(--mkt-col-when) var(--mkt-col-name) minmax(0, 1fr) var(--mkt-col-days) var(--mkt-col-chev);
+    column-gap: var(--mkt-gap);
     align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
+    padding: 10px var(--mkt-pad-x);
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover .mkt-cal__name { color: var(--el-color-primary); }
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: -2px;
+    }
   }
 
   &__when {
@@ -35,31 +73,61 @@
   &__name {
     font-weight: 700;
     font-size: 15px;
+    line-height: 1.4;
     color: var(--el-text-color-primary);
   }
 
+  // 收起來的列：一句切角（或「已排程」那顆小膠囊）。太長就截斷，攤開才看全文
+  &__angle {
+    min-width: 0;
+    font-size: 13px;
+    color: var(--el-text-color-regular);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   &__days {
-    margin-left: auto;
     font-size: 12px;
+    text-align: right;
     color: var(--el-text-color-secondary);
     white-space: nowrap;
 
     &.is-soon {
       color: var(--el-color-primary);
-      font-weight: 600;
+      font-weight: 700;
     }
   }
 
+  &__chev {
+    font-size: 12px;
+    text-align: right;
+    color: var(--el-text-color-placeholder);
+  }
+
+  // 攤開的內容從「節日名」那一欄開始，跟上面的名字對齊
+  &__body {
+    display: grid;
+    gap: 8px;
+    padding: 0 var(--mkt-pad-x) 12px calc(var(--mkt-pad-x) + var(--mkt-col-when) + var(--mkt-gap));
+  }
+
+  &__angle-full {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
   &__label {
-    margin: 10px 0 2px;
+    margin: 2px 0 -4px;
     font-size: 11.5px;
     font-weight: 700;
     letter-spacing: .04em;
     color: var(--el-text-color-secondary);
   }
 
-  &__reasons,
-  &__actions {
+  &__list-items {
     margin: 0;
     padding-left: 1.2em;
     display: grid;
@@ -67,7 +135,7 @@
 
     li {
       font-size: 13px;
-      line-height: 1.75;
+      line-height: 1.7;
       color: var(--el-text-color-primary);
     }
   }
@@ -78,16 +146,45 @@
     color: var(--el-text-color-secondary);
   }
 
-  // 「這一檔還沒有你的數字」：語氣是說明不是警告，但要讀得清楚
-  &__nodata {
-    margin: 10px 0 0;
-    font-size: 12.5px;
-    line-height: 1.75;
-    color: var(--el-text-color-secondary);
+  &__planned {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-primary);
+  }
+
+  // 「✓ 已排程 11/09 20:00」：狀態一眼看得出來（排好／草稿／失敗三種顏色）
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 20px;
+    white-space: nowrap;
+
+    &.is-ok {
+      color: var(--el-color-primary-dark-2);
+      background: var(--el-color-primary-light-8);
+    }
+
+    &.is-draft {
+      color: var(--el-text-color-regular);
+      background: var(--el-fill-color);
+    }
+
+    &.is-bad {
+      color: var(--el-color-warning-dark-2);
+      background: var(--el-color-warning-light-8);
+    }
   }
 
   &__cta {
-    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
   }
 
   // 收起來的那幾檔（`C-236`）。
@@ -111,40 +208,72 @@
     gap: 4px;
   }
 
-  // 「上一檔的結果」（`C-55`② / `C-240`）。
-  // ⭐ 刻意跟下面的檔期卡分開一格底色：回顧講的是已經發生的事，跟「接下來要做什麼」
-  //    混在一起會被讀成又一個待辦。
-  &__review {
-    padding: 10px 14px 12px;
-    border-radius: 8px;
-    background: var(--el-fill-color-lighter);
-
-    // 這一區的第一個小標不要再往上推一段
-    .mkt-cal__label {
-      margin-top: 0;
-    }
+  // 上一檔做得怎麼樣（`C-55`② / `D-121`）：卡片最下面一行，標題在左、內容在右
+  &__past {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 10px var(--mkt-pad-x) 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--el-text-color-regular);
   }
 
-  &__review-line {
-    margin: 0 0 4px;
-    font-size: 13px;
-    line-height: 1.8;
+  &__past-label {
+    font-weight: 700;
     color: var(--el-text-color-primary);
+    white-space: nowrap;
+  }
 
-    &:last-of-type {
-      margin-bottom: 0;
+  &__past-lines {
+    display: grid;
+    gap: 2px;
+
+    p { margin: 0; }
+  }
+
+  // 回顧裡的推播名字：點了打開那一則
+  &__link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--el-color-primary);
+    cursor: pointer;
+
+    &:hover { text-decoration: underline; }
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 1px;
+      border-radius: 2px;
     }
   }
 
   &__muted {
+    margin: 0;
     font-size: 13px;
     color: var(--el-text-color-secondary);
   }
 
-  @container (max-width: 480px) {
-    &__days {
-      margin-left: 0;
-      flex-basis: 100%;
+  // 窄的時候（側欄開著、或手機）：切角掉到名字下面一行。
+  // ⛔ 攤開的內容照樣從名字那一欄開始——窄也要對齊，只少了中間那一欄
+  @container (max-width: 520px) {
+    &__row-head {
+      grid-template-columns: var(--mkt-col-when) minmax(0, 1fr) auto var(--mkt-col-chev);
+    }
+
+    &__angle {
+      grid-column: 2 / 4;
+      grid-row: 2;
+      white-space: normal;
+
+      &:empty { display: none; }
+    }
+
+    &__past {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 }

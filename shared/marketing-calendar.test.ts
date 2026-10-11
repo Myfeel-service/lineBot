@@ -8,8 +8,11 @@ import {
   CALENDAR_WINDOW_DAYS,
   emptyCalendarFacts,
   hasOwnReasons,
+  pickPlanned,
+  plannedStatusText,
   seasonMatchesFestival,
   type CalendarFacts,
+  type PlannedBroadcast,
 } from './marketing-calendar'
 import { emptyStoreProfile, setStoreProfileField, type StoreProfileDoc } from './types/store-profile'
 import { TAIWAN_FESTIVALS } from './taiwan-festivals'
@@ -85,11 +88,16 @@ describe('buildReasons', () => {
     expect(r.some(x => x.text.includes('300'))).toBe(true)
   })
 
-  it('去年發過推播是強理由，要講得出名字與人數', () => {
+  it('去年這一檔發過推播是強理由，要講得出名字與人數', () => {
     const r = buildReasons(profileOf({ season: '' }), midAutumn, facts({ lastYearBroadcast: { name: '中秋禮盒預購', sentCount: 412 } }))
-    expect(r[0]?.text).toContain('中秋禮盒預購')
-    expect(r[0]?.text).toContain('412')
+    expect(r[0]?.text).toBe('去年這一檔你發過「中秋禮盒預購」，送到 412 人')
     expect(r[0]?.source).toBe('推播紀錄')
+  })
+
+  it('`D-121`：去年那則有 LINE 的點連結人數就一起講，出處也要講到 LINE', () => {
+    const r = buildReasons(profileOf({ season: '' }), midAutumn, facts({ lastYearBroadcast: { name: '中秋禮盒預購', sentCount: 2187, clicked: 443 } }))
+    expect(r[0]?.text).toBe('去年這一檔你發過「中秋禮盒預購」，送到 2,187 人，443 人點連結')
+    expect(r[0]?.source).toContain('LINE 官方統計')
   })
 
   it('標籤最多列兩顆（再多就變字牆）', () => {
@@ -102,26 +110,35 @@ describe('buildReasons', () => {
   })
 })
 
-describe('buildActions', () => {
-  it('固定三件事', () => {
-    expect(buildActions(profileOf(), midAutumn, 30)).toHaveLength(3)
+describe('buildActions（`D-121`③：只留跟時間有關的那一句）', () => {
+  const plain = TAIWAN_FESTIVALS.find(f => !f.longWeekend)!
+  const longWeekend = TAIWAN_FESTIVALS.find(f => f.longWeekend)!
+
+  it('⛔ 還早的檔期沒有「做什麼」（以前五檔都塞同樣三件事＝沒人讀）', () => {
+    expect(buildActions(profileOf(), plain, 30)).toEqual([])
+    expect(buildActions(profileOf(), plain, 7)).toEqual([])
   })
 
-  it('照剩幾天換第一件事（規劃 → 準備 → 最後確認）', () => {
-    expect(buildActions(profileOf(), midAutumn, 30)[0]).toContain('決定')
-    expect(buildActions(profileOf(), midAutumn, 7)[0]).toContain('排進排程')
-    expect(buildActions(profileOf(), midAutumn, 1)[0]).toContain('最後確認')
+  it('⛔ 不再出現跟按鈕重複、或每檔都一樣的那幾句', () => {
+    for (const d of [30, 7, 1]) {
+      const a = buildActions(profileOf(), longWeekend, d).join()
+      for (const bad of ['先決定', '準備好，排進排程', '想好這一檔的出貨時間', '當天安排人顧線上客服']) expect(a).not.toContain(bad)
+    }
   })
 
-  it('預約制的店講時段，不講出貨', () => {
-    const a = buildActions(profileOf({ channel: '預約制' }), midAutumn, 30)
-    expect(a.join()).toContain('時段')
-    expect(a.join()).not.toContain('出貨')
+  it('3 天內講「最後確認」', () => {
+    expect(buildActions(profileOf(), plain, 3)).toEqual(['最後確認推播排了沒、庫存和出貨來不來得及'])
   })
 
-  it('連假要講值班', () => {
-    const longWeekend = TAIWAN_FESTIVALS.find(f => f.longWeekend)!
-    expect(buildActions(profileOf(), longWeekend, 30).join()).toContain('值班')
+  it('預約制的店最後確認講時段，不講出貨', () => {
+    const a = buildActions(profileOf({ channel: '預約制' }), plain, 1).join()
+    expect(a).toContain('時段')
+    expect(a).not.toContain('出貨')
+  })
+
+  it('連假在兩週內才講值班（82 天後的元旦現在講值班太早）', () => {
+    expect(buildActions(profileOf(), longWeekend, 10)).toEqual(['連假期間客服值班先排好'])
+    expect(buildActions(profileOf(), longWeekend, 30)).toEqual([])
   })
 
   it('⛔ 不承諾成效（不可以出現「可以多賣」這種我們算不出來的話）', () => {
@@ -151,11 +168,18 @@ describe('buildMarketingCalendar', () => {
     for (const e of list) expect(e.soon).toBe(e.inDays <= CALENDAR_SOON_DAYS)
   })
 
-  it('每一檔都有通用切角與三件事（那兩樣永遠拿得到）', () => {
+  it('每一檔都有通用切角（那一句永遠拿得到），「做什麼」最多兩句', () => {
     for (const e of buildMarketingCalendar('2026-09-23', profileOf(), allFacts)) {
       expect(e.generalAngle.length).toBeGreaterThan(0)
-      expect(e.actions).toHaveLength(3)
+      expect(e.actions.length).toBeLessThanOrEqual(2)
     }
+  })
+
+  it('已經排好的推播帶得進每一檔；沒給就是空陣列', () => {
+    const p = { id: 'b1', name: '中秋禮盒', status: 'scheduled' as const, atMs: 0 }
+    const list = buildMarketingCalendar('2026-09-01', profileOf(), allFacts, undefined, f => (f.id === midAutumn.id ? [p] : []))
+    expect(list.find(e => e.festivalId === midAutumn.id)?.planned).toEqual([p])
+    expect(list.find(e => e.festivalId !== midAutumn.id)?.planned).toEqual([])
   })
 
   it('沒有輪廓也生得出月曆（只是沒有「為什麼是你」）', () => {
@@ -170,19 +194,30 @@ describe('buildMarketingCalendar', () => {
 })
 
 describe('calendarHeadline', () => {
-  const list = buildMarketingCalendar('2026-09-23', profileOf(), () => facts())
+  it('`D-121`：只講範圍。⛔ 「還不認識你的店」交給卡片裡那一列講一次，標題不再重講', () => {
+    expect(calendarHeadline()).toBe('未來 90 天')
+    expect(calendarHeadline()).not.toContain('通用')
+  })
+})
 
-  it('講得出幾個檔期、幾個快到了', () => {
-    const h = calendarHeadline(list, true)
-    expect(h).toContain(`${list.length} 個檔期`)
+describe('pickPlanned／plannedStatusText（已經為這一檔建好的推播）', () => {
+  const p = (status: PlannedBroadcast['status'], atMs: number | null = null, id: string = status): PlannedBroadcast => ({ id, name: id, status, atMs })
+
+  it('好幾則時先講排好的，再來發送中、發完的、草稿、失敗的', () => {
+    expect(pickPlanned([p('draft'), p('failed'), p('scheduled', 2)])?.status).toBe('scheduled')
+    expect(pickPlanned([p('draft'), p('completed', 1)])?.status).toBe('completed')
+    expect(pickPlanned([])).toBeNull()
   })
 
-  it('⛔ 沒有輪廓時一定要講「只有通用的建議」', () => {
-    expect(calendarHeadline(list, false)).toContain('通用的建議')
-    expect(calendarHeadline(list, true)).not.toContain('通用的建議')
+  it('同一種狀態先講時間近的', () => {
+    expect(pickPlanned([p('scheduled', 200, 'late'), p('scheduled', 100, 'early')])?.id).toBe('early')
   })
 
-  it('沒有檔期時講得出「可以專心顧日常」，不是丟一個 0', () => {
-    expect(calendarHeadline([], true)).toContain('沒有重要節日')
+  it('時間一律講台灣時間', () => {
+    // 2026-11-09 12:00 UTC＝台灣 20:00
+    expect(plannedStatusText(p('scheduled', Date.UTC(2026, 10, 9, 12)))).toBe('已排程 11/09 20:00')
+    expect(plannedStatusText(p('completed', Date.UTC(2026, 9, 7, 17)))).toBe('已發送 10/08')
+    expect(plannedStatusText(p('draft'))).toBe('草稿，還沒排程')
+    expect(plannedStatusText(p('failed'))).toBe('發送失敗')
   })
 })

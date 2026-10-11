@@ -570,27 +570,30 @@ async function checkMarketingCalendar() {
     let settled = false
     for (let i = 0; i < 20 && !settled; i++) {
       settled = await page.evaluate(() =>
-        document.querySelectorAll('.mkt-cal__item, .mkt-cal .el-alert, .mkt-cal__muted').length > 0)
+        document.querySelectorAll('.mkt-cal__row, .mkt-cal .el-alert, .mkt-cal__muted').length > 0)
       if (!settled) await sleep(700)
     }
     if (!settled) return fail('行銷月曆卡停在載入中')
 
-    const items = await visible(page, '.mkt-cal__item')
+    const items = await visible(page, '.mkt-cal__row')
     if (items === 0) {
       console.log('  ⚠️ 未來 90 天沒有節日（照節日表這不該發生，但不算失敗）')
       return
     }
     pass(`列出 ${items} 個檔期`)
 
-    // 每一檔都要有「做什麼」三件事
-    const badActions = await page.evaluate(() =>
-      [...document.querySelectorAll('.mkt-cal__item')]
-        .filter(el => el.querySelectorAll('.mkt-cal__actions li').length !== 3).length)
-    if (badActions) return fail(`有 ${badActions} 檔的「做什麼」不是三件事`)
-    pass('每一檔都有三件事可做')
+    // `D-121`：最近那一檔攤開、其他一行一檔；「做什麼」只留跟時間有關的（最多兩句）
+    const open = await page.evaluate(() => [...document.querySelectorAll('.mkt-cal__row')].map(el => el.classList.contains('is-open')))
+    if (open.filter(Boolean).length !== 1 || !open[0]) return fail(`應該只有最近那一檔攤開，量到：${JSON.stringify(open)}`)
+    pass('最近那一檔攤開、其他一行一檔')
+    const tooMany = await page.evaluate(() => document.querySelectorAll('.mkt-cal__actions li').length)
+    if (tooMany > 2) return fail(`「做什麼」又長回來了（${tooMany} 句）`)
+    pass(`「做什麼」只留跟時間有關的（${tooMany} 句）`)
 
-    // ⛔ 對照組：MYFEEL 沒有輪廓 → 必須看得到「還沒有你的數字」，⛔ 不可以憑空生出理由
-    const nodata = await visible(page, '.mkt-cal__nodata')
+    // ⛔ 對照組：MYFEEL 沒有輪廓 → 必須講「還不認識你的店」而且只講一次，⛔ 不可以憑空生出理由
+    const text = await page.evaluate(() => document.querySelector('.mkt-cal')?.textContent ?? '')
+    const nodata = (text.match(/還不認識你的店/g) ?? []).length
+    if (nodata > 1) return fail(`「還不認識你的店」講了 ${nodata} 次——只能講一次`)
     const reasons = await visible(page, '.mkt-cal__reasons')
     if (reasons > 0) {
       // 有理由的話，每一條都必須帶出處
@@ -599,8 +602,8 @@ async function checkMarketingCalendar() {
       if (noSource) return fail(`有 ${noSource} 條「為什麼」沒有出處`)
       pass('每一條「為什麼」都帶得出出處')
     }
-    if (!nodata && !reasons) return fail('既沒有理由也沒有「還沒有你的數字」——等於什麼都沒講')
-    pass(nodata ? `${nodata} 檔誠實講出「還沒有你的數字」` : '每一檔都有自己的理由')
+    if (!nodata && !reasons) return fail('既沒有理由也沒講「還不認識你的店」——等於假裝這是為他算的')
+    pass(nodata ? '誠實講出「還不認識你的店」，而且只講一次' : '攤開的那一檔有自己的理由')
 
     // ⛔ 不承諾成效
     const promised = await page.evaluate(() =>
