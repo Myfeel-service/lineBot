@@ -241,7 +241,117 @@ describe('findLastYearFestivalBroadcast（去年這一檔為它發的）', () =>
     expect(findLastYearFestivalBroadcast(festivals[1]!, festivals, MYFEEL_REAL)).toBeNull()
   })
 
-  it('節日表沒有去年那一檔就回 null', () => {
+  it('節日表沒有去年那一檔、也找不到為它發的：回 null', () => {
     expect(findLastYearFestivalBroadcast(festivals[0]!, festivals, [bc({ festivalId: 'x' })])).toBeNull()
+  })
+})
+
+/**
+ * 審查抓到：節日表從 2026-08-27 才開始，只認表上「去年那一檔」的話，2027 年中以前的每一檔
+ * 都找不到去年 → 「去年這一檔你發過…」一次都不會出現。表上沒有去年那一檔時，改看去年同一段日子。
+ */
+describe('findLastYearFestivalBroadcast：節日表沒有去年那一檔（表從 2026-08-27 才開始）', () => {
+  it('國曆節日（聖誕節）：去年同一天前後找得到', () => {
+    const xmas = TAIWAN_FESTIVALS.find(f => f.id === 'christmas-2026')!
+    const hit = findLastYearFestivalBroadcast(xmas, TAIWAN_FESTIVALS, [
+      bc({ id: 'x25', name: '聖誕交換禮物', atMs: at('2025-12-15'), sentCount: 800 }),
+    ])
+    expect(hit?.id).toBe('x25')
+    // 從「為這一檔擬推播」建的（帶去年那一檔的 id）名稱沒有節日字也算
+    const linked = findLastYearFestivalBroadcast(xmas, TAIWAN_FESTIVALS, [
+      bc({ id: 'l25', name: '年底感謝祭', atMs: at('2025-12-20'), sentCount: 700, festivalId: 'christmas-2025' }),
+    ])
+    expect(linked?.id).toBe('l25')
+  })
+
+  it('農曆節日（重陽）：去年的重陽晚了 11 天（2025-10-29），照樣找得到', () => {
+    const d9 = TAIWAN_FESTIVALS.find(f => f.id === 'doubleninth-2026')!
+    const hit = findLastYearFestivalBroadcast(d9, TAIWAN_FESTIVALS, [
+      // 去年重陽當天才發、比「去年的 10/18」晚 11 天
+      bc({ id: 'd25', name: '重陽敬老禮盒', atMs: at('2025-10-29'), sentCount: 600 }),
+    ])
+    expect(hit?.id).toBe('d25')
+  })
+
+  it('農曆節日遇到閏月（春節）：去年的春節早了 19 天（2025-01-29 vs 2026-02-17），照樣找得到', () => {
+    const cny = { id: 'lunarnewyear-2026', name: '春節（農曆新年）', date: '2026-02-17' }
+    const hit = findLastYearFestivalBroadcast(cny, [cny], [
+      // 去年春節前 30 天發的早鳥：離「去年的 2/17」整整 49 天
+      bc({ id: 'c25', name: '春節禮盒早鳥', atMs: at('2024-12-30'), sentCount: 900 }),
+    ])
+    expect(hit?.id).toBe('c25')
+  })
+
+  it('⛔ 放寬的只有日期：名稱對不上、試發、綁在別檔的一樣不算；前年的也不算', () => {
+    const d9 = TAIWAN_FESTIVALS.find(f => f.id === 'doubleninth-2026')!
+    expect(findLastYearFestivalBroadcast(d9, TAIWAN_FESTIVALS, [
+      bc({ id: 'p', name: '小滑手_開賣', atMs: at('2025-10-25'), sentCount: 2000 }),
+      bc({ id: 't', name: '重陽測試', atMs: at('2025-10-25'), sentCount: 1 }),
+      bc({ id: 'o', name: '重陽敬老', atMs: at('2025-10-25'), sentCount: 500, festivalId: 'christmas-2025' }),
+      bc({ id: 'old', name: '重陽敬老', atMs: at('2024-10-11'), sentCount: 500 }),
+    ])).toBeNull()
+  })
+
+  it('⭐ 表上每一對「今年／去年」：把去年那一檔拿掉，去年歸屬範圍的頭尾兩天照樣找得到', () => {
+    for (const thisYear of TAIWAN_FESTIVALS) {
+      const y = Number(thisYear.date.slice(0, 4))
+      const lastYear = TAIWAN_FESTIVALS.find(f => f.name === thisYear.name && Number(f.date.slice(0, 4)) === y - 1)
+      if (!lastYear) continue
+      const withoutLastYear = TAIWAN_FESTIVALS.filter(f => f !== lastYear)
+      const kw = festivalNameKeywords(thisYear.name)[0]!
+      const center = Date.UTC(+lastYear.date.slice(0, 4), +lastYear.date.slice(5, 7) - 1, +lastYear.date.slice(8, 10))
+      for (const atMs of [center - 30 * DAY, center + 7 * DAY]) {
+        const hit = findLastYearFestivalBroadcast(thisYear, withoutLastYear, [bc({ id: 'ly', name: `${kw}活動`, atMs, sentCount: 300 })])
+        expect(hit?.id, `${thisYear.id} ← ${lastYear.date}`).toBe('ly')
+      }
+    }
+  })
+})
+
+/**
+ * 審查抓到：國慶日的「雙十」是「雙十一」的前半段，雙十一早鳥落在國慶前後就被算成國慶的推播
+ * （回顧算錯、「已經排好了」還會把國慶的「為這一檔擬推播」藏起來）。
+ */
+describe('節日關鍵字互相包含（審查第 2 條）', () => {
+  const D11 = { id: 'double11-2026', name: '雙 11 購物節', date: '2026-11-11' }
+  const VALENTINE = { id: 'valentines-2027', name: '西洋情人節', date: '2027-02-14' }
+
+  it('「雙十一」不算國慶日，但還是雙 11 的', () => {
+    const b = bc({ name: '雙十一早鳥預告', atMs: at('2026-10-15') })
+    expect(broadcastFestivalMatch(b, NATIONAL)).toBeNull()
+    expect(broadcastFestivalMatch({ ...b, atMs: at('2026-11-01') }, D11)).toBe('named')
+  })
+
+  it('「雙十二」也不算國慶日；真的寫「雙十」的照樣算', () => {
+    expect(broadcastFestivalMatch(bc({ name: '雙十二預告', atMs: at('2026-10-15') }), NATIONAL)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '雙十連假，雙十一先別急', atMs: at('2026-10-05') }), NATIONAL)).toBe('named')
+  })
+
+  it('「七夕情人節」「白色情人節」不算西洋情人節；只寫「情人節」的算', () => {
+    expect(broadcastFestivalMatch(bc({ name: '白色情人節預購', atMs: at('2027-02-10') }), VALENTINE)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '七夕情人節回顧', atMs: at('2027-02-10') }), VALENTINE)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '情人節雙人套餐', atMs: at('2027-02-10') }), VALENTINE)).toBe('named')
+  })
+
+  it('⭐ 全表盤點：任何一檔的字被別檔更長的字包住時，那個長字只算別檔', () => {
+    const named = new Map<string, { id: string, name: string, date: string }>()
+    for (const f of TAIWAN_FESTIVALS) if (!named.has(f.name)) named.set(f.name, f)
+    const list = [...named.values()]
+    let pairs = 0
+    for (const a of list) {
+      for (const b of list) {
+        if (a === b) continue
+        for (const ka of festivalNameKeywords(a.name)) {
+          for (const kb of festivalNameKeywords(b.name)) {
+            if (kb === ka || !kb.includes(ka)) continue
+            pairs++
+            // 名稱就是 b 的長字、日期正好落在 a 那一檔：⛔ 不可以算給 a
+            expect(broadcastFestivalMatch(bc({ name: kb, atMs: at(a.date) }), a), `${kb} → ${a.name}`).toBeNull()
+          }
+        }
+      }
+    }
+    // 目前表上只有「雙十」⊂「雙十一」這一對；新增關鍵字時這條會自動把新的一對也驗進來
+    expect(pairs).toBeGreaterThanOrEqual(1)
   })
 })

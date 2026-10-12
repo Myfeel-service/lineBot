@@ -264,6 +264,25 @@ describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () 
     expect(final.lineAggregationUnit).toBeNull()
     expect(final.lineInsightAggregationApplied).toBe(false)
   })
+
+  it('`D-121`：發完時排上「第 1 天去問 LINE 人數」（排程只讀時間到了的那幾則）；一個人都沒送到的不排', async () => {
+    claimReturns(['w1_U1', 'w1_U2'])
+    mockMulticast.mockResolvedValue({ successCount: 2, failedIds: [], lineAggregationApplied: true })
+    const { updates } = makeDb()
+    const before = Date.now()
+    await executeBroadcastSend('bc1')
+    // checkpoint 與最終統計都要帶：checkpoint 之後的寫入掛掉時，排程照樣找得到它
+    for (const p of [checkpointPatch(updates)!, lastStatusPatch(updates)!]) {
+      expect(p.lineStatsNextAt).toBeGreaterThanOrEqual(before + 86_400_000)
+      expect(p.lineStatsNextAt).toBeLessThanOrEqual(Date.now() + 86_400_000)
+    }
+
+    claimReturns(['w1_U1', 'w1_U2'])
+    mockMulticast.mockResolvedValue({ successCount: 0, failedIds: ['U1', 'U2'], lineAggregationApplied: true })
+    const failedRun = makeDb()
+    await executeBroadcastSend('bc1')
+    expect(lastStatusPatch(failedRun.updates)!.lineStatsNextAt).toBe('__delete__')
+  })
 })
 
 /**

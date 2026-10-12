@@ -6,6 +6,7 @@ import { multicastMessage } from './line'
 import { renderModuleToLineMessages } from './handler'
 import { renderBroadcastMessagesForSend } from './render-attributes'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
+import { lineStatsNextDueAt } from '~~/shared/broadcast-line-stats'
 /**
  * ⛔ 「這則推播會不會被換成模組內容」的判斷**不在這支檔案裡自己寫一份**（`C-245`）：
  * 後台預覽要靠同一個判斷決定「要畫卡片還是畫模組內容」，兩邊各寫一份就會漂開，
@@ -106,6 +107,12 @@ export async function executeBroadcastSend(
     // 每一條寫 failed 的路徑都要留下人看得懂的原因（小幫手警示已承諾「進去看失敗原因」）；
     // 成功時明確清成 null，才不會留著上一輪嘗試的舊原因
     failureReason: o.allFailed ? BROADCAST_ALL_RECIPIENTS_FAILED : null,
+    /**
+     * `D-121`：排上「發完第 1 天去問 LINE 的打開／點連結人數」。排程只讀這個時間到了的推播
+     * （`server/utils/broadcast-line-stats.ts`），⛔ 少了這一欄這則就永遠不會被問到。
+     * 一個人都沒送到的沒有人數可問，不排。
+     */
+    lineStatsNextAt: o.successCount > 0 ? lineStatsNextDueAt(Date.now(), null) : FieldValue.delete(),
   })
 
   try {

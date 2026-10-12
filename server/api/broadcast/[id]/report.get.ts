@@ -3,7 +3,8 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchBroadcastLineInsight } from '~~/server/utils/broadcast-line-insight'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
-import { LINE_STATS_MAX_AGE_DAYS, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
+import { lineStatsExpired, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
 
 /** 「沒收到的人」最多列這麼多位，避免大量失敗時一次抓爆 */
 const FAILED_LIST_LIMIT = 100
@@ -38,24 +39,6 @@ async function fetchFailedRecipients(
       displayName: String(data?.displayName || '').trim() || lineUserId,
     }
   })
-}
-
-function firestoreTimeToDate(v: unknown): Date | null {
-  if (v == null) return null
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v
-  if (typeof (v as { toDate?: () => Date }).toDate === 'function') {
-    try {
-      const d = (v as { toDate: () => Date }).toDate()
-      return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null
-    }
-    catch {
-      return null
-    }
-  }
-  const o = v as { seconds?: number; _seconds?: number }
-  const sec = typeof o.seconds === 'number' ? o.seconds : typeof o._seconds === 'number' ? o._seconds : NaN
-  if (!Number.isNaN(sec)) return new Date(sec * 1000)
-  return null
 }
 
 /**
@@ -99,27 +82,35 @@ export default defineEventHandler(async (event) => {
     ? await fetchFailedRecipients(db, id, workspaceId)
     : []
 
-  const startedAt = firestoreTimeToDate(data.startedAt as unknown)
-  const completedAt = firestoreTimeToDate(data.completedAt as unknown)
+  // 全站共用那支（Timestamp／{_seconds}／Date 都認得），⛔ 不在端點裡再寫一份
+  const startedAt = parseFirestoreDate(data.startedAt)
+  const completedAt = parseFirestoreDate(data.completedAt)
+  const completedMs = completedAt?.getTime() ?? null
+  /** 發完超過約一個月：LINE 用現在的查法一定查不到（跟排程同一個天數） */
+  const expired = lineStatsExpired(completedMs, Date.now())
 
   const shouldFetchLine = ['completed', 'failed'].includes(data.status)
   /** 曾改走無彙總 multicast 時為 false，LINE 不會有該 unit 的 insight */
   const skipLineInsight = data.lineInsightAggregationApplied === false
-  const line = shouldFetchLine
-    ? (skipLineInsight
-        ? {
-            lineUniqueImpression: null as number | null,
-            lineUniqueClick: null as number | null,
-            lineInsightError: 'LINE_AGGREGATION_SKIPPED',
-          }
+  const noLine = { lineUniqueImpression: null as number | null, lineUniqueClick: null as number | null }
+  const line: { lineUniqueImpression: number | null, lineUniqueClick: number | null, lineInsightError?: string } = !shouldFetchLine
+    ? noLine
+    : skipLineInsight
+      ? { ...noLine, lineInsightError: 'LINE_AGGREGATION_SKIPPED' }
+      /**
+       * 2026-10-12 審查：發完超過一個月的，以前每打開一次成效頁就去問 LINE 一次、每次都失敗，
+       * 白白吃掉 LINE 統計查詢的次數（跟發完後自動存人數的排程共用同一份額度）。
+       * ⛔ 這種一定查不到的直接不問，改用下面存下來的那一份；畫面據 `lineStatsExpired` 講「超過一個月」。
+       */
+      : expired
+        ? { ...noLine, lineInsightError: 'LINE_STATS_EXPIRED' }
         : await fetchBroadcastLineInsight(
             id,
             String(data.workspaceId || '').trim(),
             data.lineAggregationUnit ?? null,
             startedAt,
             completedAt,
-          ))
-    : { lineUniqueImpression: null as number | null, lineUniqueClick: null as number | null }
+          )
 
   /**
    * `D-121`／`C-301`：現場問不到 LINE（發完超過約一個月、或 LINE 一時回錯誤）時，
@@ -132,7 +123,6 @@ export default defineEventHandler(async (event) => {
     && (stored.opened != null || stored.clicked != null)
   const uniqueImpression = useStored ? stored!.opened : line.lineUniqueImpression
   const uniqueClick = useStored ? stored!.clicked : line.lineUniqueClick
-  const completedMs = completedAt?.getTime() ?? null
 
   const openRate = uniqueImpression != null && data.sentCount > 0
     ? uniqueImpression / data.sentCount
@@ -165,7 +155,7 @@ export default defineEventHandler(async (event) => {
     /** 點連結的人 ÷ 送到的人（LINE 官方統計） */
     lineClickRate: clickRate != null ? Math.round(clickRate * 10000) / 10000 : null,
     /** 發完超過約一個月（LINE 用現在的查法已經查不到）；畫面據此換一句說明 */
-    lineStatsExpired: completedMs != null && Date.now() - completedMs > LINE_STATS_MAX_AGE_DAYS * 86_400_000,
+    lineStatsExpired: expired,
     lineInsightError: useStored ? undefined : line.lineInsightError,
     /** `C-301`：發送時的點擊紀錄版本。< 2＝圖片上的連結當時還不會記點擊 */
     clickTrackingVersion: Number(data.clickTrackingVersion) || 1,

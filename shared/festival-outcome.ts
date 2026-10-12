@@ -25,7 +25,7 @@
  * - 只發給 1～2 人的（試發、測試）不算成效，也要講「沒算進來」。
  */
 
-import type { BroadcastLineStats } from './broadcast-line-stats'
+import { LINE_STATS_MAX_AGE_DAYS, type BroadcastLineStats } from './broadcast-line-stats'
 
 /** LINE 官方統計（`D-121`②），定義在 `shared/broadcast-line-stats.ts` */
 export type { BroadcastLineStats }
@@ -83,8 +83,11 @@ export const OUTCOME_TEST_SEND_MAX = 2
 /** 名稱對上節日時，推播要落在節日前 30 天到後 7 天內（擋掉「去年的中秋禮盒」被算進今年） */
 export const NAMED_WINDOW_BEFORE_DAYS = 30
 export const NAMED_WINDOW_AFTER_DAYS = 7
-/** LINE 用現在的查法只查得到大約一個月內的推播（2026-10-11 實測，8 月那幾則全回錯誤） */
-export const LINE_STATS_QUERYABLE_DAYS = 28
+/**
+ * LINE 用現在的查法只查得到大約一個月內的推播（2026-10-11 實測，8 月那幾則全回錯誤）。
+ * ⛔ 跟排程、成效頁用同一個數字（`shared/broadcast-line-stats.ts`），不要各寫一份。
+ */
+export const LINE_STATS_QUERYABLE_DAYS = LINE_STATS_MAX_AGE_DAYS
 
 const DAY = 86_400_000
 
@@ -118,6 +121,20 @@ const FESTIVAL_NAME_KEYWORDS: Record<string, string[]> = {
   '父親節・七夕情人節': ['父親節', '七夕'],
 }
 
+/**
+ * 名稱裡出現這些字時，**那一段不算這個節日**（2026-10-12 審查）。
+ *
+ * 別檔的字剛好包著這一檔的字時（「雙十一」包著國慶日的「雙十」）由 `festivalBlockers` 自動算出來，
+ * 這裡只補**不在節日表上**、但會包住表上字的日子：
+ * - 「雙十二」：雙 12 刻意不收（`taiwan-festivals.ts`），它的「雙十」一樣不是國慶。
+ * - 「白色情人節」（3/14）、「七夕情人節」：只寫「情人節」才是西洋情人節。白色情人節的預購常在
+ *   2 月中就排草稿，不擋的話會被當成「情人節已經排好了」，把「為這一檔擬推播」藏起來。
+ */
+const NOT_THIS_FESTIVAL: Record<string, string[]> = {
+  '國慶日': ['雙十二'],
+  '西洋情人節': ['白色情人節', '七夕情人節'],
+}
+
 /** 比對用：轉小寫、拿掉空白（「雙 11」與「雙11」要當成同一個） */
 function normalizeForMatch(s: string): string {
   return String(s ?? '').toLowerCase().replace(/\s+/g, '')
@@ -131,6 +148,49 @@ export function festivalNameKeywords(festivalName: string): string[] {
   return base.length >= 2 ? [base] : []
 }
 
+const blockerCache = new Map<string, string[]>()
+
+/**
+ * 會包住這一檔關鍵字、但講的是別的日子的長字（長的先拿掉）。
+ * ⭐ 別檔的字是**從關鍵字表自動算的**：以後新增關鍵字撞到既有的字，不必記得回來補這張表
+ *   （`festival-outcome.test.ts`「全表盤點」那條會把新的一對驗進來）。
+ */
+function festivalBlockers(festivalName: string): string[] {
+  const cached = blockerCache.get(festivalName)
+  if (cached) return cached
+  const own = festivalNameKeywords(festivalName)
+  const fromOtherFestivals = Object.keys(FESTIVAL_NAME_KEYWORDS)
+    .filter(other => other !== festivalName)
+    .flatMap(other => festivalNameKeywords(other))
+    .filter(k => !own.includes(k) && own.some(o => k.includes(o)))
+  const out = [...new Set([...fromOtherFestivals, ...(NOT_THIS_FESTIVAL[festivalName] ?? []).map(normalizeForMatch)])]
+    .sort((a, b) => b.length - a.length)
+  blockerCache.set(festivalName, out)
+  return out
+}
+
+/** 推播名稱裡有沒有這個節日的字（先把「包著它、但講別的日子」的長字拿掉再比）。 */
+function nameMatchesFestival(broadcastName: string, festivalName: string): boolean {
+  let name = normalizeForMatch(broadcastName)
+  // 換成名稱裡不會出現的字元：直接刪掉的話，前後兩段接起來可能拼出新的關鍵字
+  for (const longer of festivalBlockers(festivalName)) name = name.split(longer).join('\u0000')
+  return festivalNameKeywords(festivalName).some(k => name.includes(k))
+}
+
+/** 歸屬規則本體：給一段日期範圍（毫秒，頭尾都算），名稱與 `festivalId` 的規則跟 `broadcastFestivalMatch` 同一條。 */
+function matchInRange(
+  b: { name: string, atMs: number | null, festivalId?: string },
+  festivalId: string | undefined,
+  festivalName: string,
+  fromMs: number,
+  toMs: number,
+): 'linked' | 'named' | null {
+  if (b.festivalId) return festivalId && b.festivalId === festivalId ? 'linked' : null
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs) || b.atMs == null || !Number.isFinite(b.atMs)) return null
+  if (b.atMs < fromMs || b.atMs > toMs) return null
+  return nameMatchesFestival(b.name, festivalName) ? 'named' : null
+}
+
 /**
  * 這則推播是不是為了這一檔發的（`D-121`①）。
  * - `linked`：從「為這一檔擬推播」建立的（帶 `festivalId`）
@@ -141,12 +201,8 @@ export function broadcastFestivalMatch(
   b: { name: string, atMs: number | null, festivalId?: string },
   festival: FestivalOutcomeFestival,
 ): 'linked' | 'named' | null {
-  if (b.festivalId) return b.festivalId === festival.id ? 'linked' : null
   const center = dateToMs(festival.date)
-  if (Number.isNaN(center) || b.atMs == null || !Number.isFinite(b.atMs)) return null
-  if (b.atMs < center - NAMED_WINDOW_BEFORE_DAYS * DAY || b.atMs > center + (NAMED_WINDOW_AFTER_DAYS + 1) * DAY) return null
-  const name = normalizeForMatch(b.name)
-  return festivalNameKeywords(festival.name).some(k => name.includes(k)) ? 'named' : null
+  return matchInRange(b, festival.id, festival.name, center - NAMED_WINDOW_BEFORE_DAYS * DAY, center + (NAMED_WINDOW_AFTER_DAYS + 1) * DAY)
 }
 
 /** 組出一檔的回顧。 */
@@ -272,20 +328,67 @@ export function outcomeLineText(l: OutcomeLine): string {
 }
 
 /**
+ * 節日表上**沒有去年那一檔**時，去年的日期最多可能跟「去年同月同日」差幾天。
+ *
+ * 2026-10-12 審查抓到：節日表從 2026-08-27 才開始，只認表上的「去年那一檔」的話，
+ * 2027 年中以前的每一檔都找不到去年，「去年這一檔你發過…」一次都不會出現。
+ * 所以表上沒有時，改看「去年同月同日」前後——但農曆節日每年的國曆日期都不一樣：
+ * - 農曆一年 353～355 天（有閏月 383～385 天），國曆一年 365／366 天，
+ *   所以去年的農曆節日會比「去年同月同日」**晚 10～13 天或早 17～20 天**
+ *   （例：2026 春節 2/17，2025 春節 1/29，早了 19 天）→ 前後各放寬 20 天。
+ * - 母親節＝五月第二個週日，每年在 5/8～5/14 之間移動 → 放寬 7 天。
+ * - 清明 4/4 或 4/5，連假的頭尾也會跟著移 → 放寬 2 天。
+ * - 其他國曆節日（元旦、國慶、聖誕…）日期固定，不放寬。
+ *
+ * ⛔ 只放寬**日期**，歸屬規則不變：名稱要有節日的字、試發不算、綁在別檔的不算。
+ *   放寬後的範圍最多 50＋28 天，離今年與前年都還有大半年，不會撿到別年的。
+ * ⛔ 選「日期放寬＋名稱比對」而不是「照日期猜」：商品推播照樣不會被當成去年這一檔（`D-121`①）。
+ */
+const LAST_YEAR_DATE_DRIFT_DAYS: Record<string, number> = {
+  '除夕': 20,
+  '春節（農曆新年）': 20,
+  '元宵節': 20,
+  '端午節': 20,
+  // 2027 年父親節（國曆 8/8）與七夕（農曆）同一天才合成一條；去年的七夕不在 8/8，照農曆放寬
+  '父親節・七夕情人節': 20,
+  '中元節': 20,
+  '中秋節': 20,
+  '重陽節': 20,
+  '母親節': 7,
+  '兒童節・清明節連假': 2,
+}
+
+/**
  * 去年同一個節日，為它發過的推播（當「為什麼是你」的證據，`D-121`①同一條歸屬規則）。
  * ⛔ 不再照日期猜：去年這時候發的商品推播不是「去年這一檔」。
  * 一檔有好幾則時取送最多人的那一則；試發不算。
+ *
+ * 節日表上有去年那一檔就照它的日期；沒有（表從 2026-08-27 才開始）就看「去年同月同日」前後，
+ * 農曆節日放寬範圍（`LAST_YEAR_DATE_DRIFT_DAYS`）。
  */
 export function findLastYearFestivalBroadcast(
-  festival: { name: string, date: string },
+  festival: { id?: string, name: string, date: string },
   festivals: readonly FestivalOutcomeFestival[],
   broadcasts: readonly BroadcastOutcome[],
 ): BroadcastOutcome | null {
-  const year = Number(festival.date.slice(0, 4))
-  if (!year) return null
+  const [year, month, day] = String(festival.date ?? '').split('-').map(Number)
+  if (!year || !month || !day) return null
+
+  const pickBest = (hits: readonly BroadcastOutcome[]) =>
+    hits.length ? [...hits].sort((a, b) => b.sentCount - a.sentCount)[0]! : null
+
   const lastYear = festivals.find(f => f.name === festival.name && Number(f.date.slice(0, 4)) === year - 1)
-  if (!lastYear) return null
-  const hits = buildOneOutcome(lastYear, broadcasts).broadcasts
-  if (!hits.length) return null
-  return [...hits].sort((a, b) => b.sentCount - a.sentCount)[0]!
+  if (lastYear) return pickBest(buildOneOutcome(lastYear, broadcasts).broadcasts)
+
+  // 表上沒有去年那一檔：從今年的 id 推出去年的（`{slug}-{西元年}`），從這裡擬的推播才認得
+  const lastYearId = festival.id && /-\d{4}$/.test(festival.id)
+    ? festival.id.replace(/-\d{4}$/, `-${year - 1}`)
+    : undefined
+  const center = Date.UTC(year - 1, month - 1, day)
+  const drift = LAST_YEAR_DATE_DRIFT_DAYS[festival.name] ?? 0
+  const from = center - (NAMED_WINDOW_BEFORE_DAYS + drift) * DAY
+  const to = center + (NAMED_WINDOW_AFTER_DAYS + 1 + drift) * DAY
+  return pickBest(broadcasts.filter(b =>
+    b.sentCount > OUTCOME_TEST_SEND_MAX
+    && matchInRange(b, lastYearId, festival.name, from, to) !== null))
 }

@@ -21,6 +21,7 @@ import {
   type PlannedBroadcast,
 } from '~~/shared/marketing-calendar'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
 import { taipeiDate } from '~~/shared/time'
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 
@@ -53,10 +54,9 @@ const BROADCAST_SCAN_LIMIT = 300
 /** 還沒送完、可以算「已經為這一檔準備好」的狀態 */
 const PLANNED_STATUSES = new Set(['draft', 'scheduled', 'processing', 'completed', 'failed'])
 
+/** Firestore 時間欄位 → 毫秒。走全站共用的 `parseFirestoreDate`（⛔ 不在端點裡再寫一份） */
 function toMs(v: unknown): number | null {
-  const d = (v as { toDate?: () => Date } | null | undefined)?.toDate?.()
-  const ms = d?.getTime()
-  return typeof ms === 'number' && Number.isFinite(ms) ? ms : null
+  return parseFirestoreDate(v)?.getTime() ?? null
 }
 
 /**
