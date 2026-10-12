@@ -880,6 +880,7 @@ try {
     await sleep(400)
     await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
     await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 30_000)
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-ocr-stop.png') })
     const s = await pg.evaluate(() => ({
       label: document.querySelector('.kb-step-label')?.innerText ?? '',
       stopped: document.querySelector('.kb-preview-stopped')?.innerText ?? '',
