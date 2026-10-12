@@ -30,6 +30,22 @@ export function detectImportKind(pasted: string, hasFile = false): ImportKind {
 }
 
 /**
+ * 一次貼了好幾個網址（`D-124`，跟 Gemini Notebook 一樣：空白或換行隔開）→ 回網址清單；不是就回 null。
+ *
+ * ⛔ 以前這種輸入被 detectImportKind 判成「一段文字」：AI 會把網址字串本身當成知識內容整理，
+ *    一個字都沒抓到網頁上的東西（`HTTP_URL_PATTERN` 只認整段就是一個網址）。
+ * 條件要嚴：每一段都要是 http(s) 網址、至少兩個；夾了任何一段不是網址的字＝那是一段文字（例：「官網 https://…」）。
+ * Google 試算表連結不收進來：它有自己的一條路（要先確認讀不讀得到），混在一般網址裡會被當網頁抓。
+ * 同一個網址貼兩次只留一個。
+ */
+export function detectUrlList(pasted: string): string[] | null {
+  const parts = String(pasted ?? '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return null
+  if (!parts.every(p => HTTP_URL_PATTERN.test(p) && !GSHEET_PATTERN.test(p))) return null
+  return [...new Set(parts)]
+}
+
+/**
  * 匯入時選的種類 → 實際存進資料庫的來源型別。
  *
  * 只有「貼上一段文字」對不起來：它存成 `manual`（與手寫單卡同類，不排同步、不偵測變動）。

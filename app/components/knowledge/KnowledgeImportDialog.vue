@@ -51,6 +51,10 @@
     >
       <!-- 步驟名稱是「這一步叫什麼」不是狀態句：1 把資料交給 AI → 2 AI 整理（整理中畫面還在這一頁，見 kb-import-step 的 processing）→ 3 加好了 -->
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>{{ previewing ? 'AI 整理' : '把資料交給 AI 整理' }}</p>
+      <!-- 從資料頁「換新版」進來的（`D-124`）：一進來就在整理，要講清楚這一份會換掉哪一份 -->
+      <p v-if="replaceIntentName" class="kb-replace-intent">
+        換新版：整理好會直接換掉「<strong>{{ replaceIntentName }}</strong>」（舊的移到回收桶，30 天內救得回來）
+      </p>
 
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
       <!-- 點框裡任何空白處＝把游標放進輸入框：整塊就是「一個輸入」的心智模型 -->
@@ -105,6 +109,12 @@
         </template>
         <template v-else>
           知識空間：已用 {{ quota.used }}／{{ quota.limit }} 條，還能放 {{ roomLeft }} 條
+          <!--
+            「條」是什麼、一份會用掉幾條（`D-124` 新手走查：後台沒講，只有官網常見問題寫過）。
+            數字是正式庫 2026-10-12 唯讀量的中位數附近：PDF 說明書 21 份中位數 35（25%～75%＝15～53）、
+            網頁 24 份中位數 5（5～11）。⚠️ 帳號還少、樣本小；之後量級變了要重量再改這句，別讓它跟實際差太多
+          -->
+          <span class="kb-quota-line__unit">（一條＝一個問答；一本說明書通常 15～50 條、一個網頁約 5～10 條）</span>
         </template>
       </p>
 
@@ -141,12 +151,41 @@
                  下面什麼都沒有、也沒有重測鈕＝死路。帳號改用探測回傳的那份當備援。
                  ⛔ 帳號與「分享好了」只在**真的是沒分享**（no_access）時出現（2026-10-12 文字審視）：以前沒資料、
                     是上傳的 Excel 檔、試不出來也都叫人去分享——那幾種要做的是補資料、轉檔、再試一次。 -->
-            <div class="kb-gsheet-share__row">
-              <template v-if="gsheetProbe?.status === 'no_access'">
-                <code v-if="shareEmail" class="kb-gsheet-email">{{ shareEmail }}</code>
+            <!--
+              沒分享：三步教學**在這裡再出現一次**（2026-10-12 `D-124` 新手走查）。起步那一格只在框還空的時候看得到，
+              先貼了連結的人一走到「讀不到」，三步和截圖全都不見了，只剩一串帳號——最需要教的那一刻反而沒有。
+              ⚠️ 截圖跟起步那一格共用同一個展開狀態（sheetShotsOpen）：在那邊打開過，這裡也是開的。
+            -->
+            <ol v-if="gsheetProbe?.status === 'no_access'" class="kb-start__steps kb-gsheet-share__steps">
+              <li>打開這份試算表，按右上角<strong>「共用」</strong></li>
+              <li>
+                貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
+                <span v-if="shareEmail" class="kb-start__email">
+                  <code class="kb-gsheet-email">{{ shareEmail }}</code>
+                  <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
+                </span>
                 <span v-else class="text-xs text-muted">（讀不到服務帳號，請重新整理頁面或聯絡我們）</span>
-                <el-button v-if="shareEmail" size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
-              </template>
+                <button type="button" class="kb-start__fold" :aria-expanded="sheetShotsOpen" @click="sheetShotsOpen = !sheetShotsOpen">
+                  {{ sheetShotsOpen ? '收起圖' : '看圖怎麼按' }}
+                </button>
+                <div v-if="sheetShotsOpen" class="kb-start__shots">
+                  <figure class="kb-shot">
+                    <img :src="SHOTS.gsheetShare1" alt="Google 共用視窗最上面那一格，紅框標示要貼帳號的位置" loading="lazy">
+                    <figcaption><span class="kb-shot__n">1</span>帳號貼在紅框那一格</figcaption>
+                  </figure>
+                  <figure class="kb-shot">
+                    <img :src="SHOTS.gsheetShare2" alt="貼上帳號後右邊出現權限下拉，預設是編輯者，紅框標示要改成檢視者" loading="lazy">
+                    <figcaption><span class="kb-shot__n">2</span>Google 預設給「編輯者」，改成「檢視者」</figcaption>
+                  </figure>
+                  <figure class="kb-shot">
+                    <img :src="SHOTS.gsheetShare3" alt="共用視窗右下角，紅框標示傳送按鈕" loading="lazy">
+                    <figcaption><span class="kb-shot__n">3</span>按右下角的「傳送」（不用通知對方）</figcaption>
+                  </figure>
+                </div>
+              </li>
+              <li>回來按下面的「分享好了，再測一次」</li>
+            </ol>
+            <div class="kb-gsheet-share__row">
               <el-button size="small" :loading="gsheetProbing" @click="probeGsheet(gsheetInput.trim(), true)">
                 {{ gsheetProbe?.status === 'no_access' ? '分享好了，再測一次' : '再測一次' }}
               </el-button>
@@ -162,7 +201,7 @@
         </p>
         <div v-else-if="mode === 'url' && sitePeekCount > 0" class="kb-site-peek">
           <span>這個網站另外還有 <strong>{{ sitePeekCount }}</strong> 頁，要一起加入嗎？</span>
-          <el-button size="small" type="primary" plain @click="step = 'sitePages'">
+          <el-button size="small" type="primary" plain @click="openSitePages">
             看清單挑選
           </el-button>
         </div>
@@ -361,6 +400,10 @@
           <p class="kb-start__ptxt kb-start__ptxt--dim">
             想用表格填？<el-link type="primary" href="/templates/faq-sheet-template.xlsx" target="_blank" rel="noopener">下載問答範本（Excel）</el-link>，填好拖回上面的框。
           </p>
+          <!-- 「手動新增知識」以前只在資料頁「⋯」選單裡（`D-124`）：同一件事（自己寫內容）的另一種深度，收在這一格一起講 -->
+          <p class="kb-start__ptxt kb-start__ptxt--dim">
+            只想加一條、自己指定客人會怎麼問？<button type="button" class="kb-start__fold" @click="emit('manual')">手寫一條</button>
+          </p>
         </div>
 
       </div>
@@ -387,7 +430,7 @@
           data-tour="kb-preview"
           :loading="previewing"
           :disabled="!canPreview"
-          @click="runPreview"
+          @click="onPrimaryClick"
         >
           <!-- 整理中只轉圈、不換字：進度在下面的等待框講（以前按鈕、等待框、投放框同時三句「正在整理」） -->
           整理並加入
@@ -482,9 +525,13 @@
     <!-- ── Step 1.5:整站匯入 — 頁面清單勾選 ─────────────── -->
     <div v-if="step === 'sitePages'">
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>{{ siteFinished ? '網站的頁面加好了' : '選擇要加入的頁面' }}</p>
+      <!-- 「sitemap」是工程用語（`D-124` 新手走查）：講成「網站自己列的頁面清單」；一次貼好幾個網址的另講一句 -->
       <p class="kb-section-hint">
-        在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
-        （{{ siteFrom === 'sitemap' ? '來自網站自己提供的頁面清單（sitemap）' : '來自這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）。
+        <template v-if="siteFrom === 'pasted'">你貼了 <strong>{{ sitePages.length }}</strong> 個網址。</template>
+        <template v-else>
+          在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
+          （{{ siteFrom === 'sitemap' ? '網站自己列的頁面清單' : '這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）<template v-if="checkedSiteCount && !siteImporting && !siteFinished">，先幫你勾了常被問的頁（運送、退換貨、常見問題、商品），要加減自己勾</template>。
+        </template>
         勾選的每一頁會<strong>各自成為一份資料</strong>：AI 自動整理、自動辨識產品名，完成後可到資料列表逐一檢查。
       </p>
 
@@ -580,6 +627,8 @@
           全選{{ siteGroup || siteFilter.trim() ? '（目前顯示的）' : '' }}
         </el-checkbox>
         <span class="text-muted text-xs">已勾選 {{ checkedSiteCount }} 頁</span>
+        <!-- 空間先講（`D-124`）：一頁大約 5 條，勾太多後面幾頁會因為空間不夠加不進去——整理的錢那時已經花了 -->
+        <span v-if="siteRoomHint" class="text-xs" :class="siteRoomHint.tight ? 'kb-site-room is-tight' : 'text-muted'">· {{ siteRoomHint.text }}</span>
         <span v-if="importedSiteCount" class="text-muted text-xs">
           · {{ importedSiteCount }} 頁以前加過了（不重複加入，要更新請到資料頁「重新同步」）
         </span>
@@ -1036,17 +1085,18 @@
     -->
     <div v-if="step === 'result' && result">
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>加好了</p>
+      <!-- 「可用／失敗」是系統的話（`D-124` 新手走查）：失敗其實是「AI 還沒學起來、可以重試」，不是東西壞了 -->
       <div class="kb-result-summary">
         <div class="kb-result-stat">
-          <span class="kb-result-label">總計</span>
+          <span class="kb-result-label">整理出</span>
           <strong>{{ result.total }}</strong>
         </div>
         <div class="kb-result-stat kb-result-stat--success">
-          <span class="kb-result-label">可用</span>
+          <span class="kb-result-label">AI 學會了</span>
           <strong>{{ result.indexed }}</strong>
         </div>
         <div class="kb-result-stat" :class="result.failed ? 'kb-result-stat--danger' : ''">
-          <span class="kb-result-label">失敗</span>
+          <span class="kb-result-label">還沒學起來</span>
           <strong>{{ result.failed }}</strong>
         </div>
       </div>
@@ -1059,6 +1109,19 @@
         存成「<strong>{{ sourceMeta.name.trim() || '未命名資料' }}</strong>」<template v-if="savedProductName">・產品：{{ savedProductName }}</template><template v-if="savedFolderName">・資料夾：{{ savedFolderName }}</template>
         <span v-if="autoImported && (savedProductName || (folderAutoPicked && savedFolderName))" class="text-muted">（產品、資料夾是 AI 猜的，打開這一份就能改）</span>
       </p>
+
+      <!--
+        AI 整理成哪幾條（`D-124` 新手走查）：以前這裡只有「3／3／0」三個數字，要再按「打開這一份」才看得到那 3 條是什麼——
+        一份直接加入之後，這是他第一次、也常常是唯一一次看到 AI 做了什麼。Gemini Notebook 每份會附一段摘要，這是我們的版本。
+        只列前 5 條標題：要看內容、要改，右下那顆就是打開這一份。
+      -->
+      <div v-if="resultTitles.length" class="kb-result-titles">
+        <p class="kb-result-titles__head">AI 整理成這幾條：</p>
+        <ul class="kb-result-titles__list">
+          <li v-for="(t, i) in resultTitles.slice(0, 5)" :key="i">{{ t }}</li>
+        </ul>
+        <p v-if="resultTitles.length > 5" class="kb-result-titles__more">還有 {{ resultTitles.length - 5 }} 條，按「打開這一份」看全部、逐條改</p>
+      </div>
 
       <!--
         蓋掉東西一定要講出來，而且要講「舊的去哪了」（`C-135`）。
@@ -1097,23 +1160,31 @@
             <template v-else>知識進庫了，但客人現在還聽不到</template>
           </p>
           <p class="kb-handoff__why">
-            <template v-if="aiEnabled">AI 客服是開啟的。想確認 AI 真的學會了，可以在這裡直接試問一題。</template>
+            <template v-if="aiEnabled">AI 客服是開啟的。想確認 AI 真的學會了，在下面問它一題試試。</template>
             <template v-else><strong>AI 客服還沒開啟</strong>，所以這些內容目前不會用在回覆客人上。開啟之後才會生效。</template>
           </p>
         </div>
         <el-button v-if="!aiEnabled" size="small" type="primary" @click="goEnableAi">前往開啟</el-button>
       </div>
 
-      <!-- 試問一題:拿剛匯入的內容真的問一次(不進統計),答得出來才敢說「學會了」 -->
+      <!--
+        試問一題:拿剛匯入的內容真的問一次(不進統計),答得出來才敢說「學會了」。
+        ⚠️ 2026-10-12（`D-124` 新手走查）：以前是一顆寫「試問一題」的小灰鈕，沒講不算額度、不會傳給客人——新手不敢按。
+           旁邊接「到測試對話多問幾題」：測試對話會列出 AI 用了哪幾條、各自多像，那是我們的「出處」，以前加完沒人帶他去。
+      -->
       <div v-if="result.indexed > 0 && verifyQuery" class="kb-handoff-verify">
-        <el-button
-          size="small"
-          plain
-          :loading="verifying"
-          @click="runVerify"
-        >
-          {{ verifyOutcome ? '再試一次' : `試問一題：「${verifyQuery.slice(0, 16)}${verifyQuery.length > 16 ? '…' : ''}」` }}
-        </el-button>
+        <div class="kb-handoff-verify__row">
+          <el-button
+            size="small"
+            plain
+            :loading="verifying"
+            @click="runVerify"
+          >
+            {{ verifyOutcome ? '再問一次' : `問 AI 一題試試：「${verifyQuery.slice(0, 16)}${verifyQuery.length > 16 ? '…' : ''}」` }}
+          </el-button>
+          <span class="text-xs text-muted">不算額度、不會傳給客人</span>
+          <el-button size="small" link type="primary" @click="goPlayground">到測試對話多問幾題 →</el-button>
+        </div>
         <p v-if="verifyOutcome" class="kb-handoff-verify__out" :class="`is-${verifyOutcome.tone}`">
           {{ verifyOutcome.text }}
         </p>
@@ -1205,7 +1276,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { Document as IconFile, EditPen as IconPen, Grid as IconSheet, Link as IconWeb, QuestionFilled } from '@element-plus/icons-vue'
-import { canReplaceSource, detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { canReplaceSource, detectImportKind, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
 import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
 import {
   KNOWLEDGE_FILE_ACCEPT,
@@ -1223,6 +1294,7 @@ import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
 import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
 import { batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
+import { CARDS_PER_PAGE_ESTIMATE, recommendSitePages, sitePageGroup } from '~/utils/kb-site-pages'
 import { EMPTY_FILE_HINT } from '~/utils/knowledge-upload'
 
 const props = defineProps<{
@@ -1254,6 +1326,8 @@ const emit = defineEmits<{
    * 沒有這個訊號的話,關掉視窗去做別的事的人回來只會看到一片乾淨畫面(見 resumeStoredJob 的說明)。
    */
   'job-state': [state: 'running' | 'batch' | 'ready' | 'added' | 'none']
+  /** 「還沒整理好」那格的「手寫一條」：父層關掉這個視窗、打開手寫一條知識的編輯框 */
+  'manual': []
 }>()
 
 
@@ -1344,6 +1418,15 @@ const detected = computed(() => {
     }
   }
   if (!pasteInput.value.trim()) return null
+  if (urlList.value) {
+    return {
+      label: `${urlList.value.length} 個網址`,
+      sync: '每個網址各自成為一份資料；之後網頁小改自己跟著更新，大改先等你看過',
+      syncTone: 'semi' as const,
+      hintLabel: '抓不到內容？',
+      hint: '只抓網頁上的文字。需要先登入、或要按按鈕才顯示內容的頁面可能抓不到；商城首頁的商品區塊常是動態載入，請改貼商品列表頁。',
+    }
+  }
   if (mode.value === 'gsheet') {
     return {
       label: 'Google 試算表',
@@ -1387,6 +1470,11 @@ const fileSizeKb = ref(0)
 // 否則 ~5MB 檔 base64 膨脹到 ~6.7MB 會超過 Lambda 6MB payload 上限 → 413）。
 const selectedFile = ref<File | null>(null)
 const fileContentType = ref('')
+/**
+ * 一次貼了好幾個網址（`D-124`）：不是 null 就走整站加入那條路（見 runUrlList）。
+ * ⚠️ 必須排在 selectedFile 之後、hintOpen 那個 watch 之前：detected 會讀它，而那個 watch 註冊當下就求值（同下面那顆 TDZ 雷）
+ */
+const urlList = computed(() => (selectedFile.value ? null : detectUrlList(pasteInput.value)))
 
 // 判別結果同步回原本三個欄位，下游（runPreview / runDiscover / bulk-create）完全不用改。
 // ⚠️ 這個 watch 必須放在 selectedFile 宣告之後：watch 註冊當下就會讀一次 mode 當初始值，
@@ -1803,6 +1891,7 @@ const ignoreDuplicateOnce = ref(false)
 
 // mode 已經是「判別結果」，這裡只需確認對應的輸入真的有值（規則共用 shared/knowledge-import-detect）
 const canPreview = computed(() => {
+  if (urlList.value) return true // 好幾個網址（`D-124`）：走整站那條路，見 onPrimaryClick
   if (mode.value === 'file') return Boolean(selectedFile.value)
   if (mode.value === 'url') return HTTP_URL_PATTERN.test(urlInput.value.trim())
   if (mode.value === 'gsheet') return GSHEET_PATTERN.test(gsheetInput.value.trim())
@@ -1835,7 +1924,8 @@ interface SitePageRow {
 }
 const discovering = ref(false)
 const sitePages = ref<SitePageRow[]>([])
-const siteFrom = ref<'sitemap' | 'links'>('sitemap')
+/** 清單從哪來：網站的頁面清單／這一頁上的連結／他一次貼了好幾個網址（`D-124`） */
+const siteFrom = ref<'sitemap' | 'links' | 'pasted'>('sitemap')
 const siteTruncated = ref(false)
 const siteImporting = ref(false)
 const siteAborted = ref(false) // 使用者中途關窗 → worker 收工
@@ -1865,16 +1955,11 @@ const siteHost = computed(() => {
   }
 })
 const siteFilter = ref('')
-/** 網址的第一段路徑當分組 key(例 /projects、/media);首頁歸「(首頁)」 */
-function pageGroupKey(url: string): string {
-  try {
-    const seg = new URL(url).pathname.split('/').filter(Boolean)[0] ?? ''
-    return seg ? `/${seg}` : '(首頁)'
-  }
-  catch {
-    return '(其他)'
-  }
-}
+/**
+ * 分組：網址第一段照意思歸成「商品／分類／文章／說明頁」（`D-124`：以前直接秀「/products」，新手看不懂）。
+ * 規則在 utils/kb-site-pages（有測試）；認不出來的照舊用那一段。
+ */
+const pageGroupKey = (url: string) => sitePageGroup(url)
 
 /** 目前選中的分組;'' = 全部 */
 const siteGroup = ref('')
@@ -1992,7 +2077,8 @@ async function loadSitePages(url: string): Promise<number> {
     '/api/ai/knowledge/discover-pages',
     { method: 'POST', body: { url } },
   )
-  // 預設不勾:整站可能上百頁,每頁都是一次 AI 整理(時間+token);讓使用者自己挑
+  // 這裡先全部不勾；打開清單那一下才照空間先幫他勾常被問的頁（見 openSitePages）——
+  // 探頁數是貼上網址就在背景跑的，那時候空間可能還沒讀到
   sitePages.value = res.pages.map(p => ({
     url: p.url,
     title: p.title,
@@ -2014,11 +2100,63 @@ async function loadSitePages(url: string): Promise<number> {
   return sitePages.value.length
 }
 
+/**
+ * 打開頁面清單（`D-124` 新手走查：以前上百頁一頁都沒勾，他不知道該勾哪些）。
+ * 他還沒勾過任何一頁時，先照空間幫他勾常被問的頁（規則在 utils/kb-site-pages）；勾過就不動他的選擇。
+ */
+function openSitePages() {
+  if (!sitePages.value.some(p => p.checked)) {
+    const order = recommendSitePages(sitePages.value, { room: roomLeft.value, maxPages: MAX_SITE_BATCH })
+    const rank = new Map(order.map((u, i) => [u, i]))
+    for (const p of sitePages.value) p.checked = rank.has(p.url)
+    // 勾好的排最上面、照推薦的順序（說明頁在前）：網站清單裡「運送」「常見問題」常在最後面，不排上來他得捲到底才看得到勾了什麼
+    if (rank.size) {
+      sitePages.value = [...sitePages.value].sort((a, b) => (rank.get(a.url) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.url) ?? Number.MAX_SAFE_INTEGER))
+    }
+  }
+  step.value = 'sitePages'
+}
+
+/**
+ * 一次貼了好幾個網址（`D-124`，Gemini Notebook 也這樣收）：每個網址各自成為一份資料，走整站加入同一條路
+ * （每頁各自整理、直接加入、清單上講結果）。⛔ 以前這種輸入被當成一段文字——AI 整理的是網址字串本身。
+ */
+function runUrlList() {
+  const urls = urlList.value
+  if (!urls) return
+  sitePages.value = urls.map(url => ({
+    url,
+    title: '',
+    checked: true,
+    status: 'idle' as const,
+    cards: 0,
+    notLearned: 0,
+    warningTexts: [],
+    error: '',
+    imported: false,
+    productName: '',
+    group: pageGroupKey(url),
+  }))
+  siteFrom.value = 'pasted'
+  siteTruncated.value = false
+  siteFinished.value = false
+  siteGroup.value = ''
+  siteFilter.value = ''
+  step.value = 'sitePages'
+  void runSiteImport()
+}
+
+/** 主按鈕：好幾個網址走整站那條路，其餘照常整理並加入 */
+function onPrimaryClick() {
+  if (urlList.value) runUrlList()
+  else void runPreview()
+}
+
 async function runDiscover() {
   discovering.value = true
   try {
     await loadSitePages(urlInput.value.trim())
-    step.value = 'sitePages'
+    openSitePages()
   }
   catch (err: any) {
     showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '探索失敗', 'error')
@@ -2299,6 +2437,19 @@ const roomLeft = computed<number | null>(() => {
   // ⚠️ 用不含草稿的那個數：草稿本來就沒算進「已用」，把它當成會空出來的空間，按鈕就會多承諾、按下去整批被擋
   const freed = replaceTarget.value ? (replaceTarget.value.quotaChunkCount ?? replaceTarget.value.chunkCount) : 0
   return Math.max(0, q.limit - q.used + freed)
+})
+/**
+ * 整站清單上的空間提醒（`D-124`）：一頁大約整理成 5 條（正式庫網頁中位數），勾的頁數乘上去超過剩下的空間就變色講。
+ * ⛔ 整站這條路沒有「收到滿為止」：放不下的那幾頁是整理完（錢花了）才在加入那一下被擋，所以要在按之前講。
+ */
+const siteRoomHint = computed(() => {
+  const room = roomLeft.value
+  if (room == null || siteImporting.value || siteFinished.value) return null
+  const need = checkedSiteCount.value * CARDS_PER_PAGE_ESTIMATE
+  if (checkedSiteCount.value && need > room) {
+    return { tight: true, text: `空間還能放 ${room} 條，一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條——勾這麼多，後面幾頁可能放不進去` }
+  }
+  return { tight: false, text: `空間還能放 ${room} 條（一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條）` }
 })
 /** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表） */
 const fitChunkCount = computed(() =>
@@ -2995,13 +3146,36 @@ async function runPreview() {
     if (!stale()) {
       previewing.value = false
       resetJobPoll()
+      replaceIntentName.value = '' // 「換新版」那一行只陪這一輪（成功已經換到結果頁；失敗了再按一次就是一般加入）
     }
   }
 }
 
+/**
+ * 資料頁「換新版」（`D-124` 新手走查：檔案改版以前只能回「加入知識」重傳、而且名字要一樣才會問要不要換）。
+ * 父層在資料頁就開好選檔視窗（點擊當下才開得了），選好之後交到這裡：直接整理、整理好直接換掉那一份，
+ * 跟「重新整理，換掉那一份」同一條路（pendingReplace → applyPreviewResult 選定覆蓋目標 → settlePreview）。
+ * ⛔ 還有別的在跑就不接：半路換掉輸入，正在整理的那一份會不見。
+ * ⚠️ 不略過「內容一模一樣」的守門：新版其實跟原本一字不差時，那張卡會講出來，不必白花一次 AI 的錢。
+ */
+const replaceIntentName = ref('')
+function replaceWithFile(file: File, target: { id: string, name: string, chunkCount: number }) {
+  if (previewing.value || batchRunning.value || siteImporting.value) {
+    showToast('「加入知識」裡還有一份正在處理，等它好了再換新版', 'warning')
+    return
+  }
+  resetAll()
+  if (!acceptFile(file)) return
+  replaceIntentName.value = target.name
+  pendingReplace.value = { id: target.id, name: target.name, type: 'file', chunkCount: target.chunkCount, updatedAtMs: 0 }
+  void runPreview()
+}
+defineExpose({ replaceWithFile })
+
 /** 取消整理:輪詢停掉、畫面回到可操作狀態（composable 早就有 cancel，只是這個視窗沒接） */
 function cancelPreview() {
   previewRun++ // 正在跑的那一輪（整理或接回）從這一刻起作廢
+  replaceIntentName.value = ''
   cancelJobPoll()
   previewing.value = false
   // ⚠️ 這裡**不可以**接著 resetJobPoll():reset 會把剛設好的取消旗標清成 false,
@@ -3107,6 +3281,19 @@ function goEnableAi() {
   close()
   void navigateTo(`/admin/${workspaceId.value}/ai-settings`)
 }
+/** 到測試對話多問幾題（`D-124`）：那頁會列出 AI 用了哪幾條、各自多像——加完最該去、卻沒人帶他去的地方 */
+function goPlayground() {
+  close()
+  void navigateTo(`/admin/${workspaceId.value}/ai-playground`)
+}
+
+/**
+ * 加好了那頁列的標題（`D-124`）：伺服器回來的那幾條（真的建進去的）；接回以前的工作時那份清單可能是空的，退用送出去的那幾條。
+ */
+const resultTitles = computed(() => {
+  const fromServer = (result.value?.items ?? []).map(i => String(i.title ?? '').trim()).filter(Boolean)
+  return fromServer.length ? fromServer : willImportChunks.value.map(c => c.title.trim()).filter(Boolean)
+})
 
 /** 試問用的句子（判斷抽在 utils，跟 sources 頁存檔後的就地試答同一套） */
 const verifyQuery = computed(() => pickKbVerifyQuery(chunks.value))
@@ -3394,6 +3581,7 @@ function resetAll() {
   stoppedFor.value = []
   autoImported.value = false
   pendingReplace.value = null
+  replaceIntentName.value = ''
   existingMatches.value = []
   truncated.value = false
   incomplete.value = false

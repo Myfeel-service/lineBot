@@ -18,8 +18,13 @@ export interface AutoTourInput {
    *    這正是這個專案一再吃虧的靜默死亡形狀。
    */
   setupFailed?: boolean
-  /** 這個帳號還沒接完 LINE，等一下會被送去開通引導 */
-  onboardingIncomplete: boolean
+  /**
+   * 這個帳號等一下**真的會被拉回開通對話**（接 LINE 接到一半就離開、下次進後台拉回一次，見 `onboarding-line-flag`）。
+   * ⚠️ 2026-10-12（`D-124`）改：以前接的是「開通沒做完」（LINE 沒接／還沒用手機測試）。`C-250`（09-26）之後
+   *    打造完就先進後台、LINE 是他自己挑時間接，**大部分沒接 LINE 的人根本不會被拉回去**——
+   *    於是這批人在每一頁都不會自動跑導覽，09-16「第一次進一頁就帶一遍」對他們整個失效（新手走查時發現）。
+   */
+  pullingBackToOnboarding: boolean
   /** 這一頁對這個角色有沒有跑得動的教學 */
   hasTopics: boolean
   /** 現在已經有導覽開著 */
@@ -45,9 +50,9 @@ export function decideAutoTour(input: AutoTourInput): AutoTourDecision {
     //    寧可這次不自動跑——那是可以忍受的；整頁的引導都無聲消失不是。
     return input.setupFailed ? 'skip' : 'wait'
   }
-  // 開通還沒做完的帳號不插隊：他等一下會被拉去開通對話，那條流程結尾本來就會問他
-  // 要不要「帶你認識後台」。在這裡搶先開一支，等於兩個引導同時對他說話。
-  if (input.onboardingIncomplete)
+  // 等一下會被拉去開通對話的不插隊：那條流程結尾本來就會問他要不要「帶你認識後台」。
+  // 在這裡搶先開一支，等於兩個引導同時對他說話。
+  if (input.pullingBackToOnboarding)
     return 'skip'
   // 角色是非同步載進來的：這一瞬間沒有教學可跑 ≠ 這個角色沒有教學可跑
   if (!input.hasTopics)

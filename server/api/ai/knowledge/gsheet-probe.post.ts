@@ -72,7 +72,8 @@ export default defineEventHandler(async (event) => {
     if (needsShare) {
       return {
         status,
-        message: '還讀不到：請把試算表「共用」給下面這個帳號（檢視權限就夠）。',
+        // 怎麼共用的三步就接在這句下面（`D-124`），這裡只講結論；「檢視者」跟三步那一行同一個叫法
+        message: '還讀不到：照下面三步把試算表共用給系統帳號（權限選「檢視者」就夠）。',
         detail: raw.slice(0, 300),
         serviceAccountEmail: getServiceAccountEmail(),
       }

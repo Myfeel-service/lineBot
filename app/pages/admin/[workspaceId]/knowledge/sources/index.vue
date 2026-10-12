@@ -140,10 +140,9 @@
       </div>
       <div v-else-if="!sources.length && !orphanCount" class="split-sidebar-empty">
         <span>還沒有任何資料</span>
+        <!-- ⛔ 這裡原本還有一顆「加入知識」：同一個畫面上方一顆、這裡一顆、右邊「加入第一份資料」一顆，
+             新手看到三顆一樣的不知道差在哪（2026-10-12 `D-124` 新手走查）。上方那顆是常駐入口、右邊那顆是空白時的主按鈕 -->
         <p class="text-xs text-muted">放一份進來（檔案、網址、Google 試算表或一段文字），AI 就會從裡面找答案回覆客人。</p>
-        <div v-if="canEditKb" class="flex gap-1" style="margin-top:8px;">
-          <el-button :icon="Upload" size="small" type="primary" plain @click="goImport">加入知識</el-button>
-        </div>
       </div>
       <div v-else class="split-list">
         <!-- 未分類資料（直接平鋪在最上方，沒有 header） -->
@@ -399,6 +398,11 @@
         >
           立即同步
         </el-button>
+        <!-- 檔案沒有自動更新：改版就在這裡換（`D-124`），跟網址的「重新同步」、試算表的「立即同步」同一個位置 -->
+        <el-tooltip v-if="selectedSource?.type === 'file' && canEditKb" content="選新的檔案，整理好直接換掉這一份" placement="bottom" :show-after="300">
+          <!-- ⛔ 不掛 data-tour="kb-resync"：那一步導覽講的是「會自動跟上」，檔案不會 -->
+          <el-button type="primary" plain @click="pickNewVersion">換新版</el-button>
+        </el-tooltip>
         <!-- 刪除收在「⋯」（全站同一顆）。知識來源不給複製：同一份內容學兩次，AI 會被重複的卡片搞混 -->
         <AdminMoreMenu
           :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true, disabled: deleting }]"
@@ -1266,13 +1270,17 @@
 
   <!-- ── 匯入彈窗 ───────────────────────────────────── -->
   <KnowledgeImportDialog
+    ref="importDialogRef"
     v-model="importOpen"
     :existing-sources="sources"
     :folders="folders"
     :prefill-paste="importPrefill"
     @imported="onImported"
     @job-state="importJobState = $event"
+    @manual="onImportManual"
   />
+  <!-- 「換新版」的選檔視窗（見 pickNewVersion）：收得了的種類跟加入視窗同一份 -->
+  <input ref="newVersionInput" type="file" :accept="KNOWLEDGE_FILE_ACCEPT" class="kb-file-input" @change="onNewVersionChosen">
 
   <!-- ── 補知識前的查重(P1-1):改既有的比新建一條重複的好 ──────── -->
   <el-dialog
@@ -1455,6 +1463,7 @@ import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { formatFileSize } from '~/utils/knowledge-upload'
+import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -3537,6 +3546,32 @@ const importJobDone = computed(() => importJobState.value === 'ready' || importJ
 /** `?import=1&url=…` 帶進來的網址：開通精靈的「把網站整理成知識卡」會這樣過來（`C-221`） */
 const importPrefill = ref('')
 function goImport() { importOpen.value = true }
+
+/**
+ * 「換新版」（`D-124` 新手走查）：檔案改版以前只能回「加入知識」重傳，而且名字要一樣才會問要不要換——
+ * 改了檔名就默默多一份。現在在那一份上直接換：選檔視窗在這裡開（要在點擊當下開，瀏覽器才放行），
+ * 選好交給加入視窗，整理好直接換掉這一份（流程同「重新整理，換掉那一份」）。
+ */
+const importDialogRef = ref<{ replaceWithFile: (file: File, target: { id: string, name: string, chunkCount: number }) => void } | null>(null)
+const newVersionInput = ref<HTMLInputElement | null>(null)
+function pickNewVersion() {
+  newVersionInput.value?.click()
+}
+async function onNewVersionChosen(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  const src = selectedSource.value
+  input.value = '' // 同一個檔再選一次也要觸發
+  if (!file || !src) return
+  importOpen.value = true
+  await nextTick()
+  importDialogRef.value?.replaceWithFile(file, { id: src.id, name: src.name, chunkCount: src.chunkCount })
+}
+/** 加入視窗「還沒整理好」那格的「手寫一條」：關掉加入視窗、打開手寫一條的編輯框 */
+function onImportManual() {
+  importOpen.value = false
+  openCreateManual()
+}
 
 async function onImported(sourceId: string | null) {
   await loadSources(true)

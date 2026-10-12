@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { canReplaceSource, detectImportKind, storedSourceType } from './knowledge-import-detect'
+import { canReplaceSource, detectImportKind, detectUrlList, storedSourceType } from './knowledge-import-detect'
+
+describe('detectUrlList（一次貼好幾個網址，D-124）', () => {
+  it('換行或空白隔開的好幾個網址 → 一份清單（重複的只留一個）', () => {
+    expect(detectUrlList('https://a.tw/faq\nhttps://a.tw/shipping\n\nhttps://a.tw/faq')).toEqual(['https://a.tw/faq', 'https://a.tw/shipping'])
+    expect(detectUrlList('https://a.tw/1 https://b.tw/2')).toEqual(['https://a.tw/1', 'https://b.tw/2'])
+  })
+
+  it('⛔ 以前被判成「一段文字」：AI 會把網址字串當成內容整理——這種輸入現在不是文字', () => {
+    const pasted = 'https://a.tw/faq\nhttps://a.tw/shipping'
+    expect(detectImportKind(pasted)).toBe('text') // 單一判斷照舊，清單要另外問 detectUrlList
+    expect(detectUrlList(pasted)).not.toBeNull()
+  })
+
+  it('只有一個網址、或夾了任何不是網址的字 → 不是清單', () => {
+    expect(detectUrlList('https://a.tw/faq')).toBeNull()
+    expect(detectUrlList('官網 https://a.tw https://b.tw')).toBeNull()
+    expect(detectUrlList('')).toBeNull()
+  })
+
+  it('Google 試算表連結不混進一般網址（它要先確認讀不讀得到）', () => {
+    expect(detectUrlList('https://a.tw/faq https://docs.google.com/spreadsheets/d/abc/edit')).toBeNull()
+  })
+})
 
 describe('detectImportKind', () => {
   it('選了檔案就一律是檔案（檔案優先，避免同時有檔案又有貼上內容而判不出來）', () => {

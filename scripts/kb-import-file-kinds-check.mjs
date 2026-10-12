@@ -844,6 +844,17 @@ try {
     else fail('結果頁之外又跳了一次提示', r.toasts.join('｜'))
     if (r.primary === '打開這一份') pass('右下主按鈕直接講會發生什麼：「打開這一份」')
     else fail('結果頁主按鈕不對', r.primary)
+    // `D-124`：加好了就看得到 AI 整理成哪幾條；問一題講清楚不算額度、給去測試對話的路；數字格不用「可用／失敗」
+    const extra = await pg.evaluate(() => ({
+      titles: [...document.querySelectorAll('.kb-result-titles__list li')].map(li => li.innerText),
+      more: document.querySelector('.kb-result-titles__more')?.innerText ?? '',
+      verify: document.querySelector('.kb-handoff-verify')?.innerText.replace(/\s+/g, ' ') ?? '',
+      labels: [...document.querySelectorAll('.kb-result-label')].map(e => e.innerText).join('／'),
+    }))
+    if (extra.titles.length === 5 && extra.titles[0] === '型號 1' && extra.more.includes('還有 4 條')) pass('加好了那頁直接列出前 5 條標題＋「還有 4 條」（不用再點進去才知道 AI 做了什麼）')
+    else fail('加好了那頁沒列出整理成哪幾條', JSON.stringify(extra))
+    if (extra.verify.includes('問 AI 一題試試') && extra.verify.includes('不算額度') && extra.verify.includes('到測試對話') && extra.labels === '整理出／AI 學會了／還沒學起來') pass(`問一題講清楚不算額度、給去測試對話的路；數字格改白話（${extra.labels}）`)
+    else fail('問一題或數字格的說法不對', JSON.stringify(extra))
     if (r.offer.includes('要不要再做一張') && r.offer.includes('佔 1 條空間')) {
       await pg.evaluate(() => [...document.querySelectorAll('.kb-overview-suggest .el-button')].find(b => b.innerText.includes('做一張'))?.click())
       const made = await waitFor(pg, () => document.querySelector('.kb-overview-suggest')?.innerText.includes('做好了'), null, 10_000)
@@ -1002,6 +1013,214 @@ try {
     }))
     if (!share.email && share.btn === '再測一次') pass('沒資料的試算表 → 不出帳號、按鈕叫「再測一次」（不叫人回頭去分享）')
     else fail('沒資料的試算表還是叫人去分享', JSON.stringify(share))
+    await pg.close()
+  }
+
+  // ── 第十九段（`D-124`）：試算表讀不到（沒共用）→ 三步教學在紅字下面再出現一次，截圖點得開 ──
+  {
+    const pg = await openImportDialog((req) => {
+      if (req.url().includes('/api/ai/knowledge/gsheet-probe')) return json({ status: 'no_access', message: '還讀不到：照下面三步把試算表共用給系統帳號（權限選「檢視者」就夠）。', detail: '讀不到這份 Google 試算表（403）。Google 原始訊息：The caller does not have permission', serviceAccountEmail: 'bot@x.iam.gserviceaccount.com' })
+      return undefined
+    })
+    await pg.evaluate(() => {
+      const ta = document.querySelector('.kb-drop__paste textarea')
+      ta.value = 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit#gid=0'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await waitFor(pg, () => document.querySelector('.kb-gsheet-share__state')?.innerText.includes('還讀不到'), null, 15_000)
+    const s = await pg.evaluate(() => ({
+      steps: document.querySelectorAll('.kb-gsheet-share__steps > li').length,
+      email: document.querySelector('.kb-gsheet-share__steps .kb-gsheet-email')?.innerText ?? '',
+      btn: [...document.querySelectorAll('.kb-gsheet-share__row .el-button')].map(b => b.innerText.trim()).join('／'),
+      detail: !!document.querySelector('.kb-gsheet-share__detail'),
+    }))
+    await pg.evaluate(() => document.querySelector('.kb-gsheet-share__steps .kb-start__fold')?.click())
+    await sleep(300)
+    const shots = await pg.$$eval('.kb-gsheet-share__steps .kb-shot', els => els.length)
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-sheet-no-access.png') })
+    // 帳號：開窗時讀到的那份優先（正式的系統帳號），探測帶回來的只是備援——所以只驗「有一個帳號」
+    if (s.steps === 3 && s.email.includes('@') && s.btn === '分享好了，再測一次' && !s.detail && shots === 3) pass('試算表讀不到 → 紅字下面再給一次三步＋帳號＋看圖（以前貼了連結教學就收起來），不秀 Google 英文原文')
+    else fail('試算表讀不到時沒有教學', JSON.stringify({ ...s, shots }))
+    await pg.close()
+  }
+
+  // ── 第二十段（`D-124`）：一次貼好幾個網址 → 每個各自整理、各自加入（以前被當成一段文字，AI 整理的是網址字串）──
+  {
+    const posts = []
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 0, limit: 50, planName: '免費' } })
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        posts.push({ type: b.type, url: b.url })
+        return json({ jobId: `job-multi-${posts.length}`, status: 'processing', phase: 'chunk' })
+      }
+      const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/job-multi-(\d+)/)
+      if (pj && m === 'GET') return json({ status: 'done', sourceName: `頁 ${pj[1]}`, chunks: [{ title: `頁 ${pj[1]} 一`, content: '內容', tags: [], questions: [] }], warnings: [], contentHash: 'h' })
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b.source?.url)
+        return json({ sourceId: `s-${bulks.length}`, total: 1, indexed: 1, failed: 0, items: [] })
+      }
+      return undefined
+    })
+    await pg.evaluate(() => {
+      const ta = document.querySelector('.kb-drop__paste textarea')
+      ta.value = 'https://shop.example.tw/pages/faq\nhttps://shop.example.tw/pages/shipping'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await sleep(600)
+    const label = await pg.$eval('.kb-detected__label', el => el.innerText).catch(() => '')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    await waitFor(pg, () => document.querySelector('.kb-site-summary')?.innerText.includes('已建立'), null, 60_000)
+    const hint = await pg.$eval('.kb-section-hint', el => el.innerText).catch(() => '')
+    if (label === '2 個網址' && posts.length === 2 && posts.every(p => p.type === 'url') && bulks.length === 2 && hint.includes('你貼了 2 個網址')) pass('一次貼兩個網址 → 認成「2 個網址」、各自當網頁整理、各自加入')
+    else fail('一次貼好幾個網址不對', JSON.stringify({ label, posts, bulks, hint: hint.slice(0, 60) }))
+    await pg.close()
+  }
+
+  // ── 第二十一段（`D-124`）：整個網站 → 先幫他勾好常被問的頁（照空間）、分組用白話、講空間 ──
+  {
+    const pages = [
+      { url: 'https://shop.example.tw/', title: '首頁' },
+      ...Array.from({ length: 30 }, (_, i) => ({ url: `https://shop.example.tw/products/${i}`, title: `商品 ${i}` })),
+      ...Array.from({ length: 12 }, (_, i) => ({ url: `https://shop.example.tw/blogs/news/${i}`, title: `文章 ${i}` })),
+      ...Array.from({ length: 4 }, (_, i) => ({ url: `https://shop.example.tw/collections/c${i}`, title: `分類 ${i}` })),
+      { url: 'https://shop.example.tw/pages/shipping', title: '運送與退換貨' },
+      { url: 'https://shop.example.tw/pages/faq', title: '常見問題' },
+      { url: 'https://shop.example.tw/policies/privacy-policy', title: '隱私權政策' },
+    ]
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/discover-pages')) return json({ pages, from: 'sitemap', truncated: false })
+      return undefined
+    })
+    await pg.evaluate(() => {
+      const ta = document.querySelector('.kb-drop__paste textarea')
+      ta.value = 'https://shop.example.tw/'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await waitFor(pg, () => !!document.querySelector('.kb-site-peek:not(.kb-site-peek--loading) .el-button'), null, 15_000)
+    await pg.evaluate(() => document.querySelector('.kb-site-peek .el-button')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-site-list'), null, 5000)
+    await sleep(400)
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-site-precheck.png') })
+    const r = await pg.evaluate(() => ({
+      checked: [...document.querySelectorAll('.kb-site-row')].filter(row => row.querySelector('.el-checkbox.is-checked')).map(row => row.querySelector('.kb-site-url')?.innerText ?? ''),
+      firstRows: [...document.querySelectorAll('.kb-site-row')].map(row => !!row.querySelector('.el-checkbox.is-checked')),
+      chips: [...document.querySelectorAll('.kb-site-group-chip')].map(c => c.innerText.trim()),
+      toolbar: document.querySelector('.kb-site-toolbar')?.innerText ?? '',
+    }))
+    // 勾好的排最上面、說明頁在前（網站清單裡它們常在最後面，不排上來得捲到底才看得到）；隱私權與文章一定不在
+    const okPick = r.checked.length === 8 && r.checked[0].includes('/pages/shipping') && r.checked[1].includes('/pages/faq') && !r.checked.some(u => u.includes('privacy') || u.includes('/blogs/'))
+      && r.firstRows.slice(0, 8).every(Boolean)
+    const okChips = r.chips.some(c => c.startsWith('商品')) && r.chips.some(c => c.startsWith('文章')) && !r.chips.some(c => c.includes('/'))
+    if (okPick && okChips && r.toolbar.includes('空間還能放 40 條')) pass(`整個網站 → 先勾好 8 頁（說明頁在前、補商品頁，剩 40 條÷每頁約 5 條），分組用白話（${r.chips.join('｜')}），講空間`)
+    else fail('整個網站的預先勾選／分組／空間不對', JSON.stringify(r))
+    await pg.close()
+  }
+
+  // ── 第二十二段（`D-124`）：資料頁「換新版」→ 選檔就直接整理、換掉那一份（不靠名字一樣）──
+  {
+    let patchedId = ''
+    let patchedName = ''
+    let polls = 0
+    const bulks = []
+    const pg = await openImportDialog(async (req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/sources/list') && m === 'GET') {
+        const real = await (await fetch(url, { headers: req.headers() })).json()
+        const items = Array.isArray(real.items) ? real.items : []
+        const target = items.find(s => s.type === 'file') ?? items[0]
+        if (target) { target.type = 'file'; patchedId = target.id; patchedName = target.name }
+        return json(real)
+      }
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: 'job-newver', status: 'processing', phase: 'chunk' })
+      if (url.includes('/api/ai/knowledge/preview-jobs/job-newver') && m === 'GET') {
+        if (++polls <= 2) return json({ status: 'processing', phase: 'chunk' })
+        return json({ status: 'done', sourceName: '退換貨政策.docx', sourceType: 'file', truncated: false, ocrUsed: false, meta: {}, warnings: [], existingMatches: [], contentHash: 'h', suggestedProductName: 'AI 猜的',
+          chunks: [{ title: '新版第一條', content: '內容', tags: [], questions: [] }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        return json({ sourceId: b.replaceSourceId ?? 'x', total: 1, indexed: 1, failed: 0, replacedChunks: 7, originalKept: true, items: [{ id: 'c1', title: '新版第一條', status: 'indexed' }] })
+      }
+      return undefined
+    }, { path: '/knowledge/sources', waitSel: '.split-list, .src-list, aside' })
+    if (!patchedId) throw new Error('資料清單是空的，沒有可以驗「換新版」的資料')
+    await waitFor(pg, name => [...document.querySelectorAll('aside *, .split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === name), patchedName)
+    await pg.evaluate((name) => {
+      const el = [...document.querySelectorAll('aside *, .split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === name)
+      el?.click()
+    }, patchedName)
+    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('換新版')), null, 15_000)
+    const [chooser] = await Promise.all([
+      pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
+      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('換新版'))?.click()),
+    ])
+    if (!chooser) throw new Error('按「換新版」沒有開選檔視窗')
+    await chooser.accept([pathOf.docx])
+    const intent = await waitFor(pg, () => document.querySelector('.kb-replace-intent')?.innerText.includes('換新版'), null, 10_000)
+    await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 30_000)
+    const body = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    const b = bulks[0]
+    if (intent && bulks.length === 1 && b.replaceSourceId === patchedId && b.source?.name === patchedName && !b.source?.productName && body.includes('原本的 7 條知識已換成上面這批')) {
+      pass(`資料頁「換新版」→ 選檔就整理、直接換掉「${patchedName}」（帶它的 id、名字照舊、不帶 AI 猜的產品名），結果頁講舊的 7 條去哪了`)
+    }
+    else fail('換新版不對', JSON.stringify({ intent, bulks: bulks.length, replace: b?.replaceSourceId, want: patchedId, name: b?.source?.name, product: b?.source?.productName, body: body.slice(0, 200) }))
+    await pg.close()
+  }
+
+  // ── 第二十三段（`D-124`）：沒有資料時入口只剩常駐那顆＋右邊大的；「還沒整理好」那格的「手寫一條」打開手寫編輯 ──
+  {
+    const pg = await openImportDialog((req) => {
+      if (req.url().includes('/api/ai/sources/list') && req.method() === 'GET') return json({ items: [], orphanCount: 0 })
+      return undefined
+    }, { path: '/knowledge/sources', waitSel: '.split-sidebar-empty' })
+    const emptyBtns = await pg.$$eval('.split-sidebar-empty .el-button', els => els.length)
+    if (emptyBtns === 0) pass('沒有資料時，左邊空白處不再多一顆「加入知識」（上方常駐一顆、右邊大的一顆）')
+    else fail('左邊空白處還有重複的加入按鈕', String(emptyBtns))
+    await pg.evaluate(() => document.querySelector('[data-tour="kb-import"]')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-start'), null, 10_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-start__tile')].find(b => b.innerText.includes('還沒整理好'))?.click())
+    await sleep(300)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-start__panel .kb-start__fold')].find(b => b.innerText.includes('手寫一條'))?.click())
+    const manual = await waitFor(pg, () => [...document.querySelectorAll('.el-dialog__title')].some(t => t.innerText.includes('手寫一條知識') && t.closest('.el-dialog')?.offsetParent !== null), null, 8000)
+    if (manual) pass('「還沒整理好」那格按「手寫一條」→ 關掉加入視窗、打開手寫一條的編輯框')
+    else fail('「手寫一條」沒有打開手寫編輯框')
+    await pg.close()
+  }
+
+  // ── 第二十四段（`D-124`）：LINE 還沒測試完、但沒有要被拉回開通對話的帳號 → 第一次進知識庫照樣自動帶導覽 ──
+  //    （以前只要開通沒做完，每一頁的自動導覽都不跳；09-26 之後大部分沒接 LINE 的人根本不會被拉回去）
+  {
+    const pg = await openImportDialog(async (req) => {
+      const url = req.url()
+      if (url.includes('/api/admin/tour-seen') && req.method() === 'GET') return json({ seen: [] })
+      if (url.includes('/api/admin/setup-status') && req.method() === 'GET') {
+        const real = await (await fetch(url, { headers: req.headers() })).json()
+        real.items = (real.items ?? []).map(i => (i.id === 'firstMessageReceived' ? { ...i, status: 'incomplete' } : i))
+        return json(real)
+      }
+      return undefined
+    }, { path: '/knowledge/sources', waitSel: '[data-tour="kb-sources"]' })
+    // ⚠️ 前面幾段打開知識庫時導覽可能已經自動跑過一次，瀏覽器本機記了「看過」（後端或本機任一邊說看過就算看過）。
+    //    清掉本機那份再重新載入，才是「第一次進來」
+    await pg.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith('tour-auto-seen:')) localStorage.removeItem(k) })
+    await pg.reload({ waitUntil: 'networkidle2', timeout: 180_000 })
+    await waitFor(pg, () => !!document.querySelector('[data-tour="kb-sources"]'), null, 60_000)
+    // ⚠️ 導覽框是固定定位（offsetParent 永遠是 null），用它的字判斷：第一步的標題只會出現在導覽裡
+    const toured = await waitFor(pg, () => document.body.innerText.includes('從「加入知識」開始'), null, 20_000)
+    if (toured) pass('開通還沒做完（還沒用手機測試）、但沒有要被拉回去 → 第一次進知識庫照樣自動跳導覽')
+    else fail('開通沒做完的帳號第一次進知識庫沒有跳導覽')
     await pg.close()
   }
 }

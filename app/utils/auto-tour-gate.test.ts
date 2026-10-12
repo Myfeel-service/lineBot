@@ -6,7 +6,7 @@ import { decideAutoTour } from './auto-tour-gate'
 const READY: AutoTourInput = {
   seenReady: true,
   setupLoaded: true,
-  onboardingIncomplete: false,
+  pullingBackToOnboarding: false,
   hasTopics: true,
   tourOpen: false,
   seen: false,
@@ -50,12 +50,12 @@ describe('decideAutoTour', () => {
     expect(decide({ seenReady: false, setupLoaded: false, setupFailed: true })).toBe('wait')
   })
 
-  it('開通還沒做完就不插隊（那條流程結尾本來就會問要不要導覽）', () => {
-    expect(decide({ onboardingIncomplete: true })).toBe('skip')
+  it('等一下會被拉回開通對話就不插隊（那條流程結尾本來就會問要不要導覽）', () => {
+    expect(decide({ pullingBackToOnboarding: true })).toBe('skip')
   })
 
-  it('開通未完的判斷要先於角色與記憶——不能等到角色載完才想起來讓路', () => {
-    expect(decide({ onboardingIncomplete: true, hasTopics: false })).toBe('skip')
+  it('要被拉回的判斷要先於角色與記憶——不能等到角色載完才想起來讓路', () => {
+    expect(decide({ pullingBackToOnboarding: true, hasTopics: false })).toBe('skip')
   })
 
   it('已經有導覽開著就這次不跑，而且是「放棄」不是「等它關掉」', () => {

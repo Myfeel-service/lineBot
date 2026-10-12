@@ -75,6 +75,7 @@
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type { TutorialTopic } from '~/utils/tutorial-topics'
 import { decideAutoTour } from '~/utils/auto-tour-gate'
+import { isLineFlowInProgress } from '~/utils/onboarding-line-flag'
 
 /**
  * 頁首「這頁怎麼用」（2026-08-26 `D-33` P1-5）。
@@ -118,9 +119,15 @@ function openAll() {
   dismissHint()
   openCatalogue()
 }
-const { can } = useWorkspace()
+const { can, workspaceId } = useWorkspace()
 const { ensureLoaded: ensureTourSeen, hasSeen: tourSeen, markSeen: markTourSeen } = useTourSeen()
 const { loaded: setupLoaded, failed: setupFailed, onboardingIncomplete } = useSetupStatus()
+/**
+ * 等一下真的會被拉回開通對話嗎＝開通沒做完**而且**接 LINE 那一趟做到一半（跟 default.vue 的 maybePopOnboarding 同一把尺）。
+ * ⛔ 不可以只看 onboardingIncomplete：`C-250` 之後 LINE 是他自己挑時間接，沒接的人大多不會被拉回，
+ *    只看它的話這批人在每一頁都不會自動跑導覽（`D-124` 新手走查發現）。
+ */
+const pullingBackToOnboarding = computed(() => onboardingIncomplete.value && isLineFlowInProgress(workspaceId.value ?? ''))
 
 /** 這一頁掛的劇本裡，這個角色真的跑得動的那幾條（同導覽：跑不動就整條不出現） */
 const availableGuides = computed(() =>
@@ -200,7 +207,7 @@ function tryAutoTour(seenReady: boolean): boolean {
     seenReady,
     setupLoaded: setupLoaded.value,
     setupFailed: setupFailed.value,
-    onboardingIncomplete: onboardingIncomplete.value,
+    pullingBackToOnboarding: pullingBackToOnboarding.value,
     hasTopics: available.value.length > 0,
     tourOpen: tourOpen.value,
     seen: !key || tourSeen(key),
@@ -268,7 +275,7 @@ onMounted(() => {
       autoTourState.value = 'off'
     return
   }
-  const stop = watch([seenReady, setupLoaded, setupFailed, onboardingIncomplete, available, tourOpen], () => {
+  const stop = watch([seenReady, setupLoaded, setupFailed, pullingBackToOnboarding, available, tourOpen], () => {
     if (!tryAutoTour(seenReady.value))
       return
     if (autoTourState.value === 'deciding')

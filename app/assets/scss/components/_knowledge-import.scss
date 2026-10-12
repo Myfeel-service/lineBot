@@ -524,6 +524,42 @@
   color: var(--el-text-color-regular);
 }
 
+/* 結果頁「AI 整理成這幾條」（`D-124`）：他第一次看到 AI 做了什麼；淺底一塊、標題一條一行，不做成可編輯的框 */
+.kb-result-titles {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  font-size: 12.5px;
+  color: var(--el-text-color-regular);
+
+  &__head {
+    margin: 0 0 4px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__list {
+    margin: 0;
+    padding-left: 1.3em;
+    line-height: 1.8;
+  }
+  &__more {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+/* 從資料頁「換新版」進來（`D-124`）：一進來就在整理，第一行講清楚會換掉哪一份 */
+.kb-replace-intent {
+  margin: -6px 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-color-primary-light-9);
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
 /*
  * 「還沒加進去——先看下面的提醒」（`D-123`②）：一份本來會直接加入，停在預覽一定是有要他看的事。
  * 跟空間不夠、截斷那幾句同一個琥珀（「這件事會讓你少東西」），但要比它們早一眼看到：放在摘要卡上面、字重一級。
@@ -586,6 +622,14 @@
 
 .kb-handoff-verify {
   margin-bottom: 12px;
+
+  /* 問一題＋「不算額度、不會傳給客人」＋去測試對話（`D-124`）：一排，窄的時候往下排 */
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
 
   &__out {
     margin: 8px 0 0;
@@ -781,6 +825,15 @@
   a {
     color: var(--el-color-primary);
   }
+  /* 「一條＝一個問答…」（`D-124`）：解釋單位，再淡一階 */
+  &__unit {
+    color: var(--el-text-color-placeholder);
+  }
+}
+
+/* 整站清單：勾的頁可能放不下時（`D-124`），跟空間不夠那幾句同一個琥珀 */
+.kb-site-room.is-tight {
+  color: #b45309;
 }
 
 /* 判別結果:左色條標示「會不會自動更新」——這是四種方式唯一真正的差別 */
@@ -840,6 +893,11 @@
   border-top: 1px dashed var(--el-border-color);
   font-size: 12px;
   color: var(--text-primary);
+
+  /* 讀不到時再出現一次的三步（`D-124`）：沿用起步那格的 .kb-start__steps，只補上下間距 */
+  &__steps {
+    margin: 6px 0 4px;
+  }
 
   &__row {
     display: flex;

@@ -26,7 +26,7 @@
       <p v-if="generating?.error" class="kb-drafts__warn">{{ generating.error }}</p>
       <!-- ⛔ 過濾掉的東西要說得出丟了什麼：封頂沒放進來的、整理不出卡的頁 -->
       <p v-if="generating?.trimmed" class="kb-drafts__note">
-        還有 {{ generating.trimmed }} 張沒整理進來（開帳一次最多整理 50 張）；那幾頁之後可以在上方「匯入資料」重新加。
+        還有 {{ generating.trimmed }} 張沒整理進來（開帳一次最多整理 50 張）；那幾頁之後可以在上方「加入知識」重新加。
       </p>
       <p v-if="generating?.pagesFailed?.length" class="kb-drafts__note">
         有 {{ generating.pagesFailed.length }} 頁整理不出卡：{{ generating.pagesFailed.map(p => pathOf(p.url)).join('、') }}
