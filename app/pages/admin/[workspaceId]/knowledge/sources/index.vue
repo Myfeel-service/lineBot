@@ -369,7 +369,7 @@
           {{ typeEmoji(selectedSource?.type) }}<template v-if="selectedSource?.url"> · <a :href="selectedSource.url" target="_blank" rel="noopener">{{ selectedSource.url }}</a></template>
           <!-- 原檔留著（`C-296`③）：檔案來源以前讀完就刪，這裡什麼都點不開 -->
           <template v-if="selectedSource?.originalFile">
-            · {{ selectedSource.originalFile.name }}（{{ formatFileSize(selectedSource.originalFile.size) }}）
+            · {{ selectedSource.originalFile.name }}（{{ formatFileSize(selectedSource.originalFile.size, { zero: '大小未知' }) }}）
             <el-button link type="primary" size="small" :loading="downloadingOriginal" @click="downloadOriginal">下載原檔</el-button>
           </template>
         </p>
@@ -1453,6 +1453,7 @@ import { Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upl
 import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
+import { formatFileSize } from '~/utils/knowledge-upload'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -3888,12 +3889,6 @@ async function downloadOriginal() {
     downloadingOriginal.value = false
   }
 }
-function formatFileSize(bytes: number) {
-  if (!bytes) return '大小未知'
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
 // ─── Display helpers ───────────────────────────────────
 function typeEmoji(t: string | undefined) {
   return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Sheet' : '文字'

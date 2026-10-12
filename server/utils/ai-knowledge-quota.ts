@@ -40,6 +40,16 @@ export function invalidateKnowledgeChunkCount(workspaceId?: string) {
  * ⛔ 為什麼用兩段 count() 相減而不是 `where('isDeleted','==',false)`：
  * 舊資料沒有 `isDeleted` 欄位，等值查詢會整批漏掉它們（同 countSourceChunks 的做法）。
  */
+/**
+ * 一張卡算不算進方案的知識額度：不在回收桶、不是「等你看過」的草稿。
+ * 「刪掉／換掉會空出多少」「這次會用掉多少」每一處都要用**這一把尺**——2026-10-12 code review：
+ * 試算表同步、匯入、網址重新同步、畫面四個地方四種算法（草稿算不算不一致），一邊多收、一邊多承諾。
+ * 用查詢數的版本是 countWorkspaceChunks（整個帳號）與 countSourceQuotaChunks（一份資料），規則同這一支。
+ */
+export function chunkCountsTowardQuota(c: { status?: string | null, isDeleted?: boolean | null }): boolean {
+  return c.isDeleted !== true && c.status !== 'draft'
+}
+
 export async function countWorkspaceChunks(
   workspaceId: string,
   db: Firestore = getDb(),

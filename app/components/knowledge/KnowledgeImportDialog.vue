@@ -128,12 +128,13 @@
           <p
             v-else-if="gsheetProbe"
             class="kb-gsheet-share__state"
-            :class="gsheetProbe.status === 'ok' ? 'is-ok' : 'is-blocked'"
+            :class="gsheetReadable ? 'is-ok' : 'is-blocked'"
           >
-            {{ gsheetProbe.status === 'ok' ? '✓' : '✗' }} {{ gsheetProbe.message }}
+            {{ gsheetReadable ? '✓' : '✗' }} {{ gsheetProbe.message }}
           </p>
-          <!-- 綠勾之後就不必再看分享說明了(事情已經做完);其餘狀態一律附上帳號與重測鈕 -->
-          <template v-if="gsheetProbe?.status !== 'ok'">
+          <!-- 綠勾之後就不必再看分享說明了(事情已經做完);其餘狀態一律附上帳號與重測鈕。
+               「讀得到、只是還有分頁沒看」（partial）也算綠勾：⛔ 畫成紅叉＋分享說明，他會回頭去重新分享（2026-10-12 code review） -->
+          <template v-if="!gsheetReadable">
             <!-- ⚠️ 重測鈕不可以藏在「拿得到服務帳號」的條件裡（2026-09-03 code review 抓到）：
                  gsheet-account 那支在開窗時失敗（靜默）的話，畫面就只剩一句「請共用給下面這個帳號」
                  下面什麼都沒有、也沒有重測鈕＝死路。帳號改用探測回傳的那份當備援。 -->
@@ -1297,6 +1298,7 @@
 import { ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { canReplaceSource, detectImportKind, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
 import {
   KNOWLEDGE_FILE_ACCEPT,
   KNOWLEDGE_FILE_KIND_LABEL,
@@ -1719,6 +1721,8 @@ const gsheetProbe = ref<GsheetProbe | null>(null)
  *    「衍生值排在來源前面」炸過兩次，一律排後面就不必每次判斷會不會炸。
  */
 const shareEmail = computed(() => serviceAccountEmail.value || gsheetProbe.value?.serviceAccountEmail || '')
+/** 讀得到這份試算表（打勾、不出分享說明）：哪幾種算見 shared/gsheet-probe-status */
+const gsheetReadable = computed(() => (GSHEET_PROBE_READABLE as readonly string[]).includes(gsheetProbe.value?.status ?? ''))
 const gsheetProbing = ref(false)
 let gsheetProbedUrl = ''
 let gsheetProbeTimer: ReturnType<typeof setTimeout> | null = null
@@ -1810,7 +1814,7 @@ const ocrUsed = ref(false) // 掃描檔 PDF 由 AI 辨識文字 → 預覽時提
 const ocrFromPhoto = ref(false) // 認字的是照片（`C-296`）：同一句提醒，主詞換成「這張照片」
 const healthWarnings = ref<string[]>([]) // 表格資料的匯入前健檢警告（提醒不擋匯入）
 const chunks = ref<Array<{ included: boolean; title: string; content: string; tags: string[]; questions: string[] }>>([])
-const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>>([])
+const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string }>>([])
 const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
@@ -1835,7 +1839,8 @@ const folderAutoPicked = ref(false)
  * 有值時 `runImport` 走覆蓋：舊卡進回收桶、來源本身留著（資料夾／同步設定不會被洗掉）。
  * 這是同名警告的正解——原本唯一的建議是「改個名字」，照做就是製造出第三份重複。
  */
-const replaceTarget = ref<{ id: string; name: string; chunkCount: number } | null>(null)
+/** quotaChunkCount：換掉它會空出多少空間（不含草稿，伺服器算好的）；chunkCount 是畫面上講「舊的幾條」用的 */
+const replaceTarget = ref<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number } | null>(null)
 
 /** 後端回報「這份內容已經匯過了」（`C-134`）：內容指紋一模一樣的既有資料 */
 interface DuplicateHit {
@@ -2353,7 +2358,9 @@ async function loadQuota() {
 const roomLeft = computed<number | null>(() => {
   const q = quota.value
   if (!q || q.limit == null) return null
-  return Math.max(0, q.limit - q.used + (replaceTarget.value?.chunkCount ?? 0))
+  // ⚠️ 用不含草稿的那個數：草稿本來就沒算進「已用」，把它當成會空出來的空間，按鈕就會多承諾、按下去整批被擋
+  const freed = replaceTarget.value ? (replaceTarget.value.quotaChunkCount ?? replaceTarget.value.chunkCount) : 0
+  return Math.max(0, q.limit - q.used + freed)
 })
 /** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表） */
 const fitChunkCount = computed(() =>
@@ -2391,8 +2398,8 @@ const importButtonLabel = computed(() => {
 })
 
 /** 選定要覆蓋的既有資料；名稱同步過去，免得更新完列表上出現兩個不同名字指同一份東西 */
-function chooseReplaceTarget(m: { id: string; name: string; chunkCount: number }) {
-  replaceTarget.value = { id: m.id, name: m.name, chunkCount: m.chunkCount }
+function chooseReplaceTarget(m: { id: string; name: string; chunkCount: number; quotaChunkCount?: number }) {
+  replaceTarget.value = { id: m.id, name: m.name, chunkCount: m.chunkCount, quotaChunkCount: m.quotaChunkCount }
   sourceMeta.value.name = m.name
 }
 
@@ -2555,7 +2562,7 @@ interface PreviewResult {
   ocrUsed?: boolean
   /** 抽取資訊；照片認字時帶 image: 1（提醒文字要說「照片」不是「掃描檔」） */
   meta?: Record<string, string | number>
-  existingMatches?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>
+  existingMatches?: Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string }>
   /** 表格資料的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
   /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */
@@ -3272,7 +3279,9 @@ async function runImport() {
           url: sourceMeta.value.url,
           productName: sourceMeta.value.productName.trim(),
           contentHash: sourceMeta.value.contentHash,
-          folderId: sourceMeta.value.folderId,
+          // 「更新這一份」而且資料夾是系統照檔名猜的（他沒動過）：不帶，舊的那份原本放哪就留在哪。
+          // ⛔ 帶了的話伺服器照收，舊資料會被默默搬到猜的那個資料夾（2026-10-12 code review）
+          ...(replaceTarget.value && folderAutoPicked.value ? {} : { folderId: sourceMeta.value.folderId }),
           // 原檔留著時「下載原檔」存成這個名字（`C-296`③）；接回背景整理時沒有檔名就退用資料名稱
           ...(sourceMeta.value.type === 'file' ? { fileName: fileName.value || sourceMeta.value.name } : {}),
         },

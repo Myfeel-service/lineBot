@@ -21,6 +21,9 @@ import {
   type SheetsApiFn,
 } from './google-sheets'
 
+/** 新貼進來的試算表那條路（readGoogleSheetAsCards 不給預設值，一定要講明新舊） */
+const NEW_RULES = { legacy: false }
+
 describe('parseGoogleSheetUrl', () => {
   it('解析完整網址含 gid', () => {
     const r = parseGoogleSheetUrl('https://docs.google.com/spreadsheets/d/1AbC-_dEf/edit#gid=123')
@@ -395,7 +398,7 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
   const guide: FakeSheet = { sheetId: 2, title: '使用說明', values: [['說明', '內容'], ['x', 'y']] }
 
   it('沒 gid + 有 FAQ 分頁 → 只讀 FAQ、跳過使用說明', async () => {
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, guide]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, guide]), NEW_RULES)
     expect(res.cards.map(c => c.title)).toEqual(['退款多久?', '運費?'])
     expect(res.sheetTitle).toBe('FAQ')
   })
@@ -403,14 +406,14 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
   it('沒 gid + 沒 FAQ + 多個資料分頁 → 全部一起讀、跨分頁彙總', async () => {
     const a: FakeSheet = { sheetId: 1, title: '商品', values: [['品名', '說明'], ['除濕機', '省電']] }
     const b: FakeSheet = { sheetId: 2, title: '報價', values: [['項目', '價格'], ['安裝', '500']] }
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([a, b]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([a, b]), NEW_RULES)
     expect(res.cards.map(c => c.title)).toEqual(['除濕機', '安裝'])
     expect(res.sheetTitle).toBe('商品、報價')
     expect(res.stats.rowCount).toBe(2)
   })
 
   it('gid 指定 → 只讀那頁（即使是說明頁也照讀）', async () => {
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: '2' }, makeApi([faq, guide]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: '2' }, makeApi([faq, guide]), NEW_RULES)
     expect(res.cards.map(c => c.title)).toEqual(['x'])
     expect(res.sheetTitle).toBe('使用說明')
   })
@@ -422,7 +425,7 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
       values: [['問題', '答案'], ['退款流程', '第一步'], ['', '第二步']],
       merges: [gridMerge(1, 3, 0, 1)], // 標題欄 A2:A3 直向合併（Google GridRange，end 不含）
     }
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([merged]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([merged]), NEW_RULES)
     expect(res.cards.map(c => c.title)).toEqual(['退款流程'])
     expect(res.cards[0]!.content).toContain('第一步')
     expect(res.cards[0]!.content).toContain('第二步')
@@ -432,14 +435,14 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
 
   it('整份分頁都沒有效資料 → 丟 422', async () => {
     const emptyish: FakeSheet = { sheetId: 1, title: '商品', values: [['只有表頭']] }
-    await expect(readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([emptyish])))
+    await expect(readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([emptyish]), NEW_RULES))
       .rejects.toMatchObject({ statusCode: 422 })
   })
 
   it('⛔ 不同分頁同一個標題併成一張（以前建兩張同名卡，同步時一頁蓋掉另一頁）、列進重複提醒', async () => {
     const price: FakeSheet = { sheetId: 1, title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
     const spec: FakeSheet = { sheetId: 2, title: '規格', values: [['品名', '容量'], ['W1', '12L']] }
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([price, spec]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([price, spec]), NEW_RULES)
     expect(res.cards).toEqual([{ title: 'W1', content: '12,900\n12L', tags: [] }])
     expect(res.stats.duplicateTitles).toEqual(['W1'])
   })
@@ -447,7 +450,7 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
   it('有讀但一條都沒整理出來的分頁要回報（那頁的內容沒收進來）', async () => {
     // 只有欄位名稱、還沒填資料的分頁
     const notes: FakeSheet = { sheetId: 2, title: '新品（還沒填）', values: [['品名', '價格']] }
-    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, notes]))
+    const res = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, notes]), NEW_RULES)
     expect(res.emptySheets).toEqual(['新品（還沒填）'])
   })
 
@@ -455,7 +458,7 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
     const price: FakeSheet = { sheetId: 3, title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
     const legacy = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]), { legacy: true })
     expect(legacy.cards.map(c => c.title)).toEqual(['退款多久?', '運費?'])
-    const fresh = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]))
+    const fresh = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]), NEW_RULES)
     expect(fresh.cards.map(c => c.title)).toEqual(['退款多久?', '運費?', 'W1'])
   })
 })
@@ -474,7 +477,7 @@ describe('selectSheetsToRead gid 守門（經 readGoogleSheetAsCards）', () => 
       [{ sheetId: 123, title: 'FAQ' }],
       [['問題', '答案'], ['運費', '滿千免運']],
     )
-    const r = await readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api)
+    const r = await readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api, NEW_RULES)
     expect(r.cards.length).toBe(1)
   })
 
@@ -492,7 +495,7 @@ describe('selectSheetsToRead gid 守門（經 readGoogleSheetAsCards）', () => 
       [{ sheetId: 456, title: '使用說明' }],
       [['問題', '答案'], ['這是說明頁的列', '會被誤讀成知識卡']],
     )
-    await expect(readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api))
+    await expect(readGoogleSheetAsCards({ spreadsheetId: 'x', gid: '123' }, api, NEW_RULES))
       .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('分頁已不存在') })
   })
 })
@@ -665,7 +668,7 @@ describe('跨分頁合併看有沒有答案（finding 3）', () => {
       { title: 'W3', content: '20L', tags: [] },
     ])
     expect(legacy.stats.duplicateTitles).toEqual([])
-    const fresh = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    const fresh = await readGoogleSheetAsCards(ref, tabsApi(tabs), NEW_RULES)
     expect(fresh.cards.find(c => c.title === 'W1')!.content).toBe('12,900\n12L')
   })
 })
@@ -717,7 +720,7 @@ describe('收滿 150 條之後同名的照樣併（finding 4）', () => {
       { title: 'A', values: many(GSHEET_MAX_ROWS) },
       { title: 'B', values: [['問題', '答案'], ['Q0', 'B 頁的補充'], ['另一題', 'y']] },
     ]
-    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs), NEW_RULES)
     expect(res.cards.find(c => c.title === 'Q0')!.content).toBe('A0\nB 頁的補充')
     expect(res.stats.droppedByCap).toBe(1)
   })
@@ -731,7 +734,7 @@ describe('空白分頁不提醒（finding 5）', () => {
       { title: '空白列', values: [[], ['', '  ']] },
       { title: '價目表', values: [['品名', '價格'], ['W1', '100']] },
     ]
-    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs), NEW_RULES)
     expect(res.emptySheets).toEqual(['封面'])
   })
 })
@@ -744,7 +747,7 @@ describe('Numbers 的輸出摘要（finding 8）', () => {
   const price: Tab = { title: '價目表', values: [['品名', '價格'], ['W1', '12,900']] }
 
   it('新讀法：不讀、不算「看起來是使用說明」，改成講「Numbers 自動加的」', async () => {
-    const res = await readGoogleSheetAsCards(ref, tabsApi([summary, price]))
+    const res = await readGoogleSheetAsCards(ref, tabsApi([summary, price]), NEW_RULES)
     expect(res.cards.map(c => c.title)).toEqual(['W1'])
     expect(res.skippedSheets).toEqual([])
     expect(res.stats.exportSummarySheets).toEqual(['輸出摘要'])
@@ -761,7 +764,7 @@ describe('Numbers 的輸出摘要（finding 8）', () => {
 describe('延續列講出第幾列併到哪一項（finding 9）', () => {
   it('一列：講列號（試算表上真正的列號，前面的空白列也算）、用第一欄的欄位名稱', async () => {
     const tabs = [{ title: '價目表', values: [[], ['品名', '容量', '價格'], ['W1', '12L', '12,900'], ['W2', '20L', '19,900'], ['', '濾網（2 入）', '990']] }]
-    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs), NEW_RULES)
     expect(res.cards.find(c => c.title === 'W2')!.content).toBe('容量：20L\n價格：19,900\n容量：濾網（2 入）\n價格：990')
     expect(sheetHealthWarnings(res.cards, res.stats)).toContain('第 5 列沒有「品名」，已併到上一項「W2」；不對的話請補上再匯入一次')
   })
@@ -782,7 +785,7 @@ describe('延續列講出第幾列併到哪一項（finding 9）', () => {
       { title: '常見問題', values: [['問題', '答案'], ['退貨?', '7 天內']] },
       { title: '價目表', values: [['品名', '容量', '價格'], ['W1', '12L', '1'], ['', '濾網', '2']] },
     ]
-    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs))
+    const res = await readGoogleSheetAsCards(ref, tabsApi(tabs), NEW_RULES)
     expect(sheetHealthWarnings(res.cards, res.stats)).toContain('「價目表」第 3 列沒有「品名」，已併到上一項「W1」；不對的話請補上再匯入一次')
   })
 

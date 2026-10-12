@@ -19,7 +19,7 @@ import {
   KNOWLEDGE_CHUNKS_COLLECTION,
   updateKnowledgeChunk,
 } from './ai-knowledge-chunks'
-import { getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
+import { chunkCountsTowardQuota, getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
 import { recordAiUsage } from './ai-usage'
 import {
   countSourceChunks,
@@ -208,7 +208,8 @@ export async function syncGoogleSheetSource(
   if (toCreate.length) {
     const room = await remainingKnowledgeRoom(db, workspaceId)
     if (room !== null) {
-      const fits = room + toDelete.length
+      // 只有算額度的卡刪了才空得出位置（草稿本來就沒算，見 chunkCountsTowardQuota）
+      const fits = room + toDelete.filter(d => chunkCountsTowardQuota(d)).length
       if (toCreate.length > fits) quotaSkipped = toCreate.splice(fits).length
     }
   }

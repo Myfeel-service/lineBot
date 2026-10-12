@@ -93,7 +93,8 @@ export default defineEventHandler(async (event) => {
     const url = String(body?.url ?? '').trim()
     const ref = parseGoogleSheetUrl(url)
     if (!ref) throw createError({ statusCode: 400, statusMessage: '請貼有效的 Google Sheet 連結或試算表 ID' })
-    const sheet = await readGoogleSheetAsCards(ref)
+    // 新貼進來的試算表一律用新規則（每頁都讀、欄位名稱自己找）；匯入時會記下 gsheetTabRule:'all'，同步照這個讀
+    const sheet = await readGoogleSheetAsCards(ref, undefined, { legacy: false })
     work.sourceName = `Google Sheet（${sheet.sheetTitle}）`
     work.sourceUrl = url
     work.sourceType = 'gsheet'

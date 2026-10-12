@@ -445,6 +445,15 @@ describe('decodeTextBuffer', () => {
     expect(decodeTextBuffer(big5('ab7ea6572cbbf9aee60ab971b8dc2c30393132333435363738'))).toEqual({ text: '品名,價格\n電話,0912345678', encoding: 'big5', unreadableChars: 0 })
   })
 
+  it('同一個 buffer 只解一次（建整理工作與讀表各要一次，10MB 的檔別整份解好幾遍）；不同 buffer 各自解', () => {
+    const buf = big5('ab7ea6572cbbf9aee60ab971b8dc2c30393132333435363738')
+    const first = decodeTextBuffer(buf)
+    expect(decodeTextBuffer(buf)).toBe(first)
+    const copy = Buffer.from(buf)
+    expect(decodeTextBuffer(copy)).not.toBe(first)
+    expect(decodeTextBuffer(copy)).toEqual(first)
+  })
+
   it('Big5：中文表頭＋1000 列英數 → 還是 Big5（⛔ 以前會被當成 UTF-8，「品名」讀成亂碼還不警告）', () => {
     const rows = Array.from({ length: 1000 }, (_, i) => `A${String(i).padStart(5, '0')},Espresso Blend ${i},${100 + i},${i % 50}\n`).join('')
     const r = decodeTextBuffer(Buffer.concat([big5(BIG5_HEADER), Buffer.from(rows)]))

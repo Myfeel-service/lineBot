@@ -45,8 +45,9 @@ export default defineEventHandler(async (event) => {
       //    把每一頁都點名——資料其實在第 5 頁的人會以為整份表都讀不到。
       //    還有沒看的頁＝我們不知道，不是「沒資料」：照實說，叫他直接整理看看。
       if (unchecked > 0) {
+        // 'partial' 不是 'unknown'：讀得到＝畫面打勾、不叫他去重新分享（'unknown' 是猜不出原因的錯誤）
         return {
-          status: 'unknown' as const,
+          status: 'partial' as const,
           message: `讀得到這份試算表。先看了${quote(res.checkedTitles)}這 ${res.checkedTitles.length} 個分頁，前 20 列都沒有資料；`
             + `另外 ${unchecked} 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。`,
         }

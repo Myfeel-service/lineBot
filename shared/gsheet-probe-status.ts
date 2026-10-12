@@ -19,6 +19,14 @@ export type GsheetProbeStatus =
   | 'bad_file'
   /** 我們也不確定 → ⛔照實說，不可以假裝是「沒分享」 */
   | 'unknown'
+  /**
+   * 讀得到，只是看過的那幾頁前幾列都沒資料、還有分頁沒看 → 直接整理就會一起讀（畫面當「讀得到」，不是失敗）。
+   * ⛔ 不可以借用 'unknown'：那是「猜不出原因的錯誤」，畫面會畫紅叉＋叫人去重新分享（2026-10-12 code review）
+   */
+  | 'partial'
+
+/** 這幾種＝讀得到這份試算表（畫面打勾、不出「請共用給這個帳號」那一塊） */
+export const GSHEET_PROBE_READABLE: readonly GsheetProbeStatus[] = ['ok', 'partial']
 
 /**
  * 照「使用者下一步該做什麼」分類，不是照 HTTP 碼分類。

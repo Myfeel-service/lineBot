@@ -1004,8 +1004,23 @@ function big5Implausibility(buf: Buffer): number {
  *    「品名」讀成亂碼還不會警告（2026-10-11 審查實測）。
  * 仍然要守住：UTF-8 檔裡有幾個壞位元組（複製貼上帶進來的）→ 還是 UTF-8，壞的那幾個字換掉就好；
  *    Big5 讀 UTF-8 的中文會壞一大堆，比較之下 UTF-8 一定贏。
+ *
+ * 同一個 buffer 解過就記住、不再解（2026-10-12 code review）：建整理工作那支先自己判一次編碼（要講 Big5、讀不出來的字），
+ * 接著讀表／讀文字檔又各解一次——10MB 的 Big5 CSV 等於整份解碼四五次，而那支請求本來就逼近閘道逾時。
+ * 用 WeakMap：buffer 沒人用了就跟著收掉；結果是唯讀的（呼叫端都只讀不改）。
  */
-export function decodeTextBuffer(buf: Buffer): { text: string, encoding: TextEncodingName, unreadableChars: number } {
+export function decodeTextBuffer(buf: Buffer): DecodedText {
+  const hit = decodedCache.get(buf)
+  if (hit) return hit
+  const out = decodeTextBufferOnce(buf)
+  decodedCache.set(buf, out)
+  return out
+}
+
+export interface DecodedText { readonly text: string, readonly encoding: TextEncodingName, readonly unreadableChars: number }
+const decodedCache = new WeakMap<Buffer, DecodedText>()
+
+function decodeTextBufferOnce(buf: Buffer): DecodedText {
   const result = (text: string, encoding: TextEncodingName) => ({ text, encoding, unreadableChars: countReplacementChars(text) })
   if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
     return result(new TextDecoder('utf-8').decode(buf.subarray(3)), 'utf-8')

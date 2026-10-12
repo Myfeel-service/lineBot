@@ -14,7 +14,7 @@ import {
 } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
-import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { assertKnowledgeChunkQuota, chunkCountsTowardQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 import {
   addWorkspaceProductName,
@@ -479,7 +479,7 @@ export default defineEventHandler(async (event) => {
 function countsTowardQuota(snap: DocumentSnapshot, workspaceId: string): boolean {
   if (!snap.exists) return false
   const d = snap.data() as { workspaceId?: string, isDeleted?: boolean, status?: string } | undefined
-  return d?.workspaceId === workspaceId && d?.isDeleted !== true && d?.status !== 'draft'
+  return d?.workspaceId === workspaceId && chunkCountsTowardQuota(d)
 }
 
 /**

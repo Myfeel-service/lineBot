@@ -22,7 +22,8 @@
         <template v-if="conflictCount"><strong>{{ conflictCount }}</strong> 份跟知識庫裡現有的資料同名，等你決定要換掉舊的、還是另外建一份。</template>
         <template v-if="notLearnedTotal">其中 <strong>{{ notLearnedTotal }}</strong> 條 AI 還沒學起來（客人問到會找不到）——到那份資料點開該條按「重新學習」即可。</template>
         <template v-if="quotaShortTotal">另有 <strong>{{ quotaShortTotal }}</strong> 條因為知識空間不夠沒收進去（清單上有標是哪幾份）。</template>
-        <template v-if="failedCount">{{ failedCount }} 份沒有匯入（清單上有標原因，可以再按一次重試）。</template>
+        <template v-if="failedCount - unsureCount > 0">{{ failedCount - unsureCount }} 份沒有匯入（清單上有標原因，可以再按一次重試）。</template>
+        <template v-if="unsureCount">{{ unsureCount }} 份連線逾時、不確定匯進去了沒，按下面的「重試」會跟伺服器確認。</template>
         <template v-if="notStartedCount">{{ notStartedCount }} 份還沒開始就停下了，可以按下面的按鈕接著匯入。</template>
         <template v-if="skippedCount">{{ skippedCount }} 份跟現有資料一模一樣，已跳過（沒有重複建立）。</template>
         <template v-if="warnedCount">{{ warnedCount }} 份帶有提醒，建議點開檢查內容。</template>
@@ -65,7 +66,7 @@
             ✓ {{ r.cards }} 條<span v-if="r.notLearned" class="kb-site-status__warn">（{{ r.notLearned }} 條待學）</span>
           </template>
           <template v-else-if="r.status === 'skipped'">已經有了</template>
-          <template v-else-if="r.status === 'failed'">✕ 沒有匯入</template>
+          <template v-else-if="r.status === 'failed'">{{ r.unsure ? '待確認' : '✕ 沒有匯入' }}</template>
           <template v-else-if="r.status === 'rejected'">不收</template>
           <template v-else-if="r.status === 'conflict'">{{ r.deciding ? '匯入中⋯' : '等你決定' }}</template>
           <template v-else>{{ finished ? '沒有開始' : '等待中' }}</template>
@@ -80,7 +81,7 @@
         v-if="running || pendingCount"
         type="primary"
         :loading="running"
-        :disabled="!pendingCount || busy || roomFull"
+        :disabled="!pendingCount || busy || (roomFull && !hasUnsure)"
         @click="run"
       >
         {{ runLabel }}
@@ -113,6 +114,7 @@ import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
 import { KNOWLEDGE_FILE_KIND_LABEL, knowledgeFileKind } from '~~/shared/knowledge-file-types'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { batchKindLabel, batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
+import { formatFileSize } from '~/utils/knowledge-upload'
 
 /** 整理好的結果在伺服器留 1 小時（完成那一刻起算）；重試時超過這個就重新整理，留 10 分鐘餘裕 */
 const PREPARED_TTL_MS = 50 * 60 * 1000
@@ -146,7 +148,8 @@ interface PreviewDone {
   truncated?: boolean
   ocrUsed?: boolean
   meta?: Record<string, string | number>
-  existingMatches?: Array<{ id: string; name: string; chunkCount: number; type?: string }>
+  /** quotaChunkCount：換掉它會空出多少空間（不含草稿，跟伺服器算額度同一把尺）；舊的伺服器沒有這一格 */
+  existingMatches?: Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; type?: string }>
 }
 type RowStatus = 'idle' | 'processing' | 'done' | 'skipped' | 'failed' | 'rejected' | 'conflict'
 interface Row {
@@ -166,14 +169,12 @@ interface Row {
   /** 整理好、還沒匯進去的結果（空間滿、匯入失敗時留著；重試直接用，不再整理一次） */
   prepared: { jobId: string, res: PreviewDone, at: number } | null
   /** 同名、等他決定時擱著的整理結果（不用重新整理、不再花一次錢） */
-  pending: { jobId: string, res: PreviewDone, existing: { id: string, name: string, chunkCount: number } } | null
+  pending: { jobId: string, res: PreviewDone, existing: { id: string, name: string, chunkCount: number, quotaChunkCount?: number } } | null
+  /** 送出去兩次都逾時的那一包（不知道伺服器做完了沒）：重試時原封不動再送，見 importRow */
+  unsure: { body: Record<string, unknown>, quotaShort: number, replaceSourceId: string } | null
   deciding: boolean
 }
 
-function sizeLabel(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(bytes ? 1 : 0, Math.round(bytes / 1024))} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
 const statusClass = (s: RowStatus) => (s === 'rejected' ? 'failed' : s === 'conflict' ? 'processing' : s === 'skipped' ? 'done' : s)
 
 const rows = ref<Row[]>([])
@@ -201,7 +202,7 @@ watch(() => props.files, (files) => {
       name: file.name,
       // 收不了的那份標副檔名（DOC、PAGES）——右邊狀態欄已經寫「不收」，這裡再寫一次就重複了
       kindLabel: batchKindLabel(file.name, kind ? KNOWLEDGE_FILE_KIND_LABEL[kind] : null),
-      sizeLabel: sizeLabel(file.size),
+      sizeLabel: formatFileSize(file.size),
       status: error ? 'rejected' : 'idle',
       stage: '',
       cards: 0,
@@ -212,6 +213,7 @@ watch(() => props.files, (files) => {
       error,
       prepared: null,
       pending: null,
+      unsure: null,
       deciding: false,
     }
   })
@@ -229,6 +231,8 @@ const cardTotal = computed(() => okRows.value.reduce((s, r) => s + r.cards, 0))
 const notLearnedTotal = computed(() => okRows.value.reduce((s, r) => s + r.notLearned, 0))
 const quotaShortTotal = computed(() => rows.value.reduce((s, r) => s + r.quotaShort, 0))
 const failedCount = computed(() => rows.value.filter(r => r.status === 'failed').length)
+/** 失敗裡面「不確定進去了沒」的（見 hasUnsure）：結論列分開講，⛔ 不算進「沒有匯入」 */
+const unsureCount = computed(() => rows.value.filter(r => r.status === 'failed' && r.unsure).length)
 const conflictCount = computed(() => rows.value.filter(r => r.status === 'conflict').length)
 const skippedCount = computed(() => rows.value.filter(r => r.status === 'skipped').length)
 const warnedCount = computed(() => okRows.value.filter(r => r.warningTexts.length).length)
@@ -259,6 +263,13 @@ const roomBefore = computed(() => {
   return Math.max(0, q.limit - q.used)
 })
 const roomFull = computed(() => roomBefore.value === 0)
+/**
+ * 有一份「送出去兩次都逾時、不知道進去了沒」：空間看起來滿了也要讓他按重試——
+ * 它很可能其實已經收進去了（空間就是被它用掉的），重試是把同一包交給伺服器確認，不會多佔空間
+ * （2026-10-12 守門員抓到：滿了就鎖按鈕，那一份永遠標著「沒有匯入」、也沒得重試）
+ */
+const hasUnsure = computed(() => rows.value.some(r => r.unsure && r.status !== 'done'))
+const UNSURE_MSG = '連線逾時，不確定這份匯進去了沒有；按「重試」會跟伺服器確認（不會重複建立）'
 const quotaLine = computed(() => {
   if (busy.value || roomBefore.value == null || !pendingCount.value) return ''
   if (roomFull.value) return `知識空間滿了（${props.quota!.used}／${props.quota!.limit} 條）：先刪掉用不到的知識或升級方案，再回來匯入`
@@ -331,11 +342,16 @@ async function bulkCreate<T>(body: Record<string, unknown>): Promise<T> {
     return await apiFetch<T>('/api/ai/knowledge/bulk-create', { method: 'POST', body })
   }
   catch (err: any) {
-    const code = Number(err?.statusCode ?? err?.status ?? err?.response?.status ?? 0)
-    if (code !== 502 && code !== 504 && code !== 408 && code !== 0) throw err
+    if (!isGatewayTimeout(err)) throw err
     await new Promise(resolve => setTimeout(resolve, BULK_RETRY_WAIT_MS))
     return await apiFetch<T>('/api/ai/knowledge/bulk-create', { method: 'POST', body })
   }
+}
+
+/** 閘道逾時／連線斷了：伺服器可能其實做完了，只是回應沒送到 */
+function isGatewayTimeout(err: any): boolean {
+  const code = Number(err?.statusCode ?? err?.status ?? err?.response?.status ?? 0)
+  return code === 502 || code === 504 || code === 408 || code === 0
 }
 
 /**
@@ -344,38 +360,57 @@ async function bulkCreate<T>(body: Record<string, unknown>): Promise<T> {
  */
 async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceId?: string) {
   const file = r.file!
-  let chunks = res.chunks
   let reserved = 0
-  // 「換掉舊的」：舊的那幾條會進回收桶、不再算空間
-  const freed = replaceSourceId ? (r.pending?.existing.chunkCount ?? 0) : 0
-  if (room !== Number.POSITIVE_INFINITY) {
-    const avail = room + freed
-    if (avail <= 0) throw new Error(ROOM_FULL_MSG)
-    r.quotaShort = 0
-    if (chunks.length > avail) {
-      r.quotaShort = chunks.length - avail
-      chunks = chunks.slice(0, avail)
-    }
-    reserved = chunks.length - freed
-    room -= reserved
+  let body: Record<string, unknown>
+  // 上一次送出去兩次都逾時＝不知道伺服器做完了沒：原封不動再送那一包，讓伺服器自己認（做完了就回上一次的結果）。
+  // ⛔ 不可以先在這裡算空間：如果其實已經收進去了，算出來會是「滿了」，就會在畫面上說沒收、其實全都在
+  //    （2026-10-12 code review）。內容也不能重算——伺服器是拿整包比對「是不是同一次」
+  const unsure = r.unsure && r.unsure.replaceSourceId === (replaceSourceId ?? '') ? r.unsure : null
+  if (unsure) {
+    body = unsure.body
+    r.quotaShort = unsure.quotaShort
   }
-  try {
-    r.stage = '匯入中'
-    const bulk = await bulkCreate<{ total: number; indexed: number; failed: number; originalKept?: boolean | null }>({
+  else {
+    let chunks = res.chunks
+    // 「換掉舊的」：舊的那幾條會進回收桶、不再算空間（草稿本來就不算，用伺服器算好的那個數）
+    const existing = r.pending?.existing
+    const freed = replaceSourceId ? (existing?.quotaChunkCount ?? existing?.chunkCount ?? 0) : 0
+    r.quotaShort = 0
+    if (room !== Number.POSITIVE_INFINITY) {
+      const avail = room + freed
+      if (avail <= 0) throw new Error(ROOM_FULL_MSG)
+      if (chunks.length > avail) {
+        r.quotaShort = chunks.length - avail
+        chunks = chunks.slice(0, avail)
+      }
+      reserved = chunks.length - freed
+      room -= reserved
+    }
+    body = {
       source: {
         type: 'file',
         name: file.name,
         fileName: file.name,
-        productName: res.suggestedProductName ?? '',
+        // 「換掉舊的」只換內容：所屬產品、資料夾都留舊的那份原本的設定（⛔ 帶了伺服器就照收，
+        // 舊資料會被默默搬到照檔名猜的資料夾、產品名換成 AI 這次猜的，2026-10-12 code review）
+        ...(replaceSourceId
+          ? {}
+          : {
+              productName: res.suggestedProductName ?? '',
+              // 沒有逐份預覽＝更不會有人事後去拖資料夾：猜得到就放進去，猜不到就是未分類（跟整站同一把尺）
+              folderId: pickFolderForSource(props.folders ?? [], { sourceName: file.name, productName: res.suggestedProductName ?? '' })?.folderId ?? null,
+            }),
         contentHash: res.contentHash ?? '',
-        // 沒有逐份預覽＝更不會有人事後去拖資料夾：猜得到就放進去，猜不到就是未分類（跟整站同一把尺）
-        folderId: pickFolderForSource(props.folders ?? [], { sourceName: file.name, productName: res.suggestedProductName ?? '' })?.folderId ?? null,
       },
       ...(replaceSourceId ? { replaceSourceId } : {}),
       importId: jobId, // 冪等鍵：逾時重按不會多生一份
       chunks: chunks.map(c => ({ title: c.title, content: c.content, tags: c.tags ?? [], questions: c.questions ?? [] })),
       overviewCard: null,
-    })
+    }
+  }
+  try {
+    r.stage = '匯入中'
+    const bulk = await bulkCreate<{ total: number; indexed: number; failed: number; originalKept?: boolean | null }>(body)
     r.cards = bulk.total ?? bulk.indexed
     r.notLearned = bulk.failed ?? 0
     r.warningTexts = [
@@ -385,9 +420,12 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
     r.status = 'done'
     r.prepared = null
     r.pending = null
+    r.unsure = null
   }
   catch (err) {
-    room += reserved // 沒匯進去，預留的空間還回去
+    room += reserved // 沒匯進去（或不確定），預留的空間先還回去；下一次開跑會重讀實際的空間
+    // 重送也逾時＝不知道做完了沒：記下這一包，下次原封不動再送（見上面）
+    r.unsure = isGatewayTimeout(err) ? { body, quotaShort: r.quotaShort, replaceSourceId: replaceSourceId ?? '' } : null
     r.quotaShort = 0
     throw err
   }
@@ -429,7 +467,8 @@ async function run() {
       let jobId = ''
       try {
         // 上一輪已經整理好、只是沒匯進去的：直接拿來匯（⛔ 不要再上傳、再付一次 AI 的錢）
-        const reuse = r.prepared && Date.now() - r.prepared.at < PREPARED_TTL_MS ? r.prepared : null
+        // 上次送出去兩次都逾時的（unsure）不看期限：重試只是把同一包再送給伺服器認，用不到整理工作
+        const reuse = r.prepared && (r.unsure || Date.now() - r.prepared.at < PREPARED_TTL_MS) ? r.prepared : null
         let res: PreviewDone
         if (reuse) {
           jobId = reuse.jobId
@@ -471,7 +510,7 @@ async function run() {
         if (sameName) {
           // 同名：整理結果擱著等他決定，不重整理、不再花一次錢
           r.status = 'conflict'
-          r.pending = { jobId, res, existing: { id: sameName.id, name: sameName.name, chunkCount: sameName.chunkCount } }
+          r.pending = { jobId, res, existing: { id: sameName.id, name: sameName.name, chunkCount: sameName.chunkCount, quotaChunkCount: sameName.quotaChunkCount } }
           continue
         }
         await importRow(r, jobId, res)
@@ -485,7 +524,8 @@ async function run() {
           if (jobId) void apiFetch(`/api/ai/knowledge/preview-jobs/${jobId}`, { method: 'DELETE' }).catch(() => {})
         }
         else {
-          r.error = errorText(err)
+          // 不確定進去了沒的，⛔ 不講「沒有匯入」（很可能其實已經在了）
+          r.error = r.unsure ? UNSURE_MSG : errorText(err)
         }
       }
       finally {
@@ -516,7 +556,7 @@ async function decide(r: Row, choice: 'replace' | 'new') {
   catch (err: any) {
     // 留在「等你決定」：兩顆按鈕還在，空出空間或過一下再按一次就好（⛔ 標成失敗的話，重試會重新上傳、重新整理）
     r.status = 'conflict'
-    r.error = errorText(err)
+    r.error = r.unsure ? UNSURE_MSG.replace('按「重試」', '再按一次') : errorText(err)
   }
   finally {
     r.deciding = false

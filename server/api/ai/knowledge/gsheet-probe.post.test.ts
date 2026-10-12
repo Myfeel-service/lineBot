@@ -41,7 +41,8 @@ describe('gsheet-probe 沒找到資料時怎麼講', () => {
       hasData: false,
     })
     const r = await run()
-    expect(r.status).toBe('unknown')
+    // 讀得到，只是還有分頁沒看：⛔ 不可以是 'unknown'（那是錯誤，畫面會畫紅叉、叫人去重新分享）
+    expect(r.status).toBe('partial')
     expect(r.message).toBe('讀得到這份試算表。先看了「A」、「B」、「C」、「D」、「E」這 5 個分頁，前 20 列都沒有資料；另外 2 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。')
     expect(r.message).not.toContain('「F」')
   })

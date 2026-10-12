@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { uploadFailureMessage } from './knowledge-upload'
+import { formatFileSize, uploadFailureMessage } from './knowledge-upload'
+
+describe('formatFileSize', () => {
+  it('KB 以下進位到 1 KB、1MB 以上一位小數；0 照呼叫端講（清單是空檔、資料頁是沒記到）', () => {
+    expect(formatFileSize(200)).toBe('1 KB')
+    expect(formatFileSize(1_843_200)).toBe('1.8 MB')
+    expect(formatFileSize(0)).toBe('0 KB')
+    expect(formatFileSize(0, { zero: '大小未知' })).toBe('大小未知')
+  })
+})
 
 describe('uploadFailureMessage（直傳雲端失敗講給店家聽的那一句）', () => {
   it('沒有回應（網路斷、或雲端儲存不收這個網址）只說連不上，不猜是哪一種', () => {

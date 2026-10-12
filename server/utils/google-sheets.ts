@@ -364,7 +364,9 @@ function hasAnyText(rows: string[][]): boolean {
 export async function readGoogleSheetAsCards(
   ref: ParsedSheetRef,
   api: SheetsApiFn = sheetsApi,
-  opts: { legacy?: boolean } = {},
+  // ⛔ 一定要講明新舊（不給預設值，2026-10-12 code review）：之後哪條路忘了帶，舊的試算表就會被新規則重讀，
+  //    下一輪同步把店家的知識整批改寫——legacy 這個開關存在就是為了擋這件事
+  opts: { legacy: boolean },
 ): Promise<ReadSheetResult> {
   const legacy = opts.legacy === true
   const { targets, allTitles } = await selectSheetsToRead(ref.spreadsheetId, ref.gid, api, { legacy })

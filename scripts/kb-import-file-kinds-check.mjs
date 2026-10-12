@@ -418,7 +418,7 @@ try {
       }
       if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
         const b = JSON.parse(req.postData() || '{}')
-        bulks.push({ name: b.source?.name, replace: b.replaceSourceId ?? null })
+        bulks.push({ name: b.source?.name, replace: b.replaceSourceId ?? null, keys: Object.keys(b.source ?? {}) })
         return json({ sourceId: 's', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
       }
       return undefined
@@ -453,6 +453,9 @@ try {
     const replaced = bulks.find(b => b.name === '退換貨政策.docx')
     if (replaced?.replace === 'old-src-1') pass('按「換掉舊的」→ 走「更新這一份」（帶舊資料的 id，不用重新整理）')
     else fail('換掉舊的沒有帶舊資料', JSON.stringify(bulks))
+    // 只換內容：⛔ 帶了資料夾／產品名，伺服器就照收，舊資料會被默默搬到猜的資料夾、改成 AI 猜的產品名（2026-10-12 code review）
+    if (replaced && !replaced.keys.includes('folderId') && !replaced.keys.includes('productName')) pass('「換掉舊的」不帶資料夾與產品名（舊的那份原本的設定留著）')
+    else fail('「換掉舊的」帶了資料夾或產品名', JSON.stringify(replaced))
     await pg.close()
   }
 
@@ -625,6 +628,102 @@ try {
       pass('上傳中取消、換一份馬上再按 → 舊那一輪沒有復活（只建了新那一份的工作，預覽沒被換掉）')
     }
     else fail('取消後舊那一輪復活了', `jobs=${JSON.stringify(jobsFor)} summary=${summaryNow.replace(/\s+/g, ' ').slice(0, 160)}`)
+    await pg.close()
+  }
+
+  // ── 第十段：匯入兩次都逾時、其實伺服器做完了 → 重試要把同一包再送給伺服器認
+  //    ⛔ 不可以先在畫面上算空間就說「滿了沒收進去」——其實全都在（2026-10-12 code review）──
+  {
+    const bulks = []
+    let used = 49
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const name = JSON.parse(req.postData() || '{}').fileName
+        // 第二份一模一樣、直接跳過：讓這一批只有一份真的要匯
+        if (name === '商品匯出.csv') return json({ duplicate: { id: 'd', name: '舊的豆單' } })
+        return json({ jobId: 'job-unsure-1', status: 'processing', phase: 'chunk' })
+      }
+      if (url.includes('/api/ai/knowledge/preview-jobs/job-unsure-1') && m === 'GET') return json({ status: 'done', sourceName: '退換貨政策.docx', chunks: [{ title: '七天鑑賞期', content: '收到後七天內可退', tags: [], questions: [] }], warnings: [], existingMatches: [], contentHash: 'h' })
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const raw = req.postData() || ''
+        bulks.push(raw)
+        // 前兩次：伺服器其實收進去了（空間變滿），只是閘道先逾時
+        if (bulks.length <= 2) { used = 50; return { status: 504, contentType: 'text/plain', body: 'gateway timeout' } }
+        return json({ sourceId: 's', total: 1, indexed: 1, failed: 0, originalKept: true, items: [], alreadyImported: true })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
+    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-site-summary'), null, 60_000)
+    // 重試之前：⛔ 不可以寫「沒有匯入」（很可能其實已經在了），而且空間顯示滿了也要按得下去
+    const before = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
+    const retryEnabled = await pg.$$eval('.kb-import-actions .el-button--primary', els => els.some(b => b.innerText.includes('重試') && !b.disabled && !b.classList.contains('is-disabled')))
+    if (before.includes('待確認') && before.includes('不確定') && !before.includes('沒有匯入') && retryEnabled) pass('兩次都逾時那份標「待確認」、講不確定進去了沒，空間滿了也按得了重試')
+    else fail('兩次逾時那份的說法或重試鈕不對', `row=${before} retryEnabled=${retryEnabled}`)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-import-actions .el-button--primary')].find(b => b.innerText.includes('重試'))?.click())
+    const ok = await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 20_000)
+    const row = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
+    if (ok && bulks.length === 3 && bulks[2] === bulks[0]) pass('兩次都逾時、其實已經收進去 → 空間顯示滿了也照樣把同一包送給伺服器認，回來是 ✓（不是「空間滿了沒收進去」）')
+    else fail('兩次逾時後重試的結果不對', `bulks=${bulks.length} same=${bulks[2] === bulks[0]} row=${row}`)
+    await pg.close()
+  }
+
+  // ── 第十一段：單份「更新這一份」，舊的那份全是草稿 → 空出來的空間是 0（草稿本來就不算），按鈕不可以承諾收得下 ──
+  {
+    const JOB = 'job-replace-drafts'
+    let bulkCalled = false
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 50, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'chunk' })
+      if (url.includes(`/api/ai/knowledge/preview-jobs/${JOB}`) && m === 'GET') {
+        return json({ status: 'done', sourceName: '退換貨政策.docx', sourceType: 'file', chunks: Array.from({ length: 5 }, (_, i) => ({ title: `第 ${i + 1} 條`, content: '內容', tags: [], questions: [] })), warnings: [], contentHash: 'h',
+          existingMatches: [{ id: 'old-drafts', name: '退換貨政策.docx', chunkCount: 30, quotaChunkCount: 0, updatedAtMs: 0, type: 'file' }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create')) { bulkCalled = true; return json({}) }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-dedup-row .el-button')].find(b => b.innerText.includes('更新這一份'))?.click())
+    await sleep(500)
+    const btn = await pg.$eval('.kb-preview-summary__actions .el-button--primary', el => ({ text: el.innerText.trim(), disabled: el.disabled || el.classList.contains('is-disabled') })).catch(() => null)
+    if (btn?.text === '空間已經滿了' && btn.disabled && !bulkCalled) pass('舊的那份全是草稿 → 換掉也空不出位置，按鈕講「空間已經滿了」、按不下去（不再承諾收 5 條、按下去整批被擋）')
+    else fail('「更新這一份」把草稿算成空出來的空間', JSON.stringify(btn))
+    await pg.close()
+  }
+
+  // ── 第十二段：試算表讀得到、只是還有分頁沒看 → 打勾，⛔ 不畫紅叉、不叫人回頭重新分享 ──
+  {
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      if (url.includes('/api/ai/knowledge/gsheet-probe')) {
+        return json({ status: 'partial', message: '讀得到這份試算表。先看了「說明」這 1 個分頁，前 20 列都沒有資料；另外 6 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。' })
+      }
+      return undefined
+    })
+    await pg.evaluate(() => {
+      const ta = document.querySelector('.kb-drop__paste textarea')
+      ta.value = 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit#gid=0'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const probed = await waitFor(pg, () => !!document.querySelector('.kb-gsheet-share__state:not(:empty)') && !document.querySelector('.kb-gsheet-share__state')?.innerText.includes('正在確認'), null, 15_000)
+    const state = await pg.$eval('.kb-gsheet-share__state', el => ({ cls: el.className, text: el.innerText.trim() })).catch(() => null)
+    const shareRow = !!(await pg.$('.kb-gsheet-share__row'))
+    if (probed && state?.cls.includes('is-ok') && state.text.startsWith('✓') && !shareRow) pass('試算表讀得到、只是還有分頁沒看 → 打勾，不出「請共用給這個帳號」那一塊')
+    else fail('讀得到的試算表被畫成失敗', JSON.stringify({ state, shareRow }))
     await pg.close()
   }
 }

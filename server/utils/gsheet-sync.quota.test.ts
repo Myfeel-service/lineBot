@@ -47,7 +47,12 @@ const { getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } = vi.hoisted(() 
   getKnowledgeChunkQuota: vi.fn(),
   invalidateKnowledgeChunkCount: vi.fn(),
 }))
-vi.mock('./ai-knowledge-quota', () => ({ getKnowledgeChunkQuota, invalidateKnowledgeChunkCount }))
+// 「算不算額度」那一把尺用真的（chunkCountsTowardQuota，2026-10-12 收成一份），其餘假造
+vi.mock('./ai-knowledge-quota', async importOriginal => ({
+  ...(await importOriginal<typeof import('./ai-knowledge-quota')>()),
+  getKnowledgeChunkQuota,
+  invalidateKnowledgeChunkCount,
+}))
 
 const { listChunksBySource } = vi.hoisted(() => ({ listChunksBySource: vi.fn() }))
 vi.mock('./ai-knowledge-sources', () => ({
@@ -120,6 +125,15 @@ describe('syncGoogleSheetSource 守知識量額度', () => {
     const softDelete = ops.find(o => o.col === 'knowledgeChunks' && o.id === 'c-OLD')!
     expect(softDelete.seq).toBeLessThan(createSeq[0]!)
     expect(invalidateKnowledgeChunkCount).toHaveBeenCalledWith('ws1')
+  })
+
+  it('⛔ 這一輪刪掉的是草稿 → 空不出位置（草稿本來就沒算額度；2026-10-12 code review：四處算法不一致）', async () => {
+    readGoogleSheetAsCards.mockResolvedValue(sheetOf(['A', 'N1', 'N2']))
+    listChunksBySource.mockResolvedValue([chunk('A'), { ...chunk('OLD'), status: 'draft' }])
+    getKnowledgeChunkQuota.mockResolvedValue({ used: 50, limit: 50, planName: '入門' })
+    const { db } = makeDb()
+    const r = await syncGoogleSheetSource(db, 'ws1', 'src1', { url: '', gsheetId: 's', gsheetGid: null, contentHash: 'old' } as any, { allowMassDeletion: true })
+    expect(r).toMatchObject({ added: 0, deleted: 1, quotaSkipped: 2 })
   })
 
   it('更新照常套用，不受額度影響', async () => {

@@ -149,6 +149,19 @@ describe('findExistingSources：⛔ 回收桶裡的不算「已經有一份」',
     expect(hits[0]).toMatchObject({ chunkCount: 12, updatedAtMs: 100_000, type: 'file' })
   })
 
+  it('同名那份會一起回「換掉它空得出多少空間」——不算草稿（2026-10-12 code review：開帳建的網址 30 條全是草稿，畫面卻承諾收得下）', async () => {
+    // 照查詢條件回數字：全部 30、回收桶 0、草稿 30 → 換掉它空不出任何位置
+    const counts: Record<string, number> = { all: 30, isDeleted: 0, status: 30 }
+    const chain = (last: string): any => ({
+      where: (field: string) => chain(['workspaceId', 'sourceId', 'name'].includes(field) ? last : field),
+      limit: () => chain(last),
+      get: async () => ({ docs: [{ id: 'web', data: () => ({ name: '官網', type: 'url', chunkCount: 30 }) }] }),
+      count: () => ({ get: async () => ({ data: () => ({ count: counts[last] }) }) }),
+    })
+    const hits = await mod.findExistingSources('ws1', '官網', { collection: () => chain('all') } as any)
+    expect(hits[0]).toMatchObject({ chunkCount: 30, quotaChunkCount: 0 })
+  })
+
   it('濾完最多回 5 筆', async () => {
     const docs = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, data: { name: 'A', type: 'file', isDeleted: i < 3 } }))
     const hits = await mod.findExistingSources('ws1', 'A', makeDb(docs))

@@ -2,6 +2,16 @@
 export const EMPTY_FILE_HINT = '這是空的檔案（0 KB），裡面沒有內容可以整理'
 
 /**
+ * 檔案大小給人看（一次好幾份的清單、資料頁的原檔那一行共用；2026-10-12 code review：兩邊各寫一份）。
+ * zero：0 要顯示什麼——清單上真的會有空檔（顯示 0 KB）；資料頁的 0 是「沒記到大小」（傳「大小未知」）。
+ */
+export function formatFileSize(bytes: number, opts: { zero?: string } = {}): string {
+  if (!bytes) return opts.zero ?? '0 KB'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
  * 把檔案直傳到雲端儲存的簽名網址（知識庫匯入的單份與一次好幾份共用，`C-296`）。
  *
  * ⛔ 失敗時不可以把原始錯誤丟給畫面：那是一行「[PUT] "https://storage.googleapis.com/…": <no response> Failed to fetch」，

@@ -15,6 +15,7 @@ vi.mock('./ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledg
 
 import {
   assertKnowledgeChunkQuota,
+  chunkCountsTowardQuota,
   countWorkspaceChunks,
   invalidateKnowledgeChunkCount,
 } from './ai-knowledge-quota'
@@ -65,6 +66,15 @@ describe('數現有幾條', () => {
   it('⭐ 等你看過的卡不算（`C-250`③：開帳整理出來的是提案，採用才算）', async () => {
     const { db } = makeDb(62, 0, 12)
     expect(await countWorkspaceChunks('ws1', db)).toBe(50)
+  })
+})
+
+describe('chunkCountsTowardQuota（一張卡算不算額度：各處共用這一把尺）', () => {
+  it('在用的算；回收桶、草稿不算（跟 countWorkspaceChunks 的查詢同一套）', () => {
+    expect(chunkCountsTowardQuota({ status: 'indexed' })).toBe(true)
+    expect(chunkCountsTowardQuota({ status: 'failed' })).toBe(true)
+    expect(chunkCountsTowardQuota({ status: 'indexed', isDeleted: true })).toBe(false)
+    expect(chunkCountsTowardQuota({ status: 'draft' })).toBe(false)
   })
 })
 

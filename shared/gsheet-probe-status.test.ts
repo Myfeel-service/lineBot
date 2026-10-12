@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyGsheetProbeError } from './gsheet-probe-status'
+import { classifyGsheetProbeError, GSHEET_PROBE_READABLE } from './gsheet-probe-status'
 
 /**
  * 這幾條字串是從 server/utils/google-sheets.ts 的 createError 原文抄來的。
@@ -38,5 +38,14 @@ describe('classifyGsheetProbeError', () => {
   it('猜不出來的錯誤 → unknown，且不可以說成「沒分享」', () => {
     expect(classifyGsheetProbeError('Google Sheets 連線失敗：fetch failed')).toEqual({ status: 'unknown', needsShare: false })
     expect(classifyGsheetProbeError('')).toEqual({ status: 'unknown', needsShare: false })
+  })
+})
+
+describe('GSHEET_PROBE_READABLE（畫面打勾、不出分享說明的那幾種）', () => {
+  it('「讀得到、只是還有分頁沒看」算讀得到；錯誤（unknown）不算（2026-10-12 code review：讀得到卻畫紅叉）', () => {
+    expect(GSHEET_PROBE_READABLE).toContain('ok')
+    expect(GSHEET_PROBE_READABLE).toContain('partial')
+    expect(GSHEET_PROBE_READABLE).not.toContain('unknown')
+    expect(GSHEET_PROBE_READABLE).not.toContain('no_access')
   })
 })

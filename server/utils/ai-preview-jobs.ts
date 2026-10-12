@@ -26,7 +26,7 @@ import {
 } from './ai-knowledge-chunker'
 import { ocrImageWithGemini, ocrPdfWithGemini, MAX_RAW_TEXT_LEN } from './ai-source-extractors'
 import { splitPdfPageRange } from './pdf-split'
-import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
+import { countSourceQuotaChunks, KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
 import type { ChunkInput } from './ai-knowledge-chunks'
@@ -85,6 +85,12 @@ export interface ExistingMatch {
   id: string
   name: string
   chunkCount: number
+  /**
+   * 換掉這一份會空出多少知識空間：不含草稿、不含回收桶（跟額度同一把尺，見 countSourceQuotaChunks）。
+   * ⛔ 畫面不可以拿 chunkCount 算：它含草稿，伺服器卻不算——畫面說「直接匯入 30 條」，按下去整批被擋
+   *    （2026-10-12 code review：開帳精靈建的網址 30 條都是草稿）。數不出來就沒有這一格，畫面退回 chunkCount
+   */
+  quotaChunkCount?: number
   updatedAtMs: number
   /** 來源種類：型別不同的不給「更新這一份」（`C-139`），畫面要分得出來 */
   type: string
@@ -647,18 +653,20 @@ export async function findExistingSources(
       const data = d.data() as { isDeleted?: boolean, deletedAt?: unknown } | undefined
       return data?.isDeleted !== true && data?.deletedAt == null
     })
-    return live.slice(0, 5).map((d) => {
+    return await Promise.all(live.slice(0, 5).map(async (d) => {
       const data = d.data() as any
       const ts = data?.updatedAt
       const sec = ts?._seconds ?? ts?.seconds
+      const quotaChunkCount = await countSourceQuotaChunks(db, workspaceId, d.id).catch(() => undefined)
       return {
         id: d.id,
         name: String(data?.name ?? ''),
         chunkCount: Number(data?.chunkCount ?? 0),
+        ...(quotaChunkCount === undefined ? {} : { quotaChunkCount }),
         updatedAtMs: typeof sec === 'number' ? sec * 1000 : 0,
         type: String(data?.type ?? ''),
       }
-    })
+    }))
   }
   catch (e) {
     console.warn('[preview-jobs] dedup check failed:', e)

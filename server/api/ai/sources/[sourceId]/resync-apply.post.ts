@@ -11,7 +11,7 @@ import {
   KNOWLEDGE_SOURCES_COLLECTION,
   listChunksBySource,
 } from '~~/server/utils/ai-knowledge-sources'
-import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { assertKnowledgeChunkQuota, chunkCountsTowardQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import {
   buildChunkSoftDeletePatch,
   createKnowledgeChunk,
@@ -76,7 +76,8 @@ export default defineEventHandler(async (event) => {
   // 下面算額度還要知道哪幾張是草稿，同一次讀取一起拿，不多讀一輪
   const sourceChunks = (await listChunksBySource(db, workspaceId, sourceId)).filter(c => !c.isOverview)
   const ownedChunkIds = new Set(sourceChunks.map(c => c.id))
-  const draftChunkIds = new Set(sourceChunks.filter(c => c.status === 'draft').map(c => c.id))
+  // 刪了空得出位置的＝有算額度的那幾張（同一把尺見 chunkCountsTowardQuota；listChunksBySource 已排除回收桶）
+  const quotaChunkIds = new Set(sourceChunks.filter(c => chunkCountsTowardQuota(c)).map(c => c.id))
 
   /**
    * 方案知識量（`C-296` 審查）：套用前先算這次**淨增加**幾張，超過剩下的空間就整次不套用（403）。
@@ -96,7 +97,7 @@ export default defineEventHandler(async (event) => {
       if (applyId && ownedChunkIds.has(deterministicChunkId(entry.id))) continue
       netAdding++
     }
-    else if (action === 'delete_old' && entry.oldChunk && ownedChunkIds.has(entry.oldChunk.id) && !draftChunkIds.has(entry.oldChunk.id)) {
+    else if (action === 'delete_old' && entry.oldChunk && ownedChunkIds.has(entry.oldChunk.id) && quotaChunkIds.has(entry.oldChunk.id)) {
       netAdding--
     }
   }

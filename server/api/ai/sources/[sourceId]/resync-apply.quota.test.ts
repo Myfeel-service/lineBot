@@ -28,7 +28,9 @@ vi.mock('~~/server/utils/ai-knowledge-resync', () => ({
   countDivergentKeeps: () => 0,
   loadDiffExemptIds: async () => new Set<string>(),
 }))
-vi.mock('~~/server/utils/ai-knowledge-quota', () => ({
+vi.mock('~~/server/utils/ai-knowledge-quota', async importOriginal => ({
+  // 「算不算額度」那一把尺用真的（chunkCountsTowardQuota），其餘假造
+  ...(await importOriginal<typeof import('~~/server/utils/ai-knowledge-quota')>()),
   // 照真的規則：現有（不含回收桶、不含草稿）＋這批 > 上限就 403
   assertKnowledgeChunkQuota: vi.fn(async (ws: string, adding: number) => {
     if (adding <= 0) return
