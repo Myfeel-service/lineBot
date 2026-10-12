@@ -168,7 +168,7 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         clickBefore: '[data-tour="kb-import"]',
         title: '丟進來就好，不用先選種類',
         description:
-          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼。<strong>不知道該丟什麼的話，框下面把五種做法都列出來了</strong>；貼上之後視窗也會就地講該注意什麼。',
+          '把檔案拖進框裡，或貼上<strong>網址、試算表連結、一段文字</strong>——系統會自己認出是什麼，貼上之後也會就地講該注意什麼。',
         placement: 'bottom',
       },
       {
@@ -177,24 +177,24 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         target: '[data-tour="kb-start"]',
         requiresPresent: '[data-tour="kb-start"]',
         clickBefore: '[data-tour="kb-import"]',
-        title: '五種做法都在這裡',
-        // ⚠️ 2026-09-13 換口徑：原本寫「差別是準備時間」，但視窗那邊的順序已改成
-        //    試算表優先（理由見 KnowledgeImportDialog 的三版說明），準備時間正好是它最吃虧的維度。
-        //    教材跟畫面講反了比沒教還糟，所以這裡也改成先講「改了會不會自動更新」。
-        // ⚠️ 同日四版再改：選項從三顆變五顆，且定位從「挑一條」改成「把能怎麼做都列出來」。
-        //    ⛔ 這裡別再寫死顆數以外的細節（哪一條排第幾），順序之後可能再調，
-        //       寫死了就是下一個 `C-180`（文案裡埋一份沒人維護的畫面副本）。
+        title: '不知道從哪開始？照手上有的挑',
+        // 2026-10-12 五版（`D-123`）：視窗那邊從「五種做法、小字講之後改了會怎樣」改成「手上有什麼？」四格。
+        // ⛔ 不在這裡列那幾格的名字：聚光燈就打在格子上，再列一次是文案裡埋一份沒人維護的畫面副本（`C-180`）。
+        //    只講格子上看不出來、又真的會影響選擇的那一件：哪一種改了會自己跟著更新。
+        // ⚠️ 官網也會自己更新（小改自己套用、大改先問，見 cron-maintenance）：以前這裡寫「只有試算表會」是錯的
         description:
-          '這裡把<strong>能怎麼做都列出來了</strong>，點一下就會展開那一條要做什麼。小字一律回答同一個問題：'
-          + '<strong>之後資料改了會怎樣</strong>——只有 Google 試算表會自己跟著更新，其餘都要回來動手。'
-          + '要花多少時間、有什麼限制，寫在各自展開後的第一行。',
+          '照你<strong>手上有什麼</strong>點一格，會告訴你下一步做什麼。'
+          + '之後內容改了：<strong>Google 試算表、官網</strong>會自己跟著更新，檔案要再傳一次。',
         placement: 'top',
       },
       {
         target: '[data-tour="kb-preview"]',
-        title: '先看 AI 整理的結果再匯入',
+        title: '按這裡就加進去',
+        // 2026-10-12（`D-123`②）一份也直接加入：以前這一步寫「先預覽、確認才匯入——不會直接上線亂答」，
+        // 現在照實講哪幾種會停下來（規則見 KnowledgeImportDialog 的 previewStopReasons）
         description:
-          '按這裡，AI 會先<strong>切好知識給你預覽</strong>：可以逐條改、取消不要的，確認才匯入——<strong>不會直接上線亂答</strong>。',
+          'AI 整理好就<strong>直接加進知識庫</strong>；照片上的字、內容太長、空間不夠、跟現有的同名，'
+          + '這幾種會<strong>先停下來給你看</strong>。加好之後每一條都能再改。',
         placement: 'top',
       },
 ]

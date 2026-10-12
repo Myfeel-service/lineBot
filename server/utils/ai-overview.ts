@@ -22,11 +22,17 @@ import {
 } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
 
+/**
+ * 這一輪做了什麼。同步那兩條路不看；「匯入完才問要不要做總表」那支（`D-123`②）要靠它講結果——
+ * ⛔ 沒做出來（子卡不夠、AI 沒給、手改過）不可以回成功：按了「做一張」卻什麼都沒有，人只會以為按了沒用。
+ */
+export type OverviewRegenOutcome = 'created' | 'updated' | 'retired' | 'kept_manual' | 'skipped'
+
 export async function regenerateOverviewCard(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-): Promise<void> {
+): Promise<OverviewRegenOutcome> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
@@ -62,7 +68,7 @@ export async function regenerateOverviewCard(
   }
 
   // 手動編輯過的總覽卡：尊重人工版本，不自動覆蓋
-  if (existingOverview?.manuallyEdited) return
+  if (existingOverview?.manuallyEdited) return 'kept_manual'
 
   /**
    * ⛔子卡「暫時」不可用時什麼都不做（C-49C）：Gemini 一次故障就會讓整批子卡變 failed，
@@ -70,7 +76,7 @@ export async function regenerateOverviewCard(
    * 但重生只在「同步有增刪改」時觸發，下一次同步是「沒變」→ 總覽永遠回不來。
    * 有 pending/failed 子卡＝狀態未定，等它們塵埃落定的那一輪再處理。
    */
-  if (transientChildren > 0 && childCards.length < 2) return
+  if (transientChildren > 0 && childCards.length < 2) return 'skipped'
 
   // 子卡真的沒了：舊總覽收進回收桶（不能留著——型錄改版清空後它會繼續唸已下架品項）
   if (childCards.length < 2) {
@@ -78,14 +84,15 @@ export async function regenerateOverviewCard(
       await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(existingOverview.id)
         .update(buildChunkSoftDeletePatch(existingOverview.status))
         .catch(e => console.warn('[overview] retire failed:', e))
+      return 'retired'
     }
-    return
+    return 'skipped'
   }
 
   const ov = await summarizeAsOverviewCard(
     childCards.map(c => ({ ...c, sourceId: null })),
   )
-  if (!ov) return
+  if (!ov) return 'skipped'
 
   await recordAiUsage(workspaceId, {
     inputTokens: ov.inputTokens,
@@ -104,17 +111,17 @@ export async function regenerateOverviewCard(
       contentChanged: true,
       manualEdit: false,
     })
+    return 'updated'
   }
-  else {
-    await createKnowledgeChunk(db, {
-      workspaceId,
-      chunkId: uuidv4(),
-      title: ov.card.title,
-      content: ov.card.content,
-      tags: ov.card.tags,
-      questions: ov.card.questions ?? [],
-      isOverview: true,
-      sourceId,
-    })
-  }
+  await createKnowledgeChunk(db, {
+    workspaceId,
+    chunkId: uuidv4(),
+    title: ov.card.title,
+    content: ov.card.content,
+    tags: ov.card.tags,
+    questions: ov.card.questions ?? [],
+    isOverview: true,
+    sourceId,
+  })
+  return 'created'
 }

@@ -106,6 +106,14 @@ export interface WorkState {
   sourceType: string
   rawLength: number
   truncated: boolean
+  /**
+   * 「後面沒讀到」但**不是** 10 萬字截斷的那幾種（`D-123`②）：表格超過 150 列、AI 整理到 150 條上限就停、
+   * 網頁超過 5MB、Word／簡報格式複雜到讀一半就停。原因各有一句 warnings 在講；這個旗標只負責讓畫面
+   * **停在預覽給人看**——一份直接加入之後，沒停下來的話他會以為整份都進去了。
+   * ⛔ 不併進 truncated：畫面看到 truncated 會講「原文超過 10 萬字已截斷」，跟旁邊那句真正的原因互相矛盾。
+   * 舊的工作沒有這一欄＝false。
+   */
+  incomplete?: boolean
   meta: Record<string, string | number>
   ocrUsed: boolean
   // OCR 進度（掃描檔）
@@ -186,6 +194,7 @@ export function makeWork(input: PreviewJobInput): WorkState {
     sourceType: input.type,
     rawLength: 0,
     truncated: false,
+    incomplete: false,
     meta: {},
     ocrUsed: false,
     ocrPageTotal: 0,
@@ -356,7 +365,8 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
     // （gsheet 路徑本來就有「超過 150 列」提示，LLM 路徑漏了這句。）
     if (work.chunks.length >= MAX_TOTAL_CHUNKS && work.segmentCursor < work.segments.length) {
       const skipped = work.segments.length - work.segmentCursor
-      work.warnings.push(`內容太多：整理到 ${MAX_TOTAL_CHUNKS} 條上限就停了，後面約 ${skipped} 段（占全文約 ${Math.round(skipped / work.segments.length * 100)}%）沒有處理。建議把文件拆成兩份分批匯入。`)
+      work.warnings.push(`內容太多：整理到 ${MAX_TOTAL_CHUNKS} 條上限就停了，後面約 ${skipped} 段（占全文約 ${Math.round(skipped / work.segments.length * 100)}%）沒有處理。建議把文件拆成兩份分批加入。`)
+      work.incomplete = true
     }
     work.phase = (work.input.generateOverview && work.chunks.length >= 2) ? 'overview' : 'finalize'
   }
@@ -393,7 +403,8 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
   }
   work.enrichCursor = cursor + Math.max(1, batch.length) // 保底前進，避免卡死
   if (work.enrichCursor >= work.chunks.length && (work.enrichFailedBatches ?? 0) > 0) {
-    work.warnings.push(`有 ${work.enrichFailedBatches} 批卡片沒補到「客人問法」（AI 服務暫時不穩），這些卡照常匯入但檢索效果較弱；稍後可在知識庫按「補問法」重跑。`)
+    // ⛔ 以前叫人「在知識庫按『補問法』重跑」：畫面上沒有這顆按鈕（只有沒接 UI 的 reenrich 端點，2026-10-12 文字審視）
+    work.warnings.push(`有 ${work.enrichFailedBatches} 批沒補到「客人會怎麼問」（AI 服務暫時不穩），這幾條照常加入，但客人換個說法問時比較難找到；可以點開那幾條自己補上。`)
   }
 
   if (work.enrichCursor >= work.chunks.length) {
@@ -490,6 +501,7 @@ export function workToPreviewResult(work: WorkState) {
     sourceType: work.sourceType,
     rawLength: work.rawLength,
     truncated: work.truncated,
+    incomplete: work.incomplete === true,
     meta: work.meta,
     ocrUsed: work.ocrUsed,
     chunks: work.chunks.map(c => ({
@@ -566,7 +578,8 @@ export async function appendImportQualityWarnings(
     TIME_SENSITIVE_RE.test(c.title) || TIME_SENSITIVE_RE.test(c.content)).length
   if (timeSensitiveCount > 0) {
     work.warnings.push(
-      `有 ${timeSensitiveCount} 張卡含有時效性內容（募資 / 折扣 / 檔期）——匯入後建議在卡片編輯視窗設定「有效期限」，活動結束會自動下架，不會過期還照答。`,
+      // 「條」不叫「張卡」：加入視窗從頭到尾都講「條」（2026-10-12 文字審視）
+      `有 ${timeSensitiveCount} 條含時效性內容（募資／折扣／檔期）——建議點開那幾條設定「有效期限」，活動結束會自動下架，不會過期還照答。`,
     )
   }
 
@@ -585,7 +598,8 @@ export async function appendImportQualityWarnings(
       }).length
       if (dupCount >= 3) {
         work.warnings.push(
-          `有 ${dupCount} 張卡與現有知識卡的標題相同或幾乎相同——可能是重複匯入（例：同產品兩份說明書）。重複卡會讓 AI 反問時出現兩個一樣的選項，建議先取消勾選重複的，或匯入後整理。`,
+          // 一份直接加入之後多半沒有預覽頁可以「取消勾選」（`D-123`②）：只講要做的事——留一份
+          `有 ${dupCount} 條跟現有知識的標題一樣或幾乎一樣——可能重複加了（例：同一個產品兩份說明書）。重複的會讓 AI 反問時出現兩個一樣的選項，留一份就好。`,
         )
       }
     }
@@ -606,7 +620,7 @@ export async function appendImportQualityWarnings(
         }).length
         if (covered / names.length < 0.3) {
           work.warnings.push(
-            `總表只提到系統已知 ${names.length} 項產品中的 ${covered} 項——來源頁面可能沒抓到商品區塊（動態首頁常見）。總表專門回答「你們有賣什麼」，內容錯會整店答錯，請務必確認或改用商品列表頁重新匯入。`,
+            `總表只提到系統已知 ${names.length} 項產品中的 ${covered} 項——來源頁面可能沒抓到商品區塊（動態首頁常見）。總表專門回答「你們有賣什麼」，內容錯會整店答錯，請務必確認，或改用商品列表頁重新加入。`,
           )
         }
       }

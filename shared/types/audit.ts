@@ -142,6 +142,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'source.put': '改了一個知識來源',
   'source.delete': '刪掉了一個知識來源（連同它的知識卡）',
   'source.reindex': '讓一個知識來源重新學習',
+  'source.overview': '幫一個知識來源做了「我們有賣什麼」總表',
   'source.gsheetSync': '重新同步了 Google 試算表',
   'source.resyncApply': '套用了知識來源的重新同步',
   'source.migrateOrphans': '把沒有來源的知識卡歸了位',

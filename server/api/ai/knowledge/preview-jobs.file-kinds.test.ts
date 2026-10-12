@@ -325,6 +325,8 @@ describe('「原文超過 10 萬字已截斷」只在真的被字數上限截掉
     expect(work.truncated).toBe(false)
     // 「列」或「條」都行（那句話的用字由 google-sheets 決定），要的是列數上限那句在、字數截斷那句不在
     expect(work.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/只會匯入前 150 [列條]/)]))
+    // `D-123`②：但要停在預覽給人看——一份直接加入的話，他會以為 160 列都進去了
+    expect(work.incomplete).toBe(true)
   })
 
   it('⛔ Google 試算表超過 150 列也一樣', async () => {
@@ -350,11 +352,18 @@ describe('「原文超過 10 萬字已截斷」只在真的被字數上限截掉
     const work = savedWork()
     expect(work.truncated).toBe(false)
     expect(work.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/只會匯入前 150 [列條]/)]))
+    expect(work.incomplete).toBe(true)
   })
 
   it('文字真的超過 10 萬字 → 照講', async () => {
     upload('長文.txt', Buffer.from('滿千免運。'.repeat(20_001), 'utf8'))
     await call()
     expect(savedWork().truncated).toBe(true)
+  })
+
+  it('整份都讀到了 → 不算沒讀完（不會無故停在預覽）', async () => {
+    upload('短文.txt', Buffer.from('滿千免運。週一公休。', 'utf8'))
+    await call()
+    expect(savedWork().incomplete).toBe(false)
   })
 })

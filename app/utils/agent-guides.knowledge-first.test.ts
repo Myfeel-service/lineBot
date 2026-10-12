@@ -97,7 +97,7 @@ describe('knowledge-first 劇本', () => {
     expect(htmlOf(r)).not.toContain('知識庫還是空的')
   })
 
-  it('沒真的看到知識就不說「好了」：空的時候提示「預覽不會存進去」，再確認才過關', async () => {
+  it('沒真的看到知識就不說「好了」：空的時候提示「停在先看一下那頁要按加入」，再確認才過關', async () => {
     const { r, ctx } = makeCtx({
       sources: [
         { items: [] }, // intro：空的 → 照常帶路
@@ -110,9 +110,10 @@ describe('knowledge-first 劇本', () => {
 
     await waitChoices(r)
     r.onChoice('check')
+    // `D-123`②（2026-10-12）起一份也直接加入：還是空的時候，要講「停在先看一下那頁的，要按加入才會存進去」
     await vi.waitFor(() => {
-      if (!htmlOf(r).includes('直接匯入'))
-        throw new Error('還沒提示「光是預覽不會存進去」')
+      if (!htmlOf(r).includes('加入之前先看一下'))
+        throw new Error('還沒提示「停在先看一下那頁要按加入」')
     })
 
     await waitChoices(r)

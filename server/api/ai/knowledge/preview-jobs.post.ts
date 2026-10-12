@@ -92,15 +92,18 @@ export default defineEventHandler(async (event) => {
   if (type === 'gsheet') {
     const url = String(body?.url ?? '').trim()
     const ref = parseGoogleSheetUrl(url)
-    if (!ref) throw createError({ statusCode: 400, statusMessage: '請貼有效的 Google Sheet 連結或試算表 ID' })
+    if (!ref) throw createError({ statusCode: 400, statusMessage: '請貼有效的 Google 試算表連結或試算表 ID' })
     // 新貼進來的試算表一律用新規則（每頁都讀、欄位名稱自己找）；匯入時會記下 gsheetTabRule:'all'，同步照這個讀
     const sheet = await readGoogleSheetAsCards(ref, undefined, { legacy: false })
+    // ⚠️ 預設名稱刻意還叫「Google Sheet（…）」（2026-10-12 文字審視時留著沒改）：同一份試算表再接一次，
+    //    靠的是「名稱一樣」才問得出「更新原本那一份」——改了名字，以前接過的表再貼一次就會默默多一份
     work.sourceName = `Google Sheet（${sheet.sheetTitle}）`
     work.sourceUrl = url
     work.sourceType = 'gsheet'
     // ⛔ 不把「超過 150 列」記成 truncated：畫面看到 truncated 會講「原文超過 10 萬字已截斷」，
-    //    跟旁邊那句正確的「只會匯入前 150 列」互相矛盾。列數上限由 sheetHealthWarnings 講。
+    //    跟旁邊那句正確的「只會匯入前 150 列」互相矛盾。列數上限由 sheetHealthWarnings 講；要停下來給人看靠 incomplete。
     work.truncated = false
+    work.incomplete = sheet.stats.truncatedByCap
     work.meta = { rows: sheet.stats.rowCount, sheet: sheet.sheetTitle }
     work.chunks = sheet.cards.map(c => cardToChunk(c))
     work.warnings = [
@@ -187,6 +190,7 @@ export default defineEventHandler(async (event) => {
           // ⛔ 不把「超過 150 列」記成 truncated：畫面看到 truncated 會講「原文超過 10 萬字已截斷」，
           //    跟 sheetHealthWarnings 那句正確的「只會匯入前 150 列」互相矛盾（一列一卡沒有字數上限）
           work.truncated = false
+          work.incomplete = xlsx.stats.truncatedByCap
           work.meta = { rows: xlsx.stats.rowCount, sheets: xlsx.sheetCount, ...(xlsx.encoding ? { encoding: xlsx.encoding } : {}) }
           work.chunks = xlsx.cards.map(c => cardToChunk(c))
           work.warnings = [
@@ -447,5 +451,7 @@ function setChunkingFromExtracted(
   if (Number(extracted.meta.textTruncated ?? 0) === 1 && !work.truncated) {
     work.warnings.push('這份檔案的格式複雜到不正常，只讀了前面一部分；後面的內容可能沒收進來，請用原本的軟體另存一份（或匯出成 PDF）再傳')
   }
+  // 讀一半就停的（網頁超過 5MB、Word／簡報格式複雜）：要停在預覽給人看（見 WorkState.incomplete）
+  work.incomplete = extracted.truncatedBySize === true || Number(extracted.meta.textTruncated ?? 0) === 1
   primeChunking(work, extracted.text)
 }

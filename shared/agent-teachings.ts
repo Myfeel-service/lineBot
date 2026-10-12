@@ -56,7 +56,7 @@ export const AGENT_TEACHINGS = {
   'tour-campaigns': { kind: 'tour', ref: 'campaigns', hint: '活動標籤：用一條連結收名單、加好友自動貼標', requires: 'marketing.write' },
   'tour-broadcasts': { kind: 'tour', ref: 'broadcasts', hint: '發推播：選對象、寫內容、排程、發送前確認、看成效', requires: 'broadcast.write' },
   'tour-ai-usage': { kind: 'tour', ref: 'ai-usage', hint: 'AI 表現頁怎麼看：全程搞定率、答不出來的案例、補知識' },
-  'tour-knowledge': { kind: 'tour', ref: 'knowledge', hint: '把資料放進知識庫：上傳檔案、貼網址或試算表、先預覽再匯入', requires: 'knowledge.write' },
+  'tour-knowledge': { kind: 'tour', ref: 'knowledge', hint: '把資料放進知識庫：上傳檔案、貼網址或試算表，整理好直接加進去', requires: 'knowledge.write' },
   'tour-knowledge-manage': { kind: 'tour', ref: 'knowledge-manage', hint: '匯入之後怎麼整理知識：資料夾、改某一條、自動同步', requires: 'knowledge.write' },
   // 主題沒設條件，照頁面：測試對話頁的進入門檻（`ai-feature` 中介層）
   'tour-ai-playground': { kind: 'tour', ref: 'ai-playground', hint: '上線前先試問 AI 會怎麼回答（不會送給客人）', requires: 'playground.use' },

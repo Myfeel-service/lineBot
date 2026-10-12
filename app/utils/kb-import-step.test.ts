@@ -13,10 +13,14 @@ describe('kbImportStepProgress', () => {
     expect(totals).toEqual(new Set([3]))
   })
 
-  it('正常路：給資料 1 → 看整理結果 2 → 完成 3', () => {
+  it('正常路：給資料 1 → AI 整理 2（停在預覽也是 2）→ 加好了 3', () => {
     expect(kbImportStepProgress('input').index).toBe(1)
     expect(kbImportStepProgress('preview').index).toBe(2)
     expect(kbImportStepProgress('result').index).toBe(3)
+  })
+
+  it('⛔ 一份直接加入（D-123②）：整理中畫面還在第一頁，數字要是 2，不能從 1 直接跳 3', () => {
+    expect(kbImportStepProgress('input', { processing: true }).index).toBe(2)
   })
 
   it('整站路：選頁面是第 2 步，匯完（同一畫面出結論）就是第 3 步', () => {

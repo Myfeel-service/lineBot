@@ -60,6 +60,35 @@ describe('advanceWork — chunk 階段', () => {
     expect(mockChunk).toHaveBeenCalledTimes(2)
   })
 
+  it('⛔ 整理到 150 條上限就停、後面還有段沒處理 → 講出來，而且標「沒讀完」讓畫面停在預覽（D-123②）', async () => {
+    let n = 0
+    mockChunk.mockImplementation(async () => ({
+      chunks: Array.from({ length: 60 }, () => card(`T${n++}`)),
+      inputTokens: 1,
+      outputTokens: 1,
+    }))
+    const work = makeWork({ type: 'text', generateOverview: false })
+    work.sourceName = 'doc'
+    work.segments = ['s1', 's2', 's3', 's4', 's5']
+    work.phase = 'chunk'
+
+    while (work.phase === 'chunk') await advanceWork(work)
+    expect(work.chunks).toHaveLength(150)
+    expect(work.warnings).toEqual(expect.arrayContaining([expect.stringContaining('150 條上限就停了')]))
+    expect(work.incomplete).toBe(true)
+    expect(workToPreviewResult(work).incomplete).toBe(true)
+  })
+
+  it('段都處理完了 → 不算沒讀完', async () => {
+    mockChunk.mockImplementation(async (text: string) => ({ chunks: [card(`T-${text}`)], inputTokens: 1, outputTokens: 1 }))
+    const work = makeWork({ type: 'text', generateOverview: false })
+    work.sourceName = 'doc'
+    work.segments = ['a', 'b']
+    work.phase = 'chunk'
+    await advanceWork(work)
+    expect(workToPreviewResult(work).incomplete).toBe(false)
+  })
+
   it('段數超過並行上限時分批推進（cursor 逐批前進，不會一次全吃）', async () => {
     mockChunk.mockImplementation(async (text: string) => ({
       chunks: [card(`T-${text}`)],

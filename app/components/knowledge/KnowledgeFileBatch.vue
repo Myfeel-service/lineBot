@@ -4,7 +4,7 @@
       <span class="kb-step-count">第 {{ finished ? 3 : 2 }} 步，共 3 步</span>{{ stepTitle }}
     </p>
     <p class="kb-section-hint">
-      每一份會<strong>各自成為一份資料</strong>：AI 整理完直接匯入，不逐條預覽；完成後可以到資料清單點開檢查。
+      每一份會<strong>各自成為一份資料</strong>，整理好直接加進去；完成後可以到資料清單點開檢查。
     </p>
 
     <!-- 跑完的結論列：沒有逐條預覽，結束一定要講「做了什麼、還要看什麼」（同整站匯入） -->
@@ -22,12 +22,13 @@
         <template v-if="conflictCount"><strong>{{ conflictCount }}</strong> 份跟知識庫裡現有的資料同名，等你決定要換掉舊的、還是另外建一份。</template>
         <template v-if="notLearnedTotal">其中 <strong>{{ notLearnedTotal }}</strong> 條 AI 還沒學起來（客人問到會找不到）——到那份資料點開該條按「重新學習」即可。</template>
         <template v-if="quotaShortTotal">另有 <strong>{{ quotaShortTotal }}</strong> 條因為知識空間不夠沒收進去（清單上有標是哪幾份）。</template>
-        <template v-if="failedCount - unsureCount > 0">{{ failedCount - unsureCount }} 份沒有匯入（清單上有標原因，可以再按一次重試）。</template>
-        <template v-if="unsureCount">{{ unsureCount }} 份連線逾時、不確定匯進去了沒，按下面的「重試」會跟伺服器確認。</template>
-        <template v-if="notStartedCount">{{ notStartedCount }} 份還沒開始就停下了，可以按下面的按鈕接著匯入。</template>
+        <!-- 「可以再按一次重試」不寫在這裡：空間滿了那幾份的重試鈕是鎖住的（2026-10-12 文字審視），每一列自己講怎麼辦 -->
+        <template v-if="failedCount - unsureCount > 0">{{ failedCount - unsureCount }} 份沒有加入（清單上有標原因）。</template>
+        <template v-if="unsureCount">{{ unsureCount }} 份連線逾時、不確定加進去了沒，按下面的「重試」會跟伺服器確認。</template>
+        <template v-if="notStartedCount">{{ notStartedCount }} 份還沒開始就停下了，可以按下面的按鈕接著加入。</template>
         <template v-if="skippedCount">{{ skippedCount }} 份跟現有資料一模一樣，已跳過（沒有重複建立）。</template>
         <template v-if="warnedCount">{{ warnedCount }} 份帶有提醒，建議點開檢查內容。</template>
-        <template v-if="okCount && !failedCount && !warnedCount && !notLearnedTotal && !quotaShortTotal && !conflictCount && !notStartedCount">這些知識沒有經過逐條預覽，建議到知識庫抽幾條看看內容是否合用。</template>
+        <template v-if="okCount && !failedCount && !warnedCount && !notLearnedTotal && !quotaShortTotal && !conflictCount && !notStartedCount">建議點開幾條看看內容對不對。</template>
       </div>
     </el-alert>
 
@@ -50,7 +51,8 @@
             <span v-if="running" class="text-xs text-muted">這一批跑完就能選</span>
           </div>
           <div v-if="r.quotaShort" class="kb-site-warnings">
-            ⚠︎ 知識空間不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（空出空間後再放一次這份、選「換掉舊的」就能補齊）
+            <!-- ⚠️ 不能叫他「一批裡再放一次」：內容一模一樣的在一次好幾份裡會被跳過；單獨放一份才會問要不要換掉原本那一份 -->
+            ⚠︎ 知識空間不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（空出空間後，把這一份單獨再放一次、選擇換掉原本那一份，就能補齊）
           </div>
           <div v-if="r.warningTexts.length" class="kb-site-warnings">
             <div v-for="(w, i) in r.warningTexts" :key="i">⚠︎ {{ w }}</div>
@@ -66,9 +68,9 @@
             ✓ {{ r.cards }} 條<span v-if="r.notLearned" class="kb-site-status__warn">（{{ r.notLearned }} 條待學）</span>
           </template>
           <template v-else-if="r.status === 'skipped'">已經有了</template>
-          <template v-else-if="r.status === 'failed'">{{ r.unsure ? '待確認' : '✕ 沒有匯入' }}</template>
+          <template v-else-if="r.status === 'failed'">{{ r.unsure ? '待確認' : '✕ 沒有加入' }}</template>
           <template v-else-if="r.status === 'rejected'">不收</template>
-          <template v-else-if="r.status === 'conflict'">{{ r.deciding ? '匯入中⋯' : '等你決定' }}</template>
+          <template v-else-if="r.status === 'conflict'">{{ r.deciding ? '加入中⋯' : '等你決定' }}</template>
           <template v-else>{{ finished ? '沒有開始' : '等待中' }}</template>
         </span>
       </div>
@@ -118,7 +120,11 @@ import { formatFileSize } from '~/utils/knowledge-upload'
 
 /** 整理好的結果在伺服器留 1 小時（完成那一刻起算）；重試時超過這個就重新整理，留 10 分鐘餘裕 */
 const PREPARED_TTL_MS = 50 * 60 * 1000
-const ROOM_FULL_MSG = '知識空間滿了，這份沒收進去（刪掉用不到的知識或升級方案後，可以再按一次重試）'
+/**
+ * ⛔ 以前寫「刪掉⋯後，可以再按一次重試」：空間滿了重試鈕是鎖住的，而要刪知識就得關掉這個視窗——
+ *    一關，跑過的這一批就清空了（2026-10-12 文字審視）。照做得到的講：騰出空間後把這份再放一次。
+ */
+const ROOM_FULL_MSG = '知識空間滿了，這份沒收進去（刪掉用不到的知識或升級方案之後，把這份再放一次）'
 /** 匯入遇到閘道逾時後，等多久再用同一包重送（見 bulkCreate） */
 const BULK_RETRY_WAIT_MS = 3000
 
@@ -246,14 +252,15 @@ const busy = computed(() => running.value || rows.value.some(r => r.deciding))
 watch(busy, on => emit('running', on), { flush: 'sync' })
 
 const stepTitle = computed(() => {
-  if (!finished.value) return acceptedCount.value ? `一次匯入 ${acceptedCount.value} 份檔案` : '這幾份都收不了'
-  if (okCount.value) return '匯入完成'
-  return conflictCount.value ? '還有檔案在等你決定' : '這一批沒有匯入'
+  // 動詞一律「加入」（2026-10-12 文字審視）：視窗標題叫「加入知識」、單份的按鈕叫「整理並加入」，這裡講「匯入」等於同一件事兩個叫法
+  if (!finished.value) return acceptedCount.value ? `一次加入 ${acceptedCount.value} 份檔案` : '這幾份都收不了'
+  if (okCount.value) return '加好了'
+  return conflictCount.value ? '還有檔案在等你決定' : '這一批沒有加入'
 })
 const runLabel = computed(() => {
-  if (running.value) return `匯入中（${doneCount.value}/${batchTotal.value}）⋯`
-  if (!finished.value) return `整理並匯入這 ${pendingCount.value} 份`
-  return notStartedCount.value && !failedCount.value ? `接著匯入剩下的 ${pendingCount.value} 份` : `重試沒匯入的 ${pendingCount.value} 份`
+  if (running.value) return `加入中（${doneCount.value}/${batchTotal.value}）⋯`
+  if (!finished.value) return `整理並加入這 ${pendingCount.value} 份`
+  return notStartedCount.value && !failedCount.value ? `接著加入剩下的 ${pendingCount.value} 份` : `重試沒加入的 ${pendingCount.value} 份`
 })
 
 /** 按之前的空間（父層每一批跑完都會重讀；run() 開跑時再讀一次最新的） */
@@ -269,10 +276,10 @@ const roomFull = computed(() => roomBefore.value === 0)
  * （2026-10-12 守門員抓到：滿了就鎖按鈕，那一份永遠標著「沒有匯入」、也沒得重試）
  */
 const hasUnsure = computed(() => rows.value.some(r => r.unsure && r.status !== 'done'))
-const UNSURE_MSG = '連線逾時，不確定這份匯進去了沒有；按「重試」會跟伺服器確認（不會重複建立）'
+const UNSURE_MSG = '連線逾時，不確定這份加進去了沒有；按「重試」會跟伺服器確認（不會重複建立）'
 const quotaLine = computed(() => {
   if (busy.value || roomBefore.value == null || !pendingCount.value) return ''
-  if (roomFull.value) return `知識空間滿了（${props.quota!.used}／${props.quota!.limit} 條）：先刪掉用不到的知識或升級方案，再回來匯入`
+  if (roomFull.value) return `知識空間滿了（${props.quota!.used}／${props.quota!.limit} 條）：先刪掉用不到的知識或升級方案，再回來加入`
   return `知識空間：還能放 ${roomBefore.value} 條；放不下的那一份會收到滿為止`
 })
 
@@ -308,9 +315,9 @@ async function leave(to: 'back' | 'close') {
   if (conflictCount.value) {
     try {
       await ElMessageBox.confirm(
-        `跟現有資料同名、等你決定的 ${conflictCount.value} 份不會匯入（整理好的結果會丟掉）。`,
+        `跟現有資料同名、等你決定的 ${conflictCount.value} 份不會加入（整理好的結果會丟掉）。`,
         '還有檔案在等你決定',
-        { confirmButtonText: '不匯入，離開', cancelButtonText: '回去決定', type: 'warning' },
+        { confirmButtonText: '不加入，離開', cancelButtonText: '回去決定', type: 'warning' },
       )
     }
     catch {
@@ -329,7 +336,7 @@ function previewNotices(res: PreviewDone): string[] {
   return [...out, ...(res.warnings ?? [])]
 }
 
-const errorText = (err: any) => String(err?.data?.statusMessage || err?.statusMessage || err?.message || '匯入失敗').slice(0, 120)
+const errorText = (err: any) => String(err?.data?.statusMessage || err?.statusMessage || err?.message || '加入失敗').slice(0, 120)
 
 /**
  * 匯入那一下遇到閘道逾時（502／504／408）或連線中斷，**不等於沒匯進去**：伺服器可能已經做完、只是回應沒送到。
@@ -409,13 +416,14 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
     }
   }
   try {
-    r.stage = '匯入中'
+    r.stage = '加入中'
     const bulk = await bulkCreate<{ total: number; indexed: number; failed: number; originalKept?: boolean | null }>(body)
     r.cards = bulk.total ?? bulk.indexed
     r.notLearned = bulk.failed ?? 0
     r.warningTexts = [
       ...previewNotices(res),
-      ...(bulk.originalKept === false ? ['原檔這次沒有留下來（知識照常可以用）；要能「下載原檔」，請再傳一次這份'] : []),
+      // 單獨再放一次才會問「換掉原本那一份」；一批裡內容一模一樣的會被跳過（同 quotaShort 那句）
+      ...(bulk.originalKept === false ? ['原檔這次沒有留下來（知識照常可以用）；要能「下載原檔」，把這一份單獨再放一次、選擇換掉原本那一份'] : []),
     ]
     r.status = 'done'
     r.prepared = null
@@ -478,7 +486,7 @@ async function run() {
           // 空間已經滿了就不上傳、不整理（⛔ 不要付了 AI 的錢才發現放不進去）
           if (room !== Number.POSITIVE_INFINITY && room <= 0) {
             r.status = 'failed'
-            r.error = '知識空間滿了，這份沒有整理（刪掉用不到的知識或升級方案後，可以再按一次重試）'
+            r.error = '知識空間滿了，這份沒有整理（刪掉用不到的知識或升級方案之後，把這份再放一次）'
             continue
           }
           r.stage = '上傳中'
@@ -519,7 +527,7 @@ async function run() {
         r.status = 'failed'
         if (err?.code === PREVIEW_JOB_DEADLINE) {
           // 這一份的匯入只在這裡做：逾時不能說「背景還在整理」，而且要主動停掉，不然排程會付錢做完再丟掉
-          r.error = '整理太久，這份跳過了（沒有匯入，可以再按一次重試）'
+          r.error = '整理太久，這份跳過了（沒有加入，可以按下面的「重試」）'
           r.prepared = null
           if (jobId) void apiFetch(`/api/ai/knowledge/preview-jobs/${jobId}`, { method: 'DELETE' }).catch(() => {})
         }

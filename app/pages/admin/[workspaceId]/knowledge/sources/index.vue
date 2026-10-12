@@ -65,15 +65,16 @@
         v-if="!importOpen && importJobState !== 'none'"
         type="button"
         class="src-workbench-link src-import-link"
-        :class="{ 'src-import-link--ready': importJobState === 'ready' }"
+        :class="{ 'src-import-link--ready': importJobDone }"
         @click="importOpen = true"
       >
         <el-icon
           class="src-workbench-link__icon"
-          :class="{ 'is-loading': importJobState !== 'ready' }"
-        ><Loading v-if="importJobState !== 'ready'" /><Check v-else /></el-icon>
+          :class="{ 'is-loading': !importJobDone }"
+        ><Loading v-if="!importJobDone" /><Check v-else /></el-icon>
+        <!-- ready＝停在預覽等他看（`D-123`② 一份本來直接加入，停下來就是有要他核對的）；added＝關著視窗自己加好了 -->
         <span class="src-workbench-link__text">
-          {{ importJobState === 'ready' ? '整理好了，看結果' : importJobState === 'batch' ? '匯入中，還沒跑完…' : '一份資料整理中…' }}
+          {{ importJobState === 'ready' ? '整理好了，等你看一下' : importJobState === 'added' ? '加好了，看結果' : importJobState === 'batch' ? '加入中，還沒跑完…' : '一份資料整理中…' }}
         </span>
         <span class="src-workbench-link__arrow">→</span>
       </button>
@@ -654,7 +655,7 @@
           </div>
           <div class="card-section-stack">
             <p class="src-section-hint">
-              排程會定期重讀這份 Sheet，<strong>一列一條自動套用</strong>（新增/更新/刪除）。你在後台手動編輯過的內容會保留、不被覆蓋。
+              排程每小時重讀這份試算表，<strong>每一列對應一條，自動套用</strong>（新增／更新／刪除）。你在這裡手動改過的那幾條會保留、不被覆蓋。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="同步頻率" tight />
@@ -894,7 +895,7 @@
         </template>
         <div class="text-xs">
           網頁可能改版成動態載入、或暫時故障——下方大量「移除」很可能是<strong>抓不到</strong>，不是內容真的下架。
-          <strong>建議先按取消、不要套用</strong>；若網頁確實改版了，請把內容複製下來改用「貼上文字」重新匯入。
+          <strong>建議先按取消、不要套用</strong>；若網頁確實改版了，請把內容複製下來，在「加入知識」直接貼進框裡。
         </div>
       </el-alert>
 
@@ -3314,11 +3315,12 @@ async function startResync(force = false) {
       if (resyncJobId.value) {
         apiFetch(`/api/ai/knowledge/preview-jobs/${resyncJobId.value}`, { method: 'DELETE' }).catch(() => {})
       }
-      showToast('這個網頁整理太久,這次先停了;你的知識沒有被改動。可以再按一次重新同步,或把內容複製下來用「貼上文字」匯入。', 'warning')
+      // 「貼上文字」不是畫面上任何東西的名字（加入視窗只有一個框，2026-10-12 文字審視）
+      showToast('這個網頁整理太久，這次先停了；你的知識沒有被改動。可以再按一次重新同步，或把內容複製下來，在「加入知識」直接貼進框裡。', 'warning')
     }
     else {
       const reason = err?.data?.statusMessage || err?.statusMessage || err?.message || '重新整理沒有完成'
-      showToast(`${reason}。你的知識沒有被改動,可以再試一次;一直失敗的話,請把網頁內容複製下來用「貼上文字」重新匯入,或聯絡我們。`, 'error')
+      showToast(`${reason}。你的知識沒有被改動，可以再試一次；一直失敗的話，請把網頁內容複製下來，在「加入知識」直接貼進框裡，或聯絡我們。`, 'error')
     }
   }
   finally {
@@ -3530,7 +3532,8 @@ const importOpen = ref(false)
  * 匯入視窗關著時,側欄要看得到「還在整理／整理好了」。
  * 匯入的等待畫面請使用者去做別的事,這裡就是他回來時的入口。
  */
-const importJobState = ref<'running' | 'batch' | 'ready' | 'none'>('none')
+const importJobState = ref<'running' | 'batch' | 'ready' | 'added' | 'none'>('none')
+const importJobDone = computed(() => importJobState.value === 'ready' || importJobState.value === 'added')
 /** `?import=1&url=…` 帶進來的網址：開通精靈的「把網站整理成知識卡」會這樣過來（`C-221`） */
 const importPrefill = ref('')
 function goImport() { importOpen.value = true }
@@ -3890,11 +3893,12 @@ async function downloadOriginal() {
   }
 }
 // ─── Display helpers ───────────────────────────────────
+// 叫法跟「加入知識」視窗同一套（2026-10-12 文字審視：試算表不叫 Sheet、貼進來的文字不叫手打）
 function typeEmoji(t: string | undefined) {
-  return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Sheet' : '文字'
+  return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? '試算表' : '文字'
 }
 function typeLabel(t: string) {
-  return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Google Sheet' : '手打'
+  return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Google 試算表' : '一段文字'
 }
 function statusLabel(s: string) {
   return s === 'ready' ? '可用' : s === 'fetching' ? '抓取中' : s === 'splitting' ? '整理中' : '失敗'

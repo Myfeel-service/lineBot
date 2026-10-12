@@ -516,6 +516,25 @@
   color: var(--el-text-color-secondary);
 }
 
+/* 結果頁「存成哪一份」（`D-123`②）：直接加入沒人看過名稱／產品／資料夾，在數字下面補一行；是附註，不搶數字 */
+.kb-result-saved {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-regular);
+}
+
+/*
+ * 「還沒加進去——先看下面的提醒」（`D-123`②）：一份本來會直接加入，停在預覽一定是有要他看的事。
+ * 跟空間不夠、截斷那幾句同一個琥珀（「這件事會讓你少東西」），但要比它們早一眼看到：放在摘要卡上面、字重一級。
+ */
+.kb-preview-stopped {
+  margin: -6px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b45309;
+}
+
 .kb-failed-list {
   margin: 8px 0 0;
   padding-left: 20px;
@@ -800,7 +819,7 @@
     color: var(--el-text-color-secondary);
   }
   /* 「抓不到內容？」「怎麼變成知識？」——細節收在這顆後面（`D-50` 簡化 1）。
-     刻意做成文字連結而非按鈕:它是可選的補充,不該跟「先看 AI 整理的結果」爭主動作 */
+     刻意做成文字連結而非按鈕:它是可選的補充,不該跟「整理並加入」爭主動作 */
   &__more {
     flex: none;
     padding: 0;
@@ -885,28 +904,35 @@
     color: var(--text-primary);
   }
 
-  &__chips {
-    display: flex;
-    flex-wrap: wrap;
+  /* 「手上有什麼？」四格（五版，`D-123`）：一格一個名稱＋一行「適合誰」。
+     四格等寬一排（視窗 760px 每格約 170px，說明一行到兩行）；窄到放不下時兩格一排。
+     ⛔ 一格只講「這是什麼、適合誰」，不再寫「之後改了會怎樣」——那句選了之後判別結果那一行才講。 */
+  &__tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
+
+    @media (max-width: 560px) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
-  /* 選項膠囊：同 .kb-site-group-chip 的語彙（這一頁的「可選分類」都長這樣） */
-  &__chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+  &__tile {
+    display: grid;
+    align-content: start;
+    gap: 3px;
+    min-width: 0;
+    padding: 10px 10px 9px;
     border: 1px solid var(--el-border-color);
-    border-radius: 999px;
+    border-radius: 8px;
     background: var(--el-bg-color);
-    padding: 4px 12px;
-    font-size: 13px;
     color: var(--text-primary);
+    font: inherit;
+    text-align: left;
     cursor: pointer;
 
-    &:hover {
+    &:hover:not(:disabled) {
       border-color: var(--el-color-primary);
-      color: var(--el-color-primary);
     }
 
     &:focus-visible {
@@ -914,39 +940,58 @@
       outline-offset: 2px;
     }
 
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
     &.is-active {
       border-color: var(--el-color-primary);
+      box-shadow: inset 0 0 0 1px var(--el-color-primary);
       background: var(--el-color-primary-light-9);
+    }
+  }
+
+  &__tile-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13.5px;
+    font-weight: 600;
+
+    .el-icon {
+      flex: none;
       color: var(--el-color-primary);
     }
   }
 
-  /* 膠囊裡的小註：比主文字輕一階。
-     2026-09-13 三版換口徑：小註從「準備時間」改成「之後改了會怎樣」——那才是各條路真正的差別，
-     準備時間搬到各自面板的第一行（.kb-start__ptxt--lead 或第一句）。⛔ 別改回寫時間：
-     順序已經改成試算表優先，而準備時間正好是試算表最吃虧的維度，寫回去等於自打嘴巴。
-     四版加到五條（改了自動更新／改了自己編／改了會通知你／改了要重傳 ×2）後，
-     ⛔ **五顆一律回答同一個問題**：只要有一顆答的是別的（例如官網原本掛「最快」），
-     這一欄就不能橫著比，等於白寫。 */
-  &__chip-tag {
-    font-size: 11px;
+  &__tile-sub {
+    font-size: 11.5px;
+    line-height: 1.45;
     color: var(--el-text-color-secondary);
-  }
-  &__chip.is-active &__chip-tag,
-  &__chip:hover &__chip-tag {
-    color: inherit;
-    opacity: 0.75;
   }
 
-  /* 「還有兩種不在這個視窗」（2026-09-13 四版）：手寫單卡與「AI 建議補的知識」都在背後那一頁上。
-     老闆「這是教學匯入方式，應該要把能怎麼做都列出教學」——教材要完整，
-     ⛔ 但這兩種在這個視窗按不到，所以是一行指路、不是第六第七顆膠囊（按了沒反應的按鈕最傷）。
-     壓灰是對的：它不是「現在要挑的選項」，是挑完之後才用得上的去處。 */
-  &__more {
-    margin: 12px 0 0;
+  /* 「看圖怎麼按」：文字按鈕，跟面板裡的連結同一種綠；三張真截圖收在它底下 */
+  &__fold {
+    margin-left: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
     font-size: 12px;
-    line-height: 1.8;
-    color: var(--el-text-color-secondary);
+    color: var(--el-color-primary);
+    cursor: pointer;
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
+  }
+
+  &__shots {
+    display: grid;
+    gap: 6px;
+    margin-top: 6px;
   }
 
   /* 點開的那一條：灰底面板（容器已改白底，層次對調）；一次只會有一個 */
@@ -983,43 +1028,6 @@
           這個 8px 會跟 .kb-start__ptxt 的 `& + &` 7px 疊成 15px，第一行看起來像被孤立。 */
     &--lead {
       margin-bottom: 8px;
-    }
-
-    /* 有標籤的那兩行：標籤與句子左右並排，折行後的字跟第一行對齊（不要跑到標籤底下）。
-       ⚠️ 這裡**可以**用 flex，因為模板把整句包在一個 `<span>` 裡＝只有兩個項目；
-          ⛔ 沒包的話 flex 會把句子與 `<strong>` 各自當成項目、用 gap 切開句子
-             （這個檔案已經踩過兩次）。
-       ⚠️ 先試過 `padding-left + 負 text-indent` 的懸掛縮排，實測**把標籤推出面板外**
-          （左邊被裁成「以貼」「不到」），已放棄那條路。 */
-    &--lbl {
-      display: flex;
-      align-items: baseline;
-      gap: 0;
-    }
-  }
-
-  /* 「可以貼」／「抓不到」的標籤。
-     ⛔ 顏色只給標籤，句子維持中性色——前一版把整句「抓不到⋯」上琥珀色，
-        整句著色等於整句在喊，讀者反而找不到重點（老闆 09-03 反映後改）。
-     ⛔「抓不到」用琥珀不用紅：那是限制不是故障。 */
-  &__lbl {
-    display: inline-block;
-    flex: none;
-    margin-right: 6px;
-    padding: 1px 7px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
-    vertical-align: 1px;
-
-    &--ok {
-      background: var(--el-color-primary-light-9);
-      color: var(--el-color-primary);
-    }
-    &--no {
-      background: var(--el-color-warning-light-9);
-      color: var(--el-color-warning-dark-2);
     }
   }
 

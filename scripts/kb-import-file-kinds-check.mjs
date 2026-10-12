@@ -14,7 +14,7 @@
  *    - 瀏覽器裡**所有不是 GET 的 /api 請求一律攔下回假的 200**，⛔ 一個都不會送到伺服器
  *      （所以就算哪裡自己觸發了上傳／整理，也不會建出任何東西）；跑完列出攔了哪些
  *    - 導覽「看過了」也攔下來回假的（不寫 `adminUserPrefs`，不必還原）
- *    - 第一段不按「先看 AI 整理的結果」：只驗選檔、判別、錯誤訊息
+ *    - 第一段不按「整理並加入」：只驗選檔、判別、錯誤訊息
  *    - 第二段（空間不夠時收到滿為止，`C-296`②）會按到底，但上傳、建整理工作、輪詢、匯入
  *      **全部在瀏覽器裡回假的**——沒有一支送到伺服器，也不花 AI 的錢
  *    - 之後各段（一次好幾份、同名、空間滿、重試、504、取消後重來）同一套：全部回假的
@@ -260,12 +260,16 @@ try {
 
   await (await quotaPage.$('.kb-file-input')).uploadFile(pathOf.docx)
   await sleep(500)
-  await quotaPage.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+  await quotaPage.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
   const previewShown = await waitFor(quotaPage, () => document.querySelector('.kb-preview-summary')?.innerText.includes('14'))
   if (!previewShown) {
     const onScreen = await quotaPage.$eval('.el-dialog__body', el => el.innerText.slice(0, 400)).catch(() => '（讀不到視窗）')
     throw new Error(`假的整理結果沒有出現在預覽頁；畫面上是：${onScreen.replace(/\n/g, ' ／ ')}`)
   }
+  // `D-123`②：一份本來直接加入，放不下就要停在這裡給他看，而且沒有先送出任何一條
+  const stoppedLine = await quotaPage.$eval('.kb-preview-stopped', el => el.innerText).catch(() => '')
+  if (stoppedLine.includes('還沒加進去') && bulkBody === null) pass('空間放不下 → 停在預覽、講「還沒加進去」，一條都沒先送')
+  else fail('放不下卻沒有停下來', `stopped=${stoppedLine} bulk=${JSON.stringify(bulkBody)?.slice(0, 80)}`)
   // SHOT_DIR=… 會存畫面（文字對了但破版，斷言看不出來）
   if (process.env.SHOT_DIR) await (await quotaPage.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-quota-preview.png') })
   const summary = await quotaPage.$eval('.kb-preview-summary', el => el.innerText)
@@ -373,7 +377,7 @@ try {
   if (listed && docRow.includes('不收') && docRow.includes('另存新檔')) pass(`選 4 份 → 換到逐份清單；收不了的那份留在清單上講原因：「${docRow}」`)
   else fail('一次好幾份的清單不對', rowsText.join('\n     '))
   const startLabel = await batchPage.$eval('.kb-import-actions .el-button--primary', el => el.innerText.trim())
-  if (startLabel === '整理並匯入這 3 份') pass(`主按鈕只算收得下的：「${startLabel}」`)
+  if (startLabel === '整理並加入這 3 份') pass(`主按鈕只算收得下的：「${startLabel}」`)
   else fail('主按鈕的份數不對', startLabel)
 
   await batchPage.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
@@ -563,7 +567,7 @@ try {
     const listShown = !!(await pg.$('.kb-site-row'))
     const toasts = await pg.$$eval('.toast', els => els.map(e => e.innerText))
     if (fileShown === '退換貨政策.docx' && !listShown && toasts.some(t => t.includes('另外 1 份收不了') && t.includes('舊說明書.doc'))) {
-      pass(`兩份裡只有一份收得了 → 走單份路（先預覽），收不了的那份當場講：「${toasts.find(t => t.includes('收不了'))}」`)
+      pass(`兩份裡只有一份收得了 → 走單份路，收不了的那份當場講：「${toasts.find(t => t.includes('收不了'))}」`)
     }
     else fail('一份收得了、一份收不了的情況不對', `file=${fileShown} list=${listShown} toasts=${toasts.join('｜')}`)
     // 第一步的投放區照樣收檔（視窗層的「別讓瀏覽器打開檔案」不可以把它也擋掉）
@@ -580,9 +584,10 @@ try {
     await pg.close()
   }
 
-  // ── 第九段：上傳中按取消、換一份馬上再按 → 舊那一輪不可以復活（不多建工作、不蓋掉新那一份的預覽）──
+  // ── 第九段：上傳中按取消、換一份馬上再按 → 舊那一輪不可以復活（不多建工作、不把舊的那份加進去）──
   {
     const jobsFor = []
+    const bulkNames = []
     let slowPut = true
     const pg = await openImportDialog(async (req) => {
       const url = req.url()
@@ -607,11 +612,17 @@ try {
         const name = jobsFor[Number(pj[1]) - 1]
         return json({ status: 'done', sourceName: name, sourceType: 'file', chunks: [{ title: `${name} 的內容`, content: '內容', tags: [], questions: [] }], warnings: [], existingMatches: [], contentHash: 'h' })
       }
+      // 一份直接加入（`D-123`②）：加入那一下也回假的，記下加的是哪一份
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulkNames.push(b.source?.name)
+        return json({ sourceId: 'race-src', total: 1, indexed: 1, failed: 0, originalKept: true, items: [] })
+      }
       return undefined
     })
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
     await sleep(400)
-    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
     await waitFor(pg, () => !!document.querySelector('.kb-waiting'), null, 5000)
     await pg.evaluate(() => document.querySelector('.kb-waiting .el-button')?.click())
     await sleep(300)
@@ -619,15 +630,14 @@ try {
     await sleep(300)
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.csv)
     await sleep(400)
-    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
-    await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
-    await sleep(3500) // 等舊那一輪的慢上傳回來：它要是復活，會在這段時間多建一份工作、把預覽換掉
-    // 預覽摘要那一行寫著「名稱：…」：被舊那一輪蓋掉的話會變成退換貨政策.docx
-    const summaryNow = await pg.$eval('.kb-preview-summary', el => el.innerText).catch(() => '')
-    if (jobsFor.length === 1 && jobsFor[0] === '商品匯出.csv' && summaryNow.includes('商品匯出.csv') && !summaryNow.includes('退換貨政策')) {
-      pass('上傳中取消、換一份馬上再按 → 舊那一輪沒有復活（只建了新那一份的工作，預覽沒被換掉）')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 20_000)
+    await sleep(3500) // 等舊那一輪的慢上傳回來：它要是復活，會在這段時間多建一份工作、把舊的那份也加進去
+    const savedNow = await pg.$eval('.kb-result-saved', el => el.innerText).catch(() => '')
+    if (jobsFor.length === 1 && jobsFor[0] === '商品匯出.csv' && bulkNames.join() === '商品匯出.csv' && savedNow.includes('商品匯出.csv')) {
+      pass('上傳中取消、換一份馬上再按 → 舊那一輪沒有復活（只建了新那一份的工作、只加了新那一份）')
     }
-    else fail('取消後舊那一輪復活了', `jobs=${JSON.stringify(jobsFor)} summary=${summaryNow.replace(/\s+/g, ' ').slice(0, 160)}`)
+    else fail('取消後舊那一輪復活了', `jobs=${JSON.stringify(jobsFor)} bulks=${JSON.stringify(bulkNames)} saved=${savedNow.replace(/\s+/g, ' ').slice(0, 160)}`)
     await pg.close()
   }
 
@@ -662,10 +672,10 @@ try {
     await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
     await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
     await waitFor(pg, () => !!document.querySelector('.kb-site-summary'), null, 60_000)
-    // 重試之前：⛔ 不可以寫「沒有匯入」（很可能其實已經在了），而且空間顯示滿了也要按得下去
+    // 重試之前：⛔ 不可以寫「沒有加入」（很可能其實已經在了），而且空間顯示滿了也要按得下去
     const before = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
     const retryEnabled = await pg.$$eval('.kb-import-actions .el-button--primary', els => els.some(b => b.innerText.includes('重試') && !b.disabled && !b.classList.contains('is-disabled')))
-    if (before.includes('待確認') && before.includes('不確定') && !before.includes('沒有匯入') && retryEnabled) pass('兩次都逾時那份標「待確認」、講不確定進去了沒，空間滿了也按得了重試')
+    if (before.includes('待確認') && before.includes('不確定') && !before.includes('沒有加入') && retryEnabled) pass('兩次都逾時那份標「待確認」、講不確定進去了沒，空間滿了也按得了重試')
     else fail('兩次逾時那份的說法或重試鈕不對', `row=${before} retryEnabled=${retryEnabled}`)
     await pg.evaluate(() => [...document.querySelectorAll('.kb-import-actions .el-button--primary')].find(b => b.innerText.includes('重試'))?.click())
     const ok = await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 20_000)
@@ -695,7 +705,8 @@ try {
     })
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
     await sleep(400)
-    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('先看 AI 整理的結果'))?.click())
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    // 同名＋空間滿：兩個理由都要停在預覽（`D-123`②）
     await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
     await pg.evaluate(() => [...document.querySelectorAll('.kb-dedup-row .el-button')].find(b => b.innerText.includes('更新這一份'))?.click())
     await sleep(500)
@@ -710,7 +721,7 @@ try {
     const pg = await openImportDialog((req) => {
       const url = req.url()
       if (url.includes('/api/ai/knowledge/gsheet-probe')) {
-        return json({ status: 'partial', message: '讀得到這份試算表。先看了「說明」這 1 個分頁，前 20 列都沒有資料；另外 6 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。' })
+        return json({ status: 'partial', message: '讀得到這份試算表。先看了「說明」這 1 個分頁，前 20 列都沒有資料；另外 6 個分頁還沒看，資料在那幾頁的話，直接按「整理並加入」就會一起讀。' })
       }
       return undefined
     })
@@ -724,6 +735,272 @@ try {
     const shareRow = !!(await pg.$('.kb-gsheet-share__row'))
     if (probed && state?.cls.includes('is-ok') && state.text.startsWith('✓') && !shareRow) pass('試算表讀得到、只是還有分頁沒看 → 打勾，不出「請共用給這個帳號」那一塊')
     else fail('讀得到的試算表被畫成失敗', JSON.stringify({ state, shareRow }))
+    await pg.close()
+  }
+
+  // ── 第十三段（`D-123`①）：「手上有什麼？」四格；試算表那格三步、圖收著、主按鈕在第一屏 ──
+  {
+    const pg = await openImportDialog()
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-start-tiles.png') })
+    const tiles = await pg.$$eval('.kb-start__tile-name', els => els.map(e => e.innerText.trim()))
+    if (tiles.join('／') === '檔案／官網／Google 試算表／還沒整理好') pass(`起步是四格：${tiles.join('／')}`)
+    else fail('起步格子不對', tiles.join('／'))
+    const clickTile = name => pg.evaluate(n => [...document.querySelectorAll('.kb-start__tile')].find(b => b.innerText.includes(n))?.click(), name)
+
+    await clickTile('官網')
+    await sleep(300)
+    const web = await pg.evaluate(() => ({
+      panel: document.querySelector('.kb-start__panel')?.innerText ?? '',
+      focused: document.activeElement?.closest?.('.kb-drop__paste') != null,
+    }))
+    if (web.panel.includes('要登入') && web.focused) pass('點「官網」→ 一行說明＋游標已經在框裡（直接貼）')
+    else fail('「官網」那格不對', JSON.stringify(web))
+
+    await clickTile('Google 試算表')
+    await sleep(300)
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-start-sheet.png') })
+    const sheet = await pg.evaluate(() => {
+      const btn = document.querySelector('[data-tour="kb-preview"]')
+      return {
+        steps: document.querySelectorAll('.kb-start__steps > li').length,
+        shots: document.querySelectorAll('.kb-start__shots .kb-shot').length,
+        btnBottom: btn ? Math.round(btn.getBoundingClientRect().bottom) : -1,
+        vh: window.innerHeight,
+      }
+    })
+    if (sheet.steps === 3 && sheet.shots === 0 && sheet.btnBottom > 0 && sheet.btnBottom <= sheet.vh) pass(`點「Google 試算表」→ 三步、圖先收著，主按鈕在第一屏（底邊 ${sheet.btnBottom}px／視窗 ${sheet.vh}px）`)
+    else fail('「Google 試算表」那格不對', JSON.stringify(sheet))
+    await pg.evaluate(() => document.querySelector('.kb-start__fold')?.click())
+    await sleep(300)
+    const shotsOpen = await pg.$$eval('.kb-start__shots .kb-shot', els => els.length)
+    if (shotsOpen === 3) pass('按「看圖怎麼按」→ 三張真截圖才出來')
+    else fail('「看圖怎麼按」沒有展開三張圖', String(shotsOpen))
+
+    const [chooser] = await Promise.all([
+      pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
+      clickTile('檔案'),
+    ])
+    if (chooser) pass('點「檔案」→ 直接開選檔視窗（不展開一段說明）')
+    else fail('點「檔案」沒有開選檔視窗')
+    if (chooser) await chooser.cancel().catch(() => {})
+    await pg.close()
+  }
+
+  /** 在頁面上裝一個「預覽頁出現過沒有」的記號（直接加入那條路一次都不該經過預覽） */
+  const watchPreview = pg => pg.evaluate(() => {
+    window.__sawPreview = false
+    new MutationObserver(() => { if (document.querySelector('.kb-preview-summary')) window.__sawPreview = true })
+      .observe(document.body, { childList: true, subtree: true })
+  })
+  const STORAGE_OK = { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+
+  // ── 第十四段（`D-123`②）：一份、沒有要核對的 → 不停在預覽、直接加入；結果頁講存成哪一份、整理時的提醒、問要不要做總表 ──
+  {
+    const JOB = 'job-direct'
+    const bulks = []
+    const overviewCalls = []
+    const nine = Array.from({ length: 9 }, (_, i) => ({ title: `型號 ${i + 1}`, content: `規格 ${i + 1}`, tags: [], questions: [] }))
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'chunk' })
+      if (url.includes(`/api/ai/knowledge/preview-jobs/${JOB}`) && m === 'GET') {
+        return json({ status: 'done', sourceName: '退換貨政策.docx', sourceUrl: '', sourceType: 'file', truncated: false, incomplete: false, ocrUsed: false, meta: {}, chunks: nine, overviewCard: null, existingMatches: [],
+          warnings: ['有 2 條含時效性內容（募資／折扣／檔期）——建議點開那幾條設定「有效期限」，活動結束會自動下架，不會過期還照答。'], suggestedProductName: 'W1 智慧手錶', contentHash: 'h' })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        return json({ sourceId: 'auto-src', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
+      }
+      if (url.includes('/api/ai/sources/auto-src/overview') && m === 'POST') { overviewCalls.push(url); return json({ outcome: 'created', made: true }) }
+      return undefined
+    })
+    await watchPreview(pg)
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    const done = await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 30_000)
+    const sawPreview = await pg.evaluate(() => window.__sawPreview)
+    if (done && !sawPreview && bulks.length === 1 && bulks[0].chunks.length === 9 && bulks[0].importId === JOB) pass('一份、沒有要核對的 → 沒經過預覽頁、直接加入 9 條（帶整理工作編號，逾時重送不重複）')
+    else fail('一份沒有直接加入', JSON.stringify({ done, sawPreview, bulks: bulks.map(b => b.chunks?.length) }))
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-direct-result.png') })
+    const r = await pg.evaluate(() => ({
+      label: document.querySelector('.kb-step-label')?.innerText ?? '',
+      saved: document.querySelector('.kb-result-saved')?.innerText ?? '',
+      warn: document.querySelector('.kb-health-warnings')?.innerText ?? '',
+      offer: document.querySelector('.kb-overview-suggest')?.innerText ?? '',
+      primary: [...document.querySelectorAll('.kb-import-actions .el-button--primary')].map(b => b.innerText.trim()).join('／'),
+      toasts: [...document.querySelectorAll('.toast')].map(t => t.innerText),
+    }))
+    if (r.label.includes('第 3 步') && r.label.includes('加好了') && r.saved.includes('存成「退換貨政策.docx」') && r.saved.includes('產品：W1 智慧手錶') && r.saved.includes('AI 猜的')) pass(`結果頁講存成哪一份、AI 猜的產品：「${r.saved.replace(/\s+/g, ' ').trim()}」`)
+    else fail('結果頁沒講存成哪一份', JSON.stringify(r))
+    if (r.warn.includes('整理時注意到 1 件事') && r.warn.includes('有效期限')) pass('沒經過預覽 → 整理時的提醒改在結果頁講')
+    else fail('結果頁沒講整理時的提醒', r.warn)
+    if (!r.toasts.some(t => t.includes('已加進知識庫') || t.includes('成功匯入'))) pass('視窗開著 → 不另跳「已加入」提示（結果頁就是交代，不講兩次）')
+    else fail('結果頁之外又跳了一次提示', r.toasts.join('｜'))
+    if (r.primary === '打開這一份') pass('右下主按鈕直接講會發生什麼：「打開這一份」')
+    else fail('結果頁主按鈕不對', r.primary)
+    if (r.offer.includes('要不要再做一張') && r.offer.includes('佔 1 條空間')) {
+      await pg.evaluate(() => [...document.querySelectorAll('.kb-overview-suggest .el-button')].find(b => b.innerText.includes('做一張'))?.click())
+      const made = await waitFor(pg, () => document.querySelector('.kb-overview-suggest')?.innerText.includes('做好了'), null, 10_000)
+      if (made && overviewCalls.length === 1) pass('9 條的檔案 → 結果頁問要不要做「我們有賣什麼」，按「做一張」打對的那一份、講做好了')
+      else fail('做總表沒有成功', JSON.stringify({ made, overviewCalls }))
+    }
+    else fail('結果頁沒問要不要做總表', r.offer)
+    await pg.close()
+  }
+
+  // ── 第十五段（`D-123`②）：照片的字是 AI 認的 → 停在預覽給他核對，一條都不先送；按了才加 ──
+  {
+    const JOB = 'job-ocr'
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'ocr' })
+      if (url.includes(`/api/ai/knowledge/preview-jobs/${JOB}`) && m === 'GET') {
+        return json({ status: 'done', sourceName: '價目表.HEIC', sourceUrl: '', sourceType: 'file', truncated: false, ocrUsed: true, meta: { image: 1 }, existingMatches: [], warnings: [], contentHash: 'h',
+          chunks: [{ title: '拿鐵', content: '中杯 60 元', tags: [], questions: [] }, { title: '美式', content: '中杯 50 元', tags: [], questions: [] }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        return json({ sourceId: 'ocr-src', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.heic)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 30_000)
+    const s = await pg.evaluate(() => ({
+      label: document.querySelector('.kb-step-label')?.innerText ?? '',
+      stopped: document.querySelector('.kb-preview-stopped')?.innerText ?? '',
+      ocr: document.querySelector('.kb-ocr-alert')?.innerText ?? '',
+      btn: document.querySelector('.kb-preview-summary__actions .el-button--primary')?.innerText.trim() ?? '',
+    }))
+    if (s.label.includes('加入之前先看一下') && s.stopped.includes('還沒加進去') && s.ocr.includes('這張照片') && s.btn === '加入 2 條' && !bulks.length) pass(`照片 → 停在「加入之前先看一下」、講字是 AI 認的，一條都沒先送（按鈕「${s.btn}」）`)
+    else fail('照片沒有停下來給人核對', JSON.stringify({ ...s, bulks: bulks.length }))
+    await pg.evaluate(() => document.querySelector('.kb-preview-summary__actions .el-button--primary')?.click())
+    const added = await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 15_000)
+    if (added && bulks.length === 1) pass('看完按「加入」→ 才加進去')
+    else fail('看完按加入沒有加進去', JSON.stringify({ added, bulks: bulks.length }))
+    await pg.close()
+  }
+
+  // ── 第十六段：同一份再放一次（內容一模一樣）→「重新整理，換掉那一份」→ 直接換掉原本那一份，不多一份、不改它的產品名 ──
+  {
+    const posts = []
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        posts.push(b)
+        if (!b.ignoreDuplicate) return json({ duplicate: { id: 'old-1', name: '退換貨政策.docx', type: 'file', chunkCount: 3, updatedAtMs: Date.now() - 86400_000 } })
+        return json({ jobId: 'job-redo', status: 'processing', phase: 'chunk' })
+      }
+      if (url.includes('/api/ai/knowledge/preview-jobs/job-redo') && m === 'GET') {
+        return json({ status: 'done', sourceName: '退換貨政策.docx', sourceUrl: '', sourceType: 'file', truncated: false, ocrUsed: false, meta: {}, warnings: [], contentHash: 'h', suggestedProductName: 'AI 猜的別台',
+          chunks: [{ title: '七天鑑賞期', content: '收到後七天內可退', tags: [], questions: [] }],
+          existingMatches: [{ id: 'old-1', name: '退換貨政策.docx', chunkCount: 3, quotaChunkCount: 3, updatedAtMs: 0, type: 'file' }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        return json({ sourceId: 'old-1', total: 1, indexed: 1, failed: 0, replacedChunks: 3, originalKept: true, items: [] })
+      }
+      return undefined
+    })
+    await watchPreview(pg)
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    const dupShown = await waitFor(pg, () => document.querySelector('.kb-dup-content')?.innerText.includes('重新整理，換掉那一份'), null, 15_000)
+    if (dupShown) pass('內容一模一樣 → 先停下來，給「看那一份」與「重新整理，換掉那一份」')
+    else fail('內容一模一樣沒有停下來')
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-dup-content .el-button')].find(b => b.innerText.includes('換掉那一份'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 30_000)
+    const b = bulks[0]
+    const resultText = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    const sawPreview = await pg.evaluate(() => window.__sawPreview)
+    if (posts.length === 2 && posts[1].ignoreDuplicate === true && bulks.length === 1 && b.replaceSourceId === 'old-1' && !b.source?.productName && !sawPreview) {
+      pass('按「重新整理，換掉那一份」→ 直接換掉原本那一份（帶它的 id、不帶 AI 猜的產品名、沒停在預覽）')
+    }
+    else fail('「換掉那一份」不對', JSON.stringify({ posts: posts.length, ignore: posts[1]?.ignoreDuplicate, replace: b?.replaceSourceId, product: b?.source?.productName, sawPreview }))
+    if (resultText.includes('原本的 3 條知識已換成上面這批') && !resultText.includes('AI 猜的別台')) pass('結果頁講舊的 3 條去哪了、不把沒帶過去的產品名講成存進去的')
+    else fail('結果頁說法不對', resultText.slice(0, 300))
+    await pg.close()
+  }
+
+  // ── 第十七段（`D-123`②）：整理中關掉視窗 → 好了自己加進去、講一句、側欄留「加好了，看結果」──
+  {
+    let polls = 0
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: 'job-bg', status: 'processing', phase: 'chunk' })
+      if (url.includes('/api/ai/knowledge/preview-jobs/job-bg') && m === 'GET') {
+        if (++polls <= 3) return json({ status: 'processing', phase: 'chunk', progress: { done: polls, total: 4, label: '整理' } })
+        return json({ status: 'done', sourceName: '商品匯出.csv', sourceUrl: '', sourceType: 'file', truncated: false, ocrUsed: false, meta: {}, warnings: [], existingMatches: [], contentHash: 'h',
+          chunks: [{ title: 'W1', content: '12,900 元', tags: [], questions: [] }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        bulks.push(1)
+        return json({ sourceId: 'bg-src', total: 1, indexed: 1, failed: 0, originalKept: true, items: [] })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.csv)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-waiting'), null, 5000)
+    const note = await pg.$eval('.kb-waiting__note', el => el.innerText).catch(() => '')
+    await pg.evaluate(() => document.querySelector('.kb-import-dialog .el-dialog__headerbtn')?.click())
+    const toasted = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('「商品匯出.csv」已加進知識庫')), null, 30_000)
+    const link = await pg.$eval('.src-import-link', el => el.innerText.replace(/\s+/g, ' ').trim()).catch(() => '')
+    if (note.includes('整理好會自己加進知識庫') && toasted && bulks.length === 1 && link.includes('加好了，看結果')) pass(`整理中關掉視窗 → 好了自己加進去、跳一句「已加進知識庫」，側欄留「${link}」`)
+    else fail('關掉視窗後沒有自己加進去／沒交代', JSON.stringify({ note, toasted, bulks: bulks.length, link }))
+    await pg.evaluate(() => document.querySelector('.src-import-link')?.click())
+    const reopened = await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 5000)
+    if (reopened) pass('點側欄那一行 → 回到結果頁（AI 開了沒、要不要做總表都還看得到）')
+    else fail('點側欄沒有回到結果頁')
+    await pg.close()
+  }
+
+  // ── 第十八段：試算表讀得到但沒資料 → ⛔ 不叫人去分享（不出帳號、按鈕不寫「分享好了」）──
+  {
+    const pg = await openImportDialog((req) => {
+      if (req.url().includes('/api/ai/knowledge/gsheet-probe')) return json({ status: 'no_data', message: '讀得到這份試算表，但「封面」分頁的前 20 列都沒有資料（要有一列欄位名稱＋至少一列資料）。' })
+      return undefined
+    })
+    await pg.evaluate(() => {
+      const ta = document.querySelector('.kb-drop__paste textarea')
+      ta.value = 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit#gid=0'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await waitFor(pg, () => document.querySelector('.kb-gsheet-share__state')?.innerText.includes('沒有資料'), null, 15_000)
+    const share = await pg.evaluate(() => ({
+      email: !!document.querySelector('.kb-gsheet-share .kb-gsheet-email'),
+      btn: [...document.querySelectorAll('.kb-gsheet-share__row .el-button')].map(b => b.innerText.trim()).join('／'),
+    }))
+    if (!share.email && share.btn === '再測一次') pass('沒資料的試算表 → 不出帳號、按鈕叫「再測一次」（不叫人回頭去分享）')
+    else fail('沒資料的試算表還是叫人去分享', JSON.stringify(share))
     await pg.close()
   }
 }
