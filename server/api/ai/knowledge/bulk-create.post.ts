@@ -33,7 +33,7 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   file: '檔案',
   url: '網址',
   gsheet: 'Google 試算表',
-  manual: '手打文字',
+  manual: '一段文字', // 跟加入視窗同一個叫法（2026-10-12 文字審視）
 }
 
 /** 會建（或更新）一份資料的匯入種類；其餘的卡不掛在任何資料底下 */
@@ -134,10 +134,11 @@ export default defineEventHandler(async (event) => {
 
   const rawChunks = Array.isArray(body?.chunks) ? body.chunks : []
   if (!rawChunks.length) {
-    throw createError({ statusCode: 400, statusMessage: '請至少選擇一張卡片匯入' })
+    // 加入視窗從頭到尾講「條」、動詞是「加入」（2026-10-12 文字審視），伺服器的話也照同一套
+    throw createError({ statusCode: 400, statusMessage: '請至少選一條再加入' })
   }
   if (rawChunks.length > MAX_BULK_CHUNKS) {
-    throw createError({ statusCode: 400, statusMessage: `單次最多匯入 ${MAX_BULK_CHUNKS} 張卡` })
+    throw createError({ statusCode: 400, statusMessage: `一次最多加入 ${MAX_BULK_CHUNKS} 條` })
   }
 
   const inputs = rawChunks.map(normalizeChunkInput)
@@ -267,7 +268,7 @@ export default defineEventHandler(async (event) => {
     let gsheetFields: Record<string, unknown> = {}
     if (sourceType === 'gsheet') {
       const ref = parseGoogleSheetUrl(sourceUrl)
-      if (!ref) throw createError({ statusCode: 400, statusMessage: '無效的 Google Sheet 連結' })
+      if (!ref) throw createError({ statusCode: 400, statusMessage: '這不是有效的 Google 試算表連結' })
       gsheetFields = {
         gsheetId: ref.spreadsheetId,
         gsheetGid: ref.gid,

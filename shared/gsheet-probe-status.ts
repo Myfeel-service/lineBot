@@ -42,7 +42,8 @@ export function classifyGsheetProbeError(raw: string): { status: GsheetProbeStat
   if (/Office file|上傳的 Excel/.test(text)) {
     return { status: 'bad_file', needsShare: false }
   }
-  if (/讀不到這份 Google Sheet|尚未在.*啟用|SERVICE_DISABLED/.test(text)) {
+  // 2026-10-12 那句原文從「Google Sheet」改叫「Google 試算表」（文字審視）；舊說法留著，免得哪裡還存著舊句子就分錯
+  if (/讀不到這份 Google (?:Sheet|試算表)|尚未在.*啟用|SERVICE_DISABLED/.test(text)) {
     return { status: 'no_access', needsShare: true }
   }
   return { status: 'unknown', needsShare: false }

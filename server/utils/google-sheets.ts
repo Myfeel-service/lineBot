@@ -130,7 +130,10 @@ async function sheetsApi<T>(path: string): Promise<T> {
       statusCode: 422,
       statusMessage: apiDisabled
         ? `Google Sheets API 尚未在「服務帳號所屬的專案」啟用。請依 Google 指示的連結（含正確專案編號）啟用後等 1–2 分鐘再試。Google 原始訊息：${googleMsg}`
-        : `讀不到這份 Google Sheet（${res.status}）。請把表單「分享」給服務帳號：${email}（檢視權限即可，並取消勾選「通知使用者」）。Google 原始訊息：${googleMsg}`,
+        // 用詞跟加入視窗同一套（2026-10-12 文字審視）：「試算表」不叫 Sheet／表單、「共用」不叫分享；
+        // 那個勾選框不點名（Google 的字我們截圖上看不到，講錯名字比不講糟），只講「不用通知對方」。
+        // ⚠️ 開頭那幾個字是 shared/gsheet-probe-status 的分類依據，改的話兩邊一起改
+        : `讀不到這份 Google 試算表（${res.status}）。請把試算表「共用」給服務帳號：${email}（檢視者就夠，不用通知對方）。Google 原始訊息：${googleMsg}`,
     })
   }
   if (res.status === 400) {
@@ -140,7 +143,8 @@ async function sheetsApi<T>(path: string): Promise<T> {
     if (/must not be an Office file|not supported for this document/i.test(body)) {
       throw createError({
         statusCode: 422,
-        statusMessage: '這個連結是「上傳的 Excel 檔」（還沒轉成 Google 試算表），系統讀不到。請在 Google 試算表裡點「檔案 → 另存為 Google 試算表」，用轉好的新檔分享給服務帳號、再貼新連結；或直接改用「下載 FAQ 範本」在 Google 雲端硬碟新建試算表。',
+        // ⛔ 以前最後一句叫人「改用『下載 FAQ 範本』在雲端硬碟新建」：那顆下載的是 .xlsx，而貼了連結之後起步那幾格是收起來的（2026-10-12 文字審視）
+        statusMessage: '這個連結是「上傳的 Excel 檔」（還沒轉成 Google 試算表），系統讀不到。請在 Google 試算表裡點「檔案 → 另存為 Google 試算表」，把轉好的新檔共用給服務帳號，再貼新的連結。',
       })
     }
     throw createError({ statusCode: 502, statusMessage: `Google Sheets API 錯誤 400：${body.slice(0, 200)}` })
@@ -401,7 +405,8 @@ export async function readGoogleSheetAsCards(
   }
 
   if (!collector.stats.rowCount) {
-    throw createError({ statusCode: 422, statusMessage: '這份試算表沒有足夠資料（需要表頭列 + 至少一列資料）' })
+    // 「沒有足夠資料」是 shared/gsheet-probe-status 的分類依據，改字時留著這幾個字
+    throw createError({ statusCode: 422, statusMessage: '這份試算表沒有足夠資料（要有一列欄位名稱＋至少一列資料）' })
   }
 
   const readTitles = targets.map(t => t.title)
@@ -979,7 +984,7 @@ export function sheetHealthWarnings(cards: SheetCard[], stats: SheetImportStats,
   }
 
   if (stats.duplicateTitles.length) {
-    warnings.push(`有重複的問題（標題），已自動合併成同一張卡，請確認內容：${listTitles(stats.duplicateTitles)}`)
+    warnings.push(`有重複的問題（標題），已自動合併成同一條，請確認內容：${listTitles(stats.duplicateTitles)}`)
   }
 
   if (stats.blankAnswerTitles.length) {
@@ -1013,7 +1018,8 @@ export function sheetHealthWarnings(cards: SheetCard[], stats: SheetImportStats,
   }
 
   if (mergeCount > 0) {
-    warnings.push(`偵測到 ${mergeCount} 處合併儲存格（已自動展開），請確認下方每張卡的內容正確；建議改為一列一題、不使用合併儲存格`)
+    // 「下方」看不到卡：逐條清單預設收著、直接加入時根本沒有預覽頁（2026-10-12 文字審視）
+    warnings.push(`偵測到 ${mergeCount} 處合併儲存格（已自動展開），請點開確認那幾條的內容；建議改成一列一題、不用合併儲存格`)
   }
 
   return warnings

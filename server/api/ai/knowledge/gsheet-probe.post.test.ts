@@ -30,7 +30,7 @@ describe('gsheet-probe 沒找到資料時怎麼講', () => {
     probeGoogleSheetAccess.mockResolvedValue({ sheetTitle: '封面', sheetTitles: ['封面', '目錄'], checkedTitles: ['封面', '目錄'], hasData: false })
     const r = await run()
     expect(r.status).toBe('no_data')
-    expect(r.message).toBe('讀得到這份試算表，但「封面」、「目錄」這幾個分頁的前 20 列都沒有資料（需要表頭列 ＋ 至少一列資料）。')
+    expect(r.message).toBe('讀得到這份試算表，但「封面」、「目錄」這幾個分頁的前 20 列都沒有資料（要有一列欄位名稱＋至少一列資料）。')
   })
 
   it('還有沒看的頁 → 不說「沒資料」：只點名看過的那幾頁、講還有幾頁沒看、叫他直接整理', async () => {
@@ -43,7 +43,7 @@ describe('gsheet-probe 沒找到資料時怎麼講', () => {
     const r = await run()
     // 讀得到，只是還有分頁沒看：⛔ 不可以是 'unknown'（那是錯誤，畫面會畫紅叉、叫人去重新分享）
     expect(r.status).toBe('partial')
-    expect(r.message).toBe('讀得到這份試算表。先看了「A」、「B」、「C」、「D」、「E」這 5 個分頁，前 20 列都沒有資料；另外 2 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。')
+    expect(r.message).toBe('讀得到這份試算表。先看了「A」、「B」、「C」、「D」、「E」這 5 個分頁，前 20 列都沒有資料；另外 2 個分頁還沒看，資料在那幾頁的話，直接按「整理並加入」就會一起讀。')
     expect(r.message).not.toContain('「F」')
   })
 

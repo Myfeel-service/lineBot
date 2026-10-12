@@ -7,6 +7,11 @@ import { classifyGsheetProbeError, GSHEET_PROBE_READABLE } from './gsheet-probe-
  */
 describe('classifyGsheetProbeError', () => {
   it('沒分享給服務帳號 → 叫人去按分享', () => {
+    const raw = '讀不到這份 Google 試算表（403）。請把試算表「共用」給服務帳號：bot@x.iam.gserviceaccount.com（檢視者就夠，不用通知對方）。Google 原始訊息：The caller does not have permission'
+    expect(classifyGsheetProbeError(raw)).toEqual({ status: 'no_access', needsShare: true })
+  })
+
+  it('2026-10-12 以前的說法（Google Sheet）也認得', () => {
     const raw = '讀不到這份 Google Sheet（403）。請把表單「分享」給服務帳號：bot@x.iam.gserviceaccount.com（檢視權限即可，並取消勾選「通知使用者」）。Google 原始訊息：The caller does not have permission'
     expect(classifyGsheetProbeError(raw)).toEqual({ status: 'no_access', needsShare: true })
   })
@@ -17,7 +22,7 @@ describe('classifyGsheetProbeError', () => {
   })
 
   it('分享好了但沒有資料 → 不要叫人再去分享一次', () => {
-    const raw = '這份試算表沒有足夠資料（需要表頭列 + 至少一列資料）'
+    const raw = '這份試算表沒有足夠資料（要有一列欄位名稱＋至少一列資料）'
     expect(classifyGsheetProbeError(raw)).toEqual({ status: 'no_data', needsShare: false })
   })
 
@@ -30,8 +35,8 @@ describe('classifyGsheetProbeError', () => {
    * ⚠️ 這條是規則順序的守門測試。Excel 檔那句原文裡**也有**「分享給服務帳號」幾個字，
    * 若 no_access 的規則排在前面，就會叫人一直去按分享，而真正該做的是先轉檔。
    */
-  it('上傳的 Excel 檔（訊息裡也有「分享給服務帳號」）→ 要判成要轉檔，不是要分享', () => {
-    const raw = '這個連結是「上傳的 Excel 檔」（還沒轉成 Google 試算表），系統讀不到。請在 Google 試算表裡點「檔案 → 另存為 Google 試算表」，用轉好的新檔分享給服務帳號、再貼新連結；或直接改用「下載 FAQ 範本」在 Google 雲端硬碟新建試算表。'
+  it('上傳的 Excel 檔（訊息裡也有「共用給服務帳號」）→ 要判成要轉檔，不是要分享', () => {
+    const raw = '這個連結是「上傳的 Excel 檔」（還沒轉成 Google 試算表），系統讀不到。請在 Google 試算表裡點「檔案 → 另存為 Google 試算表」，把轉好的新檔共用給服務帳號，再貼新的連結。'
     expect(classifyGsheetProbeError(raw)).toEqual({ status: 'bad_file', needsShare: false })
   })
 

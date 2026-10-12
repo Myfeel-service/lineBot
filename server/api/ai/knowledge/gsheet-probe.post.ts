@@ -49,12 +49,13 @@ export default defineEventHandler(async (event) => {
         return {
           status: 'partial' as const,
           message: `讀得到這份試算表。先看了${quote(res.checkedTitles)}這 ${res.checkedTitles.length} 個分頁，前 20 列都沒有資料；`
-            + `另外 ${unchecked} 個分頁還沒看，資料在那幾頁的話，直接按「先看 AI 整理的結果」就會一起讀。`,
+            + `另外 ${unchecked} 個分頁還沒看，資料在那幾頁的話，直接按「整理並加入」就會一起讀。`,
         }
       }
+      // 「欄位名稱」不叫「表頭列」：畫面其他地方都叫欄位名稱（2026-10-12 文字審視，同一件事一個叫法）
       return {
         status: 'no_data' as const,
-        message: `讀得到這份試算表，但${res.sheetTitles.length > 1 ? `${tabs}這幾個分頁` : `${tabs}分頁`}的前 20 列都沒有資料（需要表頭列 ＋ 至少一列資料）。`,
+        message: `讀得到這份試算表，但${res.sheetTitles.length > 1 ? `${tabs}這幾個分頁` : `${tabs}分頁`}的前 20 列都沒有資料（要有一列欄位名稱＋至少一列資料）。`,
       }
     }
     // ⛔ 不報總列數：只讀了前 20 列，算不出全表有幾列（報一個算錯的數字比不報更糟）

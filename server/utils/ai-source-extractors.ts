@@ -472,7 +472,8 @@ export function extractionQualityWarnings(sourceType: string, text: string, trun
   const len = text.trim().length
   if (len > 0 && len < 300) {
     warnings.push(sourceType === 'url'
-      ? `這個網址只擷取到約 ${len} 字——很可能是動態網頁（內容由程式載入），伺服器抓不到主要內容。建議改用靜態的商品列表頁網址，或直接複製頁面文字用「貼上文字」匯入。`
+      // 「貼上文字」不是畫面上任何東西的名字（加入視窗只有一個框，2026-10-12 文字審視）：講動作，不講不存在的選項
+      ? `這個網址只擷取到約 ${len} 字——很可能是動態網頁（內容由程式載入），伺服器抓不到主要內容。建議改用靜態的商品列表頁網址，或把頁面上的文字複製、直接貼進加入知識的框。`
       // ⚠️ 不寫「下一步」：一次好幾份（`C-296`④）沒有預覽那一步，叫人「在下一步確認」是指向一個不存在的畫面
       : `只讀到約 ${len} 字，內容可能不完整；請點開確認整理出來的知識對不對。`)
   }
@@ -480,7 +481,7 @@ export function extractionQualityWarnings(sourceType: string, text: string, trun
     // 連結密度過高 = 內文多半是選單 / 頁尾（stripHtml 會把站內連結轉成「錨文字（網址）」）
     const linkCount = (text.match(/https?:\/\//g) ?? []).length
     if (linkCount >= 5 && len / linkCount < 80) {
-      warnings.push('擷取到的內容大多是連結（可能只抓到選單和頁尾、沒抓到主要內容）——若下一步的卡片沒有實質商品內容，請改用商品列表頁網址或直接貼文字。')
+      warnings.push('擷取到的內容大多是連結（可能只抓到選單和頁尾、沒抓到主要內容）——整理出來的知識若沒有實質商品內容，請改用商品列表頁網址或直接貼文字。')
     }
   }
   return warnings
