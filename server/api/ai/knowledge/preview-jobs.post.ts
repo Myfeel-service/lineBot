@@ -200,7 +200,7 @@ export default defineEventHandler(async (event) => {
           work.phase = 'enrich'
         }
         else {
-          setChunkingFromExtracted(work, await readingFile(fileName, () => extractXlsxText(buffer, kind)))
+          setChunkingFromExtracted(work, await readingFile(fileName, () => extractXlsxText(buffer, kind)), { wholeText: kind === 'csv' })
         }
       }
       else if (kind === 'image') {
@@ -232,7 +232,7 @@ export default defineEventHandler(async (event) => {
             work.warnings.push(`有 ${unreadable} 張投影片讀不出來（可能損毀或內容大到不正常），那幾張沒有收進來；請在 PowerPoint 另存一次再傳。`)
           }
         }
-        setChunkingFromExtracted(work, extracted)
+        setChunkingFromExtracted(work, extracted, { wholeText: kind === 'text' })
       }
 
       if (decoded) {
@@ -434,10 +434,14 @@ function cardToChunk(c: { title: string; content: string; tags: string[] }): Chu
   return { title: c.title, content: c.content, tags: c.tags, questions: [], sourceId: null }
 }
 
-/** 有純文字的抽取結果 → 設定切卡階段。空文字直接報錯（即時回饋，不用等輪詢）。 */
+/**
+ * 有純文字的抽取結果 → 設定切卡階段。空文字直接報錯（即時回饋，不用等輪詢）。
+ * wholeText＝文字檔／CSV：讀到的就是整份，字少不講「可能不完整」（見 extractionQualityWarnings）。
+ */
 function setChunkingFromExtracted(
   work: WorkState,
   extracted: { text: string; rawLength: number; meta: Record<string, string | number>; truncatedBySize?: boolean },
+  opts: { wholeText?: boolean } = {},
 ): void {
   if (!extracted.text.trim()) {
     throw createError({ statusCode: 400, statusMessage: '抽出純文字後為空；請確認檔案或連結內容' })
@@ -445,7 +449,7 @@ function setChunkingFromExtracted(
   work.rawLength = extracted.rawLength
   work.truncated = extracted.rawLength > extracted.text.length
   work.meta = extracted.meta
-  work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text, extracted.truncatedBySize === true))
+  work.warnings.push(...extractionQualityWarnings(work.sourceType, extracted.text, extracted.truncatedBySize === true, opts))
   // Word／簡報格式複雜到讀到一半就停（標籤、表格多到不正常，見 office-extractors 的讀取額度）：
   // 讀出來的字沒撞到 10 萬字的話，畫面不會講「已截斷」——⛔ 不另外講，他會以為整份都進來了
   if (Number(extracted.meta.textTruncated ?? 0) === 1 && !work.truncated) {

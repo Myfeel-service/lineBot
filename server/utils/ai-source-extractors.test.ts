@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as XLSX from 'xlsx'
 import { makeZip } from './test-helpers/make-zip'
-import { extractXlsxCards, extractXlsxText, isProbablyScannedPdf, resolveInternalUrl } from './ai-source-extractors'
+import { extractionQualityWarnings, extractXlsxCards, extractXlsxText, isProbablyScannedPdf, resolveInternalUrl } from './ai-source-extractors'
 import { sheetHealthWarnings } from './google-sheets'
 
 // 讀壞檔時會丟 Nuxt 全域的 createError；unit 測試環境沒有，補一個最小版
@@ -360,5 +360,24 @@ describe('壞掉、大到不正常的 xlsx：不卡死、不撐爆記憶體（20
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['品名', '價格'], ['W1', '12,900']]), '價目表')
     const buf = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
     expect(extractXlsxCards(buf)!.cards.map(c => c.title)).toEqual(['W1'])
+  })
+})
+
+describe('extractionQualityWarnings：字很少的時候講什麼', () => {
+  const short = '門市營業時間：週一到週五 9:00 到 18:00。'
+
+  it('⛔ 文字檔／CSV 讀到的就是整份：字少不講「可能不完整」（2026-10-12 真的寫入測試：62 字的 .txt 被掛黃字）', () => {
+    expect(extractionQualityWarnings('file', short, false, { wholeText: true })).toEqual([])
+  })
+
+  it('Word／PDF 字少 → 講少的是寫在圖片上的字、怎麼補', () => {
+    const w = extractionQualityWarnings('file', short)
+    expect(w).toHaveLength(1)
+    expect(w[0]).toContain('寫在圖片上的字')
+    expect(w[0]).not.toContain('可能不完整')
+  })
+
+  it('網址字少照舊講可能是動態網頁（wholeText 只給檔案用）', () => {
+    expect(extractionQualityWarnings('url', short)[0]).toContain('動態網頁')
   })
 })

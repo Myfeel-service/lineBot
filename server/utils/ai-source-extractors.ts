@@ -472,19 +472,23 @@ export async function extractUrlText(url: string): Promise<ExtractedSource> {
  *
  * 匯入與「重新同步」共用同一套判斷:同一個網址在兩條路上要得到同樣的診斷,
  * 否則重新同步的人只會看到籠統的縮水警告,看不到「這是動態網頁,改用列表頁」這句已經寫好的解法。
+ *
+ * opts.wholeText＝這種檔讀到的就是全部（文字檔、CSV）：字少就是檔案本來就短，⛔ 不講「可能不完整」。
+ * 2026-10-12 真的寫入測試抓到：62 字的營業時間 .txt 被標「只讀到約 62 字，內容可能不完整」，一次好幾份那張表兩份都掛黃字，
+ * 店家會以為檔案壞了。Word／PDF 才有「字在圖片上、讀不到」這回事，那兩種照講，而且講清楚少的是哪種內容。
  */
-export function extractionQualityWarnings(sourceType: string, text: string, truncatedBySize = false): string[] {
+export function extractionQualityWarnings(sourceType: string, text: string, truncatedBySize = false, opts: { wholeText?: boolean } = {}): string[] {
   const warnings: string[] = []
   if (truncatedBySize) {
     warnings.push('這個網頁太大（超過 5MB），只讀到前面一段就停了——後半段的內容沒有進知識庫。建議改用內容較少的分頁（例如單一商品頁）當資料來源。')
   }
   const len = text.trim().length
-  if (len > 0 && len < 300) {
+  if (len > 0 && len < 300 && !opts.wholeText) {
     warnings.push(sourceType === 'url'
       // 「貼上文字」不是畫面上任何東西的名字（加入視窗只有一個框，2026-10-12 文字審視）：講動作，不講不存在的選項
       ? `這個網址只擷取到約 ${len} 字——很可能是動態網頁（內容由程式載入），伺服器抓不到主要內容。建議改用靜態的商品列表頁網址，或把頁面上的文字複製、直接貼進加入知識的框。`
       // ⚠️ 不寫「下一步」：一次好幾份（`C-296`④）沒有預覽那一步，叫人「在下一步確認」是指向一個不存在的畫面
-      : `只讀到約 ${len} 字，內容可能不完整；請點開確認整理出來的知識對不對。`)
+      : `只讀到約 ${len} 字；如果檔案裡還有寫在圖片上的字，那些沒有讀到——請把那幾頁存成圖片另外傳上來。`)
   }
   else if (sourceType === 'url') {
     // 連結密度過高 = 內文多半是選單 / 頁尾（stripHtml 會把站內連結轉成「錨文字（網址）」）
