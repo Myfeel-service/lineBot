@@ -13,7 +13,7 @@ import {
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
 import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
-import { cleanupExpiredPreviewJobs, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
+import { cleanupExpiredPreviewJobs, cleanupOrphanJobFiles, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
 import { advanceStalePreviewJobs } from '~~/server/utils/ai-preview-job-runner'
 import { advanceStaleStoreProfileJobs } from '~~/server/utils/store-profile-jobs'
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
@@ -66,6 +66,8 @@ export default defineEventHandler(async (event) => {
     { name: 'store-profile:advance-jobs', run: () => advanceStaleStoreProfileJobs(db) },
     // 取消上傳留下的孤兒檔（只在排程清，不塞進使用者請求路徑——列舉+逐檔刪會拖垮匯入端點）
     { name: 'ai:cleanup-orphan-uploads', run: () => cleanupOrphanUploads() },
+    // 建整理工作被硬砍、只留下暫存檔沒留工作紀錄的（`C-303`⑩）：照紀錄找檔的那支清不到它們
+    { name: 'ai:cleanup-orphan-job-files', run: () => cleanupOrphanJobFiles(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
     // 回收桶到期清運：軟刪除的知識卡（含連坐的 manual 來源）過了 30 天保留期真刪

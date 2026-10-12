@@ -268,6 +268,19 @@ describe('rowsToCards', () => {
     expect(r.cards.map(c => c.title)).toEqual(['退貨?', '運費?'])
   })
 
+  it('只填一格的「問題」底下是純文字（沒問號沒數字）→ 分不出是不是表格標題，照跳；但要記下拿來當欄位名稱的那一列（C-303①）', () => {
+    const r = rowsToCards([
+      ['問題'],
+      ['退貨流程', '寄回原廠', '附上發票'],
+      ['換貨流程', '門市換', '帶收據'],
+    ])
+    expect(r.stats.titleRows).toEqual(['問題'])
+    expect(r.stats.headerRows).toEqual(['退貨流程、寄回原廠、附上發票'])
+    expect(sheetHealthWarnings(r.cards, r.stats)).toContain(
+      '表格最上面的「問題」看起來是表格標題，改用下面那一列（退貨流程、寄回原廠、附上發票）當欄位名稱；如果那一列其實是第一筆資料，請在第 1 列每一欄都填上欄位名稱',
+    )
+  })
+
   it('延續列只加「還沒有的那幾行」：⛔「價格：12」不可以因為上面有「價格：12,900」就被丟掉', () => {
     const r = rowsToCards([
       ['品名', '說明', '價格'],
@@ -329,7 +342,7 @@ describe('sheetHealthWarnings', () => {
   it('跳過的表格標題、接到上一列的延續列都要講出來（C-296：猜的要說）', () => {
     const w = sheetHealthWarnings([card('W1')], stats({ rowCount: 3, titleRows: ['2026 秋季價目表'], continuedRows: 2 }))
     expect(w).toEqual([
-      '表格最上面的「2026 秋季價目表」看起來是表格標題，欄位名稱改用下面那一列；不對的話請把欄位名稱移到第 1 列',
+      '表格最上面的「2026 秋季價目表」看起來是表格標題，改用下面那一列當欄位名稱；如果那一列其實是第一筆資料，請在第 1 列每一欄都填上欄位名稱',
       '有 2 列第一欄空白，已當成上一列的延續、併進同一條（例：同一個商品的第二行規格）',
     ])
   })
@@ -460,6 +473,25 @@ describe('readGoogleSheetAsCards（多分頁彙總，注入假 API）', () => {
     expect(legacy.cards.map(c => c.title)).toEqual(['退款多久?', '運費?'])
     const fresh = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, price]), NEW_RULES)
     expect(fresh.cards.map(c => c.title)).toEqual(['退款多久?', '運費?', 'W1'])
+  })
+
+  it('只有一欄的分頁不算表格、列進「沒收進來」（跟 Excel 同一把尺，C-303②）；舊來源照舊讀', async () => {
+    // 店家拿來記事的分頁：A 欄一路寫下去，B 欄以後全空（Sheets API 會把尾端空格省掉）
+    const memo: FakeSheet = { sheetId: 4, title: '備忘', values: [['週一進貨'], ['週三盤點'], ['', ''], ['月底對帳']] }
+    const fresh = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([faq, memo]), NEW_RULES)
+    expect(fresh.cards.map(c => c.title)).toEqual(['退款多久?', '運費?'])
+    expect(fresh.emptySheets).toEqual(['備忘'])
+
+    // 已經在同步的舊表：換規則＝下一輪同步把那幾張卡整批刪掉，所以舊表一張都不能少
+    const before = await readGoogleSheetAsCards({ spreadsheetId: 's', gid: '4' }, makeApi([faq, memo]), { legacy: true })
+    expect(before.emptySheets).toEqual([])
+    expect(before.cards.length).toBeGreaterThan(0)
+  })
+
+  it('只有一欄、但整頁就這一頁 → 新表丟 422（跟只有表頭一樣）', async () => {
+    const memo: FakeSheet = { sheetId: 4, title: '備忘', values: [['週一進貨'], ['週三盤點']] }
+    await expect(readGoogleSheetAsCards({ spreadsheetId: 's', gid: null }, makeApi([memo]), NEW_RULES))
+      .rejects.toMatchObject({ statusCode: 422 })
   })
 })
 

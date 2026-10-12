@@ -168,3 +168,36 @@ describe('findExistingSources：⛔ 回收桶裡的不算「已經有一份」',
     expect(hits.map(h => h.id)).toEqual(['s3', 's4', 's5', 's6', 's7'])
   })
 })
+
+describe('cleanupOrphanJobFiles：沒有工作紀錄的暫存檔（C-303⑩）', () => {
+  /** 假 db：只回「這個工作紀錄在不在」；live 裡的在，failRead 裡的讀取失敗 */
+  const jobsDb = (live: string[], failRead: string[] = []) => ({
+    collection: () => ({
+      doc: (id: string) => ({
+        get: async () => {
+          if (failRead.includes(id)) throw new Error('unavailable')
+          return { exists: live.includes(id) }
+        },
+      }),
+    }),
+  }) as any
+
+  it('超過 24 小時、而且紀錄不在的才刪；紀錄還在、太新、讀不到紀錄的都留著', async () => {
+    objects = [
+      { name: 'preview-jobs/ws1/orphan/source.pdf', timeCreated: OLD },
+      { name: 'preview-jobs/ws1/orphan/work.json', timeCreated: OLD },
+      { name: 'preview-jobs/ws1/alive/work.json', timeCreated: OLD },
+      { name: 'preview-jobs/ws1/fresh/work.json', timeCreated: FRESH },
+      { name: 'preview-jobs/ws1/unknown/work.json', timeCreated: OLD },
+      { name: 'preview-uploads/ws1/u1.pdf', timeCreated: OLD }, // 別的前綴不關它的事
+    ]
+    const r = await mod.cleanupOrphanJobFiles(jobsDb(['alive'], ['unknown']))
+    expect(objects.map(o => o.name).sort()).toEqual([
+      'preview-jobs/ws1/alive/work.json',
+      'preview-jobs/ws1/fresh/work.json',
+      'preview-jobs/ws1/unknown/work.json',
+      'preview-uploads/ws1/u1.pdf',
+    ])
+    expect(r.purged).toBe(2)
+  })
+})

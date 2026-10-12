@@ -893,3 +893,75 @@ export async function cleanupOrphanUploads(
   if (failed) console.warn(`[cleanup-orphan-uploads] ${failed} 個過期上傳檔刪不掉（下一輪再試）`)
   return { scanned, purged, failed, reachedEnd }
 }
+
+/** 孤兒工作檔掃到哪裡了（同 orphanSweepCursor，只活在這個執行體裡） */
+let orphanJobSweepCursor: string | null = null
+
+/**
+ * 清 preview-jobs/ 底下「沒有工作紀錄」的檔（`C-303`⑩）。
+ *
+ * 建整理工作那支請求是「先存暫存檔、再寫工作紀錄」：中間被硬砍（閘道逾時、執行體重開）的話，
+ * 檔案留著、紀錄沒寫——cleanupExpiredPreviewJobs 是**照工作紀錄**找檔來刪的，這種永遠找不到
+ * （2026-10-11 真的寫入測試被我改程式打斷時留下兩個，當時手動刪）。
+ * 做法同 cleanupOrphanUploads：分頁掃、每輪有上限；只看超過 24 小時的檔（正常工作最多活一小時多一點），
+ * 從路徑取出工作編號、查一次紀錄還在不在（同一個編號只查一次）——不在才刪。
+ * ⛔ 紀錄查不到（讀取失敗）不刪：寧可留著下一輪再看，也不要刪掉一份可能還有人在接的工作。
+ */
+export async function cleanupOrphanJobFiles(
+  db: Firestore = getDb(),
+  maxDeletes = 50,
+  opts: { pageSize?: number; maxScan?: number; timeBudgetMs?: number } = {},
+): Promise<{ scanned: number; purged: number; failed: number; reachedEnd: boolean }> {
+  const pageSize = opts.pageSize ?? 500
+  const maxScan = opts.maxScan ?? 5000
+  const deadline = Date.now() + (opts.timeBudgetMs ?? 20_000)
+  const cutoff = Date.now() - 24 * 3600_000
+  const jobExists = new Map<string, boolean | null>()
+  let purged = 0
+  let scanned = 0
+  let failed = 0
+  let reachedEnd = false
+  let lastSeen = ''
+  try {
+    const bucket = getStorage().bucket()
+    const startOffset = orphanJobSweepCursor
+    let pageToken: string | undefined
+    let stopped = false
+    while (!stopped) {
+      const [files, nextQuery] = await bucket.getFiles({
+        prefix: 'preview-jobs/',
+        maxResults: pageSize,
+        autoPaginate: false,
+        ...(startOffset ? { startOffset } : {}),
+        ...(pageToken ? { pageToken } : {}),
+      })
+      for (const f of files) {
+        if (purged >= maxDeletes) { stopped = true; break }
+        scanned++
+        lastSeen = f.name
+        const createdMs = Date.parse(String(f.metadata?.timeCreated ?? '')) || 0
+        if (!createdMs || createdMs >= cutoff) continue
+        const jobId = f.name.split('/')[2] ?? ''
+        if (!jobId) continue
+        if (!jobExists.has(jobId)) {
+          const exists = await db.collection(KNOWLEDGE_PREVIEW_JOBS_COLLECTION).doc(jobId).get()
+            .then(s => s.exists)
+            .catch(() => null)
+          jobExists.set(jobId, exists)
+        }
+        if (jobExists.get(jobId) !== false) continue // 還在，或查不到（不確定就不刪）
+        await f.delete().then(() => { purged++ }).catch(() => { failed++ })
+      }
+      if (stopped) break
+      pageToken = (nextQuery as { pageToken?: string } | null | undefined)?.pageToken
+      if (!pageToken) { reachedEnd = true; break }
+      if (scanned >= maxScan || Date.now() > deadline) break
+    }
+    orphanJobSweepCursor = reachedEnd ? null : (lastSeen || orphanJobSweepCursor)
+  }
+  catch (e) {
+    console.warn('[cleanup-orphan-job-files] sweep failed:', e)
+  }
+  if (failed) console.warn(`[cleanup-orphan-job-files] ${failed} 個沒有工作紀錄的檔刪不掉（下一輪再試）`)
+  return { scanned, purged, failed, reachedEnd }
+}

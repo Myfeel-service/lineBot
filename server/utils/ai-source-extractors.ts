@@ -29,7 +29,16 @@ import { decodeTextBuffer, extractDocxText, extractPptxText, readZipDirectory, r
  * 改一個位元組，整個請求卡 20 分鐘；`docProps/app.xml` 裡壞一個壓縮位元組、或 sharedStrings 的檔名長度欄位被改，都會中）。
  * 換成 Node 的 zlib 之後同樣的檔會丟一般的錯（下面 readSpreadsheet 轉成 422），正常的檔照常讀。
  */
-XLSX.CFB.utils.use_zlib(zlib)
+/**
+ * SheetJS 每解一段就讀 `bytesRead`——Node 把它標成過時（DEP0108），伺服器每次開機都多一行警告（`C-303`⑨）。
+ * 同一個數字的新名字叫 `bytesWritten`（Node 文件：bytesRead 就是它的舊別名），包一層讓 SheetJS 讀到新的那個。
+ */
+class InflateRawWithBytesRead extends zlib.InflateRaw {
+  get bytesRead(): number {
+    return (this as unknown as { bytesWritten: number }).bytesWritten
+  }
+}
+XLSX.CFB.utils.use_zlib({ ...zlib, InflateRaw: InflateRawWithBytesRead })
 
 /**
  * xlsx 解壓之後（所有項目加起來）最多多大。量過（2026-10-11）：10MB 上限附近、11 萬列×8 欄的 xlsx 解成 41MB，

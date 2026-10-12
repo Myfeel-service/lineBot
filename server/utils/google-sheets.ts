@@ -391,6 +391,17 @@ export async function readGoogleSheetAsCards(
       (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
       t.merges,
     )
+    // 只有一欄（或只有一列）的分頁不算表格——跟 Excel 同一把尺（`C-303`②）：以前試算表會把每一格都建成
+    // 「標題＝內容」的卡、同樣的分頁在 Excel 卻列進「沒收進來」，兩邊講法不一樣。
+    // ⛔ 只對新接的表：已經在同步的舊表照舊讀，換規則＝下一輪同步把那幾張卡整批刪掉，店家什麼都沒做
+    if (!legacy) {
+      const nonEmpty = rows.filter(r => r.some(c => c.trim()))
+      const maxCols = nonEmpty.reduce((m, r) => Math.max(m, filledWidth(r)), 0)
+      if (nonEmpty.length < 2 || maxCols < 2) {
+        if (nonEmpty.length) emptySheets.push(t.title)
+        continue
+      }
+    }
     // values 從 A1 起算（前面的空白列也會回空陣列），第 i 個就是試算表的第 i+1 列
     const { cards: sheetCards, stats } = rowsToCards(rows, { legacy, firstRow: 1 })
     if (!sheetCards.length) {
@@ -512,6 +523,7 @@ export function mergeSheetStats(agg: SheetImportStats, s: SheetImportStats): voi
   agg.titleRows.push(...(s.titleRows ?? []))
   agg.continuedRows += s.continuedRows ?? 0
   if (s.serialColumns?.length) (agg.serialColumns ??= []).push(...s.serialColumns)
+  if (s.headerRows?.length) (agg.headerRows ??= []).push(...s.headerRows)
 }
 
 /**
@@ -798,6 +810,7 @@ export function rowsToCards(
     continuedRows,
     // 新讀法才有的幾格；舊讀法的統計維持改版前的樣子
     ...(legacy ? {} : { continuedExamples, cappedOut: [...cappedOut], ...(serialColumns.length ? { serialColumns } : {}) }),
+    ...(titleRows.length ? { headerRows: [headers.filter(Boolean).slice(0, HEALTH_LIST_MAX).join('、')] } : {}),
   }
   return { cards, stats }
 }
@@ -939,6 +952,12 @@ export interface SheetImportStats {
   sheetsRead?: number
   /** 第一欄是流水號、改用下一欄當名稱的那幾頁，記那一欄的欄位名稱（沒有就空字串）；要講給使用者聽 */
   serialColumns?: string[]
+  /**
+   * 跳過表格標題之後，改拿來當欄位名稱的那一列（前幾格，「品名、容量、價格」）；一頁一筆。
+   * 要講出來（`C-303`①）：第 1 列只有第一格填了欄位名稱（「問題｜｜」）時，那一格會被當成表格標題、
+   * **第一筆資料被拿去當欄位名稱**。只講「改用下面那一列」他看不出被拿走的是哪一列。
+   */
+  headerRows?: string[]
 }
 
 /** 健檢訊息裡列舉標題時最多列幾個（其餘用「等 N 列」帶過，避免訊息爆長） */
@@ -1002,8 +1021,11 @@ export function sheetHealthWarnings(cards: SheetCard[], stats: SheetImportStats,
   }
 
   // 自己找欄位名稱、自己接延續列（`C-296`）：猜的一定要講出來，猜錯他才有機會發現
+  // ⚠️ 不再叫人「把欄位名稱移到第 1 列」（`C-303`①）：猜錯最常見的是第 1 列只填了第一格（「問題｜｜」），
+  //    欄位名稱本來就在第 1 列，該做的是把它填滿；只有一頁時講出被拿去當欄位名稱的是哪一列，他才認得出那是第一筆資料
   if (stats.titleRows?.length) {
-    warnings.push(`表格最上面的${listTitles(stats.titleRows)}看起來是表格標題，欄位名稱改用下面那一列；不對的話請把欄位名稱移到第 1 列`)
+    const used = stats.headerRows?.length === 1 && stats.headerRows[0] ? `（${stats.headerRows[0]}）` : ''
+    warnings.push(`表格最上面的${listTitles(stats.titleRows)}看起來是表格標題，改用下面那一列${used}當欄位名稱；如果那一列其實是第一筆資料，請在第 1 列每一欄都填上欄位名稱`)
   }
   if (stats.continuedRows > 0) {
     warnings.push(continuedRowsWarning(stats))
