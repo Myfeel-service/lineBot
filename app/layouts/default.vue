@@ -144,6 +144,12 @@
         </nav>
       </template>
 
+      <!-- 手機頂列（`E-13` 第一步）：側欄收起來之後，靠這一行知道自己在哪個官方帳號 -->
+      <template #topbar>
+        <BrandLogo />
+        <span v-if="workspaceId" class="shell-topbar__name">{{ currentWorkspaceName }}</span>
+      </template>
+
       <template #footer>
         <div class="sidebar-footer-user">
           <div class="sidebar-footer-avatar"><el-icon><User /></el-icon></div>

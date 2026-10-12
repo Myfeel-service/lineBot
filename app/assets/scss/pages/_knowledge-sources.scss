@@ -645,6 +645,18 @@
     font-weight: 600;
     color: var(--text-primary);
   }
+  /* 「客人問」小標（`D-124`）：AI 還沒起主題名時，標題是客人原句——標出來，新手才知道那是客人講的話 */
+  &__quote-tag {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 3px;
+    background: var(--el-fill-color);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--el-text-color-secondary);
+    vertical-align: 1px;
+  }
   &__count {
     flex: none;
     font-size: 11px;
@@ -1047,6 +1059,15 @@
 
     .src-workbench-link__icon { color: var(--el-color-success); }
     &:hover { background: var(--el-color-success-light-8); }
+  }
+}
+
+/* 手機（`E-13` 第一步只做「拍照加入、看結果」）：工作台（要處理的事、AI 建議、等你看過）手機上看不到——
+   清單跟工作台在手機上是同一個位置，只能擺一個，擺清單。「N 件要處理」那條點了是回工作台，在手機上等於沒反應，收起來；
+   「整理好了」那條開的是加入視窗，留著 */
+@media (max-width: 720px) {
+  .src-workbench-link:not(.src-import-link) {
+    display: none;
   }
 }
 

@@ -1,5 +1,13 @@
 <template>
-  <div class="split-layout" :class="{ 'split-layout--solo': solo, 'split-layout--readonly': isViewer }">
+  <div
+    class="split-layout"
+    :class="{
+      'split-layout--solo': solo,
+      'split-layout--readonly': isViewer,
+      'split-layout--stack': mobileStack,
+      'split-layout--picked': !isEmpty,
+    }"
+  >
     <!-- ── Left Sidebar ─────────────────────────────── -->
     <aside v-if="!solo" class="split-sidebar" :style="{ width: sidebarWidth + 'px' }">
       <div class="split-sidebar-header">
@@ -32,6 +40,11 @@
       </div>
 
       <div v-else class="split-editor-inner">
+        <!-- 手機一次只看一邊（mobileStack）：點進來之後要有路回清單，電腦版這顆是 display:none -->
+        <button v-if="mobileStack" type="button" class="split-mobile-back" @click="emit('mobileBack')">
+          <el-icon><ArrowLeft /></el-icon>{{ mobileBackLabel }}
+        </button>
+
         <!-- Editor Header -->
         <div class="split-editor-header">
           <slot name="editor-header" />
@@ -47,6 +60,8 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowLeft } from '@element-plus/icons-vue'
+
 // 唯讀樣式是「觀察者模式」這個身分的外觀（跟頂端那條觀察者提示同一件事），不是某個功能的權限——
 // 所以看角色本身，不走 can()（`G-109`）。哪一顆按鈕能不能按，由各頁照那顆按鈕的能力決定。
 const { isViewer } = useWorkspace()
@@ -66,7 +81,22 @@ const props = defineProps({
     type: String,
     default: 'admin-split-sidebar-width',
   },
+  /**
+   * 手機上一次只看一邊（`E-13` 第一步，2026-10-12 知識庫先接）：沒選東西看清單、選了看內容，
+   * 內容上面多一顆回清單。⛔ 要頁面自己接 `mobileBack`（把選取清掉），所以是一頁一頁打開、不是預設：
+   * 沒接的頁打開它＝手機上點進去就回不來。
+   */
+  mobileStack: {
+    type: Boolean,
+    default: false,
+  },
+  mobileBackLabel: {
+    type: String,
+    default: '回清單',
+  },
 })
+
+const emit = defineEmits<{ mobileBack: [] }>()
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 520

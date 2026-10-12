@@ -110,9 +110,9 @@ const json = body => ({ status: 200, contentType: 'application/json', body: JSON
  * （GET 照常打到本機伺服器＝唯讀正式庫；不是 GET 的 /api 一律攔下、記一筆、回假的 200）。
  */
 async function openImportDialog(fake = () => undefined, opts = {}) {
-  const { path = '/knowledge/sources?import=1', waitSel = '.kb-drop' } = opts
+  const { path = '/knowledge/sources?import=1', waitSel = '.kb-drop', width = 1440, height = 1000 } = opts
   const page = await browser.newPage()
-  await page.setViewport({ width: 1440, height: 1000 })
+  await page.setViewport({ width, height })
   await page.setRequestInterception(true)
   page.on('request', async (req) => {
     const url = req.url()
@@ -438,6 +438,13 @@ try {
     else fail('同名那份沒有停下來問', dupRow)
     if (csvRow.includes('原文超過 10 萬字已截斷')) pass('單份路會講的「原文被截斷」一次好幾份也講')
     else fail('一次好幾份沒講截斷', csvRow)
+    // `D-124`：一次好幾份不停下來（清單上看不到內容），改成結論列點名要核對哪一份、那一列標「要核對」
+    const mustCheck = await pg.evaluate(() => ({
+      summary: document.querySelector('.kb-site-summary')?.innerText.replace(/\s+/g, ' ') ?? '',
+      row: [...document.querySelectorAll('.kb-site-row')].map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('商品匯出.csv')) ?? '',
+    }))
+    if (mustCheck.summary.includes('要先核對') && mustCheck.summary.includes('「商品匯出.csv」後面沒讀完') && mustCheck.row.includes('要核對')) pass('一次好幾份裡沒讀完的那份 → 結論列點名「要先核對」、那一列標「要核對」')
+    else fail('一次好幾份沒點名要核對的那份', JSON.stringify(mustCheck))
     // 還有沒決定的就按「上一步」／✕：⛔ 不可以默默丟掉付過錢的整理結果（2026-10-11 審查）
     for (const [label, click] of [
       ['上一步', () => [...document.querySelectorAll('.kb-import-actions .el-button')].find(b => b.innerText.includes('上一步'))?.click()],
@@ -1221,6 +1228,106 @@ try {
     const toured = await waitFor(pg, () => document.body.innerText.includes('從「加入知識」開始'), null, 20_000)
     if (toured) pass('開通還沒做完（還沒用手機測試）、但沒有要被拉回去 → 第一次進知識庫照樣自動跳導覽')
     else fail('開通沒做完的帳號第一次進知識庫沒有跳導覽')
+    await pg.close()
+  }
+
+  // ── 第二十五段（`D-124` 拍板做 `E-13` 的一小塊）：手機 390 寬 → 側欄收成左上角選單、清單佔滿、點一份看內容、回清單；
+  //    拍照加入照樣停下來核對、加好了看得到整理出哪幾條。以前側欄固定 240px，內容只剩 150px 一條
+  {
+    const JOB = 'job-phone'
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'ocr' })
+      if (url.includes(`/api/ai/knowledge/preview-jobs/${JOB}`) && m === 'GET') {
+        return json({ status: 'done', sourceName: 'IMG_0412.HEIC', sourceUrl: '', sourceType: 'file', truncated: false, ocrUsed: true, meta: { image: 1 }, existingMatches: [], warnings: [], contentHash: 'h',
+          chunks: [{ title: '拿鐵', content: '中杯 60 元、大杯 75 元', tags: [], questions: [] }, { title: '美式', content: '中杯 50 元、大杯 65 元', tags: [], questions: [] }] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        return json({ sourceId: 'phone-src', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
+      }
+      return undefined
+    }, { path: '/knowledge/sources', waitSel: '[data-tour="kb-sources"]', width: 390, height: 844 })
+    await waitFor(pg, () => document.querySelectorAll('.split-list [data-tour="kb-source-row"]').length > 0, null, 30_000)
+    const shotPhone = async name => { if (process.env.SHOT_DIR) await pg.screenshot({ path: join(process.env.SHOT_DIR, name) }) }
+    const navEdge = () => pg.evaluate(() => {
+      const r = document.querySelector('.layout-wrapper > .sidebar').getBoundingClientRect()
+      return { left: Math.round(r.left), right: Math.round(r.right) }
+    })
+
+    const list = await pg.evaluate(() => ({
+      hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+      listW: Math.round(document.querySelector('.split-sidebar').getBoundingClientRect().width),
+      topbar: getComputedStyle(document.querySelector('.shell-topbar')).display !== 'none',
+      workbench: getComputedStyle(document.querySelector('.split-editor')).display !== 'none',
+    }))
+    const nav0 = await navEdge()
+    await shotPhone('kb-phone-list.png')
+    if (!list.hscroll && list.listW >= 380 && list.topbar && !list.workbench && nav0.right <= 0) pass(`手機：側欄收起來、清單佔滿 ${list.listW}px、沒有橫向捲動`)
+    else fail('手機上清單沒有佔滿（或側欄還擋著）', JSON.stringify({ ...list, nav0 }))
+
+    await pg.click('.shell-topbar__menu')
+    await sleep(400)
+    const navOpen = await navEdge()
+    await shotPhone('kb-phone-nav.png')
+    await pg.mouse.click(370, 500) // 選單旁邊的暗處
+    await sleep(400)
+    const navClosed = await navEdge()
+    if (navOpen.left === 0 && navOpen.right > 200 && navClosed.right <= 0) pass('手機選單：點左上角滑出來、點旁邊暗處收回去')
+    else fail('手機選單開關不對', JSON.stringify({ navOpen, navClosed }))
+
+    const picked = await pg.evaluate(() => {
+      const row = document.querySelector('.split-list [data-tour="kb-source-row"]')
+      row.click()
+      return row.innerText.split('\n')[0]
+    })
+    const opened = await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length > 0, null, 30_000)
+    const detail = await pg.evaluate(() => ({
+      back: document.querySelector('.split-mobile-back')?.innerText.trim() ?? '',
+      listShown: getComputedStyle(document.querySelector('.split-sidebar')).display !== 'none',
+      editorW: Math.round(document.querySelector('.split-editor').getBoundingClientRect().width),
+      hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+    }))
+    await shotPhone('kb-phone-detail.png')
+    if (opened && detail.back.includes('你的資料') && !detail.listShown && detail.editorW >= 380 && !detail.hscroll) pass(`手機：點「${picked}」→ 內容佔滿、上面有「← 你的資料」`)
+    else fail('手機上點一份資料之後看不到內容', JSON.stringify({ opened, ...detail }))
+    await pg.click('.split-mobile-back')
+    const backToList = await waitFor(pg, () => getComputedStyle(document.querySelector('.split-sidebar')).display !== 'none' && !document.querySelector('.split-mobile-back'), null, 5_000)
+    if (backToList) pass('手機：按「← 你的資料」回到清單')
+    else fail('手機上回不到清單')
+
+    // 拍照加入：選檔框收照片（手機上就是「拍照或選照片」）→ 字是 AI 認的，停下來給他核對 → 按了才加 → 看得到整理出哪幾條
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('加入知識'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-file-input'), null, 10_000)
+    const accept = await pg.$eval('.kb-file-input', e => e.getAttribute('accept') ?? '')
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.heic)
+    await sleep(400)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 30_000)
+    const review = await pg.evaluate(() => {
+      const d = document.querySelector('.el-dialog').getBoundingClientRect()
+      return {
+        ocr: document.querySelector('.kb-ocr-alert')?.innerText ?? '',
+        btn: document.querySelector('.kb-preview-summary__actions .el-button--primary')?.innerText.trim() ?? '',
+        left: Math.round(d.left), right: Math.round(d.right),
+        hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+      }
+    })
+    await shotPhone('kb-phone-photo-review.png')
+    if (/image|\.heic/i.test(accept) && review.ocr.includes('這張照片') && review.btn === '加入 2 條' && !bulks.length && review.left >= 0 && review.right <= 390 && !review.hscroll) pass('手機拍照加入：停下來核對、視窗沒有超出螢幕')
+    else fail('手機拍照加入的核對畫面不對', JSON.stringify({ accept: accept.slice(0, 80), ...review, bulks: bulks.length }))
+    await pg.evaluate(() => document.querySelector('.kb-preview-summary__actions .el-button--primary')?.click())
+    const added = await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 15_000)
+    const result = await pg.evaluate(() => document.querySelector('.el-dialog__body')?.innerText ?? '')
+    await shotPhone('kb-phone-photo-result.png')
+    if (added && bulks.length === 1 && result.includes('拿鐵') && result.includes('美式')) pass('手機：按加入之後看得到整理出哪幾條（拿鐵、美式）')
+    else fail('手機上加好了看不到結果', JSON.stringify({ added, bulks: bulks.length, result: result.slice(0, 200) }))
     await pg.close()
   }
 }

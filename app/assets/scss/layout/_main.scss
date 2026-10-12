@@ -101,6 +101,97 @@
   gap: 0;
 }
 
+/* ── 手機（`E-13` 第一步，2026-10-12）────────────────────────────
+   側欄固定 240px 的時候，390px 的手機內容只剩 150px。手機上改成：頂列一顆選單鈕，
+   側欄從左邊滑出來蓋在內容上，點旁邊的暗處或點了任何一項就收回去。
+   ⛔ 只改外殼：各頁自己的版面還是電腦版的，要手機上好用得一頁一頁接（知識庫先接，見 _split-layout.scss 的 --stack）。 */
+.shell-topbar,
+.shell-backdrop {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .layout-wrapper {
+    flex-direction: column;
+    /* iPhone 的 100vh 含網址列，底部會被吃掉一截 */
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .shell-topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    height: 48px;
+    padding: 0 0.75rem 0 0.25rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .shell-topbar__menu {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    background: none;
+    color: var(--text-primary);
+    font-size: 1.35rem;
+    cursor: pointer;
+  }
+
+  .shell-topbar__title {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    --brand-logo-h: 18px;
+  }
+
+  .shell-topbar__name {
+    min-width: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .layout-wrapper > .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(280px, 85vw);
+    height: auto;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform var(--t-fast);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .layout-wrapper.is-nav-open > .sidebar {
+    transform: none;
+  }
+
+  .layout-wrapper.is-nav-open > .shell-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .main-content {
+    padding: 1rem;
+    gap: 1rem;
+  }
+}
+
 /* ── Page Header ─────────────────────────────────────────────── */
 .page-header {
   display: flex;

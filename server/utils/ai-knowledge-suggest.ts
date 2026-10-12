@@ -471,6 +471,9 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
           patch.draft = r.draft
           patch.blanksCount = countDraftBlanks(r.draft.content)
           patch.draftError = FieldValue.delete()
+          // 建立時沒擬到草稿的，topic 是客人原句的前 12 字（見下面「新主題」那段）——補到草稿就換成 AI 起的主題名。
+          // ⛔ 以前只補草稿不換名，列表上一直掛著「您好，請問，小耳記，go」這種句子（`D-124` 新手走查）
+          if (r.topic) patch.topic = r.topic
         }
         else if (r.error) {
           patch.draftError = r.error

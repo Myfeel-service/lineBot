@@ -616,3 +616,60 @@ body.is-resizing-split {
 .split-editor-body .message-card {
   flex-shrink: 0;
 }
+
+/* ── 手機一次只看一邊（`mobileStack`，`E-13` 第一步）───────────────────
+   沒選東西＝清單佔滿；選了＝內容佔滿、上面一顆「← 回清單」。電腦版完全不變。
+   ⛔ 只有打開 mobileStack 的頁才這樣排（頁面要接 mobileBack 才回得來，見 AdminSplitLayout）。 */
+.split-mobile-back {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .split-layout--stack {
+    > .split-resizer {
+      display: none;
+    }
+
+    /* 寬度是 inline style（可拖曳那個），只能用 !important 蓋 */
+    > .split-sidebar {
+      width: 100% !important;
+      border-right: 0;
+    }
+
+    &.split-layout--picked > .split-sidebar,
+    &:not(.split-layout--picked) > .split-editor {
+      display: none;
+    }
+
+    /* 拖曳排序是滑鼠在用的（HTML 拖放在手機上不會動），把手只會佔位 */
+    .drag-handle {
+      display: none;
+    }
+
+    .split-mobile-back {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      flex-shrink: 0;
+      padding: 0.65rem 1rem;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-surface);
+      color: var(--color-line-dark, var(--text-primary));
+      font: inherit;
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .split-editor-header {
+      flex-wrap: wrap;
+      padding: 0.75rem 1rem;
+    }
+
+    .split-editor-body > .solo-editor-body {
+      padding: 1rem;
+    }
+  }
+}

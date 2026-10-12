@@ -10,7 +10,7 @@
     <!-- 跑完的結論列：沒有逐條預覽，結束一定要講「做了什麼、還要看什麼」（同整站匯入） -->
     <el-alert
       v-if="finished"
-      :type="failedCount || warnedCount || quotaShortTotal || conflictCount || notStartedCount ? 'warning' : 'success'"
+      :type="failedCount || warnedCount || mustCheckRows.length || quotaShortTotal || conflictCount || notStartedCount ? 'warning' : 'success'"
       show-icon
       :closable="false"
       class="kb-site-summary"
@@ -27,8 +27,9 @@
         <template v-if="unsureCount">{{ unsureCount }} 份連線逾時、不確定加進去了沒，按下面的「重試」會跟伺服器確認。</template>
         <template v-if="notStartedCount">{{ notStartedCount }} 份還沒開始就停下了，可以按下面的按鈕接著加入。</template>
         <template v-if="skippedCount">{{ skippedCount }} 份跟現有資料一模一樣，已跳過（沒有重複建立）。</template>
-        <template v-if="warnedCount">{{ warnedCount }} 份帶有提醒，建議點開檢查內容。</template>
-        <template v-if="okCount && !failedCount && !warnedCount && !notLearnedTotal && !quotaShortTotal && !conflictCount && !notStartedCount">建議點開幾條看看內容對不對。</template>
+        <template v-if="mustCheckRows.length"><strong>要先核對：</strong>{{ mustCheckLine }}——已經加進去了，點開那一份看數字、價格有沒有錯。</template>
+        <template v-if="warnedCount">{{ mustCheckRows.length ? '另外 ' : '' }}{{ warnedCount }} 份帶有提醒，建議點開檢查內容。</template>
+        <template v-if="okCount && !failedCount && !warnedCount && !mustCheckRows.length && !notLearnedTotal && !quotaShortTotal && !conflictCount && !notStartedCount">建議點開幾條看看內容對不對。</template>
       </div>
     </el-alert>
 
@@ -65,7 +66,7 @@
         <span class="kb-site-status" :class="`is-${statusClass(r.status)}`">
           <template v-if="r.status === 'processing'">{{ r.stage }}⋯</template>
           <template v-else-if="r.status === 'done'">
-            ✓ {{ r.cards }} 條<span v-if="r.notLearned" class="kb-site-status__warn">（{{ r.notLearned }} 條待學）</span>
+            ✓ {{ r.cards }} 條<span v-if="r.notLearned" class="kb-site-status__warn">（{{ r.notLearned }} 條待學）</span><span v-if="r.mustCheck" class="kb-site-status__warn">・要核對</span>
           </template>
           <template v-else-if="r.status === 'skipped'">已經有了</template>
           <template v-else-if="r.status === 'failed'">{{ r.unsure ? '待確認' : '✕ 沒有加入' }}</template>
@@ -152,6 +153,8 @@ interface PreviewDone {
   contentHash?: string
   warnings?: string[]
   truncated?: boolean
+  /** 後面沒讀到、但不是 10 萬字截斷（表格超過 150 列、整理到 150 條上限⋯，見伺服器 WorkState.incomplete） */
+  incomplete?: boolean
   ocrUsed?: boolean
   meta?: Record<string, string | number>
   /** quotaChunkCount：換掉它會空出多少空間（不含草稿，跟伺服器算額度同一把尺）；舊的伺服器沒有這一格 */
@@ -171,6 +174,12 @@ interface Row {
   quotaShort: number
   warningTexts: string[]
   infoTexts: string[]
+  /**
+   * 加進去了、但要人核對的（`D-124`）：字是 AI 從照片認的（ocr）、或後面沒讀完（incomplete）。
+   * 單份遇到這兩種會停在預覽；一次好幾份**刻意不停**——清單上沒有地方看內容，停下來只是多按一下、還是核對不了。
+   * 改成結論列點名是哪幾份、那一列標「要核對」，他知道要點開哪一份。
+   */
+  mustCheck: '' | 'ocr' | 'incomplete'
   error: string
   /** 整理好、還沒匯進去的結果（空間滿、匯入失敗時留著；重試直接用，不再整理一次） */
   prepared: { jobId: string, res: PreviewDone, at: number } | null
@@ -216,6 +225,7 @@ watch(() => props.files, (files) => {
       quotaShort: 0,
       warningTexts: [],
       infoTexts: [],
+      mustCheck: '',
       error,
       prepared: null,
       pending: null,
@@ -241,7 +251,13 @@ const failedCount = computed(() => rows.value.filter(r => r.status === 'failed')
 const unsureCount = computed(() => rows.value.filter(r => r.status === 'failed' && r.unsure).length)
 const conflictCount = computed(() => rows.value.filter(r => r.status === 'conflict').length)
 const skippedCount = computed(() => rows.value.filter(r => r.status === 'skipped').length)
-const warnedCount = computed(() => okRows.value.filter(r => r.warningTexts.length).length)
+/** 要核對的那幾份（見 Row.mustCheck）：結論列點名 */
+const mustCheckRows = computed(() => okRows.value.filter(r => r.mustCheck))
+const mustCheckLine = computed(() => mustCheckRows.value
+  .map(r => `「${r.name}」${r.mustCheck === 'ocr' ? '的字是 AI 從照片認的' : '後面沒讀完'}`)
+  .join('、'))
+/** 其他帶提醒的（要核對的那幾份已經點名過，不再算一次） */
+const warnedCount = computed(() => okRows.value.filter(r => r.warningTexts.length && !r.mustCheck).length)
 /** 跑完了卻還是「等待中」的＝中途關窗、還沒開始就停下的 */
 const notStartedCount = computed(() => (finished.value ? rows.value.filter(r => r.file && r.status === 'idle').length : 0))
 /**
@@ -425,6 +441,7 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
       // 單獨再放一次才會問「換掉原本那一份」；一批裡內容一模一樣的會被跳過（同 quotaShort 那句）
       ...(bulk.originalKept === false ? ['原檔這次沒有留下來（知識照常可以用）；要能「下載原檔」，把這一份單獨再放一次、選擇換掉原本那一份'] : []),
     ]
+    r.mustCheck = res.ocrUsed ? 'ocr' : (res.truncated || res.incomplete) ? 'incomplete' : ''
     r.status = 'done'
     r.prepared = null
     r.pending = null

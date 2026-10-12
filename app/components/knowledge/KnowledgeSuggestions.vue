@@ -37,7 +37,14 @@
     <div v-if="items.length" class="kb-suggest-list">
       <div v-for="s in items" :key="s.id" class="kb-suggest-item">
         <div class="kb-suggest-item__main">
-          <span class="kb-suggest-item__topic">{{ s.topic }}</span>
+          <!--
+            主題名（`D-124` 新手走查）：以前直接秀 s.topic，而 AI 還沒擬到草稿的那幾筆，topic 是客人原句的前 12 字
+            （「您好，請問，小耳記，go」）——新手看不懂這是什麼。有草稿就用草稿的標題；真的還沒有，就照實標成「客人問」的引號句。
+          -->
+          <span class="kb-suggest-item__topic">
+            <template v-if="topicLabel(s).quoted"><span class="kb-suggest-item__quote-tag">客人問</span>「{{ topicLabel(s).text }}」</template>
+            <template v-else>{{ topicLabel(s).text }}</template>
+          </span>
           <!-- sampled = 事件多到撞掃描上限,次數是低估值 → 說「至少」而不是印成實數 -->
           <span class="kb-suggest-item__count">30 天內{{ s.sampled ? '至少' : '' }}被問 {{ s.eventCount }} 次</span>
         </div>
@@ -155,6 +162,7 @@
 import { MagicStick } from '@element-plus/icons-vue'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { countKnowledgeDraftBlanks, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { suggestionTopicLabel } from '~/utils/kb-suggestion-label'
 
 interface SuggestionRow {
   id: string
@@ -188,6 +196,9 @@ const { apiFetch, can, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
 
 const canEdit = computed(() => can('knowledge.write'))
+
+/** 列表上的主題名（`D-124`）：規則與理由在 utils/kb-suggestion-label（有測試） */
+const topicLabel = (s: SuggestionRow) => suggestionTopicLabel(s)
 
 const loaded = ref(false)
 /**

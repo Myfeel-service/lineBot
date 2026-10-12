@@ -1,5 +1,6 @@
 <template>
-  <AdminSplitLayout :is-empty="!selectedSource">
+  <!-- 手機一次只看一邊（`D-124` 拍板做 `E-13` 的一小塊：手機拍照加入、看結果）：清單↔一份資料的內容 -->
+  <AdminSplitLayout :is-empty="!selectedSource" mobile-stack mobile-back-label="你的資料" @mobile-back="backToWorkbench">
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title" data-tour="kb-sources">你的資料<AdminPageHelpButton :topics="['knowledge', 'knowledge-manage']" :guides="['knowledge-first']" /></span>
@@ -42,7 +43,10 @@
     <template #sidebar-list>
       <!-- `D-112`：「用一句話建立」接在「加入知識」正下方（標頭 240px 塞不下第三顆）。
            建的卡放進「等你看過」，要他按採用才上線 -->
-      <AgentAskButton page="knowledge" row />
+      <!-- 2026-10-12（`D-124`）：字改成講做出什麼——「一條」知識，跟上面「加入知識」（一整份資料）分得開。
+           ⛔ 不收進加入視窗、不拿掉：推播、標籤、AI 腳本、知識庫四頁都在這個位置（`D-112`／`D-113`），
+           只動這頁會不一致。換字是推播頁本來就有的做法（「用一句話擬草稿」） -->
+      <AgentAskButton page="knowledge" label="用一句話寫一條知識" row />
       <!-- 常駐提醒(老闆 8/05 要求):有事要處理時側欄一直顯示這一行,不只在選著資料時。
            點了回工作台;兩邊都是空的才不顯示——沒事可提醒。 -->
       <button
