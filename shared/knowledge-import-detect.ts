@@ -24,9 +24,41 @@ export function detectImportKind(pasted: string, hasFile = false): ImportKind {
   if (hasFile) return 'file'
   const v = String(pasted ?? '').trim()
   if (!v) return 'file' // 還沒給東西;呼叫端的「可以開始」判斷仍為 false
-  if (GSHEET_PATTERN.test(v)) return 'gsheet'
+  // ⛔ 只有「裡面就這一個連結、而且是試算表」才算試算表（2026-10-13 `/code-review`）：GSHEET_PATTERN 沒有錨定，
+  //    「https://shop.tw/faq https://docs.google.com/spreadsheets/…」以前整串被判成試算表——faq 那頁默默不見，
+  //    兩個網址連在一起的字串還被存成那份試算表的網址。好幾個連結夾了試算表的由 detectSheetAmongUrls 另外講。
+  //    旁邊夾幾個字（「價目表 https://docs.google.com/…」）照舊算試算表
+  if (sheetLinkOf(v)) return 'gsheet'
   if (HTTP_URL_PATTERN.test(v)) return 'url'
   return 'text'
+}
+
+/** 試算表的網址（不含裸 ID：裸 ID 只在「整段就是它」時才算，否則句子裡一個長英文字會被當成試算表） */
+const SHEET_LINK_PATTERN = /docs\.google\.com\/spreadsheets/
+const BARE_SHEET_ID_PATTERN = /^[a-zA-Z0-9-_]{20,}$/
+
+function linkTokens(pasted: string): string[] {
+  return String(pasted ?? '').trim().split(/\s+/).filter(p => p && (HTTP_URL_PATTERN.test(p) || SHEET_LINK_PATTERN.test(p)))
+}
+
+/**
+ * 輸入裡唯一的那個連結、而且它是 Google 試算表 → 回那個連結（呼叫端拿它當試算表網址，旁邊的字不帶進去）；
+ * 整段就是一串試算表 ID 也算；否則回空字串。
+ */
+export function sheetLinkOf(pasted: string): string {
+  const v = String(pasted ?? '').trim()
+  if (BARE_SHEET_ID_PATTERN.test(v)) return v
+  const links = linkTokens(v)
+  return links.length === 1 && SHEET_LINK_PATTERN.test(links[0]!) ? links[0]! : ''
+}
+
+/**
+ * 好幾個連結裡夾了 Google 試算表 → true。這種輸入不能開始：試算表有自己的一條路（要先確認讀不讀得到、之後每小時同步），
+ * 混在一般網址裡會被當成網頁抓；當成一段文字又會把網址字串本身拿去整理。呼叫端要講「試算表連結請單獨貼」並鎖住開始鈕。
+ */
+export function detectSheetAmongUrls(pasted: string): boolean {
+  const links = linkTokens(pasted)
+  return links.length >= 2 && links.some(p => SHEET_LINK_PATTERN.test(p))
 }
 
 /**

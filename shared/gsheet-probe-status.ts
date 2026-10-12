@@ -11,8 +11,13 @@ export type GsheetProbeStatus =
   | 'ok'
   /** 連結不是 Google 試算表 */
   | 'bad_url'
-  /** 還沒把表分享給服務帳號（或 Sheets API 沒啟用）→ 去 Google 按分享 */
+  /** 還沒把表分享給服務帳號 → 去 Google 按分享 */
   | 'no_access'
+  /**
+   * 我們這邊的 Google 試算表功能沒開（Sheets API 沒啟用）→ 不是店家能修的，⛔ 不可以叫他去共用
+   * （2026-10-13 `/code-review`：以前歸在 no_access，畫面只剩三步共用教學，他怎麼共用都不會成功，唯一講得出原因的原文還被藏起來）
+   */
+  | 'not_enabled'
   /** 讀得到但沒有資料可讀 → 去補資料或改貼對的分頁 */
   | 'no_data'
   /** 上傳的 Excel 檔沒轉成 Google 試算表 → 先轉檔 */
@@ -42,8 +47,12 @@ export function classifyGsheetProbeError(raw: string): { status: GsheetProbeStat
   if (/Office file|上傳的 Excel/.test(text)) {
     return { status: 'bad_file', needsShare: false }
   }
+  // ⚠️ 要排在 no_access 前面：這是我們的設定問題，叫店家去共用只會讓他白忙
+  if (/尚未在.*啟用|SERVICE_DISABLED/.test(text)) {
+    return { status: 'not_enabled', needsShare: false }
+  }
   // 2026-10-12 那句原文從「Google Sheet」改叫「Google 試算表」（文字審視）；舊說法留著，免得哪裡還存著舊句子就分錯
-  if (/讀不到這份 Google (?:Sheet|試算表)|尚未在.*啟用|SERVICE_DISABLED/.test(text)) {
+  if (/讀不到這份 Google (?:Sheet|試算表)/.test(text)) {
     return { status: 'no_access', needsShare: true }
   }
   return { status: 'unknown', needsShare: false }

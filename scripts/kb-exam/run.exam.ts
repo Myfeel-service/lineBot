@@ -23,11 +23,14 @@ vi.mock('~~/server/utils/ai-usage', async (orig) => ({
 
 const GUARD = '考卷是唯讀的'
 const deny = (what: string) => Object.assign(function () { throw new Error(`${GUARD}：擋下一次 Firestore ${what}`) }, { examDeny: true })
-for (const m of ['set', 'update', 'delete', 'create'] as const) (DocumentReference.prototype as any)[m] = deny(`doc.${m}`)
+// ⚠️ 「全部擋」要真的全部（2026-10-13 `/code-review`：BulkWriter 以前只擋了 create，set／update／delete 跟整棵刪都會直接寫進正式庫）
+const WRITE_METHODS = ['set', 'update', 'delete', 'create'] as const
+for (const m of WRITE_METHODS) (DocumentReference.prototype as any)[m] = deny(`doc.${m}`)
 ;(CollectionReference.prototype as any).add = deny('collection.add')
-;(WriteBatch.prototype as any).commit = deny('batch.commit')
+for (const m of [...WRITE_METHODS, 'commit'] as const) (WriteBatch.prototype as any)[m] = deny(`batch.${m}`)
+for (const m of WRITE_METHODS) (BulkWriter.prototype as any)[m] = deny(`bulkWriter.${m}`)
 ;(Firestore.prototype as any).runTransaction = deny('runTransaction')
-;(BulkWriter.prototype as any).create = deny('bulkWriter')
+;(Firestore.prototype as any).recursiveDelete = deny('recursiveDelete')
 
 /**
  * 被擋下的寫入。伺服器很多寫入是「失敗只記一行、不擋主流程」（用量記帳就是），錯誤會被吃掉——
@@ -188,8 +191,18 @@ describe('準度考卷', () => {
 
     // 保險真的裝在回答流程用的那一個資料庫上（⛔ 不靠寫一筆試試看——裝錯的話那一筆就真的寫進正式庫了）：
     // 套件被載入兩份時，上面改的是另一份的類別，這裡會抓到
-    const probe = getDb().collection('__exam_guard__').doc('probe') as any
-    if (!probe.set?.examDeny || !probe.update?.examDeny || !(getDb().batch().commit as any)?.examDeny) {
+    const realDb = getDb() as any
+    const probe = realDb.collection('__exam_guard__').doc('probe')
+    const guarded = [
+      ...WRITE_METHODS.map(m => probe[m]),
+      realDb.collection('__exam_guard__').add,
+      realDb.batch().commit,
+      realDb.runTransaction,
+      realDb.recursiveDelete,
+      // ⚠️ bulkWriter() 會開一個真的寫入排程器，只看類別上的方法、不建實體
+      ...WRITE_METHODS.map(m => (BulkWriter.prototype as any)[m]),
+    ]
+    if (!guarded.every(fn => fn?.examDeny === true)) {
       throw new Error('唯讀保險沒有裝在回答流程用的資料庫上，停下來不考')
     }
 

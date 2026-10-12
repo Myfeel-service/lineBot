@@ -30,6 +30,8 @@ vi.mock('~~/server/utils/ai-knowledge-sources', () => ({
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
   getSource: vi.fn(async () => ({ id: SRC, data: SOURCE })),
   invalidateCatalogSourceCache: vi.fn(),
+  // 做完總表重數一次（含總表那一條）
+  countSourceChunks: vi.fn(async () => CHUNKS.filter(c => c.deletedAt == null).length + (OUTCOME === 'created' ? 1 : 0)),
 }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
 
@@ -68,7 +70,8 @@ describe('匯入後補做總表', () => {
   it('沒有總表 → 先問空間夠不夠放 1 條，做出來把來源標成型錄', async () => {
     await expect(call()).resolves.toEqual({ outcome: 'created', made: true })
     expect(assertKnowledgeChunkQuota).toHaveBeenCalledWith(WS, 1, db)
-    expect(sourceUpdates).toEqual([expect.objectContaining({ generateOverview: true })])
+    // 條數跟著重算（2026-10-13 `/code-review`：以前清單上還寫做總表之前的數字）
+    expect(sourceUpdates).toEqual([expect.objectContaining({ generateOverview: true, chunkCount: 3 })])
     expect(invalidateCatalogSourceCache).toHaveBeenCalledWith(WS)
     expect(writeAuditLog).toHaveBeenCalledTimes(1)
   })
@@ -79,7 +82,7 @@ describe('匯入後補做總表', () => {
     OUTCOME = 'updated'
     await expect(call()).resolves.toEqual({ outcome: 'updated', made: true })
     expect(assertKnowledgeChunkQuota).not.toHaveBeenCalled()
-    expect(sourceUpdates).toEqual([]) // 已經是型錄，不重寫
+    expect(sourceUpdates).toEqual([expect.objectContaining({ chunkCount: 3 })]) // 原地重做，條數不變
   })
 
   it('回收桶裡的舊總表不算「已經有」→ 照樣要問空間', async () => {

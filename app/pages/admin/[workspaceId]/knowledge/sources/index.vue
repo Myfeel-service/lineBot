@@ -3582,7 +3582,13 @@ async function onImported(sourceId: string | null) {
   if (sourceId) {
     const src = sources.value.find(s => s.id === sourceId)
     if (src) await selectSource(src)
+    return
   }
+  // 視窗關著、背景自己加好的（sourceId 是 null，不搶他正在看的那一份）：右邊開著的那一份也要重讀一次。
+  // ⛔ 換新版換掉的常常就是他開著的這一份（2026-10-13 `/code-review`）：不重讀的話右邊一直是已經移到回收桶的舊條目，
+  //    他在上面改、或以為沒換成又按一次換新版
+  const openId = selectedId.value
+  if (openId && sources.value.some(s => s.id === openId)) await loadSourceDetail(openId)
 }
 
 // ── 一鍵整理舊版未分組知識 ───────────────────────────

@@ -306,6 +306,47 @@ export async function findSourceByContentHash(
   }
 }
 
+/** 網址正規化成比對用的 key（去 #後面、去尾斜線）：整站探頁、一次貼好幾個網址判「加過了沒」同一套 */
+export function sourceUrlKey(url: string): string {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return u.href.replace(/\/$/, '')
+  }
+  catch {
+    return url
+  }
+}
+
+/**
+ * 這個帳號已經加過的網址（比對用 key）。整站探頁與「一次貼好幾個網址」共用（2026-10-13 `/code-review`：
+ * 後者以前每一頁都當沒加過，同一個網址加兩份、兩份每天各自重新同步，AI 反問時出現兩個一樣的選項）。
+ * ⛔ 回收桶裡的不算（同 findExistingSources）：那一份已經刪了，再加一次是他要的。
+ * 查詢失敗回空集合（不擋加入，只是少了「加過了」的標記），呼叫端照常加；內容指紋的守門還在後面。
+ */
+export async function listSourceUrlKeys(db: Firestore, workspaceId: string): Promise<Set<string>> {
+  try {
+    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('type', '==', 'url')
+      .select('url', 'isDeleted', 'deletedAt')
+      .limit(1000)
+      .get()
+    return new Set(
+      snap.docs
+        .map(d => d.data() as { url?: string, isDeleted?: boolean, deletedAt?: unknown })
+        .filter(d => d.isDeleted !== true && d.deletedAt == null)
+        .map(d => String(d.url ?? '').trim())
+        .filter(Boolean)
+        .map(sourceUrlKey),
+    )
+  }
+  catch (e) {
+    console.warn('[ai-knowledge-sources] listSourceUrlKeys failed:', e)
+    return new Set()
+  }
+}
+
 /**
  * 取得單一 source（含 workspace 比對）。找不到回 null。
  */

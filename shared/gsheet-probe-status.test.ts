@@ -16,9 +16,9 @@ describe('classifyGsheetProbeError', () => {
     expect(classifyGsheetProbeError(raw)).toEqual({ status: 'no_access', needsShare: true })
   })
 
-  it('Sheets API 沒啟用 → 也算讀不到（同一顆按鈕修不了，但要看得到原文）', () => {
+  it('⛔ Sheets API 沒啟用 → 是我們的設定問題，不叫店家去共用（以前歸在 no_access，他怎麼共用都不會好，2026-10-13 /code-review）', () => {
     const raw = 'Google Sheets API 尚未在「服務帳號所屬的專案」啟用。請依 Google 指示的連結（含正確專案編號）啟用後等 1–2 分鐘再試。Google 原始訊息：SERVICE_DISABLED'
-    expect(classifyGsheetProbeError(raw).status).toBe('no_access')
+    expect(classifyGsheetProbeError(raw)).toEqual({ status: 'not_enabled', needsShare: false })
   })
 
   it('分享好了但沒有資料 → 不要叫人再去分享一次', () => {

@@ -47,6 +47,14 @@ describe('gsheet-probe 沒找到資料時怎麼講', () => {
     expect(r.message).not.toContain('「F」')
   })
 
+  it('只有一欄的分頁 → no_data，直接講是格式的問題（以前打綠勾、按下去才撞「沒有足夠資料」）', async () => {
+    probeGoogleSheetAccess.mockResolvedValue({ sheetTitle: '常見問題', sheetTitles: ['常見問題'], checkedTitles: ['常見問題'], narrowTitles: ['常見問題'], hasData: false })
+    const r = await run()
+    expect(r.status).toBe('no_data')
+    expect(r.message).toContain('「常見問題」只有一欄')
+    expect(r.message).toContain('兩欄以上')
+  })
+
   it('找到資料 → ok，講會讀幾個分頁', async () => {
     probeGoogleSheetAccess.mockResolvedValue({ sheetTitle: 'FAQ', sheetTitles: ['封面', 'FAQ'], checkedTitles: ['FAQ'], hasData: true })
     const r = await run()

@@ -123,11 +123,11 @@
         <p class="kb-detected__head">
           <span class="kb-detected__label">{{ detected.label }}</span>
           <span class="kb-detected__sync">{{ detected.sync }}</span>
-          <button type="button" class="kb-detected__more" @click="hintOpen = !hintOpen">
+          <button v-if="detected.hintLabel" type="button" class="kb-detected__more" @click="hintOpen = !hintOpen">
             {{ detected.hintLabel }}
           </button>
         </p>
-        <p v-if="hintOpen" class="kb-detected__hint">{{ detected.hint }}</p>
+        <p v-if="hintOpen && detected.hint" class="kb-detected__hint">{{ detected.hint }}</p>
 
         <!--
           Google 試算表要先分享才讀得到。⛔別只留說明文字：「分享好了沒」原本要按下
@@ -160,28 +160,7 @@
               <li>打開這份試算表，按右上角<strong>「共用」</strong></li>
               <li>
                 貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
-                <span v-if="shareEmail" class="kb-start__email">
-                  <code class="kb-gsheet-email">{{ shareEmail }}</code>
-                  <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
-                </span>
-                <span v-else class="text-xs text-muted">（讀不到服務帳號，請重新整理頁面或聯絡我們）</span>
-                <button type="button" class="kb-start__fold" :aria-expanded="sheetShotsOpen" @click="sheetShotsOpen = !sheetShotsOpen">
-                  {{ sheetShotsOpen ? '收起圖' : '看圖怎麼按' }}
-                </button>
-                <div v-if="sheetShotsOpen" class="kb-start__shots">
-                  <figure class="kb-shot">
-                    <img :src="SHOTS.gsheetShare1" alt="Google 共用視窗最上面那一格，紅框標示要貼帳號的位置" loading="lazy">
-                    <figcaption><span class="kb-shot__n">1</span>帳號貼在紅框那一格</figcaption>
-                  </figure>
-                  <figure class="kb-shot">
-                    <img :src="SHOTS.gsheetShare2" alt="貼上帳號後右邊出現權限下拉，預設是編輯者，紅框標示要改成檢視者" loading="lazy">
-                    <figcaption><span class="kb-shot__n">2</span>Google 預設給「編輯者」，改成「檢視者」</figcaption>
-                  </figure>
-                  <figure class="kb-shot">
-                    <img :src="SHOTS.gsheetShare3" alt="共用視窗右下角，紅框標示傳送按鈕" loading="lazy">
-                    <figcaption><span class="kb-shot__n">3</span>按右下角的「傳送」（不用通知對方）</figcaption>
-                  </figure>
-                </div>
+                <KnowledgeSheetShareHow v-model:open="sheetShotsOpen" :email="shareEmail" @copy="copyServiceEmail" />
               </li>
               <li>回來按下面的「分享好了，再測一次」</li>
             </ol>
@@ -339,11 +318,7 @@
 
         <!--
           試算表：五步壓成三步（`D-123`），三張真截圖收在「看圖怎麼按」——第一次做的人點開看，做過的人不用再捲過三張圖。
-          ⛔ 圖是老闆拍的真截圖（2026-09-03，走 `make-onboarding-shots.py` 的 gsheet 區塊）：站外畫面不憑記憶畫，
-             前一版畫的示意圖四處畫錯（欄位名、權限下拉位置、通知預設打勾）。
-          ⚠️ 圖上的①②③是同一張共用視窗的三個位置，跟第 2 步那一句的三個動作同序（貼帳號→檢視者→傳送），
-             改順序要一起改產線（`make-onboarding-shots.py`）。
-          ⚠️ 「檢視者」留著：我們只需要看，選「編輯者」也讀得到，但少給權限比較安全。
+          帳號、截圖、圖上編號的規矩都在 KnowledgeSheetShareHow（讀不到時那一塊共用同一份）。
         -->
         <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
           <p class="kb-start__ptxt kb-start__ptxt--lead">
@@ -359,28 +334,7 @@
             </li>
             <li>
               按右上角<strong>「共用」</strong>，貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
-              <span v-if="shareEmail" class="kb-start__email">
-                <code class="kb-gsheet-email">{{ shareEmail }}</code>
-                <el-button size="small" text type="primary" @click="copyServiceEmail">複製</el-button>
-              </span>
-              <span v-else class="text-xs text-muted">（帳號讀取失敗，請重新整理頁面）</span>
-              <button type="button" class="kb-start__fold" :aria-expanded="sheetShotsOpen" @click="sheetShotsOpen = !sheetShotsOpen">
-                {{ sheetShotsOpen ? '收起圖' : '看圖怎麼按' }}
-              </button>
-              <div v-if="sheetShotsOpen" class="kb-start__shots">
-                <figure class="kb-shot">
-                  <img :src="SHOTS.gsheetShare1" alt="Google 共用視窗最上面那一格，紅框標示要貼帳號的位置" loading="lazy">
-                  <figcaption><span class="kb-shot__n">1</span>帳號貼在紅框那一格</figcaption>
-                </figure>
-                <figure class="kb-shot">
-                  <img :src="SHOTS.gsheetShare2" alt="貼上帳號後右邊出現權限下拉，預設是編輯者，紅框標示要改成檢視者" loading="lazy">
-                  <figcaption><span class="kb-shot__n">2</span>Google 預設給「編輯者」，改成「檢視者」</figcaption>
-                </figure>
-                <figure class="kb-shot">
-                  <img :src="SHOTS.gsheetShare3" alt="共用視窗右下角，紅框標示傳送按鈕" loading="lazy">
-                  <figcaption><span class="kb-shot__n">3</span>按右下角的「傳送」（不用通知對方）</figcaption>
-                </figure>
-              </div>
+              <KnowledgeSheetShareHow v-model:open="sheetShotsOpen" :email="shareEmail" @copy="copyServiceEmail" />
             </li>
             <li>把試算表的網址貼到上面的框，會<strong>馬上告訴你讀不讀得到</strong></li>
           </ol>
@@ -428,7 +382,7 @@
         <el-button
           type="primary"
           data-tour="kb-preview"
-          :loading="previewing"
+          :loading="previewing || checkingUrlList"
           :disabled="!canPreview"
           @click="onPrimaryClick"
         >
@@ -857,7 +811,7 @@
         class="kb-dedup-warning"
       >
         <template #title>
-          已存在 {{ dupMatches.length }} 個同名資料
+          {{ dupIsSameSheet ? '這份試算表已經接過了' : `已存在 ${dupMatches.length} 個同名資料` }}
         </template>
         <!--
           ⛔ 這裡原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
@@ -1276,7 +1230,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { Document as IconFile, EditPen as IconPen, Grid as IconSheet, Link as IconWeb, QuestionFilled } from '@element-plus/icons-vue'
-import { canReplaceSource, detectImportKind, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN } from '~~/shared/knowledge-import-detect'
+import { canReplaceSource, detectImportKind, detectSheetAmongUrls, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN, sheetLinkOf } from '~~/shared/knowledge-import-detect'
 import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
 import {
   KNOWLEDGE_FILE_ACCEPT,
@@ -1288,8 +1242,6 @@ import {
 } from '~~/shared/knowledge-file-types'
 import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
-// 圖檔路徑的單一來源（同開通引導與修復劇本共用那份註冊表）
-import { ONBOARDING_SHOTS as SHOTS } from '~/utils/onboarding-shots'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
 import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
@@ -1418,6 +1370,16 @@ const detected = computed(() => {
     }
   }
   if (!pasteInput.value.trim()) return null
+  // 好幾個連結夾了試算表（2026-10-13 `/code-review`）：以前整串被當試算表，其他網址默默不見——講清楚、開始鈕也同一個判斷鎖住
+  if (sheetAmongUrls.value) {
+    return {
+      label: '網址和 Google 試算表混在一起',
+      sync: '試算表連結請單獨貼一次：它要先確認讀不讀得到，之後每小時跟著更新。網址可以先加，加完再貼試算表',
+      syncTone: 'static' as const,
+      hintLabel: '',
+      hint: '',
+    }
+  }
   if (urlList.value) {
     return {
       label: `${urlList.value.length} 個網址`,
@@ -1475,6 +1437,8 @@ const fileContentType = ref('')
  * ⚠️ 必須排在 selectedFile 之後、hintOpen 那個 watch 之前：detected 會讀它，而那個 watch 註冊當下就求值（同下面那顆 TDZ 雷）
  */
 const urlList = computed(() => (selectedFile.value ? null : detectUrlList(pasteInput.value)))
+/** 好幾個連結裡夾了 Google 試算表：哪一條路都不收，要他分開貼（見 detectSheetAmongUrls）。排在 urlList 旁邊，理由同上 */
+const sheetAmongUrls = computed(() => !selectedFile.value && detectSheetAmongUrls(pasteInput.value))
 
 // 判別結果同步回原本三個欄位，下游（runPreview / runDiscover / bulk-create）完全不用改。
 // ⚠️ 這個 watch 必須放在 selectedFile 宣告之後：watch 註冊當下就會讀一次 mode 當初始值，
@@ -1525,7 +1489,8 @@ function pickStart(route: 'sheet' | 'text' | 'web' | 'file') {
 watch([pasteInput, mode], () => {
   const v = pasteInput.value.trim()
   urlInput.value = mode.value === 'url' ? v : ''
-  gsheetInput.value = mode.value === 'gsheet' ? v : ''
+  // 只拿連結本身（旁邊夾的字不帶進去，不然會被存成這份試算表的網址）
+  gsheetInput.value = mode.value === 'gsheet' ? sheetLinkOf(v) : ''
   textInput.value = mode.value === 'text' ? pasteInput.value : ''
 })
 
@@ -1846,7 +1811,7 @@ const ocrUsed = ref(false) // 掃描檔 PDF 由 AI 辨識文字 → 預覽時提
 const ocrFromPhoto = ref(false) // 認字的是照片（`C-296`）：同一句提醒，主詞換成「這張照片」
 const healthWarnings = ref<string[]>([]) // 表格資料的匯入前健檢警告（提醒不擋匯入）
 const chunks = ref<Array<{ included: boolean; title: string; content: string; tags: string[]; questions: string[] }>>([])
-const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string }>>([])
+const existingMatches = ref<Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string; sameSheet?: boolean }>>([])
 const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
@@ -1891,6 +1856,7 @@ const ignoreDuplicateOnce = ref(false)
 
 // mode 已經是「判別結果」，這裡只需確認對應的輸入真的有值（規則共用 shared/knowledge-import-detect）
 const canPreview = computed(() => {
+  if (sheetAmongUrls.value) return false // 網址和試算表混在一起：要分開貼（畫面上那一行有講）
   if (urlList.value) return true // 好幾個網址（`D-124`）：走整站那條路，見 onPrimaryClick
   if (mode.value === 'file') return Boolean(selectedFile.value)
   if (mode.value === 'url') return HTTP_URL_PATTERN.test(urlInput.value.trim())
@@ -2121,19 +2087,33 @@ function openSitePages() {
  * 一次貼了好幾個網址（`D-124`，Gemini Notebook 也這樣收）：每個網址各自成為一份資料，走整站加入同一條路
  * （每頁各自整理、直接加入、清單上講結果）。⛔ 以前這種輸入被當成一段文字——AI 整理的是網址字串本身。
  */
-function runUrlList() {
+const checkingUrlList = ref(false)
+async function runUrlList() {
   const urls = urlList.value
-  if (!urls) return
+  if (!urls || checkingUrlList.value) return
+  // 先問哪幾個已經加過了（2026-10-13 `/code-review`）：以前每一頁都當沒加過，網頁改了幾個字就多建一份。
+  // 跟整站探頁同一支判斷；加過的那幾列不勾、標「加過了」，跟整站清單長得一樣。問不到就照舊全部加（內容一模一樣的伺服器還會擋）
+  checkingUrlList.value = true
+  let imported = new Set<string>()
+  try {
+    // 同一支整站探頁端點，帶 urls 就只回「哪幾個加過了」、不探站（見 discover-pages）
+    const res = await apiFetch<{ imported: string[] }>('/api/ai/knowledge/discover-pages', { method: 'POST', body: { urls } })
+    imported = new Set(res.imported ?? [])
+  }
+  catch { /* 見上 */ }
+  finally {
+    checkingUrlList.value = false
+  }
   sitePages.value = urls.map(url => ({
     url,
     title: '',
-    checked: true,
+    checked: !imported.has(url),
     status: 'idle' as const,
     cards: 0,
     notLearned: 0,
     warningTexts: [],
     error: '',
-    imported: false,
+    imported: imported.has(url),
     productName: '',
     group: pageGroupKey(url),
   }))
@@ -2143,12 +2123,13 @@ function runUrlList() {
   siteGroup.value = ''
   siteFilter.value = ''
   step.value = 'sitePages'
-  void runSiteImport()
+  if (sitePages.value.some(p => p.checked)) void runSiteImport()
+  else showToast(`這 ${urls.length} 個網址都加過了（在你的資料裡），沒有再加一次`, 'info')
 }
 
 /** 主按鈕：好幾個網址走整站那條路，其餘照常整理並加入 */
 function onPrimaryClick() {
-  if (urlList.value) runUrlList()
+  if (urlList.value) void runUrlList()
   else void runPreview()
 }
 
@@ -2558,12 +2539,17 @@ function showNumericOnly() {
 // 否則改名撞進「另一個」既有資料不會有任何警告——正是這個警示要防的事。
 const dupMatches = computed(() => {
   const name = sourceMeta.value.name.trim()
-  if (!name) return []
+  // 同一份 Google 試算表（伺服器比的是表的編號，名字改過也算，見 findExistingSources）：
+  // ⛔ 不可以只靠名字——換頁回來接著做的那一下，資料清單常常還沒載入（2026-10-13 `/code-review`）
+  const sameSheetIds = new Set(existingMatches.value.filter(m => m.sameSheet).map(m => m.id))
+  if (!name && !sameSheetIds.size) return []
   const pool = new Map<string, { id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>()
   for (const s of props.existingSources ?? []) pool.set(s.id, s)
   for (const m of existingMatches.value) if (!pool.has(m.id)) pool.set(m.id, m)
-  return [...pool.values()].filter(m => m.name.trim() === name)
+  return [...pool.values()].filter(m => (name && m.name.trim() === name) || sameSheetIds.has(m.id))
 })
+/** 撞到的是「同一份試算表」而不是名字一樣：標題要講對（名字可能根本不一樣） */
+const dupIsSameSheet = computed(() => existingMatches.value.some(m => m.sameSheet && dupMatches.value.some(d => d.id === m.id)))
 
 /**
  * 這一份可不可以拿來「更新」（`C-139`）。
@@ -2624,7 +2610,7 @@ interface PreviewResult {
   ocrUsed?: boolean
   /** 抽取資訊；照片認字時帶 image: 1（提醒文字要說「照片」不是「掃描檔」） */
   meta?: Record<string, string | number>
-  existingMatches?: Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string }>
+  existingMatches?: Array<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number; updatedAtMs: number; type?: string; sameSheet?: boolean }>
   /** 表格資料的匯入前健檢警告（示範列沒換、重複問題等） */
   warnings?: string[]
   /** AI 自動偵測的產品名（多產品 / 平台頁為空）；預填給使用者確認可改 */
@@ -2660,15 +2646,37 @@ const JOB_MARKER_TTL_MS = 55 * 60 * 1000
  * 不然按了「加入」、換頁回來卻停在預覽等他再按一次，等於那顆按鈕說話不算話。
  * 沒有這一欄＝舊版留下的記號（按的是「先看整理結果」），照舊停在預覽。
  */
-interface JobMarker { jobId: string, startedAtMs: number, mode: ImportMode, fileName?: string, autoImport?: boolean }
+/**
+ * replace／replaceIntentName：這一份整理好要**換掉哪一份**（資料頁「換新版」、「重新整理，換掉那一份」）。
+ * ⛔ 一定要跟著記號落地（2026-10-13 `/code-review`）：以前只記在記憶體，換頁回來接著做、或等太久交給背景之後，
+ *    整理好的結果被當成「新的一份」直接加進去——舊版沒換掉、多了一份，畫面寫的「整理好會直接換掉」沒有發生。
+ */
+interface JobMarker {
+  jobId: string
+  startedAtMs: number
+  mode: ImportMode
+  fileName?: string
+  autoImport?: boolean
+  replace?: DuplicateHit
+  replaceIntentName?: string
+}
 
 function jobMarkerKey(): string {
   return `kb-import-job:${workspaceId.value ?? ''}`
 }
 
-function saveJobMarker(jobId: string, m: ImportMode, file = '') {
+function saveJobMarker(jobId: string, m: ImportMode, file = '', replace: DuplicateHit | null = null, intentName = '') {
   try {
-    localStorage.setItem(jobMarkerKey(), JSON.stringify({ jobId, startedAtMs: Date.now(), mode: m, fileName: file, autoImport: true } satisfies JobMarker))
+    const marker: JobMarker = {
+      jobId,
+      startedAtMs: Date.now(),
+      mode: m,
+      fileName: file,
+      autoImport: true,
+      ...(replace ? { replace } : {}),
+      ...(intentName ? { replaceIntentName: intentName } : {}),
+    }
+    localStorage.setItem(jobMarkerKey(), JSON.stringify(marker))
   }
   catch { /* 無痕模式等寫不進去:接不回來而已,不影響這一輪匯入 */ }
 }
@@ -2763,6 +2771,7 @@ async function resumeStoredJob() {
   previewing.value = true
   previewError.value = ''
   previewStillRunning.value = false
+  replaceIntentName.value = marker.replaceIntentName ?? '' // 「換新版」那一行跟著接回來的這一份
   resetJobPoll()
   try {
     lastPreviewJobId.value = marker.jobId
@@ -2775,7 +2784,7 @@ async function resumeStoredJob() {
       clearJobMarker()
       return
     }
-    applyPreviewResult(res, marker.mode)
+    applyPreviewResult(res, marker.mode, marker.replace ?? null)
     fileName.value = marker.fileName ?? '' // 自動加入要用到（下載原檔的檔名），排在 settle 之前
     await settlePreview(marker.autoImport === true, stale)
   }
@@ -2806,6 +2815,7 @@ async function resumeStoredJob() {
     if (!stale()) {
       previewing.value = false
       resetJobPoll()
+      if (!previewStillRunning.value) replaceIntentName.value = ''
     }
   }
 }
@@ -2851,6 +2861,7 @@ async function recheckStoredJob() {
     if (res.status === 'processing') return
     if (res.status === 'error') {
       previewStillRunning.value = false
+      replaceIntentName.value = ''
       previewError.value = String(res.error || '整理失敗').slice(0, 300)
       clearJobMarker()
       return
@@ -2869,12 +2880,15 @@ async function recheckStoredJob() {
     const stale = () => run !== previewRun
     previewing.value = true // 加入那一下也要鎖輸入、側欄顯示「整理中」（見 autoImporting）
     try {
-      applyPreviewResult(res, marker.mode)
+      applyPreviewResult(res, marker.mode, marker.replace ?? null)
       fileName.value = marker.fileName ?? ''
       await settlePreview(marker.autoImport === true, stale)
     }
     finally {
-      if (!stale()) previewing.value = false
+      if (!stale()) {
+        previewing.value = false
+        replaceIntentName.value = ''
+      }
     }
   }
   catch (err: any) {
@@ -2882,6 +2896,7 @@ async function recheckStoredJob() {
     // 過期／被清掉／不是這個租戶 → 記號沒用了，收掉旗標（否則側欄會永遠停在「整理中」）
     if (code === 404 || code === 403) {
       previewStillRunning.value = false
+      replaceIntentName.value = ''
       clearJobMarker()
     }
     // 其他錯誤（網路抖動）不出聲，下一輪再看
@@ -3109,7 +3124,7 @@ async function runPreview() {
     ignoreDuplicateOnce.value = false // 用掉了就歸位，下一份重新守門
     lastPreviewJobId.value = created.jobId // 取消端點與 bulk-create 冪等鍵（C-46）都要用
     // 記號要在開始等之前就落地:最需要接回來的正是「等很久所以跑去做別的事」那一種
-    saveJobMarker(created.jobId, mode.value, mode.value === 'file' ? fileName.value : '')
+    saveJobMarker(created.jobId, mode.value, mode.value === 'file' ? fileName.value : '', replacing, replaceIntentName.value)
     const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(created.jobId, { isStale: stale })
 
     // 輪詢回來之後也要再確認一次:取消是在 await 期間按的
@@ -3146,7 +3161,9 @@ async function runPreview() {
     if (!stale()) {
       previewing.value = false
       resetJobPoll()
-      replaceIntentName.value = '' // 「換新版」那一行只陪這一輪（成功已經換到結果頁；失敗了再按一次就是一般加入）
+      // 「換新版」那一行只陪這一輪（成功已經換到結果頁；失敗了再按一次就是一般加入）。
+      // ⚠️ 等太久交給背景的不清：那一份好了照樣會換掉（記號裡有），這一行要陪到那時候
+      if (!previewStillRunning.value) replaceIntentName.value = ''
     }
   }
 }
@@ -3160,8 +3177,16 @@ async function runPreview() {
  */
 const replaceIntentName = ref('')
 function replaceWithFile(file: File, target: { id: string, name: string, chunkCount: number }) {
-  if (previewing.value || batchRunning.value || siteImporting.value) {
-    showToast('「加入知識」裡還有一份正在處理，等它好了再換新版', 'warning')
+  // ⚠️ 守門要連「畫面不等了、背景還在跑」的那一份一起看（2026-10-13 `/code-review`）：
+  //    以前只看 previewing，背景那份的記號會被新的這份蓋掉——整理完（錢已經花了）卻沒人把它加進去
+  if (previewing.value || batchRunning.value || siteImporting.value || previewStillRunning.value) {
+    showToast('「加入知識」裡還有一份正在整理（好了會自己加進去），等它好了再換新版', 'warning')
+    return
+  }
+  // 整理好、停在「加入之前先看一下」等他核對的那一份（照片認字、沒讀完、空間不夠、同名）：
+  // ⛔ 不可以直接清掉——那是付過錢、還沒人看過的結果，以前按了換新版就默默不見。視窗已經開著，他看得到是哪一份
+  if (step.value === 'preview' && chunks.value.length > 0) {
+    showToast('「加入知識」裡有一份整理好、還在等你看，先決定要不要加入，再換新版', 'warning')
     return
   }
   resetAll()
@@ -3563,6 +3588,7 @@ function resetAll() {
   if (!previewStillRunning.value) {
     clearJobMarker()
     previewError.value = ''
+    replaceIntentName.value = '' // 背景那一份是「換新版」的話，那一行要陪到它換好（記號裡有要換哪一份）
   }
   step.value = 'input'
   pasteInput.value = '' // mode 由這個與 selectedFile 衍生，不再是可寫的狀態
@@ -3581,7 +3607,6 @@ function resetAll() {
   stoppedFor.value = []
   autoImported.value = false
   pendingReplace.value = null
-  replaceIntentName.value = ''
   existingMatches.value = []
   truncated.value = false
   incomplete.value = false

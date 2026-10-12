@@ -993,6 +993,11 @@ export interface KnowledgeSuggestionDoc {
   status: KnowledgeSuggestionStatus
   /** 給列表看的主題名（LLM 命名，≤12 字） */
   topic: string
+  /**
+   * topic 是客人原句的前 12 字（建立時 AI 還沒擬到草稿的退路），不是 AI 起的主題名。
+   * 2026-10-13 起建立時寫明；舊資料沒有這一格，用 isRawSuggestionTopic 推（見 shared/knowledge-suggestion-topic）
+   */
+  topicIsRaw?: boolean
   /** 樣本問句（客人原話，最多 5 條，給人看） */
   sampleQueries: string[]
   /** 涵蓋的全部去重問句（最多 30 條）：採用後拿來把監控頁對應案例自動標已處理 */

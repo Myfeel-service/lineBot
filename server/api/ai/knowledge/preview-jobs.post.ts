@@ -200,7 +200,9 @@ export default defineEventHandler(async (event) => {
           work.phase = 'enrich'
         }
         else {
-          setChunkingFromExtracted(work, await readingFile(fileName, () => extractXlsxText(buffer, kind)), { wholeText: kind === 'csv' })
+          // 試算表退回純文字：Excel 跟 CSV 一樣，讀到的就是整份（2026-10-13 `/code-review`：以前只對 CSV 帶，
+          // 字少的 .xlsx 照樣被叫去「把圖片上的字存成圖片」）
+          setChunkingFromExtracted(work, await readingFile(fileName, () => extractXlsxText(buffer, kind)), { wholeText: true })
         }
       }
       else if (kind === 'image') {

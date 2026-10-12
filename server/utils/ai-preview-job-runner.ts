@@ -19,6 +19,7 @@ import {
   workToPreviewResult,
   type PreviewJobDoc,
 } from '~~/server/utils/ai-preview-jobs'
+import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 
 /**
  * 匯入／重新同步工作的「推進一步」引擎。
@@ -189,9 +190,11 @@ export async function advancePreviewJob(
           : null
       }
       else {
-        // 同名偵測只對 file / url（同舊 preview-chunks）
-        work.existingMatches = (work.input.type === 'file' || work.input.type === 'url')
-          ? await findExistingSources(workspaceId, work.sourceName, db)
+        // 同名偵測：檔案、網址比同名；Google 試算表另外比「同一份表、同一個分頁」（名字改過也認得，2026-10-13 `/code-review`）。
+        // 一段文字不比：名稱帶時間，同名就是同一分鐘貼了兩次
+        const sheetRef = work.input.type === 'gsheet' ? parseGoogleSheetUrl(String(work.input.url ?? '')) : null
+        work.existingMatches = (work.input.type === 'file' || work.input.type === 'url' || work.input.type === 'gsheet')
+          ? await findExistingSources(workspaceId, work.sourceName, db, sheetRef ? { sheet: { spreadsheetId: sheetRef.spreadsheetId, gid: sheetRef.gid } } : {})
           : []
         // 自動認產品名（P1-1）：單一產品來源預填產品名給使用者確認。gsheet（多列多產品）不跑；
         // 多產品 / 平台頁 LLM 會回空字串。失敗不擋匯入（只是不預填）。

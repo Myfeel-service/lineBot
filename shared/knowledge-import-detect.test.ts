@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canReplaceSource, detectImportKind, detectUrlList, storedSourceType } from './knowledge-import-detect'
+import { canReplaceSource, detectImportKind, detectSheetAmongUrls, detectUrlList, sheetLinkOf, storedSourceType } from './knowledge-import-detect'
 
 describe('detectUrlList（一次貼好幾個網址，D-124）', () => {
   it('換行或空白隔開的好幾個網址 → 一份清單（重複的只留一個）', () => {
@@ -56,6 +56,25 @@ describe('detectImportKind', () => {
 
   it('缺協定的網址視為文字（抓不到的東西不要假裝可以抓）', () => {
     expect(detectImportKind('www.example.com/faq')).toBe('text')
+  })
+
+  it('⛔ 好幾個網址夾了試算表連結 → 不是試算表（以前整串被判成試算表，其他網址默默不見，2026-10-13 /code-review）', () => {
+    const mixed = 'https://shop.tw/pages/faq https://docs.google.com/spreadsheets/d/abc/edit'
+    expect(detectImportKind(mixed)).not.toBe('gsheet')
+    expect(detectSheetAmongUrls(mixed)).toBe(true)
+    expect(detectUrlList(mixed)).toBeNull() // 也不是網址清單：兩條路都不收，畫面要叫他分開貼
+  })
+
+  it('一個試算表連結旁邊夾幾個字 → 照舊是試算表，拿來用的只有連結本身', () => {
+    const pasted = '價目表 https://docs.google.com/spreadsheets/d/abc123/edit#gid=0'
+    expect(detectImportKind(pasted)).toBe('gsheet')
+    expect(sheetLinkOf(pasted)).toBe('https://docs.google.com/spreadsheets/d/abc123/edit#gid=0')
+    expect(detectSheetAmongUrls(pasted)).toBe(false)
+  })
+
+  it('句子裡一個 20 字以上的英文字不算試算表 ID（只有整段就是那串才算）', () => {
+    expect(sheetLinkOf('please read abcdefghijklmnopqrstuvwxyz first')).toBe('')
+    expect(sheetLinkOf('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms')).toBe('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms')
   })
 })
 

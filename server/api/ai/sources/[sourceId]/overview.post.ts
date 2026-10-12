@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { getSource, invalidateCatalogSourceCache, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { countSourceChunks, getSource, invalidateCatalogSourceCache, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
@@ -46,10 +46,12 @@ export default defineEventHandler(async (event) => {
   const made = outcome === 'created' || outcome === 'updated'
 
   if (made) {
-    if (source.data.generateOverview !== true) {
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
-        .update({ generateOverview: true, updatedAt: FieldValue.serverTimestamp() })
-    }
+    // 條數要跟著重算（2026-10-13 `/code-review`）：新做一張＝多一條，清單上寫的還是舊數字；
+    // 之後「換新版」沒對到同名清單時是拿這個數字估會空出多少空間，少一條就少算一條。
+    // 跟同步、套用改動那幾條重做總表的路同一種寫法（countSourceChunks，聚合查詢不逐筆讀）
+    const chunkCount = await countSourceChunks(db, workspaceId, sourceId)
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+      .update({ generateOverview: true, chunkCount, updatedAt: FieldValue.serverTimestamp() })
     invalidateCatalogSourceCache(workspaceId)
     invalidateKnowledgeChunkCount(workspaceId)
     // 稽核（`C-254`）：會花一次 AI 整理＋學習的錢；沒做出來就沒有變動，不記

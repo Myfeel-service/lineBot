@@ -19,6 +19,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { embedQuery, generateJson, estimateTokens } from './gemini'
 import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { isRawSuggestionTopic, topicFromDraftTitle } from '~~/shared/knowledge-suggestion-topic'
 
 export const KNOWLEDGE_SUGGESTIONS_COLLECTION = 'knowledgeSuggestions'
 /** 掃描狀態（cronState 慣例）：{ [workspaceId]: { lastScanAt?: ISO, requestedAt?: ISO } } */
@@ -473,11 +474,20 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
           patch.draftError = FieldValue.delete()
           // 建立時沒擬到草稿的，topic 是客人原句的前 12 字（見下面「新主題」那段）——補到草稿就換成 AI 起的主題名。
           // ⛔ 以前只補草稿不換名，列表上一直掛著「您好，請問，小耳記，go」這種句子（`D-124` 新手走查）
-          if (r.topic) patch.topic = r.topic
+          if (r.topic) {
+            patch.topic = r.topic
+            patch.topicIsRaw = false
+          }
         }
         else if (r.error) {
           patch.draftError = r.error
         }
+      }
+      else if (match.data.draft?.title && isRawSuggestionTopic(match.data)) {
+        // 早就有草稿、名字卻還是客人原句的舊資料（2026-10-13 `/code-review`：上面那段只管「這輪才補到草稿」的，
+        // 這批永遠不會被修）：拿草稿標題當名字。⚠️ 判斷要在這輪覆寫樣本句之前做（用的是 match.data，不是 patch）
+        patch.topic = topicFromDraftTitle(match.data.draft.title)
+        patch.topicIsRaw = false
       }
       pendingWrites.push({ ref: match.ref, patch })
       tally.updated++
@@ -508,6 +518,8 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
       workspaceId,
       status: 'pending',
       topic,
+      // 沒擬到草稿＝topic 是客人原句的前 12 字（擬到的話 topic 一定是 AI 起的或草稿標題）；寫明，畫面與下一輪改名都靠它
+      topicIsRaw: draft == null,
       sampleQueries,
       queries,
       eventCount: cluster.totalCount,

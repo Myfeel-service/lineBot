@@ -356,6 +356,22 @@ function hasAnyText(rows: string[][]): boolean {
 }
 
 /**
+ * 只有一欄（或只有一列）的分頁不算表格（`C-303`②）：Google 試算表新讀法、探測「讀不讀得到」、Excel／CSV 三邊同一把尺。
+ * ⛔ 三邊各寫一份就會再分岔一次——2026-10-13 `/code-review` 抓到：匯入跳過單欄分頁，探測卻照舊打綠勾，
+ *    貼上連結看到「讀得到了」，按下整理才撞「沒有足夠資料」。
+ * 欄寬看「最後一個有字的格子在第幾欄」（中間空著的也算）：Excel 讀出來的列會補到整張表的寬度，看 length 會被空白欄騙過。
+ * 回傳不是表格的原因（是表格回 null）：'one-column'（A 欄一列一題，要叫他改成兩欄）跟 'one-row'（封面、只有欄位名稱）
+ * 講法不一樣——封面頁被說成「只有一欄」會讓人摸不著頭緒。
+ */
+export function tableShapeProblem(rows: unknown[][]): null | 'empty' | 'one-row' | 'one-column' {
+  const nonEmpty = rows.filter(r => Array.isArray(r) && r.some(c => String(c ?? '').trim()))
+  if (!nonEmpty.length) return 'empty'
+  if (nonEmpty.length < 2) return 'one-row'
+  const maxCols = nonEmpty.reduce((m, r) => Math.max(m, filledWidth(r.map(c => String(c ?? '')))), 0)
+  return maxCols < 2 ? 'one-column' : null
+}
+
+/**
  * 讀取一份 Google Sheet 並轉成知識卡。
  * 依 selectSheetsToRead 決定讀哪些分頁（gid 指定→單頁；否則全部非說明頁，舊來源 FAQ 頁優先），
  * 每個分頁各自跑 rowsToCards（欄位名稱那列自己找），跨分頁彙總——與 Excel 上傳一致。
@@ -394,13 +410,10 @@ export async function readGoogleSheetAsCards(
     // 只有一欄（或只有一列）的分頁不算表格——跟 Excel 同一把尺（`C-303`②）：以前試算表會把每一格都建成
     // 「標題＝內容」的卡、同樣的分頁在 Excel 卻列進「沒收進來」，兩邊講法不一樣。
     // ⛔ 只對新接的表：已經在同步的舊表照舊讀，換規則＝下一輪同步把那幾張卡整批刪掉，店家什麼都沒做
-    if (!legacy) {
-      const nonEmpty = rows.filter(r => r.some(c => c.trim()))
-      const maxCols = nonEmpty.reduce((m, r) => Math.max(m, filledWidth(r)), 0)
-      if (nonEmpty.length < 2 || maxCols < 2) {
-        if (nonEmpty.length) emptySheets.push(t.title)
-        continue
-      }
+    const shape = legacy ? null : tableShapeProblem(rows)
+    if (shape) {
+      if (shape !== 'empty') emptySheets.push(t.title)
+      continue
     }
     // values 從 A1 起算（前面的空白列也會回空陣列），第 i 個就是試算表的第 i+1 列
     const { cards: sheetCards, stats } = rowsToCards(rows, { legacy, firstRow: 1 })
@@ -416,8 +429,10 @@ export async function readGoogleSheetAsCards(
   }
 
   if (!collector.stats.rowCount) {
-    // 「沒有足夠資料」是 shared/gsheet-probe-status 的分類依據，改字時留著這幾個字
-    throw createError({ statusCode: 422, statusMessage: '這份試算表沒有足夠資料（要有一列欄位名稱＋至少一列資料）' })
+    // 「沒有足夠資料」是 shared/gsheet-probe-status 的分類依據，改字時留著這幾個字。
+    // 有字卻整理不出來的分頁要點名（多半是只有一欄）：只講「要有欄位名稱＋資料」，A 欄一列一題的人會說「我有啊」
+    const named = emptySheets.length ? `：${emptySheets.map(n => `「${n}」`).join('、')}只有一欄（或只有欄位名稱），要整理成「名稱｜內容」兩欄以上的表格` : '（要有一列欄位名稱＋至少一列資料）'
+    throw createError({ statusCode: 422, statusMessage: `這份試算表沒有足夠資料${named}` })
   }
 
   const readTitles = targets.map(t => t.title)
@@ -548,6 +563,8 @@ export interface SheetProbeResult {
   sheetTitles: string[]
   /** 這次**真的看過**的分頁（照看的順序）；講「哪幾頁沒資料」只能講這幾頁 */
   checkedTitles: string[]
+  /** 看過、有好幾列字、但只有一欄的分頁（A 欄一列一題）——匯入時會列進「沒收進來」，探測要先講（見 tableShapeProblem） */
+  narrowTitles: string[]
   hasData: boolean
 }
 
@@ -564,6 +581,7 @@ export async function probeGoogleSheetAccess(
   //    照順序只看前幾頁會在 FAQ 頁明明有資料時亮紅燈。
   const ordered = [...targets.filter(t => isFaqSheetName(t.title)), ...targets.filter(t => !isFaqSheetName(t.title))]
   const checkedTitles: string[] = []
+  const narrowTitles: string[] = []
   for (const t of ordered.slice(0, PROBE_MAX_SHEETS)) {
     const data = await api<ValuesResponse>(
       `${encodeURIComponent(ref.spreadsheetId)}/values/${encodeURIComponent(`${t.title}!A1:Z${PROBE_ROWS}`)}?majorDimension=ROWS`,
@@ -573,12 +591,18 @@ export async function probeGoogleSheetAccess(
       (data.values ?? []).map(r => (Array.isArray(r) ? r.map(c => String(c ?? '')) : [])),
       t.merges,
     )
+    // 跟匯入同一把尺（見 tableShapeProblem）：只有一欄的分頁匯入會跳過，這裡打勾就是「綠燈後撞牆」
+    const shape = tableShapeProblem(rows)
+    if (shape) {
+      if (shape === 'one-column') narrowTitles.push(t.title)
+      continue
+    }
     // 用同一支 rowsToCards 判「有沒有資料」：表頭列 + 至少一列資料才算
     if (rowsToCards(rows, { legacy: false }).stats.rowCount > 0) {
-      return { sheetTitle: t.title, sheetTitles, checkedTitles, hasData: true }
+      return { sheetTitle: t.title, sheetTitles, checkedTitles, narrowTitles, hasData: true }
     }
   }
-  return { sheetTitle: targets[0]!.title, sheetTitles, checkedTitles, hasData: false }
+  return { sheetTitle: targets[0]!.title, sheetTitles, checkedTitles, narrowTitles, hasData: false }
 }
 
 /** 標題正規化當比對 key（去空白、轉小寫）；gsheet 同步、匯入健檢、合併重複列共用這一份。 */

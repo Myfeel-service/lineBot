@@ -167,6 +167,8 @@ import { suggestionTopicLabel } from '~/utils/kb-suggestion-label'
 interface SuggestionRow {
   id: string
   topic: string
+  /** topic 是客人原句（伺服器判好的，見 suggestionTopicLabel） */
+  topicIsRaw?: boolean
   eventCount: number
   /** 次數是取樣值（事件撞到掃描上限）→ 顯示「至少 N 次」 */
   sampled: boolean

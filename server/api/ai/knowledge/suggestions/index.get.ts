@@ -2,10 +2,13 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION, getGapScanState } from '~~/server/utils/ai-knowledge-suggest'
 import type { KnowledgeSuggestionDoc, KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { isRawSuggestionTopic } from '~~/shared/knowledge-suggestion-topic'
 
 export interface KnowledgeSuggestionRow {
   id: string
   topic: string
+  /** topic 是客人原句（不是 AI 起的主題名）；伺服器這裡判好，畫面不必拿到全部 30 條問句再自己猜（見 isRawSuggestionTopic） */
+  topicIsRaw: boolean
   eventCount: number
   /** 次數是取樣值（事件撞到掃描上限）→ UI 要說「至少 N 次」 */
   sampled: boolean
@@ -50,6 +53,7 @@ export default defineEventHandler(async (event) => {
       return {
         id: d.id,
         topic: String(s.topic ?? '(未命名主題)'),
+        topicIsRaw: isRawSuggestionTopic({ topic: String(s.topic ?? ''), topicIsRaw: s.topicIsRaw, sampleQueries: s.sampleQueries, queries: s.queries }),
         eventCount: Number(s.eventCount ?? 0),
         sampled: s.sampled === true,
         sampleQueries: (s.sampleQueries ?? []).map(String),

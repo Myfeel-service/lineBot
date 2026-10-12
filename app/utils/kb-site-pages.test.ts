@@ -41,6 +41,29 @@ describe('recommendSitePages（先幫他勾好常被問的頁，D-124）', () =>
     expect(recommendSitePages(pages, { room: 4, maxPages: 50 })).toHaveLength(0)
   })
 
+  it('⛔ 商品名剛好含 cookie／cart／contact 這種字 → 照樣是商品、照樣勾（2026-10-13 /code-review：以前是子字串比對）', () => {
+    const shop = [
+      page('/products/chocolate-chip-cookie', '巧克力豆餅乾'),
+      page('/products/filter-cartridge', '濾心'),
+      page('/products/contact-lens-case', '隱形眼鏡盒'),
+      page('/products/cart-organizer', '購物車收納架'),
+      page('/policies/cookie-policy', 'Cookie 政策'),
+      page('/research/2026', '研究報告'),
+    ]
+    const picked = recommendSitePages(shop, { room: null, maxPages: 50 })
+    expect(picked).toEqual([
+      page('/products/chocolate-chip-cookie').url,
+      page('/products/filter-cartridge').url,
+      page('/products/contact-lens-case').url,
+      page('/products/cart-organizer').url,
+    ])
+  })
+
+  it('不是商品的頁：網址裡整個字是 contact／shipping 才算說明頁（about-time 這種不算）', () => {
+    const misc = [page('/contact', '聯絡我們'), page('/blogs/news/about-time-management', '時間管理')]
+    expect(recommendSitePages(misc, { room: null, maxPages: 50 })).toEqual([page('/contact').url])
+  })
+
   it('以前加過的頁不勾', () => {
     const withImported = [{ ...page('/pages/shipping', '運送'), imported: true }, page('/pages/faq', '常見問題')]
     expect(recommendSitePages(withImported, { room: null, maxPages: 50 })).toEqual([page('/pages/faq').url])

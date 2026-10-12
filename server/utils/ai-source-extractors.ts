@@ -18,6 +18,7 @@ import {
   rowsToCards,
   selectDataSheetNames,
   splitSkippedSheets,
+  tableShapeProblem,
   type MergeRange,
   type SheetCard,
   type SheetImportStats,
@@ -386,11 +387,12 @@ export function extractXlsxCards(buffer: Buffer, kind: SpreadsheetKind = 'xlsx')
     if (!sheet) continue
     // header:1 → 取「陣列的陣列」原始列，跟 Google Sheet 的 values 同格式（中間的空白列也會回來，列號才對得上）
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false }) as unknown[][]
-    const nonEmpty = rows.filter(r => Array.isArray(r) && r.some(c => String(c ?? '').trim()))
-    const maxCols = nonEmpty.reduce((m, r) => Math.max(m, r.length), 0)
-    // 太窄（< 2 欄）或列數不足就不算表格。⛔ 不可以默默跳過：記下來在預覽講「這頁沒收進來」
-    if (nonEmpty.length < 2 || maxCols < 2) {
-      if (nonEmpty.length) emptySheets.push(sheetName)
+    // 太窄（只有一欄）或列數不足就不算表格——跟 Google 試算表同一把尺（tableShapeProblem）。
+    // ⚠️ 以前這裡看 r.length：defval 會把每一列補到整張表的寬度，A 欄有字、C 欄只是被設過格式也算三欄。
+    // ⛔ 不可以默默跳過：記下來在預覽講「這頁沒收進來」
+    const shape = tableShapeProblem(rows)
+    if (shape) {
+      if (shape !== 'empty') emptySheets.push(sheetName)
       continue
     }
 

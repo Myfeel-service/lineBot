@@ -143,6 +143,16 @@ describe('extractXlsxCards — 說明分頁 / 合併儲存格', () => {
     expect(res.emptySheets).toEqual(['注意事項'])
   })
 
+  it('只有 A 欄有字、但 B、C 欄被設過（空字串）的分頁 → 照樣算「只有一欄」（以前看列長度被空白欄騙過，2026-10-13 /code-review）', () => {
+    const buf = makeXlsx([
+      { name: '價目表', rows: [['品名', '價格'], ['W1', '12,900']] },
+      { name: '備忘', rows: [['週一進貨', '', ''], ['週三盤點', '', '']] },
+    ])
+    const res = extractXlsxCards(buf)!
+    expect(res.cards.map(c => c.title)).toEqual(['W1'])
+    expect(res.emptySheets).toEqual(['備忘'])
+  })
+
   it('整本只有說明類名稱的分頁 → 照讀(不讓使用者面對空結果)', () => {
     const buf = makeXlsx([{ name: '使用說明', rows: faqRows }])
     const res = extractXlsxCards(buf)

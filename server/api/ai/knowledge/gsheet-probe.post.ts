@@ -41,6 +41,16 @@ export default defineEventHandler(async (event) => {
     const tabs = quote(res.sheetTitles)
     if (!res.hasData) {
       const unchecked = res.sheetTitles.length - res.checkedTitles.length
+      // 只有一欄的分頁（A 欄一列一題）要直接講是「格式」的問題（2026-10-13 `/code-review`）：
+      // 以前這種分頁打綠勾、按下整理才撞「沒有足夠資料」，而「要有欄位名稱＋資料」他會說「我有啊」
+      const narrow = res.narrowTitles ?? []
+      if (narrow.length && unchecked === 0) {
+        return {
+          status: 'no_data' as const,
+          message: `讀得到這份試算表，但${quote(narrow)}只有一欄，整理不出一條一條的問答；`
+            + '請整理成「名稱｜內容」兩欄以上的表格（第一欄放問題或品名，後面幾欄放答案），再測一次。',
+        }
+      }
       // ⛔ 只能講真的看過的那幾頁（2026-10-11 審查）：以前只看前 3 頁、卻說「這幾個分頁都沒有資料」
       //    把每一頁都點名——資料其實在第 5 頁的人會以為整份表都讀不到。
       //    還有沒看的頁＝我們不知道，不是「沒資料」：照實說，叫他直接整理看看。
@@ -69,6 +79,14 @@ export default defineEventHandler(async (event) => {
     const raw = String(err?.statusMessage || err?.message || '')
     // 分類（含「哪一條規則要排在前面」）在 shared/gsheet-probe-status.ts，有測試釘住
     const { status, needsShare } = classifyGsheetProbeError(raw)
+    if (status === 'not_enabled') {
+      // 我們這邊的設定問題（2026-10-13 `/code-review`）：講清楚不是他的表的問題、給一條現在就走得通的路；原文留在細節裡給我們查
+      return {
+        status,
+        message: '還讀不到：是我們這邊的 Google 試算表功能還沒開好，不是你的試算表的問題。請先把試算表下載成 Excel 傳上來，或聯絡我們。',
+        detail: raw.slice(0, 300),
+      }
+    }
     if (needsShare) {
       return {
         status,

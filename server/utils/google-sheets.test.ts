@@ -850,4 +850,18 @@ describe('probeGoogleSheetAccess（finding 6）', () => {
     const res = await probeGoogleSheetAccess(ref, tabsApi([{ title: '輸出摘要', values: [['此文件從 Numbers 輸出']] }, faq]))
     expect(res.sheetTitles).toEqual(['FAQ'])
   })
+
+  it('⛔ 只有一欄的分頁 → 不打綠勾、點名是「只有一欄」（以前打勾，按下整理才撞「沒有足夠資料」，2026-10-13 /code-review）', async () => {
+    const listOnly: Tab = { title: '常見問題', values: [['退貨多久？'], ['運費多少？'], ['可以分期嗎？']] }
+    const res = await probeGoogleSheetAccess(ref, tabsApi([listOnly]))
+    expect(res).toMatchObject({ hasData: false, narrowTitles: ['常見問題'] })
+    // 匯入那邊同一把尺：一樣整理不出來，錯誤訊息點名那一頁、講要兩欄
+    await expect(readGoogleSheetAsCards(ref, tabsApi([listOnly]), NEW_RULES))
+      .rejects.toMatchObject({ statusCode: 422, statusMessage: expect.stringContaining('「常見問題」只有一欄') })
+  })
+
+  it('封面頁（只有一格標題）不算「只有一欄」——那是沒資料，講法不一樣', async () => {
+    const res = await probeGoogleSheetAccess(ref, tabsApi([empty('封面'), faq]))
+    expect(res).toMatchObject({ hasData: true, narrowTitles: [] })
+  })
 })

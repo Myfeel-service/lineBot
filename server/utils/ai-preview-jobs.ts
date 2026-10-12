@@ -11,7 +11,7 @@
  * - 大文字放 Storage 的 work.json（無 1 MiB 限制）；Firestore job 文件只留狀態/進度/lease。
  * - lease + cursor 讓中途被閘道掐斷的一步能在 lease 過期後被下一輪重跑，不重跑已完成的步。
  */
-import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp, type Firestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore'
 import { getDb, getStorage } from './firebase'
 import {
   CHUNK_CONCURRENCY,
@@ -94,6 +94,8 @@ export interface ExistingMatch {
   updatedAtMs: number
   /** 來源種類：型別不同的不給「更新這一份」（`C-139`），畫面要分得出來 */
   type: string
+  /** 是同一份 Google 試算表（同一個分頁）——名字改過也算同一份；畫面不能只靠名字比（見 findExistingSources） */
+  sameSheet?: boolean
 }
 
 /** 放在 Storage work.json 的完整工作狀態（含大文字與累積結果）。 */
@@ -645,25 +647,41 @@ export async function appendImportQualityWarnings(
 
 // ── 同名來源偵測（給前端 dedup 警告；查詢失敗回空陣列）────────────────
 
+/**
+ * 同名（Google 試算表另外加「同一份表」）的既有資料。
+ * opts.sheet：Google 試算表要多比一次「是不是同一份表、同一個分頁」（2026-10-13 `/code-review`）。
+ *   以前試算表完全不比（只有檔案、網址比同名），同名的提醒全靠畫面拿資料清單自己比——清單還沒載入
+ *   （換頁回來接著做的那一下）就沒有提醒、自動加入，同一份表多一份，兩份每小時各自同步。
+ *   名字改過的也要認得：判斷「是不是同一份」靠表的編號，不靠名字。
+ */
 export async function findExistingSources(
   workspaceId: string,
   sourceName: string,
   db: Firestore = getDb(),
+  opts: { sheet?: { spreadsheetId: string, gid: string | null } } = {},
 ): Promise<ExistingMatch[]> {
-  if (!sourceName) return []
+  if (!sourceName && !opts.sheet) return []
   try {
-    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
-      .where('workspaceId', '==', workspaceId)
-      .where('name', '==', sourceName)
+    const base = db.collection(KNOWLEDGE_SOURCES_COLLECTION).where('workspaceId', '==', workspaceId)
+    const [byName, bySheet] = await Promise.all([
       // 多撈幾筆：回收桶的在下面濾掉，濾完還要湊得到 5 筆
-      .limit(10)
-      .get()
+      sourceName ? base.where('name', '==', sourceName).limit(10).get() : Promise.resolve(null),
+      opts.sheet ? base.where('gsheetId', '==', opts.sheet.spreadsheetId).limit(10).get() : Promise.resolve(null),
+    ])
+    const sameSheetIds = new Set(
+      (bySheet?.docs ?? [])
+        // 同一份表的不同分頁（連結帶 gid）可以是刻意分開的兩份資料，只認同一個分頁
+        .filter(d => ((d.data() as { gsheetGid?: string | null })?.gsheetGid ?? null) === opts.sheet?.gid)
+        .map(d => d.id),
+    )
+    const docs = new Map<string, QueryDocumentSnapshot>()
+    for (const d of [...(bySheet?.docs ?? []).filter(d => sameSheetIds.has(d.id)), ...(byName?.docs ?? [])]) docs.set(d.id, d)
     /**
      * ⛔ 回收桶裡的不算「已經有一份」（同 findSourceByContentHash）：列出來的話，批次匯入會問
      *    「要不要更新這一份」，按下去等於把回收桶那份整份救回來——人按的是「更新」，不是「還原」。
      *    墓碑有兩種寫法（新的 isDeleted:true、舊的只有 deletedAt），兩個都要看。
      */
-    const live = snap.docs.filter((d) => {
+    const live = [...docs.values()].filter((d) => {
       const data = d.data() as { isDeleted?: boolean, deletedAt?: unknown } | undefined
       return data?.isDeleted !== true && data?.deletedAt == null
     })
@@ -679,6 +697,7 @@ export async function findExistingSources(
         ...(quotaChunkCount === undefined ? {} : { quotaChunkCount }),
         updatedAtMs: typeof sec === 'number' ? sec * 1000 : 0,
         type: String(data?.type ?? ''),
+        ...(sameSheetIds.has(d.id) ? { sameSheet: true } : {}),
       }
     }))
   }
