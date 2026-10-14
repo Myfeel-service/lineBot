@@ -61,6 +61,7 @@ export interface AlertDefinition {
    * ⚠️2026-08-27 五輪拍板：提醒帶**不因頁面自己也有呈現而閉嘴**（四輪曾做過
    * presents 抑制，老闆否決：「進來之後就不知道問題在哪」）。頁內有重複呈現沒關係，
    * 提醒帶負責第一眼，「帶我看」聚光燈負責指到那個區塊。
+   * 唯一的例外是知識庫來源頁的五顆（`C-314`，見 PAGE_LIST_COVERED_ALERTS）。
    */
   anchor?: { selector: string, note: string }
   /**
@@ -610,6 +611,39 @@ function alertRoutes(def: AlertDefinition, scopes: WorkspaceAlertScope[] | undef
       return [...new Set(hits)]
   }
   return [def.route(wid)]
+}
+
+/**
+ * 頁頂提醒帶在**這一頁**不講的那幾顆（`C-314`，2026-10-14 老闆「只呈現需要的東西、不要過度呈現資訊」）。
+ *
+ * 知識庫來源頁自己有一份「要處理的事」，下面這五顆它每一顆都列（同一份體檢資料、各有一顆去處理的按鈕）：
+ * 資料抓不到內容（failedSources）、自動偵測失效（stalledSources）、AI 沒學起來（failedChunks）、
+ * 被標 AI 答錯（wrongAnswerChunks）、原始內容改過了（outdatedSources）。提醒帶再講一次＝同一件事一進頁就講兩遍
+ * （「有資料內容變了還沒重新學（2）」＋「有 2 份資料的原始內容改過了」）。
+ *
+ * ⚠️ 這推翻了 2026-08-27 五輪「提醒帶不因頁面自己也有呈現而閉嘴」——**只在這一頁、只這五顆**：
+ *    那次否決的是「凡是頁面有呈現就閉嘴」的通則（presents 抑制）；這一頁的清單就在第一眼的位置，
+ *    選著一份資料時側欄那一行「N 件要處理 →」接手。其他頁一律照舊。
+ * ⚠️ 手機上不濾（呼叫端判斷）：手機寬時工作台整塊不顯示（清單和工作台只能擺一個），提醒帶是唯一講這幾件事的地方。
+ * 不在這裡的：卡住學不完（knowledgeIndexStuck，清單沒列這件）、建議類（本來就不上提醒帶）。
+ * 「幫我修」一鍵修（同步失敗、沒學起來那兩顆有）沒有消失：右下角小幫手的同一張卡上照樣按得到。
+ */
+export const PAGE_LIST_COVERED_ALERTS: Record<string, readonly WorkspaceAlertId[]> = {
+  'knowledge/sources': ['knowledgeSyncFailed', 'knowledgeDetectStalled', 'knowledgeIndexFailed', 'knowledgeWrongAnswers', 'knowledgeOutdated'],
+}
+
+/**
+ * 拿掉「這一頁自己的清單已經列了」的那幾顆（規則與理由見 PAGE_LIST_COVERED_ALERTS）。
+ * path 是 `/admin/<工作區>/<頁>`（不含查詢字串）；不是這個工作區底下、或頁面不在表上＝原樣奉還。
+ */
+export function withoutPageListCovered<T extends { alert: { id: WorkspaceAlertId } }>(rows: T[], path: string, workspaceId: string): T[] {
+  const prefix = `/admin/${workspaceId}/`
+  if (!workspaceId || !path.startsWith(prefix))
+    return rows
+  const covered = PAGE_LIST_COVERED_ALERTS[path.slice(prefix.length).replace(/\/+$/, '')]
+  if (!covered)
+    return rows
+  return rows.filter(r => !covered.includes(r.alert.id))
 }
 
 /** 兩次自動檢查之間的最短間隔：頁面切換不該每次都打一輪彙總查詢 */

@@ -182,9 +182,10 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         // ⛔ 不在這裡列那幾格的名字：聚光燈就打在格子上，再列一次是文案裡埋一份沒人維護的畫面副本（`C-180`）。
         //    只講格子上看不出來、又真的會影響選擇的那一件：哪一種改了會自己跟著更新。
         // ⚠️ 官網也會自己更新（小改自己套用、大改先問，見 cron-maintenance）：以前這裡寫「只有試算表會」是錯的
+        // `C-314`：檔案改版現在在那一份按「換新版」，不是再傳一次（再傳一次會問要不要更新原本那一份，多繞一步）
         description:
           '照你<strong>手上有什麼</strong>點一格，會告訴你下一步做什麼。'
-          + '之後內容改了：<strong>Google 試算表、官網</strong>會自己跟著更新，檔案要再傳一次。',
+          + '之後內容改了：<strong>Google 試算表、官網</strong>會自己跟著更新；檔案在那一份按「<strong>換新版</strong>」。',
         placement: 'top',
       },
       {
@@ -192,9 +193,11 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         title: '按這裡就加進去',
         // 2026-10-12（`D-123`②）一份也直接加入：以前這一步寫「先預覽、確認才匯入——不會直接上線亂答」，
         // 現在照實講哪幾種會停下來（規則見 KnowledgeImportDialog 的 previewStopReasons）
+        // `C-314`：停下來的理由現在有五種（又多了「你改過的要不要帶到新版」），一條條列只會越寫越長；
+        // 講原則＋兩個最常見的例子，停下來那一頁自己會講是哪一種
         description:
-          'AI 整理好就<strong>直接加進知識庫</strong>；照片上的字、內容太長、空間不夠、跟現有的同名，'
-          + '這幾種會<strong>先停下來給你看</strong>。加好之後每一條都能再改。',
+          'AI 整理好就<strong>直接加進知識庫</strong>；需要你確認的（例如照片上的字、空間不夠）'
+          + '會<strong>先停下來給你看</strong>。加好之後每一條都能再改。',
         placement: 'top',
       },
 ]
@@ -497,8 +500,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '[data-tour="kb-sources"]',
         title: '匯入的知識都在這裡管理',
+        // `C-314`：每一步只講一件事、一兩句（老闆 10-14「只呈現需要的東西」）
         description:
-          '你匯入的每一份資料，都會變成一筆「<strong>資料</strong>」列在這份清單。<strong>點一份</strong>進去，右邊就能看它的內容、改東西、或設定更新。這一頁就是你日後照顧知識庫的地方。',
+          '放進來的每一份資料都列在這裡。<strong>點一份</strong>，右邊就看得到它整理出的知識。',
         placement: 'right',
       },
       // ── 右邊工作台那三塊（2026-09-29 `D-109`）──────────────────────────
@@ -511,26 +515,28 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // `C-309`：量詞統一講「條」、額度講「知識空間」（跟加入視窗同一套說法）
         title: '等你看過的知識',
         description:
-          '開帳讀你網站整理出來的、或請小幫手補的知識，<strong>先放在這裡</strong>：客人還收不到，'
-          + '你一條條看過、按「<strong>採用</strong>」才會拿來回答（採用了才佔知識空間）。不要的直接刪掉。',
+          '替你整理好、還沒上線的知識<strong>先放在這裡</strong>，客人還收不到。'
+          + '看過按「<strong>採用</strong>」才會拿來回答（採用了才佔知識空間）。',
         placement: 'left',
       },
       {
         target: '[data-tour="kb-health"]',
         requiresPresent: '[data-tour="kb-health"]',
-        title: '知識庫體檢會幫你盯',
+        title: '要你處理的事會列在這裡',
+        // `C-314`：工作台拿掉了「內容較短」「到期停用」那幾行灰字（不用做事的不擺），這一步也不再提
         description:
-          '同步失敗的資料、被標記「AI 答錯了」的知識會列在<strong>「要處理的事」</strong>，點分類就直接列出那幾筆，照著修完就好——'
-          + '不用自己一條條翻。下面灰色那幾行（內容較短、到期自動停用）<strong>是提醒不是待辦</strong>，想看再看。',
+          '資料內容變了、同步失敗、被標「AI 答錯了」這類<strong>要你動手的</strong>，都會列在這裡，點進去照著做就好。',
         placement: 'left',
       },
       {
         target: '[data-tour="kb-suggest"]',
         requiresPresent: '[data-tour="kb-suggest"]',
-        title: '客人問倒 AI 的題目，系統會擬好知識給你',
+        title: '客人問了、AI 答不出來的題目',
+        // `C-311`／`C-314`：一組常混好幾題，要勾這一條回答了哪幾題；草稿常常是空的（知識庫沒有答案），
+        // 以前寫「擬好一條知識、看一眼就採用」是多承諾
         description:
-          '客人問了但 AI 答不出來、或被標「答錯了」的，同一類累積到兩次，系統就會在這裡<strong>擬好一條知識</strong>。'
-          + '看一眼覺得對就採用，缺的資訊會標成「請填寫」要你補——<strong>這是把 AI 養好最省力的地方</strong>。',
+          '同一類被問到兩次就會列在這裡。按「<strong>審核草稿</strong>」寫上答案；'
+          + '一組有好幾題時，<strong>勾這一條回答了哪幾題</strong>，沒勾的會留著之後再補。',
         placement: 'left',
       },
       {
@@ -539,19 +545,18 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // ⛔ 2026-09-29（`D-109`）：原本寫「點上方新資料夾按鈕」並指著選單裡那一項——那一項收在「⋯」裡，
         //    選單沒打開時聚光燈框在一塊看不見的地方
         description:
-          '資料一多就會找不到。點這顆「<strong>⋯</strong>」→「<strong>新增資料夾</strong>」（例如：商品、退換貨、活動），'
-          + '再把資料<strong>拖進去</strong>歸類。這只是後台整理方便你找，不影響 AI 回答。'
-          + '（手動新增一條知識、回收桶也都在這個選單裡。）',
+          '點「<strong>⋯</strong>」→「<strong>新增資料夾</strong>」，再把資料<strong>拖進去</strong>分類。'
+          + '手動新增一條知識、回收桶也在這個選單裡。',
         placement: 'bottom',
       },
       {
         target: '[data-tour="kb-chunks"]',
         clickBefore: '[data-tour="kb-source-row"]',
         title: 'AI 把資料切成一條條「知識」，你能微調',
+        // `D-125`①：換新版會列出改過的那幾條、預設帶過去——在換新版那一刻畫面自己會問，這裡不再預告（`C-314`）
         description:
-          '我幫你選了第一份資料。每份會被拆成一條條知識，AI 就是一條一條找答案。覺得哪一條不對，按「<strong>編輯</strong>」改它——<strong>你親手改過的不會被日後的自動更新蓋掉</strong>；'
-          // `D-125` ①：檔案「換新版」以前會把改過的一起丟進回收桶、沒提醒；拍板改成列出來、預設帶到新版
-          + '檔案按「換新版」時，也會列出你改過的那幾條、預設照你改的帶過去。（每條還能設停用與有效期限，檔期活動用得到。）',
+          '每份資料會整理成一條條知識，AI 就從這裡找答案。哪一條不對，按「<strong>編輯</strong>」改它；'
+          + '<strong>你改過的，之後自動更新不會蓋掉</strong>。',
         placement: 'left',
       },
       {
@@ -560,11 +565,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           // ⛔ 2026-09-29（`D-109`）：原本寫「小改動自動套用並通知你」——頁面上寫的是「不另外通知你」，
           //    等通知的人等不到。試算表那顆按鈕叫「立即同步」不是「重新同步」。
-          '網址與 Google 試算表來的資料，系統會<strong>定期自動重讀</strong>：小改動自動套用'
-          + '（不另外通知你，「最後同步」時間會跟著更新），改動大會先列出差異讓你確認。<strong>你親手改過的一律保留</strong>。'
-          + '等不及就按右上「<strong>重新同步</strong>」（試算表叫「立即同步」）。'
+          '網址和 Google 試算表會<strong>自動更新</strong>，改動大時先給你看哪裡不一樣。'
+          + '等不及就按右上「<strong>立即同步</strong>」（網址叫「重新同步」）。'
           // `C-309`：檔案那一份現在有「換新版」，不再教「重新匯入」（重新匯入會多出一份、舊的還在）
-          + '（檔案不會自動更新：改了就在那一份按「<strong>換新版</strong>」，你改過的那幾條會列出來、預設照你改的帶過去；手打的直接改那一條。）',
+          + '檔案改版了，在那一份按「<strong>換新版</strong>」。',
         placement: 'left',
       },
     ],

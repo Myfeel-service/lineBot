@@ -1,5 +1,5 @@
 <template>
-  <!-- 建議收件匣:系統從「客人問了但 AI 答不出」的真實對話整理主題並擬好草稿,店家審一眼就能用 -->
+  <!-- 建議收件匣:系統從「客人問了但 AI 答不出」的真實對話整理主題、能擬就擬草稿（常常是空的：知識庫本來就沒有答案），店家寫上答案採用 -->
   <!-- 只要載入完就顯示（不等第一次掃描）:整塊藏起來會連「重新掃描」按鈕都看不到,
        從未掃描過的工作區就沒有任何方法觸發第一次掃描。 -->
   <div v-if="loaded" class="kb-suggest" data-tour="kb-suggest">
@@ -8,30 +8,40 @@
          (a) 客人問的 AI 都答得出來
          (b) 有人被問倒了,只是同一類還沒被問到兩次(門檻)——實測 8/04 就是這種:
              12 位客人沒被答到,畫面卻說「都答得出來」。 -->
-    <p class="kb-suggest-head">
+    <!--
+      `C-314`（老闆 10-14「只呈現需要的東西」）：標題直接講這一區是什麼——「客人問了、AI 答不出來（N）」。
+      拿掉標題下那一行（「從真實對話整理，草稿已擬好，審一眼就能用」：標題已經講了來源，
+      而且草稿常常是空的——知識庫裡本來就沒有答案，才會答不出來——「審一眼就能用」是多承諾）；
+      拿掉「上次分析：N 天前」（沒有人要拿它做什麼），「重新掃描」縮成標題右邊一個小連結。
+      讀不到、上次分析失敗、只被問過一次這三種照舊要講（下一步不一樣，見下面）。
+    -->
+    <div class="kb-suggest-head">
       <el-icon class="kb-suggest-icon"><MagicStick /></el-icon>
-      <span>
-        <strong>AI 建議補的知識</strong>
-        <template v-if="items.length">：{{ items.length }} 個主題待處理</template>
+      <span class="kb-suggest-head__title">
+        <strong>客人問了、AI 答不出來</strong>
+        <template v-if="items.length">（{{ items.length }}）</template>
         <!-- ⛔ 讀不到必須排在所有「沒有建議」的說法之前(`D-41` 死路②):
              退成「還沒分析過」的話,壞掉跟真的沒缺口在畫面上完全一樣 -->
-        <template v-else-if="loadFailed">：讀不到（不是沒有建議）</template>
+        <template v-else-if="loadFailed">：讀不到（不是沒有）</template>
+        <!-- 掃描失敗要說出來：不講的話標題是「目前沒有」，看起來像真的沒缺口 -->
+        <template v-else-if="lastError">：上次分析沒跑成</template>
         <template v-else-if="!lastScanAtMs">：還沒分析過</template>
-        <template v-else-if="gapEvents > 0">：有問題答不出來，還在等同類重複出現</template>
-        <template v-else>：目前沒有——最近客人問的，AI 都答得出來</template>
+        <template v-else-if="gapEvents > 0">：還沒有同一類被問兩次的</template>
+        <template v-else>：目前沒有</template>
       </span>
-    </p>
-    <p v-if="items.length" class="kb-suggest-hint">從「客人問過、但 AI 答不出來」的真實對話整理，草稿已擬好，審一眼就能用。</p>
-    <p v-else-if="loadFailed" class="kb-suggest-hint">
+      <span v-if="scanRequested" class="kb-suggest-head__aside">已排入重新掃描，約 10 分鐘內完成</span>
+      <el-button v-else-if="canEdit" link type="primary" size="small" class="kb-suggest-head__aside" :loading="refreshing" @click="requestRefresh">
+        重新掃描
+      </el-button>
+    </div>
+    <p v-if="loadFailed" class="kb-suggest-hint">
       這一區的資料沒讀到，所以<strong>現在無法判斷有沒有要補的知識</strong>。重新整理頁面再看一次；一直這樣請告訴我們。
       <span v-if="loadError" class="text-xs text-muted">（{{ loadError }}）</span>
     </p>
-    <p v-else-if="!lastScanAtMs" class="kb-suggest-hint">
-      AI 開始服務客人後，系統會自動找出「客人問了但答不出來」的主題並擬好草稿。
-    </p>
-    <p v-else-if="gapEvents > 0" class="kb-suggest-hint">
-      最近 30 天有 <strong>{{ gapEvents }}</strong> 個問題 AI 答不出來，同一類被問到兩次以上才會擬草稿；
-      只被問過一次的，可到 <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">AI 表現</NuxtLink> 的案例清單直接補。
+    <!-- 有清單時標題講的是條數，上次分析失敗只能在這裡講（沒清單時標題已經講了） -->
+    <p v-else-if="lastError && items.length" class="kb-suggest-hint">上次分析失敗了，可以再按一次「重新掃描」。</p>
+    <p v-else-if="!items.length && !lastError && lastScanAtMs && gapEvents > 0" class="kb-suggest-hint">
+      最近 30 天有 <strong>{{ gapEvents }}</strong> 題 AI 答不出來，想先補的，到 <NuxtLink :to="`/admin/${workspaceId}/ai-usage`">AI 表現</NuxtLink> 的案例清單。
     </p>
 
     <div v-if="items.length" class="kb-suggest-list">
@@ -45,8 +55,9 @@
             <template v-if="topicLabel(s).quoted"><span class="kb-suggest-item__quote-tag">客人問</span>「{{ topicLabel(s).text }}」</template>
             <template v-else>{{ topicLabel(s).text }}</template>
           </span>
-          <!-- sampled = 事件多到撞掃描上限,次數是低估值 → 說「至少」而不是印成實數 -->
-          <span class="kb-suggest-item__count">30 天內{{ s.sampled ? '至少' : '' }}被問 {{ s.eventCount }} 次</span>
+          <!-- sampled = 事件多到撞掃描上限,次數是低估值 → 說「至少」而不是印成實數。
+               `C-314`：拿掉「30 天內」——每一筆都一樣，講一次都嫌多 -->
+          <span class="kb-suggest-item__count">{{ s.sampled ? '至少' : '' }}被問 {{ s.eventCount }} 次</span>
         </div>
         <div v-if="canEdit" class="kb-suggest-item__actions">
           <el-button size="small" type="primary" plain @click="openReview(s)">審核草稿</el-button>
@@ -54,12 +65,6 @@
         </div>
       </div>
     </div>
-    <p class="kb-suggest-foot">
-      <span>{{ scanLabel }}</span>
-      <el-button v-if="canEdit && !scanRequested" size="small" text :loading="refreshing" @click="requestRefresh">
-        重新掃描
-      </el-button>
-    </p>
 
     <!-- 審核草稿:可改可直接採用;含佔位符(知識庫查不到的事實)要先補完 -->
     <el-dialog
@@ -292,18 +297,10 @@ watch(items, v => emit('count', v.length))
  */
 const draftBlanks = computed(() => countKnowledgeDraftBlanks(form.value.content))
 
-const scanLabel = computed(() => {
-  if (scanRequested.value) return '已排入重新掃描，約 10 分鐘內完成'
-  // 掃描失敗要說出來:不講的話畫面是「剛剛掃過 + 沒有建議」,看起來像真的沒缺口
-  // 讀不到資料時最優先講:這一行原本會退成「尚未分析」,跟「真的還沒分析過」分不出來
-  if (loadFailed.value) return '讀不到分析結果（不是「沒有建議」）'
-  if (lastError.value) return '上次分析失敗了，可以再按一次重新掃描'
-  if (!lastScanAtMs.value) return '尚未分析'
-  const mins = Math.floor((Date.now() - lastScanAtMs.value) / 60_000)
-  if (mins < 60) return `上次分析：${Math.max(1, mins)} 分鐘前`
-  if (mins < 48 * 60) return `上次分析：${Math.floor(mins / 60)} 小時前`
-  return `上次分析：${Math.floor(mins / 1440)} 天前`
-})
+/*
+ * `C-314`：底下那一行（「上次分析：N 天前」／「尚未分析」／「讀不到分析結果」）拿掉了——
+ * 時間沒有人要拿來做什麼；另外兩種跟標題講的是同一件事。還要講的（排入掃描了、上次失敗）搬到標題那一行與標題下面。
+ */
 
 async function load() {
   loadFailed.value = false

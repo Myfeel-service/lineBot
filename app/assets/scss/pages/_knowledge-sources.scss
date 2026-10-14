@@ -216,28 +216,43 @@
   }
 }
 
-.src-section-card { margin-bottom: 0; } /* gap 由 .admin-panel-stack 控制 */
-.src-section-hint { font-size: 12px; color: var(--el-text-color-secondary); margin: 0 0 8px; }
+/*
+ * 名稱下面那一行「Google 試算表・20 條・35 分鐘前更新」（`C-314`，取代原本整張「基本資訊」卡）。
+ * 網址那一行在它上面（.src-header-caption）；這一行短，不用截斷。狀態只有不正常時才接在後面、上色。
+ */
+.src-header-meta {
+  margin-top: 2px;
 
-.src-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  > div {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 12px;
-    background: var(--el-fill-color-light);
-    border-radius: 4px;
+  &__status {
+    font-weight: 600;
+
+    &.is-busy { color: var(--el-color-primary); }
+    &.is-failed { color: var(--el-color-danger); }
   }
 }
-.src-label {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 2px;
-}
+
+.src-section-card { margin-bottom: 0; } /* gap 由 .admin-panel-stack 控制 */
 
 .src-settings-actions { margin-top: 8px; }
+
+/*
+ * 「自動更新：[每小時 ▾]」那一行（`C-314`：取代兩張各有一段說明＋「儲存設定」的卡，選了就存）。
+ * 選單夾在固定寬度：每個選項都很短，撐滿整行只會讓「自動更新：」離選項很遠。
+ * ⚠️ el-select 自己的寬度會蓋掉掛在它身上的 class（同 .src-bin-tools），所以寬度用兩層 class 夾
+ */
+.src-sync-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+
+  &__label { color: var(--text-primary); font-weight: 500; }
+  &__value { color: var(--text-primary); }
+  .el-select.src-sync-row__select { width: 160px; }
+}
+/* 網址的「更多設定」：跟編輯框的「進階」同一個樣子（.chunk-advanced-toggle），只補上下距 */
+.src-sync-more { margin-top: 2px; }
 
 /* 試算表上在後台刪掉、不再收的那幾列（`D-125`②）：一行灰字＋一顆文字鈕；標題可能很長，照字斷行 */
 .src-excluded {
@@ -260,12 +275,6 @@
     font-size: 12px;
     line-height: 1.6;
     color: var(--el-text-color-primary);
-  }
-  &__effect {
-    margin: 0 0 8px;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--el-text-color-secondary);
   }
 }
 
@@ -335,25 +344,7 @@
 
   &:hover { color: inherit; }
 }
-/* 「內容較短」是提醒不是警告:短卡照樣被檢索、照樣拿去回答,沒有任何東西壞掉。
-   原本用 warning 黃(跟「同步失敗」同一個顏色語言)會讓人以為那條知識失效了。改中性灰。 */
-.src-chunk-note {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-light);
-  padding: 1px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-/* 短卡的說明要看得見:原本只在 hover title,手機看不到、也沒說門檻是多少 */
-.src-chunk-note-hint {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-}
+/* `C-314`：「內容較短」小標與底下那段說明拿掉了（短的照樣找得到、照樣拿去回答，不是要修的東西） */
 .src-chunk-preview {
   margin: 2px 0;
   font-size: 12px;
@@ -362,7 +353,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.src-chunk-meta { font-size: 12px; color: var(--el-text-color-secondary); }
+/* 每一條底下那一行只剩例外（`C-314`）：沒學起來的上紅字，其餘（停用、處理中、有效至）灰字 */
+.src-chunk-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+
+  &.is-failed { color: var(--el-color-danger); }
+}
 .src-chunk-loading { display: flex; justify-content: center; padding: 16px; }
 
 // 停用中的卡:整列壓淡,掃一眼就分得出「AI 用不到這張」
@@ -497,14 +494,6 @@
   gap: 8px;
   margin-top: 6px;
 }
-
-.chunk-tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.chunk-tag { margin: 0; }
 
 /* chunk 編輯 modal 的 footer（.folder-footer 版本在 _flow.scss） */
 .chunk-footer {
@@ -677,6 +666,14 @@
   align-items: baseline;
   gap: 6px;
   margin: 0;
+
+  &__title { flex: 1; min-width: 0; }
+  /* 「重新掃描」小連結／「已排入重新掃描」：標題同一行靠右（`C-314`：以前自己佔最底下一行，還陪著「上次分析：N 天前」） */
+  &__aside {
+    flex: none;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
 }
 .kb-suggest-icon { flex: none; }
 .kb-suggest-hint {
@@ -731,15 +728,6 @@
     display: flex;
     gap: 4px;
   }
-}
-.kb-suggest-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
 }
 .kb-suggest-queries {
   margin-bottom: 12px;
@@ -990,21 +978,7 @@
     color: var(--el-text-color-secondary);
   }
 
-  /* 「知道就好」的那幾行（已過期停用／內容較短）：虛線、灰階、不催促。
-     可以有多行——外層 __body 是 column flex + gap 6px，行距由它給。 */
-  &__muted {
-    padding: 6px 10px;
-    border: 1px dashed var(--el-border-color);
-    border-radius: 4px;
-    background: transparent;
-    text-align: left;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    cursor: pointer;
-
-    &:hover { border-color: var(--el-color-primary); color: var(--el-color-primary); }
-    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
-  }
+  /* `C-314`：「知道就好」那幾行灰字（已過期停用／內容較短）拿掉了——自己都說不用處理的不擺 */
   &__foot {
     margin: 2px 0 0;
     font-size: 11px;

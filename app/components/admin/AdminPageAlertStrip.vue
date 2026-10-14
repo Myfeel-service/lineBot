@@ -94,6 +94,7 @@
 import { Link } from '@element-plus/icons-vue'
 import type { AlertFieldMark } from '~/utils/alert-field-marks'
 import type { ResolvedAlert } from '~/composables/useWorkspaceAlerts'
+import { withoutPageListCovered } from '~/composables/useWorkspaceAlerts'
 
 /**
  * 頁面級提醒條（2026-08-27，D-33 二〜四輪——老闆實看後的三次回饋）。
@@ -122,12 +123,23 @@ const { workspaceId } = useWorkspace()
 const { startAdHocTour } = useTutorial()
 const { openFix } = useAlertFix()
 
+/**
+ * 電腦寬（> 720px）才成立的那件事：頁面自己的「要處理的事」看得到（`C-314`）。
+ * 720 是後台「手機一次只看一邊」的切點（_split-layout.scss）：手機上知識庫的工作台整塊不顯示，
+ * 提醒帶是唯一講那幾件事的地方，⛔ 不能跟著拿掉。還沒量到（剛掛上）先當手機——寧可多講一次也不要少講。
+ */
+const wideViewport = ref(false)
+let wideQuery: MediaQueryList | null = null
+const onWideChange = (e: MediaQueryListEvent) => { wideViewport.value = e.matches }
+
 const rows = computed(() => {
   // 開通沒做完：營運異常量不出來也不成立，異常列不出——但**不再整條消失**，
   // 由上面的開通帶接手講真話（否則每一頁都是一片誤導的 0，見 showOnboardingBand）
   if (!setupLoaded.value || onboardingIncomplete.value)
     return []
-  return alertsForPath(route.path)
+  const all = alertsForPath(route.path)
+  // 頁面自己的清單已經一條條列了的，這一頁不再講一次（只有知識庫來源頁，規則見 PAGE_LIST_COVERED_ALERTS）
+  return wideViewport.value ? withoutPageListCovered(all, route.path, workspaceId.value ?? '') : all
 })
 
 /**
@@ -363,9 +375,14 @@ watch(
 onBeforeUnmount(() => {
   markRun++
   clearMarks()
+  wideQuery?.removeEventListener('change', onWideChange)
 })
 
 onMounted(() => {
+  // 量一次寬度、之後跟著變（轉向、拉視窗）；見 wideViewport
+  wideQuery = window.matchMedia?.('(min-width: 721px)') ?? null
+  wideViewport.value = !!wideQuery?.matches
+  wideQuery?.addEventListener('change', onWideChange)
   // TTL 節流（60 秒內不重打）＋與小幫手共用 inflight，直接進頁也有資料可畫
   void refresh()
   // 資料已經在手上（別頁查過）時 watch 不會觸發，這裡補第一次

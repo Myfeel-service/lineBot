@@ -6,6 +6,8 @@
  * 它一顆管四種設定（圖文選單／機器人模組／客服腳本／活動），2026-08-26 之前
  * 一律指到圖文選單，壞在活動的人被帶去一個沒有問題的頁面。
  */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import type { Ref } from 'vue'
@@ -39,7 +41,7 @@ g.$fetch = fetchSpy
 const { useSharedRequest } = await import('./useSharedRequest')
 g.useSharedRequest = useSharedRequest
 
-const { useWorkspaceAlerts } = await import('./useWorkspaceAlerts')
+const { useWorkspaceAlerts, withoutPageListCovered, PAGE_LIST_COVERED_ALERTS } = await import('./useWorkspaceAlerts')
 
 beforeEach(() => {
   states.clear()
@@ -81,6 +83,61 @@ describe('側欄狀態點：畫在哪一頁', () => {
     const a = await load([{ id: 'brokenModuleButton', state: 'active', count: 1, scopes: ['campaign'] }])
     const card = a.alerts.value.find(x => x.id === 'brokenModuleButton')!
     expect(card.route('w1')).toBe('/admin/w1/campaigns')
+  })
+})
+
+/**
+ * 頁頂提醒帶在知識庫來源頁不重講「要處理的事」已經列的那幾顆（`C-314`，2026-10-14）。
+ *
+ * 錯了的樣子有兩種，畫面上都看不出來：多濾一顆＝某件事在電腦上從這一頁消失、清單又沒列（沒人知道）；
+ * 少濾一顆＝同一件事講兩遍（老闆這次要拿掉的）。所以釘死：只濾這一頁、只濾清單真的有列的那幾顆。
+ */
+describe('提醒帶：知識庫來源頁不重講「要處理的事」已經列的', () => {
+  const KB = '/admin/w1/knowledge/sources'
+  const ALL_KB_ALERTS: WorkspaceAlertItem[] = [
+    { id: 'knowledgeSyncFailed', state: 'active', count: 1 },
+    { id: 'knowledgeDetectStalled', state: 'active', count: 1 },
+    { id: 'knowledgeIndexFailed', state: 'active', count: 2 },
+    { id: 'knowledgeWrongAnswers', state: 'active', count: 1 },
+    { id: 'knowledgeOutdated', state: 'active', count: 2 },
+    { id: 'knowledgeIndexStuck', state: 'active', count: 3 },
+  ]
+
+  it('知識庫來源頁：清單有列的五顆拿掉，⛔「卡住學不完」留著（清單沒列這件）', async () => {
+    const a = await load(ALL_KB_ALERTS)
+    const rows = a.alertsForPath(KB)
+    expect(rows).toHaveLength(6) // 對照組：沒濾之前六顆都在這一頁
+    expect(withoutPageListCovered(rows, KB, 'w1').map(r => r.alert.id)).toEqual(['knowledgeIndexStuck'])
+  })
+
+  it('其他頁一律照舊（這不是「頁面有呈現就閉嘴」的通則）', async () => {
+    const a = await load([
+      { id: 'knowledgeSyncFailed', state: 'active', count: 1 },
+      { id: 'quotaExceeded', state: 'active', count: 1 },
+    ])
+    const billing = a.alertsForPath('/admin/w1/settings/billing')
+    expect(withoutPageListCovered(billing, '/admin/w1/settings/billing', 'w1')).toEqual(billing)
+    // 別的工作區的同一頁網址也不濾（路徑對不上這個工作區）
+    const kbRows = a.alertsForPath(KB)
+    expect(withoutPageListCovered(kbRows, '/admin/w2/knowledge/sources', 'w1')).toEqual(kbRows)
+  })
+
+  it('濾掉的每一顆，「要處理的事」真的都有那一項（清單改了這裡要跟著改）', () => {
+    // 提醒帶那一顆 → 知識庫頁 todoItems 裡對應的那一項（同一份體檢資料）
+    const TODO_ID: Record<string, string> = {
+      knowledgeSyncFailed: 'failedSources',
+      knowledgeDetectStalled: 'stalledSources',
+      knowledgeIndexFailed: 'failedChunks',
+      knowledgeWrongAnswers: 'wrongAnswerChunks',
+      knowledgeOutdated: 'outdatedSources',
+    }
+    const page = readFileSync(fileURLToPath(new URL('../pages/admin/[workspaceId]/knowledge/sources/index.vue', import.meta.url)), 'utf8')
+    const todoBody = page.slice(page.indexOf('const todoItems = computed'), page.indexOf('// ── 工作台入口'))
+    expect(todoBody.length).toBeGreaterThan(100) // 對照組：切不到那一段的話下面會空轉通過
+    for (const id of PAGE_LIST_COVERED_ALERTS['knowledge/sources']!) {
+      expect(TODO_ID[id], `${id} 沒有對應的待辦項目`).toBeTruthy()
+      expect(todoBody, `${id} 被提醒帶拿掉了，「要處理的事」卻沒列 ${TODO_ID[id]}`).toContain(`id: '${TODO_ID[id]}'`)
+    }
   })
 })
 

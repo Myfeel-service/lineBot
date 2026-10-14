@@ -47,10 +47,11 @@
            ⛔ 不收進加入視窗、不拿掉：推播、標籤、AI 腳本、知識庫四頁都在這個位置（`D-112`／`D-113`），
            只動這頁會不一致。換字是推播頁本來就有的做法（「用一句話擬草稿」） -->
       <AgentAskButton page="knowledge" label="用一句話寫一條知識" row />
-      <!-- 常駐提醒(老闆 8/05 要求):有事要處理時側欄一直顯示這一行,不只在選著資料時。
-           點了回工作台;兩邊都是空的才不顯示——沒事可提醒。 -->
+      <!-- 回工作台的那一行（老闆 8/05 要求有事時要看得到）：點了回工作台；兩邊都是空的才不顯示——沒事可提醒。
+           `C-314`（老闆 10-14「只呈現需要的東西」）：只在選著一份資料時出現。沒選資料時右邊就是工作台、
+           「要處理的事」整份攤在那裡，這一行再講一次「N 件要處理」是重複，點了也不會去任何地方 -->
       <button
-        v-if="workbenchBadge"
+        v-if="workbenchBadge && selectedSource"
         type="button"
         class="src-workbench-link"
         @click="backToWorkbench"
@@ -279,25 +280,27 @@
       <div class="src-workbench">
         <!-- 開帳讀網站整理出來、等你看過的卡（`C-250`③）：新帳號進知識庫第一件該做的事，排最上面 -->
         <KnowledgeSiteDrafts :can-edit="canEditKb" @changed="loadSources(true)" />
-        <div class="src-workbench__intro">
+        <!--
+          `C-314`（老闆 10-14「只呈現需要的東西、不要過度呈現資訊」）：這一段介紹只給還沒有任何資料的人看。
+          已經放了資料的人每天打開這頁要看的是「要處理的事」，上面不再先擺三行說明
+          （「左邊點一份資料…」那一句連空的時候都不擺：左邊沒有東西可點）。
+          `!loading`：第一次載入時清單還是空的，不擋的話介紹會先閃一下再消失。
+        -->
+        <div v-if="!loading && !sources.length" class="src-workbench__intro">
           <h3>這裡是 AI 回答客人的依據</h3>
           <p>
             你放進來的每一份資料（檔案、網址、Google 試算表、一段文字）都會由 AI 整理成一條條問答，
             客人問到相關問題時就用這些內容回答。<strong>沒放進來的事，AI 不會自己編。</strong>
           </p>
-          <!--
-            「資料進來會發生什麼事」的心智圖（D-40）。只給還沒有任何資料的人看——
-            已經在用的人早就懂了，別佔他每天要看的版面。
-          -->
-          <KnowledgeConceptDiagram v-if="!sources.length" />
-          <p class="text-muted src-workbench__tip">左邊點一份資料，可以看它整理出什麼、改內容、或設定自動更新。</p>
+          <!-- 「資料進來會發生什麼事」的心智圖（D-40） -->
+          <KnowledgeConceptDiagram />
           <!--
             空清單＝最不打擾的教學位（D-33 P2）。圖文選單／推播／活動的空狀態早就有這顆帶字鈕，
             知識庫（全站空狀態文案最好的一頁）反而漏了——第一次來的人只找得到右上角那顆灰問號。
             ⛔只掛「建立與匯入」那一支：還沒有任何資料的人不需要先挑一份教學，
             「整理與更新」等有東西之後從頁首問號進得去。
           -->
-          <div v-if="canEditKb && !sources.length" class="src-workbench__cta">
+          <div v-if="canEditKb" class="src-workbench__cta">
             <el-button :icon="Upload" type="primary" @click="goImport">加入第一份資料</el-button>
             <AdminPageHelpButton :topics="['knowledge']" label="第一次用？看一遍怎麼做" />
           </div>
@@ -311,14 +314,13 @@
           合成一份清單、照「會不會影響客人」排序：壞掉的先、建議次之、僅供參考最後。
           沿用右下角小幫手那套語言（結論先行 + 一句「不管它會怎樣」+ 一顆按鈕）。
           AI 建議的草稿要看內容，留在下方獨立區塊，不在這裡重複列一次。
+          `C-314`：只列要動手的事。以前最後還有幾行灰字（「另有 N 條知識內容較短（照樣找得到，想看再看）」
+          「已過期自動停用（正常，不用處理）」）——自己都說不用處理，就不擺；沒有要處理的事整塊不出現。
         -->
-        <div v-if="todoItems.length || mutedItems.length" class="src-todo" data-tour="kb-health">
+        <div v-if="todoItems.length" class="src-todo" data-tour="kb-health">
           <button type="button" class="src-todo__head" @click="todoOpen = !todoOpen">
             <el-icon class="src-todo__icon"><FirstAidKit /></el-icon>
-            <span class="src-todo__title">
-              <template v-if="todoItems.length">要處理的事（{{ todoItems.length }}）</template>
-              <template v-else>目前沒有要處理的事</template>
-            </span>
+            <span class="src-todo__title">要處理的事（{{ todoItems.length }}）</span>
             <span class="src-todo__toggle">{{ todoOpen ? '▴' : '▾' }}</span>
           </button>
 
@@ -333,16 +335,7 @@
               </el-button>
             </div>
 
-            <!-- 「知道就好」的體檢結果：灰階、排最後、不算進上方數字（判準見 mutedItems） -->
-            <button
-              v-for="m in mutedItems"
-              :key="m.id"
-              type="button"
-              class="src-todo__muted"
-              @click="openHealthList(m.id)"
-            >
-              {{ m.label }}
-            </button>
+            <!-- 數字可能少算（掃描撞上限）：這句講的是上面那幾個數字靠不靠得住，⛔ 不算「知道就好」的灰字，留著 -->
             <p v-if="health.chunkScanTruncated" class="src-todo__foot">
               內容較多，這份檢查只掃了其中一部分，實際數量可能更多。
             </p>
@@ -372,13 +365,22 @@
           />
           <span v-else class="split-editor-title">{{ selectedSource?.name || '(未命名資料)' }}</span>
         </div>
-        <p class="text-sm text-muted admin-subtext src-header-caption">
-          {{ typeEmoji(selectedSource?.type) }}<template v-if="selectedSource?.url"> · <a :href="selectedSource.url" target="_blank" rel="noopener">{{ selectedSource.url }}</a></template>
+        <!-- 網址／原檔那一行：沒有網址也沒有原檔（一段文字、2026-10-10 以前的檔案）就不畫 -->
+        <p v-if="selectedSource?.url || selectedSource?.originalFile" class="text-sm text-muted admin-subtext src-header-caption">
+          <a v-if="selectedSource?.url" :href="selectedSource.url" target="_blank" rel="noopener">{{ selectedSource.url }}</a>
           <!-- 原檔留著（`C-296`③）：檔案來源以前讀完就刪，這裡什麼都點不開 -->
           <template v-if="selectedSource?.originalFile">
-            · {{ selectedSource.originalFile.name }}（{{ formatFileSize(selectedSource.originalFile.size, { zero: '大小未知' }) }}）
+            {{ selectedSource.originalFile.name }}（{{ formatFileSize(selectedSource.originalFile.size, { zero: '大小未知' }) }}）
             <el-button link type="primary" size="small" :loading="downloadingOriginal" @click="downloadOriginal">下載原檔</el-button>
           </template>
+        </p>
+        <!--
+          一行講完這一份是什麼（`C-314`）：以前是一整張「基本資訊」卡、四格（類型／狀態／條數／最後同步），
+          狀態九成九是「可用」——正常的事不用講。現在一行「Google 試算表・20 條・35 分鐘前更新」，
+          狀態只有不正常時才接在後面、上色（見 headerStatus）。
+        -->
+        <p v-if="selectedSource" class="text-sm text-muted admin-subtext src-header-meta">
+          {{ headerMeta }}<span v-if="headerStatus" class="src-header-meta__status" :class="`is-${headerStatus.tone}`">・{{ headerStatus.text }}</span>
         </p>
       </div>
       <div v-if="canEditSources" class="flex gap-1 admin-header-actions">
@@ -494,56 +496,39 @@
           </div>
         </el-alert>
 
-        <!-- 基本資訊 -->
-        <div class="message-card src-section-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">基本資訊</span>
-            </div>
+        <!-- 失敗要能就地修:原本只印一行後端原文,商家看不懂也修不了
+             (最常見的兩種原因,修的地方一個在 Google、一個是換網址)。
+             試算表一次少太多列被擋下（`C-308`⑤）不是「抓不到」：表讀得到，是系統怕誤刪先停下來——標題、做法都不一樣。
+             `C-314`：「基本資訊」卡拿掉了（類型／條數／更新時間併成名稱下面那一行），這一塊自己獨立一格、有事才出現 -->
+        <div v-if="selectedSource.failureReason" class="src-fix" :class="{ 'src-fix--held': failureAdvice.kind === 'massDelete' }">
+          <p class="src-fix__title">{{ failureAdvice.kind === 'massDelete' ? `⚠ 表格一次少了 ${failureAdvice.rows} 列，自動同步先停下來` : '⚠ 這份資料目前抓不到內容' }}</p>
+          <p class="src-fix__what">{{ failureAdvice.what }}</p>
+
+          <!-- Google Sheet:最常見原因是沒分享給服務帳號 → email 直接放這裡可複製 -->
+          <div v-if="failureAdvice.kind === 'gsheet'" class="src-fix__row">
+            <code class="src-fix__email">{{ serviceAccountEmail || '讀取中⋯' }}</code>
+            <el-button size="small" plain :disabled="!serviceAccountEmail" @click="copyServiceAccount">
+              複製帳號
+            </el-button>
           </div>
-          <div class="card-section-stack">
-            <div class="src-info-grid">
-              <div><span class="src-label">類型</span><strong>{{ typeLabel(selectedSource.type) }}</strong></div>
-              <div><span class="src-label">狀態</span><strong>{{ statusLabel(selectedSource.status) }}</strong></div>
-              <div><span class="src-label">條數</span><strong>{{ selectedSource.chunkCount }}</strong></div>
-              <!-- 檔案、文字不會同步（`C-309`）：以前也寫「最後同步 9/4」，看起來像它會自己更新 -->
-              <div v-if="isSyncingType(selectedSource.type)"><span class="src-label">最後同步</span><strong>{{ selectedSource.lastFetchedAtMs ? relativeTime(selectedSource.lastFetchedAtMs) : '尚未同步' }}</strong></div>
-              <div v-else><span class="src-label">更新時間</span><strong>{{ relativeTime(selectedSource.lastFetchedAtMs || selectedSource.updatedAtMs) || '—' }}</strong></div>
-            </div>
-            <!-- 失敗要能就地修:原本只印一行後端原文,商家看不懂也修不了
-                 (最常見的兩種原因,修的地方一個在 Google、一個是換網址)。
-                 試算表一次少太多列被擋下（`C-308`⑤）不是「抓不到」：表讀得到，是系統怕誤刪先停下來——標題、做法都不一樣 -->
-            <div v-if="selectedSource.failureReason" class="src-fix" :class="{ 'src-fix--held': failureAdvice.kind === 'massDelete' }">
-              <p class="src-fix__title">{{ failureAdvice.kind === 'massDelete' ? `⚠ 表格一次少了 ${failureAdvice.rows} 列，自動同步先停下來` : '⚠ 這份資料目前抓不到內容' }}</p>
-              <p class="src-fix__what">{{ failureAdvice.what }}</p>
 
-              <!-- Google Sheet:最常見原因是沒分享給服務帳號 → email 直接放這裡可複製 -->
-              <div v-if="failureAdvice.kind === 'gsheet'" class="src-fix__row">
-                <code class="src-fix__email">{{ serviceAccountEmail || '讀取中⋯' }}</code>
-                <el-button size="small" plain :disabled="!serviceAccountEmail" @click="copyServiceAccount">
-                  複製帳號
-                </el-button>
-              </div>
-
-              <!-- 網址:原網頁被搬走時可以直接改網址,不用刪掉重新匯入(會失去手動改過的內容) -->
-              <div v-else-if="failureAdvice.kind === 'url' && canEditSources" class="src-fix__row">
-                <el-input v-model="urlForm" size="small" placeholder="https://…" class="src-fix__input" />
-                <el-button
-                  size="small"
-                  type="primary"
-                  plain
-                  :loading="savingUrl"
-                  :disabled="!urlForm.trim() || urlForm.trim() === selectedSource.url"
-                  @click="saveSourceUrl"
-                >
-                  換成這個網址
-                </el-button>
-              </div>
-
-              <!-- 擋下來那種的原文就是上面那兩句再講一次（還寫「張卡」），不重複 -->
-              <p v-if="failureAdvice.kind !== 'massDelete'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
-            </div>
+          <!-- 網址:原網頁被搬走時可以直接改網址,不用刪掉重新匯入(會失去手動改過的內容) -->
+          <div v-else-if="failureAdvice.kind === 'url' && canEditSources" class="src-fix__row">
+            <el-input v-model="urlForm" size="small" placeholder="https://…" class="src-fix__input" />
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :loading="savingUrl"
+              :disabled="!urlForm.trim() || urlForm.trim() === selectedSource.url"
+              @click="saveSourceUrl"
+            >
+              換成這個網址
+            </el-button>
           </div>
+
+          <!-- 擋下來那種的原文就是上面那兩句再講一次（還寫「張卡」），不重複 -->
+          <p v-if="failureAdvice.kind !== 'massDelete'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
         </div>
 
         <!-- 所屬產品（P1-1）：知識索引時自動繼承資料產品名；改動後自動重建該資料索引。
@@ -554,20 +539,20 @@
               <span class="section-title">所屬產品</span>
             </div>
           </div>
+          <!--
+            `C-314`：拿掉兩段說明（上面「知識會自動標上產品名…FAQ、公告這類請留空」、欄位下面「點一下欄位會列出你已經在用的
+            N 個產品…」）——什麼時候該填，框裡那一句就講完了；有哪些現成的，點一下框就列出來（每個還標著幾條在用）。
+            卡片標題已經叫「所屬產品」，欄位不再標一次。按鈕叫「儲存」：存了會重新學一次，按下去之後旁邊那一句會講（約需幾十秒）
+          -->
           <div class="card-section-stack">
-            <p class="src-section-hint">
-              這份資料的內容都在講<strong>同一個產品</strong>時才填（含品牌與型號）。知識會自動標上產品名——客人指名問哪一台、或 AI 反問「您指的是哪一個」時，靠它才不會答錯台。FAQ、公告這類多產品內容請留空。
-            </p>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="產品名" tight />
-              <KnowledgeProductNameField
-                v-if="canEditSources"
-                v-model="productNameForm"
-                placeholder="例：GPLUS 智慧除濕機 12L（留空 = 非單一產品）"
-              />
-              <!-- `G-107`：存不了的人只給看（原本是灰掉的輸入框）。空的＝上面那句說的「非單一產品」 -->
-              <p v-else class="src-readonly-value">{{ productNameForm || '未設定' }}</p>
-            </div>
+            <KnowledgeProductNameField
+              v-if="canEditSources"
+              v-model="productNameForm"
+              placeholder="這份都在講同一個商品時才填"
+              :show-hint="false"
+            />
+            <!-- `G-107`：存不了的人只給看（原本是灰掉的輸入框）。空的＝不是只講一個商品 -->
+            <p v-else class="src-readonly-value">{{ productNameForm || '未設定' }}</p>
             <div v-if="canEditSources" class="src-settings-actions">
               <el-button
                 type="primary"
@@ -576,105 +561,42 @@
                 :disabled="productNameForm.trim() === productNameBaseline"
                 @click="saveProductName"
               >
-                儲存並重新學習
+                儲存
               </el-button>
               <span v-if="savingProductName" class="text-muted text-xs">正在讓 AI 重新學習這份資料的知識，約需幾十秒⋯</span>
             </div>
           </div>
         </div>
 
-        <!-- 自動偵測設定（只給 URL） -->
-        <div v-if="selectedSource.type === 'url'" class="message-card src-section-card" data-tour="kb-sync-settings">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">自動偵測變動</span>
-              <!-- 一組一顆求救鈕（D-33 P2 列了沒做，D-40 補上）：三格是連動的，
-                   而使用者真正想問的是「它會不會自己改掉我編過的東西」。⛔別改成一格一顆。 -->
-              <AdminFieldHelp id="knowledgeAutoUpdate" />
-            </div>
-          </div>
+        <!--
+          自動更新（網址、Google 試算表）。`C-314`：以前兩張卡各一段說明＋一格選單＋「儲存設定」，
+          現在一行「自動更新：[每小時 ▾]」，選了就存（toast 講改成什麼）。
+          說明段拿掉：「你改過的不會被蓋掉」鎖頭那裡會講、「大改會先給你看」到時候畫面自己會停下來問。
+          網址另外兩格（偵測到變動時、小幅文字變動）幾乎沒人要動，收進預設關著的「更多設定」，照舊按「儲存設定」才存。
+          `G-107`：存不了的人（沒有 sources.write）只給看——選項文字只寫一份（URL_INTERVAL_OPTIONS 等），給看的那一版照同一份查。
+        -->
+        <div v-if="isSyncingType(selectedSource.type)" class="message-card src-section-card">
           <div class="card-section-stack">
-            <p class="src-section-hint">
-              排程會定期抓網頁內容、跟上次比對。<strong>小幅文字更新會自動套用</strong>（只更新原有知識的內容，不另外通知你，上面的「最後同步」時間會跟著更新）；
-              新增、刪除或大幅改版<strong>不會自動動</strong>，會在這裡標提示等你進來看差異再決定。
-              你手動編輯過的內容永遠不會被自動覆蓋。
-            </p>
-
-            <!--
-              偵測狀況三態：正常不出聲，另外兩種一定要講出來。
-              以前這兩種情況畫面上什麼都不顯示,店家看到「最後同步 N 小時前」會以為系統在顧,
-              實際上官網改版了也不會有人知道——最糟的那種假綠燈。
-            -->
-            <div v-if="selectedSource.detectStalledAtMs > 0" class="src-detect-note src-detect-note--warn">
-              <p class="src-detect-note__title">⚠ 這個網址自動偵測幫不上忙</p>
-              <p>
-                每次抓到的內容都不一樣（常見於有隨機推薦、輪播區塊的首頁），系統分不出哪一次才算真的改版，
-                所以<strong>不會</strong>主動提醒你。要更新知識請按上方「重新同步」自己看差異，
-                或改用內容固定的頁面（單一商品頁、說明頁）當資料來源。
-              </p>
-              <p class="src-detect-note__meta">從 {{ relativeTime(selectedSource.detectStalledAtMs) }}開始</p>
-            </div>
-            <div v-else-if="selectedSource.numbersVolatile" class="src-detect-note">
-              <p class="src-detect-note__title">這個網址上的數字每次抓都在變</p>
-              <p>
-                像是集資金額、支持人數、倒數天數。系統已經學會忽略這些數字，
-                <strong>只在文字內容改變時才提醒你</strong>——所以單純改數字（例如只調價格）不會通知，
-                那種情況要自己按上方「重新同步」。
-              </p>
-            </div>
-
-            <!-- `G-107`：存不了的人（沒有 sources.write）三格都只給看——原本改得動、卻沒有儲存鈕。
-                 選項文字只寫一份（URL_INTERVAL_OPTIONS 等），給看的那一版照同一份查。 -->
-            <div class="admin-field-group">
-              <AdminFieldLabel text="偵測頻率" tight />
-              <el-select v-if="canEditSources" v-model="settingsForm.refreshIntervalMinutes" class="control-full">
-                <el-option v-for="o in URL_INTERVAL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-              </el-select>
-              <p v-else class="src-readonly-value">{{ optionLabel(URL_INTERVAL_OPTIONS, settingsForm.refreshIntervalMinutes) }}</p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="偵測到變動時" tight />
-              <el-radio-group v-if="canEditSources" v-model="settingsForm.onChangeBehavior">
-                <el-radio v-for="o in ON_CHANGE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</el-radio>
-              </el-radio-group>
-              <p v-else class="src-readonly-value">{{ optionLabel(ON_CHANGE_OPTIONS, settingsForm.onChangeBehavior) }}</p>
-            </div>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="小幅文字變動" tight />
-              <el-radio-group v-if="canEditSources" v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
-                <el-radio v-for="o in AUTO_APPLY_OPTIONS" :key="String(o.value)" :value="o.value">{{ o.label }}</el-radio>
-              </el-radio-group>
-              <p v-else class="src-readonly-value">{{ optionLabel(AUTO_APPLY_OPTIONS, settingsForm.urlAutoApply) }}</p>
-              <p class="src-section-hint">
-                只有「原有知識的文字被改動」才算小幅變動；新增、刪除知識或大幅改版一定會等你確認。
-              </p>
-            </div>
-            <div v-if="canEditSources" class="src-settings-actions">
-              <el-button
-                type="primary"
+            <div class="src-sync-row" data-tour="kb-sync-settings">
+              <span class="src-sync-row__label">自動更新：</span>
+              <el-select
+                v-if="canEditSources"
+                v-model="settingsForm.refreshIntervalMinutes"
                 size="small"
-                :loading="savingSettings"
-                :disabled="!settingsDirty"
-                @click="saveSettings"
+                class="src-sync-row__select"
+                aria-label="自動更新"
+                :loading="savingInterval"
+                :disabled="savingInterval"
+                @change="saveInterval"
               >
-                儲存設定
-              </el-button>
+                <el-option v-for="o in intervalOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+              <span v-else class="src-sync-row__value">{{ optionLabel(intervalOptions, settingsForm.refreshIntervalMinutes) }}</span>
+              <!-- 一組一顆求救鈕（D-33 P2 列了沒做，D-40 補上）：網址那三格是連動的，
+                   而使用者真正想問的是「它會不會自己改掉我編過的東西」。⛔別改成一格一顆。 -->
+              <AdminFieldHelp v-if="selectedSource.type === 'url'" id="knowledgeAutoUpdate" />
             </div>
-          </div>
-        </div>
 
-        <!-- 自動同步設定（只給 Google Sheet）-->
-        <div v-if="selectedSource.type === 'gsheet'" class="message-card src-section-card" data-tour="kb-sync-settings">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">自動同步</span>
-            </div>
-          </div>
-          <div class="card-section-stack">
-            <!-- ⛔ 不寫頻率（`C-308`④）：以前寫死「排程每小時」，改成不自動同步的人看到的還是每小時；頻率就在正下方那一格 -->
-            <p class="src-section-hint">
-              同步時重讀這份試算表，<strong>每一列對應一條，自動套用</strong>（新增／更新／刪除）。你在這裡手動改過的那幾條會保留、不被覆蓋。
-            </p>
             <!--
               在後台刪掉的列（`D-125`② 拍板 A）：刪掉＝「這一列不要了」，之後同步不再收。
               ⛔ 一定要講出來：不講的話他在表格上看得到那一列、AI 卻永遠答不出來，原因只在這裡。給一顆收回來的路。
@@ -692,24 +614,63 @@
                 重新收這幾列
               </el-button>
             </p>
-            <div class="admin-field-group">
-              <AdminFieldLabel text="同步頻率" tight />
-              <el-select v-if="canEditSources" v-model="settingsForm.refreshIntervalMinutes" class="control-full">
-                <el-option v-for="o in GSHEET_INTERVAL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-              </el-select>
-              <p v-else class="src-readonly-value">{{ optionLabel(GSHEET_INTERVAL_OPTIONS, settingsForm.refreshIntervalMinutes) }}</p>
+
+            <!--
+              偵測狀況三態（只有網址）：正常不出聲，另外兩種一定要講出來。
+              以前這兩種情況畫面上什麼都不顯示,店家看到「最後同步 N 小時前」會以為系統在顧,
+              實際上官網改版了也不會有人知道——最糟的那種假綠燈。
+            -->
+            <div v-if="selectedSource.type === 'url' && selectedSource.detectStalledAtMs > 0" class="src-detect-note src-detect-note--warn">
+              <p class="src-detect-note__title">⚠ 這個網址自動偵測幫不上忙</p>
+              <p>
+                每次抓到的內容都不一樣（常見於有隨機推薦、輪播區塊的首頁），系統分不出哪一次才算真的改版，
+                所以<strong>不會</strong>主動提醒你。要更新知識請按上方「重新同步」自己看差異，
+                或改用內容固定的頁面（單一商品頁、說明頁）當資料來源。
+              </p>
+              <p class="src-detect-note__meta">從 {{ relativeTime(selectedSource.detectStalledAtMs) }}開始</p>
             </div>
-            <div v-if="canEditSources" class="src-settings-actions">
-              <el-button
-                type="primary"
-                size="small"
-                :loading="savingSettings"
-                :disabled="!settingsDirty"
-                @click="saveSettings"
-              >
-                儲存設定
-              </el-button>
+            <div v-else-if="selectedSource.type === 'url' && selectedSource.numbersVolatile" class="src-detect-note">
+              <p class="src-detect-note__title">這個網址上的數字每次抓都在變</p>
+              <p>
+                像是集資金額、支持人數、倒數天數。系統已經學會忽略這些數字，
+                <strong>只在文字內容改變時才提醒你</strong>——所以單純改數字（例如只調價格）不會通知，
+                那種情況要自己按上方「重新同步」。
+              </p>
             </div>
+
+            <!-- 網址另外兩格：預設收著（`C-314`），照舊按「儲存設定」才存 -->
+            <template v-if="selectedSource.type === 'url'">
+              <button type="button" class="chunk-advanced-toggle src-sync-more" :aria-expanded="syncMoreOpen" @click="syncMoreOpen = !syncMoreOpen">
+                {{ syncMoreOpen ? '▾' : '▸' }} 更多設定
+              </button>
+              <template v-if="syncMoreOpen">
+                <div class="admin-field-group">
+                  <AdminFieldLabel text="偵測到變動時" tight />
+                  <el-radio-group v-if="canEditSources" v-model="settingsForm.onChangeBehavior">
+                    <el-radio v-for="o in ON_CHANGE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</el-radio>
+                  </el-radio-group>
+                  <p v-else class="src-readonly-value">{{ optionLabel(ON_CHANGE_OPTIONS, settingsForm.onChangeBehavior) }}</p>
+                </div>
+                <div class="admin-field-group">
+                  <AdminFieldLabel text="小幅文字變動" tight />
+                  <el-radio-group v-if="canEditSources" v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
+                    <el-radio v-for="o in AUTO_APPLY_OPTIONS" :key="String(o.value)" :value="o.value">{{ o.label }}</el-radio>
+                  </el-radio-group>
+                  <p v-else class="src-readonly-value">{{ optionLabel(AUTO_APPLY_OPTIONS, settingsForm.urlAutoApply) }}</p>
+                </div>
+                <div v-if="canEditSources" class="src-settings-actions">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :loading="savingSettings"
+                    :disabled="!moreSettingsDirty"
+                    @click="saveSettings"
+                  >
+                    儲存設定
+                  </el-button>
+                </div>
+              </template>
+            </template>
           </div>
         </div>
 
@@ -725,9 +686,10 @@
             <p v-else-if="!chunks.length" class="text-muted">這份資料底下沒有知識。</p>
             <template v-else>
               <!--
-                要修的那幾條在哪裡:一份資料切出上百條時,「哪幾條停用了 / 沒學成功 / 太短」
+                要修的那幾條在哪裡:一份資料切出上百條時,「哪幾條停用了 / 沒學成功」
                 只能靠滑鼠滾——不然就得繞回工作台的體檢清單再點回這裡。
                 只在真的有東西可篩時才出現(全部正常就不該多一排按鈕)。
+                `C-314`：拿掉「內容較短」那一格——短的照樣找得到、照樣拿去回答，不是要修的東西
               -->
               <div v-if="chunkFilterTabs.length > 1" class="src-chunk-filters">
                 <button
@@ -753,9 +715,11 @@
                       <!--
                         鎖頭（`C-44`）＝「這一條用你改過的版本」。
                         · 一段文字（manual）不會同步，鎖頭沒有意義、不畫（`C-308`②）；
-                        · 說明以前只在滑鼠停留時出現（`C-309`），手機看不到——改成點一下就跳出來，
-                          看得到它是什麼、改回去會怎樣；改得動的人在裡面按「改回跟著表格／網頁」。
-                        `G-102`：解鎖打的是 `knowledge/[id]/settings`（客服級）。觀察者點了只看說明、沒有按鈕
+                        · 說明以前只在滑鼠停留時出現（`C-309`），手機看不到——改成點一下就跳出來；
+                          改得動的人在裡面按「改回跟著表格／網頁」。
+                        · `C-314`：點開只剩一句＋一顆按鈕（以前三句：改過的時間、現在用哪一版、改回去之後什麼時候換）。
+                          改回去之後什麼時候換，按了之後的提示會講（unlockToast），不用先講一遍。
+                        `G-102`：解鎖打的是 `knowledge/[id]/settings`（客服級）。觀察者點了只看那一句、沒有按鈕
                         （⛔ 鎖頭不拿掉：它同時是「這條不吃表格更新」的標記，拿掉等於少講一件事）。
                       -->
                       <el-popover
@@ -773,28 +737,18 @@
                             @click.stop
                           ><el-icon><Lock /></el-icon></button>
                         </template>
-                        <p class="src-lock-pop__what">{{ lockMeaning(selectedSource.type, c.manuallyEditedAtMs) }}</p>
-                        <template v-if="canEditKb">
-                          <p class="src-lock-pop__effect">{{ unlockEffect(selectedSource.type) }}</p>
-                          <el-button size="small" type="primary" plain :loading="unlockingId === c.id" @click="unlockChunk(c, true)">
-                            {{ unlockLabel(selectedSource.type) }}
-                          </el-button>
-                        </template>
+                        <p class="src-lock-pop__what">{{ lockMeaning(selectedSource.type) }}</p>
+                        <el-button v-if="canEditKb" size="small" type="primary" plain :loading="unlockingId === c.id" @click="unlockChunk(c, true)">
+                          {{ unlockLabel(selectedSource.type) }}
+                        </el-button>
                       </el-popover>
-                      <span v-if="showShortNote(c)" class="src-chunk-note">內容較短</span>
                     </div>
                     <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
-                    <span class="src-chunk-meta">
-                      {{ c.content.length }} 字 · {{ chunkStatusLabel(c.status) }}<template v-if="c.status === 'disabled' && c.expiredAtMs">（{{ ymdLabel(c.expiredAtMs) }} 到期）</template><template v-if="c.status === 'indexed' && c.activeUntilMs"> · 有效至 {{ ymdLabel(c.activeUntilMs) }}</template> · {{ relativeTime(c.updatedAtMs) }}
-                    </span>
-                    <!-- 原本這句話只在滑鼠停留時出現:手機/平板完全看不到,而且沒說「多長才算夠」,
-                         補了兩句話還是紅字也不知道差多少。改成看得見、並把門檻與差距講出來。
-                         ⛔ 原本寫「補到 30 字以上 AI 才找得到」是**假的**:檢索只篩 workspaceId + status='indexed'
-                         (searchSimilarChunks),沒有任何字數條件——短卡照樣被撈出來、照樣拿去回答客人。
-                         照著那句話做的人會另外再建一張長版的講同一件事(兩張重複卡)。這裡只陳述事實、不催人動手。 -->
-                    <span v-if="showShortNote(c)" class="src-chunk-note-hint">
-                      目前 {{ shortChunkChars(c) }} 字（空白不算），少於 {{ SHORT_CHUNK_CONTENT_CHARS }} 字就會標出來。AI 一樣找得到、也照樣拿去回答，不用特地補長；只是切壞的殘片多半也很短，看一眼是不是就好。
-                    </span>
+                    <!--
+                      `C-314`：只講例外（停用、處理中、沒學起來、等你看過、有效至…）。
+                      以前每一條都寫「62 字 · 可用 · 10/1」——字數不用管、「可用」是正常、日期沒人要用，三樣都不擺
+                    -->
+                    <span v-if="chunkMeta(c)" class="src-chunk-meta" :class="{ 'is-failed': c.status === 'failed' }">{{ chunkMeta(c) }}</span>
                   </div>
                   <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
                   <!-- `G-102`：同一個視窗，沒有 knowledge.write 時開的是唯讀版（見 chunkReadonly）——
@@ -1130,7 +1084,8 @@
       ⛔ 不要改成「同一份表單灰掉」：灰掉的輸入框看起來像壞掉，而且政策是沒權限就藏。
     -->
     <div v-if="chunkReadonly" class="chunk-form">
-      <div class="chunk-status-row">
+      <!-- 狀態章只在不正常時出現（`C-314`，理由見編輯版那一段） -->
+      <div v-if="chunkStatusWorthShowing" class="chunk-status-row">
         <span :class="['badge', chunkStatusBadge(chunkEditStatus)]">{{ chunkStatusLabel(chunkEditStatus) }}</span>
         <span v-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
       </div>
@@ -1149,24 +1104,23 @@
         </ul>
       </div>
       <div v-if="chunkShowUsage" class="admin-field-group">
-        <AdminFieldLabel text="供 AI 使用" tight />
+        <AdminFieldLabel text="AI 可以用這一條" tight />
         <p class="src-readonly-value">
-          {{ chunkEnabled ? 'AI 會引用這一條回答客人' : 'AI 目前不會引用這一條' }}<template v-if="chunkActiveUntil">・有效至 {{ chunkActiveUntil }}</template>
+          {{ chunkEnabled ? '可以' : '不行（已停用）' }}<template v-if="chunkActiveUntil">・有效至 {{ chunkActiveUntil }}</template>
         </p>
         <p v-if="chunkExpiredAtMs && !chunkEnabled" class="chunk-expired-note">
           這一條已於 {{ ymdLabel(chunkExpiredAtMs) }} 到期自動停用。
         </p>
       </div>
-      <div v-if="chunkForm.tags.length" class="admin-field-group">
-        <AdminFieldLabel text="標籤" tight />
-        <div class="chunk-tag-row">
-          <el-tag v-for="t in chunkForm.tags" :key="t" class="chunk-tag">{{ t }}</el-tag>
-        </div>
-      </div>
+      <!-- 標籤不給看（`C-314`）：標籤是系統自己分類用的，店家不用管（同編輯版） -->
     </div>
     <div v-else class="chunk-form">
-      <!-- 索引狀態(編輯既有卡才有) -->
-      <div v-if="chunkEditMode === 'edit'" class="chunk-status-row">
+      <!--
+        索引狀態(編輯既有卡才有)。`C-314`：只在不正常時出現（處理中、沒學起來、等你看過）——
+        九成九打開的是「可用」那一條，最上面掛一個綠色「可用」只是多一樣東西要看；
+        停用的不掛：下面「AI 可以用這一條」那顆開關關著就是在講這件事
+      -->
+      <div v-if="chunkEditMode === 'edit' && chunkStatusWorthShowing" class="chunk-status-row">
         <span :class="['badge', chunkStatusBadge(chunkEditStatus)]">{{ chunkStatusLabel(chunkEditStatus) }}</span>
         <span v-if="chunkEditStatus === 'pending'" class="text-xs text-muted">處理中，約 5–30 秒後 AI 就能用這條回答</span>
         <span v-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
@@ -1216,21 +1170,24 @@
           show-word-limit
           placeholder="把這條的完整資訊寫進來，AI 會用整段當回答依據。"
         />
+        <!-- `C-314`：按鈕旁那一行說明收進滑鼠停留的提示（按了之後的 toast 也會講「記得儲存」） -->
         <div class="chunk-normalize-row">
-          <el-button
-            size="small"
-            plain
-            :loading="chunkNormalizing"
-            :disabled="!chunkForm.content.trim()"
-            @click="normalizeChunkFromModal"
-          >
-            AI 整理一下
-          </el-button>
-          <span class="text-xs text-muted">自動整理成重點、清掉沒用的雜訊，讓 AI 更容易找到這條;整理後記得儲存</span>
+          <el-tooltip content="自動整理成重點、清掉沒用的雜訊，讓 AI 更容易找到這條；整理後記得儲存" placement="top" :show-after="300">
+            <el-button
+              size="small"
+              plain
+              :loading="chunkNormalizing"
+              :disabled="!chunkForm.content.trim()"
+              @click="normalizeChunkFromModal"
+            >
+              AI 整理一下
+            </el-button>
+          </el-tooltip>
         </div>
       </div>
       <!-- 客人問法會一起進 embedding(拉高命中率)。一定要看得到、改得掉:
-           從「補知識」進來時這裡預填的是客人原話,可能夾著電話或姓名。 -->
+           從「補知識」進來時這裡預填的是客人原話,可能夾著電話或姓名。
+           `C-314`：底下那句只留「別放個資」——這幾句是做什麼用的，標題括號（會幫 AI 更容易找到這一條）已經講了 -->
       <div v-if="chunkForm.questions !== undefined" class="admin-field-group">
         <AdminFieldLabel text="客人可能怎麼問（會幫 AI 更容易找到這一條）" tight />
         <el-select
@@ -1244,7 +1201,7 @@
           style="width: 100%"
         />
         <p class="text-xs text-muted" style="margin: 4px 0 0;">
-          這幾句會跟著知識一起被 AI 學習。若含個人資料（電話、姓名）請改寫成一般問法。
+          別放電話、姓名這類個資
         </p>
       </div>
       <!--
@@ -1258,43 +1215,25 @@
         <KnowledgeProductNameField v-model="chunkProductName" />
       </div>
 
-      <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用) -->
+      <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用)。
+           `C-314`：標籤改成講結果的一句話，開關旁那一行說明拿掉（開關本身就是答案） -->
       <div v-if="chunkShowUsage" class="admin-field-group">
-        <AdminFieldLabel text="供 AI 使用" tight />
+        <AdminFieldLabel text="AI 可以用這一條" tight />
         <div class="chunk-usage-row">
           <el-switch v-model="chunkEnabled" />
-          <span class="text-xs text-muted">{{ chunkEnabled ? 'AI 會引用這一條回答客人' : '停用後 AI 不再引用；隨時可重新開啟，不用重建' }}</span>
         </div>
       </div>
 
-      <!-- 標籤/有效期限用得少,收進進階:補一題知識只需要標題+內容+問法。
-           已有值(有標籤/設了期限/到期停用過)時預設展開——把生效中的設定藏起來會讓人找不到。 -->
-      <button type="button" class="chunk-advanced-toggle" @click="chunkAdvancedOpen = !chunkAdvancedOpen">
-        {{ chunkAdvancedOpen ? '▾' : '▸' }} 進階{{ chunkShowUsage ? '（標籤、有效期限）' : '（標籤）' }}
+      <!--
+        有效期限用得少,收進進階:補一題知識只需要標題+內容+問法。設了期限/到期停用過時預設展開——把生效中的設定藏起來會讓人找不到。
+        `C-314`：標籤整格不給看、不給改——那是系統自己分類用的（AI 整理時產生），店家不用管。
+        ⛔ 存檔不會洗掉標籤：改既有的那一條時沒動到就不送 tags（後端沒帶 tags＝不改那一格，見 saveChunk）。
+        「進階」裡只剩有效期限，沒有有效期限可設的（新的一條、處理中、沒學起來）整個不畫
+      -->
+      <button v-if="chunkShowUsage" type="button" class="chunk-advanced-toggle" @click="chunkAdvancedOpen = !chunkAdvancedOpen">
+        {{ chunkAdvancedOpen ? '▾' : '▸' }} 進階（有效期限）
       </button>
       <template v-if="chunkAdvancedOpen">
-        <div class="admin-field-group">
-          <AdminFieldLabel text="標籤（非必填，後台分類用）" tight />
-          <div class="chunk-tag-row">
-            <el-tag
-              v-for="t in chunkForm.tags"
-              :key="t"
-              closable
-              class="chunk-tag"
-              @close="removeChunkTag(t)"
-            >{{ t }}</el-tag>
-            <el-input
-              v-if="chunkTagInputVisible"
-              ref="chunkTagInputEl"
-              v-model="chunkTagInput"
-              size="small"
-              style="width: 120px;"
-              @keydown.enter.prevent="commitChunkTag"
-              @blur="commitChunkTag"
-            />
-            <el-button v-else size="small" plain @click="showChunkTagInput">＋</el-button>
-          </div>
-        </div>
         <div v-if="chunkShowUsage" class="admin-field-group">
           <AdminFieldLabel text="有效期限（選填）" tight />
           <div class="chunk-usage-row">
@@ -1400,10 +1339,8 @@
     width="min(640px, 92vw)"
     :close-on-click-modal="false"
   >
-    <p class="src-bin-hint">
-      刪除的知識會先放在這裡 30 天，期間可以還原；到期後才會真正清除。
-      還原後會回到刪除前的狀態（原本停用的還原後仍是停用）。
-    </p>
+    <!-- `C-314`：一句就好（以前兩句，另一句「還原後回到刪除前的狀態…」是邊角情況，還原之後清單上看得到） -->
+    <p class="src-bin-hint">刪掉的知識會在這裡放 30 天，可以還原。</p>
     <!--
       找得到才救得回來（`C-312`）：以前只列最近 100 條、不能搜——一份 150 條的說明書換新版，
       昨天刪的那一條就被擠出畫面。搜尋＋挑資料＋「顯示更多」；回收桶整個是空的就不畫工具列。
@@ -1574,7 +1511,7 @@
 <script setup lang="ts">
 import { Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
+import { SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { formatFileSize } from '~/utils/knowledge-upload'
 import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
@@ -1904,49 +1841,23 @@ async function onFolderDrop(folderId: string | null) {
 const chunks = ref<ChunkRow[]>([])
 const detailLoading = ref(false)
 
-// ── 知識品質「被動提示」:只標示、絕不自動攔截/刪除(判斷權在人) ──
-/** 標題＋內容去空白合計 <10 字:placeholder/測試列等級,embedding 是雜訊會污染檢索 */
-/** 與知識庫體檢同一把尺（shared 常數）——兩邊門檻不同會出現「體檢說有、知識卻沒標」 */
-function isShortChunk(c: Pick<ChunkRow, 'content'>): boolean {
-  return isShortChunkContent(c.content)
-}
-
-/**
- * 這一條要不要標「內容較短」。
- *
- * ⛔ 停用的卡不標:它根本不參與回答,標了只會讓列表上的條數跟體檢、篩選按鈕對不起來
- * (體檢與 `matchChunkFilter` 都排除停用)。本專案在這個標示上踩過一次
- * 「兩邊說法不一致」——實測 4 條標記 vs 體檢說 2 條,就是漏了這個條件。
- */
-function showShortNote(c: Pick<ChunkRow, 'content' | 'status'>): boolean {
-  return c.status !== 'disabled' && isShortChunk(c)
-}
-
-/**
- * 判定用的字數（不算空白），與 isShortChunkContent 同一把尺。
- * 上面 meta 行顯示的是含空白的原始長度，兩個數字會不一樣——所以提示裡要標明「空白不算」，
- * 否則會出現「35 字」卻說「還差 5 字」這種自相矛盾。
- */
-function shortChunkChars(c: Pick<ChunkRow, 'content'>): number {
-  return String(c.content ?? '').replace(/\s+/g, '').length
-}
-
 /**
  * 知識清單的狀態篩選。
  *
- * 一份說明書可以切出上百條,要找「哪幾條停用了 / 沒學成功 / 太短」原本只能滾——
+ * 一份說明書可以切出上百條,要找「哪幾條停用了 / 沒學成功」原本只能滾——
  * 或是繞回工作台的體檢清單再點回這一份資料。分類與體檢用同一組判斷,
  * 兩邊看到的條數才會一樣。
+ *
+ * `C-314`：拿掉「內容較短」那一類（連同每一條上的「內容較短」小標和底下那段長說明）。
+ * 短的照樣被找到、照樣拿去回答（檢索沒有字數條件），不是要修的東西——列成一類、每條掛標，
+ * 只會讓人以為那幾條壞了。⛔ 篩選只留「要動手」的：沒學起來、已停用。
  */
-type ChunkFilterKey = 'all' | 'failed' | 'short' | 'disabled'
+type ChunkFilterKey = 'all' | 'failed' | 'disabled'
 const chunkFilter = ref<ChunkFilterKey>('all')
 
 function matchChunkFilter(c: ChunkRow, key: ChunkFilterKey): boolean {
   if (key === 'failed') return c.status === 'failed'
   if (key === 'disabled') return c.status === 'disabled'
-  // 較短只看還在用的:停用的卡不影響答題,列進來只會讓這個分類的數字看起來比實際多
-  // (跟逐條標示共用 showShortNote,兩邊才不會一個標 4 條、一個算 2 條)
-  if (key === 'short') return showShortNote(c)
   return true
 }
 
@@ -1955,7 +1866,6 @@ const chunkFilterTabs = computed(() => {
   const defs: Array<{ key: ChunkFilterKey, label: string }> = [
     { key: 'all', label: '全部' },
     { key: 'failed', label: 'AI 沒學起來' },
-    { key: 'short', label: '內容較短' },
     { key: 'disabled', label: '已停用' },
   ]
   return defs
@@ -1967,7 +1877,7 @@ const visibleChunks = computed(() => chunks.value.filter(c => matchChunkFilter(c
 
 /**
  * 篩選中的那一類被清空時要自己退回「全部」。
- * 例:只剩一條「內容較短」,補完字之後那個分類歸零 → 按鈕列不再顯示它,
+ * 例:只剩一條「AI 沒學起來」,重新學習成功之後那個分類歸零 → 按鈕列不再顯示它,
  * 但篩選還停在 short → 清單空白、也沒有任何按鈕可以點回去(看起來像知識全消失了)。
  */
 watch([chunks, chunkFilter], () => {
@@ -1981,18 +1891,30 @@ function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
 }
 
 /**
+ * 每一條底下那一行（`C-314`）：只講例外，正常的一條什麼都不寫（回空字串＝那一行不畫）。
+ * 以前每一條都是「62 字 · 可用 · 10/1」——字數不用管、「可用」是正常狀態、日期沒有人要拿來做什麼。
+ */
+function chunkMeta(c: Pick<ChunkRow, 'status' | 'activeUntilMs' | 'expiredAtMs'>): string {
+  if (c.status === 'indexed') return c.activeUntilMs ? `有效至 ${ymdLabel(c.activeUntilMs)}` : ''
+  if (c.status === 'disabled') return c.expiredAtMs ? `已停用（${ymdLabel(c.expiredAtMs)} 到期）` : '已停用'
+  return chunkStatusLabel(c.status)
+}
+
+/**
  * 同步設定的選項文字。⛔ 只寫這一份：下拉／單選用它、給觀察者看的那一行也用它查（`G-107`），
  * 兩邊各寫一份的話改了一邊，觀察者看到的就是舊說法。
  */
+// `C-314`：前面接「自動更新：」，關掉那一項就叫「不自動更新」（以前「不自動偵測（要更新時我自己按）」／「不自動同步（只手動）」，
+// 接在「自動更新：」後面讀起來不通；關掉之後怎麼更新，改了的那一下 toast 會講）
 const URL_INTERVAL_OPTIONS = [
-  { label: '不自動偵測（要更新時我自己按）', value: 0 },
+  { label: '不自動更新', value: 0 },
   { label: '每小時', value: 60 },
   { label: '每天', value: 1440 },
   { label: '每週', value: 10080 },
   { label: '每月', value: 43200 },
 ]
 const GSHEET_INTERVAL_OPTIONS = [
-  { label: '不自動同步（只手動）', value: 0 },
+  { label: '不自動更新', value: 0 },
   { label: '每 30 分鐘', value: 30 },
   { label: '每小時', value: 60 },
   { label: '每天', value: 1440 },
@@ -2026,7 +1948,16 @@ const settingsDirty = computed(() =>
   || settingsForm.value.onChangeBehavior !== settingsBaseline.value.onChangeBehavior
   || settingsForm.value.urlAutoApply !== settingsBaseline.value.urlAutoApply,
 )
+/** 「更多設定」那兩格（網址）有沒有改了還沒存：「儲存設定」只管這兩格，頻率選了就存（`C-314`） */
+const moreSettingsDirty = computed(() =>
+  settingsForm.value.onChangeBehavior !== settingsBaseline.value.onChangeBehavior
+  || settingsForm.value.urlAutoApply !== settingsBaseline.value.urlAutoApply,
+)
 const savingSettings = ref(false)
+/** 網址的「更多設定」預設收著（`C-314`）；換一份資料不重設——收著是預設，打開是他自己要看 */
+const syncMoreOpen = ref(false)
+/** 「自動更新：」選了就存，存的那一下（`C-314`） */
+const savingInterval = ref(false)
 const deleting = ref(false)
 
 const resyncing = ref(false)
@@ -2344,12 +2275,14 @@ function lockApplies(t: string | undefined): boolean {
 /** 試算表有沒有在自動同步（設成「不自動同步」的，只有按「立即同步」才會動） */
 const gsheetAutoSync = computed(() => (selectedSource.value?.refreshIntervalMinutes ?? 0) > 0)
 
-function lockMeaning(t: string | undefined, editedAtMs: number): string {
-  const when = relativeTime(editedAtMs)
-  const head = `你在後台改過這一條${when ? `（${when}）` : ''}`
-  if (t === 'gsheet') return `${head}：同步時用你改的版本，不跟著表格。`
-  if (t === 'url') return `${head}：網頁更新時用你改的版本，不跟著網頁。`
-  return `${head}：「換新版」時會先問你要不要帶到新版。`
+/**
+ * 鎖頭點開那一句（`C-314`：一句＋一顆按鈕就好）。以前三句：改過的時間、現在用哪一版、改回去之後什麼時候換——
+ * 時間在鎖頭的 aria-label 裡、什麼時候換按了之後的提示（unlockToast）會講。
+ */
+function lockMeaning(t: string | undefined): string {
+  if (t === 'gsheet') return '你改過這一條，表格更新時不會蓋掉。'
+  if (t === 'url') return '你改過這一條，網頁更新時不會蓋掉。'
+  return '你改過這一條，換新版時會先問要不要帶過去。'
 }
 function unlockEffect(t: string | undefined): string {
   if (t === 'gsheet') {
@@ -2360,8 +2293,15 @@ function unlockEffect(t: string | undefined): string {
   if (t === 'url') return '改回之後，網頁下次有變動時會換成網頁上的內容。'
   return '改回之後，下次「換新版」不會再問，直接用新版的內容。'
 }
+/**
+ * 改回去那顆按鈕的字。
+ * 檔案（`C-314`）：檔案不會自己更新，「改回跟著新版」講的是一個還不存在的新版、讀不懂。
+ * 這顆按下去的實際效果是「下次換新版不問了、直接用新版的內容」（同一支解鎖，unlockToast 的 next_replace 那句）——
+ * 按鈕就直接講這件事。⛔ 不拿掉這顆：鎖頭要消失只有這條路（編輯框裡那顆只給試算表／網頁）；
+ * 不想按也沒關係，換新版那一下畫面本來就會一條條問帶不帶（`D-125`①）
+ */
 function unlockLabel(t: string | undefined): string {
-  return t === 'gsheet' ? '改回跟著表格' : t === 'url' ? '改回跟著網頁' : '改回跟著新版'
+  return t === 'gsheet' ? '改回跟著表格' : t === 'url' ? '改回跟著網頁' : '換新版時直接用新版'
 }
 /**
  * 改回去之後什麼時候生效：照伺服器回的 appliesOn 講（`C-308`②：伺服器知道這一份的同步設定）；
@@ -2609,8 +2549,19 @@ const chunkExpiredAtMs = ref(0)
 /** 開關/期限只對已索引或已停用的卡有意義(pending/failed 本來就不會被引用) */
 const chunkShowUsage = computed(() =>
   chunkEditMode.value === 'edit' && (chunkEditStatus.value === 'indexed' || chunkEditStatus.value === 'disabled'))
-/** 標籤/有效期限收進「進階」摺疊;開窗時依「有沒有值」決定預設開合 */
+/**
+ * 編輯框最上面那個狀態章要不要掛（`C-314`）：只有不正常時（處理中、沒學起來、等你看過，或有失敗原因）。
+ * 「可用」是正常不講；「已停用」不講——下面「AI 可以用這一條」那顆開關關著就是在講這件事
+ */
+const chunkStatusWorthShowing = computed(() =>
+  (chunkEditStatus.value !== 'indexed' && chunkEditStatus.value !== 'disabled') || !!chunkEditFailureReason.value)
+/** 有效期限收進「進階」摺疊;開窗時依「有沒有值」決定預設開合 */
 const chunkAdvancedOpen = ref(false)
+/**
+ * 打開時那一條的標籤（排好、接成一串）：存檔時比對用（`C-314`）。
+ * 標籤欄位不給看了，只有「AI 整理一下」會換掉標籤——換了才送，沒換就不送 tags，後端就不動那一格（不會被洗成空的）
+ */
+let chunkTagsOriginal = ''
 // 開窗時的原值,儲存時只送有變的部分
 let chunkSettingsOriginal = { enabled: true, activeUntil: '' }
 
@@ -2625,9 +2576,6 @@ const folderEditTarget = ref<FolderRow | null>(null)
 const folderForm = ref({ name: '' })
 const folderSaving = ref(false)
 const folderDeleting = ref(false)
-const chunkTagInput = ref('')
-const chunkTagInputVisible = ref(false)
-const chunkTagInputEl = ref<{ focus: () => void } | null>(null)
 
 /**
  * forceHealth:剛動過知識庫(匯入 / 刪資料 / 改卡 / 套用同步)時要跳過體檢節流,
@@ -2730,8 +2678,8 @@ const healthSourceCount = computed(() =>
 const healthChunkCount = computed(() =>
   health.value.failedChunks.count + health.value.wrongAnswerChunks.count)
 
-/**
- * 「知道就好」的體檢結果：不算進待處理數字、不給行動按鈕，只列一行灰字。
+/*
+ * 「知道就好」的體檢結果（已過期停用、內容較短）不進「要處理的事」。
  *
  * 判準＝**這件事有沒有讓客人得到錯的回答**。沒有的話就不該進「要處理的事」，
  * 否則數字永遠清不完，久了連真的紅字（同步失敗、AI 答錯）也一起被跳過。
@@ -2739,18 +2687,13 @@ const healthChunkCount = computed(() =>
  * - 已過期停用：有效期限功能正確運作的結果。
  * - 內容較短：短卡**照樣被檢索到、照樣拿去回答**（檢索只篩 workspaceId + status，沒有字數條件），
  *   所以它不是故障。但「免運門檻：單筆滿 1000 元」這種最好答的知識也才 13 字——
- *   列成待辦會催人去停用或刪掉一條完全正常的知識。留一行讓想看的人看得到就好。
+ *   列成待辦會催人去停用或刪掉一條完全正常的知識。
+ *
+ * `C-314`（老闆 10-14「只呈現需要的東西」）：這兩類以前在「要處理的事」最後各掛一行灰字
+ * （「另有 N 條知識已過期自動停用（正常，不用處理）」「另有 N 條知識內容較短（照樣找得到，想看再看）」）——
+ * 自己都說不用處理的，就不擺在工作台上。體檢端點照樣回這兩類，`?health=shortChunks／expiredChunks`
+ * 那份清單也還打得開（HEALTH_META 留著），只是工作台不再主動列。
  */
-const mutedItems = computed<Array<{ id: HealthCategory; label: string }>>(() => {
-  const out: Array<{ id: HealthCategory; label: string }> = []
-  if (health.value.expiredChunks.count) {
-    out.push({ id: 'expiredChunks', label: `另有 ${health.value.expiredChunks.count} 條知識已過期自動停用（正常，不用處理）` })
-  }
-  if (health.value.shortChunks.count) {
-    out.push({ id: 'shortChunks', label: `另有 ${health.value.shortChunks.count} 條知識內容較短（照樣找得到，想看再看）` })
-  }
-  return out
-})
 const healthIssueCount = computed(() => healthSourceCount.value + healthChunkCount.value)
 
 // ── 「要處理的事」單一清單 ────────────────────────────
@@ -2922,7 +2865,7 @@ const todoItems = computed<TodoItem[]>(() => {
       action: singleOrList(h.noProductSources, 'source', 'noProductSources'),
     })
   }
-  // ⛔「內容較短」刻意不在這裡：它不是待辦，見 mutedItems 的判準。
+  // ⛔「內容較短」刻意不在這裡：它不是待辦，判準見 healthIssueCount 上面那段。
   // 別名候選原本只藏在「⋯」選單展開後的項目文字裡,⋯ 按鈕本身沒有徽章——
   // 等於一個看不見的異常。它會讓 AI 把同一台機器當成兩台,該進待辦。
   if (h.aliasCandidateCount > 0) {
@@ -3596,6 +3539,43 @@ function maybeScheduleIndexPoll() {
 watch(chunks, () => maybeScheduleIndexPoll())
 onBeforeUnmount(stopIndexPolling)
 
+/** 「自動更新：」那一格的選項：網址、試算表各一份（試算表多一個「每 30 分鐘」） */
+const intervalOptions = computed(() => (selectedSource.value?.type === 'gsheet' ? GSHEET_INTERVAL_OPTIONS : URL_INTERVAL_OPTIONS))
+
+/** 改了頻率之後那一句：改成什麼；關掉的話講要更新時按哪一顆（試算表「立即同步」、網址「重新同步」，跟右上那顆同名） */
+function intervalSavedToast(minutes: number, t: string | undefined): string {
+  if (minutes > 0) return `已改成${optionLabel(t === 'gsheet' ? GSHEET_INTERVAL_OPTIONS : URL_INTERVAL_OPTIONS, minutes)}自動更新`
+  return `已關掉自動更新：要更新時按右上「${t === 'gsheet' ? '立即同步' : '重新同步'}」`
+}
+
+/**
+ * 「自動更新：」選了就存（`C-314`：以前選完還要找下面那顆「儲存設定」，沒按就等於沒改）。
+ * 只送這一格（後端那支每一格都可以單獨送）；存不了就退回原本的值、講伺服器給的原因。
+ * ⚠️ 存的途中他換到別份資料：那一份的設定已經由 selectSource 重填，⛔ 不可以把舊值退回到新的那一份上
+ */
+async function saveInterval() {
+  const id = selectedId.value
+  if (!id) return
+  const next = settingsForm.value.refreshIntervalMinutes
+  const prev = settingsBaseline.value.refreshIntervalMinutes
+  if (next === prev) return
+  const type = selectedSource.value?.type
+  savingInterval.value = true
+  try {
+    await apiFetch(`/api/ai/sources/${id}`, { method: 'PUT', body: { refreshIntervalMinutes: next } })
+    if (selectedId.value === id) settingsBaseline.value = { ...settingsBaseline.value, refreshIntervalMinutes: next }
+    showToast(intervalSavedToast(next, type), 'success')
+    if (selectedId.value === id) await loadSourceDetail(id)
+  }
+  catch (err: any) {
+    if (selectedId.value === id) settingsForm.value.refreshIntervalMinutes = prev
+    showToast(apiErrorText(err, '沒有改成，請再試一次'), 'error')
+  }
+  finally {
+    savingInterval.value = false
+  }
+}
+
 async function saveSettings() {
   if (!selectedId.value) return
   savingSettings.value = true
@@ -4186,9 +4166,16 @@ function openEditChunk(chunk: ChunkRow) {
   chunkActiveUntil.value = chunk.activeUntilMs ? ymdLabel(chunk.activeUntilMs) : ''
   chunkExpiredAtMs.value = chunk.expiredAtMs || 0
   chunkSettingsOriginal = { enabled: chunkEnabled.value, activeUntil: chunkActiveUntil.value }
-  // 有標籤/設過期限/到期停用過 → 進階預設展開,別把生效中的設定藏起來
-  chunkAdvancedOpen.value = chunkForm.value.tags.length > 0 || !!chunkActiveUntil.value || chunkExpiredAtMs.value > 0
+  chunkTagsOriginal = tagsKey(chunkForm.value.tags)
+  // 設過期限/到期停用過 → 進階預設展開,別把生效中的設定藏起來。
+  // `C-314`：有標籤不再算——標籤欄位不給看了，進階裡只剩有效期限
+  chunkAdvancedOpen.value = !!chunkActiveUntil.value || chunkExpiredAtMs.value > 0
   chunkEditOpen.value = true
+}
+
+/** 標籤比對用：排好接成一串（順序不同不算改了） */
+function tagsKey(tags: string[]): string {
+  return [...tags].sort().join('\n')
 }
 
 // ── AI 整理(normalize):加重點摘要、去系統碼 ─────────
@@ -4305,7 +4292,13 @@ async function saveChunk() {
   if (!t || !c) return
   chunkSaving.value = true
   try {
-    const body: Record<string, unknown> = { title: t, content: c, tags: chunkForm.value.tags }
+    const body: Record<string, unknown> = { title: t, content: c }
+    /*
+     * 標籤（`C-314`：欄位不給看了，系統自己管）：新開的一條照送（通常是空的，按過「AI 整理一下」就是 AI 給的）；
+     * 改既有的那一條只有「AI 整理一下」換了標籤才送——⛔ 沒換就不送：後端 PUT 沒帶 tags＝不改那一格，
+     * 原本的標籤一個都不會被洗掉（照送也行，但舊資料若有超過上限的標籤，照送會被擋下 400、整條存不了）
+     */
+    if (chunkEditMode.value === 'create' || tagsKey(chunkForm.value.tags) !== chunkTagsOriginal) body.tags = chunkForm.value.tags
     // 只要欄位有出現在畫面上就照送（含清成空陣列）——用 length 判斷的話，
     // 使用者把夾了個資的問法全部刪掉會送不出去，等於刪不掉。
     // undefined = 這次沒有這個欄位，後端保留既有值。
@@ -4418,23 +4411,6 @@ async function deleteChunkFromModal() {
   }
 }
 
-// ── Chunk tag input ─────────────────────────────────
-function showChunkTagInput() {
-  chunkTagInputVisible.value = true
-  nextTick(() => chunkTagInputEl.value?.focus())
-}
-function commitChunkTag() {
-  const t = chunkTagInput.value.trim()
-  if (t && !chunkForm.value.tags.includes(t)) {
-    chunkForm.value.tags = [...chunkForm.value.tags, t]
-  }
-  chunkTagInput.value = ''
-  chunkTagInputVisible.value = false
-}
-function removeChunkTag(t: string) {
-  chunkForm.value.tags = chunkForm.value.tags.filter(x => x !== t)
-}
-
 // ─── 原檔下載（`C-296`③）───────────────────────────────
 const downloadingOriginal = ref(false)
 /** 跟伺服器要一個 5 分鐘有效的下載網址再開；網址帶「存成附件」，瀏覽器會直接下載不會換頁 */
@@ -4458,9 +4434,6 @@ async function downloadOriginal() {
 }
 // ─── Display helpers ───────────────────────────────────
 // 叫法跟「加入知識」視窗同一套（2026-10-12 文字審視：試算表不叫 Sheet、貼進來的文字不叫手打）
-function typeEmoji(t: string | undefined) {
-  return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? '試算表' : '文字'
-}
 function typeLabel(t: string) {
   return t === 'url' ? '網址' : t === 'file' ? '檔案' : t === 'gsheet' ? 'Google 試算表' : '一段文字'
 }
@@ -4474,29 +4447,61 @@ function chunkStatusLabel(s: string) {
 function chunkStatusBadge(s: string) {
   return s === 'indexed' ? 'badge-green' : s === 'pending' ? 'badge-yellow' : s === 'disabled' ? 'badge-gray' : s === 'draft' ? 'badge-yellow' : 'badge-red'
 }
+/**
+ * 左邊每一份資料的小章（`C-314`）：**只有不正常時才有**。以前每一列都掛一個綠色「可用」——
+ * 清單上幾十個一模一樣的綠章，真正有事的那一個反而不顯眼。回 null＝不畫。
+ * 先後照嚴重度：壞了 > 處理中 > 內容有變動 > 試算表有列沒收。
+ * 試算表一次少太多列被擋下（`C-308`⑤）狀態也是 failed，但不是壞了、是等他確認——講「等你確認」不講「失敗」。
+ */
+function sourceChip(src: SourceSummary): { text: string, tone: 'warning' | 'error' | 'neutral' } | null {
+  if (src.status === 'failed') return massDeleteRows(src) > 0 ? { text: '等你確認', tone: 'warning' } : { text: '失敗', tone: 'error' }
+  if (src.status === 'fetching' || src.status === 'splitting') return { text: statusLabel(src.status), tone: 'neutral' }
+  if (src.outdatedAtMs > 0) return { text: '有變動', tone: 'warning' }
+  if (src.type === 'gsheet' && (src.quotaSkippedCount ?? 0) > 0) return { text: '有列沒收', tone: 'warning' }
+  return null
+}
 function statusChipText(src: SourceSummary) {
-  if (src.outdatedAtMs > 0) return '有變動'
-  if (src.status === 'ready') return '可用'
-  return statusLabel(src.status)
+  return sourceChip(src)?.text ?? ''
 }
 function statusChipTone(src: SourceSummary): 'success' | 'warning' | 'error' | 'neutral' {
-  if (src.outdatedAtMs > 0) return 'warning'
-  if (src.status === 'ready') return 'success'
-  if (src.status === 'failed') return 'error'
-  return 'neutral'
+  return sourceChip(src)?.tone ?? 'neutral'
 }
+/**
+ * 左邊每一份底下那一行：只剩「N 條」（`C-314`）。
+ * 以前還接產品名、「同步：46 分鐘前」——240px 寬的側欄裡每一列都被截成「…」，看不完也用不到。
+ * 「沒設產品」改由「要處理的事」那一條講（noProductSources，跟這裡以前用的是同一個判斷）；
+ * 產品名、更新時間點進那一份就看得到（名稱下面那一行、「所屬產品」那一格）。
+ */
 function metaText(src: SourceSummary) {
-  const parts: string[] = []
-  parts.push(`${src.chunkCount} 條`)
-  // 產品名放在這裡才掃得出「哪幾份還沒設」——原本只有點進每一份資料才看得到,
-  // 補產品名等於要一份一份點開試。「該設卻沒設」的判定與體檢共用 needsProductName,
-  // 不然會出現「這裡標著未設、體檢卻不算它」兩邊說法不一致。
-  if (src.productName) parts.push(src.productName)
-  else if (needsProductName(src)) parts.push('未設產品')
-  // 檔案、文字不會同步（`C-309`）：照實叫「更新」，不寫「同步：9/4」讓人以為它會自己更新
-  if (src.lastFetchedAtMs) parts.push(`${isSyncingType(src.type) ? '同步' : '更新'}：${relativeTime(src.lastFetchedAtMs)}`)
-  return parts.join(' · ')
+  return `${src.chunkCount} 條`
 }
+
+/**
+ * 資料頁名稱下面那一行（`C-314`）：「Google 試算表・20 條・35 分鐘前更新」／「檔案・79 條・9/4 更新」。
+ * 取代原本整張「基本資訊」卡（類型／狀態／條數／最後同步四格）。
+ * 檔案、文字不會自己更新（`C-309`）：時間取「最後一次換內容」那一刻，⛔ 不寫「同步」讓人以為它會自己更新。
+ */
+const headerMeta = computed(() => {
+  const s = selectedSource.value
+  if (!s) return ''
+  const parts = [typeLabel(s.type), `${s.chunkCount} 條`]
+  const when = isSyncingType(s.type) ? relativeTime(s.lastFetchedAtMs) : relativeTime(s.lastFetchedAtMs || s.updatedAtMs)
+  // 「9/4」後面空一格再接「更新」；「35 分鐘前」「剛剛」直接接
+  if (when) parts.push(/\d$/.test(when) ? `${when} 更新` : `${when}更新`)
+  else if (isSyncingType(s.type)) parts.push('還沒同步過')
+  return parts.join('・')
+})
+/**
+ * 那一行後面的狀態：只有不正常時才接（上色）。正常（可用）不講。
+ * 壞了而且有原因的不接：底下那一塊紅框（src-fix）整段就在講這件事，這裡再寫「失敗」是同一件事講兩次。
+ */
+const headerStatus = computed<{ text: string, tone: 'busy' | 'failed' } | null>(() => {
+  const s = selectedSource.value
+  if (!s) return null
+  if (s.status === 'fetching' || s.status === 'splitting') return { text: statusLabel(s.status), tone: 'busy' }
+  if (s.status === 'failed' && !s.failureReason) return { text: statusLabel(s.status), tone: 'failed' }
+  return null
+})
 function kindLabel(k: string) {
   return k === 'new' ? '新增' : k === 'modified' ? '修改' : k === 'removed' ? '移除' : '未變'
 }
