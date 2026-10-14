@@ -13,6 +13,11 @@ export interface KnowledgeSuggestionRow {
   /** 次數是取樣值（事件撞到掃描上限）→ UI 要說「至少 N 次」 */
   sampled: boolean
   sampleQueries: string[]
+  /**
+   * 這一組全部的客人原句（最多 30 條）（`C-311`）：審核時勾「這一條回答了哪幾題」用。
+   * 只給 5 條樣本的話，沒列出來的那些勾不到、採用後會莫名其妙留在清單上
+   */
+  queries: string[]
   draft: KnowledgeSuggestionDraft | null
   blanksCount: number
   draftError: string
@@ -57,6 +62,8 @@ export default defineEventHandler(async (event) => {
         eventCount: Number(s.eventCount ?? 0),
         sampled: s.sampled === true,
         sampleQueries: (s.sampleQueries ?? []).map(String),
+        // 舊資料理論上都有 queries；萬一沒有就退回樣本句（跟採用端 splitSuggestionQueries 同一個退路）
+        queries: (s.queries?.length ? s.queries : (s.sampleQueries ?? [])).map(String),
         draft: s.draft ?? null,
         blanksCount: Number(s.blanksCount ?? 0),
         draftError: String(s.draftError ?? ''),

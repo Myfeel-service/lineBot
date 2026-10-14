@@ -178,6 +178,114 @@ export function buildClusters(items: Array<GapItem & { vector: number[] }>): Gap
   return clusters.sort((a, b) => b.totalCount - a.totalCount)
 }
 
+// ── 只採用其中幾題（`C-311`）──────────────────────────────────────
+//
+// 聚類是照「問句像不像」分組，同一個產品的不同問題常被分進同一組（正式站實例：「小滑手」那組有
+// 哪一國做的／只能沖義式嗎／能邊萃取邊打奶泡嗎／寬深高各多少）。店家寫一條回答其中一題、按採用，
+// 以前整組標成已處理，其他題目沒人回答就從清單消失。現在採用時勾「這一條回答了哪幾題」，
+// 沒勾的**留在同一筆建議裡、照舊是待處理**。
+//
+// 為什麼留在同一筆、不另開一筆：下一輪掃描靠 centroid 認「這一組是哪一筆建議」。
+// 另開一筆的話兩筆的 centroid 一樣，掃描只會認到其中一筆（先比到的那筆），
+// 認到已採用的那筆就整組跳過——剩下那筆的次數再也不會更新；認到剩下那筆又會把回答掉的題目併回來。
+// 留在同一筆、記下 answeredQueries，掃描比對完再把那幾題拿掉（excludeAnsweredFromCluster），兩種情況都不會發生。
+
+/**
+ * 掃描比對到既有建議之後，把已經回答掉的題目從這一組拿掉（`C-311`）。
+ *
+ * ⚠️ 要在「比對完」才拿：比對用的是整組的中心（跟存著的 centroid 同一個口徑）。
+ * 先拿掉再聚類／比對的話，中心會偏到剩下那幾題，可能比不到原本那筆、被當成新主題另開一筆（重複）。
+ * centroid 不重算：拿掉的題目沒有各自的向量可扣，而且之後的寫入只用題目與次數。
+ */
+export function excludeAnsweredFromCluster(cluster: GapCluster, answered: readonly string[] | undefined): GapCluster {
+  if (!answered?.length) return cluster
+  const done = new Set(answered.map(q => String(q ?? '').trim()))
+  const items = cluster.items.filter(i => !done.has(i.query))
+  if (items.length === cluster.items.length) return cluster
+  return {
+    centroid: cluster.centroid,
+    items,
+    // 次數照剩下的題目重算——「30 天內被問 N 次」不能把回答掉的那幾題算進去
+    totalCount: items.reduce((n, i) => n + i.count, 0),
+    latestMs: items.reduce((m, i) => Math.max(m, i.latestMs), 0),
+  }
+}
+
+/** 部分採用之後，這筆建議剩下的樣子（寫回 Firestore 前的純資料） */
+export interface SuggestionRemaining {
+  queries: string[]
+  /** null＝舊資料沒有各題次數（寫回時刪掉這一格，等下一輪掃描補） */
+  queryCounts: number[] | null
+  sampleQueries: string[]
+  eventCount: number
+  sampled: boolean
+  answeredQueries: string[]
+  /** 主題名先換成剩下第一題的前 12 字（同「還沒擬到草稿」的新主題），下一輪重擬時換成 AI 起的名字 */
+  topic: string
+}
+
+/**
+ * 勾了哪幾題 → 哪幾題算回答掉、這筆建議還剩什麼（`C-311`）。
+ *
+ * - answered：勾的題目裡**真的在這一組**的（照組內順序）。不在組裡的（另一個分頁已經回答掉、
+ *   或掃描後已經不在窗口裡）不算——呼叫端拿 answered 是否為空判斷「你勾的都已經處理過了」。
+ * - remaining：null＝整組都回答了（＝原本的整組採用）。
+ *
+ * 次數要照實（「30 天內被問 N 次」）：
+ * - 有 queryCounts：總數扣掉回答掉那幾題的次數。總數含 30 條以外沒存下來的題目，所以用扣的、不用剩下的加總。
+ * - 舊資料沒有：只知道每一題至少被問 1 次——剩下 k 題就說「至少 k 次」（sampled）。
+ *   例外：總數扣掉「回答掉的每題至少 1 次」剛好等於 k 時，次數就是確定的，不用加「至少」。
+ *   下一輪掃描會寫回真的次數。
+ */
+export function splitSuggestionQueries(
+  doc: Pick<KnowledgeSuggestionDoc, 'queries' | 'sampleQueries' | 'queryCounts' | 'eventCount' | 'sampled' | 'answeredQueries'>,
+  ticked: readonly string[],
+): { answered: string[]; remaining: SuggestionRemaining | null } {
+  const fromQueries = Array.isArray(doc.queries) && doc.queries.length > 0
+  const group = (fromQueries ? doc.queries : (doc.sampleQueries ?? [])).map(q => String(q ?? '').trim())
+  // 各題次數只有跟 queries 一一對得上才用（長度不同＝資料不完整，硬對會扣錯題）
+  const counts = fromQueries && Array.isArray(doc.queryCounts) && doc.queryCounts.length === group.length
+    ? doc.queryCounts.map(n => Math.max(1, Number(n) || 0))
+    : null
+  const tickedList = [...new Set(ticked.map(q => String(q ?? '').trim()).filter(Boolean))]
+  const tickedSet = new Set(tickedList)
+
+  const answeredIdx: number[] = []
+  const remainingIdx: number[] = []
+  group.forEach((q, i) => (tickedSet.has(q) ? answeredIdx : remainingIdx).push(i))
+  const answered = answeredIdx.map(i => group[i]!)
+  if (!remainingIdx.length) return { answered, remaining: null }
+
+  const queries = remainingIdx.map(i => group[i]!)
+  const total = Number(doc.eventCount ?? 0) || 0
+  let eventCount: number
+  let sampled = doc.sampled === true
+  if (counts) {
+    const answeredEvents = answeredIdx.reduce((n, i) => n + counts[i]!, 0)
+    const storedLeft = remainingIdx.reduce((n, i) => n + counts[i]!, 0)
+    eventCount = Math.max(total - answeredEvents, storedLeft)
+  }
+  else {
+    eventCount = queries.length
+    if (total - answered.length > queries.length) sampled = true
+  }
+
+  return {
+    answered,
+    remaining: {
+      queries,
+      queryCounts: counts ? remainingIdx.map(i => counts[i]!) : null,
+      sampleQueries: queries.slice(0, 5),
+      eventCount,
+      sampled,
+      // 勾的全部記下（不只這次還在組裡的）：呼叫端第二次呼叫時傳的是第一次驗過的 answered，
+      // 期間掃描就算把它們從 queries 拿掉了，也要記著，否則它們的舊事件下一輪又會被併回來
+      answeredQueries: [...new Set([...(doc.answeredQueries ?? []).map(String), ...tickedList])],
+      topic: queries[0]!.slice(0, 12),
+    },
+  }
+}
+
 // ── LLM 草擬 ───────────────────────────────────────────────────────
 
 interface DraftContextCard {
@@ -392,11 +500,15 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   tally.clusters = clusters.length
 
   // 4. 與既有建議比對（同 workspace 全狀態；等值查詢免複合索引）。
-  // 只取比對與狀態判斷要用的欄位——draft/queries 是這個 collection 最肥的部分，
-  // 帶回來只為了算 cosine 是白付流量。
+  // 只取下面真的會讀的欄位——⛔ 沒列進來的欄位讀回來是 undefined、不會報錯：
+  //   · answeredQueries（`C-311`）：漏了的話回答掉的題目每一輪都被併回清單
+  //   · topic／topicIsRaw／sampleQueries／queries：給 isRawSuggestionTopic 認「名字還是客人原句」。
+  //     2026-10-14 `C-311` 才發現以前沒列，那一段改名（2026-10-13 `/code-review`）從來沒跑到過。
+  //     queries 是這裡最肥的一格（最多 30 句），但一個 workspace 七天才掃一次，比起 embedding 的錢可以忽略
   const existingSnap = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
-    .select('centroid', 'status', 'eventCount', 'seenCountAtDismiss', 'draft')
+    .select('centroid', 'status', 'eventCount', 'seenCountAtDismiss', 'draft', 'answeredQueries',
+      'topic', 'topicIsRaw', 'sampleQueries', 'queries')
     .limit(EXISTING_SCAN_LIMIT)
     .get()
   if (existingSnap.size >= EXISTING_SCAN_LIMIT) {
@@ -413,22 +525,28 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   /** 還有時間開始下一張草稿嗎（開始了才逾時＝token 已付卻什麼都沒留） */
   const canDraft = () => draftsLeft > 0 && Date.now() - startedAt < SCAN_TIME_BUDGET_MS - DRAFT_TIME_RESERVE_MS
 
-  for (const cluster of clusters) {
-    const queries = cluster.items.map(i => i.query).slice(0, 30)
-    const sampleQueries = cluster.items.slice(0, 5).map(i => i.query)
-    const lastSeenAt = Timestamp.fromMillis(cluster.latestMs || Date.now())
-
+  for (const wholeCluster of clusters) {
     let match: (typeof existing)[number] | null = null
     let matchSim = 0
     for (const ex of existing) {
       const centroid = readCentroid(ex.data.centroid)
       if (!centroid.length) continue
-      const sim = cosine(cluster.centroid, centroid)
+      const sim = cosine(wholeCluster.centroid, centroid)
       if (sim >= EXISTING_MATCH_THRESHOLD && sim > matchSim) {
         match = ex
         matchSim = sim
       }
     }
+
+    // `C-311`：比對完才拿掉這筆建議已經回答掉的題目（為什麼不能先拿，見 excludeAnsweredFromCluster）。
+    // 拿完一題都不剩＝這一組在窗口裡只剩回答過的題目，跟「這一組這輪沒出現」一樣處理：不動那筆建議
+    const cluster = match ? excludeAnsweredFromCluster(wholeCluster, match.data.answeredQueries) : wholeCluster
+    if (!cluster.items.length) continue
+    const queries = cluster.items.map(i => i.query).slice(0, 30)
+    // 跟 queries 同順序同長度：部分採用時靠它扣掉回答掉那幾題的次數（見 splitSuggestionQueries）
+    const queryCounts = cluster.items.slice(0, 30).map(i => i.count)
+    const sampleQueries = cluster.items.slice(0, 5).map(i => i.query)
+    const lastSeenAt = Timestamp.fromMillis(cluster.latestMs || Date.now())
 
     if (match) {
       const status = match.data.status
@@ -444,6 +562,7 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
               eventCount: cluster.totalCount,
               sampled: tally.sampled,
               queries,
+              queryCounts,
               sampleQueries,
               lastSeenAt,
               expireAt: FieldValue.delete(),
@@ -457,10 +576,12 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
 
       // pending：更新計數與樣本，讓「30 天內被問 N 次」保持新鮮。
       // 上一輪因時間預算沒草擬到的（draft=null 且沒失敗原因），這輪補上。
+      // 只採用其中幾題的（`C-311`）採用時也把草稿清成 null：這裡照**剩下的**題目重擬（cluster 已拿掉回答過的）
       const patch: Record<string, unknown> = {
         eventCount: cluster.totalCount,
         sampled: tally.sampled,
         queries,
+        queryCounts,
         sampleQueries,
         lastSeenAt,
         updatedAt: FieldValue.serverTimestamp(),
@@ -522,6 +643,7 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
       topicIsRaw: draft == null,
       sampleQueries,
       queries,
+      queryCounts,
       eventCount: cluster.totalCount,
       sampled: tally.sampled,
       // 存成 VectorValue（同知識卡 embedding 慣例）:純陣列會被自動建單欄索引,
