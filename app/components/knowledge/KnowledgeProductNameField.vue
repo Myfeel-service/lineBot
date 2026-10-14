@@ -50,7 +50,8 @@ function querySuggestions(query: string, cb: (items: Array<{ value: string; hint
    */
   const withHint = list.map(n => ({
     value: n,
-    hint: usage.value[n] === undefined ? '' : (usage.value[n] ? `${usage.value[n]} 張` : '目前沒有卡片在用'),
+    // `C-309`：量詞統一講「條」（加入流程已經全改，這裡以前寫「N 張」「目前沒有卡片在用」）
+    hint: usage.value[n] === undefined ? '' : (usage.value[n] ? `${usage.value[n]} 條` : '目前沒有知識在用'),
   }))
   // 正在用的排前面：殘留的舊叫法沉到底下，最常挑的那個第一眼就看得到
   withHint.sort((a, b) => (usage.value[b.value] ?? -1) - (usage.value[a.value] ?? -1))

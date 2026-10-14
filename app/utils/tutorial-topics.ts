@@ -508,10 +508,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '[data-tour="kb-drafts"]',
         requiresPresent: '[data-tour="kb-drafts"]',
-        title: '等你看過的卡',
+        // `C-309`：量詞統一講「條」、額度講「知識空間」（跟加入視窗同一套說法）
+        title: '等你看過的知識',
         description:
-          '開帳讀你網站整理出來的卡、或請小幫手補的卡，<strong>先放在這裡</strong>：客人還收不到，'
-          + '你一張張看過、按「<strong>採用</strong>」才會拿來回答（採用時才算知識卡額度）。不要的直接刪掉。',
+          '開帳讀你網站整理出來的、或請小幫手補的知識，<strong>先放在這裡</strong>：客人還收不到，'
+          + '你一條條看過、按「<strong>採用</strong>」才會拿來回答（採用了才佔知識空間）。不要的直接刪掉。',
         placement: 'left',
       },
       {
@@ -520,15 +521,15 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '知識庫體檢會幫你盯',
         description:
           '同步失敗的資料、被標記「AI 答錯了」的知識會列在<strong>「要處理的事」</strong>，點分類就直接列出那幾筆，照著修完就好——'
-          + '不用自己一張張翻。下面灰色那幾行（內容較短、到期自動停用）<strong>是提醒不是待辦</strong>，想看再看。',
+          + '不用自己一條條翻。下面灰色那幾行（內容較短、到期自動停用）<strong>是提醒不是待辦</strong>，想看再看。',
         placement: 'left',
       },
       {
         target: '[data-tour="kb-suggest"]',
         requiresPresent: '[data-tour="kb-suggest"]',
-        title: '客人問倒 AI 的題目，系統會擬好卡給你',
+        title: '客人問倒 AI 的題目，系統會擬好知識給你',
         description:
-          '客人問了但 AI 答不出來、或被標「答錯了」的，同一類累積到兩次，系統就會在這裡<strong>擬好一張卡</strong>。'
+          '客人問了但 AI 答不出來、或被標「答錯了」的，同一類累積到兩次，系統就會在這裡<strong>擬好一條知識</strong>。'
           + '看一眼覺得對就採用，缺的資訊會標成「請填寫」要你補——<strong>這是把 AI 養好最省力的地方</strong>。',
         placement: 'left',
       },
@@ -540,7 +541,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           '資料一多就會找不到。點這顆「<strong>⋯</strong>」→「<strong>新增資料夾</strong>」（例如：商品、退換貨、活動），'
           + '再把資料<strong>拖進去</strong>歸類。這只是後台整理方便你找，不影響 AI 回答。'
-          + '（手動新增一張知識、回收桶也都在這個選單裡。）',
+          + '（手動新增一條知識、回收桶也都在這個選單裡。）',
         placement: 'bottom',
       },
       {
@@ -548,7 +549,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBefore: '[data-tour="kb-source-row"]',
         title: 'AI 把資料切成一條條「知識」，你能微調',
         description:
-          '我幫你選了第一份資料。每份會被拆成一條條知識，AI 就是一條一條找答案。覺得哪一條不對，按「<strong>編輯</strong>」改它——<strong>你親手改過的不會被日後的自動更新蓋掉</strong>。（每條還能設停用與有效期限，檔期活動用得到。）',
+          '我幫你選了第一份資料。每份會被拆成一條條知識，AI 就是一條一條找答案。覺得哪一條不對，按「<strong>編輯</strong>」改它——<strong>你親手改過的不會被日後的自動更新蓋掉</strong>；'
+          // `D-125` ①：檔案「換新版」以前會把改過的一起丟進回收桶、沒提醒；拍板改成列出來、預設帶到新版
+          + '檔案按「換新版」時，也會列出你改過的那幾條、預設照你改的帶過去。（每條還能設停用與有效期限，檔期活動用得到。）',
         placement: 'left',
       },
       {
@@ -559,7 +562,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           //    等通知的人等不到。試算表那顆按鈕叫「立即同步」不是「重新同步」。
           '網址與 Google 試算表來的資料，系統會<strong>定期自動重讀</strong>：小改動自動套用'
           + '（不另外通知你，「最後同步」時間會跟著更新），改動大會先列出差異讓你確認。<strong>你親手改過的一律保留</strong>。'
-          + '等不及就按右上「<strong>重新同步</strong>」（試算表叫「立即同步」）。（檔案和手打的不會自動更新，改了要重新匯入。）',
+          + '等不及就按右上「<strong>重新同步</strong>」（試算表叫「立即同步」）。'
+          // `C-309`：檔案那一份現在有「換新版」，不再教「重新匯入」（重新匯入會多出一份、舊的還在）
+          + '（檔案不會自動更新：改了就在那一份按「<strong>換新版</strong>」，你改過的那幾條會列出來、預設照你改的帶過去；手打的直接改那一條。）',
         placement: 'left',
       },
     ],
@@ -781,9 +786,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '怎麼看它答得穩不穩',
         description:
           '每則回答下面有一行小字：<strong>信心</strong>要高過旁邊的<strong>門檻</strong>才會回客人，不然會轉真人；'
-          + '<strong>命中 N 條</strong>＝它找到幾張知識卡，0 條就是知識庫裡沒有，要回去補。'
-          + '答錯了按「<strong>展開詳情</strong>」看它用了哪幾張卡，直接點那張改。'
-          + '出現「<strong>這句用的是還沒看過的卡</strong>」的話，那張卡還在等你採用——<strong>客人問不會拿到這個答案</strong>，按「去看這張卡」採用它。',
+          // `C-309`：字跟測試對話畫面上的一致（「命中 N 條」「這句用到的知識還在等你看過」「去看這一條」）
+          + '<strong>命中 N 條</strong>＝它找到幾條相關的知識，0 條就是知識庫裡沒有，要回去補。'
+          + '答錯了按「<strong>展開詳情</strong>」看它用了哪幾條，按那一條旁邊的「編輯」直接改。'
+          + '出現「<strong>這句用到的知識還在等你看過</strong>」的話，那幾條還沒採用——<strong>客人問不會拿到這個答案</strong>，按「去看這一條」採用它。',
       },
     ],
   },
@@ -904,7 +910,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
           // ⛔ 2026-09-29（`D-109`）：原本寫「標了會收進小幫手的待辦清單」——畫面上講的是知識庫的「建議收件匣」
-          + '答得不對就在那裡標「這題 AI 答錯了」——同一類被標到兩次，<strong>知識庫的建議收件匣就會擬好一張卡</strong>讓你審，補資料時就知道要補什麼。',
+          // `C-309`：那一區叫「AI 建議補的知識」（不叫「建議收件匣」），量詞講「條」
+          + '答得不對就在那裡標「這題 AI 答錯了」——同一類被標到兩次，<strong>知識庫的「AI 建議補的知識」就會擬好一條</strong>讓你審，補資料時就知道要補什麼。',
         placement: 'left',
         // `G-107`：那顆「為什麼這樣答」是 `canReply && msg.aiTurnId` 才渲染（AdminPanel.vue，
         // `canReply`＝`can('conversations.reply')`），觀察者畫面上沒有，這一步不標的話等於跟他介紹一顆他沒有的按鈕

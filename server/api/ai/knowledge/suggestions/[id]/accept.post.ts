@@ -169,7 +169,8 @@ export default defineEventHandler(async (event) => {
     action: 'knowledge.suggestionAccept',
     targetId: chunkId,
     after: { title: input.title, cardStatus: result.status },
-    note: `採用了 AI 的建議並建成一張卡${resolvedConversations ? `，順手把 ${resolvedConversations} 筆對話標成已處理` : ''}`,
+    // `C-309`：操作紀錄是店家看得到的字，量詞跟全站一樣講「條」
+    note: `採用了 AI 的建議並建成一條知識${resolvedConversations ? `，順手把 ${resolvedConversations} 筆對話標成已處理` : ''}`,
   }, db)
 
   return {

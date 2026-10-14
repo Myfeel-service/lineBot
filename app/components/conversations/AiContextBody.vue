@@ -37,10 +37,11 @@
             v-if="src.exists"
             type="button"
             class="conv-ai-source-link"
-            title="打開這張知識卡來看／修改內容"
+            title="打開這條知識來看／修改內容"
             @click="$emit('edit-chunk', src.chunkId)"
           >{{ src.title }}</button>
-          <span v-else class="conv-ai-source-gone">{{ src.title }}</span>
+          <!-- 換新版換掉的、刪掉的（`D-125`）：看得到當時用了哪一條，但不給點——點下去找不到它 -->
+          <span v-else class="conv-ai-source-gone">{{ goneText(src.title) }}</span>
         </li>
       </ul>
     </div>
@@ -90,7 +91,7 @@
       </p>
 
       <template v-if="editableSources.length">
-        <p class="conv-ai-followup__line">AI 這題是照下面這張知識卡回答的。內容不對就直接改它，這是唯一能讓 AI 下次答對的做法：</p>
+        <p class="conv-ai-followup__line">AI 這題是照下面{{ editableSources.length > 1 ? '這幾條' : '這一條' }}知識回答的。內容不對就直接改它，這是唯一能讓 AI 下次答對的做法：</p>
         <div class="conv-ai-followup__cards">
           <el-button
             v-for="src in editableSources"
@@ -105,15 +106,16 @@
         </div>
       </template>
 
-      <!-- 引用的卡片後來被刪掉了:別叫人去修一張不存在的卡,直接導向補新的 -->
+      <!-- 引用的那幾條後來被換掉或刪掉了（換新版也算，`D-125`）:別叫人去修一條找不到的,直接導向補新的 -->
       <p v-else-if="ctx.sources.length" class="conv-ai-followup__line">
-        AI 當時引用的知識卡已經被刪掉了，這題要重新補一張。
-        <el-button size="small" type="primary" plain @click="$emit('add-knowledge', ctx.lastQuery)">補一張新的</el-button>
+        AI 當時用的知識已經換掉或刪掉了，這題要重新補一條。
+        <el-button size="small" type="primary" plain @click="$emit('add-knowledge', ctx.lastQuery)">補一條新的</el-button>
       </p>
 
+      <!-- `C-309`：那一區畫面上叫「AI 建議補的知識」（以前這裡叫「建議收件匣」），連結帶 ?suggest=1 直接捲過去 -->
       <p class="conv-ai-followup__line conv-ai-followup__line--muted">
         另外系統也會把同類問題收集起來：同一類再被記到一次（不論是又被標答錯、還是 AI 自己答不出而轉真人），
-        知識庫的「建議收件匣」就會擬一張草稿讓你審。自動整理最長要等 7 天，想馬上看可以到收件匣按「重新掃描」。
+        知識庫的<NuxtLink :to="suggestLink" class="admin-inline-link">「AI 建議補的知識」</NuxtLink>就會擬好一條草稿讓你審。自動整理最長要等 7 天，想馬上看可以到那裡按「重新掃描」。
       </p>
     </div>
   </div>
@@ -165,8 +167,20 @@ function confidenceLabel(c: number): string {
 /** 只有「真的回了客人」才適用把握度判語（見 template 註解） */
 const isAnswered = computed(() => props.ctx.lastDecision === 'answered')
 
-/** 還在知識庫裡、點得開來改的卡（被刪掉的不給連結） */
+/** 還在知識庫裡、點得開來改的卡（被刪掉的、在回收桶的不給連結） */
 const editableSources = computed(() => props.ctx.sources.filter(s => s.exists))
+
+/**
+ * 點不開的那一條怎麼講（`D-125`）：在回收桶的（換新版換掉的、刪掉的）後端照給標題；
+ * 回收桶也清掉了就沒有標題。⛔ 不讓它長得像連結、也不留一個不知道是什麼的空白。
+ */
+function goneText(title: string): string {
+  return title ? `${title}（這條已經換掉或刪掉了）` : '（這條已經刪掉了）'
+}
+
+const route = useRoute()
+/** 「AI 建議補的知識」那一區：知識庫頁看到 ?suggest=1 會捲過去（`C-309`）。兩個用到這張的頁面都在 /admin/[workspaceId] 底下 */
+const suggestLink = computed(() => `/admin/${String(route.params.workspaceId ?? '')}/knowledge/sources?suggest=1`)
 
 /** 罐頭回覆沒有「把握度」可談（信心固定 1.00，不是算出來的） */
 const isCanned = computed(() => {
@@ -297,7 +311,7 @@ async function unmarkWrong() {
     if (props.userId === userId) {
       optimisticMarked.value = false
       // 講清楚「已經擬出來的建議不會自動收回」，否則客服會以為取消了就沒事
-      showToast('已取消標記。若同類問題已擬成建議，請到知識庫的建議收件匣按「忽略」', 'success')
+      showToast('已取消標記。若同類問題已擬成建議，請到知識庫的「AI 建議補的知識」按「忽略」', 'success')
     }
   }
   catch {

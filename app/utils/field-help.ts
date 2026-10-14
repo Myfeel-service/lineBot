@@ -178,8 +178,9 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     button: '它會自己改我的知識嗎',
     title: '自動更新會動什麼、不會動什麼',
     html: `
-      <p><b>先回答最重要的一句：你自己編輯過的知識，永遠不會被自動蓋掉。</b>
-      自動更新只會動「從這個網址／試算表原封抓進來、之後沒人碰過」的那些。</p>
+      <p><b>先回答最重要的一句：你自己編輯過的知識，不會被自動蓋掉</b>（除非你點那一條標題旁的小鎖頭解除）。
+      自動更新只會動「從這個網址／試算表原封抓進來、之後沒人碰過」的那些。
+      檔案不會自動更新：改了就按「換新版」，你改過的那幾條會列出來、預設照你改的帶過去。</p>
       <svg viewBox="0 0 520 96" role="img" aria-label="流程示意：網頁改了之後，小幅文字更新會自動套用，新增刪除或大幅改版會先問過你" style="width:100%;height:auto;margin:10px 0">
         <rect x="4" y="30" width="120" height="34" rx="5" fill="var(--el-fill-color-light)" stroke="var(--el-border-color-lighter)" />
         <text x="64" y="51" font-size="12" text-anchor="middle" fill="var(--text-primary)">網頁改了</text>
@@ -203,7 +204,7 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
       </svg>
       <p>三格是<b>由上往下連動</b>的，設定前先看這個順序：</p>
       <p><b>① 偵測頻率</b>＝多久去看一次。選「不自動偵測」的話，<b>下面兩格就都不會發生</b>，
-      要更新只能自己按「重新同步」。<br>
+      要更新只能自己按「重新同步」（試算表那一顆叫「立即同步」）。<br>
       <b>② 偵測到變動時</b>＝發現不一樣了要不要告訴你。選「只記錄不通知」的話，
       <b>第三格會整個變灰</b>——都不通知了，也就沒有「要不要自動套用」的問題。<br>
       <b>③ 小幅文字變動</b>＝只有改字這種小變動，要直接套用還是等你確認。</p>

@@ -191,7 +191,7 @@ async function listFailedSources(ctx: AlertFixCtx): Promise<FailedSourceRow[]> {
     .get()
   return snap.docs.map(d => ({
     id: d.id,
-    name: String((d.data() as Record<string, unknown>).name ?? '(未命名來源)'),
+    name: String((d.data() as Record<string, unknown>).name ?? '(沒有名字的資料)'),
     type: String((d.data() as Record<string, unknown>).type ?? ''),
   }))
 }
@@ -215,7 +215,8 @@ const knowledgeRefetchSources: AlertFixOpDef = {
           ? '會現在去抓一次網頁'
           : s.type === 'gsheet'
             ? '會立即同步一次試算表'
-            : '檔案類無法自動重抓，要重新匯入',
+            // `C-309`：檔案那一份現在有「換新版」——叫人「重新匯入」會多出一份、壞的那份還在
+            : '檔案沒辦法自動重抓：到知識庫點開這一份，按「換新版」放進新的檔案',
       })),
       confirmLabel: '確定再試一次',
     }
@@ -239,7 +240,7 @@ const knowledgeRefetchSources: AlertFixOpDef = {
           const r = await $fetch<{ outcome?: string }>(`/api/ai/sources/${s.id}/gsheet-sync`, forwardOpts(ctx, {}))
           if (r.outcome === 'blocked_mass_deletion') {
             // 大量刪除的確認要留給人（刪除紅線）：這裡不代按同意
-            details.push(`「${s.name}」同步會刪掉大量卡片，需要人工確認——請到知識庫按「立即同步」走確認流程`)
+            details.push(`「${s.name}」同步會刪掉很多條知識，需要你確認——請到知識庫按「立即同步」走確認流程`)
           }
           else {
             healed++
@@ -247,7 +248,7 @@ const knowledgeRefetchSources: AlertFixOpDef = {
           }
         }
         else {
-          details.push(`「${s.name}」是檔案類，無法自動重抓——請重新匯入檔案`)
+          details.push(`「${s.name}」是檔案，沒辦法自動重抓——請到知識庫點開這一份，按「換新版」放進新的檔案`)
         }
       }
       catch (e) {
@@ -345,15 +346,16 @@ function reindexPreview(
   rows: { data: Record<string, unknown> }[],
   what: string,
 ): AlertFixPreview {
+  // `C-309`：量詞跟知識庫頁一樣講「條」（確認卡、結果、操作紀錄都是店家看的字）
   if (!rows.length)
-    return { opId, alertId, state: 'clear', summary: `再查了一次，已經沒有${what}的知識卡。`, items: [] }
-  const names = rows.slice(0, 5).map(r => ({ label: String(r.data.title ?? '(未命名知識卡)').slice(0, 40) }))
-  if (rows.length > names.length) names.push({ label: `…共 ${rows.length} 張` })
+    return { opId, alertId, state: 'clear', summary: `再查了一次，已經沒有${what}的知識。`, items: [] }
+  const names = rows.slice(0, 5).map(r => ({ label: String(r.data.title ?? '(沒有標題的一條)').slice(0, 40) }))
+  if (rows.length > names.length) names.push({ label: `…共 ${rows.length} 條` })
   return {
     opId,
     alertId,
     state: 'fixable',
-    summary: `我會把${what}的 ${rows.length} 張知識卡重新學一次（重算 AI 索引，內容不會被改動）。學不起來的會列出原因。`,
+    summary: `我會把${what}的 ${rows.length} 條知識重新學一次（內容不會被改動）。學不起來的會列出原因。`,
     items: names,
     confirmLabel: '確定重新學習',
   }
@@ -364,20 +366,20 @@ async function reindexExecute(
   action: string,
   rows: { id: string; data: Record<string, unknown> }[],
 ): Promise<AlertFixExecuteResult> {
-  if (!rows.length) return { ok: true, message: '再查了一次，已經沒有要重學的知識卡。' }
+  if (!rows.length) return { ok: true, message: '再查了一次，已經沒有要重學的知識。' }
   const r = await reindexChunks(ctx, rows)
   await writeAuditLog({
     workspaceId: ctx.workspaceId,
     uid: ctx.uid,
     actor: 'human',
     action,
-    note: `重學 ${rows.length} 張：成功 ${r.indexed}、失敗 ${r.failed}`,
+    note: `重學 ${rows.length} 條：成功 ${r.indexed}、失敗 ${r.failed}`,
   }, ctx.db)
   return {
     ok: r.indexed > 0 || r.failed === 0,
     message: r.failed === 0
-      ? `這 ${rows.length} 張都重新學好了，AI 現在讀得到它們。`
-      : `${r.indexed} / ${rows.length} 張重學成功；還學不起來的列在下面，一直失敗請聯絡我們。`,
+      ? `這 ${rows.length} 條都重新學好了，AI 現在讀得到它們。`
+      : `${r.indexed} / ${rows.length} 條重學成功；還學不起來的列在下面，一直失敗請聯絡我們。`,
     details: r.failures,
   }
 }

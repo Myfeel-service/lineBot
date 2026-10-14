@@ -3,10 +3,11 @@
  *
  * 釘住的是會騙人的行為，不是文案：
  * 1. 已經有知識的人不該被當成從零開始（否則老手每次點都被上一次課）。
- * 2. **查不到 ≠ 沒有**：`/api/ai/sources/list` 掛掉時不可以說成「你還沒放進去」。
+ * 2. **查不到 ≠ 沒有**：知識數量查詢掛掉時不可以說成「你還沒放進去」。
  * 3. 沒真的看到知識就不准說「好了」——等待迴圈要一直等到後端真的數得到。
  * 4. 最後一哩：知識放好了但 AI 總開關關著時，一定要講「客人還聽不到」並給開關入口。
  *    這條是整個 D-40 的起因，被拿掉就等於白做。
+ * 5. 🔴 只有「等你看過」的不算有（`C-308`⑦）：開帳整理出來還沒採用的，客人問不會用到。
  */
 import { describe, expect, it, vi } from 'vitest'
 import { useAgentScriptRunner } from '../composables/useAgentScriptRunner'
@@ -14,6 +15,9 @@ import { AGENT_GUIDES } from './agent-guides'
 import type { AgentGuideCtx } from './agent-guides'
 
 const guide = AGENT_GUIDES['knowledge-first']
+
+/** 知識數量的回應（跟開通清單同一支：`/api/admin/setup-status?only=knowledge`） */
+const kb = (live: number, drafts = 0) => ({ knowledge: { live, drafts } })
 
 /**
  * 假 apiFetch。sources 佇列每次取一筆（Error 代表這次查詢失敗），
@@ -27,7 +31,7 @@ function makeCtx(opts: {
   const calls: string[] = []
   const apiFetch = vi.fn(async (url: string, _o?: any) => {
     calls.push(url)
-    if (url === '/api/ai/sources/list') {
+    if (url === '/api/admin/setup-status?only=knowledge') {
       const next = opts.sources.shift()
       if (next instanceof Error)
         throw next
@@ -70,12 +74,39 @@ const waitInput = (r: ReturnType<typeof useAgentScriptRunner>) =>
 
 describe('knowledge-first 劇本', () => {
   it('已經有知識的人：直接說「不用跑」並收工，不重上一次課', async () => {
-    const { r, ctx } = makeCtx({ sources: [{ items: [{ chunkCount: 12 }, { chunkCount: 5 }] }] })
+    const { r, ctx } = makeCtx({ sources: [kb(17, 4)] })
     await r.runSteps(guide.steps, ctx)
 
     expect(ctx.state.exit).toBe(true)
-    expect(htmlOf(r)).toContain('17') // 12 + 5，數字要對得上
+    expect(htmlOf(r)).toContain('已經有 17 條') // 只講上線的那 17 條，等你看過的 4 條不加進去
+    expect(htmlOf(r)).not.toContain('21')
     expect(r.ask.value.kind).toBe('idle')
+  })
+
+  it('🔴 只有「等你看過」的（開帳整理出來還沒採用）：⛔ 不可以說「已經有、不用跑」，要帶去採用', async () => {
+    const { r, ctx, calls } = makeCtx({ sources: [kb(0, 37), kb(0, 37), kb(5, 32)], settings: { enabled: true } })
+    const done = r.runSteps(guide.steps, ctx)
+
+    await waitChoices(r)
+    const intro = htmlOf(r)
+    expect(intro).not.toContain('不用跑')
+    expect(intro).toContain('37 條')
+    expect(intro).toContain('還沒上線')
+    expect(intro).toContain('/admin/w1/knowledge/sources?drafts=1')
+    // 要做的是採用，不是再加一份：不開「加入知識」
+    expect(intro).not.toContain('?import=1')
+
+    r.onChoice('check') // 還沒採用 → 不可以說好了
+    await waitChoices(r)
+    expect(htmlOf(r)).toContain('還沒採用')
+    expect(htmlOf(r)).not.toContain('進去了')
+
+    r.onChoice('check') // 採用了 5 條
+    await waitInput(r)
+    r.onSkip()
+    await done
+    expect(ctx.state.chunkTotal).toBe(5)
+    expect(calls.filter(u => u.includes('setup-status')).length).toBe(3)
   })
 
   it('⛔查不到 ≠ 沒放：sources 查詢掛掉時不可以說成「還是空的」', async () => {
@@ -100,9 +131,9 @@ describe('knowledge-first 劇本', () => {
   it('沒真的看到知識就不說「好了」：空的時候提示「停在先看一下那頁要按加入」，再確認才過關', async () => {
     const { r, ctx } = makeCtx({
       sources: [
-        { items: [] }, // intro：空的 → 照常帶路
-        { items: [] }, // 第一次確認：還是空的
-        { items: [{ chunkCount: 3 }] }, // 第二次確認：真的有了
+        kb(0), // intro：空的 → 照常帶路
+        kb(0), // 第一次確認：還是空的
+        kb(3), // 第二次確認：真的有了
       ],
       settings: { enabled: true },
     })
@@ -128,7 +159,7 @@ describe('knowledge-first 劇本', () => {
 
   it('最後一哩：AI 開關關著要明講「客人聽不到」並給開啟入口', async () => {
     const { r, ctx } = makeCtx({
-      sources: [{ items: [] }, { items: [{ chunkCount: 8 }] }],
+      sources: [kb(0), kb(8)],
       settings: { enabled: false },
     })
     const done = r.runSteps(guide.steps, ctx)
@@ -146,7 +177,7 @@ describe('knowledge-first 劇本', () => {
 
   it('AI 開著就收尾慶祝，不要多叫人去按一次開關', async () => {
     const { r, ctx } = makeCtx({
-      sources: [{ items: [] }, { items: [{ chunkCount: 8 }] }],
+      sources: [kb(0), kb(8)],
       settings: { enabled: true },
     })
     const done = r.runSteps(guide.steps, ctx)
@@ -164,7 +195,7 @@ describe('knowledge-first 劇本', () => {
 
   it('試問答不出來：照實說 + 指去補「客人可能怎麼問」，不報喜', async () => {
     const { r, ctx } = makeCtx({
-      sources: [{ items: [] }, { items: [{ chunkCount: 8 }] }],
+      sources: [kb(0), kb(8)],
       settings: { enabled: true },
       verify: [{ timedOut: false, decision: 'handoff' }],
     })
@@ -184,7 +215,7 @@ describe('knowledge-first 劇本', () => {
   })
 
   it('中途「先跳過」：收工且不再往下問，也不留死路', async () => {
-    const { r, ctx } = makeCtx({ sources: [{ items: [] }] })
+    const { r, ctx } = makeCtx({ sources: [kb(0)] })
     const done = r.runSteps(guide.steps, ctx)
 
     await waitChoices(r)
@@ -222,11 +253,38 @@ describe('knowledge-first 掛在開通清單上', () => {
   })
 
   it('帶路要用既有的 ?import=1 直接開匯入視窗，不另做入口', async () => {
-    const { r, ctx } = makeCtx({ sources: [{ items: [] }] })
+    const { r, ctx } = makeCtx({ sources: [kb(0)] })
     const done = r.runSteps(guide.steps, ctx)
     await waitChoices(r)
     expect(htmlOf(r)).toContain('/admin/w1/knowledge/sources?import=1')
     r.onChoice('skip')
     await done
+  })
+
+  it('`C-309`：檔案改了教「換新版」（⛔ 不教重新放＝多出一份）；網址也會自己更新', async () => {
+    const { r, ctx } = makeCtx({ sources: [kb(0)] })
+    const done = r.runSteps(guide.steps, ctx)
+    await waitChoices(r)
+    const html = htmlOf(r)
+    expect(html).toContain('換新版')
+    expect(html).not.toMatch(/重新放|重新匯入/)
+    expect(html).toContain('網址會定期自動跟著更新')
+    r.onChoice('skip')
+    await done
+  })
+
+  it('後端數不出來（knowledge: null）也當成「查不到」，⛔ 不當成 0 條', async () => {
+    const { r, ctx } = makeCtx({ sources: [{ knowledge: null }, { knowledge: null }] })
+    const done = r.runSteps(guide.steps, ctx)
+    await waitChoices(r)
+    r.onChoice('check')
+    await vi.waitFor(() => {
+      if (!htmlOf(r).includes('不代表你沒放進去'))
+        throw new Error('還沒講出「查不到不等於沒放」')
+    })
+    await waitChoices(r)
+    r.onChoice('skip')
+    await done
+    expect(htmlOf(r)).not.toContain('知識庫還是空的')
   })
 })

@@ -87,15 +87,17 @@ export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; h
   const titleByChunkId: Record<string, string> = {}
   if (allChunkIds.size) {
     // getAll 一次批次讀,取代逐筆 doc().get()(最多 100 對話 × 數個 chunkId 的往返)。
-    // 批次失敗是全有全無——不能直接回空陣列,否則一次抖動會讓每列都顯示「(卡片已刪除)」;
+    // 批次失敗是全有全無——不能直接回空陣列,否則一次抖動會讓每列都顯示「（這條已經刪掉了）」;
     // 退回逐筆讀當 fallback,只損失個別文件
     const refs = Array.from(allChunkIds).map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id))
     const chunkDocs = await db.getAll(...refs)
       .catch(() => Promise.all(refs.map(r => r.get().catch(() => null))))
     chunkDocs.forEach((d) => {
       if (d?.exists) {
-        const cd = d.data() as { workspaceId?: string; title?: string }
-        if (cd?.workspaceId === workspaceId) titleByChunkId[d.id] = String(cd.title ?? '')
+        const cd = d.data() as { workspaceId?: string; title?: string; deletedAt?: unknown; isDeleted?: boolean }
+        // 在回收桶的（換新版換掉、或被刪掉）要標出來（`C-309`）：照常顯示標題的話，他以為那條還在、AI 現在還會用
+        const recycled = cd?.deletedAt != null || cd?.isDeleted === true
+        if (cd?.workspaceId === workspaceId) titleByChunkId[d.id] = recycled ? `${String(cd.title ?? '')}（這條已經換掉或刪掉了）` : String(cd.title ?? '')
       }
     })
   }
@@ -116,7 +118,7 @@ export default defineEventHandler(async (event): Promise<{ rows: HandoffRow[]; h
       handoffReason: meta.lastHandoffReason ?? null,
       sources: (meta.lastSourceChunkIds ?? []).map(id => ({
         chunkId: id,
-        title: titleByChunkId[id] ?? '(卡片已刪除)',
+        title: titleByChunkId[id] ?? '（這條已經刪掉了）',
       })),
       updatedAtMs,
       resolved: resolvedAtMs > 0 && resolvedAtMs >= updatedAtMs,

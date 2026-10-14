@@ -398,7 +398,20 @@ const handoffNotifyGuide: AgentGuideDef = {
 // ── 知識來源同步失敗 ────────────────────────────────────────────
 
 interface SourceListRes {
-  items: { name?: string, status?: string, failureReason?: string }[]
+  items: { name?: string, status?: string, failureReason?: string, type?: string }[]
+}
+
+/**
+ * 同步那顆按鈕照資料種類叫（`C-309`，2026-10-13）：網址那顆叫「重新同步」、Google 試算表那顆叫「立即同步」。
+ * ⛔ 以前一律叫人按「重新同步」——試算表那一份畫面上沒有這顆，照著找會走丟。
+ */
+export function syncButtonPhrase(items: SourceListRes['items']): string {
+  const types = new Set(items.map(i => i.type))
+  const sheet = types.has('gsheet')
+  const other = [...types].some(t => t !== 'gsheet')
+  if (sheet && other) return '網址按<b>「重新同步」</b>、Google 試算表按<b>「立即同步」</b>'
+  if (sheet) return '按<b>「立即同步」</b>'
+  return '按<b>「重新同步」</b>'
 }
 
 function failedSourceLines(items: SourceListRes['items']): string {
@@ -427,11 +440,11 @@ const knowledgeSyncGuide: AgentGuideDef = {
         if (!failed.length) {
           c.state.exit = true
           r.card({ kind: 'status', state: 'ok', text: '剛查了一次，沒有同步失敗的資料' })
-          await r.say('看起來已經恢復了 ✓ 可能剛剛重新同步成功，沒有要做的事。')
+          await r.say('看起來已經恢復了 ✓ 可能剛剛同步成功，沒有要做的事。')
           return
         }
         await r.say(`現在有 <b>${failed.length} 份</b>資料同步失敗：<br>${failedSourceLines(res.items)}`)
-        await r.say('點下面進知識庫，我幫你篩好「有問題的資料」清單——通常按<b>重新同步</b>就會好；若原因寫網址失效或權限問題，先照原因處理再同步。')
+        await r.say(`點下面進知識庫，我幫你篩好「有問題的資料」清單——通常點進那一份、${syncButtonPhrase(failed)}就會好；若原因寫網址失效或權限問題，先照原因處理再同步。`)
         r.card({ kind: 'link', internal: true, label: '去修這些資料（已篩好清單）', href: `/admin/${c.workspaceId}/knowledge/sources?health=failedSources` })
       },
     },
@@ -462,7 +475,7 @@ const knowledgeSyncGuide: AgentGuideDef = {
             return
           }
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: `還有 ${failed.length} 份沒好` })
-          await r.say(`還沒好的：<br>${failedSourceLines(res.items)}<br>剛按重新同步的話要等它跑完（清單會顯示進度），過一下再按確認。`)
+          await r.say(`還沒好的：<br>${failedSourceLines(res.items)}<br>剛按過同步的話要等它跑完（清單會顯示進度），過一下再按確認。`)
         }
       },
     },
@@ -484,20 +497,28 @@ const knowledgeSyncGuide: AgentGuideDef = {
  *    劇本只負責「帶到那裡 → 等真的做完 → 確認 AI 真的學會 → 補上最後一哩」。
  *    教材同一份寫兩處，之後必漂。
  */
-interface KnowledgeCountRes {
-  items: { chunkCount?: number }[]
-}
+/** live＝AI 拿得到的條數（跟方案額度同一把尺）；drafts＝還在「等你看過」、客人問不會用到的 */
+interface KnowledgeCounts { live: number, drafts: number }
 
-async function knowledgeChunkTotal(c: AgentGuideCtx): Promise<number | null> {
+/**
+ * 知識庫現在有幾條（`C-308`⑦，2026-10-13）：跟開通清單「建立知識庫」打勾讀**同一支、同一個數字**。
+ * ⛔ 以前把每份資料的條數加起來——開帳整理出來、還在「等你看過」的也算進去，
+ *    新帳號一條都還沒採用，這條帶路就說「已經有 37 條，不用跑」，打開 AI 一題都答不出來。
+ */
+async function knowledgeCounts(c: AgentGuideCtx): Promise<KnowledgeCounts | null> {
   try {
-    const res = await c.apiFetch<KnowledgeCountRes>('/api/ai/sources/list')
-    return res.items.reduce((sum, i) => sum + Number(i.chunkCount ?? 0), 0)
+    const res = await c.apiFetch<{ knowledge?: KnowledgeCounts | null }>('/api/admin/setup-status?only=knowledge')
+    // ⛔查不到 ≠ 沒有：後端數不出來回 null，照樣當成「查不到」
+    return res.knowledge ?? null
   }
   catch {
     // ⛔查不到 ≠ 沒有：回 null 讓呼叫端自己決定怎麼講，不要當成 0
     return null
   }
 }
+
+/** 等你看過的那一區（知識庫頁 ?drafts=1 會捲過去） */
+const draftsHref = (c: AgentGuideCtx) => `/admin/${c.workspaceId}/knowledge/sources?drafts=1`
 
 const knowledgeFirstGuide: AgentGuideDef = {
   id: 'knowledge-first',
@@ -509,13 +530,21 @@ const knowledgeFirstGuide: AgentGuideDef = {
       id: 'intro',
       async run(c) {
         const { r } = c
-        const total = await knowledgeChunkTotal(c)
+        const counts = await knowledgeCounts(c)
         // 已經有東西了就不要假裝從零開始（也不要因為查不到就亂講）
-        if (total !== null && total > 0) {
+        if (counts && counts.live > 0) {
           c.state.exit = true
-          r.card({ kind: 'status', state: 'ok', text: `知識庫裡已經有 ${total} 條知識` })
+          r.card({ kind: 'status', state: 'ok', text: `知識庫裡已經有 ${counts.live} 條知識` })
           await r.say('你的知識庫已經有內容了，這條「從零開始」的帶路就不用跑。想再放一份資料進來，直接用知識庫頁右上的「加入知識」就好。')
           r.card({ kind: 'link', internal: true, label: '去知識庫看看', href: `/admin/${c.workspaceId}/knowledge/sources` })
+          return
+        }
+        // 一條都還沒上線、但「等你看過」那裡已經有整理好的（開帳讀網站、或請小幫手補的）：
+        // 第一步是看過、按採用，不是再去加一份（`C-308`⑦）
+        if (counts && counts.drafts > 0) {
+          c.state.draftsFirst = true
+          await r.say(`知識庫的「等你看過」那裡已經有 <b>${counts.drafts} 條</b>整理好的，但<b>還沒上線</b>——客人問不會用到。看過、按「採用」才會拿來回答客人。`)
+          r.card({ kind: 'link', internal: true, label: '去看那幾條', href: draftsHref(c) })
           return
         }
         await r.say('知識庫就是 <b>AI 回答客人時的依據</b>——你放什麼進去，它才答得出什麼。<b>沒放進來的事，AI 不會自己編</b>（它會轉給真人，不會亂掰）。')
@@ -524,7 +553,8 @@ const knowledgeFirstGuide: AgentGuideDef = {
     },
     {
       id: 'open-import',
-      guard: exited,
+      // 「等你看過」已經有整理好的：要做的是去採用，不是再加一份（intro 已經給了那一區的入口）
+      guard: c => exited(c) || c.state.draftsFirst === true,
       async run(c) {
         const { r } = c
         await r.say('點下面這顆，我直接幫你把「加入知識」的視窗打開。裡面每一種資料該注意什麼，視窗上都會講——<b>你照著做就好，我在這裡等你</b>。')
@@ -535,7 +565,10 @@ const knowledgeFirstGuide: AgentGuideDef = {
           // ?import=1＝知識庫頁進頁自動開匯入視窗（既有參數，不是為這條劇本新做的）
           href: `/admin/${c.workspaceId}/knowledge/sources?import=1`,
         })
-        await r.say('小提醒：<b>檔案和貼上的文字是「當下固定」</b>，之後改了要重新放；<b>Google 試算表會自動跟著更新</b>。常常要改的價目表、商品清單，用試算表最省事。')
+        // `C-309`（2026-10-13）：以前寫「檔案改了要重新放」「只有試算表會更新」——
+        //   檔案那一份現在有「換新版」（重新放會多出一份、舊的還在）；用「加入知識」加的網址也會定期檢查。
+        //   ⛔ 不寫死「每小時／每天」：頻率是每一份自己設的（`C-308`④ 就是寫死的頻率對不上實際）
+        await r.say('小提醒：<b>Google 試算表、網址會定期自動跟著更新</b>；<b>檔案和貼上的文字是「當下固定」</b>，檔案改了就在那一份按「換新版」。常常要改的價目表、商品清單，用試算表最省事。')
       },
     },
     {
@@ -543,9 +576,10 @@ const knowledgeFirstGuide: AgentGuideDef = {
       guard: exited,
       async run(c) {
         const { r } = c
+        const draftsFirst = c.state.draftsFirst === true
         while (true) {
           const choice = await r.askChoices([
-            { label: '我放好了，幫我確認', value: 'check', primary: true },
+            { label: draftsFirst ? '我採用好了，幫我確認' : '我放好了，幫我確認', value: 'check', primary: true },
             { label: '先跳過', value: 'skip', escape: true },
           ])
           if (choice !== 'check') {
@@ -554,18 +588,25 @@ const knowledgeFirstGuide: AgentGuideDef = {
             return
           }
           const cardId = r.card({ kind: 'status', state: 'pending', text: '看看知識庫裡有沒有東西了…' })
-          const total = await knowledgeChunkTotal(c)
-          if (total === null) {
+          const counts = await knowledgeCounts(c)
+          if (counts === null) {
             // ⛔查不到就照實說「查不到」，不要說成「你還沒放」——那是兩件不同的事
             r.updateMsg(cardId, { kind: 'status', state: 'skipped', text: '這次沒查成功（不代表你沒放進去）' })
             await r.say('剛剛查不到知識庫的狀態，網路或系統忙一下就會好。可以再按一次確認。')
             continue
           }
-          if (total > 0) {
-            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: `知識庫裡有 ${total} 條知識了` })
-            c.state.chunkTotal = total
-            await r.say(`收到，<b>${total} 條</b>知識進去了 🎉`)
+          if (counts.live > 0) {
+            r.updateMsg(cardId, { kind: 'status', state: 'ok', text: `知識庫裡有 ${counts.live} 條知識了` })
+            c.state.chunkTotal = counts.live
+            await r.say(`收到，<b>${counts.live} 條</b>知識進去了 🎉`)
             return
+          }
+          // ⛔ 只有「等你看過」的不算進去了：客人問不會用到（`C-308`⑦）
+          if (counts.drafts > 0) {
+            r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '還沒有上線的知識' })
+            await r.say(`還有 <b>${counts.drafts} 條</b>在「等你看過」那裡、還沒採用——要按「採用」才會拿來回答客人。`)
+            r.card({ kind: 'link', internal: true, label: '去看那幾條', href: draftsHref(c) })
+            continue
           }
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '知識庫還是空的' })
           // `D-123`②（2026-10-12）起整理好會自己加進去；只有停在「加入之前先看一下」那一頁的要他自己按

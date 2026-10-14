@@ -15,6 +15,7 @@ import {
   auditActionLabel,
   auditChangeLines,
   auditDetailLines,
+  auditFieldLabel,
   auditIsCreate,
   auditIsDelete,
   auditRowChanges,
@@ -293,5 +294,29 @@ describe('操作紀錄：推播那幾列一列講完', () => {
 
   it('觀察者全站同一個詞（以前這裡寫「唯讀」）', () => {
     expect(auditValueText('viewer', 'role')).toBe('觀察者')
+  })
+})
+
+/**
+ * 知識的量詞（`C-309`，2026-10-13）：加入流程已經全改講「條」、資料講「資料」，
+ * 操作紀錄還在講「一張知識卡」「知識來源」——店家在兩個畫面看到同一件事的兩種講法。
+ */
+describe('知識相關的紀錄講「條」與「資料」', () => {
+  const knowledgeActions = Object.entries(AUDIT_ACTION_LABELS)
+    .filter(([k]) => /^(knowledge|source)\.|^(agent-op|alert-fix)\/knowledge/.test(k))
+
+  it('動作說明不講「張／知識卡／知識來源」', () => {
+    expect(knowledgeActions.length, '對照組：網要撈得到東西').toBeGreaterThan(20)
+    const bad = knowledgeActions.filter(([, v]) => /張|知識卡|知識來源/.test(v))
+    expect(bad, bad.map(([k, v]) => `${k}：${v}`).join('\n')).toEqual([])
+  })
+
+  it('知識會帶到的欄位名也一樣', () => {
+    for (const key of ['cardStatus', 'answer', 'sourceId', 'onChangeBehavior', 'chunkIdsCount', 'adoptedCount', 'leftForQuotaCount', 'dismissedCount'])
+      expect(auditFieldLabel(key), key).not.toMatch(/張|卡|知識來源/)
+  })
+
+  it('「等你看過」的狀態印白話，⛔ 不印英文代號', () => {
+    expect(auditValueText('draft', 'cardStatus')).toBe('等你看過')
   })
 })

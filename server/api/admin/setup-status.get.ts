@@ -1,6 +1,8 @@
+import type { Firestore } from 'firebase-admin/firestore'
 import type { SetupItemStatus, SetupStatusItem, SetupStatusResponse } from '~~/shared/types/setup'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
+import { countWorkspaceChunks } from '~~/server/utils/ai-knowledge-quota'
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
 import { hasReceivedPeerMessage } from '~~/server/utils/conversation-peer-activity'
 import { getDb } from '~~/server/utils/firebase'
@@ -10,12 +12,22 @@ import { getStoreProfile } from '~~/server/utils/store-profile'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 
 /**
- * GET /api/admin/setup-status?workspaceId=...
+ * GET /api/admin/setup-status?workspaceId=...[&only=knowledge]
  *
  * 依真實資料訊號判定每個設定能力是否完成，給前端的教學 agent 做「主動告知哪裡沒做完」。
  * 每個訊號各自 try/catch：單一查詢失敗只會讓該項變成 unknown，不會讓整支端點壞掉，
  * 也不會把「查不到」誤報成「沒做」。
+ *
+ * `knowledge`（`C-308`⑦）：知識庫現在有幾條——`live`＝AI 拿得到的（跟方案額度同一把尺）、
+ * `drafts`＝還在「等你看過」的；null＝這次查不到（⛔ 不可以當成 0）。
+ * AI 設定頁「知識庫有內容（目前 N 條）」、小幫手「帶你放進第一份知識」都讀這一份，
+ * 跟開通清單的「建立知識庫」打勾是**同一個數字**（以前三處各自加總資料的條數，連等你看過都算進去）。
+ * `only=knowledge`：只要這一項（不去問 LINE、不讀其他設定）。
  */
+export interface SetupKnowledgeCounts {
+  live: number
+  drafts: number
+}
 
 /** 把一個布林判定包成 done/incomplete；丟錯則降級為 unknown（狀態未知，不等於沒做） */
 async function resolve(check: () => Promise<boolean>): Promise<SetupItemStatus> {
@@ -27,13 +39,39 @@ async function resolve(check: () => Promise<boolean>): Promise<SetupItemStatus> 
   }
 }
 
-export default defineEventHandler(async (event): Promise<SetupStatusResponse> => {
+/**
+ * 「等你看過」幾條：一個 count() 聚合（兩個等值條件，跟 countWorkspaceChunks 用的同一種查詢）。
+ * ⚠️ 回收桶裡的草稿不會重複算：軟刪除會把 status 改成 disabled（見 countWorkspaceChunks 的說明）。
+ */
+async function loadKnowledgeCounts(wid: string, db: Firestore): Promise<SetupKnowledgeCounts> {
+  const [live, drafts] = await Promise.all([
+    countWorkspaceChunks(wid, db),
+    db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+      .where('workspaceId', '==', wid)
+      .where('status', '==', 'draft')
+      .count()
+      .get()
+      .then(a => a.data().count),
+  ])
+  return { live, drafts }
+}
+
+export default defineEventHandler(async (event): Promise<SetupStatusResponse & { knowledge: SetupKnowledgeCounts | null }> => {
   const { workspaceId } = await requireCapability(event, 'workspace.read')
   const wid = String(workspaceId || '').trim()
   if (!wid)
     throw createError({ statusCode: 400, statusMessage: 'workspaceId is required' })
 
   const db = getDb()
+  // 一次查、兩處用（knowledgeReady 的打勾與回傳的 knowledge）；查不到 → 打勾那項 unknown、knowledge 給 null
+  const knowledgeCounts = loadKnowledgeCounts(wid, db)
+  const knowledgeOrNull = knowledgeCounts.catch(() => null)
+
+  if (String(getQuery(event).only ?? '') === 'knowledge') {
+    const knowledge = await knowledgeOrNull
+    const status: SetupItemStatus = !knowledge ? 'unknown' : knowledge.live > 0 ? 'done' : 'incomplete'
+    return { workspaceId: wid, items: [{ id: 'knowledgeReady', status }], knowledge }
+  }
 
   // lineConnected / liffReady 共用同一次文件讀取（兩個訊號、一次 read）
   const workspaceSnap = db.collection('workspaces').doc(wid).get()
@@ -76,15 +114,12 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
       const s = await getAiSettings(wid, db)
       return s.enabled === true
     }),
-    // 知識庫有內容：存在任一筆此 workspace 的知識片段（單欄位查詢，免複合索引）
-    resolve(async () => {
-      const snap = await db
-        .collection(KNOWLEDGE_CHUNKS_COLLECTION)
-        .where('workspaceId', '==', wid)
-        .limit(1)
-        .get()
-      return !snap.empty
-    }),
+    // 知識庫有內容＝**AI 真的拿得到的**至少一條（`C-308`⑦，2026-10-13）。
+    // ⛔ 以前是「這個帳號有任何一條」——開帳整理出來還在「等你看過」的、回收桶裡的都算，
+    //    新帳號一條都還沒採用，開通清單就勾了「建立知識庫」、小幫手也不再說知識庫是空的，打開 AI 一題都答不出來。
+    // 跟方案額度同一把尺（`chunkCountsTowardQuota`：不在回收桶、不是等你看過），數法共用 countWorkspaceChunks
+    // （舊資料沒有 isDeleted 也數得對；60 秒快取跟額度檢查共用，不多花讀取）。
+    resolve(async () => (await knowledgeCounts).live > 0),
     // 有啟用中的客服腳本：沿用既有 loadActiveScripts（已過濾 enabled）
     resolve(async () => {
       const scripts = await loadActiveScripts(wid, db)
@@ -115,5 +150,5 @@ export default defineEventHandler(async (event): Promise<SetupStatusResponse> =>
     { id: 'firstMessageReceived', status: firstMessageReceived },
   ]
 
-  return { workspaceId: wid, items }
+  return { workspaceId: wid, items, knowledge: await knowledgeOrNull }
 })

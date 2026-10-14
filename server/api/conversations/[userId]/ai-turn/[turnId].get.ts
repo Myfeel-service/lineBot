@@ -37,14 +37,18 @@ export default defineEventHandler(async (event): Promise<AiContextPayload> => {
 
   const ids = Array.isArray(turn.sourceChunkIds) ? turn.sourceChunkIds.slice(0, 5) : []
   const titleByChunkId: Record<string, string> = {}
+  /** 在回收桶的（換新版換掉的、刪掉的）：標題照給、但不給「去修」（`D-125`，點下去找不到那一條） */
+  const recycled = new Set<string>()
   const [, wrongMarked] = await Promise.all([
     ids.length
       ? Promise.all(ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)))
         .then((docs) => {
           docs.forEach((d, i) => {
             if (!d?.exists) return
-            const cd = d.data() as { workspaceId?: string; title?: string }
-            if (cd?.workspaceId === workspaceId) titleByChunkId[ids[i]!] = String(cd.title ?? '')
+            const cd = d.data() as { workspaceId?: string; title?: string; isDeleted?: boolean; deletedAt?: unknown }
+            if (cd?.workspaceId !== workspaceId) return
+            titleByChunkId[ids[i]!] = String(cd.title ?? '')
+            if (cd.isDeleted === true || cd.deletedAt != null) recycled.add(ids[i]!)
           })
         })
       : Promise.resolve(),
@@ -70,10 +74,11 @@ export default defineEventHandler(async (event): Promise<AiContextPayload> => {
     takeoverSummary: '',
     takeoverSummaryAtMs: 0,
     draftMode: false,
+    // `D-125`：回收桶的算「不在」（換新版之後舊對話的「去修」點了沒反應）；標題照給，真的不在了才是空的（同 ai-context）
     sources: ids.map(id => ({
       chunkId: id,
-      title: titleByChunkId[id] ?? '(卡片已刪除)',
-      exists: id in titleByChunkId,
+      title: titleByChunkId[id] ?? '',
+      exists: id in titleByChunkId && !recycled.has(id),
     })),
     wrongMarked,
     // 回合的脈絡綁在 turnId 上，不再靠時間戳指認是哪一次（見 ai-feedback.post.ts）

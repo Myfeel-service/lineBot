@@ -153,7 +153,9 @@ describe('網站讀到的頁 → 等你看過的卡（`C-250`③）', () => {
     const block = chat.slice(i, chat.indexOf('\n  }\n', i))
     expect(block).toContain("variant: 'info' as const")
     expect(block).not.toContain('askChoices')
-    expect(block).toContain('一張長這樣')
+    // `C-309`：量詞跟知識庫頁一樣講「條」
+    expect(block).toContain('一條長這樣')
+    expect(block.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')).not.toMatch(/張卡|知識卡|卡片寫/)
     // 等第一步整理完最多 20 秒（⛔ 不可以無上限地等）
     expect(block).toMatch(/Promise\.race\(\[siteCardsFirstStep, new Promise\(r => setTimeout\(r, 20_000\)\)\]\)/)
   })

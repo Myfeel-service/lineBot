@@ -81,14 +81,18 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
   const updatedAtMs = tsToMs(meta.updatedAt)
 
   const titleByChunkId: Record<string, string> = {}
+  /** 在回收桶的（換新版換掉的、刪掉的）：標題照給、但不給「去修」（`D-125`，點下去找不到那一條） */
+  const recycled = new Set<string>()
   const [, wrongMarked] = await Promise.all([
     ids.length
       ? Promise.all(ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)))
         .then((docs) => {
           docs.forEach((d, i) => {
             if (!d?.exists) return
-            const cd = d.data() as { workspaceId?: string; title?: string }
-            if (cd?.workspaceId === workspaceId) titleByChunkId[ids[i]!] = String(cd.title ?? '')
+            const cd = d.data() as { workspaceId?: string; title?: string; isDeleted?: boolean; deletedAt?: unknown }
+            if (cd?.workspaceId !== workspaceId) return
+            titleByChunkId[ids[i]!] = String(cd.title ?? '')
+            if (cd.isDeleted === true || cd.deletedAt != null) recycled.add(ids[i]!)
           })
         })
       : Promise.resolve(),
@@ -114,10 +118,13 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
     takeoverSummary,
     takeoverSummaryAtMs,
     draftMode,
+    // `D-125`（2026-10-13）：以前只看文件在不在——換新版之後舊的那幾條進了回收桶，文件還在，
+    // 畫面照樣給「去修『X』」，點下去什麼都沒發生。回收桶的算「不在」，標題照給（看得出當時用了哪一條）；
+    // 真的不在了（回收桶清掉）就沒有標題，由畫面講「已經刪掉了」。
     sources: ids.map(id => ({
       chunkId: id,
-      title: titleByChunkId[id] ?? '(卡片已刪除)',
-      exists: id in titleByChunkId,
+      title: titleByChunkId[id] ?? '',
+      exists: id in titleByChunkId && !recycled.has(id),
     })),
     wrongMarked,
     // aiMeta 沒有回合身分：這支只能靠時間戳指認是哪一次（見 ai-feedback.post.ts 的舊路徑）

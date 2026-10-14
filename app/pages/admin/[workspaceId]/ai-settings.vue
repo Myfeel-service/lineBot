@@ -54,8 +54,11 @@
               <p class="ai-section-hint ai-checklist-title">上線前建議完成:</p>
               <div class="ai-check-item">
                 <span><el-icon :color="kbReady ? 'var(--brand-green-text)' : 'var(--text-muted)'"><component :is="kbReady ? CircleCheckFilled : CircleCheck" /></el-icon></span>
-                <span>知識庫有內容(目前 {{ cardCount ?? '—' }} 條)</span>
-                <NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="ai-status-link">去補知識 →</NuxtLink>
+                <!-- `C-308`⑦：「目前 N 條」只算 AI 拿得到的（跟開通清單、方案額度同一把尺）；
+                     「等你看過」的另外講——以前加進去一起算，新帳號一條都沒採用就打綠勾 -->
+                <span>知識庫有內容(目前 {{ kbCount?.live ?? '—' }} 條<template v-if="kbCount?.drafts">,另外 {{ kbCount.drafts }} 條等你看過</template>)</span>
+                <NuxtLink v-if="kbOnlyDrafts" :to="`/admin/${workspaceId}/knowledge/sources?drafts=1`" class="ai-status-link">去看那幾條 →</NuxtLink>
+                <NuxtLink v-else :to="`/admin/${workspaceId}/knowledge/sources`" class="ai-status-link">去補知識 →</NuxtLink>
               </div>
               <div class="ai-check-item">
                 <span><el-icon :color="notifyReady ? 'var(--brand-green-text)' : 'var(--text-muted)'"><component :is="notifyReady ? CircleCheckFilled : CircleCheck" /></el-icon></span>
@@ -849,7 +852,8 @@ function removeSensitive(topic: string) {
 
 // ── 目前狀態面板:讓「調整設定」跟「現在是什麼狀態」在同一頁 ──
 const usageTokens = ref<number | null>(null)
-const cardCount = ref<number | null>(null)
+/** 知識庫幾條：live＝AI 拿得到的、drafts＝還在「等你看過」的；null＝還沒載入或查不到（顯示「—」，⛔ 不當成 0） */
+const kbCount = ref<{ live: number, drafts: number } | null>(null)
 
 const statusLabel = computed(() => {
   if (!form.value.enabled) return 'AI 已停用'
@@ -885,7 +889,9 @@ const autoCloseIdleOn = computed({
   },
 })
 
-const kbReady = computed(() => (cardCount.value ?? 0) > 0)
+const kbReady = computed(() => (kbCount.value?.live ?? 0) > 0)
+/** 一條都還沒上線、但有等你看過的：要做的事是去看那幾條，不是去補新的 */
+const kbOnlyDrafts = computed(() => !!kbCount.value && kbCount.value.live === 0 && kbCount.value.drafts > 0)
 /** 名單上有沒有人在收（唯讀，從載入的設定讀；名單本身在「設定 → LINE 通知」改） */
 const notifyReady = ref(false)
 const showChecklist = computed(() => !form.value.enabled || !kbReady.value || !notifyReady.value)
@@ -899,18 +905,18 @@ function formatTokens(n: number) {
 async function loadStatus() {
   const period = taipeiYyyyMm() // 與後端 aiUsage 月結桶同一把尺(台灣時區),避免月底 8 小時讀錯月
   loadPlanSummary().catch(() => {}) // 方案摘要：決定用量以「則數」還是 token 呈現
-  const [usage, sources] = await Promise.allSettled([
+  const [usage, kb] = await Promise.allSettled([
     apiFetch<{ inputTokens: number; outputTokens: number; embeddingTokens: number }>(`/api/ai/usage/summary?period=${period}`),
-    apiFetch<{ items: Array<{ chunkCount: number }> }>('/api/ai/sources/list'),
+    // `C-308`⑦：跟開通清單「建立知識庫」讀同一支、同一個數字（以前把每份資料的條數加起來，連等你看過都算）。
+    // only=knowledge＝只數知識，不去問 LINE；也比以前讀整份資料清單省（那支一次讀上百份）
+    apiFetch<{ knowledge: { live: number, drafts: number } | null }>('/api/admin/setup-status?only=knowledge'),
   ])
   // token 細目僅 super admin 的回應才有（成本可見性收歸平台）；欄位不在就維持 null，
   // 不能用 ?? 0 硬算——那會把「看不到」顯示成「本月已用 0 tokens」。
   if (usage.status === 'fulfilled' && typeof usage.value.inputTokens === 'number') {
     usageTokens.value = (usage.value.inputTokens ?? 0) + (usage.value.outputTokens ?? 0) + (usage.value.embeddingTokens ?? 0)
   }
-  if (sources.status === 'fulfilled') {
-    cardCount.value = sources.value.items.reduce((sum, s) => sum + (s.chunkCount ?? 0), 0)
-  }
+  if (kb.status === 'fulfilled') kbCount.value = kb.value.knowledge
 }
 
 /**

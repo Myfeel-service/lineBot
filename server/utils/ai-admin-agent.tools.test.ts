@@ -36,9 +36,16 @@ vi.mock('./ai-settings', () => ({
   }),
 }))
 
+// get_knowledge_status 用：條數與方案上限（`C-308`⑦，跟開通清單同一把尺）
+vi.mock('./ai-knowledge-quota', () => ({
+  countWorkspaceChunks: vi.fn(async () => 0),
+  getKnowledgeChunkQuota: vi.fn(async () => null),
+}))
+
 ;(globalThis as any).createError = (o: any) => Object.assign(new Error(o?.statusMessage || 'error'), o)
 
 const { TOOLS } = await import('./ai-admin-agent')
+const quotaMod = await import('./ai-knowledge-quota')
 
 /** 假 Firestore：認得 collection 名稱，支援 where/orderBy/limit 鏈 */
 /** `counts`：count() 要回的總數（不給＝跟讀回來的筆數一樣），用來演「總數比讀回來的多」 */
@@ -332,5 +339,52 @@ describe('查詢：AI 答錯與沒答好', () => {
     const res = await TOOLS.get_ai_mistakes.run(db, 'w1', {}, {}) as any
     expect(res.moreTopics).toBe(245)
     expect(res.topicsNote).toContain('共 250 個')
+  })
+})
+
+/**
+ * `C-308`⑦（2026-10-13）：以前回「這個帳號一共幾條」——開帳整理出來還在「等你看過」的也算，
+ * 新帳號一條都沒採用，小幫手就說「知識庫有 37 條」，打開 AI 一題都答不出來。
+ */
+describe('查詢：知識庫現況', () => {
+  const tool = TOOLS.get_knowledge_status
+  const sources = [
+    { id: 's1', workspaceId: 'w1', isDeleted: false, type: 'gsheet', name: '商品資訊', status: 'ready', quotaSkippedCount: 10, updatedAt: ts(2) },
+    { id: 's2', workspaceId: 'w1', isDeleted: false, type: 'url', name: '官網', status: 'failed', failureReason: '網址失效', updatedAt: ts(1) },
+  ]
+
+  it('🔴 上線的跟「等你看過」的分開講，條數跟方案額度同一把尺', async () => {
+    vi.mocked(quotaMod.countWorkspaceChunks).mockResolvedValueOnce(40)
+    vi.mocked(quotaMod.getKnowledgeChunkQuota).mockResolvedValueOnce({ used: 40, limit: 50, planName: '入門' })
+    const db = makeDb({ knowledgeSources: sources }, { knowledgeChunks: 37 })
+
+    const res = await tool.run(db, 'w1', {}, {}) as any
+    expect(res.liveCount).toBe(40)
+    expect(res.waitingForReview).toBe(37)
+    expect(res).not.toHaveProperty('chunkCount') // 舊的「全部加在一起」那一格不能再回
+    expect(tool.description).toContain('不要相加')
+  })
+
+  it('回得出「還剩多少空間」與「試算表有幾列沒收」，⛔ 不回方案名（那是計費資訊）', async () => {
+    vi.mocked(quotaMod.countWorkspaceChunks).mockResolvedValueOnce(40)
+    vi.mocked(quotaMod.getKnowledgeChunkQuota).mockResolvedValueOnce({ used: 40, limit: 50, planName: '入門' })
+    const res = await tool.run(makeDb({ knowledgeSources: sources }), 'w1', {}, {}) as any
+
+    expect(res.space).toEqual({ used: 40, limit: 50, remaining: 10 })
+    expect(res.sheetRowsNotAdded).toEqual([{ name: '商品資訊', rows: 10 }])
+    expect(JSON.stringify(res)).not.toContain('入門')
+    expect(res.failedSources).toEqual([{ name: '官網', reason: '網址失效' }])
+  })
+
+  it('不限條數的方案照實講；查不到就說查不到，⛔ 不當成 0', async () => {
+    vi.mocked(quotaMod.countWorkspaceChunks).mockRejectedValueOnce(new Error('boom'))
+    vi.mocked(quotaMod.getKnowledgeChunkQuota).mockResolvedValueOnce({ used: 0, limit: null, planName: '企業' })
+    const res = await tool.run(makeDb({ knowledgeSources: [] }), 'w1', {}, {}) as any
+    expect(res.liveCount).toBe('這次查不到')
+    expect(res.space).toBe('這個方案不限條數')
+
+    vi.mocked(quotaMod.getKnowledgeChunkQuota).mockRejectedValueOnce(new Error('boom'))
+    const res2 = await tool.run(makeDb({ knowledgeSources: [] }), 'w1', {}, {}) as any
+    expect(res2.space).toBe('這次查不到')
   })
 })

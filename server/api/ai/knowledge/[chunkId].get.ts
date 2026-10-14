@@ -23,5 +23,10 @@ export default defineEventHandler(async (event) => {
     id: snap.id,
     sourceId: data?.sourceId != null ? String(data.sourceId) : null,
     title: String(data?.title ?? ''),
+    /**
+     * 在回收桶（`D-125`）：換新版換掉的、刪掉的。帶這個進來的連結（舊對話的「去修」、測試對話的「編輯」）
+     * 打開的資料裡找不到它——畫面要講「這條已經換掉或刪掉了」，⛔ 不是什麼都不發生。
+     */
+    deleted: data?.isDeleted === true || data?.deletedAt != null,
   }
 })

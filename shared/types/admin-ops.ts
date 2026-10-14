@@ -33,7 +33,7 @@ export const ADMIN_OP_LABELS = {
   'ai-settings-auto-close': '調整「真人接手太久沒動靜就自動結束」',
   'ai-settings-tone-template': '把 AI 的語氣換成現成範本',
   'tag-create': '建一個標籤',
-  'knowledge-draft-create': '補一張知識卡（放進「等你看過」，不直接上線）',
+  'knowledge-draft-create': '補一條知識（放進「等你看過」，不直接上線）',
   'script-update-keyword': '增減一條自動回應的關鍵字',
   'script-update-reply': '改一條自動回應回給客人的話',
 } as const satisfies Record<string, string>

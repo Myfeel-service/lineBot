@@ -213,4 +213,10 @@ describe('建議與範例句的字（D-116）', () => {
     for (const s of allSaid())
       expect(s, s).not.toMatch(/客服流程|腳本|上架|下架/)
   })
+
+  // `C-309`（2026-10-13）：知識庫頁、加入流程都講「條」，範例句教他講「一張知識卡」＝同一件事兩種講法
+  it('知識講「條」：⛔ 不出現「知識卡」「一張」', () => {
+    for (const s of allSaid())
+      expect(s, s).not.toMatch(/知識卡|一張/)
+  })
 })

@@ -94,11 +94,12 @@
                      跟輪廓卡「我猜的」同一個意思（還沒確認過）。⭐ 他自己撞到「它讀懂了我的網站」，
                      看卡的動機就從「去做功課」變成「我要讓它這樣答」。紅線照舊：對客人只用點過頭的卡 -->
                 <div v-if="turn.result.decision === 'answered' && draftUse(turn.result)" class="pg-draft-note">
-                  <div class="pg-draft-note__t">{{ draftUse(turn.result) === 'all' ? '這句用的是還沒看過的卡' : '這句有用到還沒看過的卡' }}</div>
+                  <!-- `C-309`：量詞跟旁邊「命中 N 條」同一個（以前同一個泡泡裡「去看這張卡」與「命中 N 條」兩種說法） -->
+                  <div class="pg-draft-note__t">{{ draftUse(turn.result) === 'all' ? '這句用到的知識還在等你看過' : '這句有用到還在等你看過的知識' }}</div>
                   <div class="pg-draft-note__d">
                     <template v-if="draftPageName(turn.result)">出自你網站的「{{ draftPageName(turn.result) }}」。</template>在知識庫點頭之後，客人問才會這樣答。
                   </div>
-                  <el-button size="small" type="primary" @click="goDrafts">去看這張卡 →</el-button>
+                  <el-button size="small" type="primary" @click="goDrafts">{{ draftCount(turn.result) > 1 ? '去看這幾條 →' : '去看這一條 →' }}</el-button>
                 </div>
                 <div v-else-if="turn.result.decision === 'disambiguate' && turn.result.disambiguation" class="pg-disambiguate">
                   <p class="pg-clarification">{{ turn.result.disambiguation.clarification }}</p>
@@ -162,14 +163,14 @@
                   </p>
                   <template v-if="turn.result.handoffReason === 'no_grounding'">
                     <p class="text-muted">
-                      知識庫沒有足夠相關內容。補一張對應的卡，回來再試一次就會生效。
+                      知識庫沒有足夠相關內容。補一條對應的知識，回來再試一次就會生效。
                     </p>
                     <el-button size="small" type="primary" plain @click="goAddKnowledge(queryForTurn(idx))">
                       補這題的知識
                     </el-button>
                   </template>
                   <p v-else-if="turn.result.handoffReason === 'low_confidence'" class="text-muted">
-                    AI 找到了卡但把握不足。可以調低信心門檻或補充更精準的卡。
+                    AI 找到了相關的知識但把握不足。可以調低信心門檻，或補一條更精準的知識。
                   </p>
                   <p v-else-if="turn.result.handoffReason === 'sensitive_topic'" class="text-muted">
                     命中敏感主題，依設定直接轉真人。
@@ -361,9 +362,13 @@ async function loadDraftPageNames() {
   }
   catch { /* 查不到就不講頁名，其他照講 */ }
 }
+/** 這一題用到幾條「等你看過」的（按鈕講「這一條」還是「這幾條」） */
+function draftCount(r: AiResult): number {
+  return r.sources.filter(s => s.draft).length
+}
 /** 這一題的來源裡有沒有等你看過的卡：全部都是／有一部分／沒有 */
 function draftUse(r: AiResult): 'all' | 'some' | null {
-  const n = r.sources.filter(s => s.draft).length
+  const n = draftCount(r)
   if (!n) return null
   return n === r.sources.length ? 'all' : 'some'
 }

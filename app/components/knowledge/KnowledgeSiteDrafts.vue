@@ -3,21 +3,32 @@
        ⭐ 老闆 09-24：「我根本還是不知道知識卡內被建立了什麼」——文字解釋連敗兩輪，
           這一區直接放**他自己的卡**讓他一張一張看（範例本身就是定義）。
        ⛔ 什麼都沒有（沒給網址、或都看完了）就整塊不畫，不留一個空殼。 -->
+  <!-- `C-309`：畫面上的量詞一律「條」（加入流程已經全改；這一區以前講「張卡」） -->
   <section v-if="visible" class="kb-drafts" data-tour="kb-drafts">
     <div class="kb-drafts__head">
       <div class="kb-drafts__title">
         <template v-if="stillWorking && !total">正在整理你網站讀到的頁面…</template>
-        <template v-else-if="siteTotal || stillWorking">開帳讀你網站那 {{ pagesCount }} 頁，整理成 {{ siteTotal }} 張卡了</template>
-        <!-- 只有請小幫手補的卡（`D-109`）：⛔ 不可以講成「讀你網站那 1 頁」——那一張不是從網站來的 -->
-        <template v-else>有 {{ total }} 張卡等你看過</template>
+        <template v-else-if="siteTotal || stillWorking">開帳讀你網站那 {{ pagesCount }} 頁，整理成 {{ siteTotal }} 條了</template>
+        <!-- 只有請小幫手補的（`D-109`）：⛔ 不可以講成「讀你網站那 1 頁」——那一條不是從網站來的 -->
+        <template v-else>有 {{ total }} 條等你看過</template>
       </div>
       <p class="kb-drafts__sub">
-        還沒進知識庫——你一張一張看過才算數。
-        <template v-if="manualCount && (siteTotal || stillWorking)">另外 {{ manualCount }} 張是請小幫手補的，也在下面。</template>
-        <!-- ⛔ 會花到額度的數字要寫在**按下去之前看得到的地方**（知識卡張數是計費維度） -->
-        <template v-if="quota && quota.limit != null && total">
-          <b>全收會用掉 {{ total }}／{{ quota.limit }} 張</b>（<template v-if="quota.planName">{{ quota.planName }}方案，</template>現在用了 {{ quota.used }} 張），不要的刪掉就不佔。
+        還沒進知識庫——你一條條看過才算數。
+        <template v-if="manualCount && (siteTotal || stillWorking)">另外 {{ manualCount }} 條是請小幫手補的，也在下面。</template>
+        <!-- ⛔ 會用掉空間的數字要寫在**按下去之前看得到的地方**（知識條數是計費維度）。
+             放得下才在這裡講；放不下的兩種講法在下面那行（`C-308`⑨） -->
+        <template v-if="roomLeft !== null && total && roomLeft >= total">
+          全收會用掉 <b>{{ total }} 條</b>知識空間（還能放 {{ roomLeft }} 條），不要的刪掉就不佔。
         </template>
+      </p>
+      <!-- 空間不夠（`C-308`⑨，照加入視窗的講法）：⛔ 以前寫「全收會用掉 30／50 張（現在用了 25 張）」——
+           看起來放得下，按下去才說只收 25 張；收不下時叫他「刪掉用不到的卡」，但旁邊的「刪掉」刪的是這裡的，
+           這裡的本來就沒佔空間，刪了也空不出位子。要刪的是知識庫裡**已經上線**、用不到的。 -->
+      <p v-if="roomLeft !== null && roomLeft > 0 && total > roomLeft" class="kb-drafts__warn">
+        知識空間還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——刪掉知識庫裡用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就收得下。
+      </p>
+      <p v-else-if="roomLeft === 0 && total" class="kb-drafts__warn">
+        知識空間滿了（{{ quota?.used }}／{{ quota?.limit }} 條），這裡的先採用不了：刪掉知識庫裡用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>，就能採用（這裡的還沒佔空間，刪掉它們空不出位子）。
       </p>
       <p v-if="stillWorking" class="kb-drafts__working">
         <span class="kb-drafts__spin" aria-hidden="true" />
@@ -26,32 +37,34 @@
       <p v-if="generating?.error" class="kb-drafts__warn">{{ generating.error }}</p>
       <!-- ⛔ 過濾掉的東西要說得出丟了什麼：封頂沒放進來的、整理不出卡的頁 -->
       <p v-if="generating?.trimmed" class="kb-drafts__note">
-        還有 {{ generating.trimmed }} 張沒整理進來（開帳一次最多整理 50 張）；那幾頁之後可以在上方「加入知識」重新加。
+        還有 {{ generating.trimmed }} 條沒整理進來（開帳一次最多整理 50 條）；那幾頁之後可以在上方「加入知識」重新加。
       </p>
       <p v-if="generating?.pagesFailed?.length" class="kb-drafts__note">
-        有 {{ generating.pagesFailed.length }} 頁整理不出卡：{{ generating.pagesFailed.map(p => pathOf(p.url)).join('、') }}
+        有 {{ generating.pagesFailed.length }} 頁整理不出知識：{{ generating.pagesFailed.map(p => pathOf(p.url)).join('、') }}
       </p>
       <!-- 重跑「讓我認識你的店」：同一頁上次已經整理過，這次沒有再建一份（⛔ 跳過的要說得出幾頁） -->
       <p v-if="generating?.skippedExisting" class="kb-drafts__note">
         有 {{ generating.skippedExisting }} 頁上次開帳已經整理過，這次沒有再整理一份。
       </p>
       <ul v-if="pages.length" class="kb-drafts__pages">
-        <li v-for="p in pages" :key="p.sourceId">{{ p.name }} · {{ p.cards.length }} 張</li>
+        <li v-for="p in pages" :key="p.sourceId">{{ p.name }} · {{ p.cards.length }} 條</li>
       </ul>
     </div>
 
     <div v-for="p in pages" :key="p.sourceId" class="kb-drafts__group">
       <div class="kb-drafts__group-head">
-        <span v-if="p.url">來自「<b>{{ p.name }}</b>」那一頁 · <b>{{ p.cards.length }}</b> 張卡</span>
-        <span v-else>請小幫手補的「<b>{{ p.name }}</b>」 · <b>{{ p.cards.length }}</b> 張卡</span>
-        <!-- 只有一張的那一組不給「全部採用」：跟卡上那顆「採用」是同一件事，兩顆會被讀成兩件事 -->
+        <span v-if="p.url">來自「<b>{{ p.name }}</b>」那一頁 · <b>{{ p.cards.length }}</b> 條</span>
+        <span v-else>請小幫手補的「<b>{{ p.name }}</b>」 · <b>{{ p.cards.length }}</b> 條</span>
+        <!-- 只有一條的那一組不給「全部採用」：跟那一條的「採用」是同一件事，兩顆會被讀成兩件事。
+             空間不夠時字照實講「先收前 N 條」（同加入視窗）；滿了就按不下去（上面那行講為什麼） -->
         <el-button
           v-if="canEdit && p.cards.some(c => !decided[c.id]) && (p.url || p.cards.length > 1)"
           size="small"
           plain
+          :disabled="roomLeft === 0"
           :loading="busyPage === p.sourceId"
           @click="adoptPage(p)"
-        >{{ p.url ? '這一頁全部採用' : '全部採用' }}</el-button>
+        >{{ adoptPageLabel(p) }}</el-button>
       </div>
       <div
         v-for="c in p.cards"
@@ -63,17 +76,19 @@
         <div class="kb-drafts__k">客人問</div>
         <div v-if="editing !== c.id" class="kb-drafts__q">{{ c.questions[0] || c.title }}</div>
         <el-input v-else v-model="editQ" size="small" :maxlength="200" />
-        <div class="kb-drafts__k">卡片寫</div>
+        <div class="kb-drafts__k">回答</div>
         <div v-if="editing !== c.id" class="kb-drafts__a">{{ c.content }}</div>
         <el-input v-else v-model="editA" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" :maxlength="4000" />
         <p v-if="decided[c.id]" class="kb-drafts__state" :class="`is-${decided[c.id]!.tone}`">{{ decided[c.id]!.text }}</p>
-        <div v-else-if="canEdit" class="kb-drafts__bar">
+        <!-- 按了採用但空間滿了：講這一下的結果，⛔ 但不把按鈕收掉——空出位子（回到這頁時會重查）就能再按（`C-308`⑨） -->
+        <p v-else-if="heldForQuota[c.id] && roomLeft === 0" class="kb-drafts__state is-warn">知識空間滿了，這條先留著</p>
+        <div v-if="!decided[c.id] && canEdit" class="kb-drafts__bar">
           <template v-if="editing === c.id">
             <el-button size="small" type="primary" :loading="busyCard === c.id" @click="saveEdit(c)">存起來</el-button>
             <el-button size="small" @click="editing = null">取消</el-button>
           </template>
           <template v-else>
-            <el-button size="small" type="primary" :loading="busyCard === c.id" @click="adopt([c.id])">採用</el-button>
+            <el-button size="small" type="primary" :disabled="roomLeft === 0" :loading="busyCard === c.id" @click="adopt([c.id])">採用</el-button>
             <el-button size="small" @click="startEdit(c)">修改</el-button>
             <el-button size="small" text @click="dismiss(c)">刪掉</el-button>
           </template>
@@ -111,6 +126,31 @@ const generating = ref<Generating | null>(null)
 const quota = ref<Overview['quota']>(null)
 /** 這一場裡決定過的卡：留在畫面上講結果（⛔ 按完就消失的話，他不知道剛剛那一下有沒有成功） */
 const decided = reactive<Record<string, { tone: 'ok' | 'muted' | 'warn', text: string }>>({})
+/**
+ * 按了採用、但空間滿了沒收的（`C-308`⑨）。⛔ 不放進 decided：以前放進去，那幾條的按鈕就此收掉、
+ * 在這一頁上永遠回不來——他照提示去刪了別的知識、回來也按不下去。
+ */
+const heldForQuota = reactive<Record<string, true>>({})
+
+/**
+ * 知識空間還能放幾條；null＝不限條數或讀不到（照舊 fail-open：不擋、也不講）。
+ * 跟加入視窗同一個算法（已用＝方案那一把尺，不含等你看過）。
+ */
+const roomLeft = computed(() => {
+  const q = quota.value
+  if (!q || q.limit == null) return null
+  return Math.max(0, q.limit - q.used)
+})
+/** 升級方案的連結只給看得到方案的人（`G-103`：伺服器只對管理員回方案名；跟加入視窗同一個判斷） */
+const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceId.value}/settings/billing` : ''))
+
+/** 「全部採用」的字：放不下整頁時照實講先收前幾條（⛔ 不讓他以為整頁都會收） */
+function adoptPageLabel(p: DraftPage): string {
+  const left = p.cards.filter(c => !decided[c.id]).length
+  const room = roomLeft.value
+  if (room !== null && room > 0 && room < left) return `先收前 ${room} 條`
+  return p.url ? '這一頁全部採用' : '全部採用'
+}
 const busyCard = ref<string | null>(null)
 const busyPage = ref<string | null>(null)
 const editing = ref<string | null>(null)
@@ -194,15 +234,21 @@ async function pushUntilDone() {
 async function adopt(ids: string[], whole = false) {
   busyCard.value = ids.length === 1 ? ids[0]! : null
   try {
-    const r = await apiFetch<{ adopted: string[], leftForQuota: string[], quota: Overview['quota'] }>('/api/ai/knowledge/drafts/adopt', {
+    const r = await apiFetch<{ adopted: string[], leftForQuota: string[], autoUpdateOn?: string[], quota: Overview['quota'] }>('/api/ai/knowledge/drafts/adopt', {
       method: 'POST',
       body: { chunkIds: ids },
     })
-    for (const id of r.adopted) decided[id] = { tone: 'ok', text: '已收進知識庫 ✓ 從現在起 AI 回客人會用這張' }
-    // ⭐ 收到滿為止：沒收的那幾張照實講，⛔ 不可以靜靜只收一部分
-    for (const id of r.leftForQuota) decided[id] = { tone: 'warn', text: '額度滿了，這張先留著——刪掉用不到的卡、或升級方案就收得下' }
+    for (const id of r.adopted) {
+      decided[id] = { tone: 'ok', text: '已收進知識庫 ✓ 從現在起 AI 回客人會用這條' }
+      delete heldForQuota[id]
+    }
+    // ⭐ 收到滿為止：沒收的那幾條照實講，⛔ 不可以靜靜只收一部分；⛔ 也不收掉它們的按鈕（見 heldForQuota）
+    for (const id of r.leftForQuota) heldForQuota[id] = true
     if (r.quota) quota.value = r.quota
-    if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 張，額度滿了，還有 ${r.leftForQuota.length} 張先留著`, 'warning')
+    // 怎麼空出位子由上面那一行講（刪知識庫裡用不到的、或升級），⛔ 這裡不再叫他「刪掉用不到的卡」——旁邊的「刪掉」刪的是這裡的
+    if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 條；知識空間滿了，還有 ${r.leftForQuota.length} 條先留在這裡`, 'warning')
+    // 開帳讀的網頁採用之後才開始每天檢查（`D-125`③）：第一次開起來的那一下講一聲，之後同一頁不再講
+    else if (r.autoUpdateOn?.length) showToast(`收好了；這 ${r.autoUpdateOn.length} 個網頁之後每天自動檢查，網站有改會提醒你`, 'success')
     total.value = Math.max(0, total.value - r.adopted.length)
     if (isSiteCard(ids[0])) trackOnboarding('kb_draft_decision', {
       decision: 'adopt',
@@ -236,6 +282,7 @@ async function dismiss(c: DraftCard) {
   try {
     await apiFetch('/api/ai/knowledge/drafts/dismiss', { method: 'POST', body: { chunkIds: [c.id] } })
     decided[c.id] = { tone: 'muted', text: '已刪掉，不會進知識庫' }
+    delete heldForQuota[c.id]
     total.value = Math.max(0, total.value - 1)
     if (isSiteCard(c.id)) trackOnboarding('kb_draft_decision', { decision: 'dismiss', n: 1, left: total.value })
     emit('changed')
@@ -282,13 +329,41 @@ async function saveEdit(c: DraftCard) {
   }
 }
 
+/**
+ * 重查空間（`C-308`⑨）：他照提示去刪了知識庫裡用不到的、或去升級，**回到這一頁**時採用要按得下去。
+ * 只打 `GET /api/ai/knowledge/quota`（一次聚合、60 秒快取），⛔ 不重抓整份草稿清單。
+ * 只在還有沒看完的、而且有上限時才查：不限條數的方案不用查。
+ */
+let quotaChecking = false
+async function refreshQuota() {
+  if (quotaChecking || !alive || !total.value || quota.value?.limit == null) return
+  quotaChecking = true
+  try {
+    const r = await apiFetch<{ quota: Overview['quota'] }>('/api/ai/knowledge/quota')
+    if (r.quota) quota.value = r.quota
+  }
+  catch { /* 查不到就維持上一次的數字；按下去伺服器還會再擋一次 */ }
+  finally {
+    quotaChecking = false
+  }
+}
+function onReturn() {
+  if (document.visibilityState === 'visible') void refreshQuota()
+}
+
 onMounted(async () => {
   await load()
   if (stillWorking.value) void pushUntilDone()
+  window.addEventListener('focus', onReturn)
+  document.addEventListener('visibilitychange', onReturn)
 })
-onBeforeUnmount(() => { alive = false })
+onBeforeUnmount(() => {
+  alive = false
+  window.removeEventListener('focus', onReturn)
+  document.removeEventListener('visibilitychange', onReturn)
+})
 
-defineExpose({ reload: load })
+defineExpose({ reload: load, refreshQuota })
 </script>
 
 <!-- 樣式在 app/assets/scss/pages/_knowledge-sources.scss（.kb-drafts） -->

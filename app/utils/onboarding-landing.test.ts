@@ -85,7 +85,13 @@ describe('打造完的落地 3 步（`D-102`）', () => {
   it('⭐ 網站整理出卡了：知識庫那一列也標亮、講得出幾張（`C-250`③）；什麼都沒採用但有卡，第 1 步照樣出現', () => {
     const [first] = landingTourSteps([ALL[0]!], { hasBand: true, bandAction: '接上 LINE', draftCards: 12 })
     expect(first!.mark).toContain(KNOWLEDGE_NAV)
-    expect(first!.description).toContain('等你看過的 <strong>12 張知識卡</strong>')
+    // `C-309`：量詞講「條」，⛔ 不講「網站整理出來的」（小幫手補的也在「等你看過」）
+    expect(first!.description).toContain('等你看過的 <strong>12 條知識</strong>')
+    expect(first!.description).not.toMatch(/知識卡|網站整理/)
+    // 小幫手面板那一條（它只拿得到總數、分不出哪幾條是網站來的）也一樣
+    const kbTodo = agent.slice(agent.indexOf('class="ta-kbtodo"'), agent.indexOf('class="ta-kbtodo__go"'))
+    expect(kbTodo).toContain('{{ draftCards }} 條知識')
+    expect(kbTodo.replace(/<!--[\s\S]*?-->/g, '')).not.toMatch(/張卡|知識卡|網站整理出來/)
     const onlyCards = landingTourSteps([], { hasBand: true, bandAction: '接上 LINE', draftCards: 3 })
     expect(onlyCards[0]!.title).toBe('你剛剛做的，都在這幾頁')
     // ⛔ 沒有卡就不提、也不標知識庫
@@ -127,7 +133,8 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
   it('還有卡沒看過：最後一步把它列成待辦（跟測試對話那件一起算件數）', () => {
     const both = liveTourSteps({ received: true, triedPlayground: false, draftCards: 8 }).at(-1)!
     expect(both.description).toContain('還差 2 件')
-    expect(both.description).toContain('看過那 8 張知識卡')
+    expect(both.description).toContain('看過那 8 條知識')
+    expect(both.description).not.toContain('知識卡')
     const none = liveTourSteps({ received: true, triedPlayground: true, draftCards: 0 }).at(-1)!
     expect(none.description).not.toContain('還差')
   })

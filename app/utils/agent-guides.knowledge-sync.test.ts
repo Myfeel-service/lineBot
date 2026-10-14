@@ -40,7 +40,7 @@ const waitChoices = (r: ReturnType<typeof useAgentScriptRunner>) =>
     if (r.ask.value.kind !== 'choices') throw new Error('還沒出現選項')
   })
 
-const sources = (items: { name: string, status: string, failureReason?: string }[]) => ({ items })
+const sources = (items: { name: string, status: string, failureReason?: string, type?: string }[]) => ({ items })
 
 describe('knowledge-sync 劇本', () => {
   it('🔴 還沒修就按確認：說還有幾份沒好，不可以說都恢復了；真的修好再按才報喜', async () => {
@@ -128,6 +128,40 @@ describe('knowledge-sync 劇本', () => {
     expect(html).toContain('不代表沒修好')
     expect(html).not.toContain('都恢復了')
     expect(html).toContain('"state":"skipped"')
+  })
+
+  /**
+   * `C-309`（2026-10-13）：以前一律叫人按「重新同步」——Google 試算表那一份畫面上那顆叫「立即同步」，
+   * 照著找會走丟。按鈕名照失敗的那幾份是什麼種類講。
+   */
+  it('按鈕名照資料種類講：試算表叫「立即同步」、網址叫「重新同步」', async () => {
+    const intro = async (items: Parameters<typeof sources>[0]) => {
+      const { r, ctx } = makeCtx([sources(items)])
+      r.runSteps(guide.steps, ctx)
+      await waitChoices(r)
+      return htmlOf(r)
+    }
+    const sheetOnly = await intro([{ name: '價目表', status: 'failed', type: 'gsheet' }])
+    expect(sheetOnly).toContain('「立即同步」')
+    expect(sheetOnly).not.toContain('重新同步')
+
+    const urlOnly = await intro([{ name: '官網', status: 'failed', type: 'url' }])
+    expect(urlOnly).toContain('「重新同步」')
+    expect(urlOnly).not.toContain('立即同步')
+
+    // 正常的那份是試算表、壞的只有網址：只講網址那顆
+    const mixedButOnlyUrlFailed = await intro([
+      { name: '官網', status: 'failed', type: 'url' },
+      { name: '價目表', status: 'ready', type: 'gsheet' },
+    ])
+    expect(mixedButOnlyUrlFailed).not.toContain('立即同步')
+
+    const both = await intro([
+      { name: '官網', status: 'failed', type: 'url' },
+      { name: '價目表', status: 'failed', type: 'gsheet' },
+    ])
+    expect(both).toContain('網址按')
+    expect(both).toContain('試算表按')
   })
 
   it('來源名稱照使用者取的原字顯示，但一律當純文字（不會變成畫面上的標籤）', async () => {

@@ -124,7 +124,8 @@ export function landingTourSteps(
       title: '你剛剛做的，都在這幾頁',
       description: `亮起來的這幾頁：${[
         ...places.map(p => `<strong>${p.short}</strong>`),
-        ...(drafts > 0 ? [`等你看過的 <strong>${drafts} 張知識卡</strong>`] : []),
+        // `C-309`：量詞跟知識庫頁一樣講「條」；⛔ 不說「網站整理出來的」——小幫手補的也在這裡（`D-109`）
+        ...(drafts > 0 ? [`等你看過的 <strong>${drafts} 條知識</strong>`] : []),
       ].join('、')}。<strong>隨時都可以改</strong>。`,
       placement: 'right',
     })
@@ -199,7 +200,7 @@ export function liveTourSteps(opts: {
 /** 「上線之後」最後一步：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話） */
 function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number, phoneNotified?: boolean }): string {
   const todo: string[] = []
-  if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 張知識卡</strong>，客人問價格、細節它才答得出來`)
+  if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 條知識、按採用</strong>，客人問價格、細節它才答得出來`)
   if (!opts.triedPlayground) todo.push('去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人')
   return todo.length
     ? `還差 ${todo.length} 件：${todo.join('；')}。`

@@ -457,7 +457,7 @@ const ALERTS: AlertDefinition[] = [
     // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑
     id: 'knowledgeIndexStuck',
     icon: Reading,
-    impact: '這些知識卡等了超過一小時還沒學完，AI 目前讀不到它們——客人問到相關問題會答不出來。若一直卡著，請聯絡我們。',
+    impact: '這些知識等了超過一小時還沒學完，AI 目前讀不到它們——客人問到相關問題會答不出來。若一直卡著，請聯絡我們。',
     cta: '去看這些知識',
     // 一鍵 `knowledge-retry-index-stuck` 是 `knowledge.write`
     requires: 'knowledge.write',

@@ -218,8 +218,10 @@
           <!-- 等你看過的知識卡（`C-250`③，示意頁 v80 的「知識卡」那一條）：⛔ 不是紅的——它不擋上線，
                只是會讓 AI 答得更好；也不跟「接上 LINE」一起收（接好 LINE 不代表卡看過了）。 -->
           <div v-if="draftCards > 0" class="ta-kbtodo">
-            <div class="ta-kbtodo__t">📖 看過知識卡，它才答得出細節</div>
-            <p class="ta-kbtodo__d">你網站整理出來的 <b>{{ draftCards }} 張卡</b>在等你看過。點頭進去之後，客人問<b>價格、細節</b>，它才答得出來。</p>
+            <!-- `C-309`：量詞講「條」；⛔ 不寫「你網站整理出來的」——「等你看過」也收小幫手補的（`D-109`），
+                 這裡只拿得到總數、分不出哪幾條是網站來的 -->
+            <div class="ta-kbtodo__t">📖 看過那幾條知識，它才答得出細節</div>
+            <p class="ta-kbtodo__d">有 <b>{{ draftCards }} 條知識</b>在等你看過。採用之後，客人問<b>價格、細節</b>，它才答得出來。</p>
             <button type="button" class="ta-kbtodo__go" @click="goDrafts">去「知識庫」看 →</button>
           </div>
 

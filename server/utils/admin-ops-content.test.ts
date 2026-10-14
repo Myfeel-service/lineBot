@@ -313,6 +313,22 @@ describe('補一張知識卡（只放進「等你看過」）', () => {
     expect(auditLogs).toHaveLength(1)
     expect(auditLogs[0]).toMatchObject({ actor: 'agent', targetId: 'c1', after: { status: 'indexed' } })
   })
+
+  // `C-309`（2026-10-13）：知識庫頁、加入流程都講「條」；確認卡、回話、操作紀錄還在講「一張知識卡」「知識卡額度」
+  it('確認卡、回話、操作紀錄講「條」與「知識空間」，⛔ 不講「張／卡片／知識卡」', async () => {
+    fetchImpl = () => ({ id: 'c1', status: 'draft', failureReason: 'Gemini 429（請求太多）' })
+    similarHits = [{ title: '停車資訊', similarity: 0.83 }]
+    const { args, preview } = await propose(ops.knowledgeDraftCreate, { question: '有沒有停車位', answer: '門口有 3 格' })
+    const res = await ops.knowledgeDraftCreate.execute(ctx, args)
+    fetchImpl = () => ({ id: 'c2', status: 'indexed' })
+    const live = await ops.knowledgeDraftCreate.execute(ctx, args)
+    const said = [
+      preview.summary, preview.warning, ...preview.items.map((i: any) => i.note),
+      res.message, live.message, ...auditLogs.map(a => a.note),
+    ].join('\n')
+    expect(said).toContain('知識空間')
+    expect(said).not.toMatch(/張|卡片|知識卡/)
+  })
 })
 
 describe('改自動回應的關鍵字／回覆字', () => {

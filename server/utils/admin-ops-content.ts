@@ -570,7 +570,7 @@ export const knowledgeDraftCreate: AdminOpDef = {
   capability: 'knowledge.write',
   targetField: 'question',
   freeTextFields: ['question', 'answer', 'title'],
-  argsHint: '參數：{"question":"客人會怎麼問","answer":"要回答的內容","title":"（選填）卡片標題"}。'
+  argsHint: '參數：{"question":"客人會怎麼問","answer":"要回答的內容","title":"（選填）這條知識的標題"}。'
     + '⛔ answer 只能用他講的內容，不可以自己補價格、時間、規則；他沒講答案就先問。'
     + '建好會放在知識庫的「等你看過」，要他按採用才會拿來回答客人。'
     // 2026-09-29 實走：模型的提議句寫成「當客人問到停車位時，AI 會回答…」——講得像馬上就會答，
@@ -608,22 +608,23 @@ export const knowledgeDraftCreate: AdminOpDef = {
     const base = { opId: 'knowledge-draft-create' as const }
     // ⚠️ 這個 noop 也是確認端點判斷「這張剛剛已經執行過了」的依據——一定要跟指紋講同一件事
     if (await identicalCardExists(ctx, args))
-      return { ...base, summary: '知識庫裡已經有一張一模一樣的卡了（同一句問法、同樣的回答），不用再放一次。', items: [], confirmLabel: '知道了', noop: true }
+      // `C-309`：確認卡是店家看的字，量詞跟知識庫頁一樣講「條」、額度講「知識空間」
+      return { ...base, summary: '知識庫裡已經有一條一模一樣的了（同一句問法、同樣的回答），不用再放一次。', items: [], confirmLabel: '知道了', noop: true }
 
     const similarItem = args.similar?.length
-      ? [{ label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 客人這樣問時，AI 現在會拿這幾張卡來回答——採用前先看一下會不會重複' }]
+      ? [{ label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 客人這樣問時，AI 現在會拿這幾條來回答——採用前先看一下會不會重複' }]
       : args.similarChecked === false
-        ? [{ label: '這次沒查成', note: '⚠️ 沒辦法先確認知識庫裡有沒有講同一件事的卡，採用前自己看一下' }]
+        ? [{ label: '這次沒查成', note: '⚠️ 沒辦法先確認知識庫裡有沒有講同一件事的知識，採用前自己看一下' }]
         : []
     return {
       ...base,
-      summary: '我會把這張知識卡放進知識庫的「等你看過」：',
+      summary: '我會把這條知識放進知識庫的「等你看過」：',
       items: [
         { label: args.question, note: '客人會這樣問', verbatim: true },
         { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容', verbatim: true },
         ...similarItem,
       ],
-      warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用時才算知識卡額度）。測試對話裡可以先試問看看。',
+      warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用了才佔知識空間）。測試對話裡可以先試問看看。',
       confirmLabel: '確定放進「等你看過」',
     }
   },
@@ -638,7 +639,7 @@ export const knowledgeDraftCreate: AdminOpDef = {
       })
     }
     catch (e: any) {
-      return { ok: false, message: `知識卡沒有建成功：${apiErrorText(e) || '請稍後再試'}。沒有動任何資料。` }
+      return { ok: false, message: `這條知識沒有建成功：${apiErrorText(e) || '請稍後再試'}。沒有動任何資料。` }
     }
     // ⛔ 端點若沒吃到 draft（例如舊版），卡片會直接上線——那跟確認卡講的完全相反，要照實講
     if (res.status && res.status !== 'draft') {
@@ -650,9 +651,9 @@ export const knowledgeDraftCreate: AdminOpDef = {
         action: adminOpAuditAction('knowledge-draft-create'),
         targetId: res.id,
         after: { title: args.title, status: res.status },
-        note: `補一張知識卡「${args.title}」——⚠️ 沒有放進「等你看過」，直接上線了`,
+        note: `補一條知識「${args.title}」——⚠️ 沒有放進「等你看過」，直接上線了`,
       }, ctx.db)
-      return { ok: false, message: '⚠️ 卡片建好了，但**沒有**放進「等你看過」，而是直接上線了。請到知識庫把它停用或刪掉。' }
+      return { ok: false, message: '⚠️ 這條知識建好了，但**沒有**放進「等你看過」，而是直接上線了。請到知識庫把它停用或刪掉。' }
     }
 
     // 卡建好了、但搜尋用的向量沒算成（例如 Gemini 一時 429）：沒有向量的卡**誰都搜不到**，
@@ -667,14 +668,14 @@ export const knowledgeDraftCreate: AdminOpDef = {
       targetId: res.id,
       after: { title: args.title, status: 'draft' },
       note: failure
-        ? `補一張知識卡「${args.title}」（放在「等你看過」，還沒上線；這次沒學成功：${failure}）`
-        : `補一張知識卡「${args.title}」（放在「等你看過」，還沒上線）`,
+        ? `補一條知識「${args.title}」（放在「等你看過」，還沒上線；這次沒學成功：${failure}）`
+        : `補一條知識「${args.title}」（放在「等你看過」，還沒上線）`,
     }, ctx.db)
 
     if (failure) {
       return {
         ok: true,
-        message: `放好了：「${args.title}」在知識庫的「等你看過」。⚠️ 但這張卡這次沒學成功（${failure}），`
+        message: `放好了：「${args.title}」在知識庫的「等你看過」。⚠️ 但這條這次沒學成功（${failure}），`
           + '所以**測試對話暫時問不到它**；按「採用」時系統會再學一次，採用之後才會拿來回答客人。',
         targetId: res.id,
       }

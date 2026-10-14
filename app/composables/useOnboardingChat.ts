@@ -913,16 +913,17 @@ export function useOnboardingChat() {
     if (siteCards.total > 0 && siteCards.sample) {
       card({
         ...base,
-        body: `我讀了你網站 ${pagesRead} 頁，整理成 ${siteCards.total} 張卡${siteCards.stillWorking ? '（剩下的頁還在整理）' : ''}。一張長這樣：\n　問：${siteCards.sample.q}\n　卡片寫：${siteCards.sample.a}`,
-        note: '還沒進知識庫——在「知識庫」那一頁一張一張看過才算數。',
+        // `C-309`：量詞跟知識庫頁一樣講「條」，範例的兩段跟「等你看過」那一區同一組字（客人問／回答）
+        body: `我讀了你網站 ${pagesRead} 頁，整理成 ${siteCards.total} 條${siteCards.stillWorking ? '（剩下的頁還在整理）' : ''}。一條長這樣：\n　客人問：${siteCards.sample.q}\n　回答：${siteCards.sample.a}`,
+        note: '還沒進知識庫——在「知識庫」那一頁一條條看過才算數。',
       })
     }
     else if (siteCards.stillWorking) {
       card({
         ...base,
         title: '知識庫：正在幫你整理',
-        body: `我讀了你網站 ${pagesRead} 頁，正在整理成知識卡。`,
-        note: '好了會在「知識庫」那一頁等你一張一張看過才算數。',
+        body: `我讀了你網站 ${pagesRead} 頁，正在整理成一條條知識。`,
+        note: '好了會在「知識庫」那一頁等你一條條看過才算數。',
       })
     }
   }
@@ -2387,7 +2388,7 @@ export function useOnboardingChat() {
       return '你說最想<b>知道客人是誰</b>——剛剛那幾顆<b>分眾標籤</b>就是在做這件事，之後發推播挑人也是用它們。'
     // `C-250`③：網站整理出卡了才講（⛔ 沒有卡就指著一件不存在的東西）
     if (pain === '客服回不完' && siteCards.total > 0)
-      return '你說最想解決<b>客服回不完</b>——等你把知識卡看過放進去，那些重複的問題它就自己答了。'
+      return '你說最想解決<b>客服回不完</b>——等你把那幾條知識看過放進去，那些重複的問題它就自己答了。'
     return ''
   }
 

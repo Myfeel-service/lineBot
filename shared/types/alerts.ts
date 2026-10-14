@@ -161,7 +161,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   humanBacklog: '有客人在等真人回覆',
   humanStale: '有對話接手後沒按結束',
   firstReplyBacklog: '有客人的訊息一直沒人回',
-  knowledgeIndexStuck: '有知識卡一直沒學完',
+  knowledgeIndexStuck: '有知識一直沒學完',
   renewalNotBound: '下期不會自動扣款（卡沒綁成）',
   brokenModuleButton: '有按鈕按下去沒反應',
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',

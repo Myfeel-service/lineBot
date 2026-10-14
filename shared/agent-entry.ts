@@ -167,7 +167,8 @@ export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
     label: '知識庫',
     placeholder: '例：客人問「有停車位嗎」就回「有」',
     dos: [
-      { op: 'knowledge-draft-create', say: '補一張知識卡：客人問「可以刷卡嗎」，就回「可以，Visa、Master 都收」' },
+      // `C-309`：量詞跟知識庫頁一樣講「條」（範例本身就是教他怎麼講，講「張知識卡」他就學著講）
+      { op: 'knowledge-draft-create', say: '補一條知識：客人問「可以刷卡嗎」，就回「可以，Visa、Master 都收」' },
     ],
     asks: ['知識庫有沒有匯入失敗的？'],
   },
@@ -242,7 +243,7 @@ export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
   'script-update-reply': '把「退換貨」的回覆改成「先填表單」',
   'tag-create': '建一個標籤「想買禮盒」',
   'broadcast-draft-create': '擬一則週年慶推播草稿，只發給「VIP」標籤的人',
-  'knowledge-draft-create': '補一張知識卡：客人問「可以刷卡嗎」，就回「可以」',
+  'knowledge-draft-create': '補一條知識：客人問「可以刷卡嗎」，就回「可以」',
   'ai-settings-service-hours': AGENT_NUMBERLESS_SAY['ai-settings-service-hours'],
   'ai-settings-sensitive-topic': '客人提到「退款」就轉真人',
   'ai-settings-reply-mode': 'AI 先只給草稿，不要直接回客人',

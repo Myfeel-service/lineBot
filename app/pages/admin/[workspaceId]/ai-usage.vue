@@ -236,8 +236,9 @@
               <strong>這個失敗不需要你處理</strong>——通常幾秒就自己恢復。你做得到的是去回覆這些被影響到的客人。
             </p>
             <p v-else-if="canEditKb" class="usage-hint">
-              AI 轉給真人的對話。預設只列「答不出來、補知識有救」的：點「補知識」直接到知識庫補一張對應卡；其他原因用下拉切換。
-              同一題被問很多次的，AI 會先在知識庫的「建議收件匣」擬好草稿，<NuxtLink :to="`/admin/${workspaceId}/knowledge/sources`" class="admin-inline-link">去那裡採用更快 →</NuxtLink>
+              <!-- `C-309`：量詞講「條」；那一區畫面上叫「AI 建議補的知識」，連結帶 ?suggest=1 直接捲過去（以前停在頁頂、還叫它「建議收件匣」） -->
+              AI 轉給真人的對話。預設只列「答不出來、補知識有救」的：點「補知識」直接到知識庫補一條對應的知識；其他原因用下拉切換。
+              同一題被問很多次的，AI 會先在知識庫的「AI 建議補的知識」擬好草稿，<NuxtLink :to="`/admin/${workspaceId}/knowledge/sources?suggest=1`" class="admin-inline-link">去那裡採用更快 →</NuxtLink>
             </p>
             <!-- `G-102`：觀察者沒有「補知識」也不能採用草稿，不教他按不到的東西 -->
             <p v-else class="usage-hint">
@@ -303,7 +304,7 @@
                   <span>{{ row.lastQuery || '(無問題內容)' }}</span>
                 </div>
                 <div v-if="row.sources.length" class="usage-handoff-sources">
-                  最相近卡：{{ row.sources.slice(0, 2).map(s => s.title).join('、') }}
+                  最相近的知識：{{ row.sources.slice(0, 2).map(s => s.title).join('、') }}
                 </div>
                 <div v-if="row.handoffReason === 'non_text_content'" class="usage-handoff-sources">
                   AI 目前看不懂圖片、影片這類內容，客人傳完後就要求真人。點「開對話」看客人傳了什麼。
@@ -643,7 +644,7 @@ const clarifyWarning = computed(() => {
   const s = summary.value
   if (!s || !s.disambiguations) return null
   if (metricTone('disambiguation', s.disambiguationRate) !== 'is-warn') return null
-  return `AI 這個月有 ${formatNumber(s.disambiguations)} 個問題得先反問客人才能回答（佔 ${formatPercent(s.disambiguationRate)}），偏高——通常是知識卡標題太相近，去把名字改清楚就會降。`
+  return `AI 這個月有 ${formatNumber(s.disambiguations)} 個問題得先反問客人才能回答（佔 ${formatPercent(s.disambiguationRate)}），偏高——通常是幾條知識的標題太相近，去把名字改清楚就會降。`
 })
 
 /**

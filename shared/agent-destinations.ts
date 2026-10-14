@@ -107,7 +107,7 @@ export const AGENT_DESTINATIONS = {
   },
   'ai-playground': {
     label: '測試對話',
-    hint: '上線前先試問 AI 會怎麼答（不會送給客人）、看它用了哪幾張知識卡',
+    hint: '上線前先試問 AI 會怎麼答（不會送給客人）、看它用了哪幾條知識',
     path: wid => `/admin/${wid}/ai-playground`,
     requires: 'playground.use',
   },

@@ -126,7 +126,8 @@ export default defineEventHandler(async (event) => {
       ...(productName ? { productName } : {}),
     },
     ...(result.failureReason
-      ? { note: `這張卡沒學成功：${result.failureReason}` }
+      // `C-309`：操作紀錄是店家看的字，量詞跟全站一樣講「條」
+      ? { note: `這條沒學成功：${result.failureReason}` }
       : asDraft ? { note: '放進「等你看過」，還沒對客人上線' } : {}),
   }, db)
 
