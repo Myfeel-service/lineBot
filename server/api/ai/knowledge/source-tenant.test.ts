@@ -12,6 +12,9 @@ const WS = 'ws1'
 
 vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__ts__', delete: () => '__del__' },
+  // 回收桶照「刪除時間＋文件編號」翻頁（`C-312`）
+  FieldPath: { documentId: () => '__name__' },
+  Timestamp: class { constructor(public seconds: number, public nanoseconds: number) {} },
 }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
@@ -74,18 +77,23 @@ const STORE: Record<string, Record<string, Record<string, unknown>>> = {
 const sets: Array<{ col: string, id: string, data: any }> = []
 const updates: Array<{ col: string, id: string, data: any }> = []
 const snap = (col: string, id: string) => ({ id, exists: !!STORE[col]?.[id], data: () => STORE[col]?.[id] })
-/** 查詢一律回回收桶那兩張卡（其餘查詢——bulk-create 回寫張數用的 count——不在乎內容） */
+/**
+ * 查詢一律回回收桶那兩張卡（其餘查詢——bulk-create 回寫張數用的 count——不在乎內容）。
+ * 回收桶的卡一定有刪除時間（回收桶照它排序、翻頁的位置記號也是它，`C-312`）
+ */
+const deletedAt = { seconds: 1_790_000_000, nanoseconds: 0, toMillis: () => 1_790_000_000_000 }
 const query: any = {
   where: () => query,
   orderBy: () => query,
   select: () => query,
+  startAfter: () => query,
   limit: () => query,
   count: () => ({ get: async () => ({ data: () => ({ count: 0 }) }) }),
   get: async () => ({
     size: 2,
     docs: [
-      { id: 'c1', data: () => ({ title: '卡一', content: '', sourceId: 'srcMine' }) },
-      { id: 'c2', data: () => ({ title: '卡二', content: '', sourceId: 'srcTheirs' }) },
+      { id: 'c1', data: () => ({ title: '卡一', content: '', sourceId: 'srcMine', deletedAt }) },
+      { id: 'c2', data: () => ({ title: '卡二', content: '', sourceId: 'srcTheirs', deletedAt }) },
     ],
   }),
 }

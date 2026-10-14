@@ -2017,6 +2017,203 @@ try {
     else fail('接回換新版時沒有停下來問改過的', JSON.stringify({ ready, bulks: bulks.length, asked }))
     await pg.close()
   }
+
+  // ── 第三十八段（`C-312`）：回收桶找得到、翻得完——換新版擠下去的那一條搜得到、挑資料、「顯示更多」、
+  //    翻到上限講「更早的還沒找」；還原照舊（空間滿講伺服器的原因）；手機 390 寬不撐破。
+  //    回收桶、還原全部在瀏覽器裡回假的（正式庫不讀回收桶、不還原任何東西） ──
+  if (CHECK_FROM <= 38) {
+    const DAY_MS = 86400_000
+    const binRow = (id, title, sourceId, sourceName, ageMs) => ({ id, title, snippet: `${title}的內容`, sourceId, sourceName, deletedAtMs: NOW - ageMs, purgeAfterMs: NOW - ageMs + 30 * DAY_MS })
+    const binRows = [
+      ...Array.from({ length: 150 }, (_, i) => binRow(`old-${i}`, `舊版第 ${i + 1} 條`, 'fake-manual', '說明書 W1', 600_000)),
+      binRow('yesterday', 'W1 保固多久', 'fake-faq', '常見問答', DAY_MS),
+      binRow('gone-1', '資料整份刪掉的一條', 'deleted-src', null, 2 * DAY_MS),
+      binRow('gone-2', '資料整份刪掉的另一條', null, null, 3 * DAY_MS),
+    ]
+    const binCalls = []
+    const restores = []
+    const manual = fakeSource({ id: 'fake-manual', type: 'file', name: '說明書 W1', chunkCount: 150 })
+    const pageFake = fakeSourcesPage([manual], { 'fake-manual': [fakeChunk({ id: 'n1', title: '新版第 1 條' })] })
+    const pg = await openImportDialog(async (req) => {
+      const url = new URL(req.url())
+      const restore = url.pathname.match(/^\/api\/ai\/knowledge\/([^/]+)\/restore$/)
+      if (restore && req.method() === 'POST') {
+        restores.push(restore[1])
+        if (restore[1] === 'old-0') return errorJson(403, '知識空間滿了，先刪掉用不到的再還原')
+        // 跟真的伺服器一樣：還原了就不在回收桶（之後重查的總數、清單都少這一條）
+        binRows.splice(binRows.findIndex(r => r.id === restore[1]), 1)
+        return json({ id: restore[1], status: 'indexed' })
+      }
+      if (url.pathname === '/api/ai/knowledge/recycle-bin' && req.method() === 'GET') {
+        const q = url.searchParams.get('q') ?? ''
+        const source = url.searchParams.get('source') ?? ''
+        const cursor = url.searchParams.get('cursor') ?? ''
+        const withSources = url.searchParams.get('withSources') === '1'
+        binCalls.push({ q, source, cursor, withSources })
+        // 「很久以前」：最近 1000 條都沒有，伺服器翻到上限先停；接著找才找到
+        if (q === '很久以前') {
+          if (!cursor) return json({ items: [], truncated: true, nextCursor: 'cap-1', scanned: 1000, scanCapped: true, total: binRows.length })
+          return json({ items: [binRow('ancient', '很久以前刪的', 'fake-faq', '常見問答', 25 * DAY_MS)], truncated: false, nextCursor: null, scanned: 40, scanCapped: false, total: null })
+        }
+        const hits = binRows.filter(r => (!q || r.title.includes(q) || r.snippet.includes(q))
+          && (!source || (source === '__gone__' ? !r.sourceName : r.sourceId === source)))
+        const start = cursor ? Number(cursor) : 0
+        const next = start + 50 < hits.length ? String(start + 50) : null
+        return json({
+          items: hits.slice(start, start + 50), truncated: !!next, nextCursor: next, scanned: Math.min(50, hits.length - start), scanCapped: false,
+          total: cursor ? null : binRows.length,
+          ...(withSources ? { sources: [{ key: 'fake-manual', name: '說明書 W1', count: 150 }, { key: 'fake-faq', name: '常見問答', count: 1 }, { key: '__gone__', name: null, count: 2 }], sourcesTruncated: false } : {}),
+        })
+      }
+      return pageFake(req)
+    }, { ...SOURCES_PAGE, width: 390, height: 844 })
+
+    const binState = () => pg.evaluate(() => {
+      const dlg = [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__header')?.innerText.includes('回收桶'))
+      if (!dlg) return null
+      return {
+        count: dlg.querySelector('.src-bin-count')?.innerText ?? '',
+        titles: [...dlg.querySelectorAll('.src-bin-row__title')].map(e => e.innerText),
+        metas: [...dlg.querySelectorAll('.src-bin-row__meta')].map(e => e.innerText),
+        empty: dlg.querySelector('.src-bin-empty')?.innerText ?? '',
+        more: dlg.querySelector('.src-bin-more .el-button')?.innerText ?? '',
+        moreNote: dlg.querySelector('.src-bin-more__note')?.innerText ?? '',
+      }
+    })
+    const binClickMore = () => pg.evaluate(() => {
+      const dlg = [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__header')?.innerText.includes('回收桶'))
+      dlg?.querySelector('.src-bin-more .el-button')?.click()
+    })
+    /**
+     * ⚠️ 不用座標點、也不用 Backspace 清：手機寬時「已還原」的提示條浮在搜尋框上（點到提示條），
+     *    還原後頁面重載資料時焦點會被拿走（Backspace 打到別處、字沒清掉）。清空走 value＋input 事件，打字照樣一個個打（驗等打完才送）
+     */
+    const binType = async (text) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await pg.$eval('.src-bin-tools__q input', (el) => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '')
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        if (text) await pg.type('.src-bin-tools__q input', text, { delay: 60 })
+        if (await pg.$eval('.src-bin-tools__q input', el => el.value) === text) return
+      }
+      throw new Error(`回收桶搜尋框打不進「${text}」`)
+    }
+    /** 上一次的選單還在淡出時，點到的會是它的選項（沒作用）：先等它真的收起來，再用 DOM 打開（同樣不靠座標） */
+    const binPickSource = async (label) => {
+      await waitFor(pg, () => ![...document.querySelectorAll('.el-select-dropdown__item')].some(e => e.offsetParent !== null), null, 5000)
+      await pg.$eval('.src-bin-tools__src .el-select__wrapper', el => el.click())
+      await waitFor(pg, l => [...document.querySelectorAll('.el-select-dropdown__item')].some(e => e.offsetParent !== null && e.innerText.trim().startsWith(l)), label, 8000)
+      return pg.evaluate((l) => {
+        const opts = [...document.querySelectorAll('.el-select-dropdown__item')].filter(e => e.offsetParent !== null)
+        const labels = opts.map(e => e.innerText.trim())
+        opts.find(e => e.innerText.trim().startsWith(l))?.click()
+        return labels
+      }, label)
+    }
+
+    // 打開：「⋯」→ 回收桶
+    await waitFor(pg, () => !!document.querySelector('[data-tour="kb-more"]'), null, 30_000)
+    await pg.click('[data-tour="kb-more"]')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '回收桶'), null, 8000)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '回收桶')?.click())
+    await waitFor(pg, () => document.querySelectorAll('.src-bin-row').length > 0, null, 15_000)
+    await sleep(400)
+    const opened = await binState()
+    if (opened?.count === '回收桶裡有 153 條' && opened.titles.length === 50 && opened.more === '顯示更多' && !opened.titles.includes('W1 保固多久')) {
+      pass('打開回收桶 → 「回收桶裡有 153 條」、先列 50 條、底下「顯示更多」（換新版的 150 條排在昨天那一條前面）')
+    }
+    else fail('打開回收桶的樣子不對', JSON.stringify({ ...opened, titles: opened?.titles.length }))
+
+    // 手機 390 寬：對話框裡沒有任何東西超出螢幕、搜尋框和選單各自夠寬
+    if (process.env.SHOT_DIR) await pg.screenshot({ path: join(process.env.SHOT_DIR, 'kb-recycle-bin-phone.png') })
+    const binLay = await pg.evaluate(() => {
+      const vw = window.innerWidth
+      const dlg = [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__header')?.innerText.includes('回收桶'))
+      const over = [...(dlg?.querySelectorAll('*') ?? [])].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.right > vw + 1 })
+        .map(el => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}`)
+      const qW = document.querySelector('.src-bin-tools__q .el-input')?.getBoundingClientRect().width ?? 0
+      const sW = document.querySelector('.src-bin-tools__src .el-select')?.getBoundingClientRect().width ?? 0
+      return { over: over.slice(0, 5), hscroll: document.documentElement.scrollWidth > vw + 1, qW: Math.round(qW), sW: Math.round(sW) }
+    })
+    if (!binLay.over.length && !binLay.hscroll && binLay.qW >= 250 && binLay.sW >= 250) pass(`手機 390 寬 → 回收桶沒有東西超出螢幕，搜尋框 ${binLay.qW}px、選單 ${binLay.sW}px 各佔一行`)
+    else fail('手機上回收桶撐破或擠扁了', JSON.stringify(binLay))
+
+    // 搜「保固」（一個字一個字打）→ 打完才送一發、找到昨天那一條
+    const callsBefore = binCalls.length
+    await binType('保固')
+    await waitFor(pg, () => [...document.querySelectorAll('.src-bin-row__title')].map(e => e.innerText).join() === 'W1 保固多久', null, 10_000)
+    await sleep(800)
+    const searched = await binState()
+    const searchCalls = binCalls.slice(callsBefore)
+    if (searched?.titles.join() === 'W1 保固多久' && searched.count === '找到 1 條' && searchCalls.length === 1 && searchCalls[0].q === '保固' && !searchCalls[0].withSources) {
+      pass('搜「保固」→ 打完才送一發（不是每個字一發、不重算選單），找到換新版擠下去的昨天那一條、「找到 1 條」')
+    }
+    else fail('回收桶搜尋不對', JSON.stringify({ searched, searchCalls }))
+
+    // 還原：照舊打還原、那一條從清單拿掉、講「已還原」
+    await pg.evaluate(() => [...document.querySelectorAll('.src-bin-row')].find(r => r.innerText.includes('W1 保固多久'))?.querySelector('.el-button')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('已還原「W1 保固多久」')), null, 8000)
+    const afterRestore = await binState()
+    if (restores.includes('yesterday') && !afterRestore?.titles.includes('W1 保固多久') && afterRestore?.empty === '回收桶裡沒有符合的。') pass('搜到後按「還原」→ 照舊還原、從清單拿掉，剩下沒有符合的就講「回收桶裡沒有符合的。」')
+    else fail('搜到後還原不對', JSON.stringify({ restores, afterRestore }))
+
+    // 挑「哪一份資料」：選單只列有東西的、帶條數，資料已經不在的叫「已經刪掉的資料」；挑了只列那一份、名稱不重複寫
+    await binType('')
+    const labels = await binPickSource('已經刪掉的資料')
+    await waitFor(pg, () => [...document.querySelectorAll('.src-bin-row__title')].map(e => e.innerText).join() === '資料整份刪掉的一條,資料整份刪掉的另一條', null, 10_000)
+    await sleep(300)
+    const gone = await binState()
+    if (labels.join('|') === '全部資料|說明書 W1（150）|已經刪掉的資料（2）') {
+      pass(`選單：${labels.join('、')}（還原到 0 條的那一份拿掉了）`)
+    }
+    else fail('「哪一份資料」選單不對', labels.join('|'))
+    if (gone?.titles.length === 2 && gone.count === '找到 2 條') pass('挑「已經刪掉的資料」→ 只列那兩條、「找到 2 條」')
+    else fail('挑資料不對', JSON.stringify({ gone, lastCalls: binCalls.slice(-3) }))
+    await binPickSource('說明書 W1')
+    await waitFor(pg, () => document.querySelectorAll('.src-bin-row').length === 50, null, 10_000)
+    await sleep(300)
+    const manualPick = await binState()
+    if (manualPick?.count === '找到 150 條' && manualPick.metas.every(m => !m.includes('說明書 W1'))) pass('挑「說明書 W1」→ 「找到 150 條」（選單數好的），每一列不再重複寫資料名稱')
+    else fail('挑一份資料的數字或名稱不對', JSON.stringify({ count: manualPick?.count, meta: manualPick?.metas[0], lastCalls: binCalls.slice(-3) }))
+
+    // 全部資料 →「顯示更多」一路翻到底：153−1（還原了）＝152 條、按鈕消失
+    await binPickSource('全部資料')
+    await waitFor(pg, () => document.querySelectorAll('.src-bin-row').length === 50, null, 10_000)
+    for (let i = 0; i < 4; i++) {
+      const s = await binState()
+      if (!s?.more) break
+      const n = s.titles.length
+      await binClickMore()
+      await waitFor(pg, k => document.querySelectorAll('.src-bin-row').length > k, n, 10_000)
+    }
+    const all = await binState()
+    if (all?.titles.length === 152 && !all.more && all.count === '回收桶裡有 152 條' && all.titles.includes('資料整份刪掉的另一條')) pass('「顯示更多」一路翻到底 → 152 條一條不少、按鈕消失、總數跟著還原少一條')
+    else fail('顯示更多翻不到底', JSON.stringify({ n: all?.titles.length, more: all?.more, count: all?.count }))
+
+    // 還原失敗（空間滿）→ 講伺服器給的原因、那一條留著
+    await pg.evaluate(() => [...document.querySelectorAll('.src-bin-row')].find(r => r.querySelector('.src-bin-row__title')?.innerText === '舊版第 1 條')?.querySelector('.el-button')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('知識空間滿了')), null, 8000)
+    const full = await binState()
+    if (restores.includes('old-0') && full?.titles.includes('舊版第 1 條')) pass('還原時空間滿了 → 講伺服器給的原因（「知識空間滿了⋯」）、那一條留在回收桶')
+    else fail('還原失敗沒講原因或那一條不見了', JSON.stringify({ restores, kept: full?.titles.includes('舊版第 1 條'), toasts: await toastsOf(pg) }))
+
+    // 翻到上限還沒找到 → 講「更早的還沒找」、按「繼續往前找」接著找
+    await binType('很久以前')
+    await waitFor(pg, () => !!document.querySelector('.src-bin-more__note'), null, 10_000)
+    const capped = await binState()
+    if (capped?.titles.length === 0 && capped.moreNote === '最近刪除的 1000 條裡沒有符合的，更早的還沒找' && capped.more === '繼續往前找' && !capped.empty) {
+      pass('最近 1000 條裡沒找到 → 講「更早的還沒找」＋「繼續往前找」（不是「找不到」）')
+    }
+    else fail('翻到上限的講法不對', JSON.stringify(capped))
+    await binClickMore()
+    await waitFor(pg, () => [...document.querySelectorAll('.src-bin-row__title')].some(e => e.innerText === '很久以前刪的'), null, 10_000)
+    const found = await binState()
+    const capCalls = binCalls.filter(c => c.q === '很久以前')
+    if (found?.titles.join() === '很久以前刪的' && found.count === '找到 1 條' && !found.more && capCalls.at(-1)?.cursor === 'cap-1') pass('按「繼續往前找」→ 帶位置記號接著找、找到了，「找到 1 條」、按鈕消失')
+    else fail('繼續往前找不對', JSON.stringify({ found, capCalls }))
+    await pg.close()
+  }
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))

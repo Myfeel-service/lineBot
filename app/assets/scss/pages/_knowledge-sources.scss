@@ -758,6 +758,48 @@
     padding-left: 18px;
   }
   li { margin: 2px 0; }
+
+  /* 「這一條回答了哪幾題？」（`C-311`）：標題左、「全部」右，同一行不多佔一列 */
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  /* 一組最多 30 題：超過約 6 題就在框裡捲，審核視窗本身不被撐長 */
+  &__checks {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 168px;
+    margin-top: 6px;
+    overflow-y: auto;
+  }
+  /* ⚠️ Element 的 el-checkbox 固定 32px 高、不換行、label line-height 1：客人原句一長就溢出或疊行。
+     夾父層（0,2,0）才蓋得過 EP 的單一 class，與載入順序無關（同 .kb-keep-edited__list） */
+  &__head .el-checkbox,
+  &__checks .el-checkbox {
+    height: auto;
+    margin-right: 0;
+  }
+  &__checks .el-checkbox {
+    min-height: 24px;
+    white-space: normal;
+    align-items: flex-start;
+
+    .el-checkbox__input { margin-top: 3px; }
+  }
+  &__checks .el-checkbox__label {
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  &__head .el-checkbox__label { font-size: 12px; }
+  &__note {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
 }
 .kb-suggest-dialog-footer {
   display: flex;
@@ -1224,6 +1266,50 @@
     color: var(--el-text-color-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+/* 回收桶的搜尋＋「哪一份資料」（`C-312`）。手機 390 寬（視窗 92vw）一排塞不下就各佔一整行。
+   ⚠️ el-select 自己的寬度會蓋掉掛在它身上的 class，所以寬度夾在外層 div、裡面的 el-select 撐滿 */
+.src-bin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+
+  &__q {
+    flex: 2 1 220px;
+    min-width: 0;
+  }
+
+  &__src {
+    flex: 1 1 180px;
+    min-width: 0;
+
+    .el-select { width: 100%; }
+  }
+}
+
+/* 「回收桶裡有 N 條」「找到 N 條」 */
+.src-bin-count {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 「顯示更多」「繼續往前找」：放在清單最底下（跟著清單一起捲） */
+.src-bin-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0 2px;
+
+  &__note {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    text-align: center;
   }
 }
 

@@ -1404,27 +1404,64 @@
       刪除的知識會先放在這裡 30 天，期間可以還原；到期後才會真正清除。
       還原後會回到刪除前的狀態（原本停用的還原後仍是停用）。
     </p>
-    <p v-if="recycleLoading" class="src-bin-empty">載入中⋯</p>
-    <p v-else-if="recycleLoadFailed" class="src-bin-empty">
-      回收桶讀取失敗，請重新開啟一次。
-    </p>
-    <p v-else-if="!recycleRows.length" class="src-bin-empty">回收桶是空的。</p>
-    <div v-else class="src-bin-list">
-      <div v-for="r in recycleRows" :key="r.id" class="src-bin-row">
-        <div class="src-bin-row__main">
-          <span class="src-bin-row__title">{{ r.title }}</span>
-          <span class="src-bin-row__meta">
-            {{ r.sourceName ? `${r.sourceName}｜` : '' }}{{ formatRecycleTime(r.deletedAtMs) }}刪除
-            <template v-if="r.purgeAfterMs">・{{ recycleDaysLeft(r.purgeAfterMs) }} 天後清除</template>
-          </span>
-          <span class="src-bin-row__snippet">{{ r.snippet }}</span>
-        </div>
-        <el-button size="small" plain :loading="restoringId === r.id" @click="restoreChunk(r)">
-          還原
-        </el-button>
+    <!--
+      找得到才救得回來（`C-312`）：以前只列最近 100 條、不能搜——一份 150 條的說明書換新版，
+      昨天刪的那一條就被擠出畫面。搜尋＋挑資料＋「顯示更多」；回收桶整個是空的就不畫工具列。
+    -->
+    <div v-if="recycleTotal !== 0 || recycleFiltering" class="src-bin-tools">
+      <div class="src-bin-tools__q">
+        <el-input
+          v-model="recycleQuery"
+          clearable
+          placeholder="找標題或內容"
+          :prefix-icon="Search"
+        />
       </div>
-      <p v-if="recycleTruncated" class="src-bin-empty">只顯示最近 100 筆。</p>
+      <div class="src-bin-tools__src">
+        <el-select v-model="recycleSource" filterable aria-label="哪一份資料">
+          <el-option :value="RECYCLE_ALL" label="全部資料" />
+          <el-option
+            v-for="s in recycleSourceOptions"
+            :key="s.key"
+            :value="s.key"
+            :label="recycleOptionLabel(s)"
+          />
+          <el-option v-if="recycleSourcesNote" value="__note__" :label="recycleSourcesNote" disabled />
+        </el-select>
+      </div>
     </div>
+    <p v-if="recycleLoading" class="src-bin-empty">載入中⋯</p>
+    <p v-else-if="recycleLoadError" class="src-bin-empty">{{ recycleLoadError }}</p>
+    <p v-else-if="!recycleRows.length && !recycleCursor" class="src-bin-empty">
+      {{ recycleFiltering ? '回收桶裡沒有符合的。' : '回收桶是空的。' }}
+    </p>
+    <template v-else>
+      <p v-if="recycleCountText" class="src-bin-count">{{ recycleCountText }}</p>
+      <div class="src-bin-list">
+        <div v-for="r in recycleRows" :key="r.id" class="src-bin-row">
+          <div class="src-bin-row__main">
+            <span class="src-bin-row__title">{{ r.title }}</span>
+            <span class="src-bin-row__meta">
+              {{ r.sourceName && recycleSource === RECYCLE_ALL ? `${r.sourceName}｜` : '' }}{{ formatRecycleTime(r.deletedAtMs) }}刪除
+              <template v-if="r.purgeAfterMs">・{{ recycleDaysLeft(r.purgeAfterMs) }} 天後清除</template>
+            </span>
+            <span class="src-bin-row__snippet">{{ r.snippet }}</span>
+          </div>
+          <el-button size="small" plain :loading="restoringId === r.id" @click="restoreChunk(r)">
+            還原
+          </el-button>
+        </div>
+        <!-- 翻到上限先停的（scanCapped）要講「更早的還沒找」——⛔ 不可以讓「還沒找」看起來像「找不到」 -->
+        <div v-if="recycleCursor" class="src-bin-more">
+          <span v-if="recycleScanCapped" class="src-bin-more__note">
+            {{ recycleRows.length ? `最近刪除的 ${recycleScanned} 條找過了，更早的還沒找` : `最近刪除的 ${recycleScanned} 條裡沒有符合的，更早的還沒找` }}
+          </span>
+          <el-button size="small" :loading="recycleLoadingMore" @click="loadRecycle(true)">
+            {{ recycleScanCapped ? '繼續往前找' : '顯示更多' }}
+          </el-button>
+        </div>
+      </div>
+    </template>
   </el-dialog>
 
   <!-- ── Duplicate Suggestions Modal（C-40(c)）────────── -->
@@ -2077,6 +2114,9 @@ function formatNumberChanges(c?: { removed: string[]; added: string[] }): string
 // ── Recycle bin（回收桶）─────────────────────────────
 // 刪除一律先軟刪除（後端 C-42），這裡是唯一的還原入口。三態（載入中/失敗/就緒）
 // 分開呈現——「讀取失敗」與「回收桶是空的」是兩回事，混在一起就是假綠燈。
+//
+// `C-312`：可以搜尋、挑「哪一份資料」、「顯示更多」往前翻。以前只列最近 100 條——一份 150 條的說明書換新版，
+// 昨天刪的那一條就被擠出畫面，畫面說「30 天內可以還原」卻找不到、救不回來。
 interface RecycleRow {
   id: string
   title: string
@@ -2086,29 +2126,177 @@ interface RecycleRow {
   deletedAtMs: number
   purgeAfterMs: number
 }
+interface RecycleSourceOption { key: string; name: string | null; count: number }
+interface RecycleBinRes {
+  items: RecycleRow[]
+  truncated: boolean
+  nextCursor?: string | null
+  scanned?: number
+  scanCapped?: boolean
+  total?: number | null
+  sources?: RecycleSourceOption[]
+  sourcesTruncated?: boolean
+  sourcesFailed?: boolean
+}
+/** 「全部資料」的代號：Element Plus 的 el-select 把 '' 當成沒選，會顯示 placeholder 而不是「全部資料」 */
+const RECYCLE_ALL = '__all__'
+/** 資料已經不在的那一組（同 server/api/ai/knowledge/recycle-bin.get.ts 的 RECYCLE_GONE_SOURCE） */
+const RECYCLE_GONE = '__gone__'
+
 const recycleOpen = ref(false)
 const recycleLoading = ref(false)
-const recycleLoadFailed = ref(false)
+/** 讀失敗的那一句（伺服器給的原因優先）；空字串＝沒失敗 */
+const recycleLoadError = ref('')
 const recycleRows = ref<RecycleRow[]>([])
-const recycleTruncated = ref(false)
+const recycleQuery = ref('')
+const recycleSource = ref(RECYCLE_ALL)
+const recycleSources = ref<RecycleSourceOption[]>([])
+/** 選單的數字只算到一部分（或讀不到）時，選單最後那一行講出來；空字串＝完整 */
+const recycleSourcesNote = ref('')
+/** 回收桶一共幾條；null＝伺服器沒算出來 */
+const recycleTotal = ref<number | null>(null)
+/** 「顯示更多」要帶回去的位置；null＝已經到最早刪除的那一條 */
+const recycleCursor = ref<string | null>(null)
+/** 伺服器翻到上限、一頁還沒湊滿就先停了：更早的還沒找（不是找不到） */
+const recycleScanCapped = ref(false)
+/** 這一次搜尋一共往前翻了幾條（按「繼續往前找」會累加） */
+const recycleScanned = ref(0)
+const recycleLoadingMore = ref(false)
 const restoringId = ref('')
+/** 每發一次 +1：回來時已經不是最新那一發（又打了字、換了資料）就丟掉，不蓋掉畫面 */
+let recycleSeq = 0
+let recycleTimer: ReturnType<typeof setTimeout> | null = null
+/** 畫面上這一份是用什麼條件查的：條件沒變就不重查（打開時重設條件也會觸發 watch） */
+let recycleLoadedKey = ''
 
-async function openRecycleBin() {
-  recycleOpen.value = true
-  recycleLoading.value = true
-  recycleLoadFailed.value = false
-  try {
-    const res = await apiFetch<{ items: RecycleRow[]; truncated: boolean }>('/api/ai/knowledge/recycle-bin')
-    recycleRows.value = res.items
-    recycleTruncated.value = res.truncated
+const recycleFiltering = computed(() => !!recycleQuery.value.trim() || recycleSource.value !== RECYCLE_ALL)
+/** 選單只列還有東西的（還原到 0 條的拿掉，除非正選著它） */
+const recycleSourceOptions = computed(() =>
+  recycleSources.value.filter(s => s.count > 0 || s.key === recycleSource.value),
+)
+/**
+ * 數字那一行。只挑了資料、沒打字時用選單數好的數字（還沒翻完也知道那一份有幾條）；
+ * 有打字又還沒翻完時只能講「目前找到」——後面還有沒翻的，不能講成總共幾條。
+ */
+const recycleCountText = computed(() => {
+  const n = recycleRows.value.length
+  if (!recycleFiltering.value) {
+    const total = recycleTotal.value ?? (recycleCursor.value ? null : n)
+    return total ? `回收桶裡有 ${total} 條` : ''
   }
-  catch {
-    recycleLoadFailed.value = true
+  if (!recycleQuery.value.trim() && !recycleSourcesNote.value) {
+    const opt = recycleSources.value.find(s => s.key === recycleSource.value)
+    if (opt) return `找到 ${opt.count} 條`
+  }
+  if (!n) return ''
+  return recycleCursor.value ? `目前找到 ${n} 條` : `找到 ${n} 條`
+})
+
+function recycleOptionLabel(s: RecycleSourceOption): string {
+  const name = s.key === RECYCLE_GONE ? '已經刪掉的資料' : (s.name || '（沒有名稱的資料）')
+  return `${name}（${s.count}）`
+}
+
+function recycleKey(): string {
+  return `${recycleQuery.value.trim()}\n${recycleSource.value}`
+}
+
+/**
+ * 讀回收桶。more＝「顯示更多／繼續往前找」（接在後面）；withSources＝順便拿選單（打開那一下才帶：
+ * 伺服器要把整個回收桶數一遍，搜尋時不重算）。
+ */
+async function loadRecycle(more = false, withSources = false) {
+  if (recycleTimer) {
+    clearTimeout(recycleTimer)
+    recycleTimer = null
+  }
+  if (more && !recycleCursor.value) return
+  const q = recycleQuery.value.trim()
+  const source = recycleSource.value
+  const seq = ++recycleSeq
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  if (source !== RECYCLE_ALL) params.set('source', source)
+  if (more && recycleCursor.value) params.set('cursor', recycleCursor.value)
+  if (withSources) params.set('withSources', '1')
+  if (more) {
+    recycleLoadingMore.value = true
+  }
+  else {
+    recycleLoadedKey = recycleKey()
+    recycleLoading.value = true
+    recycleLoadError.value = ''
+  }
+  try {
+    const qs = params.toString()
+    const res = await apiFetch<RecycleBinRes>(`/api/ai/knowledge/recycle-bin${qs ? `?${qs}` : ''}`)
+    if (seq !== recycleSeq) return
+    if (more) {
+      const seen = new Set(recycleRows.value.map(r => r.id))
+      recycleRows.value = [...recycleRows.value, ...res.items.filter(r => !seen.has(r.id))]
+    }
+    else {
+      recycleRows.value = res.items
+    }
+    recycleCursor.value = res.nextCursor ?? null
+    recycleScanCapped.value = !!res.scanCapped
+    recycleScanned.value = (more ? recycleScanned.value : 0) + (res.scanned ?? res.items.length)
+    if (!more && typeof res.total === 'number') recycleTotal.value = res.total
+    if (withSources) {
+      recycleSources.value = res.sources ?? []
+      recycleSourcesNote.value = res.sourcesFailed
+        ? '資料清單讀不到，先看全部'
+        : res.sourcesTruncated ? '更早刪除的沒算進數字' : ''
+    }
+  }
+  catch (err) {
+    if (seq !== recycleSeq) return
+    if (more) {
+      showToast(apiErrorText(err, '讀取失敗，請再按一次'), 'error')
+    }
+    else {
+      recycleLoadError.value = apiErrorText(err, '回收桶讀取失敗，請重新開啟一次。')
+      recycleRows.value = []
+      recycleCursor.value = null
+    }
   }
   finally {
-    recycleLoading.value = false
+    if (seq === recycleSeq) {
+      recycleLoading.value = false
+      recycleLoadingMore.value = false
+    }
   }
 }
+
+/** 每次打開都從頭來：回收桶可能已經變了（剛刪、剛還原） */
+async function openRecycleBin() {
+  recycleQuery.value = ''
+  recycleSource.value = RECYCLE_ALL
+  recycleRows.value = []
+  recycleSources.value = []
+  recycleSourcesNote.value = ''
+  recycleTotal.value = null
+  recycleCursor.value = null
+  recycleScanCapped.value = false
+  recycleOpen.value = true
+  await loadRecycle(false, true)
+}
+
+/**
+ * 打字停 500ms 才查（同全庫搜尋）：伺服器每一發最多往前翻 1000 條，照讀取計費。
+ * 換資料是點一下的動作，直接查。
+ */
+watch(recycleQuery, () => {
+  if (!recycleOpen.value) return
+  if (recycleTimer) clearTimeout(recycleTimer)
+  recycleTimer = setTimeout(() => {
+    recycleTimer = null
+    if (recycleOpen.value && recycleKey() !== recycleLoadedKey) loadRecycle()
+  }, 500)
+})
+watch(recycleSource, () => {
+  if (recycleOpen.value && recycleKey() !== recycleLoadedKey) loadRecycle()
+})
 
 function formatRecycleTime(ms: number): string {
   return ms ? relativeTime(ms) : ''
@@ -2123,6 +2311,11 @@ async function restoreChunk(r: RecycleRow) {
   try {
     await apiFetch(`/api/ai/knowledge/${r.id}/restore`, { method: 'POST' })
     recycleRows.value = recycleRows.value.filter(x => x.id !== r.id)
+    // 數字跟著少一條（`C-312`）：總數、那一份在選單上的數字（資料已經不在的算在「已經刪掉的資料」）
+    if (recycleTotal.value) recycleTotal.value--
+    const optKey = r.sourceId && recycleSources.value.some(s => s.key === r.sourceId) ? r.sourceId : RECYCLE_GONE
+    const opt = recycleSources.value.find(s => s.key === optKey)
+    if (opt) opt.count = Math.max(0, opt.count - 1)
     showToast(`已還原「${r.title}」`, 'success')
     // 還原會動到來源的卡數/列表（連坐的 manual 來源也會回來）→ 重載
     await loadSources(true)
