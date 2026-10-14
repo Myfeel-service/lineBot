@@ -701,10 +701,11 @@
         <div class="kb-preview-summary__actions">
           <!-- 重做清單跑到一半時擋住匯入:按下去會把「即將被取代的那一份」寫進知識庫。
                勾了總表時按鈕要把它算進去(見 importTotalLabel):按鈕說 20、結果頁說 21 是 `D-41` P0② -->
+          <!-- keepLoading：還在讀原本那一份他改過哪幾條（`D-125`①），讀完才知道要不要帶 -->
           <el-button
             type="primary"
             :loading="importing"
-            :disabled="includedCount === 0 || previewing || fitChunkCount === 0"
+            :disabled="includedCount === 0 || previewing || fitChunkCount === 0 || keepLoading"
             @click="runImport"
           >
             {{ importing ? '加入中⋯' : importButtonLabel }}
@@ -861,13 +862,37 @@
           會更新「{{ replaceTarget.name }}」，不會多一份
         </template>
         <div class="kb-dedup-body">
+          <!-- 帶過去的那幾條不進回收桶（`D-125`①）：數字要扣掉，⛔ 不另外再講一句（下面那一塊就在講它們） -->
           <p class="text-xs">
-            這份資料原本的 {{ replaceTarget.chunkCount }} 條知識會移到回收桶（30 天內都救得回來），
+            這份資料原本的 {{ Math.max(0, replaceTarget.chunkCount - keptItems.length) }} 條知識會移到回收桶（30 天內都救得回來），
             換成這次整理好的內容。同步設定留著；資料夾沒改就留在原地。
           </p>
           <el-button size="small" text @click="replaceTarget = null">改成另外建一份新的</el-button>
         </div>
       </el-alert>
+
+      <!--
+        他在原本那一份改過的（`D-125`① 拍板 A）：換之前先問帶不帶到新版，預設全帶。
+        每一條後面那半句講勾／不勾會變成什麼（新版有沒有同名的那一條）——⛔ 不另外寫一段說明，答案就在那半句。
+      -->
+      <div v-if="replaceTarget && (keepLoadFailed || keepCandidates.length)" class="kb-keep-edited">
+        <template v-if="keepLoadFailed">
+          <p class="kb-keep-edited__head">讀不到「{{ replaceTarget.name }}」裡你改過哪幾條</p>
+          <p class="kb-keep-edited__note">
+            直接換的話，你改過的也會一起移到回收桶（30 天內救得回來）。
+            <button type="button" class="kb-start__fold" :disabled="keepLoading" @click="startKeepLoad(replaceTarget.id)">再讀一次</button>
+          </p>
+        </template>
+        <template v-else>
+          <p class="kb-keep-edited__head">你改過的 {{ keepCandidates.length }} 條，要帶到新版嗎？</p>
+          <el-checkbox-group v-model="keepEditedIds" class="kb-keep-edited__list">
+            <el-checkbox v-for="c in keepCandidates" :key="c.id" :value="c.id" class="kb-keep-edited__row">
+              <span class="kb-keep-edited__title">{{ c.title }}</span>
+              <span class="kb-keep-edited__suffix">{{ keepSuffix(c) }}</span>
+            </el-checkbox>
+          </el-checkbox-group>
+        </template>
+      </div>
 
       <!-- 總表（列表頁專屬）：列在最上面、可編輯、可取消 -->
       <div v-if="overviewCard" class="kb-overview-card">
@@ -1021,7 +1046,7 @@
         <el-button
           type="primary"
           :loading="importing"
-          :disabled="includedCount === 0 || previewing || fitChunkCount === 0"
+          :disabled="includedCount === 0 || previewing || fitChunkCount === 0 || keepLoading"
           @click="runImport"
         >
           {{ importing ? '加入中⋯' : importButtonLabel }}
@@ -1081,9 +1106,13 @@
         蓋掉東西一定要講出來，而且要講「舊的去哪了」（`C-135`）。
         只報新的幾條、不提舊的幾條被換掉，等於讓人以為知識庫變多了。
       -->
-      <p v-if="result.replacedChunks" class="kb-section-hint">
-        這份資料原本的 <strong>{{ result.replacedChunks }}</strong> 條知識已換成上面這批；
-        舊的移到<strong>回收桶</strong>，30 天內都救得回來。
+      <p v-if="result.replacedChunks || result.keptEdited" class="kb-section-hint">
+        <template v-if="result.replacedChunks">
+          這份資料原本的 <strong>{{ result.replacedChunks }}</strong> 條知識已換成上面這批；
+          舊的移到<strong>回收桶</strong>，30 天內都救得回來。
+        </template>
+        <!-- 帶過去的那幾條（`D-125`①）：伺服器說留了幾條就講幾條（⛔ 不照畫面上勾的數，伺服器會再驗一次） -->
+        <template v-if="result.keptEdited">你改過的 <strong>{{ result.keptEdited }}</strong> 條帶到新版了。</template>
       </p>
 
       <!-- 原檔沒留成要講（`C-296`③）：不講的話，之後找「下載原檔」才發現沒有，還以為是系統壞了 -->
@@ -1248,6 +1277,8 @@ import type { KbVerifyOutcome } from '~/utils/kb-verify-outcome'
 import { batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
 import { CARDS_PER_PAGE_ESTIMATE, recommendSitePages, sitePageGroup } from '~/utils/kb-site-pages'
 import { EMPTY_FILE_HINT } from '~/utils/knowledge-upload'
+import { apiErrorStatus, apiErrorText, isRetryableError } from '~/utils/api-error-text'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 
 const props = defineProps<{
   modelValue: boolean
@@ -1728,7 +1759,7 @@ async function probeGsheet(url: string, force = false) {
     gsheetProbe.value = {
       status: 'unknown',
       message: '試不出來（可能是暫時的網路問題），可以直接按下面的按鈕試試看。',
-      detail: String(err?.data?.statusMessage || err?.statusMessage || err?.message || '').slice(0, 200) || undefined,
+      detail: apiErrorText(err, '').slice(0, 200) || undefined,
     }
   }
   finally {
@@ -1789,7 +1820,7 @@ const autoImported = ref(false)
  * 停在預覽的理由（`D-123`②）——停下來那一刻的快照：畫面上講「還沒加進去，先看下面的提醒」用。
  * 用快照不用即時算：他照提醒改了名字、同名提醒消失之後，標題不該跟著改口說「AI 整理的結果」。
  */
-type PreviewStopReason = 'ocr' | 'truncated' | 'quota' | 'sameName'
+type PreviewStopReason = 'ocr' | 'truncated' | 'quota' | 'sameName' | 'edited'
 const stoppedFor = ref<PreviewStopReason[]>([])
 /**
  * 最近一次預覽工作的 jobId（C-46）：兩個用途——
@@ -1838,6 +1869,62 @@ const folderAutoPicked = ref(false)
  */
 /** quotaChunkCount：換掉它會空出多少空間（不含草稿，伺服器算好的）；chunkCount 是畫面上講「舊的幾條」用的 */
 const replaceTarget = ref<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number } | null>(null)
+
+/**
+ * 換掉的那一份裡**他親手改過的**那幾條（`D-125`① 拍板 A）。
+ *
+ * 為什麼要有：以前換新版會把他改過的那幾條跟著舊的一起丟進回收桶、一句話都沒講——說明裡卻一再寫
+ * 「你親手改過的一律保留」。現在只要選了要換哪一份（「換新版」、「重新整理，換掉那一份」、「更新這一份」、
+ * 接回這樣的一份整理），就去讀那一份、挑出改過的（不算總表），**一律停在預覽問他**（見 previewStopReasons 的 edited），
+ * 預設全勾＝帶到新版；沒勾的照新版、舊的那條進回收桶。勾的送 `source.keepEditedChunkIds`。
+ * ⚠️ 讀不到（網路、伺服器）也要停：不知道有沒有改過的，就不能替他決定把它們丟掉。那一份已經不在（404）＝沒東西可帶。
+ */
+interface KeepCandidate { id: string, title: string, key: string, countsQuota: boolean }
+const keepCandidates = ref<KeepCandidate[]>([])
+/** 勾了要帶到新版的（el-checkbox-group 的值） */
+const keepEditedIds = ref<string[]>([])
+/** 上面那份清單是哪一份讀來的（換了目標就作廢） */
+const keepLoadedFor = ref('')
+const keepLoading = ref(false)
+const keepLoadFailed = ref(false)
+/** 正在讀的那一趟：自動加入（settlePreview）要等它讀完才決定停不停 */
+let keepLoad: Promise<void> = Promise.resolve()
+let keepSeq = 0
+function startKeepLoad(targetId: string) {
+  const seq = ++keepSeq
+  keepCandidates.value = []
+  keepEditedIds.value = []
+  keepLoadedFor.value = ''
+  keepLoadFailed.value = false
+  keepLoading.value = !!targetId
+  if (!targetId) {
+    keepLoad = Promise.resolve()
+    return
+  }
+  keepLoad = (async () => {
+    try {
+      const res = await apiFetch<{ chunks?: Array<{ id: string, title: string, isOverview?: boolean, manuallyEditedAtMs?: number, status?: string }> }>(
+        `/api/ai/sources/${encodeURIComponent(targetId)}`,
+      )
+      if (seq !== keepSeq) return
+      const edited = (res.chunks ?? []).filter(c => (c.manuallyEditedAtMs ?? 0) > 0 && !c.isOverview)
+      // 草稿（等你看過）本來就沒佔空間：留著也不會吃掉新版的位置（見 roomLeft）
+      keepCandidates.value = edited.map(c => ({ id: c.id, title: c.title, key: knowledgeTitleKey(c.title), countsQuota: c.status !== 'draft' }))
+      keepEditedIds.value = edited.map(c => c.id)
+      keepLoadedFor.value = targetId
+    }
+    catch (err) {
+      if (seq !== keepSeq) return
+      if (apiErrorStatus(err) === 404) keepLoadedFor.value = targetId // 那一份已經不在了：加入那一下伺服器會講原因
+      else keepLoadFailed.value = true
+    }
+    finally {
+      if (seq === keepSeq) keepLoading.value = false
+    }
+  })()
+}
+// flush:'sync'：applyPreviewResult 選定目標之後馬上就是 settlePreview，要在那之前就開始讀、拿得到 keepLoad
+watch(() => replaceTarget.value?.id ?? '', id => startKeepLoad(id), { flush: 'sync' })
 
 /** 後端回報「這份內容已經匯過了」（`C-134`）：內容指紋一模一樣的既有資料 */
 interface DuplicateHit {
@@ -2140,7 +2227,7 @@ async function runDiscover() {
     openSitePages()
   }
   catch (err: any) {
-    showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '探索失敗', 'error')
+    showToast(apiErrorText(err, '找不到這個網站的其他頁面'), 'error')
   }
   finally {
     discovering.value = false
@@ -2323,7 +2410,7 @@ async function runSiteImport() {
         }
         else {
           // 截 120 字（同一次好幾份那份清單）：80 字會把「請共用給服務帳號：…」這種長句切在帳號中間
-          page.error = String(err?.data?.statusMessage || err?.statusMessage || err?.message || '加入失敗').slice(0, 120)
+          page.error = apiErrorText(err, '加入失敗').slice(0, 120)
         }
       }
       finally {
@@ -2380,6 +2467,28 @@ const willImportChunks = computed(() =>
 const includedCount = computed(() => willImportChunks.value.length)
 
 /**
+ * 換新版時勾了要帶過去的那幾條（`D-125`①）：只算「這一份目標」讀來的清單（換了目標就不算）。
+ * 帶過去的那幾條**留在原地、照樣佔空間**；新版裡跟它們同名的（同一把 knowledgeTitleKey）伺服器不收——
+ * 這裡先扣掉，按鈕、空間、送出去的才是同一個數（伺服器那邊也照樣擋，兩邊同一套比對）。
+ */
+const keptItems = computed(() =>
+  keepLoadedFor.value && keepLoadedFor.value === replaceTarget.value?.id
+    ? keepCandidates.value.filter(c => keepEditedIds.value.includes(c.id))
+    : [])
+const keptKeys = computed(() => new Set(keptItems.value.map(c => c.key).filter(Boolean)))
+/** 新版裡有哪些標題（每條後面「新版也有這一條／沒有這一條」用） */
+const incomingKeys = computed(() => new Set(willImportChunks.value.map(c => knowledgeTitleKey(c.title))))
+/** 這次真的會送出去建的：勾了的、扣掉跟帶過去那幾條同名的 */
+const sendChunks = computed(() => willImportChunks.value.filter(c => !keptKeys.value.has(knowledgeTitleKey(c.title))))
+const sendCount = computed(() => sendChunks.value.length)
+/** 每一條改過的後面那半句：勾著＝帶過去（新版有同名的就用他改的）；沒勾＝照新版、他改的那條進回收桶 */
+function keepSuffix(c: KeepCandidate): string {
+  const inNew = incomingKeys.value.has(c.key)
+  if (keepEditedIds.value.includes(c.id)) return inNew ? '新版也有這一條，會用你改過的' : '新版沒有這一條，會原樣留著'
+  return inNew ? '用新版的' : '移到回收桶'
+}
+
+/**
  * 這次真的會建幾條（`D-41` P0②）。
  *
  * 總表卡不在 `includedCount` 裡（它是 overviewCard 另外送出的），所以按鈕寫「直接匯入 20 條」、
@@ -2392,7 +2501,7 @@ const overviewWillImport = computed(() => {
   return !!(ov && ov.included && ov.title.trim() && ov.content.trim())
 })
 const importTotalLabel = computed(() =>
-  overviewWillImport.value ? `${includedCount.value} 條＋1 張總表` : `${includedCount.value} 條`,
+  overviewWillImport.value ? `${sendCount.value} 條＋1 張總表` : `${sendCount.value} 條`,
 )
 
 /**
@@ -2416,7 +2525,9 @@ const roomLeft = computed<number | null>(() => {
   const q = quota.value
   if (!q || q.limit == null) return null
   // ⚠️ 用不含草稿的那個數：草稿本來就沒算進「已用」，把它當成會空出來的空間，按鈕就會多承諾、按下去整批被擋
-  const freed = replaceTarget.value ? (replaceTarget.value.quotaChunkCount ?? replaceTarget.value.chunkCount) : 0
+  // ⚠️ 帶到新版的那幾條（`D-125`①）留在原地、照樣佔空間：不扣的話一樣多承諾
+  const keptQuota = keptItems.value.filter(c => c.countsQuota).length
+  const freed = replaceTarget.value ? Math.max(0, (replaceTarget.value.quotaChunkCount ?? replaceTarget.value.chunkCount) - keptQuota) : 0
   return Math.max(0, q.limit - q.used + freed)
 })
 /**
@@ -2432,21 +2543,22 @@ const siteRoomHint = computed(() => {
   }
   return { tight: false, text: `空間還能放 ${room} 條（一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條）` }
 })
-/** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表） */
+/** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表）。跟帶過去那幾條同名的不用位置（sendCount 已扣） */
 const fitChunkCount = computed(() =>
-  roomLeft.value == null ? includedCount.value : Math.min(includedCount.value, roomLeft.value))
+  roomLeft.value == null ? sendCount.value : Math.min(sendCount.value, roomLeft.value))
 const overviewFits = computed(() =>
   overviewWillImport.value && (roomLeft.value == null || roomLeft.value > fitChunkCount.value))
 /** 這次因為空間不夠、不會收進去的條數（含總表） */
 const overQuotaBy = computed(() =>
-  (includedCount.value - fitChunkCount.value) + (overviewWillImport.value && !overviewFits.value ? 1 : 0))
+  (sendCount.value - fitChunkCount.value) + (overviewWillImport.value && !overviewFits.value ? 1 : 0))
 /** 匯入完要講「還有幾條沒收」用：按下去那一刻的數字（之後勾選再變也不影響結果頁） */
 const quotaSkipped = ref(0)
 /** 沒收的那幾條怎麼補：照這一份是什麼來源講（結果頁那一句的後半） */
 const quotaRefillHint = computed(() => {
   switch (sourceMeta.value.type) {
     // ⚠️ 不寫死按鈕名：內容一模一樣時出現的是「重新整理，換掉那一份」，網頁改過了出現的是同名的「更新這一份」，兩條都是換掉原本那一份
-    case 'gsheet': return '表格每小時同步時會自動補上，不用重新加入。'
+    // ⛔ 不寫「每小時」（`C-308`④）：換掉的是既有那一份的話，同步頻率照那一份原本的設定
+    case 'gsheet': return '表格同步時會自動補上，不用重新加入。'
     case 'url': return '再貼一次這個網址、選擇換掉原本那一份，就能補齊。'
     case 'text': return '再貼一次這段文字、選擇換掉原本那一份，就能補齊。'
     default: return '再傳一次這份、選擇換掉原本那一份，就能補齊。'
@@ -2580,12 +2692,13 @@ const metaEditorOpen = computed(() => metaOpen.value || dupMatches.value.length 
 /**
  * 整理好之後**要不要停下來給人看**（`D-123`②，2026-10-12 老闆拍板「一份也直接加入，有要你核對的才停」）。
  *
- * 只有這四種停：都是「AI 直接回客人，錯了要客人先發現」的那種錯，而且只有人看得出來——
+ * 只有這五種停（第五種 edited 見最下面）：都是「AI 直接回客人，錯了要客人先發現」的那種錯，而且只有人看得出來——
  *  · ocr       照片／掃描檔上的字是 AI 認的：數字、價格、電話最容易看錯；
  *  · truncated 後面沒讀到：原文超過 10 萬字，或表格超過 150 列、整理到 150 條上限、網頁太大、檔案讀一半就停
  *              （後幾種是 incomplete，原因在整理時的提醒裡）——直接加入等於默默少一截；
  *  · quota     空間不夠、只收得下前幾條：要他決定收前幾條還是先去騰空間；
- *  · sameName  知識庫裡已經有同名的：要他決定「更新原本那一份」還是另外建一份（已經選好要換哪一份就不算）。
+ *  · sameName  知識庫裡已經有同名的：要他決定「更新原本那一份」還是另外建一份（已經選好要換哪一份就不算）；
+ *  · edited    要換掉的那一份裡有他親手改過的（`D-125`①）：要他決定帶不帶到新版（同一種「有要你看的才停」）。
  * ⛔ 表格健檢那類提醒（示範列沒換、含時效內容⋯）**不停**：以前就寫「提醒不擋匯入」，加完在結果頁照樣講。
  * ⚠️ 宣告排在 dupMatches／overQuotaBy 之後（這個檔案吃過三次「衍生值排在來源前面」的 TDZ）。
  */
@@ -2595,6 +2708,8 @@ const previewStopReasons = computed<PreviewStopReason[]>(() => {
   if (truncated.value || incomplete.value) r.push('truncated')
   if (overQuotaBy.value > 0) r.push('quota')
   if (dupMatches.value.length > 0 && !replaceTarget.value) r.push('sameName')
+  // 換掉的那一份裡有他改過的（`D-125`①）、或讀不到有沒有：要他決定帶不帶過去——⛔ 不替他把親手改的丟掉
+  if (replaceTarget.value && (keepLoadFailed.value || (keepLoadedFor.value === replaceTarget.value.id && keepCandidates.value.length > 0))) r.push('edited')
   return r
 })
 
@@ -2735,6 +2850,10 @@ const result = ref<{
   replacedChunks?: number
   /** 檔案來源：原檔有沒有留下來（`C-296`③）；false 要在結果頁講，null／沒有＝不是檔案 */
   originalKept?: boolean | null
+  /** 換新版時帶過去、沿用他改過內容的條數（`D-125`①）；結果頁要講 */
+  keptEdited?: number
+  /** 新版裡跟帶過去那幾條同名、所以沒收的條數（畫面已先扣掉，這裡通常是 0） */
+  skippedForKept?: number
 } | null>(null)
 
 const jobState = computed<'running' | 'batch' | 'ready' | 'added' | 'none'>(() => {
@@ -2806,9 +2925,7 @@ async function resumeStoredJob() {
       return
     }
     // 其他錯誤留在畫面上:等了很久的人至少知道發生什麼事、可以再試一次
-    previewError.value = String(
-      err?.data?.statusMessage || err?.statusMessage || err?.message || '接續整理失敗',
-    ).slice(0, 300)
+    previewError.value = apiErrorText(err, '接續整理失敗').slice(0, 300)
     clearJobMarker()
   }
   finally {
@@ -3014,8 +3131,9 @@ async function settlePreview(auto: boolean, stale: () => boolean) {
     step.value = 'preview'
     return
   }
-  // 等整理的這幾分鐘裡空間可能變了（別的分頁刪了、加了）：用新的數字判斷收不收得下
-  await loadQuota()
+  // 等整理的這幾分鐘裡空間可能變了（別的分頁刪了、加了）：用新的數字判斷收不收得下。
+  // 要換掉哪一份的話，「他改過哪幾條」也要讀完才知道停不停（`D-125`①；目標一選定就開始讀，見 startKeepLoad）
+  await Promise.all([loadQuota(), keepLoad])
   if (stale()) return
   const reasons = previewStopReasons.value
   if (reasons.length) {
@@ -3152,9 +3270,7 @@ async function runPreview() {
     // **唯一**能承諾背景做完還接得回來的（記號落地＋下面的 recheck 定時器）。
     previewError.value = deadline
       ? '等太久了，畫面先不等——還在背景整理，好了會自己加進知識庫'
-      : String(
-        err?.data?.statusMessage || err?.statusMessage || err?.message || '整理失敗',
-      ).slice(0, 300)
+      : apiErrorText(err, '整理失敗').slice(0, 300)
   }
   finally {
     // 被取代的那一輪不碰畫面：previewing 已經由取消或新那一輪接手了
@@ -3396,7 +3512,7 @@ async function makeOverview() {
   }
   catch (err: any) {
     overviewState.value = 'ask'
-    showToast(err?.data?.statusMessage || err?.statusMessage || err?.message || '沒做成，請再試一次', 'error')
+    showToast(apiErrorText(err, '沒做成') + (isRetryableError(err) ? '，請再試一次' : ''), 'error')
   }
 }
 
@@ -3465,7 +3581,7 @@ async function retryOne(item: { id: string; status: string; failureReason?: stri
   }
   catch (err: any) {
     const row = (result.value?.items ?? []).find(i => i.id === item.id)
-    if (row) row.failureReason = err?.data?.statusMessage || err?.statusMessage || row.failureReason
+    if (row) row.failureReason = apiErrorText(err, row.failureReason ?? '')
     return false
   }
   finally {
@@ -3497,15 +3613,22 @@ async function retryAllFailed() {
 }
 
 async function runImport() {
-  // 與畫面上的 includedCount 共用同一份判斷（見 willImportChunks 的說明）；
+  // 與畫面上的按鈕共用同一份判斷（見 willImportChunks、sendChunks 的說明）；
   // 放不下時只送前 fitChunkCount 條（`C-296`：收到滿為止，不再整批被擋）
-  const selected = willImportChunks.value
+  const selected = sendChunks.value
     .slice(0, fitChunkCount.value)
     .map(c => ({ title: c.title.trim(), content: c.content.trim(), tags: c.tags, questions: c.questions ?? [] }))
 
   if (!selected.length) {
-    return showToast(overQuotaBy.value > 0 ? '知識空間已經滿了：先刪掉用不到的知識，或升級方案' : '請至少選一條', 'error')
+    return showToast(
+      overQuotaBy.value > 0
+        ? '知識空間已經滿了：先刪掉用不到的知識，或升級方案'
+        : includedCount.value > 0 ? '新版的每一條都跟你改過、要帶過去的同名——原本那一份不用換' : '請至少選一條',
+      'error',
+    )
   }
+  // 他改過的那幾條還在讀（`D-125`①）：讀完才知道要不要帶，⛔ 不先送（送了就照舊全進回收桶）
+  if (replaceTarget.value && keepLoading.value) return showToast('還在讀原本那一份你改過哪幾條，等一下再按', 'warning')
   if (selected.length > 150) return showToast('一次最多加入 150 條，請先取消勾選一些', 'error')
 
   importing.value = true
@@ -3532,6 +3655,8 @@ async function runImport() {
           ...(replaceTarget.value && folderAutoPicked.value ? {} : { folderId: sourceMeta.value.folderId }),
           // 原檔留著時「下載原檔」存成這個名字（`C-296`③）；接回背景整理時沒有檔名就退用資料名稱
           ...(sourceMeta.value.type === 'file' ? { fileName: fileName.value || sourceMeta.value.name } : {}),
+          // 換新版時勾了要帶過去的那幾條（`D-125`①）：留在原地、不進回收桶
+          ...(replaceTarget.value && keptItems.value.length ? { keepEditedChunkIds: keptItems.value.map(c => c.id) } : {}),
         },
         // 「更新既有那一份」（`C-135`）：舊卡進回收桶、來源留著，不再多生一份同名資料
         ...(replaceTarget.value ? { replaceSourceId: replaceTarget.value.id } : {}),
@@ -3572,9 +3697,13 @@ async function runImport() {
   catch (err: any) {
     // ⚠️ 中文的原因在 data.statusMessage：err.statusMessage 是 HTTP 狀態那一行（HTTP/2 下是空的），
     //    只看它的話空間不夠、舊的那份已經被刪掉這些 403／404 會變成一串「[POST] …: 403」（審查實測）
-    // 自動加入失敗時畫面會停在預覽（見 settlePreview），要講「還沒加進去」——只丟伺服器的原因，人會以為加了一半
-    const why = err?.data?.statusMessage || err?.statusMessage || err?.message || ''
-    showToast(autoImporting.value ? `還沒加進去${why ? `：${why}` : ''}（整理好的內容還在，可以再按一次加入）` : (why || '加入失敗'), 'error')
+    // 自動加入失敗時畫面會停在預覽（見 settlePreview），要講「還沒加進去」——只丟伺服器的原因，人會以為加了一半。
+    // 「可以再按一次」只在再按有用時講（`C-308`⑩）：空間滿了、那一份不在了這種 4xx，再按一百次都一樣
+    const why = apiErrorText(err, '')
+    const retry = isRetryableError(err) ? '可以再按一次加入' : ''
+    showToast(autoImporting.value
+      ? `還沒加進去${why ? `：${why}` : ''}（整理好的內容還在${retry ? `，${retry}` : ''}）`
+      : (why || '加入失敗'), 'error')
   }
   finally {
     importing.value = false

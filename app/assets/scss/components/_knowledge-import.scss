@@ -84,6 +84,54 @@
   }
 }
 
+/* 換新版時「你改過的 N 條，要帶到新版嗎？」（`D-125`①）：接在「會更新『X』」那一塊下面，同一件事的延伸——
+   淺框不上色（不是警告，是要他選），每一條一行：標題＋後面那半句（勾／不勾會變成什麼） */
+.kb-keep-edited {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+
+  &__head {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__note {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #b45309; /* 讀不到＝可能少東西，跟空間不夠同一個琥珀 */
+  }
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  /* ⚠️ Element 的 el-checkbox 固定 32px 高、不換行：標題一長就溢出視窗（同 .bc-testsend-list 的做法，夾父層才蓋得過） */
+  &__list .el-checkbox {
+    height: auto;
+    min-height: 28px;
+    margin-right: 0;
+    white-space: normal;
+    align-items: flex-start;
+
+    .el-checkbox__input { margin-top: 3px; }
+  }
+  &__title {
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  &__suffix {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
 /* 「這份內容已經匯過了」：擋在整理之前，位置在第一步的錯誤提示旁邊 */
 .kb-dup-content {
   margin-top: 12px;

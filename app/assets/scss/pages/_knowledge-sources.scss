@@ -191,6 +191,31 @@
   a { color: inherit; text-decoration: underline; }
 }
 
+/*
+ * 表頭左邊那一塊（名稱＋類型／網址）不准被內容撐寬（`C-308`⑫）。
+ * ⚠️ 病根：它是 flex 子項，`min-width` 預設是 auto＝「裡面最寬的那一行」——網址那行 nowrap，
+ *    於是一條 Google 試算表網址就把整塊撐到 640px：手機（390）上整頁可以左右滑、名稱框被切掉。
+ *    `min-width: 0` 讓它照版面寬度走，網址在自己的框裡截斷（電腦）或斷行（手機）。
+ */
+.src-header-main {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  /* 手機：名稱這一塊佔滿一整行（按鈕換到下一行），名稱框才有完整寬度；網址照字斷行看得到全部 */
+  .src-header-main {
+    flex-basis: 100%;
+  }
+  .src-header-caption {
+    overflow: visible;
+    white-space: normal;
+    max-width: none;
+
+    /* 網址沒有空白可以斷，anywhere＝哪裡都能斷（同 .kb-dedup-row 的長檔名） */
+    a { overflow-wrap: anywhere; }
+  }
+}
+
 .src-section-card { margin-bottom: 0; } /* gap 由 .admin-panel-stack 控制 */
 .src-section-hint { font-size: 12px; color: var(--el-text-color-secondary); margin: 0 0 8px; }
 
@@ -213,6 +238,46 @@
 }
 
 .src-settings-actions { margin-top: 8px; }
+
+/* 試算表上在後台刪掉、不再收的那幾列（`D-125`②）：一行灰字＋一顆文字鈕；標題可能很長，照字斷行 */
+.src-excluded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-regular);
+
+  &__text { min-width: 0; overflow-wrap: anywhere; }
+}
+
+/* 鎖頭點開的那一塊（`C-309`：以前只在滑鼠停留時出現，手機看不到）。popper 掛在 body 底下，用 popper-class 指名 */
+.src-lock-pop {
+  &__what {
+    margin: 0 0 6px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+  }
+  &__effect {
+    margin: 0 0 8px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+/* 編輯框裡「在這裡改了會不會跟著來源」那一句（`C-309`）：附註，不搶標題欄位 */
+.chunk-sync-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+
+  .el-button { margin-left: 4px; vertical-align: baseline; }
+}
 
 /* 知識清單的狀態篩選(要修的那幾條在哪裡);沿用整站匯入分組 chip 的外觀語言 */
 .src-chunk-filters {
@@ -749,6 +814,14 @@
     color: var(--el-text-color-secondary);
     word-break: break-all;
   }
+
+  /* 試算表一次少太多列、系統先停下來等他確認（`C-308`⑤）：東西沒壞，是在等他——琥珀不用紅 */
+  &--held {
+    border-left-color: var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+
+    .src-fix__title { color: var(--el-color-warning-dark-2); }
+  }
 }
 
 /* ── 自動偵測的第二、第三種狀態（正常不出聲，這兩種一定要講）── */
@@ -785,6 +858,18 @@
       color: var(--el-color-warning-dark-2);
     }
   }
+}
+
+/*
+ * 「要處理的事」被頁頂提醒帶標出來時（`data-alert-mark`，規則在 utils/alert-field-marks）：框留著、那一句不掛（`C-309`）。
+ * ⚠️ 這一格掛的字（例：「有資料內容變了還沒重新學」）就是頁頂那一條的標題，而框裡第一項又把同一件事講一次——
+ *    同一個畫面講三次。框本身已經在說「就是這裡」，字是多的。只在這一格拿掉；其他頁的標記照舊。
+ * `!important`：被標的那一格讓出標籤高度用的是 `!important`（_alert-field-mark.scss），要蓋回來只能同級、選擇器更具體。
+ */
+.src-todo[data-alert-mark][data-alert-mark-label] {
+  padding-block-start: 0 !important;
+
+  &::after { content: none; }
 }
 
 /* ── 「要處理的事」清單（取代 orphan banner + 體檢 chip 兩套視覺） ── */

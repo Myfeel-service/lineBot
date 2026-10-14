@@ -118,6 +118,8 @@ import { KNOWLEDGE_FILE_KIND_LABEL, knowledgeFileKind } from '~~/shared/knowledg
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { batchKindLabel, batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
 import { formatFileSize } from '~/utils/knowledge-upload'
+import { apiErrorStatus, apiErrorText } from '~/utils/api-error-text'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 
 /** 整理好的結果在伺服器留 1 小時（完成那一刻起算）；重試時超過這個就重新整理，留 10 分鐘餘裕 */
 const PREPARED_TTL_MS = 50 * 60 * 1000
@@ -352,7 +354,35 @@ function previewNotices(res: PreviewDone): string[] {
   return [...out, ...(res.warnings ?? [])]
 }
 
-const errorText = (err: any) => String(err?.data?.statusMessage || err?.statusMessage || err?.message || '加入失敗').slice(0, 120)
+// 伺服器的中文原因在 data.statusMessage（`C-308`⑩，規則見 utils/api-error-text）
+const errorText = (err: unknown) => apiErrorText(err, '加入失敗').slice(0, 120)
+
+/**
+ * 「換掉舊的」時舊的那一份裡他親手改過的（`D-125`① 拍板 A）。
+ * 單份那條路會停下來問帶不帶；一次好幾份**不停**（同 mustCheck 的理由：清單上看不到內容，停下來也核對不了）——
+ * 一律帶到新版，那一列講帶了幾條。ids＝要留的那幾條；keys＝它們的標題（新版裡同名的不收，伺服器同一把尺）；
+ * quota＝其中佔空間的（草稿不算）——留著就還佔著，空出來的位置要扣掉。
+ */
+interface KeepInfo { ids: string[], keys: Set<string>, quota: number }
+async function loadKeep(sourceId: string): Promise<KeepInfo> {
+  try {
+    const res = await apiFetch<{ chunks?: Array<{ id: string, title: string, isOverview?: boolean, manuallyEditedAtMs?: number, status?: string }> }>(
+      `/api/ai/sources/${encodeURIComponent(sourceId)}`,
+    )
+    const edited = (res.chunks ?? []).filter(c => (c.manuallyEditedAtMs ?? 0) > 0 && !c.isOverview)
+    return {
+      ids: edited.map(c => c.id),
+      keys: new Set(edited.map(c => knowledgeTitleKey(c.title)).filter(Boolean)),
+      quota: edited.filter(c => c.status !== 'draft').length,
+    }
+  }
+  catch (err) {
+    // 那一份已經不在了：沒有東西可帶，換的那一下伺服器會講原因
+    if (apiErrorStatus(err) === 404) return { ids: [], keys: new Set(), quota: 0 }
+    // ⛔ 讀不到就不換：不知道有沒有他改過的，不能替他把那幾條丟進回收桶
+    throw new Error('讀不到舊的那一份你改過哪幾條，這份先沒有換（再按一次「換掉舊的」）')
+  }
+}
 
 /**
  * 匯入那一下遇到閘道逾時（502／504／408）或連線中斷，**不等於沒匯進去**：伺服器可能已經做完、只是回應沒送到。
@@ -381,7 +411,9 @@ function isGatewayTimeout(err: any): boolean {
  * 把整理好的結果匯進去（第一次跑、重試、或他對同名那份做了決定之後）。
  * 空間在這裡才扣：放不下的收前 N 條；完全滿了丟錯（呼叫端決定這一列要標成什麼）。
  */
-async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceId?: string) {
+interface BulkResult { total: number; indexed: number; failed: number; originalKept?: boolean | null; replacedChunks?: number; keptEdited?: number }
+
+async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceId?: string, keep?: KeepInfo): Promise<BulkResult> {
   const file = r.file!
   let reserved = 0
   let body: Record<string, unknown>
@@ -394,10 +426,13 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
     r.quotaShort = unsure.quotaShort
   }
   else {
-    let chunks = res.chunks
-    // 「換掉舊的」：舊的那幾條會進回收桶、不再算空間（草稿本來就不算，用伺服器算好的那個數）
+    // 跟帶過去那幾條同名的不收（`D-125`①）：先扣掉，空間才算得對（伺服器也照同一把尺擋）
+    let chunks = keep?.keys.size ? res.chunks.filter(c => !keep.keys.has(knowledgeTitleKey(c.title))) : res.chunks
+    if (!chunks.length) throw new Error('新版的每一條都跟你改過的同名，舊的那一份不用換')
+    // 「換掉舊的」：舊的那幾條會進回收桶、不再算空間（草稿本來就不算，用伺服器算好的那個數）；
+    // 帶過去的那幾條留在原地、照樣佔空間，要扣掉
     const existing = r.pending?.existing
-    const freed = replaceSourceId ? (existing?.quotaChunkCount ?? existing?.chunkCount ?? 0) : 0
+    const freed = replaceSourceId ? Math.max(0, (existing?.quotaChunkCount ?? existing?.chunkCount ?? 0) - (keep?.quota ?? 0)) : 0
     r.quotaShort = 0
     if (room !== Number.POSITIVE_INFINITY) {
       const avail = room + freed
@@ -424,6 +459,7 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
               folderId: pickFolderForSource(props.folders ?? [], { sourceName: file.name, productName: res.suggestedProductName ?? '' })?.folderId ?? null,
             }),
         contentHash: res.contentHash ?? '',
+        ...(replaceSourceId && keep?.ids.length ? { keepEditedChunkIds: keep.ids } : {}),
       },
       ...(replaceSourceId ? { replaceSourceId } : {}),
       importId: jobId, // 冪等鍵：逾時重按不會多生一份
@@ -433,7 +469,7 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
   }
   try {
     r.stage = '加入中'
-    const bulk = await bulkCreate<{ total: number; indexed: number; failed: number; originalKept?: boolean | null }>(body)
+    const bulk = await bulkCreate<BulkResult>(body)
     r.cards = bulk.total ?? bulk.indexed
     r.notLearned = bulk.failed ?? 0
     r.warningTexts = [
@@ -446,6 +482,7 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
     r.prepared = null
     r.pending = null
     r.unsure = null
+    return bulk
   }
   catch (err) {
     room += reserved // 沒匯進去（或不確定），預留的空間先還回去；下一次開跑會重讀實際的空間
@@ -575,8 +612,15 @@ async function decide(r: Row, choice: 'replace' | 'new') {
     room = Math.max(0, props.quota.limit - (props.quota.used ?? 0))
   }
   try {
-    await importRow(r, jobId, res, choice === 'replace' ? existing.id : undefined)
-    if (choice === 'replace' && r.status === 'done') r.infoTexts = [`已換掉舊的「${existing.name}」，舊的 ${existing.chunkCount} 條移到回收桶（30 天內救得回來）`]
+    // 換掉舊的：他在舊的那一份改過的一律帶過去（`D-125`①，見 loadKeep）
+    const keep = choice === 'replace' ? await loadKeep(existing.id) : undefined
+    const bulk = await importRow(r, jobId, res, choice === 'replace' ? existing.id : undefined, keep)
+    if (choice === 'replace' && r.status === 'done') {
+      // 數字照伺服器回的講（帶過去的沒進回收桶）；舊伺服器沒回就自己扣
+      const kept = Number(bulk.keptEdited ?? 0)
+      const recycled = bulk.replacedChunks ?? Math.max(0, existing.chunkCount - kept)
+      r.infoTexts = [`已換掉舊的「${existing.name}」，舊的 ${recycled} 條移到回收桶（30 天內救得回來）${kept ? `；你改過的 ${kept} 條帶到新版了` : ''}`]
+    }
   }
   catch (err: any) {
     // 留在「等你決定」：兩顆按鈕還在，空出空間或過一下再按一次就好（⛔ 標成失敗的話，重試會重新上傳、重新整理）

@@ -115,10 +115,12 @@
               <span v-if="r.status === 'failed'" class="badge badge-red">AI 沒學起來</span>
               <span v-else-if="r.status === 'disabled'" class="badge badge-gray">已停用</span>
               <span v-else-if="r.status === 'pending'" class="badge badge-yellow">處理中</span>
+              <!-- 還在「等你看過」（`C-308`⑦）：搜得到、AI 卻還不會用——不標的話他以為這題已經有答案了 -->
+              <span v-else-if="r.status === 'draft'" class="badge badge-yellow">等你看過</span>
             </span>
             <span class="src-search-row__snippet">{{ r.snippet }}</span>
           </button>
-          <p v-if="searchCountTruncated" class="src-search-foot">符合的知識較多，只列出前 {{ searchResults.length }} 筆。</p>
+          <p v-if="searchCountTruncated" class="src-search-foot">符合的知識較多，只列出前 {{ searchResults.length }} 條。</p>
           <p v-if="searchTruncated" class="src-search-foot">知識較多，只搜尋了前面一部分。</p>
         </div>
       </div>
@@ -354,7 +356,8 @@
 
     <!-- ── Editor Header ── -->
     <template #editor-header>
-      <div class="admin-flex-1">
+      <!-- src-header-main（`C-308`⑫）：手機上試算表網址太長會把這一塊撐寬，整頁可以左右滑、名稱框被切掉——不准它撐（樣式見 partial） -->
+      <div class="admin-flex-1 src-header-main">
         <AdminFieldLabel text="資料名稱" tight />
         <div class="admin-title-row">
           <el-input
@@ -438,9 +441,10 @@
           </div>
         </el-alert>
 
-        <!-- 偵測到變動的提示 -->
+        <!-- 偵測到變動的提示。⚠️ 只給網址（`C-308`⑤）：試算表一次少太多列被擋下時也會標「有變動」，
+             這段講的「網頁內容變動、按重新同步」對試算表是錯的——那種情況下面的修理框會講 -->
         <el-alert
-          v-if="selectedSource.outdatedAtMs > 0"
+          v-if="selectedSource.outdatedAtMs > 0 && selectedSource.type === 'url'"
           type="warning"
           show-icon
           :closable="false"
@@ -468,12 +472,13 @@
           </template>
           <div>
             這幾條知識在後台被手動編輯過，同步時會保留人工版本、不吃表格的修改。
-            <template v-if="canEditKb">想改回「以表格為準」，點下面清單裡卡片上的鎖頭解除即可。</template>
+            <template v-if="canEditKb">想改回跟著表格，點下面那幾條旁邊的鎖頭。</template>
           </div>
         </el-alert>
 
         <!-- gsheet 空間滿了沒收的列（`C-296`）：表格加了一列、AI 卻答不出來，原因只在這裡——
-             ⛔ 不講就是「沉默地少收」；同步只是暫停新增，空間空出來會自己補，所以要講「不用重匯」 -->
+             ⛔ 不講就是「沉默地少收」；同步只是暫停新增，空間空出來會自己補，所以要講「不用重匯」。
+             「什麼時候補」照這一份實際的同步頻率講（`C-308`④）：以前寫死「每小時」，設成不自動同步的永遠補不上 -->
         <el-alert
           v-if="selectedSource.type === 'gsheet' && (selectedSource.quotaSkippedCount ?? 0) > 0"
           type="warning"
@@ -485,7 +490,7 @@
             表格上有 {{ selectedSource.quotaSkippedCount }} 列還沒收進知識庫
           </template>
           <div>
-            知識空間已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，下一次同步（每小時一次，或按「立即同步」）會自動補上，不用重新匯入。
+            知識空間已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，{{ gsheetRefillWhen }}，不用重新匯入。
           </div>
         </el-alert>
 
@@ -501,12 +506,15 @@
               <div><span class="src-label">類型</span><strong>{{ typeLabel(selectedSource.type) }}</strong></div>
               <div><span class="src-label">狀態</span><strong>{{ statusLabel(selectedSource.status) }}</strong></div>
               <div><span class="src-label">條數</span><strong>{{ selectedSource.chunkCount }}</strong></div>
-              <div><span class="src-label">最後同步</span><strong>{{ selectedSource.lastFetchedAtMs ? relativeTime(selectedSource.lastFetchedAtMs) : '尚未同步' }}</strong></div>
+              <!-- 檔案、文字不會同步（`C-309`）：以前也寫「最後同步 9/4」，看起來像它會自己更新 -->
+              <div v-if="isSyncingType(selectedSource.type)"><span class="src-label">最後同步</span><strong>{{ selectedSource.lastFetchedAtMs ? relativeTime(selectedSource.lastFetchedAtMs) : '尚未同步' }}</strong></div>
+              <div v-else><span class="src-label">更新時間</span><strong>{{ relativeTime(selectedSource.lastFetchedAtMs || selectedSource.updatedAtMs) || '—' }}</strong></div>
             </div>
             <!-- 失敗要能就地修:原本只印一行後端原文,商家看不懂也修不了
-                 (最常見的兩種原因,修的地方一個在 Google、一個是換網址) -->
-            <div v-if="selectedSource.failureReason" class="src-fix">
-              <p class="src-fix__title">⚠ 這份資料目前抓不到內容</p>
+                 (最常見的兩種原因,修的地方一個在 Google、一個是換網址)。
+                 試算表一次少太多列被擋下（`C-308`⑤）不是「抓不到」：表讀得到，是系統怕誤刪先停下來——標題、做法都不一樣 -->
+            <div v-if="selectedSource.failureReason" class="src-fix" :class="{ 'src-fix--held': failureAdvice.kind === 'massDelete' }">
+              <p class="src-fix__title">{{ failureAdvice.kind === 'massDelete' ? `⚠ 表格一次少了 ${failureAdvice.rows} 列，自動同步先停下來` : '⚠ 這份資料目前抓不到內容' }}</p>
               <p class="src-fix__what">{{ failureAdvice.what }}</p>
 
               <!-- Google Sheet:最常見原因是沒分享給服務帳號 → email 直接放這裡可複製 -->
@@ -532,7 +540,8 @@
                 </el-button>
               </div>
 
-              <p class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
+              <!-- 擋下來那種的原文就是上面那兩句再講一次（還寫「張卡」），不重複 -->
+              <p v-if="failureAdvice.kind !== 'massDelete'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
             </div>
           </div>
         </div>
@@ -662,8 +671,26 @@
             </div>
           </div>
           <div class="card-section-stack">
+            <!-- ⛔ 不寫頻率（`C-308`④）：以前寫死「排程每小時」，改成不自動同步的人看到的還是每小時；頻率就在正下方那一格 -->
             <p class="src-section-hint">
-              排程每小時重讀這份試算表，<strong>每一列對應一條，自動套用</strong>（新增／更新／刪除）。你在這裡手動改過的那幾條會保留、不被覆蓋。
+              同步時重讀這份試算表，<strong>每一列對應一條，自動套用</strong>（新增／更新／刪除）。你在這裡手動改過的那幾條會保留、不被覆蓋。
+            </p>
+            <!--
+              在後台刪掉的列（`D-125`② 拍板 A）：刪掉＝「這一列不要了」，之後同步不再收。
+              ⛔ 一定要講出來：不講的話他在表格上看得到那一列、AI 卻永遠答不出來，原因只在這裡。給一顆收回來的路。
+            -->
+            <p v-if="excludedTitles.length" class="src-excluded">
+              <span class="src-excluded__text">表格上有 {{ excludedTitles.length }} 列你在後台刪掉了，不會再收：{{ excludedPreview }}</span>
+              <el-button
+                v-if="canEditSources"
+                link
+                type="primary"
+                size="small"
+                :loading="clearingExcluded"
+                @click="clearExcludedRows"
+              >
+                重新收這幾列
+              </el-button>
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="同步頻率" tight />
@@ -723,20 +750,37 @@
                   <div class="src-chunk-body">
                     <div class="src-chunk-main">
                       <span class="src-chunk-title">{{ c.title }}</span>
-                      <button
-                        v-if="c.manuallyEditedAtMs > 0 && canEditKb"
-                        type="button"
-                        class="src-chunk-lock"
-                        :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。點一下可解除。`"
-                        @click.stop="unlockChunk(c)"
-                      ><el-icon><Lock /></el-icon></button>
-                      <!-- `G-102`：解鎖打的是 `knowledge/[id]/settings`（客服級）。觀察者留一顆**不能按**的鎖：
-                           它同時是「這條不吃表格更新」的標記，拿掉等於少講一件事 -->
-                      <span
-                        v-else-if="c.manuallyEditedAtMs > 0"
-                        class="src-chunk-lock src-chunk-lock--static"
-                        :title="`手動編輯過（${relativeTime(c.manuallyEditedAtMs)}）：同步時保留人工版本、不吃表格/網頁更新。`"
-                      ><el-icon><Lock /></el-icon></span>
+                      <!--
+                        鎖頭（`C-44`）＝「這一條用你改過的版本」。
+                        · 一段文字（manual）不會同步，鎖頭沒有意義、不畫（`C-308`②）；
+                        · 說明以前只在滑鼠停留時出現（`C-309`），手機看不到——改成點一下就跳出來，
+                          看得到它是什麼、改回去會怎樣；改得動的人在裡面按「改回跟著表格／網頁」。
+                        `G-102`：解鎖打的是 `knowledge/[id]/settings`（客服級）。觀察者點了只看說明、沒有按鈕
+                        （⛔ 鎖頭不拿掉：它同時是「這條不吃表格更新」的標記，拿掉等於少講一件事）。
+                      -->
+                      <el-popover
+                        v-if="c.manuallyEditedAtMs > 0 && lockApplies(selectedSource.type)"
+                        trigger="click"
+                        placement="bottom-start"
+                        :width="260"
+                        popper-class="src-lock-pop"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="src-chunk-lock"
+                            :aria-label="`你改過這一條（${relativeTime(c.manuallyEditedAtMs)}），點一下看說明`"
+                            @click.stop
+                          ><el-icon><Lock /></el-icon></button>
+                        </template>
+                        <p class="src-lock-pop__what">{{ lockMeaning(selectedSource.type, c.manuallyEditedAtMs) }}</p>
+                        <template v-if="canEditKb">
+                          <p class="src-lock-pop__effect">{{ unlockEffect(selectedSource.type) }}</p>
+                          <el-button size="small" type="primary" plain :loading="unlockingId === c.id" @click="unlockChunk(c, true)">
+                            {{ unlockLabel(selectedSource.type) }}
+                          </el-button>
+                        </template>
+                      </el-popover>
                       <span v-if="showShortNote(c)" class="src-chunk-note">內容較短</span>
                     </div>
                     <p class="src-chunk-preview">{{ chunkPreview(c) }}</p>
@@ -935,8 +979,8 @@
           這次的「新增 / 移除」多半不是網頁改了，而是 AI 換了一種分法
         </template>
         <div class="text-xs">
-          一條舊知識都沒有對上（未變 0），同時出現 {{ diffData.diff.summary.added }} 筆新增與
-          {{ diffData.diff.summary.removed }} 筆移除——網頁整頁重寫才會長這樣。
+          一條舊知識都沒有對上（未變 0），同時出現 {{ diffData.diff.summary.added }} 條新增與
+          {{ diffData.diff.summary.removed }} 條移除——網頁整頁重寫才會長這樣。
           <strong>先比對內容再決定</strong>；看起來只是同一件事換句話說的話，直接按取消就好，
           你現有的知識完全不會被動到。
         </div>
@@ -949,14 +993,25 @@
         <span class="diff-summary-chip diff-summary-chip--same">未變 {{ diffData.diff.summary.unchanged }}</span>
       </div>
 
-      <!-- 把「該看哪幾張」講出來:修改裡只有數字變掉的那些會影響客人拿到的答案 -->
+      <!--
+        知識空間（`C-308`⑪）：勾了新增才講——跟加入視窗同一把尺，放不下的先不加、套用完講是幾條。
+        以前空間不夠是整批套用失敗，差異畫面上也看不到還剩多少。
+      -->
+      <p v-if="diffRoom" class="kb-quota-line" :class="{ 'is-full': diffRoom.over > 0 }">
+        <template v-if="diffRoom.over > 0">
+          知識空間只剩 {{ diffRoom.room }} 條：勾了新增的 {{ diffRoom.adds }} 條裡，{{ diffRoom.over }} 條這次放不下、先不加。刪掉用不到的知識或升級方案就放得下。
+        </template>
+        <template v-else>知識空間還能放 {{ diffRoom.room }} 條。</template>
+      </p>
+
+      <!-- 把「該看哪幾條」講出來:修改裡只有數字變掉的那些會影響客人拿到的答案 -->
       <p v-if="diffNumbersChangedCount > 0 || diffRewordOnlyCount > 0" class="diff-unchanged-note text-muted text-xs">
         <template v-if="diffNumbersChangedCount > 0">
-          「修改」裡有 <strong>{{ diffNumbersChangedCount }} 筆的數字變了</strong>(價格、天數、規格這類)，
+          「修改」裡有 <strong>{{ diffNumbersChangedCount }} 條的數字變了</strong>(價格、天數、規格這類)，
           下方標了「數字有變」的請優先看。
         </template>
         <template v-else>
-          「修改」的 {{ diffRewordOnlyCount }} 筆數字都沒有變(價格、天數、規格一樣)，只是換個說法。
+          「修改」的 {{ diffRewordOnlyCount }} 條數字都沒有變(價格、天數、規格一樣)，只是換個說法。
         </template>
       </p>
 
@@ -1125,6 +1180,23 @@
           重新學習
         </el-button>
       </div>
+      <!--
+        在這裡改了會怎樣（`C-309`：鎖頭說明搬進編輯框）：試算表／網頁來的那一條，存了就不再跟著來源更新——
+        以前打開被鎖的那一條，編輯框完全沒講它被鎖；沒鎖的也沒講「存了就鎖」。一句話，被鎖的再給改回去的路。
+      -->
+      <p v-if="chunkSyncNote" class="chunk-sync-note">
+        {{ chunkSyncNote }}
+        <el-button
+          v-if="chunkEditLockedAtMs > 0 && (selectedSource?.type === 'gsheet' || selectedSource?.type === 'url')"
+          link
+          type="primary"
+          size="small"
+          :loading="unlockingId === chunkEditingId"
+          @click="unlockFromEditor"
+        >
+          {{ unlockLabel(selectedSource?.type) }}
+        </el-button>
+      </p>
       <div class="admin-field-group">
         <AdminFieldLabel text="標題" tight />
         <el-input
@@ -1304,6 +1376,7 @@
           {{ r.title }}
           <span v-if="r.status === 'failed'" class="badge badge-red">AI 沒學起來</span>
           <span v-else-if="r.status === 'disabled'" class="badge badge-gray">已停用</span>
+          <span v-else-if="r.status === 'draft'" class="badge badge-yellow">等你看過</span>
         </span>
         <span class="src-dup-row__snippet">{{ r.snippet }}</span>
         <span class="src-dup-row__go">改這一條 →</span>
@@ -1363,7 +1436,7 @@
   >
     <p class="src-bin-hint">
       系統用「內容相似度＋AI 判斷」找出可能重複的組合，並附上理由。
-      <strong>不會自動合併或刪除</strong><template v-if="canEditSources">——確認後用「整理產品名稱」合併、或把多的那條刪掉（會進回收桶，可還原）。
+      <strong>不會自動合併或刪除</strong><template v-if="canEditSources">——確認後用「產品名稱整理」合併、或把多的那條刪掉（會進回收桶，可還原）。
       不是重複的按「忽略」，之後不會再報這一組</template>。
     </p>
     <!--
@@ -1467,6 +1540,7 @@ import { ElMessageBox } from 'element-plus'
 import { isShortChunkContent, needsProductName, SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { formatFileSize } from '~/utils/knowledge-upload'
+import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -1502,6 +1576,10 @@ interface SourceSummary {
   manualKeptCount: number
   /** type='gsheet'：知識空間滿了、同步時沒新增的列數（>0 要常駐提示，`C-296`） */
   quotaSkippedCount?: number
+  /** type='gsheet'：在後台刪掉、之後同步不再收的那幾列的標題（`D-125`②）；舊伺服器沒有這一格 */
+  gsheetExcludedTitles?: string[]
+  /** type='gsheet'：表格一次少太多列、排程停下來等他確認的列數（`C-308`⑤）；0＝沒擋下 */
+  blockedPendingDeletes?: number
   /** type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的檔案當時讀完就刪了） */
   originalFile?: { name: string, size: number } | null
 }
@@ -1739,7 +1817,7 @@ async function reorderFoldersTo(targetFolderId: string) {
   }
   catch (err: any) {
     folders.value = previous
-    showToast(err?.statusMessage || '資料夾排序儲存失敗', 'error')
+    showToast(apiErrorText(err, '資料夾排序儲存失敗'), 'error')
   }
 }
 
@@ -1781,7 +1859,7 @@ async function onFolderDrop(folderId: string | null) {
     })
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '移動失敗', 'error')
+    showToast(apiErrorText(err, '移動失敗'), 'error')
     await loadSources()
   }
 }
@@ -2051,36 +2129,103 @@ async function restoreChunk(r: RecycleRow) {
     if (r.sourceId && selectedId.value === r.sourceId) await loadSourceDetail(r.sourceId)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '還原失敗', 'error')
+    showToast(apiErrorText(err, '還原失敗'), 'error')
   }
   finally {
     restoringId.value = ''
   }
 }
 
+// ── 鎖頭（手動編輯鎖，C-44）＝「這一條用你改過的版本」─────────────
+// 說明與「改回去會怎樣」照來源種類講（`C-308`②／`C-309`）：以前一律寫「下一次同步會改用表格／網頁的版本」，
+// 檔案根本不同步、試算表設成不自動同步的也永遠等不到「下一次同步」。三句話只寫在這裡，鎖頭、編輯框、確認框共用。
+
+/** 會自己同步的來源（網址、試算表）：「最後同步」「同步：」只對這兩種講 */
+function isSyncingType(t: string | undefined): boolean {
+  return t === 'url' || t === 'gsheet'
+}
+/** 鎖頭有沒有意義：一段文字（manual）不會同步、也沒有換新版，鎖了跟沒鎖一樣——不畫 */
+function lockApplies(t: string | undefined): boolean {
+  return t === 'url' || t === 'gsheet' || t === 'file'
+}
+/** 試算表有沒有在自動同步（設成「不自動同步」的，只有按「立即同步」才會動） */
+const gsheetAutoSync = computed(() => (selectedSource.value?.refreshIntervalMinutes ?? 0) > 0)
+
+function lockMeaning(t: string | undefined, editedAtMs: number): string {
+  const when = relativeTime(editedAtMs)
+  const head = `你在後台改過這一條${when ? `（${when}）` : ''}`
+  if (t === 'gsheet') return `${head}：同步時用你改的版本，不跟著表格。`
+  if (t === 'url') return `${head}：網頁更新時用你改的版本，不跟著網頁。`
+  return `${head}：「換新版」時會先問你要不要帶到新版。`
+}
+function unlockEffect(t: string | undefined): string {
+  if (t === 'gsheet') {
+    return gsheetAutoSync.value
+      ? '改回之後，下一次同步會換成表格上的內容；想馬上換就按「立即同步」。'
+      : '改回之後，按「立即同步」就會換成表格上的內容。'
+  }
+  if (t === 'url') return '改回之後，網頁下次有變動時會換成網頁上的內容。'
+  return '改回之後，下次「換新版」不會再問，直接用新版的內容。'
+}
+function unlockLabel(t: string | undefined): string {
+  return t === 'gsheet' ? '改回跟著表格' : t === 'url' ? '改回跟著網頁' : '改回跟著新版'
+}
 /**
- * 解除手動編輯鎖（C-44）：鎖住的卡同步時保留人工版本——這是「改了表格/網頁卻永遠
- * 不生效」唯一的原因。解鎖後下一輪同步會用來源版本覆蓋，先講清楚再做。
+ * 改回去之後什麼時候生效：照伺服器回的 appliesOn 講（`C-308`②：伺服器知道這一份的同步設定）；
+ * 舊伺服器沒回這一格就照來源種類推。⛔ 以前一律說「下一次同步」，表格沒變的話同步直接跳過、根本沒換
  */
-async function unlockChunk(c: { id: string; title: string }) {
-  try {
-    await ElMessageBox.confirm(
-      `「${c.title}」目前以後台手動編輯的版本為準。解除鎖定後，下一次同步會改用表格／網頁的版本覆蓋這條知識。`,
-      '解除手動編輯鎖定',
-      { confirmButtonText: '解除鎖定', cancelButtonText: '維持人工版本', type: 'warning' },
-    )
+function unlockToast(appliesOn: string | undefined, t: string | undefined): string {
+  const on = appliesOn ?? (t === 'gsheet' ? 'next_sync' : t === 'url' ? 'next_change' : t === 'file' ? 'next_replace' : 'never')
+  if (on === 'next_sync') {
+    return gsheetAutoSync.value
+      ? '已改回跟著表格：下一次同步就會換成表格上的內容'
+      : '已改回跟著表格：按「立即同步」就會換成表格上的內容'
   }
-  catch {
-    return
+  if (on === 'next_change') return '已改回跟著網頁：網頁下次有變動時會換成網頁上的內容'
+  if (on === 'next_replace') return '好了：下次換新版會直接用新版的內容'
+  return '好了：這份資料不會自動更新，這一條維持現在的內容'
+}
+
+const unlockingId = ref('')
+/**
+ * 解除手動編輯鎖。從鎖頭跳出來的那一塊按的（confirmed）：那一塊已經講了改回去會怎樣、按鈕就是確認，不再多問一次；
+ * 從編輯框按的要先確認（那裡只講了「現在用你改的版本」）。回傳有沒有改成。
+ */
+async function unlockChunk(c: { id: string; title: string }, confirmed = false): Promise<boolean> {
+  const type = selectedSource.value?.type
+  if (!confirmed) {
+    try {
+      await ElMessageBox.confirm(
+        `「${c.title}」${unlockEffect(type)}`,
+        `${unlockLabel(type)}？`,
+        { confirmButtonText: unlockLabel(type), cancelButtonText: '留著我改的', type: 'warning' },
+      )
+    }
+    catch {
+      return false
+    }
   }
+  unlockingId.value = c.id
   try {
-    await apiFetch(`/api/ai/knowledge/${c.id}/settings`, { method: 'POST', body: { clearManualLock: true } })
-    showToast('已解除鎖定；下一次同步會改用來源版本', 'success')
+    const res = await apiFetch<{ appliesOn?: string }>(`/api/ai/knowledge/${c.id}/settings`, { method: 'POST', body: { clearManualLock: true } })
+    showToast(unlockToast(res?.appliesOn, type), 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
+    return true
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '解除失敗', 'error')
+    showToast(apiErrorText(err, '解除失敗'), 'error')
+    return false
   }
+  finally {
+    unlockingId.value = ''
+  }
+}
+
+/** 編輯框裡那顆「改回跟著表格／網頁」 */
+async function unlockFromEditor() {
+  const id = chunkEditingId.value
+  if (!id) return
+  if (await unlockChunk({ id, title: chunkForm.value.title || '這一條' })) chunkEditLockedAtMs.value = 0
 }
 
 // ── Duplicate suggestions（疑似重複，C-40(c)）───────────
@@ -2107,7 +2252,7 @@ async function dupDismiss(s: DupSuggestionRow) {
     health.value.duplicates.items = health.value.duplicates.items.filter(x => x.key !== s.key)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '忽略失敗', 'error')
+    showToast(apiErrorText(err, '忽略失敗'), 'error')
   }
   finally {
     dupDismissing.value = ''
@@ -2124,7 +2269,7 @@ async function dupRescan() {
       : `掃描完成：${r.suggestions} 組疑似重複`, 'success')
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '掃描失敗', 'error')
+    showToast(apiErrorText(err, '掃描失敗'), 'error')
   }
   finally {
     dupRescanning.value = false
@@ -2139,6 +2284,21 @@ const chunkEditingId = ref<string | null>(null) // edit 模式才有值
 const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions: undefined as string[] | undefined })
 /** 新開一條時的所屬產品(後端寫進自動建立的那份 manual 資料);編輯既有條目不用 */
 const chunkProductName = ref('')
+/** 打開的那一條有沒有被鎖（＞0＝用他改過的版本，見鎖頭那段）；編輯框講「它跟不跟著來源」用 */
+const chunkEditLockedAtMs = ref(0)
+/**
+ * 編輯框裡那一句（`C-309`）：在這裡存了會不會蓋掉「跟著來源更新」。只有會同步／會換新版的來源才講，
+ * ⛔ 一句就好——要一直有效該去哪裡改、或改回去的那顆按鈕，都接在同一行
+ */
+const chunkSyncNote = computed(() => {
+  if (chunkEditMode.value !== 'edit') return ''
+  const t = selectedSource.value?.type
+  const locked = chunkEditLockedAtMs.value > 0
+  if (t === 'gsheet') return locked ? '這一條用你改過的版本，不跟著表格。' : '在這裡改了，這一條就不再跟著表格更新；要一直有效，直接改試算表。'
+  if (t === 'url') return locked ? '這一條用你改過的版本，不跟著網頁。' : '在這裡改了，這一條就不再跟著網頁更新。'
+  if (t === 'file') return locked ? '你改過這一條：「換新版」時會先問你要不要帶到新版。' : '在這裡改過的，「換新版」時會先問你要不要帶到新版。'
+  return ''
+})
 
 // ── 全庫搜尋（標題 / 內容 / 問法） ─────────────────────
 interface SearchRow { id: string; sourceId: string | null; title: string; snippet: string; status: string }
@@ -2301,7 +2461,7 @@ async function loadSources(forceHealth = false) {
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '載入資料失敗', 'error')
+    showToast(apiErrorText(err, '載入資料失敗'), 'error')
   }
   finally {
     loading.value = false
@@ -2432,6 +2592,14 @@ function singleOrList(single: Array<{ id: string }>, kind: 'source' | 'chunk', c
   return () => openHealthList(cat)
 }
 
+/**
+ * 因為空間滿了、表格上還有列沒收的試算表（`C-308`⑦／報告第 2 組最後一條）。
+ * 以前只有點進那一份才看得到——他在表格加了新品，以為 AI 會跟上。清單上每一份本來就帶著這個數，不用多打一支
+ */
+const quotaSkippedSheets = computed(() => sources.value
+  .filter(s => s.type === 'gsheet' && (s.quotaSkippedCount ?? 0) > 0)
+  .sort((a, b) => (b.quotaSkippedCount ?? 0) - (a.quotaSkippedCount ?? 0)))
+
 const todoItems = computed<TodoItem[]>(() => {
   const items: TodoItem[] = []
   const h = health.value
@@ -2499,12 +2667,25 @@ const todoItems = computed<TodoItem[]>(() => {
         : () => openHealthList('wrongAnswerChunks'),
     })
   }
+  // 排在建議類最前面：其他幾件是「可能答錯」，這件是「確定答不出來」（表格上有、知識庫沒有）
+  if (quotaSkippedSheets.value.length) {
+    const rows = quotaSkippedSheets.value.reduce((n, s) => n + (s.quotaSkippedCount ?? 0), 0)
+    items.push({
+      id: 'quotaSkippedSheets',
+      tone: 'warning',
+      title: `${quotaSkippedSheets.value.length} 份試算表有 ${rows} 列因為空間滿了還沒收`,
+      why: '表格上新加的那幾列 AI 還答不出來。刪掉用不到的知識或升級方案之後，同步時就會補上。',
+      cta: '查看',
+      action: singleOrList(quotaSkippedSheets.value, 'source', 'quotaSkippedSheets'),
+    })
+  }
   if (h.outdatedSources.length) {
     items.push({
       id: 'outdatedSources',
       tone: 'warning',
       title: `有 ${h.outdatedSources.length} 份資料的原始內容改過了`,
-      why: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
+      // ⛔ 不再寫「原始網頁或試算表被改過，但 AI 還在用舊版本回答」（`C-309`）：頁頂提醒帶一字不差講過一次了，這裡只講下一步
+      why: '點進去看哪裡變了，再決定要不要換成新的。',
       cta: '前往比對',
       action: singleOrList(h.outdatedSources, 'source', 'outdatedSources'),
     })
@@ -2631,12 +2812,13 @@ async function loadHealth(force = false) {
   }
 }
 
-type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
+type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'quotaSkippedSheets' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「重新同步」,或改用內容固定的頁面當資料來源。' },
   noProductSources: { title: '文件未設產品名', hint: '這些內容較多的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
+  quotaSkippedSheets: { title: '試算表還有列沒收', hint: '知識空間滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
   failedChunks: { title: '知識學習失敗', hint: '這幾條 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
   // ⛔ 字數不要寫死：門檻是 SHORT_CHUNK_CONTENT_CHARS，前後端共用同一把尺。
   //    寫死的話調了門檻，逐條提示與統計都會跟著變，只有這個對話框還在說「不到 30 字」——
@@ -2666,6 +2848,9 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
   if (cat === 'noProductSources') {
     return h.noProductSources.map(s => ({ id: s.id, title: s.name, meta: `${s.chunkCount} 條`, kind: 'source' as const }))
   }
+  if (cat === 'quotaSkippedSheets') {
+    return quotaSkippedSheets.value.map(s => ({ id: s.id, title: s.name, meta: `${s.quotaSkippedCount ?? 0} 列沒收`, kind: 'source' as const }))
+  }
   if (cat === 'wrongAnswerChunks') {
     // 次數是這一類唯一的排序依據,不放進 meta 等於把最重要的資訊藏起來
     return h.wrongAnswerChunks.items.map(c => ({
@@ -2680,7 +2865,8 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
 })
 const healthListTruncatedNote = computed(() => {
   const cat = healthListCategory.value
-  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'stalledSources' || cat === 'noProductSources') return ''
+  // 一列是一份資料的那幾類沒有「先列前幾條」這回事（⚠️ 一個個比：TS 才收得窄，下面那行才查得到 health[cat]）
+  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'stalledSources' || cat === 'noProductSources' || cat === 'quotaSkippedSheets') return ''
   const group = health.value[cat]
   const notes: string[] = []
   if (group.count > group.items.length) {
@@ -2757,7 +2943,7 @@ async function loadAliases() {
     aliasDialogLoaded.value = true
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '讀取產品名稱失敗', 'error')
+    showToast(apiErrorText(err, '讀取產品名稱失敗'), 'error')
   }
   finally {
     aliasLoading.value = false
@@ -2793,7 +2979,7 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
     void loadHealth(true)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     aliasSaving.value = ''
@@ -2841,7 +3027,7 @@ async function manualMergeConfirm() {
     void loadHealth(true)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     manualSaving.value = false
@@ -2860,7 +3046,7 @@ async function undoAlias(p: AliasPair) {
     await loadAliases()
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '解除失敗', 'error')
+    showToast(apiErrorText(err, '解除失敗'), 'error')
   }
   finally {
     aliasSaving.value = ''
@@ -2912,7 +3098,7 @@ async function saveFolderName() {
     folderEditOpen.value = false
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     folderSaving.value = false
@@ -2947,15 +3133,32 @@ async function deleteFolderFromModal() {
     folderEditOpen.value = false
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '刪除失敗', 'error')
+    showToast(apiErrorText(err, '刪除失敗'), 'error')
   }
   finally {
     folderDeleting.value = false
   }
 }
 
+/**
+ * 同步設定那幾格的值。⛔ 選資料的那一刻就要填（`C-309`）：以前等明細回來才填，這一兩秒裡試算表的
+ * 同步頻率先顯示「不自動同步（只手動）」（上一份的值或預設的 0）、再跳成「每小時」——看起來像設定被改掉了。
+ * 清單上那一份的摘要就有這三格（跟明細同一支 docToSourceSummary），先用它，明細回來再蓋一次。
+ * ⚠️ 他已經改了還沒存（dirty）就不蓋：輪詢重讀明細時會把正在改的值洗掉
+ */
+function seedSettingsForm(src: Pick<SourceSummary, 'refreshIntervalMinutes' | 'onChangeBehavior' | 'urlAutoApply'>, force = false) {
+  if (!force && settingsDirty.value) return
+  settingsForm.value = {
+    refreshIntervalMinutes: src.refreshIntervalMinutes,
+    onChangeBehavior: src.onChangeBehavior,
+    urlAutoApply: src.urlAutoApply !== false,
+  }
+  settingsBaseline.value = { ...settingsForm.value }
+}
+
 async function selectSource(src: SourceSummary) {
   selectedId.value = src.id
+  seedSettingsForm(src, true) // 換一份＝上一份沒存的改動不帶過來
   indexPollStartedAt = 0 // 換資料重新起算輪詢時限
   // 先清空再載入:否則標頭已換、知識列表還是上一份資料的(快速切換會張冠李戴)
   chunks.value = []
@@ -2989,14 +3192,10 @@ async function loadSourceDetail(sourceId: string) {
       if (row) {
         chunkEditStatus.value = row.status
         chunkEditFailureReason.value = row.failureReason ?? ''
+        chunkEditLockedAtMs.value = row.manuallyEditedAtMs || 0
       }
     }
-    settingsForm.value = {
-      refreshIntervalMinutes: res.source.refreshIntervalMinutes,
-      onChangeBehavior: res.source.onChangeBehavior,
-      urlAutoApply: res.source.urlAutoApply !== false,
-    }
-    settingsBaseline.value = { ...settingsForm.value }
+    seedSettingsForm(res.source)
     productNameForm.value = res.source.productName
     productNameBaseline.value = res.source.productName
     urlForm.value = res.source.url ?? ''
@@ -3004,7 +3203,7 @@ async function loadSourceDetail(sourceId: string) {
     if (res.source.failureReason && res.source.type === 'gsheet') void loadServiceAccountEmail()
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '載入細節失敗', 'error')
+    showToast(apiErrorText(err, '載入細節失敗'), 'error')
   }
 }
 
@@ -3019,26 +3218,82 @@ const savingProductName = ref(false)
 // ── 抓取失敗:就地修 ──────────────────────────────────
 // 兩種最常見原因,修的地方各自不同(一個在 Google 那邊、一個是網址換了),
 // 所以要把「該做什麼」和「做的工具」放在失敗訊息旁邊,而不是只印後端原文。
+/**
+ * 試算表一次少太多列、排程怕誤刪先停下來（`C-308`⑤）：幾列。0＝不是這種情況。
+ * 新伺服器直接給數字；舊的只有那句原因（cron-maintenance 寫的「表格一次少了 N 列…」），從那句讀
+ */
+function massDeleteRows(s: SourceSummary | null): number {
+  if (!s || s.type !== 'gsheet') return 0
+  if ((s.blockedPendingDeletes ?? 0) > 0) return s.blockedPendingDeletes!
+  const m = String(s.failureReason ?? '').match(/^表格一次少了\s*(\d+)\s*列/)
+  return m ? Number(m[1]) : 0
+}
+
 const failureAdvice = computed(() => {
   const s = selectedSource.value
-  if (!s?.failureReason) return { kind: 'other' as const, what: '' }
+  if (!s?.failureReason) return { kind: 'other' as const, what: '', rows: 0 }
+  const rows = massDeleteRows(s)
+  if (rows > 0) {
+    // ⛔ 不叫人去分享（以前照「類型是試算表」一律教分享）：表讀得到，是系統等他確認——去 Google 改分享沒有用
+    return {
+      kind: 'massDelete' as const,
+      what: '為了避免誤刪，系統先不動對應的知識。是你刪的就按上方「立即同步」確認；不是的話，到試算表把那幾列補回去。',
+      rows,
+    }
+  }
   if (s.type === 'gsheet') {
     return {
       kind: 'gsheet' as const,
       what: '最常見的原因是這份 Google 試算表沒有分享給下面這個帳號。到試算表按「共用」，把這個帳號加為「檢視者」，再回來按上方「立即同步」。',
+      rows: 0,
     }
   }
   if (s.type === 'url') {
     return {
       kind: 'url' as const,
       what: '原本的網頁可能被移走或改網址了。確認新網址後貼在下面換掉，換好會自動重新抓一次；網頁只是暫時掛掉的話，按上方「重新同步」再試即可。',
+      rows: 0,
     }
   }
+  // ⛔ 不教「重新匯入一次」（`C-309`）：同一個位置就有「換新版」，重新匯入會多一份
   return {
     kind: 'other' as const,
-    what: '檔案或文字資料不會自動更新。內容有問題請重新匯入一次這份資料。',
+    what: s.type === 'file' ? '檔案不會自動更新。內容有問題的話，按上方「換新版」放一份新的。' : '這一段文字不會自動更新。內容有問題的話，點下面那一條直接改。',
+    rows: 0,
   }
 })
+
+// ── 試算表：什麼時候補、在後台刪掉的列（`C-308`④、`D-125`②）──────────
+/** 「空出空間後什麼時候補上」那半句：照這一份實際的同步頻率講，⛔ 不寫死「每小時」 */
+const gsheetRefillWhen = computed(() => (gsheetAutoSync.value
+  ? `下一次同步（${optionLabel(GSHEET_INTERVAL_OPTIONS, selectedSource.value?.refreshIntervalMinutes ?? 0)}一次，或按「立即同步」）會自動補上`
+  : '按「立即同步」就會補上（這一份設成不自動同步）'))
+
+const excludedTitles = computed(() => (selectedSource.value?.type === 'gsheet' ? selectedSource.value.gsheetExcludedTitles ?? [] : []))
+/** 列出來的那幾列：太多就列前 3 個、其餘講「等 N 列」——那一行只是讓他認得是哪幾列，不是清單 */
+const excludedPreview = computed(() => {
+  const list = excludedTitles.value
+  const shown = list.slice(0, 3).map(t => `「${t.length > 20 ? `${t.slice(0, 20)}…` : t}」`).join('、')
+  return list.length > 3 ? `${shown} 等 ${list.length} 列` : shown
+})
+const clearingExcluded = ref(false)
+/** 「重新收這幾列」：清掉名單，之後同步把那幾列收回來（伺服器順手清掉內容指紋，表格沒變也會整份重比） */
+async function clearExcludedRows() {
+  const id = selectedId.value
+  if (!id) return
+  clearingExcluded.value = true
+  try {
+    await apiFetch(`/api/ai/sources/${id}`, { method: 'PUT', body: { clearExcludedRows: true } })
+    showToast(gsheetAutoSync.value ? '好了：下一次同步會把這幾列收回來（想馬上收就按「立即同步」）' : '好了：按「立即同步」就會把這幾列收回來', 'success')
+    await loadSourceDetail(id)
+  }
+  catch (err: any) {
+    showToast(apiErrorText(err, '沒有改成，請再試一次'), 'error')
+  }
+  finally {
+    clearingExcluded.value = false
+  }
+}
 
 const serviceAccountEmail = ref('')
 async function loadServiceAccountEmail() {
@@ -3071,7 +3326,7 @@ async function saveSourceUrl() {
     await startResync()
   }
   catch (err: any) {
-    showToast(err?.data?.statusMessage || err?.statusMessage || '更新網址失敗', 'error')
+    showToast(apiErrorText(err, '更新網址失敗'), 'error')
   }
   finally {
     savingUrl.value = false
@@ -3104,7 +3359,7 @@ async function saveProductName() {
     void loadHealth(true) // 「未設產品名」的計數要立刻反映
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     savingProductName.value = false
@@ -3161,7 +3416,7 @@ async function saveSettings() {
     await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     savingSettings.value = false
@@ -3217,7 +3472,7 @@ async function deleteSource() {
     await loadSources(true)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '刪除失敗', 'error')
+    showToast(apiErrorText(err, '刪除失敗'), 'error')
   }
   finally {
     deleting.value = false
@@ -3258,8 +3513,43 @@ const foldedNoteParts = computed(() => {
   const parts: string[] = []
   if (hiddenUnchangedCount.value) parts.push(`${hiddenUnchangedCount.value} 條未變`)
   if (stillOnPageCount.value) parts.push(`${stillOnPageCount.value} 條「移除」其實還在網頁上(這次 AI 換了分法，已自動保留)`)
-  if (cosmeticCount.value) parts.push(`${cosmeticCount.value} 條只是換句話說(意思沒變，已自動保留原卡)`)
+  if (cosmeticCount.value) parts.push(`${cosmeticCount.value} 條只是換句話說(意思沒變，已自動保留原本的)`)
   return parts
+})
+
+/**
+ * 套用前的知識空間（`C-308`⑪）：差異打開時讀一次；null＝不限或讀不到——那就不講（不猜）。
+ * 伺服器套用時放不下的新增會先不加、回 quotaSkipped（跟加入視窗「先收前 N 條」同一把尺），這裡讓他按之前就知道。
+ */
+const diffQuota = ref<{ used: number, limit: number | null } | null>(null)
+async function loadDiffQuota() {
+  diffQuota.value = null
+  try {
+    diffQuota.value = (await apiFetch<{ quota: { used: number, limit: number | null } | null }>('/api/ai/knowledge/quota')).quota
+  }
+  catch {
+    diffQuota.value = null
+  }
+}
+/**
+ * 這次勾了幾條新增、空間放不放得下。刪掉的會進回收桶、空出位置（跟伺服器同一把尺）——
+ * ⛔ 「等你看過」的不算：草稿本來就沒佔空間，刪了也空不出來。明細只在差異屬於正開著的那一份時看得到狀態
+ */
+const diffRoom = computed(() => {
+  const q = diffQuota.value
+  const d = diffData.value
+  if (!q || q.limit == null || !d) return null
+  const statusOf = selectedId.value === d.sourceId ? new Map(chunks.value.map(c => [c.id, c.status])) : new Map<string, string>()
+  let adds = 0
+  let freed = 0
+  for (const e of d.diff.entries) {
+    const action = decisions.value[e.id]
+    if (action === 'add_new' && e.newChunk) adds++
+    else if (action === 'delete_old' && e.oldChunk && statusOf.get(e.oldChunk.id) !== 'draft') freed++
+  }
+  if (!adds) return null
+  const room = Math.max(0, q.limit - q.used + freed)
+  return { adds, room, over: Math.max(0, adds - room) }
 })
 
 /** 縮水警示的二次確認(勾了才放行套用) */
@@ -3310,6 +3600,7 @@ async function startResync(force = false) {
     }
     decisions.value = init
     shrinkAcknowledged.value = false
+    void loadDiffQuota() // 背景讀；讀到之前那一行不出現
     diffOpen.value = true
   }
   catch (err: any) {
@@ -3332,8 +3623,11 @@ async function startResync(force = false) {
       showToast('這個網頁整理太久，這次先停了；你的知識沒有被改動。可以再按一次重新同步，或把內容複製下來，在「加入知識」直接貼進框裡。', 'warning')
     }
     else {
-      const reason = err?.data?.statusMessage || err?.statusMessage || err?.message || '重新整理沒有完成'
-      showToast(`${reason}。你的知識沒有被改動，可以再試一次；一直失敗的話，請把網頁內容複製下來，在「加入知識」直接貼進框裡，或聯絡我們。`, 'error')
+      const reason = apiErrorText(err, '重新整理沒有完成')
+      // 伺服器看過、拒絕了的（4xx：沒有權限、那一份不在了）再按一次也一樣，⛔ 不叫人「再試一次」（`C-308`⑩）
+      showToast(isRetryableError(err)
+        ? `${reason}。你的知識沒有被改動，可以再試一次；一直失敗的話，請把網頁內容複製下來，在「加入知識」直接貼進框裡，或聯絡我們。`
+        : `${reason}。你的知識沒有被改動。`, 'error')
     }
   }
   finally {
@@ -3342,7 +3636,8 @@ async function startResync(force = false) {
 }
 
 interface GsheetSyncRes {
-  outcome: 'unchanged' | 'synced' | 'blocked_mass_deletion'
+  /** source_deleted：同步途中這份資料被刪掉了（`C-308`③，伺服器寫每一條前會先確認那份還在） */
+  outcome: 'unchanged' | 'synced' | 'blocked_mass_deletion' | 'source_deleted'
   added: number
   updated: number
   deleted: number
@@ -3366,8 +3661,8 @@ async function syncGsheetNow() {
     if (res.outcome === 'blocked_mass_deletion') {
       try {
         await ElMessageBox.confirm(
-          `表格比上次同步少了 ${res.pendingDeletes ?? 0} 列，對應的知識卡會被移到回收桶（30 天內可還原）。\n\n如果不是你刪的，請先到試算表確認分頁與內容是否正常，不要繼續。`,
-          '一次要刪很多卡，先確認一下',
+          `表格比上次同步少了 ${res.pendingDeletes ?? 0} 列，對應的知識會移到回收桶（30 天內可還原）。\n\n如果不是你刪的，請先到試算表確認分頁與內容是否正常，不要繼續。`,
+          '一次要刪很多條，先確認一下',
           { confirmButtonText: '我確認要刪', cancelButtonText: '先不要', type: 'warning' },
         )
       }
@@ -3380,12 +3675,22 @@ async function syncGsheetNow() {
         { method: 'POST', body: { allowMassDeletion: true } },
       )
     }
-    await loadSourceDetail(selectedId.value)
+    // 同步途中這份資料被刪掉了（`C-308`③）：⛔ 不講「同步完成：新增…」——那些都沒留下來。講一句、清單重讀、回工作台
+    if (res.outcome === 'source_deleted') {
+      showToast('這份資料在同步途中被刪掉了，這次同步沒有留下任何東西', 'warning')
+      backToWorkbench()
+      await loadSources(true)
+      return
+    }
+    await loadSourceDetail(selectedId.value!)
     // 同步成功也可能剛清掉失敗標記 → 一定要 force 重跑體檢。
     // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
     await loadSources(true)
-    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了同步卻什麼都沒發生
-    const quotaTail = res.quotaSkipped ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後會自動補上）` : ''
+    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了同步卻什麼都沒發生。
+    // 什麼時候補照同步頻率講（`C-308`④）：設成不自動同步的不會「自動」補
+    const quotaTail = res.quotaSkipped
+      ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後${gsheetAutoSync.value ? '，下一次同步會自動補上' : '再按一次「立即同步」就會補上'}）`
+      : ''
     if (res.outcome === 'unchanged') {
       showToast(quotaTail ? `表格沒有變動${quotaTail}` : '已是最新，無變動', quotaTail ? 'warning' : 'success')
     }
@@ -3393,7 +3698,7 @@ async function syncGsheetNow() {
       // 被手動編輯鎖住的分歧要講出來——不講的話，商家改了表格卻永遠不生效、也不知道為什麼
       showToast(
         `同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`
-        + (res.manualKept ? `；另有 ${res.manualKept} 條知識未跟表格更新（點鎖頭可解除）` : '')
+        + (res.manualKept ? `；另有 ${res.manualKept} 條是你改過的，沒跟著表格更新（點那一條旁邊的鎖頭可以改回）` : '')
         + quotaTail,
         'warning',
       )
@@ -3404,7 +3709,7 @@ async function syncGsheetNow() {
   }
   catch (err: any) {
     // 中文原因在 data.statusMessage（err.statusMessage 是 HTTP 狀態那一行，HTTP/2 下是空的）
-    showToast(err?.data?.statusMessage || err?.statusMessage || '同步失敗', 'error')
+    showToast(apiErrorText(err, '同步失敗'), 'error')
   }
   finally {
     gsheetSyncing.value = false
@@ -3446,7 +3751,7 @@ async function applyDiff() {
   if (divergentKeeps > 0) {
     try {
       await ElMessageBox.confirm(
-        `你保留了 ${divergentKeeps} 項與網頁不同的內容（卡片會維持舊版）。網頁的新內容這次不會套用；之後按重新同步時，這些差異仍會再列出來。`,
+        `你保留了 ${divergentKeeps} 項與網頁不同的內容（那幾條維持舊版）。網頁的新內容這次不會套用；之後按重新同步時，這些差異仍會再列出來。`,
         '有保留與網頁不同的內容',
         { confirmButtonText: '照我的選擇套用', cancelButtonText: '回去再看看', type: 'warning' },
       )
@@ -3457,7 +3762,7 @@ async function applyDiff() {
   }
   applying.value = true
   try {
-    const res = await apiFetch<{ added: number; updated: number; deleted: number; kept: number; errors: any[]; divergentKeeps?: number; fingerprintAdvanced?: boolean }>(
+    const res = await apiFetch<{ added: number; updated: number; deleted: number; kept: number; errors: any[]; divergentKeeps?: number; fingerprintAdvanced?: boolean; quotaSkipped?: number }>(
       `/api/ai/sources/${targetId}/resync-apply`,
       {
         method: 'POST',
@@ -3477,14 +3782,21 @@ async function applyDiff() {
       }
       const names = res.errors.slice(0, 3).map((er: any) => `「${titleOf(String(er.entryId))}」`).join('、')
       showToast(
-        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 條失敗:${names}${res.errors.length > 3 ? ' 等' : ''}。可以直接再按一次「套用」重試,不會重複建卡`,
+        `已套用:新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted};但 ${res.errors.length} 條失敗:${names}${res.errors.length > 3 ? ' 等' : ''}。可以直接再按一次「套用」重試,不會重複建立`,
         'warning',
       )
       console.warn('[resync-apply] errors:', res.errors)
       // 部分失敗:diff 留在畫面上讓人直接重按(同一個 applyId,冪等)
       return
     }
-    showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')
+    // 空間不夠、先沒加的新增（`C-308`⑪）：伺服器收到滿為止，沒收的那幾條一定要講——不講就是「沉默地少收」
+    const skipped = Number(res.quotaSkipped ?? 0)
+    if (skipped > 0) {
+      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；還有 ${skipped} 條新增因為知識空間滿了沒加（空出空間後再按一次「重新同步」就會補上）`, 'warning')
+    }
+    else {
+      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')
+    }
     diffOpen.value = false
     diffData.value = null
     await loadSources(true)
@@ -3493,8 +3805,11 @@ async function applyDiff() {
   }
   catch (err: any) {
     // 逾時/斷線:後端很可能已經做完(或做到一半)。diff 與 applyId 都還在,
-    // 直接再按一次是安全的(新增用決定性 id 覆寫,不會重複建卡)。
-    showToast(`${err?.statusMessage || '套用失敗'}；可以直接再按一次「套用」，不會重複建卡`, 'error')
+    // 直接再按一次是安全的(新增用決定性 id 覆寫,不會重複建立)。
+    // ⛔ 伺服器看過、拒絕了的（4xx：沒有權限、那一份不在了）不叫人再按（`C-308`⑩：以前每次都是同一個錯）
+    showToast(isRetryableError(err)
+      ? `${apiErrorText(err, '套用沒有完成')}；可以直接再按一次「套用」，不會重複建立`
+      : apiErrorText(err, '套用失敗'), 'error')
   }
   finally {
     applying.value = false
@@ -3532,7 +3847,7 @@ async function reindexAll() {
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '重新學習失敗,請再試一次', 'error')
+    showToast(apiErrorText(err, '重新學習沒有完成') + (isRetryableError(err) ? '，可以再試一次' : ''), 'error')
   }
   finally {
     reindexingAll.value = false
@@ -3604,7 +3919,7 @@ async function migrateOrphans() {
     await loadSources(true)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '整理失敗', 'error')
+    showToast(apiErrorText(err, '整理失敗'), 'error')
   }
   finally {
     migrating.value = false
@@ -3631,9 +3946,9 @@ async function commitName() {
     await loadSources()
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
-  catch {
+  catch (err: any) {
     nameDraft.value = current  // 失敗還原
-    showToast('重新命名失敗', 'error')
+    showToast(apiErrorText(err, '重新命名失敗'), 'error')
   }
   finally { savingName = false }
 }
@@ -3650,6 +3965,7 @@ function openCreateManual() {
   chunkProductName.value = selectedSource.value?.productName ?? ''
   chunkEditStatus.value = ''
   chunkEditFailureReason.value = ''
+  chunkEditLockedAtMs.value = 0
   chunkEnabled.value = true
   chunkActiveUntil.value = ''
   chunkExpiredAtMs.value = 0
@@ -3672,6 +3988,7 @@ function openEditChunk(chunk: ChunkRow) {
   }
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
+  chunkEditLockedAtMs.value = chunk.manuallyEditedAtMs || 0
   chunkEnabled.value = chunk.status !== 'disabled'
   chunkActiveUntil.value = chunk.activeUntilMs ? ymdLabel(chunk.activeUntilMs) : ''
   chunkExpiredAtMs.value = chunk.expiredAtMs || 0
@@ -3705,7 +4022,7 @@ async function normalizeChunkFromModal() {
     showToast('已整理 — 記得儲存', 'success')
   }
   catch (err: any) {
-    showToast(err?.statusMessage || 'AI 整理失敗', 'error')
+    showToast(apiErrorText(err, 'AI 整理失敗'), 'error')
   }
   finally {
     chunkNormalizing.value = false
@@ -3749,7 +4066,7 @@ async function reindexChunkFromModal() {
     if (learned) void loadHealth(true)
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '重新學習失敗', 'error')
+    showToast(apiErrorText(err, '重新學習失敗'), 'error')
   }
   finally {
     chunkReindexing.value = false
@@ -3833,7 +4150,7 @@ async function saveChunk() {
       }
     }
     else if (chunkEditingId.value) {
-      await apiFetch(`/api/ai/knowledge/${chunkEditingId.value}`, {
+      const put = await apiFetch<{ changed?: boolean }>(`/api/ai/knowledge/${chunkEditingId.value}`, {
         method: 'PUT',
         body,
       })
@@ -3844,15 +4161,20 @@ async function saveChunk() {
       if (Object.keys(settingsBody).length) {
         await apiFetch(`/api/ai/knowledge/${chunkEditingId.value}/settings`, { method: 'POST', body: settingsBody })
       }
-      showToast('已儲存', 'success')
       chunkEditOpen.value = false
-      void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
+      /**
+       * 什麼都沒改（`C-308`①：伺服器回 changed:false＝沒寫、也沒上鎖）：安安靜靜關掉就好。
+       * ⛔ 不跳「已儲存」、不試問：跳了他會以為有東西被改了——以前「打開看看、按儲存關掉」就把那一條鎖住了
+       */
+      if (put?.changed === false && !Object.keys(settingsBody).length) return
+      showToast('已儲存', 'success')
+      if (put?.changed !== false) void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
       if (selectedId.value) await loadSourceDetail(selectedId.value)
       await loadSources(true) // 因為 manual source 名稱可能跟著變
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '儲存失敗', 'error')
+    showToast(apiErrorText(err, '儲存失敗'), 'error')
   }
   finally {
     chunkSaving.value = false
@@ -3865,8 +4187,12 @@ async function deleteChunkFromModal() {
   try {
     await ElMessageBox.confirm(
       // 量詞一律「條」（`D-41` 三，2026-09-03）：原本這句是錯字「這一條片」——
-      // 08-04 拍板把「卡片」全面改叫「一條知識」時，這裡改了一半
-      `要刪除「${title}」這 1 條知識嗎？無法復原。`,
+      // 08-04 拍板把「卡片」全面改叫「一條知識」時，這裡改了一半。
+      // ⛔ 以前寫「無法復原」（`C-309`）：實際是進回收桶 30 天，嚇人又不對。
+      // 試算表來的那一條（`D-125`② 拍板 A）：刪了＝表格那一列不再收，⛔ 一定要先講——不然他以為下次同步會長回來、或以為只是暫時拿掉
+      selectedSource.value?.type === 'gsheet'
+        ? `要刪除「${title}」嗎？表格上的這一列之後同步不會再收；刪掉的會先放進回收桶，30 天內可以還原。`
+        : `要刪除「${title}」這 1 條知識嗎？會先放進回收桶，30 天內可以還原。`,
       '刪除知識',
       {
         confirmButtonText: '刪除',
@@ -3892,7 +4218,7 @@ async function deleteChunkFromModal() {
     }
   }
   catch (err: any) {
-    showToast(err?.statusMessage || '刪除失敗', 'error')
+    showToast(apiErrorText(err, '刪除失敗'), 'error')
   }
   finally {
     chunkDeleting.value = false
@@ -3931,7 +4257,7 @@ async function downloadOriginal() {
     a.click()
   }
   catch (err: any) {
-    showToast(err?.data?.statusMessage || err?.statusMessage || '下載失敗，請再試一次', 'error')
+    showToast(apiErrorText(err, '下載失敗') + (isRetryableError(err) ? '，請再試一次' : ''), 'error')
   }
   finally {
     downloadingOriginal.value = false
@@ -3974,7 +4300,8 @@ function metaText(src: SourceSummary) {
   // 不然會出現「這裡標著未設、體檢卻不算它」兩邊說法不一致。
   if (src.productName) parts.push(src.productName)
   else if (needsProductName(src)) parts.push('未設產品')
-  if (src.lastFetchedAtMs) parts.push(`同步：${relativeTime(src.lastFetchedAtMs)}`)
+  // 檔案、文字不會同步（`C-309`）：照實叫「更新」，不寫「同步：9/4」讓人以為它會自己更新
+  if (src.lastFetchedAtMs) parts.push(`${isSyncingType(src.type) ? '同步' : '更新'}：${relativeTime(src.lastFetchedAtMs)}`)
   return parts.join(' · ')
 }
 function kindLabel(k: string) {
@@ -4023,7 +4350,11 @@ onMounted(async () => {
   if (healthParam && healthParam in HEALTH_META) {
     clearQuery()
     await loadHealth(true)
-    openHealthList(healthParam as HealthCategory)
+    // 只有一份／一條就直接帶過去（`C-309`：「前往比對」打開一張只有一列的清單，還要再點一次）——同 singleOrList
+    healthListCategory.value = healthParam as HealthCategory
+    const only = healthListItems.value
+    if (only.length === 1) await gotoHealthItem(only[0]!)
+    else openHealthList(healthParam as HealthCategory)
     return
   }
 
@@ -4075,7 +4406,17 @@ onMounted(async () => {
 
 async function openChunkById(chunkId: string) {
   try {
-    const info = await apiFetch<{ id: string; sourceId: string | null }>(`/api/ai/knowledge/${chunkId}`)
+    const info = await apiFetch<{ id: string; sourceId: string | null; deleted?: boolean }>(`/api/ai/knowledge/${chunkId}`)
+    /**
+     * 那一條已經在回收桶（換新版換掉、或被刪了，報告第 4 組）：以前舊對話裡「去修這條」點了什麼都沒發生。
+     * 講一句，還在的那一份照樣打開——他多半是要去改那一份現在的內容
+     */
+    if (info.deleted) {
+      showToast('這條已經換掉或刪掉了（在回收桶裡）', 'warning')
+      const owner = info.sourceId ? sources.value.find(s => s.id === info.sourceId) : null
+      if (owner) await selectSource(owner)
+      return
+    }
     if (!info.sourceId) {
       showToast('這一條尚未歸入任何資料,請先用「一鍵整理」歸檔', 'error')
       return
@@ -4089,8 +4430,8 @@ async function openChunkById(chunkId: string) {
     const chunk = chunks.value.find(c => c.id === chunkId)
     if (chunk) openEditChunk(chunk)
   }
-  catch {
-    showToast('找不到這一條(可能已被刪除)', 'error')
+  catch (err: any) {
+    showToast(apiErrorText(err, '找不到這一條(可能已被刪除)'), 'error')
   }
 }
 </script>

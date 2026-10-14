@@ -29,6 +29,11 @@ import { getFirestore } from 'firebase-admin/firestore'
 import puppeteer from 'puppeteer'
 
 const BASE = process.env.CHECK_BASE_URL ?? 'http://localhost:3000'
+/**
+ * 從第幾段開始跑（預設全跑）。第三十段起（`C-308`／`C-309`／`D-125`）全部用假資料、不靠前面任何一段，
+ * 破壞性驗證（拿掉修正→那一關變紅→還原）時用 CHECK_FROM=30 只跑那幾段，不必每次等前面二十九段
+ */
+const CHECK_FROM = Number(process.env.CHECK_FROM ?? 1)
 const WORKSPACE_ID = process.env.CHECK_WORKSPACE_ID ?? '212405d2-d782-443b-9670-adac3b3e1f99' // MYFEEL
 
 const {
@@ -105,6 +110,21 @@ const pageErrors = []
 const json = body => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 
 /**
+ * 「換新版」那幾段（第二十二、二十六段）換掉的是正式庫裡真的一份：換之前會讀那一份**他改過哪幾條**（`D-125`①），
+ * 有的話會停下來問——那幾段驗的是「直接換掉」，所以這裡照實向伺服器拿（唯讀）、只把「改過」的記號拿掉，
+ * 不管正式庫裡那一份今天有沒有人改過，畫面都一樣。⛔ 只動瀏覽器拿到的那一份，不寫回去。
+ */
+async function realDetailWithoutEdits(req, sourceId) {
+  const url = req.url()
+  if (req.method() !== 'GET' || !sourceId) return undefined
+  const m = url.match(/\/api\/ai\/sources\/([^/?]+)\?/)
+  if (!m || decodeURIComponent(m[1]) !== sourceId) return undefined
+  const real = await (await fetch(url, { headers: req.headers() })).json()
+  for (const c of real.chunks ?? []) c.manuallyEditedAtMs = 0
+  return json(real)
+}
+
+/**
  * 開一個已登入、匯入視窗打開的頁面。
  * fake(req)：要假造的請求回傳 { status, contentType, body }；回 undefined 照原規則走
  * （GET 照常打到本機伺服器＝唯讀正式庫；不是 GET 的 /api 一律攔下、記一筆、回假的 200）。
@@ -171,6 +191,7 @@ async function waitFor(page, fn, arg, ms = 30_000) {
 }
 
 try {
+  if (CHECK_FROM <= 29) {
   // ── 第一段：收哪些檔、選了之後講對是什麼 ─────────────────────────────
   const page = await openImportDialog()
   pass('匯入視窗打得開')
@@ -427,6 +448,8 @@ try {
         bulks.push({ name: b.source?.name, replace: b.replaceSourceId ?? null, keys: Object.keys(b.source ?? {}) })
         return json({ sourceId: 's', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
       }
+      // 「換掉舊的」會先讀舊的那一份有沒有他改過的（`D-125`①）：這一段的舊資料沒有改過的
+      if (url.includes('/api/ai/sources/old-src-1') && m === 'GET') return json({ source: {}, chunks: [] })
       return undefined
     })
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
@@ -942,6 +965,8 @@ try {
         bulks.push(b)
         return json({ sourceId: 'old-1', total: 1, indexed: 1, failed: 0, replacedChunks: 3, originalKept: true, items: [] })
       }
+      // 換掉之前讀那一份有沒有他改過的（`D-125`①）：沒有改過的＝照舊直接換
+      if (url.includes('/api/ai/sources/old-1') && m === 'GET') return json({ source: {}, chunks: [] })
       return undefined
     })
     await watchPreview(pg)
@@ -1148,6 +1173,8 @@ try {
         if (target) { target.type = 'file'; patchedId = target.id; patchedName = target.name }
         return json(real)
       }
+      const detail = await realDetailWithoutEdits(req, patchedId)
+      if (detail) return detail
       if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 10, limit: 50, planName: '免費' } })
       if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
       if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return STORAGE_OK
@@ -1341,6 +1368,8 @@ try {
     const hit = { id: '', name: '' }
     const handle = async (req) => {
       const url = req.url()
+      const detail = await realDetailWithoutEdits(req, hit.id)
+      if (detail) return detail
       if (!(url.includes('/api/ai/sources/list') && req.method() === 'GET')) return undefined
       const real = await (await fetch(url, { headers: req.headers() })).json()
       const items = Array.isArray(real.items) ? real.items : []
@@ -1500,6 +1529,492 @@ try {
     }))
     if (r.label.includes('混在一起') && r.sync.includes('單獨貼') && r.disabled === true && !probes.length) pass('網址和試算表連結混在一起 → 講「試算表連結請單獨貼」、開始鈕鎖住、不去試讀那份試算表')
     else fail('網址和試算表混在一起時畫面不對', JSON.stringify({ ...r, probes: probes.length }))
+    await pg.close()
+  }
+  } // CHECK_FROM <= 29
+
+  // ══ 第三十段起（2026-10-13 `C-308`／`C-309`／`D-125`）：資料頁、換新版的新規矩 ══════════════════
+  // 全部假資料：資料清單、明細、伺服器的回應都在瀏覽器裡回假的——正式庫不讀這幾份、也不寫任何東西，畫面每次一樣。
+  const NOW = Date.now()
+  const fakeSource = o => ({
+    id: 'x', type: 'gsheet', name: '', url: '', folderId: null, status: 'ready', chunkCount: 3, refreshIntervalMinutes: 60,
+    onChangeBehavior: 'notify', productName: '', generateOverview: false, urlAutoApply: true, lastFetchedAtMs: NOW - 3600_000,
+    outdatedAtMs: 0, updatedAtMs: NOW - 3600_000, numbersVolatile: false, detectStalledAtMs: 0, manualKeptCount: 0,
+    quotaSkippedCount: 0, gsheetExcludedTitles: [], blockedPendingDeletes: 0, originalFile: null, ...o,
+  })
+  const fakeChunk = o => ({ id: 'c', title: '', content: '內容', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 0, updatedAtMs: NOW - 86400_000, activeUntilMs: 0, expiredAtMs: 0, ...o })
+  /** 資料頁：清單整份換成 list、明細照 id 回 details[id]（那一份的條目）；delayMs[id] 讓那一份的明細晚一點回來 */
+  const fakeSourcesPage = (list, details, delayMs = {}) => async (req) => {
+    const url = req.url()
+    if (req.method() !== 'GET') return undefined
+    if (url.includes('/api/ai/sources/list')) return json({ items: list, orphanCount: 0 })
+    const m = url.match(/\/api\/ai\/sources\/([^/?]+)\?/)
+    const id = m ? decodeURIComponent(m[1]) : ''
+    if (id && details[id]) {
+      if (delayMs[id]) await sleep(delayMs[id])
+      return json({ source: list.find(s => s.id === id), chunks: details[id] })
+    }
+    return undefined
+  }
+  const SOURCES_PAGE = { path: '/knowledge/sources', waitSel: '[data-tour="kb-sources"]' }
+  const pickSource = async (pg, name) => {
+    await waitFor(pg, n => [...document.querySelectorAll('.split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === n), name)
+    await pg.evaluate((n) => { [...document.querySelectorAll('.split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === n)?.click() }, name)
+  }
+  const toastsOf = pg => pg.$$eval('.toast', els => els.map(e => e.innerText))
+  /**
+   * 同一頁換網址（深連結那幾關）。⚠️ dev server 在別的檔案存檔時會整頁重載，正好撞上就是「frame was detached」——
+   * 那不是畫面的錯，重來一次；第二次還失敗才算
+   */
+  const gotoAgain = async (pg, url) => {
+    try { await pg.goto(url, { waitUntil: 'networkidle2', timeout: 180_000 }) }
+    catch { await sleep(2000); await pg.goto(url, { waitUntil: 'networkidle2', timeout: 180_000 }) }
+  }
+  const PUT_OK = { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
+  const errorJson = (status, statusMessage) => ({ status, contentType: 'application/json', body: JSON.stringify({ statusCode: status, statusMessage, message: statusMessage }) })
+  /** 資料頁上點那一份 → 按「換新版」→ 選檔 */
+  const newVersionOf = async (pg, name, file) => {
+    await pickSource(pg, name)
+    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('換新版')), null, 15_000)
+    const [chooser] = await Promise.all([
+      pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
+      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('換新版'))?.click()),
+    ])
+    if (!chooser) throw new Error('按「換新版」沒有開選檔視窗')
+    await chooser.accept([file])
+  }
+
+  // ── 第三十段（`C-308`⑫④、`D-125`②）：手機 390 寬、試算表網址很長 → 畫面不撐破；
+  //    「什麼時候補」照這一份的同步頻率講（設成不自動同步＝按立即同步才補）；在後台刪掉的列講出來、收得回來 ──
+  if (CHECK_FROM <= 30) {
+    const LONG_URL = 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcdefghijklmnopqrst/edit?usp=sharing&ouid=123456789012345678901&rtpof=true&sd=true#gid=1234567890'
+    const sheet = fakeSource({ id: 'fake-sheet-long', name: '常見問答（試算表）', url: LONG_URL, refreshIntervalMinutes: 0, quotaSkippedCount: 3,
+      gsheetExcludedTitles: ['W1 保固多久', 'KIESLECT 小耳記怎麼充電', '出貨要幾天', '可以刷卡嗎', '有門市嗎'] })
+    const puts = []
+    const pageFake = fakeSourcesPage([sheet], { 'fake-sheet-long': [fakeChunk({ id: 'c1', title: '退貨要怎麼辦' })] })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().includes('/api/ai/sources/fake-sheet-long') && req.method() === 'PUT') {
+        puts.push(JSON.parse(req.postData() || '{}'))
+        return json({})
+      }
+      return pageFake(req)
+    }, { ...SOURCES_PAGE, width: 390, height: 844 })
+    await pickSource(pg, sheet.name)
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length > 0, null, 30_000)
+    await sleep(500)
+    if (process.env.SHOT_DIR) await pg.screenshot({ path: join(process.env.SHOT_DIR, 'kb-phone-long-sheet-url.png'), fullPage: true })
+    // 右緣超出螢幕的元素一個都不准有（以前網址把表頭撐到 640px：整頁左右滑、名稱框被切掉）
+    const lay = await pg.evaluate(() => {
+      const vw = window.innerWidth
+      const over = [...document.querySelectorAll('.split-editor *')]
+        .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.right > vw + 1 })
+        .map(el => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}→${Math.round(el.getBoundingClientRect().right)}`)
+      const name = document.querySelector('.src-header-main .el-input')?.getBoundingClientRect()
+      const link = document.querySelector('.src-header-caption a')?.getBoundingClientRect()
+      return { over: over.slice(0, 6), overCount: over.length, hscroll: document.documentElement.scrollWidth > vw + 1, nameW: name ? Math.round(name.width) : -1, linkLines: link ? Math.round(link.height / 16) : 0, vw }
+    })
+    if (!lay.overCount && !lay.hscroll && lay.nameW >= 250 && lay.linkLines >= 2) pass(`手機 390 寬、試算表網址很長 → 沒有任何東西超出螢幕、不能左右滑，網址斷成 ${lay.linkLines} 行、名稱框 ${lay.nameW}px`)
+    else fail('手機上長網址把畫面撐破了', JSON.stringify(lay))
+
+    const t = await pg.evaluate(() => ({
+      quota: [...document.querySelectorAll('.src-outdated-alert')].map(e => e.innerText).find(x => x.includes('還沒收進知識庫')) ?? '',
+      hint: document.querySelector('[data-tour="kb-sync-settings"] .src-section-hint')?.innerText ?? '',
+      excluded: document.querySelector('.src-excluded__text')?.innerText ?? '',
+    }))
+    if (t.quota.includes('按「立即同步」就會補上') && !t.quota.includes('每小時') && !t.hint.includes('每小時')) pass('設成不自動同步的試算表 → 「沒收的列」講按「立即同步」才補，整頁不再寫死「每小時」')
+    else fail('同步頻率的講法不對', JSON.stringify(t))
+    if (t.excluded.includes('表格上有 5 列你在後台刪掉了，不會再收') && t.excluded.includes('「W1 保固多久」') && t.excluded.includes('等 5 列')) pass(`在後台刪掉的列講出來（太多只列前 3 個）：「${t.excluded}」`)
+    else fail('沒講在後台刪掉、不再收的列', t.excluded)
+    await pg.evaluate(() => [...document.querySelectorAll('.src-excluded .el-button')].find(b => b.innerText.includes('重新收這幾列'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('收回來')), null, 8000)
+    const toasts = await toastsOf(pg)
+    if (puts.length === 1 && puts[0].clearExcludedRows === true && toasts.some(x => x.includes('按「立即同步」就會把這幾列收回來'))) pass('按「重新收這幾列」→ 叫伺服器清掉名單（clearExcludedRows），講按「立即同步」就收回來')
+    else fail('「重新收這幾列」不對', JSON.stringify({ puts, toasts }))
+    await pg.close()
+  }
+
+  // ── 第三十一段（`C-308`⑤②⑩、`C-309`、`D-125`②）：表格一次少太多列 → 講「等你確認」不是「抓不到」；
+  //    鎖頭點得開（手機也行）、照來源講改回去會怎樣；出錯講伺服器給的原因；刪除講對（回收桶、試算表那一列不再收）；文字沒有鎖頭 ──
+  if (CHECK_FROM <= 31) {
+    const held = fakeSource({ id: 'fake-held', name: '價目表（試算表）', status: 'failed', blockedPendingDeletes: 12, outdatedAtMs: NOW - 600_000,
+      failureReason: '表格一次少了 12 列（現有 30 張卡）。為避免誤刪，自動同步已暫停套用；請到知識庫來源頁確認後手動同步。' })
+    const lockSheet = fakeSource({ id: 'fake-lock', name: '保固說明（試算表）', manualKeptCount: 1 })
+    const text = fakeSource({ id: 'fake-text', type: 'manual', name: '營業時間（文字）', chunkCount: 1, lastFetchedAtMs: 0 })
+    let settingsCalls = 0
+    const settingsBodies = []
+    const pageFake = fakeSourcesPage([held, lockSheet, text], {
+      'fake-held': [fakeChunk({ id: 'h1', title: 'W1 售價' })],
+      'fake-lock': [fakeChunk({ id: 'lk1', title: 'W1 保固多久', manuallyEditedAtMs: NOW - 3 * 86400_000 })],
+      'fake-text': [fakeChunk({ id: 'tx1', title: '營業時間', manuallyEditedAtMs: NOW - 86400_000 })],
+    })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().includes('/api/ai/knowledge/lk1/settings') && req.method() === 'POST') {
+        settingsBodies.push(JSON.parse(req.postData() || '{}'))
+        // 第一次：伺服器拒絕、原因在 data.statusMessage（HTTP 那一行是英文 Forbidden）
+        if (++settingsCalls === 1) return errorJson(403, '這張卡在回收桶裡，請先還原再操作')
+        return json({ id: 'lk1', appliesOn: 'next_sync' })
+      }
+      // 什麼都沒改就按儲存：伺服器回 changed:false（沒寫、沒上鎖，`C-308`①）
+      // ⚠️ PUT 的 workspaceId 放在 body、網址後面沒有 ?（只有 GET／DELETE 才接在網址上）
+      if (new URL(req.url()).pathname === '/api/ai/knowledge/lk1' && req.method() === 'PUT') return json({ id: 'lk1', changed: false })
+      // 立即同步途中這份被刪掉了（`C-308`③）
+      if (req.url().includes('/api/ai/sources/fake-lock/gsheet-sync') && req.method() === 'POST') return json({ outcome: 'source_deleted', added: 0, updated: 0, deleted: 0, kept: 0 })
+      return pageFake(req)
+    }, SOURCES_PAGE)
+
+    await pickSource(pg, held.name)
+    await waitFor(pg, () => !!document.querySelector('.src-fix'), null, 30_000)
+    const fix = await pg.evaluate(() => ({
+      title: document.querySelector('.src-fix__title')?.innerText ?? '',
+      text: document.querySelector('.src-fix')?.innerText ?? '',
+      email: !!document.querySelector('.src-fix__email'),
+      outdated: [...document.querySelectorAll('.src-outdated-alert')].some(e => e.innerText.includes('網頁內容變動')),
+    }))
+    if (fix.title.includes('表格一次少了 12 列') && fix.text.includes('立即同步') && fix.text.includes('補回去') && !fix.text.includes('抓不到內容') && !fix.email && !fix.outdated) {
+      pass(`表格一次少太多列被擋下 → 「${fix.title.trim()}」、講按立即同步確認或把列補回去（不叫人去分享、不講網頁變動）`)
+    }
+    else fail('擋下大量刪除時還在講「抓不到內容／去分享」', JSON.stringify(fix))
+
+    await pickSource(pg, lockSheet.name)
+    await waitFor(pg, () => !!document.querySelector('.src-chunk-lock'), null, 30_000)
+    await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())
+    const popShown = await waitFor(pg, () => { const p = document.querySelector('.src-lock-pop'); return !!p && getComputedStyle(p).display !== 'none' && p.innerText.includes('不跟著表格') }, null, 5000)
+    const popText = await pg.$eval('.src-lock-pop', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    if (popShown && popText.includes('下一次同步會換成表格上的內容') && popText.includes('改回跟著表格')) pass(`鎖頭點一下就跳出說明（手機點得到，不再只靠滑鼠停留）：「${popText.slice(0, 60)}…」`)
+    else fail('鎖頭點了沒有說明', popText)
+    const clickUnlock = () => pg.evaluate(() => [...document.querySelectorAll('.src-lock-pop .el-button')].find(b => b.innerText.includes('改回跟著表格'))?.click())
+    await clickUnlock()
+    await waitFor(pg, () => document.querySelectorAll('.toast').length > 0, null, 8000)
+    const errToasts = await toastsOf(pg)
+    if (errToasts.some(x => x.includes('這張卡在回收桶裡')) && !errToasts.some(x => x.includes('解除失敗') || x.includes('Forbidden'))) pass('伺服器拒絕時講它給的中文原因（不再只說「解除失敗」、不講英文 Forbidden）')
+    else fail('出錯時沒講伺服器給的原因', errToasts.join('｜'))
+    await sleep(3800)
+    if (!(await pg.$('.src-lock-pop'))?.evaluate(el => getComputedStyle(el).display !== 'none')) await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())
+    await sleep(300)
+    await clickUnlock()
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('已改回')), null, 8000)
+    const okToasts = await toastsOf(pg)
+    if (settingsBodies.at(-1)?.clearManualLock === true && okToasts.some(x => x.includes('已改回跟著表格：下一次同步就會換成表格上的內容'))) pass('改回跟著表格 → 照伺服器回的生效時間講（下一次同步就換成表格的）')
+    else fail('改回跟著表格的提示不對', JSON.stringify({ settingsBodies, okToasts }))
+
+    await pg.evaluate(() => [...document.querySelectorAll('.src-chunk-row .el-button')].find(b => b.innerText.includes('編輯'))?.click())
+    await waitFor(pg, () => !!document.querySelector('.chunk-sync-note'), null, 8000)
+    const note = await pg.$eval('.chunk-sync-note', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    if (note.includes('這一條用你改過的版本，不跟著表格') && note.includes('改回跟著表格')) pass(`編輯框講它被鎖住、給改回去的路：「${note.trim()}」`)
+    else fail('編輯框沒講鎖住', note)
+    await pg.evaluate(() => [...document.querySelectorAll('.chunk-footer .el-button')].find(b => b.innerText.trim() === '刪除')?.click())
+    await waitFor(pg, () => !!document.querySelector('.el-message-box'), null, 5000)
+    const confirmText = await pg.$eval('.el-message-box', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box .el-button')].find(b => b.innerText.includes('取消'))?.click())
+    await sleep(500)
+    if (confirmText.includes('之後同步不會再收') && confirmText.includes('回收桶') && !confirmText.includes('無法復原')) pass('刪除試算表來的一條 → 先講那一列之後不會再收、會進回收桶 30 天（不再說「無法復原」）')
+    else fail('刪除的確認框說法不對', confirmText)
+    // 什麼都沒改、按「儲存」→ 安靜關掉：不跳「已儲存」（跳了他會以為有東西被改了、被鎖了）
+    await sleep(3800) // 前面的提示先消失
+    await pg.evaluate(() => [...document.querySelectorAll('.chunk-footer .el-button--primary')].find(b => b.innerText.trim() === '儲存')?.click())
+    const closed = await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.chunk-form')), null, 8000)
+    await sleep(800)
+    const saveToasts = await toastsOf(pg)
+    if (closed && !saveToasts.some(x => x.includes('已儲存'))) pass('什麼都沒改就按「儲存」→ 視窗關掉、不跳「已儲存」（伺服器回 changed:false＝沒上鎖）')
+    else fail('沒改東西也說已儲存', JSON.stringify({ closed, saveToasts }))
+    if (!closed) await pg.evaluate(() => [...document.querySelectorAll('.chunk-footer .el-button')].find(b => b.innerText.trim() === '取消')?.click())
+
+    // 立即同步途中這份被刪掉了 → 不講「同步完成：新增…」，回到清單
+    await pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('立即同步'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('被刪掉了')), null, 10_000)
+    const syncToasts = await toastsOf(pg)
+    const backHome = await pg.evaluate(() => !document.querySelector('.src-header-main input'))
+    if (syncToasts.some(x => x.includes('同步途中被刪掉了')) && !syncToasts.some(x => x.includes('同步完成')) && backHome) pass('立即同步時那一份被刪掉了 → 講「同步途中被刪掉了」、回到清單（不講「同步完成：新增 0…」）')
+    else fail('同步途中被刪掉時的說法不對', JSON.stringify({ syncToasts, backHome }))
+
+    await pickSource(pg, text.name)
+    await waitFor(pg, () => [...document.querySelectorAll('.src-chunk-title')].some(e => e.innerText.includes('營業時間')), null, 30_000)
+    const manual = await pg.evaluate(() => ({
+      lock: !!document.querySelector('.src-chunk-lock'),
+      labels: [...document.querySelectorAll('.src-info-grid .src-label')].map(e => e.innerText).join('／'),
+    }))
+    if (!manual.lock && manual.labels.includes('更新時間') && !manual.labels.includes('最後同步')) pass(`一段文字不會同步 → 沒有鎖頭、不寫「最後同步」（${manual.labels}）`)
+    else fail('一段文字還有鎖頭或「最後同步」', JSON.stringify(manual))
+    await pg.close()
+  }
+
+  // ── 第三十二段（`C-308`、`C-309`）：「要處理的事」講試算表還有幾列沒收、一份就直接帶過去；
+  //    選資料的那一刻同步頻率就是對的（不先閃「不自動同步」）；搜尋結果標「等你看過」；?health= 只有一份時直接帶過去 ──
+  if (CHECK_FROM <= 32) {
+    const hourly = fakeSource({ id: 'fake-hourly', name: '新品清單（試算表）', refreshIntervalMinutes: 60, quotaSkippedCount: 4 })
+    const other = fakeSource({ id: 'fake-other', type: 'url', name: '官網常見問題', url: 'https://shop.example.tw/faq', refreshIntervalMinutes: 1440 })
+    const pageFake = fakeSourcesPage([hourly, other], { 'fake-hourly': [fakeChunk({ id: 'n1', title: 'W2 上市日期' })], 'fake-other': [fakeChunk({ id: 'o1', title: '運費' })] }, { 'fake-hourly': 3000 })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().includes('/api/ai/knowledge/search') && req.method() === 'GET') {
+        return json({ items: [{ id: 'd1', sourceId: null, title: '草稿那一條', snippet: '等你看過的內容', status: 'draft' }], truncated: false, countTruncated: false })
+      }
+      // 舊對話「去修這條」帶過來的那一條已經在回收桶（換新版換掉了）
+      if (req.url().includes('/api/ai/knowledge/gone-1?') && req.method() === 'GET') return json({ id: 'gone-1', sourceId: 'fake-other', deleted: true })
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('列因為空間滿了還沒收')), null, 30_000)
+    const item = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('還沒收')) ?? '')
+    if (item.includes('1 份試算表有 4 列因為空間滿了還沒收')) pass(`「要處理的事」講試算表還有幾列沒收：「${item.slice(0, 40)}…」`)
+    else fail('「要處理的事」沒講試算表沒收的列', item)
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('還沒收'))?.querySelector('.el-button')?.click())
+    // 明細故意晚 3 秒回來：這段時間看到的同步頻率要已經是對的
+    await waitFor(pg, () => !!document.querySelector('[data-tour="kb-sync-settings"] .el-select'), null, 10_000)
+    await sleep(600)
+    const during = await pg.evaluate(() => ({
+      loading: !!document.querySelector('.src-chunk-loading'),
+      sel: document.querySelector('[data-tour="kb-sync-settings"] .el-select')?.innerText.trim() ?? '',
+      name: document.querySelector('.src-header-main input')?.value ?? '',
+    }))
+    if (during.name === '新品清單（試算表）' && during.loading && during.sel === '每小時') pass('點「查看」→ 直接打開那一份；明細還在讀的時候同步頻率就顯示「每小時」（不先閃「不自動同步」）')
+    else fail('選資料那一刻同步頻率不對、或沒帶到那一份', JSON.stringify(during))
+
+    await pg.click('.src-search input')
+    await pg.type('.src-search input', '草稿')
+    await waitFor(pg, () => !!document.querySelector('.src-search-row'), null, 8000)
+    const badge = await pg.$eval('.src-search-row', el => el.innerText).catch(() => '')
+    if (badge.includes('等你看過')) pass('搜尋找到還在「等你看過」的 → 標出來（不讓人以為 AI 已經會答）')
+    else fail('搜尋結果沒標「等你看過」', badge)
+
+    await gotoAgain(pg, `${BASE}/admin/${WORKSPACE_ID}/knowledge/sources?health=quotaSkippedSheets`)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === '新品清單（試算表）', null, 30_000)
+    const deep = await pg.evaluate(() => ({
+      name: document.querySelector('.src-header-main input')?.value ?? '',
+      listDialog: [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.innerText.includes('試算表還有列沒收')),
+    }))
+    if (deep.name === '新品清單（試算表）' && !deep.listDialog) pass('從提醒帶 ?health= 進來、只有一份 → 直接打開那一份（不再先跳一張只有一列的清單）')
+    else fail('?health= 只有一份時還是開清單', JSON.stringify(deep))
+
+    await gotoAgain(pg, `${BASE}/admin/${WORKSPACE_ID}/knowledge/sources?chunkId=gone-1`)
+    const goneToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('在回收桶裡')), null, 30_000)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === '官網常見問題', null, 10_000)
+    const goneName = await pg.$eval('.src-header-main input', el => el.value).catch(() => '')
+    if (goneToast && goneName === '官網常見問題') pass('舊對話「去修這條」、那一條已經換掉 → 講「在回收桶裡」，照樣打開它所在的那一份（以前點了什麼都沒發生）')
+    else fail('點到回收桶裡的那一條沒交代', JSON.stringify({ goneToast, goneName }))
+    await pg.close()
+  }
+
+  // ── 第三十三段（`C-308`⑪）：網址重新同步——差異畫面講剩多少空間、放不下的先不加；套用完講幾條沒加 ──
+  if (CHECK_FROM <= 33) {
+    const urlSrc = fakeSource({ id: 'fake-url', type: 'url', name: '官網運費說明', url: 'https://shop.example.tw/pages/shipping', refreshIntervalMinutes: 1440 })
+    const pageFake = fakeSourcesPage([urlSrc], { 'fake-url': [fakeChunk({ id: 'u1', title: '運費' })] })
+    const newEntry = (id, title) => ({ id, kind: 'new', defaultAction: 'add_new', newChunk: { title, content: `${title}的說明`, tags: [] } })
+    const entries = [newEntry('e1', '離島運費'), newEntry('e2', '超商取貨'), newEntry('e3', '貨到付款'),
+      { id: 'e4', kind: 'unchanged', defaultAction: 'keep_old', oldChunk: { id: 'u1', title: '運費', content: '內容', tags: [], manuallyEdited: false }, newChunk: { title: '運費', content: '內容', tags: [] } }]
+    const applies = []
+    const pg = await openImportDialog(async (req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 49, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/sources/fake-url/resync-jobs') && m === 'POST') return json({ jobId: 'job-resync-q', status: 'processing' })
+      if (url.includes('/api/ai/knowledge/preview-jobs/job-resync-q') && m === 'GET') {
+        return json({ status: 'done', sourceName: urlSrc.name, sourceUrl: urlSrc.url, rawLength: 900, truncated: false,
+          resync: { sourceId: 'fake-url', contentHash: 'h2', diff: { entries, summary: { added: 3, modified: 0, removed: 0, unchanged: 1 } }, shrink: null, warnings: [] } })
+      }
+      if (url.includes('/api/ai/sources/fake-url/resync-apply') && m === 'POST') {
+        applies.push(JSON.parse(req.postData() || '{}'))
+        return json({ added: 1, updated: 0, deleted: 0, kept: 1, errors: [], quotaSkipped: 2 })
+      }
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    await pickSource(pg, urlSrc.name)
+    await waitFor(pg, () => !!document.querySelector('[data-tour="kb-resync"]'), null, 15_000)
+    await pg.evaluate(() => document.querySelector('[data-tour="kb-resync"]')?.click())
+    await waitFor(pg, () => document.querySelector('.diff-body .kb-quota-line')?.innerText.includes('知識空間'), null, 30_000)
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog:not([style*="display: none"]) .diff-body'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-resync-quota.png') }).catch(() => {})
+    const line = await pg.$eval('.diff-body .kb-quota-line', el => el.innerText).catch(() => '')
+    if (line.includes('知識空間只剩 1 條') && line.includes('勾了新增的 3 條裡，2 條這次放不下')) pass(`差異畫面講剩多少空間、哪幾條放不下：「${line.trim().slice(0, 50)}…」`)
+    else fail('差異畫面沒講空間', line)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dialog__footer .el-button--primary')].find(b => b.innerText.includes('套用選取的變更'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('已套用')), null, 15_000)
+    const toasts = await toastsOf(pg)
+    if (applies.length === 1 && toasts.some(x => x.includes('還有 2 條新增因為知識空間滿了沒加'))) pass('套用完講還有 2 條因為空間滿了沒加（不是整批失敗、也不是沉默少收）')
+    else fail('套用完沒講沒加的條數', JSON.stringify({ applies: applies.length, toasts }))
+    await pg.close()
+  }
+
+  // ── 第三十四段（`D-125`① 拍板 A）：換新版、舊的那一份有他改過的 → 停下來問帶不帶（預設全帶），
+  //    每一條講新版有沒有同名的；不帶的照新版；送出去帶 keepEditedChunkIds、新版同名的不送；結果頁講帶了幾條 ──
+  const editedFile = fakeSource({ id: 'fake-file-edit', type: 'file', name: '保固與退貨說明.docx', chunkCount: 5, refreshIntervalMinutes: 0 })
+  const editedChunks = [
+    fakeChunk({ id: 'k-a', title: '保固多久', manuallyEditedAtMs: NOW - 86400_000 }),
+    fakeChunk({ id: 'k-b', title: '怎麼退貨', manuallyEditedAtMs: NOW - 86400_000 }),
+    fakeChunk({ id: 'k-ov', title: '我們有賣什麼', isOverview: true, manuallyEditedAtMs: NOW - 86400_000 }),
+    fakeChunk({ id: 'k-c', title: '運費' }),
+    fakeChunk({ id: 'k-d', title: '保養' }),
+  ]
+  /** 換新版那幾段共用：上傳回假的、整理工作回 doneChunks、加入那一下記下來 */
+  const replaceFlowFake = ({ jobId, doneChunks, quota, existingMatches = [], isDone = () => true, bulks }) => {
+    const pageFake = fakeSourcesPage([editedFile], { 'fake-file-edit': editedChunks })
+    return async (req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return PUT_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId, status: 'processing', phase: 'chunk' })
+      if (url.includes(`/api/ai/knowledge/preview-jobs/${jobId}`) && m === 'GET') {
+        if (!isDone()) return json({ status: 'processing', phase: 'chunk' })
+        return json({ status: 'done', sourceName: editedFile.name, sourceUrl: '', sourceType: 'file', truncated: false, ocrUsed: false, meta: {}, warnings: [], contentHash: 'h', suggestedProductName: '',
+          existingMatches, chunks: doneChunks.map(t => ({ title: t, content: `${t}的內容`, tags: [], questions: [] })) })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        const kept = (b.source?.keepEditedChunkIds ?? []).length
+        return json({ sourceId: b.replaceSourceId ?? 'x', total: b.chunks.length, indexed: b.chunks.length, failed: 0, replacedChunks: 5 - kept - 1, keptEdited: kept, skippedForKept: 0, originalKept: true,
+          items: b.chunks.map((c, i) => ({ id: `n${i}`, title: c.title, status: 'indexed' })) })
+      }
+      return pageFake(req)
+    }
+  }
+  const keepRows = pg => pg.$$eval('.kb-keep-edited__row', els => els.map(e => ({
+    title: e.querySelector('.kb-keep-edited__title')?.innerText ?? '',
+    suffix: e.querySelector('.kb-keep-edited__suffix')?.innerText ?? '',
+    checked: e.classList.contains('is-checked'),
+  })))
+  const uncheck = (pg, title) => pg.evaluate(t => [...document.querySelectorAll('.kb-keep-edited__row')].find(e => e.querySelector('.kb-keep-edited__title')?.innerText === t)?.click(), title)
+
+  if (CHECK_FROM <= 34) {
+    const bulks = []
+    const pg = await openImportDialog(replaceFlowFake({ jobId: 'job-keep', doneChunks: ['保固 多久', '新功能', '運費'], quota: { used: 0, limit: 50, planName: '免費' }, bulks }), SOURCES_PAGE)
+    await newVersionOf(pg, editedFile.name, pathOf.docx)
+    const stopped = await waitFor(pg, () => !!document.querySelector('.kb-keep-edited__row'), null, 30_000)
+    await sleep(500)
+    if (process.env.SHOT_DIR) await (await pg.$('.kb-import-dialog'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-keep-edited.png') }).catch(() => {})
+    const s = await pg.evaluate(() => ({
+      stoppedLine: document.querySelector('.kb-preview-stopped')?.innerText ?? '',
+      head: document.querySelector('.kb-keep-edited__head')?.innerText ?? '',
+      btn: document.querySelector('.kb-preview-summary__actions .el-button--primary')?.innerText.trim() ?? '',
+    }))
+    const rows1 = await keepRows(pg)
+    const a = rows1.find(r => r.title === '保固多久')
+    const b = rows1.find(r => r.title === '怎麼退貨')
+    if (stopped && !bulks.length && s.stoppedLine.includes('還沒加進去') && s.head === '你改過的 2 條，要帶到新版嗎？' && rows1.length === 2 && a?.checked && b?.checked
+      && a.suffix === '新版也有這一條，會用你改過的' && b.suffix === '新版沒有這一條，會原樣留著' && s.btn === '更新既有資料（2 條）') {
+      pass('換新版、舊的有他改過的 2 條（總表不算）→ 停下來問、預設全帶，每條講新版有沒有同名；按鈕扣掉同名的那一條（2 條）')
+    }
+    else fail('換新版時沒問改過的那幾條', JSON.stringify({ stopped, bulks: bulks.length, ...s, rows1 }))
+    await uncheck(pg, '怎麼退貨')
+    await sleep(300)
+    const rows2 = await keepRows(pg)
+    const notice = await pg.$$eval('.kb-dedup-warning', els => els.map(e => e.innerText).join(' ')).catch(() => '')
+    if (rows2.find(r => r.title === '怎麼退貨')?.suffix === '移到回收桶' && notice.includes('原本的 4 條知識會移到回收桶')) pass('不勾「怎麼退貨」→ 那一條講「移到回收桶」，上面的回收桶條數跟著變（5−1＝4）')
+    else fail('取消勾選後說法沒跟著變', JSON.stringify({ rows2, notice: notice.slice(0, 120) }))
+    await pg.evaluate(() => document.querySelector('.kb-preview-summary__actions .el-button--primary')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 20_000)
+    const body = bulks[0]
+    const resultText = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    if (bulks.length === 1 && body.replaceSourceId === 'fake-file-edit' && JSON.stringify(body.source?.keepEditedChunkIds) === '["k-a"]'
+      && body.chunks.map(c => c.title).join('、') === '新功能、運費' && resultText.includes('你改過的 1 條帶到新版了')) {
+      pass('按「更新既有資料」→ 帶 keepEditedChunkIds＝[保固多久]、新版裡同名的「保固 多久」不送；結果頁講「你改過的 1 條帶到新版了」')
+    }
+    else fail('帶過去的那幾條沒送對', JSON.stringify({ bulks: bulks.length, replace: body?.replaceSourceId, keep: body?.source?.keepEditedChunkIds, titles: body?.chunks?.map(c => c.title), result: resultText.slice(0, 200) }))
+    await pg.close()
+  }
+
+  // ── 第三十五段（`D-125`①）：帶過去的那幾條照樣佔空間、新版同名的不用位置 → 「先收前 N 條」算得對 ──
+  if (CHECK_FROM <= 35) {
+    const bulks = []
+    const pg = await openImportDialog(replaceFlowFake({
+      jobId: 'job-keep-math',
+      doneChunks: ['保固 多久', 'A 款規格', 'B 款規格', 'C 款規格', 'D 款規格', 'E 款規格', 'F 款規格'],
+      quota: { used: 48, limit: 50, planName: '免費' },
+      existingMatches: [{ id: 'fake-file-edit', name: editedFile.name, chunkCount: 5, quotaChunkCount: 5, updatedAtMs: 0, type: 'file' }],
+      bulks,
+    }), SOURCES_PAGE)
+    await newVersionOf(pg, editedFile.name, pathOf.docx)
+    await waitFor(pg, () => !!document.querySelector('.kb-keep-edited__row'), null, 30_000)
+    await sleep(400)
+    const read = () => pg.evaluate(() => ({
+      btn: document.querySelector('.kb-preview-summary__actions .el-button--primary')?.innerText.trim() ?? '',
+      warn: [...document.querySelectorAll('.kb-preview-summary__warn')].map(e => e.innerText).join(' '),
+    }))
+    // 剩 2 條空間；換掉的那一份佔 5 條、帶過去 2 條還佔著 → 空出 3 → 能放 5；新版 7 條、1 條跟帶過去的同名 → 要放 6 → 先收前 5、其餘 1
+    const m1 = await read()
+    await uncheck(pg, '保固多久')
+    await sleep(300)
+    // 不帶「保固多久」→ 帶過去 1 條 → 空出 4 → 能放 6；同名那條要收了 → 要放 7 → 先收前 6、其餘 1
+    const m2 = await read()
+    if (m1.btn === '更新既有資料（先收前 5 條）' && m1.warn.includes('其餘 1 條先不收') && m2.btn === '更新既有資料（先收前 6 條）' && m2.warn.includes('其餘 1 條先不收') && !bulks.length) {
+      pass('空間：帶過去的照樣佔位、新版同名的不用位置 → 先收前 5 條；改成不帶那一條 → 先收前 6 條（數字跟著勾選走）')
+    }
+    else fail('帶過去的那幾條沒算進空間', JSON.stringify({ m1, m2, bulks: bulks.length }))
+    await pg.close()
+  }
+
+  // ── 第三十六段（`D-125`①）：一次好幾份裡「換掉舊的」→ 舊的那一份他改過的一律帶過去（不停下來問），那一列講帶了幾條 ──
+  if (CHECK_FROM <= 36) {
+    const names = {}
+    let seq = 0
+    const bulks = []
+    const pg = await openImportDialog((req) => {
+      const url = req.url()
+      const m = req.method()
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 0, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
+      if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return PUT_OK
+      if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') {
+        const id = `job-bkeep-${++seq}`
+        names[id] = JSON.parse(req.postData() || '{}').fileName
+        return json({ jobId: id, status: 'processing', phase: 'chunk' })
+      }
+      const pj = url.match(/\/api\/ai\/knowledge\/preview-jobs\/(job-bkeep-\d+)/)
+      if (pj && m === 'GET') {
+        const name = names[pj[1]]
+        const docx = name === '退換貨政策.docx'
+        return json({ status: 'done', sourceName: name, warnings: [], contentHash: 'h',
+          existingMatches: docx ? [{ id: 'old-src-9', name, chunkCount: 3, quotaChunkCount: 3, updatedAtMs: 0, type: 'file' }] : [],
+          chunks: (docx ? ['七天 鑑賞期', '運費'] : ['W1 價格']).map(t => ({ title: t, content: '內容', tags: [], questions: [] })) })
+      }
+      if (url.includes('/api/ai/sources/old-src-9') && m === 'GET') {
+        return json({ source: {}, chunks: [fakeChunk({ id: 'e1', title: '七天鑑賞期', manuallyEditedAtMs: NOW - 86400_000 }), fakeChunk({ id: 'e2', title: '舊的一條' })] })
+      }
+      if (url.includes('/api/ai/knowledge/bulk-create') && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        bulks.push(b)
+        const kept = (b.source?.keepEditedChunkIds ?? []).length
+        return json({ sourceId: b.replaceSourceId ?? 'new', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [],
+          ...(b.replaceSourceId ? { replacedChunks: 3 - kept, keptEdited: kept } : {}) })
+      }
+      return undefined
+    })
+    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
+    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
+    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
+    await waitFor(pg, () => !!document.querySelector('.kb-file-batch__conflict'), null, 60_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('換掉舊的'))?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
+    const replaced = bulks.find(b => b.replaceSourceId === 'old-src-9')
+    const row = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
+    if (JSON.stringify(replaced?.source?.keepEditedChunkIds) === '["e1"]' && replaced?.chunks.map(c => c.title).join('、') === '運費' && row.includes('舊的 2 條移到回收桶') && row.includes('你改過的 1 條帶到新版了')) {
+      pass(`一次好幾份「換掉舊的」→ 他改過的一律帶過去、新版同名的不送，那一列講：「${row.slice(row.indexOf('已換掉'), row.indexOf('已換掉') + 60)}…」`)
+    }
+    else fail('一次好幾份換掉舊的沒帶改過的', JSON.stringify({ keep: replaced?.source?.keepEditedChunkIds, titles: replaced?.chunks?.map(c => c.title), row }))
+    await pg.close()
+  }
+
+  // ── 第三十七段（`D-125`①）：換新版整理到一半離開頁面、回來接著做 → 一樣停下來問改過的那幾條（⛔ 不自動加進去、不丟掉他改的）──
+  if (CHECK_FROM <= 37) {
+    let jobDone = false
+    let posted = 0
+    const bulks = []
+    const flow = replaceFlowFake({ jobId: 'job-keep-resume', doneChunks: ['保固 多久', '新功能'], quota: { used: 0, limit: 50, planName: '免費' }, isDone: () => jobDone, bulks })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().endsWith('/api/ai/knowledge/preview-jobs') && req.method() === 'POST') posted++
+      return flow(req)
+    }, SOURCES_PAGE)
+    await newVersionOf(pg, editedFile.name, pathOf.docx)
+    for (let i = 0; i < 60 && !posted; i++) await sleep(250)
+    await sleep(800) // 記號在建好工作那一下落地
+    jobDone = true
+    await pg.reload({ waitUntil: 'networkidle2', timeout: 180_000 })
+    const ready = await waitFor(pg, () => document.querySelector('.src-import-link')?.innerText.includes('整理好了，等你看一下'), null, 30_000)
+    await sleep(1500)
+    const noAuto = bulks.length === 0
+    await pg.evaluate(() => document.querySelector('.src-import-link')?.click())
+    const asked = await waitFor(pg, () => document.querySelector('.kb-keep-edited__head')?.innerText.includes('你改過的 2 條'), null, 10_000)
+    if (ready && noAuto && asked) pass('換新版離開頁面、回來接著做 → 一樣停下來問改過的那幾條（側欄「整理好了，等你看一下」、沒有自己加進去）')
+    else fail('接回換新版時沒有停下來問改過的', JSON.stringify({ ready, bulks: bulks.length, asked }))
     await pg.close()
   }
 }
