@@ -70,6 +70,11 @@ export interface DigestTodo {
   expiredCards: number
   suggestions: number
   tagSuggestUsers: number
+  /**
+   * 試算表因為知識空間滿了還沒收的列數（各份加總，`C-308`）：店家在表格加了新品、以為 AI 會跟上，
+   * 其實一列都沒學進去——以前只有點進那一份才看得到。沒帶＝0（預覽等舊呼叫端不用改）
+   */
+  quotaSkippedRows?: number
   /** 黃級異常件數（只點名最重要那一件，不把異常面板搬進 LINE） */
   warnings: number
   topWarningLabel: string
@@ -146,7 +151,7 @@ export function digestPlaces(input: Pick<DigestInput, 'waiting' | 'todo'>): stri
   const { waiting, todo } = input
   const places: string[] = []
   if (waiting.count > 0 || waiting.staleHumanCount > 0) places.push('「對話」')
-  if (todo.outdatedSources || todo.failedSources || todo.expiredCards || todo.suggestions) places.push('「AI 知識庫」')
+  if (todo.outdatedSources || todo.failedSources || todo.expiredCards || todo.suggestions || todo.quotaSkippedRows) places.push('「AI 知識庫」')
   if (todo.tagSuggestUsers) places.push('「好友」')
   if (todo.warnings) places.push('右下角的小幫手')
   return places
@@ -161,9 +166,11 @@ export function buildDigestLines(input: DigestInput): string[] | null {
 
   // ── 今天可以處理 ────────────────────────────────────────
   const todoLines: string[] = []
-  if (todo.outdatedSources) todoLines.push(`${todo.outdatedSources} 個知識來源內容變了，等你確認要不要更新`)
-  if (todo.failedSources) todoLines.push(`${todo.failedSources} 個知識來源同步失敗，AI 還在用舊內容`)
-  if (todo.expiredCards) todoLines.push(`${todo.expiredCards} 張知識卡已到期下架`)
+  // `C-309`：跟知識庫頁同一套說法——資料論「份」、知識論「條」（以前寫「知識來源」「N 張知識卡」）
+  if (todo.outdatedSources) todoLines.push(`${todo.outdatedSources} 份資料內容變了，等你確認要不要更新`)
+  if (todo.failedSources) todoLines.push(`${todo.failedSources} 份資料同步失敗，AI 還在用舊內容`)
+  if (todo.expiredCards) todoLines.push(`${todo.expiredCards} 條知識已到期下架`)
+  if (todo.quotaSkippedRows) todoLines.push(`試算表有 ${todo.quotaSkippedRows} 列因為知識空間滿了還沒收`)
   if (todo.suggestions) todoLines.push(`${todo.suggestions} 個常被問、AI 卻答不好的主題，草稿已擬好`)
   if (todo.tagSuggestUsers) todoLines.push(`${todo.tagSuggestUsers} 位客人的標籤建議等你決定`)
   if (todo.warnings) {

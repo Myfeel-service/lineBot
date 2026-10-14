@@ -18,7 +18,7 @@ import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { chunkSegment, SEGMENT_CHAR_LEN } from '~~/server/utils/ai-knowledge-chunker'
 import { KNOWLEDGE_CHUNKS_COLLECTION, createKnowledgeChunk } from '~~/server/utils/ai-knowledge-chunks'
-import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import { KNOWLEDGE_SOURCES_COLLECTION, listSourceUrlKeys, sourceUrlKey } from '~~/server/utils/ai-knowledge-sources'
 import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
@@ -418,7 +418,12 @@ function sha256(text: string): string {
 
 /** 這一頁的卡掛在哪一份資料底下（⭐ id 固定：同一份工作同一頁重做只會覆寫、不會多一份） */
 export function siteCardsSourceId(jobId: string, pageIndex: number): string {
-  return `onb_${jobId}_${pageIndex}`
+  return `${siteCardsSourceIdPrefix(jobId)}${pageIndex}`
+}
+
+/** 這一份工作建的資料 id 都是這個開頭（認「是不是自己建的」用） */
+function siteCardsSourceIdPrefix(jobId: string): string {
+  return `onb_${jobId}_`
 }
 
 /** 維運額度用完（`assertMaintenanceBudget` 丟的那一種 429；⚠️ Gemini 自己的 429 是一時過載，要重試不是停） */
@@ -531,6 +536,17 @@ export async function advanceSiteCards(
   let outputTokens = 0
   let embeddingTokens = 0
   const timeLeft = () => Date.now() - startedAt < budgetMs
+  /**
+   * 這個帳號已經有的網址（`D-125`③）：他先用「加入知識」加過官網首頁，重跑「讓我認識你的店」又整理一份＝
+   * 同一頁兩份、兩份每天各自檢查，AI 反問時出現兩個一樣的選項。回收桶的不算（同 listSourceUrlKeys）；
+   * 這一份工作自己建的（`onb_{jobId}_…`）不算，否則中途被砍、重做同一頁會把自己當成別人加過的。
+   * 只在真的要切新的一頁時讀一次（一步最多幾頁，讀一次夠用）。
+   */
+  let existingUrlKeys: Set<string> | null = null
+  const alreadyHasUrl = async (url: string): Promise<boolean> => {
+    existingUrlKeys ??= await listSourceUrlKeys(db, wid, { excludeIdPrefix: siteCardsSourceIdPrefix(jobId) })
+    return existingUrlKeys.has(sourceUrlKey(url))
+  }
 
   try {
     // 維運額度用完就停在這裡：⛔ 不算失敗（下個月額度回來、或升級之後照樣推得動）
@@ -541,8 +557,9 @@ export async function advanceSiteCards(
         const page = job.pages[p]
         const sourceId = siteCardsSourceId(jobId, p)
         if (!page) { state.pagesDone = state.pagesTotal; break }
-        // 重跑「讓我認識你的店」＝同一頁之前整理過，⛔ 不再建第二份（跳過的照實記）
-        if (await hasEarlierSiteSource(db, wid, page.url, sourceId)) {
+        // 重跑「讓我認識你的店」＝同一頁之前整理過，⛔ 不再建第二份（跳過的照實記）；
+        // 他已經用「加入知識」加過這個網址也一樣跳過（`D-125`③）
+        if (await hasEarlierSiteSource(db, wid, page.url, sourceId) || await alreadyHasUrl(page.url)) {
           state.skippedExisting = (state.skippedExisting ?? 0) + 1
           state.pagesDone++
           state.tries = 0
@@ -591,7 +608,8 @@ export async function advanceSiteCards(
           etag: '',
           lastModified: '',
           refreshIntervalSec: 0,
-          // ⛔ 不排自動同步：這幾份是開帳讀的、他還沒點頭；同步偵測到變動會跑去問他一件他還沒答應要的事
+          // 建立時先不排自動同步：這幾份是開帳讀的、他還沒點頭；同步偵測到變動會跑去問他一件他還沒答應要的事。
+          // ⭐ 他採用其中任何一條，這一頁就改成每天檢查（`D-125`③，knowledge-drafts 的 adoptDrafts 打開）
           refreshIntervalMinutes: 0,
           onChangeBehavior: 'notify',
           generateOverview: false,

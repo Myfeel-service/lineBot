@@ -23,7 +23,8 @@ import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
 import { runWithLlmBudget } from './gemini'
 import { extractUrlText } from './ai-source-extractors'
-import { syncGoogleSheetSource } from './gsheet-sync'
+import { gsheetSyncAuditNote, syncGoogleSheetSource } from './gsheet-sync'
+import { writeAuditLog } from './audit-log'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
 import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
@@ -98,6 +99,29 @@ function sourceTitleOf(data: KnowledgeSourceDoc): string {
   return String(d.title || d.name || d.url || '(未命名來源)').slice(0, 80)
 }
 
+/**
+ * 排程自己做的事也要進操作紀錄（`C-308`⑥）：以前只有手按「立即同步」才記，
+ * 每小時自動新增／刪掉的知識一筆都查不到，「AI 怎麼突然不會答了」沒有答案。
+ * actor＝system、uid 空的（⛔ 不掛在任何人頭上，跟排程推播 `D-117` 同一個規矩）。
+ * ⛔ 記不成也不可以打斷同步：writeAuditLog 本身就吞錯，這裡再兜一層。
+ */
+async function writeSystemSourceAudit(
+  db: Firestore,
+  sourceId: string,
+  data: KnowledgeSourceDoc,
+  entry: { action: 'source.gsheetSync' | 'source.resyncApply', after: Record<string, unknown>, note: string },
+): Promise<void> {
+  await writeAuditLog({
+    workspaceId: data.workspaceId,
+    uid: '',
+    actor: 'system',
+    action: entry.action,
+    targetId: sourceId,
+    after: entry.after,
+    note: entry.note,
+  }, db).catch(e => console.warn(`[detect-source-updates] ${sourceId} 操作紀錄沒寫成（不影響同步）:`, e))
+}
+
 async function checkOneSource(
   db: Firestore,
   sourceId: string,
@@ -115,25 +139,52 @@ async function checkOneSource(
       // 寫 failureReason + outdatedAt（體檢紅字 + 有變動提示），等人工到來源頁按
       // 「立即同步」確認放行；同時戳 lastFetchedAt 讓排程下一輪不再空轉重讀同一張表。
       if (r.outcome === 'blocked_mass_deletion') {
+        const pending = r.pendingDeletes ?? 0
         await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-          failureReason: `表格一次少了 ${r.pendingDeletes ?? 0} 列（現有 ${r.kept} 張卡）。為避免誤刪，自動同步已暫停套用；請到知識庫來源頁確認後手動同步。`,
+          // 原因要講對、講該按什麼（`C-308`⑤）：以前寫「請到知識庫來源頁確認後手動同步」，
+          // 畫面又只看 status 一律教人「把表分享給服務帳號」——他去 Google 改分享，什麼都不會變
+          failureReason: `表格一次少了 ${pending} 列（現有 ${r.kept} 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即同步」。`,
           // ⛔一定要一起寫 status:'failed'：體檢的「資料同步失敗」與小幫手 knowledgeSyncFailed
           // 都只看 status，只寫 failureReason 的話畫面全綠——正好違背這道守門的目的
-          //（讓店家看得到「自動同步暫停了，有 N 張卡等你確認」）。
+          //（讓店家看得到「自動同步暫停了，有 N 條等你確認」）。
           status: 'failed',
+          // 畫面靠這一格分得出「擋下了、按立即同步」跟「讀不到表、要分享」（任何一次同步成功會寫回 0）
+          blockedPendingDeletes: pending,
           outdatedAt: FieldValue.serverTimestamp(),
           lastFetchedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         }).catch(e => console.warn(`[detect-source-updates] ${sourceId} mark blocked failed:`, e))
-        return { sourceId, outcome: 'changed_logged', message: `gsheet 大量刪除已擋下（${r.pendingDeletes} 列）` }
+        // 擋下來也要記一筆，但只記「第一次擋下（或要刪的列數變了）」：擋著的時候每小時都會再擋一次，
+        // 每次都記就洗掉整頁操作紀錄
+        if (Number(data.blockedPendingDeletes ?? 0) !== pending) {
+          await writeSystemSourceAudit(db, sourceId, data, {
+            action: 'source.gsheetSync',
+            after: { name: String(data.name ?? '') },
+            note: `${String(data.name ?? '')}：表格一次少了 ${pending} 列，為了避免誤刪，自動同步先停下來了（一條都沒刪），等你按「立即同步」確認`,
+          })
+        }
+        return { sourceId, outcome: 'changed_logged', message: `gsheet 大量刪除已擋下（${pending} 列）` }
+      }
+      // 同步途中資料被刪了（`C-308`③）：這一輪建的已經收掉。⛔ 不清失敗標記（那份文件已經不在，寫了也只是噴錯）
+      if (r.outcome === 'source_deleted') {
+        return { sourceId, outcome: 'unchanged', message: 'source-deleted-during-sync' }
       }
       // 同步成功就清掉失敗標記（連 unchanged 也要清）。少了這段，商家把 Sheet 分享權限
       // 修好、同步其實已經成功，體檢仍永遠顯示「來源同步失敗」——做對了也看不到結果。
       // 注意不能沿用下面 url 分支的 clearFailure：那個變數宣告在本分支的 return 之後。
       await clearSourceFailure(db, sourceId, data.status)
       if (r.outcome === 'unchanged') return { sourceId, outcome: 'unchanged' }
+      // 操作紀錄只在真的有動到東西時記（`C-308`⑥）：沒新增、沒更新、沒刪除、沒收的列數也沒變＝什麼都沒發生，不洗紀錄
+      const prevQuotaSkipped = Math.max(0, Number(data.quotaSkippedCount ?? 0) || 0)
+      if (r.added || r.updated || r.deleted || (r.quotaSkipped ?? 0) !== prevQuotaSkipped) {
+        await writeSystemSourceAudit(db, sourceId, data, {
+          action: 'source.gsheetSync',
+          after: { name: String(data.name ?? ''), added: r.added, updated: r.updated, deleted: r.deleted },
+          note: `${gsheetSyncAuditNote(String(data.name ?? ''), r)}（每小時自動同步）`,
+        })
+      }
       // 同步成功不推播（2026-08-06 拍板:成功不需要行動,不值一則訊息錢）;
-      // 來源頁的最後同步時間/卡片數本來就看得到,這裡留 log 供追查。
+      // 來源頁的最後同步時間/條數本來就看得到,這裡留 log 供追查。
       console.log(`[detect-source-updates] gsheet ${sourceId} auto-synced: +${r.added} ~${r.updated} -${r.deleted}`)
       return { sourceId, outcome: 'gsheet_synced', message: `+${r.added} ~${r.updated} -${r.deleted}` }
     }
@@ -348,6 +399,16 @@ async function checkOneSource(
           await commitChange({ outdatedAt: null, appliedContentHash: newHash })
           // 自動更新成功不推播(2026-08-06 拍板:成功不需要行動);留 log 供追查
           console.log(`[detect-source-updates] ${sourceId} auto-applied ~${auto.updated}${auto.failed ? ` (${auto.failed} failed)` : ''}`)
+          // 但要進操作紀錄（`C-308`⑥）：知識的內容換了，「誰改的」答案是「網頁改了、系統自動換」
+          if (auto.updated || auto.failed) {
+            await writeSystemSourceAudit(db, sourceId, data, {
+              action: 'source.resyncApply',
+              after: { name: String(data.name ?? ''), updated: auto.updated },
+              note: `${String(data.name ?? '')}：網頁有小幅更新，系統自動換成新的內容（更新 ${auto.updated} 條`
+                + (auto.failed ? `，${auto.failed} 條沒有套用成功` : '')
+                + '）',
+            })
+          }
           return { sourceId, outcome: 'auto_applied', message: `~${auto.updated}` }
         }
         // 不符合自動條件 → 走人工審。不再即時推播:outdatedAt 標記由每日摘要
@@ -1132,7 +1193,7 @@ async function loadDigestCounts(db: Firestore, ws: string, nowMs: number) {
     q.count().get().then(s => s.data().count).catch(() => null)
 
   const sources = db.collection(KNOWLEDGE_SOURCES_COLLECTION).where('workspaceId', '==', ws)
-  const [outdatedSources, failedSources, expiredCards, suggestions, tagSuggestUsers] = await Promise.all([
+  const [outdatedSources, failedSources, expiredCards, suggestions, tagSuggestUsers, quotaSkippedRows] = await Promise.all([
     countOf(sources.where('outdatedAt', '>', Timestamp.fromMillis(0))),
     countOf(sources.where('status', '==', 'failed')),
     // 近 24 小時剛到期下架的卡；更早的到期卡當天已經講過，不重複喊。
@@ -1149,6 +1210,11 @@ async function loadDigestCounts(db: Firestore, ws: string, nowMs: number) {
     countOf(db.collection('userTagSuggestions')
       .where('workspaceId', '==', ws)
       .where('hasPending', '==', true)),
+    // 試算表因為空間滿了沒收的列（`C-308`）：要的是列數加總不是份數，count 聚合給不了。
+    // 只用兩個等值條件（不另開複合索引）＋只拿那一格；一個帳號的試算表就幾份
+    sources.where('type', '==', 'gsheet').select('quotaSkippedCount').get()
+      .then(s => s.docs.reduce((n, d) => n + Math.max(0, Math.floor(Number(d.get('quotaSkippedCount') ?? 0)) || 0), 0))
+      .catch(() => null),
   ])
 
   return {
@@ -1157,7 +1223,8 @@ async function loadDigestCounts(db: Firestore, ws: string, nowMs: number) {
     expiredCards,
     suggestions,
     tagSuggestUsers,
-    unknown: [outdatedSources, failedSources, expiredCards, suggestions, tagSuggestUsers].some(v => v === null),
+    quotaSkippedRows,
+    unknown: [outdatedSources, failedSources, expiredCards, suggestions, tagSuggestUsers, quotaSkippedRows].some(v => v === null),
   }
 }
 
@@ -1293,6 +1360,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       expiredCards: counts.expiredCards ?? 0,
       suggestions: counts.suggestions ?? 0,
       tagSuggestUsers: counts.tagSuggestUsers ?? 0,
+      quotaSkippedRows: counts.quotaSkippedRows ?? 0,
       warnings: digestWarnings.length,
       topWarningLabel: digestWarnings.length ? ALERT_LABELS[digestWarnings[0]!] : '',
     }

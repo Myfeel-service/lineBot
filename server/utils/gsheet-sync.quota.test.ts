@@ -67,12 +67,13 @@ import { syncGoogleSheetSource } from './gsheet-sync'
 let seq = 0
 let createSeq: number[] = []
 
-/** 假 db：記下每一筆寫入（照順序），來源 doc 的 update 也收進來 */
+/** 假 db：記下每一筆寫入（照順序），來源 doc 的 update 也收進來。讀來源一律「還在」（撞刪除另見 gsheet-sync.race.test.ts） */
 function makeDb() {
   const ops: Array<{ col: string; id: string; op: string; seq: number; payload?: Record<string, unknown> }> = []
   const db: any = {
     collection: (col: string) => ({
       doc: (id: string) => ({
+        get: async () => ({ exists: true, data: () => ({ workspaceId: 'ws1' }) }),
         update: async (payload: Record<string, unknown>) => { ops.push({ col, id, op: 'update', seq: seq++, payload }) },
       }),
     }),

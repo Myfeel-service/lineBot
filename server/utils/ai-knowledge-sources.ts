@@ -113,6 +113,16 @@ export interface SourceSummary {
    */
   quotaSkippedCount: number
   /**
+   * type='gsheet'：店家在知識庫刪掉、之後同步不再收的那幾列（`D-125`②）。顯示用的原標題；沒有＝[]。
+   * 來源頁要講出來（「有 N 列你在後台刪掉了，不會再收」），並給一顆「重新收回來」（PUT clearExcludedRows）。
+   */
+  gsheetExcludedTitles: string[]
+  /**
+   * type='gsheet'：排程因為「表格一次少太多列」停下來、等他確認的刪除列數（`C-308`⑤）；0＝沒有擋下。
+   * >0 時畫面要講「按立即同步確認」，⛔ 不是「把表分享給服務帳號」（那是讀不到表的時候才對）。
+   */
+  blockedPendingDeletes: number
+  /**
    * type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的、或留存失敗）。
    * ⛔ 不回 Storage 路徑：下載一律走 file-url 端點發短效網址。
    */
@@ -149,8 +159,12 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     // 從輪數推導，不另存布林值：兩個地方各存一份遲早會對不起來
     numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
     detectStalledAtMs: tsToMs(raw.detectStalledAt),
-    manualKeptCount: Number((raw as Record<string, unknown>).manualKeptCount ?? 0),
-    quotaSkippedCount: Number((raw as Record<string, unknown>).quotaSkippedCount ?? 0),
+    manualKeptCount: Number(raw.manualKeptCount ?? 0),
+    quotaSkippedCount: Number(raw.quotaSkippedCount ?? 0),
+    gsheetExcludedTitles: Array.isArray(raw.gsheetExcludedTitles)
+      ? raw.gsheetExcludedTitles.map(String).filter(t => t.trim())
+      : [],
+    blockedPendingDeletes: Math.max(0, Number(raw.blockedPendingDeletes ?? 0) || 0),
     originalFile: raw.filePath
       ? { name: String(raw.fileName || raw.name || ''), size: Number(raw.fileSize ?? 0) }
       : null,
@@ -323,8 +337,15 @@ export function sourceUrlKey(url: string): string {
  * 後者以前每一頁都當沒加過，同一個網址加兩份、兩份每天各自重新同步，AI 反問時出現兩個一樣的選項）。
  * ⛔ 回收桶裡的不算（同 findExistingSources）：那一份已經刪了，再加一次是他要的。
  * 查詢失敗回空集合（不擋加入，只是少了「加過了」的標記），呼叫端照常加；內容指紋的守門還在後面。
+ *
+ * `excludeIdPrefix`：開帳讀網站（`D-125`③）用——那一份工作自己建的資料（`onb_{jobId}_…`）不算「加過了」，
+ * 不然中途被砍、重做同一頁時會把自己當成別人加過的而跳過。
  */
-export async function listSourceUrlKeys(db: Firestore, workspaceId: string): Promise<Set<string>> {
+export async function listSourceUrlKeys(
+  db: Firestore,
+  workspaceId: string,
+  opts: { excludeIdPrefix?: string } = {},
+): Promise<Set<string>> {
   try {
     const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
@@ -334,6 +355,7 @@ export async function listSourceUrlKeys(db: Firestore, workspaceId: string): Pro
       .get()
     return new Set(
       snap.docs
+        .filter(d => !opts.excludeIdPrefix || !d.id.startsWith(opts.excludeIdPrefix))
         .map(d => d.data() as { url?: string, isDeleted?: boolean, deletedAt?: unknown })
         .filter(d => d.isDeleted !== true && d.deletedAt == null)
         .map(d => String(d.url ?? '').trim())
@@ -454,18 +476,23 @@ export async function listChunksBySource(
  *
  * ⛔ 已經在回收桶的不再蓋一次：`buildChunkSoftDeletePatch` 會把 `statusBeforeDelete`
  *    記成當下的 status，而當下已經是 `disabled` → 還原時回不到刪除前的狀態。
+ *
+ * `keepIds`（`D-125`①，2026-10-13 拍板 A）：換新版時他選了「沿用我改過的」那幾條——留在原地、不進回收桶。
+ * 驗證（是不是這一份的、有沒有改過）是呼叫端的事；這裡只照名單跳過。
  */
 export async function recycleSourceChunks(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
+  opts: { keepIds?: Iterable<string> } = {},
 ): Promise<number> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
     .get()
 
-  const live = snap.docs.filter(d => (d.data() as { deletedAt?: unknown })?.deletedAt == null)
+  const keep = new Set(opts.keepIds ?? [])
+  const live = snap.docs.filter(d => (d.data() as { deletedAt?: unknown })?.deletedAt == null && !keep.has(d.id))
   // 單一 batch 上限 500 writes，400 一批留餘裕（同 deleteSourceWithChunks：
   // 超過就是整批 commit 失敗，不是部分成功——舊卡一張都不會退場）
   for (let i = 0; i < live.length; i += 400) {
@@ -509,12 +536,28 @@ export async function deleteSourceWithChunks(
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
   await tail.commit()
+  /**
+   * 刪完再掃一輪（`C-308`③）：刪的同時試算表同步可能正在一條條建——上面那份名單數完之後才建的不在名單裡，
+   * 資料一刪就成了「AI 會用、後台看不到也刪不掉」的孤兒（2026-10-13 正式站測試撞到 9 條）。
+   * 資料文件已經刪掉了，同步那邊每建一條前都會先確認資料還在，所以這一輪之後不會再長出來。
+   */
+  const lateSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('sourceId', '==', sourceId)
+    .get()
+  const lateRefs = lateSnap.docs.map(d => d.ref)
+  for (let i = 0; i < lateRefs.length; i += 400) {
+    const batch = db.batch()
+    for (const ref of lateRefs.slice(i, i + 400)) batch.delete(ref)
+    await batch.commit()
+  }
+  if (lateRefs.length) console.warn(`[sources] ${sourceId} 刪除時同步還在建，多收掉 ${lateRefs.length} 條`)
   // 檔案來源一律照資料夾清（便宜）：路徑沒記上的情況（留存寫到一半失敗）檔案一樣可能在那裡
   if (source.data.type === 'file' || source.data.filePath) await deleteSourceFiles(workspaceId, sourceId)
   invalidateTagIndexCache(workspaceId)
   invalidateCatalogSourceCache(workspaceId)
 
-  return { chunksDeleted: chunksSnap.size }
+  return { chunksDeleted: chunksSnap.size + lateRefs.length }
 }
 
 export interface UpdateSourceSettingsInput {
@@ -534,6 +577,12 @@ export interface UpdateSourceSettingsInput {
    * 否則會拿舊網址的指紋去比新網址，變動偵測永遠算錯。
    */
   url?: string
+  /**
+   * type='gsheet' 專用（`D-125`②）：把「在後台刪掉、之後不再收」的那幾列重新收回來。
+   * 清空名單＋清掉內容指紋——不清指紋的話表格沒變，同步會直接跳過，那幾列要等表格別處改過才回來
+   * （跟 `C-308`② 解鎖不生效同一個病）。
+   */
+  clearExcludedRows?: boolean
 }
 
 /**
@@ -548,8 +597,15 @@ export async function updateSourceSettings(
 ): Promise<SourceSummary | null> {
   const source = await getSource(db, sourceId, workspaceId)
   if (!source) return null
+  if (input.clearExcludedRows === true && source.data.type !== 'gsheet') {
+    throw createError({ statusCode: 400, statusMessage: '只有 Google 試算表才有「在後台刪掉、不再收的列」' })
+  }
 
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() }
+  if (input.clearExcludedRows === true) {
+    update.gsheetExcludedTitles = []
+    update.contentHash = ''
+  }
   if (input.refreshIntervalMinutes != null) {
     const n = Number(input.refreshIntervalMinutes)
     update.refreshIntervalMinutes = Number.isFinite(n) ? Math.max(0, Math.min(43_200, Math.round(n))) : 0

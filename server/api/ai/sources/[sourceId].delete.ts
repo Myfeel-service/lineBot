@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { deleteSourceWithChunks, getSource } from '~~/server/utils/ai-knowledge-sources'
+import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -16,6 +17,8 @@ export default defineEventHandler(async (event) => {
   // 名字要在刪之前拿：刪完就查不到了，紀錄上只剩一串 id 等於沒有紀錄
   const source = await getSource(db, sourceId, workspaceId)
   const result = await deleteSourceWithChunks(db, workspaceId, sourceId)
+  // 「還剩幾條空間」的快取（60 秒）馬上作廢（`C-308`⑧）：刪了一整份、馬上加新的，以前還是說滿了
+  invalidateKnowledgeChunkCount(workspaceId)
 
   /*
    * 稽核（`C-254`）。⚠️ 這支是**真刪**（連底下的卡一起），跟單張卡的「進回收桶」不同——
@@ -30,7 +33,7 @@ export default defineEventHandler(async (event) => {
       action: 'source.delete',
       targetId: sourceId,
       before: { name: String(source.data.name ?? ''), chunkIdsCount: result.chunksDeleted },
-      note: `${String(source.data.name ?? '')}：連同底下 ${result.chunksDeleted} 張知識卡一起刪掉了（救不回來）`,
+      note: `${String(source.data.name ?? '')}：連同底下 ${result.chunksDeleted} 條知識一起刪掉了（救不回來）`,
     }, db)
   }
 

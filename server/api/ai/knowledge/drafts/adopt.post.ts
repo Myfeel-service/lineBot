@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const { workspaceId, uid, role } = await requireCapability(event, 'knowledge.write')
   const body = await readBody<{ chunkIds?: unknown }>(event)
   const ids = Array.isArray(body?.chunkIds) ? body.chunkIds.map(String) : []
-  if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要採用哪幾張？' })
+  if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要採用哪幾條？' })
   const db = getDb()
   const r = await adoptDrafts(workspaceId, ids, db)
   if (r.adopted.length || r.leftForQuota.length) {
@@ -26,7 +26,15 @@ export default defineEventHandler(async (event) => {
       action: 'knowledge.draftAdopt',
       after: { adoptedCount: r.adopted.length, leftForQuotaCount: r.leftForQuota.length },
       ...(r.adopted.length === 1 ? { targetId: r.adopted[0] } : {}),
-      ...(r.leftForQuota.length ? { note: `額度滿了，還有 ${r.leftForQuota.length} 張沒收` } : {}),
+      ...(r.leftForQuota.length || r.autoUpdateOn.length
+        ? {
+            note: [
+              r.leftForQuota.length ? `知識空間滿了，還有 ${r.leftForQuota.length} 條沒收` : '',
+              // `D-125`③：開帳讀的網站頁採用了就開始每天檢查，紀錄要講得出「從什麼時候起會自動更新」
+              r.autoUpdateOn.length ? `開帳讀的 ${r.autoUpdateOn.length} 個網頁從現在起每天自動檢查更新` : '',
+            ].filter(Boolean).join('；'),
+          }
+        : {}),
     }, db)
   }
   return { ...r, quota: quotaForRole(r.quota, role) }

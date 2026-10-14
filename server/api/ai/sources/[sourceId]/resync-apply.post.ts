@@ -11,7 +11,7 @@ import {
   KNOWLEDGE_SOURCES_COLLECTION,
   listChunksBySource,
 } from '~~/server/utils/ai-knowledge-sources'
-import { assertKnowledgeChunkQuota, chunkCountsTowardQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { chunkCountsTowardQuota, getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import {
   buildChunkSoftDeletePatch,
   createKnowledgeChunk,
@@ -80,43 +80,38 @@ export default defineEventHandler(async (event) => {
   const quotaChunkIds = new Set(sourceChunks.filter(c => chunkCountsTowardQuota(c)).map(c => c.id))
 
   /**
-   * 方案知識量（`C-296` 審查）：套用前先算這次**淨增加**幾張，超過剩下的空間就整次不套用（403）。
-   * 為什麼要有：匯入時空間不夠可以只收前幾條（批次匯入「收到滿為止」），可是之後按「重新同步」，
-   * 沒收的那幾條會變成「新增」——以前這裡照建不誤，等於繞過方案上限。
-   *  · 新增算 +1；同一次套用重按（applyId 一樣）時，上一次已經建好的那張是原地覆寫，不算；
-   *  · 刪除算 −1（進回收桶就不算額度了）；⛔ 草稿除外——草稿本來就沒算額度，刪了也騰不出空間
-   *    （開帳讀網站建的那幾份網址資料底下都是草稿）；
-   *  · 覆蓋／保留不改張數。內容不合格、等一下會被略過的新增不算。
-   * 擋整次而不是建到滿為止：這裡是人一張張勾過的決定，默默只套一半比直接講「不夠」更糟。
+   * 方案知識量（`C-296` 審查 → `C-308`⑪ 改成跟加入同一個規矩）：**收到滿為止**。
+   * 為什麼要守：匯入時空間不夠可以只收前幾條，可是之後按「重新同步」，沒收的那幾條會變成「新增」——
+   * 不看額度就等於繞過方案上限。以前是「淨增加超過剩下的空間就整次 403」：覆蓋、刪除也一起不做，
+   * 他只看到「失敗」，網頁上改了的價錢一條都沒更新。現在：
+   *  · 先套刪除、覆蓋、保留（不佔空間；刪掉有算額度的那幾條還會空出位置——⛔ 草稿除外，本來就沒算）；
+   *  · 新增照清單順序建到滿為止，沒建的數成 `quotaSkipped` 回給畫面、寫進操作紀錄；
+   *  · 同一次套用重按（applyId 一樣）時，上一次已經建好的那條是原地覆寫，不佔新的位置。
+   * 不限張數的方案、或讀不到方案（同 assertKnowledgeChunkQuota 的 fail-open）＝全部建。
    */
-  let netAdding = 0
-  for (const entry of entries) {
-    const action = decisions[entry.id]
-    if (action === 'add_new' && entry.newChunk) {
-      if (validateChunkInput(normalizeChunkInput(entry.newChunk))) continue
-      if (applyId && ownedChunkIds.has(deterministicChunkId(entry.id))) continue
-      netAdding++
-    }
-    else if (action === 'delete_old' && entry.oldChunk && ownedChunkIds.has(entry.oldChunk.id) && quotaChunkIds.has(entry.oldChunk.id)) {
-      netAdding--
-    }
-  }
-  await assertKnowledgeChunkQuota(workspaceId, netAdding, db)
+  const quota = await getKnowledgeChunkQuota(workspaceId, db).catch(() => null)
+  let room: number | null = !quota || quota.limit == null ? null : Math.max(0, quota.limit - quota.used)
 
   let added = 0
   let updated = 0
   let deleted = 0
   let kept = 0
+  let quotaSkipped = 0
   const errors: Array<{ entryId: string; message: string }> = []
 
-  for (const entry of entries) {
+  // 先跑「不新增」的決定（刪掉的空出位置要先算給新增用），再照原本順序跑新增
+  const ordered = [
+    ...entries.filter(e => decisions[e.id] !== 'add_new'),
+    ...entries.filter(e => decisions[e.id] === 'add_new'),
+  ]
+  for (const entry of ordered) {
     const action = decisions[entry.id]
     if (!action) {
       kept++
       continue
     }
     if (entry.oldChunk && !ownedChunkIds.has(entry.oldChunk.id)) {
-      errors.push({ entryId: entry.id, message: '卡片不屬於此來源，已略過' })
+      errors.push({ entryId: entry.id, message: '這條知識不屬於這份資料，已略過' })
       continue
     }
     try {
@@ -150,10 +145,20 @@ export default defineEventHandler(async (event) => {
           errors.push({ entryId: entry.id, message: verr })
           continue
         }
+        const chunkId = applyId ? deterministicChunkId(entry.id) : uuidv4()
+        // 上一次（同一個 applyId）已經建好的：原地覆寫，不佔新的位置
+        const overwrite = applyId && ownedChunkIds.has(chunkId)
+        if (!overwrite && room !== null) {
+          if (room <= 0) {
+            quotaSkipped++
+            continue
+          }
+          room--
+        }
         await createKnowledgeChunk(db, {
           workspaceId,
           // 有 applyId 就用決定性 id（重按覆寫同一張，不重複建卡）；舊 client 沒帶則照舊隨機
-          chunkId: applyId ? deterministicChunkId(entry.id) : uuidv4(),
+          chunkId,
           title: input.title,
           content: input.content,
           tags: input.tags,
@@ -193,6 +198,8 @@ export default defineEventHandler(async (event) => {
         await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(entry.oldChunk.id)
           .update(buildChunkSoftDeletePatch())
         deleted++
+        // 有算額度的那條進了回收桶＝空出一個位置給等一下的新增（草稿本來就沒算，空不出來）
+        if (room !== null && quotaChunkIds.has(entry.oldChunk.id)) room++
         continue
       }
       errors.push({ entryId: entry.id, message: `invalid action "${action}" for kind "${entry.kind}"` })
@@ -232,7 +239,8 @@ export default defineEventHandler(async (event) => {
    */
   const exemptIds = await loadDiffExemptIds(db, sourceId, bodyHash)
   const divergentKeeps = countDivergentKeeps(entries, decisions, exemptIds)
-  const fingerprintSafe = errors.length === 0 && divergentKeeps === 0
+  // ⛔ 空間不夠沒建的新增也一樣（`C-308`⑪）：網頁上有、知識庫沒有，指紋推進了就再也比不出這幾條
+  const fingerprintSafe = errors.length === 0 && divergentKeeps === 0 && quotaSkipped === 0
   const newChunkCount = await countSourceChunks(db, workspaceId, sourceId)
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
     chunkCount: newChunkCount,
@@ -252,8 +260,8 @@ export default defineEventHandler(async (event) => {
   })
   // 「有變動」旗標：全部套完（含保留決定）就清——使用者剛剛親手看過這份 diff；
   // 若卡片仍與網頁不同，排程下一輪確認到變動會再標回來，不會永久消失。
-  // 逐卡有失敗時不清：這次套用沒完成，提示留著。
-  if (errors.length === 0) {
+  // 逐卡有失敗時不清：這次套用沒完成，提示留著。空間不夠沒建完也一樣（空出位置之後再套一次才收得進來）。
+  if (errors.length === 0 && quotaSkipped === 0) {
     await clearSourceOutdated(db, sourceId)
   }
   // 張數變了：額度的 60 秒快取要立刻作廢，不然接下來一分鐘內的匯入看到的還是套用前的張數
@@ -271,10 +279,12 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'source.resyncApply',
     targetId: sourceId,
-    after: { name: String(source.data.name ?? ''), added, updated, deleted, failedCount: errors.length },
+    after: { name: String(source.data.name ?? ''), added, updated, deleted, failedItemsCount: errors.length, ...(quotaSkipped ? { quotaSkipped } : {}) },
     note: `${String(source.data.name ?? '')}：新增 ${added}、覆蓋 ${updated}、刪除 ${deleted}、保留 ${kept}`
-      + (errors.length ? `；⚠️ 有 ${errors.length} 張沒套用成功，還停在舊版` : '')
-      + (divergentKeeps ? `；有 ${divergentKeeps} 張刻意保留成跟來源不一樣` : ''),
+      // ⛔ 空間不夠沒建的要講（`C-308`⑪）：只寫「新增 3」，看的人會以為網頁上的新內容都收了
+      + (quotaSkipped ? `；知識空間滿了，還有 ${quotaSkipped} 條新的沒有加進來` : '')
+      + (errors.length ? `；⚠️ 有 ${errors.length} 條沒套用成功，還停在舊版` : '')
+      + (divergentKeeps ? `；有 ${divergentKeeps} 條刻意保留成跟來源不一樣` : ''),
   }, db)
 
   return {
@@ -283,6 +293,8 @@ export default defineEventHandler(async (event) => {
     updated,
     deleted,
     kept,
+    /** 知識空間不夠、這次沒建的新增條數（`C-308`⑪）；0＝都收了。畫面要講「還有 N 條沒加進來」 */
+    quotaSkipped,
     errors,
     chunkCount: newChunkCount,
     divergentKeeps,

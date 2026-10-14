@@ -30,7 +30,8 @@ const createKnowledgeChunk = vi.hoisted(() => vi.fn(async (_db: unknown, p: { ch
 }))
 vi.mock('./ai-knowledge-chunker', () => ({ chunkSegment: h.chunkSegment, SEGMENT_CHAR_LEN: 8000 }))
 vi.mock('./ai-knowledge-chunks', () => ({ createKnowledgeChunk, KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
-vi.mock('./ai-knowledge-sources', () => ({ KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources' }))
+// 「這個網址加過了沒」用真的（listSourceUrlKeys／sourceUrlKey，`D-125`③），跑在下面的假 Firestore 上
+vi.mock('./ai-knowledge-sources', async importOriginal => ({ ...(await importOriginal<typeof import('./ai-knowledge-sources')>()) }))
 vi.mock('./ai-knowledge-quota', () => ({ invalidateKnowledgeChunkCount: vi.fn() }))
 vi.mock('./ai-usage', () => ({ assertMaintenanceBudget: h.assertMaintenanceBudget, recordAiUsage: h.recordAiUsage }))
 vi.mock('./gemini', () => ({ runWithLlmBudget: (_w: string, fn: () => unknown) => fn() }))
@@ -72,9 +73,10 @@ function makeDb(job: Record<string, any>, extra: Record<string, Record<string, a
     },
     update: async (p: Record<string, any>) => applyDotted(store[col]![id]!, p),
   })
-  const query = (col: string, filters: [string, unknown][] = []) => ({
+  const query = (col: string, filters: [string, unknown][] = []): any => ({
     where: (f: string, _op: string, v: unknown) => query(col, [...filters, [f, v]]),
     limit: () => query(col, filters),
+    select: () => query(col, filters),
     get: async () => ({
       docs: Object.entries(store[col] ?? {})
         .filter(([, d]) => filters.every(([f, v]) => d[f] === v))
@@ -256,6 +258,28 @@ describe('重跑讀網站：同一頁不建第二份', () => {
     expect(chunkSegment).toHaveBeenCalledTimes(1)
     expect(s!.skippedExisting).toBe(1)
     expect(s!.cards).toBe(3)
+  })
+
+  it('他已經用「加入知識」加過這個網址（網址寫法略不同：尾斜線、#錨點）＝跳過，⛔ 不再整理一份（`D-125`③）', async () => {
+    const { db, store } = makeDb(baseJob(2), {
+      knowledgeSources: { mine: { workspaceId: 'ws1', type: 'url', url: `${page(1).url}/#top`, isDeleted: false } },
+    })
+    const s = await advanceSiteCards('j1', db, { budgetMs: 60_000 })
+    expect(chunkSegment).toHaveBeenCalledTimes(1) // 只整理第 2 頁
+    expect(s!.skippedExisting).toBe(1)
+    expect(store.knowledgeSources![siteCardsSourceId('j1', 0)]).toBeUndefined()
+  })
+
+  it('回收桶裡的、別家的不算加過了：照常整理', async () => {
+    const { db } = makeDb(baseJob(2), {
+      knowledgeSources: {
+        binned: { workspaceId: 'ws1', type: 'url', url: page(1).url, isDeleted: true },
+        theirs: { workspaceId: 'ws2', type: 'url', url: page(2).url, isDeleted: false },
+      },
+    })
+    const s = await advanceSiteCards('j1', db, { budgetMs: 60_000 })
+    expect(chunkSegment).toHaveBeenCalledTimes(2)
+    expect(s!.skippedExisting ?? 0).toBe(0)
   })
 
   it('新的一份接手：上一份還沒整理完的停掉（標 superseded）', async () => {

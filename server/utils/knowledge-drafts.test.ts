@@ -89,6 +89,47 @@ describe('點頭（adoptDrafts）', () => {
   })
 })
 
+describe('採用了開帳讀的網站頁＝開始每天檢查更新（`D-125`③）', () => {
+  const sitePage = (extra: Record<string, any> = {}) => ({
+    workspaceId: 'ws1', type: 'url', origin: 'onboarding-site', url: 'https://shop.example.tw/', refreshIntervalMinutes: 0,
+    onChangeBehavior: 'notify', contentHash: 'sliced', appliedContentHash: 'sliced', ...extra,
+  })
+
+  it('採用其中一條 → 那一頁改成每天檢查、比對基準重設（第一次檢查只記基準，不會誤報「內容變了」）', async () => {
+    getKnowledgeChunkQuota.mockResolvedValue({ used: 0, limit: 50, planName: '免費' })
+    const { db, store } = makeDb({ a: draft(), b: draft() }, { s1: sitePage() })
+    const r = await adoptDrafts('ws1', ['a'], db)
+    expect(r.autoUpdateOn).toEqual(['s1'])
+    expect(store.knowledgeSources!.s1).toMatchObject({ refreshIntervalMinutes: 1440, contentHash: '', appliedContentHash: '', onChangeBehavior: 'notify' })
+  })
+
+  it('⛔ 他自己設成「不自動同步」以外的值、不是開帳讀的、別家的 → 不動', async () => {
+    getKnowledgeChunkQuota.mockResolvedValue({ used: 0, limit: 50, planName: '免費' })
+    const { db, store } = makeDb(
+      { a: draft({ sourceId: 's1' }), b: draft({ sourceId: 's2' }), c: draft({ sourceId: 's3' }) },
+      {
+        s1: sitePage({ refreshIntervalMinutes: 10080 }),
+        s2: sitePage({ origin: undefined }),
+        s3: sitePage({ workspaceId: 'other' }),
+      },
+    )
+    const r = await adoptDrafts('ws1', ['a', 'b', 'c'], db)
+    expect(r.autoUpdateOn).toEqual([])
+    expect(store.knowledgeSources!.s1!.refreshIntervalMinutes).toBe(10080)
+    expect(store.knowledgeSources!.s2!.refreshIntervalMinutes).toBe(0)
+    expect(store.knowledgeSources!.s3!.refreshIntervalMinutes).toBe(0)
+  })
+
+  it('空間滿了、一條都沒收進來 → 不打開（他還沒有任何一條從那一頁上線）', async () => {
+    getKnowledgeChunkQuota.mockResolvedValue({ used: 50, limit: 50, planName: '免費' })
+    const { db, store } = makeDb({ a: draft() }, { s1: sitePage() })
+    const r = await adoptDrafts('ws1', ['a'], db)
+    expect(r.adopted).toEqual([])
+    expect(r.autoUpdateOn).toEqual([])
+    expect(store.knowledgeSources!.s1!.refreshIntervalMinutes).toBe(0)
+  })
+})
+
 describe('刪掉（dismissDrafts）', () => {
   it('真刪；那一頁刪光了，開帳整理出來的那份資料也收掉', async () => {
     countSourceChunks.mockResolvedValue(0)

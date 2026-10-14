@@ -11,6 +11,7 @@ import {
 import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 
 /**
  * POST /api/ai/knowledge/:chunkId/restore
@@ -27,11 +28,11 @@ export default defineEventHandler(async (event) => {
   const db = getDb()
   const ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId)
   const snap = await ref.get()
-  if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到這張卡（可能已超過保留期被清除）' })
+  if (!snap.exists) throw createError({ statusCode: 404, statusMessage: '找不到這條知識（可能已超過保留期被清除）' })
 
   const chunk = snap.data() as any
   if (chunk.workspaceId !== workspaceId) {
-    throw createError({ statusCode: 404, statusMessage: '找不到這張卡（可能已超過保留期被清除）' })
+    throw createError({ statusCode: 404, statusMessage: '找不到這條知識（可能已超過保留期被清除）' })
   }
   if (chunk.deletedAt == null) return { id: chunkId, status: String(chunk.status ?? 'pending') } // 不在回收桶，冪等
 
@@ -84,7 +85,20 @@ export default defineEventHandler(async (event) => {
       }
       else {
         const chunkCount = await countSourceChunks(db, workspaceId, String(chunk.sourceId))
-        await sourceRef.update({ chunkCount, updatedAt: FieldValue.serverTimestamp() }).catch(() => {})
+        /**
+         * 試算表來的那一條救回來＝他又要這一列了（`D-125`②）：從「在後台刪掉、不再收」的名單拿掉。
+         * 照標題的比對 key 找（名單存的是顯示用標題，大小寫、空白可能跟現在的不一樣）。
+         */
+        const excluded: string[] = Array.isArray((sourceSnap.data() as any)?.gsheetExcludedTitles)
+          ? (sourceSnap.data() as any).gsheetExcludedTitles.map(String)
+          : []
+        const key = knowledgeTitleKey(String(chunk.title ?? ''))
+        const matches = key ? excluded.filter(t => knowledgeTitleKey(t) === key) : []
+        await sourceRef.update({
+          chunkCount,
+          updatedAt: FieldValue.serverTimestamp(),
+          ...(matches.length ? { gsheetExcludedTitles: FieldValue.arrayRemove(...matches) } : {}),
+        }).catch(e => console.warn(`[knowledge/restore] ${chunkId} 來源的張數／不再收名單沒更新成：`, (e as Error)?.message))
       }
     }
   }

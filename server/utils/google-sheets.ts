@@ -11,6 +11,7 @@
  * 紅線：只讀「分享給服務帳號」的 Sheet，不繞權限；讀不到就請商家確認分享設定。
  */
 import { JWT } from 'google-auth-library'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly'
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets'
@@ -605,9 +606,9 @@ export async function probeGoogleSheetAccess(
   return { sheetTitle: targets[0]!.title, sheetTitles, checkedTitles, narrowTitles, hasData: false }
 }
 
-/** 標題正規化當比對 key（去空白、轉小寫）；gsheet 同步、匯入健檢、合併重複列共用這一份。 */
+/** 標題正規化當比對 key（去空白、轉小寫）；規則本身在 shared，加入視窗也要用同一把尺（`D-125`①）。 */
 export function normTitle(s: string): string {
-  return String(s ?? '').replace(/\s+/g, '').toLowerCase()
+  return knowledgeTitleKey(s)
 }
 
 /** 表格最上面最多跳過幾列「標題列」（例：「2026 秋季價目表」＋「單位：新台幣」） */

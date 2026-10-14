@@ -68,12 +68,13 @@ describe('shouldBlockSheetDeletion（純函式）', () => {
   })
 })
 
-/** 假 db：記錄所有 doc 更新/刪除；來源 doc 的 update 也收進來 */
+/** 假 db：記錄所有 doc 更新/刪除；來源 doc 的 update 也收進來。讀來源一律「還在」（撞刪除另見 gsheet-sync.race.test.ts） */
 function makeDb() {
   const ops: Array<{ col: string; id: string; op: string; payload?: unknown }> = []
   const db: any = {
     collection: (col: string) => ({
       doc: (id: string) => ({
+        get: async () => ({ exists: true, data: () => ({ workspaceId: 'ws1' }) }),
         update: async (payload: unknown) => { ops.push({ col, id, op: 'update', payload }) },
         delete: async () => { ops.push({ col, id, op: 'delete' }) },
       }),

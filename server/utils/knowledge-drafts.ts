@@ -117,6 +117,52 @@ export interface AdoptResult {
   /** 不是這個帳號的、或早就不是等你看過的（重按、別的分頁先按了） */
   skipped: string[]
   quota: KnowledgeChunkQuotaStatus | null
+  /** 這次採用之後開始「每天自動檢查更新」的開帳網站頁（資料 id，`D-125`③）；沒有＝[] */
+  autoUpdateOn: string[]
+}
+
+/** 開帳讀的網站頁採用之後，多久檢查一次（跟「加入知識」加的網址一樣每天，bulk-create 的預設） */
+const SITE_PAGE_REFRESH_MINUTES = 1440
+
+/**
+ * 開帳讀的網站頁，採用了就開始每天檢查更新（`D-125`③，2026-10-13 拍板 A）。
+ *
+ * 為什麼：建立時刻意關掉（`store-profile-jobs.ts`：他還沒點頭，偵測到變動會去問他一件他還沒答應要的事），
+ * 可是採用時從來沒打開——導覽說「官網會自己跟著更新」，對這幾頁不成立，網頁改了價錢 AI 照答舊的。
+ * 只開「開帳讀的那種、現在是 0」的：店家自己設成「不自動同步」的網址是他的決定，⛔ 不替他改。
+ *
+ * ⚠️ 比對基準要重設（contentHash／appliedContentHash 清空）：開帳存的指紋是照「截短過的頁面文字」算的，
+ *    排程照整頁算，長一點的頁第一次檢查就會被當成「內容變了」去問他。清空＝第一次檢查只記基準、不通知
+ *    （採用的這一刻，卡片就是他剛看過的那一版）。
+ * 開不成只記 log、不擋採用：採用才是他按的那件事。
+ */
+async function enableSitePageAutoUpdate(db: Firestore, workspaceId: string, sourceIds: string[]): Promise<string[]> {
+  const ids = [...new Set(sourceIds.filter(Boolean))]
+  if (!ids.length) return []
+  const snaps = await db.getAll(...ids.map(id => db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(id))).catch((e) => {
+    console.warn('[knowledge-drafts] 讀開帳網站頁失敗，這次沒打開自動更新：', (e as Error)?.message)
+    return []
+  })
+  const turnedOn: string[] = []
+  for (const s of snaps) {
+    const d = s.exists ? s.data() as { workspaceId?: string, type?: string, origin?: string, refreshIntervalMinutes?: number, isDeleted?: boolean, deletedAt?: unknown } : undefined
+    if (!d || d.workspaceId !== workspaceId || d.type !== 'url' || d.origin !== 'onboarding-site') continue
+    if (d.isDeleted === true || d.deletedAt != null) continue
+    if (Number(d.refreshIntervalMinutes ?? 0) !== 0) continue
+    try {
+      await s.ref.update({
+        refreshIntervalMinutes: SITE_PAGE_REFRESH_MINUTES,
+        contentHash: '',
+        appliedContentHash: '',
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      turnedOn.push(s.id)
+    }
+    catch (e) {
+      console.warn(`[knowledge-drafts] ${s.id} 打開自動更新失敗（不擋採用）：`, (e as Error)?.message)
+    }
+  }
+  return turnedOn
 }
 
 /**
@@ -150,11 +196,13 @@ export async function adoptDrafts(workspaceId: string, chunkIds: string[], db: F
     adopted.push(s.id)
   }
   invalidateKnowledgeChunkCount(workspaceId)
+  const autoUpdateOn = await enableSitePageAutoUpdate(db, workspaceId, take.map(s => String(s.data()?.sourceId ?? '')))
   return {
     adopted,
     leftForQuota,
     skipped,
     quota: adopted.length ? await getKnowledgeChunkQuota(workspaceId, db).catch(() => quota) : quota,
+    autoUpdateOn,
   }
 }
 

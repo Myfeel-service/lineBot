@@ -151,6 +151,16 @@ describe('recycleSourceChunks：更新既有那一份時，舊卡怎麼退場', 
     expect(commits).toEqual([400, 400, 101])
     expect(updates).toHaveLength(901)
   })
+
+  it('換新版時他選了沿用的那幾條（`D-125`①）留在原地，⛔ 不進回收桶、不算進「被換掉的」', async () => {
+    const { db, updates } = makeDb([
+      { id: 'c1', data: { workspaceId: WID, sourceId: 's1', status: 'indexed' } },
+      { id: 'c2', data: { workspaceId: WID, sourceId: 's1', status: 'indexed', manuallyEditedAt: 1 } },
+      { id: 'c3', data: { workspaceId: WID, sourceId: 's1', status: 'indexed' } },
+    ])
+    expect(await recycleSourceChunks(db, WID, 's1', { keepIds: ['c2'] })).toBe(2)
+    expect(updates.map(u => u.id).sort()).toEqual(['c1', 'c3'])
+  })
 })
 
 /**

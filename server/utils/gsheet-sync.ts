@@ -27,10 +27,15 @@ import {
   listChunksBySource,
 } from './ai-knowledge-sources'
 import { normTitle, parseGoogleSheetUrl, readGoogleSheetAsCards, type ParsedSheetRef, type SheetCard } from './google-sheets'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 export interface GsheetSyncResult {
-  outcome: 'unchanged' | 'synced' | 'blocked_mass_deletion'
+  /**
+   * `source_deleted`（`C-308`③）：同步做到一半，這份資料被刪掉了。這一輪建的已經收掉，
+   * 呼叫端 ⛔ 不要再寫這份資料（寫不進去，也不該記成「同步成功」）。
+   */
+  outcome: 'unchanged' | 'synced' | 'blocked_mass_deletion' | 'source_deleted'
   added: number
   updated: number
   deleted: number
@@ -49,7 +54,69 @@ export interface GsheetSyncResult {
    * 不講的話，店家以為表上每一列都進了知識庫。
    */
   quotaSkipped?: number
+  /**
+   * 表上有、但店家在知識庫刪掉過（`gsheetExcludedTitles`）所以這次**跳過**的列數（`D-125`②）。
+   * 不算新增、不算刪除、也不算「空間不夠沒收」——那是他自己的決定，來源頁另外講。
+   */
+  excludedSkipped?: number
 }
+
+/**
+ * 同步結果寫成操作紀錄的那一句（`C-308`⑥）：手按「立即同步」跟排程自動同步講同一套話，
+ * 不然同一份試算表的紀錄一筆講「張」一筆講「條」、一筆有講沒收的列一筆沒講。
+ * ⛔ manualKept／quotaSkipped 都是「表上有、知識庫沒跟上」，不可以省略。
+ */
+export function gsheetSyncAuditNote(name: string, r: GsheetSyncResult): string {
+  return `${name}：新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted}`
+    + (r.manualKept ? `；有 ${r.manualKept} 條因為在後台改過，沒有跟著表格更新` : '')
+    + (r.quotaSkipped ? `；有 ${r.quotaSkipped} 列因為知識空間滿了沒有新增` : '')
+    + (r.excludedSkipped ? `；有 ${r.excludedSkipped} 列你在後台刪掉過，照你的意思沒有再收` : '')
+}
+
+/**
+ * 這份資料還在不在（`C-308`③）。'gone'＝文件沒了（整份刪掉）；'recycled'＝還在但進了回收桶。
+ * 讀失敗就讓它丟出去：不知道的時候寧可這一輪不做（下一輪重來），也不要猜「還在」而繼續建。
+ */
+async function sourceState(db: Firestore, workspaceId: string, sourceId: string): Promise<'live' | 'gone' | 'recycled'> {
+  const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).get()
+  if (!snap.exists) return 'gone'
+  const d = snap.data() as { workspaceId?: string, isDeleted?: boolean, deletedAt?: unknown } | undefined
+  if (d?.workspaceId !== workspaceId) return 'gone'
+  return d?.isDeleted === true || d?.deletedAt != null ? 'recycled' : 'live'
+}
+
+/**
+ * 資料在同步途中被刪掉了：把這一輪建的真刪掉（`C-308`③）。
+ * 整份文件都不在了（'gone'）時，底下還掛著的也一起收——刪除那一邊在我們建卡之前就數完名單，
+ * 名單之後才建的就是「AI 會用、後台看不到、刪不掉」的孤兒（2026-10-13 正式站測試撞到 9 條）。
+ * 只是進回收桶（'recycled'）的不掃：那份資料還救得回來，底下的知識要跟著留著。
+ */
+async function discardRunWrites(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+  createdIds: string[],
+  state: 'gone' | 'recycled',
+): Promise<void> {
+  const refs = new Map(createdIds.map(id => [id, db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id)]))
+  if (state === 'gone') {
+    const left = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('sourceId', '==', sourceId)
+      .get()
+    for (const d of left.docs) refs.set(d.id, d.ref)
+  }
+  const all = [...refs.values()]
+  for (let i = 0; i < all.length; i += 400) {
+    const batch = db.batch()
+    for (const ref of all.slice(i, i + 400)) batch.delete(ref)
+    await batch.commit()
+  }
+  invalidateKnowledgeChunkCount(workspaceId)
+  console.warn(`[gsheet-sync] ${sourceId} 同步途中資料被刪了，收掉 ${all.length} 條（這一輪建的 ${createdIds.length} 條）`)
+}
+
+const SOURCE_DELETED_RESULT: GsheetSyncResult = { outcome: 'source_deleted', added: 0, updated: 0, deleted: 0, kept: 0 }
 
 /**
  * 大量刪除守門（純函式好測）：表格一次少掉太多列，多半是誤刪 / 篩選後全選刪 /
@@ -104,18 +171,25 @@ async function remainingKnowledgeRoom(db: Firestore, workspaceId: string): Promi
  * - 不限張數的方案跟以前完全一樣。
  * - 上次有少收（quotaSkippedCount > 0）時，「指紋沒變就跳過」不能直接跳：額度可能空出來了（刪了卡、升級）。
  *   先看還有沒有位置——還是滿的就照樣當「沒變」（不重讀卡片、不寫紀錄、不重做總覽），有位置才整份比對一次。
+ *
+ * 在後台刪掉的列（`D-125`②，`gsheetExcludedTitles`）：跳過——不建、不算刪除、不算空間不夠沒收，記成 excludedSkipped。
+ *
+ * 跟刪除撞車（`C-308`③）：同步要跑補問法（LLM，十幾秒），這段時間他可能把這份資料刪了。以前照樣一條條建下去，
+ * 建出來的知識不屬於任何一份資料——AI 會用、後台看不到也刪不掉。現在寫入前、每建一條前、寫完都確認資料還在；
+ * 不在了就停、把這一輪建的收掉，回 `source_deleted`（⛔ 不再寫這份資料、也不丟錯）。
  */
 export async function syncGoogleSheetSource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-  data: Pick<KnowledgeSourceDoc, 'url' | 'gsheetId' | 'gsheetGid' | 'contentHash' | 'gsheetTabRule' | 'quotaSkippedCount'> & { generateOverview?: boolean },
+  data: Pick<KnowledgeSourceDoc, 'url' | 'gsheetId' | 'gsheetGid' | 'contentHash' | 'gsheetTabRule' | 'quotaSkippedCount' | 'gsheetExcludedTitles' | 'blockedPendingDeletes'> & { generateOverview?: boolean },
   opts: { allowMassDeletion?: boolean } = {},
 ): Promise<GsheetSyncResult> {
   const ref: ParsedSheetRef | null = data.gsheetId
     ? { spreadsheetId: data.gsheetId, gid: data.gsheetGid ?? null }
     : parseGoogleSheetUrl(String(data.url || ''))
-  if (!ref) throw createError({ statusCode: 400, statusMessage: '來源沒有有效的 Google Sheet id' })
+  if (!ref) throw createError({ statusCode: 400, statusMessage: '這份資料沒有有效的 Google 試算表連結' })
+  const excludedKeys = new Set((data.gsheetExcludedTitles ?? []).map(t => knowledgeTitleKey(String(t))).filter(Boolean))
 
   // 讀法要跟「當初匯入時」同一套（`C-296`）：2026-10-10 之前建的來源沒有 gsheetTabRule，
   // 分頁與每一列都照舊讀——⛔ 不可以替它換新規則，下一輪同步就會把別頁的列整批變成卡、
@@ -128,16 +202,27 @@ export async function syncGoogleSheetSource(
   if (data.contentHash && data.contentHash === newHash) {
     const room = prevQuotaSkipped > 0 ? await remainingKnowledgeRoom(db, workspaceId) : 0
     if (prevQuotaSkipped === 0 || (room !== null && room <= 0)) {
-      await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-        lastFetchedAt: FieldValue.serverTimestamp(),
-      })
+      try {
+        await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+          lastFetchedAt: FieldValue.serverTimestamp(),
+          // 上次被排程擋下（表格一次少太多列），這次表格又跟卡片對得上了＝沒有要確認的刪除（`C-308`⑤）
+          ...(Number(data.blockedPendingDeletes ?? 0) > 0 ? { blockedPendingDeletes: 0 } : {}),
+        })
+      }
+      catch (e) {
+        // 讀表的那幾秒資料被刪了：不是同步失敗，照實回報
+        if ((await sourceState(db, workspaceId, sourceId).catch(() => 'live')) !== 'live') return { ...SOURCE_DELETED_RESULT }
+        throw e
+      }
+      const excludedOnSheet = new Set(sheet.cards.map(c => knowledgeTitleKey(c.title)).filter(k => excludedKeys.has(k))).size
       return {
         outcome: 'unchanged',
         added: 0,
         updated: 0,
         deleted: 0,
-        kept: Math.max(0, sheet.cards.length - prevQuotaSkipped),
+        kept: Math.max(0, sheet.cards.length - prevQuotaSkipped - excludedOnSheet),
         ...(prevQuotaSkipped > 0 ? { quotaSkipped: prevQuotaSkipped } : {}),
+        ...(excludedOnSheet > 0 ? { excludedSkipped: excludedOnSheet } : {}),
       }
     }
   }
@@ -158,6 +243,7 @@ export async function syncGoogleSheetSource(
   let kept = 0
   let deleted = 0
   let manualKept = 0
+  let excludedSkipped = 0
 
   for (const card of sheet.cards) {
     const key = normTitle(card.title)
@@ -165,7 +251,11 @@ export async function syncGoogleSheetSource(
     seen.add(key)
     const old = existingByTitle.get(key)
 
-    if (!old) {
+    if (!old && excludedKeys.has(knowledgeTitleKey(card.title))) {
+      // 他在後台刪掉過這一列（`D-125`②）：照他的意思不再收。⚠️ 已經在 seen 裡，下面不會被當成「表上少了」
+      excludedSkipped++
+    }
+    else if (!old) {
       toCreate.push(card)
     }
     else if (old.manuallyEditedAtMs > 0) {
@@ -236,76 +326,139 @@ export async function syncGoogleSheetSource(
     }).catch(() => {})
   }
 
-  // ── pass 2：套用。先刪：這一輪刪掉的卡空出來的額度，上面已經算給新增的列用了 ──
-  // 新表已不存在的舊卡 → 進回收桶（軟刪除，30 天內可還原）；人工編輯過的保留
-  for (const [key, old] of existingByTitle) {
-    if (seen.has(key)) continue
-    if (old.manuallyEditedAtMs > 0) {
-      kept++
-      manualKept++ // 表上已刪、卡片被鎖住留著＝分歧
-      continue
-    }
-    await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(old.id)
-      .update(buildChunkSoftDeletePatch(old.status))
-    deleted++
+  // ── pass 2：套用。⛔ 先確認資料還在（`C-308`③）：上面補問法要十幾秒，這段時間他可能把這份刪了 ──
+  // 這一輪建的知識 id 都記下來：中途發現資料沒了，要把它們收掉（不然就是看不到、刪不掉、AI 卻會用的孤兒）
+  const createdIds: string[] = []
+  const before = await sourceState(db, workspaceId, sourceId)
+  if (before !== 'live') {
+    await discardRunWrites(db, workspaceId, sourceId, createdIds, before)
+    return { ...SOURCE_DELETED_RESULT }
   }
 
-  // enriched.items 與 enrichTargets 同序：先 create 後 update
-  for (let i = 0; i < toCreate.length; i++) {
-    const card = toCreate[i]!
-    const extra = enriched.items[i]
-    await createKnowledgeChunk(db, {
-      workspaceId,
-      chunkId: uuidv4(),
-      title: card.title,
-      content: card.content,
-      tags: extra?.tags.length ? extra.tags : card.tags,
-      questions: extra?.questions ?? [],
-      sourceId,
-    })
-    added++
+  try {
+    // 先刪：這一輪刪掉的卡空出來的額度，上面已經算給新增的列用了
+    // 新表已不存在的舊卡 → 進回收桶（軟刪除，30 天內可還原）；人工編輯過的保留
+    // ⚠️ 這裡是「表格少了那一列」的決定，⛔ 不寫進 gsheetExcludedTitles（那只收他在後台刪的，`D-125`②）
+    for (const [key, old] of existingByTitle) {
+      if (seen.has(key)) continue
+      if (old.manuallyEditedAtMs > 0) {
+        kept++
+        manualKept++ // 表上已刪、卡片被鎖住留著＝分歧
+        continue
+      }
+      await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(old.id)
+        .update(buildChunkSoftDeletePatch(old.status))
+      deleted++
+    }
+
+    // enriched.items 與 enrichTargets 同序：先 create 後 update
+    for (let i = 0; i < toCreate.length; i++) {
+      // 每建一條前再確認一次：刪除那一邊是先數名單再刪，名單數完之後才建的不會被收到
+      const state = await sourceState(db, workspaceId, sourceId)
+      if (state !== 'live') {
+        await discardRunWrites(db, workspaceId, sourceId, createdIds, state)
+        return { ...SOURCE_DELETED_RESULT }
+      }
+      const card = toCreate[i]!
+      const extra = enriched.items[i]
+      const chunkId = uuidv4()
+      createdIds.push(chunkId) // 先記再建：建到一半丟錯，收的時候也收得到
+      await createKnowledgeChunk(db, {
+        workspaceId,
+        chunkId,
+        title: card.title,
+        content: card.content,
+        tags: extra?.tags.length ? extra.tags : card.tags,
+        questions: extra?.questions ?? [],
+        sourceId,
+      })
+      added++
+    }
+    for (let j = 0; j < toUpdate.length; j++) {
+      const { oldId, card } = toUpdate[j]!
+      const extra = enriched.items[toCreate.length + j]
+      await updateKnowledgeChunk(db, {
+        chunkId: oldId,
+        title: card.title,
+        content: card.content,
+        // tags：沒補到就傳 undefined → updateKnowledgeChunk 保留舊標籤（一列一卡的 card.tags 永遠是 []，直接帶會清空）。
+        tags: extra?.tags.length ? extra.tags : undefined,
+        // questions：內容已變 → 舊問法是照「舊答案」生的、已過時。有補到就用新的；沒補到就清空（傳 []），
+        // 別讓過時問法跟新內容一起進 embedding（避免矛盾拉低命中）；空缺由 reenrich 回填程序補上。
+        questions: extra?.questions.length ? extra.questions : [],
+        contentChanged: true,
+        manualEdit: false,
+      })
+      updated++
+    }
   }
-  for (let j = 0; j < toUpdate.length; j++) {
-    const { oldId, card } = toUpdate[j]!
-    const extra = enriched.items[toCreate.length + j]
-    await updateKnowledgeChunk(db, {
-      chunkId: oldId,
-      title: card.title,
-      content: card.content,
-      // tags：沒補到就傳 undefined → updateKnowledgeChunk 保留舊標籤（一列一卡的 card.tags 永遠是 []，直接帶會清空）。
-      tags: extra?.tags.length ? extra.tags : undefined,
-      // questions：內容已變 → 舊問法是照「舊答案」生的、已過時。有補到就用新的；沒補到就清空（傳 []），
-      // 別讓過時問法跟新內容一起進 embedding（避免矛盾拉低命中）；空缺由 reenrich 回填程序補上。
-      questions: extra?.questions.length ? extra.questions : [],
-      contentChanged: true,
-      manualEdit: false,
-    })
-    updated++
+  catch (e) {
+    // 寫到一半出錯：多半是資料（連同底下的知識）剛被刪掉，改到的那一條已經不在了。是的話照「被刪了」收尾
+    const state = await sourceState(db, workspaceId, sourceId).catch(() => 'live' as const)
+    if (state !== 'live') {
+      await discardRunWrites(db, workspaceId, sourceId, createdIds, state)
+      return { ...SOURCE_DELETED_RESULT }
+    }
+    throw e
   }
   // 張數變了：額度快取（60 秒）要重數，不然接著匯入／手寫卡會拿到舊的張數
   if (added || deleted) invalidateKnowledgeChunkCount(workspaceId)
 
+  // 寫完再查一次：最後一條建的同時被刪掉，上面的檢查看不到
+  const after = await sourceState(db, workspaceId, sourceId)
+  if (after !== 'live') {
+    await discardRunWrites(db, workspaceId, sourceId, createdIds, after)
+    return { ...SOURCE_DELETED_RESULT }
+  }
+
   const chunkCount = await countSourceChunks(db, workspaceId, sourceId)
-  await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-    contentHash: newHash,
-    chunkCount,
-    lastFetchedAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    outdatedAt: null,
-    // C-44：被手動編輯鎖住、與表格分歧的張數。來源頁用它常駐提示
-    // 「N 張卡不會跟表格更新」；0 也要寫（分歧解掉後提示要消失）。
-    manualKeptCount: manualKept,
-    // 額度滿了沒新增的列數；0 也要寫（空出位置收完之後提示要消失）。
-    // 指紋照樣前進：還有少收的時候，上面「沒變就跳過」會先看額度，不會把這幾列藏起來。
-    quotaSkippedCount: quotaSkipped,
-  })
+  try {
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+      contentHash: newHash,
+      chunkCount,
+      lastFetchedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      outdatedAt: null,
+      // C-44：被手動編輯鎖住、與表格分歧的條數。來源頁用它常駐提示
+      // 「N 條不會跟表格更新」；0 也要寫（分歧解掉後提示要消失）。
+      manualKeptCount: manualKept,
+      // 額度滿了沒新增的列數；0 也要寫（空出位置收完之後提示要消失）。
+      // 指紋照樣前進：還有少收的時候，上面「沒變就跳過」會先看額度，不會把這幾列藏起來。
+      quotaSkippedCount: quotaSkipped,
+      // 同步成功＝沒有等著確認的大量刪除了（`C-308`⑤；手按「立即同步」放行也走這裡）
+      blockedPendingDeletes: 0,
+    })
+  }
+  catch (e) {
+    const state = await sourceState(db, workspaceId, sourceId).catch(() => 'live' as const)
+    if (state !== 'live') {
+      await discardRunWrites(db, workspaceId, sourceId, createdIds, state)
+      return { ...SOURCE_DELETED_RESULT }
+    }
+    throw e
+  }
 
   // 型錄型 gsheet 的總覽卡跟著增刪改重生（C-49C）：原本永遠停在第一次匯入的版本。
   // 失敗不擋同步（總覽是加分項）；沒動卡就不重生（白花一次 LLM）。
   if (data.generateOverview === true && (added || updated || deleted)) {
     await regenerateOverviewCard(db, workspaceId, sourceId)
       .catch(e => console.warn('[gsheet-sync] overview regen failed:', e))
+    // 總覽也要跑一次 LLM：這段時間被刪掉的話，剛建的總覽同樣會變成孤兒——整份不在了就連它一起收
+    const afterOverview = await sourceState(db, workspaceId, sourceId).catch(() => 'live' as const)
+    if (afterOverview === 'gone') {
+      await discardRunWrites(db, workspaceId, sourceId, createdIds, afterOverview)
+      return { ...SOURCE_DELETED_RESULT }
+    }
   }
 
-  return { outcome: 'synced', added, updated, deleted, kept, manualKept, quotaSkipped }
+  return {
+    outcome: 'synced',
+    added,
+    updated,
+    deleted,
+    kept,
+    manualKept,
+    quotaSkipped,
+    ...(excludedSkipped ? { excludedSkipped } : {}),
+  }
 }

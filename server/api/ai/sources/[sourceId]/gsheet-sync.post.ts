@@ -2,7 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { clearSourceFailure, getSource } from '~~/server/utils/ai-knowledge-sources'
-import { syncGoogleSheetSource } from '~~/server/utils/gsheet-sync'
+import { gsheetSyncAuditNote, syncGoogleSheetSource } from '~~/server/utils/gsheet-sync'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
   const source = await getSource(db, sourceId, workspaceId)
   if (!source) throw createError({ statusCode: 404, statusMessage: 'source not found' })
   if (source.data.type !== 'gsheet') {
-    throw createError({ statusCode: 400, statusMessage: '此來源不是 Google Sheet' })
+    throw createError({ statusCode: 400, statusMessage: '這份資料不是 Google 試算表' })
   }
 
   // allowMassDeletion：前端在收到 blocked_mass_deletion 後，跳確認框讓使用者
@@ -30,8 +30,9 @@ export default defineEventHandler(async (event) => {
   const r = await syncGoogleSheetSource(db, workspaceId, sourceId, source.data, {
     allowMassDeletion: body?.allowMassDeletion === true,
   })
-  if (r.outcome === 'blocked_mass_deletion') {
-    // 被擋下＝沒有任何寫入；讓前端拿到數字後跳確認框
+  if (r.outcome === 'blocked_mass_deletion' || r.outcome === 'source_deleted') {
+    // 被擋下＝沒有任何寫入；讓前端拿到數字後跳確認框。
+    // 同步途中資料被刪了（`C-308`③）：這一輪建的已經收掉，⛔ 不清失敗標記、不記「同步了」（那份資料已經不在）
     return { sourceId, ...r }
   }
   // 手動同步成功也要清失敗標記——否則商家修好分享權限、按了「立即同步」成功了，
@@ -58,10 +59,9 @@ export default defineEventHandler(async (event) => {
         deleted: r.deleted,
         ...(r.quotaSkipped ? { quotaSkipped: r.quotaSkipped } : {}),
       },
-      note: `${String(source.data.name ?? '')}：新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted}`
-        + (r.manualKept ? `；有 ${r.manualKept} 張因為被人工改過所以沒跟著表格更新` : '')
-        // 額度滿了沒新增的列（`C-296` 審查）：跟 manualKept 一樣是「表上有、知識庫沒有」，⛔ 不可以省略
-        + (r.quotaSkipped ? `；有 ${r.quotaSkipped} 列因為知識量額度滿了沒有新增` : '')
+      // 跟排程自動同步同一句話（`C-308`⑥）；額度滿了沒新增的列（`C-296` 審查）跟 manualKept 一樣是
+      // 「表上有、知識庫沒有」，⛔ 不可以省略——都收在 gsheetSyncAuditNote 裡
+      note: gsheetSyncAuditNote(String(source.data.name ?? ''), r)
         + (body?.allowMassDeletion === true ? '；這次是使用者確認過才放行的大量刪除' : ''),
     }, db)
   }

@@ -24,6 +24,7 @@ import {
   validateChunkInput,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { writeAuditLog } from '~~/server/utils/audit-log'
+import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 import type { KnowledgeChunkStatus, KnowledgeSourceType } from '~~/shared/types/ai-knowledge'
 
 const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
@@ -71,6 +72,21 @@ interface ImportDone {
   failed: number
   replacedChunks: number
   originalKept: boolean | null
+  /** 換新版時沿用的、他改過的條數（`D-125`①）；舊紀錄沒有＝0 */
+  keptEdited?: number
+  /** 新版裡跟沿用那幾條同名、所以沒收的條數；舊紀錄沒有＝0 */
+  skippedForKept?: number
+}
+
+/** 換新版時一次最多沿用幾條（一份資料最多 150 條，留餘裕） */
+const MAX_KEEP_EDITED = 500
+
+/** 沿用的那一條（驗過：這一份的、活著的、他改過的） */
+interface KeptEdited {
+  id: string
+  title: string
+  /** 算不算額度（草稿不算）——沿用的會繼續佔位置，騰出空間時要扣掉 */
+  countsTowardQuota: boolean
 }
 
 interface ExistingSource {
@@ -84,6 +100,8 @@ interface ExistingSource {
   importId?: string | null
   /** 那筆匯入收進回收桶的舊卡張數（重送時沿用，不重收一次） */
   importReplaced?: number
+  /** 那筆匯入沿用的、他改過的那幾條（`D-125`①）：重跑時照這份名單，不看這次 body 帶什麼 */
+  importKeptEdited?: string[]
   importDone?: ImportDone | null
   /** 留著的原檔是哪一筆匯入留的 */
   fileImportId?: string
@@ -97,9 +115,11 @@ function isRecycled(s: ExistingSource | undefined): boolean {
 /**
  * POST /api/ai/knowledge/bulk-create
  * Body: {
- *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash?, productName? },
+ *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash?, productName?, keepEditedChunkIds?: string[] },
  *   chunks: [{ title, content, tags[] }]
  * }
+ * `keepEditedChunkIds` 只在帶 `replaceSourceId`（換新版）時有用：他改過、選了沿用的那幾條（`D-125`①）。
+ * 回應多 `keptEdited`（沿用了幾條）、`skippedForKept`（新版裡同名、所以沒收的幾條）。
  *
  * 流程：建 knowledgeSource（type=text 跳過）→ 批次建 chunks（含 embedding）→ 回報每張卡狀態。
  * 失敗的卡會是 status='failed'，可由排程任務或手動 reindex 救回。
@@ -144,7 +164,7 @@ export default defineEventHandler(async (event) => {
   const inputs = rawChunks.map(normalizeChunkInput)
   for (const input of inputs) {
     const err = validateChunkInput(input)
-    if (err) throw createError({ statusCode: 400, statusMessage: `卡片「${input.title || '未命名'}」：${err}` })
+    if (err) throw createError({ statusCode: 400, statusMessage: `「${input.title || '未命名'}」這一條：${err}` })
   }
 
   // 列表頁的「總覽卡」與一般卡分開傳：它帶 isOverview，re-sync 時要能單獨辨識 / 重生
@@ -239,6 +259,26 @@ export default defineEventHandler(async (event) => {
   const ownSnaps = resuming ? await db.getAll(...ownChunkIds.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id))) : []
 
   /**
+   * 換新版時沿用他改過的那幾條（`D-125`①，2026-10-13 拍板 A）：畫面先列出「這份有 N 條你改過」、預設全勾，
+   * 勾的那幾條帶在 `source.keepEditedChunkIds`。⛔ 不信前端：一條條驗是這一份的、還活著、真的改過（manuallyEditedAt），
+   * 不合的安靜略過（不是錯——可能他打開清單之後又解了鎖、或刪了那一條）。
+   * 沿用的留在原地不進回收桶；新版裡同名的那一條就不收，免得同一件事兩條。
+   * 重跑（同一筆匯入再做一次）照**上一次記下的名單**：那幾條上一次就沒進回收桶，這次 body 帶什麼都不能改變這件事。
+   */
+  const keepRequested: unknown[] = !replaceSourceId
+    ? []
+    : resuming && Array.isArray(target?.importKeptEdited)
+      ? target!.importKeptEdited!
+      : Array.isArray(body?.source?.keepEditedChunkIds) ? body.source.keepEditedChunkIds : []
+  const kept = replaceSourceId ? await resolveKeptEdited(db, workspaceId, replaceSourceId, keepRequested) : []
+  const keptKeys = new Set(kept.map(k => knowledgeTitleKey(k.title)).filter(Boolean))
+  // 這次真的要建的（留著原本的序號：有 importId 時 id 照序號算，重送要落在同一批 id 上）
+  const toCreate = inputs
+    .map((input: (typeof inputs)[number], idx: number) => ({ input, idx }))
+    .filter((x: { input: (typeof inputs)[number] }) => !keptKeys.has(knowledgeTitleKey(x.input.title)))
+  const skippedForKept = inputs.length - toCreate.length
+
+  /**
    * 方案知識量前置檢查（D-69 拍板④）：同 assertMaintenanceBudget 的用意——
    * 在開始 embedding 之前就講清楚「不夠」，而不是建到一半才死。
    *  ① 總表也是一條、也算額度（`C-296`）；
@@ -246,13 +286,20 @@ export default defineEventHandler(async (event) => {
    *     自己上一次建好的卡會被原地覆寫（決定性 id），不會變兩張。
    * ⛔ 扣多少要跟額度**同一把尺**（countWorkspaceChunks：不含回收桶、不含草稿）：草稿本來就沒算過額度，
    *    把它當成騰出來的空間，舊的那份有幾張草稿就能多塞幾張。
-   * ⛔ 重跑只數**這筆匯入自己的卡**，不數整份資料：資料底下可能還有手寫加進去的卡，那些不會被覆寫。
+   * ⛔ 重跑只數**這筆匯入自己的卡**，不數整份資料：資料底下可能還有手寫加進去的卡，那些不會被覆寫；
+   *    而且只數這次真的會覆寫的那幾個 id（跟沿用那幾條同名、這次不建的不算）。
+   * ⛔ 沿用的那幾條（`D-125`①）不進回收桶、照樣佔位置：騰出來的空間要扣掉它們，新版裡同名不收的也不算要加的。
    */
   const overviewAdding = overviewInput ? 1 : 0
+  const writeIds = new Set(importId
+    ? [...toCreate.map((x: { idx: number }) => idFor(`chunk:${x.idx}`)), ...(overviewInput ? [idFor('overview')] : [])]
+    : [])
   const freed = resuming
-    ? ownSnaps.filter(s => countsTowardQuota(s, workspaceId)).length
-    : replaceSourceId ? await countSourceQuotaChunks(db, workspaceId, replaceSourceId) : 0
-  await assertKnowledgeChunkQuota(workspaceId, inputs.length + overviewAdding - freed)
+    ? ownSnaps.filter(s => writeIds.has(s.id) && countsTowardQuota(s, workspaceId)).length
+    : replaceSourceId
+      ? Math.max(0, await countSourceQuotaChunks(db, workspaceId, replaceSourceId) - kept.filter(k => k.countsTowardQuota).length)
+      : 0
+  await assertKnowledgeChunkQuota(workspaceId, toCreate.length + overviewAdding - freed)
 
   let replacedChunks = 0
 
@@ -293,8 +340,9 @@ export default defineEventHandler(async (event) => {
 
     // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
     if (replaceSourceId && !resuming) {
-      // 舊卡進回收桶（30 天內救得回來）；批次與「已在回收桶不重蓋」的規矩收在 utils 裡
-      replacedChunks = await recycleSourceChunks(db, workspaceId, sourceId)
+      // 舊卡進回收桶（30 天內救得回來）；批次與「已在回收桶不重蓋」的規矩收在 utils 裡。
+      // 他選了沿用的那幾條留在原地（`D-125`①）
+      replacedChunks = await recycleSourceChunks(db, workspaceId, sourceId, { keepIds: kept.map(k => k.id) })
     }
     else if (resuming) {
       // 重跑：舊卡上一次就收完了（收完才寫下這筆匯入的記號）。⛔ 不再收一次——
@@ -327,11 +375,13 @@ export default defineEventHandler(async (event) => {
       outdatedAt: null,
       status: 'ready',
       isDeleted: false, // listSources 查詢層過濾用
-      chunkCount: inputs.length + (overviewInput ? 1 : 0),
+      chunkCount: toCreate.length + (overviewInput ? 1 : 0) + kept.length,
       // 重送用的記號（見上面「重送」）：做完才補 importDone；沒帶 importId 的匯入一律清掉上一筆的記號，
       // ⛔ 不清的話，那份資料的卡已經換過了，上一筆匯入晚到的重送卻還會拿到「做完了」
       importId: importId || null,
       importReplaced: replacedChunks,
+      // 這筆匯入沿用了哪幾條（`D-125`①）：跟 importReplaced 同一個道理，重跑時照這份、⛔ 不重新決定
+      importKeptEdited: kept.map(k => k.id),
       importDone: null,
       createdAt: now,
       updatedAt: now,
@@ -374,14 +424,15 @@ export default defineEventHandler(async (event) => {
   // skipUsageRecording:150 卡逐卡記帳會對同一份月用量文件連打(~15 writes/s,被節流
   // 的寫入靜默漏記),改累計 token、最後整批記一次
   type ResultRow = { id: string; status: KnowledgeChunkStatus; title: string; failureReason?: string }
-  const results: ResultRow[] = new Array(inputs.length)
+  const results: ResultRow[] = new Array(toCreate.length)
   let totalEmbeddingTokens = 0
 
   let cursor = 0
   async function worker() {
-    while (cursor < inputs.length) {
-      const idx = cursor++
-      const input = inputs[idx]!
+    while (cursor < toCreate.length) {
+      const pos = cursor++
+      const { input, idx } = toCreate[pos]!
+      // id 照「在這一包裡的序號」算（不是照這次要建的第幾條）：沿用的名單不同，同一條的 id 也不會變
       const chunkId = importId ? idFor(`chunk:${idx}`) : uuidv4()
       const r = await createKnowledgeChunk(db, {
         workspaceId,
@@ -391,10 +442,10 @@ export default defineEventHandler(async (event) => {
         skipUsageRecording: true,
       })
       if (r.status === 'indexed') totalEmbeddingTokens += r.embeddingTokens
-      results[idx] = { id: r.id, status: r.status, title: input.title, failureReason: r.failureReason }
+      results[pos] = { id: r.id, status: r.status, title: input.title, failureReason: r.failureReason }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(EMBED_CONCURRENCY, inputs.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(EMBED_CONCURRENCY, toCreate.length) }, worker))
 
   // ── 總覽卡（若有）：最後單獨建一張，帶 isOverview ──────────────────
   if (overviewInput) {
@@ -428,7 +479,7 @@ export default defineEventHandler(async (event) => {
   if (sourceId) {
     const actual = await countSourceChunks(db, workspaceId, sourceId)
     const importDone: ImportDone | null = importId
-      ? { bodyHash, total: results.length, indexed, failed, replacedChunks, originalKept }
+      ? { bodyHash, total: results.length, indexed, failed, replacedChunks, originalKept, keptEdited: kept.length, skippedForKept }
       : null
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
       .update({ chunkCount: actual, updatedAt: FieldValue.serverTimestamp(), ...(importDone ? { importDone } : {}) })
@@ -454,11 +505,13 @@ export default defineEventHandler(async (event) => {
       name: String(body?.source?.name ?? ''),
       itemsCount: results.length,
       chunkIdsCount: indexed,
-      failedCount: failed,
+      failedItemsCount: failed,
     },
-    note: `匯入 ${results.length} 張，成功 ${indexed} 張${failed ? `、失敗 ${failed} 張` : ''}`
-      + (replaceSourceId ? `；蓋掉原本那一份，舊的 ${replacedChunks} 張進了回收桶` : '')
-      + (resuming ? '；這是同一筆匯入再送一次（上一次逾時或中斷），卡片原地覆寫，沒有多出一份' : ''),
+    note: `加入 ${results.length} 條，成功 ${indexed} 條${failed ? `、失敗 ${failed} 條` : ''}`
+      + (replaceSourceId ? `；換掉原本那一份，舊的 ${replacedChunks} 條進了回收桶` : '')
+      // `D-125`①：沿用了哪幾條要查得到——「我改過的那條怎麼沒照新版」答案在這裡
+      + (kept.length ? `；你改過的 ${kept.length} 條沿用原本的內容${skippedForKept ? `（新版裡同名的 ${skippedForKept} 條沒有收）` : ''}` : '')
+      + (resuming ? '；這是同一筆匯入再送一次（上一次逾時或中斷），原地覆寫，沒有多出一份' : ''),
   }, db)
 
   return {
@@ -468,6 +521,10 @@ export default defineEventHandler(async (event) => {
     failed,
     /** 「更新既有資料」時被移進回收桶的舊卡張數；結果頁要講出來（人有權知道舊的去哪了） */
     replacedChunks: replaceSourceId ? replacedChunks : 0,
+    /** 換新版時沿用的、他改過的條數（`D-125`①）；沒有＝0 */
+    keptEdited: kept.length,
+    /** 新版裡跟沿用那幾條同名、所以這次沒收的條數；沒有＝0 */
+    skippedForKept,
     /** 檔案來源：原檔有沒有留下來（`C-296`③）；不是檔案來源是 null */
     originalKept,
     items: results,
@@ -515,10 +572,42 @@ async function replayImport(
     indexed: done.indexed,
     failed: done.failed,
     replacedChunks: done.replacedChunks,
+    keptEdited: done.keptEdited ?? 0,
+    skippedForKept: done.skippedForKept ?? 0,
     originalKept: done.originalKept,
     items,
     alreadyImported: true,
   }
+}
+
+/**
+ * 換新版時「沿用他改過的」那幾條，一條條驗過（`D-125`①）：格式對、這個帳號的、這一份的、
+ * 不在回收桶、真的改過（manuallyEditedAt）、不是總覽。不合的安靜略過——不是錯，只是不沿用。
+ * ⛔ id 格式先擋：含 `/` 的 id 丟進 doc() 會變成沒有訊息的 500（同 bodyId）。
+ */
+async function resolveKeptEdited(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+  raw: unknown[],
+): Promise<KeptEdited[]> {
+  const ids = [...new Set(raw.map(v => String(v ?? '').trim()).filter(id => SAFE_ID_RE.test(id) && !/^__.*__$/.test(id)))]
+    .slice(0, MAX_KEEP_EDITED)
+  if (!ids.length) return []
+  const snaps = await db.getAll(...ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id)))
+  const out: KeptEdited[] = []
+  for (const s of snaps) {
+    if (!s.exists) continue
+    const d = s.data() as {
+      workspaceId?: string, sourceId?: string | null, deletedAt?: unknown, isDeleted?: boolean
+      manuallyEditedAt?: unknown, isOverview?: boolean, title?: string, status?: string
+    } | undefined
+    if (!d || d.workspaceId !== workspaceId || d.sourceId !== sourceId) continue
+    if (d.deletedAt != null || d.isDeleted === true) continue
+    if (d.manuallyEditedAt == null || d.isOverview === true) continue
+    out.push({ id: s.id, title: String(d.title ?? ''), countsTowardQuota: chunkCountsTowardQuota(d) })
+  }
+  return out
 }
 
 /**

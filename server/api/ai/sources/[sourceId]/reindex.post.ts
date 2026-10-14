@@ -85,7 +85,7 @@ export default defineEventHandler(async (event) => {
     action: 'source.reindex',
     targetId: sourceId,
     after: { name: String(source.data.name ?? ''), itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed },
-    note: `${String(source.data.name ?? '')}：重學 ${indexed} 張${failed ? `、失敗 ${failed} 張` : ''}`,
+    note: `${String(source.data.name ?? '')}：重新學習 ${indexed} 條${failed ? `、失敗 ${failed} 條` : ''}`,
   }, db)
 
   return {

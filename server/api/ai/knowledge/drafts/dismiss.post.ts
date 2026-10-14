@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'knowledge.write')
   const body = await readBody<{ chunkIds?: unknown }>(event)
   const ids = Array.isArray(body?.chunkIds) ? body.chunkIds.map(String) : []
-  if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要刪哪幾張？' })
+  if (!ids.length) throw createError({ statusCode: 400, statusMessage: '要刪哪幾條？' })
   const db = getDb()
   const r = await dismissDrafts(workspaceId, ids, db)
   if (r.dismissed.length) {

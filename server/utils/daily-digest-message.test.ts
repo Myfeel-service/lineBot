@@ -89,6 +89,15 @@ describe('順利的一天（拍板選項 B：照發，一行）', () => {
   })
 })
 
+describe('試算表因為空間滿了沒收的列（`C-308`）', () => {
+  it('有沒收的列 → 列進「今天可以處理」、指路知識庫；沒帶這一格（舊呼叫端）照舊不出現', () => {
+    const out = text({ todo: { ...base.todo, quotaSkippedRows: 12 } })
+    expect(out).toContain('試算表有 12 列因為知識空間滿了還沒收')
+    expect(digestPlaces({ waiting: base.waiting, todo: { ...base.todo, quotaSkippedRows: 12 } })).toContain('「AI 知識庫」')
+    expect(text()).not.toContain('還沒收')
+  })
+})
+
 describe('三段結構（有事的一天）', () => {
   const busy: Partial<DigestInput> = {
     yesterday: {
@@ -150,7 +159,10 @@ describe('三段結構（有事的一天）', () => {
   it('待辦收成「幾件＋一句話」，數字放句首，操作步驟不進 LINE', () => {
     const out = text(busy)
     expect(out).toContain('📌 今天可以處理（6 項）')
-    expect(out).toContain('3 個知識來源內容變了，等你確認要不要更新')
+    expect(out).toContain('3 份資料內容變了，等你確認要不要更新')
+    // `C-309`：量詞跟知識庫頁一樣講「條」（以前「2 張知識卡已到期下架」）
+    expect(out).toContain('2 條知識已到期下架')
+    expect(out).not.toMatch(/知識卡|知識來源/)
     expect(out).toContain('4 個常被問、AI 卻答不好的主題，草稿已擬好')
     expect(out).toContain('另有 2 件建議處理的事，最重要的是「有推播沒有送出去」')
     // 操作步驟留在後台（原本這行有 40 個字在教人按哪顆鈕）
@@ -197,7 +209,7 @@ describe('查不到就要講（⛔不可以當成 0）', () => {
     })
     expect(out).toContain('昨天的數字這次查不到。')
     expect(out).toContain('（昨天的數字這次查不到，明天會再看一次。）')
-    expect(out).toContain('1 個知識來源同步失敗')
+    expect(out).toContain('1 份資料同步失敗')
   })
 
   it('兩類都查不到 → 併成一句講', () => {
