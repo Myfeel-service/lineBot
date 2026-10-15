@@ -23,7 +23,7 @@ import { pinyin } from 'pinyin-pro'
 import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, searchSimilarChunksWithDrafts, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { contentSimilarity } from './ai-knowledge-resync'
-import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName, productsByAliasIn } from './ai-product-alias'
+import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName, productsByAliasIn, productVocabulary } from './ai-product-alias'
 import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
@@ -1273,9 +1273,17 @@ export function activeProductsInContext(
 
   // 別名（`C-323`，分組裡「客人還會怎麼叫它」）整段比：客人的叫法跟正式名常只共用一兩個字（「紅光儀」），
   // 上面的片段比對抓不到，不補的話客人用叫法問，對話就鎖不到那一台
+  // 別名只認指向清單裡那幾台的（`C-325`）：指向已經沒有資料的名字，鎖上去就是一台什麼資料都沒有的商品
+  const known = new Set<string>()
+  for (const products of index.values()) for (const p of products) known.add(p)
   const mentioned = (t: string) => {
     const hits = productsMentionedIn(t, index)
-    if (hasAliases) for (const p of productsByAliasIn(t, aliases!)) hits.add(normalizeProductName(p))
+    if (hasAliases) {
+      for (const p of productsByAliasIn(t, aliases!)) {
+        const k = normalizeProductName(p)
+        if (known.has(k)) hits.add(k)
+      }
+    }
     return hits
   }
 
@@ -1766,14 +1774,20 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   let topSimilarity = chunks[0]?.similarity ?? 0
 
   // 已確認的別名對照（上好ㄟ ↔ NWT 威技、客人的叫法 → 正式名）。下面的別名補檢索、同產品分組、產品鎖都吃這一份
-  const { aliases: productAliases } = await getProductAliases(db, workspaceId)
+  const { aliases: productAliases, aliasLabels: productAliasLabels } = await getProductAliases(db, workspaceId)
+  /**
+   * 現在有資料在用的商品名（`C-325`）。⛔ 只認這些：別名指向一個已經沒有資料的名字、或清單裡留著的舊名字，
+   * 鎖上去就是一台什麼資料都沒有的商品（MYFEEL「MYFEEL全品項總覽」那一案）。
+   */
+  const activeProductNames = await getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[])
+  const activeProductKeys = new Set(activeProductNames.map(n => normalizeProductName(canonicalProductName(n, productAliases))))
 
   // 客人用叫法點名（`C-323`：分組裡「客人還會怎麼叫它」）：知識內容多半沒寫這個叫法，單句檢索撈到的常是
   // 別台的卡，再被產品鎖整批擋掉＝轉真人。補一次「原句＋正式商品名」檢索併進來，同一條取高分。
   // 只有句子裡真的有叫法、而且客人沒有自己打出正式名時才多花這一次。
   const normalizedText = normalizeProductName(text)
   const aliasProducts = productsByAliasIn(text, productAliases)
-    .filter(p => !normalizedText.includes(normalizeProductName(p)))
+    .filter(p => activeProductKeys.has(normalizeProductName(p)) && !normalizedText.includes(normalizeProductName(p)))
     .slice(0, 2)
   if (aliasProducts.length) {
     try {
@@ -1980,7 +1994,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 所以改用確定性規則：脈絡鎖定產品時，別台的卡一律不得進 context。
   // 沒有產品名的通用卡（運費 / 退貨政策）與總覽卡不受影響；比較 / 列舉意圖本來就要跨產品，跳過。
   if (!isCompare && !isList && !comparedRetrieval) {
-    const catalogNames = await getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[])
+    // 在用的商品名＋指向它們的別名（`C-325`）：舊全名、型號收成別名之後，客人打那些字照樣鎖得到那一台
+    const catalogNames = productVocabulary(activeProductNames, { aliases: productAliases, aliasLabels: productAliasLabels })
     const active = activeProductsInContext(text, input.history, catalogNames, productAliases)
     if (active) {
       const offContextIds = new Set(

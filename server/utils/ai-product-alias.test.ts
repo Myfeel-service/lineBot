@@ -7,6 +7,7 @@ import {
   normalizeProductName,
   aliasPairKey,
   productsByAliasIn,
+  productVocabulary,
   type ProductAliasMap,
 } from './ai-product-alias'
 import { isUsableAlias } from '~~/shared/product-name-similarity'
@@ -333,6 +334,28 @@ describe('isUsableAlias（`C-323` 分組裡客人的叫法）', () => {
   it('符號和空白不算字', () => {
     expect(isUsableAlias('「 鍋 」')).toBe(false)
     expect(isUsableAlias('')).toBe(false)
+  })
+})
+
+describe('productVocabulary（`C-325` 答題端認產品用的字）', () => {
+  const map = {
+    aliases: {
+      [normalizeProductName('NWT 威技 新一級能效 16L 高效抽取型除濕機')]: '上好ㄟ抽取式除濕機',
+      [normalizeProductName('全品項總覽')]: 'MYFEEL全品項總覽',
+    },
+    aliasLabels: {
+      [normalizeProductName('NWT 威技 新一級能效 16L 高效抽取型除濕機')]: 'NWT 威技 新一級能效 16L 高效抽取型除濕機',
+    },
+  }
+  it('在用的商品名＋指向它們的別名（原樣寫法）', () => {
+    expect(productVocabulary(['上好ㄟ抽取式除濕機'], map))
+      .toEqual(['上好ㄟ抽取式除濕機', 'NWT 威技 新一級能效 16L 高效抽取型除濕機'])
+  })
+  it('指向已經沒有資料的名字的別名不收（鎖上去就是一台什麼資料都沒有的商品）', () => {
+    expect(productVocabulary(['上好ㄟ抽取式除濕機'], map)).not.toContain('全品項總覽')
+  })
+  it('沒有標籤的舊別名用正規化的那個字、舊測試假資料沒有 aliasLabels 也不炸', () => {
+    expect(productVocabulary(['MYFEEL全品項總覽'], { aliases: map.aliases } as any)).toContain(normalizeProductName('全品項總覽'))
   })
 })
 

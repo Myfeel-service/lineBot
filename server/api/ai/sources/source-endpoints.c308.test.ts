@@ -32,6 +32,9 @@ vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
   buildChunkSoftDeletePatch: vi.fn(),
   invalidateSourceProductCache: vi.fn(),
   invalidateTagIndexCache: vi.fn(),
+  // `C-325`：型錄來源與在用的商品名共用一次掃描，作廢也走同一支
+  invalidateWorkspaceProductNames: vi.fn(),
+  getWorkspaceSourceScan: vi.fn(async () => ({ catalogIds: new Set<string>(), productNames: [] })),
 }))
 
 const STORE: Record<string, Record<string, Record<string, any>>> = {}

@@ -333,6 +333,31 @@ export function productsByAliasIn(text: string, aliases: Record<string, string>)
   return [...out.values()]
 }
 
+/**
+ * 答題端認產品用的字（`C-325`）：現在有資料在用的商品名，加上**指向這些商品**的別名（原樣寫法）。
+ *
+ * 為什麼別名也要進來：`D-127` 起舊的全名、型號都收成分組的別名（「NWT 威技 新一級能效 16L…」是「上好ㄟ抽取式除濕機」的別名），
+ * 產品鎖照名字切片段比對——不放進來的話，客人打「威技 16L」就鎖不到那一台，AI 認得的字反而變少。
+ * 為什麼只收指向在用商品的：指向一個已經沒有資料的名字，鎖上去就是一台什麼資料都沒有的商品，所有資料都會被擋掉。
+ */
+export function productVocabulary(
+  activeNames: readonly string[],
+  map: Pick<ProductAliasMap, 'aliases' | 'aliasLabels'>,
+): string[] {
+  const active = new Set(activeNames.map(n => normalizeProductName(canonicalProductName(n, map.aliases))).filter(Boolean))
+  const out = new Map<string, string>()
+  for (const n of activeNames) {
+    const k = normalizeProductName(n)
+    if (k && !out.has(k)) out.set(k, n)
+  }
+  for (const [key, target] of Object.entries(map.aliases ?? {})) {
+    if (!key || out.has(key)) continue
+    if (!active.has(normalizeProductName(canonicalProductName(target, map.aliases)))) continue
+    out.set(key, map.aliasLabels?.[key] || key)
+  }
+  return [...out.values()]
+}
+
 // ── 寫入 ──────────────────────────────────────────────────────
 
 /**

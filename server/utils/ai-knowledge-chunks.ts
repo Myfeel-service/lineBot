@@ -10,7 +10,7 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { embedDocument, estimateTokens, runWithLlmBudget } from './gemini'
 import { recordAiUsage } from './ai-usage'
-import { canonicalProductName, getProductAliases } from './ai-product-alias'
+import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
 import type { KnowledgeChunkDoc, KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
 
 export const KNOWLEDGE_CHUNKS_COLLECTION = 'knowledgeChunks'
@@ -340,32 +340,72 @@ export async function resolveSourceProductName(
  * productNames 是該 workspace 的正規產品名清單（backfill / 建索引時維護）。
  */
 export const PRODUCT_NAMES_COLLECTION = 'knowledgeProductIndex'
-const wsProductNamesCache = new Map<string, { expiresAt: number; names: string[] }>()
 
+// ── 這一家「現在真的有資料在用」的商品名＋型錄來源（`C-325`）────────────
+/**
+ * 一次掃這一家的資料清單，同時給兩樣東西（答題熱路徑、快取 60 秒）：
+ *   · catalogIds：型錄／列表來源（getCatalogSourceIds 用，以前自己掃一次，現在共用這一次）
+ *   · productNames：**現在有資料在用的**商品名（同一個寫法只留一個）
+ *
+ * 為什麼商品名改從資料算、不再讀 knowledgeProductIndex 的 names：那份清單只增不減，
+ * 改名、刪掉、搬家之後舊名字照樣留著，答題端的產品鎖拿它判斷「客人在問哪一台」——
+ * MYFEEL 清單留著官網首頁被認成的「MYFEEL全品項總覽」，對話裡一出現店名 MYFEEL 就鎖到這台不存在的商品、
+ * 所有商品的資料都被擋掉（近 60 天 23 次轉真人，`C-325`）。同一台的其他叫法改由別名負責（ai-product-alias）。
+ */
+export interface WorkspaceSourceScan {
+  catalogIds: Set<string>
+  productNames: string[]
+}
+/** 上限：答題熱路徑不做無上限讀取（以前型錄那一支是 200；這一支多拿商品名，放寬一點） */
+const SOURCE_SCAN_LIMIT = 300
+const wsSourceScanCache = new Map<string, { expiresAt: number; scan: WorkspaceSourceScan }>()
+
+/** 資料的商品名、型錄設定、刪除有變動時清掉（新增、改名、搬組、刪除都會走到） */
 export function invalidateWorkspaceProductNames(workspaceId?: string) {
-  if (workspaceId) wsProductNamesCache.delete(workspaceId)
-  else wsProductNamesCache.clear()
+  if (workspaceId) wsSourceScanCache.delete(workspaceId)
+  else wsSourceScanCache.clear()
 }
 
-export async function getWorkspaceProductNames(db: Firestore, workspaceId: string): Promise<string[]> {
-  const cached = wsProductNamesCache.get(workspaceId)
-  if (cached && cached.expiresAt > Date.now()) return cached.names
-  let names: string[] = []
+export async function getWorkspaceSourceScan(db: Firestore, workspaceId: string): Promise<WorkspaceSourceScan> {
+  const cached = wsSourceScanCache.get(workspaceId)
+  if (cached && cached.expiresAt > Date.now()) return cached.scan
+  const catalogIds = new Set<string>()
+  const byKey = new Map<string, string>()
   try {
-    const snap = await db.collection(PRODUCT_NAMES_COLLECTION).doc(workspaceId).get()
-    const raw = (snap.data() as any)?.names
-    if (Array.isArray(raw)) names = raw.map((s: unknown) => String(s).trim()).filter(Boolean)
+    // 只用 workspaceId 過濾（單欄位、免複合索引），其餘在程式端篩
+    const snap = await db.collection('knowledgeSources')
+      .where('workspaceId', '==', workspaceId)
+      .select('generateOverview', 'productName', 'isDeleted', 'deletedAt')
+      .limit(SOURCE_SCAN_LIMIT)
+      .get()
+    for (const d of snap.docs) {
+      const x = d.data() as { generateOverview?: boolean; productName?: string; isDeleted?: boolean; deletedAt?: unknown }
+      if (x.isDeleted === true || x.deletedAt != null) continue
+      if (x.generateOverview === true) catalogIds.add(d.id)
+      const name = String(x.productName ?? '').trim()
+      const key = normalizeProductName(name)
+      if (key && !byKey.has(key)) byKey.set(key, name)
+    }
   }
-  catch { /* 沒清單就退回純來源繼承，不影響索引 */ }
-  wsProductNamesCache.set(workspaceId, { expiresAt: Date.now() + SOURCE_PRODUCT_TTL_MS, names })
-  return names
+  catch (e) {
+    // 查詢失敗不擋答題：沒有商品名＝產品鎖不鎖（維持舊行為的安全那一邊），型錄集合空＝全部照常去重
+    console.warn('[ai-knowledge-chunks] workspace source scan failed:', (e as Error)?.message)
+  }
+  const scan = { catalogIds, productNames: [...byKey.values()] }
+  wsSourceScanCache.set(workspaceId, { expiresAt: Date.now() + SOURCE_PRODUCT_TTL_MS, scan })
+  return scan
+}
+
+/** 這一家現在有資料在用的商品名（見 getWorkspaceSourceScan）。名字沿用舊的，呼叫端不用改 */
+export async function getWorkspaceProductNames(db: Firestore, workspaceId: string): Promise<string[]> {
+  return (await getWorkspaceSourceScan(db, workspaceId)).productNames
 }
 
 /**
- * 產品索引自動維護（只增不刪）：來源設定 / 匯入時填了 productName 就併進清單。
- * 刻意不做刪除——清單裡有手動種入的別名（同產品多種叫法），無法從來源反推 provenance，
- * 全量重建會把它們洗掉；多出來的舊名對 pickCardProduct 幾乎無害（只影響標題真的含它的卡）。
- * 失敗不擋主流程（索引清單只是加分項）。
+ * 把商品名記進 knowledgeProductIndex 的 names。
+ * ⚠️ `C-325` 起答題、建索引都不讀這份了（改讀 getWorkspaceProductNames＝資料上真的在用的），
+ * 這裡只剩「清掉快取讓新名字馬上生效」的作用；names 留著給搬家腳本和舊資料對照用。
+ * 失敗不擋主流程。
  */
 export async function addWorkspaceProductName(db: Firestore, workspaceId: string, name: string): Promise<void> {
   const clean = String(name || '').trim()

@@ -63,7 +63,7 @@ const { answerWithAi } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { searchSimilarChunks, getWorkspaceProductNames } = await import('./ai-knowledge-chunks')
 const { generateJson, embedQuery } = await import('./gemini')
-const { getProductAliases } = await import('./ai-product-alias')
+const { getProductAliases, normalizeProductName: normalizeName } = await import('./ai-product-alias')
 const { recordAiUsage } = await import('./ai-usage')
 const { logHandoffEvent } = await import('./ai-handoff-events')
 
@@ -256,6 +256,38 @@ describe('answerWithAi 客人用叫法（別名）點名', () => {
     ])
 
     expect(res.handoffReason).toBe('product_mismatch')
+  })
+
+  it('別名指向已經沒有資料的商品 → 不鎖（`C-325`：鎖上去所有資料都會被擋掉）', async () => {
+    vi.mocked(getProductAliases).mockResolvedValue({
+      aliases: { myfeel: 'MYFEEL全品項總覽' },
+      aliasLabels: { myfeel: 'MYFEEL' },
+      dismissedPairs: [],
+    })
+    vi.mocked(searchSimilarChunks).mockResolvedValue(ZERO_WATER_CARDS)
+
+    const res = await ask('我在myfeel訂的，怎麼買最方便？', [])
+
+    expect(res.decision).toBe('answered')
+  })
+
+  it('舊全名收成別名後，只出現在全名裡的字（HEALSIO）照樣鎖得到那一台（`C-325`／`D-127`）', async () => {
+    // 分組就是商品：商品名是較短的組名，含型號的全名變成別名
+    vi.mocked(getWorkspaceProductNames).mockResolvedValue([REGEN, '自動調理零水鍋'])
+    vi.mocked(getProductAliases).mockResolvedValue({
+      aliases: { [normalizeName('SHARP HEALSIO 2.4L 自動調理零水鍋')]: '自動調理零水鍋' },
+      aliasLabels: { [normalizeName('SHARP HEALSIO 2.4L 自動調理零水鍋')]: 'SHARP HEALSIO 2.4L 自動調理零水鍋' },
+      dismissedPairs: [],
+    })
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'r1', title: 'W1 REGEN 購買方式', content: '請至商品頁下單。', similarity: 0.8, productName: REGEN }),
+    ])
+
+    const res = await ask('HEALSIO 怎麼買最方便？', [])
+
+    // 認出是零水鍋 → 紅光儀的卡不拿來答
+    expect(res.handoffReason).toBe('product_mismatch')
+    expect(vi.mocked(generateJson)).not.toHaveBeenCalled()
   })
 
   it('句子裡沒有叫法 → 不多花一次轉向量', async () => {

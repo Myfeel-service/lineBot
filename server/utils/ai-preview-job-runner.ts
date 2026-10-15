@@ -1,6 +1,8 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
-import { detectProductName } from '~~/server/utils/ai-knowledge-chunker'
+import { detectProductName, settleDetectedProductName } from '~~/server/utils/ai-knowledge-chunker'
+import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
+import { canonicalProductName, getProductAliases } from '~~/server/utils/ai-product-alias'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
 import {
@@ -202,8 +204,13 @@ export async function advancePreviewJob(
           try {
             const sample = work.segments[0]
               || work.chunks.slice(0, 5).map(c => `${c.title}\n${c.content}`).join('\n')
-            const det = await detectProductName(sample, work.sourceName)
-            work.suggestedProductName = det.productName
+            // `D-127`：給 AI 看現有的商品（分組名＝商品名），講的是其中一台就照抄；回來再對一次寫法與別名（settleDetectedProductName）
+            const [existing, aliasMap] = await Promise.all([
+              getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[]),
+              getProductAliases(db, workspaceId),
+            ])
+            const det = await detectProductName(sample, work.sourceName, existing)
+            work.suggestedProductName = settleDetectedProductName(det.productName, existing, n => canonicalProductName(n, aliasMap.aliases))
             work.usage.inputTokens += det.inputTokens
             work.usage.outputTokens += det.outputTokens
           }

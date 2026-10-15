@@ -8,8 +8,10 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import {
   addWorkspaceProductName,
   buildChunkSoftDeletePatch,
+  getWorkspaceSourceScan,
   invalidateSourceProductCache,
   invalidateTagIndexCache,
+  invalidateWorkspaceProductNames,
   KNOWLEDGE_CHUNKS_COLLECTION,
 } from './ai-knowledge-chunks'
 import type {
@@ -25,15 +27,13 @@ import { deleteSourceFiles } from './knowledge-source-files'
 
 export const KNOWLEDGE_SOURCES_COLLECTION = 'knowledgeSources'
 
-// ── Catalog source ids cache ──────────────────────────────────────
+// ── Catalog source ids ──────────────────────────────────────
 // 「型錄/列表來源」(generateOverview=true) 旗下有很多*不同產品*共用同一個 sourceId。
 // 答題時 dedupeBySource 不該把它們當「同主題」併掉，所以需要快速查出哪些 sourceId 是型錄。
-// 小量資料 + 答題熱路徑，快取 60s 避免每次答題多打 Firestore。
-const CATALOG_SRC_TTL_MS = 60_000
-const catalogSrcCache = new Map<string, { expiresAt: number; ids: Set<string> }>()
+// `C-325` 起跟「在用的商品名」共用同一次掃描與快取（getWorkspaceSourceScan，60 秒），答題不多讀一次。
 
 export function invalidateCatalogSourceCache(workspaceId: string) {
-  catalogSrcCache.delete(workspaceId)
+  invalidateWorkspaceProductNames(workspaceId)
 }
 
 /**
@@ -44,27 +44,7 @@ export async function getCatalogSourceIds(
   db: Firestore,
   workspaceId: string,
 ): Promise<Set<string>> {
-  const cached = catalogSrcCache.get(workspaceId)
-  if (cached && cached.expiresAt > Date.now()) return cached.ids
-
-  const ids = new Set<string>()
-  try {
-    // 只用 workspaceId 過濾（單欄位、免複合索引），generateOverview 在程式端篩。
-    // 加上限：型錄來源本來就少，避免在答題熱路徑做無上限讀取。
-    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
-      .where('workspaceId', '==', workspaceId)
-      .limit(200)
-      .get()
-    for (const d of snap.docs) {
-      if (d.data()?.generateOverview === true) ids.add(d.id)
-    }
-  }
-  catch (e) {
-    // 查詢失敗（缺 index 等）不擋答題：回空集合 = 維持舊行為（全部 dedupe）
-    console.warn('[ai-knowledge-sources] getCatalogSourceIds failed:', e)
-  }
-  catalogSrcCache.set(workspaceId, { expiresAt: Date.now() + CATALOG_SRC_TTL_MS, ids })
-  return ids
+  return (await getWorkspaceSourceScan(db, workspaceId)).catalogIds
 }
 
 export interface SourceSummary {
@@ -664,8 +644,10 @@ export async function updateSourceSettings(
 
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update(update)
   if (typeof input.productName === 'string') {
-    // 索引流程 60s 快取要立刻失效，之後的 reindex 才吃得到新產品名；索引清單只增不刪
+    // 索引流程 60s 快取要立刻失效，之後的 reindex 才吃得到新產品名
     invalidateSourceProductCache(sourceId)
+    // 「在用的商品名」也要馬上跟著變（`C-325`）：清空的那一次 addWorkspaceProductName 不會走到，要自己清
+    invalidateWorkspaceProductNames(workspaceId)
     const clean = input.productName.trim().slice(0, 60)
     if (clean) await addWorkspaceProductName(db, workspaceId, clean)
   }

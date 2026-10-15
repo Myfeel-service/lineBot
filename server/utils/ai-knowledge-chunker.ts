@@ -12,6 +12,7 @@
  */
 import { generateJson } from './gemini'
 import { normalizeForCompare } from './ai-knowledge-resync'
+import { normalizeProductName } from '~~/shared/product-name-similarity'
 import type { ChunkInput } from './ai-knowledge-chunks'
 
 export const MAX_CHUNKS_PER_DOC = 50
@@ -620,9 +621,10 @@ export async function normalizeChunkWithLlm(input: {
 const DETECT_PRODUCT_SYSTEM_INSTRUCTION = `你在幫商家整理客服知識庫。判斷這份文件是否「以單一產品為主」（產品說明書、單一商品頁等）。
 
 規則：
-1. 是單一產品 → 回該產品的完整正規名稱：品牌 + 產品名 +（有的話）型號 / 規格，例「GPLUS 智慧除濕機 12L」「SHARP iBarista 智慧咖啡機」。以文件自己的寫法為準，不要自行翻譯或改寫品牌名。
-2. 文件涵蓋多個產品（型錄、FAQ 彙整、公告）或是平台/公司頁（關於我們、隱私權、運送說明）→ productName 回空字串。
-3. 名稱長度 30 字以內；不要包含「說明書」「使用手冊」「操作指南」這類文件類型字眼。
+1. 是單一產品 → 先看 [這家店現有的商品]：講的是其中一台，就回那個名字，**一字不差照抄**（不要加型號、不要改寫）。
+2. 是單一產品、但不在現有商品裡 → 回該產品的完整正規名稱：品牌 + 產品名 +（有的話）型號 / 規格，例「GPLUS 智慧除濕機 12L」「SHARP iBarista 智慧咖啡機」。以文件自己的寫法為準，不要自行翻譯或改寫品牌名。
+3. 文件涵蓋多個產品（型錄、FAQ 彙整、公告）、是網站首頁或全品項總覽、或是平台/公司頁（關於我們、隱私權、運送說明）→ productName 回空字串。店名、品牌名本身不是產品。
+4. 名稱長度 30 字以內；不要包含「說明書」「使用手冊」「操作指南」這類文件類型字眼。
 
 輸出格式（嚴格 JSON）：{ "productName": "string" }`
 
@@ -632,13 +634,44 @@ export interface DetectProductNameResult {
   outputTokens: number
 }
 
+/** 首頁、全品項、品牌總覽這類「不是一台商品」的名字（`C-325`：MYFEEL 官網首頁被認成「MYFEEL全品項總覽」，店名從此被當成一台商品） */
+const NOT_A_PRODUCT_RE = /全品項|全系列|所有商品|商品一覽|商品總覽|品牌總覽|總覽|首頁|官方網站|官網|品牌介紹|關於我們/
+
+/** 送去給 AI 看的現有商品最多幾個（一家店幾十個商品夠用；再多只是讓提示變長） */
+const DETECT_EXISTING_MAX = 80
+
+/**
+ * AI 回的商品名收尾（`C-325`／`D-127`）：
+ *   · 首頁、全品項總覽這類 → ''（不是一台商品）
+ *   · 跟現有商品同一個（只差空白、符號、大小寫，或是確認過的別名）→ 換成現有的那個寫法
+ *     ——同一台換一份文件就多一種寫法，是寫法分裂的源頭
+ * 純函式，可測。
+ */
+export function settleDetectedProductName(
+  raw: string,
+  existing: readonly string[],
+  canonical: (name: string) => string = n => n,
+): string {
+  const name = String(raw ?? '').trim().slice(0, 60)
+  if (!name || NOT_A_PRODUCT_RE.test(name)) return ''
+  const resolved = canonical(name).trim() || name
+  const key = normalizeProductName(resolved)
+  return existing.find(e => normalizeProductName(e) === key) ?? resolved
+}
+
 /**
  * 從「來源名稱（檔名 / 網址 / 標題）＋內文前段」偵測單一產品名。
  * 多產品 / 平台頁回空字串。失敗 throw；caller 降級為「不預填」即可（不擋匯入）。
+ * existing：這家店現有的商品名（`D-127` 起就是商品分組的名字）——講的是其中一台就照抄那個名字，不要每次自己想一個。
  */
-export async function detectProductName(sampleText: string, sourceHint: string): Promise<DetectProductNameResult> {
+export async function detectProductName(
+  sampleText: string,
+  sourceHint: string,
+  existing: readonly string[] = [],
+): Promise<DetectProductNameResult> {
   const prompt = [
     `[來源名稱] ${sourceHint || '（無）'}`,
+    `[這家店現有的商品] ${existing.length ? existing.slice(0, DETECT_EXISTING_MAX).join('、') : '（還沒有）'}`,
     '[內文開頭]',
     String(sampleText ?? '').slice(0, 2000),
   ].join('\n')
