@@ -89,6 +89,13 @@ export interface KnowledgeFolderDoc {
   name: string
   /** 排序用；目前先用 createdAt 倒序，未來想做拖曳排序再用 */
   order: number
+  /**
+   * 「通用」分組（`C-320`，2026-10-15 拍板 `D-126`①）：放 FAQ、公告、價目表這種**不是講單一商品**的資料。
+   * 沒有這一格＝false＝商品分組（資料夾名通常就是商品名）。
+   * 為什麼要分：搬進商品分組時，產品名是空的那份會照同組其他資料補上產品名（見 server/utils/ai-knowledge-product-group）；
+   * 通用分組裡的資料本來就橫跨好幾個商品，補了反而讓 AI 把整份認成某一台。
+   */
+  general?: boolean
   createdAt: Timestamp | FieldValue
   updatedAt: Timestamp | FieldValue
 }
@@ -986,6 +993,16 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
 export type KnowledgeSuggestionStatus = 'pending' | 'accepting' | 'accepted' | 'dismissed'
 
 /**
+ * 為什麼收掉（`C-318`，2026-10-15 拍板 `D-126`④）。status＝dismissed 才有；舊資料沒有這一格＝ignore。
+ * - ignore：店家按「不用管」。照舊：同一類被問到的次數再翻一倍，會再列一次（問題在惡化要重新被看見）
+ * - handoff：店家按「交給真人就好」＝這類問題本來就該真人回、不補知識。**以後不再列**（翻倍也不列），
+ *   而且不設 expireAt——TTL 清掉這筆，同一類下一輪就會被當成新的再列出來
+ * - personal_order：系統自己收的——查某一筆訂單／付款／出貨／退款狀態，要真人去查那一筆，補知識答不了
+ *   （判斷見 shared/knowledge-suggestion-personal-order）。之後同一類不再像這種問題時，掃描會把它放回清單
+ */
+export type KnowledgeSuggestionDismissReason = 'ignore' | 'handoff' | 'personal_order'
+
+/**
  * 草稿裡「知識庫查不到、LLM 依規則留空」的佔位符。
  * 前端顯示警示、後端擋下採用都用這一支——各寫一份正則的下場是:
  * LLM 漏寫冒號時前端說草稿乾淨、後端 400 擋下,使用者看不到哪裡要補。
@@ -1066,7 +1083,9 @@ export interface KnowledgeSuggestionDoc {
   acceptedChunkId?: string
   acceptedSourceId?: string
   dismissedAt?: unknown
-  /** 忽略當下的事件數：同主題事件數翻倍才重新浮出，避免「狼來了」 */
+  /** 為什麼收掉（`C-318`）；沒有這一格的舊資料＝ignore（見 KnowledgeSuggestionDismissReason） */
+  dismissReason?: KnowledgeSuggestionDismissReason
+  /** 忽略當下的事件數：同主題事件數翻倍才重新浮出，避免「狼來了」（只對 ignore 有效） */
   seenCountAtDismiss?: number
 }
 

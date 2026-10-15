@@ -195,3 +195,17 @@ describe('換新版時沿用他改過的', () => {
     expect(liveTitles()).toEqual(['保固', '出貨 時間', '尺寸', '顏色'])
   })
 })
+
+describe('更新原本那一份時的分組（/code-review 第 9 條）', () => {
+  it('明確帶 folderId: null（「不放分組」）→ 移出分組；沒帶 → 留在原本那組', async () => {
+    STORE.knowledgeSources!.srcOld!.folderId = 'f1'
+    body = { ...replaceWith(['保固'], []), source: { type: 'file', name: '說明書.pdf', folderId: null } }
+    await call()
+    expect(STORE.knowledgeSources!.srcOld!.folderId).toBeNull()
+
+    STORE.knowledgeSources!.srcOld!.folderId = 'f1'
+    body = replaceWith(['保固'], [])
+    await call()
+    expect(STORE.knowledgeSources!.srcOld!.folderId).toBe('f1')
+  })
+})

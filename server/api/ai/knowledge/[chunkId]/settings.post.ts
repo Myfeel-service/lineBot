@@ -25,7 +25,7 @@ function unlockAppliesOn(sourceType: string): UnlockAppliesOn {
 const UNLOCK_NOTE: Record<UnlockAppliesOn, string> = {
   next_sync: '解除了鎖定，下一次同步會換回表格上的內容',
   next_change: '解除了鎖定，網頁下次有變動時會換回網頁上的內容',
-  next_replace: '解除了鎖定；檔案不會自己更新，下次換新版時這條會照新版',
+  next_replace: '解除了鎖定；檔案不會自己更新，下次上傳新版時這條會照新版',
   never: '解除了鎖定（這條是手寫的，沒有來源會蓋過它）',
 }
 

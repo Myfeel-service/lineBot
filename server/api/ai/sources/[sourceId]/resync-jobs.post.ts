@@ -44,7 +44,8 @@ export default defineEventHandler(async (event) => {
   if (source.data.type !== 'url' || !source.data.url) {
     throw createError({
       statusCode: 400,
-      statusMessage: '目前只支援網址來源 (URL) 的重新同步；檔案請重新匯入',
+      // `C-319`：按鈕已改叫「立即更新」；檔案改版走「上傳新版」，不再教「重新匯入」（會多出一份）
+      statusMessage: '這裡只能更新網址來的資料；檔案改版請在那一份按「上傳新版」',
     })
   }
 
@@ -68,7 +69,7 @@ export default defineEventHandler(async (event) => {
     const msg = String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200)
     const failCount = Number((source.data as any).checkFailCount ?? 0) + 1
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-      failureReason: `重新同步失敗：${msg}`,
+      failureReason: `更新失敗：${msg}`,
       checkFailCount: failCount,
       lastCheckedAt: FieldValue.serverTimestamp(),
       ...(failCount >= 3 ? { status: 'failed' } : {}),

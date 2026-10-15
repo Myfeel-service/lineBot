@@ -11,6 +11,6 @@
 export default defineEventHandler(() => {
   throw createError({
     statusCode: 410,
-    statusMessage: '重新同步已改版；請重新整理頁面後再試一次',
+    statusMessage: '「立即更新」已經改版；請重新整理頁面後再試一次',
   })
 })

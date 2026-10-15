@@ -261,3 +261,25 @@ describe('只採用其中幾題（C-311）', () => {
     expect(auditNote()).not.toContain('留在清單')
   })
 })
+
+describe('「寫一句答案」建出來的那一份（C-318）', () => {
+  it('帶 isDeleted:false＋未分類：資料清單的主查詢（isDeleted == false）才撈得到，不會資料一多就從左邊消失', async () => {
+    body = { title: '小滑手的產地', content: '中國製造。', tags: [], questions: [ORIGIN], answeredQueries: [ORIGIN] }
+    const res = await call()
+    expect(STORE.knowledgeSources![res.sourceId]).toMatchObject({
+      workspaceId: WS,
+      type: 'manual',
+      name: '小滑手的產地',
+      isDeleted: false,
+      folderId: null,
+      status: 'ready',
+    })
+  })
+
+  it('沒按「AI 幫我整理」也收（標題＝客人問的那句、內容＝一兩句、沒有標籤）', async () => {
+    body = { title: ORIGIN, content: '中國製造。', tags: [], questions: [ORIGIN] }
+    const res = await call()
+    expect(res.status).toBe('indexed')
+    expect(vi.mocked(createKnowledgeChunk).mock.calls[0]![1]).toMatchObject({ title: ORIGIN, content: '中國製造。', tags: [], questions: [ORIGIN] })
+  })
+})

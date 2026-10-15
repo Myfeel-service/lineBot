@@ -240,3 +240,27 @@ describe('部分採用之後的下一輪掃描（C-311）', () => {
     expect(generateJson).not.toHaveBeenCalled()
   })
 })
+
+describe('掃描途中有人動過那一筆（/code-review 第 8 條）', () => {
+  it('掃描跑到一半店家按了「交給真人就好」→ 寫回時不蓋掉，記在 skippedChangedMeanwhile', async () => {
+    seedEvents({ [ORIGIN]: 3, [ESPRESSO]: 2, [FROTH]: 1, [SIZE]: 1 })
+    seedPartiallyAccepted({ updatedAt: { toMillis: () => 1000 } })
+    // 掃描讀完、寫回之前那一刻，店家在畫面上按了「交給真人就好」
+    const realGetAll = db.getAll
+    db.getAll = async (...refs: any[]) => {
+      Object.assign(STORE.knowledgeSuggestions!.s1!, { status: 'dismissed', dismissReason: 'handoff', updatedAt: { toMillis: () => 2000 } })
+      return realGetAll(...refs)
+    }
+    try {
+      const tally = await scanWorkspaceKnowledgeGaps(db, WS)
+      expect(tally.skippedChangedMeanwhile).toBe(1)
+      expect(STORE.knowledgeSuggestions!.s1).toMatchObject({ status: 'dismissed', dismissReason: 'handoff' })
+      // 掃描的那份更新（重算次數、補草稿）沒有寫進去
+      expect(STORE.knowledgeSuggestions!.s1!.eventCount).toBe(4)
+      expect(STORE.knowledgeSuggestions!.s1!.draft).toBeNull()
+    }
+    finally {
+      db.getAll = realGetAll
+    }
+  })
+})

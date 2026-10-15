@@ -383,6 +383,9 @@ export default defineEventHandler(async (event) => {
       // 這筆匯入沿用了哪幾條（`D-125`①）：跟 importReplaced 同一個道理，重跑時照這份、⛔ 不重新決定
       importKeptEdited: kept.map(k => k.id),
       importDone: null,
+      // 「這份在講什麼」（`C-316`）：內容換了，舊摘要作廢；下次打開那一份時照新內容重整理（/code-review 第 4 條）
+      summary: [],
+      summaryAt: null,
       createdAt: now,
       updatedAt: now,
     }
@@ -397,7 +400,9 @@ export default defineEventHandler(async (event) => {
       delete sourcePayload.createdAt
       delete sourcePayload.refreshIntervalMinutes
       delete sourcePayload.onChangeBehavior
-      if (typeof body?.source?.folderId !== 'string') delete sourcePayload.folderId
+      // 沒帶＝不改；明確帶 null＝「不放分組」＝移出分組（/code-review 第 9 條：以前 null 也當成不改，
+      // 那一份留在原分組、結果頁卻寫「不放分組」）
+      if (typeof body?.source?.folderId !== 'string' && body?.source?.folderId !== null) delete sourcePayload.folderId
       // 重跑：上一次可能已經把原檔留好了。⛔ 不重置成空的——重置了，那份原檔就變成沒人指得到的孤兒
       if (resuming) delete sourcePayload.filePath
       // 產品名沒帶＝不改（`...(productName ? …)` 本來就不會塞進去，這裡只是把話講明）

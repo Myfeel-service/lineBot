@@ -20,6 +20,7 @@ import { embedQuery, generateJson, estimateTokens } from './gemini'
 import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { isRawSuggestionTopic, topicFromDraftTitle } from '~~/shared/knowledge-suggestion-topic'
+import { isPersonalOrderGroup } from '~~/shared/knowledge-suggestion-personal-order'
 
 export const KNOWLEDGE_SUGGESTIONS_COLLECTION = 'knowledgeSuggestions'
 /** 掃描狀態（cronState 慣例）：{ [workspaceId]: { lastScanAt?: ISO, requestedAt?: ISO } } */
@@ -397,8 +398,37 @@ export interface GapScanTally {
   reopened: number
   /** 因時間預算沒草擬到的主題數（建議文件已建，草稿留給下一輪）——不靜默 */
   draftsDeferred: number
+  /**
+   * 這輪新出現、但是在查他自己那一筆訂單的組數（`C-318`）：不建建議。
+   * ⛔ 不能默默丟——記在這裡、跟著掃描結果寫進 log，查「為什麼這題沒列」才有答案
+   */
+  skippedPersonalOrder: number
+  /** 本來在清單上、這輪認出是查單而收掉的筆數（`C-318`；dismissReason＝personal_order） */
+  closedPersonalOrder: number
+  /**
+   * 掃描途中有人動過（按了「交給真人就好」「不用管」「寫一句答案」），這輪就不寫回的筆數（/code-review 第 8 條）。
+   * 掃描要跑好幾分鐘，以前最後無條件整批蓋回去，店家剛按的會被蓋成掃描一開始讀到的那個狀態
+   */
+  skippedChangedMeanwhile: number
   /** 事件或問句撞到掃描上限：eventCount 是取樣值，UI 要說「至少」 */
   sampled: boolean
+}
+
+/**
+ * 收掉一筆建議時共用的欄位（`C-318`）。
+ * 系統自己收（personal_order）跟店家按「不用管」（ignore）一樣設 expireAt：180 天後 TTL 清掉也無妨，
+ * 同一類下一輪掃描照樣認得出是查單、照樣不列。
+ * ⛔ handoff（「交給真人就好」）不走這裡設 TTL——見 dismiss 端點：清掉那筆，同一類就會被當成新的再列出來。
+ */
+function personalOrderClosePatch(eventCount: number): Record<string, unknown> {
+  return {
+    status: 'dismissed',
+    dismissReason: 'personal_order',
+    dismissedAt: FieldValue.serverTimestamp(),
+    seenCountAtDismiss: eventCount,
+    expireAt: Timestamp.fromMillis(Date.now() + SUGGESTION_RESOLVED_TTL_DAYS * 24 * 3600_000),
+    updatedAt: FieldValue.serverTimestamp(),
+  }
 }
 
 export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: string): Promise<GapScanTally> {
@@ -406,7 +436,7 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   const cutoff = Timestamp.fromMillis(startedAt - EVENT_WINDOW_DAYS * 24 * 3600_000)
   const tally: GapScanTally = {
     events: 0, uniqueQueries: 0, clusters: 0, created: 0, updated: 0, reopened: 0,
-    draftsDeferred: 0, sampled: false,
+    draftsDeferred: 0, skippedPersonalOrder: 0, closedPersonalOrder: 0, skippedChangedMeanwhile: 0, sampled: false,
   }
   // 記帳放 finally：中途拋錯時 embedding / LLM 的錢已經花掉了，不記會讓成本報表低估、
   // 也會讓 token 護欄失準（recordAiUsage 內部已吞錯，不會蓋掉原本的例外）
@@ -418,6 +448,9 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     if (Object.keys(usage).length) await recordAiUsage(workspaceId, usage, db)
     if (tally.draftsDeferred) {
       console.log(`[kb-suggest] ${workspaceId}: ${tally.draftsDeferred} 個主題因時間預算未草擬，下一輪補`)
+    }
+    if (tally.skippedPersonalOrder || tally.closedPersonalOrder) {
+      console.log(`[kb-suggest] ${workspaceId}: 查單的問題不列——這輪略過 ${tally.skippedPersonalOrder} 組、收掉清單上 ${tally.closedPersonalOrder} 筆（C-318）`)
     }
   }
 
@@ -474,7 +507,8 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   const uniqueItems = allUnique.slice(0, MAX_UNIQUE_QUERIES)
   if (allUnique.length > MAX_UNIQUE_QUERIES) tally.sampled = true
   tally.uniqueQueries = uniqueItems.length
-  if (!uniqueItems.length) return tally
+  // ⚠️ 沒有事件也**不能**直接回去（`C-318`）：清單上已經有的查單題目，要靠下面第 6 步收掉——
+  //    那幾題的事件可能早就滑出 30 天窗口，這輪一個事件都沒有，它們還是掛在清單上
 
   // 3. embed + 聚類（usage 由外層宣告，走 finally 記帳）
   let embedTokens = 0
@@ -507,8 +541,10 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
   //     queries 是這裡最肥的一格（最多 30 句），但一個 workspace 七天才掃一次，比起 embedding 的錢可以忽略
   const existingSnap = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
-    .select('centroid', 'status', 'eventCount', 'seenCountAtDismiss', 'draft', 'answeredQueries',
-      'topic', 'topicIsRaw', 'sampleQueries', 'queries')
+    // dismissReason（`C-318`）：「交給真人就好」翻倍也不再列、系統收掉的查單題目不像了要放回來——漏列＝讀回 undefined＝全當「不用管」
+    // updatedAt：寫回前比對「掃描途中有沒有人動過」用（/code-review 第 8 條）
+    .select('centroid', 'status', 'eventCount', 'seenCountAtDismiss', 'dismissReason', 'draft', 'answeredQueries',
+      'topic', 'topicIsRaw', 'sampleQueries', 'queries', 'updatedAt')
     .limit(EXISTING_SCAN_LIMIT)
     .get()
   if (existingSnap.size >= EXISTING_SCAN_LIMIT) {
@@ -517,9 +553,25 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     console.warn(`[kb-suggest] ${workspaceId} 既有建議超過 ${EXISTING_SCAN_LIMIT} 筆，去重比對可能不完整`)
   }
   const existing = existingSnap.docs.map(d => ({ ref: d.ref, data: d.data() as KnowledgeSuggestionDoc }))
+  // 「交給真人就好」不設 expireAt、會一直累積（`C-318`）；上面那一句撞上限時是不排序的前 N 筆，
+  // 那筆 handoff 可能沒被讀到 → 同一類又被當新主題列出來（/code-review 第 7 條）。撞上限時另外把 handoff 的全撈出來補進比對
+  if (existingSnap.size >= EXISTING_SCAN_LIMIT) {
+    const seen = new Set(existing.map(e => e.ref.id))
+    const handoffSnap = await db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
+      .where('workspaceId', '==', workspaceId)
+      .where('dismissReason', '==', 'handoff')
+      .select('centroid', 'status', 'eventCount', 'seenCountAtDismiss', 'dismissReason', 'draft', 'answeredQueries',
+        'topic', 'topicIsRaw', 'sampleQueries', 'queries', 'updatedAt')
+      .get()
+    for (const d of handoffSnap.docs) {
+      if (!seen.has(d.id)) existing.push({ ref: d.ref, data: d.data() as KnowledgeSuggestionDoc })
+    }
+  }
 
   /** 批次寫回（既有建議的計數更新可能上百筆，逐筆 await 會吃掉時間預算） */
   const pendingWrites: Array<{ ref: FirebaseFirestore.DocumentReference; patch: Record<string, unknown> }> = []
+  /** 這輪已經比對到、處理過的既有建議（第 6 步不再重看，免得同一筆寫兩次） */
+  const touched = new Set<string>()
 
   let draftsLeft = MAX_NEW_DRAFTS_PER_SCAN
   /** 還有時間開始下一張草稿嗎（開始了才逾時＝token 已付卻什麼都沒留） */
@@ -547,13 +599,42 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     const queryCounts = cluster.items.slice(0, 30).map(i => i.count)
     const sampleQueries = cluster.items.slice(0, 5).map(i => i.query)
     const lastSeenAt = Timestamp.fromMillis(cluster.latestMs || Date.now())
+    // `C-318`：這一組是不是在查他自己那一筆（超過一半的題目是才算）——是的話補知識答不了，不列
+    const personalOrder = isPersonalOrderGroup(cluster.items.map(i => i.query))
 
     if (match) {
+      touched.add(match.ref.id)
       const status = match.data.status
       if (status === 'accepted') continue // 已補過卡；窗口內的舊事件不用再吵（真的還答不出會累積成新事件，下輪窗口自然再現）
       if (status === 'dismissed') {
+        const reason = match.data.dismissReason ?? 'ignore'
+        // 「交給真人就好」＝這類問題不補知識：⛔ 次數翻倍也不再列（那是店家的決定，不是門檻）
+        if (reason === 'handoff') continue
+        if (reason === 'personal_order') {
+          // 系統自己收的：還是查單就繼續不列；不像了（同一類現在問的是一般問題）就放回清單——
+          // 那是系統當初的判斷不再成立，不是店家說過不要，⛔ 不能拿「翻倍」的門檻擋著
+          if (personalOrder) continue
+          pendingWrites.push({
+            ref: match.ref,
+            patch: {
+              status: 'pending',
+              eventCount: cluster.totalCount,
+              sampled: tally.sampled,
+              queries,
+              queryCounts,
+              sampleQueries,
+              lastSeenAt,
+              dismissReason: FieldValue.delete(),
+              expireAt: FieldValue.delete(),
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+          })
+          tally.reopened++
+          continue
+        }
         const baseline = Number(match.data.seenCountAtDismiss ?? 0) || 1
-        if (cluster.totalCount >= baseline * 2) {
+        // 查單的那一類就算翻倍也不放回來（`C-318`）：放回來也是一題補知識答不了的
+        if (!personalOrder && cluster.totalCount >= baseline * 2) {
           // 忽略過但事件數翻倍＝問題持續惡化，重新浮出（重回 pending 就不該再被 TTL 清掉）
           pendingWrites.push({
             ref: match.ref,
@@ -565,12 +646,26 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
               queryCounts,
               sampleQueries,
               lastSeenAt,
+              dismissReason: FieldValue.delete(),
               expireAt: FieldValue.delete(),
               updatedAt: FieldValue.serverTimestamp(),
             },
           })
           tally.reopened++
         }
+        continue
+      }
+
+      // pending 但這一組是在查單（`C-318`）：收掉，連同這輪的次數一起寫（之後放回清單時次數是對的）
+      if (personalOrder) {
+        if (status === 'pending') {
+          pendingWrites.push({
+            ref: match.ref,
+            patch: { ...personalOrderClosePatch(cluster.totalCount), eventCount: cluster.totalCount, queries, queryCounts, sampleQueries, lastSeenAt },
+          })
+          tally.closedPersonalOrder++
+        }
+        // accepting（有人正在採用）不動：那筆的下一步交給採用端
         continue
       }
 
@@ -617,6 +712,11 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
 
     // 5. 新主題。草稿有預算上限,但**建議文件一定要建**——沒建就等於默默丟掉一個缺口,
     // 收件匣還會顯示「都答得出來」。沒草擬到的下一輪補（見上面 pending 分支）。
+    // 例外（`C-318`）：查單的那一組不是缺口，不建、也不花錢擬草稿；組數記進 tally（不靜默）
+    if (personalOrder) {
+      tally.skippedPersonalOrder++
+      continue
+    }
     let topic = sampleQueries[0]?.slice(0, 12) ?? '(未命名主題)'
     let draft: KnowledgeSuggestionDraft | null = null
     let draftError = ''
@@ -659,11 +759,43 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     tally.created++
   }
 
-  // 批次寫回既有建議的更新（可能上百筆；Firestore batch 上限 500）
+  // 6. 清單上還掛著、這輪沒比對到的查單題目（`C-318`）：照存著的題目判，是的話收掉。
+  // 為什麼要這一步：C-318 上線前建的那幾筆，事件可能已經滑出 30 天窗口（這輪聚不出那一組），
+  // 只靠上面的迴圈它們會一直掛在清單上。部署後第一輪掃描（自動 7 天一次，或按「重新掃描」）就會收掉。
+  for (const ex of existing) {
+    if (touched.has(ex.ref.id) || ex.data.status !== 'pending') continue
+    const stored = Array.isArray(ex.data.queries) && ex.data.queries.length ? ex.data.queries : (ex.data.sampleQueries ?? [])
+    if (!isPersonalOrderGroup(stored)) continue
+    pendingWrites.push({ ref: ex.ref, patch: personalOrderClosePatch(Number(ex.data.eventCount ?? 0)) })
+    tally.closedPersonalOrder++
+  }
+
+  // 批次寫回既有建議的更新（可能上百筆；Firestore batch 上限 500）。
+  // ⛔ 寫之前重讀一次（/code-review 第 8 條）：上面的每一筆都是照掃描一開始讀到的狀態決定的，掃描要跑好幾分鐘——
+  // 這段時間店家按了「交給真人就好」「寫一句答案」，那一筆的狀態或 updatedAt 就變了，這輪不碰它（下一輪照新狀態再判）。
+  // 剩下的窗口只有重讀到寫入的那幾毫秒
+  const readStateOf = new Map(existing.map(ex => [ex.ref.id, { status: ex.data.status, updatedAtMs: tsToMs((ex.data as { updatedAt?: unknown }).updatedAt) }]))
   for (let i = 0; i < pendingWrites.length; i += 400) {
+    const chunk = pendingWrites.slice(i, i + 400)
+    const fresh = await db.getAll(...chunk.map(w => w.ref))
+    const freshById = new Map(fresh.map(s => [s.id, s]))
     const batch = db.batch()
-    for (const w of pendingWrites.slice(i, i + 400)) batch.set(w.ref, w.patch, { merge: true })
-    await batch.commit()
+    let n = 0
+    for (const w of chunk) {
+      const was = readStateOf.get(w.ref.id)
+      const now = freshById.get(w.ref.id)
+      const cur = now?.exists ? (now.data() as { status?: string, updatedAt?: unknown }) : null
+      if (!was || !cur || cur.status !== was.status || tsToMs(cur.updatedAt) !== was.updatedAtMs) {
+        tally.skippedChangedMeanwhile++
+        continue
+      }
+      batch.set(w.ref, w.patch, { merge: true })
+      n++
+    }
+    if (n) await batch.commit()
+  }
+  if (tally.skippedChangedMeanwhile) {
+    console.log(`[kb-suggest] ${workspaceId}: 掃描途中有 ${tally.skippedChangedMeanwhile} 筆被人動過，這輪不寫回`)
   }
 
   return tally

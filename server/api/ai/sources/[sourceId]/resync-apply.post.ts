@@ -257,6 +257,8 @@ export default defineEventHandler(async (event) => {
     // 不清的話只能等下一次排程成功檢查才會清，而設成「不偵測」的來源永遠不會被排程撈到
     // → 體檢紅字永久卡著。逐卡有失敗時不清（還不算「好」）。
     ...(errors.length === 0 ? buildSourceClearFailure(source.data.status) : {}),
+    // 「這份在講什麼」（`C-316`）：網頁內容套用了，舊摘要作廢（/code-review 第 4 條）
+    ...(added || updated || deleted ? { summary: [], summaryAt: null } : {}),
   })
   // 「有變動」旗標：全部套完（含保留決定）就清——使用者剛剛親手看過這份 diff；
   // 若卡片仍與網頁不同，排程下一輪確認到變動會再標回來，不會永久消失。

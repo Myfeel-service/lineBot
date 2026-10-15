@@ -128,12 +128,13 @@ describe('試算表自動同步的操作紀錄（`C-308`⑥）', () => {
 })
 
 describe('表格一次少太多列被擋下（`C-308`⑤）', () => {
-  it('原因講「按立即同步」、⛔ 不講分享；記 blockedPendingDeletes；第一次擋下記一筆紀錄', async () => {
+  // `C-319`：按鈕改叫「立即更新」
+  it('原因講「按立即更新」、⛔ 不講分享；記 blockedPendingDeletes；第一次擋下記一筆紀錄', async () => {
     SOURCES = [sheet()]
     syncGoogleSheetSource.mockResolvedValue({ outcome: 'blocked_mass_deletion', added: 0, updated: 0, deleted: 0, kept: 40, pendingDeletes: 15 })
     await detectSourceUpdates(makeDb())
     const p = UPDATES.find(u => u.id === 'sheet1')!.payload
-    expect(p.failureReason).toBe('表格一次少了 15 列（現有 40 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即同步」。')
+    expect(p.failureReason).toBe('表格一次少了 15 列（現有 40 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即更新」。')
     expect(p.failureReason).not.toMatch(/分享|張|卡/)
     expect(p).toMatchObject({ status: 'failed', blockedPendingDeletes: 15 })
     expect(auditCalls()).toHaveLength(1)

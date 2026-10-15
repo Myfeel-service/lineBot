@@ -25,7 +25,10 @@ const VERIFY_TIMEOUT_MS = 15_000
 
 /**
  * POST /api/ai/knowledge/suggestions/:id/accept
- * Body: { title, content, tags[], questions[] }（UI 可能改過草稿，以送來的為準）
+ * Body: { title, content, tags[], questions[], answeredQueries? }（UI 可能改過草稿，以送來的為準）
+ *
+ * `C-318`（2026-10-15）：畫面改成「寫一句答案」→ 同一個「補一條知識」小視窗（KnowledgeAddOneDialog），
+ * 標題／內容是他打的一兩句（或 AI 整理過的）、問法自動帶勾的客人原句、標籤只有 AI 整理時才有。這支收的東西不變。
  *
  * 「採用並學習」一鍵收掉整個閉環：
  *   1. 建知識卡（同手寫卡：自動建 manual source、同步 embedding）
@@ -125,6 +128,12 @@ export default defineEventHandler(async (event) => {
       lastFetchedAt: now,
       outdatedAt: null,
       status: 'ready',
+      /**
+       * 資料清單的主查詢是 `isDeleted == false`（`C-49E`／`C-137`）——少了這一格，這一份只靠「舊資料」那一輪撈：
+       * 那一輪只看最近更新的 100 份（含回收桶的），資料一多它就從左邊清單消失（AI 照樣用、後台找不到）。
+       * `/api/ai/knowledge/create` 早就有寫；`C-318` 讓這條路變成「寫一句答案」的主路，補上。
+       */
+      isDeleted: false,
       chunkCount: 1,
       createdAt: now,
       updatedAt: now,

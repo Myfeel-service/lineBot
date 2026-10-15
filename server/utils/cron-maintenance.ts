@@ -143,7 +143,7 @@ async function checkOneSource(
         await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
           // 原因要講對、講該按什麼（`C-308`⑤）：以前寫「請到知識庫來源頁確認後手動同步」，
           // 畫面又只看 status 一律教人「把表分享給服務帳號」——他去 Google 改分享，什麼都不會變
-          failureReason: `表格一次少了 ${pending} 列（現有 ${r.kept} 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即同步」。`,
+          failureReason: `表格一次少了 ${pending} 列（現有 ${r.kept} 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即更新」。`,
           // ⛔一定要一起寫 status:'failed'：體檢的「資料同步失敗」與小幫手 knowledgeSyncFailed
           // 都只看 status，只寫 failureReason 的話畫面全綠——正好違背這道守門的目的
           //（讓店家看得到「自動同步暫停了，有 N 條等你確認」）。
@@ -160,7 +160,7 @@ async function checkOneSource(
           await writeSystemSourceAudit(db, sourceId, data, {
             action: 'source.gsheetSync',
             after: { name: String(data.name ?? '') },
-            note: `${String(data.name ?? '')}：表格一次少了 ${pending} 列，為了避免誤刪，自動同步先停下來了（一條都沒刪），等你按「立即同步」確認`,
+            note: `${String(data.name ?? '')}：表格一次少了 ${pending} 列，為了避免誤刪，自動同步先停下來了（一條都沒刪），等你按「立即更新」確認`,
           })
         }
         return { sourceId, outcome: 'changed_logged', message: `gsheet 大量刪除已擋下（${pending} 列）` }

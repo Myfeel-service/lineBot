@@ -127,7 +127,20 @@ export interface SourceSummary {
    * ⛔ 不回 Storage 路徑：下載一律走 file-url 端點發短效網址。
    */
   originalFile: { name: string, size: number } | null
+  /**
+   * 「這份在講什麼」（`C-316`，D-126 點開一份資料的頁面）：最多 3 行、每行 30 字內，AI 從這份的條目整理的。
+   * 還沒整理過＝[]；畫面打 PUT `{ generateSummary: true }` 才會產生（存在資料上，之後不再花錢）。
+   */
+  summary: string[]
+  /** summary 是什麼時候整理的（ms）；0＝還沒整理過 */
+  summaryAt: number
 }
+
+/** 資料文件上「這份在講什麼」那兩格（`C-316`）。共用型別沒有這兩格，只在這支讀寫，型別就留在這裡 */
+type SourceDocWithSummary = Partial<KnowledgeSourceDoc> & { summary?: unknown, summaryAt?: unknown }
+
+/** 摘要最多幾行（`C-316`）：畫面上「這份在講什麼」三行 */
+export const SOURCE_SUMMARY_MAX_LINES = 3
 
 function tsToMs(raw: unknown): number {
   if (!raw) return 0
@@ -138,7 +151,7 @@ function tsToMs(raw: unknown): number {
 }
 
 /** 把 raw doc 轉成 UI 友善的 summary（時間戳轉 ms、有預設值） */
-export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>): SourceSummary {
+export function docToSourceSummary(id: string, raw: SourceDocWithSummary): SourceSummary {
   return {
     id,
     type: (raw.type ?? 'file') as KnowledgeSourceType,
@@ -168,6 +181,10 @@ export function docToSourceSummary(id: string, raw: Partial<KnowledgeSourceDoc>)
     originalFile: raw.filePath
       ? { name: String(raw.fileName || raw.name || ''), size: Number(raw.fileSize ?? 0) }
       : null,
+    summary: Array.isArray(raw.summary)
+      ? raw.summary.map(s => String(s ?? '').trim()).filter(Boolean).slice(0, SOURCE_SUMMARY_MAX_LINES)
+      : [],
+    summaryAt: tsToMs(raw.summaryAt),
   }
 }
 

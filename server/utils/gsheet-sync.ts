@@ -427,6 +427,8 @@ export async function syncGoogleSheetSource(
       quotaSkippedCount: quotaSkipped,
       // 同步成功＝沒有等著確認的大量刪除了（`C-308`⑤；手按「立即同步」放行也走這裡）
       blockedPendingDeletes: 0,
+      // 「這份在講什麼」（`C-316`）：表格真的有增刪改才作廢，下次打開時照新內容重整理（/code-review 第 4 條）
+      ...(added || updated || deleted ? { summary: [], summaryAt: null } : {}),
     })
   }
   catch (e) {

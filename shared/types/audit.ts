@@ -146,7 +146,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'source.reindex': '讓一份資料重新學習',
   'source.overview': '幫一份資料做了「我們有賣什麼」總表',
   'source.gsheetSync': '同步了 Google 試算表',
-  'source.resyncApply': '套用了一份資料的重新同步',
+  'source.resyncApply': '套用了一份網頁資料的更新',
   'source.migrateOrphans': '把不屬於任何資料的知識歸了位',
   'knowledgeFolder.create': '新增了知識庫資料夾',
   'knowledgeFolder.put': '改了知識庫資料夾',
